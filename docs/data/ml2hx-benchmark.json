@@ -1,0 +1,181 @@
+{
+  "scope": "Current native port versus native port shadowing three generated modules. Same handwritten compiler source inputs; no whole-port performance claim.",
+  "platform": "linux",
+  "arch": "x64",
+  "binaries": {
+    "current": {
+      "bytes": 19668192
+    },
+    "generated": {
+      "bytes": 19673232
+    }
+  },
+  "rows": [
+    {
+      "name": "small program to HXB",
+      "rounds": 5,
+      "values": {
+        "current": {
+          "wallSeconds": 0.026000866999999973,
+          "cpuSeconds": 0.02,
+          "peakRssMiB": 28.0234375
+        },
+        "generated": {
+          "wallSeconds": 0.025702628000000005,
+          "cpuSeconds": 0.01,
+          "peakRssMiB": 28.0234375
+        }
+      },
+      "wallRatio": 0.9885296517227687,
+      "samples": {
+        "current": [
+          {
+            "wallSeconds": 0.02700777099999999,
+            "cpuSeconds": 0.02,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.02374225899999999,
+            "cpuSeconds": 0.02,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.027370255999999985,
+            "cpuSeconds": 0.02,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.023033772999999997,
+            "cpuSeconds": 0.01,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.026000866999999973,
+            "cpuSeconds": 0.02,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          }
+        ],
+        "generated": [
+          {
+            "wallSeconds": 0.023505903999999987,
+            "cpuSeconds": 0.01,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.045813615,
+            "cpuSeconds": 0.03,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.04
+          },
+          {
+            "wallSeconds": 0.023457581000000033,
+            "cpuSeconds": 0.01,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.025702628000000005,
+            "cpuSeconds": 0.01,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          },
+          {
+            "wallSeconds": 0.028148817000000007,
+            "cpuSeconds": 0.02,
+            "peakRssMiB": 28.0234375,
+            "timeWallSeconds": 0.02
+          }
+        ]
+      }
+    },
+    {
+      "name": "compiler sources to HXB",
+      "rounds": 5,
+      "values": {
+        "current": {
+          "wallSeconds": 5.754569889999999,
+          "cpuSeconds": 5.74,
+          "peakRssMiB": 639.5546875
+        },
+        "generated": {
+          "wallSeconds": 5.653255217999998,
+          "cpuSeconds": 5.640000000000001,
+          "peakRssMiB": 639.55078125
+        }
+      },
+      "wallRatio": 0.9823940496098482,
+      "samples": {
+        "current": [
+          {
+            "wallSeconds": 5.496004037999999,
+            "cpuSeconds": 5.48,
+            "peakRssMiB": 639.5546875,
+            "timeWallSeconds": 5.49
+          },
+          {
+            "wallSeconds": 5.639207934000002,
+            "cpuSeconds": 5.63,
+            "peakRssMiB": 639.5546875,
+            "timeWallSeconds": 5.63
+          },
+          {
+            "wallSeconds": 6.0475558059999965,
+            "cpuSeconds": 6.029999999999999,
+            "peakRssMiB": 639.546875,
+            "timeWallSeconds": 6.04
+          },
+          {
+            "wallSeconds": 5.921693125999998,
+            "cpuSeconds": 5.9,
+            "peakRssMiB": 639.546875,
+            "timeWallSeconds": 5.91
+          },
+          {
+            "wallSeconds": 5.754569889999999,
+            "cpuSeconds": 5.74,
+            "peakRssMiB": 639.5546875,
+            "timeWallSeconds": 5.75
+          }
+        ],
+        "generated": [
+          {
+            "wallSeconds": 5.401952013999999,
+            "cpuSeconds": 5.39,
+            "peakRssMiB": 639.55078125,
+            "timeWallSeconds": 5.39
+          },
+          {
+            "wallSeconds": 5.653255217999998,
+            "cpuSeconds": 5.640000000000001,
+            "peakRssMiB": 639.55078125,
+            "timeWallSeconds": 5.65
+          },
+          {
+            "wallSeconds": 5.497831907,
+            "cpuSeconds": 5.4799999999999995,
+            "peakRssMiB": 639.55078125,
+            "timeWallSeconds": 5.49
+          },
+          {
+            "wallSeconds": 5.698870298000002,
+            "cpuSeconds": 5.6899999999999995,
+            "peakRssMiB": 639.5546875,
+            "timeWallSeconds": 5.69
+          },
+          {
+            "wallSeconds": 5.900993479999998,
+            "cpuSeconds": 5.88,
+            "peakRssMiB": 639.55078125,
+            "timeWallSeconds": 5.89
+          }
+        ]
+      }
+    }
+  ]
+}

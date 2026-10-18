@@ -1,0 +1,8 @@
+{
+  "protocol": 1,
+  "ocaml": "4.14.1",
+  "jsOfOcaml": "5.6.0",
+  "sourceSha256": "565949061721b5c7947c120896216d01598ce95928bfb50d09a646f3144c9d0d",
+  "compressedSha256": "5d8f0f11e9e15ff1e4f226950704d5f1e5f7e6b2159317ca935b6cad5dcafacf",
+  "javascriptSha256": "03facae37aa865e099e4ef9e7f6034d2a1e25e324e9d78baff05b75f6cc19a0a"
+}

@@ -1,0 +1,27 @@
+{
+  "modules": [
+    {
+      "source": "src/context/typerPass.ml",
+      "output": "context/TyperPass.hx",
+      "package": "context",
+      "class": "TyperPassModule",
+      "types": {"typer_pass": "TyperPass"},
+      "append": "adapters/context/TyperPassTools.hx"
+    },
+    {
+      "source": "src/compiler/server/serverConfig.ml",
+      "output": "compiler/server/ServerConfig.hx",
+      "package": "compiler.server",
+      "class": "ServerConfigModule",
+      "append": "adapters/compiler/server/ServerConfig.hx"
+    },
+    {
+      "source": "src/core/ds/ring.ml",
+      "output": "core/ds/RingModule.hx",
+      "package": "core.ds",
+      "class": "RingModule",
+      "types": {"t": "RingState"},
+      "shadow": "adapters/core/ds/Ring.hx"
+    }
+  ]
+}
