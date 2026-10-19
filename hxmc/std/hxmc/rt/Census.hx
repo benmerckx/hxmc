@@ -531,4 +531,87 @@ class Census {
 		LibC.free(hs);
 		LibC.free(ts);
 	}
+
+	// ---- allocations (RT_CENSUS set): every object allocated, by type. The
+	// collector counts the nursery's objects before each collection empties
+	// it (with one thread its used part is contiguous objects and zeroed
+	// gaps) and large objects allocated in the old space as they come.
+	static var allocTab:Ptr; // per type: count, bytes
+	static var allocMulti:Bool; // the nursery was counted with several threads: approximate
+
+	@:hxmc.noGc static inline function allocEntry(t:Int):Ptr {
+		var nt = ntypes();
+		if (allocTab.isNull()) {
+			allocTab = LibC.malloc((nt : I64) * 16);
+			LibC.memset(allocTab, 0, (nt : I64) * 16);
+		}
+		return allocTab.add(16 * (t < nt ? t : 0));
+	}
+
+	@:hxmc.noGc public static function countAlloc(header:I64, bytes:I64) {
+		var e = allocEntry((header >> 32).toInt() & 0xFFFF);
+		Mem.setI64(e, 0, Mem.getI64(e, 0) + 1);
+		Mem.setI64(e, 8, Mem.getI64(e, 8) + bytes);
+	}
+
+	@:hxmc.noGc public static function countYoung(start:Ptr, end:Ptr) {
+		if (Mem.getI32(Mem.sym("rt_nthreads"), 0) > 1) allocMulti = true;
+		var p = start;
+		while (p.ult(end)) {
+			var h = Mem.getI64(p, 0);
+			if (h == 0) {
+				p = p.add(8);
+				continue;
+			}
+			var b = objSize(p.add(8));
+			countAlloc(h, b);
+			p = p.addL(b);
+		}
+	}
+
+	@:hxmc.noGc public static function allocReport() {
+		if (allocTab.isNull()) return;
+		var top = Os.envInt("RT_CENSUS_TOP", 40);
+		var nt = ntypes();
+		var n:I64 = 0, total:I64 = 0;
+		for (t in 0...nt) {
+			n += Mem.getI64(allocTab, 16 * t);
+			total += Mem.getI64(allocTab, 16 * t + 8);
+		}
+		var r = new Report(Mem.stack(Report.BYTES));
+		r.str("allocations: ");
+		r.int(n, 0);
+		r.str(" objects, ");
+		r.fixed(mb(total), 1, 0);
+		if (allocMulti) r.str(" MB (approximate: several threads)\n") else r.str(" MB\n");
+		r.flush();
+		r.str("  type");
+		for (_ in 0...52)
+			r.ch(" ".code);
+		r.str("      count        MB   B/obj\n");
+		r.flush();
+		var order = sortDesc(allocTab, 16, 8, nt);
+		var nb = Mem.stack(256);
+		var shown = 0;
+		for (i in 0...nt) {
+			var t = Mem.getI32(order, 4 * i);
+			var e = allocTab.add(16 * t);
+			if (Mem.getI64(e, 0) == 0) continue;
+			if (shown >= top) break;
+			shown++;
+			tname(t, nb, 200);
+			r.str("  ");
+			r.cstr(nb, 56, 56);
+			r.ch(" ".code);
+			r.int(Mem.getI64(e, 0), 10);
+			r.ch(" ".code);
+			r.fixed(mb(Mem.getI64(e, 8)), 2, 9);
+			r.ch(" ".code);
+			var by:Float = cast Mem.getI64(e, 8), cnt:Float = cast Mem.getI64(e, 0);
+			r.fixed(by / cnt, 1, 7);
+			r.str("\n");
+			r.flush();
+		}
+		LibC.free(order);
+	}
 }

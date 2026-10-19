@@ -58,6 +58,15 @@ initialised in link order (haxe.ml runs the compiler when initialised).
 keeps symbols for gdb). It compiles hello world, and upstream's unit tests (tests/unit to JS),
 byte-identically to the port.
 
+`make ml2hx-profile` profiles it against the port, both built from the tree
+with the same flags (and symbols), on self-typing (and upstream's unit tests
+to JS with `ML2HX_UTEST=<utest checkout>`): `bin/ml2hx/profile/profile.md`
+has phase times (`--times`), a differential perf profile by upstream
+function, allocations by type from census builds (`-D hxmc.census`,
+`RT_CENSUS=1`, which also counts every allocation) and perf counters; the
+raw data stays beside it. `make ml2hx-profile-report` reruns the
+measurements on the binaries built (`tools/ml2hx/profile.mjs`).
+
 ## Replacements
 
 `replacements/<package>/<unit>.ml`: library modules whose code depends on

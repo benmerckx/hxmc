@@ -990,7 +990,7 @@ distclean: clean
 # --- Experimental OCaml -> Haxe generation (tools/ml2hx, README there) ---
 # Needs the opam switch the pinned tag builds with (OCaml from
 # haxe/upstream/.github/workflows/main.yml) and the tag's opam dependencies.
-.PHONY: generate ml2hx-test ml2hx-frontend ml2hx-check port-generated ml2hx-bench
+.PHONY: generate ml2hx-test ml2hx-frontend ml2hx-check port-generated ml2hx-bench ml2hx-profile ml2hx-profile-report
 
 generate: ml2hx-frontend
 	$(NODE) tools/ml2hx/generate.mjs
@@ -1011,3 +1011,25 @@ port-generated: $(TOOL) $(STD) $(HOST_RT) generate
 
 ml2hx-bench: $(PORT_BIN) port-generated
 	$(NODE) tools/ml2hx/bench.mjs
+
+# A profile of the generated compiler against the port, both built from this
+# tree with the same flags (with symbols; and census builds, -D hxmc.census,
+# for the allocations): phase times, a differential perf profile by upstream
+# function, allocations by type, counters. bin/ml2hx/profile/profile.md and
+# the raw data beside it (tools/ml2hx/profile.mjs; ml2hx-profile-report
+# reruns the measurements on the binaries already built).
+PROFILE_DIR := bin/ml2hx/profile
+GENERATED_ARGS := -cp bin/ml2hx/generated -main Ml2hxCompiler -D disable-parallelism $(COMPILER_ARGS) $(HXFLAGS) $(HXMC_ARGS)
+ml2hx-profile: export HXMC_SYMBOLS := 1
+# (generation reports upstream test files OCaml does not type either: the
+# compiler build decides)
+ml2hx-profile: $(TOOL) $(STD) $(HOST_RT) ml2hx-frontend
+	-$(NODE) tools/ml2hx/generate.mjs
+	$(call hxmc,$(PROFILE_DIR)/port,$(PORT_ARGS))
+	$(call hxmc,$(PROFILE_DIR)/generated,$(GENERATED_ARGS))
+	$(call hxmc,$(PROFILE_DIR)/port-census,$(PORT_ARGS) -D hxmc.census)
+	$(call hxmc,$(PROFILE_DIR)/generated-census,$(GENERATED_ARGS) -D hxmc.census)
+	$(NODE) tools/ml2hx/profile.mjs
+
+ml2hx-profile-report:
+	$(NODE) tools/ml2hx/profile.mjs

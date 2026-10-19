@@ -1043,6 +1043,9 @@ class Gc {
 	@:hxmc.noGc static function collectFor(full:Bool, need:I64) {
 		if (!Threads.worldStop()) return;
 		if (youngDirty.ult(youngNext)) youngDirty = youngNext;
+		#if hxmc.census
+		if (census != 0) Census.countYoung(youngStart, youngNext);
+		#end
 		if (full) majorAndTime(need) else {
 			var before = oldPtr;
 			var m0 = majors;
@@ -1170,6 +1173,9 @@ class Gc {
 		}
 		Mem.setI64(p, 0, header);
 		LibC.memset(p.add(8), 0, bytes - 8);
+		#if hxmc.census
+		if (census != 0) Census.countAlloc(header, bytes);
+		#end
 		return p.add(8);
 	}
 
@@ -1471,9 +1477,11 @@ class Gc {
 		#if hxmc.census
 		if (census != 0) {
 			var c = census;
+			Census.countYoung(youngStart, youngNext);
 			census = 0;
 			majorAndTime(0);
 			censusNow(Mem.cstr("exit"));
+			Census.allocReport();
 			census = c;
 		}
 		#end
