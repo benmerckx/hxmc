@@ -397,6 +397,11 @@ class Poly {
 			// (compare, not =, takes a value physically equal to itself as equal
 			// without looking inside: closures included)
 			if (total && a == b) return 0;
+			// (ints first: the most frequent immediates)
+			if (Int64.isInt64(a) && Int64.isInt64(b)) {
+				var c = Int64.compare(a, b);
+				return c < 0 ? -1 : (c > 0 ? 1 : 0);
+			}
 			var ka = kind(a), kb = kind(b);
 			if (ka == K_IMM) {
 				if (kb != K_IMM) return -1;
@@ -457,8 +462,9 @@ class Poly {
 
 	// Stdlib.compare
 	public static function compare(a:Dynamic, b:Dynamic):Int {
-		if (typeKind(a) == 8 && typeKind(b) == 8) return compareStrings(a, b);
-		if (Int64.isInt64(a) && Int64.isInt64(b)) {
+		if (typeKind(a) == 8) {
+			if (typeKind(b) == 8) return compareStrings(a, b);
+		} else if (Int64.isInt64(a) && Int64.isInt64(b)) {
 			var c = Int64.compare(a, b);
 			return c < 0 ? -1 : c > 0 ? 1 : 0;
 		}
@@ -594,7 +600,8 @@ class Poly {
 	public static function hashParam(count:Int, limit:Int, seed:Int, v:Dynamic):Int {
 		// the most frequent keys first
 		if (count > 0) {
-			if (typeKind(v) == 8) return finalMix(mixString(seed, v)) & 0x3FFFFFFF;
+			var tk = typeKind(v);
+			if (tk == 8) return finalMix(mixString(seed, v)) & 0x3FFFFFFF;
 			if (Int64.isInt64(v)) {
 				var n:Int64 = v;
 				return finalMix(mixIntnat(seed, n + n + 1)) & 0x3FFFFFFF;
