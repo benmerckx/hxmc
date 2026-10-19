@@ -13,9 +13,9 @@ class LuvSemaphoreT {
 }
 
 class Luv__Semaphore {
-	public static function destroy(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ml2hx.rt.Unit { throw new Failure("luv: not available in the generated compiler"); }
-	public static function init(a0:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Semaphore.LuvSemaphoreT, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function post(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ml2hx.rt.Unit { throw new Failure("luv: not available in the generated compiler"); }
-	public static function trywait(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Unit, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function wait(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ml2hx.rt.Unit { throw new Failure("luv: not available in the generated compiler"); }
+	public static function destroy(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ml2hx.rt.Unit { throw new Failure("luv: Luv.Semaphore.destroy is not available in the generated compiler"); }
+	public static function init(a0:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Semaphore.LuvSemaphoreT, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Semaphore.init is not available in the generated compiler"); }
+	public static function post(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ml2hx.rt.Unit { throw new Failure("luv: Luv.Semaphore.post is not available in the generated compiler"); }
+	public static function trywait(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Unit, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Semaphore.trywait is not available in the generated compiler"); }
+	public static function wait(a0:ml2hx.std.Luv__Semaphore.LuvSemaphoreT):ml2hx.rt.Unit { throw new Failure("luv: Luv.Semaphore.wait is not available in the generated compiler"); }
 }

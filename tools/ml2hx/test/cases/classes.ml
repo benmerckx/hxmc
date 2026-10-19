@@ -65,3 +65,17 @@ let () =
   let a = new counter in
   let b = a#bump#bump in
   Printf.printf "%d %d %s %b\n" a#n b#n b#label (a == b)
+class state = object
+  val mutable inside = false
+  method enter = let old = inside in inside <- true; (fun () -> inside <- old)
+  method inside = inside
+end
+let () =
+  let s = new state in
+  let restore = s#enter in
+  let during = s#inside in
+  restore ();
+  Printf.printf "%b %b\n" during s#inside;
+  let o = object val mutable n = 0 method tick = n <- n + 1; (fun k -> n + k) method n = n end in
+  let f = o#tick in
+  Printf.printf "%d %d\n" o#n (f 10)

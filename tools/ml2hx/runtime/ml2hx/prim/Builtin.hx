@@ -104,7 +104,18 @@ class Builtin {
 
 	// ---- strings and bytes (strings are immutable here: conversions copy)
 	public static function bytesToString(b:Bytes):String return ByteString.ofBytes(b, 0, b.length);
-	public static function bytesOfString(s:String):Bytes return ByteString.toBytes(s);
+	// %bytes_of_string (Bytes.unsafe_of_string: its result is only read): the
+	// string's bytes, kept for the last string converted (Stdlib reads strings
+	// through it a character at a time: String.get_utf_8_uchar, get_int16...)
+	static var lastString:String = null;
+	static var lastBytes:Bytes = null;
+	public static function bytesOfString(s:String):Bytes {
+		if (s == lastString && lastString != null) return lastBytes;
+		var b = ByteString.toBytes(s);
+		lastString = s;
+		lastBytes = b;
+		return b;
+	}
 
 	// ---- atomics (one domain)
 	public static inline function atomicLoad<T>(r:Ref<T>):T return r.value;

@@ -26,5 +26,5 @@ class LuvPasswdUser implements ml2hx.rt.Block {
 }
 
 class Luv__Passwd {
-	public static function getPasswd(a1:ml2hx.rt.Unit, ?uid:ml2hx.std.Unsigned_ULong.UnsignedULongT):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Passwd.LuvPasswdUser, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
+	public static function getPasswd(a1:ml2hx.rt.Unit, ?uid:ml2hx.std.Unsigned_ULong.UnsignedULongT):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Passwd.LuvPasswdUser, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Passwd.getPasswd is not available in the generated compiler"); }
 }

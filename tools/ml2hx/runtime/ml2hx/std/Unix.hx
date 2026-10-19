@@ -204,8 +204,8 @@ private class PipeOutput extends haxe.io.Output {
 
 // hxmc's sockets; without hxmc (another Haxe type-checking this), none:
 // every call fails with ENOSYS.
-private typedef Net = #if (hxmc.target) hxmc.NativeNet #else NoNet #end;
-#if !(hxmc.target)
+private typedef Net = #if (target.name == "hxmc") hxmc.NativeNet #else NoNet #end;
+#if (target.name != "hxmc")
 private class NoNet {
 	public static function errno():Int return -1;
 	public static function socket():Int return -1;
@@ -625,7 +625,7 @@ class Unix {
 	// (EAGAIN before EWOULDBLOCK), else EUNKNOWNERR. Windows' C errno has no
 	// table here: EUNKNOWNERR.
 	public static function errorOfErrno(err:Int):UnixError {
-		#if (hxmc.target)
+		#if (target.name == "hxmc")
 		if (hxmc.unsafe.Mem.os() == 2) return EUNKNOWNERR(Int63.ofInt(err));
 		var t = hxmc.unsafe.Mem.target(), mac = t == 2 || t == 3;
 		for (i in 0...errorTable.length) {

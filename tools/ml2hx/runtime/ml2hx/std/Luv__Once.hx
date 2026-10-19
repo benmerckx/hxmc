@@ -13,6 +13,6 @@ class LuvOnceT {
 }
 
 class Luv__Once {
-	public static function init(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Once.LuvOnceT, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function once(a0:ml2hx.std.Luv__Once.LuvOnceT, a1:(ml2hx.rt.Unit) -> (ml2hx.rt.Unit)):ml2hx.rt.Unit { throw new Failure("luv: not available in the generated compiler"); }
+	public static function init(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Once.LuvOnceT, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Once.init is not available in the generated compiler"); }
+	public static function once(a0:ml2hx.std.Luv__Once.LuvOnceT, a1:(ml2hx.rt.Unit) -> (ml2hx.rt.Unit)):ml2hx.rt.Unit { throw new Failure("luv: Luv.Once.once is not available in the generated compiler"); }
 }

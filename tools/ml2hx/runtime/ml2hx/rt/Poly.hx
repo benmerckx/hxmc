@@ -359,7 +359,9 @@ class Poly {
 					h = mixDouble(h, v);
 					num--;
 				case K_FUNC:
-					throw new InvalidArgument("hash: functional value");
+					// OCaml mixes a closure's header and code pointers, which have no
+					// counterpart here: the header of a closure alone (not counted)
+					h = mix(h, header(0, 247));
 				case _:
 					var t = tag(v, k);
 					var f = fields(v, k);

@@ -13,7 +13,7 @@ class LuvBarrierT {
 }
 
 class Luv__Barrier {
-	public static function destroy(a0:ml2hx.std.Luv__Barrier.LuvBarrierT):ml2hx.rt.Unit { throw new Failure("luv: not available in the generated compiler"); }
-	public static function init(a0:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Barrier.LuvBarrierT, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function wait(a0:ml2hx.std.Luv__Barrier.LuvBarrierT):Bool { throw new Failure("luv: not available in the generated compiler"); }
+	public static function destroy(a0:ml2hx.std.Luv__Barrier.LuvBarrierT):ml2hx.rt.Unit { throw new Failure("luv: Luv.Barrier.destroy is not available in the generated compiler"); }
+	public static function init(a0:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Barrier.LuvBarrierT, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Barrier.init is not available in the generated compiler"); }
+	public static function wait(a0:ml2hx.std.Luv__Barrier.LuvBarrierT):Bool { throw new Failure("luv: Luv.Barrier.wait is not available in the generated compiler"); }
 }

@@ -20,7 +20,7 @@ class LuvTimeTimeval implements ml2hx.rt.Block {
 }
 
 class Luv__Time {
-	public static function gettimeofday(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Time.LuvTimeTimeval, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function hrtime(a0:ml2hx.rt.Unit):ml2hx.std.Unsigned_UInt64.UnsignedUInt64T { throw new Failure("luv: not available in the generated compiler"); }
-	public static function sleep(a0:ml2hx.rt.Int63):ml2hx.rt.Unit { throw new Failure("luv: not available in the generated compiler"); }
+	public static function gettimeofday(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Time.LuvTimeTimeval, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Time.gettimeofday is not available in the generated compiler"); }
+	public static function hrtime(a0:ml2hx.rt.Unit):ml2hx.std.Unsigned_UInt64.UnsignedUInt64T { throw new Failure("luv: Luv.Time.hrtime is not available in the generated compiler"); }
+	public static function sleep(a0:ml2hx.rt.Int63):ml2hx.rt.Unit { throw new Failure("luv: Luv.Time.sleep is not available in the generated compiler"); }
 }

@@ -60,13 +60,13 @@ class LuvResourceRusage implements ml2hx.rt.Block {
 }
 
 class Luv__Resource {
-	public static function constrainedMemory(a0:ml2hx.rt.Unit):ml2hx.rt.MlOption<ml2hx.std.Unsigned_UInt64.UnsignedUInt64T> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function freeMemory(a0:ml2hx.rt.Unit):ml2hx.rt.MlOption<ml2hx.std.Unsigned_UInt64.UnsignedUInt64T> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function getpriority(a0:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Int63, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function getrusage(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Resource.LuvResourceRusage, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function loadavg(a0:ml2hx.rt.Unit):ml2hx.rt.Tuple3<Float, Float, Float> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function residentSetMemory(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Unsigned_Size_t.UnsignedSizetT, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function setpriority(a0:ml2hx.rt.Int63, a1:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Unit, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function totalMemory(a0:ml2hx.rt.Unit):ml2hx.rt.MlOption<ml2hx.std.Unsigned_UInt64.UnsignedUInt64T> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function uptime(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<Float, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
+	public static function constrainedMemory(a0:ml2hx.rt.Unit):ml2hx.rt.MlOption<ml2hx.std.Unsigned_UInt64.UnsignedUInt64T> { throw new Failure("luv: Luv.Resource.constrainedMemory is not available in the generated compiler"); }
+	public static function freeMemory(a0:ml2hx.rt.Unit):ml2hx.rt.MlOption<ml2hx.std.Unsigned_UInt64.UnsignedUInt64T> { throw new Failure("luv: Luv.Resource.freeMemory is not available in the generated compiler"); }
+	public static function getpriority(a0:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Int63, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Resource.getpriority is not available in the generated compiler"); }
+	public static function getrusage(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Resource.LuvResourceRusage, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Resource.getrusage is not available in the generated compiler"); }
+	public static function loadavg(a0:ml2hx.rt.Unit):ml2hx.rt.Tuple3<Float, Float, Float> { throw new Failure("luv: Luv.Resource.loadavg is not available in the generated compiler"); }
+	public static function residentSetMemory(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Unsigned_Size_t.UnsignedSizetT, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Resource.residentSetMemory is not available in the generated compiler"); }
+	public static function setpriority(a0:ml2hx.rt.Int63, a1:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Unit, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Resource.setpriority is not available in the generated compiler"); }
+	public static function totalMemory(a0:ml2hx.rt.Unit):ml2hx.rt.MlOption<ml2hx.std.Unsigned_UInt64.UnsignedUInt64T> { throw new Failure("luv: Luv.Resource.totalMemory is not available in the generated compiler"); }
+	public static function uptime(a0:ml2hx.rt.Unit):ocaml.stdlib.StdlibModule.StdlibResult<Float, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Resource.uptime is not available in the generated compiler"); }
 }

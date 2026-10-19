@@ -54,3 +54,7 @@ let () =
   and prefix = (print_endline "prefix made"; "-") in
   w ["a"; "b"]; print_newline ();
   Printf.printf "%d %d\n" (List.length (count_down 3)) !calls
+type gctx = { root : ctx; mutable count : int }
+and ctx = { g : gctx; label : string }
+let make_ctx () = let rec ctx = { g = { root = ctx; count = 0 }; label = "root" } in ctx
+let () = let c = make_ctx () in c.g.count <- 3; Printf.printf "%s %d %b\n" c.g.root.label c.g.root.g.count (c.g.root == c)

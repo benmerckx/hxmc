@@ -13,8 +13,8 @@ class LuvThreadT {
 }
 
 class Luv__Thread {
-	public static function create(a1:(ml2hx.rt.Unit) -> (ml2hx.rt.Unit), ?stackSize:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Thread.LuvThreadT, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function join(a0:ml2hx.std.Luv__Thread.LuvThreadT):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Unit, ml2hx.rt.PolyVariant> { throw new Failure("luv: not available in the generated compiler"); }
-	public static function self(a0:ml2hx.rt.Unit):ml2hx.std.Luv__Thread.LuvThreadT { throw new Failure("luv: not available in the generated compiler"); }
+	public static function create(a1:(ml2hx.rt.Unit) -> (ml2hx.rt.Unit), ?stackSize:ml2hx.rt.Int63):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.std.Luv__Thread.LuvThreadT, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Thread.create is not available in the generated compiler"); }
+	public static function join(a0:ml2hx.std.Luv__Thread.LuvThreadT):ocaml.stdlib.StdlibModule.StdlibResult<ml2hx.rt.Unit, ml2hx.rt.PolyVariant> { throw new Failure("luv: Luv.Thread.join is not available in the generated compiler"); }
+	public static function self(a0:ml2hx.rt.Unit):ml2hx.std.Luv__Thread.LuvThreadT { throw new Failure("luv: Luv.Thread.self is not available in the generated compiler"); }
 	public static function equal(a:LuvThreadT, b:LuvThreadT):Bool return a == b;
 }

@@ -50,6 +50,23 @@ with errors until what remains types) and prints
 
 with the first type error of each module in `bin/ml2hx/check.json`.
 
+## The generated compiler
+
+`generate.mjs` also writes `Ml2hxCompiler`: every unit haxe.ml reaches,
+initialised in link order (haxe.ml runs the compiler when initialised).
+`make port-generated` builds it with hxmc into `bin/ml2hx/haxe` (one codegen
+job and `RT_OLD_MB=256` keep the build under ~9 GB; `HXMC_SYMBOLS=1` keeps
+symbols for gdb). It compiles hello world to JS byte-identically to the port.
+
+## Replacements
+
+`replacements/<package>/<unit>.ml`: library modules whose code depends on
+OCaml's memory layout, rewritten without it and compiled against the
+original interface (`-cmi-file`), so their typed trees stand for the
+originals: extlib's ExtList, Enum.force and Std.input_list (lists built from
+mutable records injected into 'a list). Each keeps the order in which it
+calls its function arguments and returns equal values.
+
 ## Layout
 
 | Path | What |
@@ -158,16 +175,21 @@ locally abstract types, polymorphic recursion.
   be T"), and object coercions to unrelated class types are unchecked casts
   (right on dynamic targets only). Most of the compiler modules that do not
   type stop here.
-- Not converted: recursive modules, object copies `{< >}`, local let rec of
-  non-function values (genpy, genphp7), GADT constructors with inline
-  records (saturn).
+- Not converted: recursive modules (unused by the compiler and its
+  libraries), let rec values that use the group's variables other than as
+  record fields (nested records included), lazies or closures.
+- A method whose body computes before its function (method m = let x = ...
+  in fun y -> ...) runs that prefix at a send with fewer arguments only when
+  it has no parameter before the prefix (its getter, `ml2hxValue_m`).
 - Effects: a handler that does work after `continue` does it before the
   computation resumes.
 - Primitives not available: marshalling (`Marshal`, `input_value`: the
   runtime lacks the static types to rebuild values), `Obj.add_offset`,
-  libuv (luv: types only), BIO callbacks of mbedtls on Haxe streams; GC
+  libuv (luv: typed for eval.luv, its functions raise Failure "luv: ... is
+  not available in the generated compiler" until bound over hxmc.NativeUv), BIO callbacks of mbedtls on Haxe streams; GC
   statistics count nothing and finalisers never run; one domain and one
   thread (a blocking `Condition.wait` or `Event.sync` raises).
-- The C-library stand-ins (Unix, Str, Thread, Domainslib) are still written
-  in Haxe over Haxe's sys API rather than converted with their primitives
-  bound to hxmc's natives.
+- The C-library stand-ins: Unix's sockets are hxmc's NativeNet (errno-exact
+  Unix_error on Linux and macOS); its files and processes, Str, Thread and
+  Domainslib are still written over Haxe's sys API (one thread: Thread.create
+  runs the thread to completion).

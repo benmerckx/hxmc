@@ -8,9 +8,14 @@ import ml2hx.rt.*;
 // Thread on a single-threaded runtime: a thread runs to completion when
 // created (a valid schedule of OCaml's preemptive threads for programs that
 // do not wait on each other).
-class ThreadT {
+// OCaml's thread descriptor: a block of its id, start closure and
+// termination (caml_thread_new_descriptor)
+class ThreadT implements Block {
 	public final id:Int;
 	public function new(id:Int) this.id = id;
+	public function blockTag():Int return 0;
+	public function blockSize():Int return 3;
+	public function blockField(i:Int):Dynamic return i == 0 ? Int63.ofInt(id) : Unit.value;
 }
 
 // Thread.Exit: ends the thread that raises it, silently, at the top of

@@ -76,6 +76,28 @@ const convertedPackages = new Set(['ocaml', 'extlib', 'sedlex', 'camlp-streams',
 // Modules whose implementation is the value representation itself (lazy
 // blocks, objects, recursive modules, effects): runtime modules.
 const notConverted = new Set(['CamlinternalLazy', 'Stdlib__Lazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Effect', 'Stdlib__Oo']);
+// Replacements (tools/ml2hx/replacements/<package>/<unit>.ml): library
+// modules whose implementation depends on OCaml's memory representation
+// (lists built from mutable records injected with %identity), rewritten
+// without it and compiled against the original interface (-cmi-file): their
+// typed trees stand for the originals.
+function replacementUnits() {
+  const dir = path.join(home, 'replacements'), out = new Map();
+  if (!fs.existsSync(dir)) return out;
+  for (const pkg of fs.readdirSync(dir)) {
+    const lib = run('ocamlfind', ['query', pkg]).trim();
+    const build = path.join(root, 'bin/ml2hx/replacements', pkg);
+    fs.mkdirSync(build, {recursive: true});
+    for (const file of fs.readdirSync(path.join(dir, pkg)).filter(f => f.endsWith('.ml'))) {
+      const base = file.replace(/\.ml$/, ''), src = path.join(build, file);
+      fs.copyFileSync(path.join(dir, pkg, file), src);
+      const r = spawnSync('ocamlfind', ['ocamlc', '-bin-annot', '-I', lib, '-cmi-file', path.join(lib, `${base}.cmi`), '-c', file], {cwd: build, encoding: 'utf8'});
+      if (r.status !== 0) throw new Error(`replacement ${pkg}/${file}: ${r.stderr}`);
+      out.set(base[0].toUpperCase() + base.slice(1), path.join(build, `${base}.cmt`));
+    }
+  }
+  return out;
+}
 export function libraryUnits(units, failures, extra = []) {
   let roots = [];
   try { roots = run('ocamlfind', ['printconf', 'path']).trim().split('\n').filter(Boolean); } catch (e) { return []; }
@@ -89,6 +111,7 @@ export function libraryUnits(units, failures, extra = []) {
     const base = path.basename(p).replace(/\.cmti?$/, ''), modname = base[0].toUpperCase() + base.slice(1);
     if (!index.has(modname)) index.set(modname, p);
   });
+  for (const [modname, cmt] of replacementUnits()) index.set(modname, cmt);
   const known = new Set(units.map(u => u.modname));
   const out = [];
   let pending = units.slice();

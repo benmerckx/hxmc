@@ -41,3 +41,9 @@ let () = let w = { inner = [1; 2] } in Printf.printf "%d %b\n" (List.length w.in
 type tr = L of tr list | D of int
 let rec first = function L [t] | (D _ as t) -> (match t with D n -> n | L _ -> first t) | L _ -> -1
 let () = Printf.printf "%d %d %d\n" (first (L [D 4])) (first (D 7)) (first (L []))
+type flag = FA | FB | FC of int | FD
+let int_of_flag (f : flag) = Obj.magic f
+let flag_of_int (i : int) : flag = Obj.magic i
+let set flags f = flags lor (1 lsl int_of_flag f)
+let has flags f = flags land (1 lsl int_of_flag f) <> 0
+let () = let fl = set (set 0 FA) FD in Printf.printf "%d %b %b %b\n" fl (has fl FD) (has fl FB) (flag_of_int 1 = FB)

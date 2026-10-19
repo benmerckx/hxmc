@@ -987,6 +987,10 @@ class UnitEmitter {
           });
         });
         this.decls.push(`enum ${name}${gen} {\n${ctors.join('\n')}\n}`);
+        // Its constant constructors in order (Obj.magic of an int: the one of
+        // that rank, the very value its literal is)
+        const consts = d.ctors.filter(c => !c.args.record && !c.args.tuple?.length);
+        if (consts.length) this.statics.push(`public static final ml2hxConstants${name}:Array<Any> = [${consts.map(c => `${name}.${ctorName(c.name)}`).join(', ')}];`);
       } else if (d.kind === 'open') {
         // (parameters phantom: one base class for every instance)
         if (params.length) this.decls.push(`class ${name}_Base {\n\tpublic function new() {}\n}`, `typedef ${name}${gen} = ${name}_Base;`);
@@ -1346,13 +1350,24 @@ class UnitEmitter {
     for (const b of bs) {
       const name = names.get(b.p.id);
       if (b.e.k === 'record' && !b.e.base) {
+        // (records nested in it are made first, into temporaries, so that
+        // their fields naming the variables can be patched too:
+        // let rec ctx = { g = { root = ctx } })
         const patches = [];
-        const fields = b.e.fields.map(f => {
-          if (f.e && f.e.k === 'ident' && f.e.path.l && names.has(f.e.path.l)) { patches.push([f.lbl, names.get(f.e.path.l)]); return {...f, e: {k: '$expr', code: 'null'}}; }
-          return f;
-        });
-        out.push(`${name} = ${this.record({...b.e, fields})};`);
-        for (const [lbl, v] of patches) out.push(`${name}.${this.fieldName(lbl)} = ${v};`);
+        const build = (r, holder) => {
+          const fields = r.fields.map(f => {
+            if (f.e && f.e.k === 'ident' && f.e.path.l && names.has(f.e.path.l)) { patches.push([holder, f.lbl, names.get(f.e.path.l)]); return {...f, e: {k: '$expr', code: 'null'}}; }
+            if (f.e && f.e.k === 'record' && !f.e.base && JSON.stringify(f.e).match(/"l":"([^"]+)"/g)?.some(m => names.has(m.slice(5, -1)))) {
+              const t = this.temp('r');
+              out.push(`var ${t} = ${build(f.e, t)};`);
+              return {...f, e: {k: '$expr', code: t}};
+            }
+            return f;
+          });
+          return this.record({...r, fields});
+        };
+        out.push(`${name} = ${build(b.e, name)};`);
+        for (const [holder, lbl, v] of patches) out.push(`${holder}.${this.fieldName(lbl)} = ${v};`);
       } else if (b.e.k === 'fun' || b.e.k === 'lazy' || b.e.k === 'construct' || b.e.k === 'record') out.push(`${name} = ${this.value(b.e)};`);
       else this.fail(b, `recursive value ${b.e.k}`);
     }
@@ -1766,7 +1781,30 @@ class UnitEmitter {
   }
 
   // ------------------------------------------------------------ application
-  apply(n) {
+  apply(n) { return this.magicResult(this.applyRaw(n), n); }
+  // A full application of a function whose result type is a variable none
+  // of its arguments mention ('a: what Obj.magic makes, as int_of_flag
+  // : flag -> 'a): its result is converted where the instance is an int or
+  // a variant of constant constructors, as Obj.magic would see it.
+  magicResult(code, n) {
+    const fn = n.fn;
+    if (fn.k !== 'ident' || typeof fn.scheme !== 'number' || n.args.some(a => !a.e)) return code;
+    const {args, res} = this.arrows(fn.scheme);
+    if (args.length !== n.args.length || this.t(res).k !== 'var') return code;
+    const rv = this.t(res).id;
+    if (args.some(a => this.typeVars(a.t).includes(rv))) return code;
+    if (this.isInt(n.t)) return `${RT}Runtime.magicInt(${code})`;
+    const t = this.t(n.t);
+    if (t.k === 'constr' && !t.path.p) {
+      let d = null;
+      try { d = this.resolveType(t.path, n); } catch (e) {}
+      if (d?.decl?.kind === 'variant' && d.decl.manifest === null && !d.builtin && d.decl.ctors.some(c => !c.args.record && !c.args.tuple?.length)) return `${RT}Runtime.magicVariant(${this.constantsOf(d)}, ${code})`;
+    }
+    return code;
+  }
+  // The static array of a variant's constant constructors (emitTypeDecl)
+  constantsOf(d) { const hx = d.hx.replace(/<.*$/, ''); return `${hx.replace(/\.[^.]+$/, '')}.ml2hxConstants${hx.split('.').at(-1)}`; }
+  applyRaw(n) {
     const fn = n.fn;
     if (fn.k === 'ident') {
       const d = this.identDesc(fn);
@@ -2091,7 +2129,8 @@ class UnitEmitter {
     // represents it; an int seen as a variant of constant constructors.
     const variantDecl = i => { const t = this.t(i); if (t.k !== 'constr' || t.path.p) return null; try { const d = this.resolveType(t.path, n); return d.decl?.kind === 'variant' ? d : null; } catch (e) { return null; } };
     if (this.isInt(n.t) && variantDecl(arg.t)) return `${RT}Int63.ofInt64(${RT}Poly.immediateOf(${v}))`;
-    if (this.isInt(arg.t)) { const d = variantDecl(n.t); if (d && d.decl.ctors.every(c => !c.args.record && !c.args.tuple?.length)) return `Type.createEnumIndex(${d.hx.replace(/<.*$/, '')}, ${wrap(v)}.toInt())`; }
+    if (this.isInt(arg.t)) { const d = variantDecl(n.t);       // (some constant constructors: the int is the rank among them)
+      if (d && d.decl.manifest === null && d.decl.ctors.some(c => !c.args.record && !c.args.tuple?.length)) return `(${RT}Runtime.constantCtor(${this.constantsOf(d)}, ${wrap(v)}.toInt()) : ${this.typeOrNull(n.t, n) ?? 'Any'})`; }
     const target = this.typeOrNull(n.t, n);
     return target ? `(cast ${v} : ${target})` : `(cast ${v})`;
   }
@@ -2680,6 +2719,7 @@ class UnitEmitter {
       const sig = this.methodSignature(ft ? ft.t : f.e.t, arity, f);
       const mb = this.methodBody(f.e, arity, sig, f);
       fields.push(`${valueName(f.name)}: function(${mb.params ?? sig.params}):${sig.res} ${mb.body}`);
+      if (mb.staged) fields.push(`ml2hxValue_${valueName(f.name)}: function():Dynamic return ${mb.staged}`);
     }
     this.selfName = savedSelf;
     this.classParams = savedParams;
@@ -2687,6 +2727,9 @@ class UnitEmitter {
     this.noClassObjects = true;
     let ot;
     try { ot = this.type(n.t, n); } finally { this.noClassObjects = false; }
+    // (its instance variables are fields of the structure, which its methods use)
+    const vals = n.cs.fields.filter(f => f.k === 'val');
+    if (vals.length && ot.startsWith('{')) ot = `{ ${vals.map(f => `var iv_${valueName(f.name)}:${this.typeOrNull(f.e.t, f) ?? 'Any'};`).join(' ')} ${ot.slice(1)}`;
     return `{ var ${o}:${ot} = null; ${o} = cast { ${fields.join(', ')} }; ${o}; }`;
   }
   // (through abbreviations of function types, as arrows() counts them)
@@ -2755,6 +2798,10 @@ class UnitEmitter {
             if (f.virtual) { members.push(`abstract public function ${valueName(f.name)}${sig.gen}(${sig.params}):${sig.res};`); break; }
             const mb = this.methodBody(f.e, info.arity, sig, f);
             members.push(`${d.parent && this.parentHasMethod(d.parent, f.name) ? 'override ' : ''}public function ${valueName(f.name)}${sig.gen}(${mb.params ?? sig.params}):${sig.res} ${mb.body}`);
+            const inheritedGetter = d.parent && this.stagedIn(d.parent, f.name);
+            if (mb.staged) members.push(`${inheritedGetter ? 'override ' : ''}public function ml2hxValue_${valueName(f.name)}():Dynamic return ${mb.staged};`);
+            else if (inheritedGetter) members.push(`override public function ml2hxValue_${valueName(f.name)}():Dynamic return null;`);
+            (d.staged ??= new Set()); if (mb.staged) d.staged.add(f.name);
             break;
           }
           case 'initializer': inits.push(this.selfBody(f.e)); break;
@@ -2811,7 +2858,9 @@ class UnitEmitter {
       }
       if (rest.arity === 0) {
         const v = this.value(rest.body ?? {k: 'unsupported', text: 'method cases'});
-        return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`};
+        // (staged: o#m alone evaluates the body to a closure, so a send with
+        // fewer arguments calls its getter, ml2hxValue_m: see send)
+        return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`, staged: arity > 0 ? v : null};
       }
       if (rest.arity < arity) {
         // Fewer parameters than the method type's arrows: the body's closure
@@ -2871,9 +2920,26 @@ class UnitEmitter {
     }
     const obj = this.value(s.obj);
     const call = {k: 'apply', t: n?.t ?? s.t, l: s.l, fn: s, args};
+    // A send with fewer arguments than the method's arrows: a staged method
+    // (method m = prefix; fun x -> ...) runs its prefix now, through its
+    // getter; another method makes a closure.
+    if (arity > 0 && (args.length < arity || args.some(a => !a.e))) {
+      const o = this.temp('o'), g = this.temp('g');
+      const staged = args.length ? this.applyRest(`(cast ${g})`, args, call) : `(cast ${g})`;
+      return `{ var ${o} = ${obj}; var ${g}:Dynamic = ${RT}Runtime.methodValue(${o}, "ml2hxValue_${valueName(name)}"); ${g} != null ? ${staged} : ${this.methodCall(`${o}.${valueName(name)}`, arity, call)}; }`;
+    }
     return this.methodCall(`${wrap(obj)}.${valueName(name)}`, arity, call);
   }
   sendArity(s, name) { return this.methodArity(s.t); }
+  // whether a class (or an ancestor) has a staged method of that name
+  stagedIn(d, name) {
+    for (let c = d; c; c = c.parent) {
+      if (c.staged?.has(name)) return true;
+      const own = c.parts?.cs.fields.find(f => f.k === 'method' && f.name === name && !f.virtual);
+      if (own && funInfo(own.e).arity - 1 === 0 && (c.methods.get(name)?.arity ?? 0) > 0) return true;
+    }
+    return false;
+  }
   methodCall(callee, arity, call) {
     if (arity === 0) return call.args.length ? this.applyRest(`${callee}()`, call.args, call) : `${callee}()`;
     return this.knownCall(callee, arity, call, call.fn);

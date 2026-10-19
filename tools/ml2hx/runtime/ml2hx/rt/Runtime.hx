@@ -50,6 +50,33 @@ class Runtime {
 
 	// ---------------------------------------------------------------- extensible types
 	public static inline function isInstance<T>(v:Any, c:Class<T>):Bool return Std.isOfType(v, c);
+	// Obj.magic of an int to a variant: its constant constructor of that rank
+	// (OCaml numbers the constant constructors apart from the others), from
+	// the variant's array of them (the literals: hxmc's Type.allEnums makes
+	// new values, not == to them)
+	public static function constantCtor(all:Array<Any>, i:Int):Dynamic {
+		if (i < 0 || i >= all.length) throw new Failure("Obj.magic: no constant constructor " + i);
+		return all[i];
+	}
+	// The result of a function returning Obj.magic's 'a, seen as an int: a
+	// constant constructor as its rank (OCaml's immediate), an int as itself
+	public static function magicInt(v:Dynamic):Int63 {
+		if (Reflect.isEnumValue(v)) {
+			var i = Poly.immediateOf(v);
+			if (i == null) throw new InvalidArgument("Obj.magic: a constructor with arguments as an int");
+			return Int63.ofInt64(i);
+		}
+		return v;
+	}
+	// ... seen as a variant: an int as the constant constructor of its rank
+	public static function magicVariant(all:Array<Any>, v:Dynamic):Dynamic
+		return haxe.Int64.isInt64(v) ? constantCtor(all, (v : Int63).toInt()) : v;
+	// o#m with fewer arguments of a staged method: its getter's closure (the
+	// method's body run now), or null (no getter: the caller's closure)
+	public static function methodValue(o:Dynamic, getter:String):Dynamic {
+		var g = Reflect.field(o, getter);
+		return g == null ? null : Reflect.callMethod(o, g, []);
+	}
 	// Oo.copy: a shallow copy of an object (its fields; no constructor runs)
 	public static function objCopy<T>(o:T):T {
 		var c = Type.getClass(o);
