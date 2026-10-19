@@ -258,6 +258,7 @@ class UnitEmitter {
       case 'constr': {
         if (t.path.p === 'int') return `${RT}Int63`;
         if (t.path.p === 'array' && this.isPredef(t.args[0], 'float') && false) return 'Array<Float>';
+        if (/(^|\.)format[46]?$/.test(pathName(t.path)) && /^(Stdlib|CamlinternalFormatBasics)\b/.test(pathName(t.path))) return `${RT}Fmt`;
         const d = this.resolveType(t.path, n);
         if (d.instance) return this.instanceType(d.instance, d.name, t.args, n);
         if (d.tparam) return d.tparam;
@@ -933,7 +934,7 @@ class UnitEmitter {
       case 'if': return `if (${this.value(n.cond)}) { ${this.stmt(n.then)} }${n.else ? ` else { ${this.stmt(n.else)} }` : ''}`;
       case 'while': return `while (${this.value(n.cond)}) { ${this.stmt(n.body)} }`;
       case 'for': return this.forLoop(n);
-      case 'setfield': return `${this.ordered([n.e, n.v], ([r, v]) => `${r}.${valueName(n.lbl.name)} = ${v}`)};`;
+      case 'setfield': return `${this.ordered([n.e, n.v], ([r, v]) => `${wrap(r)}.${valueName(n.lbl.name)} = ${v}`)};`;
       case 'match': return this.matchNode(n, null, 'stmt');
       case 'open': return this.stmt(n.e);
       case 'construct': if (n.c.name === '()') return '';
@@ -941,7 +942,7 @@ class UnitEmitter {
       case 'apply': {
         const p = n.fn.k === 'ident' ? n.fn : null;
         if (p && p.prim?.name === '%ignore' && n.args.length === 1 && n.args[0].e) return this.stmtValue(n.args[0].e);
-        if (p && (p.prim?.name === '%setfield0') && n.args.length === 2) return `${this.ordered([n.args[0].e, n.args[1].e], ([r, v]) => `${r}.value = ${v}`)};`;
+        if (p && (p.prim?.name === '%setfield0') && n.args.length === 2) return `${this.ordered([n.args[0].e, n.args[1].e], ([r, v]) => `${wrap(r)}.value = ${v}`)};`;
       }
     }
     return this.stmtValue(n);
@@ -983,7 +984,7 @@ class UnitEmitter {
         return `new ${RT}PolyVariant1(${hash}, ${tag}, ${this.value(n.arg)})`;
       }
       case 'record': return this.record(n);
-      case 'field': return `${this.value(n.e)}.${valueName(n.lbl.name)}`;
+      case 'field': return `${wrap(this.value(n.e))}.${valueName(n.lbl.name)}`;
       case 'array': return this.ordered(n.args, a => `([${a.join(', ')}]:${this.type(n.t, n)})`);
       case 'assert': {
         const c = n.e;
@@ -1327,7 +1328,11 @@ class UnitEmitter {
       '%opaque': {arity: 1, code: v => v[0]},
       '%ignore': {arity: 1, code: v => `{ ${v[0]}; ${UNIT}; }`},
       '%makemutable': {arity: 1, code: v => `new ${RT}Ref(${v[0]})`},
-      '%field0': {arity: 1, code: v => `${wrap(v[0])}.value`},
+      '%field0': {arity: 1, code: (v, a) => `${wrap(v[0])}.${this.t(a[0].t).k === 'tuple' ? 'v0' : 'value'}`},
+      '%field1': {arity: 1, code: v => `${wrap(v[0])}.v1`},
+      '%loc_LOC': {arity: 1, code: (v, a, n) => haxeString(`File "${this.cfg.source}", line ${n.l[0]}, characters ${n.l[1]}-${n.l[1]}`)},
+      '%loc_MODULE': {arity: 1, code: () => haxeString(this.u.modname)},
+      '%loc_POS': {arity: 1, code: (v, a, n) => `new ${RT}Tuple4(${haxeString(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])}, ${this.intLit(n.l[1])})`},
       '%setfield0': {arity: 2, code: v => `{ ${wrap(v[0])}.value = ${v[1]}; ${UNIT}; }`},
       '%incr': {arity: 1, code: v => `{ var _r = ${v[0]}; _r.value = ${I63}.succ(_r.value); ${UNIT}; }`},
       '%decr': {arity: 1, code: v => `{ var _r = ${v[0]}; _r.value = ${I63}.pred(_r.value); ${UNIT}; }`},
@@ -1406,7 +1411,7 @@ class UnitEmitter {
     if (n.args.length <= lead || !n.args[lead].e) return null;
     const fmtNode = n.args[lead].e;
     const pieces = this.formatPieces(fmtNode);
-    if (!pieces) this.fail(n, 'format string that is not a literal');
+    if (!pieces) return this.printfValue(kind, lead, n, fn);
     const holes = pieces.filter(p => p.conv);
     const supplied = n.args.slice(lead + 1);
     if (supplied.some(a => !a.e)) this.fail(n, 'omitted format argument');
@@ -1442,6 +1447,48 @@ class UnitEmitter {
     let out = `{ ${decls.join(' ')} ${result}; }`;
     if (supplied.length > holes.length) out = this.applyRest(out, supplied.slice(holes.length), n);
     return out;
+  }
+  // A format that is a value (a parameter, a stored format): the runtime's
+  // Printf over ml2hx.rt.Fmt. With the arity known from the format's type the
+  // arguments go as an array; in generic code the runtime builds the curried
+  // function from the format.
+  printfValue(kind, lead, n, fn) {
+    const fmtNode = n.args[lead].e;
+    const ft = this.t(fmtNode.t);
+    const arity = ft.k === 'constr' && ft.args.length ? this.schemeArity(ft.args[0]) : 0;
+    const generic = ft.k === 'constr' && ft.args.length && this.t(ft.args[0]).k === 'var';
+    const supplied = n.args.slice(lead + 1);
+    if (supplied.some(a => !a.e)) this.fail(n, 'omitted format argument');
+    const leadVals = n.args.slice(0, lead + 1).map(a => this.value(a.e));
+    const call = {sprintf: 'sprintf', printf: 'printf', eprintf: 'eprintf', fprintf: 'fprintf', bprintf: 'bprintf', ksprintf: 'ksprintf'}[kind];
+    if (generic) {
+      const k = kind === 'ksprintf' ? leadVals[0] : null;
+      const res = this.type(this.resultAfter(fn.t, lead + 1), n);
+      const base = `(cast ${STD}Printf.curried(${leadVals[lead]}, ${this.printfFinisher(kind, leadVals)}) : ${res})`;
+      return supplied.length ? this.applyRest(base, supplied, n) : base;
+    }
+    const first = supplied.slice(0, arity), rest = supplied.slice(arity);
+    const {args: formal, res} = this.arrows(this.resultAfter(fn.t, lead + 1));
+    const names = [], vals = first.map(a => this.value(a.e));
+    for (let i = first.length; i < arity; i++) names.push(this.temp('p'));
+    let body = `${STD}Printf.${call}(${leadVals.join(', ')}, ([${[...vals, ...names].join(', ')}] : Array<Any>))`;
+    let ty = this.type(this.resultAfter(fn.t, lead + 1 + arity), n);
+    for (let i = arity - 1; i >= first.length; i--) {
+      const at = this.type(formal[i].t, n);
+      body = `function(${names[i - first.length]}:${at}):${ty} return ${body}`;
+      ty = `(${at}) -> (${ty})`;
+    }
+    return rest.length ? this.applyRest(body, rest, n) : body;
+  }
+  printfFinisher(kind, leads) {
+    switch (kind) {
+      case 'sprintf': return `function(s:String) return s`;
+      case 'ksprintf': return leads[0];
+      case 'printf': return `function(s:String) return ${STD}Stdlib.printString(s)`;
+      case 'eprintf': return `function(s:String) return ${STD}Stdlib.prerrString(s)`;
+      case 'fprintf': return `function(s:String) return ${STD}Stdlib.outputString(${leads[0]}, s)`;
+      case 'bprintf': return `function(s:String) return ${STD}Buffer.addString(${leads[0]}, s)`;
+    }
   }
   formatPieces(node) {
     // Format (fmt, str) -> list of {lit} | {conv, ...}
@@ -1507,6 +1554,7 @@ class UnitEmitter {
   // ------------------------------------------------------------ data
   construct(n) {
     const c = n.c;
+    if (c.name === 'Format' && pathName(c.type ?? {}).endsWith('format6') && n.args[1]?.k === 'const') return `${RT}Fmt.of(${haxeString(n.args[1].c.v)})`;
     if (c.ext) return this.extConstruct(n);
     const special = {'true': 'true', 'false': 'false', '()': UNIT, '[]': `${RT}MlList.Nil`, 'None': `${RT}MlOption.None`};
     if (c.type?.p && special[c.name] !== undefined && (c.type.p === 'bool' || c.type.p === 'unit' || c.type.p === 'list' || c.type.p === 'option')) return special[c.name];

@@ -285,7 +285,8 @@ class Fmt {
 			case "d".code | "i".code | "u".code | "x".code | "X".code | "o".code:
 				var str = switch it.size {
 					case "l".code: formatInt(it.conv, it.plus, it.space, it.hash, haxe.Int64.ofInt((a : Int)), 32);
-					case "L".code | "n".code: formatInt(it.conv, it.plus, it.space, it.hash, (a : haxe.Int64), 64);
+					case "n".code: formatInt(it.conv, it.plus, it.space, it.hash, haxe.Int64.ofInt((a : Int)), 32);
+					case "L".code: formatInt(it.conv, it.plus, it.space, it.hash, (a : haxe.Int64), 64);
 					case _: formatInt(it.conv, it.plus, it.space, it.hash, (a : Int63).toInt64(), 64);
 				}
 				if (prec != FmtItem.NONE) str = fixIntPrecision(prec, str);

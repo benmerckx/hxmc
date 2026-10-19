@@ -483,9 +483,9 @@ class Stdlib {
 
 	// ---- channels
 
-	public static var stdin(default, null):StdlibInChannel = StdlibInChannel.ofInput(Sys.stdin());
-	public static var stdout(default, null):StdlibOutChannel = StdlibOutChannel.ofOutput(Sys.stdout());
-	public static var stderr(default, null):StdlibOutChannel = StdlibOutChannel.ofOutput(Sys.stderr(), true);
+	public static var stdin(default, null):StdlibInChannel = StdlibInChannel.ofInput(std.Sys.stdin());
+	public static var stdout(default, null):StdlibOutChannel = StdlibOutChannel.ofOutput(std.Sys.stdout());
+	public static var stderr(default, null):StdlibOutChannel = StdlibOutChannel.ofOutput(std.Sys.stderr(), true);
 
 	public static function printString(s:String):Unit
 		return outputString(stdout, s);
@@ -738,7 +738,7 @@ class Stdlib {
 
 	public static function exit<T>(code:Int63):T {
 		doAtExit();
-		Sys.exit(code.toInt());
+		std.Sys.exit(code.toInt());
 		throw new haxe.Exception("unreachable");
 	}
 }

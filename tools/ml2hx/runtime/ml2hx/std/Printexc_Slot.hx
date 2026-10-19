@@ -1,5 +1,8 @@
 package ml2hx.std;
 
+import String;
+import StdTypes;
+
 import ml2hx.rt.*;
 import ml2hx.std.Printexc;
 

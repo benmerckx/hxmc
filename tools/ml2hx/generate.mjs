@@ -68,7 +68,7 @@ export function prepare(upstream) {
 const runtimeStd = path.join(home, 'runtime/ml2hx/std');
 // Packages (and Stdlib modules) converted rather than hand-written; the rest
 // (C bindings: unix, str, luv, ctypes, threads...) are runtime modules.
-const convertedPackages = new Set(['extlib', 'sedlex', 'camlp-streams', 'xml-light']);
+const convertedPackages = new Set(['extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff']);
 const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Int', 'Stdlib__Bool', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing']);
 const notConverted = new Set(['Stdlib', 'CamlinternalFormatBasics', 'CamlinternalFormat', 'CamlinternalLazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Obj', 'Stdlib__Effect', 'Stdlib__Domain']);
 export function libraryUnits(units, failures) {

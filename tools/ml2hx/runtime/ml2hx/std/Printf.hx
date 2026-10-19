@@ -50,4 +50,14 @@ class Printf {
 
 	public static function ifprintf<O>(o:O, fmt:Fmt, args:Array<Dynamic>):Unit
 		return Unit.value;
+
+	// The curried function a format denotes (`fmt` applied to its arguments
+	// one at a time), for formats whose arity the emitter cannot see.
+	public static function curried<R>(fmt:Fmt, k:String->R):Dynamic {
+		function build(args:Array<Dynamic>, n:Int):Dynamic {
+			if (n == 0) return k(sprintf(fmt, args));
+			return function(x:Dynamic):Dynamic return build(args.concat([x]), n - 1);
+		}
+		return build([], fmt.arity);
+	}
 }
