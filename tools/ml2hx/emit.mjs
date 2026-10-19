@@ -1003,7 +1003,9 @@ class UnitEmitter {
 
   // ------------------------------------------------------------ functions
   // Parameters, result type and body of a known function (static or local).
-  functionParts(fn, node, self) {
+  // infer: a local function or closure, whose annotations are left to Haxe
+  // where they involve type variables no definition generalises.
+  functionParts(fn, node, self, infer = false) {
     const {args, res} = this.arrows(node.t);
     if (args.length < fn.arity) this.fail(node, `function type has fewer arrows (${args.length}) than parameters (${fn.arity})`);
     const params = [], prologue = [];
@@ -1025,7 +1027,11 @@ class UnitEmitter {
       const name = this.fresh(p.p.k === 'var' ? identName(p.p.id) : p.p.k === 'alias' ? identName(p.p.id) : 'arg');
       params.push({name, t: at, pattern: p.p, default: p.default, partial: p.partial});
     });
-    const resType = fn.arity < args.length ? this.chainType(args.slice(fn.arity), res, node) : this.type(res, node);
+    // (a GADT value keeps its annotation, Any for the unbound variables:
+    // Haxe matches GADT constructors against it)
+    const typeOf = i => infer ? this.typeOrNull(i, node) ?? (this.involvesGadt(i) ? this.type(i, node) : null) : this.type(i, node);
+    const resType = infer ? (() => { try { const saved = this.strictVars; this.strictVars = true; try { return fn.arity < args.length ? this.chainType(args.slice(fn.arity), res, node) : this.type(res, node); } finally { this.strictVars = saved; } } catch (e) { if (e instanceof NeedsInference) return null; throw e; } })()
+      : fn.arity < args.length ? this.chainType(args.slice(fn.arity), res, node) : this.type(res, node);
     const tc = self ? {self, arity: fn.arity, slots: params.map(p => p.name), used: false} : null;
     // Destructuring parameters and the final `function` cases become one
     // match on the parameters, in order.
@@ -1062,7 +1068,7 @@ class UnitEmitter {
       code = `{ while (true) { ${params.map((p, i) => `var ${inner[i]} = ${p.name};`).join(' ')} ${bodyCode} } }`;
     } else code = `{ ${this.functionBody(params, matches, body, null, prologue)} }`;
     for (const [id, d] of savedIds) { if (d) this.ids.set(id, d); }
-    return {params: params.map(p => `${p.name}:${this.type(p.t, node)}`).join(', '), res: resType, body: code};
+    return {params: params.map(p => { const t = typeOf(p.t); return t === null ? p.name : `${p.name}:${t}`; }).join(', '), res: resType, colonRes: resType === null ? '' : `:${resType}`, body: code};
   }
   // Bindings of an irrefutable pattern by projection, or null.
   bindIrrefutable(p, v) {
@@ -1239,26 +1245,27 @@ class UnitEmitter {
     const vars = this.typeVars(t).filter(v => !this.tvars.has(v) && this.T.some(x => x?.k === 'var' && x.id === v && x.gen));
     return this.withTypeParams(vars, params0 => this.withLocalTypes(node.newtypes ?? [], lps => {
       const params = [...params0, ...lps];
-      const f = this.functionParts(fn, node, self);
-      return `function ${name}${params.length ? `<${params.join(', ')}>` : ''}(${f.params}):${f.res} ${f.body}`;
+      const f = this.functionParts(fn, node, self, true);
+      return `function ${name}${params.length ? `<${params.join(', ')}>` : ''}(${f.params})${f.colonRes} ${f.body}`;
     }));
   }
   // A function value (closure): curried.
   lambda(n) {
     const fn = funInfo(n);
     const {args, res} = this.arrows(n.t);
-    const f = this.functionParts(fn, n, null);
+    const f = this.functionParts(fn, n, null, true);
     // functionParts gives an uncurried function; curry it.
-    if (fn.arity === 1) return `function(${f.params}):${f.res} ${f.body}`;
+    if (fn.arity === 1) return `function(${f.params})${f.colonRes} ${f.body}`;
     const tmp = this.fresh('f');
     const names = args.slice(0, fn.arity).map((_, i) => this.temp('a'));
     let call = `${tmp}(${names.join(', ')})`;
     let ty = f.res;
     for (let i = fn.arity - 1; i >= 0; i--) {
-      call = `function(${names[i]}:${this.type(args[i].t, n)}):${ty} return ${call}`;
-      ty = `(${this.type(args[i].t, n)}) -> (${ty})`;
+      const at = this.typeOrNull(args[i].t, n);
+      call = `function(${names[i]}${at === null ? '' : `:${at}`})${ty === null ? '' : `:${ty}`} return ${call}`;
+      ty = ty === null || at === null ? null : `(${at}) -> (${ty})`;
     }
-    return `{ function ${tmp}(${f.params}):${f.res} ${f.body}; ${call}; }`;
+    return `{ function ${tmp}(${f.params})${f.colonRes} ${f.body}; ${call}; }`;
   }
 
   // ------------------------------------------------------------ expressions
@@ -1314,6 +1321,14 @@ class UnitEmitter {
     if (!r && t.args && t.k !== 'constr') r = t.args.some(a => typeof a === 'number' && this.gadtSensitive(a));
     this.gadtMemo.set(i, r);
     return r;
+  }
+  involvesGadt(i, seen = new Set()) {
+    if (seen.has(i)) return false;
+    seen.add(i);
+    const t = this.t(i);
+    if (t.k === 'constr' && !t.path.p) { try { const d = this.resolveType(t.path, null); if (d.decl?.ctors?.some(c => c.res !== null && c.res !== undefined)) return true; } catch (e) {} }
+    for (const k of ['arg', 'res', 'body']) if (typeof t[k] === 'number' && this.involvesGadt(t[k], seen)) return true;
+    return (t.args ?? []).some(a => typeof a === 'number' && this.involvesGadt(a, seen));
   }
   // Whether a match's patterns test constructors of a GADT.
   gadtCases(cases) {
@@ -1629,7 +1644,7 @@ class UnitEmitter {
     const resT = k < args.length ? this.chainType(args.slice(k), res, n) : this.type(res, n);
     if (e.k === 'fun') {
       const fn = funInfo(e);
-      if (fn.arity === k) { const f = this.functionParts(fn, e, null); return {k: '$expr', code: `function(${f.params}):${f.res} ${f.body}`}; }
+      if (fn.arity === k) { const f = this.functionParts(fn, e, null, true); return {k: '$expr', code: `function(${f.params})${f.colonRes} ${f.body}`}; }
     }
     if (e.k === 'ident') {
       const d = this.identDesc(e);
@@ -2702,6 +2717,7 @@ export function haxeString(s) {
 export function hashVariant(s) {
   let accu = 0;
   for (let i = 0; i < s.length; i++) accu = (Math.imul(223, accu) + s.charCodeAt(i)) | 0;
-  accu = accu & ((1 << 31) - 1);
-  return accu > 0x3FFFFFFF ? accu - (1 << 31) : accu;
+  accu = accu & 0x7FFFFFFF;
+  // (31 bits, signed: OCaml's hash_variant)
+  return accu > 0x3FFFFFFF ? accu - 0x80000000 : accu;
 }
