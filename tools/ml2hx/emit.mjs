@@ -966,7 +966,10 @@ class UnitEmitter {
   // ------------------------------------------------------------ top-level values
   emitTopValue(item, s) {
     const members = this.members(s);
-    if (item.rec && item.bindings.some(b => b.e.k !== 'fun')) this.fail(item, 'recursive non-function value');
+    // let rec f x = ... and g = h f (a function made by an application):
+    // g is a static set at initialisation (the functions are defined
+    // before, and use g only when called).
+    if (item.rec && item.bindings.some(b => b.e.k !== 'fun' && this.t(this.expandAll(b.p.t)).k !== 'arrow')) this.fail(item, 'recursive non-function value');
     for (const b of item.bindings) {
       if (b.alias) continue;
       if (b.p.k === 'var' && b.e.k === 'fun') {
@@ -1416,7 +1419,20 @@ class UnitEmitter {
       case 'coerce': return `(cast ${this.value(n.e)})`;
       case 'newtype': return this.withLocalType(n, () => this.value(n.e));
       case 'unreachable': return `throw ${this.matchFailure(n)}`;
-      case 'letexception': this.fail(n, 'local exception');
+      // let exception E in e: a class of the module, one per declaration
+      // (OCaml makes one per evaluation: a difference only for exceptions
+      // escaping and caught by another evaluation of the same code).
+      case 'letexception': {
+        const x = n.ext;
+        if (x.rebind) this.fail(n, 'local exception rebinding');
+        this.root.localExns ??= 0;
+        const hx = `${this.cfg.package}.${this.cfg.class}.${this.cfg.module}${typeName(x.name)}LocalExn${this.root.localExns++}`;
+        const desc = {hx, ext: x, qualified: x.name};
+        const saved = this.ids.get(x.id);
+        this.ids.set(x.id, desc);
+        this.emitExtension(x, desc, `${RT}MlException`);
+        try { return this.value(n.body); } finally { if (saved) this.ids.set(x.id, saved); }
+      }
       case 'letmodule': return this.letModule(n);
       case 'new': return this.newObject({k: 'apply', t: n.t, l: n.l, fn: n, args: []});
       case 'send': return this.send(n, []);
@@ -2318,6 +2334,8 @@ class UnitEmitter {
       case 'const': {
         if (p.c.k === 'int') { const b = BigInt(p.c.v); if (b > 0x7fffffffn || b < -0x7fffffffn) this.fail(p, 'integer pattern outside 32 bits'); return {pat: `${RT}Int63.patternKey(_) => ${b < 0n ? `(${p.c.v})` : p.c.v}`}; }
         if (p.c.k === 'float') return {pat: `${RT}Float64.eq(_, ${this.constant(p.c, p)}) => true`};
+        // boxed integers: Haxe patterns take no int32/int64 literals
+        if (p.c.k === 'int32' || p.c.k === 'int64' || p.c.k === 'nativeint') return {pat: `(_ == ${this.constant(p.c, p)}) => true`};
         return {pat: this.constant(p.c, p)};
       }
       case 'tuple': return this.join(p.args.map(a => this.pattern(a)), parts => `{${parts.map((x, i) => `v${i}: ${x}`).join(', ')}}`);
@@ -2697,7 +2715,7 @@ function intKeyed(p, subject) {
 }
 function hasExtractor(p) {
   if (!p || typeof p !== 'object') return false;
-  if ((p.k === 'construct' && p.c.ext) || p.k === 'variant' || p.k === 'lazy' || (p.k === 'const' && (p.c.k === 'int' || p.c.k === 'float'))) return true;
+  if ((p.k === 'construct' && p.c.ext) || p.k === 'variant' || p.k === 'lazy' || (p.k === 'const' && ['int', 'float', 'int32', 'int64', 'nativeint'].includes(p.c.k))) return true;
   return ['p', 'a', 'b', 'arg'].some(k => hasExtractor(p[k])) || (p.args ?? []).some(hasExtractor) || (p.fields ?? []).some(f => hasExtractor(f.p));
 }
 function irrefutable(p) {

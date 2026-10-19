@@ -38,3 +38,12 @@ let () =
   Printf.printf "%d %d %d\n" wide wrap unsigned;
   tuple_order ();
   list_order ()
+
+(* boxed integer patterns, local exceptions *)
+let kind32 = function 0l -> "zero" | 1l -> "one" | _ -> "many"
+let kind64 = function 0L -> "zero" | -1L -> "minus" | _ -> "other"
+let () = print_endline (kind32 0l ^ kind32 1l ^ kind32 7l ^ kind64 (-1L) ^ kind64 5L)
+let find_first p l =
+  let exception Found of int in
+  try List.iter (fun x -> if p x then raise (Found x)) l; None with Found x -> Some x
+let () = match find_first (fun x -> x > 2) [1; 2; 3; 4] with Some x -> Printf.printf "found %d\n" x | None -> print_endline "none"

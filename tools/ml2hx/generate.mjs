@@ -219,7 +219,7 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   const all = [...failures, ...emitted.failures];
   all.forEach(f => { f.error = f.error.split(upstream + path.sep).join('').split(root + path.sep).join(''); });
   const result = {sources: sources.length, typed: units.length, emitted: emitted.outputs.size - 0, failures: all};
-  const trackedOutputs = new Set(units.filter(u => !u.generatedSource).map(u => u.config.output));
+  const trackedOutputs = new Set(units.filter(u => !u.generatedSource && !u.library).map(u => u.config.output));
   result.emitted = [...outputs.keys()].filter(k => trackedOutputs.has(k)).length;
   result.trackedOutputs = [...trackedOutputs];
   result.libraryUnits = units.filter(u => u.library).length;
