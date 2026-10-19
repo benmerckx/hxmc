@@ -1,7 +1,7 @@
 // haxe.ds.IntMap, StringMap and ObjectMap (hxmc/std/haxe/ds): empty tables
-// share read-only empty arrays until their first set (every read of an
-// empty table, a set into one of two empty tables, clear and removal of the
-// last entry), grown tables reserve their arrays (growth past several
+// have no arrays until their first set (every read of an empty table, a set
+// into one of two empty tables, clear and removal of the last entry), grown
+// tables allocate theirs for the entries that fit (growth past several
 // capacities, removals then growth, insertion order kept), Float, Bool and
 // null values, many tables across collections, and tables made by a static
 // initializer (which may run before the maps' own).

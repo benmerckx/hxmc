@@ -111,8 +111,11 @@ class Zlib {
 		/* 9 */ [32, 258, 258, 4096] /* max compression */
 	];
 
-	// port: the tables of tr_static_init (trees.h upstream), built once.
-	static var static_init_done = false;
+	// port: the tables of tr_static_init (trees.h upstream), built once, under a lock: like
+	// ... trees.h's constants, they serve streams on several threads at once (genjvm's jar
+	// ... entries).
+	static final static_init_done = new haxe.atomic.AtomicBool(false);
+	static final static_init_lock = new sys.thread.Mutex();
 	static var static_ltree_fc:Array<Int>;
 	static var static_ltree_dl:Array<Int>;
 	static var static_dtree_fc:Array<Int>;
@@ -201,40 +204,41 @@ class Zlib {
 		return a;
 	}
 
-	// port: one set of stream buffers (window, prev, head, pending_buf) kept from
+	// port: sets of stream buffers (window, prev, head, pending_buf) kept from
 	// deflateEnd for the next deflateInit2 of the same sizes: a JAR deflates each
 	// of its thousands of members with a fresh stream, and allocating and zeroing
-	// some 300 KB per stream dominated the time spent in deflate.
-	static var spareWindow:Null<Bytes> = null;
-	static var sparePrev:Array<Int>;
-	static var spareHead:Array<Int>;
-	static var sparePending:Bytes;
+	// some 300 KB per stream dominated the time spent in deflate. One set per
+	// stream ended and not taken again yet (up to SPARE_MAX): streams run on
+	// several threads at once (genjvm's jar entries).
+	static final spares:Array<SpareBuffers> = [];
+	static inline final SPARE_MAX = 16;
 	static final spareLock = new sys.thread.Mutex();
 
 	function takeBuffers():Bool {
 		spareLock.acquire();
-		var w = spareWindow;
-		var ok = w != null && w.length == w_size * 2 && spareHead.length == hash_size;
-		if (ok) {
-			window = w;
-			prev = sparePrev;
-			head = spareHead;
-			pending_buf = sparePending;
-			spareWindow = null;
-			sparePrev = spareHead = null;
-			sparePending = null;
+		var i = spares.length - 1;
+		while (i >= 0 && !(spares[i].window.length == w_size * 2 && spares[i].head.length == hash_size)) i--;
+		var s = null;
+		if (i >= 0) {
+			s = spares[i];
+			spares[i] = spares[spares.length - 1];
+			spares.pop();
 		}
 		spareLock.release();
-		return ok;
+		if (s == null) return false;
+		window = s.window;
+		prev = s.prev;
+		head = s.head;
+		pending_buf = s.pending;
+		return true;
 	}
 
 	function giveBuffers():Void {
 		if (window == null) return;
+		var s = new SpareBuffers(window, prev, head, pending_buf);
 		spareLock.acquire();
-		spareWindow = window;
-		sparePrev = prev;
-		spareHead = head;
-		sparePending = pending_buf;
+		if (spares.length == SPARE_MAX) spares.shift();
+		spares.push(s);
 		spareLock.release();
 	}
 
@@ -1392,7 +1396,14 @@ class Zlib {
 	 * Initialize the various 'constant' tables.
 	 */
 	static function tr_static_init():Void {
-		if (static_init_done) return;
+		if (static_init_done.load()) return;
+		static_init_lock.acquire();
+		if (!static_init_done.load()) tr_static_build();
+		static_init_lock.release();
+	}
+
+	// port: tr_static_init's body, run once (see static_init_done).
+	static function tr_static_build():Void {
 		var n:Int; /* iterates over tree elements */
 		var length:Int; /* length value */
 		var code:Int; /* code value */
@@ -1473,7 +1484,7 @@ class Zlib {
 			static_dtree_dl[n] = 5;
 			static_dtree_fc[n] = bi_reverse(n, 5);
 		}
-		static_init_done = true;
+		static_init_done.store(true);
 	}
 
 	/* ===========================================================================
@@ -2030,5 +2041,20 @@ private class TreeDesc {
 		this.extra_base = extra_base;
 		this.elems = elems;
 		this.max_length = max_length;
+	}
+}
+
+// port: a set of stream buffers kept for the next stream (see Zlib.spares).
+private class SpareBuffers {
+	public final window:Bytes;
+	public final prev:Array<Int>;
+	public final head:Array<Int>;
+	public final pending:Bytes;
+
+	public function new(window:Bytes, prev:Array<Int>, head:Array<Int>, pending:Bytes) {
+		this.window = window;
+		this.prev = prev;
+		this.head = head;
+		this.pending = pending;
 	}
 }

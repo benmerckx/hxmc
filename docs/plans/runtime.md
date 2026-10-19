@@ -30,10 +30,13 @@ patterns. Its weak points and the ideas that address them:
   approaches a configured cap.
 - Nursery sizing, still open: the port at 32 MB types itself 8% slower
   than at 16 MB (so the single-thread ceiling stays 16 MB) while its
-  parallel HXB phase likes 32 MB; per-thread nurseries (TLABs sized per
-  thread, not a 16th of the shared nursery) were not needed so far. A
-  fixed 16 MB nursery hurt programs whose objects die young (cache misses),
-  which is why it grows only on promotion.
+  parallel phases like more: the ceiling is 16 MB per allocating thread (up
+  to 256 MB) and TLABs at most 64 KB (the tool's cold self-build 11% faster
+  and 21% less peak memory than at a shared 32 MB with 2 MB TLABs). A fixed
+  16 MB nursery hurt programs whose objects die young (cache misses), which
+  is why it grows only on promotion. The tool's front end at 32 MB promotes
+  less (its self-build -5% peak memory, same time): a single-thread ceiling
+  per program, or an aging survivor space (above), would get that.
 
 ## Stack maps instead of the shadow stack (tried, reverted)
 

@@ -361,10 +361,11 @@ private class FunctionGraphBuilder {
 			case _: false;
 		};
 		var hadSideEffect = false;
+		// port: `x :: acc` as a push: `annotated` is read from the end
 		var annotated = [];
 		var reverse = el.copy();
 		reverse.reverse();
-		for (e in reverse) if (hadSideEffect) annotated.unshift({
+		for (e in reverse) if (hadSideEffect) annotated.push({
 			affected: checker.mightBeAffected(e) || hasSideEffect(e),
 			opt: optimizable(e),
 			e: e
@@ -373,14 +374,18 @@ private class FunctionGraphBuilder {
 			hadSideEffect = hasSideEffect(e);
 			if (hadSideEffect) checker.collectModifiedLocals(e);
 			var opt = optimizable(e);
-			annotated.unshift({affected: false, opt: opt, e: e});
+			annotated.push({affected: false, opt: opt, e: e});
 			hadSideEffect = hadSideEffect || opt;
 		}
 		var values = [];
-		for (item in annotated) if (bb != g.gUnreachable) {
-			var r = item.affected || item.opt ? bindToTemp(bb, item.e) : value(bb, item.e);
-			bb = r.bb;
-			values.push(r.value);
+		var i = annotated.length;
+		while (i > 0) {
+			var item = annotated[--i];
+			if (bb != g.gUnreachable) {
+				var r = item.affected || item.opt ? bindToTemp(bb, item.e) : value(bb, item.e);
+				bb = r.bb;
+				values.push(r.value);
+			}
 		}
 		return {bb: bb, values: values};
 	}

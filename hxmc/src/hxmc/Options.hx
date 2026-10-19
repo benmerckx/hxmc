@@ -34,6 +34,10 @@ class Options {
 	// -D hxmc.wasm-gc: wasm32-wasi as a WasmGC module (objects in the engine's
 	// collector: hxmc.wasmgc), an experiment to compare with linear memory
 	public var wasmGc = false;
+	// -D hxmc.native-array-outofbounds=throws|silent: NativeArray (Vector)
+	// accesses out of bounds throw, or read the default and write nothing
+	// (default: not tested; hxmc.ir.Lower.bounds)
+	public var bounds = hxmc.ir.Lower.BOUNDS_UNCHECKED;
 	// -D hxmc.libc=glibc: Linux, a dynamically linked executable against the system's glibc (Abi.setLibc; default: musl, static)
 	public var libc:Null<String> = null;
 	// x86-64 functions keep a frame record (push rbp; mov rbp, rsp), so
@@ -124,6 +128,12 @@ class Options {
 		}
 		o.libc = def("hxmc.libc");
 		o.wasmGc = def("hxmc.wasm_gc") != null;
+		var oob = def("hxmc.native_array_outofbounds"); // (-D turns the dashes into underscores)
+		if (oob != null) o.bounds = switch oob {
+			case "throws": hxmc.ir.Lower.BOUNDS_THROWS;
+			case "silent": hxmc.ir.Lower.BOUNDS_SILENT;
+			case _: throw "hxmc: -D hxmc.native-array-outofbounds=" + oob + ": throws or silent (not defined: unchecked)";
+		}
 		if (o.wasmGc && o.target != "wasm32-wasi") throw "hxmc: -D hxmc.wasm-gc: -D hxmc.target=wasm32-wasi";
 		var fp = def("hxmc.frame_pointers"), fpEnv = env("HXMC_FRAME_POINTERS");
 		o.framePointers = fpEnv != null && fpEnv != "" ? fpEnv != "0" : def("hxmc.no_frame_pointers") != null ? false : fp == null || fp != "0";

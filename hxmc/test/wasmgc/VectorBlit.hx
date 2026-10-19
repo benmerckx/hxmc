@@ -1,5 +1,5 @@
 // haxe.ds.Vector.blit as hxmc/test/cases/VectorBlit.hx checks it, under
-// -D hxmc.wasm-gc too (GcRepr.arrMove: array.copy), without struct values
+// -D hxmc.wasm-gc too (hxmc.NativeArray.blit: array.copy), without struct values
 // (WasmGC has none).
 import haxe.ds.Vector;
 
@@ -105,19 +105,13 @@ class VectorBlit {
 		gblit(strs(6), 1, gs, 0, 5);
 		Sys.println("g: " + show(gf) + " | " + show(gs));
 
-		// a vector whose elements are of another kind than its type's
-		// (Dynamic Floats) blitted into a Float one: upstream's loop
-		var mixed:Vector<Dynamic> = new Vector<Dynamic>(6);
-		for (i in 0...6)
+		// Dynamic elements (numbers, boxed) moved within a Vector<Dynamic>
+		// from generic code
+		var mixed = new Vector<Dynamic>(8);
+		for (i in 0...8)
 			mixed[i] = i * 1.25;
-		var mf = new Vector<Float>(6);
-		gblit((cast mixed : Vector<Float>), 0, mf, 0, 6);
-		Sys.println("m: " + show(mf) + " " + (mf[5] * 2));
-
-		// past the end: the vector grows (upstream's loop on hxmc)
-		var g = ints(3);
-		Vector.blit(ints(8), 0, g, 1, 6);
-		Sys.println("e: " + show(g) + " " + g.length);
+		gblit(mixed, 0, mixed, 2, 6);
+		Sys.println("m: " + show(mixed) + " " + ((mixed[7] : Float) * 2));
 
 		// references moved into an old vector and within it, then collections
 		var old = new Vector<String>(64);

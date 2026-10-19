@@ -91,6 +91,11 @@ private typedef MetaTag = core.MetaList.StrictMeta;
 class JvmOutput {
 	public function addEntry(content:Bytes, name:String):Void throw new Failure("Not implemented");
 
+	// port: add_entry in two steps, for write_class: what leaves the output untouched (a jar
+	// ... entry's CRC and compression) is done here, outside the write_class lock; the function
+	// ... returned adds the entry, under it.
+	public function prepareEntry(content:Bytes, name:String):Void->Void return function() addEntry(content, name);
+
 	public function close():Void throw new Failure("Not implemented");
 }
 
@@ -102,6 +107,11 @@ class JarOutput extends JvmOutput {
 	}
 
 	override public function addEntry(content:Bytes, name:String):Void zip.addBytesEntry(content, name);
+
+	override public function prepareEntry(content:Bytes, name:String):Void->Void {
+		var entry = zip.makeEntry(content, name);
+		return function() zip.addPreparedEntry(entry);
+	}
 
 	override public function close():Void zip.close();
 }
@@ -395,6 +405,20 @@ class Genjvm {
 		return JvmGlobals.jerror("No such type: " + sTypePath(path));
 	}
 
+	// port: upstream guards only associate_functional_interfaces' unification with mutexes.unify.
+	// ... The others of code generation (does_unify, overload resolution) can bind monomorphs that
+	// ... the typed AST shares between types, and add constraints to them: Haxe arrays, which the port
+	// ... cannot mutate from several threads at once. They take the mutex too.
+	public static function guardUnify<R>(gctx:GenerationContext, f:Void->R):R {
+		gctx.mutexes.unify.acquire();
+		var r = try f() catch (e:Dynamic) {
+			gctx.mutexes.unify.release();
+			throw e;
+		}
+		gctx.mutexes.unify.release();
+		return r;
+	}
+
 	public static function writeClass(gctx:GenerationContext, path:JPath, jc:JvmClassData):Void {
 		var dir = switch path.pack {
 			case []: path.name;
@@ -405,9 +429,10 @@ class Genjvm {
 			var ch = new OutputBytes();
 			generators.jvm.JvmWriter.writeJvmClass(ch, jc);
 			var bytes = ch.closeOut();
+			var addEntry = gctx.out.prepareEntry(bytes, path);
 			gctx.mutexes.writeClass.acquire();
 			try
-				gctx.out.addEntry(bytes, path)
+				addEntry()
 			catch (e:Dynamic) {
 				gctx.mutexes.writeClass.release();
 				throw e;
@@ -1023,10 +1048,10 @@ class Genjvm {
 			}
 			writeClass(gctx, path, jc.exportClass(gctx.defaultExportConfig));
 		}
-		// port: Hashtbl.to_seq order; run sequentially (see generate).
+		// port: Hashtbl.to_seq order.
 		var seq = [];
 		gctx.anonIdentification.getPfms().iter(function(_, pfm) seq.push(pfm));
-		for (pfm in seq) run(pfm);
+		context.Parallel.ParallelSeq.iter(pool, run, seq.iterator());
 	}
 
 	public static function generateTypedFunctions(gctx:GenerationContext):Void {
@@ -1134,42 +1159,41 @@ class Genjvm {
 			gctx.out.addEntry(v, filename);
 		});
 
-		// port: upstream runs the type-level passes on the domain pool when parallelism is
-		// enabled, which makes the order of closure_paths (and so the output) depend on
-		// scheduling. The port always runs them sequentially, as upstream does with
-		// -D disable-parallelism.
 		function generate():Void {
-			var pool:Null<core.ds.TaskPool> = null;
-			function generateRealTypes():Void {
-				for (mt in gctx.gctx.types.copy()) generateModuleType(gctx, mt);
-			}
-			function generateTypedInterfaces():Void {
-				var seq = [];
-				gctx.typedefInterfaces.getInterfaces().iter(function(_, c) seq.push(c));
-				for (c in seq) generateModuleType(gctx, TClassDecl(c));
-			}
-			runTimed(gctx, false, "preprocess", function() {
-				JvmPreprocessor.preprocess(gctx);
-				return null;
-			});
-			runTimed(gctx, false, "real types", function() {
-				generateRealTypes();
-				return null;
-			});
-			runTimed(gctx, false, "typed interfaces", function() {
-				generateTypedInterfaces();
-				return null;
-			});
-			runTimed(gctx, false, "anons", function() {
-				generateAnons(gctx, pool);
-				return null;
-			});
-			runTimed(gctx, false, "typed_functions", function() {
-				generateTypedFunctions(gctx);
-				return null;
-			});
-			runTimed(gctx, false, "closures", function() {
-				generateClosures(gctx);
+			context.Parallel.runWithPool(gctx.gctx.pool, function(pool) {
+				function generateRealTypes():Void {
+					context.Parallel.ParallelArray.iter(pool, generateModuleType.bind(gctx), gctx.gctx.types.copy());
+				}
+				function generateTypedInterfaces():Void {
+					// port: Hashtbl.to_seq order.
+					var seq = [];
+					gctx.typedefInterfaces.getInterfaces().iter(function(_, c) seq.push(c));
+					context.Parallel.ParallelSeq.iter(pool, function(c) generateModuleType(gctx, TClassDecl(c)), seq.iterator());
+				}
+				runTimed(gctx, false, "preprocess", function() {
+					JvmPreprocessor.preprocess(gctx);
+					return null;
+				});
+				runTimed(gctx, false, "real types", function() {
+					generateRealTypes();
+					return null;
+				});
+				runTimed(gctx, false, "typed interfaces", function() {
+					generateTypedInterfaces();
+					return null;
+				});
+				runTimed(gctx, false, "anons", function() {
+					generateAnons(gctx, pool);
+					return null;
+				});
+				runTimed(gctx, false, "typed_functions", function() {
+					generateTypedFunctions(gctx);
+					return null;
+				});
+				runTimed(gctx, false, "closures", function() {
+					generateClosures(gctx);
+					return null;
+				});
 				return null;
 			});
 		}
@@ -1286,12 +1310,14 @@ class AnnotationHandler {
 }
 
 class HaxeException {
+	final gctx:GenerationContext;
 	final t:T;
 	final isHaxeException_:Bool;
 	final nativeType:JSignature;
 	final nativePath:JPath;
 
 	public function new(gctx:GenerationContext, t:T) {
+		this.gctx = gctx;
 		this.t = t;
 		// port: `let ... and ...` in the class header
 		isHaxeException_ = ExceptionFunctions.isHaxeException(t);
@@ -1305,7 +1331,8 @@ class HaxeException {
 	public function isAssignableTo(exc2:HaxeException):Bool {
 		return switch [isHaxeException(), exc2.isHaxeException()] {
 			case [true, true] | [false, false]:
-				TUnification.doesUnify(t, exc2.getType());
+				// port: guarded (see Genjvm.guardUnify)
+				Genjvm.guardUnify(gctx, function() return TUnification.doesUnify(t, exc2.getType()));
 			/* `haxe.Exception` is assignable to java.lang.RuntimeException/Exception/Throwable */
 			case [false, true]:
 				Lambda.exists([throwableSig, exceptionSig, runtimeExceptionSig], function(s) return JvmSignature.jsigEq(exc2.getNativeType(), s));
@@ -3011,7 +3038,8 @@ class TexprToJvm {
 					return [jf.getJsig()];
 				});
 			case TNew(c, tl, el):
-				switch OverloadResolution.maybeResolveConstructorOverload(c, tl, el) {
+				// port: guarded (see Genjvm.guardUnify)
+				switch Genjvm.guardUnify(gctx, function() return OverloadResolution.maybeResolveConstructorOverload(c, tl, el)) {
 					case null:
 						core.Error.raiseTypingError("Could not find overload", e.epos);
 					case r:
@@ -3127,7 +3155,9 @@ class TexprToJvm {
 				texpr(Genjvm.rvalueAny, e1);
 				/* There could be something like `throw throw`, so we should only throw if we aren't terminated (issue #10363) */
 				if (!jm.isTerminated()) {
-					if (!ExceptionFunctions.isHaxeException(e1.etype) && !TUnification.doesUnify(e1.etype, gctx.tRuntimeException)) {
+					// port: guarded (see Genjvm.guardUnify)
+					if (!ExceptionFunctions.isHaxeException(e1.etype)
+						&& !Genjvm.guardUnify(gctx, function() return TUnification.doesUnify(e1.etype, gctx.tRuntimeException))) {
 						var exc = new HaxeException(gctx, e1.etype);
 						if (!Lambda.exists(caughtExceptions, function(exc2) return exc.isAssignableTo(exc2))) jm.addThrownException(exc.getNativePath());
 					}
@@ -3284,7 +3314,9 @@ class TclassToJvm {
 				case NotCoro(TFun(s)): s.args;
 				case _: die("", "generators/genjvm.ml");
 			}
-			return OverloadResolution.resolveInstanceOverload(false, mapType, c, cf.cfName, tl.map(function(a) return TexprBuilder.makeNull(a.type, nullPos)));
+			// port: guarded (see Genjvm.guardUnify)
+			return Genjvm.guardUnify(gctx, function() return OverloadResolution.resolveInstanceOverload(false, mapType, c, cf.cfName,
+				tl.map(function(a) return TexprBuilder.makeNull(a.type, nullPos))));
 		}
 		function ifMethod(f:TClassField->Void, cf:TClassField) {
 			switch cf.cfKind {

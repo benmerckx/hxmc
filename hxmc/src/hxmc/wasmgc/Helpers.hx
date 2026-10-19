@@ -790,6 +790,199 @@ class Helpers {
 		return m.addHelper("arr_blit", "pipii_v", b, []);
 	}
 
+	// ---- hxmc.NativeArray (rt/gc/GcNArray, W.na*): storage is an array of its
+	// kind (GcModule.naType; the kinds by number GcModule.NA_KINDS), a wrapper
+	// ($NWrap) holds storage
+
+	// if local l is storage of kind k (then ... end)
+	static function ifData(m:GcModule, b:Buf, l:Int, k:String, result = 0x40) {
+		get(b, l);
+		b.u8(0xFB);
+		b.u8(0x14);
+		Enc.sleb(b, m.naType(k));
+		b.u8(0x04);
+		b.u8(result);
+	}
+
+	// a NativeArray's kind: its storage's number (GcModule.NA_KINDS), 5 a wrapper
+	// no typed view took yet, 6 one a view took; -1 not a NativeArray
+	public static function naKind(m:GcModule):Int {
+		var h = m.hasHelper("na_kind");
+		if (h != null) return h;
+		var b = new Buf();
+		for (i in 0...GcModule.NA_KINDS.length) {
+			ifData(m, b, 0, GcModule.NA_KINDS[i]);
+			i32(b, i);
+			b.u8(0x0F);
+			b.u8(0x0B);
+		}
+		get(b, 0);
+		b.u8(0xFB);
+		b.u8(0x14);
+		Enc.sleb(b, m.nwrapType);
+		b.u8(0x04);
+		b.u8(0x40);
+		i32(b, 5);
+		get(b, 0);
+		m.castTo(b, m.nwrapType);
+		m.gc(b, 0x02, m.nwrapType, 1);
+		b.u8(0x6A);
+		b.u8(0x0F);
+		b.u8(0x0B);
+		i32(b, -1);
+		return m.addHelper("na_kind", "p_i", b, []);
+	}
+
+	// a NativeArray's storage: itself, unless a wrapper
+	public static function naStorage(m:GcModule):Int {
+		var h = m.hasHelper("na_storage");
+		if (h != null) return h;
+		var b = new Buf();
+		get(b, 0);
+		b.u8(0xFB);
+		b.u8(0x14);
+		Enc.sleb(b, m.nwrapType);
+		b.u8(0x04);
+		b.u8(0x6D);
+		get(b, 0);
+		m.castTo(b, m.nwrapType);
+		m.gc(b, 0x02, m.nwrapType, 0);
+		b.u8(0x05);
+		get(b, 0);
+		b.u8(0x0B);
+		return m.addHelper("na_storage", "p_p", b, []);
+	}
+
+	// a NativeArray's length (its storage's: any array's)
+	public static function naLen(m:GcModule):Int {
+		var h = m.hasHelper("na_len");
+		if (h != null) return h;
+		var b = new Buf();
+		get(b, 0);
+		b.u8(0x10);
+		Enc.uleb(b, naStorage(m));
+		m.castTo(b, ARRAY);
+		m.gc(b, 0x0F);
+		return m.addHelper("na_len", "p_i", b, []);
+	}
+
+	// (the abstract heap type of every array)
+	static inline var ARRAY = -0x16;
+
+	// new storage of the kind (its number) and length, zeroed (the length tested by the caller)
+	public static function naNew(m:GcModule):Int {
+		var h = m.hasHelper("na_new");
+		if (h != null) return h;
+		var b = new Buf();
+		for (i in 0...GcModule.NA_KINDS.length) {
+			get(b, 0);
+			i32(b, i);
+			b.u8(0x46);
+			b.u8(0x04);
+			b.u8(0x40);
+			get(b, 1);
+			m.gc(b, 0x07, m.naType(GcModule.NA_KINDS[i]));
+			b.u8(0x0F);
+			b.u8(0x0B);
+		}
+		b.u8(0x00);
+		return m.addHelper("na_new", "ii_p", b, []);
+	}
+
+	// element i of a NativeArray (or its wrapper's storage), boxed
+	public static function naGet(m:GcModule):Int {
+		var h = m.hasHelper("na_get");
+		if (h != null) return h;
+		var b = new Buf();
+		// (local 2: the storage)
+		get(b, 0);
+		b.u8(0x10);
+		Enc.uleb(b, naStorage(m));
+		set(b, 2);
+		for (k in GcModule.NA_KINDS) {
+			ifData(m, b, 2, k);
+			get(b, 2);
+			m.castTo(b, m.naType(k));
+			get(b, 1);
+			m.gc(b, k == "b" ? 0x0D : 0x0B, m.naType(k));
+			box(m, b, k);
+			b.u8(0x0F);
+			b.u8(0x0B);
+		}
+		b.u8(0x00);
+		return m.addHelper("na_get", "pi_p", b, [0x6D]);
+	}
+
+	// element i of a NativeArray (or its wrapper's storage) set, unboxed for its kind (unchecked)
+	public static function naSet(m:GcModule):Int {
+		var h = m.hasHelper("na_set");
+		if (h != null) return h;
+		var b = new Buf();
+		// (local 3: the storage)
+		get(b, 0);
+		b.u8(0x10);
+		Enc.uleb(b, naStorage(m));
+		set(b, 3);
+		for (k in GcModule.NA_KINDS) {
+			ifData(m, b, 3, k);
+			get(b, 3);
+			m.castTo(b, m.naType(k));
+			get(b, 1);
+			get(b, 2);
+			if (k != "p") {
+				b.u8(0x10);
+				Enc.uleb(b, unbox(m, k));
+			}
+			m.gc(b, 0x0E, m.naType(k));
+			b.u8(0x0F);
+			b.u8(0x0B);
+		}
+		b.u8(0x00);
+		return m.addHelper("na_set", "pip_v", b, [0x6D]);
+	}
+
+	// dst[di...di+n] = src[si...si+n] when both (or their wrappers' storage) are of one kind
+	// (array.copy: overlapping ranges too; in bounds), and true; else false
+	public static function naCopy(m:GcModule):Int {
+		var h = m.hasHelper("na_copy");
+		if (h != null) return h;
+		var b = new Buf();
+		// (locals 5 and 6: the storage of dst and src)
+		get(b, 0);
+		b.u8(0x10);
+		Enc.uleb(b, naStorage(m));
+		set(b, 5);
+		get(b, 2);
+		b.u8(0x10);
+		Enc.uleb(b, naStorage(m));
+		set(b, 6);
+		for (k in GcModule.NA_KINDS) {
+			var t = m.naType(k);
+			for (l in [5, 6]) {
+				get(b, l);
+				b.u8(0xFB);
+				b.u8(0x14);
+				Enc.sleb(b, t);
+			}
+			b.u8(0x71);
+			b.u8(0x04);
+			b.u8(0x40);
+			get(b, 5);
+			m.castTo(b, t);
+			get(b, 1);
+			get(b, 6);
+			m.castTo(b, t);
+			get(b, 3);
+			get(b, 4);
+			m.gc(b, 0x11, t, t);
+			i32(b, 1);
+			b.u8(0x0F);
+			b.u8(0x0B);
+		}
+		i32(b, 0);
+		return m.addHelper("na_copy", "pipii_i", b, [0x6D, 0x6D]);
+	}
+
 	// little-endian loads and stores in a Bytes (an array of i8): n bytes at local 1
 	public static function bytesGet(m:GcModule, wide:Bool):Int {
 		var name = wide ? "bytes_get_i64" : "bytes_get_i32";

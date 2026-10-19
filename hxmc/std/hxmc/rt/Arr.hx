@@ -32,45 +32,6 @@ class Arr {
 		return r;
 	}
 
-	// haxe.ds.Vector.blit (hxmc/std/haxe/ds/Vector.hx): dest[destPos, destPos +
-	// n) = src[srcPos, srcPos + n), the ranges possibly overlapping (src ==
-	// dest). vectorMove: one move of the elements when both ranges are inside
-	// arrays of one element kind (as typed code makes them), true (nothing
-	// to do for n <= 0); false otherwise, nothing done (a leaf: no frame for
-	// the collector). vectorBlit: then upstream's loop, element by element
-	// through Dynamic (a kind converted on each store, a store past the end
-	// growing the array, as upstream's own code does here).
-	@:hxmc.noGc public static function vectorMove(src:Dynamic, srcPos:Int, dest:Dynamic, destPos:Int, n:Int):Bool {
-		// (one test each: a condition of || would be computed as a value)
-		if (n <= 0) return true;
-		if (kindOf(src) != kindOf(dest)) return false;
-		if (srcPos < 0) return false;
-		if (destPos < 0) return false;
-		if (n > len(src) - srcPos) return false;
-		if (n > len(dest) - destPos) return false;
-		Repr.arrMove(dest, destPos, src, srcPos, n);
-		return true;
-	}
-
-	public static function vectorBlit(src:Dynamic, srcPos:Int, dest:Dynamic, destPos:Int, n:Int):Void {
-		var s:Array<Dynamic> = src, d:Array<Dynamic> = dest;
-		if (Repr.same(src, dest)) {
-			if (srcPos < destPos) {
-				var i = srcPos + n, j = destPos + n;
-				for (k in 0...n) {
-					i--;
-					j--;
-					s[j] = s[i];
-				}
-			} else if (srcPos > destPos) {
-				for (k in 0...n)
-					s[destPos + k] = s[srcPos + k];
-			}
-		} else
-			for (k in 0...n)
-				d[destPos + k] = s[srcPos + k];
-	}
-
 	@:hxmc.host("Array_concat") static function concat(a:Dynamic, b:Dynamic):Dynamic {
 		if (kindOf(a) == kindOf(b)) {
 			// same element kind: one allocation, two copies
@@ -175,9 +136,7 @@ class Arr {
 	@:hxmc.host("Array_pop") static function pop(a:Dynamic):Dynamic {
 		var n = len(a);
 		if (n == 0) return null;
-		var v = (a : Array<Dynamic>)[n - 1];
-		Repr.arrRemoveLast(a, n);
-		return v;
+		return Repr.arrPop(a, n);
 	}
 
 	@:hxmc.host("Array_shift") static function shift(a:Dynamic):Dynamic {
@@ -207,8 +166,13 @@ class Arr {
 		insert(a, 0, x);
 
 	// iterator and keyValueIterator as values (their calls are inline)
-	@:hxmc.host("Array_iterator") static function iterator(a:Dynamic):Dynamic
+	@:hxmc.host("Array_iterator") static function iterator(a:Dynamic):Dynamic {
+		#if hxmc.wasm_gc
+		return new haxe.iterators.ArrayIterator<Dynamic>(a);
+		#else
 		return Dyn.arrayIterator(a);
+		#end
+	}
 
 	@:hxmc.host("Array_keyValueIterator") static function keyValueIterator(a:Dynamic):Dynamic
 		return new haxe.iterators.ArrayKeyValueIterator<Dynamic>(a);
@@ -219,6 +183,7 @@ class Arr {
 		return arr.push(x);
 	}
 
+	// (no allocation but in grow: the array needs no root here)
 	@:hxmc.host("Array_resize") @:access(hxmc.rt.Boxes) static function resize(a:Dynamic, n:Int):Void {
 		var m = len(a);
 		if (n < m) {
@@ -227,7 +192,19 @@ class Arr {
 		}
 		if (n == m) return;
 		#if !(hxmc.wasm_gc)
-		// past the capacity (haxe.ds.Vector's constructor: from empty), the data
+		// within the capacity: the slots past the length are zero (shrinking
+		// clears them)
+		if (n <= Boxes.arrCap(a)) {
+			MemRepr.arrSetLen(a, n);
+			return;
+		}
+		#end
+		grow(a, n);
+	}
+
+	@:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
+		#if !(hxmc.wasm_gc)
+		// past the capacity (including from empty), the data
 		// allocated at the new length, the elements copied once (the new ones
 		// zero, the kind kept), unless another thread changed the array meanwhile
 		var kind = kindOf(a);
@@ -303,6 +280,8 @@ class Arr {
 
 	// a stable merge sort over boxed copies (the comparator may allocate);
 	// the result written back through the array's own stores (its kind kept)
+	static inline var RUN = 8;
+
 	@:hxmc.host("Array_sort") static function sort(a:Dynamic, f:Dynamic->Dynamic->Int):Void {
 		var arr:Array<Dynamic> = a;
 		var n = arr.length;
@@ -311,9 +290,30 @@ class Arr {
 		src.resize(n);
 		for (i in 0...n)
 			src[i] = arr[i];
+		// runs of RUN elements by insertion, then merged: stable both, so the
+		// same order as merging from single elements
+		var lo = 0;
+		while (lo < n) {
+			var hi = lo + RUN < n ? lo + RUN : n;
+			for (i in lo + 1...hi) {
+				var x = src[i];
+				var j = i;
+				while (j > lo && f(x, src[j - 1]) < 0) {
+					src[j] = src[j - 1];
+					j--;
+				}
+				if (j < i) src[j] = x;
+			}
+			lo = hi;
+		}
+		if (n <= RUN) {
+			for (i in 0...n)
+				arr[i] = src[i];
+			return;
+		}
 		var dst:Array<Dynamic> = [];
 		dst.resize(n);
-		var width = 1;
+		var width = RUN;
 		while (width < n) {
 			var lo = 0;
 			while (lo < n) {

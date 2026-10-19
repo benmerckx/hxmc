@@ -98,6 +98,8 @@ class Reach {
 	static inline var NAMES_FID_STR = "hxmc_rt_Names_fidStr";
 	static inline var DYN_GET = "hxmc_rt_Dyn_dynGet";
 	static inline var DYN_CALL_FIELD = "hxmc_rt_Dyn_dynCallField";
+	// (-D hxmc.wasm-gc: its runtime's lookup of a field, static or method by name)
+	static inline var GC_FIND = "hxmc_rt_gc_GcNative_find";
 	static inline var STR_CONCAT = "hxmc_rt_Str_concat";
 	static inline var STR_OR_NULL = "hxmc_rt_Str_orNull";
 	// the functions returning names from the tables: those of the fields,
@@ -243,7 +245,7 @@ class Reach {
 		for (f in p.funcs)
 			switch f.name {
 				case NAMES_FID_SLOW | NAMES_FID_FIND: add(sinks, f, 0);
-				case DYN_GET | DYN_CALL_FIELD: addMethod(f, 1, "");
+				case DYN_GET | DYN_CALL_FIELD | GC_FIND: addMethod(f, 1, "");
 				case _:
 			}
 		// (the direct calls, in the order of the bodies, found once: the rounds go over them)

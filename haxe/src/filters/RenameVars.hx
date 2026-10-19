@@ -119,6 +119,7 @@ class ReservedNames {
 }
 
 // port: persistent map/list snapshots are explicitly copied where mutation would change sharing semantics.
+// ... ovVars is in push order (`v :: ov.ov_vars` as a push): read from the end.
 class Overlaps {
 	public var ovVars:Array<TVar> = [];
 	public var ovLut:IntMap<Bool> = new IntMap();
@@ -137,7 +138,7 @@ class Overlaps {
 	}
 
 	public function add(v:TVar):Void {
-		ovVars.unshift(v);
+		ovVars.push(v);
 		ovLut.set(v.vId, true);
 		ovNameCache = null;
 	}
@@ -153,7 +154,8 @@ class Overlaps {
 	public function hasName(name:String):Bool return getCache().exists(name);
 
 	public function iter(f:TVar->Void):Void {
-		for (v in ovVars) f(v);
+		var i = ovVars.length;
+		while (i > 0) f(ovVars[--i]);
 	}
 
 	public function mem(id:Int):Bool return ovLut.exists(id);
@@ -263,7 +265,8 @@ class RenameVars {
 			loopVars: Overlaps.create(),
 			loopCount: 0
 		};
-		if (parent != null) parent.children.unshift(scope);
+		// port: `scope :: p.children` as a push: children are read from the end
+		if (parent != null) parent.children.push(scope);
 		return scope;
 	}
 
@@ -278,7 +281,8 @@ class RenameVars {
 			overlaps = scope.loopVars.copy();
 			scope.foreignVars.iter(o -> overlaps.add(o));
 		}
-		scope.ownVars.unshift({variable: v, overlaps: overlaps});
+		// port: `(v, overlaps) :: scope.own_vars` as a push: ownVars is read from the end
+		scope.ownVars.push({variable: v, overlaps: overlaps});
 		rc.rcVarOrigins.set(v.vId, scope);
 		if (scope.loopCount > 0) scope.loopVars.add(v);
 	}
@@ -292,7 +296,9 @@ class RenameVars {
 		Invoked for each `TLocal v` texr_expr
 	**/
 	public static function determineOverlaps(rc:RenameContext, scope:RenameScope, v:TVar):Void {
-		for (decl in scope.ownVars) {
+		var i = scope.ownVars.length;
+		while (i > 0) {
+			var decl = scope.ownVars[--i];
 			// If we find a declaration that already knows us, we don't have to keep
 			// looping because we can be sure that we've been here before.
 			if (decl.variable == v || decl.overlaps.mem(v.vId)) return;
@@ -443,10 +449,10 @@ class RenameVars {
 	public static function renameVars(rc:RenameContext, scope:RenameScope):Void {
 		var reserved = new ReservedNames(rc.rcReserved, null);
 		if ((rc.rcHoisting || rc.rcNoShadowing) && !scope.foreignVars.isEmpty()) scope.foreignVars.iter(v -> reserve(reserved, v.vName));
-		var own = scope.ownVars.copy();
-		own.reverse();
-		for (entry in own) maybeRenameVar(rc, reserved, entry);
-		for (child in scope.children) renameVars(rc, child);
+		// port: ownVars in push order is `List.rev scope.own_vars`
+		for (entry in scope.ownVars) maybeRenameVar(rc, reserved, entry);
+		var i = scope.children.length;
+		while (i > 0) renameVars(rc, scope.children[--i]);
 	}
 
 	/**

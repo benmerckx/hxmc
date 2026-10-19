@@ -461,7 +461,7 @@ class Gc {
 				for (i in 0...n)
 					if (((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) != 0) rootAt(o.add(8 * i));
 			case K_PARR:
-				for (i in 0...n)
+				for (i in (tindexOf(o) == T_NATIVE_ARRAY ? 1 : 0)...n)
 					rootAt(o.add(8 * i));
 			case _:
 		}
@@ -644,6 +644,7 @@ class Gc {
 				var pm = k == K_OBJ ? Mem.getPtr(Mem.sym("rt_types"), 112 * t + 24) : Ptr.nil();
 				if (k == K_PARR || !pm.isNull())
 					for (i in 0...n) {
+						if (i == 0 && t == T_NATIVE_ARRAY) continue;
 						if (k == K_OBJ && ((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) == 0) continue;
 						var v = Mem.getPtr(o, 8 * i);
 						if (v.isNull()) continue;
@@ -697,6 +698,7 @@ class Gc {
 				if (k == K_PARR || !pm.isNull()) {
 					if (!has(o))
 						for (i in 0...n) {
+							if (i == 0 && t == T_NATIVE_ARRAY) continue;
 							if (k == K_OBJ && ((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) == 0) continue;
 							var v = Mem.getPtr(o, 8 * i);
 							if (!v.isNull() && inYoung(v) && !has(o.add(8 * i))) bad("gc: verify: unremembered young reference (object, slot, type) ", count, i, t);

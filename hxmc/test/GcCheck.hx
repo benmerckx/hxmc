@@ -4,16 +4,21 @@ import sys.io.Process;
 
 using StringTools;
 
-// -D hxmc.wasm-gc (hxmc/src/hxmc/wasmgc): each program of hxmc/test/wasmgc
-// built natively and as a WasmGC module (run by node,
-// hxmc/bootstrap/wasmgc.mjs), their outputs compared (`make wasmgc-check`).
+// -D hxmc.wasm-gc (hxmc/src/hxmc/wasmgc): each program of hxmc/test/wasmgc,
+// and the corpus cases of CASES (hxmc/test/cases, as they are), built
+// natively and as a WasmGC module (run by node, hxmc/bootstrap/wasmgc.mjs),
+// their outputs compared (`make wasmgc-check`); a program's `// define:`
+// lines apply to both builds, as in the corpus.
 // With --bench, also as linear-memory wasm (hxmc/bootstrap/wasi.mjs), each
 // run RUNS times: the median time, node's peak RSS and the module's size,
 // side by side.
 //   bin/hxmc/hxmc -cp hxmc/test --run GcCheck [--bench] [-n RUNS] [names...]
 class GcCheck {
 	static final out = "bin/wasmgc";
-	static final common = ["-cp", "hxmc/test/wasmgc", "-cp", "bin/hxmc/std", "--custom-target", "hxmc"];
+	static final common = ["-cp", "bin/hxmc/std", "--custom-target", "hxmc"];
+	// (the corpus cases that need nothing WasmGC lacks: the others' counterparts
+	// are in hxmc/test/wasmgc, without the collector's API and raw memory)
+	static final CASES = ["MapTables", "NativeArrayBoundsSilent", "VectorLength"];
 
 	static function run(cmd:String, args:Array<String>):{code:Int, out:String, err:String} {
 		var p = new Process(cmd, args);
@@ -23,8 +28,8 @@ class GcCheck {
 		return {code: c, out: o, err: e};
 	}
 
-	static function build(name:String, file:String, extra:Array<String>):Null<String> {
-		var r = run("bin/hxmc/hxmc", [file, "-main", name].concat(common).concat(extra));
+	static function build(name:String, dir:String, file:String, extra:Array<String>):Null<String> {
+		var r = run("bin/hxmc/hxmc", [file, "-main", name, "-cp", dir].concat(common).concat(Corpus.caseDefines('$dir/$name.hx')).concat(extra));
 		return r.code == 0 ? null : (r.out + r.err).trim();
 	}
 
@@ -56,15 +61,20 @@ class GcCheck {
 		FileSystem.createDirectory(out);
 		var rss = rssScript();
 		var names = [for (f in FileSystem.readDirectory("hxmc/test/wasmgc")) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
+		var dirs = [for (n in names) n => "hxmc/test/wasmgc"];
+		for (c in CASES) {
+			names.push(c);
+			dirs.set(c, "hxmc/test/cases");
+		}
 		names.sort(Reflect.compare);
 		if (only.length > 0) names = names.filter(n -> only.indexOf(n) >= 0);
 		var failed = 0;
 		var rows = [];
 		for (n in names) {
-			var nat = '$out/$n', gc = '$out/$n.gc.wasm', lin = '$out/$n.wasm';
-			var err = build(n, nat, []);
-			if (err == null) err = build(n, gc, ["-D", "hxmc.target=wasm32-wasi", "-D", "hxmc.wasm-gc"]);
-			if (err == null && bench) err = build(n, lin, ["-D", "hxmc.target=wasm32-wasi"]);
+			var nat = '$out/$n', gc = '$out/$n.gc.wasm', lin = '$out/$n.wasm', dir = dirs.get(n);
+			var err = build(n, dir, nat, []);
+			if (err == null) err = build(n, dir, gc, ["-D", "hxmc.target=wasm32-wasi", "-D", "hxmc.wasm-gc"]);
+			if (err == null && bench) err = build(n, dir, lin, ["-D", "hxmc.target=wasm32-wasi"]);
 			if (err != null) {
 				Sys.println('GcCheck: $n: build failed\n$err');
 				failed++;

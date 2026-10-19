@@ -243,7 +243,7 @@ class DisplayProcessing {
 				case TLazy(f):
 					exploreTypeHint(md, p, lazyType(f));
 				case TInst({clNamePos: pn}, _) | TEnum({eNamePos: pn}, _) | TType({tNamePos: pn}, _) | TAbstract({aNamePos: pn}, _):
-					md.mTypeHints.unshift({hintPos: p, typePos: pn});
+					md.mTypeHints.push({hintPos: p, typePos: pn});
 				case TDynamic(_):
 				case TFun(_) | TAnon(_):
 			}

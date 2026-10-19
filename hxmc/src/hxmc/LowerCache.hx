@@ -66,13 +66,14 @@ class LowerCache {
 			if (a[i].name != b[i].name || a[i].data != b[i].data) return false;
 		return true;
 	}
+	var bounds = Lower.BOUNDS_UNCHECKED; // and their tests of NativeArray indices (Lower.bounds)
 
 	public function lower(main:TClass, types:Array<ModuleType>, basic:BasicTypes):Program {
 		hits = misses = keyed = 0;
 		why = null;
 		build++;
 		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.lines != lines || Lower.wasmGc != wasmGc
-			|| !sameResources(Lower.resources, resources)) {
+			|| Lower.bounds != bounds || !sameResources(Lower.resources, resources)) {
 			entries = new haxe.ds.ObjectMap();
 			lambdas = new haxe.ds.ObjectMap();
 			byKey = new Map();
@@ -81,6 +82,7 @@ class LowerCache {
 			lines = Lower.lines;
 			wasmGc = Lower.wasmGc;
 			resources = Lower.resources;
+			bounds = Lower.bounds;
 		}
 		var l = new CachedLower(this, true, types);
 		var prog = try Lower.program(main, types, basic, l) catch (m:Mismatch) {
@@ -882,7 +884,7 @@ class CachedLower extends Lower {
 					case RObj(c): map.exists(c);
 					case REnum(e): e == null || map.exists(e);
 					case RCtor(c): map.exists(c);
-					case RArr(t) | RBox(t) | RNull(t): boundTy(t);
+					case RArr(t) | RNativeArr(t) | RBox(t) | RNull(t): boundTy(t);
 					// (a function type lowers its argument types too, normalized away in the signature)
 					case RClos(_): false;
 					case RStr | RAnon | RAny | RType | RNative(_): true;
@@ -908,6 +910,7 @@ class CachedLower extends Lower {
 			case [REnum(x), REnum(y)]: bindEnum(x, y);
 			case [RCtor(x), RCtor(y)]: bindCtor(x, y);
 			case [RArr(x), RArr(y)]: bindTy(x, y);
+			case [RNativeArr(x), RNativeArr(y)]: bindTy(x, y);
 			case [RClos(x), RClos(y)]: bindSig(x, y);
 			case [RBox(x), RBox(y)]: bindTy(x, y);
 			case [RNull(x), RNull(y)]: bindTy(x, y);
@@ -982,6 +985,7 @@ class CachedLower extends Lower {
 			case REnum(e): REnum(obj(e));
 			case RCtor(c): RCtor(obj(c));
 			case RArr(t): RArr(mapTy(t));
+			case RNativeArr(t): RNativeArr(mapTy(t));
 			case RClos(s): RClos(obj(s));
 			case RBox(t): RBox(mapTy(t));
 			case RNull(t): RNull(mapTy(t));

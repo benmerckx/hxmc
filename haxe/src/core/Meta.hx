@@ -74,6 +74,12 @@ class Meta {
 		var e:StrictMeta = untyped $unsafecast(b);
 		return StdType.enumIndex(a) == StdType.enumIndex(e) && StdType.enumEq(a, e);
 	}
+	#elseif (target.name == "hxmc")
+	// port: on hxmc (hxmc/) the constructors without arguments are singletons: the identical
+	// value matches without a call. No string test: a plain string's index is its runtime
+	// type's, and enumEq rejects values of another type.
+	public static inline function metaEq(a:StrictMeta,
+			b:Dynamic):Bool return hxmc.Native.refEq(a, b) || StdType.enumIndex(a) == StdType.enumIndex(b) && StdType.enumEq(a, b);
 	#else
 	public static inline function metaEq(a:StrictMeta,
 			b:Dynamic):Bool return core.ds.Key.asString(b) == null && StdType.enumIndex(a) == StdType.enumIndex(b) && StdType.enumEq(a, b);

@@ -65,7 +65,8 @@ enum TypeParamMode {
 	TpDefinition(context:TypeParamUnificationContext);
 }
 
-// port: upstream wraps a mutable list in a record; the array itself is the stack here.
+// port: upstream wraps a mutable list in a record; the array itself is the stack here,
+// its top (the list's head) at the end: `v :: l` is a push, `List.tl` a pop.
 typedef RecStack<A> = Array<A>;
 
 enum NullFollowMode {
@@ -683,38 +684,39 @@ class TUnification {
 	}
 
 	public static function recStackExists<A>(f:A->Bool, s:RecStack<A>):Bool {
-		for (x in s) if (f(x)) return true;
+		var i = s.length;
+		while (i > 0) if (f(s[--i])) return true;
 		return false;
 	}
 
 	public static function recStackMemq<A>(v:A, s:RecStack<A>):Bool return s.indexOf(v) >= 0;
 
 	public static function recStackLoop<A, B, R>(s:RecStack<A>, v:A, f:B->R, arg:B):R {
-		s.unshift(v);
+		s.push(v);
 		try {
 			var r = f(arg);
-			s.shift();
+			s.pop();
 			return r;
 		} catch (e:haxe.Exception) {
-			s.shift();
+			s.pop();
 			throw e;
 		}
 	}
 
 	public static function recStack<A>(s:RecStack<A>, v:A, check:A->Bool, run:Void->Void, onError:Array<UnifyError>->Void):Void {
 		if (!recStackExists(check, s)) {
-			s.unshift(v);
+			s.push(v);
 			try {
 				run();
 			} catch (e:Unify_error) {
-				s.shift();
+				s.pop();
 				onError(e.errors);
 				return;
 			} catch (e:haxe.Exception) {
-				s.shift();
+				s.pop();
 				throw e;
 			}
-			s.shift();
+			s.pop();
 		}
 	}
 

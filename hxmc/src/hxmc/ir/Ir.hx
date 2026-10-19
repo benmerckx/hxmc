@@ -24,6 +24,7 @@ enum RefTy {
 	REnum(e:Null<EnumInfo>); // enum value; null: any enum (EnumValue)
 	RCtor(c:CtorInfo); // a specific enum constructor (after a tag test)
 	RArr(elem:Ty); // the runtime array also records its element kind (Boxes.hx, arrays)
+	RNativeArr(elem:Ty); // fixed-size storage; a Dynamic element (Dynamic, an erased type parameter): any kind, through the runtime (rt/NArray)
 	RClos(s:SigInfo);
 	RBox(t:Ty); // captured mutable local
 	RNull(t:Ty); // Null<Int>, Null<Float>, Null<Bool>: a Dynamic box or null
@@ -238,7 +239,7 @@ enum Ex {
 	EEnumParam(c:CtorInfo, idx:Int, e:Ex);
 	EArrLen(a:Ex);
 	EArrGet(elem:Ty, a:Ex, i:Ex);
-	EArrGetU(elem:Ty, a:Ex, i:Ex); // haxe.ds.Vector: no bounds check (out of range is unspecified)
+	EArrGetU(elem:Ty, a:Ex, i:Ex); // an Array-backed haxe.ds.Vector (WasmGC): no bounds check (out of range is unspecified)
 	EBoxGet(t:Ty, b:Ex);
 	ECapture(l:LambdaInfo, idx:Int, clos:Ex);
 	EType(t:TypeRef); // runtime type descriptor (Class<T>, Enum<T> values)
@@ -378,11 +379,16 @@ class Program {
 	var sigKeys = new Map<String, SigInfo>();
 
 	public function sig(args:Array<Ty>, ret:Ty):SigInfo {
-		var key = [for (a in args) Ir.repr(a)].join("") + "_" + Ir.repr(ret);
-		var known = sigKeys.get(key);
-		if (known != null) return known;
+		var b = new StringBuf();
+		for (a in args)
+			b.add(Ir.repr(a));
+		b.add("_");
+		b.add(Ir.repr(ret));
+		var key = b.toString();
+		var s = sigKeys.get(key);
+		if (s != null) return s;
 		var norm = (t:Ty) -> Ir.isRef(t) ? TRef(RAny) : t;
-		var s = new SigInfo(sigs.length, [for (a in args) norm(a)], norm(ret), key);
+		s = new SigInfo(sigs.length, [for (a in args) norm(a)], norm(ret), key);
 		sigs.push(s);
 		sigKeys.set(key, s);
 		return s;
@@ -391,12 +397,29 @@ class Program {
 	var shapeKeys = new Map<String, ShapeInfo>();
 
 	public function shape(fields:Array<{name:String, ty:Ty}>):ShapeInfo {
-		var fs = fields.copy();
-		fs.sort((a, b) -> a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-		var key = [for (f in fs) f.name + ":" + Ir.repr(f.ty)].join(",");
+		// (by name: sorted when they are not already)
+		var sorted = true;
+		for (i in 1...fields.length)
+			if (!(fields[i - 1].name < fields[i].name)) {
+				sorted = false;
+				break;
+			}
+		var fs = fields;
+		if (!sorted) {
+			fs = fields.copy();
+			fs.sort((a, b) -> a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		}
+		var b = new StringBuf();
+		for (i in 0...fs.length) {
+			if (i > 0) b.add(",");
+			b.add(fs[i].name);
+			b.add(":");
+			b.add(Ir.repr(fs[i].ty));
+		}
+		var key = b.toString();
 		var s = shapeKeys.get(key);
 		if (s != null) return s;
-		s = new ShapeInfo(shapes.length, fs);
+		s = new ShapeInfo(shapes.length, sorted ? fs.copy() : fs);
 		shapes.push(s);
 		shapeKeys.set(key, s);
 		return s;

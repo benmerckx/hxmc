@@ -193,11 +193,12 @@ class Case {
 		var locals:core.ds.PersistentMap<String, TVar> = ctx.f.locals;
 		var names = [for (name in locals.keys()) name];
 		names.sort(Reflect.compare);
+		// port: `(v, t_old) :: acc` as a push: oldTypes is read from the end
 		var oldTypes:Array<{variable:TVar, type:T}> = [];
 		for (name in names) {
 			var v = locals.find(name), old = v.vType;
 			v.vType = subst(v.vType);
-			oldTypes.unshift({variable: v, type: old});
+			oldTypes.push({variable: v, type: old});
 		}
 		var oldRet = ctx.e.ret;
 		ctx.e.ret = subst(ctx.e.ret);
@@ -228,7 +229,11 @@ class Case {
 			case [e, _]: typeExpr(ctx, e, withType);
 		};
 		ctx.e.ret = oldRet;
-		for (old in oldTypes) old.variable.vType = old.type;
+		var i = oldTypes.length;
+		while (i > 0) {
+			var old = oldTypes[--i];
+			old.variable.vType = old.type;
+		}
 		save();
 		return {caseData: {caseGuard: guard, caseExpr: body, casePos: p}, bindings: [], pattern: pat};
 	}

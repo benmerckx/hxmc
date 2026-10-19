@@ -1,4 +1,4 @@
-// `untyped a.length = n` on an Array (haxe.ds.Vector's generic constructor)
+// Native Vector initialization, plus `untyped a.length = n` on an Array
 // lowered to Array.resize, and resize's growth past the capacity (the data
 // allocated once at the new length): the new elements zero or null, the old
 // ones kept, the element kind kept, the value of the assignment, shrinking,

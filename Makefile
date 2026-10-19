@@ -61,6 +61,8 @@ LIX_DIR ?=
 BENCH_DATA ?=
 # `make bench`: the arguments of hxmc/test/Bench.hx (e.g. "-n 3 -c nbody -t hxmc,js")
 BENCH_ARGS ?=
+# `make bench-arrays`: length, rounds, samples, optional JSON output
+ARRAY_BENCH_ARGS ?=
 # `make crosshost`: the arguments of hxmc/test/Crosshost.hx (CI splits the targets: "--targets a,b")
 CROSSHOST_ARGS ?= --tool
 
@@ -87,16 +89,19 @@ SCRIPT := ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp hax
 # the hxmc target: bin/hxmc/std (hxmc/std merged with the Eval originals for
 # macros), given last
 HXMC_ARGS := -cp bin/hxmc/std --custom-target hxmc
+# the compilers' runtime: the collector's helper thread that faults in the old
+# space's pages ahead of the minor collections (less wall time, more CPU time)
+COMPILER_ARGS := -D hxmc.gc-prefault
 # the tool is the port (haxe/src) with hxmc (hxmc/src) as
 # its generate hook, typed against hxmc's std, without the port's other
 # target generators
 TOOL_CP := -cp haxe/src -cp hxmc/src -main hxmc.Main -D disable-parallelism -D hih_no_generators -cp bin/hxmc/std
-TOOL_ARGS := $(TOOL_CP) --custom-target hxmc
+TOOL_ARGS := $(TOOL_CP) $(COMPILER_ARGS) --custom-target hxmc
 # the port (typed with -D disable-parallelism; the binary runs its parallel
 # passes unless its own invocation passes that define)
-PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS)
+PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(COMPILER_ARGS) $(HXFLAGS) $(HXMC_ARGS)
 # `haxe` with hxmc built in (the npm package's compiler: every generator)
-PKG_ARGS := -cp haxe/src -cp hxmc/src -main hxmc.HaxeMain -D disable-parallelism $(HXMC_ARGS)
+PKG_ARGS := -cp haxe/src -cp hxmc/src -main hxmc.HaxeMain -D disable-parallelism $(COMPILER_ARGS) $(HXMC_ARGS)
 EXE = $(if $(findstring windows,$(1)),.exe)
 RELEASE_BIN := bin/release/$(TARGET)/haxe$(call EXE,$(TARGET))
 LIX_BIN := bin/release/$(TARGET)/lix$(call EXE,$(TARGET))
@@ -110,11 +115,11 @@ endef
 
 .DEFAULT_GOAL := help
 .PHONY: help std deps rt rt-build rt-target rt-layouts hxmc tool bootstrap fixpoint stage0 crosshost port dev release wasm npm site fuzz \
-	lix lix-release lix-dist reference bench test test-fuzz test-display test-server test-jsonrpc test-unit-targets test-interp \
+	lix lix-release lix-dist reference bench bench-arrays test test-fuzz test-display test-server test-jsonrpc test-unit-targets test-interp \
 	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test corpus-stage gfx-programs gfx-check gfx-web-check gfx-cache-check gfx-shader-check \
 	android-programs android-check android-device-check touch-check shared-check ios-programs ios-check ios-sim-check \
 	audio-programs audio-check audio-web-check native-macros ui-programs view-check web-check text-check ui-check ui-layout-fuzz ui-layout-reduce theme-check theme-fidelity-check theme-dom-check web-widgets ui-draw-check ui-web-check dev-check portcheck measure site-check \
-	quick check full clean distclean wasmgc-check wasmgc-bench
+	quick check full clean distclean wasmgc-check wasmgc-bench wasmgc-port test-wasmgc-port
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -247,11 +252,16 @@ help:
 ## portcheck   the port built by hxmc self-compiles to the reference's HXB (hxmc/test/Selfcheck.hx)
 ## bench       the HaxeBenchmarks cases on hxmc (native, wasm under node), C++, JVM, JS, HL/C and
 ##             HL, built by hxmc and the port: times, peak RSS, sizes (hxmc/test/Bench.hx; BENCH_ARGS)
+## bench-arrays  Array vs hxmc.NativeArray vs Vector: nine element types and five workloads
+##             (ARRAY_BENCH_ARGS="65536 128 7 bin/vector-bench/results.json")
 ## measure     peak memory and time of the self-compile (ours, the reference) and of the
 ##             tool's builds (haxe/test/Measure.hx)
-## wasmgc-check  -D hxmc.wasm-gc (WasmGC, an experiment): hxmc/test/wasmgc's programs as WasmGC
-##             modules under node, their output against the native build's (hxmc/test/GcCheck.hx);
+## wasmgc-check  -D hxmc.wasm-gc (WasmGC, an experiment): hxmc/test/wasmgc's programs and a few corpus
+##             cases as WasmGC modules under node, their output against the native build's (hxmc/test/GcCheck.hx);
 ##             wasmgc-bench adds linear-memory wasm: times, peak RSS, sizes
+## wasmgc-port  bin/wasmgc-port/haxe: the port as a WasmGC module (-D hxmc.wasm-gc) run by node
+## test-wasmgc-port  the lanes with it as the port: HXB (the three lists), --interp, display, -L, the
+##             upstream target suites (docs/testing.md)
 ## quick       after every edit (under a minute): the tool, then the x64 corpus, again with
 ##             RT_VERIFY=1, and the wasm corpus under node (CASES restricts the corpus)
 ## check       before a local commit (a few minutes): quick + arm64 (qemu), wine, a 16 KB
@@ -263,7 +273,7 @@ help:
 ## distclean   also remove bin/ entirely
 ##
 ## Variables: JOBS, NODE, ZIG, HOST, TARGET, RT_TARGET, GFX_TARGET, AUDIO_TARGET, HXFLAGS, PORT_BIN, REFERENCE, LANE, N, CASES, PORT,
-## LIX_DIR, BENCH_DATA, BENCH_ARGS, CROSSHOST_ARGS, CORPUS_TARGETS (defaults and meaning: the top of the Makefile).
+## LIX_DIR, BENCH_DATA, BENCH_ARGS, ARRAY_BENCH_ARGS, CROSSHOST_ARGS, CORPUS_TARGETS (defaults and meaning: the top of the Makefile).
 
 std: $(STD)
 $(STD): hxmc/src/hxmc/MkStd.hx $(STD_SRC)
@@ -510,7 +520,8 @@ $(REFERENCE): bin/lix/lix
 # --- Tests (docs/testing.md) ---
 
 CASES_FILE ?= haxe/test/conformance-cases.txt
-TEST_ENV = HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT=$(abspath $(PORT_BIN))
+# (exported: SCRIPT is a command list, which an assignment in front would not reach)
+TEST_ENV = export HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT=$(abspath $(PORT_BIN));
 test: $(PORT_BIN) $(REFERENCE)
 	$(TEST_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases $(CASES_FILE)
 test-display: $(PORT_BIN) $(REFERENCE)
@@ -847,6 +858,12 @@ portcheck: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE)
 bench: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) bin/lix/lix
 	$(SCRIPT) Bench $(BENCH_ARGS)
 
+bench-arrays: bin/vector-bench/m
+	bin/vector-bench/m $(ARRAY_BENCH_ARGS)
+
+bin/vector-bench/m: $(TOOL) $(STD) $(HOST_RT) hxmc/test/bench/VectorBench.hx hxmc/test/bench/VectorBenchMacro.hx
+	$(call hxmc,$@,-cp hxmc/test/bench -main VectorBench $(HXMC_ARGS))
+
 # (the self-compile of PORT_BIN; the npm package's WebAssembly compiler)
 measure: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(PORT_BIN) bin/npm/native/wasm32-wasi/haxe.wasm
 	$(SCRIPT) Measure --port $(PORT_BIN)
@@ -860,6 +877,32 @@ wasmgc-check: $(TOOL) $(STD) $(HOST_RT)
 wasmgc-bench: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) GcCheck --bench
 
+# the port as a WasmGC module (-D hxmc.wasm-gc), and the script that runs it
+# under node (hxmc/bootstrap/wasmgc.mjs; a large stack for the compiler's
+# recursion): the port of test-wasmgc-port
+WASMGC_PORT := bin/wasmgc-port/haxe
+wasmgc-port: $(WASMGC_PORT)
+$(WASMGC_PORT).wasm: $(TOOL) $(PORT_SRC) $(STD)
+	$(call hxmc,$@,$(PORT_ARGS) -D hxmc.target=wasm32-wasi -D hxmc.wasm-gc)
+$(WASMGC_PORT): $(WASMGC_PORT).wasm
+	printf '#!/bin/sh\n# the port as a WasmGC module under node (make wasmgc-port)\nulimit -s unlimited 2>/dev/null\nexec %s --stack-size=65500 %s %s "$$@"\n' \
+		"$(NODE)" $(abspath hxmc/bootstrap/wasmgc.mjs) $(abspath $<) > $@
+	chmod +x $@
+
+# the lanes with it as the port (docs/testing.md): HXB (the three lists),
+# --interp (but a case whose Eval threads interleave: the module has one
+# thread), display, -L (batch), upstream's target suites; not the server's
+# (sockets)
+WASMGC_ENV = export HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT=$(abspath $(WASMGC_PORT));
+test-wasmgc-port: $(WASMGC_PORT) $(REFERENCE) bin/lix/lix
+	$(WASMGC_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-cases.txt
+	$(WASMGC_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt
+	$(WASMGC_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-hxblib-cases.txt --hxb-lib
+	$(WASMGC_ENV) $(SCRIPT) Interp -j $(JOBS) --skip eval-eventLoop-compile
+	$(WASMGC_ENV) $(SCRIPT) Display -j $(JOBS)
+	$(WASMGC_ENV) $(SCRIPT) Haxelib
+	$(WASMGC_ENV) $(SCRIPT) UpstreamTargets -j $(JOBS)
+
 check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers check $(if $(PORT),--port) $(CASES)
 
@@ -867,7 +910,7 @@ full: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers full $(CASES)
 
 clean:
-	rm -rf bin/port bin/release bin/lix-dist bin/site bin/site-build bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/gfx bin/audio bin/corpus \
+	rm -rf bin/port bin/release bin/lix-dist bin/site bin/site-build bin/wasm bin/wasmgc-port bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/gfx bin/audio bin/corpus \
 		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(CLI_BOOT)/hxmc-std $(CLI_BOOT)/rt
 
 distclean: clean

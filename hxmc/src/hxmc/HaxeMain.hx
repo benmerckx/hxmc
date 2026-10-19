@@ -21,6 +21,7 @@ class HaxeMain {
 	}
 
 	public static function run(args:Array<String>):Int {
+		Defines.install();
 		if (args[0] == "--dev") return dev(args.slice(1));
 		var failed = null;
 		// (through links to the binary, as npm's node_modules/.bin/haxe)

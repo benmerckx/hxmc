@@ -1,0 +1,27 @@
+exit 0
+dynamic ints 10 7 3 10,7,3 sum=20
+dynamic floats 0.5 3 0.5,3 sum=3.5
+any bools true true true,true
+loose int64 4294967298 -2
+dynamic strings a c a,c
+string into ints: error: NativeArray element type mismatch
+mixed 1 two 3 3
+Dynamic as ints: 3
+Dynamic as floats: error: NativeArray storage type mismatch
+an Array as ints: error: Invalid cast to NativeArray
+ints as Null<Int>: error: NativeArray storage type mismatch
+Null<Int> as ints: error: NativeArray storage type mismatch
+null view true
+ring ints 4,2,3 4 3 again=true
+ring floats 1.5,2.25 2.25
+ring bools true,false,true false true
+ring int64 12884901892 0 12884901892
+ring strings x,y
+ring enums Large(5),Small
+ring as Dynamic 3 2
+ring ints as floats: error: NativeArray storage type mismatch
+ring nullable 7 null
+factories 0,5,0 0.25,0.25 true,true s,s
+copies 8,9 0 8,0
+a typed copy as floats: error: NativeArray storage type mismatch
+gc 90000

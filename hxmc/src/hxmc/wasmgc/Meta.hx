@@ -16,6 +16,7 @@ class Meta {
 	public var enumTypes(default, null) = -1;
 	public var enumNames(default, null) = -1;
 	public var shapeNames(default, null) = -1;
+	public var clsStatics(default, null) = -1;
 
 	public function new(m:GcModule)
 		this.m = m;
@@ -32,6 +33,7 @@ class Meta {
 		enumTypes = table();
 		enumNames = table();
 		shapeNames = table();
+		clsStatics = table();
 	}
 
 	// _start's code that fills them
@@ -80,6 +82,11 @@ class Meta {
 			names([for (f in s.fields) f.name]);
 		m.gc(b, 0x08, pt, ss.length);
 		setGlobal(shapeNames);
+		// the names of the statics reached through each class value (Lower.reflectStatics), or null
+		for (c in cls)
+			if (c.statics == null) m.constZero(b, "p") else names([for (s in c.statics) s.name]);
+		m.gc(b, 0x08, pt, cls.length);
+		setGlobal(clsStatics);
 	}
 
 	// ---- encodings
@@ -284,6 +291,56 @@ class Meta {
 					b.u8(0x0F);
 					b.u8(0x0B);
 				}
+			});
+			m.constZero(b, "p");
+		});
+	}
+
+	// a shallow copy of a class instance or an anonymous structure (Reflect.copy:
+	// its own identity hash, a structure's added fields left to GcNative), null
+	// for anything else: by its class or layout (br_table)
+	public function objCopy():Int {
+		var si = shapeIndex();
+		return helper("meta_obj_copy", "p_p", [Enc.I32], b -> {
+			get(b, 0);
+			test(b, m.objType);
+			b.u8(0x04);
+			b.u8(0x40);
+			clsOf(b);
+			b.u8(0x21);
+			b.u8(1);
+			var cls = m.classList();
+			dispatch(b, 1, cls.length, k -> {
+				var c = cls[k];
+				i32(b, m.clsOf(c));
+				for (j in 0...c.fields.length) {
+					get(b, 0);
+					m.castTo(b, m.classType(c));
+					m.gc(b, 0x02, m.classType(c), j + 1);
+				}
+				m.gc(b, 0x00, m.classType(c));
+				b.u8(0x0F);
+			});
+			m.constZero(b, "p");
+			b.u8(0x0F);
+			b.u8(0x0B);
+			get(b, 0);
+			b.u8(0x10);
+			Enc.uleb(b, si);
+			b.u8(0x21);
+			b.u8(1);
+			var ss = m.shapeList();
+			dispatch(b, 1, ss.length, k -> {
+				var sh = ss[k];
+				m.constZero(b, "p");
+				i32(b, m.shapeId(sh));
+				for (j in 0...sh.fields.length) {
+					get(b, 0);
+					m.castTo(b, m.shapeType(sh));
+					m.gc(b, 0x02, m.shapeType(sh), j + 2);
+				}
+				m.gc(b, 0x00, m.shapeType(sh));
+				b.u8(0x0F);
 			});
 			m.constZero(b, "p");
 		});
@@ -567,6 +624,113 @@ class Meta {
 				b.u8(0x0B);
 			}
 			m.constZero(b, "p");
+		});
+
+	// whether local 0 is an instance of the class or interface whose type
+	// value's id is local 1 (Std.isOfType with a type known at run time only:
+	// GcNative.isOfType), by a switch on the id: over the interfaces the classes
+	// made implement (an interface's id is -1 - its index: GcModule.typeValue),
+	// else over the classes made
+	public function instOf():Int
+		return helper("meta_inst_of", "pi_i", [Enc.I32], b -> {
+			var byId = new Map<Int, ClassInfo>(), n = 0, ifaces = new Map<Int, ClassInfo>(), ni = 0;
+			for (c in m.classList()) {
+				byId.set(c.id, c);
+				if (c.id + 1 > n) n = c.id + 1;
+				for (i in c.ifaces) {
+					var k = m.interfaceIndex(i);
+					ifaces.set(k, i);
+					if (k + 1 > ni) ni = k + 1;
+				}
+			}
+			get(b, 1);
+			i32(b, 0);
+			b.u8(0x48);
+			b.u8(0x04);
+			b.u8(0x40);
+			i32(b, -1);
+			get(b, 1);
+			b.u8(0x6B);
+			b.u8(0x21);
+			b.u8(2);
+			dispatch(b, 2, ni, k -> {
+				var i = ifaces.get(k);
+				if (i == null) return;
+				get(b, 0);
+				b.u8(0x10);
+				Enc.uleb(b, Helpers.implementsOf(m, i));
+				b.u8(0x0F);
+			});
+			i32(b, 0);
+			b.u8(0x0F);
+			b.u8(0x0B);
+			dispatch(b, 1, n, id -> {
+				var c = byId.get(id);
+				if (c == null) return;
+				get(b, 0);
+				test(b, m.classType(c));
+				b.u8(0x0F);
+			});
+			i32(b, 0);
+		});
+
+	// the names of the statics of the class of index local 0 (clsStatics), null when
+	// it has none
+	public function staticNames():Int
+		return helper("meta_static_names", "i_p", [], b -> {
+			tableGet(b, clsStatics);
+			get(b, 0);
+			m.gc(b, 0x0B, m.dataType("p"));
+		});
+
+	// static k (local 1) of the class of index local 0, boxed: a method as a closure
+	// (null: one Reach dropped, no name reaching it)
+	public function staticGet():Int
+		return helper("meta_static_get", "ii_p", [], b -> {
+			var cls = m.classList();
+			dispatch(b, 0, cls.length, ci -> {
+				var ss = cls[ci].statics;
+				if (ss == null) return;
+				dispatch(b, 1, ss.length, k -> {
+					var s = ss[k];
+					if (s.clos != null && !m.reached(s.clos.fn)) return;
+					if (s.clos != null) {
+						var fi = m.funcOf(s.clos.fn);
+						m.declare(fi);
+						b.u8(0xD2);
+						Enc.uleb(b, fi);
+						m.gc(b, 0x00, m.lambdaTypeOf(s.clos));
+					} else {
+						b.u8(0x23);
+						Enc.uleb(b, m.globalOf(s.global));
+						box(b, m.globalTy(s.global));
+					}
+					b.u8(0x0F);
+				});
+			});
+			m.constZero(b, "p");
+		});
+
+	// static k (local 1) of the class of index local 0 = v (local 2, unboxed):
+	// false for a method (it cannot be rebound)
+	public function staticSet():Int
+		return helper("meta_static_set", "iip_i", [], b -> {
+			var cls = m.classList();
+			dispatch(b, 0, cls.length, ci -> {
+				var ss = cls[ci].statics;
+				if (ss == null) return;
+				dispatch(b, 1, ss.length, k -> {
+					var s = ss[k];
+					if (s.clos != null) return;
+					get(b, 2);
+					unboxAs(b, m.globalTy(s.global));
+					b.u8(0x24);
+					Enc.uleb(b, m.globalOf(s.global));
+					i32(b, 1);
+					b.u8(0x0F);
+				});
+			});
+			i32(b, 0);
 		});
 
 	// the class types, then the enum types: the type at index i (null past the end)

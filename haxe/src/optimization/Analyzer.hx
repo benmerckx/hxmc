@@ -81,14 +81,15 @@ class Ssa {
 	public static function insertPhi(ctx:AnalyzerContext):Void for (vi in ctx.graph.gVarInfos)
 		if (vi.viBbDeclare != ctx.graph.gUnreachable) {
 			var done = new haxe.ds.IntMap<Bool>();
+			// port: viWrites is in push order (Graph.addVarDef): the worklist is a stack with its top at the end
 			var work = vi.viWrites.copy();
 			while (work.length > 0) {
-				var x = work.shift();
+				var x = work.pop();
 				for (y in x.bbDf) if (!done.exists(y.bbId)) {
 					done.set(y.bbId, true);
 					if (inScope(y, vi.viBbDeclare)) {
 						addPhi(ctx.graph, y, vi.viVar);
-						if (!vi.viWrites.contains(y)) work.unshift(y);
+						if (!vi.viWrites.contains(y)) work.push(y);
 					}
 				}
 			}
@@ -177,7 +178,9 @@ class Ssa {
 		dynarrayMapi((i, e) -> loop(LUEl(i), e), bb.bbEl);
 		bb.bbTerminator = terminatorMap(e -> loop(LUTerm, e), bb.bbTerminator);
 		for (edge in bb.bbOutgoing) updatePhi(ctx, edge);
-		for (child in bb.bbDominated) renameInBlock(ctx, child);
+		// port: bbDominated is in push order (Graph.inferImmediateDominators)
+		var i = bb.bbDominated.length;
+		while (i > 0) renameInBlock(ctx, bb.bbDominated[--i]);
 	}
 
 	public static function apply(ctx:AnalyzerContext):Void {
@@ -688,7 +691,10 @@ class Debug {
 		for (ni in nil) s += switch ni {
 			case NIExpr: bb.bbEl.length == 0 ? "" : "\n" + bb.bbEl.map(sExprPretty).join("\n");
 			case NIPhi: bb.bbPhi.length == 0 ? "" : "\n" + bb.bbPhi.map(sExprPretty).join("\n");
-			case NIVars: bb.bbVarWrites.length == 0 ? "" : "\n" + bb.bbVarWrites.map(sVar).join(", ");
+			// port: bbVarWrites is in push order (Graph.addVarDef)
+			case NIVars: bb.bbVarWrites.length == 0 ? "" : "\n" + [
+					for (i in 0...bb.bbVarWrites.length) sVar(bb.bbVarWrites[bb.bbVarWrites.length - 1 - i])
+				].join(", ");
 			case NILoopGroups: bb.bbLoopGroups.length == 0 ? "" : "\nLoops: " + bb.bbLoopGroups.map(Std.string).join(", ");
 			case NIScopes: bb.bbScopes.length == 0 ? "" : "\nScopes: " + bb.bbScopes.map(Std.string).join(", ");
 		};
@@ -760,7 +766,7 @@ class Debug {
 			case LUEl(i): Std.string(i);
 			case LUTerm: "t";
 		};
-		for (bb in g.gNodes) {
+		for (bb in Graph.nodes(g)) {
 			ch.writeString('n${bb.bbId}[label=<<table BORDER="0" CELLBORDER="1" CELLSPACING="0">\n\t<tr><td port="in" bgcolor="lightgray">(${bb.bbId}) ${BasicBlock.sBlockKind(bb.bbKind)}</td></tr>\n');
 			inline function row(luk:TExprLookupTarget, e:TExpr):Void
 				ch.writeString('\t<tr><td port="${exprName(luk)}" align="left">${escape(htmlescape(sExprPretty(e)))}</td></tr>\n');
@@ -791,14 +797,14 @@ class Debug {
 		inline function start(suffix:String):Dynamic return context.DotGraph.startGraph(context.DotGraph.getDumpPath(ctx.com, c, cf),
 			suffix, []);
 		var graph = start("-cfg.dot");
-		for (bb in g.gNodes) dotDebugNode(g, graph.channel, [NILoopGroups, NIScopes, NIPhi, NIExpr], bb);
+		for (bb in Graph.nodes(g)) dotDebugNode(g, graph.channel, [NILoopGroups, NIScopes, NIPhi, NIExpr], bb);
 		Graph.iterEdges(g, dotDebugCfgEdge.bind(graph.channel));
 		graph.close();
 		graph = start("-cfg-ssa.dot");
 		generateCfgSsa(graph.channel, g);
 		graph.close();
 		graph = start("-dj.dot");
-		for (bb in g.gNodes) {
+		for (bb in Graph.nodes(g)) {
 			dotDebugNode(g, graph.channel, [], bb);
 			for (inc in bb.bbIncoming) {
 				var pred = inc.cfgFrom;
@@ -808,19 +814,21 @@ class Debug {
 		}
 		graph.close();
 		graph = start("-df.dot");
-		for (bb in g.gNodes) {
+		for (bb in Graph.nodes(g)) {
 			dotDebugNode(g, graph.channel, [NIVars], bb);
 			for (other in bb.bbDf) graph.channel.writeString('n${bb.bbId} -> n${other.bbId};\n');
 		}
 		graph.close();
 		graph = start("-dom.dot");
-		for (bb in g.gNodes) {
+		for (bb in Graph.nodes(g)) {
 			dotDebugNode(g, graph.channel, [NIVars], bb);
-			for (other in bb.bbDominated) graph.channel.writeString('n${bb.bbId} -> n${other.bbId};\n');
+			// port: bbDominated is in push order (Graph.inferImmediateDominators)
+			var i = bb.bbDominated.length;
+			while (i > 0) graph.channel.writeString('n${bb.bbId} -> n${bb.bbDominated[--i].bbId};\n');
 		}
 		graph.close();
 		graph = start("-syntax.dot");
-		for (bb in g.gNodes) {
+		for (bb in Graph.nodes(g)) {
 			dotDebugNode(g, graph.channel, [NIExpr], bb);
 			dotDebugSyntaxEdge(graph.channel, bb, bb.bbSyntaxEdge);
 		}
@@ -845,7 +853,7 @@ class Debug {
 				graph.channel.writeString('$n1 -> $n2;\n');
 			}
 		}
-		for (bb in g.gNodes) {
+		for (bb in Graph.nodes(g)) {
 			var active = [];
 			inline function add(luk:TExprLookupTarget, e:TExpr):Void {
 				var n = nodeName(bb, luk);

@@ -1,5 +1,6 @@
 package hxmc;
 
+import haxe.ds.Vector;
 import hxmc.Mir;
 
 // Machine-independent optimizations on MIR (target facts stay in Abi and
@@ -12,7 +13,8 @@ import hxmc.Mir;
 //    shadow-stack slots, memory only calls change, immutable memory); a
 //    store or call that may write a class gives it a new version, and so
 //    does a join where the predecessors disagree, or a loop header whose
-//    loop writes it.
+//    loop writes it. A load of the address a dominating store wrote, in
+//    the version the store left, takes the stored value.
 //  - dead code: pure operations and loads nothing uses.
 //  - branches decided by a dominating branch on the same comparison.
 //  - loop-invariant code motion: pure operations, and loads that cannot
@@ -41,7 +43,11 @@ class Opt {
 	static inline var MTlsHw = 19; // rt_sp_hw
 	static inline var MTlsYp = 20; // rt_young_ptr
 	static inline var MTlsYl = 21; // rt_young_limit, rt_young_rlimit
-	static inline var NCLS = 22;
+	// shadow-stack slots by displacement (8 buckets), as fields: a store to
+	// one slot leaves the loads of the others alone (MFrame's own version:
+	// accesses at dynamic offsets)
+	static inline var MFrameAt = 22;
+	static inline var NCLS = 30;
 	static inline var TLS_BITS = (1 << MTls) | (1 << MTlsSp) | (1 << MTlsHw) | (1 << MTlsYp) | (1 << MTlsYl);
 
 	static function tlsClass(sym:String):Int
@@ -53,6 +59,7 @@ class Opt {
 			case _: MTls;
 		};
 	static inline var FIELD_BITS = ((1 << 8) - 1) << MFieldAt;
+	static inline var FRAME_BITS = ((1 << 8) - 1) << MFrameAt;
 
 	// runtime functions that write no memory the code reads and do not collect
 	static var readOnly = [
@@ -60,8 +67,8 @@ class Opt {
 	];
 
 	var f:MFunc;
-	var repl:Array<Int>;
-	var ver:Array<Int>; // per load: the version of its memory class
+	var repl:Vector<Int>;
+	var ver:Vector<Int>; // per load: the version of its memory class
 
 	public function new(f:MFunc) {
 		this.f = f;
@@ -108,9 +115,10 @@ class Opt {
 
 	// A load that cannot fault wherever it moves: of a global variable (the
 	// globals table, or a scalar global's own symbol), of immutable memory
-	// at a symbol, of a thread-local variable.
+	// at a symbol, of runtime state at a symbol, or of a thread-local variable.
+	// Runtime state can move only when the loop's calls invalidate it.
 	static inline function safeLoad(i:MIns, vals:Array<MIns>):Bool
-		return i.op == TlsLoad || i.op == Load && (i.mem == MGlobal || i.mem == MConst && i.b < 0 && vals[i.a].op == SymAddr);
+		return i.op == TlsLoad || i.op == Load && (i.mem == MGlobal || (i.mem == MConst || i.mem == MCallOnly) && i.b < 0 && vals[i.a].op == SymAddr);
 
 	// One round, over the loops that hold no loop moved from in this round
 	// (the caller repeats: what left an inner loop may then leave its outer
@@ -356,22 +364,36 @@ class Opt {
 
 	// immediate dominators (Cooper, Harvey and Kennedy) as reverse postorder
 	// indices, and the dominator tree's children lists
-	function dominators(order:Array<MBlock>):{idom:Array<Int>, childHead:Array<Int>, childNext:Array<Int>} {
+	function dominators(order:Array<MBlock>):{idom:Vector<Int>, childHead:Vector<Int>, childNext:Vector<Int>} {
 		var n = order.length;
 		var inOrder = f.newMark();
 		for (k in 0...n) {
 			order[k].mark = inOrder;
 			order[k].tmp = k;
 		}
-		var idom = [for (_ in 0...n) -1];
+		var idom = MFunc.ints(n, -1);
 		idom[0] = 0;
-		var preds = [for (b in order) [for (p in b.preds) if (p.mark == inOrder) p.tmp]];
+		// the predecessors in the order, by index: predIdx[predAt[k]...predAt[k + 1]]
+		var predAt = new Vector<Int>(n + 1);
+		var m = 0;
+		for (k in 0...n) {
+			predAt[k] = m;
+			for (p in order[k].preds)
+				if (p.mark == inOrder) m++;
+		}
+		predAt[n] = m;
+		var predIdx = new Vector<Int>(m);
+		m = 0;
+		for (b in order)
+			for (p in b.preds)
+				if (p.mark == inOrder) predIdx[m++] = p.tmp;
 		var changed = true;
 		while (changed) {
 			changed = false;
 			for (k in 1...n) {
 				var d = -1;
-				for (p in preds[k]) {
+				for (q in predAt[k]...predAt[k + 1]) {
+					var p = predIdx[q];
 					if (idom[p] < 0) continue;
 					if (d < 0) d = p else {
 						var x = p, y = d;
@@ -390,7 +412,7 @@ class Opt {
 				}
 			}
 		}
-		var childHead = [for (_ in 0...n) -1], childNext = [for (_ in 0...n) -1];
+		var childHead = MFunc.ints(n, -1), childNext = MFunc.ints(n, -1);
 		var k = n - 1;
 		while (k >= 1) {
 			var d = idom[k];
@@ -766,6 +788,13 @@ class Opt {
 	inline function fieldClass(i:MIns):Int
 		return MFieldAt + (((i.imm + dispOf(i.a)) >> 3) & 7);
 
+	inline function frameClass(i:MIns):Int
+		return MFrameAt + (((i.imm + dispOf(i.a)) >> 3) & 7);
+
+	// the version class of a load or store
+	inline function memClass(i:MIns):Int
+		return i.b >= 0 ? i.mem : i.mem == MField ? fieldClass(i) : i.mem == MFrame ? frameClass(i) : i.mem;
+
 	// the classes an instruction writes, as a bit set (0: none)
 	function killMask(i:MIns):Int {
 		return switch i.op {
@@ -775,12 +804,14 @@ class Opt {
 					case MOther: ((1 << NCLS) - 1) & ~(1 << MConst) & ~(1 << MCallOnly) & ~TLS_BITS;
 					case MField if (i.b < 0): (1 << fieldClass(i)) | (1 << MField) | (1 << MOther);
 					case MField: FIELD_BITS | (1 << MField) | (1 << MOther);
+					case MFrame if (i.b < 0): (1 << frameClass(i)) | (1 << MFrame) | (1 << MOther);
+					case MFrame: FRAME_BITS | (1 << MFrame) | (1 << MOther);
 					case c: (1 << c) | (1 << MOther);
 				}
 			case TlsStore: 1 << tlsClass(i.sym);
 			// (one during which nothing collects leaves the shadow-stack slots as they are)
 			case Call if (i.returnsTwice || i.sym == null || !readOnly.exists(i.sym)):
-				((1 << NCLS) - 1) & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~(1 << MFrame) : -1);
+				((1 << NCLS) - 1) & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1);
 			case _: 0;
 		};
 	}
@@ -798,16 +829,17 @@ class Opt {
 			order[k].tmp = k;
 		}
 		// per block: the classes it writes
-		var kill = [for (b in order) {
+		var kill = new Vector<Int>(n);
+		for (k in 0...n) {
 			var m = 0;
-			for (i in b.ins)
+			for (i in order[k].ins)
 				if (!i.dead) m |= killMask(i);
-			m;
-		}];
-		var outs:Array<Array<Int>> = [for (_ in 0...n) null];
+			kill[k] = m;
+		}
+		var outs = new Vector<Vector<Int>>(n);
 		for (k in 0...n) {
 			var b = order[k];
-			var v:Array<Int> = null;
+			var v:Vector<Int> = null;
 			var latch = -1;
 			var mixed = 0; // classes the forward predecessors disagree on
 			for (p in b.preds) {
@@ -823,7 +855,9 @@ class Opt {
 						if (v[c] != o[c]) mixed |= 1 << c;
 			}
 			if (v == null || b.handler) {
-				v = [for (_ in 0...NCLS) next++];
+				v = new Vector<Int>(NCLS);
+				for (c in 0...NCLS)
+					v[c] = next++;
 			} else {
 				if (latch >= 0)
 					for (q in k...latch + 1)
@@ -833,18 +867,20 @@ class Opt {
 			}
 			for (i in b.ins) {
 				if (i.dead) continue;
-				if (i.op == Load) ver[i.id] = v[i.mem == MField && i.b < 0 ? fieldClass(i) : i.mem] else if (i.op == TlsLoad) ver[i.id] = v[tlsClass(i.sym)];
+				if (i.op == Load) ver[i.id] = v[memClass(i)] else if (i.op == TlsLoad) ver[i.id] = v[tlsClass(i.sym)];
 				var m = killMask(i);
 				if (m != 0)
 					for (c in 0...NCLS)
 						if (m & (1 << c) != 0) v[c] = next++;
+				// (a store: the version it leaves its memory in, that of the loads it can answer)
+				if (i.op == Store) ver[i.id] = v[memClass(i)];
 			}
 			outs[k] = v;
 		}
 	}
 
 	// operands compared as values: constants and addresses of the same thing are equal
-	var canon:Array<Int>;
+	var canon:Vector<Int>;
 
 	inline function cres(x:Int):Int
 		return x < 0 ? x : canon[res(x)];
@@ -885,17 +921,38 @@ class Opt {
 		return x.op == y.op && x.ty == y.ty && cres(x.a) == cres(y.a) && cres(x.b) == cres(y.b) && cres(x.c) == cres(y.c) && x.imm == y.imm && x.imm2 == y.imm2
 			&& x.size == y.size && x.signed == y.signed && x.sym == y.sym && x.mem == y.mem && ver[x.id] == ver[y.id];
 
-	inline function hash(i:MIns):Int {
-		var h = (i.op : Int) * 31 + cres(i.a);
-		h = h * 31 + cres(i.b);
-		h = h * 31 + cres(i.c);
-		h = h * 31 + i.imm;
-		h = h * 31 + i.imm2;
-		return h * 31 + ver[i.id];
+	inline function hash(i:MIns):Int
+		return hashOf(i.op, i.a, i.b, i.c, i.imm, i.imm2, ver[i.id]);
+
+	inline function hashOf(op:Op, a:Int, b:Int, c:Int, imm:Int, imm2:Int, v:Int):Int {
+		var h = (op : Int) * 31 + cres(a);
+		h = h * 31 + cres(b);
+		h = h * 31 + cres(c);
+		h = h * 31 + imm;
+		h = h * 31 + imm2;
+		return h * 31 + v;
 	}
 
+	// A store whose value a later load of its address can take: it writes
+	// the whole value (no truncation), and not the initialization of a new
+	// object (whose stores leave the versions as they are: forwardStores)
+	inline function forwards(st:MIns):Bool {
+		var t = f.vals[res(st.c)].ty;
+		return st.mem != MInit && st.size == (t == I32 ? 4 : 8) && t != Void;
+	}
+
+	// load l reads what store st wrote: the same address and size, the
+	// memory in the version the store left it in (nothing that may write it
+	// between), the stored value of the loaded type
+	function answers(st:MIns, l:MIns):Bool
+		return cres(st.a) == cres(l.a) && cres(st.b) == cres(l.b) && st.imm == l.imm && st.imm2 == l.imm2 && st.size == l.size && st.sym == l.sym
+			&& st.mem == l.mem && ver[st.id] == ver[l.id] && f.vals[res(st.c)].ty == l.ty;
+
 	// value numbering in a preorder walk of the dominator tree, with a
-	// scoped table (entries made in a subtree are undone after it)
+	// scoped table (entries made in a subtree are undone after it); a store
+	// is an entry too, under the key of the load of its address, which then
+	// takes the stored value (store-to-load forwarding: a value kept in a
+	// shadow-stack slot and read back before the next call)
 	function gvn(order:Array<MBlock>) {
 		var n = order.length;
 		var inOrder = f.newMark();
@@ -904,7 +961,7 @@ class Opt {
 			order[k].tmp = k;
 		}
 		// immediate dominators (Cooper, Harvey and Kennedy), as rpo indices
-		var idom = [for (_ in 0...n) -1];
+		var idom = MFunc.ints(n, -1);
 		idom[0] = 0;
 		var preds = [for (b in order) [for (p in b.preds) if (p.mark == inOrder) p.tmp]];
 		var changed = true;
@@ -932,7 +989,7 @@ class Opt {
 			}
 		}
 		// children lists
-		var childHead = [for (_ in 0...n) -1], childNext = [for (_ in 0...n) -1];
+		var childHead = MFunc.ints(n, -1), childNext = MFunc.ints(n, -1);
 		var k = n - 1;
 		while (k >= 1) {
 			var d = idom[k];
@@ -962,6 +1019,17 @@ class Opt {
 				for (i in order[bk].ins) {
 					if (i.dead) continue;
 					var op = i.op;
+					if (op == Store) {
+						if (!forwards(i)) continue;
+						var h = hashOf(Load, i.a, i.b, -1, i.imm, i.imm2, ver[i.id]);
+						h = (h ^ (h >>> 15)) * 0x2c1b3c6d;
+						var bk = (h ^ (h >>> 12)) & mask;
+						chain[i.id] = head[bk];
+						head[bk] = i.id;
+						log.push(i.id);
+						log.push(bk);
+						continue;
+					}
 					// (comparisons are recomputed: they fuse with their branch)
 					if (!(pure(op) || op == Load || op == TlsLoad) || op == Cmp) continue;
 					if (fold(i)) continue;
@@ -971,7 +1039,13 @@ class Opt {
 					var hit = -1;
 					var q = head[bk];
 					while (q >= 0) {
-						if (same(i, vals[q])) {
+						var y = vals[q];
+						if (y.op == Store) {
+							if (op == Load && answers(y, i)) {
+								hit = res(y.c);
+								break;
+							}
+						} else if (same(i, y)) {
 							hit = q;
 							break;
 						}

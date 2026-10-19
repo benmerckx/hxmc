@@ -345,6 +345,14 @@ export async function run(wasm, options = {}) {
 		},
 		readFile: () => null,
 		writeFile: () => 0,
+		// (GcSys's descriptors: no files here, but writes to stdout and stderr)
+		fileIo(op, fd, x, a, b) {
+			if (op !== 2 || (fd !== 1 && fd !== 2)) return -1;
+			const buf = new Uint8Array(b);
+			for (let i = 0; i < b; i++) buf[i] = exports.hxmc_bytes_get(x, a + i);
+			write(fd, buf);
+			return b;
+		},
 		dateNum(op, t, y, m, d, h, mi, s) {
 			const date = new Date(t);
 			const f = [null, 'FullYear', 'Month', 'Date', 'Day', 'Hours', 'Minutes', 'Seconds'];

@@ -1,0 +1,20 @@
+exit 0
+int 2 true rejected=true
+float 2 true rejected=true
+bool 2 true rejected=true
+int64 2 true rejected=true
+string 2 true rejected=true
+object 2 true rejected=true
+nullable 2 true rejected=true
+dynamic 2 true rejected=true
+error "Index 5 out of bounds for length 3" index in NativeArrayBoundsThrows.main at NativeArrayBoundsThrows.hx:81
+compound true indices=1 rhs=0
+in bounds 3 2,3,3 post=1 pre=3 indices=4 rhs=1
+increments true true 2,3,3
+dynamic view true true 3
+generic true true 4
+dynamic index true true 3
+empty true true 0
+blit 2,3,4 true 3,4,4 true
+overlap 1,1,2,3
+handlers 47964

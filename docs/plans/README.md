@@ -16,6 +16,7 @@ and in which order: [ROADMAP.md](../../ROADMAP.md). What is built:
 | [ui-next.md](ui-next.md) | `@hxmc/ui`'s handoff: where single-source widgets, layout and drawn fidelity stand, the next steps by priority |
 | [theme.md](theme.md) | unstyled widgets, the rule engine and the shadcn-based `@hxmc/theme`: the contract and who builds what |
 | [dev-loop.md](dev-loop.md) | live reload and fast refresh: `hxmc dev`, state carried by key, seamless swaps, styles without a rebuild (steps 1 and 2 built: [dev.md](../dev.md)) |
+| [haxe-versions.md](haxe-versions.md) | any Haxe version per project, 4.0 onwards: the compiler generated from upstream's OCaml (ml2hx, PR #5), our changes as overlays, hxmc on a stable compiler API |
 | [document.md](document.md) | views rendered to PDF, SVG or pixels: the document platform and what today's Canvas must allow |
 | [native-or-drawn.md](native-or-drawn.md) | each widget native, drawn or auto: the defaults, platform views in a drawn tree, the browser's DOM renderer |
 | [view.md](view.md) | `@hxmc/view`: signals, markup and the renderer contract; what was looked at, chosen and rejected |

@@ -78,6 +78,7 @@ class Crosshost {
 		mkdirs(d);
 		var args = name == "TOOL" ? TOOL_ARGS : ["-cp", "hxmc/test/cases", "-main", name];
 		if (name != "TOOL") {
+			args = args.concat(Corpus.caseDefines("hxmc/test/cases/" + name + ".hx"));
 			// a case's C companions (Corpus.nativeInputs: built with zig, or skipped)
 			var glibc = target.endsWith("-glibc");
 			if (!glibc && Corpus.GLIBC_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.GLIBC_ONLY[name]};

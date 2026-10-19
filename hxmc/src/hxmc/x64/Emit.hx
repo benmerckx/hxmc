@@ -156,14 +156,17 @@ class Emit implements hxmc.Target.Emitter {
 		op(Unwind.ENDPROLOGUE);
 		if (sizeStats) stat("prologue", text.buf.len - start);
 		epiLabel = -1;
+		// (a move of a register to itself: a zero or sign extension is not)
+		f.threadJumps(i -> (i.op : XOp) == JMP,
+			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && !(i.size == 4 && i.imm2 == 1)));
 		for (b in f.blocks)
 			b.label = a.newLabel();
-		f.threadJumps(i -> (i.op : XOp) == JMP);
 		var tables:Array<{label:Int, entries:Array<LBlock>}> = [];
 		for (bi in 0...f.blocks.length) {
 			var b = f.blocks[bi];
 			a.bind(b.label);
 			var next = bi + 1 < f.blocks.length ? f.blocks[bi + 1] : null;
+			LFunc.fallThrough(b, next, i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> i.cond ^= 1);
 			// a zero constant may be xor where no flags are live (none are
 			// live at block ends: branches consume them in their block)
 			var live = false;

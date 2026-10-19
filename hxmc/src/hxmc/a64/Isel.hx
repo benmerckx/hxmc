@@ -75,11 +75,11 @@ class Isel implements hxmc.Target.Selector {
 	var apple:Bool;
 	var m:MFunc;
 	var f:LFunc;
-	var vreg:Array<Int>;
-	var useCount:Array<Int>;
+	var vreg:haxe.ds.Vector<Int>;
+	var useCount:haxe.ds.Vector<Int>;
 	var lb:Array<LBlock>;
 	var cur:LBlock;
-	var folded:Array<Bool>;
+	var folded:haxe.ds.Vector<Bool>;
 
 	var abi:Abi;
 	// the base register of thread-local variables when they are reached from
@@ -276,7 +276,7 @@ class Isel implements hxmc.Target.Selector {
 			f.slot(s.size, s.align);
 		vreg = hxmc.Lir.Arrays.filled(mf.vals.length, -1);
 		useCount = hxmc.Lir.Arrays.filled(mf.vals.length, 0);
-		folded = [for (_ in mf.vals) false];
+		folded = new haxe.ds.Vector(mf.vals.length);
 		for (b in mf.blocks)
 			for (i in b.ins) {
 				for (x in [i.a, i.b, i.c])

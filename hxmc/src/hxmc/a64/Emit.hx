@@ -145,14 +145,16 @@ class Emit implements hxmc.Target.Emitter {
 		}
 		subSp(split);
 		op(Unwind.ENDPROLOGUE);
+		// (a move of a register to itself: a 32-bit one zero-extends)
+		f.threadJumps(i -> (i.op : AOp) == B, i -> (i.op : AOp) == MOV && i.d == i.s1 && (i.d >= 32 || i.size != 4));
 		for (b in f.blocks)
 			b.label = a.newLabel();
-		f.threadJumps(i -> (i.op : AOp) == B);
 		var tables:Array<{label:Int, entries:Array<LBlock>}> = [];
 		for (bi in 0...f.blocks.length) {
 			var b = f.blocks[bi];
 			a.bind(b.label);
 			var next = bi + 1 < f.blocks.length ? f.blocks[bi + 1] : null;
+			LFunc.fallThrough(b, next, i -> (i.op : AOp) == B, i -> (i.op : AOp) == BCOND || (i.op : AOp) == CBZ, i -> if ((i.op : AOp) == CBZ) i.flag = !i.flag else i.cond ^= 1);
 			for (i in b.ins)
 				ins(i, next, tables);
 		}

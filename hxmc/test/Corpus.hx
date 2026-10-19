@@ -118,6 +118,7 @@ class Corpus {
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
+		var defines = caseDefines(c.cps[0] + "/" + c.main + ".hx");
 		var t0 = now();
 		// (WebAssembly: the program is typed for it, with its runtime)
 		if (!FileSystem.exists(hxb) || mtime(hxb) < Math.max(newest(c.cps), mtime(STD + "/.stamp"))) {
@@ -126,7 +127,7 @@ class Corpus {
 			for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
 			cmd = cmd.concat(["-cp", FileSystem.fullPath(STD), "-main", c.main, "--custom-target", 'hxmc=$d/x', "--hxb", hxb, "-D", "disable-parallelism", "--no-output"]);
 			if (wasm) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
-			var r = exec(cmd);
+			var r = exec(cmd.concat(defines));
 			if (r.code != 0) return {name: c.name, status: "hxb-fail", detail: tail(r.out + r.err, 1500)};
 		}
 		var expected = EXPECTED + "/" + c.name + ".txt";
@@ -141,15 +142,15 @@ class Corpus {
 		if (libc != null) cmd = cmd.concat(["-D", "hxmc.libc=" + libc]);
 		if (native.links.length > 0) cmd = cmd.concat(["-D", "hxmc.link=" + native.links.join(",")]);
 		if (wasm && wasmEh != null) cmd = cmd.concat(["-D", "hxmc.wasm-eh=" + wasmEh]);
+		// (the defines: caseDefines, as when typing)
 		var src = c.cps[0] + "/" + c.main + ".hx";
 		if (FileSystem.exists(src))
 			for (l in File.getContent(src).split("\n"))
-				if (l.trim().startsWith("// define: ")) cmd = cmd.concat(["-D", l.trim().substr(11)]);
-				else if (l.trim().startsWith("// resource: ")) {
+				if (l.trim().startsWith("// resource: ")) {
 					var r = l.trim().substr(13).split("@");
 					cmd = cmd.concat(["--resource", FileSystem.fullPath(c.cps[0] + "/" + r[0]) + (r.length > 1 ? "@" + r[1] : "")]);
 				}
-		var r = exec(cmd, {env: ["HXMC_STATS" => "1"]});
+		var r = exec(cmd.concat(defines), {env: ["HXMC_STATS" => "1"]});
 		File.saveContent(d + "/hxmc.log", r.out + r.err);
 		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
 		var re = ~/hxmc: ([0-9]+) functions/;
@@ -188,6 +189,15 @@ class Corpus {
 		return {name: c.name, status: "ok", detail: '${fixed(now() - t0)}s $nf'};
 	}
 
+	// Per-case defines must apply to typing as well as code generation.
+	public static function caseDefines(src:String):Array<String> {
+		var result = [];
+		if (FileSystem.exists(src))
+			for (l in File.getContent(src).split("\n"))
+				if (l.trim().startsWith("// define: ")) result = result.concat(["-D", l.trim().substr(11)]);
+		return result;
+	}
+
 	// A case the compiler must reject: every `// expect: <text>` line of its
 	// source names a part of the error.
 	static function rejectCase(c:CorpusCase):CorpusResult {
@@ -200,7 +210,7 @@ class Corpus {
 		// (`// target: <target>`: the target the case is about, whatever the host)
 		var own = [for (l in src.split("\n")) if (l.trim().startsWith("// target: ")) l.trim().substr(11)];
 		if (own.length > 0) cmd = cmd.concat(["-D", "hxmc.target=" + own[0]]) else if (target != null) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
-		var r = exec(cmd);
+		var r = exec(cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")));
 		var out = r.out + r.err;
 		if (r.code == 0) return {name: c.name, status: "differs", detail: "compiled, but must be rejected"};
 		for (w in want)

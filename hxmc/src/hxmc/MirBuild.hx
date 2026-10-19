@@ -871,7 +871,7 @@ class MirBuild {
 
 	// replaces phis whose operands are one value (or the phi itself), until none is left
 	function removeTrivialPhis() {
-		var repl:Null<Array<Int>> = null; // phi -> its value (-1: none)
+		var repl:Null<haxe.ds.Vector<Int>> = null; // phi -> its value (-1: none)
 		inline function find(v:Int):Int {
 			if (repl != null)
 				while (v < repl.length && repl[v] >= 0)
@@ -1186,6 +1186,59 @@ class MirBuild {
 		cur = done;
 	}
 
+	// Fixed arrays often outlive the values written into them. Avoid the
+	// barrier call altogether when the new value is null or outside the nursery.
+	function nativeSetPtr(obj:Int, slot:Int, val:Int) {
+		var prev = loadM(Opt.MElem, I64, 8, slot, 0);
+		storeM(Opt.MElem, 8, slot, 0, val);
+		var ys = loadM(Opt.MCallOnly, I64, 8, symAddr("rt_young_start"), 0);
+		var ye = loadM(Opt.MCallOnly, I64, 8, symAddr("rt_young_end"), 0);
+		var size = op2(Sub, I64, ye, ys);
+		var check = newBlock(), slow = newBlock(), done = newBlock();
+		slow.cold = true;
+		br(cmp(CULt, op2(Sub, I64, val, ys), size), check, done);
+		seal(check);
+		cur = check;
+		br(cmp(CULt, op2(Sub, I64, obj, ys), size), done, slow);
+		seal(slow);
+		cur = slow;
+		call("hxmc_barrier_slow", [obj, slot, val, prev], Void);
+		jmp(done);
+		seal(done);
+		cur = done;
+	}
+
+	// an element of a NativeArray seen as Dynamic (FnLower.nativeRead): of
+	// reference storage directly, else through the runtime (rt/NArray's
+	// hx_narray_get_slow, hx_narray_set_slow: the other kinds, wrappers). A
+	// wrapper's kind changes, but never to AK_PTR, so the test may be shared
+	// as that of a constant. At a cold site (Facts.markCold), the live
+	// references are spilled around that call only
+	function narrayDyn(name:String, xs:Array<Int>):Int {
+		var a = xs[0];
+		var get = name == "hxmc_narray_dget";
+		var r = get ? newVar(I64) : -1;
+		var fast = newBlock(), slow = newBlock(), join = newBlock();
+		br(cmp(CEq, loadM(Opt.MConst, I32, 4, a, 4), iconst(Abi.AK_PTR)), fast, slow);
+		seal(fast);
+		seal(slow);
+		cur = fast;
+		var ix = op1(SExt, I64, xs[1]);
+		if (get) writeVar(r, cur, loadM(Opt.MElem, I64, 8, a, 8, false, ix, 8));
+		else nativeSetPtr(a, op2(Add, I64, a, op2(Add, I64, lconst32(8), op2(Shl, I64, ix, iconst(3)))), xs[2]);
+		jmp(join);
+		cur = slow;
+		var list = coldList;
+		var sp = spillOpen(list, 0);
+		var c = call(get ? "hx_narray_get_slow" : "hx_narray_set_slow", xs, get ? I64 : Void);
+		spillClose(list, sp);
+		if (get) writeVar(r, cur, c);
+		jmp(join);
+		seal(join);
+		cur = join;
+		return get ? readVar(r, cur) : iconst(0);
+	}
+
 	function tindex(o:Int):Int
 		return loadM(Opt.MConst, I32, 2, o, Abi.HDR_TINDEX);
 
@@ -1287,6 +1340,8 @@ class MirBuild {
 				arrSet(elem, a, i, v, true);
 			case SArrPush(elem, a, v):
 				arrPush(elem, a, v, true);
+			case SExpr(e):
+				ex(e);
 			case _:
 				throw new Unsupported("cold statement");
 		}
@@ -1729,6 +1784,7 @@ class MirBuild {
 					case "Float": 3;
 					case "Bool": 4;
 					case "Array": 5;
+					case "hxmc_NativeArray": Abi.T_NATIVE_ARRAY;
 					case "haxe_io_Bytes": 8;
 					case _: 0;
 				}
@@ -1970,6 +2026,54 @@ class MirBuild {
 	}
 
 	function host(name:String, args:Array<Ex>, ret:Ty):Int {
+		if (StringTools.startsWith(name, "hxmc_narray_")) {
+			var xs = [for (a in args) ex(a)];
+			if (name == "hxmc_narray_new") {
+				var k = intLiteral(args[0], "NativeArray kind");
+				var n = xs[1];
+				var res = newVar(I64);
+				// (1 to the most elements a header can count, by one unsigned
+				// test; none: the empty array of the kind, EMPTY_ARRAY)
+				var valid = newBlock(), other = newBlock(), empty = newBlock(), invalid = newBlock(), join = newBlock();
+				other.cold = true;
+				br(cmp(CULt, op2(Sub, I32, n, iconst(1)), iconst(k == Abi.AK_BOOL ? 0x7FFFFFE8 : k == Abi.AK_I32 ? 0x1FFFFFFA : 0x0FFFFFFD)), valid, other);
+				seal(other);
+				cur = other;
+				br(cmp(CEq, n, iconst(0)), empty, invalid);
+				seal(invalid);
+				cur = invalid;
+				var invalidSp = spillOpen(coldList, 0);
+				call("hx_narray_bad_length", [], Void);
+				spillClose(coldList, invalidSp);
+				jmp(empty);
+				seal(empty);
+				cur = empty;
+				writeVar(res, cur, symAddr(EMPTY_ARRAY + k, 8));
+				jmp(join);
+				seal(valid);
+				cur = valid;
+				// One metadata word plus the elements; the header counts 8-byte slots.
+				var words = k == Abi.AK_BOOL ? op2(Shr, I32, op2(Add, I32, n, iconst(7)), iconst(3))
+					: k == Abi.AK_I32 ? op2(Shr, I32, op2(Add, I32, n, iconst(1)), iconst(1)) : n;
+				var a = allocDyn(op2(Add, I32, words, iconst(1)), iconst(Abi.T_NATIVE_ARRAY), iconst(k == Abi.AK_PTR ? Abi.K_PARR : Abi.K_RAW), true);
+				storeM(Opt.MInit, 4, a, 0, n);
+				storeM(Opt.MInit, 4, a, 4, iconst(k));
+				writeVar(res, cur, a);
+				jmp(join);
+				seal(join);
+				cur = join;
+				return readVar(res, cur);
+			}
+			if (name == "hxmc_narray_length") return loadM(Opt.MConst, I32, 4, xs[0], 0);
+			if (name == "hxmc_narray_dget" || name == "hxmc_narray_dset") return narrayDyn(name, xs);
+			var suffix = name.substr(name.length - 1);
+			var size = suffix == "b" ? 1 : suffix == "i" ? 4 : 8;
+			var ix = op1(SExt, I64, xs[1]);
+			if (StringTools.startsWith(name, "hxmc_narray_get_")) return loadM(Opt.MElem, mty(ret), size, xs[0], 8, false, ix, size);
+			if (suffix == "p") nativeSetPtr(xs[0], op2(Add, I64, xs[0], op2(Add, I64, lconst32(8), op2(Shl, I64, ix, iconst(3)))), xs[2]);
+			else storeM(Opt.MElem, size, xs[0], 8, xs[2], ix, size);
+			return iconst(0);
+		}
 		// Dynamic access by a literal name: the field id is known here
 		switch name {
 			case "hx_dyn_get" | "hx_dyn_set" | "hx_dyn_call_field" if (args[1].match(EStr(_))):
@@ -2344,6 +2448,11 @@ class MirBuild {
 		return CSTR + b.toHex();
 	}
 
+	// the empty NativeArray of an element kind, its symbol: the kind after
+	// EMPTY_ARRAY (DataGen.emptyArrays defines it in .data, once per program):
+	// every array made with no elements is that one, which cannot change
+	public static inline var EMPTY_ARRAY = "hxmc$narray_empty$";
+
 	// the symbol of Mem.words' data: its bytes in hexadecimal after WORDS
 	// (DataGen.cstrLiterals defines it in .rodata, 8-byte aligned, once per
 	// program): 8-byte little-endian words, `digits` hexadecimal digits each
@@ -2580,7 +2689,11 @@ class MirBuild {
 		writeVar(res, cur, op2(Add, I64, ptr, lconst32(8)));
 		jmp(join);
 		cur = slow;
-		writeVar(res, cur, call("hxmc_alloc_slow", [op2(Or, I32, n, op2(Shl, I32, kind, iconst(28))), tidx, op1(Trunc, I32, bytes)], I64));
+		var list = coldList;
+		var sp = spillOpen(list, 0);
+		var r = call("hxmc_alloc_slow", [op2(Or, I32, n, op2(Shl, I32, kind, iconst(28))), tidx, op1(Trunc, I32, bytes)], I64);
+		spillClose(list, sp);
+		writeVar(res, cur, r);
 		jmp(join);
 		seal(join);
 		cur = join;

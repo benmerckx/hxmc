@@ -11,6 +11,48 @@ import hxmc.unsafe.Mem;
 	Atomic integer.
 **/
 abstract AtomicInt(Dynamic) {
+	#if hxmc.wasm_gc
+	// (-D hxmc.wasm-gc: the cell a NativeArray<Int> of one element, there being no threads)
+	static function cell(v:Int):Dynamic {
+		var a = new hxmc.NativeArray<Int>(1);
+		a[0] = v;
+		return a;
+	}
+
+	static inline function arr(a:Dynamic):hxmc.NativeArray<Int>
+		return cast a;
+
+	static function add32(a:Dynamic, v:Int):Int {
+		var o = arr(a)[0];
+		arr(a)[0] = o + v;
+		return o;
+	}
+
+	static function cas32(a:Dynamic, e:Int, r:Int):Int {
+		var o = arr(a)[0];
+		if (o == e) arr(a)[0] = r;
+		return o;
+	}
+
+	static function exchange32(a:Dynamic, v:Int):Int {
+		var o = arr(a)[0];
+		arr(a)[0] = v;
+		return o;
+	}
+
+	static function load32(a:Dynamic):Int
+		return arr(a)[0];
+
+	static function store32(a:Dynamic, v:Int)
+		arr(a)[0] = v;
+
+	// (op 0 and, 1 or, 2 xor): the previous value
+	static function bitwise(a:Dynamic, v:Int, op:Int):Int {
+		var o = arr(a)[0];
+		arr(a)[0] = op == 0 ? o & v : op == 1 ? o | v : o ^ v;
+		return o;
+	}
+	#else
 	static function cell(v:Int):Dynamic {
 		var a = Mem.allocRaw(1, 16, 2); // T_NATIVE, K_RAW
 		Mem.setI32(Mem.addr(a), 0, v);
@@ -46,6 +88,7 @@ abstract AtomicInt(Dynamic) {
 			o = seen;
 		}
 	}
+	#end
 
 	public inline function new(value:Int):Void {
 		this = cell(value);

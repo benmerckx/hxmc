@@ -16,10 +16,10 @@ class Roots {
 	var refs:Bits; // locals of reference type
 	public var rooted:Bits;
 	public var spills = new Map<Int, Array<Local>>(); // SCold id -> references live across its slow path
-	var byId:Array<Null<Local>>;
+	var byId:haxe.ds.Vector<Null<Local>>;
 	// interference of the reference locals (dense indices; null: none kept,
 	// a slot per rooted local)
-	var refIdx:Array<Int>;
+	var refIdx:haxe.ds.Vector<Int>;
 	var inter:Null<Array<Bits>>;
 	// the raw-address check (rawViolations): locals holding addresses of heap
 	// objects, what is found, the GC point being looked at
@@ -38,7 +38,7 @@ class Roots {
 		for (l in all)
 			if (l.id >= n) n = l.id + 1;
 		r.n = n;
-		r.byId = [for (_ in 0...n) null];
+		r.byId = new haxe.ds.Vector(n);
 		r.refs = new Bits(n);
 		for (l in all) {
 			r.byId[l.id] = l;
@@ -79,7 +79,7 @@ class Roots {
 		for (l in all)
 			if (l.id >= n) n = l.id + 1;
 		r.n = n;
-		r.byId = [for (_ in 0...n) null];
+		r.byId = new haxe.ds.Vector(n);
 		r.refs = new Bits(n);
 		for (l in all)
 			r.byId[l.id] = l;
@@ -321,6 +321,8 @@ class Roots {
 			case SArrPush(_, a, v):
 				live.set(a.id);
 				uses(v, live);
+			case SExpr(e):
+				uses(e, live);
 			case _:
 				throw "cold statement";
 		}

@@ -43,6 +43,13 @@ class ZipOutput extends AnyOutput {
 	// modules are byte streams, so archive generation must retain every byte.
 	public function addBytesEntry(content:Bytes, name:String):Void {
 		if (closed) throw "Output is closed";
+		addPreparedEntry(makeEntry(content, name));
+	}
+
+	// port: addBytesEntry in two steps: makeEntry (the CRC and the compression) leaves the
+	// ... output untouched and may run on several threads at once (genjvm's write_class);
+	// ... addPreparedEntry adds the entry, one thread at a time.
+	public function makeEntry(content:Bytes, name:String):Entry {
 		var data = content;
 		var fileSize = data.length;
 		var compressed = compressionLevel != 0;
@@ -55,15 +62,21 @@ class ZipOutput extends AnyOutput {
 			libs.extc.Extc.zlibDeflateEnd(z);
 			data = d.sub(0, r.z_wrote);
 		}
-		entries.add({
+		return {
 			fileName: name,
 			fileSize: fileSize,
-			fileTime: Date.now(),
+			fileTime: null,
 			compressed: compressed,
 			dataSize: data.length,
 			data: data,
 			crc32: crc32
-		});
+		};
+	}
+
+	public function addPreparedEntry(entry:Entry):Void {
+		if (closed) throw "Output is closed";
+		entry.fileTime = Date.now();
+		entries.add(entry);
 	}
 
 	// port: table-driven CRC-32, as in zlib (upstream's Zip uses zlib's crc32);

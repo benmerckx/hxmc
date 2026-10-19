@@ -88,11 +88,11 @@ class Isel implements hxmc.Target.Selector {
 
 	var m:MFunc;
 	var f:LFunc;
-	var vreg:Array<Int>; // Mir value -> register
-	var useCount:Array<Int>;
+	var vreg:haxe.ds.Vector<Int>; // Mir value -> register
+	var useCount:haxe.ds.Vector<Int>;
 	var lb:Array<LBlock>; // Mir block id -> LBlock
 	var cur:LBlock;
-	var folded:Array<Bool>; // Mir values computed inside their user (no code of their own)
+	var folded:haxe.ds.Vector<Bool>; // Mir values computed inside their user (no code of their own)
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
 
@@ -377,7 +377,7 @@ class Isel implements hxmc.Target.Selector {
 			f.slot(s.size, s.align);
 		vreg = hxmc.Lir.Arrays.filled(mf.vals.length, -1);
 		useCount = hxmc.Lir.Arrays.filled(mf.vals.length, 0);
-		folded = [for (_ in mf.vals) false];
+		folded = new haxe.ds.Vector(mf.vals.length);
 		var addrUses = hxmc.Lir.Arrays.filled(mf.vals.length, 0); // uses as the base of a load or store
 		for (b in mf.blocks)
 			for (i in b.ins) {

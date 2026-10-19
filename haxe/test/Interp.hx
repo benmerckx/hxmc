@@ -5,7 +5,7 @@ import sys.io.File;
 using StringTools;
 
 // Execution conformance of the port's Eval (--interp / --run):
-//   <haxe> -cp haxe/test --run Interp [-j N] [--cases FILE]... [--summary <file>] [name-substring ...]
+//   <haxe> -cp haxe/test --run Interp [-j N] [--cases FILE]... [--skip CASE]... [--summary <file>] [name-substring ...]
 // Every case of the lists (default the HXB and macro lists) is executed by
 // the reference and by the port; exit code, stdout and stderr must agree.
 // direct/module cases get --interp appended; hxml cases run as written when
@@ -19,10 +19,10 @@ class Interp {
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["-j", "--summary"]);
-		var files = [];
+		var files = [], skips = [];
 		var args = Sys.args();
-		for (i in 0...args.length) if (args[i] == "--cases") files.push(args[i + 1]);
-		var rest = [for (r in o.rest) if (!files.contains(r)) r];
+		for (i in 0...args.length) if (args[i] == "--cases") files.push(args[i + 1]) else if (args[i] == "--skip") skips.push(args[i + 1]);
+		var rest = [for (r in o.rest) if (!files.contains(r) && !skips.contains(r)) r];
 		if (files.length == 0) files = ["haxe/test/conformance-cases.txt", "haxe/test/conformance-macro-cases.txt"];
 		var reference = FileSystem.fullPath(Sys.getEnv("HAXE_REFERENCE") ?? "bin/reference/haxe");
 		var port = shellSplit(Sys.getEnv("HAXE_IN_HAXE_PORT") ?? "bin/port/haxe");
@@ -30,7 +30,7 @@ class Interp {
 		var std = root + "/haxe/upstream/std";
 		Sys.putEnv("HAXE_STD_PATH", std);
 		Sys.putEnv("HAXE_IN_HAXE_STD_PATH", std);
-		var cases = [for (f in files) for (c in Conformance.parseCases(f)) if (rest.length == 0 || Lambda.exists(rest, x -> c.name.contains(x))) c];
+		var cases = [for (f in files) for (c in Conformance.parseCases(f)) if ((rest.length == 0 || Lambda.exists(rest, x -> c.name.contains(x))) && !skips.contains(c.name)) c];
 		mkdirs(GENERATED);
 		var gen = FileSystem.fullPath(GENERATED);
 		var executes = ~/^\s*(--interp|--run|-x)\b/m;

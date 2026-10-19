@@ -429,9 +429,10 @@ class Graph {
 		createVarInfo(g, bb, v);
 	}
 
+	// port: `x :: l` as pushes: bbVarWrites and viWrites are read from the end where the order matters
 	public static function addVarDef(g:GraphData, bb:BasicBlockData, v:TVar):Void if (bb.bbId > 0) {
-		bb.bbVarWrites.unshift(v);
-		getVarInfo(g, v).viWrites.unshift(bb);
+		bb.bbVarWrites.push(v);
+		getVarInfo(g, v).viWrites.push(bb);
 	}
 
 	public static function setVarValue(g:GraphData, v:TVar, bb:BasicBlockData,
@@ -475,8 +476,16 @@ class Graph {
 
 	public static function createNode(g:GraphData, kind:BlockKind, t:T, p:Pos):BasicBlockData {
 		var bb = BasicBlock.create(allocId(), kind, t, p);
-		g.gNodes.unshift(bb);
+		// port: `bb :: g.g_nodes` as a push: gNodes is in creation order, `nodes` gives upstream's
+		g.gNodes.push(bb);
 		return bb;
+	}
+
+	// port: g.g_nodes, the most recent block first (gNodes reversed)
+	public static function nodes(g:GraphData):Array<BasicBlockData> {
+		var l = g.gNodes.copy();
+		l.reverse();
+		return l;
 	}
 
 	public static function closeNode(bb:BasicBlockData):Void if (bb.bbId > 0) {
@@ -486,7 +495,9 @@ class Graph {
 
 	public static function iterDomTreeFrom(g:GraphData, bb:BasicBlockData, f:BasicBlockData->Void):Void {
 		f(bb);
-		for (child in bb.bbDominated) iterDomTreeFrom(g, child, f);
+		// port: bbDominated is in push order (inferImmediateDominators)
+		var i = bb.bbDominated.length;
+		while (i > 0) iterDomTreeFrom(g, bb.bbDominated[--i], f);
 	}
 
 	public static function iterDomTree(g:GraphData, f:BasicBlockData->Void):Void iterDomTreeFrom(g, g.gRoot, f);
@@ -513,7 +524,7 @@ class Graph {
 		};
 	}
 
-	public static function checkIntegrity(g:GraphData):Void for (bb in g.gNodes) {
+	public static function checkIntegrity(g:GraphData):Void for (bb in nodes(g)) {
 		for (edge in bb.bbOutgoing) if (edge.cfgTo == g.gUnreachable) Sys.println('Outgoing edge from ${bb.bbId} to the unreachable block');
 		else if (!edge.cfgTo.bbIncoming.contains(edge))
 			Sys.println('Outgoing edge ${edge.cfgFrom.bbId} -> ${edge.cfgTo.bbId} has no matching incoming edge');
@@ -558,16 +569,19 @@ class Graph {
 		}
 		visit(g.gRoot, g.gRoot);
 		function compress(bbi:DomBbInfo):Void {
+			// port: `bbi :: l` as a push: the worklist is read from the end
 			var worklist = [bbi];
 			var ancestor = bbi.ancestor;
 			while (ancestor.ancestor != ancestor) {
-				worklist.unshift(ancestor);
+				worklist.push(ancestor);
 				ancestor = ancestor.ancestor;
 			}
 			if (worklist.length == 0) throw "AnalyzerTypes.compress";
-			var a = worklist.shift();
+			var i = worklist.length - 1;
+			var a = worklist[i];
 			var minSemi = a.label.semi;
-			for (desc in worklist) {
+			while (i > 0) {
+				var desc = worklist[--i];
 				var label = desc.label;
 				if (label.semi > minSemi) desc.label = a.label;
 				else minSemi = label.semi;
@@ -586,12 +600,19 @@ class Graph {
 		while (i > 0) {
 			var w = nodes[i--];
 			var semi = w.semi;
-			for (edge in w.bb.bbIncoming) semi = Std.int(Math.min(semi, eval(edge.cfgFrom.bbId).semi));
+			for (edge in w.bb.bbIncoming) {
+				var s = eval(edge.cfgFrom.bbId).semi;
+				if (s < semi) semi = s;
+			}
 			w.semi = semi;
-			nodes[semi].bucket.unshift(w);
+			// port: `w :: bbi.bucket` as a push: buckets are read from the end
+			nodes[semi].bucket.push(w);
 			var parent = w.parent;
 			w.ancestor = parent;
-			for (v in parent.bucket) {
+			var bucket = parent.bucket;
+			var j = bucket.length;
+			while (j > 0) {
+				var v = bucket[--j];
 				var u = eval(v.bb.bbId);
 				v.idom = u.semi < v.semi ? u : parent;
 			}
@@ -604,7 +625,8 @@ class Graph {
 			var other = bbi.idom.bb;
 			if (bb != other) {
 				bb.bbDominator = other;
-				other.bbDominated.unshift(bb);
+				// port: `bb :: bb'.bb_dominated` as a push: bbDominated is read from the end
+				other.bbDominated.push(bb);
 			}
 		}
 	}

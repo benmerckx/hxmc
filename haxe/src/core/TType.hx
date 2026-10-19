@@ -732,6 +732,7 @@ enum ModuleType {
 }
 
 @:structInit class ModuleDefDisplay {
+	// port: mInlineCalls and mTypeHints in push order (`x :: l` as a push): read from the end
 	public var mInlineCalls:Array<{var callPos:Pos; var definitionPos:Pos;}>; /* calls whatever is at pos1 from pos2 */
 	public var mTypeHints:Array<{var hintPos:Pos; var typePos:Pos;}>;
 	public var mImportPositions:Map<String, Bool>;

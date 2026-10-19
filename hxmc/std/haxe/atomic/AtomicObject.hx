@@ -15,6 +15,35 @@ import hxmc.unsafe.Ptr;
 	Atomic object. Use with care, this does not magically make it thread-safe to mutate objects.
 **/
 abstract AtomicObject<T:{}>(Dynamic) {
+	#if hxmc.wasm_gc
+	// (-D hxmc.wasm-gc: the cell a NativeArray<Dynamic> of one element, there being no threads)
+	static function cell(v:Dynamic):Dynamic {
+		var a = new hxmc.NativeArray<Dynamic>(1);
+		a[0] = v;
+		return a;
+	}
+
+	static inline function arr(a:Dynamic):hxmc.NativeArray<Dynamic>
+		return cast a;
+
+	static function get(a:Dynamic):Dynamic
+		return arr(a)[0];
+
+	static function put(a:Dynamic, v:Dynamic)
+		arr(a)[0] = v;
+
+	static function swap(a:Dynamic, v:Dynamic):Dynamic {
+		var o = arr(a)[0];
+		arr(a)[0] = v;
+		return o;
+	}
+
+	static function cas(a:Dynamic, e:Dynamic, r:Dynamic):Dynamic {
+		var o = arr(a)[0];
+		if (hxmc.rt.gc.W.same(o, e)) arr(a)[0] = r;
+		return o;
+	}
+	#else
 	static function cell(v:Dynamic):Dynamic {
 		var a = Mem.alloc(1, 6, 1); // T_ADATA_P, K_PARR
 		Mem.setRef(Mem.addr(a), 0, v); // (a is young)
@@ -47,6 +76,7 @@ abstract AtomicObject<T:{}>(Dynamic) {
 		if (Ptr.ofI64(o) == Ptr.ofI64(ei)) Leaf.rt_barrier_range(a, p, 1);
 		return Mem.obj(Ptr.ofI64(o));
 	}
+	#end
 
 	public inline function new(value:T):Void {
 		this = cell(value);

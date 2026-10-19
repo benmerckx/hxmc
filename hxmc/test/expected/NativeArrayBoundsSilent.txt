@@ -1,0 +1,15 @@
+exit 0
+int 0,0,0,0 2 true false
+float 0,0,0,0 2 true false
+bool false,false,false,false 2 true false
+int64 0,0,0,0 2 true false
+string null,null,null,null 2 true false
+object null,null,null,null 2 true false
+nullable null,null,null,null 2 true false
+dynamic null,null,null,null 2 true false
+compound 3 5 post=0 pre=1 rhs=1 1,2,3
+dynamic view 0 3 1,2,3
+generic 0 6 0,6 0
+dynamic index 0 3
+empty 0 0 0
+blit 0,0,1,2,3

@@ -502,6 +502,25 @@ class DataGen {
 		}
 	}
 
+	// the empty NativeArrays the program refers to (MirBuild.EMPTY_ARRAY), in
+	// .data as string literals are: MKHDR(1, K_RAW, T_NATIVE_ARRAY), length 0,
+	// the kind
+	public function emptyArrays(objs:Array<Obj>) {
+		var names = new Map<String, Bool>();
+		for (o in objs.concat([obj]))
+			for (s in o.symbols)
+				if (s.section == null && !s.abs && StringTools.startsWith(s.name, MirBuild.EMPTY_ARRAY)) names.set(s.name, true);
+		var list = [for (n in names.keys()) n];
+		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		for (n in list) {
+			data.buf.align(8);
+			obj.define(n, data, data.buf.len, 16, true);
+			data.buf.u64(1 | (Abi.K_RAW << 28), Abi.T_NATIVE_ARRAY);
+			data.buf.u32(0);
+			data.buf.u32(Std.parseInt(n.substr(MirBuild.EMPTY_ARRAY.length)));
+		}
+	}
+
 	// the runtime's machine-code stubs the program refers to (MirBuild.STUB_*)
 	public function stubs(objs:Array<Obj>, emit:Target.Emitter) {
 		for (n in [MirBuild.STUB_CALL_ON_STACK, MirBuild.STUB_ZERO, MirBuild.STUB_FRAME]) {

@@ -199,8 +199,17 @@ class Statistics {
 			var key = Globals.sTypePath(m.mPath);
 			if (!handledModules.exists(key)) {
 				handledModules.set(key, true);
-				for (ic in m.mExtra.mDisplay.mInlineCalls) addRelation(ic.definitionPos, {r: Referenced, p: ic.callPos});
-				for (th in m.mExtra.mDisplay.mTypeHints) addRelation(th.typePos, {r: Referenced, p: th.hintPos});
+				// port: both in push order (ModuleDefDisplay)
+				var calls = m.mExtra.mDisplay.mInlineCalls, i = calls.length;
+				while (i > 0) {
+					var ic = calls[--i];
+					addRelation(ic.definitionPos, {r: Referenced, p: ic.callPos});
+				}
+				var hints = m.mExtra.mDisplay.mTypeHints, i = hints.length;
+				while (i > 0) {
+					var th = hints[--i];
+					addRelation(th.typePos, {r: Referenced, p: th.hintPos});
+				}
 			}
 		}
 		// set up descendants

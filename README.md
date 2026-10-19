@@ -54,6 +54,7 @@ editors, lix and rebuilding the compiler from source:
 | `-debug`, `-D hxmc.symbols` | a symbol table for profilers (wasm: a name section) |
 | `-D hxmc.jobs=<n>` | parallel module compilations (default: the cores) |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling, for older browsers and runtimes |
+| `-D hxmc.native-array-outofbounds=throws\|silent` | Vector (and `hxmc.NativeArray`) accesses out of bounds throw `haxe.exceptions.ArgumentException`, or read the default value and write nothing (default: not tested) |
 | `HXMC_STATS=1` | what the build did and how long it took |
 | `HXMC_CACHE=<dir>` | the cache directory (default: the user's cache folder) |
 | `HXMC_MODULE_CACHE=0`, `-D hxmc.no-module-cache` | turn off the module cache (on by default: typed modules are kept between builds, a rebuild types only what changed) |

@@ -1,12 +1,10 @@
-// haxe.ds.Vector.blit (hxmc/std/haxe/ds/Vector.hx, hxmc.rt.Arr.vectorMove):
+// haxe.ds.Vector.blit (hxmc.NativeArray.blit, hxmc.rt.NArray.move):
 // Float, Int, Bool, String, struct and Dynamic elements, a few (copied
 // inline) and many (moved by the runtime), between vectors and within one
 // in both directions (overlapping), zero and negative lengths, from generic
-// code (elements of any kind read as references), vectors of another
-// element kind than their type's (upstream's loop), a store past the end
-// (it grows the vector, as upstream's loop does on hxmc); references moved
-// into and within an old vector, kept across collections (the barrier),
-// and Vector.copy.
+// code (a NativeArray of any kind seen through Dynamic), Dynamic elements
+// within one vector; references moved into and within an old vector, kept
+// across collections (the barrier), and Vector.copy.
 import haxe.ds.Vector;
 
 @:hxmc.struct @:publicFields class P2 {
@@ -128,19 +126,13 @@ class VectorBlit {
 		gblit(strs(6), 1, gs, 0, 5);
 		Sys.println("g: " + show(gf) + " | " + show(gs));
 
-		// a vector whose elements are of another kind than its type's
-		// (Dynamic Floats) blitted into a Float one: upstream's loop
-		var mixed:Vector<Dynamic> = new Vector<Dynamic>(6);
-		for (i in 0...6)
+		// Dynamic elements (numbers, boxed) moved within a Vector<Dynamic>
+		// from generic code
+		var mixed = new Vector<Dynamic>(8);
+		for (i in 0...8)
 			mixed[i] = i * 1.25;
-		var mf = new Vector<Float>(6);
-		gblit((cast mixed : Vector<Float>), 0, mf, 0, 6);
-		Sys.println("m: " + show(mf) + " " + (mf[5] * 2));
-
-		// past the end: the vector grows (upstream's loop on hxmc)
-		var g = ints(3);
-		Vector.blit(ints(8), 0, g, 1, 6);
-		Sys.println("e: " + show(g) + " " + g.length);
+		gblit(mixed, 0, mixed, 2, 6);
+		Sys.println("m: " + show(mixed) + " " + ((mixed[7] : Float) * 2));
 
 		// references moved into an old vector and within it, then collections
 		var old = new Vector<String>(64);

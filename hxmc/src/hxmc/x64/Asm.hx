@@ -682,14 +682,13 @@ class Asm {
 		var fixups = this.fixups;
 		fixups.sort((x, y) -> x.at - y.at);
 		// shrink: a fixup is short when its displacement fits; removing bytes only shortens distances
-		var short = [for (_ in fixups) false];
+		var short = new haxe.ds.Vector<Bool>(fixups.length);
 		var changed = true;
-		var removedPrefix:Array<Int> = [];
+		var removedPrefix = new haxe.ds.Vector<Int>(fixups.length);
 		function computePrefix() {
-			removedPrefix = [];
 			var n = 0;
 			for (i in 0...fixups.length) {
-				removedPrefix.push(n);
+				removedPrefix[i] = n;
 				if (short[i]) n += fixups[i].cond < 0 ? 3 : 4;
 			}
 		}

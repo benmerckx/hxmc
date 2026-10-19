@@ -7,6 +7,7 @@ package hxmc.rt;
 import hxmc.rt.Str;
 import hxmc.rt.Dyn;
 import hxmc.rt.Arr;
+import hxmc.rt.NArray;
 import hxmc.rt.Bytes;
 import hxmc.rt.Date;
 import hxmc.rt.Names;

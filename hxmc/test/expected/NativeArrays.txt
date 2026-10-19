@@ -1,0 +1,21 @@
+exit 0
+defaults [0,0,0,0,0] [0,0,0] [false,false,false] [null,null,null] [null,null,null]
+layout 4 4 2 4 0
+int [-16,1,9,0,2147483647] post=-17 pre=1 calls=3
+float [1.75,-2.5,3] bool [false,true,true]
+int64 8589934591 -4294967295 4294967296
+generic 23 -16 1.75 8589934599
+nullable [10000,20000,null] filled=[6,6,6]
+copy [-16,1,9,23,2147483647] blit=[-16,1,9,23,23] from=[3,4,5]
+iterator 12
+dynamic 3 1.75 8.5 type=true missing=true
+kind kept
+length kept
+negative rejected
+overflow rejected
+gc 1005890 true true true
+small gc 499500
+no gc helpers 7 10000 bool=true
+nullable types 1.25 true true true
+reference copy true 234 0 10000
+packed bool 6 19 false true

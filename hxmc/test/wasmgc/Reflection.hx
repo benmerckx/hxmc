@@ -57,6 +57,13 @@ class Reflection {
 		}
 		Sys.println(Type.enumEq(Rgb(1, 2, 3), Rgb(1, 2, 3)) + " " + Type.enumEq(Rgb(1, 2, 3), Rgb(1, 2, 4)) + " " + (Red == Red));
 		Sys.println(Type.getEnumName(Type.getEnum(Green)) + " " + (Type.resolveClass("Point") == Point));
+		// enums, Int64 and arithmetic as Dynamic
+		var ds:Array<Dynamic> = [Red, Rgb(1, 2, 3), Named("sky", 0.5)];
+		Sys.println(ds.join(",") + " " + Std.string(ds[1]) + " " + cs);
+		var x:Dynamic = 7, y:Dynamic = 2, z:Dynamic = 0.5, s:Dynamic = "s";
+		Sys.println([x + y, x - y, x * y, x / y, x % y, x & y, x | y, x ^ y, x << y, x >> y, x >>> y, x + z, z * y].join(",") + " " + (s + x) + " " + (x + s));
+		var l1:Dynamic = haxe.Int64.make(1, 2), l2:Dynamic = haxe.Int64.make(1, 2), small:Dynamic = haxe.Int64.ofInt(7);
+		Sys.println((l1 == l2) + " " + (l1 == small) + " " + (small == x) + " " + (x == small));
 		Sys.println("done");
 	}
 }

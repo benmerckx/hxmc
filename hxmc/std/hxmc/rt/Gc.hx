@@ -35,13 +35,26 @@ import hxmc.unsafe.*;
 // time in the collector and a third less peak memory at 16 MB than at 4),
 // and halves after 8 collections that promoted less than a 64th; programs
 // whose objects die young keep 4 MB, which stays in the caches. Between a
-// floor of 4 MB per allocating thread and a ceiling of 16 MB, 8 MB more per
-// other thread, up to 32 MB (MINOR_MIN, MINOR_CAP, MINOR_PER_THREAD,
+// floor of 4 MB per allocating thread, at most 32 MB, and a ceiling of 16 MB
+// per allocating thread, up to 256 MB (MINOR_MIN, FLOOR_MAX, MINOR_CAP,
 // MINOR_MAX): one budget, split into TLABs; threads that fill it together
-// stop together, so each collection costs all of them a pause. A thread
-// counts when it took a TLAB since the last collection; the count grows at
-// once and shrinks after 16 collections with fewer threads (a parallel phase
-// starts and ends its workers' allocation).
+// stop together, so each collection costs all of them a pause, and what each
+// of them is working on survives it. The ceiling grows with the threads so
+// that each of them can allocate as much between two collections as a single
+// thread would (the tool's parallel code generation, 12 threads: sharing
+// 32 MB, a third of its time went to serial minor collections and it
+// promoted 1.3 GB of short-lived data); past the floor, only what survives
+// grows it, so threads whose objects die young keep a small nursery. A
+// thread counts when it took a TLAB since the last collection; the count
+// grows at once and shrinks after 16 collections with fewer threads (a
+// parallel phase starts and ends its workers' allocation).
+//
+// A TLAB is a 16th of the nursery, at most 64 KB (TLAB_MAX; RT_TLAB_KB; in
+// fresh pages, up to a 2 MB boundary: tlabRefill): zeroed when taken, it is
+// still in the L2 cache for the allocations that use it, and its refill is
+// the thread's safepoint, so a small one keeps a stop of the world from
+// waiting long for the other threads (2 MB TLABs: zeroing that missed the
+// caches, and half a second waiting for threads).
 //
 // Allocation zeroes in bulk: a TLAB is zeroed when it is taken (in the L1
 // cache, right before the allocations that use it), so every object
@@ -64,10 +77,12 @@ class Gc {
 	static inline var K_RAW = 2;
 	static inline var K_FWD = 15;
 	static inline var T_NATIVE = 16; // a native handle
-	static inline var MINOR_MAX = 32 << 20;
-	static inline var MINOR_MIN = 4 << 20;
-	static inline var MINOR_CAP = 16 << 20;
-	static inline var MINOR_PER_THREAD = 8 << 20;
+	static inline var MINOR_MAX = 256 << 20;
+	static inline var MINOR_MIN = 4 << 20; // per allocating thread
+	static inline var FLOOR_MAX = 32 << 20;
+	static inline var MINOR_CAP = 16 << 20; // per allocating thread
+	static inline var TLAB_MAX = 64 << 10;
+	static inline var HUGE_PAGE = 2 << 20;
 	static inline var FEWER_THREADS_AFTER = 16;
 	static inline var LOW_PROMOTION_AFTER = 8;
 	static inline var POISON = 0xA5;
@@ -94,7 +109,7 @@ class Gc {
 	@:hxmc.export("hxmc_young_next") static var youngNext:Ptr; // the free part: TLABs are taken from here
 	static var youngDirty:Ptr; // the nursery above this holds zeros (never used since fresh or released)
 	static var minorSize:I64;
-	static var tlabSize:I64; // with several threads (RT_TLAB_KB; default a 16th of the nursery)
+	static var tlabSize:I64; // with several threads (RT_TLAB_KB; default a 16th of the nursery, at most TLAB_MAX)
 	static var zchunk:I64; // RT_ZCHUNK_KB
 	static var minorFixed:Bool; // RT_MINOR_KB sets the nursery size
 	// the threads that took a TLAB in this cycle (a thread counts once per
@@ -170,9 +185,13 @@ class Gc {
 	static var deadCap:Int;
 
 	// ---- the copy: depth-first, an object's descendants are copied right
-	// after it (preorder), the order in which the compiler then walks its
-	// trees; Cheney's breadth-first scan scatters them. RT_BFS=1 selects the
-	// breadth-first scan. The stack holds (object, next slot) pairs.
+	// after it, close to the order in which the compiler then walks its
+	// trees; Cheney's breadth-first scan scatters them. A major collection
+	// copies in preorder; a minor one copies an object's young children
+	// together right after it, then the first one's, and so on (drainMinor:
+	// each object is scanned once, and the cache misses of the children's
+	// headers overlap). RT_BFS=1 selects the breadth-first scan. The stack
+	// holds (object, next slot) pairs.
 	static var gcStack:Ptr;
 	static var gcTop:Int;
 	static var gcCap:Int;
@@ -282,8 +301,180 @@ class Gc {
 	@:hxmc.noGc static function drain()
 		if (major) drainMajor() else drainMinor();
 
-	@:hxmc.noGc static function drainMinor()
-		drainWith(false);
+	// a minor collection's: each object is scanned once, when popped, its
+	// young children copied together right after it (their headers' cache
+	// misses overlap) and pushed, the first one on top. No call in the loop
+	// but the stack's growth, before the scan, and few values live across
+	// the scan (the nursery's bounds and the stack are read where used): the
+	// scan's values stay in registers (with one word of the pointer map:
+	// objects of more than SMALL_SLOTS slots are scanned out of the loop,
+	// LARGE_SLICE slots at a time, scanLarge, which also keeps the stack
+	// small).
+	@:hxmc.noGc static function drainMinor() {
+		while (gcTop > 0) {
+			if (gcTop + SMALL_SLOTS + 1 > gcCap) reserve(gcTop + SMALL_SLOTS + 1);
+			var top = gcTop - 1;
+			var o = Mem.getPtr(gcStack, top << 4);
+			var lo = hdrLo(o);
+			if (lo & 0x0FFFFFFF > SMALL_SLOTS)
+				scanLarge(o);
+			else {
+				// (gcTop: where its children go, until they are reversed)
+				gcTop = top;
+				pushed(scanYoung(o, lo, top));
+			}
+		}
+	}
+
+	static inline var SMALL_SLOTS = 32;
+
+	// a large object on top of the stack: its next LARGE_SLICE slots (from
+	// the entry's slot index), the entry left below the children they push
+	// while slots remain
+	@:hxmc.noGc static function scanLarge(o:Ptr) {
+		if (gcTop + LARGE_SLICE > gcCap) reserve(gcTop + LARGE_SLICE);
+		var at = gcTop - 1;
+		var e = gcStack.add(at << 4);
+		var lo = hdrLo(o);
+		var n = lo & 0x0FFFFFFF;
+		var pm = Ptr.nil();
+		if (lo >>> 28 == K_OBJ) {
+			pm = ptrmapOf(o);
+			if (pm.isNull()) {
+				gcTop = at;
+				return;
+			}
+		} else if (lo >>> 28 != K_PARR) { // (raw: a root fwdRoot pushed)
+			gcTop = at;
+			return;
+		}
+		var from = Mem.getI32(e, 8);
+		var to = from + LARGE_SLICE;
+		if (to < n) {
+			Mem.setI32(e, 8, to);
+		} else {
+			to = n;
+			gcTop = at;
+		}
+		var top = gcTop;
+		var i = from;
+		if (pm.isNull()) {
+			if (i == 0 && Mem.getU16(o, -4) == Types.T_NATIVE_ARRAY) i = 1;
+			while (i < to) {
+				top = minorSlot(o, i, top);
+				i++;
+			}
+		} else
+			while (i < to) {
+				if ((Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 != 0) top = minorSlot(o, i, top);
+				i++;
+			}
+		pushed(top);
+	}
+
+	static inline var LARGE_SLICE = 256;
+
+	// o's young children copied, pushed from gcStack[top] (which has room
+	// for all of them): the new top
+	static inline function scanYoung(o:Ptr, lo:Int, top:Int):Int {
+		var t = top;
+		var n = lo & 0x0FFFFFFF;
+		var k = lo >>> 28;
+		if (k == K_OBJ) {
+			// (at most SMALL_SLOTS slots: one word of the map)
+			var pm = ptrmapOf(o);
+			var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
+			var i = 0;
+			while (m != 0) {
+				if (m & 1 != 0) t = minorSlot(o, i, t);
+				m = m >>> 1;
+				i++;
+			}
+		} else if (k == K_PARR) {
+			var i = Mem.getU16(o, -4) == Types.T_NATIVE_ARRAY ? 1 : 0;
+			while (i < n) {
+				t = minorSlot(o, i, t);
+				i++;
+			}
+		}
+		return t;
+	}
+
+	// the children pushed from gcTop to top, reversed (pushed in slot order:
+	// the first one goes on top)
+	static inline function pushed(top:Int) {
+		var a = gcTop, b = top - 1;
+		gcTop = top;
+		var stack = gcStack;
+		while (a < b) {
+			var x = Mem.getPtr(stack, a << 4);
+			Mem.setPtr(stack, a << 4, Mem.getPtr(stack, b << 4));
+			Mem.setPtr(stack, b << 4, x);
+			a++;
+			b--;
+		}
+	}
+
+	// slot i of o (copied, or old) forwarded; a young object copied now is
+	// pushed when it has references (at gcStack[top], which has room): the
+	// new top
+	static inline function minorSlot(o:Ptr, i:Int, top:Int):Int {
+		var t = top;
+		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
+		if (!v.ult(youngStart) && v.ult(youngEnd)) {
+			var vlo = hdrLo(v);
+			if (vlo >>> 28 == K_FWD)
+				Mem.setI64At(o, 0, i, Mem.getI64(v, 0));
+			else {
+				// (copyTo, without the call of memcpy)
+				var words = (vlo & 0x0FFFFFFF) + 1;
+				var dst = oldPtr;
+				if (words <= 8) {
+					do {
+						Mem.setI64(dst, 0, Mem.getI64(v, -8));
+						if (words == 1) break;
+						Mem.setI64(dst, 8, Mem.getI64(v, 0));
+						if (words == 2) break;
+						Mem.setI64(dst, 16, Mem.getI64(v, 8));
+						if (words == 3) break;
+						Mem.setI64(dst, 24, Mem.getI64(v, 16));
+						if (words == 4) break;
+						Mem.setI64(dst, 32, Mem.getI64(v, 24));
+						if (words == 5) break;
+						Mem.setI64(dst, 40, Mem.getI64(v, 32));
+						if (words == 6) break;
+						Mem.setI64(dst, 48, Mem.getI64(v, 40));
+						if (words == 7) break;
+						Mem.setI64(dst, 56, Mem.getI64(v, 48));
+					} while (false);
+				} else {
+					var j = 0;
+					while (j < words) {
+						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
+						j++;
+					}
+				}
+				oldPtr = dst.add(words << 3);
+				var nv = dst.add(8);
+				Mem.setI32(v, -8, (vlo & 0x0FFFFFFF) | (K_FWD << 28));
+				Mem.setPtr(v, 0, nv);
+				Mem.setI64At(o, 0, i, nv.toI64());
+				if (vlo >>> 28 == K_OBJ || vlo >>> 28 == K_PARR) {
+					Mem.setPtr(gcStack, t << 4, nv);
+					Mem.setI32(gcStack, (t << 4) + 8, 0);
+					t++;
+				}
+			}
+		}
+		return t;
+	}
+
+	// room for this many entries on the collector's stack
+	@:hxmc.noGc static function reserve(entries:Int) {
+		while (gcCap < entries)
+			gcCap *= 2;
+		gcStack = LibC.realloc(gcStack, (gcCap : I64) * 16);
+	}
 
 	@:hxmc.noGc static function drainMajor()
 		drainWith(true);
@@ -307,6 +498,7 @@ class Gc {
 			}
 			var n = lo & 0x0FFFFFFF;
 			var i = Mem.getI32(gcStack, ((gcTop - 1) << 4) + 8);
+			if (i == 0 && k == K_PARR && Mem.getU16(o, -4) == Types.T_NATIVE_ARRAY) i = 1;
 			var pushed = false;
 			while (i < n) {
 				if (!pm.isNull() && (Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 == 0) {
@@ -382,7 +574,7 @@ class Gc {
 					w++;
 				}
 			case K_PARR:
-				for (i in 0...n) {
+				for (i in (Mem.getU16(o, -4) == Types.T_NATIVE_ARRAY ? 1 : 0)...n) {
 					var v = Mem.getPtr(o, 8 * i);
 					if (!v.isNull()) Mem.setPtr(o, 8 * i, fwdAs(v, root));
 				}
@@ -590,6 +782,9 @@ class Gc {
 
 	@:hxmc.noGc static function majorCollect(need:I64) {
 		majors++;
+		#if hxmc.gc_prefault
+		if (pfState > 0) prefaultCancel();
+		#end
 		fromStart = oldStart;
 		fromEnd = oldPtr;
 		curRegion ^= 1;
@@ -689,7 +884,7 @@ class Gc {
 		}
 		minorSize = size;
 		youngEnd = youngStart.addL(minorSize);
-		if (!Os.has("RT_TLAB_KB")) tlabSize = minorSize / 16;
+		if (!Os.has("RT_TLAB_KB")) tlabSize = minorSize / 16 < (TLAB_MAX : I64) ? minorSize / 16 : TLAB_MAX;
 		if (stats) {
 			var r = new Report(Mem.stack(Report.BYTES));
 			r.str("gc: nursery ");
@@ -704,8 +899,8 @@ class Gc {
 	@:hxmc.noGc static function adaptNursery(promoted:I64, used:I64, threads:Int) {
 		adaptThreads(threads);
 		var floor:I64 = (MINOR_MIN : I64) * mutators;
-		var ceiling:I64 = (MINOR_CAP : I64) + (mutators - 1 : I64) * MINOR_PER_THREAD;
-		if (floor > (MINOR_MAX : I64)) floor = MINOR_MAX;
+		var ceiling:I64 = (MINOR_CAP : I64) * mutators;
+		if (floor > (FLOOR_MAX : I64)) floor = FLOOR_MAX;
 		if (ceiling > (MINOR_MAX : I64)) ceiling = MINOR_MAX;
 		if (promoted * 16 > used) {
 			lowFor = 0;
@@ -745,6 +940,100 @@ class Gc {
 		m.value.hw = m.value.sp;
 	}
 
+	#if hxmc.gc_prefault
+	// ---- the old space's pages, faulted in ahead of the minor collections
+	// by a helper thread (Linux; RT_PREFAULT=0: none). Opt-in, with -D
+	// hxmc.gc-prefault (the compilers' builds pass it): it trades CPU time
+	// for wall time (the HaxeBenchmarks' alloc: 7.6% less wall time, 20%
+	// more CPU time). A page a collection copies into for the first time
+	// costs it a fault and the kernel's zeroing of the page (the port's
+	// self-build: a tenth of the time of its main thread's minor
+	// collections), on the collection's critical path. After each minor
+	// collection the helper is asked for the pages up to as much past the
+	// end of the old space as the collection promoted (PF_MIN to PF_MAX); it
+	// touches each page with an atomic addition of zero, which leaves a word
+	// the collector or an allocation of a large object writes meanwhile as
+	// it is. It starts once the old space passes PF_START (small programs
+	// never start it), and a major collection drops what is left of its
+	// requests (pfGen). It never runs Haxe code: it is no mutator,
+	// collections do not wait for it.
+	static inline var PF_START = 64 << 20;
+	static inline var PF_MIN = 4 << 20;
+	static inline var PF_MAX = 16 << 20;
+	static inline var PF_STEP = 256 << 10;
+	static var pfState:Int; // 0: not started, 1: started, -1: none
+	static var pfLock:Ptr;
+	static var pfCond:Ptr;
+	static var pfFrom:Ptr; // the pages to touch: [pfFrom, pfTo) (under pfLock)
+	static var pfTo:Ptr;
+	@:hxmc.export("hxmc_pf_gen") static var pfGen:Int; // major collections (Atomic)
+
+	// after a minor collection that promoted `promoted` bytes
+	@:hxmc.noGc static function prefaultAhead(promoted:I64) {
+		if (pfState == 0) {
+			if (oldPtr.diff(oldStart) < (PF_START : I64)) return;
+			if (Mem.os() != 0) {
+				pfState = -1;
+				return;
+			}
+			pfLock = LibC.malloc(Os.MUTEX_BYTES);
+			Os.mutexInit(pfLock);
+			pfCond = LibC.malloc(Os.COND_BYTES);
+			Os.condInit(pfCond, false);
+			pfFrom = oldPtr;
+			pfTo = oldPtr;
+			if (!Os.spawn(Callback.addr(prefaulter), Ptr.nil(), 256 << 10)) {
+				pfState = -1;
+				return;
+			}
+			pfState = 1;
+		}
+		var ahead = promoted < (PF_MIN : I64) ? (PF_MIN : I64) : promoted > (PF_MAX : I64) ? (PF_MAX : I64) : promoted;
+		var to = oldPtr.addL(ahead);
+		if (oldEnd.ult(to)) to = oldEnd;
+		Os.lock(pfLock);
+		if (pfFrom.ult(oldPtr)) pfFrom = oldPtr; // (the collector is past them)
+		if (pfTo.ult(to)) {
+			pfTo = to;
+			Os.signal(pfCond);
+		}
+		Os.unlock(pfLock);
+	}
+
+	// (a major collection moves the old space)
+	@:hxmc.noGc static function prefaultCancel() {
+		Os.lock(pfLock);
+		Atomic.add32(Mem.sym("hxmc_pf_gen"), 1);
+		pfFrom = Ptr.nil();
+		pfTo = Ptr.nil();
+		Os.unlock(pfLock);
+	}
+
+	// the helper thread: PF_STEP of the requested pages at a time
+	@:hxmc.callback @:hxmc.noGc static function prefaulter(arg:Ptr):Ptr {
+		var page:I64 = Os.pageSize();
+		Os.lock(pfLock);
+		while (true) {
+			while (!pfFrom.ult(pfTo))
+				Os.condWait(pfCond, pfLock);
+			var a = pfFrom;
+			var b = a.add(PF_STEP);
+			if (pfTo.ult(b)) b = pfTo;
+			pfFrom = b;
+			var gen = Atomic.load32(Mem.sym("hxmc_pf_gen"));
+			Os.unlock(pfLock);
+			var x = a.toI64() + (page - 1);
+			var p = Ptr.ofI64(x - (x & (page - 1)));
+			while (p.ult(b) && Atomic.load32(Mem.sym("hxmc_pf_gen")) == gen) {
+				Atomic.add64(p, 0);
+				p = p.addL(page);
+			}
+			Os.lock(pfLock);
+		}
+		return Ptr.nil();
+	}
+	#end
+
 	// a collection, with every other thread stopped (unless another thread
 	// collected meanwhile: the caller then retries its allocation)
 	@:hxmc.noGc static function collectFor(full:Bool, need:I64) {
@@ -759,6 +1048,9 @@ class Gc {
 				youngBytes += used;
 				promotedBytes += oldPtr.diff(before);
 				if (!minorFixed) adaptNursery(oldPtr.diff(before), used, allocating);
+				#if hxmc.gc_prefault
+				if (pfState >= 0) prefaultAhead(oldPtr.diff(before));
+				#end
 			}
 		}
 		allocating = 0;
@@ -797,7 +1089,8 @@ class Gc {
 			myEpoch = epoch;
 			Atomic.add32(Mem.sym("hxmc_allocating"), 1);
 		}
-		var want:I64 = Atomic.load32(Mem.sym("rt_nthreads")) > 1 ? tlabSize : poison ? ((1 : I64) << 62) : zchunk;
+		var many = Atomic.load32(Mem.sym("rt_nthreads")) > 1;
+		var want:I64 = many ? tlabSize : poison ? ((1 : I64) << 62) : zchunk;
 		if (want < bytes) want = bytes;
 		var cell = Mem.sym("hxmc_young_next");
 		var p = Ptr.ofI64(Atomic.load64(cell));
@@ -806,6 +1099,19 @@ class Gc {
 			var avail = youngEnd.diff(s);
 			if (avail < bytes) return false;
 			var e = s.addL(want < avail ? want : avail);
+			// with several threads, a TLAB that reaches untouched memory (above
+			// youngDirty: fresh pages, after a start or a growth) ends at a 2 MB
+			// boundary, so that threads do not fault in the same 2 MB together:
+			// with transparent huge pages, each of them would get a huge page
+			// of its own, zeroed by the kernel, all but one thrown away (the
+			// tool's code generation, its nursery growing to 256 MB under 12
+			// threads: 1.5 s of kernel time). Fresh pages need no zeroing of
+			// ours, so the larger TLAB costs nothing but its share of the nursery
+			if (many && youngDirty.ult(e)) {
+				var x = e.toI64() + (HUGE_PAGE - 1);
+				e = Ptr.ofI64(x - (x & (HUGE_PAGE - 1))); // (the nursery starts 2 MB aligned)
+				if (youngEnd.ult(e)) e = youngEnd;
+			}
 			var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), e.toI64()));
 			if (seen == p) {
 				// (below p: the rest of the thread's TLAB, zeroed already)
@@ -1004,6 +1310,14 @@ class Gc {
 		#end
 		releasePages = Os.envInt("RT_RELEASE", 1) != 0;
 		gcBfs = Os.has("RT_BFS");
+		#if hxmc.gc_prefault
+		if (Os.envInt("RT_PREFAULT", 1) == 0) pfState = -1;
+		#if (hxmc.shared || hxmc.dev_host)
+		// (a shared library's runtime gives its heap back and is closed,
+		// releaseHeap: no helper thread left running in it)
+		pfState = -1;
+		#end
+		#end
 		// transparent huge pages for the heap: the old space grows by hundreds of
 		// MB and is copied into fresh pages, so 4 KB page faults add up
 		hugePages = L.MADV_HUGEPAGE != 0 && Os.envInt("RT_HUGE", 0) != 0; // opt-in: it costs more kernel time than it saves here
@@ -1016,7 +1330,7 @@ class Gc {
 		zchunk = (Os.envInt("RT_ZCHUNK_KB", 32) : I64) << 10;
 		if (zchunk < 4096) zchunk = 4096;
 		var tk = Os.getenv("RT_TLAB_KB");
-		tlabSize = tk.isNull() ? minorSize / 16 : (Os.atoi(tk) : I64) << 10;
+		tlabSize = tk.isNull() ? (minorSize / 16 < (TLAB_MAX : I64) ? minorSize / 16 : TLAB_MAX) : (Os.atoi(tk) : I64) << 10;
 		if (tlabSize < 4096) tlabSize = 4096;
 		regionBytes = (16 : I64) << 30;
 		var rm = Os.getenv("RT_REGION_MB");
@@ -1301,6 +1615,7 @@ class Gc {
 					if (pm.isNull() || !isPtrSlot(pm, i)) continue;
 				} else if (k != K_PARR)
 					break;
+				if (i == 0 && Mem.getU16(o, -4) == Types.T_NATIVE_ARRAY) continue;
 				var c = Mem.getPtr(o, 8 * i);
 				if (!inHeap(c)) continue;
 				if (sp == cap) {

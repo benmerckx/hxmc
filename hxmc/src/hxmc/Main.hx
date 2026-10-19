@@ -20,13 +20,19 @@ package hxmc;
 //   -D hxmc.no-frame-pointers       x86-64: no frame record in functions (the default keeps one, for
 //                                   perf -g and debuggers; HXMC_FRAME_POINTERS=0 off; arm64 always)
 //   -debug                          source lines for debuggers (DWARF on ELF and Mach-O), symbols
-//   HXMC_RT_OBJ                     the runtime object (default: <tool dir>/rt/<target>/rt.o)
+//   -D hxmc.native-array-outofbounds=throws|silent
+//                                   NativeArray/Vector accesses out of bounds throw, or read the
+//                                   default and write nothing (default: not tested)
+//   -D hxmc.gc-prefault             Linux: the collector faults in the old space's pages on a helper
+//                                   thread: less wall time for more CPU time (the compilers' builds)
+//   HXMC_RT_OBJ                    the runtime object (default: <tool dir>/rt/<target>/rt.o)
 //   HXMC_STATS=1                    print what the build did and how long it took
 class Main {
 	static var start = haxe.Timer.stamp();
 	static var lowerCache = new LowerCache();
 
 	static function main() {
+		Defines.install();
 		var args = Sys.args();
 		if (args[0] == "--mkrt-macho") {
 			args.shift();
@@ -45,7 +51,6 @@ class Main {
 			args.shift();
 			if (Sys.getEnv("RT_OLD_MB") == null && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
 				Sys.putEnv("RT_OLD_MB", "4096");
-				if (Sys.getEnv("RT_MINOR_KB") == null) Sys.putEnv("RT_MINOR_KB", "32768");
 				Sys.exit(Sys.command(Sys.programPath(), ["--server"].concat(args)));
 			}
 			Driver.resident = true;
@@ -76,15 +81,18 @@ class Main {
 		}
 		if (key != null) UpToDate.forget(out);
 		// a whole-program build keeps most of what it makes (the typed program,
-		// then every module's code until the link): a large nursery and a large
-		// first old-space limit spare it most collections (half the GC time of
-		// a cold build of the port; 3 GB: the port's cold build with the module
-		// cache's encoding promotes about 2 GB, just past 2 GB, which cost a
-		// major collection of a second). The runtime reads them at startup, so
-		// the tool runs itself again with them set (not under WASI: no processes).
+		// then every module's code until the link): a large first old-space
+		// limit spares it major collections (3 GB: the port's cold build with
+		// the module cache's encoding promotes about 2 GB, just past 2 GB, which
+		// cost a major collection of a second). The nursery is the runtime's
+		// adaptive one: up to 16 MB for the front end, 16 MB per thread for the
+		// parallel code generation (against a fixed 32 MB that 12 threads
+		// shared: the cold self-build 11% faster with 21% less peak memory; a
+		// fixed 256 MB would triple a small build's peak memory). The runtime
+		// reads the limit at startup, so the tool runs itself again with it set
+		// (not under WASI: no processes).
 		if (Sys.getEnv("RT_OLD_MB") == null && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
 			Sys.putEnv("RT_OLD_MB", "3072");
-			if (Sys.getEnv("RT_MINOR_KB") == null) Sys.putEnv("RT_MINOR_KB", "32768");
 			Sys.exit(Sys.command(Sys.programPath(), [out].concat(args)));
 		}
 		compiler.Compiler.generateHook = function(com) {
@@ -119,6 +127,7 @@ class Main {
 		hxmc.ir.Lower.wasmGc = opts.wasmGc;
 		// (genjs's order: `Hashtbl.fold (fun name data acc -> (name,data) :: acc) com.resources []`)
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:String}>) -> [{name: name, data: codegen.Codegen.bytesSerialize(data)}].concat(acc), []);
+		hxmc.ir.Lower.bounds = opts.bounds;
 		// WebAssembly's runtime is typed with the program only for that target
 		if (abi.wasm && !Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): c.clPath.pack.join(".") == "hxmc.rt.wasm" && c.clPath.name == "Gc";

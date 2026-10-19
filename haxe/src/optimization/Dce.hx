@@ -830,6 +830,7 @@ class Dce {
 	}
 
 	public static function collectEntryPoints(dce:DceData, types:Array<ModuleType>):Void {
+		// port: `f :: !delayed` as a push, run from the end
 		var delayed:Array<Void->Void> = [];
 		inline function feature(ref:ClassFieldRef, names:Array<String>):Void for (s in names) {
 			if (dce.features.exists(s)) dce.features.get(s).unshift(ref);
@@ -847,7 +848,7 @@ class Dce {
 					// Have to delay mark_field so that we see all @:ifFeature
 					// a @:dce field is not kept just because its class is: it must be reached like in full DCE
 					if (keepClass && !fieldForcesDce(cf) || isStruct || keepField(dce, cf, c,
-						kind)) delayed.unshift(function() markField(dce, c, cf, kind));
+						kind)) delayed.push(function() markField(dce, c, cf, kind));
 				}
 				for (cf in c.clOrderedStatics) loop(CfrStatic, cf);
 				for (cf in c.clOrderedFields) loop(CfrMember, cf);
@@ -855,14 +856,15 @@ class Dce {
 				if (c.clInit != null && (keepClass || Meta.has(KeepInit, c.clMeta))) loop(CfrInit, c.clInit);
 			case TEnumDecl(en) if (keepWholeEnum(dce, en)):
 				en.eMeta = Meta.remove(Used, en.eMeta);
-				delayed.unshift(function() {
+				delayed.push(function() {
 					var c:TClass = core.ds.Record.copy(nullClass);
 					c.clModule = en.eModule;
 					markEnum(pushClass(dce, c), en);
 				});
 			case _:
 		}
-		for (f in delayed) f();
+		var i = delayed.length;
+		while (i > 0) delayed[--i]();
 		if (dce.debug) for (item in dce.addedFields) if (item.field.cfExpr != null) Sys.println("[DCE] Entry point: "
 			+ Globals.sTypePath(item.cls.clPath) + "." + item.field.cfName);
 	}
@@ -891,12 +893,13 @@ class Dce {
 	}
 
 	public static function sweep(dce:DceData, types:Array<ModuleType>):Array<ModuleType> {
+		// port: `mt :: acc` as a push, the accumulator reversed once at the end
 		var acc = [];
 		var reverse = types.copy();
 		reverse.reverse();
 		for (mt in reverse) switch mt {
 			case TClassDecl(c) if (keepWholeClass(dce, c) && !classHasDceField(c)):
-				acc.unshift(mt);
+				acc.push(mt);
 			case TClassDecl(c):
 				inline function checkProperty(cf:TClassField, stat:Bool):Void {
 					inline function addAccessor(name:String):Void {
@@ -940,19 +943,20 @@ class Dce {
 				if (c.clConstructor != null && !keep(c.clConstructor, CfrConstructor)) c.clConstructor = null;
 				var nonExtern = exists(isPhysicalField, c.clOrderedFields) || exists(isPhysicalField, c.clOrderedStatics);
 				// we keep a class if it is kept whole, was used or has a used field
-				if (classKept || hasClassFlag(c, CUsed) || nonExtern) acc.unshift(mt);
+				if (classKept || hasClassFlag(c, CUsed) || nonExtern) acc.push(mt);
 				else if (core.TOther.TClassTools.getClInit(c) != null && Meta.has(KeepInit, c.clMeta)) {
 					// it means that we only need the __init__ block
 					addClassFlag(c, CExtern);
-					acc.unshift(mt);
+					acc.push(mt);
 				} else if (dce.debug) Sys.println("[DCE] Removed class " + Globals.sTypePath(c.clPath));
 			case TEnumDecl(en) if (Meta.has(Used, en.eMeta) || hasEnumFlag(en, EnExtern) || keepWholeEnum(dce, en)):
-				acc.unshift(mt);
+				acc.push(mt);
 			case TEnumDecl(en):
 				if (dce.debug) Sys.println("[DCE] Removed enum " + Globals.sTypePath(en.ePath));
 			case _:
-				acc.unshift(mt);
+				acc.push(mt);
 		}
+		acc.reverse();
 		return acc;
 	}
 

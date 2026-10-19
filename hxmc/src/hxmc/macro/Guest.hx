@@ -70,8 +70,8 @@ class Guest {
 		var funcs = [for (f in prog.funcs) if (!runtime(f)) f];
 		// the string literals (as Driver registers them)
 		for (f in funcs) {
-			var fp = new Fingerprint(prep);
-			fp.func(f, new StringBuf());
+			var fp = new Fingerprint(prep, null);
+			fp.func(f);
 			var k = 0;
 			while (k < fp.newStrings.length) {
 				prep.addStr(fp.newStrings[k], fp.newStrings[k + 1]);
@@ -92,6 +92,7 @@ class Guest {
 		dg.allocStubs([], emit);
 		dg.stubs([], emit);
 		dg.cstrLiterals([]);
+		dg.emptyArrays([]);
 		sys.io.File.saveBytes(out + ".o", ElfWriter.write(obj, abi.arm));
 		sys.io.File.saveContent(out + ".json", haxe.Json.stringify(facts(com, prog, e, l, main)));
 	}

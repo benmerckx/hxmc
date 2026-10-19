@@ -146,13 +146,22 @@ linked, only the C library, mbedtls and libuv ([plans/lowlevel.md](plans/lowleve
 `RT_MINOR_KB` fixes it; Gc.hx): it starts at 4 MB, doubles after a minor
 collection that promoted more than a 16th of what was allocated since the
 previous one and halves after 8 that promoted less than a 64th, between a
-floor of 4 MB per thread that allocated in the last cycles and a ceiling of
-16 MB plus 8 MB per other such thread, at most 32 MB. Programs whose
+floor of 4 MB per thread that allocated in the last cycles (at most 32 MB)
+and a ceiling of 16 MB per such thread (at most 256 MB). Programs whose
 objects die young keep a nursery that stays in the caches; the port typing
 or compiling macro-heavy code grows it to 16 MB, which keeps medium-lived
 objects out of the old space (6-17% faster, up to 31% less peak memory);
 parallel phases get a larger one, so their threads stop for fewer
-collections. `RT_STATS=1` prints the resizes and what was promoted. A change of the runtime's
+collections and promote less of what they are working on (the tool's
+parallel code generation: 256 MB). Threads take at most 64 KB of it at a time
+(their TLAB, zeroed while it fits in the cache; `RT_TLAB_KB`), in fresh
+pages up to a 2 MB boundary, so that no two threads fault in the same
+transparent huge page. With `-D hxmc.gc-prefault` (the compilers' builds
+pass it: `COMPILER_ARGS`), on Linux, once the old space passes 64 MB, a
+helper thread faults in its pages ahead of the minor collections, which
+would otherwise wait for the kernel to zero each fresh page they copy into
+(`RT_PREFAULT=0`: no helper). It trades CPU time for wall time: the
+HaxeBenchmarks' alloc takes 7.6% less wall time and 20% more CPU time with it. `RT_STATS=1` prints the resizes and what was promoted. A change of the runtime's
 interface or of the IR's conventions needs a tool that knows it: build once
 against the previous runtime first, or bootstrap again.
 
@@ -192,6 +201,75 @@ functions (and where a name is computed) and the data's parts;
 `HXMC_REACH_WHY=<pack.Class.method>` the chain that keeps a function;
 `HXMC_REACH=0` keeps everything. WasmGC uses the same analysis (WasmGC
 below).
+
+## Native arrays
+
+`hxmc.NativeArray<T>` (`hxmc/std/hxmc/NativeArray.hx`) is fixed-size storage
+with a single GC allocation: a header, a length/kind word and packed
+elements. Bool uses 1 byte, Int 4, Float and Int64 8, and reference elements
+8 bytes. Nullable numbers and Dynamic use reference storage. Concrete
+indexing lowers to direct loads/stores in `MirBuild`, without bounds,
+growth or storage-kind checks; references keep the generational write
+barrier. The collectors skip the length/kind word in reference arrays.
+Copies preserve the runtime layout even in erased generic code; reference
+copies retain the bulk write barrier. Array conversions copy.
+
+A NativeArray whose element type is Dynamic (`Dynamic`, `Any`, an
+abstract over them, an erased type parameter) may hold storage of any
+kind: its accesses test the kind inline (reference storage directly) and
+go through `rt/NArray.hx` otherwise. Haxe lets any NativeArray be seen so,
+and lets `Vector<Int>` and `Vector<Null<Int>>` alias. Storage taken as a
+typed NativeArray (from a Dynamic-typed one, from a Dynamic, between Int
+and Null<Int>) is checked once there (`hx_narray_view`), and a mismatch
+throws, as a cast does on HL and the JVM; a `cast` is not checked. A
+NativeArray made for an erased type parameter is a wrapper (a NativeArray
+of one reference) of reference storage: the first typed view converts the
+storage to its kind if needed and the wrapper keeps pointing at the result,
+so generic code and typed code share it (HL's `ArrayDyn` does the same); a
+view of another kind later throws.
+
+An array of no elements cannot change: typed code that makes one gets the
+program's empty array of its kind (`MirBuild.EMPTY_ARRAY`, static data as
+string literals are, defined by `DataGen.emptyArrays`), so `new Vector(0)`
+allocates nothing; the runtime does not refer to those, so that a tool that
+does not define them can still build it. A copy of an empty array is itself,
+and any empty array serves as the view of any kind.
+
+`hxmc/std/haxe/ds/Vector.hx` shadows the reference standard library on the
+hxmc target and implements `haxe.ds.Vector<T>` as an abstract over
+`hxmc.NativeArray<T>`. Indexing, length and construction inline to the same
+operations as NativeArray. `toData`/`fromData` share NativeArray storage;
+`toArray`/`fromArrayCopy` copy. `MkStd` keeps the upstream
+Vector for Eval and macros in the merged `bin/hxmc/std`. `make bench-arrays`
+compares Array, NativeArray and Vector
+([measurement notes](../hxmc/test/bench/README.md)).
+
+WasmGC (`-D hxmc.wasm-gc`, below) has the same NativeArray over the engine's
+arrays: one of a known element type is the bare GC array of its kind (i32,
+f64, i64, eqref, Bool i8), its accesses
+`array.get`/`array.set`/`array.len`, `blit` of one kind `array.copy`
+(`FuncGen.narray`); the empty arrays are one immutable global per kind. One
+of a Dynamic element is an `eqref`: reference storage is accessed inline
+(`br_on_cast`), other kinds and the wrapper (a struct of its storage and
+whether a view took it) through `Helpers.na*` and `rt/gc/GcNArray`, which
+has `rt/NArray`'s views, wrappers, copies, defaults and errors. There the
+engine checks every index too: an access out of bounds that the define
+leaves untested traps.
+
+`-D hxmc.native-array-outofbounds` decides what an index out of bounds
+does, at code generation (`Lower.bounds`, `FnLower.nativeRead`): not
+defined, nothing is tested (the result is unspecified, as Haxe leaves it);
+`throws`, an access tests its index (one unsigned comparison, negative
+indices too) and throws `haxe.exceptions.ArgumentException` with the
+position of the access; `silent`, a read out of bounds gives the element
+type's default (0, false, null) and a write does nothing. The test is IR,
+so the collector's roots account for the throw, and the optimizer drops a
+test a dominating one decides (`v[i] += x` tests once with `throws`).
+The std's own loops use `unsafeGet`/`unsafeSet`, which are never tested;
+`blit` copies so when both ranges are in bounds, else element by element
+with the define's accesses. Dynamic indexing follows the define too
+(`Dyn.dynAget`, WasmGC's `GcDyn.aget`; an error when it is not defined). The define is registered
+for `haxe --help-defines` by `hxmc.Defines`, leaving `haxe/src` unchanged.
 
 ## Module cache
 
@@ -325,7 +403,7 @@ no threads, sockets or processes). mbedtls 2.28 and libuv 1.48
 use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
-`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_STATS`, `RT_VERIFY`,
+`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`,
 `RT_STACK_MB` (wasm32: the shadow stack; WebAssembly, Memory).
 
 ## Android
@@ -654,7 +732,9 @@ by class and selector holding wrappers of the table's signature; closures
 are structs whose first field is a typed function reference (`call_ref`);
 array accesses and structural field accesses test the expected kind or
 layouts inline before falling back to the runtime (an Array's or a
-String's methods called structurally: `gc_anon_call`); Ints of -128...1023 are
+String's methods called structurally: `gc_anon_call`); `hxmc.NativeArray`
+(and so `haxe.ds.Vector`) is the engine's bare array of its kind (Native
+arrays, above); Ints of -128...1023 are
 boxed once; literals of 24 characters and more come from passive data
 segments; exceptions are the legacy try/catch instructions. The natives of
 strings, StringBuf, arrays, Bytes, BytesBuffer and Date are the linear
@@ -669,7 +749,33 @@ generated code does inline), whose `@:hxmc.wasmgc` classes and the
 bound; Math's transcendental functions, float
 formatting and parsing are the host's (`hxmc/bootstrap/wasmgc.mjs`, which
 runs a module under node; `packages/os/browser.mjs` gives the same host in
-a browser).
+a browser). So is the system (`GcSys`): files whole and by descriptor
+(positions kept by the host, node's fs having no seek), directories in the
+order the system lists them, the shell, processes (`sys.io.Process`: a
+worker thread of the host runs them, the module waiting for each answer,
+so their streams behave as natively; a command that cannot be run exits
+127), and the collector's API (`GcCollector`: collections are the
+engine's to start, finalisers never run); there are no sockets and no
+`Sys.getChar`. There is one thread (the module sees
+`NUMBER_OF_PROCESSORS=1`, and the port runs its parallel passes
+sequentially): a thread created (`GcThreads`) runs, to its end, when a
+running one waits for what nothing else would end (a lock, a queue, a
+condition or a park, without a timeout), then the wait is tried again, so
+fork-join works (the port reads a process's two streams so, calling
+haxelib for `-lib`), threads that interleave with others do not. The
+atomics are a NativeArray of one element; `hxmc.NativeZip` is the same
+decoder, over copies of the Bytes in the linear memory (below). Reflection
+reaches the statics of a class used as a value (`Lower.reflectStatics`:
+their names by class index, read and written by
+`Meta.staticGet`/`staticSet`, a method as a closure; `hxmc.ir.Reach`
+takes `GcNative.find`'s names as it takes `Dyn`'s), copies objects
+(`Reflect.copy`), tests a type known at run time only
+(`GcNative.isOfType`: a switch on the class's id; an interface, which has
+none, gets -1 minus its index in its type value), and calls the methods of
+Arrays and Strings through Dynamic as through structural types
+(`gc_anon_call`); calling what is not a function throws. The port builds
+so (`make wasmgc-port`) and passes the conformance lanes as the port
+(`make test-wasmgc-port`, docs/testing.md).
 
 A program that uses `hxmc.unsafe` or C functions gets a small linear
 memory besides (a hybrid module, `GcModule.memory`): `Mem`'s loads and
@@ -697,8 +803,10 @@ builds too. A runtime function
 not covered yet fails the build with its name; `HXMC_GC_SURVEY=1` lists
 every such construct of a program instead (`=2` also writes the module,
 those functions trapping). `make wasmgc-check` compares `hxmc/test/wasmgc`'s
-programs with their native output (`Unsafe.hx`: the linear memory); `make wasmgc-bench` adds the
-linear-memory build: times, peak RSS, sizes.
+programs (`Unsafe.hx`: the linear memory), and the corpus cases
+`GcCheck.CASES` that need nothing WasmGC lacks, with their native output (a
+program's `// define:` lines apply to both builds); `make wasmgc-bench`
+adds the linear-memory build: times, peak RSS, sizes.
 
 ## Origin
 

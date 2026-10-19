@@ -187,6 +187,12 @@ class Lower {
 	// the program's resources (--resource), haxe.Resource's content: each
 	// one's name and data in base64, in genjs's order (Main.generate)
 	public static var resources:Array<{name:String, data:String}> = [];
+	// -D hxmc.native-array-outofbounds: what an access of a NativeArray
+	// (haxe.ds.Vector) at an index out of bounds does (FnLower.nativeRead)
+	public static var bounds = BOUNDS_UNCHECKED;
+	public static inline var BOUNDS_UNCHECKED = 0; // not tested (unspecified)
+	public static inline var BOUNDS_THROWS = 1; // haxe.exceptions.ArgumentException (rt/NArray.outOfBounds)
+	public static inline var BOUNDS_SILENT = 2; // a read gives the element type's default, a write does nothing
 
 	// a condition on the target (Mem.os, Mem.arm, Mem.target compared with
 	// constants) as a constant (EInt), when it is one: FnLower lowers only
@@ -223,7 +229,9 @@ class Lower {
 
 	// replaces the calls of runtime functions implemented in Haxe in fi's
 	// body, and folds the target's constants: `if (Mem.os() == 2) a else b`
-	// keeps one branch (its symbols stay out of the other targets' links)
+	// keeps one branch (its symbols stay out of the other targets' links).
+	// An expression nothing changes in is kept; the statement lists are new
+	// (Facts.markCold rewrites them in place).
 	function bindHosts(fi:FuncInfo) {
 		function fold(e:Ex):Ex {
 			return switch e {
@@ -241,67 +249,148 @@ class Lower {
 				case _: e;
 			}
 		}
-		function ex(e:Ex):Ex {
-			return fold(switch e {
-				case ECallHost("hxmc_unsafe_Mem_os", [], _) if (targetOs >= 0): EInt(targetOs);
-				case ECallHost("hxmc_unsafe_Mem_arm", [], _) if (targetArm >= 0): EInt(targetArm);
-				case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): EInt(targetCode);
-				case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): EInt(targetPlatform);
-				case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
-				// (Float's %: hxmc.rt.LibM.fmod, as Math's natives)
-				case EBin(FMod, a, b) if (hostImpls.exists("fmod")): ECall(hostImpl("fmod"), [ex(a), ex(b)]);
-				case EBin(op, a, b): EBin(op, ex(a), ex(b));
-				case ENot(a): ENot(ex(a));
-				case EConv(c, a): EConv(c, ex(a));
-				case EBox(t, a): EBox(t, ex(a));
-				case EUnbox(t, a): EUnbox(t, ex(a));
-				case EField(c, i, a): EField(c, i, ex(a));
-				case EFieldAddr(c, i, a): EFieldAddr(c, i, ex(a));
-				case EAnonGet(n, t, a, h): EAnonGet(n, t, ex(a), h);
-				case ECast(t, a): ECast(t, ex(a));
-				case EInstOf(c, a): EInstOf(c, ex(a));
-				case EEnumTag(a, en): EEnumTag(ex(a), en);
-				case EEnumParam(c, i, a): EEnumParam(c, i, ex(a));
-				case EArrLen(a): EArrLen(ex(a));
-				case EArrGet(t, a, i): EArrGet(t, ex(a), ex(i));
-				case EArrGetU(t, a, i): EArrGetU(t, ex(a), ex(i));
-				case EBoxGet(t, a): EBoxGet(t, ex(a));
-				case ECapture(l, i, a): ECapture(l, i, ex(a));
-				case ECall(f, args): ECall(f, [for (a in args) ex(a)]);
-				case ECallDispatch(sel, s, args): ECallDispatch(sel, s, [for (a in args) ex(a)]);
-				case ECallClos(s, c, args): ECallClos(s, ex(c), [for (a in args) ex(a)]);
-				case ECallAnon(n, s, o, args): ECallAnon(n, s, ex(o), [for (a in args) ex(a)]);
-				case ECallHost(n, args, ret):
-					var xs = [for (a in args) ex(a)];
-					// (the safe region's markers stay calls by symbol: Facts tells
-					// the functions that enter one by them)
-					var impl = hostImpls.exists(n) && fi.cSymbol != n && n != "rt_blocking_enter" && n != "rt_blocking_leave" ? hostImpl(n) : null;
-					if (impl == null) ECallHost(n, xs, ret) else {
-						if (impl.args.length != xs.length || Ir.repr(impl.ret) != Ir.repr(ret))
-							fail('the Haxe implementation ${impl.name} of the runtime\'s $n does not have its signature');
-						// a pure runtime function may be nested in an expression:
-						// its implementation must not reach a GC point
-						if (hxmc.ir.FnLower.noGcHost(n) && !impl.declNoGc) fail('${impl.name} implements the runtime\'s $n, which is not a GC point: it must be @:hxmc.noGc');
-						ECall(impl, xs);
-					}
-				case ENewEnum(c, args): ENewEnum(c, [for (a in args) ex(a)]);
-				case ENewArr(t, args): ENewArr(t, [for (a in args) ex(a)]);
-				case ENewClos(l, args): ENewClos(l, [for (a in args) ex(a)]);
-				case ENewBox(t, a): ENewBox(t, ex(a));
-				case ENewAnon(s, args): ENewAnon(s, [for (a in args) ex(a)]);
-			});
+		var ex:Ex->Ex = null;
+		// (xs itself when no element changes)
+		function exs(xs:Array<Ex>):Array<Ex> {
+			for (i in 0...xs.length) {
+				var x = ex(xs[i]);
+				if (x != xs[i]) {
+					var r = xs.slice(0, i);
+					r.push(x);
+					for (k in i + 1...xs.length)
+						r.push(ex(xs[k]));
+					return r;
+				}
+			}
+			return xs;
 		}
+		ex = e -> fold(switch e {
+			case ECallHost("hxmc_unsafe_Mem_os", [], _) if (targetOs >= 0): EInt(targetOs);
+			case ECallHost("hxmc_unsafe_Mem_arm", [], _) if (targetArm >= 0): EInt(targetArm);
+			case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): EInt(targetCode);
+			case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): EInt(targetPlatform);
+			case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
+			// (Float's %: hxmc.rt.LibM.fmod, as Math's natives)
+			case EBin(FMod, a, b) if (hostImpls.exists("fmod")): ECall(hostImpl("fmod"), [ex(a), ex(b)]);
+			case EBin(op, a, b):
+				var x = ex(a), y = ex(b);
+				x == a && y == b ? e : EBin(op, x, y);
+			case ENot(a):
+				var x = ex(a);
+				x == a ? e : ENot(x);
+			case EConv(c, a):
+				var x = ex(a);
+				x == a ? e : EConv(c, x);
+			case EBox(t, a):
+				var x = ex(a);
+				x == a ? e : EBox(t, x);
+			case EUnbox(t, a):
+				var x = ex(a);
+				x == a ? e : EUnbox(t, x);
+			case EField(c, i, a):
+				var x = ex(a);
+				x == a ? e : EField(c, i, x);
+			case EFieldAddr(c, i, a):
+				var x = ex(a);
+				x == a ? e : EFieldAddr(c, i, x);
+			case EAnonGet(n, t, a, h):
+				var x = ex(a);
+				x == a ? e : EAnonGet(n, t, x, h);
+			case ECast(t, a):
+				var x = ex(a);
+				x == a ? e : ECast(t, x);
+			case EInstOf(c, a):
+				var x = ex(a);
+				x == a ? e : EInstOf(c, x);
+			case EEnumTag(a, en):
+				var x = ex(a);
+				x == a ? e : EEnumTag(x, en);
+			case EEnumParam(c, i, a):
+				var x = ex(a);
+				x == a ? e : EEnumParam(c, i, x);
+			case EArrLen(a):
+				var x = ex(a);
+				x == a ? e : EArrLen(x);
+			case EArrGet(t, a, i):
+				var x = ex(a), y = ex(i);
+				x == a && y == i ? e : EArrGet(t, x, y);
+			case EArrGetU(t, a, i):
+				var x = ex(a), y = ex(i);
+				x == a && y == i ? e : EArrGetU(t, x, y);
+			case EBoxGet(t, a):
+				var x = ex(a);
+				x == a ? e : EBoxGet(t, x);
+			case ECapture(l, i, a):
+				var x = ex(a);
+				x == a ? e : ECapture(l, i, x);
+			case ECall(f, args):
+				var xs = exs(args);
+				xs == args ? e : ECall(f, xs);
+			case ECallDispatch(sel, s, args):
+				var xs = exs(args);
+				xs == args ? e : ECallDispatch(sel, s, xs);
+			case ECallClos(s, c, args):
+				var x = ex(c), xs = exs(args);
+				x == c && xs == args ? e : ECallClos(s, x, xs);
+			case ECallAnon(n, s, o, args):
+				var x = ex(o), xs = exs(args);
+				x == o && xs == args ? e : ECallAnon(n, s, x, xs);
+			case ECallHost(n, args, ret):
+				var xs = exs(args);
+				// (the safe region's markers stay calls by symbol: Facts tells
+				// the functions that enter one by them)
+				var impl = hostImpls.exists(n) && fi.cSymbol != n && n != "rt_blocking_enter" && n != "rt_blocking_leave" ? hostImpl(n) : null;
+				if (impl == null) xs == args ? e : ECallHost(n, xs, ret) else {
+					if (impl.args.length != xs.length || Ir.repr(impl.ret) != Ir.repr(ret))
+						fail('the Haxe implementation ${impl.name} of the runtime\'s $n does not have its signature');
+					// a pure runtime function may be nested in an expression:
+					// its implementation must not reach a GC point
+					if (hxmc.ir.FnLower.noGcHost(n) && !impl.declNoGc) fail('${impl.name} implements the runtime\'s $n, which is not a GC point: it must be @:hxmc.noGc');
+					ECall(impl, xs);
+				}
+			case ENewEnum(c, args):
+				var xs = exs(args);
+				xs == args ? e : ENewEnum(c, xs);
+			case ENewArr(t, args):
+				var xs = exs(args);
+				xs == args ? e : ENewArr(t, xs);
+			case ENewClos(l, args):
+				var xs = exs(args);
+				xs == args ? e : ENewClos(l, xs);
+			case ENewBox(t, a):
+				var x = ex(a);
+				x == a ? e : ENewBox(t, x);
+			case ENewAnon(s, args):
+				var xs = exs(args);
+				xs == args ? e : ENewAnon(s, xs);
+		});
 		var sts:Array<Stmt>->Array<Stmt> = null;
 		function st(s:Stmt):Stmt {
 			return switch s {
-				case SSet(l, e): SSet(l, ex(e));
-				case SExpr(e): SExpr(ex(e));
-				case SSetField(c, i, o, v): SSetField(c, i, ex(o), ex(v));
-				case SAnonSet(n, t, o, v): SAnonSet(n, t, ex(o), ex(v));
-				case SArrSet(t, a, i, v): SArrSet(t, a, ex(i), ex(v));
-				case SArrPush(t, a, v): SArrPush(t, a, ex(v));
-				case SBoxSet(t, b, v): SBoxSet(t, ex(b), ex(v));
-				case SSetGlobal(g, v): SSetGlobal(g, ex(v));
+				case SSet(l, e):
+					var x = ex(e);
+					x == e ? s : SSet(l, x);
+				case SExpr(e):
+					var x = ex(e);
+					x == e ? s : SExpr(x);
+				case SSetField(c, i, o, v):
+					var x = ex(o), y = ex(v);
+					x == o && y == v ? s : SSetField(c, i, x, y);
+				case SAnonSet(n, t, o, v):
+					var x = ex(o), y = ex(v);
+					x == o && y == v ? s : SAnonSet(n, t, x, y);
+				case SArrSet(t, a, i, v):
+					var x = ex(i), y = ex(v);
+					x == i && y == v ? s : SArrSet(t, a, x, y);
+				case SArrPush(t, a, v):
+					var x = ex(v);
+					x == v ? s : SArrPush(t, a, x);
+				case SBoxSet(t, b, v):
+					var x = ex(b), y = ex(v);
+					x == b && y == v ? s : SBoxSet(t, x, y);
+				case SSetGlobal(g, v):
+					var x = ex(v);
+					x == v ? s : SSetGlobal(g, x);
 				case SIf(c, a, b):
 					switch ex(c) {
 						case EInt(v): SIf(EInt(1), v != 0 ? sts(a) : sts(b), []);
@@ -310,8 +399,13 @@ class Lower {
 				case SLoop(body): SLoop(sts(body));
 				case SBreak | SContinue: s;
 				case SSwitch(e, cases, def): SSwitch(ex(e), [for (c in cases) {values: c.values, body: sts(c.body)}], sts(def));
-				case SReturn(e): SReturn(e == null ? null : ex(e));
-				case SThrow(e): SThrow(ex(e));
+				case SReturn(null): s;
+				case SReturn(e):
+					var x = ex(e);
+					x == e ? s : SReturn(x);
+				case SThrow(e):
+					var x = ex(e);
+					x == e ? s : SThrow(x);
 				case STry(body, catches):
 					STry(sts(body), [
 						for (c in catches) {
@@ -377,6 +471,9 @@ class Lower {
 		}
 	}
 
+	public static function isNativeArray(c:TClass):Bool
+		return c.clPath.name == "NativeArray" && c.clPath.pack.join(".") == "hxmc";
+
 	public static function isCore(c:TClass, name:String):Bool
 		return c.clPath.pack.length == 0 && c.clPath.name == name;
 
@@ -434,12 +531,44 @@ class Lower {
 
 	// ---- types
 
+	// ty per type object: the lowering reads the typed program, whose types no
+	// longer change, but for a monomorph still unbound (Dynamic until something
+	// binds it): a type that meets one is lowered again each time. Effects are
+	// the first lowering's (the classes, enums, signatures it registers; asking
+	// again would find them registered).
+	var tyMemo = new haxe.ds.ObjectMap<{}, Ty>();
+	var tyMono = false; // (the type being lowered met an unbound monomorph)
+	// (before tyMemo: the types asked last, one per position by the object's
+	// hash; most asks repeat a type met just before)
+	var tyLastK = new haxe.ds.Vector<{}>(4096);
+	var tyLastV = new haxe.ds.Vector<Ty>(4096);
+
 	public function ty(t:T):Ty {
+		var i = hxmc.Native.objHash(t) >>> 20;
+		if (tyLastK[i] == (cast t : {})) return tyLastV[i];
+		var r = tyMemo.get(cast t);
+		if (r == null) {
+			var outer = tyMono;
+			tyMono = false;
+			r = lowerTy(t);
+			var mono = tyMono;
+			tyMono = mono || outer;
+			if (mono) return r;
+			tyMemo.set(cast t, r);
+		}
+		tyLastK[i] = cast t;
+		tyLastV[i] = r;
+		return r;
+	}
+
+	function lowerTy(t:T):Ty {
 		// (a typedef, expanded below: unfolding)
 		if (t.match(TType(_))) return unfolding(t, () -> ty(TFunctions.followWithoutNull(t)));
 		var t = TFunctions.followWithoutNull(t);
 		return switch t {
-			case TMono(_): TRef(RAny);
+			case TMono(_):
+				tyMono = true;
+				TRef(RAny);
 			case TAbstract(a, params):
 				var isStd = a.aPath.pack.length == 0;
 				switch a.aPath.name {
@@ -473,6 +602,7 @@ class Lower {
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
+						else if (isNativeArray(c)) TRef(RNativeArr(boxed(ty(params[0]))));
 						else if (CInterop.isStruct(c)) {
 							var n = core.Globals.sTypePath(c.clPath);
 							structClasses.set(n, c);
@@ -512,8 +642,13 @@ class Lower {
 	// Array, a function), which convert to and from Dynamic as they are, a
 	// closure through an adapter (FnLower.coerce).
 	function unfolding(t:T, f:() -> Ty):Ty {
+		// (Dynamic there depends on where the type is lowered: not memoized, as
+		// a type meeting an unbound monomorph, ty)
 		for (u in unfolded)
-			if (core.TUnification.fastEq(u, t)) return TRef(RAny);
+			if (core.TUnification.fastEq(u, t)) {
+				tyMono = true;
+				return TRef(RAny);
+			}
 		unfolded.push(t);
 		var r = try f() catch (e:Dynamic) {
 			unfolded.pop();
@@ -534,6 +669,41 @@ class Lower {
 			throw e;
 		}
 		unfolded = saved;
+	}
+
+	// the @:hxmc.struct class of a struct value of type t, or null (FnLower), per
+	// type object as `ty` (a monomorph unbound: asked again)
+	// (Null<S> is not a struct value: a reference to its box, Lower.boxed)
+	var structMemo = new haxe.ds.ObjectMap<{}, Array<TClass>>();
+	static var NOT_STRUCT:Array<TClass> = [];
+
+	public function structOf(t:T):Null<TClass> {
+		var r = structMemo.get(cast t);
+		if (r != null) return r.length == 0 ? null : r[0];
+		var c = switch TFunctions.followWithoutNull(t) {
+			case TAbstract({aPath: {pack: [], name: "Null"}}, _): null;
+			case TMono(_): return null;
+			case _:
+				switch CInterop.ctype(t) {
+					case CStruct(c): c;
+					case _: null;
+				}
+		}
+		structMemo.set(cast t, c == null ? NOT_STRUCT : [c]);
+		return c;
+	}
+
+	// the field names of a structural type, sorted (FnLower.anonHint)
+	var anonFieldNames = new haxe.ds.ObjectMap<core.TType.TAnon, Array<String>>();
+
+	public function anonNames(an:core.TType.TAnon):Array<String> {
+		var names = anonFieldNames.get(an);
+		if (names == null) {
+			names = [for (k in an.aFields.keys()) k];
+			names.sort(Reflect.compare);
+			anonFieldNames.set(an, names);
+		}
+		return names;
 	}
 
 	// An optional argument of a function type (`?x:Int`, or `x:Int = 1`) is

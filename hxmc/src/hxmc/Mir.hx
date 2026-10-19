@@ -181,19 +181,15 @@ class MFunc {
 	public inline function newMark():Int
 		return ++marks;
 
-	// arrays of n numbers (sized once)
-	public static function ints(n:Int, v:Int):Array<Int> {
-		var a:Array<Int> = [];
-		a.resize(n);
-		if (v != 0)
-			for (i in 0...n)
-				a[i] = v;
+	// vectors of n numbers (new Vector zeroes them on hxmc)
+	public static function ints(n:Int, v:Int):haxe.ds.Vector<Int> {
+		var a = new haxe.ds.Vector<Int>(n);
+		if (v != 0) a.fill(v);
 		return a;
 	}
 
-	public static function iota(n:Int):Array<Int> {
-		var a:Array<Int> = [];
-		a.resize(n);
+	public static function iota(n:Int):haxe.ds.Vector<Int> {
+		var a = new haxe.ds.Vector<Int>(n);
 		for (i in 0...n)
 			a[i] = i;
 		return a;

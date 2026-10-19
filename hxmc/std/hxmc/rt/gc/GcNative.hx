@@ -39,6 +39,36 @@ class GcNative {
 	public static function getEnum(v:Dynamic):Dynamic
 		return W.kind(v) == 6 ? W.enumOf(v) : null;
 
+	// Std.isOfType with a type known at run time only (a literal type is tested
+	// inline: hxmc.wasmgc.FuncGen.typeTest), as hxmc.rt.Dyn.is
+	@:hxmc.export("gc_is") static function isOfType(v:Dynamic, t:Dynamic):Bool {
+		if (W.isNull(v) || W.isNull(t) || !W.isType(t)) return false;
+		return switch W.typeKind(t) {
+			case 0: W.instOf(v, W.typeId(t));
+			case 1: W.kind(v) == 6 && W.typeId(W.enumOf(v)) == W.typeId(t);
+			case _:
+				switch W.typeName(t) {
+					case "Dynamic": true;
+					case "Int": isInt(v);
+					case "Float": W.kind(v) == 1 || W.kind(v) == 2;
+					case "Bool": W.kind(v) == 3;
+					case "String": W.kind(v) == 4;
+					case "Array": W.kind(v) == 7;
+					case "hxmc_NativeArray": W.naKind(v) >= 0;
+					case _: false;
+				}
+		}
+	}
+
+	// an Int, or a Float of an Int's value (Std.isOfType(v, Int), as hxmc.rt.Dyn.is)
+	@:hxmc.export("gc_is_int") static function isInt(v:Dynamic):Bool {
+		var k = W.kind(v);
+		if (k == 1) return true;
+		if (k != 2) return false;
+		var f = W.unboxFloat(v);
+		return f == Math.ffloor(f) && Math.abs(f) < 2147483648.0;
+	}
+
 	public static function superClass(c:Dynamic):Dynamic
 		throw "Type.getSuperClass: not supported by -D hxmc.wasm-gc yet";
 
@@ -154,17 +184,41 @@ class GcNative {
 		}
 	}
 
-	// (the iterators of an Array taken as values: linear memory's are the runtime's hx_array_iterator)
-	@:hxmc.host("Array_iterator") static function arrayIterator(a:Array<Dynamic>):Dynamic
-		return new haxe.iterators.ArrayIterator(a);
+	// ---- statics reached through a class value (hxmc.ir.Lower.reflectStatics), by its index
 
-	@:hxmc.host("Array_keyValueIterator") static function arrayKeyValueIterator(a:Array<Dynamic>):Dynamic
-		return new haxe.iterators.ArrayKeyValueIterator(a);
+	static var classIndices:Null<Map<Int, Int>>;
+
+	// the index (typeAt's) of the class of a class value, -1 for anything else
+	static function classIndex(o:Dynamic):Int {
+		if (W.kind(o) != 12 || W.typeKind(o) != 0) return -1;
+		if (classIndices == null) {
+			classIndices = new Map();
+			var i = 0;
+			while (true) {
+				var t = W.typeAt(i);
+				if (t == null || W.typeKind(t) != 0) break;
+				classIndices.set(W.typeId(t), i++);
+			}
+		}
+		var i = classIndices.get(W.typeId(o));
+		return i == null ? -1 : i;
+	}
+
+	// the index of a class value's static of the name (W.staticNames), -1
+	static function staticIndex(ci:Int, name:String):Int {
+		var names = W.staticNames(ci);
+		return names == null ? -1 : find(names, name);
+	}
 
 	public static function getField(o:Dynamic, name:String):Dynamic {
 		// (an Array's or a String's length: structural access)
 		var k = W.kind(o);
 		if (k == 4 || k == 7) return name == "length" ? (k == 4 ? (o : String).length : (o : Array<Dynamic>).length) : null;
+		var ci = classIndex(o);
+		if (ci >= 0) {
+			var i = staticIndex(ci, name);
+			return i < 0 ? null : W.staticGet(ci, i);
+		}
 		var names:Array<String> = W.fieldNames(o);
 		if (names != null) {
 			var i = find(names, name);
@@ -175,6 +229,12 @@ class GcNative {
 	}
 
 	public static function setField(o:Dynamic, name:String, v:Dynamic):Void {
+		var ci = classIndex(o);
+		if (ci >= 0) {
+			var i = staticIndex(ci, name);
+			if (i >= 0 && !W.staticSet(ci, i, v)) throw "Cannot rebind this method";
+			return;
+		}
 		var names:Array<String> = W.fieldNames(o);
 		if (names != null) {
 			var i = find(names, name);
@@ -188,6 +248,8 @@ class GcNative {
 	}
 
 	public static function hasField(o:Dynamic, name:String):Bool {
+		var ci = classIndex(o);
+		if (ci >= 0) return staticIndex(ci, name) >= 0;
 		var names:Array<String> = W.fieldNames(o);
 		if (names != null && find(names, name) >= 0) return true;
 		var x = extra(o, false);
@@ -195,7 +257,8 @@ class GcNative {
 	}
 
 	public static function fields(o:Dynamic):Array<String> {
-		var names:Array<String> = W.fieldNames(o);
+		var ci = classIndex(o);
+		var names:Array<String> = ci >= 0 ? W.staticNames(ci) : W.fieldNames(o);
 		var r = names == null ? [] : names.copy();
 		var x = extra(o, false);
 		if (x != null)
@@ -220,8 +283,23 @@ class GcNative {
 	public static function callMethod(f:Dynamic, args:Array<Dynamic>):Dynamic
 		return W.dynCall(f, args);
 
-	public static function copyObject(o:Dynamic):Dynamic
-		throw "Reflect.copy: not supported by -D hxmc.wasm-gc yet";
+	// (as hxmc.rt.Dyn's: a class instance or an anonymous structure copied, with
+	// its added fields, any other value itself)
+	public static function copyObject(o:Dynamic):Dynamic {
+		var k = W.kind(o);
+		if (k != 5 && k != 10) return o;
+		var c = W.objCopy(o);
+		var x = extra(o, false);
+		if (x != null) {
+			var y = new GcFields();
+			for (i in 0...x.names.length) {
+				y.names.push(x.names[i]);
+				y.values.push(x.values[i]);
+			}
+			W.setAnonOverflow(c, y);
+		}
+		return c;
+	}
 
 	public static function compareMethods(a:Dynamic, b:Dynamic):Bool
 		return W.same(a, b);
@@ -236,14 +314,23 @@ class GcNative {
 
 	// ---- Dynamic access (o.name on a Dynamic)
 
-	@:hxmc.host("hx_dyn_get") static function dynGet(o:Dynamic, name:String):Dynamic
+	@:hxmc.host("hx_dyn_get") static function dynGet(o:Dynamic, name:String):Dynamic {
+		// (a String's, an Array's, a NativeArray's length, as hxmc.rt.Dyn's)
+		if (name.length == 6 && name == "length")
+			switch W.kind(o) {
+				case 4: return (o : String).length;
+				case 7: return W.arrLen(o);
+				case 11 if (W.naKind(o) >= 0): return W.naLen(o);
+				case _:
+			}
 		return getField(o, name);
+	}
 
 	@:hxmc.host("hx_dyn_set") static function dynSet(o:Dynamic, name:String, v:Dynamic):Void
 		setField(o, name, v);
 
 	@:hxmc.host("hx_dyn_call_field") static function dynCallField(o:Dynamic, name:String, args:Array<Dynamic>):Dynamic
-		return W.dynCall(getField(o, name), args);
+		return anonCall(o, name, args == null ? [] : args.copy());
 
 	// ---- structural access the generated code does not know the layout of (hxmc.wasmgc.FuncGen)
 

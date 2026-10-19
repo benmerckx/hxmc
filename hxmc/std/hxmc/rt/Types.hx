@@ -22,6 +22,7 @@ class Types {
 	public static inline var T_OVERFLOW = 15;
 	public static inline var T_ARRAYITER = 17;
 	public static inline var T_BOXI64 = 18;
+	public static inline var T_NATIVE_ARRAY = 19;
 	public static inline var T_FIRST = 32;
 	// object kinds
 	public static inline var K_OBJ = 0;
@@ -42,8 +43,13 @@ class Types {
 	public static inline var AK_F64 = 2;
 	public static inline var AK_I64 = 3;
 	// Bool: stored as AK_I32 is (4 bytes, 0 or 1), but read as Bool where the
-	// element is boxed (Std.string, Dynamic, reflection)
+	// element is boxed (Std.string, Dynamic, reflection); a NativeArray stores
+	// one byte per Bool
 	public static inline var AK_BOOL = 4;
+	// a NativeArray made for an erased type parameter: a wrapper of its
+	// storage, open until a typed view takes it, then fixed (NArray)
+	public static inline var AK_OPEN = 5;
+	public static inline var AK_WRAP = 6;
 
 	// the elements of these kinds take 4 bytes
 	public static inline function ak4(k:Int):Bool

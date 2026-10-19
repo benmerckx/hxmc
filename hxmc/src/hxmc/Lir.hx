@@ -74,10 +74,19 @@ class LFunc {
 	public var display:Null<String>; // (-debug) the Haxe name of the function (FuncRec.name)
 	var hints:Array<Int> = []; // vreg - NPHYS -> preferred register (physical or virtual), -1
 
-	// jump threading, before emission: a branch to a block that holds only
-	// an unconditional jump (an empty join, once its moves are placed)
-	// branches to that jump's target instead (isJump: the target's jump)
-	public function threadJumps(isJump:LIns->Bool) {
+	// jump threading, before emission: a branch (or a jump table's entry)
+	// to a block that holds only an unconditional jump (an empty join, once
+	// its moves are placed) branches to that jump's target instead (isJump:
+	// the target's jump). The instructions that emit nothing (isNop: a move
+	// of a register to itself, once registers are allocated) go first, and
+	// the blocks no branch reaches any more after (the entry is reached).
+	public function threadJumps(isJump:LIns->Bool, isNop:LIns->Bool) {
+		for (b in blocks) {
+			var ins = b.ins, k = 0;
+			for (i in ins)
+				if (!isNop(i)) ins[k++] = i;
+			if (k < ins.length) ins.resize(k);
+		}
 		function dest(t:LBlock):LBlock {
 			var n = 0;
 			while (t != blocks[0] && t.ins.length == 1 && isJump(t.ins[0]) && t.ins[0].target != t && n++ < 16)
@@ -85,8 +94,55 @@ class LFunc {
 			return t;
 		}
 		for (b in blocks)
-			for (i in b.ins)
+			for (i in b.ins) {
 				if (i.target != null) i.target = dest(i.target);
+				if (i.table != null)
+					for (k in 0...i.table.length)
+						i.table[k] = dest(i.table[k]);
+			}
+		// (every block ends with its jumps: none falls into the next one)
+		var n = blocks.length;
+		for (k in 0...n)
+			blocks[k].id = k;
+		var reached = new haxe.ds.Vector<Bool>(n);
+		reached[0] = true;
+		var stack = [blocks[0]];
+		inline function reach(t:LBlock)
+			if (!reached[t.id]) {
+				reached[t.id] = true;
+				stack.push(t);
+			}
+		while (stack.length > 0)
+			for (i in stack.pop().ins) {
+				if (i.target != null) reach(i.target);
+				if (i.table != null)
+					for (t in i.table)
+						reach(t);
+			}
+		var live = 0;
+		for (k in 0...n)
+			if (reached[k]) live++;
+		if (live < n) blocks = [for (b in blocks) if (reached[b.id]) b];
+	}
+
+	// a block's last two instructions: a conditional branch (isCond) to the
+	// next block in the layout, then a jump (isJump) elsewhere: the branch
+	// takes the jump's target with the opposite condition (invert), the jump
+	// goes to the next block (not encoded); a conditional branch to the jump's
+	// own target goes
+	public static function fallThrough(b:LBlock, next:Null<LBlock>, isJump:LIns->Bool, isCond:LIns->Bool, invert:LIns->Void) {
+		var ins = b.ins;
+		while (ins.length >= 2 && isJump(ins[ins.length - 1]) && isCond(ins[ins.length - 2])
+			&& ins[ins.length - 2].target == ins[ins.length - 1].target)
+			ins.splice(ins.length - 2, 1);
+		var n = ins.length;
+		if (n < 2 || next == null) return;
+		var j = ins[n - 1], c = ins[n - 2];
+		if (isJump(j) && isCond(c) && c.target == next && j.target != next) {
+			invert(c);
+			c.target = j.target;
+			j.target = next;
+		}
 	}
 
 	public inline function hint(r:Int):Int
@@ -120,19 +176,17 @@ class LFunc {
 }
 
 class Arrays {
-	// an Int array of n copies of v (sized once, not grown element by element)
-	public static function filled(n:Int, v:Int):Array<Int> {
-		var a = new Array<Int>();
-		a.resize(n);
-		for (i in 0...n)
-			a[i] = v;
+	// an Int vector of n copies of v
+	public static function filled(n:Int, v:Int):haxe.ds.Vector<Int> {
+		var a = new haxe.ds.Vector<Int>(n);
+		if (v != 0) a.fill(v);
 		return a;
 	}
 }
 
 // a fixed-size bit set
 class Bits {
-	public var w:Array<Int>;
+	public var w:haxe.ds.Vector<Int>;
 
 	public function new(n:Int) {
 		w = Arrays.filled((n + 31) >> 5, 0);

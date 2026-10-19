@@ -40,12 +40,22 @@ class GcGen {
 	}
 
 	// the runtime's exports this target's code calls for an expression
-	// (FuncGen: structural access it does not know the layout of, enum comparisons)
+	// (FuncGen: structural access it does not know the layout of, enum
+	// comparisons, NativeArray's error and slow path, type tests)
 	static function runtimeCalls(e:Ex):Null<String>
 		return switch e {
 			case EAnonGet(_): "gc_anon_get";
 			case ECallAnon(_): "gc_anon_call";
 			case ECallHost("hxmc_rt_gc_W_enumEq", _, _): "gc_dyn_eq";
+			case ECallHost("hxmc_narray_new", _, _): "hx_narray_bad_length";
+			case ECallHost("hxmc_narray_dset", _, _): "hx_narray_set_slow";
+			// (a type known at run time only, an Int: FuncGen.typeTest)
+			case ECallHost("Std_isOfType" | "Std_is" | "hx_is" | "Std_downcast" | "hx_cast", args, _):
+				switch args[1] {
+					case EType(TRBuiltin("Int")): "gc_is_int";
+					case EType(_): null;
+					case _: "gc_is";
+				}
 			case _: null;
 		}
 }
@@ -125,6 +135,11 @@ class Uses {
 		var k = c;
 		while (k != null && !classes.exists(k)) {
 			classes.set(k, true);
+			// (the statics reached through the class value whose closures Reach
+			// kept: Meta.staticGet)
+			if (k.statics != null)
+				for (s in k.statics)
+					if (s.clos != null && (prog.live == null || prog.live.exists(s.clos.fn))) lambdas.set(s.clos, true);
 			k = k.sup;
 		}
 	}

@@ -622,7 +622,7 @@ class Inline {
 class InlineState {
 	// port: upstream conses onto md.m_inline_calls (`x :: l`, then an assignment), which
 	// is memory safe when parallel filter workers inline into classes of the same module; the
-	// port's list is a shared Haxe array mutated in place, so concurrent unshifts are serialized.
+	// port's list is a shared Haxe array mutated in place, so concurrent pushes are serialized.
 	static final inlineCallsMutex = new sys.thread.Mutex();
 
 	var ictx:InlineContext;
@@ -807,8 +807,10 @@ class InlineState {
 					// We use a null expression because we only care about the type (for abstract casts).
 					if (l.iAbstractThis) l.iSubst.vExtra = varExtra([], withExpr(e, TConst(TNull)));
 				} else e = opt == null ? mk(TConst(TNull), v.vType, v.vPos) : opt;
-				acc.unshift({local: l, expr: e});
+				// port: `(l, e) :: acc` as a push, the accumulator reversed once at the end
+				acc.push({local: l, expr: e});
 			}
+			acc.reverse();
 			inlinedVars = acc; // Order is reversed due to tail-recursion
 		}
 		return switch ethis.eexpr {
@@ -878,7 +880,7 @@ class InlineState {
 		var endPos:Pos = core.ds.Record.copy(p);
 		endPos.pmax = p.pmin + cf.cfName.length;
 		inlineCallsMutex.acquire();
-		md.mInlineCalls.unshift({definitionPos: cf.cfNamePos, callPos: endPos});
+		md.mInlineCalls.push({definitionPos: cf.cfNamePos, callPos: endPos});
 		inlineCallsMutex.release();
 		inline function wrap(e:TExpr):TExpr {
 			// we can't mute the type of the expression because it is not correct to do so

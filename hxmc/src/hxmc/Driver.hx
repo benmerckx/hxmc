@@ -303,14 +303,24 @@ class Driver {
 		var lits:Array<Array<String>> = [for (_ in 0...nm) null];
 		var objs:Array<Obj> = [for (_ in 0...nm) null];
 		var s0 = haxe.Timer.stamp();
-		var inlined = new Fingerprint.Inlined();
+		// (the functions that may be inlined: their digests first, Fingerprint.Inlined)
+		var inlined:Null<Fingerprint.Inlined> = null;
+		if (MirBuild.inlineCands != null) {
+			var cands = MirBuild.inlineCands;
+			inlined = new Fingerprint.Inlined(prep, [for (f in p.funcs) if (cands.exists(f)) f]);
+			var d = Inline.DEPTH;
+			while (d >= 1) {
+				var depth = d;
+				parallel(inlined.funcs.length, jobs, k -> inlined.compute(depth, k));
+				d--;
+			}
+		}
 		parallel(nm, jobs, mi -> {
 			var fp = new Fingerprint(prep, inlined);
-			var text = new StringBuf();
-			text.add(tk);
+			fp.text(tk);
 			for (f in byModule.get(order[mi]))
-				fp.func(f, text);
-			var key = Fingerprint.hash(text.toString());
+				fp.func(f);
+			var key = fp.key();
 			keys[mi] = key;
 			lits[mi] = fp.newStrings;
 			var mem = resident ? memObjs.get(memPaths[mi]) : null;
@@ -347,13 +357,22 @@ class Driver {
 			for (f in byModule.get(order[mi]))
 				weight[mi] += f.body.length + f.locals.length;
 		todo.sort((a, b) -> weight[b] - weight[a]);
+		// the register allocator's working storage, taken by a module and given
+		// back (at most one per thread: its arrays keep their capacity)
+		var scratches:Array<Regalloc.Scratch> = [];
 		parallel(todo.length, jobs, k -> {
 			var mi = todo[k];
 			var obj = new Obj();
 			var emit = Target.emitter(abi, obj);
-			var ras = new Regalloc.Scratch(Target.selector(abi));
+			lock.acquire();
+			var ras = scratches.pop();
+			lock.release();
+			if (ras == null) ras = new Regalloc.Scratch(Target.selector(abi));
 			for (f in byModule.get(order[mi]))
 				compileFunc(f, obj, emit, ras);
+			lock.acquire();
+			scratches.push(ras);
+			lock.release();
 			// (WebAssembly objects are not cached: ElfWriter has no relocations for them)
 			if (!abi.wasm) {
 				var b = ElfWriter.write(obj, abi.arm);
@@ -387,6 +406,7 @@ class Driver {
 		dg.allocStubs(objs, demit);
 		dg.stubs(objs, demit);
 		dg.cstrLiterals(objs);
+		dg.emptyArrays(objs);
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {

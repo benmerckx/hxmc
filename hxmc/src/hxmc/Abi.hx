@@ -19,6 +19,7 @@ class Abi {
 	public static inline var HDR_TINDEX = -4;
 	public static inline var T_FIRST = 32;
 	public static inline var T_ARRAY = 5;
+	public static inline var T_NATIVE_ARRAY = 19;
 	public static inline var T_REFBOX_P = 11;
 	public static inline var T_REFBOX_I = 12;
 	public static inline var T_REFBOX_F = 13;
@@ -29,7 +30,7 @@ class Abi {
 	public static inline var AK_I32 = 1;
 	public static inline var AK_F64 = 2;
 	public static inline var AK_I64 = 3;
-	public static inline var AK_BOOL = 4; // stored as AK_I32 (Types.hx)
+	public static inline var AK_BOOL = 4; // stored as AK_I32 (Types.hx); in a NativeArray, one byte per Bool
 
 	public var name:String; // linux-x86_64, ...
 	public var arm:Bool;

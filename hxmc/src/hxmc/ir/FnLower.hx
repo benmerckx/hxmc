@@ -43,8 +43,11 @@ class FnLower {
 		out = fi.body;
 	}
 
-	function fail(msg:String, ?e:TExpr):Dynamic
-		throw new LowerError(msg, e != null ? '${e.epos.pfile}:${e.epos.pmin}' : "");
+	// (the expression's file and line, and the function being lowered)
+	function fail(msg:String, ?e:TExpr):Dynamic {
+		var at = e != null ? where(e) : "";
+		throw new LowerError(msg, (at != "" ? at + " in " : "") + fi.name);
+	}
 
 	inline function ty(t:T):Ty
 		return l.ty(t);
@@ -97,7 +100,7 @@ class FnLower {
 			if (d != null && Ir.isRef(a.ty) && !strip(d).eexpr.match(TConst(TNull)))
 				out.push(SIf(EBin(RefEq, ELocal(a), ENull(a.ty)), block(() -> out.push(SSet(a, coerceRhs(rhs(d), tyOf(d), a.ty)))), []));
 			var x:Ex = ELocal(a);
-			if (Ir.repr(t) != Ir.repr(a.ty) || closureConversion(a.ty, t)) {
+			if (Ir.repr(t) != Ir.repr(a.ty) || refConversion(a.ty, t)) {
 				var lo = newLocal(v.vName, t);
 				out.push(SSet(lo, coerce(x, a.ty, t)));
 				x = ELocal(lo);
@@ -193,9 +196,10 @@ class FnLower {
 					out.push(SIf(EBin(RefEq, ELocal(a), ENull(a.ty)), dflt, [SSet(v, coerce(ELocal(a), a.ty, t))]));
 					args.push(ELocal(v));
 					argTys.push(t);
-				// (the function takes a closure as the type it declares, which
-				// the one passed here may not have: signatures keep it Dynamic)
-				case _ if (closureConversion(a.ty, target)):
+				// (the function takes a closure, or a NativeArray, as the type it
+				// declares, which the one passed here may not have: signatures keep
+				// it Dynamic)
+				case _ if (refConversion(a.ty, target)):
 					args.push(coerce(ELocal(a), a.ty, target));
 					argTys.push(target);
 				case _:
@@ -376,7 +380,8 @@ class FnLower {
 	public static var NOGC = ["Math_random" => true, "hx_box_bool" => true];
 
 	public static function isPure(n:String):Bool
-		return PURE.exists(n) || MATH.exists(n) || PURE_INTRINSICS.exists(n);
+		return PURE.exists(n) || MATH.exists(n) || PURE_INTRINSICS.exists(n)
+			|| StringTools.startsWith(n, "hxmc_narray_get_") || n == "hxmc_narray_length";
 
 	// C functions declared @:hxmc.c (hxmc.unsafe.LibC): called with the C ABI,
 	// never GC points (filled while lowering)
@@ -395,7 +400,7 @@ class FnLower {
 
 	// a runtime function call that is not a GC point
 	public static function noGcHost(n:String):Bool
-		return isPure(n) || NOGC.exists(n) || C_EXTERNS.exists(n)
+		return isPure(n) || NOGC.exists(n) || C_EXTERNS.exists(n) || StringTools.startsWith(n, "hxmc_narray_set_")
 			|| (isIntrinsic(n) && n != "hxmc_unsafe_Mem_alloc" && n != "hxmc_unsafe_Mem_allocRaw" && !StringTools.startsWith(n, "hxmc_unsafe_Mem_call"));
 
 	// the layout an object literal of the structural type t gets, when the
@@ -405,8 +410,7 @@ class FnLower {
 			case TAnon(an) if (an.aStatus.match(Closed | Const)):
 				// (in the order of the names: a map's order follows its insertions,
 				// which differ for a type read from HXB, and ty numbers the types it meets)
-				var names = [for (k in an.aFields.keys()) k];
-				names.sort(Reflect.compare);
+				var names = l.anonNames(an);
 				var fs = [for (k in names) {name: k, ty: l.boxed(ty(an.aFields.get(k).cfType))}];
 				var sh = l.getProgram().shape(fs);
 				var i = sh.slot(name);
@@ -686,6 +690,11 @@ class FnLower {
 			case _:
 		}
 		switch [from, to] {
+			// a typed view takes storage of its own kind (rt/NArray.view): from
+			// a Dynamic-typed view or a Dynamic, and between the kinds Haxe lets
+			// alias (Int and Null<Int>), checked; an open wrapper's storage, converted
+			case [_, TRef(RNativeArr(b))] if (nativeConversion(from, to)):
+				return temp(to, ECallHost(l.native("hx_narray_view"), [x, EInt(nativeKind(b))], to));
 			case [TRef(RClos(a)), TRef(RClos(b))] if (a != b):
 				if (x.match(ENull(_))) return ENull(to);
 				if (hasStruct(a) || hasStruct(b)) structFail('a function taking or returning a struct value cannot become a function of another type');
@@ -729,6 +738,64 @@ class FnLower {
 				x.match(ENull(_)) ? nullOf(to) : EUnbox(to, x);
 			case _: x;
 		}
+	}
+
+	static function nativeKind(elem:Ty):Int
+		return switch elem {
+			case TI32: 1;
+			case TBool: 4;
+			case TF64: 2;
+			case TI64: 3;
+			case _: 0;
+		};
+
+	// a NativeArray whose element is Dynamic (Dynamic, Any, an erased type
+	// parameter) may hold any kind of storage, or be a wrapper (rt/NArray)
+	static function dynElem(elem:Ty):Bool
+		return elem.match(TRef(RAny));
+
+	// element i of NativeArray a (both locals or constants, as they are read
+	// again by the test of the index), the access at p: tested as -D
+	// hxmc.native-array-outofbounds says (Lower.bounds); no p: not tested (the
+	// std's own loops)
+	function nativeRead(elem:Ty, a:Ex, i:Ex, ?p:core.Globals.Pos):Ex {
+		var get = ECallHost(dynElem(elem) ? "hxmc_narray_dget" : "hxmc_narray_get_" + ["p", "i", "f", "l", "b"][nativeKind(elem)], [a, i], elem);
+		switch p == null ? Lower.BOUNDS_UNCHECKED : Lower.bounds {
+			case Lower.BOUNDS_SILENT:
+				var r = newLocal("e", elem);
+				// (seen as Dynamic: the default of the storage's kind)
+				var none = dynElem(elem) ? ECallHost(l.native("hx_narray_default"), [a], elem) : nullOf(elem);
+				out.push(SIf(inBounds(a, i), [SSet(r, get)], [SSet(r, none)]));
+				return ELocal(r);
+			case Lower.BOUNDS_THROWS:
+				out.push(SIf(inBounds(a, i), [], [SThrow(outOfBounds(a, i, p))]));
+			case _:
+		}
+		return dynElem(elem) ? temp(elem, get) : get;
+	}
+
+	// a[i] = x (x: a local or constant), as nativeRead
+	function nativeWrite(elem:Ty, a:Ex, i:Ex, x:Ex, ?p:core.Globals.Pos) {
+		var set = SExpr(ECallHost(dynElem(elem) ? "hxmc_narray_dset" : "hxmc_narray_set_" + ["p", "i", "f", "l", "b"][nativeKind(elem)], [a, i, x], TVoid));
+		out.push(switch p == null ? Lower.BOUNDS_UNCHECKED : Lower.bounds {
+			case Lower.BOUNDS_SILENT: SIf(inBounds(a, i), [set], []);
+			case Lower.BOUNDS_THROWS: SIf(inBounds(a, i), [set], [SThrow(outOfBounds(a, i, p))]);
+			case _: set;
+		});
+	}
+
+	// (one unsigned comparison: negative indices too; the length of a
+	// wrapper is its storage's)
+	static function inBounds(a:Ex, i:Ex):Ex
+		return ECallHost("hxmc_unsafe_Mem_ult", [i, ECallHost("hxmc_narray_length", [a], TI32)], TBool);
+
+	// the exception, with the position of the access (thrown at once: the
+	// call is the throw statement's own)
+	function outOfBounds(a:Ex, i:Ex, p:core.Globals.Pos):Ex {
+		var d = fi.display != null ? fi.display : fi.name;
+		var dot = d.lastIndexOf(".");
+		var pos = [EStr(p.pfile), EInt(CInterop.lineOf(p.pfile, p.pmin)), EStr(dot < 0 ? "" : d.substr(0, dot)), EStr(d.substr(dot + 1))];
+		return ECallHost(l.native("hx_narray_oob"), [i, ECallHost("hxmc_narray_length", [a], TI32)].concat(pos), TRef(RAny));
 	}
 
 	// a value converted to String (for concatenation)
@@ -898,8 +965,20 @@ class FnLower {
 	static function closureConversion(from:Ty, to:Ty):Bool
 		return to.match(TRef(RClos(_))) && (from.match(TRef(RClos(_))) || from.match(TRef(RAny)));
 
+	// a NativeArray taken by a typed view that may not have its kind (coerce)
+	static function nativeConversion(from:Ty, to:Ty):Bool
+		return switch [from, to] {
+			case [TRef(RNativeArr(a)), TRef(RNativeArr(b))]: !dynElem(b) && (dynElem(a) || nativeKind(a) != nativeKind(b));
+			case [TRef(_), TRef(RNativeArr(b))]: !dynElem(b); // (Dynamic; another reference, cast)
+			case _: false;
+		}
+
+	// a conversion between two references that is not a cast (coerce)
+	static function refConversion(from:Ty, to:Ty):Bool
+		return closureConversion(from, to) || nativeConversion(from, to);
+
 	function coerceRhs(x:Ex, from:Ty, to:Ty):Ex {
-		if (Ir.repr(from) == Ir.repr(to) && !closureConversion(from, to)) return x;
+		if (Ir.repr(from) == Ir.repr(to) && !refConversion(from, to)) return x;
 		if (isImpure(x)) x = temp(from, x);
 		return coerce(x, from, to);
 	}
@@ -1196,6 +1275,10 @@ class FnLower {
 				coerce(EEnumParam(c, i, value(e1)), c.params[i], tyOf(e));
 			case TArray(a, i):
 				switch tyOf(a) {
+					case TRef(RNativeArr(elem)):
+						var xs = operands([a, i]);
+						var al = ELocal(asLocal(xs[0], tyOf(a)));
+						coerce(nativeRead(elem, al, ELocal(asLocal(coerce(xs[1], tyOf(i), TI32), TI32)), e.epos), elem, tyOf(e));
 					case TRef(RArr(elem)):
 						var xs = operands([a, i]);
 						var ix = coerce(xs[1], tyOf(i), TI32);
@@ -1212,6 +1295,19 @@ class FnLower {
 			case TBinop(op, a, b): binop(op, a, b, e);
 			case TUnop(op, flag, e1): unop(op, flag, e1, e);
 			case TCall(f, cargs): call(f, cargs, e);
+			case TNew(c, params, cargs) if (Lower.isNativeArray(c)):
+				var n = coerce(value(cargs[0]), tyOf(cargs[0]), TI32);
+				// (of an erased type parameter: a wrapper, which the first typed
+				// view converts to its kind, rt/NArray)
+				var erased = switch TFunctions.follow(params[0]) {
+					case TInst(pc, _): pc.clKind.match(KTypeParameter(_));
+					case _: false;
+				};
+				if (erased) temp(tyOf(e), ECallHost(l.native("hx_narray_open"), [n], tyOf(e)));
+				else ECallHost("hxmc_narray_new", [EInt(nativeKind(switch tyOf(e) {
+					case TRef(RNativeArr(t)): t;
+					case _: fail("NativeArray type", e);
+				})), n], tyOf(e));
 			case TNew(c, _, cargs) if (Lower.isCore(c, "Array")):
 				var elem = switch tyOf(e) {
 					case TRef(RArr(t)): t;
@@ -1318,6 +1414,8 @@ class FnLower {
 					case Method(_): methodClosure(obj, c, cf, e);
 					case Var(_) if (Lower.isCore(c, "Array") && cf.cfName == "length"):
 						EArrLen(value(obj));
+					case Var(_) if (Lower.isNativeArray(c) && cf.cfName == "length"):
+						ECallHost("hxmc_narray_length", [value(obj)], TI32);
 					case Var(_) if (Lower.isCore(c, "String") && cf.cfName == "length"):
 						ECallHost("String_length", [value(obj)], TI32);
 					case Var(_) if (CInterop.isStruct(c)): structGet(obj, c, cf, e);
@@ -1703,7 +1801,8 @@ class FnLower {
 		switch [ta, tb] {
 			case [TRef(RStr), TRef(RStr)]:
 				return ECallHost("hx_str_eq", [xa, xb], TBool);
-			case [TRef(RObj(_) | REnum(_) | RCtor(_) | RClos(_) | RArr(_) | RAnon | RType | RNative(_)), TRef(RObj(_) | REnum(_) | RCtor(_) | RClos(_) | RArr(_) | RAnon | RType | RNative(_))]:
+			// (a NativeArray: its identity, as hx_dyn_eq has it)
+			case [TRef(RObj(_) | REnum(_) | RCtor(_) | RClos(_) | RArr(_) | RNativeArr(_) | RAnon | RType | RNative(_)), TRef(RObj(_) | REnum(_) | RCtor(_) | RClos(_) | RArr(_) | RNativeArr(_) | RAnon | RType | RNative(_))]:
 				return EBin(RefEq, xa, xb);
 			case _:
 				var da = coerce(xa, ta, TRef(RAny)), db = coerce(xb, tb, TRef(RAny));
@@ -1820,6 +1919,12 @@ class FnLower {
 				return coerce(x, t, et);
 			case TArray(a, i):
 				switch tyOf(a) {
+					case TRef(RNativeArr(elem)):
+						var al = asLocal(value(a), tyOf(a));
+						var ix = ELocal(asLocal(coerce(value(i), tyOf(i), TI32), TI32));
+						var x = pure(compute(() -> nativeRead(elem, ELocal(al), ix, lhs.epos), elem, elem), elem);
+						nativeWrite(elem, ELocal(al), ix, x, lhs.epos);
+						return coerce(x, elem, et);
 					case TRef(RArr(elem)):
 						var al = asLocal(value(a), tyOf(a));
 						var ix = ELocal(asLocal(coerce(value(i), tyOf(i), TI32), TI32));
@@ -1882,6 +1987,18 @@ class FnLower {
 			case _:
 		}
 		switch strip(f).eexpr {
+			// (the std's own loops, over indices they keep in bounds: not
+			// tested, whatever -D hxmc.native-array-outofbounds says)
+			case TField(obj, FInstance(c, _, cf)) if (Lower.isNativeArray(c) && (cf.cfName == "unsafeGet" || cf.cfName == "unsafeSet")):
+				var elem = switch tyOf(obj) {
+					case TRef(RNativeArr(t)): t;
+					case _: return fail("NativeArray." + cf.cfName + " of another type", e);
+				};
+				var xs = operands([obj].concat(cargs));
+				var a = ELocal(asLocal(xs[0], tyOf(obj))), i = coerce(xs[1], tyOf(cargs[0]), TI32);
+				if (cf.cfName == "unsafeGet") return coerce(nativeRead(elem, a, i), elem, rt);
+				nativeWrite(elem, a, i, ELocal(asLocal(coerce(xs[2], tyOf(cargs[1]), elem), elem)));
+				return EInt(0);
 			case TField(_, FStatic(_, cf)) if (cf.cfKind.match(Var(_))):
 				return callValue(f, cargs, e);
 			case TIdent("__resources__") if (cargs.length == 0):
@@ -2277,16 +2394,8 @@ class FnLower {
 			case _: false;
 		}
 
-	// (Null<S> is not a struct value: a reference to its box, Lower.boxed)
-	static function structOf(t:core.TType.T):Null<TClass>
-		return switch TFunctions.followWithoutNull(t) {
-			case TAbstract({aPath: {pack: [], name: "Null"}}, _): null;
-			case _:
-				switch CInterop.ctype(t) {
-					case CStruct(c): c;
-					case _: null;
-				}
-		}
+	inline function structOf(t:core.TType.T):Null<TClass>
+		return l.structOf(t);
 
 	static function structTy(c:TClass):Ty
 		return TStruct(core.Globals.sTypePath(c.clPath), CInterop.layout(c).size);
@@ -2525,7 +2634,8 @@ class FnLower {
 			return coerce(x, TRef(RAny), tyOf(e));
 		}
 		var x = EAnonGet(name, t, value(obj), anonHint(obj.etype, name, t));
-		return t == tyOf(e) ? x : coerce(temp(t, x), t, tyOf(e));
+		// (a reference through a temporary; a number or a Bool as it is)
+		return Ir.isRef(t) ? coerce(temp(t, x), t, tyOf(e)) : x;
 	}
 
 	// ---- closures
@@ -2574,41 +2684,52 @@ class Boxing {
 	public static function analyze(body:TExpr, args:Array<TVar>):Map<Int, Bool> {
 		var captured = new Map<Int, Bool>();
 		var assigned = new Map<Int, Bool>();
-		function walk(e:TExpr, depth:Int, declDepth:Map<Int, Int>) {
+		// (the walk's depth in closures, and the depth each local is declared
+		// at: nothing is captured at depth 0)
+		var depth = 0;
+		var declDepth = new Map<Int, Int>();
+		function walk(e:TExpr) {
 			switch e.eexpr {
 				case TVar(v, init):
 					declDepth.set(v.vId, depth);
-					if (init != null) walk(init, depth, declDepth);
+					if (init != null) walk(init);
 				case TLocal(v):
-					var d = declDepth.get(v.vId);
-					if (d != null && d < depth) captured.set(v.vId, true);
+					if (depth > 0) {
+						var d = declDepth.get(v.vId);
+						if (d != null && d < depth) captured.set(v.vId, true);
+					}
 				case TBinop(OpAssign | OpAssignOp(_), {eexpr: TLocal(v)}, rhs):
 					assigned.set(v.vId, true);
-					var d = declDepth.get(v.vId);
-					if (d != null && d < depth) captured.set(v.vId, true);
-					walk(rhs, depth, declDepth);
+					if (depth > 0) {
+						var d = declDepth.get(v.vId);
+						if (d != null && d < depth) captured.set(v.vId, true);
+					}
+					walk(rhs);
 				case TUnop(Increment | Decrement, _, {eexpr: TLocal(v)}):
 					assigned.set(v.vId, true);
-					var d = declDepth.get(v.vId);
-					if (d != null && d < depth) captured.set(v.vId, true);
+					if (depth > 0) {
+						var d = declDepth.get(v.vId);
+						if (d != null && d < depth) captured.set(v.vId, true);
+					}
 				case TFunction(tf):
 					for (a in tf.tfArgs)
 						declDepth.set(a.variable.vId, depth + 1);
-					walk(tf.tfExpr, depth + 1, declDepth);
+					depth++;
+					walk(tf.tfExpr);
+					depth--;
 				case TTry(b, cs):
-					walk(b, depth, declDepth);
+					walk(b);
 					for (c in cs) {
 						declDepth.set(c.variable.vId, depth);
-						walk(c.expr, depth, declDepth);
+						walk(c.expr);
 					}
 				case _:
-					core.Texpr.iter(x -> walk(x, depth, declDepth), e);
+					core.Texpr.iter(walk, e);
 			}
 		}
-		var decl = new Map<Int, Int>();
 		for (a in args)
-			decl.set(a.vId, 0);
-		walk(body, 0, decl);
+			declDepth.set(a.vId, 0);
+		walk(body);
 		var r = new Map<Int, Bool>();
 		for (id in captured.keys())
 			if (assigned.exists(id)) r.set(id, true);
