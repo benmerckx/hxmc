@@ -152,7 +152,26 @@ the default and the generated compiler is an extra CI lane.
 
 ## What exists
 
-- PR #5 (draft): the frontend over every module of the pinned tag (324 of
-  326 type), the emitter for a small subset (14 modules emit), a seed of
-  the runtime and semantic tests. It commits a js_of_ocaml bundle of the
-  frontend; step 1 replaces that with a CI build.
+ml2hx on branch hv-emit, parked on 2026-10-19 (tools/ml2hx/README.md,
+"State"):
+
+- **Steps 1 to 3 are done for 5.x.**
+  - The frontend is built in CI.
+  - 324 of the pin's 326 compiler modules emit and type, and 111 of 113
+    library units.
+  - The generated compiler builds with hxmc: 56 s, 3.0 GB, stripped binary
+    31.1 MB.
+- **Output identity:** on upstream's unit tests its output is the port's,
+  apart from the build date, on js, lua, python, php, hl, hlc, neko, cppia
+  and flash.
+- **haxe/test suites**, with the port as the reference: Conformance 279 pass
+  and 7 expected failures; Interp 276 pass and 0 fail.
+- **Speed gate, not met yet.** Self-typing takes 8.28 s, against the port's
+  4.45 s (1.86x) and upstream's own OCaml binary at 5.19 s (1.60x). Unit
+  tests to JS are 1.99x the port. The history is in tools/ml2hx/PROFILE.md,
+  and `make ml2hx-profile` measures it.
+- **Not started:** overlays (step 4), and libuv (luv stubs raise Failure).
+  The first overlay candidates are the port's allocation-saving departures,
+  such as map_expr returning an unchanged node.
+- **To resume:** rerun the checks and the profile (README, "State"), then
+  overlays ranked by profile impact, then luv over hxmc.NativeUv.

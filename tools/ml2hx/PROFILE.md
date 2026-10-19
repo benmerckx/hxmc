@@ -210,3 +210,29 @@ One entry per `make ml2hx-profile` run worth keeping (ML2HX_PROFILE_NOTE set): s
   | arrays (runtime) | 0.16 | 0.04 | -0.11 | 0.28x |
   | Haxe maps (haxe.ds) | 0.14 | 0.00 | -0.14 | 0.01x |
   | strings (runtime) | 0.20 | 0.03 | -0.16 | 0.18x |
+
+### Final state when parked (2026-10-19, d020de5)
+
+The numbers are from the run above, 08ccf47 plus the reference column.
+
+**Speed and allocation history** (self-typing, generated compiler; the port took 3.9 to 4.5 s in each run):
+
+| Step | Generated | Against the port | Allocated |
+| --- | ---: | ---: | ---: |
+| Before profiling | 26.5 s | | |
+| Poly kind and ranks cache | 22.4 s | | |
+| Lambda lifting | 12.9 s | | |
+| First profile report | 10.29 s | 2.40x | 9.1 GB |
+| Typed compare, Poly without Type.typeof | 8.23 s | 2.03x | 7.6 GB |
+| Static small Int64 boxes, List.mem/assoc by type | 7.56 s | 1.96x | 6.8 GB |
+| Partial applications, Poly int paths | 7.35 s | 1.87x | 6.6 GB |
+| Final | 8.28 s | 1.86x | 6.6 GB |
+
+In the final run, upstream's own OCaml compiler took 5.19 s, so the generated compiler is 1.60x upstream.
+
+**Suites** (generated compiler; the port as the reference):
+- haxe/test Conformance: 286 cases, 279 pass, 7 expected failures.
+- Interp: 352 cases, 276 pass, 76 skipped, 0 fail.
+- Unit-test output: identical apart from the build date on js, lua, python, php, hl, hlc, neko, cppia and flash.
+
+**Build:** 56 s and 3.0 GB. Stripped binary: 31.1 MB, against the port's 18.1 MB and upstream's 29.9 MB.

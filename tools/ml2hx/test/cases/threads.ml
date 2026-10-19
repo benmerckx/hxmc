@@ -1,4 +1,5 @@
-(* threads under one master lock: mutexes, conditions, join, Event *)
+(* native: threads under one master lock: mutexes, conditions, join, Event,
+   domains (the stage0 interpreter, WebAssembly, has no threads) *)
 let () =
   let m = Mutex.create () and c = Condition.create () in
   let queue = Queue.create () and finished = ref 0 in

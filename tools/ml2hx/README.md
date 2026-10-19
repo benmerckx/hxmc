@@ -50,6 +50,50 @@ with errors until what remains types) and prints
 
 with the first type error of each module in `bin/ml2hx/check.json`.
 
+## State (parked, 2026-10-19)
+
+Work on ml2hx is parked at this state (branch hv-emit):
+
+- **Counts:** 324 of the pin's 326 compiler modules emit and type (the other
+  two are upstream test files OCaml does not type either); 111 of 113
+  library units (435 of 439 with the compiler's).
+- **The generated compiler** (`make port-generated`, 56 s and 3.0 GB to
+  build) runs. Its output for upstream's unit tests is identical to the
+  port's, apart from the embedded build date, on js, lua, python, php, hl,
+  hlc, neko, cppia and flash (SWF compared inflated).
+- **haxe/test suites**, run with the port as the reference: Conformance has
+  286 cases, 279 pass and 7 are expected failures (the reference fails them
+  too). Interp (upstream's tests/misc/eval) has 352 cases: 276 pass, 76 are
+  skipped, none fail.
+- **Speed** (`make ml2hx-profile`, history in [PROFILE.md](PROFILE.md)):
+  - Self-typing: 8.28 s, against the port's 4.45 s (1.86x) and upstream's
+    own OCaml compiler at 5.19 s (1.60x).
+  - Unit tests to JS: 6.56 s against 3.29 s for the port (1.99x) and 3.60 s
+    for upstream (1.82x).
+  - Allocation in self-typing: 6.6 GB against the port's 2.9 GB.
+  - Peak RSS: 631 MB, against the port's 484 MB and upstream's 749 MB.
+  - Stripped binary: 31.1 MB, against the port's 18.1 MB and upstream's
+    29.9 MB.
+- **Threads and domains** run as OCaml 5's systhreads (host threads under one
+  master lock, ml2hx.rt.Gil), with no preemption of a thread that never
+  blocks.
+- **Not done:**
+  - libuv: the luv bindings are stubs that raise Failure.
+  - Overlays (plan step 4) are not started. The profile names the
+    candidates: places where the port departs from upstream to save work,
+    such as `map_expr` returning an unchanged node, where the generated
+    compiler allocates twice the texpr nodes.
+  - Speed: the remaining 1.9x is spread over converted code, allocation
+    volume, polymorphic hashing of structured keys (generic Hashtbl, PMap,
+    the matcher's tables) and closure adapters.
+- **To resume:**
+  1. Run `make ml2hx-check`, then `make ml2hx-profile` with
+     `ML2HX_UTEST` set and `make reference` built.
+  2. Run the haxe/test suites with `HAXE_REFERENCE` set to the port and
+     `HAXE_IN_HAXE_PORT` set to the generated compiler.
+  3. Next would come overlays ranked by profile impact, then luv over
+     hxmc.NativeUv for the tests that need it.
+
 ## The generated compiler
 
 `generate.mjs` also writes `Ml2hxCompiler`: every unit haxe.ml reaches,
@@ -193,18 +237,19 @@ locally abstract types, polymorphic recursion.
 - Not converted: recursive modules (unused by the compiler and its
   libraries), let rec values that use the group's variables other than as
   record fields (nested records included), lazies or closures.
-- A method whose body computes before its function (method m = let x = ...
-  in fun y -> ...) runs that prefix at a send with fewer arguments only when
-  it has no parameter before the prefix (its getter, `ml2hxValue_m`).
 - Effects: a handler that does work after `continue` does it before the
   computation resumes.
-- Primitives not available: marshalling (`Marshal`, `input_value`: the
-  runtime lacks the static types to rebuild values), `Obj.add_offset`,
+- Primitives not available: reading marshalled data (`input_value`,
+  `Marshal.from_*`: the runtime lacks the static types to rebuild values;
+  writing is OCaml's format, sharing included), `Obj.add_offset`,
   libuv (luv: typed for eval.luv, its functions raise Failure "luv: ... is
   not available in the generated compiler" until bound over hxmc.NativeUv), BIO callbacks of mbedtls on Haxe streams; GC
-  statistics count nothing and finalisers never run; one domain and one
-  thread (a blocking `Condition.wait` or `Event.sync` raises).
+  statistics count nothing and finalisers never run. Threads and domains
+  run one at a time under a master lock; one that never blocks is never
+  preempted (OCaml's tick thread has no counterpart). Event has send,
+  receive, always, sync and poll (no choose, wrap or guard).
 - The C-library stand-ins: Unix's sockets are hxmc's NativeNet (errno-exact
-  Unix_error on Linux and macOS); its files and processes, Str, Thread and
-  Domainslib are still written over Haxe's sys API (one thread: Thread.create
-  runs the thread to completion).
+  Unix_error on Linux and macOS). Its pipes and create_process use host
+  descriptors on POSIX hosts, other platforms fall back to Haxe's sys API.
+  Its files, Str and Domainslib are written over Haxe's sys API; kill sends
+  SIGKILL whatever the signal.
