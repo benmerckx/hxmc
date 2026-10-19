@@ -6,7 +6,8 @@
 // Environment: ML2HX_HAXE selects a Haxe compiler for the generated code
 // (default: hxmc's committed stage0); ML2HX_ONLY=name1,name2 runs a subset;
 // ML2HX_NATIVE=1 compiles each case to an hxmc executable (the generated
-// compiler's target) instead of running it in the interpreter.
+// compiler's target) instead of running it in the interpreter (and runs the
+// cases that start with `(* native:`).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -75,6 +76,8 @@ const cases = fs.existsSync(casesDir) ? fs.readdirSync(casesDir).filter(f => f.e
 for (const entry of cases) {
   const name = entry.replace(/\.ml$/, '');
   if (only && !only.includes(name)) continue;
+  // (a case starting `(* native:` runs as an hxmc executable only)
+  if (!process.env.ML2HX_NATIVE && entry.endsWith('.ml') && fs.readFileSync(path.join(casesDir, entry), 'utf8').startsWith('(* native:')) continue;
   test(`semantics: ${name}`, () => {
     const dir = path.join(work, name);
     const files = entry.endsWith('.ml') ? [path.join(casesDir, entry)]

@@ -7,8 +7,9 @@ import ml2hx.rt.*;
 
 // OCaml's extern.c (Marshal.to_*, output_value): values written in OCaml's
 // format from their OCaml shapes (as compare and hash see them: ml2hx.rt.Poly),
-// sharing by physical identity of blocks (strings and floats are values here:
-// never shared). Ints are immediates (an int64 or nativeint, an Int64 too,
+// sharing by physical identity of blocks: bytes too, and on hxmc strings
+// (String objects, which converted code passes around as OCaml passes its
+// strings; elsewhere strings are values, never shared), never floats. Ints are immediates (an int64 or nativeint, an Int64 too,
 // is written as an int: their custom blocks are not told apart). Closures
 // cannot be written. intern.c (input_value, Marshal.from_*) would need the
 // static types of the values to rebuild them as Haxe values: not supported
@@ -67,6 +68,11 @@ class Runtime {
 			else if (n >= Int64.make(-1, 0x80000000) && n < Int64.make(0, 0x80000000)) { u8(CODE_INT32); u32(n.low); }
 			else { u8(CODE_INT64); u64(n); }
 		}
+		function shared(d:Int) {
+			if (d < 0x100) { u8(CODE_SHARED8); u8(d); }
+			else if (d < 0x10000) { u8(CODE_SHARED16); u16(d); }
+			else { u8(CODE_SHARED32); u32(d); }
+		}
 		function double(f:Float) {
 			var bits = haxe.io.FPHelper.doubleToI64(f);
 			for (i in 0...8) u8(Int64.shr(bits, 8 * i).low);
@@ -79,13 +85,18 @@ class Runtime {
 				case Poly.K_IMM:
 					int(Poly.immediate(v));
 				case Poly.K_STRING | Poly.K_BYTES:
+					var identity = k == Poly.K_BYTES #if (target.name == "hxmc") || true #end;
+					if (identity && !noSharing && objects.exists(v)) {
+						shared(count - objects.get(v));
+						continue;
+					}
 					var s:Bytes = k == Poly.K_STRING ? ByteString.toBytes(v) : v;
 					var n = s.length;
 					if (n < 0x20) u8(PREFIX_SMALL_STRING + n);
 					else if (n < 0x100) { u8(CODE_STRING8); u8(n); }
 					else { u8(CODE_STRING32); u32(n); }
 					out.addBytes(s, 0, n);
-					record(v, Std.int((n + 4) / 4) + 1, Std.int((n + 8) / 8) + 1, false);
+					record(v, Std.int((n + 4) / 4) + 1, Std.int((n + 8) / 8) + 1, identity);
 				case Poly.K_DOUBLE:
 					u8(CODE_DOUBLE_LITTLE);
 					double(v);
@@ -98,10 +109,7 @@ class Runtime {
 					throw new InvalidArgument("output_value: abstract value (Abstract)");
 				case _:
 					if (!noSharing && objects.exists(v)) {
-						var d = count - objects.get(v);
-						if (d < 0x100) { u8(CODE_SHARED8); u8(d); }
-						else if (d < 0x10000) { u8(CODE_SHARED16); u16(d); }
-						else { u8(CODE_SHARED32); u32(d); }
+						shared(count - objects.get(v));
 						continue;
 					}
 					var tag = Poly.tag(v, k), fs = Poly.fields(v, k);
