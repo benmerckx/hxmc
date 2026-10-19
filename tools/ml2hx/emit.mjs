@@ -172,7 +172,12 @@ class UnitEmitter {
       for (let guard = 0; guard < 20; guard++) {
         if (t.k === 'poly') { i = t.body; t = this.t(i); continue; }
         // Through abbreviations of function types (type printer = t -> string).
-        if (t.k === 'constr') { const e = this.expandAbbrev(i); if (e !== null && this.t(e).k !== 'constr' || (e !== null && e !== i)) { i = e; t = this.t(i); continue; } }
+        if (t.k === 'constr') {
+          // only to a function type (an object or variant type stays named)
+          let e = this.expandAbbrev(i);
+          for (let k = 0; k < 10 && e !== null && this.t(e).k === 'constr'; k++) e = this.expandAbbrev(e);
+          if (e !== null && ['arrow', 'poly'].includes(this.t(e).k)) { i = e; t = this.t(i); continue; }
+        }
         break;
       }
     };
@@ -332,8 +337,11 @@ class UnitEmitter {
         // module, referenced where the type recurs.
         this.objTypedefs ??= new Map(); this.objStack ??= new Map();
         if (this.objTypedefs.has(i)) return this.objTypedefs.get(i);
-        if (this.objStack.has(i)) { const r = this.objStack.get(i); r.recursive = true; return r.name; }
-        const rec = {name: `${this.cfg.class}Obj${this.objTypedefs.size + this.objStack.size}`, recursive: false};
+        if (this.objStack.has(i)) { const r = this.objStack.get(i); r.recursive = true; return `${r.name}@@ARGS@@`; }
+        // (a recursion through expanded abbreviations: new nodes each time)
+        if (this.objStack.size >= 6) this.fail(n, 'recursive structural object type through abbreviations');
+        this.root.objCount ??= 0;
+        const rec = {name: `${this.cfg.class}Obj${this.root.objCount++}`, recursive: false};
         this.objStack.set(i, rec);
         let body;
         try {
@@ -343,11 +351,13 @@ class UnitEmitter {
           }).join(' ')} }`;
         } finally { this.objStack.delete(i); }
         if (!rec.recursive) return body;
-        for (const v of this.tvars.values()) if (new RegExp(`\\b${v}\\b`).test(body)) this.fail(n, 'recursive structural object type over type parameters');
-        const pkgName = `${this.cfg.package}.${this.cfg.class}.${rec.name}`;
-        this.decls.push(`typedef ${rec.name} = ${body};`);
-        this.objTypedefs.set(i, pkgName);
-        return pkgName;
+        // The typedef's parameters: the type parameters in scope it mentions.
+        const used = [...new Set(this.tvars.values())].filter(v => new RegExp(`\\b${v}\\b`).test(body));
+        const args = used.length ? `<${used.join(', ')}>` : '';
+        this.decls.push(`typedef ${rec.name}${args} = ${body.replaceAll('@@ARGS@@', args)};`);
+        const ref = `${this.cfg.package}.${this.cfg.class}.${rec.name}${args}`;
+        if (!used.length) this.objTypedefs.set(i, ref);
+        return ref;
       }
       case 'package': return this.packageType(t, n);
     }
@@ -380,18 +390,21 @@ class UnitEmitter {
     for (let guard = 0; guard < 20; guard++) { const e = this.expandAbbrev(i); if (e === null || e === i) break; i = e; }
     return i;
   }
-  substitute(i, map, seen = new Map()) {
+  substitute(i, map, seen = new Map(), depth = 0) {
     if (!map.size) return i;
     const t = this.t(i);
     if (t.k === 'var') return map.has(t.id) ? map.get(t.id) : i;
-    if (seen.has(i)) return seen.get(i);
+    // (keyed by node: indices may differ along a cycle)
+    if (seen.has(t)) return seen.get(t);
     const copy = {...t};
     const idx = this.T.length;
-    seen.set(i, idx);
+    seen.set(t, idx);
     this.T.push(copy);
-    for (const k of ['arg', 'res', 'body', 'exp']) if (typeof t[k] === 'number') copy[k] = this.substitute(t[k], map, seen);
-    if (t.args) copy.args = t.args.map(a => typeof a === 'number' ? this.substitute(a, map, seen) : a);
-    if (t.fields) copy.fields = t.fields.map(f => ({...f, t: typeof f.t === 'number' ? this.substitute(f.t, map, seen) : f.t, args: f.args?.map(a => this.substitute(a, map, seen))}));
+    for (const k of ['arg', 'res', 'body']) if (typeof t[k] === 'number') copy[k] = this.substitute(t[k], map, seen, depth + 1);
+    // (an expansion is recomputed from the copy when needed)
+    delete copy.exp;
+    if (t.args) copy.args = t.args.map(a => typeof a === 'number' ? this.substitute(a, map, seen, depth + 1) : a);
+    if (t.fields) copy.fields = t.fields.map(f => ({...f, t: typeof f.t === 'number' ? this.substitute(f.t, map, seen, depth + 1) : f.t, args: f.args?.map(a => this.substitute(a, map, seen, depth + 1))}));
     return idx;
   }
   // Whether a type is a tuple, through abbreviations.
@@ -547,8 +560,12 @@ class UnitEmitter {
       case 'recmodule': this.fail(item, 'recursive modules');
       case 'modtype': s.modtypes.set(item.name, item.mty); this.ids.set(item.id, {kind: 'modtype', mty: item.mty}); break;
       case 'include': {
-        let m = this.declareModule(item.m, path, s, true);
-        item.instance = m;
+        // An included functor instance is a submodule of its own (its
+        // statics apart from the including module's).
+        const im = item.m.k === 'constraint' ? item.m.m : item.m;
+        let m = this.declareModule(item.m, im.k === 'apply' ? this.uniquePath([...path, 'Include']) : path, s, true);
+        // (per structure: a functor's body is declared once per application)
+        (s.includes ??= new Map()).set(item, m);
         if (m.kind === 'alias') m = this.moduleDesc(m, item);
         if (m.kind === 'struct') {
           for (const [k, v] of m.values) s.values.set(k, v);
@@ -638,9 +655,9 @@ class UnitEmitter {
   instantiate(fn, m, path, parent) {
     let argExpr = m.arg;
     while (argExpr && argExpr.k === 'constraint') argExpr = argExpr.m;
-    let arg = null;
+    let arg = null, argPath = null;
     if (argExpr) {
-      if (argExpr.k === 'struct') arg = this.declareModule(argExpr, [...path, 'Arg'], parent);
+      if (argExpr.k === 'struct') arg = this.declareModule(argExpr, argPath = this.uniquePath([...path, 'Arg']), parent);
       else arg = this.resolveModuleExpr(argExpr);
     }
     let em = this;
@@ -664,7 +681,7 @@ class UnitEmitter {
     if (f.param && arg) d.idMap.set(f.param, arg);
     // F(struct ... end): the argument is a submodule of this unit, emitted
     // before the instance.
-    if (argExpr?.k === 'struct') d.argStruct = {s: arg, path: [...path, 'Arg']};
+    if (argExpr?.k === 'struct') d.argStruct = {s: arg, path: argPath};
     return d;
   }
   // Write into another emitter's output (functor instances of other units).
@@ -682,6 +699,14 @@ class UnitEmitter {
     if (m.k === 'ident') return this.resolveModule(m.path, m);
     if (m.k === 'constraint') return this.resolveModuleExpr(m.m);
     this.fail(m, `module expression ${m.k} in functor position`);
+  }
+  // A submodule path not used yet in this output (Arg, Arg1...).
+  uniquePath(path) {
+    const used = (this.root.subPaths ??= new Set());
+    let p = path, k = 1;
+    while (used.has(p.join('.'))) p = [...path.slice(0, -1), `${path.at(-1)}${k++}`];
+    used.add(p.join('.'));
+    return p;
   }
   // Submodule classes are unique per package: prefixed with the unit's name.
   subName(path) { return [this.cfg.module, ...path].join('_'); }
@@ -758,8 +783,9 @@ class UnitEmitter {
         const m = item.m.k === 'constraint' ? item.m.m : item.m;
         if (m.k === 'struct') this.emitItems(m.items, s, path);
         // include F(X): the instance's items, as for `module M = F(X)`.
-        else if (m.k === 'apply' && item.instance?.kind === 'struct') this.emitInstance(item.instance, path);
-        else if (m.k === 'apply' && item.instance?.kind === 'libinstance') this.emitLibInstance(item.instance, item);
+        const inst = s.includes?.get(item);
+        if (m.k === 'apply' && inst?.kind === 'struct') this.emitInstance(inst, inst.path ?? path);
+        else if (m.k === 'apply' && inst?.kind === 'libinstance') this.emitLibInstance(inst, item);
         return;
       }
       case 'class': for (const c of item.classes) this.emitClass(c, s.classes.get(c.name)); return;
@@ -1730,8 +1756,9 @@ class UnitEmitter {
       '%apply': {arity: 2, lazy: (a, n) => this.apply({k: 'apply', t: n.t, l: n.l, fn: a[0], args: [{label: '', e: a[1]}]})},
       '%string_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)}, '%bytes_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)},
       // A byte is a char (Int) or, declared so (Bytes.get_uint8), an int.
-      '%string_safe_get': {arity: 2, code: (v, a, n) => byteOut(`${RT}Runtime.stringGet(${v[0]}, ${toInt(v[1])})`, n)},
-      '%string_unsafe_get': {arity: 2, code: (v, a, n) => byteOut(`StringTools.fastCodeAt(${v[0]}, ${toInt(v[1])})`, n)},
+      // (on a value of another type, bytes made a string by Obj.magic: either)
+      '%string_safe_get': {arity: 2, code: (v, a, n) => byteOut(a?.[0] && !this.isPredef(a[0].t, 'string') ? `${RT}Runtime.anyByteGet(${v[0]}, ${toInt(v[1])})` : `${RT}Runtime.stringGet(${v[0]}, ${toInt(v[1])})`, n)},
+      '%string_unsafe_get': {arity: 2, code: (v, a, n) => byteOut(a?.[0] && !this.isPredef(a[0].t, 'string') ? `${RT}Runtime.anyByteGet(${v[0]}, ${toInt(v[1])})` : `StringTools.fastCodeAt(${v[0]}, ${toInt(v[1])})`, n)},
       '%bytes_safe_get': {arity: 2, code: (v, a, n) => byteOut(`${RT}Runtime.bytesGet(${v[0]}, ${toInt(v[1])})`, n)},
       '%bytes_unsafe_get': {arity: 2, code: (v, a, n) => byteOut(`${wrap(v[0])}.get(${toInt(v[1])})`, n)},
       '%bytes_safe_set': {arity: 3, code: (v, a) => `${RT}Runtime.bytesSet(${v[0]}, ${toInt(v[1])}, ${byteIn(v[2], a[2])})`},

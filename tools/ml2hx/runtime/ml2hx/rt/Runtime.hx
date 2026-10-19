@@ -24,6 +24,11 @@ class Runtime {
 		if (i < 0 || i >= s.length) throw new InvalidArgument("index out of bounds");
 		return StringTools.fastCodeAt(s, i);
 	}
+	// a byte of a string or of bytes (OCaml code may view one as the other)
+	public static function anyByteGet(s:Dynamic, i:Int):Int {
+		if (Std.isOfType(s, String)) return stringGet(s, i);
+		return bytesGet(s, i);
+	}
 	public static function bytesGet(b:haxe.io.Bytes, i:Int):Int {
 		if (i < 0 || i >= b.length) throw new InvalidArgument("index out of bounds");
 		return b.get(i);

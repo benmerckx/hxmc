@@ -101,7 +101,7 @@ export function libraryUnits(units, failures, extra = []) {
       // Module aliases (Stdlib's `module List = Stdlib__List`) do not make
       // a module reachable: uses are normalised to the aliased unit.
       const ir = JSON.parse(fs.readFileSync(u.irPath, 'utf8'));
-      if (Array.isArray(ir.items)) ir.items = ir.items.filter(it => !(it.k === 'module' && it.m?.k === 'ident'));
+      if (Array.isArray(ir.items) && ir.modname === 'Stdlib') ir.items = ir.items.filter(it => !(it.k === 'module' && it.m?.k === 'ident'));
       const text = JSON.stringify(ir);
       for (const m of text.matchAll(/"g":"(\w+)"/g)) {
         const name = m[1];

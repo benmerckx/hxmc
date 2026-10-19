@@ -78,4 +78,11 @@ class Bigarray {
 		if (n != a.size()) throw new InvalidArgument("Bigarray.reshape: size mismatch");
 		return new BigarrayData(a.kind, a.layout, ds, a.data, a.offset);
 	}
+	// symbols bigarray.ml mentions only to keep them linked (never called)
+	public static function camlBaGet_1(_:Unit):Unit return Unit.value;
+	public static function camlBaGet_2(_:Unit):Unit return Unit.value;
+	public static function camlBaGet_3(_:Unit):Unit return Unit.value;
+	public static function camlBaSet_1(_:Unit):Unit return Unit.value;
+	public static function camlBaSet_2(_:Unit):Unit return Unit.value;
+	public static function camlBaSet_3(_:Unit):Unit return Unit.value;
 }
