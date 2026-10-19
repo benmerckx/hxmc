@@ -13,7 +13,7 @@ class Lazy<T> {
 		switch state {
 			case 2: return result;
 			case 3: throw error;
-			case 1: throw new UndefinedExn();
+			case 1: throw LazyUndefined.instance;
 			case _:
 		}
 		state = 1;
@@ -23,7 +23,7 @@ class Lazy<T> {
 			thunk = null;
 			return result;
 		} catch (e:haxe.Exception) {
-			error = Exn.wrap(e);
+			error = MlException.wrap(e);
 			state = 3;
 			throw error;
 		}
@@ -31,6 +31,8 @@ class Lazy<T> {
 	public inline function isVal():Bool return state == 2;
 }
 
-class UndefinedExn extends Exn {
-	public function new() super("CamlinternalLazy.Undefined");
+class LazyUndefined extends MlException {
+	public static final instance = new LazyUndefined();
+	public function new() super();
+	override public function exnName():String return "CamlinternalLazy.Undefined";
 }

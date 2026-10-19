@@ -11,6 +11,9 @@ let rec sum n acc = if n = 0 then acc else sum (n - 1) (acc + n)
 let partial () = let f = sum 100 in f 0, f 5
 let payload = function Number n -> n + 1 | Empty -> 0
 let guarded = function Number n when n > 10 -> 1 | Number _ -> 2 | Empty -> 3
+let wide = 4294967296
+let wrap = 4611686018427387903 + 1
+let unsigned = 0x7fffffffffffffff
 let binary = "\000\255\195\169"
 let bounds () = log := 0; for _ = mark 1 to mark 2 do () done; !log
 let short_circuit () = log := 0; let _ = false && (mark 9 = 9) in let _ = true || (mark 8 = 8) in !log
@@ -23,7 +26,7 @@ let list_order () = log := 0; let l = [mark 1; mark 2] in Printf.printf "%d %d\n
 let () =
   let a, b = evaluation_order () in Printf.printf "%d,%d\n" a b;
   let a, b, c = shared_ref () in Printf.printf "%d,%d,%d\n" a b c;
-  Printf.printf "%d\n" (sum 10000 0);
+  Printf.printf "%d\n" (sum 100000 0);
   let a, b = partial () in Printf.printf "%d,%d\n" a b;
   Printf.printf "%d %d %d %d\n" (payload (Number 5)) (payload Empty) (guarded (Number 5)) (guarded (Number 15));
   Printf.printf "%d:" (String.length binary);
@@ -32,5 +35,6 @@ let () =
   Printf.printf "%d %d\n" (bounds ()) (short_circuit ());
   let a, b, c = grouped () in Printf.printf "%d,%d,%d\n" a b c;
   let a, b = copy_order () in Printf.printf "%d,%d\n" a b;
+  Printf.printf "%d %d %d\n" wide wrap unsigned;
   tuple_order ();
   list_order ()

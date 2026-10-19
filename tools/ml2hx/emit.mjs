@@ -1,9 +1,16 @@
 // Typed-tree IR (frontend protocol 2) -> Haxe. Unsupported constructs are
 // errors, never Dynamic or stubs. The naming contract is in naming.mjs and
 // tools/ml2hx/README.md.
-import {valueName, typeName, exnName, libraryModule, isOperator, keywords} from './naming.mjs';
+import {valueName, typeName, exnName, libraryModule, isOperator, keywords, moduleTypeName, predefExns} from './naming.mjs';
 
 const RT = 'ml2hx.rt.';
+// Library functors: the argument's values (with their arities), the result's
+// key type and type t.
+const libFunctors = {
+  'Map.Make': {key: 'key', t: 'MapT', values: [['compare', 2]]},
+  'Set.Make': {key: 'elt', t: 'SetT', values: [['compare', 2]]},
+  'Hashtbl.Make': {key: 'key', t: 'HashtblT', values: [['equal', 2], ['hash', 1]]},
+};
 const STD = 'ml2hx.std.';
 const UNIT = `${RT}Unit.value`;
 export class Unsupported extends Error {
@@ -14,13 +21,11 @@ export class Unsupported extends Error {
   }
 }
 const predefTypes = {int: 'Int', char: 'Int', string: 'String', bytes: 'haxe.io.Bytes', float: 'Float', bool: 'Bool', unit: `${RT}Unit`,
-  exn: `${RT}Exn`, array: 'Array', list: `${RT}MlList`, option: `${RT}MlOption`, nativeint: 'Int', int32: 'haxe.Int32', int64: 'haxe.Int64',
+  exn: `${RT}MlException`, array: 'Array', list: `${RT}MlList`, option: `${RT}MlOption`, nativeint: 'Int', int32: 'haxe.Int32', int64: 'haxe.Int64',
   lazy_t: `${RT}Lazy`, floatarray: 'Array<Float>'};
 // Library types the emitter owns the representation of.
 const coreLibraryTypes = {'Stdlib.ref': `${RT}Ref`, 'Lazy.t': `${RT}Lazy`, 'CamlinternalLazy.t': `${RT}Lazy`, 'Stdlib.Lazy.t': `${RT}Lazy`};
-const predefExns = {Not_found: 'NotFoundExn', Failure: 'FailureExn', Invalid_argument: 'InvalidArgumentExn', End_of_file: 'EndOfFileExn',
-  Division_by_zero: 'DivisionByZeroExn', Sys_error: 'SysErrorExn', Match_failure: 'MatchFailureExn', Assert_failure: 'AssertFailureExn',
-  Stack_overflow: 'StackOverflowExn', Out_of_memory: 'OutOfMemoryExn', Sys_blocked_io: 'SysBlockedIoExn', Undefined_recursive_module: 'UndefinedRecursiveModuleExn'};
+
 
 // ---------------------------------------------------------------- paths
 export function pathName(p) {
@@ -44,7 +49,7 @@ function libraryPath(p) {
 // Whole-program knowledge: every unit's top-level structure, the library
 // values used (for the runtime's interface), and unit dependencies.
 export class Program {
-  constructor({units, int63 = false}) {
+  constructor({units, int63 = true}) {
     this.int63 = int63;
     this.units = new Map(units.map(u => [u.modname, u]));
     this.libraryUses = new Map();  // ml2hx.std class -> Map(member -> signature)
@@ -83,7 +88,9 @@ class Struct {
   }
 }
 class LibraryModule {
-  constructor(path) { this.kind = 'lib'; this.path = path; this.hx = STD + [libraryModule(path[0]), ...path.slice(1)].join('_'); }
+  constructor(path) { this.kind = 'lib'; this.path = path; this.name = [libraryModule(path[0]), ...path.slice(1)].join('_'); this.hx = STD + this.name; }
+  typeHx(t) { return `${this.hx}.${moduleTypeName(this.name, t)}`; }
+  exnHx(x) { return this.name === 'Stdlib' && x === 'Exit' ? `${RT}Exit` : `${this.hx}.${moduleTypeName(this.name, x)}`; }
 }
 
 // ---------------------------------------------------------------- emitter
@@ -183,7 +190,7 @@ class UnitEmitter {
         const norm = [libraryModule(lib[0]), ...lib.slice(1)].join('.');
         if (coreLibraryTypes[norm]) return {hx: coreLibraryTypes[norm]};
         const m = new LibraryModule(lib.slice(0, -1));
-        return {hx: `${m.hx}.${typeName(lib.at(-1))}`, library: norm};
+        return {hx: m.typeHx(lib.at(-1)), library: norm};
       }
       let parent;
       try { parent = this.resolveModule(p.d[0], n); }
@@ -197,11 +204,11 @@ class UnitEmitter {
       if (parent.kind === 'struct') {
         const t = parent.types.get(p.d[1]);
         if (t) return t;
-        for (const lib of parent.libIncludes ?? []) return {hx: `${lib.hx}.${typeName(p.d[1])}`, library: key};
+        for (const lib of parent.libIncludes ?? []) return {hx: lib.typeHx(p.d[1]), library: key};
         this.fail(n, `unknown type ${key}`);
       }
       if (parent.kind === 'libinstance') return {instance: parent, name: p.d[1]};
-      if (parent.kind === 'lib') return {hx: `${parent.hx}.${typeName(p.d[1])}`};
+      if (parent.kind === 'lib') return {hx: parent.typeHx(p.d[1]), library: key};
       this.fail(n, `type of module ${parent.kind}: ${key}`);
     }
     this.fail(n, `type path ${pathName(p)}`);
@@ -226,7 +233,7 @@ class UnitEmitter {
       case 'poly': return this.type(t.body, n);
       case 'variant': return `${RT}PolyVariant`;
       case 'constr': {
-        if (t.path.p === 'int' && this.p.int63) return `${RT}Int63`;
+        if (t.path.p === 'int') return `${RT}Int63`;
         if (t.path.p === 'array' && this.isPredef(t.args[0], 'float') && false) return 'Array<Float>';
         const d = this.resolveType(t.path, n);
         if (d.instance) return this.instanceType(d.instance, d.name, t.args, n);
@@ -248,7 +255,7 @@ class UnitEmitter {
     if (name === inst.keyName) return inst.keyType;
     if (name === 't') {
       const a = args.map(x => this.type(x, n));
-      return `${inst.functorHx}_T<${[inst.keyType, ...a].join(', ')}>`;
+      return `${inst.lib.hx}.${inst.spec.t}<${[inst.keyType, ...a].join(', ')}>`;
     }
     this.fail(n, `type ${name} of functor instance ${inst.functor}`);
   }
@@ -294,8 +301,8 @@ class UnitEmitter {
     return c;
   }
   typeDeclName(path, name) {
-    const base = [...path, typeName(name)].join('_');
-    return base === this.cfg.class ? base + '_' : base;
+    // Unique per package: prefixed with the unit's (and submodules') names.
+    return moduleTypeName([this.cfg.module, ...path].join(''), name);
   }
   declareItem(item, s, path) {
     switch (item.k) {
@@ -327,13 +334,13 @@ class UnitEmitter {
         break;
       case 'exception': {
         const x = item.ext;
-        const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${[...path, exnName(x.name)].join('_')}`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
+        const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, x.name)}`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
         s.exns.set(x.name, desc); this.ids.set(x.id, desc);
         break;
       }
       case 'typext':
         for (const x of item.ctors) {
-          const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${[...path, typeName(x.name)].join('_')}`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
+          const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, x.name)}`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
           s.exns.set(x.name, desc); this.ids.set(x.id, desc);
         }
         break;
@@ -391,11 +398,7 @@ class UnitEmitter {
       }
       case 'apply': {
         const fn = this.resolveModuleExpr(m.fn);
-        if (fn.kind === 'lib') {
-          const functor = fn.path.join('.');
-          const hx = `${this.cls}.${this.subName(path)}_instance`;
-          return {kind: 'libinstance', functor, functorHx: `${STD}${libraryModule(fn.path[0])}${fn.path.length > 2 ? '_' + fn.path.slice(1, -1).join('_') : ''}.${fn.path.at(-1)}`, hx, arg: m.arg, path, pending: true};
-        }
+        if (fn.kind === 'lib') return this.declareLibInstance(fn, m, path, parent);
         this.fail(m, `application of functor ${fn.kind}`);
       }
       case 'functor': this.fail(m, 'functor definition');
@@ -439,7 +442,7 @@ class UnitEmitter {
       case 'value': return this.emitTopValue(item, s);
       case 'eval': this.init.push(this.stmt(item.e)); return;
       case 'type': for (const d of item.decls) this.emitTypeDecl(d, s.types.get(d.name)); return;
-      case 'exception': if (!item.ext.rebind) this.emitExtension(item.ext, s.exns.get(item.ext.name), `${RT}Exn`); return;
+      case 'exception': if (!item.ext.rebind) this.emitExtension(item.ext, s.exns.get(item.ext.name), `${RT}MlException`); return;
       case 'typext': {
         const base = this.resolveType(item.type, item);
         for (const x of item.ctors) if (!x.rebind) this.emitExtension(x, s.exns.get(x.name), base.hx);
@@ -477,31 +480,48 @@ class UnitEmitter {
     }
     this.fail(item, `structure item ${item.k}`);
   }
-  emitLibInstance(d, item) {
-    // module M = F(X) for a library functor: an instance (README, Functors).
-    const arg = this.resolveModuleExpr(d.arg.k === 'constraint' ? d.arg.m : d.arg);
-    const fn = d.functor.replace(/^Stdlib__/, '');
-    const table = {
-      'Map.Make': {key: 'key', values: ['compare']}, 'Set.Make': {key: 'elt', values: ['compare']},
-      'Hashtbl.Make': {key: 'key', values: ['equal', 'hash']},
-    };
-    const spec = table[fn];
-    if (!spec) this.fail(item, `library functor ${d.functor}`);
-    let keyType, values;
+  // module M = F(X) for a library functor F: `ml2hx.std.Lib.F({...})`, an
+  // instance whose methods are the result's values (README, Functors).
+  declareLibInstance(fn, m, path, parent) {
+    const functor = [libraryModule(fn.path[0]), ...fn.path.slice(1)].join('.');
+    const spec = libFunctors[functor];
+    if (!spec) this.fail(m, `library functor ${functor}`);
+    let argExpr = m.arg;
+    while (argExpr.k === 'constraint') argExpr = argExpr.m;
+    let arg;
+    if (argExpr.k === 'struct') {
+      arg = this.declareModule(argExpr, [...path, 'Arg'], parent);
+      arg.anonymous = true;
+    } else arg = this.resolveModuleExpr(argExpr);
+    let keyType;
     if (arg.kind === 'struct') {
       const t = arg.types.get('t');
-      if (!t) this.fail(item, 'functor argument without type t');
-      keyType = this.typeOfDecl(t, item);
-      values = spec.values.map(v => { const x = arg.values.get(v); if (!x) this.fail(item, `functor argument without ${v}`); return this.valueRef(x, null, item); });
-    } else if (arg.kind === 'lib') {
-      keyType = `${arg.hx}.T`;
-      values = spec.values.map(v => this.valueRef({kind: 'lib', cls: arg.hx, name: v, member: valueName(v), path: arg.path}, null, item));
-    } else this.fail(item, `functor argument ${arg.kind}`);
-    d.keyName = spec.key; d.keyType = keyType; d.pending = false;
+      if (!t) this.fail(m, 'functor argument without type t');
+      keyType = this.typeOfDecl(t, m);
+    } else if (arg.kind === 'lib') keyType = arg.typeHx('t');
+    else this.fail(m, `functor argument ${arg.kind}`);
+    const lib = new LibraryModule(fn.path.slice(0, -1));
+    return {kind: 'libinstance', functor, spec, arg, keyType, lib, keyName: spec.key, path,
+      hx: `${this.cls}.${this.subName(path)}_instance`, cls: `${lib.hx}.${moduleTypeName(lib.name, fn.path.at(-1))}<${keyType}>`, call: `${lib.hx}.${fn.path.at(-1)}`};
+  }
+  emitLibInstance(d, item) {
+    if (d.arg.anonymous) this.emitItems(d.arg.items, d.arg, [...d.path, 'Arg']);
+    const fields = d.spec.values.map(([v, k]) => {
+      let x;
+      if (d.arg.kind === 'struct') { x = d.arg.values.get(v); if (!x) this.fail(item, `functor argument without ${v}`); }
+      else x = {kind: 'lib', cls: d.arg.hx, name: v, member: valueName(v), path: d.arg.path, arity: k};
+      const direct = (x.kind === 'static' || x.kind === 'lib') && (x.arity ?? k) === k ? (x.kind === 'lib' ? `${x.cls}.${x.member}` : x.hx) : null;
+      if (direct) return `${v}: ${direct}`;
+      if (x.kind === 'static' && x.arity === 0) {
+        const ps = Array.from({length: k}, (_, i) => `_a${i}`);
+        return `${v}: function(${ps.join(', ')}) return ${ps.reduce((a, p) => `${a}(${p})`, x.hx)}`;
+      }
+      this.fail(item, `functor argument value ${v}`);
+    });
     const field = d.hx.split('.').at(-1);
-    this.statics.push(`public static var ${field}:${d.functorHx}<${keyType}>;`);
-    this.init.push(`${field} = new ${d.functorHx}<${keyType}>(${values.join(', ')});`);
-    this.p.useLibrary(d.functorHx.replace(/\.[^.]+$/, ''), `functor ${fn}`, `new ${fn.split('.').pop()}<K>(${spec.values.join(', ')})`);
+    this.statics.push(`public static var ${field}:${d.cls};`);
+    this.init.push(`${field} = ${d.call}({${fields.join(', ')}});`);
+    this.p.useLibrary(d.lib.hx, `functor ${d.functor}`, '');
   }
   typeOfDecl(t, n) {
     if (t.decl?.manifest !== null && t.decl?.manifest !== undefined && t.decl.kind === 'abstract') return this.type(t.decl.manifest, n);
@@ -540,7 +560,7 @@ class UnitEmitter {
   }
   recordClass(name, gen, labels, n) {
     const fields = labels.map(l => ({name: valueName(l.name), mut: l.mut, t: this.type(l.t, n)}));
-    return `class ${name}${gen} implements ${RT}Structural {\n${fields.map(f => `\tpublic ${f.mut ? 'var' : 'final'} ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n\tpublic function structuralFields():Array<Any> return [${fields.map(f => f.name).join(', ')}];\n}`;
+    return `class ${name}${gen} implements ${RT}Block {\n${fields.map(f => `\tpublic ${f.mut ? 'var' : 'final'} ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
   }
   emitExtension(x, desc, base) {
     const name = desc.hx.split('.').at(-1);
@@ -549,11 +569,15 @@ class UnitEmitter {
     this.withTypeParams(x.params.map(p => this.t(p)).filter(t => t.k === 'var').map(t => t.id), params => {
       if (params.length) this.fail(x, 'parameterised extensible type');
       const args = x.args.tuple.map((a, i) => ({name: `v${i}`, t: this.type(a, x)}));
-      const isExn = base === `${RT}Exn`;
+      const isExn = base === `${RT}MlException`;
       const ctorArgs = args.map(a => `${a.name}:${a.t}`).join(', ');
-      const superCall = isExn ? `super(${JSON.stringify(desc.qualified)});` : 'super();';
-      const fieldsFn = isExn ? `\n\toverride public function structuralFields():Array<Any> return [${args.map(a => a.name).join(', ')}];` : '';
-      this.decls.push(`class ${name} extends ${base} {\n${args.map(a => `\tpublic final ${a.name}:${a.t};`).join('\n')}\n\tpublic function new(${ctorArgs}) {\n\t\t${superCall}\n${args.map(a => `\t\tthis.${a.name} = ${a.name};`).join('\n')}\n\t}${fieldsFn}\n}`);
+      let extra = '';
+      if (isExn) {
+        extra = `\n\toverride public function exnName():String return ${JSON.stringify(desc.qualified)};\n\toverride public function exnArity():Int return ${args.length};`;
+        if (args.length) extra += `\n\toverride public function exnArg(i:Int):Dynamic return switch i { ${args.map((a, i) => `case ${i}: ${a.name};`).join(' ')} case _: super.exnArg(i); };`;
+        else extra += `\n\tpublic static final instance = new ${name}();`;
+      }
+      this.decls.push(`class ${name} extends ${base} {\n${args.map(a => `\tpublic final ${a.name}:${a.t};`).join('\n')}\n\tpublic function new(${ctorArgs}) {\n\t\tsuper();\n${args.map(a => `\t\tthis.${a.name} = ${a.name};`).join('\n')}\n\t}${extra}\n}`);
     });
   }
 
@@ -852,6 +876,8 @@ class UnitEmitter {
   value(n) {
     switch (n.k) {
       case '$code': return `{ ${n.code} }`;
+      case '$expr': return n.code;
+      case '$var': return n.name;
       case 'const': return this.constant(n.c, n);
       case 'ident': return this.identValue(n);
       case 'let': return `{ ${this.bindings(n)} ${this.value(n.body)}; }`;
@@ -877,8 +903,8 @@ class UnitEmitter {
       case 'array': return this.ordered(n.args, a => `([${a.join(', ')}]:${this.type(n.t, n)})`);
       case 'assert': {
         const c = n.e;
-        if (c.k === 'construct' && c.c.name === 'false') return `throw new ${RT}AssertFailureExn(${JSON.stringify(this.cfg.source)}, ${n.l[0]}, ${n.l[1]})`;
-        return `{ if (!${this.value(c)}) throw new ${RT}AssertFailureExn(${JSON.stringify(this.cfg.source)}, ${n.l[0]}, ${n.l[1]}); ${UNIT}; }`;
+        if (c.k === 'construct' && c.c.name === 'false') return `throw new ${RT}AssertFailure(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])})`;
+        return `{ if (!${this.value(c)}) throw new ${RT}AssertFailure(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])}); ${UNIT}; }`;
       }
       case 'lazy': return `new ${RT}Lazy(function() return ${this.value(n.e)})`;
       case 'open': return this.value(n.e);
@@ -913,14 +939,15 @@ class UnitEmitter {
     if (saved) this.ids.set(n.id, saved);
     return v;
   }
+  // An OCaml int literal (63-bit) as an Int63.
+  intLit(v) {
+    const b = BigInt(v);
+    if (b <= 0x7fffffffn && b >= -0x80000000n) return `${RT}Int63.ofInt(${b < 0n ? `(${v})` : v})`;
+    return `${RT}Int63.parse(${JSON.stringify(String(v))})`;
+  }
   constant(c, n) {
     switch (c.k) {
-      case 'int': {
-        if (this.p.int63) return `${RT}Int63.parse(${JSON.stringify(c.v)})`;
-        const v = BigInt(c.v);
-        if (v > 0x7fffffffn || v < -0x80000000n) this.fail(n, `integer literal ${c.v} outside the 32-bit range of Haxe Int (mark the function for 63-bit ints)`);
-        return v < 0n ? `(${c.v})` : c.v;
-      }
+      case 'int': return this.intLit(c.v);
       case 'char': return String(c.v);
       case 'string': return haxeString(c.v);
       case 'float': {
@@ -966,12 +993,12 @@ class UnitEmitter {
         const arity = n ? this.schemeArity(n.scheme) : d.arity ?? 0;
         this.useLib(d, n);
         if (d.name === 'raise' && false) return '';
-        return arity ? this.curry(`${d.cls}.${d.member}`, arity, n?.t, where) : `${d.cls}.${d.member}`;
+        return arity ? this.libCall(`${d.cls}.${d.member}`, arity, {k: 'apply', args: [], t: n.t, l: n.l}, n) : `${d.cls}.${d.member}`;
       }
       case 'prim': return this.primValue(d, n, where);
       case 'instance': {
         const arity = n ? this.schemeArity(n.scheme) : 0;
-        return arity ? this.curry(`${d.obj}.${d.member}`, arity, n?.t, where) : `${d.obj}.${d.member}`;
+        return arity ? this.libCall(`${d.obj}.${d.member}`, arity, {k: 'apply', args: [], t: n.t, l: n.l}, n) : `${d.obj}.${d.member}()`;
       }
       case 'exnalias': this.fail(where, 'exception alias used as a value');
     }
@@ -1019,6 +1046,7 @@ class UnitEmitter {
       const arity = d.kind === 'lib' || d.kind === 'instance' ? this.schemeArity(fn.scheme) : d.arity ?? 0;
       if (d.kind === 'lib') this.useLib(d, fn);
       const callee = {local: null, localfn: d.name, static: d.hx, external: d.hx, lib: `${d.cls}.${d.member}`, instance: `${d.obj}.${d.member}`, polystatic: null, prim: null}[d.kind];
+      if (callee && (d.kind === 'lib' || d.kind === 'instance')) return this.libCall(callee, arity, n, fn);
       if (callee && arity > 0) return this.knownCall(callee, arity, n, fn);
     }
     if (fn.k === 'new') return this.newObject(n);
@@ -1032,6 +1060,69 @@ class UnitEmitter {
     });
   }
   // Call a known function of the given arity with the application's args.
+  // A library function: all arguments at once, function arguments uncurried
+  // to the arity of the signature's arrows, optional arguments last as Haxe
+  // optional arguments (README).
+  libCall(callee, arity, n, fn) {
+    const {args: scheme} = this.arrows(fn.scheme);
+    const {args: formal, res} = this.arrows(fn.t);
+    if (arity === 0) {
+      // A constant (instance constants are zero-argument methods).
+      const base = /_instance\.\w+$/.test(callee) ? `${callee}()` : callee;
+      return n.args.length ? this.applyRest(base, n.args, n) : base;
+    }
+    const given = n.args.slice(0, arity), rest = n.args.slice(arity);
+    // Holes (omitted labelled or missing trailing arguments) become closure parameters.
+    const holes = [];
+    for (let i = 0; i < arity; i++) if (!(i < given.length && given[i].e)) holes.push(i);
+    const names = holes.map(() => this.temp('a'));
+    const nodes = [];
+    for (let i = 0; i < arity; i++) {
+      const h = holes.indexOf(i);
+      let e = h >= 0 ? {k: '$var', name: names[h], t: formal[i].t} : given[i].e;
+      const label = scheme[i].label;
+      if (label.startsWith('?')) {
+        if (h < 0 && e.k === 'construct' && e.c.type?.p === 'option') e = e.c.name === 'None' ? {k: '$omit'} : e.args[0];
+        else e = {k: '$expr', code: `(switch (${this.value(e)}) { case ${RT}MlOption.Some(_o): _o; case ${RT}MlOption.None: null; })`, impure: true};
+      }
+      const k = this.schemeArity(scheme[i].t);
+      if (k >= 2 && e.k !== '$omit') e = this.uncurriedArg(e, k, formal[i].t, n);
+      nodes.push({label, e});
+    }
+    const order = [...nodes.filter(x => !x.label.startsWith('?')), ...nodes.filter(x => x.label.startsWith('?'))];
+    while (order.length && order.at(-1).e.k === '$omit') order.pop();
+    const evals = order.map(x => x.e.k === '$omit' ? {k: '$expr', code: 'null'} : x.e);
+    let call = this.ordered(evals, vals => `${callee}(${vals.join(', ')})`);
+    if (holes.length) {
+      if (rest.length) this.fail(n, 'over-application after omitted arguments');
+      let ty = this.chainType(formal.slice(arity), res, n);
+      for (let k = holes.length - 1; k >= 0; k--) {
+        const at = this.type(formal[holes[k]].t, n);
+        call = `function(${names[k]}:${at}):${ty} return ${call}`;
+        ty = `(${at}) -> (${ty})`;
+      }
+      return `(${call})`;
+    }
+    return rest.length ? this.applyRest(call, rest, n) : call;
+  }
+  // A function argument for a library parameter of k arrows: uncurried.
+  uncurriedArg(e, k, t, n) {
+    const {args, res} = this.arrows(t);
+    if (args.length < k) this.fail(n, 'function argument with fewer arrows than the signature');
+    const resT = k < args.length ? this.chainType(args.slice(k), res, n) : this.type(res, n);
+    if (e.k === 'fun') {
+      const fn = funInfo(e);
+      if (fn.arity === k) { const f = this.functionParts(fn, e, null); return {k: '$expr', code: `function(${f.params}):${f.res} ${f.body}`}; }
+    }
+    if (e.k === 'ident') {
+      const d = this.identDesc(e);
+      const direct = d.kind === 'static' || d.kind === 'external' ? d.hx : d.kind === 'localfn' ? d.name : null;
+      if (direct && d.arity === k) return {k: '$expr', code: direct};
+    }
+    const f = this.temp('f'), ps = args.slice(0, k).map(() => this.temp('a'));
+    const call = ps.reduce((acc, p) => `${acc}(${p})`, f);
+    return {k: '$expr', impure: true, code: `{ var ${f} = ${this.value(e)}; function(${ps.map((p, i) => `${p}:${this.type(args[i].t, n)}`).join(', ')}):${resT} return ${call}; }`};
+  }
   knownCall(callee, arity, n, fn) {
     const args = n.args;
     const {args: formal, res} = this.arrows(fn.t);
@@ -1130,18 +1221,17 @@ class UnitEmitter {
   }
   primitives() {
     if (this._prims) return this._prims;
-    const I = this.p.int63;
-    const int = (op, fn) => ({arity: 2, code: (v, a) => I ? `${RT}Int63.${fn}(${v[0]}, ${v[1]})` : op(v[0], v[1])});
+    const I63 = `${RT}Int63`;
+    const int = fn => ({arity: 2, code: v => `${I63}.${fn}(${v[0]}, ${v[1]})`});
     const cmp = (op, fn) => ({arity: 2, code: (v, a, n) => this.compare(op, v, a, n)});
+    const toInt = x => `${wrap(x)}.toInt()`;
+    const ofInt = x => `${I63}.ofInt(${x})`;
     const P = {
-      '%addint': int((a, b) => `(${a} + ${b})`, 'add'), '%subint': int((a, b) => `(${a} - ${b})`, 'sub'),
-      '%mulint': int((a, b) => `(${a} * ${b})`, 'mul'),
-      '%divint': {arity: 2, code: v => I ? `${RT}Int63.div(${v[0]}, ${v[1]})` : `${RT}Runtime.div(${v[0]}, ${v[1]})`},
-      '%modint': {arity: 2, code: v => I ? `${RT}Int63.mod(${v[0]}, ${v[1]})` : `${RT}Runtime.mod(${v[0]}, ${v[1]})`},
-      '%negint': {arity: 1, code: v => I ? `${RT}Int63.neg(${v[0]})` : `(-${v[0]})`},
-      '%succint': {arity: 1, code: v => `(${v[0]} + 1)`}, '%predint': {arity: 1, code: v => `(${v[0]} - 1)`},
-      '%andint': int((a, b) => `(${a} & ${b})`, 'and'), '%orint': int((a, b) => `(${a} | ${b})`, 'or'), '%xorint': int((a, b) => `(${a} ^ ${b})`, 'xor'),
-      '%lslint': int((a, b) => `(${a} << ${b})`, 'shl'), '%lsrint': int((a, b) => `(${a} >>> ${b})`, 'ushr'), '%asrint': int((a, b) => `(${a} >> ${b})`, 'shr'),
+      '%addint': int('add'), '%subint': int('sub'), '%mulint': int('mul'), '%divint': int('div'), '%modint': int('mod'),
+      '%negint': {arity: 1, code: v => `${I63}.neg(${v[0]})`},
+      '%succint': {arity: 1, code: v => `${I63}.succ(${v[0]})`}, '%predint': {arity: 1, code: v => `${I63}.pred(${v[0]})`},
+      '%andint': int('logand'), '%orint': int('logor'), '%xorint': int('logxor'),
+      '%lslint': int('shiftLeft'), '%lsrint': int('shiftRightLogical'), '%asrint': int('shiftRight'),
       '%eq': cmp('=='), '%noteq': cmp('!='), '%equal': cmp('='), '%notequal': cmp('<>'),
       '%lessthan': cmp('<'), '%greaterthan': cmp('>'), '%lessequal': cmp('<='), '%greaterequal': cmp('>='), '%compare': cmp('compare'),
       '%boolnot': {arity: 1, code: v => `!${wrap(v[0])}`},
@@ -1154,49 +1244,59 @@ class UnitEmitter {
       '%makemutable': {arity: 1, code: v => `new ${RT}Ref(${v[0]})`},
       '%field0': {arity: 1, code: v => `${wrap(v[0])}.value`},
       '%setfield0': {arity: 2, code: v => `{ ${wrap(v[0])}.value = ${v[1]}; ${UNIT}; }`},
-      '%incr': {arity: 1, code: v => `{ ${wrap(v[0])}.value++; ${UNIT}; }`},
-      '%decr': {arity: 1, code: v => `{ ${wrap(v[0])}.value--; ${UNIT}; }`},
+      '%incr': {arity: 1, code: v => `{ var _r = ${v[0]}; _r.value = ${I63}.succ(_r.value); ${UNIT}; }`},
+      '%decr': {arity: 1, code: v => `{ var _r = ${v[0]}; _r.value = ${I63}.pred(_r.value); ${UNIT}; }`},
       '%raise': {arity: 1, code: v => `throw ${v[0]}`}, '%reraise': {arity: 1, code: v => `throw ${v[0]}`}, '%raise_notrace': {arity: 1, code: v => `throw ${v[0]}`},
       '%revapply': {arity: 2, lazy: (a, n) => this.apply({k: 'apply', t: n.t, l: n.l, fn: a[1], args: [{label: '', e: a[0]}]})},
       '%apply': {arity: 2, lazy: (a, n) => this.apply({k: 'apply', t: n.t, l: n.l, fn: a[0], args: [{label: '', e: a[1]}]})},
-      '%string_length': {arity: 1, code: v => `${wrap(v[0])}.length`}, '%bytes_length': {arity: 1, code: v => `${wrap(v[0])}.length`},
-      '%string_safe_get': {arity: 2, code: v => `${RT}Runtime.stringGet(${v[0]}, ${v[1]})`},
-      '%string_unsafe_get': {arity: 2, code: v => `StringTools.fastCodeAt(${v[0]}, ${v[1]})`},
-      '%bytes_safe_get': {arity: 2, code: v => `${RT}Runtime.bytesGet(${v[0]}, ${v[1]})`}, '%bytes_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}.get(${v[1]})`},
-      '%bytes_safe_set': {arity: 3, code: v => `${RT}Runtime.bytesSet(${v[0]}, ${v[1]}, ${v[2]})`}, '%bytes_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}.set(${v[1]}, ${v[2]}); ${UNIT}; }`},
-      '%array_length': {arity: 1, code: v => `${wrap(v[0])}.length`}, '%floatarray_length': {arity: 1, code: v => `${wrap(v[0])}.length`},
-      '%array_safe_get': {arity: 2, code: v => `${RT}Runtime.arrayGet(${v[0]}, ${v[1]})`}, '%array_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}[${v[1]}]`},
-      '%array_safe_set': {arity: 3, code: v => `${RT}Runtime.arraySet(${v[0]}, ${v[1]}, ${v[2]})`}, '%array_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}[${v[1]}] = ${v[2]}; ${UNIT}; }`},
-      '%floatofint': {arity: 1, code: v => `(${v[0]} : Float)`}, '%intoffloat': {arity: 1, code: v => `Std.int(${v[0]})`},
+      '%string_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)}, '%bytes_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)},
+      '%string_safe_get': {arity: 2, code: v => `${RT}Runtime.stringGet(${v[0]}, ${toInt(v[1])})`},
+      '%string_unsafe_get': {arity: 2, code: v => `StringTools.fastCodeAt(${v[0]}, ${toInt(v[1])})`},
+      '%bytes_safe_get': {arity: 2, code: v => `${RT}Runtime.bytesGet(${v[0]}, ${toInt(v[1])})`}, '%bytes_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}.get(${toInt(v[1])})`},
+      '%bytes_safe_set': {arity: 3, code: v => `${RT}Runtime.bytesSet(${v[0]}, ${toInt(v[1])}, ${v[2]})`}, '%bytes_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}.set(${toInt(v[1])}, ${v[2]}); ${UNIT}; }`},
+      '%array_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)}, '%floatarray_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)},
+      '%array_safe_get': {arity: 2, code: v => `${RT}Runtime.arrayGet(${v[0]}, ${toInt(v[1])})`}, '%array_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}[${toInt(v[1])}]`},
+      '%array_safe_set': {arity: 3, code: v => `${RT}Runtime.arraySet(${v[0]}, ${toInt(v[1])}, ${v[2]})`}, '%array_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}[${toInt(v[1])}] = ${v[2]}; ${UNIT}; }`},
+      '%floatofint': {arity: 1, code: v => `${I63}.toFloat(${v[0]})`}, '%intoffloat': {arity: 1, code: v => `${I63}.ofFloat(${v[0]})`},
       '%addfloat': {arity: 2, code: v => `(${v[0]} + ${v[1]})`}, '%subfloat': {arity: 2, code: v => `(${v[0]} - ${v[1]})`},
       '%mulfloat': {arity: 2, code: v => `(${v[0]} * ${v[1]})`}, '%divfloat': {arity: 2, code: v => `(${v[0]} / ${v[1]})`},
       '%negfloat': {arity: 1, code: v => `(-${v[0]})`}, '%absfloat': {arity: 1, code: v => `Math.abs(${v[0]})`},
-      '%loc_FILE': {arity: 1, code: () => haxeString(this.cfg.source)}, '%loc_LINE': {arity: 1, code: (v, a, n) => String(n.l[0])},
+      '%loc_FILE': {arity: 1, code: () => haxeString(this.cfg.source)}, '%loc_LINE': {arity: 1, code: (v, a, n) => this.intLit(n.l[0])},
       '%int_as_pointer': null,
     };
     for (const [k, v] of Object.entries(P)) if (!v) delete P[k];
     return this._prims = P;
   }
   identity(v, arg, n) {
-    // %identity: Obj.magic, Obj.repr/obj, int_of_char, char_of_int (unsafe).
+    // %identity: Obj.magic, Obj.repr/obj, int_of_char, unsafe_chr.
     let from, to;
     try { from = this.type(arg.t, n); to = this.type(n.t, n); } catch (e) { from = to = null; }
     if (from !== null && from === to) return v;
+    if (this.isPredef(arg.t, 'char') && this.isInt(n.t)) return `${RT}Int63.ofInt(${v})`;
+    if (this.isInt(arg.t) && this.isPredef(n.t, 'char')) return `(${wrap(v)}.toInt() & 255)`;
     return `(cast ${v} : ${to ?? this.type(n.t, n)})`;
   }
   // Comparison of two values with OCaml's semantics.
   compare(op, v, a, n) {
     const t = this.t(a[0].t);
-    const simple = t.k === 'constr' && ['int', 'char', 'bool', 'string', 'float'].includes(t.path.p) && !(this.p.int63 && t.path.p === 'int');
-    if (op === '==' || op === '!=') return `(${v[0]} ${op} ${v[1]})`;
-    if (simple && op !== 'compare' && !(t.path.p === 'float' && false)) {
+    if (op === '==' || op === '!=') {
+      if (this.isInt(a[0].t)) return `${op === '!=' ? '!' : ''}${RT}Int63.eq(${v[0]}, ${v[1]})`;
+      return `(${v[0]} ${op} ${v[1]})`;
+    }
+    if (this.isInt(a[0].t)) {
+      const fn = {'=': 'eq', '<>': 'eq', '<': 'lt', '>': 'gt', '<=': 'le', '>=': 'ge', compare: 'compare'}[op];
+      const call = `${RT}Int63.${fn}(${v[0]}, ${v[1]})`;
+      return op === '<>' ? `!${call}` : op === 'compare' ? `${RT}Int63.ofInt(${call})` : call;
+    }
+    const simple = t.k === 'constr' && ['char', 'bool', 'string', 'float'].includes(t.path.p);
+    if (simple && op !== 'compare') {
       const o = {'=': '==', '<>': '!='}[op] ?? op;
       if (t.path.p === 'bool' && !['==', '!='].includes(o)) return `${RT}Runtime.compareBool(${v[0]}, ${v[1]}) ${o} 0`;
       return `(${v[0]} ${o} ${v[1]})`;
     }
     if (op === 'compare') {
-      if (simple && t.path.p !== 'float' && t.path.p !== 'bool') return `${RT}Runtime.compare${t.path.p === 'string' ? 'String' : 'Int'}(${v[0]}, ${v[1]})`;
-      return `${RT}Runtime.compare(${v[0]}, ${v[1]})`;
+      if (simple && t.path.p !== 'float' && t.path.p !== 'bool') return `${RT}Int63.ofInt(${RT}Runtime.compare${t.path.p === 'string' ? 'String' : 'Int'}(${v[0]}, ${v[1]}))`;
+      return `${RT}Int63.ofInt(${RT}Runtime.compare(${v[0]}, ${v[1]}))`;
     }
     if (op === '=') return `${RT}Runtime.equal(${v[0]}, ${v[1]})`;
     if (op === '<>') return `!${RT}Runtime.equal(${v[0]}, ${v[1]})`;
@@ -1207,8 +1307,8 @@ class UnitEmitter {
     const key = `${libraryModule(d.path[0])}${d.path.length > 1 ? '.' + d.path.slice(1).join('.') : ''}.${d.name}`;
     const fmt = {'Printf.sprintf': 'sprintf', 'Printf.printf': 'printf', 'Printf.eprintf': 'eprintf', 'Printf.fprintf': 'fprintf', 'Printf.bprintf': 'bprintf', 'Printf.ksprintf': 'ksprintf', 'Printf.kprintf': 'ksprintf', 'Stdlib.failwith': null, 'Stdlib.invalid_arg': null, 'Stdlib.^': 'concat'}[key];
     if (key === 'Stdlib.^' && n.args.length === 2 && n.args.every(a => a.e)) return this.ordered(n.args.map(a => a.e), v => `(${v[0]} + ${v[1]})`);
-    if (key === 'Stdlib.failwith' && n.args.length === 1 && n.args[0].e) return `throw new ${RT}FailureExn(${this.value(n.args[0].e)})`;
-    if (key === 'Stdlib.invalid_arg' && n.args.length === 1 && n.args[0].e) return `throw new ${RT}InvalidArgumentExn(${this.value(n.args[0].e)})`;
+    if (key === 'Stdlib.failwith' && n.args.length === 1 && n.args[0].e) return `throw new ${RT}Failure(${this.value(n.args[0].e)})`;
+    if (key === 'Stdlib.invalid_arg' && n.args.length === 1 && n.args[0].e) return `throw new ${RT}InvalidArgument(${this.value(n.args[0].e)})`;
     if (fmt && fmt !== 'concat') return this.printf(fmt, n, fn);
     return null;
   }
@@ -1290,11 +1390,9 @@ class UnitEmitter {
     if (p.conv === 's' && noPad(p.pad)) return v;
     if (p.conv === 'c') return `String.fromCharCode(${v})`;
     if (p.conv === 'B') return `(${v} ? "true" : "false")`;
-    if (p.conv === 'Int' && simple && ['Int_d', 'Int_i'].includes(p.iconv)) return `Std.string(${v})`;
-    // Everything else: the runtime's format of one conversion.
-    const spec = this.convSpec(p, n);
-    this.p.useLibrary(`${RT}Format`, 'conv', '');
-    return `${RT}Format.${p.conv === 'Int' ? 'int' : p.conv === 'f' ? 'float' : p.conv === 's' ? 'string' : p.conv === 'S' ? 'camlString' : p.conv === 'C' ? 'camlChar' : p.conv === 'Int32' ? 'int32' : p.conv === 'Int64' ? 'int64' : p.conv === 'Nativeint' ? 'int' : this.fail(n, 'format conversion ' + p.conv)}(${JSON.stringify(spec)}, ${v})`;
+    if (p.conv === 'Int' && simple && ['Int_d', 'Int_i'].includes(p.iconv)) return `${wrap(v)}.toString()`;
+    // Everything else: the runtime's conversion of one specification.
+    return `${RT}Fmt.one(${JSON.stringify(this.convSpec(p, n))}, ${v})`;
   }
   convSpec(p, n) {
     // Rebuild the %-specification text from the constructor tree.
@@ -1311,7 +1409,7 @@ class UnitEmitter {
     if (p.conv === 'Int' || p.conv === 'Int32' || p.conv === 'Int64' || p.conv === 'Nativeint') {
       const m = {Int_d: 'd', Int_pd: '+d', Int_sd: ' d', Int_i: 'i', Int_pi: '+i', Int_si: ' i', Int_x: 'x', Int_Cx: '#x', Int_X: 'X', Int_CX: '#X', Int_o: 'o', Int_Co: '#o', Int_u: 'u', Int_Cd: 'd', Int_Ci: 'i', Int_Cu: 'u'}[p.iconv];
       if (!m) this.fail(n, 'int conversion ' + p.iconv);
-      flags += m.length > 1 ? m[0] : ''; conv = m.at(-1);
+      flags += m.length > 1 ? m[0] : ''; conv = {Int: '', Int32: 'l', Int64: 'L', Nativeint: 'n'}[p.conv] + m.at(-1);
     } else if (p.conv === 'f') {
       const fc = p.fconv; // (float_flag_conv, float_kind_conv)
       const flag = fc.args[0].c.name, kind = fc.args[1].c.name;
@@ -1348,13 +1446,15 @@ class UnitEmitter {
     if (p.l) { const d = this.ids.get(p.l); if (!d) this.fail(n, `unknown exception ${pathName(p)}`); return d.kind === 'exnalias' ? this.exnClass(d.path, n) : d.hx; }
     if (p.d) {
       const m = this.resolveModule(p.d[0], n);
-      if (m.kind === 'lib') { this.p.useLibrary(m.hx, `exception ${exnName(p.d[1])}`, ''); return `${m.hx}.${exnName(p.d[1])}`; }
+      if (m.kind === 'lib') { const hx = m.exnHx(p.d[1]); this.p.useLibrary(m.hx, `exception ${hx}`, ''); return hx; }
       if (m.kind === 'struct') { const d = m.exns.get(p.d[1]); if (!d) this.fail(n, `unknown exception ${pathName(p)}`); return d.kind === 'exnalias' ? this.exnClass(d.path, n) : d.hx; }
     }
     this.fail(n, `exception path ${pathName(p)}`);
   }
   extConstruct(n) {
     const cls = this.exnClass(n.c.ext, n);
+    // Constant exceptions are one value each, as in OCaml.
+    if (!n.args.length && n.c.type?.p === 'exn') return `${cls}.instance`;
     return this.ordered(n.args, a => `new ${cls}(${a.join(', ')})`);
   }
   record(n, cls = null) {
@@ -1377,14 +1477,14 @@ class UnitEmitter {
     const i = this.fresh(identName(n.id)), lim = this.temp('n');
     this.ids.set(n.id, {kind: 'local', name: i});
     const from = this.value(n.from), to = this.value(n.to);
-    if (this.p.int63) this.fail(n, 'for loop with 63-bit ints');
-    // Bounds are evaluated once, the upper first... OCaml evaluates `from` first.
+    // OCaml evaluates the start, then the end, once.
     const v = this.temp('i');
-    return `{ var ${v} = ${from}; var ${lim} = ${to}; while (${v} ${n.up ? '<=' : '>='} ${lim}) { var ${i} = ${v}; ${this.stmt(n.body)} if (${v} == ${lim}) break; ${v}${n.up ? '++' : '--'}; } }`;
+    const I = `${RT}Int63`;
+    return `{ var ${v} = ${from}; var ${lim} = ${to}; while (${I}.${n.up ? 'le' : 'ge'}(${v}, ${lim})) { var ${i} = ${v}; ${this.stmt(n.body)} if (${I}.eq(${v}, ${lim})) break; ${v} = ${I}.${n.up ? 'succ' : 'pred'}(${v}); } }`;
   }
 
   // ------------------------------------------------------------ matching
-  matchFailure(n) { return `new ${RT}MatchFailureExn(${haxeString(this.cfg.source)}, ${n.l?.[0] ?? 0}, ${n.l?.[1] ?? 0})`; }
+  matchFailure(n) { return `new ${RT}MatchFailure(${haxeString(this.cfg.source)}, ${this.intLit(n.l?.[0] ?? 0)}, ${this.intLit(n.l?.[1] ?? 0)})`; }
   matchNode(n, tc, mode) {
     const value = n.cases.filter(c => !hasException(c.p)), exns = n.cases.filter(c => hasException(c.p));
     if (exns.length) return this.matchWithExceptions(n, value, exns, tc, mode);
@@ -1424,10 +1524,10 @@ class UnitEmitter {
   matchWithExceptions(n, value, exns, tc, mode) {
     const opt = this.temp('m'), exn = this.temp('e'), v = this.temp('v');
     const scrutT = this.type(n.e.t, n);
-    const tryPart = `var ${exn}:${RT}Exn = null; var ${opt} = try ${RT}MlOption.Some(${this.value(n.e)}) catch (_x:haxe.Exception) { ${exn} = ${RT}Exn.wrap(_x); (${RT}MlOption.None : ${RT}MlOption<${scrutT}>); };`;
+    const tryPart = `var ${exn}:${RT}MlException = null; var ${opt} = try ${RT}MlOption.Some(${this.value(n.e)}) catch (_x:haxe.Exception) { ${exn} = ${RT}MlException.wrap(_x); (${RT}MlOption.None : ${RT}MlOption<${scrutT}>); };`;
     const vcode = this.switchCode(v, value, n.partial, tc, mode, n);
     const ecases = exns.map(c => ({...c, p: stripException(c.p)}));
-    const ecode = this.switchCode(exn, ecases, true, tc, mode, n).replace(/case _: throw new ml2hx\.rt\.MatchFailureExn\([^;]*\);/, `case _: throw ${exn};`);
+    const ecode = this.switchCode(exn, ecases, true, tc, mode, n).replace(/case _: throw new ml2hx\.rt\.MatchFailure\([^;]*\);/, `case _: throw ${exn};`);
     const body = mode === 'value'
       ? `{ ${tryPart} (switch (${opt}) { case ${RT}MlOption.Some(${v}): ${vcode}; case ${RT}MlOption.None: ${ecode}; }); }`
       : `{ ${tryPart} switch (${opt}) { case ${RT}MlOption.Some(${v}): ${vcode} case ${RT}MlOption.None: ${ecode} } }`;
@@ -1436,8 +1536,8 @@ class UnitEmitter {
   tryExpr(n) {
     const x = this.temp('x'), e = this.temp('e');
     const cases = n.cases;
-    const handler = this.switchCode(e, cases, true, null, 'value', n).replace(/case _: throw new ml2hx\.rt\.MatchFailureExn\([^;]*\);/, `case _: throw ${x};`);
-    return `(try ${this.value(n.e)} catch (${x}:haxe.Exception) { var ${e} = ${RT}Exn.wrap(${x}); ${handler}; })`;
+    const handler = this.switchCode(e, cases, true, null, 'value', n).replace(/case _: throw new ml2hx\.rt\.MatchFailure\([^;]*\);/, `case _: throw ${x};`);
+    return `(try ${this.value(n.e)} catch (${x}:haxe.Exception) { var ${e} = ${RT}MlException.wrap(${x}); ${handler}; })`;
   }
   tuplePattern(p, arity) {
     if (p.k === 'value') return this.tuplePattern(p.p, arity);
@@ -1471,8 +1571,8 @@ class UnitEmitter {
         return {...inner, pat: inner.pat === '_' ? name : `${name} = ${inner.pat}`};
       }
       case 'const': {
-        if (p.c.k === 'int' && this.p.int63) this.fail(p, 'integer pattern with 63-bit ints');
-        if (p.c.k === 'float') this.fail(p, 'float pattern');
+        if (p.c.k === 'int') { const b = BigInt(p.c.v); if (b > 0x7fffffffn || b < -0x7fffffffn) this.fail(p, 'integer pattern outside 32 bits'); return {pat: `${RT}Int63.patternKey(_) => ${b < 0n ? `(${p.c.v})` : p.c.v}`}; }
+        if (p.c.k === 'float') return {pat: `${RT}Float64.eq(_, ${this.constant(p.c, p)}) => true`};
         return {pat: this.constant(p.c, p)};
       }
       case 'tuple': return this.join(p.args.map(a => this.pattern(a)), parts => `{${parts.map((x, i) => `v${i}: ${x}`).join(', ')}}`);
@@ -1583,14 +1683,20 @@ function stripException(p) { if (p.k === 'exception') return p.p; throw new Unsu
 function tupleLike(p, n) { return (p.k === 'tuple' && p.args.length === n) || p.k === 'any' || (p.k === 'or' && tupleLike(p.a, n) && tupleLike(p.b, n)) || (p.k === 'value' && tupleLike(p.p, n)); }
 // No observable effects and no reads of mutable state.
 function pure(n) {
+  if (n.impure) return false;
   switch (n.k) {
-    case 'const': case 'fun': case '$var': return true;
+    case 'const': case 'fun': case '$var': case '$expr': return true;
     case 'ident': return true;
     case 'construct': case 'tuple': return n.args.every(pure);
     case 'variant': return !n.arg || pure(n.arg);
     case 'field': return pure(n.e) && false;
     default: return false;
   }
+}
+// The ml2hx.rt.Block view of a record (polymorphic compare and hash).
+function blockMethods(fields) {
+  const get = fields.length ? `switch i { ${fields.map((f, i) => `case ${i}: ${f};`).join(' ')} case _: null; }` : 'null';
+  return `\tpublic function blockTag():Int return 0;\n\tpublic function blockSize():Int return ${fields.length};\n\tpublic function blockField(i:Int):Dynamic return ${get};`;
 }
 const wrap = s => /^[\w.]+$/.test(s) ? s : `(${s})`;
 const needsParens = s => !/^[\w.]+$/.test(s);

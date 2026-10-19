@@ -6,7 +6,12 @@ export const keywords = new Set(('abstract break case cast catch class continue 
 const reserved = new Set(['trace', 'init']);
 const opChars = {'!':'Bang','$':'Dollar','%':'Percent','&':'Amp','*':'Star','+':'Plus','-':'Minus','.':'Dot','/':'Slash',':':'Colon','<':'Lt','=':'Eq','>':'Gt','?':'Qmark','@':'At','^':'Caret','|':'Bar','~':'Tilde','#':'Hash'};
 export function isOperator(s) { return s.length > 0 && !/^[A-Za-z_]/.test(s); }
+// Stdlib's operators have names (the runtime's); others are spelled out.
+const opNames = {'+': 'opAdd', '-': 'opSub', '*': 'opMul', '/': 'opDiv', '~-': 'opNeg', '~+': 'opPos', '+.': 'opAddF', '-.': 'opSubF', '*.': 'opMulF', '/.': 'opDivF',
+  '~-.': 'opNegF', '~+.': 'opPosF', '**': 'opPow', '=': 'opEq', '<>': 'opNe', '==': 'opPhysEq', '!=': 'opPhysNe', '<': 'opLt', '>': 'opGt', '<=': 'opLe', '>=': 'opGe',
+  '&&': 'opAnd', '||': 'opOr', '^': 'opConcat', '@': 'opAppend', '!': 'opDeref', ':=': 'opAssign', '|>': 'opPipe', '@@': 'opApply'};
 export function opName(s) {
+  if (opNames[s]) return opNames[s];
   let out = 'op';
   for (const c of s) { if (!opChars[c]) throw new Error(`operator character ${c} in ${s}`); out += opChars[c]; }
   return out;
@@ -24,10 +29,17 @@ export function valueName(s) {
 export const camel = valueName;
 // OCaml type name -> Haxe type name.
 export function typeName(s) { const v = camelCore(s); return v[0].toUpperCase() + v.slice(1); }
-// OCaml exception (extension constructor) name -> Haxe class name.
-export function exnName(s) { return typeName(s) + 'Exn'; }
+// A type (or exception) of module M -> its Haxe name: prefixed with the
+// module's name, as Haxe type names are unique per package (Hashtbl.t ->
+// HashtblT, Option.No_value -> OptionNoValue).
+export function moduleTypeName(module, s) { return module.replace(/_/g, '') + typeName(s); }
+export const exnName = typeName;
+// OCaml's predefined exceptions are ml2hx.rt classes (constant ones raised as `.instance`).
+export const predefExns = {Not_found: 'NotFound', Failure: 'Failure', Invalid_argument: 'InvalidArgument', End_of_file: 'EndOfFile',
+  Division_by_zero: 'DivisionByZero', Sys_error: 'SysError', Match_failure: 'MatchFailure', Assert_failure: 'AssertFailure',
+  Stack_overflow: 'StackOverflow', Out_of_memory: 'OutOfMemory', Sys_blocked_io: 'SysBlockedIo', Undefined_recursive_module: 'UndefinedRecursiveModule'};
 // Library unit name (Stdlib__List, Unix, Option) -> ml2hx.std class name.
-const shadowsStdlib = {Option: 'Extlib_Option'};
+const shadowsStdlib = {};
 export function libraryModule(unit) {
   if (unit.startsWith('Stdlib__')) return unit.slice(8);
   return shadowsStdlib[unit] ?? unit;
