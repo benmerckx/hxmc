@@ -1089,7 +1089,9 @@ class UnitEmitter {
       code = `{ while (true) { ${params.map((p, i) => `var ${inner[i]} = ${p.name};`).join(' ')} ${bodyCode} } }`;
     } else code = `{ ${this.functionBody(params, matches, body, null, prologue)} }`;
     for (const [id, d] of savedIds) { if (d) this.ids.set(id, d); }
-    return {params: params.map(p => { const t = typeOf(p.t); return t === null ? p.name : `${p.name}:${t}`; }).join(', '), res: resType, colonRes: resType === null ? '' : `:${resType}`, body: code};
+    // (a destructured parameter keeps its type: Haxe would infer a structure
+    // from the projections)
+    return {params: params.map(p => { const t = p.pattern || p.cases ? this.type(p.t, node) : typeOf(p.t); return t === null ? p.name : `${p.name}:${t}`; }).join(', '), res: resType, colonRes: resType === null ? '' : `:${resType}`, body: code};
   }
   // Bindings of an irrefutable pattern by projection, or null.
   bindIrrefutable(p, v) {
