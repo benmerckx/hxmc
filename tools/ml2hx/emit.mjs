@@ -1227,7 +1227,9 @@ class UnitEmitter {
     const out = [];
     const pending = [];
     for (const b of n.bindings) {
-      if (b.p.k === 'var' && b.e.k === 'fun') {
+      if (b.p.k === 'var' && b.e.k === 'fun' && this.liftable([b], false)) {
+        out.push(this.lift([b], false));
+      } else if (b.p.k === 'var' && b.e.k === 'fun') {
         const fn = funInfo(b.e);
         const name = this.fresh(identName(b.p.id));
         out.push(this.localFunction(name, fn, b.e, null, b.p.t));
@@ -1301,6 +1303,7 @@ class UnitEmitter {
     const dyn = independentBindings(bs);
     if (dyn.length) return `${this.bindings({...n, rec: false, bindings: dyn})} ${this.recBindings(bs.filter(b => !dyn.includes(b)), n)}`;
     if (bs.some(b => b.e.k !== 'fun')) return this.recValues(bs, n);
+    if (this.liftable(bs, true)) return this.lift(bs, true);
     if (bs.length === 1 && bs[0].e.k === 'fun') {
       const b = bs[0], fn = funInfo(b.e), name = this.fresh(identName(b.p.id));
       this.ids.set(b.p.id, {kind: 'localfn', name, arity: fn.arity});
@@ -1368,6 +1371,59 @@ class UnitEmitter {
       else this.fail(b, `recursive value ${b.e.k}`);
     }
     return out.join(' ');
+  }
+  // Local functions that use no local variable but their own group's (the
+  // states of a sedlex lexer): static functions of the unit, made once,
+  // rather than closures made at each evaluation of their definition.
+  liftable(bs, rec) {
+    if (this.gadt || this.noLift) return false;
+    const group = new Set(bs.map(b => b.p.id));
+    for (const b of bs) {
+      if (b.p.k !== 'var' || b.e.k !== 'fun' || b.e.newtypes?.length) return false;
+      if (this.typeVars(b.p.t).some(v => this.tvars.has(v))) return false;
+    }
+    const bound = new Set(), refs = new Set();
+    let blocked = false;
+    const walk = (o, inPath) => {
+      if (blocked || !o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { for (const x of o) walk(x, inPath); return; }
+      if (o.k === 'instvar' || o.k === 'setinstvar' || o.k === 'override' || o.k === 'object') { blocked = true; return; }
+      if (typeof o.id === 'string') bound.add(o.id);
+      if (typeof o.param === 'string') bound.add(o.param);
+      if (inPath && typeof o.l === 'string') refs.add(o.l);
+      for (const [k, v] of Object.entries(o)) if (v && typeof v === 'object') walk(v, inPath || k === 'path' || k === 'c' || k === 'type' || k === 'ext');
+    };
+    for (const b of bs) walk(b.e, false);
+    if (blocked) return false;
+    for (const r of refs) {
+      if (group.has(r) || bound.has(r)) continue;
+      const d = this.ids.get(r);
+      if (!d) continue;
+      if (['local', 'localfn', 'packed', 'alias', 'inline', 'super'].includes(d.kind)) return false;
+    }
+    return true;
+  }
+  lift(bs, rec) {
+    const descs = bs.map(b => {
+      const fn = funInfo(b.e);
+      const member = this.staticName(this.root, `${identName(b.p.id)}_local`);
+      const d = {kind: 'static', hx: `${this.cls}.${member}`, member, arity: fn.arity, fn};
+      this.ids.set(b.p.id, d);
+      return d;
+    });
+    const savedSelf = this.selfName, savedParams = this.classParams;
+    this.selfName = null; this.classParams = null;
+    try {
+      bs.forEach((b, i) => {
+        const d = descs[i];
+        const vars = this.typeVars(b.p.t).filter(v => !this.tvars.has(v));
+        this.withTypeParams(vars, params => {
+          const f = this.functionParts(d.fn, b.e, rec ? b.p.id : null);
+          this.statics.push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}(${f.params}):${f.res} ${f.body}`);
+        });
+      });
+    } finally { this.selfName = savedSelf; this.classParams = savedParams; }
+    return '';
   }
   localFunction(name, fn, node, self, t) {
     const vars = this.typeVars(t).filter(v => !this.tvars.has(v) && this.T.some(x => x?.k === 'var' && x.id === v && x.gen));
