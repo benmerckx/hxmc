@@ -416,11 +416,11 @@ class Unix {
 		var d = channelDescr.get(c);
 		return d != null ? d : fail(EBADF, "descr_of_out_channel", "");
 	}
-	public static function dup(?cloexec:Bool, d:UnixFileDescr):UnixFileDescr return d;
+	public static function dup(d:UnixFileDescr, ?cloexec:Bool):UnixFileDescr return d;
 	public static function setNonblock(d:UnixFileDescr):Unit return Unit.value;
 	public static function clearNonblock(d:UnixFileDescr):Unit return Unit.value;
 	public static function setCloseOnExec(d:UnixFileDescr):Unit return Unit.value;
-	public static function pipe(?cloexec:Bool, _:Unit):Tuple2<UnixFileDescr, UnixFileDescr> {
+	public static function pipe(_:Unit, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixFileDescr> {
 		var p = new PipeBuffer();
 		var r = new UnixFileDescr(), w = new UnixFileDescr();
 		r.input = new PipeInput(p);
@@ -516,7 +516,7 @@ class Unix {
 	public static function stringOfInetAddr(a:UnixInetAddr):String return a.host;
 	public static final inetAddrAny = new UnixInetAddr("0.0.0.0");
 	public static final inetAddrLoopback = new UnixInetAddr("127.0.0.1");
-	public static function socket(?cloexec:Bool, dom:UnixSocketDomain, ty:UnixSocketType, proto:Int63):UnixFileDescr {
+	public static function socket(dom:UnixSocketDomain, ty:UnixSocketType, proto:Int63, ?cloexec:Bool):UnixFileDescr {
 		if (ty != SOCK_STREAM || dom == PF_UNIX) return unsupported("socket");
 		var d = new UnixFileDescr();
 		d.socket = new sys.net.Socket();
@@ -538,7 +538,7 @@ class Unix {
 		return Unit.value;
 	}
 	public static function listen(d:UnixFileDescr, n:Int63):Unit { d.socket.listen(n.toInt()); return Unit.value; }
-	public static function accept(?cloexec:Bool, d:UnixFileDescr):Tuple2<UnixFileDescr, UnixSockaddr> {
+	public static function accept(d:UnixFileDescr, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixSockaddr> {
 		var c = new UnixFileDescr();
 		c.socket = d.socket.accept();
 		var peer = c.socket.peer();

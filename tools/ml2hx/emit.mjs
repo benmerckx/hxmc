@@ -219,7 +219,7 @@ class UnitEmitter {
       const key = pathName(p);
       const lib = libraryPath(p);
       if (lib && !this.p.unit(lib[0])) {
-        const norm = [libraryModule(lib[0]), ...lib.slice(1)].join('.');
+        const norm = [libraryModule(lib[0]), ...lib.slice(1)].join('.').replace(/^Stdlib\.(?=\w+\.)/, '');
         if (coreLibraryTypes[norm]) return {hx: coreLibraryTypes[norm]};
         const m = new LibraryModule(lib.slice(0, -1));
         return {hx: m.typeHx(lib.at(-1)), library: norm};
@@ -1773,13 +1773,13 @@ class UnitEmitter {
       case 'value': return this.pattern(p.p);
       case 'any': return {pat: '_'};
       case 'var': {
-        const name = this.fresh(identName(p.id));
+        const name = this.orNames?.get(p.id) ?? this.fresh(identName(p.id));
         this.ids.set(p.id, {kind: 'local', name});
         return {pat: name};
       }
       case 'alias': {
         const inner = this.pattern(p.p);
-        const name = this.fresh(identName(p.id));
+        const name = this.orNames?.get(p.id) ?? this.fresh(identName(p.id));
         this.ids.set(p.id, {kind: 'local', name});
         return {...inner, pat: inner.pat === '_' ? name : `${name} = ${inner.pat}`};
       }
@@ -1793,16 +1793,14 @@ class UnitEmitter {
       case 'array': return this.join(p.args.map(a => this.pattern(a)), parts => `[${parts.join(', ')}]`);
       case 'or': {
         // Both sides bind the same identifiers (the typer alpha-renames).
-        const saved = new Map(this.ids);
         const a = this.pattern(p.a);
-        const boundA = new Map(this.ids);
-        this.ids = saved;
+        // Both sides bind the same names (Haxe requires it).
+        const savedOr = this.orNames;
+        this.orNames = new Map([...(savedOr ?? []), ...patternVars(p.a).map(v => [v.id, this.ids.get(v.id)?.name])]);
         const b = this.pattern(p.b);
+        this.orNames = savedOr;
         if (a.guard || b.guard || a.pre || b.pre) this.fail(p, 'or-pattern needing a guard');
-        // Haxe needs the same capture names on both sides.
-        const pb = this.renameCaptures(b.pat, boundA, p.b);
-        this.ids = boundA;
-        return {pat: `${a.pat} | ${pb}`};
+        return {pat: `${a.pat} | ${b.pat}`};
       }
       case 'lazy': { const inner = this.pattern(p.p); return {...inner, pat: `_.force() => ${inner.pat}`}; }
       case '$intkey': return {pat: p.v};

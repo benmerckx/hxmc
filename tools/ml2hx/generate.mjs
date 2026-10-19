@@ -73,7 +73,7 @@ const runtimeStd = path.join(home, 'runtime/ml2hx/std');
 // Packages (and Stdlib modules) converted rather than hand-written; the rest
 // (C bindings: unix, str, luv, ctypes, threads...) are runtime modules.
 const convertedPackages = new Set(['extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff']);
-const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Bool', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing']);
+const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing']);
 const notConverted = new Set(['Stdlib', 'CamlinternalFormatBasics', 'CamlinternalFormat', 'CamlinternalLazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Obj', 'Stdlib__Effect', 'Stdlib__Domain']);
 export function libraryUnits(units, failures) {
   let roots = [];
@@ -81,8 +81,11 @@ export function libraryUnits(units, failures) {
   const index = new Map(), includeDirs = new Set();
   for (const r of roots) if (fs.existsSync(r)) walk(r, p => {
     if (p.endsWith('.cmi')) includeDirs.add(path.dirname(p));
-    if (!p.endsWith('.cmt')) return;
-    const base = path.basename(p, '.cmt'), modname = base[0].toUpperCase() + base.slice(1);
+    if (!p.endsWith('.cmt') && !p.endsWith('.cmti')) return;
+    // A library interface without implementation (xml_light_types.mli) is a
+    // unit of types.
+    if (p.endsWith('.cmti') && fs.existsSync(p.slice(0, -1))) return;
+    const base = path.basename(p).replace(/\.cmti?$/, ''), modname = base[0].toUpperCase() + base.slice(1);
     if (!index.has(modname)) index.set(modname, p);
   });
   const known = new Set(units.map(u => u.modname));
@@ -111,7 +114,7 @@ export function libraryUnits(units, failures) {
       const name = f.modname.replace(/^Stdlib__/, '');
       const pkg = `ocaml.${lib === 'ocaml' ? 'stdlib' : lib}`;
       const u = {modname: f.modname, library: true, irPath: f.ir, load: f.load,
-        config: {source: `${lib}/${path.basename(index.get(names[i]), '.cmt')}.ml`, module: name.replace(/_/g, ''), class: `${name.replace(/_/g, '')}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${name.replace(/_/g, '')}Module.hx`}};
+        config: {source: `${lib}/${path.basename(index.get(names[i])).replace(/\.cmti?$/, '')}.ml`, module: name.replace(/_/g, ''), class: `${name.replace(/_/g, '')}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${name.replace(/_/g, '')}Module.hx`}};
       out.push(u); pending.push(u);
     });
   }
