@@ -92,9 +92,14 @@ class Poly {
 	// the immediate's OCaml integer
 	static function immediate(v:Dynamic):Int64 {
 		if (v == null) return 0;
-		if (Std.isOfType(v, Int) && Type.typeof(v) == TInt) return Int64.ofInt((v : Int));
-		if (Std.isOfType(v, Bool)) return (v : Bool) ? 1 : 0;
+		// (ints first: the most frequent)
 		if (Int64.isInt64(v)) return (v : Int64);
+		switch Type.typeof(v) {
+			case TInt: return Int64.ofInt((v : Int));
+			case TBool: return (v : Bool) ? 1 : 0;
+			case TEnum(e): return ranks(e)[Type.enumIndex(v)];
+			case _:
+		}
 		// unit is the Int 0 at run time
 		if (Std.isOfType(v, PolyVariant)) return (v : PolyVariant).tag;
 		return enumRank(v);
@@ -230,6 +235,7 @@ class Poly {
 
 	// Stdlib.( = ), ( <> ), ( < ), ( <= ), ( > ), ( >= )
 	public static function equal(a:Dynamic, b:Dynamic):Bool {
+		if (Int64.isInt64(a) && Int64.isInt64(b)) return (a : Int64) == (b : Int64);
 		if (Std.isOfType(a, String) && Std.isOfType(b, String)) return (a : String) == (b : String);
 		return compareValues(a, b, false) == 0;
 	}

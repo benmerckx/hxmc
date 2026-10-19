@@ -214,6 +214,25 @@ class UnitEmitter {
   isPredef(i, name) { const t = this.t(i); return t.k === 'constr' && t.path.p === name; }
   isUnit(i) { return this.isPredef(i, 'unit'); }
   isInt(i) { return this.isPredef(i, 'int'); }
+  // int, or an abstract type whose implementation is int (Uchar.t): an
+  // Int63 at run time, compared as one
+  isIntRep(i) {
+    if (this.isInt(i)) return true;
+    const t = this.t(i);
+    if (t.k !== 'constr' || t.path.p) return false;
+    this.intRepMemo ??= new Map();
+    if (this.intRepMemo.has(i)) return this.intRepMemo.get(i);
+    let r = false;
+    try {
+      const d = this.resolveType(t.path, null);
+      if (d?.decl?.kind === 'abstract' && d.decl.manifest !== null && !d.builtin) {
+        const m = d.unit === this.u.modname ? this.t(d.decl.manifest) : this.p.declManifest(d);
+        r = m?.k === 'constr' && m.path.p === 'int';
+      }
+    } catch (e) {}
+    this.intRepMemo.set(i, r);
+    return r;
+  }
 
   // ------------------------------------------------------------ resolution
   resolveModule(p, n) {
@@ -2234,10 +2253,10 @@ class UnitEmitter {
   compare(op, v, a, n) {
     const t = this.t(a[0].t);
     if (op === '==' || op === '!=') {
-      if (this.isInt(a[0].t)) return `${op === '!=' ? '!' : ''}${RT}Int63.eq(${v[0]}, ${v[1]})`;
+      if (this.isIntRep(a[0].t)) return `${op === '!=' ? '!' : ''}${RT}Int63.eq(${v[0]}, ${v[1]})`;
       return `(${wrap(v[0])} ${op} ${wrap(v[1])})`;
     }
-    if (this.isInt(a[0].t)) {
+    if (this.isIntRep(a[0].t)) {
       const fn = {'=': 'eq', '<>': 'eq', '<': 'lt', '>': 'gt', '<=': 'le', '>=': 'ge', compare: 'compare'}[op];
       const call = `${RT}Int63.${fn}(${v[0]}, ${v[1]})`;
       return op === '<>' ? `!${call}` : op === 'compare' ? `${RT}Int63.ofInt(${call})` : call;
