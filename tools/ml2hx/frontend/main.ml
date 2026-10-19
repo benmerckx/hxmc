@@ -82,7 +82,24 @@ and typ_desc t =
   | Types.Tunivar name -> node "var" ["id",Num (Types.get_id t); "name",opt str name; "univ",Bool true]
   | Types.Tarrow (l,a,b,_) -> node "arrow" ["label",label l; "arg",typ a; "res",typ b]
   | Types.Ttuple ts -> node "tuple" ["args",arr typ ts]
-  | Types.Tconstr (p,ts,_) -> node "constr" ["path",path p; "args",arr typ ts]
+  | Types.Tconstr (p,ts,_) ->
+    (* A library type abbreviation (Gen.t, Seq.t...): its expansion, for
+       types the emitter does not map by name. *)
+    let exp = if not (global_root p) then [] else
+      match !norm_env with
+      | None -> []
+      | Some env ->
+        (try
+          let d = Env.find_type p env in
+          match d.Types.type_kind, d.Types.type_manifest with
+          | Types.Type_abstract _, Some _ ->
+            let e = Ctype.expand_head_opt env t in
+            (match Types.get_desc e with
+             | Types.Tconstr (q,_,_) when Path.same p q -> []
+             | _ -> ["exp",typ e])
+          | _ -> []
+        with _ -> []) in
+    node "constr" (["path",path p; "args",arr typ ts] @ exp)
   | Types.Tpoly (t,vars) -> node "poly" ["body",typ t; "vars",arr typ vars]
   | Types.Tobject (fields,nm) ->
     let fs,rest = Ctype.flatten_fields fields in
@@ -315,6 +332,7 @@ let parse file =
     let lex = Lexing.from_channel ch in Location.init lex file; Parse.implementation lex)
 let unit_json file modname source tree =
   reset_types ();
+  (match !norm_env with None -> (try norm_env := Some (Compmisc.initial_env ()) with _ -> ()) | Some _ -> ());
   let items = structure tree in
   let types = Array.to_list (Array.sub !type_table 0 !type_count) |> List.map (function Some j -> j | None -> Null) in
   Obj ["file",Str file; "modname",Str modname; "source",opt str source; "types",Arr types; "items",items]

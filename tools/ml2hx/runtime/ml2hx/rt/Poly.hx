@@ -20,6 +20,7 @@ import haxe.Int64;
 // compare alike but hash as immediates (OCaml hashes an int32 as a custom
 // block: Hashtbl.hash on an int32 differs). Int64 and int are both Int64 at
 // run time: an int64 hashes as an int (OCaml: as a custom block).
+@:allow(ml2hx.std.Obj)
 class Poly {
 	public static inline var UNORDERED = 0x80000000;
 
@@ -65,6 +66,7 @@ class Poly {
 		if (Std.isOfType(v, Int) || Std.isOfType(v, Bool) || Int64.isInt64(v)) return K_IMM;
 		if (Std.isOfType(v, Float)) return K_DOUBLE;
 		if (Std.isOfType(v, Block)) return K_BLOCK;
+		if (Std.isOfType(v, PolyVariant)) return K_IMM; // a constant polymorphic variant: its hash
 		if (Reflect.isEnumValue(v)) return enumRank(v) >= 0 ? K_IMM : K_ENUM;
 		if (Std.isOfType(v, Array)) return K_ARRAY;
 		if (Std.isOfType(v, haxe.io.Bytes)) return K_BYTES;
@@ -83,6 +85,7 @@ class Poly {
 		if (Std.isOfType(v, Bool)) return (v : Bool) ? 1 : 0;
 		if (Int64.isInt64(v)) return (v : Int64);
 		// unit is the Int 0 at run time
+		if (Std.isOfType(v, PolyVariant)) return (v : PolyVariant).tag;
 		return enumRank(v);
 	}
 

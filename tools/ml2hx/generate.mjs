@@ -18,6 +18,7 @@ export function run(cmd, args, options = {}) {
   if (r.status !== 0) throw new Error(`${path.basename(cmd)} failed (${r.status}):\n${r.stderr || r.stdout}`);
   return r.stdout;
 }
+let spoolsCleared = false;
 export function frontendPath() {
   if (process.env.ML2HX_FRONTEND) return process.env.ML2HX_FRONTEND;
   for (const f of ['frontend.exe', 'frontend.byte']) { const p = path.join(root, 'bin/ml2hx/build', f); if (fs.existsSync(p)) return p; }
@@ -26,6 +27,9 @@ export function frontendPath() {
 // Run the frontend over files (.cmt or .ml); returns [{file, modname, source, load()}|{file, error}].
 export function frontend(files, includeDirs = []) {
   const base = path.join(root, 'bin/ml2hx/ir');
+  // The IR of earlier processes is dropped (it is large); this process's
+  // spools stay until it ends, as units load them lazily.
+  if (!spoolsCleared) { fs.rmSync(base, {recursive: true, force: true}); spoolsCleared = true; }
   fs.mkdirSync(base, {recursive: true});
   const spool = fs.mkdtempSync(path.join(base, 'run-'));
   const out = run(frontendPath(), ['--out-dir', spool, ...includeDirs.flatMap(d => ['-I', d]), ...files]);
@@ -69,7 +73,7 @@ const runtimeStd = path.join(home, 'runtime/ml2hx/std');
 // Packages (and Stdlib modules) converted rather than hand-written; the rest
 // (C bindings: unix, str, luv, ctypes, threads...) are runtime modules.
 const convertedPackages = new Set(['extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff']);
-const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Int', 'Stdlib__Bool', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing']);
+const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Bool', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing']);
 const notConverted = new Set(['Stdlib', 'CamlinternalFormatBasics', 'CamlinternalFormat', 'CamlinternalLazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Obj', 'Stdlib__Effect', 'Stdlib__Domain']);
 export function libraryUnits(units, failures) {
   let roots = [];

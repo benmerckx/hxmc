@@ -13,6 +13,7 @@ const libFunctors = {
 };
 const STD = 'ml2hx.std.';
 const UNIT = `${RT}Unit.value`;
+class NeedsInference extends Error {}
 export class Unsupported extends Error {
   constructor(where, message) {
     const l = where?.l ?? where?.loc;
@@ -29,7 +30,7 @@ const coreLibraryTypes = {'Stdlib.ref': `${RT}Ref`, 'Lazy.t': `${RT}Lazy`, 'Caml
   'String.t': 'String', 'Bytes.t': 'haxe.io.Bytes', 'Char.t': 'Int', 'Int32.t': 'haxe.Int32', 'Int64.t': 'haxe.Int64', 'Nativeint.t': 'Int',
   'Int.t': `${RT}Int63`, 'Bool.t': 'Bool', 'Float.t': 'Float', 'Unit.t': `${RT}Unit`, 'List.t': `${RT}MlList`, 'Option.t': `${RT}MlOption`,
   'Array.t': 'Array', 'Stdlib.int32': 'haxe.Int32', 'Stdlib.int64': 'haxe.Int64', 'Stdlib.Int32.t': 'haxe.Int32', 'Stdlib.Int64.t': 'haxe.Int64',
-  'Uchar.t': 'Int', 'Signed.Int64.t': 'haxe.Int64', 'Signed.Int32.t': 'haxe.Int32'};
+  'Uchar.t': `${RT}Int63`, 'Signed.Int64.t': 'haxe.Int64', 'Signed.Int32.t': 'haxe.Int32'};
 
 
 // ---------------------------------------------------------------- paths
@@ -72,6 +73,14 @@ export class Program {
       finally { u.building = false; }
     }
     return u.structure;
+  }
+  // Whether a type declared in another unit abbreviates a tuple.
+  declIsTuple(d) {
+    const u = this.units.get(d.unit);
+    if (!u) return false;
+    const ir = u.ir ??= stripNewtypes(u.load());
+    let t = ir.types[d.decl.manifest];
+    return t?.k === 'tuple';
   }
   useLibrary(cls, member, signature) {
     if (!this.libraryUses.has(cls)) this.libraryUses.set(cls, new Map());
@@ -245,7 +254,9 @@ class UnitEmitter {
         const v = this.tvars.get(t.id);
         if (v) return v;
         // An unconstrained variable no definition generalises: parametric
-        // code never inspects such values.
+        // code never inspects such values. Where Haxe can infer the type
+        // (local declarations, casts) the annotation is left out instead.
+        if (this.strictVars) throw new NeedsInference();
         return 'Any';
       }
       case 'arrow': return `(${this.type(t.arg, n)}) -> (${this.type(t.res, n)})`;
@@ -264,6 +275,8 @@ class UnitEmitter {
         if (d.tparam) return d.tparam;
         if (d.abbrev !== undefined) return d.abbrev;
         const args = t.args.map(a => this.type(a, n));
+        // A library abbreviation the runtime does not define: its expansion.
+        if (d.library && t.exp !== undefined) return this.type(t.exp, n);
         if (d.library) this.p.useLibrary(d.hx.replace(/\.[^.]+$/, ''), `type ${d.hx.split('.').at(-1)}`, `${t.args.length} parameter(s)`);
         return d.hx + (args.length ? `<${args.join(', ')}>` : '');
       }
@@ -289,6 +302,25 @@ class UnitEmitter {
       return `${inst.lib.hx}.${inst.spec.t}<${[inst.keyType, ...a].join(', ')}>`;
     }
     this.fail(n, `type ${name} of functor instance ${inst.functor}`);
+  }
+  // Whether a type is a tuple, through abbreviations.
+  isTupleType(i, depth = 0) {
+    const t = this.t(i);
+    if (t.k === 'tuple') return true;
+    if (t.k !== 'constr' || depth > 20) return false;
+    if (t.exp !== undefined) return this.isTupleType(t.exp, depth + 1);
+    try {
+      const d = this.resolveType(t.path, null);
+      if (d.decl?.kind === 'abstract' && d.decl.manifest !== null && d.unit === this.u.modname) return this.isTupleType(d.decl.manifest, depth + 1);
+      if (d.decl?.kind === 'abstract' && d.decl.manifest !== null) return this.p.declIsTuple(d);
+    } catch (e) {}
+    return false;
+  }
+  // The type, or null when it has variables Haxe should infer.
+  typeOrNull(i, n) {
+    const saved = this.strictVars;
+    this.strictVars = true;
+    try { return this.type(i, n); } catch (e) { if (e instanceof NeedsInference) return null; throw e; } finally { this.strictVars = saved; }
   }
   // Type variables of a type, in order of first occurrence.
   typeVars(i, out = [], seen = new Set()) {
@@ -367,7 +399,7 @@ class UnitEmitter {
             }
             const hx = this.staticName(s, name);
             const d = fn ? {kind: 'static', hx: `${s.hx}.${hx}`, member: hx, arity: fn.arity, fn} : {kind: 'static', hx: `${s.hx}.${hx}`, member: hx, arity: 0};
-            if (!fn && b.p.k === 'var' && this.genericVarsOfValue(b.p.t).length) d.poly = true;
+            if (!fn && b.p.k === 'var' && this.genericVarsOfValue(b.p.t).length) { d.poly = true; d.kind = 'polystatic'; }
             s.values.set(name, d); this.ids.set(v.id, d);
           }
         }
@@ -606,7 +638,12 @@ class UnitEmitter {
     this.withTypeParams(this.declParams(d, d), params => {
       const gen = params.length ? `<${params.join(', ')}>` : '';
       if (d.kind === 'abstract') {
-        if (d.manifest === null) this.fail(d, `abstract type ${d.name} without definition`);
+        if (d.manifest === null) {
+          // An abstract type whose values only primitives make (`type zstream`
+          // with C externals): an opaque class the runtime's primitives use.
+          this.decls.push(`class ${name}${gen} {\n\tpublic function new() {}\n}`);
+          return;
+        }
         this.decls.push(`typedef ${name}${gen} = ${this.type(d.manifest, d)};`);
       } else if (d.kind === 'record') {
         this.decls.push(this.recordClass(name, gen, d.labels, d));
@@ -679,9 +716,8 @@ class UnitEmitter {
           const vars = this.genericVarsOfValue(b.p.t);
           const store = `${d.member}_`;
           const anyType = this.withTypeParams([], () => this.type(b.p.t, b));
-          members.push(`static var ${store}:${anyType};`);
+          members.push(`public static var ${store}:${anyType};`);
           this.withTypeParams(vars, params => members.push(`public static inline function ${d.member}<${params.join(', ')}>():${this.type(b.p.t, b)} return cast ${store};`));
-          d.kind = 'polystatic';
           this.init.push(`${s.hx === this.cls ? '' : s.hx + '.'}${store} = ${this.value(b.e)};`);
           continue;
         }
@@ -839,9 +875,14 @@ class UnitEmitter {
         const name = this.fresh(identName(b.p.id));
         out.push(this.localFunction(name, fn, b.e, null, b.p.t));
         pending.push([b.p.id, {kind: 'localfn', name, arity: fn.arity}]);
+      } else if (b.p.k === 'var' && pure(b.e) && this.genericVarsOfValue(b.p.t).some(v => !this.tvars.has(v))) {
+        // A polymorphic local value (let empty = [] in ...): a syntactic
+        // value, so it is emitted at each use with that use's type.
+        pending.push([b.p.id, {kind: 'inline', node: b.e}]);
       } else if (b.p.k === 'var') {
         const name = this.fresh(identName(b.p.id));
-        out.push(`var ${name}:${this.type(b.p.t, b)} = ${this.value(b.e)};`);
+        const t = this.typeOrNull(b.p.t, b);
+        out.push(`var ${name}${t ? `:${t}` : ''} = ${this.value(b.e)};`);
         pending.push([b.p.id, {kind: 'local', name}]);
       } else if (b.p.k === 'any') {
         out.push(`${this.stmtValue(b.e)}`);
@@ -1070,6 +1111,7 @@ class UnitEmitter {
   valueRef(d, n, where) {
     switch (d.kind) {
       case 'local': return d.name;
+      case 'inline': return this.value(d.node);
       case 'localfn': return this.curry(d.name, d.arity, n?.t, where);
       case 'static': return d.arity ? this.curry(d.hx, d.arity, n?.t, where) : d.hx;
       case 'polystatic': return `${d.hx}()`;
@@ -1330,7 +1372,7 @@ class UnitEmitter {
       '%opaque': {arity: 1, code: v => v[0]},
       '%ignore': {arity: 1, code: v => `{ ${v[0]}; ${UNIT}; }`},
       '%makemutable': {arity: 1, code: v => `new ${RT}Ref(${v[0]})`},
-      '%field0': {arity: 1, code: (v, a) => `${wrap(v[0])}.${this.t(a[0].t).k === 'tuple' ? 'v0' : 'value'}`},
+      '%field0': {arity: 1, code: (v, a) => `${wrap(v[0])}.${this.isTupleType(a[0].t) ? 'v0' : 'value'}`},
       '%field1': {arity: 1, code: v => `${wrap(v[0])}.v1`},
       '%loc_LOC': {arity: 0, code: (v, a, n) => haxeString(`File "${this.cfg.source}", line ${n.l[0]}, characters ${n.l[1]}-${n.l[1]}`)},
       '%loc_MODULE': {arity: 0, code: () => haxeString(this.u.modname)},
@@ -1366,7 +1408,8 @@ class UnitEmitter {
     if (from !== null && from === to) return v;
     if (this.isPredef(arg.t, 'char') && this.isInt(n.t)) return `${RT}Int63.ofInt(${v})`;
     if (this.isInt(arg.t) && this.isPredef(n.t, 'char')) return `(${wrap(v)}.toInt() & 255)`;
-    return `(cast ${v} : ${to ?? this.type(n.t, n)})`;
+    const target = this.typeOrNull(n.t, n);
+    return target ? `(cast ${v} : ${target})` : `(cast ${v})`;
   }
   // Comparison of two values with OCaml's semantics.
   compare(op, v, a, n) {
@@ -1559,8 +1602,9 @@ class UnitEmitter {
     if (c.name === 'Format' && pathName(c.type ?? {}).endsWith('format6') && n.args[1]?.k === 'const') return `${RT}Fmt.of(${haxeString(n.args[1].c.v)})`;
     if (c.ext) return this.extConstruct(n);
     const special = {'true': 'true', 'false': 'false', '()': UNIT, '[]': `${RT}MlList.Nil`, 'None': `${RT}MlOption.None`};
-    if (c.type?.p && special[c.name] !== undefined && (c.type.p === 'bool' || c.type.p === 'unit' || c.type.p === 'list' || c.type.p === 'option')) return special[c.name];
-    if (c.name === '::' && c.type?.p === 'list') return this.ordered(n.args, a => `${RT}MlList.Cons(${a.join(', ')})`);
+    if (c.name === '[]' || c.name === '()' || c.name === 'true' || c.name === 'false') return special[c.name];
+    if (c.type?.p && special[c.name] !== undefined && c.type.p === 'option') return special[c.name];
+    if (c.name === '::') return this.ordered(n.args, a => `${RT}MlList.Cons(${a.join(', ')})`);
     if (c.name === 'Some' && c.type?.p === 'option') return this.ordered(n.args, a => `${RT}MlOption.Some(${a[0]})`);
     const name = this.ctorRef(c, n);
     if (c.inline) {
@@ -1639,6 +1683,10 @@ class UnitEmitter {
   switchCode(subject, cases, partial, tc, mode, n, tupleArity = 0) {
     const arms = [];
     let opaque = false;
+    // Or-patterns over extensible constructors (extractors) become one arm
+    // per alternative: Haxe or-patterns need alternatives of one kind.
+    const alts = p => p.k === 'or' && hasExtractor(p) ? [...alts(p.a), ...alts(p.b)] : p.k === 'value' && p.p.k === 'or' && hasExtractor(p.p) ? alts(p.p) : [p];
+    cases = cases.flatMap(c => alts(c.p).map(p => ({...c, p})));
     for (const c of cases) {
       const saved = new Map(this.ids);
       const pat = tupleArity ? this.tuplePattern(c.p, tupleArity) : this.pattern(c.p);
@@ -1759,9 +1807,9 @@ class UnitEmitter {
       const parts = p.args.map(a => this.pattern(a));
       return this.join(parts, xs => `${RT}Runtime.downcast(_, ${cls}) => ${RT}MlOption.Some({${xs.map((x, i) => `v${i}: ${x}`).join(', ')}})`);
     }
-    if (c.type?.p === 'bool') return {pat: c.name};
-    if (c.type?.p === 'unit') return {pat: '_'};
-    if (c.type?.p === 'list') {
+    if (c.name === 'true' || c.name === 'false') return {pat: c.name};
+    if (c.name === '()') return {pat: '_'};
+    if (c.name === '[]' || c.name === '::') {
       if (c.name === '[]') return {pat: `${RT}MlList.Nil`};
       return this.join(p.args.map(a => this.pattern(a)), xs => `${RT}MlList.Cons(${xs.join(', ')})`);
     }
@@ -2003,6 +2051,11 @@ function patternVars(p, out = []) {
   for (const a of p.args ?? []) patternVars(a, out);
   for (const f of p.fields ?? []) patternVars(f.p, out);
   return out;
+}
+function hasExtractor(p) {
+  if (!p || typeof p !== 'object') return false;
+  if ((p.k === 'construct' && p.c.ext) || p.k === 'variant' || p.k === 'lazy' || (p.k === 'const' && (p.c.k === 'int' || p.c.k === 'float'))) return true;
+  return ['p', 'a', 'b', 'arg'].some(k => hasExtractor(p[k])) || (p.args ?? []).some(hasExtractor) || (p.fields ?? []).some(f => hasExtractor(f.p));
 }
 function irrefutable(p) {
   switch (p.k) {

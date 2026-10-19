@@ -24,6 +24,14 @@ class Uchar {
 	public static inline function unsafeOfInt(n:Int63):Int63
 		return n;
 
+	public static final bom:Int63 = Int63.ofInt(0xFEFF);
+
+	public static inline function isChar(u:Int63):Bool
+		return Int63.lt(u, Int63.ofInt(256));
+
+	public static inline function unsafeToChar(u:Int63):Int
+		return u.toInt() & 255;
+
 	public static function isValid(n:Int63):Bool {
 		var i = n.toInt();
 		return n.isInt() && ((i >= 0 && i <= 0xD7FF) || (i >= 0xE000 && i <= 0x10FFFF));
