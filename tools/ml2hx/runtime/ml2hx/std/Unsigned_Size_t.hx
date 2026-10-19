@@ -17,8 +17,8 @@ class Unsigned_Size_t {
 	public static inline function add(a:I64, b:I64):I64 return norm(a + b);
 	public static inline function sub(a:I64, b:I64):I64 return norm(a - b);
 	public static inline function mul(a:I64, b:I64):I64 return norm(a * b);
-	public static inline function div(a:I64, b:I64):I64 return Int64.unsignedDiv(a, b);
-	public static inline function rem(a:I64, b:I64):I64 return Int64.unsignedRem(a, b);
+	public static inline function div(a:I64, b:I64):I64 return ml2hx.prim.Int64Ops.unsignedDiv(a, b);
+	public static inline function rem(a:I64, b:I64):I64 return ml2hx.prim.Int64Ops.unsignedRem(a, b);
 	public static inline function succ(a:I64):I64 return norm(a + 1);
 	public static inline function pred(a:I64):I64 return norm(a - 1);
 	public static inline function logand(a:I64, b:I64):I64 return a & b;
@@ -34,14 +34,14 @@ class Unsigned_Size_t {
 	public static inline function toUint32(a:I64):I64 return I64.make(0, a.low);
 	public static inline function ofUint32(a:I64):I64 return a;
 	public static inline function toInt32(a:I64):haxe.Int32 return a.low;
-	public static inline function compare(a:I64, b:I64):Int63 return Int64.unsignedCompare(a, b);
+	public static inline function compare(a:I64, b:I64):Int63 return ml2hx.prim.Int64Ops.unsignedCompare(a, b);
 	public static inline function equal(a:I64, b:I64):Bool return a == b;
-	public static inline function max(a:I64, b:I64):I64 return Int64.unsignedCompare(a, b).toInt() >= 0 ? a : b;
-	public static inline function min(a:I64, b:I64):I64 return Int64.unsignedCompare(a, b).toInt() <= 0 ? a : b;
+	public static inline function max(a:I64, b:I64):I64 return ml2hx.prim.Int64Ops.unsignedCompare(a, b).toInt() >= 0 ? a : b;
+	public static inline function min(a:I64, b:I64):I64 return ml2hx.prim.Int64Ops.unsignedCompare(a, b).toInt() <= 0 ? a : b;
 	public static function toString(a:I64):String {
 		if (I64.compare(a, 0) >= 0) return I64.toStr(a);
-		var q = Int64.unsignedDiv(a, 10), r = a - q * 10;
+		var q = ml2hx.prim.Int64Ops.unsignedDiv(a, 10), r = a - q * 10;
 		return I64.toStr(q) + I64.toStr(r);
 	}
-	public static function ofString(s:String):I64 return norm(Stdlib.parseIntnat(s, 64, "Unsigned.of_string"));
+	public static function ofString(s:String):I64 return norm(ml2hx.prim.Ints.parse(s, 64, "Unsigned.of_string"));
 }

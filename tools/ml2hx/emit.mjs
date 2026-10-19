@@ -463,6 +463,27 @@ class UnitEmitter {
     });
     try { return body(constrained); } finally { this.tvars = saved; }
   }
+  // (type a) of a function: the type parameter of the scheme's variable it
+  // became (found by walking the function's type and its scheme together).
+  localTypeParams(names, bodyT, schemeT, fn = null) {
+    if (!names.length) return null;
+    const found = new Map(), seen = new Set();
+    const walk = (a, b) => {
+      if (a === undefined || b === undefined || seen.has(`${a},${b}`)) return;
+      seen.add(`${a},${b}`);
+      const x = this.t(a), y = this.t(b);
+      if (x.k === 'poly') return walk(x.body, b);
+      if (y.k === 'poly') return walk(a, y.body);
+      if (x.k === 'constr' && x.path.l && y.k === 'var') { if (!found.has(identName(x.path.l))) found.set(identName(x.path.l), y.id); return; }
+      if (x.k === 'arrow' && y.k === 'arrow') { walk(x.arg, y.arg); walk(x.res, y.res); return; }
+      if ((x.k === 'constr' || x.k === 'tuple') && x.k === y.k && x.args.length === y.args.length) x.args.forEach((t, i) => walk(t, y.args[i]));
+    };
+    walk(bodyT, schemeT);
+    // the parameters' annotations ((layout : t layout))
+    if (fn) { const {args} = this.arrows(schemeT); fn.params.forEach((p, i) => { if (p.p && args[i]) walk(p.p.t, args[i].t); }); }
+    const out = names.map(n => found.has(n) ? this.tvars.get(found.get(n)) : undefined);
+    return out.every(Boolean) ? out : null;
+  }
   withLocalTypes(names, body, reuse = null) {
     if (!names.length) return body([]);
     if (reuse && reuse.length === names.length) {
@@ -942,7 +963,7 @@ class UnitEmitter {
           const params = [...params0, ...lps];
           const f = this.functionParts(d.fn, {...b.e, t: b.e.newtypes ? b.p.t : b.e.t}, item.rec ? b.p.id : null);
           members.push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}(${f.params}):${f.res} ${f.body}`);
-        }, params0));
+        }, this.localTypeParams(b.e.newtypes ?? [], b.e.t, b.p.t, d.fn) ?? params0));
         continue;
       }
       if (b.p.k === 'var') {
