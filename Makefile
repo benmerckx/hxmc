@@ -95,11 +95,6 @@ TOOL_ARGS := $(TOOL_CP) --custom-target hxmc
 # the port (typed with -D disable-parallelism; the binary runs its parallel
 # passes unless its own invocation passes that define)
 PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS)
-# Testing this opt-in binary must also rebuild it with the generated shadow.
-ifeq ($(PORT_BIN),bin/ml2hx/haxe)
-PORT_ARGS += -cp generated/compiler
-$(PORT_BIN): generate
-endif
 # `haxe` with hxmc built in (the npm package's compiler: every generator)
 PKG_ARGS := -cp haxe/src -cp hxmc/src -main hxmc.HaxeMain -D disable-parallelism $(HXMC_ARGS)
 EXE = $(if $(findstring windows,$(1)),.exe)
@@ -878,26 +873,23 @@ clean:
 distclean: clean
 	rm -rf bin
 
-# --- Experimental OCaml -> Haxe generation (opt-in; docs/ml2hx.md) ---
-.PHONY: generate generate-check ml2hx-test ml2hx-history ml2hx-frontend port-generated ml2hx-bench
+# --- Experimental OCaml -> Haxe generation ---
+.PHONY: generate ml2hx-test ml2hx-frontend ml2hx-frontend-native port-generated ml2hx-bench
 
-generate:
+generate: ml2hx-frontend-native
 	$(NODE) tools/ml2hx/generate.mjs
-
-generate-check:
-	$(NODE) tools/ml2hx/generate.mjs --check
 
 ml2hx-frontend:
 	$(NODE) tools/ml2hx/build.mjs
 
+ml2hx-frontend-native:
+	$(NODE) tools/ml2hx/build-native.mjs
+
 ml2hx-test:
 	$(NODE) --test tools/ml2hx/test/generator.test.mjs
 
-ml2hx-history:
-	$(NODE) tools/ml2hx/matrix.mjs
-
 port-generated: $(TOOL) $(STD) $(HOST_RT) generate
-	$(call hxmc,bin/ml2hx/haxe,-cp haxe/src -cp generated/compiler -main haxe.Main -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS))
+	$(call hxmc,bin/ml2hx/haxe,-cp bin/ml2hx/generated -main upstream.compiler.HaxeModule -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS))
 
 ml2hx-bench: $(PORT_BIN) port-generated
 	$(NODE) tools/ml2hx/bench.mjs

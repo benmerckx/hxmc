@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Sequential, alternating fresh-process measurements. Both binaries compile the
-// same inputs; the scope is the migrated modules, not a fully generated port.
+// same inputs after complete generation and a successful compiler build.
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
 import {root} from './generate.mjs';
+if(fs.readFileSync(path.join(root,'bin/ml2hx/generated/.status'),'utf8')!=='complete\n')throw new Error('full generation must succeed before benchmarking');
 const dir=path.join(root,'bin/ml2hx/bench');fs.mkdirSync(dir,{recursive:true});
 const rounds=Number(process.env.ML2HX_BENCH_N??5);
 if(!Number.isInteger(rounds)||rounds<3)throw new Error('at least three benchmark samples are required');
@@ -38,5 +39,3 @@ for(const c of cases) {
   const row={name:c.name,rounds,values,wallRatio:values.generated.wallSeconds/values.current.wallSeconds,samples};rows.push(row);
   console.log(`${c.name}: current ${values.current.wallSeconds.toFixed(3)}s/${values.current.peakRssMiB.toFixed(1)} MiB; generated ${values.generated.wallSeconds.toFixed(3)}s/${values.generated.peakRssMiB.toFixed(1)} MiB (${row.wallRatio.toFixed(3)}x)`);
 }
-const result={scope:'Current native port versus native port shadowing three generated modules. Same handwritten compiler source inputs; no whole-port performance claim.',platform:process.platform,arch:process.arch,binaries:Object.fromEntries(Object.entries(binaries).map(([k,p])=>[k,{bytes:fs.statSync(p).size}])),rows};
-fs.writeFileSync(path.join(dir,'results.json'),JSON.stringify(result,null,2)+'\n');

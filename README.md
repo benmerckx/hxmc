@@ -119,7 +119,6 @@ commit (`make reference`).
 | [docs/development.md](docs/development.md) | repository layout, building, bootstrap, the developer loop |
 | [docs/testing.md](docs/testing.md) | the harnesses, hxmc's corpus, graphics tests, CI, benchmarks |
 | [docs/porting.md](docs/porting.md) | the rules for every change of the port |
-| [docs/ml2hx.md](docs/ml2hx.md) | experimental upstream OCaml generation, historical coverage and benchmarks |
 | [docs/hxmc.md](docs/hxmc.md) | hxmc's pipeline, runtime, targets |
 | [ROADMAP.md](ROADMAP.md) | the goals and what comes next |
 | [docs/plans/](docs/plans/README.md) | design docs: open designs and decisions by area |

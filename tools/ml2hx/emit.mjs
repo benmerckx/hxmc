@@ -43,6 +43,7 @@ export class Emitter {
       case 'constant': return this.value(n.value);
       case 'ident': {
         if(n.path.id) return this.variable(n.path.id);
+        if(this.config.values?.[n.path.name])return this.config.values[n.path.name];
         throw new Unsupported(n,`unmapped value ${n.path.name}`);
       }
       case 'open': if(!n.pure)throw new Unsupported(n,'open of an evaluated module');return this.expr(n.expr);
