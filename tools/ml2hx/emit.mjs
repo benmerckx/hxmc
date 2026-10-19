@@ -2301,6 +2301,14 @@ class UnitEmitter {
   // Stdlib's polymorphic min and max, Hashtbl.hash, at a type whose order
   // or hash is known: OCaml's result without the polymorphic walk.
   typedPolyCall(d, n) {
+    // List.mem, assoc, assoc_opt, mem_assoc (compare a x = 0) at a key type
+    // with a compare function: the walk with it
+    const lf = {'ocaml.stdlib.ListModule.mem': 'listMem', 'ocaml.stdlib.ListModule.assoc': 'listAssoc', 'ocaml.stdlib.ListModule.assocOpt': 'listAssocOpt', 'ocaml.stdlib.ListModule.memAssoc': 'listMemAssoc'}[d.hx];
+    if (lf) {
+      if (n.args.length !== 2 || n.args.some(a => !a.e)) return null;
+      const cmp = this.cmpCallable(n.args[0].e.t, n);
+      return cmp ? this.ordered(n.args.map(a => a.e), v => `${RT}Poly.${lf}(${v[0]}, ${v[1]}, ${cmp})`) : null;
+    }
     const fn = {'ocaml.stdlib.StdlibModule.min': 'min', 'ocaml.stdlib.StdlibModule.max': 'max', 'ocaml.stdlib.HashtblModule.hash': 'hash'}[d.hx];
     if (!fn || n.args.some(a => !a.e) || n.args.length !== (fn === 'hash' ? 1 : 2)) return null;
     const t = n.args[0].e.t, at = this.t(t);
@@ -2320,6 +2328,16 @@ class UnitEmitter {
     return false;
   }
   cmpDeclName(desc) { const k = desc.hx.lastIndexOf('.'); return `${desc.hx.slice(0, k)}.ml2hxCompare${desc.hx.slice(k + 1)}`; }
+  // A (a, b, total) -> Int function for values of type i, or null.
+  cmpCallable(i, n) {
+    if (this.isIntRep(i)) return `${RT}Poly.compareInt63T`;
+    const t = this.t(i);
+    if (t.k === 'constr' && t.path.p) {
+      const f = {char: 'compareIntT', bool: 'compareBoolT', string: 'compareStringsT', float: 'compareFloats'}[t.path.p];
+      if (f) return `${RT}Poly.${f}`;
+    }
+    return this.cmpFunction(i, n);
+  }
   // The compare function of a type (a callable path), or null (Poly).
   cmpFunction(i, n, depth = 0) {
     const t = this.t(i);
@@ -2328,6 +2346,19 @@ class UnitEmitter {
     let d = null;
     try { d = this.resolveType(t.path, n); } catch (e) { return null; }
     if (this.cmpDeclSupported(d)) return this.cmpDeclName(d);
+    // a re-export or abbreviation of another unit's type without parameters
+    // (type t = Other.t = A | B): the original's, by its global path
+    const decl = d?.decl;
+    if (decl && decl.manifest !== null && d.unit && !t.args.length && !(decl.params ?? []).length) {
+      const local = d.unit === this.u.modname;
+      const m = local ? this.t(decl.manifest) : this.p.declManifest(d);
+      const global = q => q && (q.g ? true : q.d ? global(q.d[0]) : false);
+      if (m?.k === 'constr' && !m.args?.length && m.path && !m.path.p && (local || global(m.path))) {
+        let o = null;
+        try { o = this.resolveType(m.path, n); } catch (e) {}
+        if (this.cmpDeclSupported(o)) return this.cmpDeclName(o);
+      }
+    }
     const e = this.expandAbbrev(i);
     return e !== null && depth < 10 ? this.cmpFunction(e, n, depth + 1) : null;
   }

@@ -33,3 +33,14 @@ let () =
 let () =
   pr "%d %d %d %d %d\n" (Hashtbl.hash "hello") (Hashtbl.hash 42) (Hashtbl.hash (-7)) (Hashtbl.hash 'x') (Hashtbl.hash max_int);
   pr "%c %c %g %g\n" (min 'a' 'b') (max 'a' 'b') (min nan 1.) (min 1. 2.)
+let () =
+  pr "%d %d %d\n" (Hashtbl.hash_param 0 0 "abc") (Hashtbl.hash_param 0 0 5) (Hashtbl.seeded_hash_param 0 10 3 "x");
+  let h = Hashtbl.create 8 in
+  List.iter (fun k -> Hashtbl.replace h k (k * 2)) [5; -3; 1000000; max_int; min_int];
+  pr "%d %d %b\n" (Hashtbl.find h (-3)) (Hashtbl.find h max_int) (Hashtbl.mem h 4);
+  let sorted = List.sort compare [3; -1; max_int; 0; min_int] in
+  List.iter (pr "%d ") sorted; print_newline ()
+let () =
+  pr "%b %b %b %b\n" (List.mem Blue [Red; Blue]) (List.mem (Circle nan) [Circle nan]) (List.mem nan [nan]) (List.mem "b" ["a"]);
+  pr "%s %b %s\n" (List.assoc (2, "b") [((1, "a"), "x"); ((2, "b"), "y")]) (List.mem_assoc 'c' [('c', 1)]) (match List.assoc_opt 3 [(1, "o")] with None -> "none" | Some s -> s);
+  (try ignore (List.assoc "z" ["a", 1]) with Not_found -> print_endline "Not_found")

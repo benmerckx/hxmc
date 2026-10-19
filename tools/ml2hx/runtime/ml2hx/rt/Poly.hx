@@ -335,6 +335,56 @@ class Poly {
 	public static inline function hashInt(n:Int):Int
 		return hashInt63(Int63.ofInt(n));
 
+	// (a, b, total) forms of the simple types' orders, and List's walks by a
+	// compare function (emit.mjs typedPolyCall)
+	public static function compareInt63T(a:Int63, b:Int63, total:Bool):Int
+		return compareInt63(a, b);
+
+	public static function compareIntT(a:Int, b:Int, total:Bool):Int
+		return a < b ? -1 : a > b ? 1 : 0;
+
+	public static function compareBoolT(a:Bool, b:Bool, total:Bool):Int
+		return (a ? 1 : 0) - (b ? 1 : 0);
+
+	public static function compareStringsT(a:String, b:String, total:Bool):Int
+		return compareStrings(a, b);
+
+	public static function listMem<T>(x:T, l:MlList<T>, cmp:(T, T, Bool) -> Int):Bool {
+		while (true) switch l {
+			case Nil: return false;
+			case Cons(a, r):
+				if (cmp(a, x, true) == 0) return true;
+				l = r;
+		}
+	}
+
+	public static function listMemAssoc<K, V>(x:K, l:MlList<Tuple2<K, V>>, cmp:(K, K, Bool) -> Int):Bool {
+		while (true) switch l {
+			case Nil: return false;
+			case Cons(p, r):
+				if (cmp(p.v0, x, true) == 0) return true;
+				l = r;
+		}
+	}
+
+	public static function listAssoc<K, V>(x:K, l:MlList<Tuple2<K, V>>, cmp:(K, K, Bool) -> Int):V {
+		while (true) switch l {
+			case Nil: throw NotFound.instance;
+			case Cons(p, r):
+				if (cmp(p.v0, x, true) == 0) return p.v1;
+				l = r;
+		}
+	}
+
+	public static function listAssocOpt<K, V>(x:K, l:MlList<Tuple2<K, V>>, cmp:(K, K, Bool) -> Int):MlOption<V> {
+		while (true) switch l {
+			case Nil: return None;
+			case Cons(p, r):
+				if (cmp(p.v0, x, true) == 0) return Some(p.v1);
+				l = r;
+		}
+	}
+
 	public static inline function isLess(c:Int):Bool
 		return c < 0 && c != UNORDERED;
 
@@ -408,6 +458,10 @@ class Poly {
 	// Stdlib.compare
 	public static function compare(a:Dynamic, b:Dynamic):Int {
 		if (typeKind(a) == 8 && typeKind(b) == 8) return compareStrings(a, b);
+		if (Int64.isInt64(a) && Int64.isInt64(b)) {
+			var c = Int64.compare(a, b);
+			return c < 0 ? -1 : c > 0 ? 1 : 0;
+		}
 		return compareValues(a, b, true);
 	}
 
@@ -539,7 +593,13 @@ class Poly {
 	// Hashtbl.seeded_hash_param meaningful total seed v
 	public static function hashParam(count:Int, limit:Int, seed:Int, v:Dynamic):Int {
 		// the most frequent keys first
-		if (typeKind(v) == 8) return finalMix(mixString(seed, v)) & 0x3FFFFFFF;
+		if (count > 0) {
+			if (typeKind(v) == 8) return finalMix(mixString(seed, v)) & 0x3FFFFFFF;
+			if (Int64.isInt64(v)) {
+				var n:Int64 = v;
+				return finalMix(mixIntnat(seed, n + n + 1)) & 0x3FFFFFFF;
+			}
+		}
 		var sz = limit;
 		if (sz < 0 || sz > 256) sz = 256;
 		var num = count;
