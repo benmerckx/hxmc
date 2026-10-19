@@ -89,6 +89,11 @@ export function loadUnits({upstream, buildDir, files = null}) {
     if (!f) { failures.push({source, stage: 'typing', error: 'no typed tree (not built by dune @check)'}); continue; }
     units.push({modname: f.modname, config: unitConfig(source), load: f.load});
   }
+  // Sources dune generates (MetaList, DefineList, WarningList from src-json)
+  // are units of the program too.
+  const tracked = new Set(sources);
+  for (const [source, f] of bySource) if (!tracked.has(source) && !/(^|\/)prebuild\.ml$/.test(source))
+    units.push({modname: f.modname, config: unitConfig(source), load: f.load, generatedSource: true});
   for (const e of errors) failures.push({source: path.relative(e.file.startsWith(upstream) ? upstream : buildDir, e.file), stage: 'typing', error: e.error});
   return {sources, units, failures};
 }
@@ -145,7 +150,8 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   const all = [...failures, ...emitted.failures];
   all.forEach(f => { f.error = f.error.split(upstream + path.sep).join('').split(root + path.sep).join(''); });
   const result = {sources: sources.length, typed: units.length, emitted: emitted.outputs.size - 0, failures: all};
-  result.emitted = [...outputs.keys()].filter(k => k.startsWith('upstream/')).length;
+  const trackedOutputs = new Set(units.filter(u => !u.generatedSource).map(u => u.config.output));
+  result.emitted = [...outputs.keys()].filter(k => trackedOutputs.has(k)).length;
   result.complete = all.length === 0 && result.emitted === sources.length;
   fs.writeFileSync(path.join(out, '.status'), result.complete ? 'complete\n' : 'incomplete\n');
   return result;

@@ -58,7 +58,7 @@ export class Program {
       if (u.building) throw new Unsupported(null, `cyclic unit structure ${name}`);
       u.building = true;
       try { u.structure = new UnitEmitter(this, u).declare(); }
-      catch (e) { u.structureError = new Unsupported(null, `dependency ${u.config.source}: ${e.message}`); throw u.structureError; }
+      catch (e) { u.structureError = new Unsupported(null, `dependency ${u.config.source}: ${e.name === "Unsupported" ? e.message : e.stack.split("\n").slice(0, 3).join(" ")}`); throw u.structureError; }
       finally { u.building = false; }
     }
     return u.structure;
@@ -359,7 +359,7 @@ class UnitEmitter {
           (s.libIncludes ??= []).push(m);
         } else this.fail(item, `include of ${m.kind}`);
         // The signature's identifiers name the included items locally.
-        for (const it of item.sig) {
+        for (const it of m.kind === 'struct' ? item.sig : []) {
           const name = identName(it.id);
           const d = it.k === 'value' ? m.values.get(name) : it.k === 'type' ? m.types.get(name) : it.k === 'module' ? m.modules.get(name) : it.k === 'typext' ? m.exns.get(name) : it.k === 'class' ? m.classes.get(name) : null;
           if (d) this.ids.set(it.id, d);
