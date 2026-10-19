@@ -737,7 +737,7 @@ class UnitEmitter {
   }
   recordClass(name, gen, labels, n) {
     const fields = labels.map(l => ({name: valueName(l.name), mut: l.mut, t: this.type(l.t, n)}));
-    return `class ${name}${gen} implements ${RT}Block {\n${fields.map(f => `\tpublic ${f.mut ? 'var' : 'final'} ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
+    return `class ${name}${gen} implements ${RT}Block {\n${fields.map(f => `\tpublic var ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
   }
   emitExtension(x, desc, base) {
     const name = desc.hx.split('.').at(-1);
@@ -980,7 +980,8 @@ class UnitEmitter {
     return out.join(' ');
   }
   recBindings(bs, n) {
-    if (bs.some(b => b.p.k !== 'var' || (b.e.k !== 'fun' && b.e.k !== 'lazy'))) this.fail(n, 'recursive value binding');
+    if (bs.some(b => b.p.k !== 'var')) this.fail(n, 'recursive binding of a pattern');
+    if (bs.some(b => b.e.k !== 'fun')) return this.recValues(bs, n);
     if (bs.length === 1 && bs[0].e.k === 'fun') {
       const b = bs[0], fn = funInfo(b.e), name = this.fresh(identName(b.p.id));
       this.ids.set(b.p.id, {kind: 'localfn', name, arity: fn.arity});
@@ -1001,6 +1002,33 @@ class UnitEmitter {
     for (const {b, fn, name} of infos) {
       const f = this.functionParts(fn, b.e, null);
       out.push(`${name} = function(${f.params}):${f.res} ${f.body};`);
+    }
+    return out.join(' ');
+  }
+  // let rec x = { ...; parent = x } (or lazy, or functions mixed in): the
+  // variables first, then each value; a record field that is directly one of
+  // the variables is patched after the record exists.
+  recValues(bs, n) {
+    const out = [], names = new Map();
+    for (const b of bs) {
+      const name = this.fresh(identName(b.p.id));
+      names.set(b.p.id, name);
+      out.push(`var ${name}:${this.type(b.p.t, b)} = null;`);
+      if (b.e.k === 'fun') this.ids.set(b.p.id, {kind: 'local', name});
+      else this.ids.set(b.p.id, {kind: 'local', name});
+    }
+    for (const b of bs) {
+      const name = names.get(b.p.id);
+      if (b.e.k === 'record' && !b.e.base) {
+        const patches = [];
+        const fields = b.e.fields.map(f => {
+          if (f.e && f.e.k === 'ident' && f.e.path.l && names.has(f.e.path.l)) { patches.push([f.lbl, names.get(f.e.path.l)]); return {...f, e: {k: '$expr', code: 'null'}}; }
+          return f;
+        });
+        out.push(`${name} = ${this.record({...b.e, fields})};`);
+        for (const [lbl, v] of patches) out.push(`${name}.${this.fieldName(lbl)} = ${v};`);
+      } else if (b.e.k === 'fun' || b.e.k === 'lazy' || b.e.k === 'construct' || b.e.k === 'record') out.push(`${name} = ${this.value(b.e)};`);
+      else this.fail(b, `recursive value ${b.e.k}`);
     }
     return out.join(' ');
   }
@@ -1076,7 +1104,7 @@ class UnitEmitter {
       case 'match': return this.matchNode(n, null, 'value');
       case 'try': return this.tryExpr(n);
       case 'tuple': {
-        const t = this.type(n.t, n);
+        const t = this.typeOrNull(n.t, n) ?? `${RT}Tuple${n.args.length}`;
         if (t.startsWith(`${RT}Tuple`)) return this.ordered(n.args, a => `new ${t}(${a.join(', ')})`);
         // A GADT-refined type (Haxe refines it in the branch too): the tuple's own type.
         const own = `${RT}Tuple${n.args.length}<${n.args.map(a => this.type(a.t, a)).join(', ')}>`;
@@ -1090,7 +1118,7 @@ class UnitEmitter {
       }
       case 'record': return this.record(n);
       case 'field': return `${wrap(this.value(n.e))}.${this.fieldName(n.lbl)}`;
-      case 'array': return this.ordered(n.args, a => `([${a.join(', ')}]:${this.type(n.t, n)})`);
+      case 'array': { const t = this.typeOrNull(n.t, n); return this.ordered(n.args, a => t ? `([${a.join(', ')}]:${t})` : `[${a.join(', ')}]`); }
       case 'assert': {
         const c = n.e;
         if (c.k === 'construct' && c.c.name === 'false') return `throw new ${RT}AssertFailure(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])})`;
@@ -1105,9 +1133,9 @@ class UnitEmitter {
       case 'letmodule': return this.letModule(n);
       case 'new': return this.newObject({k: 'apply', t: n.t, l: n.l, fn: n, args: []});
       case 'send': return this.send(n, []);
-      case 'instvar': return `this.${this.instvarField(n.name)}`;
-      case 'setinstvar': return `{ this.${this.instvarField(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
-      case 'object': this.fail(n, 'immediate object');
+      case 'instvar': return `${this.selfName ?? 'this'}.${this.instvarField(n.name)}`;
+      case 'setinstvar': return `{ ${this.selfName ?? 'this'}.${this.instvarField(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
+      case 'object': return this.immediateObject(n);
       case 'override': this.fail(n, 'object copy {< >}');
       case 'pack': this.fail(n, 'first-class module');
       case 'unsupported': this.fail(n, n.text ?? 'unsupported expression');
@@ -1182,6 +1210,16 @@ class UnitEmitter {
       case 'external': return d.arity ? this.curry(d.hx, d.arity, n?.t, where) : d.hx;
       case 'lib': {
         const arity = n ? this.schemeArity(n.scheme) : d.arity ?? 0;
+        if (n) {
+          // Printf.sprintf (and kin) as a value: the format as a value.
+          const fake = {k: 'apply', t: n.t, l: n.l, fn: n, args: []};
+          const fmtKind = {sprintf: 'sprintf', printf: 'printf', eprintf: 'eprintf'}[d.name];
+          if (fmtKind && libraryModule(d.path[0]) === 'Printf') {
+            const f = this.temp('fmt');
+            const res = this.type(this.resultAfter(n.t, 1), n);
+            return `(function(${f}:${RT}Fmt):${res} return (cast ${STD}Printf.curried(${f}, ${this.printfFinisher(fmtKind, [])}) : ${res}))`;
+          }
+        }
         this.useLib(d, n);
         if (d.name === 'raise' && false) return '';
         return arity ? this.libCall(`${d.cls}.${d.member}`, arity, {k: 'apply', args: [], t: n.t, l: n.l}, n) : `${d.cls}.${d.member}`;
@@ -1701,7 +1739,8 @@ class UnitEmitter {
     return this.ordered(n.args, a => `new ${cls}(${a.join(', ')})`);
   }
   record(n, cls = null) {
-    const t = cls ?? this.type(n.t, n);
+    // Without inferable type arguments, Haxe infers them from the fields.
+    const t = cls ?? this.typeOrNull(n.t, n) ?? this.type(n.t, n).replace(/<.*$/, '');
     const fields = n.fields;
     const base = n.base ? this.temp('r') : null;
     const given = fields.filter(f => f.e).map(f => f.e);
@@ -1856,10 +1895,10 @@ class UnitEmitter {
       case 'lazy': { const inner = this.pattern(p.p); return {...inner, pat: `_.force() => ${inner.pat}`}; }
       case '$intkey': return {pat: p.v};
       case '$subject': {
-        // A variable over the keyed subject: bound to the Int63 itself.
-        const name = this.fresh(identName(p.id));
-        this.ids.set(p.id, {kind: 'local', name});
-        return {pat: '_', pre: `var ${name} = ${p.subject};`};
+        // A variable over the keyed subject: the subject's temporary itself
+        // (also in guards).
+        this.ids.set(p.id, {kind: 'local', name: p.subject});
+        return {pat: '_'};
       }
       case 'construct': return this.ctorPattern(p);
       case 'variant': {
@@ -1947,6 +1986,30 @@ class UnitEmitter {
   // Instance variables: declared vals, and the class parameters and lets
   // methods use (which OCaml makes instance variables too).
   instvarField(name) { return this.classParams?.get(name) ?? `iv_${valueName(name)}`; }
+  // object ... end: an anonymous structure of its methods (and values),
+  // self being the structure.
+  immediateObject(n) {
+    const t = this.t(n.t);
+    if (t.k !== 'object') this.fail(n, 'immediate object of no object type');
+    const o = this.temp('o');
+    const savedSelf = this.selfName, savedParams = this.classParams;
+    this.selfName = o;
+    this.classParams = new Map();
+    for (const v of patternVars(n.cs.self)) this.ids.set(v.id, {kind: 'local', name: o});
+    const fields = [];
+    for (const f of n.cs.fields) {
+      if (f.k === 'val') { fields.push(`iv_${valueName(f.name)}: ${this.value(f.e)}`); continue; }
+      if (f.k !== 'method') this.fail(f, `immediate object field ${f.k}`);
+      const ft = t.fields.find(x => x.name === f.name);
+      const arity = ft ? this.methodArity(ft.t) : 0;
+      const sig = this.methodSignature(ft ? ft.t : f.e.t, arity, f);
+      const mb = this.methodBody(f.e, arity, sig, f);
+      fields.push(`${valueName(f.name)}: function(${mb.params ?? sig.params}):${sig.res} ${mb.body}`);
+    }
+    this.selfName = savedSelf;
+    this.classParams = savedParams;
+    return `{ var ${o}:${this.type(n.t, n)} = null; ${o} = cast { ${fields.join(', ')} }; ${o}; }`;
+  }
   methodArity(t) { let x = this.t(t); if (x.k === 'poly') x = this.t(x.body); let n = 0; while (x.k === 'arrow') { n++; x = this.t(x.res); } return n; }
   emitClass(c, d) {
     const {params, lets, cs} = d.parts;
