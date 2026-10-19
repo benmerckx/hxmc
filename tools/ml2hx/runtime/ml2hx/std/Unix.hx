@@ -81,7 +81,7 @@ enum UnixError {
 	EUNKNOWNERR(v0:Int63);
 }
 
-class UnixUnixError extends MlException {
+class UnixUnixErrorExn extends MlException {
 	public final v0:UnixError;
 	public final v1:String;
 	public final v2:String;
@@ -186,8 +186,8 @@ private class PipeOutput extends haxe.io.Output {
 class Unix {
 	static inline function native(s:String):String return ByteString.toNative(s);
 	static inline function ocaml(s:String):String return ByteString.ofNative(s);
-	static function fail(e:UnixError, fn:String, arg:String):Dynamic throw new UnixUnixError(e, fn, arg);
-	static function unsupported(fn:String):Dynamic throw new UnixUnixError(ENOSYS, fn, "");
+	static function fail(e:UnixError, fn:String, arg:String):Dynamic throw new UnixUnixErrorExn(e, fn, arg);
+	static function unsupported(fn:String):Dynamic throw new UnixUnixErrorExn(ENOSYS, fn, "");
 
 	public static final stdin = mk(0, true);
 	public static final stdout = mk(1, false);

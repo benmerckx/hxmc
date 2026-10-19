@@ -129,7 +129,8 @@ class LibraryModule {
   exnHx(x) {
     if (this.name === 'Stdlib' && x === 'Exit') return `${RT}Exit`;
     if (this.name === 'Stdlib' && predefExns[x]) return `${RT}${predefExns[x]}`;
-    return `${this.hx}.${moduleTypeName(this.name, x)}`;
+    // (Exn: an exception and a type may share a name, Dynlink.Error and error)
+    return `${this.hx}.${moduleTypeName(this.name, x)}Exn`;
   }
 }
 
@@ -1150,6 +1151,15 @@ class UnitEmitter {
       } else if (b.p.k === 'var') {
         const name = this.fresh(identName(b.p.id));
         const t = this.typeOrNull(b.p.t, b);
+        // let x = Obj.magic e, x of any type: e kept, converted at each use
+        // to the type the use gives it.
+        const magic = t === null && b.e.k === 'apply' && b.e.fn.k === 'ident' && ['%identity', '%obj_magic'].includes(b.e.fn.prim?.name) && b.e.args.length === 1 && b.e.args[0].e;
+        if (magic) {
+          const arg = b.e.args[0].e;
+          out.push(`var ${name} = ${this.value(arg)};`);
+          pending.push([b.p.id, {kind: 'local', name, magicFrom: arg.t}]);
+          continue;
+        }
         out.push(`var ${name}${t ? `:${t}` : ''} = ${this.value(b.e)};`);
         pending.push([b.p.id, {kind: 'local', name}]);
       } else if (b.p.k === 'any') {
@@ -1195,7 +1205,9 @@ class UnitEmitter {
     // order (Haxe local functions cannot see later ones). Haxe variables are
     // not generic: the functions' own (type a) are Any, as their variables.
     const newtypes = [...new Set(bs.flatMap(b => b.e.newtypes ?? []))];
-    return this.withLocalTypes(newtypes, () => this.mutualFunctions(bs, newtypes.length > 0), newtypes.map(() => 'Any'));
+    // (also when the group is polymorphic: its variables are Any too)
+    const poly = bs.some(b => this.genericVarsOfValue(b.p.t).some(v => !this.tvars.has(v)));
+    return this.withLocalTypes(newtypes, () => this.mutualFunctions(bs, newtypes.length > 0 || poly), newtypes.map(() => 'Any'));
   }
   mutualFunctions(bs, anyTyped) {
     const out = [];
@@ -1494,6 +1506,7 @@ class UnitEmitter {
   }
   identValue(n) {
     const d = this.identDesc(n);
+    if (d.kind === 'local' && d.magicFrom !== undefined) return this.identity(d.name, {t: d.magicFrom}, n);
     if (d.kind === 'local' && d.aliasT !== undefined && n.t !== d.aliasT && this.typeOrNull(n.t, n) !== this.typeOrNull(d.aliasT, n)) return `(cast ${d.name})`;
     if (d.kind === 'local' && d.aliasT !== undefined && n.t !== d.aliasT && this.typeOrNull(n.t, n) === null) return `(cast ${d.name})`;
     return this.valueRef(d, n, n);
@@ -1581,7 +1594,7 @@ class UnitEmitter {
       if (callee && (d.kind === 'lib' || d.kind === 'instance')) return this.libCall(callee, arity, n, fn);
       // A function of a mutually recursive group typed with Any (its own
       // locally abstract types): its result is cast to the caller's type.
-      if (callee && arity > 0) return d.anyTyped ? `(cast ${this.knownCall(callee, arity, n, fn)})` : this.knownCall(callee, arity, n, fn);
+      if (callee && arity > 0) return this.knownCall(callee, arity, n, fn, false, !!d.anyTyped);
     }
     if (fn.k === 'new') return this.newObject(n);
     if (fn.k === 'send') return this.send(fn, n.args, n);
@@ -1592,6 +1605,11 @@ class UnitEmitter {
       const f = vals.pop();
       return vals.reduce((acc, a) => `${acc}(${a})`, needsParens(f) ? `(${f})` : f);
     });
+  }
+  // ({cast: f}: the function of a castResult knownCall, its result cast)
+  calleeCall(callee, vals) {
+    if (typeof callee === 'string') return `${callee}(${vals.join(', ')})`;
+    return `(cast ${callee.cast}(${vals.join(', ')}))`;
   }
   // Call a known function of the given arity with the application's args.
   // A library function: all arguments at once, function arguments uncurried
@@ -1657,7 +1675,8 @@ class UnitEmitter {
     const call = ps.reduce((acc, p) => `${acc}(${p})`, f);
     return {k: '$expr', impure: true, code: `{ var ${f} = ${this.value(e)}; function(${ps.map((p, i) => `${p}:${this.type(args[i].t, n)}`).join(', ')}):${resT} return ${call}; }`};
   }
-  knownCall(callee, arity, n, fn, nullary = false) {
+  knownCall(callee, arity, n, fn, nullary = false, castResult = false) {
+    if (castResult) callee = {cast: callee};
     if (nullary) return n.args.length ? this.applyRest(`${callee}()`, n.args, n) : `${callee}()`;
     const args = n.args;
     const {args: formal, res} = this.arrows(fn.t);
@@ -1666,7 +1685,7 @@ class UnitEmitter {
     const first = args.slice(0, arity), rest = args.slice(arity);
     const supplied = first.filter(a => a.e).map(a => a.e);
     if (first.length === arity && first.every(a => a.e)) {
-      const call = this.ordered(first.map(a => a.e), vals => `${callee}(${vals.join(', ')})`);
+      const call = this.ordered(first.map(a => a.e), vals => this.calleeCall(callee, vals));
       if (!rest.length) return call;
       return this.applyRest(call, rest, n);
     }
@@ -1682,7 +1701,7 @@ class UnitEmitter {
     const names = holes.map(() => this.temp('a'));
     const callArgs = [];
     for (let i = 0; i < arity; i++) { const h = holes.indexOf(i); callArgs.push(h >= 0 ? names[h] : temps[i]); }
-    let body = `${callee}(${callArgs.join(', ')})`;
+    let body = this.calleeCall(callee, callArgs);
     let ty = this.chainType(formal.slice(arity), res, n);
     for (let k = holes.length - 1; k >= 0; k--) {
       const at = this.type(formal[holes[k]].t, n);
@@ -2419,7 +2438,8 @@ class UnitEmitter {
     this.classParams = savedParams;
     return `{ var ${o}:${this.type(n.t, n)} = null; ${o} = cast { ${fields.join(', ')} }; ${o}; }`;
   }
-  methodArity(t) { let x = this.t(t); if (x.k === 'poly') x = this.t(x.body); let n = 0; while (x.k === 'arrow') { n++; x = this.t(x.res); } return n; }
+  // (through abbreviations of function types, as arrows() counts them)
+  methodArity(t) { return this.arrows(t).args.length; }
   emitClass(c, d) {
     const {params, lets, cs} = d.parts;
     const name = d.hx.split('.').at(-1);
