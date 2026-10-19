@@ -280,7 +280,7 @@ and module_expr m =
   Obj (("k",Str k)::("l",loc m.mod_loc)::fields)
 and class_expr ce =
   let k, fields = match ce.cl_desc with
-  | Tcl_ident (p,_,_) -> "ident",["path",path p]
+  | Tcl_ident (p,_,cts) -> "ident",["path",path p; "targs",arr (fun ct -> typ ct.ctyp_type) cts]
   | Tcl_structure cs -> "struct",["cs",class_structure cs]
   | Tcl_fun (l,p,defaults,body,_) -> "fun",["label",label l; "p",pattern p; "defaults",arr (fun (i,d) -> Obj ["id",ident i; "e",expr d]) defaults; "body",class_expr body]
   | Tcl_apply (f,args) -> "apply",["fn",class_expr f; "args",arr (fun (l,a) -> Obj ["label",label l; "e",opt expr a]) args]

@@ -510,12 +510,59 @@ class UnitEmitter {
       case 'apply': {
         const fn = this.resolveModuleExpr(m.fn);
         if (fn.kind === 'lib') return this.declareLibInstance(fn, m, path, parent);
+        if (fn.kind === 'functor') return this.instantiate(fn, m, path, parent);
         this.fail(m, `application of functor ${fn.kind}`);
       }
-      case 'functor': this.fail(m, 'functor definition');
+      // A functor: instantiated statically at each application (its body
+      // emitted again with the parameter bound to the argument).
+      case 'functor': return {kind: 'functor', node: m, unit: this.u.modname, emitter: this};
       case 'unpack': this.fail(m, 'first-class module unpacking');
     }
     this.fail(m, `module expression ${m.k}`);
+  }
+  // F(X) for a functor of the converted program: a static submodule, the
+  // functor's body declared (and later emitted) with the parameter bound to
+  // X. A functor of another unit is instantiated by an emitter of that unit
+  // writing into this unit's output.
+  instantiate(fn, m, path, parent) {
+    let argExpr = m.arg;
+    while (argExpr && argExpr.k === 'constraint') argExpr = argExpr.m;
+    let arg = null;
+    if (argExpr) {
+      if (argExpr.k === 'struct') arg = this.declareModule(argExpr, [...path, 'Arg'], parent);
+      else arg = this.resolveModuleExpr(argExpr);
+    }
+    let em = this;
+    if (fn.unit !== this.u.modname) {
+      em = new UnitEmitter(this.p, this.p.unit(fn.unit));
+      em.declare();
+      em.share(this);
+    }
+    const f = fn.node;
+    if (f.param && arg) em.ids.set(f.param, arg);
+    let body = f.body;
+    while (body.k === 'constraint') body = body.m;
+    if (body.k === 'functor') this.fail(m, 'curried functor');
+    if (body.k !== 'struct') this.fail(m, `functor body ${body.k}`);
+    const before = new Map(em.ids);
+    const d = em.declareModule(body, path, parent);
+    d.emitter = em;
+    // This instance's identifiers (another application of the same functor
+    // rebinds them): restored when the instance is emitted.
+    d.idMap = new Map([...em.ids].filter(([k, v]) => before.get(k) !== v));
+    if (f.param && arg) d.idMap.set(f.param, arg);
+    return d;
+  }
+  // Write into another emitter's output (functor instances of other units).
+  share(target) {
+    this.cls = target.cls;
+    this.cfg = target.cfg;
+    this.decls = target.decls;
+    this.statics = target.statics;
+    this.subclasses = target.subclasses;
+    this.init = target.init;
+    this.root = target.root;
+    this.usedNames = target.usedNames;
   }
   resolveModuleExpr(m) {
     if (m.k === 'ident') return this.resolveModule(m.path, m);
@@ -579,7 +626,11 @@ class UnitEmitter {
       case 'module': {
         if (!item.name || !item.id) return;
         const d = s.modules.get(item.name);
-        if (d.kind === 'struct') this.emitItems(d.items, d, [...path, item.name]);
+        if (d.kind === 'struct') {
+          const em = d.emitter ?? this;
+          for (const [k, v] of d.idMap ?? []) em.ids.set(k, v);
+          em.emitItems(d.items, d, [...path, item.name]);
+        }
         else if (d.kind === 'libinstance') this.emitLibInstance(d, item);
         return;
       }
@@ -612,7 +663,7 @@ class UnitEmitter {
       const t = arg.types.get('t');
       if (!t) this.fail(m, 'functor argument without type t');
       keyType = this.typeOfDecl(t, m);
-    } else if (arg.kind === 'lib') keyType = arg.typeHx('t');
+    } else if (arg.kind === 'lib') keyType = this.resolveType({d: [arg.path.slice(1).reduce((p, x) => ({d: [p, x]}), {g: arg.path[0]}), 't']}, m).hx;
     else this.fail(m, `functor argument ${arg.kind}`);
     const lib = new LibraryModule(fn.path.slice(0, -1));
     return {kind: 'libinstance', functor, spec, arg, keyType, lib, keyName: spec.key, path,
@@ -1976,7 +2027,8 @@ class UnitEmitter {
     // The inherited class's type arguments, from the inherit expression's type.
     const p = d.parent;
     if (!p.decl.params.length) return p.hx;
-    let ce = pn.ce; while (ce.k === 'constraint') ce = ce.ce;
+    let ce = pn.ce; while (ce.k === 'constraint' || ce.k === 'apply') ce = ce.k === 'apply' ? ce.fn : ce.ce;
+    if (ce.k === 'ident' && ce.targs?.length === p.decl.params.length) return `${p.hx}<${ce.targs.map(t => this.type(t, pn)).join(', ')}>`;
     this.fail(pn, 'inheriting a parameterised class');
   }
   parentHasVal(p, name) { return p.parts.cs.fields.some(f => f.k === 'val' && f.name === name) || (p.parent && this.parentHasVal(p.parent, name)); }
@@ -2011,6 +2063,14 @@ class UnitEmitter {
       }
       if (rest.arity === 0) {
         const v = this.value(rest.body ?? {k: 'unsupported', text: 'method cases'});
+        return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`};
+      }
+      if (rest.arity < arity) {
+        // Fewer parameters than the method type's arrows: the body's closure
+        // applied to the rest.
+        const t = this.arrows(e.t).args.length > arity ? this.selfStripped(e.t) : e.t;
+        const inner = e.params.length > 1 ? {...e, params: e.params.slice(1), t} : e.body.k === "body" ? e.body.e : this.fail(f, "method with cases and fewer parameters");
+        const v = this.value(inner);
         return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`};
       }
       this.fail(f, `method arity ${rest.arity} differs from its type's ${arity}`);
