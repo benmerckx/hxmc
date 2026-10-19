@@ -50,13 +50,14 @@ function walk(dir,visit) {
 export function prepare(upstream) {
   const commit=run('git',['-C',upstream,'rev-parse','HEAD']).trim();
   if(run('git',['-C',upstream,'status','--porcelain','--untracked-files=no']).trim())throw new Error('upstream must be clean');
-  const build=path.join(root,'bin/ml2hx/upstream');
+  const build=path.join(root,'bin/ml2hx/checkouts',commit);
   if(!fs.existsSync(build)) {
     fs.mkdirSync(path.dirname(build),{recursive:true});
     run('git',['clone','--shared','--no-checkout',upstream,build]);
     run('git',['-C',build,'checkout','--detach',commit]);
   }
-  if(run('git',['-C',build,'rev-parse','HEAD']).trim()!==commit)throw new Error('bin/ml2hx/upstream has a different pin; move it aside before regenerating');
+  if(run('git',['-C',build,'rev-parse','HEAD']).trim()!==commit || run('git',['-C',build,'status','--porcelain','--untracked-files=no']).trim())
+    throw new Error('cached upstream checkout does not match the clean pin');
   run('dune',['build','--root',build,'--profile','release','@check'],{env:{...process.env,STATICLINK:'0',LIB_PARAMS:''}});
   return build;
 }
@@ -64,41 +65,64 @@ export function generate({upstream=path.join(root,'haxe/upstream'),out=path.join
   upstream=path.resolve(upstream);out=path.resolve(out);
   const sources=files??discover(upstream);
   if(!sources.length)throw new Error('no tracked OCaml sources');
+  if(buildDir&&!files) {
+    const expected=run('git',['-C',upstream,'rev-parse','HEAD']).trim();
+    if(run('git',['-C',buildDir,'rev-parse','HEAD']).trim()!==expected || run('git',['-C',buildDir,'status','--porcelain','--untracked-files=no']).trim())
+      throw new Error('CMT build must come from the clean pinned upstream commit');
+  }
   if(out!==path.join(root,'bin/ml2hx/generated') && !out.startsWith(path.join(root,'bin/ml2hx/tests')+path.sep))
     throw new Error('generated output must be bin/ml2hx/generated or an isolated bin/ml2hx/tests directory');
+  fs.mkdirSync(out,{recursive:true});
+  fs.writeFileSync(path.join(out,'.status'),'incomplete\n');
   const configs=sources.map(config);
-  const cmts=[];
-  if(buildDir)walk(path.join(buildDir,'_build/default'),p=>{if(p.endsWith('.cmt'))cmts.push(p);});
+  const cmts=[],includeDirs=new Set();
+  if(buildDir)walk(path.join(buildDir,'_build/default'),p=>{
+    if(p.endsWith('.cmt'))cmts.push(p);
+    if(p.endsWith('.cmi'))includeDirs.add(path.dirname(p));
+  });
   const inputs=configs.map(c=>{
-    const matches=cmts.filter(p=>path.basename(p,'.cmt').toLowerCase()===path.basename(c.source,'.ml').toLowerCase());
+    const matches=cmts.filter(p=>path.basename(p,'.cmt').split('__').at(-1).toLowerCase()===path.basename(c.source,'.ml').toLowerCase());
     const closest=matches.filter(p=>p.includes('/'+path.dirname(c.source)+'/'));
     return closest.length===1?closest[0]:matches.length===1?matches[0]:path.join(upstream,c.source);
   });
   const read=readFrontend??(args=>{
     const native=process.env.ML2HX_FRONTEND??path.join(root,'bin/ml2hx/build/frontend-native.byte');
-    return JSON.parse(run(native,args));
+    const spool=fs.mkdtempSync(path.join(root,'bin/ml2hx/ir-'));
+    if(args.some(p=>p.endsWith('.ml'))) {
+      const packages=spawnSync('ocamlfind',['printconf','path'],{encoding:'utf8'});
+      if(packages.status===0)for(const dir of packages.stdout.trim().split('\n').filter(Boolean))if(fs.existsSync(dir))
+        walk(dir,p=>{if(p.endsWith('.cmi'))includeDirs.add(path.dirname(p));});
+    }
+    return JSON.parse(run(native,['--out-dir',spool,...[...includeDirs].sort().flatMap(dir=>['-I',dir]),...args]));
   });
   // Exactly one frontend invocation for all discovered sources. CMTs preserve
   // Dune's PPX expansions, interfaces and wrapped-library module identities.
   const ir=read(inputs);
   if(ir.protocol!==1||ir.files.length!==sources.length)throw new Error('frontend protocol or source count mismatch');
-  const units=ir.files.map((f,i)=>({...f,config:configs[i]})),types={},values={},failures=[];
-  for(const f of units) {
+  const units=ir.files.map((f,i)=>({...f,config:configs[i]})),types={},values={},constructors={},failures=[];
+  const load=f=>f.ir?{...JSON.parse(fs.readFileSync(f.ir,'utf8')),config:f.config}:f;
+  for(const unit of units) {
+    const f=load(unit);
     if(f.error){failures.push({source:f.config.source,stage:'typing',error:f.error});continue;}
     const c=f.config;
     for(const d of f.items.filter(i=>i.kind==='type').flatMap(i=>i.declarations)) {
       const name=d.name==='t'?c.module+'Data':d.name[0].toUpperCase()+camel(d.name).slice(1);
       types[c.module+'.'+d.name]=c.package+'.'+c.class+'.'+name;
+      if(d.kind==='enum')for(const k of d.constructors)constructors[c.module+'.'+d.name+'.'+k.name]=types[c.module+'.'+d.name]+'.'+k.name;
     }
     for(const b of f.items.filter(i=>i.kind==='value').flatMap(i=>i.bindings))if(b.pattern.kind==='var')
       values[c.module+'.'+b.pattern.name]=c.package+'.'+c.class+'.'+camel(b.pattern.name)+(b.expr.kind==='function'?'()':'');
   }
   const output=new Map();
-  for(const f of units) {
+  for(const unit of units) {
+    const f=load(unit);
     if(f.error)continue;
     const c=f.config,local={...types};
     for(const d of f.items.filter(i=>i.kind==='type').flatMap(i=>i.declarations))local[d.name]=types[c.module+'.'+d.name].split('.').at(-1);
-    try {output.set(c.output,format(new Emitter({...c,types:local,values}).emit(f)));}
+    const localConstructors={...constructors};
+    for(const d of f.items.filter(i=>i.kind==='type').flatMap(i=>i.declarations))if(d.kind==='enum')
+      for(const k of d.constructors)localConstructors[d.name+'.'+k.name]=local[d.name]+'.'+k.name;
+    try {output.set(c.output,format(new Emitter({...c,types:local,values,constructors:localConstructors}).emit(f)));}
     catch(e){failures.push({source:c.source,stage:'lowering',error:e.message});}
   }
   const emitted=output.size;

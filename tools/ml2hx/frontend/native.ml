@@ -142,29 +142,44 @@ let structure s = arr (fun i ->
   | Tstr_eval (e,_) -> "eval",["expr",expr e]
   | Tstr_open d -> "open",["pure",Bool (match d.open_expr.mod_desc with Tmod_ident _ -> true | _ -> false)]
   | Tstr_attribute _ -> "attribute",[]
+  | Tstr_module b -> "module",["name",opt (fun s -> Str s) b.mb_name.txt]
+  | Tstr_recmodule _ -> "recursive-module",[]
+  | Tstr_modtype _ -> "module-type",[]
+  | Tstr_include _ -> "include",[]
+  | Tstr_primitive d -> "external",["name",Str d.val_name.txt]
+  | Tstr_exception _ -> "exception",[]
+  | Tstr_typext _ -> "type-extension",[]
+  | Tstr_class _ | Tstr_class_type _ -> "class",[]
   | _ -> "unsupported",[] in
   node kind (("loc",loc i.str_loc)::fields)) s.str_items
 let parse file =
   let ch = open_in_bin file in
   Fun.protect ~finally:(fun () -> close_in ch) (fun () ->
     let lex = Lexing.from_channel ch in Location.init lex file; Parse.implementation lex)
+let rec output_json ch = function
+  | Arr xs -> output_char ch '['; List.iteri (fun i x -> if i > 0 then output_char ch ','; output_json ch x) xs; output_char ch ']'
+  | Obj xs -> output_char ch '{'; List.iteri (fun i (k,v) -> if i > 0 then output_char ch ','; output_string ch (write (Str k)); output_char ch ':'; output_json ch v) xs; output_char ch '}'
+  | scalar -> output_string ch (write scalar)
 let () =
-  let cmt = ref false and files = ref [] in
+  let cmt = ref false and files = ref [] and out_dir = ref None and serial = ref 0 in
   Arg.parse ["--cmt",Arg.Set cmt,"Read compiler-produced typedtrees";
+    "--out-dir",Arg.String(fun s -> out_dir := Some s),"Spool each unit instead of retaining the full project";
     "-I",Arg.String(fun s -> Clflags.include_dirs := s :: !Clflags.include_dirs),"CMI search directory"]
     (fun s -> files := s :: !files) "ml2hx frontend [--cmt] file ...";
   try
     Compmisc.init_path ();
     let results = arr (fun file ->
       try
-        if !cmt || Filename.check_suffix file ".cmt" then begin
+        if !out_dir <> None then Gc.full_major ();
+        let result = if !cmt || Filename.check_suffix file ".cmt" then begin
           let _,info = Cmt_format.read file in
           match info with
-          | Some {Cmt_format.cmt_annots = Cmt_format.Implementation tree; cmt_sourcefile=source;_} ->
+          | Some {Cmt_format.cmt_annots = Cmt_format.Implementation tree; cmt_sourcefile=source; cmt_comments=comments;_} ->
             (* Typed CMT constants already have native 63-bit values. Reading the
                PPX input as source would reject the syntax CMT exists to preserve. *)
             Hashtbl.clear literals;
-            Obj ["file",Str file; "source",opt (fun s -> Str s) source; "items",structure tree]
+            Obj ["file",Str file; "source",opt (fun s -> Str s) source;
+              "comments",arr (fun (text,l) -> Obj ["text",Str text; "loc",loc l]) comments; "items",structure tree]
           | _ -> failwith "expected implementation CMT"
         end else begin
           let ast = parse file in
@@ -172,9 +187,17 @@ let () =
           Env.set_current_unit (Unit_info.make ~source_file:file Unit_info.Impl (Filename.remove_extension file));
           let tree,_,_,_,_ = Typemod.type_structure (Compmisc.initial_env ()) (prepare_literals ast) in
           Obj ["file",Str file; "comments",comments; "items",structure tree]
-        end
+        end in
+        match !out_dir with
+        | None -> result
+        | Some dir ->
+          let dest = Filename.concat dir (string_of_int !serial ^ ".json") in
+          incr serial;
+          let ch = open_out_bin dest in
+          Fun.protect ~finally:(fun () -> close_out ch) (fun () -> output_json ch result);
+          Obj ["file",Str file; "ir",Str dest]
       with e -> Obj ["file",Str file; "error",Str (Format.asprintf "%a" Location.report_exception e)]
     ) (List.rev !files) in
-    print_endline (write (Obj ["protocol",Num 1; "ocaml",Str Sys.ocaml_version; "files",results]))
+    output_json stdout (Obj ["protocol",Num 1; "ocaml",Str Sys.ocaml_version; "files",results]); print_newline ()
   with e -> Location.report_exception Format.err_formatter e; exit 1
 

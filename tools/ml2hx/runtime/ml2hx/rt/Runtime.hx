@@ -31,4 +31,14 @@ class Runtime {
 		a[n] = value;
 		return Unit.value;
 	}
+	public static function arrayBlit<T>(source:Array<T>, sourceOffset:Int63, destination:Array<T>, destinationOffset:Int63, count:Int63):Unit {
+		var start = sourceOffset.toInt();
+		var target = destinationOffset.toInt();
+		var length = count.toInt();
+		if (start < 0 || target < 0 || length < 0 || start + length > source.length || target + length > destination.length)
+			throw new haxe.Exception("Invalid_argument Array.blit");
+		var copy = source.slice(start,start + length);
+		for (i in 0...length) destination[target + i] = copy[i];
+		return Unit.value;
+	}
 }

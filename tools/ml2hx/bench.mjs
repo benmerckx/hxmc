@@ -28,14 +28,14 @@ function measured(exe,args) {
   const [wall,user,sys,rss]=fs.readFileSync(result,'utf8').trim().split(/\s+/).map(Number);
   return {wallSeconds:(performance.now()-start)/1000,cpuSeconds:user+sys,peakRssMiB:rss/1024,timeWallSeconds:wall};
 }
-const rows=[];
 for(const c of cases) {
   const samples={current:[],generated:[]};
   // Warm filesystem caches equally; every measured compiler is a fresh process.
   for(const [label,exe] of Object.entries(binaries))measured(exe,[...c.args,'--hxb',path.join(dir,`${label}.hxb`)]);
+  const comparison=spawnSync(binaries.current,['-cp','haxe/test','--run','HxbCmp',path.join(dir,'current.hxb'),path.join(dir,'generated.hxb')],{cwd:root,env,encoding:'utf8'});
+  if(comparison.status!==0)throw new Error(comparison.error?.message??`compiler outputs differ:\n${comparison.stdout}\n${comparison.stderr}`);
   for(let i=0;i<rounds;i++) for(const label of i%2?['generated','current']:['current','generated']) samples[label].push(measured(binaries[label],[...c.args,'--hxb',path.join(dir,`${label}.hxb`)]));
-  // ZIP metadata may differ; the established HXB comparator handles payloads.
   const values=Object.fromEntries(Object.entries(samples).map(([k,x])=>[k,{wallSeconds:median(x.map(v=>v.wallSeconds)),cpuSeconds:median(x.map(v=>v.cpuSeconds)),peakRssMiB:median(x.map(v=>v.peakRssMiB))}]));
-  const row={name:c.name,rounds,values,wallRatio:values.generated.wallSeconds/values.current.wallSeconds,samples};rows.push(row);
-  console.log(`${c.name}: current ${values.current.wallSeconds.toFixed(3)}s/${values.current.peakRssMiB.toFixed(1)} MiB; generated ${values.generated.wallSeconds.toFixed(3)}s/${values.generated.peakRssMiB.toFixed(1)} MiB (${row.wallRatio.toFixed(3)}x)`);
+  const wallRatio=values.generated.wallSeconds/values.current.wallSeconds;
+  console.log(`${c.name}: current ${values.current.wallSeconds.toFixed(3)}s/${values.current.peakRssMiB.toFixed(1)} MiB; generated ${values.generated.wallSeconds.toFixed(3)}s/${values.generated.peakRssMiB.toFixed(1)} MiB (${wallRatio.toFixed(3)}x)`);
 }

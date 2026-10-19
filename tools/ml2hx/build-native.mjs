@@ -5,7 +5,8 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const dir=path.join(root,'bin/ml2hx/build');fs.mkdirSync(dir,{recursive:true});
-const ocamlc=process.env.OCAMLC??'ocamlc';
+const selected=process.env.OCAMLC??'ocamlc';
+const ocamlc=selected.includes('/')?path.resolve(selected):selected;
 function run(args) {
   const p=spawnSync(ocamlc,args,{cwd:dir,encoding:'utf8'});
   if(p.status!==0)throw new Error(p.error?.message??p.stderr);

@@ -25,4 +25,6 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libpcre2-dev zlib1g-dev libmbedtls-dev neko-dev pkg-config
       - run: opam install ./haxe/upstream --deps-only -y
       - run: make ml2hx-test
+      - run: opam exec -- make ml2hx-frontend-native
+      - run: ML2HX_FRONTEND=bin/ml2hx/build/frontend-native.byte ML2HX_OCAMLC=ocamlc ML2HX_OCAMLRUN=ocamlrun opam exec -- make ml2hx-test
       - run: opam exec -- make generate

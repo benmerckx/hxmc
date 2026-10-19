@@ -10,6 +10,9 @@ export class Emitter {
   constructor(config) { this.config=config; this.serial=0; this.names=new Map(); this.typeNames=new Map(Object.entries(config.types ?? {})); this.vars=new Map(); this.constructors=new Map(); }
   temp() { return `_ml${this.serial++}`; }
   variable(id) { if (!this.names.has(id)) this.names.set(id, this.temp()); return this.names.get(id); }
+  constructorName(n) {
+    return this.config.constructors?.[`${n.type?.path}.${n.name}`] ?? this.constructors.get(n.name);
+  }
   typeVars(t, out=new Set()) { if (t?.kind === 'var') out.add(t.id); if(t && typeof t==='object') for (const v of Object.values(t)) { if (Array.isArray(v)) v.forEach(x=>this.typeVars(x,out)); else if (v && typeof v==='object') this.typeVars(v,out); } return out; }
   generic(ids) { return ids.length ? `<${ids.map(id=>this.tv(id)).join(', ')}>` : ''; }
   tv(id) { if (!this.vars.has(id)) this.vars.set(id, `T${this.vars.size}`); return this.vars.get(id); }
@@ -52,12 +55,12 @@ export class Emitter {
       case 'construct': {
         if(n.name==='true'||n.name==='false') return n.name;
         if(n.name==='()') return `${RT}Unit.value`;
-        if(n.name==='Not_found') return 'core.ds.NotFound.raise()';
+        if(n.name==='Not_found') return `${RT}NotFound.raise()`;
         if(n.name==='[]') return `${RT}MlList.Nil`;
         if(n.name==='None') return `${RT}MlOption.None`;
         if(n.name==='Some') return this.ordered(n.args,a=>`${RT}MlOption.Some(${a[0]})`);
         if(n.name==='::') return this.ordered(n.args, a=>`${RT}MlList.Cons(${a.join(', ')})`);
-        const c=this.constructors.get(n.name);
+        const c=this.constructorName(n);
         if(!c) throw new Unsupported(n,`constructor ${n.name}`);
         return n.args.length ? this.ordered(n.args,a=>`${c}(${a.join(', ')})`) : c;
       }
@@ -110,7 +113,7 @@ export class Emitter {
   }
   builtin(p,args,n) {
     const simple=p.replace(/^Stdlib\./,'');
-    const arities={'+':2,'-':2,'*':2,'/':2,mod:2,'~-':1,'+ .':2,not:1,'=':2,'<>':2,'==':2,'!=':2,'<':2,'>':2,'<=':2,'>=':2,ref:1,'!':1,':=':2,incr:1,decr:1,'Array.make':2,'Array.length':1,'Array.get':2,'Array.set':3,'List.length':1,raise:1};
+    const arities={'+':2,'-':2,'*':2,'/':2,mod:2,'~-':1,'+ .':2,not:1,'=':2,'<>':2,'==':2,'!=':2,'<':2,'>':2,'<=':2,'>=':2,ref:1,'!':1,':=':2,incr:1,decr:1,'Array.make':2,'Array.length':1,'Array.get':2,'Array.set':3,'Array.of_list':1,'Array.blit':5,'List.length':1,'String.length':1,raise:1};
     const key=p.startsWith('Stdlib.') ? simple : p;
     const arity=arities[key];
     if(arity===undefined) return null;
@@ -140,6 +143,9 @@ export class Emitter {
       if(key==='Array.length') return `${RT}Int63.ofInt(${a[0]}.length)`;
       if(key==='Array.get') return `${RT}Runtime.arrayGet(${a.join(', ')})`;
       if(key==='Array.set') return `${RT}Runtime.arraySet(${a.join(', ')})`;
+      if(key==='Array.of_list') return `${RT}Runtime.toArray(${a[0]})`;
+      if(key==='Array.blit') return `${RT}Runtime.arrayBlit(${a.join(', ')})`;
+      if(key==='String.length') return `${RT}Int63.ofInt(${a[0]}.length)`;
       if(key==='List.length') return `${RT}Runtime.listLength(${a[0]})`;
       if(key==='raise') return this.thunk(`throw ${a[0]};`, this.type(n.type));
       throw new Unsupported(n,`builtin ${p}`);
@@ -156,7 +162,7 @@ export class Emitter {
         if(p.name==='()') return {test:'true',bind:''};
         if(p.name==='true'||p.name==='false') return {test:`${value} == ${p.name}`,bind:''};
         // Payload patterns are lowered by switch in match(), not reflected.
-        if(!p.args.length) { const c=p.name==='[]'?`${RT}MlList.Nil`:p.name==='None'?`${RT}MlOption.None`:this.constructors.get(p.name); if(c) return {test:`Type.enumIndex(${value}) == Type.enumIndex(${c})`,bind:''}; }
+        if(!p.args.length) { const c=p.name==='[]'?`${RT}MlList.Nil`:p.name==='None'?`${RT}MlOption.None`:this.constructorName(p); if(c) return {test:`Type.enumIndex(${value}) == Type.enumIndex(${c})`,bind:''}; }
         throw new Unsupported(p,`payload pattern ${p.name}`);
       }
       case 'constant': return {test:this.int(p.type)?`${RT}Int63.eq(${value}, ${this.value(p.value)})`:`${value} == ${this.value(p.value)}`,bind:''};
@@ -193,21 +199,20 @@ export class Emitter {
     if(p.kind==='any')return '_';
     if(p.kind==='var')return this.variable(p.id);
     if(p.kind==='construct') {
-      const name=p.name==='::'?RT+'MlList.Cons':p.name==='[]'?RT+'MlList.Nil':p.name==='Some'?RT+'MlOption.Some':p.name==='None'?RT+'MlOption.None':this.constructors.get(p.name);
+      const name=p.name==='::'?RT+'MlList.Cons':p.name==='[]'?RT+'MlList.Nil':p.name==='Some'?RT+'MlOption.Some':p.name==='None'?RT+'MlOption.None':this.constructorName(p);
       if(!name)throw new Unsupported(p,'unknown pattern constructor '+p.name);
       return name+(p.args.length?'('+p.args.map(x=>this.switchPattern(x)).join(', ')+')':'');
     }
     throw new Unsupported(p,'nested payload pattern '+p.kind);
   }
   tryExpr(n) {
-    // Exception identity is shared with the existing port. General payload
-    // exceptions will get their own generated representation before enabling.
+    // Every translated Not_found uses the same runtime exception identity.
     const e=this.temp();
     let code=`try { return ${this.expr(n.expr)}; } catch (${e}:Dynamic) { `;
     for(const c of n.cases) {
       const p=c.pattern;
       if(p.kind!=='construct'||p.name!=='Not_found'||p.args.length||c.guard) throw new Unsupported(p,'exception handler');
-      code+=`if (Std.isOfType(${e}, core.ds.NotFound)) { ${this.tail(c.body)} } `;
+      code+=`if (Std.isOfType(${e}, ${RT}NotFound)) { ${this.tail(c.body)} } `;
     }
     return this.thunk(code+`throw ${e}; }`);
   }

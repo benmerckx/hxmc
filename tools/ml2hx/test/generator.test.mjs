@@ -39,7 +39,7 @@ test('the semantic golden agrees with native OCaml', {skip:!process.env.ML2HX_OC
 
 });
 test('unsupported language features fail explicitly',()=>{
-  assert.throws(()=>emit('module M = struct let x = 1 end\n'),e=>e instanceof Unsupported&&/structure unsupported/.test(e.message));
+  assert.throws(()=>emit('module M = struct let x = 1 end\n'),e=>e instanceof Unsupported&&/structure (unsupported|module)/.test(e.message));
   assert.throws(()=>emit('let f x = x\nlet g () = f == f\n'),/comparison/);
   assert.throws(()=>emit('let x = 4611686018427387904\n'),/outside OCaml.s native 63-bit range/);
   assert.throws(()=>emit('let f x = lazy x\n'),/lazy/);
@@ -65,4 +65,16 @@ test('bulk generation processes every discovered source in one invocation',()=>{
   assert.equal(calls,1);assert.equal(result.sources,sources.length);assert.equal(result.emitted,1);
   assert.equal(result.complete,false);assert.equal(result.failures.length,sources.length-1);
   assert.equal(fs.readFileSync(path.join(dir,'bulk/.status'),'utf8'),'incomplete\n');
+});
+
+test('native CMT generation resolves real cross-unit paths', {skip:!process.env.ML2HX_OCAMLC||!process.env.ML2HX_FRONTEND},()=>{
+  const project=path.join(dir,'cmt-project'),src=path.join(project,'src'),cmts=path.join(project,'_build/default/src'),out=path.join(dir,'cmt-generated');
+  fs.mkdirSync(src,{recursive:true});fs.mkdirSync(cmts,{recursive:true});
+  fs.writeFileSync(path.join(src,'a.ml'),'type payload = Empty | Number of int\nlet add x y = x + y\nlet overlap () = let a = [|1;2;3;4|] in Array.blit a 0 a 1 3; a.(3)\nlet missing () = try raise Not_found with Not_found -> 42\n');
+  fs.writeFileSync(path.join(src,'b.ml'),'let answer = A.add 40 2\nlet read = function A.Empty -> 0 | A.Number n -> n\nlet payload () = A.Number 7\n');
+  for(const unit of ['a','b'])execute(process.env.ML2HX_OCAMLC,['-bin-annot','-I',cmts,'-c','-o',path.join(cmts,unit+'.cmo'),path.join(src,unit+'.ml')]);
+  const result=generate({upstream:project,buildDir:project,out,files:['src/b.ml','src/a.ml']});
+  assert.equal(result.complete,true,JSON.stringify(result.failures));
+  fs.writeFileSync(path.join(out,'BulkMain.hx'),'class BulkMain { static function main() { Sys.println(upstream.BModule.answer.toString()); Sys.println(upstream.AModule.overlap()(ml2hx.rt.Unit.value).toString()); Sys.println(upstream.AModule.missing()(ml2hx.rt.Unit.value).toString()); Sys.println(upstream.BModule.read()(upstream.BModule.payload()(ml2hx.rt.Unit.value)).toString()); } }\n');
+  assert.equal(haxe(['-cp',out,'-main','BulkMain','--interp']),'42\n3\n42\n7\n');
 });
