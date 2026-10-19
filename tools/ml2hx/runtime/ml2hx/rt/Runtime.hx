@@ -50,6 +50,16 @@ class Runtime {
 
 	// ---------------------------------------------------------------- extensible types
 	public static inline function isInstance<T>(v:Any, c:Class<T>):Bool return Std.isOfType(v, c);
+	// Oo.copy: a shallow copy of an object (its fields; no constructor runs)
+	public static function objCopy<T>(o:T):T {
+		var c = Type.getClass(o);
+		if (c == null) return Reflect.copy(o);
+		var r = Type.createEmptyInstance(c);
+		for (f in Reflect.fields(o)) Reflect.setField(r, f, Reflect.field(o, f));
+		return r;
+	}
+	// A constructor value with an inline record: the record knows it (C r is it).
+	public static inline function owned<E>(r:{var ml2hxOwner:Any;}, e:E):E { r.ml2hxOwner = e; return e; }
 	public static function downcast<T>(v:Any, c:Class<T>):MlOption<T> return Std.isOfType(v, c) ? Some(cast v) : None;
 
 	// ---------------------------------------------------------------- structural operations

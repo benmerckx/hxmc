@@ -9,3 +9,14 @@ module Chosen = (val pick (Array.length Sys.argv > 5))
 let () = print_endline (Chosen.name ^ " " ^ Chosen.show 255)
 let () =
   List.iter (fun m -> let module M = (val m : SHOW) in print_endline (M.name ^ ":" ^ M.show 10)) [pick true; pick false]
+module type EQ = sig type t val equal : t -> t -> bool end
+type 'k eq = (module EQ with type t = 'k)
+let eq_of (type k) (o : k eq option) = match o with Some ((module M) : k eq) -> M.equal | None -> ( = )
+let () = Printf.printf "%b %b\n" (eq_of (Some (module Int : EQ with type t = int)) 1 1) (eq_of None "a" "b")
+let eq_by (type k) (f : k -> int) : k eq =
+  (module struct
+    type t = k
+    let key = f
+    let equal a b = key a = key b
+  end)
+let () = let module E = (val eq_by String.length) in Printf.printf "%b %b\n" (E.equal "ab" "cd") (E.equal "a" "cd")

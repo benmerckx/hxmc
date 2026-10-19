@@ -25,3 +25,6 @@ let () =
   print_newline ();
   Printf.printf "%d\n" (L.length [1; 2; 3]);
   let open Base in print_endline (greet "open")
+open struct let hidden = 40 let twice x = 2 * x end
+let shown = twice hidden + 2
+let () = Printf.printf "%d\n" shown

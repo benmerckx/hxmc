@@ -47,3 +47,10 @@ let find_first p l =
   let exception Found of int in
   try List.iter (fun x -> if p x then raise (Found x)) l; None with Found x -> Some x
 let () = match find_first (fun x -> x > 2) [1; 2; 3; 4] with Some x -> Printf.printf "found %d\n" x | None -> print_endline "none"
+let rec count_down n = if n = 0 then (incr calls; []) else n :: count_down (n - 1)
+and calls = (print_endline "calls made"; ref 0)
+let () =
+  let rec w = function [] -> () | x :: r -> print_string (prefix ^ x); w r
+  and prefix = (print_endline "prefix made"; "-") in
+  w ["a"; "b"]; print_newline ();
+  Printf.printf "%d %d\n" (List.length (count_down 3)) !calls

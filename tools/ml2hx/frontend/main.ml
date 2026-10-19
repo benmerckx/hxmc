@@ -143,11 +143,12 @@ let type_path t = match Types.get_desc t with Types.Tconstr (p,_,_) -> path p | 
 let constructor (c:Types.constructor_description) =
   Obj (["name",Str c.cstr_name; "type",type_path c.cstr_res; "arity",Num c.cstr_arity;
         "inline",Bool (c.cstr_inlined <> None)]
-       @ (match c.cstr_tag with Types.Cstr_extension (p,_) -> ["ext",path p] | _ -> []))
+       @ (match c.cstr_tag with Types.Cstr_extension (p,_) -> ["ext",path p] | Types.Cstr_unboxed -> ["unboxed",Bool true] | _ -> []))
 let label_ref (l:Types.label_description) =
-  Obj ["name",Str l.lbl_name; "type",type_path l.lbl_res; "pos",Num l.lbl_pos;
+  Obj (["name",Str l.lbl_name; "type",type_path l.lbl_res; "pos",Num l.lbl_pos] @
+       (match l.lbl_repres with Types.Record_unboxed _ -> ["unboxed",Bool true] | _ -> []) @ [
        "poly",Bool (match Types.get_desc l.lbl_arg with Types.Tpoly (_, _ :: _) -> true | _ -> false);
-       "all",Arr (Array.to_list (Array.map (fun (l:Types.label_description) -> Str l.lbl_name) l.lbl_all))]
+       "all",Arr (Array.to_list (Array.map (fun (l:Types.label_description) -> Str l.lbl_name) l.lbl_all))])
 
 (* ---- patterns ---- *)
 let rec pattern : type k. k general_pattern -> json = fun p ->
@@ -393,7 +394,8 @@ let () =
                 | Tsig_type (_,ds) -> Some (Obj ["k",Str "type"; "l",loc i.sig_loc; "decls",arr (fun d -> type_decl d.typ_name.txt d.typ_id d.typ_type) ds])
                 | Tsig_exception x -> Some (Obj ["k",Str "exception"; "l",loc i.sig_loc; "ext",extension x.tyexn_constructor])
                 | Tsig_typext x -> Some (Obj ["k",Str "typext"; "l",loc i.sig_loc; "type",path x.tyext_path; "ctors",arr extension x.tyext_constructors])
-                | Tsig_value _ | Tsig_attribute _ | Tsig_open _ -> None
+                | Tsig_modtype d -> Some (Obj ["k",Str "modtype"; "l",loc i.sig_loc; "id",ident d.mtd_id; "name",Str d.mtd_name.txt; "mty",opt (fun m -> module_type (env_of (sg.sig_final_env)) m.mty_type) d.mtd_type])
+                | Tsig_value _ | Tsig_attribute _ | Tsig_open _ | Tsig_class_type _ | Tsig_modtypesubst _ -> None
                 | _ -> Some (Obj ["k",Str "unsupported"; "l",loc i.sig_loc])) sg.sig_items) in
               let types = Array.to_list (Array.sub !type_table 0 !type_count) |> List.map (function Some j -> j | None -> Null) in
               Obj ["file",Str file; "modname",Str c.cmt_modname; "source",opt str c.cmt_sourcefile; "interface",Bool true; "types",Arr types; "items",items]

@@ -28,6 +28,10 @@ export function valueName(s) {
   return v;
 }
 export const camel = valueName;
+// A constructor name -> its Haxe enum constructor. OCaml lets a variant
+// redefine the predefined ones (type 'a l = (::) of 'a * 'a l | []).
+const ctorNames = {"::": "Cons", "[]": "Nil", "()": "Unit", "true": "True", "false": "False"};
+export function ctorName(s) { return ctorNames[s] ?? s; }
 // OCaml type name -> Haxe type name.
 export function typeName(s) { const v = camelCore(s); return v[0].toUpperCase() + v.slice(1); }
 // A type (or exception) of module M -> its Haxe name: prefixed with the

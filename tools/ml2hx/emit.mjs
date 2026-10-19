@@ -1,7 +1,7 @@
 // Typed-tree IR (frontend protocol 2) -> Haxe. Unsupported constructs are
 // errors, never Dynamic or stubs. The naming contract is in naming.mjs and
 // tools/ml2hx/README.md.
-import {valueName, typeName, exnName, libraryModule, isOperator, keywords, moduleTypeName, predefExns, primGroup} from './naming.mjs';
+import {valueName, typeName, exnName, libraryModule, isOperator, keywords, moduleTypeName, predefExns, primGroup, ctorName} from './naming.mjs';
 
 const RT = 'ml2hx.rt.';
 // Library functors: the argument's values (with their arities), the result's
@@ -80,6 +80,7 @@ export class Program {
     this.int63 = int63;
     this.units = new Map(units.map(u => [u.modname, u]));
     this.libraryUses = new Map();  // ml2hx.std class -> Map(member -> signature)
+    this.modtypeTypes = new WeakMap(); // module type -> the type table its types index
   }
   unit(name) { return this.units.get(name); }
   structure(name) {
@@ -102,6 +103,13 @@ export class Program {
     const ir = u.ir ??= stripNewtypes(u.load());
     let t = ir.types[d.decl.manifest];
     return t?.k === 'tuple';
+  }
+  // The type a declaration of another unit abbreviates (its IR node).
+  declManifest(d) {
+    const u = this.units.get(d.unit);
+    if (!u) return null;
+    const ir = u.ir ??= stripNewtypes(u.load());
+    return ir.types[d.decl.manifest] ?? null;
   }
   useLibrary(cls, member, signature) {
     if (!this.libraryUses.has(cls)) this.libraryUses.set(cls, new Map());
@@ -137,6 +145,19 @@ class LibraryModule {
 }
 
 // ---------------------------------------------------------------- emitter
+// The bindings of a let rec group that are not functions and use none of the
+// group's variables (OCaml evaluates them before the group's closures).
+function independentBindings(bs) {
+  if (bs.length < 2) return [];
+  const ids = new Set(bs.map(b => b.p.id));
+  const mentions = o => {
+    if (!o || typeof o !== 'object') return false;
+    if (typeof o.l === 'string' && ids.has(o.l)) return true;
+    return Array.isArray(o) ? o.some(mentions) : Object.values(o).some(mentions);
+  };
+  const dyn = bs.filter(b => b.e.k !== 'fun' && !mentions(b.e));
+  return dyn.length < bs.length ? dyn : [];
+}
 class UnitEmitter {
   constructor(program, unit) {
     this.p = program; this.u = unit; this.ir = stripNewtypes(unit.load());
@@ -240,6 +261,8 @@ class UnitEmitter {
       }
       if (m.kind === 'libinstance') return {kind: 'instance', obj: m.hx, name, member: valueName(name), instance: m};
       if (m.kind === 'packed') return {kind: 'local', name: `${m.hx}.${valueName(name)}`};
+      // ((module M) : p): a pattern binding a packed module's structure
+      if (m.kind === 'local') return {kind: 'local', name: `${m.name}.${valueName(name)}`};
       this.fail(n, `value of module ${m.kind}: ${pathName(p)}`);
     }
     this.fail(n, `value path ${pathName(p)}`);
@@ -271,7 +294,7 @@ class UnitEmitter {
         // t.C: the inline record of constructor C of type t.
         let owner = null;
         try { owner = this.resolveType(p.d[0], n); } catch (_) { throw e; }
-        if (owner.decl) return {hx: `${owner.hx}_${p.d[1]}`, inline: true};
+        if (owner.decl) return {hx: `${owner.hx}_${ctorName(p.d[1])}`, inline: true};
         throw e;
       }
       if (parent.kind === 'struct') {
@@ -282,6 +305,8 @@ class UnitEmitter {
       }
       if (parent.kind === 'libinstance') return {instance: parent, name: p.d[1]};
       if (parent.kind === 'lib') return {hx: parent.typeHx(p.d[1]), library: key};
+      // (a packed module's abstract types are Any, as in its structure)
+      if (parent.kind === 'packed' || parent.kind === 'local') return {abbrev: 'Any'};
       this.fail(n, `type of module ${parent.kind}: ${key}`);
     }
     this.fail(n, `type path ${pathName(p)}`);
@@ -584,7 +609,11 @@ class UnitEmitter {
         break;
       }
       case 'recmodule': this.fail(item, 'recursive modules');
-      case 'modtype': s.modtypes.set(item.name, item.mty); this.ids.set(item.id, {kind: 'modtype', mty: item.mty}); break;
+      case 'modtype': s.modtypes.set(item.name, item.mty); if (item.mty) this.p.modtypeTypes.set(item.mty, this.T); this.ids.set(item.id, {kind: 'modtype', mty: item.mty}); break;
+      case 'open': if (item.m.k !== 'struct') break;
+      // open struct ... end: an include (its items are in the unit's
+      // class, but not in the OCaml signature, so nothing else names them).
+      // falls through
       case 'include': {
         // An included functor instance is a submodule of its own (its
         // statics apart from the including module's).
@@ -641,7 +670,7 @@ class UnitEmitter {
           s.types.set(c.name, d);
         }
         break;
-      case 'eval': case 'open': case 'attribute': case 'classtype': break;
+      case 'eval': case 'attribute': case 'classtype': break;
       default: this.fail(item, `structure item ${item.k}`);
     }
   }
@@ -816,7 +845,7 @@ class UnitEmitter {
         return;
       }
       case 'class': for (const c of item.classes) this.emitClass(c, s.classes.get(c.name)); return;
-      case 'open': if (item.m.k !== 'ident') this.fail(item, 'open of a structure'); return;
+      case 'open': if (item.m.k === 'struct') this.emitItems(item.m.items, s, path); else if (item.m.k !== 'ident') this.fail(item, `open of ${item.m.k}`); return;
       case 'modtype': case 'attribute': case 'classtype': return;
     }
     this.fail(item, `structure item ${item.k}`);
@@ -899,6 +928,16 @@ class UnitEmitter {
         this.decls.push(`typedef ${name}${gen} = ${this.type(d.manifest, d)};`);
         return;
       }
+      // [@@unboxed]: the type of the one argument or field (OCaml's
+      // representation; a GADT constructor's own variables are Any).
+      if (d.unboxed) {
+        if (d.kind === 'record') { this.decls.push(`typedef ${name}${gen} = ${this.type(d.labels[0].t, d)};`); return; }
+        const c = d.ctors[0];
+        if (c.args.record) this.fail(d, 'an unboxed constructor with an inline record');
+        const own = c.res !== null ? [...new Set([...c.args.tuple, c.res].flatMap(t => this.typeVars(t)))].filter(v => !this.tvars.has(v)) : [];
+        this.withAnyVars(own, () => this.decls.push(`typedef ${name}${gen} = ${this.type(c.args.tuple[0], d)};`));
+        return;
+      }
       if (d.kind === 'abstract') {
         if (d.manifest === null) {
           // An abstract type whose values only primitives make (`type zstream`
@@ -911,20 +950,22 @@ class UnitEmitter {
         this.decls.push(this.recordClass(name, gen, d.labels, d));
       } else if (d.kind === 'variant') {
         const ctors = d.ctors.map(c => {
-          const render = () => {
+          const render = ps => {
             let args;
             if (c.args.record) {
-              if (c.res !== null) this.fail(d, `GADT constructor ${c.name} with an inline record`);
-              this.decls.push(this.recordClass(`${name}_${c.name}`, gen, c.args.record, d));
-              args = [`v0:${name}_${c.name}${gen}`];
+              // (a GADT constructor's record: parameterised by the constructor's own variables)
+              const rgen = c.res !== null ? (ps.length ? `<${ps.join(', ')}>` : '') : gen;
+              const rargs = c.res !== null ? (ps.length ? `<${ps.map(p => p.split(':')[0]).join(', ')}>` : '') : gen;
+              this.decls.push(this.recordClass(`${name}_${ctorName(c.name)}`, rgen, c.args.record, d, true));
+              args = [`v0:${name}_${ctorName(c.name)}${rargs}`];
             } else args = c.args.tuple.map((a, i) => `v${i}:${this.type(a, d)}`);
             return {args, res: c.res !== null ? `:${this.type(c.res, d)}` : ''};
           };
           // A GADT constructor's variables are its own: constructor type parameters.
-          const own = c.res !== null ? [...new Set([...c.args.tuple ?? [], c.res].flatMap(t => this.typeVars(t)))].filter(v => !this.tvars.has(v)) : [];
+          const own = c.res !== null ? [...new Set([...c.args.tuple ?? [], ...(c.args.record ?? []).map(l => l.t), c.res].flatMap(t => this.typeVars(t)))].filter(v => !this.tvars.has(v)) : [];
           return this.withTypeParams(own, ps => {
-            const {args, res} = render();
-            return `\t${c.name}${ps.length ? `<${ps.join(', ')}>` : ''}${args.length ? `(${args.join(', ')})` : ''}${res};`;
+            const {args, res} = render(ps);
+            return `\t${ctorName(c.name)}${ps.length ? `<${ps.join(', ')}>` : ''}${args.length ? `(${args.join(', ')})` : ''}${res};`;
           });
         });
         this.decls.push(`enum ${name}${gen} {\n${ctors.join('\n')}\n}`);
@@ -935,9 +976,11 @@ class UnitEmitter {
       } else this.fail(d, `type declaration ${d.kind}`);
     });
   }
-  recordClass(name, gen, labels, n) {
+  // (an inline record knows the constructor value it is the block of: C r,
+  // with r bound by a pattern C r, is that same value)
+  recordClass(name, gen, labels, n, inline = false) {
     const fields = labels.map(l => ({name: valueName(l.name), mut: l.mut, t: this.type(l.t, n)}));
-    return `class ${name}${gen} implements ${RT}Block {\n${fields.map(f => `\tpublic var ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
+    return `class ${name}${gen} implements ${RT}Block {\n${inline ? '\tpublic var ml2hxOwner:Any;\n' : ''}${fields.map(f => `\tpublic var ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
   }
   emitExtension(x, desc, base) {
     const name = desc.hx.split('.').at(-1);
@@ -973,6 +1016,13 @@ class UnitEmitter {
     // let rec f x = ... and g = h f (a function made by an application):
     // g is a static set at initialisation (the functions are defined
     // before, and use g only when called).
+    if (item.rec) {
+      const dyn = independentBindings(item.bindings);
+      if (dyn.length) {
+        this.emitTopValue({...item, rec: false, bindings: dyn}, s);
+        return this.emitTopValue({...item, bindings: item.bindings.filter(b => !dyn.includes(b))}, s);
+      }
+    }
     if (item.rec && item.bindings.some(b => b.e.k !== 'fun' && this.t(this.expandAll(b.p.t)).k !== 'arrow')) this.fail(item, 'recursive non-function value');
     for (const b of item.bindings) {
       if (b.alias) continue;
@@ -1228,6 +1278,10 @@ class UnitEmitter {
   }
   recBindings(bs, n) {
     if (bs.some(b => b.p.k !== 'var')) this.fail(n, 'recursive binding of a pattern');
+    // A value of the group that uses none of its variables is evaluated
+    // first, as OCaml does (functions have no effect when defined).
+    const dyn = independentBindings(bs);
+    if (dyn.length) return `${this.bindings({...n, rec: false, bindings: dyn})} ${this.recBindings(bs.filter(b => !dyn.includes(b)), n)}`;
     if (bs.some(b => b.e.k !== 'fun')) return this.recValues(bs, n);
     if (bs.length === 1 && bs[0].e.k === 'fun') {
       const b = bs[0], fn = funInfo(b.e), name = this.fresh(identName(b.p.id));
@@ -1400,7 +1454,7 @@ class UnitEmitter {
       case 'seq': return `{ ${this.stmt(n.a)} ${this.value(n.b)}; }`;
       case 'if': {
         if (!n.else) return `{ ${this.stmt(n)} ${UNIT}; }`;
-        return `(if (${this.value(n.cond)}) ${this.value(n.then)} else ${this.value(n.else)})`;
+        return `(if (${this.value(n.cond)}) ${this.joined(n.then, n)} else ${this.joined(n.else, n)})`;
       }
       case 'while': case 'for': case 'setfield': return `{ ${this.stmt(n)} ${UNIT}; }`;
       case 'fun': return this.lambda(n);
@@ -1409,7 +1463,8 @@ class UnitEmitter {
       case 'try': return this.tryExpr(n);
       case 'tuple': {
         const t = this.typeOrNull(n.t, n) ?? `${RT}Tuple${n.args.length}`;
-        if (t.startsWith(`${RT}Tuple`)) return this.ordered(n.args, a => `new ${t}(${a.join(', ')})`);
+        const comps = this.t(n.t).k === 'tuple' ? this.t(n.t).args : null;
+        if (t.startsWith(`${RT}Tuple`)) return this.ordered(n.args, a => `new ${t}(${a.map((v, i) => comps ? this.coerced(n.args[i], v, comps[i], n) : v).join(', ')})`);
         // A GADT-refined type (Haxe refines it in the branch too): the tuple's own type.
         const own = `${RT}Tuple${n.args.length}<${n.args.map(a => this.type(a.t, a)).join(', ')}>`;
         return this.ordered(n.args, a => `new ${own}(${a.join(', ')})`);
@@ -1421,7 +1476,7 @@ class UnitEmitter {
         return `new ${RT}PolyVariant1(${hash}, ${tag}, ${this.value(n.arg)})`;
       }
       case 'record': return this.record(n);
-      case 'field': return `${wrap(this.value(n.e))}.${this.fieldName(n.lbl)}`;
+      case 'field': return n.lbl.unboxed ? this.value(n.e) : `${wrap(this.value(n.e))}.${this.fieldName(n.lbl)}`;
       case 'array': { const t = this.typeOrNull(n.t, n); return this.ordered(n.args, a => t ? `([${a.join(', ')}]:${t})` : `[${a.join(', ')}]`); }
       case 'assert': {
         const c = n.e;
@@ -1455,7 +1510,12 @@ class UnitEmitter {
       case 'instvar': return `${this.selfName ?? 'this'}.${this.instvarField(n.name)}`;
       case 'setinstvar': return `{ ${this.selfName ?? 'this'}.${this.instvarField(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
       case 'object': return this.immediateObject(n);
-      case 'override': this.fail(n, 'object copy {< >}');
+      case 'override': {
+        // {< x = e >}: the field values first, then a copy of self (Oo.copy:
+        // its instance variables, not its constructor) with them set
+        const o = this.temp('o');
+        return this.ordered(n.fields.map(f => f.e), vals => `{ var ${o} = ${RT}Runtime.objCopy(${this.selfName ?? 'this'}); ${n.fields.map((f, i) => `${o}.${this.instvarField(f.name)} = ${vals[i]};`).join(' ')} ${o}; }`);
+      }
       case 'pack': return this.pack(n);
       case 'unsupported': this.fail(n, n.text ?? 'unsupported expression');
     }
@@ -1497,7 +1557,32 @@ class UnitEmitter {
     for (let guard = 0; guard < 10 && mty?.k === 'ident'; guard++) mty = this.resolveModtype(mty.path, n);
     if (!mty || mty.k !== 'sig') this.fail(n, `first-class module of signature ${pathName(t.path)}`);
     for (const it of mty.items) if (!['value', 'type'].includes(it.k)) this.fail(n, `first-class module with a ${it.k} in its signature`);
+    // (a module type of another unit: its types copied into this unit's table)
+    const src = this.p.modtypeTypes.get(mty);
+    if (src && src !== this.T) {
+      this.imported ??= new WeakMap();
+      if (!this.imported.has(mty)) {
+        const memo = new Map();
+        this.imported.set(mty, {...mty, items: mty.items.map(it => typeof it.t === 'number' ? {...it, t: this.importType(it.t, src, memo)} : it)});
+      }
+      return this.imported.get(mty).items;
+    }
     return mty.items;
+  }
+  // A type of another unit's table, copied into this one (its variables
+  // become this unit's, distinct from the ones here).
+  importType(i, src, memo) {
+    if (memo.has(i)) return memo.get(i);
+    const t = src[i];
+    if (!t) this.fail(null, `missing type ${i} of another unit`);
+    const idx = this.T.length, copy = {...t};
+    memo.set(i, idx);
+    this.T.push(copy);
+    if (t.k === 'var') copy.id = idx;
+    for (const k of ['arg', 'res', 'body', 'row', 'exp']) if (typeof t[k] === 'number') copy[k] = this.importType(t[k], src, memo);
+    for (const k of ['args', 'vars', 'classArgs']) if (Array.isArray(t[k])) copy[k] = t[k].map(a => typeof a === 'number' ? this.importType(a, src, memo) : a);
+    if (t.fields) copy.fields = t.fields.map(f => ({...f, t: typeof f.t === 'number' ? this.importType(f.t, src, memo) : f.t, args: f.args?.map(a => typeof a === 'number' ? this.importType(a, src, memo) : a)}));
+    return idx;
   }
   packageType(t, n) {
     const items = this.packageSig(t, n);
@@ -1505,11 +1590,12 @@ class UnitEmitter {
     return `{ ${items.filter(it => it.k === 'value').map(it => `var ${valueName(identName(it.id))}:${this.type(it.t, n)};`).join(' ')} }`;
   }
   pack(n) {
-    const t = this.t(n.t);
+    const t = this.t(this.expandAll(n.t));
     if (t.k !== 'package') this.fail(n, 'first-class module of no package type');
     const items = this.packageSig(t, n);
     let m = n.m;
     while (m.k === 'constraint') m = m.m;
+    if (m.k === 'struct') return this.packStruct(m, items, t, n);
     if (m.k !== 'ident') this.fail(n, `packing a module ${m.k}`);
     const fields = items.filter(it => it.k === 'value').map(it => {
       const name = identName(it.id);
@@ -1517,6 +1603,29 @@ class UnitEmitter {
       return `${valueName(name)}: ${this.valueRef(d, {...n, t: it.t}, n)}`;
     });
     return `({ ${fields.join(', ')} } : ${this.packageType(t, n)})`;
+  }
+  // (module struct type t = k let f = ... end : S): its values as locals of
+  // a block, then the structure of the signature's values.
+  packStruct(m, items, t, n) {
+    const out = [], byName = new Map();
+    for (const item of m.items) {
+      if (item.k === 'value') {
+        out.push(this.bindings({...item, k: 'let'}));
+        for (const b of item.bindings) for (const v of patternVars(b.p)) byName.set(identName(v.id), v.id);
+      } else if (item.k === 'type') {
+        for (const d of item.decls) {
+          if (d.kind !== 'abstract' || d.manifest === null) this.fail(item, 'a type declaration in a packed structure');
+          this.ids.set(d.id, {abbrev: this.type(d.manifest, item)});
+        }
+      } else if (item.k !== 'attribute') this.fail(item, `${item.k} in a packed structure`);
+    }
+    const fields = items.filter(it => it.k === 'value').map(it => {
+      const name = identName(it.id);
+      const id = byName.get(name);
+      if (id === undefined) this.fail(n, `packed structure without ${name}`);
+      return `${valueName(name)}: ${this.valueRef(this.ids.get(id), {...n, t: it.t}, n)}`;
+    });
+    return `{ ${out.join(' ')} ({ ${fields.join(', ')} } : ${this.packageType(t, n)}); }`;
   }
   // An OCaml int literal (63-bit) as an Int63.
   intLit(v) {
@@ -2161,28 +2270,54 @@ class UnitEmitter {
     return `%${flags}${width}${precision}${conv}`;
   }
 
+  // A branch of an if or match as a value of the whole: OCaml unified their
+  // types, which Haxe may not (two classes of the same object type, string *
+  // file_output against string * zip_output): cast when the types differ.
+  joined(e, whole) { return this.coerced(e, this.value(e), whole?.t, whole); }
+  // v (the value of e) where a value of type t is expected
+  coerced(e, v, t, n) {
+    if (t === undefined || e.t === undefined || e.t === t) return v;
+    let a = null, b = null;
+    try { a = this.typeOrNull(e.t, e); b = this.typeOrNull(t, n); } catch (_) { return v; }
+    return a !== null && b !== null && a !== b && !this.isUnit(t) ? `(cast ${v})` : v;
+  }
   // ------------------------------------------------------------ data
   construct(n) {
     const c = n.c;
     if (!this.p.unit('CamlinternalFormatBasics') && c.name === 'Format' && pathName(c.type ?? {}).endsWith('format6') && n.args[1]?.k === 'const') return `${RT}Fmt.of(${haxeString(n.args[1].c.v)})`;
     if (c.ext) return this.extConstruct(n);
+    if (c.unboxed) return this.value(n.args[0]);
+    const predef = this.predefCtor(c, n);
     const special = {'true': 'true', 'false': 'false', '()': UNIT, '[]': `${RT}MlList.Nil`, 'None': `${RT}MlOption.None`};
-    if (c.name === '[]' || c.name === '()' || c.name === 'true' || c.name === 'false') return special[c.name];
+    if (predef && (c.name === '[]' || c.name === '()' || c.name === 'true' || c.name === 'false')) return special[c.name];
     if (c.type?.p && special[c.name] !== undefined && c.type.p === 'option') return special[c.name];
-    if (c.name === '::') return this.ordered(n.args, a => `${RT}MlList.Cons(${a.join(', ')})`);
+    if (predef && c.name === '::') return this.ordered(n.args, a => `${RT}MlList.Cons(${a.join(', ')})`);
     if (c.name === 'Some' && c.type?.p === 'option') return this.ordered(n.args, a => `${RT}MlOption.Some(${a[0]})`);
     const name = this.ctorRef(c, n);
     if (c.inline) {
       const r = n.args[0];
-      const cls = `${name.replace(/\.[^.]+$/, '')}_${c.name}`;
-      return `${name}(${this.record(r, cls)})`;
+      if (r.k === 'ident') return `(cast ${this.value(r)}.ml2hxOwner)`;
+      if (r.k !== 'record') this.fail(n, `inline record of ${r.k}`);
+      const cls = `${name.replace(/\.[^.]+$/, '')}_${ctorName(c.name)}`;
+      const v = this.temp('r');
+      return `{ var ${v} = ${this.record(r, cls)}; ${RT}Runtime.owned(${v}, ${name}(${v})); }`;
     }
     return n.args.length ? this.ordered(n.args, a => `${name}(${a.join(', ')})`) : name;
   }
+  // A constructor of a predefined type (bool, unit, list, option), or of a
+  // re-export of one (type t = bool = false | true).
+  predefCtor(c, n) {
+    if (c.type === undefined || c.type.p !== undefined) return true;
+    let d;
+    try { d = this.resolveType(c.type, n); } catch (e) { return false; }
+    if (d.decl?.manifest === null || d.decl?.manifest === undefined) return false;
+    const t = d.unit === this.u.modname ? this.t(d.decl.manifest) : this.p.declManifest(d);
+    return t?.k === 'constr' && t.path.p !== undefined;
+  }
   ctorRef(c, n) {
     const d = this.resolveType(c.type, n);
-    if (d.decl?.kind === 'variant' || d.library) return `${d.hx}.${c.name}`;
-    if (d.hx && !d.decl) return `${d.hx}.${c.name}`;
+    if (d.decl?.kind === 'variant' || d.library) return `${d.hx}.${ctorName(c.name)}`;
+    if (d.hx && !d.decl) return `${d.hx}.${ctorName(c.name)}`;
     this.fail(n, `constructor ${c.name} of ${pathName(c.type)}`);
   }
   exnClass(p, n) {
@@ -2202,6 +2337,8 @@ class UnitEmitter {
     return this.ordered(n.args, a => `new ${cls}(${a.join(', ')})`);
   }
   record(n, cls = null) {
+    // (an unboxed record is its field)
+    if (n.fields[0]?.lbl?.unboxed) return n.fields[0].e ? this.value(n.fields[0].e) : this.value(n.base);
     // Without inferable type arguments, Haxe infers them from the fields.
     const t = cls ?? this.typeOrNull(n.t, n) ?? this.type(n.t, n).replace(/<.*$/, '');
     const fields = n.fields;
@@ -2288,7 +2425,7 @@ class UnitEmitter {
       if (pat.guard || pat.pat.includes('=>')) opaque = true;
       const pre = pat.pre ?? '';
       let body;
-      if (mode === 'value') body = `${pre ? `{ ${pre} ${this.value(c.e)}; }` : this.value(c.e)}`;
+      if (mode === 'value') body = `${pre ? `{ ${pre} ${this.joined(c.e, n)}; }` : this.joined(c.e, n)}`;
       else if (mode === 'stmt') body = `${pre} ${this.stmt(c.e)}`;
       else body = `${pre} ${this.ret(c.e, tc)}`;
       arms.push(`case ${pat.pat}${guard ? ` if (${guard})` : ''}: ${mode === 'value' ? body + ';' : body}`);
@@ -2352,7 +2489,7 @@ class UnitEmitter {
         // `Right _ as e` may have another type than the matched value
         // (('a, 'b) t matched, ('c, 'b) t bound): cast where it is used.
         this.ids.set(p.id, {kind: 'local', name, aliasT: p.p.t});
-        return {...inner, pat: inner.pat === '_' ? name : `${name} = ${inner.pat}`};
+        return {...inner, pat: inner.pat === '_' ? name : `(${name} = ${inner.pat})`};
       }
       case 'const': {
         if (p.c.k === 'int') { const b = BigInt(p.c.v); if (b > 0x7fffffffn || b < -0x7fffffffn) this.fail(p, 'integer pattern outside 32 bits'); return {pat: `${RT}Int63.patternKey(_) => ${b < 0n ? `(${p.c.v})` : p.c.v}`}; }
@@ -2362,7 +2499,8 @@ class UnitEmitter {
         return {pat: this.constant(p.c, p)};
       }
       case 'tuple': return this.join(p.args.map(a => this.pattern(a)), parts => `{${parts.map((x, i) => `v${i}: ${x}`).join(', ')}}`);
-      case 'record': return this.join(p.fields.map(f => this.pattern(f.p)), parts => `{${parts.map((x, i) => `${this.fieldName(p.fields[i].lbl)}: ${x}`).join(', ')}}`);
+      case 'record': if (p.fields[0]?.lbl.unboxed) return this.pattern(p.fields[0].p);
+        return this.join(p.fields.map(f => this.pattern(f.p)), parts => `{${parts.map((x, i) => `${this.fieldName(p.fields[i].lbl)}: ${x}`).join(', ')}}`);
       case 'array': return this.join(p.args.map(a => this.pattern(a)), parts => `[${parts.join(', ')}]`);
       case 'or': {
         // Both sides bind the same identifiers (the typer alpha-renames).
@@ -2411,15 +2549,17 @@ class UnitEmitter {
   }
   ctorPattern(p) {
     const c = p.c;
+    if (c.unboxed) return this.pattern(p.args[0]);
     if (c.ext) {
       const cls = this.exnClass(c.ext, p);
       if (!p.args.length) return {pat: `${RT}Runtime.isInstance(_, ${cls}) => true`};
       const parts = p.args.map(a => this.pattern(a));
       return this.join(parts, xs => `${RT}Runtime.downcast(_, ${cls}) => ${RT}MlOption.Some({${xs.map((x, i) => `v${i}: ${x}`).join(', ')}})`);
     }
-    if (c.name === 'true' || c.name === 'false') return {pat: c.name};
-    if (c.name === '()') return {pat: '_'};
-    if (c.name === '[]' || c.name === '::') {
+    const predef = this.predefCtor(c, p);
+    if (predef && (c.name === 'true' || c.name === 'false')) return {pat: c.name};
+    if (predef && c.name === '()') return {pat: '_'};
+    if (predef && (c.name === '[]' || c.name === '::')) {
       if (c.name === '[]') return {pat: `${RT}MlList.Nil`};
       return this.join(p.args.map(a => this.pattern(a)), xs => `${RT}MlList.Cons(${xs.join(', ')})`);
     }

@@ -93,5 +93,5 @@ test('unsupported constructs fail explicitly', () => {
     ok('ocamlfind', ['ocamlc', '-bin-annot', '-c', '-I', dir, '-o', path.join(dir, 'probe.cmo'), f]);
     assert.throws(() => generateCase('unsupported', [f.replace(/\.ml$/, '.cmt')], dir), e => e instanceof Unsupported && re.test(e.message), src);
   };
-  probe('class c = object val x = 1 method copy = {< x = 2 >} end\n', /object copy/);
+  probe('let rec l = 1 :: l\n', /recursive non-function value/);
 });

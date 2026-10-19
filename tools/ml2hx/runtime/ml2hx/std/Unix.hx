@@ -7,7 +7,7 @@ import ml2hx.rt.*;
 import ml2hx.rt.MlList;
 
 // The Unix library over Haxe's sys APIs: files, directories, processes
-// (sys.io.Process), TCP sockets (sys.net.Socket), time. What the host APIs
+// (sys.io.Process), TCP sockets (hxmc.NativeNet), time. What the host APIs
 // cannot do raises Unix_error (ENOSYS, function, "") naming the call.
 enum UnixError {
 	E2BIG;
@@ -158,9 +158,10 @@ class UnixFileDescr {
 	public var input:Null<haxe.io.Input>;
 	public var output:Null<haxe.io.Output>;
 	#if sys
-	public var socket:Null<sys.net.Socket>;
 	public var process:Null<sys.io.Process>;
 	#end
+	// a socket: its host descriptor (hxmc.NativeNet), else -1
+	public var fd:Int = -1;
 	public final id:Int;
 	static var next = 3;
 	public function new(?id:Int) this.id = id ?? next++;
@@ -200,6 +201,34 @@ private class PipeOutput extends haxe.io.Output {
 	public function new(p:PipeBuffer) this.p = p;
 	override public function writeByte(c:Int) p.data.addByte(c);
 }
+
+// hxmc's sockets; without hxmc (another Haxe type-checking this), none:
+// every call fails with ENOSYS.
+private typedef Net = #if (hxmc.target) hxmc.NativeNet #else NoNet #end;
+#if !(hxmc.target)
+private class NoNet {
+	public static function errno():Int return -1;
+	public static function socket():Int return -1;
+	public static function close(fd:Int):Int return -1;
+	public static function accept(fd:Int):Int return -1;
+	public static function bind(fd:Int, ip:Int, port:Int):Int return -1;
+	public static function connect(fd:Int, ip:Int, port:Int):Int return -1;
+	public static function listen(fd:Int, backlog:Int):Int return -1;
+	public static function sockName(fd:Int, peer:Bool):Null<Array<Int>> return null;
+	public static function recv(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int return -1;
+	public static function send(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int return -1;
+	public static function select(read:Array<Int>, write:Array<Int>, others:Array<Int>, timeout:Float):Int return -1;
+	public static function setNoDelay(fd:Int, b:Bool):Int return -1;
+	public static function setBroadcast(fd:Int, b:Bool):Int return -1;
+	public static function setReuseAddr(fd:Int, b:Bool):Int return -1;
+	public static function setTimeout(fd:Int, seconds:Float):Int return -1;
+	public static function shutdown(fd:Int, mode:Int):Int return -1;
+	public static function setBlocking(fd:Int, b:Bool):Int return -1;
+	public static function gethostname():Null<String> return null;
+	public static function resolve(name:String):Null<Array<Int>> return null;
+	public static function reverse(ip:Int):Null<String> return null;
+}
+#end
 
 class Unix {
 	static inline function native(s:String):String return ByteString.toNative(s);
@@ -319,6 +348,11 @@ class Unix {
 	#if sys
 	// ---------------------------------------------------------------- environment, directories
 	public static function environment(_:Unit):HArray<String> return [for (k => v in std.Sys.environment()) ocaml(k + "=" + v)];
+	public static function putenv(n:String, v:String):Unit {
+		if (n.indexOf("\x00") >= 0 || v.indexOf("\x00") >= 0) fail(EINVAL, "putenv", n);
+		std.Sys.putEnv(native(n), native(v));
+		return Unit.value;
+	}
 	public static function getenv(n:String):String {
 		var v = std.Sys.getEnv(native(n));
 		if (v == null) throw NotFound.instance;
@@ -393,33 +427,40 @@ class Unix {
 		try {
 			if (d.input != null) d.input.close();
 			if (d.output != null) d.output.close();
-			if (d.socket != null) d.socket.close();
 		} catch (e:Dynamic) fail(EBADF, "close", "");
+		if (d.fd >= 0) { var fd = d.fd; d.fd = -1; timeouts.remove(fd); if (Net.close(fd) < 0) netFail("close"); }
 		return Unit.value;
 	}
 	public static function read(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 {
-		if (d.input == null && d.socket == null) fail(EBADF, "read", "");
-		var i = d.socket != null ? d.socket.input : d.input;
+		if (d.fd >= 0) return recv(d, b, ofs, len, Nil);
+		if (d.input == null) fail(EBADF, "read", "");
+		var i = d.input;
 		try return Int63.ofInt(i.readBytes(b, ofs.toInt(), len.toInt())) catch (e:haxe.io.Eof) return Int63.zero;
 	}
 	public static function write(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 {
-		if (d.output == null && d.socket == null) fail(EBADF, "write", "");
-		var o = d.socket != null ? d.socket.output : d.output;
+		if (d.fd >= 0) {
+			// (write: until all is sent)
+			var done = 0;
+			while (done < len.toInt()) done += send(d, b, Int63.ofInt(ofs.toInt() + done), Int63.ofInt(len.toInt() - done), Nil).toInt();
+			return len;
+		}
+		if (d.output == null) fail(EBADF, "write", "");
+		var o = d.output;
 		o.writeFullBytes(b, ofs.toInt(), len.toInt());
 		o.flush();
 		return len;
 	}
-	public static function singleWrite(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 return write(d, b, ofs, len);
+	public static function singleWrite(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 return d.fd >= 0 ? send(d, b, ofs, len, Nil) : write(d, b, ofs, len);
 	public static function writeSubstring(d:UnixFileDescr, s:String, ofs:Int63, len:Int63):Int63
 		return write(d, ByteString.toBytes(s.substr(ofs.toInt(), len.toInt())), Int63.zero, len);
 	static final channelDescr = new haxe.ds.ObjectMap<Dynamic, UnixFileDescr>();
 	public static function inChannelOfDescr(d:UnixFileDescr):ml2hx.prim.Io.InChannel {
-		var c = ml2hx.prim.Io.inOfInput(d.socket != null ? d.socket.input : d.input);
+		var c = ml2hx.prim.Io.inOfInput(d.fd >= 0 ? new SocketInput(d) : d.input);
 		channelDescr.set(c, d);
 		return c;
 	}
 	public static function outChannelOfDescr(d:UnixFileDescr):ml2hx.prim.Io.OutChannel {
-		var c = ml2hx.prim.Io.outOfOutput(d.socket != null ? d.socket.output : d.output);
+		var c = ml2hx.prim.Io.outOfOutput(d.fd >= 0 ? new SocketOutput(d) : d.output);
 		channelDescr.set(c, d);
 		return c;
 	}
@@ -434,32 +475,50 @@ class Unix {
 		var d = channelDescr.get(c);
 		return d != null ? d : fail(EBADF, "descr_of_out_channel", "");
 	}
-	// the host's descriptor of a socket (for hxmc's natives): descriptors
-	// here are Haxe streams, which do not expose one
-	public static function nativeFd(d:UnixFileDescr):Int throw new Failure("Unix: no native descriptor for this socket");
-	// socket options Haxe's sockets have (TCP_NODELAY as setFastSend,
-	// timeouts as setTimeout); the others are not available
+	// the host's descriptor of a socket (for hxmc's natives: mbedtls' net context)
+	public static function nativeFd(d:UnixFileDescr):Int return sock(d, "native descriptor");
+	// the options hxmc's sockets set (TCP_NODELAY, SO_REUSEADDR, SO_BROADCAST);
+	// the others are not available (ENOSYS)
 	public static function setsockopt(d:UnixFileDescr, opt:UnixSocketBoolOption, v:Bool):Unit {
-		if (d.socket == null) fail(ENOTSOCK, "setsockopt", "");
-		switch opt {
-			case TCP_NODELAY: d.socket.setFastSend(v);
-			case _: fail(ENOPROTOOPT, "setsockopt", "");
+		var fd = sock(d, "setsockopt");
+		var r = switch opt {
+			case TCP_NODELAY: Net.setNoDelay(fd, v);
+			case SO_REUSEADDR: Net.setReuseAddr(fd, v);
+			case SO_BROADCAST: Net.setBroadcast(fd, v);
+			case _: unsupported("setsockopt");
 		}
+		if (r < 0) netFail("setsockopt");
 		return Unit.value;
 	}
+	// hxmc's sockets set both timeouts at once (SO_RCVTIMEO then SO_SNDTIMEO):
+	// one of them is set with the other, unless that one was given another
+	// value (ENOSYS: the two cannot differ here)
+	static final timeouts = new haxe.ds.IntMap<HArray<Null<Float>>>();
 	public static function setsockoptFloat(d:UnixFileDescr, opt:UnixSocketFloatOption, v:Float):Unit {
-		if (d.socket == null) fail(ENOTSOCK, "setsockopt_float", "");
-		d.socket.setTimeout(v);
+		var fd = sock(d, "setsockopt_float");
+		var t = timeouts.get(fd);
+		if (t == null) { t = [null, null]; timeouts.set(fd, t); }
+		var mine = opt == SO_RCVTIMEO ? 0 : 1, other = t[1 - mine];
+		if (other != null && other != v) return unsupported("setsockopt_float");
+		if (Net.setTimeout(fd, v) < 0) netFail("setsockopt_float");
+		t[mine] = v;
 		return Unit.value;
 	}
-	// the pending error of a socket: Haxe's sockets report errors as they occur
+	// SO_ERROR: hxmc's sockets report errors as they occur (connect is
+	// blocking), so none is pending
 	public static function getsockoptError(d:UnixFileDescr):MlOption<UnixError> {
-		if (d.socket == null) fail(ENOTSOCK, "getsockopt_error", "");
+		sock(d, "getsockopt_error");
 		return None;
 	}
 	public static function dup(d:UnixFileDescr, ?cloexec:Bool):UnixFileDescr return d;
-	public static function setNonblock(d:UnixFileDescr):Unit return Unit.value;
-	public static function clearNonblock(d:UnixFileDescr):Unit return Unit.value;
+	public static function setNonblock(d:UnixFileDescr):Unit {
+		if (d.fd >= 0 && Net.setBlocking(d.fd, false) < 0) netFail("set_nonblock");
+		return Unit.value;
+	}
+	public static function clearNonblock(d:UnixFileDescr):Unit {
+		if (d.fd >= 0 && Net.setBlocking(d.fd, true) < 0) netFail("clear_nonblock");
+		return Unit.value;
+	}
 	public static function setCloseOnExec(d:UnixFileDescr):Unit return Unit.value;
 	public static function pipe(_:Unit, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixFileDescr> {
 		var p = new PipeBuffer();
@@ -553,54 +612,191 @@ class Unix {
 	public static function getpid(_:Unit):Int63 return Int63.ofInt(0);
 
 	// ---------------------------------------------------------------- sockets
-	public static function inetAddrOfString(s:String):UnixInetAddr return new UnixInetAddr(s);
+	// Over hxmc's BSD sockets (hxmc.NativeNet, the natives of the eval port's
+	// sockets): descriptors are the host's, errors are the C errno as
+	// OCaml's unix_error_of_code maps it. IPv4 stream sockets only.
+	static final errorTable:HArray<UnixError> = [E2BIG, EACCES, EAGAIN, EBADF, EBUSY, ECHILD, EDEADLK, EDOM, EEXIST, EFAULT, EFBIG, EINTR, EINVAL, EIO, EISDIR, EMFILE, EMLINK, ENAMETOOLONG, ENFILE, ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTDIR, ENOTEMPTY, ENOTTY, ENXIO, EPERM, EPIPE, ERANGE, EROFS, ESPIPE, ESRCH, EXDEV, EWOULDBLOCK, EINPROGRESS, EALREADY, ENOTSOCK, EDESTADDRREQ, EMSGSIZE, EPROTOTYPE, ENOPROTOOPT, EPROTONOSUPPORT, ESOCKTNOSUPPORT, EOPNOTSUPP, EPFNOSUPPORT, EAFNOSUPPORT, EADDRINUSE, EADDRNOTAVAIL, ENETDOWN, ENETUNREACH, ENETRESET, ECONNABORTED, ECONNRESET, ENOBUFS, EISCONN, ENOTCONN, ESHUTDOWN, ETOOMANYREFS, ETIMEDOUT, ECONNREFUSED, EHOSTDOWN, EHOSTUNREACH, ELOOP, EOVERFLOW];
+	// each error's index in hxmc.rt.UvLayouts.uvError (-errno on POSIX), or
+	// its errno on Linux and macOS where libuv has no code for it
+	static final errorUv:HArray<Int> = [0, 1, 5, 21, 22, -1, -1, -1, 29, 30, 31, 33, 34, 35, 37, 39, 74, 41, 44, 46, 47, -1, -1, 48, 51, 52, 54, 55, 75, 73, 58, 59, 63, 64, 66, 67, 70, 5, -1, 20, 56, 28, 40, 62, 50, 61, 79, -1, -1, 4, 2, 3, 42, 43, -1, 25, 27, 45, 36, 53, 65, -1, 68, 26, -1, 32, 38, 78];
+	static final errnoLinux:HArray<Int> = [0, 0, 0, 0, 0, 10, 35, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 0, 0, 0, 0, 0, 95, 96, 0, 0, 0, 0, 0, 102, 0, 0, 0, 0, 0, 0, 109, 0, 0, 112, 0, 0, 0];
+	static final errnoMac:HArray<Int> = [0, 0, 0, 0, 0, 10, 11, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 102, 46, 0, 0, 0, 0, 0, 52, 0, 0, 0, 0, 0, 0, 59, 0, 0, 64, 0, 0, 0];
+	// unix_error_of_code: the first error of the table with that code
+	// (EAGAIN before EWOULDBLOCK), else EUNKNOWNERR. Windows' C errno has no
+	// table here: EUNKNOWNERR.
+	public static function errorOfErrno(err:Int):UnixError {
+		#if (hxmc.target)
+		if (hxmc.unsafe.Mem.os() == 2) return EUNKNOWNERR(Int63.ofInt(err));
+		var t = hxmc.unsafe.Mem.target(), mac = t == 2 || t == 3;
+		for (i in 0...errorTable.length) {
+			var code = errorUv[i] >= 0 ? -hxmc.rt.UvLayouts.uvError(errorUv[i]) : (mac ? errnoMac : errnoLinux)[i];
+			if (code == err) return errorTable[i];
+		}
+		#end
+		return EUNKNOWNERR(Int63.ofInt(err));
+	}
+	static function netFail(fn:String, arg = ""):Dynamic return Net.errno() < 0 ? unsupported(fn) : fail(errorOfErrno(Net.errno()), fn, arg);
+	static function sock(d:UnixFileDescr, fn:String):Int {
+		if (d.fd < 0) fail(ENOTSOCK, fn, "");
+		return d.fd;
+	}
+	// inet_addr: an IPv4 address (host order) or its text
+	static function ipv4(a:UnixInetAddr, fn:String):Int {
+		var p = a.host.split(".");
+		if (p.length != 4) return fail(EAFNOSUPPORT, fn, "");
+		var ip = 0;
+		for (s in p) ip = (ip << 8) | (Std.parseInt(s) & 0xff);
+		return ip;
+	}
+	static function ofIpv4(ip:Int):UnixInetAddr
+		return new UnixInetAddr('${(ip >>> 24) & 0xff}.${(ip >>> 16) & 0xff}.${(ip >>> 8) & 0xff}.${ip & 0xff}');
+	public static function inetAddrOfString(s:String):UnixInetAddr {
+		var p = s.split(".");
+		var ok = p.length == 4;
+		if (ok) for (x in p) { var n = Std.parseInt(x); if (n == null || n < 0 || n > 255 || Std.string(n) != x) ok = false; }
+		// (an IPv6 address is kept as its text; the sockets here are IPv4)
+		if (!ok && s.indexOf(":") < 0) throw new Failure("inet_addr_of_string");
+		return new UnixInetAddr(s);
+	}
 	public static function stringOfInetAddr(a:UnixInetAddr):String return a.host;
 	public static final inetAddrAny = new UnixInetAddr("0.0.0.0");
 	public static final inetAddrLoopback = new UnixInetAddr("127.0.0.1");
+	public static final inet6AddrAny = new UnixInetAddr("::");
+	public static final inet6AddrLoopback = new UnixInetAddr("::1");
+	public static function isInet6Addr(a:UnixInetAddr):Bool return a.host.indexOf(":") >= 0;
 	public static function socket(dom:UnixSocketDomain, ty:UnixSocketType, proto:Int63, ?cloexec:Bool):UnixFileDescr {
-		if (ty != SOCK_STREAM || dom == PF_UNIX) return unsupported("socket");
+		if (ty != SOCK_STREAM || dom != PF_INET) return unsupported("socket");
+		var fd = Net.socket();
+		if (fd < 0) netFail("socket");
 		var d = new UnixFileDescr();
-		d.socket = new sys.net.Socket();
+		d.fd = fd;
 		return d;
 	}
+	public static function domainOfSockaddr(a:UnixSockaddr):UnixSocketDomain
+		return switch a { case ADDR_UNIX(_): PF_UNIX; case ADDR_INET(h, _): isInet6Addr(h) ? PF_INET6 : PF_INET; };
 	public static function connect(d:UnixFileDescr, a:UnixSockaddr):Unit {
 		switch a {
-			case ADDR_INET(h, port):
-				try d.socket.connect(new sys.net.Host(h.host), port.toInt()) catch (e:Dynamic) fail(ECONNREFUSED, "connect", "");
+			case ADDR_INET(h, port): if (Net.connect(sock(d, "connect"), ipv4(h, "connect"), port.toInt()) < 0) netFail("connect");
 			case ADDR_UNIX(_): unsupported("connect");
 		}
 		return Unit.value;
 	}
 	public static function bind(d:UnixFileDescr, a:UnixSockaddr):Unit {
 		switch a {
-			case ADDR_INET(h, port): try d.socket.bind(new sys.net.Host(h.host), port.toInt()) catch (e:Dynamic) fail(EADDRINUSE, "bind", "");
+			case ADDR_INET(h, port): if (Net.bind(sock(d, "bind"), ipv4(h, "bind"), port.toInt()) < 0) netFail("bind");
 			case ADDR_UNIX(_): unsupported("bind");
 		}
 		return Unit.value;
 	}
-	public static function listen(d:UnixFileDescr, n:Int63):Unit { d.socket.listen(n.toInt()); return Unit.value; }
-	public static function accept(d:UnixFileDescr, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixSockaddr> {
-		var c = new UnixFileDescr();
-		c.socket = d.socket.accept();
-		var peer = c.socket.peer();
-		return new Tuple2(c, ADDR_INET(new UnixInetAddr(peer.host.toString()), Int63.ofInt(peer.port)));
+	public static function listen(d:UnixFileDescr, n:Int63):Unit {
+		if (Net.listen(sock(d, "listen"), n.toInt()) < 0) netFail("listen");
+		return Unit.value;
 	}
-	public static function send(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63 return write(d, b, ofs, len);
-	public static function sendSubstring(d:UnixFileDescr, s:String, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63 return writeSubstring(d, s, ofs, len);
-	public static function recv(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63 return read(d, b, ofs, len);
+	static function sockaddr(fd:Int, peer:Bool, fn:String):UnixSockaddr {
+		var a = Net.sockName(fd, peer);
+		if (a == null) return netFail(fn);
+		if (a[1] < 0) return unsupported(fn);
+		return ADDR_INET(ofIpv4(a[0]), Int63.ofInt(a[1]));
+	}
+	public static function accept(d:UnixFileDescr, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixSockaddr> {
+		var fd = Net.accept(sock(d, "accept"));
+		if (fd < 0) netFail("accept");
+		var c = new UnixFileDescr();
+		c.fd = fd;
+		return new Tuple2(c, sockaddr(fd, true, "accept"));
+	}
+	public static function getsockname(d:UnixFileDescr):UnixSockaddr return sockaddr(sock(d, "getsockname"), false, "getsockname");
+	public static function getpeername(d:UnixFileDescr):UnixSockaddr return sockaddr(sock(d, "getpeername"), true, "getpeername");
+	static function checkRange(b:haxe.io.Bytes, ofs:Int63, len:Int63, fn:String) {
+		if (ofs.toInt() < 0 || len.toInt() < 0 || ofs.toInt() > b.length - len.toInt()) throw new InvalidArgument(fn);
+	}
+	public static function send(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63 {
+		checkRange(b, ofs, len, "Unix.send");
+		if (flags != Nil) return unsupported("send");
+		var n = Net.send(sock(d, "send"), b, ofs.toInt(), len.toInt());
+		return n < 0 ? netFail("send") : Int63.ofInt(n);
+	}
+	public static function sendSubstring(d:UnixFileDescr, s:String, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63
+		return send(d, ByteString.toBytes(s), ofs, len, flags);
+	public static function recv(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63 {
+		checkRange(b, ofs, len, "Unix.recv");
+		if (flags != Nil) return unsupported("recv");
+		var n = Net.recv(sock(d, "recv"), b, ofs.toInt(), len.toInt());
+		return n < 0 ? netFail("recv") : Int63.ofInt(n);
+	}
 	public static function shutdown(d:UnixFileDescr, c:UnixShutdownCommand):Unit {
-		d.socket.shutdown(c != SHUTDOWN_SEND, c != SHUTDOWN_RECEIVE);
+		var mode = switch c { case SHUTDOWN_RECEIVE: 0; case SHUTDOWN_SEND: 1; case SHUTDOWN_ALL: 2; };
+		if (Net.shutdown(sock(d, "shutdown"), mode) < 0) netFail("shutdown");
 		return Unit.value;
 	}
 	public static function select(r:MlList<UnixFileDescr>, w:MlList<UnixFileDescr>, e:MlList<UnixFileDescr>, timeout:Float):Tuple3<MlList<UnixFileDescr>, MlList<UnixFileDescr>, MlList<UnixFileDescr>> {
-		// Descriptors that are not sockets are always ready.
+		// Descriptors that are not sockets (files, the pipes here) are always ready.
 		function arr(l:MlList<UnixFileDescr>) { var a = []; while (true) switch l { case Nil: return a; case Cons(h, t): a.push(h); l = t; } }
 		function list(a:HArray<UnixFileDescr>):MlList<UnixFileDescr> { var l:MlList<UnixFileDescr> = Nil, i = a.length; while (i > 0) l = Cons(a[--i], l); return l; }
-		var rs = arr(r), ws = arr(w);
-		var socks = [for (d in rs) if (d.socket != null) d.socket];
-		var wsocks = [for (d in ws) if (d.socket != null) d.socket];
-		var res = sys.net.Socket.select(socks, wsocks, [], timeout < 0 ? null : timeout);
-		return new Tuple3(list([for (d in rs) if (d.socket == null || res.read.contains(d.socket)) d]), list([for (d in ws) if (d.socket == null || res.write.contains(d.socket)) d]), Nil);
+		var rs = arr(r), ws = arr(w), es = arr(e);
+		var rf = [for (d in rs) d.fd], wf = [for (d in ws) d.fd], ef = [for (d in es) d.fd];
+		if (Net.select(rf, wf, ef, timeout) < 0) netFail("select");
+		return new Tuple3(list([for (i in 0...rs.length) if (rs[i].fd < 0 || rf[i] >= 0) rs[i]]), list([for (i in 0...ws.length) if (ws[i].fd < 0 || wf[i] >= 0) ws[i]]),
+			list([for (i in 0...es.length) if (es[i].fd >= 0 && ef[i] >= 0) es[i]]));
+	}
+	public static function openConnection(a:UnixSockaddr):Tuple2<ml2hx.prim.Io.InChannel, ml2hx.prim.Io.OutChannel> {
+		var s = socket(domainOfSockaddr(a), SOCK_STREAM, Int63.zero, true);
+		try {
+			connect(s, a);
+			return new Tuple2(inChannelOfDescr(s), outChannelOfDescr(s));
+		} catch (e:haxe.Exception) {
+			close(s);
+			throw e;
+		}
+	}
+	public static function shutdownConnection(c:ml2hx.prim.Io.InChannel):Unit return shutdown(descrOfInChannel(c), SHUTDOWN_SEND);
+	public static function gethostname(_:Unit):String {
+		var h = Net.gethostname();
+		return h == null ? netFail("gethostname") : ocaml(h);
+	}
+	public static function gethostbyname(name:String):UnixHostEntry {
+		var a = Net.resolve(native(name));
+		if (a == null) throw NotFound.instance;
+		return new UnixHostEntry(name, [], PF_INET, [for (ip in a) ofIpv4(ip)]);
+	}
+	public static function gethostbyaddr(a:UnixInetAddr):UnixHostEntry {
+		var h = Net.reverse(ipv4(a, "gethostbyaddr"));
+		if (h == null) throw NotFound.instance;
+		return new UnixHostEntry(ocaml(h), [], PF_INET, [a]);
 	}
 	#end
+}
+
+class UnixHostEntry implements Block {
+	public final hName:String; public final hAliases:HArray<String>; public final hAddrtype:UnixSocketDomain; public final hAddrList:HArray<UnixInetAddr>;
+	public function new(a:String, b:HArray<String>, c:UnixSocketDomain, d:HArray<UnixInetAddr>) { hName = a; hAliases = b; hAddrtype = c; hAddrList = d; }
+	public function blockTag():Int return 0;
+	public function blockSize():Int return 4;
+	public function blockField(i:Int):Dynamic return ([hName, hAliases, hAddrtype, hAddrList] : std.Array<Dynamic>)[i];
+}
+
+// A socket as the stream of a channel.
+private class SocketInput extends haxe.io.Input {
+	final d:UnixFileDescr;
+	public function new(d:UnixFileDescr) this.d = d;
+	override public function readByte():Int {
+		var b = haxe.io.Bytes.alloc(1);
+		if (readBytes(b, 0, 1) == 0) throw new haxe.io.Eof();
+		return b.get(0);
+	}
+	override public function readBytes(b:haxe.io.Bytes, pos:Int, len:Int):Int {
+		var n = Unix.recv(d, b, Int63.ofInt(pos), Int63.ofInt(len), Nil).toInt();
+		if (n == 0 && len > 0) throw new haxe.io.Eof();
+		return n;
+	}
+}
+private class SocketOutput extends haxe.io.Output {
+	final d:UnixFileDescr;
+	public function new(d:UnixFileDescr) this.d = d;
+	override public function writeByte(c:Int) {
+		var b = haxe.io.Bytes.alloc(1);
+		b.set(0, c);
+		writeBytes(b, 0, 1);
+	}
+	override public function writeBytes(b:haxe.io.Bytes, pos:Int, len:Int):Int return Unix.send(d, b, Int63.ofInt(pos), Int63.ofInt(len), Nil).toInt();
 }

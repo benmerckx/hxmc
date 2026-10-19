@@ -54,3 +54,14 @@ let () =
   print_endline (String.concat "," (names [new leaf "p" 1; new leaf "q" 2]));
   let rec total = function [] -> 0 | o :: r -> o#v + total r in
   Printf.printf "%d\n" (total [object method v = 1 end; object method v = 2 end])
+class counter = object
+  val n = 0
+  val label = "c"
+  method n = n
+  method label = label
+  method bump = {< n = n + 1 >}
+end
+let () =
+  let a = new counter in
+  let b = a#bump#bump in
+  Printf.printf "%d %d %s %b\n" a#n b#n b#label (a == b)
