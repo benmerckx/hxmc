@@ -1,5 +1,11 @@
 name: ml2hx
 on:
+  push:
+    paths:
+      - 'tools/ml2hx/**'
+      - 'haxe/upstream'
+      - 'Makefile'
+      - '.github/workflows/ml2hx.yml'
   pull_request:
     paths:
       - 'tools/ml2hx/**'
