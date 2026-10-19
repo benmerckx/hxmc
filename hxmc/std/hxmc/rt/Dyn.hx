@@ -974,6 +974,9 @@ class Dyn {
 		var t = described(e);
 		if (tk(ty(t)) != TK_ENUM || index < 0 || index >= tag(ty(t))) Rt.rt_throw("Invalid enum constructor");
 		var ct = ctor(ty(t), index);
+		// (its own value: `==` to the constructor)
+		var g = single(ty(ct));
+		if (g >= 0) return Mem.getRef(globalSlot(g), 0);
 		var n = slotCount(ty(ct));
 		var o = Mem.alloc(n > 0 ? n : 1, ct, K_OBJ);
 		for (i in 0...nfields(ty(ct))) {

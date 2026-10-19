@@ -386,6 +386,26 @@ What a production version needs:
   values (no Eval values in between), which an engine sharing the
   compiler's heap allows.
 
+#### On a real app (Oct 19)
+
+The prototype crashes on a markup-heavy app. Built at 69d3f39 in WSL
+(`bin/jit/haxe`, `-D hxmc.jit`), cross-compiling a small `@hxmc/ui` app
+under `Shadcn.sheet` for `windows-x86_64`:
+
+| Mode | Result |
+| --- | --- |
+| `hxmc.macros=eval` | builds, 5.95 s, macros 3.3 s |
+| `hxmc.macros=native` | segmentation fault on the first call, `MarkupMacro.build`, before its "compiled" line |
+| `hxmc.macros=verify` | compiles `MarkupMacro` and `AttrMacro`, then a segmentation fault after 139 s |
+
+Next: fix the crash with this app as the test case (any `@hxmc/ui`
+example under the theme should reproduce it) and add a ui example to
+`make native-macros`. Then measure. This app's macro time is mostly
+API-bound (`NodeRenderer.setProperty`, 1426 calls), which the prototype
+found no faster natively, so expect the real gain only from cached macro
+objects plus the shared-AST engine above. Windows and macOS hosts (W^X,
+`VirtualProtect`, `MAP_JIT`) after that.
+
 ### Bootstrap plus bundled program
 
 Executables made of a small native bootstrap (runtime, code generator,

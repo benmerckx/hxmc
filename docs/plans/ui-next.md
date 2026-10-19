@@ -196,6 +196,18 @@ input bridge in
     platforms' shapers behind one interface, with the choice justified;
     `TextLayout` keeps line breaking, bidi and carets.
 
+## Showcase examples
+
+Gallery examples that show what a drawn UI on the GPU can do, each
+doubling as a frame benchmark (frame pacing, longest pause):
+
+- an instrument panel with shader-drawn controls (exercises per-node
+  shaders, [graphics.md](graphics.md#rendering-capability));
+- a long feed with images (virtual lists, image decoding off the main
+  thread, frame pacing);
+- a GPU fractal or particle view;
+- one real app.
+
 ## Also open
 
 - Android native editors: ui renders into NativeActivity's surface, and

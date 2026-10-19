@@ -173,6 +173,38 @@ site) and Android's native controls ([targets.md](targets.md)).
 Engines: a compatibility layer for HashLink's natives (`sdl.hdll`,
 `directx.hdll`, `fmt`) on top of os and gfx would run Heaps unchanged.
 
+## Frames in step with the display
+
+- Frames driven by the display: `Choreographer` on Android, `CADisplayLink`
+  on iOS and macOS, a waitable swap chain or `DwmFlush` on Windows,
+  `requestAnimationFrame` in the browser. 120 Hz displays supported.
+- To consider: a UI thread (input, signals, layout, recording draw
+  commands) apart from a render thread (GPU submit and present), so a slow
+  layout and a slow GPU frame do not add up. Measure whether it pays
+  before committing: it touches the `hxmc.os` loop and who owns the
+  `Device`.
+
+The collector's side of a frame (collecting between frames, pause
+budgets): [runtime.md](runtime.md#frames-and-pauses).
+
+## Rendering capability
+
+- **Partial redraw**: damage tracked per frame, only what changed redrawn,
+  with the platform's present-with-dirty-rects where there is one.
+  Measure power on a laptop and a phone.
+- **Static subtrees cached as textures**, invalidated from the node tree.
+- **Paths, strokes, blur** (`backdrop-filter`, shadows on any shape) and
+  path clipping on the GPU, together with [document.md](document.md)'s
+  Canvas work.
+- **Shaders per node**: a node attaches a gfx shader to its paint, written
+  in Haxe and compiled at build time like today's shaders, with its rect,
+  states and tokens as inputs: effects a box, border and shadow model
+  cannot express. Nodes without one keep the one-draw-call path.
+- **Shaders compiled at build time, always**: no shader compilation (and
+  its stutter) during a frame, by design; a test asserts that none
+  happens.
+- Later: Vulkan on Android, wide colour gamut and HDR.
+
 ## Audio
 
 Output is built (`hxmc.os.audio`, packages/os/README.md: a pull model,

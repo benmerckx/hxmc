@@ -370,9 +370,13 @@ class Driver {
 			if (ras == null) ras = new Regalloc.Scratch(Target.selector(abi));
 			for (f in byModule.get(order[mi]))
 				compileFunc(f, obj, emit, ras);
-			lock.acquire();
-			scratches.push(ras);
-			lock.release();
+			// (one grown by a giant function is dropped: kept, its arrays would
+			// hold hundreds of MB per thread until the end of the build)
+			if (!ras.oversized()) {
+				lock.acquire();
+				scratches.push(ras);
+				lock.release();
+			}
 			// (WebAssembly objects are not cached: ElfWriter has no relocations for them)
 			if (!abi.wasm) {
 				var b = ElfWriter.write(obj, abi.arm);

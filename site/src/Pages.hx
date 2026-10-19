@@ -366,6 +366,8 @@ class Pages implements Markup {
 	public static final PACKAGES = [
 		["os", "@hxmc/os", "Windows, input, the app loop and audio: X11, Cocoa, Win32 and the browser's canvas; ALSA, Core Audio, WASAPI and WebAudio.", "Windows, input, audio"],
 		["gfx", "@hxmc/gfx", "A portable GPU API shaped like WebGPU, on OpenGL and GLES, Metal, Direct3D 11, WebGPU and WebGL2, with shaders written in Haxe.", "A GPU API, shaders in Haxe"],
+		["3d", "@hxmc/3d", "A scene layer for 3D games on gfx: math shared with the shaders, a handle-based scene graph, glTF 2.0 with typed references, a lit PBR renderer with shadows, instancing and skinning, input actions, animation.", "3D scenes, glTF, PBR"],
+		["physics", "@hxmc/physics", "A small rigid-body core for @hxmc/3d: spheres, boxes and planes, contacts with restitution and friction, sleeping, raycasts, deterministic on every target.", "Rigid bodies"],
 		["text", "@hxmc/text", "TrueType in pure Haxe: parsing, an anti-aliased rasterizer, shaping with kerning and fallback fonts, bidi and Arabic, line layout, a glyph atlas.", "Fonts, shaping, layout"],
 		["view", "@hxmc/view", "Signals and JSX-like markup on every target: fine-grained reactivity, markup compiled to direct calls on a renderer chosen at compile time.", "Signals and markup"],
 		["ui", "@hxmc/ui", "A UI toolkit: flexbox layout checked against Chromium's, events and focus, widgets, drawn on the GPU or as the platform's own controls.", "Layout, widgets, focus"],
@@ -389,7 +391,7 @@ class Pages implements Markup {
 	}
 
 	static function Packages(props:{examples:Array<Example>}):View {
-		return <Page title="Packages" section="Packages" description="The hxmc packages, in pure Haxe: os, gfx, text, view, ui and web.">
+		return <Page title="Packages" section="Packages" description="The hxmc packages, in pure Haxe: os, gfx, 3d, physics, text, view, ui and web.">
 			<Hero title="Packages">
 				<p class="lead">Libraries in pure Haxe that call the system directly, with no C of their own. On npm, found by <code>-lib</code>; native on every desktop target, and WebAssembly in the browser.</p>
 				<nav class="links" aria-label="Packages">{[for (p in PACKAGES) <a href={"#" + p[0]}>{p[1]}</a>]}</nav>
@@ -426,7 +428,7 @@ class Pages implements Markup {
 	// --- Examples ---
 
 	static function ExamplesPage(props:{examples:Array<Example>}):View {
-		var order = ["gfx", "ui", "text", "os", "view", "web"];
+		var order = ["gfx", "3d", "physics", "ui", "text", "os", "view", "web"];
 		var sorted = props.examples.copy();
 		sorted.sort((a, b) -> order.indexOf(a.pkg) - order.indexOf(b.pkg));
 		var groups = [for (p in order) if (Lambda.exists(sorted, e -> e.pkg == p)) p];

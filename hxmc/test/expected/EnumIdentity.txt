@@ -1,0 +1,16 @@
+exit 0
+3 Red,Green,Blue
+true true true
+true
+true
+true
+true
+true
+true
+true
+false true Rgb(1,2,3)
+green
+2 2
+switch green
+true true
+true

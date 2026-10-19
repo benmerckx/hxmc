@@ -515,6 +515,30 @@ export default function (host) {
 			} else if (navigator.clipboard?.readText) navigator.clipboard.readText().then(deliver, () => deliver(null));
 			else deliver(null);
 		},
+		// gamepad i (Gamepads.hx): its buttons' values then its axes into p
+		gamepad_state(i, p) {
+			const pad = navigator.getGamepads ? navigator.getGamepads()[i] : null;
+			if (!pad || !pad.connected) return 0;
+			const f = new Float32Array(host.memory().buffer, p, 21);
+			for (let b = 0; b < 17; b++) f[b] = pad.buttons[b] ? pad.buttons[b].value || (pad.buttons[b].pressed ? 1 : 0) : 0;
+			for (let a = 0; a < 4; a++) f[17 + a] = pad.axes[a] ?? 0;
+			return 1;
+		},
+		// a fetch (Fetch.hx): started, polled, its body taken
+		fetch_start(p) {
+			const f = { state: 0, body: null };
+			fetch(new URL(host.string(p), document.baseURI)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(r.status))).then(
+				(b) => { f.body = new Uint8Array(b); f.state = 1; }, () => { f.state = -1; });
+			return host.handles.add(f);
+		},
+		fetch_state: (h) => host.handles.get(h).state,
+		fetch_length: (h) => host.handles.get(h).body?.length ?? 0,
+		fetch_take(h, p) {
+			const f = host.handles.get(h);
+			if (f.body) new Uint8Array(host.memory().buffer, p, f.body.length).set(f.body);
+			host.handles.remove(h);
+		},
+		fetch_free: (h) => host.handles.remove(h),
 		// a string handle's UTF-8 length, then its bytes into p (the handle freed)
 		text_length: (h) => new TextEncoder().encode(host.handles.get(h)).length,
 		text_take(h, p) {

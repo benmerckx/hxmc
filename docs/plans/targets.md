@@ -25,6 +25,11 @@ the legacy encoding). Left:
   module, of i64 values also used in full: a second, i32 local for those
   with many address uses, or an i32 pointer type in Mir, would remove most
   (about 480 KB raw, little gzipped).
+- Size and startup of UI apps: a small canvas app is about 1.8 MB of wasm,
+  against about 44 KB of JavaScript with the DOM renderer. Link-time dead
+  code elimination ([compiler.md](compiler.md#central-object-cache-and-quieter-builds))
+  first, then code splitting with lazily loaded wasm modules; time to
+  first frame measured on a mid-range phone.
 - The playground's module size (10.8 MB, 2.1 MB gzipped): folding a call
   into its user (30 KB raw, but 16 KB more gzipped), fewer wraps.
 

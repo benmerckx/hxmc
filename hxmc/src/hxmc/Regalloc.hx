@@ -116,6 +116,11 @@ class Scratch {
 			isFpr[c] = 2;
 	}
 
+	// whether its arrays grew past what an ordinary function needs (a million
+	// positions: 500,000 instructions)
+	public function oversized():Bool
+		return count.length > 1 << 20;
+
 	// a resized to n copies of v
 	public static function fill(a:Array<Int>, n:Int, v:Int):Array<Int> {
 		a.resize(n);
@@ -148,6 +153,13 @@ class Regalloc {
 		this.s = s != null ? s : new Scratch(t);
 	}
 
+	// From the third round on, an interval that finds no register is spilled
+	// itself instead of evicting cheaper ones: each eviction moved the
+	// conflict on to the next of a chain of intervals, a round each (a
+	// function of 2 million values took 40 rounds of 1.5 s, now 4). Few
+	// functions get there (the tool's build: 5 rounds fewer of 15,169).
+	static inline var LATE = 2;
+	var lateRound = false;
 	public var rounds = 0; // allocation rounds run (statistics)
 	public var insns = 0; // instructions they went through
 
@@ -168,6 +180,7 @@ class Regalloc {
 			rounds++;
 			for (b in f.blocks)
 				insns += b.ins.length;
+			lateRound = round >= LATE;
 			var spilled = allocate();
 			if (spilled.length == 0) {
 				coldSaves();
@@ -542,7 +555,7 @@ class Regalloc {
 				// the register whose overlapping intervals cost least to spill
 				// (weight per position covered), if less than this one
 				var best = -1;
-				var bestCost = r >= noSpillFrom ? 1e300 : weight[r] / len[r];
+				var bestCost = r >= noSpillFrom ? 1e300 : lateRound ? -1.0 : weight[r] / len[r];
 				for (c in regs) {
 					if (masked(c) || fixedOverlapSegs(c, r)) continue;
 					var cost = 0.0;

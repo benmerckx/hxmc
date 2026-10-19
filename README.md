@@ -81,6 +81,9 @@ npm i -D @hxmc/gfx
 | --- | --- |
 | `@hxmc/os` | windows, input and the app loop: X11, Cocoa, Win32, Android's NativeActivity, UIKit and the browser canvas |
 | `@hxmc/gfx` | a portable GPU API with back ends for GL/GLES (Linux, Android), Metal (macOS, iOS), D3D11 (Windows), WebGPU and WebGL2 (browser), and shaders written in Haxe (compiled to GLSL, WGSL, MSL, HLSL); see `packages/gfx/examples/Triangle.hx` and `Cube.hx` |
+| `@hxmc/3d` | a scene layer for 3D games on gfx: math shared with the shaders, a handle-based scene graph, cameras, glTF 2.0 (typed `Model.of` references), a lit PBR renderer (shadows with cascades, instancing, skinning, morph targets, normal maps, blending, an environment map, sky, particles), build-time packed models, input actions, keyframe animation, a debug overlay; see `packages/3d/examples/GltfViewer.hx` and the plan, `docs/plans/3d.md` |
+| `@hxmc/physics` | a small rigid-body core for `@hxmc/3d`: spheres, boxes, capsules and planes, contacts with restitution and friction, joints, a walking character, sleeping, raycasts, deterministic on every target; see `packages/physics/examples/Falling.hx` and `Walker.hx` |
+| `@hxmc/3d-ui` | `@hxmc/view`'s markup and signals on `@hxmc/3d`'s scene graph (a prototype): nodes, meshes, lights and cameras as elements, properties bound to signals |
 | `@hxmc/text` | TrueType fonts in pure Haxe: parsing, an anti-aliased rasterizer, shaping with kerning and fallback fonts, bidi and Arabic shaping, line layout, a glyph atlas, the system's fonts |
 | `@hxmc/view` | signals and JSX-like markup for Haxe on every target: fine-grained reactivity as Solid has it, markup compiled to direct calls on a renderer chosen at compile time; components are type-checked calls |
 | `@hxmc/web` | `@hxmc/view` on the web: a DOM renderer (JavaScript), static HTML rendered at build time, hydration, islands in JavaScript or WebAssembly with a small loader, typed calls from JavaScript into wasm32-wasi modules |

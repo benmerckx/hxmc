@@ -623,6 +623,11 @@ jobs:
           make rt && touch bin/hxmc/rt/*/*.o
           make gfx-shader-check
           make gfx-check GFX_TARGET=linux-x86_64
+      - name: 3d (Eval, natively, wasm32-wasi; Mesa llvmpipe)
+        run: |
+          set -ex
+          make 3d-check GFX_TARGET=linux-x86_64
+          make 3d-sizes
       - name: audio (ALSA's null and file devices)
         run: make audio-check AUDIO_TARGET=linux-x86_64
       - name: touch (TouchDrag, the gesture of Android and iOS)
@@ -633,6 +638,7 @@ jobs:
           npm install --no-save --silent playwright@1.56.1
           npx playwright install --with-deps chromium > /dev/null
           make gfx-web-check
+          make 3d-web-check
           # (the module cache across WasmGC and native builds on one store)
           make gfx-cache-check
       - name: audio (WebAudio in Chromium)
@@ -653,21 +659,23 @@ jobs:
       - name: The ARM64 programs
         run: |
           set -ex
-          make gfx-programs ui-programs GFX_TARGET=linux-arm64
+          make gfx-programs ui-programs 3d-programs GFX_TARGET=linux-arm64
+          cp bin/3d/linux-arm64/RenderTest bin/gfx/linux-arm64/
           make audio-programs AUDIO_TARGET=linux-arm64
           cp bin/audio/linux-arm64/AudioTest bin/ui/linux-arm64/UiDrawTest bin/ui/linux-arm64/TodoTest bin/ui/linux-arm64/GalleryTest bin/gfx/linux-arm64/
-          tar czf bin/gfx-linux-arm64.tar.gz -C bin/gfx/linux-arm64 GfxTest Triangle Cube AudioTest UiDrawTest TodoTest GalleryTest
+          tar czf bin/gfx-linux-arm64.tar.gz -C bin/gfx/linux-arm64 GfxTest Triangle Cube AudioTest UiDrawTest TodoTest GalleryTest RenderTest
       - uses: actions/upload-artifact@v7
         with: {name: gfx-linux-arm64, path: bin/gfx-linux-arm64.tar.gz, retention-days: 3}
       - name: The Windows programs
         run: |
           set -ex
           for t in windows-x86_64 windows-arm64; do
-            make gfx-programs ui-programs GFX_TARGET=$t
+            make gfx-programs ui-programs 3d-programs GFX_TARGET=$t
+            cp bin/3d/$t/RenderTest.exe bin/gfx/$t/
             make audio-programs AUDIO_TARGET=$t
             make devhost-programs GFX_TARGET=$t
             cp bin/audio/$t/AudioTest.exe bin/ui/$t/UiDrawTest.exe bin/ui/$t/ClipboardTest.exe bin/ui/$t/NativeTest.exe bin/ui/$t/WinAccessTest.exe bin/ui/$t/EmojiTest.exe bin/ui/$t/WindowTest.exe bin/gfx/$t/
-            tar czf bin/gfx-$t.tar.gz -C bin/gfx/$t GfxTest.exe Triangle.exe Cube.exe AudioTest.exe UiDrawTest.exe ClipboardTest.exe NativeTest.exe WinAccessTest.exe EmojiTest.exe WindowTest.exe dev
+            tar czf bin/gfx-$t.tar.gz -C bin/gfx/$t GfxTest.exe Triangle.exe Cube.exe AudioTest.exe UiDrawTest.exe ClipboardTest.exe NativeTest.exe WinAccessTest.exe EmojiTest.exe WindowTest.exe RenderTest.exe dev
           done
       - uses: actions/upload-artifact@v7
         with: {name: gfx-windows, path: "bin/gfx-windows-*.tar.gz", retention-days: 3}
@@ -686,6 +694,7 @@ jobs:
             packages/gfx/test
             packages/ui/test
             packages/os/test
+            packages/3d/test
       - uses: actions/download-artifact@v8
         with: {name: gfx-linux-arm64, path: dl}
       - name: gfx (Mesa llvmpipe, Xvfb)
@@ -700,6 +709,8 @@ jobs:
           env -u DISPLAY gfx/UiDrawTest packages/ui/test/draw.png gfx/draw.png
           env -u DISPLAY gfx/TodoTest packages/ui/test/todo.png gfx/todo.png
           env -u DISPLAY gfx/GalleryTest packages/ui/test/gallery.png gfx/gallery.png
+          # (packages/3d's frames)
+          sh packages/3d/test/check.sh gfx
       - name: audio (ALSA's null and file devices)
         run: sh packages/os/test/audio.sh gfx
       - uses: actions/upload-artifact@v7
@@ -863,6 +874,7 @@ jobs:
           sparse-checkout: |
             packages/gfx/test
             packages/os/test
+            packages/3d/test
       - uses: actions/download-artifact@v8
         with: {name: gfx-windows, path: dl}
       - name: gfx (D3D11 WARP, Win32)
@@ -883,6 +895,8 @@ jobs:
           HXMC_GFX_SOFTWARE=1 gfx/EmojiTest.exe none gfx/emoji.png
           # (a window's title, size and minimum size, read back)
           gfx/WindowTest.exe
+          # (packages/3d's frames on WARP)
+          sh packages/3d/test/check.sh gfx
       - name: hxmc dev's host (two builds swapped into the running process, docs/dev.md)
         if: ${{ !cancelled() }}
         run: HXMC_GFX_SOFTWARE=1 sh packages/gfx/test/host-dev.sh gfx/dev dll host.exe

@@ -449,7 +449,11 @@ class Loader {
 			if (g.init != null) Mem.setRef(Gc.globals, 8 * g.idx, Mem.alloc(1, num.get(g.init), 0));
 		var singletons:Array<Dynamic> = facts.singletons;
 		for (s in singletons)
-			if (gindex.exists(s.global)) b.singletons.set(num.get(s.ty), gindex.get(s.global));
+			if (gindex.exists(s.global)) {
+				b.singletons.set(num.get(s.ty), gindex.get(s.global));
+				// (Type.createEnum finds it there: Types.single)
+				Mem.setI32(Mem.sym("rt_types").add(num.get(s.ty) * TS), 84, gindex.get(s.global) + 1);
+			}
 		// ---- the static initializers of the new classes, in order
 		dbg("the static initializers of the new classes, in order");
 		var inits:Array<Dynamic> = facts.inits;

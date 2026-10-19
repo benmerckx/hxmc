@@ -29,7 +29,8 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `macro/` | native macros, a prototype (`haxe` built with `-D hxmc.jit`, Linux x86-64; `-D hxmc.macros=native\|verify`): macro classes compiled by hxmc and linked into the running compiler, behind the macro engine seam `haxe/src/macros/MacroEngine.hx` ([plans/compiler.md](plans/compiler.md), "Native macros") |
 
 Conventions: references live across a GC point are shadow-stack slots
-(cold sites spill only on the slow path); `try` is `rt_handler` with the C
+(cold sites spill only on the slow path; a reference live across the slow
+paths of more than 32 is rooted instead, `Roots.hx`); `try` is `rt_handler` with the C
 library's `_setjmp`; calls follow the target's C ABI; a `@:hxmc.struct`
 value is the address of its memory (a frame slot, an object's inline
 field, memory behind a `Ptr`), copied on assignment (also through Haxe's

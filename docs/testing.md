@@ -103,7 +103,10 @@ fuzzer programs, compiled by the tool, run with a 64 KB nursery (a missing
 root shows) and compared with their golden files, which are frozen (the
 outputs of hxc, the C target hxmc came from): a new case gets one with
 `--bless` (checked by hand), a changed output is an edit of its golden file
-with the reason in the commit. `Crosshost`: the tool as a WebAssembly module
+with the reason in the commit. A `// build-seconds: <n>` line of a case bounds
+the tool's time to build it (`BigInit`: a function of a thousand nested
+constructor calls, the shape of ml2hx's generated tables, once a minute of
+register allocation). `Crosshost`: the tool as a WebAssembly module
 writes the same bytes as the native tool, for every target, itself included.
 `RT_VERIFY=1` fills the free nursery with a pattern, so uninitialized
 allocations and missed roots show at once. `ModuleCacheCheck` (`make
@@ -199,6 +202,25 @@ required checks yet).
 `gfx-check` and `gfx-web-check` also draw `FeatureScene` (buffer and texture
 writes, R8 and RGBA8 textures, blending, scissor) against
 `packages/gfx/test/features.png`.
+`make 3d-check` (CI's `gfx` job): `@hxmc/3d` ([plans/3d.md](plans/3d.md)): its
+math (quaternions against gfx's rotation matrices, inverses, decomposition,
+bounds), the scene graph's matrices and their cache, the camera and the
+fixed-step clock, and the glTF reader (the sample scene of
+`packages/3d/test/SampleModel.hx` as .glb and .gltf, its accessors, the
+hierarchy as scene nodes, files it must reject), on Eval, natively and as
+wasm32-wasi (`packages/3d/test/SceneTest.hx`, `GltfTest.hx`;
+`@hxmc/physics`: `packages/physics/test/PhysicsTest.hx`, its checksum the
+same on all three), input
+actions from synthetic events natively and as wasm32-wasi (`InputTest.hx`),
+a `Model.of` reference to a name the file lacks rejected, `@hxmc/3d-ui`'s
+markup on the scene graph natively (`packages/3d-ui/test/SceneUiTest.hx`), then the
+renderer's frames (`packages/3d/test/Scenes.hx`: the sample glTF scene)
+headless against `packages/3d/test/<scene>.png` by the rule above
+(`RenderTest`, `check.sh`; `make 3d-programs GFX_TARGET=<target>` builds it
+for another target: CI runs the ARM64 one on llvmpipe (`gfx-arm64`) and the
+Windows ones on D3D11's WARP (`gfx-windows`), and `check.sh` runs a Windows
+build under Wine on Linux); `make 3d-web-check`: the same on WebGPU and
+WebGL2 in headless Chromium (`packages/3d/test/web.mjs`).
 
 ## UI
 

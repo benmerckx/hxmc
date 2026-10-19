@@ -53,6 +53,11 @@ ELF, Mach-O and PE, and a COFF symbol table on Windows. Checked by
 - WebAssembly: DWARF in custom sections (`.debug_line` with code offsets)
   for the browsers' and wasmtime's debuggers.
 
+These four (PDB, `__unwind_info`, variables, wasm DWARF) are now Next on
+the roadmap. After them: a sampling profiler with symbols, and symbolised
+crash reports on every target; the profiler feeds a frame timeline
+(frames, layout, GPU, collections) for UI programs.
+
 ## Smaller items
 
 - Thread-locals: inline macOS's TLV thunk call (a call per function

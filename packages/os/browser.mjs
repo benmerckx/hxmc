@@ -36,7 +36,13 @@
 // WASI preview 1 is what the runtime needs without a file system: the
 // arguments and environment, stdout and stderr (lines to options.stdout and
 // options.stderr, else the console), the clocks, random bytes, proc_exit;
-// any other function fails with ENOSYS.
+// any other function fails with ENOSYS. Files a program reads are fetched
+// before it starts, in parallel with the module's download and compilation,
+// and served read-only from a preopened "." (sys.io.File.getBytes and
+// friends): options.files ({path: URL}) and options.assets (the URL of a
+// JSON list of paths, relative to it: the one a build writes beside the
+// module for the files its static references name, e.g. @hxmc/3d's
+// Model.of; <module>.assets.json).
 //
 // A module built with -D hxmc.wasm-gc (its Haxe values in the engine's
 // collector, a small linear memory for what crosses to the host: the same
@@ -149,6 +155,9 @@ class Exit {
 }
 
 export async function run(wasm, options = {}) {
+	// (the files, fetched while the module loads)
+	const files = fetchFiles(options);
+	let served = null;
 	const args = ['main.wasm', ...(options.args ?? [])];
 	const env = Object.entries(options.env ?? {}).map(([k, v]) => `${k}=${v}`);
 	let memory = null, exports = null;
@@ -294,7 +303,85 @@ export async function run(wasm, options = {}) {
 			return 0;
 		},
 		sched_yield: () => 0,
-		fd_prestat_get: () => 8, // EBADF: no preopened directories
+		// (a read-only "." of the fetched files, fd 3, when there are any)
+		fd_prestat_get(fd, out) {
+			if (fd !== 3 || !served) return 8; // EBADF
+			view().setUint8(out, 0);
+			view().setUint32(out + 4, 1, true);
+			return 0;
+		},
+		fd_prestat_dir_name(fd, p, n) {
+			if (fd !== 3 || !served) return 8;
+			bytes(p, 1)[0] = 46; // "."
+			return 0;
+		},
+		fd_fdstat_get(fd, out) {
+			const f = fd === 3 && served ? { dir: true } : open.get(fd);
+			if (!f) return 8;
+			const v = view();
+			v.setUint8(out, f.dir ? 3 : 4);
+			v.setUint16(out + 2, 0, true);
+			v.setBigUint64(out + 8, 0xffffffffn, true);
+			v.setBigUint64(out + 16, 0xffffffffn, true);
+			return 0;
+		},
+		path_open(dirfd, lookup, p, n, oflags, base, inh, fdflags, out) {
+			if (dirfd !== 3 || !served) return 8;
+			const path = new TextDecoder().decode(bytes(p, n).slice()).replace(/^\.\//, '');
+			const data = served.get(path);
+			if (!data) return 44; // ENOENT
+			if (oflags & 9) return 63; // EPERM: no creating or truncating here
+			const fd = nextFd++;
+			open.set(fd, { data, pos: 0 });
+			view().setUint32(out, fd, true);
+			return 0;
+		},
+		path_filestat_get(dirfd, lookup, p, n, out) {
+			if (dirfd !== 3 || !served) return 8;
+			const data = served.get(new TextDecoder().decode(bytes(p, n).slice()).replace(/^\.\//, ''));
+			if (!data) return 44;
+			stat(out, data.length);
+			return 0;
+		},
+		fd_filestat_get(fd, out) {
+			const f = open.get(fd);
+			if (!f) return 8;
+			stat(out, f.data.length);
+			return 0;
+		},
+		fd_read(fd, iovs, n, read) {
+			const f = open.get(fd);
+			if (!f) return 8;
+			const v = view();
+			let total = 0;
+			for (let i = 0; i < n; i++) {
+				const p = v.getUint32(iovs + 8 * i, true), len = v.getUint32(iovs + 8 * i + 4, true);
+				const chunk = f.data.subarray(f.pos, f.pos + len);
+				bytes(p, chunk.length).set(chunk);
+				f.pos += chunk.length;
+				total += chunk.length;
+				if (chunk.length < len) break;
+			}
+			view().setUint32(read, total, true);
+			return 0;
+		},
+		fd_seek(fd, offset, whence, out) {
+			const f = open.get(fd);
+			if (!f) return 8;
+			const base = whence === 0 ? 0 : whence === 1 ? f.pos : f.data.length;
+			f.pos = Math.max(0, base + Number(offset));
+			view().setBigUint64(out, BigInt(f.pos), true);
+			return 0;
+		},
+		fd_tell(fd, out) {
+			const f = open.get(fd);
+			if (!f) return 8;
+			view().setBigUint64(out, BigInt(f.pos), true);
+			return 0;
+		},
+		fd_close(fd) {
+			return open.delete(fd) ? 0 : 8;
+		},
 		proc_exit(code) {
 			throw new Exit(code);
 		},
@@ -362,6 +449,16 @@ export async function run(wasm, options = {}) {
 			return op === 15 ? date.getTimezoneOffset() : Date.now();
 		},
 	};
+	// (a filestat: a regular file of size bytes)
+	function stat(out, size) {
+		const v = view();
+		for (let k = 0; k < 64; k += 8) v.setBigUint64(out + k, 0n, true);
+		v.setUint8(out + 16, 4);
+		v.setBigUint64(out + 24, 1n, true);
+		v.setBigUint64(out + 32, BigInt(size), true);
+	}
+	const open = new Map();
+	let nextFd = 4;
 	const imports = { wasi_snapshot_preview1: new Proxy(wasi, { get: (o, k) => o[k] ?? (() => 52) }), hxmc: gc }; // ENOSYS
 	for (const m of options.imports ?? []) {
 		const f = typeof m === 'string' ? (await import(new URL(m, document.baseURI).href)).default : m;
@@ -380,6 +477,7 @@ export async function run(wasm, options = {}) {
 	}
 	exports = instance.exports;
 	memory = exports.memory;
+	served = await files;
 	try {
 		exports._start();
 	} catch (e) {
@@ -387,6 +485,24 @@ export async function run(wasm, options = {}) {
 		host.exitCode = e.code;
 	}
 	return { host, instance, exitCode: host.exitCode ?? 0 };
+}
+
+// the files run serves (options.files, options.assets' list), fetched at
+// once: a Map of path to bytes, or null without any
+async function fetchFiles(options) {
+	const urls = Object.entries(options.files ?? {});
+	if (options.assets) {
+		const base = new URL(options.assets, document.baseURI);
+		const list = await (await fetch(base)).json();
+		for (const p of list) urls.push([p, new URL(p, base).href]);
+	}
+	if (urls.length === 0) return null;
+	const got = await Promise.all(urls.map(async ([p, u]) => {
+		const r = await fetch(u);
+		if (!r.ok) throw new Error(`${p}: ${r.status} ${r.statusText}`);
+		return [p.replace(/^\.\//, ''), new Uint8Array(await r.arrayBuffer())];
+	}));
+	return new Map(got);
 }
 
 // a RangeError where the browser refused memory, as "out of memory: ..." with

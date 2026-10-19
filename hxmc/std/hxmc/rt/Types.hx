@@ -110,6 +110,10 @@ class Types {
 	public static inline function tag(ty:Ptr):Int
 		return Mem.getI32(ty, 80);
 
+	// a constructor without arguments: the rt_globals index of its value, else -1
+	public static inline function single(ty:Ptr):Int
+		return Mem.getI32(ty, 84) - 1;
+
 	public static inline function ctor(ty:Ptr, i:Int):Int
 		return Mem.getI32At(Mem.getPtr(ty, 88), 0, i);
 

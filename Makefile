@@ -117,7 +117,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help std deps rt rt-build rt-target rt-layouts hxmc tool bootstrap fixpoint stage0 crosshost port dev release wasm npm site fuzz \
 	lix lix-release lix-dist reference bench bench-arrays test test-fuzz test-display test-server test-jsonrpc test-unit-targets test-interp \
-	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test corpus-stage gfx-programs gfx-check gfx-web-check gfx-cache-check gfx-shader-check \
+	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test corpus-stage gfx-programs gfx-check gfx-web-check gfx-cache-check gfx-shader-check 3d-programs 3d-check 3d-web-check 3d-sizes \
 	android-programs android-check android-device-check touch-check shared-check ios-programs ios-check ios-sim-check \
 	audio-programs audio-check audio-web-check native-macros ui-programs view-check web-check text-check ui-check ui-layout-fuzz ui-layout-reduce theme-check theme-fidelity-check theme-dom-check web-widgets ui-draw-check ui-web-check dev-check portcheck measure site-check \
 	quick check full clean distclean wasmgc-check wasmgc-bench wasmgc-port test-wasmgc-port
@@ -197,6 +197,16 @@ help:
 ## gfx-shader-check  packages/gfx's shader macro on Eval: shaders run on the CPU, the emitted
 ##             GLSL, WGSL, MSL and HLSL against packages/gfx/test/shader/, the programs it must
 ##             reject (packages/gfx/test/ShaderTest.hx; BLESS=1 rewrites the sources)
+## 3d-check    packages/3d (docs/plans/3d.md): the math, the scene graph, the camera and the fixed-step
+##             clock, the glTF reader on the sample scene, on Eval, natively and as wasm32-wasi
+##             (packages/3d/test/SceneTest.hx, GltfTest.hx) and packages/physics (PhysicsTest.hx); input actions natively and as wasm32-wasi
+##             (InputTest.hx); then the renderer's frames headless against
+##             golden images (packages/3d/test/check.sh: RenderTest, Scenes.hx; Linux: Mesa)
+## 3d-programs packages/3d's RenderTest for GFX_TARGET (any of the six: check.sh runs it, Windows's under Wine)
+## 3d-sizes    what each feature of packages/3d adds to a program, natively and as wasm32-wasi
+##             (packages/3d/test/size)
+## 3d-web-check  packages/3d's frames on WebGPU and WebGL2 in headless Chromium (packages/3d/test/web.mjs),
+##             Model.of's files fetched before main; then built with -D hxmc.wasm-gc
 ## view-check  packages/view on Eval, natively and in JavaScript (the port, node): signals, markup
 ##             (elements, attributes, whitespace, components, text runs, reactive values), the control
 ##             flow components, on two test renderers with boundaries between them, and the programs
@@ -698,6 +708,65 @@ audio-web-check: $(TOOL) $(STD)
 gfx-shader-check: $(TOOL)
 	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp packages/gfx/src -cp packages/gfx/examples -cp packages/gfx/test --run ShaderTest $(TOOL) $(if $(BLESS),--bless)
 
+# packages/3d (docs/plans/3d.md) on gfx: the unit tests on Eval, natively and as wasm32-wasi, then
+# the renderer's frames against golden images, natively (GFX_TARGET) and in Chromium
+SCENE_CP := $(GFX_CP) -cp packages/3d/src -cp packages/3d/examples -cp packages/3d/test -cp packages/physics/src -cp packages/physics/examples -cp packages/physics/test \
+	-cp packages/text/src -cp packages/ui/src
+SCENE_UI_CP := -cp packages/os/src -cp packages/gfx/src -cp packages/3d/src -cp packages/view/src -cp packages/3d-ui/src -cp packages/3d-ui/test \
+	-D hxmc.view.renderer=hxmc.scene.view.SceneRenderer
+# RenderTest for GFX_TARGET (any of the six; CI runs the ARM64 and Windows ones on their machines)
+3d-programs: $(TOOL) $(STD) $(HOST_RT)
+	@mkdir -p bin/3d
+	@# (the asset step: the samples packed for the packed scenes)
+	ulimit -s unlimited 2>/dev/null || true; for m in sample skinned normals morph; do $(TOOL) $(SCENE_CP) --run hxmc.scene.gltf.Pack packages/3d/examples/$$m.glb bin/3d/$$m.hxm3d || exit 1; done
+	$(call hxmc,bin/3d/$(GFX_TARGET)/RenderTest$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main RenderTest $(HXMC_ARGS) $(GFX_ARGS))
+3d-check: $(TOOL) $(STD) $(HOST_RT)
+	@set -e; ulimit -s unlimited 2>/dev/null || true; for t in SceneTest GltfTest PhysicsTest; do $(TOOL) $(SCENE_CP) --run $$t; done
+	$(call hxmc,bin/3d/SceneTest,$(SCENE_CP) -main SceneTest $(HXMC_ARGS))
+	$(call hxmc,bin/3d/GltfTest,$(SCENE_CP) -main GltfTest $(HXMC_ARGS))
+	$(call hxmc,bin/3d/PhysicsTest,$(SCENE_CP) -main PhysicsTest $(HXMC_ARGS))
+	bin/3d/SceneTest && bin/3d/GltfTest && bin/3d/PhysicsTest
+	$(call hxmc,bin/3d/SceneTest.wasm,$(SCENE_CP) -main SceneTest $(HXMC_ARGS) -D hxmc.target=wasm32-wasi)
+	$(call hxmc,bin/3d/GltfTest.wasm,$(SCENE_CP) -main GltfTest $(HXMC_ARGS) -D hxmc.target=wasm32-wasi)
+	$(call hxmc,bin/3d/PhysicsTest.wasm,$(SCENE_CP) -main PhysicsTest $(HXMC_ARGS) -D hxmc.target=wasm32-wasi)
+	$(WASI) bin/3d/SceneTest.wasm && $(WASI) bin/3d/GltfTest.wasm && $(WASI) bin/3d/PhysicsTest.wasm
+	$(MAKE) --no-print-directory 3d-programs
+	$(call hxmc,bin/3d/$(GFX_TARGET)/GltfViewer$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main GltfViewer $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/$(GFX_TARGET)/Orbits$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main Orbits $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/$(GFX_TARGET)/Showroom$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main Showroom $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/$(GFX_TARGET)/Falling$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main Falling $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/$(GFX_TARGET)/Walker$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main Walker $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/$(GFX_TARGET)/Chains$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main Chains $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/$(GFX_TARGET)/InputTest$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main InputTest $(HXMC_ARGS) $(GFX_ARGS))
+	$(call hxmc,bin/3d/InputTest.wasm,$(SCENE_CP) -main InputTest $(HXMC_ARGS) -D hxmc.target=wasm32-wasi)
+	bin/3d/$(GFX_TARGET)/InputTest$(call EXE,$(GFX_TARGET)) && $(WASI) bin/3d/InputTest.wasm
+	@# (@hxmc/3d-ui: view's markup on the scene graph; natively: its meshes import gfx, which node lacks)
+	$(call hxmc,bin/3d/$(GFX_TARGET)/SceneUiTest$(call EXE,$(GFX_TARGET)),$(SCENE_UI_CP) -main SceneUiTest $(HXMC_ARGS) $(GFX_ARGS))
+	bin/3d/$(GFX_TARGET)/SceneUiTest$(call EXE,$(GFX_TARGET))
+	sh packages/3d/test/check.sh bin/3d/$(GFX_TARGET)
+	@# (Model.of's files beside the executable, -D hxmc.scene.embed=0)
+	$(call hxmc,bin/3d/files/RenderTest$(call EXE,$(GFX_TARGET)),$(SCENE_CP) -main RenderTest $(HXMC_ARGS) $(GFX_ARGS) -D hxmc.scene.embed=0 -D hxmc.scene.out=bin/3d/files/RenderTest$(call EXE,$(GFX_TARGET)))
+	test -f bin/3d/files/assets/sample.glb && test -f bin/3d/files/RenderTest$(call EXE,$(GFX_TARGET)).assets.json
+	cd bin/3d && LIBGL_ALWAYS_SOFTWARE=1 HXMC_GFX_SOFTWARE=1 env -u DISPLAY files/RenderTest$(call EXE,$(GFX_TARGET)) skin ../../packages/3d/test/skin.png files/skin.png
+	@# (Model.of: a name the file does not have is a compile error)
+	ulimit -s unlimited 2>/dev/null || true; ! $(TOOL) bin/3d/ModelTypo $(SCENE_CP) -cp packages/3d/test/reject -main ModelTypo $(HXMC_ARGS) > bin/3d/ModelTypo.log 2>&1
+	grep -q "has no field bal" bin/3d/ModelTypo.log
+# what each feature of packages/3d adds to a program (packages/3d/test/size: Linux x86-64, wasm32-wasi)
+3d-sizes: $(TOOL) $(STD) $(HOST_RT)
+	@mkdir -p bin/3d
+	ulimit -s unlimited 2>/dev/null || true; for m in sample skinned normals morph; do $(TOOL) $(SCENE_CP) --run hxmc.scene.gltf.Pack packages/3d/examples/$$m.glb bin/3d/$$m.hxm3d || exit 1; done
+	ulimit -s unlimited 2>/dev/null || true; sh packages/3d/test/size/sizes.sh $(TOOL) bin/3d/size -cp packages/os/src -cp packages/gfx/src -cp packages/3d/src -cp packages/3d/examples -cp packages/3d/test/size $(HXMC_ARGS)
+3d-web-check: $(TOOL) $(STD)
+	@mkdir -p bin/3d
+	ulimit -s unlimited 2>/dev/null || true; for m in sample skinned normals morph; do $(TOOL) $(SCENE_CP) --run hxmc.scene.gltf.Pack packages/3d/examples/$$m.glb bin/3d/$$m.hxm3d || exit 1; done
+	@# (Model.of's files beside the module, -D hxmc.scene.embed=0: fetched by browser.mjs before main)
+	rm -rf bin/3d/assets
+	$(call hxmc,bin/3d/SceneWebTest.wasm,$(SCENE_CP) -main SceneWebTest $(HXMC_ARGS) -D hxmc.target=wasm32-wasi -D hxmc.scene.embed=0 -D hxmc.scene.out=bin/3d/SceneWebTest.wasm)
+	$(NODE) packages/3d/test/web.mjs bin/3d/SceneWebTest.wasm bin/3d
+	@# (and as WasmGC, the files built in)
+	$(call hxmc,bin/3d/gc/SceneWebTest.wasm,$(SCENE_CP) -main SceneWebTest $(HXMC_ARGS) -D hxmc.target=wasm32-wasi -D hxmc.wasm-gc)
+	$(NODE) packages/3d/test/web.mjs bin/3d/gc/SceneWebTest.wasm bin/3d/gc
+
 # (two renderers: TestRenderer, OtherRenderer; JavaScript compiled by the port)
 VIEW_CP := -cp packages/view/src -cp packages/view/test -D hxmc.view.renderer=TestRenderer -D hxmc.view.renderer.other=OtherRenderer
 view-check: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN)
@@ -912,7 +981,7 @@ full: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers full $(CASES)
 
 clean:
-	rm -rf bin/port bin/release bin/lix-dist bin/site bin/site-build bin/wasm bin/wasmgc-port bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/gfx bin/audio bin/corpus \
+	rm -rf bin/port bin/release bin/lix-dist bin/site bin/site-build bin/wasm bin/wasmgc-port bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/gfx bin/3d bin/audio bin/corpus \
 		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(CLI_BOOT)/hxmc-std $(CLI_BOOT)/rt
 
 distclean: clean

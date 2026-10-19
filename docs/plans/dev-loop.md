@@ -183,6 +183,10 @@ Theme rules are data (and CSS for the DOM renderer): a change to
 `shadcn.json`, `extras.json` or the tokens sends new rules and the engine
 restyles on the next frame. Images, fonts and icons reload the same way.
 
+Moved up (Oct 19): changed rules and tokens go over `hxmc dev`'s socket
+and the running app restyles in place; a build happens only for code
+changes. Target: a colour or spacing edit visible in under 100 ms.
+
 ## Testing
 
 CI runs the dev loop: start `hxmc dev` on an example, edit a file, check the

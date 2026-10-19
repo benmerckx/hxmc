@@ -40,6 +40,10 @@ class Api {
 	public static final INCLUDE = [
 		"os" => ["hxmc.os", "hxmc.os.audio"],
 		"gfx" => ["hxmc.gfx"],
+		"3d" => [
+			"hxmc.scene", "hxmc.scene.math", "hxmc.scene.gltf", "hxmc.scene.render", "hxmc.scene.anim", "hxmc.scene.input", "hxmc.scene.debug"
+		],
+		"physics" => ["hxmc.physics"],
 		"text" => ["hxmc.text"],
 		"view" => ["hxmc.view"],
 		"ui" => ["hxmc.ui", "hxmc.ui.widgets", "hxmc.ui.draw"],

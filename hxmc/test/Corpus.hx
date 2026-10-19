@@ -16,7 +16,8 @@ using StringTools;
 // The golden files are frozen: a new case gets one with --bless (written from
 // hxmc's own output, to be checked by hand). A `// define: <name>[=<value>]`
 // line of a case's source adds that -D to its build, a `// resource:
-// <file>@<name>` line that resource (the file next to the source). --target cross-builds
+// <file>@<name>` line that resource (the file next to the source), a `//
+// build-seconds: <n>` line a bound on hxmc's time to build it. --target cross-builds
 // for another target (linux-arm64 runs under qemu-aarch64-static, windows-x86_64 under
 // wine64, wasm32-wasi under node or, with HXMC_WASM_RUNNER=wasmtime,
 // wasmtime; --wasm-eh legacy: built with -D hxmc.wasm-eh=legacy, run under
@@ -153,6 +154,10 @@ class Corpus {
 		var r = exec(cmd.concat(defines), {env: ["HXMC_STATS" => "1"]});
 		File.saveContent(d + "/hxmc.log", r.out + r.err);
 		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
+		// (a `// build-seconds: <n>` line: hxmc must build the case in less time)
+		var limit = caseLine(src, "build-seconds");
+		if (limit != null && r.seconds > Std.parseFloat(limit))
+			return {name: c.name, status: "slow-build", detail: 'built in ${Std.int(r.seconds)} s, more than $limit s: ' + tail(r.out, 1500)};
 		var re = ~/hxmc: ([0-9]+) functions/;
 		var nf = re.match(r.out) ? re.matched(1) + " functions" : "";
 		if (stage != null) {
@@ -190,6 +195,14 @@ class Corpus {
 	}
 
 	// Per-case defines must apply to typing as well as code generation.
+	// the value of a case's `// <key>: <value>` line, if it has one
+	static function caseLine(src:String, key:String):Null<String> {
+		if (FileSystem.exists(src))
+			for (l in File.getContent(src).split("\n"))
+				if (l.trim().startsWith("// " + key + ": ")) return l.trim().substr(key.length + 5).trim();
+		return null;
+	}
+
 	public static function caseDefines(src:String):Array<String> {
 		var result = [];
 		if (FileSystem.exists(src))

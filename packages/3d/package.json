@@ -1,0 +1,25 @@
+{
+  "name": "@hxmc/3d",
+  "version": "0.1.0",
+  "description": "A scene layer for 3D games on @hxmc/gfx, in pure Haxe: math the CPU and the shaders share (quaternions, matrices, bounds), a scene graph, cameras, a fixed-step clock, glTF 2.0 and a lit renderer",
+  "license": "MIT",
+  "files": [
+    "src/"
+  ],
+  "haxe": {
+    "name": "hxmc.3d",
+    "classPath": "src",
+    "dependencies": ["hxmc.gfx"]
+  },
+  "dependencies": {
+    "@hxmc/gfx": "0.5.0"
+  },
+  "peerDependencies": {
+    "@hxmc/cli": ">=0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benmerckx/hxmc.git",
+    "directory": "packages/3d"
+  }
+}

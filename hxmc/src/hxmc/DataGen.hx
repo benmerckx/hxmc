@@ -376,7 +376,7 @@ class DataGen {
 			data.buf.u32(0);
 			if (x.ifSym != null) ptrSym(data, x.ifSym) else data.buf.u64(0, 0); // 72 ifaces
 			data.buf.u32(t.tag); // 80 tag
-			data.buf.u32(0);
+			data.buf.u32(t.single != null ? t.single + 1 : 0); // 84 a constructor's singleton: its rt_globals index + 1
 			if (x.ctSym != null) ptrSym(data, x.ctSym) else data.buf.u64(0, 0); // 88 ctors
 			data.buf.u32(x.ss != null ? x.ss.length : 0); // 96 nstatics
 			data.buf.u32(0);

@@ -46,7 +46,7 @@ typedef Example = {
 // with the package's class paths and shown with the imports of the
 // packages it uses.
 class Examples {
-	public static final PACKAGES = ["gfx", "ui", "os", "text", "view", "web"];
+	public static final PACKAGES = ["gfx", "3d", "physics", "ui", "os", "text", "view", "web"];
 
 	// each package's class paths (its dependencies' first) and the browser
 	// modules its programs need
@@ -54,6 +54,8 @@ class Examples {
 		return switch pkg {
 			case "os": ["-cp", "packages/os/src"];
 			case "gfx": ["-cp", "packages/os/src", "-cp", "packages/gfx/src"];
+			case "3d": ["-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/text/src", "-cp", "packages/ui/src", "-cp", "packages/3d/src"];
+			case "physics": ["-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/3d/src", "-cp", "packages/physics/src"];
 			case "text": ["-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/text/src"];
 			case "ui": [
 					"-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/text/src", "-cp", "packages/view/src",
@@ -67,7 +69,7 @@ class Examples {
 	public static function imports(pkg:String):Array<String> {
 		return switch pkg {
 			case "os": ["os/imports.mjs"];
-			case "gfx": ["os/imports.mjs", "gfx/imports.mjs"];
+			case "gfx" | "3d" | "physics": ["os/imports.mjs", "gfx/imports.mjs"];
 			case "text": ["os/imports.mjs", "gfx/imports.mjs", "text/imports.mjs"];
 			case "ui": ["os/imports.mjs", "gfx/imports.mjs", "text/imports.mjs", "ui/imports.mjs"];
 			case "web": ["web/imports.mjs"];

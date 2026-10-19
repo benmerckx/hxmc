@@ -248,6 +248,7 @@ class Facts {
 				var t = entry(c.name, "TK_CTOR", slots, e.name + "." + c.name);
 				t.sup = e.tindex;
 				t.tag = c.tag;
+				if (c.global >= 0) t.single = c.global;
 				t.fields = [for (i in 0...c.params.length) {name: c.paramNames[i], slot: at(i, c.params[i]), ty: c.params[i]}];
 				c.tindex = addType(t);
 			}
@@ -697,7 +698,8 @@ typedef TypeEntry = {
 	methods:Array<{name:String, fn:String, sig:Int, ?dfn:String, ?dsig:Int}>,
 	ifaces:Array<Int>,
 	tag:Int,
-	ctors:Array<Int>
+	ctors:Array<Int>,
+	?single:Int // TK_CTOR without arguments: its singleton's rt_globals index
 };
 
 // GC points (hxmc.Roots's analysis of root slots builds on them)
