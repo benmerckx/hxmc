@@ -42,3 +42,11 @@ let () =
   print_endline (String.concat " " (Array.to_list (Array.map string_of_int a)));
   print_endline (String.concat "," (List.sort_uniq compare ["b"; "a"; "b"; "c"]));
   Printf.printf "%s %s %d\n" (String.uppercase_ascii "MiXed") (String.escaped "tab\there") (int_of_string "0x1F")
+let () =
+  let h = Hashtbl.create 0 in
+  List.iter (fun k -> Hashtbl.add h k true) [3; 70; 1000; 100000; -5];
+  String.iter (fun c -> Printf.printf "%02x" (Char.code c)) (Marshal.to_string h [Marshal.No_sharing]); print_newline ();
+  let shared = [1.5; 2.0] in
+  String.iter (fun c -> Printf.printf "%02x" (Char.code c)) (Marshal.to_string (shared, shared, "abc", [|1.0; 2.5|], Some (`A 3)) []); print_newline ();
+  Printf.printf "%d\n" (Marshal.data_size (Marshal.to_bytes (1, "x") []) 0)
+let () = let f = (fun x -> x + 1) in let p = (1, f) in Printf.printf "%d %b\n" (compare p p) (try ignore (p = p); false with Invalid_argument _ -> true)

@@ -20,7 +20,7 @@ import haxe.Int64;
 // compare alike but hash as immediates (OCaml hashes an int32 as a custom
 // block: Hashtbl.hash on an int32 differs). Int64 and int are both Int64 at
 // run time: an int64 hashes as an int (OCaml: as a custom block).
-@:allow(ml2hx.prim.Obj)
+@:allow(ml2hx.prim.Obj) @:allow(ml2hx.prim.Runtime)
 class Poly {
 	public static inline var UNORDERED = 0x80000000;
 
@@ -108,13 +108,13 @@ class Poly {
 
 	static function floatArray(a:Array<Dynamic>):Bool {
 		if (a.length == 0) return false;
-		for (x in a) if (!Std.isOfType(x, Float) || Std.isOfType(x, Int)) return false;
+		for (x in a) if (!Std.isOfType(x, Float) || Type.typeof(x) != TFloat) return false;
 		return true;
 	}
 
 	static function size(v:Dynamic, k:Int):Int {
 		return switch k {
-			case K_ENUM: Type.enumParameters(v).length;
+			case K_ENUM: fields(v, k).length;
 			case K_BLOCK: (v : Block).blockSize();
 			case K_ARRAY: (v : Array<Dynamic>).length;
 			case K_ABSTRACT: (v : Abstract).abstractSize();
@@ -124,7 +124,13 @@ class Poly {
 
 	static function fields(v:Dynamic, k:Int):Array<Dynamic> {
 		return switch k {
-			case K_ENUM: Type.enumParameters(v);
+			case K_ENUM:
+				var ps = Type.enumParameters(v);
+				// (C of {...}: the record's fields are the block's)
+				if (ps.length == 1 && Std.isOfType(ps[0], InlineRecord)) {
+					var r:Block = ps[0];
+					[for (i in 0...r.blockSize()) r.blockField(i)];
+				} else ps;
 			case K_ARRAY: v;
 			case _:
 				var b:Block = v;
@@ -165,6 +171,9 @@ class Poly {
 	// caml_compare's core: -1, 0, 1 or UNORDERED (only when !total)
 	public static function compareValues(a:Dynamic, b:Dynamic, total:Bool):Int {
 		while (true) {
+			// (compare, not =, takes a value physically equal to itself as equal
+			// without looking inside: closures included)
+			if (total && a == b) return 0;
 			var ka = kind(a), kb = kind(b);
 			if (ka == K_IMM) {
 				if (kb != K_IMM) return -1;

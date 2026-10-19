@@ -1002,7 +1002,7 @@ class UnitEmitter {
   // with r bound by a pattern C r, is that same value)
   recordClass(name, gen, labels, n, inline = false) {
     const fields = labels.map(l => ({name: valueName(l.name), mut: l.mut, t: this.type(l.t, n)}));
-    return `class ${name}${gen} implements ${RT}Block {\n${inline ? '\tpublic var ml2hxOwner:Any;\n' : ''}${fields.map(f => `\tpublic var ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
+    return `class ${name}${gen} implements ${RT}${inline ? 'InlineRecord' : 'Block'} {\n${inline ? '\tpublic var ml2hxOwner:Any;\n' : ''}${fields.map(f => `\tpublic var ${f.name}:${f.t};`).join('\n')}\n\tpublic inline function new(${fields.map(f => `${f.name}:${f.t}`).join(', ')}) {\n${fields.map(f => `\t\tthis.${f.name} = ${f.name};`).join('\n')}\n\t}\n${blockMethods(fields.map(f => f.name))}\n}`;
   }
   emitExtension(x, desc, base) {
     const name = desc.hx.split('.').at(-1);
@@ -1435,7 +1435,45 @@ class UnitEmitter {
   // types of values (in `| Char rest -> fun c -> ...`, a = char -> b); Haxe
   // has no such equations: there a value whose type involves type variables
   // or GADTs is cast where it is used (README, GADTs).
+  // An immutable structured constant (Some (A 1), (0, "x"), HArray HDyn):
+  // one static per distinct constant of the unit, as ocamlopt allocates them
+  // statically and shares equal ones (programs compare them with ==).
+  structuredConstant(n, top = true) {
+    switch (n.k) {
+      case 'const': return !top;
+      case 'construct': {
+        const c = n.c;
+        if (c.ext || c.inline || c.unboxed) return false;
+        if (!n.args.length) return !top;
+        return n.args.every(a => this.structuredConstant(a, false));
+      }
+      case 'tuple': return n.args.every(a => this.structuredConstant(a, false));
+      case 'variant': return n.arg ? this.structuredConstant(n.arg, false) : !top;
+      default: return false;
+    }
+  }
   value(n) {
+    if (!this.gadt && !this.inConstant && this.structuredConstant(n) && !(n.k === 'construct' && this.predefCtor(n.c, n) && n.c.name !== '::') && !this.gadtSensitive(n.t)) {
+      // (its parts are written out in it: one static per whole constant)
+      this.inConstant = true;
+      let code;
+      try { code = this.value0(n); } finally { this.inConstant = false; }
+      let t = null;
+      try { t = this.typeOrNull(n.t, n); } catch (_) {}
+      if (t !== null && !/\bT\d+\b/.test(t)) {
+        const statics = (this.root.constStatics ??= new Map());
+        // (one per constant and type: a format's phantom types differ by use)
+        const key = `${t}=${code}`;
+        let name = statics.get(key);
+        if (!name) {
+          name = `ml2hxConst${statics.size}`;
+          statics.set(key, name);
+          this.statics.push(`public static final ${name}:${t} = ${code};`);
+        }
+        return `${this.cls}.${name}`;
+      }
+      return code;
+    }
     const v = this.value0(n);
     if (this.gadt > 0 && n.t !== undefined && !n.k.startsWith('$') && this.gadtSensitive(n.t)) return `(cast ${v})`;
     return v;
