@@ -60,7 +60,7 @@ class Mbedtls {
 		return #if hxmc r(hxmc.NativeSsl.sslHandshake(ssl.raw())) #else na() #end;
 	public static function mlMbedtlsSslRead(ssl:Handle, b:Bytes, pos:Int63, len:Int63):Int63
 		return #if hxmc r(hxmc.NativeSsl.sslRead(ssl.raw(), b, i(pos), i(len))) #else na() #end;
-	public static function mlMbedtlsSslSetBio<A>(ssl:Handle, socket:A, send:A->Bytes->Int63, recv:A->Bytes->Int63):Unit
+	public static function mlMbedtlsSslSetBio<A>(ssl:Handle, socket:A, send:A->(Bytes->Int63), recv:A->(Bytes->Int63)):Unit
 		return #if hxmc { hxmc.NativeSsl.sslSetBio(ssl.raw(), ml2hx.std.Unix.nativeFd(cast socket)); Unit.value; } #else na() #end;
 	public static function mlMbedtlsSslSetHostname(ssl:Handle, host:String):Int63
 		return #if hxmc r(hxmc.NativeSsl.sslSetHostname(ssl.raw(), host)) #else na() #end;

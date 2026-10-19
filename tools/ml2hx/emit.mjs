@@ -1011,7 +1011,8 @@ class UnitEmitter {
       let code;
       if (irrefutable(b.p)) {
         const tmp = this.temp('d');
-        code = `{ var ${tmp} = ${scrut}; ${this.bindIrrefutable(b.p, tmp)} ${vars.map((v, i) => `${saved[i][1].hx} = ${this.ids.get(v.id).name};`).join(' ')} }`;
+        const tt = this.typeOrNull(b.p.t, b);
+        code = `{ var ${tmp}${tt ? `:${tt}` : ''} = ${scrut}; ${this.bindIrrefutable(b.p, tmp)} ${vars.map((v, i) => `${saved[i][1].hx} = ${this.ids.get(v.id).name};`).join(' ')} }`;
       } else {
         const pat = this.pattern(b.p);
         code = `switch (${scrut}) { case ${pat.pat}${pat.guard ? ` if (${pat.guard})` : ''}: ${vars.map((v, i) => `${saved[i][1].hx} = ${this.ids.get(v.id).name};`).join(' ')} case _: throw ${this.matchFailure(b)}; }`;
@@ -1190,7 +1191,9 @@ class UnitEmitter {
         const vars = patternVars(b.p);
         if (irrefutable(b.p)) {
           const tmp = this.temp('d');
-          out.push(`var ${tmp} = ${this.value(b.e)};`);
+          // (typed: branches of other tuple instances would unify to Block)
+          const tt = this.typeOrNull(b.p.t, b);
+          out.push(`var ${tmp}${tt ? `:${tt}` : ''} = ${this.value(b.e)};`);
           const saved = vars.map(v => [v.id, this.ids.get(v.id)]);
           out.push(this.bindIrrefutable(b.p, tmp));
           const bound = vars.map(v => this.ids.get(v.id));
@@ -2449,7 +2452,9 @@ class UnitEmitter {
   }
   // Instance variables: declared vals, and the class parameters and lets
   // methods use (which OCaml makes instance variables too).
-  instvarField(name) { return this.classParams?.get(name) ?? `iv_${valueName(name)}`; }
+  // (a val shadows a class parameter of its name)
+  instvarField(name) { return (this.classVals?.has(name) ? null : this.classParams?.get(name)) ?? `iv_${valueName(name)}`; }
+  classValNames(d) { return [...d.parts.cs.fields.filter(f => f.k === 'val').map(f => f.name), ...(d.parent ? this.classValNames(d.parent) : [])]; }
   // object ... end: an anonymous structure of its methods (and values),
   // self being the structure.
   immediateObject(n) {
@@ -2485,8 +2490,9 @@ class UnitEmitter {
       // super call (which may use them); ctor: the field stores after it.
       const members = [], pre = [], ctor = [], ctorParams = [];
       const saved = new Map(this.ids);
-      const savedParams = this.classParams;
+      const savedParams = this.classParams, savedVals = this.classVals;
       this.classParams = new Map(d.parent ? this.inheritedParams(d.parent) : []);
+      this.classVals = new Set(this.classValNames(d));
       // Class parameters and class-level lets become fields.
       for (const p of params) {
         const pname = this.fresh('p');
@@ -2549,6 +2555,7 @@ class UnitEmitter {
       this.decls.push(`${isAbstract ? 'abstract ' : ''}class ${name}${gen}${parentHx ? ` extends ${parentHx}` : ''} {\n${members.map(m => '\t' + m).join('\n')}\n\tpublic function new(${ctorParams.join(', ')}) { ${body} }\n}`);
       this.ids = saved;
       this.classParams = savedParams;
+      this.classVals = savedVals;
     });
   }
   inheritedParams(p) { return [...(p.parent ? this.inheritedParams(p.parent) : []), ...(p.paramFields ?? [])]; }

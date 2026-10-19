@@ -136,6 +136,24 @@ class UnixTm implements Block {
 }
 
 // A file descriptor: what the host gives for it.
+enum UnixSocketBoolOption {
+	SO_DEBUG;
+	SO_BROADCAST;
+	SO_REUSEADDR;
+	SO_KEEPALIVE;
+	SO_DONTROUTE;
+	SO_OOBINLINE;
+	SO_ACCEPTCONN;
+	TCP_NODELAY;
+	IPV6_ONLY;
+	SO_REUSEPORT;
+}
+
+enum UnixSocketFloatOption {
+	SO_RCVTIMEO;
+	SO_SNDTIMEO;
+}
+
 class UnixFileDescr {
 	public var input:Null<haxe.io.Input>;
 	public var output:Null<haxe.io.Output>;
@@ -419,6 +437,26 @@ class Unix {
 	// the host's descriptor of a socket (for hxmc's natives): descriptors
 	// here are Haxe streams, which do not expose one
 	public static function nativeFd(d:UnixFileDescr):Int throw new Failure("Unix: no native descriptor for this socket");
+	// socket options Haxe's sockets have (TCP_NODELAY as setFastSend,
+	// timeouts as setTimeout); the others are not available
+	public static function setsockopt(d:UnixFileDescr, opt:UnixSocketBoolOption, v:Bool):Unit {
+		if (d.socket == null) fail(ENOTSOCK, "setsockopt", "");
+		switch opt {
+			case TCP_NODELAY: d.socket.setFastSend(v);
+			case _: fail(ENOPROTOOPT, "setsockopt", "");
+		}
+		return Unit.value;
+	}
+	public static function setsockoptFloat(d:UnixFileDescr, opt:UnixSocketFloatOption, v:Float):Unit {
+		if (d.socket == null) fail(ENOTSOCK, "setsockopt_float", "");
+		d.socket.setTimeout(v);
+		return Unit.value;
+	}
+	// the pending error of a socket: Haxe's sockets report errors as they occur
+	public static function getsockoptError(d:UnixFileDescr):MlOption<UnixError> {
+		if (d.socket == null) fail(ENOTSOCK, "getsockopt_error", "");
+		return None;
+	}
 	public static function dup(d:UnixFileDescr, ?cloexec:Bool):UnixFileDescr return d;
 	public static function setNonblock(d:UnixFileDescr):Unit return Unit.value;
 	public static function clearNonblock(d:UnixFileDescr):Unit return Unit.value;
