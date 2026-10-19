@@ -974,7 +974,9 @@ class UnitEmitter {
         const vars = this.typeVars(b.p.t).filter(v => !this.tvars.has(v));
         this.withTypeParams(vars, params0 => this.withLocalTypes(b.e.newtypes ?? [], lps => {
           const params = [...params0, ...lps];
-          const f = this.functionParts(d.fn, {...b.e, t: b.e.newtypes ? b.p.t : b.e.t}, item.rec ? b.p.id : null);
+          // (an explicitly polymorphic binding, 'b. t -> 'b list: its scheme's
+          // variables are the parameters)
+          const f = this.functionParts(d.fn, {...b.e, t: b.e.newtypes || this.t(b.p.t).k === 'poly' ? b.p.t : b.e.t}, item.rec ? b.p.id : null);
           members.push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}(${f.params}):${f.res} ${f.body}`);
         }, this.localTypeParams(b.e.newtypes ?? [], b.e.t, b.p.t, d.fn) ?? params0));
         continue;
