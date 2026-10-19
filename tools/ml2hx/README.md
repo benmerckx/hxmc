@@ -56,7 +56,8 @@ with the first type error of each module in `bin/ml2hx/check.json`.
 initialised in link order (haxe.ml runs the compiler when initialised).
 `make port-generated` builds it with hxmc into `bin/ml2hx/haxe` (one codegen
 job and `RT_OLD_MB=256` keep the build under ~9 GB; `HXMC_SYMBOLS=1` keeps
-symbols for gdb). It compiles hello world to JS byte-identically to the port.
+symbols for gdb). It compiles hello world, and upstream's unit tests (tests/unit to JS),
+byte-identically to the port.
 
 ## Replacements
 
@@ -64,8 +65,14 @@ symbols for gdb). It compiles hello world to JS byte-identically to the port.
 OCaml's memory layout, rewritten without it and compiled against the
 original interface (`-cmi-file`), so their typed trees stand for the
 originals: extlib's ExtList, Enum.force and Std.input_list (lists built from
-mutable records injected into 'a list). Each keeps the order in which it
-calls its function arguments and returns equal values.
+mutable records injected into 'a list), thread-local-storage (slots in a
+field of Thread.t reached with Obj.magic), Stdlib's String (its per-character
+decoders read the string instead of a Bytes copy of it). Each keeps the
+order in which it calls its function arguments and returns equal values.
+`replacements/haxe/<path>`: the same for the compiler's own sources, written
+over the build checkout's copy (bin/ml2hx/checkouts, never the submodule):
+Rbuffer.alloc (bytes written after Bytes.unsafe_to_string made the rope's
+string of them).
 
 ## Layout
 

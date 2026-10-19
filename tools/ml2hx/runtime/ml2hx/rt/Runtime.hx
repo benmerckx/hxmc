@@ -77,6 +77,15 @@ class Runtime {
 		var g = Reflect.field(o, getter);
 		return g == null ? null : Reflect.callMethod(o, g, []);
 	}
+	// Obj.magic between two type variables: a constant constructor as its rank
+	// (OCaml's immediate); any other value as itself
+	public static function magicImmediate(v:Dynamic):Dynamic {
+		if (Reflect.isEnumValue(v)) {
+			var i = Poly.immediateOf(v);
+			if (i != null) return Int63.ofInt64(i);
+		}
+		return v;
+	}
 	// Oo.copy: a shallow copy of an object (its fields; no constructor runs)
 	public static function objCopy<T>(o:T):T {
 		var c = Type.getClass(o);

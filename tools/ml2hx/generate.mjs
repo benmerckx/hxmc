@@ -62,6 +62,14 @@ export function prepare(upstream) {
     run('git', ['-C', build, 'checkout', '--detach', commit]);
   }
   if (run('git', ['-C', build, 'rev-parse', 'HEAD']).trim() !== commit) throw new Error('cached upstream checkout does not match the pin');
+  // Replacements of the compiler's own sources (replacements/haxe/<path>):
+  // written over this checkout's copy (never the submodule) before it builds.
+  const own = path.join(home, 'replacements/haxe');
+  if (fs.existsSync(own)) walk(own, p => {
+    const dest = path.join(build, path.relative(own, p));
+    if (!fs.existsSync(dest)) throw new Error(`replacement of a missing source: ${path.relative(own, p)}`);
+    if (fs.readFileSync(dest, 'utf8') !== fs.readFileSync(p, 'utf8')) fs.copyFileSync(p, dest);
+  });
   run('dune', ['build', '--root', build, '--profile', 'release', '@check'], {env: {...process.env, STATICLINK: '0', LIB_PARAMS: ''}});
   return build;
 }
@@ -84,14 +92,19 @@ const notConverted = new Set(['CamlinternalLazy', 'Stdlib__Lazy', 'CamlinternalO
 function replacementUnits() {
   const dir = path.join(home, 'replacements'), out = new Map();
   if (!fs.existsSync(dir)) return out;
-  for (const pkg of fs.readdirSync(dir)) {
-    const lib = run('ocamlfind', ['query', pkg]).trim();
+  for (const pkg of fs.readdirSync(dir).filter(d => d !== 'haxe')) {
+    // (OCaml's Stdlib: string.ml is the unit Stdlib__String, compiled
+    // without the installed stdlib's implicit opening of itself)
+    const stdlib = pkg === 'ocaml';
+    const lib = stdlib ? run('ocamlfind', ['ocamlc', '-where']).trim() : run('ocamlfind', ['query', pkg]).trim();
     const build = path.join(root, 'bin/ml2hx/replacements', pkg);
     fs.mkdirSync(build, {recursive: true});
     for (const file of fs.readdirSync(path.join(dir, pkg)).filter(f => f.endsWith('.ml'))) {
-      const base = file.replace(/\.ml$/, ''), src = path.join(build, file);
-      fs.copyFileSync(path.join(dir, pkg, file), src);
-      const r = spawnSync('ocamlfind', ['ocamlc', '-bin-annot', '-I', lib, '-cmi-file', path.join(lib, `${base}.cmi`), '-c', file], {cwd: build, encoding: 'utf8'});
+      let base = file.replace(/\.ml$/, '');
+      if (stdlib) base = `stdlib__${base[0].toUpperCase()}${base.slice(1)}`;
+      fs.copyFileSync(path.join(dir, pkg, file), path.join(build, file));
+      const flags = stdlib ? ['-nostdlib', '-I', lib, '-o', `${base}.cmo`] : ['-package', 'threads.posix', '-I', lib];
+      const r = spawnSync('ocamlfind', ['ocamlc', '-bin-annot', ...flags, '-cmi-file', path.join(lib, `${base}.cmi`), '-c', file], {cwd: build, encoding: 'utf8'});
       if (r.status !== 0) throw new Error(`replacement ${pkg}/${file}: ${r.stderr}`);
       out.set(base[0].toUpperCase() + base.slice(1), path.join(build, `${base}.cmt`));
     }

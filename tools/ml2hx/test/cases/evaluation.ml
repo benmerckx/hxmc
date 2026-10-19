@@ -58,3 +58,5 @@ type gctx = { root : ctx; mutable count : int }
 and ctx = { g : gctx; label : string }
 let make_ctx () = let rec ctx = { g = { root = ctx; count = 0 }; label = "root" } in ctx
 let () = let c = make_ctx () in c.g.count <- 3; Printf.printf "%s %d %b\n" c.g.root.label c.g.root.g.count (c.g.root == c)
+let fold op fa fb = let ebool t = t (compare fa fb) 0 in match op with `Gt -> ebool (>) | `Lt -> ebool (<) | `Eq -> ebool (=)
+let () = Printf.printf "%b %b %b %b\n" (fold `Gt 0.5 (Int32.to_float 1l)) (fold `Lt 0.5 1.) (fold `Eq (float_of_string "0.5") 0.5) (fold `Gt (float_of_string "0.5") (Int32.to_float 1l))

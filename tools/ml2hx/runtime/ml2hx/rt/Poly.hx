@@ -32,6 +32,8 @@ class Poly {
 	static inline var K_BLOCK = 5;
 	static inline var K_ARRAY = 6;
 	static inline var K_FUNC = 7;
+	static inline var K_ABSTRACT = 8;
+	static inline var ABSTRACT_TAG = 251;
 
 	static inline var STRING_TAG = 252;
 	static inline var DOUBLE_TAG = 253;
@@ -63,8 +65,11 @@ class Poly {
 	static function kind(v:Dynamic):Int {
 		if (v == null) return K_IMM;
 		if (Std.isOfType(v, String)) return K_STRING;
-		if (Std.isOfType(v, Int) || Std.isOfType(v, Bool) || Int64.isInt64(v)) return K_IMM;
-		if (Std.isOfType(v, Float)) return K_DOUBLE;
+		// (a float of an integral value passes Std.isOfType(v, Int) on some
+		// targets, eval and hxmc among them: Type.typeof tells them apart)
+		if (Std.isOfType(v, Float)) return Type.typeof(v) == TFloat ? K_DOUBLE : K_IMM;
+		if (Std.isOfType(v, Bool) || Int64.isInt64(v)) return K_IMM;
+		if (Std.isOfType(v, Abstract)) return K_ABSTRACT;
 		if (Std.isOfType(v, Block)) return K_BLOCK;
 		if (Std.isOfType(v, PolyVariant)) return K_IMM; // a constant polymorphic variant: its hash
 		if (Reflect.isEnumValue(v)) return enumRank(v) >= 0 ? K_IMM : K_ENUM;
@@ -81,7 +86,7 @@ class Poly {
 	// the immediate's OCaml integer
 	static function immediate(v:Dynamic):Int64 {
 		if (v == null) return 0;
-		if (Std.isOfType(v, Int)) return Int64.ofInt((v : Int));
+		if (Std.isOfType(v, Int) && Type.typeof(v) == TInt) return Int64.ofInt((v : Int));
 		if (Std.isOfType(v, Bool)) return (v : Bool) ? 1 : 0;
 		if (Int64.isInt64(v)) return (v : Int64);
 		// unit is the Int 0 at run time
@@ -96,6 +101,7 @@ class Poly {
 			case K_ENUM: -enumRank(v) - 1;
 			case K_BLOCK: (v : Block).blockTag();
 			case K_ARRAY: floatArray(v) ? DOUBLE_ARRAY_TAG : 0;
+			case K_ABSTRACT: ABSTRACT_TAG;
 			case _: CLOSURE_TAG;
 		}
 	}
@@ -111,6 +117,7 @@ class Poly {
 			case K_ENUM: Type.enumParameters(v).length;
 			case K_BLOCK: (v : Block).blockSize();
 			case K_ARRAY: (v : Array<Dynamic>).length;
+			case K_ABSTRACT: (v : Abstract).abstractSize();
 			case _: 0;
 		}
 	}
@@ -176,6 +183,8 @@ class Poly {
 					return compareFloats(a, b, total);
 				case K_FUNC:
 					throw new InvalidArgument("compare: functional value");
+				case K_ABSTRACT:
+					throw new InvalidArgument("compare: abstract value");
 				case _:
 					var fa = fields(a, ka), fb = fields(b, kb);
 					if (fa.length != fb.length) return fa.length < fb.length ? -1 : 1;
@@ -358,6 +367,8 @@ class Poly {
 				case K_DOUBLE:
 					h = mixDouble(h, v);
 					num--;
+				case K_ABSTRACT:
+					// (skipped, as OCaml skips Abstract_tag)
 				case K_FUNC:
 					// OCaml mixes a closure's header and code pointers, which have no
 					// counterpart here: the header of a closure alone (not counted)

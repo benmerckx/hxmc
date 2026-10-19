@@ -210,7 +210,8 @@ class Ints {
 	public static function camlNativeintOfString(s:String):Int64 return parse(s, 64, "Nativeint.of_string");
 
 	public static function camlInt32OfFloat(f:Float):haxe.Int32 return Float64.toInt64(f).low;
-	public static function camlInt32ToFloat(n:haxe.Int32):Float return n;
+	// (n * 1.0: a float, not an int that a Float-typed slot holds, on eval)
+	public static function camlInt32ToFloat(n:haxe.Int32):Float return n * 1.0;
 	public static function camlInt64OfFloat(f:Float):Int64 return Float64.toInt64(f);
 	public static function camlInt64ToFloat(n:Int64):Float return Float64.ofInt64(n);
 	public static function camlNativeintOfFloat(f:Float):Int64 return Float64.toInt64(f);

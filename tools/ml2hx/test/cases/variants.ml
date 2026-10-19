@@ -47,3 +47,5 @@ let flag_of_int (i : int) : flag = Obj.magic i
 let set flags f = flags lor (1 lsl int_of_flag f)
 let has flags f = flags land (1 lsl int_of_flag f) <> 0
 let () = let fl = set (set 0 FA) FD in Printf.printf "%d %b %b %b\n" fl (has fl FD) (has fl FB) (flag_of_int 1 = FB)
+let control_cases (b : < int : 'a -> string; .. >) (l : 'b list) = List.map (fun c -> b#int (Obj.magic c)) l
+let () = print_endline (String.concat "," (control_cases (object method int i = string_of_int (i * 10) end) [FA; FB; FD]))

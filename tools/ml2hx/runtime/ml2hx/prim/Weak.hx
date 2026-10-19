@@ -6,7 +6,7 @@ import ml2hx.rt.*;
 // collector does not report reachability to OCaml code, so no key is ever
 // found dead; OCaml allows that (a key goes only after a collection finds it
 // unreachable).
-class Ephemeron {
+class Ephemeron implements ml2hx.rt.Abstract {
 	public final keys:Array<Dynamic>;
 	public final set:Array<Bool>;
 	public var data:Dynamic = null;
@@ -15,6 +15,8 @@ class Ephemeron {
 		keys = [for (_ in 0...n) null];
 		set = [for (_ in 0...n) false];
 	}
+	// (its keys, then OCaml's two additional values: the link and the data)
+	public function abstractSize():Int return keys.length + 2;
 }
 
 typedef WeakT<T> = Ephemeron;

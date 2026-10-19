@@ -2131,6 +2131,12 @@ class UnitEmitter {
     if (this.isInt(n.t) && variantDecl(arg.t)) return `${RT}Int63.ofInt64(${RT}Poly.immediateOf(${v}))`;
     if (this.isInt(arg.t)) { const d = variantDecl(n.t);       // (some constant constructors: the int is the rank among them)
       if (d && d.decl.manifest === null && d.decl.ctors.some(c => !c.args.record && !c.args.tuple?.length)) return `(${RT}Runtime.constantCtor(${this.constantsOf(d)}, ${wrap(v)}.toInt()) : ${this.typeOrNull(n.t, n) ?? 'Any'})`; }
+    // Between two distinct type variables (fun c -> b#int (Obj.magic c)): the
+    // types are known at run time only; a constant constructor is passed as
+    // the int OCaml represents it by (and comes back by the int-to-variant
+    // conversion above).
+    const ta = this.t(arg.t), tn = this.t(n.t);
+    if (ta.k === 'var' && tn.k === 'var' && ta.id !== tn.id) return `${RT}Runtime.magicImmediate(${v})`;
     const target = this.typeOrNull(n.t, n);
     return target ? `(cast ${v} : ${target})` : `(cast ${v})`;
   }
