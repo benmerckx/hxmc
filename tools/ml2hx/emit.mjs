@@ -149,8 +149,16 @@ class UnitEmitter {
   arrows(i) {
     // Argument types and result of a function type, through all arrows.
     const args = []; let t = this.t(i);
-    while (t.k === 'poly') { i = t.body; t = this.t(i); }
-    while (t.k === 'arrow') { args.push({label: t.label, t: t.arg}); i = t.res; t = this.t(i); while (t.k === 'poly') { i = t.body; t = this.t(i); } }
+    const step = () => {
+      for (let guard = 0; guard < 20; guard++) {
+        if (t.k === 'poly') { i = t.body; t = this.t(i); continue; }
+        // Through abbreviations of function types (type printer = t -> string).
+        if (t.k === 'constr') { const e = this.expandAbbrev(i); if (e !== null && this.t(e).k !== 'constr' || (e !== null && e !== i)) { i = e; t = this.t(i); continue; } }
+        break;
+      }
+    };
+    step();
+    while (t.k === 'arrow') { args.push({label: t.label, t: t.arg}); i = t.res; t = this.t(i); step(); }
     return {args, res: i};
   }
   schemeArity(i) { let n = 0, t = this.t(i); while (t.k === 'arrow') { n++; t = this.t(t.res); } return n; }
@@ -314,6 +322,33 @@ class UnitEmitter {
   }
   // A record label's Haxe field ('a ref's contents is Ref.value).
   fieldName(lbl) { return lbl.name === 'contents' && /(^|\.)ref$/.test(pathName(lbl.type ?? {})) ? 'value' : valueName(lbl.name); }
+  // One step of expansion of an abbreviation (null if not one): a library
+  // one by the frontend's expansion, one of this unit by substitution.
+  expandAbbrev(i) {
+    const t = this.t(i);
+    if (t.k !== 'constr' || t.path.p) return null;
+    if (t.exp !== undefined) return t.exp;
+    let d;
+    try { d = this.resolveType(t.path, null); } catch (e) { return null; }
+    if (!d?.decl || d.decl.kind !== 'abstract' || d.decl.manifest === null || d.unit !== this.u.modname) return null;
+    const map = new Map();
+    d.decl.params.forEach((p, k) => { const v = this.t(p); if (v.k === 'var') map.set(v.id, t.args[k]); });
+    return this.substitute(d.decl.manifest, map);
+  }
+  substitute(i, map, seen = new Map()) {
+    if (!map.size) return i;
+    const t = this.t(i);
+    if (t.k === 'var') return map.has(t.id) ? map.get(t.id) : i;
+    if (seen.has(i)) return seen.get(i);
+    const copy = {...t};
+    const idx = this.T.length;
+    seen.set(i, idx);
+    this.T.push(copy);
+    for (const k of ['arg', 'res', 'body', 'exp']) if (typeof t[k] === 'number') copy[k] = this.substitute(t[k], map, seen);
+    if (t.args) copy.args = t.args.map(a => typeof a === 'number' ? this.substitute(a, map, seen) : a);
+    if (t.fields) copy.fields = t.fields.map(f => ({...f, t: typeof f.t === 'number' ? this.substitute(f.t, map, seen) : f.t, args: f.args?.map(a => this.substitute(a, map, seen))}));
+    return idx;
+  }
   // Whether a type is a tuple, through abbreviations.
   isTupleType(i, depth = 0) {
     const t = this.t(i);
@@ -939,6 +974,10 @@ class UnitEmitter {
         const name = this.fresh(identName(b.p.id));
         out.push(this.localFunction(name, fn, b.e, null, b.p.t));
         pending.push([b.p.id, {kind: 'localfn', name, arity: fn.arity}]);
+      } else if (b.p.k === 'var' && b.e.k === 'ident' && (() => { try { const d = this.identDesc(b.e); return ['static', 'lib', 'prim', 'external', 'instance', 'polystatic', 'localfn'].includes(d.kind) && !(d.kind === 'static' && !d.arity); } catch (e) { return false; } })()) {
+        // let f = g: an alias of a known function keeps its calling convention.
+        const d = this.identDesc(b.e);
+        pending.push([b.p.id, d.kind === 'lib' || d.kind === 'instance' ? {...d, scheme: b.e.scheme} : d]);
       } else if (b.p.k === 'var' && pure(b.e) && this.genericVarsOfValue(b.p.t).some(v => !this.tvars.has(v))) {
         // A polymorphic local value (let empty = [] in ...): a syntactic
         // value, so it is emitted at each use with that use's type.
