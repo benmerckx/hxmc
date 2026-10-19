@@ -24,7 +24,8 @@ export class Unsupported extends Error {
 }
 const predefTypes = {int: 'Int', char: 'Int', string: 'String', bytes: 'haxe.io.Bytes', float: 'Float', bool: 'Bool', unit: `${RT}Unit`,
   exn: `${RT}MlException`, array: 'Array', list: `${RT}MlList`, option: `${RT}MlOption`, nativeint: 'haxe.Int64', int32: 'haxe.Int32', int64: 'haxe.Int64',
-  lazy_t: `${RT}Lazy`, floatarray: 'Array<Float>', extension_constructor: 'Any'};
+  lazy_t: `${RT}Lazy`, floatarray: 'Array<Float>', extension_constructor: 'Any',
+  eff: `${STD}Effect.EffectEff`, continuation: `${STD}Effect_Deep.EffectDeepContinuation`};
 // Types of converted library units whose values the runtime's primitives
 // make: their Haxe representation (the declaration is not emitted).
 const PRIM = 'ml2hx.prim.';
@@ -924,7 +925,9 @@ class UnitEmitter {
         });
         this.decls.push(`enum ${name}${gen} {\n${ctors.join('\n')}\n}`);
       } else if (d.kind === 'open') {
-        this.decls.push(`class ${name}${gen} {\n\tpublic function new() {}\n}`);
+        // (parameters phantom: one base class for every instance)
+        if (params.length) this.decls.push(`class ${name}_Base {\n\tpublic function new() {}\n}`, `typedef ${name}${gen} = ${name}_Base;`);
+        else this.decls.push(`class ${name} {\n\tpublic function new() {}\n}`);
       } else this.fail(d, `type declaration ${d.kind}`);
     });
   }
@@ -934,10 +937,13 @@ class UnitEmitter {
   }
   emitExtension(x, desc, base) {
     const name = desc.hx.split('.').at(-1);
-    if (x.res) this.fail(x, 'GADT extension constructor');
     if (x.args.record) this.fail(x, 'inline record in an extension constructor');
-    this.withTypeParams(x.params.map(p => this.t(p)).filter(t => t.k === 'var').map(t => t.id), params => {
-      if (params.length) this.fail(x, 'parameterised extensible type');
+    // An extensible type's parameters are phantom (its constructors' classes
+    // extend one base class): a GADT constructor's result types nothing more.
+    if (x.params.length) base = `${base}<${x.params.map(() => 'Any').join(', ')}>`;
+    const own = x.res !== null && x.res !== undefined ? [...new Set([...(x.args.tuple ?? []), x.res].flatMap(t => this.typeVars(t)))] : x.params.map(p => this.t(p)).filter(t => t.k === 'var').map(t => t.id);
+    this.withTypeParams([], () => this.withAnyVars(own, () => {
+      const params = [];
       const args = x.args.tuple.map((a, i) => ({name: `v${i}`, t: this.type(a, x)}));
       const isExn = base === `${RT}MlException`;
       const ctorArgs = args.map(a => `${a.name}:${a.t}`).join(', ');
@@ -948,7 +954,13 @@ class UnitEmitter {
         else extra += `\n\tpublic static final instance = new ${name}();`;
       }
       this.decls.push(`class ${name} extends ${base} {\n${args.map(a => `\tpublic final ${a.name}:${a.t};`).join('\n')}\n\tpublic function new(${ctorArgs}) {\n\t\tsuper();\n${args.map(a => `\t\tthis.${a.name} = ${a.name};`).join('\n')}\n\t}${extra}\n}`);
-    });
+    }));
+  }
+  // Type variables typed Any while body runs.
+  withAnyVars(ids, body) {
+    const saved = new Map(this.tvars);
+    for (const id of ids) if (!this.tvars.has(id)) this.tvars.set(id, 'Any');
+    try { return body(); } finally { this.tvars = saved; }
   }
 
   // ------------------------------------------------------------ top-level values
@@ -1263,6 +1275,8 @@ class UnitEmitter {
   }
   // A function value (closure): curried.
   lambda(n) {
+    // (type c) of a closure: Haxe closures are not generic, c is Any
+    if (n.newtypes?.length && !n.$typed) return this.withLocalTypes(n.newtypes, () => this.lambda({...n, $typed: true}), n.newtypes.map(() => 'Any'));
     const fn = funInfo(n);
     const {args, res} = this.arrows(n.t);
     const f = this.functionParts(fn, n, null, true);
