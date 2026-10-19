@@ -24,7 +24,12 @@ const predefTypes = {int: 'Int', char: 'Int', string: 'String', bytes: 'haxe.io.
   exn: `${RT}MlException`, array: 'Array', list: `${RT}MlList`, option: `${RT}MlOption`, nativeint: 'Int', int32: 'haxe.Int32', int64: 'haxe.Int64',
   lazy_t: `${RT}Lazy`, floatarray: 'Array<Float>'};
 // Library types the emitter owns the representation of.
-const coreLibraryTypes = {'Stdlib.ref': `${RT}Ref`, 'Lazy.t': `${RT}Lazy`, 'CamlinternalLazy.t': `${RT}Lazy`, 'Stdlib.Lazy.t': `${RT}Lazy`};
+// Library types the emitter owns, and abbreviations of predefined types.
+const coreLibraryTypes = {'Stdlib.ref': `${RT}Ref`, 'Lazy.t': `${RT}Lazy`, 'CamlinternalLazy.t': `${RT}Lazy`, 'Stdlib.Lazy.t': `${RT}Lazy`,
+  'String.t': 'String', 'Bytes.t': 'haxe.io.Bytes', 'Char.t': 'Int', 'Int32.t': 'haxe.Int32', 'Int64.t': 'haxe.Int64', 'Nativeint.t': 'Int',
+  'Int.t': `${RT}Int63`, 'Bool.t': 'Bool', 'Float.t': 'Float', 'Unit.t': `${RT}Unit`, 'List.t': `${RT}MlList`, 'Option.t': `${RT}MlOption`,
+  'Array.t': 'Array', 'Stdlib.int32': 'haxe.Int32', 'Stdlib.int64': 'haxe.Int64', 'Stdlib.Int32.t': 'haxe.Int32', 'Stdlib.Int64.t': 'haxe.Int64',
+  'Uchar.t': 'Int', 'Signed.Int64.t': 'haxe.Int64', 'Signed.Int32.t': 'haxe.Int32'};
 
 
 // ---------------------------------------------------------------- paths
@@ -90,7 +95,11 @@ class Struct {
 class LibraryModule {
   constructor(path) { this.kind = 'lib'; this.path = path; this.name = [libraryModule(path[0]), ...path.slice(1)].join('_'); this.hx = STD + this.name; }
   typeHx(t) { return `${this.hx}.${moduleTypeName(this.name, t)}`; }
-  exnHx(x) { return this.name === 'Stdlib' && x === 'Exit' ? `${RT}Exit` : `${this.hx}.${moduleTypeName(this.name, x)}`; }
+  exnHx(x) {
+    if (this.name === 'Stdlib' && x === 'Exit') return `${RT}Exit`;
+    if (this.name === 'Stdlib' && predefExns[x]) return `${RT}${predefExns[x]}`;
+    return `${this.hx}.${moduleTypeName(this.name, x)}`;
+  }
 }
 
 // ---------------------------------------------------------------- emitter
@@ -127,7 +136,8 @@ class UnitEmitter {
   arrows(i) {
     // Argument types and result of a function type, through all arrows.
     const args = []; let t = this.t(i);
-    while (t.k === 'arrow') { args.push({label: t.label, t: t.arg}); i = t.res; t = this.t(i); }
+    while (t.k === 'poly') { i = t.body; t = this.t(i); }
+    while (t.k === 'arrow') { args.push({label: t.label, t: t.arg}); i = t.res; t = this.t(i); while (t.k === 'poly') { i = t.body; t = this.t(i); } }
     return {args, res: i};
   }
   schemeArity(i) { let n = 0, t = this.t(i); while (t.k === 'arrow') { n++; t = this.t(t.res); } return n; }
@@ -244,7 +254,14 @@ class UnitEmitter {
         return d.hx + (args.length ? `<${args.join(', ')}>` : '');
       }
       case 'object': {
-        if (t.class) { const d = this.resolveType(t.class, n); return d.hx; }
+        if (t.class) {
+          const d = this.resolveType(t.class, n);
+          if (d.kind !== 'class') this.fail(n, `object type of ${pathName(t.class)}`);
+          // #c carries the row variable first.
+          let args = t.classArgs ?? [];
+          if (args.length === d.decl.params.length + 1) args = args.slice(1);
+          return d.hx + (args.length ? `<${args.map(a => this.type(a, n)).join(', ')}>` : '');
+        }
         this.fail(n, 'structural object type');
       }
       case 'package': this.fail(n, 'first-class module type');
@@ -311,6 +328,16 @@ class UnitEmitter {
           for (const v of patternVars(b.p)) {
             const fn = b.p.k === 'var' && b.e.k === 'fun' ? funInfo(b.e) : null;
             const name = identName(v.id);
+            // let f = g (an alias of a value): references go to g.
+            if (b.p.k === 'var' && b.e.k === 'ident' && !item.rec) {
+              let target = null;
+              try { target = this.identDesc(b.e); } catch (e) {}
+              if (target && ['static', 'lib', 'prim', 'external', 'instance', 'polystatic'].includes(target.kind)) {
+                const alias = target.kind === 'lib' || target.kind === 'instance' ? {...target, scheme: b.e.scheme, aliasType: b.e.t} : target;
+                s.values.set(name, alias); this.ids.set(v.id, alias); b.alias = true;
+                continue;
+              }
+            }
             const hx = this.staticName(s, name);
             const d = fn ? {kind: 'static', hx: `${s.hx}.${hx}`, member: hx, arity: fn.arity, fn} : {kind: 'static', hx: `${s.hx}.${hx}`, member: hx, arity: 0};
             if (!fn && b.p.k === 'var' && this.genericVarsOfValue(b.p.t).length) d.poly = true;
@@ -334,13 +361,13 @@ class UnitEmitter {
         break;
       case 'exception': {
         const x = item.ext;
-        const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, x.name)}`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
+        const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, x.name)}Exn`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
         s.exns.set(x.name, desc); this.ids.set(x.id, desc);
         break;
       }
       case 'typext':
         for (const x of item.ctors) {
-          const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, x.name)}`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
+          const desc = x.rebind ? {kind: 'exnalias', path: x.rebind} : {hx: `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, x.name)}Exn`, ext: x, qualified: [this.u.modname, ...path, x.name].join('.')};
           s.exns.set(x.name, desc); this.ids.set(x.id, desc);
         }
         break;
@@ -376,8 +403,8 @@ class UnitEmitter {
       case 'class':
         for (const c of item.classes) {
           const hx = `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, c.name)}`;
-          const d = {kind: 'class', hx, decl: c};
-          s.classes.set(c.name, d); this.ids.set(c.id, d); this.ids.set(c.type, d);
+          const d = this.declareClass(c, hx);
+          s.classes.set(c.name, d); this.ids.set(c.id, d); this.ids.set(c.type, d); if (c.object) this.ids.set(c.object, d);
           s.types.set(c.name, d);
         }
         break;
@@ -411,7 +438,8 @@ class UnitEmitter {
     if (m.k === 'constraint') return this.resolveModuleExpr(m.m);
     this.fail(m, `module expression ${m.k} in functor position`);
   }
-  subName(path) { return path.join('_'); }
+  // Submodule classes are unique per package: prefixed with the unit's name.
+  subName(path) { return [this.cfg.module, ...path].join('_'); }
 
   // ------------------------------------------------------------ emission (pass 2)
   emit() {
@@ -423,7 +451,7 @@ class UnitEmitter {
     lines.push(...this.decls, '');
     lines.push(`class ${this.cfg.class} {`);
     lines.push(...this.statics.map(x => '\t' + x));
-    lines.push(`\tpublic static function init():Void { ${this.init.join(' ')} }`);
+    lines.push(`\tpublic static function ml2hxInit():Void { ${this.init.join(' ')} }`);
     lines.push('}');
     for (const [name, members] of this.subclasses) lines.push('', `class ${name} {`, ...members.map(x => '\t' + x), '}');
     return {code: lines.join('\n') + '\n', deps: [...this.deps]};
@@ -586,6 +614,7 @@ class UnitEmitter {
     const members = this.members(s);
     if (item.rec && item.bindings.some(b => b.e.k !== 'fun')) this.fail(item, 'recursive non-function value');
     for (const b of item.bindings) {
+      if (b.alias) continue;
       if (b.p.k === 'var' && b.e.k === 'fun') {
         const d = this.ids.get(b.p.id);
         const vars = this.typeVars(b.p.t).filter(v => !this.tvars.has(v));
@@ -913,10 +942,10 @@ class UnitEmitter {
       case 'unreachable': return `throw ${this.matchFailure(n)}`;
       case 'letexception': this.fail(n, 'local exception');
       case 'letmodule': return this.letModule(n);
-      case 'new': return this.fail(n, 'class constructor used as a value');
+      case 'new': return this.newObject({k: 'apply', t: n.t, l: n.l, fn: n, args: []});
       case 'send': return this.send(n, []);
-      case 'instvar': return `this.${valueName(n.name)}`;
-      case 'setinstvar': return `{ this.${valueName(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
+      case 'instvar': return `this.iv_${valueName(n.name)}`;
+      case 'setinstvar': return `{ this.iv_${valueName(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
       case 'object': this.fail(n, 'immediate object');
       case 'override': this.fail(n, 'object copy {< >}');
       case 'pack': this.fail(n, 'first-class module');
@@ -1123,7 +1152,8 @@ class UnitEmitter {
     const call = ps.reduce((acc, p) => `${acc}(${p})`, f);
     return {k: '$expr', impure: true, code: `{ var ${f} = ${this.value(e)}; function(${ps.map((p, i) => `${p}:${this.type(args[i].t, n)}`).join(', ')}):${resT} return ${call}; }`};
   }
-  knownCall(callee, arity, n, fn) {
+  knownCall(callee, arity, n, fn, nullary = false) {
+    if (nullary) return n.args.length ? this.applyRest(`${callee}()`, n.args, n) : `${callee}()`;
     const args = n.args;
     const {args: formal, res} = this.arrows(fn.t);
     // Arguments up to the arity: holes (omitted labelled args) and missing
@@ -1235,8 +1265,8 @@ class UnitEmitter {
       '%eq': cmp('=='), '%noteq': cmp('!='), '%equal': cmp('='), '%notequal': cmp('<>'),
       '%lessthan': cmp('<'), '%greaterthan': cmp('>'), '%lessequal': cmp('<='), '%greaterequal': cmp('>='), '%compare': cmp('compare'),
       '%boolnot': {arity: 1, code: v => `!${wrap(v[0])}`},
-      '%sequand': {arity: 2, lazy: a => `(${this.value(a[0])} && ${this.value(a[1])})`},
-      '%sequor': {arity: 2, lazy: a => `(${this.value(a[0])} || ${this.value(a[1])})`},
+      '%sequand': {arity: 2, lazy: a => `(${wrap(this.value(a[0]))} && ${wrap(this.value(a[1]))})`},
+      '%sequor': {arity: 2, lazy: a => `(${wrap(this.value(a[0]))} || ${wrap(this.value(a[1]))})`},
       '%identity': {arity: 1, code: (v, a, n) => this.identity(v[0], a[0], n)},
       '%obj_magic': {arity: 1, code: (v, a, n) => this.identity(v[0], a[0], n)},
       '%opaque': {arity: 1, code: v => v[0]},
@@ -1258,8 +1288,8 @@ class UnitEmitter {
       '%array_safe_get': {arity: 2, code: v => `${RT}Runtime.arrayGet(${v[0]}, ${toInt(v[1])})`}, '%array_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}[${toInt(v[1])}]`},
       '%array_safe_set': {arity: 3, code: v => `${RT}Runtime.arraySet(${v[0]}, ${toInt(v[1])}, ${v[2]})`}, '%array_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}[${toInt(v[1])}] = ${v[2]}; ${UNIT}; }`},
       '%floatofint': {arity: 1, code: v => `${I63}.toFloat(${v[0]})`}, '%intoffloat': {arity: 1, code: v => `${I63}.ofFloat(${v[0]})`},
-      '%addfloat': {arity: 2, code: v => `(${v[0]} + ${v[1]})`}, '%subfloat': {arity: 2, code: v => `(${v[0]} - ${v[1]})`},
-      '%mulfloat': {arity: 2, code: v => `(${v[0]} * ${v[1]})`}, '%divfloat': {arity: 2, code: v => `(${v[0]} / ${v[1]})`},
+      '%addfloat': {arity: 2, code: v => `(${wrap(v[0])} + ${wrap(v[1])})`}, '%subfloat': {arity: 2, code: v => `(${wrap(v[0])} - ${wrap(v[1])})`},
+      '%mulfloat': {arity: 2, code: v => `(${wrap(v[0])} * ${wrap(v[1])})`}, '%divfloat': {arity: 2, code: v => `(${wrap(v[0])} / ${wrap(v[1])})`},
       '%negfloat': {arity: 1, code: v => `(-${v[0]})`}, '%absfloat': {arity: 1, code: v => `Math.abs(${v[0]})`},
       '%loc_FILE': {arity: 1, code: () => haxeString(this.cfg.source)}, '%loc_LINE': {arity: 1, code: (v, a, n) => this.intLit(n.l[0])},
       '%int_as_pointer': null,
@@ -1281,7 +1311,7 @@ class UnitEmitter {
     const t = this.t(a[0].t);
     if (op === '==' || op === '!=') {
       if (this.isInt(a[0].t)) return `${op === '!=' ? '!' : ''}${RT}Int63.eq(${v[0]}, ${v[1]})`;
-      return `(${v[0]} ${op} ${v[1]})`;
+      return `(${wrap(v[0])} ${op} ${wrap(v[1])})`;
     }
     if (this.isInt(a[0].t)) {
       const fn = {'=': 'eq', '<>': 'eq', '<': 'lt', '>': 'gt', '<=': 'le', '>=': 'ge', compare: 'compare'}[op];
@@ -1292,7 +1322,7 @@ class UnitEmitter {
     if (simple && op !== 'compare') {
       const o = {'=': '==', '<>': '!='}[op] ?? op;
       if (t.path.p === 'bool' && !['==', '!='].includes(o)) return `${RT}Runtime.compareBool(${v[0]}, ${v[1]}) ${o} 0`;
-      return `(${v[0]} ${o} ${v[1]})`;
+      return `(${wrap(v[0])} ${o} ${wrap(v[1])})`;
     }
     if (op === 'compare') {
       if (simple && t.path.p !== 'float' && t.path.p !== 'bool') return `${RT}Int63.ofInt(${RT}Runtime.compare${t.path.p === 'string' ? 'String' : 'Int'}(${v[0]}, ${v[1]}))`;
@@ -1306,7 +1336,7 @@ class UnitEmitter {
   libApply(d, n, fn) {
     const key = `${libraryModule(d.path[0])}${d.path.length > 1 ? '.' + d.path.slice(1).join('.') : ''}.${d.name}`;
     const fmt = {'Printf.sprintf': 'sprintf', 'Printf.printf': 'printf', 'Printf.eprintf': 'eprintf', 'Printf.fprintf': 'fprintf', 'Printf.bprintf': 'bprintf', 'Printf.ksprintf': 'ksprintf', 'Printf.kprintf': 'ksprintf', 'Stdlib.failwith': null, 'Stdlib.invalid_arg': null, 'Stdlib.^': 'concat'}[key];
-    if (key === 'Stdlib.^' && n.args.length === 2 && n.args.every(a => a.e)) return this.ordered(n.args.map(a => a.e), v => `(${v[0]} + ${v[1]})`);
+    if (key === 'Stdlib.^' && n.args.length === 2 && n.args.every(a => a.e)) return this.ordered(n.args.map(a => a.e), v => `(${wrap(v[0])} + ${wrap(v[1])})`);
     if (key === 'Stdlib.failwith' && n.args.length === 1 && n.args[0].e) return `throw new ${RT}Failure(${this.value(n.args[0].e)})`;
     if (key === 'Stdlib.invalid_arg' && n.args.length === 1 && n.args[0].e) return `throw new ${RT}InvalidArgument(${this.value(n.args[0].e)})`;
     if (fmt && fmt !== 'concat') return this.printf(fmt, n, fn);
@@ -1330,7 +1360,7 @@ class UnitEmitter {
     const leadVals = n.args.slice(0, lead).map(a => this.value(a.e));
     const concat = () => {
       let i = 0;
-      const parts = pieces.map(p => p.lit !== undefined ? haxeString(p.lit) : this.formatConv(p, names[i++], formal[i - 1]?.t, n));
+      const parts = pieces.map(p => p.lit !== undefined ? haxeString(p.lit) : wrap(this.formatConv(p, names[i++], formal[i - 1]?.t, n)));
       return parts.length ? parts.join(' + ') : '""';
     };
     let body;
@@ -1640,9 +1670,192 @@ class UnitEmitter {
   }
 
   // ------------------------------------------------------------ objects
-  newObject(n) { this.fail(n, 'object construction (new)'); }
-  send(n, args) { this.fail(n, 'method call'); }
-  emitClass(c, d) { this.fail(c, 'class declaration'); }
+  // A class's structure: constructor parameters, class-level lets, fields.
+  classParts(ce) {
+    const params = [], lets = [];
+    let parentNode = null;
+    while (ce.k !== 'struct') {
+      if (ce.k === 'fun') { params.push(ce); ce = ce.body; }
+      else if (ce.k === 'let') { lets.push(ce); ce = ce.body; }
+      else if (ce.k === 'constraint') ce = ce.ce;
+      else throw new Unsupported(ce, `class expression ${ce.k}`);
+    }
+    return {params, lets, cs: ce.cs};
+  }
+  declareClass(c, hx) {
+    const parts = this.classParts(c.ce);
+    const d = {kind: 'class', hx, decl: c, parts, methods: new Map(), parent: null, arity: parts.params.length};
+    for (const f of parts.cs.fields) {
+      if (f.k === 'inherit') {
+        if (d.parent) this.fail(f, 'multiple inheritance');
+        let ce = f.ce, args = [];
+        while (ce.k === 'constraint') ce = ce.ce;
+        if (ce.k === 'apply') { args = ce.args; ce = ce.fn; while (ce.k === 'constraint') ce = ce.ce; }
+        if (ce.k !== 'ident') this.fail(f, `inherit from ${ce.k}`);
+        d.parent = this.resolveType(ce.path, f);
+        if (d.parent.kind !== 'class') this.fail(f, 'inherit from a non-class');
+        d.parentArgs = args; d.parentNode = f;
+        for (const [k, v] of d.parent.methods) d.methods.set(k, {...v, inherited: true});
+      }
+    }
+    for (const m of parts.cs.methods) {
+      const own = parts.cs.fields.find(f => f.k === 'method' && f.name === m.name);
+      const prev = d.methods.get(m.name);
+      d.methods.set(m.name, {name: m.name, arity: this.methodArity(m.t), virtual: own ? !!own.virtual : prev?.virtual ?? false, inherited: !own && !!prev, override: !!own && !!prev});
+    }
+    return d;
+  }
+  methodArity(t) { let x = this.t(t); if (x.k === 'poly') x = this.t(x.body); let n = 0; while (x.k === 'arrow') { n++; x = this.t(x.res); } return n; }
+  emitClass(c, d) {
+    const {params, lets, cs} = d.parts;
+    const name = d.hx.split('.').at(-1);
+    this.withTypeParams(this.declParams(c, c), tparams => {
+      const gen = tparams.length ? `<${tparams.join(', ')}>` : '';
+      const members = [], ctor = [], ctorParams = [];
+      const saved = new Map(this.ids);
+      // Class parameters and class-level lets become fields.
+      for (const p of params) {
+        const pname = this.fresh('p');
+        ctorParams.push(`${pname}:${this.type(p.p.t, p)}`);
+        const bound = this.bindIrrefutable(p.p, pname);
+        if (bound === null) this.fail(p, 'refutable class parameter');
+        ctor.push(bound);
+        for (const x of p.defaults) {
+          const f = `cp_${this.fresh(identName(x.id))}`;
+          members.push(`var ${f}:${this.type(x.e.t, p)};`);
+          ctor.push(`this.${f} = ${this.value(x.e)};`);
+          this.ids.set(x.id, {kind: 'local', name: `this.${f}`});
+        }
+      }
+      for (const l of lets) {
+        ctor.push(this.bindings({rec: l.rec, bindings: l.bindings}));
+        for (const x of l.ivars) {
+          const f = `cp_${this.fresh(identName(x.id))}`;
+          members.push(`var ${f}:${this.type(x.e.t, l)};`);
+          ctor.push(`this.${f} = ${this.value(x.e)};`);
+          this.ids.set(x.id, {kind: 'local', name: `this.${f}`});
+        }
+      }
+      for (const id of patternVars(cs.self)) this.ids.set(id.id, {kind: 'local', name: 'this'});
+      let superCall = null;
+      const parentHx = d.parent ? this.parentType(d) : null;
+      const inits = [];
+      for (const f of cs.fields) {
+        switch (f.k) {
+          case 'inherit': {
+            const args = d.parentArgs.map(a => a.e ? this.value(a.e) : this.fail(f, 'omitted class argument'));
+            superCall = `super(${args.join(', ')});`;
+            if (f.super) this.ids.set(`super:${f.super}`, {kind: 'super'});
+            break;
+          }
+          case 'val': {
+            const field = `iv_${valueName(f.name)}`;
+            if (f.virtual) break;
+            const t = this.type(f.e.t, f);
+            if (!d.parent || !this.parentHasVal(d.parent, f.name)) members.push(`public var ${field}:${t};`);
+            ctor.push(`this.${field} = ${this.value(f.e)};`);
+            break;
+          }
+          case 'method': {
+            const info = d.methods.get(f.name);
+            const mt = this.methodType(cs, f.name);
+            const sig = this.methodSignature(mt, info.arity, f);
+            if (f.virtual) { members.push(`abstract public function ${valueName(f.name)}${sig.gen}(${sig.params}):${sig.res};`); break; }
+            const mb = this.methodBody(f.e, info.arity, sig, f);
+            members.push(`${d.parent && this.parentHasMethod(d.parent, f.name) ? 'override ' : ''}public function ${valueName(f.name)}${sig.gen}(${mb.params ?? sig.params}):${sig.res} ${mb.body}`);
+            break;
+          }
+          case 'initializer': inits.push(this.selfBody(f.e)); break;
+        }
+      }
+      const isAbstract = c.virtual || [...d.methods.values()].some(m => m.virtual);
+      const body = [...(superCall ? [superCall] : []), ...ctor, ...inits].join(' ');
+      this.decls.push(`${isAbstract ? 'abstract ' : ''}class ${name}${gen}${parentHx ? ` extends ${parentHx}` : ''} {\n${members.map(m => '\t' + m).join('\n')}\n\tpublic function new(${ctorParams.join(', ')}) { ${body} }\n}`);
+      this.ids = saved;
+    });
+  }
+  parentType(d) {
+    const pn = d.parentNode;
+    // The inherited class's type arguments, from the inherit expression's type.
+    const p = d.parent;
+    if (!p.decl.params.length) return p.hx;
+    let ce = pn.ce; while (ce.k === 'constraint') ce = ce.ce;
+    this.fail(pn, 'inheriting a parameterised class');
+  }
+  parentHasVal(p, name) { return p.parts.cs.fields.some(f => f.k === 'val' && f.name === name) || (p.parent && this.parentHasVal(p.parent, name)); }
+  parentHasMethod(p, name) { return p.parts.cs.fields.some(f => f.k === 'method' && f.name === name && !f.virtual) || (p.parent && this.parentHasMethod(p.parent, name)); }
+  methodType(cs, name) { const m = cs.methods.find(x => x.name === name); if (!m) this.fail(cs, `method ${name} without type`); return m.t; }
+  methodSignature(t, arity, n) {
+    let x = this.t(t), vars = [];
+    if (x.k === 'poly') { vars = x.vars.map(v => this.t(v)).filter(v => v.k === 'var').map(v => v.id); t = x.body; }
+    const out = {};
+    this.withTypeParams(vars.filter(v => !this.tvars.has(v)), tp => {
+      const {args, res} = this.arrows(t);
+      out.gen = tp.length ? `<${tp.join(', ')}>` : '';
+      out.names = args.slice(0, arity).map((_, i) => `a${i}`);
+      out.params = args.slice(0, arity).map((a, i) => `a${i}:${this.type(a.t, n)}`).join(', ');
+      out.res = arity < args.length ? this.chainType(args.slice(arity), res, n) : this.type(res, n);
+      out.vars = vars;
+    });
+    return out;
+  }
+  // A method's body: `fun self -> fun a b -> e`; self is `this`.
+  methodBody(e, arity, sig, f) {
+    return this.withTypeParams(sig.vars.filter(v => !this.tvars.has(v)), () => {
+      const fn = funInfo(e);
+      const self = fn.params[0];
+      for (const v of patternVars(self.p)) this.ids.set(v.id, {kind: 'local', name: 'this'});
+      const rest = {params: fn.params.slice(1), arity: fn.arity - 1, body: fn.body};
+      if (rest.arity === arity) {
+        // Reuse the function machinery with the method's parameter names.
+        const node = {...e, t: this.arrows(e.t).args.length > rest.arity ? this.selfStripped(e.t) : e.t};
+        const parts = this.functionParts(rest, node, null);
+        return {params: parts.params, body: parts.body};
+      }
+      if (rest.arity === 0) {
+        const v = this.value(rest.body ?? {k: 'unsupported', text: 'method cases'});
+        return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`};
+      }
+      this.fail(f, `method arity ${rest.arity} differs from its type's ${arity}`);
+    });
+  }
+  selfStripped(t) { const x = this.t(t); return x.k === 'arrow' ? x.res : t; }
+  selfBody(e) {
+    const fn = funInfo(e);
+    for (const v of patternVars(fn.params[0].p)) this.ids.set(v.id, {kind: 'local', name: 'this'});
+    return this.stmt(fn.body);
+  }
+  classOf(t, n) {
+    const x = this.t(t);
+    if (x.k === 'object' && x.class) return this.resolveType(x.class, n);
+    if (x.k === 'constr') { try { const d = this.resolveType(x.path, n); if (d.kind === 'class') return d; } catch (e) {} }
+    return null;
+  }
+  newObject(n) {
+    const d = this.resolveType(n.fn.path, n);
+    if (d.kind !== 'class') this.fail(n, 'new of a non-class');
+    const t = this.type(n.t, n).replace(/^\(.*\) -> /, '');
+    const cls = this.classOf(this.resultAfter(n.fn.t, d.arity), n) ? this.type(this.resultAfter(n.fn.t, d.arity), n) : d.hx;
+    return this.knownCall(`new ${cls}`, d.arity, n, n.fn, d.arity === 0);
+  }
+  // obj#m args: a method call with the method's arity (from its class).
+  send(s, args, n = null) {
+    const name = s.meth.name;
+    if (s.meth.ancestor) {
+      const call = {k: 'apply', t: n?.t ?? s.t, l: s.l, fn: s, args};
+      return this.methodCall(`super.${valueName(name)}`, this.sendArity(s, name), call);
+    }
+    const d = this.classOf(s.obj.t, s);
+    const arity = d ? d.methods.get(name)?.arity ?? this.fail(s, `unknown method ${name}`) : this.fail(s, 'method call on a structural object type');
+    const obj = this.value(s.obj);
+    const call = {k: 'apply', t: n?.t ?? s.t, l: s.l, fn: s, args};
+    return this.methodCall(`${wrap(obj)}.${valueName(name)}`, arity, call);
+  }
+  sendArity(s, name) { return this.methodArity(s.t); }
+  methodCall(callee, arity, call) {
+    if (arity === 0) return call.args.length ? this.applyRest(`${callee}()`, call.args, call) : `${callee}()`;
+    return this.knownCall(callee, arity, call, call.fn);
+  }
 }
 
 // ---------------------------------------------------------------- analyses
@@ -1698,7 +1911,7 @@ function blockMethods(fields) {
   const get = fields.length ? `switch i { ${fields.map((f, i) => `case ${i}: ${f};`).join(' ')} case _: null; }` : 'null';
   return `\tpublic function blockTag():Int return 0;\n\tpublic function blockSize():Int return ${fields.length};\n\tpublic function blockField(i:Int):Dynamic return ${get};`;
 }
-const wrap = s => /^[\w.]+$/.test(s) ? s : `(${s})`;
+const wrap = s => /^[\w.]+$/.test(s) || /^\((?:[^()]|\([^()]*\))*\)$/.test(s) && !s.startsWith('({') ? s : `(${s})`;
 const needsParens = s => !/^[\w.]+$/.test(s);
 export function haxeString(s) {
   let out = '"';

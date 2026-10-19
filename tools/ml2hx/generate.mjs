@@ -92,7 +92,7 @@ export function loadUnits({upstream, buildDir, files = null}) {
   // Sources dune generates (MetaList, DefineList, WarningList from src-json)
   // are units of the program too.
   const tracked = new Set(sources);
-  for (const [source, f] of bySource) if (!tracked.has(source) && !/(^|\/)prebuild\.ml$/.test(source))
+  for (const [source, f] of bySource) if (!tracked.has(source) && !/(^|\/)prebuild\.ml$/.test(source) && /\.ml$/.test(source))
     units.push({modname: f.modname, config: unitConfig(source), load: f.load, generatedSource: true});
   for (const e of errors) failures.push({source: path.relative(e.file.startsWith(upstream) ? upstream : buildDir, e.file), stage: 'typing', error: e.error});
   return {sources, units, failures};
@@ -152,6 +152,7 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   const result = {sources: sources.length, typed: units.length, emitted: emitted.outputs.size - 0, failures: all};
   const trackedOutputs = new Set(units.filter(u => !u.generatedSource).map(u => u.config.output));
   result.emitted = [...outputs.keys()].filter(k => trackedOutputs.has(k)).length;
+  result.trackedOutputs = [...trackedOutputs];
   result.complete = all.length === 0 && result.emitted === sources.length;
   fs.writeFileSync(path.join(out, '.status'), result.complete ? 'complete\n' : 'incomplete\n');
   return result;

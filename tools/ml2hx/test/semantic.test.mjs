@@ -44,14 +44,14 @@ export function generateCase(name, cmts, dir, options = {}) {
   const ir = frontend(cmts, [dir]);
   for (const f of ir) if (f.error) throw new Error(f.error);
   const pkg = `cases.${name.replace(/\W/g, '_').toLowerCase()}`;
-  const units = ir.map(f => ({modname: f.modname, config: {source: path.basename(f.source ?? f.file), class: `${f.modname}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${f.modname}Module.hx`}, load: f.load}));
+  const units = ir.map(f => ({modname: f.modname, config: {source: path.basename(f.source ?? f.file), module: f.modname, class: `${f.modname}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${f.modname}Module.hx`}, load: f.load}));
   const {outputs, failures} = emitUnits(units, options);
   if (failures.length) throw new Unsupported(null, failures.map(f => `${f.source}: ${f.error}`).join('\n'));
   const out = path.join(dir, 'hx');
   fs.rmSync(out, {recursive: true, force: true});
   for (const [p, code] of outputs) { fs.mkdirSync(path.dirname(path.join(out, p)), {recursive: true}); fs.writeFileSync(path.join(out, p), code); }
   const main = `${pkg}.Main`;
-  fs.writeFileSync(path.join(out, pkg.replaceAll('.', '/'), 'Main.hx'), format(`package ${pkg};\nclass Main {\n\tstatic function main() {\n${units.map(u => `\t\t${pkg}.${u.config.class}.init();`).join('\n')}\n\t\tml2hx.std.Stdlib.doAtExit();\n\t}\n}\n`));
+  fs.writeFileSync(path.join(out, pkg.replaceAll('.', '/'), 'Main.hx'), format(`package ${pkg};\nclass Main {\n\tstatic function main() {\n${units.map(u => `\t\t${pkg}.${u.config.class}.ml2hxInit();`).join('\n')}\n\t\tml2hx.std.Stdlib.doAtExit();\n\t}\n}\n`));
   return {out, main};
 }
 const runtime = ['-cp', 'tools/ml2hx/runtime'];

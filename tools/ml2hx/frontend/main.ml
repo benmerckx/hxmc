@@ -89,7 +89,8 @@ and typ_desc t =
     let fs = List.filter (fun (_,k,_) -> Types.field_kind_repr k = Types.Fpublic) fs in
     node "object" ["fields",arr (fun (n,_,t) -> Obj ["name",Str n; "t",typ t]) fs;
       "open",Bool (match Types.get_desc rest with Types.Tnil -> false | _ -> true);
-      "class",(match !nm with Some (p,_) -> path p | None -> Null)]
+      "class",(match !nm with Some (p,_) -> path p | None -> Null);
+      "classArgs",(match !nm with Some (_,args) -> arr typ args | None -> Arr [])]
   | Types.Tvariant row ->
     let fields = Types.row_fields row in
     node "variant" ["fields",arr (fun (tag,f) -> match Types.row_field_repr f with
@@ -286,7 +287,7 @@ and field_kind = function
 and class_decl (c,_) =
   Obj ["id",ident c.ci_id_class; "name",Str c.ci_id_name.txt; "virtual",Bool (c.ci_virt = Virtual);
        "params",arr (fun (t,_) -> typ t.ctyp_type) c.ci_params; "ce",class_expr c.ci_expr;
-       "type",ident c.ci_id_class_type; "l",loc c.ci_loc]
+       "type",ident c.ci_id_class_type; "object",ident c.ci_id_object; "l",loc c.ci_loc]
 and structure s = arr structure_item s.str_items
 and structure_item i =
   let k, fields = match i.str_desc with

@@ -3,7 +3,7 @@
 export const keywords = new Set(('abstract break case cast catch class continue default do dynamic else enum extends extern false final for function if implements import in inline interface macro new null operator overload override package private public return static super switch this throw true try typedef untyped using var while').split(' '));
 // Names Haxe resolves specially in expression position or that clash with
 // generated members.
-const reserved = new Set(['trace', 'init']);
+const reserved = new Set(['trace']);
 const opChars = {'!':'Bang','$':'Dollar','%':'Percent','&':'Amp','*':'Star','+':'Plus','-':'Minus','.':'Dot','/':'Slash',':':'Colon','<':'Lt','=':'Eq','>':'Gt','?':'Qmark','@':'At','^':'Caret','|':'Bar','~':'Tilde','#':'Hash'};
 export function isOperator(s) { return s.length > 0 && !/^[A-Za-z_]/.test(s); }
 // Stdlib's operators have names (the runtime's); others are spelled out.
