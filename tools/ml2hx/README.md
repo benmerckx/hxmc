@@ -64,7 +64,7 @@ to JS with `ML2HX_UTEST=<utest checkout>`): `bin/ml2hx/profile/profile.md`
 has phase times (`--times`), a differential perf profile by upstream
 function, allocations by type from census builds (`-D hxmc.census`,
 `RT_CENSUS=1`, which also counts every allocation) and perf counters; the
-raw data stays beside it. `make ml2hx-profile-report` reruns the
+raw data stays beside it; upstream's own compiler (`make reference`) is timed as a third column when built. `make ml2hx-profile-report` reruns the
 measurements on the binaries built (`tools/ml2hx/profile.mjs`).
 
 ## Replacements

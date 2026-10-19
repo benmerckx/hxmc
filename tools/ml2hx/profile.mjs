@@ -13,7 +13,8 @@
 //   4. counters (perf stat).
 // Environment: ML2HX_PROFILE_RUNS (timing runs per side, default 5),
 // ML2HX_PROFILE_FREQ (perf sampling Hz, default 999), PERF (the perf binary),
-// ML2HX_UTEST (a utest checkout: adds upstream's unit tests compiled to JS),
+// ML2HX_REFERENCE (upstream's compiler, default bin/reference/haxe: a third
+// column of times and phases), ML2HX_UTEST (a utest checkout: adds upstream's unit tests compiled to JS),
 // ML2HX_PROFILE_NOTE (what changed: the run's summary, also written to
 // bin/ml2hx/profile/summary.md, is then appended to tools/ml2hx/PROFILE.md).
 import fs from 'node:fs';
@@ -24,7 +25,11 @@ import readline from 'node:readline';
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const dir = path.join(root, 'bin/ml2hx/profile');
 const sides = ['port', 'generated'];
-const bin = s => path.join(dir, s);
+// upstream's own compiler (make reference: the nightly of the pinned
+// commit the conformance lanes use), timed beside them when present
+const reference = path.resolve(process.env.ML2HX_REFERENCE ?? path.join(root, 'bin/reference/haxe'));
+const hasReference = fs.existsSync(reference);
+const bin = s => s === 'reference' ? reference : path.join(dir, s);
 for (const s of [...sides, ...sides.map(s => `${s}-census`)]) if (!fs.existsSync(bin(s))) throw new Error(`build ${bin(s)} first (make ml2hx-profile)`);
 const runs = Number(process.env.ML2HX_PROFILE_RUNS ?? 5);
 const freq = Number(process.env.ML2HX_PROFILE_FREQ ?? 999);
@@ -261,26 +266,29 @@ md.push('# The generated compiler against the port: profile', '');
 md.push(`- commit: ${git(['rev-parse', '--short', 'HEAD'])}${git(['status', '--porcelain', '--untracked-files=no']) ? ' (with local changes)' : ''}, ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
 md.push('- builds (make ml2hx-profile, HXMC_SYMBOLS=1): port `-cp haxe/src -main haxe.Main`, generated `-cp bin/ml2hx/generated -main Ml2hxCompiler`; both `-D disable-parallelism -D hxmc.gc-prefault -cp bin/hxmc/std --custom-target hxmc`; census builds add `-D hxmc.census`');
 md.push(`- runs: ${runs} timed per side (alternating, medians), perf record at ${freq} Hz with frame-pointer call graphs, one perf stat and one census run per side; host ${sh('uname', ['-srm']).stdout.trim()}, ${sh('nproc', []).stdout.trim()} CPUs, load ${fs.readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).join(' ')}`);
+md.push(`- upstream's own compiler: ${hasReference ? `${path.relative(root, reference)} (${sh(reference, ['-version']).stdout.trim() || sh(reference, ['-version']).stderr.trim()}), timed only` : 'not built (make reference)'}`);
 md.push(`- raw data: bin/ml2hx/profile (times-*.txt, perf-*.data, profile-*.json, census-*.txt, stat-*.csv)`, '');
 
 for (const w of workloads) {
   md.push(`## ${w.name}`, '');
   // 1
-  const t = {port: [], generated: []};
-  for (let i = 0; i < runs; i++) for (const s of i % 2 ? [...sides].reverse() : sides) {
+  const timedSides = hasReference ? [...sides, 'reference'] : sides;
+  const t = {port: [], generated: [], reference: []};
+  for (let i = 0; i < runs; i++) for (const s of i % 2 ? [...timedSides].reverse() : timedSides) {
     const r = timed(w, s);
     fs.writeFileSync(path.join(dir, `times-${w.id}-${s}-${t[s].length}.txt`), r.out);
     t[s].push(r);
   }
   const med = s => ({wall: median(t[s].map(r => r.wall)), user: median(t[s].map(r => r.user)), sys: median(t[s].map(r => r.sys)), rss: median(t[s].map(r => r.rss)) / 1024});
-  const mp = med('port'), mg = med('generated');
-  md.push('### Time', '', '| | port | generated | Δ | ratio |', '| --- | ---: | ---: | ---: | ---: |');
-  for (const [k, n, d] of [['wall', 'wall (s)', 2], ['user', 'user (s)', 2], ['sys', 'sys (s)', 2], ['rss', 'peak RSS (MB)', 0]]) md.push(`| ${n} | ${fmt(mp[k], d)} | ${fmt(mg[k], d)} | ${sign(mg[k] - mp[k], d)} | ${ratio(mg[k], mp[k])} |`);
-  summary.push(`- ${w.name}: wall ${fmt(mp.wall)} s against ${fmt(mg.wall)} s (${ratio(mg.wall, mp.wall)}), user ${fmt(mp.user)} s against ${fmt(mg.user)} s, peak RSS ${fmt(mp.rss, 0)} MB against ${fmt(mg.rss, 0)} MB`);
-  md.push('', '### Phases (--times, medians)', '', '| phase | port (s) | generated (s) | Δ | ratio |', '| --- | ---: | ---: | ---: | ---: |');
+  const mp = med('port'), mg = med('generated'), mr = hasReference ? med('reference') : null;
+  const refHead = hasReference ? ' upstream (OCaml) | generated / upstream |' : '', refSep = hasReference ? ' ---: | ---: |' : '';
+  md.push('### Time', '', `| | port | generated | Δ | ratio |${refHead}`, `| --- | ---: | ---: | ---: | ---: |${refSep}`);
+  for (const [k, n, d] of [['wall', 'wall (s)', 2], ['user', 'user (s)', 2], ['sys', 'sys (s)', 2], ['rss', 'peak RSS (MB)', 0]]) md.push(`| ${n} | ${fmt(mp[k], d)} | ${fmt(mg[k], d)} | ${sign(mg[k] - mp[k], d)} | ${ratio(mg[k], mp[k])} |${mr ? ` ${fmt(mr[k], d)} | ${ratio(mg[k], mr[k])} |` : ''}`);
+  summary.push(`- ${w.name}: wall ${fmt(mp.wall)} s against ${fmt(mg.wall)} s (${ratio(mg.wall, mp.wall)}), user ${fmt(mp.user)} s against ${fmt(mg.user)} s, peak RSS ${fmt(mp.rss, 0)} MB against ${fmt(mg.rss, 0)} MB${mr ? `; upstream's own compiler ${fmt(mr.wall)} s, ${fmt(mr.rss, 0)} MB (generated ${ratio(mg.wall, mr.wall)})` : ''}`);
+  md.push('', '### Phases (--times, medians)', '', `| phase | port (s) | generated (s) | Δ | ratio |${hasReference ? ' upstream (s) | generated / upstream |' : ''}`, `| --- | ---: | ---: | ---: | ---: |${refSep}`);
   const ph = s => { const all = t[s].map(r => parseTimes(r.out)); const keys = new Set(all.flatMap(m => [...m.keys()])); return new Map([...keys].map(k => [k, median(all.map(m => m.get(k) ?? 0))])); };
-  const pp = ph('port'), pg = ph('generated');
-  for (const k of new Set([...pp.keys(), ...pg.keys()])) md.push(`| ${k.split(' / ').map((x, i, a) => i < a.length - 1 ? '' : '&nbsp;&nbsp;'.repeat(i) + x).join('')} | ${fmt(pp.get(k), 3)} | ${fmt(pg.get(k), 3)} | ${sign((pg.get(k) ?? 0) - (pp.get(k) ?? 0), 3)} | ${ratio(pg.get(k), pp.get(k))} |`);
+  const pp = ph('port'), pg = ph('generated'), pr = hasReference ? ph('reference') : null;
+  for (const k of new Set([...pp.keys(), ...pg.keys(), ...(pr ? pr.keys() : [])])) md.push(`| ${k.split(' / ').map((x, i, a) => i < a.length - 1 ? '' : '&nbsp;&nbsp;'.repeat(i) + x).join('')} | ${fmt(pp.get(k), 3)} | ${fmt(pg.get(k), 3)} | ${sign((pg.get(k) ?? 0) - (pp.get(k) ?? 0), 3)} | ${ratio(pg.get(k), pp.get(k))} |${pr ? ` ${fmt(pr.get(k), 3)} | ${ratio(pg.get(k), pr.get(k))} |` : ''}`);
   md.push('');
   // 2
   const prof = {};
