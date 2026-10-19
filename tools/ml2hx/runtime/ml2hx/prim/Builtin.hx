@@ -103,8 +103,30 @@ class Builtin {
 	}
 
 	// ---- strings and bytes (strings are immutable here: conversions copy)
-	public static function bytesToString(b:Bytes):String return ByteString.ofBytes(b, 0, b.length);
-	public static function bytesOfString(s:String):Bytes return ByteString.toBytes(s);
+	// Bytes.unsafe_to_string then Bytes.unsafe_of_string gives the same bytes
+	// back in OCaml (one block): the eval interpreter reads a process's output
+	// into a buffer that way. A string a recent bytes_to_string made (that
+	// String object: hxmc) converts back to its bytes; any other is copied.
+	static final recentStrings = new haxe.ds.Vector<String>(4);
+	static final recentBytes = new haxe.ds.Vector<Bytes>(4);
+	static var recentNext = 0;
+	public static function bytesToString(b:Bytes):String {
+		var s = ByteString.ofBytes(b, 0, b.length);
+		#if (target.name == "hxmc")
+		// (not the short strings the runtime may share)
+		if (b.length < 2) return s;
+		recentStrings[recentNext] = s;
+		recentBytes[recentNext] = b;
+		recentNext = (recentNext + 1) & 3;
+		#end
+		return s;
+	}
+	public static function bytesOfString(s:String):Bytes {
+		#if (target.name == "hxmc")
+		for (i in 0...4) if (hxmc.Native.refEq(recentStrings[i], s)) return recentBytes[i];
+		#end
+		return ByteString.toBytes(s);
+	}
 
 	// ---- atomics (one domain)
 	public static inline function atomicLoad<T>(r:Ref<T>):T return r.value;

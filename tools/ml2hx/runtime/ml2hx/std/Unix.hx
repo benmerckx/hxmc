@@ -162,6 +162,8 @@ class UnixFileDescr {
 	#end
 	// a socket: its host descriptor (hxmc.NativeNet), else -1
 	public var fd:Int = -1;
+	// a pipe's end: its host descriptor (hxmc.rt.PosixSys), else -1
+	public var pfd:Int = -1;
 	public final id:Int;
 	static var next = 3;
 	public function new(?id:Int) this.id = id ?? next++;
@@ -234,6 +236,27 @@ class Unix {
 	static inline function native(s:String):String return ByteString.toNative(s);
 	static inline function ocaml(s:String):String return ByteString.ofNative(s);
 	static function fail(e:UnixError, fn:String, arg:String):Dynamic throw new UnixUnixErrorExn(e, fn, arg);
+	// pipes and processes over host descriptors (hxmc on POSIX hosts), else
+	// in memory and over sys.io.Process
+	static inline function hostFds():Bool {
+		#if (target.name == "hxmc")
+		return hxmc.unsafe.Mem.os() != 2;
+		#else
+		return false;
+		#end
+	}
+	static function hostFail(fn:String, arg = ""):Dynamic {
+		#if (target.name == "hxmc")
+		return fail(errorOfErrno(hxmc.rt.PosixSys.lastError()), fn, arg);
+		#else
+		return unsupported(fn);
+		#end
+	}
+	// the host descriptor a child gets for d, or -1
+	static function hostFd(d:UnixFileDescr):Int
+		return d.pfd >= 0 ? d.pfd : d.fd >= 0 ? d.fd : d == stdin ? 0 : d == stdout ? 1 : d == stderr ? 2 : -1;
+	// processes create_process started over host descriptors
+	static final hostPids = new haxe.ds.IntMap<Bool>();
 	static function unsupported(fn:String):Dynamic throw new UnixUnixErrorExn(ENOSYS, fn, "");
 
 	public static final stdin = mk(0, true);
@@ -424,6 +447,14 @@ class Unix {
 		return d;
 	}
 	public static function close(d:UnixFileDescr):Unit {
+		#if (target.name == "hxmc")
+		if (d.pfd >= 0) {
+			var fd = d.pfd;
+			d.pfd = -1;
+			hxmc.NativeSys.fileClose(fd);
+			return Unit.value;
+		}
+		#end
 		try {
 			if (d.input != null) d.input.close();
 			if (d.output != null) d.output.close();
@@ -433,11 +464,30 @@ class Unix {
 	}
 	public static function read(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 {
 		if (d.fd >= 0) return recv(d, b, ofs, len, Nil);
+		#if (target.name == "hxmc")
+		if (d.pfd >= 0) {
+			if (ofs.toInt() < 0 || len.toInt() < 0 || ofs.toInt() + len.toInt() > b.length) throw new InvalidArgument("Unix.read");
+			var n = hxmc.NativeSys.fileRead(d.pfd, b, ofs.toInt(), len.toInt());
+			return n < 0 ? hostFail("read") : Int63.ofInt(n);
+		}
+		#end
 		if (d.input == null) fail(EBADF, "read", "");
 		var i = d.input;
 		try return Int63.ofInt(i.readBytes(b, ofs.toInt(), len.toInt())) catch (e:haxe.io.Eof) return Int63.zero;
 	}
 	public static function write(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 {
+		#if (target.name == "hxmc")
+		if (d.pfd >= 0) {
+			if (ofs.toInt() < 0 || len.toInt() < 0 || ofs.toInt() + len.toInt() > b.length) throw new InvalidArgument("Unix.write");
+			var done = 0;
+			while (done < len.toInt()) {
+				var n = hxmc.NativeSys.fileWrite(d.pfd, b, ofs.toInt() + done, len.toInt() - done);
+				if (n < 0) hostFail("write");
+				done += n;
+			}
+			return len;
+		}
+		#end
 		if (d.fd >= 0) {
 			// (write: until all is sent)
 			var done = 0;
@@ -450,7 +500,16 @@ class Unix {
 		o.flush();
 		return len;
 	}
-	public static function singleWrite(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 return d.fd >= 0 ? send(d, b, ofs, len, Nil) : write(d, b, ofs, len);
+	public static function singleWrite(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63):Int63 {
+		#if (target.name == "hxmc")
+		if (d.pfd >= 0) {
+			if (ofs.toInt() < 0 || len.toInt() < 0 || ofs.toInt() + len.toInt() > b.length) throw new InvalidArgument("Unix.single_write");
+			var n = hxmc.NativeSys.fileWrite(d.pfd, b, ofs.toInt(), len.toInt());
+			return n < 0 ? hostFail("single_write") : Int63.ofInt(n);
+		}
+		#end
+		return d.fd >= 0 ? send(d, b, ofs, len, Nil) : write(d, b, ofs, len);
+	}
 	public static function writeSubstring(d:UnixFileDescr, s:String, ofs:Int63, len:Int63):Int63
 		return write(d, ByteString.toBytes(s.substr(ofs.toInt(), len.toInt())), Int63.zero, len);
 	static final channelDescr = new haxe.ds.ObjectMap<Dynamic, UnixFileDescr>();
@@ -521,6 +580,18 @@ class Unix {
 	}
 	public static function setCloseOnExec(d:UnixFileDescr):Unit return Unit.value;
 	public static function pipe(_:Unit, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixFileDescr> {
+		#if (target.name == "hxmc")
+		// (both ends close-on-exec, cloexec or not: create_process gives the
+		// child the ones it names)
+		if (hostFds()) {
+			var fds = hxmc.rt.PosixSys.pipe();
+			if (fds == null) hostFail("pipe");
+			var r = new UnixFileDescr(), w = new UnixFileDescr();
+			r.pfd = fds[0];
+			w.pfd = fds[1];
+			return new Tuple2(r, w);
+		}
+		#end
 		var p = new PipeBuffer();
 		var r = new UnixFileDescr(), w = new UnixFileDescr();
 		r.input = new PipeInput(p);
@@ -577,6 +648,14 @@ class Unix {
 	// descriptors when it is waited for (one thread: no concurrent pumping).
 	static final pending = new haxe.ds.IntMap<{out:UnixFileDescr, err:UnixFileDescr}>();
 	public static function createProcess(prog:String, args:HArray<String>, sin:UnixFileDescr, sout:UnixFileDescr, serr:UnixFileDescr):Int63 {
+		#if (target.name == "hxmc")
+		if (hostFds() && hostFd(sin) >= 0 && hostFd(sout) >= 0 && hostFd(serr) >= 0) {
+			var pid = hxmc.rt.PosixSys.spawnFds(native(prog), [for (a in args) native(a)], hostFd(sin), hostFd(sout), hostFd(serr));
+			if (pid < 0) fail(errorOfErrno(-pid), "create_process", prog);
+			hostPids.set(pid, true);
+			return Int63.ofInt(pid);
+		}
+		#end
 		var p = spawn(prog, args.slice(1));
 		if (sin != stdin && sin.input != null) { try p.stdin.write(sin.input.readAll()) catch (e:Dynamic) {} }
 		try p.stdin.close() catch (e:Dynamic) {}
@@ -586,6 +665,23 @@ class Unix {
 	public static function createProcessEnv(prog:String, args:HArray<String>, env:HArray<String>, sin:UnixFileDescr, sout:UnixFileDescr, serr:UnixFileDescr):Int63
 		return createProcess(prog, args, sin, sout, serr);
 	public static function waitpid(flags:MlList<UnixWaitFlag>, pid:Int63):Tuple2<Int63, UnixProcessStatus> {
+		#if (target.name == "hxmc")
+		if (hostPids.exists(pid.toInt())) {
+			var nohang = false;
+			var l = flags;
+			while (true) switch l {
+				case Nil: break;
+				case Cons(f, t):
+					if (f == WNOHANG) nohang = true;
+					l = t;
+			}
+			// (the exit code, 128 + n for a signal n: as WEXITED)
+			var code = hxmc.NativeSys.processWait(pid.toInt(), !nohang);
+			if (code < 0 && nohang) return new Tuple2(Int63.zero, WEXITED(Int63.zero));
+			hostPids.remove(pid.toInt());
+			return new Tuple2(pid, WEXITED(Int63.ofInt(code)));
+		}
+		#end
 		var p = processes.get(pid.toInt());
 		if (p == null) fail(ECHILD, "waitpid", "");
 		var target = pending.get(pid.toInt());
@@ -604,6 +700,13 @@ class Unix {
 		return fail(ECHILD, "wait", "");
 	}
 	public static function kill(pid:Int63, sig:Int63):Unit {
+		#if (target.name == "hxmc")
+		// (any signal is SIGKILL here)
+		if (hostPids.exists(pid.toInt())) {
+			hxmc.NativeSys.processKill(pid.toInt());
+			return Unit.value;
+		}
+		#end
 		var p = processes.get(pid.toInt());
 		if (p == null) fail(ESRCH, "kill", "");
 		p.kill();

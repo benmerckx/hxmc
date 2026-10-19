@@ -592,6 +592,94 @@ class PosixSys {
 		return pid;
 	}
 
+	// A pipe, both ends close-on-exec (as pipes): [read end, write end], or
+	// null with errno set (OCaml's Unix.pipe ~cloexec:true, converted code:
+	// ml2hx's Unix)
+	public static function pipe():Null<Array<Int>> {
+		var p = Mem.stack(8);
+		if (!mac()) {
+			if (Posix.pipe2(p, oCloexec()) != 0) return null;
+		} else {
+			Threads.lockSafe(Gc.fdLock);
+			var r = Posix.pipe(p);
+			if (r == 0) {
+				cloexec(Mem.getI32(p, 0));
+				cloexec(Mem.getI32(p, 4));
+			}
+			Os.unlock(Gc.fdLock);
+			if (r != 0) return null;
+		}
+		return [Mem.getI32(p, 0), Mem.getI32(p, 4)];
+	}
+
+	// the last error number (errno), for a failure a primitive reported
+	public static function lastError():Int
+		return errno();
+
+	// fork and exec file (searched in PATH) with argv (argv[0] included), the given
+	// descriptors as 0, 1 and 2 (the caller keeps and closes its own): the
+	// child's pid, or -errno when exec failed. As posix_spawnp reports it (OCaml's
+	// Unix.create_process): the child writes its errno on a close-on-exec pipe
+	// that exec closes, the parent reads it, and reaps a child that failed.
+	public static function spawnFds(file:String, args:Array<String>, fdIn:Int, fdOut:Int, fdErr:Int):Int {
+		var n = args.length;
+		var argv = LibC.malloc(8 * (n + 1));
+		for (i in 0...n)
+			Mem.setPtr(argv, 8 * i, cstr(args[i]));
+		Mem.setPtr(argv, 8 * n, Ptr.nil());
+		var f = cstr(file);
+		var ep = pipe();
+		var pid = ep == null ? -errno() : spawnFdsC(f, argv, fdIn, fdOut, fdErr, ep[0], ep[1]);
+		for (i in 0...n)
+			LibC.free(Mem.getPtr(argv, 8 * i));
+		LibC.free(argv);
+		LibC.free(f);
+		if (pid <= 0 || ep == null) {
+			if (ep != null) {
+				Posix.close(ep[0]);
+				Posix.close(ep[1]);
+			}
+			return pid < 0 ? pid : -errno();
+		}
+		Posix.close(ep[1]);
+		var buf = Mem.stack(8);
+		var got = 0;
+		while (got < 4) {
+			Leaf.rt_blocking_enter();
+			var r = Posix.read(ep[0], buf.add(got), 4 - got).toInt();
+			Leaf.rt_blocking_leave();
+			if (r < 0 && errno() == EINTR) continue;
+			if (r <= 0) break;
+			got += r;
+		}
+		Posix.close(ep[0]);
+		if (got < 4) return pid;
+		var st = Mem.stack(8);
+		while (Posix.waitpid(pid, st, 0) < 0 && errno() == EINTR) {}
+		return -Mem.getI32(buf, 0);
+	}
+
+	@:hxmc.noGc static function spawnFdsC(file:Ptr, argv:Ptr, fdIn:Int, fdOut:Int, fdErr:Int, er:Int, ew:Int):Int {
+		Posix.fflush(Ptr.nil());
+		if (mac()) Threads.lockSafe(Gc.fdLock);
+		var pid = Posix.fork();
+		if (pid == 0) {
+			Posix.close(er);
+			for (k in 0...3) {
+				var fd = k == 0 ? fdIn : k == 1 ? fdOut : fdErr;
+				// (dup2 of a descriptor onto itself keeps the flag)
+				if (fd == k) Posix.fcntl(k, 2, 0) else Posix.dup2(fd, k);
+			}
+			Posix.execvp(file, argv);
+			var e = Mem.stack(8);
+			Mem.setI32(e, 0, errno());
+			Posix.write(ew, e, 4);
+			Posix._exit(127);
+		}
+		if (mac()) Os.unlock(Gc.fdLock);
+		return pid < 0 ? -errno() : pid;
+	}
+
 	// OS threads: waits in a safe region; WNOHANG 1
 	public static function processWait(pid:Int, block:Bool):Int {
 		var st = Mem.stack(8);
