@@ -71,7 +71,8 @@ export function prepare(upstream) {
 // transitively. Their C externals are the runtime's primitives
 // (ml2hx.prim, README). Packages that are bindings of C libraries (luv,
 // ctypes, mbedtls, pcre2...) are runtime modules.
-const convertedPackages = new Set(['ocaml', 'extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff', 'dynamic_gc']);
+const convertedPackages = new Set(['ocaml', 'extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff', 'dynamic_gc',
+  'ipaddr', 'macaddr', 'domain-name', 'gen', 'saturn', 'multicore-magic', 'thread-local-storage', 'thread-table', 'domain-local-await', 'seq', 'stdlib-shims']);
 // Modules whose implementation is the value representation itself (lazy
 // blocks, objects, recursive modules, effects): runtime modules.
 const notConverted = new Set(['CamlinternalLazy', 'Stdlib__Lazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Effect', 'Stdlib__Oo']);
@@ -162,7 +163,7 @@ export function loadUnits({upstream, buildDir, files = null}) {
   for (const [source, f] of bySource) if (!tracked.has(source) && !/(^|\/)prebuild\.ml$/.test(source) && /\.ml$/.test(source))
     units.push({modname: f.modname, config: unitConfig(source), load: f.load, irPath: f.ir, generatedSource: true});
   for (const e of errors) failures.push({source: path.relative(e.file.startsWith(upstream) ? upstream : buildDir, e.file), stage: 'typing', error: e.error});
-  units.push(...libraryUnits(units, failures));
+  units.push(...libraryUnits(units, failures, ['Std_exit']));
   return {sources, units, failures};
 }
 // Emit every unit; returns the outputs and per-unit failures.
@@ -221,6 +222,8 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   const trackedOutputs = new Set(units.filter(u => !u.generatedSource).map(u => u.config.output));
   result.emitted = [...outputs.keys()].filter(k => trackedOutputs.has(k)).length;
   result.trackedOutputs = [...trackedOutputs];
+  result.libraryUnits = units.filter(u => u.library).length;
+  result.libraryOutputs = units.filter(u => u.library).map(u => u.config.output);
   result.complete = all.length === 0 && result.emitted === sources.length;
   fs.writeFileSync(path.join(out, '.status'), result.complete ? 'complete\n' : 'incomplete\n');
   return result;

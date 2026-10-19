@@ -80,7 +80,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const tracked = new Set(result.trackedOutputs);
   const typedTracked = tc.typed.filter(m => tracked.has(m));
   console.log(`\nModules that emit and type: ${typedTracked.length} of ${result.sources}`);
-  const summary = {sources: result.sources, emitted: result.emitted, typed: typedTracked.length,
+  // The library units the program reaches (OCaml's Stdlib, extlib...), converted too.
+  const libOutputs = result.libraryOutputs ?? [];
+  const libTyped = tc.typed.filter(m => libOutputs.includes(m));
+  console.log(`Library units that emit and type: ${libTyped.length} of ${result.libraryUnits ?? libOutputs.length}; with the compiler's: ${typedTracked.length + libTyped.length} of ${result.sources + (result.libraryUnits ?? libOutputs.length)}`);
+  const summary = {sources: result.sources, emitted: result.emitted, typed: typedTracked.length, libraryUnits: result.libraryUnits, libraryTyped: libTyped.length,
     emitFailures: result.failures.map(f => ({source: f.source, error: f.error.slice(0, 300)})),
     typeFailures: [...tc.removed].map(([m, e]) => ({module: m, error: e.slice(0, 300)})),
     missingLibrary: [...tc.missing].sort((a, b) => b[1] - a[1])};

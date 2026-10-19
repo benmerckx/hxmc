@@ -20,6 +20,16 @@ class Sys {
 		return args;
 	}
 
+	// the runtime's constants, as a 64-bit Unix native runtime has them
+	public static function camlSysConstBigEndian(_:Unit):Bool return false;
+	public static function camlSysConstWordSize(_:Unit):Int63 return Int63.ofInt(64);
+	public static function camlSysConstIntSize(_:Unit):Int63 return Int63.ofInt(63);
+	public static function camlSysConstMaxWosize(_:Unit):Int63 return Int63.parse("18014398509481983");
+	public static function camlSysConstOstypeUnix(_:Unit):Bool return true;
+	public static function camlSysConstOstypeWin32(_:Unit):Bool return false;
+	public static function camlSysConstOstypeCygwin(_:Unit):Bool return false;
+	public static function camlSysConstNakedPointersChecked(_:Unit):Bool return false;
+
 	public static function camlSysGetConfig(_:Unit):Tuple3<String, Int63, Bool> return new Tuple3("Unix", Int63.ofInt(64), false);
 	public static function camlSysExecutableName(_:Unit):String return argv()[0];
 	public static function camlRuntimeVariant(_:Unit):String return "";
@@ -133,6 +143,9 @@ class Sys {
 		}
 		return Int63.ofInt(Io.addFd(fd));
 	}
+	// whether a channel is a terminal: Haxe's sys API cannot ask (as when
+	// output is redirected: no terminal features are used)
+	public static function camlSysIsatty(c:Io.Channel):Bool return false;
 	public static function camlSysClose(fd:Int63):Unit {
 		Io.closeFd(fd.toInt());
 		return Unit.value;

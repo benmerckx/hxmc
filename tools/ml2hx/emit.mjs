@@ -36,9 +36,9 @@ const builtinTypes = {
   'Stdlib__Digest.BLAKE128.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE256.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE512.state': `${PRIM}Digest.Blake2State`,
   'Stdlib__Mutex.t': `${PRIM}Sync.Mutex`, 'Stdlib__Condition.t': `${PRIM}Sync.Condition`,
   'Stdlib__Printexc.raw_backtrace_slot': `${PRIM}Backtrace.Slot`,
-  'Stdlib__Bigarray.Genarray.t': `${PRIM}BigarrayData.Bigarray`, 'Stdlib__Bigarray.Array0.t': `${PRIM}BigarrayData.Bigarray`,
-  'Stdlib__Bigarray.Array1.t': `${PRIM}BigarrayData.Bigarray`, 'Stdlib__Bigarray.Array2.t': `${PRIM}BigarrayData.Bigarray`,
-  'Stdlib__Bigarray.Array3.t': `${PRIM}BigarrayData.Bigarray`,
+  'Stdlib__Bigarray.Genarray.t': `${PRIM}BigarrayData`, 'Stdlib__Bigarray.Array0.t': `${PRIM}BigarrayData`,
+  'Stdlib__Bigarray.Array1.t': `${PRIM}BigarrayData`, 'Stdlib__Bigarray.Array2.t': `${PRIM}BigarrayData`,
+  'Stdlib__Bigarray.Array3.t': `${PRIM}BigarrayData`,
 };
 // C primitives OCaml declares with char and with int (output_char and
 // output_byte): the runtime's take and give ints.
@@ -548,6 +548,7 @@ class UnitEmitter {
       case 'modtype': s.modtypes.set(item.name, item.mty); this.ids.set(item.id, {kind: 'modtype', mty: item.mty}); break;
       case 'include': {
         let m = this.declareModule(item.m, path, s, true);
+        item.instance = m;
         if (m.kind === 'alias') m = this.moduleDesc(m, item);
         if (m.kind === 'struct') {
           for (const [k, v] of m.values) s.values.set(k, v);
@@ -661,6 +662,9 @@ class UnitEmitter {
     // rebinds them): restored when the instance is emitted.
     d.idMap = new Map([...em.ids].filter(([k, v]) => before.get(k) !== v));
     if (f.param && arg) d.idMap.set(f.param, arg);
+    // F(struct ... end): the argument is a submodule of this unit, emitted
+    // before the instance.
+    if (argExpr?.k === 'struct') d.argStruct = {s: arg, path: [...path, 'Arg']};
     return d;
   }
   // Write into another emitter's output (functor instances of other units).
@@ -718,7 +722,7 @@ class UnitEmitter {
         return;
       }
       case 'external': {
-        const d = s.values.get(item.name);
+        const d = this.ids.get(item.id) ?? s.values.get(item.name);
         if (d.kind === 'external') {
           // C primitives of converted units are runtime functions.
           const {args, res} = this.arrows(item.t);
@@ -742,11 +746,7 @@ class UnitEmitter {
       case 'module': {
         if (!item.name || !item.id) return;
         const d = s.modules.get(item.name);
-        if (d.kind === 'struct') {
-          const em = d.emitter ?? this;
-          for (const [k, v] of d.idMap ?? []) em.ids.set(k, v);
-          em.emitItems(d.items, d, [...path, item.name]);
-        }
+        if (d.kind === 'struct') this.emitInstance(d, [...path, item.name]);
         else if (d.kind === 'libinstance') this.emitLibInstance(d, item);
         else if (d.kind === 'packed') {
           this.statics.push(`public static var ${d.field}:${this.type(d.t, item)};`);
@@ -757,6 +757,9 @@ class UnitEmitter {
       case 'include': {
         const m = item.m.k === 'constraint' ? item.m.m : item.m;
         if (m.k === 'struct') this.emitItems(m.items, s, path);
+        // include F(X): the instance's items, as for `module M = F(X)`.
+        else if (m.k === 'apply' && item.instance?.kind === 'struct') this.emitInstance(item.instance, path);
+        else if (m.k === 'apply' && item.instance?.kind === 'libinstance') this.emitLibInstance(item.instance, item);
         return;
       }
       case 'class': for (const c of item.classes) this.emitClass(c, s.classes.get(c.name)); return;
@@ -764,6 +767,13 @@ class UnitEmitter {
       case 'modtype': case 'attribute': case 'classtype': return;
     }
     this.fail(item, `structure item ${item.k}`);
+  }
+  // A submodule's items (a functor instance's with its own identifiers).
+  emitInstance(d, path) {
+    if (d.argStruct) this.emitItems(d.argStruct.s.items, d.argStruct.s, d.argStruct.path);
+    const em = d.emitter ?? this;
+    for (const [k, v] of d.idMap ?? []) em.ids.set(k, v);
+    em.emitItems(d.items, d, path);
   }
   // module M = F(X) for a library functor F: `ml2hx.std.Lib.F({...})`, an
   // instance whose methods are the result's values (README, Functors).
@@ -1227,6 +1237,8 @@ class UnitEmitter {
     return this.stmtValue(n);
   }
   stmtValue(n) {
+    // A value without effects (`let _ = f in`): nothing to evaluate.
+    if (n.k === 'ident' || n.k === 'fun' || n.k === 'const') return '';
     const v = this.value(n);
     return /^[A-Za-z_][\w.]*$/.test(v) ? '' : `${v};`;
   }
@@ -1304,8 +1316,8 @@ class UnitEmitter {
       case 'array': { const t = this.typeOrNull(n.t, n); return this.ordered(n.args, a => t ? `([${a.join(', ')}]:${t})` : `[${a.join(', ')}]`); }
       case 'assert': {
         const c = n.e;
-        if (c.k === 'construct' && c.c.name === 'false') return `throw new ${RT}AssertFailure(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])})`;
-        return `{ if (!${this.value(c)}) throw new ${RT}AssertFailure(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])}); ${UNIT}; }`;
+        if (c.k === 'construct' && c.c.name === 'false') return `throw ${RT}AssertFailure.at(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])})`;
+        return `{ if (!${this.value(c)}) throw ${RT}AssertFailure.at(${JSON.stringify(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])}); ${UNIT}; }`;
       }
       case 'lazy': return `new ${RT}Lazy(function() return ${this.value(n.e)})`;
       case 'open': return this.value(n.e);
@@ -1774,7 +1786,7 @@ class UnitEmitter {
       '%floatarray_unsafe_get': P['%array_unsafe_get'], '%floatarray_unsafe_set': P['%array_unsafe_set'],
       '%raise_with_backtrace': {arity: 2, code: v => `throw ${v[0]}`},
       ...Object.fromEntries([1, 2, 3].flatMap(k => {
-        const BA = `${PRIM}BigarrayData.Bigarray`;
+        const BA = `${PRIM}BigarrayData`;
         const ix = v => `[${v.slice(1, 1 + k).join(', ')}]`;
         return [
           [`%caml_ba_ref_${k}`, {arity: k + 1, code: v => `${BA}.get(${v[0]}, ${ix(v)})`}],
@@ -2075,9 +2087,10 @@ class UnitEmitter {
   }
 
   // ------------------------------------------------------------ matching
-  matchFailure(n) { return `new ${RT}MatchFailure(${haxeString(this.cfg.source)}, ${this.intLit(n.l?.[0] ?? 0)}, ${this.intLit(n.l?.[1] ?? 0)})`; }
+  matchFailure(n) { return `${RT}MatchFailure.at(${haxeString(this.cfg.source)}, ${this.intLit(n.l?.[0] ?? 0)}, ${this.intLit(n.l?.[1] ?? 0)})`; }
   matchNode(n, tc, mode) {
-    const value = n.cases.filter(c => !hasException(c.p)), exns = n.cases.filter(c => hasException(c.p));
+    const all = splitExceptionCases(n.cases);
+    const value = all.filter(c => !hasException(c.p)), exns = all.filter(c => hasException(c.p));
     if (exns.length) return this.matchWithExceptions(n, value, exns, tc, mode);
     // match (a, b) with ... on a syntactic tuple: no allocation.
     const scrut = n.e;
@@ -2115,7 +2128,10 @@ class UnitEmitter {
     let opaque = false;
     // Or-patterns over extensible constructors (extractors) become one arm
     // per alternative: Haxe or-patterns need alternatives of one kind.
-    const alts = p => p.k === 'or' && hasExtractor(p) ? [...alts(p.a), ...alts(p.b)] : p.k === 'value' && p.p.k === 'or' && hasExtractor(p.p) ? alts(p.p) : [p];
+    const alts = p => p.k === 'or' && hasExtractor(p) ? [...alts(p.a), ...alts(p.b)]
+      : (p.k === 'value' || p.k === 'exception') && p.p.k === 'or' && hasExtractor(p.p) ? alts(p.p).map(x => p.k === 'value' ? x : {...p, p: x})
+      : p.k === 'alias' && hasExtractor(p.p) && (p.p.k === 'or' || (p.p.k === 'value' && p.p.p.k === 'or')) ? alts(p.p).map(x => ({...p, p: x}))
+      : [p];
     cases = cases.flatMap(c => alts(c.p).map(p => ({...c, p})));
     const gadt = this.gadtCases(cases);
     // Haxe cannot see that a GADT's other constructors are impossible here.
@@ -2145,7 +2161,7 @@ class UnitEmitter {
     const tryPart = `var ${exn}:${RT}MlException = null; var ${opt} = try ${RT}MlOption.Some(${this.value(n.e)}) catch (_x:haxe.Exception) { ${exn} = ${RT}MlException.wrap(_x); (${RT}MlOption.None : ${RT}MlOption<${scrutT}>); };`;
     const vcode = this.switchCode(v, value, n.partial, tc, mode, n);
     const ecases = exns.map(c => ({...c, p: stripException(c.p)}));
-    const ecode = this.switchCode(exn, ecases, true, tc, mode, n).replace(/case _: throw new ml2hx\.rt\.MatchFailure\([^;]*\);/, `case _: throw ${exn};`);
+    const ecode = this.switchCode(exn, ecases, true, tc, mode, n).replace(/case _: throw ml2hx\.rt\.MatchFailure\.at\([^;]*\);/, `case _: throw ${exn};`);
     const body = mode === 'value'
       ? `{ ${tryPart} (switch (${opt}) { case ${RT}MlOption.Some(${v}): ${vcode}; case ${RT}MlOption.None: ${ecode}; }); }`
       : `{ ${tryPart} switch (${opt}) { case ${RT}MlOption.Some(${v}): ${vcode} case ${RT}MlOption.None: ${ecode} } }`;
@@ -2154,7 +2170,7 @@ class UnitEmitter {
   tryExpr(n) {
     const x = this.temp('x'), e = this.temp('e');
     const cases = n.cases;
-    const handler = this.switchCode(e, cases, true, null, 'value', n).replace(/case _: throw new ml2hx\.rt\.MatchFailure\([^;]*\);/, `case _: throw ${x};`);
+    const handler = this.switchCode(e, cases, true, null, 'value', n).replace(/case _: throw ml2hx\.rt\.MatchFailure\.at\([^;]*\);/, `case _: throw ${x};`);
     return `(try ${this.value(n.e)} catch (${x}:haxe.Exception) { var ${e} = ${RT}MlException.wrap(${x}); ${handler}; })`;
   }
   tuplePattern(p, arity) {
@@ -2587,7 +2603,22 @@ function irrefutable(p) {
   return false;
 }
 function hasException(p) { return p.k === 'exception' || (p.k === 'or' && (hasException(p.a) || hasException(p.b))); }
-function stripException(p) { if (p.k === 'exception') return p.p; throw new Unsupported(p, 'or-pattern mixing values and exceptions'); }
+function stripException(p) {
+  if (p.k === 'exception') return p.p;
+  if (p.k === 'or') return {...p, a: stripException(p.a), b: stripException(p.b)};
+  throw new Unsupported(p, 'or-pattern mixing values and exceptions');
+}
+// The alternatives of an or-pattern: value ones and exception ones apart
+// (`| None | exception _ -> e` is two cases with one body).
+function splitExceptionCases(cases) {
+  const alts = p => p.k === 'or' ? [...alts(p.a), ...alts(p.b)] : [p];
+  const join = ps => ps.reduce((a, b) => ({k: 'or', t: a.t, l: a.l, a, b}));
+  return cases.flatMap(c => {
+    if (c.p.k !== 'or' || !hasException(c.p)) return [c];
+    const ps = alts(c.p), ex = ps.filter(hasException), vals = ps.filter(x => !hasException(x));
+    return vals.length ? [{...c, p: join(vals)}, {...c, p: join(ex)}] : [c];
+  });
+}
 function tupleLike(p, n) { return (p.k === 'tuple' && p.args.length === n) || p.k === 'any' || (p.k === 'or' && tupleLike(p.a, n) && tupleLike(p.b, n)) || (p.k === 'value' && tupleLike(p.p, n)); }
 // No observable effects and no reads of mutable state.
 function pure(n) {

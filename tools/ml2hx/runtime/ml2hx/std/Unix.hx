@@ -306,7 +306,7 @@ class Unix {
 		if (v == null) throw NotFound.instance;
 		return ocaml(v);
 	}
-	public static function getcwd(_:Unit):String return Sys.getcwd(Unit.value);
+	public static function getcwd(_:Unit):String return ml2hx.prim.Sys.camlSysGetcwd(Unit.value);
 	public static function chdir(p:String):Unit {
 		try std.Sys.setCwd(native(p)) catch (e:Dynamic) fail(ENOENT, "chdir", p);
 		return Unit.value;

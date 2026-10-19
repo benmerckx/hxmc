@@ -6,7 +6,7 @@ import ml2hx.rt.*;
 // from `offset`, row-major (C layout) or column-major (Fortran layout,
 // indices from 1). Elements are the values of the kind's OCaml type: Float,
 // Int63 (small ints), haxe.Int32, haxe.Int64, Int (char), Complex.t.
-class Bigarray<A, B, C> {
+class BigarrayData<A, B, C> {
 	public final kind:Any;
 	public var layout:Any;
 	public final dims:Array<Int>;
@@ -76,12 +76,12 @@ class Bigarray<A, B, C> {
 		}
 	}
 
-	public static function get<A, B, C>(a:Bigarray<A, B, C>, ix:Array<Int63>):A return a.data[a.index(ix)];
-	public static function set<A, B, C>(a:Bigarray<A, B, C>, ix:Array<Int63>, v:A):Unit {
+	public static function get<A, B, C>(a:BigarrayData<A, B, C>, ix:Array<Int63>):A return a.data[a.index(ix)];
+	public static function set<A, B, C>(a:BigarrayData<A, B, C>, ix:Array<Int63>, v:A):Unit {
 		a.data[a.index(ix)] = a.normalize(v);
 		return Unit.value;
 	}
-	public static function dim<A, B, C>(a:Bigarray<A, B, C>, n:Int):Int63 {
+	public static function dim<A, B, C>(a:BigarrayData<A, B, C>, n:Int):Int63 {
 		if (n < 0 || n >= a.dims.length) throw new InvalidArgument("Bigarray.dim");
 		return Int63.ofInt(a.dims[n]);
 	}

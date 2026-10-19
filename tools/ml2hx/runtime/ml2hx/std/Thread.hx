@@ -22,7 +22,7 @@ class Thread {
 		var saved = current;
 		current = t;
 		try f(x) catch (e:haxe.Exception) {
-			Stdlib.prerrString("Thread " + t.id + " killed on uncaught exception " + Printexc.toString(MlException.wrap(e)) + "\n");
+			std.Sys.stderr().writeString("Thread " + t.id + " killed on uncaught exception " + MlException.wrap(e).toString() + "\n");
 		}
 		current = saved;
 		return t;

@@ -360,13 +360,13 @@ class Io {
 	}
 	public static function camlMlRuntimeWarningsEnabled(_:Unit):Bool return warnings;
 
-	public static function camlMlInputBigarray<A, B, C>(ic:InChannel, a:BigarrayData.Bigarray<A, B, C>, ofs:Int63, len:Int63):Int63 {
+	public static function camlMlInputBigarray<A, B, C>(ic:InChannel, a:BigarrayData<A, B, C>, ofs:Int63, len:Int63):Int63 {
 		var b = Bytes.alloc(i(len));
 		var n = ic.read(b, 0, b.length);
 		for (k in 0...n) a.data[i(ofs) + k] = b.get(k);
 		return Int63.ofInt(n);
 	}
-	public static function camlMlOutputBigarray<A, B, C>(oc:OutChannel, a:BigarrayData.Bigarray<A, B, C>, ofs:Int63, len:Int63):Unit {
+	public static function camlMlOutputBigarray<A, B, C>(oc:OutChannel, a:BigarrayData<A, B, C>, ofs:Int63, len:Int63):Unit {
 		for (k in 0...i(len)) oc.addByte((a.data[i(ofs) + k] : Int) & 255);
 		return Unit.value;
 	}

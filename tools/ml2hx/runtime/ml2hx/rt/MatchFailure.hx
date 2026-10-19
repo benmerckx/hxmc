@@ -1,27 +1,22 @@
 package ml2hx.rt;
 
+// Match_failure of (string * int * int): one argument, a tuple (as OCaml lays it out).
 class MatchFailure extends MlException {
-	public final v0:String;
-	public final v1:Int63;
-	public final v2:Int63;
+	public final v0:Tuple3<String, Int63, Int63>;
 
-	public function new(v0:String, v1:Int63, v2:Int63) {
+	public function new(v0:Tuple3<String, Int63, Int63>) {
 		super();
 		this.v0 = v0;
-		this.v1 = v1;
-		this.v2 = v2;
 	}
 
+	public static inline function at(file:String, line:Int63, col:Int63):MatchFailure
+		return new MatchFailure(new Tuple3(file, line, col));
+
 	override public function exnArity():Int
-		return 3;
+		return 1;
 
 	override public function exnArg(i:Int):Dynamic
-		return switch i {
-			case 0: v0;
-			case 1: v1;
-			case 2: v2;
-			case _: super.exnArg(i);
-		}
+		return i == 0 ? v0 : super.exnArg(i);
 
 	override public function exnName():String
 		return "Match_failure";
