@@ -1006,10 +1006,6 @@ ml2hx-test: ml2hx-frontend
 ml2hx-check: ml2hx-test
 	$(NODE) tools/ml2hx/check.mjs
 
-# (typing ~440 generated modules: a smaller first old generation and one
-# codegen job keep hxmc under ~9 GB)
-port-generated: export RT_OLD_MB = 256
-port-generated: export HXMC_JOBS = 1
 port-generated: $(TOOL) $(STD) $(HOST_RT) generate
 	$(call hxmc,bin/ml2hx/haxe,-cp bin/ml2hx/generated -main Ml2hxCompiler -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS))
 

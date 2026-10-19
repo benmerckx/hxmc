@@ -54,9 +54,8 @@ with the first type error of each module in `bin/ml2hx/check.json`.
 
 `generate.mjs` also writes `Ml2hxCompiler`: every unit haxe.ml reaches,
 initialised in link order (haxe.ml runs the compiler when initialised).
-`make port-generated` builds it with hxmc into `bin/ml2hx/haxe` (one codegen
-job and `RT_OLD_MB=256` keep the build under ~9 GB; `HXMC_SYMBOLS=1` keeps
-symbols for gdb). It compiles hello world, and upstream's unit tests (tests/unit to JS),
+`make port-generated` builds it with hxmc into `bin/ml2hx/haxe` (`HXMC_SYMBOLS=1`
+keeps symbols for gdb). It compiles hello world, and upstream's unit tests (tests/unit to JS),
 byte-identically to the port.
 
 ## Replacements

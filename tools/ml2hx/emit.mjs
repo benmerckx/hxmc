@@ -987,10 +987,6 @@ class UnitEmitter {
           });
         });
         this.decls.push(`enum ${name}${gen} {\n${ctors.join('\n')}\n}`);
-        // Its constant constructors in order (Obj.magic of an int: the one of
-        // that rank, the very value its literal is)
-        const consts = d.ctors.filter(c => !c.args.record && !c.args.tuple?.length);
-        if (consts.length) this.statics.push(`public static final ml2hxConstants${name}:Array<Any> = [${consts.map(c => `${name}.${ctorName(c.name)}`).join(', ')}];`);
       } else if (d.kind === 'open') {
         // (parameters phantom: one base class for every instance)
         if (params.length) this.decls.push(`class ${name}_Base {\n\tpublic function new() {}\n}`, `typedef ${name}${gen} = ${name}_Base;`);
@@ -1840,8 +1836,8 @@ class UnitEmitter {
     }
     return code;
   }
-  // The static array of a variant's constant constructors (emitTypeDecl)
-  constantsOf(d) { const hx = d.hx.replace(/<.*$/, ''); return `${hx.replace(/\.[^.]+$/, '')}.ml2hxConstants${hx.split('.').at(-1)}`; }
+  // The enum of a variant (Runtime.constantCtor takes its constant constructors)
+  constantsOf(d) { return d.hx.replace(/<.*$/, ''); }
   applyRaw(n) {
     const fn = n.fn;
     if (fn.k === 'ident') {

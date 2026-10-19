@@ -51,11 +51,14 @@ class Runtime {
 	// ---------------------------------------------------------------- extensible types
 	public static inline function isInstance<T>(v:Any, c:Class<T>):Bool return Std.isOfType(v, c);
 	// Obj.magic of an int to a variant: its constant constructor of that rank
-	// (OCaml numbers the constant constructors apart from the others), from
-	// the variant's array of them (the literals: hxmc's Type.allEnums makes
-	// new values, not == to them)
-	public static function constantCtor(all:Array<Any>, i:Int):Dynamic {
-		if (i < 0 || i >= all.length) throw new Failure("Obj.magic: no constant constructor " + i);
+	// (OCaml numbers the constant constructors apart from the others:
+	// Type.allEnums lists them in order)
+	static final constantCtors = new Map<String, Array<Dynamic>>();
+	public static function constantCtor<T>(e:Enum<T>, i:Int):T {
+		var name = Type.getEnumName(e);
+		var all = constantCtors.get(name);
+		if (all == null) { all = cast Type.allEnums(e); constantCtors.set(name, all); }
+		if (i < 0 || i >= all.length) throw new Failure("Obj.magic: no constant constructor " + i + " in " + name);
 		return all[i];
 	}
 	// The result of a function returning Obj.magic's 'a, seen as an int: a
@@ -69,8 +72,8 @@ class Runtime {
 		return v;
 	}
 	// ... seen as a variant: an int as the constant constructor of its rank
-	public static function magicVariant(all:Array<Any>, v:Dynamic):Dynamic
-		return haxe.Int64.isInt64(v) ? constantCtor(all, (v : Int63).toInt()) : v;
+	public static function magicVariant<T>(e:Enum<T>, v:Dynamic):Dynamic
+		return haxe.Int64.isInt64(v) ? constantCtor(e, (v : Int63).toInt()) : v;
 	// o#m with fewer arguments of a staged method: its getter's closure (the
 	// method's body run now), or null (no getter: the caller's closure)
 	public static function methodValue(o:Dynamic, getter:String):Dynamic {
