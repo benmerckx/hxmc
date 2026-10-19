@@ -30,7 +30,7 @@ const coreLibraryTypes = {'Stdlib.ref': `${RT}Ref`, 'Lazy.t': `${RT}Lazy`, 'Caml
   'String.t': 'String', 'Bytes.t': 'haxe.io.Bytes', 'Char.t': 'Int', 'Int32.t': 'haxe.Int32', 'Int64.t': 'haxe.Int64', 'Nativeint.t': 'Int',
   'Int.t': `${RT}Int63`, 'Bool.t': 'Bool', 'Float.t': 'Float', 'Unit.t': `${RT}Unit`, 'List.t': `${RT}MlList`, 'Option.t': `${RT}MlOption`,
   'Array.t': 'Array', 'Stdlib.int32': 'haxe.Int32', 'Stdlib.int64': 'haxe.Int64', 'Stdlib.Int32.t': 'haxe.Int32', 'Stdlib.Int64.t': 'haxe.Int64',
-  'Uchar.t': `${RT}Int63`, 'Signed.Int64.t': 'haxe.Int64', 'Signed.Int32.t': 'haxe.Int32'};
+  'Uchar.t': `${RT}Int63`, 'Uchar.utf_decode': `${RT}Int63`, 'Signed.Int64.t': 'haxe.Int64', 'Signed.Int32.t': 'haxe.Int32'};
 
 
 // ---------------------------------------------------------------- paths
@@ -289,7 +289,16 @@ class UnitEmitter {
           if (args.length === d.decl.params.length + 1) args = args.slice(1);
           return d.hx + (args.length ? `<${args.map(a => this.type(a, n)).join(', ')}>` : '');
         }
-        this.fail(n, 'structural object type');
+        // A structural object type: an anonymous structure of methods (class
+        // instances unify with it structurally).
+        if (this.objDepth > 3) this.fail(n, 'recursive structural object type');
+        this.objDepth = (this.objDepth ?? 0) + 1;
+        try {
+          return `{ ${t.fields.map(f => {
+            const sig = this.methodSignature(f.t, this.methodArity(f.t), n);
+            return `function ${valueName(f.name)}${sig.gen}(${sig.params}):${sig.res};`;
+          }).join(' ')} }`;
+        } finally { this.objDepth--; }
       }
       case 'package': this.fail(n, 'first-class module type');
     }
@@ -303,6 +312,8 @@ class UnitEmitter {
     }
     this.fail(n, `type ${name} of functor instance ${inst.functor}`);
   }
+  // A record label's Haxe field ('a ref's contents is Ref.value).
+  fieldName(lbl) { return lbl.name === 'contents' && /(^|\.)ref$/.test(pathName(lbl.type ?? {})) ? 'value' : valueName(lbl.name); }
   // Whether a type is a tuple, through abbreviations.
   isTupleType(i, depth = 0) {
     const t = this.t(i);
@@ -557,8 +568,10 @@ class UnitEmitter {
           this.withTypeParams(this.typeVars(item.t), params => {
             const names = args.map((_, i) => `a${i}`);
             const sig = `(${args.map((a, i) => `${names[i]}:${this.type(a.t, item)}`).join(', ')}):${this.type(res, item)}`;
-            this.p.useLibrary(`${STD}Prim`, valueName(item.prim.name), sig);
-            this.members(s).push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}${sig} return ${STD}Prim.${valueName(item.prim.name)}(${names.join(', ')});`);
+            // ml2hx.prim.<Unit>: the unit's C primitives (README).
+            const prim = `ml2hx.prim.${this.cfg.module}`;
+            this.p.useLibrary(prim, valueName(item.prim.name), sig);
+            this.members(s).push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}${sig} return ${prim}.${valueName(item.prim.name)}(${names.join(', ')});`);
           });
         }
         return;
@@ -817,7 +830,7 @@ class UnitEmitter {
       case 'alias': { const name = this.fresh(identName(p.id)); const inner = this.bindIrrefutable(p.p, name); if (inner === null) return null; this.ids.set(p.id, {kind: 'local', name}); return `var ${name} = ${v}; ${inner}`; }
       case 'construct': if (p.c.type?.p === 'unit') return ''; return null;
       case 'tuple': case 'record': {
-        const subs = p.k === 'tuple' ? p.args.map((a, i) => [a, `v${i}`]) : p.fields.map(f => [f.p, valueName(f.lbl.name)]);
+        const subs = p.k === 'tuple' ? p.args.map((a, i) => [a, `v${i}`]) : p.fields.map(f => [f.p, this.fieldName(f.lbl)]);
         if (!subs.every(([a]) => irrefutable(a))) return null;
         const tmp = /^[\w]+$/.test(v) ? v : this.temp('d');
         let out = tmp === v ? '' : `var ${tmp} = ${v}; `;
@@ -975,7 +988,7 @@ class UnitEmitter {
       case 'if': return `if (${this.value(n.cond)}) { ${this.stmt(n.then)} }${n.else ? ` else { ${this.stmt(n.else)} }` : ''}`;
       case 'while': return `while (${this.value(n.cond)}) { ${this.stmt(n.body)} }`;
       case 'for': return this.forLoop(n);
-      case 'setfield': return `${this.ordered([n.e, n.v], ([r, v]) => `${wrap(r)}.${valueName(n.lbl.name)} = ${v}`)};`;
+      case 'setfield': return `${this.ordered([n.e, n.v], ([r, v]) => `${wrap(r)}.${this.fieldName(n.lbl)} = ${v}`)};`;
       case 'match': return this.matchNode(n, null, 'stmt');
       case 'open': return this.stmt(n.e);
       case 'construct': if (n.c.name === '()') return '';
@@ -1025,7 +1038,7 @@ class UnitEmitter {
         return `new ${RT}PolyVariant1(${hash}, ${tag}, ${this.value(n.arg)})`;
       }
       case 'record': return this.record(n);
-      case 'field': return `${wrap(this.value(n.e))}.${valueName(n.lbl.name)}`;
+      case 'field': return `${wrap(this.value(n.e))}.${this.fieldName(n.lbl)}`;
       case 'array': return this.ordered(n.args, a => `([${a.join(', ')}]:${this.type(n.t, n)})`);
       case 'assert': {
         const c = n.e;
@@ -1644,7 +1657,7 @@ class UnitEmitter {
     // { e with ... }: the base is evaluated first, then the fields right to left.
     const build = (b) => this.ordered(given, vals => {
       let i = 0;
-      const args = fields.map(f => f.e ? vals[i++] : `${b}.${valueName(f.lbl.name)}`);
+      const args = fields.map(f => f.e ? vals[i++] : `${b}.${this.fieldName(f.lbl)}`);
       return `new ${t}(${args.join(', ')})`;
     });
     if (!n.base) return build(null);
@@ -1670,14 +1683,31 @@ class UnitEmitter {
     // match (a, b) with ... on a syntactic tuple: no allocation.
     const scrut = n.e;
     if (scrut.k === 'tuple' && value.every(c => tupleLike(c.p, scrut.args.length))) {
-      const vals = this.ordered(scrut.args, a => `[${a.join(', ')}]`);
+      // Haxe matches `switch [a, b]` without an array only on a literal
+      // array subject: effects go to temporaries first (right to left).
+      const decls = [];
+      const vals = scrut.args.map(a => pure(a) ? this.value(a) : null);
+      for (let i = scrut.args.length - 1; i >= 0; i--) if (vals[i] === null) { const t = this.temp(); decls.unshift(`var ${t} = ${this.value(scrut.args[i])};`); vals[i] = t; }
       const cases = value.map(c => ({...c, p: c.p, tupleScrutinee: true}));
-      return this.switchCode(vals, cases, n.partial, tc, mode, n, scrut.args.length);
+      const code = this.switchCode(`[${vals.join(', ')}]`, cases, n.partial, tc, mode, n, scrut.args.length);
+      if (!decls.length) return code;
+      const ordered = decls.reverse().join(' ');
+      return mode === 'value' ? `{ ${ordered} ${code}; }` : `{ ${ordered} ${code} }`;
     }
+    if (this.isInt(scrut.t) && value.every(c => intKeyPattern(c.p))) return this.intSwitch(this.value(scrut), value, n.partial, tc, mode, n);
     return this.switchCode(this.value(scrut), value, n.partial, tc, mode, n);
   }
   matchStmt(scrut, scrutType, cases, partial, tc, n, inlineBodies = false) {
+    if (this.isInt(scrutType) && cases.every(c => intKeyPattern(c.p))) return this.intSwitch(scrut, cases, partial, tc, 'ret', n);
     return this.switchCode(scrut, cases, partial, tc, 'ret', n);
+  }
+  // A match on an int over constants: a switch on the Int key of the
+  // value (Haxe matches literal patterns on Int, not on Int63).
+  intSwitch(subject, cases, partial, tc, mode, n) {
+    const s = this.temp('s');
+    const keyed = cases.map(c => ({...c, p: intKeyed(c.p, s)}));
+    const code = this.switchCode(`${RT}Int63.patternKey(${s})`, keyed, partial, tc, mode, n);
+    return mode === 'value' ? `{ var ${s} = ${subject}; ${code}; }` : `{ var ${s} = ${subject}; ${code} }`;
   }
   // Emits a Haxe switch. mode: 'value' (expression), 'stmt', 'ret' (return/continue).
   switchCode(subject, cases, partial, tc, mode, n, tupleArity = 0) {
@@ -1759,7 +1789,7 @@ class UnitEmitter {
         return {pat: this.constant(p.c, p)};
       }
       case 'tuple': return this.join(p.args.map(a => this.pattern(a)), parts => `{${parts.map((x, i) => `v${i}: ${x}`).join(', ')}}`);
-      case 'record': return this.join(p.fields.map(f => this.pattern(f.p)), parts => `{${parts.map((x, i) => `${valueName(p.fields[i].lbl.name)}: ${x}`).join(', ')}}`);
+      case 'record': return this.join(p.fields.map(f => this.pattern(f.p)), parts => `{${parts.map((x, i) => `${this.fieldName(p.fields[i].lbl)}: ${x}`).join(', ')}}`);
       case 'array': return this.join(p.args.map(a => this.pattern(a)), parts => `[${parts.join(', ')}]`);
       case 'or': {
         // Both sides bind the same identifiers (the typer alpha-renames).
@@ -1775,6 +1805,13 @@ class UnitEmitter {
         return {pat: `${a.pat} | ${pb}`};
       }
       case 'lazy': { const inner = this.pattern(p.p); return {...inner, pat: `_.force() => ${inner.pat}`}; }
+      case '$intkey': return {pat: p.v};
+      case '$subject': {
+        // A variable over the keyed subject: bound to the Int63 itself.
+        const name = this.fresh(identName(p.id));
+        this.ids.set(p.id, {kind: 'local', name});
+        return {pat: '_', pre: `var ${name} = ${p.subject};`};
+      }
       case 'construct': return this.ctorPattern(p);
       case 'variant': {
         const hash = hashVariant(p.tag);
@@ -2008,7 +2045,13 @@ class UnitEmitter {
       return this.methodCall(`super.${valueName(name)}`, this.sendArity(s, name), call);
     }
     const d = this.classOf(s.obj.t, s);
-    const arity = d ? d.methods.get(name)?.arity ?? this.fail(s, `unknown method ${name}`) : this.fail(s, 'method call on a structural object type');
+    let arity;
+    if (d) arity = d.methods.get(name)?.arity ?? this.fail(s, `unknown method ${name}`);
+    else {
+      const ot = this.t(s.obj.t);
+      const f = ot.k === 'object' ? ot.fields.find(x => x.name === name) : null;
+      arity = f ? this.methodArity(f.t) : this.fail(s, 'method call on a value of no object type');
+    }
     const obj = this.value(s.obj);
     const call = {k: 'apply', t: n?.t ?? s.t, l: s.l, fn: s, args};
     return this.methodCall(`${wrap(obj)}.${valueName(name)}`, arity, call);
@@ -2051,6 +2094,26 @@ function patternVars(p, out = []) {
   for (const a of p.args ?? []) patternVars(a, out);
   for (const f of p.fields ?? []) patternVars(f.p, out);
   return out;
+}
+function intKeyPattern(p) {
+  switch (p.k) {
+    case 'value': return intKeyPattern(p.p);
+    case 'any': case 'var': return true;
+    case 'const': return p.c.k === 'int' && BigInt(p.c.v) <= 0x7fffffffn && BigInt(p.c.v) >= -0x7fffffffn;
+    case 'or': return intKeyPattern(p.a) && intKeyPattern(p.b);
+    case 'alias': return intKeyPattern(p.p) && p.p.k !== 'var';
+  }
+  return false;
+}
+function intKeyed(p, subject) {
+  switch (p.k) {
+    case 'value': return intKeyed(p.p, subject);
+    case 'const': return {...p, k: '$intkey', v: BigInt(p.c.v) < 0n ? `(${p.c.v})` : p.c.v};
+    case 'var': return {...p, k: '$subject', subject};
+    case 'or': return {...p, a: intKeyed(p.a, subject), b: intKeyed(p.b, subject)};
+    case 'alias': return {...p, p: intKeyed(p.p, subject)};
+  }
+  return p;
 }
 function hasExtractor(p) {
   if (!p || typeof p !== 'object') return false;

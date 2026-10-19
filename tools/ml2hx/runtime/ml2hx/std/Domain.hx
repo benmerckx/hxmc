@@ -19,4 +19,5 @@ class Domain {
 	public static function self(_:Unit):DomainId return Int63.zero;
 	public static function recommendedDomainCount(_:Unit):Int63 return Int63.one;
 	public static function isMainDomain(_:Unit):Bool return true;
+	public static inline function cpuRelax(_:Unit):Unit return Unit.value;
 }

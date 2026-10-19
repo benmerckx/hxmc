@@ -56,6 +56,9 @@ class String {
 		return s.substr(o, l);
 	}
 
+	public static inline function unsafeBlit(src:S, srcOfs:Int63, dst:haxe.io.Bytes, dstOfs:Int63, len:Int63):Unit
+		return blit(src, srcOfs, dst, dstOfs, len);
+
 	public static function blit(src:S, srcOfs:Int63, dst:haxe.io.Bytes, dstOfs:Int63, len:Int63):Unit {
 		var so = srcOfs.toInt(), d = dstOfs.toInt(), l = len.toInt();
 		if (l < 0 || so < 0 || so > src.length - l || d < 0 || d > dst.length - l) throw new InvalidArgument("String.blit / Bytes.blit_string");

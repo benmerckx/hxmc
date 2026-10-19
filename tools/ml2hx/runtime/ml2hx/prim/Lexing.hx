@@ -1,18 +1,13 @@
-package ml2hx.std;
+package ml2hx.prim;
 
 import Array as HArray;
 import String;
 import StdTypes;
 import ml2hx.rt.*;
 
-// C primitives of library modules converted from OCaml (their `external`
-// declarations): the OCaml runtime's implementations (runtime/hash.c,
-// ints.c, lexing.c). Converted records are reached by field name.
-class Prim {
-	public static function camlHash<T>(count:Int63, limit:Int63, seed:Int63, v:T):Int63
-		return Int63.ofInt(Poly.hashParam(count.toInt(), limit.toInt(), seed.toInt(), v));
-	public static function camlFormatInt(fmt:String, n:Int63):String return Fmt.one(fmt, n);
-
+// The C primitives of Stdlib.Lexing (converted from OCaml): the OCaml
+// runtime's lexing.c. The converted records are reached by field name.
+class Lexing {
 	// ---------------------------------------------------------------- lexing.c
 	static inline function short(tbl:String, n:Int):Int {
 		var v = StringTools.fastCodeAt(tbl, 2 * n) | (StringTools.fastCodeAt(tbl, 2 * n + 1) << 8);

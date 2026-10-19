@@ -25,7 +25,7 @@ export function typecheck(generated, {haxe = null, log = () => {}} = {}) {
   const work = path.join(root, 'bin/ml2hx/typecheck');
   fs.rmSync(work, {recursive: true, force: true});
   const modules = new Set();
-  walk(path.join(generated, 'upstream'), p => {
+  for (const top of ['upstream', 'ocaml']) if (fs.existsSync(path.join(generated, top))) walk(path.join(generated, top), p => {
     if (!p.endsWith('.hx')) return;
     const rel = path.relative(generated, p);
     fs.mkdirSync(path.dirname(path.join(work, rel)), {recursive: true});
