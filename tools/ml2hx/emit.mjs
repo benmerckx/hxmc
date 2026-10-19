@@ -985,6 +985,7 @@ class UnitEmitter {
         this.decls.push(`typedef ${name}${gen} = ${this.type(d.manifest, d)};`);
       } else if (d.kind === 'record') {
         this.decls.push(this.recordClass(name, gen, d.labels, d));
+        this.cmpDecl(d, desc, name, gen);
       } else if (d.kind === 'variant') {
         const ctors = d.ctors.map(c => {
           const render = ps => {
@@ -1006,6 +1007,7 @@ class UnitEmitter {
           });
         });
         this.decls.push(`enum ${name}${gen} {\n${ctors.join('\n')}\n}`);
+        this.cmpDecl(d, desc, name, gen);
       } else if (d.kind === 'open') {
         // (parameters phantom: one base class for every instance)
         if (params.length) this.decls.push(`class ${name}_Base {\n\tpublic function new() {}\n}`, `typedef ${name}${gen} = ${name}_Base;`);
@@ -1925,6 +1927,10 @@ class UnitEmitter {
         const special = this.libApply(d, n, fn);
         if (special !== null) return special;
       }
+      if (d.kind === 'static') {
+        const special = this.typedPolyCall(d, n);
+        if (special !== null) return special;
+      }
       const arity = d.kind === 'lib' || d.kind === 'instance' ? this.schemeArity(fn.scheme) : d.arity ?? 0;
       if (d.kind === 'lib') this.useLib(d, fn);
       const callee = {local: null, localfn: d.name, static: d.hx, external: d.hx, lib: `${d.cls}.${d.member}`, instance: `${d.obj}.${d.member}`, polystatic: null, prim: null}[d.kind];
@@ -2267,13 +2273,132 @@ class UnitEmitter {
       if (t.path.p === 'bool' && !['==', '!='].includes(o)) return `${RT}Runtime.compareBool(${v[0]}, ${v[1]}) ${o} 0`;
       return `(${wrap(v[0])} ${o} ${wrap(v[1])})`;
     }
+    // A type with a compare function of its own (a record or variant, a
+    // tuple, list or option of known types): OCaml's order without the
+    // polymorphic walk (Poly) over boxed values.
+    const fn = this.cmpFunction(a[0].t, n);
+    if (fn) {
+      const call = total => `${fn}(${v[0]}, ${v[1]}, ${total})`;
+      switch (op) {
+        case 'compare': return `${RT}Int63.ofInt(${call(true)})`;
+        case '=': return `(${call(false)} == 0)`;
+        case '<>': return `(${call(false)} != 0)`;
+        case '<': return `${RT}Poly.isLess(${call(false)})`;
+        case '<=': return `${RT}Poly.isLessEqual(${call(false)})`;
+        case '>': return `(${call(false)} > 0)`;
+        case '>=': return `(${call(false)} >= 0)`;
+      }
+    }
     if (op === 'compare') {
       if (simple && t.path.p !== 'float' && t.path.p !== 'bool') return `${RT}Int63.ofInt(${RT}Runtime.compare${t.path.p === 'string' ? 'String' : 'Int'}(${v[0]}, ${v[1]}))`;
       return `${RT}Int63.ofInt(${RT}Runtime.compare(${v[0]}, ${v[1]}))`;
     }
     if (op === '=') return `${RT}Runtime.equal(${v[0]}, ${v[1]})`;
     if (op === '<>') return `!${RT}Runtime.equal(${v[0]}, ${v[1]})`;
-    return `(${RT}Runtime.compare(${v[0]}, ${v[1]}) ${op} 0)`;
+    // (not compare: a nan is unordered, every comparison with it false)
+    return `${RT}Poly.${{"<": "lessThan", "<=": "lessEqual", ">": "greaterThan", ">=": "greaterEqual"}[op]}(${v[0]}, ${v[1]})`;
+  }
+  // Stdlib's polymorphic min and max, Hashtbl.hash, at a type whose order
+  // or hash is known: OCaml's result without the polymorphic walk.
+  typedPolyCall(d, n) {
+    const fn = {'ocaml.stdlib.StdlibModule.min': 'min', 'ocaml.stdlib.StdlibModule.max': 'max', 'ocaml.stdlib.HashtblModule.hash': 'hash'}[d.hx];
+    if (!fn || n.args.some(a => !a.e) || n.args.length !== (fn === 'hash' ? 1 : 2)) return null;
+    const t = n.args[0].e.t, at = this.t(t);
+    const kind = this.isIntRep(t) ? 'Int63' : at.k === 'constr' ? {char: 'Int', float: 'Float', string: 'String'}[at.path.p] : null;
+    if (!kind || (fn === 'hash' && kind === 'Float')) return null;
+    return this.ordered(n.args.map(a => a.e), v => fn === 'hash' ? `${RT}Int63.ofInt(${RT}Poly.hash${kind}(${v[0]}))` : `${RT}Poly.${fn}${kind}(${v.join(', ')})`);
+  }
+  // ---- typed compare: OCaml's structural order (compare.c) by type, for
+  // the types whose values the emitter knows the layout of. A function of
+  // (a, b, total) giving -1, 0, 1, or Poly.UNORDERED (a nan, when !total).
+  // Whether a declaration has one (emitTypeDecl makes it beside the type).
+  cmpDeclSupported(desc) {
+    const d = desc?.decl;
+    if (!d || desc.builtin || desc.library || d.unboxed || d.manifest !== null) return false;
+    if (d.kind === 'record') return true;
+    if (d.kind === 'variant') return d.ctors.every(c => c.res === null);
+    return false;
+  }
+  cmpDeclName(desc) { const k = desc.hx.lastIndexOf('.'); return `${desc.hx.slice(0, k)}.ml2hxCompare${desc.hx.slice(k + 1)}`; }
+  // The compare function of a type (a callable path), or null (Poly).
+  cmpFunction(i, n, depth = 0) {
+    const t = this.t(i);
+    if (t.k === 'tuple' || (t.k === 'constr' && ['list', 'option'].includes(t.path.p))) return this.cmpHelper(i, n);
+    if (t.k !== 'constr' || t.path.p) return null;
+    let d = null;
+    try { d = this.resolveType(t.path, n); } catch (e) { return null; }
+    if (this.cmpDeclSupported(d)) return this.cmpDeclName(d);
+    const e = this.expandAbbrev(i);
+    return e !== null && depth < 10 ? this.cmpFunction(e, n, depth + 1) : null;
+  }
+  // The comparison of x and y of type i as an expression (`total` in scope).
+  cmpCode(i, x, y, n) {
+    if (this.isIntRep(i)) return `${RT}Poly.compareInt63(${x}, ${y})`;
+    const t = this.t(i);
+    if (t.k === 'constr' && t.path.p) {
+      switch (t.path.p) {
+        case 'char': return `${RT}Runtime.compareInt(${x}, ${y})`;
+        case 'bool': return `${RT}Runtime.compareBool(${x}, ${y})`;
+        case 'string': return `${RT}Poly.compareStrings(${x}, ${y})`;
+        case 'float': return `${RT}Poly.compareFloats(${x}, ${y}, total)`;
+        case 'unit': return '0';
+      }
+    }
+    const fn = this.cmpFunction(i, n);
+    return fn ? `${fn}(${x}, ${y}, total)` : `${RT}Poly.compareValues(${x}, ${y}, total)`;
+  }
+  // A static of the unit comparing a tuple, list or option of a closed type.
+  cmpHelper(i, n) {
+    if (this.typeVars(i).length) return null;
+    const t = this.t(i);
+    let ht;
+    try { ht = this.type(i, n); } catch (e) { if (e instanceof Unsupported) return null; throw e; }
+    const helpers = (this.root.cmpHelpers ??= new Map());
+    if (helpers.has(ht)) return helpers.get(ht);
+    const name = `${this.cls}.ml2hxCmp${helpers.size}`;
+    helpers.set(ht, name);
+    let body;
+    if (t.k === 'tuple') {
+      body = `if (total && (a : Dynamic) == (b : Dynamic)) return 0; ${this.cmpSeq(t.args.map((a, k) => [a, `a.v${k}`, `b.v${k}`]), n)}`;
+    } else if (t.path.p === 'list') {
+      const e = this.cmpCode(t.args[0], 'x', 'y', n);
+      body = `while (true) { if (total && (a : Dynamic) == (b : Dynamic)) return 0; switch a { case ${RT}MlList.Nil: return switch b { case ${RT}MlList.Nil: 0; case _: -1; }; case ${RT}MlList.Cons(x, xs): switch b { case ${RT}MlList.Nil: return 1; case ${RT}MlList.Cons(y, ys): var c = ${e}; if (c != 0) return c; a = xs; b = ys; } } }`;
+    } else {
+      const e = this.cmpCode(t.args[0], 'x', 'y', n);
+      body = `return switch a { case ${RT}MlOption.None: switch b { case ${RT}MlOption.None: 0; case _: -1; }; case ${RT}MlOption.Some(x): switch b { case ${RT}MlOption.None: 1; case ${RT}MlOption.Some(y): ${e}; }; };`;
+    }
+    this.statics.push(`public static function ${name.split('.').at(-1)}(a:${ht}, b:${ht}, total:Bool):Int { ${body} }`);
+    return name;
+  }
+  // fields left to right, the last one's result the result
+  cmpSeq(pairs, n) {
+    return pairs.map(([i, x, y], k) => {
+      const c = this.cmpCode(i, x, y, n);
+      return k < pairs.length - 1 ? `${k === 0 ? 'var c:Int' : 'c'} = ${c}; if (c != 0) return c;` : `return ${c};`;
+    }).join(' ');
+  }
+  // A record's or variant's compare function (emitTypeDecl, its parameters in scope).
+  cmpDecl(d, desc, name, gen) {
+    if (!this.cmpDeclSupported(desc)) return;
+    const ty = `${name}${gen}`;
+    const seq = pairs => this.cmpSeq(pairs, d);
+    let body;
+    if (d.kind === 'record') body = `if (total && a == b) return 0; ${seq(d.labels.map(l => [l.t, `a.${valueName(l.name)}`, `b.${valueName(l.name)}`]))}`;
+    else {
+      // constant constructors (OCaml immediates, by rank) before the others (blocks, by tag)
+      let ci = 0, bi = 0;
+      const order = d.ctors.map(c => (!c.args.record && !c.args.tuple?.length) ? ci++ : 0x10000 + bi++);
+      const ord = v => `switch ${v} { ${order.map((o, k) => `case ${k}: ${o};`).join(' ')} case _: 0; }`;
+      const cases = d.ctors.map(c => {
+        const C = `${desc.hx}.${ctorName(c.name)}`;
+        if (c.args.record) return `case ${C}(ra): switch b { case ${C}(rb): ${seq(c.args.record.map(l => [l.t, `ra.${valueName(l.name)}`, `rb.${valueName(l.name)}`]))} case _: }`;
+        const ts = c.args.tuple ?? [];
+        if (!ts.length) return null;
+        return `case ${C}(${ts.map((_, k) => `a${k}`).join(', ')}): switch b { case ${C}(${ts.map((_, k) => `b${k}`).join(', ')}): ${seq(ts.map((t, k) => [t, `a${k}`, `b${k}`]))} case _: }`;
+      }).filter(x => x);
+      body = `if (total && (a : Dynamic) == (b : Dynamic)) return 0; var ia = Type.enumIndex(a), ib = Type.enumIndex(b); if (ia != ib) { var oa = ${ord('ia')}, ob = ${ord('ib')}; return oa < ob ? -1 : 1; } ${cases.length ? `switch a { ${cases.join(' ')} case _: } ` : ''}return 0;`;
+    }
+    this.statics.push(`public static function ml2hxCompare${name}${gen}(a:${ty}, b:${ty}, total:Bool):Int { ${body} }`);
   }
   // Library calls the emitter compiles itself (format strings).
   libApply(d, n, fn) {

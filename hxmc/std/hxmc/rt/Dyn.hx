@@ -1006,6 +1006,20 @@ class Dyn {
 		return a;
 	}
 
+	// enumParams(v).length and enumParams(v)[i] without the array (OCaml's
+	// structural compare and hash over converted values, ml2hx.rt.Poly)
+	@:hxmc.noGc public static function enumParamCount(v:Dynamic):Int
+		return slotCount(ty(tindex(v)));
+
+	public static function enumParam(v:Dynamic, i:Int):Dynamic {
+		var t = tindex(v);
+		for (j in 0...nfields(ty(t))) {
+			var f = field(ty(t), j);
+			if (ctorArg(f) == i) return boxSlot(v, fSlot(f), fKind(f));
+		}
+		return null;
+	}
+
 	public static function enumEq(a:Dynamic, b:Dynamic):Bool {
 		if (Mem.addr(a) == Mem.addr(b)) return true;
 		if (Str.isNull(a) || Str.isNull(b) || tindex(a) != tindex(b)) return false;

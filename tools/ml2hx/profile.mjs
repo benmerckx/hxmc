@@ -13,7 +13,9 @@
 //   4. counters (perf stat).
 // Environment: ML2HX_PROFILE_RUNS (timing runs per side, default 3),
 // ML2HX_PROFILE_FREQ (perf sampling Hz, default 999), PERF (the perf binary),
-// ML2HX_UTEST (a utest checkout: adds upstream's unit tests compiled to JS).
+// ML2HX_UTEST (a utest checkout: adds upstream's unit tests compiled to JS),
+// ML2HX_PROFILE_NOTE (what changed: the run's summary, also written to
+// bin/ml2hx/profile/summary.md, is then appended to tools/ml2hx/PROFILE.md).
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync, spawn} from 'node:child_process';
@@ -161,7 +163,7 @@ async function profile(w, side, data) {
   const p = sh(perf, ['record', '-F', String(freq), '-g', '-o', data, '--', bin(side), ...w.args(side)], {cwd: w.cwd, env});
   if (p.status !== 0) throw new Error(`perf record ${side}: ${p.stderr}`.slice(0, 4000));
   const map = side === 'port' ? mapPort : mapGenerated;
-  const self = new Map(), selfRt = new Map(), incl = new Map(), unmappedSelf = new Map(), categories = new Map();
+  const self = new Map(), selfRt = new Map(), incl = new Map(), unmappedSelf = new Map(), categories = new Map(), callers = new Map();
   let samples = 0;
   const cache = new Map();
   const mapped = sym => { if (!cache.has(sym)) cache.set(sym, map(sym)); return cache.get(sym); };
@@ -178,6 +180,7 @@ async function profile(w, side, data) {
     // the runtime's leaf time charged to the nearest upstream caller
     const owner = frames.map(mapped).find(k => k);
     if (owner) selfRt.set(owner, (selfRt.get(owner) ?? 0) + 1);
+    if (!lk) { const ck = `${cat}|${owner ?? '(none)'}`; callers.set(ck, (callers.get(ck) ?? 0) + 1); }
     const seen = new Set();
     for (const f of frames) { const k = mapped(f) ?? `?${f}`; if (!seen.has(k)) { seen.add(k); incl.set(k, (incl.get(k) ?? 0) + 1); } }
     frames = [];
@@ -189,7 +192,7 @@ async function profile(w, side, data) {
     if (m) frames.push(m[1].replace(/\+0x[0-9a-f]+$/, ''));
   }
   flush();
-  return {samples, self, selfRt, incl, unmappedSelf, categories};
+  return {samples, self, selfRt, incl, unmappedSelf, categories, callers};
 }
 
 // ---- 3. census
@@ -252,7 +255,7 @@ function stat(w, side) {
 const fmt = (x, d = 2) => x == null || Number.isNaN(x) ? '—' : x.toFixed(d);
 const ratio = (g, p) => p ? fmt(g / p) + 'x' : '—';
 const sign = (x, d = 2) => x == null || Number.isNaN(x) ? '—' : (x >= 0 ? '+' : '') + x.toFixed(d);
-const md = [];
+const md = [], summary = [];
 const git = a => sh('git', a, {cwd: root}).stdout.trim();
 md.push('# The generated compiler against the port: profile', '');
 md.push(`- commit: ${git(['rev-parse', '--short', 'HEAD'])}${git(['status', '--porcelain', '--untracked-files=no']) ? ' (with local changes)' : ''}, ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`);
@@ -273,6 +276,7 @@ for (const w of workloads) {
   const mp = med('port'), mg = med('generated');
   md.push('### Time', '', '| | port | generated | Δ | ratio |', '| --- | ---: | ---: | ---: | ---: |');
   for (const [k, n, d] of [['wall', 'wall (s)', 2], ['user', 'user (s)', 2], ['sys', 'sys (s)', 2], ['rss', 'peak RSS (MB)', 0]]) md.push(`| ${n} | ${fmt(mp[k], d)} | ${fmt(mg[k], d)} | ${sign(mg[k] - mp[k], d)} | ${ratio(mg[k], mp[k])} |`);
+  summary.push(`- ${w.name}: wall ${fmt(mp.wall)} s against ${fmt(mg.wall)} s (${ratio(mg.wall, mp.wall)}), user ${fmt(mp.user)} s against ${fmt(mg.user)} s, peak RSS ${fmt(mp.rss, 0)} MB against ${fmt(mg.rss, 0)} MB`);
   md.push('', '### Phases (--times, medians)', '', '| phase | port (s) | generated (s) | Δ | ratio |', '| --- | ---: | ---: | ---: | ---: |');
   const ph = s => { const all = t[s].map(r => parseTimes(r.out)); const keys = new Set(all.flatMap(m => [...m.keys()])); return new Map([...keys].map(k => [k, median(all.map(m => m.get(k) ?? 0))])); };
   const pp = ph('port'), pg = ph('generated');
@@ -293,10 +297,12 @@ for (const w of workloads) {
   const show = k => { const [file, fn] = k.split(':'); return `${file} ${fn.split('.').map(x => /^\(/.test(x) ? x : snake(x)).join('.')}`; };
   md.push(`### Differential profile by upstream function`, '', `perf samples: port ${prof.port.samples}, generated ${prof.generated.samples}; seconds are each side's CPU time (median user + sys) apportioned by samples. Closures fold into the function that contains them; a symbol neither maps is listed below.`, '');
   md.push('#### Where the time goes (leaf samples by category)', '', '| category | port (s) | generated (s) | Δ | ratio |', '| --- | ---: | ---: | ---: | ---: |');
+  const catStart = md.length;
   for (const k of [...new Set([...prof.port.categories.keys(), ...prof.generated.categories.keys()])].sort((a, b) => (prof.generated.categories.get(b) ?? 0) * secs('generated') - (prof.port.categories.get(b) ?? 0) * secs('port') - ((prof.generated.categories.get(a) ?? 0) * secs('generated') - (prof.port.categories.get(a) ?? 0) * secs('port')))) {
     const p = (prof.port.categories.get(k) ?? 0) * secs('port'), g = (prof.generated.categories.get(k) ?? 0) * secs('generated');
     md.push(`| ${k} | ${fmt(p)} | ${fmt(g)} | ${sign(g - p)} | ${ratio(g, p)} |`);
   }
+  const catRows = md.slice(catStart - 2);
   md.push('');
   for (const [what, title] of [['incl', 'Inclusive (the function and what it calls)'], ['selfRt', 'Self, with the runtime it calls (leaf samples charged to the nearest upstream function)'], ['self', 'Self (leaf samples in the function itself)']]) {
     const all = rows(what);
@@ -306,6 +312,16 @@ for (const w of workloads) {
     md.push('', `Found on one side only (names that differ: the generated compiler's library units, closures numbered by OCaml, the port's own helpers), top 15 by time:`, '', '| function | port (s) | generated (s) |', '| --- | ---: | ---: |');
     for (const r of one.sort((a, b) => Math.max(b.p, b.g) - Math.max(a.p, a.g)).slice(0, 15)) md.push(`| ${show(r.k)} | ${fmt(r.p)} | ${fmt(r.g)} |`);
     md.push('');
+  }
+  md.push('#### The runtime categories by the upstream function calling them (generated compiler, top 8 each)', '');
+  {
+    const byCat = new Map();
+    for (const [ck, n] of prof.generated.callers) { const [cat, owner] = ck.split('|'); if (!byCat.has(cat)) byCat.set(cat, []); byCat.get(cat).push([owner, n]); }
+    for (const [cat, list] of [...byCat].sort((a, b) => b[1].reduce((x, [, n]) => x + n, 0) - a[1].reduce((x, [, n]) => x + n, 0)).slice(0, 6)) {
+      md.push(`${cat}:`, '', '| caller | s |', '| --- | ---: |');
+      for (const [owner, n] of list.sort((a, b) => b[1] - a[1]).slice(0, 8)) md.push(`| ${owner === '(none)' ? owner : show(owner)} | ${fmt(n * secs('generated'))} |`);
+      md.push('');
+    }
   }
   md.push('#### Leaf samples in no upstream function (runtime, collector, libc, unmapped)', '');
   for (const s of sides) {
@@ -319,6 +335,7 @@ for (const w of workloads) {
   const c = {port: census(w, 'port'), generated: census(w, 'generated')};
   md.push('### Allocations (census builds)', '');
   md.push(`Allocated over the run: port ${c.port.allocTotal?.[1] ?? '—'} objects, ${c.port.allocTotal?.[2] ?? '—'} MB; generated ${c.generated.allocTotal?.[1] ?? '—'} objects, ${c.generated.allocTotal?.[2] ?? '—'} MB. Live at exit (after a major collection): port ${c.port.liveTotal?.[1] ?? '—'} objects, ${c.port.liveTotal?.[2] ?? '—'} MB; generated ${c.generated.liveTotal?.[1] ?? '—'} objects, ${c.generated.liveTotal?.[2] ?? '—'} MB. The census counts by type: it has no allocation sites (a type's name gives its upstream module).`, '');
+  summary.push(`  allocated: port ${c.port.allocTotal?.[2] ?? '—'} MB (${c.port.allocTotal?.[1] ?? '—'} objects), generated ${c.generated.allocTotal?.[2] ?? '—'} MB (${c.generated.allocTotal?.[1] ?? '—'} objects)`, '', ...catRows.map(l => '  ' + l), '');
   const kinds = new Map();
   for (const [ty, v] of c.generated.alloc) { const k = kindOf(ty); const e = kinds.get(k) ?? {count: 0, mb: 0, live: 0}; e.count += v.count; e.mb += v.mb; kinds.set(k, e); }
   for (const [ty, v] of c.generated.live) { const k = kindOf(ty); const e = kinds.get(k) ?? {count: 0, mb: 0, live: 0}; e.live += v.mb; kinds.set(k, e); }
@@ -346,4 +363,11 @@ for (const w of workloads) {
   md.push(`| IPC | ${fmt(ipc('port'))} | ${fmt(ipc('generated'))} | ${ipc('port') && ipc('generated') ? ratio(ipc('generated'), ipc('port')) : '—'} |`, '');
 }
 fs.writeFileSync(path.join(dir, 'profile.md'), md.join('\n') + '\n');
+const head = `### ${new Date().toISOString().slice(0, 10)}, ${git(['rev-parse', '--short', 'HEAD'])}${git(['status', '--porcelain', '--untracked-files=no']) ? ' + local changes' : ''}: ${process.env.ML2HX_PROFILE_NOTE ?? '(no note)'}`;
+fs.writeFileSync(path.join(dir, 'summary.md'), [head, '', ...summary].join('\n') + '\n');
+if (process.env.ML2HX_PROFILE_NOTE) {
+  const log = path.join(root, 'tools/ml2hx/PROFILE.md');
+  const prev = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '# Profile history\n\nOne entry per `make ml2hx-profile` run worth keeping (ML2HX_PROFILE_NOTE set): self-typing and, when measured, unit tests to JS; the port built from the same tree with the same flags. Seconds by category are leaf samples (bin/ml2hx/profile/profile.md has the rest).\n';
+  fs.writeFileSync(log, prev.trimEnd() + '\n\n' + [head, '', ...summary].join('\n').trimEnd() + '\n');
+}
 console.log(`wrote ${path.relative(root, path.join(dir, 'profile.md'))}`);

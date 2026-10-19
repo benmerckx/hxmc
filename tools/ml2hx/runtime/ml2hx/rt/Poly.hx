@@ -59,21 +59,83 @@ class Poly {
 		return r;
 	}
 
-	static inline function enumRank(v:EnumValue):Int
+	#if (target.name == "hxmc" && !hxmc.wasm_gc)
+	// by the constructor's type index (each constructor has its own): the
+	// rank + 1 of a constant one, the (negative) rank of another, 0 unknown
+	static var rankByType = new Array<Int>();
+	#end
+
+	static function enumRank(v:Dynamic):Int {
+		#if (target.name == "hxmc" && !hxmc.wasm_gc)
+		var t = hxmc.rt.Types.tindex(v);
+		if (t < rankByType.length) {
+			var x = rankByType[t];
+			if (x != 0) return x > 0 ? x - 1 : x;
+		}
+		var r = ranks(Type.getEnum(v))[Type.enumIndex(v)];
+		while (rankByType.length <= t) rankByType.push(0);
+		rankByType[t] = r >= 0 ? r + 1 : r;
+		return r;
+		#else
 		return ranks(Type.getEnum(v))[Type.enumIndex(v)];
+		#end
+	}
+
+	// Type.typeof as a number (0 null, 1 Int, 2 Float, 3 Bool, 4 object,
+	// 5 function, 6 class instance, 7 enum value, 8 String, 9 Array, 11
+	// other): hxmc's without the ValueType Type.typeof allocates
+	static inline function typeKind(v:Dynamic):Int {
+		#if (target.name == "hxmc" && !hxmc.wasm_gc)
+		return hxmc.Native.typeKind(v);
+		#else
+		return switch Type.typeof(v) {
+			case TNull: 0;
+			case TInt: 1;
+			case TFloat: 2;
+			case TBool: 3;
+			case TObject: 4;
+			case TFunction: 5;
+			case TClass(c): c == String ? 8 : c == Array ? 9 : 6;
+			case TEnum(_): 7;
+			case _: 11;
+		}
+		#end
+	}
+
+	// an enum value's arguments, read in place (no array per value on hxmc)
+	static inline function paramCount(v:Dynamic):Int {
+		#if (target.name == "hxmc" && !hxmc.wasm_gc)
+		return hxmc.rt.Dyn.enumParamCount(v);
+		#else
+		return Type.enumParameters(v).length;
+		#end
+	}
+
+	static inline function param(v:Dynamic, i:Int):Dynamic {
+		#if (target.name == "hxmc" && !hxmc.wasm_gc)
+		return hxmc.rt.Dyn.enumParam(v, i);
+		#else
+		return Type.enumParameters(v)[i];
+		#end
+	}
+
+	// C of {...}: the record (its fields are the block's), else null
+	static function inlineRecord(v:Dynamic):Dynamic {
+		if (paramCount(v) != 1) return null;
+		var p = param(v, 0);
+		return Std.isOfType(p, InlineRecord) ? p : null;
+	}
 
 	static function kind(v:Dynamic):Int {
-		// (one Type.typeof, then class tests only for class instances)
-		return switch Type.typeof(v) {
-			case TNull | TInt | TBool: K_IMM;
-			case TFloat: K_DOUBLE;
-			case TEnum(e): ranks(e)[Type.enumIndex(v)] >= 0 ? K_IMM : K_ENUM;
-			case TFunction: K_FUNC;
-			case TClass(c):
-				if (c == String) K_STRING;
-				else if (Std.isOfType(v, Block)) Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK;
-				else if (c == Array) K_ARRAY;
-				else instanceKind(v);
+		return switch typeKind(v) {
+			case 0 | 1 | 3: K_IMM;
+			case 2: K_DOUBLE;
+			// (a constant constructor: one without arguments)
+			case 7: paramCount(v) == 0 ? K_IMM : K_ENUM;
+			case 5: K_FUNC;
+			case 8: K_STRING;
+			case 9: K_ARRAY;
+			case 6: Std.isOfType(v, Block) ? (Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK) : instanceKind(v);
 			// (some hosts type Int64 or Bytes values otherwise)
 			case _: instanceKind(v);
 		}
@@ -97,10 +159,10 @@ class Poly {
 		if (v == null) return 0;
 		// (ints first: the most frequent)
 		if (Int64.isInt64(v)) return (v : Int64);
-		switch Type.typeof(v) {
-			case TInt: return Int64.ofInt((v : Int));
-			case TBool: return (v : Bool) ? 1 : 0;
-			case TEnum(e): return ranks(e)[Type.enumIndex(v)];
+		switch typeKind(v) {
+			case 1: return Int64.ofInt((v : Int));
+			case 3: return (v : Bool) ? 1 : 0;
+			case 7: return enumRank(v);
 			case _:
 		}
 		// unit is the Int 0 at run time
@@ -122,17 +184,29 @@ class Poly {
 
 	static function floatArray(a:Array<Dynamic>):Bool {
 		if (a.length == 0) return false;
-		for (x in a) if (!Std.isOfType(x, Float) || Type.typeof(x) != TFloat) return false;
+		for (x in a) if (typeKind(x) != 2) return false;
 		return true;
 	}
 
 	static function size(v:Dynamic, k:Int):Int {
 		return switch k {
-			case K_ENUM: fields(v, k).length;
+			case K_ENUM:
+				var r = inlineRecord(v);
+				r != null ? (r : Block).blockSize() : paramCount(v);
 			case K_BLOCK: (v : Block).blockSize();
 			case K_ARRAY: (v : Array<Dynamic>).length;
 			case K_ABSTRACT: (v : Abstract).abstractSize();
 			case _: 0;
+		}
+	}
+
+	// field i of a block of kind k, read in place (K_ENUM: of a constructor
+	// without an inline record)
+	static inline function field(v:Dynamic, k:Int, i:Int):Dynamic {
+		return switch k {
+			case K_ENUM: param(v, i);
+			case K_ARRAY: (v : Array<Dynamic>)[i];
+			case _: (v : Block).blockField(i);
 		}
 	}
 
@@ -171,7 +245,7 @@ class Poly {
 		return a.length < b.length ? -1 : (a.length > b.length ? 1 : 0);
 	}
 
-	static function compareFloats(a:Float, b:Float, total:Bool):Int {
+	public static function compareFloats(a:Float, b:Float, total:Bool):Int {
 		if (a < b) return -1;
 		if (a > b) return 1;
 		if (a != b) {
@@ -181,6 +255,53 @@ class Poly {
 		}
 		return 0;
 	}
+
+	// (the typed compare functions the converter makes: emit.mjs cmpDecl)
+	public static inline function compareInt63(a:Int63, b:Int63):Int
+		return Int63.lt(a, b) ? -1 : Int63.eq(a, b) ? 0 : 1;
+
+	// Stdlib.min and max (if x <= y then x else y; if x >= y then x else y)
+	// and Hashtbl.hash at known types (emit.mjs typedPolyCall)
+	public static inline function minInt63(a:Int63, b:Int63):Int63
+		return Int63.le(a, b) ? a : b;
+
+	public static inline function maxInt63(a:Int63, b:Int63):Int63
+		return Int63.ge(a, b) ? a : b;
+
+	public static inline function minInt(a:Int, b:Int):Int
+		return a <= b ? a : b;
+
+	public static inline function maxInt(a:Int, b:Int):Int
+		return a >= b ? a : b;
+
+	public static inline function minFloat(a:Float, b:Float):Float
+		return a <= b ? a : b;
+
+	public static inline function maxFloat(a:Float, b:Float):Float
+		return a >= b ? a : b;
+
+	public static inline function minString(a:String, b:String):String
+		return compareStrings(a, b) <= 0 ? a : b;
+
+	public static inline function maxString(a:String, b:String):String
+		return compareStrings(a, b) >= 0 ? a : b;
+
+	public static inline function hashString(s:String):Int
+		return finalMix(mixString(0, s)) & 0x3FFFFFFF;
+
+	public static inline function hashInt63(n:Int63):Int {
+		var l = n.toInt64();
+		return finalMix(mixIntnat(0, l + l + 1)) & 0x3FFFFFFF;
+	}
+
+	public static inline function hashInt(n:Int):Int
+		return hashInt63(Int63.ofInt(n));
+
+	public static inline function isLess(c:Int):Bool
+		return c < 0 && c != UNORDERED;
+
+	public static inline function isLessEqual(c:Int):Bool
+		return c <= 0 && c != UNORDERED;
 
 	// caml_compare's core: -1, 0, 1 or UNORDERED (only when !total)
 	public static function compareValues(a:Dynamic, b:Dynamic, total:Bool):Int {
@@ -209,23 +330,39 @@ class Poly {
 				case K_ABSTRACT:
 					throw new InvalidArgument("compare: abstract value");
 				case _:
-					var fa = fields(a, ka), fb = fields(b, kb);
-					if (fa.length != fb.length) return fa.length < fb.length ? -1 : 1;
-					if (fa.length == 0) return 0;
+					// (fields read in place: no array per block)
+					if (ka == K_ENUM) {
+						var r = inlineRecord(a);
+						if (r != null) {
+							a = r;
+							ka = K_BLOCK;
+						}
+					}
+					if (kb == K_ENUM) {
+						var r = inlineRecord(b);
+						if (r != null) {
+							b = r;
+							kb = K_BLOCK;
+						}
+					}
+					var na = size(a, ka), nb = size(b, kb);
+					if (na != nb) return na < nb ? -1 : 1;
+					if (na == 0) return 0;
 					if (ta == DOUBLE_ARRAY_TAG) {
-						for (i in 0...fa.length) {
-							var c = compareFloats(fa[i], fb[i], total);
+						for (i in 0...na) {
+							var c = compareFloats(field(a, ka, i), field(b, kb, i), total);
 							if (c != 0) return c;
 						}
 						return 0;
 					}
-					for (i in 0...fa.length - 1) {
-						var c = compareValues(fa[i], fb[i], total);
+					for (i in 0...na - 1) {
+						var c = compareValues(field(a, ka, i), field(b, kb, i), total);
 						if (c != 0) return c;
 					}
 					// the last field in the loop: lists compare without recursion
-					a = fa[fa.length - 1];
-					b = fb[fb.length - 1];
+					var last:Dynamic = field(a, ka, na - 1);
+					b = field(b, kb, na - 1);
+					a = last;
 			}
 		}
 	}
@@ -399,18 +536,26 @@ class Poly {
 					h = mix(h, header(0, 247));
 				case _:
 					var t = tag(v, k);
-					var f = fields(v, k);
+					var x:Dynamic = v, kx = k;
+					if (k == K_ENUM) {
+						var r = inlineRecord(v);
+						if (r != null) {
+							x = r;
+							kx = K_BLOCK;
+						}
+					}
+					var n = size(x, kx);
 					if (t == DOUBLE_ARRAY_TAG) {
-						for (x in f) {
-							h = mixDouble(h, x);
+						for (i in 0...n) {
+							h = mixDouble(h, field(x, kx, i));
 							num--;
 							if (num <= 0) break;
 						}
 					} else {
-						h = mix(h, header(f.length, t));
-						for (x in f) {
+						h = mix(h, header(n, t));
+						for (i in 0...n) {
 							if (wr >= sz) break;
-							q[wr++] = x;
+							q[wr++] = field(x, kx, i);
 						}
 					}
 			}
