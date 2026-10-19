@@ -114,3 +114,41 @@ One entry per `make ml2hx-profile` run worth keeping (ML2HX_PROFILE_NOTE set): s
   | arrays (runtime) | 0.11 | 0.08 | -0.04 | 0.69x |
   | strings (runtime) | 0.14 | 0.04 | -0.10 | 0.31x |
   | Haxe maps (haxe.ds) | 0.12 | 0.00 | -0.12 | 0.02x |
+
+### 2026-10-19, 30b57b8 + local changes: record fields of GADT-cast values read through their class; let-bound partial applications of known functions applied in full call the function directly
+
+- self-typing (haxe/src, --interp --no-output): wall 3.85 s against 7.88 s (2.05x), user 3.64 s against 7.36 s, peak RSS 484 MB against 629 MB
+  allocated: port 2946.8 MB (95779392 objects), generated 6601.9 MB (233097545 objects)
+
+  | category | port (s) | generated (s) | Δ | ratio |
+  | --- | ---: | ---: | ---: | ---: |
+  | upstream code | 2.20 | 3.81 | +1.61 | 1.73x |
+  | reflection and dynamic access (Dyn, Type, Std) | 0.09 | 0.78 | +0.69 | 9.01x |
+  | allocation and collection (Gc, zeroing, page faults) | 0.77 | 1.37 | +0.60 | 1.77x |
+  | polymorphic compare and hash (ml2hx.rt.Poly) | 0.00 | 0.49 | +0.49 | — |
+  | ml2hx runtime and prims | 0.00 | 0.34 | +0.34 | — |
+  | boxing | 0.02 | 0.28 | +0.26 | 14.09x |
+  | libc and kernel | 0.36 | 0.45 | +0.10 | 1.27x |
+  | Haxe code mapped to no upstream unit | 0.12 | 0.17 | +0.05 | 1.43x |
+  | other hxmc runtime | 0.03 | 0.07 | +0.04 | 2.69x |
+  | strings (runtime) | 0.10 | 0.01 | -0.09 | 0.15x |
+  | arrays (runtime) | 0.14 | 0.04 | -0.10 | 0.29x |
+  | Haxe maps (haxe.ds) | 0.15 | 0.00 | -0.15 | 0.00x |
+
+- unit tests to JS (tests/unit, compile-js.hxml): wall 3.38 s against 6.00 s (1.78x), user 3.10 s against 5.75 s, peak RSS 431 MB against 424 MB
+  allocated: port 2523.1 MB (79908888 objects), generated 5314.0 MB (179647569 objects)
+
+  | category | port (s) | generated (s) | Δ | ratio |
+  | --- | ---: | ---: | ---: | ---: |
+  | upstream code | 1.69 | 2.76 | +1.08 | 1.64x |
+  | reflection and dynamic access (Dyn, Type, Std) | 0.08 | 0.72 | +0.63 | 8.65x |
+  | ml2hx runtime and prims | 0.00 | 0.46 | +0.46 | — |
+  | polymorphic compare and hash (ml2hx.rt.Poly) | 0.00 | 0.45 | +0.45 | — |
+  | boxing | 0.02 | 0.23 | +0.21 | 9.70x |
+  | allocation and collection (Gc, zeroing, page faults) | 0.64 | 0.74 | +0.09 | 1.15x |
+  | Haxe code mapped to no upstream unit | 0.05 | 0.14 | +0.08 | 2.52x |
+  | other hxmc runtime | 0.06 | 0.08 | +0.02 | 1.43x |
+  | libc and kernel | 0.37 | 0.38 | +0.01 | 1.02x |
+  | arrays (runtime) | 0.14 | 0.06 | -0.09 | 0.40x |
+  | strings (runtime) | 0.15 | 0.04 | -0.11 | 0.28x |
+  | Haxe maps (haxe.ds) | 0.14 | 0.00 | -0.14 | 0.02x |

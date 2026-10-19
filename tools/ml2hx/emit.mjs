@@ -1242,6 +1242,18 @@ class UnitEmitter {
   }
 
   // ------------------------------------------------------------ bindings
+  // f a1 .. ak of a static or local function of arity n > k, its arguments
+  // in order: {callee, arity, args}, else null
+  partialApplication(e) {
+    if (e.k !== 'apply' || e.fn.k !== 'ident' || !e.args.length || e.args.some(a => !a.e || a.label)) return null;
+    let d;
+    try { d = this.identDesc(e.fn); } catch (err) { return null; }
+    if (d.anyTyped) return null;
+    const callee = d.kind === 'static' ? d.hx : d.kind === 'localfn' ? d.name : null;
+    const arity = d.arity ?? 0;
+    if (!callee || arity <= e.args.length) return null;
+    return {callee, arity, args: e.args.map(a => a.e)};
+  }
   bindings(n) {
     if (n.rec) return this.recBindings(n.bindings, n);
     // Non-recursive group: right-hand sides cannot see each other.
@@ -1273,6 +1285,22 @@ class UnitEmitter {
           const arg = b.e.args[0].e;
           out.push(`var ${name} = ${this.value(arg)};`);
           pending.push([b.p.id, {kind: 'local', name, magicFrom: arg.t}]);
+          continue;
+        }
+        // let mk = f ctx (f known, of a larger arity): the arguments kept,
+        // so that mk x y calls f(ctx, x, y) at once (the closure stays for
+        // other uses)
+        const pa = this.partialApplication(b.e);
+        if (pa) {
+          const temps = [];
+          for (let i = pa.args.length - 1; i >= 0; i--) {
+            const tn = this.temp('p');
+            temps[i] = {name: tn, t: pa.args[i].t};
+            out.push(`var ${tn} = ${this.value(pa.args[i])};`);
+          }
+          const fake = {...b.e, args: temps.map(x => ({label: '', e: {k: '$var', name: x.name, t: x.t}}))};
+          out.push(`var ${name}${t ? `:${t}` : ''} = ${this.knownCall(pa.callee, pa.arity, fake, b.e.fn)};`);
+          pending.push([b.p.id, {kind: 'local', name, partial: {callee: pa.callee, arity: pa.arity, fn: b.e.fn, temps}}]);
           continue;
         }
         out.push(`var ${name}${t ? `:${t}` : ''} = ${this.value(b.e)};`);
@@ -1484,7 +1512,7 @@ class UnitEmitter {
       case 'if': return `if (${this.value(n.cond)}) { ${this.stmt(n.then)} }${n.else ? ` else { ${this.stmt(n.else)} }` : ''}`;
       case 'while': return `while (${this.value(n.cond)}) { ${this.stmt(n.body)} }`;
       case 'for': return this.forLoop(n);
-      case 'setfield': return `${this.ordered([n.e, n.v], ([r, v]) => `${wrap(r)}.${this.fieldName(n.lbl)} = ${v}`)};`;
+      case 'setfield': return `${this.ordered([n.e, n.v], ([r, v]) => `${wrap(this.recordObj(r, n.lbl, n))}.${this.fieldName(n.lbl)} = ${v}`)};`;
       case 'match': return this.matchNode(n, null, 'stmt');
       case 'open': return this.stmt(n.e);
       case 'construct': if (n.c.name === '()') return '';
@@ -1550,6 +1578,21 @@ class UnitEmitter {
     const v = this.value0(n);
     if (this.gadt > 0 && n.t !== undefined && !n.k.startsWith('$') && this.gadtSensitive(n.t)) return `(cast ${v})`;
     return v;
+  }
+  // A record value cast for a GADT match (an untyped cast: its fields would
+  // be read by name at run time) typed as its record class instead, its
+  // parameters Any.
+  recordObj(code, lbl, n) {
+    const m = /^\(cast (.*)\)$/s.exec(code);
+    if (!m || !lbl?.type) return code;
+    let depth = 0;
+    for (const ch of m[1]) { if (ch === '(') depth++; else if (ch === ')' && --depth < 0) return code; }
+    if (depth !== 0 || / : /.test(m[1].replace(/\([^()]*\)/g, ''))) return code;
+    let d = null;
+    try { d = this.resolveType(lbl.type, n); } catch (e) { return code; }
+    if (d?.decl?.kind !== 'record' || d.builtin || d.decl.unboxed || d.decl.manifest !== null) return code;
+    const ps = d.decl.params.length;
+    return `(cast ${m[1]} : ${d.hx}${ps ? `<${Array(ps).fill('Any').join(', ')}>` : ''})`;
   }
   gadtSensitive(i) {
     this.gadtMemo ??= new Map();
@@ -1620,7 +1663,7 @@ class UnitEmitter {
         return `new ${RT}PolyVariant1(${hash}, ${tag}, ${this.value(n.arg)})`;
       }
       case 'record': return this.record(n);
-      case 'field': return n.lbl.unboxed ? this.value(n.e) : `${wrap(this.value(n.e))}.${this.fieldName(n.lbl)}`;
+      case 'field': return n.lbl.unboxed ? this.value(n.e) : `${wrap(this.recordObj(this.value(n.e), n.lbl, n))}.${this.fieldName(n.lbl)}`;
       case 'array': { const t = this.typeOrNull(n.t, n); return this.ordered(n.args, a => t ? `([${a.join(', ')}]:${t})` : `[${a.join(', ')}]`); }
       case 'assert': {
         const c = n.e;
@@ -1919,6 +1962,14 @@ class UnitEmitter {
     const fn = n.fn;
     if (fn.k === 'ident') {
       const d = this.identDesc(fn);
+      // a full application of a kept partial application (see bindings)
+      if (d.kind === 'local' && d.partial) {
+        const pa = d.partial, k = pa.arity - pa.temps.length;
+        if (n.args.length >= k && n.args.slice(0, k).every(a => a.e && !a.label)) {
+          const fake = {...n, args: [...pa.temps.map(x => ({label: '', e: {k: '$var', name: x.name, t: x.t}})), ...n.args]};
+          return this.knownCall(pa.callee, pa.arity, fake, pa.fn);
+        }
+      }
       if (d.kind === 'prim') {
         const r = this.primApply(d.prim, n, fn);
         if (r !== null) return r;

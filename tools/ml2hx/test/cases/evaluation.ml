@@ -64,3 +64,12 @@ let () = Printf.printf "%b %b %b %b\n" (fold `Gt 0.5 (Int32.to_float 1l)) (fold 
 let size n = match n with 0 -> "zero" | 1 -> "one" | _ -> "large"
 let () = Printf.printf "%s %s %ld %ld\n" (size max_int) (size (1 lsl 40)) (Int32.of_int max_int) (Int32.of_int (1 lsl 40 + 5))
 let () = Printf.printf "%d %b %d\n" (compare (Bytes.of_string "ab") (Bytes.of_string "b")) (Bytes.make 2 'x' = Bytes.of_string "xx") (Hashtbl.hash (Bytes.of_string "ab") - Hashtbl.hash "ab")
+(* a partial application bound to a name, then applied in full *)
+let () =
+  let trace = Buffer.create 16 in
+  let f a b c = Buffer.add_string trace (Printf.sprintf "[%d %d %d]" a b c); a + b + c in
+  let add3 = f (Buffer.add_string trace "A"; 1) in
+  let g = add3 (Buffer.add_string trace "B"; 2) in
+  let r = add3 (Buffer.add_string trace "C"; 3) (Buffer.add_string trace "D"; 4) + g 5 in
+  let h = List.map (add3 1) [1; 2] in
+  Printf.printf "%d %s %d\n" r (Buffer.contents trace) (List.fold_left (+) 0 h)

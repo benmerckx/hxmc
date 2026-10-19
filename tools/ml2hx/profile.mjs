@@ -11,7 +11,7 @@
 //   3. allocations and the live heap at exit by type (the census builds,
 //      RT_CENSUS=1), the generated compiler's grouped by representation;
 //   4. counters (perf stat).
-// Environment: ML2HX_PROFILE_RUNS (timing runs per side, default 3),
+// Environment: ML2HX_PROFILE_RUNS (timing runs per side, default 5),
 // ML2HX_PROFILE_FREQ (perf sampling Hz, default 999), PERF (the perf binary),
 // ML2HX_UTEST (a utest checkout: adds upstream's unit tests compiled to JS),
 // ML2HX_PROFILE_NOTE (what changed: the run's summary, also written to
@@ -26,7 +26,7 @@ const dir = path.join(root, 'bin/ml2hx/profile');
 const sides = ['port', 'generated'];
 const bin = s => path.join(dir, s);
 for (const s of [...sides, ...sides.map(s => `${s}-census`)]) if (!fs.existsSync(bin(s))) throw new Error(`build ${bin(s)} first (make ml2hx-profile)`);
-const runs = Number(process.env.ML2HX_PROFILE_RUNS ?? 3);
+const runs = Number(process.env.ML2HX_PROFILE_RUNS ?? 5);
 const freq = Number(process.env.ML2HX_PROFILE_FREQ ?? 999);
 const env = {...process.env, HAXE_STD_PATH: path.join(root, 'haxe/upstream/std'), HXMC_MODULE_CACHE: '0'};
 const sh = (cmd, args, o = {}) => spawnSync(cmd, args, {encoding: 'utf8', maxBuffer: 1 << 30, ...o});
