@@ -13,4 +13,5 @@ class LuvFileModeNumeric {
 }
 
 class Luv__File_Mode {
+	public static function test(a0:ml2hx.rt.MlList<ml2hx.rt.PolyVariant>, a1:ml2hx.std.Luv__File_Mode.LuvFileModeNumeric):Bool { throw new Failure("luv: not available in the generated compiler"); }
 }

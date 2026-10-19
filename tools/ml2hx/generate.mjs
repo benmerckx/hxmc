@@ -229,7 +229,8 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   const cls = new Map(units.map(u => [u.modname, `${u.config.package}.${u.config.class}`]));
   const order = [], seen = new Set();
   const visit = m => { if (seen.has(m) || !emitted.deps.has(m)) return; seen.add(m); for (const d of emitted.deps.get(m)) visit(d); order.push(m); };
-  visit('Haxe');
+  const mainUnit = units.find(u => u.config.source === 'src/compiler/haxe.ml' || u.config.source?.endsWith('/compiler/haxe.ml'));
+  if (mainUnit) visit(mainUnit.modname);
   if (emitted.deps.has('Std_exit')) visit('Std_exit');
   if (order.length) outputs.set('Ml2hxCompiler.hx', `// The generated compiler (tools/ml2hx/README.md): units in link order.\nclass Ml2hxCompiler {\n\tstatic function main() {\n${order.map(m => `\t\t${cls.get(m)}.ml2hxInit();`).join('\n')}\n\t}\n}\n`);
   walk(path.join(home, 'runtime'), p => outputs.set(path.relative(path.join(home, 'runtime'), p), fs.readFileSync(p, 'utf8')));

@@ -364,6 +364,13 @@ class UnitEmitter {
           const rv = this.t(t.row);
           if (rv.k === 'var' && this.tvars.has(rv.id)) return this.tvars.get(rv.id);
         }
+        // A closed one with the public methods of exactly one class (without
+        // type parameters) known: that class (OCaml unified them, as the
+        // object types are structural; Haxe's generics are invariant).
+        if (!t.open && t.fields.length && !this.noClassObjects) {
+          const cls = this.p.classByMethods?.get(t.fields.map(f => f.name).sort().join(' '));
+          if (cls) return cls;
+        }
         // A recursive one (< m : 'a -> unit > as 'a) is a typedef of the
         // module, referenced where the type recurs.
         this.objTypedefs ??= new Map(); this.objStack ??= new Map();
@@ -731,6 +738,16 @@ class UnitEmitter {
     const before = new Map(em.ids);
     const d = em.declareModule(body, path, parent);
     d.emitter = em;
+    // Applicative functors: F(X) applied again elsewhere to the same X has
+    // the same types (Map.Make(String).t in two units): the first instance
+    // declared owns them, the others name its types.
+    const argName = argExpr?.k === 'ident' && arg ? (arg.kind === 'lib' ? arg.hx : arg.kind === 'struct' ? arg.hx : null) : null;
+    if (argName && d.kind === 'struct' && f.l) {
+      const key = `${fn.unit}:${f.l.join(',')}(${argName})`, me = `${this.u.modname}:${path.join('.')}`;
+      const reg = (this.p.instances ??= new Map()), owner = reg.get(key);
+      if (!owner) reg.set(key, {me, types: new Map([...d.types].map(([k, v]) => [k, v.hx]))});
+      else if (owner.me !== me) for (const [k, v] of d.types) { const hx = owner.types.get(k); if (hx && v.decl && !v.builtin) { v.hx = hx; v.builtin = true; v.shared = true; } }
+    }
     // This instance's identifiers (another application of the same functor
     // rebinds them): restored when the instance is emitted.
     d.idMap = new Map([...em.ids].filter(([k, v]) => before.get(k) !== v));
@@ -1451,8 +1468,8 @@ class UnitEmitter {
       case '$var': return n.name;
       case 'const': return this.constant(n.c, n);
       case 'ident': return this.identValue(n);
-      case 'let': return `{ ${this.bindings(n)} ${this.value(n.body)}; }`;
-      case 'seq': return `{ ${this.stmt(n.a)} ${this.value(n.b)}; }`;
+      case 'let': return `{ ${this.bindings(n)} ${this.joined(n.body, n)}; }`;
+      case 'seq': return `{ ${this.stmt(n.a)} ${this.joined(n.b, n)}; }`;
       case 'if': {
         if (!n.else) return `{ ${this.stmt(n)} ${UNIT}; }`;
         return `(if (${this.value(n.cond)}) ${this.joined(n.then, n)} else ${this.joined(n.else, n)})`;
@@ -1717,7 +1734,17 @@ class UnitEmitter {
     const sig = this.withTypeParams(this.typeVars(n.scheme).filter(v => !this.tvars.has(v)), params => {
       const {args, res} = this.arrows(n.scheme);
       try {
-        return `${params.length ? `<${params.join(', ')}>` : ''}(${args.map((a, i) => `${a.label ? a.label.replace('?', 'opt_') : 'a' + i}:${this.type(a.t, n)}`).join(', ')}):${this.type(res, n)}`;
+        // (as libCall passes them: optional arguments last, as Haxe optional
+        // arguments; function arguments uncurried to their arrows)
+        const ps = args.map((a, i) => {
+          const name = a.label ? valueName(a.label.replace('?', '')) : 'a' + i;
+          if (a.label.startsWith('?')) { const o = this.t(a.t); return {opt: true, s: `?${name}:${this.type(o.k === 'constr' && o.path.p === 'option' ? o.args[0] : a.t, n)}`}; }
+          const k = this.schemeArity(a.t);
+          if (k >= 2) { const fa = this.arrows(a.t); return {opt: false, s: `${name}:(${fa.args.slice(0, k).map(x => this.type(x.t, n)).join(', ')}) -> ${k < fa.args.length ? this.chainType(fa.args.slice(k), fa.res, n) : this.type(fa.res, n)}`}; }
+          return {opt: false, s: `${name}:${this.type(a.t, n)}`};
+        });
+        const ordered = [...ps.filter(p => !p.opt), ...ps.filter(p => p.opt)];
+        return `${params.length ? `<${params.join(', ')}>` : ''}(${ordered.map(p => p.s).join(', ')}):${this.type(res, n)}`;
       } catch (e) { return `/* ${e.message} */`; }
     });
     this.p.useLibrary(d.cls, d.member, sig);
@@ -2281,9 +2308,15 @@ class UnitEmitter {
   joined(e, whole) { return this.coerced(e, this.value(e), whole?.t, whole); }
   // v (the value of e) where a value of type t is expected
   coerced(e, v, t, n) {
-    if (t === undefined || e.t === undefined || e.t === t) return v;
+    if (t === undefined || e.t === undefined) return v;
     let a = null, b = null;
-    try { a = this.typeOrNull(e.t, e); b = this.typeOrNull(t, n); } catch (_) { return v; }
+    try { b = this.typeOrNull(t, n); } catch (_) { return v; }
+    // An object type written as a structure among type arguments: the value
+    // may be held as a class instance (OCaml's object types are structural,
+    // Haxe's type parameters invariant), so it is cast.
+    if (b !== null && /[<(,]\s*\{/.test(b) && e.k !== 'const') return `(cast ${v})`;
+    if (e.t === t) return v;
+    try { a = this.typeOrNull(e.t, e); } catch (_) { return v; }
     return a !== null && b !== null && a !== b && !this.isUnit(t) ? `(cast ${v})` : v;
   }
   // ------------------------------------------------------------ data
@@ -2613,7 +2646,13 @@ class UnitEmitter {
     for (const m of parts.cs.methods) {
       const own = parts.cs.fields.find(f => f.k === 'method' && f.name === m.name);
       const prev = d.methods.get(m.name);
-      d.methods.set(m.name, {name: m.name, arity: this.methodArity(m.t), virtual: own ? !!own.virtual : prev?.virtual ?? false, inherited: !own && !!prev, override: !!own && !!prev});
+      d.methods.set(m.name, {name: m.name, arity: this.methodArity(m.t), virtual: own ? !!own.virtual : prev?.virtual ?? false, inherited: !own && !!prev, override: !!own && !!prev, private: own ? !!own.private : !!prev?.private});
+    }
+    // (the closed object type of its public methods names it: see type())
+    if (!this.declParams(c, c).length && !d.extraParams.length) {
+      const key = [...d.methods.values()].filter(m => !m.private).map(m => m.name).sort().join(' ');
+      const index = (this.p.classByMethods ??= new Map()), seen = index.get(key);
+      index.set(key, seen === undefined || seen === hx ? hx : null);
     }
     return d;
   }
@@ -2644,7 +2683,11 @@ class UnitEmitter {
     }
     this.selfName = savedSelf;
     this.classParams = savedParams;
-    return `{ var ${o}:${this.type(n.t, n)} = null; ${o} = cast { ${fields.join(', ')} }; ${o}; }`;
+    // (an anonymous structure: never typed as a class of the same methods)
+    this.noClassObjects = true;
+    let ot;
+    try { ot = this.type(n.t, n); } finally { this.noClassObjects = false; }
+    return `{ var ${o}:${ot} = null; ${o} = cast { ${fields.join(', ')} }; ${o}; }`;
   }
   // (through abbreviations of function types, as arrows() counts them)
   methodArity(t) { return this.arrows(t).args.length; }
