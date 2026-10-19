@@ -340,7 +340,7 @@ enum VinstanceKind {
 	IProcess(p:EvalProcess);
 	IInChannel(i:haxe.io.Input, eof:{v:Bool}); // FileInput
 	IOutChannel(o:haxe.io.Output); // FileOutput
-	ISocket(s:Dynamic);
+	ISocket(s:Vsocket);
 	IThread(t:Vthread);
 	IMutex(m:DomainMutex);
 	ISemaphore(s:sys.thread.Semaphore);
@@ -595,5 +595,17 @@ class EvalValueTools {
 				ve.enpos = p;
 			case _:
 		}
+	}
+}
+
+// port: an Eval socket (upstream: its Unix.file_descr): the host descriptor and
+// whether it was closed, after which its number is no longer used (it may belong
+// to another descriptor of the host by then: upstream would close or read that one)
+class Vsocket {
+	public final fd:Dynamic;
+	public var closed = false;
+
+	public function new(fd:Dynamic) {
+		this.fd = fd;
 	}
 }

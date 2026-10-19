@@ -18,9 +18,10 @@ haxe/test --run <Name> --help`-style options at the top of each file):
 | `Haxelib` | `-L` through lix's haxelib shim, batch and server | 14/14 |
 | `EvalDebugger` | scripted Eval debugger sessions (`-D eval-debugger`): breakpoints, stepping, scopes, evaluation, assignment, exception and function breakpoints, a macro | 6/6 |
 | `fuzz/` | random programs per target (`diff:<target>`) or by program output (`exec:<a>,<b>`), with reduction (`make test-fuzz LANE=diff:js`); `--cases haxe/test/fuzz/cases` checks the kept programs (failures fixed since, reduced, one directory each) on the lanes | CI: the diff lanes of ten targets, `exec:interp,hxmc` and `exec:interp,hxmc-wasm` (below) |
-| `Targets` | the website's target table (`site/data/targets.json`): haxe-formatter and the port itself compiled for every target by both, CPU, wall and peak RSS, outputs compared (hl/c after `HlcNames`); `-p self -t hlc --merge --json site/data/targets.json` replaces those rows only | 18/18 identical (the rows the reference compiles) |
+| `Targets` | the website's target table (`bench.yml`'s `targets` jobs, published to `bench-data` as `targets.json`; `site/data/targets.json` the fallback): haxe-formatter and the port itself compiled for every target by both, sequential (`-D disable-parallelism`: CPU) and with default parallelism (wall), peak RSS, outputs compared (hl/c after `HlcNames`; a parallel output where the reference's own parallel output varies is marked `varies`); `-p self -t hlc --merge --json site/data/targets.json` replaces those rows only | 18/18 identical (the rows the reference compiles) |
 | `Measure` | peak RSS, wall and CPU time: the self-compile (ours and the reference), the native build, the WebAssembly builds | self-compile 879 MB vs the reference's 1414 MB |
 | `unit.hxml` | unit tests of port modules, in-process | pass |
+| `IpcStress` | round trips of multi-byte strings through Eval's `sys.io.Process` (echo through stdin, a grandchild's environment variable as in upstream's `TestUnicode.testIPC`, short reads while the child writes; once per round a process closed after its stdin while another thread reads files reusing that number: the double close the runtime no longer does), `haxe -cp haxe/test --run IpcStress <haxe> [rounds]`; CI: four at once on both `linux-test` machines (upstream-tests.yml) | 52 checks per round, no failures |
 
 Sequential runs pass `-D disable-parallelism`: the reference itself is not
 deterministic in parallel mode. Upstream's compiler-side suite (RunCi `macro`:
@@ -358,12 +359,19 @@ sizes and compile times (`haxe_s`: the Haxe compiler, hxmc's whole build for
 its targets; `cc_s`: the C++ or C compiler for C++ and HL/C; `build_s`: their
 sum), with each case's check program compared across the
 targets. `.github/workflows/bench.yml` runs it nightly on main (skipped when
-the commit is measured already) and on demand, apart from `build.yml`; from
+the commit is measured already) and on demand, apart from `build.yml`,
+sharded by case (groups of cases on runners of their own, every target of a
+case on the same one; `Bench --merge` joins the shards' results, recording
+each case's machine under `machines`); from
 main it appends `results/<date>-<commit>.json` to the `bench-data` branch and
 regenerates `history.json` (per run, case and target: median, min, max,
 peak RSS and the compile times) and `latest.json` there (`Bench --history`),
 which the website build copies (`make site BENCH_DATA=<checkout>`) for its
-table and charts. The first points on `bench-data` are earlier measurements
+table and charts. The same workflow runs `Targets` in groups of targets
+(`targets` jobs, both compilers of a row on one runner; `Targets --join`
+joins them) and appends `targets/<date>-<commit>.json`, regenerating
+`targets.json` and `targets-history.json` (`Targets --history`), which
+replace the committed `site/data/targets.json` in the site's build. The first points on `bench-data` are earlier measurements
 imported from this repository's history (`"source": "imported"`: a
 development VM, best of the runs).
 

@@ -30,7 +30,12 @@ private enum Ctx {
 // - phis: the copies of an edge are done where its branch is written
 //   (values pushed, then popped into the phis' locals: a parallel copy);
 // - frame slots (StackAddr) live in linear memory below the stack-pointer
-//   global, which the prologue moves and every return restores;
+//   global, which the prologue moves and every return restores; the
+//   prologue compares the new stack pointer with the stack's end
+//   (rt_cstack_lo, a global) and calls rt_cstack_overflow below it: no guard
+//   page, and what lies below the stack is the heap's other regions (the
+//   runtime's stack, Gc.init) or the program's data (the linker's, until
+//   _start switches);
 // - try: the setjmp of MirBuild.tryStmt is 0 here, and the try body (the
 //   dominator subtree of its first block) is wrapped in a try_table whose
 //   catch-all lands on a pad: if the runtime's current handler (rt_hcur)
@@ -53,6 +58,9 @@ class WasmGen {
 	public static inline var SECTION = ".wasm";
 	public static inline var SP = "__stack_pointer";
 	public static inline var HANDLER = "rt_hcur";
+	// the lowest the stack pointer may go (LinkWasm: the linker's stack, then the runtime's)
+	public static inline var STACK_LO = "rt_cstack_lo";
+	public static inline var STACK_OVERFLOW = "rt_cstack_overflow";
 	// the last exception a pad caught (an exnref global; LinkWasm)
 	public static inline var EXNREF = "rt_exnref";
 	public static var coalesceOn = Sys.getEnv("HXMC_WASM_COALESCE") != "0";
@@ -161,6 +169,16 @@ class WasmGen {
 			Enc.sleb(b, frameSize);
 			op(Op.I64Sub);
 			op(Op.LocalTee);
+			Enc.uleb(b, fp);
+			global(Op.GlobalGet, STACK_LO);
+			op(Op.I64LtU);
+			op(Op.If);
+			b.u8(Enc.VOID);
+			op(Op.Call);
+			relocs.push({off: b.len, kind: RWasmFunc, sym: STACK_OVERFLOW, addend: 0});
+			Enc.uleb5(b, 0);
+			op(Op.End);
+			op(Op.LocalGet);
 			Enc.uleb(b, fp);
 			global(Op.GlobalSet, SP);
 		}

@@ -9,7 +9,9 @@ import hxmc.wasm.Enc;
 // runtime is Haxe compiled with the program; docs/hxmc.md,
 // "WebAssembly"). It keeps the functions and data sections reachable from
 // _start, lays the data out in linear memory (from 4 KB; then the stack of
-// frame slots, then the heap the runtime manages from __heap_base),
+// frame slots that runs rt_init, whose end is rt_cstack_lo's first value,
+// then the heap the runtime manages from __heap_base; _start then moves the
+// stack pointer to the runtime's stack, wasm/Gc.hx),
 // numbers the functions (the WASI imports first), puts the functions whose
 // address is taken in the table (index 0: null; exported), makes a global of each
 // thread-local variable (one thread), writes a few functions itself
@@ -62,7 +64,7 @@ class LinkWasm {
 		"rt_sp_limit" => 8, // the shadow stack's end (MirBuild.raiseHw)
 	];
 
-	public function new(objs:Array<Obj>, stackSize = 1 << 20) {
+	public function new(objs:Array<Obj>, stackSize = 64 << 10) {
 		this.objs = objs;
 		this.stackSize = stackSize;
 	}
@@ -321,7 +323,7 @@ class LinkWasm {
 			s.u8(Enc.I64);
 			s.u8(1);
 			s.u8(Op.I64Const);
-			Enc.sleb(s, g == WasmGen.SP ? stackTop : 0);
+			Enc.sleb(s, g == WasmGen.SP ? stackTop : g == WasmGen.STACK_LO ? stackTop - stackSize : 0);
 			s.u8(Op.End);
 		}
 		section(m, 6, s);

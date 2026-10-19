@@ -43,11 +43,15 @@ in [docs/plans/](docs/plans/README.md); what is built is in
 - A Canvas ready for documents: paths, gradients, glyph runs, images with their source, host apart from canvas ([document.md](docs/plans/document.md))
 - Native or drawn per widget: native text fields by default, platform views in drawn trees, a DOM renderer for the widgets in the browser ([native-or-drawn.md](docs/plans/native-or-drawn.md))
 - Unstyled widgets and one theme, `@hxmc/theme`, based on shadcn/ui: its tokens, slots, variants and class lists ([theme.md](docs/plans/theme.md))
+- Fixes from building an app on Windows: native fields in scrolled content, the dev loop's cold first edit, a GUI subsystem define, unknown markup attributes as compile errors, widget sizing under the theme, drawn text's weight and sharpness ([ui-next.md](docs/plans/ui-next.md#from-building-an-app-on-windows-oct-19))
+- Drawn text fields on desktop: a full input bridge (TSF, `NSTextInputClient`, IBus, `EditContext`), then drawn by default there ([native-or-drawn.md](docs/plans/native-or-drawn.md#drawn-text-fields-on-desktop-an-input-bridge-then-drawn-by-default))
+- The widgets mobile apps need: navigation, gestures, lists, app scaffolding, motion ([ui-next.md](docs/plans/ui-next.md#from-building-an-app-on-windows-oct-19), item 5)
 - Graphics programs in the playground ([graphics.md](docs/plans/graphics.md#graphics-in-the-playground))
 
 ## Later
 
 - Documents: paged layout and `@hxmc/pdf` (PDF, SVG, images) ([document.md](docs/plans/document.md))
+- Text shaping for complex scripts: cursive, Indic, mark reordering, `ccmp`/`locl`, bidi embeddings, CFF2 ([ui-next.md](docs/plans/ui-next.md#from-building-an-app-on-windows-oct-19), item 6)
 - Escape analysis ([codegen.md](docs/plans/codegen.md#escape-analysis))
 - Debugging: a Windows PDB, Mach-O `__unwind_info`, variables, DWARF for WebAssembly ([codegen.md](docs/plans/codegen.md#debugging-information))
 - The collector: incremental major marking, an aging survivor space, a memory limit ([runtime.md](docs/plans/runtime.md#the-collector-longer-term))

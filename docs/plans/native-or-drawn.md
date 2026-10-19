@@ -21,6 +21,9 @@ consistency matter more.
 | Video, web content, maps | native (platform views) | not something to draw ourselves |
 | Button, Checkbox, Switch, Slider, Tabs, Dialog, Popover, Tooltip, and the rest | drawn | the theme's look; native available on request |
 
+Planned change: on desktop, Input and Textarea become drawn by default once
+the drawn field has a full input bridge ([below](#drawn-text-fields-on-desktop-an-input-bridge-then-drawn-by-default)).
+
 System services stay native and are not widgets: file and colour pickers,
 share sheets, printing, alerts on request, the clipboard, drag and drop.
 
@@ -62,6 +65,29 @@ share sheets, printing, alerts on request, the clipboard, drag and drop.
 1. Native text fields by default (desktop, Android, browser).
 2. The DOM renderer and CSS theme for the browser.
 3. The rest of the defaults table.
+
+## Drawn text fields on desktop: an input bridge, then drawn by default
+
+Native hosting stays the mechanism, but its costs differ per platform. In
+the browser (the DOM renderer) and on mobile, native editors are cheap or
+irreplaceable: selection handles, the magnifier, autocorrect, autofill. On
+desktop they bring airspace problems (scrolling, opacity, transforms,
+popups over them) and GDI text beside drawn text, while a drawn field that
+speaks the platform's input protocol gets nearly everything. (From
+building a small app on Windows, Oct 19.)
+
+1. **An editing protocol for the drawn field**, instead of
+   `startTextInput`'s caret rectangle: text, selection and composition
+   ranges, replace, and character bounds for the candidate window. TSF on
+   Windows, `NSTextInputClient` on macOS, IBus or GTK's IM context on
+   Linux, `EditContext` in canvas web builds with the hidden input as the
+   fallback.
+2. **A manual test matrix**: Japanese, Chinese and Korean IMEs, dead keys,
+   the emoji panel, dictation, on `Input` and `Textarea`.
+3. **When it passes**, `Ui.policy`'s desktop defaults for `text-field` and
+   `text-area` become Drawn, and the defaults table above changes with
+   it. Native stays the default on Android, iOS and the DOM renderer, and
+   `host="native"` stays available everywhere.
 
 ## Single-source widgets (headless)
 

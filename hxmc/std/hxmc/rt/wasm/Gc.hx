@@ -143,6 +143,13 @@ class Gc {
 		Mem.setPtr(Mem.sym("rt_sp_limit"), 0, stackBase.add(smb << 20));
 		Mem.tlsSet("rt_sp", stackBase);
 		Mem.tlsSet("rt_sp_hw", stackBase);
+		// the stack of frame slots (WasmGen: Mem.stack, a try function's locals
+		// kept in memory), as large as the shadow stack: the linker's, 64 KB
+		// right above the data, runs only this; _start moves the stack pointer to
+		// this one's top, and each frame compares it with rt_cstack_lo (no
+		// guard page: overflowing it wrote over the statics and the method
+		// tables). CSTACK_RESERVE below that end is rt_cstack_overflow's.
+		cstackBase = Heap.region((smb << 20) + CSTACK_RESERVE);
 		nglobals = ng;
 		Mem.setPtr(Mem.sym("rt_globals"), 0, Heap.calloc(ng + 1, 8));
 		remCap = 4096;
@@ -183,9 +190,28 @@ class Gc {
 	}
 
 	static var stackMb:Int;
+	static var cstackBase:Ptr;
+	static inline var CSTACK_RESERVE = 64 << 10;
 
 	@:hxmc.export("rt_stack_overflow") @:hxmc.noGc static function stackOverflow():Void {
 		Wasi.writeLit(2, "stack overflow: the shadow stack's ");
+		Wasi.writeInt(2, stackMb);
+		Wasi.writeLit(2, " MB are full (RT_STACK_MB sets its size)\n");
+		Wasi.exit(2);
+	}
+
+	// the stack of frame slots (_start, DataGen): its end and its top
+	@:hxmc.export("rt_cstack_lo") @:hxmc.noGc static function cstackLo():Ptr
+		return cstackBase.add(CSTACK_RESERVE);
+
+	@:hxmc.export("rt_cstack_top") @:hxmc.noGc static function cstackTop():Ptr
+		return cstackBase.add((stackMb << 20) + CSTACK_RESERVE);
+
+	// a frame would go below rt_cstack_lo (WasmGen's prologue). Without a
+	// frame itself: the reserve below the end becomes the stack for the message
+	@:hxmc.export("rt_cstack_overflow") @:hxmc.noGc static function cstackOverflow():Void {
+		Mem.tlsSet("rt_cstack_lo", cstackBase);
+		Wasi.writeLit(2, "stack overflow: the frame stack's ");
 		Wasi.writeInt(2, stackMb);
 		Wasi.writeLit(2, " MB are full (RT_STACK_MB sets its size)\n");
 		Wasi.exit(2);

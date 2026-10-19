@@ -17,6 +17,7 @@ import hxmc.I64;
 	static function lseek(fd:Int, off:I64, whence:Int):I64;
 	@:hxmc.varargs(2) static function fcntl(fd:Int, cmd:Int, arg:Int):Int;
 	static function pipe(fds:Ptr):Int;
+	static function pipe2(fds:Ptr, flags:Int):Int; // (not on macOS)
 	static function dup2(a:Int, b:Int):Int;
 	static function isatty(fd:Int):Int;
 	static function tcgetattr(fd:Int, t:Ptr):Int;
@@ -64,6 +65,7 @@ import hxmc.I64;
 	static function bind(fd:Int, addr:Ptr, len:Int):Int;
 	static function connect(fd:Int, addr:Ptr, len:Int):Int;
 	static function accept(fd:Int, addr:Ptr, len:Ptr):Int;
+	static function accept4(fd:Int, addr:Ptr, len:Ptr, flags:Int):Int; // (not on macOS)
 	static function listen(fd:Int, backlog:Int):Int;
 	static function getsockname(fd:Int, addr:Ptr, len:Ptr):Int;
 	static function getpeername(fd:Int, addr:Ptr, len:Ptr):Int;

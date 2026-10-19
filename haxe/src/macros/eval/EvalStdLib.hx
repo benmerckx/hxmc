@@ -348,7 +348,7 @@ class EvalStdLib {
 			#if (target.name == "hxmc" || hl)
 			// port: catch_unix_error Unix.socket PF_INET SOCK_STREAM 0
 			var fd = macros.eval.EvalStdLibB.StdSocket.check(#if hl macros.eval.EvalHostNet #else NativeNet #end.socket(), "socket");
-			EvalEncode.encodeInstance(EvalHash.key_eval_vm_NativeSocket, ISocket(fd));
+			EvalEncode.encodeInstance(EvalHash.key_eval_vm_NativeSocket, ISocket(new Vsocket(fd)));
 			#else
 			notSupported("Sockets (eval.vm.NativeSocket)");
 			#end

@@ -23,6 +23,7 @@ class FileOutput extends haxe.io.Output {
 	}
 
 	override public function writeBytes(b:haxe.io.Bytes, pos:Int, len:Int):Int {
+		if (fd < 0) throw haxe.io.Error.Custom("write error"); // (closed: as EBADF)
 		var n = NativeSys.fileWrite(fd, b, pos, len);
 		if (n < 0) throw haxe.io.Error.Custom("write error");
 		return n;
@@ -31,8 +32,15 @@ class FileOutput extends haxe.io.Output {
 	override public function flush():Void
 		NativeSys.fileFlush(fd);
 
-	override public function close():Void
-		NativeSys.fileClose(fd);
+	// once: a second close would close whatever descriptor reused the number
+	// meanwhile (another file, a pipe another thread reads); upstream's
+	// channels close once too
+	override public function close():Void {
+		var f = fd;
+		if (f < 0) return;
+		fd = -1;
+		NativeSys.fileClose(f);
+	}
 
 	public function seek(p:Int, pos:FileSeek):Void
 		NativeSys.fileSeek(fd, p, switch pos {

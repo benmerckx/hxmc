@@ -25,6 +25,7 @@ class FileInput extends haxe.io.Input {
 
 	override public function readBytes(b:haxe.io.Bytes, pos:Int, len:Int):Int {
 		if (len == 0) return 0;
+		if (fd < 0) throw haxe.io.Error.Custom("read error"); // (closed: as EBADF)
 		var n = NativeSys.fileRead(fd, b, pos, len);
 		if (n == 0) {
 			atEof = true;
@@ -34,8 +35,15 @@ class FileInput extends haxe.io.Input {
 		return n;
 	}
 
-	override public function close():Void
-		NativeSys.fileClose(fd);
+	// once: a second close would close whatever descriptor reused the number
+	// meanwhile (another file, a pipe another thread reads); upstream's
+	// channels close once too
+	override public function close():Void {
+		var f = fd;
+		if (f < 0) return;
+		fd = -1;
+		NativeSys.fileClose(f);
+	}
 
 	public function seek(p:Int, pos:FileSeek):Void {
 		atEof = false;

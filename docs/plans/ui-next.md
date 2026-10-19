@@ -114,6 +114,88 @@ the single-source widgets (as of Oct 18). The designs behind them:
     are all neutral widgets to JavaScript on the site, with the scoped
     sheet, beside or instead of their canvases.
 
+## From building an app on Windows (Oct 19)
+
+Found building a small widget app against main (69d3f39) under
+`Shadcn.sheet` and running it with `hxmc dev` on Windows. native-or-drawn.md,
+theme.md and this file stand; these are gaps, in the report's order, one PR
+each (the report's other items: the dev loop's cold first edit is in
+[dev-loop.md](dev-loop.md#windows-the-first-edit-is-a-cold-build-found-oct-19),
+the GUI subsystem in [targets.md](targets.md#windows), the drawn fields'
+input bridge in
+[native-or-drawn.md](native-or-drawn.md#drawn-text-fields-on-desktop-an-input-bridge-then-drawn-by-default)):
+
+1. **Native text fields ignore scrolling.** Inside a `<scroll>`, a native
+   field's control stays where it was laid out while the content scrolls:
+   `EditableText.syncNative` places the editor at `absX`/`absY`, which are
+   unscrolled, and `clippedOut` tests against unscrolled scroller bounds.
+   Subtract the ancestors' scroll offsets in both, as `Ui.scrolled` does
+   for hit testing. Test: a field scrolled partly and fully out of view, on
+   every `PlatformViews` backend.
+2. **Unknown markup attributes at compile time.** `<view overflow="scroll">`
+   compiles and throws "has no attribute" only when mounted. Unknown
+   attributes on intrinsic elements become a compile error with a
+   close-match suggestion, and enum literals (`fit`, `role`, `direction`,
+   `host`) are checked at compile time too. `NodeRenderer.elements`
+   registrations get a way to declare their attributes. Add `overflow` to
+   `StyleAttrs`, keeping `<scroll>`. `@:neutral` widgets stay valid for
+   both renderers.
+3. **Widget sizing under the theme.**
+   - Text fields shrink to nothing: a `Textarea` in a column taller than the
+     window is squashed. Fields get a minimum height, preferably as
+     `shrink-0` in the theme's input and textarea rules so the DOM renderer
+     gets it too; check native and drawn hosts.
+   - `width` on Slider and Progress: under `Shadcn.sheet`,
+     `<Slider width={300}/>` collapses to a few pixels, and
+     `style={_ -> {width: 300}}` does not override the theme's `w-full`
+     either (the slider takes the whole column); only a fixed-width wrapper
+     works. The `width` prop and an instance style must both win over the
+     rule, as theme.md and the theme README promise.
+4. **Drawn text on Windows looks thin and soft.** At 100-125% scale drawn
+   text reads lighter and blurrier than DirectWrite, which shows in every
+   form where native fields sit beside drawn labels.
+   1. First a harness comparing hxmc, DirectWrite grayscale and Chromium at
+      a few sizes and scales, a mixed form included; numbers before any
+      change.
+   2. Then, measuring after each: DirectWrite-like gamma and contrast on
+      coverage; vertical-only grid fitting of baseline, x-height and cap
+      height at small sizes; stem darkening. Advances and line breaks must
+      not change.
+   3. If still off, a glyph-source seam in `GlyphAtlas` so Windows can
+      rasterise through DirectWrite behind a define; the pure rasteriser
+      stays for wasm and the golden tests.
+
+   Also check that Segoe UI Variable's `opsz` axis follows the size, and
+   that glyphs are sampled nearest at exact device sizes.
+5. **The widgets mobile apps reach for first.** The set follows shadcn:
+   it covers web and desktop apps, but lacks what mobile apps use first
+   (compared with Flutter's built-ins). Each one is neutral, with
+   behaviour, slots and states, and gets shadcn-style rules in
+   `@hxmc/theme`; native-or-drawn and the DOM renderer apply as for the
+   rest. Each is proved on Android by a small example app, added to the
+   gallery and to `make theme-fidelity-check` where shadcn has a
+   reference. In order:
+   1. Navigation: a route stack (push, pop, replace), page transitions,
+      back handling (Android back, browser history, Escape), deep links
+      mapped to routes.
+   2. Gestures: swipe to dismiss, pull to refresh, long press, pinch zoom
+      and pan (an interactive viewer), on the touch-drag proposal (Next,
+      1).
+   3. Lists: `VirtualList` with variable item heights, sticky section
+      headers, nested scrolling, a collapsing app bar.
+   4. App scaffolding: app bar, bottom navigation bar, navigation rail,
+      floating action button.
+   5. Motion: enter and exit animations for `For` rows, a cross-fade
+      switcher, shared-element transitions between routes.
+   6. Smaller pieces: TimePicker, Stepper, Chips (filter, choice, input),
+      form validation tying `Field` errors to rules, selection across text
+      nodes, blur and path clipping in the canvas.
+6. **Shaping leftovers** (packages/text's README limits): cursive
+    attachment, Indic and other complex scripts, mark reordering, `ccmp`
+    and `locl`, bidi embeddings, CFF2. Pick a HarfBuzz-style port or the
+    platforms' shapers behind one interface, with the choice justified;
+    `TextLayout` keeps line breaking, bidi and carets.
+
 ## Also open
 
 - Android native editors: ui renders into NativeActivity's surface, and

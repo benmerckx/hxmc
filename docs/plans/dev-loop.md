@@ -159,6 +159,24 @@ stale closures or type data, and the runtime need not be shared.
   kept, and no reload or restart happened; and the swap's time is measured
   next to step 1's.
 
+### Windows: the first edit is a cold build (found Oct 19)
+
+Measured building a small widget app against main (69d3f39) under
+`Shadcn.sheet`: dev.mjs alternates `-D hxmc.dll-base` between two values
+so the new DLL never lands on the old one's addresses. As a define it is
+part of the compilation server's signature, so the server keeps two caches
+and the first build under each base is cold: start 5.9 s, first edit 5.4 s,
+then about 1 s, and 0.56 s once the base repeats; the server holds two
+copies of everything (1.6 GB). The watcher is fine.
+
+- Keep the base out of the server signature (it only matters to the
+  linker), or emit relocations and `DYNAMIC_BASE` so no alternation is
+  needed at all.
+- Cache `Tw.sheet`'s output by the JSON's hash: it spends 0.6 s rebuilding
+  the same rules on every cold build.
+- A Windows dev-loop test asserting the second edit is well under the
+  first.
+
 ## 4. Styles and assets without a rebuild
 
 Theme rules are data (and CSS for the DOM renderer): a change to

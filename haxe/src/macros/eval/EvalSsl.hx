@@ -43,7 +43,7 @@ class EvalSsl {
 
 	static function asSocket(vthis:Value):Dynamic {
 		return switch vthis {
-			case VInstance({ikind: ISocket(sock)}): sock;
+			case VInstance({ikind: ISocket(sock)}): sock.closed ? -1 : sock.fd;
 			case _: EvalExceptions.unexpectedValue(vthis, "NativeSocket");
 		}
 	}

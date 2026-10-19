@@ -514,11 +514,11 @@ class PosixSys {
 			n = 2;
 		}
 		var p = Mem.stack(32);
-		if (Posix.pipe(p) != 0 || Posix.pipe(p.add(8)) != 0 || Posix.pipe(p.add(16)) != 0) Rt.rt_throw("Process creation failure");
-		var pid = spawn(argv, p);
+		var pid = pipes(p) ? spawn(argv, p) : -2;
 		for (i in 0...n + 1)
 			LibC.free(Mem.getPtr(argv, 8 * i));
 		LibC.free(argv);
+		if (pid == -2) Rt.rt_throw("Process creation failure");
 		if (pid < 0) {
 			Posix.close(Mem.getI32(p, 4));
 			Posix.close(Mem.getI32(p, 8));
@@ -531,29 +531,64 @@ class PosixSys {
 		return pid;
 	}
 
-	// fork and exec with the three pipes (p: in[2], out[2], err[2]); the
-	// child calls only the C library
+	// The three pipes (p: in[2], out[2], err[2]), close-on-exec from the start
+	// (upstream's Unix.pipe ~cloexec:true): a process another thread starts
+	// meanwhile must not inherit them (it would hold their ends open). pipe2
+	// on Linux; macOS has no pipe2: pipe, then FD_CLOEXEC under the
+	// descriptor lock, which fork takes too (spawn). False: a failure, with
+	// nothing left open.
+	@:hxmc.noGc static function pipes(p:Ptr):Bool {
+		if (!mac()) {
+			for (k in 0...3)
+				if (Posix.pipe2(p.add(8 * k), oCloexec()) != 0) {
+					closeFds(p, 2 * k);
+					return false;
+				}
+			return true;
+		}
+		Threads.lockSafe(Gc.fdLock);
+		var k = 0;
+		while (k < 3 && Posix.pipe(p.add(8 * k)) == 0)
+			k++;
+		for (i in 0...2 * k)
+			Posix.fcntl(Mem.getI32(p, 4 * i), 2, 1); // F_SETFD, FD_CLOEXEC
+		Os.unlock(Gc.fdLock);
+		if (k == 3) return true;
+		closeFds(p, 2 * k);
+		return false;
+	}
+
+	@:hxmc.noGc static function closeFds(p:Ptr, n:Int)
+		for (i in 0...n)
+			Posix.close(Mem.getI32(p, 4 * i));
+
+	// macOS: fd, a descriptor just created, close-on-exec; the caller holds
+	// the descriptor lock (see pipes)
+	@:hxmc.noGc public static function cloexec(fd:Int):Int {
+		if (fd >= 0) Posix.fcntl(fd, 2, 1); // F_SETFD, FD_CLOEXEC
+		return fd;
+	}
+
+	// fork and exec with the three pipes, all close-on-exec: the child's ends
+	// become 0, 1 and 2 by dup2, which clears the flag, and exec closes the
+	// rest; the child calls only the C library
 	@:hxmc.noGc static function spawn(argv:Ptr, p:Ptr):Int {
 		Posix.fflush(Ptr.nil());
+		if (mac()) Threads.lockSafe(Gc.fdLock);
 		var pid = Posix.fork();
 		if (pid == 0) {
-			Posix.dup2(Mem.getI32(p, 0), 0);
-			Posix.dup2(Mem.getI32(p, 12), 1);
-			Posix.dup2(Mem.getI32(p, 20), 2);
-			for (k in 0...6)
-				Posix.close(Mem.getI32(p, 4 * k));
+			for (k in 0...3) {
+				var fd = Mem.getI32(p, k == 0 ? 0 : 8 * k + 4);
+				// (dup2 of a descriptor onto itself keeps the flag)
+				if (fd == k) Posix.fcntl(k, 2, 0) else Posix.dup2(fd, k);
+			}
 			Posix.execvp(Mem.getPtr(argv, 0), argv);
 			Posix._exit(127);
 		}
+		if (mac()) Os.unlock(Gc.fdLock);
 		Posix.close(Mem.getI32(p, 0));
 		Posix.close(Mem.getI32(p, 12));
 		Posix.close(Mem.getI32(p, 20));
-		if (pid >= 0) {
-			// F_SETFD, FD_CLOEXEC
-			Posix.fcntl(Mem.getI32(p, 4), 2, 1);
-			Posix.fcntl(Mem.getI32(p, 8), 2, 1);
-			Posix.fcntl(Mem.getI32(p, 16), 2, 1);
-		}
 		return pid;
 	}
 

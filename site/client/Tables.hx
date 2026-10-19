@@ -7,8 +7,9 @@ import js.html.Element;
 import js.html.TableCellElement;
 
 // The Benchmarks and Target generators sections: tables of bench.json and
-// targets.json (measured results, site/data), copied by `make site`
-// (Makefile); the Programs part from the benchmark history (BenchCharts).
+// targets.json (measured results, site/data; targets.json from the bench-data
+// branch when the build has it), copied by `make site` (Makefile); the
+// Programs part from the benchmark history (BenchCharts).
 typedef BenchRun = {
 	workload:String,
 	runner:String,
@@ -44,6 +45,7 @@ typedef BenchData = {
 typedef TargetSide = {
 	status:String,
 	cpu:Float,
+	?wall:Float,
 	rss_mb:Float,
 	members:Int,
 	bytes:Float,
@@ -55,6 +57,24 @@ typedef TargetRun = {
 	reference:TargetSide,
 	?port:TargetSide,
 	identical:Bool,
+	/** with the compilers' default parallelism (targets.json since 2026-10-19) **/
+	?parallel:{
+		reference:TargetSide,
+		?port:TargetSide,
+		identical:Bool,
+		?diff:String,
+		/** the reference's own parallel output differs from its sequential one: not comparable byte for byte **/
+		?varies:Bool,
+	},
+}
+
+/** a row in one mode: sequential (CPU time) or parallel (wall time) **/
+typedef TargetCell = {
+	reference:TargetSide,
+	?port:TargetSide,
+	identical:Bool,
+	?varies:Bool,
+	?diff:String,
 }
 
 typedef TargetData = {
@@ -65,6 +85,8 @@ typedef TargetData = {
 		?date:String,
 		?commit:String,
 		?reference:String,
+		?runner:String,
+		?run_url:String,
 	},
 }
 
@@ -128,7 +150,7 @@ class Tables {
 	/** the last line of a failed run's log ("exit 1: <log tail, | for newlines>"), without the exit code */
 	static function lastLine(status:String):String {
 		final lines = [for (s in status.split(" | ")) if (StringTools.trim(s) != "") StringTools.trim(s)];
-		return ~/^exit \d+: /.replace(lines.length > 0 ? lines[lines.length - 1] : "", "");
+		return ~/^(exit \d+: )?[| ]*/.replace(lines.length > 0 ? lines[lines.length - 1] : "", "");
 	}
 
 	/** a cell with a bar for each ratio to the reference, on a log scale shared by the table */
@@ -273,29 +295,52 @@ class Tables {
 		return -1;
 	}
 
-	static function targetsTable(rows:Array<TargetRun>):Element {
+	static final MODES = [
+		["seq", "sequential · CPU"],
+		["par", "parallel · wall"],
+	];
+
+	/** a row's measurement in `mode`, null when not measured that way **/
+	static function cell(r:TargetRun, mode:String):Null<TargetCell> {
+		if (mode == "seq") return {reference: r.reference, port: r.port, identical: r.identical};
+		final p = r.parallel;
+		if (p == null) return r.reference.status != "ok" ? {reference: r.reference, identical: false} : null;
+		return {reference: p.reference, port: p.port, identical: p.identical, varies: p.varies, diff: p.diff};
+	}
+
+	static function time(s:TargetSide, mode:String):Float return mode == "seq" ? s.cpu : s.wall;
+
+	static function targetsTable(rows:Array<TargetRun>, mode:String):Element {
 		final t = el("table", "bench");
-		t.innerHTML = "<thead><tr><th>Target</th><th class=\"num\">Reference</th><th class=\"num\">Port</th><th class=\"barcol\">Port CPU vs. reference <span class=\"muted\">(log scale)</span></th><th class=\"num wall\">Peak RSS</th><th class=\"out\">Output</th></tr></thead>";
+		final what = mode == "seq" ? "CPU" : "wall";
+		t.innerHTML = '<thead><tr><th>Target</th><th class="num">Reference</th><th class="num">Port</th><th class="barcol">Port $what vs. reference <span class="muted">(log scale)</span></th><th class="num wall">Peak RSS</th><th class="out">Output</th></tr></thead>';
 		final body = el("tbody");
-		final bar = scale([for (r in rows) if (r.port != null && r.port.status == "ok") r.port.cpu / r.reference.cpu]);
-		for (r in rows) {
+		final cells = [for (r in rows) cell(r, mode)];
+		final bar = scale([for (c in cells) if (c != null && c.port != null && c.port.status == "ok") time(c.port, mode) / time(c.reference, mode)]);
+		for (i => r in rows) {
+			final c = cells[i];
 			final tr = el("tr");
-			final i = targetIndex(r.target);
-			final name = el("td", "runner", i >= 0 ? TARGETS[i][1] : r.target);
-			if (r.identical) name.append(el("span", "chk", " ✓"));
+			final ti = targetIndex(r.target);
+			final name = el("td", "runner", ti >= 0 ? TARGETS[ti][1] : r.target);
+			if (c != null && (c.identical || c.varies == true)) name.append(el("span", "chk", c.identical ? " ✓" : " ~"));
 			tr.append(name);
-			if (r.reference.status != "ok") {
-				tr.append(failure("the reference compiler rejects this project: " + lastLine(r.reference.status).substring(0, 110), "fail muted", 5));
-			} else if (r.port == null || r.port.status != "ok") {
-				tr.append(el("td", "num", secs(r.reference.cpu)));
-				tr.append(failure("port failed: " + (r.port != null ? r.port.status.substring(0, 110) : "not run"), "fail", 4));
+			if (c == null) {
+				tr.append(failure("not measured in this mode", "muted", 5));
+			} else if (c.reference.status != "ok") {
+				tr.append(failure("the reference compiler rejects this project: " + lastLine(c.reference.status).substring(0, 110), "fail muted", 5));
+			} else if (c.port == null || c.port.status != "ok") {
+				tr.append(el("td", "num", secs(time(c.reference, mode))));
+				tr.append(failure("port failed: " + (c.port != null ? c.port.status.substring(0, 110) : "not run"), "fail", 4));
 			} else {
-				tr.append(el("td", "num", secs(r.reference.cpu)));
-				tr.append(el("td", "num", secs(r.port.cpu)));
-				tr.append(bar(r.port.cpu / r.reference.cpu));
-				tr.append(el("td", "num wall", mb(r.port.rss_mb) + " / " + mb(r.reference.rss_mb)));
-				tr.append(el("td", "out " + (r.identical ? "ok" : "fail"),
-					r.identical ? 'identical, ${r.port.members > 1 ? r.port.members + " files, " : ""}${size(r.port.bytes)}' : "different"));
+				tr.append(el("td", "num", secs(time(c.reference, mode))));
+				tr.append(el("td", "num", secs(time(c.port, mode))));
+				tr.append(bar(time(c.port, mode) / time(c.reference, mode)));
+				tr.append(el("td", "num wall", mb(c.port.rss_mb) + " / " + mb(c.reference.rss_mb)));
+				final files = c.port.members > 1 ? c.port.members + " files, " : "";
+				final out = el("td", "out " + (c.identical ? "ok" : c.varies == true ? "muted" : "fail"),
+					c.identical ? 'identical, $files${size(c.port.bytes)}' : c.varies == true ? 'varies, $files${size(c.port.bytes)}' : "different");
+				if (c.diff != null) out.title = c.diff;
+				tr.append(out);
 			}
 			body.append(tr);
 		}
@@ -304,31 +349,65 @@ class Tables {
 	}
 
 	static function renderTargets(root:Element, data:TargetData) {
-		final entries = [];
-		for (p in PROJECTS) {
+		final projects = [for (p in PROJECTS) if (Lambda.exists(data.results, (r) -> r.project == p[0])) p];
+		if (projects.length == 0) return;
+		final modes = Lambda.exists(data.results, (r) -> r.parallel != null) ? MODES : [MODES[0]];
+		var project = 0, mode = 0;
+		root.textContent = "";
+		final bar = el("div", "tabs");
+		bar.setAttribute("role", "tablist");
+		final paneBox = el("div");
+		root.append(bar, paneBox);
+		final buttons = [];
+		final show = () -> {
+			for (i => b in buttons) b.setAttribute("aria-selected", (i < projects.length ? i == project : i - projects.length == mode) ? "true" : "false");
+			final p = projects[project], m = modes[mode][0];
 			final rows = data.results.filter((r) -> r.project == p[0]);
-			if (rows.length == 0) continue;
 			rows.sort((a, b) -> targetIndex(a.target) - targetIndex(b.target));
-			final ok = rows.filter((r) -> r.port != null && r.port.status == "ok");
-			var ref = 0.0, port = 0.0, same = 0;
-			for (r in ok) {
-				ref += r.reference.cpu;
-				port += r.port.cpu;
-				if (r.identical) same++;
+			var ref = 0.0, port = 0.0, same = 0, varies = 0, n = 0;
+			for (r in rows) {
+				final c = cell(r, m);
+				if (c == null || c.port == null || c.port.status != "ok") continue;
+				n++;
+				ref += time(c.reference, m);
+				port += time(c.port, m);
+				if (c.identical) same++ else if (c.varies == true) varies++;
 			}
-			final summary = ok.length > 0 ? ' Over the ${ok.length} targets: ${secs(port)} of CPU for the port, ${secs(ref)} for the reference (${ratio(port / ref)}); ${same} of ${ok.length} outputs identical.' : "";
-			entries.push({
-				label: p[0],
-				pane: pane(p[1] + summary, targetsTable(rows), "CPU: minimum of the runs. Peak RSS: port / reference. The dashed line marks the reference; green bars are faster than it.")
-			});
+			final what = m == "seq" ? "CPU" : "wall time";
+			final summary = n > 0 ? ' Over the $n targets: ${secs(port)} of $what for the port, ${secs(ref)} for the reference (${ratio(port / ref)}); $same of $n outputs identical${varies > 0 ? ', $varies varying' : ""}.' : "";
+			final outro = m == "seq"
+				? "Sequential: -D disable-parallelism, one core each (per-core efficiency). CPU: user + system, minimum of the runs. Peak RSS: port / reference. The dashed line marks the reference; green bars are faster than it."
+				: "Parallel: each compiler's default parallelism, what a plain build gets. Wall time, minimum of the runs. Peak RSS: port / reference. Varies (~): the reference's own parallel output differs from its sequential one and from run to run (e.g. genjvm's closures, HXB's string pools), so the port's is compared member by member but cannot match byte for byte.";
+			paneBox.textContent = "";
+			paneBox.append(pane(p[1] + summary, targetsTable(rows, m), outro));
+		};
+		for (i => p in projects) {
+			final b = el("button", "", p[0]);
+			b.setAttribute("role", "tab");
+			b.onclick = () -> {
+				project = i;
+				show();
+			};
+			buttons.push(b);
+			bar.append(b);
 		}
-		if (entries.length == 0) return;
-		tabs(root, entries);
+		if (modes.length > 1) for (i => m in modes) {
+			final b = el("button", "", m[1]);
+			b.setAttribute("role", "tab");
+			if (i == 0) b.style.marginLeft = "auto";
+			b.onclick = () -> {
+				mode = i;
+				show();
+			};
+			buttons.push(b);
+			bar.append(b);
+		}
+		show();
 		final facts = document.getElementById("targets-machine");
 		final m = data.meta;
 		if (facts == null || m == null) return;
 		final parts = [];
-		if (m.cpu != null) parts.push('${m.cpu}, ${m.cores} cores');
+		if (m.cpu != null) parts.push('${m.cpu}, ${m.cores} cores${m.runner != null ? " (GitHub Actions, " + StringTools.trim(m.runner) + ")" : ""}');
 		if (m.date != null) parts.push('measured ${m.date.substring(0, 10)}');
 		if (m.commit != null) parts.push('commit ${m.commit}');
 		if (m.reference != null) parts.push('reference: ${m.reference}');

@@ -17,6 +17,12 @@ class EvalProcess {
 	final host:Null<sys.io.Process>;
 	final failedStderr:Null<BytesInput>;
 	var exitCode:Null<Int>;
+	// port: closeStdin happened: close leaves stdin alone (upstream closes it again,
+	// ... ignoring EBADF, but the number may belong to another descriptor by then, opened
+	// ... by another thread of the host: closing it again would break that one)
+	var stdinClosed = false;
+	// port: close happened (upstream closes again, ignoring the errors)
+	var closed = false;
 
 	function new(host:Null<sys.io.Process>, failedStderr:Null<BytesInput>, exitCode:Null<Int>) {
 		this.host = host;
@@ -90,6 +96,10 @@ class EvalProcess {
 	}
 
 	public function closeStdin():Void {
+		// port: a second close_stdin fails with EBADF upstream (unless the number was reused)
+		if (stdinClosed)
+			throw new Failure("close(): Bad file descriptor");
+		stdinClosed = true;
 		if (host != null)
 			host.stdin.close();
 	}
@@ -105,8 +115,14 @@ class EvalProcess {
 	}
 
 	public function close():Void {
-		if (host != null)
-			host.close();
+		if (host == null || closed) return;
+		closed = true;
+		if (!stdinClosed) {
+			stdinClosed = true;
+			host.stdin.close();
+		}
+		host.stdout.close();
+		host.stderr.close();
 	}
 
 	public function kill():Void {

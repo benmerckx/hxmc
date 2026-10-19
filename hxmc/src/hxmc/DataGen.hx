@@ -550,6 +550,13 @@ class DataGen {
 		if (abi.wasm) {
 			compile(MirBuild.synthetic(prep, abi, "_start", [], Void, (b, ps) -> {
 				b.call("rt_init", [b.iconst(p.globals.length), b.iconst(0), b.lconst(0, 0)], Void);
+				// the stack of frame slots: the runtime's from here on (wasm/Gc.hx;
+				// set here, in a function without a frame of its own, whose
+				// return would restore the linker's stack pointer)
+				var lo = b.call("rt_cstack_lo", [], I64);
+				var top = b.call("rt_cstack_top", [], I64);
+				b.tlsStore(hxmc.wasm.WasmGen.SP, top);
+				b.tlsStore(hxmc.wasm.WasmGen.STACK_LO, lo);
 				b.call("hx_main_body", [], Void);
 				b.call("rt_main_done", [], Void);
 				b.ret(-1);

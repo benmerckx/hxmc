@@ -404,7 +404,7 @@ use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
 `RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`,
-`RT_STACK_MB` (wasm32: the shadow stack; WebAssembly, Memory).
+`RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory).
 
 ## Android
 
@@ -681,10 +681,19 @@ since the last collection (the slow path that raises `rt_sp_hw`), it is
 compared with the end, `rt_sp_limit`, and an overflow exits with "stack
 overflow: the shadow stack's 4 MB are full". A browser's wasm stack (about
 1 MB) runs out first: a recursion of frames of a few references fills 1 MB
-of shadow stack where node's 8 MB stack is full at 2 to 4 MB. Memory
+of shadow stack where node's 8 MB stack is full at 2 to 4 MB. The stack
+of frame areas (`Mem.stack`, a try function's locals kept in memory: below
+the `__stack_pointer` global) is a region of the same size: the linker's
+64 KB right above the data runs `rt_init` only, then `_start` moves the
+stack pointer to the runtime's (`Gc.init`), and every frame's prologue
+compares it with that stack's end (`rt_cstack_lo`): an overflow exits with
+"stack overflow: the frame stack's 4 MB are full". (It was the linker's
+1 MB, unchecked: deeper frames went on into the data and overwrote the
+statics and the method tables; the compiler typing about 440 generated
+modules at once needs 2 MB; corpus case `DeepFrames`.) Memory
 memory.grow gave is zero, so only what was handed out before and freed is
 zeroed (`Heap.freshFrom`: the highest the regions reached): the nursery, the
-shadow stack and the 64 KB granule table cost address space, not pages,
+two stacks and the 64 KB granule table cost address space, not pages,
 until they are used. When memory.grow fails the runtime writes "out of
 memory: linear memory is N MB, growing it by M MB failed" and exits;
 `packages/os/browser.mjs` turns a RangeError of the browser's (a new

@@ -254,7 +254,7 @@ class Pages implements Markup {
 					<section class="block" id="targets">
 						<header><h2>Target generators</h2></header>
 						<div>
-							<p>Compile time per target, port against reference, on two projects. Every output file identical (HL/C: after renaming a few type names that hash the reference binary). C++ and HL/C stop at the sources.</p>
+							<p>Compile time per target, port against reference, on two projects: sequential (one core, CPU time) and with each compiler's default parallelism (wall time), best of 3, nightly on a GitHub Actions runner. Every sequential output file identical (HL/C: after renaming a few type names that hash the reference binary). C++ and HL/C stop at the sources.</p>
 							<div id="targets-results"><p class="note">Loading results…</p></div>
 							<p class="note" id="targets-machine"></p>
 						</div>

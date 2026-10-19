@@ -1,0 +1,8 @@
+exit 0
+down 100: 103424
+down 400: 410624
+down 700: 717824
+tries: 1007012
+name0,name1,name2,name3,name4,name5,name6,name7
+42 144
+1000 [2,3,4]

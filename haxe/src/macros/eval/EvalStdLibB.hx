@@ -977,7 +977,7 @@ private typedef SocketHost = macros.eval.EvalHostNet;
 class StdSocket {
 	static function thisValue(vthis:Value):Dynamic {
 		return switch vthis {
-			case VInstance({ikind: ISocket(sock)}): sock;
+			case VInstance({ikind: ISocket(sock)}): sock.closed ? -1 : sock.fd;
 			case _: EvalExceptions.unexpectedValue(vthis, "NativeSocket");
 		}
 	}
@@ -1016,7 +1016,7 @@ class StdSocket {
 		var self = thisValue(vthis);
 		#if (target.name == "hxmc" || hl)
 		var socket = check(EvalLock.blocking(() -> SocketHost.accept(self)), "accept");
-		EvalEncode.encodeInstance(EvalHash.key_eval_vm_NativeSocket, ISocket(socket));
+		EvalEncode.encodeInstance(EvalHash.key_eval_vm_NativeSocket, ISocket(new Vsocket(socket)));
 		#else
 		StdLibBHelpers.socketsNotSupported();
 		#end
@@ -1036,7 +1036,14 @@ class StdSocket {
 
 	public static final close = EvalEncode.vifun0(vthis -> {
 		#if (target.name == "hxmc" || hl)
-		check(SocketHost.close(thisValue(vthis)), "close");
+		// port: a closed socket's number is not closed again: -1 fails with EBADF as
+		// ... upstream's second Unix.close does (when the number was not reused meanwhile)
+		var fd = thisValue(vthis);
+		switch vthis {
+			case VInstance({ikind: ISocket(sock)}): sock.closed = true;
+			case _:
+		}
+		check(SocketHost.close(fd), "close");
 		VNull;
 		#else
 		thisValue(vthis);

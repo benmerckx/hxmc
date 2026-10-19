@@ -571,6 +571,17 @@ Order:
 Needed by Android and plugins: the relocation model, TLS model, output
 kind and segment alignment are already parameters in `Abi`/`Target`.
 
+## Windows
+
+- **A GUI subsystem define.** Executables are always console programs
+  today, so double-clicking a ui app opens a console as well.
+  `-D hxmc.subsystem=windows` writes subsystem 2 (GUI) in the PE header;
+  launched from a terminal, the program attaches to the parent console
+  (`AttachConsole(ATTACH_PARENT_PROCESS)`) so `trace` still prints.
+  Documented beside `-D hxmc.libc=glibc` in packages/ui's README and
+  GUIDE. (Found building a small app, Oct 19.)
+- The dev loop's cold first edit: [dev-loop.md](dev-loop.md#windows-the-first-edit-is-a-cold-build-found-oct-19).
+
 ## Linux
 
 - A dynamic musl mode (`/lib/ld-musl-<arch>.so.1`, unversioned:

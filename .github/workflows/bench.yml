@@ -5,13 +5,42 @@
 #
 # Runs nightly on main (skipped when that commit is already measured) and on
 # demand: a dispatch, or a push whose head commit message says [bench] (or
-# [bench-publish], which also publishes); other pushes start no job (a run
-# takes about half an hour of a runner). Independent of build.yml, so it never
-# holds up a release or the website. Results: the job summary and an
-# artifact; from main (or with publish, or [bench-publish]) appended to the
-# bench-data branch as results/<date>-<commit>.json, with history.json and
-# latest.json regenerated, which the website's next build copies (build.yml,
-# `make site BENCH_DATA=...`).
+# [bench-publish], which also publishes); other pushes start no job.
+# Independent of build.yml, so it never holds up a release or the website.
+#
+# Sharded by case: `plan` checks whether the commit is measured already and
+# splits the cases into groups, one `shard` job (a runner of its own) per
+# group, which measures its cases on every target (so a row's targets, and its
+# "vs. hxmc", always share one machine; Bench's -c) and uploads its partial
+# results; `results` merges them (Bench --merge: the format of an unsharded
+# run, with the machine of each case) and publishes. The groups are balanced
+# by the cases' measured durations (run 39110201629, seconds with the checks:
+# formatter_noio 525, mandelbrot_anon 344, mandelbrot 293, bcrypt 166, alloc
+# 124, binarytrees 120, nbody 78, json 61, sha256 40, sha512 28), the longest
+# alone: about 10 minutes in all instead of 30 (the shards may land on
+# different CPU types: `machines` in the results says which case ran where). A dispatch whose args name the
+# cases (-c) runs them in one shard.
+#
+# The target generators (haxe/test/Targets.hx, the website's Target generators
+# table): the reference compiler (the nightly of the pinned upstream commit,
+# `make reference`, cached as in build.yml) and the port compile haxe-formatter
+# and the port itself to every target, sequential (-D disable-parallelism) and
+# with their default parallelism, best of 3, the outputs compared. One
+# `targets` job per group of targets (both projects, both compilers and both
+# modes of a target on one runner: each row's comparison on one machine),
+# balanced by the rows' durations (sequential CPU of both compilers, the self
+# build dominating: jvm 41 s, hlc 33, cpp 30, hl 27, neko 23, python 24, hxb
+# 19, js 18, the rest about 2; the parallel runs and 3 runs of each about 5x
+# that): about 5 minutes each. The dispatch input `targets` is `all`, `none`,
+# or Targets.hx's arguments (e.g. "-p self -t jvm"), run in one group.
+#
+# Results: the job summaries and an artifact (bench-results); from main (or
+# with publish, or [bench-publish]) appended to the bench-data branch as
+# results/<date>-<commit>.json, with history.json and latest.json
+# regenerated, and the targets' as targets/<date>-<commit>.json, with
+# targets.json and targets-history.json regenerated (Targets --history), which
+# the website's next build copies (build.yml, `make site BENCH_DATA=...`; the
+# committed site/data/targets.json where bench-data has none).
 name: bench
 
 on:
@@ -35,27 +64,26 @@ on:
         description: measure even when this commit is already on bench-data
         type: boolean
         default: false
+      targets:
+        description: 'the target generators (Targets.hx): all, none, or its arguments (e.g. "-p self -t jvm") in one group'
+        default: all
 
 permissions:
   contents: read
 
 jobs:
-  bench:
+  # measured already? the shards (a JSON matrix: index, cases)
+  plan:
     if: github.event_name != 'push' || contains(github.event.head_commit.message, '[bench]') || contains(github.event.head_commit.message, '[bench-publish]')
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
-    # (on the job: the skipped runs of other pushes do not queue here)
-    concurrency:
-      group: bench
-      cancel-in-progress: false
-    permissions:
-      contents: write
-    env:
-      PUBLISH: ${{ github.ref == 'refs/heads/main' || inputs.publish == true || contains(github.event.head_commit.message, '[bench-publish]') }}
+    timeout-minutes: 10
+    outputs:
+      skip: ${{ steps.seen.outputs.skip }}
+      short: ${{ steps.seen.outputs.short }}
+      matrix: ${{ steps.shards.outputs.matrix }}
+      targets: ${{ steps.targets.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       - name: Measured already?
         id: seen
         run: |
@@ -69,41 +97,101 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      # the groups, balanced by duration (see above); a case of Bench's not in
+      # any group gets a shard of its own; args with -c: one shard, Bench's -c
+      - name: Shards
+        id: shards
+        env:
+          ARGS: ${{ inputs.args }}
+        run: |
+          set -e
+          if printf ' %s ' "$ARGS" | grep -qE '[[:space:]]-c[[:space:]]'; then
+            groups=("")
+          else
+            groups=("formatter_noio" "mandelbrot_anon,json,sha512" "mandelbrot,binarytrees" "bcrypt,alloc,nbody,sha256")
+            for c in $(grep -oE '\{name: "[a-z0-9_]+", dir: ' hxmc/test/Bench.hx | cut -d'"' -f2); do
+              case ",$(IFS=,; echo "${groups[*]}")," in *",$c,"*) ;; *) echo "::warning::case $c is in no group: a shard of its own"; groups+=("$c") ;; esac
+            done
+          fi
+          matrix=$(for i in "${!groups[@]}"; do printf '{"index":%d,"cases":"%s"}\n' "$i" "${groups[$i]}"; done | jq -cs '{include: .}')
+          echo "matrix=$matrix" | tee -a "$GITHUB_OUTPUT"
+      # the target generators' groups, balanced by duration (see above); a
+      # target of Targets.hx's in no group gets one of its own
+      - name: Target groups
+        id: targets
+        env:
+          TARGETS: ${{ inputs.targets || 'all' }}
+        run: |
+          set -e
+          case "$TARGETS" in
+            none) echo "matrix=" | tee -a "$GITHUB_OUTPUT"; exit 0 ;;
+            all)
+              groups=("-t jvm,js" "-t hlc,hxb,lua" "-t cpp,neko,swf" "-t hl,python,php")
+              for t in $(grep -oE '\{name: "[a-z0-9]+", args: ' haxe/test/Targets.hx | cut -d'"' -f2); do
+                case " ${groups[*]} " in *[\ ,]$t[\ ,]*) ;; *) echo "::warning::target $t is in no group: a group of its own"; groups+=("-t $t") ;; esac
+              done ;;
+            *) groups=("$TARGETS") ;;
+          esac
+          matrix=$(for i in "${!groups[@]}"; do jq -cn --argjson i "$i" --arg a "${groups[$i]}" '{index: $i, args: $a}'; done | jq -cs '{include: .}')
+          echo "matrix=$matrix" | tee -a "$GITHUB_OUTPUT"
+
+  # the cases of one group, every target, on this runner
+  shard:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    name: shard ${{ matrix.index }} (${{ matrix.cases || 'args' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
       - uses: actions/setup-node@v7
-        if: steps.seen.outputs.skip != 'true'
         with:
           node-version: 22
       - uses: actions/setup-java@v5
-        if: steps.seen.outputs.skip != 'true'
         with:
           distribution: temurin
           java-version: 21
       - name: System packages
-        if: steps.seen.outputs.skip != 'true'
         run: sudo apt-get install -qqy time
       # the published runtime objects of this hxmc/deps, else built with zig
       - name: Runtime objects
-        if: steps.seen.outputs.skip != 'true'
         id: rt
         run: |
           echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
           if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
       - uses: mlugg/setup-zig@v2
-        if: steps.seen.outputs.skip != 'true' && steps.rt.outputs.hit != 'true'
+        if: steps.rt.outputs.hit != 'true'
         with:
           version: ${{ steps.rt.outputs.zig }}
       - name: Runtime objects with zig
-        if: steps.seen.outputs.skip != 'true' && steps.rt.outputs.hit != 'true'
+        if: steps.rt.outputs.hit != 'true'
         run: sudo apt-get install -qqy lld && make rt-build
+      # (built here, in parallel on every shard: a job building them once
+      # would put its own start, the upload and the downloads on the way)
       - name: The tool, the port and lix
-        if: steps.seen.outputs.skip != 'true'
         run: |
           set -ex
           touch bin/hxmc/rt/*/*.o
           make hxmc port lix
+      # the key: the pinned versions only (the runner and the cases' libraries,
+      # HashLink, the lix libraries: Bench.hx's lines with a commit or the
+      # HashLink tag), and the targets when args choose them (a scope set up
+      # for some targets only lacks the others' tools)
+      - name: Toolchain pins
+        id: pins
+        env:
+          ARGS: ${{ inputs.args }}
+        run: |
+          pins=$(grep -E 'commit: "|HASHLINK = \{' hxmc/test/Bench.hx | tr -d '[:space:]' | sha256sum | cut -c1-16)
+          targets=$(printf ' %s ' "$ARGS" | grep -oE '[[:space:]]-t[[:space:]]+[^[:space:]]+' | awk '{print $2}' | tr ',' '-' || true)
+          echo "key=bench-tools-${{ runner.os }}-$pins-${targets:-all}" | tee -a "$GITHUB_OUTPUT"
       # the runner, the cases' libraries, HashLink (built), the lix scope (hxcpp, hxnodejs, hxjava)
       - name: Cache the benchmark toolchains
-        if: steps.seen.outputs.skip != 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -111,38 +199,195 @@ jobs:
             bin/bench/libs
             bin/bench/hashlink-*
             bin/bench/scope
-          key: bench-tools-${{ hashFiles('hxmc/test/Bench.hx') }}
+          key: ${{ steps.pins.outputs.key }}
       - name: Benchmarks
-        if: steps.seen.outputs.skip != 'true'
+        env:
+          ARGS: ${{ inputs.args }}
+          CASES: ${{ matrix.cases }}
         run: |
           set -ex
           ulimit -s unlimited
-          make bench BENCH_ARGS="-n ${{ inputs.runs || '5' }} --out bin/bench/results.json ${{ inputs.args }}"
+          make bench BENCH_ARGS="-n ${{ inputs.runs || '5' }} --out bin/bench/results-${{ matrix.index }}.json --shard ${{ matrix.index }} $ARGS ${CASES:+-c $CASES}"
       - uses: actions/upload-artifact@v7
-        if: steps.seen.outputs.skip != 'true' && always()
+        if: always()
+        with:
+          name: bench-part-${{ matrix.index }}
+          path: bin/bench/results-${{ matrix.index }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+      # the tool, for the results job's Bench --merge and --history
+      - uses: actions/upload-artifact@v7
+        if: matrix.index == 0
+        with:
+          name: bench-tool
+          path: bin/hxmc/hxmc
+          retention-days: 1
+
+  # the target generators of one group (Targets.hx), both compilers, both
+  # modes, on this runner
+  targets:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true' && needs.plan.outputs.targets != ''
+    name: targets ${{ matrix.index }} (${{ matrix.args }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: System packages
+        run: sudo apt-get install -qqy time
+      - name: Runtime objects
+        id: rt
+        run: |
+          echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: mlugg/setup-zig@v2
+        if: steps.rt.outputs.hit != 'true'
+        with:
+          version: ${{ steps.rt.outputs.zig }}
+      - name: Runtime objects with zig
+        if: steps.rt.outputs.hit != 'true'
+        run: sudo apt-get install -qqy lld && make rt-build
+      - name: The tool, the port and lix
+        run: |
+          set -ex
+          touch bin/hxmc/rt/*/*.o
+          make hxmc port lix
+      # the reference compiler: the nightly of the pinned upstream commit, as build.yml caches it
+      - name: Reference compiler revision
+        id: ref
+        run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
+      - name: Cache the reference compiler
+        uses: actions/cache@v6
+        with:
+          path: bin/reference
+          key: reference-nightly-${{ steps.ref.outputs.rev }}
+      - name: The reference compiler
+        run: |
+          set -ex
+          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          touch bin/reference/haxe
+          bin/reference/haxe -version
+      # the shards' toolchains (the same key as theirs, restored only): the
+      # formatter case and its libraries, the lix scope with hxnodejs
+      - name: Toolchain pins
+        id: pins
+        run: |
+          pins=$(grep -E 'commit: "|HASHLINK = \{' hxmc/test/Bench.hx | tr -d '[:space:]' | sha256sum | cut -c1-16)
+          echo "key=bench-tools-${{ runner.os }}-$pins-all" | tee -a "$GITHUB_OUTPUT"
+      - name: Restore the benchmark toolchains
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            bin/bench/runner
+            bin/bench/libs
+            bin/bench/hashlink-*
+            bin/bench/scope
+          key: ${{ steps.pins.outputs.key }}
+      - name: Target generators
+        env:
+          ARGS: ${{ matrix.args }}
+        run: |
+          set -ex
+          ulimit -s unlimited
+          bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --setup -t js
+          mkdir -p bin/bench-targets
+          bin/hxmc/hxmc -cp haxe/test --run Targets -n 3 --shard ${{ matrix.index }} --json bin/bench-targets/targets-${{ matrix.index }}.json $ARGS
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: targets-part-${{ matrix.index }}
+          path: bin/bench-targets/targets-${{ matrix.index }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # the shards' results as one, published
+  results:
+    needs: [plan, shard, targets]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.skip != 'true' && (needs.shard.result != 'skipped' || needs.targets.result != 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      PUBLISH: ${{ github.ref == 'refs/heads/main' || inputs.publish == true || contains(github.event.head_commit.message, '[bench-publish]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bench-part-*
+          path: bin/bench/parts
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: targets-part-*
+          path: bin/bench-targets/parts
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: bench-tool
+          path: bin/hxmc
+      - name: Merge
+        run: |
+          set -ex
+          chmod +x bin/hxmc/hxmc
+          if ls bin/bench/parts/*.json; then
+            bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --merge bin/bench/results.json bin/bench/parts/*.json
+          fi
+          if ls bin/bench-targets/parts/*.json; then
+            bin/hxmc/hxmc -cp haxe/test --run Targets --join bin/bench-targets/targets.json bin/bench-targets/parts/*.json
+          fi
+      - uses: actions/upload-artifact@v7
         with:
           name: bench-results
           path: bin/bench/results.json
           if-no-files-found: ignore
           retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
+          name: targets-results
+          path: bin/bench-targets/targets.json
+          if-no-files-found: ignore
+          retention-days: 30
       # results/<date>-<commit>.json, history.json, latest.json on bench-data
-      # (an orphan branch: data only), retried when another run pushed first
+      # (an orphan branch: data only), when every shard succeeded; the targets'
+      # targets/<date>-<commit>.json, targets.json, targets-history.json, when
+      # every targets job did; retried when another run pushed first
       - name: Publish to bench-data
-        if: steps.seen.outputs.skip != 'true' && env.PUBLISH == 'true'
+        if: env.PUBLISH == 'true' && (needs.shard.result == 'success' || needs.targets.result == 'success')
         env:
           GH_TOKEN: ${{ github.token }}
+          BENCH_OK: ${{ needs.shard.result == 'success' }}
+          TARGETS_OK: ${{ needs.targets.result == 'success' }}
         run: |
           set -ex
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          name="$(date -u +%Y-%m-%d)-${{ steps.seen.outputs.short }}.json"
+          name="$(date -u +%Y-%m-%d)-${{ needs.plan.outputs.short }}.json"
           for attempt in 1 2 3 4 5; do
             rm -rf bin/bench-data && mkdir -p bin/bench-data && cd bin/bench-data && git init -q
             git remote add origin "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
             if git fetch -q origin bench-data; then git checkout -q -b bench-data FETCH_HEAD; else git checkout -q --orphan bench-data; fi
-            mkdir -p results && cp ../bench/results.json "results/$name"
-            cd ../.. && bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --history bin/bench-data && cd bin/bench-data
-            git add -A && git commit -q -m "Benchmarks at ${{ steps.seen.outputs.short }} ($GITHUB_REF_NAME, run $GITHUB_RUN_ID)"
+            cd ../..
+            if [ "$BENCH_OK" = true ] && [ -f bin/bench/results.json ]; then
+              mkdir -p bin/bench-data/results && cp bin/bench/results.json "bin/bench-data/results/$name"
+              bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --history bin/bench-data
+            fi
+            if [ "$TARGETS_OK" = true ] && [ -f bin/bench-targets/targets.json ]; then
+              mkdir -p bin/bench-data/targets && cp bin/bench-targets/targets.json "bin/bench-data/targets/$name"
+              bin/hxmc/hxmc -cp haxe/test --run Targets --history bin/bench-data
+            fi
+            cd bin/bench-data
+            git add -A && git commit -q -m "Benchmarks at ${{ needs.plan.outputs.short }} ($GITHUB_REF_NAME, run $GITHUB_RUN_ID)"
             if git push -q origin bench-data; then exit 0; fi
             cd ../.. && sleep $((attempt * 5))
           done

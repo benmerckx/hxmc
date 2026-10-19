@@ -121,7 +121,13 @@ class PosixNet {
 			Posix.signal(13, Ptr.ofI64(1)); // SIGPIPE, SIG_IGN
 			sigpipeIgnored = true;
 		}
-		return ret(Posix.socket(2, 1, 0)); // PF_INET, SOCK_STREAM
+		// close-on-exec from the start (PosixSys.pipes): SOCK_CLOEXEC on Linux,
+		// FD_CLOEXEC under the descriptor lock on macOS
+		if (!mac()) return ret(Posix.socket(2, 1 | 0x80000, 0)); // PF_INET, SOCK_STREAM | SOCK_CLOEXEC
+		Threads.lockSafe(Gc.fdLock);
+		var fd = ret(PosixSys.cloexec(Posix.socket(2, 1, 0)));
+		Os.unlock(Gc.fdLock);
+		return fd;
 	}
 
 	@:hxmc.noGc public static function close(fd:Int):Int {
@@ -133,7 +139,11 @@ class PosixNet {
 		if (cooperative(fd) && !waitSock(fd, false)) return ret(-1);
 		var a = Mem.stack(128), n = Mem.stack(8);
 		Mem.setI32(n, 0, 128);
-		return ret(Posix.accept(fd, a, n));
+		if (!mac()) return ret(Posix.accept4(fd, a, n, 0x80000)); // SOCK_CLOEXEC
+		Threads.lockSafe(Gc.fdLock);
+		var c = ret(PosixSys.cloexec(Posix.accept(fd, a, n)));
+		Os.unlock(Gc.fdLock);
+		return c;
 	}
 
 	// sockaddr_in of ip (host order) and port: Linux u16 family; macOS u8

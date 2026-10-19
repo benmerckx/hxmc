@@ -411,7 +411,8 @@ class Driver {
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
 			var stack = Sys.getEnv("HXMC_WASM_STACK_KB");
-			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 1 << 20);
+			// (the linker's stack runs rt_init only: the runtime's takes over, wasm/Gc.hx)
+			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 64 << 10);
 			lw.nameSection = !o.strip;
 			lw.legacyEh = o.wasmLegacyEh;
 			var wasm = lw.link();

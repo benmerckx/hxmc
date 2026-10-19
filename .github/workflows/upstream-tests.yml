@@ -62,6 +62,21 @@ jobs:
           set -ex
           mkdir ~/haxelib
           haxelib setup ~/haxelib
+      # round trips of multi-byte strings through Eval's sys.io.Process, four
+      # runs at once (haxe/test/IpcStress.hx): upstream's sys test runs each once
+      - name: Process round trips under Eval
+        run: |
+          set -e
+          pids=
+          for i in 1 2 3 4; do
+            IPC_STRESS_DIR="$RUNNER_TEMP/ipc$i" haxe -cp haxe/test --run IpcStress "$(command -v haxe)" 25 > "$RUNNER_TEMP/ipc$i.log" 2>&1 &
+            pids="$pids $!"
+          done
+          fail=0
+          for p in $pids; do wait $p || fail=1; done
+          cat "$RUNNER_TEMP"/ipc?.log
+          exit $fail
+        timeout-minutes: 15
       - name: Test
         run: haxe --run RunCi macro
         working-directory: ${{github.workspace}}/haxe/upstream/tests

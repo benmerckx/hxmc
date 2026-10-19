@@ -57,7 +57,8 @@ PORT ?=
 # `make site`: a directory of lix binaries to publish under tools/ (lix-<target>[.exe])
 LIX_DIR ?=
 # `make site`: a checkout of the bench-data branch (its history.json and
-# latest.json become bin/site/bench/, the Programs benchmarks)
+# latest.json become bin/site/bench/, the Programs benchmarks; its targets.json
+# replaces site/data/targets.json, the Target generators table)
 BENCH_DATA ?=
 # `make bench`: the arguments of hxmc/test/Bench.hx (e.g. "-n 3 -c nbody -t hxmc,js")
 BENCH_ARGS ?=
@@ -444,6 +445,7 @@ site: wasm $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN)
 	cp -r site/playground bin/site/playground
 	if [ -n "$(LIX_DIR)" ]; then mkdir -p bin/site/tools && cp $(LIX_DIR)/lix-* bin/site/tools/; fi
 	if [ -n "$(BENCH_DATA)" ] && [ -f "$(BENCH_DATA)/history.json" ]; then mkdir -p bin/site/bench && cp $(BENCH_DATA)/history.json bin/site/bench/ && { cp $(BENCH_DATA)/latest.json bin/site/bench/ 2>/dev/null || true; }; fi
+	if [ -n "$(BENCH_DATA)" ] && [ -f "$(BENCH_DATA)/targets.json" ]; then cp $(BENCH_DATA)/targets.json bin/site/targets.json; fi
 	printf '{\n\t"date": "%s",\n\t"commit": "%s",\n\t"wasmSize": "%s",\n\t"wasmGz": "%s",\n\t"wasmLegacyGz": "%s",\n\t"dataGz": "%s",\n\t"lixSize": "%s"\n}\n' \
 		"$$(date -u +%Y-%m-%d)" "$$(git rev-parse --short HEAD)" \
 		"$$(wc -c < bin/site/hih.wasm | $(mb))" \

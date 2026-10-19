@@ -24,6 +24,7 @@ using StringTools;
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench [-n RUNS] [-t hxmc,js,...] [-c nbody,...]
 //       [--out results.json] [--source ci|local] [--no-check] [--setup]
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --history <dir>
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --merge <out.json> <part.json>...
 //
 // Setup (bin/bench, kept between runs; --setup stops after it): the runner and
 // the libraries the cases use (git, pinned), HashLink built from its release
@@ -57,6 +58,11 @@ using StringTools;
 // max, peak RSS, build_s, haxe_s, cc_s; null where a run lacks one: haxe_s
 // and cc_s are recorded since 2026-10-16) and <dir>/latest.json (the newest CI run, else the newest
 // measured one), which the website reads.
+//
+// --merge <out> <part>...: the results of one run's shards (bench.yml runs the
+// cases in groups, each group on its own machine, every target of a case on
+// the same one) into one results file of the same format, with `machines`: per
+// case the machine (and `shard`, its group's index) it was measured on.
 class Bench {
 	static final RUNNER = {repo: "https://github.com/HaxeBenchmarks/benchmark-runner.git", commit: "d921d5c2a24d465188da9fb91842dbf019251d62"};
 	// the cases' libraries: dir, repository, commit (as the runner pins them)
@@ -99,9 +105,13 @@ class Bench {
 	static var log:Array<String> = [];
 
 	static function main() {
-		var a = parseArgs(Sys.args(), ["-n", "-t", "-c", "--out", "--source", "--history", "--summary"]);
+		var a = parseArgs(Sys.args(), ["-n", "-t", "-c", "--out", "--source", "--history", "--summary", "--merge", "--shard"]);
 		if (a.has("--history")) {
 			history(a.get("--history"));
+			return;
+		}
+		if (a.has("--merge")) {
+			merge(a.get("--merge"), a.rest, a.get("--summary"));
 			return;
 		}
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
@@ -109,25 +119,12 @@ class Bench {
 		port = FileSystem.fullPath(Sys.getEnv("HAXE_IN_HAXE_PORT") ?? "bin/port/haxe");
 		mkdirs(DIR);
 		bench = FileSystem.fullPath(DIR);
-		var libs = '$bench/libs';
-		cases = [
-			{name: "alloc", dir: "alloc", main: "BMAllocCode", cps: [], defines: [], check: "CheckAlloc"},
-			{name: "bcrypt", dir: "bcrypt", main: "BMBCryptCode", cps: ['$libs/crypto/src'], defines: [], check: "CheckBcrypt"},
-			{name: "binarytrees", dir: "binarytrees", main: "BMBinaryTreesCode", cps: [], defines: [], check: "CheckBinarytrees"},
-			{name: "json", dir: "json", main: "BMJsonCode", cps: [], defines: [], check: "CheckJson"},
-			{name: "mandelbrot", dir: "mandelbrot", main: "BMMandelbrotCode", cps: [], defines: [], check: "CheckMandelbrot"},
-			{name: "mandelbrot_anon", dir: "mandelbrot_anon_objects", main: "BMMandelbrotCode", cps: ["../mandelbrot"], defines: ["anon_objects"], check: "CheckMandelbrot"},
-			{name: "nbody", dir: "nbody", main: "BMNBodyCode", cps: [], defines: [], check: "CheckNbody"},
-			{name: "sha256", dir: "sha256", main: "BMSHA256Code", cps: [], defines: [], check: "CheckSha256"},
-			{name: "sha512", dir: "sha512", main: "BMSHA512Code", cps: ['$libs/crypto/src'], defines: [], check: "CheckSha512"},
-			// haxe-formatter 1.9.1 formatting its own src/ (60 times)
-			{name: "formatter_noio", dir: "formatter_noio", main: "BMFormatterNoIOCode", cps: [for (d in FORMATTER_CPS) '$libs/$d'],
-				defines: [for (d in FORMATTER_CPS) d.split("/")[0]], check: "CheckFormatter"},
-		];
+		cases = caseList('$bench/libs');
 		var runs = a.int("-n", 5);
 		var targets = a.has("-t") ? a.get("-t").split(",") : TARGETS;
 		for (t in targets) if (!TARGETS.contains(t)) fail('unknown target $t (${TARGETS.join(", ")})');
 		var only = a.has("-c") ? a.get("-c").split(",") : [for (c in cases) c.name];
+		for (n in only) if (!Lambda.exists(cases, c -> c.name == n)) fail('unknown case $n (${[for (c in cases) c.name].join(", ")})');
 		var check = !a.has("--no-check");
 		var t0 = now();
 		setup(targets);
@@ -149,6 +146,8 @@ class Bench {
 			results: {},
 			checks: {},
 		};
+		// (one shard of a sharded run: its index, for --merge)
+		if (a.has("--shard")) doc.shard = a.int("--shard", 0);
 		var results:DynamicAccess<DynamicAccess<Dynamic>> = doc.results;
 		var checks:DynamicAccess<Dynamic> = doc.checks;
 		for (c in cases) {
@@ -240,6 +239,24 @@ class Bench {
 		File.saveContent(outFile, Json.stringify(doc, null, " ") + "\n");
 		say('wrote $outFile (${doc.seconds} s)');
 		summary(a.get("--summary"), markdown(doc));
+	}
+
+	/** the cases, in their order (`libs`: the directory of their libraries) */
+	static function caseList(libs:String):Array<Case> {
+		return [
+			{name: "alloc", dir: "alloc", main: "BMAllocCode", cps: [], defines: [], check: "CheckAlloc"},
+			{name: "bcrypt", dir: "bcrypt", main: "BMBCryptCode", cps: ['$libs/crypto/src'], defines: [], check: "CheckBcrypt"},
+			{name: "binarytrees", dir: "binarytrees", main: "BMBinaryTreesCode", cps: [], defines: [], check: "CheckBinarytrees"},
+			{name: "json", dir: "json", main: "BMJsonCode", cps: [], defines: [], check: "CheckJson"},
+			{name: "mandelbrot", dir: "mandelbrot", main: "BMMandelbrotCode", cps: [], defines: [], check: "CheckMandelbrot"},
+			{name: "mandelbrot_anon", dir: "mandelbrot_anon_objects", main: "BMMandelbrotCode", cps: ["../mandelbrot"], defines: ["anon_objects"], check: "CheckMandelbrot"},
+			{name: "nbody", dir: "nbody", main: "BMNBodyCode", cps: [], defines: [], check: "CheckNbody"},
+			{name: "sha256", dir: "sha256", main: "BMSHA256Code", cps: [], defines: [], check: "CheckSha256"},
+			{name: "sha512", dir: "sha512", main: "BMSHA512Code", cps: ['$libs/crypto/src'], defines: [], check: "CheckSha512"},
+			// haxe-formatter 1.9.1 formatting its own src/ (60 times)
+			{name: "formatter_noio", dir: "formatter_noio", main: "BMFormatterNoIOCode", cps: [for (d in FORMATTER_CPS) '$libs/$d'],
+				defines: [for (d in FORMATTER_CPS) d.split("/")[0]], check: "CheckFormatter"},
+		];
 	}
 
 	// ---- setup
@@ -435,6 +452,8 @@ class Bench {
 			memory_gb: mem.match(readText("/proc/meminfo")) ? round(Std.parseFloat(mem.matched(1)) / 1048576, 1) : null,
 			os: exec(["uname", "-sr"]).out.trim(),
 			runner: Sys.getEnv("RUNNER_NAME") != null ? (Sys.getEnv("ImageOS") ?? "github") + " " + (Sys.getEnv("ImageVersion") ?? "") : null,
+			// (the runner itself: tells the virtual machines of a sharded run apart)
+			host: Sys.getEnv("RUNNER_NAME"),
 		};
 	}
 
@@ -510,6 +529,94 @@ class Bench {
 	static function round(x:Float, digits:Int):Float {
 		var m = Math.pow(10, digits);
 		return Math.round(x * m) / m;
+	}
+
+	// ---- merge (a run sharded by case: .github/workflows/bench.yml)
+
+	/**
+		The results of the shards of one run (each a run of some cases, every
+		target, on its own machine) as one results file in the format of an
+		unsharded run: the cases in their order, the first shard's facts (its
+		machine's CPU: the shards' CPUs, where they differ), the earliest date,
+		the slowest shard's seconds, and `machines`: per case the machine it ran
+		on (with `shard`, its shard's --shard: a row's targets always share one
+		machine).
+	**/
+	static function merge(out:String, files:Array<String>, summaryPath:Null<String>) {
+		if (files.length == 0) fail("--merge: no results to merge");
+		var order = [for (c in caseList("")) c.name];
+		var rank = (n:String) -> {
+			var i = order.indexOf(n);
+			i < 0 ? order.length : i;
+		};
+		var parts:Array<Dynamic> = [for (f in files) Json.parse(File.getContent(f))];
+		var firstRank = (p:Dynamic) -> {
+			var cs:Array<String> = p.cases;
+			var r = order.length + 1;
+			for (c in cs) if (rank(c) < r) r = rank(c);
+			r;
+		};
+		parts.sort((x, y) -> firstRank(x) - firstRank(y));
+		var base:Dynamic = parts[0];
+		var results = new DynamicAccess<Dynamic>(), checks = new DynamicAccess<Dynamic>(), machines = new DynamicAccess<Dynamic>();
+		var cases:Array<String> = [];
+		var date:String = base.date, seconds = 0.0;
+		for (i => p in parts) {
+			for (k in ["commit", "source", "runs"])
+				if (Std.string(Reflect.field(p, k)) != Std.string(Reflect.field(base, k)))
+					fail('--merge: the shards differ in $k (${Reflect.field(base, k)}, ${Reflect.field(p, k)})');
+			if ((p.targets : Array<String>).join(",") != (base.targets : Array<String>).join(","))
+				fail('--merge: the shards differ in their targets');
+			if (compare(p.date, date) < 0) date = p.date;
+			if (p.seconds != null && p.seconds > seconds) seconds = p.seconds;
+			var pr:DynamicAccess<Dynamic> = p.results, pc:DynamicAccess<Dynamic> = p.checks ?? {};
+			for (c in (p.cases : Array<String>)) {
+				if (cases.contains(c)) fail('--merge: case $c is in two shards');
+				cases.push(c);
+				results[c] = pr[c];
+				if (pc.exists(c)) checks[c] = pc[c];
+				var m:DynamicAccess<Dynamic> = p.machine != null ? Reflect.copy(p.machine) : {};
+				m["shard"] = p.shard ?? i;
+				machines[c] = m;
+			}
+		}
+		cases.sort((x, y) -> rank(x) - rank(y));
+		// the machine: the first shard's, its CPU the shards' CPUs where they differ
+		var machine:Null<DynamicAccess<Dynamic>> = base.machine != null ? Reflect.copy(base.machine) : null;
+		var cpus:Array<String> = [];
+		for (p in parts) if (p.machine != null && p.machine.cpu != null && !cpus.contains(p.machine.cpu)) cpus.push(p.machine.cpu);
+		if (machine != null && cpus.length > 1) machine["cpu"] = cpus.join(" / ");
+		if (machine != null && parts.length > 1) machine.remove("host");
+		// (the fields in the order of an unsharded run's, then machines)
+		var doc:Dynamic = {
+			schema: base.schema,
+			source: base.source,
+			date: date,
+			commit: base.commit,
+			short: base.short,
+			ref: base.ref,
+			run_url: base.run_url,
+			machine: machine,
+			versions: base.versions,
+			runs: base.runs,
+			method: base.method,
+			targets: base.targets,
+			cases: cases,
+			results: {},
+			checks: {},
+		};
+		var dr:DynamicAccess<Dynamic> = doc.results, dc:DynamicAccess<Dynamic> = doc.checks;
+		for (c in cases) {
+			dr[c] = results[c];
+			if (checks.exists(c)) dc[c] = checks[c];
+		}
+		doc.seconds = Math.round(seconds);
+		doc.machines = {};
+		var dm:DynamicAccess<Dynamic> = doc.machines;
+		for (c in cases) dm[c] = machines[c];
+		File.saveContent(out, Json.stringify(doc, null, " ") + "\n");
+		say('wrote $out: ${cases.length} cases from ${parts.length} shards');
+		summary(summaryPath, markdown(doc));
 	}
 
 	// ---- history (the bench-data branch)
