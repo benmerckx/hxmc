@@ -270,6 +270,14 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   if (emitted.deps.has('Std_exit')) visit('Std_exit');
   if (order.length) outputs.set('Ml2hxCompiler.hx', `// The generated compiler (tools/ml2hx/README.md): units in link order.\nclass Ml2hxCompiler {\n\tstatic function main() {\n${order.map(m => `\t\t${cls.get(m)}.ml2hxInit();`).join('\n')}\n\t}\n}\n`);
   walk(path.join(home, 'runtime'), p => outputs.set(path.relative(path.join(home, 'runtime'), p), fs.readFileSync(p, 'utf8')));
+  // zlib's deflate as the port translated it (haxe/src/libs/extc/Zlib.hx:
+  // byte for byte the zlib the reference links, which SWF output needs), for
+  // the extc primitives (runtime ml2hx.prim.Extc)
+  outputs.set('ml2hx/zlib/Zlib.hx', fs.readFileSync(path.join(root, 'haxe/src/libs/extc/Zlib.hx'), 'utf8').replace(/^package libs\.extc;/m, 'package ml2hx.zlib;').replaceAll('core.ds.Failure', 'ml2hx.rt.Failure')
+    // (the converted program runs on one domain: its locks guard nothing)
+    .replaceAll('sys.thread.Mutex', 'ZlibLock').replaceAll('haxe.atomic.AtomicBool', 'ZlibFlag')
+    + '\nprivate class ZlibLock {\n\tpublic function new() {}\n\tpublic inline function acquire() {}\n\tpublic inline function release() {}\n}\n'
+    + '\nprivate class ZlibFlag {\n\tvar v:Bool;\n\tpublic function new(v:Bool) this.v = v;\n\tpublic inline function load():Bool return v;\n\tpublic inline function store(x:Bool):Bool return v = x;\n}\n');
   writeOutputs(out, outputs);
   const uses = [];
   for (const [cls, members] of [...emitted.program.libraryUses].sort()) for (const [m, sig] of [...members].sort()) uses.push(`${cls}.${m}${sig}`);

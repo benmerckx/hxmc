@@ -3,11 +3,17 @@ package ml2hx.prim;
 import ml2hx.rt.*;
 import upstream.libs.extc.ExtcModule;
 
-// The C primitives of libs/extc (extc_stubs.c): zlib streams over haxe.zip,
-// paths and times over the host. Glue for the converted unit: it names the
+// The C primitives of libs/extc (extc_stubs.c): deflate streams over the
+// port's translation of zlib (ml2hx.zlib.Zlib, which generate.mjs copies from
+// haxe/src/libs/extc: the reference's bytes), inflate over haxe.zip, paths
+// and times over the host. Glue for the converted unit: it names the
 // unit's generated types.
 class Extc {
-	static final deflaters = new haxe.ds.ObjectMap<ExtcZstream, haxe.zip.Compress>();
+	static final deflaters = new haxe.ds.ObjectMap<ExtcZstream, ml2hx.zlib.Zlib>();
+	// the last source string as bytes (zlib_op passes the same string with
+	// growing offsets)
+	static var lastSrc:String;
+	static var lastBytes:haxe.io.Bytes;
 	static final inflaters = new haxe.ds.ObjectMap<ExtcZstream, haxe.zip.Uncompress>();
 	static function mode(f:ExtcZflush):haxe.zip.FlushMode {
 		return switch f {
@@ -19,22 +25,38 @@ class Extc {
 	}
 	public static function zlibDeflateInit2(level:Int63, windowBits:Int63):ExtcZstream {
 		var z = new ExtcZstream();
-		deflaters.set(z, new haxe.zip.Compress(level.toInt()));
+		deflaters.set(z, ml2hx.zlib.Zlib.deflateInit2(level.toInt(), windowBits.toInt()));
 		return z;
 	}
+	// zlib_deflate of extc_stubs.c, with its error messages
 	public static function zlibDeflateBytecode(z:ExtcZstream, src:String, spos:Int63, slen:Int63, dst:haxe.io.Bytes, dpos:Int63, dlen:Int63, flush:ExtcZflush):ExtcZresult {
-		var c = deflaters.get(z);
-		c.setFlushMode(mode(flush));
-		var input = ByteString.toBytes(src.substr(spos.toInt(), slen.toInt()));
-		var out = haxe.io.Bytes.alloc(dlen.toInt());
-		var r = c.execute(input, 0, out, 0);
-		dst.blit(dpos.toInt(), out, 0, r.write);
-		return new ExtcZresult(r.done, Int63.ofInt(r.read), Int63.ofInt(r.write));
+		var zl = deflaters.get(z);
+		if (src != lastSrc || lastBytes == null) {
+			lastSrc = src;
+			lastBytes = ByteString.toBytes(src);
+		}
+		var f = switch flush {
+			case Z_NO_FLUSH: ml2hx.zlib.Zlib.Z_NO_FLUSH;
+			case Z_PARTIAL_FLUSH: ml2hx.zlib.Zlib.Z_PARTIAL_FLUSH;
+			case Z_SYNC_FLUSH: ml2hx.zlib.Zlib.Z_SYNC_FLUSH;
+			case Z_FULL_FLUSH: ml2hx.zlib.Zlib.Z_FULL_FLUSH;
+			case Z_FINISH: ml2hx.zlib.Zlib.Z_FINISH;
+		}
+		var r = zl.deflate(lastBytes, spos.toInt(), slen.toInt(), dst, dpos.toInt(), dlen.toInt(), f);
+		if (r == ml2hx.zlib.Zlib.Z_OK || r == ml2hx.zlib.Zlib.Z_STREAM_END)
+			return new ExtcZresult(r == ml2hx.zlib.Zlib.Z_STREAM_END, Int63.ofInt(slen.toInt() - zl.getAvailIn()), Int63.ofInt(dlen.toInt() - zl.getAvailOut()));
+		throw new Failure(switch r {
+			case ml2hx.zlib.Zlib.Z_STREAM_ERROR: "Error in `zlib_deflate` (extc_stubs.c): call to `deflate` failed: Z_STREAM_ERROR";
+			case ml2hx.zlib.Zlib.Z_BUF_ERROR: "Error in `zlib_deflate` (extc_stubs.c): call to `deflate` failed: Z_BUF_ERROR";
+			case _: "Error in `zlib_deflate` (extc_stubs.c): unknown return code from `deflate`";
+		});
 	}
 	public static function zlibDeflateEnd(z:ExtcZstream):Unit {
-		var c = deflaters.get(z);
-		if (c != null) c.close();
+		var zl = deflaters.get(z);
 		deflaters.remove(z);
+		lastSrc = null;
+		lastBytes = null;
+		if (zl != null && zl.deflateEnd() != 0) throw new Failure("zlib_deflate_end");
 		return Unit.value;
 	}
 	public static function zlibInflateInit(windowBits:Int63):ExtcZstream {
@@ -57,8 +79,10 @@ class Extc {
 		inflaters.remove(z);
 		return Unit.value;
 	}
-	// zlib's compressBound
 	public static function zlibDeflateBound(z:ExtcZstream, n:Int63):Int63 {
+		var zl = deflaters.get(z);
+		if (zl != null) return Int63.ofInt(zl.deflateBound(n.toInt()));
+		// (an inflate stream: zlib's compressBound)
 		var len = n.toInt();
 		return Int63.ofInt(len + (len >> 12) + (len >> 14) + (len >> 25) + 13);
 	}

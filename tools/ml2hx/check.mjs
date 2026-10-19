@@ -32,6 +32,8 @@ export function typecheck(generated, {haxe = null, log = () => {}} = {}) {
     fs.copyFileSync(p, path.join(work, rel));
     modules.add(rel);
   });
+  // (sources generate.mjs adds to the runtime: zlib's deflate from the port)
+  if (fs.existsSync(path.join(generated, 'ml2hx/zlib'))) fs.cpSync(path.join(generated, 'ml2hx/zlib'), path.join(work, 'ml2hx/zlib'), {recursive: true});
   const removed = new Map(), missing = new Map();
   for (let round = 0; modules.size; round++) {
     const classes = [...modules].map(m => m.replace(/\.hx$/, '').replaceAll('/', '.'));
