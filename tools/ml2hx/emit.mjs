@@ -10,6 +10,7 @@ const libFunctors = {
   'Map.Make': {key: 'key', t: 'MapT', values: [['compare', 2]]},
   'Set.Make': {key: 'elt', t: 'SetT', values: [['compare', 2]]},
   'Hashtbl.Make': {key: 'key', t: 'HashtblT', values: [['equal', 2], ['hash', 1]]},
+  'Ephemeron.K1.Make': {key: 'key', t: 'EphemeronK1T', values: [['equal', 2], ['hash', 1]]},
 };
 const STD = 'ml2hx.std.';
 const UNIT = `${RT}Unit.value`;
@@ -177,6 +178,11 @@ class UnitEmitter {
     if (p.d) {
       const parent = this.resolveModule(p.d[0], n);
       if (parent.kind === 'lib') return new LibraryModule([...parent.path, p.d[1]]);
+      // A submodule of a library functor's application, in a type path the
+      // typer expanded (Luv's C.Types.Handle.t): the runtime's module named
+      // by the functor's path (types of applicative functors do not depend
+      // on the argument's values).
+      if (parent.kind === 'libapply') return new LibraryModule([...parent.fn.path, p.d[1]]);
       if (parent.kind === 'struct') {
         const m = parent.modules.get(p.d[1]);
         if (!m) this.fail(n, `unknown module ${pathName(p)}`);
@@ -186,7 +192,7 @@ class UnitEmitter {
     }
     if (p.a) {
       const fn = this.resolveModule(p.a[0], n);
-      if (fn.kind === 'lib') return {kind: 'libapply', path: pathName(p)};
+      if (fn.kind === 'lib') return {kind: 'libapply', path: pathName(p), fn};
     }
     this.fail(n, `module path ${pathName(p)}`);
   }
@@ -299,14 +305,30 @@ class UnitEmitter {
         }
         // A structural object type: an anonymous structure of methods (class
         // instances unify with it structurally).
-        if (this.objDepth > 3) this.fail(n, 'recursive structural object type');
-        this.objDepth = (this.objDepth ?? 0) + 1;
+        if (typeof t.row === 'number' && this.constraining !== i) {
+          const rv = this.t(t.row);
+          if (rv.k === 'var' && this.tvars.has(rv.id)) return this.tvars.get(rv.id);
+        }
+        // A recursive one (< m : 'a -> unit > as 'a) is a typedef of the
+        // module, referenced where the type recurs.
+        this.objTypedefs ??= new Map(); this.objStack ??= new Map();
+        if (this.objTypedefs.has(i)) return this.objTypedefs.get(i);
+        if (this.objStack.has(i)) { const r = this.objStack.get(i); r.recursive = true; return r.name; }
+        const rec = {name: `${this.cfg.class}Obj${this.objTypedefs.size + this.objStack.size}`, recursive: false};
+        this.objStack.set(i, rec);
+        let body;
         try {
-          return `{ ${t.fields.map(f => {
+          body = `{ ${t.fields.map(f => {
             const sig = this.methodSignature(f.t, this.methodArity(f.t), n);
             return `function ${valueName(f.name)}${sig.gen}(${sig.params}):${sig.res};`;
           }).join(' ')} }`;
-        } finally { this.objDepth--; }
+        } finally { this.objStack.delete(i); }
+        if (!rec.recursive) return body;
+        for (const v of this.tvars.values()) if (new RegExp(`\\b${v}\\b`).test(body)) this.fail(n, 'recursive structural object type over type parameters');
+        const pkgName = `${this.cfg.package}.${this.cfg.class}.${rec.name}`;
+        this.decls.push(`typedef ${rec.name} = ${body};`);
+        this.objTypedefs.set(i, pkgName);
+        return pkgName;
       }
       case 'package': this.fail(n, 'first-class module type');
     }
@@ -334,6 +356,10 @@ class UnitEmitter {
     const map = new Map();
     d.decl.params.forEach((p, k) => { const v = this.t(p); if (v.k === 'var') map.set(v.id, t.args[k]); });
     return this.substitute(d.decl.manifest, map);
+  }
+  expandAll(i) {
+    for (let guard = 0; guard < 20; guard++) { const e = this.expandAbbrev(i); if (e === null || e === i) break; i = e; }
+    return i;
   }
   substitute(i, map, seen = new Map()) {
     if (!map.size) return i;
@@ -374,9 +400,16 @@ class UnitEmitter {
     seen.add(i);
     const t = this.t(i);
     if (t.k === 'var') { if (!out.includes(t.id)) out.push(t.id); return out; }
+    // An open object type's row: a type parameter constrained by the
+    // object's methods (README, Objects).
+    if (t.k === 'object' && !t.class && typeof t.row === 'number') {
+      const rv = this.t(t.row);
+      if (rv.k === 'var') { (this.rowObjects ??= new Map()).set(rv.id, i); }
+    }
     for (const k of ['arg', 'res', 'body']) if (typeof t[k] === 'number') this.typeVars(t[k], out, seen);
     for (const a of t.args ?? []) if (typeof a === 'number') this.typeVars(a, out, seen);
     for (const f of t.fields ?? []) { if (typeof f.t === 'number') this.typeVars(f.t, out, seen); for (const a of f.args ?? []) this.typeVars(a, out, seen); }
+    if (t.k === 'object' && !t.class && typeof t.row === 'number') this.typeVars(t.row, out, seen);
     return out;
   }
   withTypeParams(vars, body) {
@@ -388,7 +421,15 @@ class UnitEmitter {
       while ([...this.tvars.values()].includes(candidate)) candidate = `T${this.tvars.size + ++i}`;
       this.tvars.set(id, candidate); names.push(candidate);
     }
-    try { return body(names); } finally { this.tvars = saved; }
+    // Row variables: constrained by their object's methods.
+    const constrained = names.map(nm => {
+      const id = [...this.tvars].find(([, v]) => v === nm)?.[0];
+      const obj = this.rowObjects?.get(id);
+      if (obj === undefined) return nm;
+      this.constraining = obj;
+      try { return `${nm}:${this.type(obj, null)}`; } finally { this.constraining = undefined; }
+    });
+    try { return body(constrained); } finally { this.tvars = saved; }
   }
   withLocalTypes(names, body, reuse = null) {
     if (!names.length) return body([]);
@@ -716,7 +757,16 @@ class UnitEmitter {
         const ps = Array.from({length: k}, (_, i) => `_a${i}`);
         return `${v}: function(${ps.join(', ')}) return ${ps.reduce((a, p) => `${a}(${p})`, x.hx)}`;
       }
-      this.fail(item, `functor argument value ${v}`);
+      if (x.kind === 'prim') {
+        // A primitive (let equal = (==)): applied to the parameters.
+        const ps = Array.from({length: k}, (_, i) => `_a${i}`);
+        const P = this.primitives()[x.prim];
+        if (!P || P.arity !== k) this.fail(item, `functor argument value ${v} (primitive ${x.prim})`);
+        const kt = d.arg.kind === 'struct' ? d.arg.types.get('t')?.decl?.manifest : null;
+        if (kt === null || kt === undefined) this.fail(item, `functor argument value ${v} (primitive ${x.prim}) without a key type`);
+        return `${v}: function(${ps.join(', ')}) return ${P.code(ps, ps.map(() => ({t: kt})), item)}`;
+      }
+      this.fail(item, `functor argument value ${v} (${x.kind})`);
     });
     const field = d.hx.split('.').at(-1);
     this.statics.push(`public static var ${field}:${d.cls};`);
@@ -2213,9 +2263,16 @@ class UnitEmitter {
     return this.stmt(fn.body);
   }
   classOf(t, n) {
-    const x = this.t(t);
-    if (x.k === 'object' && x.class) return this.resolveType(x.class, n);
-    if (x.k === 'constr') { try { const d = this.resolveType(x.path, n); if (d.kind === 'class') return d; } catch (e) {} }
+    for (let guard = 0; guard < 10; guard++) {
+      const x = this.t(t);
+      if (x.k === 'object' && x.class) return this.resolveType(x.class, n);
+      if (x.k !== 'constr') return null;
+      try { const d = this.resolveType(x.path, n); if (d.kind === 'class') return d; } catch (e) {}
+      // Through abbreviations (type t = cache).
+      const e = this.expandAbbrev(t);
+      if (e === null || e === t) return null;
+      t = e;
+    }
     return null;
   }
   newObject(n) {
@@ -2239,7 +2296,7 @@ class UnitEmitter {
     let arity;
     if (d) arity = d.methods.get(name)?.arity ?? this.fail(s, `unknown method ${name}`);
     else {
-      const ot = this.t(s.obj.t);
+      const ot = this.t(this.expandAll(s.obj.t));
       const f = ot.k === 'object' ? ot.fields.find(x => x.name === name) : null;
       arity = f ? this.methodArity(f.t) : this.fail(s, 'method call on a value of no object type');
     }

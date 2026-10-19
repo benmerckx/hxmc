@@ -112,6 +112,7 @@ and typ_desc t =
     let fs = List.filter (fun (_,k,_) -> Types.field_kind_repr k = Types.Fpublic) fs in
     node "object" ["fields",arr (fun (n,_,t) -> Obj ["name",Str n; "t",typ t]) fs;
       "open",Bool (match Types.get_desc rest with Types.Tnil -> false | _ -> true);
+      "row",(match Types.get_desc rest with Types.Tvar _ | Types.Tunivar _ -> typ rest | _ -> Null);
       "class",(match !nm with Some (p,_) -> path p | None -> Null);
       "classArgs",(match !nm with Some (_,args) -> arr typ args | None -> Arr [])]
   | Types.Tvariant row ->

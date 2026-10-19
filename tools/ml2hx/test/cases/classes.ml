@@ -27,3 +27,30 @@ let () =
   Printf.printf "%s %s %d\n" (named c) c#describe (c#add 1 2);
   let adder = c#add 100 in
   Printf.printf "%d\n" (adder 5)
+
+(* new typed as the ancestor, parameters used by inherit, abbreviations of
+   class types, recursive structural object types *)
+class virtual vbase (name : string) = object
+  method name = name
+  method virtual clone : vbase
+end
+class leaf (name : string) (n : int) = object
+  inherit vbase (name ^ string_of_int n)
+  method clone = new leaf name (n + 1)
+end
+type t = leaf
+let show (x : t) = Printf.printf "%s %s\n" x#name ((x#clone)#clone)#name
+let () = show (new leaf "a" 1)
+let rec count (o : < next : 'a option; v : int > as 'a) =
+  match o#next with None -> o#v | Some p -> o#v + count p
+let () =
+  let last : (< next : 'a option; v : int > as 'a) = object method next = None method v = 3 end in
+  let first = object method next = Some last method v = 4 end in
+  Printf.printf "%d\n" (count first)
+
+(* functions over open object types *)
+let names l = List.map (fun o -> o#name) l
+let () =
+  print_endline (String.concat "," (names [new leaf "p" 1; new leaf "q" 2]));
+  let rec total = function [] -> 0 | o :: r -> o#v + total r in
+  Printf.printf "%d\n" (total [object method v = 1 end; object method v = 2 end])
