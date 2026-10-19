@@ -43,11 +43,11 @@ class Poly {
 	// ---- enum constructors' ranks: >= 0 a constant constructor's rank among
 	// the constant ones, < 0 -(rank + 1) of a constructor with arguments
 
-	static var enumRanks = new haxe.ds.StringMap<Array<Int>>();
+	// (by the enum itself: its name would be made and hashed at each lookup)
+	static var enumRanks = new haxe.ds.ObjectMap<Dynamic, Array<Int>>();
 
 	static function ranks(e:Enum<Dynamic>):Array<Int> {
-		var name = Type.getEnumName(e);
-		var r = enumRanks.get(name);
+		var r = enumRanks.get(e);
 		if (r != null) return r;
 		var names = Type.getEnumConstructs(e);
 		var constant = [for (_ in names) false];
@@ -55,7 +55,7 @@ class Poly {
 		r = [];
 		var c = 0, b = 0;
 		for (i in 0...names.length) r.push(constant[i] ? c++ : -(++b));
-		enumRanks.set(name, r);
+		enumRanks.set(e, r);
 		return r;
 	}
 
@@ -63,20 +63,26 @@ class Poly {
 		return ranks(Type.getEnum(v))[Type.enumIndex(v)];
 
 	static function kind(v:Dynamic):Int {
-		if (v == null) return K_IMM;
-		if (Std.isOfType(v, String)) return K_STRING;
-		// (a float of an integral value passes Std.isOfType(v, Int) on some
-		// targets, eval and hxmc among them: Type.typeof tells them apart)
-		if (Std.isOfType(v, Float)) return Type.typeof(v) == TFloat ? K_DOUBLE : K_IMM;
-		if (Std.isOfType(v, Bool) || Int64.isInt64(v)) return K_IMM;
-		if (Std.isOfType(v, Abstract)) return K_ABSTRACT;
-		if (Std.isOfType(v, Block)) return K_BLOCK;
-		if (Std.isOfType(v, PolyVariant)) return K_IMM; // a constant polymorphic variant: its hash
-		if (Reflect.isEnumValue(v)) return enumRank(v) >= 0 ? K_IMM : K_ENUM;
-		if (Std.isOfType(v, Array)) return K_ARRAY;
-		if (Std.isOfType(v, haxe.io.Bytes)) return K_BYTES;
-		if (Reflect.isFunction(v)) return K_FUNC;
-		throw new InvalidArgument("ml2hx: no OCaml representation for " + Std.string(v));
+		// (one Type.typeof, then class tests only for class instances)
+		return switch Type.typeof(v) {
+			case TNull | TInt | TBool: K_IMM;
+			case TFloat: K_DOUBLE;
+			case TEnum(e): ranks(e)[Type.enumIndex(v)] >= 0 ? K_IMM : K_ENUM;
+			case TFunction: K_FUNC;
+			case TClass(c):
+				if (c == String) K_STRING;
+				else if (Std.isOfType(v, Block)) Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK;
+				else if (Int64.isInt64(v)) K_IMM;
+				else if (c == Array) K_ARRAY;
+				else if (Std.isOfType(v, Abstract)) K_ABSTRACT;
+				else if (Std.isOfType(v, PolyVariant)) K_IMM; // a constant polymorphic variant: its hash
+				else if (Std.isOfType(v, haxe.io.Bytes)) K_BYTES;
+				else if (Std.isOfType(v, Array)) K_ARRAY;
+				else throw new InvalidArgument("ml2hx: no OCaml representation for " + Std.string(v));
+			case _:
+				if (Int64.isInt64(v)) K_IMM;
+				else throw new InvalidArgument("ml2hx: no OCaml representation for " + Std.string(v));
+		}
 	}
 
 	// the OCaml integer of an immediate value, null for a block
