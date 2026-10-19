@@ -1383,7 +1383,9 @@ class UnitEmitter {
       }
       case 'lazy': return `new ${RT}Lazy(function() return ${this.value(n.e)})`;
       case 'open': return this.value(n.e);
-      case 'coerce': return this.value(n.e);
+      // (e :> t): an upcast OCaml has checked (Haxe's are invariant in type
+      // parameters: List<Child> is no List<Parent>)
+      case 'coerce': return `(cast ${this.value(n.e)})`;
       case 'newtype': return this.withLocalType(n, () => this.value(n.e));
       case 'unreachable': return `throw ${this.matchFailure(n)}`;
       case 'letexception': this.fail(n, 'local exception');
@@ -1872,6 +1874,11 @@ class UnitEmitter {
     if (from !== null && from === to) return v;
     if (this.isPredef(arg.t, 'char') && this.isInt(n.t)) return `${RT}Int63.ofInt(${v})`;
     if (this.isInt(arg.t) && this.isPredef(n.t, 'char')) return `(${wrap(v)}.toInt() & 255)`;
+    // A constant constructor seen as an int (Obj.magic): its rank, as OCaml
+    // represents it; an int seen as a variant of constant constructors.
+    const variantDecl = i => { const t = this.t(i); if (t.k !== 'constr' || t.path.p) return null; try { const d = this.resolveType(t.path, n); return d.decl?.kind === 'variant' ? d : null; } catch (e) { return null; } };
+    if (this.isInt(n.t) && variantDecl(arg.t)) return `${RT}Int63.ofInt64(${RT}Poly.immediateOf(${v}))`;
+    if (this.isInt(arg.t)) { const d = variantDecl(n.t); if (d && d.decl.ctors.every(c => !c.args.record && !c.args.tuple?.length)) return `Type.createEnumIndex(${d.hx.replace(/<.*$/, '')}, ${wrap(v)}.toInt())`; }
     const target = this.typeOrNull(n.t, n);
     return target ? `(cast ${v} : ${target})` : `(cast ${v})`;
   }
@@ -2294,6 +2301,8 @@ class UnitEmitter {
       }
       case 'lazy': { const inner = this.pattern(p.p); return {...inner, pat: `_.force() => ${inner.pat}`}; }
       case '$intkey': return {pat: p.v};
+      // `(31 | 32) as i` over an int key: i is the subject's temporary
+      case '$keyalias': { const inner = this.pattern(p.p); this.ids.set(p.id, {kind: 'local', name: p.subject}); return inner; }
       case '$subject': {
         // A variable over the keyed subject: the subject's temporary itself
         // (also in guards).
@@ -2646,7 +2655,7 @@ function intKeyed(p, subject) {
     case 'const': return {...p, k: '$intkey', v: BigInt(p.c.v) < 0n ? `(${p.c.v})` : p.c.v};
     case 'var': return {...p, k: '$subject', subject};
     case 'or': return {...p, a: intKeyed(p.a, subject), b: intKeyed(p.b, subject)};
-    case 'alias': return {...p, p: intKeyed(p.p, subject)};
+    case 'alias': return {...p, k: '$keyalias', p: intKeyed(p.p, subject), subject};
   }
   return p;
 }
