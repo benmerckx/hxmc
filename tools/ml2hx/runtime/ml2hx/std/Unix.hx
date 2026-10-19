@@ -416,6 +416,9 @@ class Unix {
 		var d = channelDescr.get(c);
 		return d != null ? d : fail(EBADF, "descr_of_out_channel", "");
 	}
+	// the host's descriptor of a socket (for hxmc's natives): descriptors
+	// here are Haxe streams, which do not expose one
+	public static function nativeFd(d:UnixFileDescr):Int throw new Failure("Unix: no native descriptor for this socket");
 	public static function dup(d:UnixFileDescr, ?cloexec:Bool):UnixFileDescr return d;
 	public static function setNonblock(d:UnixFileDescr):Unit return Unit.value;
 	public static function clearNonblock(d:UnixFileDescr):Unit return Unit.value;

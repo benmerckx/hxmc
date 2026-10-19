@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {root, frontend, emitUnits, libraryUnits} from '../generate.mjs';
+import {root, frontend, emitUnits, libraryUnits, nativesClassPath} from '../generate.mjs';
 import {format} from '../format.mjs';
 import {Unsupported} from '../emit.mjs';
 
@@ -67,7 +67,7 @@ export function generateCase(name, cmts, dir, options = {}) {
   fs.writeFileSync(path.join(out, pkg.replaceAll('.', '/'), 'Main.hx'), format(`package ${pkg};\nclass Main {\n\tstatic function main() {\n${order.map(m => `\t\t${cls.get(m)}.ml2hxInit();`).join('\n')}\n\t}\n}\n`));
   return {out, main};
 }
-const runtime = ['-cp', 'tools/ml2hx/runtime'];
+const runtime = ['-cp', 'tools/ml2hx/runtime', '-cp', nativesClassPath()];
 const only = process.env.ML2HX_ONLY?.split(',');
 const cases = fs.existsSync(casesDir) ? fs.readdirSync(casesDir).filter(f => f.endsWith('.ml') || fs.statSync(path.join(casesDir, f)).isDirectory()).sort() : [];
 for (const entry of cases) {

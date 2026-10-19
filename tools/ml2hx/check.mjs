@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {generate, root} from './generate.mjs';
+import {generate, root, nativesClassPath} from './generate.mjs';
 
 function haxeCommand(args, haxe) {
   if (haxe) return spawnSync(haxe, args, {cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024});
@@ -36,7 +36,7 @@ export function typecheck(generated, {haxe = null, log = () => {}} = {}) {
   for (let round = 0; modules.size; round++) {
     const classes = [...modules].map(m => m.replace(/\.hx$/, '').replaceAll('/', '.'));
     fs.writeFileSync(path.join(work, 'CheckAll.hx'), `class CheckAll {\n\tstatic function main() {\n${classes.map(c => `\t\t${c}.ml2hxInit();`).join('\n')}\n\t}\n}\n`);
-    const r = haxeCommand(['-cp', path.relative(root, work), '-cp', 'tools/ml2hx/runtime', '-main', 'CheckAll', '--no-output', '-D', 'no-deprecation-warnings'], haxe);
+    const r = haxeCommand(['-cp', path.relative(root, work), '-cp', 'tools/ml2hx/runtime', '-cp', nativesClassPath(), '-main', 'CheckAll', '--no-output', '-D', 'no-deprecation-warnings'], haxe);
     const out = (r.stdout ?? '') + (r.stderr ?? '');
     if (r.status === 0) break;
     const bad = new Set();

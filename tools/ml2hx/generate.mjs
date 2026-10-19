@@ -166,6 +166,18 @@ export function loadUnits({upstream, buildDir, files = null}) {
   units.push(...libraryUnits(units, failures, ['Std_exit']));
   return {sources, units, failures};
 }
+// hxmc's own implementations the runtime binds C libraries to (hxmc.Regex
+// for pcre2): a class path with hxmc's `hxmc` package only (its std overrides
+// stay out of a build with another Haxe).
+export function nativesClassPath() {
+  const dir = path.join(root, 'bin/ml2hx/natives');
+  const link = path.join(dir, 'hxmc');
+  if (!fs.existsSync(link)) {
+    fs.mkdirSync(dir, {recursive: true});
+    fs.symlinkSync(path.join(root, 'hxmc/std/hxmc'), link, 'dir');
+  }
+  return path.relative(root, dir);
+}
 // Emit every unit; returns the outputs and per-unit failures.
 export function emitUnits(units, options = {}) {
   const program = new Program({units, ...options});

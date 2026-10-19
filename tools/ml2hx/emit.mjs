@@ -35,6 +35,7 @@ const builtinTypes = {
   'Stdlib__Obj.t': 'Any', 'Stdlib__Obj.Extension_constructor.t': 'Any', 'Stdlib__Obj.raw_data': 'haxe.Int64',
   'Stdlib__Obj.Ephemeron.t': `${PRIM}Weak.Ephemeron`, 'Stdlib__Weak.t': `${PRIM}Weak.WeakT`,
   'Stdlib__Digest.BLAKE128.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE256.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE512.state': `${PRIM}Digest.Blake2State`,
+  ...Object.fromEntries(['ctr_drbg_context', 'entropy_context', 'ssl_config', 'ssl_context', 'x509_crt', 'pk_context'].map(t => [`Mbedtls.mbedtls_${t}`, `${PRIM}Mbedtls.Handle`])),
   'Stdlib__Mutex.t': `${PRIM}Sync.Mutex`, 'Stdlib__Condition.t': `${PRIM}Sync.Condition`,
   'Stdlib__Printexc.raw_backtrace_slot': `${PRIM}Backtrace.Slot`,
   'Stdlib__Bigarray.Genarray.t': `${PRIM}BigarrayData`, 'Stdlib__Bigarray.Array0.t': `${PRIM}BigarrayData`,
@@ -704,7 +705,8 @@ class UnitEmitter {
     if (f.param && arg) d.idMap.set(f.param, arg);
     // F(struct ... end): the argument is a submodule of this unit, emitted
     // before the instance.
-    if (argExpr?.k === 'struct') d.argStruct = {s: arg, path: argPath};
+    // (a functor whose body applies another has their arguments both)
+    if (argExpr?.k === 'struct') d.argStructs = [{s: arg, path: argPath, em: this}, ...(d.argStructs ?? [])];
     return d;
   }
   // Write into another emitter's output (functor instances of other units).
@@ -819,7 +821,7 @@ class UnitEmitter {
   }
   // A submodule's items (a functor instance's with its own identifiers).
   emitInstance(d, path) {
-    if (d.argStruct) this.emitItems(d.argStruct.s.items, d.argStruct.s, d.argStruct.path);
+    for (const a of d.argStructs ?? []) (a.em ?? this).emitItems(a.s.items, a.s, a.path);
     const em = d.emitter ?? this;
     for (const [k, v] of d.idMap ?? []) em.ids.set(k, v);
     em.emitItems(d.items, d, path);
