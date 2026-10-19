@@ -146,6 +146,7 @@ let constructor (c:Types.constructor_description) =
        @ (match c.cstr_tag with Types.Cstr_extension (p,_) -> ["ext",path p] | _ -> []))
 let label_ref (l:Types.label_description) =
   Obj ["name",Str l.lbl_name; "type",type_path l.lbl_res; "pos",Num l.lbl_pos;
+       "poly",Bool (match Types.get_desc l.lbl_arg with Types.Tpoly (_, _ :: _) -> true | _ -> false);
        "all",Arr (Array.to_list (Array.map (fun (l:Types.label_description) -> Str l.lbl_name) l.lbl_all))]
 
 (* ---- patterns ---- *)

@@ -37,7 +37,10 @@ make ml2hx-check                             # the progress count (below)
 `ML2HX_ANY_OCAML=1` builds the frontend with another OCaml (typed trees are
 version-specific: expect differences); `build-frontend.mjs --js` adds a
 js_of_ocaml build. `ML2HX_HAXE=haxe` runs tests and checks with another Haxe
-than hxmc's committed stage0 (faster).
+than hxmc's committed stage0 (faster). The count needs it for now: stage0's GC
+aborts (`gc: verify: bad header`) typing all ~440 modules at once, so CI
+runs the semantic tests on stage0 and the count on a pinned Haxe 5 nightly
+(`.github/workflows/ml2hx.yml`).
 
 ## Progress
 

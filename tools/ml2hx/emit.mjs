@@ -316,6 +316,7 @@ class UnitEmitter {
         if (d.tparam) return d.tparam;
         if (d.abbrev !== undefined) return d.abbrev;
         const args = t.args.map(a => this.type(a, n));
+        if (d.kind === 'class') for (const _ of d.extraParams ?? []) args.push('Any');
         // A library abbreviation the runtime does not define: its expansion.
         if (d.library && t.exp !== undefined) return this.type(t.exp, n);
         if (d.library) this.p.useLibrary(d.hx.replace(/\.[^.]+$/, ''), `type ${d.hx.split('.').at(-1)}`, `${t.args.length} parameter(s)`);
@@ -328,7 +329,8 @@ class UnitEmitter {
           // #c carries the row variable first.
           let args = t.classArgs ?? [];
           if (args.length === d.decl.params.length + 1) args = args.slice(1);
-          return d.hx + (args.length ? `<${args.map(a => this.type(a, n)).join(', ')}>` : '');
+          const ts = [...args.map(a => this.type(a, n)), ...(d.extraParams ?? []).map(() => 'Any')];
+          return d.hx + (ts.length ? `<${ts.join(', ')}>` : '');
         }
         // A structural object type: an anonymous structure of methods (class
         // instances unify with it structurally).
@@ -1214,7 +1216,14 @@ class UnitEmitter {
         vars.forEach((v, i) => pending.push([v.id, {kind: 'local', name: names[i]}]));
       }
     }
-    for (const [id, d] of pending) this.ids.set(id, d);
+    // A polymorphic local value (generalised by the relaxed value
+    // restriction: `let l = [(v, None)]`) has the type each use gives it:
+    // cast there.
+    const types = new Map(n.bindings.flatMap(b => patternVars(b.p)).map(v => [v.id, v.t]));
+    for (const [id, d] of pending) {
+      const t = types.get(id);
+      this.ids.set(id, d.kind === 'local' && t !== undefined && this.genericVarsOfValue(t).some(v => !this.tvars.has(v)) ? {...d, polyLocal: true} : d);
+    }
     return out.join(' ');
   }
   recBindings(bs, n) {
@@ -1546,6 +1555,7 @@ class UnitEmitter {
   identValue(n) {
     const d = this.identDesc(n);
     if (d.kind === 'local' && d.magicFrom !== undefined) return this.identity(d.name, {t: d.magicFrom}, n);
+    if (d.kind === 'local' && d.polyLocal) return `(cast ${d.name})`;
     if (d.kind === 'local' && d.aliasT !== undefined && n.t !== d.aliasT && this.typeOrNull(n.t, n) !== this.typeOrNull(d.aliasT, n)) return `(cast ${d.name})`;
     if (d.kind === 'local' && d.aliasT !== undefined && n.t !== d.aliasT && this.typeOrNull(n.t, n) === null) return `(cast ${d.name})`;
     return this.valueRef(d, n, n);
@@ -1640,9 +1650,13 @@ class UnitEmitter {
     // Unknown function value: curried application.
     if (n.args.some(a => !a.e)) return this.partialUnknown(n);
     const all = [...n.args.map(a => a.e), fn];
+    // A polymorphic record field ('a. 'a list -> ...): its Haxe type has Any
+    // for 'a: arguments and result cast.
+    const poly = fn.k === 'field' && fn.lbl?.poly;
     return this.ordered(all, vals => {
       const f = vals.pop();
-      return vals.reduce((acc, a) => `${acc}(${a})`, needsParens(f) ? `(${f})` : f);
+      const call = vals.reduce((acc, a) => `${acc}(${poly ? `(cast ${a})` : a})`, needsParens(f) ? `(${f})` : f);
+      return poly ? `(cast ${call})` : call;
     });
   }
   // ({cast: f}: the function of a castResult knownCall, its result cast)
@@ -2196,7 +2210,9 @@ class UnitEmitter {
     // { e with ... }: the base is evaluated first, then the fields right to left.
     const build = (b) => this.ordered(given, vals => {
       let i = 0;
-      const args = fields.map(f => f.e ? vals[i++] : `${b}.${this.fieldName(f.lbl)}`);
+      // (a polymorphic field's value is cast: the field's Haxe type has Any
+      // for its own variables)
+      const args = fields.map(f => f.e ? (f.lbl?.poly ? `(cast ${vals[i++]})` : vals[i++]) : `${b}.${this.fieldName(f.lbl)}`);
       return `new ${t}(${args.join(', ')})`;
     });
     if (!n.base) return build(null);
@@ -2432,6 +2448,10 @@ class UnitEmitter {
   declareClass(c, hx) {
     const parts = this.classParts(c.ce);
     const d = {kind: 'class', hx, decl: c, parts, methods: new Map(), parent: null, arity: parts.params.length};
+    // The class's implicit parameters: the generalised variables of its
+    // parameters' types (class c cs = ... with cs : < m : 'a -> unit; .. >).
+    const declared = new Set(this.declParams(c, c));
+    d.extraParams = [...new Set(parts.params.flatMap(p => this.genericVarsOfValue(p.p.t)))].filter(v => !declared.has(v) && !this.rowObjects?.has(v));
     for (const f of parts.cs.fields) {
       if (f.k === 'inherit') {
         if (d.parent) this.fail(f, 'multiple inheritance');
@@ -2486,7 +2506,7 @@ class UnitEmitter {
   emitClass(c, d) {
     const {params, lets, cs} = d.parts;
     const name = d.hx.split('.').at(-1);
-    this.withTypeParams(this.declParams(c, c), tparams => {
+    this.withTypeParams([...this.declParams(c, c), ...(d.extraParams ?? [])], tparams => {
       const gen = tparams.length ? `<${tparams.join(', ')}>` : '';
       // pre: local bindings of the parameters and class lets, before the
       // super call (which may use them); ctor: the field stores after it.
@@ -2565,9 +2585,10 @@ class UnitEmitter {
     const pn = d.parentNode;
     // The inherited class's type arguments, from the inherit expression's type.
     const p = d.parent;
-    if (!p.decl.params.length) return p.hx;
+    const extra = (p.extraParams ?? []).map(() => 'Any');
+    if (!p.decl.params.length) return extra.length ? `${p.hx}<${extra.join(', ')}>` : p.hx;
     let ce = pn.ce; while (ce.k === 'constraint' || ce.k === 'apply') ce = ce.k === 'apply' ? ce.fn : ce.ce;
-    if (ce.k === 'ident' && ce.targs?.length === p.decl.params.length) return `${p.hx}<${ce.targs.map(t => this.type(t, pn)).join(', ')}>`;
+    if (ce.k === 'ident' && ce.targs?.length === p.decl.params.length) return `${p.hx}<${[...ce.targs.map(t => this.type(t, pn)), ...extra].join(', ')}>`;
     this.fail(pn, 'inheriting a parameterised class');
   }
   parentHasVal(p, name) { return p.parts.cs.fields.some(f => f.k === 'val' && f.name === name) || (p.parent && this.parentHasVal(p.parent, name)); }
@@ -2641,7 +2662,8 @@ class UnitEmitter {
     // The result type names the class with its arguments, unless it was
     // unified with an ancestor's type (Haxe infers the arguments then).
     const rc = this.classOf(this.resultAfter(n.fn.t, d.arity), n);
-    const cls = rc && rc.hx === d.hx ? this.type(this.resultAfter(n.fn.t, d.arity), n) : d.hx;
+    // (implicit parameters: Haxe infers them from the arguments)
+    const cls = rc && rc.hx === d.hx && !d.extraParams?.length ? this.type(this.resultAfter(n.fn.t, d.arity), n) : d.hx;
     return this.knownCall(`new ${cls}`, d.arity, n, n.fn, d.arity === 0);
   }
   // obj#m args: a method call with the method's arity (from its class).
