@@ -65,17 +65,17 @@ export function prepare(upstream) {
   run('dune', ['build', '--root', build, '--profile', 'release', '@check'], {env: {...process.env, STATICLINK: '0', LIB_PARAMS: ''}});
   return build;
 }
-// Library modules the hand-written runtime does not provide are converted
-// too, from their opam packages' typed trees (extlib's PMap, DynArray, IO;
-// sedlex's Sedlexing; camlp-streams' Stream; Stdlib's Queue, Filename...):
-// every library module the program reaches, transitively.
-const runtimeStd = path.join(home, 'runtime/ml2hx/std');
-// Packages (and Stdlib modules) converted rather than hand-written; the rest
-// (C bindings: unix, str, luv, ctypes, threads...) are runtime modules.
-const convertedPackages = new Set(['extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff', 'dynamic_gc']);
-const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing', 'Stdlib__Arg']);
-const notConverted = new Set(['Stdlib', 'CamlinternalFormatBasics', 'CamlinternalFormat', 'CamlinternalLazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Obj', 'Stdlib__Effect', 'Stdlib__Domain']);
-export function libraryUnits(units, failures) {
+// Library modules are converted too, from the typed trees of the pinned
+// switch's packages (OCaml's Stdlib and Camlinternal*, extlib, sedlex,
+// camlp-streams, ...): every library module the program reaches,
+// transitively. Their C externals are the runtime's primitives
+// (ml2hx.prim, README). Packages that are bindings of C libraries (luv,
+// ctypes, mbedtls, pcre2...) are runtime modules.
+const convertedPackages = new Set(['ocaml', 'extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff', 'dynamic_gc']);
+// Modules whose implementation is the value representation itself (lazy
+// blocks, objects, recursive modules, effects): runtime modules.
+const notConverted = new Set(['CamlinternalLazy', 'Stdlib__Lazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Effect', 'Stdlib__Oo']);
+export function libraryUnits(units, failures, extra = []) {
   let roots = [];
   try { roots = run('ocamlfind', ['printconf', 'path']).trim().split('\n').filter(Boolean); } catch (e) { return []; }
   const index = new Map(), includeDirs = new Set();
@@ -89,18 +89,23 @@ export function libraryUnits(units, failures) {
     if (!index.has(modname)) index.set(modname, p);
   });
   const known = new Set(units.map(u => u.modname));
-  const provided = name => fs.existsSync(path.join(runtimeStd, `${name.replace(/^Stdlib__/, '')}.hx`));
   const out = [];
   let pending = units.slice();
+  let first = true;
   while (pending.length) {
     const wanted = new Set();
+    if (first) for (const name of extra) if (!known.has(name) && index.has(name)) { wanted.add(name); known.add(name); }
+    first = false;
     for (const u of pending) {
-      const text = fs.readFileSync(u.irPath, 'utf8');
+      // Module aliases (Stdlib's `module List = Stdlib__List`) do not make
+      // a module reachable: uses are normalised to the aliased unit.
+      const ir = JSON.parse(fs.readFileSync(u.irPath, 'utf8'));
+      if (Array.isArray(ir.items)) ir.items = ir.items.filter(it => !(it.k === 'module' && it.m?.k === 'ident'));
+      const text = JSON.stringify(ir);
       for (const m of text.matchAll(/"g":"(\w+)"/g)) {
         const name = m[1];
-        if (known.has(name) || notConverted.has(name) || provided(name) || !index.has(name)) continue;
-        const pkg = path.basename(path.dirname(index.get(name)));
-        if (pkg === 'ocaml' ? !convertedStdlib.has(name) : !convertedPackages.has(pkg)) continue;
+        if (known.has(name) || notConverted.has(name) || !index.has(name)) continue;
+        if (!convertedPackages.has(path.basename(path.dirname(index.get(name))))) continue;
         wanted.add(name); known.add(name);
       }
     }

@@ -45,3 +45,35 @@ export function libraryModule(unit) {
   if (unit.startsWith('Stdlib__')) return unit.slice(8);
   return shadowsStdlib[unit] ?? unit;
 }
+
+// A C primitive (`external ... = "caml_string_blit"`) -> its runtime class,
+// ml2hx.prim.<Group>, grouped as OCaml's runtime groups them in C files.
+// Primitives of other C libraries belong to their unit's class.
+const primGroups = [
+  [/backtrace|debug_info|^caml_(get_exception|convert_raw|raw_backtrace|record_backtrace|get_current_callstack)/, 'Backtrace'],
+  [/^caml_(ml_mutex|ml_condition|atomic)/, 'Sync'],
+  [/^caml_(ml_domain|domain|recommended_domain_count)/, 'Domain'],
+  [/^caml_ml_/, 'Io'],
+  [/^caml_(sys_|install_signal_handler|runtime_|register_named_value|ml_runtime)/, 'Sys'],
+  [/^caml_(string|bytes|create_bytes|blit_string|blit_bytes|fill_bytes|fill_string)/, 'Strings'],
+  [/^caml_(make_vect|array_|floatarray_|make_float_vect|uniform_array)/, 'Arrays'],
+  [/^caml_(int|int32|int64|nativeint|format_int)_?/, 'Ints'],
+  [/(float|^caml_(classify|frexp|ldexp|modf|expm1|log1p|hypot|copysign|signbit|nextafter|trunc|round|cbrt|exp2|log2|erf|erfc|fma|atan2|acosh|asinh|atanh|power|sqrt|exp|log|cos|sin|tan|acos|asin|atan|cosh|sinh|tanh|ceil|floor|fmod|hexstring_of_float))/, 'Floats'],
+  [/^caml_(compare|equal|notequal|lessthan|lessequal|greaterthan|greaterequal)$/, 'Compare'],
+  [/^caml_(hash|string_hash)/, 'Hash'],
+  [/^caml_(obj_|lazy_|fresh_oo_id|set_oo_id|alloc_dummy|update_dummy|get_public_method|reachable_words)/, 'Obj'],
+  [/^caml_(md5|blake2)/, 'Digest'],
+  [/^caml_(lex_engine|new_lex_engine)/, 'Lexing'],
+  [/^caml_(parse_engine|set_parser_trace)/, 'Parsing'],
+  [/backtrace|^caml_(get_exception|convert_raw|raw_backtrace|record_backtrace|get_current_callstack)/, 'Backtrace'],
+  [/^caml_(gc_|final_|memprof|get_minor_free|eventlog|get_major)/, 'Gc'],
+  [/^caml_(ephe_|weak_)/, 'Weak'],
+  [/^caml_ba_/, 'Bigarray'],
+  [/^caml_lxm/, 'Random'],
+  [/^caml_unix_|^unix_/, 'Unix'],
+  [/^caml_/, 'Runtime'],
+];
+export function primGroup(cname, unitModule) {
+  for (const [re, g] of primGroups) if (re.test(cname)) return g;
+  return unitModule;
+}

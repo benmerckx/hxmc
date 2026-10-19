@@ -224,7 +224,24 @@ let rec expr e =
   | Texp_unreachable -> "unreachable",[]
   | Texp_extension_constructor (_,p) -> "extconstr",["path",path p]
   | Texp_open (_,body) -> "open",["e",expr body] in
-  let base = Obj (("k",Str k)::("t",typ e.exp_type)::("l",loc e.exp_loc)::fields) in
+  (* A function's type through the equations of its context (a GADT
+     branch's `a = char -> b`): the arrows of its parameters. *)
+  let ty = match e.exp_desc with
+    | Texp_function (params, _) ->
+      (match env_of e.exp_env with
+       | None -> e.exp_type
+       | Some env ->
+         let rec arrows n t =
+           if n = 0 then t else
+           let h = try Ctype.expand_head env t with _ -> t in
+           match Types.get_desc h with
+           | Types.Tarrow (l, a, r, c) when h != t || n > 0 ->
+             let r' = arrows (n - 1) r in
+             if h == t && r' == r then t else Btype.newgenty (Types.Tarrow (l, a, r', c))
+           | _ -> t in
+         arrows (List.length params) e.exp_type)
+    | _ -> e.exp_type in
+  let base = Obj (("k",Str k)::("t",typ ty)::("l",loc e.exp_loc)::fields) in
   (* Coercions change the static type (objects, polymorphic variants); newtypes
      scope locally abstract types. Constraints are only annotations. *)
   List.fold_left (fun inner (x,l,_) -> match x with

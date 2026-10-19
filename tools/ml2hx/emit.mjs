@@ -1,7 +1,7 @@
 // Typed-tree IR (frontend protocol 2) -> Haxe. Unsupported constructs are
 // errors, never Dynamic or stubs. The naming contract is in naming.mjs and
 // tools/ml2hx/README.md.
-import {valueName, typeName, exnName, libraryModule, isOperator, keywords, moduleTypeName, predefExns} from './naming.mjs';
+import {valueName, typeName, exnName, libraryModule, isOperator, keywords, moduleTypeName, predefExns, primGroup} from './naming.mjs';
 
 const RT = 'ml2hx.rt.';
 // Library functors: the argument's values (with their arities), the result's
@@ -23,12 +23,30 @@ export class Unsupported extends Error {
   }
 }
 const predefTypes = {int: 'Int', char: 'Int', string: 'String', bytes: 'haxe.io.Bytes', float: 'Float', bool: 'Bool', unit: `${RT}Unit`,
-  exn: `${RT}MlException`, array: 'Array', list: `${RT}MlList`, option: `${RT}MlOption`, nativeint: 'Int', int32: 'haxe.Int32', int64: 'haxe.Int64',
-  lazy_t: `${RT}Lazy`, floatarray: 'Array<Float>'};
+  exn: `${RT}MlException`, array: 'Array', list: `${RT}MlList`, option: `${RT}MlOption`, nativeint: 'haxe.Int64', int32: 'haxe.Int32', int64: 'haxe.Int64',
+  lazy_t: `${RT}Lazy`, floatarray: 'Array<Float>', extension_constructor: 'Any'};
+// Types of converted library units whose values the runtime's primitives
+// make: their Haxe representation (the declaration is not emitted).
+const PRIM = 'ml2hx.prim.';
+const builtinTypes = {
+  'Stdlib.ref': `${RT}Ref`, 'Stdlib__Atomic.t': `${RT}Ref`, 'Stdlib.atomic_t': `${RT}Ref`,
+  'Stdlib.in_channel': `${PRIM}Io.InChannel`, 'Stdlib.out_channel': `${PRIM}Io.OutChannel`,
+  'Stdlib__Obj.t': 'Any', 'Stdlib__Obj.Extension_constructor.t': 'Any', 'Stdlib__Obj.raw_data': 'haxe.Int64',
+  'Stdlib__Obj.Ephemeron.t': `${PRIM}Weak.Ephemeron`, 'Stdlib__Weak.t': `${PRIM}Weak.WeakT`,
+  'Stdlib__Digest.BLAKE128.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE256.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE512.state': `${PRIM}Digest.Blake2State`,
+  'Stdlib__Mutex.t': `${PRIM}Sync.Mutex`, 'Stdlib__Condition.t': `${PRIM}Sync.Condition`,
+  'Stdlib__Printexc.raw_backtrace_slot': `${PRIM}Backtrace.Slot`,
+  'Stdlib__Bigarray.Genarray.t': `${PRIM}BigarrayData.Bigarray`, 'Stdlib__Bigarray.Array0.t': `${PRIM}BigarrayData.Bigarray`,
+  'Stdlib__Bigarray.Array1.t': `${PRIM}BigarrayData.Bigarray`, 'Stdlib__Bigarray.Array2.t': `${PRIM}BigarrayData.Bigarray`,
+  'Stdlib__Bigarray.Array3.t': `${PRIM}BigarrayData.Bigarray`,
+};
+// C primitives OCaml declares with char and with int (output_char and
+// output_byte): the runtime's take and give ints.
+const intPrims = {caml_ml_output_char: {args: [1]}, caml_ml_input_char: {res: true}};
 // Library types the emitter owns the representation of.
 // Library types the emitter owns, and abbreviations of predefined types.
 const coreLibraryTypes = {'Stdlib.ref': `${RT}Ref`, 'Lazy.t': `${RT}Lazy`, 'CamlinternalLazy.t': `${RT}Lazy`, 'Stdlib.Lazy.t': `${RT}Lazy`,
-  'String.t': 'String', 'Bytes.t': 'haxe.io.Bytes', 'Char.t': 'Int', 'Int32.t': 'haxe.Int32', 'Int64.t': 'haxe.Int64', 'Nativeint.t': 'Int',
+  'String.t': 'String', 'Bytes.t': 'haxe.io.Bytes', 'Char.t': 'Int', 'Int32.t': 'haxe.Int32', 'Int64.t': 'haxe.Int64', 'Nativeint.t': 'haxe.Int64',
   'Int.t': `${RT}Int63`, 'Bool.t': 'Bool', 'Float.t': 'Float', 'Unit.t': `${RT}Unit`, 'List.t': `${RT}MlList`, 'Option.t': `${RT}MlOption`,
   'Array.t': 'Array', 'Stdlib.int32': 'haxe.Int32', 'Stdlib.int64': 'haxe.Int64', 'Stdlib.Int32.t': 'haxe.Int32', 'Stdlib.Int64.t': 'haxe.Int64',
   'Uchar.t': `${RT}Int63`, 'Uchar.utf_decode': `${RT}Int63`, 'Signed.Int64.t': 'haxe.Int64', 'Signed.Int32.t': 'haxe.Int32'};
@@ -213,6 +231,7 @@ class UnitEmitter {
         this.fail(n, `unknown value ${pathName(p)}`);
       }
       if (m.kind === 'libinstance') return {kind: 'instance', obj: m.hx, name, member: valueName(name), instance: m};
+      if (m.kind === 'packed') return {kind: 'local', name: `${m.hx}.${valueName(name)}`};
       this.fail(n, `value of module ${m.kind}: ${pathName(p)}`);
     }
     this.fail(n, `value path ${pathName(p)}`);
@@ -283,7 +302,7 @@ class UnitEmitter {
       case 'constr': {
         if (t.path.p === 'int') return `${RT}Int63`;
         if (t.path.p === 'array' && this.isPredef(t.args[0], 'float') && false) return 'Array<Float>';
-        if (/(^|\.)format[46]?$/.test(pathName(t.path)) && /^(Stdlib|CamlinternalFormatBasics)\b/.test(pathName(t.path))) return `${RT}Fmt`;
+        if (!this.p.unit('CamlinternalFormatBasics') && /(^|\.)format[46]?$/.test(pathName(t.path)) && /^(Stdlib|CamlinternalFormatBasics)\b/.test(pathName(t.path))) return `${RT}Fmt`;
         const d = this.resolveType(t.path, n);
         if (d.instance) return this.instanceType(d.instance, d.name, t.args, n);
         if (d.tparam) return d.tparam;
@@ -330,7 +349,7 @@ class UnitEmitter {
         this.objTypedefs.set(i, pkgName);
         return pkgName;
       }
-      case 'package': this.fail(n, 'first-class module type');
+      case 'package': return this.packageType(t, n);
     }
     this.fail(n, `type ${t.k}${t.text ? ': ' + t.text : ''}`);
   }
@@ -500,8 +519,10 @@ class UnitEmitter {
       }
       case 'type':
         for (const d of item.decls) {
-          const hx = `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, d.name)}`;
-          const desc = {hx, decl: d, unit: this.u.modname};
+          // Types whose values the runtime makes (README, Primitives).
+          const builtin = builtinTypes[[this.u.modname, ...path, d.name].join('.')] ?? null;
+          const hx = builtin ?? `${this.cfg.package}.${this.cfg.class}.${this.typeDeclName(path, d.name)}`;
+          const desc = {hx, decl: d, unit: this.u.modname, builtin: !!builtin};
           s.types.set(d.name, desc); this.ids.set(d.id, desc);
         }
         break;
@@ -537,6 +558,14 @@ class UnitEmitter {
         } else if (m.kind === 'lib') {
           // include Buffer: the library module's members, unless redefined.
           (s.libIncludes ??= []).push(m);
+        } else if (m.kind === 'packed') {
+          // include (val e): the packed object's fields.
+          for (const it of item.sig) {
+            const name = identName(it.id);
+            if (it.k === 'value') { const d = {kind: 'local', name: `${m.hx}.${valueName(name)}`}; s.values.set(name, d); this.ids.set(it.id, d); }
+            else if (it.k === 'type') { const d = {abbrev: 'Any'}; s.types.set(name, d); this.ids.set(it.id, d); }
+            else this.fail(item, `include of a packed module with a ${it.k}`);
+          }
         } else this.fail(item, `include of ${m.kind}`);
         // The signature's identifiers name the included items locally.
         for (const it of m.kind === 'struct' ? item.sig : []) {
@@ -592,7 +621,12 @@ class UnitEmitter {
       // A functor: instantiated statically at each application (its body
       // emitted again with the parameter bound to the argument).
       case 'functor': return {kind: 'functor', node: m, unit: this.u.modname, emitter: this};
-      case 'unpack': this.fail(m, 'first-class module unpacking');
+      // (val e): a module whose values are the fields of the packed object
+      // e (a static of the enclosing class, set at initialisation).
+      case 'unpack': {
+        const field = this.staticName(this.root, `${path.at(-1) ?? 'M'}_packed`);
+        return {kind: 'packed', hx: `${this.cls}.${field}`, field, e: m.e, t: m.e.t};
+      }
     }
     this.fail(m, `module expression ${m.k}`);
   }
@@ -619,7 +653,7 @@ class UnitEmitter {
     let body = f.body;
     while (body.k === 'constraint') body = body.m;
     if (body.k === 'functor') this.fail(m, 'curried functor');
-    if (body.k !== 'struct') this.fail(m, `functor body ${body.k}`);
+    if (body.k !== 'struct' && body.k !== 'apply') this.fail(m, `functor body ${body.k}`);
     const before = new Map(em.ids);
     const d = em.declareModule(body, path, parent);
     d.emitter = em;
@@ -676,7 +710,7 @@ class UnitEmitter {
     switch (item.k) {
       case 'value': return this.emitTopValue(item, s);
       case 'eval': this.init.push(this.stmt(item.e)); return;
-      case 'type': for (const d of item.decls) this.emitTypeDecl(d, s.types.get(d.name)); return;
+      case 'type': for (const d of item.decls) if (!s.types.get(d.name).builtin) this.emitTypeDecl(d, s.types.get(d.name)); return;
       case 'exception': if (!item.ext.rebind) this.emitExtension(item.ext, s.exns.get(item.ext.name), `${RT}MlException`); return;
       case 'typext': {
         const base = this.resolveType(item.type, item);
@@ -691,10 +725,16 @@ class UnitEmitter {
           this.withTypeParams(this.typeVars(item.t), params => {
             const names = args.map((_, i) => `a${i}`);
             const sig = `(${args.map((a, i) => `${names[i]}:${this.type(a.t, item)}`).join(', ')}):${this.type(res, item)}`;
-            // ml2hx.prim.<Unit>: the unit's C primitives (README).
-            const prim = `ml2hx.prim.${this.cfg.module}`;
+            // ml2hx.prim.<Group>: OCaml's runtime primitives, by group;
+            // other C libraries' by unit (README, Primitives).
+            const prim = `${PRIM}${primGroup(item.prim.name, this.cfg.module)}`;
             this.p.useLibrary(prim, valueName(item.prim.name), sig);
-            this.members(s).push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}${sig} return ${prim}.${valueName(item.prim.name)}(${names.join(', ')});`);
+            // Primitives OCaml declares with char and int alike take ints.
+            const canon = intPrims[item.prim.name] ?? {};
+            const pass = names.map((x, i) => (canon.args ?? []).includes(i) && this.isPredef(args[i].t, 'char') ? `${RT}Int63.ofInt(${x})` : x);
+            let call = `${prim}.${valueName(item.prim.name)}(${pass.join(', ')})`;
+            if (canon.res && this.isPredef(res, 'char')) call = `${call}.toInt()`;
+            this.members(s).push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}${sig} return ${call};`);
           });
         }
         return;
@@ -708,6 +748,10 @@ class UnitEmitter {
           em.emitItems(d.items, d, [...path, item.name]);
         }
         else if (d.kind === 'libinstance') this.emitLibInstance(d, item);
+        else if (d.kind === 'packed') {
+          this.statics.push(`public static var ${d.field}:${this.type(d.t, item)};`);
+          this.init.push(`${d.field} = ${this.value(d.e)};`);
+        }
         return;
       }
       case 'include': {
@@ -786,6 +830,12 @@ class UnitEmitter {
     const name = desc.hx.split('.').at(-1);
     this.withTypeParams(this.declParams(d, d), params => {
       const gen = params.length ? `<${params.join(', ')}>` : '';
+      // A re-exported variant or record (type 'a t = 'a list = [] | ...):
+      // the original type.
+      if (d.kind !== 'abstract' && d.kind !== 'open' && d.manifest !== null) {
+        this.decls.push(`typedef ${name}${gen} = ${this.type(d.manifest, d)};`);
+        return;
+      }
       if (d.kind === 'abstract') {
         if (d.manifest === null) {
           // An abstract type whose values only primitives make (`type zstream`
@@ -898,7 +948,7 @@ class UnitEmitter {
   // Parameters, result type and body of a known function (static or local).
   functionParts(fn, node, self) {
     const {args, res} = this.arrows(node.t);
-    if (args.length < fn.arity) this.fail(node, 'function type has fewer arrows than parameters');
+    if (args.length < fn.arity) this.fail(node, `function type has fewer arrows (${args.length}) than parameters (${fn.arity})`);
     const params = [], prologue = [];
     const savedIds = [];
     fn.params.forEach((p, i) => {
@@ -989,13 +1039,15 @@ class UnitEmitter {
       if (i === matches.length) return this.ret(body, tc);
       const m = matches[i];
       if (m.isCases) return this.matchStmt(m.scrut, m.scrutType, m.cases, m.partial, tc, m);
-      return this.matchStmt(m.scrut, m.scrutType, m.cases.map(c => ({...c, e: {k: '$code', code: build(i + 1)}})), m.partial, tc, m, true);
+      // The rest is built after the pattern binds its variables.
+      return this.matchStmt(m.scrut, m.scrutType, m.cases.map(c => ({...c, e: {k: '$lazy', gen: () => build(i + 1)}})), m.partial, tc, m, true);
     };
     return `${pre} ${build(0)}`;
   }
   // Statements that return the value of n (or continue a self tail call).
   ret(n, tc) {
     if (n.k === '$code') return n.code;
+    if (n.k === '$lazy') return n.gen();
     switch (n.k) {
       case 'let': return `${this.bindings(n)} ${this.ret(n.body, tc)}`;
       case 'seq': return `${this.stmt(n.a)} ${this.ret(n.b, tc)}`;
@@ -1077,7 +1129,12 @@ class UnitEmitter {
       return this.localFunction(name, fn, b.e, b.p.id, b.p.t);
     }
     // Mutual recursion: variables of uncurried function types, assigned in
-    // order (Haxe local functions cannot see later ones).
+    // order (Haxe local functions cannot see later ones). Haxe variables are
+    // not generic: the functions' own (type a) are Any, as their variables.
+    const newtypes = [...new Set(bs.flatMap(b => b.e.newtypes ?? []))];
+    return this.withLocalTypes(newtypes, () => this.mutualFunctions(bs, newtypes.length > 0), newtypes.map(() => 'Any'));
+  }
+  mutualFunctions(bs, anyTyped) {
     const out = [];
     const infos = bs.map(b => {
       if (b.e.k !== 'fun') this.fail(b, 'recursive lazy binding');
@@ -1085,7 +1142,7 @@ class UnitEmitter {
       const {args, res} = this.arrows(b.e.t);
       const ft = `(${args.slice(0, fn.arity).map(a => this.type(a.t, b)).join(', ')}) -> ${fn.arity < args.length ? this.chainType(args.slice(fn.arity), res, b) : this.type(res, b)}`;
       out.push(`var ${name}:${ft} = null;`);
-      this.ids.set(b.p.id, {kind: 'localfn', name, arity: fn.arity});
+      this.ids.set(b.p.id, {kind: 'localfn', name, arity: fn.arity, anyTyped});
       return {b, fn, name};
     });
     for (const {b, fn, name} of infos) {
@@ -1174,9 +1231,46 @@ class UnitEmitter {
     return /^[A-Za-z_][\w.]*$/.test(v) ? '' : `${v};`;
   }
   // Expression with OCaml's value.
+  // In the branches of a match on a GADT, the typer's equations refine the
+  // types of values (in `| Char rest -> fun c -> ...`, a = char -> b); Haxe
+  // has no such equations: there a value whose type involves type variables
+  // or GADTs is cast where it is used (README, GADTs).
   value(n) {
+    const v = this.value0(n);
+    if (this.gadt > 0 && n.t !== undefined && !n.k.startsWith('$') && this.gadtSensitive(n.t)) return `(cast ${v})`;
+    return v;
+  }
+  gadtSensitive(i) {
+    this.gadtMemo ??= new Map();
+    if (this.gadtMemo.has(i)) return this.gadtMemo.get(i);
+    this.gadtMemo.set(i, false);
+    const t = this.t(i);
+    let r = false;
+    if (t.k === 'var') r = true;
+    else if (t.k === 'constr') {
+      if (t.path.l) r = true; // a locally abstract type
+      else if (!t.path.p) { try { const d = this.resolveType(t.path, null); r = !!d.decl?.ctors?.some(c => c.res !== null && c.res !== undefined); } catch (e) {} }
+      r ||= t.args.some(a => this.gadtSensitive(a));
+    } else for (const k of ['arg', 'res', 'body']) if (typeof t[k] === 'number' && this.gadtSensitive(t[k])) r = true;
+    if (!r && t.args && t.k !== 'constr') r = t.args.some(a => typeof a === 'number' && this.gadtSensitive(a));
+    this.gadtMemo.set(i, r);
+    return r;
+  }
+  // Whether a match's patterns test constructors of a GADT.
+  gadtCases(cases) {
+    const visit = p => {
+      if (!p || typeof p !== 'object') return false;
+      if (p.k === 'construct' && p.c?.type) {
+        try { const d = this.resolveType(p.c.type, null); if (d.decl?.ctors?.some(c => c.res !== null && c.res !== undefined)) return true; } catch (e) {}
+      }
+      return ['p', 'a', 'b'].some(k => visit(p[k])) || (p.args ?? []).some(visit) || (p.fields ?? []).some(f => visit(f.p));
+    };
+    return cases.some(c => visit(c.p));
+  }
+  value0(n) {
     switch (n.k) {
       case '$code': return `{ ${n.code} }`;
+      case '$lazy': return `{ ${n.gen()} }`;
       case '$expr': return n.code;
       case '$var': return n.name;
       case 'const': return this.constant(n.c, n);
@@ -1226,7 +1320,7 @@ class UnitEmitter {
       case 'setinstvar': return `{ ${this.selfName ?? 'this'}.${this.instvarField(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
       case 'object': return this.immediateObject(n);
       case 'override': this.fail(n, 'object copy {< >}');
-      case 'pack': this.fail(n, 'first-class module');
+      case 'pack': return this.pack(n);
       case 'unsupported': this.fail(n, n.text ?? 'unsupported expression');
     }
     this.fail(n, `expression ${n.k}`);
@@ -1239,12 +1333,54 @@ class UnitEmitter {
   letModule(n) {
     const saved = this.ids.get(n.id);
     const s = new Struct(null, '');
+    let pre = '';
     if (n.m.k === 'ident') this.ids.set(n.id, {kind: 'alias', path: n.m.path});
+    else if (n.m.k === 'unpack') {
+      const v = this.fresh('packed');
+      pre = `var ${v}:${this.type(n.m.e.t, n)} = ${this.value(n.m.e)};`;
+      this.ids.set(n.id, {kind: 'packed', hx: v, t: n.m.e.t});
+    }
     else if (n.m.k === 'apply' || (n.m.k === 'constraint' && n.m.m.k === 'apply')) this.fail(n, 'local functor application');
     else this.fail(n, `local module ${n.m.k}`);
     const v = this.value(n.body);
     if (saved) this.ids.set(n.id, saved);
-    return v;
+    return pre ? `{ ${pre} ${v}; }` : v;
+  }
+  // ---- first-class modules: an anonymous structure of the signature's
+  // values (curried closures); the signature's abstract types are Any.
+  resolveModtype(p, n) {
+    if (p.l) { const d = this.ids.get(p.l); if (d?.kind === 'modtype') return d.mty; this.fail(n, `unknown module type ${pathName(p)}`); }
+    if (p.d) {
+      const m = this.resolveModule(p.d[0], n);
+      if (m.kind === 'struct' && m.modtypes.has(p.d[1])) return m.modtypes.get(p.d[1]);
+    }
+    this.fail(n, `module type ${pathName(p)}`);
+  }
+  packageSig(t, n) {
+    let mty = this.resolveModtype(t.path, n);
+    for (let guard = 0; guard < 10 && mty?.k === 'ident'; guard++) mty = this.resolveModtype(mty.path, n);
+    if (!mty || mty.k !== 'sig') this.fail(n, `first-class module of signature ${pathName(t.path)}`);
+    for (const it of mty.items) if (!['value', 'type'].includes(it.k)) this.fail(n, `first-class module with a ${it.k} in its signature`);
+    return mty.items;
+  }
+  packageType(t, n) {
+    const items = this.packageSig(t, n);
+    for (const it of items) if (it.k === 'type') this.ids.set(it.id, {abbrev: 'Any'});
+    return `{ ${items.filter(it => it.k === 'value').map(it => `var ${valueName(identName(it.id))}:${this.type(it.t, n)};`).join(' ')} }`;
+  }
+  pack(n) {
+    const t = this.t(n.t);
+    if (t.k !== 'package') this.fail(n, 'first-class module of no package type');
+    const items = this.packageSig(t, n);
+    let m = n.m;
+    while (m.k === 'constraint') m = m.m;
+    if (m.k !== 'ident') this.fail(n, `packing a module ${m.k}`);
+    const fields = items.filter(it => it.k === 'value').map(it => {
+      const name = identName(it.id);
+      const d = this.resolveValue({d: [m.path, name]}, n);
+      return `${valueName(name)}: ${this.valueRef(d, {...n, t: it.t}, n)}`;
+    });
+    return `({ ${fields.join(', ')} } : ${this.packageType(t, n)})`;
   }
   // An OCaml int literal (63-bit) as an Int63.
   intLit(v) {
@@ -1267,7 +1403,7 @@ class UnitEmitter {
       }
       case 'int32': return `(${c.v}:haxe.Int32)`;
       case 'int64': return `haxe.Int64.parseString(${JSON.stringify(c.v)})`;
-      case 'nativeint': return c.v;
+      case 'nativeint': return `haxe.Int64.parseString(${JSON.stringify(c.v)})`;
     }
     this.fail(n, `constant ${c.k}`);
   }
@@ -1282,6 +1418,8 @@ class UnitEmitter {
   }
   identValue(n) {
     const d = this.identDesc(n);
+    if (d.kind === 'local' && d.aliasT !== undefined && n.t !== d.aliasT && this.typeOrNull(n.t, n) !== this.typeOrNull(d.aliasT, n)) return `(cast ${d.name})`;
+    if (d.kind === 'local' && d.aliasT !== undefined && n.t !== d.aliasT && this.typeOrNull(n.t, n) === null) return `(cast ${d.name})`;
     return this.valueRef(d, n, n);
   }
   identDesc(n) {
@@ -1365,7 +1503,9 @@ class UnitEmitter {
       if (d.kind === 'lib') this.useLib(d, fn);
       const callee = {local: null, localfn: d.name, static: d.hx, external: d.hx, lib: `${d.cls}.${d.member}`, instance: `${d.obj}.${d.member}`, polystatic: null, prim: null}[d.kind];
       if (callee && (d.kind === 'lib' || d.kind === 'instance')) return this.libCall(callee, arity, n, fn);
-      if (callee && arity > 0) return this.knownCall(callee, arity, n, fn);
+      // A function of a mutually recursive group typed with Any (its own
+      // locally abstract types): its result is cast to the caller's type.
+      if (callee && arity > 0) return d.anyTyped ? `(cast ${this.knownCall(callee, arity, n, fn)})` : this.knownCall(callee, arity, n, fn);
     }
     if (fn.k === 'new') return this.newObject(n);
     if (fn.k === 'send') return this.send(fn, n.args, n);
@@ -1547,6 +1687,8 @@ class UnitEmitter {
     const cmp = (op, fn) => ({arity: 2, code: (v, a, n) => this.compare(op, v, a, n)});
     const toInt = x => `${wrap(x)}.toInt()`;
     const ofInt = x => `${I63}.ofInt(${x})`;
+    const byteOut = (code, n) => n && this.isInt(n.t) ? ofInt(code) : code;
+    const byteIn = (v, a) => a && this.isInt(a.t) ? `(${toInt(v)} & 255)` : v;
     const P = {
       '%addint': int('add'), '%subint': int('sub'), '%mulint': int('mul'), '%divint': int('div'), '%modint': int('mod'),
       '%negint': {arity: 1, code: v => `${I63}.neg(${v[0]})`},
@@ -1575,10 +1717,13 @@ class UnitEmitter {
       '%revapply': {arity: 2, lazy: (a, n) => this.apply({k: 'apply', t: n.t, l: n.l, fn: a[1], args: [{label: '', e: a[0]}]})},
       '%apply': {arity: 2, lazy: (a, n) => this.apply({k: 'apply', t: n.t, l: n.l, fn: a[0], args: [{label: '', e: a[1]}]})},
       '%string_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)}, '%bytes_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)},
-      '%string_safe_get': {arity: 2, code: v => `${RT}Runtime.stringGet(${v[0]}, ${toInt(v[1])})`},
-      '%string_unsafe_get': {arity: 2, code: v => `StringTools.fastCodeAt(${v[0]}, ${toInt(v[1])})`},
-      '%bytes_safe_get': {arity: 2, code: v => `${RT}Runtime.bytesGet(${v[0]}, ${toInt(v[1])})`}, '%bytes_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}.get(${toInt(v[1])})`},
-      '%bytes_safe_set': {arity: 3, code: v => `${RT}Runtime.bytesSet(${v[0]}, ${toInt(v[1])}, ${v[2]})`}, '%bytes_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}.set(${toInt(v[1])}, ${v[2]}); ${UNIT}; }`},
+      // A byte is a char (Int) or, declared so (Bytes.get_uint8), an int.
+      '%string_safe_get': {arity: 2, code: (v, a, n) => byteOut(`${RT}Runtime.stringGet(${v[0]}, ${toInt(v[1])})`, n)},
+      '%string_unsafe_get': {arity: 2, code: (v, a, n) => byteOut(`StringTools.fastCodeAt(${v[0]}, ${toInt(v[1])})`, n)},
+      '%bytes_safe_get': {arity: 2, code: (v, a, n) => byteOut(`${RT}Runtime.bytesGet(${v[0]}, ${toInt(v[1])})`, n)},
+      '%bytes_unsafe_get': {arity: 2, code: (v, a, n) => byteOut(`${wrap(v[0])}.get(${toInt(v[1])})`, n)},
+      '%bytes_safe_set': {arity: 3, code: (v, a) => `${RT}Runtime.bytesSet(${v[0]}, ${toInt(v[1])}, ${byteIn(v[2], a[2])})`},
+      '%bytes_unsafe_set': {arity: 3, code: (v, a) => `{ ${wrap(v[0])}.set(${toInt(v[1])}, ${byteIn(v[2], a[2])}); ${UNIT}; }`},
       '%array_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)}, '%floatarray_length': {arity: 1, code: v => ofInt(`${wrap(v[0])}.length`)},
       '%array_safe_get': {arity: 2, code: v => `${RT}Runtime.arrayGet(${v[0]}, ${toInt(v[1])})`}, '%array_unsafe_get': {arity: 2, code: v => `${wrap(v[0])}[${toInt(v[1])}]`},
       '%array_safe_set': {arity: 3, code: v => `${RT}Runtime.arraySet(${v[0]}, ${toInt(v[1])}, ${v[2]})`}, '%array_unsafe_set': {arity: 3, code: v => `{ ${wrap(v[0])}[${toInt(v[1])}] = ${v[2]}; ${UNIT}; }`},
@@ -1589,6 +1734,59 @@ class UnitEmitter {
       '%loc_FILE': {arity: 0, code: () => haxeString(this.cfg.source)}, '%loc_LINE': {arity: 0, code: (v, a, n) => this.intLit(n.l[0])},
       '%int_as_pointer': null,
     };
+    // Boxed integers: haxe.Int32 and haxe.Int64 (nativeint is 64-bit).
+    const B = `${PRIM}Builtin`;
+    const call = (name, arity) => ({arity, code: v => `${B}.${name}(${v.join(', ')})`});
+    const op = (o, ty) => ({arity: 2, code: v => `((${wrap(v[0])} ${o} ${wrap(v[1])}) : ${ty})`});
+    for (const [kind, ty, cap] of [['int32', 'haxe.Int32', 'Int32'], ['int64', 'haxe.Int64', 'Int64'], ['nativeint', 'haxe.Int64', 'Int64']]) {
+      Object.assign(P, {
+        [`%${kind}_add`]: op('+', ty), [`%${kind}_sub`]: op('-', ty), [`%${kind}_mul`]: op('*', ty),
+        [`%${kind}_and`]: op('&', ty), [`%${kind}_or`]: op('|', ty), [`%${kind}_xor`]: op('^', ty),
+        [`%${kind}_neg`]: {arity: 1, code: v => `((-${wrap(v[0])}) : ${ty})`},
+        [`%${kind}_div`]: call(`${cap.toLowerCase()}Div`, 2), [`%${kind}_mod`]: call(`${cap.toLowerCase()}Mod`, 2),
+        [`%${kind}_lsl`]: call(`${cap.toLowerCase()}Lsl`, 2), [`%${kind}_asr`]: call(`${cap.toLowerCase()}Asr`, 2), [`%${kind}_lsr`]: call(`${cap.toLowerCase()}Lsr`, 2),
+        [`%${kind}_of_int`]: call(`${cap.toLowerCase()}OfInt`, 1), [`%${kind}_to_int`]: call(`${cap.toLowerCase()}ToInt`, 1),
+      });
+    }
+    const same = {arity: 1, code: v => v[0]};
+    Object.assign(P, {
+      '%int64_of_int32': call('int64OfInt32', 1), '%int64_to_int32': call('int64ToInt32', 1),
+      '%nativeint_of_int32': call('int64OfInt32', 1), '%nativeint_to_int32': call('int64ToInt32', 1),
+      '%int64_of_nativeint': same, '%int64_to_nativeint': same,
+      '%bswap16': call('bswap16', 1), '%bswap_int32': call('bswap32', 1), '%bswap_int64': call('bswap64', 1), '%bswap_native': call('bswap64', 1),
+      '%caml_bytes_get16': call('bytesGet16', 2), '%caml_bytes_get16u': call('bytesGet16', 2), '%caml_bytes_get32': call('bytesGet32', 2), '%caml_bytes_get32u': call('bytesGet32', 2),
+      '%caml_bytes_get64': call('bytesGet64', 2), '%caml_bytes_get64u': call('bytesGet64', 2),
+      '%caml_bytes_set16': call('bytesSet16', 3), '%caml_bytes_set16u': call('bytesSet16', 3), '%caml_bytes_set32': call('bytesSet32', 3), '%caml_bytes_set32u': call('bytesSet32', 3),
+      '%caml_bytes_set64': call('bytesSet64', 3), '%caml_bytes_set64u': call('bytesSet64', 3),
+      '%caml_string_get16': call('stringGet16', 2), '%caml_string_get16u': call('stringGet16', 2), '%caml_string_get32': call('stringGet32', 2), '%caml_string_get32u': call('stringGet32', 2),
+      '%caml_string_get64': call('stringGet64', 2), '%caml_string_get64u': call('stringGet64', 2),
+      '%bytes_to_string': call('bytesToString', 1), '%bytes_of_string': call('bytesOfString', 1),
+      '%atomic_load': call('atomicLoad', 1), '%atomic_exchange': call('atomicExchange', 2), '%atomic_cas': call('atomicCas', 3), '%atomic_fetch_add': call('atomicFetchAdd', 2),
+      '%dls_get': call('dlsGet', 1), '%poll': {arity: 1, code: () => UNIT},
+      '%sys_argv': {arity: 0, code: () => `${PRIM}Sys.argv()`},
+      '%word_size': {arity: 1, code: () => this.intLit(64)}, '%int_size': {arity: 1, code: () => this.intLit(63)},
+      '%max_wosize': {arity: 1, code: () => `${RT}Int63.parse("18014398509481983")`},
+      '%big_endian': {arity: 1, code: () => 'false'},
+      '%ostype_unix': {arity: 1, code: () => 'true'}, '%ostype_win32': {arity: 1, code: () => 'false'}, '%ostype_cygwin': {arity: 1, code: () => 'false'},
+      '%backend_type': {arity: 1, code: () => `ocaml.stdlib.SysModule.SysBackendType.Other("ml2hx")`},
+      '%lazy_force': {arity: 1, code: v => `${wrap(v[0])}.force()`},
+      '%floatarray_safe_get': P['%array_safe_get'], '%floatarray_safe_set': P['%array_safe_set'],
+      '%floatarray_unsafe_get': P['%array_unsafe_get'], '%floatarray_unsafe_set': P['%array_unsafe_set'],
+      '%raise_with_backtrace': {arity: 2, code: v => `throw ${v[0]}`},
+      ...Object.fromEntries([1, 2, 3].flatMap(k => {
+        const BA = `${PRIM}BigarrayData.Bigarray`;
+        const ix = v => `[${v.slice(1, 1 + k).join(', ')}]`;
+        return [
+          [`%caml_ba_ref_${k}`, {arity: k + 1, code: v => `${BA}.get(${v[0]}, ${ix(v)})`}],
+          [`%caml_ba_unsafe_ref_${k}`, {arity: k + 1, code: v => `${BA}.get(${v[0]}, ${ix(v)})`}],
+          [`%caml_ba_set_${k}`, {arity: k + 2, code: v => `${BA}.set(${v[0]}, ${ix(v)}, ${v[k + 1]})`}],
+          [`%caml_ba_unsafe_set_${k}`, {arity: k + 2, code: v => `${BA}.set(${v[0]}, ${ix(v)}, ${v[k + 1]})`}],
+          [`%caml_ba_dim_${k}`, {arity: 1, code: v => `${BA}.dim(${v[0]}, ${k - 1})`}],
+        ];
+      })),
+      '%obj_size': {arity: 1, code: v => `${PRIM}Obj.size(${v[0]})`}, '%obj_field': {arity: 2, code: v => `${PRIM}Obj.field(${v[0]}, ${v[1]})`},
+      '%obj_set_field': {arity: 3, code: v => `${PRIM}Obj.setField(${v[0]}, ${v[1]}, ${v[2]})`}, '%obj_is_int': {arity: 1, code: v => `${PRIM}Obj.isInt(${v[0]})`},
+    });
     for (const [k, v] of Object.entries(P)) if (!v) delete P[k];
     return this._prims = P;
   }
@@ -1812,7 +2010,7 @@ class UnitEmitter {
   // ------------------------------------------------------------ data
   construct(n) {
     const c = n.c;
-    if (c.name === 'Format' && pathName(c.type ?? {}).endsWith('format6') && n.args[1]?.k === 'const') return `${RT}Fmt.of(${haxeString(n.args[1].c.v)})`;
+    if (!this.p.unit('CamlinternalFormatBasics') && c.name === 'Format' && pathName(c.type ?? {}).endsWith('format6') && n.args[1]?.k === 'const') return `${RT}Fmt.of(${haxeString(n.args[1].c.v)})`;
     if (c.ext) return this.extConstruct(n);
     const special = {'true': 'true', 'false': 'false', '()': UNIT, '[]': `${RT}MlList.Nil`, 'None': `${RT}MlOption.None`};
     if (c.name === '[]' || c.name === '()' || c.name === 'true' || c.name === 'false') return special[c.name];
@@ -1887,8 +2085,9 @@ class UnitEmitter {
       // Haxe matches `switch [a, b]` without an array only on a literal
       // array subject: effects go to temporaries first (right to left).
       const decls = [];
-      const vals = scrut.args.map(a => pure(a) ? this.value(a) : null);
-      for (let i = scrut.args.length - 1; i >= 0; i--) if (vals[i] === null) { const t = this.temp(); decls.unshift(`var ${t} = ${this.value(scrut.args[i])};`); vals[i] = t; }
+      // (Subjects keep their types: Haxe refines GADT patterns against them.)
+      const vals = scrut.args.map(a => pure(a) ? this.value0(a) : null);
+      for (let i = scrut.args.length - 1; i >= 0; i--) if (vals[i] === null) { const t = this.temp(); decls.unshift(`var ${t} = ${this.value0(scrut.args[i])};`); vals[i] = t; }
       const cases = value.map(c => ({...c, p: c.p, tupleScrutinee: true}));
       const code = this.switchCode(`[${vals.join(', ')}]`, cases, n.partial, tc, mode, n, scrut.args.length);
       if (!decls.length) return code;
@@ -1896,7 +2095,7 @@ class UnitEmitter {
       return mode === 'value' ? `{ ${ordered} ${code}; }` : `{ ${ordered} ${code} }`;
     }
     if (this.isInt(scrut.t) && value.every(c => intKeyPattern(c.p))) return this.intSwitch(this.value(scrut), value, n.partial, tc, mode, n);
-    return this.switchCode(this.value(scrut), value, n.partial, tc, mode, n);
+    return this.switchCode(this.value0(scrut), value, n.partial, tc, mode, n);
   }
   matchStmt(scrut, scrutType, cases, partial, tc, n, inlineBodies = false) {
     if (this.isInt(scrutType) && cases.every(c => intKeyPattern(c.p))) return this.intSwitch(scrut, cases, partial, tc, 'ret', n);
@@ -1918,6 +2117,10 @@ class UnitEmitter {
     // per alternative: Haxe or-patterns need alternatives of one kind.
     const alts = p => p.k === 'or' && hasExtractor(p) ? [...alts(p.a), ...alts(p.b)] : p.k === 'value' && p.p.k === 'or' && hasExtractor(p.p) ? alts(p.p) : [p];
     cases = cases.flatMap(c => alts(c.p).map(p => ({...c, p})));
+    const gadt = this.gadtCases(cases);
+    // Haxe cannot see that a GADT's other constructors are impossible here.
+    if (gadt) { partial = true; this.gadt = (this.gadt ?? 0) + 1; }
+    try {
     for (const c of cases) {
       const saved = new Map(this.ids);
       const pat = tupleArity ? this.tuplePattern(c.p, tupleArity) : this.pattern(c.p);
@@ -1931,6 +2134,7 @@ class UnitEmitter {
       arms.push(`case ${pat.pat}${guard ? ` if (${guard})` : ''}: ${mode === 'value' ? body + ';' : body}`);
       this.ids = saved;
     }
+    } finally { if (gadt) this.gadt--; }
     if (partial || !cases.length || opaque) arms.push(`case _: throw ${this.matchFailure(n)};`);
     const code = `switch (${subject}) { ${arms.join(' ')} }`;
     return mode === 'value' ? `(${code})` : code;
@@ -1985,7 +2189,9 @@ class UnitEmitter {
       case 'alias': {
         const inner = this.pattern(p.p);
         const name = this.orNames?.get(p.id) ?? this.fresh(identName(p.id));
-        this.ids.set(p.id, {kind: 'local', name});
+        // `Right _ as e` may have another type than the matched value
+        // (('a, 'b) t matched, ('c, 'b) t bound): cast where it is used.
+        this.ids.set(p.id, {kind: 'local', name, aliasT: p.p.t});
         return {...inner, pat: inner.pat === '_' ? name : `${name} = ${inner.pat}`};
       }
       case 'const': {
@@ -2319,6 +2525,8 @@ function stripNewtypes(n) {
   if (!n || typeof n !== 'object') return n;
   for (const k of Object.keys(n)) if (n[k] && typeof n[k] === 'object') n[k] = stripNewtypes(n[k]);
   if (n.k === 'newtype') { const inner = n.e; (inner.newtypes ??= []).unshift(n.name); return inner; }
+  // (x : t) as a pattern: the typer's `_ as x`.
+  if (n.k === 'alias' && n.p?.k === 'any' && n.id) return {k: 'var', t: n.t, l: n.l, id: n.id};
   return n;
 }
 // Parameters of a known function, merging directly nested functions and the

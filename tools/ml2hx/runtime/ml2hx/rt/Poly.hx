@@ -20,7 +20,7 @@ import haxe.Int64;
 // compare alike but hash as immediates (OCaml hashes an int32 as a custom
 // block: Hashtbl.hash on an int32 differs). Int64 and int are both Int64 at
 // run time: an int64 hashes as an int (OCaml: as a custom block).
-@:allow(ml2hx.std.Obj)
+@:allow(ml2hx.prim.Obj)
 class Poly {
 	public static inline var UNORDERED = 0x80000000;
 

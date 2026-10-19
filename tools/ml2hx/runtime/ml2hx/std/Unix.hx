@@ -395,24 +395,24 @@ class Unix {
 	public static function writeSubstring(d:UnixFileDescr, s:String, ofs:Int63, len:Int63):Int63
 		return write(d, ByteString.toBytes(s.substr(ofs.toInt(), len.toInt())), Int63.zero, len);
 	static final channelDescr = new haxe.ds.ObjectMap<Dynamic, UnixFileDescr>();
-	public static function inChannelOfDescr(d:UnixFileDescr):Stdlib.StdlibInChannel {
-		var c = Stdlib.StdlibInChannel.ofInput(d.socket != null ? d.socket.input : d.input);
+	public static function inChannelOfDescr(d:UnixFileDescr):ml2hx.prim.Io.InChannel {
+		var c = ml2hx.prim.Io.inOfInput(d.socket != null ? d.socket.input : d.input);
 		channelDescr.set(c, d);
 		return c;
 	}
-	public static function outChannelOfDescr(d:UnixFileDescr):Stdlib.StdlibOutChannel {
-		var c = Stdlib.StdlibOutChannel.ofOutput(d.socket != null ? d.socket.output : d.output);
+	public static function outChannelOfDescr(d:UnixFileDescr):ml2hx.prim.Io.OutChannel {
+		var c = ml2hx.prim.Io.outOfOutput(d.socket != null ? d.socket.output : d.output);
 		channelDescr.set(c, d);
 		return c;
 	}
-	public static function descrOfInChannel(c:Stdlib.StdlibInChannel):UnixFileDescr {
-		if (c == Stdlib.stdin) return stdin;
+	public static function descrOfInChannel(c:ml2hx.prim.Io.InChannel):UnixFileDescr {
+		if (c.fd == 0) return stdin;
 		var d = channelDescr.get(c);
 		return d != null ? d : fail(EBADF, "descr_of_in_channel", "");
 	}
-	public static function descrOfOutChannel(c:Stdlib.StdlibOutChannel):UnixFileDescr {
-		if (c == Stdlib.stdout) return stdout;
-		if (c == Stdlib.stderr) return stderr;
+	public static function descrOfOutChannel(c:ml2hx.prim.Io.OutChannel):UnixFileDescr {
+		if (c.fd == 1) return stdout;
+		if (c.fd == 2) return stderr;
 		var d = channelDescr.get(c);
 		return d != null ? d : fail(EBADF, "descr_of_out_channel", "");
 	}
@@ -436,38 +436,38 @@ class Unix {
 		return p;
 	}
 	static function status(code:Int):UnixProcessStatus return WEXITED(Int63.ofInt(code));
-	public static function openProcessIn(cmd:String):Stdlib.StdlibInChannel {
+	public static function openProcessIn(cmd:String):ml2hx.prim.Io.InChannel {
 		var p = spawn(cmd, null);
-		var c = Stdlib.StdlibInChannel.ofInput(p.stdout);
+		var c = ml2hx.prim.Io.inOfInput(p.stdout);
 		procChannels.set(c, p);
 		return c;
 	}
-	public static function openProcessArgsIn(prog:String, args:HArray<String>):Stdlib.StdlibInChannel {
+	public static function openProcessArgsIn(prog:String, args:HArray<String>):ml2hx.prim.Io.InChannel {
 		var p = spawn(prog, args.slice(1));
-		var c = Stdlib.StdlibInChannel.ofInput(p.stdout);
+		var c = ml2hx.prim.Io.inOfInput(p.stdout);
 		procChannels.set(c, p);
 		return c;
 	}
 	static final procChannels = new haxe.ds.ObjectMap<Dynamic, sys.io.Process>();
-	public static function closeProcessIn(c:Stdlib.StdlibInChannel):UnixProcessStatus {
+	public static function closeProcessIn(c:ml2hx.prim.Io.InChannel):UnixProcessStatus {
 		var p = procChannels.get(c);
 		if (p == null) fail(EINVAL, "close_process_in", "");
 		return status(p.exitCode());
 	}
-	static function full(p:sys.io.Process):Tuple3<Stdlib.StdlibInChannel, Stdlib.StdlibOutChannel, Stdlib.StdlibInChannel> {
-		var t = new Tuple3(Stdlib.StdlibInChannel.ofInput(p.stdout), Stdlib.StdlibOutChannel.ofOutput(p.stdin), Stdlib.StdlibInChannel.ofInput(p.stderr));
+	static function full(p:sys.io.Process):Tuple3<ml2hx.prim.Io.InChannel, ml2hx.prim.Io.OutChannel, ml2hx.prim.Io.InChannel> {
+		var t = new Tuple3(ml2hx.prim.Io.inOfInput(p.stdout), ml2hx.prim.Io.outOfOutput(p.stdin), ml2hx.prim.Io.inOfInput(p.stderr));
 		procChannels.set(t.v0, p);
 		return t;
 	}
-	public static function openProcessFull(cmd:String, env:HArray<String>):Tuple3<Stdlib.StdlibInChannel, Stdlib.StdlibOutChannel, Stdlib.StdlibInChannel> return full(spawn(cmd, null));
-	public static function openProcessArgsFull(prog:String, args:HArray<String>, env:HArray<String>):Tuple3<Stdlib.StdlibInChannel, Stdlib.StdlibOutChannel, Stdlib.StdlibInChannel>
+	public static function openProcessFull(cmd:String, env:HArray<String>):Tuple3<ml2hx.prim.Io.InChannel, ml2hx.prim.Io.OutChannel, ml2hx.prim.Io.InChannel> return full(spawn(cmd, null));
+	public static function openProcessArgsFull(prog:String, args:HArray<String>, env:HArray<String>):Tuple3<ml2hx.prim.Io.InChannel, ml2hx.prim.Io.OutChannel, ml2hx.prim.Io.InChannel>
 		return full(spawn(prog, args.slice(1)));
-	public static function processFullPid(t:Tuple3<Stdlib.StdlibInChannel, Stdlib.StdlibOutChannel, Stdlib.StdlibInChannel>):Int63 {
+	public static function processFullPid(t:Tuple3<ml2hx.prim.Io.InChannel, ml2hx.prim.Io.OutChannel, ml2hx.prim.Io.InChannel>):Int63 {
 		var p = procChannels.get(t.v0);
 		if (p == null) fail(EINVAL, "process_full_pid", "");
 		return Int63.ofInt(p.getPid());
 	}
-	public static function closeProcessFull(t:Tuple3<Stdlib.StdlibInChannel, Stdlib.StdlibOutChannel, Stdlib.StdlibInChannel>):UnixProcessStatus {
+	public static function closeProcessFull(t:Tuple3<ml2hx.prim.Io.InChannel, ml2hx.prim.Io.OutChannel, ml2hx.prim.Io.InChannel>):UnixProcessStatus {
 		var p = procChannels.get(t.v0);
 		if (p == null) fail(EINVAL, "close_process_full", "");
 		try p.stdin.close() catch (e:Dynamic) {}

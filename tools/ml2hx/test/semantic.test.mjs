@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {root, frontend, emitUnits} from '../generate.mjs';
+import {root, frontend, emitUnits, libraryUnits} from '../generate.mjs';
 import {format} from '../format.mjs';
 import {Unsupported} from '../emit.mjs';
 
@@ -44,14 +44,27 @@ export function generateCase(name, cmts, dir, options = {}) {
   const ir = frontend(cmts, [dir]);
   for (const f of ir) if (f.error) throw new Error(f.error);
   const pkg = `cases.${name.replace(/\W/g, '_').toLowerCase()}`;
-  const units = ir.map(f => ({modname: f.modname, config: {source: path.basename(f.source ?? f.file), module: f.modname, class: `${f.modname}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${f.modname}Module.hx`}, load: f.load}));
-  const {outputs, failures} = emitUnits(units, options);
+  const units = ir.map(f => ({modname: f.modname, irPath: f.ir, config: {source: path.basename(f.source ?? f.file), module: f.modname, class: `${f.modname}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${f.modname}Module.hx`}, load: f.load}));
+  // The library units the case reaches (OCaml's Stdlib...), converted too.
+  const libFailures = [];
+  const libs = libraryUnits(units, libFailures, ['Std_exit']);
+  const all = [...libs, ...units];
+  const {outputs, failures, deps} = emitUnits(all, options);
+  failures.push(...libFailures);
   if (failures.length) throw new Unsupported(null, failures.map(f => `${f.source}: ${f.error}`).join('\n'));
   const out = path.join(dir, 'hx');
   fs.rmSync(out, {recursive: true, force: true});
   for (const [p, code] of outputs) { fs.mkdirSync(path.dirname(path.join(out, p)), {recursive: true}); fs.writeFileSync(path.join(out, p), code); }
   const main = `${pkg}.Main`;
-  fs.writeFileSync(path.join(out, pkg.replaceAll('.', '/'), 'Main.hx'), format(`package ${pkg};\nclass Main {\n\tstatic function main() {\n${units.map(u => `\t\t${pkg}.${u.config.class}.ml2hxInit();`).join('\n')}\n\t\tml2hx.std.Stdlib.doAtExit();\n\t}\n}\n`));
+  // Initialisation in link order: libraries first (by dependency), the case's
+  // units in order, Std_exit (at_exit functions) last.
+  const order = [], seen = new Set();
+  const visit = m => { if (seen.has(m) || !deps.has(m)) return; seen.add(m); for (const d of deps.get(m)) visit(d); order.push(m); };
+  for (const u of libs) if (u.modname !== 'Std_exit') visit(u.modname);
+  for (const u of units) visit(u.modname);
+  visit('Std_exit');
+  const cls = new Map(all.map(u => [u.modname, `${u.config.package}.${u.config.class}`]));
+  fs.writeFileSync(path.join(out, pkg.replaceAll('.', '/'), 'Main.hx'), format(`package ${pkg};\nclass Main {\n\tstatic function main() {\n${order.map(m => `\t\t${cls.get(m)}.ml2hxInit();`).join('\n')}\n\t}\n}\n`));
   return {out, main};
 }
 const runtime = ['-cp', 'tools/ml2hx/runtime'];
@@ -80,5 +93,5 @@ test('unsupported constructs fail explicitly', () => {
     ok('ocamlfind', ['ocamlc', '-bin-annot', '-c', '-I', dir, '-o', path.join(dir, 'probe.cmo'), f]);
     assert.throws(() => generateCase('unsupported', [f.replace(/\.ml$/, '.cmt')], dir), e => e instanceof Unsupported && re.test(e.message), src);
   };
-  probe('let f (m : (module Set.OrderedType)) = m\n', /first-class module/);
+  probe('class c = object val x = 1 method copy = {< x = 2 >} end\n', /object copy/);
 });
