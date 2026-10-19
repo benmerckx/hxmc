@@ -4,7 +4,9 @@
 // program prints.
 //   node --test tools/ml2hx/test/semantic.test.mjs
 // Environment: ML2HX_HAXE selects a Haxe compiler for the generated code
-// (default: hxmc's committed stage0); ML2HX_ONLY=name1,name2 runs a subset.
+// (default: hxmc's committed stage0); ML2HX_ONLY=name1,name2 runs a subset;
+// ML2HX_NATIVE=1 compiles each case to an hxmc executable (the generated
+// compiler's target) instead of running it in the interpreter.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -79,7 +81,14 @@ for (const entry of cases) {
       : fs.readFileSync(path.join(casesDir, entry, 'order'), 'utf8').trim().split(/\s+/).map(f => path.join(casesDir, entry, f));
     const {cmts, expected} = ocaml(name, files, dir);
     const {out, main} = generateCase(name, cmts, dir);
-    const p = haxe([...runtime, '-cp', path.relative(root, out), '-main', main, '--interp']);
+    const args = [...runtime, '-cp', path.relative(root, out), '-main', main];
+    let p;
+    if (process.env.ML2HX_NATIVE) {
+      const exe = path.join(dir, 'native');
+      const c = haxe([path.relative(root, exe), ...args, '-cp', 'bin/hxmc/std', '--custom-target', 'hxmc']);
+      assert.equal(c.status, 0, `${c.stdout}\n${c.stderr}`);
+      p = exec(exe, []);
+    } else p = haxe([...args, '--interp']);
     assert.equal(p.status, 0, `${p.stdout}\n${p.stderr}`);
     assert.equal(p.stdout, expected);
   });

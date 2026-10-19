@@ -63,3 +63,4 @@ let () = Printf.printf "%b %b %b %b\n" (fold `Gt 0.5 (Int32.to_float 1l)) (fold 
 (* integers outside 32 bits: matched against literals, cut to an int32 *)
 let size n = match n with 0 -> "zero" | 1 -> "one" | _ -> "large"
 let () = Printf.printf "%s %s %ld %ld\n" (size max_int) (size (1 lsl 40)) (Int32.of_int max_int) (Int32.of_int (1 lsl 40 + 5))
+let () = Printf.printf "%d %b %d\n" (compare (Bytes.of_string "ab") (Bytes.of_string "b")) (Bytes.make 2 'x' = Bytes.of_string "xx") (Hashtbl.hash (Bytes.of_string "ab") - Hashtbl.hash "ab")

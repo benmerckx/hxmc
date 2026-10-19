@@ -72,17 +72,20 @@ class Poly {
 			case TClass(c):
 				if (c == String) K_STRING;
 				else if (Std.isOfType(v, Block)) Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK;
-				else if (Int64.isInt64(v)) K_IMM;
 				else if (c == Array) K_ARRAY;
-				else if (Std.isOfType(v, Abstract)) K_ABSTRACT;
-				else if (Std.isOfType(v, PolyVariant)) K_IMM; // a constant polymorphic variant: its hash
-				else if (Std.isOfType(v, haxe.io.Bytes)) K_BYTES;
-				else if (Std.isOfType(v, Array)) K_ARRAY;
-				else throw new InvalidArgument("ml2hx: no OCaml representation for " + Std.string(v));
-			case _:
-				if (Int64.isInt64(v)) K_IMM;
-				else throw new InvalidArgument("ml2hx: no OCaml representation for " + Std.string(v));
+				else instanceKind(v);
+			// (some hosts type Int64 or Bytes values otherwise)
+			case _: instanceKind(v);
 		}
+	}
+
+	static function instanceKind(v:Dynamic):Int {
+		return if (Int64.isInt64(v)) K_IMM;
+			else if (Std.isOfType(v, Abstract)) K_ABSTRACT;
+			else if (Std.isOfType(v, PolyVariant)) K_IMM; // a constant polymorphic variant: its hash
+			else if (Std.isOfType(v, haxe.io.Bytes)) K_BYTES;
+			else if (Std.isOfType(v, Array)) K_ARRAY;
+			else throw new InvalidArgument("ml2hx: no OCaml representation for " + Std.string(v));
 	}
 
 	// the OCaml integer of an immediate value, null for a block
