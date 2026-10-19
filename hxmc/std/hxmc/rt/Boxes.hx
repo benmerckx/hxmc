@@ -19,6 +19,7 @@ class Boxes {
 	static inline var T_ADATA_P = 6;
 	@:hxmc.bss(18432) static var smallInts:Ptr; // 16 bytes each (SMALL_MAX - SMALL_MIN + 1)
 	@:hxmc.bss(32) static var boolBoxes:Ptr;
+	@:hxmc.bss(18432) static var smallI64s:Ptr; // likewise for Int64 (OCaml's ints in converted code: ml2hx)
 
 	static inline function mkhdr(nslots:Int, kind:Int, tindex:Int):I64
 		return ((tindex : I64) << 32) | ((((kind << 28) | nslots) : I64) & 0xFFFFFFFF);
@@ -29,6 +30,10 @@ class Boxes {
 		for (i in 0...n) {
 			Mem.setI64(smallInts, 16 * i, mkhdr(1, K_OBJ, T_BOXINT));
 			Mem.setI32(smallInts, 16 * i + 8, i + SMALL_MIN);
+		}
+		for (i in 0...n) {
+			Mem.setI64(smallI64s, 16 * i, mkhdr(1, K_OBJ, T_BOXI64));
+			Mem.setI64(smallI64s, 16 * i + 8, (i + SMALL_MIN : I64));
 		}
 		for (i in 0...2) {
 			Mem.setI64(boolBoxes, 16 * i, mkhdr(1, K_OBJ, T_BOXBOOL));
@@ -51,6 +56,7 @@ class Boxes {
 	}
 
 	@:hxmc.export("hx_box_i64") static function boxI64(v:I64):Dynamic {
+		if (v >= SMALL_MIN && v <= SMALL_MAX) return Mem.obj(smallI64s.add(16 * (v.toInt() - SMALL_MIN) + 8));
 		var b = Mem.allocRaw(1, T_BOXI64, K_OBJ);
 		Mem.setI64(Mem.addr(b), 0, v);
 		return b;

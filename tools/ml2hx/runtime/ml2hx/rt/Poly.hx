@@ -119,11 +119,49 @@ class Poly {
 		#end
 	}
 
+	#if (target.name == "hxmc" && !hxmc.wasm_gc)
+	// per type index (each class and constructor has its own): a class's
+	// kind + 1; for a constructor, 2 when its argument is an inline record, 1 not
+	static var kindByType = new Array<Int>();
+
+	static inline function typeCache(t:Int):Int
+		return t < kindByType.length ? kindByType[t] : 0;
+
+	static function setTypeCache(t:Int, x:Int) {
+		while (kindByType.length <= t) kindByType.push(0);
+		kindByType[t] = x;
+	}
+	#end
+
 	// C of {...}: the record (its fields are the block's), else null
 	static function inlineRecord(v:Dynamic):Dynamic {
+		#if (target.name == "hxmc" && !hxmc.wasm_gc)
+		var t = hxmc.rt.Types.tindex(v);
+		var x = typeCache(t);
+		if (x == 1) return null;
+		if (x == 2) return param(v, 0);
+		var r = paramCount(v) == 1 && Std.isOfType(param(v, 0), InlineRecord);
+		setTypeCache(t, r ? 2 : 1);
+		return r ? param(v, 0) : null;
+		#else
 		if (paramCount(v) != 1) return null;
 		var p = param(v, 0);
 		return Std.isOfType(p, InlineRecord) ? p : null;
+		#end
+	}
+
+	// a class instance's kind
+	static function classKind(v:Dynamic):Int {
+		#if (target.name == "hxmc" && !hxmc.wasm_gc)
+		var t = hxmc.rt.Types.tindex(v);
+		var x = typeCache(t);
+		if (x != 0) return x - 1;
+		var k = Std.isOfType(v, Block) ? (Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK) : instanceKind(v);
+		setTypeCache(t, k + 1);
+		return k;
+		#else
+		return Std.isOfType(v, Block) ? (Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK) : instanceKind(v);
+		#end
 	}
 
 	static function kind(v:Dynamic):Int {
@@ -135,7 +173,7 @@ class Poly {
 			case 5: K_FUNC;
 			case 8: K_STRING;
 			case 9: K_ARRAY;
-			case 6: Std.isOfType(v, Block) ? (Std.isOfType(v, Abstract) ? K_ABSTRACT : K_BLOCK) : instanceKind(v);
+			case 6: classKind(v);
 			// (some hosts type Int64 or Bytes values otherwise)
 			case _: instanceKind(v);
 		}
@@ -369,14 +407,14 @@ class Poly {
 
 	// Stdlib.compare
 	public static function compare(a:Dynamic, b:Dynamic):Int {
-		if (Std.isOfType(a, String) && Std.isOfType(b, String)) return compareStrings(a, b);
+		if (typeKind(a) == 8 && typeKind(b) == 8) return compareStrings(a, b);
 		return compareValues(a, b, true);
 	}
 
 	// Stdlib.( = ), ( <> ), ( < ), ( <= ), ( > ), ( >= )
 	public static function equal(a:Dynamic, b:Dynamic):Bool {
 		if (Int64.isInt64(a) && Int64.isInt64(b)) return (a : Int64) == (b : Int64);
-		if (Std.isOfType(a, String) && Std.isOfType(b, String)) return (a : String) == (b : String);
+		if (typeKind(a) == 8 && typeKind(b) == 8) return (a : String) == (b : String);
 		return compareValues(a, b, false) == 0;
 	}
 
@@ -501,7 +539,7 @@ class Poly {
 	// Hashtbl.seeded_hash_param meaningful total seed v
 	public static function hashParam(count:Int, limit:Int, seed:Int, v:Dynamic):Int {
 		// the most frequent keys first
-		if (Std.isOfType(v, String)) return finalMix(mixString(seed, v)) & 0x3FFFFFFF;
+		if (typeKind(v) == 8) return finalMix(mixString(seed, v)) & 0x3FFFFFFF;
 		var sz = limit;
 		if (sz < 0 || sz > 256) sz = 256;
 		var num = count;
