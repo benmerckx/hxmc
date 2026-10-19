@@ -24,7 +24,13 @@ jobs:
           ocaml-compiler: 5.3.0
       - run: sudo apt-get update && sudo apt-get install -y libpcre2-dev zlib1g-dev libmbedtls-dev neko-dev pkg-config
       - run: opam install ./haxe/upstream --deps-only -y
-      - run: make ml2hx-test
-      - run: opam exec -- make ml2hx-frontend-native
-      - run: ML2HX_FRONTEND=bin/ml2hx/build/frontend-native.byte ML2HX_OCAMLC=ocamlc ML2HX_OCAMLRUN=ocamlrun opam exec -- make ml2hx-test
-      - run: opam exec -- make generate
+      # the native frontend (compiler-libs of this switch), the semantic
+      # tests (OCaml's output against the generated Haxe's, on hxmc's
+      # stage0), then the count of modules that emit and type
+      - run: opam exec -- make ml2hx-frontend
+      - run: opam exec -- make ml2hx-check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ml2hx-check
+          path: bin/ml2hx/check.json

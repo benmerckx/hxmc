@@ -1,124 +1,173 @@
 # ml2hx: OCaml (typed trees) to Haxe
 
 `ml2hx` turns the typed trees of an OCaml project (the pinned Haxe compiler in
-`haxe/upstream`) into Haxe. Spec: `docs/plans/haxe-versions.md`.
+`haxe/upstream`) into Haxe, together with every library module the project
+reaches: OCaml's own standard library included. Spec:
+`docs/plans/haxe-versions.md`.
 
 ```
- dune build @check (.cmt)  -->  frontend (OCaml, compiler-libs)  -->  JSON IR
-                                                                       |
-                                     emit.mjs + generate.mjs  <--------+
-                                              |
-                     bin/ml2hx/generated  (Haxe; calls ml2hx.rt.* and ml2hx.std.*)
+ dune build @check (.cmt)          opam switch (.cmt of Stdlib, extlib, ...)
+            \                        /
+             frontend (OCaml, compiler-libs)  -->  JSON IR
+                                                    |
+                         emit.mjs + generate.mjs <--+
+                                   |
+       bin/ml2hx/generated: upstream.* (the compiler), ocaml.* (its libraries)
+              calling ml2hx.rt (representations) and ml2hx.prim (primitives)
 ```
 
-Unsupported constructs are errors, never `Dynamic` or stubs. A library
-function the runtime does not provide is reported, not stubbed.
+Unsupported constructs are errors, never `Dynamic` or stubs. A primitive the
+runtime does not provide is reported (the module does not type), not
+stubbed.
 
-## Ownership
+## Setup
 
-| Path | Owner |
+The frontend is native OCaml built against compiler-libs of the opam switch
+whose version the pinned compiler builds with (`OCAML_VERSION` in
+`haxe/upstream/.github/workflows/main.yml`, 5.3.0):
+
+```
+opam switch create 5.3.0 && eval $(opam env --switch=5.3.0)
+opam install ./haxe/upstream --deps-only     # the compiler's libraries (their .cmt are converted)
+make ml2hx-frontend                          # bin/ml2hx/build/frontend.exe (checks the version)
+make ml2hx-test                              # semantic tests: OCaml's output vs the generated Haxe's
+make ml2hx-check                             # the progress count (below)
+```
+
+`ML2HX_ANY_OCAML=1` builds the frontend with another OCaml (typed trees are
+version-specific: expect differences); `build-frontend.mjs --js` adds a
+js_of_ocaml build. `ML2HX_HAXE=haxe` runs tests and checks with another Haxe
+than hxmc's committed stage0 (faster).
+
+## Progress
+
+`make ml2hx-check` generates everything, type-checks it (removing modules
+with errors until what remains types) and prints
+
+- the compiler's modules that emit and type, of the 326 sources of the pin;
+- the library units that do (OCaml's Stdlib and the other packages the
+  compiler reaches, as many as it reaches: 113 at present);
+
+with the first type error of each module in `bin/ml2hx/check.json`.
+
+## Layout
+
+| Path | What |
 | --- | --- |
-| `frontend/`, `emit.mjs`, `generate.mjs`, `test/` | the emitter (branch `hv-emit`) |
-| `runtime/ml2hx/rt/` (core representations: the types below, `Exn`, structural equality/compare/hash) | the emitter |
-| `runtime/ml2hx/std/` (the OCaml library: Stdlib modules, Str, Unix, Extlib, sha, ...) | the runtime (branch `hv-rt`) |
+| `frontend/main.ml` | typed trees (.cmt) to JSON: structure, types (hash-consed per unit), declarations |
+| `emit.mjs` | the emitter: one Haxe module per OCaml unit |
+| `generate.mjs` | the pin's units, the library units they reach (transitively), output |
+| `naming.mjs` | the naming contract below |
+| `runtime/ml2hx/rt/` | representations: Int63, MlList, MlOption, Ref, TupleN, Lazy, Unit, PolyVariant, MlException and the predefined exceptions, Poly (OCaml's compare/equal/hash), FloatFormat (printf and strtod of doubles) |
+| `runtime/ml2hx/prim/` | primitives: the C functions OCaml's runtime implements, and the compiler's own (`%` primitives) beyond an expression |
+| `runtime/ml2hx/std/` | stand-ins for libraries that are C bindings (Unix, Str, luv's types, Pcre2, Domainslib, Dynlink, Effect, ...) |
+| `overlay/ml2hx/std/` | the former hand-written Stdlib (List, Hashtbl, Map, Printf, ...): out of the build; one comes back only as a speed overlay a benchmark justifies |
+| `test/` | semantic tests (`cases/*.ml`, compiled by OCaml and by ml2hx, outputs compared) |
 
-## The naming contract (emitter <-> runtime)
+## The naming contract
 
-### Library modules
-
-A *library module* is any module not compiled from the converted tree:
-OCaml's `Stdlib` and its submodules, and libraries (Str, Unix, Extlib's
-`ExtString`/`ExtList`/`IO`/`DynArray`/`PMap`/..., `Sha1`, `Sedlexing`, ...).
+### Units
 
 | OCaml | Haxe |
 | --- | --- |
-| module `M` (also `Stdlib.M`) | class `ml2hx.std.M` in `ml2hx/std/M.hx` |
-| submodule `M.N` | class `ml2hx.std.M_N` in `ml2hx/std/M_N.hx` |
-| a value of `Stdlib` itself (`print_endline`, `max_int`) | `ml2hx.std.Stdlib.printEndline`, `ml2hx.std.Stdlib.maxInt` |
-| value `M.f` | static `ml2hx.std.M.f`, name mapped as below |
-| type `M.t`, `M.foo_bar` | module-level type `ml2hx.std.M.T`, `ml2hx.std.M.FooBar` (in `M.hx`) |
-| exception `M.E` | class `ml2hx.std.M.EExn extends ml2hx.rt.Exn` (in `M.hx`) |
-| functor `M.F` | class `ml2hx.std.M.F` (in `M.hx`); see Functors |
+| `src/dir/foo.ml` of the pin | class `upstream.dir.FooModule` |
+| library unit `Stdlib__List`, `IO` of extlib | class `ocaml.stdlib.ListModule`, `ocaml.extlib.IOModule` (package `ocaml.<opam package>`) |
+| submodule `Foo.Bar` | class `FooModule_Bar` beside it (a functor instance: one class per application; an included instance `..._Include`, an anonymous argument `..._Arg`) |
+| type `t` of `Foo` (or of `Foo.Bar`) | `FooT` (`FooBarT`): module-prefixed, unique per package |
+| exception `E` of `Foo` | class `FooEExn extends ml2hx.rt.MlException` (`exnName` is `"Foo.E"`) |
+| value `foo_bar` | static `fooBar`; a Haxe keyword gets the suffix `Value`; operators: `opAdd`, `opConcat`, ... and otherwise `op` + character names (`( @@> )` -> `opAtAtGt`) |
 
-Value names: `snake_case` becomes `camelCase` (`find_opt` -> `findOpt`), a
-trailing or inner `'` becomes `_` (`x'` -> `x_`), and a Haxe keyword gets the
-suffix `Value` (`new` -> `newValue`, `in` -> `inValue`). Operators are named
-`op` followed by the names of their characters: `!` Bang, `$` Dollar,
-`%` Percent, `&` Amp, `*` Star, `+` Plus, `-` Minus, `.` Dot, `/` Slash,
-`:` Colon, `<` Lt, `=` Eq, `>` Gt, `?` Qmark, `@` At, `^` Caret, `|` Bar,
-`~` Tilde, `#` Hash (`( @ )` -> `opAt`, `( ^^ )` -> `opCaretCaret`). The
-emitter inlines the arithmetic, comparison, boolean, string-concatenation,
-reference and application operators, so only the rest reach `ml2hx.std`.
+Values: a function of syntactic arity n is a static function with n
+parameters, called uncurried when applied to n arguments; function values
+are curried closures (`(A) -> ((B) -> C)`). Labelled and optional
+parameters are positional (optional ones as `MlOption`).
 
-Type names: the same mapping, capitalised (`t` -> `T`, `in_channel` -> `InChannel`).
-
-### Calling convention
-
-- A library value whose declared type (the `val` in the `.mli`, type
-  abbreviations not expanded) has `n` top-level arrows is a static function
-  with `n` parameters, called fully applied as `M.f(a1, ..., an)`. The emitter
-  makes closures for partial applications and applies extra arguments to the
-  result. A value with no arrow (`max_int`, `stdout`, or a type abbreviation
-  of a function) is a static variable.
-- Labelled `~x` parameters are positional, in declaration order. Optional
-  `?x:t` parameters are positional too, typed `ml2hx.rt.MlOption<T>`; the
-  emitter passes `None` when the caller omits them.
-- Function *values* (callbacks, closures in data) are curried single-argument
-  Haxe functions: OCaml `'a -> 'b -> 'c` is Haxe `(A) -> ((B) -> C)`. So
-  `List.fold_left` is
-  `static function foldLeft<A, B>(f:(A) -> ((B) -> A), init:A, l:MlList<B>):A`.
-- Type parameters are the OCaml type variables of the declared type, in order
-  of first occurrence, named freely.
-
-### Representations (owned by the emitter, in `ml2hx.rt`)
+### Representations
 
 | OCaml | Haxe |
 | --- | --- |
-| `int` | `Int` (Haxe `Int`; `ml2hx.rt.Int63` only where a config marks 63-bit semantics as observable; library functions always use `Int`) |
+| `int` | `ml2hx.rt.Int63` (63-bit, wrapping, Int64-backed) |
 | `char` | `Int` (0..255) |
-| `string` | `String` whose code units are bytes 0..255 (no UTF-8 decoding) |
+| `string` | `String` whose code units are bytes 0..255 (file names converted at the boundary) |
 | `bytes` | `haxe.io.Bytes` |
 | `float`, `bool` | `Float`, `Bool` |
-| `unit` | `ml2hx.rt.Unit`, the value `ml2hx.rt.Unit.value` |
-| `'a list` | `ml2hx.rt.MlList<A>` (`Nil`, `Cons(head, tail)`) |
-| `'a option` | `ml2hx.rt.MlOption<A>` (`None`, `Some(value)`) |
-| `'a ref` | `ml2hx.rt.Ref<A>` (`value` field) |
-| `'a array` | `Array<A>` |
-| `a * b * ...` | `ml2hx.rt.TupleN<A, B, ...>` (fields `v0`, `v1`, ...; constructor in order), N = 2..12 |
-| `int32`, `int64`, `nativeint` | `haxe.Int32`, `haxe.Int64`, `Int` |
-| `exn` | `ml2hx.rt.Exn` (extends `haxe.Exception`) |
+| `unit` | `ml2hx.rt.Unit` |
+| `'a list`, `'a option` | `ml2hx.rt.MlList<A>`, `ml2hx.rt.MlOption<A>` |
+| `'a ref` (and `Atomic.t`) | `ml2hx.rt.Ref<A>` (`value`) |
+| `'a array`, `floatarray` | `Array<A>`, `Array<Float>` |
+| tuples | `ml2hx.rt.TupleN` (`v0`, `v1`, ...), N = 2..12 |
+| `int32`, `int64`, `nativeint` | `haxe.Int32`, `haxe.Int64`, `haxe.Int64` |
+| `exn` | `ml2hx.rt.MlException`; an OCaml value laid out as OCaml lays it out (constant: its extension constructor, tag 248; else tag 0, constructor then arguments) |
 | `'a Lazy.t` | `ml2hx.rt.Lazy<A>` |
-| records | classes: fields camelCased, `new` takes the fields in declaration order, mutable fields `var`, others `final` |
-| variants | enums with the OCaml constructor names, positional arguments `v0`, `v1`, ... |
+| records | classes implementing `ml2hx.rt.Block`, fields camelCased |
+| variants (GADTs too) | enums with the OCaml constructor names; GADT constructors give their result type |
+| polymorphic variants | `ml2hx.rt.PolyVariant` (tag: OCaml's `hash_variant`) |
+| extensible variants | a base class per type (its parameters phantom), a class per constructor |
+| objects, classes | classes (virtual methods abstract); immediate objects and object types are structures; an open object type is a type parameter constrained by its methods |
+| first-class modules | a structure of the signature's values (curried) |
+| `Obj.t`, `in_channel`, `Mutex.t`, ... | the runtime's (`builtinTypes` in emit.mjs): `Any`, `ml2hx.prim.Io.InChannel`, `ml2hx.prim.Sync.Mutex`, ... |
 
-Predefined exceptions are in `ml2hx.rt`: `NotFoundExn`, `FailureExn(v0:String)`,
-`InvalidArgumentExn(v0:String)`, `EndOfFileExn`, `DivisionByZeroExn`,
-`SysErrorExn(v0:String)`, `MatchFailureExn`, `AssertFailureExn`,
-`StackOverflowExn`, `OutOfMemoryExn`, `SysBlockedIoExn`,
-`UndefinedRecursiveModuleExn`. Payloads are fields `v0`, `v1`, ...; the
-constructor takes them in order. `Stdlib.Exit` is `ml2hx.std.Stdlib.ExitExn`.
+Structural operations are `ml2hx.rt.Poly`: compare.c and hash.c ported over
+these representations.
 
-Structural operations: `ml2hx.rt.Runtime.equal(a, b):Bool`,
-`ml2hx.rt.Runtime.compare(a, b):Int`, `ml2hx.rt.Runtime.hash(a):Int`, with
-OCaml's semantics over the representations above (`Hashtbl.hash` is
-`Runtime.hash`).
+### Primitives
 
-### Functors
+An `external f : ... = "caml_name"` of a converted unit is a static calling
+`ml2hx.prim.<Group>.camlName` (the C name camelCased). OCaml's runtime
+primitives are grouped as its C files group them (`primGroup` in
+naming.mjs): `Io` (io.c: channels on descriptors), `Sys`, `Strings`, `Ints`
+(formats, parsing), `Floats` (printf and strtod of doubles, libm), `Arrays`,
+`Hash`, `Obj`, `Sync` (mutexes, conditions, atomics), `Domain`, `Gc`,
+`Backtrace`, `Weak` (ephemerons), `Bigarray`, `Digest` (MD5, BLAKE2b),
+`Lexing`, `Parsing` (the ocamlyacc automaton), `Random` (LXM), `Runtime`.
+Primitives of other C libraries belong to their unit (`ml2hx.prim.Extc`,
+`ml2hx.prim.Mbedtls`). A primitive OCaml declares with `char` and with `int`
+alike (`caml_ml_output_char`) takes ints.
 
-A library functor `M.F` applied to a module `X`, `M.F(X)`, is
-`new ml2hx.std.M.F<T1, ..., Tk>(v1, ..., vn)`: `T1..Tk` are the abstract types
-of the parameter signature as `X` instantiates them, `v1..vn` are `X`'s values
-in the order of the parameter signature (curried closures). The result's
-values are instance methods (same naming and arity rules); its type `t` is
-`ml2hx.std.M.F_T<T1, ..., Tk, params...>` (a typedef is fine), and types the
-result defines as equal to the parameter's (`key`, `elt`) are expanded by the
-emitter. Example: `module SMap = Map.Make(String)` is
-`new ml2hx.std.Map.Make<String>(compare)`, `'a SMap.t` is
-`ml2hx.std.Map.Make_T<String, A>`, `SMap.add k v m` is `sMap.add(k, v, m)`.
+The compiler's own primitives (`%addint`, `%int32_add`, `%caml_bytes_get32`,
+`%atomic_load`, `%dls_get`, `%caml_ba_ref_1`, ...) are emitted inline or call
+`ml2hx.prim.Builtin`.
 
-### Converted modules
+C libraries are bound to hxmc's own implementations (the ones today's port
+uses): `Pcre2` runs on `hxmc.Regex`, `ml2hx.prim.Mbedtls` on
+`hxmc.NativeSsl` (built by another Haxe it raises `Failure`). The check and
+the tests put hxmc's `hxmc` package alone on the class path
+(`bin/ml2hx/natives`).
 
-The converted tree's own modules: `src/dir/foo.ml` is class
-`upstream.dir.FooModule` (`upstream.dir.FooModule.T` for its type `t`;
-submodules flattened as `FooModule_Sub`). This side is internal to the
-emitter.
+## Constructs
+
+Converted: modules, submodules, functors (instantiated statically per
+application, across units, curried bodies that apply other functors),
+`include` (of structures, applications, unpacked modules), first-class
+modules, records (inline ones too), variants, GADTs (values of refined types
+are cast where used in GADT branches), polymorphic variants, extensible
+variants and exceptions (local ones too), objects and classes (inheritance,
+virtual methods, open object types), laziness, recursion (mutual, recursive
+values of records, lazies and functions made by applications), pattern
+matching (or-patterns, guards, exceptions, aliases, integer and float and
+boxed integer constants), structural equality/compare/hash, strings, bytes,
+chars, formats (as CamlinternalFormat values), effects (deep handlers that
+resume their continuation last: see below), labelled and optional arguments,
+locally abstract types, polymorphic recursion.
+
+## Remaining gaps
+
+- Haxe has no GADT equations, no polymorphism of non-generalised type
+  variables and no structural subtyping of classes: GADT branches cast,
+  unbound type variables are `Any` (some uses then do not type: "Any should
+  be T"), and object coercions to unrelated class types are unchecked casts
+  (right on dynamic targets only). Most of the compiler modules that do not
+  type stop here.
+- Not converted: recursive modules, object copies `{< >}`, local let rec of
+  non-function values (genpy, genphp7), GADT constructors with inline
+  records (saturn).
+- Effects: a handler that does work after `continue` does it before the
+  computation resumes.
+- Primitives not available: marshalling (`Marshal`, `input_value`: the
+  runtime lacks the static types to rebuild values), `Obj.add_offset`,
+  libuv (luv: types only), BIO callbacks of mbedtls on Haxe streams; GC
+  statistics count nothing and finalisers never run; one domain and one
+  thread (a blocking `Condition.wait` or `Event.sync` raises).
+- The C-library stand-ins (Unix, Str, Thread, Domainslib) are still written
+  in Haxe over Haxe's sys API rather than converted with their primitives
+  bound to hxmc's natives.

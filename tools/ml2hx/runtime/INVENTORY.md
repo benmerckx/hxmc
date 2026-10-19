@@ -1,5 +1,11 @@
 # OCaml library runtime: inventory and state
 
+> Superseded in part: OCaml's standard library is now converted from the
+> switch's typed trees (tools/ml2hx/README.md). The hand-written `ml2hx/std`
+> modules this inventory describes moved to `tools/ml2hx/overlay/` (with
+> their tests), out of the build; the runtime keeps the representations
+> (`ml2hx/rt`), the primitives (`ml2hx/prim`) and the C-library stand-ins.
+
 What the compiler's OCaml (haxe/upstream at fef284737, `dune build @check`)
 uses of OCaml's libraries, and where the Haxe runtime (`ml2hx/rt`, `ml2hx/std`)
 stands. Handed over mid-work (step 2 of docs/plans/haxe-versions.md).
