@@ -2983,7 +2983,9 @@ class UnitEmitter {
         const t = this.arrows(e.t).args.length > arity ? this.selfStripped(e.t) : e.t;
         const inner = e.params.length > 1 ? {...e, params: e.params.slice(1), t} : e.body.k === "body" ? e.body.e : this.fail(f, "method with cases and fewer parameters");
         const v = this.value(inner);
-        return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`};
+        // (staged too: a send with as many arguments as the parameters runs
+        // the body up to its closure then, not at the next application)
+        return {body: `{ return ${sig.names.reduce((acc, a) => `${acc}(${a})`, `(${v})`)}; }`, staged: v};
       }
       this.fail(f, `method arity ${rest.arity} differs from its type's ${arity}`);
     });
@@ -3051,7 +3053,7 @@ class UnitEmitter {
     for (let c = d; c; c = c.parent) {
       if (c.staged?.has(name)) return true;
       const own = c.parts?.cs.fields.find(f => f.k === 'method' && f.name === name && !f.virtual);
-      if (own && funInfo(own.e).arity - 1 === 0 && (c.methods.get(name)?.arity ?? 0) > 0) return true;
+      if (own && funInfo(own.e).arity - 1 < (c.methods.get(name)?.arity ?? 0)) return true;
     }
     return false;
   }

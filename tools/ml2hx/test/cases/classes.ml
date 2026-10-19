@@ -79,3 +79,23 @@ let () =
   let o = object val mutable n = 0 method tick = n <- n + 1; (fun k -> n + k) method n = n end in
   let f = o#tick in
   Printf.printf "%d %d\n" o#n (f 10)
+(* fewer parameters than the method type's arrows: the body runs up to its
+   closure at a send with that many arguments *)
+class writer = object
+  val buf = Buffer.create 8
+  method args l = List.iter (Buffer.add_string buf) l; (fun () -> Buffer.add_string buf "|")
+  method text = Buffer.contents buf
+end
+class writer2 = object inherit writer method! args l = Buffer.add_string buf "<"; (fun () -> Buffer.add_string buf ">") end
+let () =
+  let w = new writer in
+  let close = w#args ["a"; "b"] in
+  Buffer.add_string (Buffer.create 1) "";
+  let before = w#text in
+  close ();
+  (w#args ["c"]) ();
+  let w2 = new writer2 in
+  let c2 = w2#args [] in
+  let mid = w2#text in
+  c2 ();
+  Printf.printf "%s %s %s %s\n" before w#text mid w2#text
