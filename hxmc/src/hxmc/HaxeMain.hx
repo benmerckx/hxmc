@@ -95,8 +95,12 @@ class HaxeMain {
 		var guest = Sys.getEnv("HXMC_MACRO_GUEST");
 		var engine:Null<hxmc.macro.NativeEngine> = null;
 		if (guest != null && guest != "") hxmc.macro.Guest.install(guest) else macros.MacroEngine.engine = engine = new hxmc.macro.NativeEngine();
+		// (-D hxmc.mir-macros: macros on the Mir interpreter, the macro context typed for hxmc)
+		var mirMacros = hxmc.interp.MirMacros.selected(args);
+		if (mirMacros) hxmc.interp.MirMacros.install(hxmcStd);
 		var code = haxe.Main.run(args);
 		if (engine != null) engine.report();
+		if (mirMacros) @:privateAccess hxmc.interp.MirMacros.self.report();
 		#else
 		var code = haxe.Main.run(args);
 		#end

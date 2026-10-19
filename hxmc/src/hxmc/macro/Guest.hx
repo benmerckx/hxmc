@@ -121,7 +121,7 @@ class Guest {
 		};
 
 	// what the loader needs to number, register and initialize the program's parts
-	static function facts(com:context.Common.CommonContext, p:Program, e:hxmc.ir.Facts, l:hxmc.ir.Lower, main:TClass):Dynamic {
+	static function facts(com:context.Common.CommonContext, p:Program, e:hxmc.ir.Facts, l:hxmc.ir.Lower, main:Null<TClass>):Dynamic {
 		var tn = e.typeNames;
 		// what may be the compiler's own: the std's types and statics (hxmc's std, with the
 		// runtime, included); the program's are its own even when named as one of the compiler's
@@ -225,10 +225,11 @@ class Guest {
 			selectors.push({sym: e.selNames[s], rows: rows});
 		}
 		var entries = [];
-		for (cf in main.clOrderedStatics) {
-			var f = l.funcs.get(cf);
-			if (f != null && cf.cfName != "main" && p.isLive(f)) entries.push({name: cf.cfName, sym: e.symbol(f)});
-		}
+		if (main != null)
+			for (cf in main.clOrderedStatics) {
+				var f = l.funcs.get(cf);
+				if (f != null && cf.cfName != "main" && p.isLive(f)) entries.push({name: cf.cfName, sym: e.symbol(f)});
+			}
 		// the singletons of constructors without arguments (the bridge's enum values)
 		var singletons = [];
 		for (en in p.enums)

@@ -164,7 +164,8 @@ class Loader {
 			var span = "TYSPAN_" + (c.ty : String).substr(3);
 			if (isNew.exists(c.ty)) {
 				// (the root class of every class, Object, is the compiler's)
-				if (c.sup != null && c.sup != "TY_Object" && !isNew.exists(c.sup)) throw "class " + c.ty + " extends a class of the compiler";
+				// (a class of a bundle loaded before: its span does not cover the new class, an instance test of it misses it)
+				if (c.sup != null && c.sup != "TY_Object" && !isNew.exists(c.sup) && !xb.exists(c.sup)) throw "class " + c.ty + " extends a class of the compiler";
 				num.set(span, c.span);
 			} else {
 				var v = abs(span, shared.get(c.ty));
@@ -486,7 +487,7 @@ class Loader {
 		for (n => p in extra)
 			if (!StringTools.startsWith(n, "DSP_")) xb.set(n, {k: "d", v: addrOf(p)});
 		for (n => s in defs)
-			if (s.section.kind == Text && StringTools.startsWith(n, "F_")) xb.set(n, {k: "t", v: value(s).v});
+			if (s.section.kind == Text && StringTools.startsWith(n, "F_")) xb.set(n, {k: "t", v: value(s).v}) else if (StringTools.startsWith(n, hxmc.interp.InterpGen.DESC)) xb.set(n, {k: "d", v: value(s).v});
 		// (the runtime's walks of the types, Type.resolveClass, reach the new ones)
 		Mem.setI32(Mem.sym("rt_ntypes"), 0, nextType);
 		var entries:Array<Dynamic> = facts.entries;

@@ -41,6 +41,24 @@ class FnLower {
 		this.lambda = lambda;
 		nextLocal = fi.args.length + 1;
 		out = fi.body;
+		if (Lower.callSites != null && !(fi.module != null && (StringTools.startsWith(fi.module, "hxmc.rt.") || StringTools.startsWith(fi.module, "hxmc.unsafe.")))) {
+			site = newLocal("site", TI32);
+			out.push(SSet(site, ECallHost("hxmc_unsafe_Mem_getI32", [siteData(Lower.callSites.pending), EInt(0)], TI32)));
+		}
+	}
+
+	// (Lower.callSites) this function's site: where it was called from
+	var site:Null<Local> = null;
+
+	function siteData(sym:String):Ex
+		return temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", [EStr(sym)], TI64));
+
+	// (Lower.callSites) before the call `e` (its arguments evaluated): its site, and this function's
+	function noteCall(e:TExpr) {
+		if (site == null) return;
+		var cs = Lower.callSites;
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", [siteData(cs.pending), EInt(0), EInt(cs.site(e.epos))], TVoid)));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", [siteData(cs.current), EInt(0), ELocal(site)], TVoid)));
 	}
 
 	// (the expression's file and line, and the function being lowered)
@@ -1294,6 +1312,10 @@ class FnLower {
 				coerce(binop(op, a, b, e), TBool, tyOf(e));
 			case TBinop(op, a, b): binop(op, a, b, e);
 			case TUnop(op, flag, e1): unop(op, flag, e1, e);
+			case TCall(f, cargs) if (site != null):
+				var x = call(f, cargs, e);
+				if (x.match(ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | ECallHost(_))) noteCall(e);
+				x;
 			case TCall(f, cargs): call(f, cargs, e);
 			case TNew(c, params, cargs) if (Lower.isNativeArray(c)):
 				var n = coerce(value(cargs[0]), tyOf(cargs[0]), TI32);
@@ -1391,6 +1413,10 @@ class FnLower {
 			case TThrow(_) | TReturn(_) | TBreak | TContinue | TIf(_, _, _) | TWhile(_, _, _) | TVar(_, _):
 				stmt(e);
 				nullOf(tyOf(e));
+			// (reification's position in macro code compiled for hxmc, -D hxmc.mir-macros:
+			// the expression's own, as Eval has it; the compiler that loads the code makes it)
+			case TIdent("$__mk_pos__"):
+				temp(TRef(RAny), ECallHost(l.native("hxmc_mir_macro_pos"), [EStr(e.epos.pfile), EInt(e.epos.pmin), EInt(e.epos.pmax)], TRef(RAny)));
 			case TIdent(n): fail("identifier " + n, e);
 			case _: fail("expression " + e.eexpr.getName(), e);
 		}

@@ -84,9 +84,9 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 		return null;
 	}
 
-	override public function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):Null<Value> {
+	override public function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):haxe.ds.Option<Value> {
 		if (!enabled) return super.callPath(ctx, path, f, vl, api);
-		if (ctx.hadError) return null;
+		if (ctx.hadError) return None;
 		calls++;
 		var cls = path.join(".");
 		var key = cls + "." + f;
@@ -107,7 +107,7 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 			switch r {
 				case Ok(v):
 					native++;
-					return v;
+					return Some(v);
 				case Failed(msg, e) if (e == null):
 					// (unsupported at the boundary: Eval runs it instead)
 					fallbacks++;
@@ -121,20 +121,21 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 					if (thrown == null) throw Bridge.original(e);
 					var old = ctx.curapi;
 					ctx.curapi = api;
-					return switch macros.eval.EvalExceptions.catchExceptions(ctx, () -> throw new RunTimeException(thrown, [], api.pos), api.pos, () -> ctx.curapi = old) {
-						case Some(v): v;
-						case None: null;
-					};
+					return macros.eval.EvalExceptions.catchExceptions(ctx, () -> throw new RunTimeException(thrown, [], api.pos), api.pos, () -> ctx.curapi = old);
 			}
 		}
 		// verify: Eval's result is the one used
 		var t0 = haxe.Timer.stamp();
-		var ev:Null<Value> = null, eerr:Null<Dynamic> = null;
+		var evo:haxe.ds.Option<Value> = None, eerr:Null<Dynamic> = null;
 		// (its API calls recorded, then replayed to the native run: Bridge.Recorder)
 		Bridge.Recorder.install();
 		var rec = [];
 		Bridge.Recorder.stack.push(rec);
-		try ev = super.callPath(ctx, path, f, vl, api) catch (e:Dynamic) eerr = e;
+		try evo = super.callPath(ctx, path, f, vl, api) catch (e:Dynamic) eerr = e;
+		var ev:Null<Value> = switch evo {
+			case Some(v): v;
+			case None: null;
+		};
 		Bridge.Recorder.stack.pop();
 		tEval += haxe.Timer.stamp() - t0;
 		var t1 = haxe.Timer.stamp();
@@ -151,7 +152,7 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 			mismatched++;
 			note(key + ": MISMATCH: " + rm);
 			if (eerr != null) throw eerr;
-			return ev;
+			return evo;
 		}
 		switch r {
 			case Failed(msg, e) if (e == null):
@@ -177,7 +178,7 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 				}
 		}
 		if (eerr != null) throw eerr;
-		return ev;
+		return evo;
 	}
 
 	public function report() {

@@ -181,7 +181,7 @@ class Sys {
 		Returns the path to the current executable that we are running.
 	**/
 	@:deprecated("Use programPath instead") public static function executablePath():String
-		return NativeSys.programPath();
+		return #if macro programPath() #else NativeSys.programPath() #end;
 
 	/**
 		Returns the absolute path to the current program file that we are running.
@@ -189,7 +189,7 @@ class Sys {
 		For a script (e.g. a PHP file), it returns the path to the script.
 	**/
 	public static function programPath():String
-		return NativeSys.programPath();
+		return #if macro hxmc.MacroHost.programPath() #else NativeSys.programPath() #end;
 
 	/**
 		Reads a single input character from the standard input and returns it.

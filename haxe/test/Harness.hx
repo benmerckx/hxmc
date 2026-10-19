@@ -314,9 +314,10 @@ class Harness {
 
 	/**
 		Null when two HXB archives conform (the same member names, the same
-		uncompressed .hxb payloads but for `volatile`), else what differs.
+		uncompressed .hxb payloads but for `volatile`), else what differs. With
+		`keep`, only the members it accepts count.
 	**/
-	public static function compareHxb(expected:String, actual:String, ?volatile:Array<String>):Null<String> {
+	public static function compareHxb(expected:String, actual:String, ?volatile:Array<String>, ?keep:String->Bool):Null<String> {
 		var a, b;
 		try {
 			a = readZip(expected);
@@ -324,7 +325,11 @@ class Harness {
 		} catch (e:Dynamic) {
 			return "unreadable archive: " + Std.string(e);
 		}
-		var onlyA = [for (n in a.names) if (!b.data.exists(n)) n], onlyB = [for (n in b.names) if (!a.data.exists(n)) n];
+		if (keep != null) {
+			a.names = a.names.filter(keep);
+			b.names = b.names.filter(keep);
+		}
+		var onlyA = [for (n in a.names) if (!b.names.contains(n)) n], onlyB = [for (n in b.names) if (!a.names.contains(n)) n];
 		if (onlyA.length > 0 || onlyB.length > 0) {
 			onlyA.sort(compare);
 			onlyB.sort(compare);

@@ -267,7 +267,11 @@ class MirRun {
 		for (t in types) {
 			if (t.share != true) continue;
 			var h = host.get(t.sym);
-			if (h == null || h.k != "a") continue; // (new anyway)
+			// (one the compiler lacks: new, and so are the classes over it, the classes under it)
+			if (h == null || h.k != "a") {
+				t.share = false;
+				continue;
+			}
 			var ok = true;
 			for (f in (t.fields : Array<Dynamic>))
 				if (!fids.exists(f.name)) ok = false;

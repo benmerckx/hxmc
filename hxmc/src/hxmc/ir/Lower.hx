@@ -80,6 +80,13 @@ class Lower {
 	public static var survey = Sys.getEnv("HXMC_SURVEY") != null;
 	// -debug: statements carry their source lines (Stmt.SPos)
 	public static var lines = false;
+	// (-D hxmc.mir-macros: hxmc.interp.MirMacros) the macro code's calls note
+	// where they are, as Eval's frames do (env_leave_pmin/pmax, which the
+	// macro API's get_api_call_pos reads): before each call, the call's site
+	// (`site`: its id) in `pending` and the calling function's own site in
+	// `current`; each function takes its site from `pending` as it starts.
+	// (pending, current: symbols of the compiler's 32-bit data)
+	public static var callSites:Null<{site:core.Globals.Pos->Int, pending:String, current:String}> = null;
 	public var errors = new Map<String, {count:Int, example:String}>();
 	public var natives = new Map<String, Int>(); // runtime functions called, with counts
 
