@@ -72,7 +72,7 @@ export function prepare(upstream) {
 // (ml2hx.prim, README). Packages that are bindings of C libraries (luv,
 // ctypes, mbedtls, pcre2...) are runtime modules.
 const convertedPackages = new Set(['ocaml', 'extlib', 'sedlex', 'camlp-streams', 'xml-light', 'backoff', 'dynamic_gc',
-  'ipaddr', 'macaddr', 'domain-name', 'gen', 'saturn', 'multicore-magic', 'thread-local-storage', 'thread-table', 'domain-local-await', 'seq', 'stdlib-shims']);
+  'ipaddr', 'macaddr', 'domain-name', 'gen', 'saturn', 'multicore-magic', 'thread-local-storage', 'thread-table', 'domain-local-await', 'seq', 'stdlib-shims', 'sha']);
 // Modules whose implementation is the value representation itself (lazy
 // blocks, objects, recursive modules, effects): runtime modules.
 const notConverted = new Set(['CamlinternalLazy', 'Stdlib__Lazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Effect', 'Stdlib__Oo']);
@@ -223,6 +223,15 @@ export function generate({upstream = path.join(root, 'haxe/upstream'), out = pat
   const {sources, units, failures} = loadUnits({upstream, buildDir});
   const emitted = emitUnits(units);
   const outputs = emitted.outputs;
+  // The generated compiler's entry: every unit the compiler's main unit
+  // (haxe.ml, which runs the compiler when initialised) reaches, initialised
+  // in link order (dependencies first), Std_exit last (at_exit).
+  const cls = new Map(units.map(u => [u.modname, `${u.config.package}.${u.config.class}`]));
+  const order = [], seen = new Set();
+  const visit = m => { if (seen.has(m) || !emitted.deps.has(m)) return; seen.add(m); for (const d of emitted.deps.get(m)) visit(d); order.push(m); };
+  visit('Haxe');
+  if (emitted.deps.has('Std_exit')) visit('Std_exit');
+  if (order.length) outputs.set('Ml2hxCompiler.hx', `// The generated compiler (tools/ml2hx/README.md): units in link order.\nclass Ml2hxCompiler {\n\tstatic function main() {\n${order.map(m => `\t\t${cls.get(m)}.ml2hxInit();`).join('\n')}\n\t}\n}\n`);
   walk(path.join(home, 'runtime'), p => outputs.set(path.relative(path.join(home, 'runtime'), p), fs.readFileSync(p, 'utf8')));
   writeOutputs(out, outputs);
   const uses = [];

@@ -35,6 +35,7 @@ const builtinTypes = {
   'Stdlib__Obj.t': 'Any', 'Stdlib__Obj.Extension_constructor.t': 'Any', 'Stdlib__Obj.raw_data': 'haxe.Int64',
   'Stdlib__Obj.Ephemeron.t': `${PRIM}Weak.Ephemeron`, 'Stdlib__Weak.t': `${PRIM}Weak.WeakT`,
   'Stdlib__Digest.BLAKE128.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE256.state': `${PRIM}Digest.Blake2State`, 'Stdlib__Digest.BLAKE512.state': `${PRIM}Digest.Blake2State`,
+  'Sha1.ctx': `${PRIM}Sha1.Sha1Ctx`, 'Sha1.t': `${PRIM}Sha1.Sha1Digest`,
   ...Object.fromEntries(['ctr_drbg_context', 'entropy_context', 'ssl_config', 'ssl_context', 'x509_crt', 'pk_context'].map(t => [`Mbedtls.mbedtls_${t}`, `${PRIM}Mbedtls.Handle`])),
   'Stdlib__Mutex.t': `${PRIM}Sync.Mutex`, 'Stdlib__Condition.t': `${PRIM}Sync.Condition`,
   'Stdlib__Printexc.raw_backtrace_slot': `${PRIM}Backtrace.Slot`,
@@ -1565,8 +1566,11 @@ class UnitEmitter {
         const memo = new Map();
         this.imported.set(mty, {...mty, items: mty.items.map(it => typeof it.t === 'number' ? {...it, t: this.importType(it.t, src, memo)} : it)});
       }
-      return this.imported.get(mty).items;
+      const items = this.imported.get(mty).items;
+      for (const it of items) if (it.k === 'type') this.ids.set(it.id, {abbrev: 'Any'});
+      return items;
     }
+    for (const it of mty.items) if (it.k === 'type') this.ids.set(it.id, {abbrev: 'Any'});
     return mty.items;
   }
   // A type of another unit's table, copied into this one (its variables
@@ -1623,7 +1627,8 @@ class UnitEmitter {
       const name = identName(it.id);
       const id = byName.get(name);
       if (id === undefined) this.fail(n, `packed structure without ${name}`);
-      return `${valueName(name)}: ${this.valueRef(this.ids.get(id), {...n, t: it.t}, n)}`;
+      // (the signature's abstract types are Any: the values' own types cast)
+      return `${valueName(name)}: cast ${this.valueRef(this.ids.get(id), {...n, t: it.t}, n)}`;
     });
     return `{ ${out.join(' ')} ({ ${fields.join(', ')} } : ${this.packageType(t, n)}); }`;
   }

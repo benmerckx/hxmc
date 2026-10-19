@@ -13,7 +13,17 @@ class ThreadT {
 	public function new(id:Int) this.id = id;
 }
 
+// Thread.Exit: ends the thread that raises it, silently, at the top of
+// Thread.create's function.
+class ThreadExitExn extends MlException {
+	public function new() super();
+	override public function exnName():String return "Thread.Exit";
+	override public function exnArity():Int return 0;
+	public static final instance = new ThreadExitExn();
+}
+
 class Thread {
+	public static function exit(_:Unit):Unit throw ThreadExitExn.instance;
 	static var next = 1;
 	static final main = new ThreadT(0);
 	static var current = main;
@@ -21,7 +31,7 @@ class Thread {
 		var t = new ThreadT(next++);
 		var saved = current;
 		current = t;
-		try f(x) catch (e:haxe.Exception) {
+		try f(x) catch (e:ThreadExitExn) {} catch (e:haxe.Exception) {
 			std.Sys.stderr().writeString("Thread " + t.id + " killed on uncaught exception " + MlException.wrap(e).toString() + "\n");
 		}
 		current = saved;

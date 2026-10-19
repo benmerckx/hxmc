@@ -30,18 +30,11 @@ jobs:
           ocaml-compiler: 5.3.0
       - run: sudo apt-get update && sudo apt-get install -y libpcre2-dev zlib1g-dev libmbedtls-dev neko-dev pkg-config
       - run: opam install ./haxe/upstream --deps-only -y
-      # The count types ~440 modules in one compilation, which hxmc's stage0
-      # does not survive yet (its GC aborts: "gc: verify: bad header"), so
-      # it runs on a pinned Haxe 5 nightly; the semantic tests stay on stage0.
-      - run: |
-          curl -sSfL https://build.haxe.org/builds/haxe/linux64/haxe_2025-07-04_development_2c1e544.tar.gz | tar xz -C "$RUNNER_TEMP"
-          echo "HAXE5=$(ls -d "$RUNNER_TEMP"/haxe_*)/haxe" >> "$GITHUB_ENV"
       # the native frontend (compiler-libs of this switch), the semantic
       # tests (OCaml's output against the generated Haxe's, on hxmc's
       # stage0), then the count of modules that emit and type
       - run: opam exec -- make ml2hx-frontend
-      - run: opam exec -- make ml2hx-test
-      - run: opam exec -- node tools/ml2hx/check.mjs --haxe "$HAXE5"
+      - run: opam exec -- make ml2hx-check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
