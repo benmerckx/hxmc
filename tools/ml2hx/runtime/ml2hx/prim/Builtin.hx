@@ -147,6 +147,9 @@ class Builtin {
 	}
 
 	// ---- domain-local storage: one domain, one state array
-	public static var dls:Array<Dynamic> = [];
+	// the current domain's local state (ml2hx.std.Thread: per domain)
+	public static var dls(get, set):Array<Dynamic>;
+	static inline function get_dls():Array<Dynamic> return ml2hx.std.Thread.current.domain.dls;
+	static inline function set_dls(s:Array<Dynamic>):Array<Dynamic> return ml2hx.std.Thread.current.domain.dls = s;
 	public static inline function dlsGet(_:Unit):Array<Dynamic> return dls;
 }

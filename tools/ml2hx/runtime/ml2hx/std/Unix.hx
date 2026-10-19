@@ -365,7 +365,12 @@ class Unix {
 		var t = Math.ffloor(d.getTime() / 1000);
 		return new Tuple2(t, localtime(t));
 	}
-	public static function sleepf(s:Float):Unit { #if sys std.Sys.sleep(s); #end return Unit.value; }
+	public static function sleepf(s:Float):Unit {
+		Gil.leave();
+		#if sys std.Sys.sleep(s); #end
+		Gil.enter();
+		return Unit.value;
+	}
 	public static function sleep(s:Int63):Unit return sleepf(s.toInt());
 
 	#if sys
@@ -467,7 +472,9 @@ class Unix {
 		#if (target.name == "hxmc")
 		if (d.pfd >= 0) {
 			if (ofs.toInt() < 0 || len.toInt() < 0 || ofs.toInt() + len.toInt() > b.length) throw new InvalidArgument("Unix.read");
+			Gil.leave();
 			var n = hxmc.NativeSys.fileRead(d.pfd, b, ofs.toInt(), len.toInt());
+			Gil.enter();
 			return n < 0 ? hostFail("read") : Int63.ofInt(n);
 		}
 		#end
@@ -676,7 +683,9 @@ class Unix {
 					l = t;
 			}
 			// (the exit code, 128 + n for a signal n: as WEXITED)
+			Gil.leave();
 			var code = hxmc.NativeSys.processWait(pid.toInt(), !nohang);
+			Gil.enter();
 			if (code < 0 && nohang) return new Tuple2(Int63.zero, WEXITED(Int63.zero));
 			hostPids.remove(pid.toInt());
 			return new Tuple2(pid, WEXITED(Int63.ofInt(code)));
@@ -802,7 +811,10 @@ class Unix {
 		return ADDR_INET(ofIpv4(a[0]), Int63.ofInt(a[1]));
 	}
 	public static function accept(d:UnixFileDescr, ?cloexec:Bool):Tuple2<UnixFileDescr, UnixSockaddr> {
-		var fd = Net.accept(sock(d, "accept"));
+		var sfd = sock(d, "accept");
+		Gil.leave();
+		var fd = Net.accept(sfd);
+		Gil.enter();
 		if (fd < 0) netFail("accept");
 		var c = new UnixFileDescr();
 		c.fd = fd;
@@ -824,7 +836,10 @@ class Unix {
 	public static function recv(d:UnixFileDescr, b:haxe.io.Bytes, ofs:Int63, len:Int63, flags:MlList<UnixMsgFlag>):Int63 {
 		checkRange(b, ofs, len, "Unix.recv");
 		if (flags != Nil) return unsupported("recv");
-		var n = Net.recv(sock(d, "recv"), b, ofs.toInt(), len.toInt());
+		var sfd = sock(d, "recv");
+		Gil.leave();
+		var n = Net.recv(sfd, b, ofs.toInt(), len.toInt());
+		Gil.enter();
 		return n < 0 ? netFail("recv") : Int63.ofInt(n);
 	}
 	public static function shutdown(d:UnixFileDescr, c:UnixShutdownCommand):Unit {
@@ -838,7 +853,10 @@ class Unix {
 		function list(a:HArray<UnixFileDescr>):MlList<UnixFileDescr> { var l:MlList<UnixFileDescr> = Nil, i = a.length; while (i > 0) l = Cons(a[--i], l); return l; }
 		var rs = arr(r), ws = arr(w), es = arr(e);
 		var rf = [for (d in rs) d.fd], wf = [for (d in ws) d.fd], ef = [for (d in es) d.fd];
-		if (Net.select(rf, wf, ef, timeout) < 0) netFail("select");
+		Gil.leave();
+		var sr = Net.select(rf, wf, ef, timeout);
+		Gil.enter();
+		if (sr < 0) netFail("select");
 		return new Tuple3(list([for (i in 0...rs.length) if (rs[i].fd < 0 || rf[i] >= 0) rs[i]]), list([for (i in 0...ws.length) if (ws[i].fd < 0 || wf[i] >= 0) ws[i]]),
 			list([for (i in 0...es.length) if (es[i].fd >= 0 && ef[i] >= 0) es[i]]));
 	}

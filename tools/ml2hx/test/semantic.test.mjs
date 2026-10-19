@@ -38,7 +38,7 @@ function haxe(args) {
 export function ocaml(name, files, dir) {
   fs.mkdirSync(dir, {recursive: true});
   const copies = files.map(f => { const d = path.join(dir, path.basename(f)); fs.copyFileSync(f, d); return d; });
-  ok('ocamlfind', ['ocamlc', '-package', 'str', '-linkpkg', '-bin-annot', '-I', dir, '-o', path.join(dir, 'reference.byte'), ...copies]);
+  ok('ocamlfind', ['ocamlc', '-package', 'str,threads.posix', '-linkpkg', '-bin-annot', '-I', dir, '-o', path.join(dir, 'reference.byte'), ...copies]);
   const out = ok('ocamlrun', [path.join(dir, 'reference.byte')]);
   return {cmts: copies.map(f => f.replace(/\.ml$/, '.cmt')), expected: out};
 }
