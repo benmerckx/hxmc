@@ -1273,8 +1273,9 @@ class UnitEmitter {
     const {args} = this.arrows(n.t);
     const arity = d.arity;
     // Eta-expand into a curried closure around the inline operation.
+    if (args.length < arity) this.fail(where, `primitive ${d.prim} as a value with ${args.length} of its ${arity} arguments`);
     const names = args.slice(0, arity).map(() => this.temp('a'));
-    const fake = {k: 'apply', t: null, l: n.l, fn: n, args: names.map((x, i) => ({label: '', e: {k: '$var', name: x, t: args[i].t}}))};
+    const fake = {k: 'apply', $eta: true, t: null, l: n.l, fn: n, args: names.map((x, i) => ({label: '', e: {k: '$var', name: x, t: args[i].t}}))};
     const {res} = this.arrows(n.t);
     fake.t = this.resultAfter(n.t, arity);
     let body = this.primApply(d.prim, fake, n);
@@ -1295,6 +1296,7 @@ class UnitEmitter {
     const spec = P[prim];
     if (!spec) return null;
     if (args.length < spec.arity || args.slice(0, spec.arity).some(a => !a.e)) {
+      if (n.$eta) this.fail(n, `primitive ${prim} with fewer arguments than its arity`);
       // Partial: eta through primValue.
       const f = this.primValue({prim, arity: spec.arity}, fn, n);
       return this.ordered(args.map(a => a.e ?? this.fail(n, 'omitted primitive argument')), vals => vals.reduce((acc, a) => `${acc}(${a})`, f));
@@ -1330,9 +1332,9 @@ class UnitEmitter {
       '%makemutable': {arity: 1, code: v => `new ${RT}Ref(${v[0]})`},
       '%field0': {arity: 1, code: (v, a) => `${wrap(v[0])}.${this.t(a[0].t).k === 'tuple' ? 'v0' : 'value'}`},
       '%field1': {arity: 1, code: v => `${wrap(v[0])}.v1`},
-      '%loc_LOC': {arity: 1, code: (v, a, n) => haxeString(`File "${this.cfg.source}", line ${n.l[0]}, characters ${n.l[1]}-${n.l[1]}`)},
-      '%loc_MODULE': {arity: 1, code: () => haxeString(this.u.modname)},
-      '%loc_POS': {arity: 1, code: (v, a, n) => `new ${RT}Tuple4(${haxeString(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])}, ${this.intLit(n.l[1])})`},
+      '%loc_LOC': {arity: 0, code: (v, a, n) => haxeString(`File "${this.cfg.source}", line ${n.l[0]}, characters ${n.l[1]}-${n.l[1]}`)},
+      '%loc_MODULE': {arity: 0, code: () => haxeString(this.u.modname)},
+      '%loc_POS': {arity: 0, code: (v, a, n) => `new ${RT}Tuple4(${haxeString(this.cfg.source)}, ${this.intLit(n.l[0])}, ${this.intLit(n.l[1])}, ${this.intLit(n.l[1])})`},
       '%setfield0': {arity: 2, code: v => `{ ${wrap(v[0])}.value = ${v[1]}; ${UNIT}; }`},
       '%incr': {arity: 1, code: v => `{ var _r = ${v[0]}; _r.value = ${I63}.succ(_r.value); ${UNIT}; }`},
       '%decr': {arity: 1, code: v => `{ var _r = ${v[0]}; _r.value = ${I63}.pred(_r.value); ${UNIT}; }`},
@@ -1351,7 +1353,7 @@ class UnitEmitter {
       '%addfloat': {arity: 2, code: v => `(${wrap(v[0])} + ${wrap(v[1])})`}, '%subfloat': {arity: 2, code: v => `(${wrap(v[0])} - ${wrap(v[1])})`},
       '%mulfloat': {arity: 2, code: v => `(${wrap(v[0])} * ${wrap(v[1])})`}, '%divfloat': {arity: 2, code: v => `(${wrap(v[0])} / ${wrap(v[1])})`},
       '%negfloat': {arity: 1, code: v => `(-${v[0]})`}, '%absfloat': {arity: 1, code: v => `Math.abs(${v[0]})`},
-      '%loc_FILE': {arity: 1, code: () => haxeString(this.cfg.source)}, '%loc_LINE': {arity: 1, code: (v, a, n) => this.intLit(n.l[0])},
+      '%loc_FILE': {arity: 0, code: () => haxeString(this.cfg.source)}, '%loc_LINE': {arity: 0, code: (v, a, n) => this.intLit(n.l[0])},
       '%int_as_pointer': null,
     };
     for (const [k, v] of Object.entries(P)) if (!v) delete P[k];
@@ -1730,7 +1732,7 @@ class UnitEmitter {
         const hash = hashVariant(p.tag);
         if (!p.arg) return {pat: `_.tag => ${hash}`};
         const inner = this.pattern(p.arg);
-        return {...inner, pat: `${RT}PolyVariant.arg1(_, ${hash}) => ${RT}MlOption.Some(${inner.pat})`};
+        return {...inner, pat: `(${RT}PolyVariant.arg1(_, ${hash}) : ${RT}MlOption<${this.type(p.arg.t, p)}>) => ${RT}MlOption.Some(${inner.pat})`};
       }
       case 'exception': this.fail(p, 'nested exception pattern');
     }
