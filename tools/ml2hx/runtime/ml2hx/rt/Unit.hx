@@ -1,5 +1,6 @@
 package ml2hx.rt;
-class Unit {
-	public static final value = new Unit();
-	function new() {}
+
+// OCaml's unit. An enum abstract so it costs nothing at run time.
+enum abstract Unit(Int) {
+	var value = 0;
 }

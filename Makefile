@@ -916,20 +916,24 @@ clean:
 distclean: clean
 	rm -rf bin
 
-# --- Experimental OCaml -> Haxe generation ---
-.PHONY: generate ml2hx-test ml2hx-frontend ml2hx-frontend-native port-generated ml2hx-bench
+# --- Experimental OCaml -> Haxe generation (tools/ml2hx, README there) ---
+# Needs the opam switch the pinned tag builds with (OCaml from
+# haxe/upstream/.github/workflows/main.yml) and the tag's opam dependencies.
+.PHONY: generate ml2hx-test ml2hx-frontend ml2hx-check port-generated ml2hx-bench
 
-generate: ml2hx-frontend-native
+generate: ml2hx-frontend
 	$(NODE) tools/ml2hx/generate.mjs
 
 ml2hx-frontend:
-	$(NODE) tools/ml2hx/build.mjs
+	$(NODE) tools/ml2hx/build-frontend.mjs
 
-ml2hx-frontend-native:
-	$(NODE) tools/ml2hx/build-native.mjs
+ml2hx-test: ml2hx-frontend
+	$(NODE) --test tools/ml2hx/test/semantic.test.mjs
 
-ml2hx-test:
-	$(NODE) --test tools/ml2hx/test/generator.test.mjs
+# The semantic tests, then generation over the pin with the count of modules
+# that emit and type (tools/ml2hx/check.mjs).
+ml2hx-check: ml2hx-test
+	$(NODE) tools/ml2hx/check.mjs
 
 port-generated: $(TOOL) $(STD) $(HOST_RT) generate
 	$(call hxmc,bin/ml2hx/haxe,-cp bin/ml2hx/generated -main upstream.compiler.HaxeModule -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS))
