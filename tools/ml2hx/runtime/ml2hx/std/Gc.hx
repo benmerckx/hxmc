@@ -52,7 +52,16 @@ class GcStat implements Block {
 	public function blockField(i:Int):Dynamic return ([minorWords, promotedWords, majorWords, minorCollections, majorCollections, heapWords, heapChunks, liveWords, liveBlocks, freeWords, freeBlocks, largestFree, fragments, compactions, topHeapWords, stackSize, forcedMajorCollections] : std.Array<Dynamic>)[i];
 }
 
+// An alarm runs at the end of each major cycle; there are none here.
+class GcAlarm {
+	public var active = true;
+	public final f:Unit->Unit;
+	public function new(f) this.f = f;
+}
+
 class Gc {
+	public static function createAlarm(f:Unit->Unit):GcAlarm return new GcAlarm(f);
+	public static function deleteAlarm(a:GcAlarm):Unit { a.active = false; return Unit.value; }
 	static var control = new GcControl(Int63.ofInt(262144), Int63.ofInt(15), Int63.ofInt(120), Int63.zero, Int63.ofInt(500), Int63.zero, Int63.ofInt(2), Int63.one, Int63.ofInt(44), Int63.ofInt(100), Int63.ofInt(70000));
 	public static function get(_:Unit):GcControl return control;
 	public static function set(c:GcControl):Unit { control = c; return Unit.value; }

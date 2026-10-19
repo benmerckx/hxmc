@@ -60,26 +60,32 @@ let rec path p = match p with
 (* ---- types, hash-consed per unit ---- *)
 let type_table : json option array ref = ref [||]
 let type_count = ref 0
-let type_index : (int, int) Hashtbl.t = Hashtbl.create 1024
+(* Keyed by node identity: ids are only unique per compilation, and a unit
+   mixes types from its cmt with types read from other cmis. *)
+let type_index : (int, (Types.transient_expr * int) list) Hashtbl.t = Hashtbl.create 1024
 let reset_types () = type_table := Array.make 1024 None; type_count := 0; Hashtbl.reset type_index
+let current_index = ref 0
 let rec typ t : json =
   let id = Types.get_id t in
-  match Hashtbl.find_opt type_index id with
-  | Some i -> Num i
+  let r = Types.Transient_expr.repr t in
+  let bucket = Option.value ~default:[] (Hashtbl.find_opt type_index id) in
+  match List.find_opt (fun (r', _) -> r' == r) bucket with
+  | Some (_, i) -> Num i
   | None ->
     let i = !type_count in
     incr type_count;
     if i >= Array.length !type_table then begin
       let bigger = Array.make (2 * i) None in Array.blit !type_table 0 bigger 0 i; type_table := bigger
     end;
-    Hashtbl.replace type_index id i;
+    Hashtbl.replace type_index id ((r, i) :: bucket);
+    current_index := i;
     !type_table.(i) <- Some (typ_desc t);
     Num i
 and typ_desc t =
   let node k fields = Obj (("k",Str k)::fields) in
   match Types.get_desc t with
-  | Types.Tvar name -> node "var" ["id",Num (Types.get_id t); "name",opt str name; "gen",Bool (Types.get_level t = Btype.generic_level)]
-  | Types.Tunivar name -> node "var" ["id",Num (Types.get_id t); "name",opt str name; "univ",Bool true]
+  | Types.Tvar name -> node "var" ["id",Num !current_index; "name",opt str name; "gen",Bool (Types.get_level t = Btype.generic_level)]
+  | Types.Tunivar name -> node "var" ["id",Num !current_index; "name",opt str name; "univ",Bool true]
   | Types.Tarrow (l,a,b,_) -> node "arrow" ["label",label l; "arg",typ a; "res",typ b]
   | Types.Ttuple ts -> node "tuple" ["args",arr typ ts]
   | Types.Tconstr (p,ts,_) ->

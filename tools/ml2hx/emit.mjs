@@ -1598,7 +1598,14 @@ class UnitEmitter {
     const fmtNode = n.args[lead].e;
     const pieces = this.formatPieces(fmtNode);
     if (!pieces) return this.printfValue(kind, lead, n, fn);
-    const holes = pieces.filter(p => p.conv);
+    // One hole per argument: `*` width and precision come before the value.
+    const holes = [];
+    for (const p of pieces) if (p.conv) {
+      p.star = [];
+      if (this.starArg(p.pad, 'Arg_padding')) { p.star.push('w'); holes.push(p); }
+      if (this.starArg(p.prec, 'Arg_precision')) { p.star.push('p'); holes.push(p); }
+      holes.push(p);
+    }
     const supplied = n.args.slice(lead + 1);
     if (supplied.some(a => !a.e)) this.fail(n, 'omitted format argument');
     const {args: formal} = this.arrows(this.resultAfter(fn.t, lead + 1));
@@ -1606,7 +1613,11 @@ class UnitEmitter {
     const leadVals = n.args.slice(0, lead).map(a => this.value(a.e));
     const concat = () => {
       let i = 0;
-      const parts = pieces.map(p => p.lit !== undefined ? haxeString(p.lit) : wrap(this.formatConv(p, names[i++], formal[i - 1]?.t, n)));
+      const parts = pieces.map(p => {
+        if (p.lit !== undefined) return haxeString(p.lit);
+        const stars = p.star.map(() => names[i++]);
+        return wrap(this.formatConv(p, names[i++], formal[i - 1]?.t, n, stars));
+      });
       return parts.length ? parts.join(' + ') : '""';
     };
     let body;
@@ -1701,12 +1712,18 @@ class UnitEmitter {
     for (const p of out) { if (p.lit !== undefined && merged.length && merged.at(-1).lit !== undefined) merged.at(-1).lit += p.lit; else merged.push(p); }
     return merged;
   }
-  formatConv(p, v, t, n) {
+  starArg(x, name) { return !!x && x.k === 'construct' && x.c.name === name; }
+  formatConv(p, v, t, n, stars = []) {
+    if (stars.length) {
+      const w = p.star.includes('w') ? `${wrap(stars[0])}.toInt()` : `${RT}Fmt.FmtItem.NONE`;
+      const pr = p.star.includes('p') ? `${wrap(stars.at(-1))}.toInt()` : `${RT}Fmt.FmtItem.NONE`;
+      return `${RT}Fmt.oneStar(${JSON.stringify(this.convSpec(p, n))}, ${w}, ${pr}, ${v})`;
+    }
     const noPad = x => !x || (x.k === 'construct' && x.c.name === 'No_padding');
     const noPrec = x => !x || (x.k === 'construct' && x.c.name === 'No_precision');
     const simple = noPad(p.pad) && noPrec(p.prec);
     if (p.conv === 's' && noPad(p.pad)) return v;
-    if (p.conv === 'c') return `String.fromCharCode(${v})`;
+    if (p.conv === 'c') return `std.String.fromCharCode(${v})`;
     if (p.conv === 'B') return `(${v} ? "true" : "false")`;
     if (p.conv === 'Int' && simple && ['Int_d', 'Int_i'].includes(p.iconv)) return `${wrap(v)}.toString()`;
     // Everything else: the runtime's conversion of one specification.
@@ -1720,8 +1737,13 @@ class UnitEmitter {
       const side = pad.args[0].c.name;
       flags += side === 'Left' ? '-' : side === 'Zeros' ? '0' : '';
       width = pad.args[1].c.v;
-    } else if (pad && pad.k === 'construct' && pad.c.name !== 'No_padding') this.fail(n, 'computed format padding');
+    } else if (this.starArg(pad, 'Arg_padding')) {
+      const side = pad.args[0].c.name;
+      flags += side === 'Left' ? '-' : side === 'Zeros' ? '0' : '';
+      width = '*';
+    } else if (pad && pad.k === 'construct' && pad.c.name !== 'No_padding') this.fail(n, 'format padding ' + pad.c.name);
     if (prec && prec.k === 'construct' && prec.c.name === 'Lit_precision') precision = '.' + prec.args[0].c.v;
+    else if (this.starArg(prec, 'Arg_precision')) precision = '.*';
     else if (prec && prec.k === 'construct' && prec.c.name !== 'No_precision') this.fail(n, 'computed format precision');
     let conv = '';
     if (p.conv === 'Int' || p.conv === 'Int32' || p.conv === 'Int64' || p.conv === 'Nativeint') {
@@ -1889,7 +1911,11 @@ class UnitEmitter {
     }
     if (p.k === 'any') return {pat: `[${Array(arity).fill('_').join(', ')}]`};
     if (p.k === 'or') {
-      const a = this.tuplePattern(p.a, arity), b = this.tuplePattern(p.b, arity);
+      const a = this.tuplePattern(p.a, arity);
+      const savedOr = this.orNames;
+      this.orNames = new Map([...(savedOr ?? []), ...patternVars(p.a).map(v => [v.id, this.ids.get(v.id)?.name])]);
+      const b = this.tuplePattern(p.b, arity);
+      this.orNames = savedOr;
       if (a.guard || b.guard || a.pre || b.pre) this.fail(p, 'or-pattern with conditions');
       return {pat: `${a.pat} | ${b.pat}`};
     }
@@ -2055,7 +2081,9 @@ class UnitEmitter {
     const name = d.hx.split('.').at(-1);
     this.withTypeParams(this.declParams(c, c), tparams => {
       const gen = tparams.length ? `<${tparams.join(', ')}>` : '';
-      const members = [], ctor = [], ctorParams = [];
+      // pre: local bindings of the parameters and class lets, before the
+      // super call (which may use them); ctor: the field stores after it.
+      const members = [], pre = [], ctor = [], ctorParams = [];
       const saved = new Map(this.ids);
       const savedParams = this.classParams;
       this.classParams = new Map(d.parent ? this.inheritedParams(d.parent) : []);
@@ -2065,9 +2093,9 @@ class UnitEmitter {
         ctorParams.push(`${pname}:${this.type(p.p.t, p)}`);
         const bound = this.bindIrrefutable(p.p, pname);
         if (bound === null) this.fail(p, 'refutable class parameter');
-        ctor.push(bound);
+        pre.push(bound);
         for (const x of p.defaults) {
-          const f = `cp_${this.fresh(identName(x.id))}`;
+          const f = `cp_${name}_${this.fresh(identName(x.id))}`;
           members.push(`var ${f}:${this.type(x.e.t, p)};`);
           ctor.push(`this.${f} = ${this.value(x.e)};`);
           this.ids.set(x.id, {kind: 'local', name: `this.${f}`});
@@ -2075,9 +2103,9 @@ class UnitEmitter {
         }
       }
       for (const l of lets) {
-        ctor.push(this.bindings({rec: l.rec, bindings: l.bindings}));
+        pre.push(this.bindings({rec: l.rec, bindings: l.bindings}));
         for (const x of l.ivars) {
-          const f = `cp_${this.fresh(identName(x.id))}`;
+          const f = `cp_${name}_${this.fresh(identName(x.id))}`;
           members.push(`var ${f}:${this.type(x.e.t, l)};`);
           ctor.push(`this.${f} = ${this.value(x.e)};`);
           this.ids.set(x.id, {kind: 'local', name: `this.${f}`});
@@ -2117,7 +2145,7 @@ class UnitEmitter {
         }
       }
       const isAbstract = c.virtual || [...d.methods.values()].some(m => m.virtual);
-      const body = [...(superCall ? [superCall] : []), ...ctor, ...inits].join(' ');
+      const body = [...pre, ...(superCall ? [superCall] : []), ...ctor, ...inits].join(' ');
       this.decls.push(`${isAbstract ? 'abstract ' : ''}class ${name}${gen}${parentHx ? ` extends ${parentHx}` : ''} {\n${members.map(m => '\t' + m).join('\n')}\n\tpublic function new(${ctorParams.join(', ')}) { ${body} }\n}`);
       this.ids = saved;
       this.classParams = savedParams;
@@ -2194,7 +2222,10 @@ class UnitEmitter {
     const d = this.resolveType(n.fn.path, n);
     if (d.kind !== 'class') this.fail(n, 'new of a non-class');
     const t = this.type(n.t, n).replace(/^\(.*\) -> /, '');
-    const cls = this.classOf(this.resultAfter(n.fn.t, d.arity), n) ? this.type(this.resultAfter(n.fn.t, d.arity), n) : d.hx;
+    // The result type names the class with its arguments, unless it was
+    // unified with an ancestor's type (Haxe infers the arguments then).
+    const rc = this.classOf(this.resultAfter(n.fn.t, d.arity), n);
+    const cls = rc && rc.hx === d.hx ? this.type(this.resultAfter(n.fn.t, d.arity), n) : d.hx;
     return this.knownCall(`new ${cls}`, d.arity, n, n.fn, d.arity === 0);
   }
   // obj#m args: a method call with the method's arity (from its class).

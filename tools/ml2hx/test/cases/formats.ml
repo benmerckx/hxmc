@@ -17,3 +17,8 @@ let () =
   let by = Bytes.of_string "abc" in
   Bytes.set by 1 'X';
   print_endline (Bytes.to_string by)
+
+let () =
+  Printf.printf "[%*s][%-*d][%.*f][%*.*f]\n" 6 "ab" 5 42 2 3.14159 8 3 2.5;
+  let pad w s = Printf.sprintf "%*s|" w s in
+  print_endline (pad 4 "x" ^ pad (-4) "y")

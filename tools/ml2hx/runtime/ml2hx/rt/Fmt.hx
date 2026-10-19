@@ -277,6 +277,15 @@ class Fmt {
 		throw new InvalidArgument("Printf: no conversion in " + spec);
 	}
 
+	// One conversion with `*` width and/or precision (the arguments before
+	// the value; NONE when the specification has no `*` there).
+	public static function oneStar(spec:String, width:Int, prec:Int, a:Dynamic):String {
+		var f = of(spec);
+		for (it in f.items) if (it.kind == FmtItem.CONV)
+			return convert(it, it.width == FmtItem.STAR ? width : it.width, it.prec == FmtItem.STAR ? prec : it.prec, a);
+		throw new InvalidArgument("Printf: no conversion in " + spec);
+	}
+
 	// the string of one conversion (output-independent ones)
 	public static function convert(it:FmtItem, width:Int, prec:Int, a:Dynamic):String {
 		var zeros = it.zero && !it.minus;
