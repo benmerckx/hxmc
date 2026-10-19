@@ -93,7 +93,10 @@ class Struct {
   }
 }
 class LibraryModule {
-  constructor(path) { this.kind = 'lib'; this.path = path; this.name = [libraryModule(path[0]), ...path.slice(1)].join('_'); this.hx = STD + this.name; }
+  constructor(path) {
+    // Stdlib.Buffer is the library module Buffer.
+    if (path.length > 1 && path[0] === 'Stdlib') path = path.slice(1);
+    this.kind = 'lib'; this.path = path; this.name = [libraryModule(path[0]), ...path.slice(1)].join('_'); this.hx = STD + this.name; }
   typeHx(t) { return `${this.hx}.${moduleTypeName(this.name, t)}`; }
   exnHx(x) {
     if (this.name === 'Stdlib' && x === 'Exit') return `${RT}Exit`;
@@ -105,7 +108,8 @@ class LibraryModule {
 // ---------------------------------------------------------------- emitter
 class UnitEmitter {
   constructor(program, unit) {
-    this.p = program; this.u = unit; this.ir = unit.load();
+    this.p = program; this.u = unit; this.ir = stripNewtypes(unit.load());
+    this.localTypes = new Map();
     this.T = this.ir.types;
     this.cfg = unit.config;
     this.cls = `${this.cfg.package}.${this.cfg.class}`;
@@ -192,7 +196,16 @@ class UnitEmitter {
   }
   resolveType(p, n) {
     if (p.p) return {hx: predefTypes[p.p] ?? this.fail(n, `predefined type ${p.p}`), predef: p.p};
-    if (p.l) { const d = this.ids.get(p.l); if (!d) this.fail(n, `unknown type ${pathName(p)}`); return d; }
+    if (p.l) {
+      const d = this.ids.get(p.l);
+      if (d) return d;
+      // (type a): a locally abstract type is a type parameter of its function.
+      const lt = this.localTypes.get(identName(p.l));
+      if (lt) return {tparam: lt};
+      // A GADT existential ($0, $Pair_'a): never inspected, any type.
+      if (p.l.startsWith('$')) return {tparam: 'Any'};
+      this.fail(n, `unknown type ${pathName(p)}`);
+    }
     if (p.d) {
       const key = pathName(p);
       const lib = libraryPath(p);
@@ -298,6 +311,19 @@ class UnitEmitter {
     }
     try { return body(names); } finally { this.tvars = saved; }
   }
+  withLocalTypes(names, body, reuse = null) {
+    if (!names.length) return body([]);
+    if (reuse && reuse.length === names.length) {
+      // (type a) for the function's own type variable: the same parameter.
+      const saved = new Map(this.localTypes);
+      names.forEach((n, i) => this.localTypes.set(n, reuse[i]));
+      try { return body([]); } finally { this.localTypes = saved; }
+    }
+    const saved = new Map(this.localTypes), out = [];
+    const used = new Set(this.tvars.values());
+    for (const n of names) { let k = this.tvars.size + out.length, c; do c = `T${k++}`; while (used.has(c)); used.add(c); this.localTypes.set(n, c); out.push(c); }
+    try { return body(out); } finally { this.localTypes = saved; }
+  }
   genericVars(i) { return this.typeVars(i).filter(id => { const t = this.T.find((x) => x?.k === 'var' && x.id === id); return t?.gen && !this.tvars.has(id); }); }
 
   // ------------------------------------------------------------ declarations (pass 1)
@@ -397,6 +423,20 @@ class UnitEmitter {
           const name = identName(it.id);
           const d = it.k === 'value' ? m.values.get(name) : it.k === 'type' ? m.types.get(name) : it.k === 'module' ? m.modules.get(name) : it.k === 'typext' ? m.exns.get(name) : it.k === 'class' ? m.classes.get(name) : null;
           if (d) this.ids.set(it.id, d);
+        }
+        if (m.kind === 'lib') for (const it of item.sig) {
+          const name = identName(it.id);
+          if (it.k === 'value') {
+            // Members of an included library module keep its calling convention.
+            const d = {kind: 'lib', cls: m.hx, name, member: valueName(name), path: m.path};
+            if (it.prim && it.prim.name.startsWith('%')) Object.assign(d, {kind: 'prim', prim: it.prim.name, arity: it.prim.arity});
+            if (!s.values.has(name)) s.values.set(name, d);
+            this.ids.set(it.id, d);
+          } else if (it.k === 'type') {
+            const d = this.resolveType({d: [m.path.slice(1).reduce((p, x) => ({d: [p, x]}), {g: m.path[0]}), name]}, item);
+            this.ids.set(it.id, d);
+            if (!s.types.has(name)) s.types.set(name, d);
+          } else if (it.k === 'typext') this.ids.set(it.id, {kind: 'exnalias', path: {d: [m.path.slice(1).reduce((p, x) => ({d: [p, x]}), {g: m.path[0]}), name]}});
         }
         break;
       }
@@ -571,14 +611,21 @@ class UnitEmitter {
         this.decls.push(this.recordClass(name, gen, d.labels, d));
       } else if (d.kind === 'variant') {
         const ctors = d.ctors.map(c => {
-          let args;
-          if (c.args.record) {
-            this.decls.push(this.recordClass(`${name}_${c.name}`, gen, c.args.record, d));
-            args = [`v0:${name}_${c.name}${gen}`];
-          } else args = c.args.tuple.map((a, i) => `v${i}:${this.type(a, d)}`);
-          const res = c.res !== null ? `:${this.withTypeParams(this.typeVars(c.res).filter(v => !this.tvars.has(v)), () => this.type(c.res, d))}` : '';
-          if (c.res !== null) this.fail(d, `GADT constructor ${c.name}`);
-          return `\t${c.name}${args.length ? `(${args.join(', ')})` : ''}${res};`;
+          const render = () => {
+            let args;
+            if (c.args.record) {
+              if (c.res !== null) this.fail(d, `GADT constructor ${c.name} with an inline record`);
+              this.decls.push(this.recordClass(`${name}_${c.name}`, gen, c.args.record, d));
+              args = [`v0:${name}_${c.name}${gen}`];
+            } else args = c.args.tuple.map((a, i) => `v${i}:${this.type(a, d)}`);
+            return {args, res: c.res !== null ? `:${this.type(c.res, d)}` : ''};
+          };
+          // A GADT constructor's variables are its own: constructor type parameters.
+          const own = c.res !== null ? [...new Set([...c.args.tuple ?? [], c.res].flatMap(t => this.typeVars(t)))].filter(v => !this.tvars.has(v)) : [];
+          return this.withTypeParams(own, ps => {
+            const {args, res} = render();
+            return `\t${c.name}${ps.length ? `<${ps.join(', ')}>` : ''}${args.length ? `(${args.join(', ')})` : ''}${res};`;
+          });
         });
         this.decls.push(`enum ${name}${gen} {\n${ctors.join('\n')}\n}`);
       } else if (d.kind === 'open') {
@@ -618,10 +665,11 @@ class UnitEmitter {
       if (b.p.k === 'var' && b.e.k === 'fun') {
         const d = this.ids.get(b.p.id);
         const vars = this.typeVars(b.p.t).filter(v => !this.tvars.has(v));
-        this.withTypeParams(vars, params => {
-          const f = this.functionParts(d.fn, b.e, item.rec ? b.p.id : null);
+        this.withTypeParams(vars, params0 => this.withLocalTypes(b.e.newtypes ?? [], lps => {
+          const params = [...params0, ...lps];
+          const f = this.functionParts(d.fn, {...b.e, t: b.e.newtypes ? b.p.t : b.e.t}, item.rec ? b.p.id : null);
           members.push(`public static function ${d.member}${params.length ? `<${params.join(', ')}>` : ''}(${f.params}):${f.res} ${f.body}`);
-        });
+        }, params0));
         continue;
       }
       if (b.p.k === 'var') {
@@ -852,10 +900,11 @@ class UnitEmitter {
   }
   localFunction(name, fn, node, self, t) {
     const vars = this.typeVars(t).filter(v => !this.tvars.has(v) && this.T.some(x => x?.k === 'var' && x.id === v && x.gen));
-    return this.withTypeParams(vars, params => {
+    return this.withTypeParams(vars, params0 => this.withLocalTypes(node.newtypes ?? [], lps => {
+      const params = [...params0, ...lps];
       const f = this.functionParts(fn, node, self);
       return `function ${name}${params.length ? `<${params.join(', ')}>` : ''}(${f.params}):${f.res} ${f.body}`;
-    });
+    }));
   }
   // A function value (closure): curried.
   lambda(n) {
@@ -920,7 +969,13 @@ class UnitEmitter {
       case 'apply': return this.apply(n);
       case 'match': return this.matchNode(n, null, 'value');
       case 'try': return this.tryExpr(n);
-      case 'tuple': return this.ordered(n.args, a => `new ${this.type(n.t, n)}(${a.join(', ')})`);
+      case 'tuple': {
+        const t = this.type(n.t, n);
+        if (t.startsWith(`${RT}Tuple`)) return this.ordered(n.args, a => `new ${t}(${a.join(', ')})`);
+        // A GADT-refined type (Haxe refines it in the branch too): the tuple's own type.
+        const own = `${RT}Tuple${n.args.length}<${n.args.map(a => this.type(a.t, a)).join(', ')}>`;
+        return this.ordered(n.args, a => `new ${own}(${a.join(', ')})`);
+      }
       case 'construct': return this.construct(n);
       case 'variant': {
         const tag = JSON.stringify(n.tag), hash = hashVariant(n.tag);
@@ -944,8 +999,8 @@ class UnitEmitter {
       case 'letmodule': return this.letModule(n);
       case 'new': return this.newObject({k: 'apply', t: n.t, l: n.l, fn: n, args: []});
       case 'send': return this.send(n, []);
-      case 'instvar': return `this.iv_${valueName(n.name)}`;
-      case 'setinstvar': return `{ this.iv_${valueName(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
+      case 'instvar': return `this.${this.instvarField(n.name)}`;
+      case 'setinstvar': return `{ this.${this.instvarField(n.name)} = ${this.value(n.v)}; ${UNIT}; }`;
       case 'object': this.fail(n, 'immediate object');
       case 'override': this.fail(n, 'object copy {< >}');
       case 'pack': this.fail(n, 'first-class module');
@@ -1705,6 +1760,9 @@ class UnitEmitter {
     }
     return d;
   }
+  // Instance variables: declared vals, and the class parameters and lets
+  // methods use (which OCaml makes instance variables too).
+  instvarField(name) { return this.classParams?.get(name) ?? `iv_${valueName(name)}`; }
   methodArity(t) { let x = this.t(t); if (x.k === 'poly') x = this.t(x.body); let n = 0; while (x.k === 'arrow') { n++; x = this.t(x.res); } return n; }
   emitClass(c, d) {
     const {params, lets, cs} = d.parts;
@@ -1713,6 +1771,8 @@ class UnitEmitter {
       const gen = tparams.length ? `<${tparams.join(', ')}>` : '';
       const members = [], ctor = [], ctorParams = [];
       const saved = new Map(this.ids);
+      const savedParams = this.classParams;
+      this.classParams = new Map(d.parent ? this.inheritedParams(d.parent) : []);
       // Class parameters and class-level lets become fields.
       for (const p of params) {
         const pname = this.fresh('p');
@@ -1725,6 +1785,7 @@ class UnitEmitter {
           members.push(`var ${f}:${this.type(x.e.t, p)};`);
           ctor.push(`this.${f} = ${this.value(x.e)};`);
           this.ids.set(x.id, {kind: 'local', name: `this.${f}`});
+          this.classParams.set(identName(x.id), f); (d.paramFields ??= new Map()).set(identName(x.id), f);
         }
       }
       for (const l of lets) {
@@ -1734,6 +1795,7 @@ class UnitEmitter {
           members.push(`var ${f}:${this.type(x.e.t, l)};`);
           ctor.push(`this.${f} = ${this.value(x.e)};`);
           this.ids.set(x.id, {kind: 'local', name: `this.${f}`});
+          this.classParams.set(identName(x.id), f); (d.paramFields ??= new Map()).set(identName(x.id), f);
         }
       }
       for (const id of patternVars(cs.self)) this.ids.set(id.id, {kind: 'local', name: 'this'});
@@ -1772,8 +1834,10 @@ class UnitEmitter {
       const body = [...(superCall ? [superCall] : []), ...ctor, ...inits].join(' ');
       this.decls.push(`${isAbstract ? 'abstract ' : ''}class ${name}${gen}${parentHx ? ` extends ${parentHx}` : ''} {\n${members.map(m => '\t' + m).join('\n')}\n\tpublic function new(${ctorParams.join(', ')}) { ${body} }\n}`);
       this.ids = saved;
+      this.classParams = savedParams;
     });
   }
+  inheritedParams(p) { return [...(p.parent ? this.inheritedParams(p.parent) : []), ...(p.paramFields ?? [])]; }
   parentType(d) {
     const pn = d.parentNode;
     // The inherited class's type arguments, from the inherit expression's type.
@@ -1859,6 +1923,15 @@ class UnitEmitter {
 }
 
 // ---------------------------------------------------------------- analyses
+// (type a) wrappers: the frontend shows them around the function; the
+// function node records the names instead.
+function stripNewtypes(n) {
+  if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) n[i] = stripNewtypes(n[i]); return n; }
+  if (!n || typeof n !== 'object') return n;
+  for (const k of Object.keys(n)) if (n[k] && typeof n[k] === 'object') n[k] = stripNewtypes(n[k]);
+  if (n.k === 'newtype') { const inner = n.e; (inner.newtypes ??= []).unshift(n.name); return inner; }
+  return n;
+}
 // Parameters of a known function, merging directly nested functions and the
 // final `function` cases (a function with a known arity, called uncurried).
 export function funInfo(n) {

@@ -328,7 +328,7 @@ let () =
     let results = List.map (fun file ->
       try
         let result =
-          if Filename.check_suffix file ".cmt" then begin
+          if Filename.check_suffix file ".cmt" || Filename.check_suffix file ".cmti" then begin
             let _,info = Cmt_format.read file in
             match info with
             | Some ({Cmt_format.cmt_annots = Cmt_format.Implementation tree; _} as c) ->
@@ -342,7 +342,19 @@ let () =
               Load_path.init ~auto_include:Load_path.no_auto_include ~visible:(c.cmt_loadpath.visible @ !Clflags.include_dirs) ~hidden:c.cmt_loadpath.hidden;
               Envaux.reset_cache (); norm_env := None; Hashtbl.reset norm_cache;
               unit_json file c.cmt_modname c.cmt_sourcefile tree
-            | _ -> failwith "expected an implementation CMT"
+            | Some ({Cmt_format.cmt_annots = Cmt_format.Interface sg; _} as c) ->
+              (* An interface without implementation (types only): its type
+                 and exception declarations as structure items. *)
+              reset_types ();
+              let items = Arr (List.filter_map (fun (i:signature_item) -> match i.sig_desc with
+                | Tsig_type (_,ds) -> Some (Obj ["k",Str "type"; "l",loc i.sig_loc; "decls",arr (fun d -> type_decl d.typ_name.txt d.typ_id d.typ_type) ds])
+                | Tsig_exception x -> Some (Obj ["k",Str "exception"; "l",loc i.sig_loc; "ext",extension x.tyexn_constructor])
+                | Tsig_typext x -> Some (Obj ["k",Str "typext"; "l",loc i.sig_loc; "type",path x.tyext_path; "ctors",arr extension x.tyext_constructors])
+                | Tsig_value _ | Tsig_attribute _ | Tsig_open _ -> None
+                | _ -> Some (Obj ["k",Str "unsupported"; "l",loc i.sig_loc])) sg.sig_items) in
+              let types = Array.to_list (Array.sub !type_table 0 !type_count) |> List.map (function Some j -> j | None -> Null) in
+              Obj ["file",Str file; "modname",Str c.cmt_modname; "source",opt str c.cmt_sourcefile; "interface",Bool true; "types",Arr types; "items",items]
+            | _ -> failwith "expected a CMT or CMTI"
           end else begin
             let ast = parse file in
             let modname = String.capitalize_ascii (Filename.remove_extension (Filename.basename file)) in

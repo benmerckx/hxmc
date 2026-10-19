@@ -5,7 +5,7 @@ export const keywords = new Set(('abstract break case cast catch class continue 
 // generated members.
 const reserved = new Set(['trace']);
 const opChars = {'!':'Bang','$':'Dollar','%':'Percent','&':'Amp','*':'Star','+':'Plus','-':'Minus','.':'Dot','/':'Slash',':':'Colon','<':'Lt','=':'Eq','>':'Gt','?':'Qmark','@':'At','^':'Caret','|':'Bar','~':'Tilde','#':'Hash'};
-export function isOperator(s) { return s.length > 0 && !/^[A-Za-z_]/.test(s); }
+export function isOperator(s) { return s.length > 0 && !/^[A-Za-z_0-9]/.test(s); }
 // Stdlib's operators have names (the runtime's); others are spelled out.
 const opNames = {'+': 'opAdd', '-': 'opSub', '*': 'opMul', '/': 'opDiv', '~-': 'opNeg', '~+': 'opPos', '+.': 'opAddF', '-.': 'opSubF', '*.': 'opMulF', '/.': 'opDivF',
   '~-.': 'opNegF', '~+.': 'opPosF', '**': 'opPow', '=': 'opEq', '<>': 'opNe', '==': 'opPhysEq', '!=': 'opPhysNe', '<': 'opLt', '>': 'opGt', '<=': 'opLe', '>=': 'opGe',
@@ -23,6 +23,7 @@ function camelCore(s) {
 export function valueName(s) {
   if (isOperator(s)) return opName(s);
   let v = camelCore(s);
+  if (/^[0-9]/.test(v)) v = 'v' + v;
   if (keywords.has(v) || reserved.has(v)) v += 'Value';
   return v;
 }

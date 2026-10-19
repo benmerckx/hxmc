@@ -61,6 +61,58 @@ export function prepare(upstream) {
   run('dune', ['build', '--root', build, '--profile', 'release', '@check'], {env: {...process.env, STATICLINK: '0', LIB_PARAMS: ''}});
   return build;
 }
+// Library modules the hand-written runtime does not provide are converted
+// too, from their opam packages' typed trees (extlib's PMap, DynArray, IO;
+// sedlex's Sedlexing; camlp-streams' Stream; Stdlib's Queue, Filename...):
+// every library module the program reaches, transitively.
+const runtimeStd = path.join(home, 'runtime/ml2hx/std');
+// Packages (and Stdlib modules) converted rather than hand-written; the rest
+// (C bindings: unix, str, luv, ctypes, threads...) are runtime modules.
+const convertedPackages = new Set(['extlib', 'sedlex', 'camlp-streams', 'xml-light']);
+const convertedStdlib = new Set(['Stdlib__Queue', 'Stdlib__Stack', 'Stdlib__Fun', 'Stdlib__Either', 'Stdlib__Result', 'Stdlib__Int', 'Stdlib__Bool', 'Stdlib__Unit', 'Stdlib__Lexing', 'Stdlib__Parsing']);
+const notConverted = new Set(['Stdlib', 'CamlinternalFormatBasics', 'CamlinternalFormat', 'CamlinternalLazy', 'CamlinternalOO', 'CamlinternalMod', 'Stdlib__Obj', 'Stdlib__Effect', 'Stdlib__Domain']);
+export function libraryUnits(units, failures) {
+  let roots = [];
+  try { roots = run('ocamlfind', ['printconf', 'path']).trim().split('\n').filter(Boolean); } catch (e) { return []; }
+  const index = new Map(), includeDirs = new Set();
+  for (const r of roots) if (fs.existsSync(r)) walk(r, p => {
+    if (p.endsWith('.cmi')) includeDirs.add(path.dirname(p));
+    if (!p.endsWith('.cmt')) return;
+    const base = path.basename(p, '.cmt'), modname = base[0].toUpperCase() + base.slice(1);
+    if (!index.has(modname)) index.set(modname, p);
+  });
+  const known = new Set(units.map(u => u.modname));
+  const provided = name => fs.existsSync(path.join(runtimeStd, `${name.replace(/^Stdlib__/, '')}.hx`));
+  const out = [];
+  let pending = units.slice();
+  while (pending.length) {
+    const wanted = new Set();
+    for (const u of pending) {
+      const text = fs.readFileSync(u.irPath, 'utf8');
+      for (const m of text.matchAll(/"g":"(\w+)"/g)) {
+        const name = m[1];
+        if (known.has(name) || notConverted.has(name) || provided(name) || !index.has(name)) continue;
+        const pkg = path.basename(path.dirname(index.get(name)));
+        if (pkg === 'ocaml' ? !convertedStdlib.has(name) : !convertedPackages.has(pkg)) continue;
+        wanted.add(name); known.add(name);
+      }
+    }
+    if (!wanted.size) break;
+    const names = [...wanted].sort();
+    const ir = frontend(names.map(n => index.get(n)), [...includeDirs].sort());
+    pending = [];
+    ir.forEach((f, i) => {
+      if (f.error) { failures.push({source: `library ${names[i]}`, stage: 'typing', error: f.error, library: true}); return; }
+      const lib = path.basename(path.dirname(index.get(names[i]))).replaceAll('-', '_').toLowerCase();
+      const name = f.modname.replace(/^Stdlib__/, '');
+      const pkg = `ocaml.${lib === 'ocaml' ? 'stdlib' : lib}`;
+      const u = {modname: f.modname, library: true, irPath: f.ir, load: f.load,
+        config: {source: `${lib}/${path.basename(index.get(names[i]), '.cmt')}.ml`, module: name.replace(/_/g, ''), class: `${name.replace(/_/g, '')}Module`, package: pkg, output: `${pkg.replaceAll('.', '/')}/${name.replace(/_/g, '')}Module.hx`}};
+      out.push(u); pending.push(u);
+    });
+  }
+  return out;
+}
 // Program units from a dune build: every tracked source with its CMT.
 export function loadUnits({upstream, buildDir, files = null}) {
   const sources = files ?? discover(upstream);
@@ -69,13 +121,16 @@ export function loadUnits({upstream, buildDir, files = null}) {
     if (p.endsWith('.cmt')) cmts.push(p);
     if (p.endsWith('.cmi')) includeDirs.add(path.dirname(p));
   });
+  // Interfaces without implementation (as3.mli): their types are a unit too.
+  const cmtSet = new Set(cmts);
+  walk(path.join(buildDir, '_build/default'), p => { if (p.endsWith('.cmti') && !cmtSet.has(p.slice(0, -1))) cmts.push(p); });
   const ir = frontend(cmts.sort(), [...includeDirs].sort());
   const bySource = new Map();
   const errors = [];
   for (const f of ir) {
     if (f.error) { errors.push(f); continue; }
     // PPX-processed units record the preprocessed file (lexer.pp.ml).
-    if (f.source) bySource.set(f.source.replace(/\.pp\.ml$/, '.ml'), f);
+    if (f.source) bySource.set(f.source.replace(/\.pp\.ml$/, '.ml').replace(/\.mli$/, '.ml'), f);
   }
   // Sources dune does not build (tests, plugins) are typed from source.
   const loose = sources.filter(s => !bySource.has(s));
@@ -87,14 +142,15 @@ export function loadUnits({upstream, buildDir, files = null}) {
   for (const source of sources) {
     const f = bySource.get(source);
     if (!f) { failures.push({source, stage: 'typing', error: 'no typed tree (not built by dune @check)'}); continue; }
-    units.push({modname: f.modname, config: unitConfig(source), load: f.load});
+    units.push({modname: f.modname, config: unitConfig(source), load: f.load, irPath: f.ir});
   }
   // Sources dune generates (MetaList, DefineList, WarningList from src-json)
   // are units of the program too.
   const tracked = new Set(sources);
   for (const [source, f] of bySource) if (!tracked.has(source) && !/(^|\/)prebuild\.ml$/.test(source) && /\.ml$/.test(source))
-    units.push({modname: f.modname, config: unitConfig(source), load: f.load, generatedSource: true});
+    units.push({modname: f.modname, config: unitConfig(source), load: f.load, irPath: f.ir, generatedSource: true});
   for (const e of errors) failures.push({source: path.relative(e.file.startsWith(upstream) ? upstream : buildDir, e.file), stage: 'typing', error: e.error});
+  units.push(...libraryUnits(units, failures));
   return {sources, units, failures};
 }
 // Emit every unit; returns the outputs and per-unit failures.

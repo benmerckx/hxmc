@@ -43,7 +43,7 @@ export function typecheck(generated, {haxe = null, log = () => {}} = {}) {
     let runtimeErrors = [];
     const lines = out.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/(?:\[ERROR\]\s*)?([^\s:]+\.hx):(\d+)/);
+      const m = lines[i].match(/\[ERROR\]\s*([^\s:]+\.hx):(\d+)/);
       if (!m) continue;
       let file = m[1];
       const ctx = lines.slice(i + 1, i + 8).filter(l => /^\s*\|\s+\S/.test(l)).map(l => l.replace(/^\s*\|\s*/, '').trim()).filter(l => !/^\^+$/.test(l));

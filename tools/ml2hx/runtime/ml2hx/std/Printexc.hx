@@ -90,8 +90,14 @@ class Printexc {
 	public static function rawBacktraceLength(b:PrintexcRawBacktrace):Int63
 		return Int63.zero;
 
-	public static function backtraceSlots(b:PrintexcRawBacktrace):MlOption<Array<Dynamic>>
+	public static function backtraceSlots(b:PrintexcRawBacktrace):MlOption<Array<PrintexcBacktraceSlot>>
 		return None;
+
+	public static function getRawBacktraceSlot(b:PrintexcRawBacktrace, i:Int63):PrintexcRawBacktraceSlot
+		throw new InvalidArgument("Printexc.get_raw_backtrace_slot: index out of bounds");
+
+	public static function convertRawBacktraceSlot(s:PrintexcRawBacktraceSlot):PrintexcBacktraceSlot
+		return new PrintexcBacktraceSlot();
 
 	public static function printBacktrace(oc:Stdlib.StdlibOutChannel):Unit
 		return Unit.value;
@@ -103,4 +109,30 @@ class Printexc {
 // raw_backtrace: no frames are recorded
 class PrintexcRawBacktrace {
 	public function new() {}
+}
+
+// A frame of a backtrace (none are recorded: no values of these exist).
+class PrintexcRawBacktraceSlot {
+	public function new() {}
+}
+
+class PrintexcBacktraceSlot {
+	public function new() {}
+}
+
+// Printexc.location
+class PrintexcLocation implements Block {
+	public final filename:String;
+	public final lineNumber:Int63;
+	public final startChar:Int63;
+	public final endChar:Int63;
+	public function new(filename:String, lineNumber:Int63, startChar:Int63, endChar:Int63) {
+		this.filename = filename;
+		this.lineNumber = lineNumber;
+		this.startChar = startChar;
+		this.endChar = endChar;
+	}
+	public function blockTag():Int return 0;
+	public function blockSize():Int return 4;
+	public function blockField(i:Int):Dynamic return switch i { case 0: filename; case 1: lineNumber; case 2: startChar; case _: endChar; };
 }
