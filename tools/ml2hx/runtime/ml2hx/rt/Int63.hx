@@ -15,6 +15,9 @@ abstract Int63(haxe.Int64) {
 	public static var minusOne(get, never):Int63;
 	public static var maxInt(get, never):Int63;
 	public static var minInt(get, never):Int63;
+	// Sys.max_wosize (64-bit OCaml: 2^54 - 1)
+	public static var maxWosize(get, never):Int63;
+	static inline function get_maxWosize():Int63 return trusted(haxe.Int64.make(0x3FFFFF, 0xFFFFFFFF));
 	static inline function get_zero():Int63 return trusted(haxe.Int64.ofInt(0));
 	static inline function get_one():Int63 return trusted(haxe.Int64.ofInt(1));
 	static inline function get_minusOne():Int63 return trusted(haxe.Int64.ofInt(-1));
@@ -26,10 +29,10 @@ abstract Int63(haxe.Int64) {
 	public static inline function ofInt64(v:haxe.Int64):Int63 return new Int63(v);
 	public inline function toInt64():haxe.Int64 return this;
 	// the low 32 bits (OCaml's Int32.of_int)
-	public inline function toInt():Int return haxe.Int64.toInt(this);
+	public inline function toInt():Int return this.low;
 	public inline function toString():String return haxe.Int64.toStr(this);
 	// whether the value fits a Haxe Int
-	public inline function isInt():Bool return haxe.Int64.ofInt(haxe.Int64.toInt(this)) == this;
+	public inline function isInt():Bool return this.high == this.low >> 31;
 
 	public static inline function add(a:Int63, b:Int63):Int63 return new Int63(a.raw() + b.raw());
 	public static inline function sub(a:Int63, b:Int63):Int63 return new Int63(a.raw() - b.raw());

@@ -60,3 +60,6 @@ let make_ctx () = let rec ctx = { g = { root = ctx; count = 0 }; label = "root" 
 let () = let c = make_ctx () in c.g.count <- 3; Printf.printf "%s %d %b\n" c.g.root.label c.g.root.g.count (c.g.root == c)
 let fold op fa fb = let ebool t = t (compare fa fb) 0 in match op with `Gt -> ebool (>) | `Lt -> ebool (<) | `Eq -> ebool (=)
 let () = Printf.printf "%b %b %b %b\n" (fold `Gt 0.5 (Int32.to_float 1l)) (fold `Lt 0.5 1.) (fold `Eq (float_of_string "0.5") 0.5) (fold `Gt (float_of_string "0.5") (Int32.to_float 1l))
+(* integers outside 32 bits: matched against literals, cut to an int32 *)
+let size n = match n with 0 -> "zero" | 1 -> "one" | _ -> "large"
+let () = Printf.printf "%s %s %ld %ld\n" (size max_int) (size (1 lsl 40)) (Int32.of_int max_int) (Int32.of_int (1 lsl 40 + 5))

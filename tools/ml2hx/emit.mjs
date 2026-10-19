@@ -2202,7 +2202,7 @@ class UnitEmitter {
       '%dls_get': call('dlsGet', 1), '%poll': {arity: 1, code: () => UNIT},
       '%sys_argv': {arity: 0, code: () => `${PRIM}Sys.argv()`},
       '%word_size': {arity: 1, code: () => this.intLit(64)}, '%int_size': {arity: 1, code: () => this.intLit(63)},
-      '%max_wosize': {arity: 1, code: () => `${RT}Int63.parse("18014398509481983")`},
+      '%max_wosize': {arity: 1, code: () => `${RT}Int63.maxWosize`},
       '%big_endian': {arity: 1, code: () => 'false'},
       '%ostype_unix': {arity: 1, code: () => 'true'}, '%ostype_win32': {arity: 1, code: () => 'false'}, '%ostype_cygwin': {arity: 1, code: () => 'false'},
       '%backend_type': {arity: 1, code: () => `ocaml.stdlib.SysModule.SysBackendType.Other("ml2hx")`},

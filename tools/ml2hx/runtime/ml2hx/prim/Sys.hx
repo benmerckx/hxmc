@@ -24,7 +24,7 @@ class Sys {
 	public static function camlSysConstBigEndian(_:Unit):Bool return false;
 	public static function camlSysConstWordSize(_:Unit):Int63 return Int63.ofInt(64);
 	public static function camlSysConstIntSize(_:Unit):Int63 return Int63.ofInt(63);
-	public static function camlSysConstMaxWosize(_:Unit):Int63 return Int63.parse("18014398509481983");
+	public static function camlSysConstMaxWosize(_:Unit):Int63 return Int63.maxWosize;
 	public static function camlSysConstOstypeUnix(_:Unit):Bool return true;
 	public static function camlSysConstOstypeWin32(_:Unit):Bool return false;
 	public static function camlSysConstOstypeCygwin(_:Unit):Bool return false;

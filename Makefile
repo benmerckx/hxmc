@@ -1007,7 +1007,7 @@ ml2hx-check: ml2hx-test
 	$(NODE) tools/ml2hx/check.mjs
 
 port-generated: $(TOOL) $(STD) $(HOST_RT) generate
-	$(call hxmc,bin/ml2hx/haxe,-cp bin/ml2hx/generated -main Ml2hxCompiler -D disable-parallelism $(HXFLAGS) $(HXMC_ARGS))
+	$(call hxmc,bin/ml2hx/haxe,-cp bin/ml2hx/generated -main Ml2hxCompiler -D disable-parallelism $(COMPILER_ARGS) $(HXFLAGS) $(HXMC_ARGS))
 
 ml2hx-bench: $(PORT_BIN) port-generated
 	$(NODE) tools/ml2hx/bench.mjs
