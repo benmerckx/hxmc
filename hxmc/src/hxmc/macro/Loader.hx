@@ -410,9 +410,10 @@ class Loader {
 				Mem.setPtr(e, 88, p);
 			}
 		}
-		// the new classes' statics (rt_static: fid, kind, index, rank, address;
-		// the bundle has them in the order Type.getClassFields lists them)
-		for (c in classes) {
+		// the new classes' and interfaces' statics (rt_static: fid, kind, index, rank,
+		// address; the bundle has them in the order Type.getClassFields lists them)
+		var interfaces:Array<Dynamic> = facts.interfaces;
+		for (c in (interfaces == null ? classes : classes.concat(interfaces))) {
 			var ss:Array<Dynamic> = c.statics;
 			if (!isNew.exists(c.ty) || ss == null || ss.length == 0) continue;
 			var order = [for (i in 0...ss.length) i];

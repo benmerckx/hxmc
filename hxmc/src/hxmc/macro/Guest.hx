@@ -192,6 +192,8 @@ class Guest {
 			];
 		}
 		var classes = [for (c in p.classes) if (c.tindex >= Abi.T_FIRST) {ty: tn[c.tindex], sup: c.sup == null || c.sup.tindex < 0 ? null : tn[c.sup.tindex], span: c.lastDescendant - c.id, statics: statics(c)}];
+		// (an interface's statics: its __meta__, as DataGen writes them)
+		var interfaces = [for (c in p.interfaces) if (c.tindex >= Abi.T_FIRST && c.statics != null && c.statics.length > 0) {ty: tn[c.tindex], statics: statics(c)}];
 		var globals = [], bss = [];
 		for (g in 0...p.globals.length) {
 			var gl = p.globals[g];
@@ -238,6 +240,7 @@ class Guest {
 		return {
 			types: types,
 			classes: classes,
+			interfaces: interfaces,
 			fields: [for (n in e.fieldNames) {name: n, sym: e.fidNames.get(n)}],
 			sigs: [for (s in p.sigs) {sym: e.sigNames[s.id], key: s.key, dyn: "DYN" + s.id, bt: "BT" + s.id, bound: tn[e.boundTypes.get(s.id)]}],
 			globals: globals,
