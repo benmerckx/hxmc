@@ -143,21 +143,8 @@ class Lower {
 							hostImpls.set(n, {c: c, cf: cf});
 							staticFunc(c, cf);
 						}
-				case TClassDecl(c) if (c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc" && !c.hasClassFlag(CExtern)):
-					// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
-					if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) continue;
-					// @:hxmc.ios: the iOS targets' only (Mem.platform() 1 and 2)
-					if (hasMeta(":hxmc.ios", c.clMeta) && targetPlatform >= 0 && targetPlatform < 1) continue;
-					// @:hxmc.wasm: the runtime of WebAssembly only (what C provides elsewhere)
-					if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) continue;
-					// @:hxmc.native: the runtime of the native targets only (over C libraries)
-					if (hasMeta(":hxmc.native", c.clMeta) && targetOs == 3) continue;
-					// @:hxmc.wasmgc: the runtime of -D hxmc.wasm-gc only; @:hxmc.anyHeap: of
-					// both (written over hxmc.rt.Repr); the others of linear memory only
-					if (hasMeta(":hxmc.wasmgc", c.clMeta) != wasmGc && !hasMeta(":hxmc.anyHeap", c.clMeta)) continue;
-					// @:hxmc.os("windows"): the runtime of one system only
-					var os = metaString(":hxmc.os", c.clMeta);
-					if (os != null && targetOs >= 0 && ["linux", "macos", "windows", "wasm"].indexOf(os) != targetOs) continue;
+				case TClassDecl(c) if (runtimeClass(c)):
+					if (!ofTarget(c)) continue;
 					for (cf in c.clOrderedStatics) {
 						if (cf.cfMeta.length == 0) continue;
 						// (an exported variable: data read by its symbol, always there)
@@ -175,6 +162,30 @@ class Lower {
 					}
 				case _:
 			}
+	}
+
+	// a class of the hxmc package, whose statics may implement the runtime's
+	// functions (findHosts; hxmc.ir.RuntimeSymbols)
+	public static function runtimeClass(c:TClass):Bool
+		return c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc" && !c.hasClassFlag(CExtern);
+
+	// whether such a class is of this target's runtime
+	public static function ofTarget(c:TClass):Bool {
+		// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
+		if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) return false;
+		// @:hxmc.ios: the iOS targets' only (Mem.platform() 1 and 2)
+		if (hasMeta(":hxmc.ios", c.clMeta) && targetPlatform >= 0 && targetPlatform < 1) return false;
+		// @:hxmc.wasm: the runtime of WebAssembly only (what C provides elsewhere)
+		if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) return false;
+		// @:hxmc.native: the runtime of the native targets only (over C libraries)
+		if (hasMeta(":hxmc.native", c.clMeta) && targetOs == 3) return false;
+		// @:hxmc.wasmgc: the runtime of -D hxmc.wasm-gc only; @:hxmc.anyHeap: of
+		// both (written over hxmc.rt.Repr); the others of linear memory only
+		if (hasMeta(":hxmc.wasmgc", c.clMeta) != wasmGc && !hasMeta(":hxmc.anyHeap", c.clMeta)) return false;
+		// @:hxmc.os("windows"): the runtime of one system only
+		var os = metaString(":hxmc.os", c.clMeta);
+		if (os != null && targetOs >= 0 && ["linux", "macos", "windows", "wasm"].indexOf(os) != targetOs) return false;
+		return true;
 	}
 
 	// the Haxe implementation of runtime function `name`, lowered on first use

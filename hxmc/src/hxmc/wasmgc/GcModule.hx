@@ -710,6 +710,8 @@ class GcModule {
 
 	// the runtime's function exported under the symbol (@:hxmc.export), which the reachability kept
 	public function exportOf(sym:String):Int {
+		// (one hxmc.ir.RuntimeSymbols lists)
+		hxmc.ir.RuntimeSymbols.called(sym, hxmc.ir.RuntimeSymbols.WASMGC);
 		for (f in funcs)
 			if (f.cSymbol == sym) return funcIndex.get(f);
 		throw 'hxmc: -D hxmc.wasm-gc: the runtime has no $sym';

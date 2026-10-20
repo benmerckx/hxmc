@@ -57,7 +57,8 @@ class Examples {
 			case "3d": ["-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/text/src", "-cp", "packages/ui/src", "-cp", "packages/3d/src"];
 			case "physics": ["-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/3d/src", "-cp", "packages/physics/src"];
 			case "text": ["-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/text/src"];
-			case "ui": [
+			// (theme's examples: ui's, under its sheet)
+			case "ui" | "theme": [
 					"-cp", "packages/os/src", "-cp", "packages/gfx/src", "-cp", "packages/text/src", "-cp", "packages/view/src",
 					"-D", "hxmc.view.renderer.ui=hxmc.ui.view.NodeRenderer", "-cp", "packages/ui/src", "-cp", "packages/theme/src"
 				];
@@ -85,9 +86,10 @@ class Examples {
 
 	static final HEADER = ~/^\/\/ *(title|summary|tags|demo): *(.*)$/;
 
-	public static function collect():Array<Example> {
+	// (packages: PACKAGES, the gallery's; make check's examples lane passes every one with examples)
+	public static function collect(?packages:Array<String>):Array<Example> {
 		var out = [];
-		for (pkg in PACKAGES) {
+		for (pkg in packages ?? PACKAGES) {
 			var dir = 'packages/$pkg/examples';
 			if (!FileSystem.exists(dir)) continue;
 			var names = FileSystem.readDirectory(dir).filter(n -> n.endsWith(".hx"));
@@ -158,9 +160,27 @@ class Examples {
 		return n;
 	}
 
+	// whether the site builds it for wasm32-wasi: a program on a canvas, a
+	// sound, a module JavaScript calls (not a JavaScript island)
+	public static function wasm(e:Example):Bool
+		return e.demo.match(Canvas(_, _) | Sound | Module);
+
+	// the tool's arguments for that build, into `out` (also make check's
+	// examples lane, hxmc/test/ExampleBuilds.hx)
+	public static function wasmArgs(e:Example, out:String):Array<String>
+		// (legacy exception handling: every browser with WebGPU has it, those with WebGL2 since 2021)
+		return buildArgs(e.pkg, e.main, "wasm32-wasi", out).concat(["-D", "hxmc.wasm-eh=legacy"]);
+
+	// the tool's arguments for a program of a package's examples, for a
+	// target, into `out` (Linux: the glibc mode, which loads the GPU's drivers)
+	public static function buildArgs(pkg:String, main:String, target:String, out:String):Array<String>
+		return [out].concat(classPaths(pkg))
+			.concat(["-cp", 'packages/$pkg/examples', "-main", main, "-cp", "bin/hxmc/std", "--custom-target", "hxmc", "-D", 'hxmc.target=$target'])
+			.concat(target.startsWith("linux") ? ["-D", "hxmc.libc=glibc"] : []);
+
 	// each wasm32-wasi example built (in parallel, jobs at a time), into the site's examples/
 	public static function buildAll(examples:Array<Example>) {
-		var todo = [for (e in examples) if (e.demo.match(Canvas(_, _) | Sound | Module)) e];
+		var todo = [for (e in examples) if (wasm(e)) e];
 		var running:Array<{e:Example, p:Process, out:String}> = [];
 		var failed = [];
 		var t0 = haxe.Timer.stamp();
@@ -183,13 +203,8 @@ class Examples {
 			while (todo.length > 0 && running.length < Site.jobs) {
 				var e = todo.shift();
 				var o = '${Site.build}/examples/${e.id}.wasm';
-				var args = [o].concat(classPaths(e.pkg)).concat([
-					"-cp", 'packages/${e.pkg}/examples', "-main", e.main, "-cp", "bin/hxmc/std", "--custom-target", "hxmc", "-D", "hxmc.target=wasm32-wasi",
-					// (legacy exception handling: every browser with WebGPU has it, those with WebGL2 since 2021)
-					"-D", "hxmc.wasm-eh=legacy"
-				]);
 				// (the output in a log: a pipe nobody reads would fill)
-				var cmd = [Site.tool].concat(args).map(Site.quote).join(" ") + " > " + Site.quote(o + ".log") + " 2>&1";
+				var cmd = [Site.tool].concat(wasmArgs(e, o)).map(Site.quote).join(" ") + " > " + Site.quote(o + ".log") + " 2>&1";
 				running.push({e: e, p: new Process("sh", ["-c", "ulimit -s unlimited 2>/dev/null; " + cmd]), out: o});
 			}
 			// (the oldest first: the builds take about as long)

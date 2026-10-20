@@ -142,6 +142,10 @@ class Main {
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
 		hxmc.ir.Lower.lines = opts.debugLines && !abi.wasm;
+		// the runtime's symbols generated code may call by name, defined by the
+		// modules hxmc.rt.Runtime imports for the target, whatever this program calls
+		hxmc.ir.RuntimeSymbols.check(com, opts.wasmGc ? hxmc.ir.RuntimeSymbols.WASMGC : abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE,
+			abi.name + (opts.wasmGc ? " with -D hxmc.wasm-gc" : ""));
 		var t0 = haxe.Timer.stamp();
 		// resident: bodies of the fields the server kept are reused (LowerCache)
 		var useCache = Driver.resident && Sys.getEnv("HXMC_LOWER_CACHE") != "0";

@@ -120,7 +120,7 @@ endef
 	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test corpus-stage gfx-programs gfx-check gfx-web-check gfx-cache-check gfx-shader-check 3d-programs 3d-check 3d-web-check 3d-sizes \
 	android-programs android-check android-device-check touch-check shared-check ios-programs ios-check ios-sim-check \
 	audio-programs audio-check audio-web-check native-macros mir-run-check ui-programs view-check web-check text-check ui-check ui-layout-fuzz ui-layout-reduce theme-check theme-fidelity-check theme-dom-check web-widgets ui-draw-check ui-web-check dev-check portcheck measure site-check \
-	quick check full clean distclean wasmgc-check wasmgc-bench wasmgc-port test-wasmgc-port
+	quick check examples-check full clean distclean wasmgc-check wasmgc-bench wasmgc-port test-wasmgc-port
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -280,7 +280,11 @@ help:
 ##             RT_VERIFY=1, and the wasm corpus under node (CASES restricts the corpus)
 ## check       before a local commit (a few minutes): quick + arm64 (qemu), wine, a 16 KB
 ##             nursery, the wasm corpus with legacy exception handling, ThreadNatives x30,
-##             crosshost on three cases; PORT=1 adds the native port's self-compile
+##             crosshost on three cases, the packages' examples built (examples-check);
+##             PORT=1 adds the native port's self-compile
+## examples-check  the packages' examples built, not run (no browser, GPU or display): the site's
+##             gallery (site/src/Examples.hx) for wasm32-wasi as the site builds it, and those on a
+##             canvas or playing a sound natively too, in parallel (hxmc/test/ExampleBuilds.hx)
 ## full        before a push: every nursery, RT_VERIFY, wasmtime, ThreadNatives x300, the
 ##             port's self-compile natively and as a module, crosshost, the fixpoint
 ## clean       remove the build outputs (keeps the tool, the runtime objects and the reference)
@@ -949,6 +953,10 @@ measure: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(PORT_BIN) bin/npm/native/wasm3
 
 quick: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers quick $(CASES)
+
+# (make check's examples lane; Examples.hx with the site's class paths)
+examples-check: $(TOOL) $(STD) $(HOST_RT)
+	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test $(SITE_CP) --run ExampleBuilds
 
 wasmgc-check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) GcCheck

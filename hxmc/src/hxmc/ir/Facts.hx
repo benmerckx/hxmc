@@ -46,8 +46,10 @@ class Facts {
 
 	public function new(p:Program) {
 		this.p = p;
-		for (f in p.funcs)
+		for (f in p.funcs) {
 			bySymbol.set(symbol(f), f);
+			if (f.cSymbol != null && StringTools.startsWith(f.module, "hxmc.rt.")) f.rtFamilies = RuntimeSymbols.familiesOf(f.cSymbol);
+		}
 		findNoGc();
 		markCold();
 		checkRawAddresses();

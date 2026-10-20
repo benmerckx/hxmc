@@ -32,10 +32,9 @@ class Measure {
 			for (t in TARGETS) {
 				rm(cache);
 				var exe = '$dir/${p.main}-$t' + (t.startsWith("windows") ? ".exe" : "");
-				var args = [exe].concat(p.pkg == null ? ["-cp", dir] : Examples.classPaths(p.pkg).concat(["-cp", 'packages/${p.pkg}/examples']));
-				args = args.concat(["-main", p.main, "-cp", "bin/hxmc/std", "--custom-target", "hxmc", "-D", 'hxmc.target=$t']);
-				// (Linux: the glibc mode, which loads the GPU's drivers)
-				if (p.pkg != null && t.startsWith("linux")) args = args.concat(["-D", "hxmc.libc=glibc"]);
+				var args = p.pkg != null ? Examples.buildArgs(p.pkg, p.main, t, exe) : [
+					exe, "-cp", dir, "-main", p.main, "-cp", "bin/hxmc/std", "--custom-target", "hxmc", "-D", 'hxmc.target=$t'
+				];
 				var s = haxe.Timer.stamp();
 				var code = Site.sh([Site.tool].concat(args), exe + ".log", ["HXMC_CACHE" => cache]);
 				var seconds = haxe.Timer.stamp() - s;

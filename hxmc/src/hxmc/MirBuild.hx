@@ -363,9 +363,12 @@ class MirBuild {
 	// safe region, or such a C function, unless this function is in a
 	// safe region itself (another thread may collect meanwhile). The root
 	// slots then keep their values across the call (Opt: MIns.keepsFrame).
-	function keepsFrame(sym:String):Bool {
+	function keepsFrame(sym:String):Bool
+		return p != null && fn != null && !fn.blocksHere && keepsFrameOf(sym, p.e.bySymbol.get(sym));
+
+	// (g: the program's function of that symbol, or null)
+	function keepsFrameOf(sym:String, g:Null<FuncInfo>):Bool {
 		if (p == null || fn == null || fn.blocksHere) return false;
-		var g = p.e.bySymbol.get(sym);
 		if (g != null) return g.noGc && !g.blocks;
 		if (sym == "rt_blocking_enter" || sym == "rt_blocking_leave") return false;
 		return hxmc.ir.FnLower.noGcHost(sym) || QUIET.exists(sym) || StringTools.startsWith(sym, "hxmc$");
@@ -384,9 +387,15 @@ class MirBuild {
 	];
 
 	function call(sym:String, args:Array<Int>, ret:MTy, noReturn = false):Int {
+		var g = p == null ? null : p.e.bySymbol.get(sym);
+		// (a function the runtime exports, called by its symbol: one hxmc.ir.RuntimeSymbols lists)
+		if (g != null && g.cSymbol == sym) {
+			var family = abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE;
+			if (g.rtFamilies & family == 0) hxmc.ir.RuntimeSymbols.called(sym, family);
+		}
 		var i = mk(Call, ret);
 		i.sym = sym;
-		i.keepsFrame = keepsFrame(sym);
+		i.keepsFrame = keepsFrameOf(sym, g);
 		i.args = args;
 		i.argTys = [for (a in args) tyOfVal(a)];
 		i.noReturn = noReturn;

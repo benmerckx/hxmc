@@ -17,6 +17,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `HaxeMain.hx` | `haxe` with hxmc built in (the npm package): `--custom-target hxmc=<out>` |
 | `ir/Ir.hx`, `Lower.hx`, `FnLower.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the filtered typed AST |
 | `ir/Reach.hx` | the functions the program can run (Reachability, below): the others are not compiled |
+| `ir/RuntimeSymbols.hx` | the runtime's symbols generated code calls by name, per family of targets, checked on every build against what `hxmc.rt.Runtime` imports (Runtime in Haxe, below) |
 | `ir/Facts.hx`, `Prep.hx` | the program-wide facts: names, layouts, type indices, field ids, no-GC functions, cold sites, GC points, as symbols |
 | `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, each module's object reused when its fingerprint is unchanged, lowered bodies reused by the server |
 | `Mir.hx`, `MirBuild.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx` | the SSA IR, its construction, inlining, escape analysis (allocations that stay in their function replaced by their fields: [plans/codegen.md](plans/codegen.md), "Escape analysis"), scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code |
@@ -175,6 +176,65 @@ OCaml's byte strings this way: [porting.md](porting.md)).
 A change of the runtime's
 interface or of the IR's conventions needs a tool that knows it: build once
 against the previous runtime first, or bootstrap again.
+
+### The symbols generated code calls
+
+Generated code calls a fixed set of the runtime's functions by name, and
+natively reads some of its variables by name: `hxmc/src/hxmc/ir/RuntimeSymbols.hx`
+lists them (`SYMBOLS`), per family of targets (native, wasm32, WasmGC), each
+with where generated code refers to it. They are the exported functions
+MirBuild, DataGen, the emitters and LinkWasm's `rt_throw` call (`rt_throw`,
+`rt_null_access`, `hx_box_int`, `hxmc_alloc_slow`, `rt_cstack_overflow`,
+`hx_uncaught`, ...), the Haxe implementations of what the lowering calls
+(`hx_dyn_get`, `hx_std_string`, `fmod`, ...: `Lower.bindHosts` binds them),
+the WasmGC generator's exports (`gc_anon_get`, `gc_is`, ...), and natively
+the variables (`rt_globals`, `rt_young_start`) and thread-locals (`rt_sp`,
+`rt_hcur`, ...). A program gets the runtime's modules through
+`hxmc.rt.Runtime`, whose imports differ by target, and hxmc compiles only
+the functions it calls, and the exported ones: a symbol whose module only
+something else loads is in some programs and not in others (`rt_null_access`
+was in `Faults`, which only the native targets' `Start` loads, so a
+WebAssembly program that loaded nothing bringing `Faults` in did not link:
+"wasm: undefined: rt_null_access"). Each build (`Main.generate`, before the
+lowering) therefore checks that the modules `Runtime.hx` imports for the
+target (the file parsed with the build's defines; the typed program keeps no
+imports) define every symbol of the family as generated code needs it (an
+exported function, an implementation, a variable, a thread-local), whether
+or not this program calls it, and fails otherwise:
+
+```
+hxmc: the runtime symbol rt_null_access is not defined: its module is not loaded by hxmc.rt.Runtime (for wasm32-wasi; MirBuild.nullBlock)
+hxmc: the runtime symbol rt_null_access is defined in hxmc.rt.Faults, which hxmc.rt.Runtime does not import (for wasm32-wasi; MirBuild.nullBlock)
+```
+
+The second where a module the program loads otherwise has it. So the rule is
+that `Runtime.hx` imports each module defining such a symbol itself
+(`hxmc.rt.gc.GcNArray` on WasmGC, which `GcDyn` loads too), for every target
+needing it, rather than that some module loads it. The check costs about 0.1
+ms and changes nothing written. A symbol generated code refers to only under
+a define or feature has the generator's own condition (`when`, on Lower's
+statics: `rt_null_access` on WebAssembly with `-D hxmc.null-checks`,
+`hx_narray_oob` with `-D hxmc.native-array-outofbounds=throws`) and is
+required only then; a module that `Runtime.hx` imports only under a define
+(`#if hxmc.census`) is seen only with it, as the imports are read with the
+build's defines, so a symbol only such a module defines gets that condition
+too. The list is kept by hand, next to the generators; `MirBuild.call` (on
+`FuncInfo.rtFamilies`, which Facts sets: no lookup of its own) and
+`GcModule.exportOf` fail the build when generated code calls an exported
+function of the runtime that it does not list for the family ("generated
+code calls the runtime's hx_box_int by its symbol, which
+hxmc.ir.RuntimeSymbols does not list for the native targets"), so a new one
+cannot be left out; the few other fixed references (DataGen's method tables,
+the emitters' allocation stubs, WasmGen, LinkWasm) are listed by where they
+are. Not listed: what a target's linker, C library or DataGen defines
+(`rt_types` and the program's tables, `_setjmp`, `memcpy`, `floor`, wasm32's
+linker cells and thread-local globals, LinkWasm's builtins, the stubs
+`hxmc_zero`, `hxmc_frame`, `hxmc_call_on_stack`, `hxmc_tls_base`), and the
+names the lowering makes from the std's externs (`String_toUpperCase`,
+`Math_sin`), whose missing implementation fails the build of a program that
+calls one, by its name. `make examples-check` (docs/testing.md) builds the
+packages' examples for each of their targets, the programs where CI first
+saw that failure.
 
 ## Anonymous structures
 
