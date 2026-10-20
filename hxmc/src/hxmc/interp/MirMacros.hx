@@ -90,6 +90,22 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		return false;
 	}
 
+	// the command line without it: the compilation's defines are the reference's
+	// (Compiler.getDefine, hxcpp's Options.txt, the modules' signatures)
+	public static function without(args:Array<String>):Array<String> {
+		var out = [];
+		var i = 0;
+		while (i < args.length) {
+			if ((args[i] == "-D" || args[i] == "--define") && i + 1 < args.length && (args[i + 1] == "hxmc.mir-macros" || args[i + 1] == "hxmc.mir_macros")) {
+				i += 2;
+				continue;
+			}
+			out.push(args[i]);
+			i++;
+		}
+		return out;
+	}
+
 	public static function install(std:Null<String>) {
 		hxmcStd = std;
 		self = new MirMacros();
