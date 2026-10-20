@@ -5,12 +5,29 @@ import haxe.io.Bytes;
 // A file of lines "name field...", sorted by name (<exe>.syms: Link writes
 // them so; <exe>.fps: Driver), looked up by a binary search over its bytes:
 // the jit compiler reads both at each start, 72k and 20k lines, which as
-// maps of strings took 0.56 G instructions and 40 ms.
+// maps of strings took 0.56 G instructions and 40 ms. The lines' starts
+// are found at the first lookup, and the names looked up are remembered (a
+// build of many macros looks the same symbols up again at each step).
 class SymFile {
 	final b:Bytes;
+	var starts:Null<Array<Int>> = null;
+	final found = new Map<String, Int>();
 
 	function new(b:Bytes)
 		this.b = b;
+
+	function lines():Array<Int> {
+		var s = [];
+		var at = 0, n = b.length;
+		while (at < n) {
+			var e = at;
+			while (e < n && b.get(e) != "\n".code)
+				e++;
+			if (e > at) s.push(at);
+			at = e + 1;
+		}
+		return s;
+	}
 
 	public static function read(path:String):Null<SymFile>
 		return sys.FileSystem.exists(path) ? new SymFile(sys.io.File.getBytes(path)) : null;
@@ -34,21 +51,23 @@ class SymFile {
 
 	// the line named name (its first byte), -1 when there is none
 	public function find(name:String):Int {
-		// (lo: a line's first byte; hi: one, or the end)
-		var lo = 0, hi = b.length;
-		while (lo < hi) {
-			var p = (lo + hi) >> 1;
-			while (p > lo && b.get(p - 1) != "\n".code)
-				p--;
-			var c = compareName(name, p);
-			if (c == 0) return p;
-			if (c < 0) hi = p else {
-				while (p < b.length && b.get(p) != "\n".code)
-					p++;
-				lo = p + 1;
+		var r = found.get(name);
+		if (r != null) return r;
+		if (starts == null) starts = lines();
+		var s = starts;
+		var lo = 0, hi = s.length - 1;
+		r = -1;
+		while (lo <= hi) {
+			var mid = (lo + hi) >> 1;
+			var c = compareName(name, s[mid]);
+			if (c == 0) {
+				r = s[mid];
+				break;
 			}
+			if (c < 0) hi = mid - 1 else lo = mid + 1;
 		}
-		return -1;
+		found.set(name, r);
+		return r;
 	}
 
 	// the field k of the line at p (0: its name), "" past its last one;
