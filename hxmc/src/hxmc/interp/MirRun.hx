@@ -1,6 +1,7 @@
 package hxmc.interp;
 
 #if hxmc.jit
+import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
 import hxmc.unsafe.LibC;
@@ -250,7 +251,7 @@ class MirRun {
 	// extends, whose supertypes are shared (an instance test is a type index
 	// in a class's span: a new class has no place in the compiler's); a type
 	// not shared has its statics and initializer of its own
-	public static function unshare(facts:Dynamic, host:Map<String, {k:String, v:Int}>, l:hxmc.ir.Lower, e:hxmc.ir.Facts, com:context.Common.CommonContext) {
+	public static function unshare(facts:Dynamic, host:Map<String, {k:String, v:Int}>, l:hxmc.ir.Lower, e:hxmc.ir.Facts, com:context.Common.CommonContext, ?types:Array<ModuleType>) {
 		var types:Array<Dynamic> = facts.types;
 		var fids = new Map<String, Int>();
 		for (f in (facts.fields : Array<Dynamic>)) {
@@ -313,7 +314,7 @@ class MirRun {
 		}
 		// the statics of the types no longer shared
 		var own = new Map<String, Bool>();
-		for (t in com.types)
+		for (t in (types != null ? types : com.types))
 			switch t {
 				case TClassDecl(c):
 					var ci = l.classes.get(c);

@@ -376,8 +376,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				k += 2;
 			}
 		}
-		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, main);
-		MirRun.unshare(facts, host, l, e, com);
+		// (the types handed over so far: com.types may not have them yet)
+		var types = [for (t in processed) t];
+		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, main, types);
+		MirRun.unshare(facts, host, l, e, com, types);
 		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
 		var ownRuntime = opts.bounds != 0 ? ["hxmc.rt.Dyn" => true, "hxmc.rt.NArray" => true] : new Map<String, Bool>();
 		var found = Sys.getEnv("HXMC_MIR_HOST") == "0" ? new Map() : MirRun.hostFunctions(funcs, facts, prep, e, com, ownRuntime, native);

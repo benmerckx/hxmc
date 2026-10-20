@@ -121,7 +121,8 @@ class Guest {
 		};
 
 	// what the loader needs to number, register and initialize the program's parts
-	static function facts(com:context.Common.CommonContext, p:Program, e:hxmc.ir.Facts, l:hxmc.ir.Lower, main:Null<TClass>):Dynamic {
+	// (types: the program's, com.types by default; the macro context's handed over so far for interp.MirMacros)
+	static function facts(com:context.Common.CommonContext, p:Program, e:hxmc.ir.Facts, l:hxmc.ir.Lower, main:Null<TClass>, ?types:Array<ModuleType>):Dynamic {
 		var tn = e.typeNames;
 		// what may be the compiler's own: the std's types and statics (hxmc's std, with the
 		// runtime, included); the program's are its own even when named as one of the compiler's
@@ -136,7 +137,7 @@ class Guest {
 		}
 		var stdTypes = new Map<String, Bool>();
 		var globalShare = new Map<Int, Bool>();
-		for (t in com.types) {
+		for (t in (types != null ? types : com.types)) {
 			var info = core.TFunctions.tInfos(t);
 			var std = isStd(info.mtPos.pfile);
 			if (std) stdTypes.set(core.Globals.sTypePath(info.mtPath), true);
