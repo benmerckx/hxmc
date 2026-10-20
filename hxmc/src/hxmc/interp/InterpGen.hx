@@ -540,6 +540,7 @@ class InterpGen {
 		var maxReg = nc + mf.params.length;
 		var occ:Array<Int> = [for (_ in 0...maxReg) 0];
 		var reserved:Array<Bool> = [for (_ in 0...maxReg) false];
+		var reservedRegs:Array<Int> = [];
 		var stamp = 0;
 		var last = MFunc.ints(n, -1);
 		function free():Int {
@@ -556,7 +557,10 @@ class InterpGen {
 		function take(v:Int, r:Int) {
 			reg[v] = r;
 			occ[r] = stamp;
-			if (pinned.get(wid[v])) reserved[r] = true;
+			if (pinned.get(wid[v]) && !reserved[r]) {
+				reserved[r] = true;
+				reservedRegs.push(r);
+			}
 		}
 		function pick(v:Int, prefer:Int):Int {
 			if (pinned.get(wid[v])) {
@@ -575,10 +579,18 @@ class InterpGen {
 				order.push(c);
 			stamp++;
 			var li = liveIn[b.id], lo = liveOut[b.id];
-			for (w in 0...n)
-				if (li.get(w)) occ[reg[ids[w]]] = stamp;
-			for (r in 0...maxReg)
-				if (reserved[r]) occ[r] = stamp;
+			// (the values live in: the set bits only)
+			var lw = li.w;
+			for (x in 0...lw.length) {
+				var bits = lw[x];
+				while (bits != 0) {
+					var low = bits & -bits;
+					occ[reg[ids[(x << 5) + trailingZeros(low)]]] = stamp;
+					bits ^= low;
+				}
+			}
+			for (r in reservedRegs)
+				occ[r] = stamp;
 			// (the parameters: written by the caller before the entry block runs)
 			if (b == mf.entry)
 				for (i in b.ins)
@@ -615,6 +627,28 @@ class InterpGen {
 			}
 		}
 		return maxReg;
+	}
+
+	// the index of a word's only set bit
+	static inline function trailingZeros(x:Int):Int {
+		var t = 0;
+		if (x & 0xFFFF == 0) {
+			t += 16;
+			x >>>= 16;
+		}
+		if (x & 0xFF == 0) {
+			t += 8;
+			x >>>= 8;
+		}
+		if (x & 0xF == 0) {
+			t += 4;
+			x >>>= 4;
+		}
+		if (x & 3 == 0) {
+			t += 2;
+			x >>>= 2;
+		}
+		return x & 1 == 0 ? t + 1 : t;
 	}
 
 	// a constant's register: a value (lo, hi), or a symbol's (S + A)

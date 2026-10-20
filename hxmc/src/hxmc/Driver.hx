@@ -153,7 +153,7 @@ class Driver {
 				// function, inlined when it may be and is of this module (its
 				// body and its callees' are in the module's key), so that
 				// Escape may replace the closure
-				if (Escape.on && mf.allocs > 0 && lambdaSyms != null && Escape.part("closures") && Escape.allowed(name)) {
+				if (Escape.on && (interp == null || !interp.wants(fn)) && mf.allocs > 0 && lambdaSyms != null && Escape.part("closures") && Escape.allowed(name)) {
 					var todo = [];
 					for (c in Escape.closureCalls(mf)) {
 						var g = lambdaSyms.get(c.sym);
@@ -163,7 +163,8 @@ class Driver {
 				}
 				mb.icaches = ic.count;
 			}
-			if (o.opt && Escape.on) {
+			// (not for the interpreter: no gain there, measured on the macro benchmarks, and a third of the passes' time)
+			if (o.opt && Escape.on && (interp == null || !interp.wants(fn))) {
 				var es = new Escape(mf);
 				var te = haxe.Timer.stamp();
 				es.run();

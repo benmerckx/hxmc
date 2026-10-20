@@ -79,6 +79,17 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// a compilation error was reported: no more macro calls (as Eval's had_error)
 	var hadError = false;
 	var tCompile = 0.0;
+	// (HXMC_MACRO_STATS: seconds by phase)
+	var phases = new Map<String, Float>();
+	var tPhase = 0.0;
+
+	inline function phase(name:String) {
+		if (stats) {
+			var t = haxe.Timer.stamp();
+			if (tPhase > 0) phases.set(name, (phases.exists(name) ? phases.get(name) : 0.0) + t - tPhase);
+			tPhase = t;
+		}
+	}
 	var steps = 0;
 
 	public function new() {}
@@ -420,9 +431,11 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			}
 		l.findHosts(fresh);
 		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
+		phase("before lowering");
 		try {
 			l.drain();
 			l.finish();
+			phase("lowering");
 		} catch (e:Dynamic) {
 			hxmc.ir.Lower.callSites = null;
 			throw e;
@@ -464,8 +477,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	function step(main:Null<TClass>) {
 		steps++;
 		var prog = l.prog;
+		phase("step start");
 		var d = new Driver(prog, "", opts);
 		d.inlineCandidates();
+		phase("driver, inline candidates");
 		var prep = d.prep;
 		lastPrep = prep;
 		var e = prep.e;
@@ -486,10 +501,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			}
 		}
 		// (the types handed over so far: com.types may not have them yet)
+		phase("fingerprints");
 		var types = [for (t in processed) t];
 		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, main, types);
 		MirRun.unshare(facts, host, l, e, com, types);
 		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
+		phase("facts");
 		var ownRuntime = opts.bounds != 0 ? ["hxmc.rt.Dyn" => true, "hxmc.rt.NArray" => true] : new Map<String, Bool>();
 		var found = Sys.getEnv("HXMC_MIR_HOST") == "0" ? new Map() : MirRun.hostFunctions(funcs, facts, prep, e, com, ownRuntime, native);
 		for (f => _ in found) {
@@ -497,6 +514,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			compiled.set(f, true);
 		}
 		funcs = [for (f in funcs) if (!found.exists(f)) f];
+		phase("host functions");
 		d.interp = new InterpGen.InterpSet(opts.interp, prep, native);
 		var abi = Abi.get(opts.target);
 		var obj = new Obj();
@@ -504,6 +522,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var ras = new Regalloc.Scratch(Target.selector(abi));
 		for (f in funcs)
 			d.compileFunc(f, obj, emit, ras);
+		phase("functions");
 		var dg = new DataGen(prep, abi, obj, mf -> d.compileMir(mf, emit, obj));
 		dg.strings();
 		for (s in prog.sigs) {
@@ -514,7 +533,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		dg.stubs([], emit);
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
+		phase("data, trampolines");
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
+		phase("load");
 		for (p in b.inits)
 			inits.push(p);
 		for (f in funcs)
@@ -570,6 +591,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	public function report() {
 		if (stats && steps > 0) Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+		if (stats)
+			for (k => v in phases)
+				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');
 	}
 }
 #end
