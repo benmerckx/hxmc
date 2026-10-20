@@ -126,6 +126,14 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// the macro context's defines keep it)
 		com2.doinline = true;
 		com2.platform = core.Globals.Platform.CustomTarget("hxmc");
+		// (an hxmc compilation's platform configuration: Common's default, as the
+		// custom target keeps it; the macro context is a copy of the target's,
+		// whose own may lack sys: -js; but for Eval's padding of omitted
+		// arguments, which typing a macro call's arguments counts on:
+		// MacroContext.typeMacro, CallUnification)
+		var config:Dynamic = core.ds.Record.copy(context.Common.defaultConfig);
+		config.pfPadNulls = true;
+		com2.config = config;
 		context.Common.initPlatform(com2);
 		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) core.Define.rawDefineValue(com2.defines, "hxmc.target", "linux-x86_64");
 	}
