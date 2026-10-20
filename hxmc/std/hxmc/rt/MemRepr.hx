@@ -16,7 +16,7 @@ class MemRepr {
 	static inline var K_RAW = 2;
 	static inline var T_BYTES = 8;
 	static inline var T_BYTESBUFFER = 9;
-	static inline var T_NATIVE = 16;
+	static inline var T_DATE = 20;
 
 	public static inline function isNull(o:Dynamic):Bool
 		return Mem.addr(o).isNull();
@@ -363,8 +363,9 @@ class MemRepr {
 	public static inline function bbSetData(bb:Dynamic, d:Dynamic)
 		Mem.setRefBarrier(bb, 8, d);
 
-	// ---- Date: T_NATIVE K_RAW, the milliseconds since the epoch (a double);
-	// the calendar's fields are struct tm's (Date)
+	// ---- Date: T_DATE K_RAW, the milliseconds since the epoch (a double; a
+	// type index of its own: Dyn prints, tests and compares it as a Date); the
+	// calendar's fields are struct tm's (Date)
 
 	public static inline var F_SEC = 0;
 	public static inline var F_MIN = 4;
@@ -378,7 +379,7 @@ class MemRepr {
 	public static inline var YEAR_BASE = 1900;
 
 	public static inline function dateOf(ms:Float):Dynamic {
-		var d = Mem.allocRaw(1, T_NATIVE, K_RAW);
+		var d = Mem.allocRaw(1, T_DATE, K_RAW);
 		Mem.setF64(Mem.addr(d), 0, ms);
 		return d;
 	}

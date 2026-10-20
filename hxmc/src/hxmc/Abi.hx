@@ -20,6 +20,7 @@ class Abi {
 	public static inline var T_FIRST = 32;
 	public static inline var T_ARRAY = 5;
 	public static inline var T_NATIVE_ARRAY = 19;
+	public static inline var T_DATE = 20; // a Date (hxmc.rt.Types)
 	public static inline var T_REFBOX_P = 11;
 	public static inline var T_REFBOX_I = 12;
 	public static inline var T_REFBOX_F = 13;

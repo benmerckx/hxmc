@@ -23,6 +23,8 @@ class Types {
 	public static inline var T_ARRAYITER = 17;
 	public static inline var T_BOXI64 = 18;
 	public static inline var T_NATIVE_ARRAY = 19;
+	// a Date: K_RAW, the milliseconds since the epoch (a double: MemRepr.dateOf)
+	public static inline var T_DATE = 20;
 	public static inline var T_FIRST = 32;
 	// object kinds
 	public static inline var K_OBJ = 0;

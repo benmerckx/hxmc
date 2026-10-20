@@ -1070,11 +1070,14 @@ class GcModule {
 			case TRClass(c):
 				// (an interface: -1 - its index, interfaces having no class id)
 				id = c.isInterface ? -1 - interfaceIndex(c) : c.id;
-				name = c.name;
+				// (the class of dates: Date's, Uses.dateClass)
+				name = c == uses.dateClass ? "Date" : c.name;
 			case TREnum(e):
 				kind = 1;
 				id = prog.enums.indexOf(e);
 				name = e.name;
+			case TRBuiltin("Date") if (uses.dateClass != null):
+				return typeValue(TRClass(uses.dateClass));
 			case TRBuiltin(n):
 				kind = 2;
 				name = n;

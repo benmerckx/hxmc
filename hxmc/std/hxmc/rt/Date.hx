@@ -19,8 +19,16 @@ class Date {
 	static inline function windows():Bool
 		return Mem.os() == 2;
 
-	static function of(ms:Float):Dynamic
+	// toString, for Std.string of a value of any type (hxmc.rt.Dyn.stdString,
+	// hxmc.rt.gc.GcDyn.string): set by `of`, which makes every date (a copy
+	// aside: Reflect.copy), so that a program making none has no calendar code
+	// (natively the C library's time zones)
+	@:allow(hxmc.rt) static var printer:Null<Dynamic->String>;
+
+	@:allow(hxmc.rt) static function of(ms:Float):Dynamic {
+		if (printer == null) printer = toString;
 		return Repr.dateOf(ms);
+	}
 
 	static inline function ms(d:Dynamic):Float
 		return Repr.dateMs(d);

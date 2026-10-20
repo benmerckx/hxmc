@@ -90,9 +90,14 @@ class Uses {
 	public final bodies = new Map<FuncInfo, {body:Array<Stmt>, locals:Array<Local>}>();
 	// the program works on linear memory (hxmc.unsafe, C functions: GcModule.memory)
 	public var memory = false;
+	// the class of dates, the runtime's hxmc.rt.gc.GcDate (GcRepr.dateOf): Date's
+	// (TRBuiltin("Date"): its class value, GcModule.typeValue, and type tests,
+	// FuncGen.typeTest); null when nothing lowered names it (no date can exist)
+	public final dateClass:Null<ClassInfo>;
 
 	public function new(prog:Program, optimize:Bool, jobs:Int) {
 		this.prog = prog;
+		dateClass = Lambda.find(prog.classes, c -> c.name == "hxmc.rt.gc.GcDate");
 		// (each function's on its own: on threads, an IrOpt each, as its
 		// memos of the callees are the same for every function)
 		var fs = prog.funcs;
@@ -179,6 +184,7 @@ class Uses {
 			case ENewObj(c): cls(c);
 			case ENewAnon(s, _): shapes.set(s, true);
 			case EType(TRClass(c)) if (!c.isInterface): cls(c);
+			case EType(TRBuiltin("Date")) if (dateClass != null): cls(dateClass);
 			case ENewClos(l, _): lambdas.set(l, true);
 			case _:
 		}

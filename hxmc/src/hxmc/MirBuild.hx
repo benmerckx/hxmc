@@ -1911,6 +1911,7 @@ class MirBuild {
 					case "Bool": 4;
 					case "Array": 5;
 					case "hxmc_NativeArray": Abi.T_NATIVE_ARRAY;
+					case "Date": Abi.T_DATE;
 					case "haxe_io_Bytes": 8;
 					case _: 0;
 				}

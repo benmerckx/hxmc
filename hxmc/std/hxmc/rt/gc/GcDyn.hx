@@ -1,6 +1,7 @@
 package hxmc.rt.gc;
 
 import hxmc.rt.Str;
+import hxmc.rt.gc.GcRepr.GcDate;
 
 // -D hxmc.wasm-gc: Dynamic's comparisons and printing (W.kind), as hxmc.rt.Dyn's
 @:keep @:hxmc.wasmgc
@@ -26,6 +27,8 @@ class GcDyn {
 			return x < y ? -1 : x > y ? 1 : 0;
 		}
 		if (ka == 4 && kb == 4) return @:privateAccess Str.cmp(a, b);
+		// (two dates: by time, as hxmc.rt.Dyn's)
+		if (ka == 5 && kb == 5 && !same(a, b) && Std.isOfType(a, GcDate) && Std.isOfType(b, GcDate)) return (a : GcDate).t > (b : GcDate).t ? 1 : -1;
 		return eq(a, b) ? 0 : -1;
 	}
 
@@ -115,6 +118,8 @@ class GcDyn {
 			case 2: @:privateAccess Str.ofFloat(W.unboxFloat(v));
 			case 3: W.unboxBool(v) ? "true" : "false";
 			case 4: (v : String);
+			// (a date: hxmc.rt.Date.toString, as hxmc.rt.Dyn's)
+			case 5 if (Std.isOfType(v, GcDate)): hxmc.rt.Date.printer(v);
 			case 6: enumString(v);
 			case 7:
 				var b = new StringBuf();
@@ -130,6 +135,8 @@ class GcDyn {
 			case 10: anonString(v);
 			// (the runtime type's name, as hxmc.rt.Dyn's)
 			case 11 if (W.naKind(v) >= 0): "hxmc.NativeArray";
+			// (a class or enum value: its name, as hxmc.rt.Dyn's; Date's: GcModule.typeValue)
+			case 12: W.typeName(v);
 			case _: "[object]";
 		}
 

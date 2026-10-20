@@ -173,6 +173,21 @@ surrogateescape), which encodes back to that byte, so any bytes read and
 written again are the same bytes (the corpus' `Utf8Bytes`; the port keeps
 OCaml's byte strings this way: [porting.md](porting.md)).
 
+A Date is an object of a runtime type of its own, `T_DATE` (`Types.hx`,
+`Abi.hx`), holding the milliseconds since the epoch (`MemRepr.dateOf`): `Dyn`
+prints it as the reference does (`Date.toString`, local time), gives `Date`
+as its class (`Type.getClass`, `typeof`, `resolveClass`), tests it
+(`Std.isOfType`, `downcast`, casts, `catch`), copies it (`Reflect.copy`, a new
+date, as Eval) and orders two dates by time (`Reflect.compare`, Dynamic's
+`<`, as JavaScript; Eval answers -1 but for the same date). `Std.string`
+reaches `Date.toString` through `Date.printer`, which `Date.of`, making every
+date, sets: a program that makes none has no calendar code (natively the C
+library's time zones, 12 KB of a hello world). On WasmGC a date is the
+runtime's `GcDate`, whose class is `Date`'s (`GcGen.Uses.dateClass`: its
+class value, named Date, and the type tests against Date; its time is not a
+field to reflection). `hxmc/test/cases/DateValues.hx` checks these against
+the reference's `--interp`, natively and on WasmGC (`GcCheck`).
+
 A change of the runtime's
 interface or of the IR's conventions needs a tool that knows it: build once
 against the previous runtime first, or bootstrap again.

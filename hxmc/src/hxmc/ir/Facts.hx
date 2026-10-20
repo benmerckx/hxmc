@@ -223,6 +223,9 @@ class Facts {
 		var rtSlots:Array<Array<Null<Ty>>> = [[], [], [TI32], [TF64], [TBool], [TI32, TRef(RAny)], [], [], [], [TI32, TRef(RAny)], [TI32, TRef(RAny)], [TRef(RAny)], [TI32], [TF64], [TI32], [], [], [TRef(RAny), TI32], [TI64]];
 		rtNames.push("hxmc.NativeArray");
 		rtSlots.push([]);
+		// (T_DATE: the milliseconds since the epoch, hxmc.rt.MemRepr.dateOf)
+		rtNames.push("Date");
+		rtSlots.push([TF64]);
 		for (i in 0...T_FIRST)
 			addType(entry(i < rtNames.length ? rtNames[i] : "Reserved", "TK_RUNTIME", i < rtSlots.length ? rtSlots[i] : [], "rt" + i));
 		for (c in p.classes) {

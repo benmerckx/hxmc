@@ -64,8 +64,9 @@ class Meta {
 		}
 		m.gc(b, 0x08, pt, cls.length);
 		setGlobal(clsTypes);
+		// (the class of dates: none, its time not a field, as natively: GcGen.Uses.dateClass)
 		for (c in cls)
-			names([for (f in c.fields) f.name]);
+			names(c == m.uses.dateClass ? [] : [for (f in c.fields) f.name]);
 		m.gc(b, 0x08, pt, cls.length);
 		setGlobal(clsFields);
 		var es = m.enumList();

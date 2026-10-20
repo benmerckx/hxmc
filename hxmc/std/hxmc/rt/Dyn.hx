@@ -649,6 +649,9 @@ class Dyn {
 		}
 		if (!Str.isNull(a) && !Str.isNull(b) && tindex(a) == T_STRING && tindex(b) == T_STRING) return Str.cmp(a, b);
 		if (Mem.addr(a) == Mem.addr(b)) return 0;
+		// two dates: by time, as JavaScript's `a == b ? 0 : a > b ? 1 : -1`
+		// (Eval: -1 but for the same date)
+		if (!Str.isNull(a) && !Str.isNull(b) && tindex(a) == T_DATE && tindex(b) == T_DATE) return Repr.dateMs(a) > Repr.dateMs(b) ? 1 : -1;
 		return Str.isNull(a) ? -1 : 1;
 	}
 
@@ -720,7 +723,7 @@ class Dyn {
 				return f == Math.ffloor(f) && Math.abs(f) < 2147483648.0;
 			case T_BOXFLOAT:
 				return t == T_BOXINT || t == T_BOXFLOAT;
-			case T_BOXBOOL | T_STRING | T_ARRAY | T_BYTES | T_NATIVE_ARRAY:
+			case T_BOXBOOL | T_STRING | T_ARRAY | T_BYTES | T_NATIVE_ARRAY | T_DATE:
 				return t == c;
 			case _:
 		}
@@ -779,6 +782,9 @@ class Dyn {
 				return Mem.getI32(p, 0) != 0 ? "true" : "false";
 			case T_TYPEOBJ:
 				return Str.ofAscii(name(ty(described(v))));
+			case T_DATE:
+				// (its toString: set when a date was first made)
+				return Date.printer(v);
 			case T_ARRAY:
 				var a:Array<Dynamic> = v;
 				var b = new StringBuf();
@@ -926,6 +932,8 @@ class Dyn {
 				return 8;
 			case T_ARRAY:
 				return 9;
+			case T_DATE:
+				return 6;
 			case T_TYPEOBJ:
 				return 10;
 			case _:
@@ -943,7 +951,7 @@ class Dyn {
 	@:hxmc.noGc public static function getClass(v:Dynamic):Dynamic {
 		if (Str.isNull(v)) return null;
 		var t = tindex(v);
-		if (t == T_STRING || t == T_ARRAY) return typeObj(t);
+		if (t == T_STRING || t == T_ARRAY || t == T_DATE) return typeObj(t);
 		if (t >= T_FIRST && tk(ty(t)) == TK_CLASS) return typeObj(t);
 		return null;
 	}
@@ -977,11 +985,14 @@ class Dyn {
 		}
 		LibC.free(c);
 		if (Str.isNull(r) && n == "String") r = typeObj(T_STRING);
+		if (Str.isNull(r) && n == "Date") r = typeObj(T_DATE);
 		return r;
 	}
 
 	public static function createEmpty(c:Dynamic):Dynamic {
 		var t = described(c);
+		// (a date: of time 0, as Eval's, made as every date is: Date.printer)
+		if (t == T_DATE) return Date.of(0);
 		var n = slotCount(ty(t));
 		return Mem.alloc(n > 0 ? n : 1, t, K_OBJ);
 	}
@@ -1190,7 +1201,10 @@ class Dyn {
 	}
 
 	public static function copyObject(o:Dynamic):Dynamic {
-		if (Str.isNull(o) || tindex(o) < T_FIRST) return o;
+		if (Str.isNull(o)) return o;
+		// (a date: a new one, as Eval's)
+		if (tindex(o) == T_DATE) return Repr.dateOf(Repr.dateMs(o));
+		if (tindex(o) < T_FIRST) return o;
 		var n = nslots(o);
 		var c = Mem.alloc(n, tindex(o), kind(o));
 		LibC.memcpy(Mem.addr(c), Mem.addr(o), (8 * n : I64));

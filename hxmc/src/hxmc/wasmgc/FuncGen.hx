@@ -1298,6 +1298,12 @@ class FuncGen {
 						i32(0);
 						op(0x4E);
 					case "Bool": test(m.dynType(TBool));
+					case "Date":
+						// (the class of dates, GcGen.Uses.dateClass; none: no date can exist)
+						if (m.uses.dateClass != null) test(m.classType(m.uses.dateClass)) else {
+							op(0x1A);
+							i32(0);
+						}
 					case "Int":
 						// (an Int, or a Float of an Int's value, as hxmc.rt.Dyn.isOf: GcNative.isInt)
 						call(m.exportOf("gc_is_int"));

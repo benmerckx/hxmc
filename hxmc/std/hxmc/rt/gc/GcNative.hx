@@ -82,11 +82,12 @@ class GcNative {
 			if (t == null) break;
 			if (W.typeName(t) == n) return t;
 		}
-		return n == "String" ? String : null;
+		return n == "String" ? String : n == "Date" ? std.Date : null;
 	}
 
+	// (a date: of time 0, made as every date is, as hxmc.rt.Dyn's)
 	public static function createEmpty(c:Dynamic):Dynamic
-		return W.createEmpty(c);
+		return c == std.Date ? hxmc.rt.Date.of(0) : W.createEmpty(c);
 
 	// Type.createInstance, as hxmc.rt.Dyn's: a new instance, its class's
 	// constructor called with the arguments (hxmc.wasmgc.Meta.createInstance)
