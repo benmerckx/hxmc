@@ -70,6 +70,7 @@ class Start {
 		#else
 		if (Mem.target() >= 9) U.__cxa_atexit(Callback.addr(Gc.report), Ptr.nil(), Mem.sym("__dso_handle")) else U.atexit(Callback.addr(Gc.report));
 		#end
+		Faults.init(); // (null accesses throw)
 	}
 
 	// The program's main runs on a reserved stack of RT_STACK_MB (default

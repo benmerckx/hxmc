@@ -56,6 +56,17 @@ class Helpers {
 		b.u8(0x45);
 		b.u8(0x04);
 		b.u8(0x40);
+		// (null, with -D hxmc.null-checks: rt_null_access throws "Null Access", FuncGen.derefAs)
+		if (hxmc.ir.Lower.nullChecks) {
+			get(b, 0);
+			b.u8(0xD1); // ref.is_null
+			b.u8(0x04);
+			b.u8(0x40);
+			b.u8(0x10);
+			Enc.uleb(b, m.exportOf("rt_null_access"));
+			b.u8(0x00);
+			b.u8(0x0B);
+		}
 	}
 
 	public static function arrGet(m:GcModule, k:String):Int {

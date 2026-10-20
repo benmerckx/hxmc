@@ -323,6 +323,116 @@ with the define's accesses. Dynamic indexing follows the define too
 (`Dyn.dynAget`, WasmGC's `GcDyn.aget`; an error when it is not defined). The define is registered
 for `haxe --help-defines` by `hxmc.Defines`, leaving `haxe/src` unchanged.
 
+## Null access
+
+A read or write through a null reference throws the String `"Null
+Access"`, which `try`/`catch` catches as any exception (`catch (e:String)`,
+or `haxe.Exception` with that message): a field of a class instance, of an
+anonymous structure or of an enum value (a `switch` reads its tag), an
+Array's index, length and methods, a String's length, `charCodeAt`,
+`fastCodeAt` and methods, a Vector, Bytes, a map, a call through a null
+function, a dispatched (virtual or interface) call. Nothing caught, the
+program ends as with any uncaught exception (`Uncaught exception: Null
+Access` on stderr, exit 1). Dynamic access throws the same (`Dyn.hx`,
+WasmGC's `GcDyn`, `GcNative`): `d[0]`, `d[0] = v`, `d.x = v`, `d.f()`,
+and `d.x` too, where Eval gives null: the typed `o.x` throws, and so do the
+targets that test for null (HashLink, the JVM, hxcpp's checks; JavaScript's
+TypeError); `Reflect.field(null, "x")` stays null. A call of a null Dynamic
+throws `Cannot call null`, Eval's message. The corpus case `NullAccess`
+(and `NullAccessThreads`) prints the same as the reference's `--interp`
+but where Eval words it otherwise: `field access on null` for the field
+reads of class instances and structures and for a String's length (a
+fault cannot tell those from the other accesses), `Cannot call null` for a
+typed call of a null function or a method of null taken as a value, and a
+method called directly (not dispatched) on null runs on every hxmc target
+until it reads `this` (Eval throws at the call: testing every such
+receiver costs the native port 0.9% more instructions and 0.7% more code).
+
+### Native targets: the fault handler
+
+The generated code reads through references without testing them: a null
+one faults near address 0 (a field is at a small offset from the
+object's address, its header just below it), and the fault handler
+(`hxmc/std/hxmc/rt/Faults.hx`, installed by `rt_init`: `sigaction` for
+SIGSEGV and SIGBUS with `SA_SIGINFO` on Linux, Android, macOS and iOS; a
+vectored exception handler, called before the runtime's own, on Windows)
+turns it into a throw. It does not unwind itself: it changes the
+interrupted context so that, once it returns, the thread runs
+`rt_null_access` as if the faulting instruction had called it (x86-64:
+its address pushed as the return address, below the red zone the kernel
+leaves, or on Windows below the 32 bytes a callee may use; arm64: in the
+link register; the stack pointer aligned as at a call), Go's way. The
+kernel (or `NtContinue`) restores the signal mask and the rest of the
+state, and `rt_null_access` throws as any throw does: `rt_throw` with the
+literal (nothing allocated), a `longjmp` to the innermost try's handler,
+which restores the shadow stack (`rt_sp`) and the handler chain from its
+record. The frames between are abandoned as when a callee throws; the
+collector finds their shadow-stack slots valid, if dead. Two rules keep
+the handler's view right where a throw can now come from any load or
+store, not only a call: `Roots` roots what a try's handlers read (they
+are entered from any point of the body; their tests may collect), and
+`Opt.forwardStores` keeps a store before an access through a reference
+nothing has gone through yet (the handler may read it). With no fault,
+nothing runs: the port's self-compile to HXB takes 31,050.31 million
+instructions where it took 31,050.16 (+0.0005%, the same time), the port
+is 48 bytes larger (19,534,496), the tool 17.7 KB (17,166,184: the tests'
+code generation, and the stores Opt now keeps in its own code, with which
+its cold build of the port takes 0.1% more instructions, the same time;
+Xeon E-2356G, 6 cores/12 threads, 62 GB, Linux 6.1).
+
+A fault is a null access when the hardware reported it (`si_code` above 0;
+not a signal a process sent, not Linux's address-less `SI_KERNEL`), its
+address is within 64 KB of 0 on either side (Linux never maps the first
+64 KB, Windows reserves them, macOS's page zero is 4 GB), its instruction
+is in the program's image (ELF: `__ehdr_start` to `_end`; Mach-O: the
+`__TEXT` segment of the image `dladdr` names; PE: `SizeOfImage`) or in code
+registered at run time (native macros: `hxmc.macro.Loader`,
+`Faults.addCode`), the thread is one of the runtime's, running Haxe code
+(not in a blocking call's safe region, and not the collector with the
+world stopped: `Threads.collector`), and the innermost handler is at or
+above the faulting frame (null: uncaught). Any other fault goes to the
+action that was there before: the default restored, the instruction
+faults again and the process dies of the signal (exit 139, a core dump),
+as without the handler; a handler of a host process (a shared library's,
+Android's ART) is called. A shared library's runtime puts the earlier
+actions back when it ends (`Gc.releaseHeap`). `RT_NULL_ACCESS=0` installs
+nothing. Every thread is covered alike, and so is an interpreter written in
+Haxe (a load of its interpreted code through null faults in its own
+compiled code).
+
+Limits: an element of a Vector read without a bounds test (the default)
+at a large index of a null Vector is beyond 64 KB and crashes; a fault in
+code outside the image (the system's C library in the glibc mode, a
+driver) crashes as before (that code may hold locks the throw would leave
+taken); a fault inside the runtime while it holds one of its own locks
+would leave it taken (the runtime reads its arguments before it locks).
+
+### WebAssembly: explicit tests
+
+WebAssembly has no faults to catch: in linear memory a null access read
+the zeros below the data (4 KB) or wrote over them, and an object's
+header (at -4) or an index out of the memory trapped; WasmGC's
+`struct.get` and `array.len` trap on null. A trap ends the module: no
+handler sees it. So with `-D hxmc.null-checks` (`Lower.nullChecks`; on by
+default for `wasm32-wasi`, `=0` turns it off, `=1` adds the tests to the
+native targets) each dereference tests its reference: `MirBuild.nullCheck`
+(a branch to a block calling `rt_null_access`, one per try a function's
+tests share: a try's body is the dominator subtree of its first block,
+WasmGen), `FuncGen.derefAs` (WasmGC: a call of a per-type helper, `nn_<t>`,
+which gives a `(ref null t)` back as a `(ref t)`: 2 or 3 bytes a test),
+and `FnLower.receiverCheck` for the receiver of a method the runtime
+implements (it reads it untested). A test is dropped where the value is
+known: data at a symbol, an object made here, a constructor's object, a
+closure's own, a value or a local tested on every path since its last
+assignment (`checkedLocals`, `FuncGen.checked`; a reference the collector
+moves stays non-null). The cost, on the port (`-D hih_no_generators` for
+wasm32) and its self-compile under node 24 (the same machine): wasm32
+10,204,974 to 10,788,189 bytes (+5.7%) and 4.7% more instructions (2% more
+time); WasmGC 10,195,586 to 10,627,834 bytes (+4.2%) and 6.1% more
+instructions; with `-D hxmc.null-checks=0`, as before (97 and 167 bytes
+more). Per test: a compare and a branch to the shared block (wasm32), a
+call of `nn_<t>` (WasmGC).
+
 ## Module cache
 
 The compilation server's HXB module cache, made durable
@@ -455,7 +565,7 @@ no threads, sockets or processes). mbedtls 2.28 and libuv 1.48
 use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_ESCAPE=0` (no escape analysis; `HXMC_ESCAPE_LOG=1`: what happens to each allocation analyzed and why it stays; `HXMC_ESCAPE_NO=<closures,frames,again,boxes,replace,screen>` and `HXMC_ESCAPE_HASH=<lo>-<hi>` to bisect a miscompilation; none of them are in the object cache's key), `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
-`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`,
+`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
 `RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown).
 
 ## Android
@@ -874,7 +984,7 @@ not covered yet fails the build with its name; `HXMC_GC_SURVEY=1` lists
 every such construct of a program instead (`=2` also writes the module,
 those functions trapping). `make wasmgc-check` compares `hxmc/test/wasmgc`'s
 programs (`Unsafe.hx`: the linear memory), and the corpus cases
-`GcCheck.CASES` that need nothing WasmGC lacks, with their native output (a
+`GcCheck.CASES` that need nothing WasmGC lacks, with their native output and exit code (a
 program's `// define:` lines apply to both builds); `make wasmgc-bench`
 adds the linear-memory build: times, peak RSS, sizes.
 

@@ -1,0 +1,90 @@
+exit 1
+-- arrays
+a[0]: caught Null Access
+a[1] = 5: caught Null Access
+a.length: caught Null Access
+a.push(3): caught Null Access
+a.pop(): caught Null Access
+a.indexOf(2): caught Null Access
+a.copy(): caught Null Access
+a.join: caught Null Access
+a[0] += 1: caught Null Access
+for in: caught Null Access
+s[0].length: caught Null Access
+[null][0].length: caught Null Access
+-- strings
+s.length: caught Null Access
+s.charCodeAt(0): caught Null Access
+fastCodeAt: caught Null Access
+s.charAt(1): caught Null Access
+s.substr(1): caught Null Access
+s.indexOf: caught Null Access
+s.split: caught Null Access
+s.toUpperCase(): caught Null Access
+s + x: nullx
+Std.string(s): null
+s == null: true
+-- objects
+n.value: caught Null Access
+n.weight: caught Null Access
+n.name: caught Null Access
+n.next: caught Null Access
+n.value = 2: caught Null Access
+n.name = x: caught Null Access
+n.describe(): caught Null Access
+n.dyn(): caught Null Access
+c.describe(): caught Null Access
+m.next.value: caught Null Access
+m.next.next: caught Null Access
+m.next.next.name: caught Null Access
+m.next.value: 4
+n.constant(): 7
+-- interfaces
+sh.area(): caught Null Access
+sh.sides: caught Null Access
+ok.area(): 9
+-- enums
+switch: caught Null Access
+t.match(Leaf): caught Null Access
+Type.enumIndex: caught Null Access
+Type.enumParameters: caught Null Access
+t == Leaf: false
+nested: caught Null Access
+-- structures
+p.x: caught Null Access
+p.y = 3: caught Null Access
+p.label: caught Null Access
+q.value: caught Null Access
+-- functions
+f(): caught Null Access
+g(1): caught Null Access
+o.f(): caught Null Access
+-- dynamic
+d.x: caught Null Access
+d.x = 1: caught Null Access
+d[0]: caught Null Access
+d[0] = 1: caught Null Access
+d.f(): caught Null Access
+d(): caught Cannot call null
+d.length: caught Null Access
+Reflect.field: null
+Reflect.setField: caught Null Access
+-- library
+v[0]: caught Null Access
+v[1] = 1: caught Null Access
+v.length: caught Null Access
+b.get(0): caught Null Access
+b.length: caught Null Access
+m.get(a): caught Null Access
+m[a] = 2: caught Null Access
+m.exists(a): caught Null Access
+sb.add: caught Null Access
+sb.toString(): caught Null Access
+-- closures
+in a closure: caught Null Access
+nested: caught Null Access
+-- direct
+caught 300, bad 0, keep 50 n49=49
+-- deep
+total 5380, survivors 120, sum -2460, last n-119=-119
+-- uncaught

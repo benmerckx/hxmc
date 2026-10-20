@@ -13,7 +13,15 @@ class GcGen {
 	// written, those functions trapping (to measure the rest)
 	public static function run(prog:Program, out:String, o:Options) {
 		// (twice: then over the bodies as emitted, without what IrOpt inlined everywhere)
-		var calls:hxmc.ir.Reach.RuntimeCalls = {ex: runtimeCalls, stmt: s -> s.match(SAnonSet(_)) ? "gc_anon_set" : null};
+		var calls:hxmc.ir.Reach.RuntimeCalls = {
+			ex: runtimeCalls,
+			stmt: s -> switch s {
+				case SAnonSet(_): "gc_anon_set";
+				// (null tested: FuncGen.derefAs, Helpers' array paths)
+				case SSetField(_) | SArrSet(_) | SArrPush(_) if (hxmc.ir.Lower.nullChecks): "rt_null_access";
+				case _: null;
+			}
+		};
 		hxmc.ir.Reach.run(prog, o.stats, calls);
 		var u = new Uses(prog, o.opt, o.jobs > 0 ? o.jobs : hxmc.Driver.domains());
 		hxmc.ir.Reach.run(prog, o.stats, calls, f -> u.bodies.get(f).body);
@@ -56,6 +64,13 @@ class GcGen {
 					case EType(_): null;
 					case _: "gc_is";
 				}
+			// (a reference tested against null before it is dereferenced: FuncGen.derefAs,
+			// Helpers' array paths)
+			case EField(_) | EEnumTag(_) | EEnumParam(_) | EArrLen(_) | EArrGet(_) | EArrGetU(_) | ECallDispatch(_) | ECallClos(_)
+				| ECallHost("String_length" | "String_charCodeAt_i" | "hxmc_narray_length", _, _) if (hxmc.ir.Lower.nullChecks):
+				"rt_null_access";
+			case ECallHost(n, _, _) if (hxmc.ir.Lower.nullChecks && (StringTools.startsWith(n, "hxmc_narray_get_") || StringTools.startsWith(n, "hxmc_narray_set_"))):
+				"rt_null_access";
 			case _: null;
 		}
 }

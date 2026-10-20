@@ -7,7 +7,7 @@ using StringTools;
 // -D hxmc.wasm-gc (hxmc/src/hxmc/wasmgc): each program of hxmc/test/wasmgc,
 // and the corpus cases of CASES (hxmc/test/cases, as they are), built
 // natively and as a WasmGC module (run by node, hxmc/bootstrap/wasmgc.mjs),
-// their outputs compared (`make wasmgc-check`); a program's `// define:`
+// their outputs and exit codes compared (`make wasmgc-check`); a program's `// define:`
 // lines apply to both builds, as in the corpus.
 // With --bench, also as linear-memory wasm (hxmc/bootstrap/wasi.mjs), each
 // run RUNS times: the median time, node's peak RSS and the module's size,
@@ -18,7 +18,7 @@ class GcCheck {
 	static final common = ["-cp", "bin/hxmc/std", "--custom-target", "hxmc"];
 	// (the corpus cases that need nothing WasmGC lacks: the others' counterparts
 	// are in hxmc/test/wasmgc, without the collector's API and raw memory)
-	static final CASES = ["AnonFields", "EnumIdentity", "MapTables", "NativeArrayBoundsSilent", "Utf8Bytes", "VectorLength"];
+	static final CASES = ["AnonFields", "EnumIdentity", "MapTables", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads", "Utf8Bytes", "VectorLength"];
 
 	static function run(cmd:String, args:Array<String>):{code:Int, out:String, err:String} {
 		var p = new Process(cmd, args);
@@ -80,9 +80,11 @@ class GcCheck {
 				failed++;
 				continue;
 			}
-			var expected = run(nat, []).out;
+			// (the same output and exit code: a program may end with an uncaught exception)
+			var native = run(nat, []);
+			var expected = native.out;
 			var got = run("node", ["hxmc/bootstrap/wasmgc.mjs", gc]);
-			if (got.code != 0 || got.out != expected) {
+			if (got.code != native.code || got.out != expected) {
 				Sys.println('GcCheck: $n: FAILED (exit ${got.code})');
 				Sys.println("  expected: " + expected.split("\n").slice(0, 5).join(" | "));
 				Sys.println("  got:      " + got.out.split("\n").slice(0, 5).join(" | ") + " " + got.err.trim());

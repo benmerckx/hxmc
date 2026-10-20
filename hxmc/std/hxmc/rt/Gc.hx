@@ -1406,6 +1406,7 @@ class Gc {
 	// and the main shadow stack given back to the system. Nothing of the
 	// heap is used after this (the program's threads have ended).
 	@:hxmc.noGc public static function releaseHeap() {
+		Faults.uninstall(); // (its handler's code goes with the library)
 		if (!region0.isNull()) Os.release(region0, regionBytes);
 		if (!region1.isNull()) Os.release(region1, regionBytes);
 		if (!nurseryBase.isNull()) Os.release(nurseryBase, nurseryBytes);

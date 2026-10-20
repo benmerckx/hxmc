@@ -14,6 +14,11 @@ class Defines {
 			flags: [core.DefineRegistry.DefineParameter.HasParam("throws | silent")]
 		});
 		core.DefineRegistry.all.push({
+			key: "hxmc.null_checks",
+			doc: "Whether hxmc tests references against null before it dereferences them (null throws \"Null Access\"): 1 or 0. Not defined: on WebAssembly, where a null access would read memory or trap; off on the native targets, where the access faults and the runtime's fault handler throws.",
+			flags: [core.DefineRegistry.DefineParameter.HasParam("0 | 1")]
+		});
+		core.DefineRegistry.all.push({
 			key: "hxmc.gc_prefault",
 			doc: "Linux: once the heap's old space passes 64 MB, a helper thread of the garbage collector faults in its pages ahead of the minor collections, which otherwise wait for the kernel to zero each fresh page: less wall time for more CPU time (RT_PREFAULT=0 turns it off at run time). Not defined: no helper.",
 			flags: []

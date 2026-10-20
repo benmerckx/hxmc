@@ -290,6 +290,70 @@ class FuncGen {
 	function gc(o:Int, ?a:Int, ?c:Int)
 		m.gc(b, o, a, c);
 
+	// ---- null access (docs/hxmc.md, "Null access")
+
+	// e's value on the stack as a (ref t), about to be dereferenced: with the
+	// explicit tests of -D hxmc.null-checks (Lower.nullChecks, WebAssembly's
+	// default), null calls rt_null_access, which throws "Null Access" (the
+	// engine would trap, and no handler catches a trap)
+	function derefAs(e:Ex, t:Int) {
+		var id = localOf(e);
+		if (!hxmc.ir.Lower.nullChecks || nonNull(e) || id != null && checked.exists(id)) {
+			exprAs(e, t);
+			return;
+		}
+		exprAs(e, t);
+		call(m.nonNullOf(t));
+		if (id != null) checked.set(id, true);
+	}
+
+	// The locals tested since their last assignment on every path here (a
+	// test dominating this point): their tests are not repeated. A nested
+	// statement list (a branch, a loop's or a try's body, a handler) starts
+	// with what was known before it and gives back nothing but the locals it
+	// assigns forgotten (they may differ after it); a loop forgets them before
+	// its body too (the next iteration).
+	var checked = new Map<Int, Bool>();
+
+	function localOf(e:Ex):Null<Int>
+		return switch e {
+			case ELocal(l): l.id;
+			case ECast(_, x): localOf(x);
+			case _: null;
+		}
+
+	function scoped(ss:Array<Stmt>) {
+		var saved = checked;
+		checked = saved.copy();
+		stmts(ss);
+		checked = saved;
+		forgetAssigned(ss);
+	}
+
+	function forgetAssigned(ss:Array<Stmt>) {
+		if (!checked.keys().hasNext()) return;
+		function st(s:Stmt) {
+			switch s {
+				case SSet(l, _): checked.remove(l.id);
+				case _:
+			}
+			hxmc.ir.Facts.iterStmt(st, _ -> {}, s);
+		}
+		for (s in ss)
+			st(s);
+	}
+
+	// a value never null: made here, a literal, a constructor's object
+	// (new), a closure's own (its call tests it: ECallClos); not a method's
+	// receiver (as MirBuild.nonNull)
+	function nonNull(e:Ex):Bool
+		return switch e {
+			case ELocal(l): f.args.length > 0 && l.id == f.args[0].id && (f.lambda != null || MirBuild.isCtor(f));
+			case EStr(_) | EType(_) | ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): true;
+			case ECast(_, x): nonNull(x);
+			case _: false;
+		}
+
 	function castBase(e:Ex):Null<Local>
 		return switch e {
 			case ELocal(l) if (localKey.get(l.id) == "p"): l;
@@ -329,11 +393,12 @@ class FuncGen {
 				var k = localKey.get(l.id);
 				if (k != null && k.charAt(0) == "t") exprAs(e, Std.parseInt(k.substr(1))) else expr(e);
 				if (local.exists(l.id)) localSet(local.get(l.id)) else if (rOf(e) != "v") op(0x1A);
+				checked.remove(l.id);
 			case SExpr(e):
 				expr(e);
 				if (rOf(e) != "v") op(0x1A);
 			case SSetField(c, idx, o, v):
-				exprAs(o, m.classType(c));
+				derefAs(o, m.classType(c));
 				var fk = m.fieldKey(c, idx);
 				if (fk.charAt(0) == "t") exprAs(v, Std.parseInt(fk.substr(1))) else expr(v);
 				gc(0x05, m.classType(c), idx + 1);
@@ -381,16 +446,17 @@ class FuncGen {
 			case SIf(c, a, e):
 				expr(c);
 				block(FPlain, 0x04);
-				stmts(a);
+				scoped(a);
 				if (e.length > 0) {
 					op(0x05);
-					stmts(e);
+					scoped(e);
 				}
 				end();
 			case SLoop(body):
 				block(FBreak, 0x02);
 				block(FLoop, 0x03);
-				stmts(body);
+				forgetAssigned(body);
+				scoped(body);
 				op(0x0C);
 				Enc.uleb(b, 0);
 				end();
@@ -445,11 +511,11 @@ class FuncGen {
 					if (k > 0) op(0x72);
 				}
 				block(FPlain, 0x04);
-				stmts(c.body);
+				scoped(c.body);
 				op(0x05);
 				opened++;
 			}
-			stmts(def);
+			scoped(def);
 			for (_ in 0...opened)
 				end();
 			release("i", t);
@@ -477,13 +543,13 @@ class FuncGen {
 		Enc.uleb(b, n);
 		for (k in 0...n) {
 			end();
-			stmts(cases[k].body);
+			scoped(cases[k].body);
 			// (to the end: past the remaining case blocks and the default)
 			op(0x0C);
 			Enc.uleb(b, n - k);
 		}
 		end();
-		stmts(def);
+		scoped(def);
 		end();
 		release("i", t);
 	}
@@ -659,7 +725,7 @@ class FuncGen {
 			localSet(sp);
 		}
 		block(FPlain, 0x06);
-		stmts(body);
+		scoped(body);
 		op(0x07);
 		op(0);
 		var t = temp("p");
@@ -683,7 +749,8 @@ class FuncGen {
 			// (set from the exception, any value: never refined)
 			otherUses.set(c.l.id, true);
 			if (local.exists(c.l.id)) localSet(local.get(c.l.id)) else op(0x1A);
-			stmts(c.body);
+			checked.remove(c.l.id);
+			scoped(c.body);
 			if (c.test == null) {
 				all = true;
 				break;
@@ -803,7 +870,7 @@ class FuncGen {
 				expr(x);
 				call(Helpers.unbox(m, t == TBool ? "b" : repr(t)));
 			case EField(c, idx, o):
-				exprAs(o, m.classType(c));
+				derefAs(o, m.classType(c));
 				gc(0x02, m.classType(c), idx + 1);
 			case EFieldAddr(_, _, _):
 				unsupported("the address of a struct field");
@@ -845,13 +912,13 @@ class FuncGen {
 					Enc.sleb(b, m.classType(c));
 				}
 			case EEnumTag(x, _):
-				exprAs(x, m.enumType);
+				derefAs(x, m.enumType);
 				gc(0x02, m.enumType, 0);
 			case EEnumParam(c, idx, x):
-				exprAs(x, m.ctorType(c));
+				derefAs(x, m.ctorType(c));
 				gc(0x02, m.ctorType(c), idx + 2);
 			case EArrLen(a):
-				exprAs(a, m.arrBaseType);
+				derefAs(a, m.arrBaseType);
 				gc(0x02, m.arrBaseType, 0);
 			case EArrGet(t, a, i):
 				arrGet(GcModule.elemKind(t), a, i);
@@ -860,7 +927,7 @@ class FuncGen {
 				// references as an array's, for generic code, Vector<T>'s, reads one of any kind)
 				var k = GcModule.elemKind(t);
 				if (k == "p") arrGet(k, a, i) else {
-					exprAs(a, m.arrType(k));
+					derefAs(a, m.arrType(k));
 					gc(0x02, m.arrType(k), 1);
 					expr(i);
 					gc(0x0B, m.dataType(k));
@@ -883,7 +950,7 @@ class FuncGen {
 			case ECallDispatch(sel, s, args):
 				var tk = "t" + m.objType;
 				var t = temp(tk);
-				exprAs(args[0], m.objType);
+				derefAs(args[0], m.objType);
 				localTee(t);
 				for (k in 1...args.length)
 					expr(args[k]);
@@ -900,7 +967,7 @@ class FuncGen {
 			case ECallClos(s, c, args):
 				var ct = m.closTypeOf(s);
 				var t = temp("t" + ct);
-				exprAs(c, ct);
+				derefAs(c, ct);
 				localTee(t);
 				for (a in args)
 					expr(a);
@@ -1069,8 +1136,13 @@ class FuncGen {
 				release("i", n);
 			case "hxmc_narray_length":
 				var k = dataKind(args[0]);
-				expr(args[0]);
-				if (k != null) gc(0x0F) else call(Helpers.naLen(m));
+				if (k != null) {
+					derefAs(args[0], m.naType(k));
+					gc(0x0F);
+				} else {
+					expr(args[0]);
+					call(Helpers.naLen(m));
+				}
 			case "hxmc_narray_dget":
 				// (reference storage inline: the eqref left for the slow path when not)
 				var ix = inLocal(args[1]);
@@ -1113,13 +1185,13 @@ class FuncGen {
 				ix.done();
 			case _ if (StringTools.startsWith(name, "hxmc_narray_get_")):
 				var k = name.substr(name.length - 1), d = m.naType(k);
-				exprAs(args[0], d);
+				derefAs(args[0], d);
 				expr(args[1]);
 				// (Bools: unsigned bytes)
 				gc(k == "b" ? 0x0D : 0x0B, d);
 			case _ if (StringTools.startsWith(name, "hxmc_narray_set_")):
 				var d = m.naType(name.substr(name.length - 1));
-				exprAs(args[0], d);
+				derefAs(args[0], d);
 				expr(args[1]);
 				expr(args[2]);
 				gc(0x0E, d);
@@ -1718,7 +1790,7 @@ class FuncGen {
 				// (0 past the end, as fastCodeAt)
 				var sk = "t" + m.stringType;
 				var t = temp("i"), s = temp(sk);
-				exprAs(args[0], m.stringType);
+				derefAs(args[0], m.stringType);
 				localSet(s);
 				expr(args[1]);
 				localTee(t);
@@ -1736,7 +1808,7 @@ class FuncGen {
 				release("i", t);
 				release(sk, s);
 			case "String_length":
-				exprAs(args[0], m.stringType);
+				derefAs(args[0], m.stringType);
 				gc(0x0F);
 			case "Math_NaN": f64(Math.NaN);
 			case "Math_POSITIVE_INFINITY": f64(Math.POSITIVE_INFINITY);

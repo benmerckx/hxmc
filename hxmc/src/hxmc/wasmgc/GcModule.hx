@@ -221,7 +221,8 @@ class GcModule {
 		return t;
 	}
 
-	// a function type by tokens: "i", "f", "l", "p" or "t<type>" (ref null type); "v" no result
+	// a function type by tokens: "i", "f", "l", "p", "t<type>" (ref null type) or
+	// "n<type>" (ref type); "v" no result
 	function funcTypeTokens(params:Array<String>, ret:String):Int {
 		var key = params.join(",") + ">" + ret;
 		var t = funcTypes.get(key);
@@ -232,7 +233,7 @@ class GcModule {
 		b.u8(0);
 		b.u8(0x60);
 		function tok(x:String)
-			if (x.charAt(0) == "t") refType(b, Std.parseInt(x.substr(1))) else valType(b, x);
+			if (x.charAt(0) == "t" || x.charAt(0) == "n") refType(b, Std.parseInt(x.substr(1)), x.charAt(0) == "t") else valType(b, x);
 		Enc.uleb(b, params.length);
 		for (p in params)
 			tok(p);
@@ -551,6 +552,31 @@ class GcModule {
 	public function hasHelper(name:String):Null<Int>
 		return helperIndex.get(name);
 
+	// a (ref null t) as a (ref t), and rt_null_access called on null (it throws
+	// "Null Access": FuncGen.derefAs, -D hxmc.null-checks); a call of it is 2 or
+	// 3 bytes where the test inline is about 11 (the port as a module: 7.7% larger
+	// than without tests, against 16.8%, for 1% more instructions)
+	public function nonNullOf(t:Int):Int {
+		var name = "nn_" + t;
+		var i = helperIndex.get(name);
+		if (i != null) return i;
+		var b = new Buf();
+		b.u8(0x02); // block (result (ref t))
+		refType(b, t, false);
+		b.u8(0x20); // local.get 0
+		b.u8(0);
+		b.u8(0xD6); // br_on_non_null 0
+		b.u8(0);
+		b.u8(0x10);
+		Enc.uleb(b, exportOf("rt_null_access"));
+		b.u8(0x00);
+		b.u8(0x0B);
+		i = imports.length + funcs.length + helpers.length;
+		helpers.push({name: name, type: funcTypeTokens(["t" + t], "n" + t), body: b, locals: []});
+		helperIndex.set(name, i);
+		return i;
+	}
+
 	// what JavaScript reads a string with. The string or Bytes comes in as an
 	// externref, cast here: a parameter of another reference type costs V8 a
 	// call to its runtime for each call from JavaScript (its type checked
@@ -863,6 +889,16 @@ class GcModule {
 			b.u8(0x0B);
 		}
 		// (null, or not a function: as hxmc.rt.Dyn.callBoxed)
+		b.u8(0x20);
+		b.u8(0);
+		b.u8(0xD1); // ref.is_null
+		b.u8(0x04);
+		b.u8(0x40);
+		b.u8(0x23);
+		Enc.uleb(b, strLit("Cannot call null"));
+		b.u8(0x08);
+		b.u8(0);
+		b.u8(0x0B);
 		b.u8(0x23);
 		Enc.uleb(b, strLit("Cannot call a non-function"));
 		b.u8(0x08);

@@ -38,6 +38,11 @@ class Options {
 	// accesses out of bounds throw, or read the default and write nothing
 	// (default: not tested; hxmc.ir.Lower.bounds)
 	public var bounds = hxmc.ir.Lower.BOUNDS_UNCHECKED;
+	// -D hxmc.null-checks=0|1: references tested against null before they
+	// are dereferenced (hxmc.ir.Lower.nullChecks); default: on WebAssembly,
+	// whose null accesses neither fault nor throw, off natively, where the
+	// runtime's fault handler throws (hxmc.rt.Faults)
+	public var nullChecks = false;
 	// -D hxmc.libc=glibc: Linux, a dynamically linked executable against the system's glibc (Abi.setLibc; default: musl, static)
 	public var libc:Null<String> = null;
 	// x86-64 functions keep a frame record (push rbp; mov rbp, rsp), so
@@ -135,6 +140,13 @@ class Options {
 			case "throws": hxmc.ir.Lower.BOUNDS_THROWS;
 			case "silent": hxmc.ir.Lower.BOUNDS_SILENT;
 			case _: throw "hxmc: -D hxmc.native-array-outofbounds=" + oob + ": throws or silent (not defined: unchecked)";
+		}
+		var nc = def("hxmc.null_checks"); // (-D turns the dash into an underscore)
+		o.nullChecks = switch nc {
+			case null: o.target == "wasm32-wasi";
+			case "0": false;
+			case "1": true;
+			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
 		if (o.wasmGc && o.target != "wasm32-wasi") throw "hxmc: -D hxmc.wasm-gc: -D hxmc.target=wasm32-wasi";
 		var fp = def("hxmc.frame_pointers"), fpEnv = env("HXMC_FRAME_POINTERS");

@@ -66,8 +66,9 @@ class GcDyn {
 	// a[i] on a Dynamic: an Array's (null out of range), a NativeArray's (out
 	// of bounds as -D hxmc.native-array-outofbounds says for typed access, the
 	// default of its storage's kind when silent; an error when it is not
-	// defined), else null
+	// defined), null throws "Null Access" (as hxmc.rt.Dyn's), else null
 	@:hxmc.host("hx_dyn_aget") static function aget(a:Dynamic, i:Int):Dynamic {
+		if (W.kind(a) == 0) throw "Null Access";
 		if (Std.isOfType(a, Array)) return W.arrGet(a, i);
 		if (W.naKind(a) < 0) return null;
 		var n = W.naLen(a);
@@ -84,6 +85,7 @@ class GcDyn {
 	}
 
 	@:hxmc.host("hx_dyn_aset") static function aset(a:Dynamic, i:Int, v:Dynamic):Void {
+		if (W.kind(a) == 0) throw "Null Access";
 		if (Std.isOfType(a, Array)) {
 			W.arrSet(a, i, v);
 			return;

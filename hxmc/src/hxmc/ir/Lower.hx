@@ -200,6 +200,12 @@ class Lower {
 	public static inline var BOUNDS_UNCHECKED = 0; // not tested (unspecified)
 	public static inline var BOUNDS_THROWS = 1; // haxe.exceptions.ArgumentException (rt/NArray.outOfBounds)
 	public static inline var BOUNDS_SILENT = 2; // a read gives the element type's default, a write does nothing
+	// -D hxmc.null-checks (default: WebAssembly): references are tested against
+	// null before they are dereferenced (MirBuild.nullCheck; the receivers of
+	// the runtime's methods: FnLower.receiverCheck; WasmGC: FuncGen), and null
+	// throws "Null Access"; without, the native targets fault and the runtime's
+	// handler throws (hxmc.rt.Faults)
+	public static var nullChecks = false;
 
 	// a condition on the target (Mem.os, Mem.arm, Mem.target compared with
 	// constants) as a constant (EInt), when it is one: FnLower lowers only

@@ -138,6 +138,7 @@ class GcNative {
 	// hxmc.rt.Dyn.callBuiltin: Iterable<T>'s iterator()), else a closure field
 	@:hxmc.export("gc_anon_call") static function anonCall(o:Dynamic, name:String, args:Array<Dynamic>):Dynamic {
 		var k = W.kind(o);
+		if (k == 0) throw "Null Access"; // (as hxmc.rt.Dyn's: docs/hxmc.md, "Null access")
 		if (k != 4 && k != 7) return W.dynCall(getField(o, name), args);
 		var a0:Dynamic = args.length > 0 ? args[0] : null, a1:Dynamic = args.length > 1 ? args[1] : null;
 		if (k == 4) {
@@ -229,6 +230,7 @@ class GcNative {
 	}
 
 	public static function setField(o:Dynamic, name:String, v:Dynamic):Void {
+		if (W.kind(o) == 0) throw "Null Access"; // (as hxmc.rt.Dyn's)
 		var ci = classIndex(o);
 		if (ci >= 0) {
 			var i = staticIndex(ci, name);
@@ -320,7 +322,16 @@ class GcNative {
 	public static function objHash(o:Dynamic):Int
 		return W.objHash(o);
 
-	// ---- Dynamic access (o.name on a Dynamic)
+	// ---- Dynamic access (o.name on a Dynamic; null throws "Null Access", as
+	// hxmc.rt.Dyn's: docs/hxmc.md, "Null access")
+
+	static inline function notNull(o:Dynamic)
+		if (W.kind(o) == 0) throw "Null Access";
+
+	// what the generated code's tests of a reference call when it is null
+	// (FuncGen.derefAs, Helpers' array paths), as linear memory's hxmc.rt.NullAccess
+	@:hxmc.export("rt_null_access") static function nullAccess():Void
+		throw "Null Access";
 
 	@:hxmc.host("hx_dyn_get") static function dynGet(o:Dynamic, name:String):Dynamic {
 		// (a String's, an Array's, a NativeArray's length, as hxmc.rt.Dyn's)
@@ -331,22 +342,29 @@ class GcNative {
 				case 11 if (W.naKind(o) >= 0): return W.naLen(o);
 				case _:
 			}
+		notNull(o);
 		return getField(o, name);
 	}
 
-	@:hxmc.host("hx_dyn_set") static function dynSet(o:Dynamic, name:String, v:Dynamic):Void
+	@:hxmc.host("hx_dyn_set") static function dynSet(o:Dynamic, name:String, v:Dynamic):Void {
+		notNull(o);
 		setField(o, name, v);
+	}
 
 	@:hxmc.host("hx_dyn_call_field") static function dynCallField(o:Dynamic, name:String, args:Array<Dynamic>):Dynamic
 		return anonCall(o, name, args == null ? [] : args.copy());
 
 	// ---- structural access the generated code does not know the layout of (hxmc.wasmgc.FuncGen)
 
-	@:hxmc.export("gc_anon_get") static function anonGet(o:Dynamic, name:String):Dynamic
+	@:hxmc.export("gc_anon_get") static function anonGet(o:Dynamic, name:String):Dynamic {
+		notNull(o);
 		return getField(o, name);
+	}
 
-	@:hxmc.export("gc_anon_set") static function anonSet(o:Dynamic, name:String, v:Dynamic):Void
+	@:hxmc.export("gc_anon_set") static function anonSet(o:Dynamic, name:String, v:Dynamic):Void {
+		notNull(o);
 		setField(o, name, v);
+	}
 }
 
 // the fields added to an anonymous structure (Reflect.setField of a name its layout lacks)

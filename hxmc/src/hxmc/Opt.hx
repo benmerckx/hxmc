@@ -667,11 +667,29 @@ class Opt {
 				keyStore.resize(0);
 				keySeen.resize(0);
 			}
+			// An access through a base that nothing here went through yet may
+			// fault (null: the native targets' fault handler throws,
+			// hxmc.rt.Faults), and the stores before it are then seen by
+			// whatever handles the exception: they are read there. (The bases
+			// gone through, the most recent ones.)
+			var through:Array<Int> = [];
+			inline function access(base:Int) {
+				if (keyBase.length > 0) {
+					var op = vals[base].op;
+					if (op != SymAddr && op != StackAddr && op != TlsLoad && keyBase.indexOf(base) < 0 && through.indexOf(base) < 0) {
+						for (k in 0...keySeen.length)
+							keySeen[k] = true;
+						if (through.length == 16) through.shift();
+						through.push(base);
+					}
+				}
+			}
 			for (i in b.ins) {
 				if (i.dead) continue;
 				switch i.op {
 					case Store if ((i.mem == MInit || i.mem == MField) && i.b < 0):
 						var base = baseOf(i.a), d = i.imm + dispOf(i.a), sz = i.size;
+						if (i.mem == MField) access(base);
 						var k = 0;
 						var replaced = false;
 						while (k < keyBase.length) {
@@ -702,10 +720,11 @@ class Opt {
 					case Store:
 						// arrays, globals, frames: other memory (a field store through
 						// an index, or unknown memory, ends everything)
-						if (i.mem == MOther || i.mem == MField || i.mem == MInit) clear();
+						if (i.mem == MOther || i.mem == MField || i.mem == MInit) clear() else access(baseOf(i.a));
 					case Load:
 						var base = baseOf(i.a);
 						var ld = i.imm + dispOf(i.a);
+						access(base);
 						var hit = false;
 						for (k in 0...keyBase.length)
 							if (keyBase[k] == base) {

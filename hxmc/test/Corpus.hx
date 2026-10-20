@@ -41,7 +41,10 @@ class Corpus {
 	static final FUZZ_ZIP = "hxmc/test/fuzz-1000.zip";
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
-	static final WASM_EXCLUDED = ["ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi"];
+	static final WASM_EXCLUDED = ["ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi",
+		"NullAccessThreads" => "no threads on wasm32-wasi", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)"];
+	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
+	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
 
@@ -129,6 +132,7 @@ class Corpus {
 		if (native.skip != null) return {name: c.name, status: "excluded", detail: native.skip};
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
+		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
 		var defines = caseDefines(c.cps[0] + "/" + c.main + ".hx");

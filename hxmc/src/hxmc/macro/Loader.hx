@@ -327,6 +327,8 @@ class Loader {
 				var stub = defs.get(n.substr(hxmc.interp.InterpGen.DESC.length));
 				if (stub != null) hxmc.rt.Interp.register(ptr(value(stub).v), ptr(value(s).v));
 			}
+		// (its null accesses throw, as the compiler's own: hxmc.rt.Faults)
+		hxmc.rt.Faults.addCode(region, region.addL((textSize : I64)));
 		inline function symAddr(n:String):Int {
 			var d = defs.get(n);
 			if (d != null) return value(d).v;

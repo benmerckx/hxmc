@@ -41,6 +41,9 @@ class Threads {
 	@:hxmc.threadLocal("rt_mut") public static var self:Ptr<Mutator>;
 
 	static var wl:Ptr; // the world lock
+	// the thread collecting, with the world stopped (a fault there is not a
+	// null access of the program's: Faults)
+	static var collector:Ptr<Mutator>;
 	static var wlStopped:Ptr; // a thread became safe (the collector waits)
 	static var wlResumed:Ptr; // a collection ended
 	static var allThreads:Ptr<Mutator>; // under wl
@@ -214,10 +217,12 @@ class Threads {
 			if (d * 1e6 > stStwMaxUs) stStwMaxUs = Std.int(d * 1e6);
 		}
 		publish(me);
+		collector = me;
 		return true; // wl stays held during the collection
 	}
 
 	@:hxmc.noGc static function worldResume() {
+		collector = Ptr.nil();
 		reload(self);
 		Atomic.store32(Mem.sym("rt_gc_requested"), 0);
 		Os.broadcast(wlResumed);

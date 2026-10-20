@@ -1,0 +1,6 @@
+exit 0
+thread 0: caught 750, sum 3385418, kept 56, check 294
+thread 1: caught 750, sum 3383167, kept 56, check 294
+thread 2: caught 750, sum 3383917, kept 56, check 294
+thread 3: caught 750, sum 3384668, kept 56, check 294
+thread 4: caught 750, sum 3385418, kept 56, check 294

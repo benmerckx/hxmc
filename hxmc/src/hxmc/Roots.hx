@@ -491,6 +491,12 @@ class Roots {
 				for (c in catches)
 					def(c.l.id, ins);
 				if (extras.length > 0) h = union(h, extras[extras.length - 1]);
+				// what the handlers need is live across a GC point: their tests
+				// may collect (haxe.Exception.caught), and a handler is entered
+				// from any point of the body, not only from its GC points (a
+				// null access: the native targets' fault handler, hxmc.rt.Faults,
+				// or an explicit test's throw); rooted, it is in its slot there
+				across(h);
 				extras.push(h);
 				var b = seq(body, union(out, h));
 				extras.pop();

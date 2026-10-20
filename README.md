@@ -54,6 +54,7 @@ editors, lix and rebuilding the compiler from source:
 | `-debug`, `-D hxmc.symbols` | a symbol table for profilers (wasm: a name section) |
 | `-D hxmc.jobs=<n>` | parallel module compilations (default: the cores) |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling, for older browsers and runtimes |
+| `-D hxmc.null-checks=0\|1` | tests of references against null before each access (default: on WebAssembly, where a null access cannot fault; natively a fault handler throws `Null Access` at no cost: [docs/hxmc.md](docs/hxmc.md#null-access)) |
 | `-D hxmc.native-array-outofbounds=throws\|silent` | Vector (and `hxmc.NativeArray`) accesses out of bounds throw `haxe.exceptions.ArgumentException`, or read the default value and write nothing (default: not tested) |
 | `HXMC_STATS=1` | what the build did and how long it took |
 | `HXMC_CACHE=<dir>` | the cache directory (default: the user's cache folder) |

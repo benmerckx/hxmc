@@ -267,6 +267,15 @@ class Type {
 	public static function enumEq<T:EnumValue>(a:T, b:T):Bool
 		return Native.enumEq(a, b);
 
+	// (hxmc: null throws "Null Access", as Eval and an enum switch do; the
+	// runtime reads the value untested: WebAssembly tests it here unless
+	// -D hxmc.null-checks=0, the native targets fault there, hxmc.rt.Faults)
+	static inline function nullAccess(e:EnumValue) {
+		#if (hxmc.null_checks != "0")
+		if (hxmc.unsafe.Mem.os() == 3) if (e == null) throw "Null Access";
+		#end
+	}
+
 	/**
 		Returns the constructor name of enum instance `e`.
 
@@ -274,8 +283,10 @@ class Type {
 
 		If `e` is null, the result is unspecified.
 	**/
-	public static function enumConstructor(e:EnumValue):String
+	public static function enumConstructor(e:EnumValue):String {
+		nullAccess(e);
 		return Native.enumCtorName(e);
+	}
 
 	/**
 		Returns a list of the constructor arguments of enum instance `e`.
@@ -287,8 +298,10 @@ class Type {
 
 		If `e` is null, the result is unspecified.
 	**/
-	public static function enumParameters(e:EnumValue):Array<Dynamic>
+	public static function enumParameters(e:EnumValue):Array<Dynamic> {
+		nullAccess(e);
 		return Native.enumParams(e);
+	}
 
 	/**
 		Returns the index of enum instance `e`.
@@ -298,8 +311,10 @@ class Type {
 
 		If `e` is null, the result is unspecified.
 	**/
-	public static function enumIndex(e:EnumValue):Int
+	public static function enumIndex(e:EnumValue):Int {
+		nullAccess(e);
 		return Native.enumIndex(e);
+	}
 
 	/**
 		Returns a list of all constructors of enum `e` that require no
