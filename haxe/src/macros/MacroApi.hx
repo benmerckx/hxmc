@@ -3524,11 +3524,24 @@ class MacroNativeValues {
 		return (v : NativeRef).value;
 	}
 
-	// a haxe.macro.Error thrown into the macro code, as Eval raises it
+	// a haxe.macro.Error thrown into the macro code, as Eval raises it (EvalMain.compilerError)
 	public static function compilerError(err:core.Error.CompilerError):Dynamic {
 		var c = resolveClass("haxe.macro.Error");
 		if (c == null) throw new core.Error.TypingError(err);
-		throw Type.createInstance(c, [core.Error.errorMsg(err.errMessage), err.errPos]);
+		function make(err:core.Error.CompilerError):Dynamic
+			return Type.createInstance(c, [core.Error.errorMsg(err.errMessage), err.errPos]);
+		var e = make(err);
+		if (err.errSub.length > 0) {
+			// port: the sub-errors, each with its own, in EvalMain.compilerError's order
+			var stack:Array<Dynamic> = [];
+			var subs = err.errSub.copy();
+			subs.reverse();
+			for (sub in subs)
+				core.Error.Error.recurseError((_, x) -> stack.unshift(make(x)), sub);
+			stack.reverse();
+			Reflect.setField(e, "childErrors", stack);
+		}
+		throw e;
 	}
 
 	public static function valueSignature(v:Dynamic):String {

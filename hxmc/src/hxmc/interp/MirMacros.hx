@@ -427,6 +427,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 					l.enumInfo(en);
 				case TClassDecl(k) if (apiType(t)):
 					l.classInfo(k);
+					// (its constructor's entry: the compiler makes the errors it raises into
+					// macro code with Type.createInstance, MacroNativeValues.compilerError)
+					@:privateAccess l.maker(k);
 				case _:
 			}
 		l.findHosts(fresh);
