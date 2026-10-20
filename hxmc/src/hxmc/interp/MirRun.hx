@@ -125,9 +125,6 @@ class MirRun {
 		dg.emptyArrays([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
-		// (the program, its static initializers too, sees values as Eval shows them: hxmc.rt.EvalCompat)
-		var order = hxmc.rt.EvalCompat.on;
-		hxmc.rt.EvalCompat.on = true;
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		if (o.stats)
 			Sys.println('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms');
@@ -139,7 +136,6 @@ class MirRun {
 			hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
 			Sys.exit(1);
 		}
-		hxmc.rt.EvalCompat.on = order;
 	}
 
 	// the std's functions whose native code in the compiler is the program's:

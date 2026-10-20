@@ -54,7 +54,6 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	var com:Null<context.Common.CommonContext> = null;
 	var api:Null<CompilerApi> = null;
 	var apiTable = new Map<String, Dynamic>();
-	var apiWrapped = new Map<String, Dynamic>();
 	// the macro context's types given their filters (ready), by path
 	var processed = new Map<String, ModuleType>();
 	// their modules' ids: a type typed again in another compilation starts a new generation
@@ -152,6 +151,17 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (Std.string of a position in macro code: EvalPrinting.s_value's #pos(...))
 		hxmc.rt.EvalCompat.classNames = [Type.getClassName(core.Globals.Pos) => "haxe.macro.Position"];
 		hxmc.rt.EvalCompat.special = v -> Std.isOfType(v, core.Globals.Pos) ? "#pos(" + syntax.Lexer.getErrorPos((file, line) -> '$file:$line:', v) + ")" : null;
+		// (the API's functions: the compiler's own code, not hxmc.rt.EvalCompat's)
+		macros.MacroApi.MacroNativeValues.apiCall = call -> {
+			var order = hxmc.rt.EvalCompat.on;
+			hxmc.rt.EvalCompat.on = false;
+			var r:Dynamic = try call() catch (x:Dynamic) {
+				hxmc.rt.EvalCompat.on = order;
+				throw x;
+			}
+			hxmc.rt.EvalCompat.on = order;
+			r;
+		};
 		// (a macro function the compiler calls back: macro code, as Eval shows values: hxmc.rt.EvalCompat)
 		macros.MacroApi.MacroNativeValues.callback = call -> {
 			var order = hxmc.rt.EvalCompat.on;
@@ -198,36 +208,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// ---- the API of hxmc.MacroHost
 
 	@:hxmc.export("hxmc_mir_macro_load") static function load(name:String, nargs:Int):Dynamic {
-		var w = self.apiWrapped.get(name);
-		if (w != null) return w;
 		var f = self.apiTable.get(name);
 		if (f == null) throw "Could not find macro function \"" + name + "\"";
-		w = compilerSide(f, nargs);
-		self.apiWrapped.set(name, w);
-		return w;
-	}
-
-	// an API function, run as the compiler's code (not hxmc.rt.EvalCompat's)
-	static function compilerSide(f:Dynamic, nargs:Int):Dynamic {
-		inline function run(call:Void->Dynamic):Dynamic {
-			var order = hxmc.rt.EvalCompat.on;
-			hxmc.rt.EvalCompat.on = false;
-			var r:Dynamic = try call() catch (x:Dynamic) {
-				hxmc.rt.EvalCompat.on = order;
-				throw x;
-			}
-			hxmc.rt.EvalCompat.on = order;
-			return r;
-		}
-		return switch nargs {
-			case 0: () -> run(() -> f());
-			case 1: (a:Dynamic) -> run(() -> f(a));
-			case 2: (a:Dynamic, b:Dynamic) -> run(() -> f(a, b));
-			case 3: (a:Dynamic, b:Dynamic, c:Dynamic) -> run(() -> f(a, b, c));
-			case 4: (a:Dynamic, b:Dynamic, c:Dynamic, d:Dynamic) -> run(() -> f(a, b, c, d));
-			case 5: (a:Dynamic, b:Dynamic, c:Dynamic, d:Dynamic, e:Dynamic) -> run(() -> f(a, b, c, d, e));
-			case _: Reflect.makeVarArgs(args -> run(() -> Reflect.callMethod(null, f, args)));
-		}
+		return f;
 	}
 
 	@:hxmc.export("hxmc_mir_macro_pos") static function mkPos(file:String, min:Int, max:Int):Dynamic

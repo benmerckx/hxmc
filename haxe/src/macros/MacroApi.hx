@@ -291,17 +291,17 @@ class MacroApiImpl {
 
 	static inline function encodeLazy(l:AtomicLazy<Value>):Value return nativeValues ? l.force() : macros.eval.EvalEncode.encodeLazy(l);
 
-	static inline function vfun0(f:Void->Value):Value return nativeValues ? (f : Dynamic) : macros.eval.EvalEncode.vfun0(f);
+	static inline function vfun0(f:Void->Value):Value return nativeValues ? (() -> MacroNativeValues.apiCall(() -> f()) : Dynamic) : macros.eval.EvalEncode.vfun0(f);
 
-	static inline function vfun1(f:Value->Value):Value return nativeValues ? (f : Dynamic) : macros.eval.EvalEncode.vfun1(f);
+	static inline function vfun1(f:Value->Value):Value return nativeValues ? ((a) -> MacroNativeValues.apiCall(() -> f(a)) : Dynamic) : macros.eval.EvalEncode.vfun1(f);
 
-	static inline function vfun2(f:Value->Value->Value):Value return nativeValues ? (f : Dynamic) : macros.eval.EvalEncode.vfun2(f);
+	static inline function vfun2(f:Value->Value->Value):Value return nativeValues ? ((a, b) -> MacroNativeValues.apiCall(() -> f(a, b)) : Dynamic) : macros.eval.EvalEncode.vfun2(f);
 
-	static inline function vfun3(f:Value->Value->Value->Value):Value return nativeValues ? (f : Dynamic) : macros.eval.EvalEncode.vfun3(f);
+	static inline function vfun3(f:Value->Value->Value->Value):Value return nativeValues ? ((a, b, c) -> MacroNativeValues.apiCall(() -> f(a, b, c)) : Dynamic) : macros.eval.EvalEncode.vfun3(f);
 
-	static inline function vfun4(f:Value->Value->Value->Value->Value):Value return nativeValues ? (f : Dynamic) : macros.eval.EvalEncode.vfun4(f);
+	static inline function vfun4(f:Value->Value->Value->Value->Value):Value return nativeValues ? ((a, b, c, d) -> MacroNativeValues.apiCall(() -> f(a, b, c, d)) : Dynamic) : macros.eval.EvalEncode.vfun4(f);
 
-	static inline function vfun5(f:Value->Value->Value->Value->Value->Value):Value return nativeValues ? (f : Dynamic) : macros.eval.EvalEncode.vfun5(f);
+	static inline function vfun5(f:Value->Value->Value->Value->Value->Value):Value return nativeValues ? ((a, b, c, d, e) -> MacroNativeValues.apiCall(() -> f(a, b, c, d, e)) : Dynamic) : macros.eval.EvalEncode.vfun5(f);
 
 	static inline function encodePos(p:Pos):Value return nativeValues ? (p : Dynamic) : macros.eval.EvalEncode.encodePos(p);
 
@@ -3550,6 +3550,9 @@ class MacroNativeValues {
 		s.serialize(v);
 		return haxe.crypto.Md5.encode(s.toString());
 	}
+
+	// port: what runs a function of the API that macro code calls (the engine's: the compiler's own code)
+	public static var apiCall:(Void->Dynamic)->Dynamic = call -> call();
 
 	// port: what runs a macro function the compiler calls back (the engine's, as it runs macro code)
 	public static var callback:(Void->Dynamic)->Dynamic = call -> call();
