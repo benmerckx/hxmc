@@ -14,6 +14,10 @@ import hxmc.rt.Names;
 import hxmc.rt.FloatText;
 import hxmc.rt.Boxes;
 import hxmc.rt.LibM;
+// what a null access calls (but WasmGC's, hxmc.rt.gc.GcNative)
+#if !hxmc.wasm_gc
+import hxmc.rt.NullAccess;
+#end
 // WebAssembly's runtime (@:hxmc.wasm: what C provides on the native
 // targets), typed for a program built for it only
 #if (hxmc.target == "wasm32-wasi")

@@ -271,18 +271,6 @@ class Faults {
 	}
 }
 
-// What the faulting instruction calls (Faults.redirect), and what the
-// explicit tests of a reference call when it is null (MirBuild.nullCheck:
-// WebAssembly in linear memory, -D hxmc.null-checks=1): the message is
-// Eval's for most null accesses (its field reads say "field access on
-// null"). The value thrown is the literal: nothing is allocated before
-// the handler runs.
-@:keep @:allow(hxmc.rt)
-class NullAccess {
-	@:hxmc.export("rt_null_access") static function nullAccess():Void
-		Rt.rt_throw("Null Access");
-}
-
 @:hxmc.c @:hxmc.fast private extern class S {
 	static function sigaction(sig:Int, act:Ptr, old:Ptr):Int;
 	static function raise(sig:Int):Int;
