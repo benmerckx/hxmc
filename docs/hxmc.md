@@ -759,7 +759,7 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   enough for `--next`, not yet for a long-lived compilation server.
 
 Cost (instructions, Intel Xeon E-2356G): the formatter benchmark built with
-json2object's macros, module cache off, 9.2 G (Eval: 3.8 G), the macro
+json2object's macros, module cache off, 8.0 G (Eval: 3.8 G), the macro
 context's typing (hxmc's runtime among it) and the macros' compilation
 the difference; with the module cache, which keeps the macro context, an
 edit of the main module: 1.20 G (Eval: 1.06 G).
