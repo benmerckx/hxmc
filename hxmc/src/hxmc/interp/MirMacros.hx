@@ -25,6 +25,7 @@ import macros.MacroApi.CompilerApi;
 @:access(hxmc.macro.Guest)
 @:access(hxmc.macro.Loader)
 @:access(hxmc.rt.Interp)
+@:access(hxmc.interp.MirRun)
 @:access(macros.MacroApi.MacroApiImpl)
 class MirMacros implements macros.MacroEngine.IMacroEngine {
 	static var self:Null<MirMacros> = null;
@@ -60,6 +61,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	var l:Null<hxmc.ir.Lower> = null;
 	var opts:Null<Options> = null;
 	var compiled = new Map<FuncInfo, Bool>();
+	// the std's functions the compiler has alike: its native code runs them (MirRun.hostFunctions)
+	var native = new Map<FuncInfo, Bool>();
+	// the std's class paths
+	var stdRoots:Array<String> = [];
 	var lastPrep:Null<Prep> = null;
 	// the macro functions called so far: their function and descriptor, by pack.Class.f
 	var entries = new Map<String, {fi:FuncInfo, desc:Ptr}>();
@@ -159,6 +164,14 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			if (processed.exists(k)) continue;
 			processed.set(k, t);
 			ready(t);
+			// (a class's runtime metadata, which Eval's static prototypes carry,
+			// EvalPrototype.create_static_prototype: the __meta__ static of the
+			// full pipeline, Filters.addMetaField, that hxmc's Meta reads)
+			switch t {
+				case TClassDecl(c) if (!c.clStatics.exists("__meta__")):
+					filters.Filters.addMetaField(com, t);
+				case _:
+			}
 		}
 	}
 
@@ -289,7 +302,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				case _:
 			}
 		l.findHosts(fresh);
-		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current"};
+		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
 		try {
 			l.drain();
 			l.finish();
@@ -313,6 +326,21 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.resources = [];
 		hxmc.ir.Lower.basic = com.basic;
 		l = new hxmc.ir.Lower();
+		for (cp in com.classPaths.asList())
+			if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx")))
+				stdRoots.push(cp.path);
+	}
+
+	// the functions whose calls note their sites (Lower.callSites): not the
+	// runtime's, nor the std's but for the macro API's (its own calls of
+	// the API: Compiler.keep's addGlobalMetadata), so that the std's may be
+	// the compiler's (MirRun.hostFunctions: the same code)
+	function wantsSites(f:FuncInfo):Bool {
+		if (hxmc.macro.Guest.runtime(f)) return false;
+		if (f.pos == null || f.module == null || StringTools.startsWith(f.module, "haxe.macro.")) return true;
+		for (r in stdRoots)
+			if (StringTools.startsWith(f.pos.pfile, r)) return false;
+		return true;
 	}
 
 	// the functions lowered since the last step: a bundle, loaded
@@ -342,6 +370,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, main);
 		MirRun.unshare(facts, host, l, e, com);
+		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
+		var ownRuntime = opts.bounds != 0 ? ["hxmc.rt.Dyn" => true, "hxmc.rt.NArray" => true] : new Map<String, Bool>();
+		var found = Sys.getEnv("HXMC_MIR_HOST") == "0" ? new Map() : MirRun.hostFunctions(funcs, facts, prep, e, com, ownRuntime, native);
+		for (f => _ in found) {
+			native.set(f, true);
+			compiled.set(f, true);
+		}
+		funcs = [for (f in funcs) if (!found.exists(f)) f];
+		d.interp = new InterpGen.InterpSet(opts.interp, prep, native);
 		var abi = Abi.get(opts.target);
 		var obj = new Obj();
 		var emit = Target.emitter(abi, obj);
@@ -362,7 +399,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();
-		if (stats) Sys.stderr().writeString('hxmc.mir-macros: step $steps: ${funcs.length} functions, ${b.codeBytes} bytes of code\n');
+		if (stats) Sys.stderr().writeString('hxmc.mir-macros: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code\n');
 	}
 
 	// a macro function called with the compiler's values: its arguments as

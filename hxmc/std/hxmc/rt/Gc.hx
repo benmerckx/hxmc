@@ -149,6 +149,13 @@ class Gc {
 
 	@:hxmc.export("rt_globals") static var globals:Ptr;
 	static var nglobals:Int;
+	// the table's room: a compiler that loads code (-D hxmc.jit) has spare
+	// slots for the globals of what it loads (macro.Loader), taken in place:
+	// compiled code keeps the table's address across calls (Opt.MConst)
+	static var globalsCap:Int;
+	#if hxmc.jit
+	public static inline var SPARE_GLOBALS = 65536;
+	#end
 
 	static var stats:Bool;
 	static var minors:Int;

@@ -47,9 +47,11 @@ class Start {
 		if (Mem.target() >= 9) environ = Mem.sym("environ");
 		var sbase = Gc.init(ng);
 		Threads.init(sbase);
-		var g = LibC.malloc(((ng + 1) : I64) * 8);
-		LibC.memset(g, 0, ((ng + 1) : I64) * 8);
+		var cap = ng #if hxmc.jit + Gc.SPARE_GLOBALS #end;
+		var g = LibC.malloc(((cap + 1) : I64) * 8);
+		LibC.memset(g, 0, ((cap + 1) : I64) * 8);
 		Gc.globals = g;
+		Gc.globalsCap = cap;
 		Boxes.init(); // the static boxes
 		// the type objects (rt_type_objs: two words each, DataGen)
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);

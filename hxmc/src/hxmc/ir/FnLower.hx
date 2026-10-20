@@ -41,7 +41,7 @@ class FnLower {
 		this.lambda = lambda;
 		nextLocal = fi.args.length + 1;
 		out = fi.body;
-		if (Lower.callSites != null && !(fi.module != null && (StringTools.startsWith(fi.module, "hxmc.rt.") || StringTools.startsWith(fi.module, "hxmc.unsafe.")))) {
+		if (Lower.callSites != null && Lower.callSites.wants(fi)) {
 			site = newLocal("site", TI32);
 			out.push(SSet(site, ECallHost("hxmc_unsafe_Mem_getI32", [siteData(Lower.callSites.pending), EInt(0)], TI32)));
 		}

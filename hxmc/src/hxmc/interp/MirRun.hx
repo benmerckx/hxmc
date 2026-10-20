@@ -143,9 +143,9 @@ class MirRun {
 	// compiler's in <exe>.fps), every type they touch shared, every selector
 	// they dispatch on implemented by shared types only, every function
 	// they call directly such a function or the compiler's runtime (native
-	// code calls its own)
+	// code calls its own; prior: those found so far for earlier code, MirMacros)
 	static function hostFunctions(funcs:Array<FuncInfo>, facts:Dynamic, prep:Prep, e:hxmc.ir.Facts, com:context.Common.CommonContext,
-			ownRuntime:Map<String, Bool>):Map<FuncInfo, Bool> {
+			ownRuntime:Map<String, Bool>, ?prior:Map<FuncInfo, Bool>):Map<FuncInfo, Bool> {
 		var fps = hostFps();
 		var roots = [];
 		for (cp in com.classPaths.asList())
@@ -221,7 +221,7 @@ class MirRun {
 			changed = false;
 			for (f => _ in cand)
 				for (g in calls.get(f))
-					if (hxmc.macro.Guest.runtime(g) ? ownRuntime.exists(g.module) || (bundled.exists(g) && !cand.exists(g)) : !cand.exists(g)) {
+					if (hxmc.macro.Guest.runtime(g) ? ownRuntime.exists(g.module) || (bundled.exists(g) && !cand.exists(g)) : !cand.exists(g) && !(prior != null && prior.exists(g))) {
 						cand.remove(f);
 						changed = true;
 						break;

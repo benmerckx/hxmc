@@ -465,12 +465,10 @@ class Loader {
 		}
 		// ---- rt_globals with the new slots (it is a root of the collector: no barrier)
 		dbg("rt_globals with the new slots (it is a root of the collector: no barrier)");
-		if (nglobals > Gc.nglobals) {
-			var g = zalloc(8 * (nglobals + 1));
-			LibC.memcpy(g, Gc.globals, ((8 * Gc.nglobals) : I64));
-			Gc.globals = g;
-			Gc.nglobals = nglobals;
-		}
+		// (in its spare slots, never moved: compiled code, the frames running now
+		// included, keeps the table's address across calls, Opt.MConst)
+		if (nglobals > Gc.globalsCap) throw "out of spare global slots";
+		if (nglobals > Gc.nglobals) Gc.nglobals = nglobals;
 		for (g in newGlobals)
 			if (g.init != null) Mem.setRef(Gc.globals, 8 * g.idx, Mem.alloc(1, num.get(g.init), 0));
 		var singletons:Array<Dynamic> = facts.singletons;
