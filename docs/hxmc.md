@@ -28,6 +28,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `Target.hx`, `Abi.hx`, `CAbi.hx` | per-target facts; how each C ABI passes structs by value |
 | `MkStd.hx` | hxmc's std merged with the Eval originals (the macro context shares the program's class paths; a custom target gets no `_std` directory in the reference compiler) |
 | `macro/` | native macros, a prototype (`haxe` built with `-D hxmc.jit`, Linux x86-64; `-D hxmc.macros=native\|verify`): macro classes compiled by hxmc and linked into the running compiler, behind the macro engine seam `haxe/src/macros/MacroEngine.hx` ([plans/compiler.md](plans/compiler.md), "Native macros") |
+| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in a compiler built with `-D hxmc.jit`: `--interp`/`--run` (`-D hxmc.mir-run`, `MirRun.hx`) and macros (`-D hxmc.mir-macros`, `MirMacros.hx`; Macros on the Mir interpreter, below) |
 
 Conventions: references live across a GC point are shadow-stack slots
 (cold sites spill only on the slow path; a reference live across the slow
@@ -710,6 +711,58 @@ source and those typed every build. A module whose types share a path
 (an abstract whose implementation class `@:native` renamed to it, processed
 in the macros' context: eval's `mbedtls.SslAuthmode`) is not kept: HXB names
 a type by its module and name. Plans: [plans/compiler.md](plans/compiler.md)
+
+## Macros on the Mir interpreter
+
+`-D hxmc.mir-macros`, in a compiler built with `-D hxmc.jit` (`bin/jit/haxe`,
+Linux x86-64): macros run on the Mir interpreter (`hxmc.rt.Interp`), not
+Eval. The macro context is typed for hxmc (its std in front, the hxmc
+custom target: `MirMacros.setupPlatform`); a macro function is lowered and
+compiled for the interpreter when it is first called, in bundles the
+compiler links into itself (`macro.Loader`), and the std's functions the
+compiler has alike (the same fingerprint, `<exe>.fps`) run as its native
+code. Macro values are the compiler's own (`MacroApi.MacroNativeValues`).
+`-D hxmc.mir-run` runs `--interp`/`--run` programs the same way, with hxmc's
+semantics.
+
+What macro code sees as on Eval (`hxmc.rt.EvalCompat`: on while macro code
+runs, off inside the API's functions): `Std.string` as `EvalPrinting.s_value`
+prints (`{a: 1, b: x}`, the fields by their names' OCaml hashes; nesting
+below depth 5 as `<...>`; `#fun`, `#closure`, `Class<C>`, `Enum<E>`; a
+position as `#pos(file:line: characters a-b)`), `Reflect.fields` in that
+order, `Type.getClassName` of a position's class `haxe.macro.Position`. A
+caught typing error is a `haxe.macro.Error` with its `childErrors`; `$v{}`
+of an integral Float is a Float. A compilation that types the macro context
+again (`--next`, the compilation server) starts a new generation of bundles,
+as Eval drops its prototypes, and a reused macro context runs its static
+initializers again (`EvalMain.doReuse`).
+
+Checked with upstream's unit suite: `UpstreamTargets` with the jit
+compiler as the port (`HAXE_IN_HAXE_PORT="bin/jit/haxe -D
+hxmc.mir-macros"`) compiles every target; the suite run (node, python3,
+neko) fails one test, the static `Int` below. The differences from Eval:
+
+- Maps iterate in hxmc's order (insertion), Eval's `StringMap` in its keys'
+  descending order (an OCaml map), so what a macro generates by iterating a
+  map comes in another order (utest's tests run in their declaration
+  order); `Map.toString` separates entries with `, ` (Eval: `,`).
+- Variable ids: the macro context types hxmc's std and takes more ids from
+  the counter the program's typing shares, so names made of ids differ
+  (coroutines' `_hx_hoisted<id>`, their stack items, genpy's order by them).
+- An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
+  `String.length` counts UTF-16 units (Eval: code points).
+- Not available: `Context.getMacroStack`, macro arguments that are
+  functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
+  hxmc's.
+- A generation takes spare type entries again (`Jit.SPARE_TYPES`, 4096;
+  the unit suite's macros take 440) and bundles are never unloaded:
+  enough for `--next`, not yet for a long-lived compilation server.
+
+Cost (instructions, Intel Xeon E-2356G): the formatter benchmark built with
+json2object's macros, module cache off, 9.2 G (Eval: 3.8 G), the macro
+context's typing (hxmc's runtime among it) and the macros' compilation
+the difference; with the module cache, which keeps the macro context, an
+edit of the main module: 1.20 G (Eval: 1.06 G).
 
 ## Targets
 

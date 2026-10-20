@@ -4,15 +4,14 @@ import hxmc.rt.Types.*;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
-// Whether the code running now is code the compiler runs in place of Eval
-// (macros, -D hxmc.mir-macros; --interp and --run, -D hxmc.mir-run): such
-// code sees what Eval shows of its values where programs depend on it, as
-// what a macro generates often does (utest's tests follow a map's order,
-// tests compare a type's Std.string): the maps in Eval's order, Std.string
-// as Eval prints. The compiler's own code, also when a macro calls its API,
-// keeps hxmc's. MirMacros and MirRun switch it; only the programs that can
-// run such code read it (-D hxmc.jit, and the code compiled for them:
-// -D hxmc.interp, the macro context).
+// Whether the code running now is macro code (-D hxmc.mir-macros): it sees
+// what Eval shows of its values where what a macro generates depends on it
+// (tests compare a type's Std.string): Std.string as Eval prints,
+// Reflect.fields in Eval's order. Maps keep hxmc's order (docs/hxmc.md,
+// "Macros on the Mir interpreter"). The compiler's own code, also when a
+// macro calls its API, keeps hxmc's. MirMacros switches it; only the
+// programs that can run such code read it (-D hxmc.jit, and the code
+// compiled for them: -D hxmc.interp, the macro context).
 @:access(hxmc.rt.Dyn)
 class EvalCompat {
 	public static var on = false;
@@ -24,23 +23,6 @@ class EvalCompat {
 	// the names Eval gives the classes of the compiler's own values (a position:
 	// haxe.macro.Position), by their names (Type.getClassName)
 	public static var classNames:Null<Map<String, String>> = null;
-
-	// the order of OCaml's String.compare on the UTF-8 bytes (the code points),
-	// over UTF-16 units: surrogates after the rest of the BMP
-	public static function compareStrings(a:String, b:String):Int {
-		var n = a.length < b.length ? a.length : b.length;
-		for (i in 0...n) {
-			var x = StringTools.fastCodeAt(a, i), y = StringTools.fastCodeAt(b, i);
-			if (x != y) {
-				if (x >= 0xD800 && y >= 0xD800) {
-					x = x >= 0xE000 ? x - 0x800 : x + 0x2000;
-					y = y >= 0xE000 ? y - 0x800 : y + 0x2000;
-				}
-				return x < y ? -1 : 1;
-			}
-		}
-		return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
-	}
 
 	// ---- Std.string: EvalPrinting.s_value, without indentation (Eval's print depth: 5)
 
