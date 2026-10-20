@@ -1,11 +1,11 @@
-# The site's JavaScript (`make site`): one file per bundle, into bin/site,
-# compiled by the port. Run from the repository root.
+# The site's JavaScript (`make site`): one file per page script, into
+# bin/site, compiled by the port. Run from the repository root.
 -cp site/client
 -dce full
 -D js-es=6
 --each
 
-# the playground's page and its compiler's worker; the compiler page's tables
+# the playground's page and its compiler's worker
 --main Playground
 --js bin/site/playground.js
 
@@ -13,37 +13,12 @@
 --main Worker
 --js bin/site/worker.js
 
+# the benchmarks page's tables
 --next
 --main Tables
 --js bin/site/tables.js
 
-# the islands (@hxmc/web's DOM renderer): every page's, the examples' lab,
-# and web's Counter example alone in its bundle
+# the build facts on the other pages
 --next
--cp packages/view/src
--cp packages/web/src
--cp packages/web/examples
--cp site/islands
--D hxmc.view.renderer.dom=hxmc.web.DomRenderer
--D analyzer-optimize
---main SiteBundle
---js bin/site/site.js
-
---next
--cp packages/view/src
--cp packages/web/src
--cp packages/web/examples
--cp site/islands
--D hxmc.view.renderer.dom=hxmc.web.DomRenderer
--D analyzer-optimize
---main LabBundle
---js bin/site/lab.js
-
---next
--cp packages/view/src
--cp packages/web/src
--cp packages/web/examples
--D hxmc.view.renderer.dom=hxmc.web.DomRenderer
--D analyzer-optimize
---main Counter
---js bin/site/counter.js
+--main Info
+--js bin/site/info.js

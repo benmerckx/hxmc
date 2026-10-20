@@ -259,7 +259,7 @@ and the collector. Macro share of the build (native port, Linux x86-64,
 | tink_json, 24 nested types (JS) | 24% (3.27 of 13.4 s) | 24% (2.84 of 12.1 s) |
 | upstream unit suite (JS) | 16% (0.54 of 3.33 s) | 17% (0.54 of 3.19 s) |
 | upstream unit suite (--interp) | 14% (+ interp 32%) | 13% (+ interp 46%) |
-| packages/gfx (GfxTest) | 8% | 7% |
+| gfx's GfxTest (universe's since) | 8% | 7% |
 | macro conformance cases (66, summed) | 39% | 37% |
 
 Done since: the adaptive nursery (docs/hxmc.md, "Runtime in Haxe") and
@@ -389,7 +389,7 @@ What a production version needs:
 #### On a real app (Oct 19)
 
 The prototype crashes on a markup-heavy app. Built at 69d3f39 in WSL
-(`bin/jit/haxe`, `-D hxmc.jit`), cross-compiling a small `@hxmc/ui` app
+(`bin/jit/haxe`, `-D hxmc.jit`), cross-compiling a small `@hxmc/ui` app (universe)
 under `Shadcn.sheet` for `windows-x86_64`:
 
 | Mode | Result |
@@ -399,8 +399,8 @@ under `Shadcn.sheet` for `windows-x86_64`:
 | `hxmc.macros=verify` | compiles `MarkupMacro` and `AttrMacro`, then a segmentation fault after 139 s |
 
 Next: fix the crash with this app as the test case (any `@hxmc/ui`
-example under the theme should reproduce it) and add a ui example to
-`make native-macros`. Then measure. This app's macro time is mostly
+example under the theme should reproduce it, built against universe) and
+add a markup-heavy case to `make native-macros`. Then measure. This app's macro time is mostly
 API-bound (`NodeRenderer.setProperty`, 1426 calls), which the prototype
 found no faster natively, so expect the real gain only from cached macro
 objects plus the shared-AST engine above. Windows and macOS hosts (W^X,

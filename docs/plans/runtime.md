@@ -52,8 +52,8 @@ the items above that bound pauses come forward:
 - Escape analysis ([codegen.md](codegen.md#escape-analysis)), cutting
   allocation at the source.
 - The longest pause as a CI metric with a budget (say under 4 ms) on the
-  frame benchmarks (the showcase examples,
-  [ui-next.md](ui-next.md#showcase-examples)).
+  frame benchmarks (a program drawing frames: universe's showcase
+  examples are candidates).
 
 ## Background work
 

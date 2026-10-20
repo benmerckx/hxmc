@@ -1,0 +1,18 @@
+exit 0
+added: 6000
+round 0: 5683
+round 1: 5422
+round 2: 5186
+round 3: 5021
+round 4: 4862
+round 5: 4720
+second map: 2000 keys, 2000 found
+fresh: true 150
+mixed 0: class,class Key,big 0,big 2,s1,null,b1,null,color 0,color 2,color 3,color 4,null
+mixed 1: class,class Key,big 0,big 2,s1,null,b1,null,color 0,color 2,color 3,color 4,null
+mixed 2: class,class Key,big 0,big 2,s1,null,b1,null,color 0,color 2,color 3,color 4,null
+copy: 4720
+after clear: 7 1
+small maps: true
+threads: true
+ok

@@ -298,7 +298,7 @@ class FuncGen {
 	// engine would trap, and no handler catches a trap)
 	function derefAs(e:Ex, t:Int) {
 		var id = localOf(e);
-		if (!hxmc.ir.Lower.nullChecks || nonNull(e) || id != null && checked.exists(id)) {
+		if (!hxmc.ir.Lower.nullChecks || f.declNoGc || nonNull(e) || id != null && checked.exists(id)) {
 			exprAs(e, t);
 			return;
 		}

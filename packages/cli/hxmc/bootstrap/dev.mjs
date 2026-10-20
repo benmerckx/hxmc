@@ -294,7 +294,7 @@ async function request(words) {
 // own mode, "use in-memory cache instead of hxb powered cache"), where the
 // default writes every module as HXB after each build and reads each back
 // in the next (0.3-0.4 s of an edit's build). The outputs are the same
-// (packages/os/test/dev/dev-verify.mjs); HXMC_DEV_HXB_CACHE=1 keeps the HXB cache.
+// (hxmc/test/dev/server-verify.mjs); HXMC_DEV_HXB_CACHE=1 keeps the HXB cache.
 const hxbCache = process.env.HXMC_DEV_HXB_CACHE === '1' ? [] : ['-D', 'disable-hxb-cache'];
 // natively on Linux in the glibc mode, a dev host (hxmc.dev.DevHost): one
 // process for the session, which loads each build as a shared library

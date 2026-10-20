@@ -2,10 +2,9 @@
 # and tests it on a machine of each target (docs/testing.md, "CI"):
 #
 # - changes: what the run needs (.github/select.sh): everything, except on a
-#   branch whose changes since the last checked commit are only docs (*.md:
-#   the site, which renders them), site/ (site, playground) or source-only
-#   packages of packages/ (build, gfx, npm-pack, the site); main, tags, the nightly schedule and
-#   dispatches always run everything. Also whether the release
+#   branch whose changes since the last checked commit are only docs (*.md)
+#   or site/ (the site and the playground); main, tags, the nightly schedule
+#   and dispatches always run everything. Also whether the release
 #   rt-<hash of hxmc/deps> exists (hxmc/bootstrap/rt.mjs).
 # - rt-build, rt: only when that release is missing: the runtime objects of
 #   the six targets, Linux's glibc mode and Android (hxmc/deps with mbedtls and libuv,
@@ -14,8 +13,8 @@
 #   artifact (the jobs below otherwise download the release: make rt).
 # - build: the committed stage0 module under node builds the tool, which
 #   rebuilds itself (the fixpoint: with the module cache cold, warm and off),
-#   the module cache's store and gate are checked; then the port's release
-#   binaries and lix for the six targets.
+#   the module cache's store and gate are checked, the dev loop (make
+#   dev-check); then the port's release binaries and lix for the six targets.
 #   Next to it, each with its own tool from the stage0 (make hxmc):
 #   - corpus: hxmc's corpus for every target (in three jobs), the port as a
 #     WebAssembly module, the reference's self-compile (lix downloads the
@@ -25,24 +24,14 @@
 #   - measure: peak memory and times (haxe/test/Measure.hx) in the job summary;
 #   - npm-pack: the npm packages (with the compiler as a WebAssembly module;
 #     built with the module cache off);
-#   - site: the website (site/: its pages, the examples built for the browser,
-#     the API read by the compiler, the playground's compiler); gfx: packages/gfx on Linux (make gfx-check; on
-#     ARM64 the cross-built programs, gfx-arm64; on Windows x86-64 and arm64
-#     the cross-built programs on D3D11's WARP, gfx-windows; on macOS built
-#     from the npm packages after npm-pack, gfx-macos), packages/os's audio
-#     in the same jobs (make audio-check, audio-web-check) and its touch
-#     gesture (touch-check, gfx's job), then
-#     packages/view, web, text, ui and theme (their checks on Eval, the sample UI and the
-#     todo example drawn on llvmpipe, the todo example in Chromium on WebGPU
-#     and WebGL2, web's demo page hydrated in Chromium).
-#   - android: the APKs for android-arm64 and android-x86_64 checked, then
-#     AndroidTest, AndroidNativeTest (views, real input, accessibility),
-#     AndroidMixTest (a GPU view among views), AndroidTextTest (the input
-#     method in a drawn window) and AndroidTouchTest (a fling in a drawn
-#     scroll box) on an x86-64 emulator (not required yet:
-#     continue-on-error).
+#   - site: the website (site/: plain pages, their scripts, the playground's
+#     compiler, lix, the benchmark history);
+#   - android: the APKs for android-arm64 and android-x86_64 checked (make
+#     android-check: AndroidHello, AndroidViews), shared libraries (make
+#     shared-check), then AndroidHello on an x86-64 emulator (its line in
+#     logcat; not required yet: continue-on-error).
 #   - ios: the app bundles for ios-arm64 and ios-sim-arm64 checked, then
-#     (ios-simulator, on a macOS runner) IosTest on an iPhone simulator (not
+#     (ios-simulator, on a macOS runner) IosHello on an iPhone simulator (not
 #     required yet: continue-on-error).
 # - conformance: the port against the reference: HXB of the upstream suites
 #   and macro cases, display requests, the compilation server and its
@@ -107,10 +96,9 @@ jobs:
       actions: read
     outputs:
       all: ${{ steps.select.outputs.all }}
-      libs: ${{ steps.select.outputs.libs }}
       web: ${{ steps.select.outputs.web }}
       # anything that builds (and needs the runtime objects)
-      build: ${{ steps.select.outputs.all == 'true' || steps.select.outputs.libs == 'true' || steps.select.outputs.web == 'true' }}
+      build: ${{ steps.select.outputs.all == 'true' || steps.select.outputs.web == 'true' }}
       # the npm job's full set on all six machines
       npm_full: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
       rt_hit: ${{ steps.rt.outputs.hit }}
@@ -241,7 +229,7 @@ jobs:
   # tool rebuilt by itself does not change. Then the release binaries and lix.
   build:
     needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && (needs.changes.outputs.all == 'true' || needs.changes.outputs.libs == 'true') }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -265,6 +253,10 @@ jobs:
       # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
       - name: Module cache
         run: make test-module-cache PORT=1
+      # `hxmc dev` on a console program, the compilation server's builds
+      # against fresh ones (hxmc/test/dev)
+      - name: The dev loop
+        run: make dev-check
 
       - name: The port's release binaries
         run: |
@@ -504,11 +496,10 @@ jobs:
 
   # the npm packages (packages/): @hxmc/cli, its six platform packages,
   # @hxmc/wasm and @hxmc/source, at one version: the tag's (v*), a nightly
-  # prerelease on main, packages/cli/package.json's elsewhere; and in
-  # bin/npm/packages/ the source-only packages at their own versions
+  # prerelease on main, packages/cli/package.json's elsewhere
   npm-pack:
     needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && (needs.changes.outputs.all == 'true' || needs.changes.outputs.libs == 'true') }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -546,12 +537,11 @@ jobs:
           bin/hxmc/hxmc bin/npm/probe.wasm -cp hxmc/test -main WasiProbe -cp bin/hxmc/std --custom-target hxmc -D hxmc.target=wasm32-wasi
           cat bin/npm/sizes.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
-        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/packages/*.tgz\nbin/npm/NodeLibs.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
+        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/NodeLibs.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
 
-  # the website (site/, make site): its pages, the examples built for the
-  # browser, the API reference, the playground's WebAssembly, the pages'
-  # JavaScript, lix under tools/ (the Programs benchmarks: the history on the
-  # bench-data branch, bench.yml); its page weights in the job summary
+  # the website (site/, make site): its pages, their JavaScript, the
+  # playground's WebAssembly, lix under tools/, the benchmark history and the
+  # target generators' table from the bench-data branch (bench.yml)
   site:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && (needs.changes.outputs.all == 'true' || needs.changes.outputs.web == 'true') }}
@@ -576,165 +566,28 @@ jobs:
           HXMC_SYMBOLS: ${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) && '1' || '' }}
         run: |
           set -ex
-          [ -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf ] || { sudo apt-get update -qq && sudo apt-get install -qqy --no-install-recommends fonts-dejavu-core > /dev/null; }
           make lix-dist
           mkdir -p bin/bench-data
           if git fetch --depth 1 origin bench-data; then git archive FETCH_HEAD | tar -x -C bin/bench-data; fi
           make site LIX_DIR=bin/lix-dist BENCH_DATA=bin/bench-data
           ls -l bin/site bin/site/tools
-          { echo '### Page weights'; echo '```'; node site/tools/weights.mjs bin/site; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with: {name: site, path: bin/site/, retention-days: 7}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: bin/site
 
-  # packages/gfx: the shader macro's tests (make gfx-shader-check), then
-  # the triangle and the cube headless and in an X11 window, on Mesa's
-  # llvmpipe (no GPU), against the golden images (make gfx-check: the test
-  # programs in the glibc mode, packages/gfx/test/check.sh), here on Linux
-  # x86-64, and on WebGPU and WebGL2 in headless Chromium (make
-  # gfx-web-check), and the module cache across a WasmGC and a native build
-  # on one store (make gfx-cache-check); the ARM64 and Windows programs cross-built for gfx-arm64
-  # and gfx-windows. packages/os's audio alongside: ALSA's null and file
-  # devices (make audio-check), WebAudio in headless Chromium (make
-  # audio-web-check), the ARM64 and Windows AudioTest cross-built
-  gfx:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && (needs.changes.outputs.all == 'true' || needs.changes.outputs.libs == 'true') }}
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: actions/download-artifact@v8
-        if: needs.changes.outputs.rt_hit != 'true'
-        with: {name: rt, path: bin/hxmc/rt}
-      - name: System packages
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -qqy --no-install-recommends libegl1 libegl-mesa0 libgl1-mesa-dri libgles2 xvfb xauth libasound2t64 fonts-dejavu-core fonts-inter libgtk-3-0t64 dbus at-spi2-core fonts-noto-color-emoji
-      - name: gfx (Mesa llvmpipe, Xvfb)
-        run: |
-          set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make gfx-shader-check
-          make gfx-check GFX_TARGET=linux-x86_64
-      - name: 3d (Eval, natively, wasm32-wasi; Mesa llvmpipe)
-        run: |
-          set -ex
-          make 3d-check GFX_TARGET=linux-x86_64
-          make 3d-sizes
-      - name: audio (ALSA's null and file devices)
-        run: make audio-check AUDIO_TARGET=linux-x86_64
-      - name: touch (TouchDrag, the gesture of Android and iOS)
-        run: make touch-check
-      - name: gfx (WebGPU, WebGL2 in Chromium)
-        run: |
-          set -ex
-          npm install --no-save --silent playwright@1.56.1
-          npx playwright install --with-deps chromium > /dev/null
-          make gfx-web-check
-          make 3d-web-check
-          # (the module cache across WasmGC and native builds on one store)
-          make gfx-cache-check
-      - name: audio (WebAudio in Chromium)
-        run: make audio-web-check
-      - name: view, web, text, ui and theme (Eval, natively; Mesa llvmpipe; Chromium)
-        run: |
-          set -ex
-          make view-check web-check text-check ui-check theme-check
-          make ui-draw-check GFX_TARGET=linux-x86_64
-          make theme-fidelity-check GFX_TARGET=linux-x86_64
-          make theme-dom-check web-widgets
-          make ui-web-check
-      - name: The dev loop (hxmc dev in Chromium and natively under Xvfb)
-        run: make dev-check
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with: {name: ui-images-linux-x86_64, path: "bin/ui/**/*.png", retention-days: 7, if-no-files-found: ignore}
-      - name: The ARM64 programs
-        run: |
-          set -ex
-          make gfx-programs ui-programs 3d-programs GFX_TARGET=linux-arm64
-          cp bin/3d/linux-arm64/RenderTest bin/gfx/linux-arm64/
-          make audio-programs AUDIO_TARGET=linux-arm64
-          cp bin/audio/linux-arm64/AudioTest bin/ui/linux-arm64/UiDrawTest bin/ui/linux-arm64/TodoTest bin/ui/linux-arm64/GalleryTest bin/gfx/linux-arm64/
-          tar czf bin/gfx-linux-arm64.tar.gz -C bin/gfx/linux-arm64 GfxTest Triangle Cube AudioTest UiDrawTest TodoTest GalleryTest RenderTest
-      - uses: actions/upload-artifact@v7
-        with: {name: gfx-linux-arm64, path: bin/gfx-linux-arm64.tar.gz, retention-days: 3}
-      - name: The Windows programs
-        run: |
-          set -ex
-          for t in windows-x86_64 windows-arm64; do
-            make gfx-programs ui-programs 3d-programs GFX_TARGET=$t
-            cp bin/3d/$t/RenderTest.exe bin/gfx/$t/
-            make audio-programs AUDIO_TARGET=$t
-            make devhost-programs GFX_TARGET=$t
-            cp bin/audio/$t/AudioTest.exe bin/ui/$t/UiDrawTest.exe bin/ui/$t/ClipboardTest.exe bin/ui/$t/NativeTest.exe bin/ui/$t/WinAccessTest.exe bin/ui/$t/EmojiTest.exe bin/ui/$t/WindowTest.exe bin/gfx/$t/
-            tar czf bin/gfx-$t.tar.gz -C bin/gfx/$t GfxTest.exe Triangle.exe Cube.exe AudioTest.exe UiDrawTest.exe ClipboardTest.exe NativeTest.exe WinAccessTest.exe EmojiTest.exe WindowTest.exe RenderTest.exe dev
-          done
-      - uses: actions/upload-artifact@v7
-        with: {name: gfx-windows, path: "bin/gfx-windows-*.tar.gz", retention-days: 3}
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with: {name: gfx-images-linux-x86_64, path: "bin/gfx/linux-x86_64/*.png\nbin/gfx/*.png", retention-days: 7}
-
-  gfx-arm64:
-    needs: [changes, gfx]
-    if: ${{ !cancelled() && needs.gfx.result == 'success' }}
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: |
-            packages/gfx/test
-            packages/ui/test
-            packages/os/test
-            packages/3d/test
-      - uses: actions/download-artifact@v8
-        with: {name: gfx-linux-arm64, path: dl}
-      - name: gfx (Mesa llvmpipe, Xvfb)
-        run: |
-          set -ex
-          sudo apt-get update -qq
-          sudo apt-get install -qqy --no-install-recommends libegl1 libegl-mesa0 libgl1-mesa-dri libgles2 xvfb xauth libasound2t64 fonts-dejavu-core
-          mkdir -p gfx
-          tar xzf dl/gfx-linux-arm64.tar.gz -C gfx
-          sh packages/gfx/test/check.sh gfx
-          export LIBGL_ALWAYS_SOFTWARE=1
-          env -u DISPLAY gfx/UiDrawTest packages/ui/test/draw.png gfx/draw.png
-          env -u DISPLAY gfx/TodoTest packages/ui/test/todo.png gfx/todo.png
-          env -u DISPLAY gfx/GalleryTest packages/ui/test/gallery.png gfx/gallery.png
-          # (packages/3d's frames)
-          sh packages/3d/test/check.sh gfx
-      - name: audio (ALSA's null and file devices)
-        run: sh packages/os/test/audio.sh gfx
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with: {name: gfx-images-linux-arm64, path: gfx/*.png, retention-days: 7}
-
-  # packages/gfx on Windows: the cross-built programs on D3D11's WARP
-  # (HXMC_GFX_SOFTWARE=1, check.sh), offscreen and in a Win32 window; the
-  # audio test on WASAPI's default endpoint, skipped when the runner has
-  # none (audio.sh)
   # Android (docs/hxmc.md, "Android"): the APKs hxmc writes for android-arm64
   # and android-x86_64, checked without a device (make android-check: zip,
   # manifest, ELF, v2 signature; the SDK's zipalign, aapt and apksigner),
-  # then AndroidTest.apk on an x86-64 emulator with KVM (android.sh: the cube
-  # headless against cube.png, frames in the window, input (a drag held on
-  # the cube, a fling), Home and back, Back; the screenshot and logcat as an
-  # artifact; android-touch.sh: a fling in a drawn scroll box; dev-android.mjs:
-  # hxmc dev on the Counter, two edits swapped into the same process, the count
-  # kept: docs/dev.md, "No reloads"). Not a required check yet
+  # and shared libraries (make shared-check), then AndroidHello.apk on an
+  # x86-64 emulator with KVM (hxmc/test/android/android.sh: installed,
+  # launched, its line in logcat; logcat as an artifact). Not a required check yet
   # (continue-on-error): emulators on hosted runners are slow to boot and
   # sometimes flaky.
   android:
     needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && (needs.changes.outputs.all == 'true' || needs.changes.outputs.libs == 'true') }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     continue-on-error: true
     timeout-minutes: 45
@@ -762,7 +615,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: The cube and the native views on an emulator (x86-64, API 34)
+      - name: AndroidHello on an emulator (x86-64, API 34)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -771,34 +624,26 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
           script: |
-            sh packages/gfx/test/android.sh bin/android/android-x86_64/AndroidTest.apk bin/android/android-x86_64
-            sh packages/ui/test/android-native.sh bin/android/android-x86_64/AndroidNativeTest.apk bin/android/android-x86_64
-            sh packages/ui/test/android-mix.sh bin/android/android-x86_64/AndroidMixTest.apk bin/android/android-x86_64/AndroidTextTest.apk bin/android/android-x86_64
-            sh packages/os/test/android-touch.sh bin/android/android-x86_64/AndroidTouchTest.apk bin/android/android-x86_64
-            ulimit -s unlimited 2>/dev/null || true; DEV_ANDROID_LOG=bin/android/android-x86_64/dev-logcat.txt node packages/os/test/dev/dev-android.mjs bin/hxmc/hxmc bin/dev/android android-x86_64
+            sh hxmc/test/android/android.sh bin/android/android-x86_64/AndroidHello.apk bin/android/android-x86_64
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android
           path: |
-            bin/android/android-x86_64/*.png
             bin/android/android-x86_64/*.txt
-            bin/android/android-x86_64/*.xml
             bin/android/*/*.apk
           retention-days: 7
           if-no-files-found: ignore
 
   # iOS (docs/hxmc.md, "iOS"): the app bundles hxmc writes for ios-sim-arm64
-  # and ios-arm64 (and the cube's .ipa), checked without a Mac (make
+  # and ios-arm64 (IosHello, also as an .ipa), checked without a Mac (make
   # ios-check: Info.plist, Mach-O, the code signature; llvm-objdump), then
-  # IosTest.app on an iPhone simulator of a macOS runner (ios-simulator:
-  # ios.sh, codesign --verify, the cube headless against cube.png, frames in
-  # the window, a tap, Settings and back; the screenshot, stdout and the
-  # system log as an artifact). Not required checks yet (continue-on-error),
-  # as android.
+  # IosHello.app on an iPhone simulator of a macOS runner (ios-simulator:
+  # hxmc/test/ios/ios.sh: codesign --verify, its line on stdout). Not
+  # required checks yet (continue-on-error), as android.
   ios:
     needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && (needs.changes.outputs.all == 'true' || needs.changes.outputs.libs == 'true') }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     continue-on-error: true
     timeout-minutes: 30
@@ -833,161 +678,23 @@ jobs:
       - uses: actions/checkout@v7
         with:
           sparse-checkout: |
-            packages/gfx/test
+            hxmc/test/ios
       - uses: actions/download-artifact@v8
         with: {name: ios, path: dl}
-      - name: IosTest on an iPhone simulator
+      - name: IosHello on an iPhone simulator
         run: |
           set -ex
           mkdir -p bin && tar xzf dl/ios.tar.gz -C bin
           xcodebuild -version
-          sh packages/gfx/test/ios.sh bin/ios/ios-sim-arm64/IosTest.app bin/ios/ios-sim-arm64 bin/ios/SimTap
-      - name: hxmc dev's host on an iPhone simulator (two builds swapped into the running app)
-        if: ${{ !cancelled() }}
-        run: sh packages/gfx/test/ios-dev.sh bin/ios/ios-sim-arm64 bin/ios/ios-sim-arm64
+          sh hxmc/test/ios/ios.sh bin/ios/ios-sim-arm64/IosHello.app bin/ios/ios-sim-arm64
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ios-simulator
           path: |
-            bin/ios/ios-sim-arm64/*.png
             bin/ios/ios-sim-arm64/*.txt
           retention-days: 7
           if-no-files-found: ignore
-
-  gfx-windows:
-    needs: [changes, gfx]
-    if: ${{ !cancelled() && needs.gfx.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {target: windows-x86_64, os: windows-2025}
-          - {target: windows-arm64, os: windows-11-arm}
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: |
-            packages/gfx/test
-            packages/os/test
-            packages/3d/test
-      - uses: actions/download-artifact@v8
-        with: {name: gfx-windows, path: dl}
-      - name: gfx (D3D11 WARP, Win32)
-        run: |
-          set -ex
-          mkdir -p gfx
-          tar xzf dl/gfx-${{ matrix.target }}.tar.gz -C gfx
-          sh packages/gfx/test/check.sh gfx
-          # (the UI's sample with the system's fonts: no golden image)
-          HXMC_GFX_SOFTWARE=1 gfx/UiDrawTest.exe none gfx/ui-smoke.png --smoke
-          # (the clipboard between two windows: Win32's CF_UNICODETEXT)
-          gfx/ClipboardTest.exe
-          # (hxmc.ui.native on Win32's controls)
-          gfx/NativeTest.exe
-          # (the accessibility tree through UI Automation: Narrator's view of it)
-          HXMC_GFX_SOFTWARE=1 gfx/WinAccessTest.exe
-          # (colour emoji: Segoe UI Emoji's COLR layers)
-          HXMC_GFX_SOFTWARE=1 gfx/EmojiTest.exe none gfx/emoji.png
-          # (a window's title, size and minimum size, read back)
-          gfx/WindowTest.exe
-          # (packages/3d's frames on WARP)
-          sh packages/3d/test/check.sh gfx
-      - name: hxmc dev's host (two builds swapped into the running process, docs/dev.md)
-        if: ${{ !cancelled() }}
-        run: HXMC_GFX_SOFTWARE=1 sh packages/gfx/test/host-dev.sh gfx/dev dll host.exe
-      - name: audio (WASAPI)
-        run: sh packages/os/test/audio.sh gfx
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with: {name: 'gfx-images-${{ matrix.target }}', path: gfx/*.png, retention-days: 7}
-
-  # packages/gfx on macOS: the examples and their test built from the npm
-  # packages (@hxmc/cli with its platform package, -lib hxmc.gfx from
-  # node_modules), then run on Metal and in a Cocoa window (check.sh: skipped
-  # without a Metal device or outside a GUI session); the audio test from
-  # -lib hxmc.os on CoreAudio's generic output unit, then the default output
-  # (skipped without one: audio.sh)
-  gfx-macos:
-    needs: [changes, npm-pack]
-    if: ${{ !cancelled() && needs.npm-pack.result == 'success' }}
-    runs-on: macos-15
-    steps:
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: actions/download-artifact@v8
-        with: {name: npm, path: dl}
-      - uses: actions/checkout@v7
-        with:
-          path: repo
-          sparse-checkout: |
-            packages/gfx
-            packages/ui
-            packages/os/test
-      - name: gfx (Metal, Cocoa)
-        run: |
-          set -ex
-          v=$(cat dl/VERSION)
-          mkdir -p "$RUNNER_TEMP/app" && cd "$RUNNER_TEMP/app"
-          npm init -y > /dev/null
-          # (a nightly, <version>-nightly.<date>.<commit>, is a prerelease, which
-          # the packages' peer range ">=0.1.0" of @hxmc/cli does not take)
-          peer=; case "$v" in *-nightly.*) peer=--legacy-peer-deps ;; esac
-          npm install --no-audit --no-fund $peer "$GITHUB_WORKSPACE/dl/hxmc-cli-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-darwin-arm64-$v.tgz" $(find "$GITHUB_WORKSPACE/dl" -name 'hxmc-os-*.tgz' -o -name 'hxmc-gfx-*.tgz' -o -name 'hxmc-text-*.tgz' -o -name 'hxmc-view-*.tgz' -o -name 'hxmc-ui-*.tgz')
-          g="$GITHUB_WORKSPACE/repo/packages/gfx"
-          npx haxe -lib hxmc.gfx -cp "$g/examples" -cp "$g/test" -main GfxTest --custom-target hxmc=gfx/GfxTest
-          npx haxe -lib hxmc.gfx -cp "$g/examples" -main Triangle --custom-target hxmc=gfx/Triangle
-          npx haxe -lib hxmc.gfx -cp "$g/examples" -main Cube --custom-target hxmc=gfx/Cube
-          ls -l gfx/GfxTest gfx/Triangle gfx/Cube
-          otool -L gfx/Triangle
-          sh "$g/test/check.sh" gfx
-          # the UI's sample built from the npm packages, with the system's fonts (no golden image)
-          u="$GITHUB_WORKSPACE/repo/packages/ui"
-          npx haxe -lib hxmc.ui -cp "$g/test" -cp "$u/test" -main UiDrawTest --custom-target hxmc=gfx/UiDrawTest
-          gfx/UiDrawTest none gfx/ui-smoke.png --smoke
-          # (the clipboard between two windows: NSPasteboard)
-          npx haxe -lib hxmc.os -cp "$u/test" -main ClipboardTest --custom-target hxmc=gfx/ClipboardTest
-          gfx/ClipboardTest
-          # (text input through the window's text view: a key, a composition)
-          npx haxe -lib hxmc.os -cp "$u/test" -main TextInputTest --custom-target hxmc=gfx/TextInputTest
-          gfx/TextInputTest
-          # (the accessibility tree through NSAccessibility: VoiceOver's view of it)
-          npx haxe -lib hxmc.ui -cp "$u/test" -main MacAccessTest --custom-target hxmc=gfx/MacAccessTest
-          gfx/MacAccessTest
-          # (colour emoji: Apple Color Emoji's sbix bitmaps)
-          npx haxe -lib hxmc.ui -cp "$g/test" -cp "$u/test" -main EmojiTest --custom-target hxmc=gfx/EmojiTest
-          gfx/EmojiTest none gfx/emoji.png
-          # (a window's title, size and minimum size, read back)
-          npx haxe -lib hxmc.os -cp "$u/test" -main WindowTest --custom-target hxmc=gfx/WindowTest
-          gfx/WindowTest
-          # (hxmc.ui.native on AppKit's controls)
-          npx haxe -lib hxmc.ui -cp "$u/test" -cp "$u/examples" -main NativeTest --custom-target hxmc=gfx/NativeTest
-          gfx/NativeTest gfx/native-macos.png
-      - name: hxmc dev's host (two builds swapped into the running process, docs/dev.md)
-        if: ${{ !cancelled() }}
-        run: |
-          set -ex
-          cd "$RUNNER_TEMP/app"
-          g="$GITHUB_WORKSPACE/repo/packages/gfx"
-          npx haxe -lib hxmc.os -main hxmc.dev.DevHost --custom-target hxmc=dev/host
-          for v in 1 2 3; do npx haxe -lib hxmc.gfx -cp "$g/examples" -cp "$g/test" -main DevHostTest -D hxmc.dev -D hxmc.dev-host -D hxmc.shared -D hxmc.exports=hxmc_dev_run,hxmc_dev_state -D devhost_version=$v --custom-target hxmc=dev/DevHost$v.dylib; done
-          sh "$g/test/host-dev.sh" dev dylib host
-      - name: audio (CoreAudio)
-        run: |
-          set -ex
-          cd "$RUNNER_TEMP/app"
-          o="$GITHUB_WORKSPACE/repo/packages/os"
-          npx haxe -lib hxmc.os -cp "$o/test" -main AudioTest --custom-target hxmc=audio/AudioTest
-          otool -L audio/AudioTest
-          sh "$o/test/audio.sh" audio
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with: {name: gfx-images-macos-arm64, path: "${{ runner.temp }}/app/gfx/*.png", retention-days: 7, if-no-files-found: ignore}
 
   # the port against the reference compiler (docs/testing.md); the Eval
   # debugger in shards (EvalDebugger --shard), the fuzzer's diff lanes (the
@@ -1363,15 +1070,11 @@ jobs:
         run: $H -cp hxmc/test -cp haxe/test --run Selfcheck --runner "wasmtime run -W exceptions=y -W max-wasm-stack=67108864 --dir / --env HAXE_STD_PATH --env PWD" --port port/haxe.wasm --src std-x/src --std std-x/std --ref dl/self-ref.hxb --ref-root "$SELF_ROOT" --root "$SELF_ROOT" --summary "$GITHUB_STEP_SUMMARY"
 
   # the website in the browsers' engines (make site-check,
-  # site/tools/browser-test.mjs): links; every page in Chromium, the key
-  # pages in Firefox and WebKit, at a desktop's and a phone's width
-  # (rendered, islands hydrated, no errors, no horizontal scrolling); the
-  # examples running, the triangle and the cube against packages/gfx/test's
-  # golden images (WebGPU and WebGL2 in Chromium, WebGL2 in Firefox and
-  # WebKit; Firefox's in a headed Firefox under Xvfb on Mesa's llvmpipe:
-  # headless, it has no WebGL); the playground's worker (--interp, HXB,
-  # diagnostics, completion) with both modules, the page's choice of module,
-  # also in a Chromium without exnref
+  # site/tools/browser-test.mjs): links; every page in Chromium, Firefox
+  # and WebKit, at a desktop's and a phone's width (no errors, no horizontal
+  # scrolling); the playground's worker (--interp, HXB, diagnostics,
+  # completion) with both modules, the page's choice of module, also in a
+  # Chromium without exnref; the benchmark tables
   playground:
     needs: [changes, site]
     if: ${{ !cancelled() && needs.site.result == 'success' }}
@@ -1381,7 +1084,6 @@ jobs:
         with:
           sparse-checkout: |
             site/tools
-            packages/gfx/test
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -1392,8 +1094,7 @@ jobs:
           set -ex
           npm install --no-save --silent playwright@1.56.1
           npx playwright install --with-deps chromium firefox webkit > /dev/null
-          sudo apt-get install -qqy --no-install-recommends libgl1-mesa-dri libegl-mesa0 xvfb xauth > /dev/null
-          xvfb-run -a -s "-screen 0 1280x1024x24" node site/tools/browser-test.mjs site-dist chromium firefox webkit
+          node site/tools/browser-test.mjs site-dist chromium firefox webkit
 
   # the npm packages in fresh projects, on each target's machine (every
   # package installed before publish-npm publishes them): @hxmc/cli with its
@@ -1590,13 +1291,11 @@ jobs:
   # npm: the nine packages at one version (npm-pack's), installed and
   # tested by the npm job: the six platform packages, @hxmc/wasm,
   # @hxmc/source, then @hxmc/cli: on v* tags (dist-tag latest) and pushes to main (a nightly, dist-tag
-  # next); then every source-only package (packages/<name> with a version of
-  # its own: bin/npm/packages/) at its version when that is not on npm yet
-  # (dist-tag latest, next for a prerelease); never from other branches.
+  # next); never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, gfx, gfx-arm64, gfx-windows, gfx-macos, conformance, fuzz-exec, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.gfx.result == 'success' && needs.gfx-arm64.result == 'success' && needs.gfx-windows.result == 'success' && needs.gfx-macos.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1631,20 +1330,11 @@ jobs:
           for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64 wasm source cli; do
             publish "@hxmc/$p" "./dl/hxmc-$p-$v.tgz"
           done
-          # the source-only packages, at their own versions
-          for f in dl/packages/*.tgz; do
-            test -e "$f" || continue
-            meta=$(tar xzf "$f" -O package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0)); p.name + " " + p.version')
-            name=${meta% *} pv=${meta#* }
-            if npm view "$name@$pv" version >/dev/null 2>&1; then echo "$name@$pv is published already"; continue; fi
-            case "$pv" in *-*) ptag=next ;; *) ptag=latest ;; esac
-            npm publish --access public --provenance --tag $ptag "./$f"
-          done
 
   # nightly on main, a release on v* tags
   release:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, gfx, gfx-arm64, gfx-windows, gfx-macos, conformance, fuzz-exec, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.gfx.result == 'success' && needs.gfx-arm64.result == 'success' && needs.gfx-windows.result == 'success' && needs.gfx-macos.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1689,8 +1379,8 @@ jobs:
           fi
 
   pages:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, gfx, gfx-arm64, gfx-windows, gfx-macos, wasm, playground]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.gfx.result == 'success' && needs.gfx-arm64.result == 'success' && needs.gfx-windows.result == 'success' && needs.gfx-macos.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, wasm, playground]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
       pages: write

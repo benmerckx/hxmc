@@ -1278,9 +1278,10 @@ class MirBuild {
 	// fault handler throws (hxmc.rt.Faults); with explicit tests
 	// (WebAssembly, where address 0 is memory and a trap cannot be caught,
 	// or -D hxmc.null-checks=1), null branches to the throw here. A test
-	// dominated by one of the same value is dropped (Opt.condProp).
+	// dominated by one of the same value is dropped (Opt.condProp). None in a
+	// @:hxmc.noGc function (FnLower.receiverCheck).
 	inline function nullCheck(v:Int):Int
-		return hxmc.ir.Lower.nullChecks ? nullTest(v) : v;
+		return hxmc.ir.Lower.nullChecks && !fn.declNoGc ? nullTest(v) : v;
 
 	function nullTest(v:Int):Int {
 		if (nonNull(v)) return v;

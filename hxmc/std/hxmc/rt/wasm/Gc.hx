@@ -64,7 +64,9 @@ class Gc {
 	static var major:Bool; // which forwarding (minor or major) runs
 	static var stats:Bool;
 	static var minors:Int;
-	static var majors:Int;
+	// every collection, and the major ones (both move objects: hxmc.rt.IdHash)
+	@:hxmc.export("hxmc_gc_majors") static var majors:Int;
+	@:hxmc.export("hxmc_gc_count") static var collections:Int;
 	// the remembered set: slots, and objects scanned whole
 	static var rem:Ptr;
 	static var remLen:Int;
@@ -516,6 +518,7 @@ class Gc {
 			return;
 		}
 		minors++;
+		collections++;
 		major = false;
 		scanRoots();
 		for (i in 0...remLen)
@@ -529,6 +532,7 @@ class Gc {
 
 	@:hxmc.noGc static function majorGc(need:Int) {
 		majors++;
+		collections++;
 		// the old space's chunks become the from-space; the to-space's are taken
 		// as objects are copied (from the free chunks first)
 		syncCur();

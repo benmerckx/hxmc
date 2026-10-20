@@ -1,8 +1,7 @@
 # Packaging and npm
 
 Built: the npm packages (`@hxmc/cli`, the six platform packages,
-`@hxmc/wasm`, `@hxmc/source`, and the source-only libraries in
-`packages/`), `-lib` from node_modules, lix, release binaries for the six
+`@hxmc/wasm`, `@hxmc/source`), `-lib` from node_modules, lix, release binaries for the six
 desktop targets: [docs/using.md](../using.md) and
 [docs/development.md](../development.md). npm first, haxelib later.
 
@@ -17,13 +16,11 @@ desktop targets: [docs/using.md](../using.md) and
 - **First run**: the std's modules from the module cache, warmed at
   install ([compiler.md](compiler.md), "Cached modules").
 - **The `hxmc` haxelib** (`-lib hxmc`, `--custom-target hxmc=out`,
-  `-D hxmc.target=<os>-<arch>`), as hxc had one, and the source-only
-  packages on haxelib too.
-- **New packages**: `@hxmc/ui`, `@hxmc/text` (landed with the UI toolkit),
-  `@hxmc/view` (signals and markup), then `@hxmc/web`
-  ([web.md](web.md)): sources only, a
-  peer dependency on a range of `@hxmc/cli`, an `imports.mjs` each where
-  they import from JavaScript.
+  `-D hxmc.target=<os>-<arch>`), as hxc had one.
+- **The source-only libraries** (`@hxmc/os`, `@hxmc/gfx`, `@hxmc/ui`, ...)
+  left with universe (<https://github.com/benmerckx/universe>), which
+  publishes them if it does; `publish-npm` here publishes the compiler's
+  nine packages only.
 - **`@hxmc/esx` is superseded by `@hxmc/view`**: esx 0.1.0 was published
   with the UI toolkit; its markup and `hxmc.ui.reactive`'s signals are
   `@hxmc/view` now, and `@hxmc/ui` from 0.2.0 depends on that. The

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmarks · hxmc</title>
+<meta name="description" content="Compile times of the Haxe compiler ported to Haxe and built by hxmc against the OCaml reference, and run times of programs built by hxmc against the usual Haxe targets.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+	<div class="wrap bar">
+		<a class="brand" href="index.html">hxmc</a>
+		<nav class="nav" aria-label="Pages"><ul>
+			<li><a href="index.html">About</a></li>
+			<li><a href="benchmarks.html" aria-current="page">Benchmarks</a></li>
+			<li><a href="playground.html">Playground</a></li>
+			<li><a href="https://github.com/benmerckx/hxmc">GitHub</a></li>
+		</ul></nav>
+	</div>
+</header>
+<main id="main">
+<header class="hero">
+	<div class="wrap">
+		<h1>Benchmarks</h1>
+		<p class="lead">The port against the OCaml reference compiler, and programs built by hxmc against the usual fast Haxe targets. Measured on GitHub Actions runners; every run's results are on the <a href="https://github.com/benmerckx/hxmc/tree/bench-data">bench-data</a> branch.</p>
+		<nav class="links" aria-label="On this page"><a href="#benchmarks">The compiler</a><a href="#programs">Programs</a><a href="#targets">Target generators</a></nav>
+	</div>
+</header>
+<div class="wrap">
+	<section class="block" id="benchmarks">
+		<header><h2>The compiler</h2><p>Compiling to HXB.</p></header>
+		<div>
+			<p>The port (hxmc: x86-64 and WebAssembly) compiling to HXB, against the OCaml reference. CPU time, best of 3, <code>-D disable-parallelism</code>; only runs with identical output count.</p>
+			<div id="bench-results"><p class="note">Loading results…</p></div>
+			<p class="note" id="bench-builds"></p>
+			<p class="note" id="bench-machine"></p>
+		</div>
+	</section>
+	<section class="block" id="programs">
+		<header><h2>Programs</h2><p>Run time, compile time.</p></header>
+		<div>
+			<p><a href="https://github.com/HaxeBenchmarks/benchmark-runner">HaxeBenchmarks</a> on hxmc (native, WebAssembly, WasmGC), C++, the JVM, Node, HL/C and HashLink, all compiled by the port. Nightly, on a GitHub Actions runner.</p>
+			<div id="programs-results"><p class="note">Loading results…</p></div>
+			<div id="programs-compile"></div>
+			<p class="note" id="programs-machine"></p>
+			<p class="note" id="programs-noise"></p>
+			<div id="programs-over-time" hidden>
+				<h3>Over time</h3>
+				<div id="programs-history"><p class="note">Loading history…</p></div>
+			</div>
+			<p class="note">Reproduce: <code>make bench</code> (<code>hxmc/test/Bench.hx</code>).</p>
+		</div>
+	</section>
+	<section class="block" id="targets">
+		<header><h2>Target generators</h2><p>The port against the reference, per target.</p></header>
+		<div>
+			<p>Compile time per target, port against reference, on two projects: sequential (one core, CPU time) and with each compiler's default parallelism (wall time), best of 3, nightly on a GitHub Actions runner. Every sequential output file identical (HL/C: after renaming a few type names that hash the reference binary). C++ and HL/C stop at the sources.</p>
+			<div id="targets-results"><p class="note">Loading results…</p></div>
+			<p class="note" id="targets-machine"></p>
+			<p class="note">Reproduce: <code>haxe/test/Targets.hx</code> (bench.yml).</p>
+		</div>
+	</section>
+</div>
+<script src="tables.js"></script>
+</main>
+<footer class="foot">
+	<div class="wrap">
+		<p>A port of <a href="https://haxe.org">Haxe</a>. Built <span data-info="date"></span> from commit <code data-info="commit"></code>.</p>
+		<nav aria-label="More">
+			<a href="https://github.com/benmerckx/hxmc#readme">README</a>
+			<a href="https://github.com/benmerckx/hxmc/blob/main/docs/using.md">Using hxmc</a>
+			<a href="https://github.com/benmerckx/hxmc/blob/main/ROADMAP.md">Roadmap</a>
+			<a href="https://www.npmjs.com/package/@hxmc/cli">npm</a>
+		</nav>
+		<p class="legal">The compiler is GPL-2.0-or-later, as Haxe; hxmc's runtime and std are MIT.</p>
+	</div>
+</footer>
+</body>
+</html>

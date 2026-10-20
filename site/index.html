@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hxmc: the Haxe compiler in Haxe</title>
+<meta name="description" content="A faithful port of the Haxe compiler from OCaml to Haxe, faster than upstream, with hxmc: a Haxe target that writes native code and WebAssembly with no external toolchain.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+	<div class="wrap bar">
+		<a class="brand" href="index.html">hxmc</a>
+		<nav class="nav" aria-label="Pages"><ul>
+			<li><a href="index.html" aria-current="page">About</a></li>
+			<li><a href="benchmarks.html">Benchmarks</a></li>
+			<li><a href="playground.html">Playground</a></li>
+			<li><a href="https://github.com/benmerckx/hxmc">GitHub</a></li>
+		</ul></nav>
+	</div>
+</header>
+<main id="main">
+<header class="hero">
+	<div class="wrap">
+		<h1>The Haxe compiler, in Haxe</h1>
+		<p class="lead">A faithful port of the Haxe compiler from OCaml to Haxe, faster than upstream, and <b>hxmc</b>: a Haxe target that compiles programs, the compiler included, to machine code and WebAssembly with its own code generator and linkers. No C compiler, assembler, linker or SDK.</p>
+		<nav class="links" aria-label="On this page">
+			<a href="#install">Install</a><a href="#status">Status</a><a href="#hxmc">The target</a><a href="#download">Download</a><a href="#tools">lix</a><a href="#direction">Direction</a>
+		</nav>
+	</div>
+</header>
+<div class="wrap">
+	<section class="block" id="install">
+		<header><h2>Install</h2><p>From npm, node 22 or later.</p></header>
+		<div>
+<pre class="code"><code>npm i -D @hxmc/cli      # then: npx haxe</code></pre>
+			<p><code>haxe</code> is the full Haxe command line with hxmc built in: every target works as usual (<code>--js</code>, <code>--interp</code>, ...), and <code>--custom-target hxmc=&lt;out&gt;</code> writes an executable.</p>
+<pre class="code"><code>-cp src
+-main Main
+--custom-target hxmc=bin/app
+# -D hxmc.target=windows-x86_64   # cross-compile to another target</code></pre>
+			<ul class="small">
+				<li>npm installs a native compiler for your platform; where none runs, <code>haxe</code> falls back to a WebAssembly build under node.</li>
+				<li>Libraries install from npm and are found by <code>-lib</code> (lix and haxelib still work).</li>
+				<li>More: <a href="https://github.com/benmerckx/hxmc/blob/main/docs/using.md">docs/using.md</a>.</li>
+			</ul>
+		</div>
+	</section>
+	<section class="block" id="status">
+		<header><h2>Status</h2><p>Pinned to upstream <code>066bd83</code>.</p></header>
+		<div>
+			<p>The port follows upstream module by module, at the same paths. Same arguments, same output as the reference compiler (the nightly of the pinned commit):</p>
+			<dl class="facts">
+				<div><dt>HXB</dt><dd><b>279 / 279</b> conformance cases (and the 7 the reference rejects); <b>66 / 66</b> macro cases</dd></div>
+				<div><dt>Targets</dt><dd>JS, Lua, Python, PHP, Neko, HashLink, HL/C, JVM, C++, SWF, <code>--xml</code>, <code>--json</code>: a differential fuzzer and upstream's test projects</dd></div>
+				<div><dt>Tooling</dt><dd><code>--interp</code>, display requests, the compilation server, the Eval debugger</dd></div>
+				<div><dt>Upstream CI</dt><dd>the target-independent job (unit, misc, threads, tink_core, hxcoro) passes on the native build</dd></div>
+			</dl>
+			<p class="note">Compile times against the reference: <a href="benchmarks.html">benchmarks</a>. Details: <a href="https://github.com/benmerckx/hxmc/blob/main/docs/testing.md">docs/testing.md</a>.</p>
+		</div>
+	</section>
+	<section class="block" id="hxmc">
+		<header><h2>The target</h2><p>Any target, from any host.</p></header>
+		<div>
+			<p>hxmc writes x86-64 and ARM64 machine code with its own register allocator and linkers (ELF, PE, Mach-O), or a WebAssembly module, with a precise generational collector and threads written in Haxe. Every target cross-builds from Linux or macOS, and hxmc builds itself.</p>
+			<div class="table"><table>
+				<thead><tr><th>Target</th><th>Output</th></tr></thead>
+				<tbody>
+					<tr><td>Linux, x86-64 and ARM64</td><td>a static executable (musl), or linked against glibc 2.17+ (<code>-D hxmc.libc=glibc</code>); shared libraries</td></tr>
+					<tr><td>macOS, x86-64 and ARM64</td><td>an executable; dylibs</td></tr>
+					<tr><td>Windows, x86-64 and ARM64</td><td>an executable</td></tr>
+					<tr><td>Android, ARM64 and x86-64</td><td>an APK, written without the SDK, or the shared library alone</td></tr>
+					<tr><td>iOS and its simulator</td><td>an app bundle or <code>.ipa</code>, written without Xcode</td></tr>
+					<tr><td>wasm32-wasi</td><td>a WebAssembly module (exception handling, or the legacy instructions)</td></tr>
+				</tbody>
+			</table></div>
+			<p class="note">Internals: <a href="https://github.com/benmerckx/hxmc/blob/main/docs/hxmc.md">docs/hxmc.md</a>. An experimental app and GUI stack on hxmc lives in a separate repository, <a href="https://github.com/benmerckx/universe">universe</a>; hxmc does not depend on it.</p>
+		</div>
+	</section>
+	<section class="block" id="download">
+		<header><h2>Download</h2><p>Nightly builds of <code>main</code>, with the standard library.</p></header>
+		<div>
+			<table class="downloads"><tbody>
+				<tr><td>Linux</td><td><a href="https://github.com/benmerckx/hxmc/releases/download/nightly/hxmc-haxe-linux-x86_64.tar.gz">x86-64</a><a href="https://github.com/benmerckx/hxmc/releases/download/nightly/hxmc-haxe-linux-aarch64.tar.gz">ARM64</a></td></tr>
+				<tr><td>macOS</td><td><a href="https://github.com/benmerckx/hxmc/releases/download/nightly/hxmc-haxe-macos-x86_64.tar.gz">x86-64</a><a href="https://github.com/benmerckx/hxmc/releases/download/nightly/hxmc-haxe-macos-aarch64.tar.gz">ARM64</a></td></tr>
+				<tr><td>Windows</td><td><a href="https://github.com/benmerckx/hxmc/releases/download/nightly/hxmc-haxe-windows-x86_64.zip">x86-64</a><a href="https://github.com/benmerckx/hxmc/releases/download/nightly/hxmc-haxe-windows-aarch64.zip">ARM64</a></td></tr>
+			</tbody></table>
+<pre class="code"><code>haxe -cp src --main Main --interp
+haxe -cp src --main Main --js out.js</code></pre>
+			<ul class="small">
+				<li>The same arguments as <code>haxe</code>. Set <code>HAXE_STD_PATH</code> to the archive's <code>std</code>.</li>
+				<li>Built by hxmc on Linux, with mbedtls and libuv: <code>sys.ssl</code> and <code>eval.luv</code> work in macros and <code>--interp</code>.</li>
+				<li>macOS quarantines browser downloads: <code>xattr -d com.apple.quarantine haxe</code>.</li>
+				<li>All files: <a href="https://github.com/benmerckx/hxmc/releases/tag/nightly">the nightly release</a>.</li>
+			</ul>
+		</div>
+	</section>
+	<section class="block" id="tools">
+		<header><h2>lix</h2><p>The Haxe package manager, native.</p></header>
+		<div>
+			<p><a href="https://github.com/lix-pm/lix.client">lix</a> and <a href="https://github.com/lix-pm/haxeshim">haxeshim</a>, built by hxmc: one file (<span data-info="lixSize">about 2 MB</span>) that acts as <code>lix</code>, <code>haxe</code>, <code>haxelib</code> or <code>neko</code> by its name.</p>
+			<table class="downloads"><tbody>
+				<tr><td>Linux</td><td><a href="tools/lix-linux-x86_64">x86-64</a><a href="tools/lix-linux-arm64">ARM64</a></td></tr>
+				<tr><td>macOS</td><td><a href="tools/lix-macos-x86_64">x86-64</a><a href="tools/lix-macos-arm64">ARM64</a></td></tr>
+				<tr><td>Windows</td><td><a href="tools/lix-windows-x86_64.exe">x86-64</a><a href="tools/lix-windows-arm64.exe">ARM64</a></td></tr>
+			</tbody></table>
+<pre class="code"><code># Linux x86-64; also lix-linux-arm64, lix-macos-arm64, lix-macos-x86_64
+curl -fLo ~/bin/lix https://haxe-in-haxe.ben.mk/tools/lix-linux-x86_64 &amp;&amp; chmod +x ~/bin/lix
+lix shims     # links ~/bin/haxe, ~/bin/haxelib, ~/bin/neko</code></pre>
+<pre class="code"><code># PowerShell, into a directory on PATH; also lix-windows-arm64.exe
+curl.exe -fLo C:\tools\lix.exe https://haxe-in-haxe.ben.mk/tools/lix-windows-x86_64.exe
+lix shims     # hard links haxe.exe, haxelib.exe, neko.exe</code></pre>
+			<p>Per project:</p>
+<pre class="code"><code>lix scope create                # a .haxerc here
+lix install haxe 4.3.7          # download it, use it here
+lix +lib tink_core              # haxe_libraries/tink_core.hxml
+haxe -lib tink_core --run Main  # Haxe 4.3.7 with tink_core
+lix download                    # after a clone: what the scope needs</code></pre>
+		</div>
+	</section>
+	<section class="block" id="direction">
+		<header><h2>Direction</h2><p>Boring on purpose.</p></header>
+		<div>
+			<ul class="small">
+				<li>The compiler follows Haxe: its syntax, its tests, its releases.</li>
+				<li>Distribution through npm.</li>
+				<li>Additions only where they never change output: the module cache on disk, fast macros, libraries from <code>node_modules</code>, anything that makes builds faster.</li>
+				<li>The target: live reload on every platform (or hooks for it), more low-level capabilities, a collector that can run between frames, debugging.</li>
+			</ul>
+			<p class="note">The plan: <a href="https://github.com/benmerckx/hxmc/blob/main/ROADMAP.md">ROADMAP.md</a>, and the discussion in <a href="https://github.com/benmerckx/hxmc/issues/10">#10</a>.</p>
+		</div>
+	</section>
+</div>
+<script src="info.js"></script>
+</main>
+<footer class="foot">
+	<div class="wrap">
+		<p>A port of <a href="https://haxe.org">Haxe</a>. Built <span data-info="date"></span> from commit <code data-info="commit"></code>.</p>
+		<nav aria-label="More">
+			<a href="https://github.com/benmerckx/hxmc#readme">README</a>
+			<a href="https://github.com/benmerckx/hxmc/blob/main/docs/using.md">Using hxmc</a>
+			<a href="https://github.com/benmerckx/hxmc/blob/main/ROADMAP.md">Roadmap</a>
+			<a href="https://www.npmjs.com/package/@hxmc/cli">npm</a>
+		</nav>
+		<p class="legal">The compiler is GPL-2.0-or-later, as Haxe; hxmc's runtime and std are MIT.</p>
+	</div>
+</footer>
+</body>
+</html>

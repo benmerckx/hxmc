@@ -1,14 +1,16 @@
 // hxmc: haxe/upstream/std/haxe/ds/StringMap.hx as a compact insertion-ordered hash table (as
 // in Python and JS): entries are appended to fixed-size arrays, an
-// open-addressing index (0 empty, -1 removed, else entry + 1) finds them.
-// Iteration follows insertion order. IntMap, StringMap and ObjectMap are the
-// same code but for the key type, hash and equality, and where a key's hash
-// is kept: here with the entry (a string's own is cached in it, but the
-// table's spares the comparison of keys that collide).
+// open-addressing index with linear probing finds them (removals shift the
+// probe chain back: no tombstones). Iteration follows insertion order.
+// IntMap, StringMap and ObjectMap are the same code but for the key type,
+// hash and equality, and what the index keeps beside each entry: here the
+// key's hash (a string's own is cached in it, but the index's spares the
+// loads of keys that collide), also kept by entry for the growth.
 
 package haxe.ds;
 
 import hxmc.rt.MapSlots;
+import hxmc.rt.MapSlots.RefSlots;
 
 /**
 	StringMap allows mapping of String keys to arbitrary values.
@@ -18,11 +20,12 @@ import hxmc.rt.MapSlots;
 	@see https://haxe.org/manual/std-Map.html
 **/
 class StringMap<T> implements haxe.Constraints.IMap<String, T> {
-	// the index (cap slots), then the entries' hashes (room = cap * 3 / 4:
-	// the entries that fit before the next growth)
+	// the index (cap slots of two elements: the key's hash and its entry + 1,
+	// 0 an empty slot), then the entries' hashes (room = cap / 2: the
+	// entries that fit before the next growth)
 	var slots:MapSlots<Int>;
 	// the entries' keys and values, interleaved (2 * room)
-	var kvs:MapSlots<Dynamic>;
+	var kvs:RefSlots;
 	// the removed entries, null until the first removal
 	var dead:MapSlots<Bool>;
 	var used:Int; // entries appended, the removed ones included
@@ -35,8 +38,11 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	public function new()
 		mask = -1; // no arrays: the first set grows the table
 
+	// (the string's FNV-1a hash mixed: its low bits, which pick the slot, alone
+	// cluster keys that differ only in their last units)
 	inline function hashOf(k:String):Int {
-		return hxmc.rt.Str.strHash(k);
+		var h = hxmc.rt.Str.strHash(k) * 0x9E3779B1;
+		return h ^ (h >>> 16);
 	}
 
 	inline function find(k:String, h:Int):Int {
@@ -45,9 +51,9 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		var i = h & mask;
 		var r = -1;
 		while (true) {
-			var e = slots[i];
+			var e = slots[2 * i + 1];
 			if (e == 0) break;
-			if (e > 0 && slots[mask + e] == h && (kvs[2 * e - 2] : String) == k) {
+			if (slots[2 * i] == h && (kvs[2 * e - 2] : String) == k) {
 				r = e - 1;
 				break;
 			}
@@ -80,7 +86,7 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 			kvs[2 * e + 1] = v;
 			return;
 		}
-		if ((used + 1) * 4 > (mask + 1) * 3) grow();
+		if (used >= (mask + 1) >> 1) grow();
 		add(k, v, h);
 	}
 
@@ -88,14 +94,34 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	inline function add(k:String, v:Dynamic, h:Int) {
 		var slots = this.slots, kvs = this.kvs, mask = this.mask;
 		var n = used++;
-		slots[mask + 1 + n] = h;
+		slots[2 * (mask + 1) + n] = h;
 		kvs[2 * n] = k;
 		kvs[2 * n + 1] = v;
 		live++;
 		var i = h & mask;
-		while (slots[i] > 0)
+		while (slots[2 * i + 1] != 0)
 			i = (i + 1) & mask;
-		slots[i] = n + 1;
+		slots[2 * i] = h;
+		slots[2 * i + 1] = n + 1;
+	}
+
+	// empties slot i, moving back the slots after it whose probe chain
+	// passes through it (backward-shift deletion)
+	function unindex(i:Int) {
+		var slots = this.slots, mask = this.mask;
+		var j = i;
+		while (true) {
+			j = (j + 1) & mask;
+			var e = slots[2 * j + 1];
+			if (e == 0) break;
+			var home = slots[2 * j] & mask;
+			// (j stays where it is when its home is cyclically in (i, j])
+			if (i <= j ? (i < home && home <= j) : (i < home || home <= j)) continue;
+			slots[2 * i] = slots[2 * j];
+			slots[2 * i + 1] = e;
+			i = j;
+		}
+		slots[2 * i + 1] = 0;
 	}
 
 	/**
@@ -107,11 +133,11 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		var h = hashOf(k);
 		var i = h & mask;
 		while (true) {
-			var e = slots[i];
+			var e = slots[2 * i + 1];
 			if (e == 0) return false;
-			if (e > 0 && slots[mask + e] == h && (kvs[2 * e - 2] : String) == k) {
-				slots[i] = -1;
-				if (dead == null) dead = new MapSlots<Bool>(((mask + 1) * 3) >> 2);
+			if (slots[2 * i] == h && (kvs[2 * e - 2] : String) == k) {
+				unindex(i);
+				if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1);
 				dead[e - 1] = true;
 				kvs[2 * e - 2] = null;
 				kvs[2 * e - 1] = null;
@@ -123,20 +149,22 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	}
 
 	// rebuild with removed entries dropped and room for twice the live ones
+	// (a table that only grows doubles: at 1/2 full, to 1/4; a rebuild after
+	// removals moves at most one entry per removal)
 	function grow() {
 		var os = slots, okvs = kvs, od = dead, on = used, ocap = mask + 1;
 		var cap = 8;
-		while (cap * 3 < (live + 1) * 8)
+		while (cap < live * 4)
 			cap *= 2;
-		var room = (cap * 3) >> 2;
-		slots = new MapSlots<Int>(cap + room);
-		kvs = new MapSlots<Dynamic>(2 * room);
+		var room = cap >> 1;
+		slots = new MapSlots<Int>(2 * cap + room);
+		kvs = new RefSlots(2 * room);
 		dead = null;
 		used = 0;
 		live = 0;
 		mask = cap - 1;
 		for (j in 0...on)
-			if (od == null || !od[j]) add(okvs[2 * j], okvs[2 * j + 1], os[ocap + j]);
+			if (od == null || !od[j]) add(okvs[2 * j], okvs[2 * j + 1], os[2 * ocap + j]);
 	}
 
 	/**

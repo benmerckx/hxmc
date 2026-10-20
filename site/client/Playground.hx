@@ -66,11 +66,9 @@ class Playground {
 	static function validates(bytes:Array<Int>):Bool
 		return try js.lib.WebAssembly.validate(new js.lib.Uint8Array(bytes)) catch (_:Dynamic) false;
 
-	// the playground page's island (site/src/Pages.hx): the loader calls
-	// globalThis.hxmcIslands.playground once it scrolls into view
+	// the playground page (site/playground.html), its script at the end of the body
 	static function main() {
-		final islands:Dynamic = js.Syntax.code("globalThis.hxmcIslands || (globalThis.hxmcIslands = {})");
-		islands.playground = (el:Element, props:Dynamic) -> setup();
+		setup();
 	}
 
 	static function setup() {
@@ -134,14 +132,7 @@ class Playground {
 		hxbButton.onclick = () -> start("hxb");
 
 		// build facts (sizes, date, commit) from build-info.json, written by `make site` (Makefile)
-		window.fetch(Version.url("build-info.json")).then((r) -> r.ok ? r.json() : null).then((info:haxe.DynamicAccess<String>) -> {
-			if (info == null) return;
-			for (node in document.querySelectorAll("[data-info]")) {
-				final el:Element = cast node;
-				final v = info[el.dataset.info];
-				if (v != null) el.textContent = v;
-			}
-		}).catchError((_) -> {});
+		Info.fill();
 	}
 
 	// ---- the program: Main.hx / Test.hx, main class detected from the source

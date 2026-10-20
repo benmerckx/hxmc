@@ -112,7 +112,7 @@ extern class SDL {
   hxmc.libc=glibc`: glibc's loader, `LinkDyn.hx`; `@:hxmc.lib("m")` or
   `@:hxmc.lib("libm.so.6")`, a plain name being `lib<name>.so` next to the
   executable); static musl executables cannot load glibc libraries (GPU
-  drivers, see [graphics.md](graphics.md)), and an import there is a compile
+  drivers), and an import there is a compile
   error that names the mode.
 - WebAssembly: C functions become module imports (WASI or JavaScript):
   the module `@:hxmc.lib` names ("env" by default), pointers as i32.
@@ -356,8 +356,8 @@ s[3].y = 2;                                  // in place
   is only the base of loads and stores at constant offsets becomes SSA
   values, so struct math in registers: `acc = acc + d * 0.5` over
   three-double vectors compiles to three `fadd`s in the loop. The shader
-  math types of `@hxmc/gfx` (`Vec2`..`Vec4`, `Mat4`) are struct values:
-  `packages/gfx/test/MathBench.hx` (about a million operations of each
+  math types of `@hxmc/gfx` (`Vec2`..`Vec4`, `Mat4`; universe) are struct values:
+  its `test/MathBench.hx` (about a million operations of each
   kind: a running value, a function's arguments and result, objects'
   fields, matrix products) went from 172 MB allocated in 43 minor
   collections and about 52 ms to nothing allocated and about 33 ms (Linux

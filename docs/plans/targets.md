@@ -62,7 +62,7 @@ allocation, no shadow stack or barriers), direct JavaScript interop
 - Weaker finalizers and weak references.
 
 Revisit when a concrete browser use makes module size or JavaScript
-interop matter (browser games, `@hxmc/web`). The structuring pass and the
+interop matter (browser games, web islands). The structuring pass and the
 module writer carry over; the object model and the runtime would be new.
 
 Started (2026-10-17) behind `-D hxmc.wasm-gc` to compare the two collectors
@@ -147,44 +147,10 @@ JavaScriptCore are unmeasured.
 
 #### A real program: the UI stack
 
-(As of the 17th; both build and run now: "The hybrid module" below.)
-Neither ui-counter nor gfx-cube builds. `HXMC_GC_SURVEY=1` lists what each
-lacks (=2 writes the module, those functions trapping):
-
-- ui-counter, 34 constructs, all at the browser boundary, none in the
-  ui, text and view code: imports that take pointers (`@hxmc/os`'s canvas
-  window, text input, clipboard and cursor; the accessibility mirror;
-  WebGPU's shader, buffer and texture uploads; the page's fonts read into
-  a Bytes), raw memory (`Mem`, `malloc`/`free`, `Arena`, `CString`,
-  strings as UTF-8 through memory), and the GL back end (reached because
-  `Device` picks its back end at run time; its calls take pointers too).
-  Imports of numbers only are now supported (`scale`,
-  `prefers_dark`, `font_count`...).
-- gfx-cube, 31: the same, plus `@:hxmc.struct` values (the shaders' Vec2,
-  Vec3, Vec4 and Mat4 data, written into GPU buffers through field
-  addresses).
-
-What does build is the engine itself. StressTest's list of 1000 rows
-without the GPU (markup, signals, styles, flex layout, text shaped with
-DejaVu Sans by `@hxmc/text`, the accessibility tree; a program outside the
-repository: the fonts added from a file, the page's font lookup skipped),
-median of 5, node 22:
-
-| | native | linear | WasmGC |
-| --- | --- | --- | --- |
-| mount (markup to nodes) ms | 17 | 39 | 32 |
-| first layout (styles, flex, text) ms | 33 | 59 | 61 |
-| toggle, relabel, scroll, append (each) ms | 0.7-1 | 0.6-1.1 | 0.5-1.3 |
-| 5 accessibility trees ms | 7 | 7 | 8 |
-| whole run (5 rounds) s | 0.32 | 0.72 | 0.73 |
-| peak RSS MB | 102 | 261 | 204 |
-| module KB (gzip -9) | 2163 | 1609 (396) | 775 (251) |
-
-Frame times (an update's layout and text) are at parity with linear
-memory, the module half the size; painting and the GPU's part could not be
-measured. Getting there needed four fixes found by this program (a
-structural call to a method of another representation, Vector reads in
-generic code, Std.int out of range, BytesBuffer) and the identity hashes.
+The UI stack (universe's packages: the counter, the gallery, a list of
+1000 rows; frame times at parity with linear memory, the module half the
+size) was the program the hybrid module below was made for; its numbers
+moved with the packages (universe's docs/plans/wasmgc-ui.md).
 
 #### The hybrid module (2026-10-18)
 
@@ -224,8 +190,8 @@ wasm; the fixpoint and crosshost identical):
    the target (`IrOpt.live`), a local set from Dynamic (Haxe's unchecked
    conversions: a String holding a closure), all fixed.
 
-Checked: `make wasmgc-check` (now with `Unsafe.hx`), and the browser tests
-on WasmGC builds (`make gfx-web-check`: 6 scenes on WebGPU and WebGL2,
+Checked: `make wasmgc-check` (now with `Unsafe.hx`), and the packages'
+browser tests on WasmGC builds (now universe's: `make gfx-web-check`: 6 scenes on WebGPU and WebGL2,
 headless and in a canvas, resize, text input, wheel, the readback
 checksum, the same pixel differences as linear memory; `make
 ui-web-check`: the todo example on both APIs with pointer, keyboard,
@@ -234,81 +200,10 @@ native form, the native text editors).
 
 #### The site's examples, both ways
 
-Built as the site builds them (`-D hxmc.wasm-eh=legacy`, no name
-section), the linear builds with main's startup memory fix (010fa12):
-
-| example | linear KB | gzip -9 | WasmGC KB | gzip -9 | WasmGC / linear |
-| --- | --- | --- | --- | --- | --- |
-| gfx-cube | 193.0 | 53.0 | 100.8 | 37.1 | 0.52 (0.70 gzipped) |
-| ui-counter | 1226.9 | 319.3 | 824.0 | 273.3 | 0.67 (0.86) |
-| ui-gallery | 2275.9 | 530.0 | 1481.0 | 466.5 | 0.65 (0.88) |
-
-(ui-counter's WasmGC module: code 688 KB, string literals as globals 54
-KB, the dispatch table's elements 21 KB, a dense class-by-selector matrix
-linear memory overlays.)
-
-Run in Chromium 141, Firefox 142 (headed, under Xvfb: headless Firefox
-has no WebGL) and WebKit 26.0 by Playwright, 3 runs each, the medians:
-ready (fetch, compile, instantiate and main), the first frame, the frame
-callbacks' time while the cube turns, the counter is clicked 30 times or
-the gallery scrolled 30 times; memory: the linear memory plus, in
-Chromium, the JS heap (which holds WasmGC's objects; the others give no
-such number, so their WasmGC column shows the linear memory only); RSS:
-the browser's own processes above an empty page. WebGPU on SwiftShader in
-Chromium, WebGL2 elsewhere (llvmpipe, Mesa); no GPU, a shared 4-core
-machine:
-
-| browser | example | build | ready ms | first frame ms | frame mean ms | frame p90 ms | memory MB | browser RSS MB |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Chromium | gfx-cube | linear | 70 | 80 | 0.43 | 0.9 | 12.6 | 62 |
-| Chromium | gfx-cube | WasmGC | 61 | 81 | 0.36 | 0.7 | 3.6 | 62 |
-| Chromium | ui-counter | linear | 117 | 177 | 0.57 | 2.1 | 23.9 | 88 |
-| Chromium | ui-counter | WasmGC | 147 | 199 | 0.56 | 2.1 | 9.5 | 96 |
-| Chromium | ui-gallery | linear | 161 | 270 | 2.12 | 5.1 | 24.8 | 130 |
-| Chromium | ui-gallery | WasmGC | 237 | 465 | 1.99 | 5.0 | 17.8 | 131 |
-| Firefox | gfx-cube | linear | 121 | 123 | 0.31 | 1.0 | 10.3 | 85 |
-| Firefox | gfx-cube | WasmGC | 173 | 175 | 0.25 | 1.0 | (1.3) | 89 |
-| Firefox | ui-counter | linear | 279 | 316 | 0.59 | 2.0 | 21.6 | 117 |
-| Firefox | ui-counter | WasmGC | 309 | 378 | 0.49 | 2.0 | (2.3) | 125 |
-| Firefox | ui-gallery | linear | 445 | 581 | 3.54 | 12.0 | 21.8 | 144 |
-| Firefox | ui-gallery | WasmGC | 422 | 575 | 3.43 | 9.0 | (3.3) | 164 |
-| WebKit | gfx-cube | linear | 118 | 146 | 2.72 | 3.0 | 10.3 | 53 |
-| WebKit | gfx-cube | WasmGC | 93 | 115 | 2.93 | 4.0 | (1.3) | 55 |
-| WebKit | ui-counter | linear | 198 | 262 | 0.44 | 1.0 | 21.6 | 104 |
-| WebKit | ui-counter | WasmGC | 210 | 263 | 0.40 | 1.0 | (2.3) | 106 |
-| WebKit | ui-gallery | linear | 350 | 540 | 1.63 | 4.0 | 21.8 | 118 |
-| WebKit | ui-gallery | WasmGC | 331 | 664 | 2.64 | 6.0 | (3.3) | 217 |
-
-(Firefox and WebKit time in whole milliseconds.) Before main's startup fix
-the linear builds took 98-106 MB of linear memory at start; against the
-fixed ones the difference in memory is a few MB, and the browsers' RSS
-shows none (WebKit's gallery: WasmGC's larger).
-
-What it says:
-
-- **Size**: the modules are a half to two thirds of linear memory's, but
-  gzip narrows it (0.70-0.88): linear memory's code compresses better.
-  What a visitor downloads shrinks by 16-65 KB per example.
-- **Frame times**: at parity in Chromium and Firefox (the UI engine's
-  layout, text and drawing, and the cube's per-frame work, including
-  the copies of uniforms through the memory); in WebKit the gallery's
-  frames are 60% slower (2.64 against 1.63 ms) and its RSS higher.
-- **Startup**: the cube starts as fast or faster; the UI examples' first
-  frame is slower in Chromium (gallery 465 against 270 ms) and in WebKit
-  (664 against 540): a larger part of a UI program runs before the first
-  frame (styles, layout, text, its strings made from globals at
-  instantiation), and how the engines tier WasmGC code up is not
-  measured here.
-- **Memory**: a few MB less than the fixed linear builds' linear memory,
-  none in the browsers' RSS.
-- **WebKit's trap**: in 108 runs in WebKit 26.0 (54 per build, the three
-  examples), one failed, a WasmGC ui-counter on its first frame:
-  "RuntimeError: Out of bounds array.set" under the callbacks' table's
-  call, not reproduced in the 53 other WasmGC runs nor in Chromium and
-  Firefox; the linear builds had none. It fits the intermittent WebKit
-  trap the playground shows (believed an engine bug), but one in 54 is
-  not enough to tell; it needs its own investigation before WebKit users
-  get WasmGC by default.
+Measured on the website's examples before the split (universe's
+docs/plans/wasmgc-ui.md): WasmGC modules smaller to download, frame times
+at parity in Chromium and Firefox, the first frame of the UI examples up to
+72% later in Chromium, WebKit's gallery frames 60% slower.
 
 HaxeBenchmarks under node 22 after all of the above, median of 5 (`make
 bench`'s targets hxmc, hxmc-wasm, hxmc-wasmgc; every check identical; the
@@ -367,8 +262,8 @@ gallery frames are 60% slower, and one unexplained trap in WebKit. Next:
    casts the untyped locals cost now, and what else moved since the
    previous table.
 
-Switch the site's examples, `@hxmc/web`'s islands and `@hxmc/os`'s canvas
-programs when the first frame and WebKit hold; keep linear memory for
+Switch browser builds (programs on a canvas, islands of a page) when the
+first frame and WebKit hold; keep linear memory for
 WASI, the compiler modules and threads, and as the fallback (one define,
 `-D hxmc.wasm-gc`, chooses).
 
@@ -474,52 +369,29 @@ Google's `d8`.
 
 Order:
 
-1. GPU only (done, [hxmc.md](../hxmc.md#android)): `NativeActivity`
-   (`hasCode="false"`), EGL and the GLES back end on its `ANativeWindow`,
-   the cube; the APK writer (binary XML, an aligned zip, v2 signing with a
+1. NativeActivity apps (done, [hxmc.md](../hxmc.md#android)): `NativeActivity`
+   (`hasCode="false"`), the program's library and its entry; the APK writer (binary XML, an aligned zip, v2 signing with a
    generated debug key: ECDSA P-256 in plain Haxe rather than through
    mbedtls, so that the WebAssembly tool writes APKs too); `adb` only to
    install. No `resources.arsc` was needed (the label a plain string, a
    framework theme). TLS: TLSDESC on arm64, the general dynamic model on
    x86-64 (Bionic implements TLSDESC on arm64 and riscv64 only), never
    initial-exec (refused for a dlopen'ed library); the floor is API 29, the
-   first Bionic with ELF TLS. CI: AndroidTest on an x86-64 emulator with
+   first Bionic with ELF TLS. CI: AndroidHello on an x86-64 emulator with
    KVM on a Linux runner, not a required check yet. Left from this step:
    several ABIs in one APK, release signing with the developer's keystore
    (PKCS#12, v3 for key rotation), icons and a `resources.arsc`, the `.aab`
    for Google Play, `DT_RELR` (API 30+) or Android's packed relocations to
    shrink the RELATIVE table, RELRO for the data that holds addresses.
-2. Native controls (done, [hxmc.md](../hxmc.md#android)): JNI bound in
-   Haxe (`JNIEnv` and `JavaVM` through `hxmc.os.VTable`, COM's macro),
-   a minimal DEX writer in hxmc (`Dex.hx`) for the glue (`org.hxmc.Glue`,
-   one listener class whose methods call a static native registered with
-   `RegisterNatives`; `org.hxmc.Activity`, a `NativeActivity` whose window
-   draws views), `hxmc.ui.native`'s Android backend (`android.widget`'s
-   button, label, field, checkbox, slider, progress bar in an
-   `AbsoluteLayout`, laid out by our flexbox). Views live on Java's main
-   thread: the runtime attaches it (`NativeThread.attach`), the program's
-   thread hands it work through its looper, and `NativeHost.run` is
-   driven by Choreographer's frames there (`AChoreographer`: no Java
-   `Runnable`s needed). CI: the form's checks on the emulator, taps,
-   text through the input method, uiautomator's accessibility dump. Left:
-   lists and scrolling (no backend of `hxmc.ui.native` has them yet),
-   edge-to-edge insets on Android 15 (the root fits the system bars), the
-   theme following a dark mode change while running (the activity keeps
-   `uiMode` changes).
-3. Mixing, as on the desktop (done, [hxmc.md](../hxmc.md#android); the UI
-   design, [ui.md](ui.md)): a GPU view inside native controls (a
-   `SurfaceView` giving an `ANativeWindow` to the GL back end:
-   `ChildSurface`, ui's `GpuView`); a native control inside a drawn tree
-   only for text input (a hidden `EditText` for the keyboard and the input
-   method: `Window.startTextInput`, `TextInput`). CI: the cube among views
-   through Home and back; the soft keyboard shown and hidden, a composition
-   and a commit through the field's `InputConnection`. Left: several GPU
-   views in one window (each frame does not make its context current),
-   a `TextureView` for a GPU view under other views or animated with them,
-   the input method's candidates placed at the caret (`CursorAnchorInfo`),
-   a drawn UI's text on Android checked in CI (`hxmc.text` does not look in
-   `/system/fonts` yet), `GpuView` on the desktop backends (a child
-   window or view where gfx draws).
+2. Java glue (done, [hxmc.md](../hxmc.md#android)): a minimal DEX writer
+   (`Dex.hx`) for the glue (`org.hxmc.Glue`, one listener class whose
+   methods call a static native registered with `RegisterNatives`;
+   `org.hxmc.Activity`, a `NativeActivity` whose window draws views),
+   added when the program has the glue's functions; the views attach
+   Java's main thread to the runtime (`NativeThread.attach`). CI:
+   `AndroidViews`'s `classes.dex` checked by ApkCheck. JNI's bindings, the
+   views and mixing GPU views among them are a library's (universe's
+   `@hxmc/os` and `@hxmc/ui`).
 
 ## iOS
 
@@ -542,15 +414,13 @@ Order:
    for packages; the bundle writer (an XML `Info.plist` with an empty
    `UILaunchScreen`, `CodeResources`, an ad hoc signature written by the
    linker with the bundle's special slots, `CodeSign.hx`, which macOS's
-   linker signature now is too), the `.ipa`; `hxmc.os.uikit`:
+   linker signature now is too), the `.ipa`; a UI library's
    `UIApplicationMain` run by the generated main (`hxmc_ui_main`), the
-   program's body inside UIKit's loop, a `CAMetalLayer`-backed view for the
-   Metal back end, touches, the safe area, Suspend and Resume. CI:
-   `IosCheck` on Linux, IosTest on an iPhone simulator of a macOS runner
-   (`xcrun simctl`, a tap posted on the Simulator's window), not required
-   checks yet. `ios-sim-x86_64` is left out: x86-64 needs
-   `objc_msgSend_stret` for gfx ([graphics.md](graphics.md)) and Intel
-   runners are going away. Left from this step:
+   program's body inside UIKit's loop (universe's `@hxmc/os`). CI:
+   `IosCheck` on Linux, IosHello on an iPhone simulator of a macOS runner
+   (`xcrun simctl`), not required checks yet. `ios-sim-x86_64` is left
+   out: x86-64 needs `objc_msgSend_stret` (Objective-C calls returning
+   large structs) and Intel runners are going away. Left from this step:
    - device signing: the CMS signature blob by the developer's
      certificate (RSA or P-256: `P256.hx` has the curve, DER exists for
      Android), the provisioning profile copied in as
@@ -563,19 +433,11 @@ Order:
    - the app icon and an asset catalog (`Assets.car`: undocumented; a
      `CFBundleIcons` of plain PNGs works for the home screen until then),
      `PkgInfo`, a binary `Info.plist`;
-   - keys and text input (a `UIKeyInput` view and an input method, as
-     macOS's text view), multiple touches, UIScene (required by the SDK
-     after iOS 26), `os_log` for what the app prints on a device;
+   - UIScene (required by the SDK after iOS 26: the generated main's
+     part), `os_log` for what the app prints on a device;
    - the App Store's checks (the declared SDK and Xcode in `Info.plist`'s
      DT* keys, `LC_ENCRYPTION_INFO_64`), the main stack (`RT_STACK_MB`'s
      1 GB reservation; iOS limits an app's address space).
-2. Native controls via UIKit: `hxmc.ui.native` on `UIButton`, `UILabel`,
-   `UITextField`, ... (the AppKit backend's pattern: classes made at run
-   time for targets and delegates).
-3. Mixing: a GPU view among UIKit views (`GpuView` over a
-   `CAMetalLayer`-backed `UIView`), a native field in a drawn tree for text
-   input, as on Android.
-
 ## Shared libraries and position-independent output
 
 Needed by Android and plugins: the relocation model, TLS model, output
@@ -584,12 +446,12 @@ kind and segment alignment are already parameters in `Abi`/`Target`.
 ## Windows
 
 - **A GUI subsystem define.** Executables are always console programs
-  today, so double-clicking a ui app opens a console as well.
+  today, so double-clicking a GUI app opens a console as well.
   `-D hxmc.subsystem=windows` writes subsystem 2 (GUI) in the PE header;
   launched from a terminal, the program attaches to the parent console
   (`AttachConsole(ATTACH_PARENT_PROCESS)`) so `trace` still prints.
-  Documented beside `-D hxmc.libc=glibc` in packages/ui's README and
-  GUIDE. (Found building a small app, Oct 19.)
+  Documented beside `-D hxmc.libc=glibc` in the README and docs/using.md.
+  (Found building a small app, Oct 19.)
 - The dev loop's cold first edit: [dev-loop.md](dev-loop.md#windows-the-first-edit-is-a-cold-build-found-oct-19).
 
 ## Linux
@@ -607,5 +469,5 @@ kind and segment alignment are already parameters in `Abi`/`Target`.
 - Split the runtime's Mach-O objects per function (or select sections) so
   unused runtime code is dropped, as on ELF; today they are linked whole
   (`ssl.o` is 0.8-0.9 MB).
-- x86-64 for the gfx back end: `objc_msgSend_stret` for results over 16
-  bytes ([graphics.md](graphics.md)).
+- x86-64 Objective-C calls returning structs over 16 bytes
+  (`objc_msgSend_stret`), which a Metal back end needs.

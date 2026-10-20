@@ -670,9 +670,11 @@ class FnLower {
 	// reads it without a test, tested against null before the call (the
 	// program's own methods test what they read: MirBuild.nullCheck); null
 	// throws "Null Access", as the native targets' fault handler does where
-	// the runtime reads it (hxmc.rt.Faults)
+	// the runtime reads it (hxmc.rt.Faults); none in a @:hxmc.noGc function,
+	// which promises no GC point (a throw is one: Facts.findNoGc) and reads
+	// memory unchecked, as the runtime's own code does
 	function receiverCheck(x:Ex, t:Ty):Ex {
-		if (!Lower.nullChecks || !Ir.isRef(t)) return x;
+		if (!Lower.nullChecks || fi.declNoGc || !Ir.isRef(t)) return x;
 		switch x {
 			case EStr(_) | EType(_): return x;
 			case _:

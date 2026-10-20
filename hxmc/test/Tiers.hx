@@ -18,9 +18,7 @@ using StringTools;
 //          library) and its executables checked with readelf (ElfCheck),
 //          ThreadNatives x30 (16 KB, and with the adaptive nursery), the tool as
 //          a module building three cases for x64, arm64 and wasm32-wasi
-//          byte-identical to the native tool, the packages' examples built
-//          and not run (make examples-check: ExampleBuilds, the site's
-//          gallery for wasm32-wasi and natively), the debugging information and
+//          byte-identical to the native tool, the debugging information and
 //          unwind tables (DebugCheck: gdb on the host, the tools elsewhere),
 //          shared libraries (SharedCheck), Android's APKs (ApkCheck) and iOS's
 //          app bundles (IosCheck);
@@ -36,8 +34,8 @@ using StringTools;
 //          module (node, node with 256 KB, wasmtime, node with legacy
 //          exception handling); the tool as a module building
 //          every case for every target and itself; the fixpoint: before pushing
-// Cases named restrict the corpus lanes to them; the port, ThreadNatives,
-// examples and fixpoint lanes ignore them. Lanes run one after another (they share the
+// Cases named restrict the corpus lanes to them; the port, ThreadNatives
+// and fixpoint lanes ignore them. Lanes run one after another (they share the
 // cases' output directories); the reference (bin/reference/haxe) is needed
 // for the port lanes.
 class Tiers {
@@ -162,13 +160,6 @@ class Tiers {
 		return {ok: r.code == 0, detail: said.length > 0 ? said[0] : tail(r.out, 300)};
 	}
 
-	// the packages' examples built, not run (the Makefile has the site's class paths)
-	static function examples() {
-		var r = exec(["make", "--no-print-directory", "examples-check"], {merge: true});
-		var said = [for (l in r.out.split("\n")) if (l.startsWith("examples:")) l];
-		return {ok: r.code == 0, detail: said.length > 0 ? said[0] : tail(r.out, 300)};
-	}
-
 	static function main() {
 		var args = Sys.args();
 		if (args.length == 0 || !["quick", "check", "full"].contains(args[0])) fail("usage: Tiers quick|check|full [--port] [case ...]");
@@ -195,7 +186,6 @@ class Tiers {
 			for (t in ["ios-arm64", "ios-sim-arm64"])
 				lane('iOS apps $t', make(["ios-check", "IOS_TARGET=" + t]));
 			lane("wasm node legacy EH", corpus("wasm32-wasi", null, cases, LEGACY));
-			lane("examples (built)", examples);
 			lane("ThreadNatives x30", threads(30, 16));
 			lane("ThreadNatives x30 adaptive", threads(30, 0));
 			lane("cross-host", crosshost(["--targets", "linux-x86_64,linux-arm64,wasm32-wasi,linux-x86_64-glibc"].concat(cases.length > 0 ? cases : ["Unsafe", "SwitchIndex", "Regress"])));

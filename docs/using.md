@@ -81,9 +81,9 @@ on Windows too.)
 
 Libraries from npm: `-lib <name>` (also `-L`, `--library`, and in hxml files)
 finds Haxe libraries in node_modules. A package is one when its package.json
-has a `"haxe"` field, `{"name": "hxmc.gfx", "classPath": "src", "hxml":
+has a `"haxe"` field, `{"name": "mylib", "classPath": "src", "hxml":
 "extraParams.hxml"}` (`hxml` optional); `-lib` takes that name or the
-package's own (`-lib @hxmc/gfx`), and `-lib <name>:<version>` only that
+package's own (`-lib @scope/mylib`), and `-lib <name>:<version>` only that
 version. It expands as haxelib's libraries do: the hxml's lines, the class
 path, `-D <name>=<version>`, then its dependencies (the packages of its
 `dependencies` and `peerDependencies` that have a `"haxe"` field), each
@@ -121,8 +121,7 @@ is typed and compiled again, and outputs share objects), and the compilation ser
 typed modules, lowered bodies and compiled objects in memory:
 `haxe --wait 6000`, then `haxe --connect 6000 build.hxml` (a no-change rebuild
 of a small program in about 0.4 s). `haxe --dev build.hxml` does that for you,
-watching the sources and reloading the program on each save with its state
-kept: [dev.md](dev.md).
+watching the sources and running the new build on each save: [dev.md](dev.md).
 
 ### Macros and the module cache
 

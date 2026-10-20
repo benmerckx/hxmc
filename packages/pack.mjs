@@ -22,10 +22,7 @@
 //                                  the integrity of @hxmc/wasm's tarball
 //                                  ("hxmc": {"wasmIntegrity"}: the launcher's
 //                                  download)
-// and sizes.md, their sizes. Then, into <out dir>/packages/, every other
-// packages/<name> with a version of its own (sources only, published at that
-// version: packages/os, packages/gfx, ...), as they are; also alone:
-//   node packages/pack.mjs --sources <out dir>
+// and sizes.md, their sizes.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,8 +33,6 @@ import { PLATFORMS } from './cli/hxmc/bootstrap/platforms.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-// (the packages this script builds; every other one is packed as it is)
-const BUILT = ['cli', 'wasm', 'source', 'platform'];
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const sizes = [];
 
@@ -49,28 +44,10 @@ function pack(cwd, outAbs) {
 	return r;
 }
 
-// the packages with a version of their own (sources only), as they are
-function packSources(outAbs) {
-	const out = path.join(outAbs, 'packages');
-	fs.rmSync(out, { recursive: true, force: true });
-	for (const name of fs.readdirSync(here).sort()) {
-		const file = path.join(here, name, 'package.json');
-		if (BUILT.includes(name) || !fs.existsSync(file)) continue;
-		const p = readJson(file);
-		if (!p.version || p.private) continue;
-		fs.mkdirSync(out, { recursive: true });
-		pack(path.join(here, name), out);
-	}
-}
-
 const argv = process.argv.slice(2);
-if (argv[0] === '--sources' && argv[1]) {
-	packSources(path.resolve(argv[1]));
-	process.exit(0);
-}
 const [version, natives, out] = argv;
 if (!version || !natives || !out) {
-	console.error('usage: node packages/pack.mjs <version> <natives dir> <out dir> | --sources <out dir>');
+	console.error('usage: node packages/pack.mjs <version> <natives dir> <out dir>');
 	process.exit(2);
 }
 fs.mkdirSync(out, { recursive: true });
@@ -130,5 +107,3 @@ fs.writeFileSync(path.join(outAbs, 'sizes.md'), [
 	...sizes.map(s => `| ${s.name}@${s.version} | ${kb(s.size)} | ${kb(s.unpackedSize)} | ${s.entryCount} |`),
 ].join('\n') + '\n');
 console.log(fs.readFileSync(path.join(outAbs, 'sizes.md'), 'utf8'));
-
-packSources(outAbs);

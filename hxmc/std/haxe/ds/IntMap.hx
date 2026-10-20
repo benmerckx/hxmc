@@ -1,13 +1,15 @@
 // hxmc: haxe/upstream/std/haxe/ds/IntMap.hx as a compact insertion-ordered hash table (as
 // in Python and JS): entries are appended to fixed-size arrays, an
-// open-addressing index (0 empty, -1 removed, else entry + 1) finds them.
-// Iteration follows insertion order. IntMap, StringMap and ObjectMap are the
-// same code but for the key type, hash and equality, and where a key's hash
-// is kept: here nowhere (an Int's is computed again).
+// open-addressing index with linear probing finds them (removals shift the
+// probe chain back: no tombstones). Iteration follows insertion order.
+// IntMap, StringMap and ObjectMap are the same code but for the key type,
+// hash and equality, and what the index keeps beside each entry: here the
+// key, compared without another load (its hash is computed again).
 
 package haxe.ds;
 
 import hxmc.rt.MapSlots;
+import hxmc.rt.MapSlots.RefSlots;
 
 /**
 	IntMap allows mapping of Int keys to arbitrary values.
@@ -17,11 +19,12 @@ import hxmc.rt.MapSlots;
 	@see https://haxe.org/manual/std-Map.html
 **/
 class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
-	// the index (cap slots), then the entries' keys (room = cap * 3 / 4: the
-	// entries that fit before the next growth)
+	// the index (cap slots of two elements: the key and its entry + 1, 0 an
+	// empty slot), then the entries' keys (room = cap / 2: the entries
+	// that fit before the next growth)
 	var slots:MapSlots<Int>;
 	// the entries' values (room)
-	var vs:MapSlots<Dynamic>;
+	var vs:RefSlots;
 	// the removed entries, null until the first removal
 	var dead:MapSlots<Bool>;
 	var used:Int; // entries appended, the removed ones included
@@ -45,9 +48,9 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		var i = hashOf(k) & mask;
 		var r = -1;
 		while (true) {
-			var e = slots[i];
+			var e = slots[2 * i + 1];
 			if (e == 0) break;
-			if (e > 0 && slots[mask + e] == k) {
+			if (slots[2 * i] == k) {
 				r = e - 1;
 				break;
 			}
@@ -79,7 +82,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 			vs[e] = v;
 			return;
 		}
-		if ((used + 1) * 4 > (mask + 1) * 3) grow();
+		if (used >= (mask + 1) >> 1) grow();
 		add(k, v);
 	}
 
@@ -87,13 +90,33 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	inline function add(k:Int, v:Dynamic) {
 		var slots = this.slots, mask = this.mask;
 		var n = used++;
-		slots[mask + 1 + n] = k;
+		slots[2 * (mask + 1) + n] = k;
 		vs[n] = v;
 		live++;
 		var i = hashOf(k) & mask;
-		while (slots[i] > 0)
+		while (slots[2 * i + 1] != 0)
 			i = (i + 1) & mask;
-		slots[i] = n + 1;
+		slots[2 * i] = k;
+		slots[2 * i + 1] = n + 1;
+	}
+
+	// empties slot i, moving back the slots after it whose probe chain
+	// passes through it (backward-shift deletion)
+	function unindex(i:Int) {
+		var slots = this.slots, mask = this.mask;
+		var j = i;
+		while (true) {
+			j = (j + 1) & mask;
+			var e = slots[2 * j + 1];
+			if (e == 0) break;
+			var home = hashOf(slots[2 * j]) & mask;
+			// (j stays where it is when its home is cyclically in (i, j])
+			if (i <= j ? (i < home && home <= j) : (i < home || home <= j)) continue;
+			slots[2 * i] = slots[2 * j];
+			slots[2 * i + 1] = e;
+			i = j;
+		}
+		slots[2 * i + 1] = 0;
 	}
 
 	/**
@@ -104,11 +127,11 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		var slots = this.slots, mask = this.mask;
 		var i = hashOf(k) & mask;
 		while (true) {
-			var e = slots[i];
+			var e = slots[2 * i + 1];
 			if (e == 0) return false;
-			if (e > 0 && slots[mask + e] == k) {
-				slots[i] = -1;
-				if (dead == null) dead = new MapSlots<Bool>(((mask + 1) * 3) >> 2);
+			if (slots[2 * i] == k) {
+				unindex(i);
+				if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1);
 				dead[e - 1] = true;
 				vs[e - 1] = null;
 				live--;
@@ -119,20 +142,22 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	}
 
 	// rebuild with removed entries dropped and room for twice the live ones
+	// (a table that only grows doubles: at 1/2 full, to 1/4; a rebuild after
+	// removals moves at most one entry per removal)
 	function grow() {
 		var os = slots, ovs = vs, od = dead, on = used, ocap = mask + 1;
 		var cap = 8;
-		while (cap * 3 < (live + 1) * 8)
+		while (cap < live * 4)
 			cap *= 2;
-		var room = (cap * 3) >> 2;
-		slots = new MapSlots<Int>(cap + room);
-		vs = new MapSlots<Dynamic>(room);
+		var room = cap >> 1;
+		slots = new MapSlots<Int>(2 * cap + room);
+		vs = new RefSlots(room);
 		dead = null;
 		used = 0;
 		live = 0;
 		mask = cap - 1;
 		for (j in 0...on)
-			if (od == null || !od[j]) add(os[ocap + j], ovs[j]);
+			if (od == null || !od[j]) add(os[2 * ocap + j], ovs[j]);
 	}
 
 	/**
@@ -165,7 +190,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	public function copy():IntMap<T> {
 		var m = new IntMap<T>();
 		for (j in 0...used)
-			if (dead == null || !dead[j]) m.set(slots[mask + 1 + j], vs[j]);
+			if (dead == null || !dead[j]) m.set(slots[2 * (mask + 1) + j], vs[j]);
 		return m;
 	}
 
@@ -180,7 +205,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 			if (dead == null || !dead[j]) {
 				if (!first) b.add(", ");
 				first = false;
-				b.add(Std.string(slots[mask + 1 + j]));
+				b.add(Std.string(slots[2 * (mask + 1) + j]));
 				b.add(" => ");
 				b.add(Std.string(vs[j]));
 			}
@@ -228,7 +253,7 @@ private class IntMapIterator<T> {
 
 	public function next():Dynamic {
 		if (i >= m.used) return null; // (past the end)
-		var r:Dynamic = keys ? m.slots[m.mask + 1 + i] : m.vs[i];
+		var r:Dynamic = keys ? m.slots[2 * (m.mask + 1) + i] : m.vs[i];
 		i++;
 		skip();
 		return r;

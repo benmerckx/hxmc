@@ -246,9 +246,13 @@ class Str {
 		return x;
 	}
 
-	// StringMap's hash: null is a key like any other
-	@:hxmc.noGc public static function strHash(s:String):Int
-		return isNull(s) ? 0 : hash(s);
+	// StringMap's hash: null is a key like any other (inline: the cached one
+	// read where the map looks it up)
+	public static inline function strHash(s:String):Int {
+		if (isNull(s)) return 0;
+		var h = Repr.storedHash(s);
+		return h != 0 ? h : hashSlow(s);
+	}
 
 	// ---- concatenation and conversions
 

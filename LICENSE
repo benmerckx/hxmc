@@ -4,7 +4,8 @@ hxmc licenses
 This repository is a port of the Haxe compiler (https://github.com/HaxeFoundation/haxe)
 and follows its licensing.
 
-- The compiler port (haxe/src), the hxmc tool (hxmc/src, hxmc/bootstrap), the tests (haxe/test, hxmc/test) and the website (hxmc/web)
+- The compiler port (haxe/src), the hxmc tool (hxmc/src, hxmc/bootstrap), the tests (haxe/test, hxmc/test), the npm packages' launcher (packages/) and the
+  website (site/)
   are licensed under the GNU General Public License, version 2 or (at your
   option) any later version (SPDX: GPL-2.0-or-later). The full text is in COPYING.
   Copyright (C) 2005-2025 Haxe Foundation (the upstream compiler this is
@@ -15,7 +16,6 @@ and follows its licensing.
     hxmc/deps/ the scripts that build the runtime objects (hxmc/deps/LICENSE)
     hxmc/std/  the hxmc target's standard library and the runtime's
                Haxe part                              (hxmc/std/LICENSE)
-    packages/os/, packages/gfx/  the os and gfx packages (hxmc/std/LICENSE's terms)
 
 - haxe/src/libs/ reproduces OCaml libraries that upstream Haxe depends on, under
   their own licenses:

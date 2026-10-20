@@ -232,9 +232,8 @@ linker cells and thread-local globals, LinkWasm's builtins, the stubs
 `hxmc_zero`, `hxmc_frame`, `hxmc_call_on_stack`, `hxmc_tls_base`), and the
 names the lowering makes from the std's externs (`String_toUpperCase`,
 `Math_sin`), whose missing implementation fails the build of a program that
-calls one, by its name. `make examples-check` (docs/testing.md) builds the
-packages' examples for each of their targets, the programs where CI first
-saw that failure.
+calls one, by its name (universe's examples, built for each of their
+targets, were where CI first saw that failure).
 
 ## Anonymous structures
 
@@ -493,6 +492,78 @@ instructions; with `-D hxmc.null-checks=0`, as before (97 and 167 bytes
 more). Per test: a compare and a branch to the shared block (wasm32), a
 call of `nn_<t>` (WasmGC).
 
+## Maps
+
+`haxe.ds.IntMap`, `StringMap` and `ObjectMap` (`hxmc/std/haxe/ds`) are
+compact insertion-ordered tables, as Python's and JavaScript's: entries are
+appended to an array (keys and values interleaved; iteration follows
+insertion order, a key removed and set again comes last) and an
+open-addressing index with linear probing finds them. The index is at most
+half full (a table that only grows doubles; a rebuild drops the removed
+entries and leaves room for twice the live ones, so it moves at most one
+entry per removal), and a removal shifts its probe chain back (no
+tombstones). Each slot is two Ints, what is compared first and the entry +
+1 (0: empty): IntMap's key, StringMap's hash (the string's FNV-1a hash,
+cached in it, mixed: its low bits alone pick slots for keys that differ in
+their last units), ObjectMap's hash of the key's address; so a miss reads
+the index only and a hit one entry. The keys and values are a NativeArray
+of a class type (`MapSlots.RefSlots`): plain loads and stores, where a
+Dynamic element's accesses test the storage's kind, with a slow path that
+would make every lookup a GC point.
+
+Identity maps: ObjectMap (also what `Map<SomeClass, V>` and maps of
+anonymous objects or functions are) hashes the
+key's address, as Go's `map[*T]V` does, without reading the key: the high
+half of the address times 2^64/φ (`hxmc.rt.IdHash`). The collector moves
+objects, so every collection counts (`hxmc_gc_count`, the major ones
+`hxmc_gc_majors`: Gc.hx, wasm/Gc.hx), the index keeps the count it is up to
+date with (its element 0, read with acquire semantics: `ldar` on arm64) and
+each operation compares it first (a load and a compare). An index found
+out of date is brought up to date before anything is hashed: after minor
+collections only the keys that were in the nursery when they were added
+moved, which the map lists (entry and hash) while they may be young, and
+those entries are found by their old hash and indexed again by the new
+one; after a major collection (or when most entries were young) every entry
+is indexed again. Objects never move into the nursery and it is empty after
+every collection, so the list empties at each update. Nothing on a lookup's
+path allocates; `set` and `remove` make their allocations first, then hash.
+A map shared by threads that only read it is brought up to date by the
+first that finds it out of date, under a lock (`hxmc_idhash_lock`), which
+stores the count last. The cost: nothing per object (no header bits), two
+counters in the collector, and in each map used after collections the
+entries added young since the last one (after a minor collection) or all
+of them (after a major one, which copied all of them anyway). The header's
+16-bit identity hash (`hxmc.Native.objHash`, set when first asked) stays
+for other uses; WasmGC, which has no addresses, hashes ObjectMap's keys
+with it (the engine object's, which never moves). `Map<SomeEnum, V>` is
+upstream's `EnumValueMap` (a balanced tree ordered by the constructors'
+indices and parameters), not an identity map.
+
+`hxmc/test/cases/ObjectMapGc.hx` checks maps across collections (keys
+added young, removals, keys that never move, keys allocated in the old
+space, threads reading one map), natively, on wasm32 and on WasmGC
+(`GcCheck`); `make bench-maps` measures them (`hxmc/test/bench/MapBench.hx`;
+the numbers of 2026-10-20 below, Linux x86-64, nanoseconds per operation,
+the fastest of 11 rounds (a range: two runs), before (16-bit header hashes, a 4-byte index
+without hashes, tombstones, up to 3/4 full) and after):
+
+| | 10k keys before | after | 1M keys before | after | Go 1.24, 1M |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ObjectMap get (hit) | 9.9 | 8.2 | 152 | 116-133 | 125 |
+| exists (hit) | 8.9 | 8.0 | 160 | 96-117 | 86 |
+| get (miss) | 12.1 | 4.0 | 137 | 54 | 45 |
+| set (insert) | 32 | 23 | 151 | 123-134 | 181 |
+| set (update) | 11.3 | 10.0 | 167 | 93-131 | 107 |
+| remove + set | 47 | 37 | 375 | 377-381 | 196 |
+| StringMap get (hit) | 11.0 | 9.6 | 69 | 58 | 144 |
+
+A lookup in a large map is two cache misses (the index, the entry), as in
+Go's; before, the 16-bit header hashes collided past 65,536 keys and their
+probes read the entries. The TypeScript compiler's port (tsc-haxe, the
+ts6-compiler check) runs 2.3% fewer instructions (ObjectMap.get 1.10 to 0.73
+billion, the header hash's 0.22 billion gone; bringing indexes up to date
+0.08 billion of 28.7), the port's self-build 0.9% fewer.
+
 ## Module cache
 
 The compilation server's HXB module cache, made durable
@@ -638,11 +709,11 @@ the framework's `NativeActivity` loads (no Java, no `classes.dex`, no SDK or
 NDK at build time):
 
 ```sh
-haxe -cp packages/os/src -cp packages/gfx/src -cp packages/gfx/examples -main Cube \
-  --custom-target hxmc=bin/cube.apk -D hxmc.target=android-arm64 -D hxmc.android-package=org.example.cube
-adb install -r bin/cube.apk
-adb shell am start -n org.example.cube/android.app.NativeActivity
-adb logcat -s hxmc        # what the app prints (stdout and stderr)
+haxe -cp hxmc/test/android -main AndroidHello \
+  --custom-target hxmc=bin/hello.apk -D hxmc.target=android-arm64 -D hxmc.android-package=org.example.hello
+adb install -r bin/hello.apk
+adb shell am start -n org.example.hello/android.app.NativeActivity
+adb logcat -s hxmc        # its line
 ```
 
 | Option | |
@@ -686,22 +757,17 @@ address (`Mem.target()` 9 and 10: `Mem.target() >= 9` is Android, `Mem.os()`
 is Linux's). Other libraries (`libandroid.so`, `liblog.so`, `libEGL.so`) are
 imported unversioned; `@:hxmc.lib("libEGL.so.1")` names `libEGL.so` there.
 
-The app (`packages/os`, `hxmc.os.android`): the export
-`ANativeActivity_onCreate` (no-GC Haxe, `Activity.hx`, what the NDK's
-`android_native_app_glue` does in C) sets the activity's callbacks, sends
-stdout and stderr to logcat (tag `hxmc`) and starts the program's thread,
-where the runtime starts (the generated `main`) with an `ALooper` watching
-a pipe of the callbacks' commands; the callbacks run on the UI thread, which
-the runtime does not know, and wait for the ones whose state the program
-must take (a window created or going, an input queue, pause, destroy).
-`AndroidWindow` is the activity's window behind `Window`, `App.run` polls
-the looper (input queue: touches as in the browser, `hxmc.os.TouchDrag`:
-a tap a click, a drag `Scroll`s at where it started that glide when let
-go, keys as X11 KeySyms), draws only with a window and not paused,
-and sleeps in the looper otherwise; a window taken by the system is
-`Surface.lost` (gfx lets go of its EGL surface first) and a `Suspend`
-event, a new one `Resume`. `packages/gfx`'s GL back end is EGL's default
-display on the `ANativeWindow`, GLES 3.0 from `libGLESv3.so`.
+The app: the program exports `ANativeActivity_onCreate` (`@:hxmc.export`, in
+no-GC Haxe: it runs on the activity's UI thread, which the runtime does not
+know), which NativeActivity calls with the activity; it sets the activity's
+callbacks and starts the program's thread, where the runtime starts (the
+generated `main`, called as C's). `hxmc/test/android/AndroidHello.hx` is the
+smallest such app (a thread, the program, a line to logcat through
+`liblog`, the activity finished); a library that gives programs windows,
+input and a loop on Android does what the NDK's `android_native_app_glue`
+does in C, in the same way (universe's `@hxmc/os`: a looper watching a pipe
+of the callbacks' commands, stdout and stderr to logcat, EGL on the
+`ANativeWindow`).
 
 The APK (`hxmc/src/hxmc/android/Apk.hx`): `AndroidManifest.xml` in binary
 XML (`Axml.hx`: `hasCode="false"`, `NativeActivity` with
@@ -712,68 +778,35 @@ library stored and aligned to 16 KB (the rest to 4 bytes: what `zipalign -P
 in plain Haxe (`P256.hx`, RFC 6979's deterministic nonces, so an APK signs
 the same way each time; the self-signed certificate `Der.hx` writes) with a
 debug key kept in the user's cache directory, so reinstalls keep their
-signature. The cube's APK: 296 KB (arm64; its library 279 KB), 280 KB
-(x86-64); a hello world's library 108 KB and 92 KB.
+signature. AndroidHello's APK: about 125 KB (its library about 108 KB on
+arm64, 92 KB on x86-64).
 
-Views and Java (no Java compiler or SDK either): JNI is bound in Haxe
-(`packages/os`, `hxmc.os.android.Jni`: `JNIEnv` and `JavaVM` are function
-tables behind a pointer, bound by the same build macro as COM's vtables,
-`hxmc.os.VTable`; Java's methods called with the `*A` variants, an array
-of `jvalue`; classes found through the activity's class loader; a Java
-exception thrown again as a Haxe one with its text). Views live on Java's
-main thread, which the runtime did not start: `MainThread` hands it
-functions through a pipe its looper watches (`run` waits, handling the
-activity's commands meanwhile), the first of which makes it a Haxe thread
-(`NativeThread.attach`, `hxmc/std/hxmc/rt/Threads.hx`: a record and a
-shadow stack, safe whenever it is back in Java), and runs frames from
-Choreographer (`AChoreographer_postFrameCallback64`). Java calls back
-through a few classes in a `classes.dex` that hxmc writes
+Views and Java (no Java compiler or SDK either): Java calls back through a
+few classes in a `classes.dex` that hxmc writes
 (`hxmc/src/hxmc/android/Dex.hx`: a minimal DEX 035 writer, the pools
 sorted as the runtime requires, the map, the SHA-1 signature and Adler-32
 checksum, and a reader that checks that structure; `Glue.hx`: the classes,
 written as Dalvik instructions): `org.hxmc.Glue`, one listener for every
 kind of widget (click, text, checked, progress, editor action, layout
-change, surface holder, key), whose methods call one static native,
-registered with `RegisterNatives` (`hxmc.os.android.Glue`); and
-`org.hxmc.Activity`, a `NativeActivity` that gives back the surface and the
-input queue NativeActivity took, so that its window draws views. Apk adds
-`classes.dex` (`hasCode="true"`) when the program uses the Glue, and
-makes `org.hxmc.Activity` the activity, in the system's
-`Theme.DeviceDefault.DayNight`. `packages/ui`'s `hxmc.ui.native` has an
-Android backend on that (`AndroidBackend`: `android.widget`'s views in an
-`AbsoluteLayout`, laid out by ui's flexbox in dp, measured by the views;
-accessibility is the views'): NativeForm's APK (`AndroidNativeTest`) is
-1.91 MB (arm64), 1.81 MB (x86-64), most of it ui's core; `classes.dex`
-3 KB.
+change, surface holder, key), whose methods call one static native, which
+the program registers with `RegisterNatives`; and `org.hxmc.Activity`, a
+`NativeActivity` that gives back the surface and the input queue
+NativeActivity took, so that its window draws views. Apk adds `classes.dex`
+(`hasCode="true"`) when the program has the Glue's native
+(`hxmc.os.android.Glue.event`, `Glue.USED_BY`), and makes
+`org.hxmc.Activity` the activity, in the system's
+`Theme.DeviceDefault.DayNight`, when it sets the activity's content
+(`Glue.VIEWS_USED_BY`): `hxmc/test/android/AndroidViews.hx` has both, as
+universe's `@hxmc/os` (JNI bound in Haxe, views on Java's main thread) does;
+`classes.dex` is 3 KB.
 
-Mixing GPU and native views: a GPU view among views is a `SurfaceView`
-(`hxmc.os.android.ChildSurface`) whose holder's callbacks make its surface
-the `ANativeWindow` of an `hxmc.os.Surface`, as the activity's window is in
-the GPU-only case: gfx's GL back end makes its EGL surface on it, lets go
-of it in `surfaceDestroyed` (`Surface.lost`) and makes one on the next, on
-the main thread's frames; `hxmc.ui.native.android.GpuView` is the node
-for it in a `NativeHost`, laid out like the others. A native control in a
-drawn window only for text: `Window.startTextInput` on Android
-(`hxmc.os.android.TextInput`, enabled by ui's `UiWindow`) focuses a hidden
-`EditText` in NativeActivity's window and shows the soft keyboard; what the
-input method composes comes as `TextEditing`, what it commits as
-`TextInput` (the field emptied again); keys still come through the input
-queue, which the system serves before the focused view. A program that
-never takes text keeps neither (nor `classes.dex`).
-
-Checks: `hxmc/test/ApkCheck.hx` (`make android-check`: the zip, the
-manifest read back, the library's ELF, the signature's digest and
-signature, `classes.dex` read back by `Dex.check`; `zipalign`, `aapt`,
-`apksigner`, `dexdump` where installed), `make shared-check`, and on a
-device or emulator (`make android-device-check`; CI: an x86-64 emulator)
-`packages/gfx/test/android.sh` and `packages/ui/test/android-native.sh`
-(the form's own checks on the device, uiautomator's accessibility dump,
-taps and text typed through the input method) and `android-mix.sh` (the
-cube in a `GpuView` among views, its surface taken by Home and given back;
-the soft keyboard for a drawn window, keys, a composition and a commit),
-`packages/os/test/android-touch.sh` (a fling in a drawn scroll box, which
-glides on), android.sh also a drag held on the cube and a fling; `make
-touch-check` runs `TouchDrag`'s own test on the host. Not yet: one ABI per APK,
+Checks: `hxmc/test/ApkCheck.hx` (`make android-check`: AndroidHello and
+AndroidViews, the zip, the manifest read back, the library's ELF, the
+signature's digest and signature, `classes.dex` read back by `Dex.check`;
+`zipalign`, `aapt`, `apksigner`, `dexdump` where installed), `make
+shared-check`, and on a device or emulator (`make android-device-check`; CI:
+an x86-64 emulator) `hxmc/test/android/android.sh` (AndroidHello's line in
+logcat). Not yet: one ABI per APK,
 release signing (a keystore), icons and resources, the clipboard
 ([plans/targets.md](plans/targets.md#android)).
 
@@ -791,10 +824,10 @@ an output ending in `.app` an app bundle, `.ipa` the bundle zipped (no
 Xcode or SDK at build time):
 
 ```sh
-haxe -cp packages/os/src -cp packages/gfx/src -cp packages/gfx/examples -main Cube \
-  --custom-target hxmc=bin/Cube.app -D hxmc.target=ios-sim-arm64 -D hxmc.ios-bundle-id=org.example.cube
-xcrun simctl install booted bin/Cube.app
-xcrun simctl launch --console-pty booted org.example.cube   # what the app prints
+haxe -cp hxmc/test/ios -main IosHello \
+  --custom-target hxmc=bin/Hello.app -D hxmc.target=ios-sim-arm64 -D hxmc.ios-bundle-id=org.example.hello
+xcrun simctl install booted bin/Hello.app
+xcrun simctl launch --console-pty booted org.example.hello   # what the app prints
 ```
 
 | Option | |
@@ -820,49 +853,26 @@ identified by the bundle id, its CodeDirectory's special slots binding the
 `Info.plist`, an empty requirement set and `CodeResources` (and the
 entitlements), as `codesign -s -` signs, which `codesign --verify` accepts
 and the simulator runs. An `.ipa` is the bundle under `Payload/`, stored,
-the executable with mode 0755. The cube's executable: 269 KB, its `.ipa`
-273 KB; a hello world's 134 KB; IosTest's 651 KB.
+the executable with mode 0755. A hello world's executable: 134 KB.
 
-The app (`packages/os`, `hxmc.os.uikit`): UIKit wants `UIApplicationMain`
-on the main thread before any window, and it never returns. A program
-that uses the os package has `UIKitApp`'s export `hxmc_ui_main`, which
-hxmc's generated `main` runs instead of the program's body (DataGen, on
-the big stack the body would have had): it makes the app delegate's class
-at run time and calls `UIApplicationMain`; once the app has launched, a
-timer on the main run loop runs the program's body (its static
-initializers, then `main`) inside UIKit's loop, and `App.run` turns that
-loop itself without waiting (`CFRunLoopRunInMode`, as SDL does). Nothing
-runs before the body that needs a static's initializer. `UIKitWindow` is
-the one `UIWindow`, its root view controller's view an `HxmcView` (a
-`UIView` subclass made at run time, `+layerClass` `CAMetalLayer`): gfx's
-Metal back end draws to the layer as on macOS (Surface kind `Cocoa`).
-Touches (the first finger down) are as on Android and in the browser
-(`hxmc.os.TouchDrag`: a tap a click, a drag `Scroll`s with
-`Mods.TOUCH`, a glide when let go); the view's size
-and the safe area (`Window.safeTop`, `safeLeft`, `safeBottom`,
-`safeRight`, in pixels) are measured in `layoutSubviews` and
-`safeAreaInsetsDidChange` (a Resize event when either changes,
-ScaleChange when the scale does); the app delegate's background and
-foreground callbacks are Suspend and Resume (no frames are drawn in the
-background: iOS refuses GPU work there; the layer stays, so the Surface is
-not lost). `UIPasteboard` is the clipboard and the trait collection the
-dark mode. Not yet: keys and text input (a `UIKeyInput` view, as macOS's
-text view), multiple touches, UIScene (the app delegate's lifecycle is
-what the declared SDK gets).
+The app: a program runs as on any other target, its `main` called by the
+generated `main` (`hxmc/test/ios/IosHello.hx`: a line printed, then the
+process ends). UIKit wants `UIApplicationMain` on the main thread before
+any window, and it never returns: a program that defines
+`hxmc_ui_main` (`DataGen.UI_MAIN`; universe's `@hxmc/os`, `UIKitApp`) has the
+generated `main` run that instead of the program's body, on the big stack
+the body would have had, and runs the body itself once the app has
+launched (`mainBody`).
 
 Checks: `hxmc/test/IosCheck.hx` (`make ios-check IOS_TARGET=ios-arm64|ios-sim-arm64`:
 the bundle, `Info.plist` read back, the Mach-O's header and load commands,
 the code signature's CodeDirectory with its page hashes and special slots
 recomputed, `CodeResources`; `llvm-objdump` where installed, `codesign` and
 `plutil` on a Mac), and on a Mac with Xcode `make ios-sim-check`
-(`packages/gfx/test/ios.sh`: `codesign --verify`, a new simulator booted,
-IosTest installed and launched with its stdout in a file, the cube headless
-on the simulator's Metal against `cube.png`, frames in the window and its
-pixels lit, a tap posted on the Simulator's window (`SimTap.hx`, an hxmc
-program for macOS) as MouseDown and MouseUp, a fling (SimTap's quick drag)
-as scrolls at where it started that glide on, a screenshot, Settings and back
-as Suspend and Resume; CI's `ios` and `ios-simulator` jobs, the latter on
-an iPhone 17 simulator of iOS 26.2, Xcode 16.4's runner). Devices need
+(`hxmc/test/ios/ios.sh`: `codesign --verify`, `plutil -lint`, a new
+simulator booted, IosHello installed and launched with its stdout in a
+file, its line there; CI's `ios` and `ios-simulator` jobs, the latter on a
+macOS runner). Devices need
 what is left ([plans/targets.md](plans/targets.md#ios)): a signature by the
 developer's certificate (a CMS blob over the CodeDirectory), the
 provisioning profile (`embedded.mobileprovision`) and its entitlements
@@ -874,16 +884,14 @@ is where they go.
 
 WebAssembly is the seventh target, described with the others under Targets above; the playground and the npm fallback run the port as a wasm32-wasi module.
 
-Programs in the browser: a package whose externs are imports of a module
-(`@:hxmc.lib("hxmc_gfx")`) ships an `imports.mjs`, whose default export maps
-a host to import objects, possibly asynchronously (gfx requests the WebGPU
-adapter and device before `main`); `packages/os/browser.mjs` merges them,
-gives WASI preview 1 without a file system and runs `_start`. JavaScript
-objects live in its handle table, Haxe sees integers. The runtime stays
-intact after `_start` returns, and JavaScript calls a `@:hxmc.callback` by
-its index in the exported `__indirect_function_table` (corpus case
-`WasmCallback`): `@hxmc/os`'s canvas window runs its loop from
-`requestAnimationFrame` that way, paused while the canvas is out of view.
+Programs in the browser: externs that are imports of a module
+(`@:hxmc.lib("<module>")`) are satisfied by the page, which gives the
+module its imports (and WASI preview 1, without a file system) and runs
+`_start` (universe's packages do it with an `imports.mjs` per package and
+`@hxmc/os`'s `browser.mjs`). The runtime stays intact after `_start`
+returns, and JavaScript calls a `@:hxmc.callback` by its index in the
+exported `__indirect_function_table` (corpus case `WasmCallback`): a canvas
+window can run its loop from `requestAnimationFrame` that way.
 
 ### Memory
 
@@ -927,12 +935,11 @@ grown buffer as new external memory), which in the port's self-compile,
 growing by the old space's 1 MB chunks, made 400 collections. When
 memory.grow fails the runtime writes "out of memory: linear memory is N
 MB, growing it by M MB failed" and exits;
-`packages/os/browser.mjs` turns a RangeError of the browser's (a new
-instance's memory, an ArrayBuffer) into "out of memory: the browser refused
-N MB ...", which the islands' loader shows (`data-error`).
+a page can turn a RangeError of the browser's (a new instance's memory, an
+ArrayBuffer) into the same message (universe's `browser.mjs` does).
 
-The examples' memory (`memory.buffer.byteLength`, Chromium with a phone's
-emulation, after they start and after a few seconds of taps; the playground's
+The memory of the website's examples before the split (now universe's;
+`memory.buffer.byteLength`, Chromium with a phone's emulation, after they start and after a few seconds of taps; the playground's
 compiler after `--version` and after running a hello world with `--interp`),
 and the renderer's resident memory (the examples page alone: about 108 MB):
 
@@ -988,7 +995,7 @@ generated code does inline), whose `@:hxmc.wasmgc` classes and the
 `@:hxmc.anyHeap` ones are the only ones whose `@:hxmc.host` functions are
 bound; Math's transcendental functions, float
 formatting and parsing are the host's (`hxmc/bootstrap/wasmgc.mjs`, which
-runs a module under node; `packages/os/browser.mjs` gives the same host in
+runs a module under node; universe's `browser.mjs` gives the same host in
 a browser). So is the system (`GcSys`): files whole and by descriptor
 (positions kept by the host, node's fs having no seek), directories in the
 order the system lists them, the shell, processes (`sys.io.Process`: a
@@ -1038,7 +1045,7 @@ the branch an if on a constant does not take, are dropped before
 emission (`IrOpt.live`: what follows `if (Mem.os() == 3) {...; return;}`
 is another target's, as Mir drops it). The name section is written with
 `-debug`, `-D hxmc.symbols` or `HXMC_SYMBOLS=1`, as linear memory's.
-`make gfx-web-check` and `ui-web-check` run their browser tests on such
+universe's browser tests (`gfx-web-check`, `ui-web-check`) run on such
 builds too. A runtime function
 not covered yet fails the build with its name; `HXMC_GC_SURVEY=1` lists
 every such construct of a program instead (`=2` also writes the module,

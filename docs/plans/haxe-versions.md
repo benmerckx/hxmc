@@ -1,5 +1,12 @@
 # Any Haxe version
 
+**Parked** ([#10](https://github.com/benmerckx/hxmc/issues/10)): the ml2hx
+route is stalled. Generating the compiler from upstream's OCaml takes a lot
+of work and would tune the target towards OCaml's semantics to run it at
+upstream's speed, so the port stays hand-written and follows upstream
+forwards. The draft PR #9 holds where it got to; what follows is the plan
+as it stood.
+
 Goal: hxmc builds with the compiler of any Haxe release, chosen per
 project, 4.x (back to 4.0) included, and following a new upstream
 release is a regeneration, not a port by hand.

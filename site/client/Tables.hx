@@ -111,12 +111,10 @@ class Tables {
 		["self", "The port's own source, about 1,000 modules. Targets without threads or a file system reject it, in both compilers."],
 	];
 
-	// the compiler page's island (site/src/Pages.hx), around its Benchmarks
-	// and Target generators sections: globalThis.hxmcIslands.tables, called by
-	// the loader once they scroll into view
+	// the benchmarks page (site/benchmarks.html), its script at the end of the body
 	static function main() {
-		final islands:Dynamic = js.Syntax.code("globalThis.hxmcIslands || (globalThis.hxmcIslands = {})");
-		islands.tables = (el:Element, props:Dynamic) -> start();
+		start();
+		Info.fill();
 	}
 
 	static function start() {
