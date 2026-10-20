@@ -823,7 +823,9 @@ class Dyn {
 		}
 	}
 
-	// { a : 1, b : 2 }
+	// { a : 1, b : 2 }: the structure's own fields (its layout's, by name),
+	// then those added at run time (slot 0, in the order they were added):
+	// Reflect.fields' order
 	static function anonToString(o:Dynamic):String {
 		var ty = ty(tindex(o));
 		var b = new StringBuf();
@@ -836,6 +838,17 @@ class Dyn {
 			b.add(" : ");
 			f = field(ty, i);
 			b.add(stdString(boxSlot(o, fSlot(f), fKind(f))));
+		}
+		// (read again after each value printed: printing allocates, and a
+		// toString may add fields)
+		var i = 0;
+		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
+			b.add(n++ == 0 ? " " : ", ");
+			var k:Int = Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i);
+			b.add(Names.fidStr(k));
+			b.add(" : ");
+			b.add(stdString(Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i + 1)));
+			i += 2;
 		}
 		b.add(n > 0 ? " }" : "}");
 		return b.toString();
@@ -1099,13 +1112,25 @@ class Dyn {
 	public static function setField(o:Dynamic, name:String, v:Dynamic):Void
 		dynSet(o, name, v);
 
+	// a field added at run time (slot 0's pairs, which stay without holes:
+	// the others keep their order); not one of the structure's own: its
+	// layout is fixed, and its type index, which the generated code reads
+	// as a constant, cannot change (docs/hxmc.md, "Anonymous structures")
 	public static function deleteField(o:Dynamic, name:String):Bool {
 		if (Str.isNull(o) || tk(ty(tindex(o))) != TK_ANON || Str.isNull(Mem.getRef(Mem.addr(o), 0))) return false;
 		var i = overflowFind(o, fid(name));
 		if (i < 0) return false;
-		var ov = Mem.addr(Mem.getRef(Mem.addr(o), 0));
-		Mem.setRef(ov, 8 * i, null);
-		Mem.setRef(ov, 8 * (i + 1), null);
+		var n = nslots(Mem.getRef(Mem.addr(o), 0));
+		if (n <= 2) {
+			Mem.setRef(Mem.addr(o), 0, null);
+			return true;
+		}
+		var nv = Mem.alloc(n - 2, T_OVERFLOW, K_PARR);
+		var ov = Mem.getRef(Mem.addr(o), 0);
+		var j = 0;
+		for (k in 0...n)
+			if (k != i && k != i + 1) Mem.setRefBarrier(nv, 8 * j++, Mem.getRefAt(Mem.addr(ov), 0, k));
+		Mem.setRefBarrier(o, 0, nv);
 		return true;
 	}
 

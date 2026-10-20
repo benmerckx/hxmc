@@ -125,10 +125,42 @@ class GcDyn {
 				b.toString();
 			case 8: "<function>";
 			case 9: @:privateAccess Str.ofI64(W.unboxI64(v));
+			case 10: anonString(v);
 			// (the runtime type's name, as hxmc.rt.Dyn's)
 			case 11 if (W.naKind(v) >= 0): "hxmc.NativeArray";
 			case _: "[object]";
 		}
+
+	// an anonymous structure: { a : 1, b : 2 }, its own fields (its layout's,
+	// by name), then those added (GcFields, in the order they were added), as
+	// hxmc.rt.Dyn.anonToString
+	static function anonString(o:Dynamic):String {
+		var b = new StringBuf();
+		b.addChar("{".code);
+		var n = 0;
+		var names:Array<String> = W.fieldNames(o);
+		if (names != null)
+			for (i in 0...names.length) {
+				b.add(n++ == 0 ? " " : ", ");
+				b.add(names[i]);
+				b.add(" : ");
+				b.add(string(W.objGet(o, i)));
+			}
+		var x:GcNative.GcFields = W.anonOverflow(o);
+		if (x != null) {
+			var i = 0;
+			// (the length read again: a toString may add fields)
+			while (i < x.names.length) {
+				b.add(n++ == 0 ? " " : ", ");
+				b.add(x.names[i]);
+				b.add(" : ");
+				b.add(string(x.values[i]));
+				i++;
+			}
+		}
+		b.add(n > 0 ? " }" : "}");
+		return b.toString();
+	}
 
 	// an enum value: Name(p1,p2), as hxmc.rt.Dyn.stdString
 	static function enumString(v:Dynamic):String {

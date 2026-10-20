@@ -1,0 +1,69 @@
+exit 0
+AnonFields.hx:55: { x : 1, y : two }
+AnonFields.hx:56: [x,y]
+AnonFields.hx:59: { a : 1, b : 2 }
+o { x : 1, y : two } <x=1 y=two>
+p { a : 1, b : 2 } <a=1 b=2>
+empty {} <>
+concat { a : 1, b : 2 } { a : 1, b : 2 } <{ x : 1, y : two }>
+array [{ x : 1, y : two },{ a : 1, b : 2 },{}]
+nested { in1 : { x : 1, y : two }, in2 : { a : 1, b : 2 } } <in1=<x=1 y=two> in2=<a=1 b=2>>
+outer { inner : { a : 1, b : 2 }, list : [{ x : 1, y : two }] } <inner=<a=1 b=2> list=[<x=1 y=two>]>
+enum One({ x : 1, y : two }) Two(3,{ a : 1, b : 2 }) [One({ a : 1, b : 2 })]
+map [k => { x : 1, y : two }]
+AnonFields.hx:88: { i : 7, f : 1.5, b : true, s : str, n : null, a : [1,2], o : { z : 0, w : deep } }
+kinds { i : 7, f : 1.5, b : true, s : str, n : null, a : [1,2], o : { z : 0, w : deep } } <a=[1 2] b=true f=1.5 i=7 n=null o=<w=deep z=0> s=str>
+kinds true null 7
+json {"x":1,"y":"two"} <x=1 y=two>
+json {"a":1,"b":2} <a=1 b=2>
+json {"i":7,"f":1.5,"b":true,"s":"str","n":null,"a":[1,2],"o":{"z":0,"w":"deep"}} <a=[1 2] b=true f=1.5 i=7 n=null o=<w=deep z=0> s=str>
+copy of { a : 1, b : 2 } <a=1 b=2>
+copy { a : 1, b : 20, c : 30 } <a=1 b=20 c=30>
+compare 0 true
+eq true false true TObject TObject true
+enumEq true false
+fields a,b true true false
+field 1 2 null 2 null
+set again { x : 11, y : two } <x=11 y=two>
+delete true false false
+deleted { a : 1, b : 2, e : 4 } <a=1 b=2 e=4>
+deleted a,b,e 3 false null 4
+added again { a : 1, b : 2, e : 4, c : 33 } <a=1 b=2 c=33 e=4>
+delete true true true
+only own { a : 1 } <a=1>
+only own 1
+one added { a : 1, f : 5 } <a=1 f=5>
+copy deleted { a : 1 } <a=1>
+its original { a : 1, f : 5 } <a=1 f=5>
+all deleted {} <>
+all deleted 0
+delete own false true 1
+delete own { a : 1, b : x, c : 3 } <a=1 b=x c=3>
+serialized oy1:xi11y1:yy3:twog
+unserialized { x : 11, y : two } <x=11 y=two>
+serialized oy1:ai1y1:bi2g
+unserialized { a : 1, b : 2 } <a=1 b=2>
+serialized oy1:ii7y1:fd1.5y1:bty1:sy3:stry1:nny1:aai1i2hy1:ooy1:zzy1:wy4:deepgg
+unserialized { i : 7, f : 1.5, b : true, s : str, n : null, a : [1,2], o : { z : 0, w : deep } } <a=[1 2] b=true f=1.5 i=7 n=null o=<w=deep z=0> s=str>
+serialized oy1:ai1y1:fi5g
+unserialized { a : 1, f : 5 } <a=1 f=5>
+keys a,b true 2
+values 1,2 a=1,b=2
+da set { a : 1, b : 2, q : 9 } <a=1 b=2 q=9>
+da remove true false
+da removed { a : 1, b : 2 } <a=1 b=2>
+da copy { a : 1, b : 2 } <a=1 b=2>
+struct 11 12 two null
+struct { x : 142, y : two!, z : 9 } <x=142 y=two! z=9>
+struct 7 1.5 true str 10.5
+calls 5 5 5 9 true
+own set { a : 100, b : 200 } <a=100 b=200>
+AnonFields.hx:193: { child : { leaf : { v : 1, w : 2 } } }
+root { child : { leaf : { v : 1, w : 2 } } } <child=<leaf=<v=1 w=2>>>
+many { id : 0, s : v0, b : [0], c : { n : 0, m : m0 } } <b=[0] c=<m=m0 n=0> id=0 s=v0>
+many { id : 500, s : v500, b : [500], c : { n : 500, m : m500 } } <b=[500] c=<m=m500 n=500> id=500 s=v500>
+many { id : 1000, s : v1000, b : [1000], c : { n : 1000, m : m1000 } } <b=[1000] c=<m=m1000 n=1000> id=1000 s=v1000>
+many { id : 1500, s : v1500, b : [1500], c : { n : 1500, m : m1500 } } <b=[1500] c=<m=m1500 n=1500> id=1500 s=v1500>
+many { id : 2000, s : v2000, b : [2000], c : { n : 2000, m : m2000 } } <b=[2000] c=<m=m2000 n=2000> id=2000 s=v2000>
+many { id : 2500, s : v2500, b : [2500], c : { n : 2500, m : m2500 } } <b=[2500] c=<m=m2500 n=2500> id=2500 s=v2500>
+many 429 129450 1931627 { id : 2996, s : v2996, b : [2996], c : { n : 2996, m : m2996 } }

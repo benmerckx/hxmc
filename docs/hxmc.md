@@ -176,6 +176,34 @@ A change of the runtime's
 interface or of the IR's conventions needs a tool that knows it: build once
 against the previous runtime first, or bootstrap again.
 
+## Anonymous structures
+
+An object literal's layout is a shape (`ir.ShapeInfo`): slot 0, then its
+fields sorted by name (Int and Bool two to a slot), a runtime type of kind
+`TK_ANON` whose field table is sorted by field id (the program's names
+numbered in sorted order: by name). Structural reads and writes test the
+shape's type index or go through an inline cache, else the runtime
+(`hx_anon_get_slow`, `hx_anon_set_slow`). A field the layout lacks (`o.x =
+1` on a Dynamic, `Reflect.setField`; the Unserializer starts from `{}`,
+the macro bridge from the closest shape) is added in slot 0: an array of
+(field id, value) pairs in the order they were added (`Dyn.overflowSet`).
+What reads a structure's fields reads both: structural and Dynamic access,
+`Reflect.fields`, `hasField`, `field`, `copy`, `deleteField`, and
+`Std.string`, which prints `{ a : 1, b : 2 }` (the corpus' format, from
+hxc; Eval prints `{a: 1, b: 2}`): the structure's own fields by name, then
+the added ones in the order they were added. That is `Reflect.fields`'
+order, and so `haxe.Json`'s and `haxe.Serializer`'s (Eval's is its own, by
+hash). `Reflect.deleteField` removes an added field (the pairs left without
+a hole; added again, it comes last); a field of the structure's own stays
+and the call answers false (Eval removes it): the layout is fixed, the
+type index cannot change (the generated code reads it as a constant,
+`Opt.MConst`: its loads are shared and hoisted), and a mark beside the
+field would not be seen by the inline caches' stores. WasmGC keeps the
+added fields in a `GcFields` (names, values) beside the layout's struct
+fields, with the same order, printing and deletion (`GcDyn.anonString`,
+`GcNative`). `hxmc/test/cases/AnonFields.hx` checks each of these against
+the reference's `--interp`, natively and on WasmGC (`GcCheck`).
+
 ## Reachability
 
 Haxe's default DCE (`-dce std`) keeps every field of a user class, and the
