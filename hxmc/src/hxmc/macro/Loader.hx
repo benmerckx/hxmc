@@ -47,7 +47,7 @@ class Loader {
 	static inline var MAP_ANONYMOUS = 0x20;
 	static inline var TS = 112; // Abi.TYPE_SIZE
 
-	static var host:Null<Map<String, {k:String, v:Int}>> = null;
+	static var host:Null<SymFile.HostSyms> = null;
 	// what the bundles loaded so far define (their numbers, globals, type objects, functions)
 	static var xb = new Map<String, {k:String, v:Int}>();
 	static var hostNtypes = 0;
@@ -77,22 +77,17 @@ class Loader {
 	public static function isBundleObject(o:Dynamic):Bool
 		return host != null && Mem.getU16(Mem.addr(o), -4) >= hostNtypes;
 
-	static function hostSyms():Map<String, {k:String, v:Int}> {
+	static function hostSyms():SymFile.HostSyms {
 		if (host != null) return host;
 		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
 		var path = exe + ".syms";
 		if (!sys.FileSystem.exists(path)) throw "no symbol map " + path + " (a compiler built with -D hxmc.jit writes it)";
-		var m = new Map();
-		for (l in sys.io.File.getContent(path).split("\n")) {
-			var a = l.split(" ");
-			if (a.length == 3) m.set(a[0], {k: a[1], v: Std.parseInt(a[2])});
-		}
-		host = m;
+		host = new SymFile.HostSyms(SymFile.read(path));
 		hostNtypes = Mem.getI32(Mem.sym("rt_ntypes"), 0);
 		hostNsigs = Mem.getI32(Mem.sym("rt_nsigs"), 0);
 		nextType = hostNtypes;
 		nextSig = hostNsigs;
-		return m;
+		return host;
 	}
 
 	static var debug = Sys.getEnv("HXMC_MACRO_DEBUG") == "1";

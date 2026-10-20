@@ -619,13 +619,15 @@ class Driver {
 				sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
 				// (each function's fingerprint: code loaded at run time calls this
 				// compiler's native function where its own is the same, interp.MirRun)
-				var fps = new StringBuf();
+				// (sorted by symbol, as the .syms: macro.SymFile looks them up in place)
+				var fps = [];
 				for (f in prep.p.funcs) {
 					var fp = new Fingerprint(prep, null);
 					fp.func(f);
-					fps.add(prep.funcSym(f) + " " + fp.key() + "\n");
+					fps.push({sym: prep.funcSym(f), key: fp.key()});
 				}
-				sys.io.File.saveContent(out + ".fps", fps.toString());
+				fps.sort((a, b) -> a.sym < b.sym ? -1 : a.sym > b.sym ? 1 : 0);
+				sys.io.File.saveContent(out + ".fps", [for (x in fps) x.sym + " " + x.key + "\n"].join(""));
 			}
 			exe;
 		};

@@ -870,8 +870,11 @@ class ModuleCache {
 		var d = Common.adaptDefinesToMacroContext(c.defines);
 		c.defines.values = d.values;
 		c.defines.definesSignature = null;
-		c.platform = core.Globals.Platform.Eval;
-		Common.initPlatform(c);
+		// (-D hxmc.mir-macros: the platform the hook sets up, interp.MirMacros)
+		if (typing.MacroContext.macroPlatformHook != null) typing.MacroContext.macroPlatformHook(c) else {
+			c.platform = core.Globals.Platform.Eval;
+			Common.initPlatform(c);
+		}
 		return {sign: core.Define.getSignature(c.defines), values: c.defines.values};
 	}
 

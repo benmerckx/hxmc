@@ -235,19 +235,13 @@ class MirRun {
 		return cand;
 	}
 
-	static var fpsCache:Null<Map<String, String>> = null;
+	static var fpsCache:Null<hxmc.macro.SymFile.HostFps> = null;
 
 	// the compiler's functions' fingerprints (<exe>.fps, beside <exe>.syms)
-	static function hostFps():Map<String, String> {
+	static function hostFps():hxmc.macro.SymFile.HostFps {
 		if (fpsCache != null) return fpsCache;
 		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
-		var m = new Map<String, String>();
-		if (sys.FileSystem.exists(exe + ".fps"))
-			for (line in sys.io.File.getContent(exe + ".fps").split("\n")) {
-				var sp = line.indexOf(" ");
-				if (sp > 0) m.set(line.substr(0, sp), line.substr(sp + 1));
-			}
-		return fpsCache = m;
+		return fpsCache = new hxmc.macro.SymFile.HostFps(hxmc.macro.SymFile.read(exe + ".fps"));
 	}
 
 	// which of the std's types stay the compiler's own (Guest.facts: those the
@@ -255,7 +249,7 @@ class MirRun {
 	// extends, whose supertypes are shared (an instance test is a type index
 	// in a class's span: a new class has no place in the compiler's); a type
 	// not shared has its statics and initializer of its own
-	public static function unshare(facts:Dynamic, host:Map<String, {k:String, v:Int}>, l:hxmc.ir.Lower, e:hxmc.ir.Facts, com:context.Common.CommonContext, ?types:Array<ModuleType>) {
+	public static function unshare(facts:Dynamic, host:hxmc.macro.SymFile.HostSyms, l:hxmc.ir.Lower, e:hxmc.ir.Facts, com:context.Common.CommonContext, ?types:Array<ModuleType>) {
 		var types:Array<Dynamic> = facts.types;
 		var fids = new Map<String, Int>();
 		for (f in (facts.fields : Array<Dynamic>)) {
