@@ -465,8 +465,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var prog = l.prog;
 		phase("step start");
 		var d = new Driver(prog, "", opts);
+		phase("driver (Prep)");
 		d.inlineCandidates();
-		phase("driver, inline candidates");
+		phase("inline candidates");
 		var prep = d.prep;
 		lastPrep = prep;
 		var e = prep.e;
