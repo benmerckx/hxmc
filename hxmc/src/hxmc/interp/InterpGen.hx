@@ -459,10 +459,12 @@ class InterpGen {
 		while (changed) {
 			changed = false;
 			for (b in post) {
-				var out = phiUse[b.id].copy();
+				// (in place: no set made per block and pass)
+				var out = liveOut[b.id], ow = out.w, pw = phiUse[b.id].w;
+				for (w in 0...ow.length)
+					ow[w] = pw[w];
 				for (s in b.succs)
 					if (reach[s.id]) out.union(liveIn[s.id]);
-				liveOut[b.id] = out;
 				var inn = liveIn[b.id], g = gen[b.id], k = kill[b.id];
 				for (w in 0...inn.w.length) {
 					var v = g.w[w] | (out.w[w] & ~k.w[w]);
