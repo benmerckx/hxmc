@@ -378,8 +378,13 @@ class DataGen {
 			data.buf.u32(0);
 			if (x.ifSym != null) ptrSym(data, x.ifSym) else data.buf.u64(0, 0); // 72 ifaces
 			data.buf.u32(t.tag); // 80 tag
-			data.buf.u32(t.single != null ? t.single + 1 : 0); // 84 a constructor's singleton: its rt_globals index + 1
-			if (x.ctSym != null) ptrSym(data, x.ctSym) else data.buf.u64(0, 0); // 88 ctors
+			// 84 a constructor's singleton: its rt_globals index + 1; a class's
+			// entry for Type.createInstance (Types.maker): 0 none, 1 no
+			// constructor, 2 + its signature: the function at 88
+			var mk = t.maker;
+			data.buf.u32(t.single != null ? t.single + 1 : mk != null ? (mk.fn != null ? 2 + mk.sig : 1) : 0);
+			// 88 an enum's constructors; a class's entry for Type.createInstance
+			if (x.ctSym != null) ptrSym(data, x.ctSym) else if (mk != null && mk.fn != null) ptr(data, mk.fn) else data.buf.u64(0, 0);
 			data.buf.u32(x.ss != null ? x.ss.length : 0); // 96 nstatics
 			data.buf.u32(0);
 			if (x.ssSym != null) ptrSym(data, x.ssSym) else data.buf.u64(0, 0); // 104 statics

@@ -1,0 +1,27 @@
+exit 0
+CreateInstance.hx:10: zero 1
+CreateInstance.hx:12: 3 x true
+CreateInstance.hx:14: 1 2.5 true s [1,2] 1
+CreateInstance.hx:18: 1 null 5 1.5 true dflt
+CreateInstance.hx:19: 1 b 5 1.5 true dflt
+CreateInstance.hx:20: 1 b 7 2.5 false t
+CreateInstance.hx:21: 1 null 5 1.5 true dflt
+CreateInstance.hx:22: 7 3
+CreateInstance.hx:26: 5 y true true sub
+CreateInstance.hx:28: 60 own 1.5 subown
+CreateInstance.hx:31: boxed 42
+CreateInstance.hx:32: 16
+CreateInstance.hx:33: 9
+CreateInstance.hx:35: 42
+CreateInstance.hx:38: 7 r Two
+CreateInstance.hx:40: Sub 8
+CreateInstance.hx:43: 1
+CreateInstance.hx:46: 200 OnlyNew true
+CreateInstance.hx:51: caught no
+CreateInstance.hx:56: failed 12 true
+CreateInstance.hx:61: plain
+CreateInstance.hx:64: 3
+CreateInstance.hx:67: [3]
+CreateInstance.hx:71: Null Access
+CreateInstance.hx:78: 6890
+CreateInstance.hx:85: Instance constructor not found: NoCtor

@@ -54,6 +54,14 @@ class ClassInfo {
 	// (Lower.reflectStatics); Reach keeps those live code can reach (null: no
 	// live code has the class value)
 	public var statics:Null<Array<StaticEntry>> = null;
+	// what Type.createInstance calls on a new instance of the class, with the
+	// arguments: its constructor (a superclass's when it has none), or that
+	// constructor's entry for dynamic calls (numbers and Bools with default
+	// values nullable: Lower.defaultsEntry); fn null: no constructor at all
+	// (the call throws, as Eval's fails). Set for every class once the program
+	// can call Type.createInstance (Lower.makers); Reach keeps it where live
+	// code can have the class value (null: none)
+	public var maker:Null<{fn:Null<FuncInfo>}> = null;
 
 	public function new(name, ident, sup) {
 		this.name = name;

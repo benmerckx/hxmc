@@ -429,6 +429,14 @@ class Loader {
 					Mem.setI32(p, 4 * i, tyNum(cs[i]));
 				Mem.setPtr(e, 88, p);
 			}
+			// a class's entry for Type.createInstance (DataGen, Types.maker: 1 no
+			// constructor, 2 + its signature the function at 88)
+			var mk:Dynamic = t.maker;
+			if (mk != null && mk.fn == null) Mem.setI32(e, 84, 1);
+			if (mk != null && mk.fn != null) {
+				Mem.setI32(e, 84, 2 + num.get(mk.sig));
+				Mem.setPtr(e, 88, ptr(symAddr(mk.fn)));
+			}
 		}
 		// the new classes' and interfaces' statics (rt_static: fid, kind, index, rank,
 		// address; the bundle has them in the order Type.getClassFields lists them)

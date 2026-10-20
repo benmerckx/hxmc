@@ -117,6 +117,16 @@ class Types {
 	public static inline function ctor(ty:Ptr, i:Int):Int
 		return Mem.getI32At(Mem.getPtr(ty, 88), 0, i);
 
+	// a class's entry for Type.createInstance (hxmc.ir.ClassInfo.maker, where
+	// a constructor's singleton is): 0 none (no live code can have the class
+	// value), 1 no constructor (the call fails), 2 + s: makerFn, called as a
+	// bound method of signature s on the new instance
+	public static inline function maker(ty:Ptr):Int
+		return Mem.getI32(ty, 84);
+
+	public static inline function makerFn(ty:Ptr):Ptr
+		return Mem.getPtr(ty, 88);
+
 	public static inline function nstatics(ty:Ptr):Int
 		return Mem.getI32(ty, 96);
 

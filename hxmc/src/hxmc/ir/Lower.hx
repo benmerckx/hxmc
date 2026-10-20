@@ -504,6 +504,7 @@ class Lower {
 		return c.clPath.pack.length == 0 && c.clPath.name == name;
 
 	var methodsDone = 0; // classes whose every method is lowered
+	var makersDone = 0; // classes given their Type.createInstance entry (makers)
 
 	function drain() {
 		while (true) {
@@ -518,6 +519,9 @@ class Lower {
 					if (f.cfKind.match(Method(MethNormal | MethInline)) && funcOf(f) != null && !f.hasClassFieldFlag(CfExtern))
 						method(tc, f);
 			}
+			if (makers)
+				while (makersDone < tclasses.length)
+					maker(tclasses[makersDone++]);
 			while (pending.length > 0)
 				pending.shift()();
 			// every implementation of a dispatched selector, in every class seen so far
@@ -912,6 +916,7 @@ class Lower {
 		signature(fi, tf, null);
 		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, cf);
 		pending.push(guarded(fi, () -> lowerBody(fi, cf, () -> new FnLower(this, fi, null, null).run(tf))));
+		if (isCreateInstance(fi.name)) makers = true;
 		return fi;
 	}
 
@@ -1081,7 +1086,7 @@ class Lower {
 			}
 		} else signature(fi, tf, TRef(RObj(root)));
 		pending.push(guarded(fi, () -> lowerBody(fi, cf, () -> new FnLower(this, fi, ci, null).run(tf))));
-		defaultsEntry(fi, ci);
+		fi.dfltEntry = defaultsEntry(fi, ci);
 		return fi;
 	}
 
@@ -1090,16 +1095,17 @@ class Lower {
 	// numbers or Bools, its entry in the method table (DataGen.types: dynamic
 	// and structural calls) is this one, those arguments nullable
 	// (closureArgTy, as a closure of a function type with optional
-	// arguments), null meaning the default.
-	function defaultsEntry(fi:FuncInfo, ci:ClassInfo) {
-		if (fi.sret) return;
+	// arguments), null meaning the default (null: the method itself is the
+	// entry). A constructor's, for Type.createInstance: maker.
+	function defaultsEntry(fi:FuncInfo, ci:ClassInfo):Null<FuncInfo> {
+		if (fi.sret) return null;
 		var ds = defaults.get(fi);
-		if (ds == null) return;
+		if (ds == null) return null;
 		var tys = [for (i in 1...fi.args.length) closureArgTy(fi.args[i].ty, i < ds.length ? ds[i] : null)];
 		var differs = false;
 		for (i in 0...tys.length)
 			if (tys[i] != fi.args[i + 1].ty) differs = true;
-		if (!differs) return;
+		if (!differs) return null;
 		var w = new FuncInfo(fi.name + "__dflt", fi.module);
 		w.args.push(new Local(0, "this0", fi.args[0].ty));
 		for (i in 0...tys.length)
@@ -1107,9 +1113,48 @@ class Lower {
 		w.ret = fi.ret;
 		w.pos = fi.pos;
 		w.display = fi.display;
-		fi.dfltEntry = w;
 		prog.funcs.push(w);
 		pending.push(guarded(w, () -> lowerBody(w, null, () -> new FnLower(this, w, ci, null).forwardDefaults(fi))));
+		return w;
+	}
+
+	// Type.createInstance can be called: the lowering met the runtime's
+	// function (staticFunc; a program whose classes another one makes, as the
+	// compiler makes macro code's, may set it too). Every class seen then gets
+	// its entry (ClassInfo.maker), which Reach keeps where live code can have
+	// the class value; a program that never calls it gets none.
+	public var makers = false;
+
+	// the runtime's Type.createInstance (natively, on WasmGC): Reach's too
+	public static function isCreateInstance(name:String):Bool
+		return name == "hxmc_rt_Dyn_createInstance" || name == "hxmc_rt_gc_GcNative_createInstance";
+
+	// (a constructor's entry, shared by the subclasses calling it)
+	var ctorEntries = new Map<FuncInfo, FuncInfo>();
+
+	// c's entry for Type.createInstance (ClassInfo.maker): the constructor
+	// `new` calls (its own, else the nearest superclass's), its entry for
+	// dynamic calls where it has default values for numbers or Bools; none to
+	// call when no class of the chain has one (the call fails, as Eval's);
+	// no entry when an argument is a struct, which no array of Dynamic holds
+	function maker(c:TClass) {
+		var ci = classInfo(c);
+		var k = c;
+		while (k.clConstructor == null && k.clSuper != null)
+			k = k.clSuper.cls;
+		if (k.clConstructor == null) {
+			ci.maker = {fn: null};
+			return;
+		}
+		var f = ctor(k);
+		if (hasStruct(f)) return;
+		var e = ctorEntries.get(f);
+		if (e == null) {
+			e = defaultsEntry(f, classInfo(k));
+			if (e == null) e = f;
+			ctorEntries.set(f, e);
+		}
+		ci.maker = {fn: e};
 	}
 
 	public function ctor(c:TClass):FuncInfo {

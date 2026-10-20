@@ -313,6 +313,27 @@ with `-dce full` (`Reflect.field` gives null, `Type.getClassFields` does not
 list them). A class never used as a value has no table (WasmGC: nor an
 interface).
 
+`Type.createInstance`: once the lowering meets the runtime's function
+(`Dyn.createInstance`), every class gets an entry (`ClassInfo.maker`,
+`Lower.maker`): the constructor `new` calls (a superclass's when the class has
+none), or, where it has default values for numbers or Bools, its entry for
+dynamic calls taking those nullable (as a method's in the tables), so that
+missing trailing arguments and nulls take the default values, as on Eval.
+`Reach` keeps the entries of the classes whose value live code can have (as
+for the statics above: named, resolved by name, an instance's class, a
+superclass), whose constructors run then; the rest are dropped, and a program
+that never calls `Type.createInstance` has none (the same bytes as before).
+`rt_type` holds it where an enum constructor's singleton and constructors are
+(`Types.maker`: a function called as a bound method of the new instance, of
+the arguments' signature, through the dynamic call of `Reflect.callMethod`);
+the native macros' `Loader` writes a bundle's. A class without any
+constructor fails, as Eval's does (`Instance constructor not found`), as does
+one whose entry was dropped, or an extern class the runtime implements (its
+class value is `T_NONE`'s); `String`'s and `Array`'s are Eval's. WasmGC:
+`Meta.createInstance`, a dispatch on the class making the instance and calling
+the entry. With `Type.resolveClass` live too, every class's constructor and
+its signature's trampolines stay: the port would grow by 66 KB (0.34%).
+
 ## Native arrays
 
 `hxmc.NativeArray<T>` (`hxmc/std/hxmc/NativeArray.hx`) is fixed-size storage

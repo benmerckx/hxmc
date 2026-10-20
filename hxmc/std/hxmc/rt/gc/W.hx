@@ -94,6 +94,12 @@ extern class W {
 	// a shallow copy of a class instance or anonymous structure (its added fields not copied), else null
 	static function objCopy(o:Dynamic):Dynamic;
 	static function createEmpty(cl:Dynamic):Dynamic;
+	// Type.createInstance: a new instance of the class, the constructor of its
+	// entry (hxmc.ir.ClassInfo.maker) called with the arguments (those missing
+	// null), null when it has none to call; that entry: 0 none (Reach left it
+	// out), 1 no constructor, 2 a constructor
+	static function createInstance(cl:Dynamic, args:Array<Dynamic>):Dynamic;
+	static function makerKind(cl:Dynamic):Int;
 	static function enumOf(v:Dynamic):Dynamic;
 	static function enumIndex(v:Dynamic):Int;
 	static function enumNames(e:Dynamic):Dynamic;

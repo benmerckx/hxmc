@@ -144,6 +144,9 @@ class Uses {
 			for (s in bodies.get(f).body)
 				stmt(s);
 		}
+		// (the classes Type.createInstance makes: Meta.createInstance)
+		for (c in prog.classes)
+			if (c.maker != null && c.maker.fn != null) cls(c);
 	}
 
 	function cls(c:ClassInfo) {

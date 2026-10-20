@@ -35,6 +35,13 @@ import hxmc.ir.Ir;
 // classes whose class value live code has, every class when it can also
 // resolve a class by its name (Type.resolveClass).
 //
+// Type.createInstance, live, instantiates the classes whose value live code
+// can have (named in live code, any class when it can resolve one by name,
+// the instantiated ones when it can get a value's class, their superclasses
+// when it can get a class's superclass) and keeps their entries
+// (ClassInfo.maker: the constructor called); the other classes' entries are
+// dropped (the call throws).
+//
 // A target that transforms the bodies first (WasmGC's IrOpt inlines) runs it
 // again over them: what was inlined everywhere is dropped.
 //
@@ -71,6 +78,8 @@ class Reach {
 	var typeOfValue = false; // Type.getClass (Dyn.getClass) is live: statics through it
 	var superOfValue = false; // Type.getSuperClass (Dyn.superClass) is live: the superclasses' statics too
 	var reflected = new Map<ClassInfo, Bool>(); // the classes whose statics live code can reach through their value
+	var createInstance = false; // Type.createInstance (Dyn.createInstance) is live
+	var made = new Map<ClassInfo, Bool>(); // the classes Type.createInstance can make (their entries kept)
 	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root)
 	var whyName = Sys.getEnv("HXMC_REACH_WHY");
 	var cur:Null<FuncInfo> = null; // the function being scanned
@@ -163,6 +172,15 @@ class Reach {
 				}
 			for (c in p.interfaces)
 				if (valueClasses.exists(c)) statics(c);
+			if (createInstance)
+				for (c in p.classes)
+					if (resolveType || valueClasses.exists(c) || (typeOfValue && inst[c.id])) {
+						var k = c;
+						do {
+							make(k);
+							k = k.sup;
+						} while (superOfValue && k != null);
+					}
 			// the methods callable on an instance now
 			var n = p.classes.length;
 			var below = [for (_ in 0...n + 1) 0]; // instantiated classes with an id below k
@@ -202,6 +220,9 @@ class Reach {
 			for (c in cs)
 				if (c.statics != null)
 					c.statics = reflected.exists(c) ? [for (s in c.statics) if (s.clos == null || live.exists(s.clos.fn)) s] : null;
+		// (the entries of the classes Type.createInstance can make)
+		for (c in p.classes)
+			if (c.maker != null && !made.exists(c)) c.maker = null;
 		if (stats)
 			Sys.println('hxmc: reach: ${p.funcs.length} live functions'
 				+ (anyName != null ? ', every method name (a name computed in $anyName)' : ', ${Lambda.count(names)} method names'));
@@ -249,6 +270,16 @@ class Reach {
 			if (s.clos != null && !live.exists(s.clos.fn)
 				&& (live.exists(s.fn) || (p.live != null && p.live.exists(s.fn)) || anyName != null || names.exists(s.name)))
 				mark(s.clos.fn);
+	}
+
+	// c can be made by Type.createInstance: an instance of it exists then, made
+	// by the constructor its entry calls (none: the call fails)
+	function make(c:ClassInfo) {
+		if (c.maker == null || made.exists(c)) return;
+		made.set(c, true);
+		if (c.maker.fn == null) return;
+		instantiate(c);
+		mark(c.maker.fn);
 	}
 
 	// the globals a static initializer sets (its class's statics)
@@ -519,6 +550,7 @@ class Reach {
 			case "hxmc_rt_Dyn_resolveType" | "hxmc_rt_gc_GcNative_resolveType": resolveType = true;
 			case "hxmc_rt_Dyn_getClass" | "hxmc_rt_gc_GcNative_getClass": typeOfValue = true;
 			case "hxmc_rt_Dyn_superClass" | "hxmc_rt_gc_GcNative_superClass": superOfValue = true;
+			case "hxmc_rt_Dyn_createInstance" | "hxmc_rt_gc_GcNative_createInstance": createInstance = true;
 			case _:
 		}
 		inline function runtime(sym:Null<String>)

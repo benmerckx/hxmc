@@ -337,8 +337,10 @@ program-wide numbers stay symbolic, so these remain possible:
   object plus the program-wide facts (types, field names, signatures,
   globals, initializers, dispatch rows).
 - **Loader**: links it into the running compiler with `<exe>.syms` (every
-  symbol of the executable; `-D hxmc.jit` builds also keep every runtime
-  function and spare type and signature entries). The std's types and
+  symbol of the executable; `-D hxmc.jit` builds also keep every function
+  they lower, the runtime's functions macro code calls that the compiler
+  does not (`Jit.runtime`: `Type.resolveClass`, `Type.createInstance`), and
+  spare type and signature entries). The std's types and
   statics are the compiler's (layouts checked), the program's are new.
   Code and data are mapped below 2 GB (rel32, absolute disp32 dispatch
   rows), then made executable.

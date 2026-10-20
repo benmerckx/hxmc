@@ -178,7 +178,9 @@ class Guest {
 				methods: [for (m in t.methods) {name: m.name, fn: m.dfn != null ? m.dfn : m.fn, sig: e.sigNames[m.dfn != null ? m.dsig : m.sig]}],
 				ifaces: [for (x in t.ifaces) tyName(x)],
 				tag: t.tag,
-				ctors: [for (x in t.ctors) tyName(x)]
+				ctors: [for (x in t.ctors) tyName(x)],
+				// (Type.createInstance's entry, as DataGen writes it: fn null, no constructor)
+				maker: t.maker == null ? null : {fn: t.maker.fn, sig: t.maker.fn == null ? null : e.sigNames[t.maker.sig]}
 			});
 		}
 		// (statics: what Reflect finds on the class value, as DataGen writes them)

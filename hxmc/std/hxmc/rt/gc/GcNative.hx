@@ -88,6 +88,22 @@ class GcNative {
 	public static function createEmpty(c:Dynamic):Dynamic
 		return W.createEmpty(c);
 
+	// Type.createInstance, as hxmc.rt.Dyn's: a new instance, its class's
+	// constructor called with the arguments (hxmc.wasmgc.Meta.createInstance)
+	public static function createInstance(c:Dynamic, args:Array<Dynamic>):Dynamic {
+		if (W.isNull(c)) throw "Null Access";
+		if (!W.isType(c)) throw "Type.createInstance: not a class";
+		if (W.typeKind(c) == 2 && W.typeName(c) == "String") return args == null || args.length == 0 ? null : args[0];
+		if (W.typeKind(c) == 2 && W.typeName(c) == "Array") return new Array<Dynamic>();
+		if (W.typeKind(c) == 2) throw "Type.createInstance: " + W.typeName(c) + " is not a class of the program (a basic type, or an extern class, which the runtime implements)";
+		if (W.typeKind(c) != 0) throw "Type.createInstance: " + W.typeName(c) + " is not a class";
+		var o = W.createInstance(c, args == null ? [] : args);
+		if (o != null) return o;
+		// (Eval's message, a failure of the compiler there)
+		if (W.makerKind(c) == 1) throw "Instance constructor not found: " + W.typeName(c);
+		throw "Type.createInstance: the constructor of " + W.typeName(c) + " was left out (no live code has the class's value)";
+	}
+
 	public static function enumCtorNames(e:Dynamic):Array<String> {
 		if (!W.isType(e) || W.typeKind(e) != 1) return null;
 		return (W.enumNames(e) : Array<String>).copy();

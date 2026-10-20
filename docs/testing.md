@@ -9,7 +9,7 @@ haxe/test --run <Name> --help`-style options at the top of each file):
 
 | Script | Compares | Result |
 | --- | --- | --- |
-| `Conformance` | HXB archives (member names, uncompressed payloads) of `conformance-cases.txt` (305: configurations of the upstream suites, and the port's own cases of `haxe/test/conformance`: OCaml's string order, Eval's string offsets and bounds, bytes that are not UTF-8), `conformance-macro-cases.txt` (66, run macros), `conformance-hxblib-cases.txt` (`--hxb-lib`); `--hxb-lib`, `--eval` (`noeval`: a case Eval as the host cannot run), `--parallel N` modes | 293 + 12 expected failures, 66/66, 7/7 |
+| `Conformance` | HXB archives (member names, uncompressed payloads) of `conformance-cases.txt` (305: configurations of the upstream suites, and the port's own cases of `haxe/test/conformance`: OCaml's string order, Eval's string offsets and bounds, bytes that are not UTF-8), `conformance-macro-cases.txt` (67, run macros: the upstream suites' and one of the port's own), `conformance-hxblib-cases.txt` (`--hxb-lib`); `--hxb-lib`, `--eval` (`noeval`: a case Eval as the host cannot run), `--parallel N` modes | 293 + 12 expected failures, 67/67, 7/7 |
 | `Display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
 | `Server` | the compilation server: cases twice, edits and invalidation (with the verbose logs), stdin, `--cmd`, errors, `--server-connect` | 633/633 |
 | `ServerJsonRpc` | the `server/*` methods, both cache modes | 107/107 |

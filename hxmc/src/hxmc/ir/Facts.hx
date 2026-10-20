@@ -303,6 +303,11 @@ class Facts {
 				k = k.sup;
 			}
 			types[c.tindex].methods = ms;
+			// (Type.createInstance's entry: called as a bound method of the new instance)
+			if (c.maker != null) {
+				var f = c.maker.fn;
+				types[c.tindex].maker = f == null ? {fn: null, sig: -1} : {fn: symbol(f), sig: p.sig([for (i in 1...f.args.length) f.args[i].ty], f.ret).id};
+			}
 		}
 		// the runtime's array iterator (Iterable.iterator() on an Array): methods in rt_dyn.c
 		types[17].methods = [
@@ -316,11 +321,13 @@ class Facts {
 		// one bound-method closure type per signature of a method in the
 		// tables (code, this, method; after Reach: else every signature's)
 		var bound = new Map<Int, Bool>();
-		for (t in types)
+		for (t in types) {
 			for (m in t.methods) {
 				bound.set(m.sig, true);
 				if (m.dsig != null) bound.set(m.dsig, true);
 			}
+			if (t.maker != null && t.maker.fn != null) bound.set(t.maker.sig, true);
+		}
 		for (s in p.sigs)
 			if (p.live == null || bound.exists(s.id)) {
 				var t = entry("<bound>", "TK_BOUND", [TI32, TRef(RAny), TI32], "bound." + s.key);
@@ -702,7 +709,11 @@ typedef TypeEntry = {
 	ifaces:Array<Int>,
 	tag:Int,
 	ctors:Array<Int>,
-	?single:Int // TK_CTOR without arguments: its singleton's rt_globals index
+	?single:Int, // TK_CTOR without arguments: its singleton's rt_globals index
+	// TK_CLASS: what Type.createInstance calls (ClassInfo.maker): the function
+	// taking the new instance and the arguments, of the signature of the
+	// arguments (a bound-method one); fn null: no constructor
+	?maker:{fn:Null<String>, sig:Int}
 };
 
 // GC points (hxmc.Roots's analysis of root slots builds on them)

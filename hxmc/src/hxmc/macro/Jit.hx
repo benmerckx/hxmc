@@ -17,4 +17,12 @@ class Jit {
 	// zeroed entries after rt_types and after the signature tables (DataGen)
 	public static inline var SPARE_TYPES = 4096;
 	public static inline var SPARE_SIGS = 1024;
+
+	// the runtime's functions macro code may call that the compiler's own code
+	// does not: a bundle calls the compiler's (Guest compiles no runtime), so
+	// the executable has them (HaxeMain names them). Type.resolveClass finds a
+	// bundle's classes too (the Loader counts them in), Type.createInstance
+	// makes them (their entries, hxmc.ir.Lower.makers, written by the Loader)
+	public static function runtime():Array<Dynamic>
+		return [hxmc.Native.resolveType, hxmc.Native.createInstance];
 }

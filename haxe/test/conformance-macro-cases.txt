@@ -69,3 +69,7 @@ hxml eval-Issue9838-compile haxe/upstream/tests/misc/eval/projects/Issue9838 com
 hxml eval-customExt-compile1 haxe/upstream/tests/misc/eval/projects/customExt compile1.hxml
 hxml eval-customExt-compile2 haxe/upstream/tests/misc/eval/projects/customExt compile2.hxml
 hxml eval-recursive-callbacks-compile haxe/upstream/tests/misc/eval/projects/recursive-callbacks compile.hxml
+
+# The port's own (haxe/test/conformance): Type.createInstance in macro code, a
+# typing error caught as a haxe.macro.Error (native macros: make native-macros).
+hxml macro-create-instance haxe/test/conformance/macro-create-instance build.hxml

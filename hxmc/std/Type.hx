@@ -159,7 +159,7 @@ class Type {
 		guaranteed to be taken into account.
 	**/
 	public static function createInstance<T>(cl:Class<T>, args:Array<Dynamic>):T
-		throw "Type.createInstance is not supported on hxmc";
+		return Native.createInstance(cl, args);
 
 	/**
 		Creates an instance of class `cl`.

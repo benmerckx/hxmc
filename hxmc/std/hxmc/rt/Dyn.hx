@@ -137,6 +137,11 @@ class Dyn {
 	// a closure over `o` calling method m (TK_BOUND: code, this, fn)
 	static function boundMethod(o:Dynamic, m:Ptr):Dynamic {
 		var sig = mSig(m), fn = mFn(m);
+		return bound(o, fn, sig);
+	}
+
+	// a closure over `o` calling fn, which takes o and arguments of signature sig
+	static inline function bound(o:Dynamic, fn:Ptr, sig:Int):Dynamic {
 		var c = Mem.alloc(3, Mem.getI32At(Mem.sym("rt_bound_types"), 0, sig), K_OBJ);
 		var p = Mem.addr(c);
 		Mem.setPtr(p, 0, Mem.getPtr(Mem.sym("rt_bound_tramps"), 8 * sig));
@@ -979,6 +984,29 @@ class Dyn {
 		var t = described(c);
 		var n = slotCount(ty(t));
 		return Mem.alloc(n > 0 ? n : 1, t, K_OBJ);
+	}
+
+	// Type.createInstance: a new instance, the constructor its class's entry
+	// names called with the arguments (Types.maker: those missing null,
+	// numbers and Bools with default values given them when null, as on
+	// Eval); a String's is the String it is given, an Array's an empty one,
+	// as on Eval
+	public static function createInstance(c:Dynamic, args:Array<Dynamic>):Dynamic {
+		if (Str.isNull(c)) Rt.rt_throw("Null Access");
+		if (tindex(c) != T_TYPEOBJ) Rt.rt_throw("Type.createInstance: not a class");
+		var t = described(c);
+		if (t == T_STRING) return Str.isNull(args) || args.length == 0 ? null : args[0];
+		if (t == T_ARRAY) return new Array<Dynamic>();
+		// (an extern class's value is T_NONE's: the runtime implements it, its constructor is not in the tables)
+		if (t == T_NONE) Rt.rt_throw("Type.createInstance: not a class of the program (an extern class, which the runtime implements)");
+		if (t < T_FIRST || tk(ty(t)) != TK_CLASS) Rt.rt_throw("Type.createInstance: " + typeName(c) + " is not a class");
+		var k = maker(ty(t));
+		// (Eval's message, a failure of the compiler there)
+		if (k == 1) Rt.rt_throw("Instance constructor not found: " + typeName(c));
+		if (k == 0) Rt.rt_throw("Type.createInstance: the constructor of " + typeName(c) + " was left out (no live code has the class's value)");
+		var o = createEmpty(c);
+		dynCall(bound(o, makerFn(ty(t)), k - 2), args);
+		return o;
 	}
 
 	public static function enumCtorNames(e:Dynamic):Array<String> {
