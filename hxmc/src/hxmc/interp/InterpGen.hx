@@ -431,26 +431,55 @@ class InterpGen {
 				for (v in i.args)
 					if (wid[v] >= 0) f(v);
 		}
+		// the values that can be live across a block's boundary (used in another
+		// block than their own, or by a phi): the liveness sets are of these only
+		var defBlock = MFunc.ints(vals.length, -1);
+		for (b in blocks)
+			for (i in b.ins)
+				if (!i.dead && wid[i.id] >= 0) defBlock[i.id] = b.id;
+		var gid = MFunc.ints(vals.length, -1), gids = [];
+		function global(v:Int)
+			if (gid[v] < 0) {
+				gid[v] = gids.length;
+				gids.push(v);
+			}
+		for (b in blocks)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				if (i.op == Phi) {
+					for (pi in 0...b.preds.length)
+						if (reach[b.preds[pi].id] && wid[i.args[pi]] >= 0) global(i.args[pi]);
+					continue;
+				}
+				var bid = b.id;
+				eachUse(i, u -> if (defBlock[u] != bid) global(u));
+			}
+		var ng = gids.length;
+		inline function isPinned(pinned:hxmc.Lir.Bits, v:Int):Bool
+			return gid[v] >= 0 && pinned.get(gid[v]);
 		// liveness (a phi's argument: live out of its predecessor)
-		var gen = [for (_ in 0...nb) new hxmc.Lir.Bits(n)];
-		var kill = [for (_ in 0...nb) new hxmc.Lir.Bits(n)];
-		var phiUse = [for (_ in 0...nb) new hxmc.Lir.Bits(n)];
-		var liveIn = [for (_ in 0...nb) new hxmc.Lir.Bits(n)];
-		var liveOut = [for (_ in 0...nb) new hxmc.Lir.Bits(n)];
+		var gen = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
+		var kill = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
+		var phiUse = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
+		var liveIn = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
+		var liveOut = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
 		for (b in blocks) {
 			var g = gen[b.id], k = kill[b.id];
 			for (i in b.ins) {
 				if (i.dead) continue;
 				if (i.op == Phi) {
-					if (wid[i.id] >= 0) k.set(wid[i.id]);
+					if (gid[i.id] >= 0) k.set(gid[i.id]);
 					for (pi in 0...b.preds.length) {
 						var p = b.preds[pi], v = i.args[pi];
-						if (reach[p.id] && wid[v] >= 0) phiUse[p.id].set(wid[v]);
+						if (reach[p.id] && wid[v] >= 0) phiUse[p.id].set(gid[v]);
 					}
 					continue;
 				}
-				eachUse(i, u -> if (!k.get(wid[u])) g.set(wid[u]));
-				if (wid[i.id] >= 0) k.set(wid[i.id]);
+				eachUse(i, u -> {
+					var x = gid[u];
+					if (x >= 0 && !k.get(x)) g.set(x);
+				});
+				if (gid[i.id] >= 0) k.set(gid[i.id]);
 			}
 		}
 		var post = blocks.copy();
@@ -529,7 +558,7 @@ class InterpGen {
 		for (k in 1...rpo.length)
 			kids[idom[rpo[k].id].id].push(rpo[k]);
 		// the values a try's handler reads: their own registers
-		var pinned = new hxmc.Lir.Bits(n);
+		var pinned = new hxmc.Lir.Bits(ng);
 		for (b in blocks)
 			if (b.handler) pinned.union(liveIn[b.id]);
 		// a value feeding a phi: the phi
@@ -559,13 +588,13 @@ class InterpGen {
 		function take(v:Int, r:Int) {
 			reg[v] = r;
 			occ[r] = stamp;
-			if (pinned.get(wid[v]) && !reserved[r]) {
+			if (isPinned(pinned, v) && !reserved[r]) {
 				reserved[r] = true;
 				reservedRegs.push(r);
 			}
 		}
 		function pick(v:Int, prefer:Int):Int {
-			if (pinned.get(wid[v])) {
+			if (isPinned(pinned, v)) {
 				// (a register no other value ever takes)
 				maxReg++;
 				occ.push(0);
@@ -587,7 +616,7 @@ class InterpGen {
 				var bits = lw[x];
 				while (bits != 0) {
 					var low = bits & -bits;
-					occ[reg[ids[(x << 5) + trailingZeros(low)]]] = stamp;
+					occ[reg[gids[(x << 5) + trailingZeros(low)]]] = stamp;
 					bits ^= low;
 				}
 			}
@@ -614,8 +643,8 @@ class InterpGen {
 					continue;
 				}
 				eachUse(i, u -> {
-					var w = wid[u];
-					if (last[w] == k && !lo.get(w) && !pinned.get(w)) occ[reg[u]] = 0;
+					var w = wid[u], x = gid[u];
+					if (last[w] == k && (x < 0 || !lo.get(x)) && !isPinned(pinned, u)) occ[reg[u]] = 0;
 				});
 				if (wid[i.id] < 0) continue;
 				if (i.op == Param) {
@@ -625,7 +654,7 @@ class InterpGen {
 					take(i.id, pick(i.id, h >= 0 && reg[h] >= 0 ? reg[h] : -1));
 				}
 				// (never read: free again)
-				if (uses[i.id] == 0 && !pinned.get(wid[i.id])) occ[reg[i.id]] = 0;
+				if (uses[i.id] == 0 && !isPinned(pinned, i.id)) occ[reg[i.id]] = 0;
 			}
 		}
 		return maxReg;
