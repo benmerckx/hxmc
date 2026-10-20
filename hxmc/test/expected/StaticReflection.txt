@@ -1,0 +1,30 @@
+exit 0
+StaticReflection.hx:15: 5
+StaticReflection.hx:16: 5
+StaticReflection.hx:18: { obj : { RuntimeMeta : [[42,0]] } }
+StaticReflection.hx:19: [__meta__,main,x]
+StaticReflection.hx:21: 42
+StaticReflection.hx:79: null
+StaticReflection.hx:80: null
+StaticReflection.hx:81: false
+StaticReflection.hx:82: false true true
+StaticReflection.hx:83: [inheritedFn,inherited]
+StaticReflection.hx:84: 1
+StaticReflection.hx:86: null 7
+StaticReflection.hx:87: 3
+StaticReflection.hx:89: 50
+StaticReflection.hx:92: 20
+StaticReflection.hx:95: 22 22
+StaticReflection.hx:97: 9 1.5 true 4294967298 null [1,2]
+StaticReflection.hx:100: 42
+StaticReflection.hx:101: 10
+StaticReflection.hx:102: 12 5 2
+StaticReflection.hx:103: true null
+StaticReflection.hx:105: [twice,get_prop,list,flag,opt,INLINED,RATIO,name,bounded,own,big,set_bounded]
+StaticReflection.hx:106: [twice,get_prop,list,flag,opt,INLINED,RATIO,name,bounded,own,big,set_bounded]
+StaticReflection.hx:108: a
+StaticReflection.hx:109: true
+StaticReflection.hx:110: 1
+StaticReflection.hx:111: i
+StaticReflection.hx:112: [__meta__]
+StaticReflection.hx:115: 1 true

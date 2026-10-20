@@ -110,13 +110,18 @@ class Types {
 	public static inline function tag(ty:Ptr):Int
 		return Mem.getI32(ty, 80);
 
+	// a constructor without arguments: the rt_globals index of its value, else -1
+	public static inline function single(ty:Ptr):Int
+		return Mem.getI32(ty, 84) - 1;
+
 	public static inline function ctor(ty:Ptr, i:Int):Int
 		return Mem.getI32At(Mem.getPtr(ty, 88), 0, i);
 
 	public static inline function nstatics(ty:Ptr):Int
 		return Mem.getI32(ty, 96);
 
-	// rt_static (24 bytes): int32 fid, char kind, int32 idx, void *ptr
+	// rt_static (24 bytes): int32 fid, char kind, int32 idx, int32 rank (its
+	// place in Type.getClassFields), void *ptr; sorted by fid
 	public static inline function stat(ty:Ptr, i:Int):Ptr
 		return Mem.getPtr(ty, 104).add(24 * i);
 

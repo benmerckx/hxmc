@@ -606,9 +606,17 @@ class Meta {
 					b.u8(0x46);
 					b.u8(0x04);
 					b.u8(0x40);
-					i32(b, c.tag);
-					i32(b, ei);
-					if (c.params.length == 0) m.gc(b, 0x00, m.enumTypeOf(e)) else {
+					if (c.params.length == 0 && c.global >= 0) {
+						// the constructor's own value (`==` to it)
+						b.u8(0x23);
+						Enc.uleb(b, m.globalOf(c.global));
+					} else if (c.params.length == 0) {
+						i32(b, c.tag);
+						i32(b, ei);
+						m.gc(b, 0x00, m.enumTypeOf(e));
+					} else {
+						i32(b, c.tag);
+						i32(b, ei);
 						for (k in 0...c.params.length) {
 							get(b, 2);
 							i32(b, k);

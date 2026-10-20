@@ -220,7 +220,7 @@ class Type {
 		If `c` is null, the result is unspecified.
 	**/
 	public static function getClassFields(c:Class<Dynamic>):Array<String>
-		return [];
+		return Native.classFields(c);
 
 	/**
 		Returns a list of the names of all constructors of enum `e`.

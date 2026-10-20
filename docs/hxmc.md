@@ -29,7 +29,8 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `macro/` | native macros, a prototype (`haxe` built with `-D hxmc.jit`, Linux x86-64; `-D hxmc.macros=native\|verify`): macro classes compiled by hxmc and linked into the running compiler, behind the macro engine seam `haxe/src/macros/MacroEngine.hx` ([plans/compiler.md](plans/compiler.md), "Native macros") |
 
 Conventions: references live across a GC point are shadow-stack slots
-(cold sites spill only on the slow path); `try` is `rt_handler` with the C
+(cold sites spill only on the slow path; a reference live across the slow
+paths of more than 32 is rooted instead, `Roots.hx`); `try` is `rt_handler` with the C
 library's `_setjmp`; calls follow the target's C ABI; a `@:hxmc.struct`
 value is the address of its memory (a frame slot, an object's inline
 field, memory behind a `Ptr`), copied on assignment (also through Haxe's
@@ -201,6 +202,19 @@ functions (and where a name is computed) and the data's parts;
 `HXMC_REACH_WHY=<pack.Class.method>` the chain that keeps a function;
 `HXMC_REACH=0` keeps everything. WasmGC uses the same analysis (WasmGC
 below).
+
+Statics through a class value (`Reflect.field(C, "x")`, `c.x` on a Dynamic
+holding `C`, `Type.getClassFields`, `haxe.rtti.Meta`'s `__meta__`): a class
+or interface used as a value gets a table of its statics
+(`Lower.reflectStatics`: those Eval has, an inline variable too, not its
+superclasses'), in the order the reference lists them (Eval's: by the names'
+hashes), kept when live code can have the class value (it names the class, or
+can get a value's class, resolve a class by name, or get a superclass): its
+variables, whose static initializers then run, and its functions that are
+live otherwise or looked up by name, as closures; the others are left out, as
+with `-dce full` (`Reflect.field` gives null, `Type.getClassFields` does not
+list them). A class never used as a value has no table (WasmGC: nor an
+interface).
 
 ## Native arrays
 

@@ -16,6 +16,15 @@ import hxmc.ir.Ir;
 // Reflect.field, the runtime's own lookups such as toString's). A static
 // function is reached by name through its class value likewise.
 //
+// The statics of a class value (ClassInfo.statics) live code can have (the
+// class's value in live code, any class's when it can get a value's class or
+// resolve a class by name, the superclasses' when it can get a class's
+// superclass): its variables, whose static initializers run then, and its
+// functions live otherwise or reached by name, as closures (so that
+// Type.getClassFields lists the functions kept, as with -dce full, and a
+// variable read by name never misses its initializer); the others are left
+// out, as fields -dce full dropped.
+//
 // Names: those of structural and Dynamic access, the literals passed to the
 // runtime's lookups of a name or to a function passing its parameter on to
 // one (Reflect.field, Reflect.getProperty's "get_" + field, ...), and names
@@ -60,6 +69,8 @@ class Reach {
 	var emptyInstance = false; // Type.createEmptyInstance (Dyn.createEmpty) is live
 	var resolveType = false; // Type.resolveClass (Dyn.resolveType) is live
 	var typeOfValue = false; // Type.getClass (Dyn.getClass) is live: statics through it
+	var superOfValue = false; // Type.getSuperClass (Dyn.superClass) is live: the superclasses' statics too
+	var reflected = new Map<ClassInfo, Bool>(); // the classes whose statics live code can reach through their value
 	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root)
 	var whyName = Sys.getEnv("HXMC_REACH_WHY");
 	var cur:Null<FuncInfo> = null; // the function being scanned
@@ -105,8 +116,8 @@ class Reach {
 	// the functions returning names from the tables: those of the fields,
 	// methods or statics of a type or object, of an enum's constructors
 	static var TABLE_ARRAYS = [
-		"hxmc_rt_Dyn_namesArray", "hxmc_rt_Dyn_instanceFields", "hxmc_rt_Dyn_fields", "hxmc_rt_Dyn_enumCtorNames", "Reflect_fields",
-		"Type_getInstanceFields", "Type_getClassFields", "Type_getEnumConstructs"
+		"hxmc_rt_Dyn_namesArray", "hxmc_rt_Dyn_instanceFields", "hxmc_rt_Dyn_fields", "hxmc_rt_Dyn_classFields",
+		"hxmc_rt_Dyn_enumCtorNames", "Reflect_fields", "Type_getInstanceFields", "Type_getClassFields", "Type_getEnumConstructs"
 	];
 
 	function analyze() {
@@ -143,7 +154,15 @@ class Reach {
 				for (c in p.classes)
 					if (resolveType || valueClasses.exists(c)) instantiate(c);
 			for (c in p.classes)
-				if (resolveType || typeOfValue || valueClasses.exists(c)) statics(c);
+				if (resolveType || typeOfValue || valueClasses.exists(c)) {
+					var k = c;
+					do {
+						statics(k);
+						k = k.sup;
+					} while (superOfValue && k != null);
+				}
+			for (c in p.interfaces)
+				if (valueClasses.exists(c)) statics(c);
 			// the methods callable on an instance now
 			var n = p.classes.length;
 			var below = [for (_ in 0...n + 1) 0]; // instantiated classes with an id below k
@@ -178,6 +197,11 @@ class Reach {
 		p.lambdas = [for (l in p.lambdas) if (live.exists(l.fn)) l];
 		p.shapes = [for (s in p.shapes) if (shapes.exists(s)) s];
 		p.liveSelectors = selLive;
+		// (the statics live code can reach through a class value: Type.getClassFields lists them)
+		for (cs in [p.classes, p.interfaces])
+			for (c in cs)
+				if (c.statics != null)
+					c.statics = reflected.exists(c) ? [for (s in c.statics) if (s.clos == null || live.exists(s.clos.fn)) s] : null;
 		if (stats)
 			Sys.println('hxmc: reach: ${p.funcs.length} live functions'
 				+ (anyName != null ? ', every method name (a name computed in $anyName)' : ', ${Lambda.count(names)} method names'));
@@ -210,11 +234,21 @@ class Reach {
 		if (whyName != null) instBy.set(c.id, cur);
 	}
 
-	// the static functions reached by name through c's class value (DataGen's statics table)
+	// the statics reached through c's class value (DataGen's statics table): its
+	// variables, whose initializers run, and the closures of its functions live
+	// code calls (or did before the bodies were transformed: Program.live, a
+	// first run's) or looks up by name
 	function statics(c:ClassInfo) {
-		if (c.statics != null)
+		if (c.statics == null) return;
+		if (!reflected.exists(c)) {
+			reflected.set(c, true);
 			for (s in c.statics)
-				if (s.clos != null && !live.exists(s.clos.fn) && (anyName != null || names.exists(s.name))) mark(s.clos.fn);
+				if (s.clos == null) setBy(s.global, null);
+		}
+		for (s in c.statics)
+			if (s.clos != null && !live.exists(s.clos.fn)
+				&& (live.exists(s.fn) || (p.live != null && p.live.exists(s.fn)) || anyName != null || names.exists(s.name)))
+				mark(s.clos.fn);
 	}
 
 	// the globals a static initializer sets (its class's statics)
@@ -484,6 +518,7 @@ class Reach {
 			case "hxmc_rt_Dyn_createEmpty" | "hxmc_rt_gc_GcNative_createEmpty": emptyInstance = true;
 			case "hxmc_rt_Dyn_resolveType" | "hxmc_rt_gc_GcNative_resolveType": resolveType = true;
 			case "hxmc_rt_Dyn_getClass" | "hxmc_rt_gc_GcNative_getClass": typeOfValue = true;
+			case "hxmc_rt_Dyn_superClass" | "hxmc_rt_gc_GcNative_superClass": superOfValue = true;
 			case _:
 		}
 		inline function runtime(sym:Null<String>)

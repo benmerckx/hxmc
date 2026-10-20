@@ -280,6 +280,14 @@ class GcNative {
 	public static function instanceFields(c:Dynamic):Array<String>
 		throw "Type.getInstanceFields: not supported by -D hxmc.wasm-gc yet";
 
+	// the statics a class value reaches (Type.getClassFields), in their order
+	// (hxmc.ir.Lower.reflectStatics)
+	public static function classFields(c:Dynamic):Array<String> {
+		var ci = classIndex(c);
+		var names:Array<String> = ci >= 0 ? W.staticNames(ci) : null;
+		return names == null ? [] : names.copy();
+	}
+
 	public static function callMethod(f:Dynamic, args:Array<Dynamic>):Dynamic
 		return W.dynCall(f, args);
 

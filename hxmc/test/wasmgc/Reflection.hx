@@ -1,4 +1,5 @@
-// Type, Reflect, anonymous structures, enums as values: compared with the native build (GcCheck)
+// Type, Reflect, anonymous structures, enums as values, statics through a
+// class value: compared with the native build (GcCheck)
 enum Color {
 	Red;
 	Green;
@@ -19,6 +20,39 @@ class Point {
 }
 
 typedef Person = {name:String, ?age:Int};
+
+// (as hxmc/test/cases/StaticReflection: its variables read before live code
+// reads them otherwise, its functions as closures, Type.getClassFields in the
+// reference's order, without dropped, the __meta__ static)
+@RuntimeMeta([42, 0])
+class Statics {
+	static var x = 5;
+	static var ratio = 1.5;
+	static var flag = true;
+	static var name:String;
+	static inline var INLINED = 9;
+
+	static function twice(n:Int)
+		return n * 2;
+
+	static function opt(n:Int = 4)
+		return n + 1;
+
+	static function dropped()
+		return 0;
+
+	public static function run() {
+		var c:Dynamic = Statics;
+		Sys.println(Reflect.field(Statics, "x") + " " + c.x + " " + c.ratio + " " + c.flag + " " + c.name + " " + c.INLINED);
+		Reflect.setField(Statics, "x", 6);
+		c.ratio = 2.5;
+		Sys.println(x + " " + ratio + " " + Reflect.hasField(Statics, "x") + " " + Reflect.hasField(Statics, "nope"));
+		var f = Reflect.field(Statics, "twice");
+		Sys.println(f(21) + " " + c.opt() + " " + c.opt(1) + " " + Reflect.field(Statics, "nope"));
+		Sys.println(Type.getClassFields(Statics).join(",") + " " + Reflect.fields(Statics).length);
+		Sys.println(haxe.rtti.Meta.getType(Statics).RuntimeMeta[0][0]);
+	}
+}
 
 class Reflection {
 	static function describe(n:Person):String
@@ -64,6 +98,7 @@ class Reflection {
 		Sys.println([x + y, x - y, x * y, x / y, x % y, x & y, x | y, x ^ y, x << y, x >> y, x >>> y, x + z, z * y].join(",") + " " + (s + x) + " " + (x + s));
 		var l1:Dynamic = haxe.Int64.make(1, 2), l2:Dynamic = haxe.Int64.make(1, 2), small:Dynamic = haxe.Int64.ofInt(7);
 		Sys.println((l1 == l2) + " " + (l1 == small) + " " + (small == x) + " " + (x == small));
+		Statics.run();
 		Sys.println("done");
 	}
 }

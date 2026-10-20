@@ -62,6 +62,7 @@ in [docs/plans/](docs/plans/README.md); what is built is in
 - Rendering: partial redraw, cached static subtrees, paths, blur and clipping on the GPU, shaders per node; later Vulkan on Android, wide gamut and HDR ([graphics.md](docs/plans/graphics.md#rendering-capability))
 - Showcase examples that double as frame benchmarks ([ui-next.md](docs/plans/ui-next.md#showcase-examples))
 - The collector: a memory limit, a mark-region old generation ([runtime.md](docs/plans/runtime.md#the-collector-longer-term))
+- To be decided: a syntax for components and styles (`.hxv`; element blocks with CSS, or TypeScript-flavoured Haxe with JSX) ([syntax.md](docs/plans/syntax.md))
 - Text shaping for complex scripts: cursive, Indic, mark reordering, `ccmp`/`locl`, bidi embeddings, CFF2 ([ui-next.md](docs/plans/ui-next.md#from-building-an-app-on-windows-oct-19), item 6)
 - Macro-heavy builds: monomorph transactions, Eval call frames and instance layout ([compiler.md](docs/plans/compiler.md#macro-heavy-builds))
 - C interop: methods on structs, specialized generics, value enums, allocators ([lowlevel.md](docs/plans/lowlevel.md))

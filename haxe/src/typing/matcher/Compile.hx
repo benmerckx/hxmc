@@ -25,6 +25,9 @@ import typing.matcher.Bind;
 import typing.matcher.MatcherGlobals.*;
 import typing.matcher.MatcherGlobals;
 import core.TUnification.typeIseq;
+import core.ds.MlList;
+
+using core.ds.MlList.MlListTools;
 
 private class ExtractorFound extends haxe.Exception {
 	public function new() super("Extractor");
@@ -111,19 +114,20 @@ class Compile {
 	static function specialize(subject:TExpr, con:ConstructorData, cases:Array<CaseRow>):Array<CaseRow> {
 		var arity = Constructor.arity(con);
 		function row(c:CaseRow):Null<CaseRow> {
-			if (c.patterns.length == 0) return null;
-			var p = c.patterns[0], tail = c.patterns.slice(1);
-			return switch p.kind {
-				case PatConstructor(other,
-					ps) if (Constructor.equal(con, other)): {caseData: c.caseData, bindings: c.bindings, patterns: ps.concat(tail)};
-				case PatAny: {caseData: c.caseData, bindings: c.bindings, patterns: [for (_ in 0...arity) p].concat(tail)};
-				case PatBind(v, p1): row({
-						caseData: c.caseData,
-						bindings: [makeBind(v, p.pos, subject)].concat(c.bindings),
-						patterns: [p1].concat(tail)
-					});
-				case _: null;
-			};
+			return switch c.patterns {
+				case Nil: null;
+				case Cons(p, tail): switch p.kind {
+						case PatConstructor(other,
+							ps) if (Constructor.equal(con, other)): {caseData: c.caseData, bindings: c.bindings, patterns: ps.ofArray(tail)};
+						case PatAny: {caseData: c.caseData, bindings: c.bindings, patterns: MlListTools.make(arity, p, tail)};
+						case PatBind(v, p1): row({
+								caseData: c.caseData,
+								bindings: Cons(makeBind(v, p.pos, subject), c.bindings),
+								patterns: Cons(p1, tail)
+							});
+						case _: null;
+					};
+			}
 		}
 		var result = [];
 		for (c in cases) {
@@ -135,17 +139,18 @@ class Compile {
 
 	static function defaultRows(subject:TExpr, cases:Array<CaseRow>):Array<CaseRow> {
 		function row(c:CaseRow):Null<CaseRow> {
-			if (c.patterns.length == 0) return null;
-			var p = c.patterns[0], tail = c.patterns.slice(1);
-			return switch p.kind {
-				case PatAny: {caseData: c.caseData, bindings: c.bindings, patterns: tail};
-				case PatBind(v, p1): row({
-						caseData: c.caseData,
-						bindings: [makeBind(v, p.pos, subject)].concat(c.bindings),
-						patterns: [p1].concat(tail)
-					});
-				case _: null;
-			};
+			return switch c.patterns {
+				case Nil: null;
+				case Cons(p, tail): switch p.kind {
+						case PatAny: {caseData: c.caseData, bindings: c.bindings, patterns: tail};
+						case PatBind(v, p1): row({
+								caseData: c.caseData,
+								bindings: Cons(makeBind(v, p.pos, subject), c.bindings),
+								patterns: Cons(p1, tail)
+							});
+						case _: null;
+					};
+			}
 		}
 		var result = [];
 		for (c in cases) {
@@ -162,27 +167,33 @@ class Compile {
 	};
 
 	static function expand(cases:Array<CaseRow>):Array<CaseRow> {
-		function expandRow(f:PatternData->PatternData, c:CaseRow):Array<CaseRow> {
-			if (c.patterns.length == 0) return [c];
-			var p = c.patterns[0], tail = c.patterns.slice(1);
-			inline function row(ps:Array<PatternData>):CaseRow return {caseData: c.caseData, bindings: c.bindings, patterns: ps};
-			return switch p.kind {
-				case PatOr(a, b): expandRow(f, row([a].concat(tail))).concat(expandRow(f, row([b].concat(tail))));
-				case PatBind(v, p1): expandRow(function(p2) return f({kind: PatBind(v, p2), pos: p.pos}), row([p1].concat(tail)));
-				case PatTuple(ps): expandRow(f, row(ps.concat(tail)));
-				case _: [row([f(p)].concat(tail))];
-			};
+		// port: the rows are pushed onto `result` in the order of upstream's `@`
+		var result:Array<CaseRow> = [];
+		function expandRow(f:PatternData->PatternData, c:CaseRow):Void {
+			inline function row(ps:MlList<PatternData>):CaseRow return {caseData: c.caseData, bindings: c.bindings, patterns: ps};
+			switch c.patterns {
+				case Nil:
+					result.push(c);
+				case Cons(p, tail):
+					switch p.kind {
+						case PatOr(a, b):
+							expandRow(f, row(Cons(a, tail)));
+							expandRow(f, row(Cons(b, tail)));
+						case PatBind(v, p1): expandRow(function(p2) return f({kind: PatBind(v, p2), pos: p.pos}), row(Cons(p1, tail)));
+						case PatTuple(ps): expandRow(f, row(ps.ofArray(tail)));
+						case _: result.push(row(Cons(f(p), tail)));
+					}
+			}
 		}
-		var result = [];
-		for (c in cases) result = result.concat(expandRow(function(p) return p, c));
+		for (c in cases) expandRow(function(p) return p, c);
 		return result;
 	}
 
-	static function sSubjects(s:Array<Subject>):String return s.map(function(s) return s.toString()).join(" ");
+	static function sSubjects(s:MlList<Subject>):String return s.toArray().map(function(s) return s.toString()).join(" ");
 
 	static function sCase(c:CaseRow):String {
-		var bindings = c.bindings.map(function(b) return '${b.bVar.vName}<${b.bVar.vId}> = ${sExprPretty(b.bExpr)}').join(", ");
-		var patterns = c.patterns.map(Pattern.toString).join(" ");
+		var bindings = c.bindings.toArray().map(function(b) return '${b.bVar.vName}<${b.bVar.vId}> = ${sExprPretty(b.bExpr)}').join(", ");
+		var patterns = c.patterns.toArray().map(Pattern.toString).join(" ");
 		var expr = c.caseData.caseExpr == null ? "" : core.TPrinting.sExprPretty(false, "\t\t", false, sType, c.caseData.caseExpr);
 		var guard = c.caseData.caseGuard == null ? "" : core.TPrinting.sExprPretty(false, "\t\t", false, sType, c.caseData.caseGuard);
 		return '\n\t\tbindings: $bindings\n\t\tpatterns: $patterns\n\t\tguard: $guard\n\t\texpr: $expr';
@@ -190,33 +201,26 @@ class Compile {
 
 	static function sCases(c:Array<CaseRow>):String return c.map(sCase).join("\n");
 
-	static function selectColumn(subjects:Array<Subject>, cases:Array<CaseRow>):{subjects:Array<Subject>, cases:Array<CaseRow>} {
-		var ps = cases[0].patterns.copy();
-		var i = 0;
-		while (ps.length > 0) {
-			var p = ps.shift();
-			switch p.kind {
-				case PatAny | PatExtractor(_):
-					i++;
-				case PatBind(_, p):
-					ps.unshift(p);
-				case _:
-					break;
+	static function selectColumn(subjects:MlList<Subject>, cases:Array<CaseRow>):{subjects:MlList<Subject>, cases:Array<CaseRow>} {
+		function loop(i:Int, patterns:MlList<PatternData>):Int return switch patterns {
+			case Cons({kind: PatAny | PatExtractor(_)}, patterns): loop(i + 1, patterns);
+			case Cons({kind: PatBind(_, pat1)}, patterns): loop(i, Cons(pat1, patterns));
+			case Nil: 0;
+			case _: i;
+		};
+		var i = loop(0, cases[0].patterns);
+		function sort<A>(l:MlList<A>):MlList<A> {
+			if (i == 0) return l;
+			var cur = 0, acc = Nil;
+			while (true) switch l {
+				case Cons(x, rest):
+					if (i == cur) return Cons(x, acc.append(rest));
+					cur++;
+					acc = Cons(x, acc);
+					l = rest;
+				case Nil:
+					return acc;
 			}
-			if (switch p.kind {
-					case PatAny | PatExtractor(_) | PatBind(_, _): false;
-					case _: true;
-				}) break;
-		}
-		if (ps.length == 0 && i >= cases[0].patterns.length) i = 0;
-		function sort<A>(a:Array<A>):Array<A> {
-			if (i == 0) return a;
-			var acc = [];
-			for (j in 0...a.length) {
-				if (j == i) return [a[j]].concat(acc).concat(a.slice(j + 1));
-				acc.unshift(a[j]);
-			}
-			return acc;
 		}
 		return {
 			subjects: sort(subjects),
@@ -228,10 +232,20 @@ class Compile {
 		};
 	}
 
-	static function compileRows(m:MatcherContext, subjects:Array<Subject>, cases:Array<CaseRow>):DecisionTreeData {
-		if (cases.length == 0) return fail(m, subjects.length > 0 ? subjects[0].getPos() : m.matchPos);
-		if (cases[0].patterns.filter(function(p) return !isWildcardPattern(p))
-			.length == 0) return compileLeaf(m, subjects, cases[0], cases.slice(1));
+	static function compileRows(m:MatcherContext, subjects:MlList<Subject>, cases:Array<CaseRow>):DecisionTreeData {
+		if (cases.length == 0) return fail(m, switch subjects {
+			case Cons(subject, _): subject.getPos();
+			case Nil: m.matchPos;
+		});
+		var patterns = cases[0].patterns, allWildcards = true;
+		while (allWildcards) switch patterns {
+			case Cons(p, rest):
+				allWildcards = isWildcardPattern(p);
+				patterns = rest;
+			case Nil:
+				break;
+		}
+		if (allWildcards) return compileLeaf(m, subjects, cases[0], cases.slice(1));
 		cases = expand(cases);
 		var column = selectColumn(subjects, cases);
 		subjects = column.subjects;
@@ -239,45 +253,52 @@ class Compile {
 		return try compileSwitch(m, subjects, cases) catch (e:ExtractorFound) compileExtractors(m, subjects, cases);
 	}
 
-	static function compileLeaf(m:MatcherContext, subjects:Array<Subject>, row:CaseRow, cases:Array<CaseRow>):DecisionTreeData {
+	static function compileLeaf(m:MatcherContext, subjects:MlList<Subject>, row:CaseRow, cases:Array<CaseRow>):DecisionTreeData {
 		if (m.matchDebug)
 			Sys.println('compile_leaf:\n\tsubjects: ${sSubjects(subjects)}\n\tcase: ${sCase(row)}\n\tcases: ${sCases(cases)}');
 		var dt = leaf(m, row.caseData);
 		if (row.caseData.caseGuard != null) dt = guard(m, row.caseData.caseGuard, dt, compileRows(m, subjects, cases));
-		var ps = row.patterns.copy(),
-			ss = subjects.copy(),
-			bs = row.bindings.copy();
-		while (true) {
-			if (ps.length == 1 && ps[0].kind == PatAny) break;
-			if (ps.length == 0 && ss.length == 0) break;
-			if (ps.length == 0) Error.raiseTypingError("Invalid match: Not enough patterns", ss[0].getPos());
-			if (ss.length == 0) Error.raiseTypingError("Invalid match: Too many patterns", ps[0].pos);
-			var p = ps.shift();
-			switch p.kind {
-				case PatBind(v, p1):
-					bs.unshift(makeBind(v, p.pos, ss[0].getAssignedExpr()));
-					ps.unshift(p1);
-				case _:
-					ss.shift();
-			}
+		var ps = row.patterns,
+			ss = subjects,
+			bs = row.bindings;
+		while (true) switch [ps, ss] {
+			case [Cons({kind: PatAny}, Nil), _]:
+				break;
+			case [Cons({kind: PatBind(v, p1), pos: p}, patterns), Cons(subject, _)]:
+				bs = Cons(makeBind(v, p, subject.getAssignedExpr()), bs);
+				ps = Cons(p1, patterns);
+			case [Cons(_, patterns), Cons(_, rest)]:
+				ps = patterns;
+				ss = rest;
+			case [Nil, Nil]:
+				break;
+			case [Nil, Cons(subject, _)]:
+				Error.raiseTypingError("Invalid match: Not enough patterns", subject.getPos());
+			case [Cons(p, _), Nil]:
+				Error.raiseTypingError("Invalid match: Too many patterns", p.pos);
 		}
-		if (bs.length == 0) return dt;
-		bs.reverse();
-		return bind(m, bs, dt);
+		if (bs.match(Nil)) return dt;
+		var bl = bs.toArray();
+		bl.reverse();
+		return bind(m, bl, dt);
 	}
 
-	static function compileSwitch(m:MatcherContext, subjects:Array<Subject>, cases:Array<CaseRow>):DecisionTreeData {
-		if (subjects.length == 0) throw new InternalMatchFailure();
-		var first = subjects[0];
-		subjects = subjects.slice(1);
+	static function compileSwitch(m:MatcherContext, subjects:MlList<Subject>, cases:Array<CaseRow>):DecisionTreeData {
+		var first = switch subjects {
+			case Nil: throw new InternalMatchFailure();
+			case Cons(subject, rest):
+				subjects = rest;
+				subject;
+		};
 		var scoped = first.getScopedExpr();
 		var subject = first.getExpr();
 		var sigma:Array<{con:ConstructorData, unguarded:Bool, positions:Array<Pos>}> = [];
 		var nullRows:Array<CaseRow> = [];
 		for (row in cases) {
-			function loop(bs:Array<Bind>, p:PatternData):Void switch p.kind {
+			var patterns = row.patterns;
+			function loop(bs:MlList<Bind>, p:PatternData):Void switch p.kind {
 				case PatConstructor({kind: ConConst(TNull)}, _):
-					nullRows.push({caseData: row.caseData, bindings: bs, patterns: row.patterns.slice(1)});
+					nullRows.push({caseData: row.caseData, bindings: bs, patterns: patterns.tl()});
 				case PatConstructor(con, ps):
 					var found = null;
 					for (s in sigma) if (Constructor.equal(s.con, con)) {
@@ -296,14 +317,14 @@ class Compile {
 					}
 				case PatBind(_, {kind: PatAny}):
 				case PatBind(v, p1):
-					loop([makeBind(v, p.pos, subject)].concat(bs), p1);
+					loop(Cons(makeBind(v, p.pos, subject), bs), p1);
 				case PatAny:
 				case PatExtractor(_):
 					throw core.ds.FastThrow.of(new ExtractorFound());
 				case _:
 					Error.raiseTypingError("Unexpected pattern: " + Pattern.toString(p), row.caseData.casePos);
 			};
-			loop(row.bindings, row.patterns[0]);
+			loop(row.bindings, patterns.hd());
 		}
 		sigma.sort(function(a, b) return a.con.pos.pmin - b.con.pos.pmin);
 		if (m.matchDebug)
@@ -318,7 +339,7 @@ class Compile {
 				bs.push(b);
 				ss.push(new Subject(ev, b));
 			}
-			var dt = compileRows(m, ss.concat(subjects), specialize(subject, s.con, cases));
+			var dt = compileRows(m, ss.ofArray(subjects), specialize(subject, s.con, cases));
 			return ({scCon: s.con, scUnguarded: s.unguarded, scDt: bind(m, bs, dt)} : typing.matcher.DecisionTree.DecisionSwitchCase);
 		});
 		// This is very awkward: We need to know the first occurrence of the subject expression in the
@@ -340,25 +361,28 @@ class Compile {
 		return dt;
 	}
 
-	static function compileExtractors(m:MatcherContext, subjects:Array<Subject>, cases:Array<CaseRow>):DecisionTreeData {
-		if (subjects.length == 0) throw new InternalMatchFailure();
-		var subject = subjects[0].getExpr();
-		subjects = subjects.slice(1);
+	static function compileExtractors(m:MatcherContext, subjects:MlList<Subject>, cases:Array<CaseRow>):DecisionTreeData {
+		var subject = switch subjects {
+			case Nil: throw new InternalMatchFailure();
+			case Cons(subject, rest):
+				subjects = rest;
+				subject.getExpr();
+		};
 		if (m.matchDebug)
 			Sys.println('compile_extractor:\n\tsubject: ${sExprPretty(subject)}\n\ttsubjects: ${sSubjects(subjects)}\n\tcases: ${sCases(cases)}');
 		// Find all extractors of the current column and associate them with bindings, if exist
 		var count = 0;
-		var extracted:Array<{row:CaseRow, ex:Null<{extractor:Extractor, i:Int, bindings:Array<Bind>}>}> = [];
+		var extracted:Array<{row:CaseRow, ex:Null<{extractor:Extractor, i:Int, bindings:MlList<Bind>}>}> = [];
 		for (row in cases) {
-			var ex:Null<{extractor:Extractor, i:Int, bindings:Array<Bind>}> = null;
-			function loop(bs:Array<Bind>, p:PatternData):Void switch p.kind {
+			var ex:Null<{extractor:Extractor, i:Int, bindings:MlList<Bind>}> = null;
+			function loop(bs:MlList<Bind>, p:PatternData):Void switch p.kind {
 				case PatExtractor(e):
 					ex = {extractor: e, i: ++count, bindings: bs};
 				case PatBind(v, p1):
-					loop([makeBind(v, p.pos, subject)].concat(bs), p1);
+					loop(Cons(makeBind(v, p.pos, subject), bs), p1);
 				case _:
 			};
-			loop([], row.patterns[0]);
+			loop(Nil, row.patterns.hd());
 			extracted.push({row: row, ex: ex});
 		}
 		var any:PatternData = {kind: PatAny, pos: nullPos};
@@ -368,11 +392,17 @@ class Compile {
 			lut:Array<{e:TExpr, subject:Subject, i:Int}> = [];
 		for (item in extracted) {
 			var row:CaseRow = item.row;
-			if (row.patterns.length == 0) throw "assert";
-			var p = row.patterns[0], tail = row.patterns.slice(1);
+			var p, tail;
+			switch row.patterns {
+				case Nil:
+					throw "assert";
+				case Cons(p1, rest):
+					p = p1;
+					tail = rest;
+			}
 			if (item.ex == null) {
 				// If there's no extractor, generate `[pattern1, _, ..., _ ]`
-				result.push({caseData: row.caseData, bindings: row.bindings, patterns: makeOffsetList(0, count, p, any).concat(tail)});
+				result.push({caseData: row.caseData, bindings: row.bindings, patterns: makeOffsetList(0, count, p, any).ofArray(tail)});
 				continue;
 			}
 			var ex:Extractor = item.ex.extractor;
@@ -382,7 +412,7 @@ class Compile {
 				case _: core.Texpr.mapExpr(replace, e);
 			};
 			var e = replace(ex.exExpr);
-			var bindings = item.ex.bindings.concat(row.bindings);
+			var bindings = item.ex.bindings.append(row.bindings);
 			// See if we already had an equal extractor expression. In that case we can reuse its _hx_tmp
 			var found:Null<{e:TExpr, subject:Subject, i:Int}> = null;
 			for (entry in lut) if (Texpr.equal(e, entry.e)) {
@@ -408,7 +438,7 @@ class Compile {
 				caseData: row.caseData,
 				bindings: bindings,
 				// For the patterns, generate `[_, ..., extractorPatternI, ..., _]
-				patterns: makeOffsetList(i, count - i, ex.exPattern, any).concat(tail)
+				patterns: makeOffsetList(i, count - i, ex.exPattern, any).ofArray(tail)
 			});
 		}
 		/* At the end of all this we have something like this:
@@ -420,7 +450,7 @@ class Compile {
 				case [_, _, extractorRhsN]:
 			}
 		*/
-		var dt = compileRows(m, [new Subject(subject, null)].concat(ss).concat(subjects), result);
+		var dt = compileRows(m, Cons(new Subject(subject, null), ss.ofArray(subjects)), result);
 		return bind(m, bs, dt);
 	}
 
@@ -447,7 +477,7 @@ class Compile {
 			var dt = fail(m, subjects[0].getPos());
 			return switchTree(m, subjects[0].getExpr(), [], dt);
 		}
-		var dt = compileRows(m, subjects, cases);
+		var dt = compileRows(m, subjects.ofArray(), cases);
 		Useless.check(ctx, cases);
 		return vars.length == 0 ? dt : bind(m, vars, dt);
 	}

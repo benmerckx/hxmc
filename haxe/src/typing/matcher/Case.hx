@@ -36,10 +36,10 @@ import typing.matcher.Bind;
 
 @:structInit class CaseRow {
 	public var caseData:CaseData;
-	public var bindings:Array<Bind>;
-	public var patterns:Array<PatternData>;
+	public var bindings:core.ds.MlList<Bind>;
+	public var patterns:core.ds.MlList<PatternData>;
 
-	public inline function new(caseData:CaseData, bindings:Array<Bind>, patterns:Array<PatternData>) {
+	public inline function new(caseData:CaseData, bindings:core.ds.MlList<Bind>, patterns:core.ds.MlList<PatternData>) {
 		this.caseData = caseData;
 		this.bindings = bindings;
 		this.patterns = patterns;

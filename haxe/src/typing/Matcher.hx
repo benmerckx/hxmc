@@ -42,6 +42,7 @@ import typing.matcher.DecisionTree;
 import typing.matcher.ExprToPattern;
 import typing.matcher.TexprConverter;
 import typing.matcher.MatcherGlobals;
+import core.ds.MlList;
 
 @:structInit class MatchCase {
 	public var patterns:Array<Expr>;
@@ -116,7 +117,7 @@ class Matcher {
 				&& cp.pmax == Globals.nullPos.pmax)
 				cp = c.expr.pos;
 			var row = Case.make(ctx, subject.type, [], c.patterns, c.guard, c.expr, withType, postfixMatch, cp);
-			return {caseData: row.caseData, bindings: row.bindings, patterns: [row.pattern]};
+			return {caseData: row.caseData, bindings: MlListTools.ofArray(row.bindings), patterns: Cons(row.pattern, Nil)};
 		});
 		inline function inferSwitchType():T return switch withType {
 			case NoValue: ctx.t.tvoid;
@@ -143,7 +144,7 @@ class Matcher {
 		};
 		if (matchDebug) {
 			Sys.println("CASES BEGIN");
-			for (row in rows) Sys.println(row.patterns.map(Pattern.toString).join(""));
+			for (row in rows) Sys.println(MlListTools.toArray(row.patterns).map(Pattern.toString).join(""));
 			Sys.println("CASES END");
 		}
 		var dt = Compile.compile(ctx, matchDebug, subject.subjects, rows, p);

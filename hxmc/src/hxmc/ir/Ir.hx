@@ -49,8 +49,11 @@ class ClassInfo {
 	public var tindex:Int = -1;
 	public var isInterface = false;
 	public var ifaces:Array<ClassInfo> = []; // implemented interfaces, including inherited ones
-	// statics reachable through the class value (Dynamic access, Reflect): set once the class is used as a value
-	public var statics:Null<Array<{name:String, clos:Null<LambdaInfo>, global:Int}>> = null;
+	// statics reachable through the class value (Dynamic access, Reflect): set once
+	// the class is used as a value, in the order Type.getClassFields lists them
+	// (Lower.reflectStatics); Reach keeps those live code can reach (null: no
+	// live code has the class value)
+	public var statics:Null<Array<StaticEntry>> = null;
 
 	public function new(name, ident, sup) {
 		this.name = name;
@@ -74,6 +77,10 @@ class ClassInfo {
 		return null;
 	}
 }
+
+// a static reached through its class value (ClassInfo.statics): a function
+// (fn), as the closure calling it (clos), or a variable (its global)
+typedef StaticEntry = {name:String, clos:Null<LambdaInfo>, fn:Null<FuncInfo>, global:Int};
 
 class EnumInfo {
 	public var name:String;

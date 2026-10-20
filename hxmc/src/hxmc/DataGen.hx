@@ -254,9 +254,11 @@ class DataGen {
 
 	function types() {
 		var types:Array<hxmc.ir.Facts.TypeEntry> = e.types;
-		var staticsOf = new Map<Int, Array<{name:String, clos:Null<LambdaInfo>, global:Int}>>();
-		for (c in p.classes)
-			if (c.statics != null && c.statics.length > 0) staticsOf.set(c.tindex, c.statics);
+		// (the statics Reach kept, in the order Type.getClassFields lists them: each entry's rank)
+		var staticsOf = new Map<Int, Array<StaticEntry>>();
+		for (cs in [p.classes, p.interfaces])
+			for (c in cs)
+				if (c.statics != null && c.statics.length > 0) staticsOf.set(c.tindex, c.statics);
 		// the arrays each entry points to, then the table
 		var entries = [];
 		for (i in 0...types.length) {
@@ -264,8 +266,8 @@ class DataGen {
 			var ss = staticsOf.get(i);
 			var ssSym = null, pmSym = null, fsSym = null, msSym = null, ifSym = null, ctSym = null;
 			if (ss != null) {
-				// (a static function no live code can reach through the class value: left out, Reach)
-				ss = [for (x in ss) if (x.clos == null || p.isLive(x.clos.fn)) x];
+				var rank = [for (k in 0...ss.length) ss[k].name => k];
+				ss = ss.copy();
 				ss.sort((a, b) -> e.fid(a.name) - e.fid(b.name));
 				ssSym = local(data, "ss", 8);
 				for (x in ss) {
@@ -273,19 +275,19 @@ class DataGen {
 					if (x.clos != null) {
 						data.buf.u32("c".code);
 						data.buf.u32(x.clos.tindex);
-						data.buf.u32(0);
+						data.buf.u32(rank[x.name]);
 						ptr(data, e.symbol(x.clos.fn));
 					} else {
 						var gt = p.globals[x.global].ty;
 						if (Ir.isRef(gt)) {
 							data.buf.u32("p".code);
 							data.buf.u32(x.global);
-							data.buf.u32(0);
+							data.buf.u32(rank[x.name]);
 							data.buf.u64(0, 0);
 						} else {
 							data.buf.u32(kindChar(gt));
 							data.buf.u32(-1);
-							data.buf.u32(0);
+							data.buf.u32(rank[x.name]);
 							ptr(data, e.scalarGlobal(x.global));
 						}
 					}
@@ -376,7 +378,7 @@ class DataGen {
 			data.buf.u32(0);
 			if (x.ifSym != null) ptrSym(data, x.ifSym) else data.buf.u64(0, 0); // 72 ifaces
 			data.buf.u32(t.tag); // 80 tag
-			data.buf.u32(0);
+			data.buf.u32(t.single != null ? t.single + 1 : 0); // 84 a constructor's singleton: its rt_globals index + 1
 			if (x.ctSym != null) ptrSym(data, x.ctSym) else data.buf.u64(0, 0); // 88 ctors
 			data.buf.u32(x.ss != null ? x.ss.length : 0); // 96 nstatics
 			data.buf.u32(0);

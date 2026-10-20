@@ -410,18 +410,20 @@ class Loader {
 				Mem.setPtr(e, 88, p);
 			}
 		}
-		// the new classes' statics (rt_static: fid, kind, index, address)
+		// the new classes' statics (rt_static: fid, kind, index, rank, address;
+		// the bundle has them in the order Type.getClassFields lists them)
 		for (c in classes) {
 			var ss:Array<Dynamic> = c.statics;
 			if (!isNew.exists(c.ty) || ss == null || ss.length == 0) continue;
-			ss = ss.copy();
-			ss.sort((a, b) -> fids.get(a.name) - fids.get(b.name));
+			var order = [for (i in 0...ss.length) i];
+			order.sort((a, b) -> fids.get(ss[a].name) - fids.get(ss[b].name));
 			var p = zalloc(24 * ss.length);
 			for (i in 0...ss.length) {
-				var s = ss[i];
+				var s = ss[order[i]];
 				var kind:String = s.kind;
 				Mem.setI32(p, 24 * i, fids.get(s.name));
 				Mem.setI32(p, 24 * i + 4, kind.charCodeAt(0));
+				Mem.setI32(p, 24 * i + 12, order[i]);
 				switch kind {
 					case "c":
 						Mem.setI32(p, 24 * i + 8, num.get(s.ty));
@@ -473,7 +475,11 @@ class Loader {
 			if (g.init != null) Mem.setRef(Gc.globals, 8 * g.idx, Mem.alloc(1, num.get(g.init), 0));
 		var singletons:Array<Dynamic> = facts.singletons;
 		for (s in singletons)
-			if (gindex.exists(s.global)) b.singletons.set(num.get(s.ty), gindex.get(s.global));
+			if (gindex.exists(s.global)) {
+				b.singletons.set(num.get(s.ty), gindex.get(s.global));
+				// (Type.createEnum finds it there: Types.single)
+				Mem.setI32(Mem.sym("rt_types").add(num.get(s.ty) * TS), 84, gindex.get(s.global) + 1);
+			}
 		// ---- the static initializers of the new classes, in order
 		dbg("the static initializers of the new classes, in order");
 		var inits:Array<Dynamic> = facts.inits;

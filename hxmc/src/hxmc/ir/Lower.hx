@@ -1157,20 +1157,38 @@ class Lower {
 	var staticClosures = new Map<FuncInfo, LambdaInfo>();
 
 	// the class is used as a value: its statics become reachable dynamically
+	// (Reach keeps those live code can reach; an interface's: the __meta__
+	// the filters give it). They are those Eval has (not extern nor generic; a
+	// variable with storage or an initializer: an inline one's sets a global
+	// too, FnLower.runInit), in Eval's order, the reference's:
+	// Type.getClassFields lists the names of its static prototype by their
+	// hashes (EvalStdLib's getClassFields folds an IntMap, Globals', whose
+	// keys go down, onto a list)
 	public function reflectStatics(c:TClass) {
-		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || CInterop.isNativeClass(c)) return;
+		if (c.hasClassFlag(CExtern) || CInterop.isNativeClass(c)) return;
 		var ci = classInfo(c);
 		if (ci.statics != null) return;
 		ci.statics = [];
-		for (cf in c.clOrderedStatics)
+		for (cf in c.clOrderedStatics) {
+			if (cf.hasClassFieldFlag(CfExtern) || cf.hasClassFieldFlag(CfGeneric)) continue;
 			switch cf.cfKind {
 				// (a function taking or returning a struct is not reachable by name)
 				case Method(MethNormal | MethInline) if (funcOf(cf) != null && !hasStruct(staticFunc(c, cf))):
-					ci.statics.push({name: cf.cfName, clos: staticClosure(staticFunc(c, cf)), global: -1});
-				case Var(v) if (isPhysical(c, cf, v) && !v.vRead.match(AccInline) && !ty(cf.cfType).match(TStruct(_))):
-					ci.statics.push({name: cf.cfName, clos: null, global: staticVar(c, cf)});
+					var f = staticFunc(c, cf);
+					ci.statics.push({name: cf.cfName, clos: staticClosure(f), fn: f, global: -1});
+				case Var(v) if ((cf.cfExpr != null || isPhysical(c, cf, v)) && !ty(cf.cfType).match(TStruct(_))):
+					var g = staticVar(c, cf);
+					// (not a thread's own, nor the address of a block: no global holds those)
+					if (prog.globals[g].tls == null && prog.globals[g].bss == null)
+						ci.statics.push({name: cf.cfName, clos: null, fn: null, global: g});
 				case _:
 			}
+		}
+		var hash = [for (s in ci.statics) s.name => macros.eval.EvalHash.camlHashString(s.name)];
+		ci.statics.sort((a, b) -> {
+			var x = hash[a.name], y = hash[b.name];
+			x != y ? (x < y ? -1 : 1) : a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+		});
 	}
 
 	static function hasStruct(f:FuncInfo):Bool {

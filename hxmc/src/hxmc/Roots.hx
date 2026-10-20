@@ -16,6 +16,7 @@ class Roots {
 	var refs:Bits; // locals of reference type
 	public var rooted:Bits;
 	public var spills = new Map<Int, Array<Local>>(); // SCold id -> references live across its slow path
+	var spillSets = new Map<Int, Bits>(); // (the same, as they are found)
 	var byId:haxe.ds.Vector<Null<Local>>;
 	// interference of the reference locals (dense indices; null: none kept,
 	// a slot per rooted local)
@@ -62,7 +63,47 @@ class Roots {
 		if (f.hasTry)
 			for (id in MirBuild.assignedInTry(f).keys())
 				if (r.refs.get(id)) r.rooted.set(id);
+		r.spillLists();
 		return r;
+	}
+
+	// A reference live across the slow paths of many cold sites is rooted
+	// instead: each slow path would store and reload it, and the reloaded
+	// values meet the fast path's in a phi after it, so a value live across k
+	// sites costs O(k) code, and n such values O(n * k) (ml2hx's tables:
+	// nested constructor calls over a thousand values, millions of Mir values
+	// and minutes of register allocation). In its slot it is stored once.
+	static inline var MAX_COLD_SPILLS = 32;
+
+	function spillLists() {
+		var count = hxmc.Lir.Arrays.filled(n, 0);
+		var many = false;
+		for (set in spillSets)
+			for (k in 0...set.w.length) {
+				var x = set.w[k];
+				while (x != 0) {
+					var b = x & -x;
+					var i = (k << 5) + bitIndex(b);
+					x &= x - 1;
+					if (++count[i] > MAX_COLD_SPILLS) many = true;
+				}
+			}
+		if (many)
+			for (i in 0...n)
+				if (count[i] > MAX_COLD_SPILLS) rooted.set(i);
+		for (id => set in spillSets) {
+			var list = [];
+			for (k in 0...set.w.length) {
+				var x = set.w[k];
+				while (x != 0) {
+					var b = x & -x;
+					var i = (k << 5) + bitIndex(b);
+					x &= x - 1;
+					if (byId[i] != null && count[i] <= MAX_COLD_SPILLS) list.push(byId[i]);
+				}
+			}
+			spills.set(id, list);
+		}
 	}
 
 	static inline var MAX_SHARED = 4096; // (reference locals; beyond: no sharing)
@@ -337,11 +378,12 @@ class Roots {
 			for (k in 0...n)
 				if (live.get(k) && raws.get(k)) rawError(k, "is live across " + point);
 		}
-		var list = spills.get(id);
-		if (list == null) spills.set(id, list = []);
-		for (k in 0...n)
-			if (live.get(k) && refs.get(k) && byId[k] != null && list.indexOf(byId[k]) < 0) list.push(byId[k]);
-		list.sort((x, y) -> x.id - y.id);
+		// (the analysis may come here again for the site, in a loop: the union)
+		var set = spillSets.get(id);
+		if (set == null) spillSets.set(id, set = new Bits(n));
+		var sw = set.w, lw = live.w, rw = refs.w;
+		for (k in 0...sw.length)
+			sw[k] |= lw[k] & rw[k];
 		return live;
 	}
 

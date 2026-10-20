@@ -974,6 +974,9 @@ class Dyn {
 		var t = described(e);
 		if (tk(ty(t)) != TK_ENUM || index < 0 || index >= tag(ty(t))) Rt.rt_throw("Invalid enum constructor");
 		var ct = ctor(ty(t), index);
+		// (its own value: `==` to the constructor)
+		var g = single(ty(ct));
+		if (g >= 0) return Mem.getRef(globalSlot(g), 0);
 		var n = slotCount(ty(ct));
 		var o = Mem.alloc(n > 0 ? n : 1, ct, K_OBJ);
 		for (i in 0...nfields(ty(ct))) {
@@ -1043,8 +1046,25 @@ class Dyn {
 	public static function instanceFields(c:Dynamic):Array<String>
 		return namesArray(described(c), true);
 
+	// the statics a class value reaches (Type.getClassFields), in their order
+	// (each entry's rank: hxmc.ir.Lower.reflectStatics)
+	public static function classFields(c:Dynamic):Array<String> {
+		var a:Array<String> = [];
+		if (Str.isNull(c) || tindex(c) != T_TYPEOBJ) return a;
+		var n = nstatics(ty(described(c)));
+		a.resize(n);
+		for (i in 0...n) {
+			var s = stat(ty(described(c)), i);
+			a[Mem.getI32(s, 12)] = Names.fidStr(Mem.getI32(s, 0));
+		}
+		return a;
+	}
+
 	public static function fields(o:Dynamic):Array<String> {
-		if (Str.isNull(o) || tindex(o) < T_FIRST) return [];
+		if (Str.isNull(o)) return [];
+		// (a class value's: its statics, as Eval has them)
+		if (tindex(o) == T_TYPEOBJ) return classFields(o);
+		if (tindex(o) < T_FIRST) return [];
 		var t = tindex(o);
 		var a = namesArray(t, false);
 		if (tk(ty(t)) == TK_ANON && !Str.isNull(Mem.getRef(Mem.addr(o), 0))) {
@@ -1060,7 +1080,10 @@ class Dyn {
 	}
 
 	public static function hasField(o:Dynamic, name:String):Bool {
-		if (Str.isNull(o) || tindex(o) < T_FIRST) return false;
+		if (Str.isNull(o)) return false;
+		// (a class value: its own statics, not its superclasses')
+		if (tindex(o) == T_TYPEOBJ) return !findStatic(o, fid(name)).isNull();
+		if (tindex(o) < T_FIRST) return false;
 		var f = fid(name);
 		if (!findField(ty(tindex(o)), f).isNull()) return true;
 		return overflowFind(o, f) >= 0;
@@ -1069,7 +1092,7 @@ class Dyn {
 	public static function getField(o:Dynamic, name:String):Dynamic {
 		if (Str.isNull(o)) return null;
 		var t = tindex(o);
-		if (t < T_FIRST && t != T_STRING && t != T_ARRAY) return null;
+		if (t < T_FIRST && t != T_STRING && t != T_ARRAY && t != T_TYPEOBJ) return null;
 		return dynGet(o, name);
 	}
 

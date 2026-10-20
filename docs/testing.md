@@ -103,7 +103,10 @@ fuzzer programs, compiled by the tool, run with a 64 KB nursery (a missing
 root shows) and compared with their golden files, which are frozen (the
 outputs of hxc, the C target hxmc came from): a new case gets one with
 `--bless` (checked by hand), a changed output is an edit of its golden file
-with the reason in the commit. `Crosshost`: the tool as a WebAssembly module
+with the reason in the commit. A `// build-seconds: <n>` line of a case bounds
+the tool's time to build it (`BigInit`: a function of a thousand nested
+constructor calls, the shape of ml2hx's generated tables, once a minute of
+register allocation). `Crosshost`: the tool as a WebAssembly module
 writes the same bytes as the native tool, for every target, itself included.
 `RT_VERIFY=1` fills the free nursery with a pattern, so uninitialized
 allocations and missed roots show at once. `ModuleCacheCheck` (`make
