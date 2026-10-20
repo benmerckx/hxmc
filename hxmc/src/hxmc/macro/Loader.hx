@@ -20,6 +20,7 @@ class Bundle {
 	public var typeObjs = new Map<String, Ptr>(); // type name (TK_CLASS, TK_ENUM) -> its type object
 	public var shapes:Array<{tindex:Int, fields:Array<String>}> = []; // the anonymous structures (TK_ANON)
 	public var singletons = new Map<Int, Int>(); // constructor type index -> its rt_globals index
+	public var inits:Array<Ptr> = []; // the static initializers run, in order
 	public var codeBytes = 0;
 
 	public function new() {}
@@ -54,6 +55,23 @@ class Loader {
 	static var nextType = 0;
 	static var nextSig = 0;
 	static var hint = 0x40000000;
+
+	// a new generation of bundles (interp.MirMacros: a compilation whose macro
+	// context was typed again): those loaded so far stay mapped, but the next
+	// ones are not linked against them, and their types are no longer found by
+	// name (Type.resolveClass: an empty name)
+	public static function newGeneration() {
+		for (t in hostNtypes...nextType) {
+			var e = Mem.sym("rt_types").add(t * TS);
+			var n = Mem.getPtr(e, 0);
+			if (!n.isNull()) Mem.setPtr(e, 0, n.add(LibC.strlen(n)));
+		}
+		xb = new Map();
+	}
+
+	// the spare entries taken: types, signatures
+	public static function used():{types:Int, sigs:Int}
+		return {types: nextType - hostNtypes, sigs: nextSig - hostNsigs};
 
 	// whether o is an object of a type of a bundle
 	public static function isBundleObject(o:Dynamic):Bool
@@ -487,7 +505,10 @@ class Loader {
 		for (i in inits)
 			// (a class without a type entry: new unless a bundle loaded before, or for
 			// the std the compiler, has its initializer)
-			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || (i.share && h.exists(i.fn)))) Mem.call0(ptr(symAddr(i.fn)));
+			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || (i.share && h.exists(i.fn)))) {
+				b.inits.push(ptr(symAddr(i.fn)));
+				Mem.call0(ptr(symAddr(i.fn)));
+			}
 		// what the next bundles share: the numbers, the globals and type objects, the functions
 		for (n => v in num)
 			xb.set(n, {k: "a", v: v});

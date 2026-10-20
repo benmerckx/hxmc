@@ -173,8 +173,12 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		(java) Implementation detail: Do not `set()` any new value while
 		iterating, as it may cause a resize, which will break iteration.
 	**/
-	public function keys():Iterator<String>
+	public function keys():Iterator<String> {
+		#if (hxmc.jit || hxmc.interp || macro)
+		if (hxmc.rt.EvalCompat.on) return [for (j in evalOrder()) (kvs[2 * j] : String)].iterator();
+		#end
 		return new StringMapIterator(this, 0);
+	}
 
 	/**
 		See `Map.iterator`
@@ -182,8 +186,21 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		(java) Implementation detail: Do not `set()` any new value while
 		iterating, as it may cause a resize, which will break iteration.
 	**/
-	public function iterator():Iterator<T>
+	public function iterator():Iterator<T> {
+		#if (hxmc.jit || hxmc.interp || macro)
+		if (hxmc.rt.EvalCompat.on) return [for (j in evalOrder()) (kvs[2 * j + 1] : T)].iterator();
+		#end
 		return cast new StringMapIterator(this, 1);
+	}
+
+	#if (hxmc.jit || hxmc.interp || macro)
+	// the entries in Eval's order (hxmc.rt.EvalCompat): by key, descending
+	function evalOrder():Array<Int> {
+		var order = [for (j in 0...used) if (dead == null || !dead[j]) j];
+		order.sort((a, b) -> hxmc.rt.EvalCompat.compareStrings(kvs[2 * b], kvs[2 * a]));
+		return order;
+	}
+	#end
 
 	/**
 		See `Map.keyValueIterator`
@@ -208,14 +225,24 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		var b = new StringBuf();
 		b.add("[");
 		var first = true;
+		inline function entry(j:Int, sep:String) {
+			if (!first) b.add(sep);
+			first = false;
+			b.add(Std.string(kvs[2 * j]));
+			b.add(" => ");
+			b.add(Std.string(kvs[2 * j + 1]));
+		}
+		#if (hxmc.jit || hxmc.interp || macro)
+		// (Eval's order and separator: EvalStdLib's StringMap.toString)
+		if (hxmc.rt.EvalCompat.on) {
+			for (j in evalOrder())
+				entry(j, ",");
+			b.add("]");
+			return b.toString();
+		}
+		#end
 		for (j in 0...used)
-			if (dead == null || !dead[j]) {
-				if (!first) b.add(", ");
-				first = false;
-				b.add(Std.string(kvs[2 * j]));
-				b.add(" => ");
-				b.add(Std.string(kvs[2 * j + 1]));
-			}
+			if (dead == null || !dead[j]) entry(j, ", ");
 		b.add("]");
 		return b.toString();
 	}

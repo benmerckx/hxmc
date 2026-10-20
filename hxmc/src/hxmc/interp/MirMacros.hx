@@ -54,8 +54,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	var com:Null<context.Common.CommonContext> = null;
 	var api:Null<CompilerApi> = null;
 	var apiTable = new Map<String, Dynamic>();
+	var apiWrapped = new Map<String, Dynamic>();
 	// the macro context's types given their filters (ready), by path
 	var processed = new Map<String, ModuleType>();
+	// their modules' ids: a type typed again in another compilation starts a new generation
+	var mIds = new Map<String, Int>();
+	// a compilation began (doReuse) and no generation began since
+	var reused = false;
+	// the static initializers of the classes loaded, in order (run again by doReuse)
+	var inits:Array<Ptr> = [];
 	// (the types whose runtime implementations the lowering knows: Lower.findHosts, once each)
 	var scanned = new Map<String, Bool>();
 	var l:Null<hxmc.ir.Lower> = null;
@@ -106,6 +113,29 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			if (e == null && self.macroEnum(name)) e = Type.resolveEnum(name);
 			cast e;
 		};
+		// (the path of a macro context's type in an expression: its module's, then its
+		// name when they differ, EvalMain.value_to_expr's make_path)
+		macros.MacroApi.MacroNativeValues.typePath = name -> {
+			var t = self.processed.get(name);
+			if (t == null) return name.split(".");
+			var i = core.TFunctions.tInfos(t);
+			var m = i.mtModule.mPath;
+			m.name == i.mtPath.name && m.pack.join(".") == i.mtPath.pack.join(".") ? m.pack.concat([m.name]) : m.pack.concat([m.name, i.mtPath.name]);
+		};
+		// (Std.string of a position in macro code: EvalPrinting.s_value's #pos(...))
+		hxmc.rt.EvalCompat.classNames = [Type.getClassName(core.Globals.Pos) => "haxe.macro.Position"];
+		hxmc.rt.EvalCompat.special = v -> Std.isOfType(v, core.Globals.Pos) ? "#pos(" + syntax.Lexer.getErrorPos((file, line) -> '$file:$line:', v) + ")" : null;
+		// (a macro function the compiler calls back: macro code, as Eval shows values: hxmc.rt.EvalCompat)
+		macros.MacroApi.MacroNativeValues.callback = call -> {
+			var order = hxmc.rt.EvalCompat.on;
+			hxmc.rt.EvalCompat.on = true;
+			var r:Dynamic = try call() catch (x:Dynamic) {
+				hxmc.rt.EvalCompat.on = order;
+				throw x;
+			}
+			hxmc.rt.EvalCompat.on = order;
+			r;
+		};
 		macros.MacroApi.MacroNativeValues.resolveClass = name -> {
 			var c = Type.resolveClass(name);
 			if (c == null && self.apiTypesPending()) {
@@ -141,9 +171,36 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// ---- the API of hxmc.MacroHost
 
 	@:hxmc.export("hxmc_mir_macro_load") static function load(name:String, nargs:Int):Dynamic {
+		var w = self.apiWrapped.get(name);
+		if (w != null) return w;
 		var f = self.apiTable.get(name);
 		if (f == null) throw "Could not find macro function \"" + name + "\"";
-		return f;
+		w = compilerSide(f, nargs);
+		self.apiWrapped.set(name, w);
+		return w;
+	}
+
+	// an API function, run as the compiler's code (not hxmc.rt.EvalCompat's)
+	static function compilerSide(f:Dynamic, nargs:Int):Dynamic {
+		inline function run(call:Void->Dynamic):Dynamic {
+			var order = hxmc.rt.EvalCompat.on;
+			hxmc.rt.EvalCompat.on = false;
+			var r:Dynamic = try call() catch (x:Dynamic) {
+				hxmc.rt.EvalCompat.on = order;
+				throw x;
+			}
+			hxmc.rt.EvalCompat.on = order;
+			return r;
+		}
+		return switch nargs {
+			case 0: () -> run(() -> f());
+			case 1: (a:Dynamic) -> run(() -> f(a));
+			case 2: (a:Dynamic, b:Dynamic) -> run(() -> f(a, b));
+			case 3: (a:Dynamic, b:Dynamic, c:Dynamic) -> run(() -> f(a, b, c));
+			case 4: (a:Dynamic, b:Dynamic, c:Dynamic, d:Dynamic) -> run(() -> f(a, b, c, d));
+			case 5: (a:Dynamic, b:Dynamic, c:Dynamic, d:Dynamic, e:Dynamic) -> run(() -> f(a, b, c, d, e));
+			case _: Reflect.makeVarArgs(args -> run(() -> Reflect.callMethod(null, f, args)));
+		}
 	}
 
 	@:hxmc.export("hxmc_mir_macro_pos") static function mkPos(file:String, min:Int, max:Int):Dynamic
@@ -169,8 +226,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function addTypes(ctx:macros.eval.EvalContext.Context, types:Array<ModuleType>, ready:ModuleType->Void):Void {
 		for (t in types) {
 			var k = core.Globals.sTypePath(core.TFunctions.tPath(t));
-			if (processed.exists(k)) continue;
+			var m = core.TFunctions.tInfos(t).mtModule.mId;
+			if (processed.exists(k)) {
+				if (mIds.get(k) == m) continue;
+				// (the first of this compilation: once a compilation)
+				if (reused) newGeneration();
+				reused = false;
+			}
 			processed.set(k, t);
+			mIds.set(k, m);
 			ready(t);
 			// (a class's runtime metadata, which Eval's static prototypes carry,
 			// EvalPrototype.create_static_prototype: the __meta__ static of the
@@ -186,6 +250,35 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function doReuse(ctx:macros.eval.EvalContext.Context, api:CompilerApi, args:Array<String>):Void {
 		hadError = false;
 		this.api = api;
+		reused = true;
+		// (the statics' initial values again: EvalMain.doReuse's staticPrototypes.reset)
+		var order = hxmc.rt.EvalCompat.on;
+		hxmc.rt.EvalCompat.on = true;
+		try
+			for (p in inits)
+				Mem.call0(p)
+		catch (x:Dynamic) {
+			hxmc.rt.EvalCompat.on = order;
+			throw toCompilerError(x, api);
+		}
+		hxmc.rt.EvalCompat.on = order;
+	}
+
+	// the macro context typed again (another compilation: --next, the compilation
+	// server), as EvalPrototype.addTypes drops the prototypes of a type whose module
+	// is another: what was compiled is dropped, compiled again as it is needed
+	function newGeneration() {
+		hxmc.macro.Loader.newGeneration();
+		l = null;
+		opts = null;
+		compiled = new Map();
+		native = new Map();
+		entries = new Map();
+		scanned = new Map();
+		lastPrep = null;
+		stdRoots = [];
+		inits = [];
+		macros.MacroApi.MacroNativeValues.reset();
 	}
 
 	public function setError(ctx:macros.eval.EvalContext.Context, b:Bool):Void
@@ -406,6 +499,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
+		for (p in b.inits)
+			inits.push(p);
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();
@@ -432,8 +527,18 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 		// (the macro function's site: the macro call's position, as EvalMain.callPath's frame has it)
 		pending = site(api.pos);
-		// (no collection between the addresses written and the frame taking them)
-		hxmc.rt.Interp.enter(desc, buf);
+		// (no collection between the addresses written and the frame taking them;
+		// the macro code sees values as Eval shows them: hxmc.rt.EvalCompat)
+		var order = hxmc.rt.EvalCompat.on;
+		hxmc.rt.EvalCompat.on = true;
+		try
+			hxmc.rt.Interp.enter(desc, buf)
+		catch (x:Dynamic) {
+			hxmc.rt.EvalCompat.on = order;
+			LibC.free(buf);
+			throw x;
+		}
+		hxmc.rt.EvalCompat.on = order;
 		var w = Mem.getI64(buf, 0);
 		var r:Dynamic = switch fi.ret {
 			case TVoid: null;
@@ -448,7 +553,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	}
 
 	public function report() {
-		if (stats && steps > 0) Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms\n');
+		if (stats && steps > 0) Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
 	}
 }
 #end

@@ -3538,8 +3538,11 @@ class MacroNativeValues {
 		return haxe.crypto.Md5.encode(s.toString());
 	}
 
+	// port: what runs a macro function the compiler calls back (the engine's, as it runs macro code)
+	public static var callback:(Void->Dynamic)->Dynamic = call -> call();
+
 	public static function prepareCallback(v:Dynamic, nargs:Int):Array<Dynamic>->Dynamic
-		return args -> Reflect.callMethod(null, v, args);
+		return args -> callback(() -> Reflect.callMethod(null, v, args));
 
 	public static function valueString(v:Dynamic):String
 		return Std.string(v);
@@ -3582,8 +3585,12 @@ class MacroNativeValues {
 			return {expr: EBinop(OpArrow, k, valueToExpr(x, p)), pos: p};
 		if (v == null) return {expr: EConst(Ident("null")), pos: p};
 		if (Std.isOfType(v, StdTypes.Bool)) return {expr: EConst(Ident(v ? "true" : "false")), pos: p};
-		if (Std.isOfType(v, StdTypes.Int)) return {expr: EConst(Int(Std.string(v), null)), pos: p};
-		if (Std.isOfType(v, StdTypes.Float)) return MacroApi.haxeFloat(v, p);
+		// port: by the value's kind, as Eval's VInt32 and VFloat (an integral Float is an Int to Std.isOfType)
+		switch Type.typeof(v) {
+			case TInt: return {expr: EConst(Int(Std.string(v), null)), pos: p};
+			case TFloat: return MacroApi.haxeFloat(v, p);
+			case _:
+		}
 		if (Std.isOfType(v, std.String)) return {expr: EConst(String(v, SDoubleQuotes)), pos: p};
 		if (Std.isOfType(v, std.Array)) return {expr: EArrayDecl([for (x in (v : Array<Dynamic>)) valueToExpr(x, p)]), pos: p};
 		if (Reflect.isEnumValue(v)) {
