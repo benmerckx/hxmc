@@ -64,7 +64,7 @@ class Generic {
 					case TEnum(en, tl): result(pathName(en.ePath) + tlName(tl));
 					case TAnon(a):
 						var names = [for (n in a.aFields.keys()) n];
-						names.sort(Reflect.compare);
+						names.sort(core.ds.Key.compareStrings);
 						var fields = [];
 						for (n in names) fields.unshift(n + "_" + deep(follow(a.aFields.get(n).cfType)));
 						result("anon_" + fields.join("_"));
@@ -255,7 +255,7 @@ class Generic {
 					if (t != null) loop(t);
 				case TAnon(a):
 					var names = [for (n in a.aFields.keys()) n];
-					names.sort(Reflect.compare);
+					names.sort(core.ds.Key.compareStrings);
 					for (n in names) loop(a.aFields.get(n).cfType);
 				case TFun(s):
 					for (a in s.args) loop(a.type);

@@ -35,7 +35,7 @@ import core.Texpr.Builder;
 import core.ds.NotFound;
 import generators.JsSourcemap;
 
-// port: Rbuffer.t; only the last character is ever inspected (`Rbuffer.nth buf (length-1)`).
+// port: Buffer.t; only the last character is ever inspected (`Buffer.nth buf (length-1)`).
 class JsBuffer {
 	var buf:StringBuf = new StringBuf();
 	var last:Int = -1;
@@ -49,9 +49,9 @@ class JsBuffer {
 		}
 	}
 
-	// port: Rbuffer.nth raises Invalid_argument on an empty buffer.
+	// port: Buffer.nth raises Invalid_argument "Buffer.nth" on an empty buffer.
 	public function lastChar():Int {
-		if (last < 0) throw new core.ds.InvalidArgument("index out of bounds");
+		if (last < 0) throw new core.ds.InvalidArgument("Buffer.nth");
 		return last;
 	}
 
@@ -2194,6 +2194,10 @@ class Genjs {
 				switch ctx.smap {
 					case null:
 						try sys.FileSystem.deleteFile(com.file + ".map") catch (_:Dynamic) {}
+					case smap if (Gctx.definedValueSafe(com, Define.SourceMap) == "inline"):
+						/* the map inside the output: no .map file, and none left from an earlier build */
+						try sys.FileSystem.deleteFile(com.file + ".map") catch (_:Dynamic) {}
+						print(ctx, "\n//# sourceMappingURL=" + JsSourcemap.mappingsDataUrl(ctx.com, smap, "file:///"));
 					case smap:
 						JsSourcemap.writeMappings(ctx.com, smap, "file:///");
 						var basefile = core.OcamlFilename.basename(com.file);

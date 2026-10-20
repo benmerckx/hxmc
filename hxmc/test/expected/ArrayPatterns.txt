@@ -1,0 +1,27 @@
+exit 0
+empty | empty
+one 5 | one 5
+one-then 7 | two 1 7
+desc 9 3 | two 9 3
+two 3 9 | two 3 9
+many 3 | many 3
+null
+pair 1 2
+other
+other
+pair 1 2
+6
+20
+x
+x
+null
+length two
+5
+a then b
+y then z
+two strings
+other
+ab
+not one
+42
+13

@@ -22,6 +22,8 @@ import hxmc.unsafe.Ptr;
 class Gc {
 	static inline var K_FWD = 15;
 	static inline var MINOR_MAX = 32 << 20;
+	static inline var MINOR_MIN = 4 << 20;
+	static inline var LOW_PROMOTION_AFTER = 8;
 	static inline var MIN_OLD = 16 << 20;
 	static inline var STACK_MB = 4; // the shadow stack's default (RT_STACK_MB)
 	static inline var CHUNK = 1 << 20;
@@ -76,9 +78,8 @@ class Gc {
 	static var gcTop:Int;
 	static var gcCap:Int;
 	// nursery growth (the native Gc.adaptNursery)
-	static var grownFrom:Int;
-	static var survivedBefore:Int;
-	static var growthOff:Bool;
+	static var lowFor:Int; // collections in a row that promoted little
+	static var growthOff:Bool; // memory cannot grow so far
 
 	static inline function hdrLo(p:Ptr):Int
 		return Mem.getI32(p, -8);
@@ -579,18 +580,22 @@ class Gc {
 		if (stats) Wasi.statLine("gc: major ", majors, (live >> 20).toInt(), (limit >> 20).toInt(), (Heap.memoryBytes() >> 20).toInt());
 	}
 
-	@:hxmc.noGc static function adaptNursery(survived:Int) {
-		if (grownFrom > 0) {
-			if (survived > survivedBefore + (survivedBefore >> 1)) {
-				resizeNursery(grownFrom);
-				growthOff = true;
+	// after a minor collection that promoted `promoted` of the `used` bytes
+	// allocated since the previous one: the native Gc.adaptNursery with one
+	// thread, doubled after a collection that promoted more than a 16th and
+	// halved after LOW_PROMOTION_AFTER in a row that promoted less than a
+	// 64th, between MINOR_MIN and MINOR_MAX
+	@:hxmc.noGc static function adaptNursery(promoted:Int, used:Int) {
+		if ((promoted : I64) * 16 > (used : I64)) {
+			lowFor = 0;
+			if (!growthOff && minorSize < MINOR_MAX) resizeNursery(minorSize * 2);
+		} else if ((promoted : I64) * 64 < (used : I64)) {
+			if (++lowFor >= LOW_PROMOTION_AFTER && minorSize > MINOR_MIN) {
+				resizeNursery(minorSize >> 1);
+				lowFor = 0;
 			}
-			grownFrom = 0;
-		} else if (!growthOff && minorSize < MINOR_MAX && survived * 8 > minorSize) {
-			grownFrom = minorSize;
-			survivedBefore = survived;
-			resizeNursery(minorSize * 2);
-		}
+		} else
+			lowFor = 0;
 	}
 
 	// (right after a minor collection: the nursery is empty, so it may move)
@@ -635,8 +640,9 @@ class Gc {
 		if (full) majorGc(need) else {
 			var before = copiedBytes;
 			var m0 = majors;
+			var used = Mem.tlsGet("rt_young_ptr").diff(youngStart).toInt();
 			minorGc();
-			if (!minorFixed && majors == m0) adaptNursery((copiedBytes - before).toInt());
+			if (!minorFixed && majors == m0) adaptNursery((copiedBytes - before).toInt(), used);
 		}
 		emptyChunk();
 		if (verifying) Wasm.memset(youngStart, POISON, minorSize);

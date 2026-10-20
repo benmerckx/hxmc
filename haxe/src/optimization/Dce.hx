@@ -274,7 +274,7 @@ class Dce {
 
 	static function sortedKeys<V>(map:haxe.ds.StringMap<V>):Array<String> {
 		var keys = [for (key in map.keys()) key];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		return keys;
 	}
 

@@ -81,6 +81,10 @@ class JsonRpc {
 	}
 
 	public static function parseRequest(input:String):JsonRpcRequest {
+		// port: Sedlexing.Utf8.from_string's decoding raises MalFormed where the
+		// bytes are not UTF-8 (core.StringHelper.decodedUtf8), here before reading
+		var input = core.StringHelper.decodedUtf8(input);
+		if (core.StringHelper.utf8Error(input) >= 0) throw new syntax.Lexer.MalFormed();
 		var json = try core.Json.Reader.readJson(input) catch (e:JsonRpcError) throw e catch (e:Dynamic)
 			throw new JsonRpcError(ParseError(Std.string(e)));
 		var fields = switch json {

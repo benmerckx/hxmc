@@ -159,7 +159,7 @@ class ServerMessage {
 			buffer.add("Defines ");
 			// port: PMap.iter: ascending key order
 			var keys = [for (k in com.defines.values.keys()) k];
-			keys.sort(Reflect.compare);
+			keys.sort(core.ds.Key.compareStrings);
 			for (k in keys) buffer.add(k + "=" + com.defines.values.get(k) + ",");
 			var s = buffer.toString();
 			printEndline(s.substr(0, s.length - 1));

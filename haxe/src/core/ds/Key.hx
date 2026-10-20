@@ -75,14 +75,48 @@ class Key {
 		#end
 	}
 
+	// port: OCaml's compare on strings: by their bytes, for UTF-8 code point
+	// order. UTF-16 units are in that order but where a surrogate (half of a
+	// character past U+FFFF) differs from a unit from U+E000 on, which it sorts
+	// before: units are compared directly unless a surrogate is involved
+	// (compareAtSurrogate). A code point host's own order is OCaml's
+	// (core.StringHelper.codePointHost).
 	public static function compareStrings(a:String, b:String):Int {
+		if (core.StringHelper.codePointHost) return a < b ? -1 : a > b ? 1 : 0;
 		var la = a.length, lb = b.length, n = la < lb ? la : lb;
 		for (i in 0...n) {
 			var ca = StringTools.fastCodeAt(a, i),
 				cb = StringTools.fastCodeAt(b, i);
-			if (ca != cb) return ca < cb ? -1 : 1;
+			if (ca != cb) {
+				if ((ca & 0xF800) != 0xD800 && (cb & 0xF800) != 0xD800) return ca < cb ? -1 : 1;
+				return compareAtSurrogate(a, b, i);
+			}
 		}
 		return la == lb ? 0 : la < lb ? -1 : 1;
+	}
+
+	// port: a and b differ first at unit i, a surrogate on one side at least:
+	// the characters there decide (a pair by its code point, a lone surrogate
+	// by its own value, as their UTF-8 encodings order), from the pair's first
+	// unit when the units before i end with a high surrogate that pairs on one
+	// side.
+	static function compareAtSurrogate(a:String, b:String, i:Int):Int {
+		if (i > 0
+			&& (StringTools.fastCodeAt(a, i - 1) & 0xFC00) == 0xD800
+			&& ((StringTools.fastCodeAt(a, i) & 0xFC00) == 0xDC00 || (StringTools.fastCodeAt(b, i) & 0xFC00) == 0xDC00))
+			i--;
+		var x = codePointAt(a, i), y = codePointAt(b, i);
+		return x < y ? -1 : 1;
+	}
+
+	// port: the code point at unit i of s: a surrogate pair's, else the unit.
+	static function codePointAt(s:String, i:Int):Int {
+		var c = StringTools.fastCodeAt(s, i);
+		if ((c & 0xFC00) == 0xD800 && i + 1 < s.length) {
+			var d = StringTools.fastCodeAt(s, i + 1);
+			if ((d & 0xFC00) == 0xDC00) return 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00);
+		}
+		return c;
 	}
 
 	// port: a string that is equal for two keys exactly when `compare` returns 0, used to

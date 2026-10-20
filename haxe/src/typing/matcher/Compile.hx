@@ -102,10 +102,15 @@ class Compile {
 					case _: [];
 				}
 			case ConFields(sl): sl.map(function(s) return {name: s, e: ExprToPattern.typeFieldAccess(m.ctx, e, s)});
-			case ConArray(i): [
+			case ConArray(0): [];
+			case ConArray(i):
+				var aa = ExprToPattern.getArrayAccess(m.ctx, e.etype, e.epos);
+				function get(ei:TExpr):TExpr return aa != null ? aa.aaGet(e, ei, aa.aaType,
+					e.epos) : Calls.accGet(m.ctx, Calls.arrayAccess(m.ctx, e, ei, MGet, e.epos));
+				[
 					for (i in 0...i) {
 						var ei = Texpr.Builder.makeInt(m.ctx.com.basic, i, e.epos);
-						{name: 'a$i', e: Calls.accGet(m.ctx, Calls.arrayAccess(m.ctx, e, ei, MGet, e.epos))};
+						{name: 'a$i', e: get(ei)};
 					}
 				];
 			case ConConst(_) | ConTypeExpr(_) | ConStatic(_, _): [];

@@ -204,21 +204,21 @@ class Meta {
 				all.push(doc);
 			}
 		}
-		all.sort(function(a, b) return Reflect.compare(a.name, b.name));
+		all.sort(function(a, b) return core.ds.Key.compareStrings(a.name, b.name));
 		return {all: all, maxLength: maxLength};
 	}
 
 	public static function getMetaList(userMetas:StringMap<UserMeta>):Array<{name:String, info:MetaInfos}> {
 		var all = [for (m in MetaList.all) getInfo(m, userMetas)];
 		for (s in userMetas.keys()) all.push(getInfo(Custom(s), userMetas));
-		all.sort(function(a, b) return Reflect.compare(a.name, b.name));
+		all.sort(function(a, b) return core.ds.Key.compareStrings(a.name, b.name));
 		return all;
 	}
 
 	public static function getAll(userMetas:StringMap<UserMeta>):Array<StrictMeta> {
 		var all = MetaList.all.copy();
 		for (s in userMetas.keys()) all.push(Custom(s));
-		all.sort(function(a, b) return Reflect.compare(toString(a), toString(b)));
+		all.sort(function(a, b) return core.ds.Key.compareStrings(toString(a), toString(b)));
 		return all;
 	}
 
@@ -232,7 +232,7 @@ class Meta {
 				all.unshift(doc);
 			}
 		}
-		all.sort(function(a, b) return Reflect.compare(a.name, b.name));
+		all.sort(function(a, b) return core.ds.Key.compareStrings(a.name, b.name));
 		return {all: all, maxLength: maxLength};
 	}
 

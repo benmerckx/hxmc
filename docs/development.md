@@ -5,7 +5,7 @@
 | Path | |
 | --- | --- |
 | `haxe/src/` | the port, module by module after upstream's `haxe/upstream/src/` |
-| `haxe/upstream/` | upstream Haxe (submodule, commit `fef284737`): the reference sources and std |
+| `haxe/upstream/` | upstream Haxe (submodule, commit `066bd8331`): the reference sources and std |
 | `haxe/test/` | the port's tests: conformance against the reference (HXB, display, server, JSON-RPC, `--interp`, `-L`, upstream's target suites), the fuzzer (`fuzz/`), unit tests of port modules (`unit/`, `unit.hxml`), peak memory and times (`Measure.hx`) |
 | `hxmc/src/hxmc/` | hxmc's sources (package `hxmc`, class path `hxmc/src`): the IR and lowering (`ir/`), the code generators (`x64/`, `a64/`, `wasm/`), the linkers, the driver, `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
 | `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime's Haxe part (`hxmc.rt`), merged with the Eval originals by `hxmc/src/hxmc/MkStd.hx` |

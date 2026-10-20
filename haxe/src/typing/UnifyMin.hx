@@ -68,14 +68,14 @@ class UnifyMin {
 			for (e in el) switch follow(e.etype) {
 				case TAnon(a) if (a.aStatus == Const):
 					var names = [for (name in a.aFields.keys()) name];
-					names.sort(Reflect.compare);
+					names.sort(core.ds.Key.compareStrings);
 					if (fcount == -1) {
 						fcount = names.length;
 						for (name in names) fields.set(name, [expr(a.aFields.get(name))]);
 					} else {
 						if (fcount != names.length) throw core.ds.FastThrow.of("Not_found");
 						var previous = [for (name in fields.keys()) name];
-						previous.sort(Reflect.compare);
+						previous.sort(core.ds.Key.compareStrings);
 						for (name in previous) {
 							var f = a.aFields.get(name);
 							if (f == null) throw core.ds.FastThrow.of("Not_found");
@@ -87,7 +87,7 @@ class UnifyMin {
 			}
 			var result = new StringMap<TClassField>();
 			var names = [for (name in fields.keys()) name];
-			names.sort(Reflect.compare);
+			names.sort(core.ds.Key.compareStrings);
 			for (name in names) {
 				var values = fields.get(name);
 				var t = try unifyMinRaise(basic, values) catch (_:Unify_error) {

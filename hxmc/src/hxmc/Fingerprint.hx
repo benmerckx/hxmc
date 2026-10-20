@@ -506,6 +506,7 @@ class Fingerprint {
 			case ENewEnum(c, xs):
 				word(E_NEWENUM);
 				tyName(c.tindex);
+				word(c.tag); // (Escape folds the tag of a known constructor)
 				word(c.params.length);
 				for (t in c.params)
 					ty(t);

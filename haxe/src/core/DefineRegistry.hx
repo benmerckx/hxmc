@@ -183,7 +183,7 @@ class DefineRegistry {
 			doc: "Generate JavaScript source map even in non-debug mode. Deprecated in favor of `-D source-map`.",
 			flags: [Platforms([Js])]
 		},
-		{key: "source_map", doc: "Generate source map for compiled files.", flags: [Platforms([Php, Js])]},
+		{key: "source_map", doc: "Generate source map for compiled files.", flags: [Platforms([Php, Js]), HasParam("mode: inline")]},
 		{
 			key: "jvm.compression_level",
 			doc: "Set the compression level of the generated file between 0 (no compression) and 9 (highest compression). Default: 6",

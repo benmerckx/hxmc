@@ -497,7 +497,7 @@ class StdBytes {
 		var pos = EvalDecode.decodeInt(pos);
 		var len = EvalDecode.decodeInt(len);
 		var s = try bytesSub(self, pos, len) catch (_:InvalidArgument) outsideBounds();
-		return EvalString.createUnknown(s.toString());
+		return EvalString.createUnknown(core.StringHelper.ofBytes(s));
 	});
 
 	public static final getUInt16 = EvalEncode.vifun1((vthis, pos) -> {
@@ -1189,7 +1189,7 @@ class StdEReg {
 	public static final matchedPos = EvalEncode.vifun0(vthis -> {
 		var self = thisValue(vthis);
 		// port: upstream converts byte offsets to character offsets; here native offsets to code points
-		function charOffset(s:String, i:Int):Int return EvalString.codePointLength(s.substring(0, i));
+		function charOffset(s:String, i:Int):Int return core.StringHelper.codePointHost ? i : EvalString.codePointLength(s.substring(0, i));
 		return maybeRun(self, 0, (first, last, _) -> {
 			var first = charOffset(self.rString, first);
 			var last = charOffset(self.rString, last);
@@ -1212,8 +1212,10 @@ class StdEReg {
 		var lenDefault = s.length - pos;
 		var len = EvalDecode.defaultInt(len, lenDefault);
 		var len = if (len < 0) lenDefault else len;
-		if (pos < 0) throw new InvalidArgument("Pcre2.exec: illegal offset");
 		if (pos + len > s.length) return VFalse;
+		// port: String.sub s 0 (pos + len), then Pcre2.exec_all ~pos: their checks
+		if (pos + len < 0) throw new InvalidArgument("String.sub / Bytes.sub");
+		if (pos < 0 || len < 0) throw new InvalidArgument("Pcre2.pcre2_match_stub: illegal position");
 		var a = exec(self, s, pos, len);
 		if (a == null) return VFalse;
 		self.rString = s;
@@ -1481,7 +1483,7 @@ class StdFile {
 	public static final getContent = EvalEncode.vfun1(path -> {
 		var path = EvalDecode.decodeString(path);
 		var b = try sys.io.File.getBytes(path) catch (_:Dynamic) EvalContext.excString("Could not read file " + path);
-		return EvalString.createUnknown(b.toString());
+		return EvalString.createUnknown(core.StringHelper.ofBytes(b));
 	});
 
 	public static final read = EvalEncode.vfun2((path, binary) -> {

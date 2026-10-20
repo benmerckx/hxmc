@@ -73,20 +73,20 @@ class Constructor {
 			var r = rank(ct1) - rank(ct2);
 			if (r != 0) r else switch [ct1, ct2] {
 				case [TInt(a), TInt(b)]: Reflect.compare(a, b);
-				case [TFloat(a), TFloat(b)] | [TString(a), TString(b)]: Reflect.compare(a, b);
+				case [TFloat(a), TFloat(b)] | [TString(a), TString(b)]: core.ds.Key.compareStrings(a, b);
 				case [TBool(a), TBool(b)]: a == b ? 0 : (a ? 1 : -1);
 				case _: 0;
 			}
 		case [ConEnum(_, ef1), ConEnum(_, ef2)]: Reflect.compare(ef1.efIndex, ef2.efIndex);
-		case [ConStatic(_, cf1), ConStatic(_, cf2)]: Reflect.compare(cf1.cfName, cf2.cfName);
+		case [ConStatic(_, cf1), ConStatic(_, cf2)]: core.ds.Key.compareStrings(cf1.cfName, cf2.cfName);
 		case [ConTypeExpr(mt1), ConTypeExpr(mt2)]:
 			var p1 = tPath(mt1), p2 = tPath(mt2);
 			var r = 0;
 			for (i in 0...Std.int(Math.min(p1.pack.length, p2.pack.length))) {
-				r = Reflect.compare(p1.pack[i], p2.pack[i]);
+				r = core.ds.Key.compareStrings(p1.pack[i], p2.pack[i]);
 				if (r != 0) break;
 			}
-			if (r != 0) r else if (p1.pack.length != p2.pack.length) p1.pack.length - p2.pack.length else Reflect.compare(p1.name, p2.name);
+			if (r != 0) r else if (p1.pack.length != p2.pack.length) p1.pack.length - p2.pack.length else core.ds.Key.compareStrings(p1.name, p2.name);
 		case [ConFields(_), ConFields(_)]: 0;
 		case [ConArray(i1), ConArray(i2)]: i1 - i2;
 		case _: -1; // Could assert...

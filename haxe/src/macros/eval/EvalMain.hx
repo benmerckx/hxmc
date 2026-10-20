@@ -628,7 +628,7 @@ class EvalMain {
 				case TAnon(an):
 					f("{");
 					var keys = [for (k in an.aFields.keys()) k];
-					keys.sort((a, b) -> a == b ? 0 : (a < b ? -1 : 1));
+					keys.sort(core.ds.Key.compareStrings);
 					for (k in keys) {
 						var cf = an.aFields.get(k);
 						line++;

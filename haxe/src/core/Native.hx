@@ -65,7 +65,7 @@ class Native {
 			case TEnumDecl(e):
 				var changed = false;
 				var keys = [for (k in e.eConstrs.keys()) k];
-				keys.sort(Reflect.compare);
+				keys.sort(core.ds.Key.compareStrings);
 				for (k in keys) {
 					var ef = e.eConstrs.get(k);
 					try {

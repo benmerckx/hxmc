@@ -100,12 +100,12 @@ class Error {
 	public static function stringSource(t:T):Array<String> return switch follow(t) {
 		case TInst(c, tl):
 			var names = [for (s in TClassTools.getAllFields(c, tl).keys()) s];
-			names.sort(Reflect.compare);
+			names.sort(core.ds.Key.compareStrings);
 			names.reverse();
 			names;
 		case TAnon(a):
 			var names = [for (s in a.aFields.keys()) s];
-			names.sort(Reflect.compare);
+			names.sort(core.ds.Key.compareStrings);
 			names.reverse();
 			[for (s in names) a.aFields.get(s).cfName];
 		case TAbstract(a, _) if (a.aImpl != null): [for (cf in a.aImpl.clOrderedStatics) cf.cfName];
@@ -345,7 +345,7 @@ class BetterErrors {
 				case AbstractStatics(a): "{ AbstractStatics " + Globals.sTypePath(a.aPath) + " }";
 				case _:
 					var names = [for (n in a.aFields.keys()) n];
-					names.sort(Reflect.compare);
+					names.sort(core.ds.Key.compareStrings);
 					names.reverse();
 					"{" + [
 						for (n in names) {

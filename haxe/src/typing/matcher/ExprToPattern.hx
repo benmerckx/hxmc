@@ -93,6 +93,29 @@ class ExprToPattern {
 			throw "assert";
 	};
 
+	// Array patterns apply to arrays, Dynamic and abstracts with a single `from` type leading to one of those. Other values
+	// can be matched by array patterns if they can be accessed by index like in `for` loops, and their length and elements
+	// are then read the same way (#8012). This returns how to access them, or None for values of the former types and for
+	// values which can't be accessed by index.
+	//
+	// TODO: this is looked up for each array pattern here, then again for the same subject when compile.ml reads its
+	// elements and twice in texprConverter.ml. The decision tree stores a switch subject as a plain texpr, so what the
+	// subject is and how it is accessed is lost after pattern typing (which can't keep it: patterns are typed against
+	// per-case types). A subject that carries this would avoid the repeated lookups; see the discussion in #13070.
+	public static function getArrayAccess(ctx:Typer, t:T, p:Pos):Null<typing.TyperBase.ArrayAccessData> {
+		function isArray(seen:Array<T>, t:T):Bool return switch follow(t) {
+			case TInst({clPath: {pack: [], name: "Array"}}, [_]) | TDynamic(_):
+				true;
+			case ty = TAbstract(a, tl) if (!core.ds.ArrayTools.exists(seen, function(t) return shallowEq(ty, t))):
+				var froms = TyperBase.getAbstractFroms(ctx, a, tl);
+				if (froms.length == 1) isArray([ty].concat(seen), froms[0].type); else false;
+			case _:
+				false;
+		};
+		if (isArray([], t)) return null;
+		return try TyperBase.getArrayAccess(ctx, t, p) catch (ex:NotFound) null;
+	}
+
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):PatternData {
 		var ctx = pctx.ctx;
 		var p = e.pos;
@@ -327,21 +350,27 @@ class ExprToPattern {
 				}
 			case EField(_, _, _): try tryTyping(e) catch (ex:Exit) fail() catch (ex:BadPattern) core.Error.raiseTypingError(ex.message, p);
 			case EArrayDecl(el):
+				function arrayPattern(t2:T):PatternKind {
+					var ps = el.map(function(e) return make(pctx, false, t2, e));
+					return PatConstructor({kind: ConArray(ps.length), pos: e.pos}, ps);
+				}
+				function arrayAccessPattern():PatternKind {
+					var aa = getArrayAccess(ctx, t, p);
+					return aa != null ? arrayPattern(aa.aaType) : fail();
+				}
 				function pattern(seen:Array<T>, t:T):PatternKind return switch follow(t) {
 					case TFun(s) if (s.ret == fakeTupleType):
 						if (el.length < s.args.length) core.Error.raiseTypingError("Not enough arguments", p);
 						if (el.length > s.args.length) core.Error.raiseTypingError("Too many arguments", el[s.args.length].pos);
 						PatTuple([for (i in 0...el.length) make(pctx, false, s.args[i].type, el[i])]);
 					case TInst({clPath: {pack: [], name: "Array"}}, [t2]):
-						var ps = el.map(function(e) return make(pctx, false, t2, e));
-						PatConstructor({kind: ConArray(ps.length), pos: e.pos}, ps);
+						arrayPattern(t2);
 					case t2 = TDynamic(_):
-						var ps = el.map(function(e) return make(pctx, false, t2, e));
-						PatConstructor({kind: ConArray(ps.length), pos: e.pos}, ps);
+						arrayPattern(t2);
 					case ty = TAbstract(a, tl) if (!core.ds.ArrayTools.exists(seen, function(t) return shallowEq(ty, t))):
 						var froms = TyperBase.getAbstractFroms(ctx, a, tl);
-						if (froms.length == 1) pattern([ty].concat(seen), froms[0].type); else fail();
-					case _: fail();
+						if (froms.length == 1) pattern([ty].concat(seen), froms[0].type); else arrayAccessPattern();
+					case _: arrayAccessPattern();
 				};
 				pattern([], t);
 			case EObjectDecl(fl):
@@ -354,7 +383,7 @@ class ExprToPattern {
 				function collectFields(t:T, filter:Null<Array<String>>):Void switch follow(t) {
 					case TAnon(an):
 						var names = [for (n in an.aFields.keys()) n];
-						names.sort(Reflect.compare);
+						names.sort(core.ds.Key.compareStrings);
 						for (n in names) {
 							var cf = an.aFields.get(n);
 							collectField(cf, cf.cfType, filter);
@@ -415,7 +444,7 @@ class ExprToPattern {
 					{currentLocals: new haxe.ds.StringMap(), orLocals: left.currentLocals});
 				var pat2 = make(right, toplevel, t, e2);
 				var names = [for (n in (left.currentLocals.keys() : Iterator<String>)) n];
-				names.sort(Reflect.compare);
+				names.sort(core.ds.Key.compareStrings);
 				for (n in names) {
 					var entry = left.currentLocals.get(n);
 					if (!right.currentLocals.exists(n) && n != "_") variableError(n, entry.p);

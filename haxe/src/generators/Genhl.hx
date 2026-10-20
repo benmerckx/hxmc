@@ -286,9 +286,9 @@ class Genhl {
 		return {pfile: p.pfile, pmin: p.pmax, pmax: p.pmax};
 	}
 
-	// port: the port's strings are always valid Unicode (upstream re-encodes
-	// malformed UTF-8 as ISO-8859-1); the result is the UTF-16 length.
+	// port: the result is the UTF-16 length.
 	static function toUtf8(str:String, p:Pos):{str:String, len:Int} {
+		if (core.StringHelper.malformedUtf8(str)) str = core.StringHelper.isoToUtf8(str);
 		var ccount = 0;
 		for (c in new haxe.iterators.StringIteratorUnicode(str)) {
 			if ((c >= 0xD800 && c <= 0xDFFF) || c >= 0x110000) Error.abort("Invalid unicode char", p);

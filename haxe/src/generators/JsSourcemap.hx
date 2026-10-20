@@ -103,7 +103,10 @@ class JsSourcemap {
 		return smap == null ? noop : addMappingPos(smap, e.epos);
 	}
 
-	// port: OCaml strings are UTF-8 bytes, so String.length counts bytes; the host strings are UTF-16.
+	// port: OCaml strings are UTF-8 bytes, so String.length counts bytes; the host strings are UTF-16
+	// (a character past U+FFFF a surrogate pair, a byte that is not UTF-8 a lone U+DC80 to
+	// U+DCFF), or code points on a code point host (core.StringHelper.codePointHost: such a
+	// character is one, of 4 bytes).
 	public static function utf8Length(s:String, from:Int, to:Int):Int {
 		var n = 0, i = from;
 		while (i < to) {
@@ -116,7 +119,8 @@ class JsSourcemap {
 					i++;
 					n += 4;
 				} else n += 3;
-			} else n += 3;
+			} else if (!core.StringHelper.codePointHost && c >= 0xDC80 && c < 0xDD00) n++;
+			else n += core.StringHelper.codePointHost && c >= 0x10000 ? 4 : 3;
 		}
 		return n;
 	}
@@ -139,29 +143,47 @@ class JsSourcemap {
 		}
 	}
 
-	public static function writeMappings(com:Gctx, smap:Sourcemap, sourcePathPrefix:String):Void {
+	/* The source map as JSON text. */
+	public static function mappingsJson(com:Gctx, smap:Sourcemap, sourcePathPrefix:String):String {
 		var basefile = core.OcamlFilename.basename(com.file);
-		var channel = sys.io.File.write(com.file + ".map", true);
+		var b = new StringBuf();
 		var sources = smap.sources;
 		function toUrl(file:String):String return core.Path.getFullPath(file).split("\\").join("/");
-		channel.writeString("{\n");
-		channel.writeString("\"version\":3,\n");
-		channel.writeString("\"file\":\"" + (basefile.split("\\").join("\\\\")) + "\",\n");
-		channel.writeString("\"sourceRoot\":\"\",\n");
-		channel.writeString("\"sources\":[" + ([for (s in sources) "\"" + sourcePathPrefix + toUrl(s) + "\""].join(",")) + "],\n");
+		b.add("{\n");
+		b.add("\"version\":3,\n");
+		b.add("\"file\":\"" + (basefile.split("\\").join("\\\\")) + "\",\n");
+		b.add("\"sourceRoot\":\"\",\n");
+		b.add("\"sources\":[" + ([for (s in sources) "\"" + sourcePathPrefix + toUrl(s) + "\""].join(",")) + "],\n");
 		if (Gctx.defined(com, core.Define.SourceMapContent)) {
-			channel.writeString("\"sourcesContent\":["
+			b.add("\"sourcesContent\":["
 				+ ([
 					for (s in sources)
 						try "\"" + core.StringHelper.sEscape(sys.io.File.getBytes(s).toString()) + "\"" catch (_:Dynamic) "null"
 				].join(","))
 				+ "],\n");
 		}
-		channel.writeString("\"names\":[],\n");
-		channel.writeString("\"mappings\":\"");
-		channel.writeString(smap.mappings.toString());
-		channel.writeString("\"\n");
-		channel.writeString("}");
+		b.add("\"names\":[],\n");
+		b.add("\"mappings\":\"");
+		b.add(smap.mappings.toString());
+		b.add("\"\n");
+		b.add("}");
+		return b.toString();
+	}
+
+	/* The source map, written next to the output as [<output>.map]. */
+	public static function writeMappings(com:Gctx, smap:Sourcemap, sourcePathPrefix:String):Void {
+		var channel = sys.io.File.write(com.file + ".map", true);
+		channel.writeString(mappingsJson(com, smap, sourcePathPrefix));
 		channel.close();
+	}
+
+	/* The source map as a data: URL, for a [sourceMappingURL] comment: base64, padded. */
+	public static function mappingsDataUrl(com:Gctx, smap:Sourcemap, sourcePathPrefix:String):String {
+		var json = mappingsJson(com, smap, sourcePathPrefix);
+		// port: ExtLib's Base64.str_encode with the standard table, which writes no '=' padding, over the
+		// ... JSON's UTF-8 bytes.
+		var encoded = haxe.crypto.Base64.encode(haxe.io.Bytes.ofString(json), false);
+		var padding = (4 - encoded.length % 4) % 4;
+		return "data:application/json;charset=utf-8;base64," + encoded + StringTools.lpad("", "=", padding);
 	}
 }

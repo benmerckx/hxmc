@@ -147,7 +147,7 @@ class Define {
 			maxLength = Std.int(Math.max(maxLength, doc.name.length));
 			all.push(doc);
 		}
-		all.sort((a, b) -> Reflect.compare(a.name, b.name));
+		all.sort((a, b) -> core.ds.Key.compareStrings(a.name, b.name));
 		return {all: all, maxLength: maxLength};
 	}
 
@@ -161,7 +161,7 @@ class Define {
 		var all = [for (entry in DefineRegistry.all) infos(entry.key, userDefines)];
 		for (key in userDefines.keys()) all.push(infos(key, userDefines));
 		// port: List.sort is stable
-		haxe.ds.ArraySort.sort(all, (a, b) -> Reflect.compare(a.name, b.name));
+		haxe.ds.ArraySort.sort(all, (a, b) -> core.ds.Key.compareStrings(a.name, b.name));
 		return all;
 	}
 
@@ -422,7 +422,7 @@ class Define {
 		}
 		// port: `Ast.remove_duplicates (fun a b -> a != b)` compares physically and so removes
 		// nothing from these freshly built strings.
-		defines.sort(Reflect.compare);
+		defines.sort(core.ds.Key.compareStrings);
 		ctx.definesSignature = Md5.encode(defines.join("@"));
 		return ctx.definesSignature;
 	}

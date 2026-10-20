@@ -575,7 +575,7 @@ class Unificator {
 
 	function unifyAnonToAnon(a:TAnon, b:TAnon):Void {
 		var names = [for (n in b.aFields.keys()) n];
-		names.sort(Reflect.compare);
+		names.sort(core.ds.Key.compareStrings);
 		for (n in names) {
 			var fa = a.aFields.get(n);
 			if (fa != null) unify(fa.cfType, b.aFields.get(n).cfType, Field(n));
@@ -584,7 +584,7 @@ class Unificator {
 
 	function unifyClassToAnon(a:TClass, params:Array<T>, b:TAnon):Void {
 		var names = [for (n in b.aFields.keys()) n];
-		names.sort(Reflect.compare);
+		names.sort(core.ds.Key.compareStrings);
 		for (n in names) {
 			var fa = a.clFields.get(n);
 			if (fa != null) unify(applyParams(a.clParams, params, fa.cfType), b.aFields.get(n).cfType, Field(n));

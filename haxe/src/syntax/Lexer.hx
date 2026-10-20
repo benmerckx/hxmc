@@ -452,21 +452,74 @@ class Lexer {
 	var idents:Map<String, String>;
 
 	// port: UTF-16 indices of the surrogate pairs of `source` (null without any): sedlex
-	// positions count code points, so a pair is one position (see `cp`).
+	// positions count code points, so a pair is one position (see `cp`). A code
+	// point host's strings have none (core.StringHelper.codePointHost).
 	var pairs:Null<Array<Int>>;
+
+	// port: `source` stops where upstream's refill (lexbuf_from_utf8_string,
+	// 512 characters at a time: sedlex's chunk_size) would decode bytes that are
+	// not UTF-8: at the start of their chunk. Reading past it raises
+	// Sedlexing.MalFormed, as the refill does: an error before it wins.
+	var truncated = false;
+
+	static inline final refillChunk = 512;
 
 	public function new(source:String, ?file = "?") {
 		this.source = source;
 		this.file = file;
 		index = 0;
-		for (i in 0...source.length) {
-			var c = StringTools.fastCodeAt(source, i);
-			if (c >= 0xD800 && c < 0xDC00) {
-				if (pairs == null) pairs = [];
-				pairs.push(i);
+		if (core.StringHelper.codePointHost || !scanPairs(source)) {
+			var decoded = core.StringHelper.decodedUtf8(source);
+			var bad = core.StringHelper.utf8Error(decoded);
+			pairs = null;
+			if (bad >= 0) {
+				var c = codePointsBefore(decoded, bad);
+				decoded = decoded.substring(0, unitsBefore(decoded, c - c % refillChunk));
+				truncated = true;
 			}
+			this.source = decoded;
+			if (!core.StringHelper.codePointHost) scanPairs(decoded);
 		}
 		idents = new Map();
+	}
+
+	// port: the characters (code points) of `s` before its unit `u`.
+	static function codePointsBefore(s:String, u:Int):Int {
+		if (core.StringHelper.codePointHost) return u;
+		var c = 0, i = 0;
+		while (i < u) {
+			var x = StringTools.fastCodeAt(s, i);
+			i += x >= 0xD800 && x < 0xDC00 && i + 1 < u && (StringTools.fastCodeAt(s, i + 1) & 0xFC00) == 0xDC00 ? 2 : 1;
+			c++;
+		}
+		return c;
+	}
+
+	// port: the units of `s` before its character (code point) `c`.
+	static function unitsBefore(s:String, c:Int):Int {
+		if (core.StringHelper.codePointHost) return c;
+		var i = 0;
+		while (c-- > 0) {
+			var x = StringTools.fastCodeAt(s, i);
+			i += x >= 0xD800 && x < 0xDC00 && (StringTools.fastCodeAt(s, i + 1) & 0xFC00) == 0xDC00 ? 2 : 1;
+		}
+		return i;
+	}
+
+	// port: records the surrogate pairs of `s` in `pairs`; false at a lone surrogate.
+	function scanPairs(s:String):Bool {
+		var i = 0, n = s.length;
+		while (i < n) {
+			var c = StringTools.fastCodeAt(s, i);
+			if ((c & 0xF800) == 0xD800) {
+				if (c >= 0xDC00 || i + 1 == n || (StringTools.fastCodeAt(s, i + 1) & 0xFC00) != 0xDC00) return false;
+				if (pairs == null) pairs = [];
+				pairs.push(i);
+				i++;
+			}
+			i++;
+		}
+		return true;
 	}
 
 	// port: the position (code point offset) of the UTF-16 index `i`.
@@ -501,13 +554,24 @@ class Lexer {
 		}
 	}
 
-	inline function eof():Bool return index >= source.length;
+	inline function eof():Bool return index >= source.length && atEnd();
+
+	// port: the end of `source`; where it is truncated, the refill's MalFormed.
+	function atEnd():Bool {
+		if (truncated) throw new MalFormed();
+		return true;
+	}
 
 	inline function current():String return eof() ? "" : source.charAt(index);
 
-	inline function peek(offset:Int):String return index + offset >= source.length ? "" : source.charAt(index + offset);
+	inline function peek(offset:Int):String return index + offset >= source.length && atEnd() ? "" : source.charAt(index + offset);
 
-	inline function codeAt(i:Int):Int return i < source.length ? StringTools.fastCodeAt(source, i) : -1;
+	inline function codeAt(i:Int):Int return i < source.length ? StringTools.fastCodeAt(source, i) : endCode();
+
+	function endCode():Int {
+		atEnd();
+		return -1;
+	}
 
 	// port: the code point at UTF-16 index i (sedlex buffers hold code points).
 	function codePointAt(i:Int):Int {
@@ -520,10 +584,17 @@ class Lexer {
 	}
 
 	// port: compares in place: called for every operator candidate of every token.
-	function starts(value:String):Bool {
+	inline function starts(value:String):Bool return startsAt(index, value);
+
+	function startsAt(at:Int, value:String):Bool {
 		var n = value.length;
-		if (index + n > source.length) return false;
-		for (i in 0...n) if (StringTools.fastCodeAt(source, index + i) != StringTools.fastCodeAt(value, i)) return false;
+		if (at + n > source.length) {
+			// port: what there is matches: the rest would be read from past the end
+			for (i in at...source.length) if (StringTools.fastCodeAt(source, i) != StringTools.fastCodeAt(value, i - at)) return false;
+			atEnd();
+			return false;
+		}
+		for (i in 0...n) if (StringTools.fastCodeAt(source, at + i) != StringTools.fastCodeAt(value, i)) return false;
 		return true;
 	}
 
@@ -669,11 +740,11 @@ class Lexer {
 				if (e >= 0) cand(e, 1);
 			}
 			// port: integer, "..."
-			if (source.substr(ei, 3) == "...") cand(ei + 3, 2);
+			if (startsAt(ei, "...")) cand(ei + 3, 2);
 		}
 		if (bestEnd < 0) return null;
 		// port: "." and "..." can only compete with the '.'-led float rule
-		if (codeAt(start) == ".".code && source.substr(start, 3) == "..." && 3 > bestEnd - start) return null;
+		if (codeAt(start) == ".".code && startsAt(start, "...") && 3 > bestEnd - start) return null;
 		index = bestEnd;
 		var s = core.ds.StrTools.sub(source, start, bestEnd);
 		return switch bestKind {
@@ -966,6 +1037,7 @@ class Lexer {
 		// port: The text up to "*/" in one piece (not a one-character string per character).
 		var end = index > source.length ? -1 : source.indexOf("*/", index);
 		if (end < 0) {
+			atEnd();
 			if (index < source.length) {
 				buf.addSub(source, index, source.length - index);
 				index = source.length;
@@ -1389,6 +1461,11 @@ class Lexer {
 
 private class LexExit extends haxe.Exception {
 	public function new() super("Exit");
+}
+
+// port: Sedlexing.MalFormed (the message is Printexc.to_string's)
+class MalFormed extends haxe.Exception {
+	public function new() super("Sedlexing.MalFormed");
 }
 
 class InvalidEscapeSequence extends haxe.Exception {

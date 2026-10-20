@@ -34,7 +34,7 @@ class PMap {
 
 	public static function keys<V>(map:StringMap<V>):Array<String> {
 		var keys = [for (k in map.keys()) k];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		return keys;
 	}
 

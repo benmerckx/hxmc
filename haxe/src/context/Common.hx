@@ -609,7 +609,7 @@ class Common {
 		if (externalDefinesHook != null) externalDefinesHook(com, null, false);
 		var result = new haxe.ds.StringMap<String>();
 		var names:Array<String> = [for (k in com.defines.values.keys()) k];
-		names.sort(Reflect.compare);
+		names.sort(core.ds.Key.compareStrings);
 		for (k in names) {
 			var v = com.defines.values.get(k);
 			result.set(k, v);
@@ -1173,7 +1173,7 @@ class Common {
 		for (v in flashVersions) remove.unshift("flash" + v.define);
 		var values = new haxe.ds.StringMap<String>();
 		var keys:Array<String> = [for (k in defines.values.keys()) k];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		for (k in keys) if (!remove.contains(k)) values.set(k, defines.values.get(k));
 		var result = ({values: values, definesSignature: null} : core.Define.DefineContext);
 		Define.define(result, Define.Macro);

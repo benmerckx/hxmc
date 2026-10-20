@@ -556,83 +556,145 @@ class Meta {
 			m.gc(b, 0x0B, m.dataType("p"));
 		});
 
-	// an enum value's arguments, boxed, in an Array<Dynamic>
-	public function enumParams():Int
-		return helper("meta_enum_params", "p_p", [], b -> {
-			for (e in m.enumList())
-				for (c in e.ctors) {
-					if (c.params.length == 0) continue;
-					get(b, 0);
-					test(b, m.ctorType(c));
-					b.u8(0x04);
-					b.u8(0x40);
-					i32(b, c.params.length);
-					for (k in 0...c.params.length) {
-						get(b, 0);
-						m.castTo(b, m.ctorType(c));
-						m.gc(b, 0x02, m.ctorType(c), k + 2);
-						box(b, c.params[k]);
-					}
-					m.gc(b, 0x08, m.dataType("p"), c.params.length);
-					m.gc(b, 0x00, m.arrType("p"));
-					b.u8(0x0F);
-					b.u8(0x0B);
-				}
-			i32(b, 0);
-			i32(b, 0);
-			m.gc(b, 0x07, m.dataType("p"));
-			m.gc(b, 0x00, m.arrType("p"));
+	// an enum value's arguments, boxed, in an Array<Dynamic> (an empty one for
+	// anything else): a dispatch on its enum to that enum's function, which
+	// dispatches on its constructor. (One function testing every constructor of
+	// the program in turn took as long as there were constructors, and V8, which
+	// charges a call to its tiering budget by how far into the function it
+	// returns, compiled it with its optimizing tier after a few dozen calls: half
+	// a second of a thread's time, which the port's startup waited for at exit,
+	// as for enumCreate's.)
+	public function enumParams():Int {
+		var h = m.hasHelper("meta_enum_params");
+		if (h != null) return h;
+		var es = m.enumList();
+		var per = [for (ei in 0...es.length) enumParamsOf(es[ei], ei)];
+		return helper("meta_enum_params", "p_p", [Enc.I32], b -> {
+			get(b, 0);
+			test(b, m.enumType);
+			b.u8(0x04);
+			b.u8(0x40);
+			get(b, 0);
+			m.castTo(b, m.enumType);
+			m.gc(b, 0x02, m.enumType, 1);
+			b.u8(0x21);
+			b.u8(1);
+			dispatch(b, 1, es.length, ei -> {
+				if (per[ei] < 0) return;
+				get(b, 0);
+				b.u8(0x10);
+				Enc.uleb(b, per[ei]);
+				b.u8(0x0F);
+			});
+			b.u8(0x0B);
+			emptyArray(b);
 		});
+	}
 
-	// the enum's (a type value) constructor `index` with the arguments (an Array<Dynamic>, unboxed)
-	public function enumCreate():Int
+	// an empty Array<Dynamic>
+	function emptyArray(b:Buf) {
+		i32(b, 0);
+		i32(b, 0);
+		m.gc(b, 0x07, m.dataType("p"));
+		m.gc(b, 0x00, m.arrType("p"));
+	}
+
+	// the arguments of a value of the enum e (index ei), by its constructor; -1
+	// when no constructor of e has any
+	function enumParamsOf(e:EnumInfo, ei:Int):Int {
+		var maxTag = 0, any = false;
+		for (c in e.ctors) {
+			if (c.tag > maxTag) maxTag = c.tag;
+			if (c.params.length > 0) any = true;
+		}
+		if (!any) return -1;
+		return helper("meta_enum_params_" + ei, "p_p", [Enc.I32], b -> {
+			get(b, 0);
+			m.castTo(b, m.enumType);
+			m.gc(b, 0x02, m.enumType, 0);
+			b.u8(0x21);
+			b.u8(1);
+			dispatch(b, 1, maxTag + 1, tag -> {
+				var c = null;
+				for (k in e.ctors)
+					if (k.tag == tag) c = k;
+				if (c == null || c.params.length == 0) return;
+				i32(b, c.params.length);
+				for (k in 0...c.params.length) {
+					get(b, 0);
+					m.castTo(b, m.ctorType(c));
+					m.gc(b, 0x02, m.ctorType(c), k + 2);
+					box(b, c.params[k]);
+				}
+				m.gc(b, 0x08, m.dataType("p"), c.params.length);
+				m.gc(b, 0x00, m.arrType("p"));
+				b.u8(0x0F);
+			});
+			emptyArray(b);
+		});
+	}
+
+	// the enum's (a type value) constructor `index` with the arguments (an
+	// Array<Dynamic>, unboxed), null for no such constructor: a dispatch on the
+	// enum to its function (see enumParams)
+	public function enumCreate():Int {
+		var h = m.hasHelper("meta_enum_create");
+		if (h != null) return h;
+		var es = m.enumList();
+		var arrGet = Helpers.arrGetDyn(m);
+		var per = [for (ei in 0...es.length) enumCreateOf(es[ei], ei, arrGet)];
 		return helper("meta_enum_create", "pip_p", [Enc.I32], b -> {
 			get(b, 0);
 			typeField(b, 1);
 			b.u8(0x21);
 			b.u8(3);
-			var es = m.enumList();
-			var arrGet = Helpers.arrGetDyn(m);
-			for (ei in 0...es.length) {
-				var e = es[ei];
-				get(b, 3);
-				i32(b, ei);
-				b.u8(0x46);
-				b.u8(0x04);
-				b.u8(0x40);
-				for (c in e.ctors) {
-					get(b, 1);
-					i32(b, c.tag);
-					b.u8(0x46);
-					b.u8(0x04);
-					b.u8(0x40);
-					if (c.params.length == 0 && c.global >= 0) {
-						// the constructor's own value (`==` to it)
-						b.u8(0x23);
-						Enc.uleb(b, m.globalOf(c.global));
-					} else if (c.params.length == 0) {
-						i32(b, c.tag);
-						i32(b, ei);
-						m.gc(b, 0x00, m.enumTypeOf(e));
-					} else {
-						i32(b, c.tag);
-						i32(b, ei);
-						for (k in 0...c.params.length) {
-							get(b, 2);
-							i32(b, k);
-							b.u8(0x10);
-							Enc.uleb(b, arrGet);
-							unboxAs(b, c.params[k]);
-						}
-						m.gc(b, 0x00, m.ctorType(c));
-					}
-					b.u8(0x0F);
-					b.u8(0x0B);
-				}
-				b.u8(0x0B);
-			}
+			dispatch(b, 3, es.length, ei -> {
+				get(b, 1);
+				get(b, 2);
+				b.u8(0x10);
+				Enc.uleb(b, per[ei]);
+				b.u8(0x0F);
+			});
 			m.constZero(b, "p");
 		});
+	}
+
+	// the constructor (local 0) of the enum e (index ei) with the arguments (local 1)
+	function enumCreateOf(e:EnumInfo, ei:Int, arrGet:Int):Int {
+		var maxTag = 0;
+		for (c in e.ctors)
+			if (c.tag > maxTag) maxTag = c.tag;
+		return helper("meta_enum_create_" + ei, "ip_p", [], b -> {
+			dispatch(b, 0, maxTag + 1, tag -> {
+				var c = null;
+				for (k in e.ctors)
+					if (k.tag == tag) c = k;
+				if (c == null) return;
+				if (c.params.length == 0 && c.global >= 0) {
+					// the constructor's own value (`==` to it)
+					b.u8(0x23);
+					Enc.uleb(b, m.globalOf(c.global));
+				} else if (c.params.length == 0) {
+					i32(b, c.tag);
+					i32(b, ei);
+					m.gc(b, 0x00, m.enumTypeOf(e));
+				} else {
+					i32(b, c.tag);
+					i32(b, ei);
+					for (k in 0...c.params.length) {
+						get(b, 1);
+						i32(b, k);
+						b.u8(0x10);
+						Enc.uleb(b, arrGet);
+						unboxAs(b, c.params[k]);
+					}
+					m.gc(b, 0x00, m.ctorType(c));
+				}
+				b.u8(0x0F);
+			});
+			m.constZero(b, "p");
+		});
+	}
 
 	// whether local 0 is an instance of the class or interface whose type
 	// value's id is local 1 (Std.isOfType with a type known at run time only:

@@ -604,7 +604,7 @@ class TUnification {
 						l.unshift(f);
 						return l;
 					}, a2.aFields, []);
-					var cmp = function(a:TClassField, b:TClassField) return Reflect.compare(a.cfName, b.cfName);
+					var cmp = function(a:TClassField, b:TClassField) return core.ds.Key.compareStrings(a.cfName, b.cfName);
 					f1.sort(cmp);
 					f2.sort(cmp);
 					if (f1.length != f2.length) return false;

@@ -327,7 +327,7 @@ class Filters {
 					visitedAnons.unshift(an);
 					// port: sorted like PMap.iter
 					var keys = [for (k in an.aFields.keys()) k];
-					keys.sort(Reflect.compare);
+					keys.sort(core.ds.Key.compareStrings);
 					for (k in keys) checkT(m, an.aFields.get(k).cfType);
 				}
 			case TMono(r):

@@ -97,7 +97,7 @@ class TanonIdentification<A> {
 		inline function pairs(fields:TypeMap<TClassField>):Array<{cf:TClassField, other:TClassField}> {
 			var acc = [];
 			var names = [for (n in pfm.pfmFields.keys()) n];
-			names.sort(Reflect.compare);
+			names.sort(core.ds.Key.compareStrings);
 			for (n in names) {
 				var cf = pfm.pfmFields.get(n);
 				var other = fields.get(cf.cfName);
@@ -207,7 +207,7 @@ class TanonIdentification<A> {
 		var arity = 0;
 		var fields = an.aFields.copy();
 		var names = [for (n in (an.aFields.keys() : Iterator<String>)) n];
-		names.sort(Reflect.compare);
+		names.sort(core.ds.Key.compareStrings);
 		for (n in names) {
 			var cf = an.aFields.get(n);
 			arity++;

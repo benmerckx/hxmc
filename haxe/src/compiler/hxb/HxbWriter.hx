@@ -72,16 +72,7 @@ function unopIndex(op:Unop, flag:UnopFlag):Int return switch [op, flag] {
 
 // port: OCaml `compare` on strings: byte-wise lexicographic. Code point order is
 // identical to UTF-8 byte order.
-function compareOcamlString(a:String, b:String):Int {
-	var la = a.length, lb = b.length;
-	var n = la < lb ? la : lb;
-	for (i in 0...n) {
-		var ca = StringTools.fastCodeAt(a, i),
-			cb = StringTools.fastCodeAt(b, i);
-		if (ca != cb) return ca < cb ? -1 : 1;
-	}
-	return la == lb ? 0 : (la < lb ? -1 : 1);
-}
+function compareOcamlString(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
 // port: keys of a PMap-backed string map, in PMap (ascending) order.
 function sortedKeys<V>(m:haxe.ds.StringMap<V>):Array<String> {

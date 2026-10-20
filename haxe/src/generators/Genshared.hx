@@ -443,10 +443,7 @@ class TypedefInterfaces<A> {
 	}
 
 	// port: OCaml's string compare (bytewise).
-	public static function compareStrings(a:String, b:String):Int {
-		var c = haxe.io.Bytes.ofString(a).compare(haxe.io.Bytes.ofString(b));
-		return c < 0 ? -1 : (c > 0 ? 1 : 0);
-	}
+	public static function compareStrings(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
 	function doProcessClass(c:TClass, info:TClassInfo<A>):Void {
 		switch c.clSuper {

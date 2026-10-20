@@ -1042,15 +1042,7 @@ class Hlcode {
 
 	// port: OCaml `compare` order on strings (bytes, then length); code point order
 	// matches the order of the UTF-8 encodings.
-	public static function strCompare(a:String, b:String):Int {
-		if (a == b) return 0;
-		var n = a.length < b.length ? a.length : b.length;
-		for (i in 0...n) {
-			var c1 = StringTools.fastCodeAt(a, i), c2 = StringTools.fastCodeAt(b, i);
-			if (c1 != c2) return c1 < c2 ? -1 : 1;
-		}
-		return a.length < b.length ? -1 : (a.length > b.length ? 1 : 0);
-	}
+	public static function strCompare(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
 	// port: OCaml `compare` order on ttype; records with the same name compare equal
 	// beyond their name (protos are unique per name), PMaps are not inspected.

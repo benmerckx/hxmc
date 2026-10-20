@@ -300,7 +300,7 @@ class TypedFunctions {
 		var l = [for (v in signatures) v];
 		l.sort(function(meth1, meth2) {
 			if (meth1.arity != meth2.arity) return meth1.arity < meth2.arity ? -1 : 1;
-			return Reflect.compare(meth1.sortString, meth2.sortString);
+			return core.ds.Key.compareStrings(meth1.sortString, meth2.sortString);
 		});
 		var jc = new JvmClassBuilder(haxeFunctionPath, objectPath);
 		jc.addAccessFlag(1); /* public */

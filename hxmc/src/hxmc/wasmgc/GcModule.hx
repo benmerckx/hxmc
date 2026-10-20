@@ -152,6 +152,7 @@ class GcModule {
 			case "f": b.u8(Enc.F64);
 			case "l": b.u8(Enc.I64);
 			case "p": b.u8(EQREF);
+			case "x": b.u8(0x6F); // (externref: what JavaScript passes in, unchecked)
 			case "F": b.u8(0x7D); // (f32: an import's float)
 			case _: throw "valType " + r;
 		}
@@ -550,37 +551,42 @@ class GcModule {
 	public function hasHelper(name:String):Null<Int>
 		return helperIndex.get(name);
 
-	// what JavaScript reads a string with
+	// what JavaScript reads a string with. The string or Bytes comes in as an
+	// externref, cast here: a parameter of another reference type costs V8 a
+	// call to its runtime for each call from JavaScript (its type checked
+	// there); the host copies by such calls, one per byte or unit (the port's
+	// self-compile: 0.6 s in the host's functions so, 0.2 s with externref)
 	function strHelpers() {
+		// the first parameter as a (ref null t)
+		function arg0(b:Buf, t:Int) {
+			b.u8(0x20);
+			b.u8(0);
+			gc(b, 0x1A);
+			castTo(b, t);
+		}
 		var len = new Buf();
-		len.u8(0x20);
-		len.u8(0);
-		castTo(len, tString);
+		arg0(len, tString);
 		gc(len, 0x0F);
-		exports.push({name: "hxmc_str_len", func: addHelper("hxmc_str_len", "p_i", len, [])});
+		exports.push({name: "hxmc_str_len", func: addHelper("hxmc_str_len", "x_i", len, [])});
 		var get = new Buf();
-		get.u8(0x20);
-		get.u8(0);
-		castTo(get, tString);
+		arg0(get, tString);
 		get.u8(0x20);
 		get.u8(1);
 		gc(get, 0x0D, tString);
-		exports.push({name: "hxmc_str_get", func: addHelper("hxmc_str_get", "pi_i", get, [])});
+		exports.push({name: "hxmc_str_get", func: addHelper("hxmc_str_get", "xi_i", get, [])});
 		var nw = new Buf();
 		nw.u8(0x20);
 		nw.u8(0);
 		gc(nw, 0x07, tString);
 		exports.push({name: "hxmc_str_new", func: addHelper("hxmc_str_new", "i_p", nw, [])});
 		var st = new Buf();
-		st.u8(0x20);
-		st.u8(0);
-		castTo(st, tString);
+		arg0(st, tString);
 		st.u8(0x20);
 		st.u8(1);
 		st.u8(0x20);
 		st.u8(2);
 		gc(st, 0x0E, tString);
-		exports.push({name: "hxmc_str_set", func: addHelper("hxmc_str_set", "pii_v", st, [])});
+		exports.push({name: "hxmc_str_set", func: addHelper("hxmc_str_set", "xii_v", st, [])});
 		// and its bytes
 		var bn = new Buf();
 		bn.u8(0x20);
@@ -588,29 +594,23 @@ class GcModule {
 		gc(bn, 0x07, tBytes);
 		exports.push({name: "hxmc_bytes_new", func: addHelper("hxmc_bytes_new", "i_p", bn, [])});
 		var bl = new Buf();
-		bl.u8(0x20);
-		bl.u8(0);
-		castTo(bl, tBytes);
+		arg0(bl, tBytes);
 		gc(bl, 0x0F);
-		exports.push({name: "hxmc_bytes_len", func: addHelper("hxmc_bytes_len", "p_i", bl, [])});
+		exports.push({name: "hxmc_bytes_len", func: addHelper("hxmc_bytes_len", "x_i", bl, [])});
 		var bg = new Buf();
-		bg.u8(0x20);
-		bg.u8(0);
-		castTo(bg, tBytes);
+		arg0(bg, tBytes);
 		bg.u8(0x20);
 		bg.u8(1);
 		gc(bg, 0x0D, tBytes);
-		exports.push({name: "hxmc_bytes_get", func: addHelper("hxmc_bytes_get", "pi_i", bg, [])});
+		exports.push({name: "hxmc_bytes_get", func: addHelper("hxmc_bytes_get", "xi_i", bg, [])});
 		var bs = new Buf();
-		bs.u8(0x20);
-		bs.u8(0);
-		castTo(bs, tBytes);
+		arg0(bs, tBytes);
 		bs.u8(0x20);
 		bs.u8(1);
 		bs.u8(0x20);
 		bs.u8(2);
 		gc(bs, 0x0E, tBytes);
-		exports.push({name: "hxmc_bytes_set", func: addHelper("hxmc_bytes_set", "pii_v", bs, [])});
+		exports.push({name: "hxmc_bytes_set", func: addHelper("hxmc_bytes_set", "xii_v", bs, [])});
 	}
 
 	// ======== shared encodings

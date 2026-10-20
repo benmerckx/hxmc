@@ -203,7 +203,7 @@ private class ConstructorInlining {
 
 	function fieldKeys(io:InlineObject):Array<String> {
 		var keys = [for (k in io.ioFields.keys()) k];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		return keys;
 	}
 

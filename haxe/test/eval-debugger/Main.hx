@@ -34,7 +34,7 @@ class Main {
 		var o = {name: "obj", value: 42};
 		var m = ["a" => 1, "b" => 2];
 		var f = function(z:Int) return z + counter + arr.length;
-		var r = helper(arr.length, "hi");
+		var r = helper(arr.length, "h\u00e9\u{1F600}");
 		var t = p.sum() + f(r);
 		trace(r, t, col, o, m);
 		try {

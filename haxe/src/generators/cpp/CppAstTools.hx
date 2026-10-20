@@ -16,7 +16,7 @@ class CppAstTools {
 	public static function follow(t:T):T return core.Abstract.followWithAbstracts(t);
 
 	// port: OCaml's String.compare.
-	public static function stringCompare(a:String, b:String):Int return a < b ? -1 : a > b ? 1 : 0;
+	public static function stringCompare(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
 	// port: List.sort is a stable merge sort; Array.sort is not guaranteed to be stable.
 	public static function listSort<A>(cmp:A->A->Int, l:Array<A>):Array<A> {

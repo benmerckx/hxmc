@@ -96,8 +96,9 @@ class TypeloadParse {
 	public static function parseFileFromString(com:CommonContext, file:String, p:Pos, source:String):ParseResult<Package> {
 		return core.Timer.time(com.timerCtx, ["parsing"], function(source:String) {
 			com.requestScope.stats.sFilesParsed++;
-			var result = ParserEntry.parse(ParserConfig.fileParserConfig(com, file), Grammar.parseFileStream, Lexer.createFileCtx(file),
-				new Lexer(source, file), file);
+			var result = try ParserEntry.parse(ParserConfig.fileParserConfig(com, file), Grammar.parseFileStream, Lexer.createFileCtx(file),
+				new Lexer(source, file), file) catch (_:syntax.Lexer.MalFormed)
+				raiseTypingError("Malformed file. Source files must be encoded with UTF-8.", Globals.filePos(file));
 			switch [com.display.dmsKind, result] {
 				case [DMModuleSymbols(""), _]:
 				case [DMModuleSymbols(filter), ParseSuccess(data, _)]
@@ -126,7 +127,7 @@ class TypeloadParse {
 		if (com.fileContents.length == 0
 			&& Common.defined(com, Define.DisplayStdin)
 			&& core.display.DisplayPosition.displayPosition.isInFile(key)) {
-			var s = Sys.stdin().readAll().toString();
+			var s = core.StringHelper.ofBytes(Sys.stdin().readAll());
 			Sys.stdin().close();
 			com.fileContents = [{fileKey: key, content: s}];
 			contents = s;
@@ -138,34 +139,11 @@ class TypeloadParse {
 			var bytes:haxe.io.Bytes;
 			try bytes = sys.io.File.getBytes(rfile.file)
 			catch (_:Dynamic) return raiseTypingError("Could not open " + rfile.file, p);
-			if (!validUtf8(bytes)) return raiseTypingError("Malformed file. Source files must be encoded with UTF-8.",
-				Globals.filePos(rfile.file));
-			contents = bytes.toString();
+			// port: bytes that are not UTF-8 decode to lone surrogates, which the
+			// lexer rejects as upstream's does (syntax.Lexer.MalFormed)
+			contents = core.StringHelper.ofBytes(bytes);
 		}
 		return parseFileFromString(com, rfile.file, p, contents);
-	}
-
-	// port: decode validity is checked before creating a host String, matching Sedlex's
-	// malformed-input failure rather than allowing replacement characters.
-	static function validUtf8(bytes:haxe.io.Bytes):Bool {
-		var i = 0;
-		while (i < bytes.length) {
-			var c = bytes.get(i++);
-			if (c < 0x80) continue;
-			var n = c >= 0xc2 && c <= 0xdf ? 1 : c >= 0xe0 && c <= 0xef ? 2 : c >= 0xf0 && c <= 0xf4 ? 3 : -1;
-			if (n < 0 || i + n > bytes.length) return false;
-			var first = bytes.get(i);
-			if ((c == 0xe0 && first < 0xa0)
-				|| (c == 0xed && first >= 0xa0)
-				|| (c == 0xf0 && first < 0x90)
-				|| (c == 0xf4 && first >= 0x90))
-				return false;
-			for (_ in 0...n) {
-				var next = bytes.get(i++);
-				if (next < 0x80 || next > 0xbf) return false;
-			}
-		}
-		return true;
 	}
 
 	public static var parseHook:CommonContext->ResolvedFile->Pos->ParseResult<Package> = parseFile;

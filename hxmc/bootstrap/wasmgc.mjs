@@ -30,6 +30,43 @@ function str(s) {
 	}
 	return out;
 }
+// the UTF-8 bytes of a JavaScript string as hxmc.rt.Str.utf8Into writes a
+// string's: a lone U+DC80 to U+DCFF is the byte (0x80 to 0xFF) it was decoded
+// from, another lone surrogate its three bytes
+function utf8(t) {
+	const out = Buffer.allocUnsafe(3 * t.length);
+	let j = 0;
+	for (let i = 0; i < t.length; i++) {
+		let c = t.charCodeAt(i);
+		if (c < 0x80) {
+			out[j++] = c;
+			continue;
+		}
+		if (c >= 0xd800 && c < 0xdc00 && i + 1 < t.length) {
+			const d = t.charCodeAt(i + 1);
+			if (d >= 0xdc00 && d < 0xe000) {
+				c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+				i++;
+			}
+		} else if (c >= 0xdc80 && c < 0xdd00) {
+			out[j++] = c & 0xff;
+			continue;
+		}
+		if (c < 0x800) {
+			out[j++] = 0xc0 | (c >> 6);
+		} else {
+			if (c < 0x10000) {
+				out[j++] = 0xe0 | (c >> 12);
+			} else {
+				out[j++] = 0xf0 | (c >> 18);
+				out[j++] = 0x80 | ((c >> 12) & 0x3f);
+			}
+			out[j++] = 0x80 | ((c >> 6) & 0x3f);
+		}
+		out[j++] = 0x80 | (c & 0x3f);
+	}
+	return out.subarray(0, j);
+}
 // a write of the whole buffer (a pipe that is full: EAGAIN, written again
 // after a millisecond), at the position when one is given (else the file's)
 function writeAll(fd, buf, position = null) {
@@ -185,7 +222,7 @@ function procIo(op, fd, x, a, b) {
 }
 const hxmc = {
 	write(fd, s) {
-		writeAll(fd === 2 ? 2 : 1, Buffer.from(str(s), "utf8"));
+		writeAll(fd === 2 ? 2 : 1, utf8(str(s)));
 	},
 	now() {
 		return performance.now() / 1000;

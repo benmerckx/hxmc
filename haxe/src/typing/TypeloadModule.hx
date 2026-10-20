@@ -537,7 +537,7 @@ class TypeloadModule {
 		if (local.com.platform == Jvm && !hasEnumFlag(e, EnExtern)) delay(local.g, PTypeField, function() {
 			e.eMeta = StrictMeta.checkStrictMeta(local, e.eMeta).concat(e.eMeta);
 			var keys = [for (k in e.eConstrs.keys()) k];
-			keys.sort(Reflect.compare);
+			keys.sort(core.ds.Key.compareStrings);
 			for (k in keys) {
 				var f = e.eConstrs.get(k);
 				f.efMeta = StrictMeta.checkStrictMeta(local, f.efMeta).concat(f.efMeta);

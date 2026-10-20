@@ -165,6 +165,7 @@ class Inline {
 			var b = c.block;
 			var k = b.ins.indexOf(c);
 			if (k < 0) continue;
+			f.allocs += g.allocs;
 			// the rest of the block after the call
 			var tail = new MBlock(nextBlock++);
 			tail.cold = b.cold;

@@ -61,7 +61,7 @@ import compiler.CompilationCache;
 			// port: Version.version_extra is generated at build time from Git (prebuild.ml,
 			// ADD_REVISION); the reference is the nightly build of the pinned upstream commit
 			// (build.haxe.org, branch development): moving the pin updates the hash
-			extra: {name: "git build development", build: "fef2847"}
+			extra: {name: "git build development", build: "066bd83"}
 		};
 	}
 

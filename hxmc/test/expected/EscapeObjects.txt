@@ -1,0 +1,26 @@
+exit 0
+4.5
+7 2
+6 -12
+3 6
+50
+67
+270
+32
+10 10
+4
+14
+10
+41.25
+false true true
+4
+caught big 30
+6 -50
+-1 5
+58
+350010
+true true true 10 true true true 11
+9
+9.5
+14
+27.390625

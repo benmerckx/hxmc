@@ -48,7 +48,7 @@ class TExprToExpr {
 				case _:
 					var fields:Array<ClassField> = [];
 					var names = [for (name in a.aFields.keys()) name];
-					names.sort(Reflect.compare);
+					names.sort(core.ds.Key.compareStrings);
 					for (name in names) {
 						var f = a.aFields.get(name);
 						var access:Array<PlacedAccess> = [];

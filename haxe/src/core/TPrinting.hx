@@ -107,7 +107,7 @@ class TPrinting {
 				case AbstractStatics(a): '{ AbstractStatics ${Globals.sTypePath(a.aPath)} }';
 				case _:
 					var names = [for (name in a.aFields.keys()) name];
-					names.sort(Reflect.compare);
+					names.sort(core.ds.Key.compareStrings);
 					names.reverse();
 					"{" + [
 						for (name in names) {
@@ -401,7 +401,7 @@ class Printer {
 		var keys:Array<K> = [];
 		var iter:Iterator<K> = pm.keys();
 		for (k in iter) keys.push(k);
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compare);
 		keys.reverse();
 		return "{" + [for (k in keys) fk(k) + " = " + fv(pm.get(k))].join(", ") + "}";
 	}
@@ -509,7 +509,7 @@ class Printer {
 
 	public static function sTenum(tabs:String, en:TEnum):String {
 		var names = [for (name in en.eConstrs.keys()) name];
-		names.sort(Reflect.compare);
+		names.sort(core.ds.Key.compareStrings);
 		names.reverse();
 		return record(tabs, [
 			["e_path", Globals.sTypePath(en.ePath)],

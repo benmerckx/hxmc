@@ -121,7 +121,7 @@ class Genxml {
 			node("f", attributes, sig.args.map(a -> genType(a.optional ? followParam(a.type) : a.type)).concat([genType(sig.ret)]));
 		case TAnon(a):
 			var names = [for (name in a.aFields.keys()) name];
-			names.sort(Reflect.compare);
+			names.sort(core.ds.Key.compareStrings);
 			var children = [];
 			for (name in names) {
 				var cf = core.ds.Record.copy(a.aFields.get(name));

@@ -97,6 +97,11 @@ class Driver {
 	}
 	static var sroa = Sys.getEnv("HXMC_SROA") != "0";
 	var raRounds = 0;
+	var escRemoved = 0;
+	var escFolds = 0;
+	var escTime = 0.0;
+	var lambdaSyms:Null<Map<String, FuncInfo>>; // the closures' functions that may be inlined, by symbol
+	var escSlow:Array<{name:String, t:Float}> = [];
 	var raInsns = 0;
 	var raFuncs = 0;
 
@@ -129,20 +134,46 @@ class Driver {
 			var mf = mb.build();
 			if (o.opt) {
 				// to a depth (Fingerprint keys callers with their callees' callees)
-				var todo = mb.inlineSites;
 				var ic = {sym: mb.icSym, count: mb.icaches};
-				for (_ in 0...Inline.DEPTH) {
-					if (todo.length == 0) break;
-					var sites = [];
-					var inLoop = Inline.loopBlocks(mf);
-					for (s in todo) {
-						var t = template(s.fn);
-						if (t != null && s.fn != fn && t.size <= Inline.maxSize(abi.wasm, s.call.block.mark == inLoop, StringTools.startsWith(s.fn.module, "hxmc.rt.")))
-							sites.push({call: s.call, callee: t});
+				function rounds(todo:Array<{call:MIns, fn:FuncInfo}>) {
+					for (_ in 0...Inline.DEPTH) {
+						if (todo.length == 0) break;
+						var sites = [];
+						var inLoop = Inline.loopBlocks(mf);
+						for (s in todo) {
+							var t = template(s.fn);
+							if (t != null && s.fn != fn && t.size <= Inline.maxSize(abi.wasm, s.call.block.mark == inLoop, StringTools.startsWith(s.fn.module, "hxmc.rt.")))
+								sites.push({call: s.call, callee: t});
+						}
+						todo = Inline.run(mf, sites, ic);
 					}
-					todo = Inline.run(mf, sites, ic);
+				}
+				rounds(mb.inlineSites);
+				// closures called where they are made: the call goes to their
+				// function, inlined when it may be and is of this module (its
+				// body and its callees' are in the module's key), so that
+				// Escape may replace the closure
+				if (Escape.on && mf.allocs > 0 && lambdaSyms != null && Escape.part("closures") && Escape.allowed(name)) {
+					var todo = [];
+					for (c in Escape.closureCalls(mf)) {
+						var g = lambdaSyms.get(c.sym);
+						if (g != null && g.module == fn.module && MirBuild.inlineCands.exists(g)) todo.push({call: c.call, fn: g});
+					}
+					rounds(todo);
 				}
 				mb.icaches = ic.count;
+			}
+			if (o.opt && Escape.on) {
+				var es = new Escape(mf);
+				var te = haxe.Timer.stamp();
+				es.run();
+				te = haxe.Timer.stamp() - te;
+				lock.acquire();
+				escRemoved += es.removed;
+				escFolds += es.folds;
+				escTime += te;
+				if (o.stats && te > 0.005) escSlow.push({name: name + " (" + mf.vals.length + " values)", t: te});
+				lock.release();
 			}
 			if (o.opt && sroa) new Sroa(mf).run();
 			if (o.opt) new Opt(mf).run();
@@ -238,6 +269,10 @@ class Driver {
 		Sys.println('hxmc: ${prep.p.funcs.length} functions');
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
+		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
+		escSlow.sort((a, b) -> a.t < b.t ? 1 : -1);
+		for (x in escSlow.slice(0, 8))
+			Sys.println('  escape ${ms(x.t)}\t${x.name}');
 		slow.sort((a, b) -> a.t < b.t ? 1 : -1);
 		for (x in slow.slice(0, 5))
 			Sys.println('  ${ms(x.t)}\t${x.name}');
@@ -269,6 +304,30 @@ class Driver {
 		for (f in prep.p.funcs)
 			if (Inline.candidate(f)) m.set(f, true);
 		MirBuild.inlineCands = m;
+		lambdaSyms = [for (l in prep.p.lambdas) if (m.exists(l.fn)) prep.funcSym(l.fn) => l.fn];
+		// (enums whose constructors' type indices less their tags agree, as
+		// EEnumTag subtracts: Escape folds the tag of a known constructor)
+		var tags = new Map<String, {en:Int, tag:Int}>();
+		for (k in 0...prep.p.enums.length) {
+			var en = prep.p.enums[k];
+			if (en.ctors.length == 0) continue;
+			var base = en.ctors[0].tindex - en.ctors[0].tag;
+			var ok = true;
+			for (c in en.ctors)
+				if (c.tindex < 0 || c.tindex - c.tag != base || prep.tySym(c.tindex) == null) ok = false;
+			if (ok)
+				for (c in en.ctors)
+					tags.set(prep.tySym(c.tindex), {en: k, tag: c.tag});
+		}
+		Escape.ctorTags = tags;
+		// (the slots of each type that hold references: Escape keeps them on the shadow stack)
+		var refs = new Map<String, Array<Bool>>();
+		var types = prep.e.types;
+		for (ti in 0...types.length) {
+			var sym = prep.tySym(ti);
+			refs.set(sym != null ? sym : "#" + ti, [for (s in types[ti].slots) s != null && s.match(TRef(_))]);
+		}
+		Escape.refSlots = refs;
 	}
 
 	// the processors (asked once: TaskPool runs getconf, 10-15 ms a build of the resident compiler)

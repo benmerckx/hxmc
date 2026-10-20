@@ -6,7 +6,7 @@ hxmc turns a typed Haxe program into a native executable with its own code
 generator and linker: no C compiler, assembler or system linker at build time.
 
 ```
-typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> Mir (SSA) --(Inline, Sroa, Opt)-->
+typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> Mir (SSA) --(Inline, Escape, Sroa, Opt)-->
     --(x64|a64 Isel)--> LIR --(Regalloc, Emit)--> Obj (per module, cached) | --(wasm/WasmGen)--> wasm
     --(DataGen: tables, strings)--> Obj --(Link: ELF | LinkPE | LinkMachO | LinkWasm)--> executable
 ```
@@ -19,7 +19,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `ir/Reach.hx` | the functions the program can run (Reachability, below): the others are not compiled |
 | `ir/Facts.hx`, `Prep.hx` | the program-wide facts: names, layouts, type indices, field ids, no-GC functions, cold sites, GC points, as symbols |
 | `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, each module's object reused when its fingerprint is unchanged, lowered bodies reused by the server |
-| `Mir.hx`, `MirBuild.hx`, `Opt.hx`, `Inline.hx`, `Sroa.hx` | the SSA IR, its construction, inlining, scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code |
+| `Mir.hx`, `MirBuild.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx` | the SSA IR, its construction, inlining, escape analysis (allocations that stay in their function replaced by their fields: [plans/codegen.md](plans/codegen.md), "Escape analysis"), scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code |
 | `Lir.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection, linear-scan allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
 | `Unwind.hx`, `Dwarf.hx` | unwind tables from the emitters' frame records (`.eh_frame`, `.pdata`/`.xdata`, `__eh_frame`), `-debug`'s DWARF lines (Debugging, below) |
 | `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers (static ELF, `LinkDyn.hx` dynamic ELF against glibc; PE with imports written directly; Mach-O with an ad-hoc signature), the runtime-object builder, the program's data |
@@ -162,7 +162,17 @@ pass it: `COMPILER_ARGS`), on Linux, once the old space passes 64 MB, a
 helper thread faults in its pages ahead of the minor collections, which
 would otherwise wait for the kernel to zero each fresh page they copy into
 (`RT_PREFAULT=0`: no helper). It trades CPU time for wall time: the
-HaxeBenchmarks' alloc takes 7.6% less wall time and 20% more CPU time with it. `RT_STATS=1` prints the resizes and what was promoted. A change of the runtime's
+HaxeBenchmarks' alloc takes 7.6% less wall time and 20% more CPU time with it. `RT_STATS=1` prints the resizes and what was promoted.
+
+Strings are UTF-16; they cross the system boundaries (files, processes,
+sockets, the environment, `Bytes.getString` and `ofString`) as UTF-8
+(`Str.decode`, `Str.utf8Into`). A byte that does not begin a well-formed
+sequence decodes to one unit, U+DC80 to U+DCFF for 0x80 to 0xFF (as Python's
+surrogateescape), which encodes back to that byte, so any bytes read and
+written again are the same bytes (the corpus' `Utf8Bytes`; the port keeps
+OCaml's byte strings this way: [porting.md](porting.md)).
+
+A change of the runtime's
 interface or of the IR's conventions needs a tool that knows it: build once
 against the previous runtime first, or bootstrap again.
 
@@ -415,10 +425,10 @@ runs without flags and wasmtime not at all; run with
 no threads, sockets or processes). mbedtls 2.28 and libuv 1.48
 (`hxmc/deps/deps.sh`) become `ssl.o` and `uv.o`, linked only into programs that
 use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
-`HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
+`HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_ESCAPE=0` (no escape analysis; `HXMC_ESCAPE_LOG=1`: what happens to each allocation analyzed and why it stays; `HXMC_ESCAPE_NO=<closures,frames,again,boxes,replace,screen>` and `HXMC_ESCAPE_HASH=<lo>-<hi>` to bisect a miscompilation; none of them are in the object cache's key), `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
 `RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`,
-`RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory).
+`RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown).
 
 ## Android
 
@@ -682,10 +692,14 @@ its index in the exported `__indirect_function_table` (corpus case
 A wasm32 module's linear memory only grows, and browsers (phones above all,
 and several islands on one page) refuse it early, so the runtime
 (`hxmc/std/hxmc/rt/wasm/Heap.hx`, `Gc.hx`) takes only what it uses: the
-nursery's region is as large as the nursery (4 MB, then doubled by the
-adaptive sizing up to 32 MB: grown in place when it is the last region,
-else moved to a new one right after a minor collection, when it is empty;
-it stays as it is when memory cannot grow); the old space is chunks of 1 MB
+nursery's region is as large as the nursery (4 MB, then sized as the
+native one with one thread: doubled after a minor collection that promoted
+more than a 16th of what was allocated since the previous one, halved after
+8 that promoted less than a 64th, up to 32 MB, which the port's
+self-compile keeps: 6% less time than at 4 MB, three major collections
+instead of six, 18% less peak memory; grown in place when it is the last region, else
+moved to a new one right after a minor collection, when it is empty; it
+stays as it is when memory cannot grow); the old space is chunks of 1 MB
 taken as objects are promoted (`RT_OLD_MB`, 32, is when the first major
 collection comes, not a reservation); the shadow stack is `RT_STACK_MB`
 (4 MB; `wasi.mjs` sets it from node's `--stack-size`, as deep as node's
@@ -708,8 +722,13 @@ modules at once needs 2 MB; corpus case `DeepFrames`.) Memory
 memory.grow gave is zero, so only what was handed out before and freed is
 zeroed (`Heap.freshFrom`: the highest the regions reached): the nursery, the
 two stacks and the 64 KB granule table cost address space, not pages,
-until they are used. When memory.grow fails the runtime writes "out of
-memory: linear memory is N MB, growing it by M MB failed" and exits;
+until they are used. Memory grows by an eighth of its size at a time when
+that is more than is needed (else, or when the host refuses it, by what is
+needed): node collects its own heap after a memory.grow (V8 counts the
+grown buffer as new external memory), which in the port's self-compile,
+growing by the old space's 1 MB chunks, made 400 collections. When
+memory.grow fails the runtime writes "out of memory: linear memory is N
+MB, growing it by M MB failed" and exits;
 `packages/os/browser.mjs` turns a RangeError of the browser's (a new
 instance's memory, an ArrayBuffer) into "out of memory: the browser refused
 N MB ...", which the islands' loader shows (`data-error`).

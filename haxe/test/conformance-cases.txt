@@ -142,6 +142,26 @@ module moduleload-TryCatch haxe/test unit.moduleload.TryCatch
 module moduleload-ValueSwitch haxe/test unit.moduleload.ValueSwitch
 direct moduleload-Basic haxe/test/conformance unit.moduleload.Basic
 direct moduleload-HelloWorld haxe/test/conformance unit.moduleload.HelloWorld
+direct string-order haxe/test/conformance unit.strings.StringOrder
+direct string-offsets haxe/test/conformance unit.strings.StringOffsets
+direct malformed haxe/test/conformance unit.strings.Malformed
+direct malformed-source haxe/test/conformance unit.strings.MalformedSource
+direct malformed-after-error haxe/test/conformance unit.strings.MalformedAfterError
+direct malformed-before-error haxe/test/conformance unit.strings.MalformedBeforeError
+direct malformed-same-chunk haxe/test/conformance unit.strings.MalformedSameChunk
+direct malformed-parse haxe/test/conformance unit.strings.MalformedParse
+hxml malformed-define haxe/test/conformance/strings-define build.hxml
+noeval malformed-define Eval as the host: the port on Eval reads the define with the strings of Eval, which take no such bytes (0xFF: UTF8.next; without it: BadUTF of Pcre2), as the Eval of the reference does not
+hxml string-bounds-in-range haxe/test/conformance/strings-bounds build.hxml -D probe=in-range
+hxml string-bounds-unsafe-end haxe/test/conformance/strings-bounds build.hxml -D probe=unsafe-end
+hxml string-bounds-unsafe-negative haxe/test/conformance/strings-bounds build.hxml -D probe=unsafe-negative
+hxml string-bounds-unsafe-astral haxe/test/conformance/strings-bounds build.hxml -D probe=unsafe-astral
+hxml string-bounds-addsub-past haxe/test/conformance/strings-bounds build.hxml -D probe=addsub-past
+hxml string-bounds-addsub-start-past haxe/test/conformance/strings-bounds build.hxml -D probe=addsub-start-past
+hxml string-bounds-addsub-negative haxe/test/conformance/strings-bounds build.hxml -D probe=addsub-negative
+hxml string-bounds-matchsub-negative haxe/test/conformance/strings-bounds build.hxml -D probe=matchsub-negative
+hxml string-bounds-matchsub-past haxe/test/conformance/strings-bounds build.hxml -D probe=matchsub-past
+hxml string-bounds-matchsub-negative-end haxe/test/conformance/strings-bounds build.hxml -D probe=matchsub-negative-end
 
 # The parts of multi-part misc/eval configurations that discovery leaves out
 # (Issue11354/compile.hxml: --cwd proj, then --each over a, b and proj itself;

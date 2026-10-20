@@ -44,6 +44,12 @@ class Vstring {
 	// The length of the string.
 	// port: in code points
 	public final slength:Int;
+	// The current (character * byte) offsets.
+	// port: a list of at most two (character, native index) entries
+	// (VstringOffset: the pair of refs): its head and the second, null where
+	// there is none.
+	public var soffsets1:Null<VstringOffset>;
+	public var soffsets2:Null<VstringOffset>;
 	// port: sstring has no surrogate pairs: code point indices are string indices
 	public final sbmp:Bool;
 
@@ -51,6 +57,17 @@ class Vstring {
 		this.sstring = sstring;
 		this.slength = slength;
 		this.sbmp = sbmp;
+	}
+}
+
+// port: an `(int ref * int ref)` of `soffsets`: a character index and its native index.
+class VstringOffset {
+	public var cIndex:Int;
+	public var bOffset:Int;
+
+	public function new(cIndex:Int, bOffset:Int) {
+		this.cIndex = cIndex;
+		this.bOffset = bOffset;
 	}
 }
 

@@ -436,19 +436,24 @@ Nothing in `haxe/src` changed. What it lacked, all in hxmc:
   `Lambda` over an Array), calling a non-function as an error rather than
   a trap.
 
-Measured with node 24, the self-compile to HXB (`-cp haxe/src -main
-haxe.Main --interp --no-output --hxb`):
+Measured with node 24 (2026-10-19, medians of 5 interleaved runs on an
+Intel Xeon E-2356G at 3.2 GHz, 6 cores / 12 threads, 62 GB, Linux 6.1),
+the self-compile to HXB (`-cp haxe/src -main haxe.Main --interp
+--no-output --hxb`), the same archive from all three:
 
 | | native | linear | WasmGC |
 | --- | --- | --- | --- |
-| self-compile s | 3.7 | 7.1 | 9.1 |
-| peak RSS MB | 650 | 1160 | 1220 |
-| a small compile s | 0.04 | 0.37 | 0.68 |
-| module MB (gzip -9) | | 15.3 (3.6) | 11.0 (2.8) |
+| self-compile s | 3.75 | 5.9 | 8.3 |
+| peak RSS MB | 640 | 880 | 1130-1440 (V8's collector: it varies by run) |
+| a small compile s | 0.06 | 0.32 | 0.74 |
+| module MB (gzip -9) | | 15.5 (2.9) | 10.2 (3.5) |
 
 (The small compile: `unit.moduleload.TryCatch` to `--interp`; `--version`
-alone takes 0.37 s, linear memory's 0.09 s, most of it V8's optimizing
-compiler: 0.12 s with `--liftoff-only`, which makes the self-compile 17 s.)
+alone takes 0.13 s, linear memory's 0.08 s. WasmGC's took 0.37 s while
+V8's optimizing compiler worked on two large functions of enum reflection,
+which process.exit waits for; they are one small function per enum now.
+Before memory grew by an eighth at a time and the nursery followed the
+native policy, linear memory's self-compile took 6.9 s and 1070 MB.)
 What it does not have: sockets (the compilation server, the server lanes,
 the Eval debugger), threads that interleave, `Sys.getChar`; Math's
 transcendental functions are V8's, not musl's as on every other target (no

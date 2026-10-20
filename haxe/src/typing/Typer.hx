@@ -787,7 +787,7 @@ class Typer {
 			if (!ctx.f.isUntyped) {
 				var missing = [];
 				var names = [for (name in fieldMap.keys()) name];
-				names.sort(Reflect.compare);
+				names.sort(core.ds.Key.compareStrings);
 				for (name in names) {
 					var cf = fieldMap.get(name);
 					if (!Meta.has(MetaTag.Optional, cf.cfMeta) && !fields.exists(name)) missing.unshift(name);

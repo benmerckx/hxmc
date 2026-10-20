@@ -163,6 +163,7 @@ class MFunc {
 	public var vals:Array<MIns> = [];
 	public var slots:Array<{size:Int, align:Int}> = []; // frame slots (StackAddr)
 	public var blocksHere = false; // FuncInfo.blocksHere (Inline: its calls never keep the frame)
+	public var allocs = 0; // objects allocated inline and boxes made, at most (Escape: none, nothing to do)
 	// entered from C with structs by value (MirBuild.cEntry): the parameters'
 	// groups (MIns.cGroups) and C sizes (MIns.cSizes); a Param of index -1
 	// is x8 on arm64 (the address of a struct result)

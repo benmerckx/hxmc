@@ -432,7 +432,7 @@ class InterferenceReport {
 		}
 		inline function strings(map:haxe.ds.StringMap<Bool>):String {
 			var keys = [for (k in map.keys()) k];
-			keys.sort((a, b) -> Reflect.compare(b, a));
+			keys.sort((a, b) -> core.ds.Key.compareStrings(b, a));
 			return keys.join(", ");
 		}
 		return core.TPrinting.Printer.sRecordFields("", [

@@ -26,8 +26,6 @@ using macros.eval.EvalValue.EvalValueTools;
 //   meet); a host thread that dies on an exception prints OCaml's
 //   "Thread N killed on uncaught exception" line with the host's thread
 //   numbering.
-// - A string's `soffsets` (OCaml's cache of code point offsets, runtime state
-//   with no counterpart in the port's strings) are reported as empty.
 private typedef Completion = {n:Int, k:String, column:Null<Int>};
 
 class EvalDebugSocket {
@@ -368,11 +366,18 @@ class EvalDebugSocket {
 						{n: n, v: f.value};
 					});
 				case VString(s):
-					// port: no `soffsets` (see the header): no index/offset entries
+					var l = [];
+					var offsets = [for (r in [s.soffsets2, s.soffsets1]) if (r != null) r];
+					for (i => r in offsets) {
+						// port: the entries hold native indices: the offset is the bytes before one
+						var offset = haxe.io.Bytes.ofString(s.sstring.substring(0, r.bOffset)).length;
+						l.unshift({n: 'offset$i', v: EvalValueTools.vint(offset)});
+						l.unshift({n: 'index$i', v: EvalValueTools.vint(r.cIndex)});
+					}
 					return [
 						{n: "length", v: EvalValueTools.vint(s.slength)},
 						{n: "byteLength", v: EvalValueTools.vint(haxe.io.Bytes.ofString(s.sstring).length)}
-					];
+					].concat(l);
 				case VArray(va):
 					var l = EvalArray.toList(va);
 					return [for (i => v in l) {n: '[$i]', v: v}];

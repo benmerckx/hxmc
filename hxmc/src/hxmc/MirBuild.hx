@@ -1255,6 +1255,7 @@ class MirBuild {
 	// path). At a cold site the live references are stored on the shadow
 	// stack around the slow call only
 	function alloc(n:Int, tidx:Int, kind:Int, zero:Bool):Int {
+		f.allocs++;
 		var bytes = 8 * (n + 1);
 		var ptr = tlsLoad("rt_young_ptr");
 		var lim = tlsLoad(zero ? "rt_young_limit" : "rt_young_rlimit");
@@ -1563,10 +1564,16 @@ class MirBuild {
 
 	function boxFrom(t:Ty, v:Int):Int
 		return switch t {
-			case TI32: call("hx_box_int", [v], I64);
+			case TI32:
+				f.allocs++;
+				call("hx_box_int", [v], I64);
 			case TBool: call("hx_box_bool", [v], I64);
-			case TF64: call("hx_box_float", [v], I64);
-			case TI64: call("hx_box_i64", [v], I64);
+			case TF64:
+				f.allocs++;
+				call("hx_box_float", [v], I64);
+			case TI64:
+				f.allocs++;
+				call("hx_box_i64", [v], I64);
 			case _: v;
 		};
 

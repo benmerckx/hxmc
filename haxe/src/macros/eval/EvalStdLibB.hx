@@ -941,7 +941,7 @@ class StdResource {
 
 	public static final getString = EvalEncode.vfun1(name -> {
 		var s = resources().findOpt(EvalDecode.decodeString(name));
-		s == null ? VNull : EvalString.createUnknown(s.toString());
+		s == null ? VNull : EvalString.createUnknown(core.StringHelper.ofBytes(s));
 	});
 
 	public static final getBytes = EvalEncode.vfun1(name -> {
@@ -2235,25 +2235,10 @@ class StdUtf8 {
 
 	public static final validate = EvalEncode.vfun1(s -> {
 		var s = EvalDecode.decodeString(s);
-		// port: native strings only fail to be valid with lone surrogates
-		var valid = true;
-		var i = 0;
-		while (i < s.length) {
-			var c = StringTools.fastCodeAt(s, i);
-			if (c >= 0xD800 && c <= 0xDBFF) {
-				var d = i + 1 < s.length ? StringTools.fastCodeAt(s, i + 1) : -1;
-				if (d >= 0xDC00 && d <= 0xDFFF) i++
-				else {
-					valid = false;
-					break;
-				}
-			} else if (c >= 0xDC00 && c <= 0xDFFF) {
-				valid = false;
-				break;
-			}
-			i++;
-		}
-		valid.vbool();
+		// port: UTF8.validate on the native string's UTF-8 bytes (bytes that are
+		// not UTF-8 are lone surrogates on a UTF-16 host:
+		// core.StringHelper.codePointHost)
+		(!core.StringHelper.malformedUtf8(s)).vbool();
 	});
 }
 
@@ -2272,7 +2257,7 @@ class StdNativeString {
 
 	public static final toString = EvalEncode.vfun1(v -> {
 		var s = EvalDecode.decodeNativeString(v);
-		EvalString.createUnknown(s.toString());
+		EvalString.createUnknown(core.StringHelper.ofBytes(s));
 	});
 
 	public static final toBytes = EvalEncode.vfun1(v -> {

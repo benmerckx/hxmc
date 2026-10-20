@@ -35,6 +35,7 @@ using StringTools;
 //   hxml <name> <project-dir> <hxml> [argument ...]
 //   hxblib <name> <dir> "<library arguments>" "<arguments>"
 //   volatile <case> <member> <reason ...>   (the member depends on the time of compilation)
+//   noeval <case> <reason ...>   (--eval does not apply: Eval as the host cannot run the case)
 class Conformance {
 	static final GENERATED = "bin/test/conformance";
 	static final STACK = ["-D", "eval-call-stack-depth=10000"];
@@ -104,6 +105,8 @@ class Conformance {
 					cases.push({kind: kind, name: name, cwd: root, args: ["-cp", p[2], p[3]], hxml: false});
 				case "hxblib":
 					cases.push({kind: kind, name: name, cwd: root + "/" + p[2], lib: shellSplit(p[3]), args: shellSplit(p[4]), hxml: true});
+				case "noeval":
+					Lambda.find(cases, c -> c.name == name).noEval = p.slice(2).join(" ");
 				case "volatile":
 					var c = Lambda.find(cases, c -> c.name == name);
 					if (c.volatile == null) c.volatile = [];
@@ -214,7 +217,8 @@ class Conformance {
 				note += " (--hxb-lib round trip identical)";
 			}
 		}
-		if (opts.has("--eval")) {
+		if (opts.has("--eval") && c.noEval != null) note += " (--eval not applicable: " + c.noEval + ")";
+		else if (opts.has("--eval")) {
 			var evalHxb = out + "/eval-hxb.hxb";
 			var e = run([reference].concat(STACK).concat(["--hxb-lib", compilerHxb, "--run", "haxe.Main"]).concat(invocation(evalHxb)), cwd, out + "/eval-hxb.log");
 			var s = run([reference].concat(STACK).concat(["-cp", root + "/haxe/src", "--run", "haxe.Main"]).concat(invocation(srcHxb)), cwd, out + "/source.log");
@@ -330,5 +334,5 @@ class Conformance {
 	}
 }
 
-typedef ConfCase = {kind:String, name:String, cwd:String, args:Array<String>, hxml:Bool, ?lib:Array<String>, ?volatile:Array<String>}
+typedef ConfCase = {kind:String, name:String, cwd:String, args:Array<String>, hxml:Bool, ?lib:Array<String>, ?volatile:Array<String>, ?noEval:String}
 typedef ConfResult = {name:String, seconds:Float, status:String, detail:String}

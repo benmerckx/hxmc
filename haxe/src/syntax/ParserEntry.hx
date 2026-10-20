@@ -168,7 +168,7 @@ class ParserEntry {
 	public static function cmp(v1:SmallType, v2:SmallType):Int return switch [v1, v2] {
 		case [TNull, _], [_, TNull]: throw new ComparisonExit();
 		case [TFloat(a), TFloat(b)]: Reflect.compare(a, b);
-		case [TString(a), TString(b)]: Reflect.compare(a, b);
+		case [TString(a), TString(b)]: core.ds.Key.compareStrings(a, b);
 		case [TBool(a), TBool(b)]: Reflect.compare(a, b);
 		case [TVersion(a), TVersion(b)]: SemVerTools.compareVersion(a, b);
 		case [TString(_), TFloat(_)], [TFloat(_), TString(_)], [_, TVersion(_)],

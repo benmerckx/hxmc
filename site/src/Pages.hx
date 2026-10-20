@@ -201,7 +201,7 @@ class Pages implements Markup {
 			</Hero>
 			<div class="wrap">
 				<section class="block" id="status">
-					<header><h2>Status</h2><p>Pinned to upstream <code>fef2847</code>.</p></header>
+					<header><h2>Status</h2><p>Pinned to upstream <code>066bd83</code>.</p></header>
 					<div>
 						<p>Same arguments, same output as the reference compiler:</p>
 						<dl class="facts">

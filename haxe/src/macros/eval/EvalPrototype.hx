@@ -284,7 +284,7 @@ class EvalPrototype {
 	}
 
 	// port: OCaml `compare` on strings (PMap order)
-	static function compareString(a:String, b:String):Int return a == b ? 0 : (a < b ? -1 : 1);
+	static function compareString(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
 	public static function createStaticPrototype(ctx:Context, mt:ModuleType):{init:ProtoInit, delays:Array<StaticDelay>} {
 		var path = TFunctions.tPath(mt);

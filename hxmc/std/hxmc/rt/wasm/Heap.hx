@@ -44,7 +44,13 @@ class Heap {
 		fresh = top;
 	}
 
-	// memory up to p (grows it): false when it cannot grow so far
+	// memory up to p (grows it): false when it cannot grow so far. It grows
+	// by an eighth of its size when that is more than p needs (and the host
+	// allows it): node collects its own heap after each memory.grow (V8
+	// counts the grown buffer as new external memory: the port's
+	// self-compile, growing by the 1 MB chunks of the old space, made 400
+	// collections, half a second of pauses and twice that on node's other
+	// threads); memory above `fresh` holds zeros and stays untouched
 	@:hxmc.noGc static function tryEnsure(p:Ptr):Bool {
 		if (!memEnd.ult(p)) return true;
 		var need = p.diff(memEnd);
@@ -53,7 +59,8 @@ class Heap {
 			return false;
 		}
 		var pages = ((need + (PAGE - 1)) >>> 16).toInt();
-		if (Wasm.wasm_memory_grow(pages) < 0) {
+		var ahead = (memEnd.toI64() >>> 19).toInt();
+		if (ahead > pages && Wasm.wasm_memory_grow(ahead) >= 0) pages = ahead else if (Wasm.wasm_memory_grow(pages) < 0) {
 			refused = (pages : I64) * PAGE;
 			return false;
 		}

@@ -70,6 +70,11 @@ enum FromKind {
 	FromField;
 }
 
+// How values of a type can be accessed by index: the element type, how to read the element at an index and how
+// to read the length. For loops and array patterns use this (#8012).
+// port: array_access, renamed: ArrayAccess is Haxe's.
+typedef ArrayAccessData = {var aaType:T; var aaGet:TExpr->TExpr->T->Pos->TExpr; var aaLength:TExpr->Pos->TExpr;}
+
 class MetaConfig {
 	public static function asBool(e:Expr):Bool return switch e.expr {
 		case EConst(Ident("true")): true;
@@ -375,6 +380,56 @@ class TyperBase {
 		}
 		return l;
 	}
+
+	public static function getNextArrayElement(arr:TExpr, index:TExpr, t:T, p:Pos):TExpr return mk(TArray(arr, index), t, p);
+
+	public static function getArrayLength(ctx:TyperContext, arr:TExpr, p:Pos):TExpr {
+		var fa;
+		try {
+			fa = quickField(arr.etype, "length");
+		} catch (ex:core.ds.NotFound) {
+			return Error.raiseMsg('Could not find field length on ${core.TPrinting.sTypeKind(arr.etype)}', arr.epos);
+		}
+		return mk(TField(arr, fa), ctx.com.basic.tint, p);
+	}
+
+	public static function getArrayAccess(ctx:TyperContext, t:T, p:Pos):ArrayAccessData return switch follow(t) {
+		case TInst(c = {clArrayAccess: pt}, pl) if (pt != null):
+			var length = c.clFields.get("length");
+			if (length == null || c.clFields.exists("iterator")) throw core.ds.NotFound.raise();
+			switch follow(length.cfType) {
+				case TAbstract({aPath: {pack: [], name: "Int"}}, []):
+				case _: throw core.ds.NotFound.raise();
+			}
+			{aaType: applyParams(c.clParams, pl, pt), aaGet: getNextArrayElement, aaLength: getArrayLength.bind(ctx)};
+		case TAbstract(a = {aImpl: c}, tl) if (c != null):
+			var length = core.ds.PMap.find("get_length", c.clStatics);
+			function getLength(e:TExpr,
+					p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, length, tl, [e], ctx.com.basic.tint, p);
+			switch follow(length.cfType) {
+				case TFun(s): switch follow(s.ret) {
+						case TAbstract({aPath: {pack: [], name: "Int"}}, _):
+						case _: throw core.ds.NotFound.raise();
+					}
+				case _: throw core.ds.NotFound.raise();
+			}
+			try {
+				// first try: do we have an @:arrayAccess getter field?
+				var access = AbstractCast.findArrayReadAccessRaise(ctx, a, tl, mk(TConst(TNull), ctx.t.tint, p), p);
+				function getNext(base:TExpr, index:TExpr, t:T,
+						p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, access.field, tl, [base, index], access.ret, p);
+				{aaType: access.ret, aaGet: getNext, aaLength: getLength};
+			} catch (ex:core.ds.NotFound) {
+				// second try: do we have @:arrayAccess on the abstract itself?
+				if (!core.Meta.has(MetaTag.ArrayAccess, a.aMeta)
+					// let's allow this only for core-type abstracts
+					|| !core.Meta.has(MetaTag.CoreType, a.aMeta)
+					// in which case we assume that a singular type parameter is the element type
+					|| tl.length != 1) throw core.ds.NotFound.raise();
+				{aaType: tl[0], aaGet: getNextArrayElement, aaLength: getLength};
+			}
+		case _: throw core.ds.NotFound.raise();
+	};
 
 	public static function safeNavBranch(ctx:TyperContext, sn:SafeNavAccess, fThen:Void->TExpr):TExpr {
 		// generate null-check branching for the safe navigation chain

@@ -86,38 +86,52 @@ class Str {
 		return decode(Repr.octetsAt(c, n), 0, n);
 
 	// the UTF-8 bytes [from, end) of o as a string (not allocating
-	// before it: in linear memory o may be the address of a heap object's)
+	// before it: in linear memory o may be the address of a heap object's).
+	// A byte that does not begin a well-formed sequence (a stray continuation
+	// byte; a sequence cut short, overlong, of a surrogate or past U+10FFFF)
+	// becomes one unit, U+DC80 to U+DCFF for 0x80 to 0xFF (as Python's
+	// surrogateescape), which utf8Into writes back as that byte: any bytes
+	// decoded and encoded again are the same bytes.
 	public static inline function decode(o:Octets, from:Int, end:Int):String {
 		// UTF-16 units first
 		var units = 0, i = from;
 		while (i < end) {
 			var b = o.get(i);
-			var k = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4;
-			units += k == 4 ? 2 : 1;
-			i += k;
+			if (b < 0x80) {
+				units++;
+				i++;
+			} else {
+				var k = seqLen(o, i, end, b);
+				if (k == 0) {
+					units++;
+					i++;
+				} else {
+					units += k == 4 ? 2 : 1;
+					i += k;
+				}
+			}
 		}
 		var s = make(units);
 		var d = chars(s);
-		inline function cont(k:Int):Int
-			return k < end ? o.get(k) & 0x3F : 0;
 		var j = 0;
 		i = from;
 		while (i < end) {
 			var b = o.get(i);
-			var cp:Int;
 			if (b < 0x80) {
-				cp = b;
-				i += 1;
-			} else if (b < 0xE0) {
-				cp = ((b & 0x1F) << 6) | cont(i + 1);
-				i += 2;
-			} else if (b < 0xF0) {
-				cp = ((b & 0x0F) << 12) | (cont(i + 1) << 6) | cont(i + 2);
-				i += 3;
-			} else {
-				cp = ((b & 0x07) << 18) | (cont(i + 1) << 12) | (cont(i + 2) << 6) | cont(i + 3);
-				i += 4;
+				d.set(j++, b);
+				i++;
+				continue;
 			}
+			var k = seqLen(o, i, end, b);
+			if (k == 0) {
+				d.set(j++, 0xDC00 | b);
+				i++;
+				continue;
+			}
+			var cp = if (k == 2) ((b & 0x1F) << 6) | (o.get(i + 1) & 0x3F) else if (k == 3)
+				((b & 0x0F) << 12) | ((o.get(i + 1) & 0x3F) << 6) | (o.get(i + 2) & 0x3F) else
+				((b & 0x07) << 18) | ((o.get(i + 1) & 0x3F) << 12) | ((o.get(i + 2) & 0x3F) << 6) | (o.get(i + 3) & 0x3F);
+			i += k;
 			if (cp >= 0x10000) {
 				cp -= 0x10000;
 				d.set(j++, 0xD800 | (cp >> 10));
@@ -127,7 +141,22 @@ class Str {
 		return s;
 	}
 
-	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count
+	// the length of the well-formed UTF-8 sequence at i, whose first byte b is
+	// not ASCII (Unicode's table 3-7); 0 when there is none
+	static inline function seqLen(o:Octets, i:Int, end:Int, b:Int):Int {
+		return if (b < 0xC2) 0 else if (b < 0xE0) (inByte(o, i + 1, end, 0x80, 0xBF) ? 2 : 0) else if (b < 0xF0)
+			(inByte(o, i + 1, end, b == 0xE0 ? 0xA0 : 0x80, b == 0xED ? 0x9F : 0xBF) && inByte(o, i + 2, end, 0x80, 0xBF) ? 3 : 0) else if (b < 0xF5)
+			(inByte(o, i + 1, end, b == 0xF0 ? 0x90 : 0x80, b == 0xF4 ? 0x8F : 0xBF)
+				&& inByte(o, i + 2, end, 0x80, 0xBF)
+				&& inByte(o, i + 3, end, 0x80, 0xBF) ? 4 : 0) else 0;
+	}
+
+	static inline function inByte(o:Octets, p:Int, end:Int, lo:Int, hi:Int):Bool {
+		return p < end && o.get(p) >= lo && o.get(p) <= hi;
+	}
+
+	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count.
+	// A lone U+DC80 to U+DCFF is the byte decode read it from (0x80 to 0xFF).
 	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int {
 		var c = chars(s);
 		var n = len(s), j = 0, i = 0;
@@ -144,6 +173,10 @@ class Str {
 					cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
 					i++;
 				}
+			} else if (cp >= 0xDC80 && cp < 0xDD00) {
+				buf.set(j++, cp & 0xFF);
+				i++;
+				continue;
 			}
 			if (cp < 0x800) {
 				buf.set(j++, 0xC0 | (cp >> 6));

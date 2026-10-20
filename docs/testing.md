@@ -9,12 +9,12 @@ haxe/test --run <Name> --help`-style options at the top of each file):
 
 | Script | Compares | Result |
 | --- | --- | --- |
-| `Conformance` | HXB archives (member names, uncompressed payloads) of `conformance-cases.txt` (286 configurations of the upstream suites), `conformance-macro-cases.txt` (66, run macros), `conformance-hxblib-cases.txt` (`--hxb-lib`); `--hxb-lib`, `--eval`, `--parallel N` modes | 279 + 7 expected failures, 66/66, 7/7 |
+| `Conformance` | HXB archives (member names, uncompressed payloads) of `conformance-cases.txt` (305: configurations of the upstream suites, and the port's own cases of `haxe/test/conformance`: OCaml's string order, Eval's string offsets and bounds, bytes that are not UTF-8), `conformance-macro-cases.txt` (66, run macros), `conformance-hxblib-cases.txt` (`--hxb-lib`); `--hxb-lib`, `--eval` (`noeval`: a case Eval as the host cannot run), `--parallel N` modes | 293 + 12 expected failures, 66/66, 7/7 |
 | `Display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
-| `Server` | the compilation server: cases twice, edits and invalidation (with the verbose logs), stdin, `--cmd`, errors, `--server-connect` | 595/595 |
+| `Server` | the compilation server: cases twice, edits and invalidation (with the verbose logs), stdin, `--cmd`, errors, `--server-connect` | 633/633 |
 | `ServerJsonRpc` | the `server/*` methods, both cache modes | 107/107 |
 | `UpstreamTargets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, cppia host, jvm, flash by both, every output file (jars by member, hl/c after `HlcNames`) | 12/12 identical |
-| `Interp` | `--interp` runs of the case lists | 275/276 (`eval-eventLoop-compile` depends on thread timing) |
+| `Interp` | `--interp` runs of the case lists | 294/295 (`eval-eventLoop-compile` depends on thread timing) |
 | `Haxelib` | `-L` through lix's haxelib shim, batch and server | 14/14 |
 | `EvalDebugger` | scripted Eval debugger sessions (`-D eval-debugger`): breakpoints, stepping, scopes, evaluation, assignment, exception and function breakpoints, a macro | 6/6 |
 | `fuzz/` | random programs per target (`diff:<target>`) or by program output (`exec:<a>,<b>`), with reduction (`make test-fuzz LANE=diff:js`); `--cases haxe/test/fuzz/cases` checks the kept programs (failures fixed since, reduced, one directory each) on the lanes | CI: the diff lanes of ten targets, `exec:interp,hxmc` and `exec:interp,hxmc-wasm` (below) |
@@ -36,8 +36,8 @@ is installed anywhere: target suites are compared, not run.
 module (`make wasmgc-port`: `bin/wasmgc-port/haxe.wasm`, `-D hxmc.wasm-gc`,
 and `bin/wasmgc-port/haxe`, a script running it under node with
 `hxmc/bootstrap/wasmgc.mjs`; docs/hxmc.md, "WasmGC") as the port:
-`Conformance` on the three lists (279 + 7 expected failures, 66/66, 7/7),
-`Interp` (275/275: `eval-eventLoop-compile` is skipped, `--skip`: its Eval
+`Conformance` on the three lists (293 + 12 expected failures, 66/66, 7/7),
+`Interp` (294/294: `eval-eventLoop-compile` is skipped, `--skip`: its Eval
 threads interleave, and the module's threads only run when another waits
 for them), `Display` (679/679), `Haxelib` without `--server` (7/7) and
 `UpstreamTargets` (every target's files identical; jvm needs a JDK), the

@@ -20,8 +20,7 @@ using StringTools;
 // evaluation, assignment, exception stops, function breakpoints, a macro);
 // every message each sends (after each request its response, then the
 // events in arrival order), its stdout, stderr and exit code are compared.
-// Normalized: a string's `index<i>`/`offset<i>` children (OCaml's cache of
-// code point offsets), the host's thread number in "Thread N killed", and the
+// Normalized: the host's thread number in "Thread N killed", and the
 // response to a request after which the program ran to its end (a race).
 // `getCompletion` is not exercised (upstream's handler kills the debugger
 // thread).
@@ -82,19 +81,9 @@ class EvalDebugger {
 
 	static function normalize(t:Transcript):String {
 		var b = new StringBuf();
-		var soffset = ~/^(index|offset)[0-9]+$/;
 		for (e in t.log) {
 			var response = e.response;
 			if (e.eof) response = "<maybe>";
-			else if (e.request.indexOf('"method":"getVariables"') >= 0 && response != null) {
-				try {
-					var r:Dynamic = haxe.Json.parse(response);
-					if (Std.isOfType(r.result, Array)) {
-						r.result = [for (v in (r.result : Array<Dynamic>)) if (!soffset.match(Std.string(v.name))) v];
-						response = canonical(r);
-					}
-				} catch (_:Dynamic) {}
-			}
 			b.add('> ${e.request}\n< $response\n');
 			for (ev in e.events) b.add('! $ev\n');
 		}
@@ -133,7 +122,7 @@ class EvalDebugger {
 		s.result("getThreads", "{}");
 		s.result("stackTrace", T0);
 		inspectFrame(s);
-		for (e in ["a + 1", "b.length", "b.charAt(0) + c", "var q = 5", "q * 2", "nope(", "counter", "Main.counter + 1", "[a, 2, 3].length", "{x: a}"]) ev(s, e);
+		for (e in ["a + 1", "b.length", "b.charAt(0) + c", "b.charCodeAt(2)", "var q = 5", "q * 2", "nope(", "counter", "Main.counter + 1", "[a, 2, 3].length", "{x: a}"]) ev(s, e);
 		s.step("next");
 		s.result("stackTrace", T0);
 		s.step("next");

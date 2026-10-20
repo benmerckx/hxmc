@@ -195,7 +195,7 @@ class Finalization {
 			if (init != null) walkExpr(p, sortExpr(c, null, init));
 			// port: upstream PMap.iter is key-ordered, not insertion/hash order.
 			var names = [for (name in c.clStatics.keys()) name];
-			names.sort(Reflect.compare);
+			names.sort(core.ds.Key.compareStrings);
 			for (name in names) {
 				var f = c.clStatics.get(name);
 				if (f.cfExpr != null) switch f.cfExpr.eexpr {
@@ -231,10 +231,10 @@ class Finalization {
 			// port: OCaml compares the package list first, then the module name.
 			var p1 = m1.mPath.pack, p2 = m2.mPath.pack;
 			for (i in 0...Std.int(Math.min(p1.length, p2.length))) {
-				var comparison = Reflect.compare(p1[i], p2[i]);
+				var comparison = core.ds.Key.compareStrings(p1[i], p2[i]);
 				if (comparison != 0) return comparison;
 			}
-			return p1.length != p2.length ? p1.length - p2.length : Reflect.compare(m1.mPath.name, m2.mPath.name);
+			return p1.length != p2.length ? p1.length - p2.length : core.ds.Key.compareStrings(m1.mPath.name, m2.mPath.name);
 		});
 		for (m in sortedModules) for (t in m.mTypes) loop(t);
 		return {types: types, modules: sortedModules};

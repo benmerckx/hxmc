@@ -45,16 +45,7 @@ class Display {
 	}
 
 	// port: OCaml's `compare` on strings: byte-wise on the UTF-8 encoding.
-	public static function compareStrings(a:String, b:String):Int {
-		if (a == b) return 0;
-		var ba = haxe.io.Bytes.ofString(a), bb = haxe.io.Bytes.ofString(b);
-		var n = ba.length < bb.length ? ba.length : bb.length;
-		for (i in 0...n) {
-			var d = ba.get(i) - bb.get(i);
-			if (d != 0) return d < 0 ? -1 : 1;
-		}
-		return ba.length == bb.length ? 0 : (ba.length < bb.length ? -1 : 1);
-	}
+	public static function compareStrings(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
 	public static function sortFields(l:Array<CompletionItemData>, withType:WithTypeValue, tk:ToplevelKind):Array<CompletionItemData> {
 		var p = switch tk {

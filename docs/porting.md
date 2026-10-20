@@ -22,6 +22,13 @@ These apply to every change of `haxe/src`.
   arguments with side effects, float printing (`core.Numeric`,
   `core.ds.OcamlPrintf`), 31/63-bit integers. Never derive output order from
   Haxe `Map` iteration.
+- OCaml strings are bytes. On a UTF-16 host (`core.StringHelper.codePointHost`
+  false) bytes that are not UTF-8 are lone U+DC80 to U+DCFF, which hxmc's
+  runtime writes back as those bytes (docs/hxmc.md, "Runtime in Haxe"):
+  where upstream works on the bytes, work on `Bytes.ofString`'s (extlib's
+  UTF8 functions, lengths in bytes); compare strings with
+  `core.ds.Key.compareStrings` (OCaml's order: code point order, which UTF-16
+  units are not).
 - Upstream's lists are Arrays, except where a hot path relies on O(1)
   `x :: l` and shared tails: there `core.ds.MlList` (`Nil`/`Cons`, the shape
   of ml2hx's runtime list), so far the matcher's rows (2% fewer instructions

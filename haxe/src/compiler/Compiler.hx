@@ -103,7 +103,7 @@ class Compiler {
 	public static function checkDefines(com:CommonContext):Void {
 		if (Common.defined(com, Define.DisableParallelism)) Parallel.enable = false;
 		var keys:Array<String> = [for (k in com.defines.values.keys()) k];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		for (k in keys) {
 			var v = com.defines.values.get(k),
 				reason = Define.deprecationLut.get(k);
@@ -328,7 +328,12 @@ class Compiler {
 		catch (e:context.display.DisplayJson.JsonCompleted) throw e
 		catch (e:Cancelled) throw e
 		catch (e:Dynamic) {
-			if (Sys.getEnv("OCAMLRUNPARAM") != "b" && !Helper.isDebugRun) error(com, StdTools.string(e), nullPos);
+			// port: Printexc.to_string: Invalid_argument's form; another port
+			// exception's is its message (its toString, which Std.string does not
+			// call on a WasmGC host)
+			if (Sys.getEnv("OCAMLRUNPARAM") != "b" && !Helper.isDebugRun) error(com,
+				StdTools.isOfType(e, core.ds.InvalidArgument) ? 'Invalid_argument("${(cast e : haxe.Exception).message}")' : StdTools.isOfType(e,
+					haxe.Exception) ? (cast e : haxe.Exception).message : StdTools.string(e), nullPos);
 			else {
 				Sys.stderr().writeString(haxe.CallStack.toString(@:privateAccess haxe.Exception.caught(e).stack) + "\n");
 				throw e;
@@ -521,7 +526,7 @@ class Setup {
 		var buf = new StringBuf();
 		buf.add("Defines: ");
 		var keys:Array<String> = [for (k in com.defines.values.keys()) k];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		for (k in keys) {
 			var v = com.defines.values.get(k);
 			buf.add(v == "1" ? k + ";" : k + "=" + v + ";");

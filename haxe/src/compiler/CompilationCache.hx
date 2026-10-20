@@ -373,7 +373,7 @@ class Cache {
 		var cc = getContext(sign);
 		// port: PMap.foldi with a cons accumulator: descending key order
 		var keys = [for (k in defines.values.keys()) k];
-		keys.sort(Reflect.compare);
+		keys.sort(core.ds.Key.compareStrings);
 		keys.reverse();
 		var jo = JObject([
 			{name: "index", value: JInt(cc.getIndex())},

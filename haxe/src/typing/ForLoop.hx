@@ -40,7 +40,6 @@ enum IteratorKind {
 	IteratorInt(from:TExpr, to:TExpr);
 	IteratorArrayDecl(el:Array<TExpr>);
 	IteratorArray;
-	IteratorArrayAccess;
 	IteratorGenericStack(c:TClass);
 	IteratorIterator;
 	IteratorCustom(get:TExpr->TExpr->T->Pos->TExpr, length:TExpr->Pos->TExpr);
@@ -72,8 +71,6 @@ class IterationKind {
 		cfg.allowOpenMono = false;
 		return cfg;
 	}
-
-	public static function getNextArrayElement(arr:TExpr, index:TExpr, t:T, p:Pos):TExpr return mk(TArray(arr, index), t, p);
 
 	static function isUnificationError(e:Dynamic):Bool return switch e {
 		case(core.ds.ExceptionTools.typing(_) => Some({errMessage: Unify(_)})): true;
@@ -175,43 +172,10 @@ class IterationKind {
 		return cannotIterateOn(ctx.com, e);
 	}
 
-	static function ofTexprByArrayAccess(ctx:Typer, e:TExpr, p:Pos):IteratorData return switch follow(e.etype) {
-		case TInst(c = {clArrayAccess: pt}, pl) if (pt != null):
-			var length = c.clFields.get("length");
-			if (length == null || c.clFields.exists("iterator")) throw NotFound.raise();
-			switch follow(length.cfType) {
-				case TAbstract({aPath: {pack: [], name: "Int"}}, []):
-				case _: throw NotFound.raise();
-			}
-			{itKind: IteratorArrayAccess, itExpr: e, itType: applyParams(c.clParams, pl, pt)};
-		case TAbstract(a = {aImpl: c}, tl) if (c != null):
-			var length = core.ds.PMap.find("get_length", c.clStatics);
-			function getLength(e:TExpr,
-					p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, length, tl, [e], ctx.com.basic.tint, p);
-			switch follow(length.cfType) {
-				case TFun(s): switch follow(s.ret) {
-						case TAbstract({aPath: {pack: [], name: "Int"}}, _):
-						case _: throw NotFound.raise();
-					}
-				case _: throw NotFound.raise();
-			}
-			try {
-				// first try: do we have an @:arrayAccess getter field?
-				var access = context.AbstractCast.findArrayReadAccessRaise(ctx, a, tl, mk(TConst(TNull), ctx.t.tint, p), p);
-				function getNext(base:TExpr, index:TExpr, t:T,
-						p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, access.field, tl, [base, index], access.ret, p);
-				{itKind: IteratorCustom(getNext, getLength), itExpr: e, itType: access.ret};
-			} catch (ex:NotFound) {
-				// second try: do we have @:arrayAccess on the abstract itself?
-				if (!core.Meta.has(MetaTag.ArrayAccess, a.aMeta)
-					// let's allow this only for core-type abstracts
-					|| !core.Meta.has(MetaTag.CoreType, a.aMeta)
-					// in which case we assume that a singular type parameter is the element type
-					|| tl.length != 1) throw NotFound.raise();
-				{itKind: IteratorCustom(getNextArrayElement, getLength), itExpr: e, itType: tl[0]};
-			}
-		case _: throw NotFound.raise();
-	};
+	static function ofTexprByArrayAccess(ctx:Typer, e:TExpr, p:Pos):IteratorData {
+		var aa = TyperBase.getArrayAccess(ctx, e.etype, p);
+		return {itKind: IteratorCustom(aa.aaGet, aa.aaLength), itExpr: e, itType: aa.aaType};
+	}
 
 	static function mapUnrollParams(ctx:Typer, params:Null<UnrollParameters>, i:Int):Null<UnrollParameters> {
 		if (params == null || params.forceUnroll) return params;
@@ -332,7 +296,6 @@ class IterationKind {
 			}
 			return TField(e, fa);
 		}
-		function length(e:TExpr, p:Pos):TExpr return mk(field(e, "length"), ctx.com.basic.tint, p);
 		inline function genIntIter(e1:TExpr, pt:T, get:TExpr->TExpr->T->Pos->TExpr, len:TExpr->Pos->TExpr):TExpr {
 			var index = genLocal(ctx, ti, v.vPos);
 			index.vMeta.unshift({meta: MetaTag.ForLoopVariable, exprs: [], pos: nullPos});
@@ -415,7 +378,7 @@ class IterationKind {
 			case IteratorArrayDecl(el): mk(TBlock(el.map(function(e) return Texpr.duplicateTvars(function(e) return e,
 					concat(mk(TVar(v, e), tv, e.epos), e2)))), tv,
 					p);
-			case IteratorArray | IteratorArrayAccess: genIntIter(e1, pt, getNextArrayElement, length);
+			case IteratorArray: genIntIter(e1, pt, getNextArrayElement, getArrayLength.bind(ctx));
 			case IteratorCustom(get, len): genIntIter(e1, pt, get, len);
 			case IteratorIterator: try ForLoop.optimizeForLoopIterator(ctx, v, e1, e2,
 					p) catch (ex:Exit) Texpr.forRemap(ctx.t, v, ctx.t.titerator(pt), e1, e2, p);

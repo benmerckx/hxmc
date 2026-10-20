@@ -199,6 +199,10 @@ class Main {
 			// port: an uncaught OCaml exception
 			Sys.stderr().writeString("Fatal error: exception Invalid_argument(\"" + e.message + "\")\n");
 			return 2;
+		} catch (e:syntax.Lexer.MalFormed) {
+			// port: an uncaught OCaml exception (a --display request that is not UTF-8)
+			Sys.stderr().writeString("Fatal error: exception " + e.message + "\n");
+			return 2;
 		}
 	}
 
