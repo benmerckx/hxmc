@@ -433,10 +433,10 @@ class Loader {
 				Mem.setPtr(e, 88, ptr(symAddr(mk.fn)));
 			}
 		}
-		// the new classes' and interfaces' statics (rt_static: fid, kind, index, rank,
+		// the new classes', interfaces' and enums' statics (rt_static: fid, kind, index, rank,
 		// address; the bundle has them in the order Type.getClassFields lists them)
-		var interfaces:Array<Dynamic> = facts.interfaces;
-		for (c in (interfaces == null ? classes : classes.concat(interfaces))) {
+		var interfaces:Array<Dynamic> = facts.interfaces, enumStatics:Array<Dynamic> = facts.enumStatics;
+		for (c in classes.concat(interfaces == null ? [] : interfaces).concat(enumStatics == null ? [] : enumStatics)) {
 			var ss:Array<Dynamic> = c.statics;
 			if (!isNew.exists(c.ty) || ss == null || ss.length == 0) continue;
 			var order = [for (i in 0...ss.length) i];

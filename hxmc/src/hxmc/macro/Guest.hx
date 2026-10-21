@@ -186,19 +186,21 @@ class Guest {
 			});
 		}
 		// (statics: what Reflect finds on the class value, as DataGen writes them)
-		function statics(c:ClassInfo):Array<Dynamic> {
-			if (c.statics == null) return [];
+		function statics(ss:Null<Array<StaticEntry>>):Array<Dynamic> {
+			if (ss == null) return [];
 			// (the live ones, as DataGen: hxmc.ir.Reach)
 			return [
-				for (x in c.statics)
+				for (x in ss)
 					if (x.clos != null && !p.isLive(x.clos.fn)) continue else if (x.clos != null) {name: x.name, kind: "c", ty: tn[x.clos.tindex], fn: e.symbol(x.clos.fn)}
 					else if (Ir.isRef(p.globals[x.global].ty)) {name: x.name, kind: "p", global: e.globalNames[x.global]}
 					else {name: x.name, kind: kindChar(p.globals[x.global].ty), sym: e.scalarGlobal(x.global)}
 			];
 		}
-		var classes = [for (c in p.classes) if (c.tindex >= Abi.T_FIRST) {ty: tn[c.tindex], sup: c.sup == null || c.sup.tindex < 0 ? null : tn[c.sup.tindex], span: c.lastDescendant - c.id, statics: statics(c)}];
+		var classes = [for (c in p.classes) if (c.tindex >= Abi.T_FIRST) {ty: tn[c.tindex], sup: c.sup == null || c.sup.tindex < 0 ? null : tn[c.sup.tindex], span: c.lastDescendant - c.id, statics: statics(c.statics)}];
 		// (an interface's statics: its __meta__, as DataGen writes them)
-		var interfaces = [for (c in p.interfaces) if (c.tindex >= Abi.T_FIRST && c.statics != null && c.statics.length > 0) {ty: tn[c.tindex], statics: statics(c)}];
+		var interfaces = [for (c in p.interfaces) if (c.tindex >= Abi.T_FIRST && c.statics != null && c.statics.length > 0) {ty: tn[c.tindex], statics: statics(c.statics)}];
+		// (and an enum's: its __meta__, Lower.reflectEnum)
+		var enumStatics = [for (en in p.enums) if (en.tindex >= Abi.T_FIRST && en.statics != null && en.statics.length > 0) {ty: tn[en.tindex], statics: statics(en.statics)}];
 		var globals = [], bss = [];
 		for (g in 0...p.globals.length) {
 			var gl = p.globals[g];
@@ -255,6 +257,7 @@ class Guest {
 			types: types,
 			classes: classes,
 			interfaces: interfaces,
+			enumStatics: enumStatics,
 			fields: [for (n in e.fieldNames) {name: n, sym: e.fidNames.get(n)}],
 			sigs: [for (s in p.sigs) {sym: e.sigNames[s.id], key: s.key, dyn: "DYN" + s.id, bt: "BT" + s.id, bound: tn[e.boundTypes.get(s.id)]}],
 			globals: globals,

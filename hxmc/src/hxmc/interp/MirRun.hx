@@ -102,6 +102,8 @@ class MirRun {
 		}
 		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, mainClass);
 		(facts.entries : Array<Dynamic>).push({name: "main", sym: e.symbol(prog.main)});
+		// (haxe.EntryPoint.run after main, as an executable's start: the event loop, DataGen)
+		if (prog.entryRun != null) (facts.entries : Array<Dynamic>).push({name: "entryRun", sym: e.symbol(prog.entryRun)});
 		unshare(facts, host, l, e, com);
 		// the std's functions the compiler has alike: its native code
 		// (HXMC_MIR_HOST=0: all interpreted)
@@ -131,6 +133,7 @@ class MirRun {
 		var main = b.entries.get("main");
 		try {
 			Mem.call0(main);
+			if (b.entries.exists("entryRun")) Mem.call0(b.entries.get("entryRun"));
 		} catch (e:Dynamic) {
 			// (as the program would: hxmc.rt.Start's rt_throw without a handler)
 			hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
