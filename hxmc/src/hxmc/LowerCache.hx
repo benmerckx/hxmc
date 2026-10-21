@@ -152,6 +152,7 @@ enum LCall {
 	CStructBox(name:String, r:ClassInfo);
 	CStaticVar(c:TClass, cf:TClassField, r:Int);
 	CReflect(c:TClass);
+	CReflectEnum(e:TEnum);
 	CStaticClos(f:FuncInfo, r:LambdaInfo);
 	CHostClos(name:String, sig:SigInfo, self:Null<Ty>, r:LambdaInfo);
 	CCtorClos(ci:CtorInfo, sig:SigInfo, r:LambdaInfo);
@@ -504,6 +505,13 @@ class CachedLower extends Lower {
 		log(CReflect(c));
 	}
 
+	override public function reflectEnum(e:TEnum) {
+		depth++;
+		super.reflectEnum(e);
+		depth--;
+		log(CReflectEnum(e));
+	}
+
 	override public function staticClosure(f:FuncInfo):LambdaInfo {
 		depth++;
 		var r = super.staticClosure(f);
@@ -652,6 +660,8 @@ class CachedLower extends Lower {
 			case CStaticVar(k, cf, r):
 				var n = tc(k);
 				bindGlobal(r, staticVar(n, tcf(k, n, cf)));
+			case CReflectEnum(k):
+				reflectEnum(te(k));
 			case CReflect(k):
 				reflectStatics(tc(k));
 			case CStaticClos(f, r):

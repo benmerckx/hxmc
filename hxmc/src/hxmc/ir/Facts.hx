@@ -16,6 +16,10 @@ using core.ds.VectorTools;
 // slow path (SCold). The runtime (hxmc.rt) agrees on every number this way.
 class Facts {
 	public static inline var T_FIRST = 32;
+	// the tag of a closure type: a Dynamic converted to a function type (Lower.dynAdapter, hxmc.rt.Types)
+	public static inline var TAG_DYN_ADAPTER = 1;
+	// and a closure converted to another function type (Lower.adapter)
+	public static inline var TAG_ADAPTER = 2;
 
 	public var p:Program;
 	public var strNames = new Map<String, String>(); // literal -> S_<hash of its content>
@@ -232,6 +236,9 @@ class Facts {
 		// (T_DATE: the milliseconds since the epoch, hxmc.rt.MemRepr.dateOf)
 		rtNames.push("Date");
 		rtSlots.push([TF64]);
+		// (T_MATH: Math's class value, an extern class the runtime implements; no instances)
+		rtNames.push("Math");
+		rtSlots.push([]);
 		for (i in 0...T_FIRST)
 			addType(entry(i < rtNames.length ? rtNames[i] : "Reserved", "TK_RUNTIME", i < rtSlots.length ? rtSlots[i] : [], "rt" + i));
 		for (c in p.classes) {
@@ -239,8 +246,8 @@ class Facts {
 			c.locs = layout(slots, [for (f in c.fields) f.ty]);
 			c.nslots = slots.length;
 			var t = entry(c.name, "TK_CLASS", slots, c.name);
-			// (a struct field is not reachable by name: Dynamic access and reflection skip it)
-			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_))) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
+			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it)
+			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD)) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
 			c.tindex = addType(t);
 		}
 		for (c in p.classes)
@@ -280,7 +287,19 @@ class Facts {
 			var slots:Array<Null<Ty>> = [TI32];
 			for (c in l.captures)
 				slots.push(c.ty);
-			var key = "clos." + l.sig.key + "." + [for (c in l.captures) switch c.ty {
+			// (a method as a value, `o.f` or `a.push`: a type of its own, named
+			// <method>, whose closures equal those of the same code and object:
+			// Dyn.dynEq, compareMethods; upstream's Issue6705)
+			var method = l.captures.length == 1 && (StringTools.endsWith(l.fn.name, "__bound") || StringTools.endsWith(l.fn.name, "__hclos"));
+			// (a Dynamic converted to a function type, Lower.dynAdapter, and a
+			// closure converted to another function type, Lower.adapter: types
+			// of their own, tagged, so that a dynamic call calls the Dynamic
+			// itself with all of its arguments, Dyn.unadapt, upstream's
+			// Issue12028, and two adapters of one method compare as that
+			// method, Dyn.compareMethods, upstream's TestReflect)
+			var dynAdapter = StringTools.startsWith(l.fn.name, "dynadapt__");
+			var adapter = StringTools.startsWith(l.fn.name, "adapt__");
+			var key = (method ? "meth." : dynAdapter ? "dynadapt." : adapter ? "adapt." : "clos.") + l.sig.key + "." + [for (c in l.captures) switch c.ty {
 				case TStruct(_, size): "s" + size;
 				case t: Ir.repr(t);
 			}].join("");
@@ -289,8 +308,10 @@ class Facts {
 				l.tindex = known;
 				continue;
 			}
-			var t = entry("<closure>", "TK_CLOSURE", slots, key);
+			var t = entry(method ? "<method>" : "<closure>", "TK_CLOSURE", slots, key);
 			t.sup = l.sig.id;
+			if (dynAdapter) t.tag = TAG_DYN_ADAPTER;
+			if (adapter) t.tag = TAG_ADAPTER;
 			l.tindex = addType(t);
 			closures.set(key, l.tindex);
 		}
@@ -325,8 +346,12 @@ class Facts {
 		];
 		// Iterable.iterator() on an Array (Lambda and the other Iterable
 		// consumers): a method, so structural calls hit the inline cache
-		// instead of the boxed slow path
-		types[5].methods = [{name: "iterator", fn: "hx_array_iterator", sig: p.sig([], TRef(RAny)).id}];
+		// instead of the boxed slow path; KeyValueIterable.keyValueIterator()
+		// likewise (it was not found: "Cannot call null", upstream's TestArray)
+		types[5].methods = [
+			{name: "iterator", fn: "hx_array_iterator", sig: p.sig([], TRef(RAny)).id},
+			{name: "keyValueIterator", fn: "hx_array_kv_iterator", sig: p.sig([], TRef(RAny)).id}
+		];
 		// one bound-method closure type per signature of a method in the
 		// tables (code, this, method; after Reach: else every signature's)
 		var bound = new Map<Int, Bool>();
@@ -360,9 +385,13 @@ class Facts {
 			for (m in t.methods)
 				names.set(m.name, true);
 		}
-		for (e in p.enums)
+		for (e in p.enums) {
 			for (c in e.ctors)
 				names.set(c.name, true);
+			if (e.statics != null)
+				for (s in e.statics)
+					names.set(s.name, true);
+		}
 		for (cs in [p.classes, p.interfaces])
 			for (c in cs)
 				if (c.statics != null)
@@ -578,7 +607,13 @@ class Facts {
 					}
 					gc = gc || GcPoints.gcPoint(e) != 0;
 				case ECallHost(n, _, _):
+					// (a safe region is no GC point of the function itself: it
+					// blocks, f.blocks, which its callers take as one, GcPoints)
 					if (n == "rt_blocking_enter") here = true;
+					if (n == "rt_blocking_enter" || n == "rt_blocking_leave") {
+						Facts.iterEx(ex, e);
+						return;
+					}
 					if (n == "hxmc_unsafe_Mem_addr") addr = true;
 					gc = gc || GcPoints.gcPoint(e) != 0;
 				case EFieldAddr(_):
@@ -755,10 +790,21 @@ class GcPoints {
 	// GC point of an expression; 2: operands are read after an allocation
 	public static function gcPoint(e:Ex):Int
 		return switch e {
-			case ECall(f, _) if (f.noGc): 0;
+			// (a no-GC function that enters a safe region, f.blocks: another
+			// thread may collect meanwhile, as at rt_blocking_enter below)
+			case ECall(f, _) if (f.noGc && !f.blocks): 0;
 			case ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | EBox(_) | EAnonGet(_) | EArrGet(TRef(RAny), _, _) | EArrGetU(TRef(RAny), _, _): 1;
 			// (a NativeArray literal: its elements stored after the allocation, MirBuild)
 			case ECallHost("hxmc_narray_lit", _, _): 2;
+			// (a safe region the runtime's code enters and leaves itself,
+			// Leaf.rt_blocking_enter and rt_blocking_leave, @:hxmc.fast C
+			// functions: another thread may collect, and move what the
+			// references point to, until it is left; the references live
+			// across it are in their slots before, and read back after.
+			// Without that, WinSys.fileRead copied a pipe's data into a
+			// Bytes the collection had moved, its old copy, and the
+			// reader lost it: the Windows corpus check)
+			case ECallHost("rt_blocking_enter" | "rt_blocking_leave", _, _): 1;
 			case ECallHost(n, _, _): FnLower.noGcHost(n) ? 0 : 1;
 			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): 2;
 			case _: 0;

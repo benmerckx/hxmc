@@ -1,0 +1,35 @@
+# The tests of upstream's runtime suites that UpstreamSuites.hx leaves out on
+# hxmc, one per line:
+#   <suite> <native|wasm|*> <class>[.<method>] <category> <reason>
+# BUG: an hxmc bug or missing feature, not fixed yet (docs/testing.md lists them);
+# TARGET: a behaviour hxmc chooses (that of hl, cpp and jvm where it can);
+# EXTERNAL: a service, a tool or another target's natives the test needs (as
+# upstream's CI leaves them out where they are missing).
+# A whole class that the suite finds by its directory is removed from the copy;
+# every other entry is left out by utest's UTEST_PATTERN (the whole method).
+
+# --- unit ---
+
+unit * unit.issues.Issue13043.testOverrideAsBase TARGET a dynamic method set to null is restored to its own method when read or called (FnLower.isDynMethod: the field starts null and takes the method on first use), so `b.onItem == null` is false after `b.onItem = null`
+unit * unit.teststd.haxe.TestLog.test TARGET haxe.Log.trace set to null is the original again (a dynamic method set to null: FnLower.isDynMethod), so trace does not throw
+unit * unit.issues.Issue5016 TARGET Reflect.deleteField cannot remove a field of a structure's own layout, only one added at run time (as on cpp, which upstream leaves out)
+unit * unit.teststd.TestUnicode.test TARGET Reflect.deleteField of a structure's own field (as Issue5016: the layout is fixed; cpp likewise)
+unit * unit.issues.Issue9046 TARGET Type.resolveClass finds a class the program constructs or uses as a value (docs/hxmc.md, "Reachability"), not one whose statics it only calls
+unit * unit.TestDCE.testInterface TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): an interface has no instance fields to reflection (Type.getInstanceFields of an interface is empty: its methods are in no table)
+unit * unit.TestDCE.testProperty TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): an interface has no instance fields to reflection (Type.getInstanceFields of an interface is empty: its methods are in no table)
+unit * unit.TestDCE.testClasses TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): classes only referenced or implemented are not found by Type.resolveClass
+unit * unit.TestDCE.testDceField TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): methods no live code reaches are not in the class's tables, @:keep or not
+unit * unit.TestDCE.testIssue6500 TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): a kept class never constructed is not found by Type.resolveClass
+unit * unit.TestDCE.testKeepSubInterface TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): kept classes never constructed are not found by Type.resolveClass
+unit * unit.TestDCE.testFields TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): fields and statics no live code reaches are not in the class's tables
+
+# --- sys ---
+
+sys native TestSys.testCommand EXTERNAL runs `haxe compile-each.hxml --run TestArguments`: a Haxe on PATH whose compile-each.hxml builds a neko ExitCode (nekotools), as upstream's CI has
+sys native io.TestProcess.testCommand EXTERNAL runs `haxe compile-each.hxml --run TestArguments`: a Haxe on PATH whose compile-each.hxml builds a neko ExitCode (nekotools), as upstream's CI has
+
+# --- unit on wasm32-wasi ---
+
+unit wasm unit.teststd.sys.net.TestSocket TARGET wasm32-wasi has no sockets (docs/hxmc.md, "Targets"): binding one fails with "Function not implemented"
+unit wasm unit.TestExceptions.testExceptionStack TARGET no call stacks on wasm32-wasi: a module cannot walk its own stack (no frame records, the engine's stack is not readable from WASI), so haxe.CallStack and exception stacks are empty (docs/hxmc.md, "Debugging")
+unit wasm unit.teststd.haxe.TestCallStack.test TARGET no call stacks on wasm32-wasi (as TestExceptions.testExceptionStack): haxe.CallStack.exceptionStack() is empty

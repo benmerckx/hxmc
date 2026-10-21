@@ -1,0 +1,6 @@
+# upstream tests/threads on hxmc, from a copy of the suite (UpstreamSuites.hx):
+# build.hxml (each test announced already: -D UTEST_PRINT_TESTS), as every
+# target builds it. UpstreamSuites adds hxmc's std (-cp bin/hxmc/std) and the
+# skips (-D UTEST_PATTERN).
+build.hxml
+--custom-target hxmc=bin/hxmc/threads

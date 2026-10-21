@@ -1,0 +1,8 @@
+exit 0
+true
+true
+haxe.io.Bytes haxe.io.Bytes
+true
+s4:Zm9v foo
+true foo
+true true true

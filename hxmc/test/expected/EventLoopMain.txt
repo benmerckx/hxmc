@@ -1,0 +1,7 @@
+exit 0
+main done
+an event
+tick 1
+tick 2
+tick 3
+delayed

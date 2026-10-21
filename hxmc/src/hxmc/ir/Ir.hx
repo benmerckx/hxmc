@@ -98,6 +98,9 @@ class EnumInfo {
 	public var ident:String;
 	public var ctors:Vector<CtorInfo> = vector(); // by tag
 	public var tindex:Int = -1; // the enum's own descriptor (Enum<T> values)
+	// haxe.rtti.Meta's __meta__ through the enum's value, once the enum is used
+	// as a value and has metadata (Lower.reflectEnum), as a class's statics
+	public var statics:Null<Array<StaticEntry>> = null;
 
 	public function new(name, ident) {
 		this.name = name;
@@ -220,6 +223,8 @@ class FuncInfo {
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
 	public var declNoGc:Bool = false; // declared @:hxmc.noGc: Facts.findNoGc fails the build unless noGc
+	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
+	public var withStacks:Bool = false;
 	public var pos:Null<core.Globals.Pos>; // the declaration (errors)
 	public var display:Null<String>; // its Haxe name, pack.Class.field (errors)
 	// declared @:hxmc.collects: it runs the collector (the entries of a
@@ -371,7 +376,7 @@ enum Stmt {
 	// allocation or array store: the references live across it are stored in
 	// the shadow stack only on that path (hxmc.Roots)
 	SCold(id:Int, s:Stmt);
-	// (-debug: Lower.lines) the code of the statements that follow comes from
+	// (Lower.lines) the code of the statements that follow comes from
 	// this line of the source (the typed AST's position); nothing else: every
 	// pass steps over it, so the code is the same as without it
 	SPos(file:String, line:Int);
@@ -399,9 +404,15 @@ class Program {
 	public var globals:Array<{ty:Ty, init:Null<CtorInfo>, name:String, ?tls:String, ?bss:Int, ?sym:String, ?exp:String}> = [];
 	public var inits:Array<FuncInfo> = []; // static initializers, run before main
 	public var main:FuncInfo;
+	// haxe.EntryPoint.run, run after main when the program keeps it (the event
+	// loop: Finalization.maybeAddEntrypoint puts it in com.main.mainExpr, which
+	// hxmc does not lower)
+	public var entryRun:Null<FuncInfo> = null;
 	public var roots:Array<FuncInfo> = []; // live whatever reaches them (Reach)
 	// (Reach) the live functions and the selectors live code dispatches on; null: all
 	public var live:Null<Map<FuncInfo, Bool>> = null;
+	// (Reach) whether the program reads stacks (haxe.NativeStackTrace.toHaxe live, or -D hxmc.stacks): the table of its functions and lines (hxmc.StackTable)
+	public var stacks = false;
 	public var liveSelectors:Null<Vector<Bool>> = null;
 
 	public function new() {}

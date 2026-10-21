@@ -498,6 +498,10 @@ class Driver {
 		dg.emptyArrays(objs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
+		// (the functions and their lines for the runtime's stacks: StackTable)
+		Dwarf.enabled = o.debugLines;
+		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
+		data.defineAbs(StackTable.FLAGS, prep.p.stacks && !abi.wasm ? StackTable.flags(prep.p) : 0);
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
@@ -652,6 +656,7 @@ class Driver {
 		}
 		sys.io.File.saveBytes(out, exe);
 		markExecutable(out);
+		if (o.stats && prep.p.stacks) Sys.println('hxmc: stack table: ' + StackTable.stats + ', flags ' + StackTable.flags(prep.p));
 		if (hxmc.x64.Emit.sizeStats) {
 			var ks = [for (k in hxmc.x64.Emit.statBytes.keys()) k];
 			ks.sort((x, y) -> hxmc.x64.Emit.statBytes.get(y) - hxmc.x64.Emit.statBytes.get(x));

@@ -1,0 +1,128 @@
+hxmc's changes to a copy of upstream's tests/sys (UpstreamSuites.hx applies
+them with `patch -p1`; the submodule is never edited): the programs the
+tests start, as hxmc builds them (sys.hxml: bin/hxmc/<Main>), run directly
+as hl/c's and cpp's are.
+
+- ExitCode.hx, TestArguments.hx, UtilityProcess.hx: hxmc's paths
+  (bin/hxmc/ExitCode, bin/hxmc/TestArguments, bin/hxmc/UtilityProcess),
+  started as executables (UtilityProcess.runUtility, runUtilityAsCommand).
+- TestCommandBase.hx: TestArguments and ExitCode run as executables.
+- TestSys.hx: Sys.programPath() ends with the program's name, "sys".
+- TestUnicode.hx: the symbolic link the test makes is bin-hxmc.
+- gen_test_res.py (which TestUnicode runs): the symbolic link to hxmc's
+  UtilityProcess, bin-hxmc, beside the other targets'.
+
+--- a/gen_test_res.py
++++ b/gen_test_res.py
+@@ -90,7 +90,8 @@
+         ("../../bin/php/UtilityProcess/index.php", "bin-php"),
+         ("../../bin/python/UtilityProcess.py", "bin-py"),
+         ("../../bin/eval/UtilityProcess.hxb", "bin-eval"),
+-        ("../../bin/js/UtilityProcess.js", "bin-js")
++        ("../../bin/js/UtilityProcess.js", "bin-js"),
++        ("../../bin/hxmc/UtilityProcess", "bin-hxmc")
+     ]:
+         os.symlink(target, os.path.join(TESTDIR, data, name), target_is_directory=False)
+ 
+--- a/src/ExitCode.hx
++++ b/src/ExitCode.hx
+@@ -25,6 +25,8 @@
+ 		#else
+ 			"bin/cpp/ExitCode";
+ 		#end
++	#elseif (target.name == "hxmc")
++		"bin/hxmc/ExitCode";
+ 	#elseif jvm
+ 		"bin/jvm/ExitCode.jar";
+ 	#elseif python
+--- a/src/TestArguments.hx
++++ b/src/TestArguments.hx
+@@ -87,6 +87,8 @@
+ 		#else
+ 			"bin/cpp/TestArguments";
+ 		#end
++	#elseif (target.name == "hxmc")
++		"bin/hxmc/TestArguments";
+ 	#elseif jvm
+ 		"bin/jvm/TestArguments.jar";
+ 	#elseif python
+--- a/src/TestCommandBase.hx
++++ b/src/TestCommandBase.hx
+@@ -25,6 +25,8 @@
+ 				#else
+ 				run(bin, args);
+ 				#end
++			#elseif (target.name == "hxmc")
++				run(bin, args);
+ 			#elseif java
+ 				run(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", bin].concat(args));
+ 			#elseif python
+@@ -119,6 +121,8 @@
+ 					#else
+ 					run(bin, args);
+ 					#end
++				#elseif (target.name == "hxmc")
++					run(bin, args);
+ 				#elseif java
+ 					run(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", bin].concat(args));
+ 				#elseif python
+--- a/src/TestSys.hx
++++ b/src/TestSys.hx
+@@ -113,6 +113,8 @@
+ 			#else
+ 				"Main-debug" + (Sys.systemName() == "Windows" ? ".exe" : "")
+ 			#end
++		#elseif (target.name == "hxmc")
++			"sys"
+ 		#elseif jvm
+ 			"sys.jar"
+ 		#elseif python
+--- a/src/TestUnicode.hx
++++ b/src/TestUnicode.hx
+@@ -26,6 +26,8 @@
+ 		#end
+ #elseif lua
+ 		"bin-lua";
++#elseif (target.name == "hxmc")
++		"bin-hxmc";
+ #elseif jvm
+ 		"bin-jvm";
+ #elseif neko
+--- a/src/UtilityProcess.hx
++++ b/src/UtilityProcess.hx
+@@ -22,6 +22,8 @@
+ 	#end
+ #elseif lua
+ 		Path.join(["bin", "lua"]);
++#elseif (target.name == "hxmc")
++		Path.join(["bin", "hxmc"]);
+ #elseif jvm
+ 		Path.join(["bin", "jvm"]);
+ #elseif neko
+@@ -54,6 +56,8 @@
+ 	#end
+ #elseif lua
+ 		"UtilityProcess.lua";
++#elseif (target.name == "hxmc")
++		"UtilityProcess";
+ #elseif jvm
+ 		"UtilityProcess.jar";
+ #elseif neko
+@@ -81,7 +85,7 @@
+ 		new Process("haxe", ["--hxb-lib", execFull, "--run", Path.withoutExtension(BIN_NAME)].concat(args));
+ 		#elseif cppia
+ 		new Process("haxelib", ["run", "hxcpp", execFull].concat(args).concat(Sys.getEnv("CPPIA_IS_JIT") == null ? [] : ["-jit"]));
+-		#elseif cpp
++		#elseif (cpp || target.name == "hxmc")
+ 		new Process(execFull, args);
+ 		#elseif java
+ 		new Process(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", execFull].concat(args));
+@@ -129,7 +133,7 @@
+ 		Sys.command("haxe", ["--hxb-lib", execFull, "--run", BIN_NAME.substr(0, -4)].concat(args));
+ 		#elseif cppia
+ 		Sys.command("haxelib", ["run", "hxcpp", execFull].concat(args).concat(Sys.getEnv("CPPIA_IS_JIT") == null ? [] : ["-jit"]));
+-		#elseif cpp
++		#elseif (cpp || target.name == "hxmc")
+ 		Sys.command(execFull, args);
+ 		#elseif java
+ 		Sys.command(Path.join([java.lang.System.getProperty("java.home"), "bin", "java"]), ["-jar", execFull].concat(args));

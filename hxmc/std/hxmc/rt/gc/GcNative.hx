@@ -22,6 +22,7 @@ class GcNative {
 			case 8: 5;
 			case 10: 4;
 			case 12: 10;
+			case 9: 12;
 			case _: 11;
 		}
 

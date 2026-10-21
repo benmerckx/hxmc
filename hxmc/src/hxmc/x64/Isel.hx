@@ -28,6 +28,7 @@ enum abstract XOp(Int) to Int from Int {
 	var IDIV; // rax, rdx <- rdx:rax / s1
 	var CMP; // flags <- s1 - s2
 	var CMPI; // flags <- s1 - imm
+	var TESTI; // flags <- s1 & imm
 	var CMPM; // flags <- s1 - [mem] (size)
 	var CMPMI; // flags <- [mem] - imm (size)
 	var ALUM; // d <- d (cond) [mem] (size)
@@ -105,6 +106,7 @@ class Isel implements hxmc.Target.Selector {
 	var folded:haxe.ds.Vector<Bool>; // Mir values computed inside their user (no code of their own)
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
+	var testFolds = new Map<Int, Bool>(); // x & constant used only by a comparison with 0 (TESTI)
 
 	// whether load v is a memory operand of its user (marks it folded)
 	function memFold(v:Int):Bool {
@@ -230,7 +232,7 @@ class Isel implements hxmc.Target.Selector {
 			case CMP | TEST | UCOMI:
 				uses.push(i.s1);
 				uses.push(i.s2);
-			case CMPI:
+			case CMPI | TESTI:
 				uses.push(i.s1);
 			case CMPM:
 				uses.push(i.s1);
@@ -453,6 +455,27 @@ class Isel implements hxmc.Target.Selector {
 				}
 			}
 		}
+		// x & constant compared with 0 (== or !=), used only there, in its
+		// block: a TESTI of the comparison
+		// (also when value numbering left one x & constant for several such
+		// comparisons: each tests x, the and is not computed nor kept live)
+		testFolds = new Map();
+		var testUses = new Map<Int, Int>();
+		for (b in mf.blocks)
+			for (c in b.ins) {
+				if (c.op != Cmp || c.imm != (CEq : Int) && c.imm != (CNe : Int)) continue;
+				if (immOf(c.b) != 0 || isymOf(c.b) != null) continue;
+				var x = mf.vals[c.a];
+				if (x.op != And || x.ty == F64) continue;
+				var k = immOf(x.b);
+				if (k == null || isymOf(x.b) != null || folded[x.a]) continue;
+				var n = testUses.exists(x.id) ? testUses.get(x.id) + 1 : 1;
+				testUses.set(x.id, n);
+				if (n == useCount[x.id]) {
+					testFolds[x.id] = true;
+					folded[x.id] = true;
+				}
+			}
 		// x + constant used only as the address of loads and stores: their
 		// displacement (a symbolic constant, a global's offset, relocated)
 		for (b in mf.blocks)
@@ -708,7 +731,13 @@ class Isel implements hxmc.Target.Selector {
 			return intCond(swapCond(c));
 		}
 		if (imm != null) {
-			if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe)) {
+			if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe) && testFolds.exists(a)) {
+				var y = m.vals[a];
+				var x = emit(TESTI);
+				x.s1 = use(y.a);
+				x.imm = immOf(y.b);
+				x.size = sz(t);
+			} else if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe)) {
 				var x = emit(TEST);
 				x.s1 = use(a);
 				x.s2 = x.s1;
@@ -850,6 +879,8 @@ class Isel implements hxmc.Target.Selector {
 				x.sym = i.sym;
 			case Copy:
 				mov(reg(i.id), use(i.a));
+			case And if (testFolds.exists(i.id)): // (TESTI of its comparison)
+			case Add if (folded[i.id]): // (the displacement of the loads and stores it is the address of)
 			case Add | Sub | And | Or | Xor:
 				var d = reg(i.id);
 				var size = sz(i.ty);

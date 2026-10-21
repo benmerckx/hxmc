@@ -89,6 +89,7 @@ class HaxeMain {
 		compiler.HighLevel.libraryHook = NodeLibs.resolve;
 		ModuleCache.install();
 		hxmc.ir.CInterop.install();
+		hxmc.TargetFlags.install();
 		#if hxmc.jit
 		// native macros (hxmc/src/hxmc/macro): a child compiling macro code for
 		// its parent (Guest), or the engine of -D hxmc.macros=native|verify

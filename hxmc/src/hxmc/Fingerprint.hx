@@ -434,7 +434,7 @@ class Fingerprint {
 			case ECall(f, xs):
 				word(E_CALL);
 				str(prep.funcSym(f));
-				word(f.noGc ? 1 : 0);
+				word(f.noGc ? (f.blocks ? 2 : 1) : 0);
 				word(f.args.length);
 				for (a in f.args)
 					ty(a.ty);

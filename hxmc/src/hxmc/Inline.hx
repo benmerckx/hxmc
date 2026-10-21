@@ -232,7 +232,11 @@ class Inline {
 					x.c = m(i.c);
 					x.imm = i.imm;
 					x.imm2 = i.imm2;
-					x.pos = i.pos;
+					// (the call's position: the copy is the caller's code, its
+					// frame the caller's, which a stack names with the call's
+					// line, as DWARF does without inlined subroutines;
+					// StackTable, Dwarf)
+					x.pos = c.pos != 0 ? c.pos : i.pos;
 					x.f = i.f;
 					x.size = i.size;
 					x.signed = i.signed;

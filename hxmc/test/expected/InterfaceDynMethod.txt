@@ -1,0 +1,24 @@
+exit 0
+InterfaceDynMethod.hx:42: impl 5 [Impl.foo]
+InterfaceDynMethod.hx:46: impl [Impl.foo,assigned through the interface,assigned through the interface]
+InterfaceDynMethod.hx:49: impl 4
+InterfaceDynMethod.hx:51: impl 3 3
+InterfaceDynMethod.hx:53: impl 16
+InterfaceDynMethod.hx:57: impl baz Impl.foo,assigned through the interface,assigned through the interface,assigned through the interface,through IMore
+InterfaceDynMethod.hx:61: impl through Dynamic
+InterfaceDynMethod.hx:63: impl 7
+InterfaceDynMethod.hx:65: impl 7
+InterfaceDynMethod.hx:42: sub 40 [Sub.foo]
+InterfaceDynMethod.hx:46: sub [Sub.foo,assigned through the interface,assigned through the interface]
+InterfaceDynMethod.hx:49: sub 4
+InterfaceDynMethod.hx:51: sub 3 3
+InterfaceDynMethod.hx:53: sub 16
+InterfaceDynMethod.hx:57: sub baz Sub.foo,assigned through the interface,assigned through the interface,assigned through the interface,through IMore
+InterfaceDynMethod.hx:61: sub through Dynamic
+InterfaceDynMethod.hx:63: sub 7
+InterfaceDynMethod.hx:65: sub 7
+InterfaceDynMethod.hx:73: 30
+InterfaceDynMethod.hx:76: 2
+InterfaceDynMethod.hx:78: 20
+InterfaceDynMethod.hx:79: 4
+InterfaceDynMethod.hx:81: 6

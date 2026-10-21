@@ -1,0 +1,11 @@
+exit 0
+3
+10
+0
+a
+b+c
+d+e+f
+true 0
+true 3
+2 3
+true

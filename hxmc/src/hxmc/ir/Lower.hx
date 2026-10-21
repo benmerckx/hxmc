@@ -59,6 +59,15 @@ class Lower {
 		if (l == null) l = new Lower();
 		var mainField = main.clStatics.get("main");
 		l.prog.main = l.staticFunc(main, mainField);
+		// (haxe.EntryPoint.run after main, as Finalization.maybeAddEntrypoint adds
+		// it to the main expression when the program keeps the class: the event
+		// loop, haxe.Timer and haxe.MainLoop's events; upstream's threads suite)
+		for (t in types)
+			switch t {
+				case TClassDecl(c) if (c.clPath.name == "EntryPoint" && c.clPath.pack.length == 1 && c.clPath.pack[0] == "haxe" && c.clStatics.exists("run")):
+					l.prog.entryRun = l.staticFunc(c, c.clStatics.get("run"));
+				case _:
+			}
 		l.findHosts(types);
 		l.drain();
 		l.finish();
@@ -71,6 +80,7 @@ class Lower {
 				case _:
 			}
 		var pos = (fi:FuncInfo) -> {
+			if (l.metaInits.exists(fi)) return -1;
 			var c = l.initOf.get(fi);
 			c != null && order.exists(c) ? order.get(c) : types.length;
 		};
@@ -82,7 +92,8 @@ class Lower {
 	// ---- survey mode (HXMC_SURVEY=file): record unsupported constructs, keep going
 
 	public static var survey = Sys.getEnv("HXMC_SURVEY") != null;
-	// -debug: statements carry their source lines (Stmt.SPos)
+	// statements carry their source lines (Stmt.SPos): native builds but with
+	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
 	// (-D hxmc.mir-macros: hxmc.interp.MirMacros) the macro code's calls note
 	// where they are, as Eval's frames do (env_leave_pmin/pmax, which the
@@ -140,6 +151,9 @@ class Lower {
 		for (t in types)
 			switch t {
 				case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !(c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc")):
+					// a class's __init__ runs at startup whether or not code uses the
+					// class (initClass, otherwise made when a static is used)
+					if (c.clInit != null) initClass(c);
 					for (cf in c.clOrderedStatics)
 						if (cf.cfMeta.length > 0 && cf.cfKind.match(Method(_)) && hasMeta(":hxmc.export", cf.cfMeta)) {
 							var n = metaString(":hxmc.export", cf.cfMeta);
@@ -481,8 +495,17 @@ class Lower {
 		return core.Globals.sTypePath(c.clModule.mPath);
 
 	// the name of the next closure created in `owner`: stable while other functions change
-	public static function lambdaName(owner:FuncInfo):String
-		return owner.name + "__lambda" + owner.nlambdas++;
+	public static function lambdaName(owner:FuncInfo):String {
+		var n = owner.nlambdas++;
+		var name = owner.name + "__lambda" + n;
+		// (its Haxe name: the owner's, `$` and its number, a local function in
+		// stacks: StackTable, NativeStackTrace; kept by name, which a body
+		// the server replays asks again, newLambda)
+		if (owner.display != null) lambdaDisplays.set(name, owner.display + "$" + n);
+		return name;
+	}
+
+	static var lambdaDisplays = new Map<String, String>();
 
 	// hxmc's own metadata (@:hxmc.c, @:hxmc.noGc, @:hxmc.export, @:hxmc.host)
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
@@ -515,11 +538,12 @@ class Lower {
 				pending.shift()();
 			// all methods of every class seen: structural and dynamic access
 			// (Iterator.hasNext, Reflect) reach them through the method tables;
-			// DCE already removed the unused ones
+			// DCE already removed the unused ones. A dynamic method is there
+			// too: what its field holds before first use (Dyn.anonGetSlow)
 			while (methodsDone < tclasses.length) {
 				var tc = tclasses[methodsDone++];
 				for (f in tc.clOrderedFields)
-					if (f.cfKind.match(Method(MethNormal | MethInline)) && funcOf(f) != null && !f.hasClassFieldFlag(CfExtern))
+					if (f.cfKind.match(Method(MethNormal | MethInline | MethDynamic)) && funcOf(f) != null && !f.hasClassFieldFlag(CfExtern))
 						method(tc, f);
 			}
 			if (makers)
@@ -777,6 +801,13 @@ class Lower {
 			case _: t;
 		}
 
+	// the prefix of a class's fields that no name reaches (no identifier starts with it)
+	public static inline var HIDDEN_FIELD = "#";
+
+	// StringBuf, the runtime's extern class
+	public static function isRuntimeStringBuf(c:TClass):Bool
+		return isCore(c, "StringBuf") && c.hasClassFlag(CExtern);
+
 	public function classInfo(c:TClass):ClassInfo {
 		var ci = classes.get(c);
 		if (ci != null) return ci;
@@ -790,7 +821,16 @@ class Lower {
 			prog.interfaces.push(ci);
 			return ci;
 		}
-		var sup = c.clSuper != null ? classInfo(c.clSuper.cls) : root;
+		// a class extending StringBuf (upstream's Issue6446): StringBuf is the
+		// runtime's (T_STRINGBUF), so the subclass starts with its layout, slot
+		// 0 the length and slot 1 the units (MemRepr.sbNew; fields that no name
+		// reaches, Facts.assignTypes), which the runtime's StringBuf functions
+		// and the inline addChar read; its constructor fills them
+		// (stringBufCtor). Its class is not a subclass of StringBuf to
+		// reflection (Std.isOfType, Type.getSuperClass).
+		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
+		if (sbuf && wasmGc) fail(c.clPath.name + " extends StringBuf, the runtime's class, which a class of WasmGC cannot extend");
+		var sup = c.clSuper != null && !sbuf ? classInfo(c.clSuper.cls) : root;
 		// (the superclass's field types may name this class, which has its
 		// ClassInfo then: `class Node extends Base<Node>`, upstream's unit test TestGeneric)
 		ci = classes.get(c);
@@ -811,6 +851,10 @@ class Lower {
 		prog.classes.push(ci);
 		for (f in sup.fields)
 			ci.fields.push(f);
+		if (sbuf) {
+			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
+			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
+		}
 		var own = [];
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
@@ -1022,6 +1066,7 @@ class Lower {
 		if (cf.cfMeta.length == 0) return;
 		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
+		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);
 	}
 
@@ -1161,6 +1206,10 @@ class Lower {
 			return;
 		}
 		var f = ctor(k);
+		if (isRuntimeStringBuf(k)) {
+			ci.maker = {fn: f};
+			return;
+		}
 		if (hasStruct(f)) return;
 		var e = ctorEntries.get(f);
 		if (e == null) {
@@ -1174,8 +1223,10 @@ class Lower {
 	public function ctor(c:TClass):FuncInfo {
 		var fi = ctors.get(c);
 		if (fi != null) return fi;
+		if (isRuntimeStringBuf(c)) return stringBufCtor(c);
 		var ci = classInfo(c);
 		fi = new FuncInfo(nativeName(c) + "_new", moduleOf(c));
+		fi.display = core.Globals.sTypePath(c.clPath) + ".new";
 		ci.ctor = fi;
 		ctors.set(c, fi);
 		prog.funcs.push(fi);
@@ -1196,6 +1247,21 @@ class Lower {
 		return fi;
 	}
 
+	// StringBuf's constructor as a subclass's super(): the runtime fills the
+	// length and the units of the new instance (Str.sbInit)
+	function stringBufCtor(c:TClass):FuncInfo {
+		var fi = new FuncInfo("StringBuf_new__super", moduleOf(c));
+		fi.display = "StringBuf.new";
+		ctors.set(c, fi);
+		prog.funcs.push(fi);
+		var self = new Local(0, "this0", TRef(RAny));
+		fi.args.push(self);
+		fi.ret = TVoid;
+		fi.body = vector(SExpr(ECallHost(native("StringBuf_init"), vector(ELocal(self)), TVoid)), SReturn(null));
+		pending.push(() -> bindHosts(fi));
+		return fi;
+	}
+
 	// the constructor of a @:hxmc.struct class: a function of the struct's
 	// address (this) and the arguments, which fills the memory (zeroed by
 	// the caller, FnLower.newStruct)
@@ -1205,6 +1271,7 @@ class Lower {
 		var fi = structCtors.get(c);
 		if (fi != null) return fi;
 		fi = new FuncInfo(nativeName(c) + "_new", moduleOf(c));
+		fi.display = core.Globals.sTypePath(c.clPath) + ".new";
 		structCtors.set(c, fi);
 		prog.funcs.push(fi);
 		var tf = funcOf(c.clConstructor);
@@ -1223,6 +1290,7 @@ class Lower {
 	// the closure forwards to) and the module whose C file holds it
 	public function newLambda(sig:SigInfo, captures:Vector<Local>, body:FnLower->Void, name:String, module:String):LambdaInfo {
 		var fi = new FuncInfo(name, module);
+		fi.display = lambdaDisplays.get(name);
 		var li = new LambdaInfo(prog.lambdas.length, sig, captures, fi);
 		fi.lambda = li;
 		fi.args.push(new Local(0, "clos", TRef(RClos(sig))));
@@ -1281,6 +1349,32 @@ class Lower {
 		});
 	}
 
+	// an enum used as a value: haxe.rtti.Meta reads its metadata as the static
+	// __meta__ (a class has the field from the compiler's filters; an enum's
+	// is Texpr.buildMetadata's, as the other targets' generators write it),
+	// a global its initializer sets, before the classes' (metaInits)
+	public function reflectEnum(e:TEnum) {
+		var ei = enumInfo(e);
+		if (ei.statics != null) return;
+		ei.statics = [];
+		var m = core.Texpr.buildMetadata(basic, TEnumDecl(e));
+		if (m == null) return;
+		var g = prog.globals.length;
+		prog.globals.push({ty: TRef(RAny), init: null, name: ei.ident + "___meta__"});
+		ei.statics.push({name: "__meta__", clos: null, fn: null, global: g});
+		var fi = new FuncInfo(ei.ident + "__meta", core.Globals.sTypePath(e.eModule.mPath));
+		prog.funcs.push(fi);
+		prog.inits.push(fi);
+		metaInits.set(fi, true);
+		pending.push(guarded(fi, () -> {
+			var fl = new FnLower(this, fi, null, null);
+			fl.runGlobalInit(g, m);
+			fl.finish();
+		}));
+	}
+
+	var metaInits = new Map<FuncInfo, Bool>();
+
 	static function hasStruct(f:FuncInfo):Bool {
 		for (a in f.args)
 			if (a.ty.match(TStruct(_))) return true;
@@ -1296,6 +1390,8 @@ class Lower {
 				if (!(f.sret && i == f.args.length - 1)) closureArgTy(f.args[i].ty, ds != null && i < ds.length ? ds[i] : null)
 		], f.ret);
 		li = newLambda(sig, vector(), fl -> fl.forward(f, null), f.name + "__sclos", f.module);
+		// (named as the function: its body, inlined here, is that function's in stacks)
+		li.fn.display = f.display;
 		staticClosures.set(f, li);
 		return li;
 	}
@@ -1352,6 +1448,7 @@ class Lower {
 		var sig = prog.sig(args, f.ret);
 		var self = new Local(-1, "self", TRef(RObj(root)));
 		li = newLambda(sig, vector(self), fl -> fl.forward(f, dispatch), dispatch == null ? f.name + "__bound" : lambdaName(owner), dispatch == null ? f.module : owner.module);
+		if (f != null) li.fn.display = f.display;
 		if (dispatch == null) boundClosures.set(f, li);
 		return li;
 	}

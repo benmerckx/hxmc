@@ -1,0 +1,70 @@
+hxmc's changes to a copy of upstream's tests/unit (UpstreamSuites.hx applies
+them with `patch -p1`; the submodule is never edited): the branch of the
+targets whose behaviour hxmc shares, where a conditional names them one by one:
+
+- TestExceptions.hx: CustomNativeException, a plain class as on hl and cpp
+  (hxmc throws any value).
+- TestReflect.hx: Type.createEmptyInstance leaves Int fields 0, as on hl, cpp,
+  jvm and flash (static types: an Int field cannot be null).
+- teststd/haxe/ds/TestVector.hx: VectorData is hxmc.NativeArray, not Array (as
+  on jvm and eval): `arr != vec.toData()` does not type.
+- teststd/TestType.hx: Type.typeof(1.0) is TFloat, as on Eval (hl, cpp and jvm say
+  TInt for an integral Float); haxe.Serializer writes such a Float as a Float.
+
+--- a/src/unit/TestExceptions.hx
++++ b/src/unit/TestExceptions.hx
+@@ -27,7 +27,7 @@
+ private class CustomNativeException extends java.lang.RuntimeException {}
+ #elseif python
+ private class CustomNativeException extends python.Exceptions.Exception {}
+-#elseif (lua || eval || neko || hl || cpp)
++#elseif (lua || eval || neko || hl || cpp || target.name == "hxmc")
+ private class CustomNativeException { public function new(m:String) {} }
+ #end
+ 
+--- a/src/unit/TestReflect.hx
++++ b/src/unit/TestReflect.hx
+@@ -227,8 +227,8 @@
+ 		eq( i.intValue, 55 );
+ 		var i = Type.createEmptyInstance(MyClass);
+ 		t( (i is MyClass) );
+-		eq( i.get(), #if (flash || cpp || jvm || hl) 0 #else null #end );
+-		eq( i.intValue, #if (flash || cpp || jvm || hl) 0 #else null #end );
++		eq( i.get(), #if (flash || cpp || jvm || hl || target.name == "hxmc") 0 #else null #end );
++		eq( i.intValue, #if (flash || cpp || jvm || hl || target.name == "hxmc") 0 #else null #end );
+ 		var e : MyEnum = Type.createEnum(MyEnum,__unprotect__("A"));
+ 		eq( e, MyEnum.A );
+ 		var e : MyEnum = Type.createEnum(MyEnum,__unprotect__("C"),[55,"hello"]);
+--- a/src/unit/issues/Issue4526.hx
++++ b/src/unit/issues/Issue4526.hx
+@@ -39,7 +39,7 @@
+ 
+ class Issue4526 extends Test {
+ 	function test() {
+-		var fieldNull = #if (cpp || flash || jvm || hl) 0 #else null #end;
++		var fieldNull = #if (cpp || flash || jvm || hl || target.name == "hxmc") 0 #else null #end;
+ 
+ 		var s1:Struct1 = { x: 12, y: 13 };
+ 		eq("12 13", s1.get());
+--- a/src/unit/teststd/TestType.hx
++++ b/src/unit/teststd/TestType.hx
+@@ -130,7 +130,7 @@
+ 		#if (!php && !python)
+ 		eq(Type.typeof(1e10), TFloat);
+ 		#end
+-		#if !eval
++		#if (!eval && target.name != "hxmc")
+ 		eq(Type.typeof(1.0), TInt);
+ 		#end
+ 		var i0 = haxe.Int64.fromInt(256);
+--- a/src/unit/teststd/haxe/ds/TestVector.hx
++++ b/src/unit/teststd/haxe/ds/TestVector.hx
+@@ -31,7 +31,7 @@
+ 		// fromArray
+ 		var arr = ["1", "2", "3"];
+ 		var vec:haxe.ds.Vector<String> = haxe.ds.Vector.fromArrayCopy(arr);
+-		#if (!flash && !neko && !jvm && !lua && !eval && !php)
++		#if (!flash && !neko && !jvm && !lua && !eval && !php && target.name != "hxmc")
+ 		t(arr != vec.toData());
+ 		#end
+ 		eq(vec.length, 3);

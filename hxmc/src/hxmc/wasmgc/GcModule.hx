@@ -486,6 +486,10 @@ class GcModule {
 			}
 		run.u8(0x10);
 		Enc.uleb(run, funcIndex.get(prog.main));
+		if (prog.entryRun != null && funcIndex.exists(prog.entryRun)) {
+			run.u8(0x10);
+			Enc.uleb(run, funcIndex.get(prog.entryRun));
+		}
 		// (the long literals first: made when every one is known)
 		lateStrings(start);
 		start.buf(run);

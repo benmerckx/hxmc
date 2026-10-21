@@ -249,7 +249,7 @@ class WinSys {
 	}
 
 	static inline function outside()
-		Rt.rt_throw("OutsideBounds");
+		throw haxe.io.Error.OutsideBounds;
 
 	// The heap's reservations are committed page by page on first touch, by an
 	// exception handler (rt_win.c), which a fault inside the kernel never

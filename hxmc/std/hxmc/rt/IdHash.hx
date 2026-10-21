@@ -51,7 +51,8 @@ class IdHash {
 	#else
 	// one lock for every map's update (rare: once per collection for a map
 	// used after it); only with several threads
-	@:hxmc.export("hxmc_idhash_lock") static var lockWord:Int;
+	// (kept: only named by its symbol, which --dce full does not see; corpus case ObjectMapDce)
+	@:keep @:hxmc.export("hxmc_idhash_lock") static var lockWord:Int;
 
 	@:hxmc.noGc static function lock() {
 		if (Threads.mt == 0) return;

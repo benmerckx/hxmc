@@ -1,0 +1,9 @@
+# upstream tests/unit on hxmc, from a copy of the suite (UpstreamSuites.hx):
+# what every target compiles with (compile-each.hxml), the main of
+# compile-hl.hxml and compile-cpp.hxml; each test announced (the runner
+# counts them). UpstreamSuites adds hxmc's std (-cp bin/hxmc/std), the target
+# and the skips (-D UTEST_PATTERN).
+compile-each.hxml
+--main unit.TestMain
+-D UTEST_PRINT_TESTS
+--custom-target hxmc=bin/hxmc/unit

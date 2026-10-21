@@ -1,0 +1,7 @@
+# upstream tests/unit on hxmc as a wasm32-wasi module (unit.hxml's build), run
+# under node (hxmc/bootstrap/wasi.mjs).
+compile-each.hxml
+--main unit.TestMain
+-D UTEST_PRINT_TESTS
+-D hxmc.target=wasm32-wasi
+--custom-target hxmc=bin/hxmc/unit.wasm

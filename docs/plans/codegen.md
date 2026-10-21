@@ -126,7 +126,42 @@ unwind tables always, from the emitters' frame records (`Unwind.hx`): ELF
 `-debug`, DWARF 4 lines and subprograms from the typed AST's positions on
 ELF, Mach-O and PE, and a COFF symbol table on Windows. Checked by
 `UnwindTables` (the system unwinders against the frame-pointer chain) and
-`DebugCheck` (gdb/lldb, readelf, llvm-readobj, llvm-dwarfdump). Left:
+`DebugCheck` (gdb/lldb, readelf, llvm-readobj, llvm-dwarfdump).
+
+Built since: call stacks (docs/hxmc.md, "Call stacks"). The positions are
+recorded in every native build (they change no code), and a program that
+reads stacks (`haxe.CallStack`, an exception's `stack`) gets a compact
+table of its functions and line rows (`StackTable.hx`, written from the
+same `FuncRec.lines` as `.debug_line`), which one runtime facility
+(`hxmc.rt.Stacks`) reads: a walk up the frame records checked against the
+table, names and lines from it, for `haxe.CallStack`, exception stacks and
+the report of an uncaught exception or a null access (with `-D
+hxmc.stacks` in every program). Upstream's stack tests pass natively. The
+crash-report item is mostly this: what is left of it is below.
+
+Left:
+
+- Symbolised crash reports beyond exceptions: a fault that is not a null
+  access (SIGSEGV elsewhere, SIGBUS, SIGILL, an access violation; a stack
+  overflow) still ends the process with the system's report; its handler
+  could walk from the faulting context's frame pointer and print
+  `Stacks`' names (async-signal-safe: no allocation, the table's strings
+  written directly). On by default only with the table.
+- The sampling profiler: a timer signal (SIGPROF; a thread suspending the
+  others on Windows) recording the interrupted frames with the same walk
+  (no allocation, the cache of known return addresses), names resolved
+  after the run from the table or the symbol table.
+- Stacks without frame pointers (`-D hxmc.no-frame-pointers`) and inlined
+  frames: an unwinder reading the unwind tables Unwind.hx writes (a CFA
+  rule per offset: the emitters' frame records) instead of the frame
+  pointers, and the inliner's call sites as inlined entries in the table
+  (and `DW_TAG_inlined_subroutine`).
+- WebAssembly: no stacks yet (a module cannot read its own stack). A
+  shadow call stack (each function pushing an id and the call's line on
+  a stack of its own) would give them at a cost to every call; a host
+  import reading the engine's `Error().stack` (wasm function indices and
+  offsets, which the name section and a code-offset-to-line map would
+  name) only under JavaScript hosts.
 
 - Windows PDB (CodeView): the Visual Studio debugger and WinDbg read no
   DWARF. A PDB is an MSF container of streams (PDB info, TPI/IPI type
@@ -153,9 +188,10 @@ ELF, Mach-O and PE, and a COFF symbol table on Windows. Checked by
   for the browsers' and wasmtime's debuggers.
 
 These four (PDB, `__unwind_info`, variables, wasm DWARF) are now Next on
-the roadmap. After them: a sampling profiler with symbols, and symbolised
-crash reports on every target; the profiler feeds a frame timeline
-(frames, layout, GPU, collections) for UI programs.
+the roadmap. After them: a sampling profiler with symbols (on the stacks'
+walk and table above), and the rest of the symbolised crash reports
+(faults other than null accesses, above); the profiler feeds a frame
+timeline (frames, layout, GPU, collections) for UI programs.
 
 ## Smaller items
 

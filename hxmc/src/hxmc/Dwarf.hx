@@ -17,7 +17,11 @@ class Dwarf {
 	// .debug_ranges) for the functions of `objs` that have lines; addr: a
 	// function's address (its low 32 bits; hi: the high 32 bits of every
 	// address, Mach-O's image above 4 GB); none when no function has lines
+	// (-debug or -D hxmc.lines: written; lines kept for the stacks alone, StackTable, are not)
+	public static var enabled = false;
+
 	public static function sections(objs:Array<Obj>, live:FuncRec->Bool, addr:FuncRec->Int, hi:Int):Array<{name:String, data:Buf}> {
+		if (!enabled) return [];
 		var units = [];
 		for (o in objs) {
 			var fs = [for (r in o.funcs) if (r.lines != null && r.lines.length > 0 && live(r)) r];

@@ -1,0 +1,16 @@
+exit 0
+StringBufSubclass.hx:49: 327
+StringBufSubclass.hx:50: a: one
+a: two
+xyzxyz
+StringBufSubclass.hx:51: or421.5[1,2]
+StringBufSubclass.hx:52: 327 2 a
+StringBufSubclass.hx:56: 9 2 1
+StringBufSubclass.hx:59:  custom
+StringBufSubclass.hx:62: again 5
+StringBufSubclass.hx:65: through StringBuf
+StringBufSubclass.hx:68: made: by createInstance
+
+StringBufSubclass.hx:71: [count,tag]
+StringBufSubclass.hx:72: 0
+StringBufSubclass.hx:79: true

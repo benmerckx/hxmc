@@ -1530,6 +1530,18 @@ class Gc {
 	}
 	#end
 
+	// The old space's soft limit while no major collection has run (RT_OLD_MB,
+	// 256 MB by default, which wins over this): a program that knows it keeps
+	// more than that from the start (a compiler's syntax trees and types)
+	// raises it, so its first major collection does not copy what it is
+	// still building, and its peak memory is lower without that copy.
+	@:hxmc.noGc public static function setOldLimit(mb:Int):Void {
+		if (majors > 0 || Os.has("RT_OLD_MB")) return;
+		var e = oldStart.addL((mb : I64) << 20);
+		if (oldStart.addL(regionBytes).ult(e)) e = oldStart.addL(regionBytes);
+		if (oldEnd.ult(e)) oldEnd = e;
+	}
+
 	// ---- hxmc.NativeGc's measurements (the port's server/memory, in place
 	// of OCaml's Objsize and Gc heap words)
 

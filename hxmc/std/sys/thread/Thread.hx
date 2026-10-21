@@ -23,7 +23,8 @@
 package sys.thread;
 
 // hxmc: haxe/upstream/std/sys/thread/Thread.hx over the runtime's threads (ThreadImpl:
-// rt_thread.c), without the target.threaded check and `events`. The process
+// rt_thread.c), without the target.threaded check (wasm32-wasi does not define it: its threads
+// run one at a time), with `events` where it is defined. The process
 // exits when the main thread's main() returns, as on hl and cpp.
 
 import sys.thread.ThreadCallback;
@@ -66,8 +67,14 @@ class Thread {
 	static var idCounter : Int; // TODO: Should probably be an AtomicInt
 	static var globalCallbacks : ThreadCallbackManager;
 
-	// hxmc: no `events`: the hxmc target does not define target.threaded, so
-	// haxe.EventLoop has no per-thread loops
+	#if target.threaded // hxmc: (not on wasm32-wasi: haxe.EventLoop has no per-thread loops there)
+	@:deprecated("Use haxe.EventLoop.getThreadLoop(thread) instead")
+	public var events(get, null):Null<haxe.EventLoop>;
+
+	inline function get_events() {
+		return haxe.EventLoop.getThreadLoop(this);
+	}
+	#end
 
 	public final id : Int;
 	var impl : ThreadImpl;

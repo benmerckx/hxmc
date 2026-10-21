@@ -77,6 +77,8 @@ class Reach {
 	var resolveType = false; // Type.resolveClass (Dyn.resolveType) is live
 	var typeOfValue = false; // Type.getClass (Dyn.getClass) is live: statics through it
 	var superOfValue = false; // Type.getSuperClass (Dyn.superClass) is live: the superclasses' statics too
+	var valueEnums = new Map<EnumInfo, Bool>(); // enum values (EType) in live code
+	var reflectedEnums = new Map<EnumInfo, Bool>(); // the enums whose __meta__ live code can reach
 	var reflected = new Map<ClassInfo, Bool>(); // the classes whose statics live code can reach through their value
 	var createInstance = false; // Type.createInstance (Dyn.createInstance) is live
 	var made = new Map<ClassInfo, Bool>(); // the classes Type.createInstance can make (their entries kept)
@@ -146,6 +148,7 @@ class Reach {
 			if (gs.length == 0) mark(f);
 		}
 		mark(p.main);
+		if (p.entryRun != null) mark(p.entryRun);
 		for (f in p.roots)
 			mark(f);
 		for (f in p.funcs)
@@ -172,6 +175,13 @@ class Reach {
 				}
 			for (c in p.interfaces)
 				if (valueClasses.exists(c)) statics(c);
+			// (an enum's __meta__, Lower.reflectEnum: its initializer runs)
+			for (e in p.enums)
+				if (e.statics != null && (resolveType || typeOfValue || valueEnums.exists(e)) && !reflectedEnums.exists(e)) {
+					reflectedEnums.set(e, true);
+					for (s in e.statics)
+						setBy(s.global, null);
+				}
 			if (createInstance)
 				for (c in p.classes)
 					if (resolveType || valueClasses.exists(c) || (typeOfValue && inst[c.id])) {
@@ -204,12 +214,17 @@ class Reach {
 			}
 			pending = rest;
 			cur = null;
+			flushStacks();
 			if (work.length == 0) break;
 		}
 	}
 
 	function apply() {
 		p.live = live;
+		p.stacks = stacksOn;
+		if (!stacksOn)
+			for (f in p.funcs)
+				if (live.exists(f)) f.body = dropStacks(f.body);
 		p.funcs = [for (f in p.funcs) if (live.exists(f)) f];
 		p.inits = [for (f in p.inits) if (live.exists(f)) f];
 		p.lambdas = [for (l in p.lambdas) if (live.exists(l.fn)) l];
@@ -220,6 +235,8 @@ class Reach {
 			for (c in cs)
 				if (c.statics != null)
 					c.statics = reflected.exists(c) ? [for (s in c.statics) if (s.clos == null || live.exists(s.clos.fn)) s] : null;
+		for (e in p.enums)
+			if (e.statics != null && !reflectedEnums.exists(e)) e.statics = null;
 		// (the entries of the classes Type.createInstance can make)
 		for (c in p.classes)
 			if (c.maker != null && !made.exists(c)) c.maker = null;
@@ -239,6 +256,55 @@ class Reach {
 					k = w == null ? null : w.from;
 				}
 			}
+	}
+
+	// Stacks (hxmc.rt.Stacks, haxe.Exception): the functions marked
+	// @:hxmc.withStacks (recording a throw's stack, an exception's, reporting
+	// an uncaught exception's) are live only when the program reads stacks,
+	// haxe.NativeStackTrace.toHaxe or toHaxeSkipping live (or -D hxmc.stacks:
+	// `stacksAlways`); until then their calls wait in `deferred`, and without
+	// it they are dropped (apply). The executable then has no table of its
+	// functions and lines either (hxmc.StackTable).
+	public static var stacksAlways = false;
+	var stacksOn = false;
+	var deferred:Array<FuncInfo> = [];
+	var readers:Null<Array<FuncInfo>> = null;
+
+	function flushStacks() {
+		if (stacksOn) return;
+		if (readers == null)
+			readers = [
+				for (f in p.funcs)
+					if (f.display == "haxe.NativeStackTrace.toHaxe" || f.display == "haxe.NativeStackTrace.toHaxeSkipping") f
+			];
+		if (!stacksAlways && !Lambda.exists(readers, f -> live.exists(f))) return;
+		stacksOn = true;
+		for (g in deferred)
+			mark(g);
+		deferred = [];
+	}
+
+	// a body without the calls of dead @:hxmc.withStacks functions (Void, for
+	// what they record: their results are not read)
+	function dropStacks(ss:haxe.ds.Vector<Stmt>):haxe.ds.Vector<Stmt> {
+		var changed = false;
+		var out:Array<Stmt> = [];
+		for (s in ss) {
+			var t:Null<Stmt> = switch s {
+				case SExpr(ECall(g, _)) if (g.withStacks && !live.exists(g)): null;
+				case SIf(c, a, b): SIf(c, dropStacks(a), dropStacks(b));
+				case SLoop(body): SLoop(dropStacks(body));
+				case SSwitch(e, cases, def): SSwitch(e, cases.map(c -> {values: c.values, body: dropStacks(c.body)}), dropStacks(def));
+				case STry(body, catches): STry(dropStacks(body), catches.map(c -> ({test: c.test, l: c.l, body: dropStacks(c.body)} : IrCatch)));
+				case SCold(id, x):
+					var y = dropStacks(haxe.ds.Vector.fromArrayCopy([x]));
+					y.length == 1 ? SCold(id, y[0]) : null;
+				case _: s;
+			}
+			if (t != s) changed = true;
+			if (t != null) out.push(t);
+		}
+		return changed ? haxe.ds.Vector.fromArrayCopy(out) : ss;
 	}
 
 	function mark(f:Null<FuncInfo>) {
@@ -559,7 +625,10 @@ class Reach {
 			if (calls != null) runtime(calls.ex(e));
 			switch e {
 				case ECall(g, args):
-					mark(g);
+					// (live once the program reads stacks: flushStacks)
+					if (g.withStacks && !stacksOn) {
+						if (!live.exists(g) && deferred.indexOf(g) < 0) deferred.push(g);
+					} else mark(g);
 					for (k in at(sinks, g))
 						nameArg(f, args[k], false);
 					for (s in atMethod(g))
@@ -587,6 +656,8 @@ class Reach {
 					mark(l.fn);
 				case EType(TRClass(c)):
 					valueClasses.set(c, true);
+				case EType(TREnum(e)):
+					valueEnums.set(e, true);
 				case EGlobal(g, _):
 					setBy(g, f);
 				case _:

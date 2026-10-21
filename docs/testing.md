@@ -28,7 +28,8 @@ deterministic in parallel mode. Upstream's compiler-side suite (RunCi `macro`:
 the unit tests in the macro context with their HXB round trip, null safety,
 misc, sys on Eval, threads, third-party projects) runs with the release
 binaries as `haxe` (`.github/workflows/upstream-tests.yml`); no target runtime
-is installed anywhere: target suites are compared, not run.
+is installed anywhere: the other targets' suites are compared, not run (hxmc runs
+them itself: Upstream's runtime suites on hxmc, below).
 
 ## The port as a WasmGC module
 
@@ -135,6 +136,55 @@ npm-pack job builds with it off (`HXMC_MODULE_CACHE=0`), the fixpoint
 builds the tool with it cold, warm and off, and `Crosshost` compares the
 native tool (cached) with the WebAssembly one (never cached).
 
+## Upstream's runtime suites on hxmc
+
+`make upstream-suites` (`hxmc/test/UpstreamSuites.hx`; CI: the
+`upstream-suites` jobs) builds upstream's own runtime suites with hxmc and
+runs them: `tests/unit`, `tests/sys` and `tests/threads` natively, and
+`tests/unit` as a wasm32-wasi module under node (`SUITES=<names>`,
+`SUITES_TARGET=native|wasm32-wasi` narrow it). Each suite is copied to
+`bin/test/upstream-suites/<target>/<suite>` (the submodule is never
+written) and built there from `hxmc/test/upstream/<suite>[-wasm].hxml`: the
+defines and libraries every target builds the suite with (`compile-each.hxml`
+for unit, sys's without its neko ExitCode, threads' `build.hxml`), utest from
+lix at `UpstreamTargets`' pin, `--custom-target hxmc=bin/hxmc/<main>`, each
+test announced (`-D UTEST_PRINT_TESTS`); the runner counts the tests utest
+announces and the failures its report lists, and fails the suite on a
+failure, a failed build or a program that ends before its report (the crash's
+test named). In the copy:
+
+- `hxmc/test/upstream/<suite>.patch` (`patch -p1`) gives hxmc its branch
+  where a conditional names the targets one by one (`#if (hl || cpp)`) and
+  where the sys tests start their helper programs; its header says why for
+  each file;
+- the tests of `hxmc/test/upstream/skips.txt` are left out, each with its
+  category and reason: `BUG` (an hxmc bug or missing feature not fixed yet),
+  `TARGET` (a behaviour hxmc chooses: hl's, cpp's and jvm's where it can, or
+  hxmc's own reachability, docs/hxmc.md), `EXTERNAL` (a tool or service the
+  test needs that upstream's CI has: a Haxe with neko on PATH). A class the
+  suite finds by its directory (unit's `issues`, `teststd`; threads'
+  `cases`) is removed from the copy, any other entry left out with utest's
+  `UTEST_PATTERN`.
+
+The conditionals see hxmc's target flags (docs/hxmc.md, "Target flags"):
+`target.threaded` natively, so the thread tests run there and not on
+wasm32-wasi.
+
+| Suite | Target | Passed | Skipped: BUG | TARGET | EXTERNAL | Failed |
+| --- | --- | --- | --- | --- | --- | --- |
+| unit | linux-x86_64 | 1519 | 0 | 12 | 0 | 0 |
+| sys | linux-x86_64 | 37 | 0 | 0 | 2 | 0 |
+| threads | linux-x86_64 | 38 | 0 | 0 | 0 | 0 |
+| unit | wasm32-wasi | 1516 | 0 | 15 | 0 | 0 |
+
+No `BUG` entry is left: the last ones (a class extending `StringBuf`, a
+dynamic method assigned through an interface, a `Reflect.makeVarArgs`
+function that went through a function type, `Reflect.compareMethods` on two
+closures of an Array method, an enum's `haxe.rtti.Meta`, `Math` as a class
+value, call stacks) are fixed, each with a corpus case. On wasm32-wasi the
+two call-stack tests are `TARGET` skips: a module cannot read its own stack
+(docs/hxmc.md, "Call stacks").
+
 ## The runtime's symbols
 
 Every build checks that the runtime defines each symbol generated code may
@@ -204,7 +254,8 @@ of its own from the stage0: `corpus` (`make corpus-stage`: the corpus for
 every target in three jobs, the port as a WebAssembly module, the reference's
 self-compile), `fuzz-exec` (the fuzzer's exec lanes, a job each),
 `crosshost` (`make crosshost`, the targets in two jobs),
-`memory and time` (`make measure`), `npm-pack` (the npm packages), `site`,
+`upstream-suites` (upstream's runtime suites on hxmc, natively and on wasm32-wasi:
+above), `memory and time` (`make measure`), `npm-pack` (the npm packages), `site`,
 `android` and `ios` (the targets' apps above). Then
 `conformance` (the harnesses above; the Eval debugger in three shards,
 `EvalDebugger --shard i/n`, and the fuzzer's diff lanes in three jobs), `test`

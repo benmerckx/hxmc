@@ -62,6 +62,7 @@ editors, lix and rebuilding the compiler from source:
 | `--custom-target hxmc=App.app` | iOS: an app bundle, ad hoc signed (`.ipa`: zipped; `-D hxmc.ios-bundle-id=<id>`, ...: [docs/hxmc.md](docs/hxmc.md#ios)) |
 | `-D hxmc.shared` | a shared library (Linux in the glibc mode; a dylib on macOS and iOS; Android's always is one), exporting `-D hxmc.exports=<names>` |
 | `-debug`, `-D hxmc.symbols` | a symbol table for profilers (wasm: a name section) |
+| `-D hxmc.no-stacks`, `-D hxmc.stacks` | no call stacks (`haxe.CallStack`, exception stacks: empty; by default a program that reads them gets its table of functions and lines), or that table in every program (an uncaught exception's report names its frames) ([docs/hxmc.md](docs/hxmc.md#call-stacks)) |
 | `-D hxmc.jobs=<n>` | parallel module compilations (default: the cores) |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling, for older browsers and runtimes |
 | `-D hxmc.null-checks=0\|1` | tests of references against null before each access (default: on WebAssembly, where a null access cannot fault; natively a fault handler throws `Null Access` at no cost: [docs/hxmc.md](docs/hxmc.md#null-access)) |

@@ -231,7 +231,7 @@ class WasiSys {
 	}
 
 	static inline function outside()
-		Rt.rt_throw("OutsideBounds");
+		throw haxe.io.Error.OutsideBounds;
 
 	@:hxmc.noGc static function rw(write:Bool, fd:Int, p:Ptr, n:Int):Int {
 		var io = Mem.stack(16);

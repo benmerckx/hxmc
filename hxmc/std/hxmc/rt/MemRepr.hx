@@ -110,6 +110,13 @@ class MemRepr {
 		return b;
 	}
 
+	// an instance of a class extending StringBuf, whose first slots are
+	// T_STRINGBUF's (Lower.classInfo)
+	public static inline function sbInit(b:Dynamic) {
+		var d = Mem.allocRaw(8, T_ADATA_RAW, K_RAW);
+		Mem.setRefBarrier(b, 8, d);
+	}
+
 	public static inline function sbLen(b:Dynamic):Int
 		return Mem.getI32(Mem.addr(b), 0);
 

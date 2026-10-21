@@ -1,0 +1,12 @@
+exit 0
+MethodAdapters.hx:20: true
+MethodAdapters.hx:21: false
+MethodAdapters.hx:22: false
+MethodAdapters.hx:23: true
+MethodAdapters.hx:24: false
+MethodAdapters.hx:25: true false false
+MethodAdapters.hx:27: true false false
+MethodAdapters.hx:30: true false false false
+MethodAdapters.hx:33: true true
+MethodAdapters.hx:36: true true
+MethodAdapters.hx:42: [1,5,6]

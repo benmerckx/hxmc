@@ -24,6 +24,8 @@
 	}
 
 	function matchedPos_(n:Int):Int {
+		// (Eval's: upstream's TestEReg)
+		if (last == null) throw "Invalid regex operation because no match was made";
 		if (n < 0 || n >= r.ngroups) throw "Invalid group";
 		return r.caps[2 * n];
 	}

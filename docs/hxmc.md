@@ -83,23 +83,28 @@ tool itself (24,400 functions): ELF 1.0 MB (5.7% of 17.5 MB; 6.0% on arm64),
 Mach-O 0.98 MB (5.1%), Windows 12 (x86-64) or 8 (arm64) bytes per function
 in `.pdata` (1.2%) and the shared `.xdata`.
 
-Source lines (`-debug`, or `-D hxmc.lines` alone): positions flow from the
-typed AST to the emitted code: the lowering puts a `SPos` statement (file,
-line) before each statement's code (`FnLower.stmt`), `MirBuild` gives the
-instructions it builds the current one (`MIns.pos`, `SrcPos`; the inliner
-copies them, so inlined code has its own file and lines), instruction
-selection passes it to the target instructions (`LIns.pos`), and the
-emitters record a row where it changes (`FuncRec.lines`, mapped through
-branch relaxation). The linkers write DWARF 4 (`hxmc/src/hxmc/Dwarf.hx`):
-`.debug_line`, `.debug_info` with a compilation unit per module and a
-subprogram per function named by its Haxe name (`pack.Class.field`), and
-`.debug_aranges`/`.debug_ranges`; in ELF files, in Mach-O files' `__DWARF`
-segment, and in PE files as MinGW's toolchain writes them (with a COFF
-symbol table: gdb, lldb and llvm-symbolizer read them; no PDB, so not the
-Visual Studio debugger or WinDbg: [plans/codegen.md](plans/codegen.md)). Every pass steps over the
-positions, so the code is the same with and without them (DebugCheck
-compares the code of both builds); they add 2.7 MB (15.6%) to the tool.
-`-debug` also writes the symbol table (`-D hxmc.symbols` or
+Source lines: positions flow from the typed AST to the emitted code: the
+lowering puts a `SPos` statement (file, line) before each statement's code
+(`FnLower.stmt`), `MirBuild` gives the instructions it builds the current
+one (`MIns.pos`, `SrcPos`; the inliner gives the copies the position of the
+call they replace: an inlined function's code is its caller's, as a frame
+and a line, which is what a stack shows and what DWARF shows without
+inlined subroutines), instruction selection passes it to the target
+instructions (`LIns.pos`), and the emitters record a row where it changes
+(`FuncRec.lines`, mapped through branch relaxation). Native builds record
+them always (the call stacks below need them; `-D hxmc.no-stacks` leaves
+them out); every pass steps over the positions, so the code is the same
+with and without them (DebugCheck compares the code of both builds), and
+recording them costs no measurable build time. With `-debug` (or `-D
+hxmc.lines` alone) the linkers write them as DWARF 4
+(`hxmc/src/hxmc/Dwarf.hx`): `.debug_line`, `.debug_info` with a
+compilation unit per module and a subprogram per function named by its
+Haxe name (`pack.Class.field`), and `.debug_aranges`/`.debug_ranges`; in
+ELF files, in Mach-O files' `__DWARF` segment, and in PE files as MinGW's
+toolchain writes them (with a COFF symbol table: gdb, lldb and
+llvm-symbolizer read them; no PDB, so not the Visual Studio debugger or
+WinDbg: [plans/codegen.md](plans/codegen.md)); they add 2.7 MB (15.6%) to
+the tool. `-debug` also writes the symbol table (`-D hxmc.symbols` or
 `HXMC_SYMBOLS=1` alone).
 
 Checks: the corpus case `UnwindTables` compares the system's own unwinders
@@ -129,6 +134,83 @@ Breakpoint 1, Lines.inner () at hxmc/test/debug/Lines.hx:10
 
 and checks every target's tables with readelf, llvm-readobj and
 llvm-dwarfdump.
+
+### Call stacks
+
+`haxe.CallStack.callStack()`, an exception's `stack` and
+`haxe.CallStack.exceptionStack()` come from the same records as the DWARF
+lines, through one runtime facility, `hxmc.rt.Stacks`, which the report of
+an uncaught exception uses too:
+
+- The table: the linker writes the program's functions, their Haxe names and
+  their line rows into a read-only table at `hxmc_stacks`
+  (`hxmc/src/hxmc/StackTable.hx`, from `FuncRec.lines`, so it cannot
+  disagree with `.debug_line`): 16 bytes per function (its address as a
+  PC-relative offset, no load-time fixup; its size; its class and the rest:
+  the field and the rows, LEB128 deltas, a row only where the file or line
+  changes), the strings once each. The static ELF linker's dead code
+  elimination does not count the table's references (it is rebuilt with the
+  functions it keeps). Where `.debug_line` is 1.1 MB for the tool, the
+  table is 0.64 MB (3.6% of the tool, the port 0.78 MB: 3.8%).
+- The walk: up the frame records (x86-64 by default, arm64 always:
+  above), while a frame's return address is in a function of the table
+  (looked up once per address in a small cache, then a binary search of the
+  table sorted on first use), so it stops at the first frame of C code (the
+  C library's start, a thread's entry, a callback's caller) and never
+  follows a frame pointer it cannot trust. A stack keeps at most 256
+  frames. Frames without lines (closures forwarding to a function,
+  adapters) and the runtime's own (`hxmc.rt`, `hxmc.unsafe`) are not
+  shown; a closure forwarding to a function into which it was inlined has
+  that function's name.
+- What a program pays: a program reads stacks when `haxe.NativeStackTrace`'s
+  `toHaxe` (haxe.CallStack) or `toHaxeSkipping` (an exception's `stack`) is
+  live after `Reach`; only then does it get the table, and the functions
+  marked `@:hxmc.withStacks` (an exception recording its stack where it is
+  made, `Stacks.recordThrow` at each throw, `Stacks.report`) are live:
+  until then `Reach` holds their calls back, and drops them otherwise. A
+  hello world is the same with and without stacks (125,920 bytes); one
+  printing `CallStack.callStack()` is 12 KB larger (8.6%: the table).
+  `hxmc_stack_flags`, an absolute symbol, says what the program reads (1:
+  exception stacks, `exceptionStack` live: throws record theirs; 2: an
+  exception's `stack`, `get_stack` live: an exception records its stack
+  where it is made), so that a program reading neither walks no stack.
+  A throw records the frames from the throw up to the frame of the try that
+  catches it only (its handler is in that frame: the walk stops below it,
+  each record above the previous one, inside the stack's memory, so not
+  checked against the table), and `exceptionStack()` adds, while the
+  catching function runs, its callers as they are: the port's self-compile
+  throws 2.3 million times, on average 150 frames deep, which recorded
+  whole took it from 7.0 to 9.3 s; now its time is the same within the
+  noise (7.1 s either way). `-D hxmc.no-stacks` leaves the positions, the
+  table and the recording out (stacks are empty); `-D hxmc.stacks` keeps
+  them in every program.
+- Exceptions: `haxe.Exception` (hxmc's, after hl's) records the stack where
+  it is made, or for a value caught (`Exception.caught`) the stack of its
+  throw; its `stack` leaves out the frames of the exception's constructors
+  (the class and its superclasses, from the runtime's types: no
+  reflection), of `thrown`, `caught` and its own recording, by name (hl
+  counts them).
+- Reports: an uncaught exception, a null access (a fault turned into a
+  throw: Faults) among them, prints its frames after its message on stderr,
+  as `haxe.CallStack.toString` prints them (`Called from Main.f
+  (src/Main.hx line 3)`), when the program has the table (it reads stacks,
+  or `-D hxmc.stacks`).
+
+Upstream's `TestExceptions.testExceptionStack` and `TestCallStack` pass
+natively; the corpus case `CallStacks` checks the stacks against the
+reference's `--interp` (which names only the catching function for an
+exception stack, where hxmc names the frames from the throw, as hl and
+cpp), natively, on Windows (Wine) and arm64. Not done: WebAssembly, where
+a module cannot read its own stack (no frame records, and WASI gives no
+access to the engine's): `haxe.CallStack` is empty there (the two upstream
+tests are skipped on wasm32-wasi, the corpus case excluded); a stack
+shows the frame of an inlined function as its caller's, at the call (no
+inlined frames: DWARF's `DW_TAG_inlined_subroutine` would give both);
+`-D hxmc.no-frame-pointers` on x86-64 leaves stacks empty (an unwinder
+reading the unwind tables instead would not); the null-access report's innermost
+line may be the statement before (the address the fault handler gives
+rt_null_access as its return address is the faulting instruction's, not
+the end of a call).
 
 ## Runtime in Haxe
 
@@ -345,7 +427,7 @@ the arguments' signature, through the dynamic call of `Reflect.callMethod`);
 the native macros' `Loader` writes a bundle's. A class without any
 constructor fails, as Eval's does (`Instance constructor not found`), as does
 one whose entry was dropped, or an extern class the runtime implements (its
-class value is `T_NONE`'s); `String`'s and `Array`'s are Eval's. WasmGC:
+class value is `T_NONE`'s, but `Math`'s, a runtime type of its own named Math, `T_MATH`, which `Type.resolveClass` finds); `String`'s and `Array`'s are Eval's. WasmGC:
 `Meta.createInstance`, a dispatch on the class making the instance and calling
 the entry. With `Type.resolveClass` live too, every class's constructor and
 its signature's trampolines stay: the port would grow by 66 KB (0.34%).
@@ -800,6 +882,33 @@ use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
 `RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
 `RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown).
+
+### Target flags
+
+The conditional-compilation flags code tests to choose what a target
+supports (upstream's unit suite picks its tests by them). A custom target
+starts from the default platform configuration (`Common.defaultConfig`),
+from which the compiler defines `static` and `target.static`, `sys` and
+`target.sys`, `utf16` and `target.utf16`, `target.unicode`, and
+`custom_target` with `target.name` = `hxmc`; all of them hold for hxmc:
+static types (an Int is never null, as on hl, cpp and jvm), the sys API,
+UTF-16 strings, full Unicode. `hxmc/src/hxmc/TargetFlags.hx` adds, once the
+target is initialized and before the init macros and typing:
+
+| Flag | Where | |
+| --- | --- | --- |
+| `target.threaded` | the native targets | OS threads in parallel (`sys.thread`, `haxe.EventLoop`'s per-thread loops, `Thread.events`), as on hl, cpp and jvm |
+| `target.atomics` | every target | `haxe.atomic` (`hxmc/std/haxe/atomic`) |
+
+wasm32-wasi is not `target.threaded`: its threads run one at a time
+(`hxmc.NativeThread`), so `sys.thread` compiles there but code that tests
+the flag takes its single-threaded path. They are defines only: nothing else
+in the compiler reads those fields of the platform configuration. (The
+custom target's own way, an `hxmc.Init.init()` macro calling
+`Compiler.setPlatformConfiguration`, would also turn off skipping
+non-nullable optional arguments, which that call's decoding always does, and
+an init macro cannot define a `target.*` flag.) `hxmc` itself is not a
+define: code tests `target.name == "hxmc"`.
 
 ## Android
 

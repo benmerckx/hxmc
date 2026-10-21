@@ -114,6 +114,7 @@ class RuntimeSymbols {
 		{sym: "hx_str_eq_slow", kind: FUNC, families: LINEAR, by: "MirBuild.strEq"},
 		{sym: "StringBuf_addChar_slow", kind: FUNC, families: LINEAR, by: "MirBuild.stringBufAddChar"},
 		{sym: "hx_array_iterator", kind: FUNC, families: LINEAR, by: "Facts: Array's method table (DataGen)"},
+		{sym: "hx_array_kv_iterator", kind: FUNC, families: LINEAR, by: "Facts: Array's method table (DataGen)"},
 		{sym: "hx_arrayiter_hasNext", kind: FUNC, families: LINEAR, by: "Facts: the array iterator's method table (DataGen)"},
 		{sym: "hx_arrayiter_next", kind: FUNC, families: LINEAR, by: "Facts: the array iterator's method table (DataGen)"},
 		{sym: "rt_globals", kind: DATA, families: NATIVE, by: "MirBuild: a static's address; DataGen.mainBody"},

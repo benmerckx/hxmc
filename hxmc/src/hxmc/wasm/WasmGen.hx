@@ -132,8 +132,9 @@ class WasmGen {
 	// the signature string of a type ($t:<params>><result>)
 	public static function sigOf(params:haxe.ds.Vector<MTy>, ret:MTy):String {
 		var s = new StringBuf();
+		// (a Void parameter: an i32, MirBuild.build)
 		for (p in params)
-			s.add(tyChar(p));
+			s.add(p == Void ? "i" : tyChar(p));
 		s.add(">");
 		s.add(tyChar(ret));
 		return s.toString();
@@ -1355,7 +1356,17 @@ class WasmGen {
 		}
 		var tys = i.argTys;
 		for (k in 0...i.args.length)
-			valueAs(i.args[k], tys[k]);
+			if (tys[k] == Void) {
+				// (a parameter of type Void: an i32 0, whatever the argument; sigOf,
+				// MirBuild.build: corpus case VoidParam)
+				if (ety(i.args[k]) != Void) {
+					value(i.args[k]);
+					op(Op.Drop);
+				}
+				op(Op.I32Const);
+				Enc.sleb(b, 0);
+			} else
+				valueAs(i.args[k], tys[k]);
 		if (i.sym != null) {
 			op(Op.Call);
 			relocs.push({off: b.len, kind: RWasmFunc, sym: i.sym, addend: 0});

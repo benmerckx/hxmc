@@ -1,0 +1,2 @@
+exit 0
+ClassInit.hx:34: [UnreadStatics.__init__,Unused.__init__], 11, 42

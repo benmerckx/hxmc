@@ -1,0 +1,9 @@
+exit 0
+matched: Invalid regex operation because no match was made
+left: Invalid regex operation because no match was made
+pos: Invalid regex operation because no match was made
+matched after a failed match: Invalid regex operation because no match was made
+true OutsideBounds
+true OutsideBounds
+true OutsideBounds
+true OutsideBounds

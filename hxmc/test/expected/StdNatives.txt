@@ -33,5 +33,5 @@ true true true
 4 3+1+2+0 2 27
 TInt TFloat TClass(String)
 TNull TObject
-String null
+String haxe.io.Bytes
 9.5 17.5 3.5 1 28 7s true false

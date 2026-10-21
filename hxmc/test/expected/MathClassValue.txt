@@ -1,0 +1,12 @@
+exit 0
+MathClassValue.hx:13: Math true false
+MathClassValue.hx:13: String true false
+MathClassValue.hx:13: Array true false
+MathClassValue.hx:13: Date true false
+MathClassValue.hx:13: MathClassValue true false
+MathClassValue.hx:13: IShape true false
+MathClassValue.hx:16: true
+MathClassValue.hx:17: true
+MathClassValue.hx:18: false
+MathClassValue.hx:19: Math
+MathClassValue.hx:20: 314

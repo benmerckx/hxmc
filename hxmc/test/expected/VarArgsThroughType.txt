@@ -1,0 +1,13 @@
+exit 0
+VarArgsThroughType.hx:22: 1:a
+VarArgsThroughType.hx:23: 2:b,c
+VarArgsThroughType.hx:24: 3:d,e,f
+VarArgsThroughType.hx:25: 0:
+VarArgsThroughType.hx:27: 0:
+VarArgsThroughType.hx:28: 2:1,2
+VarArgsThroughType.hx:29: 3:1,2,3
+VarArgsThroughType.hx:30: true
+VarArgsThroughType.hx:35: 7
+VarArgsThroughType.hx:36: 30
+VarArgsThroughType.hx:43: 1 2 4
+VarArgsThroughType.hx:44: 10

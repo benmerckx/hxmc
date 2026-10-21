@@ -1,0 +1,7 @@
+exit 0
+true true true false
+true false
+true
+1 0
+true
+foo [foo]

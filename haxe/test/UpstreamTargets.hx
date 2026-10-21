@@ -58,10 +58,11 @@ class UpstreamTargets {
 	];
 
 	static var gen:String;
-	static var libsOk = new Map<String, String>(); // name -> "" or why not
+	public static var libsOk = new Map<String, String>(); // name -> "" or why not
 
-	static function installLibs(names:Array<String>) {
-		var scope = '$gen/../upstream-libs';
+	// (also UpstreamSuites': the scope bin/test/upstream-libs)
+	public static function installLibs(names:Array<String>, ?scope:String) {
+		if (scope == null) scope = '$gen/../upstream-libs';
 		mkdirs(scope);
 		scope = FileSystem.fullPath(scope);
 		var lix = FileSystem.fullPath("bin/lix/lix");

@@ -41,6 +41,9 @@
 # - fuzz-exec: the fuzzer's exec lanes, one job each (with its own tool from
 #   the stage0): random programs run by the reference's Eval and built by
 #   hxmc (native, wasm32-wasi), their output compared.
+# - upstream-suites: upstream's runtime suites (tests/unit, sys, threads)
+#   built by hxmc and run, natively and (unit) as a wasm32-wasi module under
+#   node, a job each (with its own tool from the stage0; make upstream-suites).
 # - test: on each target's machine, the release binary's smoke test (with a
 #   TLS handshake and libuv), lix, hxmc's corpus and the port's self-compile.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
@@ -823,6 +826,39 @@ jobs:
         if: failure()
         with: {name: "fuzz-${{ strategy.job-index }}", path: "bin/test/fuzz/failures/", retention-days: 7, if-no-files-found: ignore}
 
+  # upstream's runtime suites built by hxmc and run (make upstream-suites,
+  # hxmc/test/UpstreamSuites.hx): unit, sys and threads natively, unit as a
+  # wasm32-wasi module under node; the counts in the job summary
+  upstream-suites:
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [native, wasm32-wasi]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Runtime objects, the tool and lix
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make hxmc lix
+      - name: Upstream's suites (${{ matrix.target }})
+        run: make upstream-suites SUITES_TARGET=${{ matrix.target }}
+        timeout-minutes: 30
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with: {name: "upstream-suites-${{ matrix.target }}", path: "bin/test/upstream-suites/*/*/*.log", retention-days: 7, if-no-files-found: ignore}
+
   # on a machine of each target: the release binary, lix, hxmc's corpus and
   # the port's self-compile; the scripts run on the release binary's Eval
   test:
@@ -1294,8 +1330,8 @@ jobs:
   # next); never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1333,8 +1369,8 @@ jobs:
 
   # nightly on main, a release on v* tags
   release:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

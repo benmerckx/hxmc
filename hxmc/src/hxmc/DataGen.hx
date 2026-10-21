@@ -275,6 +275,9 @@ class DataGen {
 		for (cs in [p.classes, p.interfaces])
 			for (c in cs)
 				if (c.statics != null && c.statics.length > 0) staticsOf.set(c.tindex, c.statics);
+		// (an enum's __meta__: Lower.reflectEnum)
+		for (en in p.enums)
+			if (en.statics != null && en.statics.length > 0) staticsOf.set(en.tindex, en.statics);
 		// the arrays each entry points to, then the table
 		var entries = [];
 		for (i in 0...types.length) {
@@ -573,6 +576,7 @@ class DataGen {
 			for (f in p.inits)
 				b.call(e.symbol(f), vector(), Void);
 			b.call(e.symbol(p.main), vector(), Void);
+			if (p.entryRun != null) b.call(e.symbol(p.entryRun), vector(), Void);
 			b.ret(-1);
 		}));
 		// WebAssembly (WASI): _start; the runtime reads the arguments itself and exits

@@ -100,11 +100,14 @@ class Link {
 		}
 		while (work.length > 0) {
 			var s = work.pop();
+			// (the stack table names every function: it keeps none, StackTable)
+			if (StackTable.isTable(s)) continue;
 			for (r in s.relocs) {
 				var t = target(r.sym);
 				if (t != null && t.section != null) mark(t.section);
 			}
 		}
+		StackTable.rebuild(objs, r -> live.exists(r.sym.section));
 	}
 
 	inline function isLive(s:Section):Bool

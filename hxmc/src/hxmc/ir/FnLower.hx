@@ -184,6 +184,13 @@ class FnLower {
 		}
 	}
 
+	// an initializer setting the global g to e (Lower.reflectEnum)
+	public function runGlobalInit(g:Int, e:TExpr) {
+		boxed = new Map();
+		var t = l.getProgram().globals[g].ty;
+		out.push(SSetGlobal(g, coerce(value(e), tyOf(e), t)));
+	}
+
 	// closure body forwarding to a function (static or bound method)
 	public function forward(f:Null<FuncInfo>, dispatch:Null<{sel:Int, sig:SigInfo, args:Array<Ty>, ?cls:TClass}>) {
 		boxed = new Map();
@@ -488,7 +495,7 @@ class FnLower {
 			if (out.length != before) {
 				var spills = [];
 				for (i in 0...n)
-					if (!isConst(r[i]) && !r[i].match(ELocal(_))) {
+					if (!isConst(r[i]) && !stableFrom(r[i], before)) {
 						var lo = newLocal("s", tyOf(es[i]));
 						spills.push(SSet(lo, r[i]));
 						r[i] = ELocal(lo);
@@ -501,10 +508,53 @@ class FnLower {
 		return r;
 	}
 
+	// a local that the statements from `before` on (a later operand's) do not
+	// assign: read after them, it is the value it had (`[i, s.cca(i++)]`, which the
+	// analyzer leaves in that order: upstream's TestStringTools; corpus case
+	// OperandOrder)
+	function stableFrom(x:Ex, before:Int):Bool {
+		var l = switch x {
+			case ELocal(l): l;
+			case _: return false;
+		}
+		for (k in before...out.length)
+			if (assigns(out[k], l)) return false;
+		return true;
+	}
+
+	static function assigns(s:Stmt, l:Local):Bool {
+		inline function any(ss:Vector<Stmt>):Bool {
+			var r = false;
+			for (s in ss)
+				if (assigns(s, l)) {
+					r = true;
+					break;
+				}
+			return r;
+		}
+		return switch s {
+			case SSet(x, _): x == l;
+			case SIf(_, a, b): any(a) || any(b);
+			case SLoop(b): any(b);
+			case SSwitch(_, cs, d):
+				var r = any(d);
+				for (c in cs)
+					if (!r && any(c.body)) r = true;
+				r;
+			case STry(b, cs):
+				var r = any(b);
+				for (c in cs)
+					if (!r && (c.l == l || any(c.body))) r = true;
+				r;
+			case SCold(_, s2): assigns(s2, l);
+			case _: false;
+		}
+	}
+
 	// x, lowered before the statements from `before` on (a later operand's
 	// effects): read into a local ahead of them unless constant
 	function spillBefore(x:Ex, t:Ty, before:Int):Ex {
-		if (out.length == before || isConst(x) || x.match(ELocal(_))) return x;
+		if (out.length == before || isConst(x) || stableFrom(x, before)) return x;
 		var lo = newLocal("s", t);
 		out.insert(before, SSet(lo, x));
 		return ELocal(lo);
@@ -548,7 +598,7 @@ class FnLower {
 			if (out.length != before) {
 				var spills = [];
 				for (k in 0...r.length)
-					if (!isConst(r[k]) && !r[k].match(ELocal(_))) {
+					if (!isConst(r[k]) && !stableFrom(r[k], before)) {
 						var lo = newLocal("s", rTys[k]);
 						spills.push(SSet(lo, r[k]));
 						r[k] = ELocal(lo);
@@ -1313,6 +1363,7 @@ class FnLower {
 			case TTypeExpr(mt):
 				switch mt {
 					case TClassDecl(c): l.reflectStatics(c);
+					case TEnumDecl(en): l.reflectEnum(en);
 					case _:
 				}
 				EType(typeRef(mt));
@@ -1476,6 +1527,8 @@ class FnLower {
 			case FInstance(c, _, cf):
 				switch cf.cfKind {
 					case Method(MethDynamic) if (isDynMethod(c, cf)): coerce(dynMethod(obj, c, cf, e), dynSlotTy(c, cf), tyOf(e));
+					// (an interface's dynamic method: the field, by name)
+					case Method(MethDynamic) if (c.hasClassFlag(CInterface)): anonGet(cf.cfName, obj, e);
 					case Method(_): methodClosure(obj, c, cf, e);
 					case Var(_) if (Lower.isCore(c, "Array") && cf.cfName == "length"):
 						EArrLen(value(obj));
@@ -1542,6 +1595,8 @@ class FnLower {
 					anonGet(cf.cfName, obj, e);
 				} else if (cf.cfKind.match(Method(MethDynamic)) && isDynMethod(cl.cls, cf)) {
 					coerce(dynMethod(obj, cl.cls, cf, e), dynSlotTy(cl.cls, cf), tyOf(e));
+				} else if (cf.cfKind.match(Method(MethDynamic)) && cl.cls.hasClassFlag(CInterface)) {
+					anonGet(cf.cfName, obj, e);
 				} else methodClosure(obj, cl.cls, cf, e);
 			case FEnum(en, ef):
 				var ci = l.ctorInfo(ef, en);
@@ -1763,7 +1818,7 @@ class FnLower {
 	function arith(op:Binop, xa:Ex, ta:Ty, getB:() -> {x:Ex, t:Ty}, rt:Ty, e:TExpr):Ex {
 		var before = out.length;
 		var rb = getB();
-		if (out.length != before && !isConst(xa) && !xa.match(ELocal(_))) {
+		if (out.length != before && !isConst(xa) && !stableFrom(xa, before)) {
 			var lo = newLocal("s", ta);
 			out.insert(before, SSet(lo, xa));
 			xa = ELocal(lo);
@@ -1868,6 +1923,10 @@ class FnLower {
 		switch [ta, tb] {
 			case [TRef(RStr), TRef(RStr)]:
 				return ECallHost("hx_str_eq", vector(xa, xb), TBool);
+			// (a method closure: equal to another of the same method and object, made
+			// apart, as on Eval and hl: hx_dyn_eq; upstream's Issue6705)
+			case [TRef(RClos(_)), TRef(_)] | [TRef(_), TRef(RClos(_))]:
+				return ECallHost("hx_dyn_eq", vector(coerce(xa, ta, TRef(RAny)), coerce(xb, tb, TRef(RAny))), TBool);
 			// (a NativeArray: its identity, as hx_dyn_eq has it)
 			case [TRef(RObj(_) | REnum(_) | RCtor(_) | RClos(_) | RArr(_) | RNativeArr(_) | RAnon | RType | RNative(_)), TRef(RObj(_) | REnum(_) | RCtor(_) | RClos(_) | RArr(_) | RNativeArr(_) | RAnon | RType | RNative(_))]:
 				return EBin(RefEq, xa, xb);
@@ -1884,6 +1943,19 @@ class FnLower {
 			case _: null;
 		};
 		var sa = scalar(ta), sb = scalar(tb);
+		// (a nullable number: null is not ordered with a number, two nulls are
+		// equal, as on Eval and the static targets; null was read as 0: upstream's
+		// TestOps)
+		if (sa != null && sb != null && (ta.match(TRef(RNull(_))) || tb.match(TRef(RNull(_))))) {
+			var a = asLocal(xa, ta), b = asLocal(xb, tb);
+			inline function isNull(l:Local, t:Ty):Ex
+				return t.match(TRef(RNull(_))) ? EBin(RefEq, ELocal(l), ENull(t)) : EInt(0);
+			var r = newLocal("ord", TBool);
+			var both = op == OpLte || op == OpGte ? 1 : 0;
+			out.push(SIf(isNull(a, ta), vector(SIf(isNull(b, tb), vector(SSet(r, EInt(both))), vector(SSet(r, EInt(0))))),
+				vector(SIf(isNull(b, tb), vector(SSet(r, EInt(0))), block(() -> out.push(SSet(r, compare(op, coerce(ELocal(a), ta, sa), sa, coerce(ELocal(b), tb, sb), sb))))))));
+			return ELocal(r);
+		}
 		if (sa != null && sb != null) {
 			if ((sa == TI64 || sb == TI64) && sa != TF64 && sb != TF64) {
 				var la = coerce(xa, ta, TI64), lb = coerce(xb, tb, TI64);
@@ -2138,6 +2210,11 @@ class FnLower {
 				var cl = asLocal(EGlobal(g, t), t);
 				var xs = args(cargs, s.args, null);
 				return callClos(s, ELocal(cl), xs, rt);
+			// (@:hxmc.withStacks: a call left out of a program without the
+			// table of its functions and lines, Lower.lines: hxmc.rt.Stacks'
+			// recording of a throw and report of an uncaught exception)
+			case TField(_, FStatic(c, cf)) if (!Lower.lines && rt == TVoid && Lower.hasMeta(":hxmc.withStacks", cf.cfMeta)):
+				return EInt(0);
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
 				var xs = args(cargs, callTys(fn), l.defaults.get(fn), 0, fn);
@@ -2167,6 +2244,17 @@ class FnLower {
 				var al = asLocal(xs[0], at);
 				out.push(SArrPush(elem, al, coerce(xs[1], tyOf(cargs[0]), elem)));
 				return coerce(EArrLen(ELocal(al)), TI32, rt);
+			case TField(obj, FInstance(c, _, cf)) if (c.hasClassFlag(CInterface) && cf.cfKind.match(Method(MethDynamic)) && tyOf(f).match(TRef(RClos(_)))):
+				// a dynamic method through an interface: the function its field
+				// holds, by name, as through a structure (upstream's Issue3159)
+				var s = switch tyOf(f) {
+					case TRef(RClos(s)): s;
+					case _: null;
+				};
+				if (hasStruct(s)) structFail('a struct value passed to or returned by a dynamic method of an interface: not supported');
+				var o = asLocal(value(obj), tyOf(obj));
+				var xs = args(cargs, s.args, null);
+				return coerceRhs(ECallAnon(cf.cfName, s, ELocal(o), xs), s.ret, rt);
 			case TField(obj, FInstance(c, _, cf)) if (c.hasClassFlag(CExtern) || Lower.isCore(c, "String") || Lower.isCore(c, "Array")):
 				var s = switch TFunctions.follow(cf.cfType) {
 					case TFun(s): s;

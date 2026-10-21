@@ -54,6 +54,13 @@ class Options {
 	// .debug_info on ELF and Mach-O) from the typed AST's positions
 	// (hxmc.ir.Ir.Stmt.SPos)
 	public var debugLines = false;
+	// stack traces (haxe.CallStack, exception stacks): the program's functions
+	// and lines in a table when it can turn a stack into items (StackTable);
+	// -D hxmc.no-stacks leaves them out (the stacks are empty then)
+	public var stacks = true;
+	// -D hxmc.stacks: the table, and the stacks recorded and reported (an
+	// uncaught exception's), whether or not the program reads stacks
+	public var stacksAlways = false;
 	// -D hxmc.jit: a compiler that can load native macros (hxmc/src/hxmc/macro): spare
 	// type and signature table entries, every runtime function kept, the
 	// symbols written next to the executable (<out>.syms); Linux x86-64, static
@@ -152,6 +159,8 @@ class Options {
 		var fp = def("hxmc.frame_pointers"), fpEnv = env("HXMC_FRAME_POINTERS");
 		o.framePointers = fpEnv != null && fpEnv != "" ? fpEnv != "0" : def("hxmc.no_frame_pointers") != null ? false : fp == null || fp != "0";
 		o.debugLines = def("debug") != null || def("hxmc.lines") != null;
+		o.stacks = def("hxmc.no_stacks") == null;
+		o.stacksAlways = o.stacks && def("hxmc.stacks") != null;
 		o.jit = def("hxmc.jit") != null;
 		o.interp = def("hxmc.interp");
 		if (o.jit && (o.target != "linux-x86_64" || o.libc != null)) throw "hxmc: -D hxmc.jit: linux-x86_64 (static) only";

@@ -1,0 +1,28 @@
+# upstream tests/sys on hxmc, from a copy of the suite (UpstreamSuites.hx): what
+# compile-each.hxml gives every target (but its neko ExitCode, which needs
+# neko), the four mains of compile-hl.hxml and compile-cpp.hxml (Main runs the
+# tests, the others are the programs they start); each test announced (the
+# runner counts them). UpstreamSuites adds hxmc's std (-cp bin/hxmc/std) and the
+# skips (-D UTEST_PATTERN).
+-D source-header=''
+--debug
+-lib utest
+-p src
+compile-fs.hxml
+-D UTEST_PRINT_TESTS
+--each
+
+--main Main
+--custom-target hxmc=bin/hxmc/sys
+
+--next
+--main TestArguments
+--custom-target hxmc=bin/hxmc/TestArguments
+
+--next
+--main ExitCode
+--custom-target hxmc=bin/hxmc/ExitCode
+
+--next
+--main UtilityProcess
+--custom-target hxmc=bin/hxmc/UtilityProcess

@@ -115,7 +115,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help std deps rt rt-build rt-target rt-layouts hxmc tool bootstrap fixpoint stage0 crosshost port dev release wasm npm site fuzz \
 	lix lix-release lix-dist reference bench bench-arrays bench-maps test test-fuzz test-display test-server test-jsonrpc test-unit-targets test-interp \
-	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test corpus-stage \
+	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test upstream-suites corpus-stage \
 	android-programs android-check android-device-check shared-check ios-programs ios-check ios-sim-check \
 	native-macros mir-run-check dev-check portcheck measure site-check \
 	quick check full clean distclean wasmgc-check wasmgc-bench wasmgc-port test-wasmgc-port
@@ -164,6 +164,10 @@ help:
 ## test-unit-targets   upstream's unit suite compiled for each target by both, compared
 ## smoke       hxmc/test/smoke.sh on PORT_BIN: --interp, HXB, JS, sys.ssl, eval.luv
 ## hxmc-test   hxmc's corpus against its golden files (hxmc/test/Corpus.hx)
+## upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run: all
+##             three natively, unit as a wasm32-wasi module under node; skips and their
+##             reasons in hxmc/test/upstream (hxmc/test/UpstreamSuites.hx; SUITES: a subset,
+##             SUITES_TARGET=native|wasm32-wasi: one target)
 ## test-module-cache  the persistent module cache's gate: the same outputs with and without it,
 ##             cold, warm, after edits, for hxmc and JS (hxmc/test/ModuleCacheCheck.hx; with
 ##             bin/npm/native/HOST/haxe; PORT=1 adds the port itself)
@@ -491,6 +495,18 @@ test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 
 hxmc-test: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Corpus -v $(CASES)
+
+# upstream's runtime suites on hxmc (docs/testing.md): unit, sys and threads natively,
+# unit on wasm32-wasi; SUITES and SUITES_TARGET narrow it (CI: a job per target)
+SUITES ?=
+SUITES_TARGET ?=
+upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
+ifneq ($(SUITES_TARGET),wasm32-wasi)
+	$(SCRIPT) UpstreamSuites $(SUITES)
+endif
+ifneq ($(SUITES_TARGET),native)
+	$(SCRIPT) UpstreamSuites --target wasm32-wasi $(or $(SUITES),unit)
+endif
 
 corpus-stage: $(TOOL) $(STD) $(HOST_RT)
 	for t in $(CORPUS_TARGETS); do \

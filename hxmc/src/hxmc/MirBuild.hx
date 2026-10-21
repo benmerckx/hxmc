@@ -716,7 +716,9 @@ class MirBuild {
 	public function build():MFunc {
 		f = new MFunc(p.funcSym(fn));
 		f.blocksHere = fn.blocksHere;
-		f.params = fn.args.mapToVector(a -> mty(a.ty));
+		// (a parameter of type Void, a T->Void callback of a C<Void>: an i32, as a Void
+		// local is; WebAssembly has no value type for Void: corpus case VoidParam)
+		f.params = fn.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));
 		f.ret = mty(fn.ret);
 		var maxId = 0;
 		for (l in fn.args.concat(fn.locals)) {
@@ -1087,7 +1089,11 @@ class MirBuild {
 				if (join.preds.length == 0) add(mk(Unreachable, Void));
 			case SReturn(null):
 				unwindTo(0);
-				retFrom(-1);
+				// (a Void body under a signature with a result, an override of
+				// Base<Void>.f():T: zero, as when it falls off its end; it returned
+				// nothing defined, and the inliner's phi read value -1: corpus
+				// case VoidOverride, upstream's Issue13046)
+				retFrom(f.ret == Void ? -1 : f.ret == F64 ? fconst(0) : f.ret == I64 ? lconst(0, 0) : iconst(0));
 			case SReturn(e) if (cSret >= 0):
 				// (a callback's struct result, through the memory its caller gave)
 				var v = ex(e);
@@ -1203,20 +1209,24 @@ class MirBuild {
 		}
 	}
 
-	// rt_set_ptr(obj, slot, val)
+	// rt_set_ptr(obj, slot, val): the runtime's part (GcPaths.barrierSlow)
+	// only for a young value stored into an object that is not young (a
+	// value that is null or old, the common store into an old object, needs
+	// nothing)
 	function setPtr(obj:Int, slot:Int, val:Int, cls = 0) {
 		var prev = loadM(cls, I64, 8, slot, 0);
 		storeM(cls, 8, slot, 0, val);
 		var ys = loadM(Opt.MCallOnly, I64, 8, symAddr("rt_young_start"), 0);
 		var ye = loadM(Opt.MCallOnly, I64, 8, symAddr("rt_young_end"), 0);
 		var size = op2(Sub, I64, ye, ys);
-		var done = newBlock();
-		var b2 = newBlock();
-		b2.cold = true;
-		// the object is not young: the rest in the runtime (rthxmc.c)
-		br(cmp(CULt, op2(Sub, I64, obj, ys), size), done, b2);
-		seal(b2);
-		cur = b2;
+		var check = newBlock(), slow = newBlock(), done = newBlock();
+		slow.cold = true;
+		br(cmp(CULt, op2(Sub, I64, val, ys), size), check, done);
+		seal(check);
+		cur = check;
+		br(cmp(CULt, op2(Sub, I64, obj, ys), size), done, slow);
+		seal(slow);
+		cur = slow;
 		call("hxmc_barrier_slow", vector(obj, slot, val, prev), Void);
 		jmp(done);
 		seal(done);
@@ -1937,6 +1947,7 @@ class MirBuild {
 					case "Array": 5;
 					case "hxmc_NativeArray": Abi.T_NATIVE_ARRAY;
 					case "Date": Abi.T_DATE;
+					case "Math": Abi.T_MATH;
 					case "haxe_io_Bytes": 8;
 					case _: 0;
 				}

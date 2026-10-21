@@ -191,7 +191,7 @@ class Emit implements hxmc.Target.Emitter {
 				var i = b.ins[k];
 				switch i.op {
 					case JCC | SETCC | CMOV: live = true;
-					case CMP | CMPI | TEST | UCOMI | ALU | ALUI | NEG | CALL: live = false;
+					case CMP | CMPI | TEST | TESTI | UCOMI | ALU | ALUI | NEG | CALL: live = false;
 					case MOVI if (i.flag && !live && i.isym == null): i.flag = false;
 					case _:
 				}
@@ -466,6 +466,8 @@ class Emit implements hxmc.Target.Emitter {
 				a.aluRM(i.cond, i.size, i.d, mem(i));
 			case TEST:
 				a.testRR(i.size, i.s1, i.s2);
+			case TESTI:
+				a.testRI(i.size, i.s1, i.imm);
 			case UCOMI:
 				a.ucomisdRR(i.s1, i.s2);
 			case SETCC:

@@ -125,8 +125,12 @@ class Start {
 	@:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
 		Gc.exn = Mem.addr(v);
 		var h = Gc.hcur;
+		// (the thrower's stack up to the catch, when exception stacks are read: Stacks)
+		Stacks.recordThrow(h);
 		if (h.isNull()) {
 			Gc.uncaught("Uncaught exception: ", v);
+			// (where it was thrown, when the program has its table of lines)
+			Stacks.report();
 			Os.exit(1);
 		}
 		// the C library's longjmp without the signal mask (as the try's setjmp:

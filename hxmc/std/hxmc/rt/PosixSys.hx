@@ -280,7 +280,7 @@ class PosixSys {
 	}
 
 	static inline function outside()
-		Rt.rt_throw("OutsideBounds");
+		throw haxe.io.Error.OutsideBounds;
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
