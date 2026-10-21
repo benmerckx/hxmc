@@ -222,15 +222,24 @@ class Guest {
 			var ci = c == null ? null : l.classes.get(c);
 			inits.push({fn: e.symbol(f), ty: ci == null || ci.tindex < 0 ? null : tn[ci.tindex], share: c != null && stdTypes.exists(core.Globals.sTypePath(c.clPath))});
 		}
-		var selectors = [];
-		for (s in 0...p.selectors.length) {
-			var rows = [];
-			for (c in p.classes) {
-				var m = c.findMethod(p.selectors[s].name);
-				if (m != null && m.dispatchSel == s && c.tindex >= Abi.T_FIRST && p.isLive(m)) rows.push({ty: tn[c.tindex], fn: e.symbol(m)});
+		// (each class's effective methods once, as findMethod finds them: the
+		// rows of each selector in the classes' order)
+		var rowsOf:Array<Array<Dynamic>> = [for (_ in 0...p.selectors.length) []];
+		for (c in p.classes) {
+			if (c.tindex < Abi.T_FIRST) continue;
+			var seen = new Map<String, Bool>();
+			var k = c;
+			while (k != null) {
+				for (name => m in k.methods)
+					if (!seen.exists(name)) {
+						seen.set(name, true);
+						var s = m.dispatchSel;
+						if (s >= 0 && p.selectors[s].name == name && p.isLive(m)) rowsOf[s].push({ty: tn[c.tindex], fn: e.symbol(m)});
+					}
+				k = k.sup;
 			}
-			selectors.push({sym: e.selNames[s], rows: rows});
 		}
+		var selectors = [for (s in 0...p.selectors.length) {sym: e.selNames[s], rows: rowsOf[s]}];
 		var entries = [];
 		if (main != null)
 			for (cf in main.clOrderedStatics) {
