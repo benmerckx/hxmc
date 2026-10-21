@@ -18,7 +18,7 @@ class GcCheck {
 	static final common = ["-cp", "bin/hxmc/std", "--custom-target", "hxmc"];
 	// (the corpus cases that need nothing WasmGC lacks: the others' counterparts
 	// are in hxmc/test/wasmgc, without the collector's API and raw memory)
-	static final CASES = ["AnonFields", "CreateInstance", "DateValues", "EnumIdentity", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads", "Utf8Bytes", "VectorLength"];
+	static final CASES = ["AnonFields", "ClosureElements", "CreateInstance", "DateValues", "EnumIdentity", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads", "Utf8Bytes", "VectorLength"];
 
 	static function run(cmd:String, args:Array<String>):{code:Int, out:String, err:String} {
 		var p = new Process(cmd, args);

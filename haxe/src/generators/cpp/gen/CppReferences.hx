@@ -61,8 +61,8 @@ class CppReferences {
 	 */
 	public static function findReferencedTypesFlags(ctx:Context, obj:ModuleType, filter:Null<String>, superDeps:PathMap<Array<GlobalTypePath>>,
 			constructorDeps:PathMap<TClassField>, headerOnly:Bool, forDepends:Bool, includeSuperArgs:Bool):{deps:Array<GlobalTypePath>, flags:Array<Bool>} {
-		function allVirtualFunctions(clazz:TClass):Array<{field:TClassField, args:Array<{name:String, optional:Bool, type:T}>, ret:T}> {
-			function currentVirtualFunctionsRev(clazz:TClass, baseFunctions:Array<{field:TClassField, args:Array<{name:String, optional:Bool, type:T}>, ret:T}>) {
+		function allVirtualFunctions(clazz:TClass):Array<{field:TClassField, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T}> {
+			function currentVirtualFunctionsRev(clazz:TClass, baseFunctions:Array<{field:TClassField, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T}>) {
 				var result = baseFunctions;
 				for (elem in clazz.clOrderedFields) {
 					result = switch [follow(elem.cfType), elem.cfKind] {

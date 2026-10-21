@@ -169,7 +169,7 @@ class DisplayPath {
 		return DisplayException.sendPositionsRaise(ctx.com, [p]);
 	}
 
-	public static function handlePathDisplay(ctx:Typer, path:Array<PlacedName>, p:Pos):Void {
+	public static function handlePathDisplay(ctx:Typer, path:haxe.ds.Vector<PlacedName>, p:Pos):Void {
 		function classField(c:TClass, name:String):Void {
 			c.clBuild();
 			var cf = core.ds.PMap.find(name, c.clStatics);

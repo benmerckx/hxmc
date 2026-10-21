@@ -107,6 +107,7 @@ class RuntimeSymbols {
 		{sym: "hx_narray_get_slow", kind: FUNC, families: LINEAR, by: "MirBuild.narrayDyn"},
 		{sym: "hx_narray_set_slow", kind: FUNC, families: LINEAR, by: "MirBuild.narrayDyn"},
 		{sym: "hx_narray_bad_length", kind: FUNC, families: LINEAR, by: "MirBuild: a NativeArray's negative length"},
+		{sym: "hx_narray_new_n", kind: FUNC, families: LINEAR, by: "MirBuild: a NativeArray literal (hxmc_narray_lit)"},
 		{sym: "hx_anon_get_slow", kind: FUNC, families: LINEAR, by: "MirBuild: a structure's field read"},
 		{sym: "hx_anon_set_slow", kind: FUNC, families: LINEAR, by: "MirBuild: a structure's field write"},
 		{sym: "hx_anon_call_slow", kind: FUNC, families: LINEAR, by: "MirBuild.callAnon"},

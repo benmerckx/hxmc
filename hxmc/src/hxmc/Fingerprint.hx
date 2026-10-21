@@ -208,7 +208,7 @@ class Fingerprint {
 		}
 	}
 
-	function stmts(ss:Array<Stmt>) {
+	function stmts(ss:haxe.ds.Vector<Stmt>) {
 		word(LIST);
 		word(ss.length);
 		for (s in ss)
@@ -311,7 +311,7 @@ class Fingerprint {
 		}
 	}
 
-	function args(xs:Array<Ex>) {
+	function args(xs:haxe.ds.Vector<Ex>) {
 		word(xs.length);
 		for (x in xs)
 			ex(x);
@@ -547,22 +547,22 @@ class Fingerprint {
 // literals that walk collects. Driver computes them before the keys, depth
 // by depth from the deepest, in parallel.
 class Inlined {
-	public var funcs:Array<FuncInfo>;
+	public var funcs:haxe.ds.Vector<FuncInfo>;
 	public var index = new Map<FuncInfo, Int>();
 	// per depth, per function k: its digest's words (2k, 2k + 1) and literals (literal, symbol, ...)
-	public var digests:Array<Array<Int>> = [];
-	public var literals:Array<Array<Array<String>>> = [];
+	public var digests = new haxe.ds.Vector<haxe.ds.Vector<Int>>(Inline.DEPTH + 1);
+	public var literals = new haxe.ds.Vector<haxe.ds.Vector<Array<String>>>(Inline.DEPTH + 1);
 
 	var prep:Prep;
 
-	public function new(prep:Prep, funcs:Array<FuncInfo>) {
+	public function new(prep:Prep, funcs:haxe.ds.Vector<FuncInfo>) {
 		this.prep = prep;
 		this.funcs = funcs;
 		for (k in 0...funcs.length)
 			index.set(funcs[k], k);
 		for (d in 0...Inline.DEPTH + 1) {
-			digests.push(d == 0 ? [] : [for (_ in 0...2 * funcs.length) 0]);
-			literals.push(d == 0 ? [] : [for (_ in 0...funcs.length) null]);
+			digests[d] = new haxe.ds.Vector(d == 0 ? 0 : 2 * funcs.length);
+			literals[d] = new haxe.ds.Vector(d == 0 ? 0 : funcs.length);
 		}
 	}
 

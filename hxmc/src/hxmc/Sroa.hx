@@ -1,6 +1,10 @@
 package hxmc;
 
 import hxmc.Mir;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // Scalar replacement of frame slots (after inlining, before Opt): a slot
 // whose address is only the base of loads and stores at constant offsets
@@ -23,7 +27,9 @@ class Sroa {
 			for (i in b.ins)
 				if (i.op == Call && i.returnsTwice) return;
 		// the uses of each value (StackAddr and its copies), per slot
-		var addrs:Array<Array<MIns>> = [for (_ in f.slots) []];
+		var addrs = new Vector<Array<MIns>>(f.slots.length);
+		for (s in 0...addrs.length)
+			addrs[s] = [];
 		var any = false;
 		for (b in f.blocks)
 			for (i in b.ins)
@@ -32,8 +38,7 @@ class Sroa {
 					any = true;
 				}
 		if (!any) return;
-		var uses:Array<Null<Array<MIns>>> = [];
-		uses.resize(f.vals.length);
+		var uses = new Vector<Null<Array<MIns>>>(f.vals.length);
 		inline function use(v:Int, i:MIns) {
 			if (uses[v] == null) uses[v] = [];
 			uses[v].push(i);
@@ -44,9 +49,8 @@ class Sroa {
 				if (i.a >= 0) use(i.a, i);
 				if (i.b >= 0) use(i.b, i);
 				if (i.c >= 0) use(i.c, i);
-				if (i.args != null)
-					for (x in i.args)
-						use(x, i);
+				for (x in i.args)
+					use(x, i);
 			}
 		for (s in 0...f.slots.length)
 			if (addrs[s].length > 0) promote(s, addrs[s], uses);
@@ -77,7 +81,7 @@ class Sroa {
 				if (trivial && same >= 0) {
 					p.op = Copy;
 					p.a = same;
-					p.args = null;
+					p.args = vector();
 					changed = true;
 				}
 			}
@@ -87,7 +91,7 @@ class Sroa {
 	var copies:Array<MIns> = []; // (of the addresses of the slot being promoted)
 
 	// the accesses of slot s, or null when it cannot be promoted
-	function accesses(roots:Array<MIns>, uses:Array<Null<Array<MIns>>>):Null<Array<MIns>> {
+	function accesses(roots:Array<MIns>, uses:Vector<Null<Array<MIns>>>):Null<Array<MIns>> {
 		var r = [];
 		copies = [];
 		var work = roots.copy();
@@ -118,7 +122,7 @@ class Sroa {
 	static inline function shapeOk(t:MTy, size:Int):Bool
 		return size == 8 && (t == I64 || t == F64) || size <= 4 && t == I32;
 
-	function promote(s:Int, roots:Array<MIns>, uses:Array<Null<Array<MIns>>>) {
+	function promote(s:Int, roots:Array<MIns>, uses:Vector<Null<Array<MIns>>>) {
 		var acc = accesses(roots, uses);
 		if (acc == null) return;
 		// the ranges: identical or disjoint
@@ -142,8 +146,8 @@ class Sroa {
 		var nb = 0;
 		for (b in f.blocks)
 			if (b.id >= nb) nb = b.id + 1;
-		var lastStore:Array<Null<Map<Int, MIns>>> = [for (_ in 0...nb) null];
-		var touched:Array<Bool> = [for (_ in 0...nb) false];
+		var lastStore = new Vector<Null<Map<Int, MIns>>>(nb);
+		var touched = new Vector<Bool>(nb);
 		for (b in f.blocks)
 			for (i in b.ins)
 				if (varOf.exists(i.id)) {
@@ -157,7 +161,7 @@ class Sroa {
 		// the access, or at the end of a block before its terminator)
 		var stored = new Map<Int, Int>(); // store -> the variable's value it gives
 		var entryVal = new Map<String, Int>();
-		var zeros:Array<Int> = [for (_ in vars) -1];
+		var zeros = new Vector<Int>(vars.length, -1);
 		var pending:Array<{b:MBlock, at:MIns, i:MIns}> = []; // instructions to insert
 		function newIns(op:Op, ty:MTy, b:MBlock, before:MIns):MIns {
 			var x = new MIns(op, ty);
@@ -209,15 +213,16 @@ class Sroa {
 				phi.id = f.vals.length;
 				f.vals.push(phi);
 				phi.block = b;
-				phi.args = [];
 				phis.push(phi);
 				var k = 0;
 				while (k < b.ins.length && b.ins[k].op == Phi)
 					k++;
 				b.ins.insert(k, phi);
 				entryVal.set(key, phi.id);
-				for (p in b.preds)
-					phi.args.push(readEnd(v, p));
+				var args = new Vector<Int>(b.preds.length);
+				for (q in 0...args.length)
+					args[q] = readEnd(v, b.preds[q]);
+				phi.args = args;
 				return phi.id;
 			}
 			entryVal.set(key, r);

@@ -96,7 +96,10 @@ class ElfReader {
 			return shoff + 64 * i;
 		var strOff = i64(sh(shstrndx) + 24);
 		var o = new Obj();
-		var secs:Array<Null<Section>> = [];
+		var secs = new haxe.ds.Vector<Null<Section>>(shnum);
+		// (an index read from the file: none out of range, as a malformed file may have)
+		inline function secAt(i:Int):Null<Section>
+			return i >= 0 && i < shnum ? secs[i] : null;
 		var symtab = -1;
 		var funcs:Null<Section> = null;
 		for (i in 0...shnum) {
@@ -108,7 +111,6 @@ class ElfReader {
 			var size = i64(h + 32);
 			var align = i64(h + 48);
 			if (type == 2) symtab = i;
-			secs.push(null);
 			if (name == FuncRec.SECTION && type == 1) {
 				// the function records (hxmc's objects): read once the relocations are
 				funcs = new Section(name, RoData, 8);
@@ -139,7 +141,7 @@ class ElfReader {
 		var symOff = i64(h + 24);
 		var nsyms = Std.int(i64(h + 32) / 24);
 		var strtab = i64(sh(u32(h + 40)) + 24);
-		var syms:Array<Null<Symbol>> = [];
+		var syms = new haxe.ds.Vector<Null<Symbol>>(nsyms > 0 ? nsyms : 0);
 		var nlocal = 0;
 		for (k in 0...nsyms) {
 			var at = symOff + 24 * k;
@@ -148,10 +150,7 @@ class ElfReader {
 			var shndx = u16(at + 6);
 			var name = cstr(strtab + u32(at));
 			var value = i64(at + 8);
-			if (k == 0) {
-				syms.push(null);
-				continue;
-			}
+			if (k == 0) continue;
 			var s:Symbol;
 			if (bind == 0) {
 				// local: its own object (names may repeat)
@@ -169,23 +168,19 @@ class ElfReader {
 				s.abs = true;
 				s.offset = value;
 			} else if (shndx != 0 && shndx < 0xff00) {
-				var sec = secs[shndx];
-				if (sec == null || sec == funcs || sec == o.ehFrame) {
-					// a symbol of a dropped section
-					syms.push(null);
-					continue;
-				}
+				var sec = secAt(shndx);
+				if (sec == null || sec == funcs || sec == o.ehFrame) continue; // (a symbol of a dropped section)
 				s.section = sec;
 				s.offset = value;
 				s.size = i64(at + 16);
 			}
-			syms.push(s);
+			syms[k] = s;
 		}
 		// relocations of the kept sections
 		for (i in 0...shnum) {
 			var h = sh(i);
 			if (u32(h + 4) != 4) continue;
-			var target = secs[u32(h + 44)];
+			var target = secAt(u32(h + 44));
 			if (target == null) continue;
 			var off = i64(h + 24);
 			var n = Std.int(i64(h + 32) / 24);
@@ -193,7 +188,7 @@ class ElfReader {
 				var at = off + 24 * k;
 				var type = u32(at + 8);
 				var si = u32(at + 12);
-				var sym = syms[si];
+				var sym = si >= 0 && si < nsyms ? syms[si] : null;
 				if (sym == null) throw "hxmc: relocation against a dropped symbol in " + target.name;
 				target.relocs.push(new Reloc(i64(at), relocKind(type), sym, i64(at + 16)));
 			}

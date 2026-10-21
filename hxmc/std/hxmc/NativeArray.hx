@@ -32,6 +32,13 @@ package hxmc;
 	/** Sets element `i` as unsafeGet reads it. **/
 	@:noCompletion public function unsafeSet(i:Int, value:T):Void;
 
+	/**
+		A new NativeArray of the elements of `values`, which must be an array
+		literal: allocated at its length and filled in order, as an Array
+		literal is (no Array is made).
+	**/
+	@:noCompletion public static function literal<T>(values:Array<T>):NativeArray<T>;
+
 	public inline function fill(value:T):Void {
 		for (i in 0...length) unsafeSet(i, value);
 	}

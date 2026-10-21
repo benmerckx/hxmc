@@ -2,6 +2,9 @@ package filters.safe;
 
 import core.TType;
 import core.TFunctions as TypeOps;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 class AddFinalReturn {
 	// Adds final returns to functions as required by some platforms
@@ -17,17 +20,16 @@ class AddFinalReturn {
 				return {eexpr: TReturn({eexpr: TConst(c), epos: p, etype: t}), etype: TypeOps.tDynamic, epos: p};
 			}
 			return switch e.eexpr {
-				case TBlock(el) if (el.length == 0): {eexpr: TBlock([defReturn(e.epos)]), etype: e.etype, epos: e.epos};
+				case TBlock(el) if (el.length == 0): {eexpr: TBlock(vector(defReturn(e.epos))), etype: e.etype, epos: e.epos};
 				case TBlock(el):
-					var rest = el.slice(0, el.length - 1);
 					var last = loop(el[el.length - 1], t);
-					switch last.eexpr {
-						case TBlock(el2): rest = rest.concat(el2);
-						case _: rest.push(last);
+					var rest = switch last.eexpr {
+						case TBlock(el2): el.slice(0, el.length - 1).concat(el2);
+						case _: el.withLast(last);
 					}
 					{eexpr: TBlock(rest), etype: e.etype, epos: e.epos};
 				case TReturn(_): e;
-				case _: {eexpr: TBlock([e, defReturn(e.epos)]), etype: e.etype, epos: e.epos};
+				case _: {eexpr: TBlock(vector(e, defReturn(e.epos))), etype: e.etype, epos: e.epos};
 			};
 		}
 		e = core.Texpr.mapExpr(addFinalReturn, e);

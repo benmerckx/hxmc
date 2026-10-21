@@ -25,11 +25,15 @@ import core.MetaList.StrictMeta;
 import core.Ast.Ast.*;
 import core.Globals.*;
 import core.Globals.Pos;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class Reification {
 	public static function reify(inMacro:Bool):{toExpr:Expr->Expr, toCtype:TypeHint->Pos->Expr, toTypeDef:TypeDecl->Expr} {
 		var currentPos:Null<Expr> = null;
-		inline function en(ename:String, name:String, values:Array<Expr>, p:Pos):Expr {
+		inline function en(ename:String, name:String, values:Vector<Expr>, p:Pos):Expr {
 			// We don't want the position of the call expression to span the entire call (#6396).
 			var min:core.Globals.Pos = {pfile: p.pfile, pmin: p.pmin, pmax: p.pmin};
 			var constructor:Expr = {expr: EConst(Ident(name)), pos: min};
@@ -41,11 +45,14 @@ class Reification {
 		inline function placed(n:PlacedName):Expr return toString(n.name, n.pos);
 		inline function nil(p:Pos):Expr return {expr: EConst(Ident("null")), pos: p};
 		function arr<A>(f:A->Pos->Expr, values:Array<A>,
+				p:Pos):Expr return {expr: EArrayDecl(values.mapToVector(function(v) return f(v, p))), pos: p};
+		// port: arr of an AST list kept as a Vector
+		function vec<A>(f:A->Pos->Expr, values:Vector<A>,
 				p:Pos):Expr return {expr: EArrayDecl(values.map(function(v) return f(v, p))), pos: p};
 		function opt<A>(f:A->Pos->Expr, v:Null<A>, p:Pos):Expr return v == null ? nil(p) : f(v, p);
 		inline function bool(v:Bool, p:Pos):Expr return {expr: EConst(Ident(v ? "true" : "false")), pos: p};
 		inline function obj(fields:Array<{name:String, e:Expr}>, p:Pos):Expr return {
-			expr: EObjectDecl(fields.map(function(f) return ({
+			expr: EObjectDecl(fields.mapToVector(function(f) return ({
 				key: {name: f.name, pos: nullPos, quote: NoQuotes},
 				expr: f.e
 			} : core.Ast.ObjectField))),
@@ -57,17 +64,17 @@ class Reification {
 		inline function macroField(cls:String, name:String,
 				p:Pos):Expr return field(field(field({expr: EConst(Ident("haxe")), pos: p}, "macro", p), cls, p), name, p);
 		inline function toConst(c:Constant, p:Pos):Expr return switch c {
-			case Int(i, suffix): en("Constant", "CInt", [rawString(i, p), opt(rawString, suffix, p)], p);
-			case String(s, kind): en("Constant", "CString", [
+			case Int(i, suffix): en("Constant", "CInt", vector(rawString(i, p), opt(rawString, suffix, p)), p);
+			case String(s, kind): en("Constant", "CString", vector(
 					rawString(s, p),
-					en("StringLiteralKind", kind == SDoubleQuotes ? "DoubleQuotes" : "SingleQuotes", [], p)
-				], p);
-			case Float(f, suffix): en("Constant", "CFloat", [rawString(f, p), opt(rawString, suffix, p)], p);
-			case Ident(s): en("Constant", "CIdent", [rawString(s, p)], p);
-			case Regexp(r, o): en("Constant", "CRegexp", [rawString(r, p), rawString(o, p)], p);
+					en("StringLiteralKind", kind == SDoubleQuotes ? "DoubleQuotes" : "SingleQuotes", vector(), p)
+				), p);
+			case Float(f, suffix): en("Constant", "CFloat", vector(rawString(f, p), opt(rawString, suffix, p)), p);
+			case Ident(s): en("Constant", "CIdent", vector(rawString(s, p)), p);
+			case Regexp(r, o): en("Constant", "CRegexp", vector(rawString(r, p), rawString(o, p)), p);
 		};
 		function toBinop(op:Binop, p:Pos):Expr return switch op {
-			case OpAssignOp(op): en("Binop", "OpAssignOp", [toBinop(op, p)], p);
+			case OpAssignOp(op): en("Binop", "OpAssignOp", vector(toBinop(op, p)), p);
 			case _: en("Binop", switch op {
 					case OpAdd: "OpAdd";
 					case OpMult: "OpMult";
@@ -94,13 +101,13 @@ class Reification {
 					case OpIn: "OpIn";
 					case OpNullCoal: "OpNullCoal";
 					case OpAssignOp(_): throw "assert";
-				}, [], p);
+				}, vector(), p);
 		};
 		var toExpr:Expr->Pos->Expr = null;
 		var toCtype:TypeHint->Pos->Expr = null;
 		var toCfield:ClassField->Pos->Expr = null;
 		var toMeta:Metadata->Pos->Expr = null;
-		var toExprArray:Array<Expr>->Pos->Expr = null;
+		var toExprArray:Vector<Expr>->Pos->Expr = null;
 		inline function toPos(p:Pos):Expr {
 			if (currentPos != null) return currentPos;
 			if (inMacro) return {expr: EUntyped({expr: EConst(Ident("$__mk_pos__")), pos: p}), pos: p};
@@ -113,11 +120,11 @@ class Reification {
 		inline function toEncPos(p:Pos):Expr {
 			if (currentPos != null) return currentPos;
 			if (inMacro) return toPos(p);
-			return {expr: ECall(macroField("Context", "makePosition", p), [toPos(p)]), pos: p};
+			return {expr: ECall(macroField("Context", "makePosition", p), vector(toPos(p))), pos: p};
 		}
 		function toTparam(t:TypeParamOrConst, p:Pos):Expr return switch t {
-			case TPType(t): en("TypeParam", "TPType", [toCtype(t, p)], p);
-			case TPExpr(e): en("TypeParam", "TPExpr", [toExpr(e, p)], p);
+			case TPType(t): en("TypeParam", "TPType", vector(toCtype(t, p)), p);
+			case TPExpr(e): en("TypeParam", "TPExpr", vector(toExpr(e, p)), p);
 		};
 		inline function toTpath(ptp:PlacedTypePath):Expr {
 			var t = ptp.path;
@@ -131,7 +138,7 @@ class Reification {
 					fld("pack", field(ei, "pack", p)),
 					fld("name", field(ei, "name", p)),
 					fld("sub", field(ei, "sub", p)),
-					fld("params", arr(toTparam, t.tparams, p)),
+					fld("params", vec(toTparam, t.tparams, p)),
 					fld("pos", toPos(p)),
 					fld("posPath", toPos(ptp.posPath))
 				], p);
@@ -139,7 +146,7 @@ class Reification {
 			var fields = [
 				fld("pack", arr(toString, t.tpackage, p)),
 				fld("name", toString(t.tname, p)),
-				fld("params", arr(toTparam, t.tparams, p)),
+				fld("params", vec(toTparam, t.tparams, p)),
 				fld("pos", toPos(p)),
 				fld("posPath", toPos(ptp.posPath))
 			];
@@ -158,15 +165,15 @@ class Reification {
 					tname: n
 				}
 			}) if (n.charAt(0) == "$"): toString(n, p);
-			case CTPath(t): en("ComplexType", "TPath", [toTpath(t)], p);
-			case CTFunction(args, ret): en("ComplexType", "TFunction", [arr(toTypeHint, args, p), toTypeHint(ret, p)], p);
-			case CTAnonymous(fields): en("ComplexType", "TAnonymous", [arr(toCfield, fields, p)], p);
-			case CTParent(t): en("ComplexType", "TParent", [toTypeHint(t, p)], p);
+			case CTPath(t): en("ComplexType", "TPath", vector(toTpath(t)), p);
+			case CTFunction(args, ret): en("ComplexType", "TFunction", vector(vec(toTypeHint, args, p), toTypeHint(ret, p)), p);
+			case CTAnonymous(fields): en("ComplexType", "TAnonymous", vector(vec(toCfield, fields, p)), p);
+			case CTParent(t): en("ComplexType", "TParent", vector(toTypeHint(t, p)), p);
 			case CTExtend(tl,
-				fields): en("ComplexType", "TExtend", [arr(function(t, _) return toTpath(t), tl, p), arr(toCfield, fields, p)], p);
-			case CTOptional(t): en("ComplexType", "TOptional", [toTypeHint(t, p)], p);
-			case CTNamed(n, t): en("ComplexType", "TNamed", [placed(n), toTypeHint(t, p)], p);
-			case CTIntersection(tl): en("ComplexType", "TIntersection", [arr(toCtype, tl, p)], p);
+				fields): en("ComplexType", "TExtend", vector(vec(function(t, _) return toTpath(t), tl, p), vec(toCfield, fields, p)), p);
+			case CTOptional(t): en("ComplexType", "TOptional", vector(toTypeHint(t, p)), p);
+			case CTNamed(n, t): en("ComplexType", "TNamed", vector(placed(n), toTypeHint(t, p)), p);
+			case CTIntersection(tl): en("ComplexType", "TIntersection", vector(vec(toCtype, tl, p)), p);
 		};
 		inline function toFun(f:Func, p:Pos):Expr {
 			p = {pfile: p.pfile, pmin: p.pmin, pmax: p.pmin};
@@ -182,13 +189,13 @@ class Reification {
 			function param(t:TypeParam, p:Pos):Expr return obj([
 				fld("name", placed(t.tpName)),
 				fld("constraints", t.tpConstraints == null ? nil(p) : arr(toCtype, [t.tpConstraints], p)),
-				fld("params", arr(param, t.tpParams, p))
+				fld("params", vec(param, t.tpParams, p))
 			], p);
 			return obj([
-				fld("args", arr(arg, f.fArgs, p)),
+				fld("args", vec(arg, f.fArgs, p)),
 				fld("ret", opt(toTypeHint, f.fType, p)),
 				fld("expr", opt(toExpr, f.fExpr, p)),
-				fld("params", arr(param, f.fParams, p))
+				fld("params", vec(param, f.fParams, p))
 			], p);
 		}
 		toCfield = function(f, p) {
@@ -206,12 +213,12 @@ class Reification {
 				case AAbstract: "AAbstract";
 				case AOverload: "AOverload";
 				case AEnum: "AEnum";
-			}, [], p);
+			}, vector(), p);
 			var kind = switch f.cffKind {
-				case FVar(ct, e): en("FieldType", "FVar", [opt(toTypeHint, ct, p), opt(toExpr, e, p)], p);
-				case FFun(fun): en("FieldType", "FFun", [toFun(fun, p)], p);
+				case FVar(ct, e): en("FieldType", "FVar", vector(opt(toTypeHint, ct, p), opt(toExpr, e, p)), p);
+				case FFun(fun): en("FieldType", "FFun", vector(toFun(fun, p)), p);
 				case FProp(get, set, t,
-					e): en("FieldType", "FProp", [placed(get), placed(set), opt(toTypeHint, t, p), opt(toExpr, e, p)], p);
+					e): en("FieldType", "FProp", vector(placed(get), placed(set), opt(toTypeHint, t, p), opt(toExpr, e, p)), p);
 			};
 			var fields = [fld("name", placed(f.cffName))];
 			if (f.cffDoc != null) fields.push(fld("doc", toString(genDocText(f.cffDoc), p)));
@@ -241,37 +248,37 @@ class Reification {
 					}
 				case _:
 			}
-			return arr(toExpr, values, p);
+			return vec(toExpr, values, p);
 		};
 		toExpr = function(e, _) {
 			var p = e.pos;
 			function expr(name:String,
-					args:Array<Expr>):Expr return obj([fld("expr", en("ExprDef", name, args, p)), fld("pos", toPos(p))], p);
+					args:Vector<Expr>):Expr return obj([fld("expr", en("ExprDef", name, args, p)), fld("pos", toPos(p))], p);
 			inline function loop(e:Expr):Expr return toExpr(e, e.pos);
 			return switch e.expr {
 				case EConst(Ident(n)) if (n.charAt(0) == "$" && n.length > 1 && n != "$__mk_pos__"): toString(n, p);
-				case EConst(c): expr("EConst", [toConst(c, p)]);
-				case EArray(e1, e2): expr("EArray", [loop(e1), loop(e2)]);
-				case EBinop(op, e1, e2): expr("EBinop", [toBinop(op, p), loop(e1), loop(e2)]);
+				case EConst(c): expr("EConst", vector(toConst(c, p)));
+				case EArray(e1, e2): expr("EArray", vector(loop(e1), loop(e2)));
+				case EBinop(op, e1, e2): expr("EBinop", vector(toBinop(op, p), loop(e1), loop(e2)));
 				case EField(e1, s, kind):
 					var patched = patchStringPos(p, s);
-					expr("EField", [
+					expr("EField", vector(
 						loop(e1),
 						toString(s, patched),
-						en("EFieldKind", kind == EFNormal ? "Normal" : "Safe", [], patched)
-					]);
-				case EParenthesis(e1): expr("EParenthesis", [loop(e1)]);
-				case EObjectDecl(fl): expr("EObjectDecl", [
-						arr(function(f:ObjectField, p) return obj([
+						en("EFieldKind", kind == EFNormal ? "Normal" : "Safe", vector(), patched)
+					));
+				case EParenthesis(e1): expr("EParenthesis", vector(loop(e1)));
+				case EObjectDecl(fl): expr("EObjectDecl", vector(
+						vec(function(f:ObjectField, p) return obj([
 							fld("field", toString(f.key.name, e.pos)),
 							fld("expr", loop(f.expr)),
-							fld("quotes", en("QuoteStatus", f.key.quote == NoQuotes ? "Unquoted" : "Quoted", [], f.key.pos))
+							fld("quotes", en("QuoteStatus", f.key.quote == NoQuotes ? "Unquoted" : "Quoted", vector(), f.key.pos))
 						], p), fl, p)
-					]);
-				case EArrayDecl(el): expr("EArrayDecl", [toExprArray(el, p)]);
-				case ECall(e1, el): expr("ECall", [loop(e1), toExprArray(el, p)]);
-				case ENew(ptp, el): expr("ENew", [toTpath(ptp), toExprArray(el, p)]);
-				case EUnop(op, flag, e1): expr("EUnop", [
+					));
+				case EArrayDecl(el): expr("EArrayDecl", vector(toExprArray(el, p)));
+				case ECall(e1, el): expr("ECall", vector(loop(e1), toExprArray(el, p)));
+				case ENew(ptp, el): expr("ENew", vector(toTpath(ptp), toExprArray(el, p)));
+				case EUnop(op, flag, e1): expr("EUnop", vector(
 						en("Unop", switch op {
 							case Increment: "OpIncrement";
 							case Decrement: "OpDecrement";
@@ -279,12 +286,12 @@ class Reification {
 							case Neg: "OpNeg";
 							case NegBits: "OpNegBits";
 							case Spread: "OpSpread";
-						}, [], p),
+						}, vector(), p),
 						bool(flag == Postfix, p),
 						loop(e1)
-					]);
-				case EVars(vl): expr("EVars", [
-						arr(function(v:EVar, p) return obj([
+					));
+				case EVars(vl): expr("EVars", vector(
+						vec(function(v:EVar, p) return obj([
 							fld("name", toString(v.evName.name, v.evName.pos)),
 							fld("namePos", toPos(v.evName.pos)),
 							fld("type", opt(toTypeHint, v.evType, p)),
@@ -293,43 +300,43 @@ class Reification {
 							fld("isStatic", bool(v.evStatic, p)),
 							fld("meta", toMeta(v.evMeta, p))
 						], p), vl, p)
-					]);
+					));
 				case EFunction(kind, f):
 					var k = switch kind {
-						case FKAnonymous: en("FunctionKind", "FAnonymous", [], p);
-						case FKArrow: en("FunctionKind", "FArrow", [], p);
-						case FKNamed(n, inlineFlag): en("FunctionKind", "FNamed", [toString(n.name, n.pos), bool(inlineFlag, n.pos)], p);
+						case FKAnonymous: en("FunctionKind", "FAnonymous", vector(), p);
+						case FKArrow: en("FunctionKind", "FArrow", vector(), p);
+						case FKNamed(n, inlineFlag): en("FunctionKind", "FNamed", vector(toString(n.name, n.pos), bool(inlineFlag, n.pos)), p);
 					};
-					expr("EFunction", [k, toFun(f, p)]);
-				case EBlock(el): expr("EBlock", [toExprArray(el, p)]);
-				case EFor(e1, e2): expr("EFor", [loop(e1), loop(e2)]);
-				case EIf(e1, e2, eelse): expr("EIf", [loop(e1), loop(e2), opt(toExpr, eelse, p)]);
-				case EWhile(e1, e2, flag): expr("EWhile", [loop(e1), loop(e2), bool(flag == NormalWhile, p)]);
-				case ESwitch(e1, cases, def): expr("ESwitch", [
+					expr("EFunction", vector(k, toFun(f, p)));
+				case EBlock(el): expr("EBlock", vector(toExprArray(el, p)));
+				case EFor(e1, e2): expr("EFor", vector(loop(e1), loop(e2)));
+				case EIf(e1, e2, eelse): expr("EIf", vector(loop(e1), loop(e2), opt(toExpr, eelse, p)));
+				case EWhile(e1, e2, flag): expr("EWhile", vector(loop(e1), loop(e2), bool(flag == NormalWhile, p)));
+				case ESwitch(e1, cases, def): expr("ESwitch", vector(
 						loop(e1),
-						arr(function(c:SwitchCase, p) return obj([
+						vec(function(c:SwitchCase, p) return obj([
 							fld("values", toExprArray(c.values, p)),
 							fld("guard", opt(toExpr, c.guard, p)),
 							fld("expr", opt(toExpr, c.expr, p))
 						], p), cases, p),
 						opt(function(d:SwitchDefault, p) return opt(toExpr, d.expr, p), def, p)
-					]);
-				case ETry(e1, catches): expr("ETry", [
+					));
+				case ETry(e1, catches): expr("ETry", vector(
 						loop(e1),
-						arr(function(c:Catch, p) return obj([
+						vec(function(c:Catch, p) return obj([
 							fld("name", toString(c.name.name, p)),
 							fld("type", opt(toCtype, c.type, p)),
 							fld("expr", loop(c.expr))
 						], p), catches, p)
-					]);
-				case EReturn(eo): expr("EReturn", [opt(toExpr, eo, p)]);
-				case EBreak: expr("EBreak", []);
-				case EContinue: expr("EContinue", []);
-				case EUntyped(e1): expr("EUntyped", [loop(e1)]);
-				case EThrow(e1): expr("EThrow", [loop(e1)]);
-				case ECast(e1, ct): expr("ECast", [loop(e1), opt(toTypeHint, ct, p)]);
-				case EIs(e1, ct): expr("EIs", [loop(e1), toTypeHint(ct, p)]);
-				case EDisplay(e1, dk): expr("EDisplay", [
+					));
+				case EReturn(eo): expr("EReturn", vector(opt(toExpr, eo, p)));
+				case EBreak: expr("EBreak", vector());
+				case EContinue: expr("EContinue", vector());
+				case EUntyped(e1): expr("EUntyped", vector(loop(e1)));
+				case EThrow(e1): expr("EThrow", vector(loop(e1)));
+				case ECast(e1, ct): expr("ECast", vector(loop(e1), opt(toTypeHint, ct, p)));
+				case EIs(e1, ct): expr("EIs", vector(loop(e1), toTypeHint(ct, p)));
+				case EDisplay(e1, dk): expr("EDisplay", vector(
 						loop(e1),
 						en("DisplayKind", (switch dk {
 							case DKCall: "DKCall";
@@ -337,55 +344,55 @@ class Reification {
 							case DKStructure: "DKStructure";
 							case DKMarked: "DKMarked";
 							case DKPattern(_): "DKPattern";
-						}), [], p)
-					]);
-				case ETernary(e1, e2, e3): expr("ETernary", [loop(e1), loop(e2), loop(e3)]);
-				case ECheckType(e1, ct): expr("ECheckType", [loop(e1), toTypeHint(ct, p)]);
+						}), vector(), p)
+					));
+				case ETernary(e1, e2, e3): expr("ETernary", vector(loop(e1), loop(e2), loop(e3)));
+				case ECheckType(e1, ct): expr("ECheckType", vector(loop(e1), toTypeHint(ct, p)));
 				case EMeta(meta, e1):
 					var mp = meta.pos;
 					switch [(cast meta.meta : StrictMeta), meta.exprs] {
 						case [StrictMeta.Dollar("" | "e"), _]: e1;
-						case [StrictMeta.Dollar("a"), _]: expr("EArrayDecl", [
+						case [StrictMeta.Dollar("a"), _]: expr("EArrayDecl", vector(
 								switch e1.expr {
 									case EArrayDecl(el):
 										toExprArray(el, mp);
 									case _:
 										e1;
 								}
-							]);
-						case [StrictMeta.Dollar("b"), _]: expr("EBlock", [e1]);
+							));
+						case [StrictMeta.Dollar("b"), _]: expr("EBlock", vector(e1));
 						// TODO: can $v and $i be implemented better?
 						case [StrictMeta.Dollar("v"), _]: switch e1.expr {
 								case EParenthesis({
 									expr: ECheckType(e2, {type: CTPath({path: {tname: "String", tpackage: []}})})
-								}): expr("EConst", [en("Constant", "CString", [e2], e2.pos)]);
+								}): expr("EConst", vector(en("Constant", "CString", vector(e2), e2.pos)));
 								case EParenthesis({
 									expr: ECheckType(e2, {type: CTPath({path: {tname: "Int", tpackage: []}})})
-								}): expr("EConst", [en("Constant", "CInt", [e2], e2.pos)]);
+								}): expr("EConst", vector(en("Constant", "CInt", vector(e2), e2.pos)));
 								case EParenthesis({
 									expr: ECheckType(e2, {type: CTPath({path: {tname: "Float", tpackage: []}})})
-								}): expr("EConst", [en("Constant", "CFloat", [e2], e2.pos)]);
+								}): expr("EConst", vector(en("Constant", "CFloat", vector(e2), e2.pos)));
 								case EConst(Int(s,
 									"i64")): expr("EConst",
-										[en("Constant", "CInt", [rawString(s, e1.pos), rawString("i64", e1.pos)], e1.pos)]);
-								case _: {expr: ECall(macroField("Context", "makeExpr", mp), [e1, toEncPos(e1.pos)]), pos: mp};
+										vector(en("Constant", "CInt", vector(rawString(s, e1.pos), rawString("i64", e1.pos)), e1.pos)));
+								case _: {expr: ECall(macroField("Context", "makeExpr", mp), vector(e1, toEncPos(e1.pos))), pos: mp};
 							}
-						case [StrictMeta.Dollar("i"), _]: expr("EConst", [en("Constant", "CIdent", [e1], e1.pos)]);
-						case [StrictMeta.Dollar("p"), _]: {expr: ECall(macroField("MacroStringTools", "toFieldExpr", mp), [e1]), pos: mp};
+						case [StrictMeta.Dollar("i"), _]: expr("EConst", vector(en("Constant", "CIdent", vector(e1), e1.pos)));
+						case [StrictMeta.Dollar("p"), _]: {expr: ECall(macroField("MacroStringTools", "toFieldExpr", mp), vector(e1)), pos: mp};
 						case [StrictMeta.Pos, [pexpr]]:
 							var old = currentPos;
 							currentPos = pexpr;
 							var result = loop(e1);
 							currentPos = old;
 							result;
-						case _: expr("EMeta", [
+						case _: expr("EMeta", vector(
 								obj([
 									fld("name", toString(core.Meta.toString(meta.meta), mp)),
 									fld("params", toExprArray(meta.exprs, mp)),
 									fld("pos", toPos(mp))
 								], mp),
 								loop(e1)
-							]);
+							));
 					}
 			};
 		};
@@ -393,7 +400,7 @@ class Reification {
 			fld("name", placed(t.tpName)),
 			fld("params", {expr: EArrayDecl(t.tpParams.map(function(t) return toTparamDecl(p, t))), pos: p}),
 			fld("meta", toMeta(t.tpMeta, p)),
-			fld("constraints", {expr: EArrayDecl(t.tpConstraints == null ? [] : [toCtype(t.tpConstraints, p)]), pos: p}),
+			fld("constraints", {expr: EArrayDecl(t.tpConstraints == null ? vector() : vector(toCtype(t.tpConstraints, p))), pos: p}),
 			fld("defaultType", opt(toCtype, t.tpDefault, p))
 		], p);
 		function toTypeDef(t:TypeDecl):Expr {
@@ -416,7 +423,7 @@ class Reification {
 						case HAbstract: abstractFlag = true;
 					}
 					obj([
-						fld("pack", {expr: EArrayDecl([]), pos: p}),
+						fld("pack", {expr: EArrayDecl(vector()), pos: p}),
 						fld("name", toString(d.name.name, d.name.pos)),
 						fld("pos", toPos(p)),
 						fld("meta", toMeta(d.meta, p)),
@@ -425,13 +432,13 @@ class Reification {
 							pos: p
 						}),
 						fld("isExtern", bool(externFlag, p)),
-						fld("kind", en("TypeDefKind", "TDClass", [
+						fld("kind", en("TypeDefKind", "TDClass", vector(
 							ext == null ? nil(p) : ext,
-							{expr: EArrayDecl(impl), pos: p},
+							{expr: EArrayDecl(Vector.fromArrayCopy(impl)), pos: p},
 							bool(interf, p),
 							bool(finalFlag, p),
 							bool(abstractFlag, p)
-						], p)),
+						), p)),
 						fld("fields", {expr: EArrayDecl(d.data.map(function(f) return toCfield(f, p))), pos: p})
 					], p);
 				case _: throw "assert";

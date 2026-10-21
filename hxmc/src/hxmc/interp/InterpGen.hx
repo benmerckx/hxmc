@@ -1,6 +1,7 @@
 package hxmc.interp;
 
 import hxmc.Mir;
+import core.ds.VectorTools.vector;
 import hxmc.Obj;
 import hxmc.ir.Ir;
 
@@ -399,7 +400,7 @@ class InterpGen {
 	// arguments', so that the edge's move goes. A value live into a try's
 	// handler block keeps a register of its own: a throw resumes the frame
 	// with its registers as they are. Returns the number of registers.
-	function allocate(blocks:Array<MBlock>, nc:Int, uses:haxe.ds.Vector<Int>):Int {
+	function allocate(blocks:haxe.ds.Vector<MBlock>, nc:Int, uses:haxe.ds.Vector<Int>):Int {
 		var vals = mf.vals;
 		var wid = MFunc.ints(vals.length, -1), ids = [];
 		for (b in blocks)
@@ -482,7 +483,7 @@ class InterpGen {
 				if (gid[i.id] >= 0) k.set(gid[i.id]);
 			}
 		}
-		var post = blocks.copy();
+		var post = blocks.toArray();
 		post.reverse();
 		var changed = true;
 		while (changed) {
@@ -800,11 +801,11 @@ class InterpGen {
 			case Cmp if (fused.exists(i.id)):
 			case TlsLoad:
 				var t = TLS.get(i.sym);
-				if (t != null) emit([TLSLD, r(i.id), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXLD, r(i.id), tlsIndex(i.sym)]) else callOut(tlsStub(i.sym, false), r(i.id), []);
+				if (t != null) emit([TLSLD, r(i.id), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXLD, r(i.id), tlsIndex(i.sym)]) else callOut(tlsStub(i.sym, false), r(i.id), vector());
 			case TlsStore:
 				if (i.sym == "rt_hcur") emit([TLSST_HCUR, r(i.a), abi.handlerPrev]) else {
 					var t = TLS.get(i.sym);
-					if (t != null) emit([TLSST, r(i.a), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXST, r(i.a), tlsIndex(i.sym)]) else callOut(tlsStub(i.sym, true), -1, [i.a]);
+					if (t != null) emit([TLSST, r(i.a), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXST, r(i.a), tlsIndex(i.sym)]) else callOut(tlsStub(i.sym, true), -1, vector(i.a));
 				}
 			case StackAddr:
 				emit([SADDR, r(i.id), slotOff[i.imm]]);
@@ -953,7 +954,7 @@ class InterpGen {
 		return (t == I64 ? (i64 : Int) : (i32 : Int)) + c.imm;
 	}
 
-	function callOut(stub:String, res:Int, args:Array<Int>) {
+	function callOut(stub:String, res:Int, args:haxe.ds.Vector<Int>) {
 		emit([CALLN, sym(stub, 0), res, args.length]);
 		for (a in args)
 			code.push(r(a));
@@ -979,19 +980,20 @@ class InterpGen {
 		var k = new StringBuf();
 		k.add(c.sym != null ? c.sym : "*");
 		k.add("|" + tyKey(c.ty) + "|" + [for (a in c.args) tyKey(ty(a))].join(""));
-		k.add("|" + (c.argTys == null ? "" : [for (t in c.argTys) tyKey(t)].join("")));
+		k.add("|" + [for (t in c.argTys) tyKey(t)].join(""));
 		k.add("|" + c.cSizes + "|" + c.cGroups + "|" + (c.cRet == null ? "" : [for (p in c.cRet) p.off + ":" + p.size + ":" + p.float].join(",")));
-		k.add("|" + c.variadic + "|" + c.noReturn);
+		k.add("|" + c.variadic + "|" + c.noReturn + "|" + c.cCall);
 		var name = STUB + haxe.crypto.Md5.encode(k.toString()).substr(0, 16);
 		if (defined(name)) return name;
 		var argTys = [for (a in c.args) ty(a)];
-		compile(MirBuild.synthetic(prep, abi, name, [I64, I64], I64, (b, ps) -> {
+		compile(MirBuild.synthetic(prep, abi, name, vector(I64, I64), I64, (b, ps) -> {
 			var buf = ps[1];
 			var xs = [for (n in 0...argTys.length) b.load(argTys[n], argTys[n] == I32 ? 4 : 8, buf, 8 + 8 * n)];
 			var x = b.mk(Call, c.ty);
 			if (c.sym != null) x.sym = c.sym else x.a = b.load(I64, 8, buf, 0);
-			x.args = xs;
-			x.argTys = c.argTys != null ? c.argTys.copy() : [for (t in argTys) t];
+			x.args = haxe.ds.Vector.fromArrayCopy(xs);
+			x.argTys = c.argTys.length > 0 ? c.argTys.copy() : haxe.ds.Vector.fromArrayCopy(argTys);
+			x.cCall = c.cCall;
 			x.cSizes = c.cSizes;
 			x.cGroups = c.cGroups;
 			x.cRet = c.cRet;
@@ -1012,7 +1014,7 @@ class InterpGen {
 	function tlsStub(tls:String, set:Bool):String {
 		var name = STUB + (set ? "tset$" : "tget$") + tls;
 		if (defined(name)) return name;
-		compile(MirBuild.synthetic(prep, abi, name, [I64, I64], I64, (b, ps) -> {
+		compile(MirBuild.synthetic(prep, abi, name, vector(I64, I64), I64, (b, ps) -> {
 			if (set) b.tlsStore(tls, b.load(I64, 8, ps[1], 8)) else b.store(8, ps[1], 0, b.tlsLoad(tls));
 			b.ret(b.lconst(0, 0));
 		}), false);
@@ -1028,7 +1030,7 @@ class InterpGen {
 			var buf = b.stackAddr(b.f.slot(8 * (params.length > 0 ? params.length : 1), 16));
 			for (n in 0...params.length)
 				b.store(params[n] == I32 ? 4 : 8, buf, 8 * n, ps[n]);
-			b.call("hxmc_interp_enter", [b.symAddr(desc), buf], Void);
+			b.call("hxmc_interp_enter", vector(b.symAddr(desc), buf), Void);
 			b.ret(ret == Void ? -1 : b.load(ret, ret == I32 ? 4 : 8, buf, 0));
 		}), true);
 	}

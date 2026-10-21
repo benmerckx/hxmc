@@ -1,0 +1,7 @@
+exit 0
+field and static: 4 4 4 4
+reversed: 4 4
+do-while: 5 5
+while: 4 4
+three loops: 8 12 8
+moved array: 192 10

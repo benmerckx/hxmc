@@ -1,21 +1,19 @@
 package core.ds;
 
 class StringDynArray {
-	var values:Array<String>;
+	var values:haxe.ds.Vector<String>;
 
 	public var length(default, null):Int = 0;
 
 	public function new(capacity:Int) {
-		values = [];
-		for (_ in 0...capacity) values.push("");
+		values = new haxe.ds.Vector(capacity, "");
 	}
 
 	public function add(value:String):Void {
 		var capacity = values.length;
 		if (length == capacity) {
-			var expanded:Array<String> = [];
-			for (_ in 0...(capacity * 2)) expanded.push("");
-			for (index in 0...capacity) expanded[index] = values[index];
+			var expanded = new haxe.ds.Vector(capacity * 2, "");
+			haxe.ds.Vector.blit(values, 0, expanded, 0, capacity);
 			values = expanded;
 		}
 		values[length] = value;

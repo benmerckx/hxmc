@@ -4,6 +4,10 @@ import hxmc.ir.Facts;
 import hxmc.ir.Ir;
 import hxmc.Mir;
 import hxmc.Obj;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // The program's data, as sections of an Obj: the type table rt_types
 // and its field/method/static/pointer-map arrays, dispatch rows, field
@@ -119,8 +123,10 @@ class DataGen {
 			case _: "p".code;
 		};
 
+	static final TKS:Vector<String> = vector("TK_RUNTIME", "TK_CLASS", "TK_INTERFACE", "TK_ENUM", "TK_CTOR", "TK_ANON", "TK_CLOSURE", "TK_BOUND");
+
 	static function tk(s:String):Int
-		return ["TK_RUNTIME", "TK_CLASS", "TK_INTERFACE", "TK_ENUM", "TK_CTOR", "TK_ANON", "TK_CLOSURE", "TK_BOUND"].indexOf(s);
+		return TKS.indexOf(s);
 
 	// ---- everything
 
@@ -222,27 +228,37 @@ class DataGen {
 
 	// DYN<s>(c, args): calls closure c with the boxed arguments args[i], boxes the result
 	function dynTrampoline(s:SigInfo):MFunc {
-		return MirBuild.synthetic(prep, abi, "DYN" + s.id, [I64, I64], I64, (b, ps) -> {
+		return MirBuild.synthetic(prep, abi, "DYN" + s.id, vector(I64, I64), I64, (b, ps) -> {
 			var c = ps[0], args = ps[1];
-			var xs = [c];
+			var xs = new Vector<Int>(s.args.length + 1);
+			xs[0] = c;
 			for (i in 0...s.args.length)
-				xs.push(b.unboxTo(s.args[i], b.load(I64, 8, args, 8 * i)));
+				xs[i + 1] = b.unboxTo(s.args[i], b.load(I64, 8, args, 8 * i));
 			var fp = b.load(I64, 8, c, 0);
-			var r = b.callInd(fp, xs, MirBuild.mty(s.ret), [I64].concat([for (t in s.args) MirBuild.mty(t)]));
+			var r = b.callInd(fp, xs, MirBuild.mty(s.ret), sigParams(s));
 			b.ret(s.ret == TVoid ? b.lconst(0, 0) : b.boxFrom(s.ret, r));
 		});
 	}
 
 	// BT<s>(c, args...): the code of bound-method closures: FP(c, 2)(FP(c, 1), args...)
 	function boundTrampoline(s:SigInfo):MFunc {
-		var params:Array<MTy> = [I64].concat([for (t in s.args) MirBuild.mty(t)]);
+		var params = sigParams(s);
 		return MirBuild.synthetic(prep, abi, "BT" + s.id, params, MirBuild.mty(s.ret), (b, ps) -> {
 			var c = ps[0];
 			var fp = b.load(I64, 8, c, 16);
 			var self = b.load(I64, 8, c, 8);
-			var r = b.callInd(fp, [self].concat(ps.slice(1)), MirBuild.mty(s.ret), params);
+			var r = b.callInd(fp, ps.withFirst(self), MirBuild.mty(s.ret), params);
 			b.ret(s.ret == TVoid ? -1 : r);
 		});
+	}
+
+	// the parameter types of a closure's code: the closure, then the signature's
+	static function sigParams(s:SigInfo):Vector<MTy> {
+		var tys = new Vector<MTy>(s.args.length + 1);
+		tys[0] = I64;
+		for (k in 0...s.args.length)
+			tys[k + 1] = MirBuild.mty(s.args[k]);
+		return tys;
 	}
 
 	function globals() {
@@ -486,9 +502,9 @@ class DataGen {
 			var ty = parts[1];
 			var sym = StringTools.startsWith(ty, "#") ? null : ty;
 			if (emit.allocStub(n, lo, sym, sym == null ? Std.parseInt(ty.substr(1)) : 0, bytes)) continue;
-			compile(MirBuild.synthetic(prep, abi, n, [], I64, (b, _) -> {
+			compile(MirBuild.synthetic(prep, abi, n, vector(), I64, (b, _) -> {
 				var t = StringTools.startsWith(ty, "#") ? b.iconst(Std.parseInt(ty.substr(1))) : b.idConst(ty, 0);
-				b.ret(b.call("hxmc_alloc_slow", [b.iconst(lo), t, b.iconst(bytes)], I64));
+				b.ret(b.call("hxmc_alloc_slow", vector(b.iconst(lo), t, b.iconst(bytes)), I64));
 			}));
 		}
 	}
@@ -546,7 +562,7 @@ class DataGen {
 	}
 
 	function mainBody() {
-		compile(MirBuild.synthetic(prep, abi, "hx_main_body", [], Void, (b, _) -> {
+		compile(MirBuild.synthetic(prep, abi, "hx_main_body", vector(), Void, (b, _) -> {
 			for (i in 0...p.globals.length) {
 				var c = p.globals[i].init;
 				if (c != null) {
@@ -555,23 +571,23 @@ class DataGen {
 				}
 			}
 			for (f in p.inits)
-				b.call(e.symbol(f), [], Void);
-			b.call(e.symbol(p.main), [], Void);
+				b.call(e.symbol(f), vector(), Void);
+			b.call(e.symbol(p.main), vector(), Void);
 			b.ret(-1);
 		}));
 		// WebAssembly (WASI): _start; the runtime reads the arguments itself and exits
 		if (abi.wasm) {
-			compile(MirBuild.synthetic(prep, abi, "_start", [], Void, (b, ps) -> {
-				b.call("rt_init", [b.iconst(p.globals.length), b.iconst(0), b.lconst(0, 0)], Void);
+			compile(MirBuild.synthetic(prep, abi, "_start", vector(), Void, (b, ps) -> {
+				b.call("rt_init", vector(b.iconst(p.globals.length), b.iconst(0), b.lconst(0, 0)), Void);
 				// the stack of frame slots: the runtime's from here on (wasm/Gc.hx;
 				// set here, in a function without a frame of its own, whose
 				// return would restore the linker's stack pointer)
-				var lo = b.call("rt_cstack_lo", [], I64);
-				var top = b.call("rt_cstack_top", [], I64);
+				var lo = b.call("rt_cstack_lo", vector(), I64);
+				var top = b.call("rt_cstack_top", vector(), I64);
 				b.tlsStore(hxmc.wasm.WasmGen.SP, top);
 				b.tlsStore(hxmc.wasm.WasmGen.STACK_LO, lo);
-				b.call("hx_main_body", [], Void);
-				b.call("rt_main_done", [], Void);
+				b.call("hx_main_body", vector(), Void);
+				b.call("rt_main_done", vector(), Void);
 				b.ret(-1);
 			}));
 			return;
@@ -581,9 +597,9 @@ class DataGen {
 		// body from its delegate once the app has launched
 		// (iOS: UIKit's start, unless a dylib's: a build hxmc dev's host loads into the running app)
 		var body = abi.ios() && abi.output != SharedLibrary && Lambda.exists(p.funcs, f -> f.cSymbol == UI_MAIN) ? UI_MAIN : "hx_main_body";
-		compile(MirBuild.synthetic(prep, abi, "main", [I32, I64], I32, (b, ps) -> {
-			b.call("rt_init", [b.iconst(p.globals.length), ps[0], ps[1]], Void);
-			b.call("rt_run_main", [b.symAddr(body)], Void);
+		compile(MirBuild.synthetic(prep, abi, "main", vector(I32, I64), I32, (b, ps) -> {
+			b.call("rt_init", vector(b.iconst(p.globals.length), ps[0], ps[1]), Void);
+			b.call("rt_run_main", vector(b.symAddr(body)), Void);
 			b.ret(b.iconst(0));
 		}));
 	}

@@ -15,6 +15,7 @@ import typing.FieldCallCandidate.FieldCallCandidateData;
 
 using Lambda;
 using core.ds.ArrayTools;
+using core.ds.VectorTools;
 
 import core.WithType as WithTypeTools;
 import core.WithType.WithTypeValue;
@@ -30,12 +31,13 @@ import core.TOther;
 import core.WithType;
 import context.Typecore.*;
 import context.Typecore;
+import core.ds.VectorTools.vector;
 
 typedef GenericSubst = {var cls:TClass; var t:T; var expr:Null<TExpr>;}
 typedef GenericContext = {var ctx:Typer; var subst:Array<GenericSubst>; var name:String; var p:Pos; var mg:Null<ModuleDef>; var genericDebug:Bool;}
 
 class Generic {
-	public static function makeGeneric(ctx:Typer, ps:TypeParams, pt:Array<T>, debug:Bool, p:Pos):GenericContext {
+	public static function makeGeneric(ctx:Typer, ps:TypeParams, pt:core.TType.TParams, debug:Bool, p:Pos):GenericContext {
 		inline function identSafe(s:String):String {
 			var b = new StringBuf();
 			for (i in 0...s.length) {
@@ -49,7 +51,7 @@ class Generic {
 			function loop(top:Bool, t:T):{name:String, t:T, expr:Null<TExpr>} {
 				inline function result(name:String, expr:Null<TExpr> = null):{name:String, t:T, expr:Null<TExpr>}
 					return {name: name, t: t, expr: expr};
-				inline function tlName(tl:Array<T>):String return tl.length == 0 ? "" : "_"
+				inline function tlName(tl:core.TType.TParams):String return tl.length == 0 ? "" : "_"
 					+ tl.map(function(t) return loop(top, t).name).join("_");
 				inline function deep(t:T):String return loop(false, t).name;
 				return switch t {
@@ -228,13 +230,13 @@ class Generic {
 		return cg;
 	}
 
-	public static function setTypeParameterDependencies(mg:ModuleDef, tl:Array<T>):Void {
+	public static function setTypeParameterDependencies(mg:ModuleDef, tl:core.TType.TParams):Void {
 		// ensure that type parameters are set in dependencies
 		var stack = [];
 		function loop(t:T):Void {
 			if (stack.indexOf(t) >= 0) return;
 			stack.unshift(t);
-			inline function dep(m:ModuleDef, tl:Array<T>):Void {
+			inline function dep(m:ModuleDef, tl:core.TType.TParams):Void {
 				addDependency(mg, m, MDepFromTyping);
 				for (t in tl) loop(t);
 			}
@@ -283,7 +285,7 @@ class Generic {
 		return result;
 	}
 
-	public static function buildGenericClass(ctx:Typer, c:TClass, p:Pos, tl:Array<T>):T {
+	public static function buildGenericClass(ctx:Typer, c:TClass, p:Pos, tl:core.TType.TParams):T {
 		var recurse = false;
 		function checkRecursive(t:T):Void switch follow(t) {
 			case TInst(c, tl):
@@ -327,7 +329,7 @@ class Generic {
 			case MetaTag.Access | Allow | Final | Hack | Keep | KeepSub | NoClosure | NullSafety | Pure | Struct | StructInit | Using | AutoBuild | Unreflective: true;
 			case _: false;
 		});
-		cg.clMeta.unshift({meta: MetaTag.NoDoc, exprs: [], pos: nullPos});
+		cg.clMeta.unshift({meta: MetaTag.NoDoc, exprs: vector(), pos: nullPos});
 		mg.mTypes = [TClassDecl(cg)];
 		ctx.com.moduleLut.add(mg.mPath, mg);
 		addDependency(mg, c.clModule, MDepFromTyping);
@@ -339,7 +341,7 @@ class Generic {
 				param: cloneTypeParameter(g, mg, {pack: [old.cfName], name: ttp.ttpName}, ttp)
 			});
 			var localG:GenericContext = core.ds.Record.withFields(g,
-				{subst: params.map(function(s) return {cls: s.original, t: s.param.ttpType, expr: null}).concat(g.subst)});
+				{subst: params.mapToArray(function(s) return {cls: s.original, t: s.param.ttpType, expr: null}).concat(g.subst)});
 			var field:TClassField = core.ds.Record.withFields(old, {cfExprUnoptimized: null}); // copy
 			field.cfParams = params.map(function(s) return s.param);
 			inline function f():T {
@@ -409,14 +411,14 @@ class Generic {
 		// In rare cases the class name can become too long, so let's shorten it (issue #3090).
 		if (cg.clPath.name.length > 254) {
 			var name = getShortName();
-			cg.clMeta.unshift({meta: MetaTag.Native, exprs: [{expr: EConst(String(name, SDoubleQuotes)), pos: p}], pos: nullPos});
+			cg.clMeta.unshift({meta: MetaTag.Native, exprs: vector({expr: EConst(String(name, SDoubleQuotes)), pos: p}), pos: nullPos});
 		}
 		cg.clUsing = c.clUsing;
 		if (g.genericDebug) Sys.println("[GENERIC] " + Printer.sTclass("  ", cg));
-		return TInst(cg, []);
+		return TInst(cg, vector());
 	}
 
-	public static function extractTypeParameters(tl:Array<T>):TypeParams {
+	public static function extractTypeParameters(tl:core.TType.TParams):TypeParams {
 		var params = [];
 		function loop(t:T):Void switch follow(t) {
 			case TInst({clKind: KTypeParameter(ttp)}, []):
@@ -425,7 +427,7 @@ class Generic {
 				iter(loop, t);
 		};
 		for (t in tl) loop(t);
-		return params;
+		return haxe.ds.Vector.fromArrayCopy(params);
 	}
 
 	public static function typeGenericFunction(ctx:Typer, fa:context.Typecore.FieldAccess, fcc:FieldCallCandidateData<Void->TExpr>,
@@ -453,7 +455,7 @@ class Generic {
 				unify(ctx, buildInstances(ctx, fcc.fcRet, p), t, p);
 			case _:
 		}
-		var monos:Array<T> = fcc.fcMonos;
+		var monos:core.TType.TParams = fcc.fcMonos;
 		for (t in monos) switch follow(t) {
 			case TMono(m):
 				safeMonoClose(ctx, m, p);
@@ -524,9 +526,9 @@ class Generic {
 				var meta = cf.cfMeta.filter(function(m) return !Type.enumEq(m.meta, MetaTag.Generic));
 				var zero = mkZeroRangePos(p);
 				field.cfMeta = ([
-					{meta: MetaTag.NoCompletion, exprs: [], pos: zero},
-					{meta: MetaTag.NoUsing, exprs: [], pos: zero},
-					{meta: MetaTag.GenericInstance, exprs: [], pos: zero}
+					{meta: MetaTag.NoCompletion, exprs: vector(), pos: zero},
+					{meta: MetaTag.NoUsing, exprs: vector(), pos: zero},
+					{meta: MetaTag.GenericInstance, exprs: vector(), pos: zero}
 				] : Array<core.Ast.MetadataEntry>).concat(meta);
 				field.cfParams = params;
 			}
@@ -561,7 +563,7 @@ class Generic {
 				fa = core.ds.Record.withFields(fa, {faField: field});
 			}
 		}
-		return new CallUnification.CallDispatcher(ctx, MCall([]), withType, p).fieldCall(fa, args, []);
+		return new CallUnification.CallDispatcher(ctx, MCall(vector()), withType, p).fieldCall(fa, args, vector());
 	}
 
 	public static function initHooks():Void context.Typecore.typeGenericFunctionRef = typeGenericFunction;

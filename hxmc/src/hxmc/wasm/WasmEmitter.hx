@@ -12,7 +12,7 @@ class WasmEmitter implements hxmc.Target.Emitter {
 		this.obj = obj;
 	}
 
-	public function func(f:hxmc.Lir.LFunc, usedRegs:Array<Bool>, global:Bool):Obj.Symbol
+	public function func(f:hxmc.Lir.LFunc, usedRegs:haxe.ds.Vector<Bool>, global:Bool):Obj.Symbol
 		throw "hxmc: wasm: no machine code";
 
 	public function useSection(name:Null<String>) {}

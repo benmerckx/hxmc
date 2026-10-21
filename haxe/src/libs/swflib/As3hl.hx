@@ -19,11 +19,12 @@
 
 package libs.swflib;
 
+import haxe.ds.Vector;
 import libs.swflib.As3;
 
 // port: haxe/libs/swflib/as3hl.mli. hl_method and hl_class are compared by
 // identity (List.memq, ==) and mutated, so they are classes; `MultiArray.t`
-// is an Array.
+// is an Array, an OCaml array a Vector.
 typedef HlIdent = String;
 typedef HlInt = Int;
 typedef HlUint = Int;
@@ -227,8 +228,8 @@ typedef HlFunction = {
 	var hlf_init_scope:Int;
 	var hlf_max_scope:Int;
 	var hlf_code:Array<HlOpcode>;
-	var hlf_trys:Array<HlTryCatch>;
-	var hlf_locals:Array<HlLocal>;
+	var hlf_trys:Vector<HlTryCatch>;
+	var hlf_locals:Vector<HlLocal>;
 }
 
 typedef HlMethodKind = As3MethodKind;
@@ -248,7 +249,7 @@ typedef HlVarField = {
 
 typedef HlMetadata = {
 	var hlmeta_name:HlIdent;
-	var hlmeta_data:Array<{k:Null<HlIdent>, v:HlIdent}>;
+	var hlmeta_data:Vector<{k:Null<HlIdent>, v:HlIdent}>;
 }
 
 enum HlFieldKind {
@@ -262,7 +263,7 @@ typedef HlField = {
 	var hlf_name:HlName;
 	var hlf_slot:HlSlot;
 	var hlf_kind:HlFieldKind;
-	var hlf_metas:Null<Array<HlMetadata>>;
+	var hlf_metas:Null<Vector<HlMetadata>>;
 }
 
 class HlClass {
@@ -273,18 +274,18 @@ class HlClass {
 	public var hlc_final:Bool;
 	public var hlc_interface:Bool;
 	public var hlc_namespace:Null<HlNamespace>;
-	public var hlc_implements:Array<HlName>;
+	public var hlc_implements:Vector<HlName>;
 	public var hlc_construct:HlMethod;
-	public var hlc_fields:Array<HlField>;
+	public var hlc_fields:Vector<HlField>;
 	public var hlc_static_construct:HlMethod;
-	public var hlc_static_fields:Array<HlField>;
+	public var hlc_static_fields:Vector<HlField>;
 
 	public function new() {}
 }
 
 typedef HlStatic = {
 	var hls_method:HlMethod;
-	var hls_fields:Array<HlField>;
+	var hls_fields:Vector<HlField>;
 }
 
 typedef HlTag = Array<HlStatic>;

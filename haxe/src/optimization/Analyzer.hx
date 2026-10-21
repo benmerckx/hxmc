@@ -38,6 +38,10 @@ import optimization.AnalyzerTexpr;
 import optimization.AnalyzerTexpr.*;
 import optimization.AnalyzerConfig;
 import optimization.OptimizerTexpr.*;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 /* File organization:
 	* analyzer.ml: The controlling file with all graph-based optimizations
@@ -72,7 +76,7 @@ class Ssa {
 	public static function addPhi(g:GraphData, bb:BasicBlockData, v:TVar):Void {
 		var p = bb.bbPos;
 		var ev = mk(TLocal(v), v.vType, p);
-		var el = bb.bbIncoming.map(_ -> ev);
+		var el = bb.bbIncoming.mapToVector(_ -> ev);
 		var phi = mk(TConst(TString("phi")), tDynamic, p);
 		var call = mk(TCall(phi, el), tDynamic, p);
 		bb.bbPhi.push(mk(TBinop(OpAssign, ev, call), tDynamic, p));
@@ -122,20 +126,17 @@ class Ssa {
 		function loop(i:Int, e:TExpr):TExpr return switch e.eexpr {
 			case TBinop(OpAssign, e1 = {eexpr: TLocal(v0)}, ecall = {eexpr: TCall(ephi = {eexpr: TConst(TString("phi"))}, el)}):
 				if (el.length != bb.bbIncoming.length) throw "Invalid_argument: List.map2";
-				var values = [
-					for (j in 0...el.length) {
-						var e = el[j];
-						var pred = bb.bbIncoming[j].cfgFrom;
-						if (pred != edge.cfgFrom) e; else switch e.eexpr {
-							case TLocal(v):
-								var replacement = local(ctx, e, v, edge.cfgFrom);
-								addSsaEdge(ctx.graph, replacement, bb, LUPhi(i));
-								withExpr(e, TLocal(replacement));
-							case _:
-								throw "Analyzer.updatePhi";
-						}
+				var values = el.mapi((j, e) -> {
+					var pred = bb.bbIncoming[j].cfgFrom;
+					if (pred != edge.cfgFrom) e; else switch e.eexpr {
+						case TLocal(v):
+							var replacement = local(ctx, e, v, edge.cfgFrom);
+							addSsaEdge(ctx.graph, replacement, bb, LUPhi(i));
+							withExpr(e, TLocal(replacement));
+						case _:
+							throw "Analyzer.updatePhi";
 					}
-				];
+				});
 				var phi = withExpr(ecall, TCall(ephi, values));
 				setVarValue(ctx.graph, v0, bb, LUPhi(i));
 				withExpr(e, TBinop(OpAssign, e1, phi));
@@ -240,7 +241,7 @@ class DataFlow<L, C> {
 		var ssaWork:Array<TExprLookup> = [];
 		var cfgWork = g.gRoot.bbOutgoing.copy();
 		inline function addCfg(edge:CfgEdge):Void cfgWork.unshift(edge);
-		inline function visitPhi(bb:BasicBlockData, v:TVar, el:Array<TExpr>):L {
+		inline function visitPhi(bb:BasicBlockData, v:TVar, el:Vector<TExpr>):L {
 			if (el.length != bb.bbIncoming.length) throw "Invalid_argument: List.fold_left2";
 			var expressions = [];
 			for (i in 0...el.length) if (BasicBlock.hasFlag(bb.bbIncoming[i], api.flag)) expressions.unshift(el[i]);
@@ -334,7 +335,7 @@ enum ConstLattice {
 	Bottom;
 	NullValue(t:T);
 	ConstValue(ct:TConstant, t:T);
-	EnumValue(index:Int, args:Array<ConstLattice>);
+	EnumValue(index:Int, args:Vector<ConstLattice>);
 	ModuleValue(mt:ModuleType, t:T);
 }
 
@@ -406,7 +407,7 @@ class ConstPropagationImpl implements DataFlowApi<ConstLattice, haxe.ds.IntMap<C
 					var input = withExpr(e, TUnop(op, flag, e1));
 					var result = optimizeUnop(input, op, flag, e1);
 					input != result ? eval(result) : unwrap(result);
-				case TField(_, FEnum(_, ef)): EnumValue(ef.efIndex, []);
+				case TField(_, FEnum(_, ef)): EnumValue(ef.efIndex, vector());
 				case TCall({eexpr: TField(_, FEnum(_, ef))}, el): EnumValue(ef.efIndex, el.map(e -> try eval(e) catch (_:TypeExit) Bottom));
 				case TEnumParameter(e1, _, i): switch eval(e1) {
 						case EnumValue(_, el):
@@ -422,7 +423,7 @@ class ConstPropagationImpl implements DataFlowApi<ConstLattice, haxe.ds.IntMap<C
 					if (actx.com.platform == Eval): switch [follow(e1.etype), eval(e1)] {
 						case [TEnum(_, _), EnumValue(i, _)]: ConstValue(TInt(i), actx.com.basic.tint);
 						case [_, value]:
-							var result = InlineOps.apiInline2(actx.com.basic, actx.com.platform, c, cf.cfName, [wrap(value)], e.epos);
+							var result = InlineOps.apiInline2(actx.com.basic, actx.com.platform, c, cf.cfName, vector(wrap(value)), e.epos);
 							if (result == null) throw new TypeExit();
 							eval(result);
 					}
@@ -926,8 +927,8 @@ class Run {
 			case _:
 				// Wrap expression in a function so we don't have to treat it as a special case throughout.
 				var ret = e.etype;
-				tf = {tfArgs: [], tfType: ret, tfExpr: mk(TReturn(e), tDynamic, e.epos)};
-				t = tfun([], ret);
+				tf = {tfArgs: vector(), tfType: ret, tfExpr: mk(TReturn(e), tDynamic, e.epos)};
+				t = tfun(vector(), ret);
 				real = false;
 		}
 		optimization.Analyzer.Run.timed(actx, ["->", "from-texpr"], function() AnalyzerTexprTransformer.fromTfunction(actx, tf, t, e.epos));
@@ -959,7 +960,7 @@ class Run {
 					case TReturn(inner) if (inner != null): inner;
 					case TBlock(el): if (el.length == 0) e; else {
 							var last = loop(el[el.length - 1]);
-							withExpr(e, TBlock(el.slice(0, el.length - 1).concat([last])));
+							withExpr(e, TBlock(el.withLast(last)));
 						}
 					case TIf(e1, e2, e3) if (e3 != null):
 						var e2 = loop(e2);
@@ -980,7 +981,7 @@ class Run {
 					case TParenthesis(e1): withExpr(e, TParenthesis(loop(e1)));
 					case _: e;
 				};
-				try loop(tf.tfExpr) catch (_:TypeExit) mk(TCall(e, []), tf.tfType, e.epos);
+				try loop(tf.tfExpr) catch (_:TypeExit) mk(TCall(e, vector()), tf.tfType, e.epos);
 			case _: throw "Analyzer.backAgain expected function";
 		};
 	}
@@ -1086,8 +1087,8 @@ class Run {
 		context.Parallel.ParallelArray.iter(pool, function(cf) runOnFieldInternal(com, out, config, c, cf), fields);
 		var init = core.TOther.TClassTools.getClInit(c);
 		if (init != null) {
-			var tf:TFunc = {tfArgs: [], tfType: init.etype, tfExpr: init};
-			var e = mk(TFunction(tf), tfun([], init.etype), init.epos);
+			var tf:TFunc = {tfArgs: vector(), tfType: init.etype, tfExpr: init};
+			var e = mk(TFunction(tf), tfun(vector(), init.etype), init.epos);
 			var config:AnalyzerConfigData = core.ds.Record.copy(config);
 			config.optimize = false;
 			var actx = createAnalyzerContext(com, config, Globals.sTypePath(c.clPath) + ".__init__", e);

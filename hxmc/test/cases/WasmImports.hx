@@ -22,5 +22,17 @@ class WasmImports {
 		trace(p[0], p[1], p[2]);
 		trace(Env.twice(21));
 		trace(hxmc.test.WasmLib.h_lib(5));
+		Arena.scoped(a -> trace(Libc.strlen(a.cstring("wasm"))));
+		var e = Libc.errno();
+		e[0] = 34;
+		trace(Libc.errno()[0]);
 	}
+}
+
+// C functions the runtime implements in Haxe (hxmc.rt.wasm.Libc, Heap): calls
+// of those functions in their own convention, not imports (@:hxmc.fast, as
+// the runtime declares them)
+@:hxmc.fast extern class Libc {
+	@:hxmc.c("__errno_location") static function errno():Ptr<Int32>;
+	@:hxmc.c("strlen") static function strlen(s:CString):Int64;
 }

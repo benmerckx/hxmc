@@ -63,10 +63,11 @@ class ParallelArray {
 		else pool.parallelFor(0, a.length - 1, function(i) f(a[i]));
 	}
 
-	public static function map<A, B>(pool:Null<TaskPool>, f:A->B, a:Array<A>, x:B):Array<B> {
-		if (pool == null) return a.map(f);
-		var output = [for (_ in a) x];
-		pool.parallelFor(0, a.length - 1, function(i) output[i] = f(a[i]));
+	// port: inline, the output (upstream's `Array.make length x`) a Vector of the caller's element type
+	public static inline function map<A, B>(pool:Null<TaskPool>, f:A->B, a:Array<A>, x:B):haxe.ds.Vector<B> {
+		var output = new haxe.ds.Vector<B>(a.length, x);
+		if (pool == null) for (i in 0...a.length) output[i] = f(a[i]);
+		else pool.parallelFor(0, a.length - 1, function(i) output[i] = f(a[i]));
 		return output;
 	}
 }

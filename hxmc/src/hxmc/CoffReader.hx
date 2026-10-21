@@ -176,20 +176,21 @@ class CoffReader {
 			return s;
 		}
 		var o = new Obj();
-		var secs:Array<Null<Section>> = [null];
-		var secChars:Array<Int> = [0];
+		// (by section number, from 1)
+		var secs = new haxe.ds.Vector<Null<Section>>(nsec + 1);
+		var secChars = new haxe.ds.Vector<Int>(nsec + 1);
+		// (a section number read from the file: out of range as none, as a malformed file may have it)
+		inline function secAt(i:Int):Null<Section>
+			return i >= 0 && i <= nsec ? secs[i] : null;
 		for (i in 0...nsec) {
 			var h = 20 + optSize + 40 * i;
 			var name = name8(h);
 			var size = u32(h + 16);
 			var raw = u32(h + 20);
 			var chars = u32(h + 36);
-			secChars.push(chars);
+			secChars[i + 1] = chars;
 			// not loaded: debug information, linker directives, removed sections
-			if ((chars & 0x800) != 0 || (chars & 0x200) != 0 || StringTools.startsWith(name, ".debug") || name == ".llvm_addrsig") {
-				secs.push(null);
-				continue;
-			}
+			if ((chars & 0x800) != 0 || (chars & 0x200) != 0 || StringTools.startsWith(name, ".debug") || name == ".llvm_addrsig") continue;
 			var alignBits = (chars >> 20) & 0xf;
 			var align = alignBits == 0 ? 16 : 1 << (alignBits - 1);
 			var kind:SecKind = if (StringTools.startsWith(name, ".tls")) Tdata else if ((chars & 0x20000020) != 0) Text else if ((chars & 0x80) != 0) Bss
@@ -197,10 +198,12 @@ class CoffReader {
 			var s = new Section(name, kind, align);
 			if (kind == Bss) s.bssSize = size else if (raw != 0) s.buf.bytes(b, base + raw, size) else s.buf.zeros(size);
 			o.sections.push(s);
-			secs.push(s);
+			secs[i + 1] = s;
 		}
-		// symbols
-		var syms:Array<Null<Symbol>> = [];
+		// symbols, by index (an auxiliary record's: none)
+		var syms = new haxe.ds.Vector<Null<Symbol>>(nsym > 0 ? nsym : 0);
+		inline function symAt(i:Int):Null<Symbol>
+			return i >= 0 && i < syms.length ? syms[i] : null;
 		var k = 0;
 		var pendingComdat = new Map<Int, Int>(); // section number -> selection, until its COMDAT symbol
 		var assocOf = new Map<Int, Int>();
@@ -212,12 +215,12 @@ class CoffReader {
 			var cls = u8(at + 16);
 			var naux = u8(at + 17);
 			var s:Null<Symbol> = null;
-			if (cls == 104 /* section */ || cls == 3 && naux > 0 && secNum > 0 && value == 0 && secs[secNum] != null && name == secs[secNum].name) {
+			if (cls == 104 /* section */ || cls == 3 && naux > 0 && secNum > 0 && value == 0 && secAt(secNum) != null && name == secAt(secNum).name) {
 				// a section symbol; its aux record holds the COMDAT selection
-				if (secNum > 0 && secs[secNum] != null) {
+				if (secNum > 0 && secAt(secNum) != null) {
 					s = new Symbol(".Lsec" + secNum + name);
 					s.global = false;
-					s.section = secs[secNum];
+					s.section = secAt(secNum);
 					o.symbols.push(s);
 					if (naux > 0 && (secChars[secNum] & 0x1000) != 0) {
 						var aux = at + 18;
@@ -234,9 +237,9 @@ class CoffReader {
 				} else if (external) {
 					s = o.sym(name);
 					if (secNum > 0) {
-						if (secs[secNum] != null) {
+						if (secAt(secNum) != null) {
 							if (s.section != null) throw "hxmc: COFF: " + name + " defined twice in one object";
-							s.section = secs[secNum];
+							s.section = secAt(secNum);
 							s.offset = value;
 						}
 					} else if (secNum == -1) {
@@ -256,34 +259,32 @@ class CoffReader {
 						weakDefaults.set(s, null);
 						weakTags.push({sym: s, tag: tag});
 					}
-				} else if (secNum > 0 && secs[secNum] != null) {
+				} else if (secNum > 0 && secAt(secNum) != null) {
 					s = new Symbol(name);
 					s.global = false;
-					s.section = secs[secNum];
+					s.section = secAt(secNum);
 					s.offset = value;
 					o.symbols.push(s);
 				}
 				// the first symbol of a COMDAT section names it
 				if (secNum > 0 && pendingComdat.exists(secNum)) {
-					comdat.set(secs[secNum], {sym: name, selection: pendingComdat.get(secNum), assoc: null});
+					comdat.set(secAt(secNum), {sym: name, selection: pendingComdat.get(secNum), assoc: null});
 					pendingComdat.remove(secNum);
 				}
 			}
-			syms.push(s);
-			for (_ in 0...naux)
-				syms.push(null);
+			syms[k] = s;
 			k += 1 + naux;
 		}
 		for (w in weakTags)
-			weakDefaults.set(w.sym, syms[w.tag]);
+			weakDefaults.set(w.sym, symAt(w.tag));
 		for (secNum => target in assocOf) {
-			var s = secs[secNum];
+			var s = secAt(secNum);
 			if (s == null) continue;
 			var c = comdat.get(s);
-			if (c == null) comdat.set(s, {sym: null, selection: 5, assoc: secs[target]}) else c.assoc = secs[target];
+			if (c == null) comdat.set(s, {sym: null, selection: 5, assoc: secAt(target)}) else c.assoc = secAt(target);
 		}
 		for (secNum => sel in pendingComdat)
-			if (secs[secNum] != null && !comdat.exists(secs[secNum])) comdat.set(secs[secNum], {sym: null, selection: sel, assoc: null});
+			if (secAt(secNum) != null && !comdat.exists(secAt(secNum))) comdat.set(secAt(secNum), {sym: null, selection: sel, assoc: null});
 		// relocations, with their addends taken out of the fields
 		for (i in 0...nsec) {
 			var s = secs[i + 1];
@@ -298,7 +299,7 @@ class CoffReader {
 			for (j in 0...n) {
 				var at = off + 10 * j;
 				var va = u32(at);
-				var sym = syms[u32(at + 4)];
+				var sym = symAt(u32(at + 4));
 				var t = u16(at + 8);
 				var rk = relocKind(t);
 				if (sym == null) throw "hxmc: COFF relocation against a dropped symbol in " + s.name;

@@ -43,14 +43,18 @@ import typing.matcher.ExprToPattern;
 import typing.matcher.TexprConverter;
 import typing.matcher.MatcherGlobals;
 import core.ds.MlList;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 @:structInit class MatchCase {
-	public var patterns:Array<Expr>;
+	public var patterns:haxe.ds.Vector<Expr>;
 	public var guard:Null<Expr>;
 	public var expr:Null<Expr>;
 	public var pos:Pos;
 
-	public inline function new(patterns:Array<Expr>, guard:Null<Expr>, expr:Null<Expr>, pos:Pos) {
+	public inline function new(patterns:haxe.ds.Vector<Expr>, guard:Null<Expr>, expr:Null<Expr>, pos:Pos) {
 		this.patterns = patterns;
 		this.guard = guard;
 		this.expr = expr;
@@ -63,7 +67,7 @@ import core.ds.MlList;
 typedef MatchDefault = core.Ast.SwitchDefault;
 
 class Matcher {
-	static function matchExprImpl(ctx:context.Typecore.Typer, e:Expr, cases:Array<MatchCase>, def:Null<MatchDefault>,
+	static function matchExprImpl(ctx:context.Typecore.Typer, e:Expr, cases:haxe.ds.Vector<MatchCase>, def:Null<MatchDefault>,
 			withType:WithTypeValue, postfixMatch:Bool, p:Pos):TExpr {
 		var matchDebug = Meta.has(MetaTag.Custom(":debug.match"), ctx.f.curfield.cfMeta);
 		function loop(e:Expr):{type:T, subjects:Array<TExpr>} {
@@ -72,8 +76,8 @@ class Matcher {
 					case EFor(_, _) | EWhile(_, _, _): true;
 					case _: false;
 				})):
-					var typed = el.map(function(e) return typeExpr(ctx, e, WithTypeTools.value));
-					{type: ExprToPattern.tupleType(typed.map(function(e) return e.etype)), subjects: typed};
+					var typed = el.mapToArray(function(e) return typeExpr(ctx, e, WithTypeTools.value));
+					{type: ExprToPattern.tupleType(typed.mapToVector(function(e) return e.etype)), subjects: typed};
 				case EParenthesis(e): loop(e);
 				case _:
 					var e = typeExpr(ctx, e, WithTypeTools.value);
@@ -81,14 +85,14 @@ class Matcher {
 			};
 		}
 		var subject = loop(e);
-		if (def != null) cases = cases.concat([
+		if (def != null) cases = cases.concat(vector(
 			{
-				patterns: [{expr: EConst(Ident("_")), pos: def.pos}],
+				patterns: vector({expr: EConst(Ident("_")), pos: def.pos}),
 				guard: null,
 				expr: def.expr,
 				pos: def.pos
 			}
-		]);
+		));
 		var tmono:Null<T> = null, allowMinVoid = false;
 		switch withType {
 			case WithType(t, source):
@@ -109,7 +113,7 @@ class Matcher {
 			case _:
 		}
 		// var freeMonos = Case.collectFreeMonos(subject.type);
-		var rows:Array<CaseRow> = cases.map(function(c):CaseRow {
+		var rows:Array<CaseRow> = cases.mapToArray(function(c):CaseRow {
 			var cp = c.pos;
 			if (c.expr != null
 				&& cp.pfile == Globals.nullPos.pfile
@@ -131,14 +135,14 @@ class Matcher {
 						var e = row.caseData.caseExpr;
 						return e == null
 							// If we have no block we have to use the `case pattern` position because that's all we have.
-							? mk(TBlock([]), ctx.t.tvoid, row.caseData.casePos)
+							? mk(TBlock(vector()), ctx.t.tvoid, row.caseData.casePos)
 							// If we have a block, use the position of the last element.
 							: switch e.eexpr {
 							case TBlock(values) if (values.length > 0): values[values.length - 1];
 							case _: e;
 						};
 					});
-					allowMinVoid ? unifyMinForTypeSource(ctx, el, ImplicitReturn) : unifyMin(ctx, el);
+					allowMinVoid ? unifyMinForTypeSource(ctx, VectorTools.ofArray(el), ImplicitReturn) : unifyMin(ctx, VectorTools.ofArray(el));
 				}
 			case WithType(t, _): t;
 		};
@@ -164,7 +168,7 @@ class Matcher {
 		return {eexpr: result.eexpr, etype: result.etype, epos: p};
 	}
 
-	public static function matchExpr(ctx:context.Typecore.Typer, e:Expr, cases:Array<MatchCase>, def:Null<MatchDefault>,
+	public static function matchExpr(ctx:context.Typecore.Typer, e:Expr, cases:haxe.ds.Vector<MatchCase>, def:Null<MatchDefault>,
 			withType:WithTypeValue, postfixMatch:Bool, p:Pos):TExpr {
 		if (cases.length == 0 && def == null && withType == NoValue) return typeExpr(ctx, e, WithTypeTools.value);
 		return matchExprImpl(ctx, e, cases, def, withType, postfixMatch, p);

@@ -26,6 +26,7 @@ import haxe.io.Bytes;
 import haxe.io.BytesBuffer;
 import haxe.Int64;
 import haxe.ds.IntMap;
+import haxe.ds.Vector;
 import core.Globals;
 import core.ds.Failure;
 import core.ds.InvalidArgument;
@@ -33,8 +34,12 @@ import core.ds.NotFound;
 import core.ds.OcamlHash;
 import core.ds.OcamlHashtbl;
 import core.ds.OcamlStr;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
 import generators.Hlcode;
 import generators.Hlcode.*;
+
+using core.ds.VectorTools;
 
 // port: OCaml values are compared with `==` (physical equality) in a few places; a Haxe
 // ... `==` on two `Value`s compares the enum instances by reference, which is the same thing
@@ -49,13 +54,13 @@ enum Value {
 	VObj(o:Vobject);
 	VClosure(f:Vfunction, v:Null<Value>); // port: `value option`, None is null
 	VBytes(b:Bytes); // port: the (mutated in place) OCaml string
-	VArray(a:Array<Value>, t:Ttype);
+	VArray(a:Vector<Value>, t:Ttype);
 	VUndef;
 	VType(t:Ttype);
 	VRef(r:RefValue, t:Ttype);
 	VVirtual(v:Vvirtual);
 	VDynObj(d:Vdynobj);
-	VEnum(e:EnumProto, i:Int, vals:Array<Value>);
+	VEnum(e:EnumProto, i:Int, vals:Vector<Value>);
 	VAbstract(a:Vabstract);
 	VVarArgs(f:Vfunction, v:Null<Value>);
 	VStruct(o:Vobject);
@@ -70,7 +75,7 @@ class ValueRef {
 enum RefValue {
 	RStack(i:Int);
 	RValue(r:ValueRef);
-	RArray(a:Array<Value>, i:Int);
+	RArray(a:Vector<Value>, i:Int);
 }
 
 // port: `(value * value) list ref`, head first
@@ -99,7 +104,7 @@ enum Vfunction {
 
 class Vobject {
 	public final oproto:Vproto;
-	public final ofields:Array<Value>;
+	public final ofields:Vector<Value>;
 
 	public function new(oproto, ofields) {
 		this.oproto = oproto;
@@ -109,7 +114,7 @@ class Vobject {
 
 class Vproto {
 	public final pclass:ClassProto;
-	public final pmethods:Array<Vfunction>;
+	public final pmethods:Vector<Vfunction>;
 
 	public function new(pclass, pmethods) {
 		this.pclass = pclass;
@@ -119,8 +124,8 @@ class Vproto {
 
 class Vvirtual {
 	public final vtype:VirtualProto;
-	public var vindexes:Array<Vfield>;
-	public var vtable:Array<Value>;
+	public var vindexes:Vector<Vfield>;
+	public var vtable:Vector<Value>;
 	public var vvalue:Value;
 
 	public function new(vtype, vindexes, vtable, vvalue) {
@@ -133,8 +138,8 @@ class Vvirtual {
 
 class Vdynobj {
 	public final dfields:OcamlHashtbl<String, Int>;
-	public var dtypes:Array<Ttype>;
-	public var dvalues:Array<Value>;
+	public var dtypes:Vector<Ttype>;
+	public var dvalues:Vector<Value>;
 	public var dvirtuals:Array<Vvirtual>; // port: list, head first
 
 	public function new(dfields, dtypes, dvalues, dvirtuals) {
@@ -153,7 +158,7 @@ enum Vfield {
 class Regexp {
 	public final r:OcamlStrRegexp;
 	public var rString:String;
-	public var rGroups:Array<Null<{start:Int, end:Int}>>;
+	public var rGroups:Vector<Null<{start:Int, end:Int}>>;
 
 	public function new(r, rString, rGroups) {
 		this.r = r;
@@ -236,7 +241,7 @@ class Frames {
 
 class ProtoEntry {
 	public final proto:Vproto;
-	public final fields:Array<Ttype>;
+	public final fields:Vector<Ttype>;
 	public final bindings:Array<{fid:Int, mk:Value->Value}>; // port: list, head first
 
 	public function new(proto, fields, bindings) {
@@ -247,11 +252,11 @@ class ProtoEntry {
 }
 
 class InterpContext {
-	public var tGlobals:Array<Value>;
-	public var tFunctions:Array<Vfunction>;
+	public var tGlobals:Vector<Value>;
+	public var tFunctions:Vector<Vfunction>;
 	public var callStack:Null<Frames>;
 	public var errorStack:Null<Frames>;
-	public var stack:Array<Value>;
+	public var stack:Vector<Value>;
 	public var stackPos:Int;
 	public var fcall:Vfunction->Array<Value>->Value;
 	public var code:Code;
@@ -263,11 +268,11 @@ class InterpContext {
 
 	public function new(checked:Bool) {
 		this.checked = checked;
-		tGlobals = [];
-		tFunctions = [];
+		tGlobals = vector();
+		tFunctions = vector();
 		callStack = null;
 		errorStack = null;
-		stack = [];
+		stack = vector();
 		stackPos = 0;
 		cachedProtos = new IntMap();
 		cachedStrings = new IntMap();
@@ -289,12 +294,12 @@ class Hlinterp {
 	static inline function die():Dynamic return Globals.die("", "hlinterp.ml");
 
 	// port: OCaml `a.(i)`: Invalid_argument "index out of bounds" outside the array
-	static inline function aget<T>(a:Array<T>, i:Int):T {
+	static inline function aget<T>(a:Vector<T>, i:Int):T {
 		if (i < 0 || i >= a.length) throw new InvalidArgument("index out of bounds");
 		return a[i];
 	}
 
-	static inline function aset<T>(a:Array<T>, i:Int, v:T):Void {
+	static inline function aset<T>(a:Vector<T>, i:Int, v:T):Void {
 		if (i < 0 || i >= a.length) throw new InvalidArgument("index out of bounds");
 		a[i] = v;
 	}
@@ -476,17 +481,17 @@ class Hlinterp {
 	static function getProto(ctx:InterpContext, p:ClassProto):ProtoEntry {
 		var cached = ctx.cachedProtos.get(p.pid);
 		if (cached != null) return cached;
-		var fields:Array<Ttype>, bindings:Array<{fid:Int, mk:Value->Value}>;
+		var fields:Vector<Ttype>, bindings:Array<{fid:Int, mk:Value->Value}>;
 		if (p.psuper == null) {
-			fields = [];
+			fields = vector();
 			bindings = [];
 		} else {
 			var e = getProto(ctx, p.psuper);
 			fields = e.fields;
 			bindings = e.bindings;
 		}
-		var meths = [for (i in p.pvirtuals) getFunction(ctx, i)];
-		var fields = fields.concat([for (f in p.pfields) f.t]);
+		var meths = p.pvirtuals.map(i -> getFunction(ctx, i));
+		var fields = fields.concat(p.pfields.map(f -> f.t));
 		var bindings = {
 			var acc = bindings;
 			for (b in p.pbindings) {
@@ -513,21 +518,21 @@ class Hlinterp {
 	static function allocObj(ctx:InterpContext, t:Ttype):Value {
 		switch t {
 			case HDynObj:
-				return VDynObj(new Vdynobj(newStringHashtbl(), [], [], []));
+				return VDynObj(new Vdynobj(newStringHashtbl(), vector(), vector(), []));
 			case HObj(p):
 				var e = getProto(ctx, p);
-				var ftable = [for (t in e.fields) defaultValue(t)];
+				var ftable = e.fields.map(t -> defaultValue(t));
 				var obj = VObj(new Vobject(e.proto, ftable));
 				for (b in e.bindings) aset(ftable, b.fid, b.mk(obj));
 				return obj;
 			case HStruct(p):
 				var e = getProto(ctx, p);
-				var ftable = [for (t in e.fields) defaultValue(t)];
+				var ftable = e.fields.map(t -> defaultValue(t));
 				return VStruct(new Vobject(e.proto, ftable));
 			case HVirtual(v):
-				var o = new Vdynobj(newStringHashtbl(), [for (f in v.vfields) f.t], [for (f in v.vfields) defaultValue(f.t)], []);
+				var o = new Vdynobj(newStringHashtbl(), v.vfields.map(f -> f.t), v.vfields.map(f -> defaultValue(f.t)), []);
 				for (i in 0...v.vfields.length) o.dfields.add(v.vfields[i].name, i);
-				var vv = new Vvirtual(v, [for (i in 0...v.vfields.length) VFIndex(i)], o.dvalues, VDynObj(o));
+				var vv = new Vvirtual(v, v.vfields.mapi((i, _) -> VFIndex(i)), o.dvalues, VDynObj(o));
 				o.dvirtuals = [vv];
 				return VVirtual(vv);
 			case _:
@@ -893,26 +898,22 @@ class Hlinterp {
 			case VNull:
 				return VNull;
 			case VObj(o):
-				var indexes = [
-					for (f in vp.vfields) {
-						try {
-							var r = getIndex(f.name, o.oproto.pclass);
-							if (r.fid < 0 || !tsame(f.t, r.t)) throw NotFound.raise();
-							VFIndex(r.fid);
-						} catch (_:NotFound) {
-							VFNone; /* most likely a method */
-						}
+				var indexes = vp.vfields.map(f -> {
+					try {
+						var r = getIndex(f.name, o.oproto.pclass);
+						if (r.fid < 0 || !tsame(f.t, r.t)) throw NotFound.raise();
+						VFIndex(r.fid);
+					} catch (_:NotFound) {
+						VFNone; /* most likely a method */
 					}
-				];
+				});
 				return VVirtual(new Vvirtual(vp, indexes, o.ofields, v));
 			case VDynObj(d):
 				for (v in d.dvirtuals) if (v.vtype == vp) return VVirtual(v);
-				var indexes = [
-					for (f in vp.vfields) {
-						var idx = d.dfields.findOpt(f.name);
-						if (idx == null || !tsame(f.t, aget(d.dtypes, idx))) VFNone else VFIndex(idx);
-					}
-				];
+				var indexes = vp.vfields.map(f -> {
+					var idx = d.dfields.findOpt(f.name);
+					if (idx == null || !tsame(f.t, aget(d.dtypes, idx))) VFNone else VFIndex(idx);
+				});
 				var vv = new Vvirtual(vp, indexes, d.dvalues, v);
 				d.dvirtuals.unshift(vv);
 				return VVirtual(vv);
@@ -1059,7 +1060,7 @@ class Hlinterp {
 			case VNull:
 				return nullAccess();
 			case VVarArgs(f, a):
-				var arr = VArray([for (a in args) makeDyn(a.v, a.t)], HDyn);
+				var arr = VArray(args.mapToVector(a -> makeDyn(a.v, a.t)), HDyn);
 				return dynCall(ctx, VClosure(f, a), [{v: arr, t: HArray(HDyn)}], tret);
 			case _:
 				return throwMsg(ctx, vstrD(ctx, v) + " cannot be called");
@@ -1195,12 +1196,8 @@ class Hlinterp {
 				} else {
 					var idx = d.dvalues.length;
 					d.dfields.add(field, idx);
-					var vals2 = d.dvalues.copy();
-					vals2.push(v);
-					var types2 = d.dtypes.copy();
-					types2.push(vt);
-					d.dvalues = vals2;
-					d.dtypes = types2;
+					d.dvalues = d.dvalues.snoc(v);
+					d.dtypes = d.dtypes.snoc(vt);
 					rebuildVirtuals(ctx, d);
 				}
 			case VObj(o):
@@ -1245,8 +1242,8 @@ class Hlinterp {
 
 	static function virtMakeVal(v:Vvirtual):Value {
 		var hfields = newStringHashtbl();
-		var ftypes = [];
-		var values = [];
+		var ftypes:Array<Ttype> = [];
+		var values:Array<Value> = [];
 		for (i in 0...v.vindexes.length) {
 			switch v.vindexes[i] {
 				case VFNone:
@@ -1257,7 +1254,7 @@ class Hlinterp {
 					ftypes.push(f.t);
 			}
 		}
-		return VDynObj(new Vdynobj(hfields, ftypes, values, [v]));
+		return VDynObj(new Vdynobj(hfields, Vector.fromArrayCopy(ftypes), Vector.fromArrayCopy(values), [v]));
 	}
 
 	static function vstr(ctx:InterpContext, v:Value, t:Ttype):String {
@@ -1326,8 +1323,8 @@ class Hlinterp {
 		var nregs = f.regs.length;
 		if (spos + nregs > ctx.stack.length) {
 			var nsize = spos + nregs + 256;
-			var nstack = [for (_ in 0...nsize) VUndef];
-			for (i in 0...ctx.stackPos) nstack[i] = ctx.stack[i];
+			var nstack = new Vector(nsize, VUndef);
+			Vector.blit(ctx.stack, 0, nstack, 0, ctx.stackPos);
 			ctx.stack = nstack;
 		}
 		if (ctx.checked) for (i in 0...nregs) ctx.stack[i + spos] = VUndef;
@@ -1811,12 +1808,12 @@ class Hlinterp {
 						set(r, VEnum(switch rtype(r) {
 							case HEnum(e): e;
 							case _: die();
-						}, e, [for (r in pl) get(r)]));
+						}, e, pl.mapToVector(r -> get(r))));
 					case OEnumAlloc(r, f):
 						switch rtype(r) {
 							case HEnum(e):
 								var fl = aget(e.efields, f).args;
-								var vl = [for (_ in 0...fl.length) VUndef];
+								var vl = new Vector(fl.length, VUndef);
 								set(r, VEnum(e, f, vl));
 							case _:
 								die();
@@ -2100,7 +2097,7 @@ class Hlinterp {
 						function(args) return switch args {
 							case [VType(t), VInt(i)]:
 								if (i < 0) throw new InvalidArgument("Array.make");
-								VArray([for (_ in 0...i) defaultValue(t)], t);
+								VArray(new Vector(i, defaultValue(t)), t);
 							case _: die();
 						}
 					case "alloc_obj":
@@ -2114,7 +2111,7 @@ class Hlinterp {
 								var args = aget(e.efields, idx).args;
 								if (args.length != len) VNull else {
 									if (len < 0 || len > vl.length) throw new InvalidArgument("Array.sub");
-									VEnum(e, idx, [for (i in 0...len) dynCast(ctx, vl[i], vt, args[i])]);
+									VEnum(e, idx, VectorTools.init(len, i -> dynCast(ctx, vl[i], vt, args[i])));
 								}
 							case vl:
 								die();
@@ -2123,8 +2120,7 @@ class Hlinterp {
 						function(args) return switch args {
 							case [VArray(dst, _), VInt(dp), VArray(src, _), VInt(sp), VInt(len)]:
 								if (len < 0 || sp < 0 || sp > src.length - len || dp < 0 || dp > dst.length - len) throw new InvalidArgument("Array.blit");
-								var tmp = src.slice(sp, sp + len);
-								for (i in 0...len) dst[dp + i] = tmp[i];
+								Vector.blit(src, sp, dst, dp, len);
 								VUndef;
 							case _: die();
 						}
@@ -2349,7 +2345,7 @@ class Hlinterp {
 									acc.unshift(v);
 									acc;
 								}, []);
-								VArray(values, HDyn);
+								VArray(Vector.fromArrayCopy(values), HDyn);
 							case _: die();
 						}
 					case "hbkeys":
@@ -2359,7 +2355,7 @@ class Hlinterp {
 									acc.unshift(VBytes(camlToHl(s)));
 									acc;
 								}, []);
-								VArray(keys, HBytes);
+								VArray(Vector.fromArrayCopy(keys), HBytes);
 							case _: die();
 						}
 					case "hbexists":
@@ -2401,7 +2397,7 @@ class Hlinterp {
 									acc.unshift(v);
 									acc;
 								}, []);
-								VArray(values, HDyn);
+								VArray(Vector.fromArrayCopy(values), HDyn);
 							case _: die();
 						}
 					case "hikeys":
@@ -2411,7 +2407,7 @@ class Hlinterp {
 									acc.unshift(VInt(i));
 									acc;
 								}, []);
-								VArray(keys, HI32);
+								VArray(Vector.fromArrayCopy(keys), HI32);
 							case _: die();
 						}
 					case "hiexists":
@@ -2461,13 +2457,13 @@ class Hlinterp {
 					case "hovalues":
 						function(args) return switch args {
 							case [VAbstract(AHashObject(l))]:
-								VArray([for (p in l.l) p.v], HDyn);
+								VArray(l.l.mapToVector(p -> p.v), HDyn);
 							case _: die();
 						}
 					case "hokeys":
 						function(args) return switch args {
 							case [VAbstract(AHashObject(l))]:
-								VArray([for (p in l.l) p.k], HDyn);
+								VArray(l.l.mapToVector(p -> p.k), HDyn);
 							case _: die();
 						}
 					case "hoexists":
@@ -2607,10 +2603,10 @@ class Hlinterp {
 						function getFields(v:Value, isRec:Bool):Value {
 							return switch v {
 								case VDynObj(o):
-									VArray(o.dfields.fold((n, _, acc:Array<Value>) -> {
+									VArray(Vector.fromArrayCopy(o.dfields.fold((n, _, acc:Array<Value>) -> {
 										acc.unshift(VBytes(camlToHl(n)));
 										acc;
-									}, []), HBytes);
+									}, [])), HBytes);
 								case VObj(o):
 									function loop(p:ClassProto):Array<Array<Value>> {
 										var fields = [for (f in p.pfields) VBytes(camlToHl(f.name))];
@@ -2618,7 +2614,7 @@ class Hlinterp {
 									}
 									var all = [];
 									for (a in loop(o.oproto.pclass)) all = all.concat(a);
-									VArray(all, HBytes);
+									VArray(Vector.fromArrayCopy(all), HBytes);
 								case VVirtual(v):
 									getFields(v.vvalue, isRec);
 								case _:
@@ -2640,7 +2636,7 @@ class Hlinterp {
 						function(args) return switch args {
 							case [VEnum(e, idx, pl)]:
 								var ptypes = aget(e.efields, idx).args;
-								VArray([for (i in 0...pl.length) makeDyn(pl[i], aget(ptypes, i))], HDyn);
+								VArray(pl.mapi((i, v) -> makeDyn(v, aget(ptypes, i))), HDyn);
 							case _:
 								die();
 						}
@@ -2661,7 +2657,7 @@ class Hlinterp {
 											}
 											return sup.concat([for (f in o.pfields) VBytes(camlToHl(f.name))]).concat(protos);
 										}
-										VArray(fields(o), HBytes);
+										VArray(Vector.fromArrayCopy(fields(o)), HBytes);
 									case _: VNull;
 								}
 							case _: die();
@@ -2670,7 +2666,7 @@ class Hlinterp {
 						function(args) return switch args {
 							case [VType(t)]:
 								switch t {
-									case HEnum(e): VArray([for (f in e.efields) VBytes(camlToHl(f.name))], HBytes);
+									case HEnum(e): VArray(e.efields.map(f -> VBytes(camlToHl(f.name))), HBytes);
 									case _: VNull;
 								}
 							case _: die();
@@ -2678,7 +2674,7 @@ class Hlinterp {
 					case "type_enum_values":
 						function(args) return switch args {
 							case [VType(HEnum(e))]:
-								VArray([for (i in 0...e.efields.length) if (e.efields[i].args.length != 0) VNull else VEnum(e, i, [])], HDyn);
+								VArray(e.efields.mapi((i, f) -> if (f.args.length != 0) VNull else VEnum(e, i, vector())), HDyn);
 							case _: die();
 						}
 					case "type_enum_eq":
@@ -2763,8 +2759,13 @@ class Hlinterp {
 											}, []);
 											d.dfields.clear();
 											for (p in fields) d.dfields.add(p.n, p.i);
-											var vals2 = d.dvalues.slice(0, idx).concat(d.dvalues.slice(idx + 1, count));
-											var types2 = d.dtypes.slice(0, idx).concat(d.dtypes.slice(idx + 1, count));
+											var vals2 = new Vector<Value>(count - 1);
+											var types2 = new Vector<Ttype>(count - 1);
+											var len = count - idx - 1;
+											Vector.blit(d.dvalues, 0, vals2, 0, idx);
+											Vector.blit(d.dvalues, idx + 1, vals2, idx, len);
+											Vector.blit(d.dtypes, 0, types2, 0, idx);
+											Vector.blit(d.dtypes, idx + 1, types2, idx, len);
 											d.dvalues = vals2;
 											d.dtypes = types2;
 											rebuildVirtuals(ctx, d);
@@ -2949,7 +2950,7 @@ class Hlinterp {
 						}
 					case "exception_stack":
 						function(args) return switch args {
-							case []: VArray([for (e in Frames.toArray(Frames.rev(ctx.errorStack))) VBytes(camlToHl(stackFrame(ctx, e)))], HBytes);
+							case []: VArray(Frames.toArray(Frames.rev(ctx.errorStack)).mapToVector(e -> VBytes(camlToHl(stackFrame(ctx, e)))), HBytes);
 							case _: die();
 						}
 					case "date_new":
@@ -3071,7 +3072,7 @@ class Hlinterp {
 									}
 								}
 								var str = buf.getBytes();
-								var r = new Regexp(if (caseSensitive) OcamlStr.regexp(str) else OcamlStr.regexpCaseFold(str), "", []);
+								var r = new Regexp(if (caseSensitive) OcamlStr.regexp(str) else OcamlStr.regexpCaseFold(str), "", vector());
 								VAbstract(AReg(r));
 							case _:
 								die();
@@ -3107,7 +3108,7 @@ class Hlinterp {
 										n++;
 									}
 									r.rString = str.getString(0, str.length);
-									r.rGroups = groups;
+									r.rGroups = Vector.fromArrayCopy(groups);
 									VBool(true);
 								} catch (_:NotFound) {
 									VBool(false);
@@ -3140,7 +3141,7 @@ class Hlinterp {
 							case _: die();
 						}
 					case "dyn_op":
-						var opNames = ["+", "-", "*", "%", "/", "<<", ">>", ">>>", "&", "|", "^"];
+						var opNames = vector("+", "-", "*", "%", "/", "<<", ">>", ">>>", "&", "|", "^");
 						function(args) return switch args {
 							case [VInt(op), a, b]:
 								function isNumber(v:Value):Bool {
@@ -3216,7 +3217,7 @@ class Hlinterp {
 
 	public static function create(checked:Bool):InterpContext {
 		var ctx = new InterpContext(checked);
-		ctx.code = new Code(0, 0, [], [], [], [], [], [], [], [], []);
+		ctx.code = new Code(0, 0, vector(), vector(), vector(), vector(), vector(), vector(), vector(), vector(), vector());
 		ctx.fcall = (_, _) -> die();
 		ctx.onError = (_, _) -> die();
 		ctx.onError = (msg, stack) -> {
@@ -3233,12 +3234,12 @@ class Hlinterp {
 
 	public static function addCode(ctx:InterpContext, code:Code):Void {
 		/* expand global table */
-		var globals = [for (t in code.globals) defaultValue(t)];
+		var globals = code.globals.map(t -> defaultValue(t));
 		for (i in 0...ctx.tGlobals.length) aset(globals, i, ctx.tGlobals[i]);
 		ctx.tGlobals = globals;
 		/* expand function table */
 		var nfunctions = code.functions.length + code.natives.length;
-		var functions = [for (_ in 0...nfunctions) FNativeFun("", _ -> die(), HDyn)];
+		var functions = new Vector(nfunctions, FNativeFun("", _ -> die(), HDyn));
 		for (i in 0...ctx.tFunctions.length) aset(functions, i, ctx.tFunctions[i]);
 		for (i in ctx.code.natives.length...code.natives.length) {
 			var n = code.natives[i];
@@ -3264,7 +3265,7 @@ class Hlinterp {
 				case HObj(o):
 					if (o.pfields.length != fields.length) die();
 					var proto = getProto(ctx, o).proto;
-					VObj(new Vobject(proto, [for (i in 0...o.pfields.length) getConstVal(o.pfields[i].t, fields[i])]));
+					VObj(new Vobject(proto, o.pfields.mapi((i, f) -> getConstVal(f.t, fields[i]))));
 				case _:
 					die();
 			}
@@ -3276,7 +3277,7 @@ class Hlinterp {
 
 	/* ------------------------------- CHECK ---------------------------------------------- */
 	public static function check(comerror:String->core.Globals.Pos->Void, code:Code):Void {
-		var ftypes = [for (_ in 0...code.natives.length + code.functions.length) HVoid];
+		var ftypes = new Vector(code.natives.length + code.functions.length, HVoid);
 		var isNativeFun = new haxe.ds.IntMap<Bool>();
 
 		function checkFun(f:Fundecl):Void {
@@ -3634,7 +3635,7 @@ class Hlinterp {
 							case HEnum(e):
 								var fl = e.efields[index].args;
 								if (fl.length != pl.length) error("MakeEnum has " + pl.length + " params while " + fl.length + " are required");
-								iter2(pl, fl);
+								iter2(pl, fl.toArray());
 							case _:
 								isEnum(r);
 						}

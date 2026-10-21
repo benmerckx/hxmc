@@ -119,11 +119,12 @@ class FuncRec {
 	// the frame operations, four numbers each: Unwind.OP_*, the offset in the
 	// function where the frame is as the operation leaves it (the end of its
 	// instruction), two operands
-	public var ops:Array<Int>;
+	public var ops:haxe.ds.Vector<Int>;
 	public var name:Null<String> = null; // (-debug) the Haxe name, pack.Class.field
 	// (-debug) rows of three numbers: an offset in the function, a file
-	// (Obj.files), a line; each row holds until the next
-	public var lines:Null<Array<Int>> = null;
+	// (Obj.files), a line; each row holds until the next (null: not recorded,
+	// which the section tells from no rows)
+	public var lines:Null<haxe.ds.Vector<Int>> = null;
 
 	public function new(sym, ops) {
 		this.sym = sym;
@@ -197,10 +198,18 @@ class FuncRec {
 			var sym = symAt.get(at);
 			if (sym == null) throw "hxmc: a function record without its function";
 			at += 8;
-			var r = new FuncRec(sym, [for (_ in 0...uleb()) uleb()]);
+			var ops = new haxe.ds.Vector<Int>(uleb());
+			for (k in 0...ops.length)
+				ops[k] = uleb();
+			var r = new FuncRec(sym, ops);
 			if (uleb() != 0) r.name = str();
 			var n = uleb();
-			if (n != 0) r.lines = [for (_ in 0...n - 1) uleb()];
+			if (n != 0) {
+				var lines = new haxe.ds.Vector<Int>(n - 1);
+				for (k in 0...n - 1)
+					lines[k] = uleb();
+				r.lines = lines;
+			}
 			o.funcs.push(r);
 		}
 	}

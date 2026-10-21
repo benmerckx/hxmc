@@ -2,6 +2,8 @@ package hxmc.a64;
 
 import hxmc.Buf;
 import hxmc.Obj;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
 
 // AArch64 instruction encoder. Registers: 0-30 the general registers
 // (x0-x30; 31 is sp or the zero register depending on the instruction:
@@ -104,25 +106,34 @@ class Asm {
 	static inline function sf(x:Bool):Int
 		return x ? 0x80000000 : 0;
 
+	// the opcodes of the instruction groups below, by op
+	static final ADD_SUB_R:Vector<Int> = vector(0x0B000000, 0x2B000000, 0x4B000000, 0x6B000000);
+	static final ADD_SUB_I:Vector<Int> = vector(0x11000000, 0x31000000, 0x51000000, 0x71000000);
+	static final LOGIC_R:Vector<Int> = vector(0x0A000000, 0x2A000000, 0x4A000000, 0x6A000000);
+	static final LOGIC_I:Vector<Int> = vector(0x12000000, 0x32000000, 0x52000000, 0x72000000);
+	static final DP2:Vector<Int> = vector(0x1AC00800, 0x1AC00C00, 0x1AC02000, 0x1AC02400, 0x1AC02800);
+	static final FOP2:Vector<Int> = vector(0x1E600800, 0x1E601800, 0x1E602800, 0x1E603800);
+	static final FOP1:Vector<Int> = vector(0x1E604000, 0x1E60C000, 0x1E614000, 0x1E61C000, 0x1E654000, 0x1E64C000);
+
 	// ---- data processing
 
 	// add/sub/adds/subs (shifted register): op 0 add, 1 adds, 2 sub, 3 subs
 	public function addSubR(op:Int, x:Bool, d:Int, n:Int, m:Int, shift = 0, amount = 0)
-		w(sf(x) | [0x0B000000, 0x2B000000, 0x4B000000, 0x6B000000][op] | (shift << 22) | (m << 16) | (amount << 10) | (n << 5) | d);
+		w(sf(x) | ADD_SUB_R[op] | (shift << 22) | (m << 16) | (amount << 10) | (n << 5) | d);
 
 	// add/sub/adds/subs (immediate 0..4095, optionally shifted by 12)
 	public function addSubI(op:Int, x:Bool, d:Int, n:Int, imm:Int, lsl12 = false)
-		w(sf(x) | [0x11000000, 0x31000000, 0x51000000, 0x71000000][op] | (lsl12 ? 1 << 22 : 0) | ((imm & 0xfff) << 10) | (n << 5) | d);
+		w(sf(x) | ADD_SUB_I[op] | (lsl12 ? 1 << 22 : 0) | ((imm & 0xfff) << 10) | (n << 5) | d);
 
 	// and/orr/eor/ands (shifted register): op 0 and, 1 orr, 2 eor, 3 ands; invert: bic/orn/eon/bics
 	public function logicR(op:Int, x:Bool, d:Int, n:Int, m:Int, invert = false, shift = 0, amount = 0)
-		w(sf(x) | [0x0A000000, 0x2A000000, 0x4A000000, 0x6A000000][op] | (invert ? 1 << 21 : 0) | (shift << 22) | (m << 16) | (amount << 10) | (n << 5) | d);
+		w(sf(x) | LOGIC_R[op] | (invert ? 1 << 21 : 0) | (shift << 22) | (m << 16) | (amount << 10) | (n << 5) | d);
 
 	// and/orr/eor/ands with a bitmask immediate (false: not encodable)
 	public function logicI(op:Int, x:Bool, d:Int, n:Int, lo:Int, hi:Int):Bool {
 		var e = bitmask(lo, x ? hi : lo, x);
 		if (e < 0) return false;
-		w(sf(x) | [0x12000000, 0x32000000, 0x52000000, 0x72000000][op] | (e << 10) | (n << 5) | d);
+		w(sf(x) | LOGIC_I[op] | (e << 10) | (n << 5) | d);
 		return true;
 	}
 
@@ -185,12 +196,14 @@ class Asm {
 	// d = a constant (halves of 64 bits)
 	public function movI(x:Bool, d:Int, lo:Int, hi:Int) {
 		if (!x) hi = 0;
-		var parts = [lo & 0xffff, lo >>> 16, hi & 0xffff, hi >>> 16];
+		// the constant's halfwords, lowest first
+		inline function part(i:Int):Int
+			return i == 0 ? lo & 0xffff : i == 1 ? lo >>> 16 : i == 2 ? hi & 0xffff : hi >>> 16;
 		var n = x ? 4 : 2;
 		var zeros = 0, ffff = 0;
 		for (i in 0...n) {
-			if (parts[i] == 0) zeros++;
-			if (parts[i] == 0xffff) ffff++;
+			if (part(i) == 0) zeros++;
+			if (part(i) == 0xffff) ffff++;
 		}
 		if (zeros == n) {
 			movz(x, d, 0, 0);
@@ -199,8 +212,8 @@ class Asm {
 		if (ffff > zeros) {
 			var first = true;
 			for (i in 0...n)
-				if (parts[i] != 0xffff) {
-					if (first) movn(x, d, ~parts[i] & 0xffff, i) else movk(x, d, parts[i], i);
+				if (part(i) != 0xffff) {
+					if (first) movn(x, d, ~part(i) & 0xffff, i) else movk(x, d, part(i), i);
 					first = false;
 				}
 			if (first) movn(x, d, 0, 0);
@@ -213,8 +226,8 @@ class Asm {
 		}
 		var first = true;
 		for (i in 0...n)
-			if (parts[i] != 0) {
-				if (first) movz(x, d, parts[i], i) else movk(x, d, parts[i], i);
+			if (part(i) != 0) {
+				if (first) movz(x, d, part(i), i) else movk(x, d, part(i), i);
 				first = false;
 			}
 	}
@@ -229,7 +242,7 @@ class Asm {
 
 	// 0 udiv, 1 sdiv, 2 lslv, 3 lsrv, 4 asrv
 	public function dp2(op:Int, x:Bool, d:Int, n:Int, m:Int)
-		w(sf(x) | [0x1AC00800, 0x1AC00C00, 0x1AC02000, 0x1AC02400, 0x1AC02800][op] | (m << 16) | (n << 5) | d);
+		w(sf(x) | DP2[op] | (m << 16) | (n << 5) | d);
 
 	public function madd(x:Bool, d:Int, n:Int, m:Int, a:Int)
 		w(sf(x) | 0x1B000000 | (m << 16) | (a << 10) | (n << 5) | d);
@@ -420,11 +433,11 @@ class Asm {
 
 	// 0 fmul, 1 fdiv, 2 fadd, 3 fsub
 	public function fop2(op:Int, d:Int, n:Int, m:Int)
-		w([0x1E600800, 0x1E601800, 0x1E602800, 0x1E603800][op] | ((m & 31) << 16) | ((n & 31) << 5) | (d & 31));
+		w(FOP2[op] | ((m & 31) << 16) | ((n & 31) << 5) | (d & 31));
 
 	// 0 fmov, 1 fabs, 2 fneg, 3 fsqrt, 4 frintm (floor), 5 frintp (ceil)
 	public function fop1(op:Int, d:Int, n:Int)
-		w([0x1E604000, 0x1E60C000, 0x1E614000, 0x1E61C000, 0x1E654000, 0x1E64C000][op] | ((n & 31) << 5) | (d & 31));
+		w(FOP1[op] | ((n & 31) << 5) | (d & 31));
 
 	public function fmovR(d:Int, n:Int) {
 		if (d != n) fop1(0, d, n);

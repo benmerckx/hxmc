@@ -19,6 +19,8 @@ import haxe.io.Bytes;
 import haxe.io.BytesOutput;
 import String as StdString;
 
+using core.ds.VectorTools;
+
 // port: representation differences:
 // - OCaml effects (UnboundTTP / UnboundTTPWithoutPosition) are modelled with an
 //   explicit handler stack, see catchUnboundTtp / performUnboundTtp.
@@ -334,6 +336,12 @@ class Chunk {
 		for (x in l) f(x);
 	}
 
+	// port: write_list of an AST list kept as a Vector
+	public inline function writeVector<B>(l:haxe.ds.Vector<B>, f:B->Void):Void {
+		writeUleb128(l.length);
+		for (x in l) f(x);
+	}
+
 	// port: write_dynarray is writeList: DynArray and list are both Array.
 
 	public function writeOption<B>(v:Null<B>, f:B->Void):Void {
@@ -567,12 +575,25 @@ class HxbWriter {
 		};
 	}
 
-	inline function writeInlinedList<A>(offset:Int, max:Int, fByte:Int->Void, fFirst:Void->Void, fElt:A->Void, l:Array<A>):Void {
+	extern overload inline function writeInlinedList<A>(offset:Int, max:Int, fByte:Int->Void, fFirst:Void->Void, fElt:A->Void, l:Array<A>):Void {
 		var length = l.length;
 		if (length > max) {
 			fByte(offset + 9);
 			fFirst();
 			chunk.writeList(l, fElt);
+		} else {
+			fByte(offset + length);
+			fFirst();
+			for (elt in l) fElt(elt);
+		}
+	}
+
+	extern overload inline function writeInlinedList<A>(offset:Int, max:Int, fByte:Int->Void, fFirst:Void->Void, fElt:A->Void, l:haxe.ds.Vector<A>):Void {
+		var length = l.length;
+		if (length > max) {
+			fByte(offset + 9);
+			fFirst();
+			chunk.writeVector(l, fElt);
 		} else {
 			fByte(offset + length);
 			fFirst();
@@ -629,7 +650,7 @@ class HxbWriter {
 	function writeMetadataEntry(entry:MetadataEntry):Void {
 		chunk.writeString(metadataName(entry.meta));
 		writePos(entry.pos);
-		chunk.writeList(entry.exprs, writeExpr);
+		chunk.writeVector(entry.exprs, writeExpr);
 	}
 
 	function writeMetadata(ml:Metadata):Void chunk.writeList(ml, writeMetadataEntry);
@@ -650,7 +671,7 @@ class HxbWriter {
 	function writeTypePath(tp:TypePath):Void {
 		chunk.writeList(tp.tpackage, chunk.writeString);
 		chunk.writeString(tp.tname);
-		chunk.writeList(tp.tparams, writeTypeParamOrConst);
+		chunk.writeVector(tp.tparams, writeTypeParamOrConst);
 		chunk.writeOption(tp.tsub, chunk.writeString);
 	}
 
@@ -674,18 +695,18 @@ class HxbWriter {
 			writePlacedTypePath(tp);
 		case CTFunction(thl, th):
 			chunk.writeU8(1);
-			chunk.writeList(thl, writeTypeHint);
+			chunk.writeVector(thl, writeTypeHint);
 			writeTypeHint(th);
 		case CTAnonymous(cffl):
 			chunk.writeU8(2);
-			chunk.writeList(cffl, writeCfield);
+			chunk.writeVector(cffl, writeCfield);
 		case CTParent(th):
 			chunk.writeU8(3);
 			writeTypeHint(th);
 		case CTExtend(ptp, cffl):
 			chunk.writeU8(4);
-			chunk.writeList(ptp, writePlacedTypePath);
-			chunk.writeList(cffl, writeCfield);
+			chunk.writeVector(ptp, writePlacedTypePath);
+			chunk.writeVector(cffl, writeCfield);
 		case CTOptional(th):
 			chunk.writeU8(5);
 			writeTypeHint(th);
@@ -695,7 +716,7 @@ class HxbWriter {
 			writeTypeHint(th);
 		case CTIntersection(thl):
 			chunk.writeU8(7);
-			chunk.writeList(thl, writeTypeHint);
+			chunk.writeVector(thl, writeTypeHint);
 	}
 
 	function writeTypeHint(th:TypeHint):Void {
@@ -705,7 +726,7 @@ class HxbWriter {
 
 	function writeTypeParam(tp:TypeParam):Void {
 		writePlacedName(tp.tpName);
-		chunk.writeList(tp.tpParams, writeTypeParam);
+		chunk.writeVector(tp.tpParams, writeTypeParam);
 		chunk.writeOption(tp.tpConstraints, writeTypeHint);
 		chunk.writeOption(tp.tpDefault, writeTypeHint);
 		chunk.writeList(tp.tpMeta, writeMetadataEntry);
@@ -720,8 +741,8 @@ class HxbWriter {
 	}
 
 	function writeFunc(f:Func):Void {
-		chunk.writeList(f.fParams, writeTypeParam);
-		chunk.writeList(f.fArgs, writeFuncArg);
+		chunk.writeVector(f.fParams, writeTypeParam);
+		chunk.writeVector(f.fArgs, writeFuncArg);
 		chunk.writeOption(f.fType, writeTypeHint);
 		chunk.writeOption(f.fExpr, writeExpr);
 	}
@@ -826,28 +847,28 @@ class HxbWriter {
 				writeExpr(e1);
 			case EObjectDecl(fl):
 				chunk.writeU8(9);
-				chunk.writeList(fl, function(f) {
+				chunk.writeVector(fl, function(f) {
 					writeObjectFieldKey(f.key);
 					writeExpr(f.expr);
 				});
 			case EArrayDecl(el):
 				chunk.writeU8(10);
-				chunk.writeList(el, writeExpr);
+				chunk.writeVector(el, writeExpr);
 			case ECall(e1, el):
 				chunk.writeU8(11);
 				writeExpr(e1);
-				chunk.writeList(el, writeExpr);
+				chunk.writeVector(el, writeExpr);
 			case ENew(ptp, el):
 				chunk.writeU8(12);
 				writePlacedTypePath(ptp);
-				chunk.writeList(el, writeExpr);
+				chunk.writeVector(el, writeExpr);
 			case EUnop(op, flag, e1):
 				chunk.writeU8(13);
 				chunk.writeU8(unopIndex(op, flag));
 				writeExpr(e1);
 			case EVars(vl):
 				chunk.writeU8(14);
-				chunk.writeList(vl, function(v) {
+				chunk.writeVector(vl, function(v) {
 					writePlacedName(v.evName);
 					chunk.writeBool(v.evFinal);
 					chunk.writeBool(v.evStatic);
@@ -868,7 +889,7 @@ class HxbWriter {
 				writeFunc(f);
 			case EBlock(el):
 				chunk.writeU8(16);
-				chunk.writeList(el, writeExpr);
+				chunk.writeVector(el, writeExpr);
 			case EFor(e1, e2):
 				chunk.writeU8(17);
 				writeExpr(e1);
@@ -893,8 +914,8 @@ class HxbWriter {
 			case ESwitch(e1, cases, def):
 				chunk.writeU8(22);
 				writeExpr(e1);
-				chunk.writeList(cases, function(c) {
-					chunk.writeList(c.values, writeExpr);
+				chunk.writeVector(cases, function(c) {
+					chunk.writeVector(c.values, writeExpr);
 					chunk.writeOption(c.guard, writeExpr);
 					chunk.writeOption(c.expr, writeExpr);
 					writePos(c.pos);
@@ -906,7 +927,7 @@ class HxbWriter {
 			case ETry(e1, catches):
 				chunk.writeU8(23);
 				writeExpr(e1);
-				chunk.writeList(catches, function(c) {
+				chunk.writeVector(catches, function(c) {
 					writePlacedName(c.name);
 					chunk.writeOption(c.type, writeTypeHint);
 					writeExpr(c.expr);
@@ -1212,7 +1233,7 @@ class HxbWriter {
 		}, function() return 'function arg `${a.name}`', null);
 	}
 
-	inline function inlinedList<A>(offset:Int, max:Int, fFirst:Void->Void, fElt:A->Void, l:Array<A>) {
+	inline function inlinedList<A>(offset:Int, max:Int, fFirst:Void->Void, fElt:A->Void, l:haxe.ds.Vector<A>) {
 		writeInlinedList(offset, max, chunk.writeU8, fFirst, fElt, l);
 	}
 
@@ -1383,7 +1404,7 @@ class HxbWriter {
 		}
 	}
 
-	function writeTypes(tl:Array<T>):Void chunk.writeList(tl, writeTypeInstance);
+	function writeTypes(tl:core.TType.TParams):Void chunk.writeVector(tl, writeTypeInstance);
 
 	// texpr
 
@@ -1416,7 +1437,7 @@ class HxbWriter {
 			}
 			chunk.writeUleb128(index);
 			chunk.writeOption(v.vExtra, function(ve) {
-				chunk.writeList(ve.vParams, function(ttp) {
+				chunk.writeVector(ve.vParams, function(ttp) {
 					var index = localTypeParameters.add(ttp, true);
 					chunk.writeUleb128(index);
 				});
@@ -1430,7 +1451,7 @@ class HxbWriter {
 				return null;
 			}, function() return "var type", v.vPos);
 		}
-		var loopEl:Array<TExpr>->Void = null;
+		var loopEl:haxe.ds.Vector<TExpr>->Void = null;
 		function loop(e1:TExpr):Void {
 			var writeType = switch e1.eexpr {
 				// values 0-19
@@ -1530,7 +1551,7 @@ class HxbWriter {
 				// function 50-59
 				case TFunction(tf):
 					chunk.writeU8(50);
-					chunk.writeList(tf.tfArgs, function(a) {
+					chunk.writeVector(tf.tfArgs, function(a) {
 						declareVar(a.variable);
 						chunk.writeOption(a.defaultValue, loop);
 					});
@@ -1557,7 +1578,7 @@ class HxbWriter {
 					true;
 				case TObjectDecl(fl):
 					chunk.writeU8(63);
-					chunk.writeList(fl, function(f) {
+					chunk.writeVector(fl, function(f) {
 						chunk.writeString(f.key.name);
 						writePos(f.key.pos);
 						switch f.key.quote {
@@ -1592,7 +1613,7 @@ class HxbWriter {
 				case TSwitch(s):
 					chunk.writeU8(82);
 					loop(s.switchSubject);
-					chunk.writeList(s.switchCases, function(c) {
+					chunk.writeVector(s.switchCases, function(c) {
 						loopEl(c.casePatterns);
 						loop(c.caseExpr);
 					});
@@ -1601,7 +1622,7 @@ class HxbWriter {
 				case TTry(e2, catches):
 					chunk.writeU8(83);
 					loop(e2);
-					chunk.writeList(catches, function(c) {
+					chunk.writeVector(catches, function(c) {
 						declareVar(c.variable);
 						loop(c.expr);
 					});
@@ -1771,12 +1792,12 @@ class HxbWriter {
 			}
 			fctx.posWriter.writePos(chunk, true, 0, e1.epos);
 		}
-		loopEl = function(el:Array<TExpr>) chunk.writeList(el, loop);
+		loopEl = function(el:haxe.ds.Vector<TExpr>) chunk.writeVector(el, loop);
 		loop(e);
 	}
 
 	function writeTypeParametersForward(ttps:TypeParams):Void {
-		chunk.writeList(ttps, function(ttp) {
+		chunk.writeVector(ttps, function(ttp) {
 			writePath(ttp.ttpClass.clPath);
 			writePos(ttp.ttpClass.clNamePos);
 			var i = switch ttp.ttpHost {
@@ -1909,7 +1930,7 @@ class HxbWriter {
 					if (inNestedScope()) chunk.writeU8(0)
 					else {
 						chunk.writeU8(1);
-						var ltp = [for (e in localTypeParameters.toList()) e.key];
+						var ltp = localTypeParameters.items.mapToVector(e -> e.key);
 						writeTypeParameters(ltp);
 					}
 					chunk.writeOption(fctx.texprThis, function(e:TExpr) {
@@ -1938,7 +1959,7 @@ class HxbWriter {
 		if (inNestedScope()) chunk.writeU8(0)
 		else {
 			chunk.writeU8(1);
-			var ftp = [for (e in fieldTypeParameters.toList()) e.key];
+			var ftp = fieldTypeParameters.items.mapToVector(e -> e.key);
 			writeTypeParameters(ftp);
 		}
 	}
@@ -2041,7 +2062,7 @@ class HxbWriter {
 			chunk.writeU8(5);
 		case KGenericBuild(l):
 			chunk.writeU8(6);
-			chunk.writeList(l, writeCfield);
+			chunk.writeVector(l, writeCfield);
 		case KAbstractImpl(a):
 			chunk.writeU8(7);
 			writeAbstractRef(a);

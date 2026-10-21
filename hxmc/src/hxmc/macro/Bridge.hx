@@ -33,7 +33,7 @@ class Recorder {
 	// function values recording their calls (the rest shared)
 	public static function wrap(v:Value, ?label = "function"):Value {
 		return switch v {
-			case VArray(a): VArray(new macros.eval.EvalValue.Varray([for (i in 0...a.alength) wrap(a.avalues[i])], a.alength));
+			case VArray(a): VArray(new macros.eval.EvalValue.Varray(core.ds.VectorTools.init(a.alength, i -> wrap(a.avalues[i])), a.alength));
 			case VObject(o):
 				// (a function field is recorded under its name)
 				var names = new Map<Int, String>();
@@ -46,12 +46,12 @@ class Recorder {
 							fs[i] = wrap(o.ofields[i]);
 						p.pinstanceNames.iter((h, i) -> fs[i] = wrap(o.ofields[i], "function " + names.get(h)));
 					case _:
-						fs = [for (f in o.ofields) wrap(f)];
+						fs = o.ofields.map(f -> wrap(f));
 				}
 				VObject(new macros.eval.EvalValue.Vobject(fs, o.oproto));
-			case VEnumValue(e): VEnumValue(new macros.eval.EvalValue.VenumValue(e.eindex, [for (a in e.eargs) wrap(a)], e.epath, e.enpos));
+			case VEnumValue(e): VEnumValue(new macros.eval.EvalValue.VenumValue(e.eindex, e.eargs.map(a -> wrap(a)), e.epath, e.enpos));
 			// (a Ref's get and toString are pure: called by both runs, their results wrapped)
-			case VInstance(vi = {ikind: IRef(_)}): VInstance(new macros.eval.EvalValue.Vinstance([for (f in vi.ifields) pure(f)], vi.iproto, vi.ikind));
+			case VInstance(vi = {ikind: IRef(_)}): VInstance(new macros.eval.EvalValue.Vinstance(vi.ifields.map(pure), vi.iproto, vi.ikind));
 			case VFunction(_, _) | VFieldClosure(_, _): recording(label, v);
 			// (a copy of its value once forced: the runs force and change their own)
 			case VLazy(l): VLazy(core.ds.AtomicLazy.fromFun(() -> wrap(l.force())));
@@ -69,9 +69,9 @@ class Recorder {
 	// the arguments as they were (the Eval run may change what it passed)
 	static function copy(v:Value):Value {
 		return switch v {
-			case VArray(a): VArray(new macros.eval.EvalValue.Varray([for (i in 0...a.alength) copy(a.avalues[i])], a.alength));
-			case VObject(o): VObject(new macros.eval.EvalValue.Vobject([for (f in o.ofields) copy(f)], o.oproto));
-			case VEnumValue(e): VEnumValue(new macros.eval.EvalValue.VenumValue(e.eindex, [for (a in e.eargs) copy(a)], e.epath, e.enpos));
+			case VArray(a): VArray(new macros.eval.EvalValue.Varray(core.ds.VectorTools.init(a.alength, i -> copy(a.avalues[i])), a.alength));
+			case VObject(o): VObject(new macros.eval.EvalValue.Vobject(o.ofields.map(copy), o.oproto));
+			case VEnumValue(e): VEnumValue(new macros.eval.EvalValue.VenumValue(e.eindex, e.eargs.map(copy), e.epath, e.enpos));
 			case _: v;
 		}
 	}
@@ -313,7 +313,7 @@ class Bridge {
 				} else if (enumPos.exists(v)) {
 					p = enumPos.get(v);
 				} else throw new Unsupported("enum value without a position: " + name + "." + Type.enumConstructor(v));
-				return EvalEncode.encodeEnumValue(EvalHash.hash(name), idx, [for (i in 0...params.length) toValue(params[i], v, "a" + i)], p);
+				return EvalEncode.encodeEnumValue(EvalHash.hash(name), idx, core.ds.VectorTools.init(params.length, i -> toValue(params[i], v, "a" + i)), p);
 			case TFunction:
 				// (called back by the compiler, maybe after this macro call)
 				var f:Dynamic = v, bnd = bundle;

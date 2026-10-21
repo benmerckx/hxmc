@@ -32,6 +32,11 @@ import core.Error;
 import context.SafeCom;
 import context.SafeCom.*;
 import optimization.Inline as InlineOps;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // INLINE CONSTRUCTORS
 
@@ -289,16 +294,14 @@ private class ConstructorInlining {
 
 	function isExternCtor(c:TClass, cf:TClassField):Bool return hasClassFlag(c, CExtern) || hasClassFieldFlag(cf, CfExtern);
 
-	function makeExprForList(el:Array<TExpr>, t:T, p:Pos):TExpr return switch el {
-		case []: mk(TBlock([]), scom.basic.tvoid, p);
+	function makeExprForList(el:Vector<TExpr>, t:T, p:Pos):TExpr return switch el {
+		case []: mk(TBlock(vector()), scom.basic.tvoid, p);
 		case [e]: e;
 		case _: mk(TBlock(el), t, p);
 	};
 
 	function makeExprForRevList(el:Array<TExpr>, t:T, p:Pos):TExpr {
-		el = el.copy();
-		el.reverse();
-		return makeExprForList(el, t, p);
+		return makeExprForList(VectorTools.ofArrayReversed(el), t, p);
 	}
 
 	/*
@@ -350,7 +353,7 @@ private class ConstructorInlining {
 		inline function mark():TExpr {
 			currIoId++;
 			var id:Expr = {expr: EConst(Int(Std.string(currIoId), null)), pos: e.epos};
-			return mk(TMeta({meta: core.MetaList.StrictMeta.InlineObject, exprs: [id], pos: e.epos}, e), e.etype, e.epos);
+			return mk(TMeta({meta: core.MetaList.StrictMeta.InlineObject, exprs: vector(id), pos: e.epos}, e), e.etype, e.epos);
 		}
 		return switch e.eexpr {
 			case TObjectDecl(_) | TArrayDecl(_): mark();
@@ -474,18 +477,21 @@ private class ConstructorInlining {
 			scopedIvs = old;
 			return null;
 		}
-		inline function analyzeCallArgs(el:Array<TExpr>):{vars:Array<TVar>, exprs:Array<TExpr>} {
+		inline function analyzeCallArgs(el:Vector<TExpr>):{vars:Array<TVar>, exprs:Vector<TExpr>} {
 			var vs = [];
-			var es = [];
-			for (e in el) switch e.eexpr {
-				case TConst(_):
-					es.push(e);
-				case _:
-					var v = allocVar(VGenerated, "arg", e.etype, e.epos);
-					analyze(IEHIgnored, mk(TVar(v, e), scom.basic.tvoid, e.epos));
-					var m:MetadataEntry = {meta: core.MetaList.StrictMeta.InlineConstructorArgument(v.vId, 0), exprs: [], pos: e.epos};
-					vs.unshift(v);
-					es.push(mk(TMeta(m, e), e.etype, e.epos));
+			var es = new Vector<TExpr>(el.length);
+			for (i in 0...el.length) {
+				var e = el[i];
+				switch e.eexpr {
+					case TConst(_):
+						es[i] = e;
+					case _:
+						var v = allocVar(VGenerated, "arg", e.etype, e.epos);
+						analyze(IEHIgnored, mk(TVar(v, e), scom.basic.tvoid, e.epos));
+						var m:MetadataEntry = {meta: core.MetaList.StrictMeta.InlineConstructorArgument(v.vId, 0), exprs: vector(), pos: e.epos};
+						vs.unshift(v);
+						es[i] = mk(TMeta(m, e), e.etype, e.epos);
+				}
 			}
 			return {vars: vs, exprs: es};
 		}
@@ -537,13 +543,10 @@ private class ConstructorInlining {
 				var len = el.length;
 				var v = allocVar(VGenerated, "inlarr", e.etype, e.epos);
 				var ev = mk(TLocal(v), v.vType, e.epos);
-				el = [
-					for (i in 0...el.length) {
-						var a = el[i];
+				el = el.mapi((i, a) -> {
 						var ef = mk(TArray(ev, mk(TConst(TInt(i)), a.etype, a.epos)), elem, a.epos);
 						mk(TBinop(OpAssign, ef, a), elem, a.epos);
-					}
-				];
+				});
 				var io = mkIo(IOKArray(len), id, makeExprForList(el, scom.basic.tvoid, e.epos));
 				allocConstIoField(io, "length", mk(TConst(TInt(len)), scom.basic.tint, e.epos));
 				for (i in 0...len) allocIoField(io, intFieldName(i), elem, v.vPos);
@@ -600,7 +603,7 @@ private class ConstructorInlining {
 				if (iv.ivClosed || captured == IEHNotHandled) cancelIv(iv, e.epos);
 				iv;
 			case TBlock(el):
-				for (e in el.slice(0, el.length - 1)) analyze(IEHIgnored, e);
+				for (i in 0...el.length - 1) analyze(IEHIgnored, el[i]);
 				el.length == 0 ? null : analyze(captured, el[el.length - 1]);
 			// The contents have already been analyzed, so we must skip the wrapped expression
 			case TMeta({meta: core.MetaList.StrictMeta.InlineConstructorArgument(id, _)}, _): try {
@@ -794,9 +797,7 @@ private class ConstructorInlining {
 					if (i == el.length - 1) io = r.object;
 				}
 				if (!unwrapBlock && io == null) {
-					var ordered = acc.copy();
-					ordered.reverse();
-					acc = [mk(TBlock(ordered), e.etype, e.epos)];
+					acc = [mk(TBlock(VectorTools.ofArrayReversed(acc)), e.etype, e.epos)];
 				}
 				{exprs: acc, object: io};
 			case TMeta({meta: core.MetaList.StrictMeta.InlineConstructorArgument(_, _)}, inner): finalMap(inner);
@@ -862,7 +863,7 @@ private class ConstructorInlining {
 		var result = finalMap(e);
 		var cf:TClassField = scom.curfield;
 		if (includedUntyped && !Meta.has(HasUntyped, cf.cfMeta)) cf.cfMeta = [
-			({meta: core.MetaList.StrictMeta.HasUntyped, exprs: [], pos: Globals.mkZeroRangePos(e.epos)} : core.Ast.MetadataEntry)
+			({meta: core.MetaList.StrictMeta.HasUntyped, exprs: vector(), pos: Globals.mkZeroRangePos(e.epos)} : core.Ast.MetadataEntry)
 		].concat(cf.cfMeta);
 		e = makeExprForRevList(result.exprs, e.etype, e.epos);
 		// port: Globals.IntMap compares keys in reverse (compare i1 i2 = i2 - i1): iterate descending.

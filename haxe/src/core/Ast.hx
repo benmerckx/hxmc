@@ -21,6 +21,8 @@ package core;
 
 import core.Globals.Pos;
 import core.Globals.GlobalTypePath;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 // port: the module Printer is AstPrinter.hx, map_expr's local functions are AstExprMapper.hx,
 // unescape (and Invalid_escape_sequence) is in syntax/Lexer.hx. The functions of the module Expr
@@ -258,10 +260,10 @@ enum ImportMode {
 @:structInit class TypePath {
 	public var tpackage:Array<String>;
 	public var tname:String;
-	public var tparams:Array<TypeParamOrConst>;
+	public var tparams:Vector<TypeParamOrConst>;
 	public var tsub:Null<String>;
 
-	public inline function new(tpackage:Array<String>, tname:String, tparams:Array<TypeParamOrConst>, tsub:Null<String>) {
+	public inline function new(tpackage:Array<String>, tname:String, tparams:Vector<TypeParamOrConst>, tsub:Null<String>) {
 		this.tpackage = tpackage;
 		this.tname = tname;
 		this.tparams = tparams;
@@ -299,10 +301,10 @@ enum ImportMode {
 
 @:structInit class MetadataEntry {
 	public var meta:Dynamic;
-	public var exprs:Array<Expr>;
+	public var exprs:Vector<Expr>;
 	public var pos:Pos;
 
-	public inline function new(meta:Dynamic, exprs:Array<Expr>, pos:Pos) {
+	public inline function new(meta:Dynamic, exprs:Vector<Expr>, pos:Pos) {
 		this.meta = meta;
 		this.exprs = exprs;
 		this.pos = pos;
@@ -362,12 +364,12 @@ typedef Documentation = Null<DocBlock>;
 }
 
 @:structInit class Func {
-	public var fParams:Array<TypeParam>;
-	public var fArgs:Array<FuncArg>;
+	public var fParams:Vector<TypeParam>;
+	public var fArgs:Vector<FuncArg>;
 	public var fType:Null<TypeHint>;
 	public var fExpr:Null<Expr>;
 
-	public inline function new(fParams:Array<TypeParam>, fArgs:Array<FuncArg>, fType:Null<TypeHint>, fExpr:Null<Expr>) {
+	public inline function new(fParams:Vector<TypeParam>, fArgs:Vector<FuncArg>, fType:Null<TypeHint>, fExpr:Null<Expr>) {
 		this.fParams = fParams;
 		this.fArgs = fArgs;
 		this.fType = fType;
@@ -397,12 +399,12 @@ typedef Documentation = Null<DocBlock>;
 
 @:structInit class TypeParam {
 	public var tpName:PlacedName;
-	public var tpParams:Array<TypeParam>;
+	public var tpParams:Vector<TypeParam>;
 	public var tpConstraints:Null<TypeHint>;
 	public var tpDefault:Null<TypeHint>;
 	public var tpMeta:Metadata;
 
-	public inline function new(tpName:PlacedName, tpParams:Array<TypeParam>, tpConstraints:Null<TypeHint>, tpDefault:Null<TypeHint>,
+	public inline function new(tpName:PlacedName, tpParams:Vector<TypeParam>, tpConstraints:Null<TypeHint>, tpDefault:Null<TypeHint>,
 			tpMeta:Metadata) {
 		this.tpName = tpName;
 		this.tpParams = tpParams;
@@ -471,13 +473,13 @@ typedef Documentation = Null<DocBlock>;
 	public var ecName:PlacedName;
 	public var ecDoc:Documentation;
 	public var ecMeta:Metadata;
-	public var ecArgs:Array<EnumConstructorArg>;
+	public var ecArgs:Vector<EnumConstructorArg>;
 	public var ecPos:Pos;
-	public var ecParams:Array<TypeParam>;
+	public var ecParams:Vector<TypeParam>;
 	public var ecType:Null<TypeHint>;
 
-	public inline function new(ecName:PlacedName, ecDoc:Documentation, ecMeta:Metadata, ecArgs:Array<EnumConstructorArg>, ecPos:Pos,
-			ecParams:Array<TypeParam>, ecType:Null<TypeHint>) {
+	public inline function new(ecName:PlacedName, ecDoc:Documentation, ecMeta:Metadata, ecArgs:Vector<EnumConstructorArg>, ecPos:Pos,
+			ecParams:Vector<TypeParam>, ecType:Null<TypeHint>) {
 		this.ecName = ecName;
 		this.ecDoc = ecDoc;
 		this.ecMeta = ecMeta;
@@ -505,10 +507,10 @@ typedef Documentation = Null<DocBlock>;
 }
 
 @:structInit class Import {
-	public var path:Array<PlacedName>;
+	public var path:Vector<PlacedName>;
 	public var mode:ImportMode;
 
-	public inline function new(path:Array<PlacedName>, mode:ImportMode) {
+	public inline function new(path:Vector<PlacedName>, mode:ImportMode) {
 		this.path = path;
 		this.mode = mode;
 	}
@@ -530,9 +532,9 @@ typedef Documentation = Null<DocBlock>;
 
 @:structInit class Package {
 	public var pack:Array<String>;
-	public var declarations:Array<TypeDecl>;
+	public var declarations:Vector<TypeDecl>;
 
-	public inline function new(pack:Array<String>, declarations:Array<TypeDecl>) {
+	public inline function new(pack:Array<String>, declarations:Vector<TypeDecl>) {
 		this.pack = pack;
 		this.declarations = declarations;
 	}
@@ -559,13 +561,13 @@ enum TypeParamOrConst {
 
 enum ComplexType {
 	CTPath(path:PlacedTypePath);
-	CTFunction(args:Array<TypeHint>, ret:TypeHint);
-	CTAnonymous(fields:Array<ClassField>);
+	CTFunction(args:Vector<TypeHint>, ret:TypeHint);
+	CTAnonymous(fields:Vector<ClassField>);
 	CTParent(type:TypeHint);
-	CTExtend(paths:Array<PlacedTypePath>, fields:Array<ClassField>);
+	CTExtend(paths:Vector<PlacedTypePath>, fields:Vector<ClassField>);
 	CTOptional(type:TypeHint);
 	CTNamed(name:PlacedName, type:TypeHint);
-	CTIntersection(types:Array<TypeHint>);
+	CTIntersection(types:Vector<TypeHint>);
 }
 
 enum ExprDef {
@@ -574,19 +576,19 @@ enum ExprDef {
 	EBinop(op:Binop, left:Expr, right:Expr);
 	EField(expr:Expr, field:String, kind:EFieldKind);
 	EParenthesis(expr:Expr);
-	EObjectDecl(fields:Array<ObjectField>);
-	EArrayDecl(values:Array<Expr>);
-	ECall(expr:Expr, args:Array<Expr>);
-	ENew(path:PlacedTypePath, args:Array<Expr>);
+	EObjectDecl(fields:Vector<ObjectField>);
+	EArrayDecl(values:Vector<Expr>);
+	ECall(expr:Expr, args:Vector<Expr>);
+	ENew(path:PlacedTypePath, args:Vector<Expr>);
 	EUnop(op:Unop, flag:UnopFlag, expr:Expr);
-	EVars(vars:Array<EVar>);
+	EVars(vars:Vector<EVar>);
 	EFunction(kind:FunctionKind, func:Func);
-	EBlock(exprs:Array<Expr>);
+	EBlock(exprs:Vector<Expr>);
 	EFor(iterator:Expr, body:Expr);
 	EIf(condition:Expr, thenExpr:Expr, elseExpr:Null<Expr>);
 	EWhile(condition:Expr, body:Expr, flag:WhileFlag);
-	ESwitch(expr:Expr, cases:Array<SwitchCase>, defaultCase:Null<SwitchDefault>);
-	ETry(expr:Expr, catches:Array<Catch>);
+	ESwitch(expr:Expr, cases:Vector<SwitchCase>, defaultCase:Null<SwitchDefault>);
+	ETry(expr:Expr, catches:Vector<Catch>);
 	EReturn(expr:Null<Expr>);
 	EBreak;
 	EContinue;
@@ -607,7 +609,7 @@ enum TypeDef {
 	EAbstract(definition:AbstractDefinition);
 	EStatic(definition:StaticDefinition);
 	EImport(value:Import);
-	EUsing(path:Array<PlacedName>);
+	EUsing(path:Vector<PlacedName>);
 }
 
 @:structInit class ObjectField {
@@ -623,12 +625,12 @@ enum TypeDef {
 }
 
 @:structInit class SwitchCase {
-	public var values:Array<Expr>;
+	public var values:Vector<Expr>;
 	public var guard:Null<Expr>;
 	public var expr:Null<Expr>;
 	public var pos:Pos;
 
-	public inline function new(values:Array<Expr>, guard:Null<Expr>, expr:Null<Expr>, pos:Pos) {
+	public inline function new(values:Vector<Expr>, guard:Null<Expr>, expr:Null<Expr>, pos:Pos) {
 		this.values = values;
 		this.guard = guard;
 		this.expr = expr;
@@ -669,13 +671,13 @@ enum TypeDef {
 @:structInit class ClassDefinition {
 	public var name:PlacedName;
 	public var doc:Documentation;
-	public var params:Array<TypeParam>;
+	public var params:Vector<TypeParam>;
 	public var meta:Metadata;
-	public var flags:Array<ClassFlag>;
-	public var data:Array<ClassField>;
+	public var flags:Vector<ClassFlag>;
+	public var data:Vector<ClassField>;
 
-	public inline function new(name:PlacedName, doc:Documentation, params:Array<TypeParam>, meta:Metadata, flags:Array<ClassFlag>,
-			data:Array<ClassField>) {
+	public inline function new(name:PlacedName, doc:Documentation, params:Vector<TypeParam>, meta:Metadata, flags:Vector<ClassFlag>,
+			data:Vector<ClassField>) {
 		this.name = name;
 		this.doc = doc;
 		this.params = params;
@@ -690,13 +692,13 @@ enum TypeDef {
 @:structInit class EnumDefinition {
 	public var name:PlacedName;
 	public var doc:Documentation;
-	public var params:Array<TypeParam>;
+	public var params:Vector<TypeParam>;
 	public var meta:Metadata;
-	public var flags:Array<EnumFlag>;
-	public var data:Array<EnumConstructor>;
+	public var flags:Vector<EnumFlag>;
+	public var data:Vector<EnumConstructor>;
 
-	public inline function new(name:PlacedName, doc:Documentation, params:Array<TypeParam>, meta:Metadata, flags:Array<EnumFlag>,
-			data:Array<EnumConstructor>) {
+	public inline function new(name:PlacedName, doc:Documentation, params:Vector<TypeParam>, meta:Metadata, flags:Vector<EnumFlag>,
+			data:Vector<EnumConstructor>) {
 		this.name = name;
 		this.doc = doc;
 		this.params = params;
@@ -711,12 +713,12 @@ enum TypeDef {
 @:structInit class TypedefDefinition {
 	public var name:PlacedName;
 	public var doc:Documentation;
-	public var params:Array<TypeParam>;
+	public var params:Vector<TypeParam>;
 	public var meta:Metadata;
-	public var flags:Array<TypedefFlag>;
+	public var flags:Vector<TypedefFlag>;
 	public var data:TypeHint;
 
-	public inline function new(name:PlacedName, doc:Documentation, params:Array<TypeParam>, meta:Metadata, flags:Array<TypedefFlag>,
+	public inline function new(name:PlacedName, doc:Documentation, params:Vector<TypeParam>, meta:Metadata, flags:Vector<TypedefFlag>,
 			data:TypeHint) {
 		this.name = name;
 		this.doc = doc;
@@ -732,13 +734,13 @@ enum TypeDef {
 @:structInit class AbstractDefinition {
 	public var name:PlacedName;
 	public var doc:Documentation;
-	public var params:Array<TypeParam>;
+	public var params:Vector<TypeParam>;
 	public var meta:Metadata;
-	public var flags:Array<AbstractFlag>;
-	public var data:Array<ClassField>;
+	public var flags:Vector<AbstractFlag>;
+	public var data:Vector<ClassField>;
 
-	public inline function new(name:PlacedName, doc:Documentation, params:Array<TypeParam>, meta:Metadata, flags:Array<AbstractFlag>,
-			data:Array<ClassField>) {
+	public inline function new(name:PlacedName, doc:Documentation, params:Vector<TypeParam>, meta:Metadata, flags:Vector<AbstractFlag>,
+			data:Vector<ClassField>) {
 		this.name = name;
 		this.doc = doc;
 		this.params = params;
@@ -753,12 +755,12 @@ enum TypeDef {
 @:structInit class StaticDefinition {
 	public var name:PlacedName;
 	public var doc:Documentation;
-	public var params:Array<TypeParam>;
+	public var params:Vector<TypeParam>;
 	public var meta:Metadata;
-	public var flags:Array<PlacedAccess>;
+	public var flags:Vector<PlacedAccess>;
 	public var data:ClassFieldKind;
 
-	public inline function new(name:PlacedName, doc:Documentation, params:Array<TypeParam>, meta:Metadata, flags:Array<PlacedAccess>,
+	public inline function new(name:PlacedName, doc:Documentation, params:Vector<TypeParam>, meta:Metadata, flags:Vector<PlacedAccess>,
 			data:ClassFieldKind) {
 		this.name = name;
 		this.doc = doc;
@@ -1035,12 +1037,12 @@ class Ast {
 
 	public static function mapExpr(loop:Expr->Expr, e:Expr):Expr return new AstExprMapper(loop).map(e);
 
-	public static function mkTypePath(pack:Array<String>, name:String, ?params:Array<TypeParamOrConst>, ?sub:String):TypePath {
+	public static function mkTypePath(pack:Array<String>, name:String, ?params:Vector<TypeParamOrConst>, ?sub:String):TypePath {
 		if (name == "") throw new core.ds.InvalidArgument("Empty module name is not allowed");
 		return {
 			tpackage: pack,
 			tname: name,
-			tparams: params == null ? [] : params,
+			tparams: params == null ? vector() : params,
 			tsub: sub
 		};
 	}
@@ -1292,15 +1294,15 @@ class Ast {
 	/* module Expr */
 	public static function ensureBlock(e:Expr):Expr return switch e.expr {
 		case EBlock(_): e;
-		case _: {expr: EBlock([e]), pos: pos(e)};
+		case _: {expr: EBlock(vector(e)), pos: pos(e)};
 	};
 
-	public static function fieldAssoc(name:String, fl:Array<ObjectField>):Expr {
+	public static function fieldAssoc(name:String, fl:Vector<ObjectField>):Expr {
 		for (f in fl) if (f.key.name == name) return f.expr;
 		throw core.ds.NotFound.raise();
 	}
 
-	public static function fieldMemAssoc(name:String, fl:Array<ObjectField>):Bool {
+	public static function fieldMemAssoc(name:String, fl:Vector<ObjectField>):Bool {
 		for (f in fl) if (f.key.name == name) return true;
 		return false;
 	}

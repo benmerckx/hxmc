@@ -19,7 +19,7 @@ class Driver {
 	var dumpSet:Null<Map<String, Bool>>;
 	// -D hxmc.interp: the functions interpreted (hxmc.interp.InterpGen)
 	var interp:Null<hxmc.interp.InterpGen.InterpSet>;
-	var tm = [0.0, 0.0, 0.0, 0.0];
+	var tm = new haxe.ds.Vector<Float>(4); // cpu seconds: mir, isel, regalloc, emit
 	var slow:Array<{name:String, t:Float}> = [];
 
 	function new(prog:Program, out:String, o:Options) {
@@ -323,11 +323,11 @@ class Driver {
 		}
 		Escape.ctorTags = tags;
 		// (the slots of each type that hold references: Escape keeps them on the shadow stack)
-		var refs = new Map<String, Array<Bool>>();
+		var refs = new Map<String, haxe.ds.Vector<Bool>>();
 		var types = prep.e.types;
 		for (ti in 0...types.length) {
 			var sym = prep.tySym(ti);
-			refs.set(sym != null ? sym : "#" + ti, [for (s in types[ti].slots) s != null && s.match(TRef(_))]);
+			refs.set(sym != null ? sym : "#" + ti, core.ds.VectorTools.mapToVector(types[ti].slots, s -> s != null && s.match(TRef(_))));
 		}
 		Escape.refSlots = refs;
 	}
@@ -380,17 +380,19 @@ class Driver {
 		// (the threads only read the program); then, in module order, the
 		// string literals they found are registered and the index written
 		var nm = order.length;
-		var paths = [for (m in order) dir + "/" + moduleFile(m)];
+		var paths = new haxe.ds.Vector<String>(nm);
+		for (mi in 0...nm)
+			paths[mi] = dir + "/" + moduleFile(order[mi]);
 		var memPaths = paths.copy();
-		var keys = [for (_ in 0...nm) ""];
-		var lits:Array<Array<String>> = [for (_ in 0...nm) null];
+		var keys = new haxe.ds.Vector<String>(nm, "");
+		var lits = new haxe.ds.Vector<Array<String>>(nm);
 		var objs:Array<Obj> = [for (_ in 0...nm) null];
 		var s0 = haxe.Timer.stamp();
 		// (the functions that may be inlined: their digests first, Fingerprint.Inlined)
 		var inlined:Null<Fingerprint.Inlined> = null;
 		if (MirBuild.inlineCands != null) {
 			var cands = MirBuild.inlineCands;
-			inlined = new Fingerprint.Inlined(prep, [for (f in p.funcs) if (cands.exists(f)) f]);
+			inlined = new Fingerprint.Inlined(prep, haxe.ds.Vector.fromArrayCopy([for (f in p.funcs) if (cands.exists(f)) f]));
 			var d = Inline.DEPTH;
 			while (d >= 1) {
 				var depth = d;
@@ -435,7 +437,7 @@ class Driver {
 			}
 		}
 		// largest modules first, so the last ones to finish are small
-		var weight = [for (m in order) 0];
+		var weight = new haxe.ds.Vector<Int>(nm);
 		for (mi in todo)
 			for (f in byModule.get(order[mi]))
 				weight[mi] += f.body.length + f.locals.length;
@@ -683,7 +685,7 @@ class Driver {
 // The order blocks are laid out in: reverse postorder, the cold blocks (slow
 // paths) at the end.
 class Layout {
-	public static function order(f:MFunc):Array<MBlock> {
+	public static function order(f:MFunc):haxe.ds.Vector<MBlock> {
 		var seen = f.newMark();
 		var post = [];
 		// iterative DFS: the first successor is visited first
@@ -708,9 +710,15 @@ class Layout {
 				idx.pop();
 			}
 		}
-		post.reverse();
-		var hot = [for (b in post) if (!b.cold) b];
-		var cold = [for (b in post) if (b.cold) b];
-		return hot.concat(cold);
+		// (reverse postorder: the hot blocks, then the cold ones)
+		var n = post.length;
+		var r = new haxe.ds.Vector<MBlock>(n);
+		var k = 0, i = n;
+		while (i-- > 0)
+			if (!post[i].cold) r[k++] = post[i];
+		i = n;
+		while (i-- > 0)
+			if (post[i].cold) r[k++] = post[i];
+		return r;
 	}
 }

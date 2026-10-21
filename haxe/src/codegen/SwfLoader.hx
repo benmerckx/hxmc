@@ -32,6 +32,10 @@ import libs.extlib.IO;
 import libs.swflib.Swf;
 import libs.swflib.As3;
 import libs.swflib.As3hl;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 private typedef MetaTag = core.MetaList.StrictMeta;
 
@@ -62,7 +66,7 @@ class SwfLoader {
 	static final tp_dyn:PlacedTypePath = core.Ast.Ast.makePtp({
 		tpackage: [],
 		tname: "Dynamic",
-		tparams: [],
+		tparams: vector(),
 		tsub: null
 	}, nullPos);
 
@@ -71,7 +75,7 @@ class SwfLoader {
 	static final ct_rest:ComplexType = core.Ast.Ast.makePtpCt({
 		tpackage: ["haxe"],
 		tname: "Rest",
-		tparams: [TPType({type: ct_dyn, pos: nullPos})],
+		tparams: vector(TPType({type: ct_dyn, pos: nullPos})),
 		tsub: null,
 	}, nullPos);
 
@@ -107,7 +111,7 @@ class SwfLoader {
 				{
 					tpackage: pn.pack,
 					tname: pn.name,
-					tparams: if (pdyn) [TPType({type: ct_dyn, pos: nullPos})] else [],
+					tparams: if (pdyn) vector(TPType({type: ct_dyn, pos: nullPos})) else vector(),
 					tsub: null,
 				};
 			case HMName(id, ns):
@@ -125,14 +129,14 @@ class SwfLoader {
 							[];
 					}),
 					tname: id,
-					tparams: [],
+					tparams: vector(),
 					tsub: null,
 				};
 			case HMNSAny(id):
 				{
 					tpackage: [],
 					tname: id,
-					tparams: [],
+					tparams: vector(),
 					tsub: null,
 				};
 			case HMMultiName(_):
@@ -153,7 +157,7 @@ class SwfLoader {
 				{
 					tpackage: ptp.path.tpackage,
 					tname: ptp.path.tname,
-					tparams: params,
+					tparams: Vector.fromArrayCopy(params),
 					tsub: ptp.path.tsub
 				};
 		}
@@ -248,12 +252,12 @@ class SwfLoader {
 				var inf:TypedefDefinition = {
 					name: {name: path.tname, pos: nullPos},
 					doc: null,
-					params: [],
+					params: vector(),
 					meta: [],
-					flags: [],
+					flags: vector(),
 					data: {type: ct_dyn, pos: nullPos},
 				};
-				return {pack: path.tpackage, declarations: [{definition: ETypedef(inf), pos: pos}]};
+				return {pack: path.tpackage, declarations: vector({definition: ETypedef(inf), pos: pos})};
 			case _:
 		}
 		/* make flags */
@@ -325,7 +329,7 @@ class SwfLoader {
 			function mk_meta():Metadata {
 				return [
 					for (m in meta)
-						({meta: m.m, exprs: [for (c in m.cl) ({expr: EConst(c), pos: pos} : Expr)], pos: pos} : MetadataEntry)
+						({meta: m.m, exprs: m.cl.mapToVector(c -> ({expr: EConst(c), pos: pos} : Expr)), pos: pos} : MetadataEntry)
 				];
 			}
 			var cf:ClassField = {
@@ -427,8 +431,8 @@ class SwfLoader {
 								}
 							]) else args;
 							var f:Func = {
-								fParams: [],
-								fArgs: args,
+								fParams: vector(),
+								fArgs: Vector.fromArrayCopy(args),
 								fType: {type: make_type(t.hlmt_ret), pos: nullPos},
 								fExpr: null,
 							};
@@ -499,8 +503,8 @@ class SwfLoader {
 					cffAccess: accessor_flags,
 					cffMeta: [],
 					cffKind: FFun({
-						fParams: [],
-						fArgs: [],
+						fParams: vector(),
+						fArgs: vector(),
 						fType: property_typehint,
 						fExpr: null,
 					}),
@@ -516,8 +520,8 @@ class SwfLoader {
 					cffAccess: accessor_flags,
 					cffMeta: [],
 					cffKind: FFun({
-						fParams: [],
-						fArgs: [
+						fParams: vector(),
+						fArgs: vector(
 							{
 								name: {name: "value", pos: nullPos},
 								optional: false,
@@ -525,7 +529,7 @@ class SwfLoader {
 								type: property_typehint,
 								expr: null
 							}
-						],
+						),
 						fType: property_typehint,
 						fExpr: null,
 					}),
@@ -538,7 +542,7 @@ class SwfLoader {
 				cffPos: pos,
 				cffDoc: null,
 				cffAccess: flags,
-				cffMeta: [({meta: MetaTag.FlashProperty, exprs: [], pos: pos} : MetadataEntry)].concat(meta),
+				cffMeta: [({meta: MetaTag.FlashProperty, exprs: vector(), pos: pos} : MetadataEntry)].concat(meta),
 				cffKind: FProp(read_access, write_access, property_typehint, null),
 			};
 			return [prop].concat(fields);
@@ -614,18 +618,18 @@ class SwfLoader {
 			var abstract_data:AbstractDefinition = {
 				name: {name: path.tname, pos: nullPos},
 				doc: null,
-				params: [],
+				params: vector(),
 				meta: [
 					{
 						meta: MetaTag.Native,
-						exprs: [{expr: EConst(String(native_path, SDoubleQuotes)), pos: nullPos}],
+						exprs: vector({expr: EConst(String(native_path, SDoubleQuotes)), pos: nullPos}),
 						pos: nullPos
 					}
 				],
-				flags: [AbEnum, AbExtern, AbOver({type: real_type, pos: pos}), AbFrom({type: real_type, pos: pos})],
-				data: constr,
+				flags: vector(AbEnum, AbExtern, AbOver({type: real_type, pos: pos}), AbFrom({type: real_type, pos: pos})),
+				data: Vector.fromArrayCopy(constr),
 			};
-			return {pack: path.tpackage, declarations: [{definition: EAbstract(abstract_data), pos: pos}]};
+			return {pack: path.tpackage, declarations: vector({definition: EAbstract(abstract_data), pos: pos})};
 		} catch (_:core.ds.Exit) {
 			var flags = if (c.hlc_final
 				&& Lambda.exists(fields, f -> f.cffName.name != "new" && !hasAccess(f.cffAccess, AStatic))) [HFinal].concat(flags) else flags;
@@ -636,7 +640,7 @@ class SwfLoader {
 						[
 							{
 								meta: MetaTag.Native,
-								exprs: [{expr: EConst(String(native_path, SDoubleQuotes)), pos: pos}],
+								exprs: vector({expr: EConst(String(native_path, SDoubleQuotes)), pos: pos}),
 								pos: pos
 							}
 						];
@@ -646,12 +650,12 @@ class SwfLoader {
 			var class_data:ClassDefinition = {
 				name: {name: path.tname, pos: nullPos},
 				doc: null,
-				params: [],
+				params: vector(),
 				meta: meta,
-				flags: flags,
-				data: fields,
+				flags: Vector.fromArrayCopy(flags),
+				data: Vector.fromArrayCopy(fields),
 			};
-			return {pack: path.tpackage, declarations: [{definition: EClass(class_data), pos: pos}]};
+			return {pack: path.tpackage, declarations: vector({definition: EClass(class_data), pos: pos})};
 		}
 	}
 
@@ -785,16 +789,13 @@ class SwfLoader {
 				}
 			}
 			f.hlf_code = code;
-			f.hlf_trys = [
-				for (t in f.hlf_trys)
-					({
-						hltc_start: positions[t.hltc_start],
-						hltc_end: positions[t.hltc_end],
-						hltc_handle: positions[t.hltc_handle],
-						hltc_type: t.hltc_type,
-						hltc_name: t.hltc_name,
-					} : HlTryCatch)
-			];
+			f.hlf_trys = f.hlf_trys.map(t -> ({
+				hltc_start: positions[t.hltc_start],
+				hltc_end: positions[t.hltc_end],
+				hltc_handle: positions[t.hltc_handle],
+				hltc_type: t.hltc_type,
+				hltc_name: t.hltc_name,
+			} : HlTryCatch));
 			return f;
 		};
 		return libs.swflib.As3hlparse.flatten(hl.map(loop_static));

@@ -284,10 +284,15 @@ class EvalStdLib {
 
 	public static function initConstructors(builtins:Builtins):Void {
 		function add(key:Int, f:Array<Value>->Value) builtins.constructorBuiltins.set(key, f);
-		add(EvalHash.key_Array, _ -> EvalEncode.encodeArrayInstance(EvalArray.create([])));
+		add(EvalHash.key_Array, _ -> EvalEncode.encodeArrayInstance(EvalArray.create(new haxe.ds.Vector(0))));
 		add(EvalHash.key_eval_Vector, vl -> switch vl {
 			case [size]:
-				EvalEncode.encodeVectorInstance([for (_ in 0...EvalDecode.decodeInt(size)) VNull]);
+				{
+			// port: `Array.make`
+			var n = EvalDecode.decodeInt(size);
+			if (n < 0) throw new core.ds.InvalidArgument("Array.make");
+			EvalEncode.encodeVectorInstance(new haxe.ds.Vector(n, VNull));
+		}
 			case _: die();
 		});
 		add(EvalHash.key_Date, vl -> {
@@ -406,8 +411,8 @@ class EvalStdLib {
 
 	public static function initEmptyConstructors(builtins:Builtins):Void {
 		var h = builtins.emptyConstructorBuiltins;
-		h.set(EvalHash.key_Array, () -> EvalEncode.encodeArrayInstance(EvalArray.create([])));
-		h.set(EvalHash.key_eval_Vector, () -> EvalEncode.encodeVectorInstance([]));
+		h.set(EvalHash.key_Array, () -> EvalEncode.encodeArrayInstance(EvalArray.create(new haxe.ds.Vector(0))));
+		h.set(EvalHash.key_eval_Vector, () -> EvalEncode.encodeVectorInstance(new haxe.ds.Vector(0)));
 		h.set(EvalHash.key_Date, () -> EvalEncode.encodeInstance(EvalHash.key_Date, IDate(0.)));
 		h.set(EvalHash.key_EReg,
 			() -> EvalEncode.encodeInstance(EvalHash.key_EReg, IRegex(new Vregex(new EReg("", ""), EvalString.createAscii("~//"), false))));

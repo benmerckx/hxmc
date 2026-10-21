@@ -7,9 +7,14 @@ import core.Globals;
 import core.Meta;
 import core.TOther.ExtType;
 import core.Define;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class Tre {
-	public static function collectNewArgsValues(ctx:context.SafeCom.SafeContext, args:Array<TExpr>, declarations:Array<TExpr>,
+	public static function collectNewArgsValues(ctx:context.SafeCom.SafeContext, args:Vector<TExpr>, declarations:Array<TExpr>,
 			values:Array<TExpr>, n:Int):{
 		declarations:Array<TExpr>,
 		values:Array<TExpr>
@@ -23,27 +28,28 @@ class Tre {
 		return {declarations: declarations, values: values};
 	}
 
-	public static function assignArgs(vars:Array<{variable:TVar, defaultValue:Null<TExpr>}>, exprs:Array<TExpr>):Array<TExpr> {
-		if (vars.length == 0) {
-			if (exprs.length != 0) throw "tre: argument arity";
-			return [];
-		}
-		var arg = vars[0];
-		var e = exprs.length == 0 ? arg.defaultValue : exprs[0];
-		if (e == null) throw "tre: missing argument";
-		var lhs = TypeOps.mk(TLocal(arg.variable), e.etype, e.epos);
-		return [TypeOps.mk(TBinop(OpAssign, lhs, e), e.etype,
-			e.epos)].concat(assignArgs(vars.slice(1), exprs.length == 0 ? exprs : exprs.slice(1)));
+	// port: the list walk as a loop: the i-th expression, else the argument's default value
+	public static function assignArgs(vars:Vector<{variable:TVar, defaultValue:Null<TExpr>}>, exprs:Array<TExpr>):Array<TExpr> {
+		if (exprs.length > vars.length) throw "tre: argument arity";
+		return [
+			for (i in 0...vars.length) {
+				var arg = vars[i];
+				var e = i < exprs.length ? exprs[i] : arg.defaultValue;
+				if (e == null) throw "tre: missing argument";
+				var lhs = TypeOps.mk(TLocal(arg.variable), e.etype, e.epos);
+				TypeOps.mk(TBinop(OpAssign, lhs, e), e.etype, e.epos);
+			}
+		];
 	}
 
-	public static function replacementForTReturn(ctx:context.SafeCom.SafeContext, fn:TFunc, args:Array<TExpr>, p:Pos):TExpr {
+	public static function replacementForTReturn(ctx:context.SafeCom.SafeContext, fn:TFunc, args:Vector<TExpr>, p:Pos):TExpr {
 		var collected = collectNewArgsValues(ctx, args, [], [], 0);
 		collected.declarations.reverse();
 		collected.values.reverse();
 		var next = TypeOps.mk(TContinue, ctx.basic.tvoid, Globals.nullPos);
-		var block = TypeOps.mk(TBlock(collected.declarations.concat(assignArgs(fn.tfArgs, collected.values)).concat([next])),
+		var block = TypeOps.mk(TBlock(Vector.fromArrayCopy(collected.declarations.concat(assignArgs(fn.tfArgs, collected.values)).concat([next]))),
 			ctx.basic.tvoid, p);
-		return TypeOps.mk(TMeta({meta: core.MetaList.StrictMeta.TailRecursion, exprs: [], pos: Globals.nullPos}, block), ctx.basic.tvoid,
+		return TypeOps.mk(TMeta({meta: core.MetaList.StrictMeta.TailRecursion, exprs: vector(), pos: Globals.nullPos}, block), ctx.basic.tvoid,
 			p);
 	}
 
@@ -93,19 +99,19 @@ class Tre {
 		var captured = collectCapturedArgs(args, body);
 		if (captured.length == 0) return wrap(body);
 		var redeclared = redeclareVars(ctx, captured, [], []);
-		return wrap(TypeOps.mk(TBlock(redeclared.declarations.concat([replaceVars(redeclared.replaceList, false, body)])), body.etype,
+		return wrap(TypeOps.mk(TBlock(Vector.fromArrayCopy(redeclared.declarations.concat([replaceVars(redeclared.replaceList, false, body)]))), body.etype,
 			body.epos));
 	}
 
-	public static function fnArgsVars(fn:TFunc):Array<TVar> return fn.tfArgs.map(a -> a.variable);
+	public static function fnArgsVars(fn:TFunc):Array<TVar> return fn.tfArgs.mapToArray(a -> a.variable);
 
-	public static function isRecursiveNamedLocalCall(fnVar:TVar, callee:TExpr, args:Array<TExpr>):Bool return switch callee.eexpr {
+	public static function isRecursiveNamedLocalCall(fnVar:TVar, callee:TExpr, args:Vector<TExpr>):Bool return switch callee.eexpr {
 		// named local function
 		case TLocal(v): v == fnVar;
 		case _: false;
 	};
 
-	public static function isRecursiveMethodCall(cls:TClass, field:TClassField, callee:TExpr, args:Array<TExpr>):Bool {
+	public static function isRecursiveMethodCall(cls:TClass, field:TClassField, callee:TExpr, args:Vector<TExpr>):Bool {
 		return switch callee.eexpr {
 			case TField(_, FStatic(_, cf)):
 				// member abstract function
@@ -119,7 +125,7 @@ class Tre {
 		};
 	}
 
-	public static function transformFunction(ctx:context.SafeCom.SafeContext, isRecursiveCall:TExpr->Array<TExpr>->Bool, fn:TFunc):TFunc {
+	public static function transformFunction(ctx:context.SafeCom.SafeContext, isRecursiveCall:TExpr->Vector<TExpr>->Bool, fn:TFunc):TFunc {
 		var addLoop = false;
 		function transformExpr(cancelTre:Bool, functionEnd:Bool, e:TExpr):TExpr {
 			return switch e.eexpr {
@@ -143,39 +149,41 @@ class Tre {
 				case TReturn(eReturn) if (eReturn != null): TypeOps.mk(TReturn(transformExpr(cancelTre, functionEnd, eReturn)), e.etype,
 						e.epos);
 				case TBlock(exprs):
-					function loop(exprs:Array<TExpr>):Array<TExpr> {
-						if (exprs.length == 0) return [];
-						var head = exprs[0];
+					// port: `loop` walks `exprs` from `i` on (upstream: its tail)
+					function loop(i:Int):Vector<TExpr> {
+						if (exprs.length - i == 0) return vector();
+						var head = exprs[i];
 						switch head.eexpr {
 							case TCall(callee, args) if (!cancelTre && isRecursiveCall(callee, args)):
-								if (exprs.length == 1 && functionEnd) {
+								if (exprs.length - i == 1 && functionEnd) {
 									addLoop = true;
-									return [replacementForTReturn(ctx, fn, args, head.epos)];
+									return vector(replacementForTReturn(ctx, fn, args, head.epos));
 								}
-								if (exprs.length == 2) switch exprs[1].eexpr {
+								if (exprs.length - i == 2) switch exprs[i + 1].eexpr {
 									case TReturn(null):
 										addLoop = true;
-										return [replacementForTReturn(ctx, fn, args, e.epos)];
+										return vector(replacementForTReturn(ctx, fn, args, e.epos));
 									case _:
 								}
 							case _:
 						}
-						return [transformExpr(cancelTre, functionEnd && exprs.length == 1, head)].concat(loop(exprs.slice(1)));
+						var x = transformExpr(cancelTre, functionEnd && exprs.length - i == 1, head);
+						return VectorTools.cons(x, loop(i + 1));
 					}
-					TypeOps.mk(TBlock(loop(exprs)), e.etype, e.epos);
+					TypeOps.mk(TBlock(loop(0)), e.etype, e.epos);
 				case _: core.Texpr.mapExpr(e -> transformExpr(cancelTre, functionEnd, e), e);
 			};
 		}
 		var body = transformExpr(false, true, fn.tfExpr);
 		if (addLoop) {
-			if (ExtType.isVoid(TypeOps.follow(fn.tfType))) body = TypeOps.mk(TBlock([body, TypeOps.mk(TReturn(null), ctx.basic.tvoid,
-				Globals.nullPos)]), ctx.basic.tvoid, Globals.nullPos);
+			if (ExtType.isVoid(TypeOps.follow(fn.tfType))) body = TypeOps.mk(TBlock(vector(body, TypeOps.mk(TReturn(null), ctx.basic.tvoid,
+				Globals.nullPos))), ctx.basic.tvoid, Globals.nullPos);
 			body = wrapLoop(ctx, fnArgsVars(fn), body);
 		}
 		return {tfArgs: fn.tfArgs, tfType: fn.tfType, tfExpr: body};
 	}
 
-	public static function hasTailRecursion(isRecursiveCall:TExpr->Array<TExpr>->Bool, cancelTre:Bool, functionEnd:Bool, e:TExpr):Bool {
+	public static function hasTailRecursion(isRecursiveCall:TExpr->Vector<TExpr>->Bool, cancelTre:Bool, functionEnd:Bool, e:TExpr):Bool {
 		return switch e.eexpr {
 			// cancel tre inside of loops bodies
 			case TWhile(_, _, _): core.Texpr.checkExpr(e -> hasTailRecursion(isRecursiveCall, true, false, e), e);
@@ -189,21 +197,22 @@ class Tre {
 			case TFunction(_): false;
 			case TReturn({eexpr: TCall(callee, args)}): !cancelTre && isRecursiveCall(callee, args);
 			case TBlock(exprs):
-				function loop(exprs:Array<TExpr>):Bool {
-					if (exprs.length == 0) return false;
-					switch exprs[0].eexpr {
+				// port: `loop` walks `exprs` from `i` on (upstream: its tail)
+				function loop(i:Int):Bool {
+					if (exprs.length - i == 0) return false;
+					switch exprs[i].eexpr {
 						case TCall(callee, args) if (!cancelTre):
-							if (exprs.length == 1 && functionEnd) return isRecursiveCall(callee, args);
-							if (exprs.length == 2) switch exprs[1].eexpr {
+							if (exprs.length - i == 1 && functionEnd) return isRecursiveCall(callee, args);
+							if (exprs.length - i == 2) switch exprs[i + 1].eexpr {
 								case TReturn(null): return isRecursiveCall(callee, args);
 								case _:
 							}
 						case _:
 					}
-					return hasTailRecursion(isRecursiveCall, cancelTre, functionEnd && exprs.length == 1, exprs[0])
-						|| loop(exprs.slice(1));
+					return hasTailRecursion(isRecursiveCall, cancelTre, functionEnd && exprs.length - i == 1, exprs[i])
+						|| loop(i + 1);
 				}
-				loop(exprs);
+				loop(0);
 			case _: core.Texpr.checkExpr(e -> hasTailRecursion(isRecursiveCall, cancelTre, functionEnd, e), e);
 		};
 	}

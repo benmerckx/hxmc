@@ -1,5 +1,8 @@
 package hxmc;
 
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
 // Target instructions over registers, before and after register allocation
 // (Regalloc). Registers: 0-63 physical (the target numbers them: general
 // registers from 0, floating-point/vector ones from LFunc.fprBase), 64 and
@@ -29,9 +32,8 @@ class LIns {
 	public var cond:Int = 0;
 	public var target:Null<LBlock>;
 	public var target2:Null<LBlock>;
-	public var table:Null<Array<LBlock>>; // jump tables
-	public var uses:Null<Array<Int>>; // calls: the argument registers
-	public var defs:Null<Array<Int>>; // calls: the result registers
+	public var table:Vector<LBlock> = vector(); // jump tables (empty: none)
+	public var uses:Vector<Int> = vector(); // calls (and returns): the argument registers
 	public var f:Float = 0;
 	public var flag:Bool = false; // target specific (zero/sign extension, ...)
 	public var pos = 0; // (-debug) the source position of the Mir instruction it comes from (SrcPos)
@@ -65,7 +67,6 @@ class LIns {
 		c.target2 = target2;
 		c.table = table;
 		c.uses = uses;
-		c.defs = defs;
 		c.f = f;
 		c.flag = flag;
 		c.pos = pos;
@@ -152,9 +153,8 @@ class LFunc {
 		for (b in blocks)
 			for (i in b.ins) {
 				if (i.target != null) i.target = dest(i.target);
-				if (i.table != null)
-					for (k in 0...i.table.length)
-						i.table[k] = dest(i.table[k]);
+				for (k in 0...i.table.length)
+					i.table[k] = dest(i.table[k]);
 			}
 		// (every block ends with its jumps: none falls into the next one)
 		var n = blocks.length;
@@ -171,9 +171,8 @@ class LFunc {
 		while (stack.length > 0)
 			for (i in stack.pop().ins) {
 				if (i.target != null) reach(i.target);
-				if (i.table != null)
-					for (t in i.table)
-						reach(t);
+				for (t in i.table)
+					reach(t);
 			}
 		var live = 0;
 		for (k in 0...n)

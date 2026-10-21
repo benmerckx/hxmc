@@ -205,10 +205,10 @@ class EvalExceptions {
 							var vf = EvalField.instanceField(vi, EvalHash.key_custom_stack);
 							switch vf {
 								case VVector(vv):
-									vv.map(v -> switch v {
+									[for (i in 0...vv.length) switch vv[i] {
 										case VEnumValue({enpos: p}) if (p != null): p;
 										case _: (Globals.die("", "EvalExceptions.catchExceptions") : Pos);
-									});
+									}];
 								case _:
 									def();
 							}

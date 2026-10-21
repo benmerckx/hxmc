@@ -20,34 +20,38 @@
 package libs.swflib;
 
 import haxe.io.Bytes;
+import haxe.ds.Vector;
 import libs.extlib.IO;
 import libs.extlib.IO.Output;
 import libs.extlib.IO.Input;
 import libs.swflib.As3;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // port: haxe/libs/swflib/as3parse.ml (the parse_* switches are all true);
 // indexes are plain Ints, so magic_index/index_int are the identity.
 class As3parse {
 	static function assertFalse():Dynamic throw new core.ds.Failure("assert false");
 
-	static function index<T>(t:Array<T>, i:Int):Index {
+	static inline function index<T>(t:Vector<T>, i:Int):Index {
 		if (i <= 0 || i - 1 >= t.length) assertFalse();
 		return i;
 	}
 
-	static function index_opt<T>(t:Array<T>, i:Int):Null<Index> {
+	static inline function index_opt<T>(t:Vector<T>, i:Int):Null<Index> {
 		if (i == 0)
 			return null
 		else
 			return index(t, i);
 	}
 
-	static function index_nz<T>(t:Array<T>, i:Int):IndexNz {
+	static inline function index_nz<T>(t:Vector<T>, i:Int):IndexNz {
 		if (i < 0 || i >= t.length) assertFalse();
 		return i;
 	}
 
-	public static inline function iget<T>(t:Array<T>, i:Index):T return t[i - 1];
+	public static inline function iget<T>(t:Vector<T>, i:Index):T return t[i - 1];
 
 	public static inline function no_nz(i:IndexNz):Index return i + 1;
 
@@ -147,7 +151,7 @@ class As3parse {
 			+ (m.mt3_pnames == null ? 0 : sum(idx_opt_length, m.mt3_pnames));
 	}
 
-	static function list_length<T>(f:T->Int, l:Array<T>):Int {
+	static inline function list_length<T>(f:T->Int, l:Vector<T>):Int {
 		return switch l.length {
 			case 0: int_length(0);
 			case n:
@@ -157,7 +161,7 @@ class As3parse {
 		}
 	}
 
-	static function list2_length<T>(f:T->Int, l:Array<T>):Int {
+	static inline function list2_length<T>(f:T->Int, l:Vector<T>):Int {
 		var acc = int_length(l.length);
 		for (x in l) acc += f(x);
 		return acc;
@@ -272,7 +276,7 @@ class As3parse {
 
 	static function read_ident(ch:Input):String return IO.nreadString(ch, read_int(ch));
 
-	static function read_namespace(idents:Array<As3Ident>, ch:Input):As3Namespace {
+	static function read_namespace(idents:Vector<As3Ident>, ch:Input):As3Namespace {
 		var k = IO.readByte(ch);
 		var p = index_opt(idents, read_int(ch));
 		return switch k {
@@ -312,7 +316,7 @@ class As3parse {
 		}
 	}
 
-	static function read_ns_set(namespaces:Array<As3Namespace>, ch:Input):As3NsSet {
+	static function read_ns_set(namespaces:Vector<As3Namespace>, ch:Input):As3NsSet {
 		var n = IO.readByte(ch);
 		var l = [];
 		for (_ in 0...n) l.push(index(namespaces, read_int(ch)));
@@ -430,16 +434,21 @@ class As3parse {
 		};
 	}
 
-	static function read_list<T>(ch:Input, f:Input->T):Array<T> {
-		return switch read_int(ch) {
-			case 0: [];
-			case n: [for (_ in 0...n - 1) f(ch)];
-		}
+	static inline function read_list<T>(ch:Input, f:Input->T):Vector<T> {
+		var n = read_int(ch);
+		// port: Array.init raises on a negative length.
+		if (n < 0) throw new core.ds.InvalidArgument("Array.init");
+		var a = new Vector<T>(n == 0 ? 0 : n - 1);
+		for (i in 0...a.length) a[i] = f(ch);
+		return a;
 	}
 
-	static function read_list2<T>(ch:Input, f:Input->T):Array<T> {
+	static inline function read_list2<T>(ch:Input, f:Input->T):Vector<T> {
 		var n = read_int(ch);
-		return [for (_ in 0...n) f(ch)];
+		if (n < 0) throw new core.ds.InvalidArgument("Array.init");
+		var a = new Vector<T>(n);
+		for (i in 0...a.length) a[i] = f(ch);
+		return a;
 	}
 
 	static function read_field(ctx:As3Tag, ch:Input):As3Field {
@@ -525,7 +534,7 @@ class As3parse {
 	static function read_metadata(ctx:As3Tag, ch:Input):As3Metadata {
 		var name = index(ctx.as3_idents, read_int(ch));
 		var data = read_list2(ch, _ -> index_opt(ctx.as3_idents, read_int(ch)));
-		var data = [for (i1 in data) {k: i1, v: index(ctx.as3_idents, read_int(ch))}];
+		var data = data.map(i1 -> {k: i1, v: index(ctx.as3_idents, read_int(ch))});
 		return {
 			meta3_name: name,
 			meta3_data: data,
@@ -577,7 +586,7 @@ class As3parse {
 		var uints = read_list(ch, read_as3_uint);
 		var floats = read_list(ch, IO.readDouble);
 		var idents = read_list(ch, read_ident);
-		var idents = (if (idents.indexOf("") >= 0) idents else idents.concat([""]));
+		var idents = (if (idents.has("")) idents else idents.snoc(""));
 		var namespaces = read_list(ch, read_namespace.bind(idents));
 		var nsets = read_list(ch, read_ns_set.bind(namespaces));
 		var ctx:As3Tag = {
@@ -587,20 +596,20 @@ class As3parse {
 			as3_idents: idents,
 			as3_namespaces: namespaces,
 			as3_nsets: nsets,
-			as3_names: [],
-			as3_method_types: [],
-			as3_metadatas: [],
-			as3_classes: [],
-			as3_statics: [],
-			as3_inits: [],
-			as3_functions: [],
+			as3_names: vector(),
+			as3_method_types: vector(),
+			as3_metadatas: vector(),
+			as3_classes: vector(),
+			as3_statics: vector(),
+			as3_inits: vector(),
+			as3_functions: vector(),
 			as3_unknown: "",
 		};
 		ctx.as3_names = read_list(ch, ch -> read_name(ctx, null, ch));
 		ctx.as3_method_types = read_list2(ch, read_method_type.bind(ctx));
 		ctx.as3_metadatas = read_list2(ch, read_metadata.bind(ctx));
 		ctx.as3_classes = read_list2(ch, read_class.bind(ctx));
-		ctx.as3_statics = [for (_ in ctx.as3_classes) read_static(ctx, ch)];
+		ctx.as3_statics = ctx.as3_classes.map(_ -> read_static(ctx, ch));
 		ctx.as3_inits = read_list2(ch, read_static.bind(ctx));
 		ctx.as3_functions = read_list2(ch, read_function.bind(ctx));
 		ctx.as3_unknown = IO.reallyNread(ch, len - (get_pos())).toString();
@@ -785,7 +794,7 @@ class As3parse {
 		}
 	}
 
-	static function write_list<T>(ch:Output, f:Output->T->Void, l:Array<T>):Void {
+	static inline function write_list<T>(ch:Output, f:Output->T->Void, l:Vector<T>):Void {
 		switch l.length {
 			case 0: IO.writeByte(ch, 0);
 			case n:
@@ -794,7 +803,7 @@ class As3parse {
 		}
 	}
 
-	static function write_list2<T>(ch:Output, f:Output->T->Void, l:Array<T>):Void {
+	static inline function write_list2<T>(ch:Output, f:Output->T->Void, l:Vector<T>):Void {
 		write_int(ch, l.length);
 		for (x in l) f(ch, x);
 	}

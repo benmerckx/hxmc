@@ -11,6 +11,9 @@ import core.Error;
 import core.Abstract;
 import typing.TyperBase;
 import filters.exception.ExceptionFunctions;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 @:structInit class ExceptionContext {
 	public var scom:SafeContext;
@@ -83,7 +86,7 @@ class Exceptions {
 	/**
 		Generate `haxe.Exception.method_name(args)`
 	**/
-	public static function haxeExceptionStaticCall(ctx:ExceptionContext, name:String, args:Array<TExpr>, p:Pos):TExpr {
+	public static function haxeExceptionStaticCall(ctx:ExceptionContext, name:String, args:haxe.ds.Vector<TExpr>, p:Pos):TExpr {
 		var fields = haxeExceptionClass(ctx).clStatics;
 		if (!fields.exists(name)) Error.raiseTypingError("haxe.Exception has no field " + name, p);
 		var field = fields.get(name);
@@ -97,7 +100,7 @@ class Exceptions {
 	/**
 		Generate `haxe_exception.method_name(args)`
 	**/
-	public static function haxeExceptionInstanceCall(ctx:ExceptionContext, hx:TExpr, name:String, args:Array<TExpr>, p:Pos):TExpr {
+	public static function haxeExceptionInstanceCall(ctx:ExceptionContext, hx:TExpr, name:String, args:haxe.ds.Vector<TExpr>, p:Pos):TExpr {
 		var access = TypeOps.quickField(hx.etype, name);
 		return switch access {
 			case FInstance(_, _, cf):
@@ -119,7 +122,7 @@ class Exceptions {
 	}
 
 	public static function addMetaExceptionTypeCheck(e:TExpr):TExpr {
-		return TypeOps.mk(TMeta({meta: core.MetaList.StrictMeta.ExceptionTypeCheck, exprs: [], pos: e.epos}, e), e.etype, e.epos);
+		return TypeOps.mk(TMeta({meta: core.MetaList.StrictMeta.ExceptionTypeCheck, exprs: vector(), pos: e.epos}, e), e.etype, e.epos);
 	}
 
 	/**
@@ -128,7 +131,7 @@ class Exceptions {
 	public static function stdIs(ctx:ExceptionContext, e:TExpr, t:T, p:Pos):TExpr {
 		var typeExpr = TyperBase.typeModuleTypeSimple(TypeOps.moduleTypeOfType(TypeOps.follow(t)), p);
 		var std = ctx.isOfType;
-		return addMetaExceptionTypeCheck(ExceptionFunctions.makeStaticCall(ctx.scom, std.cls, std.field, [e, typeExpr], std.returnType, p));
+		return addMetaExceptionTypeCheck(ExceptionFunctions.makeStaticCall(ctx.scom, std.cls, std.field, vector(e, typeExpr), std.returnType, p));
 	}
 
 	/**
@@ -220,14 +223,14 @@ class Exceptions {
 	**/
 	public static function throwNative(ctx:ExceptionContext, eThrown:TExpr, t:T, p:Pos):TExpr {
 		if (!requiresWrappedThrow(ctx, eThrown)) return eThrown;
-		var thrown = haxeExceptionStaticCall(ctx, "thrown", [eThrown], p);
+		var thrown = haxeExceptionStaticCall(ctx, "thrown", vector(eThrown), p);
 		var wrapped = ExceptionFunctions.isDynamic(ctx.baseThrowType) ? thrown : TypeOps.mkCast(thrown, ctx.baseThrowType, p);
-		return TypeOps.mk(TMeta({meta: core.MetaList.StrictMeta.WrappedException, exprs: [], pos: p}, wrapped), wrapped.etype, p);
+		return TypeOps.mk(TMeta({meta: core.MetaList.StrictMeta.WrappedException, exprs: vector(), pos: p}, wrapped), wrapped.etype, p);
 	}
 
 	public static function setNeedsExceptionStack(v:TVar):Void {
 		if (!Meta.has(NeedsExceptionStack, v.vMeta)) v.vMeta = ([
-			{meta: core.MetaList.StrictMeta.NeedsExceptionStack, exprs: [], pos: Globals.nullPos}
+			{meta: core.MetaList.StrictMeta.NeedsExceptionStack, exprs: vector(), pos: Globals.nullPos}
 		] : Array<core.Ast.MetadataEntry>).concat(v.vMeta);
 	}
 
@@ -256,35 +259,35 @@ class Exceptions {
 				condition = core.TUnification.fastEq(haxeExceptionType(ctx),
 					currentT) ? addMetaExceptionTypeCheck(TypeOps.mk(TConst(TBool(true)), ctx.basic.tbool,
 						v.vPos)) : stdIs(ctx, caught.getHaxeException(v.vPos), v.vType, v.vPos);
-				if (varUsed) body = TypeOps.mk(TBlock([
+				if (varUsed) body = TypeOps.mk(TBlock(vector(
 					// var v:ExceptionType = cast haxe_exception_local;
 					TypeOps.mk(TVar(v, TypeOps.mkCast(caught.getHaxeException(v.vPos), v.vType, v.vPos)), ctx.basic.tvoid, v.vPos),
 					body
-				]), body.etype, body.epos);
+				)), body.etype, body.epos);
 			} else if (currentT == TypeOps.tDynamic) { // catch(e:Dynamic)
 				setNeedsExceptionStack(catchVar);
 				// this is a wildcard catch
 				condition = TypeOps.mk(TConst(TBool(true)), ctx.basic.tbool, v.vPos);
 				// `var v:Dynamic = catch_local;` or `var v:Dynamic = haxe_exception_local.unwrap();`
 				var decl = varUsed ? TypeOps.mk(TVar(v, ctx.catchesAnything ? catchLocal : caught.unwrap(v.vPos)), ctx.basic.tvoid,
-					v.vPos) : TypeOps.mk(TBlock([]), ctx.basic.tvoid, v.vPos);
-				body = TypeOps.mk(TBlock([decl, body]), body.etype, body.epos);
+					v.vPos) : TypeOps.mk(TBlock(vector()), ctx.basic.tvoid, v.vPos);
+				body = TypeOps.mk(TBlock(vector(decl, body)), body.etype, body.epos);
 			} else if (core.TUnification.fastEq(ctx.wildcardCatchType, currentT)) { // catch(e:NativeWildcardException)
 				setNeedsExceptionStack(catchVar);
 				// this is a wildcard catch
 				condition = TypeOps.mk(TConst(TBool(true)), ctx.basic.tbool, v.vPos);
 				// var v:NativeWildcardException = catch_var;
 				var decl = varUsed ? TypeOps.mk(TVar(v, catchLocal), ctx.basic.tvoid,
-					v.vPos) : TypeOps.mk(TBlock([]), ctx.basic.tvoid, v.vPos);
-				body = TypeOps.mk(TBlock([decl, body]), body.etype, body.epos);
+					v.vPos) : TypeOps.mk(TBlock(vector()), ctx.basic.tvoid, v.vPos);
+				body = TypeOps.mk(TBlock(vector(decl, body)), body.etype, body.epos);
 			} else { // catch(e:AnythingElse)
 				setNeedsExceptionStack(catchVar);
 				// Std.isOfType(haxe_exception_local.unwrap(), ExceptionType)
 				condition = stdIs(ctx, caught.unwrap(v.vPos), v.vType, v.vPos);
 				// var v:ExceptionType = cast haxe_exception_local.unwrap()
 				var decl = varUsed ? TypeOps.mk(TVar(v, TypeOps.mkCast(caught.unwrap(v.vPos), v.vType, v.vPos)), ctx.basic.tvoid,
-					v.vPos) : TypeOps.mk(TBlock([]), ctx.basic.tvoid, v.vPos);
-				body = TypeOps.mk(TBlock([decl, body]), body.etype, body.epos);
+					v.vPos) : TypeOps.mk(TBlock(vector()), ctx.basic.tvoid, v.vPos);
+				body = TypeOps.mk(TBlock(vector(decl, body)), body.etype, body.epos);
 			}
 			var remaining = rest.slice(1);
 			var elseBody = remaining.length == 0 ? TypeOps.mk(TThrow(catchLocal), TypeOps.mkMono(), p) : transform(remaining);
@@ -304,7 +307,7 @@ class Exceptions {
 		var declUnwrap = caught.declareUnwrap(catchVar.vPos);
 		// var haxe_exception_local = haxe.Exception.caught(catch_var);
 		var declHx = caught.declareHaxeException(catchVar.vPos);
-		var exprs = [declHx, declUnwrap, transformed];
+		var exprs = vector(declHx, declUnwrap, transformed);
 		return [{variable: catchVar, expr: TypeOps.mk(TBlock(exprs), t, p)}];
 	}
 
@@ -337,7 +340,7 @@ class Exceptions {
 		var fields = valueExceptionClass(ctx).clFields;
 		if (!fields.exists("value")) throw 'haxe.ValueException is missing field "value"';
 		var cf = fields.get("value");
-		var catchLocalValue = TypeOps.mk(TField(catchLocal, FInstance(valueExceptionClass(ctx), [], cf)), cf.cfType, catchLocal.epos);
+		var catchLocalValue = TypeOps.mk(TField(catchLocal, FInstance(valueExceptionClass(ctx), vector(), cf)), cf.cfType, catchLocal.epos);
 		function traverse(catches:Array<CatchClause>, finalElse:TExpr):TExpr {
 			if (catches.length == 0) return finalElse;
 			var c = catches[0];
@@ -349,8 +352,8 @@ class Exceptions {
 			// var v:ExceptionType = cast catch_local.value
 			var decl = isVarUsed(v,
 				body) ? TypeOps.mk(TVar(v, TypeOps.mkCast(catchLocalValue, v.vType, v.vPos)), ctx.basic.tvoid,
-					v.vPos) : TypeOps.mk(TBlock([]), ctx.basic.tvoid, v.vPos);
-			body = TypeOps.mk(TBlock([decl, body]), body.etype, body.epos);
+					v.vPos) : TypeOps.mk(TBlock(vector()), ctx.basic.tvoid, v.vPos);
+			body = TypeOps.mk(TBlock(vector(decl, body)), body.etype, body.epos);
 			return TypeOps.mk(TIf(condition, body, traverse(catches.slice(1), finalElse)), t, p);
 		}
 		var finalElse = valueCatch == null ? TypeOps.mk(TThrow(catchLocal), TypeOps.tDynamic, p) : valueCatch.expr;
@@ -433,9 +436,9 @@ class Exceptions {
 			case TThrow(e1): TypeOps.mk(TThrow(throwNative(ctx, run(e1), e.etype, e.epos)), e.etype, e.epos);
 			case TTry(e1, catches):
 				var catches = catchNative(ctx,
-					catches.map(c -> ({variable: c.variable, expr: run(c.expr)} : filters.exception.Exceptions.CatchClause)), e.etype,
+					catches.mapToArray(c -> ({variable: c.variable, expr: run(c.expr)} : filters.exception.Exceptions.CatchClause)), e.etype,
 					e.epos);
-				TypeOps.mk(TTry(run(e1), catches), e.etype, e.epos);
+				TypeOps.mk(TTry(run(e1), haxe.ds.Vector.fromArrayCopy(catches)), e.etype, e.epos);
 			case _: core.Texpr.mapExpr(run, e);
 		};
 		return e -> containsThrowOrTry(e) ? run(e) : e;
@@ -467,13 +470,13 @@ class ExceptionCatch {
 	}
 
 	public function declareHaxeException(p:Pos):TExpr {
-		return hxExceptionVar == null ? TypeOps.mk(TBlock([]), ctx.basic.tvoid,
-			p) : TypeOps.mk(TVar(hxExceptionVar, Exceptions.haxeExceptionStaticCall(ctx, "caught", [catchLocal], p)), ctx.basic.tvoid, p);
+		return hxExceptionVar == null ? TypeOps.mk(TBlock(vector()), ctx.basic.tvoid,
+			p) : TypeOps.mk(TVar(hxExceptionVar, Exceptions.haxeExceptionStaticCall(ctx, "caught", vector(catchLocal), p)), ctx.basic.tvoid, p);
 	}
 
 	public function declareUnwrap(p:Pos):TExpr {
-		return unwrappedVar == null ? TypeOps.mk(TBlock([]), ctx.basic.tvoid,
-			p) : TypeOps.mk(TVar(unwrappedVar, Exceptions.haxeExceptionInstanceCall(ctx, getHaxeException(p), "unwrap", [], p)),
+		return unwrappedVar == null ? TypeOps.mk(TBlock(vector()), ctx.basic.tvoid,
+			p) : TypeOps.mk(TVar(unwrappedVar, Exceptions.haxeExceptionInstanceCall(ctx, getHaxeException(p), "unwrap", vector(), p)),
 			ctx.basic.tvoid, p);
 	}
 }

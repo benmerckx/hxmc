@@ -7,6 +7,7 @@ import core.Meta;
 import core.Texpr;
 import core.Error;
 import haxe.ds.IntMap;
+import core.ds.VectorTools.vector;
 
 @:structInit class LsContext {
 	public var scom:context.SafeCom.SafeContext;
@@ -36,7 +37,7 @@ class LocalStatic {
 			return;
 		}
 		var cf = TypeOps.mkField(name, v.vType, v.vPos, v.vPos, true, true);
-		cf.cfMeta = ([{meta: core.MetaList.StrictMeta.NoCompletion, exprs: [], pos: Globals.nullPos}] : Array<core.Ast.MetadataEntry>)
+		cf.cfMeta = ([{meta: core.MetaList.StrictMeta.NoCompletion, exprs: vector(), pos: Globals.nullPos}] : Array<core.Ast.MetadataEntry>)
 			.concat(v.vMeta);
 		TypeOps.addClassFieldFlag(cf, CfNoLookup);
 		if (eo != null) {
@@ -102,7 +103,7 @@ class LocalStatic {
 						case TVar(v, eo) if (TypeOps.hasVarFlag(v, VStatic)): promoteLocalStatic(lsctx, run, v, eo);
 						case _: result.push(run(e));
 					}
-					{eexpr: TBlock(result), etype: e.etype, epos: e.epos};
+					{eexpr: TBlock(haxe.ds.Vector.fromArrayCopy(result)), etype: e.etype, epos: e.epos};
 				case TLocal(v) if (TypeOps.hasVarFlag(v, VStatic)):
 					if (!lsctx.lut.exists(v.vId)) Error.raiseTypingError("Could not find local static " + v.vName + " (id " + v.vId + ")",
 						e.epos);

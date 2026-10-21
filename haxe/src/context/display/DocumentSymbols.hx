@@ -10,6 +10,8 @@ import core.Ast;
 import core.Meta;
 import core.DisplayTypes;
 
+using core.ds.VectorTools;
+
 class DocumentSymbols {
 	public static function collectModuleSymbols(mname:Null<{file:String, name:String}>, withLocals:Bool,
 			data:Package):Array<SymbolInformationData> {
@@ -96,7 +98,7 @@ class DocumentSymbols {
 			switch decl.definition {
 				case EImport(_) | EUsing(_):
 				case EClass(d):
-					var kind = d.flags.contains(HInterface) ? Interface : Class;
+					var kind = d.flags.has(HInterface) ? Interface : Class;
 					var parent = addType(d.name, d.meta, kind);
 					for (f in d.data) field(parent, kind, f);
 				case EEnum(d):
@@ -111,13 +113,13 @@ class DocumentSymbols {
 							addType(d.name, d.meta, TypeAlias);
 					}
 				case EAbstract(d):
-					var kind = d.flags.contains(AbEnum) ? EnumAbstract : Abstract;
+					var kind = d.flags.has(AbEnum) ? EnumAbstract : Abstract;
 					var parent = addType(d.name, d.meta, kind);
 					for (f in d.data) field(parent, kind, f);
 				case EStatic(d):
 					var r = getDeclPath(d.name);
 					var dotpath = stringOfPath(r.typePath);
-					field_(dotpath, Class, d.name, d.data, d.flags, p, d.meta);
+					field_(dotpath, Class, d.name, d.data, d.flags.toArray(), p, d.meta);
 			}
 		}
 		if (mname != null && !typeDecls.exists(mname.name)) add(mname.name, Module, Globals.filePos(mname.file), pack.join("."), false);

@@ -27,6 +27,7 @@ import core.TFunctions.NotFound;
 import core.TPrinting;
 import context.SafeCom;
 import optimization.AnalyzerConfig;
+import core.ds.VectorTools.vector;
 
 /*
 	A BasicBlock represents a node in the control flow. It has expression elements similar to TBlock in the AST,
@@ -87,7 +88,7 @@ enum SyntaxEdge {
 	SEIfThen(bbThen:BasicBlockData, bbNext:BasicBlockData, p:Pos); // `if` with "then" and "next"
 	SEIfThenElse(bbThen:BasicBlockData, bbElse:BasicBlockData, bbNext:BasicBlockData, t:T, p:Pos); // `if` with "then", "else" and "next"
 	SESwitch(ss:SyntaxSwitch); // `switch` with cases, "default" and "next"
-	SETry(bbTry:BasicBlockData, bbExc:BasicBlockData, catches:Array<{v:TVar, bb:BasicBlockData}>, bbNext:BasicBlockData, p:Pos); // `try` with "exc", catches and "next"
+	SETry(bbTry:BasicBlockData, bbExc:BasicBlockData, catches:haxe.ds.Vector<{v:TVar, bb:BasicBlockData}>, bbNext:BasicBlockData, p:Pos); // `try` with "exc", catches and "next"
 	SEWhile(bbBody:BasicBlockData, bbNext:BasicBlockData, p:Pos); // `while` with "body" and "next"
 	SESubBlock(bbSub:BasicBlockData, bbNext:BasicBlockData); // "sub" with "next"
 	SEMerge(bb:BasicBlockData); // Merge to same block
@@ -95,13 +96,13 @@ enum SyntaxEdge {
 }
 
 @:structInit class SyntaxSwitch {
-	public var ssCases:Array<{values:Array<TExpr>, bb:BasicBlockData}>;
+	public var ssCases:haxe.ds.Vector<{values:haxe.ds.Vector<TExpr>, bb:BasicBlockData}>;
 	public var ssDefault:Null<BasicBlockData>;
 	public var ssNext:BasicBlockData;
 	public var ssPos:Pos;
 	public var ssExhaustive:Bool;
 
-	public inline function new(ssCases:Array<{values:Array<TExpr>, bb:BasicBlockData}>, ssDefault:Null<BasicBlockData>,
+	public inline function new(ssCases:haxe.ds.Vector<{values:haxe.ds.Vector<TExpr>, bb:BasicBlockData}>, ssDefault:Null<BasicBlockData>,
 			ssNext:BasicBlockData, ssPos:Pos, ssExhaustive:Bool) {
 		this.ssCases = ssCases;
 		this.ssDefault = ssDefault;
@@ -413,7 +414,7 @@ class Graph {
 		};
 		g.gVarInfos.push(vi);
 		var i = g.gVarInfos.length - 1;
-		v.vExtra = varExtra([], mk(TConst(TInt(i)), tDynamic, Globals.nullPos));
+		v.vExtra = varExtra(vector(), mk(TConst(TInt(i)), tDynamic, Globals.nullPos));
 		return vi;
 	}
 

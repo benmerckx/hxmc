@@ -215,7 +215,9 @@ class JvmGlobals {
 
 	public static inline function writeString(ch:OutputBytes, s:String):Void ch.nwriteString(s);
 
-	public static function writeArray16<A>(ch:OutputBytes, f:OutputBytes->A->Void, a:Array<A>):Void {
+	// port: inline: hxmc erases type parameters, and a Vector read in generic code has no
+	// known element type (dynamic accesses)
+	public static inline function writeArray16<A>(ch:OutputBytes, f:OutputBytes->A->Void, a:haxe.ds.Vector<A>):Void {
 		writeUi16(ch, a.length);
 		for (x in a) f(ch, x);
 	}

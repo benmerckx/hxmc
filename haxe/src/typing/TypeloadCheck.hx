@@ -56,6 +56,7 @@ import core.display.CompletionItem.TKind;
 import core.display.CompletionItem.CompletionModuleKind;
 import typing.Typeload;
 import typing.TypeloadCheck.*;
+import core.ds.VectorTools.vector;
 
 class BuildCanceled extends haxe.Exception {
 	public final state:BuildState;
@@ -113,11 +114,11 @@ class TypeloadCheck {
 			case [Pure, MaybePure]:
 				f1.cfMeta.unshift({
 					meta: MetaTag.Pure,
-					exprs: [{expr: EConst(Ident("expect")), pos: mkZeroRangePos(f2.cfPos)}],
+					exprs: vector({expr: EConst(Ident("expect")), pos: mkZeroRangePos(f2.cfPos)}),
 					pos: Globals.nullPos
 				});
 			case [ExpectPure(p), MaybePure]:
-				f1.cfMeta.unshift({meta: MetaTag.Pure, exprs: [{expr: EConst(Ident("expect")), pos: p}], pos: Globals.nullPos});
+				f1.cfMeta.unshift({meta: MetaTag.Pure, exprs: vector({expr: EConst(Ident("expect")), pos: p}), pos: Globals.nullPos});
 			case _:
 		}
 		switch [f1.cfKind, f2.cfKind] {
@@ -723,7 +724,7 @@ class Inheritance {
 		}
 	}
 
-	public static function setHeritance(ctx:Typer, c:TClass, herits:Array<ClassFlag>, p:Pos):Array<Void->Void> {
+	public static function setHeritance(ctx:Typer, c:TClass, herits:haxe.ds.Vector<ClassFlag>, p:Pos):Array<Void->Void> {
 		var isLib = Meta.has(MetaTag.LibType, c.clMeta),
 			oldMeta = c.clMeta,
 			hasInterf = false;

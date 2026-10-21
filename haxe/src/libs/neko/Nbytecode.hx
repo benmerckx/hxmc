@@ -15,6 +15,7 @@
 
 package libs.neko;
 
+import haxe.ds.Vector;
 import libs.neko.IO;
 
 // port: haxe/libs/neko/nbytecode.ml
@@ -124,7 +125,7 @@ enum Global {
 	GlobalFunction(p:Int, nargs:Int);
 	GlobalString(s:String);
 	GlobalFloat(s:String);
-	GlobalDebug(files:Array<String>, inf:Array<DebugPos>);
+	GlobalDebug(files:Vector<String>, inf:Vector<DebugPos>);
 	GlobalVersion(v:Int);
 }
 
@@ -163,7 +164,7 @@ class Nbytecode {
 		}
 	}
 
-	static function codeTables(ops:Array<Opcode>):{ids:Array<String>, pos:Array<Int>, size:Int} {
+	static function codeTables(ops:Vector<Opcode>):{ids:Array<String>, pos:Vector<Int>, size:Int} {
 		// port: (int,string) Hashtbl.t, only looked up.
 		var ids = new haxe.ds.IntMap<String>();
 		var fids = [];
@@ -182,7 +183,7 @@ class Nbytecode {
 			}
 		}
 		var p = 0;
-		var pos = [for (_ in 0...ops.length + 1) 0];
+		var pos = new Vector(ops.length + 1, 0);
 		for (i in 0...ops.length) {
 			pos[i] = p;
 			p = p + (opParam(ops[i]) ? 2 : 1);
@@ -191,7 +192,7 @@ class Nbytecode {
 		return {ids: fids, pos: pos, size: p};
 	}
 
-	static function writeDebugInfos(ch:haxe.io.Output, files:Array<String>, inf:Array<DebugPos>):Void {
+	static function writeDebugInfos(ch:haxe.io.Output, files:Vector<String>, inf:Vector<DebugPos>):Void {
 		var nfiles = files.length;
 		/*
 			// the encoding of nfiles was set to keep
@@ -250,7 +251,7 @@ class Nbytecode {
 		flushRepeat(curpos);
 	}
 
-	public static function write(ch:haxe.io.Output, code:{globals:Array<Global>, ops:Array<Opcode>}):Void {
+	public static function write(ch:haxe.io.Output, code:{globals:Vector<Global>, ops:Vector<Opcode>}):Void {
 		var globals = code.globals, ops = code.ops;
 		IO.nwriteString(ch, "NEKO");
 		var t = codeTables(ops);

@@ -34,6 +34,7 @@ import macros.eval.EvalPrinting;
 import macros.eval.EvalMisc;
 import macros.eval.EvalField;
 import macros.eval.EvalString;
+import core.ds.VectorTools.vector;
 
 using macros.eval.EvalValue.EvalValueTools;
 // port: the host natives of hxmc (hxmc/std)
@@ -154,7 +155,7 @@ class StdEvalVector {
 	}
 
 	// port: OCaml Array.blit (overlap-safe, Invalid_argument on bad ranges).
-	static function arrayBlit(src:Array<Value>, srcPos:Int, dst:Array<Value>, dstPos:Int, len:Int):Void {
+	static function arrayBlit(src:haxe.ds.Vector<Value>, srcPos:Int, dst:haxe.ds.Vector<Value>, dstPos:Int, len:Int):Void {
 		if (len < 0 || srcPos < 0 || srcPos > src.length - len || dstPos < 0 || dstPos > dst.length - len)
 			throw new InvalidArgument("Array.blit");
 		if (src == dst && srcPos < dstPos) {
@@ -181,7 +182,9 @@ class StdEvalVector {
 
 	public static final fromArrayCopy = EvalEncode.vfun1(arr -> {
 		var a = EvalDecode.decodeVarray(arr);
-		return EvalEncode.encodeVectorInstance(a.avalues.slice(0, a.alength));
+		var v = new haxe.ds.Vector<Value>(a.alength);
+		haxe.ds.Vector.blit(a.avalues, 0, v, 0, a.alength);
+		return EvalEncode.encodeVectorInstance(v);
 	});
 
 	public static final copy = EvalEncode.vifun0(vthis -> {
@@ -588,7 +591,7 @@ class StdBytes {
 
 	public static final toHex = EvalEncode.vifun0(vthis -> {
 		var self = thisValue(vthis);
-		var chars = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"];
+		var chars:haxe.ds.Vector<String> = vector("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f");
 		var l = self.length;
 		var buf = new StringBuf();
 		for (i in 0...l) {
@@ -1125,7 +1128,7 @@ class StdEReg {
 					buf.addSub(s, pos, l - pos);
 					return;
 				}
-				self.rGroups = [a];
+				self.rGroups = vector(a);
 				var first = a.first, last = a.last;
 				buf.addSub(s, pos, first - pos);
 				buf.add(EvalDecode.decodeString(EvalPrinting.callValueOn(vthis, f, [vthis])));
@@ -1153,7 +1156,7 @@ class StdEReg {
 		self.rString = s;
 		loop(0);
 		self.rString = "";
-		self.rGroups = [];
+		self.rGroups = vector();
 		return EvalString.createUnknown(buf.toString());
 	});
 
@@ -1164,10 +1167,10 @@ class StdEReg {
 		self.rString = s;
 		var a = try exec(self, s, 0) catch (_:Dynamic) EvalContext.excString("PCRE Error (invalid unicode string?)");
 		if (a != null) {
-			self.rGroups = [a];
+			self.rGroups = vector(a);
 			return VTrue;
 		} else {
-			self.rGroups = [];
+			self.rGroups = vector();
 			return VFalse;
 		}
 	});
@@ -1219,7 +1222,7 @@ class StdEReg {
 		var a = exec(self, s, pos, len);
 		if (a == null) return VFalse;
 		self.rString = s;
-		self.rGroups = [a];
+		self.rGroups = vector(a);
 		return VTrue;
 	});
 

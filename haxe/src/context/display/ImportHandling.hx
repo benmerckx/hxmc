@@ -20,6 +20,8 @@ import core.TFunctions.*;
 import context.Typecore.*;
 import context.TyperPass;
 
+using core.ds.VectorTools;
+
 enum ImportDisplayKind {
 	IDKPackage(sl:Array<String>);
 	IDKModule(sl:Array<String>, s:String);
@@ -31,7 +33,7 @@ enum ImportDisplayKind {
 
 // port: ModuleDefDisplay.mImportPositions is keyed by position strings (see key).
 class ImportHandling {
-	public static function convertImportToSomethingUsable(pt:Pos, path:Array<PlacedName>):{kind:ImportDisplayKind, pos:Pos} {
+	public static function convertImportToSomethingUsable(pt:Pos, path:haxe.ds.Vector<PlacedName>):{kind:ImportDisplayKind, pos:Pos} {
 		var pack:Array<String> = [],
 			m:Null<String> = null,
 			t:Null<String> = null;
@@ -91,7 +93,7 @@ class ImportHandling {
 		return l;
 	}
 
-	public static function addImportPosition(ctx:Typer, p:Pos, path:Array<PlacedName>):Void {
+	public static function addImportPosition(ctx:Typer, p:Pos, path:haxe.ds.Vector<PlacedName>):Void {
 		var positions = ctx.m.curmod.mExtra.mDisplay.mImportPositions, k = key(p);
 		if (!positions.exists(k)) positions.set(k, false);
 	}
@@ -101,17 +103,17 @@ class ImportHandling {
 		if (positions.exists(k)) positions.set(k, true);
 	}
 
-	public static function commitImport(ctx:Typer, path:Array<PlacedName>, mode:ImportMode, p:Pos):Void {
+	public static function commitImport(ctx:Typer, path:haxe.ds.Vector<PlacedName>, mode:ImportMode, p:Pos):Void {
 		ctx.m.importStatements.unshift({path: path, mode: mode});
 		if (haxe.io.Path.withoutDirectory(p.pfile) != "import.hx") addImportPosition(ctx, p, path);
 	}
 
-	public static function initImport(ctx:Typer, path:Array<PlacedName>, mode:ImportMode, p:Pos):Void {
+	public static function initImport(ctx:Typer, path:haxe.ds.Vector<PlacedName>, mode:ImportMode, p:Pos):Void {
 		var i = 0;
 		while (i < path.length && Ast.isLowerIdent(path[i].name)) i++;
 		var pack = path.slice(0, i), rest = path.slice(i);
 		if (rest.length == 0) {
-			if (mode == IAll) ctx.m.importResolution.add(wildcardPackageResolution(pack.map(part -> part.name), p));
+			if (mode == IAll) ctx.m.importResolution.add(wildcardPackageResolution(pack.mapToArray(part -> part.name), p));
 			// p spans `import |` (to the display position), so we take the pmax here
 			else if (path.length == 0) DisplayException.raiseFields(DisplayToplevel.collect(ctx, TKType, NoValue, true), CRImport,
 				core.DisplayTypes.DisplayTypes.makeSubject(null, {
@@ -126,7 +128,7 @@ class ImportHandling {
 		rest = rest.slice(1);
 		var p1 = pack.length == 0 ? p2 : pack[0].pos,
 			pType = Ast.punion(p1, p2);
-		var md = ctx.g.doLoadModule(ctx, {pack: pack.map(part -> part.name), name: tname}, pType, MDepFromImport),
+		var md = ctx.g.doLoadModule(ctx, {pack: pack.mapToArray(part -> part.name), name: tname}, pType, MDepFromImport),
 			types = md.mTypes;
 		inline function errorPrivate(p:Pos):Void raiseTypingError("Importing private declarations from a module is not allowed", p);
 		inline function checkPrivate(t:ModuleType, p:Pos):Void {
@@ -292,15 +294,14 @@ class ImportHandling {
 		}
 	}
 
-	public static function handleUsing(ctx:Typer, path:Array<PlacedName>,
+	public static function handleUsing(ctx:Typer, path:haxe.ds.Vector<PlacedName>,
 			p:Pos):{types:Array<ModuleType>, filterClasses:Array<ModuleType>->Array<{cls:TClass, pos:Pos}>} {
-		var parts = path.copy();
-		parts.reverse();
+		var parts = path.rev();
 		var t:TypePath;
 		if (parts.length >= 2) {
 			var s1 = parts[0].name,
 				s2 = parts[1].name,
-				pack = parts.slice(2).map(part -> part.name);
+				pack = parts.slice(2).mapToArray(part -> part.name);
 			pack.reverse();
 			if (Ast.isLowerIdent(s2)) {
 				pack.push(s2);
@@ -333,7 +334,7 @@ class ImportHandling {
 		return {types: types, filterClasses: filterClasses};
 	}
 
-	public static function initUsing(ctx:Typer, path:Array<PlacedName>, p:Pos):Void {
+	public static function initUsing(ctx:Typer, path:haxe.ds.Vector<PlacedName>, p:Pos):Void {
 		var result = handleUsing(ctx, path, p), types = result.types.copy();
 		types.reverse();
 		// do the import first

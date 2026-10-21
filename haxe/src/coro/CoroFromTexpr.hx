@@ -20,6 +20,11 @@ import core.Globals;
 import core.Globals.*;
 import coro.CoroTypes;
 import coro.CoroFunctions.*;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 enum CoroRet {
 	RLocal(v:TVar);
@@ -56,7 +61,7 @@ class CoroFromTexpr {
 		return CoroConfig.ofMetaList(meta).outcome;
 	}
 
-	public static function checkCaptures(ctx:CoroCtx, args:Array<{variable:TVar, defaultValue:Null<TExpr>}>, expr:TExpr):Void {
+	public static function checkCaptures(ctx:CoroCtx, args:Vector<{variable:TVar, defaultValue:Null<TExpr>}>, expr:TExpr):Void {
 		var vars:Map<Int, Bool> = [];
 		inline function declare(v:TVar):Void vars.set(v.vId, true);
 		for (a in args) declare(a.variable);
@@ -133,7 +138,7 @@ class CoroFromTexpr {
 					r.e == eNoValue ? {e: eNoValue, ret: RMapExpr(r.ret, f)} : {e: f(r.e), ret: r.ret};
 				case _: {e: eNoValue, ret: ret};
 			};
-		inline function scopeAllowsSuspensionCallOn(e1:TExpr, args:Array<{name:String, optional:Bool, type:T}>, el:Array<TExpr>):Bool {
+		inline function scopeAllowsSuspensionCallOn(e1:TExpr, args:Vector<{name:String, optional:Bool, type:T}>, el:Vector<TExpr>):Bool {
 			if (scope == null || !scope.restrictedSuspension) return true;
 			function isScopeLocalExpr(e:TExpr):Bool return switch Texpr.skip(e).eexpr {
 				case TLocal(v) if (v == scope.scopeVar): true;
@@ -199,7 +204,7 @@ class CoroFromTexpr {
 					// Only the last element of a block is in tail position.
 					// port: remap_block conses `remap hd :: remap_block tl`: OCaml remaps the tail first (the deferred
 					// expressions allocate variables, and a later suspension aborts the mapping)
-					var out = [for (_ in el) null];
+					var out = new Vector<TExpr>(el.length);
 					var i = el.length;
 					while (i-- > 0) out[i] = remap(i == el.length - 1 ? canTco : false, loopDepth, el[i]);
 					{var recordCopy34 = core.ds.Record.copy(e); recordCopy34.eexpr = TBlock(out); recordCopy34;};
@@ -247,16 +252,16 @@ class CoroFromTexpr {
 		var loop:CoroBlock->CoroRet->TExpr->Null<BlockValue> = null;
 		var loopAssign:CoroBlock->CoroRet->TExpr->Null<BlockValue> = null;
 		var loopBlock:CoroBlock->CoroRet->TExpr->Null<BlockValue> = null;
-		function orderedLoop(cb:CoroBlock, el:Array<TExpr>):Null<{cb:CoroBlock, el:Array<TExpr>}> {
-			var acc = [];
-			for (e in el) {
-				var r = loop(cb, RValue, e);
+		function orderedLoop(cb:CoroBlock, el:Vector<TExpr>):Null<{cb:CoroBlock, el:Vector<TExpr>}> {
+			var acc = new Vector<TExpr>(el.length);
+			for (i in 0...el.length) {
+				var r = loop(cb, RValue, el[i]);
 				if (r == null) {
-					for (a in acc) addExpr(cb, a);
+					for (j in 0...i) addExpr(cb, acc[j]);
 					return null;
 				}
 				cb = r.cb;
-				acc.push(r.e);
+				acc[i] = r.e;
 			}
 			return {cb: cb, el: acc};
 		}
@@ -295,14 +300,12 @@ class CoroFromTexpr {
 			if (r == null) return null;
 			cb = r.cb;
 			var next = AtomicLazy.fromFun(function() return makeBlock(null));
-			var cases = [
-				for (c in s.switchCases) {
-					var b = blockFromE(c.caseExpr);
-					var n = loopBlock(b, ret, c.caseExpr);
-					if (n != null) fallThrough(n.cb, (next).force());
-					{el: c.casePatterns, cb: b};
-				}
-			];
+			var cases = s.switchCases.map(function(c) {
+				var b = blockFromE(c.caseExpr);
+				var n = loopBlock(b, ret, c.caseExpr);
+				if (n != null) fallThrough(n.cb, (next).force());
+				return {el: c.casePatterns, cb: b};
+			});
 			var def = null;
 			if (s.switchDefault != null) {
 				def = blockFromE(s.switchDefault);
@@ -330,7 +333,7 @@ class CoroFromTexpr {
 			terminate(cb, NextWhile(e1, body, n), etype, epos);
 			return n == null ? null : {cb: n, e: eNoValue};
 		}
-		inline function splitTry(cb:CoroBlock, ret:CoroRet, e1:TExpr, catches:Array<{variable:TVar, expr:TExpr}>, etype:T,
+		inline function splitTry(cb:CoroBlock, ret:CoroRet, e1:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>, etype:T,
 				epos:Pos):Null<BlockValue> {
 			var complex = checkComplex(cb, ret, etype, epos);
 			ret = complex.ret;
@@ -377,7 +380,7 @@ class CoroFromTexpr {
 						case HasSuspension: loopBlock(cb, ret, e);
 					}
 				case TArray(e1, e2):
-					var r = orderedLoop(cb, [e1, e2]);
+					var r = orderedLoop(cb, vector(e1, e2));
 					r == null ? null : {
 						cb: r.cb,
 						e: {
@@ -398,12 +401,10 @@ class CoroFromTexpr {
 						cb: r.cb,
 						e: {
 							var recordCopy25 = core.ds.Record.copy(e);
-							recordCopy25.eexpr = TObjectDecl([
-								for (i in 0...fl.length) {
-									key: fl[i].key,
+							recordCopy25.eexpr = TObjectDecl(fl.mapi((i, f) -> {
+									key: f.key,
 									expr: r.el[i]
-								}
-							]);
+								}));
 							recordCopy25;
 						}
 					};
@@ -499,12 +500,12 @@ class CoroFromTexpr {
 					loopAssign(cb, RLocal(v), e1);
 				// calls
 				case TCall(e1, el):
-					var r = orderedLoop(cb, [e1].concat(el));
+					var r = orderedLoop(cb, VectorTools.cons(e1, el));
 					if (r == null) null; else {
 						cb = r.cb;
-						var argsExprs = r.el;
-						var e1 = argsExprs.shift();
+						var e1 = r.el[0];
 						if (e1 == null) throw "assert";
+						var argsExprs = r.el.slice(1);
 						switch followWithCoro(e1.etype) {
 							case Coro({args: args, ret: _}):
 								if (!scopeAllowsSuspensionCallOn(e1, args,
@@ -665,7 +666,7 @@ class CoroFromTexpr {
 						recordCopy9.eexpr = TSwitch({
 							var recordCopy8 = core.ds.Record.copy(s);
 							recordCopy8.switchSubject = e1;
-							recordCopy8.switchCases = cases;
+							recordCopy8.switchCases = Vector.fromArrayCopy(cases);
 							recordCopy8.switchDefault = def;
 							recordCopy8;
 						});
@@ -694,7 +695,7 @@ class CoroFromTexpr {
 					switch mappedBody {
 						case HasNoSuspension(e1) if (success): {
 								cb: cb,
-								e: {var recordCopy6 = core.ds.Record.copy(e); recordCopy6.eexpr = TTry(e1, cs); recordCopy6;}
+								e: {var recordCopy6 = core.ds.Record.copy(e); recordCopy6.eexpr = TTry(e1, Vector.fromArrayCopy(cs)); recordCopy6;}
 							};
 						case _: splitTry(cb, ret, e1, catches, e.etype, e.epos);
 					}
@@ -728,7 +729,7 @@ class CoroFromTexpr {
 		loopBlock = function(cb, ret, e) {
 			var el = switch e.eexpr {
 				case TBlock(el): el;
-				case _: [e];
+				case _: vector(e);
 			};
 			if (el.length == 0) return {cb: cb, e: eNoValue};
 			for (i in 0...el.length - 1) {

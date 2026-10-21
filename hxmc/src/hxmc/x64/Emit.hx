@@ -5,6 +5,8 @@ import hxmc.Mir.SrcPos;
 import hxmc.Obj;
 import hxmc.x64.Asm;
 import hxmc.x64.Isel.XOp;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
 
 // Allocated LIR -> x86-64 machine code in a text section: frame layout,
 // prologue and epilogues, jump tables, the constant pool. With frame pointers
@@ -26,7 +28,7 @@ class Emit implements hxmc.Target.Emitter {
 	var fp:Bool;
 	// this function's frame operations (Unwind; offsets in the section until
 	// the function is done) and (-debug) its rows of lines
-	var ops:Array<Int>;
+	var ops:Array<Int> = []; // (the function's frame operations, while it is written)
 	var lines:Null<Array<Int>>;
 	var lastPos = 0;
 	var fileIndex = new Map<String, Int>();
@@ -62,7 +64,7 @@ class Emit implements hxmc.Target.Emitter {
 		return constant(bits.getInt32(0), bits.getInt32(4), 0, 0);
 	}
 
-	var slotOff:Array<Int>;
+	var slotOff:Vector<Int>;
 	var frameSize = 0;
 
 	// HXMC_SIZE_STATS=1: bytes of code by instruction kind, hot and cold
@@ -76,9 +78,21 @@ class Emit implements hxmc.Target.Emitter {
 		statBytes.set(k, (statBytes.exists(k) ? statBytes.get(k) : 0) + n);
 		statLock.release();
 	}
-	var saved:Array<Int>;
-	var savedX:Array<Int>; // Win64: xmm6-15 used, saved in the frame (all 128 bits)
-	var savedXOff:Array<Int>;
+	var saved:Vector<Int>;
+	var savedX:Vector<Int>; // Win64: xmm6-15 used, saved in the frame (all 128 bits)
+	var savedXOff:Vector<Int>;
+
+	// the registers of regs in lo...hi the function uses
+	static function usedOf(regs:Vector<Int>, usedRegs:Vector<Bool>, lo:Int, hi:Int):Vector<Int> {
+		var n = 0;
+		for (r in regs)
+			if (r >= lo && r < hi && usedRegs[r]) n++;
+		var a = new Vector<Int>(n);
+		n = 0;
+		for (r in regs)
+			if (r >= lo && r < hi && usedRegs[r]) a[n++] = r;
+		return a;
+	}
 
 	// (measurement: how much run time depends on code layout alone, the
 	// noise of A/B comparisons: HXMC_FALIGN aligns functions, HXMC_FSHIFT
@@ -92,7 +106,7 @@ class Emit implements hxmc.Target.Emitter {
 		a.b = text.buf;
 	}
 
-	public function func(f:LFunc, usedRegs:Array<Bool>, global:Bool):Symbol {
+	public function func(f:LFunc, usedRegs:Vector<Bool>, global:Bool):Symbol {
 		text.buf.align(FALIGN, 0xcc);
 		for (_ in 0...FSHIFT)
 			text.buf.u8(0xcc);
@@ -100,19 +114,20 @@ class Emit implements hxmc.Target.Emitter {
 		a.reset();
 		// frame: outgoing arguments, then the slots
 		var off = f.outArgs;
-		slotOff = [];
-		for (s in f.slots) {
+		slotOff = new Vector(f.slots.length);
+		for (k in 0...f.slots.length) {
+			var s = f.slots[k];
 			var al = s.align < 8 ? 8 : s.align;
 			off = (off + al - 1) & ~(al - 1);
-			slotOff.push(off);
+			slotOff[k] = off;
 			off += s.size;
 		}
-		saved = [for (r in (win ? Isel.WIN_CALLEE_SAVED : Isel.CALLEE_SAVED)) if (r < 16 && usedRegs[r]) r];
-		savedX = [for (r in (win ? Isel.WIN_CALLEE_SAVED : [])) if (r >= 16 && usedRegs[r]) r];
-		savedXOff = [];
-		for (_ in savedX) {
+		saved = usedOf(win ? Isel.WIN_CALLEE_SAVED : Isel.CALLEE_SAVED, usedRegs, 0, 16);
+		savedX = win ? usedOf(Isel.WIN_CALLEE_SAVED, usedRegs, 16, LFunc.NPHYS) : vector();
+		savedXOff = new Vector(savedX.length);
+		for (k in 0...savedX.length) {
 			off = (off + 15) & ~15;
-			savedXOff.push(off);
+			savedXOff[k] = off;
 			off += 16;
 		}
 		var x = off;
@@ -121,7 +136,7 @@ class Emit implements hxmc.Target.Emitter {
 		// leaf functions without slots keep rsp as it is
 		if (!f.hasCalls && f.slots.length == 0 && f.outArgs == 0 && savedX.length == 0) x = 0;
 		frameSize = x;
-		ops = [];
+		ops.resize(0);
 		lines = f.display != null ? [] : null;
 		lastPos = 0;
 		if (fp) {
@@ -162,7 +177,7 @@ class Emit implements hxmc.Target.Emitter {
 		f.duplicateDispatch(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JTABLE, 10);
 		for (b in f.blocks)
 			b.label = a.newLabel();
-		var tables:Array<{label:Int, entries:Array<LBlock>}> = [];
+		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
 		for (bi in 0...f.blocks.length) {
 			var b = f.blocks[bi];
 			a.bind(b.label);
@@ -220,11 +235,11 @@ class Emit implements hxmc.Target.Emitter {
 			ops[k] = map(ops[k]) - start;
 			k += 4;
 		}
-		var r = new FuncRec(sym, ops);
+		var r = new FuncRec(sym, Vector.fromArrayCopy(ops));
 		if (lines != null) {
 			r.name = f.display;
-			var rows = [];
-			var k = 0;
+			var rows = new Vector<Int>(3 * ((lines.length + 1) >> 1));
+			var k = 0, j = 0;
 			while (k < lines.length) {
 				var p = SrcPos.get(lines[k + 1]);
 				var fi = fileIndex.get(p.file);
@@ -233,9 +248,9 @@ class Emit implements hxmc.Target.Emitter {
 					obj.files.push(p.file);
 					fileIndex.set(p.file, fi);
 				}
-				rows.push(map(lines[k]) - start);
-				rows.push(fi);
-				rows.push(p.line);
+				rows[j++] = map(lines[k]) - start;
+				rows[j++] = fi;
+				rows[j++] = p.line;
 				k += 2;
 			}
 			r.lines = rows;
@@ -260,13 +275,13 @@ class Emit implements hxmc.Target.Emitter {
 			ops[k] -= start;
 			k += 4;
 		}
-		obj.funcs.push(new FuncRec(sym, ops));
+		obj.funcs.push(new FuncRec(sym, Vector.fromArrayCopy(ops)));
 	}
 
 	// the arguments of hxmc_alloc_slow, then a jump to it (no frame: 20 bytes)
 	public function allocStub(name:String, lo:Int, tySym:Null<String>, tyVal:Int, bytes:Int):Bool {
 		var start = text.buf.len;
-		ops = [];
+		ops.resize(0);
 		a.movImm32(win ? 1 : 7, lo); // rcx / rdi
 		if (tySym != null) a.isym = obj.sym(tySym);
 		a.movImm32(win ? 2 : 6, tySym != null ? 0 : tyVal); // rdx / rsi
@@ -279,7 +294,7 @@ class Emit implements hxmc.Target.Emitter {
 	// the runtime's stubs (MirBuild.STUB_*), in the C convention
 	public function stub(name:String) {
 		var start = text.buf.len;
-		ops = [];
+		ops.resize(0);
 		var arg0 = win ? Asm.RCX : Asm.RDI, arg1 = win ? Asm.RDX : Asm.RSI;
 		switch name {
 			case hxmc.MirBuild.STUB_CALL_ON_STACK:
@@ -388,7 +403,7 @@ class Emit implements hxmc.Target.Emitter {
 		epilogueBytes += text.buf.len - at;
 	}
 
-	function ins(i:LIns, next:Null<LBlock>, tables:Array<{label:Int, entries:Array<LBlock>}>) {
+	function ins(i:LIns, next:Null<LBlock>, tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}>) {
 		if (lines != null && i.pos != 0 && i.pos != lastPos) {
 			lastPos = i.pos;
 			lines.push(text.buf.len);

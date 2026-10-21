@@ -19,8 +19,12 @@
 
 package libs.swflib;
 
+import haxe.ds.Vector;
 import libs.swflib.As3;
 import libs.swflib.As3hl;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // port: haxe/libs/swflib/as3hlparse.ml; MultiArray.t and DynArray.t are Arrays.
 class As3hlparse {
@@ -110,7 +114,7 @@ class As3hlparse {
 	// port: ExtString.String.nsplit; an empty string has no parts.
 	static function nsplit(s:String, sep:String):Array<String> return s == "" ? [] : s.split(sep);
 
-	static inline function get<T>(t:Array<T>, i:Index):T return As3parse.iget(t, i);
+	static inline function get<T>(t:Vector<T>, i:Index):T return As3parse.iget(t, i);
 
 	static inline function no_nz(i:IndexNz):Index return As3parse.no_nz(i);
 
@@ -229,7 +233,7 @@ class As3hlparse {
 		case A3Unk(n): HUnk(n);
 	}
 
-	static function parse_code(ctx:ParseCtx, f:As3Function, trys:Array<HlTryCatch>):Array<HlOpcode> {
+	static function parse_code(ctx:ParseCtx, f:As3Function, trys:Vector<HlTryCatch>):Array<HlOpcode> {
 		var code = f.fun3_code;
 		var old_pos = ctx.pos, old_jumps = ctx.jumps;
 		var indexes:Array<Int> = [];
@@ -288,7 +292,7 @@ class As3hlparse {
 	static function parse_metadata(ctx:ParseCtx, m:As3Metadata):HlMetadata {
 		return {
 			hlmeta_name: ident(ctx, m.meta3_name),
-			hlmeta_data: [for (d in m.meta3_data) {k: d.k == null ? null : ident(ctx, d.k), v: ident(ctx, d.v)}],
+			hlmeta_data: m.meta3_data.map(d -> {k: d.k == null ? null : ident(ctx, d.k), v: ident(ctx, d.v)}),
 		};
 	}
 
@@ -334,7 +338,7 @@ class As3hlparse {
 			hlf_kind: parse_field_kind(ctx, f.f3_kind),
 			hlf_metas: switch f.f3_metas {
 				case null: null;
-				case a: [for (i in a) parse_metadata(ctx, get(ctx.as3.as3_metadatas, no_nz(i)))];
+				case a: a.map(i -> parse_metadata(ctx, get(ctx.as3.as3_metadatas, no_nz(i))));
 			},
 		};
 	}
@@ -351,7 +355,7 @@ class As3hlparse {
 
 	static function parse_nset(ctx:ParseCtx, l:As3NsSet):HlNsSet return [for (n in l) ctx.namespaces[idx(n)]];
 
-	static function parse_name(names:Array<As3MultiName>, ctx:ParseCtx, n:As3MultiName):HlName return switch n {
+	static function parse_name(names:Vector<As3MultiName>, ctx:ParseCtx, n:As3MultiName):HlName return switch n {
 		case A3MName(id, ns):
 			switch ctx.namespaces[idx(ns)] {
 				case HNPublic(p):
@@ -393,25 +397,23 @@ class As3hlparse {
 			hlf_init_scope: f.fun3_init_scope,
 			hlf_max_scope: f.fun3_max_scope,
 			hlf_code: [], /* keep for later */
-			hlf_trys: [for (t in f.fun3_trys) parse_try_catch(ctx, t)],
-			hlf_locals: [
-				for (f in f.fun3_locals) {
-					if (f.f3_metas != null) assertFalse();
-					switch f.f3_kind {
-						case A3FVar(v):
-							/* v3_value can be <> None if it's a fun parameter with a default value
-								- which looks like a bug of the AS3 compiler */
-							({
-								name: name(ctx, f.f3_name),
-								type: v.v3_type == null ? null : name(ctx, v.v3_type),
-								slot: f.f3_slot,
-								const: v.v3_const
-							} : HlLocal);
-						case _:
-							assertFalse();
-					}
+			hlf_trys: f.fun3_trys.map(t -> parse_try_catch(ctx, t)),
+			hlf_locals: f.fun3_locals.map(f -> {
+				if (f.f3_metas != null) assertFalse();
+				switch f.f3_kind {
+					case A3FVar(v):
+						/* v3_value can be <> None if it's a fun parameter with a default value
+							- which looks like a bug of the AS3 compiler */
+						({
+							name: name(ctx, f.f3_name),
+							type: v.v3_type == null ? null : name(ctx, v.v3_type),
+							slot: f.f3_slot,
+							const: v.v3_const
+						} : HlLocal);
+					case _:
+						assertFalse();
 				}
-			],
+			}),
 		};
 	}
 
@@ -443,31 +445,31 @@ class As3hlparse {
 		r.hlc_final = c.cl3_final;
 		r.hlc_interface = c.cl3_interface;
 		r.hlc_namespace = c.cl3_namespace == null ? null : ctx.namespaces[idx(c.cl3_namespace)];
-		r.hlc_implements = [for (n in c.cl3_implements) name(ctx, n)];
+		r.hlc_implements = c.cl3_implements.map(n -> name(ctx, n));
 		r.hlc_construct = method_type(ctx, c.cl3_construct);
-		r.hlc_fields = [for (f in c.cl3_fields) parse_field(ctx, f)];
+		r.hlc_fields = c.cl3_fields.map(f -> parse_field(ctx, f));
 		r.hlc_static_construct = method_type(ctx, s.st3_method);
-		r.hlc_static_fields = [for (f in s.st3_fields) parse_field(ctx, f)];
+		r.hlc_static_fields = s.st3_fields.map(f -> parse_field(ctx, f));
 		return r;
 	}
 
 	static function parse_static(ctx:ParseCtx, s:As3Static):HlStatic {
 		return {
 			hls_method: method_type(ctx, s.st3_method),
-			hls_fields: [for (f in s.st3_fields) parse_field(ctx, f)],
+			hls_fields: s.st3_fields.map(f -> parse_field(ctx, f)),
 		};
 	}
 
 	public static function parse(?delta_mt:Int = 0, ?delta_cl:Int = 0, t:As3Tag):HlTag {
 		var ctx = new ParseCtx(t, delta_mt, delta_cl);
-		ctx.namespaces = [for (ns in t.as3_namespaces) parse_namespace(ctx, ns)];
-		ctx.nsets = [for (l in t.as3_nsets) parse_nset(ctx, l)];
-		ctx.names = [for (n in t.as3_names) parse_name(t.as3_names, ctx, n)];
+		ctx.namespaces = t.as3_namespaces.map(ns -> parse_namespace(ctx, ns));
+		ctx.nsets = t.as3_nsets.map(l -> parse_nset(ctx, l));
+		ctx.names = t.as3_names.map(n -> parse_name(t.as3_names, ctx, n));
 		// port: Hashtbl.add/find: the latest function of a method index wins.
 		var hfunctions = new Map<Int, As3Function>();
 		for (f in t.as3_functions) hfunctions.set(idx(no_nz(f.fun3_id)), f);
-		ctx.methods = [for (i in 0...t.as3_method_types.length) parse_method_type(ctx, i, hfunctions.get(i))];
-		ctx.classes = [for (i in 0...t.as3_classes.length) parse_class(ctx, t.as3_classes[i], t.as3_statics[i], i)];
+		ctx.methods = t.as3_method_types.mapi((i, _) -> parse_method_type(ctx, i, hfunctions.get(i)));
+		ctx.classes = t.as3_classes.mapi((i, c) -> parse_class(ctx, c, t.as3_statics[i], i));
 		var inits = [for (s in t.as3_inits) parse_static(ctx, s)];
 		for (f in t.as3_functions) {
 			switch (method_type(ctx, f.fun3_id)).hlmt_function {
@@ -491,10 +493,20 @@ class As3hlparse {
 		return new IndexLookup(l, a, f);
 	}
 
-	static function lookup_array<H, I>(l:Lookup<H, I>):Array<I> return l.a.copy();
+	static inline function lookup_array<H, I>(l:Lookup<H, I>):Vector<I> {
+		var r = new Vector<I>(l.a.length);
+		for (i in 0...r.length) r[i] = l.a[i];
+		return r;
+	}
 
-	static function lookup_index_array<H, I>(l:IndexLookup<H, I>):Array<I> {
-		return [for (x in l.ordered_array) if (x == null) assertFalse() else x];
+	static inline function lookup_index_array<H, I>(l:IndexLookup<H, I>):Vector<I> {
+		var r = new Vector<I>(l.ordered_array.length);
+		for (i in 0...r.length) {
+			var x = l.ordered_array[i];
+			if (x == null) assertFalse();
+			r[i] = x;
+		}
+		return r;
 	}
 
 	static function lookup<H, I>(ctx:FlattenCtx, l:Lookup<H, I>, item:H):Index {
@@ -579,12 +591,10 @@ class As3hlparse {
 	}
 
 	static function flatten_meta(ctx:FlattenCtx, m:HlMetadata):As3Metadata {
-		var data = [
-			for (d in m.hlmeta_data) {
-				var v = lookup_ident(ctx, d.v);
-				{k: opt(lookup_ident, ctx, d.k), v: v};
-			}
-		];
+		var data = m.hlmeta_data.map(d -> {
+			var v = lookup_ident(ctx, d.v);
+			{k: opt(lookup_ident, ctx, d.k), v: v};
+		});
 		return {
 			meta3_name: lookup_ident(ctx, m.hlmeta_name),
 			meta3_data: data,
@@ -605,7 +615,7 @@ class As3hlparse {
 	static function flatten_field(ctx:FlattenCtx, f:HlField):As3Field {
 		var metas = switch f.hlf_metas {
 			case null: null;
-			case a: [for (m in a) lookup_nz(ctx, ctx.fmetas, m)];
+			case a: a.map(m -> lookup_nz(ctx, ctx.fmetas, m));
 		};
 		var kind = switch f.hlf_kind {
 			case HFMethod(m):
@@ -638,15 +648,15 @@ class As3hlparse {
 	}
 
 	static function flatten_class(ctx:FlattenCtx, c:HlClass):{cl:As3Class, st:As3Static} {
-		var st_fields = [for (f in c.hlc_static_fields) flatten_field(ctx, f)];
+		var st_fields = c.hlc_static_fields.map(f -> flatten_field(ctx, f));
 		var st_method = lookup_method(ctx, c.hlc_static_construct);
 		var st:As3Static = {
 			st3_method: st_method,
 			st3_fields: st_fields,
 		};
-		var fields = [for (f in c.hlc_fields) flatten_field(ctx, f)];
+		var fields = c.hlc_fields.map(f -> flatten_field(ctx, f));
 		var construct = lookup_method(ctx, c.hlc_construct);
-		var impls = [for (n in c.hlc_implements) lookup_name(ctx, n)];
+		var impls = c.hlc_implements.map(n -> lookup_name(ctx, n));
 		var namespace = opt((ctx, ns) -> lookup(ctx, ctx.fnamespaces, ns), ctx, c.hlc_namespace);
 		var sup = opt(lookup_name, ctx, c.hlc_super);
 		var name = lookup_name(ctx, c.hlc_name);
@@ -769,7 +779,7 @@ class As3hlparse {
 		case HUnk(c): A3Unk(c);
 	}
 
-	static function flatten_code(ctx:FlattenCtx, hcode:Array<HlOpcode>, trys:Array<HlTryCatch>):{code:Array<As3Opcode>, trys:Array<As3TryCatch>} {
+	static function flatten_code(ctx:FlattenCtx, hcode:Array<HlOpcode>, trys:Vector<HlTryCatch>):{code:Array<As3Opcode>, trys:Vector<As3TryCatch>} {
 		var positions = [for (_ in 0...hcode.length + 1) 0];
 		var pos = 0;
 		var old = ctx.fjumps;
@@ -792,20 +802,18 @@ class As3hlparse {
 			}
 		}
 		/* patch trys */
-		var trys = [
-			for (t in trys) {
-				// port: right-to-left record field evaluation (tc3_name first).
-				var name = opt(lookup_name, ctx, t.hltc_name);
-				var type = opt(lookup_name, ctx, t.hltc_type);
-				({
-					tc3_start: positions[t.hltc_start],
-					tc3_end: positions[t.hltc_end],
-					tc3_handle: positions[t.hltc_handle],
-					tc3_type: type,
-					tc3_name: name,
-				} : As3TryCatch);
-			}
-		];
+		var trys = trys.map(t -> {
+			// port: right-to-left record field evaluation (tc3_name first).
+			var name = opt(lookup_name, ctx, t.hltc_name);
+			var type = opt(lookup_name, ctx, t.hltc_type);
+			({
+				tc3_start: positions[t.hltc_start],
+				tc3_end: positions[t.hltc_end],
+				tc3_handle: positions[t.hltc_handle],
+				tc3_type: type,
+				tc3_name: name,
+			} : As3TryCatch);
+		});
 		ctx.fjumps = old;
 		return {code: code, trys: trys};
 	}
@@ -813,18 +821,16 @@ class As3hlparse {
 	static function flatten_function(ctx:FlattenCtx, f:HlFunction, mid:IndexNz):As3Function {
 		var r = flatten_code(ctx, f.hlf_code, f.hlf_trys);
 		// port: right-to-left record field evaluation: fun3_locals, the last field, after the code (a let).
-		var locals = [
-			for (l in f.hlf_locals) {
-				var t = opt(lookup_name, ctx, l.type);
-				var name = lookup_name(ctx, l.name);
-				({
-					f3_name: name,
-					f3_slot: l.slot,
-					f3_kind: A3FVar({v3_type: t, v3_value: A3VNone, v3_const: l.const}),
-					f3_metas: null,
-				} : As3Field);
-			}
-		];
+		var locals = f.hlf_locals.map(l -> {
+			var t = opt(lookup_name, ctx, l.type);
+			var name = lookup_name(ctx, l.name);
+			({
+				f3_name: name,
+				f3_slot: l.slot,
+				f3_kind: A3FVar({v3_type: t, v3_value: A3VNone, v3_const: l.const}),
+				f3_metas: null,
+			} : As3Field);
+		});
 		return {
 			fun3_id: mid,
 			fun3_stack_size: f.hlf_stack_size,
@@ -868,7 +874,7 @@ class As3hlparse {
 
 	static function flatten_static(ctx:FlattenCtx, s:HlStatic):As3Static {
 		// port: right-to-left record field evaluation.
-		var fields = [for (f in s.hls_fields) flatten_field(ctx, f)];
+		var fields = s.hls_fields.map(f -> flatten_field(ctx, f));
 		var method = lookup_method(ctx, s.hls_method);
 		return {
 			st3_method: method,
@@ -938,10 +944,8 @@ class As3hlparse {
 		ctx.fjumps = [];
 		ctx.ffunctions = [];
 		lookup_ident(ctx, "");
-		var inits = [for (s in t) flatten_static(ctx, s)];
+		var inits = t.mapToVector(s -> flatten_static(ctx, s));
 		var classes = lookup_index_array(ctx.fclasses);
-		var functions = ctx.ffunctions.copy();
-		functions.reverse();
 		return {
 			as3_ints: lookup_array(ctx.fints),
 			as3_uints: lookup_array(ctx.fuints),
@@ -952,9 +956,9 @@ class As3hlparse {
 			as3_names: lookup_array(ctx.fnames),
 			as3_metadatas: lookup_array(ctx.fmetas),
 			as3_method_types: lookup_index_array(ctx.fmethods),
-			as3_classes: [for (c in classes) c.cl],
-			as3_statics: [for (c in classes) c.st],
-			as3_functions: functions,
+			as3_classes: classes.map(c -> c.cl),
+			as3_statics: classes.map(c -> c.st),
+			as3_functions: VectorTools.ofArrayReversed(ctx.ffunctions),
 			as3_inits: inits,
 			as3_unknown: "",
 		};
@@ -1053,11 +1057,11 @@ private class FlattenCtx {
 @:allow(libs.swflib.As3hlparse)
 private class ParseCtx {
 	final as3:As3Tag;
-	var namespaces:Array<HlNamespace> = [];
-	var nsets:Array<HlNsSet> = [];
-	var names:Array<HlName> = [];
-	var methods:Array<HlMethod> = [];
-	var classes:Array<HlClass> = [];
+	var namespaces:Vector<HlNamespace> = vector();
+	var nsets:Vector<HlNsSet> = vector();
+	var names:Vector<HlName> = vector();
+	var methods:Vector<HlMethod> = vector();
+	var classes:Vector<HlClass> = vector();
 	var jumps:Array<{i:Int, pos:Int}> = [];
 	var pos = 0;
 	final delta_mt:Int;

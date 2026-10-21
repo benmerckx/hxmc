@@ -2,6 +2,9 @@ package hxmc;
 
 import hxmc.ir.Ir;
 import hxmc.Lir.Bits;
+import haxe.ds.Vector;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
 
 // Which reference locals live in shadow-stack slots (a backward liveness
 // over the structured statements, from hxc's analysis for C: a reference
@@ -171,8 +174,8 @@ class Roots {
 	function rawOperands(e:Ex) {
 		var args = switch e {
 			case ECall(_, xs) | ECallDispatch(_, _, xs) | ECallHost(_, xs, _): xs;
-			case ECallClos(_, c, xs) | ECallAnon(_, _, c, xs): [c].concat(xs);
-			case _: [];
+			case ECallClos(_, c, xs) | ECallAnon(_, _, c, xs): VectorTools.cons(c, xs);
+			case _: vector();
 		}
 		for (a in args)
 			if (derivedAny(a)) {
@@ -316,7 +319,7 @@ class Roots {
 		}
 	}
 
-	function seq(ss:Array<Stmt>, out:Bits):Bits {
+	function seq(ss:Vector<Stmt>, out:Bits):Bits {
 		var live = out;
 		var i = ss.length;
 		while (i-- > 0)
@@ -532,7 +535,7 @@ class Roots {
 			return r;
 		}
 		var step:(Stmt, Bits) -> Bits = null;
-		function seq(ss:Array<Stmt>, set:Bits):Bits {
+		function seq(ss:Vector<Stmt>, set:Bits):Bits {
 			for (st in ss)
 				set = step(st, set);
 			return set;

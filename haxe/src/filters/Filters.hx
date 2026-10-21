@@ -55,6 +55,7 @@ import optimization.Dce;
 import optimization.Optimizer;
 import optimization.InlineConstructors;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
 
 // port: save_class_state: the saved fields of one class field (mk_field_restore)
 private typedef FieldRestoreState = {name:String, kind:FieldKind, expr:Null<TExpr>, type:T, meta:Metadata, params:TypeParams};
@@ -135,7 +136,7 @@ class Filters {
 					ncls.clOrderedStatics.unshift(cf);
 					ncls.clStatics.set(cf.cfName, cf);
 					com.types = (cast com.types : Array<ModuleType>).concat([TClassDecl(ncls)]);
-					c.clMeta = ([{meta: Custom(":hasMetadata"), exprs: [], pos: e.epos}] : Array<core.Ast.MetadataEntry>).concat(c.clMeta);
+					c.clMeta = ([{meta: Custom(":hasMetadata"), exprs: vector(), pos: e.epos}] : Array<core.Ast.MetadataEntry>).concat(c.clMeta);
 				} else {
 					c.clOrderedStatics.unshift(cf);
 					c.clStatics.set(cf.cfName, cf);

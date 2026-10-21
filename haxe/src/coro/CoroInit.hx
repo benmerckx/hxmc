@@ -7,6 +7,7 @@ import core.ds.PMap;
 import core.Globals;
 import core.Globals.*;
 import coro.ContTypes;
+import core.ds.VectorTools.vector;
 
 class CoroInit {
 	public static function loadModuleClass(ctx:context.Typecore.Typer, path:GlobalTypePath):TClass {
@@ -31,7 +32,7 @@ class CoroInit {
 
 	public static function makeContinuationApi(ctx:context.Typecore.Typer):ContinuationApi {
 		var base = loadModuleClass(ctx, {pack: ["haxe", "coro"], name: "BaseContinuation"});
-		var state = TAbstract(loadModuleAbstract(ctx, {pack: ["haxe", "coro"], name: "SuspensionState"}), []);
+		var state = TAbstract(loadModuleAbstract(ctx, {pack: ["haxe", "coro"], name: "SuspensionState"}), vector());
 		var result = (ctx.t.tcoro.suspensionResultClass).force();
 		var api = ContTypes.createContinuationApi(base, state, result, (ctx.t.tcoro.continuation).force(),
 			PMap.find("suspended", result.clStatics), PMap.find("state", result.clFields), PMap.find("result", result.clFields),

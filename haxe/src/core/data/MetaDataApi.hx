@@ -15,16 +15,14 @@ class MetaDataApi {
 		  - `EBinop (OpAssign, EConst (Ident key), value)` which is treated as `key = value`
 	**/
 	public static function ofMetadataEntry(entry:MetadataEntry):Expr {
-		var fields:Array<ObjectField> = [
-			for (expr in entry.exprs) switch expr.expr {
+		var fields = entry.exprs.map(function(expr):ObjectField return switch expr.expr {
 				case EConst(Ident(key)):
 					{key: {name: key, pos: expr.pos, quote: NoQuotes}, expr: {expr: EConst(Ident("true")), pos: expr.pos}};
 				case EBinop(OpAssign, {expr: EConst(Ident(key)), pos: kpos}, value):
 					{key: {name: key, pos: kpos, quote: NoQuotes}, expr: value};
 				case _:
 					error('Expected identifier or identifier = value, got ${Printer.sExprInner("", expr)}', expr.pos);
-			}
-		];
+			});
 		return {expr: EObjectDecl(fields), pos: entry.pos};
 	}
 }
@@ -44,7 +42,7 @@ class MetaReaderApi {
 	};
 
 	public static function readArray(data:Expr):Array<Expr> return switch data.expr {
-		case EArrayDecl(l): l;
+		case EArrayDecl(l): l.toArray();
 		case _: MetaDataApi.error('Expected array, got ${Printer.sExprInner("", data)}', data.pos);
 	};
 

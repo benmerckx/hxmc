@@ -28,12 +28,14 @@ import core.ds.Failure;
 import core.ds.NotFound;
 import core.ds.GlobalsIntMap;
 import haxe.io.Bytes;
+import haxe.ds.Vector;
 import macros.MacroApi.CompilerApi;
 import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalHash;
 
 using macros.eval.EvalValue.EvalValueTools;
+using core.ds.VectorTools;
 
 // port: also covers eval.ml, which only includes modules.
 //
@@ -104,7 +106,7 @@ class EvalMain {
 		var stringPrototype = EvalEncode.fakeProto(fakeProtoCache, EvalHash.key_String);
 		var arrayPrototype = EvalEncode.fakeProto(fakeProtoCache, EvalHash.key_Array);
 		var vectorPrototype = EvalEncode.fakeProto(fakeProtoCache, EvalHash.key_eval_Vector);
-		var toplevel = EvalValueTools.vobject(new Vobject([], OProto(EvalEncode.fakeProto(fakeProtoCache, EvalHash.key_eval_toplevel))));
+		var toplevel = EvalValueTools.vobject(new Vobject(new haxe.ds.Vector(0), OProto(EvalEncode.fakeProto(fakeProtoCache, EvalHash.key_eval_toplevel))));
 		var maxStackDepth = intOfString(context.Common.definedValueSafe(com, core.Define.EvalCallStackDepth, "1000"));
 		var maxPrintDepth = intOfString(context.Common.definedValueSafe(com, core.Define.EvalPrintDepth, "5"));
 		var printIndentation = switch context.Common.definedValueSafe(com, core.Define.EvalPrettyPrint) {
@@ -537,7 +539,7 @@ class EvalMain {
 			case VInt32(i): {expr: EConst(Int(Std.string(i), null)), pos: p};
 			case VFloat(f): haxeFloat(f, p);
 			case VString(s): {expr: EConst(String(s.sstring, SDoubleQuotes)), pos: p};
-			case VArray(va): {expr: EArrayDecl([for (v in EvalArray.toList(va)) valueToExpr(v, p)]), pos: p};
+			case VArray(va): {expr: EArrayDecl(EvalArray.toList(va).mapToVector(v -> valueToExpr(v, p))), pos: p};
 			case VObject(o):
 				var fields:Array<ObjectField> = [];
 				for (f in EvalContext.objectFields(o)) {
@@ -552,7 +554,7 @@ class EvalMain {
 							});
 					}
 				}
-				{expr: EObjectDecl(fields), pos: p};
+				{expr: EObjectDecl(Vector.fromArrayCopy(fields)), pos: p};
 			case VEnumValue(e):
 				var epath:Expr = {
 					var proto = EvalContext.getStaticPrototypeRaise(EvalContext.getCtx(), e.epath);
@@ -568,7 +570,7 @@ class EvalMain {
 				switch e.eargs {
 					case []: epath;
 					case _:
-						var args = [for (v in e.eargs) valueToExpr(v, p)];
+						var args = e.eargs.map(v -> valueToExpr(v, p));
 						{expr: ECall(epath, args), pos: p};
 				}
 			case VInstance({ikind: IIntMap(m)}):
@@ -577,28 +579,28 @@ class EvalMain {
 					acc.unshift(makeMapEntry(eKey, v));
 					acc;
 				}, []);
-				{expr: EArrayDecl(el), pos: p};
+				{expr: EArrayDecl(Vector.fromArrayCopy(el)), pos: p};
 			case VInstance({ikind: IInt64Map(m)}):
 				var el = m.fold((k, v, acc:Array<Expr>) -> {
 					var eKey:Expr = {expr: EConst(Int(haxe.Int64.toStr(k), "i64")), pos: p};
 					acc.unshift(makeMapEntry(eKey, v));
 					acc;
 				}, []);
-				{expr: EArrayDecl(el), pos: p};
+				{expr: EArrayDecl(Vector.fromArrayCopy(el)), pos: p};
 			case VInstance({ikind: IStringMap(m)}):
 				var el = m.fold((k, e, acc:Array<Expr>) -> {
 					var eKey:Expr = {expr: EConst(String(k, SDoubleQuotes)), pos: p};
 					acc.unshift(makeMapEntry(eKey, e.value));
 					acc;
 				}, []);
-				{expr: EArrayDecl(el), pos: p};
+				{expr: EArrayDecl(Vector.fromArrayCopy(el)), pos: p};
 			case VInstance({ikind: IObjectMap(m)}):
 				var el = m.fold((k, v, acc:Array<Expr>) -> {
 					var eKey = valueToExpr(k, p);
 					acc.unshift(makeMapEntry(eKey, v));
 					acc;
 				}, []);
-				{expr: EArrayDecl(el), pos: p};
+				{expr: EArrayDecl(Vector.fromArrayCopy(el)), pos: p};
 			case _: EvalContext.excString("Cannot convert " + valueString(v) + " to expr");
 		}
 	}
@@ -692,7 +694,7 @@ class EvalMain {
 							var ef = en.eConstrs.get(en.eNames[ev.eindex]);
 							if (ef == null) throw NotFound.raise();
 							f(ef.efName);
-							function loop2(first:Bool, tl:Array<{name:String, optional:Bool, type:T}>, vl:Array<Value>, i:Int) {
+							function loop2(first:Bool, tl:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, vl:haxe.ds.Vector<Value>, i:Int) {
 								if (i >= vl.length || i >= tl.length) return;
 								if (!first) f(", ");
 								loop(tabs, tl[i].type, vl[i]);

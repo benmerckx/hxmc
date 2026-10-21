@@ -27,6 +27,7 @@ import context.Common;
 import context.TyperPass;
 import typing.TyperBase.*;
 import optimization.Dce;
+import core.ds.VectorTools.vector;
 
 enum FinalizationState {
 	Generating;
@@ -62,8 +63,8 @@ class Finalization {
 		var ef = ec.clStatics.get("run");
 		if (ef == null) return;
 		var typeExpr = Builder.makeTypeexpr(et, nullPos);
-		var e = mk(TCall(mk(TField(typeExpr, FStatic(ec, ef)), ef.cfType, nullPos), []), com.basic.tvoid, nullPos);
-		com.main.mainExpr = mk(TBlock([main, e]), com.basic.tvoid, main.epos);
+		var e = mk(TCall(mk(TField(typeExpr, FStatic(ec, ef)), ef.cfType, nullPos), vector()), com.basic.tvoid, nullPos);
+		com.main.mainExpr = mk(TBlock(vector(main, e)), com.basic.tvoid, main.epos);
 	}
 
 	public static function getMain(ctx:Typer, mainModule:Null<ModuleDef>, types:Array<ModuleType>):{expr:Null<TExpr>, path:Null<String>} {
@@ -104,7 +105,7 @@ class Finalization {
 		if (!Meta.has(MetaTag.Keep, f.cfMeta)) f.cfMeta.unshift(Dce.mkKeepMeta(f.cfPos));
 		var emain = typeModuleType(ctx, TClassDecl(c), nullPos);
 		return {
-			expr: mk(TCall(mk(TField(emain, FStatic(c, f)), ft, nullPos), []), r, nullPos),
+			expr: mk(TCall(mk(TField(emain, FStatic(c, f)), ft, nullPos), vector()), r, nullPos),
 			path: core.Path.UniqueKey.lazyPath(mainModule.mExtra.mFile)
 		};
 	}

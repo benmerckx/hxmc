@@ -16,6 +16,11 @@ import coro.CoroTypes;
 import coro.CoroFunctions;
 import coro.CoroFunctions.*;
 import coro.ContTypes;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: IntSet iteration is descending, matching the upstream comparator b - a.
 class CoroIntSet {
@@ -70,7 +75,7 @@ class SuspensionCalls {
 	// Returns (esubject, eres, eerror) field accesses on ecororesult
 	public static function unpackResultFields(ctx:CoroCtx, cont:ContinuationApi, result:TExpr):{subject:TExpr, result:TExpr, error:TExpr} {
 		inline function base(cf:TClassField,
-				t:T):TExpr return ctx.builder.instanceField(result, cont.suspensionResultClass, [ctx.typer.com.basic.tany], cf, t);
+				t:T):TExpr return ctx.builder.instanceField(result, cont.suspensionResultClass, vector(ctx.typer.com.basic.tany), cf, t);
 		return {
 			subject: base(cont.state, cont.state.cfType),
 			result: base(cont.result, ctx.typer.com.basic.tany),
@@ -89,21 +94,21 @@ class SuspensionCalls {
 		var outcome = call.csKind;
 		// Always-suspending: call + return suspended singleton
 		if (outcome.noReturn && outcome.noThrow) return {
-			call: b.voidBlock([
+			call: b.voidBlock(vector(
 				CoroToTexpr.makeSuspendingCall(ctx.typer.com.basic, cont, call,
 					{var recordCopy46 = core.ds.Record.copy(exprs.econtinuation); recordCopy46.epos = p; recordCopy46;})
-			]),
-			check: b.voidBlock([b.makeReturn(makeSuspendedReturn(b, cont, p))])
+			)),
+			check: b.voidBlock(vector(b.makeReturn(makeSuspendedReturn(b, cont, p))))
 		};
 		// Generic version: call + switch
 		var assigned = makeSuspensionCallAndAssign(ctx, cont, call, exprs.econtinuation);
 		var fields = unpackResultFields(ctx, cont, assigned.result);
-		var suspended = b.voidBlock([b.makeReturn(makeSuspendedReturn(b, cont, p))]);
+		var suspended = b.voidBlock(vector(b.makeReturn(makeSuspendedReturn(b, cont, p))));
 		var returned = switch call.csResult {
-			case SusBlock: b.voidBlockAt([], p);
+			case SusBlock: b.voidBlockAt(vector(), p);
 			case SusResult: b.assign((exprs.etmpResult).force(), fields.result);
 		};
-		var thrown = b.voidBlock([b.assign(exprs.etmpError, fields.error), b.makeBreak(p)]);
+		var thrown = b.voidBlock(vector(b.assign(exprs.etmpError, fields.error), b.makeBreak(p)));
 		// Callee can't throw: skip the Thrown case entirely.
 		var check = outcome.noThrow ? makeCustomControlSwitch(b, fields.subject,
 			[{controls: [CoroPending], e: suspended}, {controls: [CoroReturned], e: returned}],
@@ -114,7 +119,7 @@ class SuspensionCalls {
 	public static function makeSuspendingTailCall(ctx:CoroCtx, cont:ContinuationApi, exprs:CoroToTexprExprs,
 			call:CoroSuspend):{call:TExpr, check:TExpr} {
 		var b = ctx.builder;
-		var completion = b.instanceField(exprs.econtinuation, cont.baseContinuationClass, [ctx.typer.com.basic.tany], cont.completion,
+		var completion = b.instanceField(exprs.econtinuation, cont.baseContinuationClass, vector(ctx.typer.com.basic.tany), cont.completion,
 			exprs.ecompletion.etype);
 		var assigned = makeSuspensionCallAndAssign(ctx, cont, call, completion);
 		return {call: assigned.call, check: b.makeReturn(assigned.result)};
@@ -134,19 +139,19 @@ class SuspensionCalls {
 		var p = call.csPos;
 		var assigned = makeSuspensionCallAndAssign(ctx, cont, call, exprs.econtinuation);
 		var fields = unpackResultFields(ctx, cont, assigned.result);
-		var returned = e == null ? b.voidBlockAt([], p) : b.assign(e, fields.result);
+		var returned = e == null ? b.voidBlockAt(vector(), p) : b.assign(e, fields.result);
 		// Callee can't throw, and we know it can't suspend (no_suspend = true),
 		// so the result is always Returned. No switch needed.
 		if (call.csKind.noThrow) return {call: assigned.call, check: returned};
 		// Single-state: no while loop to break out of.
 		// Emit the error handler directly (equivalent to eexchandle).
-		var thrown = ctx.numStates == 1 ? b.voidBlock([
+		var thrown = ctx.numStates == 1 ? b.voidBlock(vector(
 			b.assign(exprs.etmpError, fields.error),
 			b.assign(exprs.eerror, exprs.etmpError),
 			CoroToTexpr.buildCallStack(ctx, cont, exprs.econtinuation, p),
 			b.assign(exprs.estate, b.int(CoroThrown, p)),
 			b.makeReturn(exprs.econtinuation)
-		]) : b.voidBlock([b.assign(exprs.etmpError, fields.error), b.makeBreak(p)]);
+		)) : b.voidBlock(vector(b.assign(exprs.etmpError, fields.error), b.makeBreak(p)));
 		return {
 			call: assigned.call,
 			check: makeCustomControlSwitch(b, fields.subject,
@@ -165,12 +170,12 @@ class CoroToTexpr {
 			case NotCoro(_): throw "Unexpected coroutine type";
 		};
 		return mk(TCall({var recordCopy45 = core.ds.Record.copy(call.csFun); recordCopy45.etype = tfun; recordCopy45;},
-			[econtinuation].concat(call.csArgs)),
+			VectorTools.cons(econtinuation, call.csArgs)),
 			cont.suspensionResult(basic.tany), call.csPos);
 	}
 
-	public static function handleLocals(ctx:CoroCtx, cls:TClass, params:Array<T>, states:Array<CoroState>,
-			tfArgs:Array<{variable:TVar, defaultValue:Null<TExpr>}>, econtinuation:TExpr):Array<TClassField> {
+	public static function handleLocals(ctx:CoroCtx, cls:TClass, params:core.TType.TParams, states:Array<CoroState>,
+			tfArgs:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>, econtinuation:TExpr):Array<TClassField> {
 		var b = ctx.builder;
 		var first = states[0];
 		var argStates = new CoroIntSet().add(first.csId);
@@ -303,14 +308,14 @@ class CoroToTexpr {
 
 	public static function buildCallStack(ctx:CoroCtx, cont:ContinuationApi, econtinuation:TExpr, p:Pos):TExpr {
 		var b = ctx.builder;
-		if (!ctx.typer.com.debug) return b.voidBlockAt([], p);
+		if (!ctx.typer.com.debug) return b.voidBlockAt(vector(), p);
 		var cf = PMap.find("buildCallStack", cont.baseContinuationClass.clFields);
-		return mk(TCall(b.instanceField(econtinuation, cont.baseContinuationClass, [ctx.typer.t.tany], cf, cf.cfType), []),
+		return mk(TCall(b.instanceField(econtinuation, cont.baseContinuationClass, vector(ctx.typer.t.tany), cf, cf.cfType), vector()),
 			ctx.typer.t.tvoid, p);
 	}
 
-	public static function blockToTexprCoroutine(ctx:CoroCtx, root:CoroBlock, cont:ContinuationApi, cls:TClass, params:Array<T>,
-			tfArgs:Array<{
+	public static function blockToTexprCoroutine(ctx:CoroCtx, root:CoroBlock, cont:ContinuationApi, cls:TClass, params:core.TType.TParams,
+			tfArgs:haxe.ds.Vector<{
 			variable:TVar,
 			defaultValue:Null<TExpr>
 		}>, exprs:CoroToTexprExprs, p:Pos,
@@ -329,7 +334,7 @@ class CoroToTexpr {
 		inline function setControl(c:CoroControl):TExpr return b.assign(exprs.estate, b.int(c, p));
 		inline function stdIs(e:TExpr,
 				t:T):TExpr return Builder.resolveAndMakeStaticCall(com.std, "isOfType",
-				[e, mk(TTypeExpr(moduleTypeOfType(t)), tDynamic, p)],
+				vector(e, mk(TTypeExpr(moduleTypeOfType(t)), tDynamic, p)),
 				p);
 		var ereturn = b.makeReturn(exprs.econtinuation);
 		var states:Array<CoroState> = [];
@@ -348,13 +353,13 @@ class CoroToTexpr {
 		switch (com.basic.texception : T) {
 			case TInst(c, _):
 				var cf = PMap.find("unwrap", c.clFields);
-				unwrap = function(e) return b.call(b.instanceField(e, c, [], cf, cf.cfType), [], com.basic.tany);
-				getCaught = function(e) return Builder.resolveAndMakeStaticCall(c, "caught", [e], e.epos);
+				unwrap = function(e) return b.call(b.instanceField(e, c, vector(), cf, cf.cfType), vector(), com.basic.tany);
+				getCaught = function(e) return Builder.resolveAndMakeStaticCall(c, "caught", vector(e), e.epos);
 			case _:
 				throw "assert";
 		}
 		inline function ifError(cb:CoroBlock):TExpr {
-			var thenE = b.voidBlock([b.assign(exprs.etmpError, exprs.eerror), b.makeBreak(p)]);
+			var thenE = b.voidBlock(vector(b.assign(exprs.etmpError, exprs.eerror), b.makeBreak(p)));
 			var cond = b.binop(OpNotEq, exprs.eerror, b.makeNull(exprs.eerror.etype, p), com.basic.tbool);
 			if (cb.cbStackValue == null) return b.ifThen(cond, thenE);
 			var e = cb.cbStackValue;
@@ -363,7 +368,8 @@ class CoroToTexpr {
 					{var recordCopy38 = core.ds.Record.copy((exprs.etmpResult).force()); recordCopy38.epos = e.epos; recordCopy38;}),
 				com.basic.tvoid);
 		}
-		var excStateMap:Array<Array<Int>> = [for (_ in 0...ctx.nextBlockId) []];
+		var excStateMap = new Vector<Array<Int>>(ctx.nextBlockId);
+		for (i in 0...excStateMap.length) excStateMap[i] = [];
 		inline function generate(cb:CoroBlock):Int {
 			var el = getBlockExprs(cb);
 			inline function addState(next:Null<Int>, extra:Array<TExpr>, tail:Null<Array<TExpr>>):Int {
@@ -412,7 +418,7 @@ class CoroToTexpr {
 					addState(null, [mk(TSwitch(Texpr.mkSwitch(s.csSubject, cases, def, true)), com.basic.tvoid, p)], null);
 				case NextWhile(_, body, _): addState(body.cbId, [], null);
 				case NextTry(body, c, _):
-					var rethrow = c.ccCb.cbCatch != null ? setState(c.ccCb.cbCatch.cbId) : b.voidBlock([b.makeBreak(p)]);
+					var rethrow = c.ccCb.cbCatch != null ? setState(c.ccCb.cbCatch.cbId) : b.voidBlock(vector(b.makeBreak(p)));
 					var cond = rethrow;
 					var catches = c.ccCatches.copy();
 					catches.reverse();
@@ -436,15 +442,15 @@ class CoroToTexpr {
 		states.sort(function(a, b) return a.csId - b.csId);
 		var fields = handleLocals(ctx, cls, params, states, tfArgs, exprs.econtinuation);
 		var eloop:TExpr;
-		if (states.length == 1) eloop = b.voidBlockAt(states[0].csEl, Texpr.punionEl(p, states[0].csEl));
+		if (states.length == 1) eloop = b.voidBlockAt(Vector.fromArrayCopy(states[0].csEl), Texpr.punionEl(p, states[0].csEl));
 		else {
-			var thrown = b.voidBlock([
+			var thrown = b.voidBlock(vector(
 				b.assign(exprs.etmpError, getCaught(b.string("Invalid coroutine state", p))),
 				b.makeBreak(p)
-			]);
-			var cases = states.map(function(s) return ({
-				casePatterns: [b.int(s.csId, p)],
-				caseExpr: b.voidBlockAt(s.csEl, Texpr.punionEl(p, s.csEl))
+			));
+			var cases = states.mapToVector(function(s) return ({
+				casePatterns: vector(b.int(s.csId, p)),
+				caseExpr: b.voidBlockAt(Vector.fromArrayCopy(s.csEl), Texpr.punionEl(p, s.csEl))
 			} : core.TType.TSwitchCase));
 			var eswitch = mk(TSwitch(Texpr.mkSwitch(exprs.egoto, cases, thrown, true)), com.basic.tvoid, p);
 			eloop = mk(TWhile(b.bool(true, p), eswitch, NormalWhile), com.basic.tvoid, p);
@@ -453,28 +459,28 @@ class CoroToTexpr {
 		if (!ctx.config.outcome.noThrow) {
 			var v = allocVar(VGenerated, "e", tDynamic, p);
 			var caught = getCaught(b.local(v, p));
-			etry = mk(TTry(eloop, [
-				{variable: v, expr: b.voidBlock([b.assign(exprs.etmpError, startException(caught))])}
-			]), com.basic.tvoid, p);
+			etry = mk(TTry(eloop, vector(
+				{variable: v, expr: b.voidBlock(vector(b.assign(exprs.etmpError, startException(caught))))}
+			)), com.basic.tvoid, p);
 		}
 		var cases = [];
 		for (i in 0...excStateMap.length) if (excStateMap[i].length > 0) cases.push(({
-			casePatterns: excStateMap[i].map(function(i) return b.int(i, p)),
-			caseExpr: b.voidBlock([setState(i)])
+			casePatterns: excStateMap[i].mapToVector(function(i) return b.int(i, p)),
+			caseExpr: b.voidBlock(vector(setState(i)))
 		} : core.TType.TSwitchCase));
-		var def = b.voidBlock([
+		var def = b.voidBlock(vector(
 			b.assign(exprs.eerror, exprs.etmpError),
 			buildCallStack(ctx, cont, exprs.econtinuation, p),
 			setControl(CoroThrown),
 			ereturn
-		]);
+		));
 		var handler = cases.length == 0 ? def : mk(TSwitch({
 			switchSubject: exprs.egoto,
-			switchCases: cases,
+			switchCases: Vector.fromArrayCopy(cases),
 			switchDefault: def,
 			switchExhaustive: true
 		}), com.basic.tvoid, p);
-		etry = b.voidBlock([etry, handler]);
+		etry = b.voidBlock(vector(etry, handler));
 		// If there is no catch we don't need to pseudo-goto back into the state loop, so we don't need a control loop.
 		eloop = ctx.hasCatch ? mk(TWhile(b.bool(true, p), etry, NormalWhile), com.basic.tvoid, p) : etry;
 		return {

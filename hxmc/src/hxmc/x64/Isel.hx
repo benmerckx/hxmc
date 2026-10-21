@@ -4,6 +4,8 @@ import hxmc.Mir;
 import hxmc.Abi;
 import hxmc.Lir;
 import hxmc.x64.Asm;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
 
 // x86-64 LIR operations (LIns.op)
 enum abstract XOp(Int) to Int from Int {
@@ -64,8 +66,8 @@ enum abstract XOp(Int) to Int from Int {
 
 // Mir -> LIR for x86-64 (System V calling convention).
 class Isel implements hxmc.Target.Selector {
-	public var gprs(default, null):Array<Int>;
-	public var fprs(default, null):Array<Int>;
+	public var gprs(default, null):Vector<Int>;
+	public var fprs(default, null):Vector<Int>;
 
 	static inline var RAX = 0;
 	static inline var RCX = 1;
@@ -75,22 +77,30 @@ class Isel implements hxmc.Target.Selector {
 
 	// System V; Win64 (win): arguments by position in rcx, rdx, r8, r9 / xmm0-3
 	// with 32 bytes of shadow space, rsi, rdi and xmm6-15 callee-saved
-	public static var ARG_GPRS = [7, 6, 2, 1, 8, 9];
-	public static var CALLER_SAVED = [0, 1, 2, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
-	public static var CALLEE_SAVED = [3, 5, 12, 13, 14, 15];
-	public static var WIN_ARG_GPRS = [1, 2, 8, 9];
-	public static var WIN_CALLER_SAVED = [0, 1, 2, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21];
-	public static var WIN_CALLEE_SAVED = [3, 5, 6, 7, 12, 13, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
+	public static final ARG_GPRS:Vector<Int> = vector(7, 6, 2, 1, 8, 9);
+	public static final CALLER_SAVED:Vector<Int> = vector(0, 1, 2, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
+	public static final CALLEE_SAVED:Vector<Int> = vector(3, 5, 12, 13, 14, 15);
+	public static final WIN_ARG_GPRS:Vector<Int> = vector(1, 2, 8, 9);
+	public static final WIN_CALLER_SAVED:Vector<Int> = vector(0, 1, 2, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21);
+	public static final WIN_CALLEE_SAVED:Vector<Int> = vector(3, 5, 6, 7, 12, 13, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
+	// the allocatable registers in order of preference (System V, Win64; rbp
+	// last, and not with frame pointers: it holds the frame record, Emit)
+	static final GPRS:Vector<Int> = vector(1, 2, 6, 7, 8, 9, 10, 11, 0, 3, 12, 13, 14, 15, 5);
+	static final GPRS_FP:Vector<Int> = vector(1, 2, 6, 7, 8, 9, 10, 11, 0, 3, 12, 13, 14, 15);
+	static final WIN_GPRS:Vector<Int> = vector(1, 2, 8, 9, 10, 11, 0, 3, 6, 7, 12, 13, 14, 15, 5);
+	static final WIN_GPRS_FP:Vector<Int> = vector(1, 2, 8, 9, 10, 11, 0, 3, 6, 7, 12, 13, 14, 15);
+	static final FPRS:Vector<Int> = vector(16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
+	static final CALL_RESULTS:Vector<Int> = vector(0, 2, 16, 17);
 
 	public var win:Bool;
-	var callerSaved:Array<Int>;
+	var callerSaved:Vector<Int>;
 	var tlsBase = -1;
 
 	var m:MFunc;
 	var f:LFunc;
 	var vreg:haxe.ds.Vector<Int>; // Mir value -> register
 	var useCount:haxe.ds.Vector<Int>;
-	var lb:Array<LBlock>; // Mir block id -> LBlock
+	var lb:Vector<LBlock>; // Mir block id -> LBlock
 	var cur:LBlock;
 	var folded:haxe.ds.Vector<Bool>; // Mir values computed inside their user (no code of their own)
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
@@ -107,21 +117,19 @@ class Isel implements hxmc.Target.Selector {
 		this.abi = abi;
 		win = abi.os == "windows";
 		if (win) {
-			gprs = [1, 2, 8, 9, 10, 11, 0, 3, 6, 7, 12, 13, 14, 15, 5];
+			gprs = abi.framePointers ? WIN_GPRS_FP : WIN_GPRS;
 			callerSaved = WIN_CALLER_SAVED;
 		} else {
-			gprs = [1, 2, 6, 7, 8, 9, 10, 11, 0, 3, 12, 13, 14, 15, 5];
+			gprs = abi.framePointers ? GPRS_FP : GPRS;
 			callerSaved = CALLER_SAVED;
 		}
-		// (rbp holds the frame record's address: Emit)
-		if (abi.framePointers) gprs.remove(5);
-		fprs = [for (i in 16...32) i];
+		fprs = FPRS;
 	}
 
 	// where argument k of a function with these parameter types is: a
 	// register (>= 0), or -1 - (its 8-byte slot among the stack arguments,
 	// counted from the first one; Win64 counts the shadow space)
-	function argLoc(params:Array<MTy>, k:Int):Int {
+	function argLoc(params:Vector<MTy>, k:Int):Int {
 		if (win) {
 			if (k < 4) return params[k] == F64 ? XMM0 + k : WIN_ARG_GPRS[k];
 			return -1 - k;
@@ -138,12 +146,18 @@ class Isel implements hxmc.Target.Selector {
 	}
 
 	// argLoc for each of the first n arguments, with the parts of structs
-	// (MIns.cGroups; null: none): System V places a struct's parts in
+	// (MIns.cGroups; empty: none): System V places a struct's parts in
 	// registers when enough of both kinds are left, else all on the stack
 	// (its memory, in 8-byte words), as it does with a MEMORY struct's
-	function argLocs(params:Array<MTy>, groups:Null<Array<Int>>, n:Int):Array<Int> {
-		if (win || groups == null) return [for (k in 0...n) argLoc(params, k)];
-		var r = [];
+	function argLocs(params:Vector<MTy>, groups:Vector<Int>, n:Int):Vector<Int> {
+		if (win || groups.length == 0) {
+			var r = new Vector<Int>(n);
+			for (k in 0...n)
+				r[k] = argLoc(params, k);
+			return r;
+		}
+		// (a struct's parts are all in params: its last one may come after n)
+		var r = new Vector<Int>(params.length);
 		var gi = 0, fi = 0, si = 0, k = 0;
 		while (k < n) {
 			var g = groups[k];
@@ -153,7 +167,7 @@ class Isel implements hxmc.Target.Selector {
 				if (params[j] == F64) nf++ else ni++;
 			var regs = g > 0 && gi + ni <= 6 && fi + nf <= 8;
 			for (j in k...k + cnt)
-				r.push(!regs ? -1 - si++ : params[j] == F64 ? XMM0 + fi++ : ARG_GPRS[gi++]);
+				r[j] = !regs ? -1 - si++ : params[j] == F64 ? XMM0 + fi++ : ARG_GPRS[gi++];
 			k += cnt;
 		}
 		return r;
@@ -234,7 +248,7 @@ class Isel implements hxmc.Target.Selector {
 				for (r in callerSaved)
 					defs.push(r);
 			case RET:
-				if (i.uses != null) for (u in i.uses)
+				for (u in i.uses)
 					uses.push(u);
 			case JTABLE:
 				uses.push(i.d);
@@ -250,7 +264,7 @@ class Isel implements hxmc.Target.Selector {
 	public function isMove(i:LIns):Bool
 		return i.op == MOV;
 
-	public var callResults(default, null):Array<Int> = [0, 2, 16, 17];
+	public var callResults(default, null):Vector<Int> = CALL_RESULTS;
 
 	public function isCall(i:LIns):Bool
 		return i.op == CALL;
@@ -370,7 +384,7 @@ class Isel implements hxmc.Target.Selector {
 		return null;
 	}
 
-	public function select(mf:MFunc, layout:Array<MBlock>):LFunc {
+	public function select(mf:MFunc, layout:Vector<MBlock>):LFunc {
 		m = mf;
 		f = new LFunc(mf.name, 16);
 		for (s in mf.slots)
@@ -384,7 +398,7 @@ class Isel implements hxmc.Target.Selector {
 				if (i.a >= 0) useCount[i.a]++;
 				if (i.b >= 0) useCount[i.b]++;
 				if (i.c >= 0) useCount[i.c]++;
-				if (i.args != null) for (x in i.args)
+				for (x in i.args)
 					useCount[x]++;
 				if ((i.op == Load || i.op == Store) && i.imm > -0x40000000 && i.imm < 0x40000000) addrUses[i.a]++;
 			}
@@ -395,20 +409,29 @@ class Isel implements hxmc.Target.Selector {
 			var ins = b.ins;
 			for (k in 0...ins.length) {
 				var c = ins[k];
-				var cands:Array<Int>;
+				// the candidates in order (-1: none)
+				var cand0 = -1, cand1 = -1;
 				if (c.op == Cmp && mf.vals[c.a].ty != F64) {
 					var bImm = immOf(c.b) != null, aImm = immOf(c.a) != null;
-					cands = bImm ? (isymOf(c.b) == null ? [c.a] : []) : aImm ? [] : [c.b, c.a];
+					if (bImm) {
+						if (isymOf(c.b) == null) cand0 = c.a;
+					} else if (!aImm) {
+						cand0 = c.b;
+						cand1 = c.a;
+					}
 				} else if ((c.op == Add || c.op == Sub || c.op == And || c.op == Or || c.op == Xor) && c.ty != F64) {
 					// the second operand (either, when commutative); not with an
 					// immediate operand (those take ALUI or LEA)
 					if (immOf(c.a) != null || immOf(c.b) != null) continue;
-					cands = c.op == Sub ? [c.b] : [c.b, c.a];
+					cand0 = c.b;
+					if (c.op != Sub) cand1 = c.a;
 					if (c.a == c.b) continue;
 				} else if (c.op == SExt) {
-					cands = [c.a];
+					cand0 = c.a;
 				} else continue;
-				for (x in cands) {
+				for (q in 0...2) {
+					var x = q == 0 ? cand0 : cand1;
+					if (x < 0) break;
 					var l = mf.vals[x];
 					if (l.op != Load || l.block != b || useCount[x] != 1 || l.ty == F64) continue;
 					if (l.size != (l.ty == I32 ? 4 : 8)) continue;
@@ -443,12 +466,10 @@ class Isel implements hxmc.Target.Selector {
 		for (b in mf.blocks)
 			for (i in b.ins)
 				if ((i.op == Const && immOf(i.id) != null) || i.op == SymAddr || i.op == StackAddr || i.op == ConstF) folded[i.id] = true;
-		lb = [];
 		var maxId = 0;
 		for (b in mf.blocks)
 			if (b.id >= maxId) maxId = b.id + 1;
-		for (_ in 0...maxId)
-			lb.push(null);
+		lb = new Vector<LBlock>(maxId);
 		for (b in layout) {
 			var l = new LBlock(f.blocks.length);
 			l.cold = b.cold;
@@ -521,9 +542,8 @@ class Isel implements hxmc.Target.Selector {
 			l.succs = [];
 			for (i in l.ins) {
 				if (i.target != null && l.succs.indexOf(i.target) < 0) l.succs.push(i.target);
-				if (i.table != null)
-					for (t in i.table)
-						if (l.succs.indexOf(t) < 0) l.succs.push(t);
+				for (t in i.table)
+					if (l.succs.indexOf(t) < 0) l.succs.push(t);
 			}
 		}
 		for (l in f.blocks)
@@ -750,11 +770,11 @@ class Isel implements hxmc.Target.Selector {
 				if (p.args[k] != p.id) copyTo(reg(p.id), p.args[k], p.ty);
 			return;
 		}
-		var temps = [];
+		var temps = new Vector<Int>(phis.length), nt = 0;
 		for (p in phis) {
 			var t = f.newReg(p.ty == F64);
 			copyTo(t, p.args[k], p.ty);
-			temps.push(t);
+			temps[nt++] = t;
 		}
 		for (j in 0...phis.length)
 			mov(reg(phis[j].id), temps[j], 8);
@@ -787,7 +807,7 @@ class Isel implements hxmc.Target.Selector {
 		switch i.op {
 			case Phi:
 			case Param:
-				var loc = m.cParams != null ? argLocs(m.params, m.cParams, i.imm + 1)[i.imm] : argLoc(m.params, i.imm);
+				var loc = m.cParams.length > 0 ? argLocs(m.params, m.cParams, i.imm + 1)[i.imm] : argLoc(m.params, i.imm);
 				var d = reg(i.id);
 				if (loc >= 0) mov(d, loc) else {
 					var x = emit(LOAD);
@@ -1136,24 +1156,24 @@ class Isel implements hxmc.Target.Selector {
 				}
 			case Switch:
 				switchIns(i, b, next);
-			case Ret if (i.a >= 0 && m.cRet != null):
+			case Ret if (i.a >= 0 && m.structRet):
 				// a struct in rax-rdx and xmm0-xmm1, from its memory (whole words)
-				var rs = [];
+				var rs = new Vector<Int>(m.cRet.length), nr = 0;
 				for (p in m.cRet) {
 					var r = f.newReg(p.float);
 					var l = emit(LOAD);
 					l.d = r;
 					l.size = 8;
 					memOf(l, i.a, -1, 1, p.off);
-					rs.push(r);
+					rs[nr++] = r;
 				}
 				var x = new LIns(RET);
-				x.uses = [];
+				x.uses = new Vector(rs.length);
 				var gk = 0, fk = 0;
 				for (k in 0...rs.length) {
 					var d = m.cRet[k].float ? XMM0 + fk++ : gk++ == 0 ? RAX : RDX;
 					mov(d, rs[k], 8);
-					x.uses.push(d);
+					x.uses[k] = d;
 				}
 				flush();
 				push(x);
@@ -1162,7 +1182,7 @@ class Isel implements hxmc.Target.Selector {
 				if (i.a >= 0) {
 					var r = m.vals[i.a].ty == F64 ? XMM0 : RAX;
 					mov(r, use(i.a), 8);
-					x.uses = [r];
+					x.uses = vector(r);
 				}
 				flush();
 				push(x);
@@ -1195,7 +1215,9 @@ class Isel implements hxmc.Target.Selector {
 			if (c < lo) lo = c;
 			if (c > hi) hi = c;
 		}
-		var targets = [for (k in 0...n) edgeTarget(b, i.targets[k])];
+		var targets = new Vector<LBlock>(n);
+		for (k in 0...n)
+			targets[k] = edgeTarget(b, i.targets[k]);
 		var span = hi - lo + 1;
 		if (n >= 4 && span > 0 && span <= 3 * n + 8) {
 			// jump table on value - lo
@@ -1220,7 +1242,7 @@ class Isel implements hxmc.Target.Selector {
 			c.imm = span - 1;
 			c.size = 4;
 			jcc(A, def);
-			var table = [for (_ in 0...span) def];
+			var table = new Vector<LBlock>(span, def);
 			for (k in 0...n)
 				table[i.cases[k] - lo] = targets[k];
 			var base = f.newReg(false);
@@ -1316,7 +1338,6 @@ class Isel implements hxmc.Target.Selector {
 		tlsBase = f.newReg(false);
 		var x = emit(CALL);
 		x.sym = "hxmc_tls_base";
-		x.uses = [];
 		mov(tlsBase, RAX, 8);
 	}
 
@@ -1327,7 +1348,7 @@ class Isel implements hxmc.Target.Selector {
 		var moves:Array<{d:Int, s:Int, size:Int}> = [];
 		// (a struct result in registers: its address is the last argument, not
 		// passed, MirBuild.cStructRet)
-		var n = i.cRet != null ? i.args.length - 1 : i.args.length;
+		var n = i.structRet ? i.args.length - 1 : i.args.length;
 		var locs = argLocs(i.argTys, i.cGroups, n);
 		for (k in 0...n) {
 			var a = i.args[k];
@@ -1382,20 +1403,20 @@ class Isel implements hxmc.Target.Selector {
 		var x = emit(CALL);
 		x.sym = i.sym;
 		x.s1 = target;
-		x.uses = uses;
+		x.uses = Vector.fromArrayCopy(uses);
 		x.flag = i.returnsTwice;
 		if (i.ty != Void) {
 			var r = i.ty == F64 ? XMM0 : RAX;
 			mov(reg(i.id), r, 8);
 		}
-		if (i.cRet != null) {
+		if (i.structRet) {
 			// a struct in rax-rdx and xmm0-xmm1: out of them first, then into
 			// its memory (whole words: the slot is rounded up to them)
-			var rs = [], gk = 0, fk = 0;
+			var rs = new Vector<Int>(i.cRet.length), nr = 0, gk = 0, fk = 0;
 			for (p in i.cRet) {
 				var r = f.newReg(p.float);
 				mov(r, p.float ? XMM0 + fk++ : gk++ == 0 ? RAX : RDX, 8);
-				rs.push(r);
+				rs[nr++] = r;
 			}
 			for (k in 0...i.cRet.length) {
 				var s = emit(STORE);

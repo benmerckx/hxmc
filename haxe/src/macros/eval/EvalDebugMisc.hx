@@ -9,8 +9,10 @@ import macros.eval.EvalContext;
 import macros.eval.EvalHash;
 import macros.eval.EvalValue;
 import macros.eval.EvalExceptions;
+import haxe.ds.Vector;
 
 using macros.eval.EvalValue.EvalValueTools;
+using core.ds.VectorTools;
 
 // port: deviations:
 // - The scope stack (`env.envDebug.scopes`, a snapshot of the JIT's) is an array
@@ -259,12 +261,12 @@ class EvalDebugMisc {
 		return i;
 	}
 
-	static function arrayGet(a:Array<Value>, i:Int):Value {
+	static function arrayGet(a:haxe.ds.Vector<Value>, i:Int):Value {
 		if (i < 0 || i >= a.length) throw new core.ds.InvalidArgument("index out of bounds");
 		return a[i];
 	}
 
-	static function arraySet(a:Array<Value>, i:Int, v:Value):Void {
+	static function arraySet(a:haxe.ds.Vector<Value>, i:Int, v:Value):Void {
 		if (i < 0 || i >= a.length) throw new core.ds.InvalidArgument("index out of bounds");
 		a[i] = v;
 	}
@@ -324,10 +326,10 @@ class EvalDebugMisc {
 							return v;
 					}
 				case EArrayDecl(el):
-					var vl = el.map(loop);
+					var vl = el.mapToArray(loop);
 					return EvalEncode.encodeArray(vl);
 				case EObjectDecl(fl):
-					var fl = fl.map(f -> {name: f.key.name, value: loop(f.expr)});
+					var fl = fl.mapToArray(f -> {name: f.key.name, value: loop(f.expr)});
 					return EvalEncode.encodeObjS(fl);
 				case EBinop(op, e1, e2):
 					switch op {
@@ -371,15 +373,15 @@ class EvalDebugMisc {
 						case EField(ethis, s, _):
 							var vthis = loop(ethis);
 							var v1 = EvalField.field(vthis, EvalHash.hash(s));
-							var vl = el.map(loop);
+							var vl = el.mapToArray(loop);
 							return safeCall(env.envEval, EvalPrinting.callValueOn.bind(vthis, v1), vl);
 						case _:
 							var v1 = loop(e1);
-							var vl = el.map(loop);
+							var vl = el.mapToArray(loop);
 							return safeCall(env.envEval, EvalMisc.callValue.bind(v1), vl);
 					}
 				case EBlock(el):
-					function loop2(el:Array<Expr>, i:Int):Value {
+					function loop2(el:Vector<Expr>, i:Int):Value {
 						return if (i >= el.length) VNull else if (i == el.length - 1) loop(el[i]) else {
 							loop(el[i]);
 							loop2(el, i + 1);
@@ -433,7 +435,7 @@ class EvalDebugMisc {
 						case null: tp.tname;
 						case s: s;
 					}]);
-					var vl = el.map(loop);
+					var vl = el.mapToArray(loop);
 					var vc = loop2(ctx.toplevel, ["Type", "createInstance"]);
 					return safeCall(env.envEval, EvalMisc.callValue.bind(vc), [v1, EvalEncode.encodeArray(vl)]);
 				case ETry(_) | ESwitch(_) | EFunction(_) | EFor(_) | EDisplay(_) | ECast(_, _) | EIs(_):

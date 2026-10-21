@@ -21,6 +21,10 @@ import context.Common;
 import context.PlatformConfig;
 import macros.eval.EvalValue.Value;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: haxe/src/macro/macroApi.ml: the compiler side of the macro API (`compiler_api`)
 // and the encoding/decoding of compiler values. Upstream is a functor over the
@@ -80,14 +84,14 @@ typedef CompilerApi = {
 	var allowPackage:String->Void;
 	var getLocalType:Void->Null<T>;
 	var getExpectedType:Void->Null<T>;
-	var getCallArguments:Void->Null<Array<Expr>>;
+	var getCallArguments:Void->Null<Vector<Expr>>;
 	var getLocalMethod:Void->String;
 	var getLocalImports:Void->Array<Import>;
 	var getLocalUsing:Void->Array<TClass>;
 	var getLocalVars:Void->haxe.ds.StringMap<TVar>;
 	var getBuildFields:Void->MacroValue;
 	var defineType:MacroValue->Null<String>->Void;
-	var defineModule:String->Array<MacroValue>->Array<{path:Array<PlacedName>, mode:ImportMode}>->Array<TypePath>->Void;
+	var defineModule:String->Array<MacroValue>->Array<{path:Vector<PlacedName>, mode:ImportMode}>->Array<TypePath>->Void;
 	var moduleDependency:String->String->Void;
 	var currentModule:Void->ModuleDef;
 	var formatString:String->Pos->Expr;
@@ -105,7 +109,7 @@ typedef CompilerApi = {
 	var warning:(w:core.Message.WarningCode, msg:String, p:Pos, depth:Int) -> Void;
 	var displayError:(msg:String, p:Pos, sub:Null<Array<core.Error.MacroError>>) -> Void;
 	// port: `with_imports imports usings f`
-	var withImports:Array<Import>->Array<Array<PlacedName>>->(Void->Dynamic)->Dynamic;
+	var withImports:Array<Import>->Array<Vector<PlacedName>>->(Void->Dynamic)->Dynamic;
 	var withOptions:CompilerOptions->(Void->Dynamic)->Dynamic;
 	var excString:String->Dynamic;
 	var getHxbWriterConfig:Void->MacroValue;
@@ -284,6 +288,9 @@ class MacroApiImpl {
 
 	public static inline function encodeArray(l:Array<Value>):Value return nativeValues ? (l : Dynamic) : macros.eval.EvalEncode.encodeArray(l);
 
+	// port: a Vector as macro code's Array (native values: a copy)
+	public static inline function encodeArrayV(v:Vector<Value>):Value return nativeValues ? (v.toArray() : Dynamic) : macros.eval.EvalEncode.encodeArrayV(v);
+
 	static inline function encodeString(s:String):Value return nativeValues ? (s : Dynamic) : macros.eval.EvalEncode.encodeString(s);
 
 	// port: EvalMain.encode_obj = EvalEncode.encode_obj_s
@@ -392,54 +399,54 @@ class MacroApiImpl {
 
 	static function vnullOr<A>(f:A->Value, v:Null<A>):Value return v == null ? vnull : f(v);
 
-	static function encodeEnum(k:EnumType, tag:Int, vl:Array<Value>,
-			?pos:Pos):Value return nativeValues ? MacroNativeValues.encodeEnum(k, pos, tag, cast vl) : macros.eval.EvalEncode.encodeEnum(k, pos, tag, vl);
+	static function encodeEnum(k:EnumType, tag:Int, vl:Vector<Value>,
+			?pos:Pos):Value return nativeValues ? MacroNativeValues.encodeEnum(k, pos, tag, vl.toArray()) : macros.eval.EvalEncode.encodeEnum(k, pos, tag, vl);
 
 	public static function encodeStringLiteralKind(qs:StringLiteralKind):Value {
 		var tag = switch qs {
 			case SDoubleQuotes: 0;
 			case SSingleQuotes: 1;
 		}
-		return encodeEnum(IStringLiteralKind, tag, []);
+		return encodeEnum(IStringLiteralKind, tag, vector());
 	}
 
 	public static function encodeConst(c:Constant):Value {
 		return switch c {
-			case Int(s, suffix): encodeEnum(IConst, 0, [encodeString(s), vnullOr(encodeString, suffix)]);
-			case Float(s, suffix): encodeEnum(IConst, 1, [encodeString(s), vnullOr(encodeString, suffix)]);
-			case String(s, qs): encodeEnum(IConst, 2, [encodeString(s), encodeStringLiteralKind(qs)]);
-			case Ident(s): encodeEnum(IConst, 3, [encodeString(s)]);
-			case Regexp(s, opt): encodeEnum(IConst, 4, [encodeString(s), encodeString(opt)]);
+			case Int(s, suffix): encodeEnum(IConst, 0, vector(encodeString(s), vnullOr(encodeString, suffix)));
+			case Float(s, suffix): encodeEnum(IConst, 1, vector(encodeString(s), vnullOr(encodeString, suffix)));
+			case String(s, qs): encodeEnum(IConst, 2, vector(encodeString(s), encodeStringLiteralKind(qs)));
+			case Ident(s): encodeEnum(IConst, 3, vector(encodeString(s)));
+			case Regexp(s, opt): encodeEnum(IConst, 4, vector(encodeString(s), encodeString(opt)));
 		}
 	}
 
 	public static function encodeBinop(op:Binop):Value {
 		return switch op {
-			case OpAdd: encodeEnum(IBinop, 0, []);
-			case OpMult: encodeEnum(IBinop, 1, []);
-			case OpDiv: encodeEnum(IBinop, 2, []);
-			case OpSub: encodeEnum(IBinop, 3, []);
-			case OpAssign: encodeEnum(IBinop, 4, []);
-			case OpEq: encodeEnum(IBinop, 5, []);
-			case OpNotEq: encodeEnum(IBinop, 6, []);
-			case OpGt: encodeEnum(IBinop, 7, []);
-			case OpGte: encodeEnum(IBinop, 8, []);
-			case OpLt: encodeEnum(IBinop, 9, []);
-			case OpLte: encodeEnum(IBinop, 10, []);
-			case OpAnd: encodeEnum(IBinop, 11, []);
-			case OpOr: encodeEnum(IBinop, 12, []);
-			case OpXor: encodeEnum(IBinop, 13, []);
-			case OpBoolAnd: encodeEnum(IBinop, 14, []);
-			case OpBoolOr: encodeEnum(IBinop, 15, []);
-			case OpShl: encodeEnum(IBinop, 16, []);
-			case OpShr: encodeEnum(IBinop, 17, []);
-			case OpUShr: encodeEnum(IBinop, 18, []);
-			case OpMod: encodeEnum(IBinop, 19, []);
-			case OpAssignOp(op): encodeEnum(IBinop, 20, [encodeBinop(op)]);
-			case OpInterval: encodeEnum(IBinop, 21, []);
-			case OpArrow: encodeEnum(IBinop, 22, []);
-			case OpIn: encodeEnum(IBinop, 23, []);
-			case OpNullCoal: encodeEnum(IBinop, 24, []);
+			case OpAdd: encodeEnum(IBinop, 0, vector());
+			case OpMult: encodeEnum(IBinop, 1, vector());
+			case OpDiv: encodeEnum(IBinop, 2, vector());
+			case OpSub: encodeEnum(IBinop, 3, vector());
+			case OpAssign: encodeEnum(IBinop, 4, vector());
+			case OpEq: encodeEnum(IBinop, 5, vector());
+			case OpNotEq: encodeEnum(IBinop, 6, vector());
+			case OpGt: encodeEnum(IBinop, 7, vector());
+			case OpGte: encodeEnum(IBinop, 8, vector());
+			case OpLt: encodeEnum(IBinop, 9, vector());
+			case OpLte: encodeEnum(IBinop, 10, vector());
+			case OpAnd: encodeEnum(IBinop, 11, vector());
+			case OpOr: encodeEnum(IBinop, 12, vector());
+			case OpXor: encodeEnum(IBinop, 13, vector());
+			case OpBoolAnd: encodeEnum(IBinop, 14, vector());
+			case OpBoolOr: encodeEnum(IBinop, 15, vector());
+			case OpShl: encodeEnum(IBinop, 16, vector());
+			case OpShr: encodeEnum(IBinop, 17, vector());
+			case OpUShr: encodeEnum(IBinop, 18, vector());
+			case OpMod: encodeEnum(IBinop, 19, vector());
+			case OpAssignOp(op): encodeEnum(IBinop, 20, vector(encodeBinop(op)));
+			case OpInterval: encodeEnum(IBinop, 21, vector());
+			case OpArrow: encodeEnum(IBinop, 22, vector());
+			case OpIn: encodeEnum(IBinop, 23, vector());
+			case OpNullCoal: encodeEnum(IBinop, 24, vector());
 		}
 	}
 
@@ -452,17 +459,17 @@ class MacroApiImpl {
 			case NegBits: 4;
 			case Spread: 5;
 		}
-		return encodeEnum(IUnop, tag, []);
+		return encodeEnum(IUnop, tag, vector());
 	}
 
 	public static function encodeImport(imp:Import):Value {
 		var mode = switch imp.mode {
-			case INormal: encodeEnum(IImportMode, 0, []);
-			case IAsName(pn): encodeEnum(IImportMode, 1, [encodeString(pn.name)]);
-			case IAll: encodeEnum(IImportMode, 2, []);
+			case INormal: encodeEnum(IImportMode, 0, vector());
+			case IAsName(pn): encodeEnum(IImportMode, 1, vector(encodeString(pn.name)));
+			case IAll: encodeEnum(IImportMode, 2, vector());
 		}
 		return encodeObj([
-			fld("path", encodeArray(imp.path.map(pn -> encodeObj([fld("pos", encodePos(pn.pos)), fld("name", encodeString(pn.name))])))),
+			fld("path", encodeArrayV(imp.path.map(pn -> encodeObj([fld("pos", encodePos(pn.pos)), fld("name", encodeString(pn.name))])))),
 			fld("mode", mode)
 		]);
 	}
@@ -472,7 +479,7 @@ class MacroApiImpl {
 	/** Globals.path **/
 	public static function encodePath(p:GlobalTypePath):Value {
 		return encodeObj([
-			fld("pack", encodeArray(p.pack.map(encodeString))),
+			fld("pack", encodeArrayV(p.pack.mapToVector(encodeString))),
 			fld("name", encodeString(p.name)),
 		]);
 	}
@@ -481,9 +488,9 @@ class MacroApiImpl {
 	public static function encodeAstPath(ptp:PlacedTypePath):Value {
 		var t = ptp.path;
 		var fields = [
-			fld("pack", encodeArray(t.tpackage.map(encodeString))),
+			fld("pack", encodeArrayV(t.tpackage.mapToVector(encodeString))),
 			fld("name", encodeString(t.tname)),
-			fld("params", encodeArray(t.tparams.map(encodeTparam))),
+			fld("params", encodeArrayV(t.tparams.map(encodeTparam))),
 			fld("pos", encodePos(ptp.posFull)),
 		];
 		if (!posEq(ptp.posFull, ptp.posPath))
@@ -495,8 +502,8 @@ class MacroApiImpl {
 
 	public static function encodeTparam(tp:TypeParamOrConst):Value {
 		return switch tp {
-			case TPType(t): encodeEnum(ITParam, 0, [encodeCtype(t)]);
-			case TPExpr(e): encodeEnum(ITParam, 1, [encodeExpr(e)]);
+			case TPType(t): encodeEnum(ITParam, 0, vector(encodeCtype(t)));
+			case TPExpr(e): encodeEnum(ITParam, 1, vector(encodeExpr(e)));
 		}
 	}
 
@@ -515,29 +522,29 @@ class MacroApiImpl {
 			case AOverload: 10;
 			case AEnum: 11;
 		}
-		return encodeEnum(IAccess, tag, [], a.pos);
+		return encodeEnum(IAccess, tag, vector(), a.pos);
 	}
 
 	public static function encodeMetaEntry(m:MetadataEntry):Value {
 		return encodeObj([
 			fld("name", encodeString(Meta.toString(m.meta))),
-			fld("params", encodeArray(m.exprs.map(encodeExpr))),
+			fld("params", encodeArrayV(m.exprs.map(encodeExpr))),
 			fld("pos", encodePos(m.pos)),
 		]);
 	}
 
-	public static function encodeMetaContent(m:Metadata):Value return encodeArray(m.map(encodeMetaEntry));
+	public static function encodeMetaContent(m:Metadata):Value return encodeArrayV(m.mapToVector(encodeMetaEntry));
 
 	public static function encodeField(f:ClassField):Value {
 		var kind = switch f.cffKind {
-			case FVar(t, e): encodeEnum(IField, 0, [vnullOr(encodeCtype, t), vnullOr(encodeExpr, e)]);
-			case FFun(f): encodeEnum(IField, 1, [encodeFun(f)]);
-			case FProp(get, set, t, e): encodeEnum(IField, 2, [
+			case FVar(t, e): encodeEnum(IField, 0, vector(vnullOr(encodeCtype, t), vnullOr(encodeExpr, e)));
+			case FFun(f): encodeEnum(IField, 1, vector(encodeFun(f)));
+			case FProp(get, set, t, e): encodeEnum(IField, 2, vector(
 					encodePlacedName(get),
 					encodePlacedName(set),
 					vnullOr(encodeCtype, t),
 					vnullOr(encodeExpr, e)
-				]);
+				));
 		}
 		return encodeObj([
 			fld("name", encodePlacedName(f.cffName)),
@@ -546,20 +553,20 @@ class MacroApiImpl {
 			fld("pos", encodePos(f.cffPos)),
 			fld("kind", kind),
 			fld("meta", encodeMetaContent(f.cffMeta)),
-			fld("access", encodeArray(f.cffAccess.map(encodeAccess))),
+			fld("access", encodeArrayV(f.cffAccess.mapToVector(encodeAccess))),
 		]);
 	}
 
 	public static function encodeCtype(t:TypeHint):Value {
-		var r = switch t.type {
-			case CTPath(ptp): {tag: 0, pl: [encodeAstPath(ptp)]};
-			case CTFunction(pl, r): {tag: 1, pl: [encodeArray(pl.map(encodeCtype)), encodeCtype(r)]};
-			case CTAnonymous(fl): {tag: 2, pl: [encodeArray(fl.map(encodeField))]};
-			case CTParent(t): {tag: 3, pl: [encodeCtype(t)]};
-			case CTExtend(tl, fields): {tag: 4, pl: [encodeArray(tl.map(encodeAstPath)), encodeArray(fields.map(encodeField))]};
-			case CTOptional(t): {tag: 5, pl: [encodeCtype(t)]};
-			case CTNamed(n, t): {tag: 6, pl: [encodePlacedName(n), encodeCtype(t)]};
-			case CTIntersection(tl): {tag: 7, pl: [encodeArray(tl.map(encodeCtype))]};
+		var r:{tag:Int, pl:Vector<Value>} = switch t.type {
+			case CTPath(ptp): {tag: 0, pl: vector(encodeAstPath(ptp))};
+			case CTFunction(pl, r): {tag: 1, pl: vector(encodeArrayV(pl.map(encodeCtype)), encodeCtype(r))};
+			case CTAnonymous(fl): {tag: 2, pl: vector(encodeArrayV(fl.map(encodeField)))};
+			case CTParent(t): {tag: 3, pl: vector(encodeCtype(t))};
+			case CTExtend(tl, fields): {tag: 4, pl: vector(encodeArrayV(tl.map(encodeAstPath)), encodeArrayV(fields.map(encodeField)))};
+			case CTOptional(t): {tag: 5, pl: vector(encodeCtype(t))};
+			case CTNamed(n, t): {tag: 6, pl: vector(encodePlacedName(n), encodeCtype(t))};
+			case CTIntersection(tl): {tag: 7, pl: vector(encodeArrayV(tl.map(encodeCtype)))};
 		}
 		return encodeEnum(ICType, r.tag, r.pl, t.pos);
 	}
@@ -568,7 +575,7 @@ class MacroApiImpl {
 		return encodeObj([
 			fld("name", encodePlacedName(tp.tpName)),
 			fld("name_pos", encodePos(tp.tpName.pos)),
-			fld("params", encodeArray(tp.tpParams.map(encodeTparamDecl))),
+			fld("params", encodeArrayV(tp.tpParams.map(encodeTparamDecl))),
 			fld("constraints", tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeCtype(tp.tpConstraints)])),
 			fld("meta", encodeMetaContent(tp.tpMeta)),
 		]);
@@ -576,8 +583,8 @@ class MacroApiImpl {
 
 	public static function encodeFun(f:Func):Value {
 		return encodeObj([
-			fld("params", encodeArray(f.fParams.map(encodeTparamDecl))),
-			fld("args", encodeArray(f.fArgs.map(a -> encodeObj([
+			fld("params", encodeArrayV(f.fParams.map(encodeTparamDecl))),
+			fld("args", encodeArrayV(f.fArgs.map(a -> encodeObj([
 				fld("name", encodePlacedName(a.name)),
 				fld("name_pos", encodePos(a.name.pos)),
 				fld("opt", vbool(a.optional)),
@@ -592,45 +599,45 @@ class MacroApiImpl {
 
 	public static function encodeDisplayKind(dk:DisplayKind):Value {
 		return switch dk {
-			case DKCall: encodeEnum(IDisplayKind, 0, []);
-			case DKDot: encodeEnum(IDisplayKind, 1, []);
-			case DKStructure: encodeEnum(IDisplayKind, 2, []);
-			case DKMarked: encodeEnum(IDisplayKind, 3, []);
-			case DKPattern(outermost): encodeEnum(IDisplayKind, 4, [vbool(outermost)]);
+			case DKCall: encodeEnum(IDisplayKind, 0, vector());
+			case DKDot: encodeEnum(IDisplayKind, 1, vector());
+			case DKStructure: encodeEnum(IDisplayKind, 2, vector());
+			case DKMarked: encodeEnum(IDisplayKind, 3, vector());
+			case DKPattern(outermost): encodeEnum(IDisplayKind, 4, vector(vbool(outermost)));
 		}
 	}
 
 	public static function encodeDisplayMode(dm:DisplayModeValue):Value {
 		return switch dm {
-			case DMNone: encodeEnum(IDisplayMode, 0, []);
-			case DMDefault: encodeEnum(IDisplayMode, 1, []);
-			case DMDefinition: encodeEnum(IDisplayMode, 2, []);
-			case DMTypeDefinition: encodeEnum(IDisplayMode, 3, []);
-			case DMImplementation: encodeEnum(IDisplayMode, 4, []);
-			case DMPackage: encodeEnum(IDisplayMode, 5, []);
-			case DMHover: encodeEnum(IDisplayMode, 6, []);
+			case DMNone: encodeEnum(IDisplayMode, 0, vector());
+			case DMDefault: encodeEnum(IDisplayMode, 1, vector());
+			case DMDefinition: encodeEnum(IDisplayMode, 2, vector());
+			case DMTypeDefinition: encodeEnum(IDisplayMode, 3, vector());
+			case DMImplementation: encodeEnum(IDisplayMode, 4, vector());
+			case DMPackage: encodeEnum(IDisplayMode, 5, vector());
+			case DMHover: encodeEnum(IDisplayMode, 6, vector());
 			case DMUsage(withDefinition, findDescendants,
-				findBase): encodeEnum(IDisplayMode, 7, [vbool(withDefinition), vbool(findDescendants), vbool(findBase)]);
-			case DMModuleSymbols(null): encodeEnum(IDisplayMode, 8, []);
-			case DMModuleSymbols(s): encodeEnum(IDisplayMode, 9, [encodeString(s)]);
-			case DMSignature: encodeEnum(IDisplayMode, 10, []);
+				findBase): encodeEnum(IDisplayMode, 7, vector(vbool(withDefinition), vbool(findDescendants), vbool(findBase)));
+			case DMModuleSymbols(null): encodeEnum(IDisplayMode, 8, vector());
+			case DMModuleSymbols(s): encodeEnum(IDisplayMode, 9, vector(encodeString(s)));
+			case DMSignature: encodeEnum(IDisplayMode, 10, vector());
 		}
 	}
 
 	public static function encodePlatform(p:Platform):Value {
 		return switch p {
-			case Cross: encodeEnum(IPlatform, 0, []);
-			case Js: encodeEnum(IPlatform, 1, []);
-			case Lua: encodeEnum(IPlatform, 2, []);
-			case Neko: encodeEnum(IPlatform, 3, []);
-			case Flash: encodeEnum(IPlatform, 4, []);
-			case Php: encodeEnum(IPlatform, 5, []);
-			case Cpp: encodeEnum(IPlatform, 6, []);
-			case Jvm: encodeEnum(IPlatform, 7, []);
-			case Python: encodeEnum(IPlatform, 8, []);
-			case Hl: encodeEnum(IPlatform, 9, []);
-			case Eval: encodeEnum(IPlatform, 10, []);
-			case CustomTarget(s): encodeEnum(IPlatform, 11, [encodeString(s)]);
+			case Cross: encodeEnum(IPlatform, 0, vector());
+			case Js: encodeEnum(IPlatform, 1, vector());
+			case Lua: encodeEnum(IPlatform, 2, vector());
+			case Neko: encodeEnum(IPlatform, 3, vector());
+			case Flash: encodeEnum(IPlatform, 4, vector());
+			case Php: encodeEnum(IPlatform, 5, vector());
+			case Cpp: encodeEnum(IPlatform, 6, vector());
+			case Jvm: encodeEnum(IPlatform, 7, vector());
+			case Python: encodeEnum(IPlatform, 8, vector());
+			case Hl: encodeEnum(IPlatform, 9, vector());
+			case Eval: encodeEnum(IPlatform, 10, vector());
+			case CustomTarget(s): encodeEnum(IPlatform, 11, vector(encodeString(s)));
 		}
 	}
 
@@ -642,7 +649,7 @@ class MacroApiImpl {
 			fld("padNulls", vbool(pc.pfPadNulls)),
 			fld("addFinalReturn", vbool(pc.pfAddFinalReturn)),
 			fld("overloadFunctions", vbool(pc.pfOverload)),
-			fld("reservedTypePaths", encodeArray(pc.pfReservedTypePaths.map(encodePath))),
+			fld("reservedTypePaths", encodeArrayV(pc.pfReservedTypePaths.mapToVector(encodePath))),
 			fld("supportsFunctionEquality", vbool(pc.pfSupportsFunctionEquality)),
 			fld("usesUtf16", vbool(pc.pfUsesUtf16)),
 			fld("thisBeforeSuper", vbool(pc.pfThisBeforeSuper)),
@@ -661,13 +668,13 @@ class MacroApiImpl {
 			case CPWrapRef: 1;
 			case CPLoopVars: 2;
 		}
-		return encodeEnum(ICapturePolicy, tag, []);
+		return encodeEnum(ICapturePolicy, tag, vector());
 	}
 
 	public static function encodeVarScopingConfig(vsc:VarScopingConfig):Value {
 		return encodeObj([
 			fld("scope", encodeVarScope(vsc.vsScope)),
-			fld("flags", encodeArray(vsc.vsFlags.map(encodeVarScopingFlags))),
+			fld("flags", encodeArrayV(vsc.vsFlags.mapToVector(encodeVarScopingFlags))),
 		]);
 	}
 
@@ -676,26 +683,26 @@ class MacroApiImpl {
 			case FunctionScope: 0;
 			case BlockScope: 1;
 		}
-		return encodeEnum(IVarScope, tag, []);
+		return encodeEnum(IVarScope, tag, vector());
 	}
 
 	public static function encodeVarScopingFlags(vsf:VarScopingFlags):Value {
 		return switch vsf {
-			case VarHoisting: encodeEnum(IVarScopingFlags, 0, []);
-			case NoShadowing: encodeEnum(IVarScopingFlags, 1, []);
-			case NoCatchVarShadowing: encodeEnum(IVarScopingFlags, 2, []);
-			case ReserveCurrentTopLevelSymbol: encodeEnum(IVarScopingFlags, 3, []);
-			case ReserveAllTopLevelSymbols: encodeEnum(IVarScopingFlags, 4, []);
-			case ReserveAllTypesFlat: encodeEnum(IVarScopingFlags, 5, []);
-			case ReserveNames(names): encodeEnum(IVarScopingFlags, 6, [encodeArray(names.map(encodeString))]);
-			case SwitchCasesNoBlocks: encodeEnum(IVarScopingFlags, 7, []);
+			case VarHoisting: encodeEnum(IVarScopingFlags, 0, vector());
+			case NoShadowing: encodeEnum(IVarScopingFlags, 1, vector());
+			case NoCatchVarShadowing: encodeEnum(IVarScopingFlags, 2, vector());
+			case ReserveCurrentTopLevelSymbol: encodeEnum(IVarScopingFlags, 3, vector());
+			case ReserveAllTopLevelSymbols: encodeEnum(IVarScopingFlags, 4, vector());
+			case ReserveAllTypesFlat: encodeEnum(IVarScopingFlags, 5, vector());
+			case ReserveNames(names): encodeEnum(IVarScopingFlags, 6, vector(encodeArrayV(names.mapToVector(encodeString))));
+			case SwitchCasesNoBlocks: encodeEnum(IVarScopingFlags, 7, vector());
 		}
 	}
 
 	public static function encodeExceptionsConfig(ec:ExceptionsConfig):Value {
 		return encodeObj([
-			fld("nativeThrows", encodeArray(ec.ecNativeThrows.map(encodePath))),
-			fld("nativeCatches", encodeArray(ec.ecNativeCatches.map(encodePath))),
+			fld("nativeThrows", encodeArrayV(ec.ecNativeThrows.mapToVector(encodePath))),
+			fld("nativeCatches", encodeArrayV(ec.ecNativeCatches.mapToVector(encodePath))),
 			fld("avoidWrapping", vbool(ec.ecAvoidWrapping)),
 			fld("wildcardCatch", encodePath(ec.ecWildcardCatch)),
 			fld("baseThrow", encodePath(ec.ecBaseThrow)),
@@ -705,15 +712,15 @@ class MacroApiImpl {
 
 	public static function encodePackageRule(pr:PackageRule):Value {
 		return switch pr {
-			case Forbidden: encodeEnum(IPackageRule, 0, []);
-			case Remap(path): encodeEnum(IPackageRule, 2, [encodeString(path)]);
+			case Forbidden: encodeEnum(IPackageRule, 0, vector());
+			case Remap(path): encodeEnum(IPackageRule, 2, vector(encodeString(path)));
 		}
 	}
 
 	public static function encodeMessage(cm:CompilerMessage):Value {
 		return switch core.Message.Message.severity(cm) {
-			case Information: encodeEnum(IMessage, 0, [encodeString(cm.cmMessage), encodePos(cm.cmPos)]);
-			case Warning | Hint: encodeEnum(IMessage, 1, [encodeString(cm.cmMessage), encodePos(cm.cmPos)]);
+			case Information: encodeEnum(IMessage, 0, vector(encodeString(cm.cmMessage), encodePos(cm.cmPos)));
+			case Warning | Hint: encodeEnum(IMessage, 1, vector(encodeString(cm.cmMessage), encodePos(cm.cmPos)));
 			case Error: Globals.die("", "macroApi.ml encode_message");
 		}
 	}
@@ -723,61 +730,61 @@ class MacroApiImpl {
 			case EFNormal: 0;
 			case EFSafe: 1;
 		}
-		return encodeEnum(IEFieldKind, i, []);
+		return encodeEnum(IEFieldKind, i, vector());
 	}
 
 	public static function encodeExpr(e:Expr):Value {
 		function loop(e:Expr):Value {
 			var p = e.pos;
-			var r:{tag:Int, pl:Array<Value>} = switch e.expr {
+			var r:{tag:Int, pl:Vector<Value>} = switch e.expr {
 				case EConst(c):
-					{tag: 0, pl: [encodeConst(c)]};
+					{tag: 0, pl: vector(encodeConst(c))};
 				case EArray(e1, e2):
-					{tag: 1, pl: [loop(e1), loop(e2)]};
+					{tag: 1, pl: vector(loop(e1), loop(e2))};
 				case EBinop(op, e1, e2):
-					{tag: 2, pl: [encodeBinop(op), loop(e1), loop(e2)]};
+					{tag: 2, pl: vector(encodeBinop(op), loop(e1), loop(e2))};
 				case EField(e, f, efk):
-					{tag: 3, pl: [loop(e), encodeString(f), encodeEfieldKind(efk)]};
+					{tag: 3, pl: vector(loop(e), encodeString(f), encodeEfieldKind(efk))};
 				case EParenthesis(e):
-					{tag: 4, pl: [loop(e)]};
+					{tag: 4, pl: vector(loop(e))};
 				case EObjectDecl(fl):
 					{
 						tag: 5,
-						pl: [
-							encodeArray(fl.map(of -> encodeObj([
+						pl: vector(
+							encodeArrayV(fl.map(of -> encodeObj([
 								fld("field", encodeString(of.key.name)),
 								fld("name_pos", encodePos(of.key.pos)),
 								fld("quotes", encodeEnum(IQuoteStatus, switch of.key.quote {
 									case NoQuotes: 0;
 									case DoubleQuotes: 1;
-								}, [])),
+								}, vector())),
 								fld("expr", loop(of.expr)),
 							])))
-						]
+						)
 					};
 				case EArrayDecl(el):
-					{tag: 6, pl: [encodeArray(el.map(loop))]};
+					{tag: 6, pl: vector(encodeArrayV(el.map(loop)))};
 				case ECall(e, el):
-					{tag: 7, pl: [loop(e), encodeArray(el.map(loop))]};
+					{tag: 7, pl: vector(loop(e), encodeArrayV(el.map(loop)))};
 				case ENew(p, el):
-					{tag: 8, pl: [encodeAstPath(p), encodeArray(el.map(loop))]};
+					{tag: 8, pl: vector(encodeAstPath(p), encodeArrayV(el.map(loop)))};
 				case EUnop(op, flag, e):
 					{
 						tag: 9,
-						pl: [
+						pl: vector(
 							encodeUnop(op),
 							vbool(switch flag {
 								case Prefix: false;
 								case Postfix: true;
 							}),
 							loop(e)
-						]
+						)
 					};
 				case EVars(vl):
 					{
 						tag: 10,
-						pl: [
-							encodeArray(vl.map(v -> encodeObj([
+						pl: vector(
+							encodeArrayV(vl.map(v -> encodeObj([
 								fld("name", encodePlacedName(v.evName)),
 								fld("namePos", encodePos(v.evName.pos)),
 								fld("isFinal", vbool(v.evFinal)),
@@ -786,78 +793,78 @@ class MacroApiImpl {
 								fld("expr", vnullOr(loop, v.evExpr)),
 								fld("meta", encodeMetaContent(v.evMeta)),
 							])))
-						]
+						)
 					};
 				case EFunction(kind, f):
-					{tag: 11, pl: [encodeFunctionKind(kind), encodeFun(f)]};
+					{tag: 11, pl: vector(encodeFunctionKind(kind), encodeFun(f))};
 				case EBlock(el):
-					{tag: 12, pl: [encodeArray(el.map(loop))]};
+					{tag: 12, pl: vector(encodeArrayV(el.map(loop)))};
 				case EFor(e, eloop):
-					{tag: 13, pl: [loop(e), loop(eloop)]};
+					{tag: 13, pl: vector(loop(e), loop(eloop))};
 				case EIf(econd, e, eelse):
-					{tag: 14, pl: [loop(econd), loop(e), vnullOr(loop, eelse)]};
+					{tag: 14, pl: vector(loop(econd), loop(e), vnullOr(loop, eelse))};
 				case EWhile(econd, e, flag):
 					{
 						tag: 15,
-						pl: [
+						pl: vector(
 							loop(econd),
 							loop(e),
 							vbool(switch flag {
 								case NormalWhile: true;
 								case DoWhile: false;
 							})
-						]
+						)
 					};
 				case ESwitch(e, cases, eopt):
 					{
 						tag: 16,
-						pl: [
+						pl: vector(
 							loop(e),
-							encodeArray(cases.map(c -> encodeObj([
-								fld("values", encodeArray(c.values.map(loop))),
+							encodeArrayV(cases.map(c -> encodeObj([
+								fld("values", encodeArrayV(c.values.map(loop))),
 								fld("guard", vnullOr(loop, c.guard)),
 								fld("expr", vnullOr(loop, c.expr)),
 								fld("pos", encodePos(c.pos)),
 							]))),
 							vnullOr((d:SwitchDefault) -> encodeNullExpr(d.expr), eopt)
-						]
+						)
 					};
 				case ETry(e, catches):
 					{
 						tag: 17,
-						pl: [
+						pl: vector(
 							loop(e),
-							encodeArray(catches.map(c -> encodeObj([
+							encodeArrayV(catches.map(c -> encodeObj([
 								fld("name", encodePlacedName(c.name)),
 								fld("name_pos", encodePos(c.name.pos)),
 								fld("type", vnullOr(encodeCtype, c.type)),
 								fld("expr", loop(c.expr)),
 								fld("pos", encodePos(c.pos))
 							])))
-						]
+						)
 					};
 				case EReturn(eo):
-					{tag: 18, pl: [vnullOr(loop, eo)]};
+					{tag: 18, pl: vector(vnullOr(loop, eo))};
 				case EBreak:
-					{tag: 19, pl: []};
+					{tag: 19, pl: vector()};
 				case EContinue:
-					{tag: 20, pl: []};
+					{tag: 20, pl: vector()};
 				case EUntyped(e):
-					{tag: 21, pl: [loop(e)]};
+					{tag: 21, pl: vector(loop(e))};
 				case EThrow(e):
-					{tag: 22, pl: [loop(e)]};
+					{tag: 22, pl: vector(loop(e))};
 				case ECast(e, t):
-					{tag: 23, pl: [loop(e), vnullOr(encodeCtype, t)]};
+					{tag: 23, pl: vector(loop(e), vnullOr(encodeCtype, t))};
 				case EDisplay(e, dk):
-					{tag: 24, pl: [loop(e), encodeDisplayKind(dk)]};
+					{tag: 24, pl: vector(loop(e), encodeDisplayKind(dk))};
 				case ETernary(econd, e1, e2):
-					{tag: 25, pl: [loop(econd), loop(e1), loop(e2)]};
+					{tag: 25, pl: vector(loop(econd), loop(e1), loop(e2))};
 				case ECheckType(e, t):
-					{tag: 26, pl: [loop(e), encodeCtype(t)]};
+					{tag: 26, pl: vector(loop(e), encodeCtype(t))};
 				case EMeta(m, e):
-					{tag: 27, pl: [encodeMetaEntry(m), loop(e)]};
+					{tag: 27, pl: vector(encodeMetaEntry(m), loop(e))};
 				case EIs(e, t):
-					{tag: 28, pl: [loop(e), encodeCtype(t)]};
+					{tag: 28, pl: vector(loop(e), encodeCtype(t))};
 			}
 			return encodeObj([fld("pos", encodePos(p)), fld("expr", encodeEnum(IExpr, r.tag, r.pl)),]);
 		}
@@ -870,9 +877,9 @@ class MacroApiImpl {
 
 	public static function encodeFunctionKind(kind:FunctionKind):Value {
 		return switch kind {
-			case FKAnonymous: encodeEnum(IFunctionKind, 0, []);
-			case FKNamed(name, inl): encodeEnum(IFunctionKind, 1, [encodePlacedName(name), vbool(inl)]);
-			case FKArrow: encodeEnum(IFunctionKind, 2, []);
+			case FKAnonymous: encodeEnum(IFunctionKind, 0, vector());
+			case FKNamed(name, inl): encodeEnum(IFunctionKind, 1, vector(encodePlacedName(name), vbool(inl)));
+			case FKArrow: encodeEnum(IFunctionKind, 2, vector());
 		}
 	}
 
@@ -977,8 +984,8 @@ class MacroApiImpl {
 	}
 
 	public static function decodeImport(t:Value):Import {
-		var path:Array<PlacedName> = decodeArray(field(t,
-			"path")).map(o -> ({name: decodeString(field(o, "name")), pos: decodePos(field(o, "pos"))} : PlacedName));
+		var path:Vector<PlacedName> = mapDecodedArray(field(t,
+			"path"), o -> ({name: decodeString(field(o, "name")), pos: decodePos(field(o, "pos"))} : PlacedName));
 		return {path: path, mode: decodeImportMode(field(t, "mode"))};
 	}
 
@@ -996,6 +1003,25 @@ class MacroApiImpl {
 
 	static function decodeOptArray<A>(f:Value->A, v:Value):Array<A> return isNull(v) ? [] : decodeArray(v).map(f);
 
+	// port: `List.map f (decode_array v)` for the AST lists, which are Vectors here:
+	// allocated at the array's length and filled in order, with no list in between
+	static inline function mapDecodedArray<A>(v:Value, f:Value->A):Vector<A> {
+		// port: native values (MacroNativeValues): the macro code's Array
+		if (nativeValues) {
+			var a:Array<Value> = cast MacroNativeValues.decodeArray(v);
+			var r = new Vector<A>(a.length);
+			for (i in 0...a.length) r[i] = f(a[i]);
+			return r;
+		}
+		var va = macros.eval.EvalDecode.decodeVarray(v);
+		var r = new Vector<A>(va.alength);
+		for (i in 0...va.alength) r[i] = f(va.avalues[i]);
+		return r;
+	}
+
+	// port: `decode_opt_array` for the AST lists
+	static inline function decodeOptVector<A>(f:Value->A, v:Value):Vector<A> return isNull(v) ? vector() : mapDecodedArray(v, f);
+
 	public static function decodeSubErrors(sub:Value):Array<core.Error.MacroError> {
 		function decodeSub(o:Value):core.Error.MacroError {
 			var msg = decodeString(field(o, "msg"));
@@ -1010,7 +1036,7 @@ class MacroApiImpl {
 	public static function decodeAstPath(t:Value):PlacedTypePath {
 		var pack = decodeArray(field(t, "pack")).map(decodeString);
 		var name = decodeString(field(t, "name"));
-		var params = decodeOptArray(decodeTparam, field(t, "params"));
+		var params = decodeOptVector(decodeTparam, field(t, "params"));
 		var sub = opt(decodeString, field(t, "sub"));
 		var pFull = field(t, "pos");
 		var pFull = if (isNull(pFull)) Globals.nullPos else decodePos(pFull);
@@ -1027,7 +1053,7 @@ class MacroApiImpl {
 		}
 	}
 
-	public static function decodeTparams(v:Value):Array<TypeParam> return decodeOptArray(decodeTparamDecl, v);
+	public static function decodeTparams(v:Value):Vector<TypeParam> return decodeOptVector(decodeTparamDecl, v);
 
 	public static function decodeTparamDecl(v:Value):TypeParam {
 		var vconstraints = field(v, "constraints");
@@ -1036,7 +1062,7 @@ class MacroApiImpl {
 		var tpConstraints:Null<TypeHint> = if (isNull(vconstraints)) null else switch decodeArray(vconstraints) {
 			case []: null;
 			case [t]: decodeCtype(t);
-			case tl: {type: CTIntersection(tl.map(decodeCtype)), pos: Globals.nullPos};
+			case tl: {type: CTIntersection(tl.mapToVector(decodeCtype)), pos: Globals.nullPos};
 		}
 		var tpDefault = opt(decodeCtype, vdefault);
 		var tpParams = decodeTparams(field(v, "params"));
@@ -1052,7 +1078,7 @@ class MacroApiImpl {
 
 	public static function decodeFun(v:Value):Func {
 		var fParams = decodeTparams(field(v, "params"));
-		var fArgs = decodeArray(field(v, "args")).map(o -> ({
+		var fArgs = mapDecodedArray(field(v, "args"), o -> ({
 			name: decodePlacedName(field(o, "name_pos"), field(o, "name")),
 			optional: decodeOptBool(field(o, "opt")),
 			meta: decodeMetaContent(field(o, "meta")),
@@ -1092,7 +1118,7 @@ class MacroApiImpl {
 	public static function decodeMetaEntry(v:Value):MetadataEntry {
 		return {
 			meta: Meta.fromString(decodeString(field(v, "name"))),
-			exprs: decodeOptArray(decodeExpr, field(v, "params")),
+			exprs: decodeOptVector(decodeExpr, field(v, "params")),
 			pos: decodePos(field(v, "pos"))
 		};
 	}
@@ -1134,19 +1160,19 @@ class MacroApiImpl {
 			case {index: 0, args: [p]}:
 				CTPath(decodeAstPath(p));
 			case {index: 1, args: [a, r]}:
-				CTFunction(decodeArray(a).map(decodeCtype), decodeCtype(r));
+				CTFunction(mapDecodedArray(a, decodeCtype), decodeCtype(r));
 			case {index: 2, args: [fl]}:
-				CTAnonymous(decodeArray(fl).map(decodeField));
+				CTAnonymous(mapDecodedArray(fl, decodeField));
 			case {index: 3, args: [t]}:
 				CTParent(decodeCtype(t));
 			case {index: 4, args: [tl, fl]}:
-				CTExtend(decodeArray(tl).map(decodeAstPath), decodeArray(fl).map(decodeField));
+				CTExtend(mapDecodedArray(tl, decodeAstPath), mapDecodedArray(fl, decodeField));
 			case {index: 5, args: [t]}:
 				CTOptional(decodeCtype(t));
 			case {index: 6, args: [n, t]}:
 				CTNamed({name: decodeString(n), pos: p}, decodeCtype(t));
 			case {index: 7, args: [tl]}:
-				CTIntersection(decodeArray(tl).map(decodeCtype));
+				CTIntersection(mapDecodedArray(tl, decodeCtype));
 			case _:
 				throw InvalidExpr.raise();
 		}
@@ -1204,7 +1230,7 @@ class MacroApiImpl {
 			case {index: 4, args: [e]}:
 				EParenthesis(loop(e));
 			case {index: 5, args: [a]}:
-				EObjectDecl(decodeArray(a).map(o -> {
+				EObjectDecl(mapDecodedArray(a, o -> {
 					var pn = decodePlacedName(field(o, "name_pos"), field(o, "field"));
 					var vquotes = field(o, "quotes");
 					var quotes = if (isNull(vquotes)) NoQuotes else switch decodeEnum(vquotes) {
@@ -1215,15 +1241,15 @@ class MacroApiImpl {
 						({key: {name: pn.name, pos: pn.pos, quote: quotes}, expr: loop(field(o, "expr"))} : ObjectField);
 				}));
 			case {index: 6, args: [a]}:
-				EArrayDecl(decodeArray(a).map(loop));
+				EArrayDecl(mapDecodedArray(a, loop));
 			case {index: 7, args: [e, el]}:
-				ECall(loop(e), decodeArray(el).map(loop));
+				ECall(loop(e), mapDecodedArray(el, loop));
 			case {index: 8, args: [t, el]}:
-				ENew(decodeAstPath(t), decodeArray(el).map(loop));
+				ENew(decodeAstPath(t), mapDecodedArray(el, loop));
 			case {index: 9, args: [op, f, e]}:
 				EUnop(decodeUnop(op), if (decodeBool(f)) Postfix else Prefix, loop(e));
 			case {index: 10, args: [vl]}:
-				EVars(decodeArray(vl).map(v -> {
+				EVars(mapDecodedArray(vl, v -> {
 					var vfinal = field(v, "isFinal");
 					var isFinal = if (isNull(vfinal)) false else decodeBool(vfinal);
 					var vstatic = field(v, "isStatic");
@@ -1240,7 +1266,7 @@ class MacroApiImpl {
 			case {index: 11, args: [kind, f]}:
 				EFunction(decodeFunctionKind(kind), decodeFun(f));
 			case {index: 12, args: [el]}:
-				EBlock(decodeArray(el).map(loop));
+				EBlock(mapDecodedArray(el, loop));
 			case {index: 13, args: [e1, e2]}:
 				EFor(loop(e1), loop(e2));
 			case {index: 14, args: [e1, e2, e3]}:
@@ -1248,8 +1274,8 @@ class MacroApiImpl {
 			case {index: 15, args: [e1, e2, flag]}:
 				EWhile(loop(e1), loop(e2), if (decodeBool(flag)) NormalWhile else DoWhile);
 			case {index: 16, args: [e, cases, eo]}:
-				var cases = decodeArray(cases).map(c -> ({
-					values: decodeArray(field(c, "values")).map(loop),
+				var cases = mapDecodedArray(cases, c -> ({
+					values: mapDecodedArray(field(c, "values"), loop),
 					guard: opt(loop, field(c, "guard")),
 					expr: opt(loop, field(c, "expr")),
 					pos: maybeDecodePos(field(c, "pos"))
@@ -1257,7 +1283,7 @@ class MacroApiImpl {
 				ESwitch(loop(e), cases,
 					opt(v -> ({expr: if (isNull(field(v, "expr"))) null else decodeExpr(v), pos: p} : SwitchDefault), eo));
 			case {index: 17, args: [e, catches]}:
-				var catches = decodeArray(catches).map(c -> ({
+				var catches = mapDecodedArray(catches, c -> ({
 					name: decodePlacedName(field(c, "name_pos"), field(c, "name")),
 					type: opt(decodeCtype, field(c, "type")),
 					expr: loop(field(c, "expr")),
@@ -1300,7 +1326,7 @@ class MacroApiImpl {
 		return encodeArray(l);
 	}
 
-	static function encodeAndMapArray<A>(convert:A->Value, l:Array<A>):Value return encodeArray(l.map(convert));
+	static function encodeAndMapArray<A>(convert:A->Value, l:Array<A>):Value return encodeArrayV(l.mapToVector(convert));
 
 	static function vopt<A>(f:A->Value, v:Null<A>):Value return v == null ? vnull : f(v);
 
@@ -1309,7 +1335,7 @@ class MacroApiImpl {
 		return encodeObj([
 			fld("get", vfun0(() -> encodeMetaContent(meta))),
 			fld("add", vfun3((k, vl, p) -> {
-				var el = decodeArray(vl).map(decodeExpr);
+				var el = mapDecodedArray(vl, decodeExpr);
 				var entry:MetadataEntry = {meta: Meta.fromString(decodeString(k)), exprs: el, pos: decodePos(p)};
 				meta = [entry].concat(meta);
 				set(meta);
@@ -1358,7 +1384,7 @@ class MacroApiImpl {
 		var vmodule = encodeString(MacroApi.sTypePath(i.mtModule.mPath));
 		var pos = encodePos(i.mtPos);
 		var name = encodeString(i.mtPath.name);
-		var pack = encodeArray(i.mtPath.pack.map(encodeString));
+		var pack = encodeArrayV(i.mtPath.pack.mapToVector(encodeString));
 		var tdecl = encodeTdecl(t);
 		return encodeObj([
 			fld("__t", tdecl),
@@ -1374,7 +1400,7 @@ class MacroApiImpl {
 	}
 
 	public static function encodeTypeParams(tl:TypeParams):Value {
-		return encodeArray(tl.map(tp -> {
+		return encodeArrayV(tl.map(tp -> {
 			var defaultType = tp.ttpDefault == null ? vnull : encodeType(tp.ttpDefault);
 			var t = encodeType(tp.ttpType);
 			var name = encodeString(tp.ttpName);
@@ -1383,7 +1409,7 @@ class MacroApiImpl {
 	}
 
 	public static function encodeTenum(e:TEnum):Value {
-		var names = encodeArray(e.eNames.map(encodeString));
+		var names = encodeArrayV(e.eNames.mapToVector(encodeString));
 		var constructs = encodeStringMap(encodeEfield, e.eConstrs);
 		var exclude = vfun0(() -> {
 			addEnumFlag(e, EnExcluded);
@@ -1401,7 +1427,7 @@ class MacroApiImpl {
 	public static function encodeTabstract(a:TAbstract):Value {
 		var resolveWrite = a.aWrite == null ? vnull : encodeCfref(a.aWrite);
 		var resolve = a.aRead == null ? vnull : encodeCfref(a.aRead);
-		var array = encodeArray(a.aArray.map(encodeCfield));
+		var array = encodeArrayV(a.aArray.mapToVector(encodeCfield));
 		inline function fromTo(l:Array<T>, lf:Array<{type:T, field:TClassField}>):Value {
 			var withField = lf.map(x -> {
 				var field = encodeCfield(x.field);
@@ -1416,7 +1442,7 @@ class MacroApiImpl {
 		}
 		var to = fromTo(a.aTo, a.aToField);
 		var from = fromTo(a.aFrom, a.aFromField);
-		var unops = encodeArray(a.aUnops.map(u -> {
+		var unops = encodeArrayV(a.aUnops.mapToVector(u -> {
 			var field = encodeCfield(u.field);
 			var postFix = vbool(switch u.flag {
 				case Postfix: true;
@@ -1425,7 +1451,7 @@ class MacroApiImpl {
 			var op = encodeUnop(u.op);
 			encodeObj([fld("op", op), fld("postFix", postFix), fld("field", field)]);
 		}));
-		var binops = encodeArray(a.aOps.map(b -> {
+		var binops = encodeArrayV(a.aOps.mapToVector(b -> {
 			var field = encodeCfield(b.field);
 			var op = encodeBinop(b.op);
 			encodeObj([fld("op", op), fld("field", field)]);
@@ -1507,46 +1533,46 @@ class MacroApiImpl {
 			case Var(v):
 				var write = encodeVarAccess(v.vWrite);
 				var read = encodeVarAccess(v.vRead);
-				encodeEnum(IFieldKind, 0, [read, write]);
-			case Method(m): encodeEnum(IFieldKind, 1, [encodeMethodKind(m)]);
+				encodeEnum(IFieldKind, 0, vector(read, write));
+			case Method(m): encodeEnum(IFieldKind, 1, vector(encodeMethodKind(m)));
 		}
 	}
 
 	public static function encodeVarAccess(a:VarAccess):Value {
 		return switch a {
-			case AccNormal: encodeEnum(IVarAccess, 0, []);
-			case AccNo: encodeEnum(IVarAccess, 1, []);
-			case AccNever: encodeEnum(IVarAccess, 2, []);
-			case AccCall: encodeEnum(IVarAccess, 4, []);
-			case AccPrivateCall: encodeEnum(IVarAccess, 5, []);
-			case AccInline: encodeEnum(IVarAccess, 6, []);
-			case AccRequire(s, msg): encodeEnum(IVarAccess, 7, [encodeString(s), vnullOr(encodeString, msg)]);
-			case AccCtor: encodeEnum(IVarAccess, 8, []);
+			case AccNormal: encodeEnum(IVarAccess, 0, vector());
+			case AccNo: encodeEnum(IVarAccess, 1, vector());
+			case AccNever: encodeEnum(IVarAccess, 2, vector());
+			case AccCall: encodeEnum(IVarAccess, 4, vector());
+			case AccPrivateCall: encodeEnum(IVarAccess, 5, vector());
+			case AccInline: encodeEnum(IVarAccess, 6, vector());
+			case AccRequire(s, msg): encodeEnum(IVarAccess, 7, vector(encodeString(s), vnullOr(encodeString, msg)));
+			case AccCtor: encodeEnum(IVarAccess, 8, vector());
 		}
 	}
 
 	public static function encodeMethodKind(m:MethodKind):Value {
 		return switch m {
-			case MethNormal: encodeEnum(IMethodKind, 0, []);
-			case MethInline: encodeEnum(IMethodKind, 1, []);
-			case MethDynamic: encodeEnum(IMethodKind, 2, []);
-			case MethMacro: encodeEnum(IMethodKind, 3, []);
+			case MethNormal: encodeEnum(IMethodKind, 0, vector());
+			case MethInline: encodeEnum(IMethodKind, 1, vector());
+			case MethDynamic: encodeEnum(IMethodKind, 2, vector());
+			case MethMacro: encodeEnum(IMethodKind, 3, vector());
 		}
 	}
 
 	public static function encodeClassKind(k:TClassKind):Value {
 		return switch k {
-			case KNormal: encodeEnum(IClassKind, 0, []);
-			case KTypeParameter(ttp): encodeEnum(IClassKind, 1, [encodeTparams(getConstraints(ttp))]); // TTPTODO
-			case KModuleFields(m): encodeEnum(IClassKind, 2, [encodeString(MacroApi.sTypePath(m.mPath))]);
-			case KExpr(e): encodeEnum(IClassKind, 3, [encodeExpr(e)]);
-			case KGeneric: encodeEnum(IClassKind, 4, []);
+			case KNormal: encodeEnum(IClassKind, 0, vector());
+			case KTypeParameter(ttp): encodeEnum(IClassKind, 1, vector(encodeTparams(getConstraints(ttp)))); // TTPTODO
+			case KModuleFields(m): encodeEnum(IClassKind, 2, vector(encodeString(MacroApi.sTypePath(m.mPath))));
+			case KExpr(e): encodeEnum(IClassKind, 3, vector(encodeExpr(e)));
+			case KGeneric: encodeEnum(IClassKind, 4, vector());
 			case KGenericInstance(cl, params):
 				var vparams = encodeTparams(params);
-				encodeEnum(IClassKind, 5, [encodeClref(cl), vparams]);
-			case KMacroType: encodeEnum(IClassKind, 6, []);
-			case KAbstractImpl(a): encodeEnum(IClassKind, 7, [encodeAbref(a)]);
-			case KGenericBuild(cfl): encodeEnum(IClassKind, 8, []);
+				encodeEnum(IClassKind, 5, vector(encodeClref(cl), vparams));
+			case KMacroType: encodeEnum(IClassKind, 6, vector());
+			case KAbstractImpl(a): encodeEnum(IClassKind, 7, vector(encodeAbref(a)));
+			case KGenericBuild(cfl): encodeEnum(IClassKind, 8, vector());
 		}
 	}
 
@@ -1565,7 +1591,7 @@ class MacroApiImpl {
 		var constructor = c.clConstructor == null ? vnull : encodeCfref(c.clConstructor);
 		var statics = encodeRef(c.clOrderedStatics, l -> encodeAndMapArray(encodeCfield, l), () -> "class fields");
 		var fields = encodeRef(c.clOrderedFields, l -> encodeAndMapArray(encodeCfield, l), () -> "class fields");
-		var interfaces = encodeArray(c.clImplements.map(i -> encodeClassAndParams(i.cls, i.params)));
+		var interfaces = encodeArrayV(c.clImplements.mapToVector(i -> encodeClassAndParams(i.cls, i.params)));
 		var superClass = c.clSuper == null ? vnull : encodeClassAndParams(c.clSuper.cls, c.clSuper.params);
 		var isAbstract = vbool(hasClassFlag(c, CAbstract));
 		var isFinal = vbool(hasClassFlag(c, CFinal));
@@ -1611,16 +1637,16 @@ class MacroApiImpl {
 
 	public static function encodeAnonStatus(s:AnonStatus):Value {
 		return switch s {
-			case Closed: encodeEnum(IAnonStatus, 0, []);
-			case Const: encodeEnum(IAnonStatus, 2, []);
-			case Extend(tl): encodeEnum(IAnonStatus, 3, [encodeRef(tl, tl -> encodeArray(tl.map(encodeType)), () -> "<extended types>")]);
-			case ClassStatics(cl): encodeEnum(IAnonStatus, 4, [encodeClref(cl)]);
-			case EnumStatics(en): encodeEnum(IAnonStatus, 5, [encodeEnref(en)]);
-			case AbstractStatics(ab): encodeEnum(IAnonStatus, 6, [encodeAbref(ab)]);
+			case Closed: encodeEnum(IAnonStatus, 0, vector());
+			case Const: encodeEnum(IAnonStatus, 2, vector());
+			case Extend(tl): encodeEnum(IAnonStatus, 3, vector(encodeRef(tl, tl -> encodeArrayV(tl.map(encodeType)), () -> "<extended types>")));
+			case ClassStatics(cl): encodeEnum(IAnonStatus, 4, vector(encodeClref(cl)));
+			case EnumStatics(en): encodeEnum(IAnonStatus, 5, vector(encodeEnref(en)));
+			case AbstractStatics(ab): encodeEnum(IAnonStatus, 6, vector(encodeAbref(ab)));
 		}
 	}
 
-	public static function encodeTparams(pl:TParams):Value return encodeArray(pl.map(encodeType));
+	public static function encodeTparams(pl:TParams):Value return encodeArrayV(pl.map(encodeType));
 
 	public static function encodeClref(c:TClass):Value return encodeRef(c, encodeTclass, () -> MacroApi.sTypePath(c.clPath));
 
@@ -1631,28 +1657,28 @@ class MacroApiImpl {
 	public static function encodeAbref(ab:TAbstract):Value return encodeRef(ab, encodeTabstract, () -> MacroApi.sTypePath(ab.aPath));
 
 	public static function encodeType(t:T):Value {
-		function loop(t:T):{tag:Int, pl:Array<Value>} {
+		function loop(t:T):{tag:Int, pl:Vector<Value>} {
 			return switch t {
 				case TMono(r):
 					if (r.tmType == null) {
 						{
 							tag: 0,
-							pl: [
+							pl: vector(
 								encodeRef(r, (r:TMono) -> r.tmType == null ? vnull : encodeType(r.tmType), () -> "<mono>")
-							]
+							)
 						};
 					} else {
 						loop(r.tmType);
 					}
 				case TEnum(e, pl):
 					var params = encodeTparams(pl);
-					{tag: 1, pl: [encodeRef(e, encodeTenum, () -> MacroApi.sTypePath(e.ePath)), params]};
+					{tag: 1, pl: vector(encodeRef(e, encodeTenum, () -> MacroApi.sTypePath(e.ePath)), params)};
 				case TInst(c, pl):
 					var params = encodeTparams(pl);
-					{tag: 2, pl: [encodeClref(c), params]};
+					{tag: 2, pl: vector(encodeClref(c), params)};
 				case TType(t, pl):
 					var params = encodeTparams(pl);
-					{tag: 3, pl: [encodeRef(t, encodeTtype, () -> MacroApi.sTypePath(t.tPath)), params]};
+					{tag: 3, pl: vector(encodeRef(t, encodeTtype, () -> MacroApi.sTypePath(t.tPath)), params)};
 				case TFun(sig):
 					var pl = sig.args.map(a -> {
 						var t = encodeType(a.type);
@@ -1661,18 +1687,18 @@ class MacroApiImpl {
 						encodeObj([fld("name", n), fld("opt", o), fld("t", t)]);
 					});
 					var ret = encodeType(sig.ret);
-					{tag: 4, pl: [encodeArray(pl), ret]};
+					{tag: 4, pl: vector(encodeArrayV(pl), ret)};
 				case TAnon(a):
-					{tag: 5, pl: [encodeRef(a, encodeTanon, () -> "<anonymous>")]};
+					{tag: 5, pl: vector(encodeRef(a, encodeTanon, () -> "<anonymous>"))};
 				case TDynamic(null):
-					{tag: 6, pl: [vnull]};
+					{tag: 6, pl: vector(vnull)};
 				case TDynamic(tsub):
-					{tag: 6, pl: [encodeType(tsub)]};
+					{tag: 6, pl: vector(encodeType(tsub))};
 				case TLazy(f):
 					loop(lazyType(f));
 				case TAbstract(a, pl):
 					var params = encodeTparams(pl);
-					{tag: 8, pl: [encodeAbref(a), params]};
+					{tag: 8, pl: vector(encodeAbref(a), params)};
 			}
 		}
 		var r = loop(t);
@@ -1690,7 +1716,7 @@ class MacroApiImpl {
 						case LAvailable(t):
 							encodeType(t);
 						case _:
-							encodeEnum(IType, 7, [
+							encodeEnum(IType, 7, vector(
 								encodeLazytype(f, () -> switch f.value {
 									case LAvailable(t):
 										encodeType(t);
@@ -1700,7 +1726,7 @@ class MacroApiImpl {
 										// our type in on the processing stack, error instead of returning most likely an unbound mono
 										errorMessage("Accessing a type while it's being typed");
 								})
-							]);
+							));
 					}
 				case _:
 					encodeType(outer);
@@ -1712,11 +1738,11 @@ class MacroApiImpl {
 	public static function decodeType(t:Value):T {
 		return switch decodeEnum(t) {
 			case {index: 0, args: [r]}: T.TMono(decodeRef(r));
-			case {index: 1, args: [e, pl]}: T.TEnum(decodeRef(e), decodeArray(pl).map(decodeType));
-			case {index: 2, args: [c, pl]}: T.TInst(decodeRef(c), decodeArray(pl).map(decodeType));
-			case {index: 3, args: [t, pl]}: T.TType(decodeRef(t), decodeArray(pl).map(decodeType));
+			case {index: 1, args: [e, pl]}: T.TEnum(decodeRef(e), mapDecodedArray(pl, decodeType));
+			case {index: 2, args: [c, pl]}: T.TInst(decodeRef(c), mapDecodedArray(pl, decodeType));
+			case {index: 3, args: [t, pl]}: T.TType(decodeRef(t), mapDecodedArray(pl, decodeType));
 			case {index: 4, args: [pl, r]}:
-				var args = decodeArray(pl).map(p -> {
+				var args = mapDecodedArray(pl, p -> {
 					name: decodeString(field(p, "name")),
 					optional: decodeBool(field(p, "opt")),
 					type: decodeType(field(p, "t"))
@@ -1725,7 +1751,7 @@ class MacroApiImpl {
 			case {index: 5, args: [a]}: T.TAnon(decodeRef(a));
 			case {index: 6, args: [t]}: if (isNull(t)) tDynamic else T.TDynamic(decodeType(t));
 			case {index: 7, args: [f]}: T.TLazy(decodeLazytype(f));
-			case {index: 8, args: [a, pl]}: T.TAbstract(decodeRef(a), decodeArray(pl).map(decodeType));
+			case {index: 8, args: [a, pl]}: T.TAbstract(decodeRef(a), mapDecodedArray(pl, decodeType));
 			case _: throw InvalidExpr.raise();
 		}
 	}
@@ -1737,13 +1763,13 @@ class MacroApiImpl {
 
 	public static function encodeTconst(c:TConstant):Value {
 		return switch c {
-			case TInt(i): encodeEnum(ITConstant, 0, [vint32(i)]);
-			case TFloat(f): encodeEnum(ITConstant, 1, [encodeString(f)]);
-			case TString(s): encodeEnum(ITConstant, 2, [encodeString(s)]);
-			case TBool(b): encodeEnum(ITConstant, 3, [vbool(b)]);
-			case TNull: encodeEnum(ITConstant, 4, []);
-			case TThis: encodeEnum(ITConstant, 5, []);
-			case TSuper: encodeEnum(ITConstant, 6, []);
+			case TInt(i): encodeEnum(ITConstant, 0, vector(vint32(i)));
+			case TFloat(f): encodeEnum(ITConstant, 1, vector(encodeString(f)));
+			case TString(s): encodeEnum(ITConstant, 2, vector(encodeString(s)));
+			case TBool(b): encodeEnum(ITConstant, 3, vector(vbool(b)));
+			case TNull: encodeEnum(ITConstant, 4, vector());
+			case TThis: encodeEnum(ITConstant, 5, vector());
+			case TSuper: encodeEnum(ITConstant, 6, vector());
 		}
 	}
 
@@ -1775,17 +1801,17 @@ class MacroApiImpl {
 
 	public static function encodeModuleType(mt:ModuleType):Value {
 		return switch mt {
-			case TClassDecl(c): encodeEnum(IModuleType, 0, [encodeClref(c)]);
-			case TEnumDecl(e): encodeEnum(IModuleType, 1, [encodeEnref(e)]);
-			case TTypeDecl(t): encodeEnum(IModuleType, 2, [encodeRef(t, encodeTtype, () -> MacroApi.sTypePath(t.tPath))]);
-			case TAbstractDecl(a): encodeEnum(IModuleType, 3, [encodeAbref(a)]);
+			case TClassDecl(c): encodeEnum(IModuleType, 0, vector(encodeClref(c)));
+			case TEnumDecl(e): encodeEnum(IModuleType, 1, vector(encodeEnref(e)));
+			case TTypeDecl(t): encodeEnum(IModuleType, 2, vector(encodeRef(t, encodeTtype, () -> MacroApi.sTypePath(t.tPath))));
+			case TAbstractDecl(a): encodeEnum(IModuleType, 3, vector(encodeAbref(a)));
 		}
 	}
 
 	public static function encodeTfunc(func:TFunc):Value {
 		var expr = encodeTexpr(func.tfExpr);
 		var t = encodeType(func.tfType);
-		var args = encodeArray(func.tfArgs.map(a -> {
+		var args = encodeArrayV(func.tfArgs.map(a -> {
 			var value = a.defaultValue == null ? vnull : encodeTexpr(a.defaultValue);
 			var v = encodeTvar(a.variable);
 			encodeObj([fld("v", v), fld("value", value)]);
@@ -1802,122 +1828,122 @@ class MacroApiImpl {
 			case FInstance(c, tl, cf):
 				var vcf = encodeCfref(cf);
 				var vtl = encodeTparams(tl);
-				encodeEnum(IFieldAccess, 0, [encodeClref(c), vtl, vcf]);
+				encodeEnum(IFieldAccess, 0, vector(encodeClref(c), vtl, vcf));
 			case FStatic(c, cf):
 				var vcf = encodeCfref(cf);
-				encodeEnum(IFieldAccess, 1, [encodeClref(c), vcf]);
+				encodeEnum(IFieldAccess, 1, vector(encodeClref(c), vcf));
 			case FAnon(cf):
-				encodeEnum(IFieldAccess, 2, [encodeCfref(cf)]);
+				encodeEnum(IFieldAccess, 2, vector(encodeCfref(cf)));
 			case FDynamic(s):
-				encodeEnum(IFieldAccess, 3, [encodeString(s)]);
+				encodeEnum(IFieldAccess, 3, vector(encodeString(s)));
 			case FClosure(co, cf):
 				var vcf = encodeCfref(cf);
-				encodeEnum(IFieldAccess, 4, [co == null ? vnull : encodeInstance(co.cls, co.params), vcf]);
+				encodeEnum(IFieldAccess, 4, vector(co == null ? vnull : encodeInstance(co.cls, co.params), vcf));
 			case FEnum(en, ef):
 				var vef = encodeEfield(ef);
-				encodeEnum(IFieldAccess, 5, [encodeEnref(en), vef]);
+				encodeEnum(IFieldAccess, 5, vector(encodeEnref(en), vef));
 		}
 	}
 
 	public static function encodeTexpr(e:TExpr):Value {
 		function loop(e:TExpr):Value {
 			// port: the elements of each upstream list literal are evaluated right to left
-			var r:{tag:Int, pl:Array<Value>} = switch e.eexpr {
+			var r:{tag:Int, pl:Vector<Value>} = switch e.eexpr {
 				case TConst(c):
-					{tag: 0, pl: [encodeTconst(c)]};
+					{tag: 0, pl: vector(encodeTconst(c))};
 				case TLocal(v):
-					{tag: 1, pl: [encodeTvar(v)]};
+					{tag: 1, pl: vector(encodeTvar(v))};
 				case TArray(e1, e2):
 					var v2 = loop(e2);
-					{tag: 2, pl: [loop(e1), v2]};
+					{tag: 2, pl: vector(loop(e1), v2)};
 				case TBinop(op, e1, e2):
 					var v2 = loop(e2);
 					var v1 = loop(e1);
-					{tag: 3, pl: [encodeBinop(op), v1, v2]};
+					{tag: 3, pl: vector(encodeBinop(op), v1, v2)};
 				case TField(e1, fa):
 					var vfa = encodeFieldAccess(fa);
-					{tag: 4, pl: [loop(e1), vfa]};
+					{tag: 4, pl: vector(loop(e1), vfa)};
 				case TTypeExpr(mt):
-					{tag: 5, pl: [encodeModuleType(mt)]};
+					{tag: 5, pl: vector(encodeModuleType(mt))};
 				case TParenthesis(e1):
-					{tag: 6, pl: [loop(e1)]};
+					{tag: 6, pl: vector(loop(e1))};
 				case TObjectDecl(fl):
 					{
 						tag: 7,
-						pl: [
-							encodeArray(fl.map(f -> {
+						pl: vector(
+							encodeArrayV(fl.map(f -> {
 								var expr = loop(f.expr);
 								encodeObj([fld("name", encodeString(f.key.name)), fld("expr", expr),]);
 							}))
-						]
+						)
 					};
 				case TArrayDecl(el):
-					{tag: 8, pl: [encodeTexprList(el)]};
+					{tag: 8, pl: vector(encodeTexprList(el))};
 				case TCall(e1, el):
 					var vel = encodeTexprList(el);
-					{tag: 9, pl: [loop(e1), vel]};
+					{tag: 9, pl: vector(loop(e1), vel)};
 				case TNew(c, pl, el):
 					var vel = encodeTexprList(el);
 					var vpl = encodeTparams(pl);
-					{tag: 10, pl: [encodeClref(c), vpl, vel]};
+					{tag: 10, pl: vector(encodeClref(c), vpl, vel)};
 				case TUnop(op, flag, e1):
 					var v1 = loop(e1);
-					{tag: 11, pl: [encodeUnop(op), vbool(flag.match(Postfix)), v1]};
+					{tag: 11, pl: vector(encodeUnop(op), vbool(flag.match(Postfix)), v1)};
 				case TFunction(func):
-					{tag: 12, pl: [encodeTfunc(func)]};
+					{tag: 12, pl: vector(encodeTfunc(func))};
 				case TVar(v, eo):
 					var veo = vopt(encodeTexpr, eo);
-					{tag: 13, pl: [encodeTvar(v), veo]};
+					{tag: 13, pl: vector(encodeTvar(v), veo)};
 				case TBlock(el):
-					{tag: 14, pl: [encodeTexprList(el)]};
+					{tag: 14, pl: vector(encodeTexprList(el))};
 				case TIf(eif, ethen, eelse):
 					var velse = vopt(encodeTexpr, eelse);
 					var vthen = loop(ethen);
-					{tag: 16, pl: [loop(eif), vthen, velse]};
+					{tag: 16, pl: vector(loop(eif), vthen, velse)};
 				case TWhile(econd, e1, flag):
 					var vflag = vbool(flag.match(NormalWhile));
 					var v1 = loop(e1);
-					{tag: 17, pl: [loop(econd), v1, vflag]};
+					{tag: 17, pl: vector(loop(econd), v1, vflag)};
 				case TSwitch(sw):
 					var switchSubject = if (sw.switchExhaustive) {
-						var meta:MetadataEntry = {meta: core.MetaList.StrictMeta.Exhaustive, exprs: [], pos: Globals.nullPos};
+						var meta:MetadataEntry = {meta: core.MetaList.StrictMeta.Exhaustive, exprs: vector(), pos: Globals.nullPos};
 						new TExpr(TMeta(meta, sw.switchSubject), sw.switchSubject.etype, sw.switchSubject.epos);
 					} else {
 						sw.switchSubject;
 					}
 					var vdefault = vopt(encodeTexpr, sw.switchDefault);
-					var vcases = encodeArray(sw.switchCases.map(c -> {
+					var vcases = encodeArrayV(sw.switchCases.map(c -> {
 						var expr = loop(c.caseExpr);
 						encodeObj([fld("values", encodeTexprList(c.casePatterns)), fld("expr", expr)]);
 					}));
-					{tag: 18, pl: [loop(switchSubject), vcases, vdefault]};
+					{tag: 18, pl: vector(loop(switchSubject), vcases, vdefault)};
 				case TTry(e1, catches):
-					var vcatches = encodeArray(catches.map(c -> {
+					var vcatches = encodeArrayV(catches.map(c -> {
 						var expr = loop(c.expr);
 						encodeObj([fld("v", encodeTvar(c.variable)), fld("expr", expr)]);
 					}));
-					{tag: 19, pl: [loop(e1), vcatches]};
+					{tag: 19, pl: vector(loop(e1), vcatches)};
 				case TReturn(e1):
-					{tag: 20, pl: [vopt(encodeTexpr, e1)]};
+					{tag: 20, pl: vector(vopt(encodeTexpr, e1))};
 				case TBreak:
-					{tag: 21, pl: []};
+					{tag: 21, pl: vector()};
 				case TContinue:
-					{tag: 22, pl: []};
+					{tag: 22, pl: vector()};
 				case TThrow(e1):
-					{tag: 23, pl: [loop(e1)]};
+					{tag: 23, pl: vector(loop(e1))};
 				case TCast(e1, mt):
 					var vmt = mt == null ? vnull : encodeModuleType(mt);
-					{tag: 24, pl: [loop(e1), vmt]};
+					{tag: 24, pl: vector(loop(e1), vmt)};
 				case TMeta(m, e1):
 					var v1 = loop(e1);
-					{tag: 25, pl: [encodeMetaEntry(m), v1]};
+					{tag: 25, pl: vector(encodeMetaEntry(m), v1)};
 				case TEnumParameter(e1, ef, i):
 					var vef = encodeEfield(ef);
-					{tag: 26, pl: [loop(e1), vef, vint(i)]};
+					{tag: 26, pl: vector(loop(e1), vef, vint(i))};
 				case TEnumIndex(e1):
-					{tag: 27, pl: [loop(e1)]};
+					{tag: 27, pl: vector(loop(e1))};
 				case TIdent(s):
-					{tag: 28, pl: [encodeString(s)]};
+					{tag: 28, pl: vector(encodeString(s))};
 			}
 			var t = encodeType(e.etype);
 			var expr = encodeEnum(ITypedExpr, r.tag, r.pl);
@@ -1926,7 +1952,7 @@ class MacroApiImpl {
 		return loop(e);
 	}
 
-	public static function encodeTexprList(el:Array<TExpr>):Value return encodeArray(el.map(encodeTexpr));
+	public static function encodeTexprList(el:Vector<TExpr>):Value return encodeArrayV(el.map(encodeTexpr));
 
 	// ---------------------------------------------------------------------- //
 	// TEXPR Decoding
@@ -1999,14 +2025,14 @@ class MacroApiImpl {
 		return switch decodeEnum(v) {
 			case {index: 0, args: [c, tl, cf]}:
 				var c:TClass = decodeRef(c);
-				FInstance(c, decodeArray(tl).map(decodeType), decodeRef(cf));
+				FInstance(c, mapDecodedArray(tl, decodeType), decodeRef(cf));
 			case {index: 1, args: [c, cf]}: FStatic(decodeRef(c), decodeRef(cf));
 			case {index: 2, args: [cf]}: FAnon(decodeRef(cf));
 			case {index: 3, args: [s]}: FDynamic(decodeString(s));
 			case {index: 4, args: [co, cf]}:
 				var co = if (isNull(co)) null else {
 					cls: (decodeRef(field(co, "c")) : TClass),
-					params: decodeArray(field(co, "params")).map(decodeType)
+					params: mapDecodedArray(field(co, "params"), decodeType)
 				};
 				FClosure(co, decodeRef(cf));
 			case {index: 5, args: [e, ef]}: FEnum(decodeRef(e), decodeEfield(ef));
@@ -2025,8 +2051,7 @@ class MacroApiImpl {
 	}
 
 	public static function decodeTfunc(v:Value):TFunc {
-		var tfArgs = decodeArray(field(v,
-			"args")).map(v -> {variable: decodeTvar(field(v, "v")), defaultValue: opt(decodeTexpr, field(v, "value"))});
+		var tfArgs = mapDecodedArray(field(v, "args"), v -> {variable: decodeTvar(field(v, "v")), defaultValue: opt(decodeTexpr, field(v, "value"))});
 		var tfType = decodeType(field(v, "t"));
 		var tfExpr = decodeTexpr(field(v, "expr"));
 		return {
@@ -2056,7 +2081,7 @@ class MacroApiImpl {
 			case {index: 4, args: [v1, fa]}: TField(loop(v1), decodeFieldAccess(fa));
 			case {index: 5, args: [mt]}: TTypeExpr(decodeModuleType(mt));
 			case {index: 6, args: [v1]}: TParenthesis(loop(v1));
-			case {index: 7, args: [v]}: TObjectDecl(decodeArray(v).map(v -> {
+			case {index: 7, args: [v]}: TObjectDecl(mapDecodedArray(v, v -> {
 					key: {
 						name: decodeString(field(v, "name")),
 						pos: p,
@@ -2064,13 +2089,13 @@ class MacroApiImpl {
 					},
 					expr: loop(field(v, "expr"))
 				}));
-			case {index: 8, args: [vl]}: TArrayDecl(decodeArray(vl).map(loop));
-			case {index: 9, args: [v1, vl]}: TCall(loop(v1), decodeArray(vl).map(loop));
-			case {index: 10, args: [c, tl, vl]}: TNew(decodeRef(c), decodeArray(tl).map(decodeType), decodeArray(vl).map(loop));
+			case {index: 8, args: [vl]}: TArrayDecl(mapDecodedArray(vl, loop));
+			case {index: 9, args: [v1, vl]}: TCall(loop(v1), mapDecodedArray(vl, loop));
+			case {index: 10, args: [c, tl, vl]}: TNew(decodeRef(c), mapDecodedArray(tl, decodeType), mapDecodedArray(vl, loop));
 			case {index: 11, args: [op, pf, v1]}: TUnop(decodeUnop(op), if (decodeBool(pf)) Postfix else Prefix, loop(v1));
 			case {index: 12, args: [f]}: TFunction(decodeTfunc(f));
 			case {index: 13, args: [v, eo]}: TExprDef.TVar(decodeTvar(v), opt(loop, eo));
-			case {index: 14, args: [vl]}: TBlock(decodeArray(vl).map(loop));
+			case {index: 14, args: [vl]}: TBlock(mapDecodedArray(vl, loop));
 			// 15 was TFor
 			case {index: 16, args: [vif, vthen, velse]}: TIf(loop(vif), loop(vthen), opt(loop, velse));
 			case {index: 17, args: [vcond, v1, b]}: TWhile(loop(vcond), loop(v1), if (decodeBool(b)) NormalWhile else DoWhile);
@@ -2086,15 +2111,15 @@ class MacroApiImpl {
 					return def != null || loop(e1);
 				}
 				var subject = loop(v1);
-				var cases = decodeArray(cl).map(v -> ({
-					casePatterns: decodeArray(field(v, "values")).map(loop),
+				var cases = mapDecodedArray(cl, v -> ({
+					casePatterns: mapDecodedArray(field(v, "values"), loop),
 					caseExpr: loop(field(v, "expr"))
 				} : TSwitchCase));
 				var def = opt(loop, vdef);
 				var sw = core.Texpr.mkSwitch(subject, cases, def, isExhaustive(subject, def));
 				TExprDef.TSwitch(sw);
 			case {index: 19, args: [v1, cl]}: TTry(loop(v1),
-					decodeArray(cl).map(v -> {variable: decodeTvar(field(v, "v")), expr: loop(field(v, "expr"))}));
+					mapDecodedArray(cl, v -> {variable: decodeTvar(field(v, "v")), expr: loop(field(v, "expr"))}));
 			case {index: 20, args: [vo]}: TReturn(opt(loop, vo));
 			case {index: 21, args: []}: TBreak;
 			case {index: 22, args: []}: TContinue;
@@ -2119,10 +2144,10 @@ class MacroApiImpl {
 		var meta = decodeMetaContent(field(v, "meta"));
 		var pos = decodePos(field(v, "pos"));
 		var isExtern = decodeOptBool(field(v, "isExtern"));
-		var fields = decodeArray(field(v, "fields")).map(decodeField);
+		var fields = mapDecodedArray(field(v, "fields"), decodeField);
 		var doc = decodeDoc(field(v, "doc"));
 		// port: `mk fl dl`: d_params is decoded when the definition is built
-		function params():Array<TypeParam> return decodeTparams(field(v, "params"));
+		function params():Vector<TypeParam> return decodeTparams(field(v, "params"));
 		var tdef:TypeDef = switch decodeEnum(field(v, "kind")) {
 			case {index: 0, args: []}:
 				function conv(f:ClassField):EnumConstructor {
@@ -2132,8 +2157,8 @@ class MacroApiImpl {
 							case t: {name: a.name.name, optional: a.optional, type: t};
 						}
 					}
-					var r:{args:Array<EnumConstructorArg>, params:Array<TypeParam>, t:Null<TypeHint>} = switch f.cffKind {
-						case FVar(t, null): {args: [], params: [], t: t};
+					var r:{args:Vector<EnumConstructorArg>, params:Vector<TypeParam>, t:Null<TypeHint>} = switch f.cffKind {
+						case FVar(t, null): {args: vector(), params: vector(), t: t};
 						case FFun(f): {args: f.fArgs.map(loop), params: f.fParams, t: f.fType};
 						case _: throw InvalidExpr.raise();
 					}
@@ -2154,7 +2179,7 @@ class MacroApiImpl {
 					doc: doc,
 					params: params(),
 					meta: meta,
-					flags: flags,
+					flags: Vector.fromArrayCopy(flags),
 					data: data
 				});
 			case {index: 1, args: []}:
@@ -2165,7 +2190,7 @@ class MacroApiImpl {
 					doc: doc,
 					params: params(),
 					meta: meta,
-					flags: flags,
+					flags: Vector.fromArrayCopy(flags),
 					data: data
 				});
 			case {index: 2, args: [ext, impl, interf, isFinal, isAbstract]}:
@@ -2194,7 +2219,7 @@ class MacroApiImpl {
 					doc: doc,
 					params: params(),
 					meta: meta,
-					flags: flags,
+					flags: Vector.fromArrayCopy(flags),
 					data: fields
 				});
 			case {index: 3, args: [t]}:
@@ -2205,7 +2230,7 @@ class MacroApiImpl {
 					doc: doc,
 					params: params(),
 					meta: meta,
-					flags: flags,
+					flags: Vector.fromArrayCopy(flags),
 					data: data
 				});
 			case {index: 4, args: [tthis, tflags, tfrom, tto]}:
@@ -2236,7 +2261,7 @@ class MacroApiImpl {
 					doc: doc,
 					params: params(),
 					meta: meta,
-					flags: flags,
+					flags: Vector.fromArrayCopy(flags),
 					data: fields
 				});
 			case {index: 5, args: [fk, al]}:
@@ -2248,7 +2273,7 @@ class MacroApiImpl {
 					doc: doc,
 					params: params(),
 					meta: meta,
-					flags: al,
+					flags: Vector.fromArrayCopy(al),
 					data: fk
 				});
 			case _:
@@ -2365,9 +2390,9 @@ class MacroApiImpl {
 			case TParenthesis(e) | TMeta(_, e) | TCast(e, null):
 				makeConst(e);
 			case TObjectDecl(el):
-				encodeObj(el.map(f -> fld(f.key.name, makeConst(f.expr))));
+				encodeObj(el.mapToArray(f -> fld(f.key.name, makeConst(f.expr))));
 			case TArrayDecl(al):
-				encodeArray(al.map(makeConst));
+				encodeArrayV(al.map(makeConst));
 			case _:
 				throw core.ds.Exit.raise();
 		}
@@ -2417,7 +2442,7 @@ class MacroApiImpl {
 				name: "get_macro_stack",
 				value: vfun0(() -> {
 					var stack = getApi().getMacroStack();
-					encodeArray(stack.map(encodePos));
+					encodeArrayV(stack.mapToVector(encodePos));
 				})
 			},
 			{
@@ -2574,7 +2599,7 @@ class MacroApiImpl {
 				value: vfun1(f -> {
 					var f = prepareCallback(f, 1);
 					getApi().afterTyping(tl -> {
-						f([encodeArray(tl.map(encodeModuleType))]);
+						f([encodeArrayV(tl.mapToVector(encodeModuleType))]);
 					});
 					vnull;
 				})
@@ -2584,7 +2609,7 @@ class MacroApiImpl {
 				value: vfun2((f, b) -> {
 					var f = prepareCallback(f, 1);
 					getApi().onGenerate(tl -> {
-						f([encodeArray(tl.map(encodeType))]);
+						f([encodeArrayV(tl.mapToVector(encodeType))]);
 					}, decodeBool(b));
 					vnull;
 				})
@@ -2657,7 +2682,7 @@ class MacroApiImpl {
 			{
 				name: "unify",
 				value: vfun2((t1, t2) -> {
-					var e1 = mk(TObjectDecl([]), decodeType(t1), Globals.nullPos);
+					var e1 = mk(TObjectDecl(vector()), decodeType(t1), Globals.nullPos);
 					vbool(getApi().castOrUnify(decodeType(t2), e1, Globals.nullPos));
 				})
 			},
@@ -2783,7 +2808,7 @@ class MacroApiImpl {
 						generators.Genjs.setupKwds(com);
 						var api = encodeObj([
 							fld("outputFile", encodeString(com.file)),
-							fld("types", encodeArray(com.types.map(t -> encodeType(typeOfModuleType(t))))),
+							fld("types", encodeArrayV(com.types.mapToVector(t -> encodeType(typeOfModuleType(t))))),
 							fld("main", (switch com.main.mainExpr {
 								case null: vnull;
 								case e: encodeTexpr(e);
@@ -2910,7 +2935,7 @@ class MacroApiImpl {
 				value: vfun0(() -> {
 					switch getApi().getCallArguments() {
 						case null: vnull;
-						case el: encodeArray(el.map(encodeExpr));
+						case el: encodeArrayV(el.map(encodeExpr));
 					}
 				})
 			},
@@ -3161,8 +3186,8 @@ class MacroApiImpl {
 			{
 				name: "apply_params",
 				value: vfun3((tpl, tl, t) -> {
-					var tl = decodeArray(tl).map(decodeType);
-					var tpl = decodeArray(tpl).map(v -> {
+					var tl = mapDecodedArray(tl, decodeType);
+					var tpl = mapDecodedArray(tpl, v -> {
 						var t = decodeType(field(v, "t"));
 						var defaultType:Null<T> = null; // we don't care here
 						var c = switch t {
@@ -3178,7 +3203,7 @@ class MacroApiImpl {
 						return switch t {
 							case TInst({clKind: KTypeParameter(_)}, _):
 								// use non-physical equality check here to make apply_params work
-								var found = Lambda.find(tpl, tp2 -> core.TUnification.TUnification.typeIseq(t, tp2.ttpType));
+								var found = tpl.find(tp2 -> core.TUnification.TUnification.typeIseq(t, tp2.ttpType));
 								if (found != null) extractParamType(found) else TFunctions.map(map, t);
 							case _:
 								TFunctions.map(map, t);
@@ -3348,8 +3373,8 @@ class MacroApiImpl {
 					var imports:Array<Import> = imports.map(s -> (getApi().parse((pctx,
 							s) -> @:privateAccess syntax.Grammar.parseImport2(pctx, s, Globals.nullPos), s) : Import));
 					var usings = decodeArray(usings).map(decodeString);
-					var usings:Array<Array<PlacedName>> = usings.map(s -> (getApi().parse((pctx,
-							s) -> @:privateAccess syntax.Grammar.parseUsing2(pctx, s, Globals.nullPos), s) : Array<PlacedName>));
+					var usings:Array<Vector<PlacedName>> = usings.map(s -> Vector.fromArrayCopy((getApi().parse((pctx,
+							s) -> @:privateAccess syntax.Grammar.parseUsing2(pctx, s, Globals.nullPos), s) : Array<PlacedName>)));
 					var f = prepareCallback(f, 0);
 					(getApi().withImports(imports, usings, () -> f([])) : Value);
 				})
@@ -3608,19 +3633,19 @@ class MacroNativeValues {
 			case _:
 		}
 		if (Std.isOfType(v, std.String)) return {expr: EConst(String(v, SDoubleQuotes)), pos: p};
-		if (Std.isOfType(v, std.Array)) return {expr: EArrayDecl([for (x in (v : Array<Dynamic>)) valueToExpr(x, p)]), pos: p};
+		if (Std.isOfType(v, std.Array)) return {expr: EArrayDecl(Vector.fromArrayCopy([for (x in (v : Array<Dynamic>)) valueToExpr(x, p)])), pos: p};
 		if (Reflect.isEnumValue(v)) {
 			var e = Type.getEnum(v);
 			var ep:Expr = {expr: EField(path(Type.getEnumName(e)), Type.enumConstructor(v), EFNormal), pos: p};
 			var args = Type.enumParameters(v);
-			return args.length == 0 ? ep : {expr: ECall(ep, [for (a in args) valueToExpr(a, p)]), pos: p};
+			return args.length == 0 ? ep : {expr: ECall(ep, Vector.fromArrayCopy([for (a in args) valueToExpr(a, p)])), pos: p};
 		}
 		if (Std.isOfType(v, haxe.ds.StringMap))
-			return {expr: EArrayDecl([for (k => x in (v : StringMap<Dynamic>)) entry({expr: EConst(String(k, SDoubleQuotes)), pos: p}, x)]), pos: p};
+			return {expr: EArrayDecl(Vector.fromArrayCopy([for (k => x in (v : StringMap<Dynamic>)) entry({expr: EConst(String(k, SDoubleQuotes)), pos: p}, x)])), pos: p};
 		if (Std.isOfType(v, haxe.ds.IntMap))
-			return {expr: EArrayDecl([for (k => x in (v : haxe.ds.IntMap<Dynamic>)) entry({expr: EConst(Int(Std.string(k), null)), pos: p}, x)]), pos: p};
+			return {expr: EArrayDecl(Vector.fromArrayCopy([for (k => x in (v : haxe.ds.IntMap<Dynamic>)) entry({expr: EConst(Int(Std.string(k), null)), pos: p}, x)])), pos: p};
 		if (Std.isOfType(v, haxe.ds.ObjectMap))
-			return {expr: EArrayDecl([for (k => x in (v : haxe.ds.ObjectMap<Dynamic, Dynamic>)) entry(valueToExpr(k, p), x)]), pos: p};
+			return {expr: EArrayDecl(Vector.fromArrayCopy([for (k => x in (v : haxe.ds.ObjectMap<Dynamic, Dynamic>)) entry(valueToExpr(k, p), x)])), pos: p};
 		if (Type.getClass(v) == null && Type.typeof(v) == TObject) {
 			var fields:Array<ObjectField> = [];
 			for (n in Reflect.fields(v)) {
@@ -3632,7 +3657,7 @@ class MacroNativeValues {
 					expr: valueToExpr(x, p)
 				});
 			}
-			return {expr: EObjectDecl(fields), pos: p};
+			return {expr: EObjectDecl(Vector.fromArrayCopy(fields)), pos: p};
 		}
 		throw "Cannot convert " + Std.string(v) + " to expr";
 	}

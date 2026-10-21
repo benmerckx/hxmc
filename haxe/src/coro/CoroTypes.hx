@@ -60,11 +60,11 @@ enum CoroNext {
 
 @:structInit class CoroSwitch {
 	public var csSubject:TExpr;
-	public var csCases:Array<{el:Array<TExpr>, cb:CoroBlock}>;
+	public var csCases:haxe.ds.Vector<{el:haxe.ds.Vector<TExpr>, cb:CoroBlock}>;
 	public var csDefault:Null<CoroBlock>;
 	public var csExhaustive:Bool;
 
-	public inline function new(csSubject:TExpr, csCases:Array<{el:Array<TExpr>, cb:CoroBlock}>, csDefault:Null<CoroBlock>,
+	public inline function new(csSubject:TExpr, csCases:haxe.ds.Vector<{el:haxe.ds.Vector<TExpr>, cb:CoroBlock}>, csDefault:Null<CoroBlock>,
 			csExhaustive:Bool) {
 		this.csSubject = csSubject;
 		this.csCases = csCases;
@@ -77,9 +77,9 @@ enum CoroNext {
 
 @:structInit class CoroCatch {
 	public var ccCb:CoroBlock;
-	public var ccCatches:Array<{v:TVar, cb:CoroBlock}>;
+	public var ccCatches:haxe.ds.Vector<{v:TVar, cb:CoroBlock}>;
 
-	public inline function new(ccCb:CoroBlock, ccCatches:Array<{v:TVar, cb:CoroBlock}>) {
+	public inline function new(ccCb:CoroBlock, ccCatches:haxe.ds.Vector<{v:TVar, cb:CoroBlock}>) {
 		this.ccCb = ccCb;
 		this.ccCatches = ccCatches;
 	}
@@ -89,12 +89,12 @@ enum CoroNext {
 
 @:structInit class CoroSuspend {
 	public var csFun:TExpr;
-	public var csArgs:Array<TExpr>;
+	public var csArgs:haxe.ds.Vector<TExpr>;
 	public var csPos:Pos;
 	public var csResult:SuspendExpr;
 	public var csKind:CoroOutcome;
 
-	public inline function new(csFun:TExpr, csArgs:Array<TExpr>, csPos:Pos, csResult:SuspendExpr, csKind:CoroOutcome) {
+	public inline function new(csFun:TExpr, csArgs:haxe.ds.Vector<TExpr>, csPos:Pos, csResult:SuspendExpr, csKind:CoroOutcome) {
 		this.csFun = csFun;
 		this.csArgs = csArgs;
 		this.csPos = csPos;

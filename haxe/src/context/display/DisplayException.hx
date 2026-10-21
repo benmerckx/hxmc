@@ -16,9 +16,10 @@ import context.Common;
 import core.DisplayTypes;
 import core.TType;
 import core.display.CompletionItem;
+import core.ds.VectorTools.vector;
 
 // port: `((args,ret),ctf),doc` of a signature, as produced by TyperDisplay.convert_function_signature.
-typedef SignatureInfo = {sig:{args:Array<{name:String, optional:Bool, type:T}>, ret:T, ctf:CtFunction}, doc:Documentation};
+typedef SignatureInfo = {sig:{args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T, ctf:CtFunction}, doc:Documentation};
 
 class DisplayException extends haxe.Exception {
 	public final kind:DisplayExceptionKind;
@@ -43,11 +44,11 @@ class DisplayException extends haxe.Exception {
 		}));
 
 	// global state
-	public static var lastCompletionResult:Array<CompletionItemData> = [];
+	public static var lastCompletionResult:haxe.ds.Vector<CompletionItemData> = vector();
 	public static var lastCompletionPos:Null<Pos> = null;
 
 	public static function reset():Void {
-		lastCompletionResult = [];
+		lastCompletionResult = vector();
 		lastCompletionPos = null;
 	}
 
@@ -125,7 +126,7 @@ class DisplayException extends haxe.Exception {
 
 	public static function fieldsToJson(ctx:GenjsonContext, fields:Array<CompletionItemData>, kind:CompletionResultKindValue,
 			subj:CompletionSubject):JsonValue {
-		lastCompletionResult = fields.copy();
+		lastCompletionResult = haxe.ds.Vector.fromArrayCopy(fields);
 		var needsFiltering = ServerConfig.maxCompletionItems > 0 && lastCompletionResult.length > ServerConfig.maxCompletionItems;
 		// let p_before = subj.s_insert_pos in
 		var subj = patchCompletionSubject(subj);

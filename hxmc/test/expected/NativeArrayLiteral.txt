@@ -1,0 +1,13 @@
+exit 0
+ints 3:[11,22,33] count=3
+floats 3:[1.5,-2.25,1e+300]
+bools 9:[true,false,true,true,false,true,false,false,true]
+longs 2:[4294967298,-7]
+objs 3 1 true 3
+strings 3:[a,bb3,ccc]
+nullable 3:[1,null,3]
+dynamic 4:[1,x,2.5,null]
+empty 0 0 shared=true
+generic 2 5 6
+generic ints 2:[7,8]
+young elements 101 sum=15105444 bad=0

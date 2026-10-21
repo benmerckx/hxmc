@@ -30,6 +30,9 @@ import context.TyperPass;
 import context.AbstractCast;
 import context.SafeCom;
 import optimization.Optimizer;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 @:structInit class ArgumentWithDefault {
 	public var name:String;
@@ -127,13 +130,13 @@ class FunctionArguments {
 	final isExtern:Bool;
 	final doDisplay:Bool;
 	final abstractThis:Null<T>;
-	final syntax:Array<FuncArg>;
+	final syntax:haxe.ds.Vector<FuncArg>;
 	final withDefault:Array<ArgumentWithDefault>;
-	var typeRepr:Null<Array<{name:String, optional:Bool, type:T}>> = null;
-	var exprRepr:Null<Array<{variable:TVar, defaultValue:Null<TExpr>}>> = null;
+	var typeRepr:Null<haxe.ds.Vector<{name:String, optional:Bool, type:T}>> = null;
+	var exprRepr:Null<haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>> = null;
 
 	public function new(com:CommonContext, typeArg:Int->Bool->Null<TypeHint>->Pos->T, isExtern:Bool, doDisplay:Bool, abstractThis:Null<T>,
-			syntax:Array<FuncArg>) {
+			syntax:haxe.ds.Vector<FuncArg>) {
 		this.com = com;
 		this.isExtern = isExtern;
 		this.doDisplay = doDisplay;
@@ -161,8 +164,8 @@ class FunctionArguments {
 	}
 
 	// Returns the `(string * bool * Type.t) list` requires by `TFun` .
-	public function forType():Array<{name:String, optional:Bool, type:T}> {
-		if (typeRepr == null) typeRepr = withDefault.map(function(arg) return {name: arg.name, optional: arg.expr != null, type: arg.type});
+	public function forType():haxe.ds.Vector<{name:String, optional:Bool, type:T}> {
+		if (typeRepr == null) typeRepr = withDefault.mapToVector(function(arg) return {name: arg.name, optional: arg.expr != null, type: arg.type});
 		return typeRepr;
 	}
 
@@ -175,21 +178,22 @@ class FunctionArguments {
 
 	// Returns the `(tvar * texpr option) list` for `tf_args`. Also checks the validity of argument names and whether or not
 	// an argument should be displayed.
-	public function forExpr(ctx:TyperContext):Array<{variable:TVar, defaultValue:Null<TExpr>}> {
+	public function forExpr(ctx:TyperContext):haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}> {
 		if (exprRepr != null) return exprRepr;
 		inline function makeLocal(name:String, kind:TVarKind, t:T, meta:Metadata, pn:Pos):TVar {
 			var v = allocVar(kind, name, t, pn);
 			v.vMeta = StrictMeta.checkStrictMeta(ctx, meta).concat(meta);
 			return v;
 		}
-		var acc:Array<{variable:TVar, defaultValue:Null<TExpr>}> = [];
+		// port: the arguments in order (upstream: accumulated reversed, then List.rev), one per withDefault entry
+		var acc = new haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>(withDefault.length);
 		var offset = abstractThis == null ? 0 : 1;
 		for (i in 0...withDefault.length) {
 			var typed = withDefault[i];
 			if (i == 0 && offset == 1) {
 				var v = makeLocal(typed.name, VAbstractThis, typed.type, [], Globals.nullPos);
-				v.vMeta.unshift({meta: MetaTag.This, exprs: [], pos: Globals.nullPos});
-				acc.unshift({variable: v, defaultValue: null});
+				v.vMeta.unshift({meta: MetaTag.This, exprs: vector(), pos: Globals.nullPos});
+				acc[i] = {variable: v, defaultValue: null};
 				continue;
 			}
 			if (i - offset >= syntax.length) throw "Invalid function argument lists";
@@ -199,20 +203,19 @@ class FunctionArguments {
 			if (!isExtern) {
 				Naming.checkLocalVariableName(ctx.com, typed.name, TVOArgument, pn);
 				if (typed.name != "_"
-					&& core.ds.ArrayTools.exists(acc,
-						function(arg) return arg.variable.vName == typed.name)) raiseTypingError('Duplicate argument name "'
+					&& core.ds.VectorTools.exists(acc,
+						function(arg) return arg != null && arg.variable.vName == typed.name)) raiseTypingError('Duplicate argument name "'
 						+ typed.name
 						+ '"', pn);
 			}
 			var eo = typeFunctionArgValue(ctx, typed.type, typed.expr, doDisplay);
 			var v = makeLocal(typed.name, VUser(TVOArgument), typed.type, arg.meta, pn);
 			if (doDisplay && DisplayPosition.displayPosition.enclosedIn(pn)) context.display.DisplayEmitter.displayVariable(ctx, v, pn);
-			if (acc.length == 0 && TyperManager.isCoroutineContext(ctx)) checkCoroutineScope(v);
+			if (i == 0 && TyperManager.isCoroutineContext(ctx)) checkCoroutineScope(v);
 			if (typed.name != "_") ctx.f.locals = ctx.f.locals.add(v.vName, v);
-			acc.unshift({variable: v, defaultValue: eo});
+			acc[i] = {variable: v, defaultValue: eo};
 		}
 		if (syntax.length + offset != withDefault.length) throw "Invalid function argument lists";
-		acc.reverse();
 		exprRepr = acc;
 		return acc;
 	}

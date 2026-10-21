@@ -1,6 +1,7 @@
 package coro;
 
 import core.TType;
+import core.ds.VectorTools.vector;
 
 @:structInit class ContinuationApi {
 	public var baseContinuationClass:TClass;
@@ -43,7 +44,7 @@ class ContTypes {
 			context:TClassField, gotoLabel:TClassField):ContinuationApi return {
 			baseContinuationClass: baseContinuationClass,
 			suspensionState: suspensionState,
-			suspensionResult: function(t) return TInst(suspensionResultClass, [t]),
+			suspensionResult: function(t) return TInst(suspensionResultClass, vector(t)),
 			suspensionResultClass: suspensionResultClass,
 			continuation: continuation,
 			suspended: suspended,

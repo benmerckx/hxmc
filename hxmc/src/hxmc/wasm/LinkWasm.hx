@@ -588,12 +588,17 @@ class Builtins {
 	public static function has(n:String):Bool
 		return SIGS.exists(n);
 
-	// the program's functions a builtin calls
-	public static function calls(n:String):Array<String>
-		return n == "rt_throw" ? ["hx_uncaught"] : [];
+	static final THROW_CALLS:haxe.ds.Vector<String> = core.ds.VectorTools.vector("hx_uncaught");
+	static final THROW_GLOBALS:haxe.ds.Vector<String> = core.ds.VectorTools.vector("rt_exn", WasmGen.HANDLER, WasmGen.EXNREF);
+	static final THROW_GLOBALS_LEGACY:haxe.ds.Vector<String> = core.ds.VectorTools.vector("rt_exn", WasmGen.HANDLER);
+	static final NONE:haxe.ds.Vector<String> = core.ds.VectorTools.vector();
 
-	public static function globals(n:String, legacyEh:Bool):Array<String>
-		return n == "rt_throw" ? (legacyEh ? ["rt_exn", WasmGen.HANDLER] : ["rt_exn", WasmGen.HANDLER, WasmGen.EXNREF]) : [];
+	// the program's functions a builtin calls
+	public static function calls(n:String):haxe.ds.Vector<String>
+		return n == "rt_throw" ? THROW_CALLS : NONE;
+
+	public static function globals(n:String, legacyEh:Bool):haxe.ds.Vector<String>
+		return n == "rt_throw" ? (legacyEh ? THROW_GLOBALS_LEGACY : THROW_GLOBALS) : NONE;
 
 	public static function sig(n:String):String
 		return SIGS.get(n);

@@ -36,6 +36,10 @@ import core.ds.OcamlHash;
 import core.ds.OcamlHashtbl;
 import context.Common.samePath;
 import generators.Gctx;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: OCaml evaluates the arguments of an application (including `Printf.sprintf`,
 // ... `^`, tuples, records and list literals) from right to left. Wherever two arguments have
@@ -63,7 +67,7 @@ class Utils {
 		return mk(TField(ethis, FStatic(c, cf)), t, p);
 	}
 
-	public static function mkStaticCall(c:TClass, cf:TClassField, el:Array<TExpr>, p:Pos):TExpr {
+	public static function mkStaticCall(c:TClass, cf:TClassField, el:Vector<TExpr>, p:Pos):TExpr {
 		var ef = mkStaticField(c, cf, p);
 		var tr = switch follow(ef.etype) {
 			case TFun(sig): sig.ret;
@@ -80,7 +84,7 @@ class Utils {
 
 	public static function mkStaticField2(c:TClass, n:String, p:Pos):TExpr return mkStaticField(c, resolveStaticField(c, n), p);
 
-	public static function mkStaticCall2(c:TClass, n:String, el:Array<TExpr>, p:Pos):TExpr return mkStaticCall(c, resolveStaticField(c, n), el, p);
+	public static function mkStaticCall2(c:TClass, n:String, el:Vector<TExpr>, p:Pos):TExpr return mkStaticCall(c, resolveStaticField(c, n), el, p);
 }
 
 class KeywordHandler {
@@ -187,6 +191,15 @@ class Transformer {
 		}
 	}
 
+	// port: `blocks @ el`: the lifted blocks (a list built up here) before the
+	// ... elements of a block, as the block's Vector.
+	static function prependBlocks(blocks:Array<TExpr>, el:Vector<TExpr>):Vector<TExpr> {
+		var r = new Vector<TExpr>(blocks.length + el.length);
+		for (i in 0...blocks.length) r[i] = blocks[i];
+		Vector.blit(el, 0, r, blocks.length, el.length);
+		return r;
+	}
+
 	static function toExpr(ae:AdjustedExpr):TExpr {
 		return switch ae.aBlocks {
 			case []:
@@ -194,9 +207,9 @@ class Transformer {
 			case el:
 				switch ae.aExpr.eexpr {
 					case TBlock(el2):
-						withExpr(ae.aExpr, TBlock(el.concat(el2)));
+						withExpr(ae.aExpr, TBlock(prependBlocks(el, el2)));
 					case _:
-						withExpr(ae.aExpr, TBlock(el.concat([ae.aExpr])));
+						withExpr(ae.aExpr, TBlock(prependBlocks(el, vector(ae.aExpr))));
 				}
 		}
 	}
@@ -226,7 +239,7 @@ class Transformer {
 		// TODO: this is a hack...
 		var id = mk(TLocal(toTvar("python_Syntax._pythonCode", tDynamic, pos)), tVoid, pos);
 		var id2 = mk(TLocal(toTvar(s, tDynamic, pos)), tVoid, pos);
-		return mk(TCall(id, [id2]), tDynamic, pos);
+		return mk(TCall(id, vector(id2)), tDynamic, pos);
 	}
 
 	static function toTlocalExpr(n:String, t:T, p:Pos, capture:Bool = false):TExpr return mk(TLocal(toTvar(n, t, p, capture)), t, p);
@@ -244,12 +257,12 @@ class Transformer {
 	}
 
 	static function dynamicFieldRead(e:TExpr, s:String, t:T):TExpr {
-		var e = Utils.mkStaticCall2(cReflect(), "field", [e, mk(TConst(TString(s)), tString, e.epos)], e.epos);
+		var e = Utils.mkStaticCall2(cReflect(), "field", vector(e, mk(TConst(TString(s)), tString, e.epos)), e.epos);
 		return new TExpr(e.eexpr, t, e.epos);
 	}
 
 	static function dynamicFieldWrite(e1:TExpr, s:String, e2:TExpr):TExpr {
-		return Utils.mkStaticCall2(cReflect(), "setField", [e1, mk(TConst(TString(s)), tString, e1.epos), e2], e1.epos);
+		return Utils.mkStaticCall2(cReflect(), "setField", vector(e1, mk(TConst(TString(s)), tString, e1.epos), e2), e1.epos);
 	}
 
 	static function dynamicFieldReadWrite(nextId:Void->String, e1:TExpr, s:String, op:Binop, e2:TExpr, t:T):TExpr {
@@ -260,7 +273,7 @@ class Transformer {
 		var eField = dynamicFieldRead(tempLocal, s, t);
 		var eOp = mk(TBinop(op, eField, e2), eField.etype, eField.epos);
 		var eSetField = dynamicFieldWrite(tempLocal, s, eOp);
-		return mk(TBlock([tempVarDef, eSetField]), eSetField.etype, eSetField.epos);
+		return mk(TBlock(vector(tempVarDef, eSetField)), eSetField.etype, eSetField.epos);
 	}
 
 	static function dynamicFieldIncDec(nextId:Void->String, e1:TExpr, s:String, unop:Unop, unopFlag:UnopFlag, t:T, p:Pos):TExpr {
@@ -289,7 +302,7 @@ class Transformer {
 		var eRet = isPostFix ? priorValLocal : eValue;
 
 		var eSetField = dynamicFieldWrite(tempLocal, s, eValue);
-		return mk(TBlock([tempVarDef, priorValVarDef, eSetField, eRet]), eSetField.etype, eSetField.epos);
+		return mk(TBlock(vector(tempVarDef, priorValVarDef, eSetField, eRet)), eSetField.etype, eSetField.epos);
 	}
 
 	static function addNonLocalsToFunc(e:TExpr):TExpr {
@@ -344,7 +357,7 @@ class Transformer {
 				}, []);
 				var el = [tf.tfExpr].concat(el);
 				el.reverse();
-				var tf = new TFunc(tf.tfArgs, tf.tfType, withExpr(tf.tfExpr, TBlock(el)));
+				var tf = new TFunc(tf.tfArgs, tf.tfType, withExpr(tf.tfExpr, TBlock(Vector.fromArrayCopy(el))));
 				return withExpr(e, TFunction(tf));
 			case _:
 				return die("", "genpy.ml Transformer.add_non_locals_to_func");
@@ -373,7 +386,7 @@ class Transformer {
 			case []:
 				tf.tfExpr;
 			case _:
-				var r = assigns.copy();
+				var r = Vector.fromArrayCopy(assigns);
 				r.reverse();
 				var eb = mk(TBlock(r), tDynamic, p);
 				concat(eb, tf.tfExpr);
@@ -413,7 +426,7 @@ class Transformer {
 	static function transformExpr1(isValue:Bool, nextId:Void->String, blocks:Array<TExpr>, e:TExpr):AdjustedExpr return transformExpr(nextId, e,
 		isValue, blocks);
 
-	static function transformExprsToBlock(el:Array<TExpr>, tb:T, isValue:Bool, p:Pos, nextId:Void->String):AdjustedExpr {
+	static function transformExprsToBlock(el:Vector<TExpr>, tb:T, isValue:Bool, p:Pos, nextId:Void->String):AdjustedExpr {
 		switch el {
 			case [e]:
 				return transformExpr(nextId, e, isValue);
@@ -434,11 +447,11 @@ class Transformer {
 						res.push(ae.aExpr);
 					} else {}
 				}
-				return liftExpr(nextId, mk(TBlock(res), tb, p));
+				return liftExpr(nextId, mk(TBlock(Vector.fromArrayCopy(res)), tb, p));
 		}
 	}
 
-	static function transformSwitch(ae:AdjustedExpr, isValue:Bool, e1:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>):AdjustedExpr {
+	static function transformSwitch(ae:AdjustedExpr, isValue:Bool, e1:TExpr, cases:Vector<TSwitchCase>, edef:Null<TExpr>):AdjustedExpr {
 		var caseFunctions:Array<TExpr> = [];
 		function caseToIf(c:TSwitchCase, eelse:Null<TExpr>):TExpr {
 			var el = c.casePatterns, e = c.caseExpr;
@@ -470,7 +483,7 @@ class Transformer {
 		}
 		var revCases = cases.copy();
 		revCases.reverse();
-		var edef:Null<TExpr> = if (edef == null) mk(TBlock([]), ae.aExpr.etype, ae.aExpr.epos) else edef;
+		var edef:Null<TExpr> = if (edef == null) mk(TBlock(vector()), ae.aExpr.etype, ae.aExpr.epos) else edef;
 		var res = switch revCases {
 			case []:
 				edef;
@@ -484,7 +497,7 @@ class Transformer {
 		var res = if (isValue) {
 			var l = [res].concat(caseFunctions);
 			l.reverse();
-			mk(TBlock(l), res.etype, res.epos);
+			mk(TBlock(Vector.fromArrayCopy(l)), res.etype, res.epos);
 		} else
 			res;
 		return forwardTransform(res, ae);
@@ -496,7 +509,7 @@ class Transformer {
 		return n;
 	}
 
-	static function transformStringSwitch(ae:AdjustedExpr, isValue:Bool, e1:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>):AdjustedExpr {
+	static function transformStringSwitch(ae:AdjustedExpr, isValue:Bool, e1:TExpr, cases:Vector<TSwitchCase>, edef:Null<TExpr>):AdjustedExpr {
 		var lengthMap = new OcamlHashtbl<Int, {v:Array<{el:Array<TExpr>, e:TExpr}>}>(OcamlHashtbl.hashInt, (a, b) -> a == b, 0);
 		for (c in cases) {
 			var e = c.caseExpr;
@@ -528,19 +541,19 @@ class Transformer {
 				var eacc:Null<TExpr> = edef;
 				for (ec in el.v) eacc = mkIf(ec, eacc);
 				var fs = if (eacc != null) eacc else die("", "genpy.ml Transformer.transform_string_switch");
-				return [({casePatterns: [eint], caseExpr: fs} : TSwitchCase)].concat(acc);
+				return [({casePatterns: vector(eint), caseExpr: fs} : TSwitchCase)].concat(acc);
 			}, []);
 			var cString = switch tString {
 				case TInst(c, _): c;
 				case _: die("", "genpy.ml Transformer.transform_string_switch");
 			};
 			var cfLength = core.ds.PMap.find("length", cString.clFields);
-			var ef = mk(TField(e1, FInstance(cString, [], cfLength)), tInt, e1.epos);
+			var ef = mk(TField(e1, FInstance(cString, vector(), cfLength)), tInt, e1.epos);
 			var resVar = allocVar(ae.aNextId(), ef.etype, ef.epos);
 			var resLocal = withExpr(ef, TLocal(resVar));
 			var varExpr = withExpr(ef, TVar(resVar, ef));
-			var sw = Texpr.mkSwitch(resLocal, cases, edef, edef != null);
-			var e = mk(TBlock([varExpr, mk(TSwitch(sw), ae.aExpr.etype, e1.epos)]), ae.aExpr.etype, e1.epos);
+			var sw = Texpr.mkSwitch(resLocal, Vector.fromArrayCopy(cases), edef, edef != null);
+			var e = mk(TBlock(vector(varExpr, mk(TSwitch(sw), ae.aExpr.etype, e1.epos))), ae.aExpr.etype, e1.epos);
 			return forwardTransform(e, ae);
 		}
 	}
@@ -562,7 +575,7 @@ class Transformer {
 				return liftExpr(ae.aNextId, f.aExpr, true, f.aBlocks);
 			} else {
 				var block = e1_.aBlocks.concat([assignExpr]);
-				return transformExprsToBlock(block, ex.etype, false, ex.epos, ae.aNextId);
+				return transformExprsToBlock(Vector.fromArrayCopy(block), ex.etype, false, ex.epos, ae.aNextId);
 			}
 		}
 		switch e1_.aExpr.eexpr {
@@ -592,7 +605,7 @@ class Transformer {
 					var f = exprsToFunc(block, ae.aNextId(), ae);
 					return liftExpr(ae.aNextId, f.aExpr, true, f.aBlocks);
 				} else
-					return transformExprsToBlock(block, ae.aExpr.etype, false, ae.aExpr.epos, ae.aNextId);
+					return transformExprsToBlock(Vector.fromArrayCopy(block), ae.aExpr.etype, false, ae.aExpr.epos, ae.aNextId);
 			case TField(e1, fa):
 				var tempVarL = allocVar(ae.aNextId(), e1.etype, e1.epos);
 				var tempLocalL = withExpr(e1, TLocal(tempVarL));
@@ -610,7 +623,7 @@ class Transformer {
 					var f = exprsToFunc(block, ae.aNextId(), ae);
 					return liftExpr(ae.aNextId, f.aExpr, true, f.aBlocks);
 				} else
-					return transformExprsToBlock(block, ae.aExpr.etype, false, ae.aExpr.epos, ae.aNextId);
+					return transformExprsToBlock(Vector.fromArrayCopy(block), ae.aExpr.etype, false, ae.aExpr.epos, ae.aNextId);
 			case _:
 				debugExpr(e1_.aExpr);
 				return die("", "genpy.ml Transformer.transform_op_assign_op");
@@ -651,7 +664,7 @@ class Transformer {
 						case [x]: x;
 						case x:
 							var last = x[x.length - 1];
-							mk(TBlock(exs), last.etype, base.aExpr.epos);
+							mk(TBlock(Vector.fromArrayCopy(exs)), last.etype, base.aExpr.epos);
 					}
 				case x:
 					var ret = x[x.length - 1];
@@ -661,34 +674,34 @@ class Transformer {
 						case []: die("", "genpy.ml Transformer.exprs_to_func");
 						case _:
 							var last = block[block.length - 1];
-							mk(TBlock(block), last.etype, base.aExpr.epos);
+							mk(TBlock(Vector.fromArrayCopy(block)), last.etype, base.aExpr.epos);
 					}
 			};
-			var f1 = new TFunc([], TFun({args: [], ret: ex.etype}), ex);
+			var f1 = new TFunc(vector(), TFun({args: vector(), ret: ex.etype}), ex);
 			var fexpr = mk(TFunction(f1), ex.etype, ex.epos);
 			var fvar = toTvar(name, fexpr.etype, fexpr.epos);
 			var f = addNonLocalsToFunc(fexpr);
 			var assign = withExpr(ex, TVar(fvar, f));
 			var callExpr = mk(TLocal(fvar), fexpr.etype, ex.epos);
-			var substitute = mk(TCall(callExpr, []), ex.etype, ex.epos);
+			var substitute = mk(TCall(callExpr, vector()), ex.etype, ex.epos);
 			liftExpr(base.aNextId, substitute, false, [assign]);
 		};
 		switch exprs {
 			case [x = {eexpr: TFunction(f)}] if (f.tfArgs.length == 0):
 				var l = toTlocalExpr(name, f.tfType, f.tfExpr.epos);
-				var substitute = mk(TCall(l, []), f.tfType, f.tfExpr.epos);
+				var substitute = mk(TCall(l, vector()), f.tfType, f.tfExpr.epos);
 				return liftExpr(base.aNextId, substitute, false, [x]);
 			case _:
 				return def;
 		}
 	}
 
-	static function transformCall(isValue:Bool, e:TExpr, params:Array<TExpr>, ae:AdjustedExpr):AdjustedExpr {
+	static function transformCall(isValue:Bool, e:TExpr, params:Vector<TExpr>, ae:AdjustedExpr):AdjustedExpr {
 		function trans(isValue:Bool, blocks:Array<TExpr>, e:TExpr) return transformExpr1(isValue, ae.aNextId, blocks, e);
 		function trans1(e:TExpr, params:Array<AdjustedExpr>):AdjustedExpr {
 			var e = trans(true, [], e);
 			var blocks = e.aBlocks.concat([for (p in params) for (b in p.aBlocks) b]);
-			var params = [for (p in params) p.aExpr];
+			var params = params.mapToVector(p -> p.aExpr);
 			var e = withExpr(ae.aExpr, TCall(e.aExpr, params));
 			return liftExpr(ae.aNextId, e, false, blocks);
 		}
@@ -723,22 +736,23 @@ class Transformer {
 				return transformExprsToBlock(el, ae.aExpr.etype, false, ae.aExpr.epos, ae.aNextId);
 			case [true, TBlock(el)]:
 				var name = ae.aNextId();
-				var block:Array<TExpr>, tr:T;
+				var block:Vector<TExpr>, tr:T;
 				switch el.length {
 					case 0:
 						return die("", "genpy.ml Transformer.transform1");
 					case _:
 						var e = el[el.length - 1];
-						block = el.slice(0, el.length - 1).concat([mk(TReturn(e), tDynamic, e.epos)]);
+						block = el.copy();
+						block[block.length - 1] = mk(TReturn(e), tDynamic, e.epos);
 						tr = e.etype;
 				}
 				var myBlock = transformExprsToBlock(block, tr, false, ae.aExpr.epos, ae.aNextId);
-				var fn = mk(TFunction(new TFunc([], tr, myBlock.aExpr)), ae.aExpr.etype, ae.aExpr.epos);
+				var fn = mk(TFunction(new TFunc(vector(), tr, myBlock.aExpr)), ae.aExpr.etype, ae.aExpr.epos);
 				var tVar = allocVar(name, ae.aExpr.etype, ae.aExpr.epos);
 				var f = addNonLocalsToFunc(fn);
 				var fnAssign = mk(TVar(tVar, f), ae.aExpr.etype, ae.aExpr.epos);
 				var ev = mk(TLocal(tVar), ae.aExpr.etype, ae.aExpr.epos);
-				var substitute = mk(TCall(ev, []), ae.aExpr.etype, ae.aExpr.epos);
+				var substitute = mk(TCall(ev, vector()), ae.aExpr.etype, ae.aExpr.epos);
 				return liftExpr(ae.aNextId, substitute, false, [fnAssign]);
 			case [isValue, TFunction(f)]:
 				return transformFunction(f, ae, isValue);
@@ -844,7 +858,7 @@ class Transformer {
 				var newIf = withExpr(ae.aExpr, TIf(econd1.aExpr, eif2, eelse2));
 				switch blocks {
 					case []:
-						var meta:MetadataEntry = {meta: core.MetaList.StrictMeta.Custom(":ternaryIf"), exprs: [], pos: ae.aExpr.epos};
+						var meta:MetadataEntry = {meta: core.MetaList.StrictMeta.Custom(":ternaryIf"), exprs: vector(), pos: ae.aExpr.epos};
 						var ternary = withExpr(ae.aExpr, TMeta(meta, newIf));
 						return liftExpr(ae.aNextId, ternary, false, blocks);
 					case b:
@@ -874,8 +888,8 @@ class Transformer {
 				var breakExpr = mk(TBreak, tVoid, econd.epos);
 				var ifExpr = mk(TIf(notExpr, breakExpr, null), tVoid, econd.epos);
 				var newE = switch ebody.eexpr {
-					case TBlock(exprs): withExpr(econd, TBlock(exprs.concat([ifExpr])));
-					case _: withExpr(econd, TBlock([ebody].concat([ifExpr])));
+					case TBlock(exprs): withExpr(econd, TBlock(exprs.snoc(ifExpr)));
+					case _: withExpr(econd, TBlock(vector(ebody, ifExpr)));
 				};
 				var trueExpr = mk(TConst(TBool(true)), econd.etype, ae.aExpr.epos);
 				var newExpr = withExpr(ae.aExpr, TWhile(trueExpr, newE, NormalWhile));
@@ -955,7 +969,7 @@ class Transformer {
 				return lift(false, left.aBlocks.concat(right.aBlocks), r);
 
 			case [true, TThrow(x)]:
-				var block = TBlock([aExpr, withExpr(aExpr, TConst(TNull))]);
+				var block = TBlock(vector(aExpr, withExpr(aExpr, TConst(TNull))));
 				var r = withExpr(aExpr, block);
 				return forwardTransform(r, ae);
 			case [false, TThrow(x)]:
@@ -965,7 +979,7 @@ class Transformer {
 			case [_, TNew(c, tp, params)]:
 				var params = [for (p in params) trans(true, [], p)];
 				var blocks = [for (p in params) for (b in p.aBlocks) b];
-				var params = [for (p in params) p.aExpr];
+				var params = params.mapToVector(p -> p.aExpr);
 				var e = withExpr(aExpr, TNew(c, tp, params));
 				return lift(false, blocks, e);
 			case [isValue, TCall(e, params)]:
@@ -985,7 +999,7 @@ class Transformer {
 					}
 				];
 				var blocks = [for (c in catches) for (b in c.e.aBlocks) b];
-				var catches = [for (c in catches) {variable: c.v, expr: c.e.aExpr}];
+				var catches = catches.mapToVector(c -> {variable: c.v, expr: c.e.aExpr});
 				var r = withExpr(aExpr, TTry(etry.aExpr, catches));
 				var blocks = etry.aBlocks.concat(blocks);
 				return lift(false, blocks, r);
@@ -996,26 +1010,24 @@ class Transformer {
 				var tempLocal = withExpr(aExpr, TLocal(tempVar));
 				function mkTempAssign(right:TExpr) return withExpr(aExpr, TBinop(OpAssign, tempLocal, right));
 				var etry = mkTempAssign(etry);
-				var catches = [
-					for (c in catches) {
-						KeywordHandler.checkVarDeclaration(c.variable);
-						{variable: c.variable, expr: mkTempAssign(c.expr)};
-					}
-				];
+				var catches = catches.map(c -> {
+					KeywordHandler.checkVarDeclaration(c.variable);
+					{variable: c.variable, expr: mkTempAssign(c.expr)};
+				});
 				var newTry = withExpr(aExpr, TTry(etry, catches));
-				var block = [tempVarDef, newTry, tempLocal];
+				var block = vector(tempVarDef, newTry, tempLocal);
 				var newBlock = withExpr(aExpr, TBlock(block));
 				return forwardTransform(newBlock, ae);
 			case [_, TObjectDecl(fields)]:
 				var fields = [for (f in fields) {key: f.key, ex: trans(true, [], f.expr)}];
 				var blocks = [for (f in fields) for (b in f.ex.aBlocks) b];
-				var fields = [for (f in fields) {key: f.key, expr: f.ex.aExpr}];
+				var fields = fields.mapToVector(f -> {key: f.key, expr: f.ex.aExpr});
 				var r = withExpr(aExpr, TObjectDecl(fields));
 				return liftExpr(ae.aNextId, r, false, blocks);
 			case [_, TArrayDecl(values)]:
 				var values = [for (v in values) trans(true, [], v)];
 				var blocks = [for (v in values) for (b in v.aBlocks) b];
-				var exprs = [for (v in values) v.aExpr];
+				var exprs = values.mapToVector(v -> v.aExpr);
 				var r = withExpr(aExpr, TArrayDecl(exprs));
 				return liftExpr(ae.aNextId, r, false, blocks);
 			case [isValue, TCast(e1, mt)] if (mt != null):
@@ -1202,7 +1214,7 @@ class Printer {
 		case _: e;
 	};
 
-	static function printArgs(pctx:PrintContext, args:Array<{variable:TVar, defaultValue:Null<TExpr>}>, p:Pos):String {
+	static function printArgs(pctx:PrintContext, args:Vector<{variable:TVar, defaultValue:Null<TExpr>}>, p:Pos):String {
 		var hadValue = false;
 		var hadVarArgs = false;
 		var hadKwArgs = false;
@@ -1619,7 +1631,7 @@ class Printer {
 		};
 	}
 
-	static function printTry(pctx:PrintContext, e1:TExpr, catches:Array<{variable:TVar, expr:TExpr}>):String {
+	static function printTry(pctx:PrintContext, e1:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>):String {
 		function printCatch(pctx:PrintContext, c:{variable:TVar, expr:TExpr}) {
 			var v = c.variable, e = c.expr;
 			var sType = printModuleType(moduleTypeOfType(v.vType));
@@ -1634,7 +1646,7 @@ class Printer {
 		return tryStr + catchStr;
 	}
 
-	static function printCall2(pctx:PrintContext, e1:TExpr, el:Array<TExpr>):String {
+	static function printCall2(pctx:PrintContext, e1:TExpr, el:Vector<TExpr>):String {
 		var id = printExpr(pctx, e1);
 		switch [id, el] {
 			case ["__define_feature__", [_, e]]:
@@ -1661,7 +1673,7 @@ class Printer {
 				}
 				return printExpr(pctx, e);
 			case ["python_Syntax._callNamedUntyped", el]:
-				var res:Array<TExpr>, fields;
+				var res:Vector<TExpr>, fields;
 				var last = el.length > 0 ? el[el.length - 1] : null;
 				switch last == null ? null : last.eexpr {
 					case null:
@@ -1707,7 +1719,7 @@ class Printer {
 				var e1 = el[0];
 				var el2 = switch el[1].eexpr {
 					case TArrayDecl(l): l;
-					case _: [];
+					case _: vector();
 				};
 				var etrail = el.slice(2);
 				var trailingColon = switch etrail {
@@ -1757,17 +1769,17 @@ class Printer {
 	}
 
 	// port: the body shared by the `python_Syntax._pythonCode`/`python_Syntax.code` or-pattern.
-	static function interpolate(pctx:PrintContext, code:String, tl:Array<TExpr>, ecode:TExpr):String {
+	static function interpolate(pctx:PrintContext, code:String, tl:Vector<TExpr>, ecode:TExpr):String {
 		var buf = new StringBuf();
 		function interpolate() {
-			codegen.Codegen.interpolateCode(pctx.pcCom.error, code, tl, function(s) buf.add(s), function(e) buf.add(printExpr(pctx, e)), ecode.epos);
+			codegen.Codegen.interpolateCode(pctx.pcCom.error, code, tl.toArray(), function(s) buf.add(s), function(e) buf.add(printExpr(pctx, e)), ecode.epos);
 		}
 		interpolate();
 		return buf.toString();
 	}
 
 	// port: the body shared by the `python_Syntax._newInstance`/`python_Syntax.construct` or-pattern.
-	static function printConstruct(pctx:PrintContext, e1:TExpr, el:Array<TExpr>):String {
+	static function printConstruct(pctx:PrintContext, e1:TExpr, el:Vector<TExpr>):String {
 		var cls = switch e1.eexpr {
 			case TConst(TString(className)): className;
 			case _: printExpr(pctx, e1);
@@ -1775,7 +1787,7 @@ class Printer {
 		return cls + "(" + printExprs(pctx, ", ", el) + ")";
 	}
 
-	static function printCall(pctx:PrintContext, e1:TExpr, el:Array<TExpr>, callExpr:TExpr):String {
+	static function printCall(pctx:PrintContext, e1:TExpr, el:Vector<TExpr>, callExpr:TExpr):String {
 		function getNativeFields(t:T):haxe.ds.StringMap<String> {
 			return switch follow(t) {
 				case TAnon(a):
@@ -1852,7 +1864,7 @@ class Printer {
 		case _: false;
 	};
 
-	static function printCallArgs(pctx:PrintContext, e1:TExpr, el:Array<TExpr>):String {
+	static function printCallArgs(pctx:PrintContext, e1:TExpr, el:Vector<TExpr>):String {
 		function printArg(pctx:PrintContext, i:Int, x:TExpr) {
 			var e = switch [x.eexpr, follow(x.etype)] {
 				case [TConst(TNull), TAbstract({aPath: {pack: ["python"], name: "KwArgs"}}, _)]: "{}";
@@ -1872,11 +1884,11 @@ class Printer {
 		return [for (i in 0...el.length) printArg(pctx, i, el[i])].join(",");
 	}
 
-	static function printExprs(pctx:PrintContext, sep:String, el:Array<TExpr>):String return [for (e in el) printExpr(pctx, e)].join(sep);
+	static function printExprs(pctx:PrintContext, sep:String, el:Vector<TExpr>):String return [for (e in el) printExpr(pctx, e)].join(sep);
 
 	static var lastDebugComment = "";
 
-	static function printBlockExprs(pctx:PrintContext, sep:String, printDebugComment:Bool, el:Array<TExpr>):String {
+	static function printBlockExprs(pctx:PrintContext, sep:String, printDebugComment:Bool, el:Vector<TExpr>):String {
 		if (printDebugComment) {
 			var acc = [];
 			for (e in el) {
@@ -1895,7 +1907,7 @@ class Printer {
 	}
 
 	static function printExprsNamed(pctx:PrintContext, sep:String,
-			fl:Array<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):String {
+			fl:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):String {
 		var args = [
 			for (f in fl) "'" + core.StringHelper.sEscape(handleKeywords(f.key.name)) + "': " + printExpr(pctx, f.expr)
 		].join(sep);
@@ -1903,7 +1915,7 @@ class Printer {
 	}
 
 	static function printParamsNamed(pctx:PrintContext, sep:String,
-			fl:Array<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):String {
+			fl:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):String {
 		var args = [for (f in fl) handleKeywords(f.key.name) + "= " + printExpr(pctx, f.expr)].join(sep);
 		return args;
 	}
@@ -2045,7 +2057,7 @@ class Generator {
 		var pctx = Printer.createContext("    " + indent, ctx.com, ctx.com.debug);
 		var e = switch e.eexpr {
 			case TFunction(f):
-				new TExpr(TBlock([e]), e.etype, e.epos);
+				new TExpr(TBlock(vector(e)), e.etype, e.epos);
 			case _:
 				e;
 		};
@@ -2057,10 +2069,10 @@ class Generator {
 					var eLast = es[es.length - 1];
 					var el = es.slice(0, es.length - 1);
 					var newLast = new TExpr(TReturn(eLast), eLast.etype, eLast.epos);
-					var newBlock = new TExpr(TBlock(el.concat([newLast])), expr2.etype, expr2.epos);
-					var vName = core.TFunctions.allocVar(VGenerated, name, tfun([], eLast.etype), eLast.epos);
+					var newBlock = new TExpr(TBlock(el.snoc(newLast)), expr2.etype, expr2.epos);
+					var vName = core.TFunctions.allocVar(VGenerated, name, tfun(vector(), eLast.etype), eLast.epos);
 					var fName = mk(TLocal(vName), vName.vType, eLast.epos);
-					var callF = mk(TCall(fName, []), eLast.etype, eLast.epos);
+					var callF = mk(TCall(fName, vector()), eLast.etype, eLast.epos);
 					{e1: newBlock, e2: callF};
 				case _:
 					{e1: null, e2: expr2};
@@ -2089,8 +2101,8 @@ class Generator {
 			case TFunction(f):
 				var args = if (addSelf) {
 					var v = core.TFunctions.allocVar(VGenerated, "self", tDynamic, p);
-					v.vMeta = [({meta: Meta.This, exprs: [], pos: p} : MetadataEntry)].concat(v.vMeta);
-					[{variable: v, defaultValue: null}].concat(f.tfArgs);
+					v.vMeta = [({meta: Meta.This, exprs: vector(), pos: p} : MetadataEntry)].concat(v.vMeta);
+					VectorTools.cons({variable: v, defaultValue: (null : Null<TExpr>)}, f.tfArgs);
 				} else
 					f.tfArgs;
 				new TExpr(TFunction(new TFunc(args, f.tfType, f.tfExpr)), e.etype, e.epos);
@@ -2145,12 +2157,12 @@ class Generator {
 				var memberData:Array<TExpr> = [];
 				for (cf in memberInits) {
 					if (assignedFields.indexOf(cf) == -1) {
-						var ef = mk(TField(ethis, FInstance(c, [], cf)), cf.cfType, cf.cfPos); /* TODO */
+						var ef = mk(TField(ethis, FInstance(c, vector(), cf)), cf.cfType, cf.cfPos); /* TODO */
 						var e = mk(TBinop(OpAssign, ef, nullExpr(ef.etype, ef.epos)), ef.etype, ef.epos);
 						memberData.unshift(e);
 					}
 				}
-				var e = concat(mk(TBlock(memberData), ctx.com.basic.tvoid, cf.cfPos), f.tfExpr);
+				var e = concat(mk(TBlock(Vector.fromArrayCopy(memberData)), ctx.com.basic.tvoid, cf.cfPos), f.tfExpr);
 				var ef = new TExpr(TFunction(new TFunc(f.tfArgs, f.tfType, e)), ef.etype, ef.epos);
 				cf.cfExpr = ef;
 
@@ -2408,7 +2420,7 @@ class Generator {
 						var name = handleKeywords(hxName);
 						return if (name == pName) pName + "_" + name else name;
 					}
-					function printArgs(args:Array<{name:String, optional:Bool, type:T}>) {
+					function printArgs(args:Vector<{name:String, optional:Bool, type:T}>) {
 						var hadOptional = false;
 						var sl = [
 							for (a in args) {

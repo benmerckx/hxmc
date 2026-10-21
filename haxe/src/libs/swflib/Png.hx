@@ -20,6 +20,8 @@
 package libs.swflib;
 
 import haxe.io.Bytes;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
 import libs.extlib.IO;
 import libs.extlib.IO.Input;
 
@@ -148,7 +150,8 @@ class Png {
 		return acc.getBytes();
 	}
 
-	static final crc_table:Array<Int> = [
+	static final crc_table:Vector<Int> = {
+		var t = new Vector<Int>(256);
 		for (n in 0...256) {
 			var c = n;
 			for (k in 0...8) {
@@ -157,9 +160,10 @@ class Png {
 				else
 					c = (c >>> 1);
 			}
-			c;
+			t[n] = c;
 		}
-	];
+		t;
+	};
 
 	static function input_crc(ch:Input):{ch:Input, crc:Void->Int} {
 		var crc = 0xFFFFFFFF;
@@ -303,7 +307,7 @@ class Png {
 					buf.set(bp, v & 0xFF);
 					bp++;
 				}
-				var filters:Array<Int->Int->Int->Int> = [
+				var filters:Vector<Int->Int->Int->Int> = vector(
 					(x, y, v) -> v,
 					(x, y, v) -> {
 						var v2 = if (x == 0) 0 else bget(bp - 4);
@@ -328,8 +332,8 @@ class Png {
 						var pc = Std.int(Math.abs(p - c));
 						var d = (if (pa <= pb && pa <= pc) a else if (pb <= pc) b else c);
 						v + d;
-					},
-				];
+					}
+				);
 				for (y in 0...h) {
 					var f = get(y * stride);
 					var f = (if (f < 5) filters[f] else error(Invalid_filter(f)));

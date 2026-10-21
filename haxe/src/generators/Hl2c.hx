@@ -24,7 +24,10 @@ package generators;
 
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
+import haxe.ds.Vector;
 import core.ds.Failure;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
 import core.ds.OcamlHashtbl;
 import core.ds.OcamlHash;
 import generators.Hlcode;
@@ -84,10 +87,10 @@ class GlobalContext {
 	public var hlcode:Code;
 	public var dir:String;
 	public var cfiles:Array<String> = []; // port: list, head first
-	public var ftable:Array<FunctionEntry>;
+	public var ftable:Vector<FunctionEntry>;
 	public var htypes:TtypeMap<String>;
-	public var gnames:Array<String>;
-	public var bytesNames:Array<String>;
+	public var gnames:Vector<String>;
+	public var bytesNames:Vector<String>;
 	public var typeModule:TtypeMap<CodeModule> = new TtypeMap();
 	public var gcon:Gctx;
 
@@ -118,8 +121,8 @@ enum TypeDesc {
 	DFun(args:Array<TypeDesc>, ret:TypeDesc, isFun:Bool);
 	// port: `ident` stands for the physical identity of the name string (Marshal sharing)
 	DNamed(n:String, ident:Dynamic);
-	DVirtual(arr:Array<VDescField>);
-	DContext(arr:Array<TypeDesc>);
+	DVirtual(arr:Vector<VDescField>);
+	DContext(arr:Vector<TypeDesc>);
 }
 
 class VDescField {
@@ -225,7 +228,7 @@ private class OcamlExtern {
 		if (n == null) int(0) else block(0, 1, null, () -> int(n));
 	}
 
-	function intArray(a:Array<Int>) {
+	function intArray(a:Vector<Int>) {
 		block(0, a.length, a, () -> for (n in a) int(n));
 	}
 
@@ -354,7 +357,7 @@ private class OcamlExtern {
 	}
 
 	// port: `(string * string index * ttype) array`
-	function hfields(arr:Array<HField>) {
+	function hfields(arr:Vector<HField>) {
 		block(0, arr.length, arr, () -> for (f in arr) block(0, 3, f, () -> {
 			str(f.name, if (core.ds.StrTools.hasIdentity) f.name else f);
 			int(f.nid);
@@ -571,7 +574,7 @@ class Hl2c {
 
 	static final coreTypes:Array<Ttype> = [
 		HVoid, HUI8, HUI16, HI32, HI64, HF32, HF64, HBool, HBytes, HDyn, HFun([], HVoid), HObj(nullProto), HArray(HDyn), HType, HRef(HVoid),
-		HVirtual(new VirtualProto()), HDynObj, HAbstract("", 0, null), HEnum(new EnumProto("", 0, null, [])), HMethod([], HVoid), HStruct(nullProto)
+		HVirtual(new VirtualProto()), HDynObj, HAbstract("", 0, null), HEnum(new EnumProto("", 0, null, vector())), HMethod([], HVoid), HStruct(nullProto)
 	];
 
 	// port: ExtString.String.nsplit (an empty string gives [])
@@ -1198,7 +1201,7 @@ class Hl2c {
 			il.reverse();
 			expr('${k.s} ${il.join(", ")}');
 		});
-		var outputOptions:Array<Array<OutputOptions>> = [for (_ in 0...f.code.length + 1) []];
+		var outputOptions = VectorTools.init(f.code.length + 1, _ -> ([] : Array<OutputOptions>));
 		function outputAt(i:Int, oo:OutputOptions) outputOptions[i].unshift(oo);
 		function outputAt2(i:Int, ool:Array<OutputOptions>) for (o in ool) outputAt(i, o);
 		function hasLabel(i:Int) return core.ds.ArrayTools.exists(outputOptions[i], o -> o == OOLabel);
@@ -1740,13 +1743,13 @@ class Hl2c {
 					DNamed(n, ident);
 				case HEnum(e) if (e.ename == ""):
 					var tl = e.efields[0].args;
-					DContext([for (x in tl) makeDesc(x)]);
+					DContext(tl.map(x -> makeDesc(x)));
 				case HEnum(e):
 					DNamed(e.ename, e);
 				case HVirtual(vp):
 					var d = typesDescs.get(t);
 					if (d != null) return d;
-					var arr = [for (_ in 0...vp.vfields.length) new VDescField("", null, DSimple(HVoid))];
+					var arr = new Vector(vp.vfields.length, new VDescField("", null, DSimple(HVoid)));
 					var td = DVirtual(arr);
 					typesDescs.set(t, td);
 					for (i in 0...vp.vfields.length) {
@@ -1806,7 +1809,7 @@ class Hl2c {
 		return out;
 	}
 
-	static function makeGlobalNames(code:Code, gnames:Array<String>):Array<String> {
+	static function makeGlobalNames(code:Code, gnames:Vector<String>):Vector<String> {
 		var hstrings = new StringMap<Bool>();
 		var isCstr = new IntMap<Bool>();
 		for (c in code.constants) {
@@ -1842,11 +1845,11 @@ class Hl2c {
 			gnamesUsed.set(rid, true);
 			gnames2.set(g, rid);
 		}
-		return [for (i in 0...code.globals.length) gnames2.get(i)];
+		return VectorTools.init(code.globals.length, i -> gnames2.get(i));
 	}
 
-	static function makeFunctionTable(code:Code):Array<FunctionEntry> {
-		var ftable = [for (i in 0...code.functions.length + code.natives.length) new FunctionEntry(i)];
+	static function makeFunctionTable(code:Code):Vector<FunctionEntry> {
+		var ftable = VectorTools.init(code.functions.length + code.natives.length, i -> new FunctionEntry(i));
 		for (n in code.natives) {
 			var fname = {
 				var lib = code.strings[n.lib];
@@ -1894,7 +1897,7 @@ class Hl2c {
 		return ftable;
 	}
 
-	static function makeModules(ctx:GlobalContext, allTypes:Array<Ttype>):Array<CodeModule> {
+	static function makeModules(ctx:GlobalContext, allTypes:Vector<Ttype>):Array<CodeModule> {
 		var modules = new StringMap<CodeModule>();
 		var allModules:Array<CodeModule> = []; // port: list, head first
 		function getModule(name:String):CodeModule {
@@ -2082,12 +2085,12 @@ class Hl2c {
 		line("");
 	}
 
-	public static function writeC(com:Gctx, file:String, code:Code, gnames:Array<String>, numDomains:Int):Void {
+	public static function writeC(com:Gctx, file:String, code:Code, gnames:Vector<String>, numDomains:Int):Void {
 		var gt = gatherTypes(code);
 		var allTypes = gt.all, htypes = gt.types;
 		var typesIds = makeTypesIdents(htypes);
 		var gnames = makeGlobalNames(code, gnames);
-		var bnames = [for (b in code.bytes) "bytes$" + shortDigest(md5hex(b))];
+		var bnames = code.bytes.map(b -> "bytes$" + shortDigest(md5hex(b)));
 		var gctx = new GlobalContext();
 		gctx.version = com.version.version;
 		gctx.hlcode = code;
@@ -2122,8 +2125,8 @@ class Hl2c {
 			for (name in abstracts) define(ctx, 'typedef struct _$name $name;');
 			define(ctx, "");
 			line("// Natives functions");
-			var sortedNatives = code.natives.copy();
-			ocamlArraySort((n1:Native, n2:Native) -> {
+			var sortedNatives:Vector<Native> = code.natives.copy();
+			ocamlVectorSort((n1:Native, n2:Native) -> {
 				var c = strCompare(code.strings[n1.lib], code.strings[n2.lib]);
 				if (c != 0) c else strCompare(code.strings[n1.name], code.strings[n2.name]);
 			}, sortedNatives);
@@ -2316,7 +2319,7 @@ class Hl2c {
 						expr('static hl_type_obj obj$name = {${ofields.join(",")}}');
 					case HEnum(e):
 						var ename = typeName(gctx, t);
-						function constrValue(cid:Int, f:{name:String, nid:Int, args:Array<Ttype>}):String {
+						function constrValue(cid:Int, f:EField):String {
 							var tl = f.args;
 							var tval = if (tl.length == 0) "NULL" else {
 								var name = 'econstruct${ename}_$cid';

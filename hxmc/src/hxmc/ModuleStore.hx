@@ -65,7 +65,7 @@ class Variant {
 	// the ModuleDefExtra as written, with the signatures of the build that
 	// wrote it (signs: the program's, the macros')
 	public var extra:Bytes;
-	public var signs:Array<String>;
+	public var signs:haxe.ds.Vector<Null<String>>; // per role
 	public var kind:ModuleKind;
 	// mProcessed as restored (-1: processed in an earlier compilation)
 	public var processed:Int;
@@ -84,7 +84,7 @@ class Variant {
 	public var blobSize:Int;
 	// (blob: the pack of the build that wrote it, b/<blob>.pk, at blobOff)
 	public var blobOff:Int = 0;
-	public var deps:Array<StoredDep>;
+	public var deps:haxe.ds.Vector<StoredDep>;
 	// the class fields its typing marked as maybe used through a structure
 	// (CfMaybeUsed, which DCE reads): role|module|class|kind|field
 	public var marks:Array<String> = [];
@@ -453,7 +453,7 @@ class ModuleStore {
 			v.id = i.readInt32();
 			v.extra = i.read(i.readInt32());
 			var s0 = rstr(i), s1 = rstr(i);
-			v.signs = [s0, s1 == "" ? null : s1];
+			v.signs = core.ds.VectorTools.vector(s0, s1 == "" ? null : s1);
 			if (i.readByte() == 1) {
 				var mtime = i.readDouble();
 				var size = i.readDouble();
@@ -470,14 +470,14 @@ class ModuleStore {
 			i.readByte();
 			v.macroState = [for (_ in 0...i.readInt32()) rstr(i)];
 			v.marks = [for (_ in 0...i.readInt32()) rstr(i)];
-			v.deps = [
-				for (_ in 0...i.readInt32()) {
-					var role = i.readByte() - 1;
-					var p = rpath(i);
-					var eligible = i.readByte() == 1;
-					({role: role, path: p, key: hxmc.ModuleCache.key(p), eligible: eligible, expect: rstr(i)} : StoredDep);
-				}
-			];
+			var ndeps = i.readInt32();
+			v.deps = new haxe.ds.Vector(ndeps > 0 ? ndeps : 0);
+			for (k in 0...ndeps) {
+				var role = i.readByte() - 1;
+				var p = rpath(i);
+				var eligible = i.readByte() == 1;
+				v.deps[k] = ({role: role, path: p, key: hxmc.ModuleCache.key(p), eligible: eligible, expect: rstr(i)} : StoredDep);
+			}
 			var x = readExtra(v.extra);
 			v.kind = x.mKind;
 			v.processed = x.mProcessed;

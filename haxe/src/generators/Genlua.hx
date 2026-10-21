@@ -37,6 +37,10 @@ import core.Meta;
 import core.Define;
 import generators.JsSourcemap;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 /* Loop-related context that gets reset when entering a function scope */
 @:structInit class LoopContext {
@@ -258,7 +262,14 @@ class Genlua {
 		ctx.needsSep = true;
 	}
 
-	static function concat<A>(ctx:LuaCtx, s:String, f:A->Void, l:Array<A>):Void {
+	extern overload static inline function concat<A>(ctx:LuaCtx, s:String, f:A->Void, l:Array<A>):Void {
+		for (i in 0...l.length) {
+			if (i > 0) spr(ctx, s);
+			f(l[i]);
+		}
+	}
+
+	extern overload static inline function concat<A>(ctx:LuaCtx, s:String, f:A->Void, l:Vector<A>):Void {
 		for (i in 0...l.length) {
 			if (i > 0) spr(ctx, s);
 			f(l[i]);
@@ -266,22 +277,22 @@ class Genlua {
 	}
 
 	/* create a __lua__ call */
-	static function mkLuaCode(com:BasicTypes, code:String, args:Array<TExpr>, t:T, pos:Pos):TExpr {
+	static function mkLuaCode(com:BasicTypes, code:String, args:Vector<TExpr>, t:T, pos:Pos):TExpr {
 		var luaLocal = mk(TIdent("__lua__"), tDynamic, pos);
 		var codeConst = Builder.makeString(com, code, pos);
-		return mk(TCall(luaLocal, [codeConst].concat(args)), t, pos);
+		return mk(TCall(luaLocal, VectorTools.cons(codeConst, args)), t, pos);
 	}
 
-	static function injectRestArgs(ctx:LuaCtx, args:Array<{variable:TVar, defaultValue:Null<TExpr>}>, e:TExpr):TExpr {
+	static function injectRestArgs(ctx:LuaCtx, args:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>, e:TExpr):TExpr {
 		if (args.length > 0 && ExtType.isRest(follow(args[args.length - 1].variable.vType))) {
 			var v = args[args.length - 1].variable;
 			var rest = mk(TLocal(v), v.vType, v.vPos);
-			var initRest = mkLuaCode(ctx.com.basic, "local {0} = {...}", [rest], ctx.com.basic.tvoid, v.vPos);
+			var initRest = mkLuaCode(ctx.com.basic, "local {0} = {...}", vector(rest), ctx.com.basic.tvoid, v.vPos);
 			return switch e.eexpr {
 				case TBlock(el):
-					{eexpr: TBlock([initRest].concat(el)), etype: e.etype, epos: e.epos};
+					{eexpr: TBlock(VectorTools.cons(initRest, el)), etype: e.etype, epos: e.epos};
 				case _:
-					{eexpr: TBlock([initRest, e]), etype: e.etype, epos: e.epos};
+					{eexpr: TBlock(vector(initRest, e)), etype: e.etype, epos: e.epos};
 			}
 		}
 		return e;
@@ -350,7 +361,7 @@ class Genlua {
 		addFeature(ctx, "use._hx_box_mr");
 		addFeature(ctx, "use._hx_table");
 		var code = '_hx_box_mr(_hx_table.pack({0}), {$sFields})';
-		return mkLuaCode(ctx.com.basic, code, [e], e.etype, e.epos);
+		return mkLuaCode(ctx.com.basic, code, vector(e), e.etype, e.epos);
 	}
 
 	/* create a multi-return select call for given expr and field name */
@@ -361,16 +372,16 @@ class Genlua {
 			case _:
 				Globals.die("", "genlua.ml");
 		}
-		if (i == 0) return mkLuaCode(com, "{0}", [ecall], e.etype, e.epos) else {
+		if (i == 0) return mkLuaCode(com, "{0}", vector(ecall), e.etype, e.epos) else {
 			var code = '_G.select(${i + 1}, {0})';
-			return mkLuaCode(com, code, [ecall], e.etype, e.epos);
+			return mkLuaCode(com, code, vector(ecall), e.etype, e.epos);
 		}
 	}
 
 	/* from genphp */
 	static function isStringType(t:T):Bool {
 		return switch follow(t) {
-			case TInst({clKind: KTypeParameter(ttp)}, _): Lambda.exists(getConstraints(ttp), isStringType);
+			case TInst({clKind: KTypeParameter(ttp)}, _): getConstraints(ttp).exists(isStringType);
 			case TInst({clPath: {pack: [], name: "String"}}, _): true;
 			case TAnon(a):
 				switch a.aStatus {
@@ -475,13 +486,13 @@ class Genlua {
 		}
 	}
 
-	static function genParenArguments(ctx:LuaCtx, el:Array<TExpr>):Void {
+	static function genParenArguments(ctx:LuaCtx, el:Vector<TExpr>):Void {
 		spr(ctx, "(");
 		concat(ctx, ", ", genArgument.bind(ctx, _, false), el);
 		spr(ctx, ")");
 	}
 
-	static function genCall(ctx:LuaCtx, e:TExpr, el:Array<TExpr>):Void {
+	static function genCall(ctx:LuaCtx, e:TExpr, el:Vector<TExpr>):Void {
 		ctx.iifeAssign = true;
 		switch [e.eexpr, el] {
 			case [TConst(TSuper), params]:
@@ -523,7 +534,7 @@ class Genlua {
 				var code = el[0], args = el.slice(1);
 				switch code.eexpr {
 					case TConst(TString(s)):
-						codegen.Codegen.interpolateCode(ctx.com.error, s, args, spr.bind(ctx, _), genExpr.bind(ctx, _, true), code.epos);
+						codegen.Codegen.interpolateCode(ctx.com.error, s, args.toArray(), spr.bind(ctx, _), genExpr.bind(ctx, _, true), code.epos);
 					case _:
 						raiseTypingError("The code argument for lua.Syntax.code must be a string constant", code.epos);
 				}
@@ -538,7 +549,7 @@ class Genlua {
 					case TIdent("__lua__"): false;
 					case _: true;
 				}):
-				genParen(ctx, [e]);
+				genParen(ctx, vector(e));
 				genParenArguments(ctx, el);
 			case [TIdent("__new__"), _] if (el.length >= 1 && el[0].eexpr.match(TConst(TString(_)))):
 				var cl = switch el[0].eexpr {
@@ -602,10 +613,10 @@ class Genlua {
 					case _: throw "unreachable";
 				}
 				var p = el[0].epos;
-				codegen.Codegen.interpolateCode(ctx.com.error, code, el.slice(1), spr.bind(ctx, _), genExpr.bind(ctx, _, true), p);
+				codegen.Codegen.interpolateCode(ctx.com.error, code, el.toArray().slice(1), spr.bind(ctx, _), genExpr.bind(ctx, _, true), p);
 			case [TIdent("__type__"), [o]]:
 				spr(ctx, "type");
-				genParen(ctx, [o]);
+				genParen(ctx, vector(o));
 			case [TIdent("__define_feature__"), [_, e]]:
 				genExpr(ctx, e);
 			case [TIdent("__feature__"), _] if (el.length >= 2 && el[0].eexpr.match(TConst(TString(_)))):
@@ -655,7 +666,7 @@ class Genlua {
 					spr(ctx, ")");
 				}
 			case [TField(e = {eexpr: TConst(TInt(_) | TFloat(_) | TString(_) | TBool(_))}, ef = (FInstance(_) | FAnon(_))), el]:
-				genParen(ctx, [e]);
+				genParen(ctx, vector(e));
 				print(ctx, ":" + fieldName(ef) + "(");
 				concat(ctx, ",", genValue.bind(ctx, _), el);
 				spr(ctx, ")");
@@ -672,7 +683,7 @@ class Genlua {
 				genValue(ctx, e);
 				print(ctx, ",'" + fieldName(ef) + "'");
 				spr(ctx, ")(");
-				concat(ctx, ",", genArgument.bind(ctx, _, false), [e].concat(el));
+				concat(ctx, ",", genArgument.bind(ctx, _, false), VectorTools.cons(e, el));
 				spr(ctx, ")");
 			case [TField({eexpr: TLocal(v)}, f), el] if (Meta.has(MultiReturn, v.vMeta)):
 				/* Call to a field of a multi-return local - the field is actually just a local variable */
@@ -709,7 +720,7 @@ class Genlua {
 						genValue(ctx, fieldOwner);
 						print(ctx, ",'" + s + "'");
 						spr(ctx, ")");
-						[fieldOwner].concat(el);
+						VectorTools.cons(fieldOwner, el);
 					} else {
 						genValue(ctx, fieldOwner);
 						if (isDotAccess(fieldOwner, ef)) print(ctx, "." + fieldName(ef)) else print(ctx, ":" + fieldName(ef));
@@ -747,7 +758,7 @@ class Genlua {
 		}
 	}
 
-	static function genParen(ctx:LuaCtx, el:Array<TExpr>):Void {
+	static function genParen(ctx:LuaCtx, el:Vector<TExpr>):Void {
 		spr(ctx, "(");
 		concat(ctx, ", ", genValue.bind(ctx, _), el);
 		spr(ctx, ")");
@@ -840,7 +851,7 @@ class Genlua {
 	static function checkMultireturnParam(ctx:LuaCtx, t:T, pos:Pos):Void {
 		switch t {
 			case TAbstract(_, p) | TInst(_, p):
-				if (Lambda.exists(p, ttypeMultireturn)) raiseTypingError("MultiReturns must not be type parameters", pos) else {}
+				if (p.exists(ttypeMultireturn)) raiseTypingError("MultiReturns must not be type parameters", pos) else {}
 			case _:
 		}
 	}
@@ -863,7 +874,7 @@ class Genlua {
 		}
 	}
 
-	static function genFuncBlock(ctx:LuaCtx, retExpr:TExpr, el:Array<TExpr>):Void {
+	static function genFuncBlock(ctx:LuaCtx, retExpr:TExpr, el:Vector<TExpr>):Void {
 		function loop(i:Int) {
 			if (i >= el.length) return;
 			var hd = el[i];
@@ -998,7 +1009,7 @@ class Genlua {
 			case TField(x, (FInstance(_, _, f) | FStatic(_, f) | FAnon(f))) if (Meta.has(SelfCall, f.cfMeta)):
 				genValue(ctx, x);
 			case TField(e = {eexpr: TConst(TInt(_) | TFloat(_) | TString(_) | TBool(_))}, ef = (FInstance(_) | FAnon(_))):
-				genParen(ctx, [e]);
+				genParen(ctx, vector(e));
 				print(ctx, "." + fieldName(ef));
 			case TField(x = {eexpr: TConst(TInt(_) | TFloat(_))}, f):
 				genExpr(ctx, {eexpr: TField(mk(TParenthesis(x), x.etype, x.epos), f), etype: e.etype, epos: e.epos});
@@ -1031,7 +1042,7 @@ class Genlua {
 			case TTypeExpr(t):
 				spr(ctx, ctx.typeAccessor(t));
 			case TParenthesis(e):
-				genParen(ctx, [e]);
+				genParen(ctx, vector(e));
 			case TMeta(_, e):
 				genExpr(ctx, e);
 			case TReturn(eo):
@@ -1121,7 +1132,7 @@ class Genlua {
 								/* multi-return var is generated as several vars for unpacking */
 								var id = temp(ctx);
 								var tempExpr:Expr = {expr: EConst(core.Ast.Constant.String(id, SDoubleQuotes)), pos: Globals.nullPos};
-								v.vMeta = [({meta: core.MetaList.StrictMeta.Custom(":lua_mr_id"), exprs: [tempExpr], pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
+								v.vMeta = [({meta: core.MetaList.StrictMeta.Custom(":lua_mr_id"), exprs: vector(tempExpr), pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
 								var name = varName;
 								var names = switch follow(v.vType) {
 									case TInst(c, _):
@@ -1497,7 +1508,7 @@ class Genlua {
 		switch e {
 			case {eexpr: TFunction(f)}:
 				withFunctionScope(ctx, function() {
-					print(ctx, "function(" + ["self"].concat(f.tfArgs.map(luaArgName)).join(",") + ") ");
+					print(ctx, "function(" + ["self"].concat(f.tfArgs.mapToArray(luaArgName)).join(",") + ") ");
 					var fblock = funBlock(ctx, f, e.epos);
 					switch fblock.eexpr {
 						case TBlock(el):
@@ -1559,7 +1570,7 @@ class Genlua {
 				genValue(ctx, e1);
 			case TCall({eexpr: (TField(e, s = FInstance(_)))}, el) if (isStringExpr(e)):
 				spr(ctx, ("String.prototype." + (fieldName(s))));
-				genParenArguments(ctx, [e].concat(el));
+				genParenArguments(ctx, VectorTools.cons(e, el));
 			case TCall(e, el):
 				genCall(ctx, e, el);
 			case TReturn(_) | TBreak | TContinue:
@@ -1620,7 +1631,7 @@ class Genlua {
 				v();
 			case TTry(b, catchs):
 				var v = value();
-				function block(e:TExpr):TExpr return mk(TBlock([e]), e.etype, e.epos);
+				function block(e:TExpr):TExpr return mk(TBlock(vector(e)), e.etype, e.epos);
 				genBlockElement(ctx, mk(TTry(block(assign(b)), catchs.map(c -> {variable: c.variable, expr: block(assign(c.expr))})), e.etype, e.epos));
 				v();
 				clearMapping();
@@ -1633,7 +1644,7 @@ class Genlua {
 				withFunctionScope(ctx, function() {
 					genExpr(ctx, e1);
 					spr(ctx, " = ");
-					var fnArgs = f.tfArgs.map(argName).map(ident);
+					var fnArgs = f.tfArgs.mapToArray(argName).map(ident);
 					print(ctx, "function(" + (if (isDotAccess(e3, ci)) fnArgs else ["self"].concat(fnArgs)).join(",") + ") ");
 					var fblock = funBlock(ctx, f, e1.epos);
 					switch fblock.eexpr {
@@ -1786,7 +1797,7 @@ class Genlua {
 		var ee = extractExpr(e);
 		switch ee.eexpr {
 			case TBinop(_):
-				genParen(ctx, [ee]);
+				genParen(ctx, vector(ee));
 			case _:
 				genValue(ctx, ee);
 		}
@@ -1934,7 +1945,7 @@ class Genlua {
 					case TFunction(f2):
 						withFunctionScope(ctx, function() {
 							print(ctx, " = function");
-							print(ctx, "(" + ["self"].concat(f2.tfArgs.map(luaArgName)).join(",") + ") ");
+							print(ctx, "(" + ["self"].concat(f2.tfArgs.mapToArray(luaArgName)).join(",") + ") ");
 							var fblock = funBlock(ctx, f2, e.epos);
 							switch fblock.eexpr {
 								case TBlock(el):
@@ -1982,7 +1993,7 @@ class Genlua {
 						switch e.eexpr {
 							case TFunction(f):
 								withFunctionScope(ctx, function() {
-									var args = f.tfArgs.map(luaArgName);
+									var args = f.tfArgs.mapToArray(luaArgName);
 									print(ctx, "function(" + args.join(",") + ") ");
 									var fblock = funBlock(ctx, f, e.epos);
 									switch fblock.eexpr {
@@ -2298,7 +2309,7 @@ class Genlua {
 							so it will later be generated as multiple locals unpacking the value
 						 */
 						case TVar(v, ecall = {eexpr: TCall(_)}) if (isMultireturn(v.vType)):
-							v.vMeta = [({meta: core.MetaList.StrictMeta.MultiReturn, exprs: [], pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
+							v.vMeta = [({meta: core.MetaList.StrictMeta.MultiReturn, exprs: vector(), pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
 							var ecall = Texpr.mapExpr(loop, ecall);
 							{eexpr: TVar(v, ecall), etype: e.etype, epos: e.epos};
 
@@ -2333,7 +2344,7 @@ class Genlua {
 						 */
 						case TLocal(v) if (Meta.has(MultiReturn, v.vMeta)):
 							v.vMeta = v.vMeta.filter(m -> !Meta.metaEq(core.MetaList.StrictMeta.MultiReturn, m.meta));
-							v.vMeta = [({meta: core.MetaList.StrictMeta.Custom(":lua_mr_box"), exprs: [], pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
+							v.vMeta = [({meta: core.MetaList.StrictMeta.Custom(":lua_mr_box"), exprs: vector(), pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
 							e;
 
 						case _:
@@ -2555,18 +2566,18 @@ class Genlua {
 			case null:
 			case e:
 				spr(ctx, "local success, err = _G.xpcall(");
-				var mainBlock = if (ctx.luaVanilla) [e] else {
+				var mainBlock = if (ctx.luaVanilla) vector(e) else {
 					var luvRun =
 						/* Runs libuv loop if needed */
-						mkLuaCode(ctx.com.basic, "_hx_luv.run()", [], ctx.com.basic.tvoid, Globals.nullPos);
-					[e, luvRun];
+						mkLuaCode(ctx.com.basic, "_hx_luv.run()", vector(), ctx.com.basic.tvoid, Globals.nullPos);
+					vector(e, luvRun);
 				}
 				var fn:TFunc = {
-					tfArgs: [],
+					tfArgs: vector(),
 					tfType: com.basic.tvoid,
 					tfExpr: mk(TBlock(mainBlock), com.basic.tvoid, e.epos),
 				};
-				genValue(ctx, {eexpr: TFunction(fn), etype: TFun({args: [], ret: com.basic.tvoid}), epos: e.epos});
+				genValue(ctx, {eexpr: TFunction(fn), etype: TFun({args: vector(), ret: com.basic.tvoid}), epos: e.epos});
 				println(ctx, ", _hx_handle_error)");
 				println(ctx, "if not success then _G.error(err) end");
 		}

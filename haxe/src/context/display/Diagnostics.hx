@@ -12,6 +12,7 @@ import core.Ast;
 import core.Message;
 import core.DisplayTypes;
 import core.TType;
+import core.ds.VectorTools.vector;
 
 class Diagnostics {
 	public static function addReplaceableCode(ctx:DiagnosticsContext, reason:String, replacement:String, displayRange:Pos,
@@ -65,7 +66,7 @@ class Diagnostics {
 				MKWarning(WPointlessCode, []));
 		}
 		var loop:Bool->TExpr->Void = null;
-		function compound(s:String, el:Array<TExpr>, p:Pos):Void {
+		function compound(s:String, el:haxe.ds.Vector<TExpr>, p:Pos):Void {
 			var old = hadEffect;
 			hadEffect = false;
 			for (e in el) loop(true, e);
@@ -105,15 +106,15 @@ class Diagnostics {
 				case TArray(_) | TCast(_, null) | TBinop(_) | TUnop(_) | TField(_) | TArrayDecl(_) | TObjectDecl(_) if (inValue):
 					core.Texpr.iter(loop.bind(true), e);
 				case TArray(e1, e2):
-					compound("array access", [e1, e2], e.epos);
+					compound("array access", vector(e1, e2), e.epos);
 				case TCast(e1, null):
-					compound("cast", [e1], e.epos);
+					compound("cast", vector(e1), e.epos);
 				case TBinop(op, e1, e2):
-					compound("'" + Ast.sBinop(op) + "' operator", [e1, e2], e.epos);
+					compound("'" + Ast.sBinop(op) + "' operator", vector(e1, e2), e.epos);
 				case TUnop(op, _, e1):
-					compound("'" + Ast.sUnop(op) + "' operator", [e1], e.epos);
+					compound("'" + Ast.sUnop(op) + "' operator", vector(e1), e.epos);
 				case TField(e1, _):
-					compound("field access", [e1], e.epos);
+					compound("field access", vector(e1), e.epos);
 				case TArrayDecl(el):
 					compound("array declaration", el, e.epos);
 				case TObjectDecl(fl):

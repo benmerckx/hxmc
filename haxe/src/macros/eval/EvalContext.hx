@@ -643,7 +643,7 @@ class EvalContext {
 
 	// Environment handling
 	public static final noTimer:Void->Void = () -> {};
-	public static final emptyArray:Array<Value> = [];
+	public static final emptyArray:haxe.ds.Vector<Value> = new haxe.ds.Vector(0);
 	static final emptyVector = new ValueSlots(0);
 	public static final noExpr = "";
 	public static final noDebug = new EnvDebug(noTimer, [], 0, noExpr, Globals.nullPos);

@@ -63,6 +63,7 @@ import generators.cpp.gen.CppGenInterfaceImplementation;
 import generators.cpp.gen.CppGenEnum;
 import generators.cpp.gen.CppCppia;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
 
 /*
 	The common_ctx contains the haxe AST in the "types" field and the resources
@@ -338,11 +339,11 @@ class Gencpp {
 			}
 
 			return switch cur {
-				case TAbstractDecl(abs) if (isMarshallingNativeEnum(abs) && !core.TOther.ExtType.hasValueSemantics(TAbstract(abs, []))):
+				case TAbstractDecl(abs) if (isMarshallingNativeEnum(abs) && !core.TOther.ExtType.hasValueSemantics(TAbstract(abs, vector()))):
 					noSemanticsMeta(abs.aPos);
 				case TClassDecl(classDef) if (isExternClass(classDef)):
 					if ((isMarshallingNativeValueClass(classDef) || isMarshallingNativePointer(classDef))
-						&& !core.TOther.ExtType.hasValueSemantics(TInst(classDef, []))) noSemanticsMeta(classDef.clPos);
+						&& !core.TOther.ExtType.hasValueSemantics(TInst(classDef, vector()))) noSemanticsMeta(classDef.clPos);
 
 					if (isMarshallingNativePointer(classDef) && classDef.clConstructor != null) CppError.cppAbort(PointerTypeConstructor, classDef.clPos);
 
@@ -367,7 +368,7 @@ class Gencpp {
 							if (nativeGen) {bootable: bootable, decl: NativeInterface(r.iface), slots: r.slots, ids: acc.ids} else
 								{bootable: bootable, decl: ManagedInterface(r.iface), slots: r.slots, ids: acc.ids};
 						case false:
-							var r = CppRetyper.tcppClassFromTclass(ctx, acc.ids, acc.slots, classDef, []);
+							var r = CppRetyper.tcppClassFromTclass(ctx, acc.ids, acc.slots, classDef, vector());
 							var bootable = hasTcppClassFlag(r.cls, Boot);
 							if (nativeGen) {bootable: bootable, decl: NativeClass(r.cls), slots: r.slots, ids: r.ids} else
 								{bootable: bootable, decl: ManagedClass(r.cls), slots: r.slots, ids: r.ids};

@@ -24,6 +24,7 @@ package generators;
 
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
+import haxe.ds.Vector;
 import generators.Hlcode;
 import generators.Hlcode.*;
 
@@ -90,7 +91,7 @@ class Block {
 	public var bnext:Array<Block> = []; // port: lists, head first
 	public var bprev:Array<Block> = [];
 	public var bloop:Bool = false;
-	public var bstate:Null<Array<RegState>> = null;
+	public var bstate:Null<Vector<RegState>> = null;
 	public var bneed:ISet = ISet.empty;
 	public var bneedAll:Null<ISet> = null;
 	public var bwrite:IntMap<Int> = new IntMap(); // port: (int, int) PMap.t
@@ -108,7 +109,7 @@ enum Control {
 	CJAlways(d:Int);
 	CTry(d:Int);
 	CCatch;
-	CSwitch(cases:Array<Int>);
+	CSwitch(cases:Vector<Int>);
 	CRet;
 	CThrow;
 	CLabel;
@@ -120,14 +121,14 @@ typedef Rctx = {
 	var rNopCount:Int;
 	var rBlocksPos:IntMap<Block>;
 	var rRegMoved:IntMap<{reg:Int, lastW:Int}>; // port: Hashtbl.add/find: the most recent binding
-	var rLiveBits:Array<Int>;
-	var rRegMap:Array<Int>;
+	var rLiveBits:Vector<Int>;
+	var rRegMap:Vector<Int>;
 }
 
 typedef CacheElt = {
-	var cCode:Array<Opcode>;
+	var cCode:Vector<Opcode>;
 	var cRctx:Rctx;
-	var cRemapIndexes:Array<Int>;
+	var cRemapIndexes:Vector<Int>;
 	var cLastUsed:Int;
 }
 
@@ -664,7 +665,7 @@ class Hlopt {
 		return {blocksPos: blocksPos, root: makeBlock([], 0)};
 	}
 
-	static function remapFun(ctx:Rctx, f:Fundecl, dump:Bool, getStr:Int->String, oldCode:Array<Opcode>):{f:Fundecl, dump:String} {
+	static function remapFun(ctx:Rctx, f:Fundecl, dump:Bool, getStr:Int->String, oldCode:Vector<Opcode>):{f:Fundecl, dump:String} {
 		function op(index:Int) return f.code[index];
 		var nregs = f.regs.length;
 		var regRemap = ctx.rUsedRegs != nregs;
@@ -759,7 +760,7 @@ class Hlopt {
 					a;
 				}
 			];
-			assigns = newAssigns;
+			assigns = Vector.fromArrayCopy(newAssigns);
 		}
 
 		/* done */
@@ -826,11 +827,11 @@ class Hlopt {
 		if (ctx.rNopCount > 0 || regRemap) {
 			// port: one extra slot so that a jump to the end of the code reads the end position
 			// (upstream reads past the array with unsafe_get)
-			var newPos = [for (_ in 0...f.code.length + 1) 0];
+			var newPos = new Vector(f.code.length + 1, 0);
 			var jumps:Array<Int> = [];
 			var outPos = 0;
-			var outCode = [for (_ in 0...f.code.length - ctx.rNopCount) ONop("")];
-			var newDebug:Array<DebugInfo> = [for (_ in 0...f.code.length - ctx.rNopCount) null];
+			var outCode = new Vector(f.code.length - ctx.rNopCount, ONop(""));
+			var newDebug = new Vector<DebugInfo>(f.code.length - ctx.rNopCount);
 			for (i in 0...f.code.length) {
 				var op = f.code[i];
 				newPos[i] = outPos;
@@ -869,7 +870,7 @@ class Hlopt {
 					case OJEq(a, b, d): OJEq(a, b, pos(d));
 					case OJNotEq(a, b, d): OJNotEq(a, b, pos(d));
 					case OJAlways(d): OJAlways(pos(d));
-					case OSwitch(r, cases, send): OSwitch(r, [for (c in cases) pos(c)], pos(send));
+					case OSwitch(r, cases, send): OSwitch(r, cases.map(pos), pos(send));
 					case OTrap(r, d): OTrap(r, pos(d));
 					case _: core.Globals.die("", "hlopt.ml");
 				}
@@ -884,7 +885,7 @@ class Hlopt {
 			code = outCode;
 			debug = newDebug;
 			if (regRemap) {
-				var newRegs = [for (_ in 0...ctx.rUsedRegs) HVoid];
+				var newRegs = new Vector(ctx.rUsedRegs, HVoid);
 				for (i in 0...nregs) {
 					var p = regMap[i];
 					if (p >= 0) newRegs[p] = f.regs[i];
@@ -909,7 +910,7 @@ class Hlopt {
 		/* an allocating opcode never returns null and ONull is always null */
 		function foldNullChecks():Void {
 			var len = f.code.length;
-			var isTarget = [for (_ in 0...len + 1) false];
+			var isTarget = new Vector(len + 1, false);
 			function mark(i:Int, d:Int):Void {
 				var t = i + 1 + d;
 				if (t >= 0 && t <= len) isTarget[t] = true;
@@ -962,13 +963,13 @@ class Hlopt {
 		var g = codeGraph(f);
 		var blocksPos = g.blocksPos, root = g.root;
 
-		var readCounts = [for (_ in 0...nregs) 0];
-		var writeCounts = [for (_ in 0...nregs) 0];
-		var lastWrite = [for (_ in 0...nregs) -1];
+		var readCounts = new Vector(nregs, 0);
+		var writeCounts = new Vector(nregs, 0);
+		var lastWrite = new Vector(nregs, -1);
 
 		var bitRegs = 30;
 		var stride = Std.int((nregs + bitRegs - 1) / bitRegs);
-		var liveBits = [for (_ in 0...f.code.length * stride) 0];
+		var liveBits = new Vector(f.code.length * stride, 0);
 
 		var regMoved = new IntMap<{reg:Int, lastW:Int}>();
 		function addRegMoved(p:Int, w:Int, r:Int):Void regMoved.set(p, {reg: r, lastW: lastWrite[r]});
@@ -993,7 +994,11 @@ class Hlopt {
 		function readCount(r:Int) readCounts[r] = readCounts[r] + 1;
 		function writeCount(r:Int) writeCounts[r] = writeCounts[r] + 1;
 
-		function emptyState():Array<RegState> return [for (i in 0...nregs) new RegState(i)];
+		function emptyState():Vector<RegState> {
+			var s = new Vector<RegState>(nregs);
+			for (i in 0...nregs) s[i] = new RegState(i);
+			return s;
+		}
 
 		function isPackedField(o:Int, fid:Int):Bool {
 			return switch f.regs[o] {
@@ -1015,7 +1020,7 @@ class Hlopt {
 			in
 		 */
 
-		var getState:Block->Array<RegState> = null;
+		var getState:Block->Vector<RegState> = null;
 		function propagate(b:Block):Void {
 			var state = if (b.bloop) emptyState() else if (b.bprev.length == 0) emptyState() else {
 				var b2 = b.bprev[0];
@@ -1152,7 +1157,7 @@ class Hlopt {
 			for (b2 in b.bnext) getState(b2);
 		}
 
-		getState = function(b:Block):Array<RegState> {
+		getState = function(b:Block):Vector<RegState> {
 			switch b.bstate {
 				case null:
 					/* recurse before calculating */
@@ -1297,7 +1302,7 @@ class Hlopt {
 	static var usedMark = 0;
 
 	public static function optimize(dump:Bool, getStr:Int->String, f:Fundecl, hxf:String):{f:Fundecl, dump:String} {
-		var oldCode = if (dump) f.code.copy() else f.code;
+		var oldCode:Vector<Opcode> = if (dump) f.code.copy() else f.code;
 		var c = optCache.get(hxf);
 		if (c != null) {
 			c.cLastUsed = usedMark;

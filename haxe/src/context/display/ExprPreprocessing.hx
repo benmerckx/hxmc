@@ -5,6 +5,11 @@ import core.Globals.Pos;
 import core.DisplayTypes.DisplayModeValue;
 import core.display.DisplayPosition;
 import core.Ast;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class ExprPreprocessing {
 	public static function findBeforePos(wasAutoTriggered:Bool, dm:DisplayModeValue, e:Expr):Expr {
@@ -26,20 +31,20 @@ class ExprPreprocessing {
 		}
 		function annotateMarked(e:Expr):Expr return annotate(e, DKMarked);
 		function mkNull(p:Pos):Expr return annotateMarked({expr: EConst(Ident("null")), pos: p});
-		function loopEl(el:Array<Expr>):Array<Expr> {
+		function loopEl(el:Vector<Expr>):Vector<Expr> {
 			var pr = DisplayPosition.displayPosition.withPos(e.pos);
-			function loop(i:Int):Array<Expr> {
-				if (i >= el.length) return [mkNull(pr)];
+			function loop(i:Int):Vector<Expr> {
+				if (i >= el.length) return vector(mkNull(pr));
 				var e = el[i];
-				if (e.pos.pmin >= pr.pmax) return [mkNull(pr)].concat(el.slice(i));
-				return [e].concat(loop(i + 1));
+				if (e.pos.pmin >= pr.pmax) return VectorTools.cons(mkNull(pr), el.slice(i));
+				return VectorTools.cons(e, loop(i + 1));
 			}
 			/* print_endline (Printf.sprintf "%i-%i: PR" pr.pmin pr.pmax);
 			List.iter (fun e ->
 				print_endline (Printf.sprintf "%i-%i: %s" (pos e).pmin (pos e).pmax (Ast.s_expr e));
 			) el; */
-			if (el.length == 0) return [mkNull(pr)];
-			if (el[0].pos.pmin >= pr.pmax) return [mkNull(pr)].concat(el);
+			if (el.length == 0) return vector(mkNull(pr));
+			if (el[0].pos.pmin >= pr.pmax) return VectorTools.cons(mkNull(pr), el);
 			return loop(0);
 		}
 		var inPattern = false;
@@ -79,7 +84,7 @@ class ExprPreprocessing {
 					}
 					// port: loop2 returns the variables in order, then `EVars (List.rev vl)` reverses them
 					acc.reverse();
-					var e:Expr = {expr: EVars(acc), pos: e.pos};
+					var e:Expr = {expr: EVars(Vector.fromArrayCopy(acc)), pos: e.pos};
 					if (wasAnnotated) e else throw core.ds.Exit.raise();
 				case EBinop(op = OpAssign | OpAssignOp(_), e1, e2) if (isAnnotated(e.pos) && isCompletion):
 					// Special case for assign ops: If the expression is marked, but none of its operands are,
@@ -99,9 +104,9 @@ class ExprPreprocessing {
 					annotate(e, DKStructure);
 				case EBlock([{expr: EDisplay({expr: EConst(Ident(s)), pos: pn}, DKMarked)}]) if (isCompletion):
 					var e:Expr = {
-						expr: EObjectDecl([
+						expr: EObjectDecl(vector(
 							{key: {name: s, pos: pn, quote: NoQuotes}, expr: {expr: EConst(Ident("null")), pos: Globals.nullPos}}
-						]),
+						)),
 						pos: e.pos
 					};
 					annotate(e, DKStructure);
@@ -132,15 +137,15 @@ class ExprPreprocessing {
 						var ep = mkNull(p);
 						if (ec != null) {
 							var ec:Expr = switch ec.expr {
-								case EBlock(el): {expr: EBlock(el.concat([ep])), pos: p};
-								case _: {expr: EBlock([ec, ep]), pos: p};
+								case EBlock(el): {expr: EBlock(el.snoc(ep)), pos: p};
+								case _: {expr: EBlock(vector(ec, ep)), pos: p};
 							};
 							return ec;
 						}
 						return mkNull(p);
 					}
-					function loop(i:Int):Array<SwitchCase> {
-						if (i >= cases.length) return [];
+					function loop(i:Int):Vector<SwitchCase> {
+						if (i >= cases.length) return vector();
 						var c1 = cases[i];
 						if (i == cases.length - 1) {
 							var p1 = c1.pos;
@@ -154,26 +159,13 @@ class ExprPreprocessing {
 									p1) // default is beyond display position, mark
 								else c1.expr; // default contains display position, don't mark
 							};
-							return [
-								({
-									values: c1.values,
-									guard: c1.guard,
-									expr: ec,
-									pos: p1
-								} : SwitchCase)
-							];
+							return vector(({values: c1.values, guard: c1.guard, expr: ec, pos: p1} : SwitchCase));
 						}
 						var c2 = cases[i + 1];
 						var p1 = c1.pos, p2 = c2.pos;
-						if (p1.pmax <= displayPos.pmin && p2.pmin >= displayPos.pmax) return [
-							({
-								values: c1.values,
-								guard: c1.guard,
-								expr: markCase(c1.expr, p1),
-								pos: p1
-							} : SwitchCase)
-						].concat(cases.slice(i + 1));
-						return [c1].concat(loop(i + 1));
+						if (p1.pmax <= displayPos.pmin && p2.pmin >= displayPos.pmax)
+							return VectorTools.cons(({values: c1.values, guard: c1.guard, expr: markCase(c1.expr, p1), pos: p1} : SwitchCase), cases.slice(i + 1));
+						return VectorTools.cons(c1, loop(i + 1));
 					}
 					var cases = loop(0);
 					var def = if (didMark) def else {
@@ -193,7 +185,7 @@ class ExprPreprocessing {
 					throw core.ds.Exit.raise();
 				case EVars(vl) if (isAnnotated(e.pos)):
 					// We only want to mark EVars if we're on a var name.
-					if (core.ds.ArrayTools.exists(vl, v -> isAnnotated(v.evName.pos))) annotateMarked(e) else throw core.ds.Exit.raise();
+					if (VectorTools.exists(vl, v -> isAnnotated(v.evName.pos))) annotateMarked(e) else throw core.ds.Exit.raise();
 				case _:
 					if (isAnnotated(e.pos)) annotateMarked(e) else e;
 			};
@@ -227,9 +219,9 @@ class ExprPreprocessing {
 
 	public static function findDisplayCall(wasAutoTriggered:Bool, e:Expr):Expr {
 		var found = false;
-		function handleEl(e:Expr, el:Array<Expr>):Expr {
+		function handleEl(e:Expr, el:Vector<Expr>):Expr {
 			function callArgIsMarked():Bool {
-				return el.length == 0 || core.ds.ArrayTools.exists(el, e -> e.expr.match(EDisplay(_, DKMarked)));
+				return el.length == 0 || VectorTools.exists(el, e -> e.expr.match(EDisplay(_, DKMarked)));
 			}
 			if (!wasAutoTriggered || callArgIsMarked()) {
 				found = true;
@@ -242,7 +234,7 @@ class ExprPreprocessing {
 				case ECall(_, el) | ENew(_, el) if (!found && DisplayPosition.displayPosition.enclosedIn(e.pos)):
 					handleEl(e, el);
 				case EArray(e1, e2) if (!found && DisplayPosition.displayPosition.enclosedIn(e2.pos)):
-					handleEl(e, [e2]);
+					handleEl(e, vector(e2));
 				case EDisplay(_, DKCall):
 					throw core.ds.Exit.raise();
 				case _: e;

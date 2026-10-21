@@ -322,7 +322,7 @@ class FuncGen {
 			case _: null;
 		}
 
-	function scoped(ss:Array<Stmt>) {
+	function scoped(ss:haxe.ds.Vector<Stmt>) {
 		var saved = checked;
 		checked = saved.copy();
 		stmts(ss);
@@ -330,7 +330,7 @@ class FuncGen {
 		forgetAssigned(ss);
 	}
 
-	function forgetAssigned(ss:Array<Stmt>) {
+	function forgetAssigned(ss:haxe.ds.Vector<Stmt>) {
 		if (!checked.keys().hasNext()) return;
 		function st(s:Stmt) {
 			switch s {
@@ -383,7 +383,7 @@ class FuncGen {
 		throw "no enclosing loop";
 	}
 
-	function stmts(ss:Array<Stmt>)
+	function stmts(ss:haxe.ds.Vector<Stmt>)
 		for (s in ss)
 			stmt(s);
 
@@ -488,7 +488,7 @@ class FuncGen {
 		}
 	}
 
-	function switchStmt(e:Ex, cases:Array<{values:Array<Int>, body:Array<Stmt>}>, def:Array<Stmt>) {
+	function switchStmt(e:Ex, cases:haxe.ds.Vector<IrCase>, def:haxe.ds.Vector<Stmt>) {
 		var t = temp("i");
 		expr(e);
 		localSet(t);
@@ -527,7 +527,7 @@ class FuncGen {
 		block(FPlain, 0x02); // the default
 		for (_ in 0...n)
 			block(FPlain, 0x02);
-		var targets = [for (_ in lo...hi + 1) n];
+		var targets = new haxe.ds.Vector<Int>(hi - lo + 1, n);
 		for (k in 0...n)
 			for (v in cases[k].values)
 				targets[v - lo] = k;
@@ -714,7 +714,7 @@ class FuncGen {
 
 	var excCount = 0;
 
-	function tryStmt(body:Array<Stmt>, catches:Array<{test:Null<Ex->Ex>, l:Local, body:Array<Stmt>}>) {
+	function tryStmt(body:haxe.ds.Vector<Stmt>, catches:haxe.ds.Vector<IrCatch>) {
 		// (with a linear memory: the stack pointer as here again where an
 		// exception is caught, the frames it left without returning given back)
 		var sp = -1;
@@ -1095,9 +1095,9 @@ class FuncGen {
 	// inline, the rest through Helpers.naGet and GcNArray.set
 
 	// the most elements of each kind (MirBuild's: the same programs fail)
-	static final NA_LIMITS = [0x0FFFFFFD, 0x1FFFFFFA, 0x0FFFFFFD, 0x0FFFFFFD, 0x7FFFFFE8];
+	static final NA_LIMITS:haxe.ds.Vector<Int> = core.ds.VectorTools.vector(0x0FFFFFFD, 0x1FFFFFFA, 0x0FFFFFFD, 0x0FFFFFFD, 0x7FFFFFE8);
 
-	function narray(name:String, args:Array<Ex>) {
+	function narray(name:String, args:haxe.ds.Vector<Ex>) {
 		var p = m.dataType("p");
 		switch name {
 			case "hxmc_narray_new":
@@ -1333,7 +1333,7 @@ class FuncGen {
 	}
 
 	// the runtime's intrinsics (hxmc.rt.gc.W) and the calls left to the runtime
-	function host(name:String, args:Array<Ex>, ret:Ty) {
+	function host(name:String, args:haxe.ds.Vector<Ex>, ret:Ty) {
 		inline function all()
 			for (a in args)
 				expr(a);
@@ -1970,7 +1970,7 @@ class FuncGen {
 		Enc.uleb(b, disp);
 	}
 
-	function mem(name:String, args:Array<Ex>) {
+	function mem(name:String, args:haxe.ds.Vector<Ex>) {
 		inline function load(opcode:Int) {
 			var d = address(args[0], args[1]);
 			op(opcode);

@@ -60,10 +60,10 @@ class Reach {
 	var p:Program;
 	var live = new Map<FuncInfo, Bool>();
 	var work:Array<FuncInfo> = [];
-	var inst:Array<Bool>; // by class id
+	var inst:haxe.ds.Vector<Bool>; // by class id
 	var valueClasses = new Map<ClassInfo, Bool>(); // class values (EType) in live code
 	var shapes = new Map<ShapeInfo, Bool>(); // the object literals' layouts live code makes or reads
-	var selLive:Array<Bool>;
+	var selLive:haxe.ds.Vector<Bool>;
 	var names = new Map<String, Bool>();
 	var anyName:Null<String> = null; // the function passing a computed name, once one does
 	var setters = new Map<Int, Array<FuncInfo>>(); // global -> the static initializers setting it
@@ -91,20 +91,20 @@ class Reach {
 	var bySymbol = new Map<String, FuncInfo>();
 
 	// the body analyzed (a target's own form of it: WasmGC's after IrOpt), else the function's
-	var bodyOf:Null<FuncInfo->Array<Stmt>>;
+	var bodyOf:Null<FuncInfo->haxe.ds.Vector<Stmt>>;
 
-	function new(p:Program, stats:Bool, calls:Null<RuntimeCalls>, bodyOf:Null<FuncInfo->Array<Stmt>>) {
+	function new(p:Program, stats:Bool, calls:Null<RuntimeCalls>, bodyOf:Null<FuncInfo->haxe.ds.Vector<Stmt>>) {
 		this.p = p;
 		this.stats = stats;
 		this.calls = calls;
 		this.bodyOf = bodyOf;
 	}
 
-	inline function body(f:FuncInfo):Array<Stmt>
+	inline function body(f:FuncInfo):haxe.ds.Vector<Stmt>
 		return bodyOf == null ? f.body : bodyOf(f);
 
 	// (HXMC_REACH=0: every function stays, as the lowering made them)
-	public static function run(p:Program, stats:Bool, ?calls:RuntimeCalls, ?bodyOf:FuncInfo->Array<Stmt>) {
+	public static function run(p:Program, stats:Bool, ?calls:RuntimeCalls, ?bodyOf:FuncInfo->haxe.ds.Vector<Stmt>) {
 		var r = new Reach(p, stats, calls, bodyOf);
 		r.analyze();
 		if (r.whyName != null) r.explain();
@@ -130,8 +130,8 @@ class Reach {
 	];
 
 	function analyze() {
-		inst = [for (_ in p.classes) false];
-		selLive = [for (_ in p.selectors) false];
+		inst = new haxe.ds.Vector(p.classes.length);
+		selLive = new haxe.ds.Vector(p.selectors.length);
 		for (i in 0...p.classes.length)
 			if (p.classes[i].id != i) throw "hxmc: reach: classes out of order";
 		findSinks();
@@ -183,7 +183,7 @@ class Reach {
 					}
 			// the methods callable on an instance now
 			var n = p.classes.length;
-			var below = [for (_ in 0...n + 1) 0]; // instantiated classes with an id below k
+			var below = new haxe.ds.Vector<Int>(n + 1); // instantiated classes with an id below k
 			for (i in 0...n)
 				below[i + 1] = below[i] + (inst[i] ? 1 : 0);
 			var rest = [];
@@ -314,7 +314,7 @@ class Reach {
 				case _:
 			}
 		// (the direct calls, in the order of the bodies, found once: the rounds go over them)
-		var sites:Array<{f:FuncInfo, g:FuncInfo, args:Array<Ex>}> = [];
+		var sites:Array<{f:FuncInfo, g:FuncInfo, args:haxe.ds.Vector<Ex>}> = [];
 		for (f in p.funcs) {
 			function ex(e:Ex) {
 				switch e {

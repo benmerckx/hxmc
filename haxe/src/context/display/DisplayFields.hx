@@ -37,6 +37,9 @@ import core.Meta;
 import core.DisplayTypes;
 import core.TType;
 import core.display.CompletionItem;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 class DisplayFields {
 	public static function getSubmoduleFields(ctx:Typer, path:GlobalTypePath):Array<CompletionItemData> {
@@ -103,7 +106,7 @@ class DisplayFields {
 				var f = Typecore.prepareUsingField(f);
 				var f = {
 					var f2 = f.clone();
-					f2.cfParams = [];
+					f2.cfParams = vector();
 					f2.cfFlags = setFlag(f.cfFlags, intOfClassFieldFlag(CfPublic));
 					f2.cfType = TFun({args: args, ret: ret});
 					f2;
@@ -179,7 +182,7 @@ class DisplayFields {
 	}
 
 	public static function collect(ctx:Typer, eAst:Expr, e:TExpr, dk:DisplayKind, withType:WithTypeValue, p:Pos):Array<CompletionItemData> {
-		function optArgs(args:Array<{name:String, optional:Bool, type:T}>,
+		function optArgs(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>,
 				ret:T):T return TFun({args: args.map(a -> {name: a.name, optional: true, type: a.type}), ret: ret});
 		function shouldAccess_(c:TClass, cf:TClassField, stat:Bool):Bool {
 			if (Meta.has(MetaTag.NoCompletion, cf.cfMeta)) return false;
@@ -265,7 +268,7 @@ class DisplayFields {
 						tpackage: [],
 						tname: "EnumValue",
 						tsub: null,
-						tparams: []
+						tparams: vector()
 					});
 					switch t {
 						case TAbstractDecl(a = {aImpl: c}) if (c != null):
@@ -383,7 +386,7 @@ class DisplayFields {
 					// A function has no field except the magic .bind one.
 					if (isNewItem(items, "bind")) {
 						var t = optArgs(s.args, s.ret);
-						var cf = mkField("bind", tfun([t], t), p, Globals.nullPos);
+						var cf = mkField("bind", tfun(vector(t), t), p, Globals.nullPos);
 						cf.cfKind = Method(MethNormal);
 						var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(cf.cfMeta), t);
 						var item = CompletionItem.makeCiClassField(CompletionClassField.make(cf, CFSStatic, BuiltIn, true), {t: t, ct: ct});
@@ -455,7 +458,7 @@ class DisplayFields {
 		var r = switch mode {
 			case MCall(el):
 				try {
-					var tl = [];
+					var tl = new haxe.ds.Vector(el.length);
 					for (i in 0...el.length) {
 						var e = el[i];
 						var name = switch e.expr {
@@ -463,7 +466,7 @@ class DisplayFields {
 							case _: 'arg$i';
 						};
 						var e = Typecore.typeExpr(ctx, e, WithTypeTools.value);
-						tl.push({name: name, optional: false, type: e.etype});
+						tl[i] = {name: name, optional: false, type: e.etype};
 					}
 					{t: TFun({args: tl, ret: tret}), kind: Method(MethNormal)};
 				} catch (_:Dynamic) {
@@ -477,8 +480,8 @@ class DisplayFields {
 		var t = r.t;
 		var cf = mkField(i, t, pfield, Globals.nullPos, false);
 		cf.cfMeta = [
-			{meta: MetaTag.CompilerGenerated, exprs: [], pos: Globals.nullPos},
-			{meta: MetaTag.NoCompletion, exprs: [], pos: Globals.nullPos}
+			{meta: MetaTag.CompilerGenerated, exprs: vector(), pos: Globals.nullPos},
+			{meta: MetaTag.NoCompletion, exprs: vector(), pos: Globals.nullPos}
 		];
 		cf.cfKind = r.kind;
 		var r = switch follow(tthis) {

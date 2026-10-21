@@ -29,13 +29,27 @@ These apply to every change of `haxe/src`.
   UTF8 functions, lengths in bytes); compare strings with
   `core.ds.Key.compareStrings` (OCaml's order: code point order, which UTF-16
   units are not).
-- Upstream's lists are Arrays, except where a hot path relies on O(1)
+- Fixed-size lists are `haxe.ds.Vector`s: upstream's arrays, and the lists
+  the port never extends once they are stored, such as the untyped and typed
+  AST's expression lists (`EBlock`, `ECall`, `TCall`, `TBlock`, switch cases,
+  catches, ...), metadata arguments, type parameters (`TParams`,
+  `TypeParams`) and function arguments (`TFun`'s, `tfArgs`). A Vector is
+  one allocation without spare capacity, and on hxmc the empty one is a
+  shared static object.
+  `core.ds.VectorTools` has `vector(a, b)`, a Vector literal (`vector()` the
+  empty one), and the list functions on Vectors; `core.ds.List` and
+  `core.ds.ArrayTools` take Arrays and Vectors alike. Array patterns
+  (`case [a, b]:`) match Vectors as they match Arrays, so upstream's list
+  patterns stay as they are. A list built by pushing stays an Array until it
+  is stored, then is made a Vector once (or is allocated at its final length
+  when that is known). A recursion over a list's tail walks the Vector by
+  index instead of slicing it.
+- Upstream's other lists are Arrays, except where a hot path relies on O(1)
   `x :: l` and shared tails: there `core.ds.MlList` (`Nil`/`Cons`, the shape
   of ml2hx's runtime list), so far the matcher's rows (2% fewer instructions
   in the self-compile). Convert another site only when it measures: the
   resolution list and the analyzer's CFG edges saved 0.2-0.5% of the
   instructions and no wall time beyond noise, so they stayed Arrays.
-  `core.TType`'s fields stay Arrays (hxmc's back end and HXB read them).
 - Output that depends on the reference binary itself is the one exception
   to byte identity: hl/c's digest names of the types whose description
   holds a closure (Marshal writes code pointers and the digest of the

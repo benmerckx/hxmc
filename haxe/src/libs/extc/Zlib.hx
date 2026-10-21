@@ -161,7 +161,10 @@ class Zlib {
 	var prev_match:Int;
 	var match_available:Int;
 	var strstart:Int;
-	var match_start:Int;
+	// port: C leaves match_start unset until longest_match, but fill_window slides
+	// ... it before (a value then never read): 0, as an Int field starts on the
+	// ... static targets, not null as on Eval
+	var match_start:Int = 0;
 	var lookahead:Int;
 	var prev_length:Int;
 	var max_chain_length:Int;
@@ -361,11 +364,16 @@ class Zlib {
 	}
 
 	inline function CLEAR_HASH():Void {
+		#if static
 		// port: zmemzero (NIL is 0): emptied and extended again, the array is
 		// zero-filled in place (Int's default value on the static targets)
 		// instead of 32K bounds-checked stores per stream
 		head.resize(0);
 		head.resize(hash_size);
+		#else
+		// port: Array.resize extends with null on the dynamic targets (Eval)
+		for (i in 0...hash_size) head[i] = NIL;
+		#end
 	}
 
 	inline function UPDATE_HASH(h:Int, c:Int):Int return ((h << hash_shift) ^ c) & hash_mask;

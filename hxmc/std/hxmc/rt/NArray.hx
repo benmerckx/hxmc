@@ -38,8 +38,9 @@ class NArray {
 	}
 
 	// new storage of n elements of kind k (zeroed: 0, false, null); the
-	// header counts 8-byte slots, the length/kind word first
-	static function alloc(k:Int, n:Int):Dynamic {
+	// header counts 8-byte slots, the length/kind word first. A literal's
+	// storage too (MirBuild, hxmc_narray_lit: n from 1 to the kind's most)
+	@:hxmc.export("hx_narray_new_n") static function alloc(k:Int, n:Int):Dynamic {
 		var words = k == AK_BOOL ? (n + 7) >> 3 : k == AK_I32 ? (n + 1) >> 1 : n;
 		var a = Mem.alloc(words + 1, T_NATIVE_ARRAY, k == AK_PTR ? K_PARR : K_RAW);
 		Mem.setI32(Mem.addr(a), 0, n);

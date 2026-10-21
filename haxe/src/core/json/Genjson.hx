@@ -52,7 +52,10 @@ class Genjson {
 
 	public static function jopt<T>(f:T->JsonValue, o:Null<T>):JsonValue return o == null ? JNull : f(o);
 
-	public static function jlist<T>(f:T->JsonValue, o:Array<T>):JsonValue return jarray([for (x in o) f(x)]);
+	extern overload public static inline function jlist<T>(f:T->JsonValue, o:Array<T>):JsonValue return jarray([for (x in o) f(x)]);
+
+	// port: a list kept as a Vector
+	extern overload public static inline function jlist<T>(f:T->JsonValue, o:haxe.ds.Vector<T>):JsonValue return jarray([for (x in o) f(x)]);
 
 	public static function generatePackagePath_(pack:Array<String>):Array<JsonField> return [kv("pack", jarray(pack.map(jstring)))];
 
@@ -323,7 +326,7 @@ class Genjson {
 		]);
 	}
 
-	public static function generateFunctionSignature(ctx:GenjsonContext, tl:Array<{name:String, optional:Bool, type:T}>,
+	public static function generateFunctionSignature(ctx:GenjsonContext, tl:haxe.ds.Vector<{name:String, optional:Bool, type:T}>,
 			tr:T):Array<JsonField> {
 		return [
 			kv("args", jlist(generateFunctionArgument.bind(ctx), tl)),
@@ -331,9 +334,9 @@ class Genjson {
 		];
 	}
 
-	public static function generateTypes(ctx:GenjsonContext, tl:Array<T>):JsonValue return jlist(generateType.bind(ctx), tl);
+	public static function generateTypes(ctx:GenjsonContext, tl:core.TType.TParams):JsonValue return jlist(generateType.bind(ctx), tl);
 
-	public static function generateTypePathWithParams(ctx:GenjsonContext, mpath:GlobalTypePath, tpath:GlobalTypePath, tl:Array<T>,
+	public static function generateTypePathWithParams(ctx:GenjsonContext, mpath:GlobalTypePath, tpath:GlobalTypePath, tl:core.TType.TParams,
 			meta:Metadata):JsonValue {
 		return jobject([
 			kv("path", generateTypePath(mpath, tpath, meta)),

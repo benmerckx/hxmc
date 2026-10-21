@@ -19,6 +19,9 @@ import context.Typecore;
 import context.AbstractCast;
 import typing.matcher.Pattern;
 import typing.matcher.Bind;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 @:structInit class CaseData {
 	public var caseGuard:Null<TExpr>;
@@ -150,7 +153,7 @@ class Case {
 			case _: map(subst, ty);
 		};
 		function rebindUnrefined():Void {
-			for (entry in tpMemo) if (entry.mono.tmType == null) Monomorph.doBind(entry.mono, TInst(entry.original, []));
+			for (entry in tpMemo) if (entry.mono.tmType == null) Monomorph.doBind(entry.mono, TInst(entry.original, vector()));
 		}
 		function unsubst(ty:T):T {
 			return switch ty {
@@ -159,7 +162,7 @@ class Case {
 						// Physical equality (==) for monomorph identity
 						var original:Null<T> = null;
 						for (entry in tpMemo) if (m == entry.mono) {
-							original = TInst(entry.original, []);
+							original = TInst(entry.original, vector());
 							break;
 						}
 						if (original == null) for (entry in fmMemo) if (m == entry.mono) {
@@ -174,17 +177,22 @@ class Case {
 		return {subst: subst, rebindUnrefined: rebindUnrefined, unsubst: unsubst};
 	}
 
-	public static function make(ctx:Typer, t:T, freeMonos:Array<TMono>, el:Array<Expr>, eg:Null<Expr>, eoAst:Null<Expr>,
+	public static function make(ctx:Typer, t:T, freeMonos:Array<TMono>, el:haxe.ds.Vector<Expr>, eg:Null<Expr>, eoAst:Null<Expr>,
 			withType:WithTypeValue, postfixMatch:Bool, p:Pos):{
 		caseData:CaseData,
 		bindings:Array<Bind>,
 		pattern:PatternData
 	} {
-		function collapseCase(values:Array<Expr>):Expr {
+		// port: `e :: el` folded from the end (upstream recurses on the tail): `a | (b | c)`
+		function collapseCase(values:haxe.ds.Vector<Expr>):Expr {
 			if (values.length == 0) return raiseTypingError("case without pattern", p);
-			if (values.length == 1) return values[0];
-			var e = values[0], e2 = collapseCase(values.slice(1));
-			return {expr: EBinop(OpOr, e, e2), pos: core.Ast.punion(e.pos, e2.pos)};
+			var e2 = values[values.length - 1];
+			var i = values.length - 1;
+			while (i-- > 0) {
+				var e = values[i];
+				e2 = {expr: EBinop(OpOr, e, e2), pos: core.Ast.punion(e.pos, e2.pos)};
+			}
+			return e2;
 		}
 		var e = collapseCase(el);
 		var substitution = makeSubst(ctx, freeMonos),

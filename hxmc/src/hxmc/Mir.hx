@@ -1,5 +1,8 @@
 package hxmc;
 
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
 // The machine-independent IR hxmc compiles its IR (hxmc.ir) to (MirBuild): a control
 // flow graph of basic blocks in SSA form over three value types. Values are
 // instructions, numbered by `id` in their function (MFunc.vals). Pointers
@@ -98,29 +101,36 @@ class MIns {
 	public var size:Int = 0;
 	public var signed:Bool = false;
 	public var sym:Null<String>;
-	public var args:Null<Array<Int>>;
-	public var targets:Null<Array<MBlock>>;
-	public var cases:Null<Array<Int>>;
+	// (the lists below are empty where they do not apply: the shared empty vector)
+	public var args:Vector<Int> = vector(); // Call, Phi
+	public var targets:Vector<MBlock> = vector(); // terminators
+	public var cases:Vector<Int> = vector(); // Switch
 	public var block:MBlock;
 	public var noReturn = false; // Call
 	public var returnsTwice = false; // Call (setjmp)
 	public var keepsFrame = false; // Call: nothing collects meanwhile (Opt: the frame's shadow-stack slots keep their values)
 	public var variadic = -1; // Call: the first variadic argument of a C function (-1: none)
-	public var argTys:Null<Array<MTy>>; // Call: the C types of the arguments (I32 stays 32-bit in the ABI)
+	public var argTys:Vector<MTy> = vector(); // Call: the C types of the arguments (I32 stays 32-bit in the ABI)
+	// Call of a C function (MirBuild.cCall), not of the runtime or a Haxe function
+	// by its symbol: what cSizes being set said before it was a Vector, empty for
+	// a C function without arguments too
+	public var cCall = false;
 	// Call of a C function: the size of each argument in C (1, 2, 4 or 8; float: 4),
-	// for Apple arm64's stack arguments, packed by size (null: 4 for I32, else 8)
-	public var cSizes:Null<Array<Int>>;
+	// for Apple arm64's stack arguments, packed by size (empty: 4 for I32, else 8)
+	public var cSizes:Vector<Int> = vector();
 	// Call of a C function taking structs by value (MirBuild.cStructArg): per
 	// argument, the number of registers of the struct whose first part it is
 	// (its parts all go in registers or all on the stack; negative: on the
-	// stack always, System V's MEMORY class), 0 for the others
-	public var cGroups:Null<Array<Int>>;
+	// stack always, System V's MEMORY class), 0 for the others (empty: no
+	// struct argument, 1 for each)
+	public var cGroups:Vector<Int> = vector();
 	// Call of a C function returning a struct (MirBuild.cStructRet, CAbi):
 	// the last argument is the address its value is stored at, not passed
-	// (except as x8 on arm64 when this is empty); the parts of the result in
-	// registers (integer ones in the integer result registers in order, float
-	// ones in the float result registers)
-	public var cRet:Null<Array<CAbi.CPart>>;
+	// (except as x8 on arm64 when cRet is empty); cRet: the parts of the
+	// result in registers (integer ones in the integer result registers in
+	// order, float ones in the float result registers)
+	public var structRet = false;
+	public var cRet:Vector<CAbi.CPart> = vector();
 	public var dead = false;
 	public var mem = 0; // Load/Store: the memory class (Opt.MOther...)
 	public var pos = 0; // (-debug) the source position (SrcPos; 0: none)
@@ -132,6 +142,27 @@ class MIns {
 
 	public inline function isTerm():Bool
 		return op == Jmp || op == Br || op == Switch || op == Ret || op == Unreachable;
+
+	// Phi: the argument of the k-th pred dropped (its edge removed; the
+	// arguments are reallocated, as edges change rarely; none when there is no
+	// such argument yet)
+	public function removeArg(k:Int) {
+		var n = args.length;
+		if (k >= n) return;
+		var a = new Vector<Int>(n - 1);
+		Vector.blit(args, 0, a, 0, k);
+		Vector.blit(args, k + 1, a, k, n - k - 1);
+		args = a;
+	}
+
+	// Phi: an argument added (for a new pred, last)
+	public function addArg(v:Int) {
+		var n = args.length;
+		var a = new Vector<Int>(n + 1);
+		Vector.blit(args, 0, a, 0, n);
+		a[n] = v;
+		args = a;
+	}
 }
 
 class MBlock {
@@ -157,7 +188,7 @@ class MBlock {
 
 class MFunc {
 	public var name:String;
-	public var params:Array<MTy> = [];
+	public var params:Vector<MTy> = vector();
 	public var ret:MTy = Void;
 	public var blocks:Array<MBlock> = [];
 	public var vals:Array<MIns> = [];
@@ -166,12 +197,13 @@ class MFunc {
 	public var allocs = 0; // objects allocated inline and boxes made, at most (Escape: none, nothing to do)
 	// entered from C with structs by value (MirBuild.cEntry): the parameters'
 	// groups (MIns.cGroups) and C sizes (MIns.cSizes); a Param of index -1
-	// is x8 on arm64 (the address of a struct result)
-	public var cParams:Null<Array<Int>>;
-	public var cParamSizes:Null<Array<Int>>;
-	// returning a struct in registers: Ret's value is its address, these its
-	// parts (MIns.cRet)
-	public var cRet:Null<Array<CAbi.CPart>>;
+	// is x8 on arm64 (the address of a struct result); empty: not entered from C
+	public var cParams:Vector<Int> = vector();
+	public var cParamSizes:Vector<Int> = vector();
+	// returning a struct in registers (structRet): Ret's value is its address,
+	// cRet its parts (MIns.cRet)
+	public var structRet = false;
+	public var cRet:Vector<CAbi.CPart> = vector();
 	public var entry:MBlock;
 	var marks = 0;
 
@@ -229,9 +261,9 @@ class MFunc {
 			if (x >= 0) parts.push('v$x');
 		if (i.op == Load || i.op == Store) parts.push('disp ${i.imm} scale ${i.imm2} size ${i.size}${i.signed ? " s" : ""}');
 		if (i.op == Param || i.op == StackAddr) parts.push(Std.string(i.imm));
-		if (i.args != null) parts.push("(" + [for (x in i.args) 'v$x'].join(", ") + ")");
-		if (i.cases != null) parts.push("[" + i.cases.join(",") + "]");
-		if (i.targets != null) parts.push("-> " + [for (t in i.targets) 'b${t.id}'].join(", "));
+		if (i.op == Call || i.op == Phi || i.args.length > 0) parts.push("(" + [for (x in i.args) 'v$x'].join(", ") + ")");
+		if (i.op == Switch || i.cases.length > 0) parts.push("[" + i.cases.join(",") + "]");
+		if (i.targets.length > 0) parts.push("-> " + [for (t in i.targets) 'b${t.id}'].join(", "));
 		return s + " " + parts.join(" ");
 	}
 
@@ -243,15 +275,17 @@ class MFunc {
 			case Void: "void";
 		};
 
+	static final CONDS:Vector<String> = vector("eq", "ne", "lt", "le", "gt", "ge", "ult", "ule", "ugt", "uge", "feq", "fne", "flt", "fle", "fgt", "fge");
+
 	public static function condName(c:Int):String
-		return ["eq", "ne", "lt", "le", "gt", "ge", "ult", "ule", "ugt", "uge", "feq", "fne", "flt", "fle", "fgt", "fge"][c];
+		return CONDS[c];
+
+	static final OPS:Vector<String> = vector("param", "const", "constf", "symaddr", "tlsload", "tlsstore", "stackaddr", "copy", "phi", "add", "sub", "mul", "and",
+		"or", "xor", "shl", "sar", "shr", "neg", "not", "div", "rem", "fadd", "fsub", "fmul", "fdiv", "fneg", "fsqrt", "fabs", "cmp", "sext", "zext", "trunc",
+		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr");
 
 	public static function opName(o:Op):String
-		return [
-			"param", "const", "constf", "symaddr", "tlsload", "tlsstore", "stackaddr", "copy", "phi", "add", "sub", "mul", "and", "or", "xor", "shl", "sar",
-			"shr", "neg", "not", "div", "rem", "fadd", "fsub", "fmul", "fdiv", "fneg", "fsqrt", "fabs", "cmp", "sext", "zext", "trunc", "i2f", "f2i", "bitstof",
-			"ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr"
-		][(o : Int)];
+		return OPS[(o : Int)];
 }
 
 // The source positions of instructions (-debug: MIns.pos, LIns.pos): a file

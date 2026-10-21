@@ -6,11 +6,11 @@ import hxmc.Mir;
 // A target architecture's code generator: instruction selection (which
 // also tells the register allocator about its instructions) and emission.
 interface Selector extends Regalloc.RegTarget {
-	function select(mf:MFunc, layout:Array<MBlock>):LFunc;
+	function select(mf:MFunc, layout:haxe.ds.Vector<MBlock>):LFunc;
 }
 
 interface Emitter {
-	function func(f:LFunc, usedRegs:Array<Bool>, global:Bool):Obj.Symbol;
+	function func(f:LFunc, usedRegs:haxe.ds.Vector<Bool>, global:Bool):Obj.Symbol;
 	// where the next functions go: their own section (`name`, Link's dead
 	// code removal may drop it), or the object's .text (null)
 	function useSection(name:Null<String>):Void;

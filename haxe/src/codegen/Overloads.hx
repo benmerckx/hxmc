@@ -12,10 +12,22 @@ import core.Globals;
 import typing.FieldCallCandidate;
 import core.TFunctions.*;
 import core.TUnification.*;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 class Overloads {
 	// port: inline: see core.ds.List
-	public static inline function allPairs<A>(f:A->A->Bool, a:Array<A>, b:Array<A>):Bool {
+	extern overload public static inline function allPairs<A>(f:A->A->Bool, a:Array<A>, b:Array<A>):Bool {
+		var r = a.length == b.length;
+		if (r) for (i in 0...a.length) if (!f(a[i], b[i])) {
+			r = false;
+			break;
+		}
+		return r;
+	}
+	extern overload public static inline function allPairs<A>(f:A->A->Bool, a:Vector<A>, b:Vector<A>):Bool {
 		var r = a.length == b.length;
 		if (r) for (i in 0...a.length) if (!f(a[i], b[i])) {
 			r = false;
@@ -33,7 +45,7 @@ class Overloads {
 			// port: preserves upstream's comparison of the second parameter's constraints to itself.
 			if (p1.ttpName != p2.ttpName || !allPairs(eq, getConstraints(p2), getConstraints(p2))) return false;
 		}
-		function arguments(a:Array<{name:String, optional:Bool, type:T}>, b:Array<{name:String, optional:Bool, type:T}>):Bool {
+		function arguments(a:Vector<{name:String, optional:Bool, type:T}>, b:Vector<{name:String, optional:Bool, type:T}>):Bool {
 			if (a.length != b.length) return false;
 			// TODO: do we want to compare n and o here?
 			for (i in 0...a.length) if (!eq(a[i].type, b[i].type)) return false;
@@ -100,8 +112,8 @@ class Resolution {
 		case TAbstract(a, [inner]) if (nullAbstract(a)):
 			var st = simplifyT(inner);
 			switch st {
-				case TAbstract(ab, _) if (CoreMeta.has(CoreType, ab.aMeta)): TAbstract(a, [simplifyT(st)]);
-				case TEnum(_, _): TAbstract(a, [simplifyT(st)]);
+				case TAbstract(ab, _) if (CoreMeta.has(CoreType, ab.aMeta)): TAbstract(a, vector(simplifyT(st)));
+				case TEnum(_, _): TAbstract(a, vector(simplifyT(st)));
 				case _: st;
 			}
 		case TAbstract(a, _) if (CoreMeta.has(CoreType, a.aMeta)): t;
@@ -114,7 +126,7 @@ class Resolution {
 	}
 
 	// rate type parameters
-	public static function rateTp(a:Array<T>, b:Array<T>):Int {
+	public static function rateTp(a:TParams, b:TParams):Int {
 		if (a.length != b.length) throw "Invalid_argument: List.iter2";
 		var n = 0;
 		for (i in 0...a.length) if (!typeIseq(a[i], b[i])) n++;
@@ -241,8 +253,8 @@ class Resolution {
 			case _: rateConv(0, t, e.etype);
 		}
 		// convert compatible into ( rate * compatible_type ) list
-		function mkRate(acc:Array<ConversionRate>, el:Array<TExpr>,
-				args:Array<{name:String, optional:Bool, type:T}>):{rates:Array<ConversionRate>, rest:Bool} {
+		function mkRate(acc:Array<ConversionRate>, el:Vector<TExpr>,
+				args:Vector<{name:String, optional:Bool, type:T}>):{rates:Array<ConversionRate>, rest:Bool} {
 			if (el.length == 0 && args.length == 0) return {rates: acc, rest: false};
 			if (el.length > 0 && args.length > 0 && args[0].optional) return mkRate(acc, el.slice(1), args.slice(1));
 			if (args.length == 1 && ExtType.isRest(follow(args[0].type))) {
@@ -250,7 +262,7 @@ class Resolution {
 					case TAbstract(a, [t]) if (a.aPath.pack.join(".") == "haxe" && a.aPath.name == "Rest"): t;
 					case _: Globals.die("", "overloads.ml");
 				};
-				return {rates: acc.concat(el.map(function(e) return rateArg(t, e))), rest: true};
+				return {rates: acc.concat(el.mapToArray(function(e) return rateArg(t, e))), rest: true};
 			}
 			if (el.length > 0 && args.length > 0) {
 				acc.unshift(rateArg(args[0].type, el[0]));

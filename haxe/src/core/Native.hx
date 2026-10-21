@@ -5,6 +5,7 @@ import core.TType;
 import core.Globals;
 import core.Globals.Pos;
 import core.ds.NotFound;
+import core.ds.VectorTools.vector;
 
 // port: from haxe/src/core/native.ml.
 class Native {
@@ -26,12 +27,12 @@ class Native {
 			return {
 				meta: {
 					meta: Meta.RealPath,
-					exprs: [
+					exprs: vector(
 						{
 							expr: EConst(String(name, SDoubleQuotes)),
 							pos: native.pos
 						}
-					],
+					),
 					pos: native.pos
 				},
 				name: native.name

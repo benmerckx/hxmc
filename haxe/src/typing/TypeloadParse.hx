@@ -44,6 +44,10 @@ import syntax.ParserConfig;
 import syntax.ParserEntry;
 import syntax.Grammar;
 import syntax.Lexer;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 @:structInit class SourceParseResult {
 	public var data:Package;
@@ -59,10 +63,10 @@ import syntax.Lexer;
 
 @:structInit class SourceModuleResult {
 	public var file:ResolvedFile;
-	public var declarations:Array<TypeDecl>;
+	public var declarations:Vector<TypeDecl>;
 	public var warnings:Array<ParseWarning>;
 
-	public inline function new(file:ResolvedFile, declarations:Array<TypeDecl>, warnings:Array<ParseWarning>) {
+	public inline function new(file:ResolvedFile, declarations:Vector<TypeDecl>, warnings:Array<ParseWarning>) {
 		this.file = file;
 		this.declarations = declarations;
 		this.warnings = warnings;
@@ -75,10 +79,10 @@ import syntax.Lexer;
 	public var file:ResolvedFile;
 	public var remap:Array<String>;
 	public var pack:Array<String>;
-	public var declarations:Array<TypeDecl>;
+	public var declarations:Vector<TypeDecl>;
 	public var warnings:Array<ParseWarning>;
 
-	public inline function new(file:ResolvedFile, remap:Array<String>, pack:Array<String>, declarations:Array<TypeDecl>,
+	public inline function new(file:ResolvedFile, remap:Array<String>, pack:Array<String>, declarations:Vector<TypeDecl>,
 			warnings:Array<ParseWarning>) {
 		this.file = file;
 		this.remap = remap;
@@ -270,13 +274,13 @@ class TypeloadParse {
 			var redirected:Array<TypeDecl> = [
 				{
 					definition: EImport({
-						path: remap.value.concat([path.name]).map(s -> ({name: s, pos: Globals.nullPos} : core.Ast.PlacedName)),
+						path: remap.value.concat([path.name]).mapToVector(s -> ({name: s, pos: Globals.nullPos} : core.Ast.PlacedName)),
 						mode: INormal
 					}),
 					pos: Globals.nullPos
 				}
 			];
-			inline function build(name:PlacedName, params:Array<TypeParam>, priv:Bool, p:Pos):Void {
+			inline function build(name:PlacedName, params:haxe.ds.Vector<TypeParam>, priv:Bool, p:Pos):Void {
 				var tp = priv ? AstTools.mkTypePath([],
 					"Dynamic") : AstTools.mkTypePath(remap.value, path.name,
 						params.map(tp -> TPType(AstTools.makePtpTh(AstTools.mkTypePath([], tp.tpName.name), Globals.nullPos))), name.name);
@@ -286,7 +290,7 @@ class TypeloadParse {
 						doc: null,
 						meta: [],
 						params: params,
-						flags: priv ? [TDPrivate] : [],
+						flags: priv ? vector(TDPrivate) : vector(),
 						data: AstTools.makePtpTh(tp, name.pos)
 					}),
 					pos: p
@@ -294,19 +298,19 @@ class TypeloadParse {
 			}
 			for (decl in declarations) switch decl.definition {
 				case EClass(d):
-					build(d.name, d.params, d.flags.contains(HPrivate), decl.pos);
+					build(d.name, d.params, d.flags.has(HPrivate), decl.pos);
 				case EEnum(d):
-					build(d.name, d.params, d.flags.contains(EPrivate), decl.pos);
+					build(d.name, d.params, d.flags.has(EPrivate), decl.pos);
 				case ETypedef(d):
-					build(d.name, d.params, d.flags.contains(TDPrivate), decl.pos);
+					build(d.name, d.params, d.flags.has(TDPrivate), decl.pos);
 				case EAbstract(d):
-					build(d.name, d.params, d.flags.contains(AbPrivate), decl.pos);
+					build(d.name, d.params, d.flags.has(AbPrivate), decl.pos);
 				case EStatic(d):
 					build(d.name, d.params, core.ds.ArrayTools.exists(d.flags, f -> f.access == AStatic && f.pos == Globals.nullPos),
 						decl.pos);
 				case EImport(_) | EUsing(_):
 			}
-			declarations = redirected;
+			declarations = Vector.fromArrayCopy(redirected);
 		}
 		return {file: rfile, declarations: declarations, warnings: parsed.warnings};
 	}
@@ -315,7 +319,7 @@ class TypeloadParse {
 // port: module ConditionDisplay of typeloadParse.ml
 class ConditionDisplay {
 	static final tSemver:core.TType.T = TInst(core.TFunctions.mkClass(core.TFunctions.nullModule, {pack: [], name: "SemVer"},
-		Globals.nullPos, Globals.nullPos), []);
+		Globals.nullPos, Globals.nullPos), vector());
 
 	static function convertSmallType(com:CommonContext, v:syntax.ParserEntry.SmallType):{s:String, t:core.TType.T}
 		return switch v {
@@ -336,7 +340,7 @@ class ConditionDisplay {
 		};
 		function checkExpr(e:Expr):Void switch e.expr {
 			case ECall({expr: EConst(Ident("version")), pos: p}, _):
-				var t = core.TType.T.TFun({args: [{name: "s", optional: false, type: com.basic.tstring}], ret: tSemver});
+				var t = core.TType.T.TFun({args: vector({name: "s", optional: false, type: com.basic.tstring}), ret: tSemver});
 				if (checkPosition(p)) context.display.DisplayException.sendHoverRaise(com, core.display.CompletionItem.makeCiClassField({
 					field: {
 						cfName: "version",
@@ -357,7 +361,7 @@ so it should be avoided if backwards-compatibility with earlier versions is need
 @see https://semver.org/"),
 						cfMeta: [],
 						cfKind: Method(MethNormal),
-						cfParams: [],
+						cfParams: vector(),
 						cfExpr: null,
 						cfExprUnoptimized: null,
 						cfOverloads: [],

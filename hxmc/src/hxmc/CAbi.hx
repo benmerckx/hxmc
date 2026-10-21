@@ -1,6 +1,8 @@
 package hxmc;
 
 import core.TType.TClass;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 import hxmc.ir.CInterop;
 import hxmc.ir.CInterop.CTy;
 import hxmc.ir.CInterop.CSig;
@@ -13,9 +15,9 @@ typedef CPart = {off:Int, size:Int, float:Bool};
 enum CPass {
 	// in registers, all of them or none: when too few are left, the parts go
 	// on the stack as the struct's memory (8-byte words; Apple: by size)
-	PRegs(parts:Array<CPart>);
+	PRegs(parts:Vector<CPart>);
 	// on the stack, as the struct's memory in 8-byte words (System V's MEMORY class)
-	PStack(parts:Array<CPart>);
+	PStack(parts:Vector<CPart>);
 	// the address of a copy in the caller's frame
 	PCopy;
 	// one scalar argument of the struct's only field (WebAssembly)
@@ -26,7 +28,7 @@ enum CPass {
 enum CRet {
 	// in registers: integer parts in the first two integer result registers,
 	// float ones in the first float result registers, in order
-	RRegs(parts:Array<CPart>);
+	RRegs(parts:Vector<CPart>);
 	// stored by the callee at an address the caller passes (arm64: x8; x86-64
 	// and WebAssembly: a first argument)
 	RSret;
@@ -65,16 +67,22 @@ class CAbi {
 	}
 
 	// AAPCS64: the parts of a struct that travels in registers, or null
-	static function a64Parts(c:TClass):Null<Array<CPart>> {
+	static function a64Parts(c:TClass):Null<Vector<CPart>> {
 		var h = hfa(c);
-		if (h != 0) return [for (f in CInterop.scalars(c, 0)) {off: f.off, size: h, float: true}];
+		if (h != 0) {
+			var fs = CInterop.scalars(c, 0);
+			var ps = new Vector<CPart>(fs.length);
+			for (k in 0...fs.length)
+				ps[k] = {off: fs[k].off, size: h, float: true};
+			return ps;
+		}
 		var size = CInterop.layout(c).size;
 		return size <= 16 ? words(size, _ -> false) : null;
 	}
 
 	// System V: the eightbytes of a struct of up to 16 bytes, SSE when every
 	// scalar in it is a float or a double; null: MEMORY
-	static function sysvParts(c:TClass):Null<Array<CPart>> {
+	static function sysvParts(c:TClass):Null<Vector<CPart>> {
 		var size = CInterop.layout(c).size;
 		if (size > 16) return null;
 		var fs = CInterop.scalars(c, 0);
@@ -87,8 +95,12 @@ class CAbi {
 	}
 
 	// the struct's bytes in 8-byte words (the last one shorter)
-	static function words(size:Int, float:Int->Bool):Array<CPart>
-		return [for (k in 0...(size + 7) >> 3) {off: 8 * k, size: size - 8 * k < 8 ? size - 8 * k : 8, float: float(8 * k)}];
+	static function words(size:Int, float:Int->Bool):Vector<CPart> {
+		var ps = new Vector<CPart>((size + 7) >> 3);
+		for (k in 0...ps.length)
+			ps[k] = {off: 8 * k, size: size - 8 * k < 8 ? size - 8 * k : 8, float: float(8 * k)};
+		return ps;
+	}
 
 	// wasm32: the type of the only scalar of a struct, or null
 	static function single(c:TClass):Null<{off:Int, ty:CTy}> {
@@ -106,7 +118,7 @@ class CAbi {
 			return ps != null ? PRegs(ps) : PCopy;
 		}
 		var size = CInterop.layout(c).size;
-		if (abi.os == "windows") return size == 1 || size == 2 || size == 4 || size == 8 ? PRegs([{off: 0, size: size, float: false}]) : PCopy;
+		if (abi.os == "windows") return size == 1 || size == 2 || size == 4 || size == 8 ? PRegs(vector({off: 0, size: size, float: false})) : PCopy;
 		var ps = sysvParts(c);
 		return ps != null ? PRegs(ps) : PStack(words(size, _ -> false));
 	}
@@ -118,7 +130,7 @@ class CAbi {
 		}
 		var ps = if (abi.arm) a64Parts(c) else if (abi.os == "windows") {
 			var size = CInterop.layout(c).size;
-			size == 1 || size == 2 || size == 4 || size == 8 ? [{off: 0, size: size, float: false}] : null;
+			size == 1 || size == 2 || size == 4 || size == 8 ? vector({off: 0, size: size, float: false}) : null;
 		} else sysvParts(c);
 		return ps != null ? RRegs(ps) : RSret;
 	}

@@ -4,6 +4,7 @@ import core.Globals.Pos;
 import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalEncode;
+import core.ds.VectorTools.vector;
 
 class EvalStackTrace {
 	public static function makeStack(envs:Array<{pos:Pos, kind:EnvKind}>):Value {
@@ -12,22 +13,22 @@ class EvalStackTrace {
 			var pos = e.pos;
 			inline function filePos(s:Value):Value {
 				var c = syntax.Lexer.getPosCoords(pos);
-				return EvalEncode.encodeEnumValue(EvalHash.key_haxe_StackItem, 2, [
+				return EvalEncode.encodeEnumValue(EvalHash.key_haxe_StackItem, 2, vector(
 					s,
 					EvalString.createUnknown(pos.pfile),
 					VInt32(c.lineStart),
 					VInt32(c.columnStart)
-				], pos);
+				), pos);
 			}
 			switch e.kind {
 				case EKLocalFunction(i):
-					var localFunction = EvalEncode.encodeEnumValue(EvalHash.key_haxe_StackItem, 4, [VInt32(i)], pos);
+					var localFunction = EvalEncode.encodeEnumValue(EvalHash.key_haxe_StackItem, 4, vector(VInt32(i)), pos);
 					l.push(filePos(localFunction));
 				case EKMethod(st, sf):
-					var localFunction = EvalEncode.encodeEnumValue(EvalHash.key_haxe_StackItem, 3, [
+					var localFunction = EvalEncode.encodeEnumValue(EvalHash.key_haxe_StackItem, 3, vector(
 						EvalString.createUnknown(EvalHash.revHash(st)),
 						EvalString.createUnknown(EvalHash.revHash(sf))
-					], pos);
+					), pos);
 					l.push(filePos(localFunction));
 				case EKMacro(st, sf):
 				case EKEntrypoint:

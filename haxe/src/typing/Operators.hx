@@ -21,6 +21,7 @@ import core.Ast.*;
 
 using Lambda;
 using core.ds.ArrayTools;
+using core.ds.VectorTools;
 
 import core.WithType as WithTypeTools;
 import core.WithType.WithTypeValue;
@@ -36,6 +37,8 @@ import core.WithType;
 import context.Typecore.*;
 import context.Typecore;
 import typing.Calls.*;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 import typing.Fields.*;
 
 typedef NormalBinop = {var binopOp:Binop; var binopLhs:TExpr; var binopRhs:TExpr; var binopType:T; var binopNeedsAssign:Bool; var binopSwapped:Bool; var binopPos:Pos;}
@@ -110,7 +113,7 @@ enum TypeClass {
 	KOther;
 	KNumParam(t:T);
 	KStrParam(t:T);
-	KAbstract(a:TAbstract, tl:Array<T>);
+	KAbstract(a:TAbstract, tl:core.TType.TParams);
 }
 
 typedef AssignOpApi<A> = {
@@ -230,7 +233,7 @@ class Operators {
 				case KAbstract({aImpl: c}, _) if (c != null && c.clStatics.exists("toString")): Calls.callToString(ctx, e);
 				case KInt | KFloat | KString: e;
 				case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther: Texpr.Builder.resolveAndMakeStaticCall(ctx.com.std, "string",
-						[e], e.epos);
+						vector(e), e.epos);
 				case KAbstract(a, tl): try context.AbstractCast.castOrUnifyRaise(ctx, tstring, e, p) catch (ex:Dynamic) {
 						if (!unificationError(ex)) throw ex;
 						loop(core.Abstract.getUnderlyingType(a, tl));
@@ -371,14 +374,14 @@ class Operators {
 					case TInst(c, []): c;
 					case _: throw "assert";
 				};
-				BinopSpecial(mk(TNew(c, [], [e1, e2]), t, p), false);
+				BinopSpecial(mk(TNew(c, vector(), vector(e1, e2)), t, p), false);
 			case OpArrow: Error.raiseTypingError("Unexpected =>", p);
 			case OpIn: Error.raiseTypingError("Unexpected in", p);
 			case OpNullCoal | OpAssign | OpAssignOp(_): throw "assert";
 		};
 	}
 
-	public static function findAbstractBinopOverload(ctx:Typer, op:Binop, e1:TExpr, e2:TExpr, a:TAbstract, c:TClass, tl:Array<T>,
+	public static function findAbstractBinopOverload(ctx:Typer, op:Binop, e1:TExpr, e2:TExpr, a:TAbstract, c:TClass, tl:core.TType.TParams,
 			left:Bool, isAssign:Bool, p:Pos):BinopResultData {
 		inline function mapA(t:T):T return applyParams(a.aParams, tl, t);
 		inline function make(opCf:Binop, cf:TClassField, e1:TExpr, e2:TExpr, ret:T, needs:Bool, swapped:Bool):BinopResultData {
@@ -413,10 +416,10 @@ class Operators {
 				var vr = new TyperBase.ValueReference(ctx);
 				var e2 = vr.asVar("lhs", e2);
 				var e1 = vr.asVar("rhs", e1);
-				var e = CallUnification.makeStaticCallBetter(ctx, c, cf, tl, [e1, e2], ret, p);
+				var e = CallUnification.makeStaticCallBetter(ctx, c, cf, tl, vector(e1, e2), ret, p);
 				return BinopResult.createSpecial(vr.toTexpr(e), needs);
 			}
-			return BinopResult.createSpecial(CallUnification.makeStaticCallBetter(ctx, c, cf, tl, [e1, e2], ret, p), needs);
+			return BinopResult.createSpecial(CallUnification.makeStaticCallBetter(ctx, c, cf, tl, vector(e1, e2), ret, p), needs);
 		}
 		// special case for == and !=: if the second type is a monomorph, assume that we want to unify
 		// it with the first type to preserve comparison semantics.
@@ -551,19 +554,19 @@ class Operators {
 					+ name + " for writing", p);
 			case AKField(fa): assignTo(FieldAccessTools.getFieldExpr(fa, FWrite));
 			case AKExpr(lhs): assignTo(lhs);
-			case AKAccessor(fa): new CallUnification.CallDispatcher(ctx, MSet(e2), wt, p).accessorCall(fa, [], [e2]);
+			case AKAccessor(fa): new CallUnification.CallDispatcher(ctx, MSet(e2), wt, p).accessorCall(fa, vector(), vector(e2));
 			case AKAccess(a, tl, c, base, key):
 				var r = rhs(WithTypeTools.value);
 				mkArraySetCall(ctx, context.AbstractCast.findArrayWriteAccess(ctx, a, tl, key, r, p), c, base, p);
 			case AKResolve(sea, name):
 				var n = Texpr.Builder.makeString(ctx.t, name, nullPos);
-				new CallUnification.CallDispatcher(ctx, MCall([e2]), wt, p).fieldCall(sea.seAccess, [sea.seThis, n], [e2]);
+				new CallUnification.CallDispatcher(ctx, MCall(vector(e2)), wt, p).fieldCall(sea.seAccess, vector(sea.seThis, n), vector(e2));
 			case AKUsingAccessor(sea):
 				var set = switch FieldAccessTools.resolveAccessor(sea.seAccess, MSet(e2)) {
 					case AccessorFound(fa): fa;
 					case _: Error.raiseTypingError("Could not resolve accessor", p);
 				};
-				new CallUnification.CallDispatcher(ctx, MCall([e2]), wt, p).fieldCall(set, [sea.seThis], [e2]);
+				new CallUnification.CallDispatcher(ctx, MCall(vector(e2)), wt, p).fieldCall(set, vector(sea.seThis), vector(e2));
 		};
 		return access(typeAccessRef(ctx, e1.expr, e1.pos, MSet(e2), withTypeOrValue(wt)));
 	}
@@ -610,10 +613,10 @@ class Operators {
 		}
 		inline function fieldRhs(cf:TClassField, ev:TExpr):{e:TExpr, r:A}
 			return fieldRhsName(cf.cfName, ev, WithTypeTools.withType(cf.cfType));
-		inline function set(vr:ValueReference, fa:context.Typecore.FieldAccess, lhs:TExpr, r:A, el:Array<TExpr>):TExpr {
+		inline function set(vr:ValueReference, fa:context.Typecore.FieldAccess, lhs:TExpr, r:A, el:Vector<TExpr>):TExpr {
 			function assign(rhs:TExpr):TExpr {
 				rhs = context.AbstractCast.castOrUnify(ctx, lhs.etype, rhs, p);
-				return new CallUnification.CallDispatcher(ctx, MSet(e2), wt, p).accessorCall(fa, el.concat([rhs]), []);
+				return new CallUnification.CallDispatcher(ctx, MSet(e2), wt, p).accessorCall(fa, el.snoc(rhs), vector());
 			}
 			return api.generate(vr, lhs, api.toTexpr(vr, r, assign));
 		}
@@ -638,11 +641,11 @@ class Operators {
 				var vr = new TyperBase.ValueReference(ctx);
 				var ef = vr.getExprPart("fh", fa.faOn);
 				var rhs = fieldRhs(fa.faField, ef);
-				set(vr, core.ds.Record.withFields(fa, {faOn: ef}), rhs.e, rhs.r, []);
+				set(vr, core.ds.Record.withFields(fa, {faOn: ef}), rhs.e, rhs.r, vector());
 			case AKUsingAccessor(sea):
 				var lhs = processLhsExpr(ctx, "fh", sea.seThis);
 				var rhs = fieldRhs(sea.seAccess.faField, lhs.e);
-				set(lhs.vr, sea.seAccess, rhs.e, rhs.r, [lhs.e]);
+				set(lhs.vr, sea.seAccess, rhs.e, rhs.r, vector(lhs.e));
 			case AKAccess(a, tl, c, base, key):
 				var get = context.AbstractCast.findArrayReadAccess(ctx, a, tl, key, p);
 				// bind complex keys to a variable so they do not make it into the output twice
@@ -666,14 +669,14 @@ class Operators {
 				if (write.field.cfExpr == null || get.field.cfExpr == null)
 					Error.raiseTypingError("Invalid array access getter/setter combination", p);
 				var ef = mk(TField(et, FStatic(c, write.field)), write.type, p);
-				var call = makeCall(ctx, ef, [base, write.index, write.value], write.ret, p);
+				var call = makeCall(ctx, ef, vector(base, write.index, write.value), write.ret, p);
 				save();
 				api.generate(vr, read, call);
 			case AKResolve(sea, name):
 				var lhs = processLhsExpr(ctx, "fh", sea.seThis);
 				var rhs = fieldRhsName(name, lhs.e, WithTypeTools.value);
-				function assign(e:TExpr):TExpr return new CallUnification.CallDispatcher(ctx, MCall([e2]), wt,
-					p).fieldCall(sea.seAccess, [sea.seThis, Texpr.Builder.makeString(ctx.t, name, nullPos), e], []);
+				function assign(e:TExpr):TExpr return new CallUnification.CallDispatcher(ctx, MCall(vector(e2)), wt,
+					p).fieldCall(sea.seAccess, vector(sea.seThis, Texpr.Builder.makeString(ctx.t, name, nullPos), e), vector());
 				api.generate(lhs.vr, rhs.e, api.toTexpr(lhs.vr, rhs.r, assign));
 		};
 		return loop(typeAccessRef(ctx, e1.expr, e1.pos, MSet(e2), withTypeOrValue(wt)));
@@ -750,7 +753,7 @@ class Operators {
 						CfImpl) ? FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, cf, e, false,
 							p) : FieldAccessTools.makeStaticExtensionAccess(c, cf, e, false, p);
 					try {
-						fcc = CallUnification.unifyFieldCall(ctx, sea.seAccess, [sea.seThis], [], p, false);
+						fcc = CallUnification.unifyFieldCall(ctx, sea.seAccess, vector(sea.seThis), vector(), p, false);
 						break;
 					} catch (ex:Dynamic) {
 						switch ex {
@@ -840,13 +843,13 @@ class Operators {
 				fa = core.ds.Record.withFields(fa, {faOn: ef});
 				var r = readOn(vr, ef, fa);
 				var result = new CallUnification.CallDispatcher(ctx, MSet(null), WithTypeTools.value,
-					p).accessorCall(fa, [makeOp(vr, r.lhs, one)], []);
+					p).accessorCall(fa, vector(makeOp(vr, r.lhs, one)), vector());
 				generate(vr, r.out, result);
 			case AKUsingAccessor(sea):
 				var lhs = processLhsExpr(ctx, "fh", sea.seThis);
 				var r = readOn(lhs.vr, lhs.e, sea.seAccess);
 				var result = new CallUnification.CallDispatcher(ctx, MSet(null), WithTypeTools.value,
-					p).accessorCall(sea.seAccess, [lhs.e, makeOp(lhs.vr, r.lhs, one)], []);
+					p).accessorCall(sea.seAccess, vector(lhs.e, makeOp(lhs.vr, r.lhs, one)), vector());
 				generate(lhs.vr, r.out, result);
 			case AKAccess(a, tl, c, base, key): try {
 					var vb = allocVar(VGenerated, "tmp", base.etype, base.epos);
@@ -864,7 +867,7 @@ class Operators {
 					var operation = mk(TBinop(binop, eg, mk(TConst(TInt(1)), ctx.com.basic.tint, p)), eg.etype, p);
 					// set
 					var set = mkArraySetCall(ctx, context.AbstractCast.findArrayWriteAccessRaise(ctx, a, tl, ek, operation, p), c, eb, p);
-					mk(TBlock([initBase, initKey, initGet, set].concat(flag == Postfix ? [eg] : [])), set.etype, p);
+					mk(TBlock(flag == Postfix ? vector(initBase, initKey, initGet, set, eg) : vector(initBase, initKey, initGet, set)), set.etype, p);
 				} catch (ex:NotFound) {
 					findOrMake(mkArrayGetCall(ctx, context.AbstractCast.findArrayReadAccess(ctx, a, tl, key, p), c, base, p));
 				}

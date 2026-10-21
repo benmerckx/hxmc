@@ -86,11 +86,16 @@ import typing.CallUnification.*;
 import typing.Typeload.*;
 import typing.FieldAccess.*;
 import typing.Operators.*;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class Typer {
 	static function ensureBlock(e:Expr):Expr return switch e.expr {
 		case EBlock(_): e;
-		case _: {expr: EBlock([e]), pos: e.pos};
+		case _: {expr: EBlock(vector(e)), pos: e.pos};
 	};
 
 	static function efield(e:Expr, name:String):ExprDef return EField(e, name, EFNormal);
@@ -220,14 +225,14 @@ class Typer {
 
 	// ----------------------------------------------------------------------
 	// PASS 3 : type expression & check structure
-	public static function unifyMinRaise(ctx:TyperContext, el:Array<TExpr>):T {
+	public static function unifyMinRaise(ctx:TyperContext, el:Vector<TExpr>):T {
 		try return UnifyMin.unifyMinRaise(ctx.t, el)
 		catch (_:typing.UnifyMin.NoValue) {
 			return spawnMonomorph(ctx, Globals.nullPos);
 		}
 	}
 
-	public static function unifyMin(ctx:TyperContext, el:Array<TExpr>):T {
+	public static function unifyMin(ctx:TyperContext, el:Vector<TExpr>):T {
 		try return unifyMinRaise(ctx, el)
 		catch (exc:Dynamic) {
 			switch exc {
@@ -244,7 +249,7 @@ class Typer {
 		}
 	}
 
-	public static function unifyMinForTypeSource(ctx:TyperContext, el:Array<TExpr>, src:Null<WithTypeSource>):T {
+	public static function unifyMinForTypeSource(ctx:TyperContext, el:Vector<TExpr>, src:Null<WithTypeSource>):T {
 		if (src == ImplicitReturn && core.ds.ArrayTools.exists(el, e -> ExtType.isVoid(follow(e.etype)))) return ctx.com.basic.tvoid;
 		return unifyMin(ctx, el);
 	}
@@ -374,8 +379,8 @@ class Typer {
 							cf.cfKind = Method(MethInline);
 							addClassFlag(c, CExtern);
 							c.clFields.set(cf.cfName, cf);
-							var on = mk(TConst(TNull), TInst(c, []), p);
-							AKField(FieldAccessTools.create(on, cf, FHInstance(c, []), true, p));
+							var on = mk(TConst(TNull), TInst(c, vector()), p);
+							AKField(FieldAccessTools.create(on, cf, FHInstance(c, vector()), true, p));
 					}
 				case _: AKExpr(mk(TLocal(v), t, p));
 			};
@@ -593,7 +598,7 @@ class Typer {
 						switch [c.clKind, fa.faHost] {
 							case [KAbstractImpl(a), FHAbstract(_)]:
 								t = TAbstract(a, monos);
-								call = new CallDispatcher(ctx, MCall([]), WithTypeTools.value, p).fieldCall(fa, el, []);
+								call = new CallDispatcher(ctx, MCall(vector()), WithTypeTools.value, p).fieldCall(fa, el, vector());
 							case [KAbstractImpl(a), FHInstance(c, pl)]:
 								var enew = mk(TNew(c, monos, el), TInst(c, pl), p);
 								t = TAbstract(a, monos);
@@ -632,7 +637,7 @@ class Typer {
 		};
 	}
 
-	public static function typeVars(ctx:TyperContext, vl:Array<EVar>, p:Pos):TExpr {
+	public static function typeVars(ctx:TyperContext, vl:Vector<EVar>, p:Pos):TExpr {
 		var vars:Array<{variable:TVar, expr:Null<TExpr>}> = [];
 		for (ev in vl) {
 			var name = ev.evName.name, pv = ev.evName.pos;
@@ -675,8 +680,8 @@ class Typer {
 			if (ExtType.isVoid(follow(pair.variable.vType))) raiseTypingError("Variables of type Void are not allowed", pair.variable.vPos);
 		});
 		if (vars.length == 1) return mk(TVar(vars[0].variable, vars[0].expr), ctx.t.tvoid, p);
-		var block = mk(TBlock(vars.map(pair -> mk(TVar(pair.variable, pair.expr), ctx.t.tvoid, p))), ctx.t.tvoid, p);
-		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: [], pos: p}, block), block.etype, block.epos);
+		var block = mk(TBlock(vars.mapToVector(pair -> mk(TVar(pair.variable, pair.expr), ctx.t.tvoid, p))), ctx.t.tvoid, p);
+		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: vector(), pos: p}, block), block.etype, block.epos);
 	}
 
 	public static function formatString(ctx:TyperContext, s:String,
@@ -688,32 +693,39 @@ class Typer {
 						pos: p
 					}) : {expr: next, pos: p});
 
-	public static function typeBlock(ctx:TyperContext, el:Array<Expr>, withType:WithTypeValue, p:Pos):TExpr {
-		var result = [];
+	public static function typeBlock(ctx:TyperContext, el:Vector<Expr>, withType:WithTypeValue, p:Pos):TExpr {
+		// port: the typed expressions go into a Vector of the block's length; a merged block (several
+		// expressions for one) moves them to an Array, made a Vector at the end
+		var direct = new Vector<TExpr>(el.length), n = 0, result:Null<Array<TExpr>> = null;
+		inline function push(e:TExpr):Void {
+			if (result == null) direct[n++] = e else result.push(e);
+		}
 		for (i in 0...el.length) {
 			var expected = i == el.length - 1 ? withType : WithTypeTools.noValue;
 			try {
 				var e = typeExpr(ctx, el[i], expected);
 				switch e.eexpr {
 					case TMeta({meta: MetaTag.MergeBlock}, {eexpr: TBlock(list)}):
-						result = result.concat(list);
+						if (result == null) result = [for (j in 0...n) direct[j]];
+						for (x in list) result.push(x);
 					case _:
-						result.push(e);
+						push(e);
 				}
 			} catch (exc:Dynamic) {
 				switch exc {
 					case(core.ds.ExceptionTools.typing(_) => Some(err)):
 						checkError(ctx, err);
-						if (expected != NoValue) result.push(mk(TConst(TNull), mkMono(), el[i].pos));
+						if (expected != NoValue) push(mk(TConst(TNull), mkMono(), el[i].pos));
 					case _:
 						throw exc;
 				}
 			}
 		}
+		var result = result != null ? Vector.fromArrayCopy(result) : n == direct.length ? direct : direct.slice(0, n);
 		return mk(TBlock(result), result.length == 0 ? ctx.t.tvoid : result[result.length - 1].etype, p);
 	}
 
-	public static function typeObjectDecl(ctx:TyperContext, fl:Array<ObjectField>, withType:WithTypeValue, p:Pos):TExpr {
+	public static function typeObjectDecl(ctx:TyperContext, fl:Vector<ObjectField>, withType:WithTypeValue, p:Pos):TExpr {
 		var dynamicParameter:Null<T> = null;
 		var kind:ObjectDeclKind = switch withType {
 			case WithType(t, _):
@@ -737,7 +749,7 @@ class Typer {
 				loop(false, [], t);
 			case _: ODKPlain;
 		};
-		inline function typeFields(fieldMap:haxe.ds.StringMap<TClassField>):{type:T, fields:Array<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>} {
+		inline function typeFields(fieldMap:haxe.ds.StringMap<TClassField>):{type:T, fields:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>} {
 			var fields = new haxe.ds.StringMap<TClassField>(), extra = [];
 			var result = fl.map(function(field) {
 				var n = field.key.name, pn = field.key.pos, valid = Lexer.isValidIdentifier(n);
@@ -799,8 +811,9 @@ class Typer {
 			return {type: t, fields: result};
 		}
 		inline function plain():TExpr {
-			var fields = [], types = new haxe.ds.StringMap<TClassField>();
-			for (field in fl) {
+			var fields = new Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>(fl.length), types = new haxe.ds.StringMap<TClassField>();
+			for (i in 0...fl.length) {
+				var field = fl[i];
 				var name = field.key.name,
 					pf = field.key.pos,
 					valid = Lexer.isValidIdentifier(name);
@@ -815,7 +828,7 @@ class Typer {
 				if (ctx.f.inDisplay
 					&& DisplayPosition.displayPosition.enclosedIn(pf)) context.display.DisplayEmitter.displayField(ctx, Unknown,
 						CFSMember, cf, pf);
-				fields.push({key: field.key, expr: e});
+				fields[i] = {key: field.key, expr: e};
 				if (valid) {
 					if (StringTools.startsWith(name, "$")) raiseTypingError("Field names starting with a dollar are not allowed", p);
 					types.set(name, cf);
@@ -835,7 +848,7 @@ class Typer {
 				noAbstractConstructor(c, p);
 				var fa = FieldAccessTools.getConstructorAccess(c, tl, p),
 					ctor = fa.faField;
-				var args:Array<{name:String, optional:Bool, type:T}> = switch follow(FieldAccessTools.getMapFunction(fa)(ctor.cfType)) {
+				var args:haxe.ds.Vector<{name:String, optional:Bool, type:T}> = switch follow(FieldAccessTools.getMapFunction(fa)(ctor.cfType)) {
 					case TFun({args: args, ret: _}): args;
 					case _: throw "Invalid structure constructor";
 				};
@@ -852,12 +865,11 @@ class Typer {
 				for (pair in argsWithPos) {
 					var arg = pair.arg,
 						f = mkField(arg.name, arg.type, pair.pos, pair.pos);
-					if (arg.optional) f.cfMeta = [{meta: MetaTag.Optional, exprs: [], pos: Globals.nullPos}];
+					if (arg.optional) f.cfMeta = [{meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos}];
 					if (c.clFields.exists(arg.name)) f.cfDoc = c.clFields.get(arg.name).cfDoc;
 					fields.set(arg.name, f);
 				}
-				var typed = typeFields(fields), input = typed.fields.copy();
-				input.reverse();
+				var typed = typeFields(fields), input = typed.fields.rev();
 				var declarations = [], locals = [], hadSideEffect = false;
 				for (field in input) {
 					var e = field.expr;
@@ -874,7 +886,7 @@ class Typer {
 							}
 					}
 				}
-				var el = argsWithPos.map(function(pair) {
+				var el = argsWithPos.mapToVector(function(pair) {
 					var arg = pair.arg;
 					for (field in locals) if (field.key.name == arg.name) return field.expr;
 					switch ctor.cfExpr {
@@ -888,11 +900,12 @@ class Typer {
 					return mk(TConst(TNull), t, p);
 				});
 				var e = mk(TNew(c, tl, el), TInst(c, tl), p);
-				mk(TBlock(declarations.concat([e])), e.etype, e.epos);
+				declarations.push(e);
+				mk(TBlock(Vector.fromArrayCopy(declarations)), e.etype, e.epos);
 		};
 	}
 
-	public static function typeNew(ctx:TyperContext, ptp:PlacedTypePath, el:Array<Expr>, withType:WithTypeValue, forceInline:Bool,
+	public static function typeNew(ctx:TyperContext, ptp:PlacedTypePath, el:Vector<Expr>, withType:WithTypeValue, forceInline:Bool,
 			p:Pos):TExpr {
 		/*
 			Since macros don't have placed_type_path structure on Haxe side any ENew will have null_pos in `path`.
@@ -910,7 +923,7 @@ class Typer {
 		}
 		function unifyConstructor(c:TClass, fa:FieldAccessData):FieldCallCandidateData<Void->TExpr> {
 			try {
-				var fcc = unifyFieldCall(ctx, fa, [], el, p, fa.faInline);
+				var fcc = unifyFieldCall(ctx, fa, vector(), el, p, fa.faInline);
 				checkConstructorAccess(ctx, c, fcc.fcField, p);
 				return fcc;
 			} catch (exc:Dynamic) {
@@ -1011,7 +1024,7 @@ class Typer {
 		}
 	}
 
-	public static function typeTry(ctx:TyperContext, e1:Expr, catches:Array<Catch>, withType:WithTypeValue, p:Pos):TExpr {
+	public static function typeTry(ctx:TyperContext, e1:Expr, catches:Vector<Catch>, withType:WithTypeValue, p:Pos):TExpr {
 		var body = typeExpr(ctx, ensureBlock(e1), withType),
 			typed:Array<{variable:TVar, expr:TExpr}> = [],
 			expressions = [body];
@@ -1050,7 +1063,7 @@ class Typer {
 				tpackage: ["haxe"],
 				tname: "Exception",
 				tsub: null,
-				tparams: []
+				tparams: vector()
 			}, Globals.nullPos) : catchSyntax.type;
 			var t = Typeload.loadComplexType(ctx, true, LoadNormal, th);
 			function loop(t:T):T return switch follow(t) {
@@ -1086,18 +1099,17 @@ class Typer {
 		}
 		var t:T = switch withType {
 			case NoValue: ctx.t.tvoid;
-			case Value(_): unifyMin(ctx, expressions);
-			case WithType(t, src) if (ExtType.isMono(follow(t)) || ExtType.isVoid(follow(t))): unifyMinForTypeSource(ctx, expressions, src);
+			case Value(_): unifyMin(ctx, VectorTools.ofArray(expressions));
+			case WithType(t, src) if (ExtType.isMono(follow(t)) || ExtType.isVoid(follow(t))): unifyMinForTypeSource(ctx, VectorTools.ofArray(expressions), src);
 			case WithType(t, _):
 				body = AbstractCast.castOrUnify(ctx, t, body, body.epos);
 				typed = typed.map(pair -> {variable: pair.variable, expr: AbstractCast.castOrUnify(ctx, t, pair.expr, pair.expr.epos)});
 				t;
 		};
-		typed.reverse();
-		return mk(TTry(body, typed), t, p);
+		return mk(TTry(body, VectorTools.ofArrayReversed(typed)), t, p);
 	}
 
-	public static function typeMapDeclaration(ctx:TyperContext, e1:Expr, el:Array<Expr>, withType:WithTypeValue, p:Pos):TExpr {
+	public static function typeMapDeclaration(ctx:TyperContext, e1:Expr, el:Vector<Expr>, withType:WithTypeValue, p:Pos):TExpr {
 		var expected:Null<{key:T, value:T}> = switch withType {
 			case WithType(t, _): switch follow(t) {
 					case TAbstract({aPath: {pack: ["haxe", "ds"], name: "Map"}}, [tk, tv]): {key: tk, value: tv};
@@ -1118,7 +1130,7 @@ class Typer {
 				case _:
 			}
 		}
-		var pairs = [e1].concat(el).map(e -> switch e.expr {
+		var pairs = VectorTools.cons(e1, el).map(e -> switch e.expr {
 			case EBinop(OpArrow, a, b): {key: a, value: b};
 			case EDisplay(_):
 				typeExpr(ctx, e, expected == null ? WithTypeTools.value : WithTypeTools.withType(expected.key));
@@ -1135,8 +1147,8 @@ class Typer {
 			keyExprs.unshift(key);
 			valueExprs.unshift(value);
 		}
-		var tk = expected == null ? unifyMinRaise(ctx, keyExprs) : expected.key,
-			tv = expected == null ? unifyMinRaise(ctx, valueExprs) : expected.value;
+		var tk = expected == null ? unifyMinRaise(ctx, VectorTools.ofArray(keyExprs)) : expected.key,
+			tv = expected == null ? unifyMinRaise(ctx, VectorTools.ofArray(valueExprs)) : expected.value;
 		var m = Typeload.loadModule(ctx, {pack: ["haxe", "ds"], name: "Map"}, Globals.nullPos), a:Null<TAbstract>, c:Null<TClass>;
 		if (m.mTypes.length > 0) switch m.mTypes[0] {
 			case TAbstractDecl(abstractType) if (abstractType.aImpl != null):
@@ -1154,17 +1166,17 @@ class Typer {
 			+ m.mTypes.map(sModuleTypeKind).join(", ")
 			+ "]",
 			p);
-		var tmap = TAbstract(a, [tk, tv]), cf = c.clStatics.get("set");
+		var tmap = TAbstract(a, vector(tk, tv)), cf = c.clStatics.get("set");
 		if (cf == null) throw core.ds.NotFound.raise();
 		var v = genLocal(ctx, tmap, p),
 			ev = mk(TLocal(v), tmap, p),
 			ec = TyperBase.typeModuleType(ctx, TClassDecl(c), p),
-			ef = mk(TField(ec, FStatic(c, cf)), tfun([tk, tv], ctx.t.tvoid), p);
+			ef = mk(TField(ec, FStatic(c, cf)), tfun(vector(tk, tv), ctx.t.tvoid), p);
 		var result = [ev];
-		for (i in 0...keyExprs.length) result.push(makeCall(ctx, ef, [ev, keyExprs[i], valueExprs[i]], ctx.com.basic.tvoid, p));
+		for (i in 0...keyExprs.length) result.push(makeCall(ctx, ef, vector(ev, keyExprs[i], valueExprs[i]), ctx.com.basic.tvoid, p));
 		result.reverse();
-		result.unshift(mk(TVar(v, mk(TNew(c, [tk, tv], []), tmap, p)), tDynamic, p));
-		return mk(TBlock(result), tmap, p);
+		result.unshift(mk(TVar(v, mk(TNew(c, vector(tk, tv), vector()), tmap, p)), tDynamic, p));
+		return mk(TBlock(Vector.fromArrayCopy(result)), tmap, p);
 	}
 
 	public static function typeLocalFunction(ctxFrom:TyperContext, kind:FunctionKind, f:Func, withType:WithTypeValue, wantCoroutine:Bool,
@@ -1289,7 +1301,7 @@ class Typer {
 				switch exc {
 					case(core.ds.ExceptionTools.typing(_) => Some(err)) if (resets):
 						checkError(ctx, err);
-						body = mk(TBlock([]), ctx.t.tvoid, p);
+						body = mk(TBlock(vector()), ctx.t.tvoid, p);
 					case _:
 						throw exc;
 				}
@@ -1332,14 +1344,14 @@ class Typer {
 				mk(TVar(v, mk(TConst(TNull), ft, p)), ctx.t.tvoid, p),
 				mk(TBinop(OpAssign, mk(TLocal(v), ft, p), e), ft, p)
 			].concat(exprs);
-		} else if (inlined && !ctx.m.isDisplayFile) exprs.unshift(mk(TBlock([]), ctx.t.tvoid, p)); // do not add variable since it will be inlined
+		} else if (inlined && !ctx.m.isDisplayFile) exprs.unshift(mk(TBlock(vector()), ctx.t.tvoid, p)); // do not add variable since it will be inlined
 		else exprs.unshift(mk(TVar(v, e), ctx.t.tvoid, p));
 		if (exprs.length == 1) return exprs[0];
-		var block = mk(TBlock(exprs), v.vType, p);
-		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: [], pos: Globals.nullPos}, block), v.vType, p);
+		var block = mk(TBlock(Vector.fromArrayCopy(exprs)), v.vType, p);
+		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: vector(), pos: Globals.nullPos}, block), v.vType, p);
 	}
 
-	public static function typeArrayDecl(ctx:TyperContext, el:Array<Expr>, withType:WithTypeValue, p:Pos):TExpr {
+	public static function typeArrayDecl(ctx:TyperContext, el:Vector<Expr>, withType:WithTypeValue, p:Pos):TExpr {
 		var allowDynamic = false;
 		function loop(seen:Array<T>, t:T):Null<T> return switch follow(t) {
 			case TInst({clPath: {pack: [], name: "Array"}}, [tp]): switch follow(tp) {
@@ -1407,8 +1419,8 @@ class Typer {
 				case EFor(it, e): EFor(it, map(e));
 				case EWhile(cond, e, flag): EWhile(cond, map(e), flag);
 				case EIf(cond, e1, e2): EIf(cond, map(e1), e2 == null ? null : map(e2));
-				case EBlock([e]): EBlock([map(e)]);
-				case EBlock([]): return map({expr: EObjectDecl([]), pos: ep});
+				case EBlock([e]): EBlock(vector(map(e)));
+				case EBlock([]): return map({expr: EObjectDecl(vector()), pos: ep});
 				case EBlock(el):
 					var next = el.copy();
 					next[next.length - 1] = map(next[next.length - 1]);
@@ -1420,22 +1432,22 @@ class Typer {
 						expr: ENew(makePtp({
 							tpackage: ["haxe", "ds"],
 							tname: "Map",
-							tparams: [],
+							tparams: vector(),
 							tsub: null
-						}, Globals.nullPos), []),
+						}, Globals.nullPos), vector()),
 						pos: p
 					};
-					ECall({expr: efield(reference, "set"), pos: ep}, [a, b]);
+					ECall({expr: efield(reference, "set"), pos: ep}, vector(a, b));
 				case _:
-					initializer = {expr: EArrayDecl([]), pos: p};
-					ECall({expr: efield(reference, "push"), pos: ep}, [expr]);
+					initializer = {expr: EArrayDecl(vector()), pos: p};
+					ECall({expr: efield(reference, "push"), pos: ep}, vector(expr));
 			};
 			return {expr: def, pos: ep};
 		}
 		var mapped = map(e), ea = typeExpr(ctx, initializer, withType);
 		Typecore.unify(ctx, v.vType, ea.etype, p);
 		var loop = typeExpr(ctx, mapped, NoValue);
-		return mk(TBlock([mk(TVar(v, ea), ctx.t.tvoid, p), loop, ev]), v.vType, p);
+		return mk(TBlock(vector(mk(TVar(v, ea), ctx.t.tvoid, p), loop, ev)), v.vType, p);
 	}
 
 	public static function typeReturn(ctx:TyperContext, e:Null<Expr>, withType:WithTypeValue, p:Pos, implicit:Bool = false):TExpr {
@@ -1470,7 +1482,7 @@ class Typer {
 				}
 				// if we get a Void expression (e.g. from inlining) we don't want to return it (issue #4323)
 				var t = terminatorType(ctx, withType, p);
-				return mk(TBlock([e, mk(TReturn(null), t, p)]), t, e.epos);
+				return mk(TBlock(vector(e, mk(TReturn(null), t, p))), t, e.epos);
 			}
 			return mk(TReturn(e), terminatorType(ctx, withType, p), p);
 		} catch (exc:Dynamic) {
@@ -1520,9 +1532,9 @@ class Typer {
 	public static function getIfThenElseOperands(ctx:TyperContext, e1:TExpr, e2:TExpr, withType:WithTypeValue):{type:T, coerce:TExpr->TExpr}
 		return switch withType {
 			case NoValue: {type: ctx.t.tvoid, coerce: function(e:TExpr) return e};
-			case Value(_): {type: unifyMin(ctx, [e1, e2]), coerce: function(e:TExpr) return e};
+			case Value(_): {type: unifyMin(ctx, vector(e1, e2)), coerce: function(e:TExpr) return e};
 			case WithType(t, src) if (ExtType.isMono(follow(t)) || ExtType.isVoid(follow(t))): {
-					type: unifyMinForTypeSource(ctx, [e1, e2], src),
+					type: unifyMinForTypeSource(ctx, vector(e1, e2), src),
 					coerce: function(e:TExpr) return e
 				};
 			case WithType(t, _): {type: t, coerce: function(e:TExpr) return AbstractCast.castOrUnify(ctx, t, e, e.epos)};
@@ -1587,7 +1599,7 @@ class Typer {
 					case ECall(e, el): accGet(ctx, typeCallAccess(ctx, e, el, MGet, WithTypeTools.value, m.pos, p));
 					case ENew(t, el):
 						var e = typeNew(ctx, t, el, withType, true, p);
-						mk(TMeta({meta: MetaTag.Inline, exprs: [], pos: Globals.nullPos}, e), e.etype, e.epos);
+						mk(TMeta({meta: MetaTag.Inline, exprs: vector(), pos: Globals.nullPos}, e), e.etype, e.epos);
 					case EFor(it, e2): ForLoop.typeForLoop(ctx, TyperDisplay.handleDisplay, it, e2, ForcedUnroll, p);
 					case _:
 						displayError(ctx.com, "Call or function expected after inline keyword", p);
@@ -1627,7 +1639,7 @@ class Typer {
 		return e;
 	}
 
-	public static function typeCallTarget(ctx:TyperContext, e:Expr, el:Array<Expr>, withType:WithTypeValue, pInline:Null<Pos>):AccessKind {
+	public static function typeCallTarget(ctx:TyperContext, e:Expr, el:Vector<Expr>, withType:WithTypeValue, pInline:Null<Pos>):AccessKind {
 		var acc = maybeTypeAgainstEnum(ctx, () -> typeAccess(ctx, e.expr, e.pos, MCall(el), WithTypeTools.value), withType, true, e.pos);
 		if (pInline == null) return acc;
 		inline function check(cf:TClassField):Void {
@@ -1660,7 +1672,7 @@ class Typer {
 		return loop(acc);
 	}
 
-	public static function typeCallAccess(ctx:TyperContext, e:Expr, el:Array<Expr>, mode:AccessMode, withType:WithTypeValue,
+	public static function typeCallAccess(ctx:TyperContext, e:Expr, el:Vector<Expr>, mode:AccessMode, withType:WithTypeValue,
 			pInline:Null<Pos>, p:Pos):AccessKind {
 		try return AKExpr(typeCallBuiltin(ctx, e, el, mode, withType, p))
 		catch (_:core.ds.Exit) {
@@ -1668,14 +1680,14 @@ class Typer {
 		}
 	}
 
-	public static function typeCallBuiltin(ctx:TyperContext, e:Expr, el:Array<Expr>, mode:AccessMode, withType:WithTypeValue,
+	public static function typeCallBuiltin(ctx:TyperContext, e:Expr, el:Vector<Expr>, mode:AccessMode, withType:WithTypeValue,
 			p:Pos):TExpr return switch e.expr {
 			case EConst(Ident("trace")) if (el.length > 0):
 				var p = e.pos;
 				if (Common.defined(ctx.com, Define.NoTraces)) nullExpr(ctx.t.tvoid, p); else {
 					var first = el[0], rest = el.slice(1);
 					function toStringMeta(e:Expr):Expr return {
-						expr: EMeta({meta: MetaTag.ToString, exprs: [], pos: Globals.nullPos}, e),
+						expr: EMeta({meta: MetaTag.ToString, exprs: vector(), pos: Globals.nullPos}, e),
 						pos: e.pos
 					};
 					var params:Array<core.Ast.ObjectField> = rest.length == 0 ? [] : [
@@ -1694,12 +1706,12 @@ class Typer {
 								_) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): value = callToString(ctx, value);
 							case _:
 						}
-						mk(TCall(mk(TIdent("`trace"), tDynamic, p), [value, information]), ctx.t.tvoid, p);
+						mk(TCall(mk(TIdent("`trace"), tDynamic, p), vector(value, information)), ctx.t.tvoid, p);
 					} else {
 						var root:core.Ast.Expr = {expr: EConst(Ident("haxe")), pos: p},
 							log:core.Ast.Expr = {expr: efield(root, "Log"), pos: p},
 							trace:core.Ast.Expr = {expr: efield(log, "trace"), pos: p};
-						typeExpr(ctx, {expr: ECall(trace, [toStringMeta(first), infos]), pos: p}, NoValue);
+						typeExpr(ctx, {expr: ECall(trace, vector(toStringMeta(first), infos)), pos: p}, NoValue);
 					}
 				}
 			case EField({expr: EConst(Ident("super"))}, _, _):
@@ -1736,14 +1748,14 @@ class Typer {
 					case _: false;
 				};
 				if (!hasEnumMatch(typed.etype)) throw core.ds.Exit.raise();
-				Matcher.matchExpr(ctx, on, [
+				Matcher.matchExpr(ctx, on, vector(
 					{
-						patterns: [el[0]],
+						patterns: vector(el[0]),
 						guard: null,
 						expr: {expr: EConst(Ident("true")), pos: e.pos},
 						pos: e.pos
 					}
-				],
+				),
 					{expr: {expr: EConst(Ident("false")), pos: e.pos}, pos: e.pos}, WithTypeTools.withType(ctx.t.tbool), true, e.pos);
 			case EConst(Ident("__unprotect__")) if (el.length == 1 && switch el[0].expr {
 					case EConst(String(_)): true;
@@ -1751,8 +1763,8 @@ class Typer {
 				}):
 				var value = typeExpr(ctx, el[0], WithTypeTools.value);
 				if (Common.platform(ctx.com, Flash)) {
-					var t = tfun([value.etype], value.etype);
-					mk(TCall(mk(TIdent("__unprotect__"), t, p), [value]), value.etype, value.epos);
+					var t = tfun(vector(value.etype), value.etype);
+					mk(TCall(mk(TIdent("__unprotect__"), t, p), vector(value)), value.etype, value.epos);
 				} else value;
 			case EDisplay(subject = {expr: EConst(Ident("super"))},
 				dk): TyperDisplay.handleDisplay(ctx, {expr: ECall(subject, el), pos: p}, dk, mode, withType);
@@ -1764,7 +1776,7 @@ class Typer {
 					t = TInst(c, params), on = mk(TConst(TSuper), t, e.pos);
 				if (Meta.has(MetaTag.CompilerGenerated, cf.cfMeta)) displayError(ctx.com, errorMsg(NoConstructor(TClassDecl(c))), p);
 				fa = FieldAccessTools.create(on, cf, FHInstance(c, params), false, p);
-				var fcc = unifyFieldCall(ctx, fa, [], el, p, false);
+				var fcc = unifyFieldCall(ctx, fa, vector(), el, p, false);
 				mk(TCall(mk(TConst(TSuper), t, e.pos), fcc.fcArgs), ctx.t.tvoid, p);
 			case _: throw core.ds.Exit.raise();
 		};
@@ -1792,7 +1804,7 @@ class Typer {
 					case TInst(c, []): c;
 					case _: throw "Invalid EReg class";
 				};
-				mk(TNew(c, [], [str, options]), t, p);
+				mk(TNew(c, vector(), vector(str, options)), t, p);
 			case EConst(String(s, SSingleQuotes)) if (s != ""): typeExpr(ctx, formatString(ctx, s, p), withType);
 			case EConst(Int(s, suffix)) if (suffix != null): switch suffix {
 					case "i32": try mk(TConst(TInt(core.ds.OcamlInt32.ofString(s))), ctx.com.basic.tint,
@@ -1806,10 +1818,10 @@ class Typer {
 							int64:core.Ast.Expr = {expr: efield(root, "Int64"), pos: p},
 							field:core.Ast.Expr = {expr: efield(int64, "make"), pos: p};
 						typeExpr(ctx, {
-							expr: ECall(field, [
+							expr: ECall(field, vector(
 								{expr: EConst(Int(Std.string(high), null)), pos: p},
 								{expr: EConst(Int(Std.string(low), null)), pos: p}
-							]),
+							)),
 							pos: p
 						}, withType);
 					case "u32": typeExpr(ctx,
@@ -1849,7 +1861,7 @@ class Typer {
 					*/
 					case WithType(t, ImplicitReturn): !ExtType.isMono(follow(t));
 					case _: true;
-				}): typeExpr(ctx, {expr: EObjectDecl([]), pos: p}, withType);
+				}): typeExpr(ctx, {expr: EObjectDecl(vector()), pos: p}, withType);
 			case EBlock(list):
 				var locals = saveLocals(ctx),
 					e = typeBlock(ctx, list, withType, p);
@@ -1877,9 +1889,9 @@ class Typer {
 									expr: ENew(makePtp({
 										tpackage: ["haxe", "ds"],
 										tname: "Map",
-										tparams: [],
+										tparams: vector(),
 										tsub: null
-									}, Globals.nullPos), []),
+									}, Globals.nullPos), vector()),
 									pos: p
 								}, withType); else if (list.length == 1 && switch list[0].expr {
 									case EDisplay(_): true;
@@ -1918,7 +1930,7 @@ class Typer {
 					expr: c.expr,
 					pos: c.pos
 				} : typing.Matcher.MatchCase)), def, withType, false, p);
-				mk(TMeta({meta: MetaTag.Ast, exprs: [syntax], pos: p}, result), result.etype, result.epos);
+				mk(TMeta({meta: MetaTag.Ast, exprs: vector(syntax), pos: p}, result), result.etype, result.epos);
 			case EReturn(e):
 				if (!TyperManager.isFunctionContext(ctx)) {
 					displayError(ctx.com, "Return outside function", p);
@@ -1955,7 +1967,7 @@ class Typer {
 				var old = ctx.f.isUntyped;
 				ctx.f.isUntyped = true;
 				if (!Meta.has(MetaTag.HasUntyped,
-					ctx.f.curfield.cfMeta)) ctx.f.curfield.cfMeta.unshift({meta: MetaTag.HasUntyped, exprs: [], pos: mkZeroRangePos(p)});
+					ctx.f.curfield.cfMeta)) ctx.f.curfield.cfMeta.unshift({meta: MetaTag.HasUntyped, exprs: vector(), pos: mkZeroRangePos(p)});
 				var value = typeExpr(ctx, inner, withType);
 				ctx.f.isUntyped = old;
 				mk(value.eexpr, mkMono(), value.epos);
@@ -1980,7 +1992,7 @@ class Typer {
 							&& DisplayPosition.displayPosition.enclosedIn(hint.pos)) context.display.DisplayEmitter.displayModuleType(ctx,
 								mt, hint.pos);
 						var typeValue = TyperBase.typeModuleType(ctx, mt, hint.pos);
-						Texpr.Builder.resolveAndMakeStaticCall(ctx.com.std, "isOfType", [value, typeValue], p);
+						Texpr.Builder.resolveAndMakeStaticCall(ctx.com.std, "isOfType", vector(value, typeValue), p);
 					case _:
 						displayError(ctx.com, "Unsupported type for `is` operator", hint.pos);
 						Texpr.Builder.makeBool(ctx.com.basic, false, p);

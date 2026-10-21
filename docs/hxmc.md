@@ -383,6 +383,19 @@ allocates nothing; the runtime does not refer to those, so that a tool that
 does not define them can still build it. A copy of an empty array is itself,
 and any empty array serves as the view of any kind.
 
+`NativeArray.literal([a, b, c])` (of an array literal only; what the port's
+`vector(a, b, c)` is on hxmc where the element type is known) makes the
+elements' NativeArray as an Array literal is made: FnLower lowers it to the
+host call `hxmc_narray_lit`, which `MirBuild` turns into the empty array of
+the kind, or one call of the runtime (`hx_narray_new_n`, `rt/NArray.hx`) and
+a store per element. Its operands are read after that allocation, so they
+are roots across it, as an `ENewArr`'s are (`GcPoints.gcPoint` 2; the corpus
+case `NativeArrayLiteral` stores young objects in a loop). `new NativeArray(n)` inlines its allocation and its
+test of `n`, which a literal does not need: a function returning a literal
+of three references is 224 bytes of x86-64 against 650 for `new Vector(3)`
+and three stores. For an erased type parameter, and under WasmGC, it is
+`new NativeArray(n)` and its stores.
+
 `hxmc/std/haxe/ds/Vector.hx` shadows the reference standard library on the
 hxmc target and implements `haxe.ds.Vector<T>` as an abstract over
 `hxmc.NativeArray<T>`. Indexing, length and construction inline to the same

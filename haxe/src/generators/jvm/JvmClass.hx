@@ -27,6 +27,9 @@ import generators.jvm.JvmAttribute;
 import generators.jvm.JvmBuilder;
 import generators.jvm.JvmMethod;
 import generators.jvm.JvmConstantPool;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 /* High-level class builder. */
 class JvmClassBuilder extends BaseBuilder {
@@ -190,7 +193,7 @@ class JvmClassBuilder extends BaseBuilder {
 				acc.unshift({path: k.path, name: k.name, offsetClass: offsetClass});
 				return acc;
 			}, []);
-			var l = l.map(function(e) {
+			var l = l.mapToVector(function(e) {
 				var offsetName = pool.addString(e.name);
 				var inner = innerClasses.get(e.offsetClass);
 				var flags = inner != null ? inner.getAccessFlags() : 9;
@@ -264,9 +267,9 @@ class JvmClassBuilder extends BaseBuilder {
 			classAccessFlags: accessFlags,
 			classThisClass: offsetThis,
 			classSuperClass: offsetSuper,
-			classInterfaces: interfaceOffsets.copy(),
-			classFields: fields.copy(),
-			classMethods: methods.copy(),
+			classInterfaces: Vector.fromArrayCopy(interfaceOffsets),
+			classFields: Vector.fromArrayCopy(fields),
+			classMethods: Vector.fromArrayCopy(methods),
 			classAttributes: attributes,
 		};
 	}

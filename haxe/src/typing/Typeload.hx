@@ -62,8 +62,11 @@ import core.display.CompletionItem.ClassFieldOrigin;
 
 using Lambda;
 using core.ds.ArrayTools;
+using core.ds.VectorTools;
 
 import core.Define;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 // Type instance and type parameter handling.
 enum LoadInstanceParamMode {
@@ -266,7 +269,7 @@ class Typeload {
 		}
 	}
 
-	public static function generateArgsMeta(com:CommonContext, cls:Null<TClass>, addMeta:MetadataEntry->Void, args:Array<FuncArg>):Void {
+	public static function generateArgsMeta(com:CommonContext, cls:Null<TClass>, addMeta:MetadataEntry->Void, args:Vector<FuncArg>):Void {
 		var values:Array<ObjectField> = [];
 		for (arg in args) if (arg.expr != null) values.unshift({
 			key: {name: arg.name.name, pos: arg.name.pos, quote: NoQuotes},
@@ -274,22 +277,22 @@ class Typeload {
 		});
 		if (values.length > 0) addMeta({
 			meta: MetaTag.Value,
-			exprs: [{expr: EObjectDecl(values), pos: Globals.nullPos}],
+			exprs: vector({expr: EObjectDecl(haxe.ds.Vector.fromArrayCopy(values)), pos: Globals.nullPos}),
 			pos: Globals.nullPos
 		});
 		if (args.exists(arg -> arg.meta.length > 0)) addMeta({
 			meta: MetaTag.HaxeArguments,
-			exprs: [
+			exprs: vector(
 				{
 					expr: EFunction(FKAnonymous, {
-						fParams: [],
+						fParams: vector(),
 						fArgs: args,
 						fType: null,
 						fExpr: null
 					}),
 					pos: Globals.nullPos
 				}
-			],
+			),
 			pos: Globals.nullPos
 		});
 	}
@@ -316,7 +319,7 @@ class Typeload {
 				displayError(ctx.com, "Can only extend structures", pair.pos);
 				fields = PMap.empty();
 		}
-		return mkAnon(Extend(tl.map(pair -> pair.type)), fields);
+		return mkAnon(Extend(tl.mapToVector(pair -> pair.type)), fields);
 	}
 
 	public static function checkParamConstraints(ctx:Typer, t:T, map:T->T, ttp:TypedTypeParam, p:Pos):Void {
@@ -372,7 +375,7 @@ class Typeload {
 		return loop(t0);
 	}
 
-	public static function loadParams(ctx:Typer, info:BuildInfo, params:Array<TypeParamOrConst>, p:Pos):TParams {
+	public static function loadParams(ctx:Typer, info:BuildInfo, params:Vector<TypeParamOrConst>, p:Pos):TParams {
 		var rest = info.buildKind == BuildGenericBuild && info.buildParams.length == 1 && info.buildParams[0].ttpName == "Rest",
 			javaRest = ctx.com.platform == Jvm && info.buildExtern;
 		rest = rest || javaRest;
@@ -390,7 +393,7 @@ class Typeload {
 					};
 					var c = mkClass(ctx.m.curmod, {pack: [], name: name}, p, e.pos);
 					c.clKind = KExpr(e);
-					{type: TInst(c, []), pos: e.pos};
+					{type: TInst(c, vector()), pos: e.pos};
 				case TPType({type: CTPath({path: {tpackage: ["$"], tname: "_hx_default"}}), pos: p}):
 					if (ttp != null && ttp.ttpDefault != null) {type: ttp.ttpDefault, pos: p}; else if (ttp != null)
 						raiseTypingError("Invalid default, type parameter "
@@ -400,43 +403,60 @@ class Typeload {
 				case TPType(t): {type: loadComplexType(ctx, true, LoadNormal, t), pos: t.pos};
 			};
 		var checks = [];
-		function loop(inputs:Array<TypeParamOrConst>, expected:TypeParams, isRest:Bool):TParams {
-			if (inputs.length > 0 && expected.length > 0) {
-				var ttp = expected[0],
-					name = ttp.ttpName,
-					loaded = loadParam(inputs[0], ttp),
-					t = loaded.type;
-				var expression = switch t {
-					case TInst({clKind: KExpr(_)}, _): true;
-					case _: false;
-				}, expects = name == "Const" || Meta.has(MetaTag.Const, ttp.ttpClass.clMeta), accepts = name == "Rest";
-				if (expression) {
-					if (!expects && !accepts) raiseTypingError("Constant value unexpected here", p);
-				} else if (expects) raiseTypingError("Type parameter is expected to be a constant value", p);
-				isRest = isRest || (name == "Rest" && info.buildKind == BuildGenericBuild);
-				var generic = switch info.buildKind {
-					case BuildGeneric(_): true;
-					case _: false;
-				};
-				if (ttp.ttpConstraints != null || generic) checks.push({type: t, param: ttp, pos: loaded.pos});
-				return [t].concat(loop(inputs.slice(1), expected.slice(1), isRest));
+		// port: the given and expected parameters walked from ii and ei on (upstream: their tails), the
+		// types collected in order (upstream: `t :: loop ...`) and made a Vector once at the end
+		var inputs = params, expected = info.buildParams, acc:Array<T> = [];
+		function loop(ii:Int, ei:Int, isRest:Bool):Void {
+			while (true) {
+				if (ii < inputs.length && ei < expected.length) {
+					var ttp = expected[ei],
+						name = ttp.ttpName,
+						loaded = loadParam(inputs[ii], ttp),
+						t = loaded.type;
+					var expression = switch t {
+						case TInst({clKind: KExpr(_)}, _): true;
+						case _: false;
+					}, expects = name == "Const" || Meta.has(MetaTag.Const, ttp.ttpClass.clMeta), accepts = name == "Rest";
+					if (expression) {
+						if (!expects && !accepts) raiseTypingError("Constant value unexpected here", p);
+					} else if (expects) raiseTypingError("Type parameter is expected to be a constant value", p);
+					isRest = isRest || (name == "Rest" && info.buildKind == BuildGenericBuild);
+					var generic = switch info.buildKind {
+						case BuildGeneric(_): true;
+						case _: false;
+					};
+					if (ttp.ttpConstraints != null || generic) checks.push({type: t, param: ttp, pos: loaded.pos});
+					acc.push(t);
+					ii++;
+					ei++;
+					continue;
+				}
+				if (ii == inputs.length && ei == expected.length) return;
+				if (ii == inputs.length) {
+					if (expected.length - ei == 1 && expected[ei].ttpName == "Rest" && info.buildKind == BuildGenericBuild) return;
+					var ttp = expected[ei], t:T;
+					if (javaRest) t = tDynamic;
+					else if (ttp.ttpDefault != null) t = ttp.ttpDefault;
+					else if (ignoreError(ctx.com)) t = ttp.ttpType;
+					else t = raiseTypingError("Not enough type parameters for " + Globals.sTypePath(info.buildPath), p);
+					acc.push(t);
+					ei++;
+					continue;
+				}
+				var loaded = loadParam(inputs[ii], null);
+				if (isRest) {
+					acc.push(loaded.type);
+					ii++;
+					ei = expected.length;
+					continue;
+				}
+				if (ignoreError(ctx.com)) return;
+				raiseTypingError("Too many type parameters for " + Globals.sTypePath(info.buildPath), loaded.pos);
+				return;
 			}
-			if (inputs.length == 0 && expected.length == 0) return [];
-			if (inputs.length == 0) {
-				if (expected.length == 1 && expected[0].ttpName == "Rest" && info.buildKind == BuildGenericBuild) return [];
-				var ttp = expected[0], t:T;
-				if (javaRest) t = tDynamic;
-				else if (ttp.ttpDefault != null) t = ttp.ttpDefault;
-				else if (ignoreError(ctx.com)) t = ttp.ttpType;
-				else return raiseTypingError("Not enough type parameters for " + Globals.sTypePath(info.buildPath), p);
-				return [t].concat(loop([], expected.slice(1), isRest));
-			}
-			var loaded = loadParam(inputs[0], null);
-			if (isRest) return [loaded.type].concat(loop(inputs.slice(1), [], true));
-			if (ignoreError(ctx.com)) return [];
-			return raiseTypingError("Too many type parameters for " + Globals.sTypePath(info.buildPath), loaded.pos);
 		}
-		var result = loop(params, info.buildParams, false);
+		loop(0, 0, false);
+		var result:TParams = VectorTools.ofArray(acc);
 		if (!rest) {
 			function map(t:T):T return maybeBuildInstance(ctx, applyParams(info.buildParams, result, t), ParamNormal, p);
 			delay(ctx.g, PCheckConstraint, function() {
@@ -472,7 +492,7 @@ class Typeload {
 				};
 				displayError(ctx.com, "Too many type parameters for " + Globals.sTypePath(info.buildPath), pos);
 			}
-			return info.buildApply([]);
+			return info.buildApply(vector());
 		}
 		// TODO: this is currently duplicated, but it seems suspcious anyway...
 		var rest = info.buildKind == BuildGenericBuild && info.buildParams.length == 1 && info.buildParams[0].ttpName == "Rest";
@@ -530,7 +550,7 @@ class Typeload {
 			case CTOptional(_): raiseTypingError("Optional type not allowed here", p);
 			case CTNamed(_): raiseTypingError("Named type not allowed here", p);
 			case CTIntersection(tl):
-				var loaded:Array<{type:T, pos:Pos}> = tl.map(function(t) {
+				var loaded:Array<{type:T, pos:Pos}> = tl.mapToArray(function(t) {
 					try return {
 						type: loadComplexType(ctx, allowDisplay, LoadNormal, t),
 						pos: t.pos
@@ -559,7 +579,7 @@ class Typeload {
 						PMap.iter(function(name:String, cf:TClassField) {
 							fields = PMap.add(name, cf, fields);
 						}, a.aFields);
-						mkAnon(Extend([pair.type]), fields);
+						mkAnon(Extend(vector(pair.type)), fields);
 					case _: raiseTypingError("Can only extend structures", pair.pos);
 				};
 				inline function merge(pair:{type:T, pos:Pos}):Void switch follow(pair.type) {
@@ -570,7 +590,7 @@ class Typeload {
 					case _:
 						raiseTypingError("Can only extend structures", pair.pos);
 				}
-				var instances:Array<{type:T, pos:Pos}> = tl.map(function(ptp) {
+				var instances:Array<{type:T, pos:Pos}> = tl.mapToArray(function(ptp) {
 					try return {
 						type: loadInstance(ctx, ptp, ParamNormal, LoadNormal, allowDisplay),
 						pos: ptp.posFull
@@ -581,7 +601,7 @@ class Typeload {
 					if (instances.length == 1) result = extension(instances[0]);
 					else {
 						for (instance in instances) merge(instance);
-						a.aStatus = Extend(instances.map(pair -> pair.type));
+						a.aStatus = Extend(instances.mapToVector(pair -> pair.type));
 						result = ta;
 					}
 					Monomorph.bind(tr, result);
@@ -603,7 +623,7 @@ class Typeload {
 					inline function noExpr(e:Null<Expr>):Void {
 						if (e != null) raiseTypingError("Expression not allowed here", e.pos);
 					}
-					var pub = true, dyn = false, params:TypeParams = [], isFinal = false;
+					var pub = true, dyn = false, params:TypeParams = vector(), isFinal = false;
 					checkFieldAccess(ctx, f); // TODO: do we want to do anything with this?
 					for (access in f.cffAccess) switch access.access {
 						case APublic:
@@ -692,7 +712,7 @@ class Typeload {
 					case CTPath({path: {tpackage: [], tparams: [], tname: "Void"}}): true;
 					case _: false;
 				};
-				if (voidArg) TFun({args: [], ret: loadComplexType(ctx, allowDisplay, LoadReturn, ret)}); else {
+				if (voidArg) TFun({args: vector(), ret: loadComplexType(ctx, allowDisplay, LoadReturn, ret)}); else {
 					var typed = args.map(function(t) {
 						var opt = false, name = "";
 						switch t.type {
@@ -812,7 +832,7 @@ class Typeload {
 			case TTypeDecl(t):
 				addDependency(ctx.m.curmod, t.tModule, MDepFromTyping);
 				var pt = spawnMonomorph(ctx, p);
-				{type: applyTypedef(t, [pt]), parameter: pt};
+				{type: applyTypedef(t, vector(pt)), parameter: pt};
 			case _: throw "Iterator is not a typedef";
 		};
 
@@ -838,14 +858,14 @@ class Typeload {
 		return ttp;
 	}
 
-	public static function typeTypeParams(ctx:Typer, host:TypeParamHost, path:GlobalTypePath, tpl:Array<TypeParam>):TypeParams {
+	public static function typeTypeParams(ctx:Typer, host:TypeParamHost, path:GlobalTypePath, tpl:Vector<TypeParam>):TypeParams {
 		var names:Array<String> = [], pairs = [];
 		for (tp in tpl) {
 			if (names.contains(tp.tpName.name)) displayError(ctx.com, "Duplicate type parameter name: " + tp.tpName.name, tp.tpName.pos);
 			names.unshift(tp.tpName.name);
 			pairs.push({syntax: tp, param: typeTypeParam(ctx, host, path, tp)});
 		}
-		var params = pairs.map(pair -> pair.param),
+		var params = pairs.mapToVector(pair -> pair.param),
 			local = TyperManager.cloneForTypeParams(ctx, params.concat(ctx.typeParams));
 		for (pair in pairs) {
 			var tp = pair.syntax, ttp = pair.param;
@@ -869,7 +889,7 @@ class Typeload {
 						function load(th:TypeHint):TParams return switch th.type {
 							case CTIntersection(tl): tl.map(t -> loadComplexType(local, true, LoadNormal, t));
 							case CTParent(ct): load(ct);
-							case _: [loadComplexType(local, true, LoadNormal, th)];
+							case _: vector(loadComplexType(local, true, LoadNormal, th));
 						};
 						var constr = load(th);
 						// check against direct recursion

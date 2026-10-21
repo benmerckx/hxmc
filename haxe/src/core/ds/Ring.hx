@@ -1,13 +1,12 @@
 package core.ds;
 
 class Ring<T> {
-	var values:Array<T>;
+	var values:haxe.ds.Vector<T>;
 	var index:Int = 0;
 	var numFilled:Int = 0;
 
 	public function new(length:Int, initial:T) {
-		values = [];
-		for (_ in 0...length) values.push(initial);
+		values = new haxe.ds.Vector(length, initial);
 	}
 
 	public function push(value:T):Void {

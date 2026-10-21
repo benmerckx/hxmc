@@ -245,7 +245,7 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 		for (cf in c.clOrderedStatics) {
 			if (!cf.cfKind.match(Method(_)) || cf.cfExpr == null) continue;
 			var rest = switch TFunctions.follow(cf.cfType) {
-				case TFun(s): Lambda.exists(s.args, a -> TFunctions.follow(a.type).match(TAbstract({aPath: {pack: ["haxe"], name: "Rest"}}, _)));
+				case TFun(s): core.ds.VectorTools.exists(s.args, a -> TFunctions.follow(a.type).match(TAbstract({aPath: {pack: ["haxe"], name: "Rest"}}, _)));
 				case _: true;
 			};
 			if (!rest) fns.push(cf.cfName);

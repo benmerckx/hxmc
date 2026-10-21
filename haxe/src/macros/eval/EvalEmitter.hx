@@ -31,6 +31,7 @@ import macros.eval.EvalHash;
 import macros.eval.EvalExceptions.Break;
 import macros.eval.EvalExceptions.Continue;
 import macros.eval.EvalExceptions.Return;
+import haxe.ds.Vector;
 
 using macros.eval.EvalValue.EvalValueTools;
 
@@ -171,6 +172,14 @@ class EvalEmitter {
 		return vl;
 	}
 
+	// port: `Array.map (apply env) execs` (in order): the value array itself
+	static inline function applyAllArray(execs:Vector<Emitter>, env:Env):Vector<Value> {
+		var vl = new Vector<Value>(execs.length);
+		for (i in 0...execs.length)
+			vl[i] = execs[i](env);
+		return vl;
+	}
+
 	// port: `vthis :: List.map (apply env) execs` without an intermediate array.
 	static inline function applyAllThis(vthis:Value, execs:Array<Emitter>, env:Env):Array<Value> {
 		#if !hl
@@ -247,11 +256,11 @@ class EvalEmitter {
 		}
 	}
 
-	public static final emitNewArray:Emitter = _ -> EvalEncode.encodeArrayInstance(EvalArray.create([]));
+	public static final emitNewArray:Emitter = _ -> EvalEncode.encodeArrayInstance(EvalArray.create(new Vector(0)));
 
 	public static function emitNewVectorIntRaw(i:Int, p:Pos):Value {
 		if (i < 0) EvalContext.excStringP("Vector size must be >= 0", p);
-		var a = [for (_ in 0...i) VNull];
+		var a = new Vector<Value>(i, VNull);
 		return EvalEncode.encodeVectorInstance(a);
 	}
 
@@ -273,18 +282,21 @@ class EvalEmitter {
 
 	public static function emitObjectDeclaration(proto:Vprototype, fa:Array<{i:Int, exec:Emitter}>):Emitter {
 		var n = fa.length;
-		var indices = [for (f in fa) f.i];
-		var execs = [for (f in fa) f.exec];
+		var indices = new Vector<Int>(n), execs = new Vector<Emitter>(n);
+		for (k in 0...n) {
+			indices[k] = fa[k].i;
+			execs[k] = fa[k].exec;
+		}
 		return function(env:Env):Value {
-			var a = [for (_ in 0...n) VNull];
+			var a = new Vector<Value>(n, VNull);
 			for (k in 0...n) a[indices[k]] = execs[k](env);
 			return VObject(new Vobject(a, OProto(proto)));
 		}
 	}
 
-	public static function emitArrayDeclaration(execs:Array<Emitter>):Emitter {
+	public static function emitArrayDeclaration(execs:Vector<Emitter>):Emitter {
 		return function(env:Env):Value {
-			var vl = applyAll(execs, env);
+			var vl = applyAllArray(execs, env);
 			return EvalEncode.encodeArrayInstance(EvalArray.create(vl));
 		}
 	}
@@ -293,9 +305,9 @@ class EvalEmitter {
 
 	public static function emitMkPos(p:Pos):Emitter return _ -> EvalEncode.encodePos(p);
 
-	public static function emitEnumConstruction(key:Int, i:Int, execs:Array<Emitter>, p:Null<Pos>):Emitter {
+	public static function emitEnumConstruction(key:Int, i:Int, execs:Vector<Emitter>, p:Null<Pos>):Emitter {
 		return function(env:Env):Value {
-			return EvalEncode.encodeEnumValue(key, i, applyAll(execs, env), p);
+			return EvalEncode.encodeEnumValueV(key, i, applyAllArray(execs, env), p);
 		}
 	}
 
@@ -310,7 +322,7 @@ class EvalEmitter {
 		}
 	}
 
-	public static function emitSwitch(exec:Emitter, execs:Array<Emitter>, patterns:Array<Array<Emitter>>, execDef:Emitter):Emitter {
+	public static function emitSwitch(exec:Emitter, execs:Vector<Emitter>, patterns:Vector<Array<Emitter>>, execDef:Emitter):Emitter {
 		return function(env:Env):Value {
 			var v1 = exec(env);
 			var i = 0;
@@ -352,7 +364,7 @@ class EvalEmitter {
 		}
 	}
 
-	public static function emitIntSwitchArray(shift:Int, exec:Emitter, cases:Array<Emitter>, execDef:Emitter, p:Pos):Emitter {
+	public static function emitIntSwitchArray(shift:Int, exec:Emitter, cases:Vector<Emitter>, execDef:Emitter, p:Pos):Emitter {
 		return function(env:Env):Value {
 			return switch exec(env) {
 				case VInt32(i32):
@@ -1261,7 +1273,7 @@ class EvalEmitter {
 		}
 	}
 
-	public static function createClosureNoret(ctx:Context, eci:EnvInfo, refSlots:Array<Int>, refValues:Array<Value>, exec:Emitter,
+	public static function createClosureNoret(ctx:Context, eci:EnvInfo, refSlots:Vector<Int>, refValues:Vector<Value>, exec:Emitter,
 			fl:Array<ArgSetter>):Vfunc {
 		return function(vl:Array<Value>):Value {
 			var env = EvalContext.pushEnvironment(ctx, eci);
@@ -1273,7 +1285,7 @@ class EvalEmitter {
 		}
 	}
 
-	public static function createClosure(refSlots:Array<Int>, refValues:Array<Value>, ctx:Context, eci:EnvInfo, exec:Emitter,
+	public static function createClosure(refSlots:Vector<Int>, refValues:Vector<Value>, ctx:Context, eci:EnvInfo, exec:Emitter,
 			fl:Array<ArgSetter>):Vfunc {
 		return function(vl:Array<Value>):Value {
 			var env = EvalContext.pushEnvironment(ctx, eci);
@@ -1287,10 +1299,10 @@ class EvalEmitter {
 
 	// port: [mapping] is upstream's `(i, slot) array`, as two parallel arrays: the
 	// closure's capture slots [mappingI] and the outer capture slots [mappingSlot].
-	public static function emitClosure(ctx:Context, mappingI:Array<Int>, mappingSlot:Array<Int>, eci:EnvInfo, hasret:Bool, exec:Emitter,
+	public static function emitClosure(ctx:Context, mappingI:Vector<Int>, mappingSlot:Vector<Int>, eci:EnvInfo, hasret:Bool, exec:Emitter,
 			fl:Array<ArgSetter>):Emitter {
 		return function(env:Env):Value {
-			var refValues = new Array<Value>();
+			var refValues = new Vector<Value>(mappingSlot.length);
 			for (k in 0...mappingSlot.length) refValues[k] = env.envCaptures[mappingSlot[k]];
 			var f = if (hasret && eci.numCaptures == 0) createFunction(ctx, eci, exec,
 				fl) else if (!hasret && eci.numCaptures == 0) createFunctionNoret(ctx, eci, exec,

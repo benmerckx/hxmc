@@ -2,6 +2,10 @@ package hxmc.wasmgc;
 
 import hxmc.ir.Facts;
 import hxmc.ir.Ir;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // Inlining and scalar replacement on the IR, for the WasmGC path: the native
 // and linear-memory paths do both on Mir (hxmc.Inline, then hxmc.Sroa), which
@@ -42,7 +46,7 @@ class IrOpt {
 	public function new() {}
 
 	// f's body and locals as the WasmGC path emits them
-	public function run(f:FuncInfo, opt:Bool):{body:Array<Stmt>, locals:Array<Local>} {
+	public function run(f:FuncInfo, opt:Bool):{body:Vector<Stmt>, locals:Array<Local>} {
 		if (!opt || !on || f.body.length == 0) return {body: f.body, locals: f.locals};
 		nextId = 0;
 		for (l in f.args)
@@ -63,7 +67,7 @@ class IrOpt {
 	// fold) as its branch, nothing after a statement that always leaves (as
 	// Mir's dead code is dropped for linear memory: what follows
 	// `if (Mem.os() == 3) {...; return;}` is another target's)
-	public static function live(ss:Array<Stmt>):Array<Stmt> {
+	public static function live(ss:Vector<Stmt>):Vector<Stmt> {
 		var out = [];
 		for (s in ss) {
 			switch s {
@@ -72,16 +76,16 @@ class IrOpt {
 						out.push(x);
 				case SIf(c, a, b): out.push(SIf(c, live(a), live(b)));
 				case SLoop(body): out.push(SLoop(live(body)));
-				case SSwitch(e, cases, def): out.push(SSwitch(e, [for (k in cases) {values: k.values, body: live(k.body)}], live(def)));
-				case STry(body, catches): out.push(STry(live(body), [for (c in catches) {test: c.test, l: c.l, body: live(c.body)}]));
+				case SSwitch(e, cases, def): out.push(SSwitch(e, cases.map(k -> {values: k.values, body: live(k.body)}), live(def)));
+				case STry(body, catches): out.push(STry(live(body), catches.map(c -> {test: c.test, l: c.l, body: live(c.body)})));
 				case SCold(id, x):
-					var y = live([x]);
+					var y = live(vector(x));
 					if (y.length == 1) out.push(SCold(id, y[0])) else for (z in y) out.push(z);
 				case _: out.push(s);
 			}
 			if (out.length > 0 && leaves(out[out.length - 1])) break;
 		}
-		return out;
+		return Vector.fromArrayCopy(out);
 	}
 
 	static function leaves(s:Stmt):Bool
@@ -154,15 +158,15 @@ class IrOpt {
 		return ok;
 	}
 
-	function inlineAll(ss:Array<Stmt>, depth:Int):Array<Stmt> {
+	function inlineAll(ss:Vector<Stmt>, depth:Int):Vector<Stmt> {
 		var out = [];
 		for (s in ss)
 			inlineStmt(s, depth, out);
-		return out;
+		return Vector.fromArrayCopy(out);
 	}
 
 	function inlineStmt(s:Stmt, depth:Int, out:Array<Stmt>) {
-		inline function sub(b:Array<Stmt>)
+		inline function sub(b:Vector<Stmt>)
 			return inlineAll(b, depth);
 		switch s {
 			case SSet(l, ECall(g, args)) if (wanted(g, args, depth)):
@@ -178,15 +182,15 @@ class IrOpt {
 			case SLoop(body):
 				out.push(SLoop(sub(body)));
 			case SSwitch(e, cases, def):
-				out.push(SSwitch(e, [for (c in cases) {values: c.values, body: sub(c.body)}], sub(def)));
+				out.push(SSwitch(e, cases.map(c -> {values: c.values, body: sub(c.body)}), sub(def)));
 			case STry(body, catches):
-				out.push(STry(sub(body), [for (c in catches) {test: c.test, l: c.l, body: sub(c.body)}]));
+				out.push(STry(sub(body), catches.map(c -> {test: c.test, l: c.l, body: sub(c.body)})));
 			case _:
 				out.push(s);
 		}
 	}
 
-	function wanted(g:FuncInfo, args:Array<Ex>, depth:Int):Bool {
+	function wanted(g:FuncInfo, args:Vector<Ex>, depth:Int):Bool {
 		if (depth >= Inline.DEPTH || stack.contains(g) || !inlinable(g)) return false;
 		if (maker(g)) return true;
 		for (a in args)
@@ -197,7 +201,7 @@ class IrOpt {
 		return false;
 	}
 
-	function expand(g:FuncInfo, args:Array<Ex>, target:Null<Local>, depth:Int, out:Array<Stmt>) {
+	function expand(g:FuncInfo, args:Vector<Ex>, target:Null<Local>, depth:Int, out:Array<Stmt>) {
 		var assigned = new Map<Int, Bool>();
 		function st(s:Stmt) {
 			switch s {
@@ -247,14 +251,12 @@ class IrOpt {
 		if (tail) {
 			for (s in body)
 				out.push(s);
-		} else {
-			body.push(SBreak);
-			out.push(SLoop(body));
-		}
+		} else
+			out.push(SLoop(body.snoc(SBreak)));
 	}
 
 	// the callee's statements in the caller: its locals renamed, its returns the call's result (and a break)
-	function rename(ss:Array<Stmt>, map:Map<Int, Local>, target:Null<Local>, brk:Bool):Array<Stmt> {
+	function rename(ss:Vector<Stmt>, map:Map<Int, Local>, target:Null<Local>, brk:Bool):Vector<Stmt> {
 		function loc(l:Local):Local {
 			var x = map.get(l.id);
 			if (x == null) throw 'hxmc: -D hxmc.wasm-gc: inlining: the local ${l.name} is not declared';
@@ -266,11 +268,11 @@ class IrOpt {
 				case _: Facts.mapEx(ex, e);
 			}
 		var st:(Stmt, Array<Stmt>) -> Void = null;
-		function sts(ss:Array<Stmt>):Array<Stmt> {
+		function sts(ss:Vector<Stmt>):Vector<Stmt> {
 			var out = [];
 			for (s in ss)
 				st(s, out);
-			return out;
+			return Vector.fromArrayCopy(out);
 		}
 		st = (s, out) -> out.push(switch s {
 				case SSet(l, e): SSet(loc(l), ex(e));
@@ -284,7 +286,7 @@ class IrOpt {
 				case SIf(c, a, b): SIf(ex(c), sts(a), sts(b));
 				case SLoop(body): SLoop(sts(body));
 				case SBreak | SContinue | SPos(_): s;
-				case SSwitch(e, cases, def): SSwitch(ex(e), [for (c in cases) {values: c.values, body: sts(c.body)}], sts(def));
+				case SSwitch(e, cases, def): SSwitch(ex(e), cases.map(c -> {values: c.values, body: sts(c.body)}), sts(def));
 				case SReturn(e):
 					if (e != null) out.push(target != null ? SSet(target, ex(e)) : SExpr(ex(e)));
 					if (!brk) return;
@@ -303,7 +305,7 @@ class IrOpt {
 private class Sra {
 	final o:IrOpt;
 	final f:FuncInfo;
-	final body:Array<Stmt>;
+	final body:Vector<Stmt>;
 	final parent = new Map<Int, Int>(); // union-find over local ids: the locals one object may pass through
 	final bad = new Map<Int, Bool>();
 	final allocs = new Map<Int, Array<Ex>>(); // a local's allocations (ENewObj, ENewAnon)
@@ -335,7 +337,7 @@ private class Sra {
 			case _: null;
 		}
 
-	public function run():Array<Stmt> {
+	public function run():Vector<Stmt> {
 		for (a in f.args)
 			bad.set(a.id, true);
 		for (s in body)
@@ -361,14 +363,14 @@ private class Sra {
 					else if (!sameShape(g.kind, a)) badRoot.set(r, true);
 				}
 		}
-		var fields = new Map<Int, Array<Local>>(); // per replaced local: a local per field
+		var fields = new Map<Int, Vector<Local>>(); // per replaced local: a local per field
 		var tys = new Map<Int, Array<{name:String, ty:Ty}>>();
 		for (r => g in groups) {
 			if (badRoot.exists(r) || g.kind == null) continue;
 			var fs = fieldsOf(g.kind);
 			if (Lambda.exists(fs, x -> x.ty.match(TStruct(_))) || !accessesOk(g.members, fs)) continue;
 			for (l in g.members) {
-				fields.set(l.id, [for (x in fs) o.fresh(l.name + "_" + x.name, x.ty)]);
+				fields.set(l.id, fs.mapToVector(x -> o.fresh(l.name + "_" + x.name, x.ty)));
 				tys.set(l.id, fs);
 				o.drop(l);
 			}
@@ -480,7 +482,7 @@ private class Sra {
 	}
 
 	// a field written other than right after the local's allocation: the object stays
-	function inits(ss:Array<Stmt>) {
+	function inits(ss:Vector<Stmt>) {
 		var open = new Map<Int, Bool>();
 		for (s0 in ss) {
 			var s = switch s0 {
@@ -547,7 +549,7 @@ private enum Access {
 // the replaced locals' statements on their field locals
 private class Rewrite {
 	final o:IrOpt;
-	final fields:Map<Int, Array<Local>>;
+	final fields:Map<Int, Vector<Local>>;
 	final tys:Map<Int, Array<{name:String, ty:Ty}>>;
 
 	public function new(o, fields, tys) {
@@ -587,11 +589,11 @@ private class Rewrite {
 			case _: Facts.mapEx(ex, e);
 		}
 
-	public function stmts(ss:Array<Stmt>):Array<Stmt> {
+	public function stmts(ss:Vector<Stmt>):Vector<Stmt> {
 		var out = [];
 		for (s in ss)
 			stmt(s, out);
-		return out;
+		return Vector.fromArrayCopy(out);
 	}
 
 	function stmt(s:Stmt, out:Array<Stmt>) {
@@ -630,10 +632,10 @@ private class Rewrite {
 			case SIf(c, a, b): out.push(SIf(ex(c), stmts(a), stmts(b)));
 			case SLoop(body): out.push(SLoop(stmts(body)));
 			case SBreak | SContinue | SPos(_): out.push(s);
-			case SSwitch(e, cases, def): out.push(SSwitch(ex(e), [for (c in cases) {values: c.values, body: stmts(c.body)}], stmts(def)));
+			case SSwitch(e, cases, def): out.push(SSwitch(ex(e), cases.map(c -> {values: c.values, body: stmts(c.body)}), stmts(def)));
 			case SReturn(e): out.push(SReturn(e == null ? null : ex(e)));
 			case SThrow(e): out.push(SThrow(ex(e)));
-			case STry(body, catches): out.push(STry(stmts(body), [for (c in catches) {test: c.test, l: c.l, body: stmts(c.body)}]));
+			case STry(body, catches): out.push(STry(stmts(body), catches.map(c -> {test: c.test, l: c.l, body: stmts(c.body)})));
 			case SCold(id, x):
 				var xs = [];
 				stmt(x, xs);

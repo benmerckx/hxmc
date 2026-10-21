@@ -25,6 +25,7 @@ import core.Ast.StringLiteralKind;
 import core.Ast.Token;
 import core.Ast.Unop;
 import core.Globals.Pos;
+import haxe.ds.Vector;
 
 enum LexerErrorMsg {
 	InvalidCharacter(code:Int);
@@ -68,12 +69,12 @@ class LexerError {
 	public var lline:Int;
 	public var lmaxline:Int;
 	public var llines:Array<{offset:Int, line:Int}>;
-	public var lalines:Array<{offset:Int, line:Int}>;
+	public var lalines:haxe.ds.Vector<{offset:Int, line:Int}>;
 	public var llast:Int;
 	public var llastindex:Int;
 
 	public inline function new(lfile:String, lline:Int, lmaxline:Int, llines:Array<{offset:Int, line:Int}>,
-			lalines:Array<{offset:Int, line:Int}>, llast:Int, llastindex:Int) {
+			lalines:haxe.ds.Vector<{offset:Int, line:Int}>, llast:Int, llastindex:Int) {
 		this.lfile = lfile;
 		this.lline = lline;
 		this.lmaxline = lmaxline;
@@ -111,7 +112,7 @@ class Lexer {
 		lline: 1,
 		lmaxline: 1,
 		llines: [{offset: 0, line: 1}],
-		lalines: [{offset: 0, line: 1}],
+		lalines: Vector.fromArrayCopy([{offset: 0, line: 1}]),
 		llast: 0x7FFFFFFF,
 		llastindex: 0
 	};
@@ -199,7 +200,7 @@ class Lexer {
 		// rebuild cache if we have a new line
 		if (f.lmaxline != f.lline) {
 			f.lmaxline = f.lline;
-			f.lalines = f.llines.copy();
+			f.lalines = Vector.fromArrayCopy(f.llines);
 			f.llast = 0x7FFFFFFF;
 			f.llastindex = 0;
 		}
@@ -281,19 +282,6 @@ class Lexer {
 		}
 	}
 
-	static function updateLines(ctx:LexerContext, code:Lexer, start:Int):Void {
-		var i = start;
-		var src = code.source, n = src.length;
-		while (i < code.index) {
-			var c = StringTools.fastCodeAt(src, i++);
-			if (c == "\r".code && i < n && StringTools.fastCodeAt(src, i) == "\n".code) i++;
-			if (c == "\r".code || c == "\n".code) {
-				ctx.file.lline++;
-				ctx.file.llines.push({offset: code.cp(i), line: ctx.file.lline});
-			}
-		}
-	}
-
 	// port: make_token; the sedlex rules are the Lexer.token method, the returned closure
 	// ... sets up the context around it.
 	public static function makeToken(ctx:LexerContext):Lexer->LexedToken {
@@ -305,22 +293,14 @@ class Lexer {
 
 	static function readTokenWith(ctx:LexerContext, code:Lexer):LexedToken {
 		code.file = ctx.file.lfile;
-		var start = code.index;
-		// port: upstream records each newline as it is lexed, so a lexer error sees the lines before it
-		var result = try code.token() catch (e:LexerError) {
-			updateLines(ctx, code, start);
-			throw e;
-		};
-		updateLines(ctx, code, start);
-		return result;
+		code.lines = ctx.file;
+		return code.token();
 	}
 
 	public static function sharpToken(ctx:LexerContext, code:Lexer):LexedToken {
 		code.file = ctx.file.lfile;
-		var start = code.index;
-		var result = code.sharpTokenRaw();
-		updateLines(ctx, code, start);
-		return result;
+		code.lines = ctx.file;
+		return code.sharpTokenRaw();
 	}
 
 	// https://www.w3.org/TR/xml/#sec-common-syn plus '$' for JSX
@@ -347,8 +327,9 @@ class Lexer {
 
 	public static function lexXml(ctx:LexerContext, p:Int, code:Lexer):Int {
 		code.file = ctx.file.lfile;
+		code.lines = ctx.file;
 		if (p + 1 != code.cp(code.index)) code.fail(InvalidCharacter(code.codePointAt(code.index)), code.index);
-		var start = code.index, name = code.xmlName();
+		var name = code.xmlName();
 		ctx.buf.add("<" + name);
 		var open = "<" + name, close = "</" + name + ">", depth = 0, inOpen = name != ""; // don't allow self-closing fragments
 		while (!code.eof()) {
@@ -363,10 +344,7 @@ class Lexer {
 					ctx.buf.add(tag);
 					// If it matches our document close tag, finish or decrease depth.
 					if (tag == close) {
-						if (depth == 0) {
-							updateLines(ctx, code, start);
-							return code.cp(code.index);
-						}
+						if (depth == 0) return code.cp(code.index);
 						depth--;
 					}
 					inOpen = false;
@@ -391,18 +369,17 @@ class Lexer {
 				// We only care about this if we are still in the opening tag, i.e. if it wasn't closed yet.
 				// In that case, decrease depth and finish if it's 0.
 				if (inOpen) depth--;
-				if (depth < 0) {
-					updateLines(ctx, code, start);
-					return code.cp(code.index);
-				}
+				if (depth < 0) return code.cp(code.index);
 				inOpen = false;
 			} else {
-				ctx.buf.add(code.current());
-				code.index++;
+				var c = code.codeAt(code.index);
+				if (c == "\n".code || c == "\r".code) code.storeNewline(ctx.buf, c);
+				else {
+					ctx.buf.add(code.current());
+					code.index++;
+				}
 			}
 		}
-		// port: not_xml records each newline as it is lexed.
-		updateLines(ctx, code, start);
 		code.failPos(UnterminatedMarkup, p);
 		return 0;
 	}
@@ -444,6 +421,9 @@ class Lexer {
 	var source:String;
 	var file:String;
 	var index:Int;
+	// port: the file whose lines the rules record (newlineAt): the context's
+	// LexerContext.file, set by readTokenWith, sharpToken and lexXml; none for Lexer.lex
+	var lines:Null<LexerFile> = null;
 	// port: on the hosts without string identity (core.ds.StrTools.hasIdentity),
 	// identifiers are interned per file (a memory-only deviation there), so the
 	// AST holds one string per name instead of one per occurrence. Where strings
@@ -506,20 +486,35 @@ class Lexer {
 		return i;
 	}
 
-	// port: records the surrogate pairs of `s` in `pairs`; false at a lone surrogate.
-	function scanPairs(s:String):Bool {
-		var i = 0, n = s.length;
+	// port: the first '*', '\n' or '\r' of s from i on, else n (comment's search apart
+	// from its recording: a loop that allocates nothing)
+	static function nextCommentStop(s:String, i:Int, n:Int):Int {
 		while (i < n) {
 			var c = StringTools.fastCodeAt(s, i);
-			if ((c & 0xF800) == 0xD800) {
-				if (c >= 0xDC00 || i + 1 == n || (StringTools.fastCodeAt(s, i + 1) & 0xFC00) != 0xDC00) return false;
-				if (pairs == null) pairs = [];
-				pairs.push(i);
-				i++;
-			}
+			if (c <= "*".code && (c == "*".code || c == "\n".code || c == "\r".code)) break;
 			i++;
 		}
+		return i;
+	}
+
+	// port: records the surrogate pairs of `s` in `pairs`; false at a lone surrogate.
+	function scanPairs(s:String):Bool {
+		var n = s.length, i = nextSurrogate(s, 0, n);
+		while (i < n) {
+			var c = StringTools.fastCodeAt(s, i);
+			if (c >= 0xDC00 || i + 1 == n || (StringTools.fastCodeAt(s, i + 1) & 0xFC00) != 0xDC00) return false;
+			if (pairs == null) pairs = [];
+			pairs.push(i);
+			i = nextSurrogate(s, i + 2, n);
+		}
 		return true;
+	}
+
+	// port: the first unit of s from i on that is a surrogate, else n (the search
+	// apart from scanPairs' recording: a loop that allocates nothing)
+	static function nextSurrogate(s:String, i:Int, n:Int):Int {
+		while (i < n && (StringTools.fastCodeAt(s, i) & 0xF800) != 0xD800) i++;
+		return i;
 	}
 
 	// port: the position (code point offset) of the UTF-16 index `i`.
@@ -596,6 +591,27 @@ class Lexer {
 		}
 		for (i in 0...n) if (StringTools.fastCodeAt(source, at + i) != StringTools.fastCodeAt(value, i)) return false;
 		return true;
+	}
+
+	// port: newline ctx lexbuf, where a rule matches '\n', '\r' or "\r\n": the line that
+	// starts at i, the newline's end (into the context's file, none for Lexer.lex)
+	inline function newlineAt(i:Int):Void {
+		var f = lines;
+		if (f != null) {
+			f.lline++;
+			f.llines.push({offset: cp(i), line: f.lline});
+		}
+	}
+
+	// port: the newline rule of string, string2, code_string and not_xml (c at index):
+	// stored, its line recorded
+	function storeNewline(buf:StringBuf, c:Int):Void {
+		index++;
+		if (c == "\r".code && index < source.length && StringTools.fastCodeAt(source, index) == "\n".code) {
+			index++;
+			buf.add("\r\n");
+		} else buf.add(c == "\r".code ? "\r" : "\n");
+		newlineAt(index);
 	}
 
 	function make(token:Token, start:Int):LexedToken return {token: token, pos: {pfile: file, pmin: cp(start), pmax: cp(index)}};
@@ -908,10 +924,12 @@ class Lexer {
 			if (c == "\r".code) {
 				index++;
 				if (codeAt(index) == "\n".code) index++;
+				newlineAt(index);
 				continue;
 			}
 			if (c == "\n".code) {
 				index++;
+				newlineAt(index);
 				continue;
 			}
 			// port: Find the longest fixed-text operator.
@@ -1017,10 +1035,12 @@ class Lexer {
 			if (c == "\r".code) {
 				index++;
 				if (codeAt(index) == "\n".code) index++;
+				newlineAt(index);
 				continue;
 			}
 			if (c == "\n".code) {
 				index++;
+				newlineAt(index);
 				continue;
 			}
 			if (starts("/*")) {
@@ -1034,8 +1054,21 @@ class Lexer {
 	// port: comment: stores the content, returns the end of "*/".
 	function comment(buf:StringBuf, pmin:Int):Int {
 		index += 2;
-		// port: The text up to "*/" in one piece (not a one-character string per character).
-		var end = index > source.length ? -1 : source.indexOf("*/", index);
+		// port: The text up to "*/" in one piece (not a one-character string per character),
+		// found by one scan that records the newlines it passes (the comment rule's).
+		var n = source.length, i = index, end = -1;
+		while ((i = nextCommentStop(source, i, n)) < n) {
+			var c = StringTools.fastCodeAt(source, i++);
+			if (c == "*".code) {
+				if (i < n && StringTools.fastCodeAt(source, i) == "/".code) {
+					end = i - 1;
+					break;
+				}
+			} else if (c == "\n".code || c == "\r".code) {
+				if (c == "\r".code && i < n && StringTools.fastCodeAt(source, i) == "\n".code) i++;
+				newlineAt(i);
+			}
+		}
 		if (end < 0) {
 			atEnd();
 			if (index < source.length) {
@@ -1068,6 +1101,10 @@ class Lexer {
 			if (c == '"'.code) {
 				index++;
 				return index;
+			}
+			if (c == "\n".code || c == "\r".code) {
+				storeNewline(buf, c);
+				continue;
 			}
 			buf.add(current());
 			index++;
@@ -1123,6 +1160,10 @@ class Lexer {
 				}
 				buf.add("$");
 				index++;
+				continue;
+			}
+			if (c == "\n".code || c == "\r".code) {
+				storeNewline(buf, c);
 				continue;
 			}
 			buf.add(current());
@@ -1189,6 +1230,10 @@ class Lexer {
 				var s = index;
 				while (!eof() && codeAt(index) != "\n".code && codeAt(index) != "\r".code) index++;
 				buf.add(core.ds.StrTools.sub(source, s, index));
+				continue;
+			}
+			if (c == "\n".code || c == "\r".code) {
+				storeNewline(buf, c);
 				continue;
 			}
 			buf.add(current());

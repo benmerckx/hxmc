@@ -11,6 +11,7 @@ import generators.cpp.CppTypeUtils.*;
 import generators.cpp.CppMarshalling.*;
 import generators.cpp.CppError;
 import generators.cpp.CppError.CppErrorKind;
+import core.ds.VectorTools.vector;
 
 class CppAstTools {
 	public static function follow(t:T):T return core.Abstract.followWithAbstracts(t);
@@ -492,7 +493,7 @@ class CppAstTools {
 					case _: die("", "cppAstTools.ml");
 				}
 			/* Objective-C class */
-			case _ if (isObjcType(TInst(klass, []))):
+			case _ if (isObjcType(TInst(klass, vector()))):
 				var str = joinClassPathRemap(klass.clPath, "::");
 				if (suffix == "_obj") str else if (hasClassFlag(klass, CInterface)) "id < " + str + ">" else str + " *";
 			/* Native interface - use pointer */
@@ -515,7 +516,7 @@ class CppAstTools {
 	}
 
 	// port: List.hd.
-	static function hd<A>(l:Array<A>):A {
+	static function hd<A>(l:haxe.ds.Vector<A>):A {
 		if (l.length == 0) throw new core.ds.Failure("hd");
 		return l[0];
 	}
@@ -627,7 +628,7 @@ class CppAstTools {
 			/* type_str may have already converted Null<X> to Dynamic because of NotNull tag ... */
 			return (if (opt && cantBeNull(typ) && typeStr != "Dynamic") "::hx::Null< " + typeStr + " > " else typeStr) + " " + keywordRemap(name);
 		}
-		function genTfunInterfaceArgList(args:Array<{name:String, optional:Bool, type:T}>):String
+		function genTfunInterfaceArgList(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>):String
 			return args.map(function(a) return genInterfaceArgTypeName(a.name, a.optional, a.type)).join(",");
 		return switch follow(tfun) {
 			case TFun(sig): typeString(sig.ret) + " " + abi + "(" + genTfunInterfaceArgList(sig.args) + ")";

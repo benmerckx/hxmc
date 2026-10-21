@@ -26,6 +26,8 @@ import macros.MacroApi.EnumType;
 import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalHash;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 using macros.eval.EvalValue.EvalValueTools;
 
@@ -160,7 +162,10 @@ class EvalEncode {
 	public static function encodeObj(l:Array<{name:Int, value:Value}>):Value {
 		var ctx = EvalContext.getCtx();
 		var r = getObjectPrototype(ctx, l);
-		return VObject(new Vobject([for (f in r.sorted) f.value], OProto(r.proto)));
+		var fields = new Vector<Value>(r.sorted.length);
+		for (i in 0...r.sorted.length)
+			fields[i] = r.sorted[i].value;
+		return VObject(new Vobject(fields, OProto(r.proto)));
 	}
 
 	public static function encodeObjS(l:Array<{name:String, value:Value}>):Value {
@@ -169,11 +174,14 @@ class EvalEncode {
 
 	// Enum values
 
-	public static function encodeEnumValue(path:Int, i:Int, vl:Array<Value>, pos:Null<Pos>):Value {
+	public static function encodeEnumValueV(path:Int, i:Int, vl:Vector<Value>, pos:Null<Pos>):Value {
 		return VEnumValue(new VenumValue(i, vl, path, pos));
 	}
 
-	public static function encodeEnum(i:EnumType, pos:Null<Pos>, index:Int, pl:Array<Value>):Value {
+	public static function encodeEnumValue(path:Int, i:Int, vl:Vector<Value>, pos:Null<Pos>):Value
+		return encodeEnumValueV(path, i, vl, pos);
+
+	public static function encodeEnum(i:EnumType, pos:Null<Pos>, index:Int, pl:Vector<Value>):Value {
 		var key = switch i {
 			case IExpr: EvalHash.key_haxe_macro_ExprDef;
 			case IEFieldKind: EvalHash.key_haxe_macro_EFieldKind;
@@ -207,7 +215,7 @@ class EvalEncode {
 			case IFunctionKind: EvalHash.key_haxe_macro_FunctionKind;
 			case IStringLiteralKind: EvalHash.key_haxe_macro_StringLiteralKind;
 		}
-		return encodeEnumValue(key, index, pl, pos);
+		return encodeEnumValueV(key, index, pl, pos);
 	}
 
 	// Instances
@@ -231,9 +239,13 @@ class EvalEncode {
 
 	public static function encodeVectorInstance(v:Vvector):Value return VVector(v);
 
-	public static function encodeArray(l:Array<Value>):Value return encodeArrayInstance(EvalArray.create(l.copy()));
+	public static function encodeArray(l:Array<Value>):Value return encodeArrayInstance(EvalArray.ofList(l));
 
-	public static function encodeArrayA(a:Array<Value>):Value return encodeArrayInstance(EvalArray.create(a));
+	// port: encode_array of a fresh value array (a Vector made by the caller), with no copy
+	public static function encodeArrayV(v:Vector<Value>):Value return encodeArrayInstance(EvalArray.create(v));
+
+	// port: upstream's takes a value array; the Haxe arrays given here are copied
+	public static function encodeArrayA(a:Array<Value>):Value return encodeArrayInstance(EvalArray.ofList(a));
 
 	public static function encodeString(s:String):Value return EvalString.createUnknown(s);
 
@@ -269,46 +281,49 @@ class EvalEncode {
 	public static function fakeProto(cache:Map<Int, Vprototype>, path:Int):Vprototype {
 		var proto = cache.get(path);
 		if (proto != null) return proto;
-		var proto = new Vprototype(path, [], GlobalsIntMap.empty(), [], GlobalsIntMap.empty(), null, PInstance, VNull);
+		var proto = new Vprototype(path, new Vector(0), GlobalsIntMap.empty(), new Vector(0), GlobalsIntMap.empty(), null, PInstance, VNull);
 		proto.pvalue = VPrototype(proto);
 		cache.set(path, proto);
 		return proto;
 	}
 
 	public static function encodeUnsafe(o:Dynamic):Value {
-		return VInstance(new Vinstance([], fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_Unsafe), IRef(o)));
+		return VInstance(new Vinstance(new Vector(0), fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_Unsafe), IRef(o)));
 	}
 
 	public static function encodePos(p:Pos):Value {
-		return VInstance(new Vinstance([], fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_Position), IPos(p)));
+		return VInstance(new Vinstance(new Vector(0), fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_Position), IPos(p)));
 	}
 
 	public static function encodeLazytype(t:core.TType.TLazy, f:Void->Value):Value {
-		return VInstance(new Vinstance([], fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_LazyType),
+		return VInstance(new Vinstance(new Vector(0), fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_LazyType),
 			ILazyType(t, f)));
 	}
 
 	public static function encodeTdecl(t:core.TType.ModuleType):Value {
-		return VInstance(new Vinstance([], fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_TypeDecl), ITypeDecl(t)));
+		return VInstance(new Vinstance(new Vector(0), fakeProto(EvalContext.getCtx().fakeProtoCache, EvalHash.key_haxe_macro_TypeDecl), ITypeDecl(t)));
 	}
 
 	public static final refProto:Vprototype = {
-		var proto = new Vprototype(EvalHash.key_haxe_macro_Ref, [], GlobalsIntMap.empty(), [VNull, VNull],
+		var proto = new Vprototype(EvalHash.key_haxe_macro_Ref, new Vector(0), GlobalsIntMap.empty(), new Vector(2, VNull),
 			GlobalsIntMap.empty().add(EvalHash.key_toString, 1).add(EvalHash.key_get, 0), null, PInstance, VNull);
 		proto.pvalue = VPrototype(proto);
 		proto;
 	}
 
 	public static function encodeRef<T>(v:T, convert:T->Value, tostr:Void->String):Value {
-		return VInstance(new Vinstance([vifun0(_ -> convert(v)), vifun0(_ -> encodeString(tostr()))], refProto, IRef(v)));
+		var fields = new Vector<Value>(2);
+		fields[0] = vifun0(_ -> convert(v));
+		fields[1] = vifun0(_ -> encodeString(tostr()));
+		return VInstance(new Vinstance(fields, refProto, IRef(v)));
 	}
 
 	public static function encodeLazy(r:AtomicLazy<Value>):Value return VLazy(r);
 
 	public static function encodeOption<T>(encodeValue:T->Value, o:Null<T>):Value {
 		return switch o {
-			case null: encodeEnumValue(EvalHash.key_haxe_ds_Option, 1, [], null);
-			case v: encodeEnumValue(EvalHash.key_haxe_ds_Option, 0, [encodeValue(v)], null);
+			case null: encodeEnumValue(EvalHash.key_haxe_ds_Option, 1, vector(), null);
+			case v: encodeEnumValue(EvalHash.key_haxe_ds_Option, 0, vector(encodeValue(v)), null);
 		}
 	}
 

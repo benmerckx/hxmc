@@ -7,6 +7,7 @@ import core.TType;
 import core.TFunctions;
 import core.TFunctions.*;
 import typing.Typeload;
+import core.ds.VectorTools.vector;
 
 // port: from haxe/src/core/inheritDoc.ml.
 class InheritDoc {
@@ -147,7 +148,7 @@ class InheritDoc {
 			var tp = if (reversed.length > 0 && !Ast.isLowerIdent(reversed[0])) {
 				var pack = reversed.slice(1);
 				pack.reverse();
-				Ast.mkTypePath(pack, reversed[0], [], path.name);
+				Ast.mkTypePath(pack, reversed[0], vector(), path.name);
 			} else Ast.mkTypePath(path.pack, path.name);
 			var t = findType(ctx, LoadNormal, tp, eTarget.pos);
 			try return switch follow(t) {
@@ -187,7 +188,7 @@ class InheritDoc {
 			if (target.sub == null) return resolveTypeT(findType(ctx, LoadNormal, Ast.mkTypePath(path.pack, path.name), eTarget.pos));
 			// field or sub type
 			if (Ast.isLowerIdent(target.sub)) return resolveField(target.sub);
-			var doc = try resolveTypeT(findType(ctx, LoadNormal, Ast.mkTypePath(path.pack, path.name, [], target.sub),
+			var doc = try resolveTypeT(findType(ctx, LoadNormal, Ast.mkTypePath(path.pack, path.name, vector(), target.sub),
 				eTarget.pos)) catch (_:NotFound) resolveField(target.sub);
 			return doc;
 		} catch (_:NotFound) return null;

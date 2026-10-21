@@ -80,20 +80,32 @@ class ZipOutput extends AnyOutput {
 	}
 
 	// port: table-driven CRC-32, as in zlib (upstream's Zip uses zlib's crc32);
-	// haxe.crypto.Crc32 computes it bit by bit.
+	// haxe.crypto.Crc32 computes it bit by bit. Eight bytes a step (slicing by 8:
+	// table k is the CRC of a byte followed by k zero bytes, 256 entries each).
 	static final crcTable:haxe.ds.Vector<Int> = {
-		var t = new haxe.ds.Vector<Int>(256);
+		var t = new haxe.ds.Vector<Int>(8 * 256);
 		for (n in 0...256) {
 			var c = n;
 			for (_ in 0...8) c = (c & 1) != 0 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
 			t[n] = c;
 		}
+		for (k in 1...8)
+			for (n in 0...256) {
+				var c = t[(k - 1) * 256 + n];
+				t[k * 256 + n] = t[c & 0xFF] ^ (c >>> 8);
+			}
 		t;
 	};
 
 	static function crc32Of(b:Bytes):Int {
-		var crc = 0xFFFFFFFF, table = crcTable;
-		for (i in 0...b.length) crc = table[(crc ^ b.get(i)) & 0xFF] ^ (crc >>> 8);
+		var crc = 0xFFFFFFFF, t = crcTable, n = b.length, i = 0;
+		while (i + 8 <= n) {
+			var lo = crc ^ b.getInt32(i), hi = b.getInt32(i + 4);
+			crc = t[7 * 256 + (lo & 0xFF)] ^ t[6 * 256 + ((lo >>> 8) & 0xFF)] ^ t[5 * 256 + ((lo >>> 16) & 0xFF)] ^ t[4 * 256 + (lo >>> 24)]
+				^ t[3 * 256 + (hi & 0xFF)] ^ t[2 * 256 + ((hi >>> 8) & 0xFF)] ^ t[256 + ((hi >>> 16) & 0xFF)] ^ t[hi >>> 24];
+			i += 8;
+		}
+		while (i < n) crc = t[(crc ^ b.get(i++)) & 0xFF] ^ (crc >>> 8);
 		return crc ^ 0xFFFFFFFF;
 	}
 

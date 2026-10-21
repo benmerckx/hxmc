@@ -33,6 +33,7 @@ import libs.extlib.IO;
 import libs.swflib.Swf;
 import libs.swflib.As3hl;
 import libs.swflib.Png;
+import core.ds.VectorTools.vector;
 
 private enum DependencyKind {
 	DKInherit;
@@ -439,7 +440,7 @@ class Genswf {
 					for (c in code)
 						{
 							hls_method: c.m,
-							hls_fields: [c.f],
+							hls_fields: vector(c.f),
 						}
 				];
 				[tag(TActionScript3({id: 1, frame: boot_name}, libs.swflib.As3hlparse.flatten(inits)))];
@@ -453,7 +454,7 @@ class Genswf {
 						});
 						var init:HlStatic = {
 							hls_method: c.m,
-							hls_fields: [c.f],
+							hls_fields: vector(c.f),
 						};
 						tag(TActionScript3({id: 1, frame: path}, libs.swflib.As3hlparse.flatten([init])));
 					}
@@ -662,18 +663,18 @@ class Genswf {
 													case 0xFF:
 														var infos = i.read_byte();
 														var ver = (infos >> 3) & 3;
-														sampling = [11025, 0, 22050, 44100][ver];
+														sampling = vector(11025, 0, 22050, 44100)[ver];
 														var layer = (infos >> 1) & 3;
 														var bits = i.read_byte();
-														var bitrate = (if (ver == 3) [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, -1] else [
+														var bitrate = (if (ver == 3) vector(0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, -1) else vector(
 															0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, -1
-														])[bits >> 4];
-														var srate = [
-															[11025, 12000, 8000, -1],
-															[-1, -1, -1, -1],
-															[22050, 24000, 16000, -1],
-															[44100, 48000, 32000, -1],
-														][ver][(bits >> 2) & 3];
+														))[bits >> 4];
+														var srate = vector(
+															vector(11025, 12000, 8000, -1),
+															vector(-1, -1, -1, -1),
+															vector(22050, 24000, 16000, -1),
+															vector(44100, 48000, 32000, -1)
+														)[ver][(bits >> 2) & 3];
 														var pad = (bits >> 1) & 1;
 														mono = (i.read_byte()) >> 6 == 3;
 														var bpp = (if (ver == 3) 144 else 72);

@@ -21,6 +21,11 @@ import core.WithType;
 import context.Typecore.*;
 import context.Typecore;
 import context.TyperPass;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class StrictMeta {
 	static function efield(e:Expr, name:String):ExprDef return EField(e, name, EFNormal);
@@ -96,17 +101,17 @@ class StrictMeta {
 			var expr = f.expr, pos = expr.pos;
 			var field:core.Ast.Expr = {expr: efield(withTypeExpr, f.key.name), pos: pos};
 			var fieldexpr:core.Ast.Expr = {expr: EConst(Ident(f.key.name)), pos: pos};
-			var left = typeExpr(ctx, {expr: ECall(field, []), pos: pos}, NoValue);
+			var left = typeExpr(ctx, {expr: ECall(field, vector()), pos: pos}, NoValue);
 			var right = kindOfTypeAgainst(ctx, left.etype, expr);
 			return {expr: EBinop(OpAssign, fieldexpr, processMetaArgument(ctx, right)), pos: pos};
 		});
 
 	public static function makeMeta(ctx:TyperContext, texpr:TExpr, extra:Array<Expr>):Expr return switch texpr.eexpr {
 		case TNew(c, _, el): {
-				expr: ECall(getNativeRepr(TClassDecl(c), texpr.epos), el.map(e -> processMetaArgument(ctx, e)).concat(extra)),
+				expr: ECall(getNativeRepr(TClassDecl(c), texpr.epos), el.map(e -> processMetaArgument(ctx, e)).appendArray(extra)),
 				pos: texpr.epos
 			};
-		case TTypeExpr(md): {expr: ECall(getNativeRepr(md, texpr.epos), extra), pos: texpr.epos};
+		case TTypeExpr(md): {expr: ECall(getNativeRepr(md, texpr.epos), VectorTools.ofArray(extra)), pos: texpr.epos};
 		case _:
 			displayError(ctx.com, "Unexpected expression", texpr.epos);
 			throw "Unexpected strict metadata expression";
@@ -140,7 +145,7 @@ class StrictMeta {
 						sub = s;
 					case _: throw "Invalid strict metadata path";
 				}
-				mkTypePath(pack, n, [], sub);
+				mkTypePath(pack, n, vector(), sub);
 			case _:
 				displayError(com, "Unexpected expression when building strict meta", e.pos);
 				throw core.ds.Exit.raise();
@@ -148,13 +153,13 @@ class StrictMeta {
 		return loop(e, [], []);
 	}
 
-	public static function getStrictMeta(ctx:TyperContext, meta:MetaTag, params:Array<Expr>, pos:Pos):MetadataEntry {
+	public static function getStrictMeta(ctx:TyperContext, meta:MetaTag, params:Vector<Expr>, pos:Pos):MetadataEntry {
 		var changedExpr:Expr, fields:Array<ObjectField>, ctype:ComplexType;
 		switch params {
 			case [{expr: ECall(ef, el), pos: p}]:
 				var path = fieldToTypePath(ctx.com, ef);
 				fields = switch el {
-					case [{expr: EObjectDecl(f)}]: f;
+					case [{expr: EObjectDecl(f)}]: f.toArray();
 					case []: [];
 					case _:
 						displayError(ctx.com, "Object declaration expected", el[0].pos);
@@ -191,7 +196,7 @@ class StrictMeta {
 				args.push({expr: EConst(String(v == null ? "CLASS" : v, SDoubleQuotes)), pos: pos});
 			case _:
 		}
-		return {meta: meta, exprs: args, pos: pos};
+		return {meta: meta, exprs: Vector.fromArrayCopy(args), pos: pos};
 	}
 
 	public static function checkStrictMeta(ctx:TyperContext, metas:Metadata):Metadata {

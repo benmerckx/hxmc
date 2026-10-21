@@ -23,7 +23,9 @@
 package generators;
 
 import haxe.ds.StringMap;
+import haxe.ds.Vector;
 import core.ds.NotFound;
+import core.ds.VectorTools.vector;
 import core.ds.OcamlHashtbl;
 import core.ds.OcamlHash;
 
@@ -63,6 +65,13 @@ typedef HField = {
 	var t:Ttype;
 }
 
+// port: the `(string * string index * ttype array)` constructors of `efields`.
+typedef EField = {
+	var name:String;
+	var nid:Int;
+	var args:Vector<Ttype>;
+}
+
 // port: the `(string, 'v) PMap.t` fields of the prototypes (pindex, pfunctions,
 // vindex): looked up through a StringMap; `keys` holds the keys in first-insertion
 // order (a re-added key keeps its place and takes the new key string, as PMap.add
@@ -96,10 +105,10 @@ class ClassProto {
 	public var pid:Int;
 	public var pclassglobal:Null<Int>;
 	public var psuper:Null<ClassProto>;
-	public var pvirtuals:Array<Int>;
-	public var pproto:Array<FieldProto>;
+	public var pvirtuals:Vector<Int>;
+	public var pproto:Vector<FieldProto>;
 	public var pnfields:Int;
-	public var pfields:Array<HField>;
+	public var pfields:Vector<HField>;
 	public var pindex:StrPMap<{fid:Int, t:Ttype}>;
 	public var pfunctions:StrPMap<Int>;
 	public var pinterfaces:TtypeMap<Int>;
@@ -110,10 +119,10 @@ class ClassProto {
 		this.pid = pid;
 		pclassglobal = null;
 		psuper = null;
-		pvirtuals = [];
-		pproto = [];
+		pvirtuals = vector();
+		pproto = vector();
 		pnfields = 0;
-		pfields = [];
+		pfields = vector();
 		pindex = new StrPMap();
 		pfunctions = new StrPMap();
 		pinterfaces = new TtypeMap();
@@ -125,9 +134,9 @@ class EnumProto {
 	public var ename:String;
 	public var eid:Int;
 	public var eglobal:Null<Int>;
-	public var efields:Array<{name:String, nid:Int, args:Array<Ttype>}>;
+	public var efields:Vector<EField>;
 
-	public function new(ename:String, eid:Int, eglobal:Null<Int>, efields:Array<{name:String, nid:Int, args:Array<Ttype>}>) {
+	public function new(ename:String, eid:Int, eglobal:Null<Int>, efields:Vector<EField>) {
 		this.ename = ename;
 		this.eid = eid;
 		this.eglobal = eglobal;
@@ -150,11 +159,11 @@ class FieldProto {
 }
 
 class VirtualProto {
-	public var vfields:Array<HField>;
+	public var vfields:Vector<HField>;
 	public var vindex:StrPMap<Int>;
 
 	public function new() {
-		vfields = [];
+		vfields = vector();
 		vindex = new StrPMap();
 	}
 }
@@ -248,7 +257,7 @@ enum Opcode {
 	ORet(r:Int);
 	OThrow(r:Int);
 	ORethrow(r:Int);
-	OSwitch(r:Int, idx:Array<Int>, eend:Int);
+	OSwitch(r:Int, idx:Vector<Int>, eend:Int);
 	ONullCheck(r:Int);
 	OTrap(r:Int, d:Int);
 	OEndTrap(b:Bool);
@@ -311,13 +320,13 @@ class Fundecl {
 	public var fpath:FPath;
 	public var findex:Int;
 	public var ftype:Ttype;
-	public var regs:Array<Ttype>;
-	public var code:Array<Opcode>;
-	public var debug:Array<DebugInfo>;
-	public var assigns:Array<Assign>;
+	public var regs:Vector<Ttype>;
+	public var code:Vector<Opcode>;
+	public var debug:Vector<DebugInfo>;
+	public var assigns:Vector<Assign>;
 	public var needOpt:Bool;
 
-	public function new(fpath:FPath, findex:Int, ftype:Ttype, regs:Array<Ttype>, code:Array<Opcode>, debug:Array<DebugInfo>, assigns:Array<Assign>,
+	public function new(fpath:FPath, findex:Int, ftype:Ttype, regs:Vector<Ttype>, code:Vector<Opcode>, debug:Vector<DebugInfo>, assigns:Vector<Assign>,
 			needOpt:Bool) {
 		this.fpath = fpath;
 		this.findex = findex;
@@ -330,7 +339,7 @@ class Fundecl {
 	}
 
 	// port: `{ f with ... }`
-	public function with(code:Array<Opcode>, regs:Array<Ttype>, debug:Array<DebugInfo>, assigns:Array<Assign>):Fundecl
+	public function with(code:Vector<Opcode>, regs:Vector<Ttype>, debug:Vector<DebugInfo>, assigns:Vector<Assign>):Fundecl
 		return new Fundecl(fpath, findex, ftype, regs, code, debug, assigns, needOpt);
 }
 
@@ -345,19 +354,19 @@ typedef Native = {
 class Code {
 	public var version:Int;
 	public var entrypoint:Int;
-	public var strings:Array<String>;
-	public var ints:Array<Int>;
-	public var floats:Array<Float>;
-	public var bytes:Array<haxe.io.Bytes>;
+	public var strings:Vector<String>;
+	public var ints:Vector<Int>;
+	public var floats:Vector<Float>;
+	public var bytes:Vector<haxe.io.Bytes>;
 	/* types : ttype array // only in bytecode, rebuilt on save() */
-	public var globals:Array<Ttype>;
-	public var natives:Array<Native>;
-	public var functions:Array<Fundecl>;
-	public var debugfiles:Array<String>;
-	public var constants:Array<{g:Int, fields:Array<Int>}>;
+	public var globals:Vector<Ttype>;
+	public var natives:Vector<Native>;
+	public var functions:Vector<Fundecl>;
+	public var debugfiles:Vector<String>;
+	public var constants:Vector<{g:Int, fields:Vector<Int>}>;
 
-	public function new(version:Int, entrypoint:Int, strings:Array<String>, ints:Array<Int>, floats:Array<Float>, bytes:Array<haxe.io.Bytes>,
-			globals:Array<Ttype>, natives:Array<Native>, functions:Array<Fundecl>, debugfiles:Array<String>, constants:Array<{g:Int, fields:Array<Int>}>) {
+	public function new(version:Int, entrypoint:Int, strings:Vector<String>, ints:Vector<Int>, floats:Vector<Float>, bytes:Vector<haxe.io.Bytes>,
+			globals:Vector<Ttype>, natives:Vector<Native>, functions:Vector<Fundecl>, debugfiles:Vector<String>, constants:Vector<{g:Int, fields:Vector<Int>}>) {
 		this.version = version;
 		this.entrypoint = entrypoint;
 		this.strings = strings;
@@ -599,7 +608,7 @@ class Hlcode {
 		throw NotFound.raise();
 	}
 
-	public static function gatherTypes(code:Code):{all:Array<Ttype>, types:TtypeMap<Int>} {
+	public static function gatherTypes(code:Code):{all:Vector<Ttype>, types:TtypeMap<Int>} {
 		var types = new TtypeMap<Int>();
 		var arr:Array<Ttype> = [];
 		function getType(t:Ttype):Void {
@@ -637,7 +646,7 @@ class Hlcode {
 				case _:
 			}
 		}
-		return {all: arr, types: types};
+		return {all: Vector.fromArrayCopy(arr), types: types};
 	}
 
 	public static function lookupType(types:TtypeMap<Int>, t:Ttype):Int {
@@ -797,7 +806,7 @@ class Hlcode {
 			case OEnumIndex(r, e): 'enumindex $r, $e';
 			case OEnumField(r, e, i, n): 'enumfield $r, $e[$i:$n]';
 			case OSetEnumField(e, i, r): 'setenumfield $e[$i], $r';
-			case OSwitch(r, idx, eend): 'switch $r [${rl(idx)}] $eend';
+			case OSwitch(r, idx, eend): 'switch $r [${[for (r in idx) Std.string(r)].join(",")}] $eend';
 			case ONullCheck(r): 'nullcheck $r';
 			case OTrap(r, i): 'trap $r, $i';
 			case OEndTrap(b): 'endtrap ${b ? "true" : "false"}';
@@ -1067,7 +1076,7 @@ class Hlcode {
 				i++;
 			}
 		}
-		function fieldsCmp(f1:Array<HField>, f2:Array<HField>):Int {
+		function fieldsCmp(f1:Vector<HField>, f2:Vector<HField>):Int {
 			if (f1.length != f2.length) return icmp(f1.length, f2.length);
 			for (i in 0...f1.length) {
 				var c = strCompare(f1[i].name, f2[i].name);
@@ -1196,6 +1205,17 @@ class Hlcode {
 		}
 	}
 
+	// port: the same sort on a Vector (upstream's arrays): the heap sort runs on the
+	// elements' indices, comparing the elements they stand for, which takes the same
+	// steps, then the elements are put in that order. Inline: hxmc erases type
+	// parameters, and a Vector read in generic code is a dynamic access.
+	public static inline function ocamlVectorSort<T>(cmp:T->T->Int, a:Vector<T>):Void {
+		var src:Array<T> = a.toArray();
+		var perm = [for (i in 0...src.length) i];
+		ocamlArraySort((i:Int, j:Int) -> cmp(src[i], src[j]), perm);
+		for (k in 0...perm.length) a[k] = src[perm[k]];
+	}
+
 	// port: `List.sort`/`List.stable_sort` (a stable merge sort) on a copy.
 	public static function listSort<T>(cmp:T->T->Int, l:Array<T>):Array<T> {
 		var a = l.copy();
@@ -1269,7 +1289,7 @@ private class TtypeEq {
 		}
 	}
 
-	function fieldsEq(f1:Array<HField>, f2:Array<HField>):Bool {
+	function fieldsEq(f1:Vector<HField>, f2:Vector<HField>):Bool {
 		if (f1.length != f2.length) return false;
 		for (i in 0...f1.length) if (f1[i].name != f2[i].name || f1[i].nid != f2[i].nid || !eq(f1[i].t, f2[i].t)) return false;
 		return true;

@@ -6,6 +6,10 @@ import core.TUnification.*;
 import core.TUnification;
 import core.TOther.*;
 import context.Common;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // -------------------------------------------------------------------------- //
 // FIX OVERRIDES
@@ -62,7 +66,7 @@ class FixOverrides {
 			};
 			var changed:Array<{original:TVar, replacement:TVar}> = [];
 			if (fd.tfArgs.length != signature.args.length) throw "Invalid_argument: List.map2";
-			var nargs = [];
+			var nargs = new Vector(fd.tfArgs.length);
 			for (i in 0...fd.tfArgs.length) {
 				var cur = fd.tfArgs[i],
 					v = cur.variable,
@@ -84,17 +88,17 @@ class FixOverrides {
 					changed.unshift({original: v, replacement: v2});
 					next = {variable: v2, defaultValue: cur.defaultValue};
 				}
-				nargs.push(next);
+				nargs[i] = next;
 			}
 			changed.reverse();
 			var expr = fd.tfExpr;
 			if (changed.length > 0) {
 				var el = switch expr.eexpr {
 					case TBlock(el): el;
-					case _: [expr];
+					case _: vector(expr);
 				};
 				var p = el.length == 0 ? expr.epos : el[0].epos;
-				var decls = changed.map(function(pair) return mk(TVar(pair.original,
+				var decls = changed.mapToVector(function(pair) return mk(TVar(pair.original,
 					mk(TCast(mk(TLocal(pair.replacement), pair.replacement.vType, p), null), pair.original.vType, p)),
 					com.basic.tvoid, p));
 				expr = {eexpr: TBlock(decls.concat(el)), etype: expr.etype, epos: expr.epos};

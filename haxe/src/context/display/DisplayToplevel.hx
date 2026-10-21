@@ -41,6 +41,9 @@ import core.Meta;
 import core.DisplayTypes;
 import core.TType;
 import core.display.CompletionItem;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 class ExploreClassPathTask extends ServerTask {
 	final com:CommonContext;
@@ -180,19 +183,20 @@ class DisplayToplevel {
 		WARNING: Merging types from boths contexts like this is dangerous. The resuling type must never be
 		persisted on the compilation server, or else the compiler gets COVID.
 	**/
-	public static function performTypeVoodoo(t:T, tl_:Array<{name:String, optional:Bool, type:T}>, tr_:T):T {
+	public static function performTypeVoodoo(t:T, tl_:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, tr_:T):T {
 		return switch t {
 			case TFun(s):
 				var tl = s.args, tr = s.ret;
-				var acc = [];
-				var i = 0;
-				while (i < tl.length && i < tl_.length) {
-					var a1 = tl[i], a1_ = tl_[i];
-					acc.push(a1.type == tDynamic ? a1_ : a1);
-					i++;
+				// port: the merged pairs, then the rest of tl': always as long as tl'
+				var acc = new haxe.ds.Vector(tl_.length);
+				for (i in 0...tl_.length) {
+					var a1_ = tl_[i];
+					acc[i] = if (i < tl.length) {
+						var a1 = tl[i];
+						a1.type == tDynamic ? a1_ : a1;
+					} else a1_;
 				}
-				var tl = acc.concat(tl_.slice(i));
-				TFun({args: tl, ret: tr == tDynamic ? tr_ : tr});
+				TFun({args: acc, ret: tr == tDynamic ? tr_ : tr});
 			case _:
 				TFun({args: tl_, ret: tr_});
 		};
@@ -312,7 +316,7 @@ class DisplayToplevel {
 			}
 		}
 
-		function processDecls(pack:Array<String>, name:String, decls:Array<TypeDecl>):Bool {
+		function processDecls(pack:Array<String>, name:String, decls:haxe.ds.Vector<TypeDecl>):Bool {
 			var addedSomething = false;
 			function add(item:CompletionItemData, name:Null<String>):Void {
 				addedSomething = true;
@@ -321,10 +325,10 @@ class DisplayToplevel {
 			function run():Void for (decl in decls) {
 				try {
 					var r = switch decl.definition {
-						case EClass(d): {tname: d.name.name, isPrivate: d.flags.contains(HPrivate), meta: d.meta};
-						case EEnum(d): {tname: d.name.name, isPrivate: d.flags.contains(EPrivate), meta: d.meta};
-						case ETypedef(d): {tname: d.name.name, isPrivate: d.flags.contains(TDPrivate), meta: d.meta};
-						case EAbstract(d): {tname: d.name.name, isPrivate: d.flags.contains(AbPrivate), meta: d.meta};
+						case EClass(d): {tname: d.name.name, isPrivate: d.flags.has(HPrivate), meta: d.meta};
+						case EEnum(d): {tname: d.name.name, isPrivate: d.flags.has(EPrivate), meta: d.meta};
+						case ETypedef(d): {tname: d.name.name, isPrivate: d.flags.has(TDPrivate), meta: d.meta};
+						case EAbstract(d): {tname: d.name.name, isPrivate: d.flags.has(AbPrivate), meta: d.meta};
 						case EStatic(d): {
 								tname: d.name.name,
 								isPrivate: core.ds.ArrayTools.exists(d.flags, a -> a.access == APrivate),
@@ -543,7 +547,7 @@ class DisplayToplevel {
 
 					// builtins
 					add(CompletionItem.makeCiLiteral("trace",
-						tpair(TFun({args: [{name: "value", optional: false, type: tDynamic}], ret: ctx.com.basic.tvoid}))),
+						tpair(TFun({args: vector({name: "value", optional: false, type: tDynamic}), ret: ctx.com.basic.tvoid}))),
 						"trace");
 					return null;
 				}, null);
@@ -625,7 +629,7 @@ class DisplayToplevel {
 	public static function collectAndRaise<R>(ctx:Typer, tk:ToplevelKind, withType:WithTypeValue, cr:CompletionResultKindValue,
 			name:String, pname:Pos, pinsert:Pos):R {
 		var p_ = DisplayException.lastCompletionPos;
-		var fields = if (p_ != null && pname.pmin == p_.pmin) DisplayException.lastCompletionResult.copy() else collect(ctx, tk, withType,
+		var fields = if (p_ != null && pname.pmin == p_.pmin) DisplayException.lastCompletionResult.toArray() else collect(ctx, tk, withType,
 			name == "");
 		return DisplayException.raiseFields(fields, cr, DisplayTypes.makeSubject(name, pinsert, pname));
 	}

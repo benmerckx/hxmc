@@ -11,6 +11,9 @@ import core.TPrinting.*;
 import core.TUnification.TUnification.*;
 import core.MetaList.StrictMeta;
 import core.Meta as MetadataTools;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // port: from haxe/src/core/tUnification.ml.
 // port: OCaml record updates copy the context but share all recursion-stack cells.
@@ -49,10 +52,10 @@ enum EqKind {
 }
 
 @:structInit class TypeParamUnificationContext {
-	public var knownTypeParams:Array<TypedTypeParam>;
+	public var knownTypeParams:core.TType.TypeParams;
 	public var typeParamPairs:Array<{a:TypedTypeParam, b:TypedTypeParam}>;
 
-	public inline function new(knownTypeParams:Array<TypedTypeParam>, typeParamPairs:Array<{a:TypedTypeParam, b:TypedTypeParam}>) {
+	public inline function new(knownTypeParams:core.TType.TypeParams, typeParamPairs:Array<{a:TypedTypeParam, b:TypedTypeParam}>) {
 		this.knownTypeParams = knownTypeParams;
 		this.typeParamPairs = typeParamPairs;
 	}
@@ -425,8 +428,8 @@ class Monomorph {
 
 	public static function unbind(m:TMono):Void m.tmType = null;
 
-	public static function spawnConstrainedMonos(map:T->T, params:TypeParams):Array<T> {
-		var checks:Array<{mono:TMono, constraints:Array<T>, path:String}> = [];
+	public static function spawnConstrainedMonos(map:T->T, params:TypeParams):TParams {
+		var checks:Array<{mono:TMono, constraints:TParams, path:String}> = [];
 		var monos = params.map(function(ttp) {
 			var m = create(), c = getConstraints(ttp);
 			if (c.length > 0) checks.push({mono: m, constraints: c, path: Globals.sTypePath(ttp.ttpClass.clPath)});
@@ -871,7 +874,7 @@ class TUnification {
 		}
 	}
 
-	public static function typeEqParams(c:UnificationContext, a:T, b:T, tl1:Array<T>, tl2:Array<T>):Void {
+	public static function typeEqParams(c:UnificationContext, a:T, b:T, tl1:core.TType.TParams, tl2:core.TType.TParams):Void {
 		var i = 0;
 		List.iter2(function(t1, t2) {
 			i++;
@@ -985,7 +988,7 @@ class TUnification {
 				assignTypeParams(c, p1, p2);
 				unifyTypeParams(c, a, b, tl1, tl2);
 			case [TInst(c1, tl1), TInst(c2, tl2)]:
-				function loop(cl:TClass, tl:Array<T>):Bool {
+				function loop(cl:TClass, tl:core.TType.TParams):Bool {
 					if (cl == c2) {
 						unifyTypeParams(c, a, b, tl, tl2);
 						return true;
@@ -1043,12 +1046,18 @@ class TUnification {
 					PMap.iter(function(n, f2) {
 						// introducing monomorphs while unifying might create infinite loops - see #2315
 						// let's store these monomorphs and make sure we reach a fixed point
-						var monos:Array<T> = [];
+						var monos:core.TType.TParams = vector();
 						function makeType(f:TClassField):T {
 							if (c.opaqueFieldParams || f.cfParams.length == 0) return f.cfType;
 							var ml = f.cfParams.map(function(_) return mkMono());
 							monos = ml;
 							return applyParams(f.cfParams, ml, f.cfType);
+						}
+						// port: monos @ old
+						inline function withMonos(old:RecStack<T>):RecStack<T> {
+							var r = [for (m in monos) m];
+							for (t in old) r.push(t);
+							return r;
 						}
 						var found = try {
 							rawClassField(makeType, cl, tl, n);
@@ -1063,7 +1072,7 @@ class TUnification {
 							case Var({vRead: AccNo}), Var({vRead: AccNever}):
 								// we will do a recursive unification, so let's check for possible recursion
 								var old = c.unifyNewMonos;
-								c.unifyNewMonos = monos.concat(old);
+								c.unifyNewMonos = withMonos(old);
 								recStack(c.unifyStack, pair(ft, f2.cfType),
 									function(p) return fastEq(p.b, f2.cfType) && fastEqMono(c.unifyNewMonos, ft, p.a), function() {
 										try {
@@ -1077,7 +1086,7 @@ class TUnification {
 							case Method(MethNormal), Method(MethInline), Var({vWrite: AccNo}), Var({vWrite: AccNever}):
 								// same as before, but unification is reversed (read-only var)
 								var old = c.unifyNewMonos;
-								c.unifyNewMonos = monos.concat(old);
+								c.unifyNewMonos = withMonos(old);
 								recStack(c.unifyStack, pair(f2.cfType, ft),
 									function(p) return fastEqMono(c.unifyNewMonos, p.b, ft) && fastEq(f2.cfType, p.a), function() {
 										try {
@@ -1319,32 +1328,32 @@ class TUnification {
 				equalityKind: kind
 			}), a, b);
 
-	public static function unifyAbstracts(c:UnificationContext, a:T, b:T, a1:TAbstract, tl1:Array<T>, a2:TAbstract, tl2:Array<T>):Void {
+	public static function unifyAbstracts(c:UnificationContext, a:T, b:T, a1:TAbstract, tl1:core.TType.TParams, a2:TAbstract, tl2:core.TType.TParams):Void {
 		if (!unifiesAbstracts(c, a, b, a1, tl1, a2, tl2)) error([cannotUnify(a, b)]);
 	}
 
-	public static function unifyFrom(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Void {
+	public static function unifyFrom(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams):Void {
 		if (!unifiesFrom(c, a, b, ab, tl)) error([cannotUnify(a, b)]);
 	}
 
-	public static function unifyTo(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Void {
+	public static function unifyTo(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams):Void {
 		if (!unifiesTo(c, a, b, ab, tl)) error([cannotUnify(a, b)]);
 	}
 
-	public static function unifiesAbstracts(c:UnificationContext, a:T, b:T, a1:TAbstract, tl1:Array<T>, a2:TAbstract,
-			tl2:Array<T>):Bool return unifiesWithAbstract(c, a, b,
+	public static function unifiesAbstracts(c:UnificationContext, a:T, b:T, a1:TAbstract, tl1:core.TType.TParams, a2:TAbstract,
+			tl2:core.TType.TParams):Bool return unifiesWithAbstract(c, a, b,
 			function(c) return core.ds.ArrayTools.exists(a1.aTo, function(t) return unifiesToDirect(c, a, b, a1, tl1, t))
 				|| core.ds.ArrayTools.exists(a2.aFrom, function(t) return unifiesFromDirect(c, a, b, a2, tl2, t)));
 
 	public static function unifiesFrom(c:UnificationContext, a:T, b:T, ab:TAbstract,
-			tl:Array<T>):Bool return unifiesWithAbstract(c, a, b,
+			tl:core.TType.TParams):Bool return unifiesWithAbstract(c, a, b,
 			function(c) return core.ds.ArrayTools.exists(ab.aFrom, function(t) return unifiesFromDirect(c, a, b, ab, tl, t)));
 
 	public static function unifiesTo(c:UnificationContext, a:T, b:T, ab:TAbstract,
-			tl:Array<T>):Bool return unifiesWithAbstract(c, a, b,
+			tl:core.TType.TParams):Bool return unifiesWithAbstract(c, a, b,
 			function(c) return core.ds.ArrayTools.exists(ab.aTo, function(t) return unifiesToDirect(c, a, b, ab, tl, t)));
 
-	public static function unifiesFromDirect(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>,
+	public static function unifiesFromDirect(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams,
 			t:T):Bool return doesFuncUnify(function() {
 			var t = applyParams(ab.aParams, tl, t),
 				c = getAbstractContext(c, a, b, ab),
@@ -1352,7 +1361,7 @@ class TUnification {
 			f(a, t);
 		});
 
-	public static function unifiesToDirect(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>,
+	public static function unifiesToDirect(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams,
 			t:T):Bool return doesFuncUnify(function() {
 			var t = applyParams(ab.aParams, tl, t),
 				c = getAbstractContext(c, a, b, ab),
@@ -1360,7 +1369,7 @@ class TUnification {
 			f(t, b);
 		});
 
-	public static function unifiesFromField(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>,
+	public static function unifiesFromField(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams,
 			entry:{type:T, field:TClassField}):Bool return doesFuncUnify(function() {
 			var cf = entry.field;
 			switch follow(cf.cfType) {
@@ -1379,7 +1388,7 @@ class TUnification {
 			}
 		});
 
-	public static function unifiesToField(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>,
+	public static function unifiesToField(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams,
 			entry:{type:T, field:TClassField}):Bool return doesFuncUnify(function() {
 			var cf = entry.field;
 			switch follow(cf.cfType) {
@@ -1409,12 +1418,12 @@ class TUnification {
 		inline function unifyRec(f:Void->Void):Void recStack(c.varianceStack, pair(t1, t2),
 			function(p) return fastEqPair(pair(t1, t2), p), f, function(_) fail());
 		function unifyNested(t1:T, t2:T):Void withVariance(getNestedContext(c), f, t1, t2);
-		inline function unifyTls(tl1:Array<T>, tl2:Array<T>):Void List.iter2(unifyNested, tl1, tl2);
-		inline function thisType(ab:TAbstract, tl:Array<T>):T return followWithoutType(applyParams(ab.aParams, tl, ab.aThis));
-		inline function definedType(td:TDef, tl:Array<T>):T return followWithoutType(applyTypedef(td, tl));
+		inline function unifyTls(tl1:core.TType.TParams, tl2:core.TType.TParams):Void List.iter2(unifyNested, tl1, tl2);
+		inline function thisType(ab:TAbstract, tl:core.TType.TParams):T return followWithoutType(applyParams(ab.aParams, tl, ab.aThis));
+		inline function definedType(td:TDef, tl:core.TType.TParams):T return followWithoutType(applyTypedef(td, tl));
 		inline function compareUnderlying():Void typeEqCustom(core.ds.Record.withFields(c,
 			{equalityUnderlying: true, equalityKind: EqBothDynamic}), t1, t2);
-		inline function unifiesAbstract(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, ats:Array<T>):Bool {
+		inline function unifiesAbstract(c:UnificationContext, a:T, b:T, ab:TAbstract, tl:core.TType.TParams, ats:Array<T>):Bool {
 			try {
 				var c = getAbstractContext(c, a, b, ab);
 				return recStackDefault(c.abstractCastStack, pair(a, b), function(p) return fastEqPair(pair(a, b), p),
@@ -1463,7 +1472,7 @@ class TUnification {
 		}
 	}
 
-	public static function unifyTypeParams(c:UnificationContext, a:T, b:T, tl1:Array<T>, tl2:Array<T>):Void {
+	public static function unifyTypeParams(c:UnificationContext, a:T, b:T, tl1:core.TType.TParams, tl2:core.TType.TParams):Void {
 		var c = getNestedContext(c), i = 0;
 		List.iter2(function(t1, t2) {
 			i++;
@@ -1581,9 +1590,9 @@ enum UnificationMatrixState {
 }
 
 class UnificationMatrix {
-	var values:Array<UnificationMatrixState>;
+	var values:haxe.ds.Vector<UnificationMatrixState>;
 
-	public function new(arity:Int) values = [for (_ in 0...arity) STop];
+	public function new(arity:Int) values = new haxe.ds.Vector(arity, STop);
 
 	public function join(t:T, at:Int):Void switch values[at] {
 		case STop:

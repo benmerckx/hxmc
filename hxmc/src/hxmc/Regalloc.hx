@@ -11,8 +11,8 @@ interface RegTarget {
 	// a register to register copy: d <- s1
 	function isMove(i:LIns):Bool;
 	// allocatable registers in order of preference (caller-saved first)
-	var gprs(default, null):Array<Int>;
-	var fprs(default, null):Array<Int>;
+	var gprs(default, null):haxe.ds.Vector<Int>;
+	var fprs(default, null):haxe.ds.Vector<Int>;
 	function spillLoad(r:Int, slot:Int, float:Bool):LIns;
 	function spillStore(slot:Int, r:Int, float:Bool):LIns;
 	// calls: the registers that hold their results (the other registers a
@@ -20,7 +20,7 @@ interface RegTarget {
 	function isCall(i:LIns):Bool;
 	// the jumps that end a block
 	function isBranch(i:LIns):Bool;
-	var callResults(default, null):Array<Int>;
+	var callResults(default, null):haxe.ds.Vector<Int>;
 }
 
 // a list of registers that keeps its storage (defsUses fills one per instruction)
@@ -43,8 +43,8 @@ class Scratch {
 	public var uses = new RegList();
 	public var start:Array<Int> = [];
 	public var end:Array<Int> = [];
-	public var fixedFrom:Array<Array<Int>> = [for (_ in 0...LFunc.NPHYS) []];
-	public var fixedTo:Array<Array<Int>> = [for (_ in 0...LFunc.NPHYS) []];
+	public var fixedFrom:haxe.ds.Vector<Array<Int>> = perReg();
+	public var fixedTo:haxe.ds.Vector<Array<Int>> = perReg();
 	public var openFixed:haxe.ds.Vector<Int> = Arrays.filled(LFunc.NPHYS, -1);
 	public var exposedHead:Array<Int> = [];
 	public var exposedBlock:Array<Int> = [];
@@ -89,10 +89,10 @@ class Scratch {
 	public var pZ:Array<Int> = [];
 	public var bucket:Array<Int> = [];
 	public var sorted:Array<Int> = [];
-	public var oFrom:Array<Array<Int>> = [for (_ in 0...LFunc.NPHYS) []];
-	public var oTo:Array<Array<Int>> = [for (_ in 0...LFunc.NPHYS) []];
-	public var oOwn:Array<Array<Int>> = [for (_ in 0...LFunc.NPHYS) []];
-	public var oPend:Array<Array<Int>> = [for (_ in 0...LFunc.NPHYS) []];
+	public var oFrom:haxe.ds.Vector<Array<Int>> = perReg();
+	public var oTo:haxe.ds.Vector<Array<Int>> = perReg();
+	public var oOwn:haxe.ds.Vector<Array<Int>> = perReg();
+	public var oPend:haxe.ds.Vector<Array<Int>> = perReg();
 	public var pendSeg:Array<Int> = [];
 	public var pendOwn:Array<Int> = [];
 	public var pendIdx:Array<Int> = [];
@@ -106,6 +106,14 @@ class Scratch {
 	// the allocatable float registers, 2 for the integer ones
 	public var isResult = new haxe.ds.Vector<Bool>(LFunc.NPHYS);
 	public var isFpr:haxe.ds.Vector<Int> = Arrays.filled(LFunc.NPHYS, 0);
+
+	// an empty list per physical register
+	static function perReg():haxe.ds.Vector<Array<Int>> {
+		var v = new haxe.ds.Vector<Array<Int>>(LFunc.NPHYS);
+		for (k in 0...v.length)
+			v[k] = [];
+		return v;
+	}
 
 	public function new(t:RegTarget) {
 		for (r in t.callResults)
@@ -144,7 +152,7 @@ class Regalloc {
 	var f:LFunc;
 	var t:RegTarget;
 	public var assigned:Array<Int>; // register -> physical register
-	public var usedRegs = [for (_ in 0...LFunc.NPHYS) false]; // physical registers used
+	public var usedRegs = new haxe.ds.Vector<Bool>(LFunc.NPHYS); // physical registers used
 	var noSpillFrom = 0x7fffffff; // registers made by spill code are numbered from here
 
 	public function new(f:LFunc, t:RegTarget, ?s:Scratch) {
@@ -203,8 +211,8 @@ class Regalloc {
 	var segN:Array<Int>;
 	var segFrom:Array<Int>;
 	var segTo:Array<Int>;
-	var fixedFrom:Array<Array<Int>>; // per physical register: sorted ranges
-	var fixedTo:Array<Array<Int>>;
+	var fixedFrom:haxe.ds.Vector<Array<Int>>; // per physical register: sorted ranges
+	var fixedTo:haxe.ds.Vector<Array<Int>>;
 	var s:Scratch;
 
 	function allocate():Array<Int> {

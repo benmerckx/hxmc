@@ -18,6 +18,9 @@ import generators.cpp.CppContext;
 import generators.cpp.CppMarshalling.*;
 import generators.cpp.CppError;
 import generators.cpp.CppError.CppErrorKind;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 @:structInit class TInject {
 	public var injPrologue:Bool->Void;
@@ -84,8 +87,8 @@ class CppGen {
 	}
 
 	public static function functionSignature(basic:BasicTypes, includeNames:Bool, tfun:T, abi:String):String {
-		function printTfunArgList(includeNames:Bool, argList:Array<{name:String, optional:Bool, type:T}>):String {
-			return printRetypedTfunArgList(includeNames, argList.map(function(a) return CppRetyper.retypeArg(basic, CppRetyper.withStackValueType, a)));
+		function printTfunArgList(includeNames:Bool, argList:haxe.ds.Vector<{name:String, optional:Bool, type:T}>):String {
+			return printRetypedTfunArgList(includeNames, argList.mapToArray(function(a) return CppRetyper.retypeArg(basic, CppRetyper.withStackValueType, a)));
 		}
 
 		return switch follow(tfun) {
@@ -745,7 +748,7 @@ class CppGen {
 						switch tcppClass.tclSuper {
 							case null:
 							case klass:
-								function findSuperArgs(l:Array<TExprDef>):Null<Array<TExpr>> {
+								function findSuperArgs(l:Array<TExprDef>):Null<Vector<TExpr>> {
 									return switch l {
 										case [] : null;
 										case _:
@@ -755,7 +758,7 @@ class CppGen {
 												case TParenthesis(e) | TMeta(_, e) | TCast(e, null):
 													findSuperArgs([e.eexpr].concat(rest));
 												case TBlock(e):
-													findSuperArgs(e.map(function(e) return e.eexpr).concat(rest));
+													findSuperArgs(e.mapToArray(function(e) return e.eexpr).concat(rest));
 												case _: findSuperArgs(rest);
 											}
 									}

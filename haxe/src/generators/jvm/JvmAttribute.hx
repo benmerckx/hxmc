@@ -19,6 +19,7 @@
 
 package generators.jvm;
 
+import haxe.ds.Vector;
 import generators.jvm.JvmGlobals;
 import generators.jvm.JvmData;
 import generators.jvm.JvmVerificationTypeInfo;
@@ -26,7 +27,7 @@ import generators.jvm.JvmWriter;
 
 @:structInit class JAnnotation {
 	public var annType:Int;
-	public var annElements:Array<{index:JvmConstantPoolIndex, value:JAnnotationElementValue}>;
+	public var annElements:Vector<{index:JvmConstantPoolIndex, value:JAnnotationElementValue}>;
 }
 
 // port: `char * j_annotation_value`
@@ -40,7 +41,7 @@ enum JAnnotationValue {
 	ValEnum(i1:Int, i2:Int); /* e */
 	ValClass(i:Int); /* c */ /* V -> Void */
 	ValAnnotation(a:JAnnotation); /* @ */
-	ValArray(a:Array<JAnnotationElementValue>); /* [ */
+	ValArray(a:Vector<JAnnotationElementValue>); /* [ */
 }
 
 /* https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html#jvms-4.7.4 */
@@ -55,7 +56,7 @@ enum JStackMapFrame {
 	StackAppend1(i:Int, t1:VerificationTypeInfo);
 	StackAppend2(i:Int, t1:VerificationTypeInfo, t2:VerificationTypeInfo);
 	StackAppend3(i:Int, t1:VerificationTypeInfo, t2:VerificationTypeInfo, t3:VerificationTypeInfo);
-	StackFull(i:Int, tl1:Array<VerificationTypeInfo>, tl2:Array<VerificationTypeInfo>);
+	StackFull(i:Int, tl1:Vector<VerificationTypeInfo>, tl2:Vector<VerificationTypeInfo>);
 }
 
 /* https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html#jvms-4.7.13 */
@@ -76,27 +77,27 @@ enum JStackMapFrame {
 
 @:structInit class JBootstrapMethod {
 	public var bmMethodRef:JvmConstantPoolIndex;
-	public var bmArguments:Array<JvmConstantPoolIndex>;
+	public var bmArguments:Vector<JvmConstantPoolIndex>;
 }
 
 /* https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html#jvms-4.7 */
 enum JAttribute {
 	AttributeConstantValue(i:JvmConstantPoolIndex);
 	AttributeCode(code:JvmCodeData);
-	AttributeStackMapTable(frames:Array<JStackMapFrame>);
-	AttributeExceptions(a:Array<JvmConstantPoolIndex>);
+	AttributeStackMapTable(frames:Vector<JStackMapFrame>);
+	AttributeExceptions(a:Vector<JvmConstantPoolIndex>);
 	AttributeSourceFile(i:JvmConstantPoolIndex);
-	AttributeLineNumberTable(a:Array<{pc:Int, line:Int}>);
+	AttributeLineNumberTable(a:Vector<{pc:Int, line:Int}>);
 	AttributeSignature(i:JvmConstantPoolIndex);
-	AttributeLocalVariableTable(a:Array<JvmLocalDebug>);
-	AttributeLocalVariableTypeTable(a:Array<JvmLocalDebug>);
-	AttributeInnerClasses(a:Array<JvmInnerClass>);
+	AttributeLocalVariableTable(a:Vector<JvmLocalDebug>);
+	AttributeLocalVariableTypeTable(a:Vector<JvmLocalDebug>);
+	AttributeInnerClasses(a:Vector<JvmInnerClass>);
 	AttributeEnclosingMethod(i1:JvmConstantPoolIndex, i2:JvmConstantPoolIndex);
-	AttributeRuntimeVisibleAnnotations(a:Array<JAnnotation>);
-	AttributeRuntimeInvisibleAnnotations(a:Array<JAnnotation>);
-	AttributeRuntimeVisibleParameterAnnotations(a:Array<Array<JAnnotation>>);
-	AttributeRuntimeInvisibleParameterAnnotations(a:Array<Array<JAnnotation>>);
-	AttributeBootstrapMethods(a:Array<JBootstrapMethod>);
+	AttributeRuntimeVisibleAnnotations(a:Vector<JAnnotation>);
+	AttributeRuntimeInvisibleAnnotations(a:Vector<JAnnotation>);
+	AttributeRuntimeVisibleParameterAnnotations(a:Vector<Vector<JAnnotation>>);
+	AttributeRuntimeInvisibleParameterAnnotations(a:Vector<Vector<JAnnotation>>);
+	AttributeBootstrapMethods(a:Vector<JBootstrapMethod>);
 }
 
 class JvmAttribute {
@@ -197,7 +198,7 @@ class JvmAttribute {
 
 	public static function writeAttribute(pool:JvmConstantPool, jvma:JAttribute):JvmAttributeData {
 		var ch = new OutputBytes();
-		function writeLocalTable(table:Array<JvmLocalDebug>):Void {
+		function writeLocalTable(table:Vector<JvmLocalDebug>):Void {
 			JvmGlobals.writeArray16(ch, function(_, d:JvmLocalDebug) {
 				ch.writeUi16(d.ldStartPc);
 				ch.writeUi16(d.ldLength);

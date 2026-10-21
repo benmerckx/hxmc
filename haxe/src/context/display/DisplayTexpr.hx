@@ -15,10 +15,12 @@ import typing.TypeloadFields;
 import core.Ast;
 import core.TType;
 
+using core.ds.VectorTools;
+
 class DisplayTexpr {
 	static inline function posEq(a:Pos, b:Pos):Bool return a.pfile == b.pfile && a.pmin == b.pmin && a.pmax == b.pmax;
 
-	public static function findFieldByPosition(sc:Array<ClassField>, p:Pos):ClassField {
+	public static function findFieldByPosition(sc:haxe.ds.Vector<ClassField>, p:Pos):ClassField {
 		for (cff in sc) if (posEq(cff.cffName.pos, p)) return cff;
 		throw core.ds.NotFound.raise();
 	}
@@ -28,7 +30,7 @@ class DisplayTexpr {
 		throw core.ds.NotFound.raise();
 	}
 
-	public static function findClassByPosition(decls:Array<TypeDecl>, p:Pos):ClassDefinition {
+	public static function findClassByPosition(decls:haxe.ds.Vector<TypeDecl>, p:Pos):ClassDefinition {
 		for (d in decls) switch d.definition {
 			case EClass(c) if (posEq(c.name.pos, p)):
 				return c;
@@ -37,7 +39,7 @@ class DisplayTexpr {
 		throw core.ds.NotFound.raise();
 	}
 
-	public static function findModuleStaticByPosition(decls:Array<TypeDecl>, p:Pos):StaticDefinition {
+	public static function findModuleStaticByPosition(decls:haxe.ds.Vector<TypeDecl>, p:Pos):StaticDefinition {
 		for (d in decls) switch d.definition {
 			case EStatic(s) if (posEq(s.name.pos, p)):
 				return s;
@@ -46,7 +48,7 @@ class DisplayTexpr {
 		throw core.ds.NotFound.raise();
 	}
 
-	public static function findEnumByPosition(decls:Array<TypeDecl>, p:Pos):EnumDefinition {
+	public static function findEnumByPosition(decls:haxe.ds.Vector<TypeDecl>, p:Pos):EnumDefinition {
 		for (d in decls) switch d.definition {
 			case EEnum(en) if (posEq(en.name.pos, p)):
 				return en;
@@ -55,7 +57,7 @@ class DisplayTexpr {
 		throw core.ds.NotFound.raise();
 	}
 
-	public static function findTypedefByPosition(decls:Array<TypeDecl>, p:Pos):TypedefDefinition {
+	public static function findTypedefByPosition(decls:haxe.ds.Vector<TypeDecl>, p:Pos):TypedefDefinition {
 		for (d in decls) switch d.definition {
 			case ETypedef(td) if (posEq(td.name.pos, p)):
 				return td;
@@ -64,7 +66,7 @@ class DisplayTexpr {
 		throw core.ds.NotFound.raise();
 	}
 
-	public static function findAbstractByPosition(decls:Array<TypeDecl>, p:Pos):AbstractDefinition {
+	public static function findAbstractByPosition(decls:haxe.ds.Vector<TypeDecl>, p:Pos):AbstractDefinition {
 		for (d in decls) switch d.definition {
 			case EAbstract(a) if (posEq(a.name.pos, p)):
 				return a;
@@ -85,18 +87,18 @@ class DisplayTexpr {
 		follow(cf.cfType);
 	}
 
-	public static function checkDisplayField(ctx:Typer, sc:Array<ClassField>, c:TClass, cf:TClassField):Void {
+	public static function checkDisplayField(ctx:Typer, sc:haxe.ds.Vector<ClassField>, c:TClass, cf:TClassField):Void {
 		var cff = findFieldByPosition(sc, cf.cfNamePos);
 		actuallyCheckDisplayField(ctx, c, cff, cf.cfPos);
 	}
 
-	public static function checkDisplayClass(ctx:Typer, decls:Array<TypeDecl>, c:TClass):Void {
-		function checkField_(sc:Array<ClassField>, cf:TClassField):Void {
+	public static function checkDisplayClass(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, c:TClass):Void {
+		function checkField_(sc:haxe.ds.Vector<ClassField>, cf:TClassField):Void {
 			if (!hasClassFieldFlag(cf, CfNoLookup)
 				&& DisplayPosition.displayPosition.enclosedIn(cf.cfPos)) checkDisplayField(ctx, sc, c, cf);
 			DisplayEmitter.checkDisplayMetadata(ctx, cf.cfMeta);
 		}
-		function checkField(sc:Array<ClassField>, cf:TClassField):Void {
+		function checkField(sc:haxe.ds.Vector<ClassField>, cf:TClassField):Void {
 			checkField_(sc, cf);
 			for (cf in cf.cfOverloads) checkField_(sc, cf);
 		}
@@ -118,7 +120,7 @@ class DisplayTexpr {
 		}
 	}
 
-	public static function checkDisplayEnum(ctx:Typer, decls:Array<TypeDecl>, en:TEnum):Void {
+	public static function checkDisplayEnum(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, en:TEnum):Void {
 		var se = findEnumByPosition(decls, en.eNamePos);
 		Typeload.typeTypeParams(ctx, TPHType, en.ePath, se.params);
 		core.ds.PMap.iter(function(_, ef:TEnumField) {
@@ -129,13 +131,13 @@ class DisplayTexpr {
 		}, en.eConstrs);
 	}
 
-	public static function checkDisplayTypedef(ctx:Typer, decls:Array<TypeDecl>, td:TDef):Void {
+	public static function checkDisplayTypedef(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, td:TDef):Void {
 		var st = findTypedefByPosition(decls, td.tNamePos);
 		Typeload.typeTypeParams(ctx, TPHType, td.tPath, st.params);
 		Typeload.loadComplexType(ctx, true, LoadNormal, st.data);
 	}
 
-	public static function checkDisplayAbstract(ctx:Typer, decls:Array<TypeDecl>, a:TAbstract):Void {
+	public static function checkDisplayAbstract(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, a:TAbstract):Void {
 		var sa = findAbstractByPosition(decls, a.aNamePos);
 		Typeload.typeTypeParams(ctx, TPHType, a.aPath, sa.params);
 		for (f in sa.flags) switch f {
@@ -145,7 +147,7 @@ class DisplayTexpr {
 		}
 	}
 
-	public static function checkDisplayModuleFields(ctx:Typer, decls:Array<TypeDecl>, m:ModuleDef):Void {
+	public static function checkDisplayModuleFields(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, m:ModuleDef):Void {
 		if (m.mStatics != null) {
 			var c = m.mStatics;
 			for (cf in c.clOrderedStatics) {
@@ -158,7 +160,7 @@ class DisplayTexpr {
 		}
 	}
 
-	public static function checkDisplayModule(ctx:Typer, decls:Array<TypeDecl>, m:ModuleDef):Void {
+	public static function checkDisplayModule(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, m:ModuleDef):Void {
 		var imports = decls.filter(d -> switch d.definition {
 			case EImport(_) | EUsing(_): true;
 			case _: false;

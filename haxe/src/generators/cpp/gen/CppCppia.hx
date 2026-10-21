@@ -12,6 +12,9 @@ import generators.cpp.CppAst;
 import generators.cpp.CppTypeUtils.*;
 import generators.cpp.CppAstTools.*;
 import generators.cpp.CppContext;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 enum ScriptType {
 	ScriptBool;
@@ -573,7 +576,7 @@ class CppCppia {
 				case [Method(MethDynamic), TFun(sig)]:
 					script.func(isStatic, true, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), field.cfExpr, field.cfPos);
 				case [Method(_), TFun(sig)] if (field.cfName == "new"):
-					script.func(true, false, "new", TInst(classDef, []), sig.args, false, field.cfExpr, field.cfPos);
+					script.func(true, false, "new", TInst(classDef, vector()), sig.args, false, field.cfExpr, field.cfPos);
 				case [Method(_), TFun(sig)]:
 					script.func(isStatic, false, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), field.cfExpr, field.cfPos);
 				case [Method(_), _]:
@@ -798,13 +801,13 @@ class ScriptWriter {
 	public function instText(clazz:TClass):String {
 		return switch clazz.clPath {
 			case {pack: [], name: "Array"}: Std.string(typeId("Array< ::Dynamic >")) + " ";
-			case _: typeText(TInst(clazz, []));
+			case _: typeText(TInst(clazz, vector()));
 		}
 	}
 
 	public function instName(clazz:TClass):Void write(if (cppiaAst) cppInstText(clazz) else instText(clazz));
 
-	public function enumText(e:TEnum):String return typeText(TEnum(e, []));
+	public function enumText(e:TEnum):String return typeText(TEnum(e, vector()));
 
 	public function close():Void {
 		var out = new haxe.io.BytesBuffer();
@@ -914,7 +917,7 @@ class ScriptWriter {
 		genExpression(fieldExpression);
 	}
 
-	public function func(isStatic:Bool, isDynamic:Bool, funcName:String, ret:T, args:Array<{name:String, optional:Bool, type:T}>, isInterface:Bool,
+	public function func(isStatic:Bool, isDynamic:Bool, funcName:String, ret:T, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, isInterface:Bool,
 			fieldExpression:Null<TExpr>, abstractPos:Pos):Void {
 		comment(funcName);
 		write(op(IaFunction) + staticText(isStatic) + " " + boolText(isDynamic) + " " + stringText(funcName) + " ");
@@ -928,7 +931,7 @@ class ScriptWriter {
 		if (!isInterface) switch fieldExpression {
 			case e = {eexpr: TFunction(functionDef)} if (e != null):
 				if (cppiaAst) {
-					var args = functionDef.tfArgs.map(function(a) return retypeDefaultArg(a.variable, a.defaultValue));
+					var args = functionDef.tfArgs.mapToArray(function(a) return retypeDefaultArg(a.variable, a.defaultValue));
 					var cppExpr = CppRetyper.expression(ctx, TCppVoid, args, CppCppia.cppTypeOf(basic, functionDef.tfType), functionDef.tfExpr, false);
 					beginExpr();
 					writePos(functionDef.tfExpr);
@@ -1127,7 +1130,7 @@ class ScriptWriter {
 		switch expression.eexpr {
 			case TFunction(functionDef):
 				write(op(IaFun) + typeText(functionDef.tfType) + Std.string(functionDef.tfArgs.length) + "\n");
-				var close = genFuncArgs(functionDef.tfArgs.map(function(a) return retypeDefaultArg(a.variable, a.defaultValue)));
+				var close = genFuncArgs(functionDef.tfArgs.mapToArray(function(a) return retypeDefaultArg(a.variable, a.defaultValue)));
 				var pop = pushReturn(functionDef.tfType);
 				genExpression(functionDef.tfExpr);
 				pop();
@@ -1346,7 +1349,7 @@ class ScriptWriter {
 					case TEnum(en, _) | TFun({ret: TEnum(en, _)}): en;
 					case _: die("", "cppCppia.ml");
 				}
-				write(op(IaEnumI) + typeText(TEnum(enumDef, [])) + Std.string(i) + "\n");
+				write(op(IaEnumI) + typeText(TEnum(enumDef, vector())) + Std.string(i) + "\n");
 				genExpression(expr);
 			case TEnumIndex(expr):
 				write(({ var st = stringText("__Index"); op(IaCallMember) + typeTextString("::hx::EnumBase") + " " + st; }) + "0" + commentOf("Enum index") + "\n");
@@ -1375,7 +1378,7 @@ class ScriptWriter {
 			// port: the None case is tested first (null-safe enum patterns); it takes the `TCast (cast, _)` branch.
 			case TCast(castExpr, null): checkCast(expression.etype, castExpr, true, true);
 			case TCast(castExpr, TClassDecl(t)):
-				write(op(IaTCast) + typeText(TInst(t, [])) + "\n");
+				write(op(IaTCast) + typeText(TInst(t, vector())) + "\n");
 				genExpression(castExpr);
 			case TCast(castExpr, _): checkCast(expression.etype, castExpr, true, true);
 			case TParenthesis(_): core.Error.abort("Unexpected parens", expression.epos);

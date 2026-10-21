@@ -4,3 +4,5 @@ WasmImports.hx:20: 6
 WasmImports.hx:22: 10, -20, 30
 WasmImports.hx:23: 42
 WasmImports.hx:24: 6
+WasmImports.hx:25: 4
+WasmImports.hx:28: 34

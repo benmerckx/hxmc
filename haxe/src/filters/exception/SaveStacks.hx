@@ -6,6 +6,7 @@ import core.Meta;
 import core.Error;
 import filters.exception.Exceptions;
 import filters.exception.ExceptionFunctions;
+import core.ds.VectorTools.vector;
 
 class SaveStacks {
 	/**
@@ -29,7 +30,7 @@ class SaveStacks {
 						catchVar.vPos);
 			};
 			var local = TypeOps.mk(TLocal(catchVar), catchVar.vType, catchVar.vPos);
-			return ExceptionFunctions.makeStaticCall(scom, cls, field, [local], returnType, catchVar.vPos);
+			return ExceptionFunctions.makeStaticCall(scom, cls, field, vector(local), returnType, catchVar.vPos);
 		}
 		function run(e:TExpr):TExpr return switch e.eexpr {
 			case TTry(e1, catches):
@@ -37,8 +38,8 @@ class SaveStacks {
 				var catches = catches.map(function(c) {
 					if (!Meta.has(NeedsExceptionStack, c.variable.vMeta)) return c;
 					var exprs = switch c.expr.eexpr {
-						case TBlock(exprs): [saveExceptionStack(c.variable)].concat(exprs);
-						case _: [saveExceptionStack(c.variable), c.expr];
+						case TBlock(exprs): core.ds.VectorTools.cons(saveExceptionStack(c.variable), exprs);
+						case _: vector(saveExceptionStack(c.variable), c.expr);
 					};
 					return {variable: c.variable, expr: TypeOps.mk(TBlock(exprs), c.expr.etype, c.expr.epos)};
 				});
@@ -86,7 +87,7 @@ class SaveStacks {
 									case _: Error.raiseTypingError("haxe.Exception.__shiftStack is not a function and cannot be called",
 											cf.cfNamePos);
 								};
-								ExceptionFunctions.makeCall(ectx.scom, efield, [], rt, p);
+								ExceptionFunctions.makeCall(ectx.scom, efield, vector(), rt, p);
 							case _: Error.raiseTypingError("haxe.Exception.__shiftStack is expected to be an instance method", p);
 						};
 					}
@@ -95,13 +96,13 @@ class SaveStacks {
 					if (ctor != null && ctor.cfExpr != null) {
 						function add(e:TExpr):TExpr return switch e.eexpr {
 							case TFunction(_): e;
-							case TReturn(_): TypeOps.mk(TBlock([shiftStack(e.epos), e]), e.etype, e.epos);
+							case TReturn(_): TypeOps.mk(TBlock(vector(shiftStack(e.epos), e)), e.etype, e.epos);
 							case _: core.Texpr.mapExpr(add, e);
 						};
 						var eCtor = ctor.cfExpr;
 						ctor.cfExpr = switch eCtor.eexpr {
 							case TFunction(fn):
-								var body = TypeOps.mk(TBlock([add(fn.tfExpr), shiftStack(fn.tfExpr.epos)]), ectx.scom.basic.tvoid,
+								var body = TypeOps.mk(TBlock(vector(add(fn.tfExpr), shiftStack(fn.tfExpr.epos))), ectx.scom.basic.tvoid,
 									fn.tfExpr.epos);
 								TypeOps.mk(TFunction({tfArgs: fn.tfArgs, tfType: fn.tfType, tfExpr: body}), eCtor.etype, eCtor.epos);
 							case _: throw "saveStacks: constructor is not a function";

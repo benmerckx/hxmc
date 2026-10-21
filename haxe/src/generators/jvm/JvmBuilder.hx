@@ -23,6 +23,9 @@ import generators.jvm.JvmGlobals;
 import generators.jvm.JvmSignature;
 import generators.jvm.JvmAttribute;
 import generators.jvm.JvmData;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 enum AnnotationKind {
 	AInt(i:Int);
@@ -42,10 +45,10 @@ typedef Annotation = Array<{name:String, kind:AnnotationKind}>;
 }
 
 class JvmBuilder {
-	public static function convertAnnotations(pool:JvmConstantPool, annotations:Array<{jsig:JSignature, a:Annotation}>):Array<JAnnotation> {
+	public static function convertAnnotations(pool:JvmConstantPool, annotations:Array<{jsig:JSignature, a:Annotation}>):Vector<JAnnotation> {
 		function processAnnotation(jsig:JSignature, l:Annotation):JAnnotation {
 			var offset = pool.addString(JvmSignature.generateSignature(false, jsig));
-			var l = l.map(function(e) {
+			var l = l.mapToVector(function(e) {
 				var offset = pool.addString(e.name);
 				function loop(ak:AnnotationKind):JAnnotationElementValue return switch ak {
 					case AInt(i32):
@@ -62,7 +65,7 @@ class JvmBuilder {
 						var i1 = pool.addString(JvmSignature.generateSignature(false, jsig));
 						{c: "e", v: ValEnum(i1, i2)};
 					case AArray(l):
-						var l = l.map(function(ak) return loop(ak));
+						var l = l.mapToVector(function(ak) return loop(ak));
 						{c: "[", v: ValArray(l)};
 					case AAnnotation(jsig, a):
 						var ann = processAnnotation(jsig, a);
@@ -77,7 +80,7 @@ class JvmBuilder {
 				annElements: l
 			};
 		}
-		return annotations.map(function(a) return processAnnotation(a.jsig, a.a));
+		return annotations.mapToVector(function(a) return processAnnotation(a.jsig, a.a));
 	}
 }
 
@@ -104,16 +107,16 @@ class BaseBuilder {
 
 	function commitAnnotations(pool:JvmConstantPool):Void {
 		if (runtimeVisibleAnnotations.length > 0) {
-			var a = JvmBuilder.convertAnnotations(pool, runtimeVisibleAnnotations.copy());
+			var a = JvmBuilder.convertAnnotations(pool, runtimeVisibleAnnotations);
 			addAttribute(AttributeRuntimeVisibleAnnotations(a));
 		}
 		if (runtimeInvisibleAnnotations.length > 0) {
-			var a = JvmBuilder.convertAnnotations(pool, runtimeInvisibleAnnotations.copy());
+			var a = JvmBuilder.convertAnnotations(pool, runtimeInvisibleAnnotations);
 			addAttribute(AttributeRuntimeInvisibleAnnotations(a));
 		}
 	}
 
-	public function exportAttributes(pool:JvmConstantPool):Array<JvmAttributeData> {
-		return attributes.map(function(a) return JvmAttribute.writeAttribute(pool, a));
+	public function exportAttributes(pool:JvmConstantPool):Vector<JvmAttributeData> {
+		return attributes.mapToVector(function(a) return JvmAttribute.writeAttribute(pool, a));
 	}
 }

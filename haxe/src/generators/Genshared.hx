@@ -12,6 +12,8 @@ import core.ds.OcamlHash.OcamlValue;
 import core.ds.OcamlHashtbl;
 import typing.TanonIdentification;
 import typing.OverloadResolution;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 private typedef MetaTag = core.MetaList.StrictMeta;
 
@@ -58,7 +60,7 @@ class InfoContext<A> {
 		};
 		classInfos.push(infos);
 		c.clMeta = [
-			({meta: MetaTag.Custom(":jvm.classInfo"), exprs: [{expr: EConst(Int(Std.string(index), null)), pos: nullPos}], pos: nullPos} : MetadataEntry)
+			({meta: MetaTag.Custom(":jvm.classInfo"), exprs: vector({expr: EConst(Int(Std.string(index), null)), pos: nullPos}), pos: nullPos} : MetadataEntry)
 		].concat(c.clMeta);
 		return infos;
 	}
@@ -78,7 +80,7 @@ class Genshared {
 
 	public static function patchOptional(basic:BasicTypes, cf:TClassField):Void {
 		for (cf in cf.cfOverloads) patchOptional(basic, cf);
-		function patchArgs(args:Array<{name:String, optional:Bool, type:T}>):Array<{name:String, optional:Bool, type:T}> {
+		function patchArgs(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>):haxe.ds.Vector<{name:String, optional:Bool, type:T}> {
 			return args.map(function(a) {
 				var o = a.optional, t = a.type;
 				if (o && !isNullable(t)) t = basic.tnull(t);
@@ -93,7 +95,7 @@ class Genshared {
 				switch follow(t) {
 					case TFun(s):
 						var args = patchArgs(s.args);
-						cf.cfType = TAbstract(a, [TFun({args: args, ret: s.ret})]);
+						cf.cfType = TAbstract(a, vector(TFun({args: args, ret: s.ret})));
 					case t:
 				}
 			case _:
@@ -142,11 +144,11 @@ class Preprocessor<A> {
 	}
 
 	static function makeNative(cf:TClassField):Void {
-		cf.cfMeta = [({meta: MetaTag.NativeGen, exprs: [], pos: nullPos} : MetadataEntry)].concat(cf.cfMeta);
+		cf.cfMeta = [({meta: MetaTag.NativeGen, exprs: vector(), pos: nullPos} : MetadataEntry)].concat(cf.cfMeta);
 	}
 
 	static function makeHaxe(cf:TClassField):Void {
-		cf.cfMeta = [({meta: MetaTag.HxGen, exprs: [], pos: nullPos} : MetadataEntry)].concat(cf.cfMeta);
+		cf.cfMeta = [({meta: MetaTag.HxGen, exprs: vector(), pos: nullPos} : MetadataEntry)].concat(cf.cfMeta);
 	}
 
 	static function getConstructor(c:TClass):TClassField {
@@ -205,7 +207,7 @@ class Preprocessor<A> {
 		var thisBeforeSuper = false;
 		var superCallFields:Array<{c:TClass, cf:TClassField}> = [];
 		function isOnCurrentClass(cf:TClassField):Bool return c.clFields.exists(cf.cfName);
-		function findSuperCtor0(el:Array<TExpr>):{c:TClass, cf:TClassField} {
+		function findSuperCtor0(el:Vector<TExpr>):{c:TClass, cf:TClassField} {
 			var csup:TClass = null, mapType:T->T = null;
 			switch c.clSuper {
 				case null:
@@ -234,7 +236,7 @@ class Preprocessor<A> {
 					{c: c, cf: cf};
 			}
 		}
-		function findSuperCtor(el:Array<TExpr>):{c:TClass, cf:TClassField} {
+		function findSuperCtor(el:Vector<TExpr>):{c:TClass, cf:TClassField} {
 			var cf = findSuperCtor0(el).cf;
 			/* This is a bit hacky: We always want the direct super class, not the one that actually holds
 				 the ctor. It will be implicitly copied to it anyway. */
@@ -297,7 +299,7 @@ class Preprocessor<A> {
 							hasDynamicInstanceMethod = true;
 						case Var(_) if (cf.cfExpr != null && !hasFieldInit && c.clConstructor == null && c.clSuper == null):
 							hasFieldInit = true;
-							addImplicitCtor(c, c, mkField("new", tfun([], basic.tvoid), nullPos, nullPos));
+							addImplicitCtor(c, c, mkField("new", tfun(vector(), basic.tvoid), nullPos, nullPos));
 						case _:
 					}
 				case MStatic:
@@ -328,7 +330,7 @@ class Preprocessor<A> {
 							cf.cfMeta = [
 								({
 									meta: MetaTag.Custom(":jvm.fieldInfo"),
-									exprs: [{expr: EConst(Int(Std.string(index), null)), pos: nullPos}],
+									exprs: vector({expr: EConst(Int(Std.string(index), null)), pos: nullPos}),
 									pos: nullPos
 								} : MetadataEntry)
 							].concat(cf.cfMeta);
@@ -463,7 +465,7 @@ class TypedefInterfaces<A> {
 				if (implementsRecursively(c, pathInner)) throw new Unify_error([UnifyCustom("already implemented")]);
 				anonIdentification.unify(AnonIdMode.defaultMode, tc, pfm);
 				var ci = makeInterfaceClass(pfm, pathInner, isExtern);
-				c.clImplements = [({cls: ci, params: []} : ClassAndParams)].concat(c.clImplements);
+				c.clImplements = [({cls: ci, params: vector()} : ClassAndParams)].concat(c.clImplements);
 				/* print_endline (Printf.sprintf "%s IMPLEMENTS %s" (s_type_path c.cl_path) (s_type_path path_inner)); */
 				acc.unshift(ci);
 				return acc;

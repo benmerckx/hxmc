@@ -10,6 +10,7 @@ import core.TUnification.RecStack;
 import core.TPrinting.*;
 import core.MetaList.StrictMeta;
 import core.Meta as MetadataTools;
+import core.ds.VectorTools.vector;
 
 // port: from haxe/src/core/abstract.ml.
 class Abstract {
@@ -95,18 +96,17 @@ class Abstract {
 		}
 		var definitiveTypes = [];
 		if (a.aParams.length != pl.length) throw "List.map2";
-		var tl = [
-			for (i in 0...pl.length) {
-				var t = pl[i];
-				var f = relevant.get(a.aParams[i].ttpName);
-				if (f != null) {
-					t = f(t);
-					definitiveTypes.unshift(t);
-					t;
-				} else if (!hasMono(t)) t else tDynamic;
-			}
-		];
-		return {types: tl, definitiveTypes: definitiveTypes};
+		var tl = new haxe.ds.Vector<T>(pl.length);
+		for (i in 0...pl.length) {
+			var t = pl[i];
+			var f = relevant.get(a.aParams[i].ttpName);
+			tl[i] = if (f != null) {
+				t = f(t);
+				definitiveTypes.unshift(t);
+				t;
+			} else if (!hasMono(t)) t else tDynamic;
+		}
+		return {types: tl, definitiveTypes: haxe.ds.Vector.fromArrayCopy(definitiveTypes)};
 	}
 
 	public static function findMultitypeSpecializationType(a:TAbstract, pl:TParams):T {
@@ -123,7 +123,7 @@ class Abstract {
 			function loop(t:T):T return switch t {
 				case TMono(r): r.tmType == null ? t : loop(r.tmType);
 				case TLazy(f): loop(lazyType(f));
-				case TAbstract(a, [t1]) if (a.aPath.pack.length == 0 && a.aPath.name == "Null"): TAbstract(a, [loop(t1)]);
+				case TAbstract(a, [t1]) if (a.aPath.pack.length == 0 && a.aPath.name == "Null"): TAbstract(a, vector(loop(t1)));
 				case TType(t, tl): loop(applyTypedef(t, tl));
 				case TAbstract(a, tl) if (!MetadataTools.has(MetadataTools.CoreType, a.aMeta)):
 					if (recStackExists(function(t2) return fastEq(t, t2), stack)) {

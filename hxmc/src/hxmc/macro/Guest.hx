@@ -1,6 +1,8 @@
 package hxmc.macro;
 
 #if hxmc.jit
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
 import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
@@ -295,9 +297,11 @@ class Guest {
 					};
 					// the call with k arguments, returning its result
 					function callWith(k:Int):TExpr {
-						var call = core.TFunctions.mk(TCall(ef, [for (i in 0...k) arg(i)]), sig.ret, p);
+						var args = new haxe.ds.Vector<TExpr>(k);
+						for (i in 0...k) args[i] = arg(i);
+						var call = core.TFunctions.mk(TCall(ef, args), sig.ret, p);
 						var ret = core.TFunctions.mk(TReturn(isVoid ? core.TFunctions.mk(TConst(TNull), tdyn, p) : call), b.tvoid, p);
-						return core.TFunctions.mk(TBlock(isVoid ? [call, ret] : [ret]), b.tvoid, p);
+						return core.TFunctions.mk(TBlock(isVoid ? vector(call, ret) : vector(ret)), b.tvoid, p);
 					}
 					// trailing optional arguments that are null are left out (their
 					// defaults apply, as when Eval calls the function with them null)
@@ -309,7 +313,7 @@ class Guest {
 						var given = core.TFunctions.mk(TBinop(OpNotEq, arg(k - 1), core.TFunctions.mk(TConst(TNull), tdyn, p)), b.tbool, p);
 						body = core.TFunctions.mk(TIf(given, callWith(k), body), b.tvoid, p);
 					}
-					tf.tfExpr = core.TFunctions.mk(TBlock([body]), b.tvoid, p);
+					tf.tfExpr = core.TFunctions.mk(TBlock(vector(body)), b.tvoid, p);
 				case _:
 			}
 		}
@@ -337,11 +341,11 @@ class Guest {
 			var cf = host.clStatics.get(name);
 			if (cf == null) throw "GuestHost." + name + " is missing (" + [for (k in host.clStatics.keys()) k].join(",") + ")";
 			var ef = core.TFunctions.mk(TField(core.Texpr.Builder.makeStaticThis(host, p), FStatic(host, cf)), cf.cfType, p);
-			return core.TFunctions.mk(TCall(ef, args.concat([
+			return core.TFunctions.mk(TCall(ef, VectorTools.ofArray(args.concat([
 				core.Texpr.Builder.makeString(b, p.pfile, p),
 				core.Texpr.Builder.makeInt(b, p.pmin, p),
 				core.Texpr.Builder.makeInt(b, p.pmax, p)
-			])), t, p);
+			]))), t, p);
 		}
 		var user = false; // (in the program's code, not the std's)
 		function map(e:TExpr):TExpr {
@@ -350,14 +354,14 @@ class Guest {
 				// (Bridge.callPos), which the API gets from Eval's frames
 				case TCall({eexpr: TField(_, FStatic(mc, _))}, _) if (user && ["haxe.macro.Context", "haxe.macro.Compiler"].indexOf(core.Globals.sTypePath(mc.clPath)) >= 0):
 					var inner = core.Texpr.mapExpr(map, e);
-					core.TFunctions.mk(TBlock([call("hxmc_macro_call_pos", [], b.tvoid, e.epos), inner]), e.etype, e.epos);
+					core.TFunctions.mk(TBlock(vector(call("hxmc_macro_call_pos", [], b.tvoid, e.epos), inner)), e.etype, e.epos);
 				// Context's `load(name, n)(args)` as hxmc_macro_api(name, [args])
 				case TCall({eexpr: TCall({eexpr: TField(_, FStatic(lc, {cfName: "load"}))}, [name, _])}, args) if (core.Globals.sTypePath(lc.clPath) == "haxe.macro.Context"):
 					var p = e.epos;
 					var cf = host.clStatics.get("hxmc_macro_api");
 					var ef = core.TFunctions.mk(TField(core.Texpr.Builder.makeStaticThis(host, p), FStatic(host, cf)), cf.cfType, p);
-					var arr = core.TFunctions.mk(TArrayDecl([for (a in args) core.TFunctions.mk(TCast(map(a), null), b.tany, a.epos)]), b.tarray(b.tany), p);
-					core.TFunctions.mk(TCall(ef, [map(name), arr]), e.etype, p);
+					var arr = core.TFunctions.mk(TArrayDecl(args.map(a -> core.TFunctions.mk(TCast(map(a), null), b.tany, a.epos))), b.tarray(b.tany), p);
+					core.TFunctions.mk(TCall(ef, vector(map(name), arr)), e.etype, p);
 				case TIdent("$__mk_pos__"):
 					call("hxmc_macro_pos", [], e.etype, e.epos);
 				// (the construction position of a macro API enum value, as Eval keeps it)

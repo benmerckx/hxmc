@@ -18,6 +18,10 @@ import context.Sourcemaps;
 import generators.Genphp7;
 import generators.genphp7.TypeWrappers;
 import generators.Genphp7.*;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 /**
 	Class to simplify collecting lists of declared and used local vars.
@@ -453,7 +457,7 @@ class CodeWriter {
 		Check if currently generated expression is located in a left part of assignment.
 	*/
 	public function isInWriteContext():Bool {
-		function isInRefArg(current:TExpr, types:Array<{name:String, optional:Bool, type:T}>, args:Array<TExpr>):Bool {
+		function isInRefArg(current:TExpr, types:Vector<{name:String, optional:Bool, type:T}>, args:Vector<TExpr>):Bool {
 			// port: List.exists2; the Invalid_argument of different lengths gives false
 			var n = types.length < args.length ? types.length : args.length;
 			for (i in 0...n) if (args[i] == current && isRef(types[i].type)) return true;
@@ -494,7 +498,7 @@ class CodeWriter {
 						FStatic(ctx.pgcBoot, core.ds.PMap.find("deref", ctx.pgcBoot.clStatics))),
 					etype: expr.etype,
 					epos: expr.epos
-				}, [expr]),
+				}, vector(expr)),
 				etype: expr.etype,
 				epos: expr.epos
 			};
@@ -694,7 +698,7 @@ class CodeWriter {
 	/**
 		Writes TArrayDecl to output buffer
 	*/
-	public function writeExprArrayDecl(exprs:Array<TExpr>):Void {
+	public function writeExprArrayDecl(exprs:Vector<TExpr>):Void {
 		switch exprs {
 			case []:
 				function decl() write("new " + (use(arrayTypePath)) + "()");
@@ -718,7 +722,7 @@ class CodeWriter {
 	/**
 		Writes native array declaration to output buffer
 	*/
-	public function writeNativeArrayDecl(exprs:Array<TExpr>):Void {
+	public function writeNativeArrayDecl(exprs:Vector<TExpr>):Void {
 		switch exprs {
 			case []:
 				write("[]");
@@ -738,7 +742,7 @@ class CodeWriter {
 	/**
 		Write associative array declaration
 	*/
-	public function writeAssocArrayDecl(fields:Array<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):Void {
+	public function writeAssocArrayDecl(fields:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):Void {
 		switch fields {
 			case []: write("[]");
 			case [{key: {name: key}, expr: value}]:
@@ -862,7 +866,7 @@ class CodeWriter {
 			write("(");
 			writeExpr({
 				eexpr: TFunction({
-					tfArgs: [],
+					tfArgs: vector(),
 					tfType: blockExpr.etype,
 					tfExpr: ensureReturnInBlock(blockExpr),
 				}),
@@ -884,7 +888,7 @@ class CodeWriter {
 			case TBlock([]):
 			case _:
 				writeIndentation();
-				var fakeBlock:TExpr = {eexpr: TBlock([expr]), etype: expr.etype, epos: expr.epos};
+				var fakeBlock:TExpr = {eexpr: TBlock(vector(expr)), etype: expr.etype, epos: expr.epos};
 				exprHierarchy.push(fakeBlock);
 				writeAsBlock(true, expr);
 				exprHierarchy.pop();
@@ -909,7 +913,7 @@ class CodeWriter {
 		var unsetLocals = unsetLocals == true;
 		var exprs = switch expr.eexpr {
 			case TBlock(exprs): exprs;
-			case _: [expr];
+			case _: vector(expr);
 		}
 		function writeBody():Void {
 			function writeExpr_(expr:TExpr):Void {
@@ -994,7 +998,7 @@ class CodeWriter {
 	/**
 		Writes try...catch to output buffer
 	*/
-	public function writeExprTryCatch(tryExpr:TExpr, catches:Array<{variable:TVar, expr:TExpr}>):Void {
+	public function writeExprTryCatch(tryExpr:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>):Void {
 		write("try ");
 		writeAsBlock(tryExpr);
 		for (c in catches) {
@@ -1024,7 +1028,7 @@ class CodeWriter {
 		Write Haxe->PHP magic function call
 		@see http://old.haxe.org/doc/advanced/magic#php-magic
 	*/
-	public function writeExprMagic(name:String, args:Array<TExpr>):Void {
+	public function writeExprMagic(name:String, args:Vector<TExpr>):Void {
 		var error = ("Invalid arguments for " + name + " magic call");
 		switch args {
 			case []: fail(error, pos(), "genphp7.code_writer#write_expr_magic");
@@ -1039,7 +1043,7 @@ class CodeWriter {
 					case "__php__":
 						switch expr.eexpr {
 							case TConst(TString(php)):
-								codegen.Codegen.interpolateCode(ctx.pgcCommon.error, php, args, write, writeExpr, pos());
+								codegen.Codegen.interpolateCode(ctx.pgcCommon.error, php, args.toArray(), write, writeExpr, pos());
 							case _: fail(pos(), "genphp7.code_writer#write_expr_magic");
 						}
 					case "__call__":
@@ -1315,11 +1319,11 @@ class CodeWriter {
 	/**
 		Convert field access expressions for strings to native PHP string functions and write to output buffer
 	*/
-	public function writeExprCallString(expr:TExpr, access:TFieldAccess, args:Array<TExpr>):Void {
+	public function writeExprCallString(expr:TExpr, access:TFieldAccess, args:Vector<TExpr>):Void {
 		switch access {
 			case FInstance(_, _, field = {cfKind: Method(_)}) | FClosure(_, field = {cfKind: Method(_)}):
 				write((use(hxstringTypePath)) + "::" + (fieldName(field)) + "(");
-				writeArgs(write, writeExpr, (fixCallArgs(ctx.pgcCommon.basic, field.cfType, [expr].concat(args))));
+				writeArgs(write, writeExpr, (fixCallArgs(ctx.pgcCommon.basic, field.cfType, VectorTools.cons(expr, args))));
 				write(")");
 			case _:
 				var msg = "Unexpected field access " + (core.TPrinting.sFieldAccess(t -> core.TPrinting.sType(core.TPrinting.printContext(), t), access));
@@ -1408,7 +1412,7 @@ class CodeWriter {
 	/**
 		Write anonymous object declaration to output buffer
 	*/
-	public function writeExprObjectDeclaration(fields:Array<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):Void {
+	public function writeExprObjectDeclaration(fields:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>):Void {
 		switch fields {
 			case []: write("new " + (use(hxanonTypePath)) + "()");
 			case _:
@@ -1424,7 +1428,7 @@ class CodeWriter {
 	public function writeType(typeExpr:TExpr):Void {
 		switch typeExpr.eexpr {
 			case TTypeExpr(TClassDecl(tcls)):
-				write(useT(TInst(tcls, [])));
+				write(useT(TInst(tcls, vector())));
 			case _:
 				if (isString(revealExpr(typeExpr))) writeExpr(typeExpr) else {
 					write("(");
@@ -1437,7 +1441,7 @@ class CodeWriter {
 	/**
 		Write language specific expression declared in `php.Syntax` extern
 	*/
-	public function writeExprCallSyntaxExtern(expr:TExpr, args:Array<TExpr>):Void {
+	public function writeExprCallSyntaxExtern(expr:TExpr, args:Vector<TExpr>):Void {
 		var name = switch expr.eexpr {
 			case TField(_, FStatic(_, field)): fieldName(field);
 			case _: fail(pos(), "genphp7.code_writer#write_expr_call_syntax_extern");
@@ -1465,7 +1469,7 @@ class CodeWriter {
 	/**
 		Writes plain php code (for `php.Syntax.code()`)
 	*/
-	public function writeExprSyntaxCode(args:Array<TExpr>):Void {
+	public function writeExprSyntaxCode(args:Vector<TExpr>):Void {
 		switch args {
 			case []: fail(pos(), "genphp7.code_writer#write_expr_syntax_code");
 			case _ if (args[0].eexpr.match(TConst(TString(_)))):
@@ -1473,7 +1477,7 @@ class CodeWriter {
 					case TConst(TString(php)): php;
 					case _: throw "unreachable";
 				}
-				var args = args.slice(1).map(arg -> switch (revealExpr(arg)).eexpr {
+				var args = args.slice(1).mapToArray(arg -> switch (revealExpr(arg)).eexpr {
 					case TBinop(_) | TUnop(_): parenthesis(arg);
 					case _: arg;
 				});
@@ -1485,7 +1489,7 @@ class CodeWriter {
 	/**
 		Writes error suppression operator (for `php.Syntax.suppress()`)
 	*/
-	public function writeExprSyntaxSuppress(args:Array<TExpr>):Void {
+	public function writeExprSyntaxSuppress(args:Vector<TExpr>):Void {
 		switch args {
 			case [argsExpr]:
 				write("@");
@@ -1497,7 +1501,7 @@ class CodeWriter {
 	/**
 		Writes native array declaration (for `php.Syntax.arrayDecl()`)
 	*/
-	public function writeExprSyntaxArrayDecl(args:Array<TExpr>):Void {
+	public function writeExprSyntaxArrayDecl(args:Vector<TExpr>):Void {
 		write("[");
 		writeArgs(write, (e:TExpr) -> writeExpr(e), args);
 		write("]");
@@ -1506,9 +1510,9 @@ class CodeWriter {
 	/**
 		Writes native array declaration (for `php.Syntax.arrayDecl()`)
 	*/
-	public function writeExprSyntaxAssocDecl(args:Array<TExpr>):Void {
+	public function writeExprSyntaxAssocDecl(args:Vector<TExpr>):Void {
 		switch args {
-			case []: writeAssocArrayDecl([]);
+			case []: writeAssocArrayDecl(vector());
 			case [{eexpr: TObjectDecl(fields)}]: writeAssocArrayDecl(fields);
 			case _: ctx.pgcCommon.error("php.Syntax.assocDecl() accepts object declaration only.", pos());
 		}
@@ -1533,7 +1537,7 @@ class CodeWriter {
 	/**
 		Writes a call to instance method (for `php.Syntax.call()`)
 	*/
-	public function writeExprSyntaxCall(args:Array<TExpr>):Void {
+	public function writeExprSyntaxCall(args:Vector<TExpr>):Void {
 		if (args.length >= 2) {
 			var objExpr = args[0], methodExpr = args[1], args = args.slice(2);
 			writeExpr(objExpr);
@@ -1549,7 +1553,7 @@ class CodeWriter {
 	/**
 		Writes a call to a static method (for `php.Syntax.staticCall()`)
 	*/
-	public function writeExprSyntaxStaticCall(args:Array<TExpr>):Void {
+	public function writeExprSyntaxStaticCall(args:Vector<TExpr>):Void {
 		if (args.length >= 2) {
 			var typeExpr = args[0], methodExpr = args[1], args = args.slice(2);
 			writeType(typeExpr);
@@ -1565,7 +1569,7 @@ class CodeWriter {
 	/**
 		Writes field access for reading (for `php.Syntax.getField()`)
 	*/
-	public function writeExprSyntaxGetField(args:Array<TExpr>):Void {
+	public function writeExprSyntaxGetField(args:Vector<TExpr>):Void {
 		switch args {
 			case [objExpr, fieldExpr]:
 				writeExpr(objExpr);
@@ -1578,7 +1582,7 @@ class CodeWriter {
 	/**
 		Writes field access for writing (for `php.Syntax.setField()`)
 	*/
-	public function writeExprSyntaxSetField(args:Array<TExpr>):Void {
+	public function writeExprSyntaxSetField(args:Vector<TExpr>):Void {
 		switch args {
 			case [objExpr, fieldExpr, valueExpr]:
 				writeExpr(objExpr);
@@ -1594,7 +1598,7 @@ class CodeWriter {
 	/**
 		Writes static field access for reading (for `php.Syntax.getStaticField()`)
 	*/
-	public function writeExprSyntaxGetStaticField(args:Array<TExpr>):Void {
+	public function writeExprSyntaxGetStaticField(args:Vector<TExpr>):Void {
 		switch args {
 			case [typeExpr, fieldExpr]:
 				writeType(typeExpr);
@@ -1608,7 +1612,7 @@ class CodeWriter {
 	/**
 		Writes static field access for writing (for `php.Syntax.setField()`)
 	*/
-	public function writeExprSyntaxSetStaticField(args:Array<TExpr>):Void {
+	public function writeExprSyntaxSetStaticField(args:Vector<TExpr>):Void {
 		switch args {
 			case [typeExpr, fieldExpr, valueExpr]:
 				writeExpr(typeExpr);
@@ -1624,7 +1628,7 @@ class CodeWriter {
 	/**
 		Writes `new` expression with class name taken local variable (for `php.Syntax.construct()`)
 	*/
-	public function writeExprSyntaxConstruct(args:Array<TExpr>):Void {
+	public function writeExprSyntaxConstruct(args:Vector<TExpr>):Void {
 		if (args.length == 0) fail(pos(), "genphp7.code_writer#write_expr_syntax_construct");
 		var classExpr = args[0], args = args.slice(1);
 		write("new ");
@@ -1641,7 +1645,7 @@ class CodeWriter {
 	/**
 		Writes `$left ?? $right` expression to output buffer (for `php.Syntax.coalesce()`)
 	*/
-	public function writeExprSyntaxCoalesce(args:Array<TExpr>):Void {
+	public function writeExprSyntaxCoalesce(args:Vector<TExpr>):Void {
 		switch args {
 			case [left, right]:
 				write("(");
@@ -1656,7 +1660,7 @@ class CodeWriter {
 	/**
 		Writes `instanceof` expression to output buffer (for `php.Syntax.instanceof()`)
 	*/
-	public function writeExprSyntaxInstanceof(args:Array<TExpr>):Void {
+	public function writeExprSyntaxInstanceof(args:Vector<TExpr>):Void {
 		switch args {
 			case [valExpr, typeExpr]:
 				write("(");
@@ -1664,7 +1668,7 @@ class CodeWriter {
 				write(" instanceof ");
 				switch (revealExpr(typeExpr)).eexpr {
 					case TTypeExpr(TClassDecl(tcls)):
-						write(useT(TInst(tcls, [])));
+						write(useT(TInst(tcls, vector())));
 					case _:
 						writeExpr(typeExpr);
 						if (!(isString(typeExpr))) write("->phpClassName");
@@ -1678,7 +1682,7 @@ class CodeWriter {
 		Writes either a "Cls::class" expression (if class is passed directly) or a `$cls->phpClassName` expression
 		(if class is passed as a variable) to output buffer (for `php.Syntax.nativeClassName()`)
 	*/
-	public function writeExprSyntaxNativeClassName(args:Array<TExpr>):Void {
+	public function writeExprSyntaxNativeClassName(args:Vector<TExpr>):Void {
 		switch args {
 			case [clsExpr]:
 				switch (revealExpr(clsExpr)).eexpr {
@@ -1731,7 +1735,7 @@ class CodeWriter {
 	/**
 		Writes TCall to output buffer
 	*/
-	public function writeExprCall(targetExpr:TExpr, args:Array<TExpr>):Void {
+	public function writeExprCall(targetExpr:TExpr, args:Vector<TExpr>):Void {
 		var noCall = false;
 		switch revealExpr(targetExpr) {
 			case {eexpr: TConst(TSuper)}:
@@ -1753,9 +1757,9 @@ class CodeWriter {
 		Writes `Std.isOfType(value, type)` to output buffer
 	*/
 	public function writeExprStdIs(targetExpr:TExpr, valueExpr:TExpr, typeExpr:TExpr):Void {
-		if (instanceofCompatible(valueExpr, typeExpr)) writeExprSyntaxInstanceof([valueExpr, typeExpr]) else {
+		if (instanceofCompatible(valueExpr, typeExpr)) writeExprSyntaxInstanceof(vector(valueExpr, typeExpr)) else {
 			function noOptimisation():Void {
-				writeExprCall(targetExpr, [valueExpr, typeExpr]);
+				writeExprCall(targetExpr, vector(valueExpr, typeExpr));
 			}
 			switch (revealExpr(typeExpr)).eexpr {
 				case TTypeExpr(mtype):
@@ -1801,7 +1805,7 @@ class CodeWriter {
 	public function writeExprPhpClassConst(targetExpr:TExpr):Void {
 		switch targetExpr.eexpr {
 			case TField(_, FStatic(ecls, field)):
-				write((useT(TInst(ecls, []))) + "::" + (fieldName(field)));
+				write((useT(TInst(ecls, vector()))) + "::" + (fieldName(field)));
 			case _: fail(pos(), "genphp7.code_writer#write_expr_php_class_const");
 		}
 	}
@@ -1809,7 +1813,7 @@ class CodeWriter {
 	/**
 		Writes TNew to output buffer
 	*/
-	public function writeExprNew(instClass:TClass, args:Array<TExpr>):Void {
+	public function writeExprNew(instClass:TClass, args:Vector<TExpr>):Void {
 		var needsPhpPrefix = !(hasClassFlag(instClass, CExtern));
 		write("new " + (use(needsPhpPrefix, instClass.clPath)) + "(");
 		var args = switch instClass.clConstructor {
@@ -1892,7 +1896,7 @@ class CodeWriter {
 	/**
 		Writes TSwitch to output buffer
 	*/
-	public function writeExprSwitch(switch_:TExpr, cases:Array<TSwitchCase>, default_:Null<TExpr>):Void {
+	public function writeExprSwitch(switch_:TExpr, cases:Vector<TSwitchCase>, default_:Null<TExpr>):Void {
 		var writeSwitch = switch switch_.eexpr {
 			case TLocal(_):
 				(() -> writeExpr(switch_));
@@ -1905,7 +1909,7 @@ class CodeWriter {
 				writeIndentation();
 				(() -> write("$__hx__switch"));
 		}
-		function writeConditions(conditions:Array<TExpr>):Void {
+		function writeConditions(conditions:Vector<TExpr>):Void {
 			for (i in 0...conditions.length) {
 				var condition = conditions[i];
 				if (needBootEqual(switch_, condition)) {
@@ -1922,7 +1926,7 @@ class CodeWriter {
 				if (i < conditions.length - 1) write(" || ");
 			}
 		}
-		function writeCases(cases:Array<TSwitchCase>):Void {
+		function writeCases(cases:Vector<TSwitchCase>):Void {
 			for (i in 0...cases.length) {
 				var conditions = cases[i].casePatterns, expr = cases[i].caseExpr;
 				write("if (");

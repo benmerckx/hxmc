@@ -30,6 +30,7 @@ import context.Typecore;
 import context.AbstractCast;
 import context.Typecore.TyperManager;
 import typing.FieldAccess.*;
+import core.ds.VectorTools.vector;
 
 enum AccessKind {
 	// Access is not possible or allowed.
@@ -142,19 +143,22 @@ class ValueReference {
 	public function toTexpr(e:TExpr):TExpr {
 		if (vars.length == 0) return e;
 		var el = vars.map(pair -> mk(TVar(pair.variable, pair.expr), ctx.t.tvoid, pair.variable.vPos));
-		var block = mk(TBlock(el.concat([e])), e.etype, e.epos);
-		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: [], pos: Globals.nullPos}, block), block.etype, block.epos);
+		el.push(e);
+		var block = mk(TBlock(haxe.ds.Vector.fromArrayCopy(el)), e.etype, e.epos);
+		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: vector(), pos: Globals.nullPos}, block), block.etype, block.epos);
 	}
 
 	public function toTexprEl(el:Array<TExpr>, e:TExpr):TExpr {
 		var declarations = vars.map(pair -> mk(TVar(pair.variable, pair.expr), ctx.t.tvoid, pair.variable.vPos));
-		var block = mk(TBlock(declarations.concat(el).concat([e])), e.etype, e.epos);
-		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: [], pos: Globals.nullPos}, block), block.etype, block.epos);
+		for (x in el) declarations.push(x);
+		declarations.push(e);
+		var block = mk(TBlock(haxe.ds.Vector.fromArrayCopy(declarations)), e.etype, e.epos);
+		return mk(TMeta({meta: MetaTag.MergeBlock, exprs: vector(), pos: Globals.nullPos}, block), block.etype, block.epos);
 	}
 }
 
 class TyperBase {
-	public static var typeCallTargetRef:TyperContext->Expr->Array<Expr>->WithTypeValue->Null<Pos>->AccessKind = function(_, _, _, _, _) {
+	public static var typeCallTargetRef:TyperContext->Expr->haxe.ds.Vector<Expr>->WithTypeValue->Null<Pos>->AccessKind = function(_, _, _, _, _) {
 		throw "Uninitialized typeCallTargetRef";
 	};
 	public static var typeAccessRef:TyperContext->ExprDef->Pos->AccessMode->WithTypeValue->AccessKind = function(_, _, _, _, _) {
@@ -237,15 +241,15 @@ class TyperBase {
 			}
 		case TAbstractDecl(a) if (a.aImpl != null): typeModuleTypeSimple(TClassDecl(a.aImpl), p);
 		case TAbstractDecl(a):
-			var tmp = abstractModuleType(a, []);
-			mk(TTypeExpr(TAbstractDecl(a)), TType(tmp, []), p);
+			var tmp = abstractModuleType(a, vector());
+			mk(TTypeExpr(TAbstractDecl(a)), TType(tmp, vector()), p);
 	};
 
 	public static function typeModuleType(ctx:TyperContext, t:ModuleType, p:Pos):TExpr {
 		function loop(t:ModuleType, tparams:Null<TParams>):TExpr return switch t {
 			case TClassDecl({clKind: KGenericBuild(_)}):
 				var info = InstanceBuilder.getBuildInfo(ctx, t, p);
-				var t1 = info.buildApply(tparams == null ? [] : tparams);
+				var t1 = info.buildApply(tparams == null ? vector() : tparams);
 				var mt:ModuleType;
 				try mt = moduleTypeOfType(t1)
 				catch (_:core.ds.Exit) {
@@ -267,8 +271,8 @@ class TyperBase {
 			case TAbstractDecl(a) if (a.aImpl != null): loop(TClassDecl(a.aImpl), tparams);
 			case TAbstractDecl(a):
 				if (!Meta.has(MetaTag.RuntimeValue, a.aMeta)) raiseTypingError(Globals.sTypePath(a.aPath) + " is not a value", p);
-				var tmp = abstractModuleType(a, []);
-				mk(TTypeExpr(TAbstractDecl(a)), TType(tmp, []), p);
+				var tmp = abstractModuleType(a, vector());
+				mk(TTypeExpr(TAbstractDecl(a)), TType(tmp, vector()), p);
 		};
 		return loop(t, null);
 	}
@@ -405,7 +409,7 @@ class TyperBase {
 		case TAbstract(a = {aImpl: c}, tl) if (c != null):
 			var length = core.ds.PMap.find("get_length", c.clStatics);
 			function getLength(e:TExpr,
-					p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, length, tl, [e], ctx.com.basic.tint, p);
+					p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, length, tl, vector(e), ctx.com.basic.tint, p);
 			switch follow(length.cfType) {
 				case TFun(s): switch follow(s.ret) {
 						case TAbstract({aPath: {pack: [], name: "Int"}}, _):
@@ -417,7 +421,7 @@ class TyperBase {
 				// first try: do we have an @:arrayAccess getter field?
 				var access = AbstractCast.findArrayReadAccessRaise(ctx, a, tl, mk(TConst(TNull), ctx.t.tint, p), p);
 				function getNext(base:TExpr, index:TExpr, t:T,
-						p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, access.field, tl, [base, index], access.ret, p);
+						p:Pos):TExpr return CallUnification.makeStaticCallBetter(ctx, c, access.field, tl, vector(base, index), access.ret, p);
 				{aaType: access.ret, aaGet: getNext, aaLength: getLength};
 			} catch (ex:core.ds.NotFound) {
 				// second try: do we have @:arrayAccess on the abstract itself?
@@ -439,7 +443,7 @@ class TyperBase {
 		if (!isNullable(ethen.etype)) ethen = mk(TCast(ethen, null), tnull, ethen.epos);
 		var eelse = Builder.makeNull(tnull, sn.snPos),
 			eif = mk(TIf(eneq, ethen, eelse), tnull, sn.snPos);
-		return sn.snTempVar == null ? eif : mk(TBlock([sn.snTempVar, eif]), eif.etype, eif.epos);
+		return sn.snTempVar == null ? eif : mk(TBlock(vector(sn.snTempVar, eif)), eif.etype, eif.epos);
 	}
 
 	public static function getSafeNavBase(ctx:TyperContext, eobj:TExpr):{base:TExpr, tempVar:Null<TExpr>}

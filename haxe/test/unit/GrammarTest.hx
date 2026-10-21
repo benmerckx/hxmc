@@ -2,6 +2,8 @@ package unit;
 
 import core.Ast;
 
+using core.ds.VectorTools;
+
 class GrammarTest {
 	public static function main():Void {
 		var parsed = parse('package example; import foo.Bar; class Main extends Base { public static var count:Int = 1 + 2; public function new(x:Int) { var y = x; trace(y); } }', null, "Main.hx");
@@ -138,7 +140,7 @@ class GrammarTest {
 		var overloadedConstructor = parse('abstract Vector<T>(Array<T>) { extern overload public inline function new(length:Int) {} }').declarations[0];
 		assert(switch overloadedConstructor.definition { case EAbstract(value): value.data[0].cffAccess.filter(function(access) return access.access == AOverload).length == 1; case _: false; });
 		var constantTypeArguments = parse('class Main { var one:Const<10>; var negative:Const<-3>; var values:Const<["test", 1]>; var pattern:Const<~/foo/i>; }').declarations[0];
-		assert(switch constantTypeArguments.definition { case EClass(value): Lambda.foreach(value.data, function(field) return switch field.cffKind { case FVar({type:CTPath({path:{tparams:[TPExpr(_)]}})}, _): true; case _: false; }); case _: false; });
+		assert(switch constantTypeArguments.definition { case EClass(value): value.data.foreach(function(field) return switch field.cffKind { case FVar({type:CTPath({path:{tparams:[TPExpr(_)]}})}, _): true; case _: false; }); case _: false; });
 		parse('class Main<T> { var values:Array<T>=[]; var nested:Array<Array<T>>=[]; }');
 		parse('class Main { function run() { try { return; } value(); } }');
 		var unparenthesizedCast = parse('class Main { function run() return cast readByte(); }').declarations[0];

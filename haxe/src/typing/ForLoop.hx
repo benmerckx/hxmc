@@ -15,6 +15,7 @@ import typing.TyperBase.*;
 
 using Lambda;
 using core.ds.ArrayTools;
+using core.ds.VectorTools;
 
 import core.WithType as WithTypeTools;
 import core.WithType.WithTypeValue;
@@ -30,6 +31,8 @@ import core.WithType;
 import context.Typecore.*;
 import context.Typecore;
 import typing.Fields.*;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
 import typing.Calls.*;
 
 typedef UnrollParameters = {var expressionWeight:Int; var forceUnroll:Bool;}
@@ -38,7 +41,7 @@ enum IteratorKind {
 	IteratorIntConst(from:TExpr, to:TExpr, ascending:Bool); // ascending?
 	IteratorIntUnroll(offset:Int, length:Int, ascending:Bool);
 	IteratorInt(from:TExpr, to:TExpr);
-	IteratorArrayDecl(el:Array<TExpr>);
+	IteratorArrayDecl(el:haxe.ds.Vector<TExpr>);
 	IteratorArray;
 	IteratorGenericStack(c:TClass);
 	IteratorIterator;
@@ -97,8 +100,8 @@ class IterationKind {
 		var pt = spawnMonomorph(ctx, e.epos);
 		var t = ctx.t.titerator(pt);
 		try {
-			var acc = Fields.typeField(typeFieldConfig, ctx, e, s, e.epos, MCall([]), WithTypeTools.withType(t));
-			var call = Calls.buildCall(ctx, acc, [], WithTypeTools.value, e.epos);
+			var acc = Fields.typeField(typeFieldConfig, ctx, e, s, e.epos, MCall(vector()), WithTypeTools.withType(t));
+			var call = Calls.buildCall(ctx, acc, vector(), WithTypeTools.value, e.epos);
 			unifyRaise(call.etype, t, call.epos);
 			return {e: call, t: pt};
 		} catch (ex:Dynamic) {
@@ -113,11 +116,11 @@ class IterationKind {
 	public static function mkHasNextNext(ctx:Typer, e:TExpr, p:Pos, ?check:AccessKind->AccessKind->Void):IteratorData {
 		var v = genLocal(ctx, e.etype, e.epos);
 		var tmp = Texpr.Builder.makeLocal(v, v.vPos);
-		var hasNext = Fields.typeField(typeFieldConfig, ctx, tmp, "hasNext", p, MCall([]), WithTypeTools.withType(ctx.t.tbool));
-		var next = Fields.typeField(typeFieldConfig, ctx, tmp, "next", p, MCall([]), WithTypeTools.value);
+		var hasNext = Fields.typeField(typeFieldConfig, ctx, tmp, "hasNext", p, MCall(vector()), WithTypeTools.withType(ctx.t.tbool));
+		var next = Fields.typeField(typeFieldConfig, ctx, tmp, "next", p, MCall(vector()), WithTypeTools.value);
 		if (check != null) check(next, hasNext);
-		var eh = Calls.buildCall(ctx, hasNext, [], WithTypeTools.withType(ctx.t.tbool), tmp.epos);
-		var en = Calls.buildCall(ctx, next, [], WithTypeTools.value, tmp.epos);
+		var eh = Calls.buildCall(ctx, hasNext, vector(), WithTypeTools.withType(ctx.t.tbool), tmp.epos);
+		var en = Calls.buildCall(ctx, next, vector(), WithTypeTools.value, tmp.epos);
 		return {itKind: IteratorHasNextNext(v, en, eh), itExpr: e, itType: en.etype};
 	}
 
@@ -148,8 +151,8 @@ class IterationKind {
 		var pt = spawnMonomorph(ctx, e.epos);
 		var t = asyncType(pt);
 		try {
-			var acc = Fields.typeField(typeFieldConfig, ctx, e, s, e.epos, MCall([]), WithTypeTools.withType(t));
-			var call = Calls.buildCall(ctx, acc, [], WithTypeTools.value, e.epos);
+			var acc = Fields.typeField(typeFieldConfig, ctx, e, s, e.epos, MCall(vector()), WithTypeTools.withType(t));
+			var call = Calls.buildCall(ctx, acc, vector(), WithTypeTools.value, e.epos);
 			unifyRaise(call.etype, t, call.epos);
 			return mkHasNextNext(ctx, call, p);
 		} catch (ex:Dynamic) {
@@ -298,7 +301,7 @@ class IterationKind {
 		}
 		inline function genIntIter(e1:TExpr, pt:T, get:TExpr->TExpr->T->Pos->TExpr, len:TExpr->Pos->TExpr):TExpr {
 			var index = genLocal(ctx, ti, v.vPos);
-			index.vMeta.unshift({meta: MetaTag.ForLoopVariable, exprs: [], pos: nullPos});
+			index.vMeta.unshift({meta: MetaTag.ForLoopVariable, exprs: vector(), pos: nullPos});
 			var arr = e1;
 			var avar = null;
 			switch e1.eexpr {
@@ -312,17 +315,13 @@ class IterationKind {
 			var get = mk(TVar(v, get(arr, ie, pt, p)), tv, v.vPos);
 			var inc = mk(TUnop(Increment, Prefix, ie), ti, p);
 			var block = switch e2.eexpr {
-				case TBlock(el): mk(TBlock([get, inc].concat(el)), tv, e2.epos);
-				case _: mk(TBlock([get, inc, e2]), tv, p);
+				case TBlock(el): mk(TBlock(el.prependArray([get, inc])), tv, e2.epos);
+				case _: mk(TBlock(vector(get, inc, e2)), tv, p);
 			};
 			var init = mk(TVar(index, mk(TConst(TInt(0)), ti, p)), tv, p);
 			var elength = len(arr, p);
-			var el = [
-				mk(TWhile(mk(TBinop(OpLt, ie, elength), ctx.t.tbool, p), block, NormalWhile), tv, p)
-			];
-			if (avar != null) el.unshift(avar);
-			el.unshift(init);
-			return mk(TBlock(el), tv, p);
+			var loop = mk(TWhile(mk(TBinop(OpLt, ie, elength), ctx.t.tbool, p), block, NormalWhile), tv, p);
+			return mk(TBlock(avar != null ? vector(init, avar, loop) : vector(init, loop)), tv, p);
 		}
 		return switch iterator.itKind {
 			case IteratorIntUnroll(offset, n, ascending):
@@ -346,15 +345,14 @@ class IterationKind {
 					} catch (ex:Exit) {
 						var el = switch e2.eexpr {
 							case TBlock(el): el;
-							case _: [e2];
+							case _: vector(e2);
 						};
-						body = core.ds.Record.withFields(e2, {eexpr: TBlock([mk(TVar(v, ei), tv, p)].concat(el))});
+						body = core.ds.Record.withFields(e2, {eexpr: TBlock(VectorTools.cons(mk(TVar(v, ei), tv, p), el))});
 					}
 					acc = acc.concat(locals);
 					acc.unshift(Texpr.duplicateTvars(function(e) return e, body));
 				}
-				acc.reverse();
-				mk(TBlock(acc), tv, p);
+				mk(TBlock(VectorTools.ofArrayReversed(acc)), tv, p);
 			case IteratorIntConst(a, b, ascending):
 				if (!ascending) Error.raiseTypingError("Cannot iterate backwards", p);
 				var index = genLocal(ctx, ti, a.epos);
@@ -363,7 +361,7 @@ class IterationKind {
 				var cond = Texpr.Builder.binop(ascending ? OpLt : OpGt, local, b, ctx.t.tbool, punion(v.vPos, b.epos));
 				var inc = mk(TUnop(ascending ? Increment : Decrement, Postfix, local), ti, punion(a.epos, b.epos));
 				var initVar = mk(TVar(v, inc), tv, punion(v.vPos, a.epos));
-				mk(TBlock([init, mk(TWhile(cond, concat(initVar, e2), NormalWhile), tv, p)]), tv, p);
+				mk(TBlock(vector(init, mk(TWhile(cond, concat(initVar, e2), NormalWhile), tv, p))), tv, p);
 			case IteratorInt(a, b):
 				var index = genLocal(ctx, ti, a.epos);
 				var init = mk(TVar(index, a), tv, a.epos);
@@ -374,7 +372,7 @@ class IterationKind {
 				var cond = Texpr.Builder.binop(OpLt, local, eb, ctx.t.tbool, punion(v.vPos, b.epos));
 				var inc = mk(TUnop(Increment, Postfix, local), ti, punion(a.epos, b.epos));
 				var initVar = mk(TVar(v, inc), tv, punion(v.vPos, a.epos));
-				mk(TBlock([init, initB, mk(TWhile(cond, concat(initVar, e2), NormalWhile), tv, p)]), tv, p);
+				mk(TBlock(vector(init, initB, mk(TWhile(cond, concat(initVar, e2), NormalWhile), tv, p))), tv, p);
 			case IteratorArrayDecl(el): mk(TBlock(el.map(function(e) return Texpr.duplicateTvars(function(e) return e,
 					concat(mk(TVar(v, e), tv, e.epos), e2)))), tv,
 					p);
@@ -391,20 +389,20 @@ class IterationKind {
 				var initVar = mk(TVar(v, mk(field(ce, "elt"), pt, p)), tv, v.vPos);
 				var next = mk(TBinop(OpAssign, ce, mk(field(ce, "next"), tcell, p)), tcell, p);
 				var block = switch e2.eexpr {
-					case TBlock(el): mk(TBlock([initVar, next].concat(el)), tv, e2.epos);
-					case _: mk(TBlock([initVar, next, e2]), tv, p);
+					case TBlock(el): mk(TBlock(el.prependArray([initVar, next])), tv, e2.epos);
+					case _: mk(TBlock(vector(initVar, next, e2)), tv, p);
 				};
-				mk(TBlock([
+				mk(TBlock(vector(
 					mk(TVar(cell, mk(field(e1, "head"), tcell, p)), tv, p),
 					mk(TWhile(mk(TBinop(OpNotEq, ce, mk(TConst(TNull), tcell, p)), ctx.t.tbool, p), block, NormalWhile), tv, p)
-				]), tv, p);
+				)), tv, p);
 			case IteratorHasNextNext(tmp, next, hasNext):
 				var init = mk(TVar(v, next), tv, p);
-				mk(TBlock([
+				mk(TBlock(vector(
 					mk(TVar(tmp, e1), tv, p),
 					mk(TWhile(hasNext, concat(init, e2), NormalWhile), tv, p)
-				]), tv, p);
-			case IteratorDynamic: mk(TBlock([]), tv, p);
+				)), tv, p);
+			case IteratorDynamic: mk(TBlock(vector()), tv, p);
 		};
 	}
 }
@@ -428,7 +426,7 @@ class ForLoop {
 			};
 		var cp = getClass(e1);
 		var c:TClass = cp.c;
-		var tl:Array<T> = cp.tl;
+		var tl:core.TType.TParams = cp.tl;
 		var hasNext:TClassField;
 		try {
 			hasNext = rawClassField(function(cf) return applyParams(c.clParams, tl, cf.cfType), c, tl, "hasNext").field;
@@ -439,22 +437,22 @@ class ForLoop {
 		var it = TInst(c, tl);
 		var tmp = genLocal(ctx, it, e1.epos);
 		var eit = mk(TLocal(tmp), it, p);
-		var eh = makeCall(ctx, mk(TField(eit, FInstance(c, tl, hasNext)), TFun({args: [], ret: ctx.t.tbool}), p), [], ctx.t.tbool, p);
+		var eh = makeCall(ctx, mk(TField(eit, FInstance(c, tl, hasNext)), TFun({args: vector(), ret: ctx.t.tbool}), p), vector(), ctx.t.tbool, p);
 		var next;
 		try {
 			next = FInstance(c, tl, rawClassField(function(cf) return applyParams(c.clParams, tl, cf.cfType), c, tl, "next").field);
 		} catch (ex:NotFound) {
 			next = quickFieldDynamic(eit.etype, "next");
 		}
-		var en = mk(TVar(v, makeCall(ctx, mk(TField(eit, next), TFun({args: [], ret: v.vType}), p), [], v.vType, p)), ctx.t.tvoid, p);
+		var en = mk(TVar(v, makeCall(ctx, mk(TField(eit, next), TFun({args: vector(), ret: v.vType}), p), vector(), v.vType, p)), ctx.t.tvoid, p);
 		var block = switch e2.eexpr {
-			case TBlock(el): core.ds.Record.withFields(e2, {eexpr: TBlock([en].concat(el))});
-			case _: mk(TBlock([en, e2]), ctx.t.tvoid, p);
+			case TBlock(el): core.ds.Record.withFields(e2, {eexpr: TBlock(VectorTools.cons(en, el))});
+			case _: mk(TBlock(vector(en, e2)), ctx.t.tvoid, p);
 		};
-		return mk(TBlock([
+		return mk(TBlock(vector(
 			mk(TVar(tmp, e1), ctx.t.tvoid, p),
 			mk(TWhile(eh, block, NormalWhile), ctx.t.tvoid, p)
-		]), ctx.t.tvoid, p);
+		)), ctx.t.tvoid, p);
 	}
 
 	public static function getUnrollParams(ctx:Typer, e2:Expr, force:Bool):Null<UnrollParameters> {
@@ -481,7 +479,7 @@ class ForLoop {
 		ctx.e.inLoop = true;
 		e2 = switch e2.expr {
 			case EBlock(_): e2;
-			case _: {expr: EBlock([e2]), pos: e2.pos};
+			case _: {expr: EBlock(vector(e2)), pos: e2.pos};
 		};
 		inline function check(v:TVar,
 				ident:IterationIdent):Void if (ident.display != null) display(ctx, {expr: EConst(Ident(v.vName)), pos: v.vPos},
@@ -504,10 +502,10 @@ class ForLoop {
 				var tmp = genLocal(ctx, e1.etype, e1.epos);
 				var etmp = Texpr.Builder.makeLocal(tmp, tmp.vPos);
 				var hasNext = Calls.buildCall(ctx,
-					Fields.typeFieldDefaultCfg(ctx, etmp, "hasNext", etmp.epos, MCall([]), WithTypeTools.withType(ctx.t.tbool)), [],
+					Fields.typeFieldDefaultCfg(ctx, etmp, "hasNext", etmp.epos, MCall(vector()), WithTypeTools.withType(ctx.t.tbool)), vector(),
 					WithTypeTools.value, etmp.epos);
-				var next = Calls.buildCall(ctx, Fields.typeFieldDefaultCfg(ctx, etmp, "next", etmp.epos, MCall([]), /* WITHTYPETODO */ WithTypeTools.value),
-					[], WithTypeTools.value, etmp.epos);
+				var next = Calls.buildCall(ctx, Fields.typeFieldDefaultCfg(ctx, etmp, "next", etmp.epos, MCall(vector()), /* WITHTYPETODO */ WithTypeTools.value),
+					vector(), WithTypeTools.value, etmp.epos);
 				var v = genLocal(ctx, it.t, e1.epos);
 				var ev = Texpr.Builder.makeLocal(v, v.vPos);
 				var ek = accGet(ctx, Fields.typeFieldDefaultCfg(ctx, ev, "key", ev.epos, MGet, WithTypeTools.value));
@@ -517,16 +515,16 @@ class ForLoop {
 				var body = typeExpr(ctx, e2, NoValue);
 				check(vk, key);
 				check(vv, value);
-				var block = mk(TBlock([
+				var block = mk(TBlock(vector(
 					mk(TVar(v, next), ctx.t.tvoid, next.epos),
 					mk(TVar(vk, ek), ctx.t.tvoid, ek.epos),
 					mk(TVar(vv, evalue), ctx.t.tvoid, evalue.epos),
 					body
-				]), ctx.t.tvoid, body.epos);
-				var e = mk(TBlock([
+				)), ctx.t.tvoid, body.epos);
+				var e = mk(TBlock(vector(
 					mk(TVar(tmp, e1), ctx.t.tvoid, e1.epos),
 					mk(TWhile(hasNext, block, NormalWhile), ctx.t.tvoid, p)
-				]), ctx.t.tvoid, p);
+				)), ctx.t.tvoid, p);
 				ctx.e.inLoop = old;
 				restore();
 				e;

@@ -14,6 +14,10 @@ import core.Error.*;
 import core.Error;
 import core.Meta;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class NoValue extends haxe.Exception {
 	public function new() super("NoValue");
@@ -24,7 +28,7 @@ private class UnifyMinExit extends haxe.Exception {
 }
 
 class UnifyMin {
-	public static function unifyMinRaise(basic:BasicTypes, el:Array<TExpr>):T {
+	public static function unifyMinRaise(basic:BasicTypes, el:haxe.ds.Vector<TExpr>):T {
 		if (el.length == 0) throw new NoValue();
 		if (el.length == 1) return el[0].etype;
 		function chkNull(e:TExpr):Bool {
@@ -37,7 +41,7 @@ class UnifyMin {
 			};
 		}
 		// First pass: Try normal unification and find out if null is involved.
-		function loop(t:Null<T>, values:Array<TExpr>):{hasError:Bool, type:T} {
+		function loop(t:Null<T>, values:haxe.ds.Vector<TExpr>):{hasError:Bool, type:T} {
 			if (values.length == 0) return {hasError: false,
 				// The only way to get here is if all types were Dynamic. We know there's more than 0
 				// because in that case we raise NoValue above.
@@ -63,7 +67,7 @@ class UnifyMin {
 		try {
 			// specific case for const anon : we don't want to hide fields but restrict their common type
 			var fcount = -1;
-			inline function expr(f:TClassField):TExpr return f.cfExpr == null ? mk(TBlock([]), f.cfType, f.cfPos) : f.cfExpr;
+			inline function expr(f:TClassField):TExpr return f.cfExpr == null ? mk(TBlock(vector()), f.cfType, f.cfPos) : f.cfExpr;
 			var fields = new StringMap<Array<TExpr>>();
 			for (e in el) switch follow(e.etype) {
 				case TAnon(a) if (a.aStatus == Const):
@@ -90,7 +94,7 @@ class UnifyMin {
 			names.sort(core.ds.Key.compareStrings);
 			for (name in names) {
 				var values = fields.get(name);
-				var t = try unifyMinRaise(basic, values) catch (_:Unify_error) {
+				var t = try unifyMinRaise(basic, core.ds.VectorTools.ofArray(values)) catch (_:Unify_error) {
 					throw core.ds.FastThrow.of("Not_found");
 				};
 				result.set(name, mkField(name, t, values[0].epos, nullPos));
@@ -105,9 +109,9 @@ class UnifyMin {
 				case TFun(s): s;
 				case _: throw core.ds.FastThrow.of(new UnifyMinExit());
 			};
-			var args = signature.args.copy(), arity = args.length;
+			var args:Vector<{name:String, optional:Bool, type:T}> = signature.args.copy(), arity = args.length;
 			var rets:Array<T> = [];
-			for (e in el.slice(1)) switch follow(e.etype) {
+			for (i in 1...el.length) switch follow(el[i].etype) {
 				case TFun(s):
 					if (s.args.length != arity) throw core.ds.FastThrow.of(new UnifyMinExit());
 					for (i in 0...arity) {
@@ -139,10 +143,9 @@ class UnifyMin {
 			}
 			dynTypes.reverse();
 			if (dynTypes.length > 0) commonTypes = commonTypes.concat(dynTypes);
-			var rest = el.slice(1);
-			return switch UnifyMinT.unifyMinPrime(defaultUnificationContext(), commonTypes, rest.map(function(e) return e.etype)) {
+			return switch UnifyMinT.unifyMinPrime(defaultUnificationContext(), commonTypes, [for (i in 1...el.length) el[i].etype]) {
 				case UnifyMinOk(t): t;
-				case UnifyMinError(errors, index): raiseTypingErrorExt(makeError(Unify(errors), rest[index].epos));
+				case UnifyMinError(errors, index): raiseTypingErrorExt(makeError(Unify(errors), el[index + 1].epos));
 			};
 		}
 	}

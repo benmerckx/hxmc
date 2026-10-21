@@ -21,7 +21,7 @@ class ModuleInterface {
 
 	function new() {}
 
-	public static function hash(decls:Array<TypeDecl>):String {
+	public static function hash(decls:haxe.ds.Vector<TypeDecl>):String {
 		var w = new ModuleInterface();
 		for (d in decls)
 			w.decl(d);
@@ -139,7 +139,7 @@ class ModuleInterface {
 		b.add(";\n");
 	}
 
-	function typeHead(name:PlacedName, params:Array<TypeParam>, meta:Metadata) {
+	function typeHead(name:PlacedName, params:haxe.ds.Vector<TypeParam>, meta:Metadata) {
 		b.add(name.name);
 		typeParams(params);
 		metadata(meta);
@@ -176,9 +176,11 @@ class ModuleInterface {
 		}
 	}
 
+	static final KEEPS_BODY:Array<core.MetaList.StrictMeta> = [Generic, Extern, Build];
+
 	static function strippable(name:String, access:Array<Access>, meta:Metadata, f:Func):Bool {
 		if (access.indexOf(AInline) >= 0 || access.indexOf(AMacro) >= 0 || access.indexOf(AExtern) >= 0) return false;
-		if (hasMeta(meta, [Generic, Extern, Build])) return false;
+		if (hasMeta(meta, KEEPS_BODY)) return false;
 		if (f.fType == null && name != "new") return false;
 		for (a in f.fArgs)
 			if (a.type == null) return false;
@@ -226,7 +228,7 @@ class ModuleInterface {
 		pos(n.pos);
 	}
 
-	function placedNames(l:Array<PlacedName>) {
+	function placedNames(l:haxe.ds.Vector<PlacedName>) {
 		b.add("[");
 		for (n in l)
 			placedName(n);
@@ -300,7 +302,7 @@ class ModuleInterface {
 		pos(t.pos);
 	}
 
-	function typeHints(l:Array<TypeHint>) {
+	function typeHints(l:haxe.ds.Vector<TypeHint>) {
 		b.add("[");
 		for (t in l)
 			typeHint(t);
@@ -342,7 +344,7 @@ class ModuleInterface {
 	}
 
 	// (a structure's fields: all of them)
-	function classFields(l:Array<ClassField>) {
+	function classFields(l:haxe.ds.Vector<ClassField>) {
 		b.add("{");
 		for (f in l) {
 			placedName(f.cffName);
@@ -368,7 +370,7 @@ class ModuleInterface {
 		b.add("}");
 	}
 
-	function typeParams(l:Array<TypeParam>) {
+	function typeParams(l:haxe.ds.Vector<TypeParam>) {
 		b.add("<");
 		for (p in l) {
 			placedName(p.tpName);
@@ -380,7 +382,7 @@ class ModuleInterface {
 		b.add(">");
 	}
 
-	function funcArgs(l:Array<FuncArg>) {
+	function funcArgs(l:haxe.ds.Vector<FuncArg>) {
 		b.add("(");
 		for (a in l) {
 			placedName(a.name);
@@ -423,7 +425,7 @@ class ModuleInterface {
 		}
 	}
 
-	function exprs(l:Array<Expr>) {
+	function exprs(l:haxe.ds.Vector<Expr>) {
 		b.add("[");
 		for (e in l)
 			expr(e);

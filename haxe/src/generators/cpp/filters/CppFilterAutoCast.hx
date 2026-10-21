@@ -6,6 +6,7 @@ import generators.cpp.CppAst;
 import generators.cpp.CppAstTools.*;
 import generators.cpp.CppTypeUtils.*;
 import generators.cpp.CppError;
+import core.ds.VectorTools.vector;
 
 class CppFilterAutoCast {
 	public static function autocastFilter(forCppia:Bool, returnType:Tcpp, cppexpr:TcppExpr):TcppExpr {
@@ -146,7 +147,7 @@ class CppFilterAutoCast {
 				/* This happens in inheritance related situations */
 				case [TCppMarshalNativeType((ValueClass(fstCls, fstParams) | Pointer(fstCls, fstParams)), _),
 					TCppMarshalNativeType(dst = (ValueClass(sndCls, sndParams) | Pointer(sndCls, sndParams)), _)]
-					if (!core.TUnification.fastEq(TInst(fstCls, []), TInst(sndCls, []))):
+					if (!core.TUnification.fastEq(TInst(fstCls, vector()), TInst(sndCls, vector()))):
 					var reference = TCppMarshalNativeType(dst, Reference);
 					mkCppexpr(CppCast(cppexpr, reference), reference);
 				/* Ensure we wrap any access to the stack or promoted type in a reference object. */

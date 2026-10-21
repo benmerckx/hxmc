@@ -59,7 +59,6 @@ class MachOReader {
 		// every section of the file, by ordinal (1-based), null when left out
 		var secs:Array<Null<Section>> = [null];
 		var secAddr:Array<Int> = [0];
-		var secSize:Array<Int> = [0];
 		var secHdr:Array<Int> = [0];
 		var secSym:Array<Null<Symbol>> = [null];
 		var symoff = 0, nsyms = 0, stroff = 0;
@@ -80,7 +79,6 @@ class MachOReader {
 					// (pointer sections: 8, whatever the object says)
 					if ((type == 0x13 || type == 9 || type == 0xa || type == 0x14) && align < 8) align = 8;
 					secAddr.push(addr);
-					secSize.push(sz);
 					secHdr.push(h);
 					var skip = seg == "__DWARF" || (flags & 0x02000000) != 0 || sect == "__eh_frame" || sect == "__compact_unwind" || sect == "__llvm_addrsig";
 					if (skip) {
@@ -114,16 +112,13 @@ class MachOReader {
 			at += size;
 		}
 		// symbols
-		var syms:Array<Null<Symbol>> = [];
+		var syms = new haxe.ds.Vector<Null<Symbol>>(nsyms > 0 ? nsyms : 0);
 		for (k in 0...nsyms) {
 			var e = symoff + 16 * k;
 			var name = cName(cstr(stroff + u32(e)));
 			var type = u8(e + 4), sect = u8(e + 5), desc = u16(e + 6);
 			var value = u32(e + 8);
-			if ((type & 0xe0) != 0) {
-				syms.push(null); // a debugging entry
-				continue;
-			}
+			if ((type & 0xe0) != 0) continue; // a debugging entry
 			var ext = (type & 1) != 0;
 			var t = type & 0x0e;
 			var s:Symbol;
@@ -156,7 +151,7 @@ class MachOReader {
 					s.offset = 0;
 				case _:
 			}
-			syms.push(s);
+			syms[k] = s;
 		}
 		// relocations
 		for (n in 1...secs.length) {
@@ -180,7 +175,7 @@ class MachOReader {
 					continue;
 				}
 				// the target: a symbol, or a section and the address in the field
-				var sym:Symbol = ext == 1 ? syms[symnum] : secSym[symnum];
+				var sym:Symbol = ext == 1 ? (symnum < syms.length ? syms[symnum] : null) : secSym[symnum];
 				if (sym == null) throw "hxmc: Mach-O relocation against a section left out, in " + s.name;
 				var buf = s.buf;
 				// SUBTRACTOR (arm64 1, x86-64 5) then UNSIGNED: T - M + field, 32

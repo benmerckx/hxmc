@@ -22,6 +22,7 @@ import syntax.Lexer;
 
 using Lambda;
 using core.ds.ArrayTools;
+using core.ds.VectorTools;
 
 import core.MetaList.StrictMeta as MetaTag;
 import core.Globals.Pos;
@@ -301,11 +302,11 @@ class NullSafety {
 			case TField(_, FAnon(cf) | FClosure(_, cf) | FStatic(_, cf) | FInstance(_, _, cf)): try {
 					var meta = getMeta(MetaTag.HaxeArguments, cf.cfMeta);
 					switch meta.exprs {
-						case [{expr: EFunction(_, {fArgs: args})}] if (args.length == count): args.map(function(a) return a.meta);
+						case [{expr: EFunction(_, {fArgs: args})}] if (args.length == count): args.mapToArray(function(a) return a.meta);
 						case _: empty();
 					}
 				} catch (ex:NotFound) empty();
-			case TFunction(fn) if (fn.tfArgs.length == count): fn.tfArgs.map(function(a) return a.variable.vMeta);
+			case TFunction(fn) if (fn.tfArgs.length == count): fn.tfArgs.mapToArray(function(a) return a.variable.vMeta);
 			case _: empty();
 		};
 	}
@@ -582,7 +583,7 @@ class Unificator {
 		}
 	}
 
-	function unifyClassToAnon(a:TClass, params:Array<T>, b:TAnon):Void {
+	function unifyClassToAnon(a:TClass, params:core.TType.TParams, b:TAnon):Void {
 		var names = [for (n in b.aFields.keys()) n];
 		names.sort(core.ds.Key.compareStrings);
 		for (n in names) {
@@ -972,7 +973,7 @@ class LocalSafety {
 	/**
 		This method should be called upon passing `try`.
 	*/
-	public function processTry(body:TExpr, catches:Array<{variable:TVar, expr:TExpr}>, check:TExpr->Void):Void {
+	public function processTry(body:TExpr, catches:haxe.ds.Vector<{variable:TVar, expr:TExpr}>, check:TExpr->Void):Void {
 		var original = getSafeLocalsCopy();
 		check(body);
 		// Remove locals which became safe inside of a try block from safety
@@ -1233,7 +1234,7 @@ class ExprChecker {
 				return NullSafety.fail(expr.epos, {file: "nullSafety.ml", line: 1240}, "Null safety unification failure");
 			}
 		}
-		inline function checkAnon(fields:Array<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>, to:TAnon):Bool {
+		inline function checkAnon(fields:haxe.ds.Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>, to:TAnon):Bool {
 			var acc = true;
 			for (f in fields) {
 				var field = to.aFields.get(f.key.name);
@@ -1332,7 +1333,7 @@ class ExprChecker {
 	/**
 		Check expressions in a block
 	*/
-	function checkBlock(el:Array<TExpr>, p:Pos):Void {
+	function checkBlock(el:haxe.ds.Vector<TExpr>, p:Pos):Void {
 		localSafety.blockDeclared();
 		for (e in el) checkExpr(e);
 		localSafety.scopeClosed();
@@ -1341,7 +1342,7 @@ class ExprChecker {
 	/**
 		Don't allow to use nullable values as items in declaration of not-nullable arrays
 	*/
-	function checkArrayDecl(items:Array<TExpr>, type:T, p:Pos):Void {
+	function checkArrayDecl(items:haxe.ds.Vector<TExpr>, type:T, p:Pos):Void {
 		switch core.Abstract.followWithAbstracts(type) {
 			case TInst({clPath: {pack: [], name: "Array"}}, [itemType]):
 				for (e in items) if (!canPassExpr(e, itemType,
@@ -1568,7 +1569,7 @@ class ExprChecker {
 	/**
 		Check calls: don't call a nullable value, dont' pass nulable values to not-nullable arguments
 	*/
-	function checkCall(callee:TExpr, args:Array<TExpr>, p:Pos):Void {
+	function checkCall(callee:TExpr, args:haxe.ds.Vector<TExpr>, p:Pos):Void {
 		if (isNullableExpr(callee)) error("Cannot call a nullable value.", [callee.epos, p]);
 		switch callee.eexpr {
 			case TFunction(fn) | TParenthesis({eexpr: TFunction(fn)}):
@@ -1583,7 +1584,7 @@ class ExprChecker {
 					if (args.length == 2) switch args[1].eexpr {
 						case TObjectDecl(fields): for (f in fields) if (f.key.name == "customParams") {
 								switch f.expr.eexpr {
-									case TArrayDecl(rest): real = [args[0]].concat(rest);
+									case TArrayDecl(rest): real = core.ds.VectorTools.cons(args[0], rest);
 									case _:
 								}
 								break;
@@ -1601,7 +1602,7 @@ class ExprChecker {
 	/**
 		Check if specified expressions can be passed to a call which expects `types`.
 	*/
-	function checkArgs(callee:TExpr, args:Array<TExpr>, types:Array<{name:String, optional:Bool, type:T}>):Void {
+	function checkArgs(callee:TExpr, args:haxe.ds.Vector<TExpr>, types:haxe.ds.Vector<{name:String, optional:Bool, type:T}>):Void {
 		var meta = NullSafety.getArgumentsMeta(callee, types.length);
 		var count = Std.int(Math.min(args.length, Math.min(types.length, meta.length)));
 		for (i in 0...count) {

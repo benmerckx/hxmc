@@ -29,6 +29,9 @@ import core.Texpr.*;
 import core.TFunctions.NotFound;
 import core.Meta;
 import context.SafeCom;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 enum DceMode {
 	DceNo;
@@ -156,13 +159,13 @@ class Dce {
 
 	public static function mkUsedMeta(p:Pos):MetadataEntry return {
 		meta: core.MetaList.StrictMeta.Used,
-		exprs: [],
+		exprs: vector(),
 		pos: Globals.mkZeroRangePos(p)
 	};
 
 	public static function mkKeepMeta(p:Pos):MetadataEntry return {
 		meta: core.MetaList.StrictMeta.Keep,
-		exprs: [],
+		exprs: vector(),
 		pos: Globals.mkZeroRangePos(p)
 	};
 
@@ -352,7 +355,7 @@ class Dce {
 		case TAbstractDecl(a):
 			// abstract 'feature' is defined as the abstract type beeing used as a value, not as a type
 			if (!Meta.has(ValueUsed, a.aMeta)) a.aMeta = [
-				({meta: core.MetaList.StrictMeta.ValueUsed, exprs: [], pos: Globals.mkZeroRangePos(a.aPos)} : core.Ast.MetadataEntry)
+				({meta: core.MetaList.StrictMeta.ValueUsed, exprs: vector(), pos: Globals.mkZeroRangePos(a.aPos)} : core.Ast.MetadataEntry)
 			].concat(a.aMeta);
 			markAbstract(dce, a);
 		case TTypeDecl(_):
@@ -472,14 +475,14 @@ class Dce {
 	public static function markDirectlyUsedClass(dce:DceData,
 			c:TClass):Void if (c != dce.curclass && !Meta.has(DirectlyUsed, c.clMeta)) protect(dce.usedMutex, function() {
 			if (!Meta.has(DirectlyUsed, c.clMeta)) c.clMeta = [
-				({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: [], pos: Globals.mkZeroRangePos(c.clPos)} : core.Ast.MetadataEntry)
+				({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: vector(), pos: Globals.mkZeroRangePos(c.clPos)} : core.Ast.MetadataEntry)
 			].concat(c.clMeta);
 		});
 
 	public static function markDirectlyUsedEnum(dce:DceData,
 			en:TEnum):Void if (!Meta.has(DirectlyUsed, en.eMeta)) protect(dce.usedMutex, function() {
 			if (!Meta.has(DirectlyUsed, en.eMeta)) en.eMeta = [
-				({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: [], pos: Globals.mkZeroRangePos(en.ePos)} : core.Ast.MetadataEntry)
+				({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: vector(), pos: Globals.mkZeroRangePos(en.ePos)} : core.Ast.MetadataEntry)
 			].concat(en.eMeta);
 		});
 
@@ -822,7 +825,7 @@ class Dce {
 	}
 
 	public static function extractIfFeature(meta:Metadata):Array<String> {
-		for (m in meta) if (m.meta == core.MetaList.StrictMeta.IfFeature) return m.exprs.map(e -> switch e.expr {
+		for (m in meta) if (m.meta == core.MetaList.StrictMeta.IfFeature) return m.exprs.mapToArray(e -> switch e.expr {
 			case EConst(String(s, _)): s;
 			case _: core.Error.raiseTypingError("String expected", e.pos);
 		});
@@ -906,7 +909,7 @@ class Dce {
 						var cf = (stat ? c.clStatics : c.clFields).get(name);
 						if (cf != null && !Meta.has(Accessor, cf.cfMeta)) cf.cfMeta.unshift({
 							meta: core.MetaList.StrictMeta.Accessor,
-							exprs: [],
+							exprs: vector(),
 							pos: Globals.mkZeroRangePos(c.clPos)
 						});
 					}

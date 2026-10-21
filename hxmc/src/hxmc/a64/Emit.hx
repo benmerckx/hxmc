@@ -5,6 +5,7 @@ import hxmc.Mir.SrcPos;
 import hxmc.Obj;
 import hxmc.a64.Asm;
 import hxmc.a64.Isel.AOp;
+import haxe.ds.Vector;
 
 // Allocated LIR -> AArch64 machine code: frame (x29/x30 pair, then the
 // slots, the callee-saved registers and the outgoing arguments below),
@@ -36,16 +37,16 @@ class Emit implements hxmc.Target.Emitter {
 		a = new Asm(text);
 	}
 
-	var slotOff:Array<Int>;
+	var slotOff:Vector<Int>;
 	var frameSize = 0;
-	var saved:Array<Int>;
-	var saveOff:Array<Int>;
+	var saved:Vector<Int>;
+	var saveOff:Vector<Int>;
 	// Windows, where the outgoing arguments would put the saved registers
 	// beyond the unwind codes' reach: their area (allocated last, freed first)
 	var split = 0;
 	// this function's frame operations (Unwind; offsets in the section until
 	// the function is done) and (-debug) its rows of lines
-	var ops:Array<Int>;
+	var ops:Array<Int> = []; // (the function's frame operations, while it is written)
 	var lines:Null<Array<Int>>;
 	var lastPos = 0;
 	var fileIndex = new Map<String, Int>();
@@ -66,7 +67,7 @@ class Emit implements hxmc.Target.Emitter {
 	public function stub(name:String) {
 		text.buf.align(4, 0);
 		start = text.buf.len;
-		ops = [];
+		ops.resize(0);
 		switch name {
 			case hxmc.MirBuild.STUB_CALL_ON_STACK:
 				// fn() (x1) with the stack pointer at top (x0); unwinders follow
@@ -97,7 +98,7 @@ class Emit implements hxmc.Target.Emitter {
 			case _:
 				throw "hxmc: unknown runtime stub " + name;
 		}
-		obj.funcs.push(new FuncRec(obj.define(name, text, start, text.buf.len - start, true), ops));
+		obj.funcs.push(new FuncRec(obj.define(name, text, start, text.buf.len - start, true), Vector.fromArrayCopy(ops)));
 	}
 
 	public function useSection(name:Null<String>) {
@@ -106,30 +107,37 @@ class Emit implements hxmc.Target.Emitter {
 		a.b = text.buf;
 	}
 
-	public function func(f:LFunc, usedRegs:Array<Bool>, global:Bool):Symbol {
+	public function func(f:LFunc, usedRegs:Vector<Bool>, global:Bool):Symbol {
 		text.buf.align(16, 0);
 		start = text.buf.len;
 		a.reset();
-		ops = [];
+		ops.resize(0);
 		lines = f.display != null ? [] : null;
 		lastPos = 0;
 		var off = f.outArgs;
-		saved = [for (r in Isel.CALLEE_SAVED) if (usedRegs[r]) r];
+		var n = 0;
+		for (r in Isel.CALLEE_SAVED)
+			if (usedRegs[r]) n++;
+		saved = new Vector(n);
+		n = 0;
+		for (r in Isel.CALLEE_SAVED)
+			if (usedRegs[r]) saved[n++] = r;
 		split = 0;
 		if (probe && off + 8 * saved.length > 504) {
 			off = (off + 15) & ~15;
 			split = off;
 		}
-		saveOff = [];
-		for (r in saved) {
-			saveOff.push(off - split);
+		saveOff = new Vector(saved.length);
+		for (k in 0...saved.length) {
+			saveOff[k] = off - split;
 			off += 8;
 		}
-		slotOff = [];
-		for (s in f.slots) {
+		slotOff = new Vector(f.slots.length);
+		for (k in 0...f.slots.length) {
+			var s = f.slots[k];
 			var al = s.align < 8 ? 8 : s.align;
 			off = (off + al - 1) & ~(al - 1);
-			slotOff.push(off);
+			slotOff[k] = off;
 			off += s.size;
 		}
 		frameSize = (off + 15) & ~15;
@@ -149,7 +157,7 @@ class Emit implements hxmc.Target.Emitter {
 		f.threadJumps(i -> (i.op : AOp) == B, i -> (i.op : AOp) == MOV && i.d == i.s1 && (i.d >= 32 || i.size != 4));
 		for (b in f.blocks)
 			b.label = a.newLabel();
-		var tables:Array<{label:Int, entries:Array<LBlock>}> = [];
+		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
 		for (bi in 0...f.blocks.length) {
 			var b = f.blocks[bi];
 			a.bind(b.label);
@@ -166,11 +174,11 @@ class Emit implements hxmc.Target.Emitter {
 		}
 		a.finish();
 		var sym = obj.define(f.name, text, start, text.buf.len - start, global);
-		var r = new FuncRec(sym, ops);
+		var r = new FuncRec(sym, Vector.fromArrayCopy(ops));
 		if (lines != null) {
 			r.name = f.display;
-			var rows = [];
-			var k = 0;
+			var rows = new Vector<Int>(3 * ((lines.length + 1) >> 1));
+			var k = 0, j = 0;
 			while (k < lines.length) {
 				var p = SrcPos.get(lines[k + 1]);
 				var fi = fileIndex.get(p.file);
@@ -179,9 +187,9 @@ class Emit implements hxmc.Target.Emitter {
 					obj.files.push(p.file);
 					fileIndex.set(p.file, fi);
 				}
-				rows.push(lines[k]);
-				rows.push(fi);
-				rows.push(p.line);
+				rows[j++] = lines[k];
+				rows[j++] = fi;
+				rows[j++] = p.line;
 				k += 2;
 			}
 			r.lines = rows;
@@ -291,7 +299,7 @@ class Emit implements hxmc.Target.Emitter {
 		ldst(load, i.size, signedLoad, t, i.base, i.disp, i.size == 8);
 	}
 
-	function ins(i:LIns, next:Null<LBlock>, tables:Array<{label:Int, entries:Array<LBlock>}>) {
+	function ins(i:LIns, next:Null<LBlock>, tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}>) {
 		if (lines != null && i.pos != 0 && i.pos != lastPos) {
 			lastPos = i.pos;
 			lines.push(text.buf.len - start);

@@ -43,7 +43,10 @@ class EvalMisc {
 	public static function updateObjectPrototype(o:Vobject, fields:Array<{name:Int, value:Value}>):Void {
 		var ctx = EvalContext.getCtx();
 		var r = EvalEncode.getObjectPrototype(EvalContext.getCtx(), fields);
-		o.ofields = [for (f in r.sorted) f.value];
+		var fields = new haxe.ds.Vector<Value>(r.sorted.length);
+		for (i in 0...r.sorted.length)
+			fields[i] = r.sorted[i].value;
+		o.ofields = fields;
 		o.oproto = OProto(r.proto);
 	}
 
@@ -195,7 +198,7 @@ class EvalMisc {
 		}
 	}
 
-	public static function arraysEqual(cmp:Value->Value->Bool, a1:Array<Value>, a2:Array<Value>):Bool {
+	public static function arraysEqual(cmp:Value->Value->Bool, a1:haxe.ds.Vector<Value>, a2:haxe.ds.Vector<Value>):Bool {
 		if (a1.length != a2.length) return false;
 		for (i in 0...a1.length) if (!cmp(a1[i], a2[i])) return false;
 		return true;

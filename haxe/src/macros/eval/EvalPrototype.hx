@@ -30,6 +30,8 @@ import core.TFunctions;
 import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalHash;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
 
 using macros.eval.EvalValue.EvalValueTools;
 
@@ -156,22 +158,22 @@ class PrototypeBuilder {
 		for (i in 0...pctx.fields.length)
 			pnames = pnames.add(pctx.fields[i].name, i);
 		var pinstanceNames:GlobalsIntMap<Int>;
-		var pinstanceFields:Array<Value>;
+		var pinstanceFields:haxe.ds.Vector<Value>;
 		var f:Vprototype->Void;
 		if (!pctx.isStatic) {
 			// Combines parent instance fields with current instance fields.
 			var names:GlobalsIntMap<Int>;
-			var fields:Array<Value>;
+			var fields:haxe.ds.Vector<Value>;
 			switch pctx.parent {
 				case null:
 					names = GlobalsIntMap.empty();
-					fields = [];
+					fields = new haxe.ds.Vector(0);
 				case proto:
 					names = proto.pinstanceNames;
 					fields = proto.pinstanceFields;
 			}
 			var offset = fields.length;
-			var a = [for (_ in 0...offset + pctx.instanceFields.length) VNull];
+			var a = new haxe.ds.Vector<Value>(offset + pctx.instanceFields.length, VNull);
 			for (i in 0...offset)
 				a[i] = fields[i];
 			// Create the mapping from hashed name to field offset for instance fields.
@@ -196,13 +198,13 @@ class PrototypeBuilder {
 			};
 		} else {
 			pinstanceNames = GlobalsIntMap.empty();
-			pinstanceFields = [];
+			pinstanceFields = new haxe.ds.Vector(0);
 			f = proto -> {
 				initializeFields(pctx, proto);
 			};
 		}
 		// Create the prototype.
-		var proto = new Vprototype(pctx.key, [for (_ in 0...pctx.fields.length) VNull], pnames, pinstanceFields, pinstanceNames,
+		var proto = new Vprototype(pctx.key, new haxe.ds.Vector(pctx.fields.length, VNull), pnames, pinstanceFields, pinstanceNames,
 			pctx.parent, pctx.kind, VNull);
 		proto.pvalue = EvalValueTools.vprototype(proto);
 		// Register the prototype.
@@ -355,7 +357,7 @@ class EvalPrototype {
 						case TFun(sig):
 							sig.args.map(a -> EvalHash.hash(a.name));
 						case _:
-							[];
+							vector();
 					}
 					{name: name, params: args};
 				});
@@ -363,10 +365,10 @@ class EvalPrototype {
 				inline function enumFieldValue(ef:TEnumField):Value {
 					return switch TFunctions.follow(ef.efType) {
 						case TFun(_):
-							var f = (vl:Array<Value>) -> EvalEncode.encodeEnumValue(key, ef.efIndex, vl.copy(), ef.efPos);
+							var f = (vl:Array<Value>) -> EvalEncode.encodeEnumValue(key, ef.efIndex, Vector.fromArrayCopy(vl), ef.efPos);
 							EvalValueTools.vstaticFunction(f);
 						case _:
-							EvalEncode.encodeEnumValue(key, ef.efIndex, [], ef.efPos);
+							EvalEncode.encodeEnumValueV(key, ef.efIndex, new haxe.ds.Vector(0), ef.efPos);
 					}
 				}
 				// port: PMap.iter: ascending key order

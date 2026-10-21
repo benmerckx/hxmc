@@ -50,11 +50,14 @@ class Unwind {
 
 	// ---- DWARF call frame information
 
+	// the DWARF numbers of x86-64 registers 0-7 by the emitter's number (rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi)
+	static final X64_DWARF:haxe.ds.Vector<Int> = core.ds.VectorTools.vector(0, 2, 1, 3, 7, 6, 4, 5);
+
 	// the DWARF number of an emitter's register
 	static function dwarfReg(r:Int, arm:Bool):Int {
 		if (arm) return r < 32 ? r : 64 + (r - 32);
 		if (r >= 16) return 17 + (r - 16);
-		return [0, 2, 1, 3, 7, 6, 4, 5][r & 7] + (r & 8);
+		return X64_DWARF[r & 7] + (r & 8);
 	}
 
 	// the CIE every FDE shares: x86-64 CFA = rsp + 8, the return address at
@@ -88,7 +91,7 @@ class Unwind {
 	}
 
 	// the CFA instructions of a function of `size` bytes from its operations
-	public static function cfi(ops:Array<Int>, size:Int, arm:Bool, b:Buf) {
+	public static function cfi(ops:haxe.ds.Vector<Int>, size:Int, arm:Bool, b:Buf) {
 		var codeAlign = arm ? 4 : 1;
 		var sp = arm ? 31 : 7, fp = arm ? 29 : 6;
 		var loc = 0;
@@ -248,15 +251,16 @@ class Unwind {
 	// .eh_frame of these functions (one CIE, an FDE each, a terminator),
 	// whose FDEs give the functions' addresses through RPc32 relocations;
 	// fdes: the offset of each FDE (for .eh_frame_hdr)
-	public static function ehFrame(recs:Array<FuncRec>, arm:Bool, name:String):{sec:Section, fdes:Array<Int>} {
+	public static function ehFrame(recs:Array<FuncRec>, arm:Bool, name:String):{sec:Section, fdes:haxe.ds.Vector<Int>} {
 		var s = new Section(name, RoData, 8);
 		var b = s.buf;
 		cie(b, arm);
-		var fdes = [];
+		var fdes = new haxe.ds.Vector<Int>(recs.length);
 		var insns = new Buf(256);
-		for (r in recs) {
+		for (k in 0...recs.length) {
+			var r = recs[k];
 			var at = b.len;
-			fdes.push(at);
+			fdes[k] = at;
 			b.u32(0);
 			b.u32(at + 4); // the distance back to the CIE (at 0)
 			s.relocs.push(new Reloc(b.len, RPc32, r.sym, 0));
@@ -298,7 +302,7 @@ class Unwind {
 	// the UNWIND_INFO of an x86-64 function (null: a leaf function that
 	// leaves the stack pointer alone, which needs none). Epilogues are not
 	// described: the unwinder recognizes them (add rsp; pops; ret).
-	public static function winX64(ops:Array<Int>):Null<Buf> {
+	public static function winX64(ops:haxe.ds.Vector<Int>):Null<Buf> {
 		var codes:Array<Array<Int>> = []; // slots of each code, in prologue order
 		var fpreg = 0, prolog = 0;
 		var k = 0;
@@ -346,7 +350,7 @@ class Unwind {
 	// the .xdata of an arm64 function (null: a leaf function without a
 	// frame): the prologue's unwind codes in reverse, then the epilogue's
 	// (the same for every epilogue of a function) in order
-	public static function winA64(ops:Array<Int>, size:Int):Null<Buf> {
+	public static function winA64(ops:haxe.ds.Vector<Int>, size:Int):Null<Buf> {
 		var pro = new Buf(32), epi = new Buf(32);
 		var proCodes:Array<Buf> = [];
 		var epilogues:Array<Int> = [];

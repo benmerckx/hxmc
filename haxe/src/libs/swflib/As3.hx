@@ -19,8 +19,10 @@
 
 package libs.swflib;
 
+import haxe.ds.Vector;
+
 // port: haxe/libs/swflib/as3.mli. `'a index` and `'a index_nz` are plain Ints
-// (the phantom type is not kept); `MultiArray.t` is an Array.
+// (the phantom type is not kept); `MultiArray.t` is an Array, an OCaml array a Vector.
 typedef Index = Int;
 typedef IndexNz = Int;
 typedef As3Ident = String;
@@ -269,7 +271,7 @@ typedef As3Var = {
 
 typedef As3Metadata = {
 	var meta3_name:Index;
-	var meta3_data:Array<{k:Null<Index>, v:Index}>;
+	var meta3_data:Vector<{k:Null<Index>, v:Index}>;
 }
 
 enum As3FieldKind {
@@ -283,7 +285,7 @@ typedef As3Field = {
 	var f3_name:As3Name;
 	var f3_slot:As3Slot;
 	var f3_kind:As3FieldKind;
-	var f3_metas:Null<Array<IndexNz>>;
+	var f3_metas:Null<Vector<IndexNz>>;
 }
 
 typedef As3Class = {
@@ -293,14 +295,14 @@ typedef As3Class = {
 	var cl3_final:Bool;
 	var cl3_interface:Bool;
 	var cl3_namespace:Null<Index>;
-	var cl3_implements:Array<As3Name>;
+	var cl3_implements:Vector<As3Name>;
 	var cl3_construct:IndexNz;
-	var cl3_fields:Array<As3Field>;
+	var cl3_fields:Vector<As3Field>;
 }
 
 typedef As3Static = {
 	var st3_method:IndexNz;
-	var st3_fields:Array<As3Field>;
+	var st3_fields:Vector<As3Field>;
 }
 
 typedef As3TryCatch = {
@@ -318,23 +320,23 @@ typedef As3Function = {
 	var fun3_init_scope:Int;
 	var fun3_max_scope:Int;
 	var fun3_code:Array<As3Opcode>;
-	var fun3_trys:Array<As3TryCatch>;
-	var fun3_locals:Array<As3Field>;
+	var fun3_trys:Vector<As3TryCatch>;
+	var fun3_locals:Vector<As3Field>;
 }
 
 typedef As3Tag = {
-	var as3_ints:Array<As3Int>;
-	var as3_uints:Array<As3Uint>;
-	var as3_floats:Array<As3Float>;
-	var as3_idents:Array<As3Ident>;
-	var as3_namespaces:Array<As3Namespace>;
-	var as3_nsets:Array<As3NsSet>;
-	var as3_names:Array<As3MultiName>;
-	var as3_method_types:Array<As3MethodType>;
-	var as3_metadatas:Array<As3Metadata>;
-	var as3_classes:Array<As3Class>;
-	var as3_statics:Array<As3Static>;
-	var as3_inits:Array<As3Static>;
-	var as3_functions:Array<As3Function>;
+	var as3_ints:Vector<As3Int>;
+	var as3_uints:Vector<As3Uint>;
+	var as3_floats:Vector<As3Float>;
+	var as3_idents:Vector<As3Ident>;
+	var as3_namespaces:Vector<As3Namespace>;
+	var as3_nsets:Vector<As3NsSet>;
+	var as3_names:Vector<As3MultiName>;
+	var as3_method_types:Vector<As3MethodType>;
+	var as3_metadatas:Vector<As3Metadata>;
+	var as3_classes:Vector<As3Class>;
+	var as3_statics:Vector<As3Static>;
+	var as3_inits:Vector<As3Static>;
+	var as3_functions:Vector<As3Function>;
 	var as3_unknown:String; /* only for partial parsing */
 }

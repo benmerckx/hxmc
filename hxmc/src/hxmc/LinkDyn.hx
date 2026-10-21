@@ -205,7 +205,7 @@ class LinkDyn extends Link {
 		}
 		o.sections.push(t);
 		// (and what their prologues and epilogues do: Unwind; _start is the outermost frame)
-		o.funcs.push(new FuncRec(o.define("_start", t, start, init - start), [Unwind.ENTRY, 0, 0, 0]));
+		o.funcs.push(new FuncRec(o.define("_start", t, start, init - start), core.ds.VectorTools.vector(Unwind.ENTRY, 0, 0, 0)));
 		var U = Unwind;
 		var initOps = [], finiOps = [];
 		function op(ops:Array<Int>, kind:Int, at:Int, x = 0, y = 0) {
@@ -235,8 +235,8 @@ class LinkDyn extends Link {
 				[U.POP, e + 5, 3], [U.RET, e + 6, 0]])
 				op(finiOps, x[0], x[1], x[2]);
 		}
-		o.funcs.push(new FuncRec(o.define("hxmc_init", t, init, initEnd - init, false), initOps));
-		if (hasFini) o.funcs.push(new FuncRec(o.define("hxmc_fini", t, fini, finiEnd - fini, false), finiOps));
+		o.funcs.push(new FuncRec(o.define("hxmc_init", t, init, initEnd - init, false), haxe.ds.Vector.fromArrayCopy(initOps)));
+		if (hasFini) o.funcs.push(new FuncRec(o.define("hxmc_fini", t, fini, finiEnd - fini, false), haxe.ds.Vector.fromArrayCopy(finiOps)));
 		// (atexit, libc_nonshared's, passes its value to __cxa_atexit)
 		var d = new Section(".data.hxmc.dso_handle", Data, 8);
 		d.buf.u64(0, 0);
@@ -301,7 +301,7 @@ class LinkDyn extends Link {
 				for (v in x) ops.push(v);
 		}
 		o.sections.push(t);
-		o.funcs.push(new FuncRec(o.define("hxmc_tls_base", t, 0, b.len, true), ops));
+		o.funcs.push(new FuncRec(o.define("hxmc_tls_base", t, 0, b.len, true), haxe.ds.Vector.fromArrayCopy(ops)));
 		return o;
 	}
 
@@ -696,8 +696,8 @@ class LinkDyn extends Link {
 		if (relaAt != rela.buf.len || relAt != 24 * relatives) throw "hxmc: link: " + Std.int(relaAt / 24) + " dynamic relocations for " + nrela;
 		fillUnwind();
 		// .dynsym, .hash, .gnu.version, .gnu.version_r
-		var buckets = [for (_ in 0...nbucket) 0];
-		var chains = [for (_ in 0...nsym) 0];
+		var buckets = new haxe.ds.Vector<Int>(nbucket);
+		var chains = new haxe.ds.Vector<Int>(nsym);
 		var bssIndex = 15; // the section header of .bss (below)
 		for (i in used) {
 			var at = 24 * i.index;

@@ -142,7 +142,7 @@ class EvalSsl {
 				value: EvalEncode.vifun0(self -> {
 					var x509Crt = nativeCert(self);
 					var a = NativeSsl.certAltNames(x509Crt);
-					VArray(EvalArray.create(a.map(EvalEncode.encodeString)));
+					VArray(EvalArray.ofList(a.map(EvalEncode.encodeString)));
 				})
 			},
 			{

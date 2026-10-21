@@ -34,6 +34,10 @@ import core.Texpr;
 import core.Texpr.Builder;
 import core.ds.NotFound;
 import generators.JsSourcemap;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: Buffer.t; only the last character is ever inspected (`Buffer.nth buf (length-1)`).
 class JsBuffer {
@@ -261,7 +265,14 @@ class Genjs {
 		}
 	}
 
-	public static function concat<A>(ctx:JsCtx, s:String, f:A->Void, l:Array<A>):Void {
+	extern overload public static inline function concat<A>(ctx:JsCtx, s:String, f:A->Void, l:Array<A>):Void {
+		for (i in 0...l.length) {
+			if (i > 0) spr(ctx, s);
+			f(l[i]);
+		}
+	}
+
+	extern overload public static inline function concat<A>(ctx:JsCtx, s:String, f:A->Void, l:Vector<A>):Void {
 		for (i in 0...l.length) {
 			if (i > 0) spr(ctx, s);
 			f(l[i]);
@@ -278,16 +289,16 @@ class Genjs {
 		It's the only way to avoid disabling javascript VM optimizations of functions
 		with rest arguments.
 	**/
-	public static function declareRestArgsLegacy(com:Gctx, offset:Int, restArg:TVar):Array<TExpr> {
+	public static function declareRestArgsLegacy(com:Gctx, offset:Int, restArg:TVar):Vector<TExpr> {
 		var i = Std.string(offset);
 		var newArray = mk(TIdent("new Array($l>" + i + "?$l-" + i + ":0)"), tDynamic, restArg.vPos);
 		var populate = mk(TIdent("for(var $i=" + i + ";$i<$l;++$i){" + (ident(restArg.vName)) + "[$i-" + i + "]=arguments[$i];}"),
 			com.basic.tvoid, restArg.vPos);
-		return [
+		return vector(
 			mk(TIdent("var $l=arguments.length"), com.basic.tvoid, restArg.vPos),
 			mk(TVar(restArg, newArray), com.basic.tvoid, restArg.vPos),
 			populate
-		];
+		);
 	}
 
 	public static function funBlock(ctx:JsCtx, f:TFunc, p:Pos):TExpr {
@@ -387,28 +398,28 @@ class Genjs {
 		If `add_null_context` is provided then `element_list` will have `null` as the
 		first expr if needed.
 	**/
-	public static function applyArgs(addNullContext:Bool = false, ctx:JsCtx, el:Array<TExpr>):{apply:Bool, el:Array<TExpr>} {
+	public static function applyArgs(addNullContext:Bool = false, ctx:JsCtx, el:Vector<TExpr>):{apply:Bool, el:Vector<TExpr>} {
 		if (ctx.esVersion < 6) {
 			var n = el.length;
 			if (n == 1 && !addNullContext) switch el[0].eexpr {
 				case TUnop(Spread, Prefix, rest):
-					return {apply: true, el: [rest]};
+					return {apply: true, el: vector(rest)};
 				case _:
 			}
 			if (n > 0) switch el[n - 1].eexpr {
 				case TUnop(Spread, Prefix, rest):
 					/* [arg1, arg2, ..., argN].concat(rest) */
-					var args = if (addNullContext) [Builder.makeNull(tDynamic, nullPos)].concat(el.slice(0, n - 1)) else el.slice(0, n - 1);
+					var args = if (addNullContext) VectorTools.cons(Builder.makeNull(tDynamic, nullPos), el.slice(0, n - 1)) else el.slice(0, n - 1);
 					var arr = mk(TArrayDecl(args), tDynamic, nullPos);
 					var concat = mk(TField(arr, FDynamic("concat")), tDynamic, nullPos);
-					return {apply: true, el: [mk(TCall(concat, [rest]), tDynamic, nullPos)]};
+					return {apply: true, el: vector(mk(TCall(concat, vector(rest)), tDynamic, nullPos))};
 				case _:
 			}
 			return {apply: false, el: el};
 		} else return {apply: false, el: el};
 	}
 
-	public static function genCall(ctx:JsCtx, e:TExpr, el:Array<TExpr>, inValue:Bool):Void {
+	public static function genCall(ctx:JsCtx, e:TExpr, el:Vector<TExpr>, inValue:Bool):Void {
 		var r = applyArgs(ctx, el);
 		var apply = r.apply, el = r.el;
 		switch [e.eexpr, el] {
@@ -548,7 +559,7 @@ class Genjs {
 		}, []);
 	}
 
-	public static function genCallWithApply(ctx:JsCtx, target:TExpr, args:Array<TExpr>):Void {
+	public static function genCallWithApply(ctx:JsCtx, target:TExpr, args:Vector<TExpr>):Void {
 		if (args.length != 1) die("`args` for `gen_call_with_apply` must contain exactly one item", "genjs.ml", target.epos);
 		switch target.eexpr {
 			case TField(this_, FInstance(_, _, {cfName: field}) | FAnon({cfName: field}) | FDynamic(field) | FClosure(_, {cfName: field})):
@@ -897,7 +908,7 @@ class Genjs {
 		var oldInValue = ctx.inValue, oldInLoop = ctx.inLoop;
 		ctx.inValue = null;
 		ctx.inLoop = false;
-		function mkNonRestArgNames(args:Array<{variable:TVar, defaultValue:Null<TExpr>}>):Array<String> {
+		function mkNonRestArgNames(args:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>):Array<String> {
 			return [
 				for (a in args) {
 					checkVarDeclaration(a.variable);
@@ -928,7 +939,7 @@ class Genjs {
 				var body = {
 					var el = switch f.tfExpr.eexpr {
 						case TBlock(el): argsDecl.concat(el);
-						case _: argsDecl.concat([f.tfExpr]);
+						case _: argsDecl.snoc(f.tfExpr);
 					}
 					mk(TBlock(el), f.tfExpr.etype, f.tfExpr.epos);
 				}
@@ -1059,10 +1070,7 @@ class Genjs {
 				var v = value();
 				var sw2:TSwitch = {
 					switchSubject: sw.switchSubject,
-					switchCases: [
-						for (c in sw.switchCases)
-							({casePatterns: c.casePatterns, caseExpr: assign(c.caseExpr)} : TSwitchCase)
-					],
+					switchCases: sw.switchCases.map(c -> ({casePatterns: c.casePatterns, caseExpr: assign(c.caseExpr)} : TSwitchCase)),
 					switchDefault: sw.switchDefault == null ? null : assign(sw.switchDefault),
 					switchExhaustive: sw.switchExhaustive
 				};
@@ -1070,14 +1078,14 @@ class Genjs {
 				v();
 			case TTry(b, catchs):
 				var v = value();
-				function block(e:TExpr):TExpr return mk(TBlock([e]), e.etype, e.epos);
-				genExpr(ctx, mk(TTry(block(assign(b)), [for (c in catchs) {variable: c.variable, expr: block(assign(c.expr))}]), e.etype, e.epos));
+				function block(e:TExpr):TExpr return mk(TBlock(vector(e)), e.etype, e.epos);
+				genExpr(ctx, mk(TTry(block(assign(b)), catchs.map(c -> {variable: c.variable, expr: block(assign(c.expr))})), e.etype, e.epos));
 				v();
 		}
 		clearMapping();
 	}
 
-	public static function genSyntax(ctx:JsCtx, meth:String, args:Array<TExpr>, pos:Pos):Void {
+	public static function genSyntax(ctx:JsCtx, meth:String, args:Vector<TExpr>, pos:Pos):Void {
 		switch [meth, args] {
 			case ["construct", _] if (args.length >= 1):
 				var cl = args[0], params = args.slice(1);
@@ -1865,7 +1873,7 @@ class Genjs {
 							core.Native.getNativeName(c.clMeta).name;
 						} catch (_:NotFound) {
 							c.clMeta = [
-								({meta: Meta.Native, exprs: [{expr: EConst(String(flatPath, SDoubleQuotes)), pos: nullPos}], pos: nullPos} : MetadataEntry)
+								({meta: Meta.Native, exprs: vector({expr: EConst(String(flatPath, SDoubleQuotes)), pos: nullPos}), pos: nullPos} : MetadataEntry)
 							].concat(c.clMeta);
 							core.Native.applyNativePaths(mt);
 							flatPath;

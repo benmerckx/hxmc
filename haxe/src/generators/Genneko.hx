@@ -22,6 +22,7 @@ package generators;
 import core.OcamlFilename;
 
 import haxe.io.Bytes;
+import haxe.ds.Vector;
 import core.Globals;
 import core.Globals.*;
 import core.Globals.Pos;
@@ -45,6 +46,8 @@ import libs.neko.Ncompile.Ncompile;
 import libs.neko.Ncompile.Error as NcompileError;
 import libs.neko.Nast.Pos as NPos;
 import libs.neko.Nast.Expr as NExpr;
+
+using core.ds.VectorTools;
 
 /*
 	The Haxe Compiler
@@ -277,7 +280,7 @@ class Genneko {
 		}
 	}
 
-	static function genCall(ctx:Context, p:NPos, e:TExpr, el:Array<TExpr>):NExpr {
+	static function genCall(ctx:Context, p:NPos, e:TExpr, el:Vector<TExpr>):NExpr {
 		switch [e.eexpr, el] {
 			case [TConst(TSuper), _]:
 				var c = (switch follow(e.etype) {
@@ -287,7 +290,7 @@ class Genneko {
 				return call(p, builtin(p, "call"), [
 					field(p, genTypePath(p, c.clPath), "__construct__"),
 					this_(p),
-					array(p, el.map(genExpr.bind(ctx)))
+					array(p, el.mapToArray(genExpr.bind(ctx)))
 				]);
 			case [TIdent("__resources__"), []]:
 				return call(p, builtin(p, "array"), ctx.com.resources.fold((name, data, acc:Array<NExpr>) -> {
@@ -306,14 +309,14 @@ class Genneko {
 				return call(p, builtin(p, "call"), [
 					field(p, genTypePath(p, new GlobalTypePath(c.clPath.pack, "@" + c.clPath.name)), fieldName(f)),
 					this_(p),
-					array(p, el.map(genExpr.bind(ctx)))
+					array(p, el.mapToArray(genExpr.bind(ctx)))
 				]);
 			case [_, _]:
 				var e = (switch genExpr(ctx, e) {
 					case e = {decl: EFunction(_)}: new NExpr(EBlock([e]), p);
 					case e: e;
 				});
-				return call(p, e, el.map(genExpr.bind(ctx)));
+				return call(p, e, el.mapToArray(genExpr.bind(ctx)));
 		}
 	}
 
@@ -369,7 +372,7 @@ class Genneko {
 				return genExpr(ctx, e);
 			case TObjectDecl(fl):
 				var hasToString = false;
-				var fl = fl.map(fe -> {
+				var fl = fl.mapToArray(fe -> {
 					var f = fe.key.name, e = fe.expr;
 					if (f == "toString") hasToString = (switch follow(e.etype) {
 						case TFun({args: []}): true;
@@ -379,11 +382,11 @@ class Genneko {
 				});
 				return new NExpr(EObject(if (hasToString) [{name: "__string", expr: ident(p, "@default__string")}].concat(fl) else fl), p);
 			case TArrayDecl(el):
-				return call(p, field(p, ident(p, "Array"), "new1"), [array(p, el.map(genExpr.bind(ctx))), int(p, el.length)]);
+				return call(p, field(p, ident(p, "Array"), "new1"), [array(p, el.mapToArray(genExpr.bind(ctx))), int(p, el.length)]);
 			case TCall(e, el):
 				return genCall(ctx, p, e, el);
 			case TNew(c, tl, params):
-				return call(p, field(p, genTypePath(p, c.clPath), "new"), params.map(genExpr.bind(ctx)));
+				return call(p, field(p, genTypePath(p, c.clPath), "new"), params.mapToArray(genExpr.bind(ctx)));
 			case TUnop(op, flag, e):
 				return genUnop(ctx, p, op, flag, e);
 			case TVar(v, eo):
@@ -413,9 +416,9 @@ class Genneko {
 						l.reverse();
 						new NExpr(EBlock(l), p);
 				});
-				return new NExpr(EFunction(f.tfArgs.map(a -> bs(argName(a))), withReturn(e)), p);
+				return new NExpr(EFunction(f.tfArgs.mapToArray(a -> bs(argName(a))), withReturn(e)), p);
 			case TBlock(el):
-				return new NExpr(EBlock(el.map(genExpr.bind(ctx))), p);
+				return new NExpr(EBlock(el.mapToArray(genExpr.bind(ctx))), p);
 			case TIf(cond, e1, e2):
 				/* if(e)-1 is parsed as if( e - 1 ) */
 				function parent(e:TExpr) return mk(TParenthesis(e), e.etype, e.epos);
@@ -480,14 +483,13 @@ class Genneko {
 						single = false;
 				}
 				if (single) {
-					return new NExpr(ESwitch(e, cases.map(c -> switch c.casePatterns.map(genExpr.bind(ctx)) {
+					return new NExpr(ESwitch(e, cases.mapToArray(c -> switch c.casePatterns.map(genExpr.bind(ctx)) {
 						case []: Globals.die("", "genneko.ml");
 						case [e]: {e1: e, e2: genExpr(ctx, c.caseExpr)};
 						case _: throw core.ds.Exit.raise();
 					}), eo), p);
 				} else {
-					var rcases = cases.copy();
-					rcases.reverse();
+					var rcases = cases.rev();
 					var acc = (eo == null ? null_(p) : eo);
 					for (c in rcases) {
 						var el = c.casePatterns, e = c.caseExpr;
@@ -548,13 +550,13 @@ class Genneko {
 						genMethod(ctx, p, f, [
 							{
 								name: "new",
-								e: new NExpr(EFunction(params.map(bs), new NExpr(EBlock([
+								e: new NExpr(EFunction(params.mapToArray(bs), new NExpr(EBlock([
 									new NExpr(EVars([{name: "@o", expr: call(p, builtin(p, "new"), [null_(p)])}]), p),
 									(call(p, builtin(p, "objsetproto"), [ident(p, "@o"), clpath])),
 									(call(p, builtin(p, "call"), [
 										field(p, this_(p), "__construct__"),
 										ident(p, "@o"),
-										array(p, params.map(ident.bind(p)))
+										array(p, params.mapToArray(ident.bind(p)))
 									])),
 									new NExpr(EReturn(ident(p, "@o")), p)
 								]), p)), p)
@@ -634,14 +636,14 @@ class Genneko {
 		return new NExpr(EBinop("=", field(p, path, c.efName), switch follow(c.efType) {
 			case TFun(sig):
 				var params = sig.args.map(a -> a.name);
-				new NExpr(EFunction(params.map(bs), new NExpr(EBlock([
+				new NExpr(EFunction(params.mapToArray(bs), new NExpr(EBlock([
 					new NExpr(EVars([
 						{
 							name: "@tmp",
 							expr: new NExpr(EObject([
 								{name: "tag", expr: str(p, c.efName)},
 								{name: "index", expr: int(p, c.efIndex)},
-								{name: "args", expr: array(p, params.map(ident.bind(p)))},
+								{name: "args", expr: array(p, params.mapToArray(ident.bind(p)))},
 							]), p)
 						}
 					]), p),

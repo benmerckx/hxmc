@@ -42,6 +42,7 @@ import macros.eval.EvalStdLib;
 import macros.eval.EvalStdLibA;
 import macros.eval.EvalStdLibA.StdCompress;
 import compiler.io.CompilerIo;
+import haxe.ds.Vector;
 
 using macros.eval.EvalValue.EvalValueTools;
 // port: the host natives of hxmc (hxmc/std)
@@ -1402,7 +1403,7 @@ class StdString {
 				}
 			}
 			loop(0, 0);
-			EvalEncode.encodeArrayInstance(EvalArray.create(acc));
+			EvalEncode.encodeArrayInstance(EvalArray.ofList(acc));
 		}
 	});
 
@@ -2119,7 +2120,7 @@ class StdType {
 			}
 		}
 		var r = loop(v);
-		EvalEncode.encodeEnumValue(EvalHash.key_ValueType, r.i, r.vl, null);
+		EvalEncode.encodeEnumValue(EvalHash.key_ValueType, r.i, Vector.fromArrayCopy(r.vl), null);
 	});
 }
 

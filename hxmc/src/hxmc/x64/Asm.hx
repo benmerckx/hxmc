@@ -114,17 +114,19 @@ class Asm {
 		b = sec != null ? sec.buf : new Buf(4096);
 	}
 
+	// the names of registers 0-7 by size
+	static final N64:haxe.ds.Vector<String> = core.ds.VectorTools.vector("rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi");
+	static final N32:haxe.ds.Vector<String> = core.ds.VectorTools.vector("eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi");
+	static final N16:haxe.ds.Vector<String> = core.ds.VectorTools.vector("ax", "cx", "dx", "bx", "sp", "bp", "si", "di");
+	static final N8:haxe.ds.Vector<String> = core.ds.VectorTools.vector("al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil");
+
 	public static function regName(r:Int, size:Int):String {
 		if (r >= 16) return "xmm" + (r - 16);
-		var n64 = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"];
-		var n32 = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"];
-		var n16 = ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"];
-		var n8 = ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil"];
 		if (r < 8) return switch size {
-			case 8: n64[r];
-			case 4: n32[r];
-			case 2: n16[r];
-			case _: n8[r];
+			case 8: N64[r];
+			case 4: N32[r];
+			case 2: N16[r];
+			case _: N8[r];
 		}
 		return "r" + r + (switch size {
 			case 8: "";

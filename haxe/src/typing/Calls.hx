@@ -41,16 +41,20 @@ import typing.Fields.*;
 import typing.FieldAccess;
 import typing.FieldAccess.*;
 import typing.CallUnification.*;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class Calls {
-	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Pos, ?forceInline:Bool):TExpr {
+	public static function makeCall(ctx:TyperContext, e:TExpr, params:Vector<TExpr>, t:T, p:Pos, ?forceInline:Bool):TExpr {
 		if (forceInline == null) forceInline = false;
 		switch follow(e.etype) {
 			case TFun({args: args, ret: _}):
 				if (args.length > 0) {
 					var last = args[args.length - 1];
 					if (last.optional && isPosInfos(last.type) && args.length
-						- 1 == params.length) params = params.concat([mkInfosT(ctx, p, [], last.type)]);
+						- 1 == params.length) params = params.concat(vector(mkInfosT(ctx, p, [], last.type)));
 				}
 			case _:
 		}
@@ -143,7 +147,7 @@ class Calls {
 		}
 		var et = TyperBase.typeModuleType(ctx, TClassDecl(c), p),
 			ef = mk(TField(et, FStatic(c, cf)), access.type, p);
-		return makeCall(ctx, ef, [ebase, access.index], access.ret, p);
+		return makeCall(ctx, ef, vector(ebase, access.index), access.ret, p);
 	}
 
 	public static function mkArraySetCall(ctx:TyperContext, access:{
@@ -161,7 +165,7 @@ class Calls {
 		}
 		var et = TyperBase.typeModuleType(ctx, TClassDecl(c), p),
 			ef = mk(TField(et, FStatic(c, cf)), access.type, p);
-		return makeCall(ctx, ef, [ebase, access.index, access.value], access.ret, p);
+		return makeCall(ctx, ef, vector(ebase, access.index, access.value), access.ret, p);
 	}
 
 	public static function abstractUsingParamType(sea:StaticExtensionAccess):T return switch follow(sea.seThis.etype) {
@@ -254,7 +258,7 @@ class Calls {
 					stored = storeTypedExpr(ctx.com, sea.seThis, field.epos);
 				var meta:core.Ast.MetadataEntry = {
 					meta: MetaTag.StaticExtension,
-					exprs: [makeStoredIdExpr(stored.id, field.epos)],
+					exprs: vector(makeStoredIdExpr(stored.id, field.epos)),
 					pos: Globals.nullPos
 				};
 				var t = switch follow(field.etype) {
@@ -269,8 +273,8 @@ class Calls {
 							FRead) : raiseTypingError("Invalid macro access", fa.faPos);
 					case _: fa.faInline ? accGetInlineRead(ctx, fa) : FieldAccess.getFieldExpr(fa, FRead);
 				}
-			case AKAccessor(fa): dispatcher(fa.faPos).fieldCall(fa, [], []);
-			case AKUsingAccessor(sea): dispatcher(sea.seAccess.faPos).fieldCall(sea.seAccess, [sea.seThis], []);
+			case AKAccessor(fa): dispatcher(fa.faPos).fieldCall(fa, vector(), vector());
+			case AKUsingAccessor(sea): dispatcher(sea.seAccess.faPos).fieldCall(sea.seAccess, vector(sea.seThis), vector());
 			case AKUsingField(sea):
 				var e = sea.seThis,
 					field = FieldAccess.getFieldExpr(sea.seAccess, FGet);
@@ -280,7 +284,7 @@ class Calls {
 						var p = sea.seAccess.faPos, args = allArgs.slice(1);
 						unify(ctx, abstractUsingParamType(sea), allArgs[0].type, e.epos);
 						var callbackType = TFun({args: args, ret: ret}),
-							wrapperType = TFun({args: [{name: "_e", optional: false, type: e.etype}], ret: callbackType});
+							wrapperType = TFun({args: vector({name: "_e", optional: false, type: e.etype}), ret: callbackType});
 						// arguments might not have names in case of variable fields of function types, so we generate one (issue #2495)
 						var vars = args.map(function(arg) {
 							var t = arg.optional ? ctx.t.tnull(arg.type) : arg.type;
@@ -290,7 +294,7 @@ class Calls {
 							};
 						});
 						var ve = allocVar(VGenerated, "_e", e.etype, e.epos);
-						var call = makeCall(ctx, field, [ve].concat(vars.map(a -> a.variable)).map(v -> mk(TLocal(v), v.vType, p)), ret, p);
+						var call = makeCall(ctx, field, VectorTools.cons(mk(TLocal(ve), ve.vType, p), vars.map(a -> mk(TLocal(a.variable), a.variable.vType, p))), ret, p);
 						var body = switch follow(ret) {
 							case TAbstract({aPath: {pack: [], name: "Void"}}, _): call;
 							case _: mk(TReturn(call), tDynamic, p);
@@ -304,11 +308,11 @@ class Calls {
 							tfExpr: body
 						}), callbackType, p);
 						var wrapper = mk(TFunction({
-							tfArgs: [{variable: ve, defaultValue: null}],
+							tfArgs: vector({variable: ve, defaultValue: null}),
 							tfType: callbackType,
 							tfExpr: mk(TReturn(callback), tDynamic, p)
 						}), wrapperType, p);
-						makeCall(ctx, wrapper, [e], callbackType, p);
+						makeCall(ctx, wrapper, vector(e), callbackType, p);
 					case _: throw "Static extension field is not a function";
 				}
 		};
@@ -320,17 +324,17 @@ class Calls {
 		case _:
 	}
 
-	public static function buildCallAccess(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, mode:AccessMode, withType:WithTypeValue,
+	public static function buildCallAccess(ctx:TyperContext, acc:AccessKind, el:Vector<Expr>, mode:AccessMode, withType:WithTypeValue,
 			p:Pos):AccessKind {
 		inline function getAccessor(fa:FieldAccessData,
-				args:Array<TExpr>):TExpr return new CallDispatcher(ctx, MGet, WithTypeTools.value, fa.faPos).fieldCall(fa, args, []);
+				args:Vector<TExpr>):TExpr return new CallDispatcher(ctx, MGet, WithTypeTools.value, fa.faPos).fieldCall(fa, args, vector());
 		var dispatch = new CallDispatcher(ctx, mode, withType, p);
 		return switch acc {
 			case AKField(fa):
 				checkDynamicSuperMethodCall(ctx, fa, p);
-				AKExpr(dispatch.fieldCall(fa, [], el));
+				AKExpr(dispatch.fieldCall(fa, vector(), el));
 			case AKUsingField(sea):
-				var e = dispatch.fieldCall(sea.seAccess, [sea.seThis], el);
+				var e = dispatch.fieldCall(sea.seAccess, vector(sea.seThis), el);
 				switch sea.seAccess.faHost {
 					case FHAbstract(_) if (!ctx.allowTransform):
 						// transform XXXImpl.field(this,args) back into this.field(args)
@@ -343,12 +347,12 @@ class Calls {
 					case _:
 				}
 				AKExpr(e);
-			case AKResolve(sea, name): AKExpr(dispatch.exprCall(dispatch.resolveCall(sea, name), [], el));
+			case AKResolve(sea, name): AKExpr(dispatch.exprCall(dispatch.resolveCall(sea, name), vector(), el));
 			case AKNo(_, p): raiseTypingError("This expression cannot be called", p);
 			case AKAccess(_): raiseTypingError("This expression cannot be called", p);
-			case AKAccessor(fa): AKExpr(dispatch.exprCall(getAccessor(fa, []), [], el));
-			case AKUsingAccessor(sea): AKExpr(dispatch.exprCall(getAccessor(sea.seAccess, [sea.seThis]), [], el));
-			case AKExpr(e): AKExpr(dispatch.exprCall(e, [], el));
+			case AKAccessor(fa): AKExpr(dispatch.exprCall(getAccessor(fa, vector()), vector(), el));
+			case AKUsingAccessor(sea): AKExpr(dispatch.exprCall(getAccessor(sea.seAccess, vector(sea.seThis)), vector(), el));
+			case AKExpr(e): AKExpr(dispatch.exprCall(e, vector(), el));
 			case AKSafeNav(sn):
 				// pack the call inside the safe navigation chain
 				AKSafeNav({
@@ -360,7 +364,7 @@ class Calls {
 		};
 	}
 
-	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithTypeValue, p:Pos,
+	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Vector<Expr>, withType:WithTypeValue, p:Pos,
 			?mode:AccessMode):TExpr return accGet(ctx, buildCallAccess(ctx, acc, el, mode == null ? MGet : mode, withType, p));
 
 	public static function needsTempVar(e:TExpr):Bool return switch e.eexpr {
@@ -373,11 +377,11 @@ class Calls {
 		if (!ctx.allowTransform) return mk(e.eexpr, ctx.t.tstring, e.epos);
 		inline function generate(e:TExpr):TExpr {
 			// Ignore visibility of the toString field.
-			ctx.f.meta.unshift({meta: MetaTag.PrivateAccess, exprs: [], pos: e.epos});
-			var acc = Fields.typeField(TypeFieldConfig.create(resume), ctx, e, "toString", e.epos, MCall([]),
+			ctx.f.meta.unshift({meta: MetaTag.PrivateAccess, exprs: vector(), pos: e.epos});
+			var acc = Fields.typeField(TypeFieldConfig.create(resume), ctx, e, "toString", e.epos, MCall(vector()),
 				WithTypeTools.withType(ctx.t.tstring));
 			ctx.f.meta.shift();
-			return buildCall(ctx, acc, [], WithTypeTools.withType(ctx.t.tstring), e.epos);
+			return buildCall(ctx, acc, vector(), WithTypeTools.withType(ctx.t.tstring), e.epos);
 		}
 		if (ctx.com.config.pfStatic && !isNullable(e.etype)) return generate(e);
 		// generate `if(e == null) 'null' else e.toString()`
@@ -386,16 +390,16 @@ class Calls {
 			var tmp = allocVar(VGenerated, "tmp", e.etype, e.epos),
 				local = mk(TLocal(tmp), tmp.vType, tmp.vPos);
 			var check = mk(TBinop(OpEq, local, mk(TConst(TNull), tmp.vType, tmp.vPos)), ctx.t.tbool, e.epos);
-			return mk(TBlock([
+			return mk(TBlock(vector(
 				mk(TVar(tmp, e), tmp.vType, tmp.vPos),
 				mk(TIf(check, stringNull, generate(local)), ctx.t.tstring, tmp.vPos)
-			]), ctx.t.tstring, e.epos);
+			)), ctx.t.tstring, e.epos);
 		}
 		var check = mk(TBinop(OpEq, e, mk(TConst(TNull), e.etype, e.epos)), ctx.t.tbool, e.epos);
 		return mk(TIf(check, stringNull, generate(e)), ctx.t.tstring, e.epos);
 	}
 
-	public static function typeBind(ctx:TyperContext, e:TExpr, signature:TSignature, params:Array<Expr>, safe:Bool, p:Pos):TExpr {
+	public static function typeBind(ctx:TyperContext, e:TExpr, signature:TSignature, params:Vector<Expr>, safe:Bool, p:Pos):TExpr {
 		var args = signature.args, ret = signature.ret, acount = 0;
 		function name(n:String):String {
 			if (n == "" && !ctx.m.isDisplayFile) {
@@ -464,19 +468,20 @@ class Calls {
 				snTempVar: base.tempVar,
 				snAccess: AKExpr(e) // This is weird, but it's not used by safe_nav_branch.
 			};
-			body = TyperBase.safeNavBranch(ctx, sn, () -> makeCall(ctx, base.base, ordered, ret, p));
-		} else body = makeCall(ctx, e, ordered, ret, p);
+			body = TyperBase.safeNavBranch(ctx, sn, () -> makeCall(ctx, base.base, Vector.fromArrayCopy(ordered), ret, p));
+		} else body = makeCall(ctx, e, Vector.fromArrayCopy(ordered), ret, p);
 		if (!ExtType.isVoid(follow(ret))) body = mk(TReturn(body), ret, p);
 		var fn = ({
-			tfArgs: missing.map(arg -> {
+			tfArgs: missing.mapToVector(arg -> {
 				variable: arg.variable,
 				defaultValue: arg.optional ? Texpr.Builder.makeNull(arg.variable.vType, Globals.nullPos) : null
 			}),
 			tfType: ret,
 			tfExpr: body
 		} : core.TType.TFunc);
-		var t = TFun({args: missing.map(arg -> {name: arg.variable.vName, optional: arg.optional, type: arg.variable.vType}), ret: ret});
-		return mk(TBlock(declarations.concat([mk(TFunction(fn), t, p)])), t, p);
+		var t = TFun({args: missing.mapToVector(arg -> {name: arg.variable.vName, optional: arg.optional, type: arg.variable.vType}), ret: ret});
+		declarations.push(mk(TFunction(fn), t, p));
+		return mk(TBlock(Vector.fromArrayCopy(declarations)), t, p);
 	}
 
 	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Pos):AccessKind {

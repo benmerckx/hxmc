@@ -752,13 +752,12 @@ class LinkMachO {
 		}
 		// (the children's offsets, and so the root's size, until stable)
 		var rootSize = 2;
-		var offs:Array<Int> = [];
+		var offs = new haxe.ds.Vector<Int>(items.length);
 		for (_ in 0...4) {
 			var at = rootSize;
-			offs = [];
-			for (it in items) {
-				offs.push(at);
-				at += 1 + 1 + ulebLen(it.addr) + 1; // terminal size, flags, address, no children
+			for (k in 0...items.length) {
+				offs[k] = at;
+				at += 1 + 1 + ulebLen(items[k].addr) + 1; // terminal size, flags, address, no children
 			}
 			var size = 2;
 			for (k in 0...items.length)

@@ -12,6 +12,7 @@ import core.TFunctions.*;
 import core.TOther.*;
 import core.TOther;
 import core.Globals.*;
+import core.ds.VectorTools.vector;
 
 typedef PathFieldMapping<A> = {var pfmPath:core.Globals.GlobalTypePath; var pfmParams:TypeParams; var pfmFields:TypeMap<TClassField>; var pfmConverted:Null<Array<{name:String, value:A}>>; var pfmArity:Int;}
 
@@ -108,7 +109,7 @@ class TanonIdentification<A> {
 		}
 		inline function fieldType(cf:TClassField):T return uctx.opaqueFieldParams ? cf.cfType : monomorphs(cf.cfParams, cf.cfType);
 		try {
-			var monos:Array<T> = switch follow(tc) {
+			var monos:core.TType.TParams = switch follow(tc) {
 				case TInst(c, tl):
 					var ps = pairs(c.clFields);
 					var ms = pfm.pfmParams.map(function(_) return mkMono());
@@ -184,7 +185,7 @@ class TanonIdentification<A> {
 	public function identifyAnon(uctx:UnificationContext, an:TAnon):PathFieldMapping<A> {
 		inline function makePfm(path:core.Globals.GlobalTypePath):PathFieldMapping<A> return {
 			pfmPath: path,
-			pfmParams: [],
+			pfmParams: vector(),
 			pfmFields: an.aFields,
 			pfmConverted: null,
 			pfmArity: countFields(an.aFields)

@@ -38,14 +38,14 @@ class EvalDecode {
 
 	public static function decodeEnum(v:Value):{index:Int, args:Array<Value>} {
 		return switch v {
-			case VEnumValue(ev): {index: ev.eindex, args: ev.eargs.copy()};
+			case VEnumValue(ev): {index: ev.eindex, args: ev.eargs.toArray()};
 			case _: unexpectedValue(v, "enum");
 		}
 	}
 
 	public static function decodeEnumWithPos(v:Value):{index:Int, args:Array<Value>, pos:Pos} {
 		return switch v {
-			case VEnumValue(ev): {index: ev.eindex, args: ev.eargs.copy(), pos: ev.enpos == null ? Globals.nullPos : ev.enpos};
+			case VEnumValue(ev): {index: ev.eindex, args: ev.eargs.toArray(), pos: ev.enpos == null ? Globals.nullPos : ev.enpos};
 			case _: unexpectedValue(v, "enum");
 		}
 	}

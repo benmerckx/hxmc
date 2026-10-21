@@ -30,12 +30,13 @@ import core.Error;
 import optimization.OptimizerTexpr;
 import optimization.Inline;
 import filters.safe.Sanitize;
+import core.ds.VectorTools.vector;
 
 // ----------------------------------------------------------------------
 // REDUCE
 
 class Optimizer {
-	public static function checkEnumConstructionArgs(el:Array<TExpr>, index:Int):Bool {
+	public static function checkEnumConstructionArgs(el:haxe.ds.Vector<TExpr>, index:Int):Bool {
 		var result = true;
 		for (i in 0...el.length) result = result && (i == index || !OptimizerTexpr.hasSideEffect(el[i]));
 		return result;
@@ -80,8 +81,8 @@ class Optimizer {
 
 	public static function reduceControlFlow(scom:context.SafeCom.SafeContext, e:TExpr):TExpr {
 		return switch e.eexpr {
-			case TIf({eexpr: TConst(TBool(t))}, e1, e2): t ? e1 : e2 == null ? TypeOps.mk(TBlock([]), e.etype, e.epos) : e2;
-			case TWhile({eexpr: TConst(TBool(false))}, sub, flag): flag == NormalWhile ? TypeOps.mk(TBlock([]), e.etype, e.epos) /* erase sub */ : e; // we cant remove while since sub can contain continue/break
+			case TIf({eexpr: TConst(TBool(t))}, e1, e2): t ? e1 : e2 == null ? TypeOps.mk(TBlock(vector()), e.etype, e.epos) : e2;
+			case TWhile({eexpr: TConst(TBool(false))}, sub, flag): flag == NormalWhile ? TypeOps.mk(TBlock(vector()), e.etype, e.epos) /* erase sub */ : e; // we cant remove while since sub can contain continue/break
 			case TSwitch(sw):
 				var reduced = checkConstantSwitch(sw);
 				reduced == null ? e : reduced;

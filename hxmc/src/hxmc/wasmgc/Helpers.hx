@@ -514,7 +514,7 @@ class Helpers {
 		return m.addHelper("kind", "p_i", b, []);
 	}
 
-	static final KINDS = ["i", "f", "l", "p", "b"];
+	static final KINDS:haxe.ds.Vector<String> = core.ds.VectorTools.vector("i", "f", "l", "p", "b");
 
 	// the box of a value of kind k on the stack (p: itself)
 	static function box(m:GcModule, b:Buf, k:String)

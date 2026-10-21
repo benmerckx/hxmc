@@ -20,6 +20,7 @@
 package generators.jvm;
 
 import haxe.io.Bytes;
+import haxe.ds.Vector;
 import generators.jvm.JvmGlobals;
 
 /* Low-level data that is written out. */
@@ -32,7 +33,7 @@ import generators.jvm.JvmGlobals;
 	public var fieldAccessFlags:Int;
 	public var fieldNameIndex:Int;
 	public var fieldDescriptorIndex:Int;
-	public var fieldAttributes:Array<JvmAttributeData>;
+	public var fieldAttributes:Vector<JvmAttributeData>;
 }
 
 @:structInit class JvmClassData {
@@ -42,10 +43,10 @@ import generators.jvm.JvmGlobals;
 	public var classAccessFlags:Int;
 	public var classThisClass:Int;
 	public var classSuperClass:Int;
-	public var classInterfaces:Array<Int>;
-	public var classFields:Array<JvmField>;
-	public var classMethods:Array<JvmField>;
-	public var classAttributes:Array<JvmAttributeData>;
+	public var classInterfaces:Vector<Int>;
+	public var classFields:Vector<JvmField>;
+	public var classMethods:Vector<JvmField>;
+	public var classAttributes:Vector<JvmAttributeData>;
 }
 
 @:structInit class JvmException {
@@ -59,8 +60,8 @@ import generators.jvm.JvmGlobals;
 	public var codeMaxStack:Int;
 	public var codeMaxLocals:Int;
 	public var codeCode:Bytes;
-	public var codeExceptions:Array<JvmException>;
-	public var codeAttributes:Array<JvmAttributeData>;
+	public var codeExceptions:Vector<JvmException>;
+	public var codeAttributes:Vector<JvmAttributeData>;
 }
 
 /* Opcodes */
@@ -295,9 +296,9 @@ enum JOpcode {
 	/* other */
 	OpAthrow;
 	OpIinc(i:JByte, c:JByte);
-	OpLookupswitch(pad:Int /* num pad bytes */, def:JBranchOffsetRef /* default */, pairs:Array<{key:Int, offset:JBranchOffsetRef}>);
+	OpLookupswitch(pad:Int /* num pad bytes */, def:JBranchOffsetRef /* default */, pairs:Vector<{key:Int, offset:JBranchOffsetRef}>);
 	OpTableswitch(pad:Int /* num pad bytes */, def:JBranchOffsetRef /* default */, low:Int /* low */, high:Int /* high */,
-		offsets:Array<JBranchOffsetRef>);
+		offsets:Vector<JBranchOffsetRef>);
 	OpMonitorenter;
 	OpMonitorexit;
 	OpRet(i:JByte);

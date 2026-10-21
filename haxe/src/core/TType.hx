@@ -16,6 +16,7 @@ import core.Globals.Pos;
 import core.Message.CompilerMessage;
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
+import haxe.ds.Vector;
 
 // port: the PMap-typed fields (fields of anonymous structures and classes, constraint fields) are
 // StringMaps; code that iterates them goes through core.ds.PMap (sorted keys).
@@ -171,10 +172,10 @@ class TLazy {
 }
 
 @:structInit class TSignature {
-	public var args:Array<{var name:String; var optional:Bool; var type:T;}>;
+	public var args:Vector<{var name:String; var optional:Bool; var type:T;}>;
 	public var ret:T;
 
-	public inline function new(args:Array<{var name:String; var optional:Bool; var type:T;}>, ret:T) {
+	public inline function new(args:Vector<{var name:String; var optional:Bool; var type:T;}>, ret:T) {
 		this.args = args;
 		this.ret = ret;
 	}
@@ -182,7 +183,7 @@ class TLazy {
 	public inline function clone():TSignature return new TSignature(args, ret);
 }
 
-typedef TParams = Array<T>;
+typedef TParams = Vector<T>;
 // port: `(tclass * tparams)`, as in `cl_super`/`cl_implements`.
 typedef ClassAndParams = {var cls:TClass; var params:TParams;};
 
@@ -197,11 +198,11 @@ typedef AbstractCastField = {var abs:TAbstract; var params:TParams; var field:Ca
 	public var ttpClass:TClass;
 	public var ttpHost:TypeParamHost;
 	public var ttpType:T;
-	public var ttpConstraints:Null<AtomicLazy<Array<T>>>;
+	public var ttpConstraints:Null<AtomicLazy<TParams>>;
 	public var ttpDefault:Null<T>;
 
 	public inline function new(ttpName:String, ttpClass:TClass, ttpHost:TypeParamHost, ttpType:T,
-			ttpConstraints:Null<AtomicLazy<Array<T>>>, ttpDefault:Null<T>) {
+			ttpConstraints:Null<AtomicLazy<TParams>>, ttpDefault:Null<T>) {
 		this.ttpName = ttpName;
 		this.ttpClass = ttpClass;
 		this.ttpHost = ttpHost;
@@ -214,7 +215,7 @@ typedef AbstractCastField = {var abs:TAbstract; var params:TParams; var field:Ca
 		ttpDefault);
 }
 
-typedef TypeParams = Array<TypedTypeParam>;
+typedef TypeParams = Vector<TypedTypeParam>;
 
 enum TConstant {
 	TInt(value:Int);
@@ -282,11 +283,11 @@ enum TVarKind {
 }
 
 @:structInit class TFunc {
-	public var tfArgs:Array<{var variable:TVar; var defaultValue:Null<TExpr>;}>;
+	public var tfArgs:Vector<{var variable:TVar; var defaultValue:Null<TExpr>;}>;
 	public var tfType:T;
 	public var tfExpr:TExpr;
 
-	public inline function new(tfArgs:Array<{var variable:TVar; var defaultValue:Null<TExpr>;}>, tfType:T, tfExpr:TExpr) {
+	public inline function new(tfArgs:Vector<{var variable:TVar; var defaultValue:Null<TExpr>;}>, tfType:T, tfExpr:TExpr) {
 		this.tfArgs = tfArgs;
 		this.tfType = tfType;
 		this.tfExpr = tfExpr;
@@ -298,7 +299,7 @@ enum TVarKind {
 enum AnonStatus {
 	Closed;
 	Const;
-	Extend(types:Array<T>);
+	Extend(types:TParams);
 	ClassStatics(cls:TClass);
 	EnumStatics(en:TEnum);
 	AbstractStatics(abs:TAbstract);
@@ -346,18 +347,18 @@ enum TExprDef {
 	TField(expr:TExpr, access:TFieldAccess);
 	TTypeExpr(type:ModuleType);
 	TParenthesis(expr:TExpr);
-	TObjectDecl(fields:Array<{var key:{var name:String; var pos:Pos; var quote:QuoteStatus;}; var expr:TExpr;}>);
-	TArrayDecl(values:Array<TExpr>);
-	TCall(expr:TExpr, args:Array<TExpr>);
-	TNew(cls:TClass, params:TParams, args:Array<TExpr>);
+	TObjectDecl(fields:Vector<{var key:{var name:String; var pos:Pos; var quote:QuoteStatus;}; var expr:TExpr;}>);
+	TArrayDecl(values:Vector<TExpr>);
+	TCall(expr:TExpr, args:Vector<TExpr>);
+	TNew(cls:TClass, params:TParams, args:Vector<TExpr>);
 	TUnop(op:Unop, flag:UnopFlag, expr:TExpr);
 	TFunction(func:TFunc);
 	TVar(variable:TVar, expr:Null<TExpr>);
-	TBlock(exprs:Array<TExpr>);
+	TBlock(exprs:Vector<TExpr>);
 	TIf(condition:TExpr, thenExpr:TExpr, elseExpr:Null<TExpr>);
 	TWhile(condition:TExpr, body:TExpr, flag:WhileFlag);
 	TSwitch(switchExpr:TSwitch);
-	TTry(expr:TExpr, catches:Array<{var variable:TVar; var expr:TExpr;}>);
+	TTry(expr:TExpr, catches:Vector<{var variable:TVar; var expr:TExpr;}>);
 	TReturn(expr:Null<TExpr>);
 	TBreak;
 	TContinue;
@@ -371,11 +372,11 @@ enum TExprDef {
 
 @:structInit class TSwitch {
 	public var switchSubject:TExpr;
-	public var switchCases:Array<TSwitchCase>;
+	public var switchCases:Vector<TSwitchCase>;
 	public var switchDefault:Null<TExpr>;
 	public var switchExhaustive:Bool;
 
-	public inline function new(switchSubject:TExpr, switchCases:Array<TSwitchCase>, switchDefault:Null<TExpr>, switchExhaustive:Bool) {
+	public inline function new(switchSubject:TExpr, switchCases:Vector<TSwitchCase>, switchDefault:Null<TExpr>, switchExhaustive:Bool) {
 		this.switchSubject = switchSubject;
 		this.switchCases = switchCases;
 		this.switchDefault = switchDefault;
@@ -386,10 +387,10 @@ enum TExprDef {
 }
 
 @:structInit class TSwitchCase {
-	public var casePatterns:Array<TExpr>;
+	public var casePatterns:Vector<TExpr>;
 	public var caseExpr:TExpr;
 
-	public inline function new(casePatterns:Array<TExpr>, caseExpr:TExpr) {
+	public inline function new(casePatterns:Vector<TExpr>, caseExpr:TExpr) {
 		this.casePatterns = casePatterns;
 		this.caseExpr = caseExpr;
 	}
@@ -463,7 +464,7 @@ enum TClassKind {
 	KGeneric;
 	KGenericInstance(cls:TClass, params:TParams);
 	KMacroType;
-	KGenericBuild(fields:Array<ClassField>);
+	KGenericBuild(fields:Vector<ClassField>);
 	KAbstractImpl(abs:TAbstract);
 	KModuleFields(module:ModuleDef);
 }

@@ -25,6 +25,8 @@ import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalString;
 
+using core.ds.VectorTools;
+
 // port: floats are printed with `Numeric.floatRepres` (numeric.ml `float_repres`,
 // i.e. C's %.12g/%.15g/%.18g).
 class EvalPrinting {
@@ -146,7 +148,7 @@ class EvalPrinting {
 				EvalString.join(EvalString.emptyString, [
 					EvalString.createAscii(name),
 					rpopen,
-					EvalString.join(rcomma, vl.map(v -> sValue(depth + 1, v, indentLevel))),
+					EvalString.join(rcomma, vl.mapToArray(v -> sValue(depth + 1, v, indentLevel))),
 					rpclose
 				]);
 		}

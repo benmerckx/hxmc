@@ -29,6 +29,8 @@ import core.Define.DefineContext;
 import core.ds.Stream;
 import core.Message.WarningCode;
 import syntax.Lexer.LexerContext;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 enum ParserPreprocessorError {
 	InvalidEnd;
@@ -408,7 +410,7 @@ class Parser {
 	public static final magicTypePath:TypePath = {
 		tpackage: [],
 		tname: "",
-		tparams: [],
+		tparams: vector(),
 		tsub: null
 	};
 
@@ -504,7 +506,7 @@ class Parser {
 		return {expr: expr, pos: Ast.punion(p1, e.pos)};
 	}
 
-	public static function makeMeta(name:Dynamic, params:Array<Expr>, e:Expr, p1:Pos):Expr {
+	public static function makeMeta(name:Dynamic, params:haxe.ds.Vector<Expr>, e:Expr, p1:Pos):Expr {
 		var expr = switch e.expr {
 			case EBinop(OpAssign, _, _), EBinop(OpAssignOp(_), _, _): EMeta({meta: name, exprs: params, pos: p1}, e);
 			case EBinop(bop, left, right): EBinop(bop, makeMeta(name, params, left, p1), right);
@@ -518,7 +520,7 @@ class Parser {
 		Lexer.reset(ctx.lexerCtx);
 		var end = Lexer.lexXml(ctx.lexerCtx, p1.pmin, ctx.code);
 		var xml = Lexer.contents(ctx.lexerCtx);
-		return makeMeta(core.Meta.Markup, [],
+		return makeMeta(core.Meta.Markup, vector(),
 			{expr: EConst(String(xml, SDoubleQuotes)), // STRINGTODO: distinct kind?
 				pos: {pfile: p1.pfile, pmin: p1.pmin, pmax: end}}, p1);
 	}

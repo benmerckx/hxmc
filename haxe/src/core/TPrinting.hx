@@ -8,6 +8,7 @@ import core.TType as TypeModel;
 import core.TFunctions;
 import core.TFunctions.*;
 import core.AstPrinter;
+import core.ds.VectorTools.vector;
 
 // port: from haxe/src/core/tPrinting.ml.
 typedef PrintContext = Array<{mono:TMono, id:Int}>;
@@ -117,7 +118,7 @@ class TPrinting {
 					].join(",") + " }";
 			}
 		case TDynamic(null): "Dynamic";
-		case TDynamic(t2): "Dynamic" + sTypeParams(ctx, [t2]);
+		case TDynamic(t2): "Dynamic" + sTypeParams(ctx, vector(t2));
 		case TLazy(f): sType(ctx, lazyType(f));
 	};
 
@@ -195,7 +196,7 @@ class TPrinting {
 
 	public static function sExprPretty(printVarIds:Bool, tabs:String, topLevel:Bool, print:T->String, e:TExpr):String {
 		function loop(e:TExpr):String return sExprPretty(printVarIds, tabs, false, print, e);
-		inline function list(el:Array<TExpr>):String return el.map(loop).join(", ");
+		inline function list(el:haxe.ds.Vector<TExpr>):String return el.map(loop).join(", ");
 		inline function local(v:TVar):String return printVarIds ? '${v.vName}<${v.vId}>' : v.vName;
 		return switch e.eexpr {
 			case TConst(c): sConst(c);
@@ -285,7 +286,7 @@ class TPrinting {
 			return '[$tag ${v.vName}<${varId(v)}>${v.vFlags == 0 ? "" : "(" + sFlags(v.vFlags, TypeModel.flagTVarNames) + ")"}:${print(v.vType)}]'
 				+ tagArgs(tabs, sl);
 		inline function moduleType(mt:ModuleType):String return '[TypeExpr ${Globals.sTypePath(tPath(mt))}:${print(e.etype)}]';
-		inline function loops(el:Array<TExpr>):Array<String> return [for (e in el) loop(e)];
+		inline function loops(el:haxe.ds.Vector<TExpr>):Array<String> return [for (e in el) loop(e)];
 		return switch e.eexpr {
 			case TConst(c): tag("Const", [sConst(c)], e.etype);
 			case TLocal(v): local(v, e.etype);
@@ -393,7 +394,11 @@ class Printer {
 	static function record(tabs:String,
 			fields:Array<Array<String>>):String return sRecordFields(tabs, [for (f in fields) {name: f[0], value: f[1]}]);
 
-	public static function sList<V>(sep:String, f:V->String, l:Array<V>):String return "[" + l.map(f).join(sep) + "]";
+	extern overload public static inline function sList<V>(sep:String, f:V->String, l:Array<V>):String return "[" + l.map(f).join(sep) + "]";
+
+	// port: a list kept as a Vector
+	extern overload public static inline function sList<V>(sep:String, f:V->String, l:haxe.ds.Vector<V>):String
+		return "[" + [for (x in l) f(x)].join(sep) + "]";
 
 	public static function sOpt<V>(f:V->String, o:Null<V>):String return o == null ? "None" : f(o);
 

@@ -250,12 +250,12 @@ class LinkPE {
 		var hasLines = symbols && Lambda.exists(objs, o -> Lambda.exists(o.funcs, r -> r.lines != null));
 		var headers = align(64 + 4 + 20 + 240 + 40 * (nsec + (hasLines ? 5 : 0)), FILE);
 		var rva = align(headers, SECT);
-		var starts = [], sizes = [];
+		var starts = new haxe.ds.Vector<Int>(groups.length), sizes = new haxe.ds.Vector<Int>(groups.length);
 		var idata:Buf = null;
 		var idataLayout = null;
 		for (gi in 0...groups.length) {
 			var g = groups[gi];
-			starts.push(rva);
+			starts[gi] = rva;
 			var pos = rva;
 			if (g.name == ".idata") {
 				idataLayout = importData(dlls, byDll, rva);
@@ -268,7 +268,7 @@ class LinkPE {
 					outOf.set(s, gi);
 					pos += s.size();
 				}
-			sizes.push(pos - rva);
+			sizes[gi] = pos - rva;
 			rva = align(pos, SECT);
 		}
 		var imageSize = rva;
@@ -384,19 +384,15 @@ class LinkPE {
 		// the file
 		var out = new Buf(1 << 20);
 		out.zeros(headers);
-		var rawPos = [], rawSize = [];
+		var rawPos = new haxe.ds.Vector<Int>(groups.length), rawSize = new haxe.ds.Vector<Int>(groups.length);
 		for (gi in 0...groups.length) {
 			var g = groups[gi];
-			if (g.name == ".bss" || sizes[gi] == 0) {
-				rawPos.push(0);
-				rawSize.push(0);
-				continue;
-			}
+			if (g.name == ".bss" || sizes[gi] == 0) continue; // (none in the file)
 			out.align(FILE);
 			var at = out.len;
-			rawPos.push(at);
+			rawPos[gi] = at;
 			out.zeros(align(sizes[gi], FILE));
-			rawSize.push(align(sizes[gi], FILE));
+			rawSize[gi] = align(sizes[gi], FILE);
 			if (g.name == ".idata") out.b.blit(at, idata.b, 0, idata.len) else if (g.name == ".reloc") out.b.blit(at, relocBuf.b, 0, relocBuf.len) else
 				for (s in g.secs)
 					if (s.kind != Bss && s.kind != Tbss) out.b.blit(at + addr.get(s) - BASE - starts[gi], s.buf.b, 0, s.buf.len);
@@ -499,7 +495,9 @@ class LinkPE {
 		h.u32(0);
 		h.u32(16);
 		// data directories
-		var dirs = [for (_ in 0...16) [0, 0]];
+		var dirs = new haxe.ds.Vector<Array<Int>>(16);
+		for (k in 0...16)
+			dirs[k] = [0, 0];
 		if (edata != null) dirs[0] = [addr.get(edata) - BASE, edata.buf.len];
 		if (dlls.length > 0) {
 			dirs[1] = [starts[5] + idataLayout.dir, 20 * (dlls.length + 1)];

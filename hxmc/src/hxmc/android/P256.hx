@@ -1,6 +1,7 @@
 package hxmc.android;
 
 import haxe.io.Bytes;
+import haxe.ds.Vector;
 
 // ECDSA over NIST P-256 with SHA-256, in plain Haxe, for the APK's debug
 // signature (Apk): the public key of a private scalar, and signatures with
@@ -33,8 +34,8 @@ class P256 {
 
 	// ---- numbers
 
-	public static function fromBytes(b:Bytes):Array<Int> {
-		var r = [for (_ in 0...L) 0];
+	public static function fromBytes(b:Bytes):Vector<Int> {
+		var r = new Vector<Int>(L, 0);
 		for (i in 0...b.length) {
 			var byte = b.get(b.length - 1 - i), bit = 8 * i;
 			for (k in 0...8)
@@ -43,7 +44,7 @@ class P256 {
 		return r;
 	}
 
-	public static function toBytes(a:Array<Int>, len = 32):Bytes {
+	public static function toBytes(a:Vector<Int>, len = 32):Bytes {
 		var b = Bytes.alloc(len);
 		for (i in 0...8 * len) {
 			if (a[Std.int(i / BITS)] & (1 << (i % BITS)) != 0) {
@@ -54,10 +55,10 @@ class P256 {
 		return b;
 	}
 
-	static function fromHex(h:String):Array<Int>
+	static function fromHex(h:String):Vector<Int>
 		return fromBytes(Bytes.ofHex(h));
 
-	public static function cmp(a:Array<Int>, b:Array<Int>):Int {
+	public static function cmp(a:Vector<Int>, b:Vector<Int>):Int {
 		var i = L - 1;
 		while (i >= 0) {
 			if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
@@ -66,14 +67,14 @@ class P256 {
 		return 0;
 	}
 
-	static function isZero(a:Array<Int>):Bool {
+	static function isZero(a:Vector<Int>):Bool {
 		for (x in a)
 			if (x != 0) return false;
 		return true;
 	}
 
-	static function addRaw(a:Array<Int>, b:Array<Int>):Array<Int> {
-		var r = [for (_ in 0...L) 0], c = 0;
+	static function addRaw(a:Vector<Int>, b:Vector<Int>):Vector<Int> {
+		var r = new Vector<Int>(L, 0), c = 0;
 		for (i in 0...L) {
 			var s = a[i] + b[i] + c;
 			r[i] = s & MASK;
@@ -83,8 +84,8 @@ class P256 {
 	}
 
 	// a - b, a >= b
-	static function subRaw(a:Array<Int>, b:Array<Int>):Array<Int> {
-		var r = [for (_ in 0...L) 0], c = 0;
+	static function subRaw(a:Vector<Int>, b:Vector<Int>):Vector<Int> {
+		var r = new Vector<Int>(L, 0), c = 0;
 		for (i in 0...L) {
 			var s = a[i] - b[i] - c;
 			c = s < 0 ? 1 : 0;
@@ -94,7 +95,7 @@ class P256 {
 	}
 
 	// a mod m for a < 2^(15*18) (the inputs: digests, RFC 6979's candidates)
-	static function reduce(a:Array<Int>, m:Array<Int>):Array<Int> {
+	static function reduce(a:Vector<Int>, m:Vector<Int>):Vector<Int> {
 		var r = a;
 		while (cmp(r, m) >= 0)
 			r = subRaw(r, m);
@@ -103,7 +104,15 @@ class P256 {
 
 	// ---- the curve: Jacobian points [X, Y, Z] in Montgomery form (Z = 0: infinity)
 
-	static function double(q:Array<Array<Int>>):Array<Array<Int>> {
+	static function pt(x:Vector<Int>, y:Vector<Int>, z:Vector<Int>):Vector<Vector<Int>> {
+		var q = new Vector<Vector<Int>>(3);
+		q[0] = x;
+		q[1] = y;
+		q[2] = z;
+		return q;
+	}
+
+	static function double(q:Vector<Vector<Int>>):Vector<Vector<Int>> {
 		var f = fp;
 		if (isZero(q[2])) return q;
 		var delta = f.mul(q[2], q[2]), gamma = f.mul(q[1], q[1]), beta = f.mul(q[0], gamma);
@@ -119,18 +128,18 @@ class P256 {
 		g8 = f.add(g8, g8);
 		g8 = f.add(g8, g8);
 		var y3 = f.sub(f.mul(alpha, f.sub(beta4, x3)), g8);
-		return [x3, y3, z3];
+		return pt(x3, y3, z3);
 	}
 
 	// q + (x2, y2) (affine, Montgomery form)
-	static function addAffine(q:Array<Array<Int>>, x2:Array<Int>, y2:Array<Int>):Array<Array<Int>> {
+	static function addAffine(q:Vector<Vector<Int>>, x2:Vector<Int>, y2:Vector<Int>):Vector<Vector<Int>> {
 		var f = fp;
-		if (isZero(q[2])) return [x2, y2, f.one];
+		if (isZero(q[2])) return pt(x2, y2, f.one);
 		var z1z1 = f.mul(q[2], q[2]);
 		var u2 = f.mul(x2, z1z1), s2 = f.mul(y2, f.mul(q[2], z1z1));
 		var h = f.sub(u2, q[0]);
 		var rr = f.sub(s2, q[1]);
-		if (isZero(h)) return isZero(rr) ? double([x2, y2, f.one]) : [f.one, f.one, [for (_ in 0...L) 0]];
+		if (isZero(h)) return isZero(rr) ? double(pt(x2, y2, f.one)) : pt(f.one, f.one, new Vector<Int>(L, 0));
 		var hh = f.mul(h, h);
 		var i = f.add(hh, hh);
 		i = f.add(i, i);
@@ -142,15 +151,15 @@ class P256 {
 		var y3 = f.sub(f.mul(r, f.sub(v, x3)), f.add(y1j, y1j));
 		var zh = f.add(q[2], h);
 		var z3 = f.sub(f.sub(f.mul(zh, zh), z1z1), hh);
-		return [x3, y3, z3];
+		return pt(x3, y3, z3);
 	}
 
 	// k * G as affine (x, y), plain numbers
-	static function mulG(k:Array<Int>):{x:Array<Int>, y:Array<Int>} {
+	static function mulG(k:Vector<Int>):{x:Vector<Int>, y:Vector<Int>} {
 		init();
 		var f = fp;
 		var gx = f.to(GX), gy = f.to(GY);
-		var q = [f.one, f.one, [for (_ in 0...L) 0]];
+		var q = pt(f.one, f.one, new Vector<Int>(L, 0));
 		var i = 8 * 32 - 1;
 		while (i >= 0) {
 			q = double(q);
@@ -177,8 +186,9 @@ class P256 {
 
 	// whether d is a valid private scalar (1 <= d < n)
 	public static function validPrivate(d:Bytes):Bool {
+		if (d.length != 32) return false;
 		var x = fromBytes(d);
-		return d.length == 32 && !isZero(x) && cmp(x, N) < 0;
+		return !isZero(x) && cmp(x, N) < 0;
 	}
 
 	// the DER signature (SEQUENCE of r and s) of message's SHA-256 with d
@@ -226,12 +236,12 @@ private class Mont {
 	static inline var MASK = 0x7fff;
 	static inline var L = 18;
 
-	final m:Array<Int>;
+	final m:Vector<Int>;
 	final minv:Int; // -m^-1 mod 2^15
-	final r2:Array<Int>; // R^2 mod m
-	public final one:Array<Int>; // R mod m
+	final r2:Vector<Int>; // R^2 mod m
+	public final one:Vector<Int>; // R mod m
 
-	public function new(m:Array<Int>) {
+	public function new(m:Vector<Int>) {
 		this.m = m;
 		// m^-1 mod 2^15 by Newton's iteration, then negated
 		var inv = 1;
@@ -239,7 +249,7 @@ private class Mont {
 			inv = (inv * (2 - ((m[0] * inv) & MASK))) & MASK;
 		minv = (-inv) & MASK;
 		// R mod m and R^2 mod m by doubling
-		var x = [for (_ in 0...L) 0];
+		var x = new Vector<Int>(L, 0);
 		x[0] = 1;
 		for (i in 0...2 * BITS * L) {
 			x = dbl(x);
@@ -248,8 +258,8 @@ private class Mont {
 		r2 = x;
 	}
 
-	function dbl(a:Array<Int>):Array<Int> {
-		var r = [for (_ in 0...L) 0], c = 0;
+	function dbl(a:Vector<Int>):Vector<Int> {
+		var r = new Vector<Int>(L, 0), c = 0;
 		for (i in 0...L) {
 			var s = (a[i] << 1) | c;
 			r[i] = s & MASK;
@@ -259,7 +269,7 @@ private class Mont {
 		return c != 0 || cmp(r, m) >= 0 ? subRaw(r, m) : r;
 	}
 
-	static function cmp(a:Array<Int>, b:Array<Int>):Int {
+	static function cmp(a:Vector<Int>, b:Vector<Int>):Int {
 		var i = L - 1;
 		while (i >= 0) {
 			if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
@@ -268,8 +278,8 @@ private class Mont {
 		return 0;
 	}
 
-	static function subRaw(a:Array<Int>, b:Array<Int>):Array<Int> {
-		var r = [for (_ in 0...L) 0], c = 0;
+	static function subRaw(a:Vector<Int>, b:Vector<Int>):Vector<Int> {
+		var r = new Vector<Int>(L, 0), c = 0;
 		for (i in 0...L) {
 			var s = a[i] - b[i] - c;
 			c = s < 0 ? 1 : 0;
@@ -278,8 +288,8 @@ private class Mont {
 		return r;
 	}
 
-	public function mul(a:Array<Int>, b:Array<Int>):Array<Int> {
-		var t = [for (_ in 0...L + 2) 0];
+	public function mul(a:Vector<Int>, b:Vector<Int>):Vector<Int> {
+		var t = new Vector<Int>(L + 2, 0);
 		for (i in 0...L) {
 			var ai = a[i], c = 0;
 			for (j in 0...L) {
@@ -302,12 +312,13 @@ private class Mont {
 			t[L - 1] = s & MASK;
 			t[L] = t[L + 1] + (s >> BITS);
 		}
-		var r = t.slice(0, L);
+		var r = new Vector<Int>(L);
+		Vector.blit(t, 0, r, 0, L);
 		return t[L] != 0 || cmp(r, m) >= 0 ? subRaw(r, m) : r;
 	}
 
-	public function add(a:Array<Int>, b:Array<Int>):Array<Int> {
-		var r = [for (_ in 0...L) 0], c = 0;
+	public function add(a:Vector<Int>, b:Vector<Int>):Vector<Int> {
+		var r = new Vector<Int>(L, 0), c = 0;
 		for (i in 0...L) {
 			var s = a[i] + b[i] + c;
 			r[i] = s & MASK;
@@ -316,10 +327,10 @@ private class Mont {
 		return c != 0 || cmp(r, m) >= 0 ? subRaw(r, m) : r;
 	}
 
-	public function sub(a:Array<Int>, b:Array<Int>):Array<Int> {
+	public function sub(a:Vector<Int>, b:Vector<Int>):Vector<Int> {
 		if (cmp(a, b) >= 0) return subRaw(a, b);
 		// (a + m - b: a carry or a borrow per limb, s >> 15 either way)
-		var r = [for (_ in 0...L) 0], c = 0;
+		var r = new Vector<Int>(L, 0), c = 0;
 		for (i in 0...L) {
 			var s = a[i] + m[i] - b[i] + c;
 			r[i] = s & MASK;
@@ -328,18 +339,20 @@ private class Mont {
 		return r;
 	}
 
-	public inline function to(a:Array<Int>):Array<Int>
+	public inline function to(a:Vector<Int>):Vector<Int>
 		return mul(a, r2);
 
-	public function from(a:Array<Int>):Array<Int> {
-		var o = [for (_ in 0...L) 0];
+	public function from(a:Vector<Int>):Vector<Int> {
+		var o = new Vector<Int>(L, 0);
 		o[0] = 1;
 		return mul(a, o);
 	}
 
 	// a^(m-2) (Montgomery form in and out: Fermat, m prime)
-	public function inverse(a:Array<Int>):Array<Int> {
-		var e = subRaw(m, [2].concat([for (_ in 1...L) 0]));
+	public function inverse(a:Vector<Int>):Vector<Int> {
+		var two = new Vector<Int>(L, 0);
+		two[0] = 2;
+		var e = subRaw(m, two);
 		var r = one;
 		var i = BITS * L - 1;
 		while (i >= 0) {

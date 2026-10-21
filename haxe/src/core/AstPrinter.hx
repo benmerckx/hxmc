@@ -74,7 +74,7 @@ class AstPrinter {
 		};
 	}
 
-	public static function sExprList(tabs:String, el:Array<Expr>, sep:String):String return [for (e in el) sExprInner(tabs, e)].join(sep);
+	public static function sExprList(tabs:String, el:haxe.ds.Vector<Expr>, sep:String):String return [for (e in el) sExprInner(tabs, e)].join(sep);
 
 	public static function sComplexTypePath(tabs:String,
 			t:PlacedTypePath):String return Globals.sTypePath({pack: t.path.tpackage, name: t.path.tname})
@@ -82,7 +82,7 @@ class AstPrinter {
 			+ sTypeParamOrConsts(tabs, t.path.tparams);
 
 	public static function sTypeParamOrConsts(tabs:String,
-			pl:Array<TypeParamOrConst>):String return pl.length == 0 ? "" : "<" + [for (p in pl) sTypeParamOrConst(tabs, p)].join(",") +
+			pl:haxe.ds.Vector<TypeParamOrConst>):String return pl.length == 0 ? "" : "<" + [for (p in pl) sTypeParamOrConst(tabs, p)].join(",") +
 			">";
 
 	public static function sTypeParamOrConst(tabs:String, p:TypeParamOrConst):String return switch p {
@@ -166,7 +166,7 @@ class AstPrinter {
 			+ (t.tpConstraints == null ? "" : ":(" + sComplexType(tabs, t.tpConstraints.type) + ")");
 
 	public static function sTypeParamList(tabs:String,
-			tl:Array<TypeParam>):String return tl.length == 0 ? "" : "<" + [for (t in tl) sTypeParam(tabs, t)].join(", ") + ">";
+			tl:haxe.ds.Vector<TypeParam>):String return tl.length == 0 ? "" : "<" + [for (t in tl) sTypeParam(tabs, t)].join(", ") + ">";
 
 	public static function sFuncArg(tabs:String,
 			a:FuncArg):String return a.optional ? "?" : "" + a.name.name + sOptTypeHint(tabs, a.type, ":") + sOptExpr(tabs, a.expr, " = ");
@@ -185,7 +185,7 @@ class AstPrinter {
 	public static function sCatch(tabs:String,
 			c:Catch):String return " catch(" + c.name.name + sOptTypeHint(tabs, c.type, ":") + ") " + sExprInner(tabs, c.expr);
 
-	public static function sBlock(tabs:String, el:Array<Expr>, open:String, nl:String,
+	public static function sBlock(tabs:String, el:haxe.ds.Vector<Expr>, open:String, nl:String,
 			close:String):String return open + "\n\t" + tabs + sExprList(tabs + "\t", el, ";\n\t" + tabs) + ";" + nl + tabs + close;
 
 	public static function sExprOmitBlock(tabs:String, e:Expr):String return switch e.expr {

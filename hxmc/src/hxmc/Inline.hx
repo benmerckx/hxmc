@@ -2,6 +2,9 @@ package hxmc;
 
 import hxmc.ir.Ir;
 import hxmc.Mir;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // Inlining of small functions into their callers, on Mir (after MirBuild,
 // before Opt): the callee's blocks are copied in place of the call, its
@@ -103,7 +106,7 @@ class Inline {
 				if (k < 0) continue;
 				s.preds.splice(k, 1);
 				for (i in s.ins)
-					if (i.op == Phi) i.args.splice(k, 1);
+					if (i.op == Phi) i.removeArg(k);
 			}
 		}
 		if (!all) f.blocks = [for (b in f.blocks) if (b.mark == reach) b];
@@ -240,12 +243,14 @@ class Inline {
 					x.keepsFrame = i.keepsFrame && !f.blocksHere;
 					x.variadic = i.variadic;
 					x.argTys = i.argTys;
+					x.cCall = i.cCall;
 					x.cSizes = i.cSizes;
 					x.cGroups = i.cGroups;
+					x.structRet = i.structRet;
 					x.cRet = i.cRet;
 					x.cases = i.cases;
-					if (i.args != null) x.args = [for (v in i.args) m(v)];
-					if (i.targets != null) x.targets = [for (t in i.targets) bmap[t.id]];
+					x.args = i.args.map(v -> m(v));
+					x.targets = i.targets.map(t -> bmap[t.id]);
 					if (i.op == StackAddr) x.imm = i.imm + slotBase;
 					if (i.op == SymAddr && i.sym == site.callee.icSym) {
 						x.sym = ic.sym;
@@ -258,7 +263,7 @@ class Inline {
 						x.op = Jmp;
 						x.ty = Void;
 						x.a = -1;
-						x.targets = [tail];
+						x.targets = vector(tail);
 						nb.succs = [tail];
 					}
 					nb.ins.push(x);
@@ -270,7 +275,7 @@ class Inline {
 			f.vals.push(j);
 			j.block = b;
 			var entry = bmap[g.entry.id];
-			j.targets = [entry];
+			j.targets = vector(entry);
 			b.ins.push(j);
 			b.succs = [entry];
 			entry.preds.push(b);
@@ -285,7 +290,7 @@ class Inline {
 					phi.id = f.vals.length;
 					f.vals.push(phi);
 					phi.block = tail;
-					phi.args = [for (r in rets) r.v];
+					phi.args = rets.mapToVector(r -> r.v);
 					tail.ins.unshift(phi);
 					replFrom.push(c.id);
 					replTo.push(phi.id);
@@ -313,9 +318,8 @@ class Inline {
 				if (i.a >= 0) i.a = r(i.a);
 				if (i.b >= 0) i.b = r(i.b);
 				if (i.c >= 0) i.c = r(i.c);
-				if (i.args != null)
-					for (q in 0...i.args.length)
-						i.args[q] = r(i.args[q]);
+				for (q in 0...i.args.length)
+					i.args[q] = r(i.args[q]);
 			}
 		return [for (m in more) if (!m.call.dead && m.call.block != null) m];
 	}

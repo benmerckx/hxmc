@@ -30,6 +30,10 @@ import generators.jvm.JvmBuilder;
 import generators.jvm.JvmCode;
 import generators.jvm.JvmClass;
 import generators.jvm.JvmVerificationTypeInfo;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 /* High-level method builder. */
 enum VarInitState {
@@ -919,20 +923,20 @@ class JvmMethodBuilder extends BaseBuilder {
 		if (!term) addStackFrame();
 	}
 
-	static function sortByKey(a:Array<{key:Int, offset:JBranchOffsetRef}>):Void {
+	static function sortByKey(a:Vector<{key:Int, offset:JBranchOffsetRef}>):Void {
 		// port: Array.sort (compare on the keys); the keys are distinct here.
 		a.sort(function(x, y) return x.key < y.key ? -1 : (x.key > y.key ? 1 : 0));
 	}
 
 	public function stringSwitch(needVal:Bool, load:Void->Void, cases:Array<{sl:Array<String>, f:Void->Void}>, def:Null<Void->Void>):Void {
 		var buckets = new HashtblList<{s:String, index:Int}>();
-		var exprs = [
-			for (index in 0...cases.length) {
-				var c = cases[index];
-				for (s in c.sl) buckets.add(JvmMethod.javaHash(s), {s: s, index: index});
-				{f: c.f, numJumps: c.sl.length};
-			}
-		];
+		// port: List.mapi, then Array.of_list: allocated at its length and filled in order
+		var exprs = new Vector<{f:Void->Void, numJumps:Int}>(cases.length);
+		for (index in 0...cases.length) {
+			var c = cases[index];
+			for (s in c.sl) buckets.add(JvmMethod.javaHash(s), {s: s, index: index});
+			exprs[index] = {f: c.f, numJumps: c.sl.length};
+		}
 		var cases = buckets.asList();
 		var def = switch def {
 			case null if (needVal):
@@ -954,7 +958,7 @@ class JvmMethodBuilder extends BaseBuilder {
 		invokevirtual(stringPath, "hashCode", methodSig([], JInt));
 		var exprs = exprs.map(function(e) return {e: e, label: spawnLabel("case-expr")});
 		var jumpTable = cases.map(function(c) return {hash: c.key, label: spawnLabel("hash-match")});
-		var sortedJumpTable = jumpTable.map(function(j) return {key: j.hash, offset: j.label.mkOffset()});
+		var sortedJumpTable = jumpTable.mapToVector(function(j) return {key: j.hash, offset: j.label.mkOffset()});
 		sortByKey(sortedJumpTable);
 		code.lookupswitch(labelDef.mkOffset(), sortedJumpTable);
 		var restore = startBranch();
@@ -1055,17 +1059,16 @@ class JvmMethodBuilder extends BaseBuilder {
 		if (useTableswitch) {
 			var imin = imin.low;
 			var imax = imax.low;
-			var offsets = [
-				for (i in 0...((imax - imin) | 0) + 1) {
-					var l = caseLut.get((i + imin) | 0);
-					l != null ? l : labelDef;
-				}
-			];
+			var offsets = new Vector<JvmLabel>(((imax - imin) | 0) + 1);
+			for (i in 0...offsets.length) {
+				var l = caseLut.get((i + imin) | 0);
+				offsets[i] = l != null ? l : labelDef;
+			}
 			// port: OCaml evaluates the arguments right to left: the case offsets before the default's.
 			var caseOffsets = offsets.map(function(label) return label.mkOffset());
 			code.tableswitch(labelDef.mkOffset(), imin, imax, caseOffsets);
 		} else {
-			var a = flatCases.copy();
+			var a = Vector.fromArrayCopy(flatCases);
 			sortByKey(a);
 			code.lookupswitch(labelDef.mkOffset(), a);
 		}
@@ -1210,23 +1213,22 @@ class JvmMethodBuilder extends BaseBuilder {
 		argumentLocals = locals;
 	}
 
-	function getStackMapTable():Array<JStackMapFrame> {
+	function getStackMapTable():Vector<JStackMapFrame> {
 		var argumentLocals = getLocalsForStackFrame(argumentLocals);
 		var lastOffset = -1, lastLocals = argumentLocals, lastLocalsLength = argumentLocals.length;
-		var acc = [];
-		var frames = stackFrames.copy();
-		frames.reverse();
+		// port: one entry per frame, in the order of `List.rev stack_frames` (stackFrames
+		// is upstream's list: index 0 is the last frame), filled at its length
+		var numFrames = stackFrames.length;
+		var acc = new Vector<JStackMapFrame>(numFrames);
 		inline function tail(l:Array<VerificationTypeInfo>, n:Int):Array<VerificationTypeInfo> return l.slice(n);
-		for (frame in frames) {
+		for (fi in 0...numFrames) {
+			var frame = stackFrames[numFrames - 1 - fi];
 			var offset = frame.offset, locals = frame.locals, stack = frame.stack;
 			var cur = offset - lastOffset - 1;
-			var aLocals = locals.copy();
-			aLocals.reverse();
+			var aLocals = VectorTools.ofArrayReversed(locals);
 			var localsLength = aLocals.length;
 			function default_():JStackMapFrame {
-				var s = stack.copy();
-				s.reverse();
-				return StackFull(cur, aLocals, s);
+				return StackFull(cur, aLocals, VectorTools.ofArrayReversed(stack));
 			}
 			var eq = JvmVerificationTypeInfo.listEq;
 			var entry = switch [stack.length, localsLength - lastLocalsLength] {
@@ -1260,7 +1262,7 @@ class JvmMethodBuilder extends BaseBuilder {
 			lastOffset = offset;
 			lastLocals = locals;
 			lastLocalsLength = localsLength;
-			acc.push(entry);
+			acc[fi] = entry;
 		}
 		return acc;
 	}
@@ -1280,11 +1282,10 @@ class JvmMethodBuilder extends BaseBuilder {
 	function getJcode(config:ExportConfig):JvmCodeData {
 		var attributes:Array<JAttribute> = [];
 		var lines = code.getLines();
-		if (config.exportDebug && lines.length > 0) attributes.push(AttributeLineNumberTable(lines.copy()));
+		if (config.exportDebug && lines.length > 0) attributes.push(AttributeLineNumberTable(Vector.fromArrayCopy(lines)));
 		var stackMapTable = getStackMapTable();
 		if (stackMapTable.length > 0) attributes.push(AttributeStackMapTable(stackMapTable));
-		var exceptions = exceptions.copy();
-		exceptions.reverse();
+		var exceptions = VectorTools.ofArrayReversed(exceptions);
 		if (config.exportDebug) {
 			switch debugLocals {
 				case []:
@@ -1310,15 +1311,15 @@ class JvmMethodBuilder extends BaseBuilder {
 						});
 						return ld;
 					}
-					var locals = debugLocals.map(map);
+					var locals = debugLocals.mapToVector(map);
 					attributes.push(AttributeLocalVariableTable(locals));
 					if (typeLocals.length > 0) {
-						var locals = typeLocals.copy();
+						var locals = Vector.fromArrayCopy(typeLocals);
 						attributes.push(AttributeLocalVariableTypeTable(locals));
 					}
 			}
 		}
-		var attributes = attributes.map(function(a) return JvmAttribute.writeAttribute(jc.getPool(), a));
+		var attributes = attributes.mapToVector(function(a) return JvmAttribute.writeAttribute(jc.getPool(), a));
 		return {
 			codeMaxStack: code.getMaxStackSize(),
 			codeMaxLocals: maxNumLocals,
@@ -1337,21 +1338,23 @@ class JvmMethodBuilder extends BaseBuilder {
 			var code = getJcode(config);
 			addAttribute(AttributeCode(code));
 		}
-		if (thrownExceptions.length() > 0)
-			addAttribute(AttributeExceptions(thrownExceptions.fold(function(k, _, c:Array<Int>) {
-				c.unshift(k);
-				return c;
-			}, [])));
-		function collectAnnotations(h:haxe.ds.IntMap<Array<{jsig:JSignature, a:Annotation}>>, f:Array<Array<JAnnotation>>->Void):Void {
+		if (thrownExceptions.length() > 0) {
+			// port: Array.of_list of the fold consing each key: the keys in reverse visit
+			// order, filled from the end
+			var n = thrownExceptions.length();
+			var a = new Vector<Int>(n);
+			thrownExceptions.iter(function(k, _) a[--n] = k);
+			addAttribute(AttributeExceptions(a));
+		}
+		function collectAnnotations(h:haxe.ds.IntMap<Array<{jsig:JSignature, a:Annotation}>>, f:Vector<Vector<JAnnotation>>->Void):Void {
 			if (h.keys().hasNext()) {
 				var l = argumentLocals.length;
 				var offset = if (hasMethodFlag(MStatic)) 0 else 1;
-				var a = [
-					for (i in 0...l - offset) {
-						var d = h.get(i + offset);
-						if (d != null) JvmBuilder.convertAnnotations(jc.getPool(), d.copy()) else [];
-					}
-				];
+				var a = new Vector<Vector<JAnnotation>>(l - offset);
+				for (i in 0...a.length) {
+					var d = h.get(i + offset);
+					a[i] = if (d != null) JvmBuilder.convertAnnotations(jc.getPool(), d) else vector();
+				}
 				f(a);
 			}
 		}

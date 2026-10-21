@@ -32,6 +32,11 @@ import optimization.AnalyzerTypes;
 import optimization.OptimizerTexpr.*;
 import context.PurityState;
 import optimization.AnalyzerConfig;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 class AnalyzerTexpr {
 	// port: hxmc's struct values (@:hxmc.struct, hxmc/src/hxmc/ir/CInterop.hx) are copied on assignment: true
@@ -70,8 +75,8 @@ class AnalyzerTexpr {
 			case TBlock([e1]): loop(complex, e1);
 			case TBlock(el): if (el.length > 0) {
 					var last = loop(true, el[el.length - 1]);
-					var block = withExpr(e, TBlock(el.slice(0, el.length - 1).concat([last])));
-					withExpr(block, TMeta({meta: core.MetaList.StrictMeta.MergeBlock, exprs: [], pos: block.epos}, block));
+					var block = withExpr(e, TBlock(el.withLast(last)));
+					withExpr(block, TMeta({meta: core.MetaList.StrictMeta.MergeBlock, exprs: vector(), pos: block.epos}, block));
 				} else {
 					if (!complex) throw new TypeExit();
 					value(e);
@@ -151,14 +156,14 @@ class AnalyzerTexpr {
 	static function cannotBeUsedAsValue(com:context.SafeCom.SafeContext, e:TExpr):Bool return !canBeUsedAsValueLoop(com, e);
 
 	public static function wrapMeta(s:String,
-			e:TExpr):TExpr return mk(TMeta({meta: core.MetaList.StrictMeta.Custom(s), exprs: [], pos: e.epos}, e), e.etype, e.epos);
+			e:TExpr):TExpr return mk(TMeta({meta: core.MetaList.StrictMeta.Custom(s), exprs: vector(), pos: e.epos}, e), e.etype, e.epos);
 
 	public static function isReallyUnbound(s:String):Bool return s != "`trace" && s != "__int__";
 
 	// port: a fresh EReg per use (an EReg keeps its last match; the analyzer runs on several threads)
 	static inline function r():EReg return ~/^[A-Za-z0-9_]+$/;
 
-	public static function isUnboundCallThatMightHaveSideEffects(s:String, el:Array<TExpr>):Bool return switch [s, el] {
+	public static function isUnboundCallThatMightHaveSideEffects(s:String, el:haxe.ds.Vector<TExpr>):Bool return switch [s, el] {
 		case ["__js__", [{eexpr: TConst(TString(code))}]] if (r().match(code)): false;
 		case _: true;
 	};
@@ -227,7 +232,7 @@ class TexprFilter {
 			case TUnop(op = Increment | Decrement, flag, e1 = {eexpr: TLocal(_)}):
 				var one = mk(TConst(TInt(1)), com.basic.tint, e1.epos);
 				var assign = withExpr(e, TBinop(OpAssignOp(op == Increment ? OpAdd : OpSub), e1, one));
-				loop(flag == Prefix ? assign : mk(TBlock([assign, withExpr(assign, TBinop(op == Increment ? OpSub : OpAdd, e1, one))]),
+				loop(flag == Prefix ? assign : mk(TBlock(vector(assign, withExpr(assign, TBinop(op == Increment ? OpSub : OpAdd, e1, one)))),
 					assign.etype, assign.epos));
 			case TWhile(e1, e2, DoWhile) if (isTrueExpr(e1)): loop(withExpr(e, TWhile(e1, e2, NormalWhile)));
 			case TWhile(e1, e2, flag) if (!isTrueExpr(e1)):
@@ -529,7 +534,7 @@ class Fusion {
 			+ InterferenceReport.toString(ir)
 			+ "\nINTO: "
 			+ core.TPrinting.sExprPretty(true, "", false, core.TPrinting.sType.bind(core.TPrinting.printContext()),
-				mk(TBlock(el), tDynamic, Globals.nullPos)));
+				mk(TBlock(Vector.fromArrayCopy(el)), tDynamic, Globals.nullPos)));
 		// This function walks the AST in order of evaluation and tries to find an occurrence of v1. If successful, that occurrence is
 		// replaced with e1. If there's an interference "on the way" the replacement is canceled.
 		function replace(e:TExpr):TExpr {
@@ -540,7 +545,7 @@ class Fusion {
 				blocked = old;
 				return e;
 			}
-			inline function handleEl(el:Array<TExpr>):Array<TExpr> {
+			inline function handleEl(el:Vector<TExpr>):Vector<TExpr> {
 				if (AnalyzerTexpr.targetHandlesSideEffectOrder(com)) return el.map(replace);
 				// This mess deals with the fact that the order of evaluation is undefined for call
 				// arguments on these targets. Even if we find a replacement, we pretend that we
@@ -555,7 +560,7 @@ class Fusion {
 				found = reallyFound;
 				return el;
 			}
-			inline function handleCall(e:TExpr, el:Array<TExpr>):{expr:TExpr, args:Array<TExpr>}
+			inline function handleCall(e:TExpr, el:Vector<TExpr>):{expr:TExpr, args:Vector<TExpr>}
 				return switch com.platform {
 					case Neko:
 						// Neko has this reversed at the moment (issue #4787)
@@ -690,7 +695,7 @@ class Fusion {
 					var el = handleEl(fl.map(f -> f.expr));
 					if (!found && (ir.irStateWrite || InterferenceReport.hasAnyFieldWrite(ir))) throw new TypeExit();
 					if (fl.length != el.length) throw "Invalid_argument: List.map2";
-					withExpr(e, TObjectDecl([for (i in 0...fl.length) {key: fl[i].key, expr: el[i]}]));
+					withExpr(e, TObjectDecl(fl.mapi((i, f) -> {key: f.key, expr: el[i]})));
 				case TArrayDecl(el): withExpr(e, TArrayDecl(handleEl(el))); // if not !found && (has_state_write ir || has_any_field_write ir) then raise Exit;
 				case TBinop(op, e1, e2) if (com.platform == Cpp):
 					var e1 = replace(e1);
@@ -714,7 +719,7 @@ class Fusion {
 				}
 			}
 			if (!found) throw new TypeExit();
-			if (config.fusionDebug) Sys.println("YES: " + AnalyzerTexpr.sExprPretty(mk(TBlock(out), tDynamic, Globals.nullPos)));
+			if (config.fusionDebug) Sys.println("YES: " + AnalyzerTexpr.sExprPretty(mk(TBlock(Vector.fromArrayCopy(out)), tDynamic, Globals.nullPos)));
 			return out;
 		} catch (_:TypeExit) {
 			if (config.fusionDebug) Sys.println("NO: " + haxe.CallStack.toString(haxe.CallStack.exceptionStack()));
@@ -734,7 +739,7 @@ class Fusion {
 		stack.reverse();
 		var accRev = acc.copy();
 		accRev.reverse();
-		inline function pushAll(xs:Array<TExpr>):Void {
+		inline function pushAll(xs:Vector<TExpr>):Void {
 			var i = xs.length;
 			while (i > 0) stack.push(xs[--i]);
 		}
@@ -1021,8 +1026,8 @@ class Fusion {
 		function timedFuse(el:Array<TExpr>):Array<TExpr> return optimization.Analyzer.Run.timed(actx, ["<-", "fusion", "fuse"],
 			function() return fuse([], el));
 		var loop:TExpr->TExpr = null;
-		function block(bottom:Bool, el:Array<TExpr>, t:T, p:Pos):TExpr {
-			el = el.map(loop);
+		function block(bottom:Bool, el:Vector<TExpr>, t:T, p:Pos):TExpr {
+			var el = el.mapToArray(loop);
 			el.reverse();
 			el = blockElementTimed(bottom, [], el);
 			// fuse flips element order, but block_element doesn't care and flips it back
@@ -1034,7 +1039,7 @@ class Fusion {
 				el = blockElementTimed(false, [], el);
 				if (!state.didChange()) break;
 			}
-			return mk(TBlock(el), t, p);
+			return mk(TBlock(Vector.fromArrayCopy(el)), t, p);
 		}
 		loop = function(e:TExpr):TExpr return switch e.eexpr {
 			case TWhile(cond, {eexpr: TBlock(el), etype: t, epos: p}, flag):
@@ -1126,24 +1131,28 @@ class Cleanup {
 							case TLocal(v) if (locals.exists(v.vId)): true;
 							case _: checkExpr(referencesLocal, e);
 						};
-						function loop2(el:Array<TExpr>):Array<TExpr> return switch el {
-							case [{eexpr: TBreak}] if (isTrueExpr(e1) && !continues):
-								doWhile = Texpr.Builder.makeBool(scom.basic, true, e1.epos);
-								[];
-							case [{eexpr: TIf(cond, {eexpr: TBlock([{eexpr: TBreak}])}, null)}]
-								if (isTrueExpr(e1) && !referencesLocal(cond) && !continues):
-								doWhile = cond;
-								[];
-							case []: [];
-							case _:
-								var first = el[0];
-								switch first.eexpr {
-									case TBreak | TContinue | TReturn(_) | TThrow(_): [first];
+						// port: the list walked by index (upstream: loop2 on its tail), the
+						// statements kept a prefix of el, copied once
+						function loop2(el:Vector<TExpr>):Vector<TExpr> {
+							for (i in 0...el.length) {
+								var first = el[i];
+								// (the last statement)
+								if (i == el.length - 1) switch first.eexpr {
+									case TBreak if (isTrueExpr(e1) && !continues):
+										doWhile = Texpr.Builder.makeBool(scom.basic, true, e1.epos);
+										return el.slice(0, i);
+									case TIf(cond, {eexpr: TBlock([{eexpr: TBreak}])}, null) if (isTrueExpr(e1) && !referencesLocal(cond) && !continues):
+										doWhile = cond;
+										return el.slice(0, i);
 									case _:
-										collectVars(first);
-										[first].concat(loop2(el.slice(1)));
 								}
-						};
+								switch first.eexpr {
+									case TBreak | TContinue | TReturn(_) | TThrow(_): return el.slice(0, i + 1);
+									case _: collectVars(first);
+								}
+							}
+							return el.slice(0, el.length);
+						}
 						var el = loop2(el);
 						doWhile == null ? withExpr(e,
 							TWhile(e1, withExpr(e2, TBlock(el)),
@@ -1327,7 +1336,7 @@ class Purity {
 				node.pnField.cfMeta = [
 					({
 						meta: core.MetaList.StrictMeta.Pure,
-						exprs: [{expr: EConst(Ident("inferredPure")), pos: p}],
+						exprs: vector({expr: EConst(Ident("inferredPure")), pos: p}),
 						pos: p
 					} : core.Ast.MetadataEntry)
 				].concat(node.pnField.cfMeta);

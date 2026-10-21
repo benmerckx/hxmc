@@ -2,6 +2,10 @@ package hxmc;
 
 import haxe.ds.Vector;
 import hxmc.Mir;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // Machine-independent optimizations on MIR (target facts stay in Abi and
 // the instruction selectors):
@@ -133,7 +137,7 @@ class Opt {
 		var idom = dom.idom;
 		var inOrder = order[0].mark; // (set by dominators: tmp is the reverse postorder index)
 		var vals = f.vals;
-		var body:Array<Bool> = [];
+		var body = new Vector<Bool>(n); // (the blocks of the loop, by rpo index)
 		var inv:Array<Bool> = [];
 		var moved = false;
 		var nextBlock = 0;
@@ -153,8 +157,7 @@ class Opt {
 				}
 			if (latches.length == 0) continue;
 			// the loop: the blocks reaching a latch without passing the header
-			body.resize(0);
-			body.resize(n);
+			body.fill(false);
 			body[k] = true;
 			var members = [h];
 			var stack = [];
@@ -246,7 +249,7 @@ class Opt {
 				j.id = vals.length;
 				vals.push(j);
 				j.block = pre;
-				j.targets = [h];
+				j.targets = vector(h);
 				pre.ins = [j];
 				pre.preds = [outside];
 				pre.succs = [h];
@@ -330,11 +333,11 @@ class Opt {
 							if (q >= 0) {
 								drop.preds.splice(q, 1);
 								for (i in drop.ins)
-									if (i.op == Phi) i.args.splice(q, 1);
+									if (i.op == Phi) i.removeArg(q);
 							}
 							t.op = Jmp;
 							t.a = -1;
-							t.targets = [keep];
+							t.targets = vector(keep);
 							b.succs = [keep];
 							changed = true;
 						}
@@ -364,7 +367,7 @@ class Opt {
 
 	// immediate dominators (Cooper, Harvey and Kennedy) as reverse postorder
 	// indices, and the dominator tree's children lists
-	function dominators(order:Array<MBlock>):{idom:Vector<Int>, childHead:Vector<Int>, childNext:Vector<Int>} {
+	function dominators(order:Vector<MBlock>):{idom:Vector<Int>, childHead:Vector<Int>, childNext:Vector<Int>} {
 		var n = order.length;
 		var inOrder = f.newMark();
 		for (k in 0...n) {
@@ -447,11 +450,11 @@ class Opt {
 			if (k >= 0) {
 				drop.preds.splice(k, 1);
 				for (i in drop.ins)
-					if (i.op == Phi) i.args.splice(k, 1);
+					if (i.op == Phi) i.removeArg(k);
 			}
 			t.op = Jmp;
 			t.a = -1;
-			t.targets = [keep];
+			t.targets = vector(keep);
 			b.succs = [keep];
 		}
 		var uses = MFunc.ints(f.vals.length, 0);
@@ -460,9 +463,8 @@ class Opt {
 				if (i.a >= 0) uses[i.a]++;
 				if (i.b >= 0) uses[i.b]++;
 				if (i.c >= 0) uses[i.c]++;
-				if (i.args != null)
-					for (x in i.args)
-						uses[x]++;
+				for (x in i.args)
+					uses[x]++;
 			}
 		var vals = f.vals;
 		for (b in f.blocks.copy()) {
@@ -497,7 +499,7 @@ class Opt {
 				var j = s.preds.indexOf(b);
 				for (i in s.ins)
 					if (i.op == Phi) {
-						i.args.push(i.args[j]);
+						i.addArg(i.args[j]);
 						uses[i.args[j]]++;
 					}
 			}
@@ -520,7 +522,7 @@ class Opt {
 					addArgs(onZero);
 					t.op = Br;
 					t.a = v;
-					t.targets = [onSet, onZero];
+					t.targets = vector(onSet, onZero);
 					p.succs = [onSet, onZero];
 					onSet.preds.push(p);
 					onZero.preds.push(p);
@@ -531,7 +533,7 @@ class Opt {
 				}
 				// drop the edge into b
 				b.preds.splice(k, 1);
-				phi.args.splice(k, 1);
+				phi.removeArg(k);
 			}
 		}
 		pruneBlocks();
@@ -554,7 +556,7 @@ class Opt {
 					if (i.op == Phi) {
 						i.op = Copy;
 						i.a = i.args[0];
-						i.args = null;
+						i.args = vector();
 						i.block = b;
 						rest.push(i);
 					} else {
@@ -592,7 +594,7 @@ class Opt {
 		if (t.op == Br && t.targets[0] == t.targets[1]) {
 			t.op = Jmp;
 			t.a = -1;
-			t.targets = [to];
+			t.targets = vector(to);
 			p.succs = [to];
 			to.preds.remove(p);
 		}
@@ -619,7 +621,7 @@ class Opt {
 				while (k >= 0) {
 					s.preds.splice(k, 1);
 					for (i in s.ins)
-						if (i.op == Phi) i.args.splice(k, 1);
+						if (i.op == Phi) i.removeArg(k);
 					k = s.preds.indexOf(b);
 				}
 			}
@@ -761,7 +763,7 @@ class Opt {
 		}
 	}
 
-	function rpo():Array<MBlock> {
+	function rpo():Vector<MBlock> {
 		var seen = f.newMark();
 		var post = [];
 		var stack:Array<MBlock> = [f.entry];
@@ -785,8 +787,7 @@ class Opt {
 				post.push(b);
 			}
 		}
-		post.reverse();
-		return post;
+		return VectorTools.ofArrayReversed(post);
 	}
 
 	inline function res(x:Int):Int {
@@ -840,7 +841,7 @@ class Opt {
 	// the memory versions: per block in reverse postorder, from its
 	// predecessors' (a loop header: new versions of what the loop writes),
 	// through its instructions; recorded per load
-	function versions(order:Array<MBlock>) {
+	function versions(order:Vector<MBlock>) {
 		var n = order.length;
 		var inOrder = f.newMark();
 		for (k in 0...n) {
@@ -856,16 +857,28 @@ class Opt {
 			kill[k] = m;
 		}
 		var outs = new Vector<Vector<Int>>(n);
+		// (a loop's blocks: those that reach a back edge without passing its
+		// header, walked back from the back edges; not the blocks between the
+		// header and its last back edge in reverse postorder, which can leave
+		// out an inner loop's latch and the calls in it. walked: k + 1 for
+		// the blocks reached for header k)
+		var walked = new Vector<Int>(n);
+		var stack:Array<MBlock> = [];
 		for (k in 0...n) {
 			var b = order[k];
 			var v:Vector<Int> = null;
-			var latch = -1;
-			var mixed = 0; // classes the forward predecessors disagree on
+			var loop = false;
+			var mixed = 0; // classes the forward predecessors disagree on, or the loop writes
+			walked[k] = k + 1;
 			for (p in b.preds) {
 				if (p.mark != inOrder) continue;
 				var pk = p.tmp;
 				if (pk >= k) {
-					if (pk > latch) latch = pk;
+					loop = true;
+					if (walked[pk] != k + 1) {
+						walked[pk] = k + 1;
+						stack.push(p);
+					}
 					continue;
 				}
 				var o = outs[pk];
@@ -873,14 +886,27 @@ class Opt {
 					for (c in 0...NCLS)
 						if (v[c] != o[c]) mixed |= 1 << c;
 			}
+			if (loop) mixed |= kill[k];
+			while (stack.length > 0) {
+				var q = stack.pop();
+				mixed |= kill[q.tmp];
+				for (p in q.preds) {
+					if (p.mark != inOrder || walked[p.tmp] == k + 1) continue;
+					if (p.tmp < k) {
+						// (a way into the loop other than its header: every class)
+						mixed = -1;
+						stack.resize(0);
+						break;
+					}
+					walked[p.tmp] = k + 1;
+					stack.push(p);
+				}
+			}
 			if (v == null || b.handler) {
 				v = new Vector<Int>(NCLS);
 				for (c in 0...NCLS)
 					v[c] = next++;
 			} else {
-				if (latch >= 0)
-					for (q in k...latch + 1)
-						mixed |= kill[q];
 				for (c in 0...NCLS)
 					if (mixed & (1 << c) != 0) v[c] = next++;
 			}
@@ -972,7 +998,7 @@ class Opt {
 	// is an entry too, under the key of the load of its address, which then
 	// takes the stored value (store-to-load forwarding: a value kept in a
 	// shadow-stack slot and read back before the next call)
-	function gvn(order:Array<MBlock>) {
+	function gvn(order:Vector<MBlock>) {
 		var n = order.length;
 		var inOrder = f.newMark();
 		for (k in 0...n) {
@@ -982,7 +1008,9 @@ class Opt {
 		// immediate dominators (Cooper, Harvey and Kennedy), as rpo indices
 		var idom = MFunc.ints(n, -1);
 		idom[0] = 0;
-		var preds = [for (b in order) [for (p in b.preds) if (p.mark == inOrder) p.tmp]];
+		var preds = new Vector<Array<Int>>(n);
+		for (k in 0...n)
+			preds[k] = [for (p in order[k].preds) if (p.mark == inOrder) p.tmp];
 		var changed = true;
 		while (changed) {
 			changed = false;
@@ -1172,9 +1200,8 @@ class Opt {
 				if (i.a >= 0) i.a = res(i.a);
 				if (i.b >= 0) i.b = res(i.b);
 				if (i.c >= 0) i.c = res(i.c);
-				if (i.args != null)
-					for (k in 0...i.args.length)
-						i.args[k] = res(i.args[k]);
+				for (k in 0...i.args.length)
+					i.args[k] = res(i.args[k]);
 			}
 	}
 
@@ -1187,9 +1214,8 @@ class Opt {
 					if (i.a >= 0) uses[i.a]++;
 					if (i.b >= 0) uses[i.b]++;
 					if (i.c >= 0) uses[i.c]++;
-					if (i.args != null)
-						for (x in i.args)
-							uses[x]++;
+					for (x in i.args)
+						uses[x]++;
 				}
 		var work = [];
 		for (b in f.blocks)
@@ -1202,9 +1228,8 @@ class Opt {
 			if (i.a >= 0 && --uses[i.a] == 0 && removable(f.vals[i.a])) work.push(f.vals[i.a]);
 			if (i.b >= 0 && --uses[i.b] == 0 && removable(f.vals[i.b])) work.push(f.vals[i.b]);
 			if (i.c >= 0 && --uses[i.c] == 0 && removable(f.vals[i.c])) work.push(f.vals[i.c]);
-			if (i.args != null)
-				for (x in i.args)
-					if (--uses[x] == 0 && removable(f.vals[x])) work.push(f.vals[x]);
+			for (x in i.args)
+				if (--uses[x] == 0 && removable(f.vals[x])) work.push(f.vals[x]);
 		}
 		for (b in f.blocks) {
 			var ins = b.ins, k = 0;

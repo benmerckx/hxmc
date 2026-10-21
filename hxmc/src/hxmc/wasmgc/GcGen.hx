@@ -87,7 +87,7 @@ class Uses {
 	public final classes = new Map<ClassInfo, Bool>();
 	public final lambdas = new Map<LambdaInfo, Bool>();
 	public final shapes = new Map<ShapeInfo, Bool>();
-	public final bodies = new Map<FuncInfo, {body:Array<Stmt>, locals:Array<Local>}>();
+	public final bodies = new Map<FuncInfo, {body:haxe.ds.Vector<Stmt>, locals:Array<Local>}>();
 	// the program works on linear memory (hxmc.unsafe, C functions: GcModule.memory)
 	public var memory = false;
 	// the class of dates, the runtime's hxmc.rt.gc.GcDate (GcRepr.dateOf): Date's
@@ -101,7 +101,7 @@ class Uses {
 		// (each function's on its own: on threads, an IrOpt each, as its
 		// memos of the callees are the same for every function)
 		var fs = prog.funcs;
-		var out:Array<{body:Array<Stmt>, locals:Array<Local>}> = [for (_ in fs) null];
+		var out = new haxe.ds.Vector<{body:haxe.ds.Vector<Stmt>, locals:Array<Local>}>(fs.length);
 		var next = 0, failure:Null<String> = null;
 		var lock = new sys.thread.Mutex();
 		function work() {

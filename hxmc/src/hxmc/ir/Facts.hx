@@ -1,6 +1,10 @@
 package hxmc.ir;
 
 import hxmc.ir.Ir;
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // The program-wide preparation hxmc's code generator and data share
 // (hxmc.Prep), from the part of hxc's C emitter that did not write C
@@ -38,11 +42,11 @@ class Facts {
 	// the numbering does.
 	public var ids = new Map<String, Int>(); // id name -> value
 	public var idOrder:Array<String> = [];
-	public var typeNames:Array<String> = []; // type index -> its name (program types: TY_* ids)
+	public var typeNames:Vector<String> = vector(); // type index -> its name (program types: TY_* ids)
 	public var fidNames = new Map<String, String>();
-	public var sigNames:Array<String> = [];
-	public var globalNames:Array<String> = [];
-	public var selNames:Array<String> = [];
+	public var sigNames:Vector<String> = vector();
+	public var globalNames:Vector<String> = vector();
+	public var selNames:Vector<String> = vector();
 
 	public function new(p:Program) {
 		this.p = p;
@@ -112,7 +116,7 @@ class Facts {
 
 	// Names for keys: `prefix` + the key as an identifier; keys mapping to the
 	// same identifier get a suffix by their sorted rank. Values become ids.
-	function nameIds(prefix:String, keys:Array<String>, values:Null<Array<Int>>):Array<String> {
+	function nameIds(prefix:String, keys:Array<String>, values:Null<Array<Int>>):Vector<String> {
 		var cands = [for (k in keys) prefix + ident(k)];
 		var groups = new Map<String, Array<String>>();
 		for (i in 0...keys.length) {
@@ -120,7 +124,7 @@ class Facts {
 			if (g == null) groups.set(cands[i], g = []);
 			g.push(keys[i]);
 		}
-		var names = [];
+		var names = new Vector<String>(keys.length);
 		for (i in 0...keys.length) {
 			var g = groups.get(cands[i]);
 			var n = cands[i];
@@ -128,7 +132,7 @@ class Facts {
 				g.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 				n += "_" + g.indexOf(keys[i]);
 			}
-			names.push(n);
+			names[i] = n;
 			if (values != null) {
 				if (ids.exists(n)) throw "duplicate name " + n;
 				ids.set(n, values[i]);
@@ -145,7 +149,9 @@ class Facts {
 			vals.push(i);
 		}
 		var tn = nameIds("TY_", keys, vals);
-		typeNames = [for (i in 0...types.length) i < T_FIRST ? Std.string(i) : tn[i - T_FIRST]];
+		typeNames = new Vector(types.length);
+		for (i in 0...types.length)
+			typeNames[i] = i < T_FIRST ? Std.string(i) : tn[i - T_FIRST];
 		var fn = nameIds("FID_", fieldNames, [for (i in 0...fieldNames.length) i]);
 		for (i in 0...fieldNames.length)
 			fidNames.set(fieldNames[i], fn[i]);
@@ -188,26 +194,26 @@ class Facts {
 	// start with its superclass's, so the layout of a subclass extends the
 	// superclass's. Returns per field its location (see `at`); appends the
 	// physical slots (for the pointer map) to `slots`.
-	static function layout(slots:Array<Null<Ty>>, tys:Array<Ty>):Array<Int> {
-		var locs = [], half = -1;
-		for (t in tys)
-			switch t {
+	static function layout(slots:Array<Null<Ty>>, tys:Array<Ty>):Vector<Int> {
+		var locs = new Vector<Int>(tys.length), half = -1;
+		for (k in 0...tys.length)
+			switch tys[k] {
 				case TI32 | TBool:
 					if (half >= 0) {
-						locs.push(2 * half + 1);
+						locs[k] = 2 * half + 1;
 						half = -1;
 					} else {
 						half = slots.length;
-						locs.push(2 * half);
+						locs[k] = 2 * half;
 						slots.push(TI32);
 					}
 				case TStruct(_, size):
 					// (a struct's memory: whole slots, none a reference)
-					locs.push(slots.length);
+					locs[k] = slots.length;
 					for (_ in 0...(size + 7) >> 3)
 						slots.push(TI64);
-				case _:
-					locs.push(slots.length);
+				case t:
+					locs[k] = slots.length;
 					slots.push(t);
 			}
 		return locs;
@@ -394,8 +400,8 @@ class Facts {
 
 	// e with its subexpressions replaced by f's results (iterEx's order)
 	public static function mapEx(f:Ex->Ex, e:Ex):Ex {
-		inline function all(a:Array<Ex>)
-			return [for (x in a) f(x)];
+		inline function all(a:Vector<Ex>)
+			return a.map(f);
 		return switch e {
 			case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
 			case EBin(o, a, b): EBin(o, f(a), f(b));
@@ -663,7 +669,7 @@ class Facts {
 		var next = 0;
 		function gcFree(e:Ex):Bool
 			return GcPoints.gcPoint(e) == 0 && !GcPoints.nestedGc(e);
-		function mark(ss:Array<Stmt>) {
+		function mark(ss:Vector<Stmt>) {
 			for (k in 0...ss.length) {
 				var st = ss[k];
 				switch st {
@@ -726,6 +732,8 @@ class GcPoints {
 		return switch e {
 			case ECall(f, _) if (f.noGc): 0;
 			case ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | EBox(_) | EAnonGet(_) | EArrGet(TRef(RAny), _, _) | EArrGetU(TRef(RAny), _, _): 1;
+			// (a NativeArray literal: its elements stored after the allocation, MirBuild)
+			case ECallHost("hxmc_narray_lit", _, _): 2;
 			case ECallHost(n, _, _): FnLower.noGcHost(n) ? 0 : 1;
 			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): 2;
 			case _: 0;

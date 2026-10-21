@@ -11,6 +11,10 @@ import core.ds.AtomicLazy;
 import haxe.ds.StringMap;
 import haxe.ds.IntMap;
 import sys.thread.Mutex;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // port: from haxe/src/core/tFunctions.ml.
 typedef NotFound = core.ds.NotFound;
@@ -151,7 +155,7 @@ class TFunctions {
 
 	public static function mkBlock(e:TExpr):TExpr return switch e.eexpr {
 		case TBlock(_): e;
-		case _: mk(TBlock([e]), e.etype, e.epos);
+		case _: mk(TBlock(vector(e)), e.etype, e.epos);
 	};
 
 	public static function mkCast(e:TExpr, t:T, p:Pos):TExpr return mk(TCast(e, null), t, p);
@@ -166,7 +170,7 @@ class TFunctions {
 	public static function mkAnon(status:AnonStatus,
 			?fields:TypeMap<TClassField>):T return TAnon({aFields: fields == null ? new StringMap() : fields, aStatus: status});
 
-	public static function tfun(pl:TParams, r:T):T return TFun({args: [for (t in pl) {name: "", optional: false, type: t}], ret: r});
+	public static function tfun(pl:TParams, r:T):T return TFun({args: pl.map(t -> {name: "", optional: false, type: t}), ret: r});
 
 	public static function funArgs(l:Array<{name:String, defaultValue:Null<TExpr>, type:T}>):Array<{name:String, optional:Bool, type:T}>
 		return [for (a in l) {name: a.name, optional: a.defaultValue != null, type: a.type}];
@@ -179,7 +183,7 @@ class TFunctions {
 		tPrivate: false,
 		tDoc: null,
 		tMeta: [],
-		tParams: [],
+		tParams: vector(),
 		tUsing: [],
 		tType: t,
 		tRestore: function() {}
@@ -205,7 +209,7 @@ class TFunctions {
 			clKind: KNormal,
 			clFlags: 0,
 			clType: tDynamic,
-			clParams: [],
+			clParams: vector(),
 			clUsing: [],
 			clSuper: null,
 			clImplements: [],
@@ -221,7 +225,7 @@ class TFunctions {
 			clRestore: function() {},
 			clDescendants: []
 		};
-		c.clType = TType(classModuleType(c), []);
+		c.clType = TType(classModuleType(c), vector());
 		return c;
 	}
 
@@ -264,7 +268,7 @@ class TFunctions {
 			cfKind: Var({vRead: AccNormal, vWrite: AccNormal}),
 			cfExpr: null,
 			cfExprUnoptimized: null,
-			cfParams: [],
+			cfParams: vector(),
 			cfOverloads: [],
 			cfFlags: flags
 		};
@@ -319,7 +323,7 @@ class TFunctions {
 		ePrivate: true,
 		eDoc: null,
 		eMeta: [],
-		eParams: [],
+		eParams: vector(),
 		eUsing: [],
 		eRestore: function() {},
 		eType: tDynamic,
@@ -330,12 +334,12 @@ class TFunctions {
 	public static final nullField:TClassField = mkField("", tDynamic, Globals.nullPos, Globals.nullPos);
 	public static final nullEnumField:TEnumField = {
 		efName: "",
-		efType: TEnum(nullEnum, []),
+		efType: TEnum(nullEnum, vector()),
 		efPos: Globals.nullPos,
 		efNamePos: Globals.nullPos,
 		efDoc: null,
 		efIndex: 0,
-		efParams: [],
+		efParams: vector(),
 		efMeta: []
 	};
 	public static final nullAbstract:TAbstract = {
@@ -346,7 +350,7 @@ class TFunctions {
 		aPrivate: true,
 		aDoc: null,
 		aMeta: [],
-		aParams: [],
+		aParams: vector(),
 		aUsing: [],
 		aRestore: function() {},
 		aOps: [],
@@ -502,7 +506,7 @@ class TFunctions {
 		case TInst(c, tl): TInst(c, tl.map(loop));
 		case TType(td, tl): TType(td, tl.map(loop));
 		case TAbstract(a, tl): TAbstract(a, tl.map(loop));
-		case TFun(s): TFun({args: [for (a in s.args) {name: a.name, optional: a.optional, type: loop(a.type)}], ret: loop(s.ret)});
+		case TFun(s): TFun({args: s.args.map(a -> {name: a.name, optional: a.optional, type: loop(a.type)}), ret: loop(s.ret)});
 		case TAnon(a):
 			var fields = new StringMap<TClassField>();
 			for (name => f in a.aFields) {
@@ -622,7 +626,7 @@ class TFunctions {
 			case TInst(c, [TMono(r)]) if (r.tmType != null && t == r.tmType):
 				// for dynamic
 				var pt = mkMono();
-				var result = TInst(c, [pt]);
+				var result = TInst(c, vector(pt));
 				switch pt {
 					case TMono(r): monomorphBindRef(r, result);
 					case _: throw "Expected monomorph";
@@ -636,7 +640,7 @@ class TFunctions {
 
 	public static function applyTypedef(td:TDef, tl:TParams):T return applyParams(td.tParams, tl, td.tType);
 
-	public static function monomorphs(eparams:TypeParams, t:T):T return applyParams(eparams, [for (_ in eparams) mkMono()], t);
+	public static function monomorphs(eparams:TypeParams, t:T):T return applyParams(eparams, eparams.map(_ -> mkMono()), t);
 
 	public static function tryApplyParamsRec(stack:ApplyParamsStack, cparams:TypeParams, params:TParams, t:T, success:T->Void):Void {
 		var oldStack = stack.value;
@@ -704,7 +708,7 @@ class TFunctions {
 	};
 
 	public static function ambiguateFuns(t:T):T return switch follow(t) {
-		case TFun(_): TFun({args: [], ret: tDynamic});
+		case TFun(_): TFun({args: vector(), ret: tDynamic});
 		case _: map(ambiguateFuns, t);
 	};
 
@@ -771,9 +775,9 @@ class TFunctions {
 	public static function concat(e1:TExpr, e2:TExpr):TExpr {
 		var e = switch [e1.eexpr, e2.eexpr] {
 			case [TBlock(el1), TBlock(el2)]: TBlock(el1.concat(el2));
-			case [TBlock(el), _]: TBlock(el.concat([e2]));
-			case [_, TBlock(el)]: TBlock([e1].concat(el));
-			case _: TBlock([e1, e2]);
+			case [TBlock(el), _]: TBlock(el.snoc(e2));
+			case [_, TBlock(el)]: TBlock(VectorTools.cons(e1, el));
+			case _: TBlock(vector(e1, e2));
 		};
 		return mk(e, e2.etype, AstTools.punion(e1.epos, e2.epos));
 	}
@@ -789,10 +793,10 @@ class TFunctions {
 		throw NotFound.raise();
 	}
 
-	public static function mkTypeParam(c:TClass, host:TypeParamHost, def:Null<T>, constraints:Null<AtomicLazy<Array<T>>>):TypedTypeParam {
+	public static function mkTypeParam(c:TClass, host:TypeParamHost, def:Null<T>, constraints:Null<AtomicLazy<TParams>>):TypedTypeParam {
 		var ttp:TypedTypeParam = {
 			ttpName: c.clPath.name,
-			ttpType: TInst(c, []),
+			ttpType: TInst(c, vector()),
 			ttpClass: c,
 			ttpHost: host,
 			ttpConstraints: constraints,
@@ -838,7 +842,7 @@ class TFunctions {
 		case TSuper: Ident("super");
 	};
 
-	public static function getConstraints(ttp:TypedTypeParam):TParams return ttp.ttpConstraints == null ? [] : ttp.ttpConstraints.force();
+	public static function getConstraints(ttp:TypedTypeParam):TParams return ttp.ttpConstraints == null ? vector() : ttp.ttpConstraints.force();
 
 	public static function hasCtorConstraint(c:TClass):Bool return switch c.clKind {
 		case KTypeParameter(ttp): core.ds.ArrayTools.exists(getConstraints(ttp), function(t) return switch follow(t) {

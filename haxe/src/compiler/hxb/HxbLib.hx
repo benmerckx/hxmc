@@ -24,8 +24,8 @@ class HxbLibrary implements AbstractHxbLib {
 	final modules:Map<String, {filename:String, entry:ZipEntry}> = new Map();
 	var closed = false;
 	var loaded = false;
-	var stringPool:Null<Array<String>> = null;
-	var macroStringPool:Null<Array<String>> = null;
+	var stringPool:Null<haxe.ds.Vector<String>> = null;
+	var macroStringPool:Null<haxe.ds.Vector<String>> = null;
 
 	public function new(timerCtx:TimerContext, filePath:String, hxbTimes:Null<TimerContext>) {
 		this.timerCtx = timerCtx;
@@ -78,7 +78,7 @@ class HxbLibrary implements AbstractHxbLib {
 
 	public function getFilePath():String return filePath;
 
-	public function getStringPool(target:String):Null<Array<String>> {
+	public function getStringPool(target:String):Null<haxe.ds.Vector<String>> {
 		return if (target == "macro" && macroStringPool != null) macroStringPool else stringPool;
 	}
 }

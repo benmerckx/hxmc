@@ -16,6 +16,7 @@
 package libs.neko;
 
 import haxe.ds.StringMap;
+import haxe.ds.Vector;
 import libs.neko.Nast;
 import libs.neko.Nbytecode;
 
@@ -691,7 +692,7 @@ class Ncompile {
 		ctx.g.gtable.push(GlobalFunction(gid, -1));
 		/* // environment */
 		if (ctx.nenv > 0) {
-			var a = [for (_ in 0...ctx.nenv) ""];
+			var a = new Vector(ctx.nenv, "");
 			for (v => i in ctx.env) a[i] = v;
 			for (v in a) {
 				compileConstant(main, Ident(v), e.pos);
@@ -1047,7 +1048,7 @@ class Ncompile {
 					var ints = ci.ints, size = ci.size;
 					compile(ctx, false, e);
 					write(ctx, JumpTable(size));
-					var tbl:Array<Null<Expr>> = [for (_ in 0...size) null];
+					var tbl = new Vector<Null<Expr>>(size);
 					for (ie in ints) {
 						tbl[ie.n] = ie.e;
 					}
@@ -1098,7 +1099,7 @@ class Ncompile {
 	}
 
 	// port: upstream's toplevel `compile`, which shadows the recursive one above.
-	public static function compileAst(version:Int, ast:Expr):{globals:Array<Global>, ops:Array<Opcode>} {
+	public static function compileAst(version:Int, ast:Expr):{globals:Vector<Global>, ops:Vector<Opcode>} {
 		var g:Globals = {
 			globals: new StringMap(),
 			gobjects: new StringMap(),
@@ -1163,7 +1164,7 @@ class Ncompile {
 			for (p in ctxpos) pos.push(p);
 			for (o in ctxops) ops.push(o);
 		}
-		g.gtable.push(GlobalDebug(ctx.g.files.copy(), ctx.pos.copy()));
-		return {globals: g.gtable.copy(), ops: ctx.ops.copy()};
+		g.gtable.push(GlobalDebug(Vector.fromArrayCopy(ctx.g.files), Vector.fromArrayCopy(ctx.pos)));
+		return {globals: Vector.fromArrayCopy(g.gtable), ops: Vector.fromArrayCopy(ctx.ops)};
 	}
 }

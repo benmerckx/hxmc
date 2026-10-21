@@ -21,7 +21,7 @@ enum ReferenceKind {
 }
 
 class SyntaxExplorer {
-	public static function findInSyntax(symbols:Array<{name:String, kind:Symbol}>, pack:Array<String>, decls:Array<TypeDecl>):Void {
+	public static function findInSyntax(symbols:Array<{name:String, kind:Symbol}>, pack:Array<String>, decls:haxe.ds.Vector<TypeDecl>):Void {
 		// Employ some heuristics: We know what kind of symbol we are looking for, so let's
 		// filter where we can.
 		function check(kind_:ReferenceKind, name_:String):Void {

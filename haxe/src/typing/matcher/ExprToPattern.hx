@@ -28,6 +28,9 @@ import context.Typecore.*;
 import context.Typecore;
 import typing.matcher.Pattern;
 import typing.matcher.Constructor;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 typedef PatternContext = {
 	var ctx:Typer;
@@ -46,7 +49,7 @@ class BadPattern extends haxe.Exception {
 }
 
 class ExprToPattern {
-	static function fieldAssoc(name:String, fields:Array<ObjectField>):Expr {
+	static function fieldAssoc(name:String, fields:haxe.ds.Vector<ObjectField>):Expr {
 		for (field in fields) if (field.key.name == name) return field.expr;
 		throw NotFound.raise();
 	}
@@ -57,9 +60,9 @@ class ExprToPattern {
 	static function displayExprDeferred(ctx:Typer, e:Expr, typed:TExpr, kind:DisplayKind, mode:AccessMode, withType:WithTypeValue,
 			p:Pos):Void typing.TyperDisplay.displayExpr(ctx, e, typed, kind, mode, withType, p);
 
-	public static var fakeTupleType:T = TInst(mkClass(nullModule, {pack: [], name: "-Tuple"}, nullPos, nullPos), []);
+	public static var fakeTupleType:T = TInst(mkClass(nullModule, {pack: [], name: "-Tuple"}, nullPos, nullPos), vector());
 
-	public static function tupleType(tl:Array<T>):T return tfun(tl, fakeTupleType);
+	public static function tupleType(tl:core.TType.TParams):T return tfun(tl, fakeTupleType);
 
 	public static function typeFieldAccess(ctx:Typer, e:TExpr, name:String,
 			resume:Bool = false):TExpr return Calls.accGet(ctx,
@@ -82,13 +85,13 @@ class ExprToPattern {
 			tname: loop(mt),
 			tpackage: [],
 			tsub: null,
-			tparams: []
+			tparams: vector()
 		}, p), ParamSpawnMonos, LoadNormal);
 	}
 
 	public static function unifyTypePattern(ctx:Typer, mt:ModuleType, t:T, p:Pos):Void switch getGeneralModuleType(ctx, mt, p) {
 		case TAbstract(a, _):
-			unify(ctx, TAbstract(a, [spawnMonomorph(ctx, p)]), t, p);
+			unify(ctx, TAbstract(a, vector(spawnMonomorph(ctx, p))), t, p);
 		case _:
 			throw "assert";
 	};
@@ -277,7 +280,7 @@ class ExprToPattern {
 				};
 				PatConstructor({kind: ConConst(constant), pos: e.pos}, []);
 			case EConst(Ident(i)): switch follow(t) {
-					case TFun(s) if (s.ret == fakeTupleType): if (i == "_") PatTuple(s.args.map(function(_) return ({
+					case TFun(s) if (s.ret == fakeTupleType): if (i == "_") PatTuple(s.args.mapToArray(function(_) return ({
 							kind: PatAny,
 							pos: e.pos
 						} : typing.matcher.Pattern.PatternData))); else
@@ -351,7 +354,7 @@ class ExprToPattern {
 			case EField(_, _, _): try tryTyping(e) catch (ex:Exit) fail() catch (ex:BadPattern) core.Error.raiseTypingError(ex.message, p);
 			case EArrayDecl(el):
 				function arrayPattern(t2:T):PatternKind {
-					var ps = el.map(function(e) return make(pctx, false, t2, e));
+					var ps = el.mapToArray(function(e) return make(pctx, false, t2, e));
 					return PatConstructor({kind: ConArray(ps.length), pos: e.pos}, ps);
 				}
 				function arrayAccessPattern():PatternKind {
@@ -389,7 +392,7 @@ class ExprToPattern {
 							collectField(cf, cf.cfType, filter);
 						}
 					case TInst(c, tl):
-						function loopClass(c:TClass, tl:Array<T>):Void {
+						function loopClass(c:TClass, tl:core.TType.TParams):Void {
 							if (c.clSuper != null) loopClass(c.clSuper.cls,
 								c.clSuper.params.map(function(t) return applyParams(c.clParams, tl, t)));
 							for (cf in c.clOrderedFields) if (canAccess(ctx, c, cf,

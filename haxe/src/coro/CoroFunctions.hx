@@ -5,6 +5,8 @@ import core.TFunctions.*;
 import coro.CoroTypes;
 import coro.CoroElsewhere.TexprBuilder;
 
+using core.ds.VectorTools;
+
 enum abstract CoroControl(Int) to Int {
 	var CoroPending = 0;
 	var CoroReturned = 1;
@@ -14,8 +16,8 @@ enum abstract CoroControl(Int) to Int {
 class CoroFunctions {
 	public static function makeCustomControlSwitch(b:TexprBuilder, eSubject:TExpr, cases:Array<{controls:Array<CoroControl>, e:TExpr}>,
 			p:core.Globals.Pos):TExpr {
-		var cases = cases.map(function(c) return ({
-			casePatterns: c.controls.map(function(k) return b.int(k, p)),
+		var cases = cases.mapToVector(function(c) return ({
+			casePatterns: c.controls.mapToVector(function(k) return b.int(k, p)),
 			caseExpr: c.e
 		} : core.TType.TSwitchCase));
 		return mk(TSwitch({
@@ -58,7 +60,7 @@ class CoroFunctions {
 		var i = cb.cbEl.length;
 		while (i-- > 0) switch cb.cbEl[i].eexpr {
 			case TBlock(el):
-				acc = el.concat(acc);
+				acc = el.toArray().concat(acc);
 			case _:
 				acc.unshift(cb.cbEl[i]);
 		}

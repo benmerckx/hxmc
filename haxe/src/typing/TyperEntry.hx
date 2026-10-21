@@ -26,6 +26,7 @@ import context.Common;
 import core.Define;
 import typing.Typer.*;
 import context.Resolution.*;
+import core.ds.VectorTools.vector;
 
 class TyperEntry {
 	public static function loadStdTypes(ctx:TyperContext):Void {
@@ -47,31 +48,31 @@ class TyperEntry {
 				case TAbstractDecl(a):
 					switch a.aPath.name {
 						case "Void":
-							var t = TAbstract(a, []);
+							var t = TAbstract(a, vector());
 							core.TUnification.unify(t, ctx.t.tvoid);
 							ctx.t.tvoid = t;
 						case "Float":
-							var t = TAbstract(a, []);
+							var t = TAbstract(a, vector());
 							core.TUnification.unify(t, ctx.t.tfloat);
 							ctx.t.tfloat = t;
 						case "Int":
-							var t = TAbstract(a, []);
+							var t = TAbstract(a, vector());
 							core.TUnification.unify(t, ctx.t.tint);
 							ctx.t.tint = t;
 						case "Bool":
-							var t = TAbstract(a, []);
+							var t = TAbstract(a, vector());
 							core.TUnification.unify(t, ctx.t.tbool);
 							ctx.t.tbool = t;
 						case "Dynamic": ctx.g.tDynamicDef = TAbstract(a, extractParamTypes(a.aParams));
 						case "Null":
 							ctx.t.tnull = function(t:T):T {
 								try {
-									return !isNull(t, true) && !isExplicitNull(t) ? TAbstract(a, [t]) : t;
+									return !isNull(t, true) && !isExplicitNull(t) ? TAbstract(a, vector(t)) : t;
 								} catch (err:TypeExit) {
 									// don't force lazy evaluation
 									var r = new TLazy(lazyAvailable(tDynamic));
 									r.value = lazyWait(function() {
-										var t1 = !isNull(t) ? TAbstract(a, [t]) : t;
+										var t1 = !isNull(t) ? TAbstract(a, vector(t)) : t;
 										r.value = lazyAvailable(t1);
 										return t1;
 									});
@@ -81,7 +82,7 @@ class TyperEntry {
 						case _:
 					}
 				case TTypeDecl(td):
-					if (td.tPath.name == "Iterator") ctx.t.titerator = t -> TType(td, [t]);
+					if (td.tPath.name == "Iterator") ctx.t.titerator = t -> TType(td, vector(t));
 				case TEnumDecl(_) | TClassDecl(_):
 			}
 		}
@@ -91,7 +92,7 @@ class TyperEntry {
 		var m = TypeloadModule.loadModule(ctx, {pack: [], name: "String"}, Globals.nullPos);
 		for (mt in m.mTypes) switch mt {
 			case TClassDecl(c = {clPath: {pack: [], name: "String"}}):
-				var t = TInst(c, []);
+				var t = TInst(c, vector());
 				core.TUnification.unify(t, ctx.t.tstring);
 				ctx.t.tstring = t;
 			case _:
@@ -111,7 +112,7 @@ class TyperEntry {
 		var m = TypeloadModule.loadModule(ctx, {pack: [], name: "Any"}, Globals.nullPos);
 		for (mt in m.mTypes) switch mt {
 			case TAbstractDecl(a) if (a.aPath.name == "Any"):
-				var t = TAbstract(a, []);
+				var t = TAbstract(a, vector());
 				core.TUnification.unify(t, ctx.t.tany);
 				ctx.t.tany = t;
 			case _:
@@ -122,7 +123,7 @@ class TyperEntry {
 		var m = TypeloadModule.loadModule(ctx, {pack: [], name: "Array"}, Globals.nullPos);
 		for (mt in m.mTypes) switch mt {
 			case TClassDecl(c = {clPath: {pack: [], name: "Array"}}):
-				ctx.t.tarray = t -> TInst(c, [t]);
+				ctx.t.tarray = t -> TInst(c, vector(t));
 				return;
 			case _:
 		}
@@ -133,7 +134,7 @@ class TyperEntry {
 		var m = TypeloadModule.loadModule(ctx, {pack: ["haxe"], name: "Unit"}, Globals.nullPos);
 		for (mt in m.mTypes) switch mt {
 			case TEnumDecl(en) if (en.ePath.name == "Unit"):
-				ctx.t.tunit = TEnum(en, []);
+				ctx.t.tunit = TEnum(en, vector());
 				// ctx.m.importResolution.add(moduleTypeResolution(mt, null, nullPos));
 			case _:
 		}
@@ -181,7 +182,7 @@ class TyperEntry {
 			var m = TypeloadModule.loadModule(ctx, {pack: ["haxe", "coro"], name: "Coroutine"}, Globals.nullPos);
 			for (mt in m.mTypes) switch mt {
 				case TAbstractDecl(a = {aPath: {pack: ["haxe", "coro"], name: "Coroutine"}}):
-					return function(signature:TSignature):T return TAbstract(a, [TFun(signature)]);
+					return function(signature:TSignature):T return TAbstract(a, vector(TFun(signature)));
 				case _:
 			}
 			throw "Could not locate abstract Coroutine<T> (was it redefined?)";
@@ -190,7 +191,7 @@ class TyperEntry {
 			var m = TypeloadModule.loadModule(ctx, {pack: ["haxe", "coro"], name: "IContinuation"}, Globals.nullPos);
 			for (mt in m.mTypes) switch mt {
 				case TClassDecl(cl = {clPath: {pack: ["haxe", "coro"], name: "IContinuation"}}):
-					return TInst(cl, [ctx.t.tany]);
+					return TInst(cl, vector(ctx.t.tany));
 				case _:
 			}
 			throw "Could not locate class IContinuation<T> (was it redefined?)";
@@ -208,7 +209,7 @@ class TyperEntry {
 			var m = TypeloadModule.loadModule(ctx, {pack: ["haxe", "coro"], name: "AsyncIterator"}, Globals.nullPos);
 			for (mt in m.mTypes) switch mt {
 				case TTypeDecl(td = {tPath: {pack: ["haxe", "coro"], name: "AsyncIterator"}}):
-					return function(t:T):T return TType(td, [t]);
+					return function(t:T):T return TType(td, vector(t));
 				case _:
 			}
 			throw "Could not locate typedef AsyncIterator<T> (was it redefined?)";
@@ -216,7 +217,7 @@ class TyperEntry {
 		var m = TypeloadModule.loadModule(ctx, {pack: ["haxe"], name: "Exception"}, Globals.nullPos);
 		for (mt in m.mTypes) switch mt {
 			case TClassDecl(cl = {clPath: {pack: ["haxe"], name: "Exception"}}):
-				ctx.t.texception = TInst(cl, []);
+				ctx.t.texception = TInst(cl, vector());
 			case _:
 		}
 	}
@@ -246,14 +247,19 @@ class TyperEntry {
 			pass: PBuildModule,
 			allowInline: true,
 			allowTransform: true,
-			typeParams: [],
+			typeParams: vector(),
 			memoryMarker: memoryMarker
 		};
 		ctx.g = {
 			coreApi: null,
 			macros: macros,
 			moduleCheckPolicies: [],
-			delayed: [for (_ in 0...TyperPassTools.allTyperPassesLength) {tasks: [], tasksLate: []}],
+			delayed: {
+				var a = new haxe.ds.Vector<TyperPassTasks>(TyperPassTools.allTyperPassesLength);
+				for (i in 0...a.length)
+					a[i] = new TyperPassTasks([], []);
+				a;
+			},
 			delayedMinIndex: 0,
 			debugDelayed: [],
 			retainMeta: Common.defined(com, Define.RetainUntypedMeta),
@@ -307,18 +313,18 @@ private class CaptureLocalWrapper implements LocalWrapperApi {
 		this.nativeClass = nativeClass;
 	}
 
-	public function capturedType(t:T):T return nativeClass == null ? basic.tarray(t) : TInst(nativeClass, [t]);
+	public function capturedType(t:T):T return nativeClass == null ? basic.tarray(t) : TInst(nativeClass, vector(t));
 
 	public function mkRef(v:TVar, value:Null<TExpr>, p:Pos):TExpr {
-		if (nativeClass == null) return mk(TArrayDecl(value == null ? [] : [value]), v.vType, p);
+		if (nativeClass == null) return mk(TArrayDecl(value == null ? vector() : vector(value)), v.vType, p);
 		if (value == null) {
 			var element = switch v.vType {
 				case TInst(_, [t]): t;
 				case _: throw "Invalid native local wrapper type";
 			};
-			return mk(TNew(nativeClass, [element], [mk(TConst(TInt(1)), basic.tint, p)]), v.vType, p);
+			return mk(TNew(nativeClass, vector(element), vector(mk(TConst(TInt(1)), basic.tint, p))), v.vType, p);
 		}
-		var e = Inline.mkUntypedCall("__array__", p, [value]);
+		var e = Inline.mkUntypedCall("__array__", p, vector(value));
 		e.etype = v.vType;
 		return e;
 	}
@@ -330,7 +336,7 @@ private class CaptureLocalWrapper implements LocalWrapperApi {
 
 	public function mkInit(av:TVar, v:TVar, p:Pos):TExpr {
 		var local = mk(TLocal(v), v.vType, p);
-		var array = nativeClass == null ? mk(TArrayDecl([local]), av.vType, p) : Inline.mkUntypedCall("__array__", p, [local]);
+		var array = nativeClass == null ? mk(TArrayDecl(vector(local)), av.vType, p) : Inline.mkUntypedCall("__array__", p, vector(local));
 		array.etype = av.vType;
 		return mk(TVar(av, array), basic.tvoid, p);
 	}

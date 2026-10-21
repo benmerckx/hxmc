@@ -9,10 +9,11 @@ import core.TPrinting;
 import core.TPrinting.*;
 import core.TUnification.UnifyError;
 import core.TOther.TClassTools;
+import core.ds.VectorTools.vector;
 
 // port: from haxe/src/core/error.ml.
 enum CallError {
-	NotEnoughArguments(args:Array<{name:String, optional:Bool, type:T}>);
+	NotEnoughArguments(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>);
 	TooManyArguments;
 	CouldNotUnify(message:ErrorMsg);
 	CannotSkipNonNullable(name:String);
@@ -355,7 +356,7 @@ class BetterErrors {
 					].join(",") + " }";
 			}
 		case TDynamic(null): "Dynamic";
-		case TDynamic(t2): "Dynamic" + sTypeParams(ctx, [t2]);
+		case TDynamic(t2): "Dynamic" + sTypeParams(ctx, vector(t2));
 		case TLazy(f): sType(ctx, lazyType(f));
 	};
 

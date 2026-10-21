@@ -30,6 +30,8 @@ import core.Meta;
 import core.Meta.MetaNotFound;
 import context.Common.CommonContext;
 
+using core.ds.VectorTools;
+
 private typedef SParam = {name:String, value:Null<Constant>, type:T};
 
 class Genhxold {
@@ -207,7 +209,7 @@ class Genhxold {
 					var params:Array<SParam>, ret:T;
 					switch follow(f.cfType) {
 						case TFun(sig):
-							params = sig.args.map(function(arg):SParam {
+							params = sig.args.mapToArray(function(arg):SParam {
 								var a = arg.name;
 								function loop(l:Metadata, i:Int):Constant {
 									if (i >= l.length) return Ident("null");

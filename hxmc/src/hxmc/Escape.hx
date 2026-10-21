@@ -2,6 +2,9 @@ package hxmc;
 
 import haxe.ds.Vector;
 import hxmc.Mir;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // Escape analysis with scalar replacement (after inlining, before Sroa and
 // Opt): an allocation that never leaves its function is replaced by its
@@ -70,7 +73,7 @@ class Escape {
 
 	// per type (the symbol of its index, or #index), which slots hold
 	// references (Driver sets it; read only)
-	public static var refSlots:Null<Map<String, Array<Bool>>>;
+	public static var refSlots:Null<Map<String, Vector<Bool>>>;
 
 	// (HXMC_ESCAPE_LOG=1) what happens to each allocation that is analyzed
 	static var log = Sys.getEnv("HXMC_ESCAPE_LOG") == "1";
@@ -89,7 +92,7 @@ class Escape {
 	var useList:Vector<MIns>;
 	// virtual phis (of cells, and of the latest instance of a group)
 	var vpBlock:Array<MBlock> = [];
-	var vpArgs:Array<Array<Int>> = [];
+	var vpArgs:Array<Vector<Int>> = [];
 	// cells: shadow-stack slots and spill areas at constant offsets
 	var cellOf:Vector<Int>; // load or store -> its cell + 1 (0: none)
 	var rootDone:Vector<Bool>; // rt_sp values whose accesses are known
@@ -107,10 +110,10 @@ class Escape {
 	var inSet:Vector<Bool>;
 	var repl:Vector<Int>; // trivial phis -> their value (-1)
 	var closure:Array<Int> = [];
-	var parent:Array<Int> = []; // union-find of sites
-	var escaped:Array<Bool> = [];
-	var uniform:Array<Bool> = [];
-	var whys:Array<Null<String>> = [];
+	var parent:Vector<Int> = vector(); // union-find of sites
+	var escaped:Vector<Bool> = vector();
+	var uniform:Vector<Bool> = vector();
+	var whys:Vector<Null<String>> = vector();
 	var lastFail:Null<MIns>;
 
 	public function new(f:MFunc)
@@ -209,7 +212,7 @@ class Escape {
 		var calls = [];
 		for (b in f.blocks)
 			for (i in b.ins)
-				if (!i.dead && i.op == Call && i.sym == null && i.a >= 0 && i.args != null && i.args.length > 0) calls.push(i);
+				if (!i.dead && i.op == Call && i.sym == null && i.a >= 0 && i.args.length > 0) calls.push(i);
 		if (calls.length == 0) return r;
 		var e = new Escape(f);
 		var nv = f.vals.length;
@@ -364,7 +367,7 @@ class Escape {
 					case Copy:
 						der[i.id] = der[i.a];
 						exact[i.id] = exact[i.a];
-					case Call if (i.sym != null && i.args != null && i.args.length == 1 && i.sym.length >= 10 && StringTools.fastCodeAt(i.sym, 3) == "b".code):
+					case Call if (i.sym != null && i.args.length == 1 && i.sym.length >= 10 && StringTools.fastCodeAt(i.sym, 3) == "b".code):
 						var k = switch i.sym {
 							case "hx_box_int": 1;
 							case "hx_box_float": 2;
@@ -435,9 +438,8 @@ class Escape {
 					case _ if (b.cold):
 					case Call if (ignore == null || !ignore.exists(i.id)):
 						var any = isDer(i.a);
-						if (i.args != null)
-							for (a in i.args)
-								if (isDer(a)) any = true;
+						for (a in i.args)
+							if (isDer(a)) any = true;
 						if (any && i.sym != "hxmc_barrier_slow" && (i.sym == null || !StringTools.startsWith(i.sym, "hx_unbox_"))) {
 							if (isDer(i.a)) markSure(i.a);
 							for (a in i.args)
@@ -528,7 +530,7 @@ class Escape {
 	// MirBuild.alloc's shape: head: ptr = young_ptr ... br (enough room) fast, slow;
 	// fast: young_ptr = ptr + bytes, the header's two words, ptr + 8; join: phi(ptr + 8, stub())
 	function objectSite(p:MIns):Null<Site> {
-		if (p.ty != I64 || p.args == null || p.args.length != 2) return null;
+		if (p.ty != I64 || p.args.length != 2) return null;
 		var j = p.block;
 		if (j.preds.length != 2) return null;
 		for (k in 0...2) {
@@ -575,7 +577,7 @@ class Escape {
 			s.defAt = j.term();
 			for (i in j.ins) {
 				if (i.dead || i.op == Phi) continue;
-				if (i.a == p.id || i.b == p.id || i.c == p.id || i.args != null && i.args.indexOf(p.id) >= 0) {
+				if (i.a == p.id || i.b == p.id || i.c == p.id || i.args.indexOf(p.id) >= 0) {
 					s.defAt = i;
 					break;
 				}
@@ -617,16 +619,14 @@ class Escape {
 				mark(i.a);
 				mark(i.b);
 				mark(i.c);
-				if (i.args != null)
-					for (x in i.args)
-						mark(x);
+				for (x in i.args)
+					mark(x);
 			}
 		while (top > 0) {
 			var i = f.vals[work[--top]];
 			mark(i.a);
-			if (i.args != null)
-				for (x in i.args)
-					mark(x);
+			for (x in i.args)
+				mark(x);
 		}
 		for (b in f.blocks) {
 			var ins = b.ins, k = 0;
@@ -653,9 +653,8 @@ class Escape {
 					use(i.a);
 					use(i.b);
 					use(i.c);
-					if (i.args != null)
-						for (x in i.args)
-							use(x);
+					for (x in i.args)
+						use(x);
 				}
 		}
 		scan(false);
@@ -700,9 +699,9 @@ class Escape {
 		cellStores = [];
 		cellDone = [];
 		cellVps = [];
-		parent = [for (k in 0...sites.length) k];
-		escaped = [for (_ in sites) false];
-		whys = [for (_ in sites) null];
+		parent = MFunc.iota(sites.length);
+		escaped = new Vector(sites.length);
+		whys = new Vector(sites.length);
 		// the closure: what may be an alias
 		closure = [];
 		inline function add(x:Int) {
@@ -775,7 +774,7 @@ class Escape {
 			if (s >= 0) src[x] = find(s);
 		}
 		// one layout per group; (boxes) one per block
-		uniform = [for (_ in sites) true];
+		uniform = new Vector(sites.length, true);
 		var boxAt = new Map<Int, Int>();
 		for (k in 0...sites.length) {
 			var r = find(k);
@@ -796,16 +795,16 @@ class Escape {
 		collapse(phis, users);
 	}
 
-	static var noInputs:Array<Int> = [];
+	static var noInputs:Vector<Int> = vector();
 
 	// the abstract values x is computed from (in the lattice)
-	function inputs(x:Int):Array<Int> {
+	function inputs(x:Int):Vector<Int> {
 		if (x >= nv) return vpArgs[x - nv];
 		var i = f.vals[x];
 		return switch i.op {
-			case Copy: [i.a];
+			case Copy: vector(i.a);
 			case Phi: i.args;
-			case Load if (reach[x] != NOTSET): [reach[x]];
+			case Load if (reach[x] != NOTSET): vector(reach[x]);
 			case _: noInputs;
 		};
 	}
@@ -973,7 +972,7 @@ class Escape {
 		return v;
 	}
 
-	function setVpArgs(v:Int, args:Array<Int>)
+	function setVpArgs(v:Int, args:Vector<Int>)
 		vpArgs[v - nv] = args;
 
 	// ---- cells
@@ -1187,7 +1186,7 @@ class Escape {
 					if (keep) keep = false else {
 						s.preds.splice(k, 1);
 						for (i in s.ins)
-							if (i.op == Phi && !i.dead) i.args.splice(k, 1);
+							if (i.op == Phi && !i.dead) i.removeArg(k);
 						continue;
 					}
 				}
@@ -1196,8 +1195,8 @@ class Escape {
 		}
 		t.op = Jmp;
 		t.a = -1;
-		t.cases = null;
-		t.targets = [to];
+		t.cases = vector();
+		t.targets = vector(to);
 		b.succs = [to];
 	}
 
@@ -1222,7 +1221,7 @@ class Escape {
 				while (k >= 0) {
 					s.preds.splice(k, 1);
 					for (i in s.ins)
-						if (i.op == Phi && !i.dead) i.args.splice(k, 1);
+						if (i.op == Phi && !i.dead) i.removeArg(k);
 					k = s.preds.indexOf(b);
 				}
 			}
@@ -1236,7 +1235,7 @@ class Escape {
 
 	// the groups that do not escape, with their accesses
 	function check():Array<Group> {
-		var acc:Array<Null<Group>> = [for (_ in sites) null];
+		var acc = new Vector<Null<Group>>(sites.length);
 		for (x in closure) {
 			if (x >= nv) continue;
 			var s = src[x];
@@ -1310,7 +1309,7 @@ class Escape {
 					g.nulls.push(u);
 				case Call if (u.sym == "hxmc_barrier_slow" && box == 0 && u.args.length == 4 && u.args[2] != v && u.args[3] != v):
 					g.barriers.push(u);
-				case Call if (box > 0 && v == x && u.sym != null && u.args != null && u.args.length == 1 && unboxOk(box, u.sym)):
+				case Call if (box > 0 && v == x && u.sym != null && u.args.length == 1 && unboxOk(box, u.sym)):
 					g.access(u, x, 0);
 				case _:
 					return false;
@@ -1396,7 +1395,7 @@ class Escape {
 	inline function phiBlock(v:Int):Null<MBlock>
 		return v >= nv ? vpBlock[v - nv] : f.vals[v].op == Phi ? f.vals[v].block : null;
 
-	inline function phiArgs(v:Int):Array<Int>
+	inline function phiArgs(v:Int):Vector<Int>
 		return v >= nv ? vpArgs[v - nv] : f.vals[v].args;
 
 	// ---- the log
@@ -1633,7 +1632,9 @@ class Escape {
 			if (v != null) cur[v] = storedValue(i, v);
 		}
 		// the variables' values at the end of the blocks, then a reader each
-		var endsOf = [for (_ in 0...n) MFunc.ints(nb, NONE)];
+		var endsOf = new Vector<Vector<Int>>(n);
+		for (v in 0...n)
+			endsOf[v] = MFunc.ints(nb, NONE);
 		for (b in blocks) {
 			var cur = MFunc.ints(n, NONE);
 			for (i in b.ins)
@@ -1641,24 +1642,22 @@ class Escape {
 			for (v in 0...n)
 				endsOf[v][b.id] = cur[v];
 		}
-		var readers = [
-			for (v in 0...n) {
-				var ty = vars[v].ty;
-				new Reader(f.entry, NONE, endsOf[v], MFunc.ints(nb, NOTSET), b -> {
-					var phi = new MIns(Phi, ty);
-					phi.id = f.vals.length;
-					f.vals.push(phi);
-					phi.block = b;
-					phi.args = [];
-					var k = 0;
-					while (k < b.ins.length && b.ins[k].op == Phi)
-						k++;
-					b.ins.insert(k, phi);
-					newPhis.push(phi);
-					phi.id;
-				}, (p, args) -> f.vals[p].args = args);
-			}
-		];
+		var readers = new Vector<Reader>(n);
+		for (v in 0...n) {
+			var ty = vars[v].ty;
+			readers[v] = new Reader(f.entry, NONE, endsOf[v], MFunc.ints(nb, NOTSET), b -> {
+				var phi = new MIns(Phi, ty);
+				phi.id = f.vals.length;
+				f.vals.push(phi);
+				phi.block = b;
+				var k = 0;
+				while (k < b.ins.length && b.ins[k].op == Phi)
+					k++;
+				b.ins.insert(k, phi);
+				newPhis.push(phi);
+				phi.id;
+			}, (p, args) -> f.vals[p].args = args);
+		}
 		// the reads
 		for (b in blocks) {
 			var cur = MFunc.ints(n, NONE);
@@ -1756,11 +1755,13 @@ class Escape {
 			i.op = conv ? I2F : Copy;
 			i.a = x;
 			i.sym = null;
-			i.args = null;
-			i.argTys = null;
-			i.cSizes = null;
-			i.cGroups = null;
-			i.cRet = null;
+			i.args = vector();
+			i.argTys = vector();
+			i.cCall = false;
+			i.cSizes = vector();
+			i.cGroups = vector();
+			i.structRet = false;
+			i.cRet = vector();
 			i.keepsFrame = false;
 			i.noReturn = false;
 			return;
@@ -1865,7 +1866,7 @@ class Escape {
 				if (trivial && same >= 0) {
 					p.op = Copy;
 					p.a = same;
-					p.args = null;
+					p.args = vector();
 					changed = true;
 				}
 			}
@@ -1947,7 +1948,7 @@ private class Reader {
 	var entry:MBlock;
 	var undef:Int;
 	var mkPhi:MBlock->Int;
-	var setArgs:(Int, Array<Int>) -> Void;
+	var setArgs:(Int, Vector<Int>) -> Void;
 	var pendV:Array<Int> = [];
 	var pendB:Array<MBlock> = [];
 	var npend = 0;
@@ -2015,7 +2016,10 @@ private class Reader {
 		while (npend > 0) {
 			npend--;
 			var v = pendV[npend], b = pendB[npend];
-			setArgs(v, [for (p in b.preds) readEnd(p)]);
+			var args = new Vector<Int>(b.preds.length);
+			for (k in 0...args.length)
+				args[k] = readEnd(b.preds[k]);
+			setArgs(v, args);
 		}
 	}
 

@@ -17,6 +17,7 @@ import generators.Gctx;
 import generators.Genphp7;
 import generators.genphp7.TypeWrappers;
 import generators.Genphp7.*;
+import core.ds.VectorTools.vector;
 
 /**
 	Base class for type builders
@@ -229,7 +230,7 @@ class TypeBuilder {
 	/**
 		Generates docblock for a method and writes it to output buffer
 	*/
-	public function writeMethodDocblock(args:Array<{name:String, optional:Bool, type:T}>, returnType:T, doc:Null<String>):Void {
+	public function writeMethodDocblock(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, returnType:T, doc:Null<String>):Void {
 		writer.writeLine("/**");
 		switch doc {
 			case null:
@@ -333,8 +334,8 @@ class TypeBuilder {
 
 	/**
 	*/
-	function alignArgsToParentStaticMethod(args:Array<{variable:TVar, defaultValue:Null<TExpr>}>,
-			methodName:String):Array<{variable:TVar, defaultValue:Null<TExpr>}> {
+	function alignArgsToParentStaticMethod(args:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>,
+			methodName:String):haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}> {
 		return switch getParentMethodArgsCount(methodName, true) {
 			case null: args;
 			case {mandatory: mandatory, total: total}:
@@ -353,7 +354,7 @@ class TypeBuilder {
 							[args[0]].concat(loop(args.slice(1), next(mandatory), next(total)));
 					}
 				}
-				loop(args, mandatory, total);
+				haxe.ds.Vector.fromArrayCopy(loop(args.toArray(), mandatory, total));
 		}
 	}
 
@@ -467,17 +468,17 @@ class EnumBuilder extends TypeBuilder {
 	function writeConstructor(name:String, field:TEnumField):Void {
 		var args = switch follow(field.efType) {
 			case TFun(sig): sig.args;
-			case TEnum(_): [];
+			case TEnum(_): vector();
 			case _: fail(field.efPos, "genphp7.enum_builder#write_constructor");
 		}
 		writer.indent(1);
-		writeDoc(DocMethod(args, TEnum(enm, []), (AstTools.genDocTextOpt(field.efDoc))), field.efMeta);
+		writeDoc(DocMethod(args, TEnum(enm, vector()), (AstTools.genDocTextOpt(field.efDoc))), field.efMeta);
 		writer.writeWithIndentation("static public function " + name + " (");
 		writeArgs(writer.write, writer.writeArg.bind(true), fixTsignatureArgs(args));
 		writer.write(") {\n");
 		writer.indentMore();
 		var indexStr = Std.string(field.efIndex);
-		function writeConstruction(args:Array<{name:String, optional:Bool, type:T}>):Void {
+		function writeConstruction(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>):Void {
 			writer.write("new " + getName() + "('" + name + "', " + indexStr + ", [");
 			writeArgs(writer.write, (a:{name:String, optional:Bool, type:T}) -> writer.write("$" + a.name), args);
 			writer.write("])");
@@ -487,7 +488,7 @@ class EnumBuilder extends TypeBuilder {
 				/* writer#write ((writer#use hxenum_type_path) ^ "::singleton(static::class, '" ^ name ^ "', " ^ index_str ^")") */
 				writer.writeLine("static $inst = null;");
 				writer.writeWithIndentation("if (!$inst) $inst = ");
-				writeConstruction([]);
+				writeConstruction(vector());
 				writer.write(";\n");
 				writer.writeLine("return $inst;");
 			case args:
@@ -710,13 +711,13 @@ class ClassBuilder extends TypeBuilder {
 			case null:
 				if (!constructorIsRequired()) null else {
 					var basic = ctx.pgcCommon.basic;
-					var f = mkField("new", TFun({args: [], ret: basic.tvoid}), cls.clPos, cls.clPos);
+					var f = mkField("new", TFun({args: vector(), ret: basic.tvoid}), cls.clPos, cls.clPos);
 					f.cfKind = Method(MethNormal);
 					f.cfExpr = {
 						eexpr: TFunction({
-							tfArgs: [],
+							tfArgs: vector(),
 							tfType: basic.tvoid,
-							tfExpr: {eexpr: TBlock([]), epos: cls.clPos, etype: basic.tvoid},
+							tfExpr: {eexpr: TBlock(vector()), epos: cls.clPos, etype: basic.tvoid},
 						}),
 						epos: cls.clPos,
 						etype: basic.tvoid,

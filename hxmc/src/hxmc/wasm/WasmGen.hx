@@ -4,6 +4,11 @@ import hxmc.Mir;
 import hxmc.Obj;
 import hxmc.Buf;
 import hxmc.Lir.Bits;
+import haxe.ds.Vector;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 import hxmc.wasm.Enc;
 import hxmc.MirBuild.Unsupported;
 
@@ -74,26 +79,26 @@ class WasmGen {
 
 	// the control-flow graph (reachable blocks)
 	var nblk:Int;
-	var rpo:Array<MBlock> = [];
-	var rpoNum:Array<Int>;
-	var idom:Array<Int>;
-	var kids:Array<Array<MBlock>>;
-	var isLoop:Array<Bool>;
-	var isMerge:Array<Bool>;
-	var tryAddr:Array<Int>; // block id of a try body's first block -> the handler's address value (-1)
-	var tryHandler:Array<MBlock>;
+	var rpo:Vector<MBlock> = vector();
+	var rpoNum:Vector<Int>;
+	var idom:Vector<Int>;
+	var kids:Vector<Array<MBlock>>;
+	var isLoop:Vector<Bool>;
+	var isMerge:Vector<Bool>;
+	var tryAddr:Vector<Int>; // block id of a try body's first block -> the handler's address value (-1)
+	var tryHandler:Vector<MBlock>;
 	var hasHandlers = false;
 
 	// values
-	var uses:Array<Int>;
-	var folded:Array<Bool>;
-	var narrow:Array<Bool>; // I64 values computed as i32 (`narrowing`)
-	var local:Array<Int>;
+	var uses:Vector<Int>;
+	var folded:Vector<Bool>;
+	var narrow:Vector<Bool>; // I64 values computed as i32 (`narrowing`)
+	var local:Vector<Int>;
 	var localTys:Array<Int> = []; // the types of the locals after the parameters
 	var nparams:Int;
 	var fp = -1; // the frame pointer's local
 	var frameSize = 0;
-	var slotOff:Array<Int> = [];
+	var slotOff:Vector<Int> = vector();
 	var scratch = new Map<Int, Int>(); // wasm type -> a scratch local (atomics)
 	var ctx:Array<Ctx> = [];
 	// the last local.set written (its opcode's offset, the body's length after
@@ -125,7 +130,7 @@ class WasmGen {
 		};
 
 	// the signature string of a type ($t:<params>><result>)
-	public static function sigOf(params:Array<MTy>, ret:MTy):String {
+	public static function sigOf(params:haxe.ds.Vector<MTy>, ret:MTy):String {
 		var s = new StringBuf();
 		for (p in params)
 			s.add(tyChar(p));
@@ -255,7 +260,7 @@ class WasmGen {
 			for (p in x.preds)
 				grow(p);
 		}
-		var seen = [for (_ in 0...nblk) false];
+		var seen = new Vector<Bool>(nblk);
 		var post:Array<MBlock> = [];
 		var stack = [f.entry];
 		var idx = [0];
@@ -276,13 +281,12 @@ class WasmGen {
 				idx.pop();
 			}
 		}
-		post.reverse();
-		rpo = post;
-		rpoNum = [for (_ in 0...nblk) -1];
+		rpo = VectorTools.ofArrayReversed(post);
+		rpoNum = MFunc.ints(nblk, -1);
 		for (k in 0...rpo.length)
 			rpoNum[rpo[k].id] = k;
 		// dominators (Cooper, Harvey and Kennedy)
-		idom = [for (_ in 0...nblk) -1];
+		idom = MFunc.ints(nblk, -1);
 		idom[f.entry.id] = f.entry.id;
 		var changed = true;
 		while (changed) {
@@ -300,11 +304,13 @@ class WasmGen {
 				}
 			}
 		}
-		kids = [for (_ in 0...nblk) []];
+		kids = new Vector(nblk);
+		for (k in 0...nblk)
+			kids[k] = [];
 		for (k in 1...rpo.length)
 			kids[idom[rpo[k].id]].push(rpo[k]);
-		isLoop = [for (_ in 0...nblk) false];
-		isMerge = [for (_ in 0...nblk) false];
+		isLoop = new Vector(nblk);
+		isMerge = new Vector(nblk);
 		for (x in rpo) {
 			var fwd = new Map<Int, Bool>();
 			for (p in x.preds) {
@@ -321,8 +327,8 @@ class WasmGen {
 			if (n >= 2) isMerge[x.id] = true;
 		}
 		// try bodies: a branch to a handler block (MirBuild.tryStmt)
-		tryAddr = [for (_ in 0...nblk) -1];
-		tryHandler = [for (_ in 0...nblk) null];
+		tryAddr = MFunc.ints(nblk, -1);
+		tryHandler = new Vector(nblk);
 		for (x in rpo) {
 			if (x.handler) {
 				hasHandlers = true;
@@ -419,25 +425,25 @@ class WasmGen {
 
 	function analyze() {
 		var n = vals.length;
-		uses = [for (_ in 0...n) 0];
-		folded = [for (_ in 0...n) false];
+		uses = MFunc.ints(n, 0);
+		folded = new Vector(n);
 		for (x in rpo)
 			for (i in x.ins)
 				if (!i.dead) operands(i, v -> uses[v]++);
 		// a try's handler address is read by its pad
 		for (k in 0...nblk)
 			if (tryAddr[k] >= 0) uses[tryAddr[k]] += 2;
-		var emitPos = [for (_ in 0...n) -1];
-		var user = [for (_ in 0...n) -1];
+		var emitPos = MFunc.ints(n, -1);
+		var user = MFunc.ints(n, -1);
 		for (x in rpo) {
 			var l = body(x);
 			var at = new Map<Int, Int>();
 			for (k in 0...l.length)
 				at.set(l[k].id, k);
 			// writes before position k
-			var w = [0];
+			var w = new Vector<Int>(l.length + 1);
 			for (k in 0...l.length)
-				w.push(w[k] + (isWrite(l[k]) ? 1 : 0));
+				w[k + 1] = w[k] + (isWrite(l[k]) ? 1 : 0);
 			var k = l.length;
 			while (k-- > 0) {
 				var i = l[k];
@@ -466,7 +472,7 @@ class WasmGen {
 	// demands, to a fixpoint: an arithmetic use passes its own on)
 	function narrowing() {
 		var n = vals.length;
-		narrow = [for (i in vals) i.ty == I64 && !i.dead && narrowDef(i)];
+		narrow = vals.mapToVector(i -> i.ty == I64 && !i.dead && narrowDef(i));
 		var changed = true;
 		while (changed) {
 			changed = false;
@@ -532,7 +538,7 @@ class WasmGen {
 			case Call:
 				if (!u.returnsTwice) {
 					if (u.sym == null) fn(u.a, true);
-					var tys = argTys(u);
+					var tys = u.argTys;
 					for (k in 0...u.args.length)
 						fn(u.args[k], tys[k] == I32);
 				}
@@ -544,10 +550,12 @@ class WasmGen {
 	function frame() {
 		if (f.slots.length == 0) return;
 		var off = 0;
-		for (s in f.slots) {
+		slotOff = new Vector(f.slots.length);
+		for (k in 0...f.slots.length) {
+			var s = f.slots[k];
 			var al = s.align < 8 ? 8 : s.align;
 			off = (off + al - 1) & ~(al - 1);
-			slotOff.push(off);
+			slotOff[k] = off;
 			off += s.size;
 		}
 		frameSize = (off + 15) & ~15;
@@ -563,18 +571,26 @@ class WasmGen {
 		return !i.dead && i.ty != Void && i.op != Param && !remat(i) && !folded[i.id] && uses[i.id] > 0;
 
 	function plainLocals() {
-		local = [for (_ in vals) -1];
+		local = MFunc.ints(vals.length, -1);
 		for (x in rpo)
 			for (i in x.ins)
 				if (needsLocal(i)) local[i.id] = newLocal(tyCode(ety(i.id)));
+	}
+
+	// a set of n bits per block
+	static function sets(nblk:Int, n:Int):Vector<Bits> {
+		var v = new Vector<Bits>(nblk);
+		for (k in 0...nblk)
+			v[k] = new Bits(n);
+		return v;
 	}
 
 	// SSA coloring: in dominator-tree preorder, a value takes a local of its
 	// type that no value live at its definition holds; a local is free again
 	// after its value's last use
 	function coalesce() {
-		local = [for (_ in vals) -1];
-		var want = [for (i in vals) needsLocal(i)];
+		local = MFunc.ints(vals.length, -1);
+		var want = vals.mapToVector(needsLocal);
 		// the values that get locals, numbered densely for the bit sets
 		var wid = MFunc.ints(vals.length, -1), ids = [];
 		for (v in 0...vals.length)
@@ -584,11 +600,11 @@ class WasmGen {
 			}
 		var n = ids.length;
 		// liveness of the values that get locals (phi operands: live out of the predecessor)
-		var liveIn = [for (_ in 0...nblk) new Bits(n)];
-		var liveOut = [for (_ in 0...nblk) new Bits(n)];
-		var gen = [for (_ in 0...nblk) new Bits(n)];
-		var kill = [for (_ in 0...nblk) new Bits(n)];
-		var phiUse = [for (_ in 0...nblk) new Bits(n)]; // phi operands for the edges out of a block
+		var liveIn = sets(nblk, n);
+		var liveOut = sets(nblk, n);
+		var gen = sets(nblk, n);
+		var kill = sets(nblk, n);
+		var phiUse = sets(nblk, n); // phi operands for the edges out of a block
 		for (x in rpo) {
 			var g = gen[x.id], kl = kill[x.id];
 			for (i in x.ins) {
@@ -981,7 +997,7 @@ class WasmGen {
 				Enc.sleb(b, lo);
 				op(Op.I32Sub);
 			}
-			var table = [for (_ in 0...span) labelIdx(def)];
+			var table = new Vector<Int>(span, labelIdx(def));
 			for (ci in 0...cases.length)
 				table[cases[ci] - lo] = labelIdx(t.targets[ci]);
 			op(Op.BrTable);
@@ -1299,9 +1315,6 @@ class WasmGen {
 		};
 	}
 
-	function argTys(i:MIns):Array<MTy>
-		return i.argTys != null ? i.argTys : [for (a in i.args) vals[a].ty];
-
 	function call(i:MIns) {
 		if (i.returnsTwice) {
 			// setjmp: the first return (the second is the pad's branch)
@@ -1313,11 +1326,13 @@ class WasmGen {
 			special(i, i.sym.substr(MirBuild.SPECIAL.length));
 			return;
 		}
-		var imp = i.sym != null ? hxmc.ir.CInterop.SIGS.get(i.sym) : null;
+		// (a C call, MirBuild.cCall; a program's extern the runtime implements
+		// in Haxe, as __errno_location, is a call of that function: Lower.bindHosts)
+		var imp = i.sym != null && i.cCall ? hxmc.ir.CInterop.SIGS.get(i.sym) : null;
 		if (imp != null && hxmc.ir.CInterop.USER.exists(i.sym)) {
 			imp = hxmc.CAbi.wasmSig(imp);
 			// an import (LinkWasm): pointers as i32, floats as f32
-			var tys = argTys(i);
+			var tys = i.argTys;
 			for (k in 0...i.args.length)
 				switch imp.args[k] {
 					case CPtr:
@@ -1338,7 +1353,7 @@ class WasmGen {
 			}
 			return;
 		}
-		var tys = argTys(i);
+		var tys = i.argTys;
 		for (k in 0...i.args.length)
 			valueAs(i.args[k], tys[k]);
 		if (i.sym != null) {

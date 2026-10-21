@@ -7,10 +7,14 @@ import core.TType;
 import core.TFunctions;
 import core.TFunctions.*;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: from haxe/src/core/tOther.ml.
 class TExprToExpr {
-	public static function tpath(path:GlobalTypePath, modulePath:GlobalTypePath, params:Array<TypeParamOrConst>):ComplexType {
+	public static function tpath(path:GlobalTypePath, modulePath:GlobalTypePath, params:Vector<TypeParamOrConst>):ComplexType {
 		return Ast.makePtpCt(path.name == modulePath.name ? Ast.mkTypePath(path.pack, path.name,
 			params) : Ast.mkTypePath(modulePath.pack, modulePath.name, params, path.name),
 			Globals.nullPos);
@@ -33,18 +37,16 @@ class TExprToExpr {
 		case TType(td,
 			pl): StringTools.startsWith(td.tPath.name, "#") ? convertType(follow(t)) : tpath(td.tPath, td.tModule.mPath, pl.map(tparam));
 		case TAbstract(a, pl): tpath(a.aPath, a.aModule.mPath, pl.map(tparam));
-		case TFun(s): CTFunction([
-				for (arg in s.args) {
+		case TFun(s): CTFunction(s.args.map(function(arg):TypeHint {
 					var ct = convertTypeHint(arg.type);
 					if (arg.name != "") ct = {type: CTNamed({name: arg.name, pos: Globals.nullPos}, ct), pos: Globals.nullPos};
-					arg.optional ? {type: CTOptional(ct), pos: Globals.nullPos} : ct;
-				}
-			], convertTypeHint(s.ret));
+					return arg.optional ? {type: CTOptional(ct), pos: Globals.nullPos} : ct;
+				}), convertTypeHint(s.ret));
 		case TAnon(a): switch a.aStatus {
 				case ClassStatics(c): tpath({pack: [], name: "Class"}, {pack: [], name: "Class"},
-						[TPType({type: tpath(c.clPath, c.clPath, []), pos: Globals.nullPos})]);
+						vector(TPType({type: tpath(c.clPath, c.clPath, vector()), pos: Globals.nullPos})));
 				case EnumStatics(e): tpath({pack: [], name: "Enum"}, {pack: [], name: "Enum"},
-						[TPType({type: tpath(e.ePath, e.ePath, []), pos: Globals.nullPos})]);
+						vector(TPType({type: tpath(e.ePath, e.ePath, vector()), pos: Globals.nullPos})));
 				case _:
 					var fields:Array<ClassField> = [];
 					var names = [for (name in a.aFields.keys()) name];
@@ -68,16 +70,14 @@ class TExprToExpr {
 									{name: accessToString(v.vWrite, "set"), pos: Globals.nullPos}, mkTypeHint(f.cfType, Globals.nullPos),
 									null);
 							case [Method(_), TFun(s)]: FFun({
-									fParams: [],
-									fArgs: [
-										for (arg in s.args) {
+									fParams: vector(),
+									fArgs: s.args.map(arg -> ({
 											name: {name: arg.name, pos: Globals.nullPos},
 											optional: arg.optional,
 											meta: [],
 											type: convertTypeHint(arg.type),
 											expr: null
-										}
-									],
+										} : FuncArg)),
 									fType: convertTypeHint(s.ret),
 									fExpr: null
 								});
@@ -92,10 +92,10 @@ class TExprToExpr {
 							cffAccess: access
 						});
 					}
-					CTAnonymous(fields);
+					CTAnonymous(Vector.fromArrayCopy(fields));
 			}
-		case TDynamic(null): tpath({pack: [], name: "Dynamic"}, {pack: [], name: "Dynamic"}, []);
-		case TDynamic(t): tpath({pack: [], name: "Dynamic"}, {pack: [], name: "Dynamic"}, [tparam(t)]);
+		case TDynamic(null): tpath({pack: [], name: "Dynamic"}, {pack: [], name: "Dynamic"}, vector());
+		case TDynamic(t): tpath({pack: [], name: "Dynamic"}, {pack: [], name: "Dynamic"}, vector(tparam(t)));
 		case TLazy(f): convertType(lazyType(f));
 	};
 
@@ -126,11 +126,11 @@ class TExprToExpr {
 			case TField(e, f): EField(convertExpr(e), fieldName(f), EFNormal);
 			case TTypeExpr(t): Ast.exprOfTypePath(fullTypePath(t), e.epos).expr;
 			case TParenthesis(e): EParenthesis(convertExpr(e));
-			case TObjectDecl(fl): EObjectDecl([for (f in fl) {key: f.key, expr: convertExpr(f.expr)}]);
+			case TObjectDecl(fl): EObjectDecl(fl.map(f -> ({key: f.key, expr: convertExpr(f.expr)} : ObjectField)));
 			case TArrayDecl(el): EArrayDecl(el.map(convertExpr));
 			case TCall(e, el): ECall(convertExpr(e), el.map(convertExpr));
 			case TNew(c, pl, el):
-				var ct = try convertType(TInst(c, pl)) catch (_:TypeExit) convertType(TInst(c, []));
+				var ct = try convertType(TInst(c, pl)) catch (_:TypeExit) convertType(TInst(c, vector()));
 				var path = switch ct {
 					case CTPath(ptp): ptp;
 					case _: throw "Expected constructor type path";
@@ -138,32 +138,28 @@ class TExprToExpr {
 				ENew(path, el.map(convertExpr));
 			case TUnop(op, p, e): EUnop(op, p, convertExpr(e));
 			case TFunction(f): EFunction(FKAnonymous, {
-					fParams: [],
-					fArgs: [
-						for (arg in f.tfArgs) {
+					fParams: vector(),
+					fArgs: f.tfArgs.map(arg -> ({
 							name: {name: arg.variable.vName, pos: arg.variable.vPos},
 							optional: false,
 							meta: arg.variable.vMeta,
 							type: mkTypeHint(arg.variable.vType, Globals.nullPos),
 							expr: eopt(arg.defaultValue)
-						}
-					],
+						} : FuncArg)),
 					fType: mkTypeHint(f.tfType, Globals.nullPos),
 					fExpr: convertExpr(f.tfExpr)
 				});
-			case TVar(v, eo): EVars([
+			case TVar(v, eo): EVars(vector(
 					Ast.mkEVar({name: v.vName, pos: v.vPos}, hasVarFlag(v, VFinal), false, mkTypeHint(v.vType, v.vPos), eopt(eo), v.vMeta)
-				]);
+				));
 			case TBlock(el): EBlock(el.map(convertExpr));
 			case TIf(e, e1, e2): EIf(convertExpr(e), convertExpr(e1), eopt(e2));
 			case TWhile(e1, e2, flag): EWhile(convertExpr(e1), convertExpr(e2), flag);
 			case TSwitch(s):
-				var cases = [
-					for (c in s.switchCases) ({
+				var cases = s.switchCases.map(c -> ({
 						values:c.casePatterns.map(convertExpr), guard:null,
 						expr:c.caseExpr.eexpr.match(TBlock([])) ? null : convertExpr(c.caseExpr), pos:c.caseExpr.epos
-					} : core.Ast.SwitchCase)
-				];
+					} : core.Ast.SwitchCase));
 				var de = eopt(s.switchDefault);
 				var def = de == null ? null : de.expr.match(EBlock([])) ? ({
 					expr: null,
@@ -174,18 +170,16 @@ class TExprToExpr {
 			case TEnumIndex(_) | TEnumParameter(_, _, _): throw "Complex enum AST requires @:ast metadata";
 			case TTry(e, catches):
 				var e1 = convertExpr(e);
-				ETry(e1, [
-					for (c in catches) {
+				ETry(e1, catches.map(c -> {
 						var ct = try convertTypeHint(c.variable.vType) catch (_:TypeExit) throw "Unconvertible catch type";
 						var e = convertExpr(c.expr);
-						{
+						({
 							name: {name: c.variable.vName, pos: c.variable.vPos},
 							type: ct,
 							expr: e,
 							pos: e.pos
-						};
-					}
-				]);
+						} : core.Ast.Catch);
+					}));
 			case TReturn(e): EReturn(eopt(e));
 			case TBreak: EBreak;
 			case TContinue: EContinue;
@@ -193,10 +187,10 @@ class TExprToExpr {
 			case TCast(e, t):
 				var ct = if (t == null) null else {
 					var t = switch t {
-						case TClassDecl(c): TInst(c, []);
-						case TEnumDecl(e): TEnum(e, []);
-						case TTypeDecl(t): TType(t, []);
-						case TAbstractDecl(a): TAbstract(a, []);
+						case TClassDecl(c): TInst(c, vector());
+						case TEnumDecl(e): TEnum(e, vector());
+						case TTypeDecl(t): TType(t, vector());
+						case TAbstractDecl(a): TAbstract(a, vector());
 					};
 					try convertTypeHint(t)
 					catch (_:TypeExit) throw "Unconvertible cast type";
@@ -282,7 +276,7 @@ class TOther {
 		eNamePos: namePos,
 		eDoc: null,
 		eMeta: [],
-		eParams: [],
+		eParams: vector(),
 		eUsing: [],
 		eRestore: function() {},
 		ePrivate: false,
@@ -299,7 +293,7 @@ class TOther {
 		aPos: pos,
 		aNamePos: namePos,
 		aDoc: null,
-		aParams: [],
+		aParams: vector(),
 		aUsing: [],
 		aRestore: function() {},
 		aMeta: [],

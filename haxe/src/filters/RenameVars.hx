@@ -10,6 +10,7 @@ import core.Path;
 import core.Native;
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
+import core.ds.VectorTools.vector;
 
 @:structInit class RenameInit {
 	public var riScope:context.PlatformConfig.VarScope;
@@ -371,8 +372,8 @@ class RenameVars {
 				for (c in catches) {
 					var vExpr = TypeOps.mk(TVar(c.variable, null), TypeOps.tDynamic, c.variable.vPos);
 					var exprs = switch c.expr.eexpr {
-						case TBlock(exprs): [vExpr].concat(exprs);
-						case _: [vExpr, c.expr];
+						case TBlock(exprs): core.ds.VectorTools.cons(vExpr, exprs);
+						case _: vector(vExpr, c.expr);
 					};
 					collect(scope, TypeOps.mk(TBlock(exprs), c.expr.etype, c.expr.epos));
 					if (rc.rcNoCatchVarShadowing) useVar(rc, scope, c.variable);
@@ -420,12 +421,12 @@ class RenameVars {
 			v.vMeta = ([
 				{
 					meta: core.MetaList.StrictMeta.RealPath,
-					exprs: [
+					exprs: vector(
 						{
 							expr: EConst(String(v.vName, SDoubleQuotes)),
 							pos: Globals.nullPos
 						}
-					],
+					),
 					pos: Globals.nullPos
 				}
 			] : core.Ast.Metadata).concat(v.vMeta);

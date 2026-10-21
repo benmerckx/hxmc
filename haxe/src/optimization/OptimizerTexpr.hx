@@ -8,6 +8,9 @@ import core.Error;
 import context.PurityState.PurityStateTools as PurityState;
 import haxe.ds.IntMap;
 import haxe.Int64;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 class OptimizerTexpr {
 	// tells if an expression causes side effects. This does not account for potential null accesses (fields/arrays/ops)
@@ -191,7 +194,7 @@ class OptimizerTexpr {
 				}
 			case [other, TCall({eexpr: TField(_, FEnum(_, _))}, el)] | [TCall({eexpr: TField(_, FEnum(_, _))}, el), other]:
 				switch [op, other] {
-					case [OpEq | OpNotEq, TConst(TNull)]: TypeOps.mk(TBlock(el.concat([constant(TBool(op == OpNotEq))])), e.etype, e.epos);
+					case [OpEq | OpNotEq, TConst(TNull)]: TypeOps.mk(TBlock(el.concat(vector(constant(TBool(op == OpNotEq))))), e.etype, e.epos);
 					case [OpAssign, _]: e;
 					case _: Error.raiseTypingError("You cannot directly compare enums with arguments. Use either `switch`, `match` or `Type.enumEq`",
 							e.epos);

@@ -8,6 +8,9 @@ import core.TOther.ExtType;
 import core.Meta;
 import core.Abstract;
 import core.Error;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // ----------------------------------------------------------------------
 // SANITIZE
@@ -60,7 +63,7 @@ class Sanitize {
 
 	static function block(e:TExpr):TExpr return switch e.eexpr {
 		case TBlock(_): e;
-		case _: TypeOps.mk(TBlock([e]), e.etype, e.epos);
+		case _: TypeOps.mk(TBlock(vector(e)), e.etype, e.epos);
 	};
 
 	// complex expressions are the one that once generated to source consists in several expressions
@@ -169,13 +172,14 @@ class Sanitize {
 			case TBlock(l):
 				var ec = l[l.length - 1];
 				// remove all no-ops : not-final constants in blocks
-				var rest = l.slice(0, l.length - 1).filter(e -> switch e.eexpr {
-					case TConst(_) | TBlock([]) | TObjectDecl([]): false;
-					case _: true;
-				});
+				var rest = [];
+				for (i in 0...l.length - 1) switch l[i].eexpr {
+					case TConst(_) | TBlock([]) | TObjectDecl([]):
+					case _: rest.push(l[i]);
+				}
 				if (rest.length == 0) ec; else {
 					rest.push(ec);
-					TypeOps.mk(TBlock(rest), e.etype, e.epos);
+					TypeOps.mk(TBlock(haxe.ds.Vector.fromArrayCopy(rest)), e.etype, e.epos);
 				}
 			case TParenthesis(ec): {eexpr: ec.eexpr, etype: ec.etype, epos: e.epos};
 			case TTry(body, []): body;

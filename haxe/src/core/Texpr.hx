@@ -10,6 +10,9 @@ import core.TUnification.*;
 import core.TPrinting.*;
 import core.Error;
 import core.Abstract as AbstractTools;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 // port: from haxe/src/core/texpr.ml.
 class Texpr {
@@ -88,7 +91,7 @@ class Texpr {
 	}
 
 	// port: these generic array helpers are inline: see core.ds.List.
-	public static inline function exists<A>(f:A->Bool, el:Array<A>):Bool {
+	extern overload public static inline function exists<A>(f:A->Bool, el:Array<A>):Bool {
 		var r = false;
 		for (e in el) if (f(e)) {
 			r = true;
@@ -97,7 +100,25 @@ class Texpr {
 		return r;
 	}
 
-	public static inline function all<A>(f:A->Bool, el:Array<A>):Bool {
+	extern overload public static inline function exists<A>(f:A->Bool, el:Vector<A>):Bool {
+		var r = false;
+		for (e in el) if (f(e)) {
+			r = true;
+			break;
+		}
+		return r;
+	}
+
+	extern overload public static inline function all<A>(f:A->Bool, el:Array<A>):Bool {
+		var r = true;
+		for (e in el) if (!f(e)) {
+			r = false;
+			break;
+		}
+		return r;
+	}
+
+	extern overload public static inline function all<A>(f:A->Bool, el:Vector<A>):Bool {
 		var r = true;
 		for (e in el) if (!f(e)) {
 			r = false;
@@ -174,7 +195,7 @@ class Texpr {
 	// port: non-generic copies: on HashLink a typed function passed to a generic parameter is
 	// wrapped in a new closure on every call, which is what these helpers avoid.
 	static function mapListWithScom(f:context.SafeCom.SafeContext->TExpr->TExpr, x:context.SafeCom.SafeContext,
-			el:Array<TExpr>):Array<TExpr> {
+			el:Vector<TExpr>):Vector<TExpr> {
 		for (i in 0...el.length) {
 			var cur = el[i], y = f(x, cur);
 			if (y != cur) {
@@ -356,7 +377,7 @@ class Texpr {
 		}
 	}
 
-	static function mapListWithBool(f:Bool->TExpr->TExpr, x:Bool, el:Array<TExpr>):Array<TExpr> {
+	static function mapListWithBool(f:Bool->TExpr->TExpr, x:Bool, el:Vector<TExpr>):Vector<TExpr> {
 		for (i in 0...el.length) {
 			var cur = el[i], y = f(x, cur);
 			if (y != cur) {
@@ -543,7 +564,7 @@ class Texpr {
 	// port: upstream rebuilds every node; here a node whose children all come back
 	// unchanged is returned as is (texprs are immutable; this saves most allocations
 	// of identity-like passes). Evaluation order is unchanged.
-	static function mapList(f:TExpr->TExpr, el:Array<TExpr>):Array<TExpr> {
+	static function mapList(f:TExpr->TExpr, el:Vector<TExpr>):Vector<TExpr> {
 		for (i in 0...el.length) {
 			var x = el[i], y = f(x);
 			if (y != x) {
@@ -686,7 +707,7 @@ class Texpr {
 	}
 
 	// port: mapExpr with an argument passed through (see iterWith).
-	static function mapListWith<A>(f:A->TExpr->TExpr, x:A, el:Array<TExpr>):Array<TExpr> {
+	static function mapListWith<A>(f:A->TExpr->TExpr, x:A, el:Vector<TExpr>):Vector<TExpr> {
 		for (i in 0...el.length) {
 			var cur = el[i], y = f(x, cur);
 			if (y != cur) {
@@ -897,7 +918,16 @@ class Texpr {
 		return {eexpr: def, etype: ft(e.etype), epos: e.epos};
 	}
 
-	public static inline function all2<A, B>(f:A->B->Bool, a:Array<A>, b:Array<B>):Bool {
+	extern overload public static inline function all2<A, B>(f:A->B->Bool, a:Array<A>, b:Array<B>):Bool {
+		var r = a.length == b.length;
+		if (r) for (i in 0...a.length) if (!f(a[i], b[i])) {
+			r = false;
+			break;
+		}
+		return r;
+	}
+
+	extern overload public static inline function all2<A, B>(f:A->B->Bool, a:Vector<A>, b:Vector<B>):Bool {
 		var r = a.length == b.length;
 		if (r) for (i in 0...a.length) if (!f(a[i], b[i])) {
 			r = false;
@@ -1044,7 +1074,7 @@ class Texpr {
 		// port: upstream foldmap builds switch cases by cons without reversing them.
 		switch mapped.eexpr {
 			case TSwitch(s):
-				s.switchCases.reverse();
+				VectorTools.reverse(s.switchCases);
 			case _:
 		}
 		return {acc: acc, value: mapped};
@@ -1159,16 +1189,16 @@ class Texpr {
 		var t = AbstractTools.followWithAbstracts(etype);
 		var fa = try quickField(t,
 			"hasNext") catch (_:NotFound) Error.raiseTypingError(sType(printContext(), t) + " has no field hasNext()", p);
-		var hasNext = mk(TField(ev, fa), tfun([], b.tbool), e1.epos);
-		hasNext = mk(TCall(hasNext, []), b.tbool, hasNext.epos);
-		var next = mk(TField(ev, quickField(t, "next")), tfun([], v.vType), e1.epos);
-		next = mk(TCall(next, []), v.vType, e1.epos);
+		var hasNext = mk(TField(ev, fa), tfun(vector(), b.tbool), e1.epos);
+		hasNext = mk(TCall(hasNext, vector()), b.tbool, hasNext.epos);
+		var next = mk(TField(ev, quickField(t, "next")), tfun(vector(), v.vType), e1.epos);
+		next = mk(TCall(next, vector()), v.vType, e1.epos);
 		var assign = mk(TVar(v, next), b.tvoid, p);
 		var body = concat(assign, e2);
-		return mk(TBlock([
+		return mk(TBlock(vector(
 			mk(TVar(v2, e1), b.tvoid, e1.epos),
 			mk(TWhile(mk(TParenthesis(hasNext), hasNext.etype, hasNext.epos), body, NormalWhile), b.tvoid, e1.epos)
-		]), b.tvoid, p);
+		)), b.tvoid, p);
 	}
 
 	public static function notWhileTrueToWhileTrue(b:BasicTypes, e1:TExpr, e2:TExpr, flag:WhileFlag, t:T, p:Pos):TExpr {
@@ -1246,7 +1276,7 @@ class Texpr {
 			return {name: n, pos: Globals.nullPos, quote: NoQuotes};
 		inline function makeMetaField(ml:Metadata):TExpr {
 			var seen = new haxe.ds.StringMap<Bool>();
-			return mk(TObjectDecl(ml.map(m -> {
+			return mk(TObjectDecl(VectorTools.mapToVector(ml, m -> {
 				var name = switch m.meta {
 					case core.MetaList.StrictMeta.Custom(s): s;
 					case _: throw "Texpr.buildMetadata";
@@ -1260,7 +1290,7 @@ class Texpr {
 				};
 			})), tDynamic, p);
 		}
-		inline function makeMeta(l:Array<{name:String, meta:Metadata}>):TExpr return mk(TObjectDecl(l.map(a -> {
+		inline function makeMeta(l:Array<{name:String, meta:Metadata}>):TExpr return mk(TObjectDecl(VectorTools.mapToVector(l, a -> {
 			key: key(a.name),
 			expr: makeMetaField(a.meta)
 		})), tDynamic, p);
@@ -1272,7 +1302,7 @@ class Texpr {
 			obj.unshift({key: key("obj"), expr: makeMetaField(a.meta)});
 			break;
 		}
-		return mk(TObjectDecl(obj), tDynamic, p);
+		return mk(TObjectDecl(Vector.fromArrayCopy(obj)), tDynamic, p);
 	}
 
 	public static function dumpWithPos(tabs:String, e:TExpr):String {
@@ -1444,7 +1474,20 @@ class Texpr {
 		Returns `default_pos` if `el` is empty or values of `pfile` of the first and
 		the last positions are different.
 	**/
-	public static function punionEl(defaultPos:Pos, el:Array<TExpr>):Pos {
+	extern overload public static inline function punionEl(defaultPos:Pos, el:Array<TExpr>):Pos {
+		if (el.length == 0) return defaultPos;
+		if (el.length == 1) return el[0].epos;
+		var first = el[0].epos;
+		var last = el[1].epos;
+		var i = 2;
+		while (i < el.length) {
+			if (i == el.length - 1) last = el[i].epos;
+			i++;
+		}
+		return first.pfile != last.pfile ? defaultPos : Ast.punion(first, last);
+	}
+
+	extern overload public static inline function punionEl(defaultPos:Pos, el:Vector<TExpr>):Pos {
 		if (el.length == 0) return defaultPos;
 		if (el.length == 1) return el[0].epos;
 		var first = el[0].epos;
@@ -1459,7 +1502,7 @@ class Texpr {
 
 	public static function isExhaustive(s:TSwitch):Bool return s.switchExhaustive;
 
-	public static function mkSwitch(subject:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>, exhaustive:Bool):TSwitch return {
+	public static function mkSwitch(subject:TExpr, cases:Vector<TSwitchCase>, def:Null<TExpr>, exhaustive:Bool):TSwitch return {
 		switchSubject: subject,
 		switchCases: cases,
 		switchDefault: def,
@@ -1487,7 +1530,7 @@ class Builder {
 		var t = switch resolveTypedef(mt) {
 			case TClassDecl(c): c.clType;
 			case TEnumDecl(e): e.eType;
-			case TAbstractDecl(a): TType(abstractModuleType(a, []), []);
+			case TAbstractDecl(a): TType(abstractModuleType(a, vector()), vector());
 			case _: throw "Texpr.makeTypeexpr";
 		};
 		return mk(TTypeExpr(mt), t, p);
@@ -1526,7 +1569,7 @@ class Builder {
 		return mk(TField(e, fa), t, p);
 	}
 
-	public static function fcall(e:TExpr, name:String, el:Array<TExpr>, ret:T,
+	public static function fcall(e:TExpr, name:String, el:Vector<TExpr>, ret:T,
 			p:Pos):TExpr return mk(TCall(field(e, name, tfun(el.map(e -> e.etype), ret), p), el), ret, p);
 
 	public static function mkParent(e:TExpr):TExpr return mk(TParenthesis(e), e.etype, e.epos);
@@ -1542,7 +1585,7 @@ class Builder {
 
 	public static function index(b:BasicTypes, e:TExpr, i:Int, t:T, p:Pos):TExpr return mk(TArray(e, mk(TConst(TInt(i)), b.tint, p)), t, p);
 
-	public static function resolveAndMakeStaticCall(c:TClass, name:String, args:Array<TExpr>, p:Pos):TExpr {
+	public static function resolveAndMakeStaticCall(c:TClass, name:String, args:Vector<TExpr>, p:Pos):TExpr {
 		c.clBuild();
 		var cf = c.clStatics.get(name);
 		if (cf == null) throw "Texpr.resolveAndMakeStaticCall";

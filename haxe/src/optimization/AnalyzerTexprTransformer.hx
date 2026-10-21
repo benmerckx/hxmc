@@ -31,9 +31,14 @@ import optimization.AnalyzerTypes.BasicBlock.*;
 import optimization.AnalyzerTypes.Graph.*;
 import optimization.AnalyzerTexpr.*;
 import optimization.OptimizerTexpr.*;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 private typedef BlockValue = {var bb:BasicBlockData; var value:TExpr;}
-private typedef BlockValues = {var bb:BasicBlockData; var values:Array<TExpr>;}
+private typedef BlockValues = {var bb:BasicBlockData; var values:Vector<TExpr>;}
 
 /*
 	Transforms an expression to a graph, and a graph back to an expression. This module relies on TexprFilter being
@@ -114,7 +119,7 @@ class AnalyzerTexprTransformer {
 
 	public static function blockToTexpr(ctx:AnalyzerContext, bb:BasicBlockData):TExpr {
 		if (!bb.bbClosed) throw "assert: block not closed";
-		return mk(TBlock(blockToTexprEl(ctx, bb)), bb.bbType, bb.bbPos);
+		return mk(TBlock(Vector.fromArrayCopy(blockToTexprEl(ctx, bb))), bb.bbType, bb.bbPos);
 	}
 
 	public static function func(ctx:AnalyzerContext, i:Int):TExpr {
@@ -224,7 +229,7 @@ private class FunctionGraphBuilder {
 		return g.gUnreachable;
 	}
 
-	function checkUnboundCall(s:String, el:Array<TExpr>):Void {
+	function checkUnboundCall(s:String, el:Vector<TExpr>):Void {
 		if (s == "$ref") switch el {
 			case [{eexpr: TLocal(v)}]:
 				addVarFlag(v, VCaptured);
@@ -270,7 +275,7 @@ private class FunctionGraphBuilder {
 				bb = s.bb;
 				result(TBinop(op, r.value, s.value));
 			case TBinop(op, e1, e2):
-				var r = orderedValueList(bb, [e1, e2]);
+				var r = orderedValueList(bb, vector(e1, e2));
 				bb = r.bb;
 				switch r.values {
 					case [a, b]: result(TBinop(op, a, b));
@@ -291,14 +296,14 @@ private class FunctionGraphBuilder {
 				var r = orderedValueList(bb, fl.map(f -> f.expr));
 				bb = r.bb;
 				if (fl.length != r.values.length) throw "Invalid_argument: List.map2";
-				result(TObjectDecl([for (i in 0...fl.length) {key: fl[i].key, expr: r.values[i]}]));
+				result(TObjectDecl(fl.mapi((i, f) -> {key: f.key, expr: r.values[i]})));
 			case TField({eexpr: TTypeExpr(_)}, _): {bb: bb, value: e};
 			case TField(e1, fa):
 				var r = value(bb, e1);
 				bb = r.bb;
 				result(TField(r.value, fa));
 			case TArray(e1, e2):
-				var r = orderedValueList(bb, [e1, e2]);
+				var r = orderedValueList(bb, vector(e1, e2));
 				bb = r.bb;
 				switch r.values {
 					case [a, b]: result(TArray(a, b));
@@ -334,7 +339,7 @@ private class FunctionGraphBuilder {
 			case TFunction(tf):
 				var fn = AnalyzerTexprTransformer.buildFunc(ctx, bb, tf, e.etype, e.epos);
 				var efun = mk(TConst(TString("fun")), tDynamic, p);
-				var ec = mk(TCall(efun, [mk(TConst(TInt(fn.root.bbId)), ctx.com.basic.tint, e.epos)]), tDynamic, p);
+				var ec = mk(TCall(efun, vector(mk(TConst(TInt(fn.root.bbId)), ctx.com.basic.tint, e.epos))), tDynamic, p);
 				var next = createNode(BKNormal, bb.bbType, bb.bbPos);
 				addCfgEdge(bb, next, CFGGoto);
 				setSyntaxEdge(bb, SEMerge(next));
@@ -353,7 +358,7 @@ private class FunctionGraphBuilder {
 		return r;
 	}
 
-	function orderedValueList(bb:BasicBlockData, el:Array<TExpr>):BlockValues {
+	function orderedValueList(bb:BasicBlockData, el:Vector<TExpr>):BlockValues {
 		var checker = createAffectionChecker();
 		function optimizable(e:TExpr):Bool return switch e.eexpr {
 			case TBinop(_, _, _) | TArray(_, _) | TCall(_, _): true;
@@ -363,31 +368,34 @@ private class FunctionGraphBuilder {
 		var hadSideEffect = false;
 		// port: `x :: acc` as a push: `annotated` is read from the end
 		var annotated = [];
-		var reverse = el.copy();
-		reverse.reverse();
-		for (e in reverse) if (hadSideEffect) annotated.push({
-			affected: checker.mightBeAffected(e) || hasSideEffect(e),
-			opt: optimizable(e),
-			e: e
-		});
-		else {
-			hadSideEffect = hasSideEffect(e);
-			if (hadSideEffect) checker.collectModifiedLocals(e);
-			var opt = optimizable(e);
-			annotated.push({affected: false, opt: opt, e: e});
-			hadSideEffect = hadSideEffect || opt;
+		var i = el.length;
+		while (i > 0) {
+			var e = el[--i];
+			if (hadSideEffect) annotated.push({
+				affected: checker.mightBeAffected(e) || hasSideEffect(e),
+				opt: optimizable(e),
+				e: e
+			});
+			else {
+				hadSideEffect = hasSideEffect(e);
+				if (hadSideEffect) checker.collectModifiedLocals(e);
+				var opt = optimizable(e);
+				annotated.push({affected: false, opt: opt, e: e});
+				hadSideEffect = hadSideEffect || opt;
+			}
 		}
-		var values = [];
+		var values = new Vector<TExpr>(annotated.length), n = 0;
 		var i = annotated.length;
 		while (i > 0) {
 			var item = annotated[--i];
 			if (bb != g.gUnreachable) {
 				var r = item.affected || item.opt ? bindToTemp(bb, item.e) : value(bb, item.e);
 				bb = r.bb;
-				values.push(r.value);
+				values[n++] = r.value;
 			}
 		}
-		return {bb: bb, values: values};
+		// port: the values made before the block became unreachable
+		return {bb: bb, values: n == values.length ? values : values.slice(0, n)};
 	}
 
 	function bindToTemp(bb:BasicBlockData, e:TExpr, ?v:TVar):BlockValue {
@@ -438,8 +446,8 @@ private class FunctionGraphBuilder {
 			case TParenthesis(a): strip(bb, a);
 			case TBlock(el):
 				if (el.length == 0) throw "AnalyzerTexprTransformer.empty value block";
-				for (a in el.slice(0, el.length - 1)) {
-					bb = blockElement(bb, a);
+				for (i in 0...el.length - 1) {
+					bb = blockElement(bb, el[i]);
 					if (bb == g.gUnreachable) throw new TypeExit();
 				}
 				strip(bb, el[el.length - 1]);
@@ -479,7 +487,7 @@ private class FunctionGraphBuilder {
 
 	function blockElementValue(bb:BasicBlockData, e:TExpr, f:TExpr->TExpr):BasicBlockData return blockElementPlus(bb, mapValues(f, e), f);
 
-	function call(bb:BasicBlockData, e:TExpr, e1:TExpr, el:Array<TExpr>):BlockValue {
+	function call(bb:BasicBlockData, e:TExpr, e1:TExpr, el:Vector<TExpr>):BlockValue {
 		function check(e:TExpr, t:T):TExpr return switch e.eexpr {
 			case TLocal(v) if (core.TOther.ExtType.hasReferenceSemantics(t)):
 				addVarFlag(v, VCaptured);
@@ -492,7 +500,7 @@ private class FunctionGraphBuilder {
 				} else e;
 		};
 		el = codegen.Codegen.UnificationCallback.checkCall(check, el, e1.etype);
-		var r = orderedValueList(bb, [e1].concat(el));
+		var r = orderedValueList(bb, VectorTools.cons(e1, el));
 		if (r.values.length == 0) throw "AnalyzerTexprTransformer.call";
 		return {bb: r.bb, value: withExpr(e, TCall(r.values[0], r.values.slice(1)))};
 	}
@@ -753,7 +761,7 @@ private class FunctionGraphBuilder {
 		case TBinop(OpAssignOp(op), ea = {eexpr: TArray(e1, e2)}, e3): arrayAssignOp(bb, op, e, ea, e1, e2, e3).bb;
 		case TBinop(OpAssignOp(op), ef = {eexpr: TField(e1, fa)}, e2): fieldAssignOp(bb, op, e, ef, e1, fa, e2).bb;
 		case TBinop(OpAssign, ea = {eexpr: TArray(e1, e2)}, e3):
-			var r = orderedValueList(bb, [e1, e2, e3]);
+			var r = orderedValueList(bb, vector(e1, e2, e3));
 			switch r.values {
 				case [e1, e2, e3]: addTexpr(r.bb, withExpr(e, TBinop(OpAssign, withExpr(ea, TArray(e1, e2)), e3)));
 				case _: throw "AnalyzerTexprTransformer.array assign";
@@ -785,7 +793,7 @@ private class FunctionGraphBuilder {
 		case TWhile(_, _, DoWhile): throw "AnalyzerTexprTransformer.unlowered do-while";
 	};
 
-	function blockEl(allowVoid:Bool, bb:BasicBlockData, el:Array<TExpr>):BasicBlockData {
+	function blockEl(allowVoid:Bool, bb:BasicBlockData, el:Vector<TExpr>):BasicBlockData {
 		var stack = tryStack;
 		for (e in el) {
 			if (stack.length != 0 && canThrow(e)) {
@@ -805,6 +813,6 @@ private class FunctionGraphBuilder {
 
 	function block(bb:BasicBlockData, e:TExpr):BasicBlockData return blockEl(true, bb, switch e.eexpr {
 		case TBlock(el): el;
-		case _: [e];
+		case _: vector(e);
 	});
 }

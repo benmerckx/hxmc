@@ -1,5 +1,8 @@
 package hxmc.ir;
 
+import haxe.ds.Vector;
+import core.ds.VectorTools.vector;
+
 // The typed IR between the typed AST and hxmc's code generator (MirBuild):
 // hxc's IR, copied with its lowering (Lower, FnLower) when hxmc separated
 // from hxc (docs/hxmc.md, "Origin"). Statements are
@@ -42,7 +45,7 @@ class ClassInfo {
 	public var ident:String; // the prefix of its symbols
 	public var sup:Null<ClassInfo>;
 	public var fields:Array<{name:String, ty:Ty}> = []; // including inherited (the class is the header's type index)
-	public var locs:Array<Int>; // per field: its slot, or for Int/Bool its 4-byte index (packed two per slot; Facts.layout)
+	public var locs:Vector<Int>; // per field: its slot, or for Int/Bool its 4-byte index (packed two per slot; Facts.layout)
 	public var nslots:Int;
 	public var methods:Map<String, FuncInfo> = new Map(); // own implementations
 	public var ctor:Null<FuncInfo>;
@@ -93,7 +96,7 @@ typedef StaticEntry = {name:String, clos:Null<LambdaInfo>, fn:Null<FuncInfo>, gl
 class EnumInfo {
 	public var name:String;
 	public var ident:String;
-	public var ctors:Array<CtorInfo> = [];
+	public var ctors:Vector<CtorInfo> = vector(); // by tag
 	public var tindex:Int = -1; // the enum's own descriptor (Enum<T> values)
 
 	public function new(name, ident) {
@@ -106,8 +109,8 @@ class CtorInfo {
 	public var en:EnumInfo;
 	public var name:String;
 	public var tag:Int;
-	public var params:Array<Ty>; // from slot 0: the tag is the header's type index (Gc.hx)
-	public var paramNames:Array<String> = [];
+	public var params:Vector<Ty>; // from slot 0: the tag is the header's type index (Gc.hx)
+	public var paramNames:Vector<String> = vector();
 	public var global:Int = -1; // singleton for constructors without arguments
 	public var tindex:Int = -1;
 
@@ -122,9 +125,9 @@ class CtorInfo {
 // An anonymous structure layout: the fields of an object literal, sorted by name.
 class ShapeInfo {
 	public var id:Int;
-	public var fields:Array<{name:String, ty:Ty}>; // slot 0 = dynamic overflow fields, then these
+	public var fields:Vector<{name:String, ty:Ty}>; // slot 0 = dynamic overflow fields, then these
 	public var tindex:Int = -1;
-	public var locs:Array<Int>; // as ClassInfo.locs
+	public var locs:Vector<Int>; // as ClassInfo.locs
 	public var nslots:Int;
 
 	public function new(id, fields) {
@@ -144,7 +147,7 @@ class ShapeInfo {
 // interchangeable; others need an adapter (FnLower.coerce).
 class SigInfo {
 	public var id:Int;
-	public var args:Array<Ty>;
+	public var args:Vector<Ty>;
 	public var ret:Ty;
 	public var key:String;
 
@@ -160,7 +163,7 @@ class SigInfo {
 class LambdaInfo {
 	public var id:Int;
 	public var sig:SigInfo;
-	public var captures:Array<Local>;
+	public var captures:Vector<Local>;
 	public var fn:FuncInfo;
 	public var tindex:Int = -1;
 
@@ -197,7 +200,7 @@ class FuncInfo {
 	// argument is then the address of its memory, as is the result
 	public var cAbi:Null<hxmc.ir.CInterop.CSig>;
 	public var locals:Array<Local> = [];
-	public var body:Array<Stmt> = [];
+	public var body:Vector<Stmt> = vector();
 	public var selfClass:Null<ClassInfo>; // instance method: args[0] is `this`, typed as the root object
 	public var lambda:Null<LambdaInfo>; // closure body: args[0] is the closure
 	public var dispatchSel:Int = -1;
@@ -262,17 +265,17 @@ enum Ex {
 	ECapture(l:LambdaInfo, idx:Int, clos:Ex);
 	EType(t:TypeRef); // runtime type descriptor (Class<T>, Enum<T> values)
 	// impure: only as the value of SSet / SExpr
-	ECall(f:FuncInfo, args:Array<Ex>);
-	ECallDispatch(sel:Int, sig:SigInfo, args:Array<Ex>); // virtual and interface calls
-	ECallClos(s:SigInfo, clos:Ex, args:Array<Ex>);
-	ECallAnon(name:String, s:SigInfo, obj:Ex, args:Array<Ex>); // obj.name(args) through a structural type: a method or a closure field
-	ECallHost(name:String, args:Array<Ex>, ret:Ty); // runtime function (hxmc.rt)
+	ECall(f:FuncInfo, args:Vector<Ex>);
+	ECallDispatch(sel:Int, sig:SigInfo, args:Vector<Ex>); // virtual and interface calls
+	ECallClos(s:SigInfo, clos:Ex, args:Vector<Ex>);
+	ECallAnon(name:String, s:SigInfo, obj:Ex, args:Vector<Ex>); // obj.name(args) through a structural type: a method or a closure field
+	ECallHost(name:String, args:Vector<Ex>, ret:Ty); // runtime function (hxmc.rt)
 	ENewObj(c:ClassInfo); // zeroed instance; the constructor is called separately
-	ENewEnum(c:CtorInfo, args:Array<Ex>);
-	ENewArr(elem:Ty, values:Array<Ex>);
-	ENewClos(l:LambdaInfo, captures:Array<Ex>);
+	ENewEnum(c:CtorInfo, args:Vector<Ex>);
+	ENewArr(elem:Ty, values:Vector<Ex>);
+	ENewClos(l:LambdaInfo, captures:Vector<Ex>);
 	ENewBox(t:Ty, v:Ex);
-	ENewAnon(s:ShapeInfo, values:Array<Ex>);
+	ENewAnon(s:ShapeInfo, values:Vector<Ex>);
 }
 
 enum TypeRef {
@@ -351,14 +354,14 @@ enum Stmt {
 	SArrPush(elem:Ty, a:Local, v:Ex);
 	SBoxSet(t:Ty, b:Ex, v:Ex);
 	SSetGlobal(g:Int, v:Ex);
-	SIf(c:Ex, a:Array<Stmt>, b:Array<Stmt>);
-	SLoop(body:Array<Stmt>); // infinite; left with SBreak
+	SIf(c:Ex, a:Vector<Stmt>, b:Vector<Stmt>);
+	SLoop(body:Vector<Stmt>); // infinite; left with SBreak
 	SBreak;
 	SContinue;
-	SSwitch(e:Ex, cases:Array<{values:Array<Int>, body:Array<Stmt>}>, def:Array<Stmt>);
+	SSwitch(e:Ex, cases:Vector<IrCase>, def:Vector<Stmt>);
 	SReturn(e:Null<Ex>);
 	SThrow(e:Ex);
-	STry(body:Array<Stmt>, catches:Array<{test:Null<Ex->Ex>, l:Local, body:Array<Stmt>}>);
+	STry(body:Vector<Stmt>, catches:Vector<IrCatch>);
 	// (Facts.markCold) a statement whose only GC point is the slow path of an
 	// allocation or array store: the references live across it are stored in
 	// the shadow stack only on that path (hxmc.Roots)
@@ -368,6 +371,13 @@ enum Stmt {
 	// pass steps over it, so the code is the same as without it
 	SPos(file:String, line:Int);
 }
+
+// a case of SSwitch: its values and its body
+typedef IrCase = {values:Vector<Int>, body:Vector<Stmt>};
+
+// a catch of STry: its test of the exception (null: any), the local it is
+// bound to, its body
+typedef IrCatch = {test:Null<Ex->Ex>, l:Local, body:Vector<Stmt>};
 
 class Program {
 	public var classes:Array<ClassInfo> = [];
@@ -387,7 +397,7 @@ class Program {
 	public var roots:Array<FuncInfo> = []; // live whatever reaches them (Reach)
 	// (Reach) the live functions and the selectors live code dispatches on; null: all
 	public var live:Null<Map<FuncInfo, Bool>> = null;
-	public var liveSelectors:Null<Array<Bool>> = null;
+	public var liveSelectors:Null<Vector<Bool>> = null;
 
 	public function new() {}
 
@@ -406,7 +416,10 @@ class Program {
 		var s = sigKeys.get(key);
 		if (s != null) return s;
 		var norm = (t:Ty) -> Ir.isRef(t) ? TRef(RAny) : t;
-		s = new SigInfo(sigs.length, [for (a in args) norm(a)], norm(ret), key);
+		var nargs = new Vector<Ty>(args.length);
+		for (k in 0...args.length)
+			nargs[k] = norm(args[k]);
+		s = new SigInfo(sigs.length, nargs, norm(ret), key);
 		sigs.push(s);
 		sigKeys.set(key, s);
 		return s;
@@ -437,7 +450,7 @@ class Program {
 		var key = b.toString();
 		var s = shapeKeys.get(key);
 		if (s != null) return s;
-		s = new ShapeInfo(shapes.length, sorted ? fs.copy() : fs);
+		s = new ShapeInfo(shapes.length, Vector.fromArrayCopy(fs));
 		shapes.push(s);
 		shapeKeys.set(key, s);
 		return s;

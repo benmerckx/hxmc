@@ -29,6 +29,11 @@ import core.ds.Stream;
 import core.display.DisplayPosition;
 import core.DisplayTypes.DisplayModeValue;
 import syntax.Parser;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: ppx_parser semantics (see ppx_parser lib/parser.ml): a `match%parser` case is
 // selected by its first element. A terminal first element is matched against
@@ -51,7 +56,7 @@ class Grammar {
 
 	public static function parseFileStream(ctx:ParserContext, s:S):Package {
 		var r = parseFile(ctx, s);
-		return {pack: r.pack, declarations: r.decls};
+		return {pack: r.pack, declarations: Vector.fromArrayCopy(r.decls)};
 	}
 
 	public static function parseExpressionStream(ctx:ParserContext, s:S):Expr return expr(ctx, s);
@@ -431,9 +436,9 @@ class Grammar {
 				name: name,
 				doc: docFromStringOpt(doc),
 				meta: meta,
-				params: tl,
-				flags: flags.concat(sl),
-				data: fl
+				params: Vector.fromArrayCopy(tl),
+				flags: Vector.fromArrayCopy(flags.concat(sl)),
+				data: Vector.fromArrayCopy(fl)
 			},
 			p: punion(p1, p2)
 		};
@@ -506,9 +511,9 @@ class Grammar {
 				name: name,
 				doc: docFromStringOpt(doc),
 				meta: meta,
-				params: tl,
-				flags: cflags.concat(n).concat(hl),
-				data: r.fields
+				params: Vector.fromArrayCopy(tl),
+				flags: Vector.fromArrayCopy(cflags.concat(n).concat(hl)),
+				data: Vector.fromArrayCopy(r.fields)
 			}),
 			pos: punion(p1, r.pos)
 		};
@@ -561,8 +566,8 @@ class Grammar {
 					p2 = r2.v;
 				}
 				var f:Func = {
-					fParams: pl,
-					fArgs: args,
+					fParams: Vector.fromArrayCopy(pl),
+					fArgs: Vector.fromArrayCopy(args),
 					fType: t,
 					fExpr: e
 				};
@@ -571,8 +576,8 @@ class Grammar {
 						name: name,
 						doc: docFromStringOpt(doc),
 						meta: meta,
-						params: pl,
-						flags: moduleFieldFlags(ctx, c),
+						params: Vector.fromArrayCopy(pl),
+						flags: Vector.fromArrayCopy(moduleFieldFlags(ctx, c)),
 						data: FFun(f)
 					}),
 					pos: punion(p1, p2)
@@ -603,8 +608,8 @@ class Grammar {
 						name: name,
 						doc: docFromStringOpt(doc),
 						meta: meta,
-						params: [],
-						flags: moduleFieldFlags(ctx, c),
+						params: vector(),
+						flags: Vector.fromArrayCopy(moduleFieldFlags(ctx, c)),
 						data: t
 					}),
 					pos: punion(p1, p2)
@@ -636,9 +641,9 @@ class Grammar {
 								name: name,
 								doc: docFromStringOpt(doc),
 								meta: meta,
-								params: tl,
-								flags: eflags,
-								data: l
+								params: Vector.fromArrayCopy(tl),
+								flags: Vector.fromArrayCopy(eflags),
+								data: Vector.fromArrayCopy(l)
 							}),
 							pos: punion(p1, p2)
 						};
@@ -664,8 +669,8 @@ class Grammar {
 						name: name,
 						doc: docFromStringOpt(doc),
 						meta: meta,
-						params: tl,
-						flags: tflags,
+						params: Vector.fromArrayCopy(tl),
+						flags: Vector.fromArrayCopy(tflags),
 						data: t
 					}),
 					pos: punion(p1, t.pos)
@@ -696,13 +701,8 @@ class Grammar {
 								name: name,
 								doc: docFromStringOpt(doc),
 								meta: meta,
-								params: [],
-								flags: moduleFieldFlags(ctx, crest).concat([
-									{
-										access: AFinal,
-										pos: p1
-									}
-								]),
+								params: vector(),
+								flags: Vector.fromArrayCopy(moduleFieldFlags(ctx, crest)).snoc({access: AFinal, pos: p1}),
 								data: FVar(t, a.e)
 							}),
 							pos: punion(p1, a.pos)
@@ -734,9 +734,9 @@ class Grammar {
 				name: name,
 				doc: doc,
 				meta: meta,
-				params: tl,
-				flags: [for (f in cflags) f.flag].concat(cf.flags).concat(hl),
-				data: r.fields
+				params: Vector.fromArrayCopy(tl),
+				flags: Vector.fromArrayCopy([for (f in cflags) f.flag].concat(cf.flags).concat(hl)),
+				data: Vector.fromArrayCopy(r.fields)
 			}),
 			pos: punion(cf.pos, r.pos)
 		};
@@ -771,12 +771,12 @@ class Grammar {
 							s.junk();
 							var l = acc.copy();
 							l.reverse();
-							return {path: l, mode: IAll};
+							return {path: Vector.fromArrayCopy(l), mode: IAll};
 						case _:
 							popt(function(s) return semicolon(ctx, s), s);
 							var l = acc.copy();
 							l.reverse();
-							return Parser.syntaxError(ctx, Expected(["identifier"]), s, ({path: l, mode: INormal} : core.Ast.Import));
+							return Parser.syntaxError(ctx, Expected(["identifier"]), s, ({path: Vector.fromArrayCopy(l), mode: INormal} : core.Ast.Import));
 					}
 				case Kwd(In):
 					s.junk();
@@ -786,7 +786,7 @@ class Grammar {
 							s.junk();
 							var l = acc.copy();
 							l.reverse();
-							return {path: l, mode: IAsName(pn(name, tk2.pos))};
+							return {path: Vector.fromArrayCopy(l), mode: IAsName(pn(name, tk2.pos))};
 						case _:
 							return serror();
 					}
@@ -798,14 +798,14 @@ class Grammar {
 							s.junk();
 							var l = acc.copy();
 							l.reverse();
-							return {path: l, mode: IAsName(pn(name, tk2.pos))};
+							return {path: Vector.fromArrayCopy(l), mode: IAsName(pn(name, tk2.pos))};
 						case _:
 							return serror();
 					}
 				case _:
 					var l = acc.copy();
 					l.reverse();
-					return {path: l, mode: INormal};
+					return {path: Vector.fromArrayCopy(l), mode: INormal};
 			}
 		}
 		var tk = peek(s);
@@ -815,8 +815,8 @@ class Grammar {
 				loop(tk.pos, [pn(name, tk.pos)]);
 			case _:
 				if (Parser.wouldSkipDisplayPosition(ctx, p1, true,
-					s)) ({path: [], mode: INormal} : core.Ast.Import) else Parser.syntaxError(ctx, Expected(["identifier"]), s,
-					({path: [], mode: INormal} : core.Ast.Import));
+					s)) ({path: vector(), mode: INormal} : core.Ast.Import) else Parser.syntaxError(ctx, Expected(["identifier"]), s,
+					({path: vector(), mode: INormal} : core.Ast.Import));
 		}
 	}
 
@@ -884,7 +884,7 @@ class Grammar {
 				s)) DisplayPosition.displayPosition.withPos(p1) else
 				Parser.syntaxError(ctx, Expected([".", ";"]), s, Parser.lastPos(ctx, s));
 		}
-		return {definition: EUsing(path), pos: punion(p1, p2)};
+		return {definition: EUsing(Vector.fromArrayCopy(path)), pos: punion(p1, p2)};
 	}
 
 	static function parseAbstractRelations(ctx:ParserContext, s:S):AbstractFlag {
@@ -1086,16 +1086,16 @@ class Grammar {
 		}
 	}
 
-	static function parseMetaParams(ctx:ParserContext, pname:Pos, s:S):Array<Expr> {
+	static function parseMetaParams(ctx:ParserContext, pname:Pos, s:S):Vector<Expr> {
 		var tk = peek(s);
 		switch tk.token {
 			case POpen if (tk.pos.pmin == pname.pmax):
 				s.junk();
 				var params = tail(function() return psepTrailing(Comma, function(s) return parseMetaArgumentExpr(ctx, s), s));
 				expectUnlessResumeP(ctx, PClose, s);
-				return params;
+				return Vector.fromArrayCopy(params);
 			case _:
-				return [];
+				return vector();
 		}
 	}
 
@@ -1105,7 +1105,7 @@ class Grammar {
 		var p1 = tk.pos;
 		s.junk();
 		var meta:Null<MetadataEntry> = Parser.checkResume(ctx, p1,
-			function():MetadataEntry return {meta: StrictMeta.HxCompletion, exprs: [], pos: p1}, function() return null);
+			function():MetadataEntry return {meta: StrictMeta.HxCompletion, exprs: vector(), pos: p1}, function() return null);
 		var r = tryHead(function() return parseMetaName(ctx, p1, s));
 		if (r != null) {
 			var params = tail(function() return parseMetaParams(ctx, r.v.pos, s));
@@ -1258,18 +1258,18 @@ class Grammar {
 				var p1 = tk.pos;
 				s.junk();
 				var r = tryHead(function() return parseTypeAnonymous(ctx, s));
-				if (r != null) return {type: CTAnonymous(r.v.fields), pos: punion(p1, r.v.pos)};
+				if (r != null) return {type: CTAnonymous(Vector.fromArrayCopy(r.v.fields)), pos: punion(p1, r.v.pos)};
 				var r = tryHead(function() return parseStructuralExtension(ctx, s));
 				if (r != null) {
 					var tl = [r.v].concat(plist(function(s) return parseStructuralExtension(ctx, s), s));
 					var r2 = tryHead(function() return parseTypeAnonymous(ctx, s));
-					if (r2 != null) return {type: CTExtend(tl, r2.v.fields), pos: punion(p1, r2.v.pos)};
+					if (r2 != null) return {type: CTExtend(Vector.fromArrayCopy(tl), Vector.fromArrayCopy(r2.v.fields)), pos: punion(p1, r2.v.pos)};
 					var r3 = tryHead(function() return parseClassFields(ctx, true, p1, s));
-					if (r3 != null) return {type: CTExtend(tl, r3.v.fields), pos: punion(p1, r3.v.pos)};
+					if (r3 != null) return {type: CTExtend(Vector.fromArrayCopy(tl), Vector.fromArrayCopy(r3.v.fields)), pos: punion(p1, r3.v.pos)};
 					return fail();
 				}
 				var r = tryHead(function() return parseClassFields(ctx, true, p1, s));
-				if (r != null) return {type: CTAnonymous(r.v.fields), pos: punion(p1, r.v.pos)};
+				if (r != null) return {type: CTAnonymous(Vector.fromArrayCopy(r.v.fields)), pos: punion(p1, r.v.pos)};
 				return serror();
 			case Question:
 				var p1 = tk.pos;
@@ -1285,7 +1285,7 @@ class Grammar {
 					case _: t;
 				};
 				var p = punion(p1, t.pos);
-				return {type: CTPath(makePtp(mkTypePath(["haxe"], "Rest", [TPType(hint)]), p)), pos: p};
+				return {type: CTPath(makePtp(mkTypePath(["haxe"], "Rest", vector(TPType(hint))), p)), pos: p};
 			case Kwd(Default):
 				s.junk();
 				return {type: CTPath(makePtp(mkTypePath(["$"], "_hx_default"), tk.pos)), pos: tk.pos};
@@ -1386,7 +1386,7 @@ class Grammar {
 				p2 = r.p;
 			}
 		} else params = [];
-		var tp = mkTypePath(revPack(pack), name, params, sub);
+		var tp = mkTypePath(revPack(pack), name, Vector.fromArrayCopy(params), sub);
 		var pFull = punion(p1, p2);
 		return makePtp(tp, pFull, pPath);
 	}
@@ -1459,14 +1459,14 @@ class Grammar {
 	static function parseComplexTypeNext(ctx:ParserContext, t:TypeHint, s:S):TypeHint {
 		inline function makeFun(t2:ComplexType, p2:Pos):TypeHint {
 			return switch t2 {
-				case CTFunction(args, r): {type: CTFunction([t].concat(args), r), pos: punion(t.pos, p2)};
-				case _: {type: CTFunction([t], {type: t2, pos: p2}), pos: punion(t.pos, p2)};
+				case CTFunction(args, r): {type: CTFunction(VectorTools.cons(t, args), r), pos: punion(t.pos, p2)};
+				case _: {type: CTFunction(vector(t), {type: t2, pos: p2}), pos: punion(t.pos, p2)};
 			}
 		}
 		inline function makeIntersection(t2:ComplexType, p2:Pos):TypeHint {
 			return switch t2 {
-				case CTIntersection(tl): {type: CTIntersection([t].concat(tl)), pos: punion(t.pos, p2)};
-				case _: {type: CTIntersection([t, {type: t2, pos: p2}]), pos: punion(t.pos, p2)};
+				case CTIntersection(tl): {type: CTIntersection(VectorTools.cons(t, tl)), pos: punion(t.pos, p2)};
+				case _: {type: CTIntersection(vector(t, {type: t2, pos: p2})), pos: punion(t.pos, p2)};
 			}
 		}
 		var tk = peek(s);
@@ -1502,10 +1502,10 @@ class Grammar {
 		var pa = tk.pos;
 		s.junk();
 		var r = tryHead(function() return parseComplexTypeInner(ctx, false, s));
-		if (r != null) return {type: CTFunction(tl, r.v), pos: punion(p1, r.v.pos)};
+		if (r != null) return {type: CTFunction(Vector.fromArrayCopy(tl), r.v), pos: punion(p1, r.v.pos)};
 		if (Parser.wouldSkipDisplayPosition(ctx, pa, false, s)) {
 			var ct = Parser.magicTypeTh(DisplayPosition.displayPosition.withPos(pa));
-			return {type: CTFunction(tl, ct), pos: punion(p1, pa)};
+			return {type: CTFunction(Vector.fromArrayCopy(tl), ct), pos: punion(p1, pa)};
 		}
 		return serror();
 	}
@@ -1524,7 +1524,7 @@ class Grammar {
 			return ([
 				{
 					cffName: pn(name, p1),
-					cffMeta: opt ? ([{meta: StrictMeta.Optional, exprs: [], pos: Globals.nullPos}] : Array<MetadataEntry>) : [],
+					cffMeta: opt ? ([{meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos}] : Array<MetadataEntry>) : [],
 					cffAccess: [],
 					cffDoc: null,
 					cffKind: FVar(t, null),
@@ -1570,8 +1570,8 @@ class Grammar {
 			ecName: n,
 			ecDoc: docFromStringOpt(doc),
 			ecMeta: meta,
-			ecArgs: args,
-			ecParams: params,
+			ecArgs: Vector.fromArrayCopy(args),
+			ecParams: Vector.fromArrayCopy(params),
 			ecType: t,
 			ecPos: punion(n.pos, p2)
 		};
@@ -1611,8 +1611,8 @@ class Grammar {
 			p2 = r2.v;
 		}
 		var f:Func = {
-			fParams: pl,
-			fArgs: args,
+			fParams: Vector.fromArrayCopy(pl),
+			fArgs: Vector.fromArrayCopy(args),
 			fType: t,
 			fExpr: e
 		};
@@ -1653,7 +1653,7 @@ class Grammar {
 		inline function checkOptional(opt:Bool, name:PlacedName):Metadata {
 			if (opt) {
 				if (!tdecl) Parser.syntaxError(ctx, Custom("?var syntax is only allowed in structures"), s, null, name.pos);
-				return ([{meta: StrictMeta.Optional, exprs: [], pos: Globals.nullPos}] : Array<core.Ast.MetadataEntry>).concat(meta);
+				return ([{meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos}] : Array<core.Ast.MetadataEntry>).concat(meta);
 			}
 			return meta;
 		}
@@ -1743,8 +1743,8 @@ class Grammar {
 							var c = Parser.checkCompletion(ctx, po, true, s);
 							if (c == null) return serror();
 							var f:Func = {
-								fParams: [],
-								fArgs: [],
+								fParams: vector(),
+								fArgs: vector(),
 								fType: null,
 								fExpr: null
 							};
@@ -1757,7 +1757,7 @@ class Grammar {
 								meta: ([
 									{
 										meta: StrictMeta.DisplayOverride,
-										exprs: [],
+										exprs: vector(),
 										pos: Globals.nullPos
 									}
 								] : Array<core.Ast.MetadataEntry>).concat(meta)
@@ -1841,7 +1841,7 @@ class Grammar {
 			var t = tail(function() return popt(function(s) return parseTypeHint(ctx, s), s));
 			var c = tail(function() return parseFunParamValue(ctx, s));
 			var t:TypeHint = t != null ? t : {type: ctMono(), pos: Globals.nullPos};
-			var t:TypeHint = {type: CTPath(makePtp(mkTypePath(["haxe"], "Rest", [TPType(t)]), t.pos)), pos: t.pos};
+			var t:TypeHint = {type: CTPath(makePtp(mkTypePath(["haxe"], "Rest", vector(TPType(t))), t.pos)), pos: t.pos};
 			return {
 				name: n,
 				optional: false,
@@ -1895,7 +1895,7 @@ class Grammar {
 			} else null;
 			return {
 				tpName: r.v,
-				tpParams: [],
+				tpParams: vector(),
 				tpConstraints: cto,
 				tpDefault: def,
 				tpMeta: meta
@@ -1950,7 +1950,7 @@ class Grammar {
 			case _:
 		}
 		var b = block(ctx, [], s);
-		return EBlock(b);
+		return EBlock(Vector.fromArrayCopy(b));
 	}
 
 	static function block2(ctx:ParserContext, name:{name:String, pos:Pos, quote:QuoteStatus}, ident:Constant, p:Pos, s:S):ExprDef {
@@ -1964,7 +1964,7 @@ class Grammar {
 			return e;
 		}
 		var r = blockWithPos2(ctx, [], f, p, s);
-		return EBlock(r.el);
+		return EBlock(Vector.fromArrayCopy(r.el));
 	}
 
 	static function block(ctx:ParserContext, acc:Array<Expr>, s:S):Array<Expr> return blockWithPos(ctx, acc, Globals.nullPos, s).el;
@@ -2017,7 +2017,7 @@ class Grammar {
 
 	static function parseBlockElt(ctx:ParserContext, s:S):Expr {
 		var r = tryHead(function() return parseBlockVar(ctx, s));
-		if (r != null) return mk(EVars(r.v.vl), r.v.pos);
+		if (r != null) return mk(EVars(Vector.fromArrayCopy(r.v.vl)), r.v.pos);
 		var tk = peek(s);
 		switch tk.token {
 			case Kwd(Function):
@@ -2038,7 +2038,7 @@ class Grammar {
 				var r = tryHead(function() return secureExpr(ctx, s));
 				if (r != null) {
 					tail(function() return semicolon(ctx, s));
-					return Parser.makeMeta(StrictMeta.Inline, [], r.v, p1);
+					return Parser.makeMeta(StrictMeta.Inline, vector(), r.v, p1);
 				}
 				return serror();
 			case Kwd(Static):
@@ -2046,11 +2046,9 @@ class Grammar {
 				s.junk();
 				var r = tryHead(function() return parseBlockVar(ctx, s));
 				if (r != null) {
-					var vl = [
-						for (ev in r.v.vl) ({
+					var vl = r.v.vl.mapToVector(ev -> ({
 							evName:ev.evName, evFinal:ev.evFinal, evStatic:true, evType:ev.evType, evExpr:ev.evExpr, evMeta:ev.evMeta
-						} : EVar)
-					];
+						} : EVar));
 					return mk(EVars(vl), r.v.pos);
 				}
 				return Parser.syntaxError(ctx, Expected(["var", "final"]), s, Parser.mkNullExpr(p));
@@ -2070,9 +2068,7 @@ class Grammar {
 
 	static function parseObjDecl(ctx:ParserContext, name:{name:String, pos:Pos, quote:QuoteStatus}, e:Expr, p0:Pos, s:S):Expr {
 		inline function makeObjDecl(el:Array<ObjectField>, p1:Pos):Expr {
-			var l = el.copy();
-			l.reverse();
-			return mk(EObjectDecl(l), punion(p0, p1));
+			return mk(EObjectDecl(VectorTools.ofArrayReversed(el)), punion(p0, p1));
 		}
 		// port: the recursion `loop p_end acc` as a loop. A missing ':' calls
 		// `syntax_error ctx (Expected [":"]) s (next_expr key)`, whose argument parses the
@@ -2169,7 +2165,7 @@ class Grammar {
 				p2 = r.p;
 			}
 		}
-		return mk(EArrayDecl(el), punion(p1, p2));
+		return mk(EArrayDecl(Vector.fromArrayCopy(el)), punion(p1, p2));
 	}
 
 	static function parseVarDeclHead(ctx:ParserContext, isFinal:Bool, s:S):{
@@ -2270,13 +2266,13 @@ class Grammar {
 				var p1 = tk.pos;
 				s.junk();
 				var vl = tail(function() return psep(Comma, function(s) return parseVarDecl(ctx, false, s), s));
-				return Reification.reifyExpr(mk(EVars(vl), p1), ctx.inMacro);
+				return Reification.reifyExpr(mk(EVars(Vector.fromArrayCopy(vl)), p1), ctx.inMacro);
 			case Kwd(Final):
 				var p1 = tk.pos;
 				s.junk();
 				checkRedundantVar(ctx, p1, s);
 				var r = tryHead(function() return psep(Comma, function(s) return parseVarDecl(ctx, true, s), s));
-				if (r != null) return Reification.reifyExpr(mk(EVars(r.v), p1), ctx.inMacro);
+				if (r != null) return Reification.reifyExpr(mk(EVars(Vector.fromArrayCopy(r.v)), p1), ctx.inMacro);
 				return serror();
 			case _:
 		}
@@ -2300,9 +2296,9 @@ class Grammar {
 			var t = tail(function() return popt(function(s) return parseTypeHint(ctx, s), s));
 			inline function make(e:Expr):Expr {
 				var f:Func = {
-					fParams: pl,
+					fParams: Vector.fromArrayCopy(pl),
 					fType: t,
-					fArgs: al,
+					fArgs: Vector.fromArrayCopy(al),
 					fExpr: e
 				};
 				return mk(EFunction(name == null ? FKAnonymous : FKNamed(name, inl), f), punion(p1, e.pos));
@@ -2313,9 +2309,9 @@ class Grammar {
 		// like `function a|b`
 		if (Parser.wouldSkipDisplayPosition(ctx, p1, false, s)) {
 			var f:Func = {
-				fParams: [],
+				fParams: vector(),
 				fType: null,
-				fArgs: [],
+				fArgs: vector(),
 				fExpr: null
 			};
 			var p = punion(p1, Parser.nextPos(ctx, s));
@@ -2333,11 +2329,11 @@ class Grammar {
 	static function arrowFunction(ctx:ParserContext, p1:Pos, al:Array<FuncArg>, er:Expr, s:S):Expr {
 		inline function make(e:Expr):Expr {
 			var p = e.pos;
-			var ret = mk(EMeta({meta: StrictMeta.ImplicitReturn, exprs: [], pos: Globals.nullPos}, mk(EReturn(e), p)), p);
+			var ret = mk(EMeta({meta: StrictMeta.ImplicitReturn, exprs: vector(), pos: Globals.nullPos}, mk(EReturn(e), p)), p);
 			return mk(EFunction(FKArrow, {
-				fParams: [],
+				fParams: vector(),
 				fType: null,
-				fArgs: al,
+				fArgs: Vector.fromArrayCopy(al),
 				fExpr: ret
 			}), punion(p1, p));
 		}
@@ -2432,7 +2428,7 @@ class Grammar {
 						case _: e;
 					}
 				}
-				return Parser.checkResume(ctx, p1, function() return mk(EDisplay(mk(EObjectDecl([]), p1), DKStructure), p1), serror);
+				return Parser.checkResume(ctx, p1, function() return mk(EDisplay(mk(EObjectDecl(vector()), p1), DKStructure), p1), serror);
 			case Kwd(k) if (parsingMacroCond):
 				s.junk();
 				return exprNext(ctx, mk(EConst(Ident(sKeyword(k))), p), s);
@@ -2450,13 +2446,13 @@ class Grammar {
 				var p1 = p;
 				s.junk();
 				var v = tail(function() return parseVarDecl(ctx, false, s));
-				return mk(EVars([v]), p1);
+				return mk(EVars(vector(v)), p1);
 			case Kwd(Final):
 				var p1 = p;
 				s.junk();
 				checkRedundantVar(ctx, p1, s);
 				var r = tryHead(function() return parseVarDecl(ctx, true, s));
-				if (r != null) return mk(EVars([r.v]), p1);
+				if (r != null) return mk(EVars(vector(r.v)), p1);
 				return serror();
 			case Const(c):
 				s.junk();
@@ -2524,7 +2520,7 @@ class Grammar {
 					var e = tail(function() return parseCallParams(ctx, function(el, p2) return mk(ENew(t, el), punion(p1, p2)), po, s));
 					return exprNext(ctx, e, s);
 				}
-				return Parser.syntaxError(ctx, Expected(["("]), s, mk(ENew(t, []), punion(p1, t.posFull)));
+				return Parser.syntaxError(ctx, Expected(["("]), s, mk(ENew(t, vector()), punion(p1, t.posFull)));
 			case POpen:
 				var p1 = p;
 				s.junk();
@@ -2633,15 +2629,15 @@ class Grammar {
 					var p2 = acceptTok(s, BrClose);
 					// Ignore missing } if we are resuming and "guess" the last position.
 					if (p2 == null) p2 = Parser.syntaxError(ctx, Expected(["}"]), s, Parser.nextToken(ctx, s).pos);
-					return mk(ESwitch(e, r.cases, r.def), punion(p1, p2));
+					return mk(ESwitch(e, Vector.fromArrayCopy(r.cases), r.def), punion(p1, p2));
 				}
-				return Parser.syntaxError(ctx, Expected(["{"]), s, mk(ESwitch(e, [], null), punion(p1, e.pos)));
+				return Parser.syntaxError(ctx, Expected(["{"]), s, mk(ESwitch(e, vector(), null), punion(p1, e.pos)));
 			case Kwd(Try):
 				var p1 = p;
 				s.junk();
 				var e = tail(function() return secureExpr(ctx, s));
 				var r = tail(function() return parseCatches(ctx, e, [], e.pos, s));
-				return mk(ETry(e, r.catches), punion(p1, r.pmax));
+				return mk(ETry(e, Vector.fromArrayCopy(r.catches)), punion(p1, r.pmax));
 			case IntInterval(i):
 				s.junk();
 				var e2 = tail(function() return expr(ctx, s));
@@ -2656,7 +2652,7 @@ class Grammar {
 			case Kwd(Inline):
 				s.junk();
 				var e = tail(function() return secureExpr(ctx, s));
-				return Parser.makeMeta(StrictMeta.Inline, [], e, p);
+				return Parser.makeMeta(StrictMeta.Inline, vector(), e, p);
 			case _:
 				return fail();
 		}
@@ -2788,7 +2784,7 @@ class Grammar {
 				var p2 = expectTok(s, BrClose);
 				return switch e1.expr {
 					case EConst(Ident(n)): exprNext(ctx,
-							mk(EMeta({meta: core.Meta.fromString(n), exprs: [], pos: e1.pos}, eparam), punion(p1, p2)), s);
+							mk(EMeta({meta: core.Meta.fromString(n), exprs: vector(), pos: e1.pos}, eparam), punion(p1, p2)), s);
 					case _: Globals.die("", "grammar.ml");
 				}
 			case Dot:
@@ -2941,13 +2937,13 @@ class Grammar {
 				var p1 = tk.pos;
 				s.junk();
 				var np = tail(function() return dollarIdent(s));
-				return mk(EVars([mkEvar(np)]), punion(p1, np.pos));
+				return mk(EVars(vector(mkEvar(np))), punion(p1, np.pos));
 			case Kwd(Final):
 				var p1 = tk.pos;
 				s.junk();
 				checkRedundantVar(ctx, p1, s);
 				var r = tryHead(function() return dollarIdent(s));
-				if (r != null) return mk(EVars([mkEvar(r.v, null, null, null, true)]), punion(p1, r.v.pos));
+				if (r != null) return mk(EVars(vector(mkEvar(r.v, null, null, null, true))), punion(p1, r.v.pos));
 				return serror();
 			case _:
 		}
@@ -2965,7 +2961,7 @@ class Grammar {
 				var r = blockWithPos(ctx, [], p1, s);
 				var b:SwitchDefault = if (r.el.length == 0) {expr: null, pos: pdot} else {
 					var p = punion(p1, r.pos);
-					{expr: mk(EBlock(r.el), p), pos: p};
+					{expr: mk(EBlock(Vector.fromArrayCopy(r.el)), p), pos: p};
 				};
 				var res = parseSwitchCases(ctx, eswitch, cases, s);
 				if (res.def != null) Parser.syntaxError(ctx, DuplicateDefault, s, null, p1);
@@ -2986,10 +2982,10 @@ class Grammar {
 					p = punion(p1, pdot);
 				} else {
 					p = punion(p1, r.pos);
-					b = mk(EBlock(r.el), p);
+					b = mk(EBlock(Vector.fromArrayCopy(r.el)), p);
 				}
 				cases.unshift({
-					values: el,
+					values: Vector.fromArrayCopy(el),
 					guard: eg,
 					expr: b,
 					pos: p
@@ -3048,7 +3044,8 @@ class Grammar {
 		}
 	}
 
-	static function parseCallParams(ctx:ParserContext, f:Array<Expr>->Pos->Expr, p1:Pos, s:S):Expr {
+	static function parseCallParams(ctx:ParserContext, fv:Vector<Expr>->Pos->Expr, p1:Pos, s:S):Expr {
+		inline function f(el:Array<Expr>, p:Pos):Expr return fv(Vector.fromArrayCopy(el), p);
 		if (!ctx.config.inDisplayFile) {
 			var el = psepTrailing(Comma, function(s) return expr(ctx, s), s);
 			var p2 = acceptTok(s, PClose);
@@ -3146,7 +3143,7 @@ class Grammar {
 			case EBinop(op, e1, e2): mk(EBinop(op, validateMacroCond(ctx, s, e1), validateMacroCond(ctx, s, e2)), e.pos);
 			case EParenthesis(e1): mk(EParenthesis(validateMacroCond(ctx, s, e1)), e.pos);
 			case EField(e1, name, efk): mk(EField(validateMacroCond(ctx, s, e1), name, efk), e.pos);
-			case ECall(i = {expr: EConst(Ident(_))}, args): mk(ECall(i, [for (a in args) validateMacroCond(ctx, s, a)]), e.pos);
+			case ECall(i = {expr: EConst(Ident(_))}, args): mk(ECall(i, args.map(a -> validateMacroCond(ctx, s, a))), e.pos);
 			case _: Parser.syntaxError(ctx, Custom("Invalid conditional expression"), s, mk(EConst(Ident("false")), e.pos), e.pos);
 		}
 	}

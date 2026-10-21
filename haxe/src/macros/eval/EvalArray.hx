@@ -20,45 +20,39 @@
 package macros.eval;
 
 import macros.eval.EvalValue;
+import haxe.ds.Vector;
 
-// port: OCaml arrays have a fixed length; `avalues` is a Haxe array whose
-// length plays the role of `Array.length a.avalues` (capacity). Reallocation
-// sizes follow upstream.
+// port: `avalues` is a Vector, the OCaml array: its length is the capacity,
+// `alength` the array's length. Reallocation sizes follow upstream.
 class EvalArray {
-	public static function create(values:Array<Value>):Varray return new Varray(values, values.length);
+	public static function create(values:Vector<Value>):Varray return new Varray(values, values.length);
 
-	public static function arrayJoin(a:Array<Value>, f:Value->Vstring, sep:Vstring):Vstring {
-		var l = a.map(f);
+	// port: `create (Array.of_list l)`
+	public static function ofList(values:Array<Value>):Varray return create(Vector.fromArrayCopy(values));
+
+	public static function arrayJoin(a:Vector<Value>, f:Value->Vstring, sep:Vstring):Vstring {
+		var l = [for (i in 0...a.length) f(a[i])];
 		return EvalString.join(sep, l);
 	}
 
-	public static function toList(a:Varray):Array<Value> return a.avalues.slice(0, a.alength);
+	public static function toList(a:Varray):Array<Value> return [for (i in 0...a.alength) a.avalues[i]];
 
-	public static function make(len:Int):Array<Value> {
+	public static function make(len:Int):Vector<Value> {
 		if (len < 0 || len > 0x3FFFFFFF) return EvalContext.errorMessage("Array allocation is too large");
-		var r = new Array<Value>();
-		if (len > 0) r[len - 1] = VNull;
-		for (i in 0...len) r[i] = VNull;
-		return r;
+		return new Vector(len, VNull);
 	}
 
-	static inline function blit(src:Array<Value>, srcPos:Int, dst:Array<Value>, dstPos:Int, len:Int):Void {
+	static inline function blit(src:Vector<Value>, srcPos:Int, dst:Vector<Value>, dstPos:Int, len:Int):Void {
 		if (len < 0 || srcPos < 0 || dstPos < 0 || srcPos + len > src.length || dstPos
 			+ len > dst.length) throw new haxe.Exception("Invalid_argument(\"Array.blit\")");
-		if (src == dst && srcPos < dstPos) {
-			var i = len - 1;
-			while (i >= 0) {
-				dst[dstPos + i] = src[srcPos + i];
-				i--;
-			}
-		} else {
-			for (i in 0...len) dst[dstPos + i] = src[srcPos + i];
-		}
+		Vector.blit(src, srcPos, dst, dstPos, len);
 	}
 
-	static inline function sub(a:Array<Value>, pos:Int, len:Int):Array<Value> {
+	static inline function sub(a:Vector<Value>, pos:Int, len:Int):Vector<Value> {
 		if (pos < 0 || len < 0 || pos + len > a.length) throw new haxe.Exception("Invalid_argument(\"Array.sub\")");
-		return a.slice(pos, pos + len);
+		var r = new Vector<Value>(len);
+		Vector.blit(a, pos, r, 0, len);
+		return r;
 	}
 
 	public static function setLength(a:Varray, l:Int):Void {
@@ -84,7 +78,10 @@ class EvalArray {
 
 	public static function copy(a:Varray):Varray return create(sub(a.avalues, 0, a.alength));
 
-	public static function filter(a:Varray, f:Value->Bool):Varray return create(sub(a.avalues, 0, a.alength).filter(f));
+	public static function filter(a:Varray, f:Value->Bool):Varray {
+		var values = sub(a.avalues, 0, a.alength);
+		return ofList([for (i in 0...values.length) if (f(values[i])) values[i]]);
+	}
 
 	public static function get(a:Varray, i:Int):Value {
 		if (i < 0 || i >= a.alength) return VNull;
@@ -181,7 +178,14 @@ class EvalArray {
 
 	public static function reverse(a:Varray):Void {
 		var r = sub(a.avalues, 0, a.alength);
-		r.reverse();
+		var i = 0, j = a.alength - 1;
+		while (i < j) {
+			var v = r[i];
+			r[i] = r[j];
+			r[j] = v;
+			i++;
+			j--;
+		}
 		a.avalues = r;
 	}
 
@@ -207,7 +211,7 @@ class EvalArray {
 	}
 
 	public static function slice(a:Varray, pos:Int, end:Int):Varray {
-		if (pos > a.alength || pos >= end) return create([]);
+		if (pos > a.alength || pos >= end) return create(new Vector(0));
 		return create(sub(a.avalues, pos, end - pos));
 	}
 
@@ -218,7 +222,7 @@ class EvalArray {
 	}
 
 	// port: stdlib/array.ml `sort` (heap sort with bottom-up sift), translated directly.
-	static function ocamlArraySort(cmp:Value->Value->Int, a:Array<Value>):Void {
+	static function ocamlArraySort(cmp:Value->Value->Int, a:Vector<Value>):Void {
 		inline function maxson(l:Int, i:Int):Int {
 			var i31 = i + i + i + 1;
 			var x = i31;
@@ -301,13 +305,12 @@ class EvalArray {
 	}
 
 	public static function splice(a:Varray, pos:Int, len:Int, end:Int):Varray {
-		var values2 = [
-			for (i in 0...len) {
-				var j = pos + i;
-				if (j < 0 || j >= a.avalues.length) throw new haxe.Exception("Invalid_argument(\"index out of bounds\")");
-				a.avalues[j];
-			}
-		];
+		var values2 = new Vector<Value>(len);
+		for (i in 0...len) {
+			var j = pos + i;
+			if (j < 0 || j >= a.avalues.length) throw new haxe.Exception("Invalid_argument(\"index out of bounds\")");
+			values2[i] = a.avalues[j];
+		}
 		blit(a.avalues, pos + len, a.avalues, pos, a.alength - end);
 		a.alength = a.alength - len;
 		return create(values2);

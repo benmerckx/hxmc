@@ -61,6 +61,11 @@ import macros.MacroApi.MacroApiImpl;
 import macros.MacroApi.InvalidExpr;
 import macros.eval.EvalValue.Value;
 import macros.eval.EvalContext.RunTimeException;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 // port: upstream's `Interp` module is `include InterpImpl (= Eval, (* Hlmacro *)) include BuiltApi (MacroApiImpl)`;
 // here `Interp.f` is the Eval module that defines `f` upstream (EvalContext, EvalMain,
@@ -70,7 +75,7 @@ import macros.eval.EvalContext.RunTimeException;
 // applied to EvalDataApi's readers/writers.
 // port: the macro context's engine calls (create, init, addTypes, callPath, doReuse,
 // setError) go through macros.MacroEngine.engine, Eval unless a host installs another.
-typedef MacroMethod = {args:Array<{name:String, optional:Bool, type:T}>, ret:T, cls:TClass, field:TClassField};
+typedef MacroMethod = {args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T, cls:TClass, field:TClassField};
 
 typedef LoadedMacro = {meth:MacroMethod, module:ModuleDef};
 
@@ -257,7 +262,7 @@ class MacroContext {
 								return null;
 							else {
 								var d = MacroApiImpl.decodeTypeDef(td);
-								return {pack: d.path.pack, declarations: [{definition: d.def, pos: d.pos}]};
+								return {pack: d.path.pack, declarations: vector({definition: d.def, pos: d.pos})};
 							}
 						}
 					}
@@ -535,7 +540,7 @@ class MacroContext {
 				if (ctx.c.curclass == nullClass)
 					return null;
 				else
-					return TInst(ctx.c.curclass, []);
+					return TInst(ctx.c.curclass, vector());
 			}
 		};
 		api.getExpectedType = function() {
@@ -587,12 +592,12 @@ class MacroContext {
 					ctx.com.cs.taintModule(mpath, DefineType);
 					var mdep = mdep == null ? ctx.m.curmod : TypeloadModule.loadModule(ctx, AstTools.parsePath(mdep), pos, MDepFromMacro);
 					var mnew = TypeloadModule.typeModule(ctx.com, ctx.g, mpath,
-						ctx.com.partScope.fileKeys.generateVirtual(mpath, ctx.com.partScope.compilationStep), [
+						ctx.com.partScope.fileKeys.generateVirtual(mpath, ctx.com.partScope.compilationStep), vector(
 						{
 							definition: tdef,
 							pos: pos
 						}
-					], pos, hasNativeMeta);
+					), pos, hasNativeMeta);
 					mnew.mExtra.mKind = isMacro ? MMacro : MFake;
 					addDependency(mnew, mdep, MDepFromMacro);
 					addDependency(mdep, mnew, MDepFromMacroDefine);
@@ -604,7 +609,7 @@ class MacroContext {
 			if (!ctx.com.isMacroContext)
 				switch tdef {
 					case EClass(c)
-						if (Lambda.exists(c.data,
+						if (VectorTools.exists(c.data,
 							function(cff) return Lambda.exists(cff.cffAccess, function(a) return a.access == AMacro))):
 						add(true, mctx);
 					case _:
@@ -623,9 +628,9 @@ class MacroContext {
 			});
 			var usings:Array<TypeDecl> = usings.map(function(tp):TypeDecl {
 				var sl = tp.tpackage.concat([tp.tname]).concat(tp.tsub == null ? [] : [tp.tsub]);
-				return {definition: EUsing(sl.map(function(s):PlacedName return {name: s, pos: Globals.nullPos})), pos: pos};
+				return {definition: EUsing(sl.mapToVector(function(s):PlacedName return {name: s, pos: Globals.nullPos})), pos: pos};
 			});
-			var types = imports.concat(usings).concat(types);
+			var types = Vector.fromArrayCopy(imports.concat(usings).concat(types));
 			var mpath = AstTools.parsePath(m);
 			try {
 				var m = ctx.com.moduleLut.find(mpath);
@@ -1074,7 +1079,7 @@ class MacroContext {
 		return {mctx: mctx, meth: meth, call: call};
 	}
 
-	public static function typeMacro(ctx:TyperContext, mode:MacroMode, cpath:GlobalTypePath, f:String, el:Array<Expr>, p:Pos):MacroResult {
+	public static function typeMacro(ctx:TyperContext, mode:MacroMode, cpath:GlobalTypePath, f:String, el:Vector<Expr>, p:Pos):MacroResult {
 		var mctx = getMacroContext(ctx);
 		var api = makeMacroApi(ctx, mctx, p);
 		var loaded = loadMacro(ctx, ctx.com, mctx, api, mode == MDisplay, cpath, f, p);
@@ -1092,7 +1097,7 @@ class MacroContext {
 				var last = margs[margs.length - 1];
 				switch follow(last.type) {
 					case TAbstract({aPath: {pack: ["haxe"], name: "Rest"}}, [t1]):
-						margs.slice(0, margs.length - 1).concat([{name: last.name, optional: last.optional, type: mctx.t.tarray(t1)}]);
+						VectorTools.withLast(margs, {name: last.name, optional: last.optional, type: mctx.t.tarray(t1)});
 					case _:
 						margs;
 				}
@@ -1107,9 +1112,9 @@ class MacroContext {
 			case MExpr:
 				Typecore.unify(mctx, mret, expr, mpos);
 			case MBuild:
-				var params = [
+				var params = vector(
 					TPType(makePtpTh(AstTools.mkTypePath(["haxe", "macro"], "Expr", null, "Field"), Globals.nullPos))
-				];
+				);
 				var ctfields = AstTools.mkTypePath([], "Array", params);
 				var tfields = Typeload.loadInstance(mctx, makePtp(ctfields, p), ParamNormal, LoadNormal);
 				Typecore.unify(mctx, mret, tfields, mpos);
@@ -1146,20 +1151,20 @@ class MacroContext {
 			if (lastIsExprArray) {
 				var acc1:Array<Expr> = [], acc2:Array<Expr> = [];
 				var i = 0, j = 0;
-				var result:{el:Array<Expr>, el2:Array<Expr>} = null;
+				var result:{el:Vector<Expr>, el2:Vector<Expr>} = null;
 				while (result == null) {
 					var n1 = el.length - i, n2 = margs.length - j;
 					if (n1 == 0 && n2 == 0) {
-						result = {el: acc1, el2: acc2};
+						result = {el: Vector.fromArrayCopy(acc1), el2: Vector.fromArrayCopy(acc2)};
 					} else if (n1 == 0 && n2 == 1) {
-						acc1.push({expr: EArrayDecl([]), pos: p});
-						result = {el: acc1, el2: []};
+						acc1.push({expr: EArrayDecl(vector()), pos: p});
+						result = {el: Vector.fromArrayCopy(acc1), el2: vector()};
 					} else if (n1 == 0) {
 						// not enough arguments, will be handled by unify_call_args
-						result = {el: acc1, el2: acc2};
+						result = {el: Vector.fromArrayCopy(acc1), el2: Vector.fromArrayCopy(acc2)};
 					} else if (n2 == 1) {
 						var e1 = el[i++];
-						acc1.push({expr: EArrayDecl([]), pos: p});
+						acc1.push({expr: EArrayDecl(vector()), pos: p});
 						acc2 = [e1];
 						j++;
 					} else if (n2 == 0) {
@@ -1170,14 +1175,14 @@ class MacroContext {
 					}
 				}
 				result;
-			} else {el: el, el2: []};
+			} else {el: el, el2: vector()};
 		};
 		var el = split.el, el2 = split.el2;
 		var args = {
 			/*
 				force default parameter types to haxe.macro.Expr, and if success allow to pass any value type since it will be encoded
 			 */
-			var eargs:Array<{arg:{name:String, optional:Bool, type:T}, kind:MacroArgType}> = margs.map(function(a):{arg:{name:String, optional:Bool, type:T}, kind:MacroArgType} {
+			var eargs:Vector<{arg:{name:String, optional:Bool, type:T}, kind:MacroArgType}> = margs.map(function(a):{arg:{name:String, optional:Bool, type:T}, kind:MacroArgType} {
 				try {
 					Typecore.unifyRaise(a.type, expr, p);
 					return {arg: {name: a.name, optional: a.optional, type: tDynamic}, kind: MAExpr};
@@ -1228,7 +1233,7 @@ class MacroContext {
 				};
 				// let's track the index by doing [e][index] (we will keep the expression type this way)
 				index++;
-				return {expr: EArray({expr: EArrayDecl([e]), pos: p}, {expr: EConst(Int(Std.string(index), null)), pos: p}), pos: p};
+				return {expr: EArray({expr: EArrayDecl(vector(e)), pos: p}, {expr: EConst(Int(Std.string(index), null)), pos: p}), pos: p};
 			});
 			var elt = CallUnification.unifyCallArgs(mctx, constants, eargs.map(function(a) return a.arg), tDynamic, p, false, false, false);
 			if (eargs.length != elt.length)
@@ -1268,7 +1273,7 @@ class MacroContext {
 			];
 		};
 		var args = el2.length == 0 ? args : args.slice(0, args.length == 0 ? 0 : args.length - 1)
-			.concat([MacroApiImpl.encodeArray(el2.map(MacroApiImpl.encodeExpr))]);
+			.concat([MacroApiImpl.encodeArrayV(el2.map(MacroApiImpl.encodeExpr))]);
 		function call():MacroResult {
 			var v = switch callMacro(args) {
 				case None: return MError;
@@ -1293,9 +1298,9 @@ class MacroContext {
 									function() return MacroApiImpl.decodeField(f)));
 						};
 						return MSuccess({
-							expr: EVars([
-								mkEvar({name: "fields", pos: Globals.nullPos}, {type: CTAnonymous(fields), pos: p})
-							]),
+							expr: EVars(vector(
+								mkEvar({name: "fields", pos: Globals.nullPos}, {type: CTAnonymous(haxe.ds.Vector.fromArrayCopy(fields)), pos: p})
+							)),
 							pos: p
 						});
 					};
@@ -1311,7 +1316,7 @@ class MacroContext {
 							MacroApiImpl.decodeType(v);
 						};
 						ctx.e.ret = t;
-						return MSuccess({expr: EBlock([]), pos: p});
+						return MSuccess({expr: EBlock(vector()), pos: p});
 					};
 			}
 			return safeDecode(ctx.com, v, expected, mret, p, process);
@@ -1320,17 +1325,17 @@ class MacroContext {
 		return e;
 	}
 
-	public static function callMacro(mctx:TyperContext, args:Array<Expr>, margs:Array<{name:String, optional:Bool, type:T}>,
+	public static function callMacro(mctx:TyperContext, args:Vector<Expr>, margs:Vector<{name:String, optional:Bool, type:T}>,
 			call:Array<Value>->haxe.ds.Option<Value>, p:Pos):haxe.ds.Option<Value> {
 		var el = CallUnification.unifyCallArgs(mctx, args, margs, tDynamic, p, false, false, false);
-		return call(el.map(function(e) return try MacroApiImpl.makeConst(e) catch (_:Exit)
+		return call(el.mapToArray(function(e) return try MacroApiImpl.makeConst(e) catch (_:Exit)
 			Error.raiseTypingError("Argument should be a constant", e.epos)));
 	}
 
 	public static function resolveInitMacro(com:CommonContext, e:String):{
 		path:GlobalTypePath,
 		meth:String,
-		args:Array<Expr>,
+		args:Vector<Expr>,
 		pos:Pos
 	} {
 		var p = Globals.fakePos("--macro " + e);

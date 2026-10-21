@@ -6,6 +6,8 @@ import core.Texpr;
 import core.Globals;
 import core.Globals.*;
 import core.TFunctions.*;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 
 /*
 	Code that should eventually be moved elsewhere.
@@ -34,7 +36,7 @@ class TexprBuilder {
 
 	public function makeBreak(p:Pos):TExpr return mk(TBreak, tDynamic, p);
 
-	public function call(e1:TExpr, el:Array<TExpr>,
+	public function call(e1:TExpr, el:Vector<TExpr>,
 			tret:T):TExpr return mk(TCall(e1, el), tret, core.Ast.punion(e1.epos, Texpr.punionEl(e1.epos, el)));
 
 	public function makeContinue(p:Pos):TExpr return mk(TContinue, tDynamic, p);
@@ -47,16 +49,16 @@ class TexprBuilder {
 	public function ifThenElse(eif:TExpr, ethen:TExpr, eelse:TExpr,
 			t:T):TExpr return mk(TIf(eif, ethen, eelse), t, core.Ast.punion(eif.epos, eelse.epos));
 
-	public function instanceField(e:TExpr, c:TClass, params:Array<T>, cf:TClassField,
+	public function instanceField(e:TExpr, c:TClass, params:core.TType.TParams, cf:TClassField,
 			t:T):TExpr return mk(TField(e, FInstance(c, params, cf)), t, e.epos);
 
 	public function int(i:Int, p:Pos):TExpr return mk(TConst(TInt(i)), basic.tint, p);
 
 	public function meta0(m:core.MetaList.StrictMeta,
-			e:TExpr):TExpr return mk(TMeta({meta: m, exprs: [], pos: e.epos}, e), e.etype, e.epos);
+			e:TExpr):TExpr return mk(TMeta({meta: m, exprs: vector(), pos: e.epos}, e), e.etype, e.epos);
 
 	public function meta1(m:core.MetaList.StrictMeta, marg1:core.Ast.Expr,
-			e:TExpr):TExpr return mk(TMeta({meta: m, exprs: [marg1], pos: e.epos}, e), e.etype, e.epos);
+			e:TExpr):TExpr return mk(TMeta({meta: m, exprs: vector(marg1), pos: e.epos}, e), e.etype, e.epos);
 
 	public function makeNull(t:T, p:Pos):TExpr return mk(TConst(TNull), t, p);
 
@@ -80,7 +82,7 @@ class TexprBuilder {
 
 	public function varInitNull(v:TVar):TExpr return varInit(v, makeNull(v.vType, v.vPos));
 
-	public function voidBlock(el:Array<TExpr>):TExpr return mk(TBlock(el), basic.tvoid, Texpr.punionEl(defaultPos, el));
+	public function voidBlock(el:Vector<TExpr>):TExpr return mk(TBlock(el), basic.tvoid, Texpr.punionEl(defaultPos, el));
 
-	public function voidBlockAt(el:Array<TExpr>, p:Pos):TExpr return mk(TBlock(el), basic.tvoid, p);
+	public function voidBlockAt(el:Vector<TExpr>, p:Pos):TExpr return mk(TBlock(el), basic.tvoid, p);
 }

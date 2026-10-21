@@ -382,13 +382,13 @@ class JvmCodeBuilder {
 
 	public function goto(r:JBranchOffsetRef):Void op(OpGoto(r), 3, [], []);
 
-	public function lookupswitch(offsetDef:JBranchOffsetRef, offsets:Array<{key:Int, offset:JBranchOffsetRef}>):Void {
+	public function lookupswitch(offsetDef:JBranchOffsetRef, offsets:haxe.ds.Vector<{key:Int, offset:JBranchOffsetRef}>):Void {
 		var pad = (fp + 1) % 4;
 		var pad = if (pad == 0) pad else 4 - pad;
 		op(OpLookupswitch(pad, offsetDef, offsets), 9 + pad + (offsets.length * 8), [JInt], []);
 	}
 
-	public function tableswitch(offsetDef:JBranchOffsetRef, low:Int, high:Int, offsets:Array<JBranchOffsetRef>):Void {
+	public function tableswitch(offsetDef:JBranchOffsetRef, low:Int, high:Int, offsets:haxe.ds.Vector<JBranchOffsetRef>):Void {
 		var pad = (fp + 1) % 4;
 		var pad = if (pad == 0) pad else 4 - pad;
 		op(OpTableswitch(pad, offsetDef, low, high, offsets), 13 + pad + (offsets.length * 4), [JInt], []);

@@ -41,6 +41,10 @@ import core.WarningList;
 import Type as StdType;
 import core.Error.Error;
 import core.Error.ErrorMsg;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 @:structInit class TypePatch {
 	public var tpType:Null<ComplexType>;
@@ -75,7 +79,7 @@ enum MacroMode {
 enum AccessMode {
 	MGet;
 	MSet(rhs:Null<Expr>); // rhs, if exists
-	MCall(args:Array<Expr>); // call arguments
+	MCall(args:Vector<Expr>); // call arguments
 }
 
 @:structInit class TyperModule {
@@ -183,7 +187,7 @@ enum FunctionMode {
 }
 
 @:structInit class TyperGlobals {
-	public var delayed:Array<TyperPassTasks>;
+	public var delayed:haxe.ds.Vector<TyperPassTasks>;
 	public var delayedMinIndex:Int;
 	public var debugDelayed:Array<Dynamic>;
 	public var retainMeta:Bool;
@@ -205,7 +209,7 @@ enum FunctionMode {
 	public var rootTyper:Typer;
 	// api
 	public var continuationApi:Null<coro.ContTypes.ContinuationApi>;
-	public var doMacro:Typer->MacroMode->GlobalTypePath->String->Array<Expr>->Pos->MacroResult;
+	public var doMacro:Typer->MacroMode->GlobalTypePath->String->Vector<Expr>->Pos->MacroResult;
 	public var doLoadMacro:Typer->Bool->GlobalTypePath->String->Pos->typing.MacroContext.MacroMethod;
 	public var doLoadModule:(ctx:Typer, path:GlobalTypePath, p:Pos, ?origin:ModuleDepOrigin) -> ModuleDef;
 	public var doLoadTypeDef:Typer->Pos->TypePath->ModuleType;
@@ -298,12 +302,12 @@ class MonomorphList {
 	public var inLoop:Bool;
 	public var bypassAccessor:Int;
 	public var withTypeStack:Array<core.WithType.WithTypeValue>;
-	public var callArgumentStack:Array<Array<Expr>>;
+	public var callArgumentStack:Array<Vector<Expr>>;
 	public var macroDepth:Int;
 
 	public inline function new(curfun:CurrentFun, functionMode:FunctionMode, ret:T, opened:Array<TAnon>,
 			monomorphs:Null<MonomorphList>, inLoop:Bool, bypassAccessor:Int, withTypeStack:Array<core.WithType.WithTypeValue>,
-			callArgumentStack:Array<Array<Expr>>, macroDepth:Int) {
+			callArgumentStack:Array<Vector<Expr>>, macroDepth:Int) {
 		this.curfun = curfun;
 		this.functionMode = functionMode;
 		this.ret = ret;
@@ -357,10 +361,10 @@ class MonomorphList {
 	public var allowInline:Bool;
 	public var allowTransform:Bool;
 	// events
-	public var memoryMarker:Array<Float>;
+	public var memoryMarker:Vector<Float>;
 
 	public inline function new(com:context.Common.CommonContext, t:BasicTypes, g:TyperGlobals, m:TyperModule, c:TyperClass, f:TyperField,
-			e:TyperExpr, pass:TyperPass, typeParams:TypeParams, allowInline:Bool, allowTransform:Bool, memoryMarker:Array<Float>) {
+			e:TyperExpr, pass:TyperPass, typeParams:TypeParams, allowInline:Bool, allowTransform:Bool, memoryMarker:Vector<Float>) {
 		this.com = com;
 		this.t = t;
 		this.g = g;
@@ -528,7 +532,7 @@ class TyperManager {
 	};
 
 	public static function cloneForModule(ctx:Typer, m:TyperModule):Typer {
-		var out = create(ctx, m, ctx.c, ctx.f, ctx.e, PBuildModule, []);
+		var out = create(ctx, m, ctx.c, ctx.f, ctx.e, PBuildModule, vector());
 		out.allowTransform = true;
 		out.allowInline = true;
 		return out;
@@ -589,15 +593,15 @@ class TyperManager {
 }
 
 class Typecore {
-	public static final memoryMarker:Array<Float> = [Sys.time()];
-	public static var makeCallRef:(ctx:Typer, e:TExpr, el:Array<TExpr>, t:T, p:Pos,
+	public static final memoryMarker:Vector<Float> = vector(Sys.time());
+	public static var makeCallRef:(ctx:Typer, e:TExpr, el:Vector<TExpr>, t:T, p:Pos,
 		?forceInline:Bool) -> TExpr = function(ctx, e, el, t, p, ?forceInline) throw "makeCallRef is not initialized";
 	public static var typeExprRef:(ctx:Typer, e:core.Ast.Expr, withType:core.WithType.WithTypeValue,
 		?mode:AccessMode) -> TExpr = function(ctx, e, withType, ?mode) throw "typeExprRef is not initialized";
-	public static var typeBlockRef:(ctx:Typer, el:Array<Expr>, withType:core.WithType.WithTypeValue,
+	public static var typeBlockRef:(ctx:Typer, el:Vector<Expr>, withType:core.WithType.WithTypeValue,
 		p:Pos) -> TExpr = function(ctx, el, withType, p) throw "typeBlockRef is not initialized";
-	public static var unifyMinRef:(ctx:Typer, el:Array<TExpr>) -> T = function(ctx, el) throw "unifyMinRef is not initialized";
-	public static var unifyMinForTypeSourceRef:(ctx:Typer, el:Array<TExpr>,
+	public static var unifyMinRef:(ctx:Typer, el:Vector<TExpr>) -> T = function(ctx, el) throw "unifyMinRef is not initialized";
+	public static var unifyMinForTypeSourceRef:(ctx:Typer, el:Vector<TExpr>,
 		src:Null<core.WithType.WithTypeSource>) -> T = function(ctx, el, src) throw "unifyMinForTypeSourceRef is not initialized";
 	public static var analyzerRunOnExprRef:(com:context.Common.CommonContext, name:String,
 		e:TExpr) -> TExpr = function(com, name, e) throw "analyzerRunOnExprRef is not initialized";
@@ -639,14 +643,14 @@ class Typecore {
 		}
 	}
 
-	public static function makeCall(ctx:Typer, e:TExpr, el:Array<TExpr>, t:T, p:Pos):TExpr return makeCallRef(ctx, e, el, t, p);
+	public static function makeCall(ctx:Typer, e:TExpr, el:Vector<TExpr>, t:T, p:Pos):TExpr return makeCallRef(ctx, e, el, t, p);
 
 	public static function typeExpr(ctx:Typer, e:Expr, withType:core.WithType.WithTypeValue,
 			?mode:AccessMode):TExpr return typeExprRef(ctx, e, withType, mode == null ? MGet : mode);
 
-	public static function unifyMin(ctx:Typer, el:Array<TExpr>):T return unifyMinRef(ctx, el);
+	public static function unifyMin(ctx:Typer, el:Vector<TExpr>):T return unifyMinRef(ctx, el);
 
-	public static function unifyMinForTypeSource(ctx:Typer, el:Array<TExpr>,
+	public static function unifyMinForTypeSource(ctx:Typer, el:Vector<TExpr>,
 			src:Null<core.WithType.WithTypeSource>):T return unifyMinForTypeSourceRef(ctx, el, src);
 
 	public static function spawnMonomorphRaw(ctx:Typer, p:Pos):TMono {
@@ -1028,7 +1032,8 @@ class Typecore {
 			key: {name: "methodName", pos: Globals.nullPos, quote: NoQuotes},
 			expr: core.Texpr.Builder.makeString(ctx.com.basic, ctx.f.curfield.cfName, p)
 		});
-		return core.TFunctions.mk(TObjectDecl(fields.concat(params)), t, p);
+		for (f in params) fields.push(f);
+		return core.TFunctions.mk(TObjectDecl(Vector.fromArrayCopy(fields)), t, p);
 	}
 
 	public static function mkInfos(ctx:Typer, p:Pos, params:Array<ObjectField>):Expr {
@@ -1049,7 +1054,8 @@ class Typecore {
 			key: {name: "methodName", pos: Globals.nullPos, quote: NoQuotes},
 			expr: {expr: EConst(String(ctx.f.curfield.cfName, SDoubleQuotes)), pos: p}
 		});
-		return {expr: EObjectDecl(fields.concat(params)), pos: p};
+		for (f in params) fields.push(f);
+		return {expr: EObjectDecl(haxe.ds.Vector.fromArrayCopy(fields)), pos: p};
 	}
 
 	public static function isPosInfos(t:T):Bool return switch t {
@@ -1061,8 +1067,9 @@ class Typecore {
 		case _: false;
 	};
 
-	public static function isEmptyOrPosInfos(args:Array<{name:String, optional:Bool, type:T}>):Bool return args.length == 0
-		|| (args.length == 1 && args[0].optional && isPosInfos(args[0].type));
+	// port: args from pos on (the list's tail, without the copy)
+	public static function isEmptyOrPosInfos(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, pos = 0):Bool return args.length == pos
+		|| (args.length == pos + 1 && args[pos].optional && isPosInfos(args[pos].type));
 
 	static var storedTypedExprUid = 0;
 
@@ -1076,7 +1083,7 @@ class Typecore {
 		return {
 			id: id,
 			expr: {
-				expr: EMeta({meta: StrictMeta.StoredTypedExpr, exprs: [], pos: Globals.nullPos}, makeStoredIdExpr(id, p)),
+				expr: EMeta({meta: StrictMeta.StoredTypedExpr, exprs: vector(), pos: Globals.nullPos}, makeStoredIdExpr(id, p)),
 				pos: p
 			}
 		};

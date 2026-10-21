@@ -15,6 +15,8 @@ import macros.eval.EvalExceptions;
 import macros.eval.EvalMisc;
 import macros.eval.EvalField;
 import macros.eval.EvalIntegers;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
 // port: the host natives of hxmc (hxmc/std)
 #if (target.name == "hxmc")
 import hxmc.NativeUv as Uv;
@@ -217,9 +219,9 @@ class EvalLuv {
 		}
 	}
 
-	static function ok(v:Value):Value return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_Result, 0, [v], null);
+	static function ok(v:Value):Value return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_Result, 0, vector(v), null);
 
-	static function error(code:Int):Value return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_Result, 1, [encodeUvError(code)], null);
+	static function error(code:Int):Value return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_Result, 1, vector(encodeUvError(code)), null);
 
 	// port: `encode_result f` of a host result: a negative code is an error.
 	static function encodeResult(r:Int, f:Int->Value):Value return r < 0 ? error(r) : ok(f(r));
@@ -351,7 +353,7 @@ class EvalLuv {
 		var r = if (a == Uv.constant(3,
 			0)) {index: 0, args: []} else if (a == Uv.constant(3,
 			1)) {index: 1, args: []} else if (a == Uv.constant(3, 2)) {index: 2, args: []} else {index: 3, args: [a.vint()]};
-		return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_AddressFamily, r.index, r.args, null);
+		return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_AddressFamily, r.index, Vector.fromArrayCopy(r.args), null);
 	}
 
 	// port: `encode_socket_type` of `Socket_type.from_c`.
@@ -359,7 +361,7 @@ class EvalLuv {
 		var r = if (a == Uv.constant(4,
 			0)) {index: 0, args: []} else if (a == Uv.constant(4,
 			1)) {index: 1, args: []} else if (a == Uv.constant(4, 2)) {index: 2, args: []} else {index: 3, args: [a.vint()]};
-		return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_SocketType, r.index, r.args, null);
+		return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_SocketType, r.index, Vector.fromArrayCopy(r.args), null);
 	}
 
 	static function decodePipe(v:Value):Int return switch v {
@@ -1284,7 +1286,7 @@ class EvalLuv {
 					case 2: {index: 2, args: [EvalEncode.vfun1(v -> encodeUnitResult(Uv.streamAccept(pipe, decodePipe(v))))]};
 					case _: {index: 0, args: []};
 				}
-			EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_ReceiveHandle, r.index, r.args, null);
+			EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_ReceiveHandle, r.index, Vector.fromArrayCopy(r.args), null);
 		})),
 		f("chmod", EvalEncode.vfun2((v1, v2) -> {
 			var pipe = decodePipe(v1);
@@ -2343,7 +2345,7 @@ class EvalLuv {
 	// port: ---- threads and synchronization (see the module comment)
 
 	// port: A `Result.Error` of a luv `Error.t` index (the primitives below report indices, not libuv codes).
-	static function errorIndex(i:Int):Value return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_Result, 1, [i.vint()], null);
+	static function errorIndex(i:Int):Value return EvalEncode.encodeEnumValue(EvalHash.key_eval_luv_Result, 1, vector(i.vint()), null);
 
 	static function encodeIndexResult(i:Int):Value return i == 0 ? ok(VNull) : errorIndex(i);
 

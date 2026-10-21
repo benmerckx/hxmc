@@ -30,7 +30,7 @@ class JvmWriter {
 		ch.nwrite(jvma.attrData);
 	}
 
-	public static function writeJvmAttributes(ch:OutputBytes, jvmal:Array<JvmAttributeData>):Void {
+	public static function writeJvmAttributes(ch:OutputBytes, jvmal:haxe.ds.Vector<JvmAttributeData>):Void {
 		JvmGlobals.writeArray16(ch, writeJvmAttribute, jvmal);
 	}
 

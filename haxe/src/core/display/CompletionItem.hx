@@ -17,6 +17,9 @@ import core.json.Genjson.GenjsonContext;
 import core.json.Genjson.*;
 import core.Meta;
 import core.TType;
+import core.ds.VectorTools.vector;
+
+using core.ds.VectorTools;
 
 // port: from haxe/src/core/display/completionItem.ml
 enum ToplevelKind {
@@ -66,7 +69,7 @@ enum NotBool {
 	public var moduleName:String;
 	public var pos:Pos;
 	public var isPrivate:Bool;
-	public var params:Array<TypeParam>;
+	public var params:haxe.ds.Vector<TypeParam>;
 	public var meta:Metadata;
 	public var doc:Documentation;
 	public var isExtern:Bool;
@@ -75,7 +78,7 @@ enum NotBool {
 	public var kind:CompletionModuleKind;
 	public var hasConstructor:NotBool;
 
-	public inline function new(pack:Array<String>, name:String, moduleName:String, pos:Pos, isPrivate:Bool, params:Array<TypeParam>,
+	public inline function new(pack:Array<String>, name:String, moduleName:String, pos:Pos, isPrivate:Bool, params:haxe.ds.Vector<TypeParam>,
 			meta:Metadata, doc:Documentation, isExtern:Bool, isFinal:Bool, isAbstract:Bool, kind:CompletionModuleKind,
 			hasConstructor:NotBool) {
 		this.pack = pack;
@@ -106,7 +109,7 @@ class CompletionModuleType {
 						break;
 					}
 					if (cff != null) {
-						if (d.flags.contains(HExtern) || core.ds.ArrayTools.exists(cff.cffAccess, a -> a.access == APublic)) Yes
+						if (d.flags.has(HExtern) || core.ds.ArrayTools.exists(cff.cffAccess, a -> a.access == APublic)) Yes
 						else YesButPrivate;
 					} else {
 						if (core.ds.ArrayTools.exists(d.flags, f -> f.match(HExtends(_)))) Maybe
@@ -118,14 +121,14 @@ class CompletionModuleType {
 					name: d.name.name,
 					moduleName: moduleName,
 					pos: p,
-					isPrivate: d.flags.contains(HPrivate),
+					isPrivate: d.flags.has(HPrivate),
 					params: d.params,
 					meta: d.meta,
 					doc: d.doc,
-					isExtern: d.flags.contains(HExtern),
-					isFinal: d.flags.contains(HFinal),
-					isAbstract: d.flags.contains(HAbstract),
-					kind: d.flags.contains(HInterface) ? Interface : Class,
+					isExtern: d.flags.has(HExtern),
+					isFinal: d.flags.has(HFinal),
+					isAbstract: d.flags.has(HAbstract),
+					kind: d.flags.has(HInterface) ? Interface : Class,
 					hasConstructor: ctor
 				};
 			case EEnum(d):
@@ -134,11 +137,11 @@ class CompletionModuleType {
 					name: d.name.name,
 					moduleName: moduleName,
 					pos: p,
-					isPrivate: d.flags.contains(EPrivate),
+					isPrivate: d.flags.has(EPrivate),
 					params: d.params,
 					meta: d.meta,
 					doc: d.doc,
-					isExtern: d.flags.contains(EExtern),
+					isExtern: d.flags.has(EExtern),
 					isFinal: false,
 					isAbstract: false,
 					kind: Enum,
@@ -154,11 +157,11 @@ class CompletionModuleType {
 					name: d.name.name,
 					moduleName: moduleName,
 					pos: p,
-					isPrivate: d.flags.contains(TDPrivate),
+					isPrivate: d.flags.has(TDPrivate),
 					params: d.params,
 					meta: d.meta,
 					doc: d.doc,
-					isExtern: d.flags.contains(TDExtern),
+					isExtern: d.flags.has(TDExtern),
 					isFinal: false,
 					isAbstract: false,
 					kind: kind,
@@ -181,14 +184,14 @@ class CompletionModuleType {
 					name: d.name.name,
 					moduleName: moduleName,
 					pos: p,
-					isPrivate: d.flags.contains(AbPrivate),
+					isPrivate: d.flags.has(AbPrivate),
 					params: d.params,
 					meta: d.meta,
 					doc: d.doc,
-					isExtern: d.flags.contains(AbExtern),
+					isExtern: d.flags.has(AbExtern),
 					isFinal: false,
 					isAbstract: false,
-					kind: d.flags.contains(AbEnum) ? EnumAbstract : Abstract,
+					kind: d.flags.has(AbEnum) ? EnumAbstract : Abstract,
 					hasConstructor: ctor
 				};
 			case EStatic(d):
@@ -304,7 +307,7 @@ class CompletionModuleType {
 		function convertTypeParam(ttp:TypedTypeParam):TypeParam {
 			return {
 				tpName: {name: ttp.ttpName, pos: Globals.nullPos},
-				tpParams: [],
+				tpParams: vector(),
 				tpConstraints: null, // TODO?
 				tpDefault: null, // TODO?
 				tpMeta: ttp.ttpClass.clMeta
@@ -341,7 +344,7 @@ class CompletionModuleType {
 			kv("kind", jint(CompletionModuleKindTools.toInt(cm.kind))),
 			kv("meta", generateMetadata(ctx, cm.meta)),
 			kv("pos", generatePos(ctx, cm.pos)),
-			kv("params", jlist(generateAstTypeParam.bind(ctx), cm.params)),
+			kv("params", jlist(generateAstTypeParam.bind(ctx), cm.params.toArray())),
 			kv("isExtern", jbool(cm.isExtern)),
 			kv("isFinal", jbool(cm.isFinal)),
 			kv("isAbstract", jbool(cm.isAbstract))
@@ -440,10 +443,10 @@ enum PackageContentKind {
 	public var ctPack:Array<String>;
 	public var ctTypeName:String;
 	public var ctModuleName:String;
-	public var ctParams:Array<CompletionTypeKind>;
+	public var ctParams:haxe.ds.Vector<CompletionTypeKind>;
 	public var ctImportStatus:ImportStatus;
 
-	public inline function new(ctPack:Array<String>, ctTypeName:String, ctModuleName:String, ctParams:Array<CompletionTypeKind>,
+	public inline function new(ctPack:Array<String>, ctTypeName:String, ctModuleName:String, ctParams:haxe.ds.Vector<CompletionTypeKind>,
 			ctImportStatus:ImportStatus) {
 		this.ctPack = ctPack;
 		this.ctTypeName = ctTypeName;
@@ -468,10 +471,10 @@ enum PackageContentKind {
 }
 
 @:structInit class CtFunction {
-	public var ctArgs:Array<CtFunctionArgument>;
+	public var ctArgs:haxe.ds.Vector<CtFunctionArgument>;
 	public var ctReturn:CompletionTypeKind;
 
-	public inline function new(ctArgs:Array<CtFunctionArgument>, ctReturn:CompletionTypeKind) {
+	public inline function new(ctArgs:haxe.ds.Vector<CtFunctionArgument>, ctReturn:CompletionTypeKind) {
 		this.ctArgs = ctArgs;
 		this.ctReturn = ctReturn;
 	}
@@ -591,7 +594,7 @@ class CompletionType {
 	public static function fromType(getImportStatus:GlobalTypePath->ImportStatus, ?values:haxe.ds.StringMap<Expr>, t:T):CompletionTypeKind {
 		var empty = new haxe.ds.StringMap<Expr>();
 		// port: OCaml evaluates record fields right to left: the parameters are converted before the import status is looked up.
-		function ppath(mpath:GlobalTypePath, tpath:GlobalTypePath, tl:Array<T>):CtPathWithParams {
+		function ppath(mpath:GlobalTypePath, tpath:GlobalTypePath, tl:core.TType.TParams):CtPathWithParams {
 			var params = tl.map(t -> fromType_(empty, t));
 			var is = getImportStatus(tpath);
 			return {
@@ -622,7 +625,7 @@ class CompletionType {
 						ctModuleName: c.clModule.mPath.name,
 						ctTypeName: c.clPath.name,
 						ctImportStatus: Imported,
-						ctParams: []
+						ctParams: vector()
 					});
 				case TInst(c, tl):
 					CTInst(ppath(c.clModule.mPath, c.clPath, tl));

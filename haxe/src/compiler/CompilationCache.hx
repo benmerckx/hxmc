@@ -14,17 +14,18 @@ import core.ds.PriorityQueue;
 import compiler.hxb.HxbData;
 import compiler.hxb.HxbWriter;
 import syntax.Parser.ParserDisplayInformation;
+import core.ds.VectorTools.vector;
 
 // port: Digest.t signatures are hexadecimal strings (see Define.getSignature).
 @:structInit class CachedFile {
 	public var cFilePath:ResolvedFile;
 	public var cTime:Float;
 	public var cPackage:Array<String>;
-	public var cDecls:Array<TypeDecl>;
+	public var cDecls:haxe.ds.Vector<TypeDecl>;
 	public var cModuleName:Null<String>;
 	public var cPdi:ParserDisplayInformation;
 
-	public inline function new(cFilePath:ResolvedFile, cTime:Float, cPackage:Array<String>, cDecls:Array<TypeDecl>,
+	public inline function new(cFilePath:ResolvedFile, cTime:Float, cPackage:Array<String>, cDecls:haxe.ds.Vector<TypeDecl>,
 			cModuleName:Null<String>, cPdi:ParserDisplayInformation) {
 		this.cFilePath = cFilePath;
 		this.cTime = cTime;
@@ -269,7 +270,7 @@ class ContextCache {
 	public function setJson(j:JsonValue):Void json = j;
 
 	/* Pointers for memory inspection. */
-	public function getPointers():Array<Dynamic> return [files, modules, binaryCache];
+	public function getPointers():haxe.ds.Vector<Dynamic> return vector(files, modules, binaryCache);
 
 	/* access tracking */
 	public function updateAccessTime():Void lastAccessTime = Sys.time();
@@ -606,5 +607,5 @@ class Cache {
 	}
 
 	/* Pointers for memory inspection. */
-	public function getPointers():Array<Dynamic> return [contexts, haxelib, directories, nativeLibs];
+	public function getPointers():haxe.ds.Vector<Dynamic> return vector(contexts, haxelib, directories, nativeLibs);
 }

@@ -5,6 +5,8 @@ import hxmc.ir.Ir;
 import hxmc.wasm.Enc;
 import hxmc.wasmgc.GcGen.Uses;
 
+using core.ds.VectorTools;
+
 // A WasmGC module from the reached part of the IR (GcGen). Every Haxe
 // reference is an eqref (locals, parameters, fields, globals), cast to its
 // concrete type where it is used: the IR's unchecked casts and coercions
@@ -292,11 +294,11 @@ class GcModule {
 		return addHelper(name, funcKey(f), b, []);
 	}
 
-	public static function sigKey(args:Array<Ty>, ret:Ty):String
+	public static function sigKey(args:haxe.ds.Vector<Ty>, ret:Ty):String
 		return [for (a in args) repr(a)].join("") + "_" + repr(ret);
 
 	static function funcKey(f:FuncInfo):String
-		return sigKey([for (a in f.args) a.ty], f.ret);
+		return sigKey(f.args.mapToVector(a -> a.ty), f.ret);
 
 	function buildTypes() {
 		tString = arrayType(b -> b.u8(0x77));
@@ -344,7 +346,7 @@ class GcModule {
 	function enumBase(e:EnumInfo):Int {
 		var te = tEnumOf.get(e);
 		if (te != null) return te;
-		te = structType([{r: "i", mut: false}, {r: "i", mut: false}], tEnum, Lambda.exists(e.ctors, c -> c.params.length > 0));
+		te = structType([{r: "i", mut: false}, {r: "i", mut: false}], tEnum, e.ctors.exists(c -> c.params.length > 0));
 		tEnumOf.set(e, te);
 		for (c in e.ctors)
 			if (c.params.length > 0)
@@ -947,7 +949,7 @@ class GcModule {
 	}
 
 	// a NativeArray's element kinds by their numbers (FnLower.nativeKind, rt.Types.AK_*)
-	public static final NA_KINDS = ["p", "i", "f", "l", "b"];
+	public static final NA_KINDS:haxe.ds.Vector<String> = core.ds.VectorTools.vector("p", "i", "f", "l", "b");
 
 	public var nwrapType(get, never):Int;
 

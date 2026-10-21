@@ -14,6 +14,11 @@ import core.Texpr.*;
 import core.Meta;
 import core.Error;
 import optimization.OptimizerTexpr.*;
+import core.ds.VectorTools;
+import core.ds.VectorTools.vector;
+import haxe.ds.Vector;
+
+using core.ds.VectorTools;
 
 @:structInit class InlineContext {
 	public var scom:SafeContext;
@@ -83,9 +88,9 @@ class Inline {
 	public static var copyArgumentHook:Null<(v:TVar, arg:TExpr, body:TExpr) -> Bool> = null;
 
 	public static function mkUntypedCall(name:String, p:Pos,
-			params:Array<TExpr>):TExpr return mk(TCall(mk(TIdent(name), tDynamic, p), params), tDynamic, p);
+			params:Vector<TExpr>):TExpr return mk(TCall(mk(TIdent(name), tDynamic, p), params), tDynamic, p);
 
-	public static function apiInline2(b:BasicTypes, platform:core.Globals.Platform, c:TClass, field:String, params:Array<TExpr>,
+	public static function apiInline2(b:BasicTypes, platform:core.Globals.Platform, c:TClass, field:String, params:Vector<TExpr>,
 			p:Pos):Null<TExpr> {
 		var path = Globals.sTypePath(c.clPath);
 		return switch [path, field, params] {
@@ -158,7 +163,7 @@ class Inline {
 				|| Math.isNaN(f)
 				|| f <= -2147483648.0
 				|| f >= 2147483648.0 ? null /* out range, keep platform-specific behavior */ : mk(TConst(TInt(Math.floor(f))), b.tint, p);
-			case ["java.Lib", "lock", [obj, block]]: mkUntypedCall("__lock__", p, [obj, mkBlock(block)]);
+			case ["java.Lib", "lock", [obj, block]]: mkUntypedCall("__lock__", p, vector(obj, mkBlock(block)));
 			case _: null;
 		};
 	}
@@ -170,7 +175,7 @@ class Inline {
 
 	public static function contextOfScom(scom:SafeContext):InlineContext return {scom: scom, typer: null};
 
-	public static function apiInline(scom:SafeContext, c:TClass, field:String, params:Array<TExpr>, p:Pos):Null<TExpr> {
+	public static function apiInline(scom:SafeContext, c:TClass, field:String, params:Vector<TExpr>, p:Pos):Null<TExpr> {
 		function mkTypeexpr(path:GlobalTypePath):TExpr {
 			var m:ModuleDef = try scom.findModule(path) catch (_:NotFound) {
 				throw "Inline.mkTypeexpr";
@@ -192,7 +197,7 @@ class Inline {
 					case TConst(_) | TLocal(_): true;
 					case _: false;
 				};
-				function typeof(name:String):TExpr return mk(TBinop(OpEq, Texpr.Builder.fcall(jsSyntax(), "typeof", [o], b.tstring, p),
+				function typeof(name:String):TExpr return mk(TBinop(OpEq, Texpr.Builder.fcall(jsSyntax(), "typeof", vector(o), b.tstring, p),
 					mk(TConst(TString(name)), b.tstring, p)),
 					b.tbool, p);
 				function skipCast(e:TExpr):TExpr return switch e.eexpr {
@@ -207,24 +212,24 @@ class Inline {
 					case TTypeExpr(TAbstractDecl({aPath: {pack: [], name: "Int"}})) if (trivial(o)):
 						// generate typeof(o) == "number" && (o|0) === o check
 						var lhs = mk(TBinop(OpOr, o, mk(TConst(TInt(0)), b.tint, p)), b.tint, p);
-						var check = Texpr.Builder.fcall(jsSyntax(), "strictEq", [lhs, o], b.tbool, p);
+						var check = Texpr.Builder.fcall(jsSyntax(), "strictEq", vector(lhs, o), b.tbool, p);
 						mk(TBinop(OpBoolAnd, typeof("number"), check), b.tbool, p);
 					case TTypeExpr(TClassDecl({clPath: {pack: [], name: "Array"}})):
 						// generate (o instanceof Array) && o.__enum__ == null check
-						var iof = Texpr.Builder.fcall(jsSyntax(), "instanceof", [o, t], b.tbool, p);
+						var iof = Texpr.Builder.fcall(jsSyntax(), "instanceof", vector(o, t), b.tbool, p);
 						if (!core.Define.defined(scom.defines, core.Define.JsEnumsAsArrays)) iof; else {
 							var en = mk(TField(o, FDynamic("__enum__")), tDynamic, p);
 							var notEnum = mk(TBinop(OpEq, en, mk(TConst(TNull), tDynamic, p)), b.tbool, p);
 							mk(TBinop(OpBoolAnd, iof, notEnum), b.tbool, p);
 						}
 					case TTypeExpr(TClassDecl(cls)): hasClassFlag(cls,
-							CInterface) ? Texpr.Builder.fcall(jsBoot(), "__implements", [o, t], b.tbool,
-							p) : Texpr.Builder.fcall(jsSyntax(), "instanceof", [o, t], b.tbool, p);
+							CInterface) ? Texpr.Builder.fcall(jsBoot(), "__implements", vector(o, t), b.tbool,
+							p) : Texpr.Builder.fcall(jsSyntax(), "instanceof", vector(o, t), b.tbool, p);
 					case _: null;
 				}
 			case ["js.Boot", "__downcastCheck", [o, t = {eexpr: TTypeExpr(TClassDecl(cls))}]] if (scom.platform == Js): hasClassFlag(cls,
-					CInterface) ? Texpr.Builder.fcall(Texpr.Builder.makeStaticThis(c, p), "__implements", [o, t], b.tbool,
-					p) : Texpr.Builder.fcall(jsSyntax(), "instanceof", [o, t], b.tbool, p);
+					CInterface) ? Texpr.Builder.fcall(Texpr.Builder.makeStaticThis(c, p), "__implements", vector(o, t), b.tbool,
+					p) : Texpr.Builder.fcall(jsSyntax(), "instanceof", vector(o, t), b.tbool, p);
 			case [
 				"haxe.ds._Vector.Vector_Impl_",
 				"fromArrayCopy",
@@ -245,8 +250,8 @@ class Inline {
 					}
 					if (main == null) throw NotFound.raise();
 					var t = switch [follow(edecl.etype), main] {
-						case [TInst({clPath: {pack: [], name: "Array"}}, [t]), TClassDecl(cl)]: TInst(cl, [t]);
-						case [TInst({clPath: {pack: [], name: "Array"}}, [t]), TAbstractDecl(a)]: TAbstract(a, [t]);
+						case [TInst({clPath: {pack: [], name: "Array"}}, [t]), TClassDecl(cl)]: TInst(cl, vector(t));
+						case [TInst({clPath: {pack: [], name: "Array"}}, [t]), TAbstractDecl(a)]: TAbstract(a, vector(t));
 						case _: throw "Inline.vector";
 					};
 					var call = mkUntypedCall("__array__", p, args);
@@ -271,14 +276,14 @@ class Inline {
 		function loop(t:T):{params:TypeParams, types:TParams}
 			return switch follow(t) {
 				case TInst({clKind: KTypeParameter(ttp)}, _):
-					var acc:{params:TypeParams, types:TParams} = {params: [], types: []};
+					var acc:{params:TypeParams, types:TParams} = {params: vector(), types: vector()};
 					for (t in getConstraints(ttp)) {
 						var r = loop(t);
 						acc = {params: r.params.concat(acc.params), types: r.types.concat(acc.types)};
 					}
 					acc;
 				case TInst(c, pl): getParams(c, pl);
-				case _: {params: [], types: []};
+				case _: {params: vector(), types: vector()};
 			};
 		var config = loop(t);
 		var monos = config.types.concat(cf.cfParams.map(_ -> mkMono()));
@@ -286,7 +291,7 @@ class Inline {
 		return {hasParams: params.length > 0, mapType: t -> applyParams(params, monos, t)};
 	}
 
-	public static function inlineConfig(cls:Null<TClass>, cf:TClassField, args:Array<TExpr>, ret:T):Null<InlineConfig> {
+	public static function inlineConfig(cls:Null<TClass>, cf:TClassField, args:Vector<TExpr>, ret:T):Null<InlineConfig> {
 		if (cls == null) return null;
 		return switch cls.clKind {
 			case KAbstractImpl(_) if (hasClassFieldFlag(cf, CfImpl)):
@@ -316,7 +321,7 @@ class Inline {
 		return e;
 	}
 
-	public static function typeInline(ictx:InlineContext, cf:TClassField, f:TFunc, ethis:TExpr, params:Array<TExpr>, tret:T,
+	public static function typeInline(ictx:InlineContext, cf:TClassField, f:TFunc, ethis:TExpr, params:Vector<TExpr>, tret:T,
 			config:Null<InlineConfig>, p:Pos, force:Bool, selfCallingClosure:Bool = false):TExpr {
 		var scom:SafeContext = ictx.scom;
 		try {
@@ -339,7 +344,7 @@ class Inline {
 		var state = new InlineState(ictx, ethis, params, cf, f, p);
 		var vthis = state.initialize();
 		var inLoop = false;
-		inline function returnType(t:T, el:Array<TExpr>):T {
+		inline function returnType(t:T, el:Vector<TExpr>):T {
 			// If the function return is Dynamic or Void, stick to it.
 			if (follow(f.tfType) == tDynamic || core.TOther.ExtType.isVoid(follow(f.tfType))) return f.tfType;
 			// If the expression is Void, find common type of its branches.
@@ -359,10 +364,9 @@ class Inline {
 					case TReturn(_): true;
 					case TFunction(_): false;
 					case TIf(_, _, null) | TSwitch({switchDefault: null}) | TWhile(_, _, NormalWhile): false; // we might not enter this code at all
-					case TTry(a, catches): all(hasTermReturn, [a].concat(catches.map(c -> c.expr)));
+					case TTry(a, catches): hasTermReturn(a) && catches.foreach(c -> hasTermReturn(c.expr));
 					case TIf(cond, a, b): hasTermReturn(cond) || hasTermReturn(a) && hasTermReturn(b);
-					case TSwitch(s): hasTermReturn(s.switchSubject) || all(hasTermReturn,
-							[s.switchDefault].concat(s.switchCases.map(c -> c.caseExpr)));
+					case TSwitch(s): hasTermReturn(s.switchSubject) || hasTermReturn(s.switchDefault) && s.switchCases.foreach(c -> hasTermReturn(c.caseExpr));
 					case TBinop(OpBoolAnd, a, b): hasTermReturn(a) && hasTermReturn(b);
 					case _:
 						iter(loop, e);
@@ -428,11 +432,11 @@ class Inline {
 						caseExpr: map(innerTerm, false, c.caseExpr)
 					} : core.TType.TSwitchCase));
 					var def = s.switchDefault == null ? null : map(innerTerm, false, s.switchDefault);
-					var t = returnType(e.etype, cases.map(c -> c.caseExpr).concat(def == null ? [] : [def]));
+					var t = returnType(e.etype, def == null ? cases.map(c -> c.caseExpr) : cases.map(c -> c.caseExpr).snoc(def));
 					{eexpr: TSwitch(mkSwitch(map(false, false, s.switchSubject), cases, def, s.switchExhaustive)), etype: t, epos: e.epos};
 				case TTry(e1, catches):
 					var t = !term ? e.etype : returnType(e.etype,
-						[e1].concat(catches.map(c ->
+						VectorTools.cons(e1, catches.map(c ->
 							c.expr)));
 					// port: right-to-left constructor arguments: catches before the body
 					var catches = catches.map(c -> {
@@ -444,30 +448,35 @@ class Inline {
 				case TBlock(el):
 					var restore = saveLocals();
 					var t = e.etype;
-					function block(el:Array<TExpr>):Array<TExpr> return switch el {
-						case []: if (term) {
-								t = mkMono();
-								[mk(TConst(TNull), t, p)];
-							} else [];
-						case [a]:
+					// port: the list walked by index (upstream: loop on its tail), the
+					// statements mapped in order into a Vector of the block's length
+					function block(el:Vector<TExpr>):Vector<TExpr> {
+						if (el.length == 0) return if (term) {
+							t = mkMono();
+							vector(mk(TConst(TNull), t, p));
+						} else vector();
+						var r = new Vector<TExpr>(el.length), n = 0;
+						inline function last(a:TExpr):Vector<TExpr> {
 							var a = map(term, false, a);
 							if (term) t = a.etype;
-							[a];
-						case _:
-							var first = el[0];
-							var rest = el.slice(1);
+							r[n++] = a;
+							return n == el.length ? r : r.slice(0, n);
+						}
+						while (true) {
+							var first = el[n];
+							if (n == el.length - 1) return last(first);
 							switch first.eexpr {
-								case TIf(cond, a, null) if (term && hasTermReturn(a)): block([
-										{
-											eexpr: TIf(cond, a, mk(TBlock(rest), first.etype, first.epos)),
-											etype: first.etype,
-											epos: core.Ast.punion(first.epos, rest[rest.length - 1].epos)
-										}
-									]);
+								case TIf(cond, a, null) if (term && hasTermReturn(a)):
+									var rest = el.slice(n + 1);
+									return last({
+										eexpr: TIf(cond, a, mk(TBlock(rest), first.etype, first.epos)),
+										etype: first.etype,
+										epos: core.Ast.punion(first.epos, rest[rest.length - 1].epos)
+									});
 								case _:
-									var a = map(false, false, first);
-									[a].concat(block(rest));
+									r[n++] = map(false, false, first);
 							}
+						}
 					};
 					var result = block(el);
 					restore();
@@ -476,7 +485,7 @@ class Inline {
 					var cond = map(false, false, cond);
 					var a = map(term, false, a);
 					var b = map(term, false, b);
-					{eexpr: TIf(cond, a, b), etype: returnType(e.etype, [a, b]), epos: e.epos};
+					{eexpr: TIf(cond, a, b), etype: returnType(e.etype, vector(a, b)), epos: e.epos};
 				case TParenthesis(a):
 					var a = map(term, inCall, a);
 					mk(TParenthesis(a), a.etype, e.epos);
@@ -537,13 +546,11 @@ class Inline {
 			};
 		}
 		var e = map(true, false, f.tfExpr);
-		var tl = [];
-		var pi = 0;
-		for (arg in f.tfArgs) {
-			if (pi < params.length) tl.push({name: "", optional: false, type: params[pi++].etype});
-			else if (arg.defaultValue != null) tl.push({name: "", optional: true, type: mkMono()});
-			else break;
-		}
+		// port: the arguments with a param or a default value, up to the first without
+		var n = 0;
+		while (n < f.tfArgs.length && (n < params.length || f.tfArgs[n].defaultValue != null)) n++;
+		var tl = new Vector(n);
+		for (i in 0...n) tl[i] = i < params.length ? {name: "", optional: false, type: params[i].etype} : {name: "", optional: true, type: mkMono()};
 		e = state.finalize(e, tl, tret, hasParams, mapType, p);
 		if (ictx.typer != null && Meta.has(Custom(":debug.inline"), ictx.typer.f.meta)) {
 			function se(tabs:String,
@@ -557,7 +564,7 @@ class Inline {
 	}
 
 	// Same as type_inline, but modifies the function body to add field inits
-	public static function typeInlineCtor(ictx:InlineContext, c:TClass, cf:TClassField, tf:TFunc, ethis:TExpr, el:Array<TExpr>,
+	public static function typeInlineCtor(ictx:InlineContext, c:TClass, cf:TClassField, tf:TFunc, ethis:TExpr, el:Vector<TExpr>,
 			po:Pos):TExpr {
 		var cparams = extractParamTypes(c.clParams);
 		var thisExpr = mk(TConst(TThis), TInst(c, cparams), c.clPos);
@@ -571,51 +578,55 @@ class Inline {
 		if (inits.length > 0) {
 			var body = switch tf.tfExpr.eexpr {
 				case TBlock(el): el;
-				case _: [tf.tfExpr];
+				case _: vector(tf.tfExpr);
 			};
-			tf = {tfArgs: tf.tfArgs, tfType: tf.tfType, tfExpr: mk(TBlock(inits.concat(body)), ictx.scom.basic.tvoid, c.clPos)};
+			tf = {tfArgs: tf.tfArgs, tfType: tf.tfType, tfExpr: mk(TBlock(body.prependArray(inits)), ictx.scom.basic.tvoid, c.clPos)};
 		}
 		return typeInline(ictx, cf, tf, ethis, el, ictx.scom.basic.tvoid, null, po, true);
 	}
 
-	public static function inlineRestParams(ctx:context.Typecore.Typer, f:TFunc, params:Array<TExpr>, mapType:T->T, p:Pos):Array<TExpr> {
+	public static function inlineRestParams(ctx:context.Typecore.Typer, f:TFunc, params:Vector<TExpr>, mapType:T->T, p:Pos):Vector<TExpr> {
 		if (!ctx.com.config.pfSupportsRestArgs) return params;
-		function loop(args:Array<{variable:TVar, defaultValue:Null<TExpr>}>, params:Array<TExpr>):Array<TExpr> {
-			// last argument expects rest parameters
-			if (args.length == 1 && core.TOther.ExtType.isRest(follow(args[0].variable.vType))) {
-				switch params {
-					// In case of `...rest` just use `rest`
-					case [{eexpr: TUnop(Spread, Prefix, e)}]:
-						return [e];
-					case _:
-				}
-				// In other cases: `haxe.Rest.of([param1, param2, ...])`
-				var v = args[0].variable;
-				return switch follow(mapType(v.vType)) {
-					case TAbstract(a = {aPath: {pack: ["haxe"], name: "Rest"}, aImpl: c}, [t]) if (c != null):
-						var cf = c.clStatics.get("of");
-						if (cf == null) throw "Can't find haxe.Rest.of function";
-						var pos = punionEl(p, params);
-						// [param1, param2, ...]
-						// If we don't know the type (e.g. the rest argument is a field type parameter) then we need
-						// to find a common type via unify_min.
-						var paramType = switch follow(t) {
-							case TMono(_): context.Typecore.unifyMin(ctx, params);
-							case _: t;
-						};
-						var array = mk(TArrayDecl(params), ctx.t.tarray(paramType), pos);
-						[
-							// haxe.Rest.of(array)
-							typing.CallUnification.makeStaticCallBetter(ctx, c, cf, [t], [array], TAbstract(a, [paramType]), pos)
-						];
-					case _: throw "Unexpected rest arguments type";
-				};
+		// port: the rest argument's expression for the remaining params
+		function restParam(v:TVar, params:Vector<TExpr>):TExpr {
+			switch params {
+				// In case of `...rest` just use `rest`
+				case [{eexpr: TUnop(Spread, Prefix, e)}]:
+					return e;
+				case _:
 			}
-			if (args.length == 0) return params;
-			if (params.length == 0) return [];
-			return [params[0]].concat(loop(args.slice(1), params.slice(1)));
+			// In other cases: `haxe.Rest.of([param1, param2, ...])`
+			return switch follow(mapType(v.vType)) {
+				case TAbstract(a = {aPath: {pack: ["haxe"], name: "Rest"}, aImpl: c}, [t]) if (c != null):
+					var cf = c.clStatics.get("of");
+					if (cf == null) throw "Can't find haxe.Rest.of function";
+					var pos = punionEl(p, params);
+					// [param1, param2, ...]
+					// If we don't know the type (e.g. the rest argument is a field type parameter) then we need
+					// to find a common type via unify_min.
+					var paramType = switch follow(t) {
+						case TMono(_): context.Typecore.unifyMin(ctx, params);
+						case _: t;
+					};
+					var array = mk(TArrayDecl(params), ctx.t.tarray(paramType), pos);
+					// haxe.Rest.of(array)
+					typing.CallUnification.makeStaticCallBetter(ctx, c, cf, vector(t), vector(array), TAbstract(a, vector(paramType)), pos);
+				case _: throw "Unexpected rest arguments type";
+			};
 		}
-		return loop(f.tfArgs, params);
+		// port: the list walk as a loop: params pass through, up to a last argument that expects rest parameters
+		var args = f.tfArgs;
+		for (i in 0...args.length) {
+			// last argument expects rest parameters
+			if (i == args.length - 1 && core.TOther.ExtType.isRest(follow(args[i].variable.vType))) {
+				var r = new Vector<TExpr>(i + 1);
+				Vector.blit(params, 0, r, 0, i);
+				r[i] = restParam(args[i].variable, i == 0 ? params : params.slice(i));
+				return r;
+			}
+			if (i >= params.length) return params;
+		}
+		return params;
 	}
 }
 
@@ -628,7 +639,7 @@ class InlineState {
 	var ictx:InlineContext;
 	var scom:SafeContext;
 	var ethis:TExpr;
-	var params:Array<TExpr>;
+	var params:Vector<TExpr>;
 	var cf:TClassField;
 	var f:TFunc;
 	var p:Pos;
@@ -640,7 +651,7 @@ class InlineState {
 	public var hadSideEffect = false;
 	public var hasReturnValue = false;
 
-	public function new(ictx:InlineContext, ethis:TExpr, params:Array<TExpr>, cf:TClassField, f:TFunc, p:Pos) {
+	public function new(ictx:InlineContext, ethis:TExpr, params:Vector<TExpr>, cf:TClassField, f:TFunc, p:Pos) {
 		this.ictx = ictx;
 		scom = ictx.scom;
 		this.ethis = ethis;
@@ -767,7 +778,7 @@ class InlineState {
 		/*
 			Build the expr/var subst list
 		*/
-		inline function setVars(pl:Array<TExpr>, al:Array<{variable:TVar, defaultValue:Null<TExpr>}>):Void {
+		inline function setVars(pl:Vector<TExpr>, al:Vector<{variable:TVar, defaultValue:Null<TExpr>}>):Void {
 			var acc = [];
 			var index = 0;
 			for (arg in al) {
@@ -805,7 +816,7 @@ class InlineState {
 						l.iForceTemp = true;
 					}
 					// We use a null expression because we only care about the type (for abstract casts).
-					if (l.iAbstractThis) l.iSubst.vExtra = varExtra([], withExpr(e, TConst(TNull)));
+					if (l.iAbstractThis) l.iSubst.vExtra = varExtra(vector(), withExpr(e, TConst(TNull)));
 				} else e = opt == null ? mk(TConst(TNull), v.vType, v.vPos) : opt;
 				// port: `(l, e) :: acc` as a push, the accumulator reversed once at the end
 				acc.push({local: l, expr: e});
@@ -823,12 +834,12 @@ class InlineState {
 					case _: ethis;
 				};
 				var v = allocVar(VInlined, "_this", self.etype, self.epos);
-				setVars([self].concat(params), [{variable: v, defaultValue: null}].concat(f.tfArgs));
+				setVars(VectorTools.cons(self, params), VectorTools.cons({variable: v, defaultValue: (null : Null<TExpr>)}, f.tfArgs));
 				v;
 		};
 	}
 
-	public function finalize(e:TExpr, tl:Array<{name:String, optional:Bool, type:T}>, tret:T, hasParams:Bool, mapType:T->T, p:Pos):TExpr {
+	public function finalize(e:TExpr, tl:Vector<{name:String, optional:Bool, type:T}>, tret:T, hasParams:Bool, mapType:T->T, p:Pos):TExpr {
 		if (hadSideEffect) for (item in inlinedVars) if (mightBeAffected(item.expr)
 			&& !core.TOther.ExtType.hasValueSemantics(item.expr.etype)) item.local.iForceTemp = true;
 		// port: hxmc's struct values (Inline.copyArgumentHook): the temporary is a copy, not one the analyzer
@@ -865,7 +876,7 @@ class InlineState {
 			case TCall(e1 = {eexpr: TField(_, FStatic({clPath: {pack: [], name: "Std"}}, {cfName: "string"}))}, [e2]):
 				var mapped = inlineParams(true, false, e2);
 				if (!fastEq(follow(e2.etype), follow(mapped.etype))) mapped = withExpr(e2, TCast(mapped, null));
-				withExpr(e, TCall(e1, [mapped]));
+				withExpr(e, TCall(e1, vector(mapped)));
 			case TCall(e1, el):
 				var e1 = inlineParams(true, false, e1);
 				withExpr(e, TCall(e1, el.map(e -> inlineParams(false, false, e))));
@@ -904,7 +915,7 @@ class InlineState {
 		}
 		if (vars.length == 0 && !hasReturnValue) e = switch e.eexpr {
 			case TBlock(_): {eexpr: e.eexpr, etype: tret, epos: e.epos};
-			case _: mk(TBlock([e]), tret, e.epos);
+			case _: mk(TBlock(vector(e)), tret, e.epos);
 		};
 		else if (vars.length == 0) e = switch e.eexpr {
 			case TBlock([inner]): wrap(inner);
@@ -922,11 +933,11 @@ class InlineState {
 			}
 			switch e.eexpr {
 				case TBlock(body):
-					el = el.concat(body);
+					for (x in body) el.push(x);
 				case _:
 					el.push(e);
 			}
-			e = mk(TBlock(el), tret, e.epos);
+			e = mk(TBlock(Vector.fromArrayCopy(el)), tret, e.epos);
 		}
 		e = Inline.inlineMetadata(e, cf.cfMeta);
 		if (hasParams) {
@@ -939,7 +950,7 @@ class InlineState {
 							CfImpl)): if (!hasClassFieldFlag(cf, CfAbstractConstructor)) {
 								// the first argument must unify with a_this for abstract implementation functions
 								if (tl.length == 0) throw "Failure: tl";
-								var args = [{name: "", optional: false, type: mapType(a.aThis)}].concat(tl.slice(1));
+								var args = VectorTools.withFirst(tl, {name: "", optional: false, type: mapType(a.aThis)});
 								context.Typecore.unifyRaise(mt, TFun({args: args, ret: tret}), p);
 							}
 						case _: unifyFunc();
@@ -967,7 +978,7 @@ class InlineState {
 				No need to change typing of arguments of inlined call
 				because they were already properly typed prior to inlining.
 			*/
-			var mapper = params.contains(e) ? t->t : mapType;
+			var mapper = params.has(e) ? t->t : mapType;
 			var e = Texpr.mapExprType(e -> mapExprTypeLocal(mapper, e), mapper, v -> mapVar(mapper, v), e);
 			return typing.OverloadResolution.maybeReapplyOverloadCall(e);
 		};
@@ -975,7 +986,7 @@ class InlineState {
 		function dropUnused(e:TExpr):TExpr return switch e.eexpr {
 			case TVar(v, {eexpr: TConst(_)}):
 				var data = locals.get(v.vId);
-				if (data != null && data.iRead == 0 && data.iCalled == 0 && !data.iWrite) mk(TBlock([]), e.etype,
+				if (data != null && data.iRead == 0 && data.iCalled == 0 && !data.iWrite) mk(TBlock(vector()), e.etype,
 					e.epos); else mapExpr(dropUnused, e);
 			case _: mapExpr(dropUnused, e);
 		};

@@ -41,7 +41,7 @@ class ExceptionFunctions {
 		};
 	}
 
-	public static function makeCall(scom:context.SafeCom.SafeContext, eon:TExpr, el:Array<TExpr>, tret:T, p:Pos):TExpr {
+	public static function makeCall(scom:context.SafeCom.SafeContext, eon:TExpr, el:haxe.ds.Vector<TExpr>, tret:T, p:Pos):TExpr {
 		return switch eon.eexpr {
 			case TField(ef, FStatic(cl, cf) | FInstance(cl, _, cf)) if (SafeCom.needsInline(scom, cl, cf)):
 				switch cf.cfExpr {
@@ -54,7 +54,7 @@ class ExceptionFunctions {
 		};
 	}
 
-	public static function makeStaticCall(scom:context.SafeCom.SafeContext, c:TClass, cf:TClassField, el:Array<TExpr>, tret:T,
+	public static function makeStaticCall(scom:context.SafeCom.SafeContext, c:TClass, cf:TClassField, el:haxe.ds.Vector<TExpr>, tret:T,
 			p:Pos):TExpr {
 		return makeCall(scom, Texpr.Builder.makeStaticField(c, cf, p), el, tret, p);
 	}

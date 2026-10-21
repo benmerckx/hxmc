@@ -115,8 +115,10 @@ extern class SDL {
   drivers), and an import there is a compile
   error that names the mode.
 - WebAssembly: C functions become module imports (WASI or JavaScript):
-  the module `@:hxmc.lib` names ("env" by default), pointers as i32.
-  The module exports `memory`, `_start` and `__indirect_function_table`;
+  the module `@:hxmc.lib` names ("env" by default), pointers as i32;
+  one the runtime implements in Haxe (`__errno_location`, `malloc`,
+  `strlen`, ...: `hxmc.rt.wasm.Libc`, `Heap`) is a call of that function
+  (test: `hxmc/test/cases/WasmImports.hx`). The module exports `memory`, `_start` and `__indirect_function_table`;
   a `@:hxmc.callback`'s address (`Callback.addr`) is its index in that
   table, so JavaScript calls it with `table.get(addr)(...)`, during an
   import call or after `_start` returned (a browser's event loop: the

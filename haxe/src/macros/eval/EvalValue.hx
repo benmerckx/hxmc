@@ -24,6 +24,7 @@ import core.ds.AtomicLazy;
 import core.ds.GlobalsIntMap;
 import core.ds.OcamlHashtbl;
 import haxe.io.Bytes;
+import haxe.ds.Vector;
 
 // port: deviations:
 // - Strings (`Vstring`) hold a native string. Their length and indices are in
@@ -188,7 +189,7 @@ class Vregex {
 	public final rGlobal:Bool;
 	public var rString:String = "";
 	// port: `r_groups`: snapshots of the last match (empty when no match was made)
-	public var rGroups:Array<VregexMatch> = [];
+	public var rGroups:Vector<VregexMatch> = new Vector(0);
 
 	public function new(r:EReg, rRexString:Vstring, rGlobal:Bool) {
 		this.r = r;
@@ -225,7 +226,7 @@ class Vzlib {
 
 enum VprototypeKind {
 	PClass(interfaces:Array<Int>);
-	PEnum(names:Array<{name:String, params:Array<Int>}>);
+	PEnum(names:Array<{name:String, params:haxe.ds.Vector<Int>}>);
 	PInstance;
 	PObject;
 }
@@ -291,15 +292,15 @@ enum Value {
 }
 
 typedef Vfunc = Array<Value>->Value;
-typedef Vvector = Array<Value>;
+typedef Vvector = Vector<Value>;
 
 class Vobject {
 	// The fields of the object known when it is created.
-	public var ofields:Array<Value>;
+	public var ofields:Vector<Value>;
 	// The prototype of the object.
 	public var oproto:VobjectProto;
 
-	public function new(ofields:Array<Value>, oproto:VobjectProto) {
+	public function new(ofields:Vector<Value>, oproto:VobjectProto) {
 		this.ofields = ofields;
 		this.oproto = oproto;
 	}
@@ -314,11 +315,11 @@ class Vprototype {
 	// The path of the prototype. Using revHash on this gives the original dot path.
 	public final ppath:Int;
 	// The fields of the prototype itself (static fields).
-	public final pfields:Array<Value>;
+	public final pfields:Vector<Value>;
 	// Map from hashed name to field offset (in pfields).
 	public final pnames:GlobalsIntMap<Int>;
 	// The fields of instances of this prototype (non-static fields).
-	public final pinstanceFields:Array<Value>;
+	public final pinstanceFields:Vector<Value>;
 	// Map from hashed name to field offset (in pinstanceFields).
 	public final pinstanceNames:GlobalsIntMap<Int>;
 	// The parent prototype in case of inheritance. Static inheritance is reflected here
@@ -329,7 +330,7 @@ class Vprototype {
 	// The value of this prototype, i.e. VPrototype(this).
 	public var pvalue:Value;
 
-	public function new(ppath:Int, pfields:Array<Value>, pnames:GlobalsIntMap<Int>, pinstanceFields:Array<Value>,
+	public function new(ppath:Int, pfields:Vector<Value>, pnames:GlobalsIntMap<Int>, pinstanceFields:Vector<Value>,
 			pinstanceNames:GlobalsIntMap<Int>, pparent:Null<Vprototype>, pkind:VprototypeKind, pvalue:Value) {
 		this.ppath = ppath;
 		this.pfields = pfields;
@@ -385,14 +386,14 @@ enum VinstanceKind {
 
 class Vinstance {
 	// The fields of this instance.
-	public final ifields:Array<Value>;
+	public final ifields:Vector<Value>;
 	// The prototype of this instance. Field offsets for ifields can be found using
 	// iproto.pinstance_names.
 	public final iproto:Vprototype;
 	// The [vinstance_kind].
 	public var ikind:VinstanceKind;
 
-	public function new(ifields:Array<Value>, iproto:Vprototype, ikind:VinstanceKind) {
+	public function new(ifields:Vector<Value>, iproto:Vprototype, ikind:VinstanceKind) {
 		this.ifields = ifields;
 		this.iproto = iproto;
 		this.ikind = ikind;
@@ -400,10 +401,10 @@ class Vinstance {
 }
 
 class Varray {
-	public var avalues:Array<Value>;
+	public var avalues:Vector<Value>;
 	public var alength:Int;
 
-	public function new(avalues:Array<Value>, alength:Int) {
+	public function new(avalues:Vector<Value>, alength:Int) {
 		this.avalues = avalues;
 		this.alength = alength;
 	}
@@ -411,11 +412,11 @@ class Varray {
 
 class VenumValue {
 	public final eindex:Int;
-	public final eargs:Array<Value>;
+	public final eargs:Vector<Value>;
 	public final epath:Int;
 	public var enpos:Null<Pos>;
 
-	public function new(eindex:Int, eargs:Array<Value>, epath:Int, enpos:Null<Pos>) {
+	public function new(eindex:Int, eargs:Vector<Value>, epath:Int, enpos:Null<Pos>) {
 		this.eindex = eindex;
 		this.eargs = eargs;
 		this.epath = epath;
@@ -580,7 +581,11 @@ class EvalValueTools {
 
 	// port: small ints are shared: values are immutable and identity is not observable,
 	// and HashLink allocations cost more than OCaml's (deviation: upstream boxes each).
-	static final smallInts:Array<Value> = [for (i in -128...1024) VInt32(i)];
+	static final smallInts:Vector<Value> = {
+		var v = new Vector<Value>(1024 + 128);
+		for (i in 0...v.length) v[i] = VInt32(i - 128);
+		v;
+	};
 
 	public static inline function vint(i:Int):Value return vint32(i);
 
