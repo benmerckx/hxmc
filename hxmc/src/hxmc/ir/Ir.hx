@@ -214,6 +214,11 @@ class FuncInfo {
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)
 	public var blocks:Bool = false;
 	public var blocksHere:Bool = false;
+	// (Facts: what a scan of its body found, made once: a program lowered in
+	// steps, interp.MirMacros, makes its facts again at each step)
+	public var gcScan:Null<{gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>}> = null;
+	public var rawChecked:Bool = false;
+	public var coldMarked:Bool = false;
 	public var declNoGc:Bool = false; // declared @:hxmc.noGc: Facts.findNoGc fails the build unless noGc
 	public var pos:Null<core.Globals.Pos>; // the declaration (errors)
 	public var display:Null<String>; // its Haxe name, pack.Class.field (errors)
