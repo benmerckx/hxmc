@@ -78,9 +78,10 @@ build.hxml` is the dev loop: it rebuilds on save and runs the new build
 
 ## Libraries
 
-Haxe libraries install from npm and are found by `-lib`, through a `"haxe"`
-field in their `package.json` (lix and haxelib still work):
-[docs/using.md](docs/using.md#libraries-from-npm).
+`-lib` resolves as lix does in a lix scope (`.haxerc`, `haxe_libraries`),
+from npm packages with a `"haxe"` field in their `package.json`, and from
+haxelib's repositories, without a lix or haxelib process:
+[docs/using.md](docs/using.md#libraries).
 
 ## Building from source
 

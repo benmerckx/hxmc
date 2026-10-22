@@ -21,6 +21,7 @@ marks a harness no tier and no CI job runs:
 | `UpstreamTargets` | `targets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, cppia host, jvm, flash by both, every output file (jars by member, hl/c after `HlcNames`) | 12/12 identical |
 | `Interp` | `interp` | `--interp` runs of the case lists | 294/295 (`eval-eventLoop-compile` depends on thread timing); manual |
 | `Haxelib` | `haxelib` | `-L` through lix's haxelib shim, batch and server (`--server`) | 14/14 |
+| `LibResolution` (`hxmc/test`) | `libs` | hxmc's own `-lib` resolution (`hxmc/src/hxmc/libs`, the npm package's compiler) on the same files as haxelib (the reference's: `haxelib path`'s exit code, output and errors) and lix's `haxe` shim (`--run resolve-args`): repositories, versions, dependencies, every `resolveLibs` mode, interpolation, the errors | 95/95 |
 | `EvalDebugger` | `debugger` (`SHARD=i/n`) | scripted Eval debugger sessions (`-D eval-debugger`): breakpoints, stepping, scopes, evaluation, assignment, exception and function breakpoints, a macro | 6/6 |
 | `fuzz/` | `make test-fuzz LANE=...` | random programs per target (`diff:<target>`) or by program output (`exec:<a>,<b>`), with reduction (`make test-fuzz LANE=diff:js`); `--cases haxe/test/fuzz/cases` checks the kept programs (failures fixed since, reduced, one directory each) on the lanes | CI: the diff lanes of ten targets, `exec:interp,hxmc` and `exec:interp,hxmc-wasm` (below) |
 | `Targets` | (bench.yml) | the website's target table (`bench.yml`'s `targets` jobs, published to `bench-data` as `targets.json`; `site/data/targets.json` the fallback): haxe-formatter and the port itself compiled for every target by both, sequential (`-D disable-parallelism`: CPU) and with default parallelism (wall), peak RSS, outputs compared (hl/c after `HlcNames`; a parallel output where the reference's own parallel output varies is marked `varies`); `-p self -t hlc --merge --json site/data/targets.json` replaces those rows only | 18/18 identical (the rows the reference compiles) |
@@ -289,8 +290,8 @@ playground's compiler with both modules, its fallback to the legacy one in a
 Chromium without exnref, and its worker running a request again after a
 fault of the engine, faked (the WebKit of Safari 26.0 at times faults in
 correct code: `site/client/Worker.hx`)), `npm` (the nine packages in fresh projects on each of the six
-machines: native at once through the platform package, `-lib` from
-node_modules (`hxmc/test/NodeLibs.hx`), `--ignore-scripts`; and on linux-x64,
+machines: native at once through the platform package, `-lib` from lix's
+scopes, node_modules and haxelib (`hxmc/test/Libraries.hx`), `--ignore-scripts`; and on linux-x64,
 or on all six on main, tags and the nightly run, lix with `dist/`, the
 WebAssembly fallback, downloaded (from the local tarball: `HXMC_WASM_TARBALL`,
 a path or URL in place of the registry's) and installed (with `-lib` by the
