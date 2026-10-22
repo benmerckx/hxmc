@@ -23,6 +23,9 @@ using StringTools;
 //   haxelib beside lix's haxe), which the compiler asks within a scope
 //   (the cpp generator's `haxelib path hxcpp`): the exit code, standard
 //   output and error.
+// haxelib is a Neko program: it runs with lix's Neko, as lix runs a Haxe
+// installation's haxelib (installed by lix's haxelib on first use, into the
+// scratch directory's root; the machine needs no Neko of its own).
 class LibResolution {
 	static var haxelib:String;
 	static var lix:String;
@@ -48,6 +51,8 @@ class LibResolution {
 		dir = FileSystem.fullPath(dir);
 		for (v in ["HAXELIB_PATH", "HAXELIB_DEV_FILTER", "HAXESHIM_SCOPE", "HAXE_ROOT", "HAXESHIM_LIBCACHE", "HAXE_LIBCACHE"])
 			Sys.putEnv(v, null);
+		Sys.putEnv("HAXESHIM_ROOT", '$dir/root');
+		useLixNeko();
 		haxelibCases();
 		scopeCases();
 		var result = failures == 0 ? 'LibResolution: $cases/$cases' : 'LibResolution: $failures of $cases failed';
@@ -60,6 +65,30 @@ class LibResolution {
 			o.close();
 		}
 		Sys.exit(failures == 0 ? 0 : 1);
+	}
+
+	// lix's haxelib installs lix's Neko (in a scope whose version is haxelib's
+	// directory); haxelib then finds it as lix gives it (NekoInstallation.env)
+	static function useLixNeko() {
+		write('$dir/neko-scope', [".haxerc" => '{"version": "${Path.directory(haxelib)}"}']);
+		run(lixHaxelib, ["path"], '$dir/neko-scope');
+		var versions = '$dir/root/neko/versions';
+		var found = try FileSystem.readDirectory(versions) catch (_:Dynamic) [];
+		if (found.length != 1) {
+			Sys.println('LibResolution: lix did not install its Neko in $versions (${found.join(", ")})');
+			Sys.exit(1);
+		}
+		var name = switch Sys.systemName() {
+			case "Windows": "PATH";
+			case "Mac": "DYLD_LIBRARY_PATH";
+			default: "LD_LIBRARY_PATH";
+		}
+		var neko = '$versions/${found[0]}';
+		Sys.putEnv(name, switch Sys.getEnv(name) {
+			case null: neko;
+			case v if (v.indexOf(neko) != -1): v;
+			case v: v + (Sys.systemName() == "Windows" ? ";" : ":") + neko;
+		});
 	}
 
 	// --- haxelib ---
@@ -153,7 +182,6 @@ class LibResolution {
 	static function scopeCases() {
 		var install = Path.directory(haxelib);
 		var root = '$dir/root', proj = '$dir/proj';
-		Sys.putEnv("HAXESHIM_ROOT", root);
 		Sys.putEnv("HAXELIB_PATH", null);
 		Sys.putEnv("LIBRES_VAR", "from-env");
 		write(proj, [
@@ -169,9 +197,6 @@ class LibResolution {
 			"sub/nested.hxml" => "-D nested_sub\n",
 			"other/.keep" => "",
 		]);
-		// (lix's haxelib installs its Neko on first use, in a scope: before the comparisons)
-		File.saveContent('$proj/.haxerc', '{"version": "$install"}');
-		run(lixHaxelib, ["path"], proj);
 		for (mode in ["scoped", "mixed", "haxelib", null]) {
 			// (null: the default, scoped)
 			File.saveContent('$proj/.haxerc', '{"version": "$install"' + (mode == null ? "" : ', "resolveLibs": "$mode"') + "}");
