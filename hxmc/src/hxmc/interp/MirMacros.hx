@@ -340,6 +340,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// server), as EvalPrototype.addTypes drops the prototypes of a type whose module
 	// is another: what was compiled is dropped, compiled again as it is needed
 	function newGeneration() {
+		if (stats) Sys.stderr().writeString("hxmc.mir-macros: new generation, spare entries taken " + hxmc.macro.Loader.used() + ", globals " + @:privateAccess hxmc.rt.Gc.nglobals + " of " + @:privateAccess hxmc.rt.Gc.globalsCap + "\n");
 		hxmc.macro.Loader.newGeneration();
 		// (the types of earlier compilations this one has not handed over: not lowered
 		// in the new generation, unless the compilation hands them over again)

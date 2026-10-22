@@ -849,9 +849,14 @@ neko) fails one test, the static `Int` below. The differences from Eval:
 - Not available: `Context.getMacroStack`, macro arguments that are
   functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
   hxmc's.
-- A generation takes spare type entries again (`Jit.SPARE_TYPES`, 4096;
-  the unit suite's macros take 440) and bundles are never unloaded:
-  enough for `--next`, not yet for a long-lived compilation server.
+- A generation takes again the spare type entries (`Jit.SPARE_TYPES`,
+  4096), signatures and global slots of the earlier ones' whose facts are
+  the same (`macro.Loader`: enums with their constructors, structures,
+  closures' types, interfaces, the classes when all of a bundle's are);
+  the others take new ones (a trivial macro's edit under a server: none,
+  254 types and 94 globals each without that). Bundles are never
+  unloaded: each generation's code stays mapped (a trivial macro's: 216
+  KB).
 
 Cost (instructions, Intel Xeon E-2356G): the formatter benchmark built with
 json2object's macros, module cache off, 7.4 G (Eval: 3.8 G), the macro
