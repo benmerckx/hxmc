@@ -1223,6 +1223,10 @@ class Common {
 	// ... which module's typing one continues; always null in the compiler itself.
 	public static var lazyHook:Null<(Void->T)->(Void->T)> = null;
 
+	// port: hxmc.HaxeMain answers `haxelib` itself (hxmc/src/hxmc/libs: as lix's haxelib shim within a lix scope, as haxelib outside),
+	// ... with the exit code and output the process would have, for add_libs and the cpp generator; always null in the compiler itself.
+	public static var haxelibHook:Null<(args:Array<String>) -> {code:Int, stdout:String, stderr:String}> = null;
+
 	public static function makeUnforcedLazy(tProc:T, f:Void->T, where:String):TLazy {
 		if (lazyHook != null) f = lazyHook(f);
 		var r = new TLazy(lazyAvailable(tDynamic));

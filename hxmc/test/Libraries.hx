@@ -22,7 +22,9 @@ using StringTools;
 //   same repository as its haxelib): haxe_libraries/<name>.hxml before
 //   node_modules, node_modules before the scope's error, mixed's haxelib, a
 //   missing class path, a library once per part and once in each --next
-//   part, the global scope.
+//   part, the global scope;
+// - the cpp generator's `haxelib path hxcpp` (Options.txt's hxcpp=, with
+//   -D no-compilation): lix's haxe_libraries/hxcpp.hxml, haxelib's hxcpp.
 // hxmc/test/LibResolution.hx compares the resolution with haxelib's and lix's.
 class Libraries {
 	static var haxe:String;
@@ -47,6 +49,9 @@ class Libraries {
 		"root/haxelib/hxmc,demo/9,9,9/src/hxmc/demo/Demo.hx" => "package hxmc.demo;\nclass Demo {\n\tpublic static function hello() return 'haxelib demo 9.9.9';\n}\n",
 		"root/haxelib/other/.current" => "1.0.0",
 		"root/haxelib/other/1,0,0/other/Lib.hx" => "package other;\nclass Lib {\n\tpublic static function name() return 'haxelib other';\n}\n",
+		"root/haxelib/hxcpp/.current" => "4.3.2",
+		"root/haxelib/hxcpp/4,3,2/haxelib.json" => '{"name": "hxcpp", "version": "4.3.2"}',
+		"proj/src/Plain.hx" => "class Plain {\n\tstatic function main() {}\n}\n",
 		// lix's scope
 		"lixproj/.haxerc" => '{"version": "4.3.7", "resolveLibs": "scoped"}',
 		"lixproj/haxe_libraries/hxmc.demo.hxml" => "# @install: lix --silent download haxelib:/hxmc.demo#0.0.1\n-cp ${SCOPE_DIR}/lixlib/demo\n-D hxmc.demo=0.0.1\n",
@@ -54,6 +59,9 @@ class Libraries {
 		"lixproj/haxe_libraries/y.hxml" => "-lib x\n-D y\n",
 		"lixproj/haxe_libraries/broken.hxml" => "-cp ${SCOPE_DIR}/nowhere\n",
 		"lixproj/lixlib/demo/hxmc/demo/Demo.hx" => "package hxmc.demo;\nclass Demo {\n\tpublic static function hello() return 'lix demo';\n}\n",
+		"lixproj/haxe_libraries/hxcpp.hxml" => "-cp ${SCOPE_DIR}/fakehxcpp\n-D hxcpp=4.3.2\n",
+		"lixproj/fakehxcpp/.keep" => "",
+		"lixproj/src/Plain.hx" => "class Plain {\n\tstatic function main() {}\n}\n",
 		"lixproj/lixlib/x/X.hx" => "class X {\n\tpublic static function name() return 'x';\n}\n",
 		"lixproj/node_modules/@hxmc/demo/package.json" => '{"name": "@hxmc/demo", "version": "1.2.3", "haxe": {"name": "hxmc.demo", "classPath": "src"}}',
 		"lixproj/node_modules/node-only/package.json" => '{"name": "node-only", "version": "1.0.0", "haxe": {"name": "node.only", "classPath": "src"}}',
@@ -104,6 +112,7 @@ class Libraries {
 		check("another version: haxelib", proj, ["-cp", "src", "-lib", "hxmc.demo:9.9.9", "-main", "Main", "--interp"], ["haxelib demo 9.9.9", "9.9.9 null null"]);
 		check("an unknown name: haxelib", proj, ["-cp", "src", "-lib", "other", "-main", "Other", "--interp"], ["haxelib other"]);
 		check("node_modules and haxelib together", proj, ["-cp", "src", "-lib", "other", "-lib", "hxmc.demo", "-main", "Main", "--interp"], demo);
+		checkHxcpp("the cpp generator's hxcpp: haxelib's", proj, "hxcpp/4,3,2/");
 		check("haxelib's error", proj, ["-cp", "src", "-lib", "nothing", "-main", "Other", "--interp"], null, "Error: Library nothing is not installed");
 		var lix = '$dir/lixproj';
 		check("lix: haxe_libraries before node_modules", lix, ["-cp", "src", "-lib", "hxmc.demo", "-main", "Main", "--interp"], ["lix demo"]);
@@ -115,6 +124,7 @@ class Libraries {
 		check("lix: a library once per part", lix, ["-lib", "x", "-cp", "src", "-lib", "y", "-main", "UseX", "--interp"], ["x added", "x 1"]);
 		check("lix: and in each --next part", lix, ["-lib", "y", "-cp", "src", "-main", "UseX", "--interp", "--next", "--cwd", lix, "-lib", "x", "-lib", "y", "-cp", "src", "-main", "UseX", "--interp"],
 			["x added", "x 1", "x added", "x 1"]);
+		checkHxcpp("lix: the cpp generator's hxcpp", lix, "fakehxcpp/");
 		check("lix: mixed, haxelib's", '$dir/lixmixed', ["-cp", "src", "-lib", "other", "-main", "Other", "--interp"], ["haxelib other"]);
 		File.saveContent('$dir/root/.haxerc', '{"version": "4.3.7"}');
 		FileSystem.createDirectory('$dir/root/haxe_libraries');
@@ -138,6 +148,24 @@ class Libraries {
 		if (!ok) {
 			failures++;
 			Sys.println('  haxe ${args.join(" ")} (in $cwd): exit $code\n  expected: ${expect == null ? "an error: " + error : expect.join("|")}\n  stdout: ${out.trim()}\n  stderr: ${err.trim()}');
+		}
+	}
+
+	// a cpp build without the native compilation: Options.txt's hxcpp= ends with suffix
+	static function checkHxcpp(name:String, cwd:String, suffix:String) {
+		var out = '$cwd/cpp-out';
+		var p = new sys.io.Process(haxe, ["--cwd", cwd, "-cp", "src", "-main", "Plain", "--cpp", out, "-D", "no-compilation"]);
+		var err = p.stderr.readAll().toString().replace("\r", "");
+		p.stdout.readAll();
+		var code = p.exitCode();
+		p.close();
+		var options = try File.getContent('$out/Options.txt').replace("\r", "") catch (_:Dynamic) "";
+		var line = Lambda.find(options.split("\n"), l -> l.startsWith("hxcpp="));
+		var ok = code == 0 && line != null && line.endsWith(suffix);
+		Sys.println((ok ? "ok   " : "FAIL ") + name);
+		if (!ok) {
+			failures++;
+			Sys.println('  haxe --cpp (in $cwd): exit $code\n  expected: hxcpp=...$suffix\n  got: $line\n  stderr: ${err.trim()}');
 		}
 	}
 

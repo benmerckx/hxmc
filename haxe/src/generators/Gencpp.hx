@@ -227,14 +227,24 @@ class Gencpp {
 			case "true" | "sys" | "dce" | "cpp" | "debug":
 			case _: writeDefine(name, escapeCommand(value));
 		}, defines);
-		// port: Unix.open_process_args_in "haxelib" [|"haxelib"; "path"; "hxcpp"|] and input_line.
-		var pin = new sys.io.Process("haxelib", ["path", "hxcpp"]);
-		var line = try pin.stdout.readLine() catch (_:haxe.io.Eof) {
-			pin.close();
-			throw new haxe.Exception("End_of_file");
+		// port: Unix.open_process_args_in "haxelib" [|"haxelib"; "path"; "hxcpp"|] and input_line; context.Common.haxelibHook's output when it is set.
+		var line = switch context.Common.haxelibHook {
+			case null:
+				var pin = new sys.io.Process("haxelib", ["path", "hxcpp"]);
+				var line = try pin.stdout.readLine() catch (_:haxe.io.Eof) {
+					pin.close();
+					throw new haxe.Exception("End_of_file");
+				}
+				pin.close();
+				line;
+			case hook:
+				var out = hook(["path", "hxcpp"]).stdout;
+				if (out == "") throw new haxe.Exception("End_of_file");
+				var line = out.split("\n")[0];
+				// port: as readLine, without the \r of \r\n
+				StringTools.endsWith(line, "\r") ? line.substr(0, line.length - 1) : line;
 		}
 		writeDefine("hxcpp", line);
-		pin.close();
 		writer.close();
 	}
 

@@ -8,10 +8,11 @@ using StringTools;
 
 // `haxelib path <libraries>` without a process: what haxelib 4.2.0 (the
 // client upstream ships, extra/haxelib_src at the pinned commit) answers,
-// as the exit code, standard output and standard error of the process. The
-// compiler's add_libs calls it in place of haxelib (compiler.HighLevel's
-// haxelibHook), and lix's scopes for the libraries they leave to haxelib
-// (Scope). Its parts, in haxelib's order and with its messages:
+// as the exit code, standard output and standard error of the process: the
+// `haxelib` the compiler asks outside lix's scopes (Scope.haxelib, behind
+// context.Common's haxelibHook: add_libs, the cpp generator), and lix's
+// scopes for the libraries they leave to haxelib (Scope.Build). Its parts, in
+// haxelib's order and with its messages:
 // - the command line (client/Main.hx): --global, --cwd <dir>, `path` and the
 //   libraries, name[:version];
 // - the repository (api/RepoManager.hx, Repository.get): a .haxelib in the

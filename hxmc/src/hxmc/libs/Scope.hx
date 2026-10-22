@@ -19,10 +19,13 @@ using StringTools;
 //   its hxml files expanded, all in the place of the -lib;
 // - mixed, haxelib: haxelib's path (Haxelib, with HAXELIB_PATH the root's
 //   haxelib, as the shim runs it) for the others, after the build's
-//   arguments; its class paths as -cp, its -L as --neko-lib-path;
+//   arguments; its class paths as -cp, its -L as -lib ndll:<dir>;
 // - scoped: a missing hxml is an error.
-// Each library once per build; -lib ndll:<dir> is --neko-lib-path <dir>
-// (what the shim's haxelib answers the compiler). What is not haxeshim's:
+// Each library once per build; -lib ndll:<dir> is passed on (as the shim
+// passes it to the compiler, for its haxelib to answer: Libraries does).
+// Scope.haxelib is the `haxelib` command lix puts on PATH: within a scope
+// its shim (haxeshim's HaxelibCli: `path` from the scope), else haxelib
+// itself (Haxelib). What is not haxeshim's:
 // before haxelib (or the error), the caller's `other` (node_modules); the
 // "version" is not looked at (the compiler is the one running); the class
 // paths checked after resolution are the libraries', not the build's own.
@@ -203,6 +206,78 @@ class Scope {
 	// a build's (one part's) resolution
 	public function build():Build
 		return new Build(this);
+
+	// `haxelib <args>` in cwd, as the command lix puts on PATH answers:
+	// within a scope its shim (lix's HaxelibCmd: the scope of cwd, sought
+	// first; then HaxelibCli.exec: --cwd, which moves the process but not the
+	// scope, --global, `path`), else haxelib (Haxelib.run); other:
+	// Build.expand's, for a directory
+	public static function haxelib(args:Array<String>, cwd:String, env:String->Null<String>, inherit:Bool,
+			other:(dir:String) -> (String->Null<Array<String>>)):Haxelib.Output {
+		// (Exec.die: the reason on stderr, the code as the exit code)
+		function die(code:Int, reason:String):Haxelib.Output
+			return {code: exitCode(code), stdout: "", stderr: reason + "\n"};
+		var scope = try seek(cwd, env, inherit) catch (e:LibraryError) return die(500, e.message);
+		if (scope == null) return Haxelib.run(args, cwd, env);
+		// (parseGlobalPrefix)
+		var i = 0, dir:Null<String> = null;
+		while (i < args.length)
+			switch args[i] {
+				case "-cwd" | "--cwd":
+					if (++i >= args.length) return die(500, '${args[i - 1]} requires argument');
+					dir = args[i++];
+				case "--global":
+					i++;
+				case arg if (arg.charCodeAt(0) == "-".code):
+					return die(500, 'Global flag \'$arg\' is not supported by haxeshim; please report a bug');
+				default:
+					break;
+			}
+		var commandArgs = args.slice(i);
+		// (Sys.setCwd)
+		if (dir != null && !FileSystem.isDirectory(Path.isAbsolute(dir) ? dir : Path.join([cwd, dir]))) return die(500, 'Invalid directory: $dir');
+		if (commandArgs[0] != "path") return die(1, 'hxmc: `haxelib ${args.join(" ")}` within lix\'s scope is only answered by lix itself');
+		// (HaxelibCli.path)
+		var libs = commandArgs.slice(1), names = [], out = [];
+		for (lib in libs)
+			if (lib.startsWith("ndll:")) out.push("-L " + lib.substr(5)) else names.push(lib.split(":")[0]);
+		// (scope.resolve: the build's arguments, the class paths not checked; on
+		// failure the first error's message on stdout, its code the exit code)
+		var b = scope.build();
+		b.checkClassPaths = false;
+		var dirNoSlash = Path.removeTrailingSlashes(scope.cwd);
+		var resolved = try {
+			var a = b.expand(names, dirNoSlash, other(dirNoSlash));
+			a.concat(b.finish());
+		} catch (e:LibraryError) {
+			var first = e.errors[0];
+			return {code: exitCode(first.code != null ? first.code : 500), stdout: first.message + "\n", stderr: ""};
+		}
+		var i = 0;
+		while (i < resolved.length) {
+			switch resolved[i] {
+				case "-lib":
+					var v = resolved[++i];
+					if (v != null && v.startsWith("ndll:")) out.push("-L " + v.substr(5)) else
+						return {code: exitCode(500), stdout: 'Unexpected -lib $v returned from haxelib path ${libs.join(" ")}\n', stderr: ""};
+				case "-cwd" | "--cwd":
+					i++;
+				// (-libcp: a class path from node_modules)
+				case "-cp" | "-libcp":
+					out.push(Path.addTrailingSlash(resolved[++i]));
+				case v if (v.charCodeAt(0) == "-".code):
+					out.push('$v ${resolved[++i]}');
+				default:
+			}
+			i++;
+		}
+		// (Out.print: no newline at the end)
+		return {code: 0, stdout: out.join("\n"), stderr: ""};
+	}
+
+	// (Sys.exit's code as the parent sees it: a byte, but on Windows)
+	static function exitCode(code:Int):Int
+		return Sys.systemName() == "Windows" ? code : code & 0xFF;
 }
 
 // (Scope.resolveArgs, for the -lib of one build)
@@ -241,9 +316,8 @@ class Build {
 						case null:
 							fail("-lib requires argument");
 						case v if (v.val.startsWith("ndll:")):
-							// (the compiler asks the shim's haxelib: -L <dir>)
-							out.push({val: "--neko-lib-path", pos: v.pos});
-							out.push({val: v.val.substr(5), pos: v.pos});
+							out.push(arg);
+							out.push(v);
 						case lib:
 							if (!libs[lib.val]) {
 								libs[lib.val] = true;
@@ -300,13 +374,16 @@ class Build {
 			var r = Haxelib.run(["path"].concat([for (l in haxelibs) l.val]), scope.cwd, scope.haxelibEnv);
 			if (r.code == 0) {
 				var args = Scope.fromMultilineString(r.stdout, "haxelib path", scope.getVar, errors, true);
-				// (-L <dir>: the shim's -lib ndll:<dir>, which its haxelib answers the compiler with -L <dir>)
+				// (-L <dir>: -lib ndll:<dir>)
 				for (i in 0...args.length)
-					if (args[i].val == "-L" && i + 1 < args.length) args[i] = {val: "--neko-lib-path", pos: args[i].pos};
+					if (args[i].val == "-L" && i + 1 < args.length) {
+						args[i] = {val: "-lib", pos: args[i].pos};
+						args[i + 1] = {val: "ndll:" + args[i + 1].val, pos: args[i + 1].pos};
+					}
 				addClassPaths(args, scope.cwd);
 				for (a in args) out.push(a.val);
 			} else
-				errors.push({message: r.stdout + r.stderr, pos: "haxelib path"});
+				errors.push({message: r.stdout + r.stderr, pos: "haxelib path", code: r.code});
 		}
 		if (errors.length == 0 && checkClassPaths)
 			// (ResolvedArgs.checkClassPaths)
@@ -327,7 +404,7 @@ class Build {
 }
 
 typedef Arg = {val:String, pos:Null<String>};
-typedef Error = {message:String, pos:Null<String>};
+typedef Error = {message:String, pos:Null<String>, ?code:Int};
 
 enum Outcome {
 	Success(s:String);

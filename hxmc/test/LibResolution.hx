@@ -18,13 +18,15 @@ using StringTools;
 //   whose .haxerc's "version" is haxelib's directory (the shim runs that
 //   haxelib): each mode, haxe_libraries/*.hxml with interpolations, nested
 //   -lib and hxml, haxelib's libraries, ndll, a subdirectory, HAXESHIM_SCOPE,
-//   the global scope, the errors (the shim prints the first one's message).
-//   The shim passes -lib ndll:<dir> on for its haxelib to answer the
-//   compiler; Scope answers it, --neko-lib-path <dir>, as the comparison
-//   writes the shim's.
+//   the global scope, the errors (the shim prints the first one's message);
+// - Scope.haxelib against lix's haxelib shim (`haxelib path ...`, the
+//   haxelib beside lix's haxe), which the compiler asks within a scope
+//   (the cpp generator's `haxelib path hxcpp`): the exit code, standard
+//   output and error.
 class LibResolution {
 	static var haxelib:String;
 	static var lix:String;
+	static var lixHaxelib:String;
 	static var dir:String;
 	static var failures = 0;
 	static var cases = 0;
@@ -37,7 +39,9 @@ class LibResolution {
 			return i >= 0 && i + 1 < args.length ? args[i + 1] : def;
 		}
 		haxelib = FileSystem.fullPath(opt("--haxelib", null));
-		lix = FileSystem.fullPath(opt("--lix", null));
+		// (not fullPath: haxe and haxelib are links to lix, which runs as their name says)
+		lix = FileSystem.absolutePath(opt("--lix", null));
+		lixHaxelib = Path.directory(lix) + "/haxelib";
 		dir = opt("--dir", "bin/test/lib-resolution");
 		rmrf(dir);
 		FileSystem.createDirectory(dir);
@@ -165,15 +169,28 @@ class LibResolution {
 			"sub/nested.hxml" => "-D nested_sub\n",
 			"other/.keep" => "",
 		]);
+		// (lix's haxelib installs its Neko on first use, in a scope: before the comparisons)
+		File.saveContent('$proj/.haxerc', '{"version": "$install"}');
+		run(lixHaxelib, ["path"], proj);
 		for (mode in ["scoped", "mixed", "haxelib", null]) {
 			// (null: the default, scoped)
 			File.saveContent('$proj/.haxerc', '{"version": "$install"' + (mode == null ? "" : ', "resolveLibs": "$mode"') + "}");
 			for (libs in [["a"], ["b", "a"], ["h"], ["alpha", "b"], ["v"], ["forbidden"], ["unknown"], ["dir"], ["nope"], ["missingnested"],
 				["a", "alpha", "gamma:1.0.0"], ["ndll:/x/"], ["gamma:2.0.0"]])
 				compareScope('${mode == null ? "default" : mode}: -lib ${libs.join(" -lib ")}', proj, libs);
+			for (libs in [["a"], ["h"], ["alpha:1.0.0"], ["ndll:/x/", "b"], ["nope"], ["unknown"], []])
+				compareShim('${mode == null ? "default" : mode}: path ${libs.join(" ")}', proj, ["path"].concat(libs));
 		}
 		File.saveContent('$proj/.haxerc', '{"version": "$install", "resolveLibs": "mixed"}');
 		compareScope("a subdirectory", '$proj/sub', ["a", "h"]);
+		compareShim("a subdirectory", '$proj/sub', ["path", "a", "h"]);
+		// (the scope is the one of the directory lix's haxelib starts in: --cwd moves it, not the scope)
+		compareShim("--cwd", proj, ["--cwd", '$dir/root', "path", "a"]);
+		compareShim("-cwd, relative", proj, ["-cwd", "sub", "path", "h"]);
+		compareShim("--global", proj, ["--global", "path", "alpha"]);
+		compareShim("--cwd that does not exist", proj, ["--cwd", '$dir/nowhere', "path", "a"]);
+		compareShim("an unknown flag", proj, ["--frobnicate", "path", "a"]);
+		compareShim("--cwd without a value", proj, ["--cwd"]);
 		Sys.putEnv("HAXESHIM_SCOPE", proj);
 		compareScope("HAXESHIM_SCOPE", '$dir/root', ["a"]);
 		Sys.putEnv("HAXESHIM_SCOPE", null);
@@ -196,20 +213,7 @@ class LibResolution {
 		var args = [];
 		for (l in libs) args = args.concat(["-lib", l]);
 		var shim = run(lix, ["--run", "resolve-args"].concat(args), cwd);
-		var expected = if (shim.code == 0) {
-			// (-lib ndll:<dir>: what the shim's haxelib answers the compiler)
-			var a = shim.stdout.trim().split("\n");
-			var out = [];
-			var i = 0;
-			while (i < a.length) {
-				if (a[i] == "-lib" && i + 1 < a.length && a[i + 1].startsWith("ndll:")) {
-					out.push("--neko-lib-path");
-					out.push(a[i + 1].substr(5));
-					i += 2;
-				} else out.push(a[i++]);
-			}
-			out.join("\n");
-		} else "error: " + (shim.stdout + shim.stderr).trim();
+		var expected = if (shim.code == 0) shim.stdout.trim() else "error: " + (shim.stdout + shim.stderr).trim();
 		var actual = try {
 			var scope = Scope.seek(cwd, Sys.getEnv);
 			if (scope == null) throw "no scope";
@@ -222,6 +226,13 @@ class LibResolution {
 			// (haxe.Json's message past the end: Eval's fastCodeAt is null there, the native runtime's 0)
 			.replace("Invalid char null at", "Invalid char 0 at");
 		check('lix $name', expected, actual);
+	}
+
+	static function compareShim(name:String, cwd:String, args:Array<String>) {
+		var expected = run(lixHaxelib, args, cwd);
+		var actual = Scope.haxelib(args, cwd + "/", Sys.getEnv, true, _ -> _ -> null);
+		check('lix haxelib $name', 'exit ${expected.code}\n${expected.stdout}\n--- stderr\n${expected.stderr}',
+			'exit ${actual.code}\n${actual.stdout}\n--- stderr\n${actual.stderr}');
 	}
 
 	// --- helpers ---

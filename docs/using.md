@@ -122,6 +122,12 @@ the global one (`HAXELIB_PATH`, `~/.haxelib`, ...); `name:version`, the
 dev path or the current version; haxelib.json's class path and
 dependencies, `extraParams.hxml`, `ndll/`; haxelib's messages.
 
+The cpp generator's `haxelib path hxcpp` (`hxcpp=` in `Options.txt`) is
+answered the same way: within a lix scope as lix's `haxelib` shim answers it
+(from `haxe_libraries/hxcpp.hxml`), elsewhere as haxelib does. Running a
+library (`haxelib run hxcpp`, `haxelib run hashlink`, the native builds)
+still needs haxelib or lix.
+
 All of it works without node (`node_modules/.bin/haxe` as the native
 compiler) and without lix or haxelib installed. Run through lix's own `haxe`
 shim (the `dist/` version below), the shim resolves the libraries before the

@@ -13,9 +13,6 @@ class HighLevel {
 	// port: hxmc.HaxeMain resolves -lib itself (hxmc/src/hxmc/libs/Libraries.hx: lix's scopes, node_modules, then haxelib); a resolver per part, given each group of libraries in turn (its arguments take the group's place, followed by haxelib's for the libraries it leaves to haxelib) and asked at the part's end for the arguments after the part's; always null in the compiler itself.
 	public static var libraryResolver:Null<() -> LibraryResolver> = null;
 
-	// port: hxmc.HaxeMain answers haxelib itself (hxmc/src/hxmc/libs/Haxelib.hx: `haxelib path` without a process), with the exit code and output the process would have; always null in the compiler itself.
-	public static var haxelibHook:Null<(args:Array<String>) -> {code:Int, stdout:String, stderr:String}> = null;
-
 	public static function addLibs(timerCtx:core.Timer.TimerContext, libsCwd:{libs:Array<String>, cwd:String}, args:Array<String>,
 			cs:Cache, hasDisplay:Bool):Array<String> {
 		var libs = libsCwd.libs, cwd = libsCwd.cwd;
@@ -23,7 +20,7 @@ class HighLevel {
 		function fail(msg:String):Dynamic {
 			throw new ArgumentError(msg);
 		}
-		// port: the rest of call_haxelib, for the process's output or haxelibHook's
+		// port: the rest of call_haxelib, for the process's output or Common.haxelibHook's
 		function haxelibResult(ret:Int, lines:Array<String>, err:Array<String>):Array<String> {
 			if (ret != 0) fail(switch [lines, err] {
 				case [[], []]: "Failed to call haxelib (command not found ?)";
@@ -35,8 +32,8 @@ class HighLevel {
 		}
 		function callHaxelib():Array<String> {
 			var args = (if (globalRepo) ["--global"] else ["--cwd", cwd]).concat(["path"]).concat(libs);
-			if (haxelibHook != null) {
-				var r = haxelibHook(args);
+			if (Common.haxelibHook != null) {
+				var r = Common.haxelibHook(args);
 				return haxelibResult(r.code, inputList(r.stdout), inputList(r.stderr));
 			}
 			var proc = try new sys.io.Process("haxelib", args) catch (e:Dynamic) throw new UnixError(Std.string(e), "haxelib");
