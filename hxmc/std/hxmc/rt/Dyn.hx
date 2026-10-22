@@ -832,7 +832,8 @@ class Dyn {
 	static var fidToString = 0; // fid of "toString" + 1 (0: not looked up yet; -1 + 1: not a field name)
 
 	@:hxmc.host("hx_std_string") static function stdString(v:Dynamic):String {
-		#if hxmc.jit
+		// (macro: the macro context's copy, which macro code may inline)
+		#if (hxmc.jit || hxmc.interp || macro)
 		if (EvalCompat.on) return EvalCompat.string(v, 0);
 		#end
 		return str(v, 0);
