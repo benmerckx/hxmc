@@ -23,9 +23,12 @@ using StringTools;
 //   haxelib beside lix's haxe), which the compiler asks within a scope
 //   (the cpp generator's `haxelib path hxcpp`): the exit code, standard
 //   output and error.
-// haxelib is a Neko program: it runs with lix's Neko, as lix runs a Haxe
-// installation's haxelib (installed by lix's haxelib on first use, into the
-// scratch directory's root; the machine needs no Neko of its own).
+// haxelib runs as in the reference's installation (the machine needs no Haxe
+// or Neko of its own): with the installation's directory first on PATH (its
+// `haxe --version`, which haxelib asks for a library with documentation, the
+// reference's 5.x as Haxelib assumes the compiler's), and, a Neko program,
+// with lix's Neko as lix runs an installation's haxelib (installed by lix's
+// haxelib on first use, into the scratch directory's root).
 class LibResolution {
 	static var haxelib:String;
 	static var lix:String;
@@ -52,6 +55,7 @@ class LibResolution {
 		for (v in ["HAXELIB_PATH", "HAXELIB_DEV_FILTER", "HAXESHIM_SCOPE", "HAXE_ROOT", "HAXESHIM_LIBCACHE", "HAXE_LIBCACHE"])
 			Sys.putEnv(v, null);
 		Sys.putEnv("HAXESHIM_ROOT", '$dir/root');
+		Sys.putEnv("PATH", Path.directory(haxelib) + (Sys.systemName() == "Windows" ? ";" : ":") + Sys.getEnv("PATH"));
 		useLixNeko();
 		haxelibCases();
 		scopeCases();
