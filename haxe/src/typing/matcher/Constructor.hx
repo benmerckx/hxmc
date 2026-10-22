@@ -93,4 +93,11 @@ class Constructor {
 	};
 
 	public static function hash(con:ConstructorData):Int return Hashtbl.hash(con.kind);
+
+	public static function extractCtor(e:TExpr):Null<ConstructorKind> return switch e.eexpr {
+		case TConst(ct): ConConst(ct);
+		case TField(_, FEnum(en, ef)): ConEnum(en, ef);
+		case TCast(e1, null): extractCtor(e1);
+		case _: null;
+	};
 }

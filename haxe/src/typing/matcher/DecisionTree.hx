@@ -14,9 +14,34 @@ enum TypeFiniteness {
 	RunTimeFinite; // type is truly finite (Bool, enums)
 }
 
+// How a switch tests its scrutinee.
+enum MatchKind {
+	SKValue; // against constants, statics and types
+	SKEnum; // by the index of its enum constructor
+	SKLength(aa:typing.ArrayAccess.ArrayAccessData); // by its length, read the way this says (#8012)
+}
+
+// What a switch examines: a subject's expression and what the switch makes of it, see Subject.make_scrutinee.
+@:structInit class Scrutinee {
+	public var scrExpr:TExpr;
+	public var scrKind:MatchKind;
+	public var scrFiniteness:TypeFiniteness;
+	public var scrConstructors:Array<ConstructorData>; // the constructors of its type
+	public var scrNullable:Bool;
+
+	public inline function new(scrExpr:TExpr, scrKind:MatchKind, scrFiniteness:TypeFiniteness, scrConstructors:Array<ConstructorData>,
+			scrNullable:Bool) {
+		this.scrExpr = scrExpr;
+		this.scrKind = scrKind;
+		this.scrFiniteness = scrFiniteness;
+		this.scrConstructors = scrConstructors;
+		this.scrNullable = scrNullable;
+	}
+}
+
 enum DecisionTreeKind {
 	Leaf(caseData:CaseData);
-	Switch(subject:TExpr, cases:Array<DecisionSwitchCase>, defaultTree:DecisionTreeData);
+	Switch(scrutinee:Scrutinee, cases:Array<DecisionSwitchCase>, defaultTree:DecisionTreeData);
 	Bind(bindings:Array<Bind>, tree:DecisionTreeData);
 	Guard(expr:TExpr, thenTree:DecisionTreeData, elseTree:DecisionTreeData);
 	GuardNull(expr:TExpr, thenTree:DecisionTreeData, elseTree:DecisionTreeData);
@@ -65,6 +90,12 @@ class DecisionTree {
 
 	public static function makeBind(v:TVar, p:Pos, e:TExpr):Bind return makeBindGen(v, p, e, BindUsed);
 
+	public static function sMatchKind(k:MatchKind):String return switch k {
+		case SKValue: "value";
+		case SKEnum: "enum";
+		case SKLength(_): "length";
+	};
+
 	public static final tabString = "    ";
 
 	public static function toString(dt:DecisionTreeData):String {
@@ -99,8 +130,8 @@ class DecisionTree {
 			switch dt.dtT {
 				case Leaf(caseData):
 					if (caseData.caseExpr != null) printExprNoblock(tabs, caseData.caseExpr);
-				case Switch(e, cases, defaultTree):
-					addLine(tabs, "switch (" + sExpr(tabs, e) + ")");
+				case Switch(scrutinee, cases, defaultTree):
+					addLine(tabs, "switch " + sMatchKind(scrutinee.scrKind) + " (" + sExpr(tabs, scrutinee.scrExpr) + ")");
 					for (sc in cases) {
 						addLine(tabs + tabString, "case ");
 						buf.add(Constructor.toString(sc.scCon));
@@ -150,8 +181,9 @@ class DecisionTree {
 
 	public static function equal(dt1:DecisionTreeKind, dt2:DecisionTreeKind):Bool return switch [dt1, dt2] {
 		case [Leaf(c1), Leaf(c2)]: c1 == c2;
-		case [Switch(s1, c1, d1), Switch(s2, c2, d2)]: Texpr.equal(s1,
-				s2) && all2(function(a:DecisionSwitchCase,
+		case [Switch(s1, c1, d1), Switch(s2, c2, d2)]:
+			// What the switch makes of its scrutinee follows from the expression and the cases.
+			Texpr.equal(s1.scrExpr, s2.scrExpr) && all2(function(a:DecisionSwitchCase,
 					b:DecisionSwitchCase) return Constructor.equal(a.scCon, b.scCon) && a.scUnguarded == b.scUnguarded
 					&& equalDt(a.scDt, b.scDt),
 				c1, c2) && equalDt(d1, d2);
@@ -164,5 +196,11 @@ class DecisionTree {
 		case _: false;
 	};
 
-	public static function hash(dt:DecisionTreeKind):Int return core.ds.Hashtbl.hash(dt);
+	// port: the tuple (scr_expr, cases, dt) is hashed as an array.
+	public static function hash(dt:DecisionTreeKind):Int return switch dt {
+		case Switch(scrutinee, cases, d):
+			core.ds.Hashtbl.hash(([scrutinee.scrExpr, cases, d] : Array<Dynamic>));
+		case _:
+			core.ds.Hashtbl.hash(dt);
+	};
 }
