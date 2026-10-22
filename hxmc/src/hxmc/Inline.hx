@@ -50,9 +50,10 @@ class Inline {
 	// whether f may be inlined (the IR test); not a function that runs the
 	// collector (@:hxmc.collects): the calls in its body are to the
 	// collector's own no-GC code, during which its callers' shadow-stack
-	// slots would be taken to keep their values (MIns.keepsFrame)
+	// slots would be taken to keep their values (MIns.keepsFrame); not one
+	// without its body (FuncInfo.hostCode)
 	public static function candidate(f:FuncInfo):Bool {
-		if (f.hasTry || f.collects) return false;
+		if (f.hasTry || f.collects || f.hostCode) return false;
 		var n = 0;
 		function ex(e:Ex) {
 			if (++n > MAX_IR) return;

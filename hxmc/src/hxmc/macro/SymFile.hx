@@ -5,28 +5,30 @@ import haxe.io.Bytes;
 // A file of lines "name field...", sorted by name (<exe>.syms: Link writes
 // them so; <exe>.fps: Driver), looked up by a binary search over its bytes:
 // the jit compiler reads both at each start, 72k and 20k lines, which as
-// maps of strings took 0.56 G instructions and 40 ms. The lines' starts
-// are found at the first lookup, and the names looked up are remembered (a
-// build of many macros looks the same symbols up again at each step).
+// maps of strings took 0.56 G instructions and 40 ms. A probe takes the
+// line around the middle byte of the range left (no index of the lines'
+// starts: making one scanned both files, 0.06 G instructions at each
+// start), and the names looked up are remembered (a build of many macros
+// looks the same symbols up again at each step).
 class SymFile {
 	final b:Bytes;
-	var starts:Null<Array<Int>> = null;
 	final found = new Map<String, Int>();
 
 	function new(b:Bytes)
 		this.b = b;
 
-	function lines():Array<Int> {
-		var s = [];
-		var at = 0, n = b.length;
-		while (at < n) {
-			var e = at;
-			while (e < n && b.get(e) != "\n".code)
-				e++;
-			if (e > at) s.push(at);
-			at = e + 1;
-		}
-		return s;
+	// the start of the line holding byte i
+	inline function lineStart(i:Int):Int {
+		while (i > 0 && b.get(i - 1) != "\n".code)
+			i--;
+		return i;
+	}
+
+	// the start of the line after the one at p
+	inline function nextLine(p:Int):Int {
+		while (p < b.length && b.get(p) != "\n".code)
+			p++;
+		return p + 1;
 	}
 
 	public static function read(path:String):Null<SymFile>
@@ -53,18 +55,17 @@ class SymFile {
 	public function find(name:String):Int {
 		var r = found.get(name);
 		if (r != null) return r;
-		if (starts == null) starts = lines();
-		var s = starts;
-		var lo = 0, hi = s.length - 1;
+		// (the lines from lo, a line's start, to before hi)
+		var lo = 0, hi = b.length;
 		r = -1;
-		while (lo <= hi) {
-			var mid = (lo + hi) >> 1;
-			var c = compareName(name, s[mid]);
+		while (lo < hi) {
+			var p = lineStart((lo + hi) >> 1);
+			var c = compareName(name, p);
 			if (c == 0) {
-				r = s[mid];
+				r = p;
 				break;
 			}
-			if (c < 0) hi = mid - 1 else lo = mid + 1;
+			if (c < 0) hi = p else lo = nextLine(p);
 		}
 		found.set(name, r);
 		return r;
@@ -105,8 +106,14 @@ class HostSyms {
 		return f.find(name) >= 0;
 }
 
-// <exe>.fps: "symbol fingerprint" per line (none: no function the compiler's)
+// <exe>.fps: "symbol fingerprint flags" per line (none: no function the compiler's)
 class HostFps {
+	// the flags: what Facts found of the function (FuncInfo.noGc, blocks),
+	// and whether it may be inlined (Inline.candidate)
+	public static inline var NO_GC = 1;
+	public static inline var BLOCKS = 2;
+	public static inline var INLINE = 4;
+
 	final f:Null<SymFile>;
 
 	public function new(f:Null<SymFile>)
@@ -115,6 +122,15 @@ class HostFps {
 	public function get(name:String):Null<String> {
 		if (f == null) return null;
 		var p = f.find(name);
-		return p < 0 ? null : f.field(p, -1);
+		return p < 0 ? null : f.field(p, 1);
+	}
+
+	// the flags of the compiler's function of that symbol, -1 when it has none
+	public function flags(name:String):Int {
+		if (f == null) return -1;
+		var p = f.find(name);
+		if (p < 0) return -1;
+		var v = Std.parseInt(f.field(p, 2));
+		return v == null ? -1 : v;
 	}
 }

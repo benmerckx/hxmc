@@ -102,6 +102,11 @@ class Lower {
 	// `current`; each function takes its site from `pending` as it starts.
 	// (pending, current: symbols of the compiler's 32-bit data; wants: the functions that do)
 	public static var callSites:Null<{site:core.Globals.Pos->Int, pending:String, current:String, wants:FuncInfo->Bool}> = null;
+	// (-D hxmc.mir-macros: hxmc.interp.MacroRuntime) a static function of the
+	// runtime marked @:hxmc.hostCode, whose body was not typed: the native
+	// code of the compiler running this lowering is its code. What that code
+	// does (FuncInfo.noGc, blocks), or null when the compiler lacks it.
+	public static var hostCode:Null<FuncInfo->Null<{noGc:Bool, blocks:Bool}>> = null;
 	public var errors = new Map<String, {count:Int, example:String}>();
 	public var natives = new Map<String, Int>(); // runtime functions called, with counts
 
@@ -963,13 +968,22 @@ class Lower {
 		funcs.set(cf, fi);
 		prog.funcs.push(fi);
 		signature(fi, tf, null);
+		if (isCreateInstance(fi.name)) makers = true;
+		if (cf.cfMeta.length > 0 && hasMeta(":hxmc.hostCode", cf.cfMeta)) {
+			// (its body stands for the compiler's native code: never lowered;
+			// Facts takes what that code does instead of scanning it)
+			var h = hostCode == null ? null : hostCode(fi);
+			if (h == null) fail(fi.display + " has no body (@:hxmc.hostCode: the native code of the compiler that typed it), and this compiler lacks it");
+			fi.hostCode = true;
+			fi.gcScan = {gc: !h.noGc, here: h.blocks, addr: false, callees: [], names: []};
+			return fi;
+		}
 		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, cf);
 		pending.push(guarded(fi, () -> lowerBody(fi, cf, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.run(tf);
 			fl.finish();
 		})));
-		if (isCreateInstance(fi.name)) makers = true;
 		return fi;
 	}
 

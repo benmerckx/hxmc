@@ -626,14 +626,19 @@ class Driver {
 				// (each function's fingerprint: code loaded at run time calls this
 				// compiler's native function where its own is the same, interp.MirRun)
 				// (sorted by symbol, as the .syms: macro.SymFile looks them up in place)
+				// (and what callers of its native code need to know of it, which
+				// code loaded at run time calls without having its body:
+				// macro.SymFile.HostFps.flags, interp.MacroRuntime)
 				var fps = [];
 				for (f in prep.p.funcs) {
 					var fp = new Fingerprint(prep, null);
 					fp.func(f);
-					fps.push({sym: prep.funcSym(f), key: fp.key()});
+					var flags = (f.noGc ? hxmc.macro.SymFile.HostFps.NO_GC : 0) | (f.blocks ? hxmc.macro.SymFile.HostFps.BLOCKS : 0)
+						| (MirBuild.inlineCands != null && MirBuild.inlineCands.exists(f) ? hxmc.macro.SymFile.HostFps.INLINE : 0);
+					fps.push({sym: prep.funcSym(f), key: fp.key(), flags: flags});
 				}
 				fps.sort((a, b) -> a.sym < b.sym ? -1 : a.sym > b.sym ? 1 : 0);
-				sys.io.File.saveContent(out + ".fps", [for (x in fps) x.sym + " " + x.key + "\n"].join(""));
+				sys.io.File.saveContent(out + ".fps", [for (x in fps) x.sym + " " + x.key + " " + x.flags + "\n"].join(""));
 			}
 			exe;
 		};

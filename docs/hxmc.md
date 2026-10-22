@@ -28,7 +28,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `Target.hx`, `Abi.hx`, `CAbi.hx` | per-target facts; how each C ABI passes structs by value |
 | `MkStd.hx` | hxmc's std merged with the Eval originals (the macro context shares the program's class paths; a custom target gets no `_std` directory in the reference compiler) |
 | `macro/` | native macros, a prototype (`haxe` built with `-D hxmc.jit`, Linux x86-64; `-D hxmc.macros=native\|verify`): macro classes compiled by hxmc and linked into the running compiler, behind the macro engine seam `haxe/src/macros/MacroEngine.hx` ([plans/compiler.md](plans/compiler.md), "Native macros") |
-| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in a compiler built with `-D hxmc.jit`: `--interp`/`--run` (`-D hxmc.mir-run`, `MirRun.hx`) and macros (`-D hxmc.mir-macros`, `MirMacros.hx`; Macros on the Mir interpreter, below) |
+| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in a compiler built with `-D hxmc.jit`: `--interp`/`--run` (`-D hxmc.mir-run`, `MirRun.hx`) and macros (`-D hxmc.mir-macros`, `MirMacros.hx`; the runtime in their context: `MacroRuntime.hx`, `../MacroCuts.hx`; Macros on the Mir interpreter, below) |
 
 Conventions: references live across a GC point are shadow-stack slots
 (cold sites spill only on the slow path; a reference live across the slow
@@ -832,6 +832,24 @@ again (`--next`, the compilation server) starts a new generation of bundles,
 as Eval drops its prototypes, and a reused macro context runs its static
 initializers again (`EvalMain.doReuse`).
 
+The runtime in the macro context: hxmc's std loads all of it (`Std`
+imports `hxmc.rt.Runtime`), but a bundle never compiles a runtime function
+the compiler has (its native code runs it), so the macro context neither
+types nor parses most of it (`interp.MacroRuntime`). A static function of
+the runtime the compiler has, whose declared signature is all its callers
+need (no optional argument; its result's type written, or no value
+returned: Void) and that the Mir inliner does not copy into callers
+(`<exe>.fps`'s flags), gets a body that throws, marked `@:hxmc.hostCode`
+(`TypeBinding.untypedBodyHook`); `Lower` makes it a function without body
+whose facts (no GC point, safe region) are those of the compiler's code
+(`Lower.hostCode`). Its body is not parsed either: a compiler built with
+`-D hxmc.jit` also writes `<exe>.cuts` (`hxmc.MacroCuts`), for each file of
+the runtime the hash of its content and the ranges of those bodies, which
+the macro context blanks in a file of that content
+(`TypeloadParse.sourceHook`: `{throw "hxmc.cut";}` and spaces, the line
+breaks kept, so positions stay); a blanked body the macro context would type
+fails the build. `HXMC_MIR_TYPE_RUNTIME=1` types and parses all of it.
+
 Checked with upstream's unit suite: `UpstreamTargets` with the jit
 compiler as the port (`HAXE_IN_HAXE_PORT="bin/jit/haxe -D
 hxmc.mir-macros"`) compiles every target; the suite run (node, python3,
@@ -853,11 +871,16 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   the unit suite's macros take 440) and bundles are never unloaded:
   enough for `--next`, not yet for a long-lived compilation server.
 
-Cost (instructions, Intel Xeon E-2356G): the formatter benchmark built with
-json2object's macros, module cache off, 7.4 G (Eval: 3.8 G), the macro
-context's typing (hxmc's runtime among it) and the macros' compilation
-the difference; with the module cache, which keeps the macro context, an
-edit of the main module: 1.20 G (Eval: 1.06 G).
+Cost (instructions, Intel Xeon E-2356G, Linux 6.1), module cache off: a
+trivial macro (`macro 1` called from main, `--js`) 1.08 G (no macro 0.29 G,
+Eval 0.60 G; 1.50 G while the macro context typed and parsed the whole
+runtime); the formatter benchmark built with json2object's macros 7.05 G
+(Eval 3.6 G; was 7.58 G), the macros' compilation most of the difference
+(json2object's `DataBuilder` makes six functions of 10,000 to 38,000 Mir
+values: 70% of the time compiling for the interpreter). With the module
+cache, which keeps the macro context, an edit of the main module: the
+trivial macro 0.59 G (Eval 0.32 G; was 0.87 G), the formatter 1.15 G (Eval
+1.24 G; was 1.17 G).
 
 ## Targets
 

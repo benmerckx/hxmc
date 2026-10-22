@@ -146,9 +146,16 @@ class TypeloadParse {
 			// port: bytes that are not UTF-8 decode to lone surrogates, which the
 			// lexer rejects as upstream's does (syntax.Lexer.MalFormed)
 			contents = core.StringHelper.ofBytes(bytes);
+			// port: (sourceHook)
+			if (sourceHook != null) contents = sourceHook(com, rfile.file, contents);
 		}
 		return parseFileFromString(com, rfile.file, p, contents);
 	}
+
+	// port: (hxmc) a file's source as it is parsed, from its content: -D
+	// hxmc.mir-macros blanks bodies of the runtime the macro context never
+	// types (hxmc.MacroCuts, hxmc.interp.MacroRuntime)
+	public static var sourceHook:Null<(com:CommonContext, file:String, source:String) -> String> = null;
 
 	public static var parseHook:CommonContext->ResolvedFile->Pos->ParseResult<Package> = parseFile;
 
