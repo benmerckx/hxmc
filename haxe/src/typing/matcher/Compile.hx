@@ -105,7 +105,7 @@ class Compile {
 			case ConArray(0): [];
 			case ConArray(i):
 				var aa = ExprToPattern.getArrayAccess(m.ctx, e.etype, e.epos);
-				function get(ei:TExpr):TExpr return aa != null ? TyperBase.makeArrayGet(m.ctx, aa, e, ei,
+				function get(ei:TExpr):TExpr return aa != null ? typing.ArrayAccess.makeArrayGet(m.ctx, aa, e, ei,
 					e.epos) : Calls.accGet(m.ctx, Calls.arrayAccess(m.ctx, e, ei, MGet, e.epos));
 				[
 					for (i in 0...i) {

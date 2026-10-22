@@ -1553,6 +1553,8 @@ class Builder {
 
 	public static function makeLocal(v:TVar, p:Pos):TExpr return mk(TLocal(v), v.vType, p);
 
+	public static function makeArrayAccess(arr:TExpr, iexpr:TExpr, pt:T, p:Pos):TExpr return mk(TArray(arr, iexpr), pt, p);
+
 	public static function makeConstTexpr(b:BasicTypes, c:TConstant, p:Pos):TExpr return switch c {
 		case TString(s): makeString(b, s, p);
 		case TInt(i): makeInt(b, i, p);

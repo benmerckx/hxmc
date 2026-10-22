@@ -96,27 +96,16 @@ class ExprToPattern {
 			throw "assert";
 	};
 
-	// Array patterns apply to arrays, Dynamic and abstracts with a single `from` type leading to one of those. Other values
-	// can be matched by array patterns if they can be accessed by index like in `for` loops, and their length and elements
-	// are then read the same way (#8012). This returns how to access them, or None for values of the former types and for
-	// values which can't be accessed by index.
+	// Array patterns apply to values which can be accessed by index (#8012), and to abstracts with a single `from` type
+	// leading to an array or to Dynamic, whose patterns are typed against the `from` type. This returns how to access
+	// them, or None if values of type `t` can't be accessed by index.
 	//
 	// TODO: this is looked up for each array pattern here, then again for the same subject when compile.ml reads its
 	// elements and twice in texprConverter.ml. The decision tree stores a switch subject as a plain texpr, so what the
 	// subject is and how it is accessed is lost after pattern typing (which can't keep it: patterns are typed against
 	// per-case types). A subject that carries this would avoid the repeated lookups; see the discussion in #13070.
-	public static function getArrayAccess(ctx:Typer, t:T, p:Pos):Null<typing.TyperBase.ArrayAccessData> {
-		function isArray(seen:Array<T>, t:T):Bool return switch follow(t) {
-			case TInst({clPath: {pack: [], name: "Array"}}, [_]) | TDynamic(_):
-				true;
-			case ty = TAbstract(a, tl) if (!core.ds.ArrayTools.exists(seen, function(t) return shallowEq(ty, t))):
-				var froms = TyperBase.getAbstractFroms(ctx, a, tl);
-				if (froms.length == 1) isArray([ty].concat(seen), froms[0].type); else false;
-			case _:
-				false;
-		};
-		if (isArray([], t)) return null;
-		return try TyperBase.getArrayAccess(ctx, t, p) catch (ex:NotFound) null;
+	public static function getArrayAccess(ctx:Typer, t:T, p:Pos):Null<typing.ArrayAccess.ArrayAccessData> {
+		return try typing.ArrayAccess.getArrayAccess(ctx, t, p) catch (ex:NotFound) null;
 	}
 
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):PatternData {
