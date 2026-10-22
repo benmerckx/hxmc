@@ -69,6 +69,35 @@ class Loader {
 		xb = new Map();
 	}
 
+	// the methods the compiler's own classes override, under every class above
+	// the overriding one ("pack.C.name"): code loaded into the compiler is handed
+	// its objects (a compilation's streams), so its calls of those methods
+	// dispatch (Lower.hostOverrides), though no class it knows overrides them
+	public static function hostOverrides():Map<String, Bool> {
+		hostSyms();
+		var r = new Map<String, Bool>();
+		var types = Mem.sym("rt_types");
+		inline function entry(t:Int):Ptr
+			return types.add(t * TS);
+		for (t in Abi.T_FIRST...hostNtypes) {
+			var e = entry(t);
+			var s = hxmc.rt.Types.sup(e);
+			if (hxmc.rt.Types.tk(e) != hxmc.rt.Types.TK_CLASS || s < Abi.T_FIRST) continue;
+			for (i in 0...hxmc.rt.Types.nmethods(e)) {
+				var m = hxmc.rt.Types.method(e, i);
+				var above = @:privateAccess Dyn.findMethod(entry(s), hxmc.rt.Types.mFid(m));
+				if (above.isNull() || hxmc.rt.Types.mFn(above) == hxmc.rt.Types.mFn(m)) continue;
+				var n = @:privateAccess hxmc.rt.Names.fidStr(hxmc.rt.Types.mFid(m));
+				var k = s;
+				while (k >= Abi.T_FIRST && hxmc.rt.Types.tk(entry(k)) == hxmc.rt.Types.TK_CLASS) {
+					r.set(@:privateAccess hxmc.rt.Str.ofAscii(hxmc.rt.Types.name(entry(k))) + "." + n, true);
+					k = hxmc.rt.Types.sup(entry(k));
+				}
+			}
+		}
+		return r;
+	}
+
 	// the spare entries taken: types, signatures
 	public static function used():{types:Int, sigs:Int}
 		return {types: nextType - hostNtypes, sigs: nextSig - hostNsigs};
@@ -354,6 +383,10 @@ class Loader {
 		dbg("dispatch rows");
 		for (k in 0...selectors.length) {
 			var row = ptr(base + rowsAt + rowBytes * k);
+			// (the compiler's rows of the same selector first: the bundle's code is handed
+			// objects of the compiler's own classes, which only it implements: hostOverrides)
+			var hs = h.get(selectors[k].sym);
+			if (hs != null && hs.k == "d") LibC.memcpy(row, ptr(hs.v), (8 * (hostNtypes - Abi.T_FIRST) : I64));
 			var rows:Array<Dynamic> = selectors[k].rows;
 			for (r in rows)
 				Mem.setPtr(row, 8 * (num.get(r.ty) - Abi.T_FIRST), ptr(symAddr(r.fn)));
