@@ -1,0 +1,5 @@
+exit 0
+1799 aligned
+22 aligned aligned
+9 aligned
+10 aligned aligned

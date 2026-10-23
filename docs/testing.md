@@ -118,9 +118,11 @@ root shows) and compared with their golden files, which are frozen (the
 outputs of hxc, the C target hxmc came from): a new case gets one with
 `--bless` (checked by hand), a changed output is an edit of its golden file
 with the reason in the commit. A `// build-seconds: <n>` line of a case bounds
-the tool's time to build it (`BigInit`: a function of a thousand nested
-constructor calls, the shape of ml2hx's generated tables, once a minute of
-register allocation). `Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases
+the tool's time to build it, and the build is stopped there (`BigInit`: a
+function of a thousand nested constructor calls, the shape of ml2hx's
+generated tables, once a minute of register allocation; `StackAreas`: frame
+areas of sizes that are not multiples of 8, once a build that never ended).
+`Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases
 a target cannot run (threads and sockets on wasm32-wasi; `NullAccessCrash`, a
 fault that is not a null access, dies of SIGSEGV on Linux and macOS only:
 docs/hxmc.md, "Null access"). `Crosshost`: the tool as a WebAssembly module
