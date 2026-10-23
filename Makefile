@@ -44,7 +44,7 @@ PORT_BIN ?= bin/port/haxe
 # the reference compiler: the nightly build of the pinned upstream commit (`make reference`)
 REFERENCE ?= bin/reference/haxe
 # `make test`: the lanes, among hxb, macro, hxblib, display, server, jsonrpc,
-# interp, haxelib, debugger, targets, unit (TEST_LANES below; default hxb);
+# interp, haxelib, libs, debugger, targets, unit (TEST_LANES below; default hxb);
 # SHARD=i/n splits the debugger lane (EvalDebugger --shard)
 LANES ?= hxb
 SHARD ?=
@@ -129,7 +129,7 @@ endef
 
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
-	lix lix-dist reference test test-fuzz test-node-libs test-module-cache upstream-suites corpus-stage \
+	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
 	android-check android-device-check shared-check ios-check ios-sim-check native-macros dev-check \
 	bench bench-compile bench-micro measure wasmgc-check wasmgc-bench quick check full clean distclean
 
@@ -161,6 +161,7 @@ help:
 ##   test        the port against the reference, the lanes of LANES (default hxb; CI's conformance jobs):
 ##               hxb, macro, hxblib (HXB of the three case lists, Conformance; CASES_FILE for hxb),
 ##               display, server, jsonrpc, interp (--interp runs), haxelib (-L, batch and server),
+##               libs (hxmc's -lib resolution against haxelib and lix's haxe shim),
 ##               debugger (the Eval debugger; SHARD=i/n), targets (upstream's unit suite compiled for
 ##               each target by both, compared), unit (unit tests of port modules, in-process)
 ##   test-fuzz   the fuzzer on PORT_BIN: LANE (default diff:hxb), the kept programs, then N programs
@@ -179,8 +180,8 @@ help:
 ##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
 ##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
 ##               run on a simulator (a Mac), shared libraries of the glibc mode
-##   corpus-stage, test-node-libs  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
-##               -lib from node_modules with the npm package's compiler
+##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
+##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
 ##
 ## Bench (docs/testing.md, "Benchmarks")
 ##   bench       the HaxeBenchmarks cases on hxmc, C++, JVM, JS, HL/C and HL (hxmc/test/Bench.hx; BENCH_ARGS)
@@ -449,7 +450,7 @@ $(REFERENCE): bin/lix/lix
 CASES_FILE ?= haxe/test/conformance-cases.txt
 # the lanes of `make test` (LANES): the harness and its arguments of each
 # (haxe/test/*.hx, on EVAL's Eval), PORT_BIN against the reference
-TEST_LANES := hxb macro hxblib display server jsonrpc interp haxelib debugger targets unit
+TEST_LANES := hxb macro hxblib display server jsonrpc interp haxelib libs debugger targets unit
 LANE_hxb := Conformance -j $(JOBS) --cases $(CASES_FILE)
 LANE_macro := Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt
 LANE_hxblib := Conformance -j $(JOBS) --cases haxe/test/conformance-hxblib-cases.txt --hxb-lib
@@ -458,16 +459,19 @@ LANE_server := Server -j $(JOBS)
 LANE_jsonrpc := ServerJsonRpc
 LANE_interp := Interp -j $(JOBS)
 LANE_haxelib := Haxelib --server
+# (hxmc/test/LibResolution.hx: hxmc/src/hxmc/libs against haxelib, the reference's, and lix's haxe shim)
+LANE_libs = LibResolution --haxelib $(dir $(realpath $(REFERENCE)))haxelib --lix bin/lix/haxe
+LANE_CP_libs := -cp hxmc/src
 LANE_debugger := EvalDebugger $(if $(SHARD),--shard $(SHARD))
 LANE_targets := UpstreamTargets -j $(JOBS)
 # (unit: haxe/test/unit.hxml, the port's modules typed and run in-process: no
 # harness, no reference, no summary)
 SUMMARY_ARG = $(if $(SUMMARY),--summary "$(SUMMARY)")
-TEST_CMD = $(if $(filter unit,$(1)),$(EVAL) --cwd . haxe/test/unit.hxml,$(EVAL) -cp hxmc/test -cp haxe/test --run $(LANE_$(1)) $(SUMMARY_ARG))
+TEST_CMD = $(if $(filter unit,$(1)),$(EVAL) --cwd . haxe/test/unit.hxml,$(EVAL) -cp hxmc/test -cp haxe/test $(LANE_CP_$(1)) --run $(LANE_$(1)) $(SUMMARY_ARG))
 # (exported: the harnesses are command lists, which an assignment in front would not reach)
 TEST_ENV = export HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT=$(abspath $(PORT_BIN));
 # every lane runs, the failed ones named at the end (lix: -L's shim, the targets' libraries)
-test: $(PORT_BIN) $(REFERENCE) $(if $(filter haxelib targets,$(LANES)),bin/lix/lix)
+test: $(PORT_BIN) $(REFERENCE) $(if $(filter haxelib libs targets,$(LANES)),bin/lix/lix)
 	@$(if $(filter-out $(TEST_LANES),$(LANES)),echo "test: no lane $(filter-out $(TEST_LANES),$(LANES)) (LANES: $(TEST_LANES))"; exit 1; )ulimit -s unlimited 2>/dev/null || true; $(TEST_ENV) failed=; \
 	$(foreach l,$(LANES),echo '$(call TEST_CMD,$(l))'; $(call TEST_CMD,$(l)) || failed="$$failed $(l)";) \
 	if [ -n "$$failed" ]; then echo "test: failed:$$failed"; exit 1; fi
@@ -481,8 +485,8 @@ test-fuzz: $(firstword $(FUZZ)) $(PORT_BIN) $(REFERENCE)
 	$(FUZZ) -j $(JOBS) -n $(N) --port $(abspath $(PORT_BIN)) --lane $(LANE) || failed="$$failed random"; \
 	if [ -n "$$failed" ]; then echo "test-fuzz $(LANE): failed:$$failed"; exit 1; fi
 
-test-node-libs: bin/npm/native/$(HOST)/haxe
-	$(SCRIPT) NodeLibs
+test-libraries: bin/npm/native/$(HOST)/haxe
+	$(SCRIPT) Libraries
 
 test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 	$(SCRIPT) ModuleCacheCheck --haxe bin/npm/native/$(HOST)/haxe $(if $(PORT),--port)

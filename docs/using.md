@@ -77,25 +77,61 @@ Windows the WebAssembly path runs on node's WASI, whose gaps the launcher
 fills: `fd_readdir`, drive roots, Windows paths in arguments; checked in CI
 on Windows too.)
 
-## Libraries from npm
+## Libraries
 
-Libraries from npm: `-lib <name>` (also `-L`, `--library`, and in hxml files)
-finds Haxe libraries in node_modules. A package is one when its package.json
-has a `"haxe"` field, `{"name": "mylib", "classPath": "src", "hxml":
+Libraries: the compiler resolves `-lib <name>` (also `-L`, `--library`, and
+in hxml files) itself, without a `haxelib` or lix process
+(`hxmc/src/hxmc/libs`), from three places, as below: lix's scopes, npm
+packages and haxelib's repositories. Within a lix scope it resolves as lix's
+`haxe` shim would before calling the compiler; elsewhere as the compiler
+does through `haxelib path`, node_modules first.
+
+**lix's scopes.** The scope is the nearest `.haxerc` from the working
+directory up (or the one `HAXESHIM_SCOPE` names), else lix's global one,
+`$HAXESHIM_ROOT/.haxerc` (default `~/haxe`), when it exists; with neither,
+there is none. Its `"resolveLibs"` (`scoped` by default, `mixed` for the
+global scope) decides:
+
+- `scoped`, `mixed`: `haxe_libraries/<name>.hxml` beside the `.haxerc`,
+  read as lix reads it (one argument per line, a flag and its value split at
+  the first space, `${VAR}` from the environment, `HAXE_LIBCACHE`,
+  `SCOPE_DIR`, `CWD`, `__dirname`), with its `-lib` and hxml files
+  resolved in turn, in the place of the `-lib`;
+- `mixed`, `haxelib`: the others through haxelib (lix's root's
+  `haxelib` repository), after the build's arguments;
+- `scoped`: a library without its hxml is an error, unless node_modules has
+  it.
+
+Each library comes once per build (`--next` part), and a missing class path
+of a library is an error, as with lix. The `"version"` is not looked at (the
+compiler is the one running).
+
+**npm packages.** A package is a library when its package.json has a
+`"haxe"` field, `{"name": "mylib", "classPath": "src", "hxml":
 "extraParams.hxml"}` (`hxml` optional); `-lib` takes that name or the
 package's own (`-lib @scope/mylib`), and `-lib <name>:<version>` only that
 version. It expands as haxelib's libraries do: the hxml's lines, the class
 path, `-D <name>=<version>`, then its dependencies (the packages of its
 `dependencies` and `peerDependencies` that have a `"haxe"` field), each
-library once. For each name, in this order: lix's `haxe_libraries/<name>.hxml`
-in the working directory or a parent (left to haxelib, which is lix's shim
-there), else the nearest `node_modules` holding it (from the working
-directory up, as node looks), else haxelib, as before. The compiler does this
-itself (`hxmc/src/hxmc/NodeLibs.hx`), so it works without node too
-(`node_modules/.bin/haxe` as the native compiler); lix's own `haxe` shim
-resolves every `-lib` itself before the compiler sees it (from
-`haxe_libraries`, or through `haxelib path`), so through it a library from
-npm needs a `haxe_libraries/<name>.hxml` of its own.
+library once. The nearest `node_modules` holding it counts (from the working
+directory up, as node looks): after a lix scope's hxml, before haxelib.
+
+**haxelib.** What `haxelib path` answers (haxelib 4.2.0, the version upstream
+ships): a `.haxelib` repository in the working directory or a parent, else
+the global one (`HAXELIB_PATH`, `~/.haxelib`, ...); `name:version`, the
+dev path or the current version; haxelib.json's class path and
+dependencies, `extraParams.hxml`, `ndll/`; haxelib's messages.
+
+The cpp generator's `haxelib path hxcpp` (`hxcpp=` in `Options.txt`) is
+answered the same way: within a lix scope as lix's `haxelib` shim answers it
+(from `haxe_libraries/hxcpp.hxml`), elsewhere as haxelib does. Running a
+library (`haxelib run hxcpp`, `haxelib run hashlink`, the native builds)
+still needs haxelib or lix.
+
+All of it works without node (`node_modules/.bin/haxe` as the native
+compiler) and without lix or haxelib installed. Run through lix's own `haxe`
+shim (the `dist/` version below), the shim resolves the libraries before the
+compiler sees them, the same way.
 
 ## Editors and lix
 

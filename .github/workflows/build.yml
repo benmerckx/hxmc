@@ -36,7 +36,8 @@
 #     ios-sim-check; not required yet: continue-on-error).
 # - conformance: the port against the reference (make test LANES=..., make
 #   test-fuzz LANE=..., on the release binary's Eval): HXB of the upstream
-#   suites, macro and library cases, the port's unit tests, display requests,
+#   suites, macro and library cases (and hxmc's -lib resolution against
+#   haxelib and lix), the port's unit tests, display requests,
 #   the compilation server and its JSON-RPC methods, upstream's target suites
 #   compiled by both and compared file by file, the Eval debugger and the
 #   fuzzer's lanes, the last two in shards (haxe/test).
@@ -52,7 +53,7 @@
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
 # - npm: the nine packages (@hxmc/cli, its six platform packages, @hxmc/wasm,
 #   @hxmc/source) installed in fresh projects on each target's machine: native
-#   at once, -lib from node_modules, --ignore-scripts; and on linux-x64 (on
+#   at once, -lib (lix's scopes, node_modules, haxelib), --ignore-scripts; and on linux-x64 (on
 #   all six on main, tags and nightly, before publish-npm) lix, the
 #   WebAssembly fallback (downloaded, installed) and hxmc-rebuild;
 #   publish-npm publishes them on v* tags and (as nightlies) from main.
@@ -487,14 +488,14 @@ jobs:
           esac
           make npm NPM_VERSION=$v
           echo "$v" > bin/npm/VERSION
-          # -lib from node_modules (and the npm job's copy of the test)
-          make test-node-libs
-          cp hxmc/test/NodeLibs.hx bin/npm/
+          # -lib: lix's scopes, node_modules, haxelib (and the npm job's copy of the test)
+          make test-libraries
+          cp hxmc/test/Libraries.hx bin/npm/
           # what WebAssembly programs see of the file system (the npm job on Windows)
           bin/hxmc/hxmc bin/npm/probe.wasm -cp hxmc/test -main WasiProbe -cp bin/hxmc/std --custom-target hxmc -D hxmc.target=wasm32-wasi
           cat bin/npm/sizes.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
-        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/NodeLibs.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
+        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
 
   # the website (site/, make site): its pages, their JavaScript, the
   # playground's WebAssembly, lix under tools/, the benchmark history and the
@@ -671,7 +672,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {suite: hxb macro hxblib haxelib unit}
+          - {suite: hxb macro hxblib haxelib libs unit}
           - {suite: display server jsonrpc}
           - {suite: targets}
           - {suite: debugger, shard: 1/3}
@@ -1086,7 +1087,7 @@ jobs:
   # the npm packages in fresh projects, on each target's machine (every
   # package installed before publish-npm publishes them): @hxmc/cli with its
   # platform package (native at once, node_modules/.bin/haxe the native
-  # compiler on Unix; -lib from node_modules; with --ignore-scripts after the
+  # compiler on Unix; -lib from lix's scopes, node_modules and haxelib; with --ignore-scripts after the
   # first call) on all six every run; and the full set on linux-x64 (on all
   # six on main, tags and nightly: changes.outputs.npm_full): lix with
   # dist/; the WebAssembly fallback (no platform package: @hxmc/wasm downloaded
@@ -1150,14 +1151,14 @@ jobs:
           time npx haxe build.hxml
           if [ "$RUNNER_OS" = Windows ]; then ./bin/app.exe; ls -l node_modules/@hxmc/cli/dist/haxe.exe; else ./bin/app; fi
           npx haxe -cp src -main Js --js main.js && node main.js
-      # -lib from node_modules (hxmc/test/NodeLibs.hx), by the native compiler
-      # run without node (npm's link to it on Unix, dist/haxe.exe on Windows)
-      - name: -lib from node_modules
+      # -lib: lix's scopes, node_modules, haxelib (hxmc/test/Libraries.hx), by the
+      # native compiler run without node (npm's link to it on Unix, dist/haxe.exe on Windows)
+      - name: -lib from lix's scopes, node_modules, haxelib
         run: |
           set -ex
           cd "$RUNNER_TEMP/app"
           if [ "$RUNNER_OS" = Windows ]; then hx="$PWD/node_modules/@hxmc/cli/dist/haxe.exe"; else hx="$PWD/node_modules/.bin/haxe"; fi
-          "$hx" -cp "$GITHUB_WORKSPACE/dl" --run NodeLibs --haxe "$hx" --dir "$RUNNER_TEMP/node-libs"
+          "$hx" -cp "$GITHUB_WORKSPACE/dl" --run Libraries --haxe "$hx" --dir "$RUNNER_TEMP/libraries"
       - name: With --ignore-scripts, the first call installs the native compiler
         if: runner.os != 'Windows'
         run: |

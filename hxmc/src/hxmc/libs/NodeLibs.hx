@@ -1,4 +1,4 @@
-package hxmc;
+package hxmc.libs;
 
 import haxe.io.Path;
 import sys.FileSystem;
@@ -6,45 +6,38 @@ import sys.io.File;
 
 using StringTools;
 
-// `-lib <name>` (-L, --library, also in hxml files) from node_modules, for the
-// npm package's compiler (hxmc.HaxeMain installs it as compiler.HighLevel's
-// libraryHook; docs/using.md). For each library, in this order:
-// - lix's: a haxe_libraries/<name>.hxml in the working directory or a parent
-//   leaves it to haxelib (lix's haxelib shim reads that file);
-// - an npm package: the nearest node_modules, from the working directory up
-//   as node looks, holding a package whose package.json has a "haxe" field,
-//   {"name": "hxmc.gfx", "classPath": "src", "hxml": "extraParams.hxml"}
-//   ("hxml" optional), named <name> there (or <name> is the package's own
-//   name); `-lib <name>:<version>` takes it only at that version;
-// - else haxelib, as before (the name is passed on unchanged).
-// A package expands as haxelib's output does: its hxml's lines, its class
-// path (absolute), -D <name>=<version>, then its dependencies: the packages
-// of its "dependencies" and "peerDependencies" (found from its directory, as
-// node does) that have a "haxe" field, recursively; each package once.
+// `-lib <name>` from node_modules (Libraries asks it after lix's scope and
+// before haxelib; docs/using.md): the nearest node_modules, from the working
+// directory up as node looks, holding a package whose package.json has a
+// "haxe" field, {"name": "hxmc.gfx", "classPath": "src", "hxml":
+// "extraParams.hxml"} ("hxml" optional), named <name> there (or <name> is
+// the package's own name); `-lib <name>:<version>` takes it only at that
+// version. A package expands as haxelib's output does: its hxml's lines, its
+// class path (absolute), -D <name>=<version>, then its dependencies: the
+// packages of its "dependencies" and "peerDependencies" (found from its
+// directory, as node does) that have a "haxe" field, recursively; each
+// package once per NodeLibs.
 class NodeLibs {
-	// libs (haxelib's names) -> {lines: haxelib path's lines for those found
-	// here, rest: the others, for haxelib}
-	public static function resolve(libs:Array<String>, cwd:String):{lines:Array<String>, rest:Array<String>} {
-		var r = new NodeLibs(cwd);
-		var rest = [];
-		for (lib in libs) {
-			var colon = lib.indexOf(":");
-			var name = colon < 0 ? lib : lib.substr(0, colon);
-			var version = colon < 0 ? null : lib.substr(colon + 1);
-			var pkg = r.lix(name) ? null : r.find(name);
-			if (pkg == null || (version != null && version != pkg.version)) rest.push(lib) else r.add(pkg);
-		}
-		return {lines: r.lines, rest: rest};
-	}
-
 	final cwd:String;
-	final lines:Array<String> = [];
 	final added = new Map<String, Bool>();
 	// package.json of a package directory (null: none, or no "haxe" field)
 	final pkgs = new Map<String, Null<Pkg>>();
 
-	function new(cwd:String) {
+	public function new(cwd:String) {
 		this.cwd = Path.removeTrailingSlashes(Path.normalize(cwd));
+	}
+
+	// lib (haxelib's name[:version]) -> haxelib path's lines for it (empty:
+	// added before), or null when node_modules does not have it
+	public function resolve(lib:String):Null<Array<String>> {
+		var colon = lib.indexOf(":");
+		var name = colon < 0 ? lib : lib.substr(0, colon);
+		var version = colon < 0 ? null : lib.substr(colon + 1);
+		var pkg = find(name);
+		if (pkg == null || (version != null && version != pkg.version)) return null;
+		var lines = [];
+		add(pkg, lines);
+		return lines;
 	}
 
 	// a directory and its parents (normalized: "/" separators)
@@ -64,18 +57,12 @@ class NodeLibs {
 		return out;
 	}
 
-	function lix(name:String):Bool {
-		for (d in dirs(cwd))
-			if (FileSystem.exists('$d/haxe_libraries/$name.hxml')) return true;
-		return false;
-	}
-
 	function pkg(dir:String):Null<Pkg> {
 		if (pkgs.exists(dir)) return pkgs.get(dir);
 		var p:Null<Pkg> = null;
 		var text = try File.getContent('$dir/package.json') catch (_:Dynamic) null;
 		if (text != null) {
-			var json:Dynamic = try haxe.Json.parse(text) catch (e:Dynamic) throw new core.ds.ArgumentError('$dir/package.json: $e');
+			var json:Dynamic = try haxe.Json.parse(text) catch (e:Dynamic) throw new Scope.LibraryError('$dir/package.json: $e');
 			var h:Dynamic = Reflect.field(json, "haxe");
 			if (h != null) {
 				var deps = [];
@@ -144,12 +131,12 @@ class NodeLibs {
 		return null;
 	}
 
-	function add(p:Pkg) {
+	function add(p:Pkg, lines:Array<String>) {
 		if (added.exists(p.dir)) return;
 		added.set(p.dir, true);
 		if (p.hxml != null) {
 			var file = Path.isAbsolute(p.hxml) ? p.hxml : '${p.dir}/${p.hxml}';
-			var text = try File.getContent(file) catch (_:Dynamic) throw new core.ds.ArgumentError('${p.dir}/package.json: the hxml file $file is missing');
+			var text = try File.getContent(file) catch (_:Dynamic) throw new Scope.LibraryError('${p.dir}/package.json: the hxml file $file is missing');
 			for (l in text.split("\n")) {
 				var l = l.trim();
 				if (l != "" && !l.startsWith("#")) lines.push(l);
@@ -160,7 +147,7 @@ class NodeLibs {
 		lines.push("-D " + p.name + (p.version == null ? "" : "=" + p.version));
 		for (dep in p.deps) {
 			var d = dependency(p.dir, dep);
-			if (d != null) add(d);
+			if (d != null) add(d, lines);
 		}
 	}
 }
