@@ -845,7 +845,7 @@ a type by its module and name. Plans: [plans/compiler.md](plans/compiler.md)
 ## Macros on the Mir interpreter
 
 `-D hxmc.mir-macros`, in a compiler built with `-D hxmc.jit` (`bin/jit/haxe`;
-any target but windows-x86_64, below; the native macros of
+the six native targets, below; the native macros of
 `-D hxmc.macros=native|verify` are linux-x86_64's only): macros run on the Mir interpreter (`hxmc.rt.Interp`), not
 Eval. The macro context is typed for hxmc (its std in front, the hxmc
 custom target: `MirMacros.setupPlatform`); a macro function is lowered and
@@ -892,13 +892,27 @@ The call-outs, the pools and the accessors are Mir, compiled into the
 compiler by the target's own back end when it is linked with `-D hxmc.jit`
 (0.33 MB of code: the register pools' entries are 32 bytes each), so a
 platform needs no machine code of its own for them: the per-ABI part is
-`InterpAbi`'s, written for conventions whose integer and float arguments
-take registers independently (System V x86-64, AAPCS64); Win64, which
-assigns them by position, needs a variant per pattern of the first four
-arguments (not written yet). So the jit compiler builds for linux-arm64,
-macos-arm64, macos-x86_64 and windows-arm64 as for linux-x86_64 (the
-linux-arm64 one passes the macro conformance and the mir-run corpus under
-qemu); the macro context and `--run` take the compiler's own target. The compiler carries the table of its
+`InterpAbi`'s. Each of those functions takes every argument register,
+then stack words, whatever the function behind it takes
+(`CallConv.ALL_REGS`): where integer and float arguments take registers
+independently (System V x86-64, AAPCS64) that is the convention's own
+placement; Win64 assigns them by position (rcx or xmm0 for the first, ...),
+and there the entries take both registers of each of the first four
+positions, so one pool serves every signature, and the call-outs pass both
+from the argument's word (a variadic callee reads a float from the integer
+register too). Apple's arm64 packs stack arguments by their C size and puts
+variadic ones on the stack, both carried by the image's stack words as
+they are; x18, the platform's register on Apple and Windows, is never
+allocated. The macro context and `--run` take the compiler's own target.
+The jit compiler is cross-built for linux-x86_64, linux-arm64,
+macos-x86_64, macos-arm64, windows-x86_64 and windows-arm64 (`make
+jit-release TARGET=<target>`), and CI's test jobs run it on each target's
+machine (the Mir lane): the corpus in it (`Corpus --mir-run`, as `make
+mir-run-check`; the cases known to fail there: `Corpus.MIR_RUN_KNOWN`),
+the macro cases with Mir macros against the reference (as `make
+mir-macros-check`: 66 of 67, Issue11631 uses Eval's `mbedtls`), and a
+benchmark macro and the formatter's build timed against Eval
+(`MirBench`). The compiler carries the table of its
 symbols, its functions' fingerprints and flags and the cuts below as data
 (`macro.HostTable`: 63,450 symbols, 1.5 MB, made at its link; the values
 are relocations of the image, so the system's loader moves them with it;

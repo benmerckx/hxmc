@@ -62,6 +62,18 @@ class CallConv {
 	// where a callee finds the address to store a struct result at (arm64:
 	// x8); -1: it is a first argument
 	public var sretReg(default, null) = -1;
+	// whether arguments take registers by position (Win64: each of the first
+	// four in rcx, rdx, r8, r9 or xmm0-3, the other kind of its position unused)
+	public var positional(default, null) = false;
+
+	// the `variadic` of a call, and of a function's parameters with
+	// MFunc.allRegs: a signature of every argument register (argGprs.length
+	// I64s, then argFprs F64s), then stack words, placed in all of them.
+	// System V and AAPCS64 place such a signature that way anyway; Win64 puts
+	// the I64s in rcx, rdx, r8, r9, the F64s in xmm0-3 (both registers of each
+	// of the four positions) and the stack words at positions 4 on
+	// (interp.InterpAbi)
+	public static inline var ALL_REGS = -2;
 
 	public static function of(abi:Abi):CallConv
 		return abi.arm ? new Aapcs64(abi.os == "macos", abi.os == "windows") : x64(abi.os == "windows");
@@ -81,7 +93,7 @@ class CallConv {
 
 	// the parameters of a function
 	public inline function params(m:MFunc):Placement
-		return place(m.params, m.params.length, m.cParams, m.cParamSizes, -1);
+		return place(m.params, m.params.length, m.cParams, m.cParamSizes, m.allRegs ? ALL_REGS : -1);
 
 	// the register of a scalar result
 	public inline function result(float:Bool):Int
@@ -164,10 +176,17 @@ class Win64 extends CallConv {
 		calleeSaved = vector(3, 5, 6, 7, 12, 13, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
 		callResults = vector(0, 2, 16, 17);
 		intResults = vector(0, 2);
+		positional = true;
 	}
 
 	override public function place(tys:Vector<MTy>, n:Int, groups:Vector<Int>, sizes:Vector<Int>, variadic:Int):Placement {
 		var p = new Placement(n);
+		if (variadic == CallConv.ALL_REGS) {
+			for (k in 0...n)
+				p.locs[k] = k < 4 ? new ArgLoc(argGprs[k]) : k < 8 ? new ArgLoc(argFpr0 + k - 4) : ArgLoc.stack(8 * (k - 4), 8);
+			p.stack = 8 * (n > 8 ? n - 4 : 4);
+			return p;
+		}
 		for (k in 0...n) {
 			if (k >= 4) {
 				p.locs[k] = ArgLoc.stack(8 * k, 8);

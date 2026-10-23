@@ -370,6 +370,8 @@ class MFunc {
 	// cRet its parts (MIns.cRet)
 	public var structRet = false;
 	public var cRet:Vector<CAbi.CPart> = vector();
+	// its parameters are every argument register, then stack words (CallConv.ALL_REGS)
+	public var allRegs = false;
 	public var entry:MBlock;
 	var marks = 0;
 	var cfgOf:Null<Cfg<MBlock>>;

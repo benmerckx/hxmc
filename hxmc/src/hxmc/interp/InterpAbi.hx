@@ -15,9 +15,9 @@ import hxmc.CallConv.ArgLoc;
 // like any other (`thunks`): nothing here is machine code.
 //
 // The image (byte offsets): the integer argument registers in the calling
-// convention's order (8 words: x86-64's 6 used), the float ones (8 words),
-// then STACK_WORDS words of stack arguments as the ABI lays them out
-// (Placement.off), then the callee's address (call-outs). A call's results
+// convention's order (8 words: System V's 6 used, Win64's 4), the float ones
+// (8 words), then STACK_WORDS words of stack arguments as the ABI lays them
+// out (Placement.off; Win64: after the shadow space), then the callee's address (call-outs). A call's results
 // come back in the first 4 words: the first two integer and the first two
 // float result registers.
 //
@@ -40,25 +40,35 @@ import hxmc.CallConv.ArgLoc;
 //   integer. Pool entries are given out once, when a function's address is
 //   first needed (Loader), and never taken back.
 //
-// This works on any ABI whose integer and float arguments take registers
-// independently of each other and whose struct results come back in the
-// registers of their parts, as System V x86-64 (Linux, macOS) and AAPCS64
-// (Linux, Android, macOS, iOS). Per ABI (`variadic`):
-// - System V: a variadic callee reads al; the call-outs set it (variadic
-//   from the stack words on).
-// - AAPCS64 (Apple): stack arguments are packed by their C size: the image
-//   holds them at their byte offsets (Placement.off), which the stack words
-//   carry as they are. A C function returning a struct through x8 (no
-//   registers: MIns.structRet with empty cRet) needs a call-out that passes
-//   x8: not written yet (InterpGen rejects such a call).
-// - AAPCS64 (Windows): a variadic call passes floats as integers: the
-//   call-outs must not be variadic there.
-// - Win64: arguments take registers by position (rcx or xmm0 for the first,
-//   ...), so one signature cannot take both kinds of a position: entries and
-//   call-outs need one variant per pattern of the four register positions
-//   (16, by the kinds of the first four arguments), and a variadic callee
-//   reads a float from both registers of its position (ArgLoc.gpr). Not
-//   written yet (`supported`).
+// The call-outs, the common functions and the entries take every argument
+// register, then the stack words (CallConv.ALL_REGS, MFunc.allRegs): one
+// signature whatever the function behind them takes. The result registers
+// come back as the parts of a struct result in hxmc's own registers for them
+// (CallConv.structResult), whatever the ABI returns a C struct in. Per ABI:
+// - System V x86-64 (Linux, macOS): a variadic callee reads al; the
+//   call-outs set it (variadic from the stack words on).
+// - AAPCS64 (Linux, Android, macOS, iOS, Windows): x18 is the platform's
+//   register, which no function here uses (a64.Isel). A C function returning
+//   a struct through x8 (no registers: MIns.structRet with empty cRet) needs
+//   a call-out that passes x8: not written yet (InterpGen rejects such a
+//   call).
+//   - Apple: stack arguments are packed by their C size, and a variadic
+//     argument takes an 8-byte stack slot: the image holds each at its byte
+//     offset (Placement.off), which the stack words carry as they are (the
+//     entries' and call-outs' stack words are 8 bytes each, packed
+//     the same).
+//   - Windows: a variadic call passes floats as integers (ArgLoc.bits), in
+//     the integer registers' words: the call-outs are not variadic.
+// - Win64: arguments take registers by position, the first four each in
+//   rcx, rdx, r8, r9 or xmm0-3 by its kind, the rest on the stack after 32
+//   bytes of shadow space. ALL_REGS places the call-outs', common functions'
+//   and entries' integer parameters in rcx-r9 and float ones in xmm0-3, both
+//   registers of each position: an entry takes what its caller passed in
+//   either, and a call-out passes both. Interpreted code leaves a call's
+//   first four arguments in the integer words by position (`outSlot`),
+//   which the call-outs pass in both registers of the position: a variadic
+//   callee, which reads a float from the integer register (ArgLoc.gpr), sees
+//   it too. The image's stack words are the stack positions from 4 on.
 @:access(hxmc.MirBuild)
 @:access(hxmc.MirWriter)
 class InterpAbi {
@@ -88,24 +98,56 @@ class InterpAbi {
 
 	// whether the target's convention is one of those above
 	public static function supported(abi:Abi):Bool
-		return !abi.wasm && (abi.arm || abi.os != "windows");
+		return !abi.wasm;
 
 	static function check(abi:Abi) {
-		if (!supported(abi)) throw new MirBuild.Unsupported("-D hxmc.jit: interpreted code loaded at run time on " + abi.name + " (hxmc.interp.InterpAbi: Win64 is not written yet)");
+		if (!supported(abi)) throw new MirBuild.Unsupported("-D hxmc.jit: interpreted code loaded at run time on " + abi.name + " (hxmc.interp.InterpAbi)");
 	}
 
-	// the first variadic argument of a call-out (System V: al bounds the float registers used), -1: none
+	// the first variadic argument of a call-out (System V: al bounds the float
+	// registers used; Win64: every register, CallConv.ALL_REGS), -1: none
 	static function variadic(abi:Abi, cc:CallConv):Int
-		return !abi.arm && abi.os != "windows" ? cc.argGprs.length + cc.argFprs : -1;
+		return cc.positional ? CallConv.ALL_REGS : !abi.arm ? cc.argGprs.length + cc.argFprs : -1;
 
-	// where an argument travels, as a byte offset in the image; -1: not there
-	// (an argument on the stack beyond the image's stack words)
+	// the bytes of a stack argument's offset (Placement.off) before the
+	// image's first stack word (Win64: the shadow space)
+	static inline function stackSkip(cc:CallConv):Int
+		return cc.positional ? 32 : 0;
+
+	// where an argument of a function entered through the pools travels, as a
+	// byte offset in the image; -1: not there (an argument on the stack beyond
+	// the image's stack words)
 	public static function slot(cc:CallConv, loc:ArgLoc, float:Bool):Int {
-		if (loc.reg < 0) return loc.off + loc.size <= 8 * STACK_WORDS ? STACK + loc.off : -1;
+		if (loc.reg < 0) {
+			var off = loc.off - stackSkip(cc);
+			return off >= 0 && off + loc.size <= 8 * STACK_WORDS ? STACK + off : -1;
+		}
 		if (loc.reg >= cc.argFpr0 && loc.reg < cc.argFpr0 + cc.argFprs && !loc.bits) return FPR + 8 * (loc.reg - cc.argFpr0);
 		for (k in 0...cc.argGprs.length)
 			if (cc.argGprs[k] == loc.reg) return GPR + 8 * k;
 		return -1;
+	}
+
+	// where an argument of a call-out goes, as a byte offset in the image; -1:
+	// not there. Win64: a register argument in the integer word of its
+	// position, passed in both registers of the position (a variadic float
+	// with them: ArgLoc.gpr)
+	public static function outSlot(cc:CallConv, loc:ArgLoc, float:Bool):Int {
+		if (cc.positional && loc.reg >= 0) {
+			if (loc.reg >= cc.argFpr0) return loc.reg < cc.argFpr0 + cc.argFprs ? GPR + 8 * (loc.reg - cc.argFpr0) : -1;
+			for (k in 0...cc.argGprs.length)
+				if (cc.argGprs[k] == loc.reg) return GPR + 8 * k;
+			return -1;
+		}
+		return loc.gpr >= 0 ? -1 : slot(cc, loc, float);
+	}
+
+	// whether a placement puts an argument on the stack (the pools and
+	// call-outs with stack words; Win64 always reserves the shadow space)
+	public static function onStack(pl:CallConv.Placement):Bool {
+		for (l in pl.locs)
+			if (l != null && l.reg < 0) return true;
+		return false;
 	}
 
 	// the result word a struct part's register lands in
@@ -130,10 +172,11 @@ class InterpAbi {
 		return ps;
 	}
 
-	// the image's byte offset of parameter k of regParams
-	static function paramOffset(cc:CallConv, k:Int):Int {
+	// the image's byte offset of parameter k of regParams (a call-out's: Win64
+	// passes a position's two registers from its integer word, outSlot)
+	static function paramOffset(cc:CallConv, k:Int, out:Bool):Int {
 		var ng = cc.argGprs.length, nf = cc.argFprs;
-		return k < ng ? GPR + 8 * k : k < ng + nf ? FPR + 8 * (k - ng) : STACK + 8 * (k - ng - nf);
+		return k < ng ? GPR + 8 * k : k < ng + nf ? (out && cc.positional ? GPR : FPR) + 8 * (k - ng) : STACK + 8 * (k - ng - nf);
 	}
 
 	// the functions of the compiler (built with -D hxmc.jit) that code loaded
@@ -185,7 +228,7 @@ class InterpAbi {
 		var tys = regParams(cc, stack);
 		return MirBuild.synthetic(prep, abi, stack ? CALLOUT_S : CALLOUT_R, vector(I64, I64), I64, (b, ps) -> {
 			var img = ps[1];
-			var xs = [for (k in 0...tys.length) b.load(tys[k], 8, img, paramOffset(cc, k))];
+			var xs = [for (k in 0...tys.length) b.load(tys[k], 8, img, paramOffset(cc, k, true))];
 			var fn = b.load(I64, 8, img, FN);
 			// (the result's address: the struct result's, the image itself)
 			xs.push(img);
@@ -206,23 +249,29 @@ class InterpAbi {
 	static function common(prep:Prep, abi:Abi, cc:CallConv, kind:String, float:Bool, stack:Bool):MFunc {
 		var tys = regParams(cc, stack);
 		var params = Vector.fromArrayCopy(tys.concat([I32]));
-		return MirBuild.synthetic(prep, abi, "hxmc_interp_pc$" + kind, params, float ? F64 : I64, (b, ps) -> {
+		var mf = MirBuild.synthetic(prep, abi, "hxmc_interp_pc$" + kind, params, float ? F64 : I64, (b, ps) -> {
 			var img = b.stackAddr(b.f.slot(IMAGE_BYTES, 16));
 			for (k in 0...tys.length)
-				b.store(8, img, paramOffset(cc, k), ps[k]);
+				b.store(8, img, paramOffset(cc, k, false), ps[k]);
 			var r = b.call(ENTER, vector(ps[tys.length], img), I64);
 			b.ret(float ? b.op1(BitsToF, F64, r) : r);
 		});
+		mf.allRegs = true;
+		return mf;
 	}
 
 	// entry k of a pool: its arguments as they came, and k, to the common function
 	static function entry(prep:Prep, abi:Abi, cc:CallConv, kind:String, float:Bool, stack:Bool, k:Int, number:Int):MFunc {
 		var tys = Vector.fromArrayCopy(regParams(cc, stack));
-		return MirBuild.synthetic(prep, abi, entryName(kind, k), tys, float ? F64 : I64, (b, ps) -> {
+		var mf = MirBuild.synthetic(prep, abi, entryName(kind, k), tys, float ? F64 : I64, (b, ps) -> {
 			var xs = [for (p in ps) p];
 			xs.push(b.iconst(number));
-			b.ret(b.call("hxmc_interp_pc$" + kind, Vector.fromArrayCopy(xs), float ? F64 : I64));
+			var r = b.call("hxmc_interp_pc$" + kind, Vector.fromArrayCopy(xs), float ? F64 : I64);
+			b.f.vals[r].variadic = CallConv.ALL_REGS;
+			b.ret(r);
 		});
+		mf.allRegs = true;
+		return mf;
 	}
 
 	// the host's thread-local variables' accessors (hxmc_tls_get$<name>() and hxmc_tls_set$<name>(v))
