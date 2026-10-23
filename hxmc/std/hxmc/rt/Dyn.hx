@@ -844,8 +844,13 @@ class Dyn {
 
 	@:hxmc.host("hx_std_string") static function stdString(v:Dynamic):String {
 		// (macro: the macro context's copy, which macro code may inline)
-		#if (hxmc.jit || hxmc.interp || macro)
+		// (and code that runs as Eval's: interpreted, or a Mir host's, EvalCompat)
+		#if (hxmc.interp || macro)
 		if (EvalCompat.on) return EvalCompat.string(v, 0);
+		#else
+		if (Mem.mirHost() == 1) {
+			if (EvalCompat.on) return EvalCompat.string(v, 0);
+		}
 		#end
 		return str(v, 0);
 	}

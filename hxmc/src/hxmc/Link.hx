@@ -152,9 +152,9 @@ class Link extends LinkCore {
 		];
 
 	public var symbols = true; // write a symbol table of the code (profilers, debuggers)
-	// -D hxmc.jit: every global symbol of the executable, "<name> <kind> <value>" per
+	// a Mir host: every global symbol of the executable, "<name> <kind> <value>" per
 	// line (t code, d data, a absolute, l TLS: the thread-pointer offset), for
-	// the native macros the executable loads (hxmc.macro.Loader)
+	// people (RT_CENSUS_WHY's globals); nothing reads it
 	public var hostSyms:Null<StringBuf> = null;
 
 	public function link(entry:String):Bytes {

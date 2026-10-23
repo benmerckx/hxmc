@@ -1,7 +1,7 @@
 package hxmc;
 
 // The compiler's side of the macro API for macro code compiled for hxmc
-// (-D hxmc.mir-macros: hxmc/src/hxmc/interp/MirMacros.hx exports these from
+// (-D hxmc.macros=mir: hxmc/src/hxmc/interp/MirMacros.hx exports these from
 // the compiler that loads the macro code)
 @:keep @:hxmc.rt extern class MacroHost {
 	// the API function `name` (haxe.macro.Context.load): a closure of the compiler's

@@ -32,8 +32,8 @@ class DataGen {
 	var cstrs = new Map<String, Symbol>();
 	var ncstr = 0;
 	var nlocal = 0;
-	// -D hxmc.jit: zeroed entries after rt_types and the signature tables, filled
-	// at run time by the types and signatures of native macros (hxmc.macro.Loader)
+	// a Mir host (Options.mirHost): zeroed entries after rt_types and the signature tables, filled
+	// at run time by the types and signatures of the bundles of Mir macros and --run (hxmc.macro.Loader)
 	public var spareTypes = 0;
 	public var spareSigs = 0;
 
@@ -202,7 +202,7 @@ class DataGen {
 	}
 
 	// (the trampolines of the signatures closures have: Facts.closureSigs,
-	// boundTypes; -D hxmc.jit: every signature's, for the native macros')
+	// boundTypes; a Mir host: every signature's, for the bundles')
 	function signatures() {
 		var all = spareSigs > 0;
 		for (s in p.sigs) {
@@ -443,8 +443,8 @@ class DataGen {
 	// reads only the entries of the classes implementing the selector, so the
 	// rows are laid over each other, each where its entries find free slots
 	// (or the same function), its symbol at its first slot (the slots before
-	// another row's): a fraction of the classes times the selectors. -D
-	// hxmc.jit: whole rows (the native macros' types come after).
+	// another row's): a fraction of the classes times the selectors. A Mir
+	// host: whole rows (the bundles' types come after).
 	function dispatch() {
 		var rows = [];
 		for (s in 0...p.selectors.length) {

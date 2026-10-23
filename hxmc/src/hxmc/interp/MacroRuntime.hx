@@ -1,6 +1,5 @@
 package hxmc.interp;
 
-#if hxmc.jit
 import core.Ast.Expr;
 import core.TType;
 import core.MetaList.StrictMeta;
@@ -8,7 +7,7 @@ import core.ds.VectorTools.vector;
 
 using core.TFunctions;
 
-// -D hxmc.mir-macros: the runtime's functions in the macro context. hxmc's
+// -D hxmc.macros=mir: the runtime's functions in the macro context. hxmc's
 // std loads the runtime (hxmc.rt, hxmc.unsafe: Std imports hxmc.rt.Runtime)
 // and the macro context types every function it loads, but a bundle never
 // compiles a runtime function the compiler has (MirMacros.step: its native
@@ -42,7 +41,7 @@ class MacroRuntime {
 		hxmc.ir.Lower.hostCode = native;
 	}
 
-	// a class of the runtime (macro.Guest.runtime: its package)
+	// a class of the runtime (macro.BundleFacts.runtime: its package)
 	static function runtimeClass(c:TClass):Bool {
 		var pk = c.clPath.pack;
 		return pk.length >= 2 && pk[0] == "hxmc" && (pk[1] == "rt" || pk[1] == "unsafe");
@@ -140,4 +139,3 @@ class MacroRuntime {
 		return {noGc: flags & hxmc.macro.HostTable.HostFps.NO_GC != 0, blocks: flags & hxmc.macro.HostTable.HostFps.BLOCKS != 0};
 	}
 }
-#end

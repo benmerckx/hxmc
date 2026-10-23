@@ -95,7 +95,7 @@ class MacroContext {
 	public static var macroInterpCache:Null<macros.eval.EvalContext.Context> = null;
 
 	// port: hook (not upstream): the macro context's platform when its code is not
-	// Eval's (hxmc's -D hxmc.mir-macros): called instead of adding Eval's _std and
+	// Eval's (hxmc's -D hxmc.macros=mir): called instead of adding Eval's _std and
 	// setting the platform to Eval, once the macro context's defines are adapted
 	public static var macroPlatformHook:Null<CommonContext->Void> = null;
 
@@ -208,7 +208,7 @@ class MacroContext {
 			getMacroCom: () -> mcom,
 			getMacroStack: function() {
 				// port: the native values' engine keeps no positions of its frames
-				if (MacroApiImpl.nativeValues) Error.raiseTypingError("Context.getMacroStack is not available with -D hxmc.mir-macros", p);
+				if (MacroApiImpl.nativeValues) Error.raiseTypingError("Context.getMacroStack is not available with -D hxmc.macros=mir", p);
 				var envs = macros.eval.EvalContext.callStack(macros.eval.EvalContext.getEval(macros.eval.EvalContext.getCtx()));
 				var envs = envs.length > 0 ? envs.slice(1) : envs; // Skip call to getMacroStack()
 				return envs.map(function(env:macros.eval.EvalContext.Env):Pos return
@@ -1256,7 +1256,7 @@ class MacroContext {
 							MacroApiImpl.encodeExpr(e);
 						case MAFunction if (MacroApiImpl.nativeValues):
 							// port: not with the native values' engine yet
-							Error.raiseTypingError("Function arguments of macros are not available with -D hxmc.mir-macros", e.pos);
+							Error.raiseTypingError("Function arguments of macros are not available with -D hxmc.macros=mir", e.pos);
 						case MAFunction:
 							var e = Typecore.typeExpr(mctx, e, WithTypeTools.withArgument(t, n));
 							Typecore.unify(mctx, e.etype, t, e.epos);

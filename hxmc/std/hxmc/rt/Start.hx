@@ -47,7 +47,7 @@ class Start {
 		if (Mem.target() >= 9) environ = Mem.sym("environ");
 		var sbase = Gc.init(ng);
 		Threads.init(sbase);
-		var cap = ng #if hxmc.jit + Gc.SPARE_GLOBALS #end;
+		var cap = ng + (Mem.mirHost() == 1 ? Gc.SPARE_GLOBALS : 0);
 		var g = LibC.malloc(((cap + 1) : I64) * 8);
 		LibC.memset(g, 0, ((cap + 1) : I64) * 8);
 		Gc.globals = g;

@@ -144,7 +144,7 @@ enum abstract IOp(Int) from Int to Int {
 	var UNREACH;
 	var TLSXLD; // d k: thread-local variable k of code loaded at run time (a block per thread)
 	var TLSXST; // a k
-	// (code loaded at run time, -D hxmc.jit: hxmc.interp.InterpAbi's register image)
+	// (code loaded at run time into a Mir host, Mem.mirHost: hxmc.interp.InterpAbi's register image)
 	var CALLX; // f d len n args rk nst dst*n [a np (w off size)*np]: native code at register f (the shape after the arguments: callX)
 	var CALLXI; // f d len c n args shape: an indirect call, entries c and c + 1 its inline cache (an interpreted function: run here)
 	var SPECIAL; // k d a b c: an expansion of the instruction selections (hxmc$*: atomics, float32 conversions; SP_*)
@@ -163,7 +163,7 @@ enum abstract IOp(Int) from Int to Int {
 // compiles it, the result into the buffer), so every ABI detail stays the
 // code generator's. An indirect call whose target is an entry stub runs its
 // function directly (lookup, cached per call site). Code loaded at run time
-// into a compiler built with -D hxmc.jit (macro.Loader) has neither: it
+// into a Mir host (a compiler with Mir macros, macro.Loader) has neither: it
 // calls native code through the register image (CALLX, CALLXI: the
 // compiler's call-outs) and native code calls it through an entry of the
 // compiler's pools (poolEntry, poolEnter; hxmc/src/hxmc/interp/InterpAbi.hx).
@@ -482,7 +482,7 @@ class Interp {
 		if (d >= 0) sl(regs, d, Mem.getI64(buf, 0));
 	}
 
-	// ---- code loaded at run time (-D hxmc.jit): no code of its own
+	// ---- code loaded at run time (a Mir host, Mem.mirHost): no code of its own
 	// (hxmc.interp.InterpAbi: the register image, its offsets; the call-outs
 	// and the pools' entries are functions of the compiler)
 	static inline var IMG_FN = 192;
@@ -518,7 +518,11 @@ class Interp {
 	// words, each argument's place; with R_PARTS the struct's address
 	// register, its parts and for each its result word, offset and bytes
 	static function callX(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
-		#if hxmc.jit
+		if (Mem.mirHost() == 1) callXHost(regs, ip, fn, d, n, first);
+		else throw "hxmc interp: CALLX outside a Mir host (a compiler with Mir macros)";
+	}
+
+	static function callXHost(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
 		var img = isp;
 		var sh = first + n;
 		var rk = o(ip, sh), nst = o(ip, sh + 1);
@@ -545,9 +549,6 @@ class Interp {
 					Mem.setI8(addr, off + b, Mem.getU8(w, b));
 			}
 		}
-		#else
-		throw "hxmc interp: CALLX outside a compiler built with -D hxmc.jit";
-		#end
 	}
 
 	static function special(regs:Ptr, ip:Ptr) {
@@ -596,7 +597,8 @@ class Interp {
 		}
 	}
 
-	#if hxmc.jit
+	// (a Mir host's: the program of a Mir host reaches these, macro.Loader,
+	// interp.InterpAbi's entries)
 	// the functions given entries of the pools, by entry number (InterpAbi.POOLS;
 	// made at the first, as the table), the entries given out of each pool
 	static var poolDescs:Ptr;
@@ -624,7 +626,9 @@ class Interp {
 		for (k in 0...kind)
 			base += Mem.getI64(t, 8 * k).toInt();
 		var used = Mem.getI64(poolUsed, 8 * kind).toInt();
-		if (used == Mem.getI64(t, 8 * kind).toInt()) throw "hxmc interp: out of entries for interpreted functions called from native code (hxmc.interp.InterpAbi.POOL_*)";
+		if (used == Mem.getI64(t, 8 * kind).toInt())
+			throw "hxmc interp: out of entries for interpreted functions called from native code: all " + used + " of the pool of "
+				+ ["integer", "double", "integer, stack", "double, stack"][kind] + " results are given out (hxmc.interp.InterpAbi.POOL_*)";
 		Mem.setI64(poolUsed, 8 * kind, used + 1);
 		var k = base + used;
 		Mem.setPtr(poolDescs, 8 * k, desc);
@@ -633,6 +637,10 @@ class Interp {
 		entriesGiven++;
 		return addr;
 	}
+
+	// the entries given out of each pool (HXMC_MACRO_STATS): integer, double, integer with stack words, double with
+	public static function entriesByPool():String
+		return poolUsed.isNull() ? "0/0/0/0" : [for (k in 0...4) Std.string(Mem.getI64(poolUsed, 8 * k))].join("/");
 
 	// native code calling entry k of the pools (its common function): the
 	// arguments from the register image img (the descriptor's parameter
@@ -654,7 +662,6 @@ class Interp {
 		}
 		return Mem.getI64(img, 0);
 	}
-	#end
 
 	// runs the frame from ip: RETURNED, or the level of the try its code
 	// ended (where it goes on saved)

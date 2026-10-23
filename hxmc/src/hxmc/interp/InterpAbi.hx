@@ -6,11 +6,11 @@ import hxmc.Mir;
 import hxmc.Obj;
 import hxmc.CallConv.ArgLoc;
 
-// How interpreted code loaded at run time (macro.Loader: -D hxmc.mir-macros,
-// -D hxmc.mir-run) meets native code without code of its own: every
+// How interpreted code loaded at run time (macro.Loader: -D hxmc.macros=mir,
+// -D hxmc.run=mir) meets native code without code of its own: every
 // crossing goes through a register image, a buffer of words that the
 // interpreter (hxmc.rt.Interp) reads and writes and that a few functions
-// of the compiler (built with -D hxmc.jit) move in and out of the ABI's
+// of the compiler (a Mir host, Options.mirHost) move in and out of the ABI's
 // registers. Those functions are Mir, compiled by the target's own back end
 // like any other (`thunks`): nothing here is machine code.
 //
@@ -83,11 +83,15 @@ class InterpAbi {
 	public static inline var RES_INT1 = 8;
 	public static inline var RES_F0 = 16;
 	public static inline var RES_F1 = 24;
-	// the pools (entries per kind: integer or no result, double result; register arguments only, or stack ones too)
-	public static inline var POOL_INT = 6144;
-	public static inline var POOL_FLOAT = 1024;
-	public static inline var POOL_INT_STACK = 512;
-	public static inline var POOL_FLOAT_STACK = 128;
+	// the pools (entries per kind: integer or no result, double result; register
+	// arguments only, or stack ones too), about ten times the most measured
+	// (HXMC_MACRO_STATS: upstream's unit suite's macros 99/0/0/0, the macro
+	// cases at most 66, the formatter's build 70, the corpus under --run 93/16/2/0);
+	// running out is an error naming the pool (hxmc.rt.Interp.poolEntry)
+	public static inline var POOL_INT = 1024;
+	public static inline var POOL_FLOAT = 256;
+	public static inline var POOL_INT_STACK = 128;
+	public static inline var POOL_FLOAT_STACK = 32;
 	public static inline var POOLS = "hxmc_interp_pools";
 	public static inline var CALLOUT_R = "hxmc_interp_callout_r";
 	public static inline var CALLOUT_S = "hxmc_interp_callout_s";
@@ -101,7 +105,7 @@ class InterpAbi {
 		return !abi.wasm;
 
 	static function check(abi:Abi) {
-		if (!supported(abi)) throw new MirBuild.Unsupported("-D hxmc.jit: interpreted code loaded at run time on " + abi.name + " (hxmc.interp.InterpAbi)");
+		if (!supported(abi)) throw new MirBuild.Unsupported("Mir macros and --run: interpreted code loaded at run time on " + abi.name + " (hxmc.interp.InterpAbi)");
 	}
 
 	// the first variadic argument of a call-out (System V: al bounds the float
@@ -179,7 +183,7 @@ class InterpAbi {
 		return k < ng ? GPR + 8 * k : k < ng + nf ? (out && cc.positional ? GPR : FPR) + 8 * (k - ng) : STACK + 8 * (k - ng - nf);
 	}
 
-	// the functions of the compiler (built with -D hxmc.jit) that code loaded
+	// the functions of the compiler (a Mir host) that code loaded
 	// for the interpreter crosses into native code through
 	public static function thunks(prep:Prep, abi:Abi, compile:MFunc->Void) {
 		check(abi);

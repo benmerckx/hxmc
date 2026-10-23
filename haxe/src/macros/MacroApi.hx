@@ -3425,7 +3425,7 @@ class MacroApiImpl {
 }
 
 // port: hook (not upstream): the values of a macro engine whose code is the
-// compiler's own kind of code, sharing its heap (hxmc's -D hxmc.mir-macros,
+// compiler's own kind of code, sharing its heap (hxmc's -D hxmc.macros=mir,
 // hxmc/src/hxmc/interp/MirMacros.hx): MacroApiImpl's bindings use these when
 // `MacroApiImpl.nativeValues` is set. The values are the compiler's Haxe
 // values: Int, Float, Bool, String, Array, Bytes, anonymous objects, the
@@ -3612,7 +3612,7 @@ class MacroNativeValues {
 				var a:Array<Dynamic> = evalConstant(e1);
 				a[i];
 			case _:
-				throw new core.Error.TypingError(core.Error.makeError(core.Error.ErrorMsg.Custom("This macro argument is not a constant the compiler evaluates (-D hxmc.mir-macros)"), e.epos));
+				throw new core.Error.TypingError(core.Error.makeError(core.Error.ErrorMsg.Custom("This macro argument is not a constant the compiler evaluates (-D hxmc.macros=mir)"), e.epos));
 		}
 	}
 

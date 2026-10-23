@@ -488,10 +488,7 @@ class Filters {
 		var beforeParallel:Array<{name:String, run:SafeContext->TExpr->TExpr}> = [
 			{name: "local_statics", run: LocalStatic.run},
 			{name: "fix_return_dynamic_from_void_function", run: SafeFilters.fixReturnDynamicFromVoidFunction},
-			// port: not for hxmc's native macros, whose compile runs these filters in macro mode
-			// (hxmc/src/hxmc/macro/Guest.hx): the macro context does not check this
-			// (MacroContext.flushMacroContext); upstream never runs them in macro mode
-			{name: "check_local_vars_init", run: (scom, e) -> scom.isMacroContext ? e : CheckVarInit.checkLocalVarsInit(scom, e)},
+			{name: "check_local_vars_init", run: CheckVarInit.checkLocalVarsInit},
 			{name: "check_abstract_as_value", run: SafeFilters.checkAbstractAsValue},
 			{name: "Tre", run: (scom, e) -> Define.defined(scom.defines, Define.AnalyzerOptimize) ? Tre.run(scom)(e) : e}
 		];

@@ -23,7 +23,7 @@ using StringTools;
 // variable ids (the reference loads both through --hxb-lib and writes them
 // again); --parallel-reference runs the reference itself the same way.
 // --target-only: the macro context's modules (macro/) are not compared, for a
-// port whose macro context is typed against another std (-D hxmc.mir-macros).
+// port whose macro context is typed against another std (-D hxmc.macros=mir).
 // --known <case,...>: cases known to fail (a port's documented differences):
 // each still runs; its failure is KNOWN-FAIL, which does not fail the run, and
 // its passing does (the list is out of date).

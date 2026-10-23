@@ -158,7 +158,7 @@ class InterpSet {
 
 	// (exclude: functions whose native code is used, interp.MirRun)
 	final exclude:Null<Map<FuncInfo, Bool>>;
-	// code loaded at run time into a compiler built with -D hxmc.jit
+	// code loaded at run time into a compiler with Mir macros (a Mir host)
 	// (macro.Loader: interp.MirMacros, interp.MirRun): no native code at all,
 	// so every function of it is interpreted, the runtime's it has too; its
 	// calls of native code and native code's calls of it go through the
@@ -184,7 +184,7 @@ class InterpSet {
 	}
 
 	// an empty table: a program with the interpreter, none of its functions
-	// interpreted (a compiler that loads interpreted code: -D hxmc.jit)
+	// interpreted (a compiler that loads interpreted code: a Mir host)
 	public static function emptyTable(obj:Obj) {
 		var sec = obj.section(".data", SecKind.Data, 16);
 		sec.buf.align(16);
@@ -457,7 +457,7 @@ class InterpGen {
 			sources.push(s);
 		}
 		if (mf.cRet.length > 0 || !InterpAbi.supported(abi)) flags |= 4;
-		if (set.loaded && mf.cRet.length > 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a function returning a struct by value (C callbacks) is not interpreted');
+		if (set.loaded && mf.cRet.length > 0) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a function returning a struct by value (C callbacks) is not interpreted');
 		return {sources: sources, flags: flags};
 	}
 
@@ -472,7 +472,7 @@ class InterpGen {
 		var k = emulatedTls.get(sym);
 		if (k == null) {
 			k = Lambda.count(emulatedTls);
-			if (k >= 4096) throw new MirBuild.Unsupported("-D hxmc.mir-run: more than 4096 thread-local variables");
+			if (k >= 4096) throw new MirBuild.Unsupported("-D hxmc.run=mir: more than 4096 thread-local variables");
 			emulatedTls.set(sym, k);
 		}
 		return k;
@@ -989,7 +989,7 @@ class InterpGen {
 					var al = allocs.get(i.id);
 					if (al != null) callImage(CALLX, al[0], res, vector(al[1], al[2], al[3]), vector(I32, I32, I32), 0, -1, null) else {
 						var n = i.structRet ? i.args.length - 1 : i.args.length;
-						if (i.structRet && i.cRet.length == 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a C call returning a struct through x8 (hxmc.interp.InterpAbi)');
+						if (i.structRet && i.cRet.length == 0) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a C call returning a struct through x8 (hxmc.interp.InterpAbi)');
 						var regs = new haxe.ds.Vector<Int>(n);
 						for (k in 0...n)
 							regs[k] = r(i.args[k]);
@@ -1073,7 +1073,7 @@ class InterpGen {
 	// used, each argument's place; a struct result in registers (c.cRet):
 	// its address's register, then per part its result word, offset and bytes
 	function callImage(op:IOp, target:Null<Int>, res:Int, regs:haxe.ds.Vector<Int>, tys:haxe.ds.Vector<MTy>, n:Int, variadic:Int, c:Null<MIns>) {
-		if (target == null) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a call without its target');
+		if (target == null) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a call without its target');
 		n = regs.length;
 		var groups = c != null ? c.cGroups : vector();
 		var sizes = c != null ? c.cSizes : vector();
@@ -1090,7 +1090,7 @@ class InterpGen {
 		for (k in 0...n) {
 			var loc = pl.locs[k];
 			var s = InterpAbi.outSlot(cc, loc, tys[k] == F64);
-			if (s < 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a call of native code whose arguments take more than the interpreter\'s stack words (hxmc.interp.InterpAbi)');
+			if (s < 0) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a call of native code whose arguments take more than the interpreter\'s stack words (hxmc.interp.InterpAbi)');
 			code.push(s | (tys[k] == I32 ? 0x10000 : 0));
 		}
 		if (parts) {
@@ -1099,7 +1099,7 @@ class InterpGen {
 			var rr = cc.structResult(c.cRet);
 			for (k in 0...c.cRet.length) {
 				var w = InterpAbi.resultWord(cc, rr[k]);
-				if (w < 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a struct result in registers the interpreter does not take');
+				if (w < 0) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a struct result in registers the interpreter does not take');
 				emit([w, c.cRet[k].off, c.cRet[k].size]);
 			}
 		}

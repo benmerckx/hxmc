@@ -1,7 +1,7 @@
 // Type.createInstance in macro code: of a class value, of a class found by
 // its name (one the code names: hxmc's program has the classes it refers
 // to), of an instance's class; the arguments' default values, a constructor
-// inherited and one calling super. (Native macros: the classes are the
+// inherited and one calling super. (Mir macros: the classes are the
 // bundle's, their entries written by hxmc.macro.Loader, which counts them in
 // for Type.resolveClass.)
 class Make {

@@ -6,13 +6,13 @@ import core.TType;
 import hxmc.macro.HostTable.HostFps;
 import syntax.Parser.ParseResult;
 
-// The bodies the macro context of -D hxmc.mir-macros need not parse
+// The bodies the macro context of -D hxmc.macros=mir need not parse
 // (interp.MacroRuntime). That context loads hxmc's whole runtime (Std imports
 // hxmc.rt.Runtime), whose parsing was most of what the runtime still cost
 // a cold build there once the runtime's functions the compiler has were no
 // longer typed (a trivial macro: 0.07 G of 1.15 G instructions). A
-// compiler built with -D hxmc.jit carries their lines (macro.HostTable,
-// made at its link: Driver.jitCuts): for each file of
+// compiler with Mir macros (a Mir host) carries their lines (macro.HostTable,
+// made at its link: Driver.hostCuts): for each file of
 // the runtime (hxmc.rt, hxmc.unsafe), its content's hash and the ranges of
 // the block bodies that macro context never types: those of the static
 // functions MacroRuntime takes as the compiler's native code, by their
@@ -61,7 +61,7 @@ class MacroCuts {
 		} catch (_:core.ds.Exit) false;
 	}
 
-	// ---- writing (the compiler's build, -D hxmc.jit)
+	// ---- writing (the compiler's build, a Mir host)
 
 	// the lines (the compiler's link: macro.HostTable carries them), given the compiler's fingerprints
 	public static function text(com:context.Common.CommonContext, fps:HostFps):String {

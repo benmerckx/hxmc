@@ -4,14 +4,14 @@ import hxmc.rt.Types.*;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
-// Whether the code running now is macro code (-D hxmc.mir-macros): it sees
+// Whether the code running now is macro code (-D hxmc.macros=mir): it sees
 // what Eval shows of its values where what a macro generates depends on it
 // (tests compare a type's Std.string): Std.string as Eval prints,
 // Reflect.fields in Eval's order. Maps keep hxmc's order (docs/hxmc.md,
 // "Macros on the Mir interpreter"). The compiler's own code, also when a
 // macro calls its API, keeps hxmc's. MirMacros switches it; only the
-// programs that can run such code read it (-D hxmc.jit, and the code
-// compiled for them: -D hxmc.interp, the macro context).
+// programs that can run such code read it (a Mir host, Mem.mirHost, and
+// the code compiled for it: -D hxmc.interp, the macro context).
 @:access(hxmc.rt.Dyn)
 class EvalCompat {
 	public static var on = false;

@@ -444,7 +444,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "ult", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -1524,7 +1524,7 @@ class FnLower {
 			case TThrow(_) | TReturn(_) | TBreak | TContinue | TIf(_, _, _) | TWhile(_, _, _) | TVar(_, _):
 				stmt(e);
 				nullOf(tyOf(e));
-			// (reification's position in macro code compiled for hxmc, -D hxmc.mir-macros:
+			// (reification's position in macro code compiled for hxmc, -D hxmc.macros=mir:
 			// the expression's own, as Eval has it; the compiler that loads the code makes it)
 			case TIdent("$__mk_pos__"):
 				temp(TRef(RAny), ECallHost(l.native("hxmc_mir_macro_pos"), vector(EStr(e.epos.pfile), EInt(e.epos.pmin), EInt(e.epos.pmax)), TRef(RAny)));

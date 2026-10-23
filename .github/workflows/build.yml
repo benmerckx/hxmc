@@ -16,8 +16,8 @@
 #   the module cache's store and gate are checked, the dev loop (make
 #   dev-check); then the port's release binaries and lix for the six targets.
 #   Next to it, each with its own tool from the stage0 (make hxmc):
-#   - corpus: hxmc's corpus for every target (in three jobs), the compiler
-#     with Mir macros and --run (-D hxmc.jit) for the six targets, the port as
+#   - corpus: hxmc's corpus for every target (in three jobs), the native
+#     compiler (`haxe` with hxmc built in) for the six targets, the port as
 #     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
 #   - crosshost (two jobs): the tool as a WebAssembly module building the
@@ -363,15 +363,15 @@ jobs:
           make hxmc
       - name: Cross-build hxmc's corpus
         run: make corpus-stage CORPUS_TARGETS="${{ matrix.targets }}"
-      # the compiler with Mir macros and --run (-D hxmc.jit) for each target of
-      # the group (the test jobs run its lanes on the targets' machines)
-      - name: Cross-build the compiler with Mir macros
+      # the native compiler (the npm package's: Mir macros and --run) for each
+      # target of the group (the test jobs run its Mir lane on the targets' machines)
+      - name: Cross-build the native compiler
         if: matrix.group != 'wasm'
         run: |
           set -ex
           for t in ${{ matrix.targets }}; do
-            case $t in *-glibc) continue ;; esac
-            make jit-release TARGET=$t
+            exe=haxe; case $t in *-glibc) continue ;; windows-*) exe=haxe.exe ;; esac
+            make bin/npm/native/$t/$exe
           done
 
       - name: The port as a WebAssembly module
@@ -438,7 +438,7 @@ jobs:
           for t in ${{ matrix.targets }}; do tar czf dist/corpus/corpus-$t.tar.gz -C bin/corpus/$t .; done
           for t in ${{ matrix.targets }}; do
             exe=haxe; case $t in windows-*) exe=haxe.exe ;; esac
-            if [ -f bin/jit-release/$t/$exe ]; then tar czf dist/corpus/jit-$t.tar.gz -C bin/jit-release/$t $exe; fi
+            if [ -f bin/npm/native/$t/$exe ]; then tar czf dist/corpus/haxe-$t.tar.gz -C bin/npm/native/$t $exe; fi
           done
           if [ -d bin/corpus/port ]; then tar czf dist/corpus/corpus-wasm32-wasi-port.tar.gz -C bin/corpus/port haxe.wasm haxe-legacy.wasm; fi
           ls -l dist/corpus
@@ -1024,7 +1024,7 @@ jobs:
           # (MSYS would rewrite the reference's root, a POSIX path)
           MSYS_NO_PATHCONV=1 "$exe" -cp hxmc/test -cp haxe/test --run Selfcheck --port "$exe" --src std-x/src --std std-x/std --ref dl/self-ref.hxb --ref-root "$SELF_ROOT" --root "$root" --summary "$GITHUB_STEP_SUMMARY"
 
-      # The compiler with Mir macros and --run (-D hxmc.jit, cross-built by the
+      # The native compiler with Mir macros and --run (cross-built by the
       # corpus job) on this machine (docs/hxmc.md, "Macros on the Mir
       # interpreter"), in mir/ (the corpus job's files, Unix line ends): the
       # corpus run in it (as make mir-run-check), the macro cases with Mir
@@ -1046,7 +1046,7 @@ jobs:
           set -ex
           mkdir -p mir
           tar xzf dl/mir-data.tar.gz -C mir
-          mkdir -p mir/bin/jit && tar xzf dl/jit-${{ matrix.target }}.tar.gz -C mir/bin/jit
+          mkdir -p mir/bin/haxe && tar xzf dl/haxe-${{ matrix.target }}.tar.gz -C mir/bin/haxe
           exe=; lix=lix/lix-${{ matrix.target }}
           if [ "$RUNNER_OS" = Windows ]; then exe=.exe; lix=$lix.exe; fi
           rev=${{ steps.ref.outputs.rev }}
@@ -1074,14 +1074,14 @@ jobs:
           ls -l "$(dirname "$ref")"
           "$ref" -version
           {
-            echo "MIR_JIT=$(native "$PWD/mir/bin/jit/haxe$exe")"
+            echo "MIR_HAXE=$(native "$PWD/mir/bin/haxe/haxe$exe")"
             echo "MIR_REF=$(native "$ref")"
             echo "MIR_EVAL=$(native "${{ steps.unpack.outputs.bin }}")"
             echo "HXMC_STD=$(native "$PWD/mir/bin/hxmc/std")"
             echo "HAXE_STD_PATH=$(native "$PWD/mir/haxe/upstream/std")"
             echo "MIR_JOBS=$([ "$RUNNER_OS" = Windows ] && echo 1 || echo 4)"
           } >> "$GITHUB_ENV"
-          "$PWD/mir/bin/jit/haxe$exe" -version
+          "$PWD/mir/bin/haxe/haxe$exe" -version
       - name: Mir lane, the corpus run in the compiler
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 30
@@ -1092,21 +1092,21 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo sysctl -q -w kernel.core_pattern=core; fi
           ulimit -c 0 2>/dev/null || true
-          HXMC_JIT="$MIR_JIT" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Corpus --mir-run -v -j $MIR_JOBS
+          HXMC_HAXE="$MIR_HAXE" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Corpus --mir-run -v -j $MIR_JOBS
       - name: Mir lane, the macro cases with Mir macros
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 30
         working-directory: mir
         # (Issue11631: Eval's own mbedtls package, as make mir-macros-check's MIR_MACROS_KNOWN)
         run: |
-          HAXE_REFERENCE="$MIR_REF" HAXE_IN_HAXE_PORT="$MIR_JIT -D hxmc.mir-macros" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Conformance -j $MIR_JOBS \
+          HAXE_REFERENCE="$MIR_REF" HAXE_IN_HAXE_PORT="$MIR_HAXE -D hxmc.macros=mir" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Conformance -j $MIR_JOBS \
             --cases haxe/test/conformance-macro-cases.txt --target-only --parallel 1 --known eval-Issue11631-compile --summary "$GITHUB_STEP_SUMMARY"
       - name: Mir lane, a benchmark macro and the formatter's build
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 20
         working-directory: mir
         run: |
-          "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run MirBench --dir bench --mir "$MIR_JIT -D hxmc.mir-macros" --eval "$MIR_EVAL" --summary "$GITHUB_STEP_SUMMARY"
+          "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run MirBench --dir bench --mir "$MIR_HAXE -D hxmc.macros=mir" --eval "$MIR_EVAL" --summary "$GITHUB_STEP_SUMMARY"
 
   # the WebAssembly corpus under node 22 and wasmtime, the port as a module
   # compiling itself under both

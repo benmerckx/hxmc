@@ -47,14 +47,15 @@ class Driver {
 		if (o.interp != null) interp = new hxmc.interp.InterpGen.InterpSet(o.interp, prep);
 	}
 
-	// (-D hxmc.jit: every function stays, for the native macros the compiler
-	// loads, and closures are made as they are in those, Prep.staticClosures;
-	// native macros' own code makes a Driver itself, Guest)
+	// (a Mir host, Options.mirHost: every function stays, for the code it
+	// loads, which calls the std's and the runtime's functions it has; and no
+	// closure is made static, Prep.staticClosures, which costs a Mir host more
+	// than it saves: measured, docs/plans/compiler.md, "Mir macros: size and speed")
 	public static function run(prog:Program, out:String, o:Options) {
 		var t0 = haxe.Timer.stamp();
-		if (!o.jit) hxmc.ir.Reach.run(prog, o.stats);
+		if (!o.mirHost) hxmc.ir.Reach.run(prog, o.stats);
 		var d = new Driver(prog, out, o);
-		d.prep.staticClosures = !o.jit;
+		d.prep.staticClosures = !o.mirHost;
 		var t1 = haxe.Timer.stamp();
 		d.build(t0, t1);
 	}
@@ -287,16 +288,18 @@ class Driver {
 		}
 	}
 
-	// -D hxmc.jit: the bodies of the runtime its Mir macros' context need not
+	// (a Mir host) the bodies of the runtime its Mir macros' context need not
 	// parse, given the compiler's fingerprints (Main: MacroCuts.cuts)
-	public static var jitCuts:Null<hxmc.macro.HostTable.HostFps->String> = null;
+	public static var hostCuts:Null<hxmc.macro.HostTable.HostFps->String> = null;
+	// (a Mir host) the program's types by ident, true for the std's (Main: HostTable.idents)
+	public static var hostIdents:Null<Map<String, Bool>> = null;
 
 	// each function's fingerprint: code loaded at run time calls this
 	// compiler's native function where its own is the same (interp.MirRun),
 	// and what callers of its native code need to know of it, which code
 	// loaded at run time calls without having its body (HostFps flags,
 	// interp.MacroRuntime)
-	function jitFingerprints():Array<{sym:String, key:String, flags:Int}> {
+	function hostFingerprints():Array<{sym:String, key:String, flags:Int}> {
 		var fps = [];
 		for (f in prep.p.funcs) {
 			var fp = new Fingerprint(prep, null);
@@ -373,7 +376,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.ios() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.jit ? "+jit" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -547,9 +550,9 @@ class Driver {
 		var data = new Obj();
 		var demit = Target.emitter(abi, data);
 		var dg = new DataGen(prep, abi, data, mf -> compileMir(mf, demit, data));
-		if (o.jit) {
-			dg.spareTypes = hxmc.macro.Jit.SPARE_TYPES;
-			dg.spareSigs = hxmc.macro.Jit.SPARE_SIGS;
+		if (o.mirHost) {
+			dg.spareTypes = hxmc.macro.MirHost.SPARE_TYPES;
+			dg.spareSigs = hxmc.macro.MirHost.SPARE_SIGS;
 		}
 		dg.run();
 		dg.allocStubs(objs, demit);
@@ -643,30 +646,33 @@ class Driver {
 			var imp = LinkInputs.peImports(still, abi);
 			if (imp != null) all.push(imp);
 		}
-		// -D hxmc.jit: what code loaded at run time crosses into native code
+		// a Mir host: what code loaded at run time crosses into native code
 		// through (interp.InterpAbi: the call-outs, the entries' pools, the
 		// thread-local variables' accessors), then the table of the
 		// executable's symbols, fingerprints and cuts it links against
 		// (macro.HostTable)
-		if (o.jit) {
+		if (o.mirHost) {
 			var th = new Obj();
 			var temit = Target.emitter(abi, th);
 			hxmc.interp.InterpAbi.thunks(prep, abi, mf -> compileMir(mf, temit, th));
 			hxmc.interp.InterpAbi.poolTables(th);
 			hxmc.interp.InterpAbi.tlsAccessors(prep, abi, hxmc.macro.HostTable.tlsNames(all), mf -> compileMir(mf, temit, th));
 			all.push(th);
-			var fps = jitFingerprints();
+			// (what code loaded at run time can reach: the std's and the runtime's, HostTable.named)
+			var idents = hostIdents != null ? hostIdents : new Map();
+			var named = n -> hxmc.macro.HostTable.named(n, idents);
+			var fps = hostFingerprints().filter(x -> named(x.sym));
 			var map = new Map<String, {key:String, flags:Int}>();
 			for (x in fps)
 				map.set(x.sym, {key: x.key, flags: x.flags});
-			var cuts = jitCuts != null ? jitCuts(new hxmc.macro.HostTable.HostFps(map)) : "";
-			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts, hxmc.macro.HostTable.imports(all, abi)));
+			var cuts = hostCuts != null ? hostCuts(new hxmc.macro.HostTable.HostFps(map)) : "";
+			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts, hxmc.macro.HostTable.imports(all, abi), named, o.stats));
 		}
 		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios) : null;
 		// the runtime objects' sections and the runtime's Haxe functions that
-		// nothing reaches are left out (LinkCore.gc; -D hxmc.jit: every runtime
-		// function stays, for the native macros it loads)
-		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.jit ? rts : null;
+		// nothing reaches are left out (LinkCore.gc; a Mir host: every runtime
+		// function stays, for the code it loads)
+		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.mirHost ? rts : null;
 		var exe = abi.os == "windows" ? {
 			var l = new LinkPE(all, abi.arm);
 			if (abi.output == SharedLibrary) {
@@ -704,10 +710,10 @@ class Driver {
 			} else new Link(all, abi);
 			l.symbols = !o.strip;
 			l.collect = collect;
-			// (-D hxmc.jit: the symbols also as a file, for people: RT_CENSUS_WHY's globals; nothing reads it)
-			if (o.jit) l.hostSyms = new StringBuf();
+			// (a Mir host: the symbols also as a file, for people: RT_CENSUS_WHY's globals; nothing reads it)
+			if (o.mirHost) l.hostSyms = new StringBuf();
 			var exe = l.link("_start");
-			if (o.jit) sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
+			if (o.mirHost) sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
 			exe;
 		};
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";

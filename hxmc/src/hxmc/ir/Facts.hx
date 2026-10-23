@@ -175,7 +175,7 @@ class Facts {
 
 	function addType(t:TypeEntry):Int {
 		types.push(t);
-		// (16 bits of type index, 0xFFFF the collector's: Types.T_FWD; the JIT's spare entries after)
+		// (16 bits of type index, 0xFFFF the collector's: Types.T_FWD; a Mir host's spare entries after)
 		if (types.length > 0xFFFF - 4096) throw "hxmc: more than " + (0xFFFF - 4096) + " types";
 		return types.length - 1;
 	}
