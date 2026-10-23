@@ -219,15 +219,21 @@ class InterpSet {
 // symbol), its entry stub (a native function of its symbol, so that
 // whatever calls it, code, dispatch rows, closures, C, finds it as before)
 // and the call-out stubs its calls of native code go through (local
-// functions of the module's object, one per callee and signature).
+// functions of the module's object, one per callee and signature). Code
+// loaded at run time (InterpSet.loaded) gets neither stub: its calls of
+// native code carry their shape (callImage) and native code reaches it
+// through the compiler's pools, by the descriptor's parameter sources
+// (entrySources; InterpAbi).
 //
 // The descriptor: a header (MAGIC, registers, frame bytes, code words, the
-// symbol table's offset, constants, their offset, parameters), the code (words:
+// symbol table's offset, constants, their offset, parameters, the offset of
+// the parameters' sources, flags: Interp.D_*), the code (words:
 // an operation and its operands, branch targets as byte offsets in the
 // code, relative to their instruction's start), the constants (8 bytes each, relocated: copied into the first
 // registers when a frame starts, so a constant is never an operation) and
 // the symbol table (8 bytes each, relocated: call-out stubs, other
-// descriptors; zeroed: inline caches).
+// descriptors; zeroed: inline caches), then the parameters' sources (32
+// bits each: an entry's byte offset in InterpAbi's register image).
 //
 // Registers: the constants (deduplicated), the parameters (a caller writes
 // its arguments there), then the other values, then
@@ -1118,6 +1124,8 @@ class InterpGen {
 			case "f64_to_f32": 12;
 			case "f32bits_to_freg": 13;
 			case "freg_to_f32bits": 14;
+			case "floor": 15;
+			case "ceil": 16;
 			case s: throw new MirBuild.Unsupported('-D hxmc.interp: ${mf.name}: the expansion $s');
 		}
 		inline function arg(j:Int):Int

@@ -478,6 +478,8 @@ class Loader {
 			if (region.isNull()) throw "no memory for a bundle";
 			LibC.memset(region, 0, (size : I64));
 		} else {
+			// (native bundles: linux-x86_64 only, NativeEngine; the comparison folds, so other targets do not link mmap)
+			if (Mem.os() != 0) throw "native bundles: Linux only";
 			region = Vm.mmap(Ptr.ofI64((hint : I64)), (size : I64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 			var ra = region.toI64();
 			if (ra == (-1 : I64) || ra >= (0x7fff0000 : I64) || ra < (0 : I64)) throw "cannot map code below 2 GB";
@@ -558,7 +560,7 @@ class Loader {
 		}
 		b.codeBytes = textSize;
 		b.dataBytes = size - textSize;
-		if (!interp) {
+		if (!interp && Mem.os() == 0) {
 			if (Vm.mprotect(region, (textSize : I64), PROT_READ | PROT_EXEC) != 0) throw "mprotect failed";
 			// the functions interpreted (-D hxmc.interp: a descriptor beside each
 			// entry stub): the interpreter runs them directly where code calls their stub

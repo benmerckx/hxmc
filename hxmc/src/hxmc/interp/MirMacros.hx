@@ -211,7 +211,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		config.pfPadNulls = true;
 		com2.config = config;
 		context.Common.initPlatform(com2);
-		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) core.Define.rawDefineValue(com2.defines, "hxmc.target", "linux-x86_64");
+		// (the compiler's own target: the macro code runs in it, with its layouts and convention)
+		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) {
+			core.Define.rawDefineValue(com2.defines, "hxmc.target", Options.host());
+			var t = Mem.target();
+			if ((t == 7 || t == 8) && !core.Define.rawDefined(com2.defines, "hxmc.libc")) core.Define.rawDefineValue(com2.defines, "hxmc.libc", "glibc");
+		}
 	}
 
 	// ---- the API of hxmc.MacroHost
@@ -667,7 +672,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function report() {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
-			Sys.stderr().writeString('hxmc.mir-macros: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes\n');
+			Sys.stderr().writeString('hxmc.mir-macros: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
 		if (stats)
 			for (k => v in phases)

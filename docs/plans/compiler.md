@@ -336,14 +336,17 @@ program-wide numbers stay symbolic, so these remain possible:
   the class's module for hxmc in macro mode and writes a relocatable
   object plus the program-wide facts (types, field names, signatures,
   globals, initializers, dispatch rows).
-- **Loader**: links it into the running compiler with `<exe>.syms` (every
-  symbol of the executable; `-D hxmc.jit` builds also keep every function
+- **Loader**: links it into the running compiler with the table of its
+  symbols it carries (`macro.HostTable`, every symbol of the executable but
+  its string literals; `-D hxmc.jit` builds also keep every function
   they lower, the runtime's functions macro code calls that the compiler
   does not (`Jit.runtime`: `Type.resolveClass`, `Type.createInstance`), and
   spare type and signature entries). The std's types and
   statics are the compiler's (layouts checked), the program's are new.
   Code and data are mapped below 2 GB (rel32, absolute disp32 dispatch
-  rows), then made executable.
+  rows), then made executable. (Bundles for the Mir interpreter,
+  `-D hxmc.mir-macros`, have no code and need none of this:
+  `interp.InterpAbi`, docs/hxmc.md, "Macros on the Mir interpreter".)
 - **Bridge**: native objects to and from Eval values, so MacroApi stays
   the one implementation (anonymous structures, enums with Eval's
   positions, Refs, lazy values, API function values; API exceptions

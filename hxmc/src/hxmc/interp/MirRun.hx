@@ -54,7 +54,9 @@ class MirRun {
 			out.push(a);
 			i++;
 		}
-		return out.concat(["--custom-target", "hxmc", "-D", "hxmc.interp"]);
+		// (a compiler linked against glibc: the program's layouts are that mode's)
+		var t = Mem.target();
+		return out.concat(["--custom-target", "hxmc", "-D", "hxmc.interp"]).concat(t == 7 || t == 8 ? ["-D", "hxmc.libc=glibc"] : []);
 	}
 
 	public static function run(com:context.Common.CommonContext) {
@@ -62,7 +64,9 @@ class MirRun {
 		var mainClass = context.Common.getEntryPoint(com).cls;
 		var o = Options.read(com);
 		var abi = Abi.get(o.target);
-		if (abi.name != "linux-x86_64" || o.libc != null) throw "-D hxmc.mir-run: linux-x86_64 (static) only, as the loader";
+		// (the program runs in the compiler: its target is the compiler's own)
+		var t = Mem.target();
+		if (o.target != Options.host() || (o.libc != null) != (t == 7 || t == 8)) throw "-D hxmc.mir-run: the program's target is the compiler's own (" + Options.host() + ")";
 		abi.framePointers = abi.arm || o.framePointers; // (as Driver)
 		hxmc.ir.Lower.targetOs = abi.osCode();
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
@@ -129,7 +133,7 @@ class MirRun {
 		setArgs();
 		var b = hxmc.macro.Loader.loadObj(obj, facts, true);
 		if (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")
-			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data\n');
+			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		var main = b.entries.get("main");
 		try {
 			hxmc.macro.Loader.run0(main, true);

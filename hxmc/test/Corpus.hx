@@ -228,8 +228,20 @@ class Corpus {
 		cmd = cmd.concat(["--run", c.main]);
 		var t0 = now();
 		// (a small nursery, as the executables get: the compiler's collector is the program's)
-		var r = exec(cmd, {cwd: d, timeout: 120, env: ["RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64", "HXMC_STD" => FileSystem.fullPath(STD), "HAXE_STD_PATH" => FileSystem.fullPath("haxe/upstream/std")]});
+		// (HXMC_MACRO_STATS=1: the bundle's sizes on stderr, its code 0 bytes: interp.InterpAbi)
+		var r = exec(cmd, {
+			cwd: d,
+			timeout: 120,
+			env: [
+				"RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64",
+				"HXMC_STD" => FileSystem.fullPath(STD),
+				"HAXE_STD_PATH" => FileSystem.fullPath("haxe/upstream/std"),
+				"HXMC_MACRO_STATS" => "1"
+			]
+		});
 		if (r.timedOut) return {name: c.name, status: "timeout", detail: ""};
+		if (r.err.indexOf("hxmc mir-run: ") < 0 || r.err.indexOf(" 0 bytes of code,") < 0)
+			return {name: c.name, status: "differs", detail: "no bundle without native code (HXMC_MACRO_STATS): " + tail(r.err, 400)};
 		var got = 'exit ${r.code}\n' + r.out;
 		if (got != File.getContent(expected)) {
 			File.saveContent(d + "/got.txt", got + r.err);

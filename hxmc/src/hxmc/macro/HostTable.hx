@@ -113,7 +113,7 @@ class HostTable {
 		for (r in rows) {
 			if (r.kind == "l".code) {
 				// (x86-64's local-exec offset: the native macros' code reaches it so)
-				if (!abi.arm) sec.relocs.push(new Reloc(b.len, RelKind.RTpOff32, obj.sym(r.name), 0));
+				if (abi.os == "linux" && !abi.arm) sec.relocs.push(new Reloc(b.len, RelKind.RTpOff32, obj.sym(r.name), 0));
 			} else
 				sec.relocs.push(new Reloc(b.len, RelKind.RAbs64, obj.sym(r.name), 0));
 			b.u64(0, 0);
@@ -163,8 +163,24 @@ class HostTable {
 		m = hxmc.unsafe.Mem.getI64(t, 8).toInt();
 	}
 
+	// (HXMC_MACRO_STATS=1: the lookups and their time)
+	static final timed = Sys.getEnv("HXMC_MACRO_STATS") == "1";
+	public static var lookups = 0;
+	public static var lookupTime = 0.0;
+
 	// the row of the key of name in a sorted run of count keys at keys, -1 when none
 	static function find(keys:hxmc.unsafe.Ptr, count:Int, name:String):Int {
+		lookups++;
+		if (timed) {
+			var t = haxe.Timer.stamp();
+			var r = search(keys, count, name);
+			lookupTime += haxe.Timer.stamp() - t;
+			return r;
+		}
+		return search(keys, count, name);
+	}
+
+	static function search(keys:hxmc.unsafe.Ptr, count:Int, name:String):Int {
 		hash(name);
 		var a = 0, z = count;
 		while (a < z) {

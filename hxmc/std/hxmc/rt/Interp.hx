@@ -162,7 +162,11 @@ enum abstract IOp(Int) from Int to Int {
 // callee and signature: the arguments from a buffer, the call as the tool
 // compiles it, the result into the buffer), so every ABI detail stays the
 // code generator's. An indirect call whose target is an entry stub runs its
-// function directly (lookup, cached per call site).
+// function directly (lookup, cached per call site). Code loaded at run time
+// into a compiler built with -D hxmc.jit (macro.Loader) has neither: it
+// calls native code through the register image (CALLX, CALLXI: the
+// compiler's call-outs) and native code calls it through an entry of the
+// compiler's pools (poolEntry, poolEnter; hxmc/src/hxmc/interp/InterpAbi.hx).
 //
 // Registers (8 bytes each: the function's constants first, copied when its
 // frame starts, then its values) and frame slots are on a stack of this
@@ -506,6 +510,8 @@ class Interp {
 	static inline var SP_F64_TO_F32 = 12;
 	static inline var SP_F32BITS_TO_FREG = 13;
 	static inline var SP_FREG_TO_F32BITS = 14;
+	static inline var SP_FLOOR = 15; // (arm64's: x86-64 calls the C library's)
+	static inline var SP_CEIL = 16;
 
 	// native code at fn called through the image: the arguments' registers
 	// at operand `first`, then the shape: the result's kind, the stack
@@ -581,7 +587,11 @@ class Interp {
 			case SP_F32BITS_TO_FREG:
 				// (a float's bits in the low half: a register move, the upper half zero)
 				sl(regs, d, zext(gi(regs, o(ip, 3))));
-			case _:
+			case SP_FLOOR:
+				sf(regs, d, Math.ffloor(gf(regs, o(ip, 3))));
+			case SP_CEIL:
+				sf(regs, d, Math.fceil(gf(regs, o(ip, 3))));
+			case _: // SP_FREG_TO_F32BITS
 				si(regs, d, gi(regs, o(ip, 3)));
 		}
 	}
