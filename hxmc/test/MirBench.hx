@@ -88,14 +88,15 @@ class MirBench {
 				if (w.edit == null) return;
 				File.saveContent(w.edit.file, switch w.edit.kind {
 					case Comment: original + '\n// MirBench edit $n $k\n';
-					case Declaration: original + '\ntypedef MirBenchEdit_${n}_$k = Int;\n';
-					case MacroBody: original.replace("macro 1;", 'macro ${100 * n + k};');
+					case Declaration: original + '\ntypedef MirBenchEdit_${n + 1}_$k = Int;\n';
+					case MacroBody: original.replace("macro 1;", 'macro ${100 * (n + 1) + k};');
 				});
 			}
 			var times = [for (_ in compilers) []];
 			var servers = [];
 			try {
-				// (a cache of each compiler's own, filled by a first build; a server each, its first build)
+				// (a cache of each compiler's own, filled by a first build; a server each,
+				// its first two builds: the second one is slower than the next ones, both engines)
 				for (k in 0...compilers.length) {
 					var c = compilers[k];
 					var env = envOf(w, dir, k);
@@ -103,11 +104,12 @@ class MirBench {
 					if (w.server == true) {
 						servers.push(server(c.cmd, w.cwd, env, port + k));
 					}
-					if (w.warm == true || w.server == true) {
-						edit(0, k);
-						var x = exec(command(w, c.cmd, port + k), {cwd: w.cwd, merge: true, env: env});
-						if (x.code != 0) throw '${w.name}, ${c.name}: the first build: exit ${x.code}\n' + tail(x.out, 2000);
-					}
+					if (w.warm == true || w.server == true)
+						for (i in 0...(w.server == true ? 2 : 1)) {
+							edit(-i, k);
+							var x = exec(command(w, c.cmd, port + k), {cwd: w.cwd, merge: true, env: env});
+							if (x.code != 0) throw '${w.name}, ${c.name}: a first build: exit ${x.code}\n' + tail(x.out, 2000);
+						}
 				}
 				for (r in 0...runs)
 					for (k in 0...compilers.length) {
