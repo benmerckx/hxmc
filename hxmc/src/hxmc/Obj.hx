@@ -246,6 +246,65 @@ class Obj {
 		return s;
 	}
 
+	// another object's sections after this one's (each after the section of
+	// its name, aligned as it is), with its symbols and relocations: its
+	// global and undefined symbols by name, its local ones its own (Mir
+	// macros' functions kept one object each: interp.BundleCache)
+	public function append(o:Obj) {
+		if (o.funcs.length > 0 || o.ehFrame != null) throw "hxmc: Obj.append: an object with function records";
+		var at = new haxe.ds.ObjectMap<Section, {sec:Section, off:Int}>();
+		for (s in o.sections) {
+			var t = section(s.name, s.kind, s.align);
+			if (s.align > t.align) t.align = s.align;
+			var off;
+			if (s.kind == Bss || s.kind == Tbss) {
+				off = (t.bssSize + s.align - 1) & ~(s.align - 1);
+				t.bssSize = off + s.bssSize;
+			} else {
+				t.buf.align(s.align);
+				off = t.buf.len;
+				t.buf.bytes(s.buf.b, 0, s.buf.len);
+			}
+			at.set(s, {sec: t, off: off});
+		}
+		var map = new haxe.ds.ObjectMap<Symbol, Symbol>();
+		function mapped(s:Symbol):Symbol {
+			var m = map.get(s);
+			if (m != null) return m;
+			var local = !s.global && (s.section != null || s.abs);
+			if (local) {
+				m = new Symbol(s.name);
+				m.global = false;
+				symbols.push(m);
+			} else m = sym(s.name);
+			if (s.section != null || s.abs) {
+				if (m.section != null || m.abs) throw 'hxmc: symbol ${s.name} defined twice';
+				if (s.abs) {
+					m.abs = true;
+					m.offset = s.offset;
+				} else {
+					var p = at.get(s.section);
+					m.section = p.sec;
+					m.offset = p.off + s.offset;
+				}
+				m.size = s.size;
+				m.global = s.global;
+				m.func = s.func;
+				m.tls = s.tls;
+			}
+			if (s.weak) m.weak = true;
+			map.set(s, m);
+			return m;
+		}
+		for (s in o.symbols)
+			mapped(s);
+		for (s in o.sections) {
+			var p = at.get(s);
+			for (r in s.relocs)
+				p.sec.relocs.push(new Reloc(p.off + r.offset, r.kind, mapped(r.sym), r.addend));
+		}
+	}
+
 	public function define(name:String, sec:Section, offset:Int, size = 0, global = true):Symbol {
 		var s = sym(name);
 		if (s.section != null) throw 'hxmc: symbol $name defined twice';

@@ -286,8 +286,9 @@ three shards, `SHARD=i/n`, and the fuzzer's diff lanes in three jobs), `test`
 handshake and libuv, lix, the corpus, the self-compile; then the Mir lane:
 the compiler with Mir macros running the corpus in itself, `Corpus --mir-run`,
 the macro cases with Mir macros against the reference, `Conformance
---target-only --parallel 1 --known eval-Issue11631-compile`, and a benchmark
-macro and the formatter's build timed against Eval, `MirBench`), `wasm` (the corpus
+--target-only --parallel 1 --known eval-Issue11631-compile`, the compiled
+functions kept across builds, `MirCacheCheck`, and macro workloads timed
+against Eval, cold and with the caches warm, `MirBench`), `wasm` (the corpus
 and the self-compile under node and wasmtime, both also with legacy exception
 handling under node), `playground` (the website in three browser engines,
 `make site-check`: a link check; every page at a desktop's and a phone's
