@@ -144,6 +144,7 @@ enum abstract IOp(Int) from Int to Int {
 	var UNREACH;
 	var TLSXLD; // d k: thread-local variable k of code loaded at run time (a block per thread)
 	var TLSXST; // a k
+	var CALLNX; // k s d n args: the call-out stub k calling the code at symbol table entry s
 }
 
 // An interpreter of hxmc's Mir inside the running program (-D hxmc.interp):
@@ -300,7 +301,11 @@ class Interp {
 
 	// native code calling an interpreted function (its entry stub): the
 	// arguments are 8-byte words at args, the result is written at args
+	public static var nEnter = 0;
+	public static var nCallOut = 0;
+	public static var nCallInterp = 0;
 	@:hxmc.export("hxmc_interp_enter") static function enter(desc:Ptr, args:Ptr):Void {
+		nEnter++;
 		if (isp.isNull()) initStack();
 		var base = isp;
 		try {
@@ -448,6 +453,7 @@ class Interp {
 	// ip + 4 * first into its parameters' registers, its result into register d
 	// (none: a word of its frame)
 	static inline function callInterp(regs:Ptr, ip:Ptr, desc:Ptr, d:Int, n:Int, first:Int) {
+		nCallInterp++;
 		var callee = isp.add(FRAME);
 		var nc = Mem.getI32(desc, 20);
 		for (k in 0...n)
@@ -458,6 +464,7 @@ class Interp {
 	// a call through a call-out stub: buf[0] the function (indirect calls),
 	// the arguments after it, the result into buf[0]
 	static inline function callOut(regs:Ptr, ip:Ptr, stub:Ptr, fn:I64, d:Int, n:Int, first:Int) {
+		nCallOut++;
 		var buf = isp;
 		Mem.setI64(buf, 0, fn);
 		for (k in 0...n)
@@ -895,6 +902,10 @@ class Interp {
 				case TLSXST:
 					Mem.setI64At(tlsBlock(), 0, o(ip, 2), gl(regs, o(ip, 1)));
 					ip = ip.add(12);
+				case CALLNX:
+					var n = o(ip, 4);
+					callOut(regs, ip, Mem.getPtr(syms, o(ip, 1) << 3), Mem.getI64(syms, o(ip, 2) << 3), o(ip, 3), n, 5);
+					ip = ip.add(20 + 4 * n);
 				case _:
 					throw "hxmc interp: unreachable code reached";
 			}

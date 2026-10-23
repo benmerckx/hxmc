@@ -142,6 +142,7 @@ enum abstract IOp(Int) from Int to Int {
 	var UNREACH;
 	var TLSXLD;
 	var TLSXST;
+	var CALLNX;
 }
 
 // The functions -D hxmc.interp interprets: those of the program's modules
@@ -892,6 +893,15 @@ class InterpGen {
 					emit([CALLI, sym(DESC + i.sym, 0), res, i.args.length]);
 					for (a in i.args)
 						code.push(r(a));
+				} else if (i.sym != null && nostub && !StringTools.startsWith(i.sym, "hxmc$")) {
+					// (HXMC_NOSTUB=1: the shape's indirect call-out stub, the callee's address from the symbol table)
+					var s = i.sym;
+					i.sym = null;
+					var stub = callStub(i);
+					i.sym = s;
+					emit([CALLNX, sym(stub, 0), sym(s, 0), res, i.args.length]);
+					for (a in i.args)
+						code.push(r(a));
 				} else if (i.sym != null) callOut(callStub(i), res, i.args) else {
 					emit([CALLNI, sym(callStub(i), 0), r(i.a), res, i.args.length, cacheSlot()]);
 					for (a in i.args)
@@ -984,6 +994,17 @@ class InterpGen {
 	// the call-out stub of a call: (unused, buf) -> 0: the function at buf[0]
 	// (an indirect call) called with the arguments at buf[8...], as the call
 	// does it, its result written at buf[0]
+	// (HXMC_INTERP_SHAPES=<file>: the shapes of the stubs made, a line each)
+	static var shapesFile = Sys.getEnv("HXMC_INTERP_SHAPES");
+	static var nostub = Sys.getEnv("HXMC_NOSTUB") == "1";
+
+	public static function shape(line:String) {
+		if (shapesFile == null) return;
+		var o = sys.io.File.append(shapesFile, false);
+		o.writeString(line + "\n");
+		o.close();
+	}
+
 	function callStub(c:MIns):String {
 		var k = new StringBuf();
 		k.add(c.sym != null ? c.sym : "*");
@@ -992,6 +1013,8 @@ class InterpGen {
 		k.add("|" + c.cSizes + "|" + c.cGroups + "|" + (c.cRet == null ? "" : [for (p in c.cRet) p.off + ":" + p.size + ":" + p.float].join(",")));
 		k.add("|" + c.variadic + "|" + c.noReturn + "|" + c.cCall);
 		var name = STUB + haxe.crypto.Md5.encode(k.toString()).substr(0, 16);
+		var kk = k.toString();
+		shape("C " + (c.sym == null ? "ind " : "dir ") + kk.substr(kk.indexOf("|")) + " " + (c.sym != null ? c.sym : "*"));
 		if (defined(name)) return name;
 		var argTys = [for (a in c.args) ty(a)];
 		compile(MirBuild.synthetic(prep, abi, name, vector(I64, I64), I64, (b, ps) -> {
@@ -1034,6 +1057,7 @@ class InterpGen {
 	function entryStub() {
 		var params = mf.params, ret = mf.ret;
 		var desc = DESC + mf.name;
+		shape("E " + [for (t in params) tyKey(t)].join("") + ">" + tyKey(ret) + " " + mf.name);
 		compile(MirBuild.synthetic(prep, abi, mf.name, params, ret, (b, ps) -> {
 			var buf = b.stackAddr(b.f.slot(8 * (params.length > 0 ? params.length : 1), 16));
 			for (n in 0...params.length)

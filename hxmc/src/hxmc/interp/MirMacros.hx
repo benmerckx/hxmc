@@ -604,6 +604,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		phase("data, trampolines");
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		phase("load");
+		InterpGen.shape("S funcs=" + funcs.length + " sigs=" + prog.sigs.length + " code=" + b.codeBytes + " allocstubs="
+			+ [for (s in obj.symbols) if (s.section != null && StringTools.startsWith(s.name, MemLower.ALLOC_STUB)) s].length);
 		for (p in b.inits)
 			inits.push(p);
 		for (f in funcs)
@@ -660,6 +662,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	public function report() {
 		if (stats && steps > 0) Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+		if (stats) Sys.stderr().writeString('  interp: entries from native code ' + hxmc.rt.Interp.nEnter + ', calls out ' + hxmc.rt.Interp.nCallOut + ', interpreted calls ' + hxmc.rt.Interp.nCallInterp + '\n');
 		if (stats)
 			for (k => v in phases)
 				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');
