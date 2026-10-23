@@ -65,7 +65,8 @@ class HostTable {
 	// the table of the global symbols the objects define (they and the
 	// table's own object are linked together), with the fingerprints
 	// (symbol, Fingerprint.key, HostFps flags) and the cuts
-	public static function build(objs:Array<Obj>, abi:Abi, fps:Array<{sym:String, key:String, flags:Int}>, cuts:String):Obj {
+	// and the imports (`imports`: their values bound by the system's loader)
+	public static function build(objs:Array<Obj>, abi:Abi, fps:Array<{sym:String, key:String, flags:Int}>, cuts:String, imports:Array<String>):Obj {
 		var obj = new Obj();
 		var defs = new Map<String, Symbol>();
 		var names = [];
@@ -76,11 +77,13 @@ class HostTable {
 					defs.set(s.name, s);
 					names.push(s.name);
 				}
+		for (n in imports)
+			if (!defs.exists(n)) names.push(n);
 		var rows = [];
 		var seen = new Map<String, String>();
 		for (n in names) {
 			var s = defs.get(n);
-			var kind = s.abs ? "a".code : switch s.section.kind {
+			var kind = s == null ? "t".code : s.abs ? "a".code : switch s.section.kind {
 				case Text: "t".code;
 				case Tdata | Tbss: "l".code;
 				case _: "d".code;
@@ -134,6 +137,45 @@ class HostTable {
 		obj.define(SYM, sec, start, b.len - start, true);
 		return obj;
 	}
+
+	// the functions the system's loader binds the compiler to, by name
+	// (Windows: its DLL imports, LinkInputs.peImports, through their thunks;
+	// macOS: what libSystem and the dylibs define, bound in place): code
+	// loaded at run time finds them in the table as the compiler's own (on
+	// Linux the static executable has them). Weak references are left out
+	// (a missing one is null), and so are the names the Mach-O linker defines.
+	public static function imports(objs:Array<Obj>, abi:Abi):Array<String> {
+		if (abi.os != "windows" && abi.os != "macos") return [];
+		var defined = new Map<String, Bool>(), weak = new Map<String, Bool>();
+		for (o in objs)
+			for (s in o.symbols)
+				if (s.global && (s.section != null || s.abs)) defined.set(s.name, true);
+		var r = [], seen = new Map<String, Bool>();
+		for (o in objs)
+			for (s in o.symbols)
+				if (s.global && s.section == null && !s.abs && !defined.exists(s.name)) {
+					if (s.weak) weak.set(s.name, true);
+					if (!seen.exists(s.name)) {
+						seen.set(s.name, true);
+						r.push(s.name);
+					}
+				}
+		r.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		// (Windows: the code the objects' import lists name, the runtime
+		// object's and LinkInputs.peImports': DLL, symbol, name, kind)
+		var code = new Map<String, Bool>();
+		if (abi.os == "windows")
+			for (o in objs)
+				for (s in o.sections)
+					if (s.name == ".hxmc.imports")
+						for (l in s.buf.toBytes().toString().split("\n")) {
+							var f = l.split("\t");
+							if (f.length >= 4 && f[3] == "code") code.set(f[1], true);
+						}
+		return [for (n in r) if (!weak.exists(n) && (abi.os == "windows" ? code.exists(n) : !MACHO_LINKER.contains(n))) n];
+	}
+
+	static final MACHO_LINKER = ["__dso_handle", "hxmc_tls_start", "hxmc_tls_base"];
 
 	// the thread-local variables the objects define (their accessors: InterpAbi.tlsAccessors)
 	public static function tlsNames(objs:Array<Obj>):Array<String> {

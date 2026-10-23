@@ -660,7 +660,7 @@ class Driver {
 			for (x in fps)
 				map.set(x.sym, {key: x.key, flags: x.flags});
 			var cuts = jitCuts != null ? jitCuts(new hxmc.macro.HostTable.HostFps(map)) : "";
-			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts));
+			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts, hxmc.macro.HostTable.imports(all, abi)));
 		}
 		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios) : null;
 		// the runtime objects' sections and the runtime's Haxe functions that

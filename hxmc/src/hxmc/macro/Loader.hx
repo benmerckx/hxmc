@@ -272,6 +272,31 @@ class Loader {
 		return e;
 	}
 
+	// a C function of the system's libraries the compiler imports nothing of
+	// (its imports are in the host table: HostTable.imports), looked up as
+	// the system's loader would bind it, or null: macOS: libSystem and the
+	// images loaded (dlsym, RTLD_DEFAULT); Windows: the DLL of its
+	// @:hxmc.lib, else the C library's and the system's DLLs the process has
+	// loaded. (Linux: the executable is static, there is nothing else.)
+	static function systemSymbol(n:String):Ptr {
+		if (Mem.os() == 1) return SysDl.dlsym(Ptr.ofI64(-2), cstr(n));
+		if (Mem.os() == 2) {
+			var lib = hxmc.ir.CInterop.LIBS.get(n);
+			// (LinkInputs.libFile's names)
+			var dlls = lib != null ? [lib.indexOf(".") < 0 && lib.indexOf("/") < 0 ? lib + ".dll" : lib] : [];
+			for (d in ["ucrtbase.dll", "msvcrt.dll", "kernel32.dll", "ntdll.dll"])
+				dlls.push(d);
+			for (d in dlls) {
+				var h = SysDll.GetModuleHandleA(cstr(d));
+				if (h.isNull()) h = lib != null && d == dlls[0] ? SysDll.LoadLibraryA(cstr(d)) : Ptr.nil();
+				if (h.isNull()) continue;
+				var p = SysDll.GetProcAddress(h, cstr(n));
+				if (!p.isNull()) return p;
+			}
+		}
+		return Ptr.nil();
+	}
+
 	// a C string outside the heap (never freed)
 	static function cstr(s:String):Ptr {
 		var b = haxe.io.Bytes.ofString(s);
@@ -519,6 +544,8 @@ class Loader {
 			var hs = h.get(n);
 			if (hs == null) hs = xb.get(n);
 			if (hs != null) return {v: hs.v, tls: hs.k == "l"};
+			var dyn = systemSymbol(n);
+			if (!dyn.isNull()) return {v: dyn.toI64(), tls: false};
 			// (a definition in another object of the bundle: one object here)
 			throw "undefined symbol " + n;
 		}
@@ -799,5 +826,16 @@ class Loader {
 		}
 		return null;
 	}
+}
+
+// (Loader.systemSymbol: each used only on its system, the others fold its calls away, Mem.os)
+@:hxmc.c @:hxmc.fast private extern class SysDl {
+	static function dlsym(handle:Ptr, name:Ptr):Ptr;
+}
+
+@:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class SysDll {
+	static function GetModuleHandleA(name:Ptr):Ptr;
+	static function LoadLibraryA(name:Ptr):Ptr;
+	static function GetProcAddress(module:Ptr, name:Ptr):Ptr;
 }
 #end

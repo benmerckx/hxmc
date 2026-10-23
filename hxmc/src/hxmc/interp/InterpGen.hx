@@ -446,7 +446,7 @@ class InterpGen {
 	function entrySources():{sources:Array<Int>, flags:Int} {
 		var pl = cc.params(mf);
 		var flags = mf.ret == F64 ? 1 : 0;
-		if (pl.stack > 0) flags |= 2;
+		if (InterpAbi.onStack(pl)) flags |= 2;
 		var sources = [];
 		for (k in 0...mf.params.length) {
 			var s = InterpAbi.slot(cc, pl.locs[k], mf.params[k] == F64);
@@ -1086,11 +1086,11 @@ class InterpGen {
 			code.push(x);
 		var parts = c != null && c.structRet && c.cRet.length > 0;
 		code.push(parts ? 2 : c != null && c.ty == F64 ? 1 : 0);
-		code.push(pl.stack > 0 ? 1 : 0);
+		code.push(InterpAbi.onStack(pl) ? 1 : 0);
 		for (k in 0...n) {
 			var loc = pl.locs[k];
-			var s = InterpAbi.slot(cc, loc, tys[k] == F64);
-			if (s < 0 || loc.gpr >= 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a call of native code whose arguments take more than the interpreter\'s stack words (hxmc.interp.InterpAbi)');
+			var s = InterpAbi.outSlot(cc, loc, tys[k] == F64);
+			if (s < 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a call of native code whose arguments take more than the interpreter\'s stack words (hxmc.interp.InterpAbi)');
 			code.push(s | (tys[k] == I32 ? 0x10000 : 0));
 		}
 		if (parts) {
