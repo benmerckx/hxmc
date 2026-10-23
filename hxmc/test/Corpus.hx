@@ -275,7 +275,7 @@ class Corpus {
 		var got = 'exit ${r.code}\n' + r.out;
 		if (got != File.getContent(expected)) {
 			File.saveContent(d + "/got.txt", got + r.err);
-			return {name: c.name, status: "differs", detail: 'diff $expected $d/got.txt\n' + tail(r.err, 800)};
+			return {name: c.name, status: "differs", detail: 'diff $expected $d/got.txt\n' + lineDiff(File.getContent(expected), got, 12).join("\n") + "\n" + tail(r.err, 800)};
 		}
 		return {name: c.name, status: "ok", detail: '${fixed(now() - t0)}s'};
 	}

@@ -1086,7 +1086,11 @@ jobs:
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 30
         working-directory: mir
-        run: HXMC_JIT="$MIR_JIT" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Corpus --mir-run -j $MIR_JOBS
+        # (no core dumps: NullAccessCrash ends the compiler, whose address
+        # space is large, with SIGSEGV: its dump outlasted the case's timeout)
+        run: |
+          ulimit -c 0 2>/dev/null || true
+          HXMC_JIT="$MIR_JIT" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Corpus --mir-run -v -j $MIR_JOBS
       - name: Mir lane, the macro cases with Mir macros
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 30
