@@ -161,10 +161,18 @@ class HostTable {
 					}
 				}
 		r.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
-		return [
-			for (n in r)
-				if (!weak.exists(n) && (abi.os == "windows" ? hxmc.ir.CInterop.LIBS.exists(n) : !MACHO_LINKER.contains(n))) n
-		];
+		// (Windows: the code the objects' import lists name, the runtime
+		// object's and LinkInputs.peImports': DLL, symbol, name, kind)
+		var code = new Map<String, Bool>();
+		if (abi.os == "windows")
+			for (o in objs)
+				for (s in o.sections)
+					if (s.name == ".hxmc.imports")
+						for (l in s.buf.toBytes().toString().split("\n")) {
+							var f = l.split("\t");
+							if (f.length >= 4 && f[3] == "code") code.set(f[1], true);
+						}
+		return [for (n in r) if (!weak.exists(n) && (abi.os == "windows" ? code.exists(n) : !MACHO_LINKER.contains(n))) n];
 	}
 
 	static final MACHO_LINKER = ["__dso_handle", "hxmc_tls_start", "hxmc_tls_base"];

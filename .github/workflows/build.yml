@@ -1049,15 +1049,27 @@ jobs:
           mkdir -p mir/bin/jit && tar xzf dl/jit-${{ matrix.target }}.tar.gz -C mir/bin/jit
           exe=; lix=lix/lix-${{ matrix.target }}
           if [ "$RUNNER_OS" = Windows ]; then exe=.exe; lix=$lix.exe; fi
-          # (Haxe has no Windows ARM64 build: the x86-64 one, emulated, and lix's x86-64 build to download it)
-          if [ "${{ matrix.target }}" = windows-arm64 ]; then lix=lix/lix-windows-x86_64.exe; fi
           rev=${{ steps.ref.outputs.rev }}
           native() { if [ "$RUNNER_OS" = Windows ]; then cygpath -m "$1"; else echo "$1"; fi; }
-          ref="$PWD/ref/lix/versions/$rev/haxe$exe"
-          if [ ! -f "$ref" ]; then
-            chmod +x "$lix"; lixp="$PWD/$lix"
-            mkdir -p ref
-            (cd ref && HAXESHIM_ROOT="$(native "$PWD/lix")" "$lixp" download haxe $rev)
+          if [ "${{ matrix.target }}" = windows-arm64 ]; then
+            # Haxe has no Windows ARM64 build (nor lix a platform there): the
+            # x86-64 nightly, emulated, from the nightlies' listing
+            ref="$PWD/ref/nightly/haxe.exe"
+            if [ ! -f "$ref" ]; then
+              base=https://build.haxe.org/builds/haxe/windows64
+              f=$(curl -fsSL --retry 3 "$base/" | grep -o "haxe_[0-9-]*_[a-z_]*_$rev\.zip" | head -1)
+              mkdir -p ref/x
+              curl -fsSL --retry 3 -o ref/nightly.zip "$base/$f"
+              unzip -q ref/nightly.zip -d ref/x
+              mv "$(dirname "$(ls ref/x/*/haxe.exe | head -1)")" ref/nightly
+            fi
+          else
+            ref="$PWD/ref/lix/versions/$rev/haxe$exe"
+            if [ ! -f "$ref" ]; then
+              chmod +x "$lix"; lixp="$PWD/$lix"
+              mkdir -p ref
+              (cd ref && HAXESHIM_ROOT="$(native "$PWD/lix")" "$lixp" download haxe $rev)
+            fi
           fi
           ls -l "$(dirname "$ref")"
           "$ref" -version

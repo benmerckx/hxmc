@@ -76,7 +76,9 @@ class Corpus {
 			for (k in MIR_RUN_KNOWN.keys())
 				known.push(k);
 		var stale = [];
-		tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
+		tool = Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc";
+		// (--mir-run on a target's machine has no tool: macOS's full path of a missing file fails)
+		if (FileSystem.exists(tool)) tool = FileSystem.fullPath(tool);
 		target = a.get("--target");
 		stage = a.get("--stage");
 		wasmEh = a.get("--wasm-eh");
