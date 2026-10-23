@@ -271,7 +271,7 @@ class InterpGen {
 	var nregs = 0;
 	var scratch = 0;
 	// compares that are their branch's condition
-	final fused = new Map<Int, Bool>();
+	var fused:haxe.ds.Vector<Int>;
 	// targets to fill in: blocks' (their code's offset), trampolines' (an edge's moves)
 	final fixups:Array<{at:Int, from:Int, to:MBlock}> = [];
 	final tramps:Array<{at:Int, from:Int, moves:Array<{d:Int, s:Int}>, to:MBlock}> = [];
@@ -313,6 +313,7 @@ class InterpGen {
 		var blocks = hxmc.Driver.Layout.order(mf);
 		// uses, the compares that are their branch's condition
 		var uses = MFunc.ints(mf.vals.length, 0);
+		fused = MFunc.ints(mf.vals.length, 0);
 		for (b in blocks)
 			for (i in b.ins) {
 				if (i.dead) continue;
@@ -325,7 +326,7 @@ class InterpGen {
 			}
 		for (b in blocks) {
 			var t = b.term();
-			if (t != null && t.op == Br && mf.vals[t.a].op == Cmp && uses[t.a] == 1) fused.set(t.a, true);
+			if (t != null && t.op == Br && mf.vals[t.a].op == Cmp && uses[t.a] == 1) fused[t.a] = 1;
 		}
 		// registers: the constants, then the other values
 		reg = MFunc.ints(mf.vals.length, -1);
@@ -381,7 +382,7 @@ class InterpGen {
 					if (i.op == Param && !i.dead) reg[i.id] = nc + i.imm;
 			for (b in blocks)
 				for (i in b.ins)
-					if (!i.dead && reg[i.id] < 0 && i.ty != Void && !fused.exists(i.id)) reg[i.id] = nregs++;
+					if (!i.dead && reg[i.id] < 0 && i.ty != Void && fused[i.id] == 0) reg[i.id] = nregs++;
 		}
 		// (a parameter of type Void, or one never read, still has its register: calls pass it, DataGen.boundTrampoline)
 		for (b in blocks)
@@ -494,7 +495,7 @@ class InterpGen {
 		var wid = MFunc.ints(vals.length, -1), ids = [];
 		for (b in blocks)
 			for (i in b.ins)
-				if (!i.dead && i.ty != Void && reg[i.id] < 0 && !fused.exists(i.id)) {
+				if (!i.dead && i.ty != Void && reg[i.id] < 0 && fused[i.id] == 0) {
 					wid[i.id] = ids.length;
 					ids.push(i.id);
 				}
@@ -507,8 +508,8 @@ class InterpGen {
 			reach[b.id] = true;
 		// the uses of an operation (a fused compare's at its branch)
 		function eachUse(i:MIns, f:Int->Void) {
-			if (i.op == Phi || fused.exists(i.id)) return;
-			if (i.op == Br && fused.exists(i.a)) {
+			if (i.op == Phi || fused[i.id] != 0) return;
+			if (i.op == Br && fused[i.a] != 0) {
 				var c = vals[i.a];
 				if (wid[c.a] >= 0) f(c.a);
 				if (wid[c.b] >= 0) f(c.b);
@@ -547,53 +548,49 @@ class InterpGen {
 		var ng = gids.length;
 		inline function isPinned(pinned:hxmc.Lir.Bits, v:Int):Bool
 			return gid[v] >= 0 && pinned.get(gid[v]);
-		// liveness (a phi's argument: live out of its predecessor)
-		var gen = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
-		var kill = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
-		var phiUse = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
-		var liveIn = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
-		var liveOut = [for (_ in 0...nb) new hxmc.Lir.Bits(ng)];
-		for (b in blocks) {
-			var g = gen[b.id], k = kill[b.id];
+		// liveness, sparse (SSA: a value is live from its definition to its
+		// uses, so each use walks the predecessors back to the defining block,
+		// Brandner et al.'s path exploration): the values live into each block,
+		// and those its successors' phis read from it (live out of it). Dense
+		// sets per block cost the giant functions of macros (json2object's:
+		// 38,000 values) most of their compilation.
+		var useBlocks = [for (_ in 0...ng) []], phiPreds = [for (_ in 0...ng) []];
+		var phiUse:Array<Array<Int>> = [for (_ in 0...nb) []];
+		for (b in blocks)
 			for (i in b.ins) {
 				if (i.dead) continue;
 				if (i.op == Phi) {
-					if (gid[i.id] >= 0) k.set(gid[i.id]);
 					for (pi in 0...b.preds.length) {
 						var p = b.preds[pi], v = i.args[pi];
-						if (reach[p.id] && wid[v] >= 0) phiUse[p.id].set(gid[v]);
+						if (reach[p.id] && wid[v] >= 0) {
+							phiUse[p.id].push(gid[v]);
+							phiPreds[gid[v]].push(p);
+						}
 					}
 					continue;
 				}
-				eachUse(i, u -> {
-					var x = gid[u];
-					if (x >= 0 && !k.get(x)) g.set(x);
-				});
-				if (gid[i.id] >= 0) k.set(gid[i.id]);
+				var bid = b.id;
+				eachUse(i, u -> if (defBlock[u] != bid) useBlocks[gid[u]].push(b));
+			}
+		var liveIn:Array<Array<Int>> = [for (_ in 0...nb) []];
+		var walk:Array<MBlock> = [];
+		for (x in 0...ng) {
+			var d = defBlock[gids[x]];
+			for (b in useBlocks[x])
+				walk.push(b);
+			for (p in phiPreds[x])
+				if (p.id != d) walk.push(p);
+			while (walk.length > 0) {
+				var b = walk.pop();
+				var li = liveIn[b.id];
+				if (b.id == d || (li.length > 0 && li[li.length - 1] == x)) continue;
+				li.push(x);
+				for (p in b.preds)
+					if (reach[p.id]) walk.push(p);
 			}
 		}
-		var post = blocks.toArray();
-		post.reverse();
-		var changed = true;
-		while (changed) {
-			changed = false;
-			for (b in post) {
-				// (in place: no set made per block and pass)
-				var out = liveOut[b.id], ow = out.w, pw = phiUse[b.id].w;
-				for (w in 0...ow.length)
-					ow[w] = pw[w];
-				for (s in b.succs)
-					if (reach[s.id]) out.union(liveIn[s.id]);
-				var inn = liveIn[b.id], g = gen[b.id], k = kill[b.id];
-				for (w in 0...inn.w.length) {
-					var v = g.w[w] | (out.w[w] & ~k.w[w]);
-					if (v != inn.w[w]) {
-						inn.w[w] = v;
-						changed = true;
-					}
-				}
-			}
-		}
+		// (the values live out of the block being allocated: marked with its stamp)
+		var outMark = MFunc.ints(ng, -1);
 		// dominators (Cooper, Harvey, Kennedy) over a reverse postorder
 		var rpo = [], seen = [for (_ in 0...nb) false];
 		var stack = [mf.entry], idx = [0];
@@ -619,7 +616,7 @@ class InterpGen {
 			num[rpo[k].id] = k;
 		var idom:Array<Null<MBlock>> = [for (_ in 0...nb) null];
 		idom[mf.entry.id] = mf.entry;
-		changed = true;
+		var changed = true;
 		while (changed) {
 			changed = false;
 			for (k in 1...rpo.length) {
@@ -650,7 +647,9 @@ class InterpGen {
 		// the values a try's handler reads: their own registers
 		var pinned = new hxmc.Lir.Bits(ng);
 		for (b in blocks)
-			if (b.handler) pinned.union(liveIn[b.id]);
+			if (b.handler)
+				for (x in liveIn[b.id])
+					pinned.set(x);
 		// a value feeding a phi: the phi
 		var hint = MFunc.ints(vals.length, -1);
 		for (b in blocks)
@@ -664,10 +663,17 @@ class InterpGen {
 		var reservedRegs:Array<Int> = [];
 		var stamp = 0;
 		var last = MFunc.ints(n, -1);
+		// (every register from nc to low is taken or reserved: free() looks from there)
+		var low = nc;
+		function release(r:Int) {
+			occ[r] = 0;
+			if (r < low) low = r;
+		}
 		function free():Int {
-			var r = nc;
+			var r = low;
 			while (r < maxReg && (occ[r] == stamp || reserved[r]))
 				r++;
+			low = r;
 			if (r == maxReg) {
 				maxReg++;
 				occ.push(0);
@@ -699,17 +705,16 @@ class InterpGen {
 			for (c in kids[b.id])
 				order.push(c);
 			stamp++;
-			var li = liveIn[b.id], lo = liveOut[b.id];
-			// (the values live in: the set bits only)
-			var lw = li.w;
-			for (x in 0...lw.length) {
-				var bits = lw[x];
-				while (bits != 0) {
-					var low = bits & -bits;
-					occ[reg[gids[(x << 5) + trailingZeros(low)]]] = stamp;
-					bits ^= low;
-				}
-			}
+			low = nc;
+			for (x in liveIn[b.id])
+				occ[reg[gids[x]]] = stamp;
+			// (the values live out: the successors' live in, their phis' arguments from here)
+			for (s in b.succs)
+				if (reach[s.id])
+					for (x in liveIn[s.id])
+						outMark[x] = stamp;
+			for (x in phiUse[b.id])
+				outMark[x] = stamp;
 			for (r in reservedRegs)
 				occ[r] = stamp;
 			// (the parameters: written by the caller before the entry block runs)
@@ -734,7 +739,7 @@ class InterpGen {
 				}
 				eachUse(i, u -> {
 					var w = wid[u], x = gid[u];
-					if (last[w] == k && (x < 0 || !lo.get(x)) && !isPinned(pinned, u)) occ[reg[u]] = 0;
+					if (last[w] == k && (x < 0 || outMark[x] != stamp) && !isPinned(pinned, u)) release(reg[u]);
 				});
 				if (wid[i.id] < 0) continue;
 				if (i.op == Param) {
@@ -744,32 +749,10 @@ class InterpGen {
 					take(i.id, pick(i.id, h >= 0 && reg[h] >= 0 ? reg[h] : -1));
 				}
 				// (never read: free again)
-				if (uses[i.id] == 0 && !isPinned(pinned, i.id)) occ[reg[i.id]] = 0;
+				if (uses[i.id] == 0 && !isPinned(pinned, i.id)) release(reg[i.id]);
 			}
 		}
 		return maxReg;
-	}
-
-	// the index of a word's only set bit
-	static inline function trailingZeros(x:Int):Int {
-		var t = 0;
-		if (x & 0xFFFF == 0) {
-			t += 16;
-			x >>>= 16;
-		}
-		if (x & 0xFF == 0) {
-			t += 8;
-			x >>>= 8;
-		}
-		if (x & 0xF == 0) {
-			t += 4;
-			x >>>= 4;
-		}
-		if (x & 3 == 0) {
-			t += 2;
-			x >>>= 2;
-		}
-		return x & 1 == 0 ? t + 1 : t;
 	}
 
 	// a constant's register: a value (lo, hi), or a symbol's (S + A)
@@ -887,7 +870,7 @@ class InterpGen {
 	function ins(i:MIns, b:MBlock, slotOff:Array<Int>) {
 		switch i.op {
 			case Param | Const | ConstF | SymAddr | Phi:
-			case Cmp if (fused.exists(i.id)):
+			case Cmp if (fused[i.id] != 0):
 			case TlsLoad:
 				var t = TLS.get(i.sym);
 				if (t != null) emit([TLSLD, r(i.id), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXLD, r(i.id), tlsIndex(i.sym)]) else if (set.loaded)
@@ -1005,7 +988,7 @@ class InterpGen {
 				moveJump(moves(b, i.targets[0]), i.targets[0]);
 			case Br:
 				var c = mf.vals[i.a];
-				if (fused.exists(c.id)) emit([cmpOp(c, BEQ32, BEQ64, BFEQ), r(c.a), r(c.b)]) else emit([BR, r(i.a)]);
+				if (fused[c.id] != 0) emit([cmpOp(c, BEQ32, BEQ64, BFEQ), r(c.a), r(c.b)]) else emit([BR, r(i.a)]);
 				edge(b, i.targets[0]);
 				edge(b, i.targets[1]);
 			case Switch:
