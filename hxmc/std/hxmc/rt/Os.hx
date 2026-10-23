@@ -83,9 +83,15 @@ class Os {
 		return s + ns * 1e-9;
 	}
 
-	// (nanosleep, again after a signal; Windows: MinGW-w64's)
+	// (nanosleep, again after a signal; Windows: Sleep, in milliseconds as
+	// WinSys.sleep's: MinGW-w64's nanosleep returned after 3-4 ms of 10 on
+	// Windows on arm64)
 	@:hxmc.noGc public static function sleep(seconds:Float) {
 		if (seconds <= 0) return;
+		if (windows()) {
+			hxmc.unsafe.Win32.Sleep(Std.int(seconds * 1000.0 + 0.5));
+			return;
+		}
 		var t = Mem.stack(32);
 		var whole = Math.ffloor(seconds);
 		Mem.setI64(t, 0, (cast whole : I64));
