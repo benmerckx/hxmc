@@ -1,0 +1,14 @@
+exit 0
+classify(0) = 10
+classify(1) = 1
+classify(7) = 1
+classify(99) = 1
+classify(100) = 30
+classify(12345) = 30
+classify(-1) = 20
+classify(-100) = 20
+bit(0) = 10
+bit(8) = 30
+bit(9) = 30
+bit(7) = 10
+bit(65544) = 30

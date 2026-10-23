@@ -170,20 +170,25 @@ class DataGen {
 
 	var typeObjs = 0;
 
+	// the string literals, read-only: nothing writes them (their hash is
+	// here, never 0, so Str.hash does not store it; the collector leaves what
+	// is outside the heap alone; a string's identity hash is its content's)
 	function strings() {
+		var buf = rodata.buf;
 		for (s in e.strOrder) {
 			var n = e.strNames.get(s);
 			var units = [for (i in 0...s.length) s.charCodeAt(i)];
-			var nslots = Std.int((8 + 2 * units.length + 7) / 8);
-			data.buf.align(8);
-			obj.define(n, data, data.buf.len, 8 + 8 + 2 * (units.length + 1), true);
-			// MKHDR(nslots, K_RAW, T_STRING)
-			data.buf.u64(nslots | (Abi.K_RAW << 28), 1);
-			data.buf.u32(s.length);
-			data.buf.u32(0);
+			buf.align(8);
+			obj.define(n, rodata, buf.len, 8 + 4 + 2 * (units.length + 1), true);
+			// the header (hxmc.rt.Types): T_STRING, its words, its hash (as
+			// Str.hash computes it); the length, the units, then a 0 unit
+			var words = (units.length + 5) >> 2;
+			buf.u32(Abi.T_STRING | ((words < 0xFFFF ? words : 0xFFFF) << 16));
+			buf.u32(hxmc.ir.FnLower.strHash(s));
+			buf.u32(s.length);
 			for (u in units)
-				data.buf.u16(u);
-			data.buf.u16(0);
+				buf.u16(u);
+			buf.u16(0);
 		}
 	}
 
@@ -335,7 +340,7 @@ class DataGen {
 				for (f in fs) {
 					rodata.buf.u32(e.fid(f.name));
 					rodata.buf.u32(f.slot);
-					rodata.buf.u32(kindChar(f.ty));
+					rodata.buf.u32(f.kind != null ? f.kind : kindChar(f.ty));
 				}
 			}
 			var ms = t.methods.copy();
@@ -425,8 +430,9 @@ class DataGen {
 		for (l in p.lambdas)
 			if (l.captures.length == 0) {
 				data.buf.align(8);
-				data.buf.u32(1 | (Abi.K_OBJ << 28));
-				data.buf.u32(l.tindex);
+				// (a record of one slot, its hash 0: hxmc.rt.Types)
+				data.buf.u32((1 << 16) | l.tindex);
+				data.buf.u32(0);
 				obj.define(prep.closureSym(l), data, data.buf.len, 8, true);
 				ptr(data, e.symbol(l.fn));
 			}
@@ -489,18 +495,18 @@ class DataGen {
 			obj.define(e.selNames[rows[i].s], data, base + 8 * at[i], 0, true);
 	}
 
-	// the allocation stubs the program's code calls (MirBuild.ALLOC_STUB):
+	// the allocation stubs the program's code calls (MemLower.ALLOC_STUB):
 	// each passes its header words and size to hxmc_alloc_slow, so an
 	// allocation site's slow path is one call (after run: hx_main_body allocates)
 	public function allocStubs(objs:Array<Obj>, emit:Target.Emitter) {
 		var names = new Map<String, Bool>();
 		for (o in objs.concat([obj]))
 			for (s in o.symbols)
-				if (s.section == null && !s.abs && StringTools.startsWith(s.name, MirBuild.ALLOC_STUB)) names.set(s.name, true);
+				if (s.section == null && !s.abs && StringTools.startsWith(s.name, MemLower.ALLOC_STUB)) names.set(s.name, true);
 		var list = [for (n in names.keys()) n];
 		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 		for (n in list) {
-			var parts = n.substr(MirBuild.ALLOC_STUB.length).split("$");
+			var parts = n.substr(MemLower.ALLOC_STUB.length).split("$");
 			var lo = Std.parseInt(parts[0]), bytes = Std.parseInt(parts[2]);
 			var ty = parts[1];
 			var sym = StringTools.startsWith(ty, "#") ? null : ty;
@@ -535,8 +541,8 @@ class DataGen {
 	}
 
 	// the empty NativeArrays the program refers to (MirBuild.EMPTY_ARRAY), in
-	// .data as string literals are: MKHDR(1, K_RAW, T_NATIVE_ARRAY), length 0,
-	// the kind
+	// .rodata as string literals are: the header (Types: length 0, the type of
+	// the kind), a zero slot
 	public function emptyArrays(objs:Array<Obj>) {
 		var names = new Map<String, Bool>();
 		for (o in objs.concat([obj]))
@@ -544,13 +550,40 @@ class DataGen {
 				if (s.section == null && !s.abs && StringTools.startsWith(s.name, MirBuild.EMPTY_ARRAY)) names.set(s.name, true);
 		var list = [for (n in names.keys()) n];
 		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		// (read-only: nothing writes them, an array having no identity hash)
 		for (n in list) {
-			data.buf.align(8);
-			obj.define(n, data, data.buf.len, 16, true);
-			data.buf.u64(1 | (Abi.K_RAW << 28), Abi.T_NATIVE_ARRAY);
-			data.buf.u32(0);
-			data.buf.u32(Std.parseInt(n.substr(MirBuild.EMPTY_ARRAY.length)));
+			rodata.buf.align(8);
+			obj.define(n, rodata, rodata.buf.len, 16, true);
+			rodata.buf.u64(MirBuild.naType(Std.parseInt(n.substr(MirBuild.EMPTY_ARRAY.length))), 0);
+			rodata.buf.u64(0, 0);
 		}
+	}
+
+	// haxe.Resource's bytes (Lower.resources), when the program reads them
+	// (hxmc.rt.Bytes, by the symbol RESOURCES): in .rodata, a table of 8
+	// bytes per resource in Lower.resources' order, the offset of its bytes
+	// from the table and their length (32 bits each, little-endian), then
+	// each resource's bytes as they are, once. No relocations: nothing in it
+	// is an address.
+	public static inline var RESOURCES = "hxmc_resources";
+
+	public function resources(objs:Array<Obj>) {
+		var used = false;
+		for (o in objs.concat([obj]))
+			for (s in o.symbols)
+				if (s.section == null && !s.abs && s.name == RESOURCES) used = true;
+		if (!used) return;
+		var rs = hxmc.ir.Lower.resources, buf = rodata.buf;
+		var at = begin(rodata, RESOURCES, 8, true);
+		var off = 8 * rs.length;
+		for (r in rs) {
+			buf.u32(off);
+			buf.u32(r.data.length);
+			off += r.data.length;
+		}
+		for (r in rs)
+			buf.bytes(r.data);
+		at.size = buf.len - at.offset;
 	}
 
 	// the runtime's machine-code stubs the program refers to (MirBuild.STUB_*)

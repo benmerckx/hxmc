@@ -1,0 +1,11 @@
+exit 0
+CallStacksGc.hx:76: made at depth 0: 2 frames, the same after collections: true
+CallStacksGc.hx:76: caught at depth 0: 2 frames, the same after collections: true
+CallStacksGc.hx:76: made at depth 5: 7 frames, the same after collections: true
+CallStacksGc.hx:76: caught at depth 5: 7 frames, the same after collections: true
+CallStacksGc.hx:76: made at depth 30: 32 frames, the same after collections: true
+CallStacksGc.hx:76: caught at depth 30: 32 frames, the same after collections: true
+CallStacksGc.hx:76: made at depth 80: 82 frames, the same after collections: true
+CallStacksGc.hx:76: caught at depth 80: 82 frames, the same after collections: true
+CallStacksGc.hx:78: CallStacksGc.made:36 < CallStacksGc.made:31 < CallStacksGc.made:31
+CallStacksGc.hx:79: CallStacksGc.thrown:45 < CallStacksGc.thrown:42 < CallStacksGc.thrown:42

@@ -140,6 +140,7 @@ class EncTestA64 {
 					emit('stlxr w17, ${r(t, x)}, [${r(n, true)}]', a -> a.stlxr(x, 17, t, n));
 				}
 		emit('dmb ish', a -> a.dmbIsh());
+		emit('dmb ishst', a -> a.dmbIshst());
 		emit('clrex', a -> a.clrex());
 		Sys.print(out.toString());
 	}

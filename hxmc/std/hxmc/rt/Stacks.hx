@@ -174,10 +174,11 @@ class Stacks {
 
 	static function ofAddresses(p:Ptr, n:Int):haxe.io.Bytes {
 		var b = haxe.io.Bytes.alloc(8 * n);
-		copyInto(b, p, n);
+		copyInto(b.getData(), p, n);
 		return b;
 	}
 
+	// (b: the haxe.io.BytesData of a haxe.io.Bytes)
 	@:hxmc.noGc static function copyInto(b:Dynamic, p:Ptr, n:Int)
 		LibC.memcpy(Bytes.bytes(b), p, (8 * n : I64));
 
@@ -312,7 +313,7 @@ class Stacks {
 
 	// the return address k of a stack capture made
 	@:hxmc.noGc public static function at(b:haxe.io.Bytes, k:Int):Ptr
-		return Mem.getPtr(Bytes.bytes(b), 8 * k);
+		return Mem.getPtr(Bytes.bytes(b.getData()), 8 * k);
 
 	// whether a frame is the runtime's own (not shown in stacks)
 	public static function internal(name:Null<String>):Bool

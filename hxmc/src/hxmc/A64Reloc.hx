@@ -2,9 +2,9 @@ package hxmc;
 
 import hxmc.Obj;
 
-// The AArch64 instruction fields the linkers patch (LinkPE, LinkMachO; Link
-// has its own copy for ELF): `v` is the value the relocation computes (S + A,
-// or a TLS offset), `p` the address of the instruction.
+// The AArch64 instruction fields the linkers patch (LinkCore.applyRelocs):
+// `v` is the value the relocation computes (S + A, a GOT slot's address, or a
+// TLS offset), `p` the address of the instruction.
 class A64Reloc {
 	public static function imm12(buf:Buf, at:Int, v:Int)
 		buf.set32(at, (buf.get32(at) & ~(0xfff << 10)) | ((v & 0xfff) << 10));
@@ -25,8 +25,10 @@ class A64Reloc {
 	// patches the field of a relocation of an arm64 kind; false: not one
 	public static function apply(buf:Buf, at:Int, kind:RelKind, v:Int, p:Int, name:String):Bool {
 		switch kind {
-			case RA64AdrPage21:
+			case RA64AdrPage21 | RA64GotPage21:
 				adrp(buf, at, v, p);
+			case RA64GotLo12:
+				imm12(buf, at, (v & 0xfff) >> 3);
 			case RA64AddLo12 | RA64Ldst8Lo12:
 				imm12(buf, at, v & 0xfff);
 			case RA64Ldst16Lo12:
@@ -49,6 +51,10 @@ class A64Reloc {
 				var d = v - p;
 				if (d >= (1 << 15) || d < -(1 << 15)) throw "hxmc: link: test branch out of range to " + name;
 				buf.set32(at, (buf.get32(at) & ~(0x3fff << 5)) | (((d >> 2) & 0x3fff) << 5));
+			case RA64TlsLeHi12:
+				imm12(buf, at, (v >> 12) & 0xfff);
+			case RA64TlsLeLo12Nc:
+				imm12(buf, at, v & 0xfff);
 			case RA64SecRelHi12:
 				if (v < 0 || v >= 1 << 24) throw "hxmc: link: thread-local offset out of range for " + name;
 				imm12(buf, at, (v >> 12) & 0xfff);

@@ -64,9 +64,11 @@ class Meta {
 		}
 		m.gc(b, 0x08, pt, cls.length);
 		setGlobal(clsTypes);
-		// (the class of dates: none, its time not a field, as natively: GcGen.Uses.dateClass)
+		// (the class of dates: none, its time not a field, as natively:
+		// GcGen.Uses.dateClass; then the derived fields, @:hxmc.lengthOf:
+		// indices from c.fields.length)
 		for (c in cls)
-			names(c == m.uses.dateClass ? [] : [for (f in c.fields) f.name]);
+			names(c == m.uses.dateClass ? [] : [for (f in c.fields) f.name].concat([for (d in c.derived) d.name]));
 		m.gc(b, 0x08, pt, cls.length);
 		setGlobal(clsFields);
 		var es = m.enumList();
@@ -268,6 +270,21 @@ class Meta {
 					b.u8(0x0F);
 					b.u8(0x0B);
 				}
+				// a derived field: the length of its NativeArray field (array.len)
+				for (k in 0...c.derived.length) {
+					get(b, 1);
+					i32(b, c.fields.length + k);
+					b.u8(0x46);
+					b.u8(0x04);
+					b.u8(0x40);
+					get(b, 0);
+					m.castTo(b, m.classType(c));
+					m.gc(b, 0x02, m.classType(c), c.fieldIndex(c.derived[k].of) + 1);
+					m.gc(b, 0x0F);
+					box(b, TI32);
+					b.u8(0x0F);
+					b.u8(0x0B);
+				}
 			});
 			m.constZero(b, "p");
 			b.u8(0x0F);
@@ -350,9 +367,10 @@ class Meta {
 	}
 
 	// o's field i = v (unboxed)
+	// (whether it was set: a derived field, @:hxmc.lengthOf, is not)
 	public function objSet():Int {
 		var si = shapeIndex();
-		return helper("meta_obj_set", "pip_v", [Enc.I32], b -> {
+		return helper("meta_obj_set", "pip_i", [Enc.I32], b -> {
 			get(b, 0);
 			test(b, m.objType);
 			b.u8(0x04);
@@ -377,10 +395,23 @@ class Meta {
 					var fk = m.fieldKey(c, j);
 					if (fk.charAt(0) == "t") m.castTo(b, Std.parseInt(fk.substr(1)));
 					m.gc(b, 0x05, m.classType(c), j + 1);
+					i32(b, 1);
+					b.u8(0x0F);
+					b.u8(0x0B);
+				}
+				// a derived field cannot be set (GcNative.setField throws)
+				for (k in 0...c.derived.length) {
+					get(b, 1);
+					i32(b, c.fields.length + k);
+					b.u8(0x46);
+					b.u8(0x04);
+					b.u8(0x40);
+					i32(b, 0);
 					b.u8(0x0F);
 					b.u8(0x0B);
 				}
 			});
+			i32(b, 1);
 			b.u8(0x0F);
 			b.u8(0x0B);
 			get(b, 0);
@@ -403,10 +434,12 @@ class Meta {
 					get(b, 2);
 					unbox(b, sh.fields[j].ty);
 					m.gc(b, 0x05, m.shapeType(sh), j + 2);
+					i32(b, 1);
 					b.u8(0x0F);
 					b.u8(0x0B);
 				}
 			});
+			i32(b, 1);
 		});
 	}
 

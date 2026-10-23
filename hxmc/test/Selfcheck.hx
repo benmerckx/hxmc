@@ -17,7 +17,7 @@ using StringTools;
 // one (Windows: D:\...) identical once each root is replaced by the same
 // placeholder. A WebAssembly port runs under --runner.
 //
-// Here (`make portcheck`): --local builds bin/hxmc-t/port/s with the tool
+// Here (`make check PORT=1`, `make full`): --local builds bin/hxmc-t/port/s with the tool
 // and compares its self-compile with the reference's (bin/reference/haxe,
 // written once and again when haxe/src is newer); --small also runs it with
 // a 256 KB nursery.

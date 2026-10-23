@@ -62,11 +62,8 @@ class WinSys {
 		}
 	}
 
-	static function printTo(fd:Int, s:String) {
-		var u = Str.toUtf8(Str.orNull(s));
-		writeAll(fd, u, LibC.strlen(u).toInt());
-		LibC.free(u);
-	}
+	static function printTo(fd:Int, s:String)
+		SysCore.printTo(fd, s);
 
 	public static function print(s:String):Void
 		printTo(1, s);
@@ -364,20 +361,8 @@ class WinSys {
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
 
-	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool {
-		touch(d, n);
-		var ok = true;
-		while (n > 0) {
-			var w = Win32._write(fd, d, n);
-			if (w <= 0) {
-				ok = false;
-				break;
-			}
-			d = d.add(w);
-			n -= w;
-		}
-		return Win32._close(fd) == 0 && ok;
-	}
+	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool
+		return SysCore.saveAll(fd, d, n);
 
 	// Sys.file_exists, Sys.is_directory: _wstat64
 	@:hxmc.noGc static function pathStat(p:Ptr, st:Ptr):Int

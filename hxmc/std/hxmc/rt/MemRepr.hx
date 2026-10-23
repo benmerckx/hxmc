@@ -9,14 +9,15 @@ import hxmc.unsafe.Ptr;
 // hxmc.rt.Repr in linear memory, over Mem (rt.h's layouts; addresses of
 // heap objects valid until the next GC point).
 class MemRepr {
-	static inline var T_STRING = 1;
-	static inline var T_ADATA_RAW = 7;
+	static inline var T_STRING = Types.T_STRING;
+	static inline var T_ADATA_RAW = Types.T_ADATA_RAW;
 	static inline var T_STRINGBUF = 10;
 	static inline var K_OBJ = 0;
 	static inline var K_RAW = 2;
-	static inline var T_BYTES = 8;
+	static inline var T_BYTES = Types.T_BYTES;
 	static inline var T_BYTESBUFFER = 9;
-	static inline var T_DATE = 20;
+	static inline var T_NATIVE = Types.T_NATIVE;
+	static inline var T_DATE = Types.T_DATE;
 
 	public static inline function isNull(o:Dynamic):Bool
 		return Mem.addr(o).isNull();
@@ -52,34 +53,37 @@ class MemRepr {
 	public static inline function fail(msg:String)
 		Rt.rt_throw(msg);
 
-	// ---- strings: K_RAW, int32 length, int32 hash (0: not computed yet), the
-	// UTF-16 units from offset 8
+	// ---- strings (Types): the header's content hash (a u32 at -4, 0 until
+	// computed); the length (a u32 at 0), the UTF-16 units from offset 4
 
 	public static inline function len(s:String):Int
 		return Mem.getI32(Mem.addr(s), 0);
 
 	public static inline function unit(s:String, i:Int):Int
-		return Mem.getU16At(Mem.addr(s), 8, i);
+		return Mem.getU16At(Mem.addr(s), 4, i);
 
 	public static inline function chars(s:String):MemChars
-		return Mem.addr(s).add(8);
+		return Mem.addr(s).add(4);
 
-	// length set, hash 0, the units not written
-	public static inline function make(n:Int):String {
-		var s:String = Mem.allocRaw((2 * n + 15) >> 3, T_STRING, K_RAW);
-		Mem.setI64(Mem.addr(s), 0, (n : I64));
+	// length set, hash 0, the units not written (none: the static empty
+	// string, as every object on the heap has a slot: Gc)
+	public static inline function make(n:Int):String
+		return n == 0 ? "" : withLength(Mem.allocArrayRaw(T_STRING, 0, (n + 5) >> 2), n); // (0: the hash, where an array has its length)
+
+	static inline function withLength(s:String, n:Int):String {
+		Mem.setI32(Mem.addr(s), 0, n);
 		return s;
 	}
 
 	public static inline function storedHash(s:String):Int
-		return Mem.getI32(Mem.addr(s), 4);
+		return Mem.getI32(Mem.addr(s), -4);
 
 	public static inline function storeHash(s:String, h:Int)
-		Mem.setI32(Mem.addr(s), 4, h);
+		Mem.setI32(Mem.addr(s), -4, h);
 
 	// unit i (a constant) of s set
 	public static inline function setUnit(s:String, i:Int, v:Int)
-		Mem.setI16(Mem.addr(s), 8 + 2 * i, v);
+		Mem.setI16(Mem.addr(s), 4 + 2 * i, v);
 
 	// dst[0, n) = src[0, n) (not overlapping); copyFrom: from src[si, si + n);
 	// copyTo: to dst[di, di + n)
@@ -130,7 +134,7 @@ class MemRepr {
 		return Mem.addr(sbData(b));
 
 	public static inline function sbCapacity(b:Dynamic):Int
-		return (Mem.getI32(Mem.addr(sbData(b)), -8) & 0x0FFFFFFF) << 2;
+		return Mem.getI32(Mem.addr(sbData(b)), -4) << 2; // (its slots: Types)
 
 	// new storage of `cap` units, the first n copied
 	public static inline function sbGrow(b:Dynamic, cap:Int, n:Int) {
@@ -139,8 +143,9 @@ class MemRepr {
 		Mem.setRefBarrier(b, 8, nd);
 	}
 
-	// ---- arrays (rt.h): slot 0 the length and the element kind, slot 1 the
-	// data, null while empty; Int and Bool elements take 4 bytes, others 8
+	// ---- arrays (Boxes): slot 0 the length and the element kind, slot 1 the
+	// storage, a NativeArray of that kind (its length the capacity; without
+	// room the empty one): the elements, Bool one byte, Int 4, others 8
 
 	public static inline var AK_PTR = Types.AK_PTR;
 	public static inline var AK_I32 = Types.AK_I32;
@@ -157,20 +162,26 @@ class MemRepr {
 	public static inline function arrKind(a:Dynamic):Int
 		return Mem.getI32(Mem.addr(a), 4);
 
-	public static inline function arrData(a:Dynamic):Ptr
+	// the storage
+	public static inline function arrStore(a:Dynamic):Ptr
 		return Mem.getPtr(Mem.addr(a), 8);
 
+	// the first element
+	public static inline function arrData(a:Dynamic):Ptr
+		return arrStore(a);
+
 	public static inline function elemSize(a:Dynamic):Int
-		return Types.ak4(arrKind(a)) ? 4 : 8;
+		return Types.akSize(arrKind(a));
 
 	public static inline function elems(a:Dynamic):MemElems
 		return arrData(a);
 
 	public static inline function arrMake(kind:Int, n:Int):Dynamic {
 		if (n == 0) {
-			// `[]`: the data is allocated by the first store
+			// `[]`: storage is allocated by the first store
 			var a = Mem.alloc(2, Types.T_ARRAY, K_OBJ);
 			Mem.setI32(Mem.addr(a), 4, kind);
+			Mem.setRef(Mem.addr(a), 8, NArray.empty(kind)); // a is young
 			return a;
 		}
 		return Rt.hx_arr_new_n(kind, n);
@@ -178,14 +189,14 @@ class MemRepr {
 
 	// the data of a fresh reference array was written without the barrier
 	static inline function barrierAll(a:Dynamic, n:Int) {
-		if (arrKind(a) == AK_PTR && n > 0) barrier(arrData(a), arrData(a), n);
+		if (arrKind(a) == AK_PTR && n > 0) barrier(arrStore(a), arrData(a), n);
 	}
 
-	// rt_barrier_range for n slots from `from` in the data d, unless d is young
-	// (the usual case: fresh, or recently allocated, data)
-	static inline function barrier(d:Ptr, from:Ptr, n:Int) {
-		if (d.ult(Mem.getPtr(Mem.sym("rt_young_start"), 0)) || !d.ult(Mem.getPtr(Mem.sym("rt_young_end"), 0)))
-			Leaf.rt_barrier_range(Mem.obj(d), from, n);
+	// rt_barrier_range for n slots from `from` in the storage s, unless s is
+	// young (the usual case: fresh, or recently allocated, storage)
+	static inline function barrier(s:Ptr, from:Ptr, n:Int) {
+		if (s.ult(Mem.getPtr(Mem.sym("rt_young_start"), 0)) || !s.ult(Mem.getPtr(Mem.sym("rt_young_end"), 0)))
+			Leaf.rt_barrier_range(Mem.obj(s), from, n);
 	}
 
 	// r[0, n) = a[0, n) (r new)
@@ -216,7 +227,7 @@ class MemRepr {
 		var d = arrData(a);
 		LibC.memmove(d.add(es * i), d.add(es * (i + 1)), (es * (n - i - 1) : I64));
 		LibC.memset(d.add(es * (n - 1)), 0, es);
-		if (arrKind(a) == AK_PTR && n - i - 1 > 0) barrier(d, d.add(8 * i), n - i - 1);
+		if (arrKind(a) == AK_PTR && n - i - 1 > 0) barrier(arrStore(a), d.add(8 * i), n - i - 1);
 		arrSetLen(a, n - 1);
 	}
 
@@ -233,10 +244,15 @@ class MemRepr {
 			Mem.setI64At(d, 0, n, 0);
 			return v;
 		}
-		if (Types.ak4(k)) {
+		if (k == AK_I32) {
 			var x = Mem.getI32At(d, 0, n);
 			Mem.setI32At(d, 0, n, 0);
-			return k == AK_BOOL ? Boxes.boxBool(x) : Boxes.boxInt(x);
+			return Boxes.boxInt(x);
+		}
+		if (k == AK_BOOL) {
+			var x = Mem.getU8At(d, 0, n);
+			Mem.setU8At(d, 0, n, 0);
+			return Boxes.boxBool(x);
 		}
 		if (k == AK_F64) {
 			var x = Mem.getF64At(d, 0, n);
@@ -258,17 +274,26 @@ class MemRepr {
 	public static inline function arrRotate(a:Dynamic, pos:Int, n:Int) {
 		var es = elemSize(a);
 		var d = arrData(a);
-		var tmp = es == 4 ? (Mem.getI32(d, 4 * n) : I64) : Mem.getI64(d, 8 * n);
+		var tmp = es == 1 ? (Mem.getU8At(d, 0, n) : I64) : es == 4 ? (Mem.getI32(d, 4 * n) : I64) : Mem.getI64(d, 8 * n);
 		LibC.memmove(d.add(es * (pos + 1)), d.add(es * pos), (es * (n - pos) : I64));
-		if (es == 4) Mem.setI32(d, 4 * pos, tmp.toInt()) else Mem.setI64(d, 8 * pos, tmp);
-		if (arrKind(a) == AK_PTR) barrier(d, d.add(8 * pos), n - pos + 1);
+		if (es == 1) Mem.setU8At(d, 0, pos, tmp.toInt()) else if (es == 4) Mem.setI32(d, 4 * pos, tmp.toInt()) else Mem.setI64(d, 8 * pos, tmp);
+		if (arrKind(a) == AK_PTR) barrier(arrStore(a), d.add(8 * pos), n - pos + 1);
 	}
 
 	// the n >= 2 elements in reverse order
 	public static inline function arrReverse(a:Dynamic, n:Int) {
 		var d = arrData(a);
 		var i = 0, j = n - 1;
-		if (elemSize(a) == 4)
+		var es = elemSize(a);
+		if (es == 1)
+			while (i < j) {
+				var t = Mem.getU8At(d, 0, i);
+				Mem.setU8At(d, 0, i, Mem.getU8At(d, 0, j));
+				Mem.setU8At(d, 0, j, t);
+				i++;
+				j--;
+			}
+		else if (es == 4)
 			while (i < j) {
 				var t = Mem.getI32At(d, 0, i);
 				Mem.setI32At(d, 0, i, Mem.getI32At(d, 0, j));
@@ -284,7 +309,7 @@ class MemRepr {
 				i++;
 				j--;
 			}
-		if (arrKind(a) == AK_PTR) barrier(d, d, n);
+		if (arrKind(a) == AK_PTR) barrier(arrStore(a), d, n);
 	}
 
 	// a[pos, pos + l) moved to r (new), the rest of a's n elements down
@@ -299,7 +324,7 @@ class MemRepr {
 		arrSetLen(a, n - l);
 		if (arrKind(a) == AK_PTR) {
 			barrierAll(r, l);
-			if (n - pos - l > 0) barrier(d, d.add(8 * pos), n - pos - l);
+			if (n - pos - l > 0) barrier(arrStore(a), d.add(8 * pos), n - pos - l);
 		}
 	}
 
@@ -313,19 +338,18 @@ class MemRepr {
 	public static inline function utf8To(s:String, p:Ptr):Int
 		return Str.utf8Into(s, p);
 
-	// ---- Bytes: K_RAW, int32 length, the bytes from offset 8
+	// ---- Bytes: haxe.io.BytesData, NativeArray storage of bytes (Types:
+	// T_BYTES, its length in its header), the bytes from offset 0; of none,
+	// the static one
 
 	public static inline function bytesLen(b:Dynamic):Int
-		return Mem.getI32(Mem.addr(b), 0);
+		return Mem.getI32(Mem.addr(b), -4);
 
 	public static inline function octets(b:Dynamic):MemOctets
-		return Mem.addr(b).add(8);
+		return Mem.addr(b);
 
-	public static inline function bytesAllocUninit(n:Int):Dynamic {
-		var b = Mem.allocRaw((n + 15) >> 3, T_BYTES, K_RAW);
-		Mem.setI32(Mem.addr(b), 0, n);
-		return b;
-	}
+	public static inline function bytesAllocUninit(n:Int):Dynamic
+		return n == 0 ? NArray.empty(Types.AK_BYTE) : Mem.allocArrayRaw(T_BYTES, n, (n + 7) >> 3);
 
 	// dst[di, di + n) = src[si, si + n) (bytesMove: they may overlap)
 	public static inline function bytesMove(dst:Dynamic, di:Int, src:Dynamic, si:Int, n:Int)
@@ -370,9 +394,9 @@ class MemRepr {
 	public static inline function bbSetData(bb:Dynamic, d:Dynamic)
 		Mem.setRefBarrier(bb, 8, d);
 
-	// ---- Date: T_DATE K_RAW, the milliseconds since the epoch (a double; a
-	// type index of its own: Dyn prints, tests and compares it as a Date); the
-	// calendar's fields are struct tm's (Date)
+	// ---- Date: T_DATE, a record of one slot, the milliseconds since the
+	// epoch (a double; a type index of its own: Dyn prints, tests and
+	// compares it as a Date); the calendar's fields are struct tm's (Date)
 
 	public static inline var F_SEC = 0;
 	public static inline var F_MIN = 4;
@@ -386,7 +410,7 @@ class MemRepr {
 	public static inline var YEAR_BASE = 1900;
 
 	public static inline function dateOf(ms:Float):Dynamic {
-		var d = Mem.allocRaw(1, T_DATE, K_RAW);
+		var d = Mem.allocRaw(1, T_DATE, K_OBJ);
 		Mem.setF64(Mem.addr(d), 0, ms);
 		return d;
 	}
@@ -498,7 +522,7 @@ abstract MemElems(Ptr) from Ptr to Ptr {
 		return Mem.getI32At(this, 0, i);
 
 	public inline function getBool(i:Int):Int
-		return Mem.getI32At(this, 0, i);
+		return Mem.getU8At(this, 0, i);
 
 	public inline function getFloat(i:Int):Float
 		return Mem.getF64At(this, 0, i);

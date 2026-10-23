@@ -19,7 +19,7 @@ class VectorAccess {
 	static function clone<T>(v:Vector<T>):Vector<T> return v.copy();
 	static function sorted<T>(v:Vector<T>, cmp:T->T->Int):Void v.sort(cmp);
 	@:generic static function filled<T>(n:Int, value:T):Vector<T> return new Vector<T>(n, value);
-	@:hxmc.noGc static function slots<T>(v:Vector<T>):Int return Mem.getI32(Mem.addr(v.toData()), -8) & 0x0FFFFFFF;
+	@:hxmc.noGc static function slots<T>(v:Vector<T>):Int return hxmc.rt.Types.nslots(v.toData());
 
 	static function main() {
 		var ints = new Vector<Int>(5);

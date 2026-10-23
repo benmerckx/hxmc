@@ -66,7 +66,7 @@ class Ssl {
 	static inline var CONF_REF_RNG = 1;
 	static inline var CONF_REF_CA = 2;
 	static inline var SSL_REF_CONF = 1;
-	static inline var T_NATIVE = 16;
+	static inline var T_NATIVE = Types.T_NATIVE;
 
 	static inline function ptr(o:Dynamic):Ptr
 		return Mem.getPtr(Mem.addr(o), 0);
@@ -75,7 +75,7 @@ class Ssl {
 		Mem.setRefBarrier(o, 8 * slot, v);
 
 	static inline function bytes(b:Bytes):Ptr
-		return Mem.addr(b).add(8);
+		return Mem.addr(b.getData());
 
 	static inline function os():Int
 		return Mem.os();
@@ -86,7 +86,7 @@ class Ssl {
 
 	// a borrowed pointer into owner's resource: slot 1 keeps owner alive
 	static function borrow(p:Ptr, owner:Dynamic):Dynamic {
-		var o = Mem.alloc(2, T_NATIVE, Types.K_PARR);
+		var o = Mem.alloc(2, Types.T_NATIVE_REFS, Types.K_PARR);
 		Mem.setPtr(Mem.addr(o), 0, p);
 		Mem.setRef(Mem.addr(o), 8, owner); // (young)
 		return o;

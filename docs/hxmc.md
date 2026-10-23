@@ -6,26 +6,29 @@ hxmc turns a typed Haxe program into a native executable with its own code
 generator and linker: no C compiler, assembler or system linker at build time.
 
 ```
-typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> Mir (SSA) --(Inline, Escape, Sroa, Opt)-->
+typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, Opt, Frames)--> --(MemLower)--> Mir (SSA) --(Fold)-->
     --(x64|a64 Isel)--> LIR --(Regalloc, Emit)--> Obj (per module, cached) | --(wasm/WasmGen)--> wasm
     --(DataGen: tables, strings)--> Obj --(Link: ELF | LinkPE | LinkMachO | LinkWasm)--> executable
+-D hxmc.wasm-gc: hxmc IR --(ir.Reach)--> --(MirBuild.gc)--> object-level Mir --(Inline, Escape, Opt)--> --(wasmgc.MirGen, GcModule)--> WasmGC module
 ```
 
 | File (`hxmc/src/hxmc/`) | |
 | --- | --- |
 | `Main.hx`, `Options.hx`, `Driver.hx` | the tool: runs the port's compiler with a generate hook, compiles every module (in parallel, cached) and links; `--server` keeps the compilation server resident |
 | `HaxeMain.hx` | `haxe` with hxmc built in (the npm package): `--custom-target hxmc=<out>` |
-| `ir/Ir.hx`, `Lower.hx`, `FnLower.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the filtered typed AST |
+| `ir/Ir.hx`, `Lower.hx`, `FnLower.hx`, `LowerQueries.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the filtered typed AST; a function body asks the program's lowering only what `LowerQueries` lists, each query tagged with how the server's reuse of bodies covers it |
 | `ir/Reach.hx` | the functions the program can run (Reachability, below): the others are not compiled |
 | `ir/RuntimeSymbols.hx` | the runtime's symbols generated code calls by name, per family of targets, checked on every build against what `hxmc.rt.Runtime` imports (Runtime in Haxe, below) |
 | `ir/Facts.hx`, `Prep.hx` | the program-wide facts: names, layouts, type indices, field ids, no-GC functions, cold sites, GC points, as symbols |
 | `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, each module's object reused when its fingerprint is unchanged, lowered bodies reused by the server |
-| `Mir.hx`, `MirBuild.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx` | the SSA IR, its construction, inlining, escape analysis (allocations that stay in their function replaced by their fields: [plans/codegen.md](plans/codegen.md), "Escape analysis"), scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code |
-| `Lir.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection, linear-scan allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
+| `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels: object-level Mir (objects made, their fields, arrays, structural access, type tests, boxes, closures, virtual calls as operations; values typed from the IR) that `MirBuild` makes from the IR, and the memory-level Mir every back end takes, which `MemLower` makes from it (layouts, the nursery's allocation, barriers, inline caches, null tests, the shadow stack around cold sites' slow paths); `MirWriter` writes instructions and SSA variables for both ([plans/codegen.md](plans/codegen.md), "Object-level Mir") |
+| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | the control-flow analyses (reverse postorder, dominator tree, loop nest; generic over the block type), SSA construction on a finished graph (Escape, Sroa), inlining, escape analysis (allocations that stay in their function replaced by their fields: [plans/codegen.md](plans/codegen.md), "Escape analysis"), scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code, the write barriers into objects just allocated left out (all on object-level Mir), the shadow-stack slots and frames nothing reads after them dropped |
+| `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection (`IselBase`: the walk over the blocks, phi copies on split edges, the switch strategy, thread-local bases, parameters and calls; each architecture its instructions, folding, compares and branches), linear-scan allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
 | `Unwind.hx`, `Dwarf.hx` | unwind tables from the emitters' frame records (`.eh_frame`, `.pdata`/`.xdata`, `__eh_frame`), `-debug`'s DWARF lines (Debugging, below) |
-| `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers (static ELF, `LinkDyn.hx` dynamic ELF against glibc; PE with imports written directly; Mach-O with an ad-hoc signature), the runtime-object builder, the program's data |
+| `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers (`LinkCore.hx`: resolution, dead sections, GOT and import slots, placement and relocations, shared by static ELF, `LinkDyn.hx` dynamic ELF against glibc, PE with imports written directly, Mach-O with an ad-hoc signature; `wasm/LinkWasm.hx` shares the resolution), the runtime-object builder, the program's data |
 | `wasm/` | wasm32-wasi: structured code from Mir, the linker, exception handling with `exnref` (or the legacy instructions) |
-| `Target.hx`, `Abi.hx`, `CAbi.hx` | per-target facts; how each C ABI passes structs by value |
+| `wasmgc/` | `-D hxmc.wasm-gc`: the object-level Mir of each function as WasmGC code (`MirGen`, over `FuncGen`'s expressions), the module, its types and helpers (`GcModule`, `Helpers`), reflection's tables (`Meta`), the pipeline (`GcGen`) |
+| `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI (System V, Win64, AAPCS64 with its Apple and Windows variants: argument and result registers, where each argument goes, the registers a call clobbers and keeps; for calls and parameters alike); how each C ABI passes structs by value |
 | `MkStd.hx` | hxmc's std merged with the Eval originals (the macro context shares the program's class paths; a custom target gets no `_std` directory in the reference compiler) |
 | `macro/` | native macros, a prototype (`haxe` built with `-D hxmc.jit`, Linux x86-64; `-D hxmc.macros=native\|verify`): macro classes compiled by hxmc and linked into the running compiler, behind the macro engine seam `haxe/src/macros/MacroEngine.hx` ([plans/compiler.md](plans/compiler.md), "Native macros") |
 | `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in a compiler built with `-D hxmc.jit`: `--interp`/`--run` (`-D hxmc.mir-run`, `MirRun.hx`) and macros (`-D hxmc.mir-macros`, `MirMacros.hx`; the runtime in their context: `MacroRuntime.hx`, `../MacroCuts.hx`; Macros on the Mir interpreter, below) |
@@ -148,9 +151,9 @@ an uncaught exception uses too:
   disagree with `.debug_line`): 16 bytes per function (its address as a
   PC-relative offset, no load-time fixup; its size; its class and the rest:
   the field and the rows, LEB128 deltas, a row only where the file or line
-  changes), the strings once each. The static ELF linker's dead code
-  elimination does not count the table's references (it is rebuilt with the
-  functions it keeps). Where `.debug_line` is 1.1 MB for the tool, the
+  changes), the strings once each. The linkers' dead-section removal
+  (LinkCore, on every native target) does not count the table's references
+  (it is rebuilt with the functions it keeps). Where `.debug_line` is 1.1 MB for the tool, the
   table is 0.64 MB (3.6% of the tool, the port 0.78 MB: 3.8%).
 - The walk: up the frame records (x86-64 by default, arm64 always:
   above), while a frame's return address is in a function of the table
@@ -227,8 +230,18 @@ live across a GC point outside `@:hxmc.noGc` code, `Facts.checkRawAddresses`). T
 handshake, startup and `rt_throw` are Haxe too (`Gc.hx`, `Threads.hx`,
 `Start.hx`; the heap census with `-D hxmc.census`): no C of hxmc's own is
 linked, only the C library, mbedtls and libuv ([plans/lowlevel.md](plans/lowlevel.md),
-"The runtime without C of our own"). The nursery's size adapts (unless
-`RT_MINOR_KB` fixes it; Gc.hx): it starts at 4 MB, doubles after a minor
+"The runtime without C of our own"). What is the same across targets is
+written once, inline so that each target compiles to what its own copy
+did: the object model both collectors read (`GcCore.hx`: the header, the
+size and kind of an object, forwarding, pointer maps; the native `Gc.hx`
+and `wasm/Gc.hx` keep their own spaces, copies and remembered sets), and
+what the system layers do the same way over the calls that differ
+(`SysCore.hx` for PosixSys, WinSys and WasiSys; `NetCore.hx` for PosixNet
+and WinNet: the resolver, select's wait with other threads, Boolean
+options), the system chosen by `Mem.os`, which folds while lowering. The nursery's size adapts (unless
+`RT_MINOR_KB` fixes it, to 4 KB at least: generated code stores into an
+object of up to 1 KB allocated since the last collection point without a
+write barrier, which needs it young; Gc.hx): it starts at 4 MB, doubles after a minor
 collection that promoted more than a 16th of what was allocated since the
 previous one and halves after 8 that promoted less than a 64th, between a
 floor of 4 MB per thread that allocated in the last cycles (at most 32 MB)
@@ -247,6 +260,22 @@ helper thread faults in its pages ahead of the minor collections, which
 would otherwise wait for the kernel to zero each fresh page they copy into
 (`RT_PREFAULT=0`: no helper). It trades CPU time for wall time: the
 HaxeBenchmarks' alloc takes 7.6% less wall time and 20% more CPU time with it. `RT_STATS=1` prints the resizes and what was promoted.
+
+Threads that race on a field see objects whole: a store of a reference
+into an object, an array or a static publishes it (`MIns.release`), so a
+thread that reads the reference also sees the stores that initialised the
+object, as OCaml's `caml_modify` (a release store) guarantees the
+reference compiler's code. Upstream's parallel phases rely on it: Dce reads
+`a_meta` without its lock and adds the `@:used` entry under it. Free on
+x86-64; arm64 orders the stores with a `dmb ishst` before each such store
+(not before initialising stores or null ones); the reading thread's loads
+through the reference are ordered by their address dependency. Without
+it, the port on arm64 read a new metadata array whose length was there but
+not its element: a null access in a child compiler in about one run in 700
+of TestUnicode (some 230 compilers each through testIPC; 9 in 6000 runs,
+none in 10 080 with the barrier). It costs arm64 1-2% of the port's
+self-compile and 12% of HaxeBenchmarks' binarytrees (two such stores per
+node, in its constructor); json and formatter stay within 3%.
 
 Strings are UTF-16; they cross the system boundaries (files, processes,
 sockets, the environment, `Bytes.getString` and `ofString`) as UTF-8
@@ -301,8 +330,8 @@ exported function, an implementation, a variable, a thread-local), whether
 or not this program calls it, and fails otherwise:
 
 ```
-hxmc: the runtime symbol rt_null_access is not defined: its module is not loaded by hxmc.rt.Runtime (for wasm32-wasi; MirBuild.nullBlock)
-hxmc: the runtime symbol rt_null_access is defined in hxmc.rt.Faults, which hxmc.rt.Runtime does not import (for wasm32-wasi; MirBuild.nullBlock)
+hxmc: the runtime symbol rt_null_access is not defined: its module is not loaded by hxmc.rt.Runtime (for wasm32-wasi; MemLower.nullBlock)
+hxmc: the runtime symbol rt_null_access is defined in hxmc.rt.Faults, which hxmc.rt.Runtime does not import (for wasm32-wasi; MemLower.nullBlock)
 ```
 
 The second where a module the program loads otherwise has it. So the rule is
@@ -316,7 +345,7 @@ statics: `rt_null_access` on WebAssembly with `-D hxmc.null-checks`,
 required only then; a module that `Runtime.hx` imports only under a define
 (`#if hxmc.census`) is seen only with it, as the imports are read with the
 build's defines, so a symbol only such a module defines gets that condition
-too. The list is kept by hand, next to the generators; `MirBuild.call` (on
+too. The list is kept by hand, next to the generators; `MirWriter.call` (on
 `FuncInfo.rtFamilies`, which Facts sets: no lookup of its own) and
 `GcModule.exportOf` fail the build when generated code calls an exported
 function of the runtime that it does not list for the family ("generated
@@ -438,7 +467,7 @@ its signature's trampolines stay: the port would grow by 66 KB (0.34%).
 with a single GC allocation: a header, a length/kind word and packed
 elements. Bool uses 1 byte, Int 4, Float and Int64 8, and reference elements
 8 bytes. Nullable numbers and Dynamic use reference storage. Concrete
-indexing lowers to direct loads/stores in `MirBuild`, without bounds,
+indexing lowers to direct loads/stores in `MemLower`, without bounds,
 growth or storage-kind checks; references keep the generational write
 barrier. The collectors skip the length/kind word in reference arrays.
 Copies preserve the runtime layout even in erased generic code; reference
@@ -483,8 +512,8 @@ hxmc target and implements `haxe.ds.Vector<T>` as an abstract over
 `hxmc.NativeArray<T>`. Indexing, length and construction inline to the same
 operations as NativeArray. `toData`/`fromData` share NativeArray storage;
 `toArray`/`fromArrayCopy` copy. `MkStd` keeps the upstream
-Vector for Eval and macros in the merged `bin/hxmc/std`. `make bench-arrays`
-compares Array, NativeArray and Vector
+Vector for Eval and macros in the merged `bin/hxmc/std`. `make bench-micro
+WHICH=arrays` compares Array, NativeArray and Vector
 ([measurement notes](../hxmc/test/bench/README.md)).
 
 WasmGC (`-D hxmc.wasm-gc`, below) has the same NativeArray over the engine's
@@ -606,10 +635,10 @@ header (at -4) or an index out of the memory trapped; WasmGC's
 `struct.get` and `array.len` trap on null. A trap ends the module: no
 handler sees it. So with `-D hxmc.null-checks` (`Lower.nullChecks`; on by
 default for `wasm32-wasi`, `=0` turns it off, `=1` adds the tests to the
-native targets) each dereference tests its reference: `MirBuild.nullCheck`
+native targets) each dereference tests its reference: `MirBuild.nullCheck`, `MemLower.nullTest`
 (a branch to a block calling `rt_null_access`, one per try a function's
 tests share: a try's body is the dominator subtree of its first block,
-WasmGen), `FuncGen.derefAs` (WasmGC: a call of a per-type helper, `nn_<t>`,
+WasmGen; WasmGC: `MirBuild.nullCheck`'s `NullCheck`, a call of `nn_any`, and `FuncGen.derefAs` in the IR's own operations, a call of a per-type helper, `nn_<t>`,
 which gives a `(ref null t)` back as a `(ref t)`: 2 or 3 bytes a test),
 and `FnLower.receiverCheck` for the receiver of a method the runtime
 implements (it reads it untested). A test is dropped where the value is
@@ -667,14 +696,17 @@ entries added young since the last one (after a minor collection) or all
 of them (after a major one, which copied all of them anyway). The header's
 16-bit identity hash (`hxmc.Native.objHash`, set when first asked) stays
 for other uses; WasmGC, which has no addresses, hashes ObjectMap's keys
-with it (the engine object's, which never moves). `Map<SomeEnum, V>` is
+with it (the engine object's, which never moves), times 2^32/φ: the slot
+is hash & mask, and the bare 16 bits would leave every slot past 65,536
+home to no key (a map of the TypeScript compiler's emit, 200,000 keys
+in one probe run: 67 s instead of 6). `Map<SomeEnum, V>` is
 upstream's `EnumValueMap` (a balanced tree ordered by the constructors'
 indices and parameters), not an identity map.
 
 `hxmc/test/cases/ObjectMapGc.hx` checks maps across collections (keys
 added young, removals, keys that never move, keys allocated in the old
 space, threads reading one map), natively, on wasm32 and on WasmGC
-(`GcCheck`); `make bench-maps` measures them (`hxmc/test/bench/MapBench.hx`;
+(`GcCheck`); `make bench-micro WHICH=maps` measures them (`hxmc/test/bench/MapBench.hx`;
 the numbers of 2026-10-20 below, Linux x86-64, nanoseconds per operation,
 the fastest of 11 rounds (a range: two runs), before (16-bit header hashes, a 4-byte index
 without hashes, tombstones, up to 3/4 full) and after):
@@ -699,7 +731,10 @@ billion, the header hash's 0.22 billion gone; bringing indexes up to date
 ## Module cache
 
 The compilation server's HXB module cache, made durable
-(`hxmc/src/hxmc/ModuleCache.hx`, `ModuleStore.hx`; on by default,
+(`hxmc/src/hxmc/ModuleCache.hx` with a build's state in
+`ModuleCacheState.hx`, the callbacks it watches in `WatchedCallbacks.hx`,
+the writer that checks what it encodes in `CheckingHxbWriter.hx` and the
+type sort's walks in `Skeletons.hx`; `ModuleStore.hx`; on by default,
 `HXMC_MODULE_CACHE=0` or `-D hxmc.no-module-cache` off; through `haxe` and
 the tool, for every target): a successful build writes its typed modules
 (HXB chunks, dependencies, file and check policy) into a store in the user
@@ -735,7 +770,7 @@ target; Std depends on the runtime): of those, the one typed with the
 build's defines (its context's signature) is restored, and a variant typed
 with other defines is kept beside one with the same reads (at most four
 per module), so builds that alternate (WasmGC, linear, native) each
-restore their own (`make gfx-cache-check`). The server's
+restore their own (universe's graphics programs check it). The server's
 checks decide which modules are good, lazily, for the modules the build
 loads, also those a restored module's HXB names (decoded from the store
 only once checked, else typed from source); beyond them, a module's file
@@ -1195,22 +1230,36 @@ MB) and a 64 MB shadow stack at startup.
 
 ### WasmGC (-D hxmc.wasm-gc, an experiment)
 
-With `-D hxmc.wasm-gc` (and `-D hxmc.target=wasm32-wasi`) the IR after Lower
-becomes a WasmGC module instead (`hxmc/src/hxmc/wasmgc/`): Haxe's values live
-in the engine's collector, with no shadow stack or barriers. What is
+With `-D hxmc.wasm-gc` (and `-D hxmc.target=wasm32-wasi`) the program becomes
+a WasmGC module instead (`hxmc/src/hxmc/wasmgc/`): Haxe's values live in the
+engine's collector, with no shadow stack or barriers. Each function goes
+through the native pipeline's object level (docs/plans/codegen.md,
+"Object-level Mir"): `MirBuild` in its WasmGC mode (`MirBuild.gc`: no
+roots, fields by index; what is memory-level natively, globals, strings,
+the runtime's intrinsics, `throw`, stays the IR's own as `IrNode`
+operations; a `try` is a `Try` terminator and the handler's `Catch`, the
+locals a handler reads `VarGet`/`VarSet`; the branch an if on a constant
+does not take is not built), `Inline` (the native templates and limits;
+also, in a loop, a callee that an object made here meets, passed or
+returned, judged on what WasmGC makes of it, so that the object may be
+replaced), the closures called where they are made, `Inline.devirtualize`,
+`Escape` and `Opt`; then `MirGen` writes it: its control flow structured
+as `wasm/WasmGen` structures linear memory's, each value a local of the
+wasm type its operation gives it (a value used once, right where it is
+made, left on the stack instead), the operations it does not write
+itself written by `FuncGen` as the IR's expressions and statements over
+locals standing for their operands (struct and array types, casts, the
+inline array and structural paths, the intrinsics: one place). What is
 emitted is what the reachability above keeps (method-level, by name), run
-twice: before and after each function's body goes through `IrOpt`, so a
-function inlined everywhere is dropped (the runtime's exports are live
-where this target's code calls them: `GcGen.runtimeCalls`). `IrOpt`:
-inlining where it lets scalar replacement turn objects
-that never escape into locals (the IR's counterpart of Mir's `Inline` and
-`Sroa`, which this path never reaches; V8 inlines small functions of a
-WasmGC module itself). A reference has the wasm type its IR type proves
+twice: before building the Mir and over what the Mir still calls
+(`Uses.summary`: each function's IR with the callees inlined into it
+followed), so a function inlined everywhere is dropped (the runtime's
+exports are live where this target's code calls them:
+`GcGen.runtimeCalls`). A reference has the wasm type its IR type proves
 (classes, strings, arrays, enums, closures, Bytes: `GcModule.keyOf`), else
-`eqref` cast where it is used; a local that is only ever cast to one type
-gets it (`FuncGen.refine`, a second emission); one set from a Dynamic
-value (Haxe's unchecked conversions) gets none, as linear memory may hold
-a value of another type there. All types are in one recursion
+`eqref` cast where it is used (an untyped object whose fields a block
+reads or writes more than once: cast once there, `MirGen.classOperand`).
+All types are in one recursion
 group, so the class hierarchy is wasm's subtyping (`instanceof` is
 `ref.test`; leaf classes are final types); methods have their own typed
 signatures, virtual and interface calls go through a funcref table indexed
@@ -1260,8 +1309,9 @@ takes `GcNative.find`'s names as it takes `Dyn`'s), copies objects
 none, gets -1 minus its index in its type value), and calls the methods of
 Arrays and Strings through Dynamic as through structural types
 (`gc_anon_call`); calling what is not a function throws. The port builds
-so (`make wasmgc-port`) and passes the conformance lanes as the port
-(`make test-wasmgc-port`, docs/testing.md).
+so and passed the conformance lanes as the port (docs/testing.md, "The
+port as a WasmGC module", which says how to run them; `make wasmgc-check`
+keeps the lowering checked in CI).
 
 A program that uses `hxmc.unsafe` or C functions gets a small linear
 memory besides (a hybrid module, `GcModule.memory`): `Mem`'s loads and
@@ -1273,16 +1323,20 @@ it as in linear memory. It is exported as `memory`, with the
 `@:hxmc.callback` functions in `__indirect_function_table`, so the
 packages' imports (`imports.mjs`) and `browser.mjs` treat the module as
 a linear one: `@:hxmc.lib` externs are imports with wasm32's C ABI
-(pointers as i32 into that memory, floats as f32). A Bytes stays an array
+(pointers as i32 into that memory, floats as f32). So are
+`hxmc.rt.wasm.WasiApi`'s functions, from `wasi_snapshot_preview1`
+(`GcModule.libOf`), which `wasmgc.mjs` gives with node's WASI (the file
+system preopened as `/`); `hxmc.rt.wasm.Wasi` reads the preopened
+directories on the first path it resolves and takes the host's working
+directory for relative ones, so a program that makes WASI's path calls
+itself (tsc-haxe's `go.OsWasi`) runs as either kind of module
+(`hxmc/test/wasmgc/WasiPaths.hx`). A Bytes stays an array
 of the collector; where it crosses to C, `hxmc.unsafe.BytesPtr` copies
 it through the linear memory (in linear memory: its own address, no
 copy); strings cross as UTF-8 through it (`Repr.utf8To`,
 `Repr.octetsAt`). A `@:hxmc.struct` class whose fields are all final is
 an object here (a value that cannot change needs no copies); the others
-live in the linear memory. Statements after one that always leaves, and
-the branch an if on a constant does not take, are dropped before
-emission (`IrOpt.live`: what follows `if (Mem.os() == 3) {...; return;}`
-is another target's, as Mir drops it). The name section is written with
+live in the linear memory. The name section is written with
 `-debug`, `-D hxmc.symbols` or `HXMC_SYMBOLS=1`, as linear memory's.
 universe's browser tests (`gfx-web-check`, `ui-web-check`) run on such
 builds too. A runtime function

@@ -10,9 +10,10 @@ import hxmc.unsafe.Ptr;
 // The runtime's strings (formerly rt_str.c): UTF-16 strings, number
 // formatting, the String, StringBuf and Std natives, written over
 // hxmc.rt.Repr for both runtimes (@:hxmc.anyHeap). In linear memory a
-// string is a K_RAW object: int32 length, int32 hash (0: not computed yet),
-// the UTF-16 units; StringBuf keeps the runtime's layout (T_STRINGBUF: slot
-// 0 the length, slot 1 a K_RAW block of units), which generated code's
+// string is an array without references (hxmc.rt.Types: its hash in its
+// header, 0 until computed), its int32 length, then its UTF-16 units;
+// StringBuf keeps the runtime's layout (T_STRINGBUF: slot 0 the length,
+// slot 1 a K_RAW block of units), which generated code's
 // inline addChar reads too (MirBuild.stringBufAddChar). Under -D
 // hxmc.wasm-gc a string is an array of units (hxmc.rt.gc.GcRepr).
 //
@@ -23,8 +24,8 @@ import hxmc.unsafe.Ptr;
 // The functions over C strings (Ptr) are linear memory's.
 @:keep @:allow(hxmc.rt) @:hxmc.anyHeap
 class Str {
-	public static inline var T_STRING = 1;
-	public static inline var T_ADATA_RAW = 7;
+	public static inline var T_STRING = 16; // (Types.T_STRING, Types.T_ADATA_RAW)
+	public static inline var T_ADATA_RAW = 17;
 	public static inline var T_STRINGBUF = 10;
 	public static inline var K_OBJ = 0;
 	public static inline var K_RAW = 2;
@@ -44,9 +45,9 @@ class Str {
 	public static inline function chars(s:String):Chars
 		return Repr.chars(s);
 
-	// linear memory's: the address of unit 0 (valid until the next GC point)
+	// linear memory's: the address of unit 0, after the length (valid until the next GC point)
 	public static inline function unitsAddr(s:String):Ptr
-		return Mem.addr(s).add(8);
+		return Mem.addr(s).add(4);
 
 	// a string of `n` units, not yet written
 	public static inline function make(n:Int):String
@@ -250,8 +251,10 @@ class Str {
 		return na < nb ? -1 : na > nb ? 1 : 0;
 	}
 
-	// FNV-1a over the units, kept in the string where it has room (a benign
-	// race between threads: they store the same value)
+	// FNV-1a over the units, never 0, kept in the string's header where it
+	// has room (a benign race between threads: they store the same value).
+	// FnLower.strHash computes the same at compile time (DataGen stores it in
+	// the literals).
 	@:hxmc.host("hx_str_hash") @:hxmc.noGc static function hash(s:String):Int {
 		var h = Repr.storedHash(s);
 		return h != 0 ? h : hashSlow(s);

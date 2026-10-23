@@ -4,6 +4,8 @@ import hxmc.Mir;
 import hxmc.Abi;
 import hxmc.Lir;
 import hxmc.x64.Asm;
+import hxmc.CallConv.ArgLoc;
+import hxmc.CAbi.CPart;
 import haxe.ds.Vector;
 import core.ds.VectorTools.vector;
 
@@ -65,25 +67,15 @@ enum abstract XOp(Int) to Int from Int {
 	var FOPK; // d <- d (cond: as FOP) f (constant pool)
 }
 
-// Mir -> LIR for x86-64 (System V calling convention).
-class Isel implements hxmc.Target.Selector {
-	public var gprs(default, null):Vector<Int>;
-	public var fprs(default, null):Vector<Int>;
-
+// Mir -> LIR for x86-64 (System V and Win64: CallConv); the walk, the
+// edges, switches and calls are IselBase's.
+class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	static inline var RAX = 0;
 	static inline var RCX = 1;
 	static inline var RDX = 2;
 	static inline var RSP = 4;
 	static inline var XMM0 = 16;
 
-	// System V; Win64 (win): arguments by position in rcx, rdx, r8, r9 / xmm0-3
-	// with 32 bytes of shadow space, rsi, rdi and xmm6-15 callee-saved
-	public static final ARG_GPRS:Vector<Int> = vector(7, 6, 2, 1, 8, 9);
-	public static final CALLER_SAVED:Vector<Int> = vector(0, 1, 2, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
-	public static final CALLEE_SAVED:Vector<Int> = vector(3, 5, 12, 13, 14, 15);
-	public static final WIN_ARG_GPRS:Vector<Int> = vector(1, 2, 8, 9);
-	public static final WIN_CALLER_SAVED:Vector<Int> = vector(0, 1, 2, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21);
-	public static final WIN_CALLEE_SAVED:Vector<Int> = vector(3, 5, 6, 7, 12, 13, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
 	// the allocatable registers in order of preference (System V, Win64; rbp
 	// last, and not with frame pointers: it holds the frame record, Emit)
 	static final GPRS:Vector<Int> = vector(1, 2, 6, 7, 8, 9, 10, 11, 0, 3, 12, 13, 14, 15, 5);
@@ -91,19 +83,9 @@ class Isel implements hxmc.Target.Selector {
 	static final WIN_GPRS:Vector<Int> = vector(1, 2, 8, 9, 10, 11, 0, 3, 6, 7, 12, 13, 14, 15, 5);
 	static final WIN_GPRS_FP:Vector<Int> = vector(1, 2, 8, 9, 10, 11, 0, 3, 6, 7, 12, 13, 14, 15);
 	static final FPRS:Vector<Int> = vector(16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
-	static final CALL_RESULTS:Vector<Int> = vector(0, 2, 16, 17);
 
 	public var win:Bool;
-	var callerSaved:Vector<Int>;
-	var tlsBase = -1;
 
-	var m:MFunc;
-	var f:LFunc;
-	var vreg:haxe.ds.Vector<Int>; // Mir value -> register
-	var useCount:haxe.ds.Vector<Int>;
-	var lb:Vector<LBlock>; // Mir block id -> LBlock
-	var cur:LBlock;
-	var folded:haxe.ds.Vector<Bool>; // Mir values computed inside their user (no code of their own)
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
 	var testFolds = new Map<Int, Bool>(); // x & constant used only by a comparison with 0 (TESTI)
@@ -113,66 +95,19 @@ class Isel implements hxmc.Target.Selector {
 		return memFolds.exists(v);
 	}
 
-	var abi:Abi;
-
 	public function new(abi:Abi) {
-		this.abi = abi;
+		super(abi);
 		win = abi.os == "windows";
-		if (win) {
-			gprs = abi.framePointers ? WIN_GPRS_FP : WIN_GPRS;
-			callerSaved = WIN_CALLER_SAVED;
-		} else {
-			gprs = abi.framePointers ? GPRS_FP : GPRS;
-			callerSaved = CALLER_SAVED;
-		}
+		if (win) gprs = abi.framePointers ? WIN_GPRS_FP : WIN_GPRS else gprs = abi.framePointers ? GPRS_FP : GPRS;
 		fprs = FPRS;
-	}
-
-	// where argument k of a function with these parameter types is: a
-	// register (>= 0), or -1 - (its 8-byte slot among the stack arguments,
-	// counted from the first one; Win64 counts the shadow space)
-	function argLoc(params:Vector<MTy>, k:Int):Int {
-		if (win) {
-			if (k < 4) return params[k] == F64 ? XMM0 + k : WIN_ARG_GPRS[k];
-			return -1 - k;
-		}
-		var gi = 0, fi = 0, si = 0;
-		for (j in 0...k)
-			if (params[j] == F64) {
-				if (fi < 8) fi++ else si++;
-			} else {
-				if (gi < 6) gi++ else si++;
-			}
-		if (params[k] == F64) return fi < 8 ? XMM0 + fi : -1 - si;
-		return gi < 6 ? ARG_GPRS[gi] : -1 - si;
-	}
-
-	// argLoc for each of the first n arguments, with the parts of structs
-	// (MIns.cGroups; empty: none): System V places a struct's parts in
-	// registers when enough of both kinds are left, else all on the stack
-	// (its memory, in 8-byte words), as it does with a MEMORY struct's
-	function argLocs(params:Vector<MTy>, groups:Vector<Int>, n:Int):Vector<Int> {
-		if (win || groups.length == 0) {
-			var r = new Vector<Int>(n);
-			for (k in 0...n)
-				r[k] = argLoc(params, k);
-			return r;
-		}
-		// (a struct's parts are all in params: its last one may come after n)
-		var r = new Vector<Int>(params.length);
-		var gi = 0, fi = 0, si = 0, k = 0;
-		while (k < n) {
-			var g = groups[k];
-			var cnt = g < 0 ? -g : g > 0 ? g : 1;
-			var ni = 0, nf = 0;
-			for (j in k...k + cnt)
-				if (params[j] == F64) nf++ else ni++;
-			var regs = g > 0 && gi + ni <= 6 && fi + nf <= 8;
-			for (j in k...k + cnt)
-				r[j] = !regs ? -1 - si++ : params[j] == F64 ? XMM0 + fi++ : ARG_GPRS[gi++];
-			k += cnt;
-		}
-		return r;
+		fprBase = 16;
+		opMov = MOV;
+		opLoad = LOAD;
+		opStore = STORE;
+		opJmp = JMP;
+		opCall = CALL;
+		opRet = RET;
+		opTeb = GSLOAD;
 	}
 
 	// ---- RegTarget
@@ -247,7 +182,7 @@ class Isel implements hxmc.Target.Selector {
 				if (i.s1 >= 0) uses.push(i.s1);
 				for (u in i.uses)
 					uses.push(u);
-				for (r in callerSaved)
+				for (r in cc.callerSaved)
 					defs.push(r);
 			case RET:
 				for (u in i.uses)
@@ -263,114 +198,13 @@ class Isel implements hxmc.Target.Selector {
 		}
 	}
 
-	public function isMove(i:LIns):Bool
-		return i.op == MOV;
-
-	public var callResults(default, null):Vector<Int> = CALL_RESULTS;
-
-	public function isCall(i:LIns):Bool
-		return i.op == CALL;
-
 	public function isBranch(i:LIns):Bool
 		return i.op == JMP || i.op == JCC || i.op == JTABLE || i.op == UD2;
 
-	public function spillLoad(r:Int, slot:Int, float:Bool):LIns {
-		var i = new LIns(LOAD);
-		i.d = r;
-		i.base = LIns.FRAME;
-		i.slot = slot;
-		i.size = 8;
-		return i;
-	}
-
-	public function spillStore(slot:Int, r:Int, float:Bool):LIns {
-		var i = new LIns(STORE);
-		i.s1 = r;
-		i.base = LIns.FRAME;
-		i.slot = slot;
-		i.size = 8;
-		return i;
-	}
-
 	// ---- selection
-
-	// The instruction being filled in is appended once the next one starts
-	// (flush), so the constants and addresses its operands materialize
-	// (`use`) come before it.
-	var pending:Null<LIns>;
-
-	// (-debug) the source position of the Mir instruction being selected (LIns.pos)
-	var curPos = 0;
-
-	function emit(op:XOp):LIns {
-		flush();
-		pending = new LIns(op);
-		pending.pos = curPos;
-		return pending;
-	}
-
-	function flush() {
-		if (pending != null) {
-			cur.ins.push(pending);
-			pending = null;
-		}
-	}
-
-	function push(i:LIns) {
-		i.pos = curPos;
-		cur.ins.push(i);
-	}
 
 	inline function isF(v:Int):Bool
 		return m.vals[v].ty == F64;
-
-	inline function sz(t:MTy):Int
-		return t == I32 ? 4 : 8;
-
-	function reg(v:Int):Int {
-		var r = vreg[v];
-		if (r < 0) {
-			r = f.newReg(m.vals[v].ty == F64);
-			vreg[v] = r;
-		}
-		return r;
-	}
-
-	// an operand as a register, materializing folded constants
-	function use(v:Int):Int {
-		if (folded[v]) {
-			var i = m.vals[v];
-			var r = f.newReg(i.ty == F64);
-			materialize(i, r);
-			return r;
-		}
-		return reg(v);
-	}
-
-	function mov(d:Int, s:Int, size = 8) {
-		if (d == s) return;
-		var i = emit(MOV);
-		i.d = d;
-		i.s1 = s;
-		i.size = size;
-		if (d >= LFunc.NPHYS) f.setHint(d, s);
-		if (s >= LFunc.NPHYS) f.setHint(s, d);
-	}
-
-	// the absolute symbol of a symbolic constant (its immediate is the addend)
-	function isymOf(v:Int):Null<String> {
-		var i = m.vals[v];
-		return i.op == Const ? i.sym : null;
-	}
-
-	static function log2(v:Int):Int {
-		var k = 0;
-		while (v > 1) {
-			v >>>= 1;
-			k++;
-		}
-		return k;
-	}
 
 	// a constant without a symbol
 	function plainImm(v:Int):Null<Int>
@@ -386,24 +220,15 @@ class Isel implements hxmc.Target.Selector {
 		return null;
 	}
 
-	public function select(mf:MFunc, layout:Vector<MBlock>):LFunc {
-		m = mf;
-		f = new LFunc(mf.name, 16);
-		for (s in mf.slots)
-			f.slot(s.size, s.align);
-		vreg = hxmc.Lir.Arrays.filled(mf.vals.length, -1);
-		useCount = hxmc.Lir.Arrays.filled(mf.vals.length, 0);
-		folded = new haxe.ds.Vector(mf.vals.length);
+	// x86-64 folds loads into the comparisons and arithmetic that use them,
+	// x & constant into TESTI, address arithmetic into displacements, and
+	// constants and addresses into their users
+	override function prepare() {
+		var mf = m;
 		var addrUses = hxmc.Lir.Arrays.filled(mf.vals.length, 0); // uses as the base of a load or store
 		for (b in mf.blocks)
-			for (i in b.ins) {
-				if (i.a >= 0) useCount[i.a]++;
-				if (i.b >= 0) useCount[i.b]++;
-				if (i.c >= 0) useCount[i.c]++;
-				for (x in i.args)
-					useCount[x]++;
+			for (i in b.ins)
 				if ((i.op == Load || i.op == Store) && i.imm > -0x40000000 && i.imm < 0x40000000) addrUses[i.a]++;
-			}
 		// loads used once by an integer comparison or operation later in their
 		// block, with no store or call between: memory operands of the
 		// comparison or operation (a sign extension: movsxd from memory)
@@ -489,93 +314,9 @@ class Isel implements hxmc.Target.Selector {
 		for (b in mf.blocks)
 			for (i in b.ins)
 				if ((i.op == Const && immOf(i.id) != null) || i.op == SymAddr || i.op == StackAddr || i.op == ConstF) folded[i.id] = true;
-		var maxId = 0;
-		for (b in mf.blocks)
-			if (b.id >= maxId) maxId = b.id + 1;
-		lb = new Vector<LBlock>(maxId);
-		for (b in layout) {
-			var l = new LBlock(f.blocks.length);
-			l.cold = b.cold;
-			l.loopDepth = b.loopDepth;
-			lb[b.id] = l;
-			f.blocks.push(l);
-		}
-		// Windows: the thread's TLS block once per function,
-		// ThreadLocalStoragePointer[_tls_index] (gs:[0x58] is the pointer array)
-		tlsBase = -1;
-		if (win) {
-			var uses = false;
-			for (b in mf.blocks)
-				for (i in b.ins)
-					if (i.op == TlsLoad || i.op == TlsStore) uses = true;
-			if (uses) {
-				cur = lb[layout[0].id];
-				var idx = f.newReg(false), arr = f.newReg(false);
-				tlsBase = f.newReg(false);
-				var x = emit(LOAD);
-				x.d = idx;
-				x.sym = "_tls_index";
-				x.size = 4;
-				var g = emit(GSLOAD);
-				g.d = arr;
-				g.imm = 0x58;
-				var l = emit(LOAD);
-				l.d = tlsBase;
-				l.base = arr;
-				l.index = idx;
-				l.scale = 8;
-				l.size = 8;
-				flush();
-			}
-		}
-		// Apple: the image's thread-local template for this thread
-		// (hxmc_tls_base in the runtime), once the parameters are out of
-		// their registers
-		var macTls = false;
-		// (Android's TLSDESC: the module's block from hxmc_tls_base too, LinkDyn)
-		if (abi.tls == MachoTlv || abi.tls == Desc)
-			for (b in mf.blocks)
-				for (i in b.ins)
-					if (i.op == TlsLoad || i.op == TlsStore) macTls = true;
-		for (bi in 0...layout.length) {
-			var b = layout[bi];
-			cur = lb[b.id];
-			var next = bi + 1 < layout.length ? layout[bi + 1] : null;
-			var pendingBase = bi == 0 && macTls;
-			// after the last parameter (the call clobbers their registers;
-			// constants such as MirBuild.zeroAt's may come before them)
-			var lastParam = -1;
-			if (pendingBase)
-				for (k in 0...b.ins.length)
-					if (b.ins[k].op == Param) lastParam = k;
-			for (k in 0...b.ins.length) {
-				var i = b.ins[k];
-				if (pendingBase && k > lastParam) {
-					pendingBase = false;
-					macTlsBase();
-				}
-				curPos = i.pos;
-				ins(i, b, next);
-			}
-			if (pendingBase) macTlsBase();
-			flush();
-		}
-		// successor edges (for liveness), including the critical-edge blocks added on the way
-		for (l in f.blocks) {
-			l.succs = [];
-			for (i in l.ins) {
-				if (i.target != null && l.succs.indexOf(i.target) < 0) l.succs.push(i.target);
-				for (t in i.table)
-					if (l.succs.indexOf(t) < 0) l.succs.push(t);
-			}
-		}
-		for (l in f.blocks)
-			for (s in l.succs)
-				s.preds.push(l);
-		return f;
 	}
 
-	function materialize(i:MIns, r:Int) {
+	override function materialize(i:MIns, r:Int) {
 		// into a physical register: after the pending instruction (it may be a call)
 		if (r < LFunc.NPHYS) flush();
 		switch i.op {
@@ -645,23 +386,6 @@ class Isel implements hxmc.Target.Selector {
 			if (index >= 0) x.index = use(index);
 		}
 	}
-
-	static function swapCond(c:Int):Int
-		return switch (c : Cond) {
-			case CLt: CGt;
-			case CLe: CGe;
-			case CGt: CLt;
-			case CGe: CLe;
-			case CULt: CUGt;
-			case CULe: CUGe;
-			case CUGt: CULt;
-			case CUGe: CULe;
-			case FLt: FGt;
-			case FLe: FGe;
-			case FGt: FLt;
-			case FGe: FLe;
-			case c: c;
-		};
 
 	static function intCond(c:Int):hxmc.x64.Asm.CC
 		return switch (c : Cond) {
@@ -779,72 +503,11 @@ class Isel implements hxmc.Target.Selector {
 		x.target = t;
 	}
 
-	function jmp(t:LBlock) {
-		var x = emit(JMP);
-		x.target = t;
-	}
-
-	// the copies of the phis of `to` for the edge from `from`
-	function phiCopies(from:MBlock, to:MBlock) {
-		var k = to.preds.indexOf(from);
-		var phis = [for (i in to.ins) if (i.op == Phi) i];
-		if (phis.length == 0) return;
-		// through temporaries when a phi's operand is another phi of the same block
-		var needTemp = false;
-		for (p in phis)
-			for (q in phis)
-				if (p.args[k] == q.id && p != q) needTemp = true;
-		if (!needTemp) {
-			for (p in phis)
-				if (p.args[k] != p.id) copyTo(reg(p.id), p.args[k], p.ty);
-			return;
-		}
-		var temps = new Vector<Int>(phis.length), nt = 0;
-		for (p in phis) {
-			var t = f.newReg(p.ty == F64);
-			copyTo(t, p.args[k], p.ty);
-			temps[nt++] = t;
-		}
-		for (j in 0...phis.length)
-			mov(reg(phis[j].id), temps[j], 8);
-	}
-
-	function copyTo(d:Int, v:Int, t:MTy) {
-		if (folded[v]) materialize(m.vals[v], d) else mov(d, reg(v), 8);
-	}
-
-	function hasPhis(b:MBlock):Bool
-		return b.ins.length > 0 && b.ins[0].op == Phi;
-
-	// a branch from Mir block b to `to`: through an edge block when the edge is critical
-	function edgeTarget(b:MBlock, to:MBlock):LBlock {
-		if (!hasPhis(to)) return lb[to.id];
-		var e = new LBlock(f.blocks.length);
-		e.cold = lb[to.id].cold;
-		f.blocks.push(e);
-		flush();
-		var saved = cur;
-		cur = e;
-		phiCopies(b, to);
-		jmp(lb[to.id]);
-		flush();
-		cur = saved;
-		return e;
-	}
-
-	function ins(i:MIns, b:MBlock, next:Null<MBlock>) {
+	override function ins(i:MIns, b:MBlock, next:Null<MBlock>) {
 		switch i.op {
 			case Phi:
 			case Param:
-				var loc = m.cParams.length > 0 ? argLocs(m.params, m.cParams, i.imm + 1)[i.imm] : argLoc(m.params, i.imm);
-				var d = reg(i.id);
-				if (loc >= 0) mov(d, loc) else {
-					var x = emit(LOAD);
-					x.d = d;
-					x.base = -3; // incoming stack arguments
-					x.disp = 8 * (-1 - loc);
-					x.size = 8;
-				}
+				param(i);
 			case Const | SymAddr | StackAddr:
 				if (!folded[i.id]) materialize(i, reg(i.id));
 			case ConstF:
@@ -985,6 +648,10 @@ class Isel implements hxmc.Target.Selector {
 					x.cond = o;
 					x.size = size;
 				}
+			case NullCheck | New | NewDyn | InitField | GetField | SetField | FieldAddr | EnumTag | TypeTest | Box | Unbox | VirtualCall | ClosureCall | AnonGet |
+				AnonTest | AnonStore | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush | NewArray | ArrayInit | NewNArray | NArrayInit | NArrayLength |
+				NArrayGet | NArraySet | NArrayDyn | RefStore | IrNode | VarGet | VarSet | Try | Catch:
+				objectLevel(i);
 			case Rotr:
 				var d = reg(i.id);
 				var size = sz(i.ty);
@@ -1044,7 +711,7 @@ class Isel implements hxmc.Target.Selector {
 				x.cond = i.op == FNeg ? 0x57 : 0x54;
 				x.imm = i.op == FNeg ? 0 : 1;
 			case Cmp:
-				if (useCount[i.id] == 0) return; // unused (MirBuild.cmp folded it)
+				if (useCount[i.id] == 0) return; // unused (MirWriter.cmp folded it)
 				// fused into the branch that follows
 				if (fusable(i, b)) return;
 				var d = reg(i.id);
@@ -1150,8 +817,7 @@ class Isel implements hxmc.Target.Selector {
 			case Call:
 				call(i);
 			case Jmp:
-				phiCopies(b, i.targets[0]);
-				jmp(lb[i.targets[0].id]);
+				jmpIns(i, b);
 			case Br:
 				var t = i.targets[0], e = i.targets[1];
 				var cond = m.vals[i.a];
@@ -1186,118 +852,59 @@ class Isel implements hxmc.Target.Selector {
 					jmp(le);
 				}
 			case Switch:
-				switchIns(i, b, next);
+				switchIns(i, b);
 			case Ret if (i.a >= 0 && m.structRet):
 				// a struct in rax-rdx and xmm0-xmm1, from its memory (whole words)
-				var rs = new Vector<Int>(m.cRet.length), nr = 0;
-				for (p in m.cRet) {
-					var r = f.newReg(p.float);
-					var l = emit(LOAD);
-					l.d = r;
-					l.size = 8;
-					memOf(l, i.a, -1, 1, p.off);
-					rs[nr++] = r;
-				}
-				var x = new LIns(RET);
-				x.uses = new Vector(rs.length);
-				var gk = 0, fk = 0;
-				for (k in 0...rs.length) {
-					var d = m.cRet[k].float ? XMM0 + fk++ : gk++ == 0 ? RAX : RDX;
-					mov(d, rs[k], 8);
-					x.uses[k] = d;
-				}
-				flush();
-				push(x);
+				structRet(i);
 			case Ret:
-				var x = new LIns(RET);
-				if (i.a >= 0) {
-					var r = m.vals[i.a].ty == F64 ? XMM0 : RAX;
-					mov(r, use(i.a), 8);
-					x.uses = vector(r);
-				}
-				flush();
-				push(x);
+				ret(i);
 			case Unreachable:
 				emit(UD2);
 		}
 	}
 
-	// a comparison used only by the branch right after it
-	function fusable(i:MIns, b:MBlock):Bool {
-		if (useCount[i.id] != 1) return false;
-		var t = b.term();
-		if (t == null || t.op != Br || t.a != i.id) return false;
-		// nothing between them that changes flags: the comparison must be the instruction before the branch
-		if (b.ins.length < 2 || b.ins[b.ins.length - 2] != i) return false;
-		folded[i.id] = true;
-		return true;
+	// (the index zero-extended even into the same register: the table is
+	// indexed with all 64 bits, and an Int's upper half may be anything, an
+	// addition done by lea)
+	override function jumpTable(v:Int, lo:Int, span:Int, def:LBlock, table:Vector<LBlock>) {
+		var idx = f.newReg(false);
+		var x = emit(MOV);
+		x.d = idx;
+		x.s1 = v;
+		x.size = 4;
+		x.imm2 = 1;
+		if (lo != 0) {
+			var a = emit(ALUI);
+			a.d = idx;
+			a.cond = Asm.SUB;
+			a.imm = lo;
+			a.size = 4;
+		}
+		var c = emit(CMPI);
+		c.s1 = idx;
+		c.imm = span - 1;
+		c.size = 4;
+		jcc(A, def);
+		var base = f.newReg(false);
+		var l = emit(LEATABLE);
+		l.d = base;
+		l.table = table;
+		var j = emit(JTABLE);
+		j.d = base;
+		j.s1 = idx;
+		j.s2 = f.newReg(false);
+		j.table = table;
 	}
 
-	function switchIns(i:MIns, b:MBlock, next:Null<MBlock>) {
-		var v = use(i.a);
-		var def = edgeTarget(b, i.targets[i.targets.length - 1]);
-		var n = i.cases.length;
-		if (n == 0) {
-			jmp(def);
-			return;
-		}
-		var lo = i.cases[0], hi = i.cases[0];
-		for (c in i.cases) {
-			if (c < lo) lo = c;
-			if (c > hi) hi = c;
-		}
-		var targets = new Vector<LBlock>(n);
-		for (k in 0...n)
-			targets[k] = edgeTarget(b, i.targets[k]);
-		var span = hi - lo + 1;
-		if (n >= 4 && span > 0 && span <= 3 * n + 8) {
-			// jump table on value - lo
-			var idx = f.newReg(false);
-			var x = emit(MOV);
-			x.d = idx;
-			x.s1 = v;
-			x.size = 4;
-			// zero-extends even into the same register: the table is indexed
-			// with all 64 bits, and an Int's upper half may be anything (an
-			// addition done by lea)
-			x.imm2 = 1;
-			if (lo != 0) {
-				var a = emit(ALUI);
-				a.d = idx;
-				a.cond = Asm.SUB;
-				a.imm = lo;
-				a.size = 4;
-			}
-			var c = emit(CMPI);
-			c.s1 = idx;
-			c.imm = span - 1;
-			c.size = 4;
-			jcc(A, def);
-			var table = new Vector<LBlock>(span, def);
-			for (k in 0...n)
-				table[i.cases[k] - lo] = targets[k];
-			var base = f.newReg(false);
-			var l = emit(LEATABLE);
-			l.d = base;
-			l.table = table;
-			var j = emit(JTABLE);
-			j.d = base;
-			j.s1 = idx;
-			j.s2 = f.newReg(false);
-			j.table = table;
-			return;
-		}
-		for (k in 0...n) {
-			var c = emit(CMPI);
-			c.s1 = v;
-			c.imm = i.cases[k];
-			c.size = 4;
-			jcc(E, targets[k]);
-		}
-		jmp(def);
+	override function caseBranch(v:Int, c:Int, t:LBlock) {
+		var x = emit(CMPI);
+		x.s1 = v;
+		x.imm = c;
+		x.size = 4;
+		jcc(E, t);
 	}
 
-	// the inline expansions of MirBuild.special: atomics (sequentially
+	// the inline expansions of MirWriter.special: atomics (sequentially
 	// consistent: loads are plain moves, stores xchg) and float32 conversions
 	function special(i:MIns) {
 		var name = i.sym.substr(hxmc.MirBuild.SPECIAL.length);
@@ -1364,61 +971,35 @@ class Isel implements hxmc.Target.Selector {
 		}
 	}
 
-	function macTlsBase() {
-		f.hasCalls = true;
-		tlsBase = f.newReg(false);
-		var x = emit(CALL);
-		x.sym = "hxmc_tls_base";
-		mov(tlsBase, RAX, 8);
+	// ---- calls (IselBase.call)
+
+	override function floatBits(d:Int, v:Int) {
+		var x = emit(MOVQRX);
+		x.d = d;
+		x.s1 = use(v);
 	}
 
-	function call(i:MIns) {
-		f.hasCalls = true;
-		var stack = 0;
-		var uses = [];
-		var moves:Array<{d:Int, s:Int, size:Int}> = [];
-		// (a struct result in registers: its address is the last argument, not
-		// passed, MirBuild.cStructRet)
-		var n = i.structRet ? i.args.length - 1 : i.args.length;
-		var locs = argLocs(i.argTys, i.cGroups, n);
-		for (k in 0...n) {
-			var a = i.args[k];
-			var t = i.argTys[k];
-			var loc = locs[k];
-			if (loc >= 0) {
-				moves.push({d: loc, s: a, size: t == F64 ? 8 : sz(t)});
-				uses.push(loc);
-				// Win64: a variadic callee reads a float from the integer register
-				// of its position too
-				if (win && i.variadic >= 0 && t == F64) {
-					var g = f.newReg(false);
-					var x = emit(MOVQRX);
-					x.d = g;
-					x.s1 = use(a);
-					moves.push({d: WIN_ARG_GPRS[k], s: -1 - g, size: 8});
-					uses.push(WIN_ARG_GPRS[k]);
-				}
-				continue;
-			}
-			// stack argument
-			if (-loc > stack) stack = -loc;
-			var imm = immOf(a);
-			var x = emit(imm != null && t != F64 ? STOREI : STORE);
-			x.base = -4; // outgoing argument area
-			x.disp = 8 * (-1 - loc);
-			x.size = 8;
-			if (imm != null && t != F64) {
-				x.imm = imm;
-				x.isym = isymOf(a);
-			} else x.s1 = use(a);
-		}
-		// Win64: the callee's shadow space
-		if (win && stack < 4) stack = 4;
-		if (8 * stack > f.outArgs) f.outArgs = 8 * stack;
-		var target = i.sym == null ? use(i.a) : -1;
-		for (mv in moves)
-			if (mv.s < 0) mov(mv.d, -1 - mv.s, 8) // (a register of this call's own: -1 - its number)
-			else if (folded[mv.s]) materialize(m.vals[mv.s], mv.d) else mov(mv.d, reg(mv.s), 8);
+	override function f32FromBits(d:Int, s:Int) {
+		var x = emit(MOVDXR);
+		x.d = d;
+		x.s1 = s;
+	}
+
+	override function stackArg(i:MIns, k:Int, loc:ArgLoc) {
+		var a = i.args[k];
+		var t = i.argTys[k];
+		var imm = immOf(a);
+		var x = emit(imm != null && t != F64 ? STOREI : STORE);
+		x.base = -4; // outgoing argument area
+		x.disp = loc.off;
+		x.size = 8;
+		if (imm != null && t != F64) {
+			x.imm = imm;
+			x.isym = isymOf(a);
+		} else x.s1 = use(a);
+	}
+
+	override function beforeCall(i:MIns, uses:Array<Int>) {
 		if (i.variadic >= 0 && !win) {
 			// System V: al bounds the vector registers a variadic call passes
 			var nv = 0;
@@ -1431,30 +1012,26 @@ class Isel implements hxmc.Target.Selector {
 			r.size = 4;
 			uses.push(RAX);
 		}
-		var x = emit(CALL);
-		x.sym = i.sym;
-		x.s1 = target;
-		x.uses = Vector.fromArrayCopy(uses);
-		x.flag = i.returnsTwice;
-		if (i.ty != Void) {
-			var r = i.ty == F64 ? XMM0 : RAX;
-			mov(reg(i.id), r, 8);
-		}
-		if (i.structRet) {
-			// a struct in rax-rdx and xmm0-xmm1: out of them first, then into
-			// its memory (whole words: the slot is rounded up to them)
-			var rs = new Vector<Int>(i.cRet.length), nr = 0, gk = 0, fk = 0;
-			for (p in i.cRet) {
-				var r = f.newReg(p.float);
-				mov(r, p.float ? XMM0 + fk++ : gk++ == 0 ? RAX : RDX, 8);
-				rs[nr++] = r;
-			}
-			for (k in 0...i.cRet.length) {
-				var s = emit(STORE);
-				s.size = 8;
-				s.s1 = rs[k];
-				memOf(s, i.args[n], -1, 1, i.cRet[k].off);
-			}
-		}
+	}
+
+	// (a struct in rax-rdx and xmm0-xmm1: whole words, the slot is rounded up to them)
+	override function loadPart(r:Int, addr:Int, p:CPart) {
+		var l = emit(LOAD);
+		l.d = r;
+		l.size = 8;
+		memOf(l, addr, -1, 1, p.off);
+	}
+
+	override function takePart(r:Int, p:CPart):Int {
+		var t = f.newReg(p.float);
+		mov(t, r, 8);
+		return t;
+	}
+
+	override function storePart(r:Int, addr:Int, p:CPart) {
+		var s = emit(STORE);
+		s.size = 8;
+		s.s1 = r;
+		memOf(s, addr, -1, 1, p.off);
 	}
 }

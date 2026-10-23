@@ -25,6 +25,7 @@ class Emit implements hxmc.Target.Emitter {
 	var npool = 0;
 
 	var win:Bool;
+	var cc:hxmc.CallConv; // System V or Win64
 	var fp:Bool;
 	// this function's frame operations (Unwind; offsets in the section until
 	// the function is done) and (-debug) its rows of lines
@@ -36,6 +37,7 @@ class Emit implements hxmc.Target.Emitter {
 	public function new(obj:Obj, win = false, fp = false) {
 		this.obj = obj;
 		this.win = win;
+		cc = hxmc.CallConv.x64(win);
 		this.fp = fp;
 		text = obj.section(".text", Text, FALIGN);
 		rodata = obj.section(".rodata", RoData, 16);
@@ -122,8 +124,8 @@ class Emit implements hxmc.Target.Emitter {
 			slotOff[k] = off;
 			off += s.size;
 		}
-		saved = usedOf(win ? Isel.WIN_CALLEE_SAVED : Isel.CALLEE_SAVED, usedRegs, 0, 16);
-		savedX = win ? usedOf(Isel.WIN_CALLEE_SAVED, usedRegs, 16, LFunc.NPHYS) : vector();
+		saved = usedOf(cc.calleeSaved, usedRegs, 0, 16);
+		savedX = win ? usedOf(cc.calleeSaved, usedRegs, 16, LFunc.NPHYS) : vector();
 		savedXOff = new Vector(savedX.length);
 		for (k in 0...savedX.length) {
 			off = (off + 15) & ~15;
@@ -282,10 +284,10 @@ class Emit implements hxmc.Target.Emitter {
 	public function allocStub(name:String, lo:Int, tySym:Null<String>, tyVal:Int, bytes:Int):Bool {
 		var start = text.buf.len;
 		ops.resize(0);
-		a.movImm32(win ? 1 : 7, lo); // rcx / rdi
+		a.movImm32(cc.argGprs[0], lo); // rcx / rdi
 		if (tySym != null) a.isym = obj.sym(tySym);
-		a.movImm32(win ? 2 : 6, tySym != null ? 0 : tyVal); // rdx / rsi
-		a.movImm32(win ? 8 : 2, bytes); // r8 / rdx
+		a.movImm32(cc.argGprs[1], tySym != null ? 0 : tyVal); // rdx / rsi
+		a.movImm32(cc.argGprs[2], bytes); // r8 / rdx
 		a.jmpSym(obj.sym("hxmc_alloc_slow"));
 		define(name, start);
 		return true;
@@ -295,7 +297,7 @@ class Emit implements hxmc.Target.Emitter {
 	public function stub(name:String) {
 		var start = text.buf.len;
 		ops.resize(0);
-		var arg0 = win ? Asm.RCX : Asm.RDI, arg1 = win ? Asm.RDX : Asm.RSI;
+		var arg0 = cc.argGprs[0], arg1 = cc.argGprs[1];
 		switch name {
 			case hxmc.MirBuild.STUB_CALL_ON_STACK:
 				// fn() with the stack pointer at top (Windows: its home area

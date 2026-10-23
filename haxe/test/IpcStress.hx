@@ -7,8 +7,9 @@
 //
 // The children are the same program, compiled once to HXB and run with
 // `--hxb-lib ... --run IpcStress child <mode> ...`. Each round runs every mode:
-// - echo: the child prints the line it reads from stdin (the parent reads
-//   after the exit code, as runUtility does);
+// - echo, readString, readUntil: the child prints what it reads from stdin
+//   with readLine, readString(byte length) and readUntil(0x70) (the parent
+//   reads after the exit code, as runUtility does);
 // - nested: the child sets an environment variable and prints what a
 //   grandchild prints of it (TestUnicode's putEnv + getEnv / environment);
 // - stream: the child writes the string a few bytes at a time, flushing and
@@ -55,6 +56,8 @@ class IpcStress {
 				var long = [for (_ in 0...20) s].join("|");
 				for (check in [
 					{mode: "echo", expected: s + "\n", res: run(["echo"], s + "\n", false)},
+					{mode: "readString", expected: s + "\n", res: run(["readString", '${haxe.io.Bytes.ofString(s).length}'], s, false)},
+					{mode: "readUntil", expected: s + "\n", res: run(["readUntil"], s + "\x70" + s + "\x70", false)},
 					{mode: "nested", expected: s + "\n", res: run(["nested", s], null, false)},
 					{mode: "stream", expected: long, res: run(["stream", long], null, true)}
 				]) {
@@ -147,6 +150,10 @@ class IpcStress {
 		switch args {
 			case ["echo"]:
 				Sys.println(Sys.stdin().readLine());
+			case ["readString", Std.parseInt(_) => len]:
+				Sys.println(Sys.stdin().readString(len, UTF8));
+			case ["readUntil"]:
+				Sys.println(Sys.stdin().readUntil(0x70));
 			case ["nested", s]:
 				Sys.putEnv("IPC_STRESS", s);
 				var p = new sys.io.Process(Sys.getEnv("IPC_STRESS_BIN"), ["--hxb-lib", Sys.getEnv("IPC_STRESS_HXB"), "--run", "IpcStress", "child", "getEnv"]);

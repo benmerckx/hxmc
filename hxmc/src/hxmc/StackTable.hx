@@ -36,7 +36,7 @@ class StackTable {
 	public static var stats = "";
 
 	// the table's section in `data`, of every function of `objs` and `data`
-	// (Link drops those of the functions it does not keep: rebuild); empty
+	// (the linkers drop those of the functions it does not keep: rebuild); empty
 	// unless `withLines`
 	public static function add(data:Obj, objs:Array<Obj>, withLines:Bool) {
 		var s = new Section(SECTION, RoData, 8);

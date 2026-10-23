@@ -314,19 +314,8 @@ class WasiSys {
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
 
-	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool {
-		var ok = true;
-		while (n > 0) {
-			var w = rw(true, fd, d, n);
-			if (w <= 0) {
-				ok = false;
-				break;
-			}
-			d = d.add(w);
-			n -= w;
-		}
-		return WasiApi.fd_close(fd) == 0 && ok;
-	}
+	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool
+		return SysCore.saveAll(fd, d, n);
 
 	// the file type of a path (filestat.filetype: 3 directory, 4 regular file), -1: none
 	static function fileType(path:String):Int {

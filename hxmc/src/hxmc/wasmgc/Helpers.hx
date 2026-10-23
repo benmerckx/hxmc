@@ -711,7 +711,7 @@ class Helpers {
 			get(b, 2);
 			if (k != "p") {
 				b.u8(0x10);
-				Enc.uleb(b, unbox(m, k));
+				Enc.uleb(b, unbox(m, k == "u" ? "i" : k));
 			}
 			b.u8(0x10);
 			Enc.uleb(b, st);
@@ -815,8 +815,9 @@ class Helpers {
 		b.u8(result);
 	}
 
-	// a NativeArray's kind: its storage's number (GcModule.NA_KINDS), 5 a wrapper
-	// no typed view took yet, 6 one a view took; -1 not a NativeArray
+	// a NativeArray's kind: its storage's number (GcModule.NA_KINDS), 6 a wrapper
+	// no typed view took yet, 7 one a view took (Types.AK_OPEN, AK_WRAP); -1
+	// not a NativeArray
 	public static function naKind(m:GcModule):Int {
 		var h = m.hasHelper("na_kind");
 		if (h != null) return h;
@@ -833,7 +834,7 @@ class Helpers {
 		Enc.sleb(b, m.nwrapType);
 		b.u8(0x04);
 		b.u8(0x40);
-		i32(b, 5);
+		i32(b, GcModule.NA_KINDS.length);
 		get(b, 0);
 		m.castTo(b, m.nwrapType);
 		m.gc(b, 0x02, m.nwrapType, 1);
@@ -915,8 +916,9 @@ class Helpers {
 			get(b, 2);
 			m.castTo(b, m.naType(k));
 			get(b, 1);
-			m.gc(b, k == "b" ? 0x0D : 0x0B, m.naType(k));
-			box(m, b, k);
+			// (Bools and Bytes: unsigned bytes; a Byte boxed as an Int)
+			m.gc(b, k == "b" || k == "u" ? 0x0D : 0x0B, m.naType(k));
+			box(m, b, k == "u" ? "i" : k);
 			b.u8(0x0F);
 			b.u8(0x0B);
 		}
@@ -942,7 +944,7 @@ class Helpers {
 			get(b, 2);
 			if (k != "p") {
 				b.u8(0x10);
-				Enc.uleb(b, unbox(m, k));
+				Enc.uleb(b, unbox(m, k == "u" ? "i" : k));
 			}
 			m.gc(b, 0x0E, m.naType(k));
 			b.u8(0x0F);

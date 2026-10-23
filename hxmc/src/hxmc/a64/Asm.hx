@@ -498,6 +498,10 @@ class Asm {
 	public function dmbIsh()
 		w(0xD5033BBF);
 
+	// stores before it, then stores after it (inner shareable)
+	public function dmbIshst()
+		w(0xD5033ABF);
+
 	public function clrex()
 		w(0xD5033F5F);
 }

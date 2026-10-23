@@ -38,8 +38,9 @@ enum CRet {
 
 // Structs by value in C calls, one place per ABI (docs/plans/lowlevel.md, "Calls
 // and linking"); MirBuild applies it to calls of C functions and to the
-// entries of @:hxmc.callback functions, the instruction selections place the
-// parts (MIns.cGroups, MIns.cRet, MFunc.cParams, MFunc.cRet).
+// entries of @:hxmc.callback functions, CallConv places the parts
+// (MIns.cGroups, MIns.cRet, MFunc.cParams, MFunc.cRet) in registers and on
+// the stack for the instruction selections.
 // - AAPCS64 (Linux, macOS and Windows on arm64): a homogeneous aggregate of
 //   one to four floats or doubles in float registers, another struct of up
 //   to 16 bytes in one or two integer registers, a larger one as the address

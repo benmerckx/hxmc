@@ -31,7 +31,7 @@ import hxmc.unsafe.*;
 class Faults {
 	// the null page and its neighbours: Linux never maps the first 64 KB
 	// (vm.mmap_min_addr), Windows reserves them, macOS maps nothing below 4 GB;
-	// below 0: an object's header (its type index at -4)
+	// below 0: an object's header (its type index at -8)
 	static inline var NEAR = 65536;
 
 	// the image's code [lo, hi) (ELF: the whole image; Mach-O: __TEXT; PE: the image)

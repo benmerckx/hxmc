@@ -7,18 +7,20 @@ import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
 class Unsafe {
-	static inline var T_STRING = 1;
+	static inline var T_STRING = hxmc.rt.Types.T_STRING;
 	static inline var K_RAW = 2;
 
-	// a string of n units, every one c, built by hand (rt.h: int32 length,
-	// int32 hash, UTF-16 units from offset 8)
+	// a string of n units, every one c, built by hand (hxmc.rt.Types: the
+	// header's words and hash 0; the length at offset 0, the UTF-16 units
+	// from offset 4; none: the static empty string, every heap object having
+	// a slot)
 	static function makeString(n:Int, c:Int):String {
-		var s = Mem.allocRaw((8 + 2 * n + 7) >> 3, T_STRING, K_RAW);
+		if (n == 0) return "";
+		var s:String = Mem.allocArrayRaw(T_STRING, 0, (n + 5) >> 2);
 		var p = Mem.addr(s);
 		Mem.setI32(p, 0, n);
-		Mem.setI32(p, 4, 0);
 		for (i in 0...n)
-			Mem.setU16At(p, 8, i, c);
+			Mem.setU16At(p, 4, i, c);
 		return s;
 	}
 
@@ -27,12 +29,12 @@ class Unsafe {
 		var p = Mem.addr(s);
 		var n = Mem.getI32(p, 0), t = 0;
 		for (i in 0...n)
-			t += Mem.getU16At(p, 8, i);
+			t += Mem.getU16At(p, 4, i);
 		return t;
 	}
 
 	@:hxmc.noGc static function copyUnits(dst:String, src:String, n:Int):Void {
-		LibC.memcpy(Mem.addr(dst).add(8), Mem.addr(src).add(8), (2 * n : I64));
+		LibC.memcpy(Mem.addr(dst).add(4), Mem.addr(src).add(4), (2 * n : I64));
 	}
 
 	static function main() {
@@ -79,7 +81,7 @@ class Unsafe {
 		copyUnits(dst, "hello", 5);
 		Sys.println(dst + " " + (dst == "hello"));
 		// zeroed objects: an Int array's raw data block is all zero
-		var z = Mem.alloc(3, 7, K_RAW);
+		var z = Mem.alloc(3, hxmc.rt.Types.T_ADATA_RAW, K_RAW);
 		Sys.println(Mem.getI64(Mem.addr(z), 0) == 0 && Mem.getI64(Mem.addr(z), 16) == 0 ? "zeroed" : "not zeroed");
 		// the target, as the code generator knows it
 		Sys.println(Mem.os() >= 0 && Mem.os() <= 3 ? "os ok" : "os bad");

@@ -10,9 +10,11 @@ import hxmc.unsafe.Ptr;
 @:hxmc.native @:keep
 class GcPaths {
 	// Gc.allocSlow with the header assembled here (the type index is a
-	// link-time constant: it cannot be shifted into place by the linker)
-	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlow(lo:Int, tindex:Int, bytes:Int):Ptr
-		return Gc.allocSlow(((tindex : I64) << 32) | ((lo : I64) & 0xFFFFFFFF), bytes);
+	// link-time constant: it cannot be shifted into place by the linker): a
+	// record's (Types.isRecord) with its slots from the bytes, else an array's,
+	// w0 its first word (its type and width), len its length
+	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlow(len:Int, w0:Int, bytes:Int):Ptr
+		return Gc.allocSlow(Types.isRecord(w0 & 0xFFFF) ? Types.recordHdr(w0 & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(w0, len), bytes);
 
 	// the rest of the barrier once obj is known not to be young: the slot
 	// now holds a young pointer, and held none (a slot of an old object that

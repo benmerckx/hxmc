@@ -1,19 +1,7 @@
-// hxmc: haxe/upstream/std/eval/_std/haxe/io/BytesData.hx: Bytes is its own data;
-// indexing reads and writes bytes
+// hxmc: haxe/upstream/std/eval/_std/haxe/io/BytesData.hx: NativeArray storage
+// of bytes, which a Bytes holds (hxmc.rt.Bytes); indexing reads and writes bytes,
+// unchecked unless -D hxmc.native-array-outofbounds says otherwise
 
 package haxe.io;
 
-abstract BytesData(Bytes) from Bytes to Bytes {
-	public var length(get, never):Int;
-
-	inline function get_length():Int
-		return this.length;
-
-	@:arrayAccess inline function get(i:Int):Int
-		return this.get(i);
-
-	@:arrayAccess inline function set(i:Int, v:Int):Int {
-		this.set(i, v);
-		return v;
-	}
-}
+typedef BytesData = hxmc.NativeArray<hxmc.Byte>;

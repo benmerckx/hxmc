@@ -42,7 +42,7 @@ class Corpus {
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
 	static final WASM_EXCLUDED = ["ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi",
-		"NullAccessThreads" => "no threads on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)"];
+		"NullAccessThreads" => "no threads on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
@@ -160,14 +160,9 @@ class Corpus {
 		if (libc != null) cmd = cmd.concat(["-D", "hxmc.libc=" + libc]);
 		if (native.links.length > 0) cmd = cmd.concat(["-D", "hxmc.link=" + native.links.join(",")]);
 		if (wasm && wasmEh != null) cmd = cmd.concat(["-D", "hxmc.wasm-eh=" + wasmEh]);
-		// (the defines: caseDefines, as when typing)
+		// (its resources: caseResources; the defines: caseDefines, as when typing)
 		var src = c.cps[0] + "/" + c.main + ".hx";
-		if (FileSystem.exists(src))
-			for (l in File.getContent(src).split("\n"))
-				if (l.trim().startsWith("// resource: ")) {
-					var r = l.trim().substr(13).split("@");
-					cmd = cmd.concat(["--resource", FileSystem.fullPath(c.cps[0] + "/" + r[0]) + (r.length > 1 ? "@" + r[1] : "")]);
-				}
+		cmd = cmd.concat(caseResources(src));
 		var r = exec(cmd.concat(defines), {env: ["HXMC_STATS" => "1"]});
 		File.saveContent(d + "/hxmc.log", r.out + r.err);
 		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
@@ -248,6 +243,19 @@ class Corpus {
 			for (l in File.getContent(src).split("\n"))
 				if (l.trim().startsWith("// " + key + ": ")) return l.trim().substr(key.length + 5).trim();
 		return null;
+	}
+
+	// a case's `// resource: <file>@<name>` lines as --resource arguments (the
+	// file next to the source)
+	public static function caseResources(src:String):Array<String> {
+		var result = [];
+		if (FileSystem.exists(src))
+			for (l in File.getContent(src).split("\n"))
+				if (l.trim().startsWith("// resource: ")) {
+					var r = l.trim().substr(13).split("@");
+					result = result.concat(["--resource", FileSystem.fullPath(haxe.io.Path.directory(src) + "/" + r[0]) + (r.length > 1 ? "@" + r[1] : "")]);
+				}
+		return result;
 	}
 
 	public static function caseDefines(src:String):Array<String> {

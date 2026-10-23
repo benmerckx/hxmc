@@ -26,6 +26,10 @@ extern class Mem {
 	static function tlsSet(name:String, v:Ptr):Void;
 	// a constant of the code generator's Abi (TYPE_SIZE, IC_SLOT, ...)
 	static function abi(name:String):Int;
+	// the type index of a class (its instances' header: hxmc.rt.Types), named
+	// as a literal: to allocate an instance with something else in the same
+	// allocation (haxe.io.Bytes)
+	static function typeIndexOf(c:Class<Dynamic>):Int;
 	// the target: os() 0 Linux, 1 macOS, 2 Windows, 3 WASI (WebAssembly); arm() true on arm64
 	static function os():Int;
 	static function arm():Bool;
@@ -105,8 +109,15 @@ extern class Mem {
 	static function setF64At(p:Ptr, off:Int, i:Int, v:Float):Void;
 
 	// a new heap object of `nslots` 8-byte slots with this type index and
-	// kind (rt.h K_*): zeroed (alloc), or not (allocRaw: K_RAW objects
-	// only, which the collector does not scan). GC points.
+	// kind (hxmc.rt.Types K_*: K_OBJ a record, else an array of slots, its
+	// length nslots): zeroed (alloc), or not (allocRaw: objects without
+	// references only, which the collector does not scan). GC points.
 	static function alloc(nslots:Int, tindex:Int, kind:Int):Dynamic;
 	static function allocRaw(nslots:Int, tindex:Int, kind:Int):Dynamic;
+	// a new array (hxmc.rt.Types: its type index; `words` 8-byte words of
+	// elements, which its header counts; its length; a string, its type a
+	// literal, its hash 0 instead): zeroed (allocArray), or not
+	// (allocArrayRaw: without references only). GC points.
+	static function allocArray(tindex:Int, length:Int, words:Int):Dynamic;
+	static function allocArrayRaw(tindex:Int, length:Int, words:Int):Dynamic;
 }

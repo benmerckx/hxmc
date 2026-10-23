@@ -331,9 +331,6 @@ class LinkDyn extends Link {
 	static inline function isCode(k:RelKind):Bool
 		return k == RCall32 || k == RPc32 || k == RA64Call26 || k == RA64Jump26 || k == RA64AdrPage21 || k == RA64AddLo12;
 
-	static inline function isGotRel(k:RelKind):Bool
-		return k == RA64GotPage21 || k == RA64GotLo12 || k == RGotPcRel32;
-
 	override public function link(entry:String):Bytes {
 		readImports();
 		var hasFini = false, hasTls = false;
@@ -392,11 +389,11 @@ class LinkDyn extends Link {
 						if (r.kind == RAbs64) {
 							absRelocs++;
 							if (s.kind == RoData) moved.set(s, true);
-						} else if (!isGotRel(r.kind)) relaxToGot(s, r);
+						} else if (!LinkCore.isGotRel(r.kind)) relaxToGot(s, r);
 					} else if (i.object) {
 						if (i.copyAt < 0) {
 							var al = i.size >= 16 ? 16 : i.size >= 8 ? 8 : 4;
-							copies.bssSize = Link.align(copies.bssSize, al);
+							copies.bssSize = LinkCore.align(copies.bssSize, al);
 							i.copyAt = copies.bssSize;
 							copies.bssSize += i.size;
 						}
@@ -423,18 +420,14 @@ class LinkDyn extends Link {
 						absRelocs++;
 						if (s.kind == RoData) moved.set(s, true);
 						else if (s.kind == Text) throw "hxmc: link: an absolute address of " + r.sym.name + " in code";
-					} else if (!isGotRel(r.kind))
+					} else if (!LinkCore.isGotRel(r.kind))
 						throw "hxmc: link: relocation " + r.kind + " against " + r.sym.name + ", a shared library's";
 				}
 			}
 		var extra = new Obj();
 		extra.sections.push(stubs);
 		extra.sections.push(copies);
-		objs.push(extra);
-		if (live != null) {
-			live.set(stubs, true);
-			live.set(copies, true);
-		}
+		keep(extra);
 		makeGot();
 		unwindObj();
 		// GLOB_DAT relocations: the slots of functions
@@ -576,50 +569,38 @@ class LinkDyn extends Link {
 		imageBase = BASE;
 		var headers = 64 + 56 * nph;
 		var pos = BASE + headers;
-		function place(list:Array<Section>) {
-			for (s in list) {
-				pos = Link.align(pos, s.align);
-				addr.set(s, pos);
-				pos += s.size();
-			}
-		}
-		place(shared ? [hash, dynsym, dynstrSec, versym, verneed, rela] : [interp, hash, dynsym, dynstrSec, versym, verneed, rela]);
+		pos = place(shared ? [hash, dynsym, dynstrSec, versym, verneed, rela] : [interp, hash, dynsym, dynstrSec, versym, verneed, rela], pos);
 		var roStart = pos;
-		place(ro);
+		pos = place(ro, pos);
 		var roEnd = pos;
-		pos = Link.align(pos, PAGE);
+		pos = LinkCore.align(pos, PAGE);
 		var textStart = pos;
-		place(text);
+		pos = place(text, pos);
 		var textEnd = pos;
-		pos = Link.align(pos, PAGE);
+		pos = LinkCore.align(pos, PAGE);
 		var dataStart = pos;
-		place(tdata);
+		pos = place(tdata, pos);
 		tlsStart = dataStart;
 		var tdataEnd = pos;
-		var tpos = pos;
-		for (s in tbss) {
-			tpos = Link.align(tpos, s.align);
-			addr.set(s, tpos);
-			tpos += s.size();
-		}
+		var tpos = place(tbss, pos);
 		for (s in tdata.concat(tbss))
 			if (s.align > tlsAlign) tlsAlign = s.align;
 		tlsSize = tpos - tlsStart;
-		pos = Link.align(pos, 8);
+		pos = LinkCore.align(pos, 8);
 		var initStart = pos;
 		defined.set("__init_array_start", pos);
-		place(init);
+		pos = place(init, pos);
 		defined.set("__init_array_end", pos);
 		defined.set("__fini_array_start", pos);
-		place(fini);
+		pos = place(fini, pos);
 		defined.set("__fini_array_end", pos);
-		place([dynSec]);
+		pos = place([dynSec], pos);
 		var gotStart = pos;
-		if (got != null) place([got]);
+		if (got != null) pos = place([got], pos);
 		var gotEnd = pos;
-		place(data);
+		pos = place(data, pos);
 		var fileEnd = pos;
-		place(bss);
+		pos = place(bss, pos);
 		var dataEnd = pos;
 		defined.set("_end", dataEnd);
 		defined.set("end", dataEnd);
@@ -692,7 +673,7 @@ class LinkDyn extends Link {
 			}
 		}
 		for (s in all)
-			if (s.kind != Bss && s.kind != Tbss && o(dynObj, s) == false) apply(s);
+			if (s.kind != Bss && s.kind != Tbss && o(dynObj, s) == false) applyRelocs(s);
 		if (relaAt != rela.buf.len || relAt != 24 * relatives) throw "hxmc: link: " + Std.int(relaAt / 24) + " dynamic relocations for " + nrela;
 		fillUnwind();
 		// .dynsym, .hash, .gnu.version, .gnu.version_r
@@ -875,6 +856,13 @@ class LinkDyn extends Link {
 		ph(0x6474e551, 6, 0, 0, 0, 0, 16);
 		out.b.blit(0, h.b, 0, h.len);
 		return out.toBytes();
+	}
+
+	// a relocation that becomes a dynamic one (true: done)
+	var dynReloc:Null<(Section, Reloc) -> Bool> = null;
+
+	override function absolute(s:Section, r:Reloc, P:Int) {
+		if (dynReloc == null || !dynReloc(s, r)) super.absolute(s, r, P);
 	}
 
 	// a section's object is `o`

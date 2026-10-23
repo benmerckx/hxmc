@@ -2,6 +2,7 @@ package hxmc.rt.wasm;
 
 import hxmc.I64;
 import hxmc.rt.Types.*;
+import hxmc.rt.GcCore.*;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
@@ -20,7 +21,6 @@ import hxmc.unsafe.Ptr;
 // @:hxmc.noGc: it runs while objects move, with raw addresses.
 @:hxmc.wasm @:keep
 class Gc {
-	static inline var K_FWD = 15;
 	static inline var MINOR_MAX = 32 << 20;
 	static inline var MINOR_MIN = 4 << 20;
 	static inline var LOW_PROMOTION_AFTER = 8;
@@ -83,21 +83,7 @@ class Gc {
 	static var lowFor:Int; // collections in a row that promoted little
 	static var growthOff:Bool; // memory cannot grow so far
 
-	static inline function hdrLo(p:Ptr):Int
-		return Mem.getI32(p, -8);
-
-	static inline function nslotsOf(p:Ptr):Int
-		return hdrLo(p) & 0x0FFFFFFF;
-
-	static inline function kindOf(p:Ptr):Int
-		return (hdrLo(p) >>> 28) & 15;
-
-	static inline function tindexOf(p:Ptr):Int
-		return Mem.getU16(p, -4);
-
-	static inline function objBytes(p:Ptr):Int
-		return 8 * (nslotsOf(p) + 1);
-
+	// (the header: read through GcCore, as the native Gc.hx reads it)
 	static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
@@ -135,7 +121,7 @@ class Gc {
 		cur = -1;
 		newState = 1;
 		// the shadow stack: RT_STACK_MB (4 MB), its end checked where a frame
-		// first goes deeper (MirBuild.raiseHw: rt_stack_overflow); a browser's
+		// first goes deeper (MirWriter.raiseHw: rt_stack_overflow); a browser's
 		// wasm stack (about 1 MB) runs out well before (node's wasi.mjs sets it
 		// from --stack-size: as large as node's stack)
 		var smb = Wasi.envInt("RT_STACK_MB", STACK_MB);
@@ -167,13 +153,10 @@ class Gc {
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);
 		var to = Mem.sym("rt_type_objs");
 		for (t in 0...nt) {
-			Mem.setI64(to, 16 * t, mkhdr(1, K_RAW, T_TYPEOBJ));
+			Mem.setI64(to, 16 * t, Types.recordHdr(T_TYPEOBJ, 1));
 			Mem.setI64(to, 16 * t + 8, t);
 		}
 	}
-
-	public static inline function mkhdr(nslots:Int, kind:Int, tindex:Int):I64
-		return ((tindex : I64) << 32) | ((((kind << 28) | nslots) : I64) & ((((1 : I64) << 32) - 1)));
 
 	@:hxmc.noGc static function setYoungEnd(e:Ptr) {
 		youngEnd = e;
@@ -256,8 +239,9 @@ class Gc {
 		return true;
 	}
 
+	// (as the native GcPaths.allocSlow: a record's slots from its bytes)
 	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlowParts(lo:Int, tindex:Int, bytes:Int):Ptr
-		return allocSlow(((tindex : I64) << 32) | ((lo : I64) & ((((1 : I64) << 32) - 1))), bytes);
+		return allocSlow(Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo), bytes);
 
 	@:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr {
 		var p:Ptr;
@@ -400,14 +384,12 @@ class Gc {
 		return dst.add(8);
 	}
 
-	@:hxmc.noGc static function forwardTo(p:Ptr, n:Ptr) {
-		Mem.setI32(p, -8, (hdrLo(p) & 0x0FFFFFFF) | (K_FWD << 28));
-		Mem.setPtr(p, 0, n);
-	}
+	@:hxmc.noGc static function forwardTo(p:Ptr, n:Ptr)
+		setFwd(p, n);
 
 	@:hxmc.noGc static function fwd(p:Ptr):Ptr {
 		if (!inYoung(p) && !(major && inFrom(p))) return p;
-		if (kindOf(p) == K_FWD) return Mem.getPtr(p, 0);
+		if (isFwdAt(p)) return fwdAddr(p);
 		var bytes = objBytes(p);
 		var d = oldAlloc(bytes);
 		if (d.isNull()) Heap.outOfMemory();
@@ -433,7 +415,7 @@ class Gc {
 			var f = gcStack.add(16 * (gcTop - 1));
 			var o = Mem.getPtr(f, 0);
 			var n = nslotsOf(o), k = kindOf(o);
-			var pm = k == K_OBJ ? Mem.getPtr(Mem.sym("rt_types"), 112 * tindexOf(o) + 24) : Ptr.nil();
+			var pm = k == K_OBJ ? ptrmapAt(tindexOf(o)) : Ptr.nil();
 			if (k == K_RAW || (k == K_OBJ && pm.isNull())) {
 				gcTop--;
 				continue;
@@ -485,12 +467,12 @@ class Gc {
 		var n = nslotsOf(o);
 		switch kindOf(o) {
 			case K_OBJ:
-				var pm = Mem.getPtr(Mem.sym("rt_types"), 112 * tindexOf(o) + 24);
+				var pm = ptrmapAt(tindexOf(o));
 				if (pm.isNull()) return;
 				for (i in 0...n)
 					if (((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) != 0) rootAt(o.add(8 * i));
 			case K_PARR:
-				for (i in (tindexOf(o) == T_NATIVE_ARRAY ? 1 : 0)...n)
+				for (i in 0...n)
 					rootAt(o.add(8 * i));
 			case _:
 		}
@@ -676,16 +658,15 @@ class Gc {
 			while (p.ult(end)) {
 				var o = p.add(8);
 				var n = nslotsOf(o), k = kindOf(o), t = tindexOf(o);
-				if (k > 2 || t >= nt || end.diff(o) < ((8 * n) : I64)) bad("gc: verify: bad header (minor, chunk, offset) ", minors, c, o.diff(Mem.getPtr(chunks, 24 * c)).toInt());
-				var pm = k == K_OBJ ? Mem.getPtr(Mem.sym("rt_types"), 112 * t + 24) : Ptr.nil();
+				if (t >= nt || end.diff(o) < ((8 * n) : I64)) bad("gc: verify: bad header (minor, chunk, offset) ", minors, c, o.diff(Mem.getPtr(chunks, 24 * c)).toInt());
+				var pm = k == K_OBJ ? ptrmapAt(t) : Ptr.nil();
 				if (k == K_PARR || !pm.isNull())
 					for (i in 0...n) {
-						if (i == 0 && t == T_NATIVE_ARRAY) continue;
 						if (k == K_OBJ && ((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) == 0) continue;
 						var v = Mem.getPtr(o, 8 * i);
 						if (v.isNull()) continue;
 						if (after && inYoung(v)) bad("gc: verify: young reference after a collection (object, slot, type) ", count, i, t);
-						if (isOld(v) && kindOf(v) > 2) bad("gc: verify: reference to a bad header (object, slot, type) ", count, i, t);
+						if (isOld(v) && isFwdAt(v)) bad("gc: verify: reference to a bad header (object, slot, type) ", count, i, t);
 					}
 				p = p.add(8 * (n + 1));
 				count++;
@@ -730,11 +711,10 @@ class Gc {
 			while (p.ult(end)) {
 				var o = p.add(8);
 				var n = nslotsOf(o), k = kindOf(o), t = tindexOf(o);
-				var pm = k == K_OBJ ? Mem.getPtr(Mem.sym("rt_types"), 112 * t + 24) : Ptr.nil();
+				var pm = k == K_OBJ ? ptrmapAt(t) : Ptr.nil();
 				if (k == K_PARR || !pm.isNull()) {
 					if (!has(o))
 						for (i in 0...n) {
-							if (i == 0 && t == T_NATIVE_ARRAY) continue;
 							if (k == K_OBJ && ((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) == 0) continue;
 							var v = Mem.getPtr(o, 8 * i);
 							if (!v.isNull() && inYoung(v) && !has(o.add(8 * i))) bad("gc: verify: unremembered young reference (object, slot, type) ", count, i, t);

@@ -5,7 +5,8 @@ import hxmc.rt.Types.*;
 
 // -D hxmc.wasm-gc: hxmc.NativeArray, as hxmc.rt.NArray. A NativeArray of a
 // known element type is the bare WasmGC array of its kind (i32, f64, i64,
-// eqref; Bool i8: GcModule.naType), made, read and written by the
+// eqref; Bool i8, hxmc.Byte the array of bytes a haxe.io.Bytes holds:
+// GcModule.naType), made, read and written by the
 // generated code (hxmc.wasmgc.FuncGen.narray); its empty array is one global
 // per kind. A NativeArray seen as Dynamic (Dynamic, Any, an erased type
 // parameter) goes through these functions and W.na*, by the kind of its
@@ -51,7 +52,7 @@ class GcNArray {
 		var zero:I64 = 0;
 		return switch W.naKind(W.naStorage(a)) {
 			case AK_BOOL: (false : Dynamic);
-			case AK_I32: (0 : Dynamic);
+			case AK_I32 | AK_BYTE: (0 : Dynamic);
 			case AK_F64: (0.0 : Dynamic);
 			case AK_I64: (zero : Dynamic);
 			case _: null;

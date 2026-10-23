@@ -443,10 +443,27 @@ function ofJs(t) {
 // them (getMemory: the module's linear memory, when it has one)
 const imports = { hxmc };
 if (process.env.HXMC_WASM_IMPORTS) Object.assign(imports, createRequire(import.meta.url)(path.resolve(process.env.HXMC_WASM_IMPORTS))(() => exports.memory ?? null, () => exports));
-const { instance } = await WebAssembly.instantiate(readFileSync(file), imports);
+// a module that calls WASI itself (hxmc.rt.wasm.WasiApi, over its linear
+// memory) gets node's, with the file system preopened as "/" (wasi.mjs's)
+const module = await WebAssembly.compile(readFileSync(file));
+let wasi = null;
+if (WebAssembly.Module.imports(module).some((i) => i.module === "wasi_snapshot_preview1")) {
+	const emitWarning = process.emitWarning;
+	process.emitWarning = (w, ...rest) => {
+		if (!String(w).includes("WASI")) emitWarning.call(process, w, ...rest);
+	};
+	const { WASI } = await import("node:wasi");
+	wasi = new WASI({ version: "preview1", args: [path.resolve(file), ...args], env: process.env, preopens: { "/": "/" }, returnOnExit: true });
+	imports.wasi_snapshot_preview1 = wasi.wasiImport;
+}
+const instance = await WebAssembly.instantiate(module, imports);
 exports = instance.exports;
 try {
-	exports._start();
+	// (node's WASI binds the memory as it starts the module)
+	if (wasi) {
+		const code = wasi.start(instance);
+		if (code) process.exitCode = code;
+	} else exports._start();
 } catch (e) {
 	if (e instanceof WebAssembly.Exception) {
 		console.error("Uncaught exception (a Haxe value)");

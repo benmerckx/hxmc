@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Benchmarks · hxmc</title>
-<meta name="description" content="Compile times of the Haxe compiler ported to Haxe and built by hxmc against the OCaml reference, and run times of programs built by hxmc against the usual Haxe targets.">
+<meta name="description" content="hxmc over its commits: the Haxe compiler ported to Haxe compiling itself, and HaxeBenchmarks programs, with the reference compiler and the usual Haxe targets for comparison.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
@@ -25,42 +25,34 @@
 <header class="hero">
 	<div class="wrap">
 		<h1>Benchmarks</h1>
-		<p class="lead">The port against the OCaml reference compiler, and programs built by hxmc against the usual fast Haxe targets. Measured on GitHub Actions runners; every run's results are on the <a href="https://github.com/benmerckx/hxmc/tree/bench-data">bench-data</a> branch.</p>
+		<p class="lead">hxmc over its commits, and the other compilers and targets at the latest run. Every run is on the <a href="https://github.com/benmerckx/hxmc/tree/bench-data">bench-data</a> branch.</p>
 		<nav class="links" aria-label="On this page"><a href="#benchmarks">The compiler</a><a href="#programs">Programs</a><a href="#targets">Target generators</a></nav>
 	</div>
 </header>
 <div class="wrap">
 	<section class="block" id="benchmarks">
-		<header><h2>The compiler</h2><p>Compiling to HXB.</p></header>
+		<header><h2>The compiler</h2><p>The port, built by hxmc, compiling to HXB.</p></header>
 		<div>
-			<p>The port (hxmc: x86-64 and WebAssembly) compiling to HXB, against the OCaml reference. CPU time, best of 3, <code>-D disable-parallelism</code>; only runs with identical output count.</p>
-			<div id="bench-results"><p class="note">Loading results…</p></div>
-			<p class="note" id="bench-builds"></p>
-			<p class="note" id="bench-machine"></p>
+			<div id="compiler-history" hidden></div>
+			<h3>Latest run</h3>
+			<div id="compiler-results"><p class="note">Loading results…</p></div>
+			<p class="note">Median wall time, <code>-D disable-parallelism</code>, outputs identical to the reference's. <span id="compiler-machine"></span></p>
 		</div>
 	</section>
 	<section class="block" id="programs">
-		<header><h2>Programs</h2><p>Run time, compile time.</p></header>
+		<header><h2>Programs</h2><p><a href="https://github.com/HaxeBenchmarks/benchmark-runner">HaxeBenchmarks</a>, built by hxmc.</p></header>
 		<div>
-			<p><a href="https://github.com/HaxeBenchmarks/benchmark-runner">HaxeBenchmarks</a> on hxmc (native, WebAssembly, WasmGC), C++, the JVM, Node, HL/C and HashLink, all compiled by the port. Nightly, on a GitHub Actions runner.</p>
+			<div id="programs-history" hidden></div>
+			<h3>Latest run, every target</h3>
 			<div id="programs-results"><p class="note">Loading results…</p></div>
-			<div id="programs-compile"></div>
 			<p class="note" id="programs-machine"></p>
-			<p class="note" id="programs-noise"></p>
-			<div id="programs-over-time" hidden>
-				<h3>Over time</h3>
-				<div id="programs-history"><p class="note">Loading history…</p></div>
-			</div>
-			<p class="note">Reproduce: <code>make bench</code> (<code>hxmc/test/Bench.hx</code>).</p>
 		</div>
 	</section>
 	<section class="block" id="targets">
 		<header><h2>Target generators</h2><p>The port against the reference, per target.</p></header>
 		<div>
-			<p>Compile time per target, port against reference, on two projects: sequential (one core, CPU time) and with each compiler's default parallelism (wall time), best of 3, nightly on a GitHub Actions runner. Every sequential output file identical (HL/C: after renaming a few type names that hash the reference binary). C++ and HL/C stop at the sources.</p>
 			<div id="targets-results"><p class="note">Loading results…</p></div>
 			<p class="note" id="targets-machine"></p>
-			<p class="note">Reproduce: <code>haxe/test/Targets.hx</code> (bench.yml).</p>
 		</div>
 	</section>
 </div>

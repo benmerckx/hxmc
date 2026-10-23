@@ -1,6 +1,7 @@
 package hxmc.ir;
 
 import hxmc.ir.Ir;
+import hxmc.ir.LowerQueries;
 import core.Ast.Binop;
 import core.Ast.Unop;
 import core.TType;
@@ -20,8 +21,9 @@ using core.ds.VectorTools;
 // everything else is a pointer. Generics are erased: a type parameter is Dynamic (RAny), and values
 // are converted (boxed, unboxed, wrapped in adapter closures) where a declared
 // type and a use-site type differ: calls, returns, field and enum-argument
-// access (FnLower.coerce).
-class Lower {
+// access (FnLower.coerce). A function body sees this class through
+// LowerQueries alone (what the compilation server's reuse of bodies covers).
+class Lower implements LowerQueries {
 	var prog = new Program();
 	var classes = new Map<TClass, ClassInfo>();
 	var enums = new Map<TEnum, EnumInfo>();
@@ -32,15 +34,16 @@ class Lower {
 	var subclasses = new Map<TClass, Array<TClass>>(); // per class: its subclasses in tclasses, in that order
 	var root:ClassInfo;
 	var usedSelectors = new Map<String, Int>();
-	public var defaults = new Map<FuncInfo, Array<Null<TExpr>>>();
-	// the variables of the arguments `defaults` belong to (null: the
-	// receiver): a default value may read the arguments before it (FnLower.defaultValue)
-	public var argVars = new Map<FuncInfo, Array<Null<TVar>>>();
+	// the default values of each function's arguments (argDefaults)
+	var defaults = new Map<FuncInfo, ArgDefaults>();
 
 	public function new() {
 		CInterop.resetCaches();
 		root = new ClassInfo("Object", "Object", null);
 		prog.classes.push(root);
+		// (the C functions are this program's: those of an earlier build of the
+		// compilation server are not, and a body it replays declares its own, cExtern)
+		CInterop.reset();
 	}
 
 	// the program's basic types (the coroutine types: Coroutine below)
@@ -226,9 +229,10 @@ class Lower {
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
 	// -D hxmc.wasm-gc (hxmc.wasmgc): the runtime's Haxe implementations are those of @:hxmc.wasmgc classes
 	public static var wasmGc = false;
-	// the program's resources (--resource), haxe.Resource's content: each
-	// one's name and data in base64, in genjs's order (Main.generate)
-	public static var resources:Array<{name:String, data:String}> = [];
+	// the program's resources (--resource, Context.addResource), haxe.Resource's
+	// content: each one's name and bytes, in genjs's order (Main.generate); the
+	// names are literals of the code (FnLower), the bytes DataGen's data
+	public static var resources:Array<{name:String, data:haxe.io.Bytes}> = [];
 	// -D hxmc.native-array-outofbounds: what an access of a NativeArray
 	// (haxe.ds.Vector) at an index out of bounds does (FnLower.nativeRead)
 	public static var bounds = BOUNDS_UNCHECKED;
@@ -532,6 +536,13 @@ class Lower {
 	public static function isNativeArray(c:TClass):Bool
 		return c.clPath.name == "NativeArray" && c.clPath.pack.join(".") == "hxmc";
 
+	// hxmc.Byte (through typedefs): a NativeArray of them stores bytes (TU8)
+	static function isByte(t:T):Bool
+		return switch TFunctions.followWithoutNull(t) {
+			case TAbstract(a, _): a.aPath.name == "Byte" && a.aPath.pack.join(".") == "hxmc";
+			case _: false;
+		};
+
 	public static function isCore(c:TClass, name:String):Bool
 		return c.clPath.pack.length == 0 && c.clPath.name == name;
 
@@ -665,7 +676,7 @@ class Lower {
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
-						else if (isNativeArray(c)) TRef(RNativeArr(boxed(ty(params[0]))));
+						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : boxed(ty(params[0]))));
 						else if (CInterop.isStruct(c)) {
 							var n = core.Globals.sTypePath(c.clPath);
 							structClasses.set(n, c);
@@ -786,7 +797,11 @@ class Lower {
 	// element, an enum's argument, a structural type's field, Null<S>), a
 	// struct value is boxed: an object holding a copy, never changed once
 	// made, of a class of its own named after the struct (FnLower.coerce)
-	public var structClasses = new Map<String, TClass>();
+	var structClasses = new Map<String, TClass>();
+
+	public function structClass(name:String):TClass
+		return structClasses.get(name);
+
 	var boxes = new Map<String, ClassInfo>();
 
 	public function structBox(name:String):ClassInfo {
@@ -857,6 +872,8 @@ class Lower {
 		prog.classes.push(ci);
 		for (f in sup.fields)
 			ci.fields.push(f);
+		for (d in sup.derived)
+			ci.derived.push(d);
 		if (sbuf) {
 			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
 			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
@@ -873,8 +890,14 @@ class Lower {
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
+				// a property Dynamic access and reflection read as the length of a NativeArray field
+				case Var(_) if (f.cfMeta.length > 0 && hasMeta(":hxmc.lengthOf", f.cfMeta)):
+					ci.derived.push({name: f.cfName, of: metaString(":hxmc.lengthOf", f.cfMeta)});
 				case _:
 			}
+		for (d in ci.derived)
+			if (d.of == null || !Lambda.exists(ci.fields, x -> x.name == d.of))
+				fail("@:hxmc.lengthOf on " + ci.name + "." + d.name + ": the name of a field of the class, as a string literal");
 		// field types may refer back to this class
 		outsideUnfolding(() -> for (o in own)
 			o.slot.ty = ty(o.f.cfType));
@@ -955,8 +978,25 @@ class Lower {
 			ds.unshift(null);
 			vs.unshift(null);
 		}
-		defaults.set(fi, ds);
-		argVars.set(fi, vs);
+		defaults.set(fi, new ArgDefaults(ds, vs));
+	}
+
+	// a method's own default values (an override may declare others than the
+	// declaration it shares its signature with), the receiver first
+	static function ownDefaults(tf:TFunc):ArgDefaults
+		return new ArgDefaults([null].concat([for (a in tf.tfArgs) a.defaultValue]), [null].concat([for (a in tf.tfArgs) a.variable]));
+
+	function defaultValues(f:FuncInfo):Null<Array<Null<TExpr>>> {
+		var d = defaults.get(f);
+		return d == null ? null : d.values;
+	}
+
+	public function argDefaults(f:FuncInfo):Null<ArgDefaults>
+		return defaults.get(f);
+
+	public function fieldDefaults(c:TClass, cf:TClassField):Null<ArgDefaults> {
+		var tf = funcOf(cf);
+		return tf == null ? null : ownDefaults(tf);
 	}
 
 	public function staticFunc(c:TClass, cf:TClassField):FuncInfo {
@@ -996,7 +1036,8 @@ class Lower {
 	// calling thread is in (a call of C that is not @:hxmc.fast, the only
 	// kind that may call back) and enters it again on return. One taking or
 	// returning structs by value always has a wrapper (FuncInfo.cAbi).
-	public var callbackSyms = new Map<TClassField, String>();
+	public function callbackSym(fi:FuncInfo):String
+		return "hxmc_cb_" + fi.name;
 
 	function callback(fi:FuncInfo, cf:TClassField) {
 		var where = CInterop.posOf(cf.cfPos);
@@ -1014,8 +1055,7 @@ class Lower {
 			}
 			if (a.id != -1) cargs.push(ct);
 		}
-		var sym = "hxmc_cb_" + fi.name;
-		callbackSyms.set(cf, sym);
+		var sym = callbackSym(fi);
 		if (structs) {
 			// structs by value: a wrapper receives them by the C ABI's rules
 			// (MirBuild.cEntry) and passes their addresses; a struct result
@@ -1129,8 +1169,7 @@ class Lower {
 		if (dtf != null && dtf.tfArgs.length == tf.tfArgs.length) {
 			signature(fi, dtf, TRef(RObj(root)));
 			// (the default values are the method's own: an override may declare others)
-			defaults.set(fi, [null].concat([for (a in tf.tfArgs) a.defaultValue]));
-			argVars.set(fi, [null].concat([for (a in tf.tfArgs) a.variable]));
+			defaults.set(fi, ownDefaults(tf));
 		} else if (decl != null && dtf == null) {
 			// interface or abstract declaration without a body: use its type
 			switch followFun(decl.cfType) {
@@ -1144,10 +1183,7 @@ class Lower {
 						fi.args.push(new Local(id++, "sret", TI64));
 						fi.sret = true;
 					}
-					var ds:Array<Null<TExpr>> = [null];
-					for (a in tf.tfArgs) ds.push(a.defaultValue);
-					defaults.set(fi, ds);
-					argVars.set(fi, [null].concat([for (a in tf.tfArgs) a.variable]));
+					defaults.set(fi, ownDefaults(tf));
 				case _: signature(fi, tf, TRef(RObj(root)));
 			}
 		} else signature(fi, tf, TRef(RObj(root)));
@@ -1169,7 +1205,7 @@ class Lower {
 	// entry). A constructor's, for Type.createInstance: maker.
 	function defaultsEntry(fi:FuncInfo, ci:ClassInfo):Null<FuncInfo> {
 		if (fi.sret) return null;
-		var ds = defaults.get(fi);
+		var ds = defaultValues(fi);
 		if (ds == null) return null;
 		var tys = [for (i in 1...fi.args.length) closureArgTy(fi.args[i].ty, i < ds.length ? ds[i] : null)];
 		var differs = false;
@@ -1399,7 +1435,7 @@ class Lower {
 	public function staticClosure(f:FuncInfo):LambdaInfo {
 		var li = staticClosures.get(f);
 		if (li != null) return li;
-		var ds = defaults.get(f);
+		var ds = defaultValues(f);
 		var sig = prog.sig([
 			for (i in 0...f.args.length)
 				if (!(f.sret && i == f.args.length - 1)) closureArgTy(f.args[i].ty, ds != null && i < ds.length ? ds[i] : null)
@@ -1458,7 +1494,7 @@ class Lower {
 		}
 		var li = boundClosures.get(f);
 		if (li != null && dispatch == null) return li;
-		var ds = defaults.get(f);
+		var ds = defaultValues(f);
 		var args = [for (i in 1...(f.sret ? f.args.length - 1 : f.args.length)) closureArgTy(f.args[i].ty, ds != null && i < ds.length ? ds[i] : null)];
 		var sig = prog.sig(args, f.ret);
 		var self = new Local(-1, "self", TRef(RObj(root)));
@@ -1573,6 +1609,35 @@ class Lower {
 
 	public function getProgram():Program
 		return prog;
+
+	public function sig(args:Array<Ty>, ret:Ty):SigInfo
+		return prog.sig(args, ret);
+
+	public function shape(fields:Array<{name:String, ty:Ty}>):ShapeInfo
+		return prog.shape(fields);
+
+	public function globalTy(g:Int):Ty
+		return prog.globals[g].ty;
+
+	public function selectorName(s:Int):String
+		return prog.selectors[s].name;
+
+	// C function sym, the extern field cf of c, declared for this program
+	// (called by the bodies calling it: CInterop.reset forgets the previous program's)
+	public function cExtern(sym:String, c:TClass, cf:TClassField):CInterop.CSig {
+		var s = switch TFunctions.follow(cf.cfType) {
+			case TFun(s): s;
+			case _: fail("extern static " + cf.cfName + " is not a function");
+		}
+		var sig = CInterop.declare(sym, c, cf, s);
+		var va = core.Meta.getOpt(Custom(":hxmc.varargs"), cf.cfMeta);
+		if (va != null && va.exprs.length == 1)
+			switch va.exprs[0].expr {
+				case EConst(core.Ast.Constant.Int(k, _)): FnLower.C_VARIADIC.set(sym, Std.parseInt(k));
+				case _:
+			}
+		return sig;
+	}
 
 	public function lookupMethod(c:TClass, name:String):Null<{cls:TClass, field:TClassField}> {
 		var k = c;

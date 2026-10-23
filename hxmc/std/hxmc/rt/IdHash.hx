@@ -39,10 +39,10 @@ class IdHash {
 	// only read, the first of which to see it out of date brings it up to
 	// date (under the lock below) and stores the count last
 	static inline function seen(slots:Dynamic):Int
-		return Atomic.load32(Mem.addr(slots).add(8));
+		return Atomic.load32(Mem.addr(slots));
 
 	static inline function setSeen(slots:Dynamic, n:Int)
-		Atomic.store32(Mem.addr(slots).add(8), n);
+		Atomic.store32(Mem.addr(slots), n);
 
 	#if (hxmc.target == "wasm32-wasi")
 	static inline function lock() {}

@@ -48,11 +48,8 @@ class PosixSys {
 		}
 	}
 
-	static function printTo(fd:Int, s:String) {
-		var u = cstr(Str.orNull(s));
-		writeAll(fd, u, LibC.strlen(u).toInt());
-		LibC.free(u);
-	}
+	static function printTo(fd:Int, s:String)
+		SysCore.printTo(fd, s);
 
 	public static function print(s:String):Void
 		printTo(1, s);
@@ -377,20 +374,8 @@ class PosixSys {
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
 
-	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool {
-		var ok = true;
-		while (n > 0) {
-			var w = Posix.write(fd, d, n).toInt();
-			if (w < 0) {
-				if (errno() == EINTR) continue;
-				ok = false;
-				break;
-			}
-			d = d.add(w);
-			n -= w;
-		}
-		return Posix.close(fd) == 0 && ok;
-	}
+	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool
+		return SysCore.saveAll(fd, d, n);
 
 	public static function exists(path:String):Bool {
 		var p = cstr(path);

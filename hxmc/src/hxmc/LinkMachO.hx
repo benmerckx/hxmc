@@ -27,17 +27,13 @@ import hxmc.Abi;
 // bound to _tlv_bootstrap, key, offset in the template) get their offsets
 // here; generated code reaches a variable at its template offset from the
 // thread's copy (hxmc_tls_base, through hxmc_tls_start, a descriptor of
-// offset 0 defined here).
-class LinkMachO {
+// offset 0 defined here). Resolution, the slots and the relocations: LinkCore.
+class LinkMachO extends LinkCore {
 	static inline var BASE_HI = 1; // the image at 0x100000000 (above __PAGEZERO)
 	static inline var HEADER_RESERVE = 0x1000; // load commands (padded)
 
-	var objs:Array<Obj>;
 	var abi:Abi;
-	var arm:Bool;
 	var PAGE:Int;
-	var globals = new Map<String, Symbol>();
-	var addr = new Map<Section, Int>();
 
 	public var symbols = false; // a symbol table of the code (profilers, debuggers)
 	// the code signature (linker-signed by default; an app bundle's: hxmc.ios.Bundle)
@@ -59,9 +55,8 @@ class LinkMachO {
 	var baseHi = BASE_HI;
 
 	public function new(objs:Array<Obj>, abi:Abi) {
-		this.objs = objs;
+		super(objs, abi.arm);
 		this.abi = abi;
-		arm = abi.arm;
 		PAGE = abi.segAlign;
 		dylib = abi.output == SharedLibrary;
 		if (dylib) {
@@ -69,25 +64,6 @@ class LinkMachO {
 			sign.mainBinary = false;
 		} else if (abi.output != Executable) throw "hxmc: " + abi.output + " output is not supported yet on macOS";
 	}
-
-	function resolve() {
-		for (o in objs)
-			for (s in o.symbols) {
-				if (!s.global || (s.section == null && !s.abs)) continue;
-				var prev = globals.get(s.name);
-				if (prev == null || prev.weak && !s.weak) globals.set(s.name, s);
-				else if (!prev.weak && !s.weak) throw 'hxmc: link: ${s.name} defined twice';
-			}
-	}
-
-	inline function target(s:Symbol):Null<Symbol>
-		return (s.section != null || s.abs) ? s : globals.get(s.name);
-
-	static inline function align(v:Int, a:Int):Int
-		return a <= 1 ? v : (v + a - 1) & ~(a - 1);
-
-	static function isGot(k:RelKind):Bool
-		return k == RGotPcRel32 || k == RA64GotPage21 || k == RA64GotLo12;
 
 	static function isBranch(k:RelKind):Bool
 		return k == RCall32 || k == RA64Call26 || k == RA64Jump26;
@@ -104,6 +80,9 @@ class LinkMachO {
 		dso.define("__dso_handle", header, 0, 0);
 		objs.push(dso);
 		resolve();
+		// (the sections nothing reaches left out: LinkCore.gc; a dylib's exports are roots)
+		if (dylib) roots = [for (n in abi.exports) if (globals.exists(n)) n];
+		gc(entry);
 		// imports: what stays undefined (by name), and whether each is weak
 		var importWeak = new Map<String, Bool>();
 		var importOrder:Array<String> = [];
@@ -117,7 +96,7 @@ class LinkMachO {
 		}
 		// the template-start descriptor (hxmc_tls_start), and the first
 		// thread-local section it points at
-		var tls = [for (o in objs) for (s in o.sections) if (s.kind == Tdata) s].concat([for (o in objs) for (s in o.sections) if (s.kind == Tbss) s]);
+		var tls = [for (o in objs) for (s in o.sections) if (s.kind == Tdata && isLive(s)) s].concat([for (o in objs) for (s in o.sections) if (s.kind == Tbss && isLive(s)) s]);
 		var extra = new Obj();
 		var tlv0 = new Section("__DATA,__thread_vars", Data, 8);
 		if (tls.length > 0) {
@@ -151,39 +130,16 @@ class LinkMachO {
 			extra.define("hxmc_tls_base", base, 0, base.buf.len);
 		}
 		var stubs = new Section("__TEXT,__stubs", Text, 16);
-		var got = new Section("__DATA,__got", Data, 8);
+		got = new Section("__DATA,__got", Data, 8);
 		extra.sections.push(stubs);
 		extra.sections.push(got);
-		objs.push(extra);
+		keep(extra);
 		if (tls.length > 0) {
 			globals.set("hxmc_tls_start", extra.sym("hxmc_tls_start"));
 			globals.set("hxmc_tls_base", extra.sym("hxmc_tls_base"));
 		}
-		// slots (by target: a defined symbol, or an import's name) and stubs
-		var gotSlot = new Map<String, Int>(); // key -> offset in got
-		var gotKey = new Map<Int, Symbol>(); // offset -> the symbol it holds
+		// slots (gotKey) and stubs
 		var stubOf = new Map<String, Int>();
-		var localKeys = new Map<Symbol, String>();
-		var nlocal = 0;
-		function slotKey(s:Symbol):String {
-			var t = target(s);
-			if (t == null) return "imp:" + s.name;
-			if (t.global) return "sym:" + t.name;
-			var k = localKeys.get(t);
-			if (k == null) localKeys.set(t, k = "loc:" + (nlocal++));
-			return k;
-		}
-		function slot(s:Symbol):Int {
-			var k = slotKey(s);
-			var at = gotSlot.get(k);
-			if (at == null) {
-				at = got.buf.len;
-				gotSlot.set(k, at);
-				gotKey.set(at, s);
-				got.buf.u64(0, 0);
-			}
-			return at;
-		}
 		function stub(name:String):Int {
 			var at = stubOf.get(name);
 			if (at != null) return at;
@@ -204,19 +160,21 @@ class LinkMachO {
 		var stubSlot = new Map<String, Int>();
 		for (o in objs)
 			for (s in o.sections)
-				for (r in s.relocs) {
-					var imp = imported(r.sym);
-					if (isGot(r.kind)) slot(r.sym);
-					else if (imp && r.kind != RAbs64) {
-						// code (a call, or an address taken pc-relatively): the stub
-						stub(r.sym.name);
-						if (!stubSlot.exists(r.sym.name)) stubSlot.set(r.sym.name, slot(r.sym));
+				if (isLive(s))
+					for (r in s.relocs) {
+						var imp = imported(r.sym);
+						if (LinkCore.isGotRel(r.kind)) slot(r.sym);
+						else if (imp && r.kind != RAbs64) {
+							// code (a call, or an address taken pc-relatively): the stub
+							stub(r.sym.name);
+							if (!stubSlot.exists(r.sym.name)) stubSlot.set(r.sym.name, slot(r.sym));
+						}
 					}
-				}
 		// ---- layout
 		var text = [], ro = [], roData = [], data = [], init = [], fini = [], tlv = [], tdata = [], tbss = [], bss = [];
 		for (o in objs)
 			for (s in o.sections) {
+				if (!isLive(s)) continue;
 				switch s.kind {
 					case Text: if (s != stubs) text.push(s);
 					case RoData:
@@ -238,46 +196,42 @@ class LinkMachO {
 			}
 		text.push(stubs);
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
-		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null) r];
+		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section)) r];
 		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame").sec : null;
 		addr.set(header, 0);
 		var pos = HEADER_RESERVE;
-		function place(list:Array<Section>):{start:Int, end:Int} {
-			if (list.length > 0) pos = align(pos, list[0].align);
+		function group(list:Array<Section>):{start:Int, end:Int} {
+			if (list.length > 0) pos = LinkCore.align(pos, list[0].align);
 			var start = pos;
-			for (s in list) {
-				pos = align(pos, s.align);
-				addr.set(s, pos);
-				pos += s.size();
-			}
+			pos = place(list, pos);
 			return {start: start, end: pos};
 		}
 		// __TEXT
-		pos = align(pos, 16);
-		var oText = place(text);
-		var oConst = place(ro);
-		var oEh = place(eh != null ? [eh] : []);
-		var textEnd = align(pos, PAGE);
+		pos = LinkCore.align(pos, 16);
+		var oText = group(text);
+		var oConst = group(ro);
+		var oEh = group(eh != null ? [eh] : []);
+		var textEnd = LinkCore.align(pos, PAGE);
 		// __DATA
 		pos = textEnd;
 		var dataStart = pos;
-		var oGot = place([got]);
-		var oDConst = place(roData);
-		var oData = place(data);
-		var oInit = place(init);
-		var oFini = place(fini);
-		var oTlv = place(tlv);
-		pos = align(pos, 16);
-		var oTdata = place(tdata);
+		var oGot = group([got]);
+		var oDConst = group(roData);
+		var oData = group(data);
+		var oInit = group(init);
+		var oFini = group(fini);
+		var oTlv = group(tlv);
+		pos = LinkCore.align(pos, 16);
+		var oTdata = group(tdata);
 		var dataFileEnd = pos;
-		var oTbss = place(tbss);
-		var tlsStart = tdata.length > 0 ? addr.get(tdata[0]) : tbss.length > 0 ? addr.get(tbss[0]) : 0;
-		var oBss = place(bss);
-		var dataEnd = align(pos, PAGE);
+		var oTbss = group(tbss);
+		tlsStart = tdata.length > 0 ? addr.get(tdata[0]) : tbss.length > 0 ? addr.get(tbss[0]) : 0;
+		var oBss = group(bss);
+		var dataEnd = LinkCore.align(pos, PAGE);
 		if (dataEnd == dataStart) dataEnd += PAGE;
 		var stubAddr = addr.get(stubs);
 		var gotAddr = addr.get(got);
-		function symAddr(s:Symbol):Int {
+		symAddr = function(s:Symbol):Int {
 			var t = target(s);
 			if (t == null) {
 				var st = stubOf.get(s.name);
@@ -287,36 +241,19 @@ class LinkMachO {
 			}
 			if (t.abs) return t.offset;
 			return addr.get(t.section) + t.offset;
-		}
+		};
 		// the stubs, now that slots have addresses
-		for (name => at in stubOf) {
-			var sl = gotAddr + stubSlot.get(name);
-			if (arm) {
-				A64Reloc.adrp(stubs.buf, at, sl, stubAddr + at);
-				A64Reloc.imm12(stubs.buf, at + 4, (sl & 0xfff) >> 3);
-			} else stubs.buf.set32(at + 2, sl - (stubAddr + at + 6));
-		}
-		// the thread-local template offset of a variable: its descriptor's
-		// third word refers to its storage
-		var descRel = new Map<Section, Map<Int, Reloc>>();
+		for (name => at in stubOf)
+			LinkCore.patchStub(stubs.buf, at, arm, gotAddr + stubSlot.get(name), stubAddr + at);
+		// (the thread-local descriptors: secRel)
 		for (s in tlv) {
 			var m = new Map<Int, Reloc>();
 			for (r in s.relocs)
 				m.set(r.offset, r);
 			descRel.set(s, m);
 		}
-		function tlsOffset(s:Symbol):Int {
-			var t = target(s);
-			if (t == null || t.section == null || !descRel.exists(t.section)) throw "hxmc: link: " + s.name + " is not a thread-local variable";
-			var r = descRel.get(t.section).get(t.offset + 16);
-			if (r == null) throw "hxmc: link: no storage for the thread-local variable " + s.name;
-			return symAddr(r.sym) + r.addend - tlsStart;
-		}
-		// relocations; rebase and bind entries
-		var rebases:Array<Int> = [];
-		var binds:Array<{at:Int, name:String, addend:Int}> = [];
-		// the slots
-		for (at => s in gotKey) {
+		// relocations; rebase and bind entries (absolute): the slots, then the sections
+		for (at => s in gotHeld) {
 			var t = target(s);
 			if (t == null) binds.push({at: gotAddr + at, name: s.name, addend: 0});
 			else if (t.abs) got.buf.set64(at, t.offset, 0);
@@ -326,51 +263,8 @@ class LinkMachO {
 			}
 		}
 		var all = text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(init).concat(fini).concat(tlv).concat(tdata);
-		for (s in all) {
-			var base = addr.get(s);
-			var buf = s.buf;
-			var inTlv = isTlvSection(s);
-			for (r in s.relocs) {
-				var P = base + r.offset;
-				var A = r.addend;
-				switch r.kind {
-					case RAbs64:
-						var t = target(r.sym);
-						if (inTlv && r.offset % 24 == 16) {
-							// a descriptor's offset in the template
-							buf.set64(r.offset, symAddr(r.sym) + A - tlsStart, 0);
-						} else if (t == null) {
-							buf.set64(r.offset, 0, 0);
-							binds.push({at: P, name: r.sym.name, addend: A});
-						} else if (t.abs) {
-							var v = t.offset + A;
-							buf.set64(r.offset, v, v < 0 ? -1 : 0);
-						} else {
-							buf.set64(r.offset, symAddr(r.sym) + A, baseHi);
-							rebases.push(P);
-						}
-					case RAbs32 | RAbs32S:
-						var t = target(r.sym);
-						if (t == null || !t.abs) throw "hxmc: link: a 32-bit absolute address of " + r.sym.name + " (position-independent output)";
-						buf.set32(r.offset, t.offset + A);
-					case RPc32 | RCall32:
-						buf.set32(r.offset, symAddr(r.sym) + A - P);
-					case RGotPcRel32:
-						buf.set32(r.offset, gotAddr + slot(r.sym) + A - P);
-					case RSecRel32:
-						buf.set32(r.offset, tlsOffset(r.sym) + A);
-					case RA64GotPage21:
-						A64Reloc.adrp(buf, r.offset, gotAddr + slot(r.sym), P);
-					case RA64GotLo12:
-						A64Reloc.imm12(buf, r.offset, ((gotAddr + slot(r.sym)) & 0xfff) >> 3);
-					case RA64SecRelHi12 | RA64SecRelLo12A | RA64SecRelLo12L:
-						A64Reloc.apply(buf, r.offset, r.kind, tlsOffset(r.sym) + A, P, r.sym.name);
-					case _:
-						if (!arm || !A64Reloc.apply(buf, r.offset, r.kind, symAddr(r.sym) + A, P, r.sym.name))
-							throw "hxmc: link: relocation " + r.kind + " on macOS";
-				}
-			}
-		}
+		for (s in all)
+			applyRelocs(s);
 		// ---- __LINKEDIT
 		var le = new Buf(1 << 16);
 		// rebase opcodes: runs of adjacent pointers
@@ -473,19 +367,16 @@ class LinkMachO {
 		var symtabOff = le.len;
 		var nlocals = 0;
 		if (symbols)
-			for (o in objs)
-				for (s in o.symbols) {
-					var sec = s.section;
-					if (sec == null || sec.kind != Text || !addr.exists(sec) || s.abs || s.name.length == 0 || StringTools.startsWith(s.name, ".L")) continue;
-					le.u32(strtab.len);
-					strtab.str("_" + s.name);
-					strtab.u8(0);
-					le.u8(0x0e); // N_SECT, local
-					le.u8(1); // __text
-					le.u16(0);
-					le.u64(addr.get(sec) + s.offset, baseHi);
-					nlocals++;
-				}
+			codeSymbols(s -> {
+				le.u32(strtab.len);
+				strtab.str("_" + s.name);
+				strtab.u8(0);
+				le.u8(0x0e); // N_SECT, local
+				le.u8(1); // __text
+				le.u16(0);
+				le.u64(addr.get(s.section) + s.offset, baseHi);
+				nlocals++;
+			});
 		var nimports = 0;
 		for (name in importOrder) {
 			le.u32(strtab.len);
@@ -504,16 +395,16 @@ class LinkMachO {
 		var sigOffInLe = le.len;
 		// (-debug) the DWARF sections, between __DATA and __LINKEDIT in the file
 		var dwarf = Dwarf.sections(objs, r -> r.sym.section != null && addr.exists(r.sym.section), r -> symAddr(r.sym), baseHi);
-		var dwarfOff = dataFileEnd > dataStart ? align(dataFileEnd, PAGE) : dataStart;
+		var dwarfOff = dataFileEnd > dataStart ? LinkCore.align(dataFileEnd, PAGE) : dataStart;
 		var dwarfSize = 0;
 		for (d in dwarf)
 			dwarfSize += d.data.len;
 		// ---- the file
-		var leFileOff = dwarf.length > 0 ? align(dwarfOff + dwarfSize, PAGE) : dwarfOff;
+		var leFileOff = dwarf.length > 0 ? LinkCore.align(dwarfOff + dwarfSize, PAGE) : dwarfOff;
 		// (__DWARF, read-only, mapped between __DATA and __LINKEDIT: its sections
 		// have addresses, as dsymutil's)
 		var dwarfVm = dataEnd;
-		var leVm = dataEnd + align(dwarfSize, PAGE);
+		var leVm = dataEnd + LinkCore.align(dwarfSize, PAGE);
 		var sigLen = sign.size(leFileOff + sigOffInLe);
 		var fileSize = leFileOff + sigOffInLe + sigLen;
 		var out = new Buf(fileSize + 16);
@@ -594,7 +485,7 @@ class LinkMachO {
 			sec("__bss", oBss, 1, true)
 		]);
 		if (dwarf.length > 0) seg("__DWARF", dwarfVm, leVm - dwarfVm, dwarfOff, dwarfSize, 1, dsects);
-		seg("__LINKEDIT", leVm, align(sigOffInLe + sigLen, PAGE), leFileOff, sigOffInLe + sigLen, 1, []);
+		seg("__LINKEDIT", leVm, LinkCore.align(sigOffInLe + sigLen, PAGE), leFileOff, sigOffInLe + sigLen, 1, []);
 		// dyld info
 		ncmds++;
 		h.u32(0x80000022);
@@ -632,7 +523,7 @@ class LinkMachO {
 		if (dylib) {
 			ncmds++;
 			var id = installName;
-			var il = align(24 + id.length + 1, 8);
+			var il = LinkCore.align(24 + id.length + 1, 8);
 			h.u32(0xd); // LC_ID_DYLIB
 			h.u32(il);
 			h.u32(24);
@@ -643,7 +534,7 @@ class LinkMachO {
 		} else {
 			ncmds++;
 			var dyld = "/usr/lib/dyld";
-			var dl = align(12 + dyld.length + 1, 8);
+			var dl = LinkCore.align(12 + dyld.length + 1, 8);
 			h.u32(0xe);
 			h.u32(dl);
 			h.u32(12);
@@ -680,7 +571,7 @@ class LinkMachO {
 		// libSystem
 		ncmds++;
 		var lib = "/usr/lib/libSystem.B.dylib";
-		var ll = align(24 + lib.length + 1, 8);
+		var ll = LinkCore.align(24 + lib.length + 1, 8);
 		h.u32(0xc);
 		h.u32(ll);
 		h.u32(24);
@@ -694,7 +585,7 @@ class LinkMachO {
 			var d = libs[k];
 			if (StringTools.startsWith(d, "@rpath/")) rpath = true;
 			ncmds++;
-			var dl = align(24 + d.length + 1, 8);
+			var dl = LinkCore.align(24 + d.length + 1, 8);
 			h.u32(0xc);
 			h.u32(dl);
 			h.u32(24);
@@ -706,7 +597,7 @@ class LinkMachO {
 		if (rpath) {
 			ncmds++;
 			var r = "@executable_path";
-			var rl = align(12 + r.length + 1, 8);
+			var rl = LinkCore.align(12 + r.length + 1, 8);
 			h.u32(0x8000001c); // LC_RPATH
 			h.u32(rl);
 			h.u32(12);
@@ -732,6 +623,64 @@ class LinkMachO {
 		var sig = sign.sign(out.b, codeLimit, textEnd);
 		out.b.blit(codeLimit, sig, 0, sig.length);
 		return out.toBytes();
+	}
+
+	// ---- the slots: by target (a defined symbol: a global's name, a local
+	// itself), or an import's name; what each holds, filled at load time
+	// (rebase or bind entries)
+	var slotKeys = new Map<String, Symbol>();
+	var gotHeld = new Map<Int, Symbol>(); // offset -> the symbol it holds
+
+	override function gotKey(s:Symbol):Symbol {
+		var t = target(s);
+		if (t != null && !t.global) return t;
+		var k = (t == null ? "imp:" : "sym:") + s.name;
+		var c = slotKeys.get(k);
+		if (c == null) slotKeys.set(k, c = s);
+		return c;
+	}
+
+	override function gotFill(at:Int, key:Symbol, s:Symbol)
+		gotHeld.set(at, s);
+
+	// ---- relocations
+
+	var rebases:Array<Int> = [];
+	var binds:Array<{at:Int, name:String, addend:Int}> = [];
+	var tlsStart = 0;
+	// the thread-local descriptors' relocations by offset (descRel)
+	var descRel = new Map<Section, Map<Int, Reloc>>();
+
+	// the thread-local template offset of a variable: its descriptor's
+	// third word refers to its storage
+	override function secRel(s:Symbol):Int {
+		var t = target(s);
+		if (t == null || t.section == null || !descRel.exists(t.section)) throw "hxmc: link: " + s.name + " is not a thread-local variable";
+		var r = descRel.get(t.section).get(t.offset + 16);
+		if (r == null) throw "hxmc: link: no storage for the thread-local variable " + s.name;
+		return symAddr(r.sym) + r.addend - tlsStart;
+	}
+
+	// an absolute address: a descriptor's offset in the template, an
+	// import's (bound), a number, or an address in the image (rebased)
+	override function absolute(s:Section, r:Reloc, P:Int) {
+		var buf = s.buf, A = r.addend;
+		var t = target(r.sym);
+		if (r.kind != RAbs64) {
+			if (t == null || !t.abs) throw "hxmc: link: a 32-bit absolute address of " + r.sym.name + " (position-independent output)";
+			buf.set32(r.offset, t.offset + A);
+		} else if (isTlvSection(s) && r.offset % 24 == 16) {
+			buf.set64(r.offset, symAddr(r.sym) + A - tlsStart, 0);
+		} else if (t == null) {
+			buf.set64(r.offset, 0, 0);
+			binds.push({at: P, name: r.sym.name, addend: A});
+		} else if (t.abs) {
+			var v = t.offset + A;
+			buf.set64(r.offset, v, v < 0 ? -1 : 0);
+		} else {
+			buf.set64(r.offset, symAddr(r.sym) + A, baseHi);
+			rebases.push(P);
+		}
 	}
 
 	function entrySymOrNull(name:String):Null<Symbol> {
@@ -778,12 +727,6 @@ class LinkMachO {
 			uleb(le, it.addr);
 			le.u8(0);
 		}
-	}
-
-	function entrySym(name:String):Symbol {
-		var s = globals.get(name);
-		if (s == null) throw 'hxmc: link: no entry point $name';
-		return s;
 	}
 
 	static function log2(v:Int):Int {

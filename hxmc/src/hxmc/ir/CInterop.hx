@@ -54,6 +54,18 @@ class CInterop {
 	// pointer, their first argument): not a symbol
 	public static inline var INDIRECT = "@indirect:";
 
+	// the C functions declared, forgotten: a program's lowering starts so
+	// (Lower), each of its bodies declaring those it calls, also a body the
+	// compilation server replays (Lower.cExtern)
+	public static function reset() {
+		SIGS = new Map();
+		BLOCKING = new Map();
+		LIBS = new Map();
+		USER = new Map();
+		FnLower.C_EXTERNS = new Map();
+		FnLower.C_VARIADIC = new Map();
+	}
+
 	// (-D hxmc.wasm-gc: a struct whose fields are all final is an object, there
 	// being no copy to tell from it; the others live in the linear memory)
 	public static function isStruct(c:TClass):Bool

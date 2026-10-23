@@ -1,12 +1,12 @@
 #!/bin/sh
-# A smoke test of a release build of the port (.github/workflows/build.yml,
-# `make smoke`): runs a hello world with --interp, writes HXB and compiles it
+# A smoke test of a release build of the port (.github/workflows/build.yml's
+# test job, on each target's machine): runs a hello world with --interp, writes HXB and compiles it
 # to JS (and runs that with node when available), then checks the natives of
 # the bundled Eval: sys.ssl (mbedtls: the system's CA certificates and a TLS
 # handshake verified with them, with SMOKE_TLS_HOST, default github.com; empty
 # skips the handshake) and eval.luv (libuv: a timer and a TCP echo on one loop).
 #
-#   HAXE_STD_PATH=<std> sh tools/smoke.sh <binary>
+#   HAXE_STD_PATH=<std> sh hxmc/test/smoke.sh <binary>
 #
 # SMOKE_NATIVES=0 skips the sys.ssl and eval.luv checks (builds without
 # mbedtls and libuv); SMOKE_STRICT=1 makes the extras at the end fatal.

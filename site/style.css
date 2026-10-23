@@ -178,35 +178,32 @@ table.bench .fail { color: var(--todo); white-space: normal; font-size: 13px; }
 table.matrix th.num { white-space: nowrap; }
 table.matrix td.best { font-weight: 700; }
 table.matrix .warnmark { color: var(--todo); }
-#programs-compile h4 { margin: 24px 0 0; font-size: 16px; }
-table.compile td.num .total, table.compile td.num .parts { display: block; }
-table.compile td.num .parts { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.3; }
-.chartbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin: 12px 0 4px; }
-.chartbar .tabs { margin: 0; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px; }
-.legend .series { font-size: 13px; padding: 3px 10px; }
-.legend .series[aria-pressed="false"] { opacity: 0.45; text-decoration: line-through; }
-.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 24px 20px; margin-top: 12px; }
+table.bench td.num .parts { display: block; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.3; }
+.block h3 { font-size: 16px; margin: 28px 0 0; }
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px 20px; margin-top: 8px; }
+.tabs.narrow { display: none; }
 .chart { margin: 0; min-width: 0; }
 .chart figcaption { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
 .plot { position: relative; }
-.plot svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.plot svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; -webkit-tap-highlight-color: transparent; }
 .plot .grid { stroke: var(--line); stroke-width: 1; }
 .plot .unit { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .plot .tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.plot .imported { fill: var(--bg-2); }
-.plot .series path { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.plot .series circle { fill: var(--c); stroke: var(--bg); stroke-width: 1; }
+.plot .offci { fill: var(--bg-2); }
+.plot .band { fill: color-mix(in srgb, var(--s1) 22%, transparent); stroke: none; }
+.plot .band1 { stroke: color-mix(in srgb, var(--s1) 40%, transparent); stroke-width: 6; stroke-linecap: round; }
+.plot .line { fill: none; stroke: var(--s1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.plot .pt { fill: var(--s1); stroke: var(--bg); stroke-width: 1; }
+.plot .pt.off { fill: var(--bg); stroke: var(--s1); stroke-width: 1.5; }
 .plot .cross { stroke: var(--muted); stroke-width: 1; }
 .plot .hit { fill: transparent; }
 .plot .tip {
-	position: absolute; top: 4px; z-index: 2; pointer-events: none; min-width: 170px;
+	position: absolute; top: 4px; z-index: 2; min-width: 140px; max-width: 220px;
 	background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
 	font-size: 12px; line-height: 1.5; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
 .plot .tip code { font-size: 11px; }
-.plot .tip div { display: flex; align-items: center; white-space: nowrap; }
-.plot .tip .v { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.plot .tip a { display: inline-block; padding: 2px 0; }
 @media (max-width: 600px) {
 	td, th { padding: 7px 8px 7px 0; }
 	td:not(:first-child), th:not(:first-child) { white-space: normal; }
@@ -216,6 +213,11 @@ table.compile td.num .parts { color: var(--muted); font-size: 12px; font-weight:
 	table.bench { font-size: 13px; }
 	table.bench td, table.bench th { padding: 5px 4px; }
 	table.bench .barcol { min-width: 90px; }
+	table.matrix td, table.matrix th { padding: 5px 6px; }
+	.charts { grid-template-columns: minmax(0, 1fr); }
+	.tabs.narrow { display: flex; }
+	.charts.pick > figure:not(.on) { display: none; }
+	table.bench .wide { display: none; }
 	table.bench th.barcol .muted { display: none; }
 }
 

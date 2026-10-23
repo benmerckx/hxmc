@@ -27,7 +27,7 @@ private typedef VectorData<T> = hxmc.NativeArray<T>;
 /**
 	A fixed-size vector backed by specialized native storage on hxmc.
 
-	Int, Float, Int64 and Bool elements are unboxed. Indices must be in
+	Int, Float, Int64, Bool and hxmc.Byte (one byte) elements are unboxed. Indices must be in
 	0...length; out of bounds, `-D hxmc.native-array-outofbounds` decides:
 	not tested when not defined, `throws` (haxe.exceptions.ArgumentException),
 	`silent` (a read gives the default value, a write does nothing).

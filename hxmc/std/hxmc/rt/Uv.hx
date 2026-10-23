@@ -123,7 +123,7 @@ class Uv {
 	// ---- C data <-> Haxe values
 
 	static inline function data(b:Bytes):Ptr
-		return Mem.addr(b).add(8);
+		return Mem.addr(b.getData());
 
 	// a NUL-terminated copy of a Bytes in the arena (null for null)
 	static function bytesZ(a:Arena, b:Null<Bytes>):CString
@@ -463,7 +463,7 @@ class Uv {
 	}
 
 	static inline function u32(v:Int):I64
-		return (v : I64) & 0xFFFFFFFF;
+		return ((v : I64) << 32) >>> 32; // (& 0xFFFFFFFF would keep the sign: the literal is the Int -1)
 
 	public static function timerStart(id:Int, timeout:Int, repeat:Int):Int
 		return U.uv_timer_start(uvh(id), Callback.addr(watcherCb), u32(timeout), u32(repeat));

@@ -1,8 +1,0 @@
-# Types every port module, including those haxe.Main does not reach (from the repository root).
--cp haxe/src
--main haxe.Main
---macro include("", true, ["haxe"], ["haxe/src"])
-# Select the intended host runtime without executing the compiler entry point.
---interp
---no-output
---hxb bin/haxe-in-haxe.all.eval.hxb

@@ -3,9 +3,11 @@ package hxmc;
 /**
 	Fixed-size, GC-managed storage specialized for its element type.
 
-	Bool uses 8-bit elements, Int uses 32 bits, Float and Int64 use 64 bits,
-	and other types use references (including boxed nullable numbers). With
-	`-D hxmc.wasm-gc`, it is the engine's array of that type.
+	Bool and `hxmc.Byte` use 8-bit elements (a Byte read as an Int from 0
+	to 255: `haxe.io.BytesData`, which a `haxe.io.Bytes` holds), Int uses 32
+	bits, Float and Int64 use 64 bits, and other types use references
+	(including boxed nullable numbers). With `-D hxmc.wasm-gc`, it is the
+	engine's array of that type.
 	Elements start at zero, false or null. Out of bounds, `-D
 	hxmc.native-array-outofbounds` decides: not tested when not defined,
 	`throws`, `silent` (as haxe.ds.Vector). Casts between storage types are
@@ -49,13 +51,24 @@ package hxmc;
 	public inline function toArray():Array<T> {
 		var result:Array<T> = [];
 		result.resize(length);
+		#if !(hxmc.wasm_gc)
+		// (more than a few elements: blit's memmove into the Array's storage, a
+		// NativeArray of the Array's kind, unless the kinds differ; a few are
+		// copied below, cheaper than the call)
+		if (length > 4 && hxmc.rt.NArray.move(hxmc.rt.NArray.ofArray(result), 0, this, 0, length)) {} else
+		#end
 		for (i in 0...length) result[i] = unsafeGet(i);
 		return result;
 	}
 
 	public static inline function fromArray<T>(array:Array<T>):NativeArray<T> {
-		var result = new NativeArray<T>(array.length);
-		for (i in 0...array.length) result.unsafeSet(i, array[i]);
+		var n = array.length;
+		var result = new NativeArray<T>(n);
+		#if !(hxmc.wasm_gc)
+		// (as toArray: blit's memmove from the Array's storage)
+		if (n > 4 && hxmc.rt.NArray.move(result, 0, hxmc.rt.NArray.ofArray(array), 0, n)) {} else
+		#end
+		for (i in 0...n) result.unsafeSet(i, array[i]);
 		return result;
 	}
 

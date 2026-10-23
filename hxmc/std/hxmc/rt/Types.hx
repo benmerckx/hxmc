@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.I64;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
@@ -8,31 +9,46 @@ import hxmc.unsafe.Ptr;
 // rt.h's rt_type: the same on every 64-bit target), the field, method and
 // static tables, the type objects. All inline: the accessors are loads.
 class Types {
-	// runtime type indices (rt.h); generated types start at T_FIRST
+	// runtime type indices; generated types start at T_FIRST. 16 to 31 are
+	// arrays (isArray): 16 to 23 of bytes (isRawArray), 24 to 31 of
+	// references; the others records (the headers, below)
 	public static inline var T_NONE = 0;
-	public static inline var T_STRING = 1;
+	public static inline var T_ARRAYITER = 1;
 	public static inline var T_BOXINT = 2;
 	public static inline var T_BOXFLOAT = 3;
 	public static inline var T_BOXBOOL = 4;
 	public static inline var T_ARRAY = 5;
-	public static inline var T_ADATA_P = 6;
-	public static inline var T_ADATA_RAW = 7;
-	public static inline var T_BYTES = 8;
+	public static inline var T_BOXI64 = 6;
+	// the NativeArray made for an erased type parameter (NArray): open, fixed
+	public static inline var T_NATIVE_OPEN = 7;
+	public static inline var T_NATIVE_WRAP = 8;
 	public static inline var T_TYPEOBJ = 14;
-	public static inline var T_OVERFLOW = 15;
-	public static inline var T_ARRAYITER = 17;
-	public static inline var T_BOXI64 = 18;
-	public static inline var T_NATIVE_ARRAY = 19;
-	// a Date: K_RAW, the milliseconds since the epoch (a double: MemRepr.dateOf)
-	public static inline var T_DATE = 20;
-	// Math's class value: an extern class the runtime implements, named (Type.getClassName, resolveClass)
-	public static inline var T_MATH = 21;
+	public static inline var T_STRING = 16;
+	public static inline var T_ADATA_RAW = 17; // slots
+	public static inline var T_NATIVE = 18; // slots: a C resource, an AtomicInt cell
+	// NativeArray storage, by element kind: T_NATIVE_ARRAY - AK_* (naType:
+	// AK_BYTE's 19 to AK_PTR's 24, references). T_BYTES: the storage of bytes
+	// (haxe.io.BytesData: NativeArray<hxmc.Byte>), which a haxe.io.Bytes holds
+	public static inline var T_BYTES = 19;
+	public static inline var T_NATIVE_ARRAY = 24;
+	public static inline var T_ADATA_P = 25; // slots of references
+	public static inline var T_OVERFLOW = 26;
+	public static inline var T_NATIVE_REFS = 27; // a C resource (slot 0) and references
+	// a Date: a record of one slot, the milliseconds since the epoch (a double: MemRepr.dateOf)
+	public static inline var T_DATE = 15;
+	// Math's class value: an extern class the runtime implements, named
+	// (Type.getClassName, resolveClass); no instance has it (one of the free
+	// indices, 28 to 31)
+	public static inline var T_MATH = 28;
 	public static inline var T_FIRST = 32;
+	// (the header of an object the collector copied)
+	public static inline var T_FWD = 0xFFFF;
 	// a closure type's tag: a Dynamic converted to a function type (hxmc.ir.Facts, Dyn.unadapt)
 	public static inline var TAG_DYN_ADAPTER = 1;
 	// and a closure converted to another function type (Lower.adapter)
 	public static inline var TAG_ADAPTER = 2;
-	// object kinds
+	// object kinds: what Mem.alloc makes (K_OBJ a record, else an array of
+	// 8-byte slots), and how the collector scans (kind)
 	public static inline var K_OBJ = 0;
 	public static inline var K_PARR = 1;
 	public static inline var K_RAW = 2;
@@ -50,30 +66,109 @@ class Types {
 	public static inline var AK_I32 = 1;
 	public static inline var AK_F64 = 2;
 	public static inline var AK_I64 = 3;
-	// Bool: stored as AK_I32 is (4 bytes, 0 or 1), but read as Bool where the
-	// element is boxed (Std.string, Dynamic, reflection); a NativeArray stores
-	// one byte per Bool
+	// Bool: one byte (0 or 1), read as Bool where the element is boxed
+	// (Std.string, Dynamic, reflection)
 	public static inline var AK_BOOL = 4;
+	// hxmc.Byte: one byte, read as an Int from 0 to 255 (a NativeArray's
+	// only, haxe.io.BytesData: no Array is of this kind)
+	public static inline var AK_BYTE = 5;
+	// the kinds of NativeArray storage: AK_PTR to AK_BYTE
+	public static inline var AK_COUNT = 6;
 	// a NativeArray made for an erased type parameter: a wrapper of its
 	// storage, open until a typed view takes it, then fixed (NArray)
-	public static inline var AK_OPEN = 5;
-	public static inline var AK_WRAP = 6;
+	public static inline var AK_OPEN = 6;
+	public static inline var AK_WRAP = 7;
 
-	// the elements of these kinds take 4 bytes
-	public static inline function ak4(k:Int):Bool
-		return k == AK_I32 || k == AK_BOOL;
+	// the bytes of an element of kind k (a NativeArray's, so an Array's)
+	public static inline function akSize(k:Int):Int
+		return k >= AK_BOOL ? 1 : k == AK_I32 ? 4 : 8;
 
-	// ---- headers: slot count bits 0..27, kind 28..31, type index 32..47,
-	// identity hash 48..63
+	// ---- headers (docs/plans/heap-layout.md): the 8 bytes before an
+	// object, its type index first (a u16 at -8), which decides the rest:
+	//   record (a size its type fixes): its slots (a u16 at -6; 65534 at
+	//     most), its identity hash (a u32 at -4; the NativeArray wrapper: its
+	//     length there);
+	//   array (isArray): its payload's 8-byte words (a u16 at -6; 0xFFFF:
+	//     that many or more: lenWords), its length in elements (a u32 at -4);
+	//     whether the elements are references, and their size, its type says;
+	//   string: its words as an array's, its content hash (a u32 at -4, 0
+	//     until computed); its length (a u32 at 0), then its UTF-16 units;
+	//   forwarded (by the collector): T_FWD, the copy's address in slot 0
+	// (every object on the heap has a slot: an empty array or string is static).
+
+	public static inline function isArray(t:Int):Bool
+		return t & 0xFFF0 == 16;
+
+	public static inline function isRecord(t:Int):Bool
+		return !isArray(t);
+
+	// an array without references (a string too), by its type or its
+	// header's first word
+	public static inline function isRawArray(t:Int):Bool
+		return t & 0xFFF8 == 16;
+
+	// the type of NativeArray storage of element kind k, and the kind of type t
+	public static inline function naType(k:Int):Int
+		return T_NATIVE_ARRAY - k;
+
+	public static inline function naKind(t:Int):Int
+		return T_NATIVE_ARRAY - t;
+
+	// an array's first header word: its type t, its payload's words (0xFFFF
+	// from that many on: the sign of 0xFFFE - words, without a branch)
+	public static inline function arrWord(t:Int, words:Int):Int
+		return t | ((words | ((0xFFFE - words) >> 31)) << 16);
+
+	// the header of a record of type t (its hash 0)
+	public static inline function recordHdr(t:Int, slots:Int):I64
+		return ((t | (slots << 16) : I64) << 32) >>> 32;
+
+	// the header of an array whose first word is w0
+	public static inline function arrayHdr(w0:Int, len:Int):I64
+		return (((w0 : I64) << 32) >>> 32) | ((len : I64) << 32);
+
+	// the payload's 8-byte words of the object at p whose header's first
+	// word is w0 (not forwarded): the header's, but an array's of 0xFFFF
+	// words or more (lenWords: its length, a string's at p, the others' at p - 4)
+	public static inline function wordsAt(p:Ptr, w0:Int):Int {
+		var n = w0 >>> 16;
+		return n == 0xFFFF ? lenWords(w0 & 0xFFFF, Mem.getI32(p, w0 & 0xFFFF == T_STRING ? 0 : -4)) : n;
+	}
+
+	// the words of an array of type t and length len, by its elements' size:
+	// a string's units after its length, NativeArray storage's by its kind,
+	// else 8-byte slots (inline: the collector's loops make no call)
+	public static inline function lenWords(t:Int, len:Int):Int {
+		var k = naKind(t);
+		var size = t == T_STRING ? 2 : Mem.ult(k, AK_COUNT) ? akSize(k) : 8;
+		return ((((len : I64) * size) + (t == T_STRING ? 11 : 7)) >>> 3).toInt();
+	}
+
+	// how an object whose first header word is w0 is scanned: K_OBJ (a
+	// record, by its type's pointer map), K_PARR (every slot), K_RAW (none)
+	public static inline function kindOfWord(w0:Int):Int {
+		var t = w0 & 0xFFFF;
+		return isArray(t) ? K_RAW - ((t >>> 3) & 1) : K_OBJ;
+	}
+
+	public static inline function isNativeArray(t:Int):Bool
+		return Mem.ult(naKind(t), AK_COUNT) || t == T_NATIVE_OPEN || t == T_NATIVE_WRAP;
 
 	public static inline function tindex(o:Dynamic):Int
-		return Mem.getU16(Mem.addr(o), -4);
+		return Mem.getU16(Mem.addr(o), -8);
 
+	// the payload's 8-byte words
 	public static inline function nslots(o:Dynamic):Int
-		return Mem.getI32(Mem.addr(o), -8) & 0x0FFFFFFF;
+		return wordsAt(Mem.addr(o), Mem.getI32(Mem.addr(o), -8));
 
+	// an array's length (in elements)
+	public static inline function arrLength(o:Dynamic):Int
+		return Mem.getI32(Mem.addr(o), -4);
+
+	// how the collector scans o: by its pointer map (a record), every slot
+	// (references) or not at all
 	public static inline function kind(o:Dynamic):Int
-		return (Mem.getI32(Mem.addr(o), -8) >>> 28) & 15;
+		return kindOfWord(Mem.getI32(Mem.addr(o), -8));
 
 	// ---- rt_type (112 bytes)
 

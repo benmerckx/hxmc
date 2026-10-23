@@ -4,8 +4,10 @@
 # build times, the targets' check outputs compared.
 #
 # Runs nightly on main (skipped when that commit is already measured) and on
-# demand: a dispatch, or a push whose head commit message says [bench] (or
-# [bench-publish], which also publishes); other pushes start no job.
+# demand: a dispatch (any branch: `gh workflow run bench.yml --ref <branch>`,
+# `-f publish=true` to publish), or a push to main whose head commit message
+# says [bench] (or [bench-publish]); other pushes to main start no job, and
+# pushes to other branches no run.
 # Independent of build.yml, so it never holds up a release or the website.
 #
 # Sharded by case: `plan` checks whether the commit is measured already and
@@ -34,18 +36,33 @@
 # that): about 5 minutes each. The dispatch input `targets` is `all`, `none`,
 # or Targets.hx's arguments (e.g. "-p self -t jvm"), run in one group.
 #
+# The compiler benchmarks (hxmc/test/CompileBench.hx, `make bench-compile`):
+# one `compile` job, the port and the reference compiling hello, stdlib and the
+# port itself to HXB (5 runs each, interleaved on one runner: hxmc / reference
+# cancels most of a runner's speed), the wasm runners once, hxmc's cold builds
+# of the port once: about 10 minutes.
+#
+# Memory and time (haxe/test/Measure.hx, `make measure`): one `measure` job
+# beside the compile job, on a runner of its own: the timed bootstrap from the
+# stage0, peak RSS, wall and CPU time of the self-compile (ours and the
+# reference), the cold native build of the port, the stage0 and the npm
+# package's WebAssembly compiler building native compilers; in its job summary
+# only (nothing published).
+#
 # Results: the job summaries and an artifact (bench-results); from main (or
 # with publish, or [bench-publish]) appended to the bench-data branch as
 # results/<date>-<commit>.json, with history.json and latest.json
 # regenerated, and the targets' as targets/<date>-<commit>.json, with
-# targets.json and targets-history.json regenerated (Targets --history), which
+# targets.json and targets-history.json regenerated (Targets --history), and
+# the compiler's as compile/<date>-<commit>.json, with compile-history.json
+# and compile-latest.json regenerated (CompileBench --history), which
 # the website's next build copies (build.yml, `make site BENCH_DATA=...`; the
 # committed site/data/targets.json where bench-data has none).
 name: bench
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -67,6 +84,10 @@ on:
       targets:
         description: 'the target generators (Targets.hx): all, none, or its arguments (e.g. "-p self -t jvm") in one group'
         default: all
+      compile:
+        description: the compiler benchmarks (CompileBench.hx)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -308,10 +329,145 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # the compiler benchmarks (hxmc/test/CompileBench.hx): the port (hxmc) and
+  # the reference compiling hello, stdlib and the port itself to HXB, 5 runs
+  # each, interleaved on this runner (so hxmc / reference is a ratio the
+  # runner's speed mostly cancels out); the wasm runners once, for context;
+  # hxmc's cold builds of the port once
+  compile:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.compile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: System packages
+        run: sudo apt-get install -qqy time
+      - name: Runtime objects
+        id: rt
+        run: |
+          echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: mlugg/setup-zig@v2
+        if: steps.rt.outputs.hit != 'true'
+        with:
+          version: ${{ steps.rt.outputs.zig }}
+      - name: Runtime objects with zig
+        if: steps.rt.outputs.hit != 'true'
+        run: sudo apt-get install -qqy lld && make rt-build
+      - name: The tool and the port
+        run: |
+          set -ex
+          touch bin/hxmc/rt/*/*.o
+          make hxmc port
+      - name: Reference compiler revision
+        id: ref
+        run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
+      - name: Cache the reference compiler
+        uses: actions/cache@v6
+        with:
+          path: bin/reference
+          key: reference-nightly-${{ steps.ref.outputs.rev }}
+      - name: The reference compiler
+        run: |
+          set -ex
+          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          touch bin/reference/haxe
+          bin/reference/haxe -version
+      # (optional: without it the wasmtime runner is left out)
+      - name: wasmtime
+        continue-on-error: true
+        run: |
+          curl -sSf https://wasmtime.dev/install.sh | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+      - name: Compiler benchmarks
+        run: |
+          set -ex
+          ulimit -s unlimited
+          mkdir -p bin/bench-compile
+          make -o bin/reference/haxe bench-compile COMPILE_BENCH_ARGS="-n ${{ inputs.runs || '5' }} -r reference,hxmc --once hxmc-wasm-node,hxmc-wasm-wasmtime --build --build-runs 1 --out bin/bench-compile/compile.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: compile-part
+          path: bin/bench-compile/compile.json
+          if-no-files-found: ignore
+          retention-days: 7
+      # the tool, for the results job's CompileBench --history
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compile-tool
+          path: bin/hxmc/hxmc
+          retention-days: 1
+
+  # memory and time (make measure), in the job summary
+  measure:
+    name: memory and time
+    needs: plan
+    if: needs.plan.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.compile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: System packages
+        run: sudo apt-get install -qqy time
+      - name: Runtime objects
+        id: rt
+        run: |
+          echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: mlugg/setup-zig@v2
+        if: steps.rt.outputs.hit != 'true'
+        with:
+          version: ${{ steps.rt.outputs.zig }}
+      - name: Runtime objects with zig
+        if: steps.rt.outputs.hit != 'true'
+        run: sudo apt-get install -qqy lld && make rt-build
+      - name: Bootstrap from the stage0 (timed)
+        run: |
+          set -ex
+          touch bin/hxmc/rt/*/*.o
+          s=$(date +%s)
+          make bootstrap
+          echo "BOOTSTRAP_SECONDS=$(( $(date +%s) - s ))" >> "$GITHUB_ENV"
+      - name: Reference compiler revision
+        id: ref
+        run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
+      - name: Cache the reference compiler
+        uses: actions/cache@v6
+        with:
+          path: bin/reference
+          key: reference-nightly-${{ steps.ref.outputs.rev }}
+      - name: Memory and time
+        run: |
+          set -ex
+          {
+            echo "### Builds"
+            echo ""
+            echo "| | |"
+            echo "| --- | ---: |"
+            echo "| clean bootstrap from the stage0 (stage0 under node, the tool from source, the fixpoint) | ${BOOTSTRAP_SECONDS} s |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          make lix
+          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          touch bin/reference/haxe
+          make -o bin/reference/haxe measure
+
   # the shards' results as one, published
   results:
-    needs: [plan, shard, targets]
-    if: always() && needs.plan.result == 'success' && needs.plan.outputs.skip != 'true' && (needs.shard.result != 'skipped' || needs.targets.result != 'skipped')
+    needs: [plan, shard, targets, compile]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.skip != 'true' && (needs.shard.result != 'skipped' || needs.targets.result != 'skipped' || needs.compile.result != 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -334,7 +490,19 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v8
         with:
+          name: compile-part
+          path: bin/bench-compile
+        continue-on-error: true
+      # the tool: a shard's, else the compile job's
+      - uses: actions/download-artifact@v8
+        with:
           name: bench-tool
+          path: bin/hxmc
+        continue-on-error: true
+      - uses: actions/download-artifact@v8
+        if: hashFiles('bin/hxmc/hxmc') == ''
+        with:
+          name: compile-tool
           path: bin/hxmc
       - name: Merge
         run: |
@@ -354,6 +522,12 @@ jobs:
           retention-days: 30
       - uses: actions/upload-artifact@v7
         with:
+          name: compile-results
+          path: bin/bench-compile/compile.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
           name: targets-results
           path: bin/bench-targets/targets.json
           if-no-files-found: ignore
@@ -361,13 +535,17 @@ jobs:
       # results/<date>-<commit>.json, history.json, latest.json on bench-data
       # (an orphan branch: data only), when every shard succeeded; the targets'
       # targets/<date>-<commit>.json, targets.json, targets-history.json, when
-      # every targets job did; retried when another run pushed first
+      # every targets job did; the compile job's compile/<date>-<commit>.json,
+      # compile-history.json (with the runs imported from the repository's
+      # history: site/data/compile-history.json) and compile-latest.json;
+      # retried when another run pushed first
       - name: Publish to bench-data
-        if: env.PUBLISH == 'true' && (needs.shard.result == 'success' || needs.targets.result == 'success')
+        if: env.PUBLISH == 'true' && (needs.shard.result == 'success' || needs.targets.result == 'success' || needs.compile.result == 'success')
         env:
           GH_TOKEN: ${{ github.token }}
           BENCH_OK: ${{ needs.shard.result == 'success' }}
           TARGETS_OK: ${{ needs.targets.result == 'success' }}
+          COMPILE_OK: ${{ needs.compile.result == 'success' }}
         run: |
           set -ex
           git config --global user.name "github-actions[bot]"
@@ -385,6 +563,10 @@ jobs:
             if [ "$TARGETS_OK" = true ] && [ -f bin/bench-targets/targets.json ]; then
               mkdir -p bin/bench-data/targets && cp bin/bench-targets/targets.json "bin/bench-data/targets/$name"
               bin/hxmc/hxmc -cp haxe/test --run Targets --history bin/bench-data
+            fi
+            if [ "$COMPILE_OK" = true ] && [ -f bin/bench-compile/compile.json ]; then
+              mkdir -p bin/bench-data/compile && cp bin/bench-compile/compile.json "bin/bench-data/compile/$name"
+              bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CompileBench --history bin/bench-data --seed site/data/compile-history.json
             fi
             cd bin/bench-data
             git add -A && git commit -q -m "Benchmarks at ${{ needs.plan.outputs.short }} ($GITHUB_REF_NAME, run $GITHUB_RUN_ID)"

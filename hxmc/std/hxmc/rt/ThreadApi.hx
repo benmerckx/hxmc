@@ -270,14 +270,14 @@ class ThreadApi {
 
 	@:hxmc.noGc public static function tlsGet(id:Int):Dynamic {
 		var a = Threads.self.value.tls;
-		return !a.isNull() && id >= 0 && id < (Mem.getI32(a, -8) & 0x0FFFFFFF) ? Mem.getRef(a, 8 * id) : null;
+		return !a.isNull() && id >= 0 && id < Mem.getI32(a, -4) ? Mem.getRef(a, 8 * id) : null;
 	}
 
 	public static function tlsSet(id:Int, v:Dynamic):Void {
 		if (id < 0) return;
 		var a = Threads.self.value.tls;
-		if (a.isNull() || id >= (Mem.getI32(a, -8) & 0x0FFFFFFF)) {
-			var n = a.isNull() ? 8 : (Mem.getI32(a, -8) & 0x0FFFFFFF) * 2;
+		if (a.isNull() || id >= Mem.getI32(a, -4)) {
+			var n = a.isNull() ? 8 : Mem.getI32(a, -4) * 2;
 			if (n <= id) n = id + 1;
 			var na:Dynamic = Mem.alloc(n, Types.T_ADATA_P, Types.K_PARR);
 			grow(na);
@@ -289,7 +289,7 @@ class ThreadApi {
 	@:hxmc.noGc static function grow(na:Dynamic) {
 		var a = Threads.self.value.tls;
 		if (!a.isNull())
-			for (i in 0...(Mem.getI32(a, -8) & 0x0FFFFFFF))
+			for (i in 0...Mem.getI32(a, -4))
 				Mem.setRefBarrier(na, 8 * i, Mem.getRef(a, 8 * i));
 		Threads.self.value.tls = Mem.addr(na);
 	}

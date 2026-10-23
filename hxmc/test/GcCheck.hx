@@ -18,7 +18,7 @@ class GcCheck {
 	static final common = ["-cp", "bin/hxmc/std", "--custom-target", "hxmc"];
 	// (the corpus cases that need nothing WasmGC lacks: the others' counterparts
 	// are in hxmc/test/wasmgc, without the collector's API and raw memory)
-	static final CASES = ["AnonFields", "ClosureElements", "CreateInstance", "DateValues", "EnumIdentity", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads", "Utf8Bytes", "VectorLength"];
+	static final CASES = ["AnonFields", "ClosureElements", "CreateInstance", "DateValues", "EnumIdentity", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads", "ResourceBytes", "Resources", "Utf8Bytes", "VectorLength"];
 
 	static function run(cmd:String, args:Array<String>):{code:Int, out:String, err:String} {
 		var p = new Process(cmd, args);
@@ -29,7 +29,7 @@ class GcCheck {
 	}
 
 	static function build(name:String, dir:String, file:String, extra:Array<String>):Null<String> {
-		var r = run("bin/hxmc/hxmc", [file, "-main", name, "-cp", dir].concat(common).concat(Corpus.caseDefines('$dir/$name.hx')).concat(extra));
+		var r = run("bin/hxmc/hxmc", [file, "-main", name, "-cp", dir].concat(common).concat(Corpus.caseDefines('$dir/$name.hx')).concat(Corpus.caseResources('$dir/$name.hx')).concat(extra));
 		return r.code == 0 ? null : (r.out + r.err).trim();
 	}
 

@@ -259,7 +259,9 @@ class GcNative {
 		if (names != null) {
 			var i = find(names, name);
 			if (i >= 0) {
-				W.objSet(o, i, v);
+				// (a length without storage, @:hxmc.lengthOf: to the length it has
+				// only, as when haxe.runtime.Copy copies every field)
+				if (!W.objSet(o, i, v) && W.objGet(o, i) != v) throw "a length without storage (@:hxmc.lengthOf) cannot be set";
 				return;
 			}
 		}

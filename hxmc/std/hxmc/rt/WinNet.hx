@@ -295,23 +295,8 @@ class WinNet {
 		}
 		if (threads() > 1 && timeout != 0) {
 			// other threads run until a socket is ready or the timeout passes,
-			// then select looks without waiting (WSAPOLLFD: SOCKET, short events, short revents)
-			var p = LibC.malloc(16 * (nr + nw + no + 1));
-			var k = 0;
-			inline function add(fd:Int, events:Int) {
-				Mem.setI64(p, 16 * k, sock(fd));
-				Mem.setI16(p, 16 * k + 8, events);
-				Mem.setI16(p, 16 * k + 10, 0);
-				k++;
-			}
-			for (i in 0...nr)
-				add(r[i], 0x100); // POLLRDNORM
-			for (i in 0...nw)
-				add(w[i], 0x10); // POLLWRNORM
-			for (i in 0...no)
-				add(o[i], 0x200); // POLLRDBAND
-			Rt.rt_wait_fds(p, k, timeout);
-			LibC.free(p);
+			// then select looks without waiting
+			NetCore.waitFds(r, nr, w, nw, o, no, timeout);
 			timeout = 0;
 		}
 		var rs = Mem.stack(528), ws = Mem.stack(528), os = Mem.stack(528);
@@ -335,11 +320,8 @@ class WinNet {
 		return n;
 	}
 
-	@:hxmc.noGc static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
-		var v = Mem.stack(8);
-		Mem.setI32(v, 0, b ? 1 : 0);
-		return ret(Winsock.setsockopt(sock(fd), level, opt, v, 4));
-	}
+	@:hxmc.noGc static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
+		return NetCore.setBool(fd, level, opt, b);
 
 	@:hxmc.noGc public static function setNoDelay(fd:Int, b:Bool):Int
 		return setBool(fd, 6, 1, b); // IPPROTO_TCP, TCP_NODELAY
@@ -385,14 +367,11 @@ class WinNet {
 	}
 
 	// one lookup at a time (Names.spin[4]), in a safe region (it may block on the network)
-	@:hxmc.noGc static function lockResolver() {
-		var l = Names.spin.add(16);
-		while (Atomic.cas32(l, 0, 1) != 0)
-			Win32.Sleep(0);
-	}
+	@:hxmc.noGc static function lockResolver()
+		NetCore.lockResolver();
 
 	@:hxmc.noGc static function unlockResolver()
-		Atomic.store32(Names.spin.add(16), 0);
+		NetCore.unlockResolver();
 
 	public static function resolve(name:String):Array<Int> {
 		Winsock.rt_win_sockets_init();
@@ -406,22 +385,8 @@ class WinNet {
 
 	// the host-order IPv4 address of n, with 1 << 32 set when found
 	// (struct hostent: h_name, h_aliases, short h_addrtype, short h_length, h_addr_list)
-	@:hxmc.noGc static function lookup(n:Ptr):I64 {
-		var r:I64 = 0;
-		Leaf.rt_blocking_enter();
-		lockResolver();
-		var h = Winsock.gethostbyname(n);
-		if (!h.isNull() && Mem.getI16(h, 16) == 2) {
-			var a = Mem.getPtr(Mem.getPtr(h, 24), 0);
-			if (!a.isNull()) {
-				var ip = (Mem.getU8(a, 0) << 24) | (Mem.getU8(a, 1) << 16) | (Mem.getU8(a, 2) << 8) | Mem.getU8(a, 3);
-				r = ((1 : I64) << 32) | ((ip : I64) & (((1 : I64) << 32) - 1));
-			}
-		}
-		unlockResolver();
-		Leaf.rt_blocking_leave();
-		return r;
-	}
+	@:hxmc.noGc static function lookup(n:Ptr):I64
+		return NetCore.lookup(n);
 
 	public static function reverse(ip:Int):String {
 		Winsock.rt_win_sockets_init();
@@ -433,19 +398,6 @@ class WinNet {
 		return s;
 	}
 
-	@:hxmc.noGc static function reverseLookup(ip:Int):Ptr {
-		var a = Mem.stack(8);
-		Mem.setI8(a, 0, ip >>> 24);
-		Mem.setI8(a, 1, ip >> 16);
-		Mem.setI8(a, 2, ip >> 8);
-		Mem.setI8(a, 3, ip);
-		var name = Ptr.nil();
-		Leaf.rt_blocking_enter();
-		lockResolver();
-		var h = Winsock.gethostbyaddr(a, 4, 2);
-		if (!h.isNull() && !Mem.getPtr(h, 0).isNull()) name = Winsock._strdup(Mem.getPtr(h, 0));
-		unlockResolver();
-		Leaf.rt_blocking_leave();
-		return name;
-	}
+	@:hxmc.noGc static function reverseLookup(ip:Int):Ptr
+		return NetCore.reverseLookup(ip);
 }

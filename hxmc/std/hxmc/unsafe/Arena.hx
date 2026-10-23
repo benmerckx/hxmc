@@ -112,7 +112,7 @@ abstract Arena(Ptr) {
 		if (s == null) return Ptr.nil();
 		var n = s.length;
 		var p:Ptr<UInt16> = alloc(2 * n + 2, 2);
-		LibC.memcpy(p, Mem.addr(s).add(8), (2 * n : I64));
+		LibC.memcpy(p, Mem.addr(s).add(4), (2 * n : I64)); // (the units, after the length: hxmc.rt.Types)
 		return p;
 	}
 
@@ -120,7 +120,7 @@ abstract Arena(Ptr) {
 	public function copyBytesZ(b:haxe.io.Bytes):CString {
 		var n = b.length;
 		var p:Ptr<UInt8> = alloc(n + 1, 1);
-		LibC.memcpy(p, Mem.addr(b).add(8), (n : I64));
+		LibC.memcpy(p, Mem.addr(b.getData()), (n : I64));
 		return p;
 	}
 
@@ -129,7 +129,7 @@ abstract Arena(Ptr) {
 		if (len < 0) len = b.length - pos;
 		if (pos < 0 || len < 0 || pos + len > b.length) throw haxe.io.Error.OutsideBounds;
 		var p:Ptr<UInt8> = alloc(len, 1);
-		LibC.memcpy(p, Mem.addr(b).add(8 + pos), (len : I64));
+		LibC.memcpy(p, Mem.addr(b.getData()).add(pos), (len : I64));
 		return p;
 	}
 }

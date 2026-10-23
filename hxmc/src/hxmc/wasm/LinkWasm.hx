@@ -3,6 +3,7 @@ package hxmc.wasm;
 import hxmc.Obj;
 import hxmc.Buf;
 import hxmc.wasm.Enc;
+import hxmc.LinkCore;
 
 // The WebAssembly linker: the program's objects (functions written by
 // WasmGen, data by DataGen) to one module, with nothing else linked in (the
@@ -61,7 +62,7 @@ class LinkWasm {
 	// (name => bytes, zeroed)
 	static var CELLS:Map<String, Int> = [
 		"rt_globals" => 8, "rt_young_start" => 8, "rt_young_end" => 8, "rt_argc" => 8, "rt_argv" => 8, "rt_nthreads" => 8,
-		"rt_sp_limit" => 8, // the shadow stack's end (MirBuild.raiseHw)
+		"rt_sp_limit" => 8, // the shadow stack's end (MirWriter.raiseHw)
 	];
 
 	public function new(objs:Array<Obj>, stackSize = 64 << 10) {
@@ -69,35 +70,26 @@ class LinkWasm {
 		this.stackSize = stackSize;
 	}
 
-	function resolve(o:Obj, s:Symbol):Null<Symbol> {
-		if (s.section != null || s.abs) return s;
-		return defs.get(s.name);
-	}
+	inline function resolve(o:Obj, s:Symbol):Null<Symbol>
+		return LinkCore.targetIn(defs, s);
 
 	static function isCode(s:Section):Bool
 		return s.name == WasmGen.SECTION;
 
 	public function link():haxe.io.Bytes {
+		// (the native linkers' resolution, LinkCore)
+		LinkCore.resolveInto(objs, defs);
 		for (o in objs)
 			for (s in o.symbols)
-				if ((s.section != null || s.abs) && s.global) {
-					if (defs.exists(s.name)) throw 'hxmc: symbol ${s.name} defined twice';
-					defs.set(s.name, s);
-					defObj.set(s, o);
-				}
-		for (o in objs)
-			for (s in o.symbols)
-				if (s.section != null && !s.global) defObj.set(s, o);
+				if (s.section != null || (s.abs && s.global)) defObj.set(s, o);
 		// reachability from _start: functions (by symbol) and data sections
-		var liveFn = new Map<Symbol, Bool>();
-		var liveSec = new Map<Section, Bool>();
+		var liveFn = new Reach<Symbol>();
+		var liveSec = new Reach<Section>();
 		var undefinedFns = new Map<String, Bool>();
 		var undefinedData = new Map<String, Bool>();
 		var start = defs.get(START);
 		if (start == null) throw "hxmc: no _start";
-		var work:Array<Symbol> = [start];
-		var secWork:Array<{o:Obj, s:Section}> = [];
-		liveFn.set(start, true);
+		liveFn.mark(start);
 		var codeRelocs = new Map<Symbol, Array<Reloc>>();
 		// relocations of each function (code sections: by offset)
 		for (o in objs)
@@ -123,40 +115,25 @@ class LinkWasm {
 			if (t == null) {
 				if (r.kind == RWasmFunc) {
 					if (!undefinedFns.exists(r.sym.name))
-						for (c in Builtins.calls(r.sym.name)) {
-							var cs = defs.get(c);
-							if (cs != null && !liveFn.exists(cs)) {
-								liveFn.set(cs, true);
-								work.push(cs);
-							}
-						}
+						for (c in Builtins.calls(r.sym.name))
+							liveFn.mark(defs.get(c));
 					undefinedFns.set(r.sym.name, true);
 				} else
 					undefinedData.set(r.sym.name, true);
 				return;
 			}
 			if (t.abs) return;
-			if (isCode(t.section)) {
-				if (!liveFn.exists(t)) {
-					liveFn.set(t, true);
-					work.push(t);
-				}
-			} else if (!liveSec.exists(t.section)) {
-				liveSec.set(t.section, true);
-				secWork.push({o: defObj.get(t), s: t.section});
-			}
+			if (isCode(t.section)) liveFn.mark(t) else liveSec.mark(t.section);
 		}
-		while (work.length > 0 || secWork.length > 0) {
-			if (work.length > 0) {
-				var f = work.pop();
+		while (liveFn.pending() || liveSec.pending()) {
+			if (liveFn.pending()) {
+				var f = liveFn.next();
 				var o = defObj.get(f);
 				for (r in codeRelocs.get(f))
 					reach(o, r, true);
-			} else {
-				var x = secWork.pop();
-				for (r in x.s.relocs)
-					reach(x.o, r, false);
-			}
+			} else
+				for (r in liveSec.next().relocs)
+					reach(null, r, false);
 		}
 		// builtins and imports for the undefined functions
 		var missing = [];
@@ -184,7 +161,7 @@ class LinkWasm {
 		// defined functions in object order (stable), then the builtins
 		for (o in objs)
 			for (s in o.symbols)
-				if (s.section != null && isCode(s.section) && liveFn.exists(s)) {
+				if (s.section != null && isCode(s.section) && liveFn.has(s)) {
 					funcIndex.set(s.name, funcs.length);
 					funcs.push({name: s.name, sym: s, sig: sigAt(s), builtin: false});
 				}
@@ -204,7 +181,7 @@ class LinkWasm {
 		for (pass in 0...2)
 			for (o in objs)
 				for (sec in o.sections) {
-					if (isCode(sec) || !liveSec.exists(sec)) continue;
+					if (isCode(sec) || !liveSec.has(sec)) continue;
 					var bss = sec.kind == Bss || sec.kind == Tbss;
 					if (bss != (pass == 1)) continue;
 					var al = sec.align < 8 ? 8 : sec.align;
@@ -231,7 +208,7 @@ class LinkWasm {
 					if (r.kind == RWasmAddr || r.kind == RWasmAddr32) tableEntry(defObj.get(f.sym), r.sym);
 		for (o in objs)
 			for (sec in o.sections)
-				if (!isCode(sec) && liveSec.exists(sec))
+				if (!isCode(sec) && liveSec.has(sec))
 					for (r in sec.relocs)
 						tableEntry(o, r.sym);
 		// globals: the stack pointer, then the thread-local variables

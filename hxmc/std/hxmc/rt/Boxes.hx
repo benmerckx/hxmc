@@ -15,28 +15,23 @@ import hxmc.unsafe.Ptr;
 class Boxes {
 	static inline var SMALL_MIN = -128;
 	static inline var SMALL_MAX = 1023;
-	static inline var T_ADATA_RAW = 7;
-	static inline var T_ADATA_P = 6;
 	@:hxmc.bss(18432) static var smallInts:Ptr; // 16 bytes each (SMALL_MAX - SMALL_MIN + 1)
 	@:hxmc.bss(32) static var boolBoxes:Ptr;
 	@:hxmc.bss(18432) static var smallI64s:Ptr; // likewise for Int64 (OCaml's ints in converted code: ml2hx)
-
-	static inline function mkhdr(nslots:Int, kind:Int, tindex:Int):I64
-		return ((tindex : I64) << 32) | ((((kind << 28) | nslots) : I64) & 0xFFFFFFFF);
 
 	// at startup (rt_init; WebAssembly's Gc.init)
 	@:hxmc.host("hx_boxes_init") @:hxmc.noGc public static function init() {
 		var n = SMALL_MAX - SMALL_MIN + 1;
 		for (i in 0...n) {
-			Mem.setI64(smallInts, 16 * i, mkhdr(1, K_OBJ, T_BOXINT));
+			Mem.setI64(smallInts, 16 * i, Types.recordHdr(T_BOXINT, 1));
 			Mem.setI32(smallInts, 16 * i + 8, i + SMALL_MIN);
 		}
 		for (i in 0...n) {
-			Mem.setI64(smallI64s, 16 * i, mkhdr(1, K_OBJ, T_BOXI64));
+			Mem.setI64(smallI64s, 16 * i, Types.recordHdr(T_BOXI64, 1));
 			Mem.setI64(smallI64s, 16 * i + 8, (i + SMALL_MIN : I64));
 		}
 		for (i in 0...2) {
-			Mem.setI64(boolBoxes, 16 * i, mkhdr(1, K_OBJ, T_BOXBOOL));
+			Mem.setI64(boolBoxes, 16 * i, Types.recordHdr(T_BOXBOOL, 1));
 			Mem.setI32(boolBoxes, 16 * i + 8, i);
 		}
 	}
@@ -132,7 +127,11 @@ class Boxes {
 		}
 	}
 
-	// ---- arrays (slot 0 the length and the element kind, slot 1 the data)
+	// ---- arrays: a record, slot 0 the length and the element kind, slot 1
+	// the storage, a NativeArray of that kind (NArray: its header's length,
+	// then the elements) whose length is the capacity, the elements past the
+	// array's length zero; an array without room has the empty one of its
+	// kind (static data)
 
 	static inline function arrLen(a:Dynamic):Int
 		return Mem.getI32(Mem.addr(a), 0);
@@ -140,36 +139,37 @@ class Boxes {
 	static inline function arrKind(a:Dynamic):Int
 		return Mem.getI32(Mem.addr(a), 4);
 
-	static inline function arrData(a:Dynamic):Ptr
+	// the storage
+	static inline function arrStore(a:Dynamic):Ptr
 		return Mem.getPtr(Mem.addr(a), 8);
 
-	static inline function arrCap(a:Dynamic):Int {
-		var d = arrData(a);
-		return d.isNull() ? 0 : (Mem.getI32(d, -8) & 0x0FFFFFFF) << (ak4(arrKind(a)) ? 1 : 0);
-	}
+	// the first element
+	static inline function arrData(a:Dynamic):Ptr
+		return arrStore(a);
 
-	static function dataAlloc(kind:Int, cap:Int):Dynamic {
-		if (cap < 1) cap = 1;
-		return switch kind {
-			case AK_I32 | AK_BOOL: Mem.alloc((cap + 1) >> 1, T_ADATA_RAW, K_RAW);
-			case AK_F64 | AK_I64: Mem.alloc(cap, T_ADATA_RAW, K_RAW);
-			case _: Mem.alloc(cap, T_ADATA_P, K_PARR);
-		}
-	}
+	static inline function arrCap(a:Dynamic):Int
+		return Mem.getI32(arrStore(a), -4);
+
+	// a capacity of at least n, filling the storage's last word
+	static inline function roomFor(kind:Int, n:Int):Int
+		return kind == AK_BOOL ? (n + 7) & ~7 : kind == AK_I32 ? (n + 1) & ~1 : n;
+
+	// storage of cap elements of the kind (zero)
+	static function dataAlloc(kind:Int, cap:Int):Dynamic
+		return cap < 1 ? NArray.empty(kind) : NArray.alloc(kind, cap);
 
 	@:hxmc.export("hx_arr_new_n") static function arrNewN(kind:Int, len:Int):Dynamic {
-		var ds = ak4(kind) ? (len + 1) >> 1 : len;
-		if (ds < 1) ds = 1;
-		if (ds <= 64) {
-			// small: the array and its data in one allocation (one bump, no
+		var ws = kind == AK_BOOL ? (len + 7) >> 3 : kind == AK_I32 ? (len + 1) >> 1 : len;
+		if (len > 0 && ws <= 64) {
+			// small: the array and its storage in one allocation (one bump, no
 			// root), split by writing the second header; both are young
-			var a = Mem.alloc(3 + ds, T_ARRAY, K_OBJ);
+			var a = Mem.alloc(3 + ws, T_ARRAY, K_OBJ);
 			var p = Mem.addr(a);
-			Mem.setI64(p, -8, mkhdr(2, K_OBJ, T_ARRAY));
+			Mem.setI64(p, -8, Types.recordHdr(T_ARRAY, 2));
 			Mem.setI32(p, 0, len);
 			Mem.setI32(p, 4, kind);
 			Mem.setPtr(p, 8, p.add(24));
-			Mem.setI64(p, 16, kind == AK_PTR ? mkhdr(ds, K_PARR, T_ADATA_P) : mkhdr(ds, K_RAW, T_ADATA_RAW));
+			Mem.setI64(p, 16, Types.arrayHdr(Types.naType(kind) | (ws << 16), roomFor(kind, len)));
 			return a;
 		}
 		var d = dataAlloc(kind, len);
@@ -188,20 +188,18 @@ class Boxes {
 		if (ncap < 2) ncap = 2;
 		if (ncap < need) ncap = need;
 		var kind = arrKind(a);
-		var d0 = arrData(a);
-		var nd = dataAlloc(kind, ncap);
+		var d0 = arrStore(a);
+		var nd = NArray.make(kind, roomFor(kind, ncap));
 		// (another thread may have changed the array at the allocation: a
-		// replaced data or kind retries)
+		// replaced storage or kind retries)
 		a = Mem.getRef(slot, 0);
-		if (arrData(a) != d0 || arrKind(a) != kind) {
+		if (arrStore(a) != d0 || arrKind(a) != kind) {
 			arrGrow(slot, need);
 			return;
 		}
 		var len = arrLen(a);
-		var d = arrData(a);
-		if (!d.isNull()) {
-			var es = ak4(kind) ? 4 : 8;
-			LibC.memcpy(Mem.addr(nd), d, es * len);
+		if (len > 0) {
+			LibC.memcpy(Mem.addr(nd), arrData(a), akSize(kind) * len);
 			if (kind == AK_PTR && !inYoungObj(nd)) Gc_barrierRange(nd, len);
 		}
 		Mem.setRefBarrier(a, 8, nd);
@@ -212,6 +210,7 @@ class Boxes {
 		return !p.ult(Mem.getPtr(Mem.sym("rt_young_start"), 0)) && p.ult(Mem.getPtr(Mem.sym("rt_young_end"), 0));
 	}
 
+	// the barrier of the first n elements of reference storage o
 	@:hxmc.noGc static function Gc_barrierRange(o:Dynamic, n:Int)
 		hxmc.rt.C.Leaf.rt_barrier_range(o, Mem.addr(o), n);
 
@@ -223,7 +222,7 @@ class Boxes {
 		for (i in 0...len) {
 			a = Mem.getRef(slot, 0);
 			var k = arrKind(a);
-			var v:Dynamic = k == AK_I32 ? boxInt(Mem.getI32At(arrData(a), 0, i)) : k == AK_BOOL ? boxBool(Mem.getI32At(arrData(a), 0, i)) : k == AK_I64 ? boxI64(Mem.getI64At(arrData(a), 0, i)) : boxFloat(Mem.getF64At(arrData(a), 0, i));
+			var v:Dynamic = k == AK_I32 ? boxInt(Mem.getI32At(arrData(a), 0, i)) : k == AK_BOOL ? boxBool(Mem.getU8At(arrData(a), 0, i)) : k == AK_I64 ? boxI64(Mem.getI64At(arrData(a), 0, i)) : boxFloat(Mem.getF64At(arrData(a), 0, i));
 			Mem.setRefBarrier(nd, 8 * i, v);
 		}
 		a = Mem.getRef(slot, 0);
@@ -235,7 +234,8 @@ class Boxes {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		var d = arrData(a);
 		return switch arrKind(a) {
-			case AK_I32 | AK_BOOL: Mem.getI32At(d, 0, i);
+			case AK_I32: Mem.getI32At(d, 0, i);
+			case AK_BOOL: Mem.getU8At(d, 0, i);
 			case AK_F64: f2i(Mem.getF64At(d, 0, i));
 			case AK_I64: Mem.getI64At(d, 0, i).toInt();
 			case _: unboxInt(Mem.getRefAt(d, 0, i));
@@ -246,7 +246,8 @@ class Boxes {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		var d = arrData(a);
 		return switch arrKind(a) {
-			case AK_I32 | AK_BOOL: Mem.getI32At(d, 0, i);
+			case AK_I32: Mem.getI32At(d, 0, i);
+			case AK_BOOL: Mem.getU8At(d, 0, i);
 			case AK_F64: f2l(Mem.getF64At(d, 0, i));
 			case AK_I64: Mem.getI64At(d, 0, i);
 			case _: unboxI64(Mem.getRefAt(d, 0, i));
@@ -257,7 +258,8 @@ class Boxes {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		var d = arrData(a);
 		return switch arrKind(a) {
-			case AK_I32 | AK_BOOL: Mem.getI32At(d, 0, i);
+			case AK_I32: Mem.getI32At(d, 0, i);
+			case AK_BOOL: Mem.getU8At(d, 0, i);
 			case AK_F64: Mem.getF64At(d, 0, i);
 			case AK_I64:
 				var f:Float = cast Mem.getI64At(d, 0, i);
@@ -270,7 +272,7 @@ class Boxes {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return null;
 		return switch arrKind(a) {
 			case AK_I32: boxInt(Mem.getI32At(arrData(a), 0, i));
-			case AK_BOOL: boxBool(Mem.getI32At(arrData(a), 0, i));
+			case AK_BOOL: boxBool(Mem.getU8At(arrData(a), 0, i));
 			case AK_F64: boxFloat(Mem.getF64At(arrData(a), 0, i));
 			case AK_I64: boxI64(Mem.getI64At(arrData(a), 0, i));
 			case _: Mem.getRefAt(arrData(a), 0, i);
@@ -292,7 +294,7 @@ class Boxes {
 				case _: Mem.getRef(new Ptr(v), 0);
 			}
 			a = Mem.getRef(slot, 0);
-			Mem.setRefBarrier(Mem.obj(arrData(a)), 8 * i, p);
+			Mem.setRefBarrier(Mem.obj(arrStore(a)), 8 * i, p);
 			return;
 		}
 		if (vk == AK_PTR) {
@@ -310,8 +312,8 @@ class Boxes {
 				return;
 			}
 			var d = arrData(a);
-			if (ak4(ak)) Mem.setI32At(d, 0, i, unboxInt(p)) else if (ak == AK_F64) Mem.setF64At(d, 0, i, unboxFloat(p)) else
-				Mem.setI64At(d, 0, i, unboxI64(p));
+			if (ak == AK_I32) Mem.setI32At(d, 0, i, unboxInt(p)) else if (ak == AK_BOOL) Mem.setU8At(d, 0, i, unboxInt(p)) else if (ak == AK_F64)
+				Mem.setF64At(d, 0, i, unboxFloat(p)) else Mem.setI64At(d, 0, i, unboxI64(p));
 			return;
 		}
 		if (vk != ak && !(vk == AK_I32 && (ak == AK_F64 || ak == AK_I64))) {
@@ -320,7 +322,7 @@ class Boxes {
 			return;
 		}
 		var d = arrData(a);
-		if (ak4(ak)) Mem.setI32At(d, 0, i, v.toInt()) else if (ak == AK_F64) {
+		if (ak == AK_I32) Mem.setI32At(d, 0, i, v.toInt()) else if (ak == AK_BOOL) Mem.setU8At(d, 0, i, v.toInt()) else if (ak == AK_F64) {
 			if (vk == AK_I32) Mem.setF64At(d, 0, i, v.toInt()) else Mem.setI64At(d, 0, i, v);
 		} else
 			Mem.setI64At(d, 0, i, vk == AK_I32 ? (v.toInt() : I64) : v);
@@ -338,7 +340,7 @@ class Boxes {
 	}
 
 	// the push of a value of kind vk (AK_PTR: v is the address of a rooted
-	// slot) that the inline path left: a full array, one without data yet, or
+	// slot) that the inline path left: a full array (one without room too) or
 	// another kind. The usual case, a full one of the value's kind, grows here
 	// in one go (twice the capacity, at least 2, as arrGrow) and stores
 	// directly; the others, and an array changed at the allocation, take
@@ -348,7 +350,7 @@ class Boxes {
 		var k = arrKind(a);
 		if (k != vk) return pushConv(slot, vk, v);
 		var n = arrLen(a);
-		var d = arrData(a);
+		var d = arrStore(a);
 		var cap = arrCap(a);
 		if (n < cap) {
 			setLen(a, n + 1);
@@ -358,12 +360,11 @@ class Boxes {
 		var ncap = cap * 2;
 		if (ncap < 2) ncap = 2;
 		if (ncap < n + 1) ncap = n + 1;
-		var nd:Dynamic = k == AK_PTR ? Mem.alloc(ncap, T_ADATA_P, K_PARR) : Mem.alloc(ak4(k) ? (ncap + 1) >> 1 : ncap, T_ADATA_RAW, K_RAW);
+		var nd = NArray.make(k, roomFor(k, ncap));
 		a = Mem.getRef(slot, 0);
-		if (arrData(a) != d || arrKind(a) != k || arrLen(a) != n) return pushConv(slot, vk, v);
+		if (arrStore(a) != d || arrKind(a) != k || arrLen(a) != n) return pushConv(slot, vk, v);
 		if (n > 0) {
-			var bytes = n << (ak4(k) ? 2 : 3);
-			LibC.memcpy(Mem.addr(nd), d, bytes);
+			LibC.memcpy(Mem.addr(nd), d, akSize(k) * n);
 			if (k == AK_PTR && !inYoungObj(nd)) Gc_barrierRange(nd, n);
 		}
 		Mem.setRefBarrier(a, 8, nd);
@@ -375,10 +376,10 @@ class Boxes {
 	static inline function setLen(a:Dynamic, n:Int)
 		Mem.setI32(Mem.addr(a), 0, n);
 
-	// v (of the array's kind k) stored at i in the data d
-	static inline function storeKind(d:Ptr, i:Int, k:Int, v:I64) {
-		if (k == AK_PTR) Mem.setRefBarrier(Mem.obj(d), 8 * i, Mem.getRef(new Ptr(v), 0)) else if (ak4(k)) Mem.setI32At(d, 0, i, v.toInt()) else
-			Mem.setI64At(d, 0, i, v);
+	// v (of the array's kind k) stored at i in the storage s
+	static inline function storeKind(s:Ptr, i:Int, k:Int, v:I64) {
+		if (k == AK_PTR) Mem.setRefBarrier(Mem.obj(s), 8 * i, Mem.getRef(new Ptr(v), 0)) else if (k == AK_I32) Mem.setI32At(s, 0, i, v.toInt()) else if (k == AK_BOOL)
+			Mem.setU8At(s, 0, i, v.toInt()) else Mem.setI64At(s, 0, i, v);
 	}
 
 	static function pushConv(slot:Ptr, vk:Int, v:I64):Int {

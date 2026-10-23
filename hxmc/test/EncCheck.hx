@@ -11,7 +11,7 @@ class EncCheck {
 	static function main() {
 		var a = parseArgs(Sys.args(), ["--arch"]);
 		var x64 = a.get("--arch", "x64") == "x64";
-		var r = exec([Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc", "-cp", "hxmc/src", "-cp", "hxmc/test/encoder", "--run", x64 ? "EncTest" : "EncTestA64"], {merge: true});
+		var r = exec([Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc", "-cp", "hxmc/src", "-cp", "haxe/src", "-cp", "hxmc/test/encoder", "--run", x64 ? "EncTest" : "EncTestA64"], {merge: true});
 		if (r.code != 0) fail(r.out);
 		var cases = [for (l in r.out.split("\n")) if (l.contains("|")) {var i = l.lastIndexOf("|"); {text: l.substr(0, i), hex: l.substr(i + 1)};}];
 		var src = (x64 ? ".intel_syntax noprefix\n" : "") + [for (c in cases) c.text].join("\n") + "\n";

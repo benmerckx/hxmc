@@ -99,8 +99,13 @@ class Driver {
 	var raRounds = 0;
 	var escRemoved = 0;
 	var escFolds = 0;
+	var allocsFolded = 0; // (Fold)
+	var rootStores = 0; // (Frames)
+	var freshStores = 0; // (Opt.freshTargets)
+	var framesRemoved = 0;
+	var devirtualized = 0; // (Inline.devirtualize)
+	var foldWhy = new Map<String, Int>(); // (Fold.whyOn)
 	var escTime = 0.0;
-	var lambdaSyms:Null<Map<String, FuncInfo>>; // the closures' functions that may be inlined, by symbol
 	var escSlow:Array<{name:String, t:Float}> = [];
 	var raInsns = 0;
 	var raFuncs = 0;
@@ -114,9 +119,10 @@ class Driver {
 		var e = templates.get(fn);
 		tlock.release();
 		if (e != null) return e.t;
+		// (object-level Mir, judged on the size of its lowering: Inline.size)
 		var cb = new MirBuild(prep, abi, fn);
 		cb.icSym = prep.funcSym(fn) + "__ic";
-		var t = try Inline.template(cb, cb.build()) catch (_:Unsupported) null;
+		var t = try Inline.template(cb, cb.objects()) catch (_:Unsupported) null;
 		tlock.acquire();
 		var e2 = templates.get(fn);
 		if (e2 == null) templates.set(fn, {t: t}) else t = e2.t;
@@ -131,10 +137,11 @@ class Driver {
 			var s0 = haxe.Timer.stamp();
 			var mb = new MirBuild(prep, abi, fn);
 			mb.icSym = name + "__ic";
-			var mf = mb.build();
+			// object-level Mir: inlined, its allocations replaced (Escape), then
+			// lowered (MemLower) for the memory-level passes and the back ends
+			var mf = mb.objects();
 			if (o.opt) {
 				// to a depth (Fingerprint keys callers with their callees' callees)
-				var ic = {sym: mb.icSym, count: mb.icaches};
 				function rounds(todo:Array<{call:MIns, fn:FuncInfo}>) {
 					for (_ in 0...Inline.DEPTH) {
 						if (todo.length == 0) break;
@@ -145,7 +152,7 @@ class Driver {
 							if (t != null && s.fn != fn && t.size <= Inline.maxSize(abi.wasm, s.call.block.mark == inLoop, StringTools.startsWith(s.fn.module, "hxmc.rt.")))
 								sites.push({call: s.call, callee: t});
 						}
-						todo = Inline.run(mf, sites, ic);
+						todo = Inline.run(mf, sites);
 					}
 				}
 				rounds(mb.inlineSites);
@@ -153,15 +160,22 @@ class Driver {
 				// function, inlined when it may be and is of this module (its
 				// body and its callees' are in the module's key), so that
 				// Escape may replace the closure
-				if (Escape.on && (interp == null || !interp.wants(fn)) && mf.allocs > 0 && lambdaSyms != null && Escape.part("closures") && Escape.allowed(name)) {
+				if (Escape.on && (interp == null || !interp.wants(fn)) && mf.allocs > 0 && Escape.part("closures") && Escape.allowed(name)) {
 					var todo = [];
-					for (c in Escape.closureCalls(mf)) {
-						var g = lambdaSyms.get(c.sym);
-						if (g != null && g.module == fn.module && MirBuild.inlineCands.exists(g)) todo.push({call: c.call, fn: g});
-					}
+					for (c in Escape.closureCalls(mf, g -> g.module == fn.module && MirBuild.inlineCands.exists(g), prep.funcSym))
+						todo.push(c);
 					rounds(todo);
 				}
-				mb.icaches = ic.count;
+				// virtual calls on objects made here: direct, then inlined where they may be
+				if (Inline.devirtOn && mf.allocs > 0) {
+					var d = Inline.devirtualize(mf, fn.module, prep.p.selectors, prep.funcSym);
+					if (d.length > 0) {
+						lock.acquire();
+						devirtualized += d.length;
+						lock.release();
+						rounds([for (s in d) if (MirBuild.inlineCands.exists(s.fn)) s]);
+					}
+				}
 			}
 			// (not for the interpreter: no gain there, measured on the macro benchmarks, and a third of the passes' time)
 			if (o.opt && Escape.on && (interp == null || !interp.wants(fn))) {
@@ -176,8 +190,38 @@ class Driver {
 				if (o.stats && te > 0.005) escSlow.push({name: name + " (" + mf.vals.length + " values)", t: te});
 				lock.release();
 			}
+			// the optimizer on object-level Mir (struct values in frame slots
+			// replaced first), then the frame's slots nothing reads; after the
+			// lowering only allocation folding, the CFG's cleanup and
+			// dead code
 			if (o.opt && sroa) new Sroa(mf).run();
-			if (o.opt) new Opt(mf).run();
+			if (o.opt) {
+				var op = new Opt(mf);
+				op.run();
+				// (the rooted locals' slots nothing reads any more)
+				var fs = new Frames(mf);
+				fs.run();
+				if (fs.storesRemoved > 0 || fs.frameRemoved || op.freshStores > 0) {
+					lock.acquire();
+					freshStores += op.freshStores;
+					rootStores += fs.storesRemoved;
+					if (fs.frameRemoved) framesRemoved++;
+					lock.release();
+				}
+			}
+			mb.lower();
+			if (o.opt && Fold.on && mf.allocs > 1) {
+				var fo = new Fold(mf);
+				fo.run();
+				if (fo.folded > 0 || Fold.whyOn) {
+					lock.acquire();
+					allocsFolded += fo.folded;
+					for (k => v in fo.why)
+						foldWhy.set(k, (foldWhy.exists(k) ? foldWhy.get(k) : 0) + v);
+					lock.release();
+				}
+			}
+			if (o.opt) Opt.lowered(mf);
 			if (dumpSet != null && dumpSet.exists(name)) Sys.println(mf.dump());
 			if (interp != null && interp.wants(fn)) {
 				new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (m, global) -> compileStub(m, emit, global)).run();
@@ -218,7 +262,7 @@ class Driver {
 			// the runtime's Haxe functions: a section each, dropped by the linker
 			// when nothing reaches them (the exported ones are always compiled)
 			var rtFunc = StringTools.startsWith(fn.module, "hxmc.rt.");
-			if (rtFunc) emit.useSection(Link.GC_PREFIX + name);
+			if (rtFunc) emit.useSection(LinkCore.GC_PREFIX + name);
 			emit.func(lf, ra.usedRegs, true);
 			if (rtFunc) emit.useSection(null);
 			var s4 = haxe.Timer.stamp();
@@ -271,6 +315,12 @@ class Driver {
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
+		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
+		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
+		var ks = [for (k in foldWhy.keys()) k];
+		ks.sort((a, b) -> foldWhy.get(b) - foldWhy.get(a));
+		for (k in ks)
+			Sys.println('hxmc: fold: ${foldWhy.get(k)} stopped by $k');
 		escSlow.sort((a, b) -> a.t < b.t ? 1 : -1);
 		for (x in escSlow.slice(0, 8))
 			Sys.println('  escape ${ms(x.t)}\t${x.name}');
@@ -306,29 +356,12 @@ class Driver {
 		for (f in prep.p.funcs)
 			if (Inline.candidate(f)) m.set(f, true);
 		MirBuild.inlineCands = m;
-		lambdaSyms = [for (l in prep.p.lambdas) if (m.exists(l.fn)) prep.funcSym(l.fn) => l.fn];
-		// (enums whose constructors' type indices less their tags agree, as
-		// EEnumTag subtracts: Escape folds the tag of a known constructor)
-		var tags = new Map<String, {en:Int, tag:Int}>();
-		for (k in 0...prep.p.enums.length) {
-			var en = prep.p.enums[k];
-			if (en.ctors.length == 0) continue;
-			var base = en.ctors[0].tindex - en.ctors[0].tag;
-			var ok = true;
-			for (c in en.ctors)
-				if (c.tindex < 0 || c.tindex - c.tag != base || prep.tySym(c.tindex) == null) ok = false;
-			if (ok)
-				for (c in en.ctors)
-					tags.set(prep.tySym(c.tindex), {en: k, tag: c.tag});
-		}
-		Escape.ctorTags = tags;
-		// (the slots of each type that hold references: Escape keeps them on the shadow stack)
-		var refs = new Map<String, haxe.ds.Vector<Bool>>();
+		// (the slots of each type that hold references: Escape keeps a
+		// Mem.alloc object's on the shadow stack)
+		var refs = new Map<Int, haxe.ds.Vector<Bool>>();
 		var types = prep.e.types;
-		for (ti in 0...types.length) {
-			var sym = prep.tySym(ti);
-			refs.set(sym != null ? sym : "#" + ti, core.ds.VectorTools.mapToVector(types[ti].slots, s -> s != null && s.match(TRef(_))));
-		}
+		for (ti in 0...types.length)
+			refs.set(ti, core.ds.VectorTools.mapToVector(types[ti].slots, s -> s != null && s.match(TRef(_))));
 		Escape.refSlots = refs;
 	}
 
@@ -496,6 +529,7 @@ class Driver {
 		dg.stubs(objs, demit);
 		dg.cstrLiterals(objs);
 		dg.emptyArrays(objs);
+		dg.resources(objs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
 		// (the functions and their lines for the runtime's stacks: StackTable)
@@ -583,6 +617,10 @@ class Driver {
 			if (imp != null) all.push(imp);
 		}
 		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios) : null;
+		// the runtime objects' sections and the runtime's Haxe functions that
+		// nothing reaches are left out (LinkCore.gc; -D hxmc.jit: every runtime
+		// function stays, for the native macros it loads)
+		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.jit ? rts : null;
 		var exe = abi.os == "windows" ? {
 			var l = new LinkPE(all, abi.arm);
 			if (abi.output == SharedLibrary) {
@@ -593,10 +631,12 @@ class Driver {
 				if (o.dllBase != null) l.dllBase = Std.parseInt(o.dllBase);
 			}
 			l.symbols = !o.strip;
+			l.collect = collect;
 			l.link("mainCRTStartup");
 		} : abi.os == "macos" ? {
 			var l = new LinkMachO(all, abi);
 			l.symbols = !o.strip;
+			l.collect = collect;
 			if (abi.output == SharedLibrary) l.installName = "@rpath/" + haxe.io.Path.withoutDirectory(out);
 			l.dylibs = dylibs;
 			if (bundle != null) {
@@ -617,8 +657,7 @@ class Driver {
 				d;
 			} else new Link(all, abi);
 			l.symbols = !o.strip;
-			// (-D hxmc.jit: every runtime function stays, for the native macros it loads)
-			if (Sys.getEnv("HXMC_NOGC") != "1" && !o.jit) l.collect = rts;
+			l.collect = collect;
 			if (o.jit) l.hostSyms = new StringBuf();
 			var exe = l.link("_start");
 			if (o.jit) {
@@ -692,43 +731,17 @@ class Driver {
 	}
 }
 
-// The order blocks are laid out in: reverse postorder, the cold blocks (slow
-// paths) at the end.
+// The order blocks are laid out in: reverse postorder (Cfg), the cold blocks
+// (slow paths) at the end.
 class Layout {
 	public static function order(f:MFunc):haxe.ds.Vector<MBlock> {
-		var seen = f.newMark();
-		var post = [];
-		// iterative DFS: the first successor is visited first
-		var stack:Array<MBlock> = [f.entry];
-		var idx:Array<Int> = [0];
-		f.entry.mark = seen;
-		while (stack.length > 0) {
-			var top = stack.length - 1;
-			var b = stack[top];
-			var k = idx[top];
-			if (k < b.succs.length) {
-				idx[top] = k + 1;
-				var s = b.succs[k];
-				if (s.mark != seen) {
-					s.mark = seen;
-					stack.push(s);
-					idx.push(0);
-				}
-			} else {
-				post.push(b);
-				stack.pop();
-				idx.pop();
-			}
-		}
-		// (reverse postorder: the hot blocks, then the cold ones)
-		var n = post.length;
-		var r = new haxe.ds.Vector<MBlock>(n);
-		var k = 0, i = n;
-		while (i-- > 0)
-			if (!post[i].cold) r[k++] = post[i];
-		i = n;
-		while (i-- > 0)
-			if (post[i].cold) r[k++] = post[i];
+		var rpo = f.cfg().rpo;
+		var r = new haxe.ds.Vector<MBlock>(rpo.length);
+		var k = 0;
+		for (b in rpo)
+			if (!b.cold) r[k++] = b;
+		for (b in rpo)
+			if (b.cold) r[k++] = b;
 		return r;
 	}
 }

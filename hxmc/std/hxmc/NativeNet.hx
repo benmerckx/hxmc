@@ -47,10 +47,10 @@ class NativeNet {
 		return #if (hxmc.target == "wasm32-wasi") WasiNet.sockName(fd, peer) #else Mem.os() == 2 ? WinNet.sockName(fd, peer) : PosixNet.sockName(fd, peer) #end;
 
 	public static inline function recv(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiNet.recv(fd, b, pos, len) #else Mem.os() == 2 ? WinNet.recv(fd, b, pos, len) : PosixNet.recv(fd, b, pos, len) #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiNet.recv(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinNet.recv(fd, b.getData(), pos, len) : PosixNet.recv(fd, b.getData(), pos, len) #end;
 
 	public static inline function send(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiNet.send(fd, b, pos, len) #else Mem.os() == 2 ? WinNet.send(fd, b, pos, len) : PosixNet.send(fd, b, pos, len) #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiNet.send(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinNet.send(fd, b.getData(), pos, len) : PosixNet.send(fd, b.getData(), pos, len) #end;
 
 	// Unix.select: sets the entries of descriptors that are not ready to -1
 	public static inline function select(read:Array<Int>, write:Array<Int>, others:Array<Int>, timeout:Float):Int

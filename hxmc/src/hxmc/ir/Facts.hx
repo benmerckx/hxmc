@@ -175,6 +175,8 @@ class Facts {
 
 	function addType(t:TypeEntry):Int {
 		types.push(t);
+		// (16 bits of type index, 0xFFFF the collector's: Types.T_FWD; the JIT's spare entries after)
+		if (types.length > 0xFFFF - 4096) throw "hxmc: more than " + (0xFFFF - 4096) + " types";
 		return types.length - 1;
 	}
 
@@ -229,25 +231,40 @@ class Facts {
 		return t.match(TI32 | TBool) ? 2 * slot : slot;
 
 	function assignTypes() {
-		var rtNames = ["None", "String", "Int", "Float", "Bool", "Array", "ArrayData", "ArrayData", "haxe.io.Bytes", "haxe.io.BytesBuffer", "StringBuf", "Ref", "Ref", "Ref", "Class", "Overflow", "Native", "ArrayIterator", "haxe.Int64"];
-		var rtSlots:Array<Array<Null<Ty>>> = [[], [], [TI32], [TF64], [TBool], [TI32, TRef(RAny)], [], [], [], [TI32, TRef(RAny)], [TI32, TRef(RAny)], [TRef(RAny)], [TI32], [TF64], [TI32], [], [], [TRef(RAny), TI32], [TI64]];
-		rtNames.push("hxmc.NativeArray");
-		rtSlots.push([]);
-		// (T_DATE: the milliseconds since the epoch, hxmc.rt.MemRepr.dateOf)
-		rtNames.push("Date");
-		rtSlots.push([TF64]);
-		// (T_MATH: Math's class value, an extern class the runtime implements; no instances)
-		rtNames.push("Math");
-		rtSlots.push([]);
+		// (hxmc.rt.Types: records below 16, with their slots; 16 to 31 arrays,
+		// whose slots their headers describe, of bytes to 23, of references
+		// from 24; 19 to 24 NativeArray storage by element kind (19 that of
+		// bytes, haxe.io.BytesData); 7 and 8 the wrapper made for an erased
+		// type parameter; 15 a Date, its time: hxmc.rt.MemRepr.dateOf; 28
+		// Math's class value, an extern class the runtime implements, with no
+		// instances)
+		var rtNames = [
+			"None", "ArrayIterator", "Int", "Float", "Bool", "Array", "haxe.Int64", "hxmc.NativeArray", "hxmc.NativeArray", "haxe.io.BytesBuffer", "StringBuf",
+			"Ref", "Ref", "Ref", "Class", "Date", "String", "ArrayData", "Native", "hxmc.NativeArray", "hxmc.NativeArray", "hxmc.NativeArray", "hxmc.NativeArray",
+			"hxmc.NativeArray", "hxmc.NativeArray", "ArrayData", "Overflow", "Native", "Math"
+		];
+		var rtSlots:Array<Array<Null<Ty>>> = [
+			[], [TRef(RAny), TI32], [TI32], [TF64], [TBool], [TI32, TRef(RAny)], [TI64], [TRef(RAny)], [TRef(RAny)], [TI32, TRef(RAny)], [TI32, TRef(RAny)],
+			[TRef(RAny)], [TI32], [TF64], [TI32], [TF64]
+		];
 		for (i in 0...T_FIRST)
 			addType(entry(i < rtNames.length ? rtNames[i] : "Reserved", "TK_RUNTIME", i < rtSlots.length ? rtSlots[i] : [], "rt" + i));
 		for (c in p.classes) {
 			var slots:Array<Null<Ty>> = [];
 			c.locs = layout(slots, [for (f in c.fields) f.ty]);
 			c.nslots = slots.length;
+			// (a record's header counts 16 bits of slots, 0xFFFF an array's mark: Types)
+			if (slots.length >= 0xFFFF) throw "hxmc: class " + c.name + " has more than 65534 slots";
 			var t = entry(c.name, "TK_CLASS", slots, c.name);
 			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it)
 			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD)) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
+			// (a derived field: its NativeArray field's slot, kind L, the runtime's Dyn.boxSlot)
+			for (d in c.derived) {
+				var i = c.fieldIndex(d.of);
+				if (!c.fields[i].ty.match(TRef(RNativeArr(_))))
+					throw "hxmc: @:hxmc.lengthOf(\"" + d.of + "\") on " + c.name + "." + d.name + ": not a NativeArray field";
+				t.fields.push({name: d.name, slot: c.locs[i], ty: c.fields[i].ty, kind: "L".code});
+			}
 			c.tindex = addType(t);
 		}
 		for (c in p.classes)
@@ -340,7 +357,7 @@ class Facts {
 			}
 		}
 		// the runtime's array iterator (Iterable.iterator() on an Array): methods in rt_dyn.c
-		types[17].methods = [
+		types[1].methods = [
 			{name: "hasNext", fn: "hx_arrayiter_hasNext", sig: p.sig([], TBool).id},
 			{name: "next", fn: "hx_arrayiter_next", sig: p.sig([], TRef(RAny)).id}
 		];
@@ -772,7 +789,8 @@ typedef TypeEntry = {
 	tk:String,
 	sup:Int,
 	slots:Array<Null<Ty>>,
-	fields:Array<{name:String, slot:Int, ty:Ty}>,
+	// (kind: the runtime's field kind when not the type's: L, Dyn.boxSlot)
+	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int}>,
 	// (dfn, dsig: the entry for dynamic calls, FuncInfo.dfltEntry)
 	methods:Array<{name:String, fn:String, sig:Int, ?dfn:String, ?dsig:Int}>,
 	ifaces:Array<Int>,

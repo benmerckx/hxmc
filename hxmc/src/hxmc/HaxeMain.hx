@@ -85,8 +85,8 @@ class HaxeMain {
 				if (Driver.resident) com.error("hxmc: " + Std.string(e), core.Globals.nullPos) else failed = Std.string(e);
 			}
 		}
-		// -lib from node_modules before lix and haxelib (NodeLibs.hx)
-		compiler.HighLevel.libraryHook = NodeLibs.resolve;
+		// -lib: lix's scopes, node_modules, haxelib without a process (libs/Libraries.hx)
+		hxmc.libs.Libraries.install(args[0] != "--cwd");
 		ModuleCache.install();
 		hxmc.ir.CInterop.install();
 		hxmc.TargetFlags.install();

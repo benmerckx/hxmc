@@ -876,6 +876,9 @@ class InterpGen {
 				}
 				if (i.b < 0) emit([(LD1S : Int) + k, r(i.id), r(i.a), i.imm]) else emit([(LDX1S : Int) + k, r(i.id), r(i.a), r(i.b), i.imm2, i.imm]);
 			case Store:
+				// (a store that publishes what it stores, MIns.release: a plain
+				// store on x86-64, which orders stores; the interpreter's only host)
+				if (i.release && abi.arm) throw new MirBuild.Unsupported("-D hxmc.interp: a release store on arm64");
 				var k = if (ty(i.c) == F64 && i.size == 4) 4 else switch i.size {
 					case 1: 0;
 					case 2: 1;
@@ -934,6 +937,11 @@ class InterpGen {
 				if (i.a >= 0) emit([RET, r(i.a)]) else code.push(RETV);
 			case Unreachable:
 				code.push(UNREACH);
+			case NullCheck | New | NewDyn | InitField | GetField | SetField | FieldAddr | EnumTag | TypeTest | Box | Unbox | VirtualCall | ClosureCall | AnonGet |
+				AnonTest | AnonStore | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush | NewArray | ArrayInit | NewNArray | NArrayInit | NArrayLength |
+				NArrayGet | NArraySet | NArrayDyn | RefStore | IrNode | VarGet | VarSet | Try | Catch:
+				// (the interpreter runs lowered Mir, as the back ends)
+				throw "-D hxmc.interp: " + MFunc.opName(i.op) + " is object-level (MemLower lowers it first)";
 		}
 	}
 

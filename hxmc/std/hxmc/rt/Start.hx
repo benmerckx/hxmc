@@ -57,7 +57,7 @@ class Start {
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);
 		var to = Mem.sym("rt_type_objs");
 		for (t in 0...nt) {
-			Mem.setI64(to, 16 * t, (((Types.T_TYPEOBJ : I64) << 32) | ((Types.K_RAW << 28) | 1)));
+			Mem.setI64(to, 16 * t, Types.recordHdr(Types.T_TYPEOBJ, 1));
 			Mem.setI32(to, 16 * t + 8, t);
 		}
 		// (Android: Bionic's atexit is crtbegin_so.o's, __cxa_atexit with the

@@ -8,10 +8,10 @@ import hxmc.unsafe.Mem;
 // The Array natives (formerly in rt_std.c): generic natives over arrays of
 // any element kind, written over hxmc.rt.Repr for both runtimes
 // (@:hxmc.anyHeap): the arguments' meaning here, the elements' storage
-// there (in linear memory rt.h's: slot 0 the length and the element kind,
-// slot 1 the data, null while empty; Int and Bool elements take 4 bytes,
-// others 8; the element access, growth and kind conversion themselves stay
-// with the collector, hx_arr_*). The rest are the language's own array
+// there (in linear memory Boxes': slot 0 the length and the element kind,
+// slot 1 the storage, a NativeArray of that kind as long as the capacity;
+// the element access, growth and kind conversion themselves stay with the
+// collector, hx_arr_*). The rest are the language's own array
 // operations on Array<Dynamic>, which go through them.
 @:keep @:allow(hxmc.rt) @:hxmc.anyHeap
 class Arr {
@@ -204,15 +204,15 @@ class Arr {
 
 	@:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
 		#if !(hxmc.wasm_gc)
-		// past the capacity (including from empty), the data
+		// past the capacity (including from empty), the storage
 		// allocated at the new length, the elements copied once (the new ones
 		// zero, the kind kept), unless another thread changed the array meanwhile
 		var kind = kindOf(a);
 		if (n > Boxes.arrCap(a)) {
-			var d0 = MemRepr.arrData(a);
+			var d0 = MemRepr.arrStore(a);
 			var nd:Dynamic = Boxes.dataAlloc(kind, n);
 			var k = len(a);
-			if (MemRepr.arrData(a) == d0 && kindOf(a) == kind && k <= n) {
+			if (MemRepr.arrStore(a) == d0 && kindOf(a) == kind && k <= n) {
 				if (k > 0) {
 					LibC.memcpy(Mem.addr(nd), MemRepr.arrData(a), (MemRepr.elemSize(a) * k : I64));
 					if (kind == Repr.AK_PTR && !Boxes.inYoungObj(nd)) Boxes.Gc_barrierRange(nd, k);

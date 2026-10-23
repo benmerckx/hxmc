@@ -24,7 +24,7 @@ ZIG ?= zig
 export ZIG
 # the machine the tool runs on (Linux or macOS; its own runtime object)
 HOST ?= $(if $(filter Darwin,$(shell uname -s)),macos,linux)-$(if $(filter aarch64 arm64,$(shell uname -m)),arm64,x86_64)
-# `make release`, `make lix-release`: one of the six targets
+# `make release`: one of the six targets
 TARGET ?= $(HOST)
 TARGETS := linux-x86_64 linux-arm64 windows-x86_64 windows-arm64 macos-x86_64 macos-arm64
 # the runtime objects: the six targets, Linux in the dynamic glibc mode (-D hxmc.libc=glibc), Android
@@ -33,9 +33,9 @@ RT_TARGETS := $(TARGETS) linux-x86_64-glibc linux-arm64-glibc android-arm64 andr
 RT_TARGET ?= $(HOST)
 # `make corpus-stage`: the six targets, wasm32-wasi, wasm32-wasi-legacy, linux-x86_64-glibc, linux-arm64-glibc
 CORPUS_TARGETS ?= $(TARGETS) wasm32-wasi wasm32-wasi-legacy linux-x86_64-glibc linux-arm64-glibc
-# `make android-programs`, `android-check`, `android-device-check`: android-x86_64 or android-arm64
+# `make android-check`, `android-device-check`: android-x86_64 or android-arm64
 ANDROID_TARGET ?= android-x86_64
-# `make ios-programs`, `ios-check`: ios-sim-arm64 or ios-arm64 (`ios-sim-check`: the simulator's, on a Mac)
+# `make ios-check`: ios-sim-arm64 or ios-arm64 (`ios-sim-check`: always the simulator's, on a Mac)
 IOS_TARGET ?= ios-sim-arm64
 # extra arguments of the port's build (e.g. HXFLAGS="-D retain")
 HXFLAGS ?=
@@ -43,9 +43,21 @@ HXFLAGS ?=
 PORT_BIN ?= bin/port/haxe
 # the reference compiler: the nightly build of the pinned upstream commit (`make reference`)
 REFERENCE ?= bin/reference/haxe
+# `make test`: the lanes, among hxb, macro, hxblib, display, server, jsonrpc,
+# interp, haxelib, libs, debugger, targets, unit (TEST_LANES below; default hxb);
+# SHARD=i/n splits the debugger lane (EvalDebugger --shard)
+LANES ?= hxb
+SHARD ?=
 # `make test-fuzz`: the lane and the number of programs
 LANE ?= diff:hxb
 N ?= 200
+# `make test`, `test-fuzz`: the compiler whose Eval runs the harnesses (CI:
+# EVAL=bin/port/haxe, the job has no tool) and the fuzzer (CI: the Fuzz script
+# on that Eval, FUZZ="bin/port/haxe -cp haxe/test/fuzz -cp haxe/test --run Fuzz");
+# SUMMARY: a file the harnesses append Markdown results to (CI: the job summary)
+EVAL ?= $(TOOL)
+FUZZ ?= bin/fuzz/fuzz
+SUMMARY ?=
 # `quick`, `check`, `full`: the corpus cases to restrict the corpus lanes to
 # (CASES="Int64Gc Bench"); PORT=1 adds the port's self-compile to `check`
 CASES ?=
@@ -58,21 +70,25 @@ LIX_DIR ?=
 BENCH_DATA ?=
 # `make bench`: the arguments of hxmc/test/Bench.hx (e.g. "-n 3 -c nbody -t hxmc,js")
 BENCH_ARGS ?=
-# `make bench-arrays`: length, rounds, samples, optional JSON output
+# `make bench-compile`: the arguments of hxmc/test/CompileBench.hx (e.g. "-n 5 --build --out site/data/bench.json")
+COMPILE_BENCH_ARGS ?=
+# `make bench-micro`: which microbenchmarks (arrays, maps; default both)
+WHICH ?= arrays maps
+# `make bench-micro WHICH=arrays`: length, rounds, samples, optional JSON output
 ARRAY_BENCH_ARGS ?=
-# `make bench-maps`: keys, rounds
+# `make bench-micro WHICH=maps`: keys, rounds
 MAP_BENCH_ARGS ?=
 # `make crosshost`: the arguments of hxmc/test/Crosshost.hx (CI splits the targets: "--targets a,b")
 CROSSHOST_ARGS ?= --tool
 
 # --- Sources ---
 
-PORT_SRC := $(shell find haxe/src -name '*.hx')
-HXMC_SRC := $(shell find hxmc/src -name '*.hx')
+PORT_SRC := $(shell find haxe/src -name '*.hx' 2>/dev/null)
+HXMC_SRC := $(shell find hxmc/src -name '*.hx' 2>/dev/null)
 # (the directories too: a file deleted changes only its directory's time)
-STD_SRC := $(shell find hxmc/std)
+STD_SRC := $(shell find hxmc/std 2>/dev/null)
 RT_SRC := $(wildcard hxmc/deps/*)
-LIX_SRC := $(shell find tools/lix/src -name '*.hx')
+LIX_SRC := $(shell find tools/lix/src -name '*.hx' 2>/dev/null)
 FUZZ_SRC := $(wildcard haxe/test/fuzz/*.hx haxe/test/fuzz/fuzz/*.hx) haxe/test/HlcNames.hx
 
 TOOL := bin/hxmc/hxmc
@@ -103,7 +119,6 @@ PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(COMPILER_ARGS
 PKG_ARGS := -cp haxe/src -cp hxmc/src -main hxmc.HaxeMain -D disable-parallelism $(COMPILER_ARGS) $(HXMC_ARGS)
 EXE = $(if $(findstring windows,$(1)),.exe)
 RELEASE_BIN := bin/release/$(TARGET)/haxe$(call EXE,$(TARGET))
-LIX_BIN := bin/release/$(TARGET)/lix$(call EXE,$(TARGET))
 
 # $(call hxmc,<out>,<args>): a build by the tool, its log next to the output
 define hxmc
@@ -113,114 +128,87 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
-.PHONY: help std deps rt rt-build rt-target rt-layouts hxmc tool bootstrap fixpoint stage0 crosshost port dev release wasm npm site fuzz \
-	lix lix-release lix-dist reference bench bench-arrays bench-maps test test-fuzz test-display test-server test-jsonrpc test-unit-targets test-interp \
-	test-haxelib test-eval-debugger test-node-libs test-module-cache smoke hxmc-test upstream-suites corpus-stage \
-	android-programs android-check android-device-check shared-check ios-programs ios-check ios-sim-check \
-	native-macros mir-run-check dev-check portcheck measure site-check \
-	quick check full clean distclean wasmgc-check wasmgc-bench wasmgc-port test-wasmgc-port
+.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
+	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
+	android-check android-device-check shared-check ios-check ios-sim-check native-macros mir-run-check dev-check \
+	bench bench-compile bench-micro measure wasmgc-check wasmgc-bench quick check full clean distclean
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
 
 # --- Targets ---
-## hxmc        bin/hxmc/hxmc: the tool, built by the previous tool from source (alias: tool);
-##             the first one by the stage0 module under node (bin/hxmc/boot/hxmc1)
-## bootstrap   the tool from the stage0 only, then the fixpoint
-## fixpoint    bin/hxmc/hxmc builds bin/hxmc/fix/a, which builds bin/hxmc/fix/b: byte-identical
-## stage0      hxmc/bootstrap/stage0.wasm.br: the tool as a wasm32-wasi module, brotli (commit it
-##             when the sources need a newer one)
-## std         bin/hxmc/std: hxmc/std merged with the Eval originals (hxmc/src/hxmc/MkStd.hx)
-## rt          the runtime objects (bin/hxmc/rt/<target>/{rt,ssl,uv}.o): the release
-##             rt-<hash of hxmc/deps> (hxmc/bootstrap/rt.mjs), else rt-build
-## rt-build    the runtime objects with zig: mbedtls and libuv (hxmc/deps/deps.sh), hxmc/deps/mkrt.sh
-## rt-target   RT_TARGET's objects alone (and linux-x86_64's, the tool's); rt-layouts then checks
-##             the committed layouts against every target's headers and writes bin/hxmc/rt/HASH
-##             (CI builds the eight targets in parallel)
-## crosshost   the tool as a WebAssembly module (under node) builds the corpus for every target
-##             and the tool itself byte-identical to the native tool (hxmc/test/Crosshost.hx)
-## port        PORT_BIN (bin/port/haxe): the port for the host, built by hxmc (alias: dev)
-## release     bin/release/TARGET/haxe[.exe]: the port cross-built by hxmc, with mbedtls and libuv
-## wasm        bin/wasm/hih.wasm: the playground's compiler (wasm32-wasi, -D hih_no_generators),
-##             and bin/wasm/hih-legacy.wasm, the same with -D hxmc.wasm-eh=legacy (browsers without exnref)
-## npm         bin/npm/*.tgz: the npm packages of packages/ (packages/pack.mjs): @hxmc/cli, its six
-##             platform packages @hxmc/<os>-<cpu>, @hxmc/wasm and @hxmc/source (NPM_VERSION)
-## site        bin/site: the website (site/: plain pages, their scripts compiled by the port, the
-##             playground's compiler; LIX_DIR's lix binaries under tools/, BENCH_DATA's benchmark
-##             history under bench/)
-## site-check  bin/site in headless browsers: links, every page without errors, the playground compiling,
-##             the benchmark tables (site/tools/browser-test.mjs; Playwright; BROWSERS="chromium firefox webkit")
-## fuzz        bin/fuzz/fuzz: the differential fuzzer, built by hxmc
-## lix         bin/lix/lix (+ haxe, haxelib, neko links): lix (tools/lix) for the host
-## lix-release bin/release/TARGET/lix[.exe]: lix cross-built for TARGET
-## lix-dist    bin/lix-dist/lix-<target>[.exe]: lix for the six targets (the release, the site's tools/)
-## reference   REFERENCE (bin/reference/haxe): the nightly of the pinned upstream commit, by lix
-## test        HXB conformance of PORT_BIN against the reference (haxe/test/Conformance.hx;
-##             CASES_FILE=haxe/test/conformance-macro-cases.txt for the macro cases)
-## test-fuzz   the fuzzer on PORT_BIN: LANE (default diff:hxb), the kept programs, then N programs
-## test-display, test-server, test-jsonrpc, test-interp, test-haxelib, test-eval-debugger
-##             the display requests, the compilation server, its JSON-RPC methods, --interp
-##             runs, -lib, the Eval debugger: PORT_BIN against the reference (haxe/test/*.hx)
-## test-unit-targets   upstream's unit suite compiled for each target by both, compared
-## smoke       hxmc/test/smoke.sh on PORT_BIN: --interp, HXB, JS, sys.ssl, eval.luv
-## hxmc-test   hxmc's corpus against its golden files (hxmc/test/Corpus.hx)
-## upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run: all
-##             three natively, unit as a wasm32-wasi module under node; skips and their
-##             reasons in hxmc/test/upstream (hxmc/test/UpstreamSuites.hx; SUITES: a subset,
-##             SUITES_TARGET=native|wasm32-wasi: one target)
-## test-module-cache  the persistent module cache's gate: the same outputs with and without it,
-##             cold, warm, after edits, for hxmc and JS (hxmc/test/ModuleCacheCheck.hx; with
-##             bin/npm/native/HOST/haxe; PORT=1 adds the port itself)
-## corpus-stage  bin/corpus/<target>: hxmc's corpus cross-built for each of CORPUS_TARGETS, to run on
-##             the target's machine (Check; CI's test and wasm jobs): wasm32-wasi-legacy with legacy
-##             exception handling, linux-*-glibc in the glibc mode (checked with readelf: ElfCheck);
-##             the native targets' debugging information checked and a -debug build staged in _debug/
-##             (DebugCheck: its --run on the target's machine runs gdb or lldb)
-## test-node-libs  -lib from node_modules with the npm package's compiler for the host (hxmc/test/NodeLibs.hx)
-## android-programs  bin/android/ANDROID_TARGET/{AndroidHello,AndroidViews}.apk: APKs written by hxmc (android-x86_64, android-arm64)
-## android-check  their structure (hxmc/test/ApkCheck.hx: zip, manifest, ELF, v2 signature, classes.dex)
-## android-device-check  AndroidHello on the device or emulator adb reaches (hxmc/test/android/android.sh)
-## ios-programs  bin/ios/IOS_TARGET/IosHello.{app,ipa}: an iOS app written by hxmc (ios-sim-arm64, ios-arm64)
-## ios-check   their structure (hxmc/test/IosCheck.hx: bundle, Info.plist, Mach-O, code signature)
-## ios-sim-check  IosHello on an iPhone simulator (a Mac with Xcode: hxmc/test/ios/ios.sh)
-## shared-check  shared libraries of the glibc mode (-D hxmc.shared), loaded by an hxmc program (hxmc/test/SharedCheck.hx)
-## dev-check   the dev loop (docs/dev.md): `hxmc dev` on a console program through edits and a compile
-##             error (hxmc/test/dev/dev-console.mjs), the compilation server's builds through edits
-##             against fresh ones (server-verify.mjs)
-## native-macros  the native macros prototype (docs/plans/compiler.md, "Native macros"): bin/jit/haxe, the
-##             npm compiler built with -D hxmc.jit (Linux x86-64), runs the macro cases with
-##             -D hxmc.macros=verify (MACROS=native: native only, the HXB compared)
-## mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.mir-run,
-##             hxmc/src/hxmc/interp/MirRun.hx): bin/jit/haxe as for native-macros, the corpus run
-##             in it (Corpus --mir-run)
-## portcheck   the port built by hxmc self-compiles to the reference's HXB (hxmc/test/Selfcheck.hx)
-## bench       the HaxeBenchmarks cases on hxmc (native, wasm under node), C++, JVM, JS, HL/C and
-##             HL, built by hxmc and the port: times, peak RSS, sizes (hxmc/test/Bench.hx; BENCH_ARGS)
-## bench-arrays  Array vs hxmc.NativeArray vs Vector: nine element types and five workloads
-##             (ARRAY_BENCH_ARGS="65536 128 7 bin/vector-bench/results.json")
-## bench-maps  ObjectMap get/set/exists/remove on objects, hits and misses, and StringMap's
-##             (MAP_BENCH_ARGS="1000000 11": keys, rounds)
-## measure     peak memory and time of the self-compile (ours, the reference) and of the
-##             tool's builds (haxe/test/Measure.hx)
-## wasmgc-check  -D hxmc.wasm-gc (WasmGC, an experiment): hxmc/test/wasmgc's programs and a few corpus
-##             cases as WasmGC modules under node, their output against the native build's (hxmc/test/GcCheck.hx);
-##             wasmgc-bench adds linear-memory wasm: times, peak RSS, sizes
-## wasmgc-port  bin/wasmgc-port/haxe: the port as a WasmGC module (-D hxmc.wasm-gc) run by node
-## test-wasmgc-port  the lanes with it as the port: HXB (the three lists), --interp, display, -L, the
-##             upstream target suites (docs/testing.md)
-## quick       after every edit (under a minute): the tool, then the x64 corpus, again with
-##             RT_VERIFY=1, and the wasm corpus under node (CASES restricts the corpus)
-## check       before a local commit (a few minutes): quick + arm64 (qemu), wine, a 16 KB
-##             nursery, the wasm corpus with legacy exception handling, ThreadNatives x30,
-##             crosshost on three cases, Android's APKs and iOS's apps checked, shared libraries;
-##             PORT=1 adds the native port's self-compile
-## full        before a push: every nursery, RT_VERIFY, wasmtime, ThreadNatives x300, the
-##             port's self-compile natively and as a module, crosshost, the fixpoint
-## clean       remove the build outputs (keeps the tool, the runtime objects and the reference)
-## distclean   also remove bin/ entirely
+## Build
+##   hxmc        bin/hxmc/hxmc: the tool, built by the previous tool from source (the first one by the
+##               stage0 module under node); bootstrap: from the stage0 only, then the fixpoint
+##   port        PORT_BIN (bin/port/haxe): the port for the host, built by hxmc (seconds after an edit)
+##   lix         bin/lix/lix (+ haxe, haxelib, neko links): lix (tools/lix) for the host
+##   reference   REFERENCE (bin/reference/haxe): the nightly of the pinned upstream commit, by lix
+##   stage0      hxmc/bootstrap/stage0.wasm.br: the tool as a wasm32-wasi module, brotli (commit it
+##               when the sources need a newer one)
+##   rt          the runtime objects (bin/hxmc/rt/<target>/{rt,ssl,uv}.o): the release rt-<hash of
+##               hxmc/deps> (hxmc/bootstrap/rt.mjs), else rt-build: zig, mbedtls and libuv (hxmc/deps);
+##               rt-target: RT_TARGET's alone, rt-layouts: the committed layouts checked (CI's rt jobs)
 ##
-## Variables: JOBS, NODE, ZIG, HOST, TARGET, RT_TARGET, ANDROID_TARGET, IOS_TARGET, HXFLAGS, PORT_BIN, REFERENCE, LANE, N, CASES, PORT,
-## LIX_DIR, BENCH_DATA, BENCH_ARGS, ARRAY_BENCH_ARGS, MAP_BENCH_ARGS, CROSSHOST_ARGS, CORPUS_TARGETS (defaults and meaning: the top of the Makefile).
+## Test (docs/testing.md)
+##   quick       after every edit of hxmc: the tool, the x64 corpus, again with RT_VERIFY=1, the wasm
+##               corpus under node, the module cache's store, the lowering's queries (CASES restricts
+##               the corpus)
+##   check       before a commit: quick + arm64 (qemu), wine, a 16 KB nursery, legacy exception handling,
+##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, Android's APKs,
+##               iOS's apps, shared libraries; PORT=1 adds the native port's self-compile
+##   full        before a push: every nursery, RT_VERIFY, wasmtime, ThreadNatives x300, the port's
+##               self-compile natively and as a module, crosshost, the fixpoint (hxmc/test/Tiers.hx)
+##   test        the port against the reference, the lanes of LANES (default hxb; CI's conformance jobs):
+##               hxb, macro, hxblib (HXB of the three case lists, Conformance; CASES_FILE for hxb),
+##               display, server, jsonrpc, interp (--interp runs), haxelib (-L, batch and server),
+##               libs (hxmc's -lib resolution against haxelib and lix's haxe shim),
+##               debugger (the Eval debugger; SHARD=i/n), targets (upstream's unit suite compiled for
+##               each target by both, compared), unit (unit tests of port modules, in-process)
+##   test-fuzz   the fuzzer on PORT_BIN: LANE (default diff:hxb), the kept programs, then N programs
+##   fixpoint    the tool rebuilds itself byte-identical (the module cache cold, warm and off)
+##   crosshost   the tool as a WebAssembly module builds the corpus and itself byte-identical to the
+##               native tool (hxmc/test/Crosshost.hx; CROSSHOST_ARGS)
+##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
+##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
+##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
+##               JS (hxmc/test/ModuleCacheCheck.hx; PORT=1 adds the port itself)
+##   wasmgc-check  -D hxmc.wasm-gc: hxmc/test/wasmgc's programs and corpus cases as WasmGC modules
+##               under node against the native build's output (hxmc/test/GcCheck.hx)
+##   dev-check   the dev loop: `hxmc dev` through edits and a compile error, the compilation server's
+##               builds against fresh ones (hxmc/test/dev)
+##   native-macros  the native macros prototype: the macro cases with -D hxmc.jit, -D hxmc.macros=MACROS
+##   mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.mir-run,
+##               hxmc/src/hxmc/interp/MirRun.hx): bin/jit/haxe as for native-macros, the corpus run in it
+##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
+##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
+##               run on a simulator (a Mac), shared libraries of the glibc mode
+##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
+##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
+##
+## Bench (docs/testing.md, "Benchmarks")
+##   bench       the HaxeBenchmarks cases on hxmc, C++, JVM, JS, HL/C and HL (hxmc/test/Bench.hx; BENCH_ARGS)
+##   bench-compile  the port against the reference compiling hello, stdlib and itself to HXB
+##               (hxmc/test/CompileBench.hx; COMPILE_BENCH_ARGS)
+##   bench-micro WHICH=arrays|maps (default both): Array vs NativeArray vs Vector (ARRAY_BENCH_ARGS),
+##               ObjectMap and StringMap (MAP_BENCH_ARGS)
+##   measure     peak memory and time of the self-compile (ours, the reference) and of the tool's
+##               builds (haxe/test/Measure.hx)
+##   wasmgc-bench  wasmgc-check's programs as WasmGC, linear-memory wasm and native: times, peak RSS, sizes
+##
+## Site & release
+##   site        bin/site: the website (site/; LIX_DIR's lix binaries, BENCH_DATA's benchmark history)
+##   site-check  bin/site in headless browsers (site/tools/browser-test.mjs; Playwright; BROWSERS)
+##   release     bin/release/TARGET/haxe[.exe]: the port cross-built by hxmc, with mbedtls and libuv
+##   lix-dist    bin/lix-dist/lix-<target>[.exe]: lix for the six targets (the release, the site's tools/)
+##   npm         bin/npm/*.tgz: the nine npm packages of packages/ (packages/pack.mjs; NPM_VERSION)
+##
+## Dev
+##   clean       remove the build outputs (keeps the tool, the runtime objects and the reference)
+##   distclean   also remove bin/ entirely
+##
+## Variables: JOBS, NODE, ZIG, HOST, TARGET, RT_TARGET, ANDROID_TARGET, IOS_TARGET, HXFLAGS, PORT_BIN, REFERENCE,
+## LANES, SHARD, LANE, N, EVAL, FUZZ, SUMMARY, CASES, PORT, LIX_DIR, BENCH_DATA, BENCH_ARGS, COMPILE_BENCH_ARGS,
+## WHICH, ARRAY_BENCH_ARGS, MAP_BENCH_ARGS, CROSSHOST_ARGS, CORPUS_TARGETS (defaults and meaning: the top of the Makefile).
 
 std: $(STD)
 $(STD): hxmc/src/hxmc/MkStd.hx $(STD_SRC)
@@ -264,7 +252,7 @@ rt-layouts: $(TOOL)
 # then moved: the running binary is replaced); the first one comes from the
 # stage0 module under node. A change to code generation reaches the tool's own
 # code on the next rebuild (`fixpoint` checks that a rebuild changes nothing).
-hxmc tool: $(TOOL)
+hxmc: $(TOOL)
 $(TOOL): $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
 	@if [ ! -x $@ ]; then $(MAKE) --no-print-directory bin/hxmc/boot/hxmc1; fi
 	@T=$@; [ -x $$T ] || T=bin/hxmc/boot/hxmc1; \
@@ -314,7 +302,7 @@ crosshost: $(TOOL) $(STD) $(HOST_RT)
 
 # --- The port ---
 
-port dev: $(PORT_BIN)
+port: $(PORT_BIN)
 $(PORT_BIN): $(TOOL) $(PORT_SRC) $(STD) $(HOST_RT)
 	$(call hxmc,$@,$(PORT_ARGS))
 
@@ -370,7 +358,8 @@ npm: $(NPM_GEN) $(NPM_NATIVES)
 # their scripts (site/client, compiled by the port: site/build.hxml), the
 # playground's compiler (bin/wasm) and examples, the std subset its compiler
 # reads (site/tools/MkBundle.hx), the measured results (site/data), lix under
-# tools/ (LIX_DIR), the benchmark history (BENCH_DATA) and the build facts
+# tools/ (LIX_DIR), the benchmark histories (BENCH_DATA: the programs', the
+# compiler's, the target generators') and the build facts
 # (build-info.json). The site's build in the addresses of the files its pages
 # fetch (Version.hx, and the pages' scripts and stylesheet): a deploy reaches
 # browsers at once.
@@ -387,6 +376,7 @@ site: wasm $(TOOL) $(STD) $(PORT_BIN)
 	if [ -n "$(LIX_DIR)" ]; then mkdir -p bin/site/tools && cp $(LIX_DIR)/lix-* bin/site/tools/; fi
 	if [ -n "$(BENCH_DATA)" ] && [ -f "$(BENCH_DATA)/history.json" ]; then mkdir -p bin/site/bench && cp $(BENCH_DATA)/history.json bin/site/bench/ && { cp $(BENCH_DATA)/latest.json bin/site/bench/ 2>/dev/null || true; }; fi
 	if [ -n "$(BENCH_DATA)" ] && [ -f "$(BENCH_DATA)/targets.json" ]; then cp $(BENCH_DATA)/targets.json bin/site/targets.json; fi
+	if [ -n "$(BENCH_DATA)" ] && [ -f "$(BENCH_DATA)/compile-history.json" ]; then mkdir -p bin/site/bench && cp $(BENCH_DATA)/compile-history.json $(BENCH_DATA)/compile-latest.json bin/site/bench/; fi
 	printf '{\n\t"date": "%s",\n\t"commit": "%s",\n\t"wasmSize": "%s",\n\t"wasmGz": "%s",\n\t"wasmLegacyGz": "%s",\n\t"dataGz": "%s",\n\t"lixSize": "%s"\n}\n' \
 		"$$(date -u +%Y-%m-%d)" "$$(git rev-parse --short HEAD)" \
 		"$$(wc -c < bin/site/hih.wasm | $(mb))" \
@@ -434,7 +424,6 @@ bin/lix/lix: $(LIX_DEPS)
 	$(call hxmc,$@,$(LIX_ARGS))
 	for cmd in haxe haxelib neko; do ln -sf lix bin/lix/$$cmd; done
 
-lix-release: $(LIX_BIN)
 bin/release/%/lix: $(LIX_DEPS)
 	$(call hxmc,$@,$(LIX_ARGS) -D hxmc.target=$*)
 bin/release/%/lix.exe: $(LIX_DEPS)
@@ -461,40 +450,48 @@ $(REFERENCE): bin/lix/lix
 # --- Tests (docs/testing.md) ---
 
 CASES_FILE ?= haxe/test/conformance-cases.txt
-# (exported: SCRIPT is a command list, which an assignment in front would not reach)
+# the lanes of `make test` (LANES): the harness and its arguments of each
+# (haxe/test/*.hx, on EVAL's Eval), PORT_BIN against the reference
+TEST_LANES := hxb macro hxblib display server jsonrpc interp haxelib libs debugger targets unit
+LANE_hxb := Conformance -j $(JOBS) --cases $(CASES_FILE)
+LANE_macro := Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt
+LANE_hxblib := Conformance -j $(JOBS) --cases haxe/test/conformance-hxblib-cases.txt --hxb-lib
+LANE_display := Display -j $(JOBS)
+LANE_server := Server -j $(JOBS)
+LANE_jsonrpc := ServerJsonRpc
+LANE_interp := Interp -j $(JOBS)
+LANE_haxelib := Haxelib --server
+# (hxmc/test/LibResolution.hx: hxmc/src/hxmc/libs against haxelib, the reference's, and lix's haxe shim)
+LANE_libs = LibResolution --haxelib $(dir $(realpath $(REFERENCE)))haxelib --lix bin/lix/haxe
+LANE_CP_libs := -cp hxmc/src
+LANE_debugger := EvalDebugger $(if $(SHARD),--shard $(SHARD))
+LANE_targets := UpstreamTargets -j $(JOBS)
+# (unit: haxe/test/unit.hxml, the port's modules typed and run in-process: no
+# harness, no reference, no summary)
+SUMMARY_ARG = $(if $(SUMMARY),--summary "$(SUMMARY)")
+TEST_CMD = $(if $(filter unit,$(1)),$(EVAL) --cwd . haxe/test/unit.hxml,$(EVAL) -cp hxmc/test -cp haxe/test $(LANE_CP_$(1)) --run $(LANE_$(1)) $(SUMMARY_ARG))
+# (exported: the harnesses are command lists, which an assignment in front would not reach)
 TEST_ENV = export HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT=$(abspath $(PORT_BIN));
-test: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases $(CASES_FILE)
-test-display: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) Display -j $(JOBS)
-test-server: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) Server -j $(JOBS)
-test-jsonrpc: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) ServerJsonRpc
-test-interp: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) Interp -j $(JOBS)
-test-haxelib: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) Haxelib
-test-eval-debugger: $(PORT_BIN) $(REFERENCE)
-	$(TEST_ENV) $(SCRIPT) EvalDebugger
-test-unit-targets: $(PORT_BIN) $(REFERENCE) bin/lix/lix
-	$(TEST_ENV) $(SCRIPT) UpstreamTargets -j $(JOBS)
+# every lane runs, the failed ones named at the end (lix: -L's shim, the targets' libraries)
+test: $(PORT_BIN) $(REFERENCE) $(if $(filter haxelib libs targets,$(LANES)),bin/lix/lix)
+	@$(if $(filter-out $(TEST_LANES),$(LANES)),echo "test: no lane $(filter-out $(TEST_LANES),$(LANES)) (LANES: $(TEST_LANES))"; exit 1; )ulimit -s unlimited 2>/dev/null || true; $(TEST_ENV) failed=; \
+	$(foreach l,$(LANES),echo '$(call TEST_CMD,$(l))'; $(call TEST_CMD,$(l)) || failed="$$failed $(l)";) \
+	if [ -n "$$failed" ]; then echo "test: failed:$$failed"; exit 1; fi
 
-test-fuzz: bin/fuzz/fuzz $(PORT_BIN) $(REFERENCE)
-	HAXE_REFERENCE=$(abspath $(REFERENCE)) bin/fuzz/fuzz -j $(JOBS) --cases haxe/test/fuzz/cases --port $(abspath $(PORT_BIN)) --lane $(LANE)
-	HAXE_REFERENCE=$(abspath $(REFERENCE)) bin/fuzz/fuzz -j $(JOBS) -n $(N) --port $(abspath $(PORT_BIN)) --lane $(LANE)
+# (the kept programs, then N random ones; both run, either failing fails)
+test-fuzz: $(firstword $(FUZZ)) $(PORT_BIN) $(REFERENCE)
+	@export HAXE_REFERENCE=$(abspath $(REFERENCE)); failed=; \
+	echo '$(FUZZ) -j $(JOBS) --cases haxe/test/fuzz/cases --port $(abspath $(PORT_BIN)) --lane $(LANE)'; \
+	$(FUZZ) -j $(JOBS) --cases haxe/test/fuzz/cases --port $(abspath $(PORT_BIN)) --lane $(LANE) || failed="$$failed cases"; \
+	echo '$(FUZZ) -j $(JOBS) -n $(N) --port $(abspath $(PORT_BIN)) --lane $(LANE)'; \
+	$(FUZZ) -j $(JOBS) -n $(N) --port $(abspath $(PORT_BIN)) --lane $(LANE) || failed="$$failed random"; \
+	if [ -n "$$failed" ]; then echo "test-fuzz $(LANE): failed:$$failed"; exit 1; fi
 
-smoke:
-	sh hxmc/test/smoke.sh $(PORT_BIN)
-
-test-node-libs: bin/npm/native/$(HOST)/haxe
-	$(SCRIPT) NodeLibs
+test-libraries: bin/npm/native/$(HOST)/haxe
+	$(SCRIPT) Libraries
 
 test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 	$(SCRIPT) ModuleCacheCheck --haxe bin/npm/native/$(HOST)/haxe $(if $(PORT),--port)
-
-hxmc-test: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) Corpus -v $(CASES)
 
 # upstream's runtime suites on hxmc (docs/testing.md): unit, sys and threads natively,
 # unit on wasm32-wasi; SUITES and SUITES_TARGET narrow it (CI: a job per target)
@@ -548,9 +545,11 @@ ios-programs: $(TOOL) $(STD) $(HOST_RT)
 # their structure without a Mac (hxmc/test/IosCheck.hx: bundle, Info.plist, Mach-O, code signature; llvm-objdump when there)
 ios-check: ios-programs
 	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run IosCheck $(foreach a,IosHello.app IosHello.ipa,bin/ios/$(IOS_TARGET)/$(a))
-# IosHello on an iPhone simulator (hxmc/test/ios/ios.sh: a Mac with Xcode)
-ios-sim-check:
-	$(MAKE) --no-print-directory ios-programs IOS_TARGET=ios-sim-arm64
+# IosHello on an iPhone simulator (hxmc/test/ios/ios.sh: a Mac with Xcode;
+# CI's ios-simulator job: `make -o ios-programs ios-sim-check` on the bundle
+# the ios job built)
+ios-sim-check: override IOS_TARGET := ios-sim-arm64
+ios-sim-check: ios-programs
 	sh hxmc/test/ios/ios.sh bin/ios/ios-sim-arm64/IosHello.app bin/ios/ios-sim-arm64
 
 # the dev loop (docs/dev.md): `hxmc dev` on a console program through edits
@@ -573,20 +572,25 @@ mir-run-check: $(TOOL) $(STD) $(HOST_RT)
 	$(call hxmc,bin/jit/haxe,$(PKG_ARGS) -D hxmc.jit)
 	$(SCRIPT) Corpus --mir-run $(CASES)
 
-portcheck: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE)
-	$(SCRIPT) Selfcheck --local --small
-
 bench: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) bin/lix/lix
 	$(SCRIPT) Bench $(BENCH_ARGS)
 
-bench-arrays: bin/vector-bench/m
-	bin/vector-bench/m $(ARRAY_BENCH_ARGS)
+bench-compile: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) $(REFERENCE)
+	$(SCRIPT) CompileBench $(COMPILE_BENCH_ARGS)
+
+# the microbenchmarks of WHICH: arrays (hxmc/test/bench/VectorBench.hx,
+# hxmc/test/bench/README.md), maps (hxmc/test/bench/MapBench.hx)
+MICRO_BIN_arrays := bin/vector-bench/m
+MICRO_BIN_maps := bin/map-bench/m
+MICRO_ARGS_arrays = $(ARRAY_BENCH_ARGS)
+MICRO_ARGS_maps = $(MAP_BENCH_ARGS)
+bench-micro: $(foreach w,$(WHICH),$(or $(MICRO_BIN_$(w)),bench-micro-unknown-$(w)))
+	$(foreach w,$(WHICH),$(MICRO_BIN_$(w)) $(MICRO_ARGS_$(w)) &&) true
+bench-micro-unknown-%:
+	@echo "bench-micro: no microbenchmark $* (WHICH: arrays maps)"; exit 1
 
 bin/vector-bench/m: $(TOOL) $(STD) $(HOST_RT) hxmc/test/bench/VectorBench.hx hxmc/test/bench/VectorBenchMacro.hx
 	$(call hxmc,$@,-cp hxmc/test/bench -main VectorBench $(HXMC_ARGS))
-
-bench-maps: bin/map-bench/m
-	bin/map-bench/m $(MAP_BENCH_ARGS)
 
 bin/map-bench/m: $(TOOL) $(STD) $(HOST_RT) hxmc/test/bench/MapBench.hx
 	$(call hxmc,$@,-cp hxmc/test/bench -main MapBench $(HXMC_ARGS))
@@ -604,32 +608,6 @@ wasmgc-check: $(TOOL) $(STD) $(HOST_RT)
 wasmgc-bench: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) GcCheck --bench
 
-# the port as a WasmGC module (-D hxmc.wasm-gc), and the script that runs it
-# under node (hxmc/bootstrap/wasmgc.mjs; a large stack for the compiler's
-# recursion): the port of test-wasmgc-port
-WASMGC_PORT := bin/wasmgc-port/haxe
-wasmgc-port: $(WASMGC_PORT)
-$(WASMGC_PORT).wasm: $(TOOL) $(PORT_SRC) $(STD)
-	$(call hxmc,$@,$(PORT_ARGS) -D hxmc.target=wasm32-wasi -D hxmc.wasm-gc)
-$(WASMGC_PORT): $(WASMGC_PORT).wasm
-	printf '#!/bin/sh\n# the port as a WasmGC module under node (make wasmgc-port)\nulimit -s unlimited 2>/dev/null\nexec %s --stack-size=65500 %s %s "$$@"\n' \
-		"$(NODE)" $(abspath hxmc/bootstrap/wasmgc.mjs) $(abspath $<) > $@
-	chmod +x $@
-
-# the lanes with it as the port (docs/testing.md): HXB (the three lists),
-# --interp (but a case whose Eval threads interleave: the module has one
-# thread), display, -L (batch), upstream's target suites; not the server's
-# (sockets)
-WASMGC_ENV = export HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT=$(abspath $(WASMGC_PORT));
-test-wasmgc-port: $(WASMGC_PORT) $(REFERENCE) bin/lix/lix
-	$(WASMGC_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-cases.txt
-	$(WASMGC_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt
-	$(WASMGC_ENV) $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-hxblib-cases.txt --hxb-lib
-	$(WASMGC_ENV) $(SCRIPT) Interp -j $(JOBS) --skip eval-eventLoop-compile
-	$(WASMGC_ENV) $(SCRIPT) Display -j $(JOBS)
-	$(WASMGC_ENV) $(SCRIPT) Haxelib
-	$(WASMGC_ENV) $(SCRIPT) UpstreamTargets -j $(JOBS)
-
 check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers check $(if $(PORT),--port) $(CASES)
 
@@ -637,7 +615,7 @@ full: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers full $(CASES)
 
 clean:
-	rm -rf bin/port bin/release bin/lix-dist bin/site bin/site-build bin/wasm bin/wasmgc-port bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/android bin/ios bin/dev bin/corpus \
+	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/android bin/ios bin/dev bin/corpus \
 		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(CLI_BOOT)/hxmc-std $(CLI_BOOT)/rt
 
 distclean: clean

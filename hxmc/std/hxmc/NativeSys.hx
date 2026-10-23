@@ -90,10 +90,10 @@ class NativeSys {
 
 	// 0 at end, -1 on error
 	public static inline function fileRead(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
-		return #if (hxmc.wasm_gc) GcSys.fileRead(fd, b, pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileRead(fd, b, pos, len) #else Mem.os() == 2 ? WinSys.fileRead(fd, b, pos, len) : PosixSys.fileRead(fd, b, pos, len) #end;
+		return #if (hxmc.wasm_gc) GcSys.fileRead(fd, b.getData(), pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileRead(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileRead(fd, b.getData(), pos, len) : PosixSys.fileRead(fd, b.getData(), pos, len) #end;
 
 	public static inline function fileWrite(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
-		return #if (hxmc.wasm_gc) GcSys.fileWrite(fd, b, pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileWrite(fd, b, pos, len) #else Mem.os() == 2 ? WinSys.fileWrite(fd, b, pos, len) : PosixSys.fileWrite(fd, b, pos, len) #end;
+		return #if (hxmc.wasm_gc) GcSys.fileWrite(fd, b.getData(), pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileWrite(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileWrite(fd, b.getData(), pos, len) : PosixSys.fileWrite(fd, b.getData(), pos, len) #end;
 
 	// WebAssembly: the buffered standard output written out (elsewhere writes
 	// are not buffered)
@@ -112,11 +112,14 @@ class NativeSys {
 	public static inline function fileTell(fd:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileTell(fd) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileTell(fd) #else Mem.os() == 2 ? WinSys.fileTell(fd) : PosixSys.fileTell(fd) #end;
 
-	public static inline function fileContent(path:String):Null<haxe.io.Bytes>
-		return #if (hxmc.wasm_gc) GcSys.fileContent(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileContent(path) #else Mem.os() == 2 ? WinSys.fileContent(path) : PosixSys.fileContent(path) #end;
+	public static inline function fileContent(path:String):Null<haxe.io.Bytes> {
+		// (the runtime's: the BytesData)
+		var d:Null<haxe.io.BytesData> = #if (hxmc.wasm_gc) GcSys.fileContent(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileContent(path) #else Mem.os() == 2 ? WinSys.fileContent(path) : PosixSys.fileContent(path) #end;
+		return d == null ? null : haxe.io.Bytes.ofData(d);
+	}
 
 	public static inline function fileSave(path:String, b:haxe.io.Bytes, append:Bool):Bool
-		return #if (hxmc.wasm_gc) GcSys.fileSave(path, b, append) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileSave(path, b, append) #else Mem.os() == 2 ? WinSys.fileSave(path, b, append) : PosixSys.fileSave(path, b, append) #end;
+		return #if (hxmc.wasm_gc) GcSys.fileSave(path, b.getData(), append) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileSave(path, b.getData(), append) #else Mem.os() == 2 ? WinSys.fileSave(path, b.getData(), append) : PosixSys.fileSave(path, b.getData(), append) #end;
 
 	public static inline function exists(path:String):Bool
 		return #if (hxmc.wasm_gc) GcSys.exists(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.exists(path) #else Mem.os() == 2 ? WinSys.exists(path) : PosixSys.exists(path) #end;

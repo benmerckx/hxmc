@@ -69,7 +69,7 @@ class MirRun {
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
 		hxmc.ir.Lower.bounds = o.bounds;
-		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:String}>) -> [{name: name, data: codegen.Codegen.bytesSerialize(data)}].concat(acc), []);
+		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		var t0 = haxe.Timer.stamp();
 		var l = new hxmc.ir.Lower();
 		var prog = hxmc.ir.Lower.program(mainClass, com.types, com.basic, l);
@@ -125,6 +125,7 @@ class MirRun {
 		dg.stubs([], emit);
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
+		dg.resources([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
 		var b = hxmc.macro.Loader.loadObj(obj, facts);

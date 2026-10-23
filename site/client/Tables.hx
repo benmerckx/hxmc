@@ -6,10 +6,12 @@ import js.Browser.window;
 import js.html.Element;
 import js.html.TableCellElement;
 
-// The Benchmarks and Target generators sections: tables of bench.json and
-// targets.json (measured results, site/data; targets.json from the bench-data
-// branch when the build has it), copied by `make site` (Makefile); the
-// Programs part from the benchmark history (BenchCharts).
+// The benchmarks page (site/benchmarks.html). The compiler: hxmc's history
+// (compile-history.json: one chart per workload, HistoryChart) and the latest
+// run of every runner (bench.json's format); both from the bench-data branch
+// when the build has it (bench/compile-*.json, make site BENCH_DATA=...), else
+// the committed site/data files (hxmc/test/CompileBench.hx). Programs:
+// BenchCharts. Target generators: targets.json.
 typedef BenchRun = {
 	workload:String,
 	runner:String,
@@ -17,8 +19,23 @@ typedef BenchRun = {
 	?runs:Int,
 	?verified:Bool,
 	?cpu_min:Float,
+	?cpu_median:Float,
 	?wall_min:Float,
+	?wall_median:Float,
+	?wall_max:Float,
 	?maxrss_mb:Float,
+}
+
+typedef CompileHistory = {
+	fields:Array<String>,
+	runs:Array<{
+		date:String,
+		commit:String,
+		source:String,
+		?machine:String,
+		?runs:Int,
+		results:DynamicAccess<DynamicAccess<Array<Null<Float>>>>,
+	}>,
 }
 
 typedef BuildFacts = {
@@ -92,23 +109,23 @@ typedef TargetData = {
 
 class Tables {
 	static final RUNNERS = [
-		["reference", "OCaml reference"],
-		["hxmc", "hxmc, x86-64"],
-		["hxmc-wasm-node", "hxmc, wasm (Node)"],
-		["hxmc-wasm-wasmtime", "hxmc, wasm (wasmtime)"],
+		["reference", "Reference"],
+		["hxmc", "hxmc"],
+		["hxmc-wasm-node", "wasm, Node"],
+		["hxmc-wasm-wasmtime", "wasm, wasmtime"],
 	];
 	static final WORKLOADS = [
-		["self", "The port's own source: 52k lines in 382 modules, with std macros run by the Eval interpreter."],
-		["stdlib", "32 standard library modules (JSON, XML, zip, crypto, data structures) as roots."],
-		["hello", "Hello world: mostly start-up time and the core standard library."],
+		["hello", "Hello world: start-up and the core std"],
+		["stdlib", "32 std modules as roots"],
+		["self", "The port's own source, std macros run by Eval"],
 	];
 	static final TARGETS = [
 		["hxb", "HXB"], ["js", "JavaScript"], ["lua", "Lua"], ["python", "Python"], ["php", "PHP"], ["neko", "Neko"],
 		["hl", "HashLink"], ["hlc", "HL/C (sources)"], ["cpp", "C++ (sources)"], ["jvm", "JVM"], ["swf", "Flash (SWF)"],
 	];
 	static final PROJECTS = [
-		["formatter", "haxe-formatter 1.9.1 with its six libraries (tokentree, haxeparser, hxparse, json2object, hxargs, hxjsonast): the HaxeBenchmarks formatter case."],
-		["self", "The port's own source, about 1,000 modules. Targets without threads or a file system reject it, in both compilers."],
+		["formatter", "haxe-formatter 1.9.1 and its libraries"],
+		["self", "The port's own source"],
 	];
 
 	// the benchmarks page (site/benchmarks.html), its script at the end of the body
@@ -118,7 +135,7 @@ class Tables {
 	}
 
 	static function start() {
-		load("bench.json", "bench-results", renderBench);
+		loadCompiler();
 		BenchCharts.load();
 		load("targets.json", "targets-results", renderTargets);
 	}
@@ -213,77 +230,132 @@ class Tables {
 		return ~/ \d{4}-\d\d-\d\d$/.replace(~/"/g.replace(~/ version /.replace(~/\s*\([^)]*\)/g.replace(v, ""), " "), ""), "");
 	}
 
-	// ---- bench.json
+	// ---- the compiler: compile-history.json (hxmc over time) and the latest run (bench.json's format)
 
-	static function benchTable(rows:Array<{label:String, run:BenchRun}>, ref:BenchRun):Element {
-		final t = el("table", "bench");
-		t.innerHTML = "<thead><tr><th>Runner</th><th class=\"num\">CPU</th><th class=\"barcol\">CPU vs. reference <span class=\"muted\">(log scale)</span></th><th class=\"num wall\">Wall</th><th class=\"num\">Peak RSS</th><th class=\"out\">Output</th></tr></thead>";
+	static function loadCompiler() {
+		final hist = document.getElementById("compiler-history");
+		final latest = document.getElementById("compiler-results");
+		if (latest == null) return;
+		// (the bench-data branch's when the build has it, else the committed fallback)
+		final get = (a:String, b:String) -> (cast window.fetch(Version.url(a)).then((r) -> r.ok ? r.json() : null).catchError((_) -> null).then((d) -> d != null ? d : window.fetch(Version.url(b))
+			.then((r) -> r.ok ? r.json() : null)
+			.catchError((_) -> null)) : js.lib.Promise<Dynamic>);
+		get("bench/compile-latest.json", "bench.json").then((d:Null<BenchData>) -> if (d != null) renderCompilerLatest(latest, d));
+		if (hist != null) get("bench/compile-history.json", "compile-history.json").then((h:Null<CompileHistory>) -> renderCompilerHistory(hist, h));
+	}
+
+	/** the charts of the workloads whose hxmc series has HistoryChart.MIN_POINTS runs; none: the whole block hidden **/
+	static function renderCompilerHistory(root:Element, h:Null<CompileHistory>) {
+		root.textContent = "";
+		final f = (n:String) -> h == null ? -1 : h.fields.indexOf(n);
+		final iMed = f("wall_median"), iMin = f("wall_min"), iMax = f("wall_max");
+		final shown = h == null ? [] : [
+			for (w in WORKLOADS)
+				if (Lambda.count(h.runs, (r) -> r.results[w[0]] != null && r.results[w[0]]["hxmc"] != null && r.results[w[0]]["hxmc"][iMed] != null) >= HistoryChart.MIN_POINTS) w
+		];
+		if (shown.length == 0) {
+			root.hidden = true;
+			return;
+		}
+		root.hidden = false;
+		final bar = el("div", "tabs");
+		bar.setAttribute("role", "tablist");
+		final grid = el("div", "charts");
+		root.append(bar, grid);
+		final modes = [["abs", "Seconds"], ["rel", "vs. reference"]];
+		final draw = (mode:String) -> {
+			for (i => m in modes) bar.children[i].setAttribute("aria-selected", m[0] == mode ? "true" : "false");
+			grid.textContent = "";
+			for (w in shown) {
+				final pts:Array<HistoryChart.ChartPoint> = [];
+				for (r in h.runs) {
+					final row = r.results[w[0]];
+					final e = row == null ? null : row["hxmc"];
+					if (e == null || e[iMed] == null) continue;
+					var div = 1.0;
+					if (mode == "rel") {
+						final ref = row["reference"];
+						if (ref == null || ref[iMed] == null) continue;
+						div = ref[iMed];
+					}
+					final sc = (v:Null<Float>) -> v == null ? null : v / div;
+					pts.push({date: r.date, commit: r.commit, source: r.source, median: sc(e[iMed]), min: sc(e[iMin]), max: sc(e[iMax]), runs: r.runs, machine: r.machine});
+				}
+				HistoryChart.draw(HistoryChart.figure(grid, w[0]), w[0], pts, mode == "rel" ? ratio : secs, mode == "rel" ? 1.0 : null, mode == "rel" ? "×" : " s");
+			}
+		};
+		for (m in modes) {
+			final b = el("button", "", m[1]);
+			b.setAttribute("role", "tab");
+			b.onclick = () -> draw(m[0]);
+			bar.append(b);
+		}
+		draw("abs");
+	}
+
+	static function renderCompilerLatest(root:Element, data:BenchData) {
+		final runs = new Map<String, Map<String, BenchRun>>();
+		for (r in data.results) {
+			if (!runs.exists(r.workload)) runs[r.workload] = new Map();
+			runs[r.workload][r.runner] = r;
+		}
+		final runners = [for (r in RUNNERS) if (Lambda.exists(data.results, (x) -> x.runner == r[0])) r];
+		final t = el("table", "bench matrix");
+		final head = el("tr");
+		head.append(el("th", "", "Workload"));
+		// (wasmtime's column: not on a phone's width)
+		final cls = (r:Array<String>) -> r[0] == "hxmc-wasm-wasmtime" ? "num wide" : "num";
+		for (r in runners) head.append(el("th", cls(r), r[1]));
+		final thead = el("thead");
+		thead.append(head);
+		t.append(thead);
 		final body = el("tbody");
-		final bar = scale([for (r in rows) if (r.run.cpu_min != null) r.run.cpu_min / ref.cpu_min]);
-		for (row in rows) {
-			final r = row.run, isRef = r.runner == "reference";
-			final tr = el("tr", isRef ? "ref" : "");
-			final name = el("td", "runner", row.label);
-			// on narrow screens the Output column is hidden: a check mark marks verified runs
-			if (r.verified) name.append(el("span", "chk", " ✓"));
-			if (r.runs != null && r.runs >= 1) name.title = '${r.runs} run${r.runs > 1 ? "s" : ""}';
+		for (w in WORKLOADS) {
+			final row = runs[w[0]];
+			if (row == null) continue;
+			final ref = row["reference"];
+			final tr = el("tr");
+			final name = el("td", "runner", w[0]);
+			name.title = w[1];
 			tr.append(name);
-			if (r.cpu_min == null) {
-				tr.append(failure(StringTools.startsWith(r.status, "exit") ? "failed: " + lastLine(r.status).substring(0, 120) : r.status, "fail", 5));
-			} else {
-				tr.append(el("td", "num", secs(r.cpu_min) + (r.runs == 1 ? "¹" : "")));
-				tr.append(bar(r.cpu_min / ref.cpu_min, isRef));
-				tr.append(el("td", "num wall", secs(r.wall_min)));
-				tr.append(el("td", "num", mb(r.maxrss_mb)));
-				tr.append(el("td", "out " + (r.verified ? "ok" : "muted"), isRef ? "baseline" : r.verified ? "identical" : "–"));
+			for (r in runners) {
+				final x = row[r[0]];
+				final td = el("td", cls(r));
+				final wall = x == null ? null : x.wall_median ?? x.wall_min;
+				if (x == null) td.textContent = "–";
+				else if (wall == null) {
+					td.textContent = "✗";
+					td.className = "num fail";
+					td.title = x.status;
+				} else {
+					td.textContent = secs(wall);
+					final refWall = ref == null ? null : ref.wall_median ?? ref.wall_min;
+					if (r[0] != "reference" && refWall != null) td.append(el("span", "parts", ratio(wall / refWall)));
+					td.title = 'CPU ${secs(x.cpu_median ?? x.cpu_min)}; peak RSS ${mb(x.maxrss_mb)}; ${x.runs} runs' + (x.verified ? "; output identical to the reference's" : "");
+				}
+				tr.append(td);
 			}
 			body.append(tr);
 		}
 		t.append(body);
-		return t;
-	}
-
-	static function renderBench(root:Element, data:BenchData) {
-		final byWorkload = new Map<String, Map<String, BenchRun>>();
-		for (r in data.results) {
-			if (!byWorkload.exists(r.workload)) byWorkload[r.workload] = new Map();
-			byWorkload[r.workload][r.runner] = r;
-		}
-		final entries = [];
-		for (w in WORKLOADS) {
-			final runs = byWorkload[w[0]];
-			if (runs == null || !runs.exists("reference")) continue;
-			final ref = runs["reference"];
-			final rows = [for (r in RUNNERS) if (runs.exists(r[0])) {label: r[1], run: runs[r[0]]}];
-			final single = Lambda.exists(rows, (r) -> r.run.runs == 1);
-			entries.push({
-				label: w[0],
-				pane: pane(w[1] + ' Reference: ${secs(ref.cpu_min)} CPU, ${mb(ref.maxrss_mb)}.', benchTable(rows, ref),
-					"Identical (✓): every .hxb member byte-identical to the reference's. The dashed line marks the reference." + (single ? " ¹ Single run (slow runner)." : ""))
-			});
-		}
-		if (entries.length == 0) return;
-		tabs(root, entries);
-		final facts = document.getElementById("bench-machine");
+		root.textContent = "";
+		final scroll = el("div", "scroll");
+		scroll.append(t);
+		root.append(scroll);
+		final facts = document.getElementById("compiler-machine");
 		final m = data.meta;
 		if (facts == null || m == null) return;
 		final parts = [];
-		if (m.cpu != null) parts.push('${m.cpu}, ${m.cores} cores${m.memory_gb != null ? ', ${Math.round(m.memory_gb)} GB' : ""}');
-		if (m.date != null) parts.push('measured ${m.date.substring(0, 10)}');
-		if (m.commit != null) parts.push('commit ${m.commit}');
-		final v = m.versions != null ? m.versions : new DynamicAccess();
-		final tools = [
-			for (t in [["reference", "Haxe"], ["node", "Node"], ["wasmtime", ""]])
-				if (v[t[0]] != null) (t[1] != "" ? t[1] + " " : "") + version(v[t[0]])
-		];
-		facts.textContent = parts.join("; ") + (tools.length > 0 ? ". Tools: " + tools.join(", ") + "." : ".");
 		final b = data.builds;
-		final builds = document.getElementById("bench-builds");
-		if (b == null || builds == null) return;
-		final line = [];
-		if (b["native"] != null) line.push('the x86-64 executable in ${secs(b["native"].wall)} (${size(b["native"].size)}, ${size(b["native"].gzip)} gzipped)');
-		if (b["wasm"] != null) line.push('the WebAssembly module in ${secs(b["wasm"].wall)} (${size(b["wasm"].size)}, ${size(b["wasm"].gzip)} gzipped)');
-		builds.textContent = "hxmc builds the port from source, cold: " + line.join("; ") + ".";
+		if (b != null && b["native"] != null && b["wasm"] != null)
+			parts.push('hxmc builds the port cold in ${secs(b["native"].wall)} (x86-64, ${size(b["native"].gzip)} gzipped) and ${secs(b["wasm"].wall)} (wasm, ${size(b["wasm"].gzip)}).');
+		if (m.cpu != null) parts.push('${m.cpu}, ${m.cores} cores; ${m.date != null ? m.date.substring(0, 10) : ""}, ');
+		facts.textContent = parts.join(" ");
+		if (m.commit != null) {
+			final a:js.html.AnchorElement = cast el("a", "", m.commit);
+			a.href = '${HistoryChart.REPO}/commit/${m.commit}';
+			facts.append(a, document.createTextNode("."));
+		}
 	}
 
 	// ---- targets.json
@@ -335,9 +407,8 @@ class Tables {
 				tr.append(bar(time(c.port, mode) / time(c.reference, mode)));
 				tr.append(el("td", "num wall", mb(c.port.rss_mb) + " / " + mb(c.reference.rss_mb)));
 				final files = c.port.members > 1 ? c.port.members + " files, " : "";
-				final out = el("td", "out " + (c.identical ? "ok" : c.varies == true ? "muted" : "fail"),
-					c.identical ? 'identical, $files${size(c.port.bytes)}' : c.varies == true ? 'varies, $files${size(c.port.bytes)}' : "different");
-				if (c.diff != null) out.title = c.diff;
+				final out = el("td", "out " + (c.identical ? "ok" : c.varies == true ? "muted" : "fail"), c.identical ? "identical" : c.varies == true ? "varies" : "different");
+				out.title = c.diff ?? '$files${size(c.port.bytes)}';
 				tr.append(out);
 			}
 			body.append(tr);
@@ -372,12 +443,12 @@ class Tables {
 				if (c.identical) same++ else if (c.varies == true) varies++;
 			}
 			final what = m == "seq" ? "CPU" : "wall time";
-			final summary = n > 0 ? ' Over the $n targets: ${secs(port)} of $what for the port, ${secs(ref)} for the reference (${ratio(port / ref)}); $same of $n outputs identical${varies > 0 ? ', $varies varying' : ""}.' : "";
+			final summary = n > 0 ? ' All $n targets: ${secs(port)} vs. ${secs(ref)} (${ratio(port / ref)}); $same of $n identical${varies > 0 ? ', $varies varying' : ""}.' : "";
 			final outro = m == "seq"
-				? "Sequential: -D disable-parallelism, one core each (per-core efficiency). CPU: user + system, minimum of the runs. Peak RSS: port / reference. The dashed line marks the reference; green bars are faster than it."
-				: "Parallel: each compiler's default parallelism, what a plain build gets. Wall time, minimum of the runs. Peak RSS: port / reference. Varies (~): the reference's own parallel output differs from its sequential one and from run to run (e.g. genjvm's closures, HXB's string pools), so the port's is compared member by member but cannot match byte for byte.";
+				? "Sequential (-D disable-parallelism): CPU time, best of the runs. RSS: port / reference."
+				: "Default parallelism: wall time, best of the runs. ~: the reference's own parallel output varies, so it cannot match byte for byte.";
 			paneBox.textContent = "";
-			paneBox.append(pane(p[1] + summary, targetsTable(rows, m), outro));
+			paneBox.append(pane(p[1] + "." + summary, targetsTable(rows, m), outro));
 		};
 		for (i => p in projects) {
 			final b = el("button", "", p[0]);
@@ -405,10 +476,13 @@ class Tables {
 		final m = data.meta;
 		if (facts == null || m == null) return;
 		final parts = [];
-		if (m.cpu != null) parts.push('${m.cpu}, ${m.cores} cores${m.runner != null ? " (GitHub Actions, " + StringTools.trim(m.runner) + ")" : ""}');
-		if (m.date != null) parts.push('measured ${m.date.substring(0, 10)}');
-		if (m.commit != null) parts.push('commit ${m.commit}');
-		if (m.reference != null) parts.push('reference: ${m.reference}');
-		facts.textContent = parts.join("; ") + ".";
+		if (m.cpu != null) parts.push('${m.cpu}, ${m.cores} cores${m.runner != null ? " (GitHub Actions)" : ""}');
+		if (m.date != null) parts.push(m.date.substring(0, 10));
+		facts.textContent = parts.join("; ") + (m.commit != null ? ", " : ".");
+		if (m.commit != null) {
+			final a:js.html.AnchorElement = cast el("a", "", m.commit);
+			a.href = '${HistoryChart.REPO}/commit/${m.commit}';
+			facts.append(a, document.createTextNode("."));
+		}
 	}
 }

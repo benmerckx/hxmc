@@ -71,7 +71,7 @@ extern class W {
 	static function naWrap(s:Dynamic):Dynamic;
 	static function naSetStorage(w:Dynamic, s:Dynamic):Void;
 	static function naFix(w:Dynamic):Void;
-	// haxe.io.Bytes: an array of bytes
+	// haxe.io.BytesData (which a haxe.io.Bytes holds): an array of bytes
 	static function bytesNew(n:Int):Dynamic;
 	static function bytesLen(b:Dynamic):Int;
 	static function bytesGet(b:Dynamic, i:Int):Int;
@@ -90,7 +90,8 @@ extern class W {
 	static function classOf(o:Dynamic):Dynamic;
 	static function fieldNames(o:Dynamic):Dynamic;
 	static function objGet(o:Dynamic, i:Int):Dynamic;
-	static function objSet(o:Dynamic, i:Int, v:Dynamic):Void;
+	// (false: a field without storage, @:hxmc.lengthOf, not set)
+	static function objSet(o:Dynamic, i:Int, v:Dynamic):Bool;
 	// a shallow copy of a class instance or anonymous structure (its added fields not copied), else null
 	static function objCopy(o:Dynamic):Dynamic;
 	static function createEmpty(cl:Dynamic):Dynamic;

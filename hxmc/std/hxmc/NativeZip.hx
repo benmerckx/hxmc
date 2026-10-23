@@ -265,10 +265,10 @@ class NativeZip {
 	// dst[dstPos, dstPos + dstLen): the number of bytes written, or -1 when the
 	// stream is invalid, truncated or does not fit
 	public static function inflateRaw(src:haxe.io.Bytes, srcPos:Int, srcLen:Int, dst:haxe.io.Bytes, dstPos:Int, dstLen:Int):Int {
-		if (srcPos < 0 || srcLen < 0 || srcPos + srcLen > Bytes.len(src) || dstPos < 0 || dstLen < 0 || dstPos + dstLen > Bytes.len(dst))
+		if (srcPos < 0 || srcLen < 0 || srcPos + srcLen > src.length || dstPos < 0 || dstLen < 0 || dstPos + dstLen > dst.length)
 			outside();
 		#if (hxmc.wasm_gc)
-		// (-D hxmc.wasm-gc: a Bytes is the collector's, without an address: the
+		// (-D hxmc.wasm-gc: a BytesData is the collector's, without an address: the
 		// stream inflated from a copy in the module's linear memory into a buffer
 		// there, copied out)
 		var out = LibC.malloc(dstLen > 0 ? dstLen : 1);
@@ -278,7 +278,7 @@ class NativeZip {
 		return n;
 		#else
 		// (no GC point from here: the buffers' addresses stay valid)
-		return inflate(Bytes.bytes(src).add(srcPos), srcLen, Bytes.bytes(dst).add(dstPos), dstLen);
+		return inflate(Bytes.bytes(src.getData()).add(srcPos), srcLen, Bytes.bytes(dst.getData()).add(dstPos), dstLen);
 		#end
 	}
 
@@ -327,10 +327,10 @@ class NativeZip {
 
 	// the CRC-32 (ISO-HDLC, as zlib's crc32) of b[pos, pos + len)
 	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos + len > b.length) outside();
 		var t = table();
 		// (-D hxmc.wasm-gc: a copy in the module's linear memory, as inflateRaw)
-		var p = #if (hxmc.wasm_gc) BytesPtr.of(b, pos, len) #else Bytes.bytes(b).add(pos) #end;
+		var p = #if (hxmc.wasm_gc) BytesPtr.of(b, pos, len) #else Bytes.bytes(b.getData()).add(pos) #end;
 		var c = 0xFFFFFFFF;
 		for (i in 0...len)
 			c = Mem.getI32At(t, 0, (c ^ Mem.getU8At(p, 0, i)) & 0xFF) ^ (c >>> 8);

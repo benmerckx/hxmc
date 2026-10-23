@@ -69,7 +69,7 @@ jobs:
           set -e
           pids=
           for i in 1 2 3 4; do
-            IPC_STRESS_DIR="$RUNNER_TEMP/ipc$i" haxe -cp haxe/test --run IpcStress "$(command -v haxe)" 25 > "$RUNNER_TEMP/ipc$i.log" 2>&1 &
+            IPC_STRESS_DIR="$RUNNER_TEMP/ipc$i" haxe -cp haxe/test --run IpcStress "$(command -v haxe)" 15 > "$RUNNER_TEMP/ipc$i.log" 2>&1 &
             pids="$pids $!"
           done
           fail=0

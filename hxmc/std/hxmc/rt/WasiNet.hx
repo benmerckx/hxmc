@@ -35,10 +35,10 @@ class WasiNet {
 	public static function sockName(fd:Int, peer:Bool):Null<Array<Int>>
 		return null;
 
-	public static function recv(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
+	public static function recv(fd:Int, b:Dynamic, pos:Int, len:Int):Int
 		return -1;
 
-	public static function send(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
+	public static function send(fd:Int, b:Dynamic, pos:Int, len:Int):Int
 		return -1;
 
 	public static function select(read:Array<Int>, write:Array<Int>, others:Array<Int>, timeout:Float):Int

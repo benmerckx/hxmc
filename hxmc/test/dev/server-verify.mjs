@@ -41,6 +41,32 @@ const cases = {
 		},
 		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\tvar f:Int->Int = x -> x * 2;\n\t\tvar g:Int->Null<Int> = f;\n\t\ttrace(Lib.call(x -> x + 1) + g(3));\n\t}\n}\n' },
 	],
+	// a dispatched call leaving out an argument gets the default of the
+	// override the receiver runs (FnLower.receiverDefault): Lib's body,
+	// replayed (Lib does not depend on Sub, so it is not typed again), has
+	// Sub's default value, which the edit of Sub changes (LowerQueries.fieldDefaults)
+	"an override's default value, in a replayed dispatched call": [
+		{
+			'Lib.hx': 'class Base {\n\tpublic function new() {}\n\tpublic function f(x:Int = 1):Int\n\t\treturn x;\n}\n\nclass Lib {\n\tpublic static function call(b:Base):Int\n\t\treturn b.f();\n}\n',
+			'Sub.hx': 'class Sub extends Lib.Base {\n\tpublic function new() {\n\t\tsuper();\n\t}\n\n\toverride public function f(x:Int = 2):Int\n\t\treturn x * 10;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.call(new Sub()) + Lib.call(new Lib.Base()));\n\t}\n}\n',
+		},
+		{ 'Sub.hx': 'class Sub extends Lib.Base {\n\tpublic function new() {\n\t\tsuper();\n\t}\n\n\toverride public function f(x:Int = 3):Int\n\t\treturn x * 10;\n}\n' },
+	],
+	// a C function's declaration (CInterop.declare: its signature, whether
+	// its calls stay outside the safe region) is the program's: an edit of
+	// it is the new one, not checked against the previous build's, and a
+	// replayed body calling it declares it again (LowerQueries.cExtern)
+	'a C function declared again, @:hxmc.fast, called by a replayed body': [
+		{
+			'CLib.hx': 'extern class CLib {\n\t@:hxmc.c("getpid") static function getpid():Int;\n}\n',
+			'Lib.hx': 'class Lib {\n\tpublic static function pid():Int\n\t\treturn CLib.getpid();\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.pid() > 0);\n\t}\n}\n',
+		},
+		{ 'CLib.hx': 'extern class CLib {\n\t@:hxmc.c("getpid") @:hxmc.fast static function getpid():Int;\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.pid() != 0);\n\t}\n}\n' },
+		{ 'CLib.hx': 'extern class CLib {\n\t@:hxmc.c("getpid") static function getpid():Int;\n}\n' },
+	],
 };
 
 const out = web ? 'out/app.wasm' : process.platform === 'win32' ? 'out/app.exe' : 'out/app';

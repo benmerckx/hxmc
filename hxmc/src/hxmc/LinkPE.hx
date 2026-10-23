@@ -18,8 +18,9 @@ import hxmc.Obj;
 // in an export directory, relocatable (base relocations, x86-64 too) from
 // its preferred base (dllBase, x86-64), which it keeps unless taken: no
 // DYNAMIC_BASE there; arm64's like its executables (DYNAMIC_BASE, which
-// Windows requires on arm64: ERROR_BAD_EXE_FORMAT without it).
-class LinkPE {
+// Windows requires on arm64: ERROR_BAD_EXE_FORMAT without it). Resolution
+// and the relocations: LinkCore.
+class LinkPE extends LinkCore {
 	// the image base: x86-64 a fixed 0x400000 (addresses are kept absolute);
 	// arm64 0x140000000, relocatable (addresses are kept as RVAs, BASE 0, and
 	// the base is added where a 64-bit absolute address is written)
@@ -29,12 +30,8 @@ class LinkPE {
 	static inline var SECT = 0x1000;
 	static inline var FILE = 0x200;
 
-	var objs:Array<Obj>;
-	var arm:Bool;
 	public var symbols = false;
-	var globals = new Map<String, Symbol>();
 	var imports = new Map<String, {dll:String, name:String, code:Bool}>();
-	var addr = new Map<Section, Int>();
 	var outOf = new Map<Section, Int>(); // section -> output section index
 
 	// a DLL: its exports, its file name, its preferred base
@@ -44,8 +41,7 @@ class LinkPE {
 	public var dllBase = 0x10000000;
 
 	public function new(objs:Array<Obj>, arm:Bool) {
-		this.objs = objs;
-		this.arm = arm;
+		super(objs, arm);
 		if (arm && !diag("lowbase")) {
 			BASE = 0;
 			imgLo = 0x40000000;
@@ -67,22 +63,6 @@ class LinkPE {
 		}
 	}
 
-	function resolve() {
-		for (o in objs)
-			for (s in o.symbols) {
-				if (!s.global || (s.section == null && !s.abs)) continue;
-				var prev = globals.get(s.name);
-				if (prev == null || prev.weak && !s.weak) globals.set(s.name, s);
-				else if (!prev.weak && !s.weak) throw 'hxmc: link: ${s.name} defined twice';
-			}
-	}
-
-	inline function target(s:Symbol):Null<Symbol>
-		return (s.section != null || s.abs) ? s : globals.get(s.name);
-
-	static inline function align(v:Int, a:Int):Int
-		return a <= 1 ? v : (v + a - 1) & ~(a - 1);
-
 	// HXMC_PE_DIAG=<flag,...>: variants of the output for bisecting a loader's
 	// refusal (development)
 	static var diags:Null<Array<String>>;
@@ -100,11 +80,18 @@ class LinkPE {
 		if (dll && !arm) BASE = dllBase;
 		readImports();
 		resolve();
+		// (the sections nothing reaches left out: LinkCore.gc, with the
+		// exception directory's entries of the functions kept)
+		roots = [for (n in (dll ? exports : []).concat(["_tls_used"])) if (globals.exists(n)) n];
+		unwindOf = pdataLinks();
+		gc(entry);
+		if (live != null) keepPdata();
 		// the imports the objects use: IAT slots (and thunks for code)
 		var used = new Map<String, Bool>(); // imported name keys (the symbol names of the list)
 		for (o in objs)
 			for (s in o.sections)
-				for (r in s.relocs)
+				if (isLive(s))
+					for (r in s.relocs)
 					if (target(r.sym) == null && imports.exists(r.sym.name)) used.set(r.sym.name, true);
 		// one IAT slot per (dll, name)
 		var dlls:Array<String> = [];
@@ -213,7 +200,7 @@ class LinkPE {
 						sec.kind = Data;
 					}
 		unwindInfo(extra);
-		objs.push(extra);
+		keep(extra);
 		// output sections
 		var groups:Array<{name:String, chars:Int, secs:Array<Section>}> = [
 			{name: ".text", chars: 0x60000020, secs: []},
@@ -227,6 +214,7 @@ class LinkPE {
 		];
 		for (o in objs)
 			for (s in o.sections) {
+				if (!isLive(s)) continue;
 				// (.CRT$X?A ... .CRT$X?Z: arrays of pointers, read-only or not,
 				// kept together in .data in name order)
 				var g = StringTools.startsWith(s.name, ".CRT$") ? 3 : switch s.kind {
@@ -248,9 +236,10 @@ class LinkPE {
 		var nsec = groups.length;
 		// (-debug: the DWARF sections after the others)
 		var hasLines = symbols && Lambda.exists(objs, o -> Lambda.exists(o.funcs, r -> r.lines != null));
-		var headers = align(64 + 4 + 20 + 240 + 40 * (nsec + (hasLines ? 5 : 0)), FILE);
-		var rva = align(headers, SECT);
-		var starts = new haxe.ds.Vector<Int>(groups.length), sizes = new haxe.ds.Vector<Int>(groups.length);
+		var headers = LinkCore.align(64 + 4 + 20 + 240 + 40 * (nsec + (hasLines ? 5 : 0)), FILE);
+		var rva = LinkCore.align(headers, SECT);
+		starts = new haxe.ds.Vector<Int>(groups.length);
+		var sizes = new haxe.ds.Vector<Int>(groups.length);
 		var idata:Buf = null;
 		var idataLayout = null;
 		for (gi in 0...groups.length) {
@@ -261,26 +250,23 @@ class LinkPE {
 				idataLayout = importData(dlls, byDll, rva);
 				idata = idataLayout.buf;
 				pos += idata.len;
-			} else
-				for (s in g.secs) {
-					pos = align(pos, s.align);
-					addr.set(s, BASE + pos);
+			} else {
+				pos = place(g.secs, pos, BASE);
+				for (s in g.secs)
 					outOf.set(s, gi);
-					pos += s.size();
-				}
+			}
 			sizes[gi] = pos - rva;
-			rva = align(pos, SECT);
+			rva = LinkCore.align(pos, SECT);
 		}
 		var imageSize = rva;
-		var relocatable = (arm || dll) && !diag("fixed");
-		var baseRelocs:Array<{rva:Int, type:Int}> = [];
+		relocatable = (arm || dll) && !diag("fixed");
 		var defined = new Map<String, Int>();
 		defined.set("__CTOR_LIST__", addr.get(listHead.get("ctor")));
 		defined.set("__DTOR_LIST__", addr.get(listHead.get("dtor")));
 		defined.set("__ImageBase", BASE);
 		defined.set("WinMain", 0);
 		var iatAddr = (k:String) -> BASE + idataLayout.iat.get(slotKey.get(k));
-		var symAddr = function(s:Symbol):Int {
+		symAddr = function(s:Symbol):Int {
 			var t = target(s);
 			if (t == null) {
 				var n = s.name;
@@ -304,63 +290,14 @@ class LinkPE {
 						m.add(StringTools.hex(addr.get(s.section) + s.offset, 8) + " " + s.name + "\n");
 			sys.io.File.saveContent(mapFile, m.toString());
 		}
-		function isAbs(sym:Symbol):Bool {
-			var t = target(sym);
-			// (linker-defined: addresses, but for the zero of an undefined weak symbol)
-			return t != null ? t.abs : sym.name != "__ImageBase" && symAddr(sym) == 0;
-		}
 		// the thunks: jmp [rip + IAT slot] (arm64: adrp, ldr, br)
-		for (k => off in thunkOf) {
-			if (arm) {
-				var p = addr.get(thunks) + off;
-				A64Reloc.adrp(thunks.buf, off, iatAddr(k), p);
-				A64Reloc.imm12(thunks.buf, off + 4, (iatAddr(k) & 0xfff) >> 3);
-				continue;
-			}
-			var p = addr.get(thunks) + off + 6;
-			thunks.buf.set32(off + 2, iatAddr(k) - p);
-		}
+		for (k => off in thunkOf)
+			LinkCore.patchStub(thunks.buf, off, arm, iatAddr(k), addr.get(thunks) + off);
 		// relocations
-		var tlsStart = BASE + starts[4];
+		imageBase = BASE;
 		for (g in groups)
-			for (s in g.secs) {
-				if (s.kind == Bss || s.kind == Tbss) continue;
-				var base = addr.get(s);
-				for (r in s.relocs) {
-					var S = symAddr(r.sym);
-					var A = r.addend;
-					var P = base + r.offset;
-					switch r.kind {
-						case RAbs64:
-							var v = S + A;
-							if (isAbs(r.sym)) s.buf.set64(r.offset, v, v < 0 ? -1 : 0) else {
-								s.buf.set64(r.offset, v + imgLo, imgHi);
-								if (relocatable) baseRelocs.push({rva: P - BASE, type: 10});
-							}
-						case RAbs32 | RAbs32S:
-							s.buf.set32(r.offset, S + A);
-							if (!isAbs(r.sym)) {
-								if (imgHi != 0) throw "hxmc: link: a 32-bit absolute address of " + r.sym.name + " (an image above 4 GB)";
-								if (relocatable) baseRelocs.push({rva: P - BASE, type: 3});
-							}
-						case RPc32 | RCall32:
-							s.buf.set32(r.offset, S + A - P);
-						case RImgRel32:
-							s.buf.set32(r.offset, S == 0 ? 0 : S + A - BASE);
-						case RSecRel32:
-							var t = target(r.sym);
-							var sec = t != null && t.section != null ? outOf.get(t.section) : -1;
-							s.buf.set32(r.offset, S + A - BASE - (sec >= 0 ? starts[sec] : 0));
-						case RA64SecRelHi12 | RA64SecRelLo12A | RA64SecRelLo12L:
-							var t = target(r.sym);
-							var sec = t != null && t.section != null ? outOf.get(t.section) : -1;
-							A64Reloc.apply(s.buf, r.offset, r.kind, S + A - BASE - (sec >= 0 ? starts[sec] : 0), P, r.sym.name);
-						case _:
-							if (!arm || !A64Reloc.apply(s.buf, r.offset, r.kind, S + A, P, r.sym.name))
-								throw "hxmc: link: relocation " + r.kind + " on Windows";
-					}
-				}
-			}
+			for (s in g.secs)
+				if (s.kind != Bss && s.kind != Tbss) applyRelocs(s);
 		// base relocations (arm64 images must be relocatable): a block per page
 		var relocBuf = new Buf(4096);
 		if (relocatable && baseRelocs.length > 0) {
@@ -379,7 +316,7 @@ class LinkPE {
 				relocBuf.set32(at + 4, relocBuf.len - at);
 			}
 			sizes[7] = relocBuf.len;
-			imageSize = starts[7] + align(relocBuf.len, SECT);
+			imageSize = starts[7] + LinkCore.align(relocBuf.len, SECT);
 		}
 		// the file
 		var out = new Buf(1 << 20);
@@ -391,8 +328,8 @@ class LinkPE {
 			out.align(FILE);
 			var at = out.len;
 			rawPos[gi] = at;
-			out.zeros(align(sizes[gi], FILE));
-			rawSize[gi] = align(sizes[gi], FILE);
+			out.zeros(LinkCore.align(sizes[gi], FILE));
+			rawSize[gi] = LinkCore.align(sizes[gi], FILE);
 			if (g.name == ".idata") out.b.blit(at, idata.b, 0, idata.len) else if (g.name == ".reloc") out.b.blit(at, relocBuf.b, 0, relocBuf.len) else
 				for (s in g.secs)
 					if (s.kind != Bss && s.kind != Tbss) out.b.blit(at + addr.get(s) - BASE - starts[gi], s.buf.b, 0, s.buf.len);
@@ -410,35 +347,32 @@ class LinkPE {
 				out.align(FILE);
 				var at = out.len;
 				out.buf(d.data);
-				out.zeros(align(d.data.len, FILE) - d.data.len);
-				debug.push({name: name, rva: imageSize, size: d.data.len, raw: at, rawSize: align(d.data.len, FILE)});
-				imageSize += align(d.data.len, SECT);
+				out.zeros(LinkCore.align(d.data.len, FILE) - d.data.len);
+				debug.push({name: name, rva: imageSize, size: d.data.len, raw: at, rawSize: LinkCore.align(d.data.len, FILE)});
+				imageSize += LinkCore.align(d.data.len, SECT);
 			}
 		// (`symbols`) the COFF symbol table of the code, then the string table
 		var symOff = 0, nsyms = 0;
 		if (symbols) {
 			var syms = new Buf(1 << 16);
-			for (o in objs)
-				for (sy in o.symbols) {
-					var sec = sy.section;
-					if (sec == null || sec.kind != Text || !addr.exists(sec) || sy.abs || sy.name.length == 0 || StringTools.startsWith(sy.name, ".L")) continue;
-					var n = Bytes.ofString(sy.name);
-					if (n.length <= 8) {
-						syms.bytes(n);
-						syms.zeros(8 - n.length);
-					} else {
-						syms.u32(0);
-						syms.u32(strtab.len);
-						strtab.bytes(n);
-						strtab.u8(0);
-					}
-					syms.u32(addr.get(sec) + sy.offset - BASE - starts[0]);
-					syms.u16(1); // .text, the first section
-					syms.u16(0x20); // a function
-					syms.u8(sy.global ? 2 : 3); // IMAGE_SYM_CLASS_EXTERNAL, _STATIC
-					syms.u8(0);
-					nsyms++;
+			codeSymbols(sy -> {
+				var n = Bytes.ofString(sy.name);
+				if (n.length <= 8) {
+					syms.bytes(n);
+					syms.zeros(8 - n.length);
+				} else {
+					syms.u32(0);
+					syms.u32(strtab.len);
+					strtab.bytes(n);
+					strtab.u8(0);
 				}
+				syms.u32(addr.get(sy.section) + sy.offset - BASE - starts[0]);
+				syms.u16(1); // .text, the first section
+				syms.u16(0x20); // a function
+				syms.u8(sy.global ? 2 : 3); // IMAGE_SYM_CLASS_EXTERNAL, _STATIC
+				syms.u8(0);
+				nsyms++;
+			});
 			symOff = out.len;
 			out.buf(syms);
 		}
@@ -544,6 +478,132 @@ class LinkPE {
 		return out.toBytes();
 	}
 
+	// ---- relocations
+
+	var starts:haxe.ds.Vector<Int>; // the output sections' RVAs
+	var relocatable = false;
+	var baseRelocs:Array<{rva:Int, type:Int}> = [];
+
+	// an absolute address of the image (a number: as it is): with the
+	// image's base, and a base relocation when relocatable
+	override function absolute(s:Section, r:Reloc, P:Int) {
+		var v = symAddr(r.sym) + r.addend;
+		if (r.kind == RAbs64) {
+			if (isAbs(r.sym)) s.buf.set64(r.offset, v, v < 0 ? -1 : 0) else {
+				s.buf.set64(r.offset, v + imgLo, imgHi);
+				if (relocatable) baseRelocs.push({rva: P - BASE, type: 10});
+			}
+		} else {
+			s.buf.set32(r.offset, v);
+			if (!isAbs(r.sym)) {
+				if (imgHi != 0) throw "hxmc: link: a 32-bit absolute address of " + r.sym.name + " (an image above 4 GB)";
+				if (relocatable) baseRelocs.push({rva: P - BASE, type: 3});
+			}
+		}
+	}
+
+	function isAbs(sym:Symbol):Bool {
+		var t = target(sym);
+		// (linker-defined: addresses, but for the zero of an undefined weak symbol)
+		return t != null ? t.abs : sym.name != "__ImageBase" && symAddr(sym) == 0;
+	}
+
+	// a thread-local variable: its offset in its output section (.tls)
+	override function secRel(sym:Symbol):Int {
+		var t = target(sym);
+		var sec = t != null && t.section != null ? outOf.get(t.section) : -1;
+		return symAddr(sym) - BASE - (sec >= 0 ? starts[sec] : 0);
+	}
+
+	// ---- dead sections (LinkCore.gc)
+
+	// roots besides the entry, the other objects and the exports: the C
+	// runtime's initializer, terminator and TLS callback lists (.CRT$X??,
+	// .ctors, .dtors); the exception directory is no root (keepPdata)
+	override function gcRoot(o:Obj, s:Section):Bool {
+		if (isPdata(s)) return false;
+		var n = s.name;
+		return super.gcRoot(o, s) || StringTools.startsWith(n, ".CRT$") || n == ".ctors" || n == ".dtors" || StringTools.startsWith(n, ".ctors.")
+			|| StringTools.startsWith(n, ".dtors.");
+	}
+
+	override function gcOpaque(s:Section):Bool
+		return super.gcOpaque(s) || isPdata(s);
+
+	// a kept function keeps its unwind information (.xdata, and the handlers it names)
+	override function gcAlso(s:Section, mark:Section->Void) {
+		var u = unwindOf.get(s);
+		if (u != null)
+			for (x in u)
+				mark(x);
+	}
+
+	static inline function isPdata(s:Section):Bool
+		return StringTools.startsWith(s.name, ".pdata");
+
+	var unwindOf = new Map<Section, Array<Section>>();
+
+	// the size of an exception directory entry: x86-64 begin, end, unwind
+	// information; arm64 begin, unwind information (or packed)
+	inline function pdataEntry():Int
+		return arm ? 8 : 12;
+
+	// what the objects' exception directory entries name for each function's
+	// section: the sections of its unwind information
+	function pdataLinks():Map<Section, Array<Section>> {
+		var m = new Map<Section, Array<Section>>();
+		var n = pdataEntry();
+		for (o in objs)
+			for (s in o.sections)
+				if (isPdata(s)) {
+					var fn = new Map<Int, Section>();
+					for (r in s.relocs)
+						if (r.offset % n == 0) {
+							var t = target(r.sym);
+							if (t != null && t.section != null) fn.set(Std.int(r.offset / n), t.section);
+						}
+					for (r in s.relocs) {
+						var f = fn.get(Std.int(r.offset / n));
+						var t = target(r.sym);
+						if (f == null || t == null || t.section == null || t.section == f) continue;
+						var l = m.get(f);
+						if (l == null) m.set(f, l = []);
+						if (l.indexOf(t.section) < 0) l.push(t.section);
+					}
+				}
+		return m;
+	}
+
+	// the objects' exception directory entries of the functions kept (the
+	// others' left out), their sections kept when any are
+	function keepPdata() {
+		var n = pdataEntry();
+		for (o in objs)
+			for (s in o.sections)
+				if (isPdata(s)) {
+					var byEntry = new Map<Int, Array<Reloc>>();
+					for (r in s.relocs) {
+						var k = Std.int(r.offset / n);
+						var l = byEntry.get(k);
+						if (l == null) byEntry.set(k, l = []);
+						l.push(r);
+					}
+					var buf = new Buf(s.buf.len), relocs = [];
+					for (k in 0...Std.int(s.buf.len / n)) {
+						var l = byEntry.get(k);
+						var first = l == null ? null : Lambda.find(l, r -> r.offset == k * n);
+						var t = first == null ? null : target(first.sym);
+						if (t == null || t.section == null || !live.exists(t.section)) continue;
+						for (r in l)
+							relocs.push(new Reloc(buf.len + r.offset - k * n, r.kind, r.sym, r.addend));
+						buf.bytes(s.buf.b, k * n, n);
+					}
+					s.buf = buf;
+					s.relocs = relocs;
+					if (buf.len > 0) live.set(s, true);
+				}
+	}
+
 	// the .pdata entries and .xdata of the generated functions (Unwind):
 	// x86-64 (begin, end, unwind info), arm64 (begin, .xdata); a function
 	// whose frame needs no description (a leaf leaving the stack alone) has
@@ -557,6 +617,7 @@ class LinkPE {
 		var shared = new Map<String, Int>();
 		for (o in objs)
 			for (r in o.funcs) {
+				if (r.sym.section == null || !isLive(r.sym.section)) continue;
 				var u = arm ? Unwind.winA64(r.ops, r.sym.size) : Unwind.winX64(r.ops);
 				if (u == null) continue;
 				var key = u.toBytes().toHex();

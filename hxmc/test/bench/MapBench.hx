@@ -1,6 +1,6 @@
 // Identity-keyed and string-keyed maps: haxe.ds.ObjectMap get/set/exists on
 // objects (hits and misses, keys looked up in a shuffled order), and
-// StringMap's for comparison (make bench-maps; MAP_BENCH_ARGS: keys, rounds).
+// StringMap's for comparison (make bench-micro WHICH=maps; MAP_BENCH_ARGS: keys, rounds).
 // Prints the fastest and the median nanoseconds per operation of each workload.
 class MapBench {
 	static var sink = 0;

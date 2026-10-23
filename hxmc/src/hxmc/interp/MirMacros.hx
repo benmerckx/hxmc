@@ -600,6 +600,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		dg.stubs([], emit);
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
+		dg.resources([]);
 		phase("data, trampolines");
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		phase("load");

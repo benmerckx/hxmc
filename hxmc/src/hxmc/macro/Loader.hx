@@ -199,7 +199,7 @@ class Loader {
 
 	// whether o is an object of a type of a bundle
 	public static function isBundleObject(o:Dynamic):Bool
-		return host != null && Mem.getU16(Mem.addr(o), -4) >= hostNtypes;
+		return host != null && Mem.getU16(Mem.addr(o), hxmc.Abi.HDR_TINDEX) >= hostNtypes; // (the type index: hxmc.rt.Types)
 
 	static function hostSyms():SymFile.HostSyms {
 		if (host != null) return host;
@@ -381,7 +381,7 @@ class Loader {
 			var n = "TYOBJ_" + (t.sym : String).substr(3);
 			if (isNew.exists(t.sym)) {
 				var o = Mem.sym("rt_type_objs").add(16 * num.get(t.sym));
-				Mem.setI64(o, 0, ((14 : I64) << 32) | ((2 << 28) | 1)); // T_TYPEOBJ, K_RAW, one slot
+				Mem.setI64(o, 0, ((1 << 16) | 14 : I64)); // a record (hxmc.rt.Types): T_TYPEOBJ, one slot, hash 0
 				Mem.setI32(o, 8, num.get(t.sym));
 				extra.set(n, o.add(8));
 			} else {

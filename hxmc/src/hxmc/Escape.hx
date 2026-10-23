@@ -1,54 +1,56 @@
 package hxmc;
 
 import haxe.ds.Vector;
+import hxmc.ir.Ir;
 import hxmc.Mir;
+import hxmc.Ssa;
 import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
 
-// Escape analysis with scalar replacement (after inlining, before Sroa and
-// Opt): an allocation that never leaves its function is replaced by its
-// fields in SSA values, and is not made at all.
+// Escape analysis with scalar replacement, on object-level Mir (after
+// inlining, before MemLower): an allocation that never leaves its function
+// is replaced by its fields in SSA values, and is not made at all.
 //
-// The allocations are MirBuild's: the inline bump allocation of an object
-// (a phi of the fast path's address and the slow path's stub call,
-// MirBuild.alloc: class instances, anonymous objects, enum values,
-// closures, the boxes of captured variables) and the runtime's boxing of an
-// Int, Float or Int64 into a Dynamic (hx_box_int, hx_box_float,
-// hx_box_i64). An allocation's aliases are its value, its copies, phis of
-// aliases only, and what is read back from a shadow-stack slot or a cold
-// site's spill area it was stored into ("cells": variables whose stores
+// The allocations are New's (class instances, anonymous objects, enum
+// values, closures, the boxes of captured variables) and Box's (an Int,
+// Float or Int64 as a Dynamic). An allocation's aliases are its value, its
+// copies, phis of aliases only (a cold site's continuation phi among them:
+// the same object after the GC point), and what is read back from a
+// shadow-stack slot it was stored into ("cells": variables whose stores
 // reach their loads; a collection moves objects but keeps what a slot
 // refers to). Allocations that meet at a phi form a group, replaced
 // together when their layouts agree: the group's fields are one set of
 // variables, which is right only when every use of an alias is a use of
-// the group's latest instance (checked: the alias's instance is the
-// group's reaching allocation at the use; an object's allocation counts
-// from its first use, so its constructor's arguments may still read the
-// previous one). An alias may be read and written at constant offsets
-// (fields, the header), compared with null, given to the write barrier
-// (which an object that is never made does not need), stored into a cell
-// and, for a box, unboxed; anything else (a call, a return, a store into
-// the heap or a global, a phi with another value, an identity comparison)
-// is an escape, and the group stays as it is. An object stored into
-// another one's field escapes too (phase 1: one level of objects).
+// the group's latest instance (checked: the alias's instance is the group's
+// reaching allocation at the use; an object's allocation counts from its
+// first use, so its constructor's arguments may still read the previous
+// one). An alias may have its fields read and written (GetField, SetField,
+// InitField), be tested against null (NullCheck, a comparison), be given to
+// a cold site's GC point (which keeps it on the shadow stack across its slow
+// path), be stored into a cell and, for a box, be unboxed; anything else (a
+// call, a return, a store into the heap or a global, a phi with another
+// value, an identity comparison) is an escape, and the group stays as it
+// is. An object stored into another one's field escapes too (one level of
+// objects; again after a replacement, the field being a frame slot then).
 //
-// Before that, the type index of any alias (escaping or not) is known: the
-// inline caches' and enum switches' tests on it fold, so their slow paths
-// (which take the object) go first. A screen keeps the analysis to the
-// allocations that may stay in the function or have such tests.
+// Before that, what is known of any alias (escaping or not) folds: its type
+// tests (TypeTest, EnumTag), its null tests, an anonymous object's
+// structural accesses (AnonGet, AnonTest: its fields are known). A screen
+// keeps the analysis to the allocations that may stay in the function or
+// have such tests.
 class Escape {
 	static inline var EMPTY = -1; // lattice: no allocation seen (yet)
 	static inline var TOP = -2; // lattice: anything else, or several groups
 	static inline var UNDEF = -2; // abstract value: no store reaches (the variable's entry)
-	static inline var NONE = -3; // no definition in the block
-	static inline var NOTSET = -4;
+	static inline var NONE = SsaReader.NONE; // no definition in the block
+	static inline var NOTSET = SsaReader.NOTSET;
 
 	public static var on = Sys.getEnv("HXMC_ESCAPE") != "0";
 
 	// (debugging: HXMC_ESCAPE_HASH=<lo>-<hi>, the functions whose names hash
 	// to lo...hi of 0...1024 only; HXMC_ESCAPE_NO=<parts>, parts off:
-	// closures, frames, again, boxes, replace, screen)
+	// closures, frames, again, boxes, replace, screen, anon)
 	static var hashRange:Null<Array<Int>> = {
 		var e = Sys.getEnv("HXMC_ESCAPE_HASH");
 		e == null ? null : [for (x in e.split("-")) Std.parseInt(x)];
@@ -67,13 +69,10 @@ class Escape {
 	public static inline function part(p:String):Bool
 		return no.indexOf(p) < 0;
 
-	// the enum constructors by the symbol of their type index: the enum's
-	// number and the tag (Driver sets it before compiling; read only)
-	public static var ctorTags:Null<Map<String, {en:Int, tag:Int}>>;
-
-	// per type (the symbol of its index, or #index), which slots hold
-	// references (Driver sets it; read only)
-	public static var refSlots:Null<Map<String, Vector<Bool>>>;
+	// per type index, which slots hold references (the Driver sets it; read
+	// only): Mem.alloc's objects, whose words are read and written by
+	// hxmc.unsafe's loads and stores, keep those on the shadow stack
+	public static var refSlots:Null<Map<Int, Vector<Bool>>>;
 
 	// (HXMC_ESCAPE_LOG=1) what happens to each allocation that is analyzed
 	static var log = Sys.getEnv("HXMC_ESCAPE_LOG") == "1";
@@ -81,7 +80,7 @@ class Escape {
 	var f:MFunc;
 
 	public var removed = 0; // allocation sites replaced
-	public var folds = 0; // tests folded on known type indices
+	public var folds = 0; // tests folded on known objects
 
 	var nv = 0; // values when analyzed: abstract values below are Mir values, from here virtual phis
 	var nb = 0; // block numbers
@@ -93,7 +92,7 @@ class Escape {
 	// virtual phis (of cells, and of the latest instance of a group)
 	var vpBlock:Array<MBlock> = [];
 	var vpArgs:Array<Vector<Int>> = [];
-	// cells: shadow-stack slots and spill areas at constant offsets
+	// cells: shadow-stack slots at constant offsets
 	var cellOf:Vector<Int>; // load or store -> its cell + 1 (0: none)
 	var rootDone:Vector<Bool>; // rt_sp values whose accesses are known
 	var cellTracked:Array<Bool> = [];
@@ -119,8 +118,18 @@ class Escape {
 	public function new(f:MFunc)
 		this.f = f;
 
+	// (HXMC_ESCAPE_DUMP=<function symbol>: its object-level Mir before and after)
+	static var dumpName = Sys.getEnv("HXMC_ESCAPE_DUMP");
+
 	public function run() {
+		if (f.name == dumpName) Sys.println("escape: before\n" + f.dump());
+		go();
+		if (f.name == dumpName) Sys.println("escape: after\n" + f.dump());
+	}
+
+	function go() {
 		if (f.allocs == 0 || !allowed(f.name)) return;
+		f.edited();
 		for (b in f.blocks)
 			for (i in b.ins)
 				if (i.op == Call && i.returnsTwice) return;
@@ -149,7 +158,7 @@ class Escape {
 		if (!any) return false;
 		sweep();
 		prune();
-		trivialPhis();
+		Ssa.trivialPhis(f.vals, newPhis);
 		if (part("frames")) elideFrames();
 		return true;
 	}
@@ -203,55 +212,48 @@ class Escape {
 
 	// ---- closures called where they are made
 
-	// The indirect calls of f through closures whose function is known (a
-	// closure made here, possibly kept in a shadow-stack slot that holds only
-	// closures of that function) become direct calls of it, returned (the
+	// The calls of f through closures whose function is known (a closure made
+	// here, possibly kept in a shadow-stack slot that holds only closures of
+	// that function) become direct calls of it (sym: its symbol), returned
+	// when ok says it may be inlined and the closure may then be replaced (the
 	// Driver inlines them, then the closure is an object like any other).
-	public static function closureCalls(f:MFunc):Array<{call:MIns, sym:String}> {
+	public static function closureCalls(f:MFunc, ok:FuncInfo->Bool, sym:FuncInfo->String):Array<{call:MIns, fn:FuncInfo}> {
 		var r = [];
 		var calls = [];
 		for (b in f.blocks)
 			for (i in b.ins)
-				if (!i.dead && i.op == Call && i.sym == null && i.a >= 0 && i.args.length > 0) calls.push(i);
+				if (!i.dead && i.op == ClosureCall) calls.push(i);
 		if (calls.length == 0) return r;
 		var e = new Escape(f);
 		var nv = f.vals.length;
-		var fn = new Vector<Null<String>>(nv); // values that are closures of a known function
+		var fn = new Vector<Null<FuncInfo>>(nv); // values that are closures of a known function
 		var any = false;
 		for (b in f.blocks)
 			for (i in b.ins) {
 				if (i.dead) continue;
 				switch i.op {
+					case New if (i.info.lambda != null):
+						fn[i.id] = i.info.lambda.fn;
+						any = true;
 					case Phi:
-						var s = e.objectSite(i);
-						if (s != null) {
-							var d = s.defAt;
-							if (d.op == Store && d.a == i.id && d.b < 0 && d.imm == 0 && d.size == 8) {
-								var c = f.vals[d.c];
-								while (c.op == Copy)
-									c = f.vals[c.a];
-								if (c.op == SymAddr && c.imm == 0 && c.sym != null) {
-									fn[i.id] = c.sym;
-									any = true;
-								}
-							}
-						} else
-							fn[i.id] = e.sameSym(fn, i);
+						fn[i.id] = sameFn(fn, i);
 					case Copy:
 						fn[i.id] = fn[i.a];
 					case _:
 				}
 			}
 		if (!any) return r;
-		// (slots that only ever hold closures of one function)
-		var slots = new Map<Int, String>();
+		// (slots that only ever hold closures of one function: "" several)
+		var slots = new Map<Int, Null<FuncInfo>>();
+		var mixed = new Map<Int, Bool>();
 		for (b in f.blocks)
 			for (i in b.ins)
 				if (!i.dead && i.op == Store) {
 					var k = e.slotKey(i);
 					if (k < 0) continue;
-					var s = fn[i.c], o = slots.get(k);
-					slots.set(k, s == null || o != null && o != s ? "" : s);
+					var s = fn[i.c];
+					if (s == null || slots.exists(k) && slots.get(k) != s) mixed.set(k, true);
+					slots.set(k, s);
 				}
 		for (b in f.blocks)
 			for (i in b.ins) {
@@ -259,25 +261,24 @@ class Escape {
 				switch i.op {
 					case Load if (i.ty == I64 && fn[i.id] == null):
 						var k = e.slotKey(i);
-						var s = k < 0 ? null : slots.get(k);
-						if (s != null && s != "") fn[i.id] = s;
+						if (k >= 0 && slots.exists(k) && !mixed.exists(k)) fn[i.id] = slots.get(k);
 					case Copy if (fn[i.id] == null):
 						fn[i.id] = fn[i.a];
 					case Phi if (fn[i.id] == null):
-						fn[i.id] = e.sameSym(fn, i);
+						fn[i.id] = sameFn(fn, i);
 					case _:
 				}
 			}
 		for (c in calls) {
-			var l = f.vals[c.a];
-			while (l.op == Copy)
-				l = f.vals[l.a];
-			if (l.op != Load || l.b >= 0 || l.imm != 0 || l.size != 8) continue;
-			var s = fn[l.a];
-			if (s == null || c.args[0] != l.a && fn[c.args[0]] != s) continue;
-			c.sym = s;
+			var g = fn[c.args[0]];
+			if (g == null) continue;
+			// (a direct call of the closure's function, the closure first: as MirBuild's)
+			c.op = Call;
+			c.sym = sym(g);
 			c.a = -1;
-			r.push({call: c, sym: s});
+			c.argTys = g.args.mapToVector(a -> MirBuild.mty(a.ty) == Void ? I32 : MirBuild.mty(a.ty));
+			c.info = null;
+			if (ok(g)) r.push({call: c, fn: g});
 		}
 		if (r.length == 0) return r;
 		// (inlined only where the closure may then be replaced: not where it
@@ -296,8 +297,8 @@ class Escape {
 	var screenSure:Null<Vector<Bool>>;
 
 	// a phi's operands' function when they agree (null: not all known closures of one)
-	function sameSym(fn:Vector<Null<String>>, i:MIns):Null<String> {
-		var s:Null<String> = null;
+	static function sameFn(fn:Vector<Null<FuncInfo>>, i:MIns):Null<FuncInfo> {
+		var s:Null<FuncInfo> = null;
 		for (a in i.args) {
 			if (a == i.id) continue;
 			var x = fn[a];
@@ -308,6 +309,64 @@ class Escape {
 	}
 
 	// ---- allocation sites
+
+	// an anonymous structure's field's slot (WasmGC: by its index, as MirBuild's)
+	function shapeLoc(s:hxmc.ir.Ir.ShapeInfo, at:Int):Int
+		return f.gc ? (s.fields[at].ty.match(TI32 | TBool) ? 2 * at : at) : s.locs[at];
+
+	// what an allocation makes, by name (WasmGC's sites: no type indices)
+	static function gcKey(o:OInfo):String
+		return o.cls != null ? o.cls.name : o.ctor != null ? o.ctor.en.name + "." + o.ctor.name : o.lambda != null ? "lambda" + o.lambda.id : o.shape != null ? "shape"
+			+ [for (x in o.shape.fields) x.name].join(",") : hxmc.ir.Ir.repr(o.t);
+
+	// the site an instruction makes (null: none)
+	function siteAt(i:MIns):Null<Site> {
+		switch i.op {
+			case New:
+				var o = i.info;
+				// (not an empty Array: the runtime takes it for any growth)
+				if (o.name == OInfo.NEW_ARRAY || o.tindex == Abi.T_ARRAY) return null;
+				var s = new Site(i, i.block);
+				s.raw = o.name == OInfo.NEW_RAW;
+				// (its values are defined where it is first used: what its
+				// continuation computes before, its constructor's arguments, may
+				// read the previous instance of its group)
+				var j = o.cont;
+				var after = false;
+				if (j != null && j.preds.length == 1 && j.preds[0] == i.block) {
+					s.block = j;
+					after = true;
+				} else j = i.block;
+				s.defAt = j.term();
+				for (u in j.ins) {
+					if (u == i) after = true;
+					if (!after || u == i || u.dead || u.op == Phi) continue;
+					if (u.a == i.id || u.b == i.id || u.c == i.id || u.args.indexOf(i.id) >= 0) {
+						s.defAt = u;
+						break;
+					}
+				}
+				if (s.defAt == null) return null;
+				// (WasmGC: no type indices, the class, constructor, closure or shape by name)
+				s.key = o.name + ":" + (f.gc ? gcKey(o) : "" + o.tindex) + ":" + o.n;
+				return s;
+			case Box if (part("boxes")):
+				var k = switch i.info.t {
+					case TI32: 1;
+					case TF64: 2;
+					case TI64: 3;
+					case _: 0;
+				};
+				if (k == 0) return null;
+				var s = new Site(i, i.block);
+				s.defAt = i;
+				s.box = k;
+				s.key = "box" + k;
+				return s;
+			case _:
+				return null;
+		}
+	}
 
 	// the sites worth analyzing: false when none (an object or box with a use
 	// that certainly escapes, outside slow paths, and no test to fold is left
@@ -356,30 +415,16 @@ class Escape {
 				var s:Null<Site> = null;
 				switch i.op {
 					case Phi:
-						s = objectSite(i);
-						if (s == null) {
-							var e = NONE;
-							for (a in i.args)
-								if (a != i.id) e = e == NONE || e == exact[a] ? exact[a] : -1;
-							if (e >= 0) exact[i.id] = e;
-							der[i.id] = phiDer(i);
-						}
+						var e = NONE;
+						for (a in i.args)
+							if (a != i.id) e = e == NONE || e == exact[a] ? exact[a] : -1;
+						if (e >= 0) exact[i.id] = e;
+						der[i.id] = phiDer(i);
 					case Copy:
 						der[i.id] = der[i.a];
 						exact[i.id] = exact[i.a];
-					case Call if (i.sym != null && i.args.length == 1 && i.sym.length >= 10 && StringTools.fastCodeAt(i.sym, 3) == "b".code):
-						var k = switch i.sym {
-							case "hx_box_int": 1;
-							case "hx_box_float": 2;
-							case "hx_box_i64": 3;
-							case _: 0;
-						};
-						if (k > 0 && part("boxes")) {
-							s = new Site(i, i.block);
-							s.defAt = i;
-							s.box = k;
-							s.key = "box" + k;
-						}
+					case New | Box:
+						s = siteAt(i);
 					case _:
 				}
 				if (s != null) {
@@ -389,7 +434,7 @@ class Escape {
 				}
 			}
 		if (all.length == 0) return false;
-		// (what is read back from shadow-stack slots and spill areas they were stored into)
+		// (what is read back from shadow-stack slots they were stored into)
 		// (a slot several sites were stored into: the load is any of them, der
 		// -10 - its index in multi)
 		var slots:Null<Map<Int, Int>> = null;
@@ -422,7 +467,7 @@ class Escape {
 			var d = der[v];
 			if (d >= 0) sure[root(d)] = true;
 		}
-		var tindex:Array<MIns> = [], nulls:Array<MIns> = [];
+		var tests:Array<MIns> = [];
 		for (b in f.blocks)
 			for (i in b.ins) {
 				if (i.dead) continue;
@@ -431,23 +476,22 @@ class Escape {
 						der[i.id] = phiDer(i);
 					case Copy if (der[i.id] == -1):
 						der[i.id] = der[i.a];
-					case Load if (i.imm == Abi.HDR_TINDEX && i.size == 2 && i.b < 0 && exact[i.a] >= 0):
-						if (all[exact[i.a]].box == 0) tindex.push(i);
+					case TypeTest | EnumTag | NullCheck | AnonGet | AnonTest if (exact[i.a] >= 0):
+						tests.push(i);
 					case Cmp if ((i.imm == CEq || i.imm == CNe) && (exact[i.a] >= 0 && isConst(i.b, 0) || exact[i.b] >= 0 && isConst(i.a, 0))):
-						nulls.push(i);
+						tests.push(i);
 					case _ if (b.cold):
-					case Call if (ignore == null || !ignore.exists(i.id)):
-						var any = isDer(i.a);
+					case Call | VirtualCall | ClosureCall | AnonCall if (ignore == null || !ignore.exists(i.id)):
+						if (isDer(i.a)) markSure(i.a);
 						for (a in i.args)
-							if (isDer(a)) any = true;
-						if (any && i.sym != "hxmc_barrier_slow" && (i.sym == null || !StringTools.startsWith(i.sym, "hx_unbox_"))) {
-							if (isDer(i.a)) markSure(i.a);
-							for (a in i.args)
-								if (isDer(a)) markSure(a);
-						}
+							if (isDer(a)) markSure(a);
 					case Ret | TlsStore if (isDer(i.a)):
 						markSure(i.a);
 					case Store if (isDer(i.c) && (i.mem == Opt.MField || i.mem == Opt.MElem || i.mem == Opt.MGlobal || i.mem == Opt.MInit)):
+						markSure(i.c);
+					case SetField | InitField | ArrayInit | NArrayInit | AnonStore if (isDer(i.b)):
+						markSure(i.b);
+					case ArraySet | ArrayPush | NArraySet | NArrayDyn | RefStore if (isDer(i.c)):
 						markSure(i.c);
 					case _:
 				}
@@ -459,23 +503,11 @@ class Escape {
 				if (a != i.id && der[a] >= 0) sure[root(der[a])] = true;
 		var n = 0;
 		if (!part("screen")) sure = new Vector<Bool>(all.length); // (debugging: everything analyzed)
-		for (i in tindex)
-			if (sure[root(exact[i.a])]) {
-				var tc = constOf(all[exact[i.a]].ty.c);
-				i.op = Const;
-				i.a = -1;
-				i.sym = tc.sym;
-				i.imm = tc.imm;
-				i.imm2 = tc.imm2;
-				i.size = 0;
-				i.mem = 0;
-				n++;
-			}
-		for (i in nulls)
-			if (exact[i.a] >= 0 && sure[root(exact[i.a])] || exact[i.b] >= 0 && sure[root(exact[i.b])]) {
-				toConst(i, i.imm == CEq ? 0 : 1);
-				n++;
-			}
+		for (i in tests) {
+			var x = i.op == Cmp ? (exact[i.a] >= 0 ? i.a : i.b) : i.a;
+			var k = exact[x];
+			if (sure[root(k)] && foldOn(i, all[k], x)) n++;
+		}
 		if (n > 0) {
 			folds += n;
 			constFold();
@@ -498,7 +530,7 @@ class Escape {
 
 	var screenFolds = 0;
 
-	// (the screen) a load's or store's slot when its address is rt_sp plus a constant (-1: other memory)
+	// a load's or store's slot when its address is rt_sp plus a constant (-1: other memory)
 	function slotKey(i:MIns):Int {
 		if (i.b >= 0 || i.size != 8) return -1;
 		var v = i.a, off = i.imm, n = 0;
@@ -527,74 +559,76 @@ class Escape {
 		return c != null && c.sym == null && c.imm == k && c.imm2 == (k < 0 ? -1 : 0);
 	}
 
-	// MirBuild.alloc's shape: head: ptr = young_ptr ... br (enough room) fast, slow;
-	// fast: young_ptr = ptr + bytes, the header's two words, ptr + 8; join: phi(ptr + 8, stub())
-	function objectSite(p:MIns):Null<Site> {
-		if (p.ty != I64 || p.args.length != 2) return null;
-		var j = p.block;
-		if (j.preds.length != 2) return null;
-		for (k in 0...2) {
-			var o = f.vals[p.args[k]], r = f.vals[p.args[1 - k]];
-			if (o.op != Add || r.op != Call || r.sym == null || !StringTools.startsWith(r.sym, MirBuild.ALLOC_STUB)) continue;
-			var fast = o.block;
-			if (j.preds[k] != fast || fast.preds.length != 1 || fast.succs.length != 1) continue;
-			var ptr = f.vals[o.a];
-			if (ptr.op != TlsLoad || ptr.sym != "rt_young_ptr" || !isConst(o.b, 8)) continue;
-			var head = fast.preds[0];
-			var br = head.term();
-			if (ptr.block != head || br == null || br.op != Br || br.targets[0] != fast || br.targets[1] == fast) continue;
-			var tls:MIns = null, hdr:MIns = null, ty:MIns = null, bytes = -1;
-			var ok = true;
-			for (i in fast.ins) {
-				if (i.dead) continue;
-				switch i.op {
-					case Const | Jmp:
-					case Add if (i.a == ptr.id):
-					case TlsStore if (i.sym == "rt_young_ptr" && tls == null):
-						var a = f.vals[i.a];
-						var c = a.op == Add && a.a == ptr.id ? constOf(a.b) : null;
-						if (c == null || c.sym != null) ok = false else {
-							tls = i;
-							bytes = c.imm;
+	// ---- what is known of an object
+
+	// folds test u of x, an alias of site s whose layout is known (false:
+	// nothing to fold)
+	function foldOn(u:MIns, s:Site, x:Int):Bool {
+		var o = s.v.info;
+		switch u.op {
+			case Cmp:
+				toConst(u, u.imm == CEq ? 0 : 1);
+				return true;
+			case NullCheck:
+				u.dead = true;
+				return true;
+			case TypeTest if (s.box == 0):
+				// (the classes' type indices are in their preorder: TYSPAN_)
+				var c = u.info.cls, k = o.cls;
+				toConst(u, k != null && k.id >= c.id && k.id <= c.lastDescendant ? 1 : 0);
+				return true;
+			case EnumTag if (o.ctor != null):
+				toConst(u, o.ctor.tag);
+				return true;
+			case AnonGet if (o.shape != null && part("anon")):
+				var at = anonField(o.shape, u.info.name, u.info.t);
+				if (at < 0) return false;
+				var t = o.shape.fields[at].ty;
+				var i = new OInfo();
+				i.t = t;
+				i.loc = shapeLoc(o.shape, at);
+				i.shape = o.shape;
+				u.op = GetField;
+				u.info = i;
+				return true;
+			case AnonTest if (o.shape != null && part("anon")):
+				var at = anonField(o.shape, u.info.name, u.info.t);
+				var hit = u.targets[0];
+				if (at >= 0) {
+					// (the store: AnonStore in the hit block, of this test)
+					for (st in hit.ins)
+						if (st.op == AnonStore && st.c == u.id) {
+							var i = new OInfo();
+							i.t = o.shape.fields[at].ty;
+							i.loc = shapeLoc(o.shape, at);
+							i.shape = o.shape;
+							i.cont = st.info.cont;
+							st.op = SetField;
+							st.c = -1;
+							st.info = i;
 						}
-					case Store if (i.a == ptr.id && i.b < 0 && i.size == 4 && i.imm == 0 && hdr == null):
-						hdr = i;
-					case Store if (i.a == ptr.id && i.b < 0 && i.size == 4 && i.imm == 4 && ty == null):
-						ty = i;
-					case _:
-						ok = false;
 				}
-			}
-			if (!ok || tls == null || hdr == null || ty == null || bytes < 16 || bytes & 7 != 0) continue;
-			var hc = constOf(hdr.c), tc = constOf(ty.c);
-			if (hc == null || tc == null || hc.sym != null) continue;
-			// (an array: the runtime takes it for any growth; not worth the analysis)
-			if (tc.sym == null && tc.imm == Abi.T_ARRAY) return null;
-			var s = new Site(p, j);
-			// (its values are defined where it is first used: what the block
-			// computes before, its constructor's arguments, may read the
-			// previous instance of its group)
-			s.defAt = j.term();
-			for (i in j.ins) {
-				if (i.dead || i.op == Phi) continue;
-				if (i.a == p.id || i.b == p.id || i.c == p.id || i.args.indexOf(p.id) >= 0) {
-					s.defAt = i;
-					break;
-				}
-			}
-			if (s.defAt == null) return null;
-			s.head = head;
-			s.fast = fast;
-			s.tls = tls;
-			s.hdr = hdr;
-			s.ty = ty;
-			s.nslots = (bytes >> 3) - 1;
-			s.hdrImm = hc.imm;
-			s.tySym = tc.sym;
-			s.tyImm = tc.imm;
-			return s;
+				jumpTo(u.block, u, at >= 0 ? hit : u.targets[1]);
+				return true;
+			case _:
+				return false;
 		}
-		return null;
+	}
+
+	// the field of shape s that a structural access of the name, of type t,
+	// finds in place (an inline cache's slot of the field's kind: MemLower.kindMatch;
+	// -1: none, its slow path)
+	static function anonField(s:ShapeInfo, name:String, t:Ty):Int {
+		var k = s.slot(name) - 1;
+		if (k < 0) return -1;
+		var ft = s.fields[k].ty;
+		var ok = switch t {
+			case TI32 | TBool: ft.match(TI32 | TBool);
+			case TF64: ft == TF64;
+			case TI64: ft == TI64;
+			case _: ft.match(TRef(_));
+		};
+		return ok ? k : -1;
 	}
 
 	// ---- analysis
@@ -778,7 +812,7 @@ class Escape {
 		var boxAt = new Map<Int, Int>();
 		for (k in 0...sites.length) {
 			var r = find(k);
-			if (sites[r].layout() != sites[k].layout()) {
+			if (sites[r].key != sites[k].key) {
 				uniform[r] = false;
 				escape(r, "layouts differ");
 			}
@@ -899,16 +933,22 @@ class Escape {
 		while (j-- > 0)
 			work[top++] = phis[j];
 		var next = [], nt = 0;
+		var seen = new Vector<Int>(users.length), gen = 0;
 		while (top > 0) {
 			var p = work[--top];
 			if (repl[p] >= 0 || !trivial(p)) continue;
-			// (its users, through copies and cell loads, resolve further)
+			// (its users, through copies, cell loads and phis that collapsed
+			// already, resolve further)
 			next[nt++] = p;
+			gen++;
 			while (nt > 0) {
 				var us = users[next[--nt]];
 				if (us != null)
-					for (y in us)
-						if (y >= nv || f.vals[y].op == Phi) work[top++] = y else next[nt++] = y;
+					for (y in us) {
+						if (seen[y] == gen) continue;
+						seen[y] = gen;
+						if ((y >= nv || f.vals[y].op == Phi) && repl[y] < 0) work[top++] = y else next[nt++] = y;
+					}
 			}
 		}
 	}
@@ -993,9 +1033,10 @@ class Escape {
 		return cellOf[u.id] - 1;
 	}
 
-	// the accesses of one shadow-stack frame or spill area (an rt_sp value),
-	// at constant offsets; an address that leaves (but as a call's argument:
-	// the runtime's slot handles) keeps the whole area untracked
+	// the accesses of one shadow-stack frame (an rt_sp value), at constant
+	// offsets; an address that leaves (but as a call's argument or a cold
+	// site's frame, whose slots the runtime handles) keeps the whole frame
+	// untracked
 	function cellRoot(r:MIns) {
 		var acc:Array<MIns> = [], accOff:Array<Int> = [];
 		var all = false;
@@ -1026,6 +1067,11 @@ class Escape {
 					case Cmp:
 					case Call if (u.a != v):
 						untrack.push(off);
+					// (the frame of a cold site's spill slots and of an array store's
+					// slot: the spill slots are no cells; a rooted array's slot is
+					// given to the runtime)
+					case New | NewDyn | ArraySet | ArrayPush | NewNArray | NArrayDyn if (u.a != v && u.b != v && u.c != v):
+						if (u.info.rootSlot >= 0) untrack.push(off + 8 * u.info.rootSlot);
 					case _:
 						all = true;
 				}
@@ -1075,7 +1121,7 @@ class Escape {
 			ends[b.id] = cur;
 		}
 		var first = vpBlock.length;
-		var rd = new Reader(f.entry, UNDEF, ends, memo, newVp, setVpArgs);
+		var rd = new SsaReader(f.entry, UNDEF, ends, memo, newVp, setVpArgs);
 		for (l in early)
 			reach[l.id] = rd.readEntry(l.block);
 		rd.finish();
@@ -1086,10 +1132,11 @@ class Escape {
 			cellVps[c].push(nv + k);
 	}
 
-	// ---- folding on known type indices
+	// ---- folding on known objects
 
-	// the type index of an alias is its group's; an alias is not null; then
-	// comparisons of equal constants, and branches and switches on constants
+	// the layout of an alias is its group's: what is known of it folds,
+	// then comparisons of equal constants, and branches and switches on
+	// constants
 	function foldKnown():Bool {
 		var n = 0;
 		for (x in closure) {
@@ -1101,19 +1148,10 @@ class Escape {
 				var u = useList[q];
 				if (u.dead) continue;
 				switch u.op {
-					case Load if (site.box == 0 && u.a == x && u.b < 0 && u.imm == Abi.HDR_TINDEX && u.size == 2):
-						var tc = constOf(site.ty.c);
-						u.op = Const;
-						u.a = -1;
-						u.sym = tc.sym;
-						u.imm = tc.imm;
-						u.imm2 = tc.imm2;
-						u.size = 0;
-						u.mem = 0;
-						n++;
+					case TypeTest | EnumTag | NullCheck | AnonGet | AnonTest if (u.a == x):
+						if (foldOn(u, site, x)) n++;
 					case Cmp if ((u.imm == CEq || u.imm == CNe) && (u.a == x && isConst(u.b, 0) || u.b == x && isConst(u.a, 0))):
-						toConst(u, u.imm == CEq ? 0 : 1);
-						n++;
+						if (foldOn(u, site, x)) n++;
 					case _:
 				}
 			}
@@ -1135,6 +1173,8 @@ class Escape {
 		i.imm2 = v < 0 && i.ty == I64 ? -1 : 0;
 		i.size = 0;
 		i.mem = 0;
+		i.info = null;
+		i.args = vector();
 	}
 
 	function constFold() {
@@ -1145,18 +1185,8 @@ class Escape {
 					case Cmp if (i.imm == CEq || i.imm == CNe):
 						var x = constOf(i.a), y = constOf(i.b);
 						if (x == null || y == null || x.ty != y.ty) continue;
-						var eq = if (x.sym == y.sym && x.imm == y.imm && x.imm2 == y.imm2) 1 else if (x.sym == null && y.sym == null) 0 else if (x.sym != null
-							&& y.sym != null && x.imm == 0 && y.imm == 0 && x.imm2 == 0 && y.imm2 == 0 && StringTools.startsWith(x.sym, "TY_")
-							&& StringTools.startsWith(y.sym, "TY_")) 0 else -1;
+						var eq = if (x.sym == y.sym && x.imm == y.imm && x.imm2 == y.imm2) 1 else if (x.sym == null && y.sym == null) 0 else -1;
 						if (eq >= 0) toConst(i, i.imm == CEq ? eq : 1 - eq);
-					case Sub if (i.ty == I32):
-						var x = constOf(i.a), y = constOf(i.b);
-						if (x == null || y == null || x.sym == null || y.sym == null || x.imm2 != 0 || y.imm2 != 0) continue;
-						if (x.sym == y.sym) toConst(i, x.imm - y.imm) else {
-							// (constructors of one enum: their type indices less their tags are the same)
-							var tx = ctorTags == null ? null : ctorTags.get(x.sym), ty = ctorTags == null ? null : ctorTags.get(y.sym);
-							if (tx != null && ty != null && tx.en == ty.en) toConst(i, tx.tag + x.imm - ty.tag - y.imm);
-						}
 					case Br:
 						var c = constOf(i.a);
 						if (c == null || c.sym != null) continue;
@@ -1195,6 +1225,8 @@ class Escape {
 		}
 		t.op = Jmp;
 		t.a = -1;
+		t.b = -1;
+		t.info = null;
 		t.cases = vector();
 		t.targets = vector(to);
 		b.succs = [to];
@@ -1244,14 +1276,14 @@ class Escape {
 			var g = acc[s];
 			g.aliases.push(x);
 			lastFail = null;
-			if (!uses1(g, x, x, 0)) escape(s, failWhy(lastFail));
+			if (!uses1(g, x)) escape(s, failWhy(lastFail));
 		}
 		// the instance used is the group's latest
 		for (g in acc) {
 			if (g == null || escaped[g.root]) continue;
 			for (k in 0...g.accesses.length)
 				if (!latest(g, g.bases[k], g.accesses[k])) {
-					escape(g.root, "not the latest instance");
+					escape(g.root, "not the latest instance" + (log ? " (" + MFunc.insString(g.accesses[k]) + ")" : ""));
 					break;
 				}
 		}
@@ -1266,51 +1298,48 @@ class Escape {
 		return r;
 	}
 
-	// the uses of v, an alias x or an address off bytes into it (false: an escape)
-	function uses1(g:Group, x:Int, v:Int, off:Int):Bool {
-		var box = sites[g.root].box;
-		for (q in useStart[v]...useStart[v + 1]) {
+	// the uses of alias x (false: an escape)
+	function uses1(g:Group, x:Int):Bool {
+		var box = sites[g.root].box, raw = sites[g.root].raw;
+		for (q in useStart[x]...useStart[x + 1]) {
 			var u = useList[q];
 			if (u.dead) continue;
 			lastFail = u;
 			switch u.op {
 				case Copy:
-					if (v != x) {
-						g.derived.push(u);
-						if (!uses1(g, x, u.id, off)) return false;
-					}
 				case Phi:
-					if (v != x) return false;
 					var s = srcOf(u.id);
 					if (s < 0 || find(s) != g.root) return false;
-				case Load if (u.a == v && u.b != v && u.b < 0 && box == 0):
-					g.access(u, x, off + u.imm);
-				case Store if (u.a == v && u.b != v && u.b < 0 && u.c != v && box == 0):
+				case GetField if (box == 0 && !raw):
+					g.access(u, x);
+				case SetField | InitField if (box == 0 && !raw && u.a == x && u.b != x):
+					var c = srcOf(u.b);
+					if (c >= 0) escape(c, "stored into an object"); // (one level)
+					g.access(u, x);
+				// (Mem.alloc's object: hxmc.unsafe's loads and stores at constant offsets)
+				case Load if (raw && u.a == x && u.b < 0):
+					g.access(u, x);
+				case Store if (raw && u.a == x && u.b < 0 && u.c != x):
 					var c = srcOf(u.c);
-					if (c >= 0) escape(c, "stored into an object"); // (phase 1)
-					g.access(u, x, off + u.imm);
-				case Store if (u.c == v && v == x && u.a != v && u.b != v && cellOf[u.id] > 0 && cellTracked[cellOf[u.id] - 1]):
+					if (c >= 0) escape(c, "stored into an object");
+					g.access(u, x);
+				case RefStore if (raw && u.a == x && u.b != x && u.c != x && constOf(u.b) != null && constOf(u.b).sym == null):
+					var c = srcOf(u.c);
+					if (c >= 0) escape(c, "stored into an object");
+					g.access(u, x);
+				case Store if (u.c == x && u.a != x && u.b != x && cellOf[u.id] > 0 && cellTracked[cellOf[u.id] - 1]):
 					g.cellStores.push(u);
-				case Add if (u.a == v && u.b != v && box == 0):
-					var c = constOf(u.b);
-					if (c == null || c.sym != null || c.imm2 != (c.imm < 0 ? -1 : 0)) return false;
-					g.derived.push(u);
-					if (!uses1(g, x, u.id, off + c.imm)) return false;
-				case Sub if (u.a == v && v == x && youngStart(u.b) && box == 0):
-					// the write barrier's test: the object is young
-					for (r in useStart[u.id]...useStart[u.id + 1]) {
-						var w = useList[r];
-						if (!w.dead && (w.op != Cmp || w.imm != CULt || w.a != u.id)) return false;
-					}
-					g.derived.push(u);
-					for (r in useStart[u.id]...useStart[u.id + 1])
-						if (!useList[r].dead) g.young.push(useList[r]);
-				case Cmp if ((u.imm == CEq || u.imm == CNe) && v == x && (u.a == v && isConst(u.b, 0) || u.b == v && isConst(u.a, 0))):
+				case NullCheck:
 					g.nulls.push(u);
-				case Call if (u.sym == "hxmc_barrier_slow" && box == 0 && u.args.length == 4 && u.args[2] != v && u.args[3] != v):
-					g.barriers.push(u);
-				case Call if (box > 0 && v == x && u.sym != null && u.args.length == 1 && unboxOk(box, u.sym)):
-					g.access(u, x, 0);
+				case Cmp if ((u.imm == CEq || u.imm == CNe) && (u.a == x && isConst(u.b, 0) || u.b == x && isConst(u.a, 0))):
+					g.nulls.push(u);
+				case Unbox if (box > 0 && unboxOk(box, u.info.t)):
+					g.access(u, x);
+				case New | NewDyn | ArraySet | ArrayPush | NewNArray | NArrayDyn if (u.info.cold && u.a != x && u.b != x && u.c != x):
+					// (a cold site keeps it on the shadow stack: no need once it is not made)
+					var k = u.args.indexOf(x);
+					if (k < 0 || k >= u.info.nspill) return false;
+					g.spills.push(u);
 				case _:
 					return false;
 			}
@@ -1318,24 +1347,17 @@ class Escape {
 		return true;
 	}
 
-	static function unboxOk(box:Int, sym:String):Bool
-		return switch sym {
-			case "hx_unbox_int": box == 1;
-			case "hx_unbox_float": box == 1 || box == 2;
-			case "hx_unbox_i64": box == 3;
+	static function unboxOk(box:Int, t:Ty):Bool
+		return switch t {
+			case TI32: box == 1;
+			case TF64: box == 1 || box == 2;
+			case TI64: box == 3;
 			case _: false;
 		};
 
-	function youngStart(v:Int):Bool {
-		var l = f.vals[v];
-		if (l.op != Load || l.b >= 0 || l.imm != 0) return false;
-		var a = f.vals[l.a];
-		return a.op == SymAddr && a.sym == "rt_young_start" && a.imm == 0;
-	}
-
 	// ---- the latest instance
 
-	var curReaders:Map<Int, Reader> = new Map();
+	var curReaders:Map<Int, SsaReader> = new Map();
 
 	// where u uses alias x: the group's reaching allocation is x's instance
 	function latest(g:Group, x:Int, u:MIns):Bool {
@@ -1344,7 +1366,7 @@ class Escape {
 			var defs = MFunc.ints(nb, NONE);
 			for (k in 0...sites.length)
 				if (find(k) == g.root) defs[sites[k].block.id] = sites[k].v.id;
-			rd = new Reader(f.entry, UNDEF, defs, MFunc.ints(nb, NOTSET), newVp, setVpArgs);
+			rd = new SsaReader(f.entry, UNDEF, defs, MFunc.ints(nb, NOTSET), newVp, setVpArgs);
 			curReaders.set(g.root, rd);
 		}
 		var b = u.block;
@@ -1405,9 +1427,8 @@ class Escape {
 		for (k in 0...sites.length) {
 			var r = find(k);
 			var s = sites[k];
-			var what = s.box > 0 ? "box" + s.box : s.tySym;
 			var w = escaped[r] ? (whys[r] == null ? "?" : whys[r]) : "replaced";
-			lines.push('escape: ${f.name}: $what: $w');
+			lines.push('escape: ${f.name}: ${s.what()}: $w');
 		}
 		Sys.println(lines.join("\n"));
 	}
@@ -1418,6 +1439,7 @@ class Escape {
 		if (u.op == Call) s += " " + (u.sym == null ? "(indirect)" : u.sym);
 		if (u.op == Store && u.c >= 0 && srcOf(u.c) >= 0)
 			s += " (as a value" + (cellOf[u.id] > 0 ? ", into an untracked slot" : ", memory class " + u.mem) + ")";
+		if ((u.op == SetField || u.op == InitField) && u.b >= 0 && srcOf(u.b) >= 0) s += " (as a value)";
 		return s;
 	}
 
@@ -1452,20 +1474,52 @@ class Escape {
 		return x.id;
 	}
 
+	// an access's bytes in the object (a field's from its static part, a
+	// load's or store's of Mem.alloc's object from its displacement), its
+	// type, the value it stores (-1: a read)
+	function accOff(u:MIns):Int
+		return switch u.op {
+			case GetField | SetField | InitField: u.info.t.match(TI32 | TBool | TU8) ? 4 * u.info.loc : 8 * u.info.loc;
+			case RefStore: constOf(u.b).imm;
+			case Unbox: 0;
+			case _: u.imm;
+		};
+
+	function accSize(u:MIns):Int
+		return switch u.op {
+			case GetField | SetField | InitField: u.info.t.match(TI32 | TBool | TU8) ? 4 : u.info.t == TVoid ? 0 : 8;
+			case RefStore | Unbox: 8;
+			case _: u.size;
+		};
+
+	function accTy(u:MIns):MTy
+		return switch u.op {
+			case GetField | SetField | InitField: MirBuild.mty(u.info.t);
+			case RefStore: I64;
+			case Store: f.vals[u.c].ty;
+			case _: u.ty;
+		};
+
+	static function accValue(u:MIns):Int
+		return switch u.op {
+			case SetField | InitField: u.b;
+			case Store | RefStore: u.c;
+			case _: -1;
+		};
+
 	// replaces group g by variables (false: its accesses do not fit)
 	function replace(g:Group):Bool {
-		var box = sites[g.root].box;
+		var site = sites[g.root];
+		var box = site.box;
 		var phiStart = newPhis.length;
-		// the variables: the accessed ranges, identical or disjoint (narrower
-		// loads at a range's start read its low bytes; stores of zero define
-		// the ranges they cover)
+		// the variables: the ranges accessed, identical or disjoint (narrower
+		// loads at a range's start read its low bytes); stores of zero (and an
+		// enum value's cleared words: InitField's next) define the ranges
+		// they cover
 		var vars:Array<Var> = [];
-		if (box == 0) {
-			vars.push(new Var(-8, 4, I32));
-			vars.push(new Var(Abi.HDR_TINDEX, 4, I32));
-		} else
-			vars.push(box == 1 ? new Var(0, 4, I32) : box == 2 ? new Var(0, 8, F64) : new Var(0, 8, I64));
-		var nslots = sites[g.root].nslots;
+		if (box > 0) vars.push(box == 1 ? new Var(0, 4, I32) : box == 2 ? new Var(0, 8, F64) : new Var(0, 8, I64));
+		var nslots = site.v.info.n;
+		var refs = site.raw && refSlots != null ? refSlots.get(site.v.info.tindex) : null;
 		var order = [for (k in 0...g.accesses.length) k];
 		// (wider first: a narrower load then finds its range)
 		order.sort((a, b) -> {
@@ -1473,21 +1527,32 @@ class Escape {
 			sa != sb ? sb - sa : a - b;
 		});
 		var varOf = new Map<Int, Int>(); // access -> variable
-		var zeroStores:Array<Int> = []; // (accesses)
+		var zeroStores:Array<{u:MIns, off:Int, size:Int}> = [];
 		for (k in order) {
-			var u = g.accesses[k], off = g.offs[k];
-			if (u.op == Call) {
+			var u = g.accesses[k];
+			if (u.op == Unbox) {
 				varOf.set(u.id, 0);
 				continue;
 			}
-			var size = u.size;
-			var t = u.op == Load ? u.ty : f.vals[u.c].ty;
-			if (off < -8 || off + size > 8 * nslots) return false;
-			if (u.op == Store && isConst(u.c, 0)) {
-				zeroStores.push(k);
+			if (u.op == InitField && u.info.next >= 0) zeroStores.push({u: u, off: 8 * u.info.next, size: 8});
+			var off = accOff(u), size = accSize(u), t = accTy(u);
+			if (size == 0) continue;
+			if (off < 0 || off + size > 8 * nslots) return false;
+			var value = accValue(u);
+			if (value >= 0 && isConst(value, 0)) {
+				zeroStores.push({u: u, off: off, size: size});
 				continue;
 			}
 			if (size != 1 && size != 2 && size != 4 && size != 8 || size == 8 && t == I32 || size < 8 && t != I32) return false;
+			// (a reference: its field's type, a barriered store, or the type's
+			// pointer map for Mem.alloc's object)
+			var ref = switch u.op {
+				case GetField | SetField | InitField: u.info.t.match(TRef(_));
+				case RefStore: true;
+				case _:
+					if (size == 8 && t != F64 && (refs == null || off & 7 != 0)) return false; // (a word that may be a reference)
+					size == 8 && t != F64 && (off >> 3) < refs.length && refs[off >> 3];
+			};
 			var v = -1;
 			for (j in 0...vars.length) {
 				var r = vars[j];
@@ -1495,57 +1560,52 @@ class Escape {
 					if (r.size == size) {
 						v = j;
 						if (r.ty != t) {
-							if (size != 8) return false;
+							if (size != 8 || r.ref || ref) return false;
 							r.ty = I64; // (doubles and words: words)
 						}
-					} else if (u.op == Load && size < r.size && r.ty != F64) v = j else return false;
+						if (r.ref != ref) return false;
+					} else if (u.op == Load && size < r.size && r.ty != F64 && !r.ref) v = j else return false;
 				} else if (off < r.off + r.size && r.off < off + size) return false;
 			}
 			if (v < 0) {
 				if (u.op == Load && size < 4) return false; // (a narrow load of nothing wider)
 				v = vars.length;
-				vars.push(new Var(off, size, t));
+				var r = new Var(off, size, t);
+				r.ref = ref;
+				vars.push(r);
 			}
 			varOf.set(u.id, v);
 		}
 		// stores of zero: every range they cover
 		var zeroVars = new Map<Int, Array<Int>>();
-		for (k in zeroStores) {
-			var u = g.accesses[k], off = g.offs[k];
-			var vs = [];
+		for (z in zeroStores) {
+			var vs = zeroVars.get(z.u.id);
+			if (vs == null) zeroVars.set(z.u.id, vs = []);
 			for (j in 0...vars.length) {
 				var r = vars[j];
-				if (r.off >= off && r.off + r.size <= off + u.size) vs.push(j);
-				else if (r.off < off + u.size && off < r.off + r.size) return false;
+				if (r.off >= z.off && r.off + r.size <= z.off + z.size) vs.push(j);
+				else if (r.off < z.off + z.size && z.off < r.off + r.size) return false;
 			}
-			zeroVars.set(u.id, vs);
 		}
 		// fields holding references stay in memory the collector sees, a slot
 		// of the function's shadow-stack frame each (as SSA values a collection
 		// would leave them pointing at the object's old place)
 		var slotOf = MFunc.ints(vars.length, -1);
 		var nrooted = 0;
-		if (box == 0) {
-			var s = sites[g.root];
-			var refs = refSlots == null ? null : refSlots.get(s.tySym != null ? s.tySym : "#" + s.tyImm);
-			for (j in 0...vars.length) {
-				var r = vars[j];
-				if (r.off < 0 || r.size != 8 || r.ty == F64) continue;
-				if (refs == null) return false; // (a word that may be a reference)
-				if (r.off & 7 == 0 && (r.off >> 3) < refs.length && refs[r.off >> 3]) {
-					slotOf[j] = 0;
-					nrooted++;
-				}
+		// (WasmGC: the engine's collector sees SSA values)
+		for (j in 0...vars.length)
+			if (vars[j].ref && !f.gc) {
+				slotOf[j] = 0;
+				nrooted++;
 			}
-			if (nrooted > 0) {
-				for (k in 0...g.accesses.length) {
-					var v = varOf.get(g.accesses[k].id);
-					if (v != null && slotOf[v] >= 0 && g.accesses[k].size != 8) return false;
-				}
-				if (!frameReady()) return false;
-				for (j in 0...vars.length)
-					if (slotOf[j] >= 0) slotOf[j] = frameSlot();
+		if (nrooted > 0) {
+			for (u in g.accesses) {
+				var v = varOf.get(u.id);
+				if (v != null && slotOf[v] >= 0 && accSize(u) != 8) return false;
 			}
+			if (!frameReady()) return false;
+			for (j in 0...vars.length)
+				if (slotOf[j] >= 0) slotOf[j] = frameSlot();
 		}
 		// (a store of the frame slot)
 		function slotStore(before:MIns, off:Int, v:Int) {
@@ -1557,29 +1617,40 @@ class Escape {
 			st.size = 8;
 			st.mem = Opt.MFrame;
 		}
+		var rooted:Array<MIns> = [];
 		for (u in g.accesses) {
 			var v = varOf.get(u.id);
 			if (v == null || slotOf[v] < 0) continue;
 			// (the access is the slot's)
+			var value = accValue(u);
+			if (value < 0) {
+				u.op = Load;
+				u.ty = I64;
+			} else {
+				u.op = Store;
+				u.c = value;
+			}
 			u.a = frameRoot;
 			u.b = -1;
 			u.imm = slotOf[v];
 			u.imm2 = 1;
+			u.size = 8;
+			u.signed = false;
 			u.mem = Opt.MFrame;
+			u.info = null;
 			varOf.remove(u.id);
+			rooted.push(u);
 		}
 		if (nrooted > 0) {
 			for (s in g.sites)
 				for (j in 0...vars.length)
 					if (slotOf[j] >= 0) slotStore(s.defAt, slotOf[j], zero(I64));
-			for (k in zeroStores) {
-				var u = g.accesses[k];
-				for (j in zeroVars.get(u.id))
-					if (slotOf[j] >= 0) slotStore(u, slotOf[j], zero(I64));
-			}
+			for (z in zeroStores)
+				for (j in zeroVars.get(z.u.id))
+					if (slotOf[j] >= 0) slotStore(z.u, slotOf[j], zero(I64));
 		}
-		// the definitions: each site (zeros, the header; the boxed value),
-		// before the instruction it counts from, and the stores
+		// the definitions: each site (zeros; the boxed value), before the
+		// instruction it counts from, and the stores
 		var siteDef = new Map<Int, Site>();
 		for (s in g.sites)
 			siteDef.set(s.defAt.id, s);
@@ -1599,7 +1670,7 @@ class Escape {
 		function storedValue(st:MIns, v:Int):Int {
 			var r = stored.get(st.id);
 			if (r != null) return r;
-			var c = st.c;
+			var c = accValue(st);
 			if (vars[v].ty == I64 && f.vals[c].ty == F64) {
 				var x = newIns(FToBits, I64, st.block, st);
 				x.a = c;
@@ -1609,11 +1680,8 @@ class Escape {
 			return c;
 		}
 		function siteValue(s:Site, v:Int):Int {
-			var r = vars[v];
-			if (s.box > 0) return s.v.args[0];
-			if (r.off == -8) return s.hdr.c;
-			if (r.off == Abi.HDR_TINDEX) return s.ty.c;
-			return zero(r.ty);
+			if (s.box > 0) return s.v.a;
+			return zero(vars[v].ty);
 		}
 		// what one instruction defines (cur: the variables' values)
 		function define(i:MIns, cur:Vector<Int>) {
@@ -1621,13 +1689,11 @@ class Escape {
 			if (s != null)
 				for (v in 0...n)
 					cur[v] = siteValue(s, v);
-			if (i.op != Store) return;
 			var zv = zeroVars.get(i.id);
-			if (zv != null) {
-				for (v in zv)
-					cur[v] = zero(vars[v].ty);
-				return;
-			}
+			if (zv != null)
+				for (w in zv)
+					cur[w] = zero(vars[w].ty);
+			if (accValue(i) < 0) return;
 			var v = varOf.get(i.id);
 			if (v != null) cur[v] = storedValue(i, v);
 		}
@@ -1642,10 +1708,10 @@ class Escape {
 			for (v in 0...n)
 				endsOf[v][b.id] = cur[v];
 		}
-		var readers = new Vector<Reader>(n);
+		var readers = new Vector<SsaReader>(n);
 		for (v in 0...n) {
 			var ty = vars[v].ty;
-			readers[v] = new Reader(f.entry, NONE, endsOf[v], MFunc.ints(nb, NOTSET), b -> {
+			readers[v] = new SsaReader(f.entry, NONE, endsOf[v], MFunc.ints(nb, NOTSET), b -> {
 				var phi = new MIns(Phi, ty);
 				phi.id = f.vals.length;
 				f.vals.push(phi);
@@ -1664,7 +1730,7 @@ class Escape {
 			for (i in b.ins.copy()) {
 				if (i.dead) continue;
 				define(i, cur);
-				if (i.op != Load && i.op != Call) continue;
+				if (i.op != GetField && i.op != Unbox && i.op != Load) continue;
 				var v = varOf.get(i.id);
 				if (v == null) continue;
 				var x = cur[v] != NONE ? cur[v] : readers[v].readEntry(b);
@@ -1680,34 +1746,26 @@ class Escape {
 			for (k in 0...p.args.length)
 				if (p.args[k] == NONE) p.args[k] = zero(p.ty);
 		}
-		// the stores go; the cells keep null; the barrier and the tests know
-		// the object is young and not null
+		// the stores go; the cells and the cold sites keep null; the tests
+		// know the object is not null
 		for (u in g.accesses)
-			if (u.op == Store && !(u.a == frameRoot && u.mem == Opt.MFrame)) u.dead = true;
-		var z64 = g.cellStores.length > 0 ? zero(I64) : -1;
+			if (accValue(u) >= 0 && rooted.indexOf(u) < 0) u.dead = true;
+		var z64 = g.cellStores.length > 0 || g.spills.length > 0 ? zero(I64) : -1;
 		for (u in g.cellStores)
 			u.c = z64;
-		for (u in g.barriers)
-			u.dead = true;
-		for (u in g.young)
-			toConst(u, 1);
+		var aliasSet = new Map<Int, Bool>();
+		for (x in g.aliases)
+			aliasSet.set(x, true);
+		for (u in g.spills)
+			for (k in 0...u.info.nspill)
+				if (aliasSet.exists(u.args[k])) u.args[k] = z64;
 		for (u in g.nulls)
-			toConst(u, u.imm == CEq ? 0 : 1);
-		for (u in g.derived)
-			u.dead = true;
+			if (u.op == NullCheck) u.dead = true else toConst(u, u.imm == CEq ? 0 : 1);
 		for (x in g.aliases)
 			f.vals[x].dead = true;
 		// the allocations go
-		for (s in g.sites) {
-			if (s.box > 0) {
-				s.v.dead = true;
-				continue;
-			}
-			s.tls.dead = true;
-			s.hdr.dead = true;
-			s.ty.dead = true;
-			jumpTo(s.head, s.head.term(), s.fast);
-		}
+		for (s in g.sites)
+			s.v.dead = true;
 		removed += g.sites.length;
 		return true;
 	}
@@ -1744,29 +1802,18 @@ class Escape {
 		return off;
 	}
 
-	static inline function accSize(u:MIns):Int
-		return u.op == Call ? 8 : u.size;
-
-	// load or unbox i reads x, the value of variable r
+	// a field read, a load or an unboxing i reads x, the value of variable r
 	function read(i:MIns, x:Int, r:Var) {
 		var b = i.block;
-		if (i.op == Call) {
-			var conv = i.sym == "hx_unbox_float" && r.ty == I32;
+		if (i.op == Unbox) {
+			var conv = i.info.t == TF64 && r.ty == I32;
 			i.op = conv ? I2F : Copy;
 			i.a = x;
-			i.sym = null;
-			i.args = vector();
-			i.argTys = vector();
-			i.cCall = false;
-			i.cSizes = vector();
-			i.cGroups = vector();
-			i.structRet = false;
-			i.cRet = vector();
-			i.keepsFrame = false;
-			i.noReturn = false;
+			i.info = null;
 			return;
 		}
-		var size = i.size, signed = i.signed, ty = i.ty;
+		var size = i.op == Load ? i.size : accSize(i), signed = i.signed, ty = i.ty;
+		i.info = null;
 		i.b = -1;
 		i.c = -1;
 		i.imm = 0;
@@ -1774,12 +1821,6 @@ class Escape {
 		i.size = 0;
 		i.signed = false;
 		i.mem = 0;
-		if (r.off == Abi.HDR_TINDEX) {
-			// (the 16-bit type index: the whole constant, as every comparison takes it)
-			i.op = Copy;
-			i.a = x;
-			return;
-		}
 		if (ty == F64 && r.ty == I64) {
 			i.op = BitsToF;
 			i.a = x;
@@ -1843,61 +1884,26 @@ class Escape {
 			if (k < ins.length) ins.resize(k);
 		}
 	}
-
-	// the phis made whose operands are one value (or the phi) are copies of it
-	function trivialPhis() {
-		var changed = true;
-		while (changed) {
-			changed = false;
-			for (p in newPhis) {
-				if (p.op != Phi || p.dead) continue;
-				var same = -1, trivial = true;
-				for (a in p.args) {
-					var x = a;
-					while (f.vals[x].op == Copy && f.vals[x].a >= 0)
-						x = f.vals[x].a;
-					if (x == p.id || x == same) continue;
-					if (same >= 0) {
-						trivial = false;
-						break;
-					}
-					same = x;
-				}
-				if (trivial && same >= 0) {
-					p.op = Copy;
-					p.a = same;
-					p.args = vector();
-					changed = true;
-				}
-			}
-		}
-	}
 }
 
 private class Site {
-	public var v:MIns; // the object (the phi) or the box (the call)
-	public var block:MBlock;
+	public var v:MIns; // the New or the Box
+	public var block:MBlock; // where its values are defined (a New's continuation)
 	public var box = 0; // 1 Int, 2 Float, 3 Int64 (0: an object)
-	public var key:Null<String>; // the layout: a group's sites agree (layout())
-	public var hdrImm = 0; // (an object's header words)
-	public var tySym:Null<String>;
-	public var tyImm = 0;
+	public var raw = false; // Mem.alloc's: its words read and written by hxmc.unsafe's loads and stores
+	public var key:Null<String>; // the layout: a group's sites agree
 	public var defAt:MIns; // the instruction its values are defined before
-	public var head:MBlock;
-	public var fast:MBlock;
-	public var tls:MIns; // the bump of rt_young_ptr
-	public var hdr:MIns; // the header's stores
-	public var ty:MIns;
-	public var nslots = 1;
 
 	public function new(v, block) {
 		this.v = v;
 		this.block = block;
 	}
 
-	public function layout():String {
-		if (key == null) key = "o" + hdrImm + ":" + (tySym == null ? "" : tySym) + ":" + tyImm;
-		return key;
+	public function what():String {
+		if (box > 0) return "box" + box;
+		var o = v.info;
+		return o.cls != null ? o.cls.name : o.ctor != null ? o.ctor.en.name + "." + o.ctor.name : o.lambda != null ? "closure " + o.lambda.sig.key : o.shape != null ? "anon "
+			+ o.shape.id : o.name;
 	}
 }
 
@@ -1905,21 +1911,16 @@ private class Group {
 	public var root:Int;
 	public var sites:Array<Site> = [];
 	public var aliases:Array<Int> = [];
-	public var accesses:Array<MIns> = []; // loads and stores (at offs), unboxings
-	public var offs:Array<Int> = [];
+	public var accesses:Array<MIns> = []; // field reads and writes, unboxings
 	public var bases:Array<Int> = []; // the alias each access goes through
 	public var cellStores:Array<MIns> = [];
-	public var derived:Array<MIns> = []; // addresses into the object, barrier tests
-	public var young:Array<MIns> = [];
 	public var nulls:Array<MIns> = [];
-	public var barriers:Array<MIns> = [];
-
+	public var spills:Array<MIns> = []; // cold sites' GC points keeping an alias
 	public function new(root)
 		this.root = root;
 
-	public function access(u:MIns, x:Int, off:Int) {
+	public function access(u:MIns, x:Int) {
 		accesses.push(u);
-		offs.push(off);
 		bases.push(x);
 	}
 }
@@ -1928,104 +1929,11 @@ private class Var {
 	public var off:Int;
 	public var size:Int;
 	public var ty:MTy;
+	public var ref = false; // a reference (a slot of the frame)
 
 	public function new(off, size, ty) {
 		this.off = off;
 		this.size = size;
 		this.ty = ty;
-	}
-}
-
-// a variable's value at block entries, on demand (Braun et al.): the
-// definition at the end of a block (ends, by block number: NONE), else a
-// phi where predecessors meet (made by mkPhi, its operands set by setArgs in
-// finish), else the entry's value; iterative (no recursion along long
-// paths); memo: by block number, NOTSET (reset puts it back)
-private class Reader {
-	public var ends:Vector<Int>;
-	var memo:Vector<Int>;
-	var touched:Array<Int> = [];
-	var entry:MBlock;
-	var undef:Int;
-	var mkPhi:MBlock->Int;
-	var setArgs:(Int, Vector<Int>) -> Void;
-	var pendV:Array<Int> = [];
-	var pendB:Array<MBlock> = [];
-	var npend = 0;
-
-	static inline var NONE = -3;
-	static inline var NOTSET = -4;
-
-	public function new(entry, undef, ends, memo, mkPhi, setArgs) {
-		this.entry = entry;
-		this.undef = undef;
-		this.ends = ends;
-		this.memo = memo;
-		this.mkPhi = mkPhi;
-		this.setArgs = setArgs;
-	}
-
-	inline function remember(b:MBlock, v:Int) {
-		memo[b.id] = v;
-		touched.push(b.id);
-	}
-
-	public inline function readEnd(b:MBlock):Int {
-		var d = ends[b.id];
-		return d != NONE ? d : readEntry(b);
-	}
-
-	public function readEntry(b:MBlock):Int {
-		var chain:Array<MBlock> = [];
-		var r = undef;
-		var n = 0;
-		while (true) {
-			var m = memo[b.id];
-			if (m != NOTSET) {
-				r = m;
-				break;
-			}
-			if (b == entry || b.preds.length == 0 || n++ > 1000000) {
-				r = undef;
-				remember(b, r);
-				break;
-			}
-			if (b.preds.length == 1) {
-				chain.push(b);
-				var p = b.preds[0];
-				var d = ends[p.id];
-				if (d != NONE) {
-					r = d;
-					break;
-				}
-				b = p;
-				continue;
-			}
-			r = mkPhi(b);
-			remember(b, r);
-			pendV[npend] = r;
-			pendB[npend++] = b;
-			break;
-		}
-		for (x in chain)
-			remember(x, r);
-		return r;
-	}
-
-	public function finish() {
-		while (npend > 0) {
-			npend--;
-			var v = pendV[npend], b = pendB[npend];
-			var args = new Vector<Int>(b.preds.length);
-			for (k in 0...args.length)
-				args[k] = readEnd(b.preds[k]);
-			setArgs(v, args);
-		}
-	}
-
-	public function reset() {
-		for (k in touched)
-			memo[k] = NOTSET;
-		touched = [];
 	}
 }

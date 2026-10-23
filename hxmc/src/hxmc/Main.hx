@@ -136,7 +136,7 @@ class Main {
 		hxmc.ir.Lower.targetOs = abi.osCode();
 		hxmc.ir.Lower.wasmGc = opts.wasmGc;
 		// (genjs's order: `Hashtbl.fold (fun name data acc -> (name,data) :: acc) com.resources []`)
-		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:String}>) -> [{name: name, data: codegen.Codegen.bytesSerialize(data)}].concat(acc), []);
+		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		hxmc.ir.Lower.bounds = opts.bounds;
 		hxmc.ir.Lower.nullChecks = opts.nullChecks;
 		hxmc.ir.Lower.interp = opts.interp != null;

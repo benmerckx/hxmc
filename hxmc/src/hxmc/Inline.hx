@@ -6,21 +6,24 @@ import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
 
-// Inlining of small functions into their callers, on Mir (after MirBuild,
-// before Opt): the callee's blocks are copied in place of the call, its
-// parameters replaced by the arguments, its returns by jumps to the rest of
-// the caller's block (a phi joins the results).
+// Inlining of small functions into their callers, on object-level Mir (after
+// MirBuild, before Escape and MemLower): the callee's blocks are copied in
+// place of the call, its parameters replaced by the arguments, its returns
+// by jumps to the rest of the caller's block (a phi joins the results); the
+// copy's operations are lowered in the caller (its inline caches the
+// caller's).
 //
 // Candidates are decided on hxmc's IR (hxmc.ir) (`candidate`: no try, a small body),
 // so that Fingerprint can put a candidate's body into the key of every
-// module calling it; the final decision is on the callee's Mir: few
-// instructions on its fast path (its inline caches become the caller's; a
-// shadow-stack frame stays the copy's own: it pushes and pops it).
+// module calling it; the final decision is on the callee's object-level Mir:
+// few instructions on its fast path once lowered (size: what MemLower makes
+// of each operation, counted on the operation; a shadow-stack frame stays the
+// copy's own: it pushes and pops it).
 class Inline {
 	public static inline var MAX_IR = 40; // IR nodes of a candidate
 	// instructions outside slow paths: of a callee inlined anywhere, at a
 	// call in a loop, and of the runtime's Haxe functions (hxmc.rt) outside
-	// loops: 3, those no bigger than their call (Bytes.get, set and length:
+	// loops: 3, those no bigger than their call (Bytes.get, set and length, then:
 	// the tool 0.2% smaller, its self-compile 1% less CPU; 16 inlines
 	// hx_str_or_null at every concatenation too: 0.5% faster still, the
 	// port 1.2% larger) (size against speed;
@@ -71,18 +74,92 @@ class Inline {
 		return true;
 	}
 
-	// the callee's Mir when it can be inlined (built once per caller module)
-	public static function template(mb:MirBuild, mf:MFunc):Null<Template> {
-		// (a callee with a shadow-stack frame keeps it: its copy pushes and pops it)
+	// the instructions of f outside slow paths once lowered, from its
+	// object-level Mir: an object-level operation counts what MemLower makes
+	// of it outside slow paths (opSize), the others one each but constants
+	// and addresses, which fold into their users (-1: never inlined)
+	public static function size(f:MFunc, gc = false):Int {
 		var n = 0;
-		for (b in mf.blocks)
+		for (b in f.blocks)
 			if (!b.cold)
 				for (i in b.ins) {
-					if (i.op == Call && i.returnsTwice) return null;
-					// (constants and addresses fold into their users)
-					if (i.op != Const && i.op != ConstF && i.op != SymAddr && i.op != StackAddr && i.op != Param) n++;
+					if (i.op == Call && i.returnsTwice) return -1;
+					if (i.op != Const && i.op != ConstF && i.op != SymAddr && i.op != StackAddr && i.op != Param)
+						n += !i.isObj() ? 1 : gc ? gcOpSize(i) : opSize(i);
 				}
-		return n <= MAX_LOOP ? {mf: mf, sites: mb.inlineSites, size: n, icSym: mb.icSym, icaches: mb.icaches} : null;
+		return n;
+	}
+
+	// what wasmgc.MirGen makes of an object-level operation (no barriers,
+	// nursery or inline caches: mostly one instruction and its casts; an
+	// array access its kind and range tests inline, a structural one its
+	// layout tests)
+	static function gcOpSize(i:MIns):Int {
+		var o = i.info;
+		return switch i.op {
+			case InitField | ArrayInit: 0; // (operands of the struct.new)
+			case TypeTest | ClosureCall: 2;
+			case VirtualCall: 3;
+			case AnonGet: o.shape != null ? 3 : 6;
+			case AnonCall: 10;
+			case ArrayGet: 4;
+			case ArraySet: 5;
+			case ArrayPush: 6;
+			case _: 1;
+		}
+	}
+
+	// what MemLower makes of an object-level operation outside its slow paths
+	// (its blocks' instructions but constants, its continuation's phis)
+	static function opSize(i:MIns):Int {
+		var o = i.info;
+		inline function ref(t:Ty):Bool
+			return t.match(TRef(_));
+		// a reference stored with the write barrier (MemLower.setPtr: its tests)
+		var barrier = 11;
+		// a cold site's references: pushed on the shadow stack (the push's
+		// high-water test and the block after it are not slow paths), or in
+		// the frame's own slots
+		var spill = !o.cold || o.nspill == 0 ? 0 : o.fr ? -o.nspill : 2 + 2 * o.nspill;
+		return spill + switch i.op {
+			case NullCheck: 2;
+			case New: 12 + (o.name == OInfo.NEW_ARRAY ? 2 : o.name == OInfo.NEW_OBJECT || o.name == OInfo.NEW_ANON || o.name == OInfo.NEW_RAW ? 0 : 1) + (o.next >= 0 ? 1 : 0);
+			case NewDyn: 15;
+			case InitField: o.next >= 0 ? 2 : 1;
+			case GetField | ArrayLength | NArrayLength: 1;
+			case SetField: ref(o.t) && !o.flag ? 1 + barrier : 1;
+			case FieldAddr: 1;
+			case EnumTag: 2;
+			case TypeTest: 8;
+			case Box | Unbox: o.t.match(TI32 | TBool | TF64 | TI64) ? 1 : 0;
+			case VirtualCall: 4;
+			case ClosureCall: 2;
+			case AnonGet: o.shape != null && o.shape.tindex >= 0 ? 6 : 16;
+			case AnonTest: 12;
+			case AnonStore: ref(o.t) ? 4 + barrier : 3;
+			case AnonCall: 40;
+			case ArrayGet: o.flag ? 11 : 9;
+			// (a reference stored: rooted in a pushed slot on the slow path)
+			case ArraySet: o.t.match(TI32 | TBool | TF64 | TI64) ? 10 : 11 + barrier + (o.fr ? 0 : 4);
+			case ArrayPush: o.t.match(TI32 | TBool | TF64 | TI64) ? 13 : 14 + barrier + (o.fr ? 0 : 4);
+			case NewArray: 2;
+			case ArrayInit: o.t.match(TI32 | TBool | TF64 | TI64) ? 2 : 3 + barrier;
+			case NewNArray: 25;
+			case NArrayInit: o.kind == Abi.AK_PTR ? 1 + barrier : 1;
+			case NArrayGet: 2;
+			case NArraySet: o.flag ? 3 + barrier : 2;
+			case NArrayDyn: 10;
+			case RefStore: 1 + barrier;
+			case _: 1;
+		};
+	}
+
+	// the callee's object-level Mir (mb's) when it can be inlined, judged on
+	// the size of its lowering (size; built once per caller module; a callee
+	// with a shadow-stack frame keeps it: its copy pushes and pops it)
+	public static function template(mb:MirBuild, mf:MFunc):Null<Template> {
+		var n = size(mf);
+		return n >= 0 && n <= MAX_LOOP ? {mf: mf, sites: mb.inlineSites, size: n} : null;
 	}
 
 	// drops the blocks no longer reachable (after a callee that never returns)
@@ -113,53 +190,79 @@ class Inline {
 		if (!all) f.blocks = [for (b in f.blocks) if (b.mark == reach) b];
 	}
 
-	// the blocks of f in loops (a back edge in reverse postorder closes a
-	// loop over the blocks between): marked with the mark returned
-	public static function loopBlocks(f:MFunc):Int {
-		var seen = f.newMark();
-		var stack = [f.entry], idx = [0];
-		f.entry.mark = seen;
-		var post = [];
-		while (stack.length > 0) {
-			var top = stack.length - 1;
-			var b = stack[top];
-			if (idx[top] < b.succs.length) {
-				var s = b.succs[idx[top]++];
-				if (s.mark != seen) {
-					s.mark = seen;
-					stack.push(s);
-					idx.push(0);
-				}
-			} else {
-				stack.pop();
-				idx.pop();
-				post.push(b);
-			}
+	public static var devirtOn = Sys.getEnv("HXMC_DEVIRT") != "0";
+
+	// whether inlining the call may let Escape replace an object: one made in
+	// the caller passed to it, or one the callee makes returned (WasmGC
+	// inlines those up to the native loop limit: an engine inlines small
+	// functions itself, but does not take objects out of the heap)
+	public static function objectsMeet(f:MFunc, call:MIns, t:Template):Bool {
+		for (a in call.args)
+			if (madeHere(f, a, 0)) return true;
+		for (b in t.mf.blocks) {
+			var r = b.term();
+			if (r != null && r.op == Ret && r.a >= 0 && madeHere(t.mf, r.a, 0)) return true;
 		}
-		post.reverse();
-		var n = post.length;
-		for (k in 0...n)
-			post[k].tmp = k;
-		var inLoop = MFunc.ints(n, 0);
-		for (k in 0...n)
-			for (p in post[k].preds) {
-				if (p.mark != seen) continue;
-				var pk = p.tmp;
-				if (pk >= k)
-					for (q in k...pk + 1)
-						inLoop[q] = 1;
+		return false;
+	}
+
+	// v is an object made in f (New, through copies and phis)
+	static function madeHere(f:MFunc, v:Int, depth:Int):Bool {
+		var x = f.vals[v];
+		while (x.op == Copy)
+			x = f.vals[x.a];
+		if (x.op == New) return x.info.name != OInfo.NEW_ARRAY;
+		if (x.op != Phi || depth > 2) return false;
+		for (a in x.args)
+			if (a != x.id && !madeHere(f, a, depth + 1)) return false;
+		return true;
+	}
+
+	// Devirtualization: a virtual call on an object made in f (New: its class
+	// exactly known) calls the class's implementation of the selector
+	// directly (the function the dispatch row has: DataGen.dispatch), when that
+	// is of f's module (the module's key covers it: Fingerprint); returned are
+	// the calls made direct, to be inlined where they may be
+	public static function devirtualize(f:MFunc, module:String, selectors:Array<{name:String, sig:SigInfo}>, sym:FuncInfo->String):Array<{call:MIns, fn:FuncInfo}> {
+		var r = [];
+		for (b in f.blocks)
+			for (i in b.ins) {
+				if (i.dead || i.op != VirtualCall) continue;
+				var x = f.vals[i.args[0]];
+				while (x.op == Copy)
+					x = f.vals[x.a];
+				if (x.op != New || x.info.name != OInfo.NEW_OBJECT || x.info.cls == null || x.info.cls.isInterface) continue;
+				var sel = i.info.sel;
+				var g = x.info.cls.findMethod(selectors[sel].name);
+				if (g == null || g.dispatchSel != sel || g.module != module || g.sret || g.cAbi != null || g.args.length != i.args.length) continue;
+				i.op = Call;
+				i.sym = sym(g);
+				i.a = -1;
+				i.argTys = g.args.mapToVector(a -> MirBuild.mty(a.ty) == Void ? I32 : MirBuild.mty(a.ty));
+				i.info = null;
+				r.push({call: i, fn: g});
 			}
+		return r;
+	}
+
+	// the blocks of f in loops (an edge back in reverse postorder closes a
+	// loop over the blocks between: Cfg.retreatSpans): marked with the mark
+	// returned
+	public static function loopBlocks(f:MFunc):Int {
+		var cfg = f.cfg();
+		var inLoop = cfg.retreatSpans();
 		var m = f.newMark();
-		for (k in 0...n)
-			if (inLoop[k] != 0) post[k].mark = m;
+		for (k in 0...cfg.size)
+			if (inLoop[k]) cfg.rpo[k].mark = m;
 		return m;
 	}
 
 	// replaces each call (in f) by a copy of its callee's template
 	// (returns the calls to candidates in the copies: inlined in turn, to a depth)
-	public static function run(f:MFunc, sites:Array<{call:MIns, callee:Template}>, ic:IcAlloc):Array<{call:MIns, fn:FuncInfo}> {
+	public static function run(f:MFunc, sites:Array<{call:MIns, callee:Template}>):Array<{call:MIns, fn:FuncInfo}> {
 		var more = [];
 		if (sites.length == 0) return more;
+		f.edited();
 		var nextBlock = 0;
 		for (b in f.blocks)
 			if (b.id >= nextBlock) nextBlock = b.id + 1;
@@ -170,6 +273,9 @@ class Inline {
 			var k = b.ins.indexOf(c);
 			if (k < 0) continue;
 			f.allocs += g.allocs;
+			// (a copy of a function that enters a safe region: the caller's
+			// calls no longer keep its frame, MIns.keepsFrame, MemLower's too)
+			if (g.blocksHere) f.blocksHere = true;
 			// the rest of the block after the call
 			var tail = new MBlock(nextBlock++);
 			tail.cold = b.cold;
@@ -202,8 +308,6 @@ class Inline {
 				f.blocks.push(nb);
 			}
 			var slotBase = f.slots.length;
-			var icBase = ic.count;
-			ic.count += site.callee.icaches;
 			for (s in g.slots)
 				f.slots.push(s);
 			// values first (operands may refer forward: phis)
@@ -233,6 +337,13 @@ class Inline {
 					x.c = m(i.c);
 					x.imm = i.imm;
 					x.imm2 = i.imm2;
+					x.vty = i.vty;
+					if (i.info != null) {
+						x.info = i.info.copy(i.info.cont == null ? null : bmap[i.info.cont.id]);
+						// (a copy's null tests share a block of their own, as a
+						// callee's: a try around the call keeps it inside)
+						if (i.op == NullCheck && x.info.key == -1) x.info.key = -2 - c.id;
+					}
 					// (the call's position: the copy is the caller's code, its
 					// frame the caller's, which a stack names with the call's
 					// line, as DWARF does without inlined subroutines;
@@ -243,6 +354,7 @@ class Inline {
 					x.signed = i.signed;
 					x.sym = i.sym;
 					x.mem = i.mem;
+					x.release = i.release;
 					x.noReturn = i.noReturn;
 					x.returnsTwice = i.returnsTwice;
 					x.keepsFrame = i.keepsFrame && !f.blocksHere;
@@ -257,10 +369,6 @@ class Inline {
 					x.args = i.args.map(v -> m(v));
 					x.targets = i.targets.map(t -> bmap[t.id]);
 					if (i.op == StackAddr) x.imm = i.imm + slotBase;
-					if (i.op == SymAddr && i.sym == site.callee.icSym) {
-						x.sym = ic.sym;
-						x.imm = i.imm + Abi.IC_SIZE * icBase;
-					}
 					x.block = nb;
 					if (i.op == Ret) {
 						// a jump to the rest of the caller's block
@@ -330,7 +438,5 @@ class Inline {
 	}
 }
 
-typedef Template = {mf:MFunc, sites:Array<{call:MIns, fn:FuncInfo}>, size:Int, icSym:String, icaches:Int};
+typedef Template = {mf:MFunc, sites:Array<{call:MIns, fn:FuncInfo}>, size:Int};
 
-// the caller's inline caches: copies of a callee's get their own entries
-typedef IcAlloc = {sym:String, count:Int};

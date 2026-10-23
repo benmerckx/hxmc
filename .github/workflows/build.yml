@@ -20,24 +20,27 @@
 #     WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
 #   - crosshost (two jobs): the tool as a WebAssembly module building the
-#     corpus and itself byte-identical;
-#   - measure: peak memory and times (haxe/test/Measure.hx) in the job summary;
+#     corpus and itself byte-identical; the second also -D hxmc.wasm-gc's
+#     programs as WasmGC modules under node (make wasmgc-check);
 #   - npm-pack: the npm packages (with the compiler as a WebAssembly module;
 #     built with the module cache off);
 #   - site: the website (site/: plain pages, their scripts, the playground's
 #     compiler, lix, the benchmark history);
 #   - android: the APKs for android-arm64 and android-x86_64 checked (make
 #     android-check: AndroidHello, AndroidViews), shared libraries (make
-#     shared-check), then AndroidHello on an x86-64 emulator (its line in
-#     logcat; not required yet: continue-on-error).
+#     shared-check), then AndroidHello on an x86-64 emulator (make
+#     android-device-check: its line in logcat; not required yet:
+#     continue-on-error).
 #   - ios: the app bundles for ios-arm64 and ios-sim-arm64 checked, then
-#     (ios-simulator, on a macOS runner) IosHello on an iPhone simulator (not
-#     required yet: continue-on-error).
-# - conformance: the port against the reference: HXB of the upstream suites
-#   and macro cases, display requests, the compilation server and its
-#   JSON-RPC methods, upstream's target suites compiled by both and compared
-#   file by file, the Eval debugger and the fuzzer's lanes, the last two in
-#   shards (haxe/test).
+#     (ios-simulator, on a macOS runner) IosHello on an iPhone simulator (make
+#     ios-sim-check; not required yet: continue-on-error).
+# - conformance: the port against the reference (make test LANES=..., make
+#   test-fuzz LANE=..., on the release binary's Eval): HXB of the upstream
+#   suites, macro and library cases (and hxmc's -lib resolution against
+#   haxelib and lix), the port's unit tests, display requests,
+#   the compilation server and its JSON-RPC methods, upstream's target suites
+#   compiled by both and compared file by file, the Eval debugger and the
+#   fuzzer's lanes, the last two in shards (haxe/test).
 # - fuzz-exec: the fuzzer's exec lanes, one job each (with its own tool from
 #   the stage0): random programs run by the reference's Eval and built by
 #   hxmc (native, wasm32-wasi), their output compared.
@@ -50,7 +53,7 @@
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
 # - npm: the nine packages (@hxmc/cli, its six platform packages, @hxmc/wasm,
 #   @hxmc/source) installed in fresh projects on each target's machine: native
-#   at once, -lib from node_modules, --ignore-scripts; and on linux-x64 (on
+#   at once, -lib (lix's scopes, node_modules, haxelib), --ignore-scripts; and on linux-x64 (on
 #   all six on main, tags and nightly, before publish-npm) lix, the
 #   WebAssembly fallback (downloaded, installed) and hxmc-rebuild;
 #   publish-npm publishes them on v* tags and (as nightlies) from main.
@@ -410,7 +413,9 @@ jobs:
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
   # itself, byte-identical to the native tool (make crosshost; the targets in
-  # two jobs)
+  # two jobs); the second job also checks -D hxmc.wasm-gc (make wasmgc-check:
+  # hxmc/test/wasmgc's programs and corpus cases as WasmGC modules under node,
+  # their output against the native build's)
   crosshost:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
@@ -420,7 +425,7 @@ jobs:
       matrix:
         include:
           - {args: '--tool --targets linux-x86_64,linux-arm64,linux-x86_64-glibc,linux-arm64-glibc'}
-          - {args: '--targets windows-x86_64,windows-arm64,macos-x86_64,macos-arm64,wasm32-wasi'}
+          - {args: '--targets windows-x86_64,windows-arm64,macos-x86_64,macos-arm64,wasm32-wasi', wasmgc: true}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -443,59 +448,9 @@ jobs:
           make hxmc
       - name: hxmc as a WebAssembly module, byte-identical output
         run: make crosshost CROSSHOST_ARGS="${{ matrix.args }}"
-
-  # peak memory and time: the bootstrap from the stage0, the self-compile
-  # (ours and the reference), the cold native build of the port, the stage0
-  # and the npm package's WebAssembly compiler building native compilers
-  # (make measure)
-  measure:
-    name: memory and time
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: actions/download-artifact@v8
-        if: needs.changes.outputs.rt_hit != 'true'
-        with: {name: rt, path: bin/hxmc/rt}
-      - name: System packages
-        run: sudo apt-get install -qqy time
-      - name: Runtime objects
-        run: make rt && touch bin/hxmc/rt/*/*.o
-      - name: Bootstrap from the stage0 (timed)
-        run: |
-          set -ex
-          s=$(date +%s)
-          make bootstrap
-          echo "BOOTSTRAP_SECONDS=$(( $(date +%s) - s ))" >> "$GITHUB_ENV"
-      - name: Reference compiler revision
-        id: ref
-        run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
-      - name: Cache the reference compiler
-        uses: actions/cache@v6
-        with:
-          path: bin/reference
-          key: reference-nightly-${{ steps.ref.outputs.rev }}
-      - name: Memory and time
-        run: |
-          set -ex
-          {
-            echo "### Builds"
-            echo ""
-            echo "| | |"
-            echo "| --- | ---: |"
-            echo "| clean bootstrap from the stage0 (stage0 under node, the tool from source, the fixpoint) | ${BOOTSTRAP_SECONDS} s |"
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-          make lix
-          if [ ! -x bin/reference/haxe ]; then make reference; fi
-          touch bin/reference/haxe
-          make measure PORT_BIN=bin/release/linux-x86_64/haxe
+      - name: WasmGC
+        if: matrix.wasmgc
+        run: make wasmgc-check
 
   # the npm packages (packages/): @hxmc/cli, its six platform packages,
   # @hxmc/wasm and @hxmc/source, at one version: the tag's (v*), a nightly
@@ -533,14 +488,14 @@ jobs:
           esac
           make npm NPM_VERSION=$v
           echo "$v" > bin/npm/VERSION
-          # -lib from node_modules (and the npm job's copy of the test)
-          make test-node-libs
-          cp hxmc/test/NodeLibs.hx bin/npm/
+          # -lib: lix's scopes, node_modules, haxelib (and the npm job's copy of the test)
+          make test-libraries
+          cp hxmc/test/Libraries.hx bin/npm/
           # what WebAssembly programs see of the file system (the npm job on Windows)
           bin/hxmc/hxmc bin/npm/probe.wasm -cp hxmc/test -main WasiProbe -cp bin/hxmc/std --custom-target hxmc -D hxmc.target=wasm32-wasi
           cat bin/npm/sizes.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
-        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/NodeLibs.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
+        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
 
   # the website (site/, make site): its pages, their JavaScript, the
   # playground's WebAssembly, lix under tools/, the benchmark history and the
@@ -584,8 +539,9 @@ jobs:
   # and android-x86_64, checked without a device (make android-check: zip,
   # manifest, ELF, v2 signature; the SDK's zipalign, aapt and apksigner),
   # and shared libraries (make shared-check), then AndroidHello.apk on an
-  # x86-64 emulator with KVM (hxmc/test/android/android.sh: installed,
-  # launched, its line in logcat; logcat as an artifact). Not a required check yet
+  # x86-64 emulator with KVM (make android-device-check,
+  # hxmc/test/android/android.sh: installed, launched, its line in logcat;
+  # logcat as an artifact). Not a required check yet
   # (continue-on-error): emulators on hosted runners are slow to boot and
   # sometimes flaky.
   android:
@@ -626,8 +582,9 @@ jobs:
           target: default
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          # (the APKs of the step above: -o, not rebuilt)
           script: |
-            sh hxmc/test/android/android.sh bin/android/android-x86_64/AndroidHello.apk bin/android/android-x86_64
+            make -o android-programs android-device-check ANDROID_TARGET=android-x86_64
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -642,7 +599,8 @@ jobs:
   # and ios-arm64 (IosHello, also as an .ipa), checked without a Mac (make
   # ios-check: Info.plist, Mach-O, the code signature; llvm-objdump), then
   # IosHello.app on an iPhone simulator of a macOS runner (ios-simulator:
-  # hxmc/test/ios/ios.sh: codesign --verify, its line on stdout). Not
+  # make ios-sim-check, hxmc/test/ios/ios.sh: codesign --verify, its line on
+  # stdout). Not
   # required checks yet (continue-on-error), as android.
   ios:
     needs: [changes, rt]
@@ -678,6 +636,8 @@ jobs:
     continue-on-error: true
     timeout-minutes: 40
     steps:
+      # (the Makefile comes with the root's files; the bundle from the ios job:
+      # -o, not rebuilt)
       - uses: actions/checkout@v7
         with:
           sparse-checkout: |
@@ -689,7 +649,7 @@ jobs:
           set -ex
           mkdir -p bin && tar xzf dl/ios.tar.gz -C bin
           xcodebuild -version
-          sh hxmc/test/ios/ios.sh bin/ios/ios-sim-arm64/IosHello.app bin/ios/ios-sim-arm64
+          make -o ios-programs ios-sim-check
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -699,8 +659,10 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # the port against the reference compiler (docs/testing.md); the Eval
-  # debugger in shards (EvalDebugger --shard), the fuzzer's diff lanes (the
+  # the port against the reference compiler (docs/testing.md): make test
+  # LANES=<suite> and make test-fuzz LANE=<lane>, as locally, on the release
+  # binary's Eval (EVAL, FUZZ: the job has no tool); the Eval debugger in
+  # shards (SHARD: EvalDebugger --shard), the fuzzer's diff lanes (the
   # targets that need no library) split across three jobs
   conformance:
     needs: [changes, build]
@@ -710,7 +672,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {suite: hxb macro haxelib}
+          - {suite: hxb macro hxblib haxelib libs unit}
           - {suite: display server jsonrpc}
           - {suite: targets}
           - {suite: debugger, shard: 1/3}
@@ -753,27 +715,17 @@ jobs:
       - name: ${{ matrix.suite }} ${{ matrix.shard }}
         run: |
           set -x
-          export HAXE_REFERENCE=$PWD/bin/reference/haxe HAXE_IN_HAXE_PORT=$PWD/bin/port/haxe
-          S="bin/port/haxe -cp hxmc/test -cp haxe/test --run"
-          failed=
-          for suite in ${{ matrix.suite }}; do
-            case "$suite" in
-              hxb) $S Conformance -j 4 --summary "$GITHUB_STEP_SUMMARY" ;;
-              macro) $S Conformance -j 4 --cases haxe/test/conformance-macro-cases.txt --summary "$GITHUB_STEP_SUMMARY" ;;
-              display) $S Display -j 4 --summary "$GITHUB_STEP_SUMMARY" ;;
-              server) $S Server -j 4 --summary "$GITHUB_STEP_SUMMARY" ;;
-              jsonrpc) $S ServerJsonRpc --summary "$GITHUB_STEP_SUMMARY" ;;
-              targets) $S UpstreamTargets -j 4 --summary "$GITHUB_STEP_SUMMARY" ;;
-              haxelib) $S Haxelib --server --summary "$GITHUB_STEP_SUMMARY" ;;
-              debugger) $S EvalDebugger --shard ${{ matrix.shard }} --summary "$GITHUB_STEP_SUMMARY" ;;
-              fuzz)
-                for lane in ${{ matrix.lanes }}; do
-                  bin/port/haxe -cp haxe/test/fuzz -cp haxe/test --run Fuzz -j 4 --cases haxe/test/fuzz/cases --port $PWD/bin/port/haxe --lane $lane || failed="$failed $lane"
-                  bin/port/haxe -cp haxe/test/fuzz -cp haxe/test --run Fuzz -j 4 -n 100 --port $PWD/bin/port/haxe --lane $lane || failed="$failed $lane"
-                done ;;
-            esac || failed="$failed $suite"
-          done
-          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+          # (the port, the reference and lix are in place: -o, not rebuilt)
+          M="make -o bin/port/haxe -o bin/reference/haxe -o bin/lix/lix JOBS=4 EVAL=bin/port/haxe"
+          if [ "${{ matrix.suite }}" = fuzz ]; then
+            failed=
+            for lane in ${{ matrix.lanes }}; do
+              $M test-fuzz LANE=$lane N=100 FUZZ="bin/port/haxe -cp haxe/test/fuzz -cp haxe/test --run Fuzz" || failed="$failed $lane"
+            done
+            if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+          else
+            $M test LANES="${{ matrix.suite }}" SHARD="${{ matrix.shard }}" SUMMARY="$GITHUB_STEP_SUMMARY"
+          fi
 
   # the fuzzer's exec lanes (docs/testing.md): the kept programs and a random
   # batch run by the reference's Eval and built by hxmc (a native executable,
@@ -1135,7 +1087,7 @@ jobs:
   # the npm packages in fresh projects, on each target's machine (every
   # package installed before publish-npm publishes them): @hxmc/cli with its
   # platform package (native at once, node_modules/.bin/haxe the native
-  # compiler on Unix; -lib from node_modules; with --ignore-scripts after the
+  # compiler on Unix; -lib from lix's scopes, node_modules and haxelib; with --ignore-scripts after the
   # first call) on all six every run; and the full set on linux-x64 (on all
   # six on main, tags and nightly: changes.outputs.npm_full): lix with
   # dist/; the WebAssembly fallback (no platform package: @hxmc/wasm downloaded
@@ -1199,14 +1151,14 @@ jobs:
           time npx haxe build.hxml
           if [ "$RUNNER_OS" = Windows ]; then ./bin/app.exe; ls -l node_modules/@hxmc/cli/dist/haxe.exe; else ./bin/app; fi
           npx haxe -cp src -main Js --js main.js && node main.js
-      # -lib from node_modules (hxmc/test/NodeLibs.hx), by the native compiler
-      # run without node (npm's link to it on Unix, dist/haxe.exe on Windows)
-      - name: -lib from node_modules
+      # -lib: lix's scopes, node_modules, haxelib (hxmc/test/Libraries.hx), by the
+      # native compiler run without node (npm's link to it on Unix, dist/haxe.exe on Windows)
+      - name: -lib from lix's scopes, node_modules, haxelib
         run: |
           set -ex
           cd "$RUNNER_TEMP/app"
           if [ "$RUNNER_OS" = Windows ]; then hx="$PWD/node_modules/@hxmc/cli/dist/haxe.exe"; else hx="$PWD/node_modules/.bin/haxe"; fi
-          "$hx" -cp "$GITHUB_WORKSPACE/dl" --run NodeLibs --haxe "$hx" --dir "$RUNNER_TEMP/node-libs"
+          "$hx" -cp "$GITHUB_WORKSPACE/dl" --run Libraries --haxe "$hx" --dir "$RUNNER_TEMP/libraries"
       - name: With --ignore-scripts, the first call installs the native compiler
         if: runner.os != 'Windows'
         run: |
@@ -1330,8 +1282,8 @@ jobs:
   # next); never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1369,8 +1321,8 @@ jobs:
 
   # nightly on main, a release on v* tags
   release:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1415,8 +1367,8 @@ jobs:
           fi
 
   pages:
-    needs: [changes, build, corpus, crosshost, measure, npm-pack, site, wasm, playground]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.measure.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [changes, build, corpus, crosshost, npm-pack, site, wasm, playground]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
       pages: write

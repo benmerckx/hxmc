@@ -4,24 +4,32 @@
 
 Every harness compares the port (`PORT_BIN`, default `bin/port/haxe`) with the
 reference (`bin/reference/haxe`); outputs go to `bin/test/`. They are Haxe
-scripts on the tool's Eval (`make test-<name>`, or `bin/hxmc/hxmc -cp
-haxe/test --run <Name> --help`-style options at the top of each file):
+scripts on the tool's Eval, one entry point for all of them: `make test
+LANES="<lane> ..."` (default `hxb`; every lane runs, the failed ones are named
+at the end; `EVAL` picks the compiler whose Eval runs them, `SUMMARY` a file
+for Markdown results), or `bin/hxmc/hxmc -cp haxe/test --run <Name>` with the
+options at the top of each file. CI's `conformance` jobs run the same `make
+test` and `make test-fuzz` (below). The Lane column names the lane; "manual"
+marks a harness no tier and no CI job runs:
 
-| Script | Compares | Result |
-| --- | --- | --- |
-| `Conformance` | HXB archives (member names, uncompressed payloads) of `conformance-cases.txt` (305: configurations of the upstream suites, and the port's own cases of `haxe/test/conformance`: OCaml's string order, Eval's string offsets and bounds, bytes that are not UTF-8), `conformance-macro-cases.txt` (67, run macros: the upstream suites' and one of the port's own), `conformance-hxblib-cases.txt` (`--hxb-lib`); `--hxb-lib`, `--eval` (`noeval`: a case Eval as the host cannot run), `--parallel N` modes | 293 + 12 expected failures, 67/67, 7/7 |
-| `Display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
-| `Server` | the compilation server: cases twice, edits and invalidation (with the verbose logs), stdin, `--cmd`, errors, `--server-connect` | 633/633 |
-| `ServerJsonRpc` | the `server/*` methods, both cache modes | 107/107 |
-| `UpstreamTargets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, cppia host, jvm, flash by both, every output file (jars by member, hl/c after `HlcNames`) | 12/12 identical |
-| `Interp` | `--interp` runs of the case lists | 294/295 (`eval-eventLoop-compile` depends on thread timing) |
-| `Haxelib` | `-L` through lix's haxelib shim, batch and server | 14/14 |
-| `EvalDebugger` | scripted Eval debugger sessions (`-D eval-debugger`): breakpoints, stepping, scopes, evaluation, assignment, exception and function breakpoints, a macro | 6/6 |
-| `fuzz/` | random programs per target (`diff:<target>`) or by program output (`exec:<a>,<b>`), with reduction (`make test-fuzz LANE=diff:js`); `--cases haxe/test/fuzz/cases` checks the kept programs (failures fixed since, reduced, one directory each) on the lanes | CI: the diff lanes of ten targets, `exec:interp,hxmc` and `exec:interp,hxmc-wasm` (below) |
-| `Targets` | the website's target table (`bench.yml`'s `targets` jobs, published to `bench-data` as `targets.json`; `site/data/targets.json` the fallback): haxe-formatter and the port itself compiled for every target by both, sequential (`-D disable-parallelism`: CPU) and with default parallelism (wall), peak RSS, outputs compared (hl/c after `HlcNames`; a parallel output where the reference's own parallel output varies is marked `varies`); `-p self -t hlc --merge --json site/data/targets.json` replaces those rows only | 18/18 identical (the rows the reference compiles) |
-| `Measure` | peak RSS, wall and CPU time: the self-compile (ours and the reference), the native build, the WebAssembly builds | self-compile 879 MB vs the reference's 1414 MB |
-| `unit.hxml` | unit tests of port modules, in-process | pass |
-| `IpcStress` | round trips of multi-byte strings through Eval's `sys.io.Process` (echo through stdin, a grandchild's environment variable as in upstream's `TestUnicode.testIPC`, short reads while the child writes; once per round a process closed after its stdin while another thread reads files reusing that number: the double close the runtime no longer does), `haxe -cp haxe/test --run IpcStress <haxe> [rounds]`; CI: four at once on both `linux-test` machines (upstream-tests.yml) | 52 checks per round, no failures |
+| Script | Lane | Compares | Result |
+| --- | --- | --- | --- |
+| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives (member names, uncompressed payloads) of `conformance-cases.txt` (305: configurations of the upstream suites, and the port's own cases of `haxe/test/conformance`: OCaml's string order, Eval's string offsets and bounds, bytes that are not UTF-8), `conformance-macro-cases.txt` (67, run macros: the upstream suites' and one of the port's own), `conformance-hxblib-cases.txt` (`--hxb-lib`); `--hxb-lib`, `--eval` (`noeval`: a case Eval as the host cannot run), `--parallel N` modes | 293 + 12 expected failures, 67/67, 7/7 |
+| `Display` | `display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
+| `Server` | `server` | the compilation server: cases twice, edits and invalidation (with the verbose logs), stdin, `--cmd`, errors, `--server-connect` | 633/633 |
+| `ServerJsonRpc` | `jsonrpc` | the `server/*` methods, both cache modes | 107/107 |
+| `UpstreamTargets` | `targets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, cppia host, jvm, flash by both, every output file (jars by member, hl/c after `HlcNames`) | 12/12 identical |
+| `Interp` | `interp` | `--interp` runs of the case lists | 294/295 (`eval-eventLoop-compile` depends on thread timing); manual |
+| `Haxelib` | `haxelib` | `-L` through lix's haxelib shim, batch and server (`--server`) | 14/14 |
+| `LibResolution` (`hxmc/test`) | `libs` | hxmc's own `-lib` resolution (`hxmc/src/hxmc/libs`, the npm package's compiler) on the same files as haxelib (the reference's: `haxelib path`'s exit code, output and errors), lix's `haxe` shim (`--run resolve-args`) and lix's `haxelib` shim (`haxelib path`, which the cpp generator asks within a scope): repositories, versions, dependencies, every `resolveLibs` mode, interpolation, `--cwd`, the errors | 130/130 |
+| `EvalDebugger` | `debugger` (`SHARD=i/n`) | scripted Eval debugger sessions (`-D eval-debugger`): breakpoints, stepping, scopes, evaluation, assignment, exception and function breakpoints, a macro | 6/6 |
+| `fuzz/` | `make test-fuzz LANE=...` | random programs per target (`diff:<target>`) or by program output (`exec:<a>,<b>`), with reduction (`make test-fuzz LANE=diff:js`); `--cases haxe/test/fuzz/cases` checks the kept programs (failures fixed since, reduced, one directory each) on the lanes | CI: the diff lanes of ten targets, `exec:interp,hxmc` and `exec:interp,hxmc-wasm` (below) |
+| `Targets` | (bench.yml) | the website's target table (`bench.yml`'s `targets` jobs, published to `bench-data` as `targets.json`; `site/data/targets.json` the fallback): haxe-formatter and the port itself compiled for every target by both, sequential (`-D disable-parallelism`: CPU) and with default parallelism (wall), peak RSS, outputs compared (hl/c after `HlcNames`; a parallel output where the reference's own parallel output varies is marked `varies`); `-p self -t hlc --merge --json site/data/targets.json` replaces those rows only | 18/18 identical (the rows the reference compiles) |
+| `Measure` | `make measure` (bench.yml) | peak RSS, wall and CPU time: the self-compile (ours and the reference), the native build, the WebAssembly builds | self-compile 646 MB vs the reference's 1529 MB |
+| `unit.hxml` | `unit` | unit tests of port modules, typed and run in-process (`haxe/test/unit.hxml` on EVAL) | pass |
+| `IpcStress` | (upstream-tests.yml) | round trips of multi-byte strings through Eval's `sys.io.Process` (stdin read with readLine, readString and readUntil, a grandchild's environment variable as in upstream's `TestUnicode.testIPC`, short reads while the child writes; once per round a process closed after its stdin while another thread reads files reusing that number: the double close the runtime no longer does), `haxe -cp haxe/test --run IpcStress <haxe> [rounds]`; CI: four at once on both `linux-test` machines (upstream-tests.yml) | 86 checks per round, no failures |
+| `GcCheck` | `make wasmgc-check` | `-D hxmc.wasm-gc`: `hxmc/test/wasmgc`'s programs and corpus cases as WasmGC modules under node against the native build's output (`--bench`, `make wasmgc-bench`: also linear-memory wasm, times, peak RSS, sizes) | every program's output identical; CI: the second `crosshost` job |
+| `EncCheck` | | the x86-64 and AArch64 encoders against `llvm-mc` (`hxmc/test/EncCheck.hx`, `--arch x64\|a64`) | manual (needs `llvm-mc`) |
 
 Sequential runs pass `-D disable-parallelism`: the reference itself is not
 deterministic in parallel mode. Upstream's compiler-side suite (RunCi `macro`:
@@ -33,20 +41,25 @@ them itself: Upstream's runtime suites on hxmc, below).
 
 ## The port as a WasmGC module
 
-`make test-wasmgc-port` runs the lanes with the port built as a WasmGC
-module (`make wasmgc-port`: `bin/wasmgc-port/haxe.wasm`, `-D hxmc.wasm-gc`,
-and `bin/wasmgc-port/haxe`, a script running it under node with
-`hxmc/bootstrap/wasmgc.mjs`; docs/hxmc.md, "WasmGC") as the port:
-`Conformance` on the three lists (293 + 12 expected failures, 66/66, 7/7),
-`Interp` (294/294: `eval-eventLoop-compile` is skipped, `--skip`: its Eval
-threads interleave, and the module's threads only run when another waits
-for them), `Display` (679/679), `Haxelib` without `--server` (7/7) and
-`UpstreamTargets` (every target's files identical; jvm needs a JDK), the
-same results as natively. The server lanes (`Server`, `ServerJsonRpc`,
-`Haxelib --server`, `EvalDebugger`) need sockets, which its runtime does not
-have. The lanes take several times as long as with the native
-port (a run starts in about 0.4 s; the self-compile to HXB takes 9 s
-against 3.7 s: docs/plans/targets.md, "WasmGC").
+The port built as a WasmGC module (`-D hxmc.wasm-gc`; docs/hxmc.md,
+"WasmGC") passed the lanes as the port (2026-10-18): `Conformance` on the
+three lists (293 + 12 expected failures, 66/66, 7/7), `Interp` (294/294:
+`eval-eventLoop-compile` skipped, `--skip`: its Eval threads interleave, and
+the module's threads only run when another waits for them), `Display`
+(679/679), `Haxelib` without `--server` (7/7) and `UpstreamTargets` (every
+target's files identical; jvm needs a JDK), the same results as natively.
+The server lanes (`Server`, `ServerJsonRpc`, `Haxelib --server`,
+`EvalDebugger`) need sockets, which its runtime does not have. It has no
+make target of its own (manual; CI keeps the WasmGC lowering itself checked
+with `make wasmgc-check`): build the module with `bin/hxmc/hxmc
+bin/wasmgc-port/haxe.wasm -cp haxe/src -main haxe.Main -D
+disable-parallelism -cp bin/hxmc/std --custom-target hxmc -D
+hxmc.target=wasm32-wasi -D hxmc.wasm-gc`, wrap it in a script that runs
+`node --stack-size=65500 hxmc/bootstrap/wasmgc.mjs <module> "$@"`, and pass
+that as the port: `make -o <script> test PORT_BIN=<script> LANES="hxb
+display ..."`. The lanes take several times as long as with the native port
+(a run starts in about 0.4 s; the self-compile to HXB takes 9 s against
+3.7 s: docs/plans/targets.md, "WasmGC").
 
 ## hl/c digest names
 
@@ -130,7 +143,10 @@ sharing every object, for
 hxmc (the tool and `haxe`), JS and Eval. `CacheCheck` (`make quick`): its
 store (tool directories, the trim of indexes, packs of blobs, objects and
 tool directories, a tiny cap held as builds write past it, a cache that
-cannot be written). The cache is on by default, so builds from
+cannot be written). `LowerQueriesCheck` (`make quick`): each query a
+function body makes of the lowering (`ir/LowerQueries.hx`) is tagged with
+how the server's reuse of bodies covers it, and the logged ones are
+recorded by `LowerCache.hx`. The cache is on by default, so builds from
 source use it (the corpus builds from HXB archives and does not); CI's
 npm-pack job builds with it off (`HXMC_MODULE_CACHE=0`), the fixpoint
 builds the tool with it cold, warm and off, and `Crosshost` compares the
@@ -239,7 +255,8 @@ an edit starts the new build in place of the old one, a compile error shows
 while the old build keeps running, the fix runs; `server-verify.mjs`: a
 compilation server's builds of small programs through edits are the bytes a
 one-shot build of the same sources makes (typed modules kept in memory, then
-read back from HXB).
+read back from HXB), through edits of what a replayed body reads of other
+modules (an override's default value, a C function's declaration).
 
 ## CI
 
@@ -255,22 +272,26 @@ every target in three jobs, the port as a WebAssembly module, the reference's
 self-compile), `fuzz-exec` (the fuzzer's exec lanes, a job each),
 `crosshost` (`make crosshost`, the targets in two jobs),
 `upstream-suites` (upstream's runtime suites on hxmc, natively and on wasm32-wasi:
-above), `memory and time` (`make measure`), `npm-pack` (the npm packages), `site`,
-`android` and `ios` (the targets' apps above). Then
-`conformance` (the harnesses above; the Eval debugger in three shards,
-`EvalDebugger --shard i/n`, and the fuzzer's diff lanes in three jobs), `test`
+above), `npm-pack` (the npm packages), `site`,
+`android` and `ios` (the targets' apps above); the second `crosshost` job
+also runs `make wasmgc-check`. Then
+`conformance` (the harnesses above, through `make test LANES=<suite>` and
+`make test-fuzz LANE=<lane>` on the release binary's Eval: `hxb macro hxblib
+haxelib unit`, `display server jsonrpc`, `targets`, the Eval debugger in
+three shards, `SHARD=i/n`, and the fuzzer's diff lanes in three jobs), `test`
 (on each of the six machines: the release binary's smoke test with a TLS
 handshake and libuv, lix, the corpus, the self-compile), `wasm` (the corpus
 and the self-compile under node and wasmtime, both also with legacy exception
 handling under node), `playground` (the website in three browser engines,
 `make site-check`: a link check; every page at a desktop's and a phone's
-width, no errors and no horizontal scrolling; the benchmark tables; the
+width, no errors and no horizontal scrolling; the benchmark charts, their
+tooltips and tables; the
 playground's compiler with both modules, its fallback to the legacy one in a
 Chromium without exnref, and its worker running a request again after a
 fault of the engine, faked (the WebKit of Safari 26.0 at times faults in
 correct code: `site/client/Worker.hx`)), `npm` (the nine packages in fresh projects on each of the six
-machines: native at once through the platform package, `-lib` from
-node_modules (`hxmc/test/NodeLibs.hx`), `--ignore-scripts`; and on linux-x64,
+machines: native at once through the platform package, `-lib` from lix's
+scopes, node_modules and haxelib (`hxmc/test/Libraries.hx`), `--ignore-scripts`; and on linux-x64,
 or on all six on main, tags and the nightly run, lix with `dist/`, the
 WebAssembly fallback, downloaded (from the local tarball: `HXMC_WASM_TARBALL`,
 a path or URL in place of the registry's) and installed (with `-lib` by the
@@ -291,10 +312,19 @@ run; runs on main, hxmc and tags always finish.
 
 ## Benchmarks
 
-Array, NativeArray and Vector microbenchmark: `make bench-arrays`, with
-nine element types and read, read4, write, update and allocation workloads. The
+Microbenchmarks: `make bench-micro` (`WHICH=arrays|maps`, default both):
+Array, NativeArray and Vector with nine element types and read, read4, write,
+update and allocation workloads (`arrays`; the
 [benchmark notes](../hxmc/test/bench/README.md) describe the arguments,
-measurement method and native Vector backing.
+measurement method and native Vector backing), and ObjectMap and StringMap
+(`maps`, `hxmc/test/bench/MapBench.hx`; docs/hxmc.md, "Maps").
+
+Memory and time (`make measure`, `haxe/test/Measure.hx`): peak RSS, wall and
+CPU time of the self-compile (ours and the reference), the cold native build
+of the port, the stage0 and the npm package's WebAssembly compiler building
+native compilers, and the timed bootstrap from the stage0; `bench.yml`'s
+`memory and time` job, beside its `compile` job, writes them to its job
+summary.
 
 Benchmarks (`make bench`, `hxmc/test/Bench.hx`): the
 [HaxeBenchmarks](https://github.com/HaxeBenchmarks/benchmark-runner) cases
@@ -306,7 +336,9 @@ sizes and compile times (`haxe_s`: the Haxe compiler, hxmc's whole build for
 its targets; `cc_s`: the C++ or C compiler for C++ and HL/C; `build_s`: their
 sum), with each case's check program compared across the
 targets. `.github/workflows/bench.yml` runs it nightly on main (skipped when
-the commit is measured already) and on demand, apart from `build.yml`,
+the commit is measured already) and on demand (a dispatch on any branch, or
+a push to main whose message says `[bench]` or `[bench-publish]`), apart
+from `build.yml`,
 sharded by case (groups of cases on runners of their own, every target of a
 case on the same one; `Bench --merge` joins the shards' results, recording
 each case's machine under `machines`); from
@@ -321,6 +353,51 @@ joins them) and appends `targets/<date>-<commit>.json`, regenerating
 replace the committed `site/data/targets.json` in the site's build. The first points on `bench-data` are earlier measurements
 imported from this repository's history (`"source": "imported"`: a
 development VM, best of the runs).
+
+Compiler benchmarks (`make bench-compile`, `hxmc/test/CompileBench.hx`): the
+port built by hxmc (natively, and as a wasm32-wasi module under node and
+wasmtime) against the reference, compiling three workloads to HXB with
+`-D disable-parallelism`: `hello` (`hxmc/test/bench/Hello.hx`: start-up and
+the core std), `stdlib` (32 std modules as roots) and `self` (the port's own
+source, its std macros run by Eval). N runs per runner, interleaved round by
+round; wall time, CPU time and peak RSS per run (`/usr/bin/time`), median,
+min and max reported; every runner's archive compared with the reference's
+before its times count. `--build` also times hxmc's cold builds of the port
+(native and wasm, an empty object cache) and records their sizes. The output
+has the format of `site/data/bench.json`, the website's fallback when the
+site is built without `BENCH_DATA`. `bench.yml`'s `compile` job runs it on
+every measured commit (5 runs of the reference and native hxmc; the wasm
+runners and the builds once) and appends `compile/<date>-<commit>.json` to
+`bench-data`, regenerating `compile-history.json` and `compile-latest.json`
+(`CompileBench --history <dir> --seed site/data/compile-history.json`: the
+seed holds the runs measured before CI did, imported from this repository's
+history). The reference runs on the same machine in every run, so the
+website's "vs. reference" view (hxmc / reference) cancels most of the
+difference between CI machines; the absolute times of nightlies that land on
+different CPU types move by more than the code does.
+
+The website shows hxmc's history only (one chart per compiler workload and
+per HaxeBenchmarks case: the median of each run, the band its min-max, the
+points off CI hollow on a shaded background, each linked to its commit;
+a series is charted from 10 runs on, `HistoryChart.MIN_POINTS`, and a
+section without such a series shows its latest run's table only); the
+other targets and compilers, which change only with their pinned toolchains,
+appear once, as tables of the latest run. Their method in short: Programs'
+time is the wall time of the whole process (start-up, JIT and module
+compilation included); peak RSS includes the JVM, node and the HashLink VM;
+size is the artifact gzipped (the static executable for hxmc, the module for
+wasm, stripped executables dynamically linked to libstdc++ or libhl for C++
+and HL/C, the jar, the script, the bytecode); compile time is a cold build:
+hxmc's whole build (typing, code generation, link; its typed runtime cached
+per tool, as always), the port's run for the JVM, JS and HashLink, the port
+plus hxcpp with g++ (its runtime compiled once beforehand) or gcc -O3 against
+libhl for C++ and HL/C. The target generators compare the port with the
+reference on haxe-formatter and the port itself: sequential (one core, CPU
+time) and with each compiler's default parallelism (wall time), best of 3,
+every sequential output file identical (HL/C after renaming the type names
+that hash the reference binary; C++ and HL/C stop at the sources); a
+parallel output where the reference's own varies between runs (genjvm's
+closures, HXB's string pools) is marked `varies`.
 
 Micro-benchmarks (`hxmc/test/micro`, built and run by hand, not a lane):
 `VectorBlitBench`, `haxe.ds.Vector.blit` against the plain loop for Float

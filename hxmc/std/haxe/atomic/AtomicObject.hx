@@ -45,7 +45,7 @@ abstract AtomicObject<T:{}>(Dynamic) {
 	}
 	#else
 	static function cell(v:Dynamic):Dynamic {
-		var a = Mem.alloc(1, 6, 1); // T_ADATA_P, K_PARR
+		var a = Mem.alloc(1, hxmc.rt.Types.T_ADATA_P, 1); // K_PARR
 		Mem.setRef(Mem.addr(a), 0, v); // (a is young)
 		return a;
 	}

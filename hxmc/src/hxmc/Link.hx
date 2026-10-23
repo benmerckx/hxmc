@@ -12,133 +12,42 @@ import hxmc.Abi;
 // ...), the unwind tables of the generated code (.eh_frame and its search
 // table .eh_frame_hdr, PT_GNU_EH_FRAME: Unwind) and with -debug its DWARF
 // line information (Dwarf). LinkDyn extends it for dynamically linked
-// executables (-D hxmc.libc=glibc).
-class Link {
+// executables (-D hxmc.libc=glibc). Resolution, dead sections, the GOT and
+// the relocations: LinkCore.
+class Link extends LinkCore {
 	static inline var BASE = 0x400000;
-	// the image's address (a shared library's: 0, LinkDyn)
-	var imageBase = BASE;
 
-	var objs:Array<Obj>;
 	// the segment alignment: 4K on x86-64, 64K on aarch64 (the largest page size kernels use)
 	var PAGE:Int;
-	var arm:Bool;
-	var globals = new Map<String, Symbol>();
-	var addr = new Map<Section, Int>(); // section -> address
-	var symAddr:Symbol->Int;
 	var tlsStart = 0;
 	var tlsSize = 0;
 	var tlsAlign = 1;
 
 	public function new(objs:Array<Obj>, abi:Abi) {
-		this.objs = objs;
-		this.arm = abi.arm;
+		super(objs, abi.arm);
+		// the image's address (a shared library's: 0, LinkDyn)
+		imageBase = BASE;
 		PAGE = abi.segAlign;
 		// (position-independent output, shared libraries: LinkDyn; a PIE is
 		// not written yet)
 		if (!abi.linksDynamically() && (abi.reloc != Static || abi.output != Executable)) throw "hxmc: " + abi.reloc + " " + abi.output + " output is not supported yet";
 	}
 
-	// ---- symbols
-
-	function resolve() {
-		for (o in objs)
-			for (s in o.symbols) {
-				if (!s.global || (s.section == null && !s.abs)) continue;
-				var prev = globals.get(s.name);
-				if (prev == null || prev.weak && !s.weak) globals.set(s.name, s);
-				else if (!prev.weak && !s.weak) throw 'hxmc: link: ${s.name} defined twice';
-			}
-	}
-
-	// the key of an undefined symbol (its GOT slot): itself; LinkDyn: the
-	// import of that name, one slot per import
-	function undefKey(s:Symbol):Symbol
-		return s;
-
-	// the definition a reference resolves to (null: undefined)
-	function target(s:Symbol):Null<Symbol> {
-		if (s.section != null || s.abs) return s;
-		return globals.get(s.name);
-	}
-
-	// ---- layout
-
-	// a slot per symbol reached through the global offset table (aarch64
-	// GOT relocations of the C library): its address, filled by a relocation
-	var got:Null<Section>;
-	var gotSlot = new Map<Symbol, Int>();
-
-	// ---- dead code: the sections of `collect` (the runtime objects) that
-	// nothing reaches from the entry, the other objects and the
-	// initializers are left out (the runtime is compiled with a section per
-	// function and per datum)
-	public var collect:Null<Array<Obj>>;
-	// sections of any object kept only when reached (the runtime's Haxe functions)
-	public static inline var GC_PREFIX = ".text.gc.";
-	var live:Null<Map<Section, Bool>>;
-	// more roots than the entry (a shared library's exports: LinkDyn)
-	var roots:Array<String> = [];
-
-	function gc(entry:String) {
-		if (collect == null) return;
-		live = new Map();
-		var work:Array<Section> = [];
-		function mark(s:Section) {
-			if (s != null && !live.exists(s)) {
-				live.set(s, true);
-				work.push(s);
-			}
-		}
-		for (o in objs)
-			for (s in o.sections)
-				if ((collect.indexOf(o) < 0 && !StringTools.startsWith(s.name, GC_PREFIX)) || s.kind == InitArray || s.kind == FiniArray) mark(s);
-		var e = globals.get(entry);
-		if (e != null) mark(e.section);
-		for (r in roots) {
-			var x = globals.get(r);
-			if (x != null && x.section != null) mark(x.section);
-		}
-		while (work.length > 0) {
-			var s = work.pop();
-			// (the stack table names every function: it keeps none, StackTable)
-			if (StackTable.isTable(s)) continue;
-			for (r in s.relocs) {
-				var t = target(r.sym);
-				if (t != null && t.section != null) mark(t.section);
-			}
-		}
-		StackTable.rebuild(objs, r -> live.exists(r.sym.section));
-	}
-
-	inline function isLive(s:Section):Bool
-		return live == null || live.exists(s);
+	// ---- the GOT: a slot per symbol reached through it (aarch64 GOT
+	// relocations of the C library; LinkDyn's imports): its address, filled by
+	// a relocation
 
 	function makeGot() {
 		for (o in objs)
 			for (s in o.sections)
 				if (isLive(s))
-				for (r in s.relocs)
-					if (r.kind == RA64GotPage21 || r.kind == RA64GotLo12 || r.kind == RGotPcRel32) {
-						var t = target(r.sym);
-						var key = t != null ? t : undefKey(r.sym);
-						if (!gotSlot.exists(key)) {
-							if (got == null) got = new Section(".got", Data, 8);
-							gotSlot.set(key, got.buf.len);
-							got.relocs.push(new Reloc(got.buf.len, RAbs64, key, 0));
-							got.buf.u64(0, 0);
-						}
-					}
+					for (r in s.relocs)
+						if (LinkCore.isGotRel(r.kind)) slot(r.sym);
 		if (got != null) {
-			if (live != null) live.set(got, true);
 			var o = new Obj();
 			o.sections.push(got);
-			objs.push(o);
+			keep(o);
 		}
-	}
-
-	function gotAddr(s:Symbol):Int {
-		var t = target(s);
-		return addr.get(got) + gotSlot.get(t != null ? t : undefKey(s));
 	}
 
 	// ---- unwind tables (Unwind) and debugging information (Dwarf)
@@ -173,11 +82,7 @@ class Link {
 		var o = new Obj();
 		o.sections.push(ehFrameHdr);
 		o.sections.push(ehFrame);
-		if (live != null) {
-			live.set(ehFrameHdr, true);
-			live.set(ehFrame, true);
-		}
-		objs.push(o);
+		keep(o);
 	}
 
 	// the CIEs and FDEs of a C object's .eh_frame whose functions are live
@@ -274,47 +179,35 @@ class Link {
 		var nph = ehFrame != null ? 6 : 5; // LOAD r, LOAD rx, LOAD rw, TLS, GNU_STACK, GNU_EH_FRAME
 		var headers = 64 + 56 * nph;
 		var pos = BASE + headers;
-		function place(list:Array<Section>) {
-			for (s in list) {
-				pos = align(pos, s.align);
-				addr.set(s, pos);
-				pos += s.size();
-			}
-		}
 		// segment 1: headers + read-only data
-		place(ro);
+		pos = place(ro, pos);
 		var roEnd = pos;
 		// segment 2: code (file offset = address - BASE: one image)
-		pos = align(pos, PAGE);
+		pos = LinkCore.align(pos, PAGE);
 		var textStart = pos;
-		place(text);
+		pos = place(text, pos);
 		var textEnd = pos;
 		// segment 3: TLS image, init/fini arrays, data, bss
-		pos = align(pos, PAGE);
+		pos = LinkCore.align(pos, PAGE);
 		var dataStart = pos;
-		place(tdata);
+		pos = place(tdata, pos);
 		tlsStart = dataStart;
 		var tdataEnd = pos;
 		// .tbss takes no room in the segment
-		var tpos = pos;
-		for (s in tbss) {
-			tpos = align(tpos, s.align);
-			addr.set(s, tpos);
-			tpos += s.size();
-		}
+		var tpos = place(tbss, pos);
 		for (s in tdata.concat(tbss))
 			if (s.align > tlsAlign) tlsAlign = s.align;
 		tlsSize = tpos - tlsStart;
-		pos = align(pos, 8);
+		pos = LinkCore.align(pos, 8);
 		defined.set("__init_array_start", pos);
-		place(init);
+		pos = place(init, pos);
 		defined.set("__init_array_end", pos);
 		defined.set("__fini_array_start", pos);
-		place(fini);
+		pos = place(fini, pos);
 		defined.set("__fini_array_end", pos);
-		place(data);
+		pos = place(data, pos);
 		var fileEnd = pos;
-		place(bss);
+		pos = place(bss, pos);
 		var dataEnd = pos;
 		defined.set("_end", dataEnd);
 		defined.set("end", dataEnd);
@@ -333,7 +226,7 @@ class Link {
 		};
 		// relocations
 		for (s in all)
-			if (s.kind != Bss && s.kind != Tbss) apply(s);
+			if (s.kind != Bss && s.kind != Tbss) applyRelocs(s);
 		fillUnwind();
 		if (hostSyms != null) writeHostSyms(defined);
 		// the image
@@ -403,21 +296,18 @@ class Link {
 			symtab.zeros(24);
 			var locals = new Buf(1 << 16), globals = new Buf(1 << 16);
 			var nlocal = 1;
-			for (o in objs)
-				for (s in o.symbols) {
-					var sec = s.section;
-					if (sec == null || sec.kind != Text || !addr.exists(sec) || s.abs || s.name.length == 0 || StringTools.startsWith(s.name, ".L")) continue;
-					var b = s.global ? globals : locals;
-					if (!s.global) nlocal++;
-					b.u32(strtab.len);
-					strtab.str(s.name);
-					strtab.u8(0);
-					b.u8((s.global ? 0x10 : 0) | 2); // STT_FUNC
-					b.u8(0);
-					b.u16(textIndex);
-					b.i64(addr.get(sec) + s.offset);
-					b.i64(s.size);
-				}
+			codeSymbols(s -> {
+				var b = s.global ? globals : locals;
+				if (!s.global) nlocal++;
+				b.u32(strtab.len);
+				strtab.str(s.name);
+				strtab.u8(0);
+				b.u8((s.global ? 0x10 : 0) | 2); // STT_FUNC
+				b.u8(0);
+				b.u16(textIndex);
+				b.i64(addr.get(s.section) + s.offset);
+				b.i64(s.size);
+			});
 			symtab.buf(locals);
 			symtab.buf(globals);
 			out.align(8);
@@ -485,95 +375,17 @@ class Link {
 		}
 	}
 
-	function entrySym(name:String):Symbol {
-		var s = globals.get(name);
-		if (s == null) throw 'hxmc: link: no entry point $name';
-		return s;
-	}
-
-	static inline function align(v:Int, a:Int):Int
-		return a <= 1 ? v : (v + a - 1) & ~(a - 1);
-
 	// the thread-pointer-relative offset of a TLS symbol (local-exec):
 	// x86-64 (variant II) below the thread pointer, aarch64 (variant I) above
 	// the 16-byte control block
-	function tpoff(a:Int):Int {
-		if (arm) return align(16, tlsAlign) + (a - tlsStart);
-		return (a - tlsStart) - align(tlsSize, tlsAlign);
+	override function tpoff(a:Int):Int {
+		if (arm) return LinkCore.align(16, tlsAlign) + (a - tlsStart);
+		return (a - tlsStart) - LinkCore.align(tlsSize, tlsAlign);
 	}
 
-	static function imm12(buf:Buf, at:Int, v:Int)
-		buf.set32(at, (buf.get32(at) & ~(0xfff << 10)) | ((v & 0xfff) << 10));
-
-	static function adrp(buf:Buf, at:Int, target:Int, p:Int) {
-		var imm = ((target & ~0xfff) - (p & ~0xfff)) >> 12;
-		var w = buf.get32(at) & ~((3 << 29) | (0x7ffff << 5));
-		buf.set32(at, w | ((imm & 3) << 29) | (((imm >> 2) & 0x7ffff) << 5));
-	}
-
-	// LinkDyn: a relocation that becomes a dynamic one (true: done)
-	var dynReloc:Null<(Section, Reloc) -> Bool> = null;
-
-	function apply(s:Section) {
-		var base = addr.get(s);
-		var buf = s.buf;
-		for (r in s.relocs) {
-			if (dynReloc != null && dynReloc(s, r)) continue;
-			var S = symAddr(r.sym);
-			var A = r.addend;
-			var P = base + r.offset;
-			switch r.kind {
-				case RAbs64:
-					var v = S + A;
-					buf.set64(r.offset, v, v < 0 ? -1 : 0);
-				case RAbs32 | RAbs32S:
-					buf.set32(r.offset, S + A);
-				case RPc32 | RCall32:
-					buf.set32(r.offset, S + A - P);
-				case RTpOff32:
-					buf.set32(r.offset, tpoff(S) + A);
-				// (the offset in the module's TLS block: LinkDyn's TLSDESC, hxmc_tls_base)
-				case RSecRel32:
-					buf.set32(r.offset, S + A - tlsStart);
-				case RA64SecRelHi12 | RA64SecRelLo12A | RA64SecRelLo12L:
-					A64Reloc.apply(buf, r.offset, r.kind, S + A - tlsStart, P, r.sym.name);
-				case RGotPcRel32:
-					buf.set32(r.offset, gotAddr(r.sym) + A - P);
-				case RA64AdrPage21:
-					adrp(buf, r.offset, S + A, P);
-				case RA64GotPage21:
-					adrp(buf, r.offset, gotAddr(r.sym), P);
-				case RA64AddLo12:
-					imm12(buf, r.offset, (S + A) & 0xfff);
-				case RA64Ldst8Lo12:
-					imm12(buf, r.offset, (S + A) & 0xfff);
-				case RA64Ldst16Lo12:
-					imm12(buf, r.offset, ((S + A) & 0xfff) >> 1);
-				case RA64Ldst32Lo12:
-					imm12(buf, r.offset, ((S + A) & 0xfff) >> 2);
-				case RA64Ldst64Lo12:
-					imm12(buf, r.offset, ((S + A) & 0xfff) >> 3);
-				case RA64Ldst128Lo12:
-					imm12(buf, r.offset, ((S + A) & 0xfff) >> 4);
-				case RA64GotLo12:
-					imm12(buf, r.offset, (gotAddr(r.sym) & 0xfff) >> 3);
-				case RA64Call26 | RA64Jump26:
-					var d = S + A - P;
-					if (d >= (1 << 27) || d < -(1 << 27)) throw "hxmc: link: branch out of range to " + r.sym.name;
-					buf.set32(r.offset, (buf.get32(r.offset) & 0xfc000000) | ((d >> 2) & 0x3ffffff));
-				case RA64TlsLeHi12:
-					imm12(buf, r.offset, ((tpoff(S) + A) >> 12) & 0xfff);
-				case RA64TlsLeLo12Nc:
-					imm12(buf, r.offset, (tpoff(S) + A) & 0xfff);
-				case RA64MovwG0Nc:
-					buf.set32(r.offset, (buf.get32(r.offset) & ~(0xffff << 5)) | (((S + A) & 0xffff) << 5));
-				case RA64MovwG1Nc:
-					buf.set32(r.offset, (buf.get32(r.offset) & ~(0xffff << 5)) | ((((S + A) >>> 16) & 0xffff) << 5));
-				case _:
-					throw "hxmc: link: relocation " + r.kind + " not supported yet";
-			}
-		}
-	}
+	// (the offset in the module's TLS block: LinkDyn's TLSDESC, hxmc_tls_base)
+	override function secRel(sym:Symbol):Int
+		return symAddr(sym) - tlsStart;
 }
 
 typedef SecHdr = {name:String, type:Int, flags:Int, addr:Int, off:Int, size:Int, link:Int, info:Int, align:Int, entsize:Int}

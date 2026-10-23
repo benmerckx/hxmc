@@ -195,6 +195,7 @@ class Fingerprint {
 			case TVoid: 5;
 			case TRef(_): 6;
 			case TStruct(_): 7;
+			case TU8: 8;
 		});
 
 	function tyName(tindex:Int) {

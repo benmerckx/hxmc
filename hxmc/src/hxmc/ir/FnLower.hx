@@ -2,6 +2,7 @@ package hxmc.ir;
 
 import hxmc.ir.Ir;
 import hxmc.ir.Lower;
+import hxmc.ir.LowerQueries;
 import hxmc.ir.CInterop;
 import core.Ast.Binop;
 import core.Ast.Unop;
@@ -21,7 +22,7 @@ using core.ds.VectorTools;
 // has the representation of its typed-AST type, `ty(e.etype)`; consumers
 // convert with `coerce`.
 class FnLower {
-	var l:Lower;
+	var l:LowerQueries; // (not Lower: what a body asks is what the compilation server's reuse covers)
 	var fi:FuncInfo;
 	var self:Null<ClassInfo>;
 	var lambda:Null<LambdaInfo>;
@@ -79,6 +80,17 @@ class FnLower {
 
 	inline function tyOf(e:TExpr):Ty
 		return l.ty(e.etype);
+
+	// the default values of a function's arguments, and their variables (LowerQueries.argDefaults)
+	function defaultValues(f:FuncInfo):Null<Array<Null<TExpr>>> {
+		var d = l.argDefaults(f);
+		return d == null ? null : d.values;
+	}
+
+	function argVars(f:FuncInfo):Null<Array<Null<TVar>>> {
+		var d = l.argDefaults(f);
+		return d == null ? null : d.vars;
+	}
 
 	function newLocal(name:String, t:Ty):Local {
 		if (t == TVoid) t = TI32;
@@ -166,7 +178,7 @@ class FnLower {
 			switch cf.cfKind {
 				case Var(_) if (cf.cfExpr != null):
 					var g = l.staticVar(c, cf);
-					var t = l.getProgram().globals[g].ty;
+					var t = l.globalTy(g);
 					var sc = structOf(cf.cfType);
 					if (sc != null) {
 						copyStruct(EGlobal(g, t), structRhs(cf.cfExpr).x, sc);
@@ -187,7 +199,7 @@ class FnLower {
 	// an initializer setting the global g to e (Lower.reflectEnum)
 	public function runGlobalInit(g:Int, e:TExpr) {
 		boxed = new Map();
-		var t = l.getProgram().globals[g].ty;
+		var t = l.globalTy(g);
 		out.push(SSetGlobal(g, coerce(value(e), tyOf(e), t)));
 	}
 
@@ -202,8 +214,8 @@ class FnLower {
 			out.push(SSet(recv, ECapture(lambda, 0, ELocal(fi.args[0]))));
 			args.push((ELocal(recv) : Ex));
 		}
-		var ds = f != null ? l.defaults.get(f) : null;
-		var vars = f != null ? l.argVars.get(f) : null;
+		var ds = f != null ? defaultValues(f) : null;
+		var vars = f != null ? argVars(f) : null;
 		var argTys = [for (x in args) TRef(RObj(l.rootClass()))];
 		var last = fi.sret ? fi.args.length - 1 : fi.args.length;
 		for (k in 1...fi.args.length) {
@@ -220,7 +232,7 @@ class FnLower {
 					var dflt = block(() -> {
 						var x = d != null ? defaultValue(d, t, j, vars, args, argTys, recv != null ? () -> ELocal(recv) : null, f.selfClass) : nullOf(t);
 						if (dispatch != null && dispatch.cls != null && recv != null) {
-							var y = receiverDefault(dispatch.cls, l.getProgram().selectors[dispatch.sel].name, ELocal(recv), j, d, t, x, args, argTys);
+							var y = receiverDefault(dispatch.cls, l.selectorName(dispatch.sel), ELocal(recv), j, d, t, x, args, argTys);
 							if (y != null) x = y;
 						}
 						out.push(SSet(v, x));
@@ -262,8 +274,8 @@ class FnLower {
 	// its nullable arguments null take the method's defaults
 	public function forwardDefaults(f:FuncInfo) {
 		boxed = new Map();
-		var ds = l.defaults.get(f);
-		var vars = l.argVars.get(f);
+		var ds = defaultValues(f);
+		var vars = argVars(f);
 		var args:Array<Ex> = [ELocal(fi.args[0])];
 		var argTys = [fi.args[0].ty];
 		for (k in 1...fi.args.length) {
@@ -442,7 +454,7 @@ class FnLower {
 	// a runtime function call that is not a GC point
 	public static function noGcHost(n:String):Bool
 		return isPure(n) || NOGC.exists(n) || C_EXTERNS.exists(n) || StringTools.startsWith(n, "hxmc_narray_set_")
-			|| (isIntrinsic(n) && n != "hxmc_unsafe_Mem_alloc" && n != "hxmc_unsafe_Mem_allocRaw" && !StringTools.startsWith(n, "hxmc_unsafe_Mem_call"));
+			|| (isIntrinsic(n) && !StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") && !StringTools.startsWith(n, "hxmc_unsafe_Mem_call"));
 
 	// the layout an object literal of the structural type t gets, when the
 	// field `name` has the representation rt there
@@ -453,7 +465,7 @@ class FnLower {
 				// which differ for a type read from HXB, and ty numbers the types it meets)
 				var names = l.anonNames(an);
 				var fs = [for (k in names) {name: k, ty: l.boxed(ty(an.aFields.get(k).cfType))}];
-				var sh = l.getProgram().shape(fs);
+				var sh = l.shape(fs);
 				var i = sh.slot(name);
 				return i > 0 && Ir.repr(sh.fields[i - 1].ty) == Ir.repr(rt) ? sh : null;
 			case _:
@@ -572,7 +584,7 @@ class FnLower {
 	// one may read its arguments or `this`: defaultValue)
 	function args(es:Vector<TExpr>, to:Vector<Ty>, defaults:Null<Array<Null<TExpr>>>, offset = 0, ?callee:FuncInfo, ?recv:() -> Ex):Vector<Ex> {
 		var xs = operands(es);
-		var vars = callee != null ? l.argVars.get(callee) : null;
+		var vars = callee != null ? argVars(callee) : null;
 		var r = [], rTys = [];
 		// (before a default value that is not a constant, outside of the branch
 		// it may be in: the arguments as locals when it reads them or is in
@@ -760,7 +772,7 @@ class FnLower {
 
 	function nullOf(t:Ty):Ex
 		return switch t {
-			case TI32 | TBool: EInt(0);
+			case TI32 | TBool | TU8: EInt(0);
 			case TF64: EF64(0);
 			case TI64: EConv(I2L, EInt(0));
 			case TVoid: EInt(0);
@@ -850,8 +862,16 @@ class FnLower {
 			case TBool: 4;
 			case TF64: 2;
 			case TI64: 3;
+			case TU8: 5;
 			case _: 0;
 		};
+
+	// the type of the values of a NativeArray's elements: a byte's an Int
+	static function elemValue(elem:Ty):Ty
+		return elem == TU8 ? TI32 : elem;
+
+	// the suffix of the typed accesses of a NativeArray (MirBuild), by nativeKind
+	static final NATIVE_SUFFIX = ["p", "i", "f", "l", "b", "u"];
 
 	// a NativeArray whose element is Dynamic (Dynamic, Any, an erased type
 	// parameter) may hold any kind of storage, or be a wrapper (rt/NArray)
@@ -863,12 +883,12 @@ class FnLower {
 	// hxmc.native-array-outofbounds says (Lower.bounds); no p: not tested (the
 	// std's own loops)
 	function nativeRead(elem:Ty, a:Ex, i:Ex, ?p:core.Globals.Pos):Ex {
-		var get = ECallHost(dynElem(elem) ? "hxmc_narray_dget" : "hxmc_narray_get_" + ["p", "i", "f", "l", "b"][nativeKind(elem)], vector(a, i), elem);
+		var get = ECallHost(dynElem(elem) ? "hxmc_narray_dget" : "hxmc_narray_get_" + NATIVE_SUFFIX[nativeKind(elem)], vector(a, i), elemValue(elem));
 		switch p == null ? Lower.BOUNDS_UNCHECKED : Lower.bounds {
 			case Lower.BOUNDS_SILENT:
-				var r = newLocal("e", elem);
+				var r = newLocal("e", elemValue(elem));
 				// (seen as Dynamic: the default of the storage's kind)
-				var none = dynElem(elem) ? ECallHost(l.native("hx_narray_default"), vector(a), elem) : nullOf(elem);
+				var none = dynElem(elem) ? ECallHost(l.native("hx_narray_default"), vector(a), elem) : nullOf(elemValue(elem));
 				out.push(SIf(inBounds(a, i), vector(SSet(r, get)), vector(SSet(r, none))));
 				return ELocal(r);
 			case Lower.BOUNDS_THROWS:
@@ -880,7 +900,7 @@ class FnLower {
 
 	// a[i] = x (x: a local or constant), as nativeRead
 	function nativeWrite(elem:Ty, a:Ex, i:Ex, x:Ex, ?p:core.Globals.Pos) {
-		var set = SExpr(ECallHost(dynElem(elem) ? "hxmc_narray_dset" : "hxmc_narray_set_" + ["p", "i", "f", "l", "b"][nativeKind(elem)], vector(a, i, x), TVoid));
+		var set = SExpr(ECallHost(dynElem(elem) ? "hxmc_narray_dset" : "hxmc_narray_set_" + NATIVE_SUFFIX[nativeKind(elem)], vector(a, i, x), TVoid));
 		out.push(switch p == null ? Lower.BOUNDS_UNCHECKED : Lower.bounds {
 			case Lower.BOUNDS_SILENT: SIf(inBounds(a, i), vector(set), vector());
 			case Lower.BOUNDS_THROWS: SIf(inBounds(a, i), vector(set), vector(SThrow(outOfBounds(a, i, p))));
@@ -1154,7 +1174,8 @@ class FnLower {
 		}
 	}
 
-	// FNV-1a over the UTF-16 units, as Str.hash computes (and caches) it at run time
+	// FNV-1a over the UTF-16 units, never 0, as Str.hash computes (and
+	// caches) it at run time
 	public static function strHash(s:String):Int {
 		var x = 0x811C9DC5;
 		for (i in 0...s.length)
@@ -1440,7 +1461,7 @@ class FnLower {
 				var obj = temp(TRef(RObj(ci)), ENewObj(ci));
 				if (k.clConstructor != null) {
 					var ctor = l.ctor(k);
-					var xs = args(cargs, tys(ctor), l.defaults.get(ctor), 1, ctor, () -> obj);
+					var xs = args(cargs, tys(ctor), defaultValues(ctor), 1, ctor, () -> obj);
 					out.push(SExpr(ECall(ctor, VectorTools.cons(obj, xs))));
 				}
 				coerce(obj, TRef(RObj(ci)), tyOf(e));
@@ -1454,7 +1475,7 @@ class FnLower {
 			case TObjectDecl(fs):
 				var xs = operands(fs.map(f -> f.expr));
 				var fields = [for (i in 0...fs.length) {name: fs[i].key.name, ty: l.boxed(tyOf(fs[i].expr))}];
-				var sh = l.getProgram().shape(fields);
+				var sh = l.shape(fields);
 				var vals = [];
 				// (a shape is its fields' names and representations, its types
 				// those of the first object of that shape: a reference is stored
@@ -1564,19 +1585,20 @@ class FnLower {
 						coerce(temp(t, ECallHost(l.native(Lower.nativeName(c) + "_" + cf.cfName), vector(), t)), t, tyOf(e));
 					case Var(_):
 						var g = l.staticVar(c, cf);
-						var t = l.getProgram().globals[g].ty;
+						var t = l.globalTy(g);
 						coerce(EGlobal(g, t), t, tyOf(e));
 					case Method(_) if (c.hasClassFlag(CExtern) || cf.cfExpr == null):
 						var s = switch TFunctions.follow(cf.cfType) {
 							case TFun(s): s;
 							case _: fail("extern static " + cf.cfName + " is not a function", e);
 						};
-						var sig = l.getProgram().sig([for (a in s.args) ty(a.type)], ty(s.ret));
+						var sig = l.sig([for (a in s.args) ty(a.type)], ty(s.ret));
 						var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig);
 						coerce(temp(TRef(RClos(sig)), ENewClos(li, vector())), TRef(RClos(sig)), tyOf(e));
 					case Method(MethDynamic):
 						var g = staticDynMethod(c, cf);
-						coerce(EGlobal(g, l.getProgram().globals[g].ty), l.getProgram().globals[g].ty, tyOf(e));
+						var t = l.globalTy(g);
+						coerce(EGlobal(g, t), t, tyOf(e));
 					case Method(_):
 						var f = l.staticFunc(c, cf);
 						var li = l.staticClosure(f);
@@ -1602,7 +1624,7 @@ class FnLower {
 				var ci = l.ctorInfo(ef, en);
 				if (ci.global >= 0) coerce(EGlobal(ci.global, TRef(RCtor(ci))), TRef(RCtor(ci)), tyOf(e)) else {
 					// a constructor with arguments used as a function
-					var sig = l.getProgram().sig(ci.params.toArray(), TRef(REnum(ci.en)));
+					var sig = l.sig(ci.params.toArray(), TRef(REnum(ci.en)));
 					var li = l.ctorClosure(ci, sig);
 					coerce(temp(TRef(RClos(sig)), ENewClos(li, vector())), TRef(RClos(sig)), tyOf(e));
 				}
@@ -1638,7 +1660,7 @@ class FnLower {
 
 	function staticDynMethod(c:TClass, cf:TClassField):Int {
 		var g = l.staticVar(c, cf);
-		var t = l.getProgram().globals[g].ty;
+		var t = l.globalTy(g);
 		out.push(SIf(EBin(RefEq, EGlobal(g, t), ENull(t)), block(() -> {
 			var f = l.staticFunc(c, cf);
 			var li = l.staticClosure(f);
@@ -1660,7 +1682,7 @@ class FnLower {
 				case TFun(s): s;
 				case _: fail("extern method " + cf.cfName + " is not a function", e);
 			};
-			var sig = l.getProgram().sig([for (a in s.args) ty(a.type)], ty(s.ret));
+			var sig = l.sig([for (a in s.args) ty(a.type)], ty(s.ret));
 			var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig, tyOf(obj));
 			var x = temp(TRef(RClos(sig)), ENewClos(li, vector(value(obj))));
 			return coerce(x, TRef(RClos(sig)), rt);
@@ -1702,36 +1724,38 @@ class FnLower {
 	// a Bool is `x` (base's value) changed by a test of the receiver's class for
 	// each implementation, each after its superclass's; a reference is null.
 	function receiverDefault(c:TClass, name:String, o:Ex, i:Int, base:Null<TExpr>, t:Ty, x:Ex, given:Array<Null<Ex>>, givenTys:Array<Null<Ty>>):Null<Ex> {
-		inline function defaultOf(f:TClassField):Null<TExpr> {
-			var tf = switch f.cfExpr.eexpr { case TFunction(tf): tf; case _: null; };
-			return tf != null && i - 1 < tf.tfArgs.length ? tf.tfArgs[i - 1].defaultValue : null;
-		}
 		var impls = l.implementors(c, name);
+		// (the implementations' own: LowerQueries.fieldDefaults)
+		var dfs = [for (k in impls) l.fieldDefaults(k.cls, k.field)];
+		inline function defaultOf(j:Int):Null<TExpr> {
+			var d = dfs[j];
+			return d != null && i < d.values.length ? d.values[i] : null;
+		}
+		inline function varsOf(j:Int):Null<Array<Null<TVar>>> {
+			var d = dfs[j];
+			return d == null ? null : d.vars;
+		}
 		var differs = false;
-		for (k in impls)
-			if (!sameDefault(defaultOf(k.field), base)) differs = true;
+		for (j in 0...impls.length)
+			if (!sameDefault(defaultOf(j), base)) differs = true;
 		if (!differs) return null;
 		// (a reference: null, which the callee replaces with its own default)
 		if (t != TI32 && t != TF64 && t != TBool) return nullOf(t);
 		var r = newLocal("d", t);
-		inline function varsOf(f:TClassField):Null<Array<Null<TVar>>>
-			return switch f.cfExpr.eexpr {
-				case TFunction(tf): [null].concat([for (a in tf.tfArgs) a.variable]);
-				case _: null;
-			};
 		// (the arguments as locals, for defaults reading them: defaultValue)
 		var reads = false;
-		for (k in impls) {
-			var d = defaultOf(k.field), vars = varsOf(k.field);
+		for (j in 0...impls.length) {
+			var d = defaultOf(j), vars = varsOf(j);
 			if (d != null && vars != null && !constDefault(d) && readsFunction(d, vars)) reads = true;
 		}
 		if (reads)
 			for (k in 1...i)
 				if (k < given.length && !isConst(given[k]) && !given[k].match(ELocal(_))) given[k] = ELocal(asLocal(given[k], givenTys[k]));
 		out.push(SSet(r, x));
-		for (k in impls) {
-			var d = defaultOf(k.field);
-			var vars = varsOf(k.field);
+		for (j in 0...impls.length) {
+			var k = impls[j];
+			var d = defaultOf(j);
+			var vars = varsOf(j);
 			var test = ECallHost(l.native("hx_is"), vector(coerce(o, TRef(RObj(l.rootClass())), TRef(RAny)), EType(TRClass(l.classInfo(k.cls)))), TBool);
 			out.push(SIf(test, block(() -> out.push(SSet(r, d != null ? defaultValue(d, t, i, vars, given, givenTys, () -> o, l.classInfo(k.cls)) : nullOf(t)))), vector()));
 		}
@@ -1767,7 +1791,7 @@ class FnLower {
 				args = [TRef(RObj(l.rootClass()))].concat([for (a in s.args) ty(a.type)]).concat(ret.match(TStruct(_)) ? [TI64] : []);
 			case _: return fail("method type");
 		}
-		return {sig: l.getProgram().sig(args, ret), args: args, ret: ret};
+		return {sig: l.sig(args, ret), args: args, ret: ret};
 	}
 
 	// ---- operators
@@ -2046,7 +2070,7 @@ class FnLower {
 				return coerce(x, t, et);
 			case TField(_, FStatic(c, cf)) if (!c.hasClassFlag(CExtern)):
 				var g = l.staticVar(c, cf);
-				var t = l.getProgram().globals[g].ty;
+				var t = l.globalTy(g);
 				var x = pure(compute(() -> EGlobal(g, t), t, t), t);
 				out.push(SSetGlobal(g, x));
 				return coerce(x, t, et);
@@ -2061,9 +2085,10 @@ class FnLower {
 					case TRef(RNativeArr(elem)):
 						var al = asLocal(value(a), tyOf(a));
 						var ix = ELocal(asLocal(coerce(value(i), tyOf(i), TI32), TI32));
-						var x = pure(compute(() -> nativeRead(elem, ELocal(al), ix, lhs.epos), elem, elem), elem);
+						var t = elemValue(elem);
+						var x = pure(compute(() -> nativeRead(elem, ELocal(al), ix, lhs.epos), t, t), t);
 						nativeWrite(elem, ELocal(al), ix, x, lhs.epos);
-						return coerce(x, elem, et);
+						return coerce(x, t, et);
 					case TRef(RArr(elem)):
 						var al = asLocal(value(a), tyOf(a));
 						var ix = ELocal(asLocal(coerce(value(i), tyOf(i), TI32), TI32));
@@ -2136,7 +2161,7 @@ class FnLower {
 				var xs = operands(VectorTools.cons(obj, cargs));
 				var a = ELocal(asLocal(xs[0], tyOf(obj))), i = coerce(xs[1], tyOf(cargs[0]), TI32);
 				if (cf.cfName == "unsafeGet") return elemRead(nativeRead(elem, a, i), elem, rt);
-				nativeWrite(elem, a, i, ELocal(asLocal(coerce(xs[2], tyOf(cargs[1]), elem), elem)));
+				nativeWrite(elem, a, i, ELocal(asLocal(coerce(xs[2], tyOf(cargs[1]), elemValue(elem)), elemValue(elem))));
 				return EInt(0);
 			// NativeArray.literal([a, b, c]) (VectorTools' `vector(a, b, c)`): one
 			// allocation and the elements stored in order, as an Array literal is
@@ -2160,21 +2185,20 @@ class FnLower {
 				};
 				var xs = operands(el);
 				if (!erased && !Lower.wasmGc)
-					return ECallHost("hxmc_narray_lit", VectorTools.cons(EInt(nativeKind(elem)), xs.mapi((i, x) -> coerce(x, tyOf(el[i]), elem))), rt);
+					return ECallHost("hxmc_narray_lit", VectorTools.cons(EInt(nativeKind(elem)), xs.mapi((i, x) -> coerce(x, tyOf(el[i]), elemValue(elem)))), rt);
 				var a = ELocal(asLocal(erased ? ECallHost(l.native("hx_narray_open"), vector(EInt(el.length)), rt) : ECallHost("hxmc_narray_new",
 					vector(EInt(nativeKind(elem)), EInt(el.length)), rt), rt));
 				for (i in 0...el.length)
-					nativeWrite(elem, a, EInt(i), ELocal(asLocal(coerce(xs[i], tyOf(el[i]), elem), elem)));
+					nativeWrite(elem, a, EInt(i), ELocal(asLocal(coerce(xs[i], tyOf(el[i]), elemValue(elem)), elemValue(elem))));
 				return a;
 			case TField(_, FStatic(_, cf)) if (cf.cfKind.match(Var(_))):
 				return callValue(f, cargs, e);
-			case TIdent("__resources__") if (cargs.length == 0):
-				// haxe.Resource's content: an object per resource with its name
-				// and its data in base64 (Lower.resources), as genjs writes it
-				var sh = l.getProgram().shape([{name: "name", ty: TRef(RStr)}, {name: "data", ty: TRef(RStr)}]);
-				var objs = Lower.resources.mapToVector(r -> temp(TRef(RAnon), ENewAnon(sh, sh.fields.map(f -> EStr(f.name == "name" ? r.name : r.data)))));
-				var at = TRef(RArr(TRef(RAnon)));
-				return coerce(temp(at, ENewArr(TRef(RAnon), objs)), at, rt);
+			case TField(_, FStatic(c, cf)) if (cf.cfName == "names" && c.clPath.name == "NativeResource" && c.clPath.pack.join(".") == "hxmc"):
+				// haxe.Resource's names (hxmc.NativeResource): a new array of
+				// them as literals, in Lower.resources' order (their bytes are
+				// DataGen's, read by the runtime: hxmc.rt.Bytes)
+				var at = TRef(RArr(TRef(RStr)));
+				return coerce(temp(at, ENewArr(TRef(RStr), Lower.resources.mapToVector(r -> EStr(r.name)))), at, rt);
 			case TField(_, FStatic(c, cf)) if (c.hasClassFlag(CExtern) || cf.cfExpr == null):
 				var s = switch TFunctions.follow(cf.cfType) {
 					case TFun(s): s;
@@ -2205,7 +2229,7 @@ class FnLower {
 				return coerceRhs(ECallHost("String_charCodeAt_i", vector(xs[0], coerce(xs[1], tyOf(cargs[0]), TI32)), TI32), TI32, rt);
 			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(MethDynamic)) && !c.hasClassFlag(CExtern)):
 				var g = staticDynMethod(c, cf);
-				var t = l.getProgram().globals[g].ty;
+				var t = l.globalTy(g);
 				var s = switch t { case TRef(RClos(s)): s; case _: fail("dynamic static " + cf.cfName + " is not a closure", e); };
 				var cl = asLocal(EGlobal(g, t), t);
 				var xs = args(cargs, s.args, null);
@@ -2217,13 +2241,13 @@ class FnLower {
 				return EInt(0);
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
-				var xs = args(cargs, callTys(fn), l.defaults.get(fn), 0, fn);
+				var xs = args(cargs, callTys(fn), defaultValues(fn), 0, fn);
 				return callFn(fn, xs, rt);
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)):
 				var impl = l.lookupMethod(c, cf.cfName);
 				if (impl == null) fail("super." + cf.cfName + " without implementation", e);
 				var fn = l.method(impl.cls, impl.field);
-				var xs = args(cargs, callTys(fn), l.defaults.get(fn), 1, fn, () -> ELocal(thisLocal));
+				var xs = args(cargs, callTys(fn), defaultValues(fn), 1, fn, () -> ELocal(thisLocal));
 				return callFn(fn, VectorTools.cons(ELocal(thisLocal), xs), rt);
 			case TConst(TSuper):
 				var sup = l.superOf(self);
@@ -2231,7 +2255,7 @@ class FnLower {
 					sup = sup.clSuper.cls;
 				if (sup == null || sup.clConstructor == null) return EInt(0);
 				var fn = l.ctor(sup);
-				var xs = args(cargs, tys(fn), l.defaults.get(fn), 1, fn, () -> ELocal(thisLocal));
+				var xs = args(cargs, tys(fn), defaultValues(fn), 1, fn, () -> ELocal(thisLocal));
 				out.push(SExpr(ECall(fn, VectorTools.cons(ELocal(thisLocal), xs))));
 				return EInt(0);
 			case TField(obj, FInstance(c, _, cf)) if (Lower.isCore(c, "Array") && cf.cfName == "push"):
@@ -2290,7 +2314,7 @@ class FnLower {
 					var decl = l.rootDecl(c, cf.cfName);
 					var impl = l.lookupMethod(c, cf.cfName);
 					var implFn = impl != null ? l.method(impl.cls, impl.field) : null;
-					var ds = implFn != null ? l.defaults.get(implFn) : null;
+					var ds = implFn != null ? defaultValues(implFn) : null;
 					var rootTy = TRef(RObj(l.rootClass()));
 					var o = coerce(value(obj), tyOf(obj), rootTy);
 					var before = out.length;
@@ -2312,7 +2336,7 @@ class FnLower {
 				var fn = l.method(impl.cls, impl.field);
 				var o = value(obj);
 				var before = out.length;
-				var xs = args(cargs, callTys(fn), l.defaults.get(fn), 1, fn, () -> o = receiverLocal(o, tyOf(obj), before));
+				var xs = args(cargs, callTys(fn), defaultValues(fn), 1, fn, () -> o = receiverLocal(o, tyOf(obj), before));
 				return callFn(fn, VectorTools.cons(spillBefore(o, tyOf(obj), before), xs), rt);
 			case TField(_, FEnum(en, ef)):
 				var ci = l.ctorInfo(ef, en);
@@ -2500,8 +2524,8 @@ class FnLower {
 		if (c.clPath.name == "Callback" && c.clPath.pack.join(".") == "hxmc.unsafe" && cf.cfName == "addr") {
 			switch strip(cargs[0]).eexpr {
 				case TField(_, FStatic(fc, fcf)) if (Lower.hasMeta(":hxmc.callback", fcf.cfMeta)):
-					l.staticFunc(fc, fcf);
-					return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(l.callbackSyms.get(fcf))), TI64);
+					var cb = l.staticFunc(fc, fcf);
+					return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(l.callbackSym(cb))), TI64);
 				case _:
 					cfail("Callback.addr: the argument must name a static function declared @:hxmc.callback", e);
 			}
@@ -2532,16 +2556,10 @@ class FnLower {
 	// arguments converted to their C types' representations; MirBuild applies
 	// the ABI (narrow and float32 values) and the safe region
 	function cCall(sym:String, c:TClass, cf:TClassField, s:core.TType.TSignature, cargs:Vector<TExpr>, e:TExpr):Ex {
-		var sig = try CInterop.declare(sym, c, cf, s) catch (err:LowerError) {
+		var sig = try l.cExtern(sym, c, cf) catch (err:LowerError) {
 			if (err.where == "") err.where = where(e);
 			throw err;
 		};
-		var va = core.Meta.getOpt(Custom(":hxmc.varargs"), cf.cfMeta);
-		if (va != null && va.exprs.length == 1)
-			switch va.exprs[0].expr {
-				case EConst(Int(k, _)): C_VARIADIC.set(sym, Std.parseInt(k));
-				case _:
-			}
 		var t = ty(s.ret);
 		var xs = args(cargs, s.args.map(a -> ty(a.type)), null);
 		if (t.match(TStruct(_))) {
@@ -2696,7 +2714,7 @@ class FnLower {
 				return coerce(ELocal(lo), structTy(c), tyOf(e));
 			case TField(_, FStatic(k, cf)) if (!k.hasClassFlag(CExtern)):
 				var g = l.staticVar(k, cf);
-				var t = l.getProgram().globals[g].ty;
+				var t = l.globalTy(g);
 				var src = structRhs(r).x;
 				if (!src.match(ELocal(_) | EGlobal(_, _))) src = ELocal(asLocal(src, tyOf(r)));
 				copyStruct(EGlobal(g, t), src, c);
@@ -2745,7 +2763,7 @@ class FnLower {
 			return s;
 		}
 		var ctor = l.structCtor(c);
-		var xs = args(cargs, tys(ctor), l.defaults.get(ctor), 1, ctor);
+		var xs = args(cargs, tys(ctor), defaultValues(ctor), 1, ctor);
 		zeroStruct(ELocal(s), c);
 		out.push(SExpr(ECall(ctor, VectorTools.cons(ELocal(s), xs))));
 		return s;
@@ -2785,7 +2803,7 @@ class FnLower {
 	// a struct value in a new box (its copy)
 	function box(x:Ex, n:String):Ex {
 		var ci = l.structBox(n);
-		var c = l.structClasses.get(n);
+		var c = l.structClass(n);
 		var src = x.match(ELocal(_) | EGlobal(_, _)) ? x : ELocal(asLocal(x, structTy(c)));
 		var b = temp(TRef(RObj(ci)), ENewObj(ci));
 		copyStruct(EFieldAddr(ci, 0, b), src, c);
@@ -2796,7 +2814,7 @@ class FnLower {
 	// not one fails as a cast does
 	function unbox(x:Ex, from:Ty, n:String):Ex {
 		var ci = l.structBox(n);
-		var c = l.structClasses.get(n);
+		var c = l.structClass(n);
 		var t = TRef(RObj(ci));
 		var b = switch from {
 			case TRef(RObj(k)) if (k == ci): asLocal(x, from);
@@ -2827,7 +2845,7 @@ class FnLower {
 			case [TRef(RClos(a)), TRef(RClos(b))] if (!hasStruct(a) && !hasStruct(b)):
 				return coerce(temp(TRef(RAny), x), TRef(RAny), to);
 			case _:
-				return coerce(x, elem, to);
+				return coerce(x, elemValue(elem), to);
 		}
 	}
 
@@ -2867,7 +2885,7 @@ class FnLower {
 		}
 		var sig = switch tyOf(e) {
 			case TRef(RClos(s)): s;
-			case _: l.getProgram().sig([for (a in tf.tfArgs) ty(a.variable.vType)], ty(tf.tfType));
+			case _: l.sig([for (a in tf.tfArgs) ty(a.variable.vType)], ty(tf.tfType));
 		};
 		var outerBoxed = boxed;
 		var li = l.newLambda(sig, Vector.fromArrayCopy(captureLocals), fl -> fl.runLambda(tf, copyMap(outerBoxed), caps), Lower.lambdaName(fi), fi.module);

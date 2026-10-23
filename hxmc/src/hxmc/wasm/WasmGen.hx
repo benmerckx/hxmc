@@ -5,7 +5,6 @@ import hxmc.Obj;
 import hxmc.Buf;
 import hxmc.Lir.Bits;
 import haxe.ds.Vector;
-import core.ds.VectorTools;
 import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
@@ -81,7 +80,6 @@ class WasmGen {
 	var nblk:Int;
 	var rpo:Vector<MBlock> = vector();
 	var rpoNum:Vector<Int>;
-	var idom:Vector<Int>;
 	var kids:Vector<Array<MBlock>>;
 	var isLoop:Vector<Bool>;
 	var isMerge:Vector<Bool>;
@@ -261,66 +259,28 @@ class WasmGen {
 			for (p in x.preds)
 				grow(p);
 		}
-		var seen = new Vector<Bool>(nblk);
-		var post:Array<MBlock> = [];
-		var stack = [f.entry];
-		var idx = [0];
-		seen[f.entry.id] = true;
-		while (stack.length > 0) {
-			var top = stack.length - 1;
-			var x = stack[top];
-			if (idx[top] < x.succs.length) {
-				var s = x.succs[idx[top]++];
-				if (!seen[s.id]) {
-					seen[s.id] = true;
-					stack.push(s);
-					idx.push(0);
-				}
-			} else {
-				post.push(x);
-				stack.pop();
-				idx.pop();
-			}
-		}
-		rpo = VectorTools.ofArrayReversed(post);
+		// reverse postorder, the dominator tree and the loop headers (Cfg)
+		var g = f.cfg();
+		g.loops();
+		if (g.irreducible) throw new Unsupported("wasm: an irreducible loop");
+		rpo = g.rpo;
 		rpoNum = MFunc.ints(nblk, -1);
 		for (k in 0...rpo.length)
 			rpoNum[rpo[k].id] = k;
-		// dominators (Cooper, Harvey and Kennedy)
-		idom = MFunc.ints(nblk, -1);
-		idom[f.entry.id] = f.entry.id;
-		var changed = true;
-		while (changed) {
-			changed = false;
-			for (k in 1...rpo.length) {
-				var x = rpo[k];
-				var nd = -1;
-				for (p in x.preds) {
-					if (rpoNum[p.id] < 0 || idom[p.id] < 0) continue;
-					nd = nd < 0 ? p.id : intersect(p.id, nd);
-				}
-				if (nd != idom[x.id]) {
-					idom[x.id] = nd;
-					changed = true;
-				}
-			}
-		}
 		kids = new Vector(nblk);
 		for (k in 0...nblk)
 			kids[k] = [];
 		for (k in 1...rpo.length)
-			kids[idom[rpo[k].id]].push(rpo[k]);
+			kids[rpo[g.idom[k]].id].push(rpo[k]);
 		isLoop = new Vector(nblk);
 		isMerge = new Vector(nblk);
-		for (x in rpo) {
+		for (k in 0...rpo.length) {
+			var x = rpo[k];
+			if (g.loopHead[k] == k) isLoop[x.id] = true;
 			var fwd = new Map<Int, Bool>();
 			for (p in x.preds) {
-				if (rpoNum[p.id] < 0) continue;
-				if (rpoNum[p.id] >= rpoNum[x.id]) {
-					if (!dominates(x.id, p.id)) throw new Unsupported("wasm: an irreducible loop");
-					isLoop[x.id] = true;
-				} else
-					fwd.set(p.id, true);
+				var pk = rpoNum[p.id];
+				if (pk >= 0 && pk < k) fwd.set(p.id, true);
 			}
 			var n = 0;
 			for (_ in fwd.keys())
@@ -353,25 +313,6 @@ class WasmGen {
 		for (i in x.ins)
 			if (!i.dead && i.op == Call && i.returnsTwice) return i;
 		return null;
-	}
-
-	function intersect(a:Int, c:Int):Int {
-		while (a != c) {
-			while (rpoNum[a] > rpoNum[c])
-				a = idom[a];
-			while (rpoNum[c] > rpoNum[a])
-				c = idom[c];
-		}
-		return a;
-	}
-
-	function dominates(a:Int, x:Int):Bool {
-		while (true) {
-			if (x == a) return true;
-			var d = idom[x];
-			if (d == x || d < 0) return false;
-			x = d;
-		}
 	}
 
 	// the operands of i
@@ -1380,7 +1321,7 @@ class WasmGen {
 		}
 	}
 
-	// MirBuild.special: atomics as plain accesses (one thread), float32 conversions
+	// MirWriter.special: atomics as plain accesses (one thread), float32 conversions
 	function special(i:MIns, name:String) {
 		inline function at() {
 			valueAs(i.args[0], I32);

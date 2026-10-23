@@ -84,7 +84,9 @@ extern class SDL {
   argument or result is the address of its memory at the Haxe level (a
   result's in the caller's frame), and the ABI's rules apply in MirBuild
   and the instruction selections, classified in one place per ABI
-  (`hxmc/src/hxmc/CAbi.hx`). AAPCS64: aggregates of one to four floats or
+  (`hxmc/src/hxmc/CAbi.hx`), the parts placed in registers and stack slots
+  by one calling convention per ABI, for calls and for the callee's
+  parameters alike (`hxmc/src/hxmc/CallConv.hx`). AAPCS64: aggregates of one to four floats or
   doubles in float registers, other structs of up to 16 bytes in one or two
   integer registers, larger ones as the address of a copy, results through
   x8. System V x86-64 (Linux, macOS): each eightbyte of a struct of up to

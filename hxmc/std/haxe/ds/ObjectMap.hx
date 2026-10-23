@@ -59,7 +59,9 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 
 	inline function hashOf(k:Dynamic):Int {
 		#if hxmc.wasm_gc
-		return hxmc.Native.objHash(k);
+		// (16 bits, spread over the 32: the slot is hash & mask, and past 65536 slots the bare hash would
+		// leave the upper slots as homes to none, piling every key into one run of the probes)
+		return hxmc.Native.objHash(k) * 0x9E3779B1;
 		#else
 		return IdHash.hash(k);
 		#end

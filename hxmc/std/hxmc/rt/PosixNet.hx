@@ -282,22 +282,7 @@ class PosixNet {
 			// other threads run until a descriptor is ready or the timeout
 			// passes, then select looks without waiting
 			var nr = Str.isNull(r) ? 0 : r.length, nw = Str.isNull(w) ? 0 : w.length, no = Str.isNull(o) ? 0 : o.length;
-			var p = LibC.malloc(8 * (nr + nw + no + 1));
-			var k = 0;
-			inline function add(fd:Int, events:Int) {
-				Mem.setI32(p, 8 * k, fd);
-				Mem.setI16(p, 8 * k + 4, events);
-				Mem.setI16(p, 8 * k + 6, 0);
-				k++;
-			}
-			for (i in 0...nr)
-				add(r[i], 1); // POLLIN
-			for (i in 0...nw)
-				add(w[i], 4); // POLLOUT
-			for (i in 0...no)
-				add(o[i], 2); // POLLPRI
-			Rt.rt_wait_fds(p, k, timeout);
-			LibC.free(p);
+			NetCore.waitFds(r, nr, w, nw, o, no, timeout);
 			Mem.setI32(maxfd, 0, -1);
 			if (!toFdset(r, rs, maxfd) || !toFdset(w, ws, maxfd) || !toFdset(o, os, maxfd)) {
 				netErrno = EBADF;
@@ -328,11 +313,8 @@ class PosixNet {
 	@:hxmc.noGc static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
 		return Mem.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);
 
-	@:hxmc.noGc static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
-		var v = Mem.stack(8);
-		Mem.setI32(v, 0, b ? 1 : 0);
-		return ret(Posix.setsockopt(fd, level, opt, v, 4));
-	}
+	@:hxmc.noGc static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
+		return NetCore.setBool(fd, level, opt, b);
 
 	@:hxmc.noGc public static function setNoDelay(fd:Int, b:Bool):Int
 		return setBool(fd, 6, 1, b); // IPPROTO_TCP, TCP_NODELAY
@@ -382,14 +364,11 @@ class PosixNet {
 	// gethostbyname/gethostbyaddr return static data: one thread at a time
 	// (a spin lock: Names.spin[0]), in a safe region (they may block
 	// on the network), results copied out under the lock
-	@:hxmc.noGc static function lockResolver() {
-		var l = Names.spin;
-		while (Atomic.cas32(l, 0, 1) != 0)
-			Posix.sched_yield();
-	}
+	@:hxmc.noGc static function lockResolver()
+		NetCore.lockResolver();
 
 	@:hxmc.noGc static function unlockResolver()
-		Atomic.store32(Names.spin, 0);
+		NetCore.unlockResolver();
 
 	public static function resolve(name:String):Array<Int> {
 		var n = Str.toUtf8(name);
@@ -401,24 +380,8 @@ class PosixNet {
 	}
 
 	// the host-order IPv4 address of n, with 1 << 32 set when found
-	@:hxmc.noGc static function lookup(n:Ptr):I64 {
-		var r:I64 = 0;
-		Leaf.rt_blocking_enter();
-		lockResolver();
-		var h = Posix.gethostbyname(n);
-		// struct hostent: h_name, h_aliases, int h_addrtype, int h_length, h_addr_list
-		if (!h.isNull() && Mem.getI32(h, 16) == 2) {
-			var list = Mem.getPtr(h, 24);
-			var a = Mem.getPtr(list, 0);
-			if (!a.isNull()) {
-				var ip = (Mem.getU8(a, 0) << 24) | (Mem.getU8(a, 1) << 16) | (Mem.getU8(a, 2) << 8) | Mem.getU8(a, 3);
-				r = ((1 : I64) << 32) | ((ip : I64) & (((1 : I64) << 32) - 1));
-			}
-		}
-		unlockResolver();
-		Leaf.rt_blocking_leave();
-		return r;
-	}
+	@:hxmc.noGc static function lookup(n:Ptr):I64
+		return NetCore.lookup(n);
 
 	public static function reverse(ip:Int):String {
 		var name = reverseLookup(ip);
@@ -430,19 +393,6 @@ class PosixNet {
 	}
 
 	// a malloc'ed copy of the name of ip (host order), or null
-	@:hxmc.noGc static function reverseLookup(ip:Int):Ptr {
-		var a = Mem.stack(8);
-		Mem.setI8(a, 0, ip >>> 24);
-		Mem.setI8(a, 1, ip >> 16);
-		Mem.setI8(a, 2, ip >> 8);
-		Mem.setI8(a, 3, ip);
-		var name = Ptr.nil();
-		Leaf.rt_blocking_enter();
-		lockResolver();
-		var h = Posix.gethostbyaddr(a, 4, 2);
-		if (!h.isNull() && !Mem.getPtr(h, 0).isNull()) name = Posix.strdup(Mem.getPtr(h, 0));
-		unlockResolver();
-		Leaf.rt_blocking_leave();
-		return name;
-	}
+	@:hxmc.noGc static function reverseLookup(ip:Int):Ptr
+		return NetCore.reverseLookup(ip);
 }

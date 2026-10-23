@@ -137,7 +137,7 @@ class GcModule {
 
 	public static function repr(t:Ty):String
 		return switch t {
-			case TI32 | TBool: "i";
+			case TI32 | TBool | TU8: "i";
 			case TF64: "f";
 			case TI64: "l";
 			case TVoid: "v";
@@ -258,7 +258,6 @@ class GcModule {
 			case TRef(RNativeArr(e)) if (!e.match(TRef(RAny))): "t" + naType(elemKind(e));
 			case TRef(REnum(e)): "t" + (e == null ? tEnum : enumBase(e));
 			case TRef(RClos(s)): "t" + closType(s);
-			case TRef(RNative("haxe_io_Bytes")): "t" + tBytes;
 			case _: repr(t);
 		}
 
@@ -419,7 +418,7 @@ class GcModule {
 		foreign.sort(Reflect.compare);
 		for (n in foreign) {
 			var key = foreignKey(n);
-			if (key != null) importFunc(hxmc.ir.CInterop.LIBS.get(n), n, key);
+			if (key != null) importFunc(libOf(n), n, key);
 		}
 		var tagType = funcType("p_v");
 		for (f in uses.funcs) {
@@ -508,7 +507,7 @@ class GcModule {
 	// memory's: pointers into the linear memory as i32, floats as f32, structs
 	// by CAbi.wasmSig), or null
 	static function foreignKey(sym:String):Null<String> {
-		var lib = hxmc.ir.CInterop.LIBS.get(sym), sig = hxmc.ir.CInterop.SIGS.get(sym);
+		var lib = libOf(sym), sig = hxmc.ir.CInterop.SIGS.get(sym);
 		if (lib == null || sig == null) return null;
 		sig = hxmc.CAbi.wasmSig(sig);
 		function r(t:hxmc.ir.CInterop.CTy):Null<String>
@@ -530,18 +529,26 @@ class GcModule {
 		return ret == null ? null : ps + "_" + ret;
 	}
 
+	// the module an extern is imported from: its @:hxmc.lib, else WASI's for
+	// hxmc.rt.wasm.WasiApi's functions (as LinkWasm imports them; the host
+	// gives them over the linear memory: hxmc/bootstrap/wasmgc.mjs)
+	static function libOf(sym:String):Null<String> {
+		var lib = hxmc.ir.CInterop.LIBS.get(sym);
+		return lib != null ? lib : hxmc.wasm.LinkWasm.WASI.exists(sym) ? "wasi_snapshot_preview1" : null;
+	}
+
 	// the import of a @:hxmc.lib extern (foreignKey), or null
 	public function foreignOf(sym:String):Null<Int> {
-		var lib = hxmc.ir.CInterop.LIBS.get(sym);
+		var lib = libOf(sym);
 		return lib == null ? null : importIndex.get(lib + "." + sym);
 	}
 
-	// a function's code: emitted again when locals can be given a type (FuncGen.refine)
+	// a function's code: its object-level Mir (Uses.mirs) written by MirGen
 	function emitFunc(f:FuncInfo):Buf {
-		var g = new FuncGen(this, f);
-		var code = g.emit();
-		var r = g.refine();
-		return r == null ? code : new FuncGen(this, f, r).emit();
+		var name = f.display != null ? f.display : f.name;
+		var mf = uses.mirs.get(f);
+		if (mf == null) throw 'hxmc: -D hxmc.wasm-gc: $name: ${uses.unbuilt.get(f)} is not supported yet';
+		return try new MirGen(this, f, mf).emit() catch (e:String) throw e.indexOf(name) >= 0 ? e : e + " (in " + name + ")";
 	}
 
 	// a function written here (its body without the final end), after the program's;
@@ -581,6 +588,23 @@ class GcModule {
 		helpers.push({name: name, type: funcTypeTokens(["t" + t], "n" + t), body: b, locals: []});
 		helperIndex.set(name, i);
 		return i;
+	}
+
+	// rt_null_access called when the eqref is null (MirGen's NullCheck)
+	public function nonNullAny():Int {
+		var i = helperIndex.get("nn_any");
+		if (i != null) return i;
+		var b = new Buf();
+		b.u8(0x20); // local.get 0
+		b.u8(0);
+		b.u8(0xD1); // ref.is_null
+		b.u8(0x04); // if
+		b.u8(0x40);
+		b.u8(0x10);
+		Enc.uleb(b, exportOf("rt_null_access"));
+		b.u8(0x00);
+		b.u8(0x0B);
+		return addHelper("nn_any", "p_v", b, []);
 	}
 
 	// what JavaScript reads a string with. The string or Bytes comes in as an
@@ -941,9 +965,10 @@ class GcModule {
 	public function dataType(k:String):Int
 		return tData.get(k);
 
-	// a NativeArray's storage of the kind: an Array's data array, but Bool's packed (i8)
+	// a NativeArray's storage of the kind: an Array's data array, but Bool's
+	// packed (i8), and a Byte's the array of bytes (haxe.io.BytesData)
 	public function naType(k:String):Int
-		return k == "b" ? tNBool : tData.get(k);
+		return k == "b" ? tNBool : k == "u" ? tBytes : tData.get(k);
 
 	// the kind of NativeArray storage of the type, or null
 	public function naKindOf(t:Int):Null<String> {
@@ -953,7 +978,7 @@ class GcModule {
 	}
 
 	// a NativeArray's element kinds by their numbers (FnLower.nativeKind, rt.Types.AK_*)
-	public static final NA_KINDS:haxe.ds.Vector<String> = core.ds.VectorTools.vector("p", "i", "f", "l", "b");
+	public static final NA_KINDS:haxe.ds.Vector<String> = core.ds.VectorTools.vector("p", "i", "f", "l", "b", "u");
 
 	public var nwrapType(get, never):Int;
 
@@ -977,9 +1002,10 @@ class GcModule {
 		return g;
 	}
 
-	// an array's element kind in the IR: b for Bool, else its representation
+	// an array's element kind in the IR: b for Bool, u for a NativeArray's
+	// Byte, else its representation
 	public static function elemKind(t:Ty):String
-		return t == TBool ? "b" : repr(t);
+		return t == TBool ? "b" : t == TU8 ? "u" : repr(t);
 
 	// An object's first i32 (a class instance's class index, an anonymous
 	// structure's layout index) holds its identity hash in its top 16 bits,
@@ -1177,6 +1203,40 @@ class GcModule {
 			b.u8(0x24);
 			Enc.uleb(b, g);
 		}
+	}
+
+	// hxmc.NativeResource.bytes(i): a new array of resource i's bytes, each
+	// resource's a passive data segment (Lower.resources, as linear memory's
+	// DataGen.resources), read only by this (br_table on i, then array.new_data)
+	public function resourceBytes():Int {
+		var h = hasHelper("resource_bytes");
+		if (h != null) return h;
+		var rs = hxmc.ir.Lower.resources;
+		var b = new Buf();
+		// (a block per resource and one for an index out of range, innermost first)
+		for (_ in 0...rs.length + 1) {
+			b.u8(0x02);
+			b.u8(0x40);
+		}
+		b.u8(0x20);
+		b.u8(0);
+		b.u8(0x0E);
+		Enc.uleb(b, rs.length);
+		for (k in 0...rs.length + 1)
+			Enc.uleb(b, k);
+		b.u8(0x0B);
+		for (k in 0...rs.length) {
+			b.u8(0x41);
+			b.u8(0);
+			b.u8(0x41);
+			Enc.sleb(b, rs[k].data.length);
+			gc(b, 0x09, tBytes, dataSegs.length);
+			dataSegs.push(rs[k].data);
+			b.u8(0x0F);
+			b.u8(0x0B);
+		}
+		b.u8(0x00);
+		return addHelper("resource_bytes", "i_p", b, []);
 	}
 
 	// a string of the bytes (Latin-1)

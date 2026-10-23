@@ -1,8 +1,8 @@
 # Array, NativeArray and Vector microbenchmark
 
 ```sh
-make bench-arrays
-make bench-arrays ARRAY_BENCH_ARGS="65536 256 9 bin/vector-bench/results.json"
+make bench-micro WHICH=arrays
+make bench-micro WHICH=arrays ARRAY_BENCH_ARGS="65536 256 9 bin/vector-bench/results.json"
 ```
 
 The arguments are element count, passes per sample, number of samples, and

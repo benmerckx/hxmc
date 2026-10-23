@@ -21,13 +21,13 @@ class Census {
 		return Mem.getI32(Mem.sym("rt_ntypes"), 0);
 
 	static inline function nslotsOf(o:Ptr):Int
-		return Mem.getI32(o, -8) & 0x0FFFFFFF;
+		return Types.wordsAt(o, Mem.getI32(o, -8));
 
 	static inline function kindOf(o:Ptr):Int
-		return (Mem.getI32(o, -8) >>> 28) & 15;
+		return Types.kindOfWord(Mem.getI32(o, -8));
 
 	static inline function tindexOf(o:Ptr):Int
-		return Mem.getU16(o, -4);
+		return Mem.getU16(o, -8);
 
 	static inline function objSize(o:Ptr):I64
 		return ((nslotsOf(o) + 1 : I64)) * 8;
@@ -87,9 +87,9 @@ class Census {
 			put(".".code);
 			puts(Types.name(ty));
 		} else if (t == Types.T_ADATA_P)
-			lit("ArrayData<ptr>")
+			lit("Data<ptr>")
 		else if (t == Types.T_ADATA_RAW)
-			lit("ArrayData<raw>")
+			lit("Data<raw>")
 		else if (t == 11 || t == 12 || t == 13) {
 			lit("Ref<");
 			put(t == 11 ? "p".code : t == 12 ? "i".code : "f".code);
@@ -100,14 +100,14 @@ class Census {
 	}
 
 	// bytes of an object and what it owns exclusively in our layout: arrays
-	// with their data, maps with their arrays
+	// with their storage (none: the static empty one), maps with their arrays
 	@:hxmc.noGc static function deep(o:Ptr):I64 {
 		if (o.isNull()) return 0;
 		var t = tindexOf(o);
 		var b = objSize(o);
 		if (t == Types.T_ARRAY) {
 			var d = Mem.getPtr(o, 8);
-			if (!d.isNull()) b += objSize(d);
+			if (Mem.getI32(d, -4) > 0) b += objSize(d);
 		} else if (kindOf(o) == K_OBJ && isMap(t)) {
 			var ty = Types.ty(t);
 			for (i in 0...Types.nfields(ty)) {
@@ -199,10 +199,11 @@ class Census {
 			if (t >= nt) t = 0;
 			var ty = Types.ty(t);
 			if (t == Types.T_STRING) {
+				// (the length at 0, the units from 4: Types)
 				var len = Mem.getI32(o, 0);
 				var lat = true;
 				for (i in 0...len)
-					if (Mem.getU16(o, 8 + 2 * i) > 0xFF) {
+					if (Mem.getU16(o, 4 + 2 * i) > 0xFF) {
 						lat = false;
 						break;
 					}
@@ -218,7 +219,7 @@ class Census {
 				Mem.setI64(sHist, 8 * hb, Mem.getI64(sHist, 8 * hb) + 1);
 				var h = 0x811C9DC5; // FNV-1a
 				for (i in 0...len)
-					h = (h ^ Mem.getU16(o, 8 + 2 * i)) * 16777619;
+					h = (h ^ Mem.getU16(o, 4 + 2 * i)) * 16777619;
 				if (sDistinct * 2 < hcap) {
 					var j = h & (hcap - 1);
 					while (true) {
@@ -228,7 +229,7 @@ class Census {
 							sDistinct++;
 							break;
 						}
-						if (Mem.getI32(e, 0) == len && LibC.memcmp(e.add(8), o.add(8), (len : I64) * 2) == 0) {
+						if (Mem.getI32(e, 0) == len && LibC.memcmp(e.add(4), o.add(4), (len : I64) * 2) == 0) {
 							sDupbytes += b;
 							break;
 						}
@@ -238,25 +239,23 @@ class Census {
 			} else if (t == Types.T_ARRAY && k == K_OBJ) {
 				var len = Mem.getI32(o, 0), kind = Mem.getI32(o, 4);
 				var d = Mem.getPtr(o, 8);
-				var cap = d.isNull() ? 0 : (nslotsOf(d) << (Types.ak4(kind) ? 1 : 0));
-				var es = Types.ak4(kind) ? 4 : 8;
+				var cap = Mem.getI32(d, -4);
+				var es = Types.akSize(kind);
 				aN++;
 				aHdr += b;
-				if (d.isNull()) aNodata++;
+				if (cap == 0) aNodata++;
 				if (len == 0) aLen0++;
 				aLen += len;
-				if (!d.isNull()) {
+				if (cap > 0) {
 					aCap += cap;
 					aWaste += ((cap - len : I64)) * es;
+					aData += objSize(d);
 				}
 				var hb = len == 0 ? 0 : len == 1 ? 1 : len == 2 ? 2 : len <= 4 ? 3 : len <= 8 ? 4 : len <= 16 ? 5 : len <= 64 ? 6 : 7;
 				Mem.setI64(aHist, 8 * hb, Mem.getI64(aHist, 8 * hb) + 1);
 				// OCaml: an array (header + elements; ints and floats unboxed)
 				oc = len != 0 ? (len : I64) * 8 + 8 : 0;
 				aOcaml += oc;
-			} else if (t == Types.T_ADATA_P || t == Types.T_ADATA_RAW) {
-				aData += b;
-				oc = 0; // counted with the array
 			} else if (t == Types.T_BOXINT || t == Types.T_BOXBOOL) {
 				boxes0++;
 				oc = 0; // immediate
@@ -408,7 +407,7 @@ class Census {
 		r.int(aN, 0);
 		r.str(" (");
 		r.int(aNodata, 0);
-		r.str(" without data, ");
+		r.str(" without room, ");
 		r.int(aLen0, 0);
 		r.str(" empty), headers ");
 		r.fixed(mb(aHdr), 1, 0);
@@ -565,7 +564,7 @@ class Census {
 			if (k != K_OBJ && k != 1) continue; // (K_RAW: no references)
 			var pm = k == K_OBJ ? Types.ptrmap(Types.ty(tindexOf(o))) : Ptr.nil();
 			if (k == K_OBJ && pm.isNull()) continue;
-			for (i in (k == 1 && tindexOf(o) == Types.T_NATIVE_ARRAY ? 1 : 0)...n) {
+			for (i in 0...n) {
 				if (k == K_OBJ && (Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1 == 0) continue;
 				var v = Mem.getPtr(o, 8 * i);
 				if (!inHeap(v)) continue;
@@ -671,7 +670,7 @@ class Census {
 	}
 
 	@:hxmc.noGc public static function countAlloc(header:I64, bytes:I64) {
-		var e = allocEntry((header >> 32).toInt() & 0xFFFF);
+		var e = allocEntry(header.toInt() & 0xFFFF);
 		Mem.setI64(e, 0, Mem.getI64(e, 0) + 1);
 		Mem.setI64(e, 8, Mem.getI64(e, 8) + bytes);
 	}

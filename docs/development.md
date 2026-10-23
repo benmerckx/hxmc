@@ -10,7 +10,7 @@
 | `hxmc/src/hxmc/` | hxmc's sources (package `hxmc`, class path `hxmc/src`): the IR and lowering (`ir/`), the code generators (`x64/`, `a64/`, `wasm/`), the linkers, the driver, `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
 | `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime's Haxe part (`hxmc.rt`), merged with the Eval originals by `hxmc/src/hxmc/MkStd.hx` |
 | `hxmc/deps/` | no C of ours: `deps.sh` (mbedtls and libuv), `mkrt.sh` (the runtime objects: the C library's members, or the glibc mode's import table, mbedtls, libuv), `Layouts.hx` (system and libuv struct layouts per target, checked against the C headers), `probe.c` (build-time layout probe), `zig-version` |
-| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs `expected/`, frozen fuzzer programs `fuzz-1000.zip`), the encoder tests (`encoder/`), the scripts that run them (`Corpus`, `Check`, `Crosshost`, `Selfcheck`, `Tiers`, `EncCheck`), `-lib` from node_modules (`NodeLibs`), the release smoke test (`smoke.sh`), the smallest Android and iOS apps (`android/`, `ios/`: `ApkCheck`, `IosCheck`), the dev loop's tests (`dev/`), the benchmarks (`Bench`, with the cases' check programs in `bench/`) |
+| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs `expected/`, frozen fuzzer programs `fuzz-1000.zip`), the encoder tests (`encoder/`), the scripts that run them (`Corpus`, `Check`, `Crosshost`, `Selfcheck`, `Tiers`, `EncCheck`), `-lib` with the npm package's compiler (`Libraries`) and its resolution against haxelib and lix (`LibResolution`), the release smoke test (`smoke.sh`), the smallest Android and iOS apps (`android/`, `ios/`: `ApkCheck`, `IosCheck`), the dev loop's tests (`dev/`), the benchmarks (`Bench`, with the cases' check programs in `bench/`; `CompileBench`, the compiler's) |
 | `site/` | the website: plain pages (`*.html`) and their stylesheet, the pages' scripts (`client/`: the playground, which runs the port as a WebAssembly module, the benchmark tables), the measured data (`data/`), the playground's examples (`playground/`), the browser tests and tools (`tools/`) |
 | `hxmc/bootstrap/` | the committed stage0 (`stage0.wasm.br`), node's WASI runner (`wasi.mjs`), the runtime objects by hash (`rt.mjs`) |
 | `packages/` | everything published to npm, one folder per package, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`, laid out as its tarball, with the launcher and `dist/haxe` for lix), `wasm`, `source` (with `hxmc-rebuild`), `platform` (the template of the six `@hxmc/<os>-<cpu>`) |
@@ -66,8 +66,8 @@ their scripts (`site/build.hxml`, compiled by the port: the playground and
 its compiler's worker, the benchmark tables, the build facts), the
 playground's compiler (`bin/wasm`) and examples, the std the playground
 reads (`site/tools/MkBundle.hx`), the measured data (`site/data`, or the
-bench-data branch's with `BENCH_DATA`: the benchmark history and the
-target generators' table), lix under `tools/` (`LIX_DIR`) and the build
+bench-data branch's with `BENCH_DATA`: the benchmark histories, the
+programs' and the compiler's, and the target generators' table), lix under `tools/` (`LIX_DIR`) and the build
 facts (`build-info.json`). Every file a page loads carries the commit in
 its address (`?v=`, `Version.hx`). CI builds it in the `site` job, tests it
 in `playground` and deploys it from main in `pages`.
@@ -81,5 +81,5 @@ in `playground` and deploys it from main in `pages`.
 | `make quick` | after every edit of hxmc: the x64 corpus, again with `RT_VERIFY=1`, the wasm corpus under node, the module cache's store (about 20 s; `CASES="Int64Gc Bench"` restricts it) |
 | `make check` | before a commit: quick, arm64 (qemu), x64 Windows (wine), a 16 KB nursery, the wasm corpus with legacy exception handling, ThreadNatives x30, crosshost on three cases, Android's APKs and iOS's apps checked (`PORT=1`: the port's self-compile) |
 | `make full` | before a push: every nursery and `RT_VERIFY`, wasmtime, the port's self-compile natively and as a module, crosshost on everything, the fixpoint |
-| `make test` | HXB conformance of the port against the reference (seconds per 100 cases) |
-| `make portcheck` | the port built by hxmc self-compiles to the reference's HXB |
+| `make test` | HXB conformance of the port against the reference (seconds per 100 cases); `LANES="display server ..."` for the other harnesses (docs/testing.md) |
+| `make check PORT=1` | check, and the port built by hxmc self-compiles to the reference's HXB |

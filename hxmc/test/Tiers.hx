@@ -9,8 +9,8 @@ using StringTools;
 // exit 1 if any lane failed.
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Tiers quick|check|full [--port] [case ...]
 //   quick  the x64 corpus (64 KB nursery), again with RT_VERIFY=1, and the wasm
-//          corpus under node, the module cache's store (CacheCheck): after
-//          every edit
+//          corpus under node, the module cache's store (CacheCheck), the
+//          lowering's queries (LowerQueriesCheck): after every edit
 //   check  quick + linux-arm64 (qemu) and windows-x86_64 (wine), x64 with a
 //          16 KB nursery, the wasm corpus with legacy exception handling
 //          (-D hxmc.wasm-eh=legacy) under node, the corpus in the dynamic glibc
@@ -171,6 +171,7 @@ class Tiers {
 			lane("x64 RT_VERIFY", corpus(null, ["RT_VERIFY" => "1"], cases));
 			lane("wasm node", corpus("wasm32-wasi", null, cases));
 			lane("module cache store", script(["CacheCheck"]));
+			lane("lower queries", script(["LowerQueriesCheck"]));
 		}
 		if (tier == "check") {
 			lane("x64 16K", corpus(null, ["RT_MINOR_KB" => "16"], cases));

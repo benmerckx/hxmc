@@ -1,20 +1,21 @@
 package hxmc;
 
 import hxmc.Mir;
+import hxmc.Ssa;
 import haxe.ds.Vector;
-import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
 
-// Scalar replacement of frame slots (after inlining, before Opt): a slot
+// Scalar replacement of frame slots (on object-level Mir after Escape,
+// before Opt): a slot
 // whose address is only the base of loads and stores at constant offsets
 // (a struct value of the function that no call takes, FnLower.newSlot) has
 // its accesses replaced by SSA values, one variable per accessed range: a
 // store defines it, a load reads it (phis where paths join, Braun et al.'s
-// construction on the finished graph; zero before any store). A slot with
-// ranges that partly overlap, an access of another shape or an escaping
-// address stays in memory, as do the slots of a function that calls setjmp
-// (a second return finds memory, not registers, as it was).
+// construction on the finished graph: Ssa; zero before any store). A
+// slot with ranges that partly overlap, an access of another shape or an
+// escaping address stays in memory, as do the slots of a function that
+// calls setjmp (a second return finds memory, not registers, as it was).
 class Sroa {
 	var f:MFunc;
 
@@ -54,39 +55,11 @@ class Sroa {
 			}
 		for (s in 0...f.slots.length)
 			if (addrs[s].length > 0) promote(s, addrs[s], uses);
-		if (phis.length > 0) trivialPhis();
+		// (the phis made whose operands are one value become copies of it)
+		if (phis.length > 0) Ssa.trivialPhis(f.vals, phis);
 	}
 
 	var phis:Array<MIns> = [];
-
-	// the phis made whose operands are one value (or the phi itself) become copies of it
-	function trivialPhis() {
-		var changed = true;
-		while (changed) {
-			changed = false;
-			for (p in phis) {
-				if (p.op != Phi) continue;
-				var same = -1, trivial = true;
-				for (a in p.args) {
-					var x = a;
-					while (f.vals[x].op == Copy && f.vals[x].a >= 0)
-						x = f.vals[x].a;
-					if (x == p.id || x == same) continue;
-					if (same >= 0) {
-						trivial = false;
-						break;
-					}
-					same = x;
-				}
-				if (trivial && same >= 0) {
-					p.op = Copy;
-					p.a = same;
-					p.args = vector();
-					changed = true;
-				}
-			}
-		}
-	}
 
 	var copies:Array<MIns> = []; // (of the addresses of the slot being promoted)
 
@@ -160,7 +133,6 @@ class Sroa {
 		// conversions are made where the value is (new instructions before
 		// the access, or at the end of a block before its terminator)
 		var stored = new Map<Int, Int>(); // store -> the variable's value it gives
-		var entryVal = new Map<String, Int>();
 		var zeros = new Vector<Int>(vars.length, -1);
 		var pending:Array<{b:MBlock, at:MIns, i:MIns}> = []; // instructions to insert
 		function newIns(op:Op, ty:MTy, b:MBlock, before:MIns):MIns {
@@ -199,17 +171,19 @@ class Sroa {
 			stored.set(st.id, c);
 			return c;
 		}
-		var readEnd:(Int, MBlock) -> Int = null;
-		function readEntry(v:Int, b:MBlock):Int {
-			var key = v + ":" + b.id;
-			var r = entryVal.get(key);
-			if (r != null) return r;
-			if (b == f.entry || b.preds.length == 0) {
-				r = zero(v);
-			} else if (b.preds.length == 1) {
-				r = readEnd(v, b.preds[0]);
-			} else {
-				var phi = new MIns(Phi, vars[v].ty);
+		// a variable's value at a block's entry (SsaReader: its last store in
+		// a block, phis where paths join, zero at the entry; read depth first,
+		// each phi's operands before the next value)
+		var readers = new Vector<SsaReader>(vars.length);
+		function reader(v:Int):SsaReader {
+			var ends = MFunc.ints(nb, SsaReader.NONE);
+			for (b in f.blocks) {
+				var ls = lastStore[b.id];
+				if (ls != null && ls.exists(v)) ends[b.id] = SsaReader.LAZY;
+			}
+			var ty = vars[v].ty;
+			var rd = new SsaReader(f.entry, SsaReader.LAZY, ends, MFunc.ints(nb, SsaReader.NOTSET), b -> {
+				var phi = new MIns(Phi, ty);
 				phi.id = f.vals.length;
 				f.vals.push(phi);
 				phi.block = b;
@@ -218,21 +192,20 @@ class Sroa {
 				while (k < b.ins.length && b.ins[k].op == Phi)
 					k++;
 				b.ins.insert(k, phi);
-				entryVal.set(key, phi.id);
-				var args = new Vector<Int>(b.preds.length);
-				for (q in 0...args.length)
-					args[q] = readEnd(v, b.preds[q]);
-				phi.args = args;
-				return phi.id;
-			}
-			entryVal.set(key, r);
+				phi.id;
+			}, (p, args) -> f.vals[p].args = args);
+			rd.depthFirst = true;
+			rd.endOf = b -> storedValue(lastStore[b.id].get(v));
+			rd.undefOf = () -> zero(v);
+			return rd;
+		}
+		function readEntry(v:Int, b:MBlock):Int {
+			var rd = readers[v];
+			if (rd == null) rd = readers[v] = reader(v);
+			var r = rd.readEntry(b);
+			rd.finish();
 			return r;
 		}
-		readEnd = (v, b) -> {
-			var ls = lastStore[b.id];
-			var st = ls != null ? ls.get(v) : null;
-			st != null ? storedValue(st) : readEntry(v, b);
-		};
 		// the loads become their variable's value; the stores go
 		for (b in f.blocks) {
 			if (!touched[b.id]) continue;

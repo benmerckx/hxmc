@@ -14,14 +14,15 @@ class Abi {
 	public static inline var IC_KIND = 8;
 	public static inline var IC_FN = 16;
 	public static inline var IC_SIG = 24;
-	// object header (Gc.hx): the type index is bits 32..47, i.e. the 16-bit
-	// word at payload - 4; the kind bits 28..31 of the word at payload - 8
-	public static inline var HDR_TINDEX = -4;
+	// object header (hxmc.rt.Types): the type index first, the 16-bit word at
+	// payload - 8; 16 to 31 are arrays, the other types records
+	public static inline var HDR_TINDEX = -8;
 	public static inline var T_FIRST = 32;
 	public static inline var T_ARRAY = 5;
-	public static inline var T_NATIVE_ARRAY = 19;
-	public static inline var T_DATE = 20; // a Date (hxmc.rt.Types)
-	public static inline var T_MATH = 21; // Math's class value (hxmc.rt.Types)
+	public static inline var T_STRING = 16;
+	public static inline var T_NATIVE_ARRAY = 24; // - the element kind (AK_*): MirBuild.naType
+	public static inline var T_DATE = 15; // a Date: a record (hxmc.rt.Types)
+	public static inline var T_MATH = 28; // Math's class value (hxmc.rt.Types)
 	public static inline var T_REFBOX_P = 11;
 	public static inline var T_REFBOX_I = 12;
 	public static inline var T_REFBOX_F = 13;
@@ -32,7 +33,17 @@ class Abi {
 	public static inline var AK_I32 = 1;
 	public static inline var AK_F64 = 2;
 	public static inline var AK_I64 = 3;
-	public static inline var AK_BOOL = 4; // stored as AK_I32 (Types.hx); in a NativeArray, one byte per Bool
+	public static inline var AK_BOOL = 4; // one byte per Bool (Types.hx)
+	public static inline var AK_BYTE = 5; // a NativeArray<hxmc.Byte>'s, one byte each
+
+	// the bytes of a NativeArray element of kind k
+	public static inline function akSize(k:Int):Int
+		return k >= AK_BOOL ? 1 : k == AK_I32 ? 4 : 8;
+
+	// the most elements of a NativeArray of kind k (its header counts its
+	// words in 32 bits, its length too)
+	public static inline function akMax(k:Int):Int
+		return k >= AK_BOOL ? 0x7FFFFFE8 : k == AK_I32 ? 0x1FFFFFFA : 0x0FFFFFFD;
 
 	public var name:String; // linux-x86_64, ...
 	public var arm:Bool;

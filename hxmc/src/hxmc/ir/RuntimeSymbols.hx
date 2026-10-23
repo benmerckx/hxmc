@@ -22,7 +22,7 @@ using core.TFunctions;
 // Runtime.hx and a look at those modules' statics, and changes nothing that
 // is written.
 //
-// The list is kept by hand, next to the generators; MirBuild.call and
+// The list is kept by hand, next to the generators; MirWriter.call and
 // GcModule.exportOf fail the build when generated code calls an exported
 // function of the runtime that it does not list for the family, so a new
 // one cannot be left out (the few fixed references elsewhere are listed
@@ -77,25 +77,25 @@ class RuntimeSymbols {
 		// (wasm32: LinkWasm's builtin, which calls hx_uncaught)
 		{sym: "rt_throw", kind: FUNC, families: NATIVE, by: "MirBuild: a throw, a catch's rethrow"},
 		{sym: "hx_uncaught", kind: FUNC, families: WASM32, by: "LinkWasm's rt_throw: no handler"},
-		{sym: "rt_null_access", kind: FUNC, families: NATIVE, by: "Faults.redirect: a fault's target; MirBuild.nullBlock with -D hxmc.null-checks=1"},
-		{sym: "rt_null_access", kind: FUNC, families: WASM32, by: "MirBuild.nullBlock", when: nullChecks},
+		{sym: "rt_null_access", kind: FUNC, families: NATIVE, by: "Faults.redirect: a fault's target; MemLower.nullBlock with -D hxmc.null-checks=1"},
+		{sym: "rt_null_access", kind: FUNC, families: WASM32, by: "MemLower.nullBlock", when: nullChecks},
 		// (an interpreted function's entry stub; the code a compiler built with -D hxmc.jit loads, MirRun, MirMacros)
 		{sym: "hxmc_interp_enter", kind: FUNC, families: NATIVE, by: "InterpGen: an interpreted function's entry stub", when: interp},
-		{sym: "rt_stack_overflow", kind: FUNC, families: WASM32, by: "MirBuild.raiseHw: the shadow stack's end"},
+		{sym: "rt_stack_overflow", kind: FUNC, families: WASM32, by: "MirWriter.raiseHw: the shadow stack's end"},
 		{sym: "rt_cstack_overflow", kind: FUNC, families: WASM32, by: "WasmGen: a frame's prologue"},
 		{sym: "rt_blocking_enter", kind: FUNC, families: NATIVE, by: "MirBuild.cCall: a C call's safe region"},
 		{sym: "rt_blocking_leave", kind: FUNC, families: NATIVE, by: "MirBuild.cCall: a C call's safe region"},
-		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MirBuild.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
+		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MemLower.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
 		{sym: "hxmc_barrier_slow", kind: FUNC, families: LINEAR, by: "MirBuild: the write barrier"},
 		{sym: "rt_icache_miss", kind: FUNC, families: LINEAR, by: "MirBuild: an inline cache's miss"},
-		{sym: "hx_box_int", kind: FUNC, families: LINEAR, by: "MirBuild.box"},
-		{sym: "hx_box_bool", kind: FUNC, families: LINEAR, by: "MirBuild.box"},
-		{sym: "hx_box_float", kind: FUNC, families: LINEAR, by: "MirBuild.box"},
-		{sym: "hx_box_i64", kind: FUNC, families: LINEAR, by: "MirBuild.box"},
-		{sym: "hx_unbox_int", kind: FUNC, families: LINEAR, by: "MirBuild.unbox"},
-		{sym: "hx_unbox_bool", kind: FUNC, families: LINEAR, by: "MirBuild.unbox"},
-		{sym: "hx_unbox_float", kind: FUNC, families: LINEAR, by: "MirBuild.unbox"},
-		{sym: "hx_unbox_i64", kind: FUNC, families: LINEAR, by: "MirBuild.unbox"},
+		{sym: "hx_box_int", kind: FUNC, families: LINEAR, by: "MemLower.boxFrom"},
+		{sym: "hx_box_bool", kind: FUNC, families: LINEAR, by: "MemLower.boxFrom"},
+		{sym: "hx_box_float", kind: FUNC, families: LINEAR, by: "MemLower.boxFrom"},
+		{sym: "hx_box_i64", kind: FUNC, families: LINEAR, by: "MemLower.boxFrom"},
+		{sym: "hx_unbox_int", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
+		{sym: "hx_unbox_bool", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
+		{sym: "hx_unbox_float", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
+		{sym: "hx_unbox_i64", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
 		{sym: "hx_aget_i_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array read's slow path"},
 		{sym: "hx_aget_f_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array read's slow path"},
 		{sym: "hx_aget_l_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array read's slow path"},
@@ -104,13 +104,13 @@ class RuntimeSymbols {
 		{sym: "hx_apush_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array push's slow path"},
 		{sym: "hx_arr_new_n", kind: FUNC, families: LINEAR, by: "MirBuild: an Array literal"},
 		{sym: "hx_f2i_slow", kind: FUNC, families: LINEAR, by: "MirBuild: Float to Int out of range"},
-		{sym: "hx_narray_get_slow", kind: FUNC, families: LINEAR, by: "MirBuild.narrayDyn"},
-		{sym: "hx_narray_set_slow", kind: FUNC, families: LINEAR, by: "MirBuild.narrayDyn"},
+		{sym: "hx_narray_get_slow", kind: FUNC, families: LINEAR, by: "MemLower.narrayDyn"},
+		{sym: "hx_narray_set_slow", kind: FUNC, families: LINEAR, by: "MemLower.narrayDyn"},
 		{sym: "hx_narray_bad_length", kind: FUNC, families: LINEAR, by: "MirBuild: a NativeArray's negative length"},
 		{sym: "hx_narray_new_n", kind: FUNC, families: LINEAR, by: "MirBuild: a NativeArray literal (hxmc_narray_lit)"},
 		{sym: "hx_anon_get_slow", kind: FUNC, families: LINEAR, by: "MirBuild: a structure's field read"},
 		{sym: "hx_anon_set_slow", kind: FUNC, families: LINEAR, by: "MirBuild: a structure's field write"},
-		{sym: "hx_anon_call_slow", kind: FUNC, families: LINEAR, by: "MirBuild.callAnon"},
+		{sym: "hx_anon_call_slow", kind: FUNC, families: LINEAR, by: "MemLower.callAnon"},
 		{sym: "hx_str_eq_slow", kind: FUNC, families: LINEAR, by: "MirBuild.strEq"},
 		{sym: "StringBuf_addChar_slow", kind: FUNC, families: LINEAR, by: "MirBuild.stringBufAddChar"},
 		{sym: "hx_array_iterator", kind: FUNC, families: LINEAR, by: "Facts: Array's method table (DataGen)"},
@@ -121,12 +121,12 @@ class RuntimeSymbols {
 		{sym: "rt_young_start", kind: DATA, families: NATIVE, by: "MirBuild: the write barrier"},
 		{sym: "rt_young_end", kind: DATA, families: NATIVE, by: "MirBuild: the write barrier"},
 		{sym: "rt_sp", kind: TLS, families: NATIVE, by: "MirBuild: the shadow stack"},
-		{sym: "rt_sp_hw", kind: TLS, families: NATIVE, by: "MirBuild.raiseHw"},
+		{sym: "rt_sp_hw", kind: TLS, families: NATIVE, by: "MirWriter.raiseHw"},
 		{sym: "rt_hcur", kind: TLS, families: NATIVE, by: "MirBuild.tryStmt"},
 		{sym: "rt_exn", kind: TLS, families: NATIVE, by: "MirBuild.tryStmt"},
-		{sym: "rt_young_ptr", kind: TLS, families: NATIVE, by: "MirBuild.alloc"},
-		{sym: "rt_young_limit", kind: TLS, families: NATIVE, by: "MirBuild.alloc"},
-		{sym: "rt_young_rlimit", kind: TLS, families: NATIVE, by: "MirBuild.alloc"},
+		{sym: "rt_young_ptr", kind: TLS, families: NATIVE, by: "MemLower.alloc"},
+		{sym: "rt_young_limit", kind: TLS, families: NATIVE, by: "MemLower.alloc"},
+		{sym: "rt_young_rlimit", kind: TLS, families: NATIVE, by: "MemLower.alloc"},
 		// FnLower's calls of the runtime (bound by Lower.bindHosts; MirBuild and
 		// FuncGen expand the others: hx_str_eq on linear memory, hx_dyn_call,
 		// hx_clos_of_sig, hx_is, hx_cast and hx_is_typeobj on WasmGC, the
@@ -185,14 +185,14 @@ class RuntimeSymbols {
 		return family == NATIVE ? "the native targets" : family == WASM32 ? "wasm32-wasi" : "WasmGC";
 
 	// the families `sym` is listed for as a FUNC (0: none; Facts keeps it on
-	// the runtime's exported functions, FuncInfo.rtFamilies, for MirBuild.call)
+	// the runtime's exported functions, FuncInfo.rtFamilies, for MirWriter.call)
 	public static function familiesOf(sym:String):Int {
 		var f = FUNCS.get(sym);
 		return f == null ? 0 : f;
 	}
 
 	// generated code calls the runtime's exported function `sym` by its
-	// symbol (MirBuild.call, GcModule.exportOf): it must be listed for the
+	// symbol (MirWriter.call, GcModule.exportOf): it must be listed for the
 	// family, which check keeps defined; else this list is wrong
 	public static function called(sym:String, family:Int) {
 		var f = FUNCS.get(sym);
