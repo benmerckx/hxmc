@@ -1889,7 +1889,7 @@ class TypeBinding {
 
 	// port: (hxmc) a method whose body is never compiled: not typed, the
 	// expression the hook gives is its cf_expr; null: typed (-D
-	// hxmc.mir-macros: the runtime's functions the compiler runs as its
+	// hxmc.macros=mir: the runtime's functions the compiler runs as its
 	// own native code, in the macro context, hxmc.interp.MacroRuntime)
 	public static var untypedBodyHook:Null<(ctx:Typer, c:TClass, cf:TClassField, fctx:FieldInitCtx, args:FunctionArguments, t:T, ret:T,
 		e:Expr, p:Pos) -> Null<TExpr>> = null;

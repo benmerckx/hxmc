@@ -615,8 +615,8 @@ Left:
   locals. `DW_TAG_inlined_subroutine` for inlined calls (the inliner knows
   the call site: Inline.run), columns (positions have them).
 - perf: `perf --call-graph dwarf` (not checked here: no usable perf in the
-  development container) and the JIT's frames (native macros: `Jit.hx`
-  could register its code's FDEs with `__register_frame`).
+  development container) and code generated at run time (none yet: its FDEs would be registered
+  with `__register_frame`).
 - WebAssembly: DWARF in custom sections (`.debug_line` with code offsets)
   for the browsers' and wasmtime's debuggers.
 

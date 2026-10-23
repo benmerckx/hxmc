@@ -119,7 +119,8 @@ PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(COMPILER_ARGS
 PKG_ARGS := -cp haxe/src -cp hxmc/src -main hxmc.HaxeMain -D disable-parallelism $(COMPILER_ARGS) $(HXMC_ARGS)
 EXE = $(if $(findstring windows,$(1)),.exe)
 RELEASE_BIN := bin/release/$(TARGET)/haxe$(call EXE,$(TARGET))
-JIT_RELEASE_BIN := bin/jit-release/$(TARGET)/haxe$(call EXE,$(TARGET))
+# the native compiler for the host (the npm package's: Mir macros and --run, mir-run-check)
+HOST_HAXE := bin/npm/native/$(HOST)/haxe
 
 # $(call hxmc,<out>,<args>): a build by the tool, its log next to the output
 define hxmc
@@ -131,7 +132,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
-	android-check android-device-check shared-check ios-check ios-sim-check native-macros mir-run-check mir-macros-check jit-release dev-check \
+	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check dev-check \
 	bench bench-compile bench-micro measure wasmgc-check wasmgc-bench quick check full clean distclean
 
 help:
@@ -177,13 +178,12 @@ help:
 ##               under node against the native build's output (hxmc/test/GcCheck.hx)
 ##   dev-check   the dev loop: `hxmc dev` through edits and a compile error, the compilation server's
 ##               builds against fresh ones (hxmc/test/dev)
-##   native-macros  the native macros prototype: the macro cases with -D hxmc.jit, -D hxmc.macros=MACROS
-##   mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.mir-run,
-##               hxmc/src/hxmc/interp/MirRun.hx): bin/jit/haxe as for native-macros, the corpus run in it
+##   mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.run=mir,
+##               hxmc/src/hxmc/interp/MirRun.hx): bin/npm/native/HOST/haxe, the corpus run in it
 ##               (each bundle without native code: HXMC_MACRO_STATS; the cases known to fail there:
 ##               Corpus.MIR_RUN_KNOWN)
-##   mir-macros-check  the macro cases with Mir macros (-D hxmc.mir-macros, bin/jit/haxe as for
-##               native-macros) against the reference (Conformance --target-only --parallel 1;
+##   mir-macros-check  the macro cases with Mir macros (-D hxmc.macros=mir, bin/npm/native/HOST/haxe as for
+##               mir-run-check) against the reference (Conformance --target-only --parallel 1;
 ##               MIR_MACROS_KNOWN: Eval's own packages)
 ##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
 ##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
@@ -205,8 +205,6 @@ help:
 ##   site        bin/site: the website (site/; LIX_DIR's lix binaries, BENCH_DATA's benchmark history)
 ##   site-check  bin/site in headless browsers (site/tools/browser-test.mjs; Playwright; BROWSERS)
 ##   release     bin/release/TARGET/haxe[.exe]: the port cross-built by hxmc, with mbedtls and libuv
-##   jit-release bin/jit-release/TARGET/haxe[.exe]: `haxe` with hxmc built in and -D hxmc.jit (Mir macros
-##               and --run), cross-built by hxmc (CI's test jobs run its lanes on each target's machine)
 ##   lix-dist    bin/lix-dist/lix-<target>[.exe]: lix for the six targets (the release, the site's tools/)
 ##   npm         bin/npm/*.tgz: the nine npm packages of packages/ (packages/pack.mjs; NPM_VERSION)
 ##
@@ -320,13 +318,6 @@ bin/release/%/haxe: $(TOOL) $(PORT_SRC) $(STD) $(HOST_RT)
 	$(call hxmc,$@,$(PORT_ARGS) -D hxmc.target=$*)
 bin/release/%/haxe.exe: $(TOOL) $(PORT_SRC) $(STD) $(HOST_RT)
 	$(call hxmc,$@,$(PORT_ARGS) -D hxmc.target=$*)
-
-# the compiler with Mir macros and --run (-D hxmc.jit) for TARGET: cross-built from Linux
-jit-release: $(JIT_RELEASE_BIN)
-bin/jit-release/%/haxe: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
-	$(call hxmc,$@,$(PKG_ARGS) -D hxmc.jit -D hxmc.target=$*)
-bin/jit-release/%/haxe.exe: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
-	$(call hxmc,$@,$(PKG_ARGS) -D hxmc.jit -D hxmc.target=$*)
 
 # the playground's compiler: a wasm32-wasi module (its runtime is Haxe, no
 # runtime object), without the target generators; with exnref, and with the
@@ -574,26 +565,16 @@ dev-check: $(TOOL) $(STD) $(HOST_RT)
 	ulimit -s unlimited 2>/dev/null || true; $(NODE) hxmc/test/dev/dev-console.mjs $(TOOL) bin/dev/console
 	ulimit -s unlimited 2>/dev/null || true; $(NODE) hxmc/test/dev/server-verify.mjs $(TOOL)
 
-# (each macro class compiled in a child of bin/jit/haxe; the engine's report in each
-# case's port.log)
-MACROS ?= verify
-native-macros: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE)
-	$(call hxmc,bin/jit/haxe,$(PKG_ARGS) -D hxmc.jit)
-	export HXMC_STD=$(abspath bin/hxmc/std) HXMC_RT_DIR=$(abspath bin/hxmc/rt) HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT="$(abspath bin/jit/haxe) -D hxmc.macros=$(MACROS)"; $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt
-	@cat bin/test/conformance/*/port.log | grep -h "^hxmc.macros: [0-9]* macro calls" | awk '{c+=$$2; n+=$$5; m+=substr($$7,2); mm+=$$9; e+=$$11} END {print "native macros: " c " calls, " n " native (" m " matched, " mm " mismatched), " e " on Eval"}'
-
-# (each case typed, compiled for the Mir interpreter and run in bin/jit/haxe's process)
-mir-run-check: $(TOOL) $(STD) $(HOST_RT)
-	$(call hxmc,bin/jit/haxe,$(PKG_ARGS) -D hxmc.jit)
-	$(SCRIPT) Corpus --mir-run $(CASES)
+# (each case typed, compiled for the Mir interpreter and run in the native compiler's process)
+mir-run-check: $(TOOL) $(STD) $(HOST_RT) $(HOST_HAXE)
+	HXMC_HAXE=$(abspath $(HOST_HAXE)) $(SCRIPT) Corpus --mir-run $(CASES)
 
 # (Mir macros: the macro context typed against hxmc's std, its modules not
 # compared; Issue11631 uses Eval's own mbedtls package; CI's test jobs run the
 # same on each target's machine)
 MIR_MACROS_KNOWN := eval-Issue11631-compile
-mir-macros-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE)
-	$(call hxmc,bin/jit/haxe,$(PKG_ARGS) -D hxmc.jit)
-	export HXMC_STD=$(abspath bin/hxmc/std) HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT="$(abspath bin/jit/haxe) -D hxmc.mir-macros"; $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt --target-only --parallel 1 --known $(MIR_MACROS_KNOWN)
+mir-macros-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
+	export HXMC_STD=$(abspath bin/hxmc/std) HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT="$(abspath $(HOST_HAXE)) -D hxmc.macros=mir"; $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt --target-only --parallel 1 --known $(MIR_MACROS_KNOWN)
 
 bench: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) bin/lix/lix
 	$(SCRIPT) Bench $(BENCH_ARGS)

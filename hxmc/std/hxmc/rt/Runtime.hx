@@ -51,8 +51,8 @@ import hxmc.rt.WinRt;
 #if hxmc.census
 import hxmc.rt.Census;
 #end
-// (the interpreter: a program interpreted, or a compiler loading interpreted code, -D hxmc.jit)
-#if (hxmc.interp || hxmc.jit)
+// (the interpreter: a program interpreted; a Mir host reaches it through its own code, macro.Loader)
+#if hxmc.interp
 import hxmc.rt.Interp;
 #end
 #end

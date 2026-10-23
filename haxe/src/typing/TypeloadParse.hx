@@ -153,7 +153,7 @@ class TypeloadParse {
 	}
 
 	// port: (hxmc) a file's source as it is parsed, from its content: -D
-	// hxmc.mir-macros blanks bodies of the runtime the macro context never
+	// hxmc.macros=mir blanks bodies of the runtime the macro context never
 	// types (hxmc.MacroCuts, hxmc.interp.MacroRuntime)
 	public static var sourceHook:Null<(com:CommonContext, file:String, source:String) -> String> = null;
 

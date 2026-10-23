@@ -48,7 +48,7 @@ typedef MacroError = {
 	- `haxe.macro.TypeTools`
 **/
 class Context {
-	// (hxmc: macro code compiled for hxmc, -D hxmc.mir-macros: the API is the compiler's, hxmc.MacroHost)
+	// (hxmc: macro code compiled for hxmc, -D hxmc.macros=mir: the API is the compiler's, hxmc.MacroHost)
 	#if macro
 	/**
 		Displays a compilation error `msg` at the given `Position` `pos`

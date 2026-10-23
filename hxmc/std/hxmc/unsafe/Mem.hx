@@ -40,6 +40,11 @@ extern class Mem {
 	// 8 linux-arm64 with glibc (-D hxmc.libc=glibc), 9 android-x86_64, 10
 	// android-arm64 (Bionic, os() Linux's: `Mem.target() >= 9` is Android)
 	static function target():Int;
+	// 1 in a program that loads code for the Mir interpreter (a compiler with
+	// Mir macros and --run: it has hxmc.interp.MirMacros, for a native target;
+	// docs/hxmc.md, "Macros on the Mir interpreter"), else 0; a constant, as
+	// target() (one comparison folds)
+	static function mirHost():Int;
 	// the Apple platform where os() is 1: 0 macOS, 1 iOS, 2 the iOS simulator
 	// (target() 3 for both: macos-arm64's libSystem and layouts; packages
 	// only, not the runtime: the committed stage0 does not know it)

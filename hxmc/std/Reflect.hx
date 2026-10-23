@@ -98,8 +98,13 @@ class Reflect {
 		If `o` is null, the result is unspecified.
 	**/
 	public static function fields(o:Dynamic):Array<String> {
-		#if (hxmc.jit || hxmc.interp || macro)
+		// (code that runs as Eval's: interpreted, the macro context's, or a Mir host's, EvalCompat)
+		#if (hxmc.interp || macro)
 		if (hxmc.rt.EvalCompat.on) return hxmc.rt.EvalCompat.fields(Native.fields(o));
+		#else
+		if (hxmc.unsafe.Mem.mirHost() == 1) {
+			if (hxmc.rt.EvalCompat.on) return hxmc.rt.EvalCompat.fields(Native.fields(o));
+		}
 		#end
 		return Native.fields(o);
 	}

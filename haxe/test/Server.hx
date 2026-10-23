@@ -25,7 +25,7 @@ using StringTools;
 //   answer length-prefixed requests.
 // --no-hxb compares the requests' exit codes and outputs only, not the archives:
 // for a port whose macro context is typed for another platform (-D
-// hxmc.mir-macros), whose archive then lays the modules out otherwise.
+// hxmc.macros=mir), whose archive then lays the modules out otherwise.
 // --hxb-cache keeps the default HXB module cache (by default every request
 // adds -D disable-hxb-cache); --fresh restarts the servers for every case.
 class Server {

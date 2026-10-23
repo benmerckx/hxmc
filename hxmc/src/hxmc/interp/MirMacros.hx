@@ -1,6 +1,5 @@
 package hxmc.interp;
 
-#if hxmc.jit
 import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
@@ -9,7 +8,7 @@ import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 import macros.MacroApi.CompilerApi;
 
-// -D hxmc.mir-macros, in a compiler built with -D hxmc.jit: macros on the Mir
+// -D hxmc.macros=mir, in a native compiler (a Mir host): macros on the Mir
 // interpreter, without Eval. The macro context is typed for hxmc
 // (MacroContext.macroPlatformHook: hxmc's std, the hxmc custom target,
 // `macro` defined), its functions are lowered as macros call them (one
@@ -22,7 +21,7 @@ import macros.MacroApi.CompilerApi;
 @:access(hxmc.DataGen)
 @:access(hxmc.ir.Facts)
 @:access(hxmc.ir.Lower)
-@:access(hxmc.macro.Guest)
+@:access(hxmc.macro.BundleFacts)
 @:access(hxmc.macro.Loader)
 @:access(hxmc.rt.Interp)
 @:access(hxmc.interp.MirRun)
@@ -98,29 +97,6 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	public function new() {}
 
-	// whether the command line selects it: -D hxmc.mir-macros
-	public static function selected(args:Array<String>):Bool {
-		for (i in 0...args.length - 1)
-			if ((args[i] == "-D" || args[i] == "--define") && (args[i + 1] == "hxmc.mir-macros" || args[i + 1] == "hxmc.mir_macros")) return true;
-		return false;
-	}
-
-	// the command line without it: the compilation's defines are the reference's
-	// (Compiler.getDefine, hxcpp's Options.txt, the modules' signatures)
-	public static function without(args:Array<String>):Array<String> {
-		var out = [];
-		var i = 0;
-		while (i < args.length) {
-			if ((args[i] == "-D" || args[i] == "--define") && i + 1 < args.length && (args[i + 1] == "hxmc.mir-macros" || args[i + 1] == "hxmc.mir_macros")) {
-				i += 2;
-				continue;
-			}
-			out.push(args[i]);
-			i++;
-		}
-		return out;
-	}
-
 	public static function install(std:Null<String>) {
 		hxmcStd = std;
 		self = new MirMacros();
@@ -194,7 +170,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	// the macro context: hxmc's std in front, the hxmc custom target, the host as its target
 	static function setupPlatform(com2:context.Common.CommonContext) {
-		if (hxmcStd == null) throw "-D hxmc.mir-macros: hxmc's std is unknown (HXMC_STD)";
+		if (hxmcStd == null) throw "-D hxmc.macros=mir: hxmc's std is unknown (HXMC_STD)";
 		(com2.classPaths : core.ClassPaths).add(new core.ClassPath.DirectoryClassPath(haxe.io.Path.addTrailingSlash(hxmcStd), core.ClassPath.ClassPathScope.User));
 		// (the macro context's defines name Eval, Common.adaptDefinesToMacroContext: not this one's platform)
 		core.Define.rawUndefine(com2.defines, "eval");
@@ -232,7 +208,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	// Sys in macro code as Eval's (EvalStdLibB.StdSys): the request's streams, the
 	// compilation's arguments, its commands (com.runCommand), its end (SysExit);
-	// the process's own when another engine runs the macro code (the native macros)
+	// the process's own when another engine (Eval) runs the macro code
 	static function io():Null<compiler.io.CompilerIo.CompilerIoData>
 		return self == null || self.api == null || macros.MacroEngine.engine != self ? null : self.api.getCom().requestScope.io;
 
@@ -335,7 +311,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.rt.EvalCompat.on = true;
 		try
 			for (p in inits)
-				hxmc.macro.Loader.run0(p, true)
+				hxmc.macro.Loader.run0(p)
 		catch (x:Dynamic) {
 			hxmc.rt.EvalCompat.on = order;
 			throw toCompilerError(x, api);
@@ -347,7 +323,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// server), as EvalPrototype.addTypes drops the prototypes of a type whose module
 	// is another: what was compiled is dropped, compiled again as it is needed
 	function newGeneration() {
-		if (stats) Sys.stderr().writeString("hxmc.mir-macros: new generation, spare entries taken " + hxmc.macro.Loader.used() + ", globals " + @:privateAccess hxmc.rt.Gc.nglobals + " of " + @:privateAccess hxmc.rt.Gc.globalsCap + "\n");
+		if (stats) Sys.stderr().writeString("hxmc.macros=mir: new generation, spare entries taken " + hxmc.macro.Loader.used() + ", globals " + @:privateAccess hxmc.rt.Gc.nglobals + " of " + @:privateAccess hxmc.rt.Gc.globalsCap + "\n");
 		hxmc.macro.Loader.newGeneration();
 		// (the types of earlier compilations this one has not handed over: not lowered
 		// in the new generation, unless the compilation hands them over again)
@@ -420,7 +396,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				if (core.Globals.sTypePath(core.TFunctions.tPath(x)) == name) t = x;
 		return switch t {
 			case TClassDecl(c): c;
-			case _: throw "-D hxmc.mir-macros: no class " + name + " in the macro context";
+			case _: throw "-D hxmc.macros=mir: no class " + name + " in the macro context";
 		}
 	}
 
@@ -430,14 +406,14 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (e != null) return e;
 		var c = findClass(path);
 		var cf = c.clStatics.get(f);
-		if (cf == null) throw "-D hxmc.mir-macros: no static " + key;
+		if (cf == null) throw "-D hxmc.macros=mir: no static " + key;
 		var t0 = haxe.Timer.stamp();
 		if (l == null) start();
 		hxmc.ir.Lower.basic = com.basic;
 		var fi = l.staticFunc(c, cf);
 		build(c);
 		var d = hxmc.macro.Loader.xb.get(InterpGen.DESC + lastPrep.funcSym(fi));
-		if (d == null) throw "-D hxmc.mir-macros: " + key + " was not loaded";
+		if (d == null) throw "-D hxmc.macros=mir: " + key + " was not loaded";
 		e = {fi: fi, desc: Ptr.ofI64((d.v : I64))};
 		entries.set(key, e);
 		tCompile += haxe.Timer.stamp() - t0;
@@ -522,6 +498,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		hxmc.ir.Lower.mirHost = 0; // (a bundle: code loaded, not a loader)
 		hxmc.ir.Lower.bounds = opts.bounds;
 		hxmc.ir.Lower.resources = [];
 		hxmc.ir.Lower.basic = com.basic;
@@ -537,7 +514,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// the API: Compiler.keep's addGlobalMetadata), so that the std's may be
 	// the compiler's (MirRun.hostFunctions: the same code)
 	function wantsSites(f:FuncInfo):Bool {
-		if (hxmc.macro.Guest.runtime(f)) return false;
+		if (hxmc.macro.BundleFacts.runtime(f)) return false;
 		if (f.pos == null || f.module == null || StringTools.startsWith(f.module, "haxe.macro.")) return true;
 		for (r in stdRoots)
 			if (StringTools.startsWith(f.pos.pfile, r)) return false;
@@ -562,7 +539,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			var h = host.get(s);
 			h != null && h.k == "l";
 		};
-		var funcs = [for (f in prog.funcs) if (!compiled.exists(f) && (!hxmc.macro.Guest.runtime(f) || !host.exists(e.symbol(f)))) f];
+		var funcs = [for (f in prog.funcs) if (!compiled.exists(f) && (!hxmc.macro.BundleFacts.runtime(f) || !host.exists(e.symbol(f)))) f];
 		for (f in funcs) {
 			var fp = new Fingerprint(prep, null);
 			fp.func(f);
@@ -575,7 +552,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the types handed over so far: com.types may not have them yet)
 		phase("fingerprints");
 		var types = [for (t in processed) t];
-		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, main, types);
+		var facts:Dynamic = hxmc.macro.BundleFacts.facts(com, prog, e, l, main, types);
 		MirRun.unshare(facts, host, l, e, com, types);
 		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
 		phase("facts");
@@ -607,7 +584,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		dg.emptyArrays([]);
 		dg.resources([]);
 		phase("data, trampolines");
-		var b = hxmc.macro.Loader.loadObj(obj, facts, true);
+		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		phase("load");
 		codeBytes += b.codeBytes;
 		dataBytes += b.dataBytes;
@@ -616,7 +593,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();
-		if (stats) Sys.stderr().writeString('hxmc.mir-macros: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
+		if (stats) Sys.stderr().writeString('hxmc.macros=mir: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
 	}
 
 	// the bytes of the bundles loaded (code: always 0, interp.InterpAbi)
@@ -671,12 +648,11 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	public function report() {
 		if (stats && steps > 0) {
-			Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
-			Sys.stderr().writeString('hxmc.mir-macros: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
+			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
 		if (stats)
 			for (k => v in phases)
 				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');
 	}
 }
-#end

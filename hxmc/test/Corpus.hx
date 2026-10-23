@@ -29,8 +29,9 @@ using StringTools;
 // its golden file to DIR/<case>/ (Check runs them on the target's machine);
 // --interp builds every case with -D hxmc.interp (the program's functions
 // run by the interpreter in it: hxmc.rt.Interp), in bin/hxmc-t-interp;
-// --mir-run runs every case inside a compiler built with -D hxmc.jit
-// (HXMC_JIT, bin/jit/haxe: make mir-run-check) with -D hxmc.mir-run --run
+// --mir-run runs every case inside the native compiler, `haxe` with hxmc
+// built in (HXMC_HAXE, default the host's bin/npm/native/<host>/haxe: make
+// mir-run-check) with -D hxmc.run=mir --run
 // (hxmc.interp.MirRun: no executable), in bin/hxmc-t-mir; the cases known to
 // fail there are MIR_RUN_KNOWN's.
 // --known <case,...>: cases known to fail in this mode (its documented
@@ -67,7 +68,7 @@ class Corpus {
 	static var libc:Null<String>; // --libc glibc: -D hxmc.libc=glibc
 	static var bless = false;
 	static var interp = false; // --interp: -D hxmc.interp
-	static var mirRun = false; // --mir-run: in the compiler (bin/jit/haxe), -D hxmc.mir-run
+	static var mirRun = false; // --mir-run: in the native compiler (HXMC_HAXE), -D hxmc.run=mir
 
 	static function main() {
 		var a = parseArgs(Sys.args(), ["-j", "--target", "--stage", "--wasm-eh", "--libc", "--known"]);
@@ -239,15 +240,15 @@ class Corpus {
 	}
 
 	// a case run inside the compiler (--mir-run): typed, compiled for the Mir
-	// interpreter and run in bin/jit/haxe's process, its output against the golden file
+	// interpreter and run in the native compiler's process, its output against the golden file
 	static function mirRunCase(c:CorpusCase, d:String, links:Bool):CorpusResult {
 		if (links) return {name: c.name, status: "excluded", detail: "C objects: not linked into the running compiler"};
 		var expected = EXPECTED + "/" + c.name + ".txt";
 		if (!FileSystem.exists(expected)) return {name: c.name, status: "no-golden", detail: expected + " is missing"};
-		var jit = FileSystem.fullPath(Sys.getEnv("HXMC_JIT") ?? "bin/jit/haxe");
-		var cmd = [jit];
+		var haxe = FileSystem.fullPath(Sys.getEnv("HXMC_HAXE") ?? "bin/npm/native/" + hostTarget() + "/haxe");
+		var cmd = [haxe];
 		for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
-		cmd = cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")).concat(["-D", "hxmc.mir-run"]);
+		cmd = cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")).concat(["-D", "hxmc.run=mir"]);
 		var src = c.cps[0] + "/" + c.main + ".hx";
 		if (FileSystem.exists(src))
 			for (l in File.getContent(src).split("\n"))

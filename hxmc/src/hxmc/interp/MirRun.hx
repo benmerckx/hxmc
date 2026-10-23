@@ -1,6 +1,5 @@
 package hxmc.interp;
 
-#if hxmc.jit
 import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
@@ -8,8 +7,8 @@ import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
-// `--interp` and `--run` with -D hxmc.mir-run, in a compiler built with
-// -D hxmc.jit: the program typed for hxmc (its std, not Eval's), its
+// `--interp` and `--run` with -D hxmc.run=mir, in a native compiler (a
+// Mir host): the program typed for hxmc (its std, not Eval's), its
 // functions encoded for the Mir interpreter (InterpGen: all but the
 // runtime's, which is the compiler's own), linked into the running compiler
 // (macro.Loader: the std's types and statics are the compiler's where the
@@ -19,24 +18,21 @@ import hxmc.unsafe.Ptr;
 @:access(hxmc.DataGen)
 @:access(hxmc.ir.Facts)
 @:access(hxmc.ir.Lower)
-@:access(hxmc.macro.Guest)
+@:access(hxmc.macro.BundleFacts)
 @:access(hxmc.macro.Loader)
 @:access(hxmc.rt.Start)
 @:access(hxmc.rt.Gc)
 class MirRun {
-	// (-D turns the dash into an underscore)
-	public static inline var DEFINE = "hxmc.mir_run";
-
 	// the program's arguments (--run's after its module)
 	static var args:Array<String> = [];
 
-	// the command line with -D hxmc.mir-run: --interp and --run as an hxmc
-	// compile that ends here (generateHook: run); null without it
-	public static function rewrite(argv:Array<String>):Null<Array<String>> {
-		var on = false;
-		for (i in 0...argv.length - 1)
-			if ((argv[i] == "-D" || argv[i] == "--define") && (argv[i + 1] == "hxmc.mir-run" || argv[i + 1] == DEFINE)) on = true;
-		if (!on) return null;
+	// whether the compilation is one rewrite made (generateHook: run)
+	public static function selected(com:context.Common.CommonContext):Bool
+		return core.Define.rawDefinedValueSafe(com.defines, HaxeMain.RUN) == "mir";
+
+	// the command line with -D hxmc.run=mir (HaxeMain.runEngine): --interp and
+	// --run as an hxmc compile that ends here (generateHook: run; the define stays)
+	public static function rewrite(argv:Array<String>):Array<String> {
 		var out = [];
 		var i = 0;
 		while (i < argv.length) {
@@ -66,12 +62,13 @@ class MirRun {
 		var abi = Abi.get(o.target);
 		// (the program runs in the compiler: its target is the compiler's own)
 		var t = Mem.target();
-		if (o.target != Options.host() || (o.libc != null) != (t == 7 || t == 8)) throw "-D hxmc.mir-run: the program's target is the compiler's own (" + Options.host() + ")";
+		if (o.target != Options.host() || (o.libc != null) != (t == 7 || t == 8)) throw "-D hxmc.run=mir: the program's target is the compiler's own (" + Options.host() + ")";
 		abi.framePointers = abi.arm || o.framePointers; // (as Driver)
 		hxmc.ir.Lower.targetOs = abi.osCode();
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		hxmc.ir.Lower.mirHost = 0; // (a bundle: code loaded, not a loader)
 		hxmc.ir.Lower.bounds = o.bounds;
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		var t0 = haxe.Timer.stamp();
@@ -93,7 +90,7 @@ class MirRun {
 		};
 		// (and those whose source the program's defines change: -D hxmc.native-array-outofbounds)
 		var ownRuntime = o.bounds != 0 ? ["hxmc.rt.Dyn" => true, "hxmc.rt.NArray" => true] : new Map<String, Bool>();
-		var funcs = [for (f in prog.funcs) if (!hxmc.macro.Guest.runtime(f) || !host.exists(e.symbol(f)) || ownRuntime.exists(f.module)) f];
+		var funcs = [for (f in prog.funcs) if (!hxmc.macro.BundleFacts.runtime(f) || !host.exists(e.symbol(f)) || ownRuntime.exists(f.module)) f];
 		// the string literals (as Driver registers them)
 		for (f in funcs) {
 			var fp = new Fingerprint(prep, null);
@@ -104,7 +101,7 @@ class MirRun {
 				k += 2;
 			}
 		}
-		var facts:Dynamic = hxmc.macro.Guest.facts(com, prog, e, l, mainClass);
+		var facts:Dynamic = hxmc.macro.BundleFacts.facts(com, prog, e, l, mainClass);
 		(facts.entries : Array<Dynamic>).push({name: "main", sym: e.symbol(prog.main)});
 		// (haxe.EntryPoint.run after main, as an executable's start: the event loop, DataGen)
 		if (prog.entryRun != null) (facts.entries : Array<Dynamic>).push({name: "entryRun", sym: e.symbol(prog.entryRun)});
@@ -131,13 +128,13 @@ class MirRun {
 		dg.resources([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
-		var b = hxmc.macro.Loader.loadObj(obj, facts, true);
+		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		if (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")
-			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
+			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		var main = b.entries.get("main");
 		try {
-			hxmc.macro.Loader.run0(main, true);
-			if (b.entries.exists("entryRun")) hxmc.macro.Loader.run0(b.entries.get("entryRun"), true);
+			hxmc.macro.Loader.run0(main);
+			if (b.entries.exists("entryRun")) hxmc.macro.Loader.run0(b.entries.get("entryRun"));
 		} catch (e:Dynamic) {
 			// (as the program would: hxmc.rt.Start's rt_throw without a handler)
 			hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
@@ -181,7 +178,7 @@ class MirRun {
 		var cand = new Map<FuncInfo, Bool>();
 		var calls = new Map<FuncInfo, Array<FuncInfo>>();
 		for (f in funcs) {
-			if (hxmc.macro.Guest.runtime(f) || f.pos == null || !isStd(f.pos.pfile)) continue;
+			if (hxmc.macro.BundleFacts.runtime(f) || f.pos == null || !isStd(f.pos.pfile)) continue;
 			var h = fps.get(e.symbol(f));
 			if (h == null) continue;
 			var fp = new Fingerprint(prep, null);
@@ -229,7 +226,7 @@ class MirRun {
 			changed = false;
 			for (f => _ in cand)
 				for (g in calls.get(f))
-					if (hxmc.macro.Guest.runtime(g) ? ownRuntime.exists(g.module) || (bundled.exists(g) && !cand.exists(g)) : !cand.exists(g) && !(prior != null && prior.exists(g))) {
+					if (hxmc.macro.BundleFacts.runtime(g) ? ownRuntime.exists(g.module) || (bundled.exists(g) && !cand.exists(g)) : !cand.exists(g) && !(prior != null && prior.exists(g))) {
 						cand.remove(f);
 						changed = true;
 						break;
@@ -260,7 +257,7 @@ class MirRun {
 		return fpsCache;
 	}
 
-	// which of the std's types stay the compiler's own (Guest.facts: those the
+	// which of the std's types stay the compiler's own (BundleFacts.facts: those the
 	// compiler has): only those with the compiler's layout, that no new class
 	// extends, whose supertypes are shared (an instance test is a type index
 	// in a class's span: a new class has no place in the compiler's); a type
@@ -332,7 +329,7 @@ class MirRun {
 			switch t {
 				case TClassDecl(c):
 					var ci = l.classes.get(c);
-					if (ci == null || ci.tindex < 0 || hxmc.macro.Guest.runtimeClass(c)) continue;
+					if (ci == null || ci.tindex < 0 || hxmc.macro.BundleFacts.runtimeClass(c)) continue;
 					var sym = e.typeNames[ci.tindex];
 					if (!bySym.exists(sym) || shared(sym)) continue;
 					for (cf in c.clOrderedStatics) {
@@ -363,4 +360,3 @@ class MirRun {
 		hxmc.rt.Start.argv = a;
 	}
 }
-#end

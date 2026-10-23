@@ -9,7 +9,7 @@ import macros.eval.EvalValue.Value;
 // `InterpImpl (= Eval | Hlmacro) + MacroApiImpl`, a choice made when the
 // compiler is built; here MacroContext calls the engine through this
 // interface, so a host can install another one at run time (hxmc's
-// HaxeMain: native macros, hxmc/src/hxmc/macro). Every engine keeps Eval's
+// HaxeMain: Mir macros, hxmc/src/hxmc/interp/MirMacros.hx). Every engine keeps Eval's
 // context and values: MacroApi stays a single implementation, and errors
 // and positions travel as Eval's do (exceptions, `api.pos`). Eval is the
 // default and the only engine of the port's own builds.

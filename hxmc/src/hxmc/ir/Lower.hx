@@ -99,14 +99,14 @@ class Lower implements LowerQueries {
 	// statements carry their source lines (Stmt.SPos): native builds but with
 	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
-	// (-D hxmc.mir-macros: hxmc.interp.MirMacros) the macro code's calls note
+	// (-D hxmc.macros=mir: hxmc.interp.MirMacros) the macro code's calls note
 	// where they are, as Eval's frames do (env_leave_pmin/pmax, which the
 	// macro API's get_api_call_pos reads): before each call, the call's site
 	// (`site`: its id) in `pending` and the calling function's own site in
 	// `current`; each function takes its site from `pending` as it starts.
 	// (pending, current: symbols of the compiler's 32-bit data; wants: the functions that do)
 	public static var callSites:Null<{site:core.Globals.Pos->Int, pending:String, current:String, wants:FuncInfo->Bool}> = null;
-	// (-D hxmc.mir-macros: hxmc.interp.MacroRuntime) a static function of the
+	// (-D hxmc.macros=mir: hxmc.interp.MacroRuntime) a static function of the
 	// runtime marked @:hxmc.hostCode, whose body was not typed: the native
 	// code of the compiler running this lowering is its code. What that code
 	// does (FuncInfo.noGc, blocks), or null when the compiler lacks it.
@@ -227,6 +227,8 @@ class Lower implements LowerQueries {
 	public static var targetArm = -1;
 	public static var targetCode = -1;
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
+	// Mem.mirHost: 1 when the program loads code for the Mir interpreter (Main)
+	public static var mirHost = 0;
 	// -D hxmc.wasm-gc (hxmc.wasmgc): the runtime's Haxe implementations are those of @:hxmc.wasmgc classes
 	public static var wasmGc = false;
 	// the program's resources (--resource, Context.addResource), haxe.Resource's
@@ -259,6 +261,7 @@ class Lower implements LowerQueries {
 				case ECallHost("hxmc_unsafe_Mem_arm", [], _) if (targetArm >= 0): targetArm;
 				case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): targetCode;
 				case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): targetPlatform;
+				case ECallHost("hxmc_unsafe_Mem_mirHost", [], _): mirHost;
 				case ENot(a):
 					var x = v(a);
 					x == null ? null : x == 0 ? 1 : 0;
@@ -324,6 +327,7 @@ class Lower implements LowerQueries {
 			case ECallHost("hxmc_unsafe_Mem_arm", [], _) if (targetArm >= 0): EInt(targetArm);
 			case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): EInt(targetCode);
 			case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): EInt(targetPlatform);
+			case ECallHost("hxmc_unsafe_Mem_mirHost", [], _): EInt(mirHost);
 			case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
 			// (Float's %: hxmc.rt.LibM.fmod, as Math's natives)
 			case EBin(FMod, a, b) if (hostImpls.exists("fmod")): ECall(hostImpl("fmod"), vector(ex(a), ex(b)));
@@ -658,7 +662,7 @@ class Lower implements LowerQueries {
 					case "EnumValue" if (isStd): TRef(REnum(null));
 					case "UInt" if (isStd): TI32;
 					case "I64" if (a.aPath.pack.join(".") == "hxmc"): TI64;
-					// in macro mode (native macros, hxmc/src/hxmc/macro): the compiler's position, opaque
+					// in macro mode (Mir macros, hxmc.interp.MirMacros): the compiler's position, opaque
 					case "Position" if (a.aPath.pack.join(".") == "haxe.macro"): TRef(RAny);
 					// a coroutine is a function taking the continuation, as on HashLink
 					case "Coroutine" if (a.aPath.pack.join(".") == "haxe.coro"):

@@ -5,7 +5,7 @@ using StringTools;
 
 // Mir macros as a smoke and speed check on a target's machine (the CI test
 // job's Mir lane, docs/testing.md): two macro workloads of the HaxeBenchmarks
-// cases, timed with the compiler built with -D hxmc.jit (-D hxmc.mir-macros)
+// cases, timed with the native compiler, `haxe` with hxmc built in (-D hxmc.macros=mir)
 // and with a compiler whose macros run on Eval (the release binary), on the
 // same machine:
 //   json       BMJsonCode.main() as an initialization macro (--macro, --no-output)
@@ -13,7 +13,7 @@ using StringTools;
 //              (--interp --no-output: the macros, nothing run)
 //
 //   <haxe> -cp hxmc/test -cp haxe/test --run MirBench --fetch <dir>
-//   <haxe> -cp hxmc/test -cp haxe/test --run MirBench --dir <dir> --mir "<compiler> -D hxmc.mir-macros"
+//   <haxe> -cp hxmc/test -cp haxe/test --run MirBench --dir <dir> --mir "<compiler> -D hxmc.macros=mir"
 //       --eval <compiler> [-n RUNS] [--summary <file>]
 // --fetch: the cases and the formatter's libraries (pinned as Bench's) into <dir>.
 // Each workload runs RUNS times (default 3) per compiler, the compilers
