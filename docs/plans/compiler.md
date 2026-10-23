@@ -308,6 +308,86 @@ fix:
   its slow call (within noise, 2.6% more code); `encodeObjS` without its
   intermediate records (no gain).
 
+## Mir macros: size and speed
+
+Where Mir macros (docs/hxmc.md, "Macros on the Mir interpreter") stand
+against Eval, and the plan to close the gaps before they can be the
+default. Measured on the jit compiler after the stub-free bundles (#57),
+Intel Xeon @ 2.10 GHz, 4 vCPUs:
+
+| | Mir macros | Eval |
+| --- | --- | --- |
+| compute-bound macros (mandelbrot, json, binarytrees) | 3-10x faster | |
+| formatter with json2object's macros | 1.04 s | 0.70 s |
+| trivial macro, cold | 0.22 s | 0.12 s |
+| trivial macro edited under the server | 0.020 s | |
+| compiler binary | 28.6 MB (jit build) | about 20.4 MB |
+
+Eval's cost is inherent (dynamic values, encode/decode at the API
+boundary); Mir's is preparation (typing the runtime in the macro
+context, lowering every macro function through the Mir pipeline) and
+binary size, both reducible.
+
+### Speed of typical builds
+
+1. A breakdown of the formatter build on Mir macros against Eval: typing
+   the runtime, lowering and `Opt`, interpreting, API calls.
+2. Bundles cached on disk: since #57 they are data only, so a library's
+   macros (json2object) are prepared once and reused across builds,
+   keyed by sources, tool and defines.
+3. A cold path: macro functions lowered without `Opt` (object-level Mir
+   already lowers without the optimizer when `o.opt` is off), only hot
+   ones optimized.
+
+Eval stays the default until Mir macros beat it on typical builds.
+
+### Names
+
+The run-time switches become `-D hxmc.macros=mir|eval` (default eval)
+and `-D hxmc.run=mir` (for `--run`/`--interp`), replacing
+`hxmc.mir-macros` and `hxmc.mir-run`. The build flavor `-D hxmc.jit` is
+a misnomer once nothing generates code at run time: fold it into every
+compiler build if its cost is small (about 10% of the binary or less, no
+measurable speed cost), else an internal `-D hxmc.mir-host`.
+
+### Binary size
+
+The jit build's about 8 MB over the normal compiler, in this order:
+
+1. **What the table must hold**: a dual design. Native are the functions
+   the compiler keeps for itself (free) and a measured hot set of what
+   macros call most (strings, maps, arrays, Std/Reflect/Type), chosen
+   from profiles of the macro conformance cases, upstream's unit suite,
+   the formatter build and the benchmark macros; checked in as a list
+   with a lane that regenerates and checks it. Everything else is left
+   to dead-code elimination and interpreted from the macro context when
+   called (the interpreter already runs a std function the compiler
+   lacks). Shared statics still resolve to one global. Today every
+   function is kept: the host table names 63,450 symbols.
+2. **How the table is encoded** (`macro.HostTable`, today 1.5 MB: per
+   symbol a 64-bit name hash, a 64-bit absolute address and a kind byte,
+   17 bytes; per fingerprint an 8-byte key and a 12-byte row; MacroCuts'
+   lines as text):
+
+   | part | today | encoding | per entry |
+   | --- | --- | --- | --- |
+   | name keys | 64-bit hash, sorted, binary search | a minimal perfect hash (PTHash, RecSplit) to a slot, plus a 16-bit check that rejects names the compiler lacks | about 2-3 bits + 16 bits |
+   | addresses | 64-bit absolute, relocated by the system's loader | 32-bit offsets from the image base (half, and no relocations, which PE and Mach-O files also store); better, Elias-Fano over the sorted addresses (a range of about 30 MB: about 11 bits each, random access in constant time) | about 11 bits |
+   | kinds | a byte | 2 bits packed, or implied by the address range (code, data, thread-local) | 2 bits or none |
+   | fingerprints | 8 + 12 bytes | the same perfect hash, smaller flags, possibly shared with the symbol | 2-3x smaller |
+   | MacroCuts' lines | text | compressed (the runtime has inflate), expanded when a macro context first needs them | text: 4-6x smaller |
+
+   About 4 bytes per symbol instead of 17 (for all 63k: about 250 KB
+   instead of 1.08 MB); with the hot set of item 1, tens of KB. A lookup
+   (a perfect hash and an Elias-Fano read) stays below today's 0.4 us.
+3. **The entry pools** (6144 + 1024 + 512 + 128 entries, 32-160 bytes
+   each on x86-64, with unwind entries): sized to the measured need
+   (14 entries for a trivial macro, 70 for the formatter build) with
+   headroom and a clear error when exhausted, smaller entries, and no
+   unwind entries the unwinder does not need.
+
+Each step reports its saving per part and re-measures the macros' speed.
+
 ## Code generation at run time
 
 The code generator compiles to in-memory objects with relocations, and
