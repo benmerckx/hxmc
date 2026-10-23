@@ -71,7 +71,7 @@ class Options {
 	public function new() {}
 
 	// the default target: the one the tool runs on (WebAssembly, Eval: linux-x86_64)
-	static function host():String {
+	public static function host():String {
 		#if eval
 		return "linux-x86_64";
 		#else
@@ -163,7 +163,8 @@ class Options {
 		o.stacksAlways = o.stacks && def("hxmc.stacks") != null;
 		o.jit = def("hxmc.jit") != null;
 		o.interp = def("hxmc.interp");
-		if (o.jit && (o.target != "linux-x86_64" || o.libc != null)) throw "hxmc: -D hxmc.jit: linux-x86_64 (static) only";
+		// (the native macros' loader is linux-x86_64's only: NativeEngine says so when they are asked for)
+		if (o.jit && StringTools.startsWith(o.target, "wasm")) throw "hxmc: -D hxmc.jit: not on WebAssembly";
 		var j = def("hxmc.jobs");
 		if (j == null) j = env("HXMC_JOBS");
 		if (j != null) o.jobs = Std.parseInt(j);

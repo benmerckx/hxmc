@@ -54,7 +54,9 @@ class MirRun {
 			out.push(a);
 			i++;
 		}
-		return out.concat(["--custom-target", "hxmc", "-D", "hxmc.interp"]);
+		// (a compiler linked against glibc: the program's layouts are that mode's)
+		var t = Mem.target();
+		return out.concat(["--custom-target", "hxmc", "-D", "hxmc.interp"]).concat(t == 7 || t == 8 ? ["-D", "hxmc.libc=glibc"] : []);
 	}
 
 	public static function run(com:context.Common.CommonContext) {
@@ -62,7 +64,9 @@ class MirRun {
 		var mainClass = context.Common.getEntryPoint(com).cls;
 		var o = Options.read(com);
 		var abi = Abi.get(o.target);
-		if (abi.name != "linux-x86_64" || o.libc != null) throw "-D hxmc.mir-run: linux-x86_64 (static) only, as the loader";
+		// (the program runs in the compiler: its target is the compiler's own)
+		var t = Mem.target();
+		if (o.target != Options.host() || (o.libc != null) != (t == 7 || t == 8)) throw "-D hxmc.mir-run: the program's target is the compiler's own (" + Options.host() + ")";
 		abi.framePointers = abi.arm || o.framePointers; // (as Driver)
 		hxmc.ir.Lower.targetOs = abi.osCode();
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
@@ -109,32 +113,31 @@ class MirRun {
 		// (HXMC_MIR_HOST=0: all interpreted)
 		var native = Sys.getEnv("HXMC_MIR_HOST") == "0" ? new Map() : hostFunctions(funcs, facts, prep, e, com, ownRuntime);
 		funcs = [for (f in funcs) if (!native.exists(f)) f];
-		d.interp = new InterpGen.InterpSet(o.interp, prep, native);
+		d.interp = new InterpGen.InterpSet(o.interp, prep, notHere(prog, funcs, new Map(), native), true);
 		var obj = new Obj();
 		var emit = Target.emitter(abi, obj);
 		var ras = new Regalloc.Scratch(Target.selector(abi));
 		for (f in funcs)
 			d.compileFunc(f, obj, emit, ras);
-		var dg = new DataGen(prep, abi, obj, mf -> d.compileMir(mf, emit, obj));
+		// (no native code: interp.InterpAbi)
+		var dg = new DataGen(prep, abi, obj, mf -> d.compileInterp(mf, obj));
 		dg.strings();
 		for (s in prog.sigs) {
-			d.compileMir(dg.dynTrampoline(s), emit, obj);
-			d.compileMir(dg.boundTrampoline(s), emit, obj);
+			d.compileInterp(dg.dynTrampoline(s), obj);
+			d.compileInterp(dg.boundTrampoline(s), obj);
 		}
-		dg.allocStubs([], emit);
-		dg.stubs([], emit);
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
 		dg.resources([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
-		var b = hxmc.macro.Loader.loadObj(obj, facts);
-		if (o.stats)
-			Sys.println('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms');
+		var b = hxmc.macro.Loader.loadObj(obj, facts, true);
+		if (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")
+			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		var main = b.entries.get("main");
 		try {
-			Mem.call0(main);
-			if (b.entries.exists("entryRun")) Mem.call0(b.entries.get("entryRun"));
+			hxmc.macro.Loader.run0(main, true);
+			if (b.entries.exists("entryRun")) hxmc.macro.Loader.run0(b.entries.get("entryRun"), true);
 		} catch (e:Dynamic) {
 			// (as the program would: hxmc.rt.Start's rt_throw without a handler)
 			hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
@@ -235,13 +238,26 @@ class MirRun {
 		return cand;
 	}
 
-	static var fpsCache:Null<hxmc.macro.SymFile.HostFps> = null;
+	// the functions of the program that this bundle neither interprets nor
+	// found interpreted in an earlier one (compiled, but not native): the
+	// compiler's native code (InterpGen.InterpSet's exclusion: their calls go
+	// to the compiler's symbols)
+	static function notHere(prog:Program, funcs:Array<FuncInfo>, compiled:Map<FuncInfo, Bool>, native:Map<FuncInfo, Bool>):Map<FuncInfo, Bool> {
+		var here = new Map<FuncInfo, Bool>();
+		for (f in funcs)
+			here.set(f, true);
+		var r = new Map<FuncInfo, Bool>();
+		for (f in prog.funcs)
+			if (!here.exists(f) && !(compiled.exists(f) && !native.exists(f))) r.set(f, true);
+		return r;
+	}
 
-	// the compiler's functions' fingerprints (<exe>.fps, beside <exe>.syms)
-	static function hostFps():hxmc.macro.SymFile.HostFps {
-		if (fpsCache != null) return fpsCache;
-		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
-		return fpsCache = new hxmc.macro.SymFile.HostFps(hxmc.macro.SymFile.read(exe + ".fps"));
+	static var fpsCache:Null<hxmc.macro.HostTable.HostFps> = null;
+
+	// the compiler's functions' fingerprints (macro.HostTable)
+	static function hostFps():hxmc.macro.HostTable.HostFps {
+		if (fpsCache == null) fpsCache = new hxmc.macro.HostTable.HostFps();
+		return fpsCache;
 	}
 
 	// which of the std's types stay the compiler's own (Guest.facts: those the
@@ -249,12 +265,12 @@ class MirRun {
 	// extends, whose supertypes are shared (an instance test is a type index
 	// in a class's span: a new class has no place in the compiler's); a type
 	// not shared has its statics and initializer of its own
-	public static function unshare(facts:Dynamic, host:hxmc.macro.SymFile.HostSyms, l:hxmc.ir.Lower, e:hxmc.ir.Facts, com:context.Common.CommonContext, ?types:Array<ModuleType>) {
+	public static function unshare(facts:Dynamic, host:hxmc.macro.HostTable.HostSyms, l:hxmc.ir.Lower, e:hxmc.ir.Facts, com:context.Common.CommonContext, ?types:Array<ModuleType>) {
 		var types:Array<Dynamic> = facts.types;
 		var fids = new Map<String, Int>();
 		for (f in (facts.fields : Array<Dynamic>)) {
 			var h = host.get(f.sym);
-			if (h != null && h.k == "a") fids.set(f.name, h.v);
+			if (h != null && h.k == "a") fids.set(f.name, h.v.toInt());
 		}
 		var bySym = new Map<String, Dynamic>();
 		for (t in types)
@@ -274,7 +290,7 @@ class MirRun {
 			var ok = true;
 			for (f in (t.fields : Array<Dynamic>))
 				if (!fids.exists(f.name)) ok = false;
-			if (ok && hxmc.macro.Loader.sameLayout(h.v, t, fids) != null) ok = false;
+			if (ok && hxmc.macro.Loader.sameLayout(h.v.toInt(), t, fids) != null) ok = false;
 			if (!ok) t.share = false;
 		}
 		var changed = true;

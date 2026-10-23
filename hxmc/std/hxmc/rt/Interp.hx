@@ -144,6 +144,11 @@ enum abstract IOp(Int) from Int to Int {
 	var UNREACH;
 	var TLSXLD; // d k: thread-local variable k of code loaded at run time (a block per thread)
 	var TLSXST; // a k
+	// (code loaded at run time, -D hxmc.jit: hxmc.interp.InterpAbi's register image)
+	var CALLX; // f d len n args rk nst dst*n [a np (w off size)*np]: native code at register f (the shape after the arguments: callX)
+	var CALLXI; // f d len c n args shape: an indirect call, entries c and c + 1 its inline cache (an interpreted function: run here)
+	var SPECIAL; // k d a b c: an expansion of the instruction selections (hxmc$*: atomics, float32 conversions; SP_*)
+	var FENCE; // a store's release (arm64)
 }
 
 // An interpreter of hxmc's Mir inside the running program (-D hxmc.interp):
@@ -157,7 +162,11 @@ enum abstract IOp(Int) from Int to Int {
 // callee and signature: the arguments from a buffer, the call as the tool
 // compiles it, the result into the buffer), so every ABI detail stays the
 // code generator's. An indirect call whose target is an entry stub runs its
-// function directly (lookup, cached per call site).
+// function directly (lookup, cached per call site). Code loaded at run time
+// into a compiler built with -D hxmc.jit (macro.Loader) has neither: it
+// calls native code through the register image (CALLX, CALLXI: the
+// compiler's call-outs) and native code calls it through an entry of the
+// compiler's pools (poolEntry, poolEnter; hxmc/src/hxmc/interp/InterpAbi.hx).
 //
 // Registers (8 bytes each: the function's constants first, copied when its
 // frame starts, then its values) and frame slots are on a stack of this
@@ -176,9 +185,14 @@ enum abstract IOp(Int) from Int to Int {
 @:access(hxmc.rt.Threads)
 class Interp {
 	// a descriptor (InterpGen): magic, registers, frame bytes, code words,
-	// the symbol table's offset, constants, their offset, parameters; the
-	// code from HEADER. Registers: the constants, the parameters, the values
-	static inline var HEADER = 32;
+	// the symbol table's offset, constants, their offset, parameters, the
+	// offset of the parameters' sources (an entry's: their byte offsets in
+	// the register image), flags (D_*); the code from HEADER. Registers: the
+	// constants, the parameters, the values
+	static inline var HEADER = 40;
+	static inline var D_FLOAT = 1; // it returns a double
+	static inline var D_STACK = 2; // its arguments take stack words
+	static inline var D_NOENTRY = 4; // more than the image's stack words
 	static inline var MAGIC = 0x31495848; // "HXI1"
 	// a frame (on the interpreter's stack): its code, symbol table,
 	// registers, slots, where its result goes, end, where it goes on (a try ended), the
@@ -467,6 +481,180 @@ class Interp {
 		isp = buf;
 		if (d >= 0) sl(regs, d, Mem.getI64(buf, 0));
 	}
+
+	// ---- code loaded at run time (-D hxmc.jit): no code of its own
+	// (hxmc.interp.InterpAbi: the register image, its offsets; the call-outs
+	// and the pools' entries are functions of the compiler)
+	static inline var IMG_FN = 192;
+	static inline var IMG_BYTES = 208;
+	static inline var IMG_F0 = 16;
+	// an argument's place in the image: its byte offset, and whether its low 32 bits are zero-extended
+	static inline var ARG_ZEXT = 0x10000;
+	// a call's result: an integer register, a float one, a struct in registers (its parts stored)
+	static inline var R_INT = 0;
+	static inline var R_FLOAT = 1;
+	static inline var R_PARTS = 2;
+	// SPECIAL's expansions
+	static inline var SP_LOAD4 = 0;
+	static inline var SP_LOAD8 = 1;
+	static inline var SP_STORE4 = 2;
+	static inline var SP_STORE8 = 3;
+	static inline var SP_ADD4 = 4;
+	static inline var SP_ADD8 = 5;
+	static inline var SP_XCHG4 = 6;
+	static inline var SP_XCHG8 = 7;
+	static inline var SP_CAS4 = 8;
+	static inline var SP_CAS8 = 9;
+	static inline var SP_FENCE = 10;
+	static inline var SP_F32_TO_F64 = 11;
+	static inline var SP_F64_TO_F32 = 12;
+	static inline var SP_F32BITS_TO_FREG = 13;
+	static inline var SP_FREG_TO_F32BITS = 14;
+	static inline var SP_FLOOR = 15; // (arm64's: x86-64 calls the C library's)
+	static inline var SP_CEIL = 16;
+
+	// native code at fn called through the image: the arguments' registers
+	// at operand `first`, then the shape: the result's kind, the stack
+	// words, each argument's place; with R_PARTS the struct's address
+	// register, its parts and for each its result word, offset and bytes
+	static function callX(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
+		#if hxmc.jit
+		var img = isp;
+		var sh = first + n;
+		var rk = o(ip, sh), nst = o(ip, sh + 1);
+		for (k in 0...n) {
+			var dst = o(ip, sh + 2 + k);
+			var v = gl(regs, o(ip, first + k));
+			Mem.setI64(img, dst & 0xFFFF, dst & ARG_ZEXT != 0 ? zext(v.toInt()) : v);
+		}
+		Mem.setI64(img, IMG_FN, fn);
+		isp = img.add(IMG_BYTES);
+		Mem.callRef2(nst > 0 ? Mem.sym("hxmc_interp_callout_s") : Mem.sym("hxmc_interp_callout_r"), null, img);
+		isp = img;
+		if (rk == R_INT) {
+			if (d >= 0) sl(regs, d, Mem.getI64(img, 0));
+		} else if (rk == R_FLOAT) {
+			if (d >= 0) sl(regs, d, Mem.getI64(img, IMG_F0));
+		} else {
+			var at = sh + 2 + n;
+			var addr = Ptr.ofI64(gl(regs, o(ip, at)));
+			for (p in 0...o(ip, at + 1)) {
+				var w = img.add(o(ip, at + 2 + 3 * p));
+				var off = o(ip, at + 3 + 3 * p), size = o(ip, at + 4 + 3 * p);
+				for (b in 0...size)
+					Mem.setI8(addr, off + b, Mem.getU8(w, b));
+			}
+		}
+		#else
+		throw "hxmc interp: CALLX outside a compiler built with -D hxmc.jit";
+		#end
+	}
+
+	static function special(regs:Ptr, ip:Ptr) {
+		var d = o(ip, 2);
+		inline function p():Ptr
+			return Ptr.ofI64(gl(regs, o(ip, 3)));
+		switch o(ip, 1) {
+			case SP_LOAD4:
+				si(regs, d, hxmc.unsafe.Atomic.load32(p()));
+			case SP_LOAD8:
+				sl(regs, d, hxmc.unsafe.Atomic.load64(p()));
+			case SP_STORE4:
+				hxmc.unsafe.Atomic.store32(p(), gi(regs, o(ip, 4)));
+			case SP_STORE8:
+				hxmc.unsafe.Atomic.store64(p(), gl(regs, o(ip, 4)));
+			case SP_ADD4:
+				si(regs, d, hxmc.unsafe.Atomic.add32(p(), gi(regs, o(ip, 4))));
+			case SP_ADD8:
+				sl(regs, d, hxmc.unsafe.Atomic.add64(p(), gl(regs, o(ip, 4))));
+			case SP_XCHG4:
+				si(regs, d, hxmc.unsafe.Atomic.exchange32(p(), gi(regs, o(ip, 4))));
+			case SP_XCHG8:
+				sl(regs, d, hxmc.unsafe.Atomic.exchange64(p(), gl(regs, o(ip, 4))));
+			case SP_CAS4:
+				si(regs, d, hxmc.unsafe.Atomic.cas32(p(), gi(regs, o(ip, 4)), gi(regs, o(ip, 5))));
+			case SP_CAS8:
+				sl(regs, d, hxmc.unsafe.Atomic.cas64(p(), gl(regs, o(ip, 4)), gl(regs, o(ip, 5))));
+			case SP_FENCE:
+				hxmc.unsafe.Atomic.fence();
+			case SP_F32_TO_F64:
+				// (through a word of the interpreter's stack)
+				Mem.setI32(isp, 0, gi(regs, o(ip, 3)));
+				sf(regs, d, Mem.getF32(isp, 0));
+			case SP_F64_TO_F32:
+				Mem.setF32(isp, 0, gf(regs, o(ip, 3)));
+				si(regs, d, Mem.getI32(isp, 0));
+			case SP_F32BITS_TO_FREG:
+				// (a float's bits in the low half: a register move, the upper half zero)
+				sl(regs, d, zext(gi(regs, o(ip, 3))));
+			case SP_FLOOR:
+				sf(regs, d, Math.ffloor(gf(regs, o(ip, 3))));
+			case SP_CEIL:
+				sf(regs, d, Math.fceil(gf(regs, o(ip, 3))));
+			case _: // SP_FREG_TO_F32BITS
+				si(regs, d, gi(regs, o(ip, 3)));
+		}
+	}
+
+	#if hxmc.jit
+	// the functions given entries of the pools, by entry number (InterpAbi.POOLS;
+	// made at the first, as the table), the entries given out of each pool
+	static var poolDescs:Ptr;
+	static var poolUsed:Ptr;
+	public static var entriesGiven = 0;
+
+	// the address native code calls the interpreted function of descriptor
+	// desc at: an entry of the pool of its kind (its result's, whether its
+	// arguments take stack words: its flags, D_*), given out once and never
+	// taken back (macro.Loader: the descriptor need not be written yet)
+	public static function poolEntry(desc:Ptr, flags:Int):Ptr {
+		if (flags & D_NOENTRY != 0) throw "hxmc interp: a function called from native code whose arguments take more stack words than the interpreter's entries (hxmc.interp.InterpAbi.STACK_WORDS)";
+		var t = Mem.sym("hxmc_interp_pools");
+		if (poolDescs.isNull()) {
+			var total:I64 = 0;
+			for (k in 0...4)
+				total += Mem.getI64(t, 8 * k);
+			poolDescs = LibC.malloc(total * 8);
+			LibC.memset(poolDescs, 0, total * 8);
+			poolUsed = LibC.malloc(32);
+			LibC.memset(poolUsed, 0, 32);
+		}
+		var kind = (flags & D_STACK != 0 ? 2 : 0) + (flags & D_FLOAT != 0 ? 1 : 0);
+		var base = 0;
+		for (k in 0...kind)
+			base += Mem.getI64(t, 8 * k).toInt();
+		var used = Mem.getI64(poolUsed, 8 * kind).toInt();
+		if (used == Mem.getI64(t, 8 * kind).toInt()) throw "hxmc interp: out of entries for interpreted functions called from native code (hxmc.interp.InterpAbi.POOL_*)";
+		Mem.setI64(poolUsed, 8 * kind, used + 1);
+		var k = base + used;
+		Mem.setPtr(poolDescs, 8 * k, desc);
+		var addr = Mem.getPtr(t, 32 + 8 * k);
+		register(addr, desc);
+		entriesGiven++;
+		return addr;
+	}
+
+	// native code calling entry k of the pools (its common function): the
+	// arguments from the register image img (the descriptor's parameter
+	// sources), the result as a word (the common function returns it as its
+	// kind's register)
+	@:hxmc.export("hxmc_interp_pool_enter") static function poolEnter(k:Int, img:Ptr):I64 {
+		var desc = Mem.getPtr(poolDescs, 8 * k);
+		if (isp.isNull()) initStack();
+		var base = isp;
+		try {
+			var regs = base.add(FRAME), nc = Mem.getI32(desc, 20);
+			var src = desc.add(Mem.getI32(desc, 32));
+			for (j in 0...Mem.getI32(desc, 28))
+				Mem.setI64At(regs, 0, nc + j, Mem.getI64(img, Mem.getI32(src, 4 * j)));
+			run(desc, img);
+		} catch (e:Dynamic) {
+			isp = base;
+			throw e;
+		}
+		return Mem.getI64(img, 0);
+	}
+	#end
 
 	// runs the frame from ip: RETURNED, or the level of the try its code
 	// ended (where it goes on saved)
@@ -895,8 +1083,38 @@ class Interp {
 				case TLSXST:
 					Mem.setI64At(tlsBlock(), 0, o(ip, 2), gl(regs, o(ip, 1)));
 					ip = ip.add(12);
-				case _:
+				case CALLX:
+					callX(regs, ip, gl(regs, o(ip, 1)), o(ip, 2), o(ip, 4), 5);
+					ip = ip.add(4 * o(ip, 3));
+				case CALLXI:
+					var n = o(ip, 5);
+					var fn = gl(regs, o(ip, 1));
+					// (an interpreted function's entry: run here; the last two cached at the call)
+					var ic = syms.add(o(ip, 4) << 3);
+					var e = Mem.getPtr(ic, 0);
+					if (e.isNull() || Mem.getI64(e, 0) != fn) {
+						var e2 = Mem.getPtr(ic, 8);
+						if (!e2.isNull() && Mem.getI64(e2, 0) == fn) e = e2 else {
+							e2 = lookup(fn);
+							if (!e2.isNull()) {
+								Mem.setPtr(ic, 8, e);
+								Mem.setPtr(ic, 0, e2);
+							}
+							e = e2;
+						}
+					}
+					if (!e.isNull()) callInterp(regs, ip, Mem.getPtr(e, 8), o(ip, 2), n, 6) else callX(regs, ip, fn, o(ip, 2), n, 6);
+					ip = ip.add(4 * o(ip, 3));
+				case SPECIAL:
+					special(regs, ip);
+					ip = ip.add(24);
+				case FENCE:
+					hxmc.unsafe.Atomic.fence();
+					ip = ip.add(4);
+				case UNREACH:
 					throw "hxmc interp: unreachable code reached";
+				case _:
+					throw "hxmc interp: no operation " + o(ip, 0);
 			}
 		}
 	}

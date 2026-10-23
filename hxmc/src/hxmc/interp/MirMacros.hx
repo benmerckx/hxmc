@@ -211,7 +211,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		config.pfPadNulls = true;
 		com2.config = config;
 		context.Common.initPlatform(com2);
-		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) core.Define.rawDefineValue(com2.defines, "hxmc.target", "linux-x86_64");
+		// (the compiler's own target: the macro code runs in it, with its layouts and convention)
+		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) {
+			core.Define.rawDefineValue(com2.defines, "hxmc.target", Options.host());
+			var t = Mem.target();
+			if ((t == 7 || t == 8) && !core.Define.rawDefined(com2.defines, "hxmc.libc")) core.Define.rawDefineValue(com2.defines, "hxmc.libc", "glibc");
+		}
 	}
 
 	// ---- the API of hxmc.MacroHost
@@ -330,7 +335,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.rt.EvalCompat.on = true;
 		try
 			for (p in inits)
-				Mem.call0(p)
+				hxmc.macro.Loader.run0(p, true)
 		catch (x:Dynamic) {
 			hxmc.rt.EvalCompat.on = order;
 			throw toCompilerError(x, api);
@@ -582,7 +587,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 		funcs = [for (f in funcs) if (!found.exists(f)) f];
 		phase("host functions");
-		d.interp = new InterpGen.InterpSet(opts.interp, prep, native);
+		d.interp = new InterpGen.InterpSet(opts.interp, prep, MirRun.notHere(prog, funcs, compiled, native), true);
 		var abi = Abi.get(opts.target);
 		var obj = new Obj();
 		var emit = Target.emitter(abi, obj);
@@ -590,27 +595,33 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (f in funcs)
 			d.compileFunc(f, obj, emit, ras);
 		phase("functions");
-		var dg = new DataGen(prep, abi, obj, mf -> d.compileMir(mf, emit, obj));
+		// (no native code: the signatures' trampolines interpreted too, the allocations' slow paths and the
+		// expansions the interpreter's own, InterpGen)
+		var dg = new DataGen(prep, abi, obj, mf -> d.compileInterp(mf, obj));
 		dg.strings();
 		for (s in prog.sigs) {
-			d.compileMir(dg.dynTrampoline(s), emit, obj);
-			d.compileMir(dg.boundTrampoline(s), emit, obj);
+			d.compileInterp(dg.dynTrampoline(s), obj);
+			d.compileInterp(dg.boundTrampoline(s), obj);
 		}
-		dg.allocStubs([], emit);
-		dg.stubs([], emit);
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
 		dg.resources([]);
 		phase("data, trampolines");
-		var b = hxmc.macro.Loader.loadObj(obj, facts);
+		var b = hxmc.macro.Loader.loadObj(obj, facts, true);
 		phase("load");
+		codeBytes += b.codeBytes;
+		dataBytes += b.dataBytes;
 		for (p in b.inits)
 			inits.push(p);
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();
-		if (stats) Sys.stderr().writeString('hxmc.mir-macros: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code\n');
+		if (stats) Sys.stderr().writeString('hxmc.mir-macros: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
 	}
+
+	// the bytes of the bundles loaded (code: always 0, interp.InterpAbi)
+	var codeBytes = 0;
+	var dataBytes = 0;
 
 	// a macro function called with the compiler's values: its arguments as
 	// the interpreter's words (hxmc.rt.Interp.enter), its result back
@@ -659,7 +670,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	}
 
 	public function report() {
-		if (stats && steps > 0) Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+		if (stats && steps > 0) {
+			Sys.stderr().writeString('hxmc.mir-macros: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+			Sys.stderr().writeString('hxmc.mir-macros: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers; host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
+		}
 		if (stats)
 			for (k => v in phases)
 				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');

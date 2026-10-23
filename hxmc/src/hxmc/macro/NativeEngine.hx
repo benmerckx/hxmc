@@ -55,6 +55,8 @@ class NativeEngine extends macros.MacroEngine.EvalEngine {
 		enabled = m == "native" || m == "verify" || m == "mir" || m == "mir-verify";
 		verify = m == "verify" || m == "mir-verify";
 		interp = m == "mir" || m == "mir-verify";
+		// (native bundles: code mapped below 2 GB, local-exec TLS, ELF objects: macro.Loader)
+		if (enabled && hxmc.unsafe.Mem.target() != 0) throw "-D hxmc.macros=" + m + ": a compiler for linux-x86_64 (static) only (-D hxmc.mir-macros runs macros on every target)";
 		// (before any macro code runs: Eval may keep the API functions it looked up)
 		if (verify) Bridge.Recorder.install();
 		return super.create(com, api, isMacro, args);

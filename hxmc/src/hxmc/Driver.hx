@@ -287,6 +287,27 @@ class Driver {
 		}
 	}
 
+	// -D hxmc.jit: the bodies of the runtime its Mir macros' context need not
+	// parse, given the compiler's fingerprints (Main: MacroCuts.cuts)
+	public static var jitCuts:Null<hxmc.macro.HostTable.HostFps->String> = null;
+
+	// each function's fingerprint: code loaded at run time calls this
+	// compiler's native function where its own is the same (interp.MirRun),
+	// and what callers of its native code need to know of it, which code
+	// loaded at run time calls without having its body (HostFps flags,
+	// interp.MacroRuntime)
+	function jitFingerprints():Array<{sym:String, key:String, flags:Int}> {
+		var fps = [];
+		for (f in prep.p.funcs) {
+			var fp = new Fingerprint(prep, null);
+			fp.func(f);
+			var flags = (f.noGc ? hxmc.macro.HostTable.HostFps.NO_GC : 0) | (f.blocks ? hxmc.macro.HostTable.HostFps.BLOCKS : 0)
+				| (MirBuild.inlineCands != null && MirBuild.inlineCands.exists(f) ? hxmc.macro.HostTable.HostFps.INLINE : 0);
+			fps.push({sym: prep.funcSym(f), key: fp.key(), flags: flags});
+		}
+		return fps;
+	}
+
 	// an interpreted function's stub (InterpGen) into its module's object
 	function compileStub(mf:MFunc, emit:Target.Emitter, global:Bool) {
 		var isel = Target.selector(abi);
@@ -294,6 +315,12 @@ class Driver {
 		var ra = new Regalloc(lf, isel);
 		ra.run();
 		emit.func(lf, ra.usedRegs, global);
+	}
+
+	// a synthetic function (DataGen) for the interpreter, into obj (code loaded
+	// at run time: interp.InterpGen.InterpSet.loaded, which has no native code)
+	function compileInterp(mf:MFunc, obj:Obj) {
+		new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (_, _) -> throw "hxmc: " + mf.name + ": a stub in code loaded for the interpreter").run();
 	}
 
 	// a synthetic function (DataGen) into obj
@@ -616,6 +643,25 @@ class Driver {
 			var imp = LinkInputs.peImports(still, abi);
 			if (imp != null) all.push(imp);
 		}
+		// -D hxmc.jit: what code loaded at run time crosses into native code
+		// through (interp.InterpAbi: the call-outs, the entries' pools, the
+		// thread-local variables' accessors), then the table of the
+		// executable's symbols, fingerprints and cuts it links against
+		// (macro.HostTable)
+		if (o.jit) {
+			var th = new Obj();
+			var temit = Target.emitter(abi, th);
+			hxmc.interp.InterpAbi.thunks(prep, abi, mf -> compileMir(mf, temit, th));
+			hxmc.interp.InterpAbi.poolTables(th);
+			hxmc.interp.InterpAbi.tlsAccessors(prep, abi, hxmc.macro.HostTable.tlsNames(all), mf -> compileMir(mf, temit, th));
+			all.push(th);
+			var fps = jitFingerprints();
+			var map = new Map<String, {key:String, flags:Int}>();
+			for (x in fps)
+				map.set(x.sym, {key: x.key, flags: x.flags});
+			var cuts = jitCuts != null ? jitCuts(new hxmc.macro.HostTable.HostFps(map)) : "";
+			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts));
+		}
 		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios) : null;
 		// the runtime objects' sections and the runtime's Haxe functions that
 		// nothing reaches are left out (LinkCore.gc; -D hxmc.jit: every runtime
@@ -658,27 +704,10 @@ class Driver {
 			} else new Link(all, abi);
 			l.symbols = !o.strip;
 			l.collect = collect;
+			// (-D hxmc.jit: the symbols also as a file, for people: RT_CENSUS_WHY's globals; nothing reads it)
 			if (o.jit) l.hostSyms = new StringBuf();
 			var exe = l.link("_start");
-			if (o.jit) {
-				sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
-				// (each function's fingerprint: code loaded at run time calls this
-				// compiler's native function where its own is the same, interp.MirRun)
-				// (sorted by symbol, as the .syms: macro.SymFile looks them up in place)
-				// (and what callers of its native code need to know of it, which
-				// code loaded at run time calls without having its body:
-				// macro.SymFile.HostFps.flags, interp.MacroRuntime)
-				var fps = [];
-				for (f in prep.p.funcs) {
-					var fp = new Fingerprint(prep, null);
-					fp.func(f);
-					var flags = (f.noGc ? hxmc.macro.SymFile.HostFps.NO_GC : 0) | (f.blocks ? hxmc.macro.SymFile.HostFps.BLOCKS : 0)
-						| (MirBuild.inlineCands != null && MirBuild.inlineCands.exists(f) ? hxmc.macro.SymFile.HostFps.INLINE : 0);
-					fps.push({sym: prep.funcSym(f), key: fp.key(), flags: flags});
-				}
-				fps.sort((a, b) -> a.sym < b.sym ? -1 : a.sym > b.sym ? 1 : 0);
-				sys.io.File.saveContent(out + ".fps", [for (x in fps) x.sym + " " + x.key + " " + x.flags + "\n"].join(""));
-			}
+			if (o.jit) sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
 			exe;
 		};
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";

@@ -179,6 +179,7 @@ help:
 ##   native-macros  the native macros prototype: the macro cases with -D hxmc.jit, -D hxmc.macros=MACROS
 ##   mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.mir-run,
 ##               hxmc/src/hxmc/interp/MirRun.hx): bin/jit/haxe as for native-macros, the corpus run in it
+##               (each bundle without native code: HXMC_MACRO_STATS)
 ##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
 ##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
 ##               run on a simulator (a Mac), shared libraries of the glibc mode

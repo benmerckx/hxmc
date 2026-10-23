@@ -7,8 +7,9 @@ package hxmc.macro;
 //                 compiler (typed for hxmc, in macro mode): a relocatable
 //                 object and the program-wide facts it needs (a "bundle")
 //   Loader        links a bundle into the running compiler: its symbols
-//                 (<exe>.syms), new type indices and table entries, the code
-//                 mapped executable
+//                 (HostTable, carried by the executable), new type indices
+//                 and table entries, the code mapped executable (a bundle
+//                 for the Mir interpreter has none: interp.InterpAbi)
 //   Bridge        native objects to and from Eval values at the boundary
 //   NativeEngine  the macro engine (macros.MacroEngine) that calls them, with
 //                 Eval as the fallback and as the reference of verify mode
