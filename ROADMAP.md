@@ -54,8 +54,8 @@ it.
 - Real code bases: compile macro-heavy projects, first with Eval, then with
   native or interpreted macros, and turn what breaks into cases.
 - Fast macros: the MIR interpreter running macros inside hxmc's runtime
-  (PR #15), and the native macros prototype on a real app
-  ([compiler.md](docs/plans/compiler.md#code-generation-at-run-time)).
+  (PR #15), its size and speed
+  ([compiler.md](docs/plans/compiler.md#mir-macros-size-and-speed)).
 - The module cache on by default, nondeterministic macros handled: landed
   ([compiler.md](docs/plans/compiler.md#cached-modules)).
 

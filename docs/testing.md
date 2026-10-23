@@ -271,7 +271,7 @@ cache checks, the dev loop, the
 release binaries and lix for the six targets) and next to it, each with a tool
 of its own from the stage0: `corpus` (`make corpus-stage`: the corpus for
 every target in three jobs, the compiler with Mir macros and `--run` for the six
-targets, `make jit-release`, the port as a WebAssembly module, the reference's
+targets, `bin/npm/native/<target>/haxe`, the port as a WebAssembly module, the reference's
 self-compile), `fuzz-exec` (the fuzzer's exec lanes, a job each),
 `crosshost` (`make crosshost`, the targets in two jobs),
 `upstream-suites` (upstream's runtime suites on hxmc, natively and on wasm32-wasi:

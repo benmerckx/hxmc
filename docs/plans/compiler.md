@@ -312,7 +312,7 @@ fix:
 
 Where Mir macros (docs/hxmc.md, "Macros on the Mir interpreter") stand
 against Eval, and the plan to close the gaps before they can be the
-default. Measured on the jit compiler after the stub-free bundles (#57),
+default. Measured on the jit build after the stub-free bundles (#57),
 Intel Xeon @ 2.10 GHz, 4 vCPUs:
 
 | | Mir macros | Eval |
@@ -321,7 +321,7 @@ Intel Xeon @ 2.10 GHz, 4 vCPUs:
 | formatter with json2object's macros | 1.04 s | 0.70 s |
 | trivial macro, cold | 0.22 s | 0.12 s |
 | trivial macro edited under the server | 0.020 s | |
-| compiler binary | 28.6 MB (jit build) | about 20.4 MB |
+| compiler binary (linux-x86_64) | 26.3 MB, every native compiler (the jit build: 28.6 MB) | |
 
 Eval's cost is inherent (dynamic values, encode/decode at the API
 boundary); Mir's is preparation (typing the runtime in the macro
@@ -343,50 +343,87 @@ Eval stays the default until Mir macros beat it on typical builds.
 
 ### Names
 
-The run-time switches become `-D hxmc.macros=mir|eval` (default eval)
-and `-D hxmc.run=mir` (for `--run`/`--interp`), replacing
-`hxmc.mir-macros` and `hxmc.mir-run`. The build flavor `-D hxmc.jit` is
-a misnomer once nothing generates code at run time: fold it into every
-compiler build if its cost is small (about 10% of the binary or less, no
-measurable speed cost), else an internal `-D hxmc.mir-host`.
+Done. The run-time switches are `-D hxmc.macros=mir|eval` (default
+eval) and `-D hxmc.run=mir` (for `--run`/`--interp`; default Eval);
+an unknown value is an error. The jit build flavor and its define
+are folded in: every native build of the compiler is a Mir
+host (docs/hxmc.md, "Macros on the Mir interpreter"), since its cost
+measured below the bar (about 10% of the binary or less, no measurable
+speed cost).
 
 ### Binary size
 
-The jit build's about 8 MB over the normal compiler, in this order:
+Measured on linux-x86_64 (the same sources; gzip -9). The jit build was
+3.35 MB over the normal compiler (`hxmc.HaxeMain` without it; the 8 MB
+first estimated was against the port's own binary, which has no hxmc
+back end); it is now 1.12 MB over it raw and 0.14 MB under it gzipped:
 
-1. **What the table must hold**: a dual design. Native are the functions
-   the compiler keeps for itself (free) and a measured hot set of what
-   macros call most (strings, maps, arrays, Std/Reflect/Type), chosen
-   from profiles of the macro conformance cases, upstream's unit suite,
-   the formatter build and the benchmark macros; checked in as a list
-   with a lane that regenerates and checks it. Everything else is left
-   to dead-code elimination and interpreted from the macro context when
-   called (the interpreter already runs a std function the compiler
-   lacks). Shared statics still resolve to one global. Today every
-   function is kept: the host table names 63,450 symbols.
-2. **How the table is encoded** (`macro.HostTable`, today 1.5 MB: per
-   symbol a 64-bit name hash, a 64-bit absolute address and a kind byte,
-   17 bytes; per fingerprint an 8-byte key and a 12-byte row; MacroCuts'
-   lines as text):
+| build | raw | gzipped |
+| --- | --- | --- |
+| normal compiler (no Mir host, before) | 25,221,008 | 8,366,385 |
+| jit build (before) | 28,567,480 | 9,242,836 |
+| every native compiler (now) | 26,343,288 (+4.4%) | 8,221,662 (-1.7%) |
 
-   | part | today | encoding | per entry |
-   | --- | --- | --- | --- |
-   | name keys | 64-bit hash, sorted, binary search | a minimal perfect hash (PTHash, RecSplit) to a slot, plus a 16-bit check that rejects names the compiler lacks | about 2-3 bits + 16 bits |
-   | addresses | 64-bit absolute, relocated by the system's loader | 32-bit offsets from the image base (half, and no relocations, which PE and Mach-O files also store); better, Elias-Fano over the sorted addresses (a range of about 30 MB: about 11 bits each, random access in constant time) | about 11 bits |
-   | kinds | a byte | 2 bits packed, or implied by the address range (code, data, thread-local) | 2 bits or none |
-   | fingerprints | 8 + 12 bytes | the same perfect hash, smaller flags, possibly shared with the symbol | 2-3x smaller |
-   | MacroCuts' lines | text | compressed (the runtime has inflate), expanded when a macro context first needs them | text: 4-6x smaller |
+By part (from the symbols, `<exe>.syms`, and the unwind sections):
 
-   About 4 bytes per symbol instead of 17 (for all 63k: about 250 KB
-   instead of 1.08 MB); with the hot set of item 1, tens of KB. A lookup
-   (a perfect hash and an Elias-Fano read) stays below today's 0.4 us.
-3. **The entry pools** (6144 + 1024 + 512 + 128 entries, 32-160 bytes
-   each on x86-64, with unwind entries): sized to the measured need
-   (14 entries for a trivial macro, 70 for the formatter build) with
-   headroom and a clear error when exhausted, smaller entries, and no
-   unwind entries the unwinder does not need.
+| part | normal | jit before | now |
+| --- | --- | --- | --- |
+| host table | 0 | 1,507,536 | 215,920 |
+| pools' entries, call-outs, accessors | 0 | 397,136 | 80,976 |
+| unwind entries (.eh_frame, its index) | 1,291,988 | 1,707,400 | 1,443,144 |
+| type tables (rt_types, the type objects) | 736,076 | 1,206,704 | 976,432 |
+| signature tables | 22,764 | 240,820 | 234,197 |
+| the Mir host's code (Loader, MirMacros, MirRun, the interpreter) | 129,360 | 407,640 | 315,616 |
+| other code | 20,250,536 | 20,799,512 | 20,804,216 |
+| other data | 3,523,200 | 3,106,548 | 3,044,971 |
 
-Each step reports its saving per part and re-measures the macros' speed.
+1. **What the table must hold.** Three configurations:
+
+   | configuration | raw | gzipped | json as a macro | formatter build |
+   | --- | --- | --- | --- | --- |
+   | everything kept (now) | 26,343,288 | 8,221,662 | 4.15 s | 1.14 s |
+   | compiler-only (`Reach`, static closures) | 27,713,352 | 8,923,431 | 4.04 s | 1.06 s |
+   | hot set | not built: at least compiler-only's | | | |
+
+   (MirBench, five runs each interleaved, the median; Eval in the same
+   compiler: 9.25 s and 0.72 s.) Compiler-only is larger: the reachable
+   set drops only about 690 functions (75 KB of code), static closures
+   add 1.45 MB of data, and the table keeps nearly as many names. A hot
+   set adds to compiler-only, so the dual design does not pay; every
+   function stays. What shrinks the table is naming less: not the
+   compiler's own classes' entities (functions, type and field tables,
+   globals), which the macro context and `--run` programs type again,
+   so a bundle never asks for them (20,439 of 63,450 symbols).
+2. **How the table is encoded** (`macro.HostTable`): 1.5 MB to 216 KB.
+
+   | part | before | now |
+   | --- | --- | --- |
+   | name keys | 64-bit hash, sorted, binary search | a minimal perfect hash (PTHash: a 16-bit pilot per bucket, 21,078 slots for 20,439 names) and a 32-bit check per slot (16 bits would let about one in 65,536 of a build's misses through, and a build has hundreds) |
+   | addresses | 64-bit absolute, relocated by the loader | 32-bit, relative to the entry (resolved at the link: no relocations; macOS's bound imports keep 64-bit slots) |
+   | kinds | a byte | 4 bits |
+   | fingerprints | 8 + 12 bytes, binary search | their own perfect hash, a 32-bit check, the key and a flags byte (1,563 entries) |
+   | MacroCuts' lines | text | 4,717 bytes of text, not compressed |
+
+   A lookup takes 0.23 µs instead of 0.40 (the formatter build's 6,878:
+   1.6 ms instead of 2.8).
+3. **The entry pools**: 6144 + 1024 + 512 + 128 entries to 1024 + 256 +
+   128 + 32 (the most measured: 99, 16, 2 and 0; the formatter build 70),
+   an exhausted pool's error names it;
+   397 KB of code to 81 KB, and their unwind entries with them. The spare
+   type entries 4096 to 2048 (the most measured: 339), the spare
+   signatures 256 (none measured).
+
+The tool (`bin/hxmc/hxmc`, which has `hxmc.HaxeMain` for scripts) is a
+Mir host too: 18.67 MB to 19.83 MB. The WebAssembly compiler does not
+type the Mir host's classes (`HaxeMain`), so it is unchanged.
+
+Speed (interleaved, the median): the port's self-compile to HXB 7.46 s
+normal, 7.47 s now (nine runs); 20 corpus builds 9.98 s and 10.53 s, and
+10.71 s and 10.37 s, in two sessions; `haxe -version` 7 ms and 5 ms.
+Mir macros (MirBench against the jit build): json 4.11 s and 3.89 s now
+against 4.25 s and 3.83 s before, the formatter build 1.33 s and 1.19 s
+against 1.19 s and 1.17 s (two sessions, the order swapped; the same
+functions run natively).
 
 ## Code generation at run time
 
@@ -394,7 +431,12 @@ The code generator compiles to in-memory objects with relocations, and
 program-wide numbers stay symbolic, so these remain possible:
 
 - **Native macros**: macro code compiled by hxmc into the running
-  compiler instead of interpreted by Eval (prototype below).
+  compiler instead of interpreted. A prototype (machine-code bundles
+  mapped below 2 GB on linux-x86_64, with a verify mode comparing each
+  call against Eval) was removed once Mir macros (docs/hxmc.md, "Macros
+  on the Mir interpreter") replaced it; hot macro functions compiled from
+  the same Mir would be a tier of that engine, and a Mir-versus-Eval check
+  like verify mode could be rebuilt on it.
 - **Hot reload / live patching**: replace changed modules in a running
   process (needs runtime registration of new types and dispatch rows).
 - **A JIT library** for interpreters written in Haxe (only the code
@@ -403,93 +445,6 @@ program-wide numbers stay symbolic, so these remain possible:
 - Platform limits: iOS and consoles forbid generating code at run time,
   hardened macOS apps need the allow-JIT entitlement, browsers use
   WebAssembly instead.
-
-### Native macros (prototype)
-
-`make native-macros` (`MACROS=native`). The macro engine is an interface
-(`haxe/src/macros/MacroEngine.hx`, Eval by default); `haxe` built with
-`-D hxmc.jit` (Linux x86-64, static) installs
-`hxmc/src/hxmc/macro/NativeEngine.hx`, selected by
-`-D hxmc.macros=eval|native|verify`:
-
-- **Guest**: on a class's first macro call, a child of the compiler types
-  the class's module for hxmc in macro mode and writes a relocatable
-  object plus the program-wide facts (types, field names, signatures,
-  globals, initializers, dispatch rows).
-- **Loader**: links it into the running compiler with the table of its
-  symbols it carries (`macro.HostTable`, every symbol of the executable but
-  its string literals; `-D hxmc.jit` builds also keep every function
-  they lower, the runtime's functions macro code calls that the compiler
-  does not (`Jit.runtime`: `Type.resolveClass`, `Type.createInstance`), and
-  spare type and signature entries). The std's types and
-  statics are the compiler's (layouts checked), the program's are new.
-  Code and data are mapped below 2 GB (rel32, absolute disp32 dispatch
-  rows), then made executable. (Bundles for the Mir interpreter,
-  `-D hxmc.mir-macros`, have no code and need none of this:
-  `interp.InterpAbi`, docs/hxmc.md, "Macros on the Mir interpreter".)
-- **Bridge**: native objects to and from Eval values, so MacroApi stays
-  the one implementation (anonymous structures, enums with Eval's
-  positions, Refs, lazy values, API function values; API exceptions
-  catchable by macro code).
-- **verify**: both engines per call, Eval's result used; Eval's API calls
-  recorded and replayed to the native run, so no side effect happens
-  twice; results, positions, errors and the API call sequence compared.
-
-Results: the 66 macro cases pass in verify mode (119 calls, 115 native,
-114 identical; the mismatch is `Sys.programPath()`, null in Eval's macro
-std); native mode writes byte-identical HXB for 65/66. GfxTest's 40 macro
-calls run natively; the shader macro does not match yet (nested macro
-calls during the Eval run advance the native statics too). Compiling a
-macro class takes about 0.4 s; a compute-bound macro runs 20x faster
-natively, an API-bound one (2000 `makeExpr` calls) as fast as Eval: the
-conversions at the boundary cost what interpretation saved. So the gain
-needs cached compiles and comes from macro code that computes.
-
-What a production version needs:
-
-- Macro code is typed for Eval (its std's externs) and has to be typed
-  again for hxmc: in process (or from HXB), objects cached per macro
-  module on disk, keyed by sources, tool and defines; tiered: Eval first,
-  compile the classes that run often.
-- A macro std with Eval's semantics (`Sys.programPath`, integer overflow,
-  negative array indices, ...).
-- Static state belongs to one engine: a class's functions run all natively
-  or all on Eval; a fallback after a native run started is unsafe.
-- A new class extending a class of an earlier bundle: instance tests use
-  index spans compiled into code, so new classes need spare index ranges
-  and earlier dispatch rows patched.
-- Crashes in macro code (a null access is a SIGSEGV) must become errors:
-  a signal handler returning to the macro call, or null checks in macro
-  mode.
-- W^X per platform: macOS `MAP_JIT` with `pthread_jit_write_protect_np`,
-  Windows `VirtualAlloc`/`VirtualProtect` plus `FlushInstructionCache`,
-  arm64 cache maintenance and branch ranges (veneers or a mapping near the
-  image), PIE executables.
-- The bridge's position maps keep their objects alive (weak maps), and
-  bundles are never unloaded (the compilation server).
-- The bigger win: the compiler's own AST and types as native haxe.macro
-  values (no Eval values in between), which an engine sharing the
-  compiler's heap allows.
-
-#### On a real app (Oct 19)
-
-The prototype crashes on a markup-heavy app. Built at 69d3f39 in WSL
-(`bin/jit/haxe`, `-D hxmc.jit`), cross-compiling a small `@hxmc/ui` app (universe)
-under `Shadcn.sheet` for `windows-x86_64`:
-
-| Mode | Result |
-| --- | --- |
-| `hxmc.macros=eval` | builds, 5.95 s, macros 3.3 s |
-| `hxmc.macros=native` | segmentation fault on the first call, `MarkupMacro.build`, before its "compiled" line |
-| `hxmc.macros=verify` | compiles `MarkupMacro` and `AttrMacro`, then a segmentation fault after 139 s |
-
-Next: fix the crash with this app as the test case (any `@hxmc/ui`
-example under the theme should reproduce it, built against universe) and
-add a markup-heavy case to `make native-macros`. Then measure. This app's macro time is mostly
-API-bound (`NodeRenderer.setProperty`, 1426 calls), which the prototype
-found no faster natively, so expect the real gain only from cached macro
-objects plus the shared-AST engine above. Windows and macOS hosts (W^X,
-`VirtualProtect`, `MAP_JIT`) after that.
 
 ### Bootstrap plus bundled program
 
