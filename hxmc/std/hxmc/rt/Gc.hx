@@ -151,6 +151,11 @@ class Gc {
 
 	@:hxmc.export("rt_globals") static var globals:Ptr;
 	static var nglobals:Int;
+	// the table's room: a Mir host (a compiler that loads code, Mem.mirHost)
+	// has spare slots for the globals of what it loads (macro.Loader), taken
+	// in place: compiled code keeps the table's address across calls (Opt.MConst)
+	static var globalsCap:Int;
+	public static inline var SPARE_GLOBALS = 65536;
 
 	static var stats:Bool;
 	static var minors:Int;
@@ -806,18 +811,18 @@ class Gc {
 					Mem.setPtr(finals, 16 * i, Ptr.nil());
 				}
 			}
-			for (i in 0...nfinals)
-				if (!Mem.getPtr(finals, 16 * i).isNull()) {
-					var v = Mem.getPtr(finals, 16 * i + 8);
+			for (j in 0...nfinals)
+				if (!Mem.getPtr(finals, 16 * j).isNull()) {
+					var v = Mem.getPtr(finals, 16 * j + 8);
 					if (inYoung(v) || inFrom(v)) v = fwdAddr(v);
-					Mem.setPtr(finals, 16 * live, Mem.getPtr(finals, 16 * i));
+					Mem.setPtr(finals, 16 * live, Mem.getPtr(finals, 16 * j));
 					Mem.setPtr(finals, 16 * live + 8, v);
 					live++;
 				}
 			nfinals = live;
-			for (i in q0...finalQlen) {
-				var v = Mem.getPtr(finalQueue, 16 * i + 8);
-				Mem.setPtr(finalQueue, 16 * i + 8, gcBfs ? majorForward(v) : fwdRoot(v));
+			for (j in q0...finalQlen) {
+				var v = Mem.getPtr(finalQueue, 16 * j + 8);
+				Mem.setPtr(finalQueue, 16 * j + 8, gcBfs ? majorForward(v) : fwdRoot(v));
 			}
 			if (gcBfs) scanFrom(scan);
 		}
@@ -1509,6 +1514,7 @@ class Gc {
 		var me = Threads.self;
 		Census.run(oldStart, oldPtr, when, minorSize, oldEnd.diff(oldStart), (me.value.remCap + me.value.robjsCap : I64) * 8,
 			(gcCap : I64) * 16, sp.diff(me.value.base), minors, majors, nglobals);
+		Census.why(oldStart, oldPtr, globals, nglobals);
 	}
 	#end
 

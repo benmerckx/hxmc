@@ -665,7 +665,7 @@ class ServerCache {
 			case interp:
 				/* curapi holds a reference to the typing context which we don't want to persist. Replace it with a
 					null API so all references to the compilation context are released and it can be garbage collected. */
-				interp.curapi = macros.MacroApi.CompilerApiTools.nullApi();
+				macros.MacroEngine.engine.setApi(interp, macros.MacroApi.CompilerApiTools.nullApi());
 		}
 		sctx.cs.clearTempCache();
 		/* Remove context caches that haven't been accessed within the max age window.

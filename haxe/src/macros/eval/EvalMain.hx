@@ -164,9 +164,9 @@ class EvalMain {
 
 	// API for macroContext.ml
 
-	public static function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):Null<Value> {
+	public static function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):haxe.ds.Option<Value> {
 		if (ctx.hadError)
-			return null;
+			return None;
 		else {
 			var old = ctx.curapi;
 			ctx.curapi = api;
@@ -174,7 +174,7 @@ class EvalMain {
 				case 0: Globals.die("", "evalMain.ml call_path");
 				case n: new GlobalTypePath(path.slice(0, n - 1), path[n - 1]);
 			}
-			return switch EvalExceptions.catchExceptions(ctx, () -> {
+			return EvalExceptions.catchExceptions(ctx, () -> {
 				var vtype = EvalContext.getStaticPrototypeAsValue(ctx, EvalHash.pathHash(path), api.pos);
 				var vfield = EvalField.field(vtype, EvalHash.hash(f));
 				var p = api.pos;
@@ -186,10 +186,7 @@ class EvalMain {
 				var v = EvalPrinting.callValueOn(vtype, vfield, vl);
 				EvalContext.popEnvironment(ctx, env);
 				return v;
-			}, api.pos, () -> ctx.curapi = old) {
-				case Some(v): v;
-				case None: null;
-			}
+			}, api.pos, () -> ctx.curapi = old);
 		}
 	}
 

@@ -6,7 +6,7 @@ using StringTools;
 
 // HXB conformance of the port (docs/testing.md):
 //   <haxe> -cp haxe/test --run Conformance [-j N] [--cases <list>] [--eval] [--hxb-lib]
-//       [--parallel N [--parallel-reference]] [--summary <file>] [name-substring ...]
+//       [--parallel N [--parallel-reference]] [--target-only] [--known <case,...>] [--summary <file>] [name-substring ...]
 // For every case of the list (default haxe/test/conformance-cases.txt):
 // 1. the reference (HAXE_REFERENCE) compiles the case to HXB;
 // 2. the port (HAXE_IN_HAXE_PORT, default bin/port/haxe) compiles the same invocation;
@@ -22,6 +22,11 @@ using StringTools;
 // each archive must match the sequential reference archive after normalizing
 // variable ids (the reference loads both through --hxb-lib and writes them
 // again); --parallel-reference runs the reference itself the same way.
+// --target-only: the macro context's modules (macro/) are not compared, for a
+// port whose macro context is typed against another std (-D hxmc.macros=mir).
+// --known <case,...>: cases known to fail (a port's documented differences):
+// each still runs; its failure is KNOWN-FAIL, which does not fail the run, and
+// its passing does (the list is out of date).
 // `hxblib` cases first build a library archive with the reference and compile
 // the case against it with --hxb-lib. A case the reference rejects is an
 // expected failure: the port must reject it as well. Both use -D
@@ -46,7 +51,9 @@ class Conformance {
 	static var root:String;
 
 	static function main() {
-		opts = parseArgs(Sys.args(), ["-j", "--cases", "--parallel", "--summary"]);
+		opts = parseArgs(Sys.args(), ["-j", "--cases", "--parallel", "--summary", "--known"]);
+		var known = [for (k in opts.get("--known", "").split(",")) if (k != "") k];
+		var stale = [];
 		root = Harness.root;
 		reference = Sys.getEnv("HAXE_REFERENCE") ?? "bin/reference/haxe";
 		if (!FileSystem.exists(reference)) fail("Conformance: no reference compiler at " + reference + " (make reference, or HAXE_REFERENCE)");
@@ -74,6 +81,9 @@ class Conformance {
 			if (!had) rmrf(dump);
 			r;
 		}, (c, r) -> {
+			if (known.contains(r.name)) {
+				if (r.status == "FAIL") r.status = "KNOWN-FAIL" else stale.push(r.name);
+			}
 			results.push(r);
 			counts[r.status] = (counts[r.status] ?? 0) + 1;
 			Sys.println(pad(r.status, 17) + " " + pad(r.name, 40) + " " + fixed(r.seconds).lpad(" ", 6) + "s  " + r.detail);
@@ -81,11 +91,12 @@ class Conformance {
 		var keys = [for (k in counts.keys()) k];
 		keys.sort(compare);
 		var line = 'Conformance: ${results.length} cases: ' + [for (k in keys) '$k ${counts[k]}'].join(", ");
+		if (stale.length > 0) line += '; known to fail but did not (--known): ${stale.join(", ")}';
 		Sys.println(line);
 		File.saveContent(GENERATED + "/summary.tsv", [for (r in results) '${r.status}\t${r.name}\t${r.detail}\n'].join(""));
 		var failed = [for (r in results) if (r.status == "FAIL") '- ${r.name}: ${r.detail}'];
 		summary(opts.get("--summary"), '### ${opts.get("--cases", "haxe/test/conformance-cases.txt")}\n\n$line\n\n' + failed.slice(0, 30).join("\n") + "\n\n");
-		Sys.exit(counts.exists("FAIL") ? 1 : 0);
+		Sys.exit(counts.exists("FAIL") || stale.length > 0 ? 1 : 0);
 	}
 
 	public static function parseCases(file:String):Array<ConfCase> {
@@ -136,7 +147,9 @@ class Conformance {
 		return (lines.length > 0 ? lines[lines.length - 1] : "").substr(0, 200);
 	}
 
-	static function hxbNames(path:String):Array<String> return [for (n in readZip(path).names) if (n.endsWith(".hxb")) n];
+	static function hxbNames(path:String):Array<String> return [for (n in readZip(path).names) if (n.endsWith(".hxb") && compared(n)) n];
+
+	static function compared(member:String):Bool return !(opts.has("--target-only") && member.startsWith("macro/"));
 
 	static function rootsOf(names:Array<String>):{target:Array<String>, roots:Array<String>} {
 		var target = Lambda.exists(names, n -> n.startsWith("eval/")) ? ["--interp", "--no-output"] : ["--no-output"];
@@ -181,7 +194,7 @@ class Conformance {
 			return done("EXPECTED-FAILURE", "both reject: " + firstError(out + "/reference.log"));
 		}
 		if (pr.code != 0) return done("FAIL", 'port failed (${codeText(pr)}): ' + firstError(out + "/port.log"));
-		var diff = compareHxb(refHxb, portHxb, c.volatile);
+		var diff = compareHxb(refHxb, portHxb, c.volatile, compared);
 		if (diff != null) return done("FAIL", diff);
 		// Every module of the archive is a root: the reference must load all of
 		// them from the archive alone, without the case's source class path.
@@ -225,7 +238,7 @@ class Conformance {
 				if (d != null) return done("FAIL", '${x.what} port differs from the port: $d');
 			}
 		}
-		var members = readZip(refHxb).names.length;
+		var members = readZip(refHxb).names.filter(compared).length;
 		if (c.volatile != null) note = ' (${c.volatile.length} volatile not compared)' + note;
 		return done("PASS", '$members members identical' + note);
 	}

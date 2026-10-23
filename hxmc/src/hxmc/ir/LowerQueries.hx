@@ -37,7 +37,7 @@ import haxe.ds.Vector;
 //              output
 //
 // Outside this interface, FnLower reads only Lower's static settings,
-// which are the build's: the target and platform (Lower.targetConst),
+// which are the build's: the target, platform and Mir host (Lower.targetConst),
 // lines, bounds, nullChecks, wasmGc and the resources' names are compared by
 // LowerCache.lower, which drops every body when one changes; survey comes
 // from the environment, fixed for a process. The fields of the IR objects

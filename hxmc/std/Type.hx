@@ -78,8 +78,23 @@ class Type {
 
 		The class name does not include any type parameters.
 	**/
-	public static function getClassName(c:Class<Dynamic>):String
+	public static function getClassName(c:Class<Dynamic>):String {
+		// (code that runs as Eval's: interpreted, the macro context's, or a Mir host's, EvalCompat)
+		#if (hxmc.interp || macro)
+		if (hxmc.rt.EvalCompat.on && hxmc.rt.EvalCompat.classNames != null) {
+			var n = hxmc.rt.EvalCompat.classNames.get(Native.typeName(c));
+			if (n != null) return n;
+		}
+		#else
+		if (hxmc.unsafe.Mem.mirHost() == 1) {
+			if (hxmc.rt.EvalCompat.on && hxmc.rt.EvalCompat.classNames != null) {
+				var n = hxmc.rt.EvalCompat.classNames.get(Native.typeName(c));
+				if (n != null) return n;
+			}
+		}
+		#end
 		return Native.typeName(c);
+	}
 
 	/**
 		Returns the name of enum `e`, including its path.

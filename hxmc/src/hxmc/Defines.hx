@@ -23,5 +23,10 @@ class Defines {
 			doc: "Linux: once the heap's old space passes 64 MB, a helper thread of the garbage collector faults in its pages ahead of the minor collections, which otherwise wait for the kernel to zero each fresh page: less wall time for more CPU time (RT_PREFAULT=0 turns it off at run time). Not defined: no helper.",
 			flags: []
 		});
+		core.DefineRegistry.all.push({
+			key: "hxmc.interp",
+			doc: "The program's functions (or those of the modules named, by prefix) are run by an interpreter of hxmc's Mir inside the program, with the same memory, layouts and runtime as compiled code (an experiment). Not on WebAssembly.",
+			flags: [core.DefineRegistry.DefineParameter.HasParam("module prefixes")]
+		});
 	}
 }

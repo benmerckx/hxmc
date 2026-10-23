@@ -998,7 +998,7 @@ class FuncGen {
 							i32(0);
 						}
 					case "Int":
-						// (an Int, or a Float of an Int's value, as hxmc.rt.Dyn.is: GcNative.isInt)
+						// (an Int, or a Float of an Int's value, as hxmc.rt.Dyn.isOf: GcNative.isInt)
 						call(m.exportOf("gc_is_int"));
 					case "Float" | "Dynamic":
 						call(Helpers.kind(m));

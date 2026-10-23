@@ -51,6 +51,10 @@ import hxmc.rt.WinRt;
 #if hxmc.census
 import hxmc.rt.Census;
 #end
+// (the interpreter: a program interpreted; a Mir host reaches it through its own code, macro.Loader)
+#if hxmc.interp
+import hxmc.rt.Interp;
+#end
 #end
 // the threads' API (ThreadApi), mbedtls's and libuv's glue (Ssl, Uv; on
 // WebAssembly NoSsl, NoUv) are typed with hxmc.NativeThread, NativeSsl and

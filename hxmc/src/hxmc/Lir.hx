@@ -42,6 +42,36 @@ class LIns {
 
 	public function new(op:Int)
 		this.op = op;
+
+	public function copy():LIns {
+		var c = new LIns(op);
+		c.size = size;
+		c.d = d;
+		c.s1 = s1;
+		c.s2 = s2;
+		c.s3 = s3;
+		c.base = base;
+		c.index = index;
+		c.scale = scale;
+		c.disp = disp;
+		c.slot = slot;
+		c.sym = sym;
+		c.secrel = secrel;
+		c.mem = mem;
+		c.dsym = dsym;
+		c.imm = imm;
+		c.isym = isym;
+		c.imm2 = imm2;
+		c.cond = cond;
+		c.target = target;
+		c.target2 = target2;
+		c.table = table;
+		c.uses = uses;
+		c.f = f;
+		c.flag = flag;
+		c.pos = pos;
+		return c;
+	}
 }
 
 class LBlock {
@@ -82,6 +112,31 @@ class LFunc {
 	// the target's jump). The instructions that emit nothing (isNop: a move
 	// of a register to itself, once registers are allocated) go first, and
 	// the blocks no branch reaches any more after (the entry is reached).
+	// (HXMC_DUP_DISPATCH=0: off) a small block ending with a jump table (a
+	// switch's dispatch: an interpreter's loop) copied into each block that
+	// jumps to it, after the allocation: each copy's own indirect jump, no
+	// jump to it first (isJump: an unconditional jump, isTable: a jump
+	// table's jump; the copies of a table's address share its table)
+	public static var dupDispatch = Sys.getEnv("HXMC_DUP_DISPATCH") != "0";
+
+	public static var minTable = Sys.getEnv("HXMC_DUP_MIN") != null ? Std.parseInt(Sys.getEnv("HXMC_DUP_MIN")) : 64;
+
+	public function duplicateDispatch(isJump:LIns->Bool, isTable:LIns->Bool, maxIns:Int) {
+		if (!dupDispatch) return;
+		for (d in blocks) {
+			var n = d.ins.length;
+			if (n == 0 || n > maxIns || !isTable(d.ins[n - 1]) || d.ins[n - 1].table.length < minTable) continue;
+			for (b in blocks) {
+				if (b == d || b.ins.length == 0) continue;
+				var j = b.ins[b.ins.length - 1];
+				if (!isJump(j) || j.target != d) continue;
+				b.ins.pop();
+				for (i in d.ins)
+					b.ins.push(i.copy());
+			}
+		}
+	}
+
 	public function threadJumps(isJump:LIns->Bool, isNop:LIns->Bool) {
 		for (b in blocks) {
 			var ins = b.ins, k = 0;

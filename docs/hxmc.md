@@ -30,7 +30,8 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `wasmgc/` | `-D hxmc.wasm-gc`: the object-level Mir of each function as WasmGC code (`MirGen`, over `FuncGen`'s expressions), the module, its types and helpers (`GcModule`, `Helpers`), reflection's tables (`Meta`), the pipeline (`GcGen`) |
 | `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI (System V, Win64, AAPCS64 with its Apple and Windows variants: argument and result registers, where each argument goes, the registers a call clobbers and keeps; for calls and parameters alike); how each C ABI passes structs by value |
 | `MkStd.hx` | hxmc's std merged with the Eval originals (the macro context shares the program's class paths; a custom target gets no `_std` directory in the reference compiler) |
-| `macro/` | native macros, a prototype (`haxe` built with `-D hxmc.jit`, Linux x86-64; `-D hxmc.macros=native\|verify`): macro classes compiled by hxmc and linked into the running compiler, behind the macro engine seam `haxe/src/macros/MacroEngine.hx` ([plans/compiler.md](plans/compiler.md), "Native macros") |
+| `macro/` | what links code compiled for the Mir interpreter into the running compiler (`Loader.hx`, `BundleFacts.hx`) and what the compiler carries for it (`HostTable.hx`, `MirHost.hx`): Mir macros and `--run` (Macros on the Mir interpreter, below) |
+| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in the native compiler (a Mir host): `--interp`/`--run` (`-D hxmc.run=mir`, `MirRun.hx`) and macros (`-D hxmc.macros=mir`, `MirMacros.hx`; the runtime in their context: `MacroRuntime.hx`, `../MacroCuts.hx`; Macros on the Mir interpreter, below) |
 
 Conventions: references live across a GC point are shadow-stack slots
 (cold sites spill only on the slow path; a reference live across the slow
@@ -452,7 +453,7 @@ that never calls `Type.createInstance` has none (the same bytes as before).
 `rt_type` holds it where an enum constructor's singleton and constructors are
 (`Types.maker`: a function called as a bound method of the new instance, of
 the arguments' signature, through the dynamic call of `Reflect.callMethod`);
-the native macros' `Loader` writes a bundle's. A class without any
+the `Loader` writes a bundle's (Mir macros and `--run`). A class without any
 constructor fails, as Eval's does (`Instance constructor not found`), as does
 one whose entry was dropped, or an extern class the runtime implements (its
 class value is `T_NONE`'s, but `Math`'s, a runtime type of its own named Math, `T_MATH`, which `Type.resolveClass` finds); `String`'s and `Array`'s are Eval's. WasmGC:
@@ -604,9 +605,7 @@ not a signal a process sent, not Linux's address-less `SI_KERNEL`), its
 address is within 64 KB of 0 on either side (Linux never maps the first
 64 KB, Windows reserves them, macOS's page zero is 4 GB), its instruction
 is in the program's image (ELF: `__ehdr_start` to `_end`; Mach-O: the
-`__TEXT` segment of the image `dladdr` names; PE: `SizeOfImage`) or in code
-registered at run time (native macros: `hxmc.macro.Loader`,
-`Faults.addCode`), the thread is one of the runtime's, running Haxe code
+`__TEXT` segment of the image `dladdr` names; PE: `SizeOfImage`), the thread is one of the runtime's, running Haxe code
 (not in a blocking call's safe region, and not the collector with the
 world stopped: `Threads.collector`), and the innermost handler is at or
 above the faulting frame (null: uncaught). Any other fault goes to the
@@ -841,6 +840,174 @@ source and those typed every build. A module whose types share a path
 in the macros' context: eval's `mbedtls.SslAuthmode`) is not kept: HXB names
 a type by its module and name. Plans: [plans/compiler.md](plans/compiler.md)
 
+## Macros on the Mir interpreter
+
+`-D hxmc.macros=mir`, in the native compiler (`haxe` with hxmc built in,
+the npm package's: `bin/npm/native/<target>/haxe` for the six native
+targets, below; not the WebAssembly one): macros run on the Mir interpreter (`hxmc.rt.Interp`), not
+Eval. The macro context is typed for hxmc (its std in front, the hxmc
+custom target: `MirMacros.setupPlatform`); a macro function is lowered and
+compiled for the interpreter when it is first called, in bundles the
+compiler links into itself (`macro.Loader`), and the std's functions the
+compiler has alike (the same fingerprint, from the compiler's own table:
+`macro.HostTable`) run as its native code. Macro values are the compiler's
+own (`MacroApi.MacroNativeValues`). `-D hxmc.run=mir` runs
+`--interp`/`--run` programs the same way, with hxmc's semantics.
+
+A native build of a program that has `hxmc.interp.MirMacros` (the
+compiler, `hxmc.HaxeMain`, and the tool) is a Mir host (`Options.mirHost`;
+`hxmc.unsafe.Mem.mirHost()`, a constant the lowering folds, is 1 in its
+code): every function stays, it carries the host table, the pools and
+spare type, signature and global entries (`macro.MirHost`), and the
+std's parts for code it loads (`EvalCompat`, the interpreter's `CALLX`)
+are compiled in. Other programs lower none of it. There is no build
+flavor: on linux-x86_64 this costs the compiler 4.4% raw and nothing
+gzipped (plans/compiler.md, "Mir macros: size and speed").
+
+A bundle for the interpreter carries no native code, so interpreted code
+never needs executable memory: its functions are descriptors
+(`InterpGen`), its data and dispatch rows are in memory of malloc's, only
+64-bit absolute relocations are applied, and nothing is mapped executable
+or below 2 GB (the Loader throws if a bundle for the interpreter has code;
+`HXMC_MACRO_STATS=1` reports its bytes, `make mir-run-check` checks them).
+Every crossing goes through a register image, a buffer of words the
+interpreter reads and writes, and functions of the compiler that move it
+in and out of the ABI's registers (`interp.InterpAbi`):
+
+- interpreted code calling native code (the compiler's functions, the C
+  library) writes each argument where the calling convention puts it
+  (`CallConv.place`, at compile time) and calls `hxmc_interp_callout_r`
+  (or `_s`, with stack words), which loads every argument register from
+  the image, calls, and stores the result registers back (taken as the
+  parts of a struct result: `MIns.cRet`). An allocation's slow path calls
+  `hxmc_alloc_slow` so; the instruction selections' expansions (atomics,
+  float32 conversions) are the interpreter's own operations; the
+  compiler's thread-local variables are read and set through accessors it
+  carries (`hxmc_tls_get$<name>`, `hxmc_tls_set$<name>`).
+- native code calling an interpreted function (a dispatch row, a method
+  table, a closure, a maker of `Type.createInstance`, a signature's
+  trampoline, a callback the compiler keeps) calls an entry of one of the
+  compiler's pools (an integer or a double result, with or without stack
+  words: 1024, 256, 128 and 32 entries, ten times the most measured, the
+  formatter build's 70; an exhausted pool is an error that names it), which passes its arguments and
+  its number to the interpreter (`hxmc_interp_pool_enter`: the function
+  the Loader gave that entry, its arguments by the descriptor's parameter
+  sources). The Loader gives an entry out the first time a function's
+  address is needed (the formatter's macros: 70) and never takes it back.
+- the signatures' dyn and bound trampolines are interpreted too, and so
+  are the runtime's functions the compiler lacks.
+
+The call-outs, the pools and the accessors are Mir, compiled into the
+compiler by the target's own back end (81 KB of code on x86-64: the
+pools' entries are 32 bytes each), so a
+platform needs no machine code of its own for them: the per-ABI part is
+`InterpAbi`'s. Each of those functions takes every argument register,
+then stack words, whatever the function behind it takes
+(`CallConv.ALL_REGS`): where integer and float arguments take registers
+independently (System V x86-64, AAPCS64) that is the convention's own
+placement; Win64 assigns them by position (rcx or xmm0 for the first, ...),
+and there the entries take both registers of each of the first four
+positions, so one pool serves every signature, and the call-outs pass both
+from the argument's word (a variadic callee reads a float from the integer
+register too). Apple's arm64 packs stack arguments by their C size and puts
+variadic ones on the stack, both carried by the image's stack words as
+they are; x18, the platform's register on Apple and Windows, is never
+allocated. The macro context and `--run` take the compiler's own target.
+The native compiler is cross-built for linux-x86_64, linux-arm64,
+macos-x86_64, macos-arm64, windows-x86_64 and windows-arm64 (`make
+bin/npm/native/<target>/haxe`), and CI's test jobs run it on each target's
+machine (the Mir lane): the corpus in it (`Corpus --mir-run`, as `make
+mir-run-check`; the cases known to fail there: `Corpus.MIR_RUN_KNOWN`),
+the macro cases with Mir macros against the reference (as `make
+mir-macros-check`: 66 of 67, Issue11631 uses Eval's `mbedtls`), and a
+benchmark macro and the formatter's build timed against Eval
+(`MirBench`). The compiler carries the table of its
+symbols, its functions' fingerprints and flags and the cuts below as data
+(`macro.HostTable`, made at its link: 216 KB on linux-x86_64). Its
+symbols are the ones code loaded at run time can name: not the
+compiler's own classes' entities, which the macro context and `--run`
+programs type again (20,439 of 63,450). A name is found through a
+minimal perfect hash (PTHash's: a 16-bit pilot per bucket of the name's
+64-bit hash, 21,078 slots) and checked against the 32-bit check of its
+slot (a name the compiler lacks: one in 4 billion passes); the value is
+32-bit and relative to its own place in the table (the link resolves
+it, so the system's loader moves nothing), the kind four bits; the
+fingerprints have their own perfect hash. A lookup takes about 0.23 µs,
+2,500-7,000 per build. On Windows and macOS, where the C library is
+imported from DLLs or bound from libSystem, the table also names the
+compiler's imports (`HostTable.imports`: their thunks, or bound in place),
+and a C function the compiler imports nothing of is looked up as the
+system's loader would bind it (`Loader.systemSymbol`: `dlsym`, or
+`GetProcAddress` in the DLL of its `@:hxmc.lib`). `<exe>.syms` is still written next to it, for
+people (`RT_CENSUS_WHY`'s globals); nothing reads it.
+
+What macro code sees as on Eval (`hxmc.rt.EvalCompat`: on while macro code
+runs, off inside the API's functions): `Std.string` as `EvalPrinting.s_value`
+prints (`{a: 1, b: x}`, the fields by their names' OCaml hashes; nesting
+below depth 5 as `<...>`; `#fun`, `#closure`, `Class<C>`, `Enum<E>`; a
+position as `#pos(file:line: characters a-b)`), `Reflect.fields` in that
+order, `Type.getClassName` of a position's class `haxe.macro.Position`. A
+caught typing error is a `haxe.macro.Error` with its `childErrors`; `$v{}`
+of an integral Float is a Float. A compilation that types the macro context
+again (`--next`, the compilation server) starts a new generation of bundles,
+as Eval drops its prototypes, and a reused macro context runs its static
+initializers again (`EvalMain.doReuse`).
+
+The runtime in the macro context: hxmc's std loads all of it (`Std`
+imports `hxmc.rt.Runtime`), but a bundle never compiles a runtime function
+the compiler has (its native code runs it), so the macro context neither
+types nor parses most of it (`interp.MacroRuntime`). A static function of
+the runtime the compiler has, whose declared signature is all its callers
+need (no optional argument; its result's type written, or no value
+returned: Void) and that the Mir inliner does not copy into callers
+(its fingerprint's flags), gets a body that throws, marked `@:hxmc.hostCode`
+(`TypeBinding.untypedBodyHook`); `Lower` makes it a function without body
+whose facts (no GC point, safe region) are those of the compiler's code
+(`Lower.hostCode`). Its body is not parsed either: the compiler also
+carries the cuts (`hxmc.MacroCuts`, in `macro.HostTable`), for each file of
+the runtime the hash of its content and the ranges of those bodies, which
+the macro context blanks in a file of that content
+(`TypeloadParse.sourceHook`: `{throw "hxmc.cut";}` and spaces, the line
+breaks kept, so positions stay); a blanked body the macro context would type
+fails the build. `HXMC_MIR_TYPE_RUNTIME=1` types and parses all of it.
+
+Checked with upstream's unit suite: `UpstreamTargets` with the native
+compiler as the port (`HAXE_IN_HAXE_PORT="bin/npm/native/<host>/haxe -D
+hxmc.macros=mir"`) compiles every target; the suite run (node, python3,
+neko) fails one test, the static `Int` below. The differences from Eval:
+
+- Maps iterate in hxmc's order (insertion), Eval's `StringMap` in its keys'
+  descending order (an OCaml map), so what a macro generates by iterating a
+  map comes in another order (utest's tests run in their declaration
+  order); `Map.toString` separates entries with `, ` (Eval: `,`).
+- Variable ids: the macro context types hxmc's std and takes more ids from
+  the counter the program's typing shares, so names made of ids differ
+  (coroutines' `_hx_hoisted<id>`, their stack items, genpy's order by them).
+- An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
+  `String.length` counts UTF-16 units (Eval: code points).
+- Not available: `Context.getMacroStack`, macro arguments that are
+  functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
+  hxmc's.
+- A generation takes again the spare type entries (`MirHost.SPARE_TYPES`,
+  2048), signatures and global slots of the earlier ones' whose facts are
+  the same (`macro.Loader`: enums with their constructors, structures,
+  closures' types, interfaces, the classes when all of a bundle's are);
+  the others take new ones (a trivial macro's edit under a server: none,
+  254 types and 94 globals each without that). Bundles are never
+  unloaded: each generation's descriptors and data stay in memory (a
+  trivial macro's: 236 KB), and so do the pool entries they were given.
+
+Cost (instructions, Intel Xeon E-2356G, Linux 6.1), module cache off: a
+trivial macro (`macro 1` called from main, `--js`) 1.08 G (no macro 0.29 G,
+Eval 0.60 G; 1.50 G while the macro context typed and parsed the whole
+runtime); the formatter benchmark built with json2object's macros 7.05 G
+(Eval 3.6 G; was 7.58 G), the macros' compilation most of the difference
+(json2object's `DataBuilder` makes six functions of 10,000 to 38,000 Mir
+values: 70% of the time compiling for the interpreter). With the module
+cache, which keeps the macro context, an edit of the main module: the
+trivial macro 0.59 G (Eval 0.32 G; was 0.87 G), the formatter 1.15 G (Eval
+1.24 G; was 1.17 G).
+
 ## Targets
 
 Targets: Linux (static ELF with musl's members; with `-D hxmc.libc=glibc`, an
@@ -863,7 +1030,7 @@ use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_ESCAPE=0` (no escape analysis; `HXMC_ESCAPE_LOG=1`: what happens to each allocation analyzed and why it stays; `HXMC_ESCAPE_NO=<closures,frames,again,boxes,replace,screen>` and `HXMC_ESCAPE_HASH=<lo>-<hi>` to bisect a miscompilation; none of them are in the object cache's key), `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
 `RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
-`RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown).
+`RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown); with `RT_CENSUS_WHY=<type>` (its name in the census) also a path from a global to each of the first `RT_CENSUS_WHY_MAX` (8) objects of that type, what keeps a leak alive (global `i` is the symbol of value `8 * i` in `<exe>.syms`).
 
 ### Target flags
 

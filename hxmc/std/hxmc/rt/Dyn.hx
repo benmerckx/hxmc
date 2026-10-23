@@ -787,7 +787,7 @@ class Dyn {
 		return false;
 	}
 
-	@:hxmc.host("hx_is") @:hxmc.noGc static function is(v:Dynamic, type:Dynamic):Bool {
+	@:hxmc.host("hx_is") @:hxmc.noGc static function isOf(v:Dynamic, type:Dynamic):Bool {
 		if (Str.isNull(v) || Str.isNull(type)) return false;
 		var c = described(type);
 		var t = tindex(v);
@@ -817,13 +817,13 @@ class Dyn {
 	}
 
 	@:hxmc.host("hx_cast") static function cast_(v:Dynamic, type:Dynamic):Dynamic {
-		if (Str.isNull(v) || is(v, type)) return v;
+		if (Str.isNull(v) || isOf(v, type)) return v;
 		Rt.rt_throw("Class cast error");
 		return null;
 	}
 
 	@:hxmc.host("Std_isOfType") @:hxmc.noGc static function isOfType(v:Dynamic, t:Dynamic):Bool
-		return is(v, t);
+		return isOf(v, t);
 
 	// Std.isOfType(v, Class) (kind 0: a type object, not an enum's), (v, Enum) (1)
 	@:hxmc.host("hx_is_typeobj") @:hxmc.noGc static function isTypeObject(v:Dynamic, kind:Int):Bool {
@@ -833,7 +833,7 @@ class Dyn {
 	}
 
 	@:hxmc.host("Std_downcast") @:hxmc.noGc static function downcast(v:Dynamic, t:Dynamic):Dynamic
-		return is(v, t) ? v : null;
+		return isOf(v, t) ? v : null;
 
 	// ---- Std.string
 
@@ -842,8 +842,18 @@ class Dyn {
 
 	static var fidToString = 0; // fid of "toString" + 1 (0: not looked up yet; -1 + 1: not a field name)
 
-	@:hxmc.host("hx_std_string") static function stdString(v:Dynamic):String
+	@:hxmc.host("hx_std_string") static function stdString(v:Dynamic):String {
+		// (macro: the macro context's copy, which macro code may inline)
+		// (and code that runs as Eval's: interpreted, or a Mir host's, EvalCompat)
+		#if (hxmc.interp || macro)
+		if (EvalCompat.on) return EvalCompat.string(v, 0);
+		#else
+		if (Mem.mirHost() == 1) {
+			if (EvalCompat.on) return EvalCompat.string(v, 0);
+		}
+		#end
 		return str(v, 0);
+	}
 
 	// (depth: of the arrays, enum values and structures v is in; one deeper
 	// than PRINT_DEPTH prints as <...>, as Eval and JavaScript print it:
@@ -898,18 +908,7 @@ class Dyn {
 					b.addChar("(".code);
 					for (i in 0...np) {
 						if (i > 0) b.addChar(",".code);
-						var k = "p".code;
-						for (f in 0...nfields(ty)) {
-							var fk = fKind(field(ty, f));
-							if (fSlot(field(ty, f)) == (fk == "i".code || fk == "b".code ? 2 * i : i)) k = fk;
-						}
-						var x:Dynamic = switch k {
-							case "i".code: (Mem.getI32(Mem.addr(v), 8 * i) : Dynamic);
-							case "b".code: (Mem.getI32(Mem.addr(v), 8 * i) != 0 : Dynamic);
-							case "f".code: (Mem.getF64(Mem.addr(v), 8 * i) : Dynamic);
-							case _: Mem.getRef(Mem.addr(v), 8 * i);
-						}
-						b.add(str(x, depth + 1));
+						b.add(str(ctorValue(v, ty, i), depth + 1));
 					}
 					b.addChar(")".code);
 				}
@@ -936,6 +935,21 @@ class Dyn {
 				return "<function>";
 			case _:
 				return Str.ofAscii(name(ty));
+		}
+	}
+
+	// an enum constructor's argument i, boxed
+	static function ctorValue(v:Dynamic, ty:Ptr, i:Int):Dynamic {
+		var k = "p".code;
+		for (f in 0...nfields(ty)) {
+			var fk = fKind(field(ty, f));
+			if (fSlot(field(ty, f)) == (fk == "i".code || fk == "b".code ? 2 * i : i)) k = fk;
+		}
+		return switch k {
+			case "i".code: (Mem.getI32(Mem.addr(v), 8 * i) : Dynamic);
+			case "b".code: (Mem.getI32(Mem.addr(v), 8 * i) != 0 : Dynamic);
+			case "f".code: (Mem.getF64(Mem.addr(v), 8 * i) : Dynamic);
+			case _: Mem.getRef(Mem.addr(v), 8 * i);
 		}
 	}
 

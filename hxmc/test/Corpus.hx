@@ -6,7 +6,7 @@ using StringTools;
 
 // The hxmc test corpus (docs/testing.md): every program compiled by
 // hxmc, run, and its output compared with its golden file.
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus [-j N] [-v] [--target T] [--wasm-eh legacy] [--libc glibc] [--stage DIR] [--bless] [case ...]
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus [-j N] [-v] [--target T] [--wasm-eh legacy] [--libc glibc] [--interp] [--mir-run] [--known <case,...>] [--stage DIR] [--bless] [case ...]
 // The cases are the programs of hxmc/test/cases (<Name>.hx with class <Name>)
 // and the fuzzer programs frozen in hxmc/test/fuzz-1000.zip (extracted to
 // bin/hxmc-fuzz, cases fuzz-<seed>). Each case's HXB archive is written once
@@ -26,9 +26,19 @@ using StringTools;
 // /usr/aarch64-linux-gnu, the cross C library's root, or QEMU_LD_PREFIX;
 // the cases that must be rejected are of the default mode); --stage only
 // builds and copies each executable with
-// its golden file to DIR/<case>/ (Check runs them on the target's machine).
+// its golden file to DIR/<case>/ (Check runs them on the target's machine);
+// --interp builds every case with -D hxmc.interp (the program's functions
+// run by the interpreter in it: hxmc.rt.Interp), in bin/hxmc-t-interp;
+// --mir-run runs every case inside the native compiler, `haxe` with hxmc
+// built in (HXMC_HAXE, default the host's bin/npm/native/<host>/haxe: make
+// mir-run-check) with -D hxmc.run=mir --run
+// (hxmc.interp.MirRun: no executable), in bin/hxmc-t-mir; the cases known to
+// fail there are MIR_RUN_KNOWN's.
+// --known <case,...>: cases known to fail in this mode (its documented
+// differences): each still runs; its failure is `known`, which does not fail
+// the run, and its passing does (the list is out of date).
 class Corpus {
-	static final OUT = "bin/hxmc-t";
+	static var OUT = "bin/hxmc-t";
 	static final STD = "bin/hxmc/std";
 	static final CASES = "hxmc/test/cases";
 	static final REJECT = "hxmc/test/reject";
@@ -42,6 +52,14 @@ class Corpus {
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
+	// the cases known to fail under --mir-run (as --known: still run, their
+	// failure does not fail the run, their passing does)
+	static final MIR_RUN_KNOWN = [
+		"CallStacks" => "interpreted frames are not in native call stacks",
+		"CallStacksGc" => "interpreted frames are not in native call stacks",
+		"MethodAdapters" => "a function converted to another function type compares unequal to what it adapts",
+		"SafeRegionRoots" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler"
+	];
 
 	static var tool:String;
 	static var target:Null<String>;
@@ -49,29 +67,53 @@ class Corpus {
 	static var wasmEh:Null<String>; // --wasm-eh legacy: -D hxmc.wasm-eh=legacy
 	static var libc:Null<String>; // --libc glibc: -D hxmc.libc=glibc
 	static var bless = false;
+	static var interp = false; // --interp: -D hxmc.interp
+	static var mirRun = false; // --mir-run: in the native compiler (HXMC_HAXE), -D hxmc.run=mir
 
 	static function main() {
-		var a = parseArgs(Sys.args(), ["-j", "--target", "--stage", "--wasm-eh", "--libc"]);
-		tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
+		var a = parseArgs(Sys.args(), ["-j", "--target", "--stage", "--wasm-eh", "--libc", "--known"]);
+		var known = [for (k in a.get("--known", "").split(",")) if (k != "") k];
+		if (a.has("--mir-run"))
+			for (k in MIR_RUN_KNOWN.keys())
+				known.push(k);
+		var stale = [];
+		tool = Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc";
+		// (--mir-run on a target's machine has no tool: macOS's full path of a missing file fails)
+		if (FileSystem.exists(tool)) tool = FileSystem.fullPath(tool);
 		target = a.get("--target");
 		stage = a.get("--stage");
 		wasmEh = a.get("--wasm-eh");
 		libc = a.get("--libc");
 		bless = a.has("--bless");
+		interp = a.has("--interp");
+		if (interp) OUT = "bin/hxmc-t-interp";
+		mirRun = a.has("--mir-run");
+		if (mirRun) OUT = "bin/hxmc-t-mir";
 		var verbose = a.has("-v");
 		if (!FileSystem.exists(STD + "/.stamp")) fail("Corpus: bin/hxmc/std is missing (make std)");
 		var cases = caseList(a.rest);
 		var t0 = now();
-		var bad = 0, excluded = 0;
+		var bad = 0, excluded = 0, knownFailed = 0;
 		parallel(cases, a.int("-j", cpus()), runCase, (c, r) -> {
-			var good = r.status == "ok" || r.status == "blessed" || r.status == "excluded";
+			if (known.contains(r.name)) {
+				if (r.status == "ok") {
+					stale.push(r.name);
+					bad++;
+				} else if (r.status != "excluded") {
+					r.status = "known";
+					knownFailed++;
+				}
+			}
+			var good = r.status == "ok" || r.status == "blessed" || r.status == "excluded" || r.status == "known";
 			Sys.println(pad(r.name, 24) + " " + pad(r.status, 12) + " " + (good || !verbose ? r.detail : ""));
-			if (r.status == "excluded") excluded++ else if (r.status != "ok" && r.status != "blessed") {
+			if (r.status == "excluded") excluded++ else if (r.status != "ok" && r.status != "blessed" && r.status != "known") {
 				bad++;
 				if (verbose) Sys.println("    " + r.detail.replace("\n", "\n    "));
 			}
 		});
-		Sys.println('${cases.length - bad - excluded}/${cases.length - excluded} ok' + (excluded > 0 ? ' ($excluded excluded)' : '') + ', ${fixed(now() - t0)}s');
+		Sys.println('${cases.length - bad - excluded - knownFailed}/${cases.length - excluded} ok' + (excluded > 0 ? ' ($excluded excluded)' : '')
+			+ (knownFailed > 0 ? ' ($knownFailed known to fail)' : '') + (stale.length > 0 ? '; known to fail but did not (--known): ${stale.join(", ")}' : '')
+			+ ', ${fixed(now() - t0)}s');
 		Sys.exit(bad > 0 ? 1 : 0);
 	}
 
@@ -115,15 +157,17 @@ class Corpus {
 		var d = OUT + "/" + c.name;
 		mkdirs(d);
 		var wasm = target != null && target.startsWith("wasm");
-		if (c.name.startsWith("reject-")) return stage != null || libc != null ? {name: c.name, status: "excluded", detail: "a compile error"} : rejectCase(c);
+		if (c.name.startsWith("reject-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "a compile error"} : rejectCase(c);
 		var t = target != null ? target : hostTarget();
 		var native = nativeInputs(c, t, d);
 		if (native.skip != null) return {name: c.name, status: "excluded", detail: native.skip};
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
+		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
 		var defines = caseDefines(c.cps[0] + "/" + c.main + ".hx");
+		if (interp) defines = defines.concat(["-D", "hxmc.interp"]);
 		var t0 = now();
 		// (WebAssembly: the program is typed for it, with its runtime)
 		if (!FileSystem.exists(hxb) || mtime(hxb) < Math.max(newest(c.cps), mtime(STD + "/.stamp"))) {
@@ -193,6 +237,48 @@ class Corpus {
 			return {name: c.name, status: "differs", detail: 'diff $expected $d/got.txt\n' + tail(r.err, 800)};
 		}
 		return {name: c.name, status: "ok", detail: '${fixed(now() - t0)}s $nf'};
+	}
+
+	// a case run inside the compiler (--mir-run): typed, compiled for the Mir
+	// interpreter and run in the native compiler's process, its output against the golden file
+	static function mirRunCase(c:CorpusCase, d:String, links:Bool):CorpusResult {
+		if (links) return {name: c.name, status: "excluded", detail: "C objects: not linked into the running compiler"};
+		var expected = EXPECTED + "/" + c.name + ".txt";
+		if (!FileSystem.exists(expected)) return {name: c.name, status: "no-golden", detail: expected + " is missing"};
+		var haxe = FileSystem.fullPath(Sys.getEnv("HXMC_HAXE") ?? "bin/npm/native/" + hostTarget() + "/haxe");
+		var cmd = [haxe];
+		for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
+		cmd = cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")).concat(["-D", "hxmc.run=mir"]);
+		var src = c.cps[0] + "/" + c.main + ".hx";
+		if (FileSystem.exists(src))
+			for (l in File.getContent(src).split("\n"))
+				if (l.trim().startsWith("// resource: ")) {
+					var r = l.trim().substr(13).split("@");
+					cmd = cmd.concat(["--resource", FileSystem.fullPath(c.cps[0] + "/" + r[0]) + (r.length > 1 ? "@" + r[1] : "")]);
+				}
+		cmd = cmd.concat(["--run", c.main]);
+		var t0 = now();
+		// (a small nursery, as the executables get: the compiler's collector is the program's)
+		// (HXMC_MACRO_STATS=1: the bundle's sizes on stderr, its code 0 bytes: interp.InterpAbi)
+		var r = exec(cmd, {
+			cwd: d,
+			timeout: 120,
+			env: [
+				"RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64",
+				"HXMC_STD" => FileSystem.fullPath(STD),
+				"HAXE_STD_PATH" => FileSystem.fullPath("haxe/upstream/std"),
+				"HXMC_MACRO_STATS" => "1"
+			]
+		});
+		if (r.timedOut) return {name: c.name, status: "timeout", detail: ""};
+		if (r.err.indexOf("hxmc mir-run: ") < 0 || r.err.indexOf(" 0 bytes of code,") < 0)
+			return {name: c.name, status: "differs", detail: "no bundle without native code (HXMC_MACRO_STATS): " + tail(r.err, 400)};
+		var got = 'exit ${r.code}\n' + r.out;
+		if (got != File.getContent(expected)) {
+			File.saveContent(d + "/got.txt", got + r.err);
+			return {name: c.name, status: "differs", detail: 'diff $expected $d/got.txt\n' + lineDiff(File.getContent(expected), got, 12).join("\n") + "\n" + tail(r.err, 800)};
+		}
+		return {name: c.name, status: "ok", detail: '${fixed(now() - t0)}s'};
 	}
 
 	// Per-case defines must apply to typing as well as code generation.

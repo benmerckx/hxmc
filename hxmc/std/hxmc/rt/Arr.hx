@@ -315,11 +315,11 @@ class Arr {
 		dst.resize(n);
 		var width = RUN;
 		while (width < n) {
-			var lo = 0;
-			while (lo < n) {
-				var mid = lo + width < n ? lo + width : n;
-				var hi = lo + 2 * width < n ? lo + 2 * width : n;
-				var i = lo, j = mid, k = lo;
+			var start = 0;
+			while (start < n) {
+				var mid = start + width < n ? start + width : n;
+				var hi = start + 2 * width < n ? start + 2 * width : n;
+				var i = start, j = mid, k = start;
 				while (i < mid && j < hi) {
 					if (f(src[j], src[i]) < 0) dst[k++] = src[j++] else dst[k++] = src[i++];
 				}
@@ -327,7 +327,7 @@ class Arr {
 					dst[k++] = src[i++];
 				while (j < hi)
 					dst[k++] = src[j++];
-				lo += 2 * width;
+				start += 2 * width;
 			}
 			var t = src;
 			src = dst;

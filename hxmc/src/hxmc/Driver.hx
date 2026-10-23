@@ -17,6 +17,8 @@ class Driver {
 	var o:Options;
 	var out:String;
 	var dumpSet:Null<Map<String, Bool>>;
+	// -D hxmc.interp: the functions interpreted (hxmc.interp.InterpGen)
+	var interp:Null<hxmc.interp.InterpGen.InterpSet>;
 	var tm = new haxe.ds.Vector<Float>(4); // cpu seconds: mir, isel, regalloc, emit
 	var slow:Array<{name:String, t:Float}> = [];
 
@@ -42,16 +44,18 @@ class Driver {
 		for (e in o.exports)
 			if (abi.exports.indexOf(e) < 0) abi.exports.push(e);
 		dumpSet = o.dump == null ? null : [for (n in o.dump.split(",")) n => true];
+		if (o.interp != null) interp = new hxmc.interp.InterpGen.InterpSet(o.interp, prep);
 	}
 
-	// (-D hxmc.jit: every function stays, for the native macros the compiler
-	// loads, and closures are made as they are in those, Prep.staticClosures;
-	// native macros' own code makes a Driver itself, Guest)
+	// (a Mir host, Options.mirHost: every function stays, for the code it
+	// loads, which calls the std's and the runtime's functions it has; and no
+	// closure is made static, Prep.staticClosures, which costs a Mir host more
+	// than it saves: measured, docs/plans/compiler.md, "Mir macros: size and speed")
 	public static function run(prog:Program, out:String, o:Options) {
 		var t0 = haxe.Timer.stamp();
-		if (!o.jit) hxmc.ir.Reach.run(prog, o.stats);
+		if (!o.mirHost) hxmc.ir.Reach.run(prog, o.stats);
 		var d = new Driver(prog, out, o);
-		d.prep.staticClosures = !o.jit;
+		d.prep.staticClosures = !o.mirHost;
 		var t1 = haxe.Timer.stamp();
 		d.build(t0, t1);
 	}
@@ -157,7 +161,7 @@ class Driver {
 				// function, inlined when it may be and is of this module (its
 				// body and its callees' are in the module's key), so that
 				// Escape may replace the closure
-				if (Escape.on && mf.allocs > 0 && Escape.part("closures") && Escape.allowed(name)) {
+				if (Escape.on && (interp == null || !interp.wants(fn)) && mf.allocs > 0 && Escape.part("closures") && Escape.allowed(name)) {
 					var todo = [];
 					for (c in Escape.closureCalls(mf, g -> g.module == fn.module && MirBuild.inlineCands.exists(g), prep.funcSym))
 						todo.push(c);
@@ -174,7 +178,8 @@ class Driver {
 					}
 				}
 			}
-			if (o.opt && Escape.on) {
+			// (not for the interpreter: no gain there, measured on the macro benchmarks, and a third of the passes' time)
+			if (o.opt && Escape.on && (interp == null || !interp.wants(fn))) {
 				var es = new Escape(mf);
 				var te = haxe.Timer.stamp();
 				es.run();
@@ -219,6 +224,16 @@ class Driver {
 			}
 			if (o.opt) Opt.lowered(mf);
 			if (dumpSet != null && dumpSet.exists(name)) Sys.println(mf.dump());
+			if (interp != null && interp.wants(fn)) {
+				new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (m, global) -> compileStub(m, emit, global)).run();
+				if (mb.icaches > 0) {
+					var bss = obj.section(".bss", Bss, 16);
+					bss.bssSize = (bss.bssSize + 15) & ~15;
+					obj.define(mb.icSym, bss, bss.bssSize, Abi.IC_SIZE * mb.icaches, false);
+					bss.bssSize += Abi.IC_SIZE * mb.icaches;
+				}
+				return;
+			}
 			if (abi.wasm) {
 				// WebAssembly: structured code from the Mir, no instruction selection or registers
 				var s1 = haxe.Timer.stamp();
@@ -273,6 +288,44 @@ class Driver {
 		}
 	}
 
+	// (a Mir host) the bodies of the runtime its Mir macros' context need not
+	// parse, given the compiler's fingerprints (Main: MacroCuts.cuts)
+	public static var hostCuts:Null<hxmc.macro.HostTable.HostFps->String> = null;
+	// (a Mir host) the program's types by ident, true for the std's (Main: HostTable.idents)
+	public static var hostIdents:Null<Map<String, Bool>> = null;
+
+	// each function's fingerprint: code loaded at run time calls this
+	// compiler's native function where its own is the same (interp.MirRun),
+	// and what callers of its native code need to know of it, which code
+	// loaded at run time calls without having its body (HostFps flags,
+	// interp.MacroRuntime)
+	function hostFingerprints():Array<{sym:String, key:String, flags:Int}> {
+		var fps = [];
+		for (f in prep.p.funcs) {
+			var fp = new Fingerprint(prep, null);
+			fp.func(f);
+			var flags = (f.noGc ? hxmc.macro.HostTable.HostFps.NO_GC : 0) | (f.blocks ? hxmc.macro.HostTable.HostFps.BLOCKS : 0)
+				| (MirBuild.inlineCands != null && MirBuild.inlineCands.exists(f) ? hxmc.macro.HostTable.HostFps.INLINE : 0);
+			fps.push({sym: prep.funcSym(f), key: fp.key(), flags: flags});
+		}
+		return fps;
+	}
+
+	// an interpreted function's stub (InterpGen) into its module's object
+	function compileStub(mf:MFunc, emit:Target.Emitter, global:Bool) {
+		var isel = Target.selector(abi);
+		var lf = isel.select(mf, Layout.order(mf));
+		var ra = new Regalloc(lf, isel);
+		ra.run();
+		emit.func(lf, ra.usedRegs, global);
+	}
+
+	// a synthetic function (DataGen) for the interpreter, into obj (code loaded
+	// at run time: interp.InterpGen.InterpSet.loaded, which has no native code)
+	function compileInterp(mf:MFunc, obj:Obj) {
+		new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (_, _) -> throw "hxmc: " + mf.name + ": a stub in code loaded for the interpreter").run();
+	}
+
 	// a synthetic function (DataGen) into obj
 	function compileMir(mf:MFunc, emit:Target.Emitter, obj:Obj) {
 		if (abi.wasm) {
@@ -323,7 +376,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.ios() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.jit ? "+jit" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -497,9 +550,9 @@ class Driver {
 		var data = new Obj();
 		var demit = Target.emitter(abi, data);
 		var dg = new DataGen(prep, abi, data, mf -> compileMir(mf, demit, data));
-		if (o.jit) {
-			dg.spareTypes = hxmc.macro.Jit.SPARE_TYPES;
-			dg.spareSigs = hxmc.macro.Jit.SPARE_SIGS;
+		if (o.mirHost) {
+			dg.spareTypes = hxmc.macro.MirHost.SPARE_TYPES;
+			dg.spareSigs = hxmc.macro.MirHost.SPARE_SIGS;
 		}
 		dg.run();
 		dg.allocStubs(objs, demit);
@@ -507,6 +560,8 @@ class Driver {
 		dg.cstrLiterals(objs);
 		dg.emptyArrays(objs);
 		dg.resources(objs);
+		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
+		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
 		// (the functions and their lines for the runtime's stacks: StackTable)
 		Dwarf.enabled = o.debugLines;
 		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
@@ -591,11 +646,33 @@ class Driver {
 			var imp = LinkInputs.peImports(still, abi);
 			if (imp != null) all.push(imp);
 		}
+		// a Mir host: what code loaded at run time crosses into native code
+		// through (interp.InterpAbi: the call-outs, the entries' pools, the
+		// thread-local variables' accessors), then the table of the
+		// executable's symbols, fingerprints and cuts it links against
+		// (macro.HostTable)
+		if (o.mirHost) {
+			var th = new Obj();
+			var temit = Target.emitter(abi, th);
+			hxmc.interp.InterpAbi.thunks(prep, abi, mf -> compileMir(mf, temit, th));
+			hxmc.interp.InterpAbi.poolTables(th);
+			hxmc.interp.InterpAbi.tlsAccessors(prep, abi, hxmc.macro.HostTable.tlsNames(all), mf -> compileMir(mf, temit, th));
+			all.push(th);
+			// (what code loaded at run time can reach: the std's and the runtime's, HostTable.named)
+			var idents = hostIdents != null ? hostIdents : new Map();
+			var named = n -> hxmc.macro.HostTable.named(n, idents);
+			var fps = hostFingerprints().filter(x -> named(x.sym));
+			var map = new Map<String, {key:String, flags:Int}>();
+			for (x in fps)
+				map.set(x.sym, {key: x.key, flags: x.flags});
+			var cuts = hostCuts != null ? hostCuts(new hxmc.macro.HostTable.HostFps(map)) : "";
+			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts, hxmc.macro.HostTable.imports(all, abi), named, o.stats));
+		}
 		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios) : null;
 		// the runtime objects' sections and the runtime's Haxe functions that
-		// nothing reaches are left out (LinkCore.gc; -D hxmc.jit: every runtime
-		// function stays, for the native macros it loads)
-		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.jit ? rts : null;
+		// nothing reaches are left out (LinkCore.gc; a Mir host: every runtime
+		// function stays, for the code it loads)
+		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.mirHost ? rts : null;
 		var exe = abi.os == "windows" ? {
 			var l = new LinkPE(all, abi.arm);
 			if (abi.output == SharedLibrary) {
@@ -633,9 +710,10 @@ class Driver {
 			} else new Link(all, abi);
 			l.symbols = !o.strip;
 			l.collect = collect;
-			if (o.jit) l.hostSyms = new StringBuf();
+			// (a Mir host: the symbols also as a file, for people: RT_CENSUS_WHY's globals; nothing reads it)
+			if (o.mirHost) l.hostSyms = new StringBuf();
 			var exe = l.link("_start");
-			if (o.jit) sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
+			if (o.mirHost) sys.io.File.saveContent(out + ".syms", l.hostSyms.toString());
 			exe;
 		};
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";

@@ -20,8 +20,7 @@ import hxmc.unsafe.*;
 //
 // A fault is a null access when it is a fault of the hardware (not a signal
 // sent by a process), its address is within NEAR of 0 (either side), its
-// instruction is in the program's code (the image, or code registered with
-// addCode: native macros), the thread is one of the runtime's, running
+// instruction is in the program's code (the image), the thread is one of the runtime's, running
 // (not in a blocking call's safe region), not collecting, and the innermost
 // handler is plausible (null: uncaught, or above the faulting frame). Any
 // other fault goes to the handler that was there before (the default: the
@@ -37,11 +36,6 @@ class Faults {
 	// the image's code [lo, hi) (ELF: the whole image; Mach-O: __TEXT; PE: the image)
 	static var codeLo:Ptr;
 	static var codeHi:Ptr;
-	// code mapped at run time (native macros: hxmc.macro.Loader): [lo, hi) pairs,
-	// the count stored after the pair (a handler on another thread reads them)
-	static inline var MAX_EXTRA = 64;
-	static var extra:Ptr;
-	@:hxmc.export("hxmc_faults_nextra") static var nextra:Int;
 	// POSIX: the actions installed before (struct sigaction, SA_BYTES each), SIGSEGV's then SIGBUS's
 	static var prev:Ptr;
 	static var installed:Bool;
@@ -96,7 +90,6 @@ class Faults {
 		var off = Os.getenv("RT_NULL_ACCESS");
 		if (!off.isNull() && Mem.getU8(off, 0) == "0".code) return;
 		imageCode();
-		extra = LibC.malloc(16 * MAX_EXTRA);
 		// (one target's branch is lowered: Lower folds Mem.os())
 		if (windows()) {
 			// first: before the runtime's own handlers (WinRt: commits, crash reports)
@@ -133,15 +126,6 @@ class Faults {
 		}
 	}
 
-	// code mapped at run time (native macros register theirs; one thread at a time)
-	@:hxmc.noGc public static function addCode(lo:Ptr, hi:Ptr) {
-		var n = nextra;
-		if (extra.isNull() || n == MAX_EXTRA) return;
-		Mem.setPtr(extra, 16 * n, lo);
-		Mem.setPtr(extra, 16 * n + 8, hi);
-		Atomic.store32(Mem.sym("hxmc_faults_nextra"), n + 1);
-	}
-
 	@:hxmc.noGc static function imageCode() {
 		if (Mem.os() == 1) {
 			// the Mach-O image holding this code (an executable or a dylib): its
@@ -174,12 +158,8 @@ class Faults {
 		}
 	}
 
-	@:hxmc.noGc static function inCode(pc:Ptr):Bool {
-		if (!pc.ult(codeLo) && pc.ult(codeHi)) return true;
-		for (i in 0...Atomic.load32(Mem.sym("hxmc_faults_nextra")))
-			if (!pc.ult(Mem.getPtr(extra, 16 * i)) && pc.ult(Mem.getPtr(extra, 16 * i + 8))) return true;
-		return false;
-	}
+	@:hxmc.noGc static inline function inCode(pc:Ptr):Bool
+		return !pc.ult(codeLo) && pc.ult(codeHi);
 
 	@:hxmc.noGc static inline function near(a:Ptr):Bool
 		return Mem.ult(a.toI64() + NEAR, 2 * NEAR);

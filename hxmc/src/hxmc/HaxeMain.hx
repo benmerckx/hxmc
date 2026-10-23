@@ -23,6 +23,30 @@ class HaxeMain {
 	public static function run(args:Array<String>):Int {
 		Defines.install();
 		if (args[0] == "--dev") return dev(args.slice(1));
+		// the engines: -D hxmc.macros=mir|eval for macros, -D hxmc.run=mir|eval
+		// for --interp and --run (both Eval by default)
+		var macroEngine = "eval", runEngine = "eval";
+		try {
+			macroEngine = engine(args, MACROS, "the macro engine");
+			runEngine = engine(args, RUN, "the engine of --interp and --run");
+		} catch (e:String) {
+			Sys.stderr().writeString("hxmc: " + e + "\n");
+			return 1;
+		}
+		if (runEngine == "eval") args = without(args, RUN);
+		// (a native compiler loads code for the Mir interpreter: it is a Mir host,
+		// Mem.mirHost, because it has these classes; the WebAssembly one has
+		// nothing to link such code into, and does not type them: its
+		// Type.createInstance would keep them)
+		#if (hxmc.target != "wasm32-wasi" && !hxmc.wasm_gc)
+		// (-D hxmc.run=mir: --interp and --run on the Mir interpreter, interp.MirRun)
+		if (runEngine == "mir") args = hxmc.interp.MirRun.rewrite(args);
+		#else
+		if (macroEngine == "mir" || runEngine == "mir") {
+			Sys.stderr().writeString("hxmc: the Mir interpreter (-D " + (macroEngine == "mir" ? MACROS : RUN) + "=mir) is not in this compiler (WebAssembly)\n");
+			return 1;
+		}
+		#end
 		var failed = null;
 		// (through links to the binary, as npm's node_modules/.bin/haxe)
 		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
@@ -68,6 +92,12 @@ class HaxeMain {
 					Sys.println("hxmc dev: generating");
 					Sys.stdout().flush();
 				}
+				#if (hxmc.target != "wasm32-wasi" && !hxmc.wasm_gc)
+				if (hxmc.interp.MirRun.selected(com)) {
+					hxmc.interp.MirRun.run(com);
+					return;
+				}
+				#end
 				@:privateAccess Main.generate(com, com.file);
 			} catch (e:Dynamic) {
 				// (a compilation server's client gets it as an error: hxmc dev)
@@ -79,16 +109,16 @@ class HaxeMain {
 		ModuleCache.install();
 		hxmc.ir.CInterop.install();
 		hxmc.TargetFlags.install();
-		#if hxmc.jit
-		// native macros (hxmc/src/hxmc/macro): a child compiling macro code for
-		// its parent (Guest), or the engine of -D hxmc.macros=native|verify
-		var guest = Sys.getEnv("HXMC_MACRO_GUEST");
-		var engine:Null<hxmc.macro.NativeEngine> = null;
-		if (guest != null && guest != "") hxmc.macro.Guest.install(guest) else macros.MacroEngine.engine = engine = new hxmc.macro.NativeEngine();
+		// (not among the compilation's defines: its defines are the reference's,
+		// Compiler.getDefine, hxcpp's Options.txt, the modules' signatures)
+		args = without(args, MACROS);
+		#if (hxmc.target != "wasm32-wasi" && !hxmc.wasm_gc)
 		// (the runtime's functions macro code calls: in the executable)
-		hxmc.macro.Jit.runtime();
+		hxmc.macro.MirHost.runtime();
+		// (-D hxmc.macros=mir: macros on the Mir interpreter, the macro context typed for hxmc)
+		if (macroEngine == "mir") hxmc.interp.MirMacros.install(hxmcStd);
 		var code = haxe.Main.run(args);
-		if (engine != null) engine.report();
+		if (macroEngine == "mir") @:privateAccess hxmc.interp.MirMacros.self.report();
 		#else
 		var code = haxe.Main.run(args);
 		#end
@@ -98,6 +128,43 @@ class HaxeMain {
 			return 1;
 		}
 		return code;
+	}
+
+	// the engines' defines (HaxeMain.run)
+	public static inline var MACROS = "hxmc.macros";
+	public static inline var RUN = "hxmc.run";
+
+	// a define's name as the defines keep it (an underscore for a dash)
+	public static function defineName(d:String):String {
+		var eq = d.indexOf("=");
+		return StringTools.replace(eq < 0 ? d : d.substr(0, eq), "-", "_");
+	}
+
+	// the engine -D <name>=mir|eval selects (the last one; eval when absent)
+	static function engine(args:Array<String>, name:String, what:String):String {
+		var v = "eval";
+		for (i in 0...args.length - 1)
+			if ((args[i] == "-D" || args[i] == "--define") && defineName(args[i + 1]) == name) {
+				var d = args[i + 1], eq = d.indexOf("=");
+				v = eq < 0 ? "" : d.substr(eq + 1);
+			}
+		if (v != "mir" && v != "eval") throw '-D $name=$v: unknown value for $what (mir: the Mir interpreter; eval, the default: Eval)';
+		return v;
+	}
+
+	// the command line without -D <name>=...
+	static function without(args:Array<String>, name:String):Array<String> {
+		var out = [];
+		var i = 0;
+		while (i < args.length) {
+			if ((args[i] == "-D" || args[i] == "--define") && i + 1 < args.length && defineName(args[i + 1]) == name) {
+				i += 2;
+				continue;
+			}
+			out.push(args[i]);
+			i++;
+		}
+		return out;
 	}
 
 	static var devProgress = Sys.getEnv("HXMC_DEV_PROGRESS") == "1";

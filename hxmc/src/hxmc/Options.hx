@@ -61,15 +61,19 @@ class Options {
 	// -D hxmc.stacks: the table, and the stacks recorded and reported (an
 	// uncaught exception's), whether or not the program reads stacks
 	public var stacksAlways = false;
-	// -D hxmc.jit: a compiler that can load native macros (hxmc/src/hxmc/macro): spare
-	// type and signature table entries, every runtime function kept, the
-	// symbols written next to the executable (<out>.syms); Linux x86-64, static
-	public var jit = false;
+	// a program that loads code for the Mir interpreter (Main: a compiler with
+	// Mir macros and --run, Mem.mirHost): the pools and the host table its
+	// code loaded crosses into native code through, spare type and signature
+	// table entries, every function kept, the symbols written next to the
+	// executable (<out>.syms)
+	public var mirHost = false;
+	// -D hxmc.interp[=<module prefixes>]: the program's functions run by the interpreter in the program (hxmc.interp.InterpGen, hxmc.rt.Interp); null: none
+	public var interp:Null<String> = null;
 
 	public function new() {}
 
 	// the default target: the one the tool runs on (WebAssembly, Eval: linux-x86_64)
-	static function host():String {
+	public static function host():String {
 		#if eval
 		return "linux-x86_64";
 		#else
@@ -159,8 +163,7 @@ class Options {
 		o.debugLines = def("debug") != null || def("hxmc.lines") != null;
 		o.stacks = def("hxmc.no_stacks") == null;
 		o.stacksAlways = o.stacks && def("hxmc.stacks") != null;
-		o.jit = def("hxmc.jit") != null;
-		if (o.jit && (o.target != "linux-x86_64" || o.libc != null)) throw "hxmc: -D hxmc.jit: linux-x86_64 (static) only";
+		o.interp = def("hxmc.interp");
 		var j = def("hxmc.jobs");
 		if (j == null) j = env("HXMC_JOBS");
 		if (j != null) o.jobs = Std.parseInt(j);

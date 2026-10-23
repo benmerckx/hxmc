@@ -139,6 +139,7 @@ class Main {
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		hxmc.ir.Lower.bounds = opts.bounds;
 		hxmc.ir.Lower.nullChecks = opts.nullChecks;
+		hxmc.ir.Lower.interp = opts.interp != null;
 		// WebAssembly's runtime is typed with the program only for that target
 		if (abi.wasm && !Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): c.clPath.pack.join(".") == "hxmc.rt.wasm" && c.clPath.name == "Gc";
@@ -148,6 +149,12 @@ class Main {
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		// (a compiler with Mir macros and --run, for a native target: Mem.mirHost)
+		hxmc.ir.Lower.mirHost = !abi.wasm && !opts.wasmGc && Lambda.exists(com.types, t -> switch t {
+			case TClassDecl(c): c.clPath.pack.join(".") == "hxmc.interp" && c.clPath.name == "MirMacros";
+			case _: false;
+		}) ? 1 : 0;
+		opts.mirHost = hxmc.ir.Lower.mirHost == 1;
 		// (the positions of every statement, natively: a program that reads
 		// stacks gets the table of its functions and lines, which Reach finds
 		// out after the lowering, StackTable; -debug writes DWARF lines from
@@ -172,6 +179,9 @@ class Main {
 			hxmc.wasmgc.GcGen.run(prog, out, opts);
 			return;
 		}
+		// (a Mir host: the runtime's bodies its Mir macros' context need not parse, MacroCuts; the std's types)
+		Driver.hostCuts = opts.mirHost ? fps -> MacroCuts.text(com, fps) : null;
+		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
 		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {

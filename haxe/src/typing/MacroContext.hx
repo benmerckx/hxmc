@@ -94,22 +94,26 @@ class MacroContext {
 
 	public static var macroInterpCache:Null<macros.eval.EvalContext.Context> = null;
 
+	// port: hook (not upstream): the macro context's platform when its code is not
+	// Eval's (hxmc's -D hxmc.macros=mir): called instead of adding Eval's _std and
+	// setting the platform to Eval, once the macro context's defines are adapted
+	public static var macroPlatformHook:Null<CommonContext->Void> = null;
+
 	// port: ExtString.String.nsplit; an empty string has no parts.
 	static function nsplit(s:String, sep:String):Array<String>
 		return s == "" ? [] : s.split(sep);
 
+	// port: through MacroApiImpl (its values: Eval's, or the compiler's own, nativeValues)
 	static function isVNull(v:Value):Bool
-		return switch v {
-			case VNull: true;
-			case _: false;
-		};
+		return MacroApiImpl.isNull(v);
 
 	public static function safeDecode<A>(com:CommonContext, v:Value, expected:String, t:T, p:Pos, f:Void->A):A {
 		inline function raiseDecodeError(s:String):Dynamic {
 			var path = [com.partScope.dumpConfig.dumpPath, "decoding_error"];
 			var ch = core.Path.createFile(false, ".txt", [], path.copy());
 			ch.writeString(core.TPrinting.Printer.sPos(p) + ": " + s + "\n");
-			var errors = macros.eval.EvalMain.handleDecodingError(function(s:String) ch.writeString(s), v, t);
+			// port: the native values have no line-by-line account (MacroApiImpl.nativeValues)
+			var errors = MacroApiImpl.nativeValues ? [] : macros.eval.EvalMain.handleDecodingError(function(s:String) ch.writeString(s), v, t);
 			var errors = errors.copy();
 			errors.reverse();
 			for (e in errors)
@@ -128,7 +132,11 @@ class MacroContext {
 					throw e;
 			}
 		} catch (e:InvalidExpr) {
-			return raiseDecodeError("Expected " + expected + " but got " + macros.eval.EvalPrinting.valueString(v));
+			return raiseDecodeError("Expected " + expected + " but got " + MacroApiImpl.valueString(v));
+		} catch (e:String) {
+			// port: the native values' runtime exception (MacroApiImpl.excString)
+			if (!MacroApiImpl.nativeValues) throw e;
+			return raiseDecodeError("Eval runtime exception: " + e);
 		}
 	}
 
@@ -162,10 +170,10 @@ class MacroContext {
 			return r;
 		} catch (err:TypingError) {
 			exit();
-			return macros.eval.EvalMain.compilerError(err.error);
+			return MacroApiImpl.compilerError(err.error);
 		} catch (err:WithTypeError) {
 			exit();
-			return macros.eval.EvalMain.compilerError(err.error);
+			return MacroApiImpl.compilerError(err.error);
 		} catch (e:Dynamic) {
 			exit();
 			throw e;
@@ -190,15 +198,17 @@ class MacroContext {
 		}
 		inline function badStage():Dynamic {
 			if (Type.enumIndex(com.stage) < Type.enumIndex(CInitMacrosDone))
-				return macros.eval.EvalContext.excString("This API cannot be used in initialization macros");
+				return MacroApiImpl.excString("This API cannot be used in initialization macros");
 			else
-				return macros.eval.EvalContext.excString("This API cannot be used in the interpreter run-time");
+				return MacroApiImpl.excString("This API cannot be used in the interpreter run-time");
 		}
 		return {
 			pos: p,
 			getCom: () -> com,
 			getMacroCom: () -> mcom,
 			getMacroStack: function() {
+				// port: the native values' engine keeps no positions of its frames
+				if (MacroApiImpl.nativeValues) Error.raiseTypingError("Context.getMacroStack is not available with -D hxmc.macros=mir", p);
 				var envs = macros.eval.EvalContext.callStack(macros.eval.EvalContext.getEval(macros.eval.EvalContext.getCtx()));
 				var envs = envs.length > 0 ? envs.slice(1) : envs; // Skip call to getMacroStack()
 				return envs.map(function(env:macros.eval.EvalContext.Env):Pos return
@@ -268,16 +278,16 @@ class MacroContext {
 						case ParseSuccess(data,
 							{pdWasDisplayFile: true}) if (inl): data; // ignore errors when inline-parsing in display file
 						case ParseSuccess(data, _): data;
-						case ParseError(_): macros.eval.EvalContext.excString("Invalid expression");
+						case ParseError(_): MacroApiImpl.excString("Invalid expression");
 					};
 					exit();
 					return r;
 				} catch (err:TypingError) {
 					exit();
-					return macros.eval.EvalMain.compilerError(err.error);
+					return MacroApiImpl.compilerError(err.error);
 				} catch (err:WithTypeError) {
 					exit();
-					return macros.eval.EvalMain.compilerError(err.error);
+					return MacroApiImpl.compilerError(err.error);
 				} catch (e:Dynamic) {
 					exit();
 					throw e;
@@ -345,11 +355,11 @@ class MacroContext {
 			withOptions: function(opts, f) return badStage(),
 			info: function(msg, p, depth) com.info(msg, p, depth),
 			warning: function(w, msg, p, depth) com.warning(w, [], msg, p, depth),
-			excString: macros.eval.EvalContext.excString,
+			excString: MacroApiImpl.excString,
 			getHxbWriterConfig: function() {
 				return switch com.hxbWriterConfig {
 					case null:
-						VNull;
+						MacroApiImpl.vnull;
 					case config:
 						compiler.hxb.HxbWriterConfig.writeWriterConfig(macros.eval.EvalDataApi.EvalWriterApi.api(), config);
 				}
@@ -374,7 +384,7 @@ class MacroContext {
 
 	static function previouslyDefinedError(m:ModuleDef, mpath:GlobalTypePath, p:Pos):Dynamic {
 		var pos:Pos = {pfile: core.Path.UniqueKey.lazyPath(m.mExtra.mFile), pmin: 0, pmax: 0};
-		return macros.eval.EvalMain.compilerError(Error.makeError(Custom("Cannot redefine module " + Globals.sTypePath(mpath)), p,
+		return MacroApiImpl.compilerError(Error.makeError(Custom("Cannot redefine module " + Globals.sTypePath(mpath)), p,
 			[Error.makeError(Custom("Previously defined here"), pos)]));
 	}
 
@@ -558,7 +568,7 @@ class MacroContext {
 		};
 		api.getBuildFields = function() {
 			var infos = ctx.c.getBuildInfos();
-			return infos == null ? VNull : macros.eval.EvalEncode.encodeArray(infos.fields.map(MacroApiImpl.encodeField));
+			return infos == null ? MacroApiImpl.vnull : MacroApiImpl.encodeArray(infos.fields.map(MacroApiImpl.encodeField));
 		};
 		api.defineType = function(v, mdep) {
 			var cttype = mkTypePath({pack: ["haxe", "macro"], name: "Expr"}, "TypeDefinition");
@@ -608,7 +618,7 @@ class MacroContext {
 		api.defineModule = function(m, types, imports, usings) {
 			var types:Array<TypeDecl> = types.map(function(v):TypeDecl {
 				var d = try MacroApiImpl.decodeTypeDef(v) catch (_:InvalidExpr)
-					macros.eval.EvalContext.excString("Invalid type definition");
+					MacroApiImpl.excString("Invalid type definition");
 				return {definition: d.def, pos: d.pos};
 			});
 			var pos = types.length == 0 ? Globals.nullPos : types[0].pos;
@@ -894,15 +904,17 @@ class MacroContext {
 		}, (com.classPaths : core.ClassPaths).asList());
 		// Eval _std must be in front so we don't look into hxnodejs or something.
 		// This can run before `TyperEntry.create`, so in order to display nice error when std is not found, this needs to be checked here too
-		if (evalStd != null)
+		if (macroPlatformHook != null) {} else if (evalStd != null)
 			(com2.classPaths : core.ClassPaths).add(evalStd);
 		else
 			Error.raiseStdNotFound();
 		var defines = Common.adaptDefinesToMacroContext(com2.defines);
 		com2.defines.values = defines.values;
 		com2.defines.definesSignature = null;
-		com2.platform = core.Globals.Platform.Eval;
-		Common.initPlatform(com2);
+		if (macroPlatformHook != null) macroPlatformHook(com2) else {
+			com2.platform = core.Globals.Platform.Eval;
+			Common.initPlatform(com2);
+		}
 		var mctx:TyperContext = Typecore.createContextRef(com2, null);
 		mctx.m.isDisplayFile = false;
 		context.CommonCache.lockSignature(com2, "get_macro_context");
@@ -1028,7 +1040,7 @@ class MacroContext {
 	}
 
 	public static function doCallMacro(com:CommonContext, api:CompilerApi, cpath:GlobalTypePath, name:String, args:Array<Value>,
-			p:Pos):Null<Value> {
+			p:Pos):haxe.ds.Option<Value> {
 		if (com.verbose)
 			Common.log(com,
 				"Calling macro "
@@ -1044,7 +1056,7 @@ class MacroContext {
 		var timerLevel = Timer.levelFromDefine(com.defines, Define.MacroTimes);
 		var ictx = macros.eval.EvalContext.getCtx();
 		var path = cpath.pack.concat([cpath.name]);
-		var f = function(api:CompilerApi):Null<Value> return macros.MacroEngine.engine.callPath(ictx, path, name, args, api);
+		var f = function(api:CompilerApi):haxe.ds.Option<Value> return macros.MacroEngine.engine.callPath(ictx, path, name, args, api);
 		var r = macroTimer(com.timerCtx, timerLevel, ["execution", Globals.sTypePath(cpath) + "." + name], null, f, api);
 		if (com.verbose)
 			Common.log(com, "Exiting macro " + Globals.sTypePath(cpath) + "." + name);
@@ -1055,12 +1067,12 @@ class MacroContext {
 			cpath:GlobalTypePath, f:String, p:Pos):{
 		mctx:TyperContext,
 		meth:MacroMethod,
-		call:Array<Value>->Null<Value>
+		call:Array<Value>->haxe.ds.Option<Value>
 	} {
 		var loaded = loadMacroPrimePrime(com, mctx, display, cpath, f, p);
 		var meth = loaded.meth, mloaded = loaded.module;
 		var cpath = meth.cls.clPath;
-		function call(args:Array<Value>):Null<Value> {
+		function call(args:Array<Value>):haxe.ds.Option<Value> {
 			addDependency(ctx.m.curmod, mloaded, MDepFromMacro);
 			return doCallMacro(ctx.com, api, cpath, f, args, p);
 		}
@@ -1242,24 +1254,31 @@ class MacroContext {
 					switch mct {
 						case MAExpr:
 							MacroApiImpl.encodeExpr(e);
+						case MAFunction if (MacroApiImpl.nativeValues):
+							// port: not with the native values' engine yet
+							Error.raiseTypingError("Function arguments of macros are not available with -D hxmc.macros=mir", e.pos);
 						case MAFunction:
 							var e = Typecore.typeExpr(mctx, e, WithTypeTools.withArgument(t, n));
 							Typecore.unify(mctx, e.etype, t, e.epos);
 							var v = macros.eval.EvalMain.evalExpr(ictx, e);
-							v == null ? VNull : v;
+							v == null ? MacroApiImpl.vnull : v;
+						case MAOther if (MacroApiImpl.nativeValues):
+							// port: the native values' constant (as Eval evaluates it)
+							macros.MacroApi.MacroNativeValues.evalConstant(et);
 						case MAOther:
 							var v = macros.eval.EvalMain.evalExpr(ictx, et);
-							v == null ? VNull : v;
+							v == null ? MacroApiImpl.vnull : v;
 					}
 				}
 			];
 		};
 		var args = el2.length == 0 ? args : args.slice(0, args.length == 0 ? 0 : args.length - 1)
-			.concat([macros.eval.EvalEncode.encodeArrayV(el2.map(MacroApiImpl.encodeExpr))]);
+			.concat([MacroApiImpl.encodeArrayV(el2.map(MacroApiImpl.encodeExpr))]);
 		function call():MacroResult {
-			var v = callMacro(args);
-			if (v == null)
-				return MError;
+			var v = switch callMacro(args) {
+				case None: return MError;
+				case Some(v): v;
+			};
 			var expected:String, process:Void->MacroResult;
 			switch mode {
 				case MExpr | MDisplay:
@@ -1274,7 +1293,7 @@ class MacroContext {
 						} else {
 							var ct = makePtpTh(AstTools.mkTypePath(["haxe", "macro"], "Expr", null, "Field"), Globals.nullPos);
 							var t = Typeload.loadComplexType(mctx, false, LoadNormal, ct);
-							macros.eval.EvalDecode.decodeArray(v)
+							MacroApiImpl.decodeArray(v)
 								.map(function(f) return safeDecode(ctx.com, f, "Field", t, p,
 									function() return MacroApiImpl.decodeField(f)));
 						};
@@ -1307,7 +1326,7 @@ class MacroContext {
 	}
 
 	public static function callMacro(mctx:TyperContext, args:Vector<Expr>, margs:Vector<{name:String, optional:Bool, type:T}>,
-			call:Array<Value>->Null<Value>, p:Pos):Null<Value> {
+			call:Array<Value>->haxe.ds.Option<Value>, p:Pos):haxe.ds.Option<Value> {
 		var el = CallUnification.unifyCallArgs(mctx, args, margs, tDynamic, p, false, false, false);
 		return call(el.mapToArray(function(e) return try MacroApiImpl.makeConst(e) catch (_:Exit)
 			Error.raiseTypingError("Argument should be a constant", e.epos)));
@@ -1391,7 +1410,7 @@ class MacroContext {
 		if (macroInterpCache == null)
 			createMacroInterp(api, mctx);
 		else
-			macroInterpCache.curapi = api;
+			macros.MacroEngine.engine.setApi(macroInterpCache, api);
 	}
 
 	// port: Eval-target execution (`--interp`/`--eval`); not reachable from the HXB driver.

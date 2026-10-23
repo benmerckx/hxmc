@@ -7,7 +7,7 @@ using StringTools;
 
 // Compilation-server conformance of the port:
 //   <haxe> -cp haxe/test --run Server [-j N] [--rounds N] [--hxb-cache] [--fresh]
-//       [--scenario cases|edit|misc|server-connect|all] [--cases FILE] [--summary <file>] [name-substring ...]
+//       [--scenario cases|edit|misc|server-connect|all] [--cases FILE] [--no-hxb] [--summary <file>] [name-substring ...]
 // Starts the reference (HAXE_REFERENCE) and the port (HAXE_IN_HAXE_PORT) as
 // compilation servers (`--wait <port>`) and sends both the same requests
 // through `--connect` (each compiler's client to its own server). For each
@@ -23,6 +23,9 @@ using StringTools;
 //   output, errors, --version and --next through the server;
 // - server-connect: the compilers connect to this script (--server-connect) and
 //   answer length-prefixed requests.
+// --no-hxb compares the requests' exit codes and outputs only, not the archives:
+// for a port whose macro context is typed for another platform (-D
+// hxmc.macros=mir), whose archive then lays the modules out otherwise.
 // --hxb-cache keeps the default HXB module cache (by default every request
 // adds -D disable-hxb-cache); --fresh restarts the servers for every case.
 class Server {
@@ -99,11 +102,13 @@ class Server {
 	static function normalize(text:String, outDir:String):String
 		return ~/\b(ref|port)([0-9]*)\.hxb/g.replace(text.replace(outDir, "<OUT>"), "X$2.hxb");
 
+	static var noHxb = false;
+
 	static function compareOutputs(ref:ServerOut, port:ServerOut, refHxb:Null<String>, portHxb:Null<String>, outDir:String):Null<String> {
 		if (ref.code != port.code) return 'exit code differs (reference ${ref.code}, port ${port.code}): ' + (port.err != "" ? port.err : ref.err).trim().substr(0, 300);
 		if (normalize(ref.out, outDir) != normalize(port.out, outDir)) return 'stdout differs: reference ${haxe.Json.stringify(ref.out.substr(0, 200))}, port ${haxe.Json.stringify(port.out.substr(0, 200))}';
 		if (normalize(ref.err, outDir) != normalize(port.err, outDir)) return 'stderr differs: reference ${haxe.Json.stringify(ref.err.substr(0, 300))}, port ${haxe.Json.stringify(port.err.substr(0, 300))}';
-		if (ref.code == "0" && refHxb != null && FileSystem.exists(refHxb)) {
+		if (ref.code == "0" && refHxb != null && FileSystem.exists(refHxb) && !noHxb) {
 			if (!FileSystem.exists(portHxb)) return "port wrote no archive";
 			return compareHxb(refHxb, portHxb);
 		}
@@ -336,6 +341,7 @@ class Server {
 		mkdirs(GENERATED);
 		gen = FileSystem.fullPath(GENERATED);
 		var extra = o.has("--hxb-cache") ? [] : ["-D", "disable-hxb-cache"];
+		noHxb = o.has("--no-hxb");
 		var scenario = o.get("--scenario", "all");
 		var results = [];
 		if (scenario == "cases" || scenario == "all") {

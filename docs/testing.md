@@ -270,7 +270,8 @@ and the release), `build` (the bootstrap from the stage0, the fixpoint, the type
 cache checks, the dev loop, the
 release binaries and lix for the six targets) and next to it, each with a tool
 of its own from the stage0: `corpus` (`make corpus-stage`: the corpus for
-every target in three jobs, the port as a WebAssembly module, the reference's
+every target in three jobs, the compiler with Mir macros and `--run` for the six
+targets, `bin/npm/native/<target>/haxe`, the port as a WebAssembly module, the reference's
 self-compile), `fuzz-exec` (the fuzzer's exec lanes, a job each),
 `crosshost` (`make crosshost`, the targets in two jobs),
 `upstream-suites` (upstream's runtime suites on hxmc, natively and on wasm32-wasi:
@@ -282,7 +283,11 @@ also runs `make wasmgc-check`. Then
 haxelib unit`, `display server jsonrpc`, `targets`, the Eval debugger in
 three shards, `SHARD=i/n`, and the fuzzer's diff lanes in three jobs), `test`
 (on each of the six machines: the release binary's smoke test with a TLS
-handshake and libuv, lix, the corpus, the self-compile), `wasm` (the corpus
+handshake and libuv, lix, the corpus, the self-compile; then the Mir lane:
+the compiler with Mir macros running the corpus in itself, `Corpus --mir-run`,
+the macro cases with Mir macros against the reference, `Conformance
+--target-only --parallel 1 --known eval-Issue11631-compile`, and a benchmark
+macro and the formatter's build timed against Eval, `MirBench`), `wasm` (the corpus
 and the self-compile under node and wasmtime, both also with legacy exception
 handling under node), `playground` (the website in three browser engines,
 `make site-check`: a link check; every page at a desktop's and a phone's

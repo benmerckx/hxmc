@@ -175,7 +175,7 @@ class Facts {
 
 	function addType(t:TypeEntry):Int {
 		types.push(t);
-		// (16 bits of type index, 0xFFFF the collector's: Types.T_FWD; the JIT's spare entries after)
+		// (16 bits of type index, 0xFFFF the collector's: Types.T_FWD; a Mir host's spare entries after)
 		if (types.length > 0xFFFF - 4096) throw "hxmc: more than " + (0xFFFF - 4096) + " types";
 		return types.length - 1;
 	}
@@ -547,54 +547,19 @@ class Facts {
 		var callers = new Map<FuncInfo, Array<FuncInfo>>();
 		var dropped:Array<FuncInfo> = [];
 		var blocking:Array<FuncInfo> = [];
+		var initial = [for (f => _ in cand) f => true];
 		for (f in p.funcs) {
-			var gc = false, here = false, addr = false;
-			function ex(e:Ex) {
-				switch e {
-					case ECall(g, _):
-						var cs = callers.get(g);
-						if (cs == null) callers.set(g, cs = []);
-						if (cs.length == 0 || cs[cs.length - 1] != f) cs.push(f);
-						if (!cand.exists(g)) gc = true;
-					case EAnonGet(n, _, _, _) | ECallAnon(n, _, _, _):
-						bodyNames.set(n, true);
-						gc = gc || GcPoints.gcPoint(e) != 0;
-					case ECallHost("hx_dyn_get" | "hx_dyn_set" | "hx_dyn_call_field", args, _) if (args[1].match(EStr(_))):
-						switch args[1] {
-							case EStr(n): bodyNames.set(n, true);
-							case _:
-						}
-						gc = gc || GcPoints.gcPoint(e) != 0;
-					case ECallHost(n, _, _):
-						// (a safe region is no GC point of the function itself: it
-						// blocks, f.blocks, which its callers take as one, GcPoints)
-						if (n == "rt_blocking_enter") here = true;
-						if (n == "rt_blocking_enter" || n == "rt_blocking_leave") {
-							Facts.iterEx(ex, e);
-							return;
-						}
-						if (n == "hxmc_unsafe_Mem_addr") addr = true;
-						gc = gc || GcPoints.gcPoint(e) != 0;
-					case EFieldAddr(_):
-						addr = true;
-						gc = gc || GcPoints.gcPoint(e) != 0;
-					case _:
-						gc = gc || GcPoints.gcPoint(e) != 0;
-				}
-				Facts.iterEx(ex, e);
+			var sc = f.gcScan;
+			if (sc == null) f.gcScan = sc = scanGc(f);
+			for (n in sc.names)
+				bodyNames.set(n, true);
+			var gc = sc.gc, here = sc.here, addr = sc.addr;
+			for (g in sc.callees) {
+				var cs = callers.get(g);
+				if (cs == null) callers.set(g, cs = []);
+				if (cs.length == 0 || cs[cs.length - 1] != f) cs.push(f);
+				if (!initial.exists(g)) gc = true;
 			}
-			function st(s:Stmt) {
-				switch s {
-					case SArrSet(_) | SArrPush(_) | SThrow(_) | STry(_): gc = true;
-					case SAnonSet(n, _, _, _):
-						bodyNames.set(n, true);
-						gc = true;
-					case _:
-				}
-				Facts.iterStmt(st, ex, s);
-			}
-			for (s in f.body)
-				st(s);
 			if (gc && cand.remove(f)) dropped.push(f);
 			if (here) {
 				f.blocksHere = f.blocks = true;
@@ -634,6 +599,61 @@ class Facts {
 			errors.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 			throw errors.join("\n");
 		}
+	}
+
+	// a function's body as findNoGc needs it: its own GC points, its callees,
+	// whether it enters a safe region or takes a raw address, the names it
+	// reads or writes by name
+	static function scanGc(f:FuncInfo):{gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>} {
+		var gc = false, here = false, addr = false;
+		var callees:Array<FuncInfo> = [], seen = new Map<FuncInfo, Bool>(), names:Array<String> = [];
+		function ex(e:Ex) {
+			switch e {
+				case ECall(g, _):
+					if (!seen.exists(g)) {
+						seen.set(g, true);
+						callees.push(g);
+					}
+				case EAnonGet(n, _, _, _) | ECallAnon(n, _, _, _):
+					names.push(n);
+					gc = gc || GcPoints.gcPoint(e) != 0;
+				case ECallHost("hx_dyn_get" | "hx_dyn_set" | "hx_dyn_call_field", args, _) if (args[1].match(EStr(_))):
+					switch args[1] {
+						case EStr(n): names.push(n);
+						case _:
+					}
+					gc = gc || GcPoints.gcPoint(e) != 0;
+				case ECallHost(n, _, _):
+					// (a safe region is no GC point of the function itself: it
+					// blocks, f.blocks, which its callers take as one, GcPoints)
+					if (n == "rt_blocking_enter") here = true;
+					if (n == "rt_blocking_enter" || n == "rt_blocking_leave") {
+						Facts.iterEx(ex, e);
+						return;
+					}
+					if (n == "hxmc_unsafe_Mem_addr") addr = true;
+					gc = gc || GcPoints.gcPoint(e) != 0;
+				case EFieldAddr(_):
+					addr = true;
+					gc = gc || GcPoints.gcPoint(e) != 0;
+				case _:
+					gc = gc || GcPoints.gcPoint(e) != 0;
+			}
+			Facts.iterEx(ex, e);
+		}
+		function st(s:Stmt) {
+			switch s {
+				case SArrSet(_) | SArrPush(_) | SThrow(_) | STry(_): gc = true;
+				case SAnonSet(n, _, _, _):
+					names.push(n);
+					gc = true;
+				case _:
+			}
+			Facts.iterStmt(st, ex, s);
+		}
+		for (s in f.body)
+			st(s);
+		return {gc: gc, here: here, addr: addr, callees: callees, names: names};
 	}
 
 	// file:line: of a function's declaration (errors)
@@ -708,7 +728,9 @@ class Facts {
 	function checkRawAddresses() {
 		var errors = [];
 		for (f in takesAddr) {
-			if (f.noGc) continue;
+			// (checked once: a program lowered in steps makes its facts again)
+			if (f.noGc || f.rawChecked) continue;
+			f.rawChecked = true;
 			for (v in Roots.rawViolations(f))
 				errors.push(where(f) + '${displayName(f)}: a raw heap address (Mem.addr) $v; take the address after the GC point, or move the work into a @:hxmc.noGc function');
 		}
@@ -750,7 +772,10 @@ class Facts {
 			}
 		}
 		for (f in p.funcs)
-			if (!f.hasTry) mark(f.body);
+			if (!f.hasTry && !f.coldMarked) {
+				f.coldMarked = true;
+				mark(f.body);
+			}
 	}
 
 	// (@:hxmc.export("symbol") on a scalar static: that symbol)

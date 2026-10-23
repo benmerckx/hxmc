@@ -38,6 +38,7 @@ class Lower implements LowerQueries {
 	var defaults = new Map<FuncInfo, ArgDefaults>();
 
 	public function new() {
+		CInterop.resetCaches();
 		root = new ClassInfo("Object", "Object", null);
 		prog.classes.push(root);
 		// (the C functions are this program's: those of an earlier build of the
@@ -98,6 +99,18 @@ class Lower implements LowerQueries {
 	// statements carry their source lines (Stmt.SPos): native builds but with
 	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
+	// (-D hxmc.macros=mir: hxmc.interp.MirMacros) the macro code's calls note
+	// where they are, as Eval's frames do (env_leave_pmin/pmax, which the
+	// macro API's get_api_call_pos reads): before each call, the call's site
+	// (`site`: its id) in `pending` and the calling function's own site in
+	// `current`; each function takes its site from `pending` as it starts.
+	// (pending, current: symbols of the compiler's 32-bit data; wants: the functions that do)
+	public static var callSites:Null<{site:core.Globals.Pos->Int, pending:String, current:String, wants:FuncInfo->Bool}> = null;
+	// (-D hxmc.macros=mir: hxmc.interp.MacroRuntime) a static function of the
+	// runtime marked @:hxmc.hostCode, whose body was not typed: the native
+	// code of the compiler running this lowering is its code. What that code
+	// does (FuncInfo.noGc, blocks), or null when the compiler lacks it.
+	public static var hostCode:Null<FuncInfo->Null<{noGc:Bool, blocks:Bool}>> = null;
 	public var errors = new Map<String, {count:Int, example:String}>();
 	public var natives = new Map<String, Int>(); // runtime functions called, with counts
 
@@ -214,6 +227,8 @@ class Lower implements LowerQueries {
 	public static var targetArm = -1;
 	public static var targetCode = -1;
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
+	// Mem.mirHost: 1 when the program loads code for the Mir interpreter (Main)
+	public static var mirHost = 0;
 	// -D hxmc.wasm-gc (hxmc.wasmgc): the runtime's Haxe implementations are those of @:hxmc.wasmgc classes
 	public static var wasmGc = false;
 	// the program's resources (--resource, Context.addResource), haxe.Resource's
@@ -232,6 +247,8 @@ class Lower implements LowerQueries {
 	// throws "Null Access"; without, the native targets fault and the runtime's
 	// handler throws (hxmc.rt.Faults)
 	public static var nullChecks = false;
+	// -D hxmc.interp: functions of the program are interpreted (hxmc.interp.InterpGen: their entry stubs call hxmc_interp_enter)
+	public static var interp = false;
 
 	// a condition on the target (Mem.os, Mem.arm, Mem.target compared with
 	// constants) as a constant (EInt), when it is one: FnLower lowers only
@@ -244,6 +261,7 @@ class Lower implements LowerQueries {
 				case ECallHost("hxmc_unsafe_Mem_arm", [], _) if (targetArm >= 0): targetArm;
 				case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): targetCode;
 				case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): targetPlatform;
+				case ECallHost("hxmc_unsafe_Mem_mirHost", [], _): mirHost;
 				case ENot(a):
 					var x = v(a);
 					x == null ? null : x == 0 ? 1 : 0;
@@ -309,6 +327,7 @@ class Lower implements LowerQueries {
 			case ECallHost("hxmc_unsafe_Mem_arm", [], _) if (targetArm >= 0): EInt(targetArm);
 			case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): EInt(targetCode);
 			case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): EInt(targetPlatform);
+			case ECallHost("hxmc_unsafe_Mem_mirHost", [], _): EInt(mirHost);
 			case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
 			// (Float's %: hxmc.rt.LibM.fmod, as Math's natives)
 			case EBin(FMod, a, b) if (hostImpls.exists("fmod")): ECall(hostImpl("fmod"), vector(ex(a), ex(b)));
@@ -643,7 +662,7 @@ class Lower implements LowerQueries {
 					case "EnumValue" if (isStd): TRef(REnum(null));
 					case "UInt" if (isStd): TI32;
 					case "I64" if (a.aPath.pack.join(".") == "hxmc"): TI64;
-					// in macro mode (native macros, hxmc/src/hxmc/macro): the compiler's position, opaque
+					// in macro mode (Mir macros, hxmc.interp.MirMacros): the compiler's position, opaque
 					case "Position" if (a.aPath.pack.join(".") == "haxe.macro"): TRef(RAny);
 					// a coroutine is a function taking the continuation, as on HashLink
 					case "Coroutine" if (a.aPath.pack.join(".") == "haxe.coro"):
@@ -994,13 +1013,22 @@ class Lower implements LowerQueries {
 		funcs.set(cf, fi);
 		prog.funcs.push(fi);
 		signature(fi, tf, null);
+		if (isCreateInstance(fi.name)) makers = true;
+		if (cf.cfMeta.length > 0 && hasMeta(":hxmc.hostCode", cf.cfMeta)) {
+			// (its body stands for the compiler's native code: never lowered;
+			// Facts takes what that code does instead of scanning it)
+			var h = hostCode == null ? null : hostCode(fi);
+			if (h == null) fail(fi.display + " has no body (@:hxmc.hostCode: the native code of the compiler that typed it), and this compiler lacks it");
+			fi.hostCode = true;
+			fi.gcScan = {gc: !h.noGc, here: h.blocks, addr: false, callees: [], names: []};
+			return fi;
+		}
 		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, cf);
 		pending.push(guarded(fi, () -> lowerBody(fi, cf, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.run(tf);
 			fl.finish();
 		})));
-		if (isCreateInstance(fi.name)) makers = true;
 		return fi;
 	}
 
@@ -1658,11 +1686,17 @@ class Lower implements LowerQueries {
 		if (subs != null)
 			for (d in subs)
 				if (d.clFields.exists(name) && d.clFields.get(name).cfExpr != null) return true;
+		// (a class of the compiler code is loaded into: its own subclasses may override)
+		if (hostOverrides != null && hostOverrides.exists(core.Globals.sTypePath(c.clPath) + "." + name)) return true;
 		// a subclass lowered later may still override: dispatch if any
 		// descendant the typer knows does (clDescendants holds the direct
 		// subclasses: their subclasses too)
 		return overriddenBelow(c, name);
 	}
+
+	// the methods the compiler's own classes override ("pack.C.name": code
+	// loaded into the compiler, interp.MirMacros, macro.Loader.hostOverrides)
+	public static var hostOverrides:Null<Map<String, Bool>> = null;
 
 	var overridden = new Map<String, Bool>();
 

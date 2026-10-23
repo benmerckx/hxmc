@@ -1,6 +1,5 @@
 package hxmc.macro;
 
-#if hxmc.jit
 import hxmc.I64;
 import hxmc.Obj;
 import hxmc.unsafe.LibC;
@@ -9,72 +8,205 @@ import hxmc.rt.Gc;
 import hxmc.rt.Dyn;
 import hxmc.unsafe.Ptr;
 
-@:hxmc.c @:hxmc.fast private extern class Vm {
-	static function mmap(addr:Ptr, len:I64, prot:Int, flags:Int, fd:Int, off:I64):Ptr;
-	static function mprotect(addr:Ptr, len:I64, prot:Int):Int;
-}
-
-// A loaded bundle: what the bridge and the engine use.
+// A loaded bundle: what the engines use.
 class Bundle {
-	public var entries = new Map<String, Ptr>(); // entry name -> code
+	public var entries = new Map<String, Ptr>(); // entry name -> its descriptor
 	public var typeObjs = new Map<String, Ptr>(); // type name (TK_CLASS, TK_ENUM) -> its type object
 	public var shapes:Array<{tindex:Int, fields:Array<String>}> = []; // the anonymous structures (TK_ANON)
 	public var singletons = new Map<Int, Int>(); // constructor type index -> its rt_globals index
-	public var codeBytes = 0;
+	public var inits:Array<Ptr> = []; // the static initializers' descriptors, run in order (Loader.run0)
+	public var codeBytes = 0; // (always 0: a bundle has no code)
+	public var dataBytes = 0;
 
 	public function new() {}
 }
 
-// Links a bundle (Guest) into the running compiler: the compiler's symbols
-// come from <exe>.syms (Link, -D hxmc.jit); program-wide numbers the
-// compiler has are its own (type indices after a layout check, field ids,
-// signatures, globals), the others are new: types fill the spare entries of
-// rt_types, signatures the spare entries of the signature tables, field
-// names are added to the runtime's table (Names), reference globals grow
-// rt_globals. The code, its data and the dispatch rows are mapped below 2 GB
-// (code reaches the compiler with rel32 and dispatch rows are absolute
-// 32-bit displacements), the code made read-only and executable once
-// relocated. Prototype limits: a new class may not extend one of the
-// compiler's, and nothing is ever unloaded.
+// Links a bundle compiled for the Mir interpreter (interp.MirMacros,
+// interp.MirRun) into the running compiler: the compiler's symbols come
+// from the table it carries (HostTable, made at its link as a Mir host's);
+// program-wide numbers the compiler has are its own (type indices after a
+// layout check, field ids, signatures, globals), the others are new: types
+// fill the spare entries of rt_types, signatures the spare entries of the
+// signature tables, field names are added to the runtime's table (Names),
+// reference globals grow rt_globals. Prototype limits: a new class may not
+// extend one of the compiler's, and nothing is ever unloaded.
+//
+// A bundle has no code: its functions are descriptors (InterpGen), its data
+// and rows are in memory of malloc's, only 64-bit absolute relocations are
+// applied, and nothing is made executable. An interpreted function's
+// address, where native code calls it (dispatch rows, method tables,
+// closures in data, makers, signature trampolines), is an entry of the
+// interpreter's pools (interp.InterpAbi), given out the first time it is
+// needed (`entry`).
 @:access(hxmc.rt.Gc)
 @:access(hxmc.rt.Dyn)
+@:access(hxmc.rt.Interp)
 class Loader {
-	static inline var PROT_READ = 1;
-	static inline var PROT_WRITE = 2;
-	static inline var PROT_EXEC = 4;
-	static inline var MAP_PRIVATE = 2;
-	static inline var MAP_ANONYMOUS = 0x20;
 	static inline var TS = 112; // Abi.TYPE_SIZE
 
-	static var host:Null<Map<String, {k:String, v:Int}>> = null;
+	static var host:Null<HostTable.HostSyms> = null;
 	// what the bundles loaded so far define (their numbers, globals, type objects, functions)
-	static var xb = new Map<String, {k:String, v:Int}>();
+	static var xb = new Map<String, {k:String, v:I64}>();
+	// the pool entries given out, by descriptor symbol (this generation's)
+	static var entries = new Map<String, Ptr>();
 	static var hostNtypes = 0;
 	static var hostNsigs = 0;
 	static var nextType = 0;
 	static var nextSig = 0;
-	static var hint = 0x40000000;
+	// the types and signatures of this generation, and those of earlier ones no
+	// bundle has taken again, by symbol, with their facts: a later generation's
+	// of the same facts takes the entry again (takenAgain; spare entries are
+	// finite, and every generation has the macro API's enums: 243 of the 254
+	// types of a trivial macro's)
+	static var genTypes = new Map<String, {idx:Int, key:String}>();
+	static var oldTypes = new Map<String, {idx:Int, key:String}>();
+	static var genSigs = new Map<String, {id:Int, key:String}>();
+	static var oldSigs = new Map<String, {id:Int, key:String}>();
+	// the slots of rt_globals likewise, by symbol (a static's, a constructor's
+	// singleton): emptied when taken again, as a new generation's statics
+	// start (Eval's code of a dropped prototype finds the new one's by its path)
+	static var genGlobals = new Map<String, Int>();
+	static var oldGlobals = new Map<String, Int>();
+	// the empty anonymous structure (one for every bundle)
+	static var emptyAnon = -1;
+
+	// a new generation of bundles (interp.MirMacros: a compilation whose macro
+	// context was typed again): those loaded so far stay mapped, but the next
+	// ones are not linked against them, and their types are no longer found by
+	// name (Type.resolveClass: an empty name)
+	public static function newGeneration() {
+		for (t in hostNtypes...nextType) {
+			if (t == emptyAnon) continue;
+			var e = Mem.sym("rt_types").add(t * TS);
+			var n = Mem.getPtr(e, 0);
+			if (!n.isNull()) Mem.setPtr(e, 0, n.add(LibC.strlen(n)));
+		}
+		xb = new Map();
+		entries = new Map();
+		for (k => v in genTypes)
+			oldTypes.set(k, v);
+		for (k => v in genSigs)
+			oldSigs.set(k, v);
+		for (k => v in genGlobals)
+			oldGlobals.set(k, v);
+		genTypes = new Map();
+		genSigs = new Map();
+		genGlobals = new Map();
+	}
+
+	// the facts of a type that decide whether an entry of an earlier generation
+	// is its (a class's: with the span of its descendants' type indices)
+	static function typeKey(t:Dynamic, spans:Map<String, Int>):String {
+		var k = haxe.Json.stringify(t);
+		return t.tk == "TK_CLASS" ? k + " " + spans.get(t.sym) : k;
+	}
+
+	// the types of a bundle that take entries of earlier generations again
+	// (fresh: those neither the compiler's nor of a bundle of this generation):
+	// an enum with all its constructors, at type indices less their tags that
+	// agree (code subtracts them, MirBuild's EEnumTag); a structure, a
+	// closure's type, an interface; the classes, all of them or none, at
+	// type indices that follow each other in their order (a class's
+	// instances are the span of type indices from its own, MirBuild.instOf;
+	// every class is below Object)
+	static function takenAgain(types:Array<Dynamic>, spans:Map<String, Int>, fresh:Dynamic->Bool):Map<String, Int> {
+		var r = new Map<String, Int>();
+		var bySym = new Map<String, Dynamic>();
+		for (t in types)
+			bySym.set(t.sym, t);
+		function old(t:Dynamic):Null<Int> {
+			if (t == null || !fresh(t)) return null;
+			var o = oldTypes.get(t.sym);
+			return o != null && o.key == typeKey(t, spans) ? o.idx : null;
+		}
+		var classes = [];
+		for (t in types)
+			switch (t.tk : String) {
+				case "TK_ANON" | "TK_CLOSURE" | "TK_BOUND" | "TK_INTERFACE":
+					var i = old(t);
+					if (i != null) r.set(t.sym, i);
+				case "TK_CLASS" if (fresh(t)):
+					classes.push(t);
+				case "TK_ENUM":
+					var i = old(t);
+					if (i == null) continue;
+					var cs:Array<String> = t.ctors;
+					var base:Null<Int> = null, ok = true;
+					for (c in cs) {
+						var ct = bySym.get(c);
+						var ci = old(ct);
+						if (ci == null || (base != null && ci - (ct.tag : Int) != base)) {
+							ok = false;
+							break;
+						}
+						base = ci - (ct.tag : Int);
+					}
+					if (!ok) continue;
+					r.set(t.sym, i);
+					for (c in cs)
+						r.set(c, oldTypes.get(c).idx);
+				case _:
+			}
+		var base:Null<Int> = null;
+		for (k in 0...classes.length) {
+			var i = old(classes[k]);
+			if (i == null || (k > 0 && i != base + k)) {
+				base = null;
+				break;
+			}
+			if (k == 0) base = i;
+		}
+		if (base != null)
+			for (k in 0...classes.length)
+				r.set(classes[k].sym, base + k);
+		return r;
+	}
+
+	// the methods the compiler's own classes override, under every class above
+	// the overriding one ("pack.C.name"): code loaded into the compiler is handed
+	// its objects (a compilation's streams), so its calls of those methods
+	// dispatch (Lower.hostOverrides), though no class it knows overrides them
+	public static function hostOverrides():Map<String, Bool> {
+		hostSyms();
+		var r = new Map<String, Bool>();
+		var types = Mem.sym("rt_types");
+		inline function entry(t:Int):Ptr
+			return types.add(t * TS);
+		for (t in Abi.T_FIRST...hostNtypes) {
+			var e = entry(t);
+			var s = hxmc.rt.Types.sup(e);
+			if (hxmc.rt.Types.tk(e) != hxmc.rt.Types.TK_CLASS || s < Abi.T_FIRST) continue;
+			for (i in 0...hxmc.rt.Types.nmethods(e)) {
+				var m = hxmc.rt.Types.method(e, i);
+				var above = @:privateAccess Dyn.findMethod(entry(s), hxmc.rt.Types.mFid(m));
+				if (above.isNull() || hxmc.rt.Types.mFn(above) == hxmc.rt.Types.mFn(m)) continue;
+				var n = @:privateAccess hxmc.rt.Names.fidStr(hxmc.rt.Types.mFid(m));
+				var k = s;
+				while (k >= Abi.T_FIRST && hxmc.rt.Types.tk(entry(k)) == hxmc.rt.Types.TK_CLASS) {
+					r.set(@:privateAccess hxmc.rt.Str.ofAscii(hxmc.rt.Types.name(entry(k))) + "." + n, true);
+					k = hxmc.rt.Types.sup(entry(k));
+				}
+			}
+		}
+		return r;
+	}
+
+	// the spare entries taken: types, signatures
+	public static function used():{types:Int, sigs:Int}
+		return {types: nextType - hostNtypes, sigs: nextSig - hostNsigs};
 
 	// whether o is an object of a type of a bundle
 	public static function isBundleObject(o:Dynamic):Bool
 		return host != null && Mem.getU16(Mem.addr(o), hxmc.Abi.HDR_TINDEX) >= hostNtypes; // (the type index: hxmc.rt.Types)
 
-	static function hostSyms():Map<String, {k:String, v:Int}> {
+	static function hostSyms():HostTable.HostSyms {
 		if (host != null) return host;
-		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
-		var path = exe + ".syms";
-		if (!sys.FileSystem.exists(path)) throw "no symbol map " + path + " (a compiler built with -D hxmc.jit writes it)";
-		var m = new Map();
-		for (l in sys.io.File.getContent(path).split("\n")) {
-			var a = l.split(" ");
-			if (a.length == 3) m.set(a[0], {k: a[1], v: Std.parseInt(a[2])});
-		}
-		host = m;
+		host = new HostTable.HostSyms();
 		hostNtypes = Mem.getI32(Mem.sym("rt_ntypes"), 0);
 		hostNsigs = Mem.getI32(Mem.sym("rt_nsigs"), 0);
 		nextType = hostNtypes;
 		nextSig = hostNsigs;
-		return m;
+		return host;
 	}
 
 	static var debug = Sys.getEnv("HXMC_MACRO_DEBUG") == "1";
@@ -82,14 +214,57 @@ class Loader {
 	static function dbg(s:String)
 		if (debug) Sys.stderr().writeString("hxmc.macros: load: " + s + "\n");
 
-	static inline function ptr(v:Int):Ptr
-		return Ptr.ofI64((v : I64));
+	static inline function ptr(v:I64):Ptr
+		return Ptr.ofI64(v);
 
-	// (an address code reaches with 32 bits: below 2 GB)
-	static function addrOf(p:Ptr):Int {
-		var v = p.toI64();
-		if (v < (0 : I64) || v >= (0x7fffffff : I64)) throw "address beyond 2 GB in a 32-bit relocation";
-		return v.toInt();
+	// a function of no arguments of a bundle run by the interpreter (its
+	// descriptor: the static initializers, MirRun's main)
+	public static function run0(p:Ptr) {
+		var buf = LibC.malloc(8);
+		try
+			hxmc.rt.Interp.enter(p, buf)
+		catch (e:Dynamic) {
+			LibC.free(buf);
+			throw e;
+		}
+		LibC.free(buf);
+	}
+
+	// the address native code calls the function of descriptor
+	// symbol d at, given out once (hxmc.rt.Interp.poolEntry; flags: the
+	// descriptor's, which may not be in memory yet)
+	static function entry(d:String, desc:Ptr, flags:Int):Ptr {
+		var e = entries.get(d);
+		if (e == null) {
+			e = hxmc.rt.Interp.poolEntry(desc, flags);
+			entries.set(d, e);
+		}
+		return e;
+	}
+
+	// a C function of the system's libraries the compiler imports nothing of
+	// (its imports are in the host table: HostTable.imports), looked up as
+	// the system's loader would bind it, or null: macOS: libSystem and the
+	// images loaded (dlsym, RTLD_DEFAULT); Windows: the DLL of its
+	// @:hxmc.lib, else the C library's and the system's DLLs the process has
+	// loaded. (Linux: the executable is static, there is nothing else.)
+	static function systemSymbol(n:String):Ptr {
+		if (Mem.os() == 1) return SysDl.dlsym(Ptr.ofI64(-2), cstr(n));
+		if (Mem.os() == 2) {
+			var lib = hxmc.ir.CInterop.LIBS.get(n);
+			// (LinkInputs.libFile's names)
+			var dlls = lib != null ? [lib.indexOf(".") < 0 && lib.indexOf("/") < 0 ? lib + ".dll" : lib] : [];
+			for (d in ["ucrtbase.dll", "msvcrt.dll", "kernel32.dll", "ntdll.dll"])
+				dlls.push(d);
+			for (d in dlls) {
+				var h = SysDll.GetModuleHandleA(cstr(d));
+				if (h.isNull()) h = lib != null && d == dlls[0] ? SysDll.LoadLibraryA(cstr(d)) : Ptr.nil();
+				if (h.isNull()) continue;
+				var p = SysDll.GetProcAddress(h, cstr(n));
+				if (!p.isNull()) return p;
+			}
+		}
+		return Ptr.nil();
 	}
 
 	// a C string outside the heap (never freed)
@@ -108,10 +283,9 @@ class Loader {
 		return p;
 	}
 
-	public static function load(base:String):Bundle {
+	// a bundle: its object (no code: InterpGen.InterpSet.loaded) and its facts (BundleFacts.facts)
+	public static function loadObj(obj:Obj, facts:Dynamic):Bundle {
 		var h = hostSyms();
-		var obj = ElfReader.read(sys.io.File.getBytes(base + ".o"));
-		var facts:Dynamic = haxe.Json.parse(sys.io.File.getContent(base + ".json"));
 		var b = new Bundle();
 		// ---- program-wide numbers
 		dbg("program-wide numbers");
@@ -122,9 +296,9 @@ class Loader {
 		function abs(n:String, share:Bool):Null<Int> {
 			var s = share ? h.get(n) : null;
 			if (s == null) s = xb.get(n);
-			return s != null && s.k == "a" ? s.v : null;
+			return s != null && s.k == "a" ? s.v.toInt() : null;
 		}
-		function dataAddr(n:String, share:Bool):Null<Int> {
+		function dataAddr(n:String, share:Bool):Null<I64> {
 			var s = share ? h.get(n) : null;
 			if (s == null) s = xb.get(n);
 			return s != null && s.k == "d" ? s.v : null;
@@ -138,10 +312,14 @@ class Loader {
 			num.set(f.sym, v);
 			fids.set(f.name, v);
 		}
-		// types: the compiler's (after a layout check) or a bundle's, else the next spare entry (in the guest's order)
+		// types: the compiler's (after a layout check) or a bundle's, else the next spare entry (in the bundle's order)
 		var types:Array<Dynamic> = facts.types;
 		var isNew = new Map<String, Bool>();
 		var shared = new Map<String, Bool>();
+		var spans = new Map<String, Int>();
+		for (c in (facts.classes : Array<Dynamic>))
+			spans.set(c.ty, c.span);
+		var again = takenAgain(types, spans, t -> abs(t.sym, t.share) == null);
 		for (t in types) {
 			shared.set(t.sym, t.share);
 			var v = abs(t.sym, t.share);
@@ -150,9 +328,16 @@ class Loader {
 				if (why != null) throw "type " + t.name + " differs from the compiler's: " + why;
 				num.set(t.sym, v);
 			} else {
-				if (nextType >= hostNtypes + Jit.SPARE_TYPES) throw "out of spare type entries";
-				num.set(t.sym, nextType++);
+				var i = again.get(t.sym);
+				if (i != null)
+					oldTypes.remove(t.sym)
+				else {
+					if (nextType >= hostNtypes + MirHost.SPARE_TYPES) throw "out of spare type entries: the bundles loaded have " + MirHost.SPARE_TYPES + " types the compiler lacks (hxmc.macro.MirHost.SPARE_TYPES)";
+					i = nextType++;
+				}
+				num.set(t.sym, i);
 				isNew.set(t.sym, true);
+				genTypes.set(t.sym, {idx: i, key: typeKey(t, spans)});
 			}
 		}
 		inline function tyNum(n:Dynamic):Int
@@ -162,7 +347,8 @@ class Loader {
 			var span = "TYSPAN_" + (c.ty : String).substr(3);
 			if (isNew.exists(c.ty)) {
 				// (the root class of every class, Object, is the compiler's)
-				if (c.sup != null && c.sup != "TY_Object" && !isNew.exists(c.sup)) throw "class " + c.ty + " extends a class of the compiler";
+				// (a class of a bundle loaded before: its span does not cover the new class, an instance test of it misses it)
+				if (c.sup != null && c.sup != "TY_Object" && !isNew.exists(c.sup) && !xb.exists(c.sup)) throw "class " + c.ty + " extends a class of the compiler";
 				num.set(span, c.span);
 			} else {
 				var v = abs(span, shared.get(c.ty));
@@ -176,9 +362,16 @@ class Loader {
 		for (s in sigs) {
 			var v = abs(s.sym, true);
 			if (v == null) {
-				if (nextSig >= hostNsigs + Jit.SPARE_SIGS) throw "out of spare signature entries";
-				v = nextSig++;
+				var o = oldSigs.get(s.sym);
+				if (o != null && o.key == s.key) {
+					v = o.id;
+					oldSigs.remove(s.sym);
+				} else {
+					if (nextSig >= hostNsigs + MirHost.SPARE_SIGS) throw "out of spare signature entries: the bundles loaded have " + MirHost.SPARE_SIGS + " signatures the compiler lacks (hxmc.macro.MirHost.SPARE_SIGS)";
+					v = nextSig++;
+				}
 				newSigs.push({id: v, s: s});
+				genSigs.set(s.sym, {id: v, key: s.key});
 			}
 			num.set(s.sym, v);
 		}
@@ -188,12 +381,20 @@ class Loader {
 		var nglobals = Gc.nglobals;
 		var newGlobals = [];
 		var gindex = new Map<String, Int>();
-		var newScalars:Array<String> = []; // (in the mapping, after the rows: code reaches them with rel32)
+		var newScalars:Array<String> = []; // (in the bundle's memory, after the rows)
 		for (g in globals) {
 			if (g.ref) {
 				var v = abs(g.sym, g.share);
-				var idx = v == null ? nglobals++ : v >> 3;
-				if (v == null) newGlobals.push({idx: idx, init: g.init});
+				var idx = v == null ? oldGlobals.get(g.sym) : v >> 3;
+				if (v == null) {
+					if (idx != null) {
+						oldGlobals.remove(g.sym);
+						Mem.setRef(Gc.globals, 8 * idx, null);
+					} else
+						idx = nglobals++;
+					newGlobals.push({idx: idx, init: g.init});
+					genGlobals.set(g.sym, idx);
+				}
 				num.set(g.sym, 8 * idx);
 				num.set(g.name, idx);
 				gindex.set(g.name, idx);
@@ -201,6 +402,13 @@ class Loader {
 				var a = dataAddr(g.sym, g.share);
 				if (a != null) extra.set(g.sym, ptr(a)) else newScalars.push(g.sym);
 			}
+		}
+		// @:hxmc.bss blocks: the compiler's, else new (in the bundle's memory, zeroed: after the scalars)
+		var bssList:Array<Dynamic> = facts.bss != null ? facts.bss : [];
+		var newBss:Array<{sym:String, size:Int, at:Int}> = [];
+		for (x in bssList) {
+			var a = dataAddr(x.sym, true);
+			if (a != null) extra.set(x.sym, ptr(a)) else newBss.push({sym: x.sym, size: x.size, at: 0});
 		}
 		// type objects (two words: the header, the type index): the new types' in
 		// the spare part of rt_types_objs, where the runtime finds them
@@ -216,12 +424,15 @@ class Loader {
 				if (a != null) extra.set(n, ptr(a));
 			}
 		}
-		// ---- layout: code | read-only data, data, bss, then the dispatch rows
-		dbg("layout: code | read-only data, data, bss, then the dispatch rows");
+		// ---- layout: read-only data, data, bss, then the dispatch rows
+		dbg("layout: read-only data, data, bss, then the dispatch rows");
 		var text = [], rest = [];
 		for (s in obj.sections)
 			if (s.kind == Text) text.push(s) else if (s.kind == RoData || s.kind == Data || s.kind == Bss) rest.push(s) else if (s.size() > 0) throw "section " + s.name + " (" + s.kind + ")";
-		var addr = new Map<Section, Int>();
+		// (a bundle has no code: interp.InterpAbi)
+		for (s in text)
+			if (s.size() > 0) throw "code in a bundle for the Mir interpreter: section " + s.name + " (" + s.size() + " bytes)";
+		var addr = new Map<Section, I64>();
 		var pos = 0;
 		function place(list:Array<Section>) {
 			for (s in list) {
@@ -230,9 +441,6 @@ class Loader {
 				pos += s.size();
 			}
 		}
-		place(text);
-		var textSize = (pos + 4095) & ~4095;
-		pos = textSize;
 		place(rest);
 		var selectors:Array<Dynamic> = facts.selectors;
 		var rowsAt = (pos + 15) & ~15;
@@ -241,37 +449,59 @@ class Loader {
 		pos = rowsAt + rowBytes * selectors.length;
 		var scalarsAt = (pos + 15) & ~15;
 		pos = scalarsAt + 8 * newScalars.length;
+		for (x in newBss) {
+			pos = (pos + 63) & ~63;
+			x.at = pos;
+			pos += x.size;
+		}
 		var size = (pos + 4095) & ~4095;
-		var region = Vm.mmap(ptr(hint), (size : I64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-		var ra = region.toI64();
-		if (ra == (-1 : I64) || ra >= (0x7fff0000 : I64) || ra < (0 : I64)) throw "cannot map code below 2 GB";
-		var base = addrOf(region);
-		hint = base + size + 0x10000;
+		// (ordinary memory, never executable; zeroed: bss, rows, scalars; never freed, as nothing is unloaded)
+		var region = LibC.malloc((size : I64));
+		if (region.isNull()) throw "no memory for a bundle";
+		LibC.memset(region, 0, (size : I64));
+		var base = region.toI64();
 		for (s in addr.keys())
 			addr.set(s, addr.get(s) + base);
 		for (i in 0...newScalars.length)
-			extra.set(newScalars[i], ptr(base + scalarsAt + 8 * i));
+			extra.set(newScalars[i], region.add(scalarsAt + 8 * i));
+		for (x in newBss)
+			extra.set(x.sym, region.add(x.at));
 		for (k in 0...selectors.length)
-			extra.set(selectors[k].sym, ptr(base + rowsAt + rowBytes * k)); // (indexed by type index - T_FIRST: MirBuild)
+			extra.set(selectors[k].sym, region.add(rowsAt + rowBytes * k)); // (indexed by type index - T_FIRST: MirBuild)
 		// ---- symbols
 		dbg("symbols");
-		function value(s:Symbol):{v:Int, tls:Bool} {
-			if (s.section != null) return {v: addr.get(s.section) + s.offset, tls: false};
-			if (s.abs) return {v: s.offset, tls: false};
-			var n = num.get(s.name);
-			if (n != null) return {v: n, tls: false};
-			var x = extra.get(s.name);
-			if (x != null) return {v: addrOf(x), tls: false};
-			var hs = h.get(s.name);
-			if (hs == null) hs = xb.get(s.name);
-			if (hs != null) return {v: hs.v, tls: hs.k == "l"};
-			// (a definition in another object of the bundle: one object here)
-			throw "undefined symbol " + s.name;
-		}
 		var defs = new Map<String, Symbol>();
 		for (s in obj.symbols)
 			if (s.section != null && s.global) defs.set(s.name, s);
-		function resolve(s:Symbol):{v:Int, tls:Bool}
+		// a symbol the bundle does not define: a number, an address of the
+		// bundle's (rows, scalars, type objects), an interpreted function's
+		// entry (the function of this bundle's or an earlier one's descriptor),
+		// the compiler's or an earlier bundle's
+		function outside(n:String):{v:I64, tls:Bool} {
+			var nv = num.get(n);
+			if (nv != null) return {v: nv, tls: false};
+			var x = extra.get(n);
+			if (x != null) return {v: x.toI64(), tls: false};
+			var dn = hxmc.interp.InterpGen.DESC + n;
+			var d = defs.get(dn);
+			// (the descriptor's flags from the bundle's bytes: its memory is written after the relocations)
+			if (d != null) return {v: entry(dn, ptr(addr.get(d.section) + d.offset), d.section.buf.b.getInt32(d.offset + 36)).toI64(), tls: false};
+			var xd = xb.get(dn);
+			if (xd != null) return {v: entry(dn, ptr(xd.v), Mem.getI32(ptr(xd.v), 36)).toI64(), tls: false};
+			var hs = h.get(n);
+			if (hs == null) hs = xb.get(n);
+			if (hs != null) return {v: hs.v, tls: hs.k == "l"};
+			var dyn = systemSymbol(n);
+			if (!dyn.isNull()) return {v: dyn.toI64(), tls: false};
+			// (a definition in another object of the bundle: one object here)
+			throw "undefined symbol " + n;
+		}
+		function value(s:Symbol):{v:I64, tls:Bool} {
+			if (s.section != null) return {v: addr.get(s.section) + s.offset, tls: false};
+			if (s.abs) return {v: s.offset, tls: false};
+			return outside(s.name);
+		}
+		function resolve(s:Symbol):{v:I64, tls:Bool}
 			return s.section == null && defs.exists(s.name) ? value(defs.get(s.name)) : value(s);
 		// ---- relocation
 		dbg("relocation");
@@ -281,42 +511,44 @@ class Loader {
 			var buf = sec.buf;
 			for (r in sec.relocs) {
 				var sv = resolve(r.sym);
-				var S = sv.v, A = r.addend, P = at + r.offset;
+				var v = sv.v + r.addend;
 				switch r.kind {
 					case RAbs64:
-						var v = S + A;
-						buf.set64(r.offset, v, v < 0 ? -1 : 0);
+						buf.set64(r.offset, v.toInt(), (v >> 32).toInt());
 					case RAbs32 | RAbs32S:
-						buf.set32(r.offset, S + A);
-					case RPc32 | RCall32:
-						buf.set32(r.offset, S + A - P);
-					case RTpOff32:
-						if (!sv.tls) throw "TLS relocation against " + r.sym.name;
-						buf.set32(r.offset, S + A);
+						// (a number)
+						if (v >> 31 != (0 : I64) && v >> 31 != (-1 : I64)) throw "a 32-bit relocation against " + r.sym.name + " beyond 32 bits";
+						buf.set32(r.offset, v.toInt());
 					case _:
-						throw "relocation " + r.kind + " against " + r.sym.name;
+						throw "relocation " + r.kind + " against " + r.sym.name + " in a bundle for the Mir interpreter";
 				}
 			}
 			var p = ptr(at);
 			for (i in 0...buf.len)
 				Mem.setI8(p, i, buf.b.get(i));
 		}
-		b.codeBytes = textSize;
-		if (Vm.mprotect(region, (textSize : I64), PROT_READ | PROT_EXEC) != 0) throw "mprotect failed";
-		// (its null accesses throw, as the compiler's own: hxmc.rt.Faults)
-		hxmc.rt.Faults.addCode(region, region.addL((textSize : I64)));
-		inline function symAddr(n:String):Int {
+		b.codeBytes = 0;
+		b.dataBytes = size;
+		function symAddr(n:String):I64 {
 			var d = defs.get(n);
-			if (d != null) return value(d).v;
-			var hs = h.get(n);
-			if (hs == null) hs = xb.get(n);
-			if (hs == null) throw "undefined symbol " + n;
-			return hs.v;
+			return d != null ? value(d).v : outside(n).v;
+		}
+		// a function to run: its descriptor
+		function runnable(n:String):Ptr {
+			var d = defs.get(hxmc.interp.InterpGen.DESC + n);
+			if (d != null) return ptr(value(d).v);
+			var xd = xb.get(hxmc.interp.InterpGen.DESC + n);
+			if (xd == null) throw "no descriptor of " + n;
+			return ptr(xd.v);
 		}
 		// ---- dispatch rows
 		dbg("dispatch rows");
 		for (k in 0...selectors.length) {
 			var row = ptr(base + rowsAt + rowBytes * k);
+			// (the compiler's rows of the same selector first: the bundle's code is handed
+			// objects of the compiler's own classes, which only it implements: hostOverrides)
+			var hs = h.get(selectors[k].sym);
+			if (hs != null && hs.k == "d") LibC.memcpy(row, ptr(hs.v), (8 * (hostNtypes - Abi.T_FIRST) : I64));
 			var rows:Array<Dynamic> = selectors[k].rows;
 			for (r in rows)
 				Mem.setPtr(row, 8 * (num.get(r.ty) - Abi.T_FIRST), ptr(symAddr(r.fn)));
@@ -396,10 +628,10 @@ class Loader {
 				Mem.setPtr(e, 88, ptr(symAddr(mk.fn)));
 			}
 		}
-		// the new classes' and interfaces' statics (rt_static: fid, kind, index, rank,
+		// the new classes', interfaces' and enums' statics (rt_static: fid, kind, index, rank,
 		// address; the bundle has them in the order Type.getClassFields lists them)
-		var interfaces:Array<Dynamic> = facts.interfaces;
-		for (c in (interfaces == null ? classes : classes.concat(interfaces))) {
+		var interfaces:Array<Dynamic> = facts.interfaces, enumStatics:Array<Dynamic> = facts.enumStatics;
+		for (c in classes.concat(interfaces == null ? [] : interfaces).concat(enumStatics == null ? [] : enumStatics)) {
 			var ss:Array<Dynamic> = c.statics;
 			if (!isNew.exists(c.ty) || ss == null || ss.length == 0) continue;
 			var order = [for (i in 0...ss.length) i];
@@ -428,17 +660,19 @@ class Loader {
 		}
 		// an empty anonymous structure (its fields overflow): the bridge's objects that
 		// match no structure of the bundle
-		if (nextType >= hostNtypes + Jit.SPARE_TYPES) throw "out of spare type entries";
-		var empty = nextType++;
-		var ee = Mem.sym("rt_types").add(empty * TS);
-		Mem.setPtr(ee, 0, cstr("{}"));
-		Mem.setI32(ee, 8, 5);
-		Mem.setI32(ee, 12, -1);
-		Mem.setI32(ee, 16, 1);
-		var epm = zalloc(8);
-		Mem.setI32(epm, 0, 1);
-		Mem.setPtr(ee, 24, epm);
-		b.shapes.push({tindex: empty, fields: []});
+		if (emptyAnon < 0) {
+			if (nextType >= hostNtypes + MirHost.SPARE_TYPES) throw "out of spare type entries: the bundles loaded have " + MirHost.SPARE_TYPES + " types the compiler lacks (hxmc.macro.MirHost.SPARE_TYPES)";
+			emptyAnon = nextType++;
+			var ee = Mem.sym("rt_types").add(emptyAnon * TS);
+			Mem.setPtr(ee, 0, cstr("{}"));
+			Mem.setI32(ee, 8, 5);
+			Mem.setI32(ee, 12, -1);
+			Mem.setI32(ee, 16, 1);
+			var epm = zalloc(8);
+			Mem.setI32(epm, 0, 1);
+			Mem.setPtr(ee, 24, epm);
+		}
+		b.shapes.push({tindex: emptyAnon, fields: []});
 		// what the bridge needs
 		for (t in types) {
 			var tk:String = t.tk;
@@ -452,12 +686,10 @@ class Loader {
 		}
 		// ---- rt_globals with the new slots (it is a root of the collector: no barrier)
 		dbg("rt_globals with the new slots (it is a root of the collector: no barrier)");
-		if (nglobals > Gc.nglobals) {
-			var g = zalloc(8 * (nglobals + 1));
-			LibC.memcpy(g, Gc.globals, ((8 * Gc.nglobals) : I64));
-			Gc.globals = g;
-			Gc.nglobals = nglobals;
-		}
+		// (in its spare slots, never moved: compiled code, the frames running now
+		// included, keeps the table's address across calls, Opt.MConst)
+		if (nglobals > Gc.globalsCap) throw "out of spare global slots";
+		if (nglobals > Gc.nglobals) Gc.nglobals = nglobals;
 		for (g in newGlobals)
 			if (g.init != null) Mem.setRef(Gc.globals, 8 * g.idx, Mem.alloc(1, num.get(g.init), 0));
 		var singletons:Array<Dynamic> = facts.singletons;
@@ -473,23 +705,27 @@ class Loader {
 		for (i in inits)
 			// (a class without a type entry: new unless a bundle loaded before, or for
 			// the std the compiler, has its initializer)
-			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || (i.share && h.exists(i.fn)))) Mem.call0(ptr(symAddr(i.fn)));
+			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || xb.exists(hxmc.interp.InterpGen.DESC + i.fn) || (i.share && h.exists(i.fn)))) {
+				var p = runnable(i.fn);
+				b.inits.push(p);
+				run0(p);
+			}
 		// what the next bundles share: the numbers, the globals and type objects, the functions
 		for (n => v in num)
 			xb.set(n, {k: "a", v: v});
 		for (n => p in extra)
-			if (!StringTools.startsWith(n, "DSP_")) xb.set(n, {k: "d", v: addrOf(p)});
+			if (!StringTools.startsWith(n, "DSP_")) xb.set(n, {k: "d", v: p.toI64()});
 		for (n => s in defs)
-			if (s.section.kind == Text && StringTools.startsWith(n, "F_")) xb.set(n, {k: "t", v: value(s).v});
+			if (StringTools.startsWith(n, hxmc.interp.InterpGen.DESC)) xb.set(n, {k: "d", v: value(s).v});
 		// (the runtime's walks of the types, Type.resolveClass, reach the new ones)
 		Mem.setI32(Mem.sym("rt_ntypes"), 0, nextType);
-		var entries:Array<Dynamic> = facts.entries;
-		for (en in entries)
-			b.entries.set(en.name, ptr(symAddr(en.sym)));
+		var ens:Array<Dynamic> = facts.entries;
+		for (en in ens)
+			b.entries.set(en.name, runnable(en.sym));
 		return b;
 	}
 
-	// null when the compiler's type `idx` has the guest's layout (slots, pointer map, fields)
+	// null when the compiler's type `idx` has the bundle's layout (slots, pointer map, fields)
 	static function sameLayout(idx:Int, t:Dynamic, fids:Map<String, Int>):Null<String> {
 		var e = Mem.sym("rt_types").add(idx * TS);
 		var slots:String = t.slots;
@@ -514,4 +750,14 @@ class Loader {
 		return null;
 	}
 }
-#end
+
+// (Loader.systemSymbol: each used only on its system, the others fold its calls away, Mem.os)
+@:hxmc.c @:hxmc.fast private extern class SysDl {
+	static function dlsym(handle:Ptr, name:Ptr):Ptr;
+}
+
+@:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class SysDll {
+	static function GetModuleHandleA(name:Ptr):Ptr;
+	static function LoadLibraryA(name:Ptr):Ptr;
+	static function GetProcAddress(module:Ptr, name:Ptr):Ptr;
+}

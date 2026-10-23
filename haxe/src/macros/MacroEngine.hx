@@ -9,7 +9,7 @@ import macros.eval.EvalValue.Value;
 // `InterpImpl (= Eval | Hlmacro) + MacroApiImpl`, a choice made when the
 // compiler is built; here MacroContext calls the engine through this
 // interface, so a host can install another one at run time (hxmc's
-// HaxeMain: native macros, hxmc/src/hxmc/macro). Every engine keeps Eval's
+// HaxeMain: Mir macros, hxmc/src/hxmc/interp/MirMacros.hx). Every engine keeps Eval's
 // context and values: MacroApi stays a single implementation, and errors
 // and positions travel as Eval's do (exceptions, `api.pos`). Eval is the
 // default and the only engine of the port's own builds.
@@ -21,11 +21,13 @@ interface IMacroEngine {
 	// the types of the macro context, after its filters (EvalMain.addTypes)
 	function addTypes(ctx:Context, types:Array<ModuleType>, ready:ModuleType->Void):Void;
 	// calls the static function `f` of the class at `path` with encoded arguments (EvalMain.callPath)
-	function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):Null<Value>;
+	function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):haxe.ds.Option<Value>;
 	// a cached context reused by the next compilation (EvalMain.doReuse)
 	function doReuse(ctx:Context, api:CompilerApi, args:Array<String>):Void;
 	// a compilation error was reported (EvalMain.setError)
 	function setError(ctx:Context, b:Bool):Void;
+	// the API macro code calls from now on (`mint.curapi <- api`)
+	function setApi(ctx:Context, api:CompilerApi):Void;
 }
 
 // port: Eval through the seam: each method is the EvalMain function upstream calls.
@@ -41,7 +43,7 @@ class EvalEngine implements IMacroEngine {
 	public function addTypes(ctx:Context, types:Array<ModuleType>, ready:ModuleType->Void):Void
 		macros.eval.EvalMain.addTypes(ctx, types, ready);
 
-	public function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):Null<Value>
+	public function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):haxe.ds.Option<Value>
 		return macros.eval.EvalMain.callPath(ctx, path, f, vl, api);
 
 	public function doReuse(ctx:Context, api:CompilerApi, args:Array<String>):Void
@@ -49,6 +51,9 @@ class EvalEngine implements IMacroEngine {
 
 	public function setError(ctx:Context, b:Bool):Void
 		macros.eval.EvalMain.setError(ctx, b);
+
+	public function setApi(ctx:Context, api:CompilerApi):Void
+		ctx.curapi = api;
 }
 
 class MacroEngine {

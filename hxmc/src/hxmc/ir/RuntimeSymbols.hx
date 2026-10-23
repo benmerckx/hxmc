@@ -64,6 +64,9 @@ class RuntimeSymbols {
 	static function boundsThrow():Bool
 		return Lower.bounds == Lower.BOUNDS_THROWS;
 
+	static function interp():Bool
+		return Lower.interp;
+
 	public static final SYMBOLS:Array<RuntimeSymbol> = [
 		// MirBuild (and DataGen through its builders)
 		{sym: "rt_init", kind: FUNC, families: LINEAR, by: "DataGen.mainBody: main, _start"},
@@ -76,6 +79,9 @@ class RuntimeSymbols {
 		{sym: "hx_uncaught", kind: FUNC, families: WASM32, by: "LinkWasm's rt_throw: no handler"},
 		{sym: "rt_null_access", kind: FUNC, families: NATIVE, by: "Faults.redirect: a fault's target; MemLower.nullBlock with -D hxmc.null-checks=1"},
 		{sym: "rt_null_access", kind: FUNC, families: WASM32, by: "MemLower.nullBlock", when: nullChecks},
+		// (an interpreted function's entry stub; the code a Mir host loads, MirRun, MirMacros)
+		{sym: "hxmc_interp_enter", kind: FUNC, families: NATIVE, by: "InterpGen: an interpreted function's entry stub", when: interp},
+		{sym: "hxmc_interp_pool_enter", kind: FUNC, families: NATIVE, by: "interp.InterpAbi: the entries' pools of a Mir host", when: interp},
 		{sym: "rt_stack_overflow", kind: FUNC, families: WASM32, by: "MirWriter.raiseHw: the shadow stack's end"},
 		{sym: "rt_cstack_overflow", kind: FUNC, families: WASM32, by: "WasmGen: a frame's prologue"},
 		{sym: "rt_blocking_enter", kind: FUNC, families: NATIVE, by: "MirBuild.cCall: a C call's safe region"},
