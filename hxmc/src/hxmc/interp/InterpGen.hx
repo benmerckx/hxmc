@@ -311,6 +311,18 @@ class InterpGen {
 		}
 		frame = (frame + 15) & ~15;
 		var blocks = hxmc.Driver.Layout.order(mf);
+		// (what the descriptor depends on besides the function's Mir: BundleCache)
+		if (deps != null)
+			for (b in blocks)
+				for (i in b.ins)
+					if (!i.dead) switch i.op {
+						case Call if (i.sym != null && !i.returnsTwice):
+							deps.push((set.syms.exists(i.sym) ? "+" : "-") + i.sym);
+						case TlsLoad | TlsStore if (TLS.get(i.sym) == null && emulatedTls != null && !nativeTls(i.sym)):
+							// (an index of this process's: not kept)
+							deps.push("!" + i.sym);
+						case _:
+					}
 		// uses, the compares that are their branch's condition
 		var uses = MFunc.ints(mf.vals.length, 0);
 		fused = MFunc.ints(mf.vals.length, 0);
@@ -466,6 +478,12 @@ class InterpGen {
 	// code is loaded at run time (MirRun: no TLS block of its own): indices
 	// of a block of the interpreter's per thread (TLSXLD, TLSXST)
 	public static var emulatedTls:Null<Map<String, Int>> = null;
+
+	// (BundleCache) when not null, what run() makes of the calls by symbol
+	// ("+sym": an interpreted function's, CALLI; "-sym": native code, a
+	// special operation) and "!sym" for a thread-local variable emulated
+	// with an index of this process's (such a descriptor is not kept)
+	public static var deps:Null<Array<String>> = null;
 	// (those the running compiler has: its own, through a stub)
 	public static var nativeTls:String->Bool = _ -> false;
 

@@ -997,6 +997,39 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   unloaded: each generation's descriptors and data stay in memory (a
   trivial macro's: 236 KB), and so do the pool entries they were given.
 
+Compiled functions are kept across builds (`interp.BundleCache`), in the
+module cache's store (`<cache>/modules/<tool>/o/<key>-mir.o`, per build of
+the compiler, with the store's limits and trim; the list of a command
+line's objects is what the trim keeps): each function a bundle compiles is
+an object of its own, under the key of its `Fingerprint` (its lowered IR,
+what `MirBuild` reads of the rest of the program, the digests of the
+callees the Mir inliner may copy into it) with the compiler's target and
+options; what its descriptor depends on besides (which of its calls by
+symbol are of interpreted functions) is kept with it and checked before it
+is used, and a function using a thread-local variable emulated with an
+index of the process's is not kept. A bundle appends the objects it finds,
+in its order, to the ones it compiles (`Obj.append`): the bundle is the
+same as without the cache. The ids of the call sites the lowering writes
+into the IR (`Lower.callSites`) are hashes of their positions, so a
+function's IR and key do not depend on what was lowered before it. Off with
+the module cache (`HXMC_MODULE_CACHE=0`, `-D hxmc.no-module-cache`);
+`HXMC_MIR_CACHE=0` turns it off alone, `HXMC_MIR_CACHE=1` on without the
+module cache; `HXMC_MACRO_STATS=1` reports the functions found and compiled.
+`make mir-cache-check` (`hxmc/test/MirCacheCheck.hx`, in the Mir lane):
+every build prints what Eval's macros make it print, a warm build finds
+every function, and an edit of a dependency, of a function the inliner
+copies, a define and another build of the compiler compile again what they
+change; objects that are not theirs (truncated, under another key) are not
+used.
+
+A function whose IR is larger than 8,000 words (its `Fingerprint`'s; the
+giant functions macros that write code are made of, json2object's
+`DataBuilder`: 9,000 to 73,000) is compiled without the optimizer
+(`HXMC_MIR_COLD=<words>`, 0: every function optimized): it costs those most
+of their compilation and gains them nothing measurable, as they run a few
+times each; compute-bound macros' functions are far smaller (json's and
+mandelbrot's: under 3,000 words).
+
 Cost (instructions, Intel Xeon E-2356G, Linux 6.1), module cache off: a
 trivial macro (`macro 1` called from main, `--js`) 1.08 G (no macro 0.29 G,
 Eval 0.60 G; 1.50 G while the macro context typed and parsed the whole

@@ -1028,7 +1028,8 @@ jobs:
       # corpus job) on this machine (docs/hxmc.md, "Macros on the Mir
       # interpreter"), in mir/ (the corpus job's files, Unix line ends): the
       # corpus run in it (as make mir-run-check), the macro cases with Mir
-      # macros against the reference (as make mir-macros-check), and a macro
+      # macros against the reference (as make mir-macros-check), the compiled
+      # functions kept across builds (as make mir-cache-check), and a macro
       # of the benchmarks and the formatter's build against Eval (the release
       # binary; MirBench). Windows: the harnesses run one process at a time
       # (Harness.exec changes the process's working directory there).
@@ -1101,6 +1102,12 @@ jobs:
         run: |
           HAXE_REFERENCE="$MIR_REF" HAXE_IN_HAXE_PORT="$MIR_HAXE -D hxmc.macros=mir" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Conformance -j $MIR_JOBS \
             --cases haxe/test/conformance-macro-cases.txt --target-only --parallel 1 --known eval-Issue11631-compile --summary "$GITHUB_STEP_SUMMARY"
+      - name: Mir lane, the compiled functions kept across builds
+        if: always() && steps.mir.outcome == 'success'
+        timeout-minutes: 15
+        working-directory: mir
+        run: |
+          HXMC_HAXE="$MIR_HAXE" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run MirCacheCheck
       - name: Mir lane, a benchmark macro and the formatter's build
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 20

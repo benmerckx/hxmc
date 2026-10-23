@@ -35,16 +35,32 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// env_leave_pmin/pmax: get_api_call_pos); sites by id (0: none)
 	@:hxmc.export("hxmc_mir_macro_pending") static var pending:Int;
 	@:hxmc.export("hxmc_mir_macro_current") static var current:Int;
-	static var sites:Array<core.Globals.Pos> = [core.Globals.nullPos];
-	static var siteIds = new Map<String, Int>();
+	// (an id is a hash of the position, the next free one on a collision: the
+	// same in every build whatever is lowered first, so a function's IR and
+	// its key in the BundleCache are too)
+	static var sites = new Map<Int, core.Globals.Pos>();
+	// (by file, then pmin, then pmax; a file's hash)
+	static var siteIds = new Map<String, {hash:Int, ids:Map<Int, Map<Int, Int>>}>();
 
 	static function site(p:core.Globals.Pos):Int {
-		var k = p.pmin + ":" + p.pmax + ":" + p.pfile;
-		var id = siteIds.get(k);
+		var f = siteIds.get(p.pfile);
+		if (f == null) {
+			var h = 0x811c9dc5;
+			for (i in 0...p.pfile.length)
+				h = (h ^ StringTools.fastCodeAt(p.pfile, i)) * 0x01000193;
+			siteIds.set(p.pfile, f = {hash: h, ids: new Map()});
+		}
+		var byMin = f.ids.get(p.pmin);
+		if (byMin == null) f.ids.set(p.pmin, byMin = new Map());
+		var id = byMin.get(p.pmax);
 		if (id == null) {
-			id = sites.length;
-			sites.push(p);
-			siteIds.set(k, id);
+			var h = (f.hash ^ p.pmin) * 0x01000193;
+			h = (h ^ p.pmax) * 0x01000193;
+			id = (h ^ (h >>> 15)) & 0x3fffffff;
+			while (id == 0 || sites.exists(id))
+				id = (id + 1) & 0x3fffffff;
+			sites.set(id, p);
+			byMin.set(p.pmax, id);
 		}
 		return id;
 	}
@@ -79,6 +95,21 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// the macro functions called so far: their function and descriptor, by pack.Class.f
 	var entries = new Map<String, {fi:FuncInfo, desc:Ptr}>();
 	var stats = Sys.getEnv("HXMC_MACRO_STATS") == "1";
+	// the compiled functions kept across builds (null: off)
+	var cache:Null<BundleCache> = null;
+	var cacheOpened = false;
+	// the size of a function's IR (its Fingerprint's words) above which it is
+	// compiled without the optimizer: the giant functions macros that write
+	// code are made of (json2object's DataBuilder: 9,000 to 73,000 words, run
+	// a few times each) cost their compilation most, and the optimizer gains
+	// them nothing measurable; the functions of compute-bound macros are far
+	// below (json's, mandelbrot's: under 3,000). HXMC_MIR_COLD=<words>, 0:
+	// every function optimized
+	static var coldWords:Int = {
+		var n = Std.parseInt(Sys.getEnv("HXMC_MIR_COLD") ?? "");
+		n == null ? COLD_WORDS : n;
+	}
+	static inline var COLD_WORDS = 8000;
 	// a compilation error was reported: no more macro calls (as Eval's had_error)
 	var hadError = false;
 	var tCompile = 0.0;
@@ -109,7 +140,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (e in table)
 			self.apiTable.set(e.name, e.value);
 		// (the call site of the function calling the API: EvalMain.get_api_call_pos)
-		macros.MacroApi.MacroNativeValues.apiCallPos = () -> current > 0 ? sites[current] : self.api == null ? core.Globals.nullPos : self.api.pos;
+		macros.MacroApi.MacroNativeValues.apiCallPos = () -> current > 0 && sites.exists(current) ? sites.get(current) : self.api == null ? core.Globals.nullPos : self.api.pos;
 		// (the macro context's types by name: the loaded ones, the macro API's loaded on demand,
 		// as arguments are encoded before the first macro function is, and even before the
 		// macro context hands its types over: macroEnum)
@@ -540,9 +571,43 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			h != null && h.k == "l";
 		};
 		var funcs = [for (f in prog.funcs) if (!compiled.exists(f) && (!hxmc.macro.BundleFacts.runtime(f) || !host.exists(e.symbol(f)))) f];
+		// (the keys of the functions' objects, BundleCache: with the digests of the callees they may inline)
+		if (cache == null && !cacheOpened) {
+			cacheOpened = true;
+			cache = BundleCache.open(com, Abi.get(opts.target).arm);
+		}
+		var inlined:Null<Fingerprint.Inlined> = null;
+		if (cache != null && MirBuild.inlineCands != null) {
+			var cands = MirBuild.inlineCands;
+			inlined = new Fingerprint.Inlined(prep, haxe.ds.Vector.fromArrayCopy([for (f in prog.funcs) if (cands.exists(f)) f]));
+			var dd = Inline.DEPTH;
+			while (dd >= 1) {
+				for (k in 0...inlined.funcs.length)
+					inlined.compute(dd, k);
+				dd--;
+			}
+		}
+		var tk = cache == null ? null : d.toolKey() + "mir-bundle|opt=" + (opts.opt ? 1 : 0) + "|bounds=" + opts.bounds + "|";
+		var keys = new Map<FuncInfo, String>();
+		// (the functions compiled without the optimizer: COLD_WORDS)
+		var cold = new Map<FuncInfo, Bool>();
 		for (f in funcs) {
-			var fp = new Fingerprint(prep, null);
+			var fp = new Fingerprint(prep, inlined);
+			if (tk != null) fp.text(tk);
+			var w0 = @:privateAccess fp.words;
 			fp.func(f);
+			// (the size of its own IR, without the inlined callees' digests)
+			var size = @:privateAccess fp.words - w0;
+			if (inlined != null) {
+				var own = new Fingerprint(prep, null);
+				own.func(f);
+				size = @:privateAccess own.words;
+			}
+			if (opts.opt && coldWords > 0 && size > coldWords) {
+				cold.set(f, true);
+				fp.text("|cold");
+			}
+			if (tk != null) keys.set(f, fp.key());
 			var k = 0;
 			while (k < fp.newStrings.length) {
 				prep.addStr(fp.newStrings[k], fp.newStrings[k + 1]);
@@ -569,8 +634,45 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var obj = new Obj();
 		var emit = Target.emitter(abi, obj);
 		var ras = new Regalloc.Scratch(Target.selector(abi));
-		for (f in funcs)
-			d.compileFunc(f, obj, emit, ras);
+		function compile(f:FuncInfo, into:Obj) {
+			var opt = opts.opt;
+			if (cold.exists(f)) opts.opt = false;
+			try
+				d.compileFunc(f, into, emit, ras)
+			catch (x:Dynamic) {
+				opts.opt = opt;
+				throw x;
+			}
+			opts.opt = opt;
+		}
+		for (f in funcs) {
+			var key = keys.get(f);
+			if (key == null) {
+				compile(f, obj);
+				continue;
+			}
+			// (an object per function, kept or compiled, appended in order: the bundle is the same)
+			var sym = prep.funcSym(f);
+			var fo = cache.get(key, sym, d.interp);
+			if (fo == null) {
+				fo = new Obj();
+				var deps = InterpGen.deps = [];
+				try
+					compile(f, fo)
+				catch (x:Dynamic) {
+					InterpGen.deps = null;
+					throw x;
+				}
+				InterpGen.deps = null;
+				cache.put(key, sym, fo, deps);
+			}
+			obj.append(fo);
+		}
+		if (cache != null) {
+			cache.record();
+			// (a server build has no end where ModuleCache.finish settles the store)
+			if (Driver.resident) CacheDir.settle();
+		}
 		phase("functions");
 		// (no native code: the signatures' trampolines interpreted too, the allocations' slow paths and the
 		// expansions the interpreter's own, InterpGen)
@@ -649,6 +751,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function report() {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+			if (cache != null) Sys.stderr().writeString('hxmc.macros=mir: functions kept (BundleCache): ${cache.hits} found, ${cache.misses} compiled\n');
 			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
 		if (stats)
