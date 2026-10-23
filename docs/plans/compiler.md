@@ -326,20 +326,127 @@ Intel Xeon @ 2.10 GHz, 4 vCPUs:
 Eval's cost is inherent (dynamic values, encode/decode at the API
 boundary); Mir's is preparation (typing the runtime in the macro
 context, lowering every macro function through the Mir pipeline) and
-binary size, both reducible.
+binary size, both reducible. Since then (Speed of typical builds, below)
+the compiled functions are kept across builds and their compilation is
+cheaper; the macro context is what is left.
 
 ### Speed of typical builds
 
-1. A breakdown of the formatter build on Mir macros against Eval: typing
-   the runtime, lowering and `Opt`, interpreting, API calls.
-2. Bundles cached on disk: since #57 they are data only, so a library's
-   macros (json2object) are prepared once and reused across builds,
-   keyed by sources, tool and defines.
-3. A cold path: macro functions lowered without `Opt` (object-level Mir
-   already lowers without the optimizer when `o.opt` is off), only hot
-   ones optimized.
+Measured on an Intel Xeon @ 2.10 GHz, 4 vCPUs, Linux 6.18, the
+linux-x86_64 native compiler.
 
-Eval stays the default until Mir macros beat it on typical builds.
+1. **Breakdown** (done). The formatter build with json2object's macros,
+   module cache off, by where the main thread is (`perf` samples, each
+   charged to the innermost frame of a category, the collector's to its
+   caller's; ms, the mean of five runs, `perf` adding about a third):
+
+   | | Mir before | Mir now | Mir now, compiled functions kept | Eval |
+   | --- | --- | --- | --- | --- |
+   | typing (the macro context, hxmc's std and runtime in it, included), filters, the rest of the compiler | 701 | 651 | 610 | 555 |
+   | parsing | 167 | 162 | 166 | 151 |
+   | `Lower`, `Prep`, the macro context's facts, fingerprints | 49 | 52 | 41 | |
+   | `MirBuild` (object-level Mir) | 43 | 44 | 0 | |
+   | `Opt` (with `Sroa`, `Frames`, `Fold`, the inliner) | 78 | 22 | 0 | |
+   | `MemLower` and the rest of the lowering | 30 | 33 | 0 | |
+   | `InterpGen` | 201 | 132 | 1 | |
+   | bundle load (and the cache's reads) | 16 | 15 | 21 | |
+   | running the macros: the interpreter, API calls, values | 82 | 67 | 77 | 111 |
+   | total (of which the collector) | 1,368 (297) | 1,178 (263) | 917 (207) | 818 (181) |
+
+   Compiling for the interpreter was 417 ms, `InterpGen` half of it (its
+   register coalescing built dense liveness sets per block: the
+   `DataBuilder` functions have 38,000 values) of the 550 ms over Eval;
+   typing and parsing the macro context against hxmc's std most of the
+   rest (162 ms), and most of a cold trivial macro's: 384 ms against Eval's 212,
+   typing and parsing 356 against 207, compiling 28 (instructions: 1.30 G,
+   Eval 0.70 G, no macro 0.33 G; 1.78 G with the runtime's bodies typed,
+   `HXMC_MIR_TYPE_RUNTIME=1`). The interpreter itself runs the macros
+   faster than Eval.
+2. **Compiled functions on disk** (done, `interp.BundleCache`; docs/hxmc.md,
+   "Macros on the Mir interpreter"). Per function rather than per bundle:
+   a bundle depends on what the macros called before it, a function's
+   descriptor only on its IR (`Fingerprint`, with the inlined callees'
+   digests), the compiler's target and options, and which of its calls
+   are of interpreted functions (kept with it, checked). The store,
+   limits, trim and the off switch are the module cache's; the typed macro
+   context is the module cache's already (it keeps the macro context's
+   modules), so nothing else is kept. `make mir-cache-check`.
+3. **Cold path** (done, a static policy): the optimizer gains the giant
+   functions nothing and costs them most of `Opt`'s time, so a function
+   over 8,000 IR words is compiled without it (`HXMC_MIR_COLD`); the
+   others are optimized as before. All functions without `Opt` saves 4.6%
+   of the formatter build's instructions, the policy 2.5%; but json then
+   runs 19% slower and mandelbrot (its loop in one call) 2.6 times slower,
+   so the functions of compute-bound macros (under 3,000 words) stay
+   optimized. Tiering up hot functions is not done: no measured workload
+   has a hot function over the threshold (decision below).
+4. **Results** (MirBench, interleaved, the median of five, wall time; the
+   caches warm: the module cache and the compiled functions, each
+   compiler its own, filled by a first build, then each run after the edit
+   named):
+
+   | | Mir before | Mir now | Eval |
+   | --- | --- | --- | --- |
+   | json as a macro | 3.60 s | 3.51 s | 8.57 s |
+   | mandelbrot as a macro | 6.57 s | 6.63 s | 88.5 s |
+   | formatter build, cold | 1.11 s | 0.989 s | 0.636 s |
+   | formatter build, warm, unchanged | 0.194 s | 0.144 s | 0.144 s |
+   | formatter build, warm, main module edited | 0.225 s | 0.229 s | 0.195 s |
+   | formatter build, warm, configuration edited (json2object's macros run) | 1.37 s | 1.07 s | 0.943 s |
+   | formatter build, only the compiled functions kept (every macro runs) | 1.27 s | 0.924 s | 0.716 s |
+   | trivial macro, cold | 0.330 s | 0.378 s (the same instructions) | 0.187 s |
+   | trivial macro, warm, main module edited | 0.177 s | 0.160 s | 0.083 s |
+   | trivial macro edited under the server (the median of 12 builds, two sessions) | 0.022 s, 0.020 s | 0.020 s, 0.021 s | 0.023 s, 0.019 s |
+
+   Mir macros are on par with Eval where the module cache holds (the
+   formatter unchanged or with its main module edited, which runs none of
+   json2object's macros) and under the server, 13% behind where the
+   macros run again with the caches warm (29% with only the compiled
+   functions kept), and behind on cold builds and the trivial macro by
+   the cost of typing the macro context; compute-bound macros stay 2.4x
+   (json) to 13x (mandelbrot) faster.
+
+**What is left: the macro context.** With compilation gone from warm
+builds, what Mir macros pay over Eval is the macro context typed (and
+restored from the module cache) against hxmc's std: 47 more modules than
+Eval's (168 against 121 for the trivial macro), whose bodies Eval's
+externs do not have. A cold trivial macro types 1,456 bodies there (249 KB
+of source; the runtime's 113 KB of them, 141 KB more not typed already:
+the compiler's native code, `MacroRuntime`), among them `hxmc.Regex` and
+`RegexUnicode` (42 KB, for `EReg`), `WinSys` (17 KB, Windows' on Linux),
+`LibM`'s tables (26 KB), `StringTools` (16 KB). Warm, the module cache
+decodes all of their expressions as it restores them (the macro context
+reads them eagerly, `ServerCache.readExpressionEagerly`), and encodes the
+macro context's edited modules again. Levers, none done:
+
+- the bodies the compiler runs natively, not typed nor parsed: instance
+  methods of the runtime too, and the std's classes of files the compiler
+  was built from (`MacroCuts` keyed by content, as for the runtime's
+  statics);
+- the macro context's bodies typed lazily, when the lowering reaches them
+  (the filters then per function), and their expressions decoded so from
+  the module cache;
+- a macro std that does not load the whole runtime (`Std` imports
+  `hxmc.rt.Runtime`), loading a runtime module when lowering needs it.
+
+Eval stays the default (decision below).
+
+Open decisions:
+
+- **Tiering up.** Options: (a) none, the static size policy only (now);
+  (b) counts of calls in each descriptor (from interpreted callers: native
+  ones enter with addresses the collector does not see) and, at a
+  threshold, the function compiled with the optimizer into a bundle of
+  its own and the old descriptor forwarding to it (the interpreter checks
+  the forward pointer where it enters a function, so frames running the
+  old one finish on it); (c) (b) with counts of backward jumps too, for a
+  loop in one call, which needs entering the new code in the middle of a
+  frame. (b) covers a giant function called often, (c) mandelbrot's shape
+  over the threshold; neither has a measured workload yet.
+- **The default engine.** Mir macros now match Eval where the module cache
+  holds and under the server, are 2.4 to 13 times faster on compute-bound
+  macros, and are behind on cold builds, on a trivial macro and where the
+  macros run again (13% on the formatter), by the macro context's typing.
 
 ### Names
 
