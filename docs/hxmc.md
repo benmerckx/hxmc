@@ -917,7 +917,12 @@ symbols, its functions' fingerprints and flags and the cuts below as data
 (`macro.HostTable`: 63,450 symbols, 1.5 MB, made at its link; the values
 are relocations of the image, so the system's loader moves them with it;
 a lookup is a 64-bit hash of the name and a binary search, about 0.4 µs,
-2,500-7,000 per build). `<exe>.syms` is still written next to it, for
+2,500-7,000 per build). On Windows and macOS, where the C library is
+imported from DLLs or bound from libSystem, the table also names the
+compiler's imports (`HostTable.imports`: their thunks, or bound in place),
+and a C function the compiler imports nothing of is looked up as the
+system's loader would bind it (`Loader.systemSymbol`: `dlsym`, or
+`GetProcAddress` in the DLL of its `@:hxmc.lib`). `<exe>.syms` is still written next to it, for
 people (`RT_CENSUS_WHY`'s globals); nothing reads it.
 
 What macro code sees as on Eval (`hxmc.rt.EvalCompat`: on while macro code
