@@ -16,8 +16,9 @@
 #   the module cache's store and gate are checked, the dev loop (make
 #   dev-check); then the port's release binaries and lix for the six targets.
 #   Next to it, each with its own tool from the stage0 (make hxmc):
-#   - corpus: hxmc's corpus for every target (in three jobs), the port as a
-#     WebAssembly module, the reference's self-compile (lix downloads the
+#   - corpus: hxmc's corpus for every target (in three jobs), the compiler
+#     with Mir macros and --run (-D hxmc.jit) for the six targets, the port as
+#     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
 #   - crosshost (two jobs): the tool as a WebAssembly module building the
 #     corpus and itself byte-identical; the second also -D hxmc.wasm-gc's
@@ -48,7 +49,10 @@
 #   built by hxmc and run, natively and (unit) as a wasm32-wasi module under
 #   node, a job each (with its own tool from the stage0; make upstream-suites).
 # - test: on each target's machine, the release binary's smoke test (with a
-#   TLS handshake and libuv), lix, hxmc's corpus and the port's self-compile.
+#   TLS handshake and libuv), lix, hxmc's corpus and the port's self-compile;
+#   then the Mir lane: the compiler with Mir macros and --run running the
+#   corpus in itself, the macro cases against the reference, and a benchmark
+#   macro and the formatter's build timed against Eval.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
 # - npm: the nine packages (@hxmc/cli, its six platform packages, @hxmc/wasm,
@@ -359,6 +363,16 @@ jobs:
           make hxmc
       - name: Cross-build hxmc's corpus
         run: make corpus-stage CORPUS_TARGETS="${{ matrix.targets }}"
+      # the compiler with Mir macros and --run (-D hxmc.jit) for each target of
+      # the group (the test jobs run its lanes on the targets' machines)
+      - name: Cross-build the compiler with Mir macros
+        if: matrix.group != 'wasm'
+        run: |
+          set -ex
+          for t in ${{ matrix.targets }}; do
+            case $t in *-glibc) continue ;; esac
+            make jit-release TARGET=$t
+          done
 
       - name: The port as a WebAssembly module
         if: matrix.group == 'wasm'
@@ -396,6 +410,23 @@ jobs:
           # line ends, and other positions)
           tar czf dist/self/std.tar.gz -C haxe/upstream std
           tar czf dist/self/src.tar.gz -C haxe src
+      # what the test jobs' Mir lane needs besides the compiler, with Unix
+      # line ends: hxmc's std, the std, the harnesses and the corpus, the
+      # macro cases' projects, the benchmark's sources (MirBench --fetch)
+      - name: The Mir lane's files
+        if: matrix.group == 'wasm'
+        run: |
+          set -ex
+          D=bin/mir-data
+          mkdir -p $D/bin/hxmc $D/haxe/upstream/tests/misc/eval $D/hxmc
+          cp -r bin/hxmc/std $D/bin/hxmc/std
+          cp -r haxe/upstream/std $D/haxe/upstream/std
+          cp -r haxe/upstream/tests/misc/eval/projects $D/haxe/upstream/tests/misc/eval/projects
+          cp -r hxmc/test $D/hxmc/test
+          cp -r haxe/test $D/haxe/test
+          bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run MirBench --fetch $D/bench
+          tar czf dist/self/mir-data.tar.gz -C $D .
+          ls -l dist/self
       - uses: actions/upload-artifact@v7
         if: matrix.group == 'wasm'
         with: {name: hxmc-self, path: dist/self/, retention-days: 3}
@@ -405,6 +436,10 @@ jobs:
           set -ex
           mkdir -p dist/corpus
           for t in ${{ matrix.targets }}; do tar czf dist/corpus/corpus-$t.tar.gz -C bin/corpus/$t .; done
+          for t in ${{ matrix.targets }}; do
+            exe=haxe; case $t in windows-*) exe=haxe.exe ;; esac
+            if [ -f bin/jit-release/$t/$exe ]; then tar czf dist/corpus/jit-$t.tar.gz -C bin/jit-release/$t $exe; fi
+          done
           if [ -d bin/corpus/port ]; then tar czf dist/corpus/corpus-wasm32-wasi-port.tar.gz -C bin/corpus/port haxe.wasm haxe-legacy.wasm; fi
           ls -l dist/corpus
       - uses: actions/upload-artifact@v7
@@ -988,6 +1023,72 @@ jobs:
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           # (MSYS would rewrite the reference's root, a POSIX path)
           MSYS_NO_PATHCONV=1 "$exe" -cp hxmc/test -cp haxe/test --run Selfcheck --port "$exe" --src std-x/src --std std-x/std --ref dl/self-ref.hxb --ref-root "$SELF_ROOT" --root "$root" --summary "$GITHUB_STEP_SUMMARY"
+
+      # The compiler with Mir macros and --run (-D hxmc.jit, cross-built by the
+      # corpus job) on this machine (docs/hxmc.md, "Macros on the Mir
+      # interpreter"), in mir/ (the corpus job's files, Unix line ends): the
+      # corpus run in it (as make mir-run-check), the macro cases with Mir
+      # macros against the reference (as make mir-macros-check), and a macro
+      # of the benchmarks and the formatter's build against Eval (the release
+      # binary; MirBench). Windows: the harnesses run one process at a time
+      # (Harness.exec changes the process's working directory there).
+      - name: Reference compiler revision
+        id: ref
+        run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
+      - name: Cache the reference compiler
+        uses: actions/cache@v6
+        with:
+          path: ref
+          key: reference-nightly-${{ matrix.target }}-${{ steps.ref.outputs.rev }}
+      - name: Mir lane, setup
+        id: mir
+        run: |
+          set -ex
+          mkdir -p mir
+          tar xzf dl/mir-data.tar.gz -C mir
+          tar xzf dl/jit-${{ matrix.target }}.tar.gz -C mir
+          exe=; lix=lix/lix-${{ matrix.target }}
+          if [ "$RUNNER_OS" = Windows ]; then exe=.exe; lix=$lix.exe; fi
+          # (Haxe has no Windows ARM64 build: the x86-64 one, emulated, and lix's x86-64 build to download it)
+          if [ "${{ matrix.target }}" = windows-arm64 ]; then lix=lix/lix-windows-x86_64.exe; fi
+          rev=${{ steps.ref.outputs.rev }}
+          native() { if [ "$RUNNER_OS" = Windows ]; then cygpath -m "$1"; else echo "$1"; fi; }
+          ref="$PWD/ref/lix/versions/$rev/haxe$exe"
+          if [ ! -f "$ref" ]; then
+            chmod +x "$lix"
+            mkdir -p ref
+            (cd ref && HAXESHIM_ROOT="$(native "$PWD/lix")" "$GITHUB_WORKSPACE/$lix" download haxe $rev)
+          fi
+          ls -l "$(dirname "$ref")"
+          "$ref" -version
+          {
+            echo "MIR_JIT=$(native "$PWD/mir/haxe$exe")"
+            echo "MIR_REF=$(native "$ref")"
+            echo "MIR_EVAL=$(native "${{ steps.unpack.outputs.bin }}")"
+            echo "HXMC_STD=$(native "$PWD/mir/bin/hxmc/std")"
+            echo "HAXE_STD_PATH=$(native "$PWD/mir/haxe/upstream/std")"
+            echo "MIR_JOBS=$([ "$RUNNER_OS" = Windows ] && echo 1 || echo 4)"
+          } >> "$GITHUB_ENV"
+          "$PWD/mir/haxe$exe" -version
+      - name: Mir lane, the corpus run in the compiler
+        if: always() && steps.mir.outcome == 'success'
+        timeout-minutes: 30
+        working-directory: mir
+        run: HXMC_JIT="$MIR_JIT" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Corpus --mir-run -j $MIR_JOBS
+      - name: Mir lane, the macro cases with Mir macros
+        if: always() && steps.mir.outcome == 'success'
+        timeout-minutes: 30
+        working-directory: mir
+        # (Issue11631: Eval's own mbedtls package, as make mir-macros-check's MIR_MACROS_KNOWN)
+        run: |
+          HAXE_REFERENCE="$MIR_REF" HAXE_IN_HAXE_PORT="$MIR_JIT -D hxmc.mir-macros" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Conformance -j $MIR_JOBS \
+            --cases haxe/test/conformance-macro-cases.txt --target-only --parallel 1 --known eval-Issue11631-compile --summary "$GITHUB_STEP_SUMMARY"
+      - name: Mir lane, a benchmark macro and the formatter's build
+        if: always() && steps.mir.outcome == 'success'
+        timeout-minutes: 20
+        working-directory: mir
+        run: |
+          "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run MirBench --dir bench --mir "$MIR_JIT -D hxmc.mir-macros" --eval "$MIR_EVAL" --summary "$GITHUB_STEP_SUMMARY"
 
   # the WebAssembly corpus under node 22 and wasmtime, the port as a module
   # compiling itself under both
