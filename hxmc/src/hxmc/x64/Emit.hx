@@ -132,7 +132,10 @@ class Emit implements hxmc.Target.Emitter {
 			savedXOff[k] = off;
 			off += 16;
 		}
-		var x = off;
+		// (from the slots' end rounded up to 8 bytes: a Mem.stack area may end
+		// anywhere, and steps of 8 from an end that is not a multiple of 8
+		// never reach a multiple of 16)
+		var x = (off + 7) & ~7;
 		while ((8 + 8 * pushed() + x) % 16 != 0)
 			x += 8;
 		// leaf functions without slots keep rsp as it is

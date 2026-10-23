@@ -40,10 +40,11 @@ class Harness {
 	/**
 		Runs `cmd`. Options: `cwd` (the working directory), `env` (variables set
 		for this process; a null value unsets), `log` (stdout and stderr go to
-		this file instead of being returned), `timeout` (seconds; then `timedOut`
-		and code -1), `merge` (stderr into stdout), `stdin` (a file). Not on
-		Windows: cwd, env and timeout there change the process-wide state (the
-		Windows users run one process at a time).
+		this file instead of being returned), `timeout` (seconds; then the process
+		and the ones it started are killed, as hxmc's tool runs itself again,
+		hxmc.Main: `timedOut` and code -1), `merge` (stderr into stdout), `stdin`
+		(a file). Not on Windows: cwd, env and timeout there change the
+		process-wide state (the Windows users run one process at a time).
 	**/
 	public static function exec(cmd:Array<String>, ?o:ExecOptions):ExecResult {
 		if (o == null) o = {};
@@ -60,7 +61,10 @@ class Harness {
 		var redir = ' >${quote(outFile)} 2>' + (errFile == null ? '&1' : quote(errFile)) + (o.stdin != null ? ' <' + quote(o.stdin) : ' </dev/null');
 		if (o.timeout != null) {
 			var t = Std.int(Math.ceil(o.timeout));
-			script.add('"$$@"$redir & p=$$!; (sleep $t; kill -9 $$p 2>/dev/null) >/dev/null 2>&1 & w=$$!; wait $$p; c=$$?; kill $$w 2>/dev/null; exit $$c');
+			// (k: a process and its descendants, each stopped first, so it neither
+			// starts more nor ends before them)
+			script.add('k() { kill -STOP $$1; for c in $$(pgrep -P $$1); do k $$c; done; kill -9 $$1; }; ');
+			script.add('"$$@"$redir & p=$$!; (sleep $t; k $$p 2>/dev/null) >/dev/null 2>&1 & w=$$!; wait $$p; c=$$?; kill $$w 2>/dev/null; exit $$c');
 		} else
 			script.add('exec "$$@"$redir');
 		var p = new sys.io.Process("/bin/sh", ["-c", script.toString(), "sh", o.cwd == null ? "." : o.cwd].concat(cmd));

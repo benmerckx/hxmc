@@ -150,11 +150,13 @@ class Corpus {
 		// (its resources: caseResources; the defines: caseDefines, as when typing)
 		var src = c.cps[0] + "/" + c.main + ".hx";
 		cmd = cmd.concat(caseResources(src));
-		var r = exec(cmd.concat(defines), {env: ["HXMC_STATS" => "1"]});
-		File.saveContent(d + "/hxmc.log", r.out + r.err);
-		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
-		// (a `// build-seconds: <n>` line: hxmc must build the case in less time)
+		// (a `// build-seconds: <n>` line: hxmc must build the case in less time,
+		// and is stopped there, so a build that never ends fails too)
 		var limit = caseLine(src, "build-seconds");
+		var r = exec(cmd.concat(defines), {env: ["HXMC_STATS" => "1"], timeout: limit != null ? Std.parseFloat(limit) : null});
+		File.saveContent(d + "/hxmc.log", r.out + r.err);
+		if (r.timedOut) return {name: c.name, status: "slow-build", detail: 'stopped after $limit s: ' + tail(r.out, 1500)};
+		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
 		if (limit != null && r.seconds > Std.parseFloat(limit))
 			return {name: c.name, status: "slow-build", detail: 'built in ${Std.int(r.seconds)} s, more than $limit s: ' + tail(r.out, 1500)};
 		var re = ~/hxmc: ([0-9]+) functions/;
