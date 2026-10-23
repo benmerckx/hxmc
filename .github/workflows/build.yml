@@ -1046,7 +1046,7 @@ jobs:
           set -ex
           mkdir -p mir
           tar xzf dl/mir-data.tar.gz -C mir
-          tar xzf dl/jit-${{ matrix.target }}.tar.gz -C mir
+          mkdir -p mir/bin/jit && tar xzf dl/jit-${{ matrix.target }}.tar.gz -C mir/bin/jit
           exe=; lix=lix/lix-${{ matrix.target }}
           if [ "$RUNNER_OS" = Windows ]; then exe=.exe; lix=$lix.exe; fi
           # (Haxe has no Windows ARM64 build: the x86-64 one, emulated, and lix's x86-64 build to download it)
@@ -1055,21 +1055,21 @@ jobs:
           native() { if [ "$RUNNER_OS" = Windows ]; then cygpath -m "$1"; else echo "$1"; fi; }
           ref="$PWD/ref/lix/versions/$rev/haxe$exe"
           if [ ! -f "$ref" ]; then
-            chmod +x "$lix"
+            chmod +x "$lix"; lixp="$PWD/$lix"
             mkdir -p ref
-            (cd ref && HAXESHIM_ROOT="$(native "$PWD/lix")" "$GITHUB_WORKSPACE/$lix" download haxe $rev)
+            (cd ref && HAXESHIM_ROOT="$(native "$PWD/lix")" "$lixp" download haxe $rev)
           fi
           ls -l "$(dirname "$ref")"
           "$ref" -version
           {
-            echo "MIR_JIT=$(native "$PWD/mir/haxe$exe")"
+            echo "MIR_JIT=$(native "$PWD/mir/bin/jit/haxe$exe")"
             echo "MIR_REF=$(native "$ref")"
             echo "MIR_EVAL=$(native "${{ steps.unpack.outputs.bin }}")"
             echo "HXMC_STD=$(native "$PWD/mir/bin/hxmc/std")"
             echo "HAXE_STD_PATH=$(native "$PWD/mir/haxe/upstream/std")"
             echo "MIR_JOBS=$([ "$RUNNER_OS" = Windows ] && echo 1 || echo 4)"
           } >> "$GITHUB_ENV"
-          "$PWD/mir/haxe$exe" -version
+          "$PWD/mir/bin/jit/haxe$exe" -version
       - name: Mir lane, the corpus run in the compiler
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 30
