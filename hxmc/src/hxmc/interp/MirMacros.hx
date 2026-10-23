@@ -127,6 +127,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		macros.MacroEngine.engine = self;
 		macros.MacroApi.MacroApiImpl.nativeValues = true;
 		typing.MacroContext.macroPlatformHook = setupPlatform;
+		// (the runtime's functions the compiler has: not typed, MacroRuntime)
+		MacroRuntime.install();
 		var table = macros.MacroApi.MacroApiImpl.macroApi(() -> self.api.getCom(), () -> self.api);
 		for (e in table)
 			self.apiTable.set(e.name, e.value);

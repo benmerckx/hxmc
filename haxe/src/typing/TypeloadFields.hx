@@ -1887,10 +1887,25 @@ class TypeBinding {
 		else bindVarExpression(ctx, cctx, fctx, cf, e);
 	}
 
+	// port: (hxmc) a method whose body is never compiled: not typed, the
+	// expression the hook gives is its cf_expr; null: typed (-D
+	// hxmc.mir-macros: the runtime's functions the compiler runs as its
+	// own native code, in the macro context, hxmc.interp.MacroRuntime)
+	public static var untypedBodyHook:Null<(ctx:Typer, c:TClass, cf:TClassField, fctx:FieldInitCtx, args:FunctionArguments, t:T, ret:T,
+		e:Expr, p:Pos) -> Null<TExpr>> = null;
+
 	public static function bindMethod(ctxField:Typer, cctx:ClassInitCtx, fctx:FieldInitCtx, fmode:CurrentFun, cf:TClassField, t:T,
 			args:FunctionArguments, ret:T, e:Null<Expr>, functionMode:FunctionMode, p:Pos):Void {
 		var c = cctx.tclass;
 		var ctx = TyperManager.cloneForExpr(ctxField, fmode, functionMode);
+		// port: (untypedBodyHook)
+		if (untypedBodyHook != null && e != null) {
+			var body = untypedBodyHook(ctx, c, cf, fctx, args, t, ret, e, p);
+			if (body != null) {
+				cf.cfExpr = body;
+				return;
+			}
+		}
 		inline function bind():Void {
 			ctxField.com.requestScope.stats.sMethodsTyped++;
 			if (ctx.com.verbose) Common.log(ctx.com,

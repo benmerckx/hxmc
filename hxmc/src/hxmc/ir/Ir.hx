@@ -220,6 +220,10 @@ class FuncInfo {
 	// (Facts: what a scan of its body found, made once: a program lowered in
 	// steps, interp.MirMacros, makes its facts again at each step)
 	public var gcScan:Null<{gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>}> = null;
+	// the native code of the compiler lowering it runs it, and its body was
+	// not typed (@:hxmc.hostCode, Lower.hostCode): no body here, never
+	// compiled nor inlined; its gcScan says what that code does
+	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
 	public var declNoGc:Bool = false; // declared @:hxmc.noGc: Facts.findNoGc fails the build unless noGc

@@ -174,6 +174,8 @@ class Main {
 			return;
 		}
 		Driver.run(prog, out, opts);
+		// (-D hxmc.jit: the runtime's bodies its Mir macros' context need not parse, MacroCuts)
+		if (opts.jit) MacroCuts.write(com, out);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
 		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {
 			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
