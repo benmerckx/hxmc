@@ -1091,6 +1091,38 @@ jobs:
         run: |
           ulimit -c 0 2>/dev/null || true
           HXMC_JIT="$MIR_JIT" "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run Corpus --mir-run -v -j $MIR_JOBS
+      - name: Mir lane, diagnostics (temporary)
+        if: always() && steps.mir.outcome == 'success' && (matrix.target == 'windows-arm64' || matrix.target == 'linux-x86_64')
+        timeout-minutes: 10
+        working-directory: mir
+        run: |
+          set -x
+          mkdir -p diag && cd diag
+          cat > Diag.hx <<'EOF'
+          class Diag {
+          	static function main() {
+          		var t0 = Sys.time();
+          		Sys.sleep(0.01);
+          		var t1 = Sys.time();
+          		Sys.println("time " + t0 + " " + t1 + " d=" + (t1 - t0) + " cpu " + Sys.cpuTime());
+          		var c = Sys.time();
+          		Sys.sleep(0.2);
+          		Sys.println("sleep 0.2 d=" + (Sys.time() - c));
+          		var a = Sys.time();
+          		var x = 0.0;
+          		for (i in 0...3000000) x += i;
+          		Sys.println("busy d=" + (Sys.time() - a) + " " + x);
+          		Sys.println(Math.ffloor(2.7) + " " + Std.int(0.01 * 1000.0 + 0.5) + " " + Math.ffloor(0.01) + " " + ((0.01 - Math.ffloor(0.01)) * 1e9));
+          	}
+          }
+          EOF
+          "$MIR_JIT" -cp . -D hxmc.mir-run --run Diag
+          "$MIR_JIT" -cp . --run Diag
+          if [ "$RUNNER_OS" = Linux ]; then
+            cat /proc/sys/kernel/core_pattern; ulimit -c
+            cp ../hxmc/test/cases/NullAccessCrash.hx .
+            start=$(date +%s); timeout 100 "$MIR_JIT" -cp . -D hxmc.mir-run --run NullAccessCrash; echo "exit $? after $(( $(date +%s) - start ))s"
+          fi
       - name: Mir lane, the macro cases with Mir macros
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 30
