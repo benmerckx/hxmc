@@ -56,8 +56,37 @@ class EvalEngine implements IMacroEngine {
 		ctx.curapi = api;
 }
 
+// port: -D hih_no_eval: no macro engine unless a host installs one
+class NoEngine implements IMacroEngine {
+	public function new() {}
+
+	static function none():Dynamic
+		throw "macros: no macro engine in this compiler (-D hih_no_eval)";
+
+	public function create(com:context.Common.CommonContext, api:CompilerApi, isMacro:Bool, args:Array<String>):Context
+		return none();
+
+	public function init(ctx:Context):Void
+		none();
+
+	public function addTypes(ctx:Context, types:Array<ModuleType>, ready:ModuleType->Void):Void
+		none();
+
+	public function callPath(ctx:Context, path:Array<String>, f:String, vl:Array<Value>, api:CompilerApi):haxe.ds.Option<Value>
+		return none();
+
+	public function doReuse(ctx:Context, api:CompilerApi, args:Array<String>):Void
+		none();
+
+	public function setError(ctx:Context, b:Bool):Void
+		none();
+
+	public function setApi(ctx:Context, api:CompilerApi):Void
+		none();
+}
+
 class MacroEngine {
 	// port: the engine MacroContext uses for the macro context (not for
 	// --interp, which is Eval's own run of a program)
-	public static var engine:IMacroEngine = new EvalEngine();
+	public static var engine:IMacroEngine = #if hih_no_eval new NoEngine() #else new EvalEngine() #end;
 }

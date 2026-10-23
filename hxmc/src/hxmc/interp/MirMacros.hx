@@ -125,7 +125,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmcStd = std;
 		self = new MirMacros();
 		macros.MacroEngine.engine = self;
+		#if !hih_no_eval
 		macros.MacroApi.MacroApiImpl.nativeValues = true;
+		#end
 		typing.MacroContext.macroPlatformHook = setupPlatform;
 		// (the runtime's functions the compiler has: not typed, MacroRuntime)
 		MacroRuntime.install();

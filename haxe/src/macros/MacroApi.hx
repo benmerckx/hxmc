@@ -272,7 +272,12 @@ class MacroApi {
 class MacroApiImpl {
 	// port: InterpImpl (Eval), or the compiler's own values when a host sets
 	// nativeValues (hook, not upstream: MacroNativeValues)
+	// (-D hih_no_eval, not upstream: Eval compiled out, the native values only)
+	#if hih_no_eval
+	public static inline var nativeValues = true;
+	#else
 	public static var nativeValues = false;
+	#end
 
 	public static var vnull(get, never):Value;
 

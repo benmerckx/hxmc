@@ -209,10 +209,15 @@ class MacroContext {
 			getMacroStack: function() {
 				// port: the native values' engine keeps no positions of its frames
 				if (MacroApiImpl.nativeValues) Error.raiseTypingError("Context.getMacroStack is not available with -D hxmc.mir-macros", p);
+				// port: -D hih_no_eval (not upstream): no Eval frames
+				#if hih_no_eval
+				return [];
+				#else
 				var envs = macros.eval.EvalContext.callStack(macros.eval.EvalContext.getEval(macros.eval.EvalContext.getCtx()));
 				var envs = envs.length > 0 ? envs.slice(1) : envs; // Skip call to getMacroStack()
 				return envs.map(function(env:macros.eval.EvalContext.Env):Pos return
 					{pfile: macros.eval.EvalHash.revHash(env.envInfo.pfile), pmin: env.envLeavePmin, pmax: env.envLeavePmax});
+				#end
 			},
 			initMacrosDone: () -> Type.enumIndex(com.stage) >= Type.enumIndex(CInitMacrosDone),
 			getType: function(s) return badStage(),
@@ -361,7 +366,11 @@ class MacroContext {
 					case null:
 						MacroApiImpl.vnull;
 					case config:
+						#if hih_no_eval
+						Error.raiseTypingError("Context.getHxbWriterConfig needs Eval (-D hih_no_eval)", p);
+						#else
 						compiler.hxb.HxbWriterConfig.writeWriterConfig(macros.eval.EvalDataApi.EvalWriterApi.api(), config);
+						#end
 				}
 			},
 			setHxbWriterConfig: function(v) {
@@ -376,7 +385,11 @@ class MacroContext {
 						case config:
 							config;
 					}
+					#if hih_no_eval
+					Error.raiseTypingError("Context.setHxbWriterConfig needs Eval (-D hih_no_eval)", p);
+					#else
 					compiler.hxb.HxbWriterConfig.readWriterConfig(macros.eval.EvalDataApi.EvalReaderApi.api(), config, v);
+					#end
 				}
 			}
 		};
@@ -1257,17 +1270,24 @@ class MacroContext {
 						case MAFunction if (MacroApiImpl.nativeValues):
 							// port: not with the native values' engine yet
 							Error.raiseTypingError("Function arguments of macros are not available with -D hxmc.mir-macros", e.pos);
+						// port: -D hih_no_eval (not upstream): Eval evaluates these arguments
+						#if !hih_no_eval
 						case MAFunction:
 							var e = Typecore.typeExpr(mctx, e, WithTypeTools.withArgument(t, n));
 							Typecore.unify(mctx, e.etype, t, e.epos);
 							var v = macros.eval.EvalMain.evalExpr(ictx, e);
 							v == null ? MacroApiImpl.vnull : v;
+						#end
 						case MAOther if (MacroApiImpl.nativeValues):
 							// port: the native values' constant (as Eval evaluates it)
 							macros.MacroApi.MacroNativeValues.evalConstant(et);
+						#if !hih_no_eval
 						case MAOther:
 							var v = macros.eval.EvalMain.evalExpr(ictx, et);
 							v == null ? MacroApiImpl.vnull : v;
+						#else
+						case _: Globals.die("", "typing/MacroContext.hx");
+						#end
 					}
 				}
 			];
@@ -1416,14 +1436,21 @@ class MacroContext {
 	// port: Eval-target execution (`--interp`/`--eval`); not reachable from the HXB driver.
 	public static function interpret(ctx:TyperContext, args:Array<String>):Void {
 		context.Parallel.ManagedPool.release(ctx.com.sctx.pool);
+		// port: -D hih_no_eval (not upstream): no Eval to run the program
+		#if hih_no_eval
+		Error.raiseTypingError("--interp needs Eval (-D hih_no_eval)", Globals.nullPos);
+		#else
 		var mctx = getMacroContext(ctx);
 		var mctx = macros.eval.EvalMain.create(ctx.com, makeMacroComApi(ctx.com, mctx.com, Globals.nullPos), false, args);
 		macros.eval.EvalMain.addTypes(mctx, ctx.com.types, function(t) {});
 		if (ctx.com.main.mainExpr != null)
 			macros.eval.EvalMain.evalExpr(mctx, ctx.com.main.mainExpr);
+		#end
 	}
 
 	public static function setup():Void {
+		#if !hih_no_eval
 		macros.eval.EvalMain.setup(MacroApiImpl.macroApi);
+		#end
 	}
 }

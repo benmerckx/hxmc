@@ -922,6 +922,20 @@ cache, which keeps the macro context, an edit of the main module: the
 trivial macro 0.59 G (Eval 0.32 G; was 0.87 G), the formatter 1.15 G (Eval
 1.24 G; was 1.17 G).
 
+`-D hih_no_eval` compiles Eval out of a compiler: `MacroApiImpl.nativeValues`
+is a constant (the native values only), the macro engine is none until a
+host installs one (`MacroEngine.NoEngine`: macros fail), and what only Eval
+does fails with an error: `--interp`, macro arguments evaluated by Eval
+(functions and other constants), `Context.getMacroStack`,
+`Context.get/setHxbWriterConfig`. What kept Eval in without it: the default
+engine (`MacroEngine.engine`), the runtime switch between the two kinds of
+values (`nativeValues`), `--interp` (`MacroContext.interpret`) and those
+macro arguments. The playground's compiler (`bin/wasm/hih.wasm`) without
+Eval: 9.52 MB, 1.88 MB with gzip -9, from 11.42 MB and 2.26 MB; but the
+playground runs code with `--interp` and macros on Eval, and the Mir
+interpreter does not run in a wasm32 compiler (bundles of native code,
+`macro.Loader`), so it keeps Eval.
+
 ## Targets
 
 Targets: Linux (static ELF with musl's members; with `-D hxmc.libc=glibc`, an
