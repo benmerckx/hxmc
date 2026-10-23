@@ -844,8 +844,9 @@ a type by its module and name. Plans: [plans/compiler.md](plans/compiler.md)
 
 ## Macros on the Mir interpreter
 
-`-D hxmc.mir-macros`, in a compiler built with `-D hxmc.jit` (`bin/jit/haxe`,
-Linux x86-64): macros run on the Mir interpreter (`hxmc.rt.Interp`), not
+`-D hxmc.mir-macros`, in a compiler built with `-D hxmc.jit` (`bin/jit/haxe`;
+any target but windows-x86_64, below; the native macros of
+`-D hxmc.macros=native|verify` are linux-x86_64's only): macros run on the Mir interpreter (`hxmc.rt.Interp`), not
 Eval. The macro context is typed for hxmc (its std in front, the hxmc
 custom target: `MirMacros.setupPlatform`); a macro function is lowered and
 compiled for the interpreter when it is first called, in bundles the
@@ -894,7 +895,10 @@ platform needs no machine code of its own for them: the per-ABI part is
 `InterpAbi`'s, written for conventions whose integer and float arguments
 take registers independently (System V x86-64, AAPCS64); Win64, which
 assigns them by position, needs a variant per pattern of the first four
-arguments (not written yet). The compiler carries the table of its
+arguments (not written yet). So the jit compiler builds for linux-arm64,
+macos-arm64, macos-x86_64 and windows-arm64 as for linux-x86_64 (the
+linux-arm64 one passes the macro conformance and the mir-run corpus under
+qemu); the macro context and `--run` take the compiler's own target. The compiler carries the table of its
 symbols, its functions' fingerprints and flags and the cuts below as data
 (`macro.HostTable`: 63,450 symbols, 1.5 MB, made at its link; the values
 are relocations of the image, so the system's loader moves them with it;
