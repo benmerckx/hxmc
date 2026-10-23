@@ -3,7 +3,7 @@ package hxmc;
 import core.Ast;
 import core.MetaList.StrictMeta;
 import core.TType;
-import hxmc.macro.SymFile.HostFps;
+import hxmc.macro.HostTable.HostFps;
 import syntax.Parser.ParseResult;
 
 // The bodies the macro context of -D hxmc.mir-macros need not parse
@@ -11,13 +11,14 @@ import syntax.Parser.ParseResult;
 // hxmc.rt.Runtime), whose parsing was most of what the runtime still cost
 // a cold build there once the runtime's functions the compiler has were no
 // longer typed (a trivial macro: 0.07 G of 1.15 G instructions). A
-// compiler built with -D hxmc.jit writes <exe>.cuts (Main): for each file of
+// compiler built with -D hxmc.jit carries their lines (macro.HostTable,
+// made at its link: Driver.jitCuts): for each file of
 // the runtime (hxmc.rt, hxmc.unsafe), its content's hash and the ranges of
 // the block bodies that macro context never types: those of the static
 // functions MacroRuntime takes as the compiler's native code, by their
 // declaration (`eligible`: a subset of what MacroRuntime decides, which
-// also has the typed signature) and by what the executable has (<exe>.fps,
-// `nativeFlags`). The macro context blanks those ranges
+// also has the typed signature) and by what the executable has (its
+// fingerprints' flags, `nativeFlags`). The macro context blanks those ranges
 // (`apply`, from TypeloadParse.sourceHook) when the file is the same:
 // `{throw "hxmc.cut";}` padded with spaces, the line breaks kept, so that
 // every position in the file stays the same. A function whose body is cut
@@ -62,8 +63,8 @@ class MacroCuts {
 
 	// ---- writing (the compiler's build, -D hxmc.jit)
 
-	public static function write(com:context.Common.CommonContext, out:String) {
-		var fps = new HostFps(hxmc.macro.SymFile.read(out + ".fps"));
+	// the lines (the compiler's link: macro.HostTable carries them), given the compiler's fingerprints
+	public static function text(com:context.Common.CommonContext, fps:HostFps):String {
 		var files = new Map<String, String>();
 		for (t in com.types)
 			switch t {
@@ -80,7 +81,7 @@ class MacroCuts {
 			var ranges = cuts(com, rel, source, fps);
 			if (ranges.length > 0) lines.push(rel + " " + Fingerprint.hash(source) + " " + ranges.join(" ") + "\n");
 		}
-		sys.io.File.saveContent(out + ".cuts", lines.join(""));
+		return lines.join("");
 	}
 
 	// the ranges (a-b) of the bodies in file `rel` (hxmc/rt/Dyn.hx) to cut
@@ -210,11 +211,10 @@ class MacroCuts {
 
 	// ---- reading (the macro context)
 
-	// the cuts of <exe>.cuts by file (hxmc/rt/Dyn.hx), with the hash of the content they are of
-	public static function read(path:String):Map<String, {hash:String, ranges:Array<Int>}> {
+	// the cuts of the lines by file (hxmc/rt/Dyn.hx), with the hash of the content they are of
+	public static function read(text:String):Map<String, {hash:String, ranges:Array<Int>}> {
 		var m = new Map();
-		if (!sys.FileSystem.exists(path)) return m;
-		for (line in sys.io.File.getContent(path).split("\n")) {
+		for (line in text.split("\n")) {
 			var parts = line.split(" ");
 			if (parts.length < 3) continue;
 			var ranges = [];

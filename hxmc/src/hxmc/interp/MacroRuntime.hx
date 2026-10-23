@@ -17,11 +17,12 @@ using core.TFunctions;
 // A static function of the runtime that the compiler has, whose callers
 // need only its declared signature (no optional argument, nothing left to
 // infer but a Void result) and that the Mir inliner does not copy into
-// them (<exe>.fps's flags), is not typed (TypeBinding.untypedBodyHook): its
+// them (the flags of its fingerprint, macro.HostTable), is not typed
+// (TypeBinding.untypedBodyHook): its
 // body is a throw naming it, and @:hxmc.hostCode marks it; Lower makes it a
 // function without body (FuncInfo.hostCode) whose facts are those of the
 // compiler's code (Lower.hostCode). Most of their bodies are not parsed
-// either (hxmc.MacroCuts: <exe>.cuts, TypeloadParse.sourceHook). The macro
+// either (hxmc.MacroCuts: its lines in macro.HostTable, TypeloadParse.sourceHook). The macro
 // code compiled and what it runs are the same. HXMC_MIR_TYPE_RUNTIME=1:
 // every function typed and parsed, as before.
 @:access(hxmc.ir.Facts)
@@ -30,7 +31,7 @@ using core.TFunctions;
 class MacroRuntime {
 	public static inline var META = ":hxmc.hostCode";
 
-	// <exe>.cuts, read at the first file of the runtime the macro context parses
+	// the cuts (macro.HostTable), read at the first file of the runtime the macro context parses
 	static var cuts:Null<Map<String, {hash:String, ranges:Array<Int>}>> = null;
 
 	public static function install() {
@@ -123,23 +124,20 @@ class MacroRuntime {
 		var at = f.lastIndexOf("/hxmc/rt/");
 		if (at < 0) at = f.lastIndexOf("/hxmc/unsafe/");
 		if (at < 0) return text;
-		if (cuts == null) {
-			var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
-			cuts = hxmc.MacroCuts.read(exe + ".cuts");
-		}
+		if (cuts == null) cuts = hxmc.MacroCuts.read(hxmc.macro.HostTable.cuts());
 		var c = cuts.get(f.substr(at + 1));
 		if (c == null) return text;
 		var s = hxmc.MacroCuts.apply(text, c);
 		return s == null ? text : s;
 	}
 
-	// Lower.hostCode: what the compiler's code of fi does (Facts), from <exe>.fps
+	// Lower.hostCode: what the compiler's code of fi does (Facts), from its fingerprint's flags
 	static function native(fi:hxmc.ir.Ir.FuncInfo):Null<{noGc:Bool, blocks:Bool}> {
 		var sym = fi.cSymbol != null ? fi.cSymbol : "F_" + hxmc.ir.Facts.ident(fi.name);
 		if (!hxmc.macro.Loader.hostSyms().exists(sym)) return null;
 		var flags = MirRun.hostFps().flags(sym);
 		if (flags < 0) return null;
-		return {noGc: flags & hxmc.macro.SymFile.HostFps.NO_GC != 0, blocks: flags & hxmc.macro.SymFile.HostFps.BLOCKS != 0};
+		return {noGc: flags & hxmc.macro.HostTable.HostFps.NO_GC != 0, blocks: flags & hxmc.macro.HostTable.HostFps.BLOCKS != 0};
 	}
 }
 #end

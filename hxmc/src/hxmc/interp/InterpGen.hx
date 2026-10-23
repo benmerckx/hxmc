@@ -142,6 +142,10 @@ enum abstract IOp(Int) from Int to Int {
 	var UNREACH;
 	var TLSXLD;
 	var TLSXST;
+	var CALLX;
+	var CALLXI;
+	var SPECIAL;
+	var FENCE;
 }
 
 // The functions -D hxmc.interp interprets: those of the program's modules
@@ -154,15 +158,23 @@ class InterpSet {
 
 	// (exclude: functions whose native code is used, interp.MirRun)
 	final exclude:Null<Map<FuncInfo, Bool>>;
+	// code loaded at run time into a compiler built with -D hxmc.jit
+	// (macro.Loader: interp.MirMacros, interp.MirRun): no native code at all,
+	// so every function of it is interpreted, the runtime's it has too; its
+	// calls of native code and native code's calls of it go through the
+	// compiler's functions of InterpAbi, not stubs of its own
+	public final loaded:Bool;
 
-	public function new(spec:String, prep:Prep, ?exclude:Map<FuncInfo, Bool>) {
+	public function new(spec:String, prep:Prep, ?exclude:Map<FuncInfo, Bool>, loaded = false) {
 		this.exclude = exclude;
+		this.loaded = loaded;
 		prefixes = spec == "" || spec == "1" ? null : [for (p in spec.split(",")) if (StringTools.trim(p) != "") StringTools.trim(p)];
 		for (f in prep.p.funcs)
 			if (wants(f)) syms.set(prep.funcSym(f), true);
 	}
 
 	public function wants(f:FuncInfo):Bool {
+		if (loaded) return exclude == null || !exclude.exists(f);
 		if (f.module == null || StringTools.startsWith(f.module, "hxmc.rt.") || StringTools.startsWith(f.module, "hxmc.unsafe.") || f.cAbi != null) return false;
 		if (exclude != null && exclude.exists(f)) return false;
 		if (prefixes == null) return true;
@@ -229,7 +241,7 @@ class InterpGen {
 	public static inline var TABLE = "hxmc_interp_fns";
 	static inline var STUB = "hxmc_ic$";
 	static inline var MAGIC = 0x31495848;
-	static inline var HEADER = 32;
+	static inline var HEADER = 40;
 	// the runtime's thread-local variables the interpreter reads itself (Interp.T_*)
 	static var TLS = [
 		"rt_sp" => 0, "rt_sp_hw" => 1, "rt_hcur" => 2, "rt_exn" => 3, "rt_young_ptr" => 4, "rt_young_limit" => 5, "rt_young_rlimit" => 6,
@@ -259,6 +271,12 @@ class InterpGen {
 	final tramps:Array<{at:Int, from:Int, moves:Array<{d:Int, s:Int}>, to:MBlock}> = [];
 	// where the instruction being written starts (its targets are relative to it)
 	var insStart = 0;
+	// (code loaded at run time) the constant registers of the native code a
+	// call by symbol reaches, by call; an allocation's slow path's: the
+	// function, then its arguments
+	final targets = new Map<Int, Int>();
+	final allocs = new Map<Int, Array<Int>>();
+	final cc:CallConv;
 
 	public function new(prep, abi, obj, mf, set, compile) {
 		this.prep = prep;
@@ -267,7 +285,12 @@ class InterpGen {
 		this.mf = mf;
 		this.set = set;
 		this.compile = compile;
+		cc = CallConv.of(abi);
 	}
+
+	// a thread-local variable of the compiler's that code loaded at run time reads or sets (through InterpAbi.TLS_GET, TLS_SET)
+	function hostTls(sym:String):Bool
+		return TLS.get(sym) == null && sym != "rt_hcur" && !(emulatedTls != null && !nativeTls(sym));
 
 	public function run() {
 		if (abi.wasm) throw new MirBuild.Unsupported("-D hxmc.interp: not on WebAssembly");
@@ -315,6 +338,35 @@ class InterpGen {
 						reg[i.id] = constant(0, 0, i.sym, i.imm);
 					case _:
 				}
+		// (code loaded at run time: the native code it calls by symbol, as constants)
+		if (set.loaded)
+			for (b in blocks)
+				for (i in b.ins)
+					if (!i.dead) switch i.op {
+						case Call if (i.sym == MirBuild.STUB_FRAME):
+							// (Mem.frame: an interpreted function keeps no frame record, as WebAssembly's)
+							targets.set(i.id, constant(0, 0, null, 0));
+						case Call if (i.sym != null && !i.returnsTwice && !set.syms.exists(i.sym) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL)):
+							if (StringTools.startsWith(i.sym, MemLower.ALLOC_STUB)) {
+								// (an allocation's slow path: hxmc_alloc_slow with the stub's header words and bytes, DataGen.allocStubs)
+								var parts = i.sym.substr(MemLower.ALLOC_STUB.length).split("$");
+								var lo = Std.parseInt(parts[0]), bytes = Std.parseInt(parts[2]);
+								var ty = parts[1];
+								var t = StringTools.startsWith(ty, "#") ? constant(Std.parseInt(ty.substr(1)), 0, null, 0) : constant(0, 0, ty, 0);
+								allocs.set(i.id, [
+									constant(0, 0, "hxmc_alloc_slow", 0),
+									constant(lo, lo < 0 ? -1 : 0, null, 0),
+									t,
+									constant(bytes, 0, null, 0)
+								]);
+							} else
+								targets.set(i.id, constant(0, 0, i.sym, 0));
+						case TlsLoad if (hostTls(i.sym)):
+							targets.set(i.id, constant(0, 0, InterpAbi.TLS_GET + i.sym, 0));
+						case TlsStore if (hostTls(i.sym)):
+							targets.set(i.id, constant(0, 0, InterpAbi.TLS_SET + i.sym, 0));
+						case _:
+					}
 		var nc = consts.length;
 		if (coalesce) nregs = allocate(blocks, nc, uses) else {
 			nregs = nc + mf.params.length;
@@ -325,6 +377,10 @@ class InterpGen {
 				for (i in b.ins)
 					if (!i.dead && reg[i.id] < 0 && i.ty != Void && !fused.exists(i.id)) reg[i.id] = nregs++;
 		}
+		// (a parameter of type Void, or one never read, still has its register: calls pass it, DataGen.boundTrampoline)
+		for (b in blocks)
+			for (i in b.ins)
+				if (i.op == Param && i.imm >= 0 && reg[i.id] < 0) reg[i.id] = nc + i.imm;
 		var pcOf = new Map<Int, Int>();
 		for (b in blocks) {
 			pcOf.set(b.id, code.length);
@@ -349,6 +405,8 @@ class InterpGen {
 		var start = b.len;
 		var constOff = (HEADER + 4 * code.length + 7) & ~7;
 		var symOff = constOff + 8 * consts.length;
+		var srcOff = symOff + 8 * syms.length;
+		var entry = entrySources();
 		b.u32(MAGIC);
 		b.u32(nregs + scratch);
 		b.u32(frame);
@@ -357,6 +415,8 @@ class InterpGen {
 		b.u32(consts.length);
 		b.u32(constOff);
 		b.u32(mf.params.length);
+		b.u32(srcOff);
+		b.u32(entry.flags);
 		for (w in code)
 			b.u32(w);
 		b.align(8);
@@ -368,8 +428,31 @@ class InterpGen {
 			if (s.name != null) sec.relocs.push(new Reloc(b.len, RelKind.RAbs64, obj.sym(s.name), s.addend));
 			b.u64(0, 0);
 		}
+		for (s in entry.sources)
+			b.u32(s);
 		obj.define(DESC + mf.name, sec, start, b.len - start, true);
-		entryStub();
+		if (!set.loaded) entryStub();
+	}
+
+	// where native code entering the function through the interpreter's pools
+	// (code loaded at run time: InterpAbi) leaves each argument, as a byte
+	// offset in the register image, and the descriptor's flags (Interp.D_*)
+	function entrySources():{sources:Array<Int>, flags:Int} {
+		var pl = cc.params(mf);
+		var flags = mf.ret == F64 ? 1 : 0;
+		if (pl.stack > 0) flags |= 2;
+		var sources = [];
+		for (k in 0...mf.params.length) {
+			var s = InterpAbi.slot(cc, pl.locs[k], mf.params[k] == F64);
+			if (s < 0 || pl.locs[k].gpr >= 0) {
+				flags |= 4;
+				s = 0;
+			}
+			sources.push(s);
+		}
+		if (mf.cRet.length > 0 || !InterpAbi.supported(abi)) flags |= 4;
+		if (set.loaded && mf.cRet.length > 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a function returning a struct by value (C callbacks) is not interpreted');
+		return {sources: sources, flags: flags};
 	}
 
 	// the program's thread-local variables (@:hxmc.threadLocal statics) when
@@ -801,11 +884,13 @@ class InterpGen {
 			case Cmp if (fused.exists(i.id)):
 			case TlsLoad:
 				var t = TLS.get(i.sym);
-				if (t != null) emit([TLSLD, r(i.id), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXLD, r(i.id), tlsIndex(i.sym)]) else callOut(tlsStub(i.sym, false), r(i.id), vector());
+				if (t != null) emit([TLSLD, r(i.id), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXLD, r(i.id), tlsIndex(i.sym)]) else if (set.loaded)
+					callImage(CALLX, targets.get(i.id), r(i.id), vector(), vector(), 0, -1, null) else callOut(tlsStub(i.sym, false), r(i.id), vector());
 			case TlsStore:
 				if (i.sym == "rt_hcur") emit([TLSST_HCUR, r(i.a), abi.handlerPrev]) else {
 					var t = TLS.get(i.sym);
-					if (t != null) emit([TLSST, r(i.a), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXST, r(i.a), tlsIndex(i.sym)]) else callOut(tlsStub(i.sym, true), -1, vector(i.a));
+					if (t != null) emit([TLSST, r(i.a), t]) else if (emulatedTls != null && !nativeTls(i.sym)) emit([TLSXST, r(i.a), tlsIndex(i.sym)]) else if (set.loaded)
+						callImage(CALLX, targets.get(i.id), -1, vector(r(i.a)), vector(I64), 0, -1, null) else callOut(tlsStub(i.sym, true), -1, vector(i.a));
 				}
 			case StackAddr:
 				emit([SADDR, r(i.id), slotOff[i.imm]]);
@@ -877,8 +962,8 @@ class InterpGen {
 				if (i.b < 0) emit([(LD1S : Int) + k, r(i.id), r(i.a), i.imm]) else emit([(LDX1S : Int) + k, r(i.id), r(i.a), r(i.b), i.imm2, i.imm]);
 			case Store:
 				// (a store that publishes what it stores, MIns.release: a plain
-				// store on x86-64, which orders stores; the interpreter's only host)
-				if (i.release && abi.arm) throw new MirBuild.Unsupported("-D hxmc.interp: a release store on arm64");
+				// store on x86-64, which orders stores; arm64: a fence before it)
+				if (i.release && abi.arm) code.push(FENCE);
 				var k = if (ty(i.c) == F64 && i.size == 4) 4 else switch i.size {
 					case 1: 0;
 					case 2: 1;
@@ -892,6 +977,19 @@ class InterpGen {
 					emit([CALLI, sym(DESC + i.sym, 0), res, i.args.length]);
 					for (a in i.args)
 						code.push(r(a));
+				} else if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL)) specialOp(i) else if (set.loaded && i.sym == MirBuild.STUB_FRAME) {
+					emit([MOV, res, targets.get(i.id)]);
+				} else if (set.loaded) {
+					var al = allocs.get(i.id);
+					if (al != null) callImage(CALLX, al[0], res, vector(al[1], al[2], al[3]), vector(I32, I32, I32), 0, -1, null) else {
+						var n = i.structRet ? i.args.length - 1 : i.args.length;
+						if (i.structRet && i.cRet.length == 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a C call returning a struct through x8 (hxmc.interp.InterpAbi)');
+						var regs = new haxe.ds.Vector<Int>(n);
+						for (k in 0...n)
+							regs[k] = r(i.args[k]);
+						var tys = i.argTys.length > 0 ? i.argTys : i.args.map(ty);
+						callImage(i.sym != null ? CALLX : CALLXI, i.sym != null ? targets.get(i.id) : r(i.a), res, regs, tys, n, i.variadic, i);
+					}
 				} else if (i.sym != null) callOut(callStub(i), res, i.args) else {
 					emit([CALLNI, sym(callStub(i), 0), r(i.a), res, i.args.length, cacheSlot()]);
 					for (a in i.args)
@@ -960,6 +1058,71 @@ class InterpGen {
 		}
 		if (c.imm >= 10) throw new MirBuild.Unsupported("-D hxmc.interp: a double condition on integers");
 		return (t == I64 ? (i64 : Int) : (i32 : Int)) + c.imm;
+	}
+
+	// a call of native code through the register image (code loaded at run
+	// time: Interp.callX, InterpAbi): the target's register, the result's,
+	// the arguments' registers and types (n of them, as the call passes
+	// them), then the shape: the result's kind, whether stack words are
+	// used, each argument's place; a struct result in registers (c.cRet):
+	// its address's register, then per part its result word, offset and bytes
+	function callImage(op:IOp, target:Null<Int>, res:Int, regs:haxe.ds.Vector<Int>, tys:haxe.ds.Vector<MTy>, n:Int, variadic:Int, c:Null<MIns>) {
+		if (target == null) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a call without its target');
+		n = regs.length;
+		var groups = c != null ? c.cGroups : vector();
+		var sizes = c != null ? c.cSizes : vector();
+		var pl = cc.place(tys, n, groups, sizes, variadic);
+		var start = code.length;
+		emit([op, target, res, 0]);
+		if (op == CALLXI) code.push(cacheSlot());
+		code.push(n);
+		for (x in regs)
+			code.push(x);
+		var parts = c != null && c.structRet && c.cRet.length > 0;
+		code.push(parts ? 2 : c != null && c.ty == F64 ? 1 : 0);
+		code.push(pl.stack > 0 ? 1 : 0);
+		for (k in 0...n) {
+			var loc = pl.locs[k];
+			var s = InterpAbi.slot(cc, loc, tys[k] == F64);
+			if (s < 0 || loc.gpr >= 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a call of native code whose arguments take more than the interpreter\'s stack words (hxmc.interp.InterpAbi)');
+			code.push(s | (tys[k] == I32 ? 0x10000 : 0));
+		}
+		if (parts) {
+			code.push(r(c.args[c.args.length - 1]));
+			code.push(c.cRet.length);
+			var rr = cc.structResult(c.cRet);
+			for (k in 0...c.cRet.length) {
+				var w = InterpAbi.resultWord(cc, rr[k]);
+				if (w < 0) throw new MirBuild.Unsupported('-D hxmc.jit: ${mf.name}: a struct result in registers the interpreter does not take');
+				emit([w, c.cRet[k].off, c.cRet[k].size]);
+			}
+		}
+		code[start + 3] = code.length - start;
+	}
+
+	// an expansion of the instruction selections (MirBuild.SPECIAL: Interp.SP_*)
+	function specialOp(i:MIns) {
+		var k = switch i.sym.substr(MirBuild.SPECIAL.length) {
+			case "atomic_load4": 0;
+			case "atomic_load8": 1;
+			case "atomic_store4": 2;
+			case "atomic_store8": 3;
+			case "atomic_add4": 4;
+			case "atomic_add8": 5;
+			case "atomic_xchg4": 6;
+			case "atomic_xchg8": 7;
+			case "atomic_cas4": 8;
+			case "atomic_cas8": 9;
+			case "fence": 10;
+			case "f32_to_f64": 11;
+			case "f64_to_f32": 12;
+			case "f32bits_to_freg": 13;
+			case "freg_to_f32bits": 14;
+			case s: throw new MirBuild.Unsupported('-D hxmc.interp: ${mf.name}: the expansion $s');
+		}
+		inline function arg(j:Int):Int
+			return j < i.args.length ? r(i.args[j]) : 0;
+		emit([SPECIAL, k, i.ty == Void ? -1 : r(i.id), arg(0), arg(1), arg(2)]);
 	}
 
 	function callOut(stub:String, res:Int, args:haxe.ds.Vector<Int>) {
