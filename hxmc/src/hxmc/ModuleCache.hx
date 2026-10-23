@@ -649,6 +649,8 @@ class ModuleCache {
 		var why = wanted(com) ? unusable(com, actx) : "off";
 		var s = why == null ? open(com) : null;
 		early = [];
+		// (a server's earlier builds' typers: no longer used, and each keeps its build's modules)
+		typers = [];
 		if (s == null) {
 			if (why == null) why = "no cache directory";
 			if (why != "off" && stats()) Sys.println('hxmc: module cache not used ($why)');

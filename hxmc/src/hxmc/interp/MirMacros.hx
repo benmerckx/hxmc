@@ -289,6 +289,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		stdRoots = [];
 		inits = [];
 		macros.MacroApi.MacroNativeValues.reset();
+		macros.MacroApi.MacroNativeValues.dropValues();
 	}
 
 	public function setError(ctx:macros.eval.EvalContext.Context, b:Bool):Void

@@ -1527,6 +1527,7 @@ class Gc {
 		var me = Threads.self;
 		Census.run(oldStart, oldPtr, when, minorSize, oldEnd.diff(oldStart), (me.value.remCap + me.value.robjsCap : I64) * 8,
 			(gcCap : I64) * 16, sp.diff(me.value.base), minors, majors, nglobals);
+		Census.why(oldStart, oldPtr, globals, nglobals);
 	}
 	#end
 

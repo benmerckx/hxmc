@@ -532,6 +532,128 @@ class Census {
 		LibC.free(ts);
 	}
 
+	// ---- RT_CENSUS_WHY=<type> (its name in the census): how the first
+	// RT_CENSUS_WHY_MAX (8) objects of that type are reached from the globals,
+	// one path each, by a breadth-first walk from them that records every
+	// object's first referrer (what keeps a leak alive; what only a stack
+	// reaches has no path)
+	@:hxmc.noGc public static function why(start:Ptr, end:Ptr, globals:Ptr, nglobals:Int) {
+		var want = Os.getenv("RT_CENSUS_WHY");
+		if (want.isNull()) return;
+		var max = Os.envInt("RT_CENSUS_WHY_MAX", 8);
+		var words = end.diff(start) >> 3;
+		// per word (an object's first): its referrer's word + 1 and the slot,
+		// or -(index + 1) of a global; 0: not reached
+		var par = LibC.malloc(words * 8 + 8);
+		LibC.memset(par, 0, words * 8 + 8);
+		var queue = LibC.malloc(words * 4 + 4);
+		var qh = 0, qt = 0;
+		inline function wordOf(o:Ptr):Int
+			return (o.diff(start) >> 3).toInt();
+		inline function inHeap(v:Ptr):Bool
+			return !v.isNull() && !v.ult(start) && v.ult(end);
+		for (g in 0...nglobals) {
+			var v = Mem.getPtr(globals, 8 * g);
+			if (!inHeap(v) || Mem.getI32(par, 8 * wordOf(v)) != 0) continue;
+			Mem.setI32(par, 8 * wordOf(v), -(g + 1));
+			Mem.setI32(queue, 4 * qt++, wordOf(v));
+		}
+		while (qh < qt) {
+			var ow = Mem.getI32(queue, 4 * qh++);
+			var o = start.addL((ow : I64) << 3);
+			var n = nslotsOf(o), k = kindOf(o);
+			if (k != K_OBJ && k != 1) continue; // (K_RAW: no references)
+			var pm = k == K_OBJ ? Types.ptrmap(Types.ty(tindexOf(o))) : Ptr.nil();
+			if (k == K_OBJ && pm.isNull()) continue;
+			for (i in (k == 1 && tindexOf(o) == Types.T_NATIVE_ARRAY ? 1 : 0)...n) {
+				if (k == K_OBJ && (Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1 == 0) continue;
+				var v = Mem.getPtr(o, 8 * i);
+				if (!inHeap(v)) continue;
+				var vw = wordOf(v);
+				if (Mem.getI32(par, 8 * vw) != 0) continue;
+				Mem.setI32(par, 8 * vw, ow + 1);
+				Mem.setI32(par, 8 * vw + 4, i);
+				Mem.setI32(queue, 4 * qt++, vw);
+			}
+		}
+		var buf = Mem.stack(512);
+		var chain = LibC.malloc(4 * 4096);
+		var r = new Report(Mem.stack(Report.BYTES));
+		var found = 0, unreached = 0;
+		var p = start;
+		while (p.ult(end) && found < max) {
+			var o = p.add(8);
+			p = p.addL(objSize(o));
+			if (tindexOf(o) >= ntypes()) continue;
+			tname(tindexOf(o), buf, 512);
+			if (LibC.strcmp(buf, want) != 0) continue;
+			if (Mem.getI32(par, 8 * wordOf(o)) == 0) {
+				unreached++;
+				continue;
+			}
+			found++;
+			// the chain up to a global
+			var n = 0, w = wordOf(o);
+			while (n < 4096) {
+				Mem.setI32(chain, 4 * n++, w);
+				var pw = Mem.getI32(par, 8 * w);
+				if (pw < 0) break;
+				w = pw - 1;
+			}
+			r.str("why ");
+			r.cstr(want, 0, -1);
+			r.str(" #");
+			r.int(found, 0);
+			r.str(": global ");
+			r.int(-Mem.getI32(par, 8 * Mem.getI32(chain, 4 * (n - 1))) - 1, 0);
+			r.flush();
+			var j = n - 1;
+			while (j > 0) {
+				var x = start.addL((Mem.getI32(chain, 4 * j) : I64) << 3);
+				var slot = Mem.getI32(par, 8 * Mem.getI32(chain, 4 * (j - 1)) + 4);
+				var t = tindexOf(x);
+				tname(t, buf, 512);
+				r.str("\n   ");
+				r.cstr(buf, 0, 120);
+				var named = false;
+				if (kindOf(x) == K_OBJ && t < ntypes()) {
+					var ty = Types.ty(t);
+					for (i in 0...Types.nfields(ty)) {
+						var f = Types.field(ty, i);
+						if (Types.fSlot(f) == slot) {
+							r.str(".");
+							r.cstr(Names.fidName(Types.fFid(f)), 0, -1);
+							named = true;
+							break;
+						}
+					}
+				}
+				if (!named) {
+					r.str(" [");
+					r.int(slot, 0);
+					r.str("]");
+				}
+				r.flush();
+				j--;
+			}
+			r.str("\n   -> ");
+			r.cstr(want, 0, -1);
+			r.str("\n");
+			r.flush();
+		}
+		r.str("why ");
+		r.cstr(want, 0, -1);
+		r.str(": ");
+		r.int(found, 0);
+		r.str(" shown, ");
+		r.int(unreached, 0);
+		r.str(" before them not reached from a global\n");
+		r.flush();
+		LibC.free(chain);
+		LibC.free(queue);
+		LibC.free(par);
+	}
+
 	// ---- allocations (RT_CENSUS set): every object allocated, by type. The
 	// collector counts the nursery's objects before each collection empties
 	// it (with one thread its used part is contiguous objects and zeroed

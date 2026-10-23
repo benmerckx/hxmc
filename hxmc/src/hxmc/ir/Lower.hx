@@ -38,6 +38,7 @@ class Lower {
 	public var argVars = new Map<FuncInfo, Array<Null<TVar>>>();
 
 	public function new() {
+		CInterop.resetCaches();
 		root = new ClassInfo("Object", "Object", null);
 		prog.classes.push(root);
 	}

@@ -3449,6 +3449,13 @@ class MacroNativeValues {
 		enums = new Map();
 	}
 
+	// (the engine's values so far are no longer used: its code is compiled again,
+	// MirMacros.newGeneration; the positions and types they map to are dropped)
+	public static function dropValues() {
+		enumPos = new haxe.ds.ObjectMap();
+		lazyTypes = new haxe.ds.ObjectMap();
+	}
+
 	static function enumOf(k:EnumType):Enum<Dynamic> {
 		var name = "haxe.macro." + Std.string(k).substr(1);
 		name = switch k {

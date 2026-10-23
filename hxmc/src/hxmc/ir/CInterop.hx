@@ -235,6 +235,14 @@ class CInterop {
 	static var layouts = new Map<TClass, CLayout>();
 	static var inProgress = new Map<TClass, Bool>();
 
+	// a new program (Lower): the caches hold the last one's classes and files
+	// (a server's builds: they would keep its modules, and a file's lines change)
+	public static function resetCaches() {
+		layouts = new Map();
+		inProgress = new Map();
+		lineCache = new Map();
+	}
+
 	// the C layout of a @:hxmc.struct class: its variables in order, each at
 	// the next multiple of its alignment; the size a multiple of the largest
 	// alignment (the same on the six 64-bit targets: no type here differs)
