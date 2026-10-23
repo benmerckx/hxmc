@@ -1603,11 +1603,17 @@ class Lower {
 		if (subs != null)
 			for (d in subs)
 				if (d.clFields.exists(name) && d.clFields.get(name).cfExpr != null) return true;
+		// (a class of the compiler code is loaded into: its own subclasses may override)
+		if (hostOverrides != null && hostOverrides.exists(core.Globals.sTypePath(c.clPath) + "." + name)) return true;
 		// a subclass lowered later may still override: dispatch if any
 		// descendant the typer knows does (clDescendants holds the direct
 		// subclasses: their subclasses too)
 		return overriddenBelow(c, name);
 	}
+
+	// the methods the compiler's own classes override ("pack.C.name": code
+	// loaded into the compiler, interp.MirMacros, macro.Loader.hostOverrides)
+	public static var hostOverrides:Null<Map<String, Bool>> = null;
 
 	var overridden = new Map<String, Bool>();
 

@@ -55,6 +55,23 @@ class Loader {
 	static var nextType = 0;
 	static var nextSig = 0;
 	static var hint = 0x40000000;
+	static var windowFaults = false;
+	// the types and signatures of this generation, and those of earlier ones no
+	// bundle has taken again, by symbol, with their facts: a later generation's
+	// of the same facts takes the entry again (takenAgain; spare entries are
+	// finite, and every generation has the macro API's enums: 243 of the 254
+	// types of a trivial macro's)
+	static var genTypes = new Map<String, {idx:Int, key:String}>();
+	static var oldTypes = new Map<String, {idx:Int, key:String}>();
+	static var genSigs = new Map<String, {id:Int, key:String}>();
+	static var oldSigs = new Map<String, {id:Int, key:String}>();
+	// the slots of rt_globals likewise, by symbol (a static's, a constructor's
+	// singleton): emptied when taken again, as a new generation's statics
+	// start (Eval's code of a dropped prototype finds the new one's by its path)
+	static var genGlobals = new Map<String, Int>();
+	static var oldGlobals = new Map<String, Int>();
+	// the empty anonymous structure (one for every bundle)
+	static var emptyAnon = -1;
 
 	// a new generation of bundles (interp.MirMacros: a compilation whose macro
 	// context was typed again): those loaded so far stay mapped, but the next
@@ -62,11 +79,118 @@ class Loader {
 	// name (Type.resolveClass: an empty name)
 	public static function newGeneration() {
 		for (t in hostNtypes...nextType) {
+			if (t == emptyAnon) continue;
 			var e = Mem.sym("rt_types").add(t * TS);
 			var n = Mem.getPtr(e, 0);
 			if (!n.isNull()) Mem.setPtr(e, 0, n.add(LibC.strlen(n)));
 		}
 		xb = new Map();
+		for (k => v in genTypes)
+			oldTypes.set(k, v);
+		for (k => v in genSigs)
+			oldSigs.set(k, v);
+		for (k => v in genGlobals)
+			oldGlobals.set(k, v);
+		genTypes = new Map();
+		genSigs = new Map();
+		genGlobals = new Map();
+	}
+
+	// the facts of a type that decide whether an entry of an earlier generation
+	// is its (a class's: with the span of its descendants' type indices)
+	static function typeKey(t:Dynamic, spans:Map<String, Int>):String {
+		var k = haxe.Json.stringify(t);
+		return t.tk == "TK_CLASS" ? k + " " + spans.get(t.sym) : k;
+	}
+
+	// the types of a bundle that take entries of earlier generations again
+	// (fresh: those neither the compiler's nor of a bundle of this generation):
+	// an enum with all its constructors, at type indices less their tags that
+	// agree (code subtracts them, MirBuild's EEnumTag); a structure, a
+	// closure's type, an interface; the classes, all of them or none, at
+	// type indices that follow each other in their order (a class's
+	// instances are the span of type indices from its own, MirBuild.instOf;
+	// every class is below Object)
+	static function takenAgain(types:Array<Dynamic>, spans:Map<String, Int>, fresh:Dynamic->Bool):Map<String, Int> {
+		var r = new Map<String, Int>();
+		var bySym = new Map<String, Dynamic>();
+		for (t in types)
+			bySym.set(t.sym, t);
+		function old(t:Dynamic):Null<Int> {
+			if (t == null || !fresh(t)) return null;
+			var o = oldTypes.get(t.sym);
+			return o != null && o.key == typeKey(t, spans) ? o.idx : null;
+		}
+		var classes = [];
+		for (t in types)
+			switch (t.tk : String) {
+				case "TK_ANON" | "TK_CLOSURE" | "TK_BOUND" | "TK_INTERFACE":
+					var i = old(t);
+					if (i != null) r.set(t.sym, i);
+				case "TK_CLASS" if (fresh(t)):
+					classes.push(t);
+				case "TK_ENUM":
+					var i = old(t);
+					if (i == null) continue;
+					var cs:Array<String> = t.ctors;
+					var base:Null<Int> = null, ok = true;
+					for (c in cs) {
+						var ct = bySym.get(c);
+						var ci = old(ct);
+						if (ci == null || (base != null && ci - (ct.tag : Int) != base)) {
+							ok = false;
+							break;
+						}
+						base = ci - (ct.tag : Int);
+					}
+					if (!ok) continue;
+					r.set(t.sym, i);
+					for (c in cs)
+						r.set(c, oldTypes.get(c).idx);
+				case _:
+			}
+		var base:Null<Int> = null;
+		for (k in 0...classes.length) {
+			var i = old(classes[k]);
+			if (i == null || (k > 0 && i != base + k)) {
+				base = null;
+				break;
+			}
+			if (k == 0) base = i;
+		}
+		if (base != null)
+			for (k in 0...classes.length)
+				r.set(classes[k].sym, base + k);
+		return r;
+	}
+
+	// the methods the compiler's own classes override, under every class above
+	// the overriding one ("pack.C.name"): code loaded into the compiler is handed
+	// its objects (a compilation's streams), so its calls of those methods
+	// dispatch (Lower.hostOverrides), though no class it knows overrides them
+	public static function hostOverrides():Map<String, Bool> {
+		hostSyms();
+		var r = new Map<String, Bool>();
+		var types = Mem.sym("rt_types");
+		inline function entry(t:Int):Ptr
+			return types.add(t * TS);
+		for (t in Abi.T_FIRST...hostNtypes) {
+			var e = entry(t);
+			var s = hxmc.rt.Types.sup(e);
+			if (hxmc.rt.Types.tk(e) != hxmc.rt.Types.TK_CLASS || s < Abi.T_FIRST) continue;
+			for (i in 0...hxmc.rt.Types.nmethods(e)) {
+				var m = hxmc.rt.Types.method(e, i);
+				var above = @:privateAccess Dyn.findMethod(entry(s), hxmc.rt.Types.mFid(m));
+				if (above.isNull() || hxmc.rt.Types.mFn(above) == hxmc.rt.Types.mFn(m)) continue;
+				var n = @:privateAccess hxmc.rt.Names.fidStr(hxmc.rt.Types.mFid(m));
+				var k = s;
+				while (k >= Abi.T_FIRST && hxmc.rt.Types.tk(entry(k)) == hxmc.rt.Types.TK_CLASS) {
+					r.set(@:privateAccess hxmc.rt.Str.ofAscii(hxmc.rt.Types.name(entry(k))) + "." + n, true);
+					k = hxmc.rt.Types.sup(entry(k));
+				}
+			}
+		}
+		return r;
 	}
 
 	// the spare entries taken: types, signatures
@@ -157,6 +281,10 @@ class Loader {
 		var types:Array<Dynamic> = facts.types;
 		var isNew = new Map<String, Bool>();
 		var shared = new Map<String, Bool>();
+		var spans = new Map<String, Int>();
+		for (c in (facts.classes : Array<Dynamic>))
+			spans.set(c.ty, c.span);
+		var again = takenAgain(types, spans, t -> abs(t.sym, t.share) == null);
 		for (t in types) {
 			shared.set(t.sym, t.share);
 			var v = abs(t.sym, t.share);
@@ -165,9 +293,16 @@ class Loader {
 				if (why != null) throw "type " + t.name + " differs from the compiler's: " + why;
 				num.set(t.sym, v);
 			} else {
-				if (nextType >= hostNtypes + Jit.SPARE_TYPES) throw "out of spare type entries";
-				num.set(t.sym, nextType++);
+				var i = again.get(t.sym);
+				if (i != null)
+					oldTypes.remove(t.sym)
+				else {
+					if (nextType >= hostNtypes + Jit.SPARE_TYPES) throw "out of spare type entries";
+					i = nextType++;
+				}
+				num.set(t.sym, i);
 				isNew.set(t.sym, true);
+				genTypes.set(t.sym, {idx: i, key: typeKey(t, spans)});
 			}
 		}
 		inline function tyNum(n:Dynamic):Int
@@ -192,9 +327,16 @@ class Loader {
 		for (s in sigs) {
 			var v = abs(s.sym, true);
 			if (v == null) {
-				if (nextSig >= hostNsigs + Jit.SPARE_SIGS) throw "out of spare signature entries";
-				v = nextSig++;
+				var o = oldSigs.get(s.sym);
+				if (o != null && o.key == s.key) {
+					v = o.id;
+					oldSigs.remove(s.sym);
+				} else {
+					if (nextSig >= hostNsigs + Jit.SPARE_SIGS) throw "out of spare signature entries";
+					v = nextSig++;
+				}
 				newSigs.push({id: v, s: s});
+				genSigs.set(s.sym, {id: v, key: s.key});
 			}
 			num.set(s.sym, v);
 		}
@@ -208,8 +350,16 @@ class Loader {
 		for (g in globals) {
 			if (g.ref) {
 				var v = abs(g.sym, g.share);
-				var idx = v == null ? nglobals++ : v >> 3;
-				if (v == null) newGlobals.push({idx: idx, init: g.init});
+				var idx = v == null ? oldGlobals.get(g.sym) : v >> 3;
+				if (v == null) {
+					if (idx != null) {
+						oldGlobals.remove(g.sym);
+						Mem.setRef(Gc.globals, 8 * idx, null);
+					} else
+						idx = nglobals++;
+					newGlobals.push({idx: idx, init: g.init});
+					genGlobals.set(g.sym, idx);
+				}
 				num.set(g.sym, 8 * idx);
 				num.set(g.name, idx);
 				gindex.set(g.name, idx);
@@ -340,8 +490,14 @@ class Loader {
 				var stub = defs.get(n.substr(hxmc.interp.InterpGen.DESC.length));
 				if (stub != null) hxmc.rt.Interp.register(ptr(value(stub).v), ptr(value(s).v));
 			}
-		// (its null accesses throw, as the compiler's own: hxmc.rt.Faults)
-		hxmc.rt.Faults.addCode(region, region.addL((textSize : I64)));
+		// (its null accesses throw, as the compiler's own: hxmc.rt.Faults, which
+		// keeps 64 ranges: the bundles' window from the first hint to 2 GB is one,
+		// a region the system put below it one of its own)
+		if (!windowFaults) {
+			windowFaults = true;
+			hxmc.rt.Faults.addCode(ptr(0x40000000), ptr(0x7fff0000));
+		}
+		if (base < 0x40000000) hxmc.rt.Faults.addCode(region, region.addL((textSize : I64)));
 		inline function symAddr(n:String):Int {
 			var d = defs.get(n);
 			if (d != null) return value(d).v;
@@ -354,6 +510,10 @@ class Loader {
 		dbg("dispatch rows");
 		for (k in 0...selectors.length) {
 			var row = ptr(base + rowsAt + rowBytes * k);
+			// (the compiler's rows of the same selector first: the bundle's code is handed
+			// objects of the compiler's own classes, which only it implements: hostOverrides)
+			var hs = h.get(selectors[k].sym);
+			if (hs != null && hs.k == "d") LibC.memcpy(row, ptr(hs.v), (8 * (hostNtypes - Abi.T_FIRST) : I64));
 			var rows:Array<Dynamic> = selectors[k].rows;
 			for (r in rows)
 				Mem.setPtr(row, 8 * (num.get(r.ty) - Abi.T_FIRST), ptr(symAddr(r.fn)));
@@ -465,17 +625,19 @@ class Loader {
 		}
 		// an empty anonymous structure (its fields overflow): the bridge's objects that
 		// match no structure of the bundle
-		if (nextType >= hostNtypes + Jit.SPARE_TYPES) throw "out of spare type entries";
-		var empty = nextType++;
-		var ee = Mem.sym("rt_types").add(empty * TS);
-		Mem.setPtr(ee, 0, cstr("{}"));
-		Mem.setI32(ee, 8, 5);
-		Mem.setI32(ee, 12, -1);
-		Mem.setI32(ee, 16, 1);
-		var epm = zalloc(8);
-		Mem.setI32(epm, 0, 1);
-		Mem.setPtr(ee, 24, epm);
-		b.shapes.push({tindex: empty, fields: []});
+		if (emptyAnon < 0) {
+			if (nextType >= hostNtypes + Jit.SPARE_TYPES) throw "out of spare type entries";
+			emptyAnon = nextType++;
+			var ee = Mem.sym("rt_types").add(emptyAnon * TS);
+			Mem.setPtr(ee, 0, cstr("{}"));
+			Mem.setI32(ee, 8, 5);
+			Mem.setI32(ee, 12, -1);
+			Mem.setI32(ee, 16, 1);
+			var epm = zalloc(8);
+			Mem.setI32(epm, 0, 1);
+			Mem.setPtr(ee, 24, epm);
+		}
+		b.shapes.push({tindex: emptyAnon, fields: []});
 		// what the bridge needs
 		for (t in types) {
 			var tk:String = t.tk;

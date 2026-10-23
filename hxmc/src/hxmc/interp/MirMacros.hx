@@ -54,12 +54,17 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	var com:Null<context.Common.CommonContext> = null;
 	var api:Null<CompilerApi> = null;
 	var apiTable = new Map<String, Dynamic>();
+	// the compilation's arguments (Sys.args in macros: EvalContext.args)
+	var args:Array<String> = [];
 	// the macro context's types given their filters (ready), by path
 	var processed = new Map<String, ModuleType>();
 	// their modules' ids: a type typed again in another compilation starts a new generation
 	var mIds = new Map<String, Int>();
 	// a compilation began (doReuse) and no generation began since
 	var reused = false;
+	// the types this compilation handed over so far (a new generation keeps
+	// those; the others are handed over again if the compilation has them)
+	var delivered = new Map<String, Bool>();
 	// the static initializers of the classes loaded, in order (run again by doReuse)
 	var inits:Array<Ptr> = [];
 	// (the types whose runtime implementations the lowering knows: Lower.findHosts, once each)
@@ -157,6 +162,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = false;
 			var r:Dynamic = try call() catch (x:Dynamic) {
 				hxmc.rt.EvalCompat.on = order;
+				// (no handler of the macro code catches the compiler's own exceptions)
+				if (self.compilerOwn(x)) hxmc.rt.Interp.uncatchable = x;
 				throw x;
 			}
 			hxmc.rt.EvalCompat.on = order;
@@ -216,6 +223,48 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	@:hxmc.export("hxmc_mir_macro_pos") static function mkPos(file:String, min:Int, max:Int):Dynamic
 		return ({pfile: file, pmin: min, pmax: max} : core.Globals.Pos);
 
+	// Sys in macro code as Eval's (EvalStdLibB.StdSys): the request's streams, the
+	// compilation's arguments, its commands (com.runCommand), its end (SysExit);
+	// the process's own when another engine runs the macro code (the native macros)
+	static function io():Null<compiler.io.CompilerIo.CompilerIoData>
+		return self == null || self.api == null || macros.MacroEngine.engine != self ? null : self.api.getCom().requestScope.io;
+
+	@:hxmc.export("hxmc_mir_macro_stdout") static function stdout():haxe.io.Output {
+		var io = io();
+		return io == null ? Sys.stdout() : compiler.io.CompilerIo.getStdout(io);
+	}
+
+	@:hxmc.export("hxmc_mir_macro_stderr") static function stderr():haxe.io.Output {
+		var io = io();
+		return io == null ? Sys.stderr() : compiler.io.CompilerIo.getStderr(io);
+	}
+
+	@:hxmc.export("hxmc_mir_macro_stdin") static function stdin():haxe.io.Input {
+		var io = io();
+		return io == null ? Sys.stdin() : compiler.io.CompilerIo.getStdin(io);
+	}
+
+	@:hxmc.export("hxmc_mir_macro_print") static function print(s:String):Void {
+		var io = io();
+		if (io == null) Sys.print(s) else compiler.io.CompilerIo.writeOut(io, s);
+	}
+
+	@:hxmc.export("hxmc_mir_macro_get_char") static function getChar(echo:Bool):Int {
+		var io = io();
+		return io == null ? Sys.getChar(echo) : compiler.io.CompilerIo.getch(io, echo);
+	}
+
+	@:hxmc.export("hxmc_mir_macro_args") static function sysArgs():Array<String>
+		return io() == null ? Sys.args() : self.args.copy();
+
+	@:hxmc.export("hxmc_mir_macro_command") static function command(cmd:String):Int
+		return io() == null ? Sys.command(cmd) : self.api.getCom().runCommand(cmd);
+
+	@:hxmc.export("hxmc_mir_macro_exit") static function exit(code:Int):Void {
+		if (io() == null) Sys.exit(code);
+		throw new macros.eval.EvalTypes.SysExit(code);
+	}
+
 	@:hxmc.export("hxmc_mir_macro_program_path") static function programPath():Null<String> {
 		// (as Eval's Sys.programPath: EvalStdLibB.StdSys.programPath)
 		var file:Null<String> = self.api.getCom().main.mainFile;
@@ -227,6 +276,16 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function create(com:context.Common.CommonContext, api:CompilerApi, isMacro:Bool, args:Array<String>):macros.eval.EvalContext.Context {
 		this.com = com;
 		this.api = api;
+		this.args = args;
+		// (a new interpreter, as Eval's context is new: what the previous ones
+		// compiled is dropped, their types handed over again)
+		if (processed.keys().hasNext()) {
+			newGeneration();
+			processed = new Map();
+			mIds = new Map();
+		}
+		reused = false;
+		delivered = new Map();
 		// (the macro context's handle: only MacroContext keeps it)
 		return cast this;
 	}
@@ -237,6 +296,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (t in types) {
 			var k = core.Globals.sTypePath(core.TFunctions.tPath(t));
 			var m = core.TFunctions.tInfos(t).mtModule.mId;
+			delivered.set(k, true);
 			if (processed.exists(k)) {
 				if (mIds.get(k) == m) continue;
 				// (the first of this compilation: once a compilation)
@@ -260,7 +320,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function doReuse(ctx:macros.eval.EvalContext.Context, api:CompilerApi, args:Array<String>):Void {
 		hadError = false;
 		this.api = api;
+		this.args = args;
 		reused = true;
+		delivered = new Map();
 		// (the statics' initial values again: EvalMain.doReuse's staticPrototypes.reset)
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = true;
@@ -278,7 +340,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// server), as EvalPrototype.addTypes drops the prototypes of a type whose module
 	// is another: what was compiled is dropped, compiled again as it is needed
 	function newGeneration() {
+		if (stats) Sys.stderr().writeString("hxmc.mir-macros: new generation, spare entries taken " + hxmc.macro.Loader.used() + ", globals " + @:privateAccess hxmc.rt.Gc.nglobals + " of " + @:privateAccess hxmc.rt.Gc.globalsCap + "\n");
 		hxmc.macro.Loader.newGeneration();
+		// (the types of earlier compilations this one has not handed over: not lowered
+		// in the new generation, unless the compilation hands them over again)
+		for (k in [for (k in processed.keys()) k])
+			if (!delivered.exists(k)) {
+				processed.remove(k);
+				mIds.remove(k);
+			}
 		l = null;
 		opts = null;
 		compiled = new Map();
@@ -314,10 +384,16 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 	}
 
+	// an exception of the compiler's own, of a class the macro context does not
+	// know: as Eval's OCaml exceptions, no macro code catches it and the
+	// compiler gets it as it is (Sedlexing.MalFormed from Context.parse)
+	function compilerOwn(x:Dynamic):Bool
+		return Reflect.isObject(x) && Type.getClass(x) != null && !processed.exists(Type.getClassName(Type.getClass(x)));
+
 	// an exception the macro code did not catch: its haxe.macro.Error as the
 	// compiler's error, anything else as an uncaught exception (as Eval reports them)
 	function toCompilerError(x:Dynamic, api:CompilerApi):Dynamic {
-		if (Std.isOfType(x, core.Error.TypingError) || Std.isOfType(x, core.Error.FatalError) || Std.isOfType(x, macros.MacroApi.Abort)) return x;
+		if (Std.isOfType(x, core.Error.TypingError) || Std.isOfType(x, core.Error.FatalError) || Std.isOfType(x, macros.MacroApi.Abort) || Std.isOfType(x, macros.eval.EvalTypes.SysExit) || compilerOwn(x)) return x;
 		var c = macros.MacroApi.MacroNativeValues.resolveClass("haxe.macro.Error");
 		if (c != null && Std.isOfType(x, c)) {
 			var msg:String = Reflect.field(x, "message");
@@ -443,6 +519,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.resources = [];
 		hxmc.ir.Lower.basic = com.basic;
 		l = new hxmc.ir.Lower();
+		if (hxmc.ir.Lower.hostOverrides == null) hxmc.ir.Lower.hostOverrides = hxmc.macro.Loader.hostOverrides();
 		for (cp in com.classPaths.asList())
 			if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx")))
 				stdRoots.push(cp.path);
@@ -560,6 +637,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.Interp.enter(desc, buf)
 		catch (x:Dynamic) {
 			hxmc.rt.EvalCompat.on = order;
+			hxmc.rt.Interp.uncatchable = null;
 			LibC.free(buf);
 			throw x;
 		}

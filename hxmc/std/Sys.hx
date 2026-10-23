@@ -11,7 +11,7 @@ class Sys {
 		Prints any value to the standard output.
 	**/
 	public static function print(v:Dynamic):Void
-		NativeSys.print(Std.string(v));
+		#if macro hxmc.MacroHost.print(Std.string(v)) #else NativeSys.print(Std.string(v)) #end;
 
 	/**
 		Prints any value to the standard output, followed by a newline.
@@ -19,7 +19,7 @@ class Sys {
 		LF newlines are printed on all other platforms.
 	**/
 	public static function println(v:Dynamic):Void
-		NativeSys.print(Std.string(v) + "\n");
+		#if macro hxmc.MacroHost.print(Std.string(v) + "\n") #else NativeSys.print(Std.string(v) + "\n") #end;
 
 	/**
 		Returns all the arguments that were passed in the command line.
@@ -28,7 +28,7 @@ class Sys {
 		(java)(eval) On Windows, non-ASCII Unicode arguments will not work correctly.
 	**/
 	public static function args():Array<String>
-		return NativeSys.args();
+		return #if macro hxmc.MacroHost.args() #else NativeSys.args() #end;
 
 	/**
 		Returns the value of the given environment variable, or `null` if it
@@ -133,6 +133,12 @@ class Sys {
 		Use the `sys.io.Process` API for more complex tasks, such as background processes, or providing input to the command.
 	**/
 	public static function command(cmd:String, ?args:Array<String>):Int {
+		#if macro
+		// (as Eval's: one command line, run by the compiler: haxe/upstream/std/eval/_std/Sys.hx)
+		if (args != null)
+			cmd = systemName() == "Windows" ? [for (a in [StringTools.replace(cmd, "/", "\\")].concat(args)) haxe.SysTools.quoteWinArg(a, true)].join(" ") : [cmd].concat(args).map(haxe.SysTools.quoteUnixArg).join(" ");
+		return hxmc.MacroHost.command(cmd);
+		#end
 		if (args != null) {
 			// Windows (Cosmopolitan builds): run without a shell; -2 elsewhere
 			var r = NativeSys.commandArgs(cmd, args);
@@ -160,7 +166,7 @@ class Sys {
 		the compilation process, which also prevents the execution of any `--next` sections of compilation arguments.
 	**/
 	public static function exit(code:Int):Void
-		NativeSys.exit(code);
+		#if macro hxmc.MacroHost.exit(code) #else NativeSys.exit(code) #end;
 
 	/**
 		Gives the most precise timestamp value available (in seconds).
@@ -196,7 +202,7 @@ class Sys {
 		Setting `echo` to `true` will also display the character on the output.
 	**/
 	public static function getChar(echo:Bool):Int
-		return NativeSys.getChar(echo);
+		return #if macro hxmc.MacroHost.getChar(echo) #else NativeSys.getChar(echo) #end;
 
 	static var _stdin:haxe.io.Input;
 	static var _stdout:haxe.io.Output;
@@ -208,6 +214,9 @@ class Sys {
 		See `getChar` for an alternative.
 	**/
 	public static function stdin():haxe.io.Input {
+		#if macro
+		return hxmc.MacroHost.stdin();
+		#end
 		if (_stdin == null) _stdin = @:privateAccess new sys.io.FileInput(0);
 		return _stdin;
 	}
@@ -216,6 +225,9 @@ class Sys {
 		Returns the standard output of the process, to which program output can be written.
 	**/
 	public static function stdout():haxe.io.Output {
+		#if macro
+		return hxmc.MacroHost.stdout();
+		#end
 		if (_stdout == null) _stdout = @:privateAccess new sys.io.FileOutput(1);
 		return _stdout;
 	}
@@ -224,6 +236,9 @@ class Sys {
 		Returns the standard error of the process, to which program errors can be written.
 	**/
 	public static function stderr():haxe.io.Output {
+		#if macro
+		return hxmc.MacroHost.stderr();
+		#end
 		if (_stderr == null) _stderr = @:privateAccess new sys.io.FileOutput(2);
 		return _stderr;
 	}

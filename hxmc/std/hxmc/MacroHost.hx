@@ -10,4 +10,15 @@ package hxmc;
 	@:native("hxmc_mir_macro_pos") static function pos(file:String, min:Int, max:Int):Dynamic;
 	// Sys.programPath as macros see it (Eval's: the full path of the compilation's main file, or null)
 	@:native("hxmc_mir_macro_program_path") static function programPath():Null<String>;
+	// Sys as macros see it, Eval's (EvalStdLibB.StdSys): the request's streams (the
+	// client's under the compilation server), the compilation's arguments, its
+	// commands, its end
+	@:native("hxmc_mir_macro_stdout") static function stdout():haxe.io.Output;
+	@:native("hxmc_mir_macro_stderr") static function stderr():haxe.io.Output;
+	@:native("hxmc_mir_macro_stdin") static function stdin():haxe.io.Input;
+	@:native("hxmc_mir_macro_print") static function print(s:String):Void;
+	@:native("hxmc_mir_macro_get_char") static function getChar(echo:Bool):Int;
+	@:native("hxmc_mir_macro_args") static function args():Array<String>;
+	@:native("hxmc_mir_macro_command") static function command(cmd:String):Int;
+	@:native("hxmc_mir_macro_exit") static function exit(code:Int):Void;
 }

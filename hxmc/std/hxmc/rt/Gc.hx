@@ -827,18 +827,18 @@ class Gc {
 					Mem.setPtr(finals, 16 * i, Ptr.nil());
 				}
 			}
-			for (i in 0...nfinals)
-				if (!Mem.getPtr(finals, 16 * i).isNull()) {
-					var v = Mem.getPtr(finals, 16 * i + 8);
+			for (j in 0...nfinals)
+				if (!Mem.getPtr(finals, 16 * j).isNull()) {
+					var v = Mem.getPtr(finals, 16 * j + 8);
 					if (inYoung(v) || inFrom(v)) v = Mem.getPtr(v, 0);
-					Mem.setPtr(finals, 16 * live, Mem.getPtr(finals, 16 * i));
+					Mem.setPtr(finals, 16 * live, Mem.getPtr(finals, 16 * j));
 					Mem.setPtr(finals, 16 * live + 8, v);
 					live++;
 				}
 			nfinals = live;
-			for (i in q0...finalQlen) {
-				var v = Mem.getPtr(finalQueue, 16 * i + 8);
-				Mem.setPtr(finalQueue, 16 * i + 8, gcBfs ? majorForward(v) : fwdRoot(v));
+			for (j in q0...finalQlen) {
+				var v = Mem.getPtr(finalQueue, 16 * j + 8);
+				Mem.setPtr(finalQueue, 16 * j + 8, gcBfs ? majorForward(v) : fwdRoot(v));
 			}
 			if (gcBfs) scanFrom(scan);
 		}

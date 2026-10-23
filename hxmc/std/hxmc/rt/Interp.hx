@@ -342,6 +342,13 @@ class Interp {
 
 	// the frame's try at the setjmp (level: the tries entered before), the
 	// frame going on after it at ip
+	// an exception the interpreted code's handlers let through (the compiler's own
+	// from its macro API, as Eval's OCaml exceptions: interp.MirMacros)
+	public static var uncatchable:Dynamic = null;
+	// a handler's previous one's offset (the target's: the operand of TLSST_HCUR,
+	// which links every try's handler before its enterTry)
+	static var hprevOff = 0;
+
 	static function enterTry(fr:Ptr, ip:Ptr, d:Int, h:Ptr):Int {
 		var level = Mem.getI32(fr, F_NTRIES);
 		if (level == MAX_TRIES) throw "hxmc interp: tries nested too deep";
@@ -361,6 +368,11 @@ class Interp {
 			// the interpreted code reads its exception from)
 			isp = Mem.getPtr(fr, F_TOP);
 			Mem.setI32(fr, F_NTRIES, level);
+			if (uncatchable != null && Mem.addr(e) == Mem.addr(uncatchable)) {
+				// (on past this try: its handler h unlinked, as the interpreted code would)
+				Gc.hcur = Mem.getPtr(h, hprevOff);
+				throw e;
+			}
 			Gc.exn = Mem.addr(e);
 		}
 		if (caught) {
@@ -472,6 +484,7 @@ class Interp {
 				case TLSST_HCUR:
 					var v = Ptr.ofI64(gl(regs, o(ip, 1)));
 					var prevOff = o(ip, 2);
+					hprevOff = prevOff;
 					Gc.hcur = v;
 					ip = ip.add(12);
 					// (a try of this frame's ended: back to its enterTry)
