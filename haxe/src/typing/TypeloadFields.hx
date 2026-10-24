@@ -1894,6 +1894,20 @@ class TypeBinding {
 	public static var untypedBodyHook:Null<(ctx:Typer, c:TClass, cf:TClassField, fctx:FieldInitCtx, args:FunctionArguments, t:T, ret:T,
 		e:Expr, p:Pos) -> Null<TExpr>> = null;
 
+	// port: (hxmc) a method whose body is typed when it is asked for: its
+	// cf_expr a function of its arguments (typed, with their default values)
+	// whose body only throws, its type the one written, the typing in
+	// lazyBodies until then (core.TFunctions.lazyType of its `r`: cf_expr
+	// is then the function typed). true: one of those (only a full type,
+	// with full typing: -D hxmc.macros=mir, the std's bodies in the macro
+	// context, hxmc.interp.MacroRuntime)
+	public static var lazyBodyHook:Null<(ctx:Typer, c:TClass, cf:TClassField, fctx:FieldInitCtx, t:T) -> Bool> = null;
+	public static var lazyBodies = new haxe.ds.ObjectMap<TClassField, {ctx:Typer, c:TClass, r:TLazy}>();
+	// port: (hxmc) the bodies of lazyBodies of a context typed, before its
+	// modules are encoded (CommonCache.cacheContext, hxmc's module cache):
+	// an encoded module has its bodies
+	public static var typeLazyBodies:Null<CommonContext->Void> = null;
+
 	public static function bindMethod(ctxField:Typer, cctx:ClassInitCtx, fctx:FieldInitCtx, fmode:CurrentFun, cf:TClassField, t:T,
 			args:FunctionArguments, ret:T, e:Null<Expr>, functionMode:FunctionMode, p:Pos):Void {
 		var c = cctx.tclass;
@@ -1956,6 +1970,15 @@ class TypeBinding {
 			return t;
 		}
 		var r = makeUnforcedLazy(t, maybeBind, "type_fun");
+		// port: (lazyBodyHook)
+		if (lazyBodyHook != null && e != null && ctx.com.display.dmsFullTyping && !fctx.isDisplayField && lazyBodyHook(ctx, c, cf, fctx, t)) {
+			var msg = Globals.sTypePath(c.clPath) + "." + cf.cfName + ": its body is not typed (TypeBinding.lazyBodies)";
+			var tf:TFunc = {tfArgs: args.forExpr(ctx), tfType: ret, tfExpr: mk(TThrow(mk(TConst(TString(msg)), ctx.t.tstring, p)), ctx.t.tvoid, p)};
+			cf.cfExpr = mk(TFunction(tf), t, p);
+			cf.cfType = t;
+			lazyBodies.set(cf, {ctx: ctx, c: c, r: r});
+			return;
+		}
 		bindType(ctx, cctx, fctx, cf, r, p);
 	}
 }

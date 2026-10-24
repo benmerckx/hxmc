@@ -1095,6 +1095,9 @@ class ModuleCache {
 			s.captureTime = haxe.Timer.stamp() - t0;
 			return;
 		}
+		// (bodies the macro context types when they are asked for, -D
+		// hxmc.macros=mir: typed now, an encoded module has its bodies)
+		if (coms.length > 1 && typing.TypeloadFields.TypeBinding.typeLazyBodies != null) typing.TypeloadFields.TypeBinding.typeLazyBodies(mcom);
 		// the defines the compiler read in this build, with their values
 		var buildReads:Array<Read> = [];
 		for (k in s.global.keys()) {

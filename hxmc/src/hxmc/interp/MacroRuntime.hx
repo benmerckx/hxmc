@@ -38,7 +38,119 @@ class MacroRuntime {
 			typing.TypeloadFields.TypeBinding.untypedBodyHook = body;
 			typing.TypeloadParse.sourceHook = source;
 		}
+		if (Sys.getEnv("HXMC_MIR_LAZY_BODIES") != "0") {
+			typing.TypeloadFields.TypeBinding.lazyBodyHook = lazyBody;
+			typing.TypeloadFields.TypeBinding.typeLazyBodies = typeAll;
+		}
 		hxmc.ir.Lower.hostCode = native;
+	}
+
+	// ---- the std's bodies typed when they are asked for
+
+	// TypeBinding.lazyBodyHook: in the macro context, a method of the std's
+	// files (hxmc's and Haxe's, not the program's: its errors stay where they
+	// are) whose callers need only its signature (its type written in full;
+	// not inline, a macro, generic, overloaded, a coroutine, a constructor or
+	// an __init__, nor of an abstract, an interface or an extern class) is
+	// typed when lowering it needs it (`ready`: MirMacros lowers what macro
+	// code calls, its classes' methods) or when its module is encoded
+	// (typeAll); the others never are (a cold trivial macro: 1,460 bodies
+	// typed before, ... now). HXMC_MIR_LAZY_BODIES=0: every body typed
+	static function lazyBody(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx, t:T):Bool {
+		if (!ctx.com.isMacroContext) return false;
+		globals = ctx.g;
+		if (fctx.isInline || fctx.isMacro || fctx.isExtern || fctx.isAbstract || fctx.isGeneric) return false;
+		if (fctx.fieldKind != CfrStatic && fctx.fieldKind != CfrMember) return false;
+		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || !c.clKind.match(KNormal)) return false;
+		if (!cf.cfKind.match(Method(MethNormal)) || cf.cfOverloads.length > 0) return false;
+		if (cf.cfMeta.length > 0 && (core.Meta.has(Overload, cf.cfMeta) || core.Meta.has(Generic, cf.cfMeta) || typing.TypeloadFields.getCoroConfig(ctx, cf.cfMeta) != null)) return false;
+		if (!full(t, null) || !stdFile(ctx.com, cf.cfPos.pfile)) return false;
+		lazyCount++;
+		return true;
+	}
+
+	// (HXMC_MACRO_STATS) the bodies left untyped, those typed since
+	public static var lazyCount = 0;
+	public static var lazyTyped = 0;
+
+	// the macro context's typer globals (the latest)
+	static var globals:Null<context.Typecore.TyperGlobals> = null;
+
+	// the class paths of the std of a context: Haxe's, hxmc's (MirMacros.setupPlatform)
+	static var roots:Null<{com:context.Common.CommonContext, paths:Array<String>}> = null;
+
+	static function stdFile(com:context.Common.CommonContext, file:String):Bool {
+		if (roots == null || roots.com != com)
+			roots = {
+				com: com,
+				paths: [
+					for (cp in com.classPaths.asList())
+						if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx"))) cp.path
+				]
+			};
+		for (r in roots.paths)
+			if (StringTools.startsWith(file, r)) return true;
+		return false;
+	}
+
+	// the bodies typed so far, as their filters left them (a reused macro
+	// context's classes are restored to what their filters made of them,
+	// the throwing body: given back as they are lowered)
+	static var typed = new haxe.ds.ObjectMap<TClassField, TExpr>();
+
+	// (Lower.bodyReady, while MirMacros lowers) whether cf's body may be
+	// lowered: typed, and its class handed over to the engine (its filters
+	// run), else typed by `typeBodies` first
+	public static function ready(c:TClass, cf:TClassField):Bool {
+		if (typing.TypeloadFields.TypeBinding.lazyBodies.exists(cf)) return false;
+		var e = typed.get(cf);
+		if (e != null && cf.cfExpr != e) cf.cfExpr = e;
+		return handed(c);
+	}
+
+	// (the module's types handed over: flushMacroContext's `ready` ran on them)
+	static inline function handed(c:TClass):Bool
+		return c.clModule.mExtra.mProcessed != 0;
+
+	// the bodies of these fields typed (those not typed yet), then the types
+	// they loaded handed over (the macro context finalized and flushed, as
+	// for a macro's module: MacroContext.loadMacroPrimePrime), and the
+	// expression filters run on the bodies of the classes handed over before
+	// (MacroContext.lateFieldFilters)
+	public static function typeBodies(fields:Array<TClassField>) {
+		var lazies = typing.TypeloadFields.TypeBinding.lazyBodies;
+		var late = [];
+		var done = [];
+		for (cf in fields) {
+			var lb = lazies.get(cf);
+			if (lb == null) continue;
+			lazies.remove(cf);
+			if (handed(lb.c)) late.push({c: lb.c, cf: cf});
+			core.TFunctions.lazyType(lb.r);
+			done.push(cf);
+			lazyTyped++;
+		}
+		var mctx = globals == null || globals.macros == null ? null : globals.macros.typer;
+		if (mctx != null) {
+			typing.Finalization.finalize(mctx);
+			typing.MacroContext.flushMacroContext(macros.eval.EvalContext.getCtx(), mctx);
+		}
+		for (x in late)
+			if (typing.MacroContext.lateFieldFilters != null) typing.MacroContext.lateFieldFilters(x.c, x.cf);
+		for (cf in done)
+			typed.set(cf, cf.cfExpr);
+	}
+
+	// TypeBinding.typeLazyBodies: every body of com not typed yet, typed (and
+	// those its typing makes), before com's modules are encoded
+	static function typeAll(com:context.Common.CommonContext) {
+		if (!com.isMacroContext) return;
+		var lazies = typing.TypeloadFields.TypeBinding.lazyBodies;
+		while (true) {
+			var fields = [for (cf => lb in lazies) if (lb.ctx.com == com) cf];
+			if (fields.length == 0) break;
+			typeBodies(fields);
+		}
 	}
 
 	// a class of the runtime (macro.BundleFacts.runtime: its package)

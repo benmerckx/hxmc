@@ -1024,12 +1024,33 @@ class Lower implements LowerQueries {
 			return fi;
 		}
 		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, cf);
-		pending.push(guarded(fi, () -> lowerBody(fi, cf, () -> {
+		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
 			var fl = new FnLower(this, fi, null, null);
-			fl.run(tf);
+			fl.run(funcOf(cf));
 			fl.finish();
 		})));
 		return fi;
+	}
+
+	// (-D hxmc.macros=mir: hxmc.interp.MirMacros, while it lowers) whether a
+	// field's body may be lowered now: the macro context types the std's
+	// bodies when they are asked for (TypeBinding.lazyBodies) and hands the
+	// types they load over after; null: always
+	public static var bodyReady:Null<(TClass, TClassField) -> Bool> = null;
+	// the bodies that may not be lowered yet: their fields, their lowering
+	// (`resume` once they may)
+	public var deferred:Array<{c:TClass, cf:TClassField, lower:() -> Void}> = [];
+
+	// a field's body lowered (`lower`, when drain runs it), or deferred
+	function whenTyped(c:TClass, cf:TClassField, lower:() -> Void)
+		pending.push(() -> if (bodyReady != null && !bodyReady(c, cf)) deferred.push({c: c, cf: cf, lower: lower}) else lower());
+
+	// the deferred bodies lowered (drain runs them)
+	public function resume() {
+		var ds = deferred;
+		deferred = [];
+		for (d in ds)
+			pending.push(d.lower);
 	}
 
 	// @:hxmc.callback: a static function C calls through its address
@@ -1191,9 +1212,9 @@ class Lower implements LowerQueries {
 				case _: signature(fi, tf, TRef(RObj(root)));
 			}
 		} else signature(fi, tf, TRef(RObj(root)));
-		pending.push(guarded(fi, () -> lowerBody(fi, cf, () -> {
+		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
 			var fl = new FnLower(this, fi, ci, null);
-			fl.run(tf);
+			fl.run(funcOf(cf));
 			fl.finish();
 		})));
 		fi.dfltEntry = defaultsEntry(fi, ci);

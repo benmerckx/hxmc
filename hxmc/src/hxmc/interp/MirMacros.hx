@@ -117,7 +117,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// function compiled with its bundle
 	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
 	// the functions not compiled yet, by stub number, with their bundle's step
-	var lazies:Array<{f:FuncInfo, sym:String, key:Null<String>, cold:Bool, step:StepState}> = [];
+	var lazies:Array<{f:FuncInfo, key:Null<String>, cold:Bool, step:StepState}> = [];
+	// (the generation's latest step: what compiles its functions later)
+	var lineage:Null<{latest:StepState}> = null;
 	var lazyCompiled = 0;
 	// a compilation error was reported: no more macro calls (as Eval's had_error)
 	var hadError = false;
@@ -375,6 +377,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			}
 		l = null;
 		opts = null;
+		lineage = null;
 		compiled = new Map();
 		native = new Map();
 		entries = new Map();
@@ -501,7 +504,45 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// compiled and loaded (main: the macro class, if a function of it is called)
 	function build(main:Null<TClass>) {
 		if (l == null) start();
+		if (typingBodies) throw "-D hxmc.macros=mir: a macro called while the macro context types the std's bodies Mir macros lower (hxmc.interp.MacroRuntime; HXMC_MIR_LAZY_BODIES=0 types them all first)";
 		hxmc.ir.Lower.basic = com.basic;
+		scan();
+		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
+		hxmc.ir.Lower.bodyReady = MacroRuntime.ready;
+		phase("before lowering");
+		try {
+			l.drain();
+			// (the std's bodies the macro context has not typed: typed, the types
+			// they load handed over, then lowered with what they reach)
+			while (l.deferred.length > 0) {
+				phase("lowering");
+				typingBodies = true;
+				MacroRuntime.typeBodies([for (d in l.deferred) d.cf]);
+				typingBodies = false;
+				phase("typing the std's bodies");
+				scan();
+				l.resume();
+				l.drain();
+			}
+			l.finish();
+			phase("lowering");
+		} catch (e:Dynamic) {
+			typingBodies = false;
+			hxmc.ir.Lower.callSites = null;
+			hxmc.ir.Lower.bodyReady = null;
+			throw e;
+		}
+		hxmc.ir.Lower.callSites = null;
+		hxmc.ir.Lower.bodyReady = null;
+		step(main);
+	}
+
+	// (MacroRuntime.typeBodies running: what macro code it would call finds bodies not lowered)
+	var typingBodies = false;
+
+	// the types handed over since the last scan: the macro API's (its enums,
+	// Error's constructor), the runtime's implementations (Lower.findHosts)
+	function scan() {
 		var fresh = [for (k => t in processed) if (!scanned.exists(k)) t];
 		for (k in processed.keys())
 			scanned.set(k, true);
@@ -517,18 +558,6 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				case _:
 			}
 		l.findHosts(fresh);
-		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
-		phase("before lowering");
-		try {
-			l.drain();
-			l.finish();
-			phase("lowering");
-		} catch (e:Dynamic) {
-			hxmc.ir.Lower.callSites = null;
-			throw e;
-		}
-		hxmc.ir.Lower.callSites = null;
-		step(main);
 	}
 
 	function start() {
@@ -643,6 +672,9 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var abi = Abi.get(opts.target);
 		var obj = new Obj();
 		var st = new StepState(d, abi, opts, cache);
+		if (lineage == null) lineage = {latest: st};
+		lineage.latest = st;
+		st.lineage = lineage;
 		// (compiled with the bundle: the static initializers, which run as it
 		// loads, and the functions whose calls are no GC point, Facts.GcPoints:
 		// their callers keep references in registers across them, which a
@@ -655,7 +687,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			var key = keys.get(f);
 			var sym = prep.funcSym(f);
 			if (lazyOn && !initFns.exists(f) && !(f.noGc && !f.blocks) && InterpGen.stub(obj, abi, f, sym, lazies.length)) {
-				lazies.push({f: f, sym: sym, key: key, cold: cold.exists(f), step: st});
+				lazies.push({f: f, key: key, cold: cold.exists(f), step: st});
 				// (kept in the store's list: a later build may call it)
 				if (key != null) cache.keep(key);
 				stubs++;
@@ -696,12 +728,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	// (hxmc.rt.Interp.lazyHook) the function of stub k called the first time
 	// (its stub desc, its arguments in regs): compiled as its bundle would have
-	// (its step's state: the program, the inlining candidates, the keys of
-	// the store), loaded (Loader.loadLate) and desc made its descriptor
+	// (with its generation's latest step: each step's Prep numbers the
+	// program's types again, in its objects), loaded (Loader.loadLate) and
+	// desc made its descriptor
 	function compileLazy(k:Int, desc:Ptr, regs:Ptr) {
 		var t0 = haxe.Timer.stamp();
 		var p = lazies[k];
 		var f = p.f;
+		var st = p.step.lineage.latest;
+		var sym = st.d.prep.funcSym(f);
 		// (the arguments' references, kept across the collections compiling makes)
 		var n = f.args.length;
 		var refs:Array<Dynamic> = [];
@@ -711,24 +746,24 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = false;
 		try {
-			p.step.enter();
+			st.enter();
 			var obj = new Obj();
-			p.step.compile(f, p.sym, p.key, p.cold, obj);
-			var dg = new DataGen(p.step.d.prep, p.step.abi, obj, mf -> p.step.d.compileInterp(mf, obj));
+			st.compile(f, sym, p.key, p.cold, obj);
+			var dg = new DataGen(st.d.prep, st.abi, obj, mf -> st.d.compileInterp(mf, obj));
 			dg.stringsUsed();
 			dg.cstrLiterals([]);
 			dg.emptyArrays([]);
 			dg.resources([]);
-			hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + p.sym, p.step.gen));
-			p.step.leave();
+			hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + sym, st.gen));
+			st.leave();
 		} catch (x:Dynamic) {
-			p.step.leave();
+			st.leave();
 			hxmc.rt.EvalCompat.on = order;
 			// (the compiler's failure: no handler of the macro code catches it)
 			hxmc.rt.Interp.uncatchable = x;
 			throw x;
 		}
-		if (p.step.cache != null && Driver.resident) CacheDir.settle();
+		if (st.cache != null && Driver.resident) CacheDir.settle();
 		hxmc.rt.EvalCompat.on = order;
 		for (j in 0...n)
 			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
@@ -792,6 +827,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
 			Sys.stderr().writeString('hxmc.macros=mir: functions compiled when first called: ${lazyCompiled} of ${lazies.length} (${hxmc.macro.Loader.lateBytes} bytes)\n');
+			Sys.stderr().writeString('hxmc.macros=mir: the std\'s bodies typed when asked for: ${MacroRuntime.lazyTyped} of ${MacroRuntime.lazyCount}\n');
 			if (cache != null) Sys.stderr().writeString('hxmc.macros=mir: functions kept (BundleCache): ${cache.hits} found, ${cache.misses} compiled\n');
 			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
@@ -802,10 +838,11 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 }
 
 // what a step's bundle compiles its functions with, kept for those compiled
-// when first called (MirMacros.compileLazy): its driver (the program, its
-// facts, which functions are interpreted), the inlining candidates and the
-// thread-local variables of its time, the store, and what its generation's
-// bundles share (Loader.gen, set as it loads)
+// when first called (MirMacros.compileLazy, with the latest step of their
+// generation: `lineage`): its driver (the program, its facts, which
+// functions are interpreted), the inlining candidates and the thread-local
+// variables of its time, the store, and what its generation's bundles share
+// (Loader.gen, set as it loads)
 @:access(hxmc.Driver)
 private class StepState {
 	public final d:Driver;
@@ -813,6 +850,7 @@ private class StepState {
 	final opts:Options;
 	public final cache:Null<BundleCache>;
 	public var gen:Null<hxmc.macro.Loader.Gen> = null;
+	public var lineage:Null<{latest:StepState}> = null;
 	final emit:Target.Emitter;
 	final ras:Regalloc.Scratch;
 	final cands:Null<Map<FuncInfo, Bool>>;

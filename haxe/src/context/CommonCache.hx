@@ -119,6 +119,8 @@ class CommonCache {
 	}
 
 	public static function cacheContext(cs:Cache, com:CommonContext):Void {
+		// port: (TypeBinding.typeLazyBodies)
+		if (typing.TypeloadFields.TypeBinding.typeLazyBodies != null) typing.TypeloadFields.TypeBinding.typeLazyBodies(com);
 		var cc = getCache(com);
 		var sign = Define.getSignature(com.defines);
 
