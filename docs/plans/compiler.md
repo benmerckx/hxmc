@@ -406,30 +406,87 @@ linux-x86_64 native compiler.
    the cost of typing the macro context; compute-bound macros stay 2.4x
    (json) to 13x (mandelbrot) faster.
 
-**What is left: the macro context.** With compilation gone from warm
-builds, what Mir macros pay over Eval is the macro context typed (and
-restored from the module cache) against hxmc's std: 47 more modules than
-Eval's (168 against 121 for the trivial macro), whose bodies Eval's
-externs do not have. A cold trivial macro types 1,456 bodies there (249 KB
-of source; the runtime's 113 KB of them, 141 KB more not typed already:
-the compiler's native code, `MacroRuntime`), among them `hxmc.Regex` and
-`RegexUnicode` (42 KB, for `EReg`), `WinSys` (17 KB, Windows' on Linux),
-`LibM`'s tables (26 KB), `StringTools` (16 KB). Warm, the module cache
-decodes all of their expressions as it restores them (the macro context
-reads them eagerly, `ServerCache.readExpressionEagerly`), and encodes the
-macro context's edited modules again. Levers, none done:
+5. **Work only for what runs** (done; docs/hxmc.md, "Macros on the Mir
+   interpreter"). Measured before it (main f330233, cold): most compiled
+   functions never ran (a trivial macro: 82 compiled, 1 run; json as a
+   macro: 143, 13; the formatter: 212, 65, 43% of the bytes; the
+   formatter's compiling for the interpreter 182 ms of its 220), and the
+   macro context typed 1,460-1,490 bodies (578-705 of them the runtime's,
+   none interpreted) where Eval typed 680-710 and the interpreter ran
+   1, 12 and 53. Now a bundle has a stub of each function and compiles it
+   the first time it is called (the stub's header then the function's:
+   no check on the interpreter's call path), but for the static
+   initializers and the functions whose calls are no GC point; the std's
+   method bodies are parsed (the lexer passes over them) and typed when
+   lowering or an inlined call needs them; MacroCuts and the cuts in the
+   host table are gone (the parse passes over the runtime's bodies the
+   compiler has natively, which are never typed, as before). Counts, cold:
 
-- the bodies the compiler runs natively, not typed nor parsed: instance
-  methods of the runtime too, and the std's classes of files the compiler
-  was built from (`MacroCuts` keyed by content, as for the runtime's
-  statics);
-- the macro context's bodies typed lazily, when the lowering reaches them
-  (the filters then per function), and their expressions decoded so from
-  the module cache;
+   | | functions compiled (before) | run | bodies typed in the macro context | Eval |
+   | --- | --- | --- | --- | --- |
+   | trivial macro | 25 (82) | 1 | 834 | 677 |
+   | json as a macro | 71 (143) | 13 | 912 | 701 |
+   | formatter build | 105 (212) | 65 | 926 | 711 |
+
+   (Bodies typed before: 1,460-1,490 in each. The compiled functions not
+   run are those compiled with their bundle:
+   the static initializers and the no-GC-point leaves; bundles' bytes, the
+   formatter's: 2.8 MB to 0.4 MB, then 1.0 MB compiled when first called.)
+   Of the bodies still typed, 521 (the trivial macro's) are inline
+   functions the typing of others inlines, 156 inline functions whose
+   result is not written, the rest constructors, `__init__`s, the program's
+   own code and the bodies lowering asks for (68, in four rounds).
+   MirBench (the median of five, two sessions each, alternated, the
+   compiler before and after the change, Eval in each; the same machine as
+   above):
+
+   | | Mir before | Mir now | Eval |
+   | --- | --- | --- | --- |
+   | json as a macro | 2.94 s | 2.96 s | 7.1 s |
+   | formatter build, cold | 0.89 s | 0.74 s | 0.61 s |
+   | formatter build, warm, unchanged | 0.127 s | 0.131 s | 0.127 s |
+   | formatter build, warm, main module edited | 0.186 s | 0.192 s | 0.170 s |
+   | formatter build, warm, config edited (macros run) | 0.93 s | 0.93 s | 0.76 s |
+   | formatter build, only compiled functions kept | 0.69 s | 0.70 s | 0.60 s |
+   | trivial macro, cold | 0.28 s | 0.20 s | 0.16 s |
+   | trivial macro, warm, main module edited | 0.141 s | 0.129 s | 0.073 s |
+   | trivial macro edited under the server | 0.023 s | 0.021 s | 0.020 s |
+
+   Cold builds gain: the trivial macro 29%, the formatter 17%; Mir macros
+   still lose them, by 25% and 21%. The rows with the module cache warm do
+   not move (the macro context comes from the cache typed, its bodies
+   decoded), nor does the formatter with its compiled functions kept (it
+   compiled little already); json stays 2.4 times faster than Eval, and
+   the server's edit on par. (This machine's times vary by a tenth from
+   one session to the next; the two sessions agree on the changes.) The
+   compiler: 26,361,632 to 26,395,752 bytes raw (+34 KB), 8,227,203 to
+   8,236,995 gzipped (+10 KB; the host table 216,005 to 211,768 bytes).
+
+**What is left.** Mir macros lose the cold builds by what it costs to
+compile the few giant functions macros that write code are made of and
+by the macro context's typing, and the warm builds by restoring a larger
+macro context. Levers, none done:
+
+- a cheap first tier: a function's first calls run code translated from
+  the lowered IR without MirBuild, Opt and MemLower, the full pipeline
+  kept for functions called often. The formatter's cold build compiles
+  59 functions when first called, 1.0 MB, in 70-100 ms (json2object's
+  `DataBuilder` most of it: each runs once or twice): what Mir macros
+  lose that row by. Without it the row is not won.
+- the macro context restored from the module cache with its bodies
+  decoded when asked for (as they are typed now: the macro context reads
+  them eagerly, `ServerCache.readExpressionEagerly`): it restores 168
+  modules where Eval's restores 121 (the trivial macro's warm edit: 46-68
+  ms against 19-27 in the cache's code);
 - a macro std that does not load the whole runtime (`Std` imports
-  `hxmc.rt.Runtime`), loading a runtime module when lowering needs it.
-
-Eval stays the default (decision below).
+  `hxmc.rt.Runtime`), loading a runtime module when lowering needs it:
+  typing the runtime's declarations is what most of the remaining
+  macro-context typing pays;
+- the no-GC-point functions compiled with their bundle (24 of the trivial
+  macro's 25): compiled when first called, a collection held off meanwhile;
+- a build that writes the module cache (its first, cold) types the macro
+  context's remaining bodies before encoding it, as much as before; the
+  encoding could keep a body untyped and type it when the module is read.
 
 Open decisions:
 
@@ -443,10 +500,12 @@ Open decisions:
   loop in one call, which needs entering the new code in the middle of a
   frame. (b) covers a giant function called often, (c) mandelbrot's shape
   over the threshold; neither has a measured workload yet.
-- **The default engine.** Mir macros now match Eval where the module cache
-  holds and under the server, are 2.4 to 13 times faster on compute-bound
-  macros, and are behind on cold builds, on a trivial macro and where the
-  macros run again (13% on the formatter), by the macro context's typing.
+- **The default engine.** Mir macros match Eval where the module cache
+  holds unchanged and under the server, are 2.4 to 13 times faster on
+  compute-bound macros, and are behind on cold builds (by a fifth to a
+  quarter: compiling giant functions, the macro context's typing), on a
+  trivial macro's warm edit and where the macros run again (a fifth on
+  the formatter).
 
 ### Names
 
@@ -469,7 +528,8 @@ back end); it is now 1.12 MB over it raw and 0.14 MB under it gzipped:
 | --- | --- | --- |
 | normal compiler (no Mir host, before) | 25,221,008 | 8,366,385 |
 | jit build (before) | 28,567,480 | 9,242,836 |
-| every native compiler (now) | 26,343,288 (+4.4%) | 8,221,662 (-1.7%) |
+| every native compiler (then) | 26,343,288 (+4.4%) | 8,221,662 (-1.7%) |
+| every native compiler (now: work only for what runs, above) | 26,395,752 | 8,236,995 |
 
 By part (from the symbols, `<exe>.syms`, and the unwind sections):
 
@@ -509,7 +569,7 @@ By part (from the symbols, `<exe>.syms`, and the unwind sections):
    | addresses | 64-bit absolute, relocated by the loader | 32-bit, relative to the entry (resolved at the link: no relocations; macOS's bound imports keep 64-bit slots) |
    | kinds | a byte | 4 bits |
    | fingerprints | 8 + 12 bytes, binary search | their own perfect hash, a 32-bit check, the key and a flags byte (1,563 entries) |
-   | MacroCuts' lines | text | 4,717 bytes of text, not compressed |
+   | MacroCuts' lines | text | 4,717 bytes of text, not compressed (gone since: item 5 of Speed of typical builds) |
 
    A lookup takes 0.23 µs instead of 0.40 (the formatter build's 6,878:
    1.6 ms instead of 2.8).

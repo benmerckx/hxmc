@@ -31,7 +31,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI (System V, Win64, AAPCS64 with its Apple and Windows variants: argument and result registers, where each argument goes, the registers a call clobbers and keeps; for calls and parameters alike); how each C ABI passes structs by value |
 | `MkStd.hx` | hxmc's std merged with the Eval originals (the macro context shares the program's class paths; a custom target gets no `_std` directory in the reference compiler) |
 | `macro/` | what links code compiled for the Mir interpreter into the running compiler (`Loader.hx`, `BundleFacts.hx`) and what the compiler carries for it (`HostTable.hx`, `MirHost.hx`): Mir macros and `--run` (Macros on the Mir interpreter, below) |
-| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in the native compiler (a Mir host): `--interp`/`--run` (`-D hxmc.run=mir`, `MirRun.hx`) and macros (`-D hxmc.macros=mir`, `MirMacros.hx`; the runtime in their context: `MacroRuntime.hx`, `../MacroCuts.hx`; Macros on the Mir interpreter, below) |
+| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in the native compiler (a Mir host): `--interp`/`--run` (`-D hxmc.run=mir`, `MirRun.hx`) and macros (`-D hxmc.macros=mir`, `MirMacros.hx`; the runtime and the std in their context: `MacroRuntime.hx`; Macros on the Mir interpreter, below) |
 
 Conventions: references live across a GC point are shadow-stack slots
 (cold sites spill only on the slow path; a reference live across the slow
@@ -846,9 +846,10 @@ a type by its module and name. Plans: [plans/compiler.md](plans/compiler.md)
 the npm package's: `bin/npm/native/<target>/haxe` for the six native
 targets, below; not the WebAssembly one): macros run on the Mir interpreter (`hxmc.rt.Interp`), not
 Eval. The macro context is typed for hxmc (its std in front, the hxmc
-custom target: `MirMacros.setupPlatform`); a macro function is lowered and
-compiled for the interpreter when it is first called, in bundles the
-compiler links into itself (`macro.Loader`), and the std's functions the
+custom target: `MirMacros.setupPlatform`); a macro function, with what it
+reaches, is lowered when a macro first calls it, in bundles the compiler
+links into itself (`macro.Loader`), each function compiled for the
+interpreter the first time it is called (below), and the std's functions the
 compiler has alike (the same fingerprint, from the compiler's own table:
 `macro.HostTable`) run as its native code. Macro values are the compiler's
 own (`MacroApi.MacroNativeValues`). `-D hxmc.run=mir` runs
@@ -922,8 +923,8 @@ the macro cases with Mir macros against the reference (as `make
 mir-macros-check`: 66 of 67, Issue11631 uses Eval's `mbedtls`), and a
 benchmark macro and the formatter's build timed against Eval
 (`MirBench`). The compiler carries the table of its
-symbols, its functions' fingerprints and flags and the cuts below as data
-(`macro.HostTable`, made at its link: 216 KB on linux-x86_64). Its
+symbols and its functions' fingerprints and flags as data
+(`macro.HostTable`, made at its link: 212 KB on linux-x86_64). Its
 symbols are the ones code loaded at run time can name: not the
 compiler's own classes' entities, which the macro context and `--run`
 programs type again (20,439 of 63,450). A name is found through a
@@ -953,23 +954,73 @@ again (`--next`, the compilation server) starts a new generation of bundles,
 as Eval drops its prototypes, and a reused macro context runs its static
 initializers again (`EvalMain.doReuse`).
 
-The runtime in the macro context: hxmc's std loads all of it (`Std`
-imports `hxmc.rt.Runtime`), but a bundle never compiles a runtime function
-the compiler has (its native code runs it), so the macro context neither
-types nor parses most of it (`interp.MacroRuntime`). A static function of
-the runtime the compiler has, whose declared signature is all its callers
-need (no optional argument; its result's type written, or no value
-returned: Void) and that the Mir inliner does not copy into callers
-(its fingerprint's flags), gets a body that throws, marked `@:hxmc.hostCode`
-(`TypeBinding.untypedBodyHook`); `Lower` makes it a function without body
-whose facts (no GC point, safe region) are those of the compiler's code
-(`Lower.hostCode`). Its body is not parsed either: the compiler also
-carries the cuts (`hxmc.MacroCuts`, in `macro.HostTable`), for each file of
-the runtime the hash of its content and the ranges of those bodies, which
-the macro context blanks in a file of that content
-(`TypeloadParse.sourceHook`: `{throw "hxmc.cut";}` and spaces, the line
-breaks kept, so positions stay); a blanked body the macro context would type
-fails the build. `HXMC_MIR_TYPE_RUNTIME=1` types and parses all of it.
+The std and the runtime in the macro context: hxmc's std loads all of the
+runtime (`Std` imports `hxmc.rt.Runtime`), and a macro reaches few of the
+functions of the std's files the macro context loads, so their bodies are
+parsed and typed when they are asked for (`interp.MacroRuntime`). A file
+of the std (hxmc's, Haxe's: not the program's, whose errors stay where
+they are) is parsed without its methods' block bodies (but constructors',
+macros', dynamic, extern, abstract, overloaded and generic methods' and
+those of abstracts): the lexer passes over the source up to the body's
+closing brace (`Lexer.skipBlock`: its strings, comments and regular
+expressions, its lines recorded as the rules would; the stream's tokens
+when the body has a preprocessor directive), and an empty block at the
+body's position stands for it (`ParserEntry.SkippedBodies`), parsed from
+the source when the body is typed (positions as a parse of the whole file
+gives them). A method of the std whose callers need only its signature
+(its type written in full; not a macro, generic, overloaded, a coroutine,
+a constructor or an `__init__`, nor of an interface or an extern class)
+is not typed with its module (`TypeBinding.lazyBodyHook`): its `cf_expr`
+is a function of its typed arguments whose body throws, an inline one's
+type stays lazy (an inlined call forces it), and the typing waits in
+`TypeBinding.lazyBodies`. Lowering defers such a body, and that of a class
+not handed over yet (`Lower.bodyReady`); `MirMacros` has the deferred
+bodies typed (`MacroRuntime.typeBodies`: the macro context finalized and
+flushed, as for a macro's module, then the expression filters on the
+bodies of the classes handed over before:
+`MacroContext.lateFieldFilters`), then lowers them. The static
+initializers' sort (`Finalization.sortTypes`) types the bodies it walks;
+before a context's modules are encoded (the server's
+`CommonCache.cacheContext`, the module cache) its bodies are typed
+(`TypeBinding.typeLazyBodies`), so an encoded module has them all. A cold
+trivial macro types 834 bodies in the macro context, the formatter's
+build 926 (1,460-1,490 before; Eval 677 and 711).
+
+A static function of the runtime the compiler has, whose declared
+signature is all its callers need (no optional argument; its result's
+type written, or no value returned: Void, from whether the source passed
+over has a `return` of a value) and that the Mir inliner does not copy
+into callers (its fingerprint's flags), is never typed: its body is one
+that throws, marked `@:hxmc.hostCode` (`TypeBinding.untypedBodyHook`);
+`Lower` makes it a function without body whose facts (no GC point, safe
+region) are those of the compiler's code (`Lower.hostCode`), and its body
+is never parsed either. `HXMC_MIR_TYPE_RUNTIME=1` types those too;
+`HXMC_MIR_LAZY_BODIES=0` parses and types every body with its module.
+
+A function is compiled for the interpreter the first time it is called. A
+bundle has a stub of each function it reaches (`InterpGen.stub`: a
+descriptor of the function's symbol, its parameters, flags and
+parameters' sources from its signature, whose code is `LAZY k`), but for
+the static initializers, which its load runs, and the functions whose
+calls are no GC point (their callers keep references in registers across
+them, which a collection while compiling would leave pointing at what it
+moved); most functions a bundle reaches never run (the formatter's
+macros: 65 of 212). A descriptor's header holds its parts as 64-bit
+offsets from it, so a stub's header can be made its function's: on
+`LAZY`, the interpreter calls the compiler back (`Interp.lazyHook`:
+`MirMacros.compileLazy`, the call's arguments rooted meanwhile), which
+compiles the function as its bundle would have, with its generation's
+latest step (each step's `Prep` numbers the program's types again, in
+the IR's objects), loads it alone (`Loader.loadLate`: linked against its
+generation's bundles, a selector's latest dispatch row) and makes the
+stub's header the function's (`Interp.become`); the frame then runs it,
+and whatever holds the stub (a call's symbol table, a pool entry, a
+static initializer's list) calls the function from then on, with no check
+on the interpreter's call path. Macro code's threads take a lock there.
+A trivial macro compiles 25 functions instead of 82 (one runs), the json
+benchmark 71 instead of 143 (13 run), the formatter's build 105 instead of
+212 (65 run): its bundles' bytes 2.8 MB to 0.4 MB, and 1.0 MB compiled
+later. `HXMC_MIR_LAZY=0`: every function compiled with its bundle.
 
 Checked with upstream's unit suite: `UpstreamTargets` with the native
 compiler as the port (`HAXE_IN_HAXE_PORT="bin/npm/native/<host>/haxe -D
@@ -980,9 +1031,11 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   descending order (an OCaml map), so what a macro generates by iterating a
   map comes in another order (utest's tests run in their declaration
   order); `Map.toString` separates entries with `, ` (Eval: `,`).
-- Variable ids: the macro context types hxmc's std and takes more ids from
-  the counter the program's typing shares, so names made of ids differ
-  (coroutines' `_hx_hoisted<id>`, their stack items, genpy's order by them).
+- Variable ids: the macro context types hxmc's std and takes other ids
+  from the counter the program's typing shares (its bodies typed when
+  they are asked for, so when a macro needs them), so names made of ids
+  differ (coroutines' `_hx_hoisted<id>`, their stack items, genpy's order
+  by them).
 - An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
   `String.length` counts UTF-16 units (Eval: code points).
 - Not available: `Context.getMacroStack`, macro arguments that are
@@ -995,7 +1048,7 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   the others take new ones (a trivial macro's edit under a server: none,
   254 types and 94 globals each without that). Bundles are never
   unloaded: each generation's descriptors and data stay in memory (a
-  trivial macro's: 236 KB), and so do the pool entries they were given.
+  trivial macro's: 21 KB), and so do the pool entries they were given.
 
 Compiled functions are kept across builds (`interp.BundleCache`), in the
 module cache's store (`<cache>/modules/<tool>/o/<key>-mir.o`, per build of
@@ -1007,9 +1060,11 @@ callees the Mir inliner may copy into it) with the compiler's target and
 options; what its descriptor depends on besides (which of its calls by
 symbol are of interpreted functions) is kept with it and checked before it
 is used, and a function using a thread-local variable emulated with an
-index of the process's is not kept. A bundle appends the objects it finds,
-in its order, to the ones it compiles (`Obj.append`): the bundle is the
-same as without the cache. The ids of the call sites the lowering writes
+index of the process's is not kept. A function is looked for when it is
+compiled (with its bundle, or when first called: its object then is all
+that is loaded, a kept object's string literals named in the latest
+step's `Prep`); a bundle names every function's object in its list, so
+the trim keeps those a build did not call. The ids of the call sites the lowering writes
 into the IR (`Lower.callSites`) are hashes of their positions, so a
 function's IR and key do not depend on what was lowered before it. Off with
 the module cache (`HXMC_MODULE_CACHE=0`, `-D hxmc.no-module-cache`);
@@ -1020,7 +1075,8 @@ every build prints what Eval's macros make it print, a warm build finds
 every function, and an edit of a dependency, of a function the inliner
 copies, a define and another build of the compiler compile again what they
 change; objects that are not theirs (truncated, under another key) are not
-used.
+used; a method its class brings into a first macro's bundle and that a
+later macro first calls is found, its literals with it.
 
 A function whose IR is larger than 8,000 words (its `Fingerprint`'s; the
 giant functions macros that write code are made of, json2object's
@@ -1030,16 +1086,17 @@ of their compilation and gains them nothing measurable, as they run a few
 times each; compute-bound macros' functions are far smaller (json's and
 mandelbrot's: under 3,000 words).
 
-Cost (instructions, Intel Xeon E-2356G, Linux 6.1), module cache off: a
-trivial macro (`macro 1` called from main, `--js`) 1.08 G (no macro 0.29 G,
-Eval 0.60 G; 1.50 G while the macro context typed and parsed the whole
-runtime); the formatter benchmark built with json2object's macros 7.05 G
-(Eval 3.6 G; was 7.58 G), the macros' compilation most of the difference
-(json2object's `DataBuilder` makes six functions of 10,000 to 38,000 Mir
-values: 70% of the time compiling for the interpreter). With the module
-cache, which keeps the macro context, an edit of the main module: the
-trivial macro 0.59 G (Eval 0.32 G; was 0.87 G), the formatter 1.15 G (Eval
-1.24 G; was 1.17 G).
+Cost (MirBench, wall time, the median of five, Intel Xeon @ 2.10 GHz,
+4 vCPUs, module cache off): a trivial macro (`macro 1` called from main,
+`--js`) 0.20 s (Eval 0.16 s; 0.28 s while every function reached was
+compiled and the std's bodies typed with their modules); the formatter
+benchmark built with json2object's macros 0.74 s (Eval 0.61 s; was 0.89
+s), compiling the functions json2object's `DataBuilder` is made of (six of
+10,000 to 38,000 Mir values, each run once or twice) most of the
+difference. With the module cache, which keeps the macro context typed, an
+edit of the main module: the trivial macro 0.13 s (Eval 0.07 s), the
+formatter 0.19 s (Eval 0.17 s); plans/compiler.md, "Mir macros: size and
+speed".
 
 ## Targets
 
