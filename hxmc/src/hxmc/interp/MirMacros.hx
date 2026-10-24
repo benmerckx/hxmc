@@ -12,9 +12,11 @@ import macros.MacroApi.CompilerApi;
 // interpreter, without Eval. The macro context is typed for hxmc
 // (MacroContext.macroPlatformHook: hxmc's std, the hxmc custom target,
 // `macro` defined), its functions are lowered as macros call them (one
-// Lower, grown call by call), compiled for the interpreter and linked into
-// the running compiler (macro.Loader: a bundle per step, sharing the earlier
-// ones' numbers, globals and functions), and called directly. Its values are
+// Lower, grown call by call; the std's bodies typed as it needs them:
+// MacroRuntime), linked into the running compiler (macro.Loader: a bundle
+// per step, sharing the earlier ones' numbers, globals and functions),
+// each compiled for the interpreter the first time it is called
+// (compileLazy), and called directly. Its values are
 // the compiler's own Haxe values (MacroApi.MacroNativeValues); Context's API
 // is the compiler's (hxmc.MacroHost: hxmc_mir_macro_load, exported here).
 @:access(hxmc.Driver)

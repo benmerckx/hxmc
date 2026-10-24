@@ -50,7 +50,7 @@ class MacroRuntime {
 	// lowering it needs it (`ready`: MirMacros lowers what macro code calls,
 	// its classes' methods), when a call inlines it (an inline method's type
 	// is lazy) or when its module is encoded (typeAll); the others never are
-	// (a cold trivial macro: 1,460 bodies typed before, ... now).
+	// (a cold trivial macro: 1,460 bodies typed before, 834 now; Eval 677).
 	// HXMC_MIR_LAZY_BODIES=0: every body typed
 	static function lazyBody(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx, t:T):Bool {
 		if (!ctx.com.isMacroContext) return false;
