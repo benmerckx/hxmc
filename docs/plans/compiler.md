@@ -459,8 +459,8 @@ linux-x86_64 native compiler.
    compiled little already); json stays 2.4 times faster than Eval, and
    the server's edit on par. (This machine's times vary by a tenth from
    one session to the next; the two sessions agree on the changes.) The
-   compiler: 26,361,632 to 26,395,752 bytes raw (+34 KB), 8,227,203 to
-   8,236,995 gzipped (+10 KB; the host table 216,005 to 211,768 bytes).
+   compiler: 26,361,632 to 26,395,768 bytes raw (+34 KB), 8,227,203 to
+   8,237,991 gzipped (+11 KB; the host table 216,005 to 211,768 bytes).
 
 **What is left.** Mir macros lose the cold builds by what it costs to
 compile the few giant functions macros that write code are made of and
@@ -529,7 +529,7 @@ back end); it is now 1.12 MB over it raw and 0.14 MB under it gzipped:
 | normal compiler (no Mir host, before) | 25,221,008 | 8,366,385 |
 | jit build (before) | 28,567,480 | 9,242,836 |
 | every native compiler (then) | 26,343,288 (+4.4%) | 8,221,662 (-1.7%) |
-| every native compiler (now: work only for what runs, above) | 26,395,752 | 8,236,995 |
+| every native compiler (now: work only for what runs, above) | 26,395,768 | 8,237,991 |
 
 By part (from the symbols, `<exe>.syms`, and the unwind sections):
 
