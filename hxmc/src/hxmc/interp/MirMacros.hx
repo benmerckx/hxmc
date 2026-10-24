@@ -749,6 +749,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			st.enter();
 			var obj = new Obj();
 			st.compile(f, sym, p.key, p.cold, obj);
+			// (the literals of a kept object: its step's fingerprints named them, in its Prep)
+			if (p.step != st)
+				for (s in obj.symbols) {
+					var lit = s.section == null && !s.abs && !st.d.prep.e.strByName.exists(s.name) ? p.step.d.prep.e.strByName.get(s.name) : null;
+					if (lit != null) st.d.prep.addStr(lit, s.name);
+				}
 			var dg = new DataGen(st.d.prep, st.abi, obj, mf -> st.d.compileInterp(mf, obj));
 			dg.stringsUsed();
 			dg.cstrLiterals([]);
