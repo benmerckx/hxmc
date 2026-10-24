@@ -50,19 +50,20 @@ class MacroRuntime {
 	// TypeBinding.lazyBodyHook: in the macro context, a method of the std's
 	// files (hxmc's and Haxe's, not the program's: its errors stay where they
 	// are) whose callers need only its signature (its type written in full;
-	// not inline, a macro, generic, overloaded, a coroutine, a constructor or
-	// an __init__, nor of an abstract, an interface or an extern class) is
-	// typed when lowering it needs it (`ready`: MirMacros lowers what macro
-	// code calls, its classes' methods) or when its module is encoded
-	// (typeAll); the others never are (a cold trivial macro: 1,460 bodies
-	// typed before, ... now). HXMC_MIR_LAZY_BODIES=0: every body typed
+	// not a macro, generic, overloaded, a coroutine, a constructor or an
+	// __init__, nor of an interface or an extern class) is typed when
+	// lowering it needs it (`ready`: MirMacros lowers what macro code calls,
+	// its classes' methods), when a call inlines it (an inline method's type
+	// is lazy) or when its module is encoded (typeAll); the others never are
+	// (a cold trivial macro: 1,460 bodies typed before, ... now).
+	// HXMC_MIR_LAZY_BODIES=0: every body typed
 	static function lazyBody(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx, t:T):Bool {
 		if (!ctx.com.isMacroContext) return false;
 		globals = ctx.g;
-		if (fctx.isInline || fctx.isMacro || fctx.isExtern || fctx.isAbstract || fctx.isGeneric) return false;
+		if (fctx.isMacro || fctx.isExtern || fctx.isAbstract || fctx.isGeneric) return false;
 		if (fctx.fieldKind != CfrStatic && fctx.fieldKind != CfrMember) return false;
-		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || !c.clKind.match(KNormal)) return false;
-		if (!cf.cfKind.match(Method(MethNormal)) || cf.cfOverloads.length > 0) return false;
+		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || !c.clKind.match(KNormal | KAbstractImpl(_))) return false;
+		if (!cf.cfKind.match(Method(MethNormal | MethInline)) || cf.cfOverloads.length > 0) return false;
 		if (cf.cfMeta.length > 0 && (core.Meta.has(Overload, cf.cfMeta) || core.Meta.has(Generic, cf.cfMeta) || typing.TypeloadFields.getCoroConfig(ctx, cf.cfMeta) != null)) return false;
 		if (!full(t, null) || !stdFile(ctx.com, cf.cfPos.pfile)) return false;
 		lazyCount++;
@@ -119,15 +120,13 @@ class MacroRuntime {
 	// (MacroContext.lateFieldFilters)
 	public static function typeBodies(fields:Array<TClassField>) {
 		var lazies = typing.TypeloadFields.TypeBinding.lazyBodies;
-		var late = [];
 		var done = [];
 		for (cf in fields) {
 			var lb = lazies.get(cf);
 			if (lb == null) continue;
 			lazies.remove(cf);
-			if (handed(lb.c)) late.push({c: lb.c, cf: cf});
 			core.TFunctions.lazyType(lb.r);
-			done.push(cf);
+			done.push({cf: cf, lb: lb});
 			lazyTyped++;
 		}
 		var mctx = globals == null || globals.macros == null ? null : globals.macros.typer;
@@ -135,10 +134,10 @@ class MacroRuntime {
 			typing.Finalization.finalize(mctx);
 			typing.MacroContext.flushMacroContext(macros.eval.EvalContext.getCtx(), mctx);
 		}
-		for (x in late)
-			if (typing.MacroContext.lateFieldFilters != null) typing.MacroContext.lateFieldFilters(x.c, x.cf);
-		for (cf in done)
-			typed.set(cf, cf.cfExpr);
+		for (x in done) {
+			if (x.lb.late && typing.MacroContext.lateFieldFilters != null) typing.MacroContext.lateFieldFilters(x.lb.c, x.cf);
+			typed.set(x.cf, x.cf.cfExpr);
+		}
 	}
 
 	// TypeBinding.typeLazyBodies: every body of com not typed yet, typed (and
