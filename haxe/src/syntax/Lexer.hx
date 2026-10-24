@@ -668,8 +668,7 @@ class Lexer {
 					}
 				case "#".code:
 					return false;
-				case "r".code if (!skippedReturn && source.substr(index - 1, 6) == "return" && (index < 2 || !identChar(StringTools.fastCodeAt(source, index - 2)))
-						&& !identChar(index + 5 < n ? StringTools.fastCodeAt(source, index + 5) : 0)):
+				case "r".code if (!skippedReturn && word(index - 1, "return")):
 					index += 5;
 					var k = index;
 					while (k < n && (StringTools.fastCodeAt(source, k) == " ".code || StringTools.fastCodeAt(source, k) == "\t".code))
@@ -683,6 +682,16 @@ class Lexer {
 
 	static inline function identChar(c:Int):Bool
 		return c >= "a".code && c <= "z".code || c >= "A".code && c <= "Z".code || c >= "0".code && c <= "9".code || c == "_".code;
+
+	// (skipCode) whether the identifier w is at i, a word of its own
+	function word(i:Int, w:String):Bool {
+		var n = source.length, k = w.length;
+		if (i + k > n || i > 0 && identChar(StringTools.fastCodeAt(source, i - 1)) || i + k < n && identChar(StringTools.fastCodeAt(source, i + k)))
+			return false;
+		for (j in 0...k)
+			if (StringTools.fastCodeAt(source, i + j) != StringTools.fastCodeAt(w, j)) return false;
+		return true;
+	}
 
 	// (skipBlock: a string after its quote q, index after its end; a
 	// single-quoted one's interpolations are code)
