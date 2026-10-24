@@ -137,6 +137,8 @@ class SyntaxCompletionException extends haxe.Exception {
 	public var displayMode:DisplayModeValue;
 	public var wasAutoTriggered:Bool;
 	public var specialIdentifierFiles:Null<core.ds.ThreadSafeHashtbl<String, String>>;
+	// port: (hxmc) the method bodies a file's parse skips, when not null (syntax.ParserEntry.SkippedBodies)
+	public var skipBodies:Null<syntax.ParserEntry.SkippedBodies> = null;
 
 	public inline function new(defines:DefineContext, inDisplay:Bool, inDisplayFile:Bool, displayMode:DisplayModeValue,
 			wasAutoTriggered:Bool, specialIdentifierFiles:Null<core.ds.ThreadSafeHashtbl<String, String>>) {

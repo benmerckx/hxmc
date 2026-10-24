@@ -1943,7 +1943,8 @@ class TypeBinding {
 						case OverloadOverride(f):
 							f();
 					}
-					var body = TypeloadFunction.typeFunction(ctx, args, ret, e, fctx.isDisplayField, p);
+					// port: (a body the parse skipped: syntax.ParserEntry.SkippedBodies)
+					var body = TypeloadFunction.typeFunction(ctx, args, ret, syntax.ParserEntry.SkippedBodies.body(e), fctx.isDisplayField, p);
 					check();
 					switch checkResult {
 						case NormalOverride(rctx): TypeloadCheck.checkCallSuper(ctx.com, rctx, body);

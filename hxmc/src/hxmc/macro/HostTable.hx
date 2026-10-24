@@ -7,8 +7,7 @@ import hxmc.Obj;
 // such code can reach (functions, data, program-wide numbers, thread-local
 // variables, imports) and its functions' fingerprints (interp.MirRun.
 // hostFunctions: the std's functions it has alike) with what callers need
-// to know of them (HostFps flags), and the bodies its macro context need not
-// parse (MacroCuts). Built when the compiler is linked (Driver, `build`):
+// to know of them (HostFps flags). Built when the compiler is linked (Driver, `build`):
 // the addresses are offsets the linker computes from each value's own place
 // (no relocation for the system's loader, no slide to apply), and nothing is
 // read from files next to the executable.
@@ -29,14 +28,14 @@ import hxmc.Obj;
 // stores no key. Each slot holds the high word as its check, which rejects
 // a name the set lacks but for 1 in 2^32. The table (the symbol
 // hxmc_host_table): 8 32-bit words (the symbols' slots ns and buckets nb,
-// the fingerprints' slots ms and buckets mb, the cuts' bytes, the bound
+// the fingerprints' slots ms and buckets mb, the table's bytes, the bound
 // imports' count ng, 0, 0); the symbols' pilots (16 bits each, then to 4
 // bytes), checks and values (32 bits each) and kinds (4 bits each: 0 an
 // empty slot, 1 code, 2 data, 3 an absolute number, 4 a thread-local
 // variable, 5 an import bound in place: its 64-bit slot), to 8 bytes; the
 // bound imports' slots (64 bits each); the fingerprints' pilots, checks,
-// keys (two 32-bit words) and flags (8 bits), to 8 bytes; the cuts
-// (MacroCuts' lines). A value is a number for kind 3, for code, data and a
+// keys (two 32-bit words) and flags (8 bits), to 8 bytes. A value is a
+// number for kind 3, for code, data and a
 // bound import's slot the 32-bit offset of the address from the value's own
 // place, 0 for a thread-local variable (its accessors are the compiler's:
 // InterpAbi.tlsAccessors).
@@ -153,8 +152,8 @@ class HostTable {
 	// the table of the symbols the objects define that `named` keeps (they and
 	// the table's own object are linked together) and the imports
 	// (`imports`: bound by the system's loader), with the fingerprints
-	// (symbol, Fingerprint.key, HostFps flags) and the cuts
-	public static function build(objs:Array<Obj>, abi:Abi, fps:Array<{sym:String, key:String, flags:Int}>, cuts:String, imports:Array<String>,
+	// (symbol, Fingerprint.key, HostFps flags)
+	public static function build(objs:Array<Obj>, abi:Abi, fps:Array<{sym:String, key:String, flags:Int}>, imports:Array<String>,
 			named:String->Bool, ?stats:Bool):Obj {
 		var obj = new Obj();
 		var defs = new Map<String, Symbol>();
@@ -195,12 +194,11 @@ class HostTable {
 			frows.push({lo: lo, hi: hi, d1: hex8(f.key, 0), d2: hex8(f.key, 8), flags: f.flags});
 		}
 		var fh = perfect(frows);
-		var cutBytes = haxe.io.Bytes.ofString(cuts);
 		var sec = obj.section(".data", SecKind.Data, 16);
 		var b = sec.buf;
 		var start = b.len;
 		var ns = ph.slots, ms = fh.slots, ng = Lambda.count(boundOf);
-		for (v in [ns, ph.pilots.length, ms, fh.pilots.length, cutBytes.length, ng, 0, 0])
+		for (v in [ns, ph.pilots.length, ms, fh.pilots.length, 0, ng, 0, 0])
 			b.u32(v);
 		var tsym = obj.sym(SYM);
 		// the symbols
@@ -256,10 +254,10 @@ class HostTable {
 		for (s in 0...ms)
 			b.u8(fslot[s] < 0 ? 0xff : frows[fslot[s]].flags);
 		b.align(8);
-		b.bytes(cutBytes);
+		b.set32(start + 16, b.len - start);
 		obj.define(SYM, sec, start, b.len - start, true);
 		if (stats)
-			Sys.println('hxmc: host table: ${rows.length} symbols in $ns slots (${ng} bound imports), ${frows.length} fingerprints in $ms slots, cuts ${cutBytes.length} bytes; ${b.len - start} bytes');
+			Sys.println('hxmc: host table: ${rows.length} symbols in $ns slots (${ng} bound imports), ${frows.length} fingerprints in $ms slots; ${b.len - start} bytes');
 		return obj;
 	}
 
@@ -378,7 +376,6 @@ class HostTable {
 	static var fchecks:hxmc.unsafe.Ptr;
 	static var fkeys:hxmc.unsafe.Ptr;
 	static var fflags:hxmc.unsafe.Ptr;
-	static var cutsAt:hxmc.unsafe.Ptr;
 
 	static function init() {
 		if (base != null) return;
@@ -405,8 +402,6 @@ class HostTable {
 		fkeys = t.add(at);
 		at += 8 * ms;
 		fflags = t.add(at);
-		at = (at + ms + 7) & ~7;
-		cutsAt = t.add(at);
 		base = t;
 	}
 
@@ -472,20 +467,10 @@ class HostTable {
 	public static function fpFlags(s:Int):Int
 		return hxmc.unsafe.Mem.getU8(fflags, s);
 
-	// MacroCuts' lines
-	public static function cuts():String {
-		init();
-		var len = hxmc.unsafe.Mem.getI32(base, 16);
-		var bs = haxe.io.Bytes.alloc(len);
-		for (i in 0...len)
-			bs.set(i, hxmc.unsafe.Mem.getU8(cutsAt, i));
-		return bs.toString();
-	}
-
 	// the table's bytes (HXMC_MACRO_STATS)
 	public static function bytes():Int {
 		init();
-		return cutsAt.toI64().toInt() - base.toI64().toInt() + hxmc.unsafe.Mem.getI32(base, 16);
+		return hxmc.unsafe.Mem.getI32(base, 16);
 	}
 
 	// its symbols' slots

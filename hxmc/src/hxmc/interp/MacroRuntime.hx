@@ -7,40 +7,35 @@ import core.ds.VectorTools.vector;
 
 using core.TFunctions;
 
-// -D hxmc.macros=mir: the runtime's functions in the macro context. hxmc's
-// std loads the runtime (hxmc.rt, hxmc.unsafe: Std imports hxmc.rt.Runtime)
-// and the macro context types every function it loads, but a bundle never
-// compiles a runtime function the compiler has (MirMacros.step: its native
-// code runs it), so typing their bodies was most of what a cold build paid
-// for the macro context (a trivial macro: 1.50 G instructions, Eval 0.60 G).
-// A static function of the runtime that the compiler has, whose callers
-// need only its declared signature (no optional argument, nothing left to
-// infer but a Void result) and that the Mir inliner does not copy into
-// them (the flags of its fingerprint, macro.HostTable), is not typed
-// (TypeBinding.untypedBodyHook): its
-// body is a throw naming it, and @:hxmc.hostCode marks it; Lower makes it a
-// function without body (FuncInfo.hostCode) whose facts are those of the
-// compiler's code (Lower.hostCode). Most of their bodies are not parsed
-// either (hxmc.MacroCuts: its lines in macro.HostTable, TypeloadParse.sourceHook). The macro
-// code compiled and what it runs are the same. HXMC_MIR_TYPE_RUNTIME=1:
-// every function typed and parsed, as before.
+// -D hxmc.macros=mir: the std's and the runtime's functions in the macro
+// context. hxmc's std loads the runtime (hxmc.rt, hxmc.unsafe: Std imports
+// hxmc.rt.Runtime), and a macro reaches few of the functions of the std's
+// files the macro context loads: their bodies are parsed (TypeloadParse.
+// skipBodiesHook: ParserEntry.SkippedBodies) and typed (`lazyBody`) when
+// they are asked for. A bundle never compiles a runtime function the
+// compiler has (MirMacros.step: its native code runs it): a static
+// function of the runtime that the compiler has, whose callers need only
+// its declared signature (no optional argument, nothing left to infer but
+// a Void result) and that the Mir inliner does not copy into them (the
+// flags of its fingerprint, macro.HostTable), is not typed at all
+// (TypeBinding.untypedBodyHook): its body is a throw naming it, and
+// @:hxmc.hostCode marks it; Lower makes it a function without body
+// (FuncInfo.hostCode) whose facts are those of the compiler's code
+// (Lower.hostCode). The macro code compiled and what it runs are the same.
+// HXMC_MIR_TYPE_RUNTIME=1: the runtime's functions the compiler has typed
+// too; HXMC_MIR_LAZY_BODIES=0: every body parsed and typed with its module.
 @:access(hxmc.ir.Facts)
 @:access(hxmc.macro.Loader)
 @:access(hxmc.interp.MirRun)
 class MacroRuntime {
 	public static inline var META = ":hxmc.hostCode";
 
-	// the cuts (macro.HostTable), read at the first file of the runtime the macro context parses
-	static var cuts:Null<Map<String, {hash:String, ranges:Array<Int>}>> = null;
-
 	public static function install() {
-		if (Sys.getEnv("HXMC_MIR_TYPE_RUNTIME") != "1") {
-			typing.TypeloadFields.TypeBinding.untypedBodyHook = body;
-			typing.TypeloadParse.sourceHook = source;
-		}
+		if (Sys.getEnv("HXMC_MIR_TYPE_RUNTIME") != "1") typing.TypeloadFields.TypeBinding.untypedBodyHook = body;
 		if (Sys.getEnv("HXMC_MIR_LAZY_BODIES") != "0") {
 			typing.TypeloadFields.TypeBinding.lazyBodyHook = lazyBody;
 			typing.TypeloadFields.TypeBinding.typeLazyBodies = typeAll;
+			typing.TypeloadParse.skipBodiesHook = (com, file) -> com.isMacroContext && stdFile(com, file);
 		}
 		hxmc.ir.Lower.hostCode = native;
 	}
@@ -175,12 +170,7 @@ class MacroRuntime {
 	static function body(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx,
 			args:typing.FunctionArguments, t:T, ret:T, e:Expr, p:core.Globals.Pos):Null<TExpr> {
 		if (!ctx.com.isMacroContext || !runtimeClass(c)) return null;
-		var r = bodiless(ctx, c, cf, fctx, args, t, ret, e, p);
-		// (a body MacroCuts blanked: never typed)
-		if (r == null && cut(e))
-			core.Error.raiseTypingError(core.Globals.sTypePath(c.clPath) + "." + cf.cfName
-				+ ": its body was left out of the macro context (hxmc.MacroCuts, the compiler's .cuts), but it is not the compiler's native code there (hxmc.interp.MacroRuntime): the compiler and its std disagree", p);
-		return r;
+		return bodiless(ctx, c, cf, fctx, args, t, ret, e, p);
 	}
 
 	static function bodiless(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx,
@@ -202,9 +192,12 @@ class MacroRuntime {
 			case _: null;
 		}
 		if (!full(t, void)) return null;
-		if (hxmc.MacroCuts.nativeFlags(MirRun.hostFps(), hxmc.MacroCuts.symbol(hxmc.ir.Lower.nativeName(c), cf.cfName, cf.cfMeta)) < 0) return null;
+		if (nativeFlags(MirRun.hostFps(), symbol(hxmc.ir.Lower.nativeName(c), cf.cfName, cf.cfMeta)) < 0) return null;
 		if (void != null) {
-			if (!hxmc.MacroCuts.returnsNothing(e)) return null;
+			// (a body the parse skipped: whether it has a `return` of a value, from its source)
+			var nothing = syntax.ParserEntry.SkippedBodies.returnsNothing(e);
+			if (nothing == null) nothing = returnsNothing(syntax.ParserEntry.SkippedBodies.body(e));
+			if (!nothing) return null;
 			context.Typecore.unify(ctx, ctx.t.tvoid, ret, p);
 		}
 		cf.cfMeta.push({meta: Custom(META), exprs: vector(), pos: p});
@@ -218,27 +211,38 @@ class MacroRuntime {
 		return core.TFunctions.mk(TFunction(tf), t, p);
 	}
 
-	// whether a body is one MacroCuts blanked
-	static function cut(e:Expr):Bool
-		return switch e.expr {
-			case EBlock([{expr: EThrow({expr: EConst(core.Ast.Constant.String(s, _))})}]): s == hxmc.MacroCuts.MARKER;
-			case _: false;
-		}
+	// the symbol of a static function's native code (Facts.symbol: its
+	// export's, or F_ and its name); cls: its class's path, `_` between the parts
+	public static function symbol(cls:String, field:String, meta:core.Ast.Metadata):String {
+		var exported = meta.length > 0 ? hxmc.ir.Lower.metaString(":hxmc.export", meta) : null;
+		return exported != null ? exported : "F_" + hxmc.ir.Facts.ident(cls + "_" + field);
+	}
 
-	// TypeloadParse.sourceHook: a file of the runtime as the macro context
-	// parses it, with the bodies of <exe>.cuts blanked when it is the file
-	// they are of
-	static function source(com:context.Common.CommonContext, file:String, text:String):String {
-		if (!com.isMacroContext) return text;
-		var f = StringTools.replace(file, "\\", "/");
-		var at = f.lastIndexOf("/hxmc/rt/");
-		if (at < 0) at = f.lastIndexOf("/hxmc/unsafe/");
-		if (at < 0) return text;
-		if (cuts == null) cuts = hxmc.MacroCuts.read(hxmc.macro.HostTable.cuts());
-		var c = cuts.get(f.substr(at + 1));
-		if (c == null) return text;
-		var s = hxmc.MacroCuts.apply(text, c);
-		return s == null ? text : s;
+	// the flags (HostFps) of the compiler's native code of that symbol when it
+	// may stand for the function: the compiler has it, no other function may
+	// have that symbol (Facts numbers the others of one name: sym_1, ...) and
+	// the Mir inliner does not copy it into callers (code loaded at run time
+	// would copy a body there is none of); else -1
+	static function nativeFlags(fps:hxmc.macro.HostTable.HostFps, sym:String):Int {
+		var flags = fps.flags(sym);
+		if (flags < 0 || flags & hxmc.macro.HostTable.HostFps.INLINE != 0 || fps.flags(sym + "_1") >= 0) return -1;
+		return flags;
+	}
+
+	// whether a body returns no value (its own `return`s: not those of the
+	// functions in it), which typeFunction makes Void when no type is written
+	static function returnsNothing(e:Expr):Bool {
+		function loop(e:Expr) {
+			switch e.expr {
+				case EReturn(v) if (v != null): throw core.ds.Exit.raise();
+				case EFunction(_, _):
+				case _: core.Ast.iterExpr(loop, e);
+			}
+		}
+		return try {
+			loop(e);
+			true;
+		} catch (_:core.ds.Exit) false;
 	}
 
 	// Lower.hostCode: what the compiler's code of fi does (Facts), from its fingerprint's flags

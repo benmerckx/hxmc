@@ -422,7 +422,14 @@ class Grammar {
 		var fl:Array<ClassField>, p2:Pos;
 		if (isTok(s, BrOpen)) {
 			s.junk();
-			var r = tail(function() return parseClassFields(ctx, false, p1, s));
+			// port: (hxmc) an abstract's bodies are not skipped (its fields are made over, TypeloadFields.transformAbstractField)
+			var skip = ctx.config.skipBodies;
+			ctx.config.skipBodies = null;
+			var r = try tail(function() return parseClassFields(ctx, false, p1, s)) catch (x:Dynamic) {
+				ctx.config.skipBodies = skip;
+				throw x;
+			};
+			ctx.config.skipBodies = skip;
 			fl = r.fields;
 			p2 = r.pos;
 		} else {
@@ -1599,9 +1606,13 @@ class Grammar {
 		expectTok(s, PClose);
 		var t = tail(function() return popt(function(s) return parseTypeHint(ctx, s), s));
 		var e:Null<Expr>, p2:Pos;
-		var r = tryHead(function() return expr(ctx, s));
+		// port: (hxmc) a body skipped (ParserConfiguration.skipBodies)
+		var skipped = ctx.config.skipBodies != null && peek(s).token == BrOpen && ParserEntry.SkippedBodies.skippable(name.name, al, meta) ? skipBody(ctx,
+			s) : null;
+		var r = skipped != null ? {v: skipped} : tryHead(function() return expr(ctx, s));
 		if (r != null) {
-			semicolon(ctx, s);
+			// port: (a block passed over: no last token, an optional `;`)
+			if (skipped != null) acceptTok(s, Semicolon) else semicolon(ctx, s);
 			e = r.v;
 			p2 = r.v.pos;
 		} else {
@@ -1623,6 +1634,36 @@ class Grammar {
 			access: al,
 			meta: meta
 		};
+	}
+
+	// port: (hxmc) a method's block body skipped: its tokens matched by their
+	// braces (the conditional compilation's done by the stream), an empty
+	// block at its position that ParserConfiguration.skipBodies parses
+	// when the body is asked for (SkippedBodies.body)
+	static function skipBody(ctx:ParserContext, s:S):Expr {
+		var open = peek(s);
+		s.junk();
+		// (the source passed over, when the stream holds no token after the `{`: Lexer.skipBlock)
+		if (s.pending() == 0 && ctx.code.skipBlock()) {
+			var e:Expr = {expr: EBlock(vector()), pos: {pfile: open.pos.pfile, pmin: open.pos.pmin, pmax: @:privateAccess ctx.code.index}};
+			ctx.config.skipBodies.add(e, ctx.code.skippedReturn);
+			return e;
+		}
+		var depth = 1, last = open.pos;
+		while (depth > 0) {
+			var tk = peek(s);
+			switch tk.token {
+				case BrOpen: depth++;
+				case BrClose: depth--;
+				case Eof: Parser.error(Unexpected(Eof), tk.pos);
+				case _:
+			}
+			s.junk();
+			last = tk.pos;
+		}
+		var e:Expr = {expr: EBlock(vector()), pos: punion(open.pos, last)};
+		ctx.config.skipBodies.add(e, null);
+		return e;
 	}
 
 	static function parseVarFieldAssignment(ctx:ParserContext, s:S):{e:Null<Expr>, pos:Pos} {
