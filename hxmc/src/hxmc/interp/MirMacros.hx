@@ -515,6 +515,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			// (the std's bodies the macro context has not typed: typed, the types
 			// they load handed over, then lowered with what they reach)
 			while (l.deferred.length > 0) {
+				rounds++;
 				phase("lowering");
 				typingBodies = true;
 				MacroRuntime.typeBodies([for (d in l.deferred) d.cf]);
@@ -539,6 +540,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	// (MacroRuntime.typeBodies running: what macro code it would call finds bodies not lowered)
 	var typingBodies = false;
+	// (HXMC_MACRO_STATS: the bodies' typings between drains)
+	var rounds = 0;
 
 	// the types handed over since the last scan: the macro API's (its enums,
 	// Error's constructor), the runtime's implementations (Lower.findHosts)
@@ -833,7 +836,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
 			Sys.stderr().writeString('hxmc.macros=mir: functions compiled when first called: ${lazyCompiled} of ${lazies.length} (${hxmc.macro.Loader.lateBytes} bytes)\n');
-			Sys.stderr().writeString('hxmc.macros=mir: the std\'s bodies typed when asked for: ${MacroRuntime.lazyTyped} of ${MacroRuntime.lazyCount}\n');
+			Sys.stderr().writeString('hxmc.macros=mir: the std\'s bodies typed when asked for: ${MacroRuntime.lazyTyped} of ${MacroRuntime.lazyCount} ($rounds rounds)\n');
 			if (cache != null) Sys.stderr().writeString('hxmc.macros=mir: functions kept (BundleCache): ${cache.hits} found, ${cache.misses} compiled\n');
 			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
