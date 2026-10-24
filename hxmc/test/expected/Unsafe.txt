@@ -10,6 +10,8 @@ atomic64 ok
 cas64 ok
 strings 21 45238 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 hello true
+wstring 4 ok
+wstring 4 ok
 zeroed
 os ok
 stack ok
