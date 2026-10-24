@@ -8,6 +8,20 @@ import hxmc.rt.Gc;
 import hxmc.rt.Dyn;
 import hxmc.unsafe.Ptr;
 
+// What the bundles of a generation share, as a function compiled after its
+// bundle finds it (Loader.loadLate)
+class Gen {
+	public final xb:Map<String, {k:String, v:I64}>;
+	public final entries:Map<String, Ptr>;
+	public final rows:Map<String, I64>;
+
+	public function new(xb, entries, rows) {
+		this.xb = xb;
+		this.entries = entries;
+		this.rows = rows;
+	}
+}
+
 // A loaded bundle: what the engines use.
 class Bundle {
 	public var entries = new Map<String, Ptr>(); // entry name -> its descriptor
@@ -49,6 +63,8 @@ class Loader {
 	static var xb = new Map<String, {k:String, v:I64}>();
 	// the pool entries given out, by descriptor symbol (this generation's)
 	static var entries = new Map<String, Ptr>();
+	// the latest dispatch row of each selector (this generation's)
+	static var rows = new Map<String, I64>();
 	static var hostNtypes = 0;
 	static var hostNsigs = 0;
 	static var nextType = 0;
@@ -83,6 +99,7 @@ class Loader {
 		}
 		xb = new Map();
 		entries = new Map();
+		rows = new Map();
 		for (k => v in genTypes)
 			oldTypes.set(k, v);
 		for (k => v in genSigs)
@@ -233,7 +250,10 @@ class Loader {
 	// the address native code calls the function of descriptor
 	// symbol d at, given out once (hxmc.rt.Interp.poolEntry; flags: the
 	// descriptor's, which may not be in memory yet)
-	static function entry(d:String, desc:Ptr, flags:Int):Ptr {
+	static function entry(d:String, desc:Ptr, flags:Int):Ptr
+		return entryOf(entries, d, desc, flags);
+
+	static function entryOf(entries:Map<String, Ptr>, d:String, desc:Ptr, flags:Int):Ptr {
 		var e = entries.get(d);
 		if (e == null) {
 			e = hxmc.rt.Interp.poolEntry(desc, flags);
@@ -241,6 +261,10 @@ class Loader {
 		}
 		return e;
 	}
+
+	// this generation's shared symbols, entries and rows (loadLate)
+	public static function gen():Gen
+		return new Gen(xb, entries, rows);
 
 	// a C function of the system's libraries the compiler imports nothing of
 	// (its imports are in the host table: HostTable.imports), looked up as
@@ -485,9 +509,9 @@ class Loader {
 			var dn = hxmc.interp.InterpGen.DESC + n;
 			var d = defs.get(dn);
 			// (the descriptor's flags from the bundle's bytes: its memory is written after the relocations)
-			if (d != null) return {v: entry(dn, ptr(addr.get(d.section) + d.offset), d.section.buf.b.getInt32(d.offset + 36)).toI64(), tls: false};
+			if (d != null) return {v: entry(dn, ptr(addr.get(d.section) + d.offset), d.section.buf.b.getInt32(d.offset + hxmc.interp.InterpGen.H_FLAGS)).toI64(), tls: false};
 			var xd = xb.get(dn);
-			if (xd != null) return {v: entry(dn, ptr(xd.v), Mem.getI32(ptr(xd.v), 36)).toI64(), tls: false};
+			if (xd != null) return {v: entry(dn, ptr(xd.v), Mem.getI32(ptr(xd.v), hxmc.interp.InterpGen.H_FLAGS)).toI64(), tls: false};
 			var hs = h.get(n);
 			if (hs == null) hs = xb.get(n);
 			if (hs != null) return {v: hs.v, tls: hs.k == "l"};
@@ -705,25 +729,99 @@ class Loader {
 		for (i in inits)
 			// (a class without a type entry: new unless a bundle loaded before, or for
 			// the std the compiler, has its initializer)
-			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || xb.exists(hxmc.interp.InterpGen.DESC + i.fn) || (i.share && h.exists(i.fn)))) {
-				var p = runnable(i.fn);
-				b.inits.push(p);
-				run0(p);
-			}
+			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || xb.exists(hxmc.interp.InterpGen.DESC + i.fn) || (i.share && h.exists(i.fn))))
+				b.inits.push(runnable(i.fn));
 		// what the next bundles share: the numbers, the globals and type objects, the functions
 		for (n => v in num)
 			xb.set(n, {k: "a", v: v});
 		for (n => p in extra)
-			if (!StringTools.startsWith(n, "DSP_")) xb.set(n, {k: "d", v: p.toI64()});
+			if (!StringTools.startsWith(n, "DSP_")) xb.set(n, {k: "d", v: p.toI64()}) else rows.set(n, p.toI64());
 		for (n => s in defs)
 			if (StringTools.startsWith(n, hxmc.interp.InterpGen.DESC)) xb.set(n, {k: "d", v: value(s).v});
 		// (the runtime's walks of the types, Type.resolveClass, reach the new ones)
 		Mem.setI32(Mem.sym("rt_ntypes"), 0, nextType);
+		// (run once the bundle is shared: a function they call may be compiled
+		// then, against it, interp.MirMacros)
+		for (p in b.inits)
+			run0(p);
 		var ens:Array<Dynamic> = facts.entries;
 		for (en in ens)
 			b.entries.set(en.name, runnable(en.sym));
 		return b;
 	}
+
+	// a function compiled after its bundle (interp.MirMacros: on its first
+	// call), its object alone (its descriptor, its literals): linked against
+	// the bundles of its generation (gen: xb, entries and rows as they were
+	// then, which have every number it uses), then the compiler; its
+	// descriptor's address. Dispatch rows: the selector's latest, which has
+	// the types of every bundle loaded since.
+	public static function loadLate(obj:Obj, desc:String, gen:Gen):Ptr {
+		var h = hostSyms();
+		var defs = new Map<String, Symbol>();
+		for (s in obj.symbols)
+			if (s.section != null && s.global) defs.set(s.name, s);
+		var addr = new Map<Section, I64>();
+		var pos = 0;
+		for (s in obj.sections) {
+			if (s.kind == Text && s.size() > 0) throw "code in a bundle for the Mir interpreter: section " + s.name + " (" + s.size() + " bytes)";
+			if (s.kind != RoData && s.kind != Data && s.kind != Bss) continue;
+			pos = (pos + s.align - 1) & ~(s.align - 1);
+			addr.set(s, pos);
+			pos += s.size();
+		}
+		var region = LibC.malloc(((pos < 8 ? 8 : pos) : I64));
+		if (region.isNull()) throw "no memory for a bundle";
+		LibC.memset(region, 0, ((pos < 8 ? 8 : pos) : I64));
+		for (s in addr.keys())
+			addr.set(s, addr.get(s) + region.toI64());
+		function value(s:Symbol):I64 {
+			if (s.section != null) return addr.get(s.section) + s.offset;
+			if (s.abs) return s.offset;
+			var d = defs.get(s.name);
+			if (d != null) return value(d);
+			var n = s.name;
+			var x = gen.xb.get(n);
+			if (x != null) return x.v;
+			if (StringTools.startsWith(n, "DSP_") && gen.rows.exists(n)) return gen.rows.get(n);
+			var dn = hxmc.interp.InterpGen.DESC + n;
+			var dd = defs.get(dn);
+			if (dd != null) return entryOf(gen.entries, dn, ptr(value(dd)), dd.section.buf.b.getInt32(dd.offset + hxmc.interp.InterpGen.H_FLAGS)).toI64();
+			var xd = gen.xb.get(dn);
+			if (xd != null) return entryOf(gen.entries, dn, ptr(xd.v), Mem.getI32(ptr(xd.v), hxmc.interp.InterpGen.H_FLAGS)).toI64();
+			var hs = h.get(n);
+			if (hs != null) return hs.v;
+			var sys = systemSymbol(n);
+			if (!sys.isNull()) return sys.toI64();
+			throw "undefined symbol " + n;
+		}
+		for (sec in obj.sections) {
+			if (!addr.exists(sec) || sec.kind == Bss) continue;
+			var buf = sec.buf;
+			for (r in sec.relocs) {
+				var v = value(r.sym) + r.addend;
+				switch r.kind {
+					case RAbs64:
+						buf.set64(r.offset, v.toInt(), (v >> 32).toInt());
+					case RAbs32 | RAbs32S:
+						if (v >> 31 != (0 : I64) && v >> 31 != (-1 : I64)) throw "a 32-bit relocation against " + r.sym.name + " beyond 32 bits";
+						buf.set32(r.offset, v.toInt());
+					case _:
+						throw "relocation " + r.kind + " against " + r.sym.name + " in a bundle for the Mir interpreter";
+				}
+			}
+			var p = ptr(addr.get(sec));
+			for (i in 0...buf.len)
+				Mem.setI8(p, i, buf.b.get(i));
+		}
+		lateBytes += pos;
+		var d = defs.get(desc);
+		if (d == null) throw "no descriptor " + desc;
+		return ptr(value(d));
+	}
+
+	// the bytes of the functions loaded after their bundles (HXMC_MACRO_STATS)
+	public static var lateBytes = 0;
 
 	// null when the compiler's type `idx` has the bundle's layout (slots, pointer map, fields)
 	static function sameLayout(idx:Int, t:Dynamic, fids:Map<String, Int>):Null<String> {

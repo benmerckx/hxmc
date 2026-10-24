@@ -146,6 +146,7 @@ enum abstract IOp(Int) from Int to Int {
 	var CALLXI;
 	var SPECIAL;
 	var FENCE;
+	var LAZY;
 }
 
 // The functions -D hxmc.interp interprets: those of the program's modules
@@ -225,9 +226,11 @@ class InterpSet {
 // through the compiler's pools, by the descriptor's parameter sources
 // (entrySources; InterpAbi).
 //
-// The descriptor: a header (MAGIC, registers, frame bytes, code words, the
-// symbol table's offset, constants, their offset, parameters, the offset of
-// the parameters' sources, flags: Interp.D_*), the code (words:
+// The descriptor: a header (MAGIC, registers, frame bytes, code words,
+// constants, parameters, flags: Interp.D_*, then the 64-bit offsets from
+// the descriptor of the code, the symbol table, the constants and the
+// parameters' sources: a stub's header, `stub`, is made its function's
+// when it is compiled), the code (words:
 // an operation and its operands, branch targets as byte offsets in the
 // code, relative to their instruction's start), the constants (8 bytes each, relocated: copied into the first
 // registers when a frame starts, so a constant is never an operation) and
@@ -246,8 +249,10 @@ class InterpGen {
 	public static inline var DESC = "hxmc_i$";
 	public static inline var TABLE = "hxmc_interp_fns";
 	static inline var STUB = "hxmc_ic$";
-	static inline var MAGIC = 0x31495848;
-	static inline var HEADER = 40;
+	static inline var MAGIC = 0x32495848;
+	public static inline var HEADER = 64;
+	// (the header's flags: Loader reads them before the descriptor is in memory)
+	public static inline var H_FLAGS = 24;
 	// the runtime's thread-local variables the interpreter reads itself (Interp.T_*)
 	static var TLS = [
 		"rt_sp" => 0, "rt_sp_hw" => 1, "rt_hcur" => 2, "rt_exn" => 3, "rt_young_ptr" => 4, "rt_young_limit" => 5, "rt_young_rlimit" => 6,
@@ -425,17 +430,8 @@ class InterpGen {
 		var constOff = (HEADER + 4 * code.length + 7) & ~7;
 		var symOff = constOff + 8 * consts.length;
 		var srcOff = symOff + 8 * syms.length;
-		var entry = entrySources();
-		b.u32(MAGIC);
-		b.u32(nregs + scratch);
-		b.u32(frame);
-		b.u32(code.length);
-		b.u32(symOff);
-		b.u32(consts.length);
-		b.u32(constOff);
-		b.u32(mf.params.length);
-		b.u32(srcOff);
-		b.u32(entry.flags);
+		var entry = entrySources(abi, cc, mf, set.loaded);
+		header(b, nregs + scratch, frame, code.length, consts.length, mf.params.length, entry.flags, constOff, symOff, srcOff);
 		for (w in code)
 			b.u32(w);
 		b.align(8);
@@ -453,10 +449,49 @@ class InterpGen {
 		if (!set.loaded) entryStub();
 	}
 
+	static function header(b:hxmc.Buf, nregs:Int, frame:Int, words:Int, nconsts:Int, nparams:Int, flags:Int, constOff:Int, symOff:Int, srcOff:Int) {
+		b.u32(MAGIC);
+		b.u32(nregs);
+		b.u32(frame);
+		b.u32(words);
+		b.u32(nconsts);
+		b.u32(nparams);
+		b.u32(flags);
+		b.u32(0);
+		for (off in [HEADER, symOff, constOff, srcOff])
+			b.u64(off, 0);
+	}
+
+	// a function not compiled yet (code loaded at run time: interp.MirMacros
+	// compiles a function the first time it is called): a descriptor of its
+	// symbol whose code is LAZY k (hxmc.rt.Interp.lazy), with the function's
+	// parameters, flags and parameters' sources (native code may be given its
+	// entry first), from its signature; null when only its Mir tells them
+	// (structs by value)
+	public static function stub(obj:Obj, abi:Abi, fn:FuncInfo, sym:String, k:Int):Bool {
+		if (fn.cAbi != null || fn.sret) return false;
+		var mf = new MFunc(sym);
+		mf.params = haxe.ds.Vector.fromArrayCopy([for (a in fn.args) MirBuild.mty(a.ty) == Void ? I32 : MirBuild.mty(a.ty)]);
+		mf.ret = MirBuild.mty(fn.ret);
+		var entry = entrySources(abi, CallConv.of(abi), mf, true);
+		var sec = obj.section(".data", SecKind.Data, 16);
+		var b = sec.buf;
+		b.align(16);
+		var start = b.len;
+		var srcOff = HEADER + 8;
+		header(b, mf.params.length, 0, 2, 0, mf.params.length, entry.flags, HEADER, HEADER, srcOff);
+		b.u32(LAZY);
+		b.u32(k);
+		for (s in entry.sources)
+			b.u32(s);
+		obj.define(DESC + sym, sec, start, b.len - start, true);
+		return true;
+	}
+
 	// where native code entering the function through the interpreter's pools
 	// (code loaded at run time: InterpAbi) leaves each argument, as a byte
 	// offset in the register image, and the descriptor's flags (Interp.D_*)
-	function entrySources():{sources:Array<Int>, flags:Int} {
+	static function entrySources(abi:Abi, cc:CallConv, mf:MFunc, loaded:Bool):{sources:Array<Int>, flags:Int} {
 		var pl = cc.params(mf);
 		var flags = mf.ret == F64 ? 1 : 0;
 		if (InterpAbi.onStack(pl)) flags |= 2;
@@ -470,7 +505,7 @@ class InterpGen {
 			sources.push(s);
 		}
 		if (mf.cRet.length > 0 || !InterpAbi.supported(abi)) flags |= 4;
-		if (set.loaded && mf.cRet.length > 0) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a function returning a struct by value (C callbacks) is not interpreted');
+		if (loaded && mf.cRet.length > 0) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: a function returning a struct by value (C callbacks) is not interpreted');
 		return {sources: sources, flags: flags};
 	}
 

@@ -110,6 +110,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		n == null ? COLD_WORDS : n;
 	}
 	static inline var COLD_WORDS = 8000;
+	// a function is compiled the first time it is called (a bundle has a stub
+	// of it, InterpGen.stub, LAZY k: compileLazy), but for the static
+	// initializers, which its load runs; most functions a bundle reaches never
+	// run (the formatter's macros: 65 of 212). HXMC_MIR_LAZY=0: every
+	// function compiled with its bundle
+	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
+	// the functions not compiled yet, by stub number, with their bundle's step
+	var lazies:Array<{f:FuncInfo, sym:String, key:Null<String>, cold:Bool, step:StepState}> = [];
+	var lazyCompiled = 0;
 	// a compilation error was reported: no more macro calls (as Eval's had_error)
 	var hadError = false;
 	var tCompile = 0.0;
@@ -189,6 +198,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = order;
 			r;
 		};
+		hxmc.rt.Interp.lazyHook = (k, desc, regs) -> self.compileLazy(k, desc, regs);
 		macros.MacroApi.MacroNativeValues.resolveClass = name -> {
 			var c = Type.resolveClass(name);
 			if (c == null && self.apiTypesPending()) {
@@ -632,41 +642,26 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		d.interp = new InterpGen.InterpSet(opts.interp, prep, MirRun.notHere(prog, funcs, compiled, native), true);
 		var abi = Abi.get(opts.target);
 		var obj = new Obj();
-		var emit = Target.emitter(abi, obj);
-		var ras = new Regalloc.Scratch(Target.selector(abi));
-		function compile(f:FuncInfo, into:Obj) {
-			var opt = opts.opt;
-			if (cold.exists(f)) opts.opt = false;
-			try
-				d.compileFunc(f, into, emit, ras)
-			catch (x:Dynamic) {
-				opts.opt = opt;
-				throw x;
-			}
-			opts.opt = opt;
-		}
+		var st = new StepState(d, abi, opts, cache);
+		// (compiled with the bundle: the static initializers, which run as it
+		// loads, and the functions whose calls are no GC point, Facts.GcPoints:
+		// their callers keep references in registers across them, which a
+		// collection while compiling would leave pointing at what it moved)
+		var initFns = new Map<FuncInfo, Bool>();
+		for (f in prog.inits)
+			initFns.set(f, true);
+		var stubs = 0;
 		for (f in funcs) {
 			var key = keys.get(f);
-			if (key == null) {
-				compile(f, obj);
+			var sym = prep.funcSym(f);
+			if (lazyOn && !initFns.exists(f) && !(f.noGc && !f.blocks) && InterpGen.stub(obj, abi, f, sym, lazies.length)) {
+				lazies.push({f: f, sym: sym, key: key, cold: cold.exists(f), step: st});
+				// (kept in the store's list: a later build may call it)
+				if (key != null) cache.keep(key);
+				stubs++;
 				continue;
 			}
-			// (an object per function, kept or compiled, appended in order: the bundle is the same)
-			var sym = prep.funcSym(f);
-			var fo = cache.get(key, sym, d.interp);
-			if (fo == null) {
-				fo = new Obj();
-				var deps = InterpGen.deps = [];
-				try
-					compile(f, fo)
-				catch (x:Dynamic) {
-					InterpGen.deps = null;
-					throw x;
-				}
-				InterpGen.deps = null;
-				cache.put(key, sym, fo, deps);
-			}
-			obj.append(fo);
+			st.compile(f, sym, key, cold.exists(f), obj);
 		}
 		if (cache != null) {
 			cache.record();
@@ -677,15 +672,16 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (no native code: the signatures' trampolines interpreted too, the allocations' slow paths and the
 		// expansions the interpreter's own, InterpGen)
 		var dg = new DataGen(prep, abi, obj, mf -> d.compileInterp(mf, obj));
-		dg.strings();
 		for (s in prog.sigs) {
 			d.compileInterp(dg.dynTrampoline(s), obj);
 			d.compileInterp(dg.boundTrampoline(s), obj);
 		}
+		dg.stringsUsed();
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
 		dg.resources([]);
 		phase("data, trampolines");
+		st.gen = hxmc.macro.Loader.gen();
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		phase("load");
 		codeBytes += b.codeBytes;
@@ -695,7 +691,51 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();
-		if (stats) Sys.stderr().writeString('hxmc.macros=mir: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
+		if (stats) Sys.stderr().writeString('hxmc.macros=mir: step $steps: ${funcs.length} functions (${Lambda.count(found)} native, $stubs compiled when first called), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
+	}
+
+	// (hxmc.rt.Interp.lazyHook) the function of stub k called the first time
+	// (its stub desc, its arguments in regs): compiled as its bundle would have
+	// (its step's state: the program, the inlining candidates, the keys of
+	// the store), loaded (Loader.loadLate) and desc made its descriptor
+	function compileLazy(k:Int, desc:Ptr, regs:Ptr) {
+		var t0 = haxe.Timer.stamp();
+		var p = lazies[k];
+		var f = p.f;
+		// (the arguments' references, kept across the collections compiling makes)
+		var n = f.args.length;
+		var refs:Array<Dynamic> = [];
+		refs.resize(n);
+		for (j in 0...n)
+			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) refs[j] = Mem.obj(Mem.getPtr(regs, 8 * j));
+		var order = hxmc.rt.EvalCompat.on;
+		hxmc.rt.EvalCompat.on = false;
+		try {
+			p.step.enter();
+			var obj = new Obj();
+			p.step.compile(f, p.sym, p.key, p.cold, obj);
+			var dg = new DataGen(p.step.d.prep, p.step.abi, obj, mf -> p.step.d.compileInterp(mf, obj));
+			dg.stringsUsed();
+			dg.cstrLiterals([]);
+			dg.emptyArrays([]);
+			dg.resources([]);
+			hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + p.sym, p.step.gen));
+			p.step.leave();
+		} catch (x:Dynamic) {
+			p.step.leave();
+			hxmc.rt.EvalCompat.on = order;
+			// (the compiler's failure: no handler of the macro code catches it)
+			hxmc.rt.Interp.uncatchable = x;
+			throw x;
+		}
+		if (p.step.cache != null && Driver.resident) CacheDir.settle();
+		hxmc.rt.EvalCompat.on = order;
+		for (j in 0...n)
+			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
+		lazyCompiled++;
+		var dt = haxe.Timer.stamp() - t0;
+		tCompile += dt;
+		if (stats) phases.set("compiled when first called", (phases.exists("compiled when first called") ? phases.get("compiled when first called") : 0.0) + dt);
 	}
 
 	// the bytes of the bundles loaded (code: always 0, interp.InterpAbi)
@@ -751,11 +791,99 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function report() {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+			Sys.stderr().writeString('hxmc.macros=mir: functions compiled when first called: ${lazyCompiled} of ${lazies.length} (${hxmc.macro.Loader.lateBytes} bytes)\n');
 			if (cache != null) Sys.stderr().writeString('hxmc.macros=mir: functions kept (BundleCache): ${cache.hits} found, ${cache.misses} compiled\n');
 			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
 		if (stats)
 			for (k => v in phases)
 				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');
+	}
+}
+
+// what a step's bundle compiles its functions with, kept for those compiled
+// when first called (MirMacros.compileLazy): its driver (the program, its
+// facts, which functions are interpreted), the inlining candidates and the
+// thread-local variables of its time, the store, and what its generation's
+// bundles share (Loader.gen, set as it loads)
+@:access(hxmc.Driver)
+private class StepState {
+	public final d:Driver;
+	public final abi:Abi;
+	final opts:Options;
+	public final cache:Null<BundleCache>;
+	public var gen:Null<hxmc.macro.Loader.Gen> = null;
+	final emit:Target.Emitter;
+	final ras:Regalloc.Scratch;
+	final cands:Null<Map<FuncInfo, Bool>>;
+	final refSlots:Null<Map<Int, haxe.ds.Vector<Bool>>>;
+	final tls:Null<Map<String, Int>>;
+	final nativeTls:String->Bool;
+	// (the statics of the step running when a function is compiled later)
+	var saved:Null<Array<Dynamic>> = null;
+
+	public function new(d, abi, opts, cache) {
+		this.d = d;
+		this.abi = abi;
+		this.opts = opts;
+		this.cache = cache;
+		emit = Target.emitter(abi, new Obj());
+		ras = new Regalloc.Scratch(Target.selector(abi));
+		cands = MirBuild.inlineCands;
+		refSlots = Escape.refSlots;
+		tls = InterpGen.emulatedTls;
+		nativeTls = InterpGen.nativeTls;
+	}
+
+	public function enter() {
+		saved = [MirBuild.inlineCands, Escape.refSlots, InterpGen.emulatedTls, InterpGen.nativeTls];
+		MirBuild.inlineCands = cands;
+		Escape.refSlots = refSlots;
+		InterpGen.emulatedTls = tls;
+		InterpGen.nativeTls = nativeTls;
+	}
+
+	public function leave() {
+		if (saved == null) return;
+		MirBuild.inlineCands = saved[0];
+		Escape.refSlots = saved[1];
+		InterpGen.emulatedTls = saved[2];
+		InterpGen.nativeTls = saved[3];
+		saved = null;
+	}
+
+	// f into obj: its object kept under key in the store, or compiled (and kept)
+	public function compile(f:FuncInfo, sym:String, key:Null<String>, cold:Bool, obj:Obj) {
+		if (key == null) {
+			compileFunc(f, cold, obj);
+			return;
+		}
+		// (an object per function, kept or compiled, appended in order: the bundle is the same)
+		var fo = cache.get(key, sym, d.interp);
+		if (fo == null) {
+			fo = new Obj();
+			var deps = InterpGen.deps = [];
+			try
+				compileFunc(f, cold, fo)
+			catch (x:Dynamic) {
+				InterpGen.deps = null;
+				throw x;
+			}
+			InterpGen.deps = null;
+			cache.put(key, sym, fo, deps);
+		}
+		obj.append(fo);
+	}
+
+	function compileFunc(f:FuncInfo, cold:Bool, into:Obj) {
+		var opt = opts.opt;
+		if (cold) opts.opt = false;
+		try
+			d.compileFunc(f, into, emit, ras)
+		catch (x:Dynamic) {
+			opts.opt = opt;
+			throw x;
+		}
+		opts.opt = opt;
 	}
 }
