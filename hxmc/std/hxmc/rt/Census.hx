@@ -88,8 +88,8 @@ class Census {
 			puts(Types.name(ty));
 		} else if (t == Types.T_ADATA_P)
 			lit("Data<ptr>")
-		else if (t == Types.T_ADATA_RAW)
-			lit("Data<raw>")
+		else if (t == Types.T_STRING1)
+			lit("String (one-byte)")
 		else if (t == 11 || t == 12 || t == 13) {
 			lit("Ref<");
 			put(t == 11 ? "p".code : t == 12 ? "i".code : "f".code);
@@ -173,7 +173,7 @@ class Census {
 		LibC.memset(ts, 0, (nt : I64) * 24);
 		var total:I64 = 0, objs:I64 = 0, ocaml:I64 = 0;
 		// strings
-		var sN:I64 = 0, sBytes:I64 = 0, sLatin1:I64 = 0, sUnits:I64 = 0, sBytes1:I64 = 0, sOcaml:I64 = 0, sEmpty:I64 = 0;
+		var sN:I64 = 0, s1N:I64 = 0, sBytes:I64 = 0, sLatin1:I64 = 0, sUnits:I64 = 0, sBytes1:I64 = 0, sOcaml:I64 = 0, sEmpty:I64 = 0;
 		var sHist = Mem.stack(64); // length buckets: 0, 1-7, 8-15, 16-31, 32-63, 64-255, 256+
 		LibC.memset(sHist, 0, 64);
 		// arrays
@@ -198,28 +198,32 @@ class Census {
 			total += b;
 			if (t >= nt) t = 0;
 			var ty = Types.ty(t);
-			if (t == Types.T_STRING) {
-				// (the length at 0, the units from 4: Types)
+			if (Types.isString(t)) {
+				// (the length at 0, the units from 4, a byte each in a one-byte string: Types)
 				var len = Mem.getI32(o, 0);
+				var one = t == Types.T_STRING1;
+				inline function u(i:Int):Int
+					return one ? Mem.getU8(o, 4 + i) : Mem.getU16(o, 4 + 2 * i);
 				var lat = true;
 				for (i in 0...len)
-					if (Mem.getU16(o, 4 + 2 * i) > 0xFF) {
+					if (u(i) > 0xFF) {
 						lat = false;
 						break;
 					}
+				if (one) s1N++;
 				sN++;
 				sBytes += b;
 				sUnits += len;
 				if (len == 0) sEmpty++;
 				if (lat) sLatin1++;
-				sBytes1 += r8(lat ? len : (len : I64) * 2) + 16;
+				sBytes1 += lat ? r8((len : I64) + 4) + 8 : b; // (a one-byte string: the length, a byte per unit)
 				oc = r8((len : I64) + 1) + 8; // UTF-8 for non-Latin-1: about as many bytes
 				sOcaml += oc;
 				var hb = len == 0 ? 0 : len < 8 ? 1 : len < 16 ? 2 : len < 32 ? 3 : len < 64 ? 4 : len < 256 ? 5 : 6;
 				Mem.setI64(sHist, 8 * hb, Mem.getI64(sHist, 8 * hb) + 1);
 				var h = 0x811C9DC5; // FNV-1a
 				for (i in 0...len)
-					h = (h ^ Mem.getU16(o, 4 + 2 * i)) * 16777619;
+					h = (h ^ u(i)) * 16777619;
 				if (sDistinct * 2 < hcap) {
 					var j = h & (hcap - 1);
 					while (true) {
@@ -229,7 +233,7 @@ class Census {
 							sDistinct++;
 							break;
 						}
-						if (Mem.getI32(e, 0) == len && LibC.memcmp(e.add(4), o.add(4), (len : I64) * 2) == 0) {
+						if (Mem.getI32(e, 0) == len && tindexOf(e) == t && LibC.memcmp(e.add(4), o.add(4), one ? (len : I64) : (len : I64) * 2) == 0) {
 							sDupbytes += b;
 							break;
 						}
@@ -318,7 +322,7 @@ class Census {
 				var bi = bit(v);
 				if ((Mem.getU8(seen, (bi >> 3).toInt()) >> (bi & 7).toInt()) & 1 != 0) continue;
 				var vt = tindexOf(v);
-				if (!(vt == Types.T_ARRAY || vt == Types.T_STRING || (kindOf(v) == K_OBJ && isMap(vt)))) continue;
+				if (!(vt == Types.T_ARRAY || Types.isString(vt) || (kindOf(v) == K_OBJ && isMap(vt)))) continue;
 				Mem.setI8(seen, (bi >> 3).toInt(), Mem.getU8(seen, (bi >> 3).toInt()) | (1 << (bi & 7).toInt()));
 				var b = deep(v);
 				var fid = Types.fFid(f);
@@ -385,14 +389,16 @@ class Census {
 		r.int(sN, 0);
 		r.str(" (");
 		r.int(sEmpty, 0);
-		r.str(" empty), ");
+		r.str(" empty, ");
+		r.int(s1N, 0);
+		r.str(" one-byte), ");
 		r.fixed(mb(sBytes), 1, 0);
 		r.str(" MB, ");
 		r.int(sUnits, 0);
 		r.str(" units, ");
 		var l1:Float = cast sLatin1, sn:Float = cast sN;
 		r.fixed(sN != 0 ? 100.0 * l1 / sn : 0, 1, 0);
-		r.str("% Latin-1; 1-byte Latin-1 would be ");
+		r.str("% Latin-1; all Latin-1 ones one-byte: ");
 		r.fixed(mb(sBytes1), 1, 0);
 		r.str(" MB; OCaml ");
 		r.fixed(mb(sOcaml), 1, 0);

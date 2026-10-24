@@ -53,7 +53,8 @@ decides what the other 48 bits are.
 record:   [ type:16 ][ slots:16              ][ identity hash:32       ]
 array:    [ type:16 ][ words:16 (0xFFFF: more) ][ length:32, in elements ]
 string:   [ type:16 ][ words:16 (0xFFFF: more) ][ content hash:32         ]
-          then its length (u32 at +0) and its UTF-16 units from +4
+          then its length (u32 at +0) and its units from +4 (type 17: a
+          byte each; 16: UTF-16)
 forwarded (while the collector copies): type 0xFFFF, the copy in slot 0
 ```
 
@@ -97,7 +98,11 @@ forwarded (while the collector copies): type 0xFFFF, the copy in slot 0
 
 A string is `[16][words][content hash]`, its length at +0 and its UTF-16
 units from +4: 4 bytes more payload than its units, 8 bytes less than the
-uniform header's (which had the length and hash in the payload). The hash is
+uniform header's (which had the length and hash in the payload). A
+string whose units are all below 0x100 may be `[17][words][content
+hash]` instead, a byte per unit (compact strings, as V8's one-byte
+strings: [runtime.md](runtime.md#compact-strings-latin-1--utf-16)); what
+makes strings makes those where every unit fits, the literals among them. The hash is
 FNV-1a over the units, all 32 bits (StringMap's index; 0 until computed, a
 computed 0 stored as 1); `DataGen` writes the literals' at compile time
 (`FnLower.strHash`, which string switches use too: the compiler's, not
@@ -243,8 +248,6 @@ header, not the length, so a copy may carry a word after its elements).
 - **Array as a Haxe class** over NativeArray (HashLink's way), its methods in
   the std instead of `Arr`/`Boxes` and MirBuild's special lowering.
 - **The Array's kind** dropped, read from its storage's type.
-- Compact strings: a second string type (Latin-1, one byte per unit), not a
-  flag.
 - A new stage0 (`make stage0`): the committed one cannot build these sources
   (a layout change: the previous tool builds the new compiler against the
   previous std, which then builds itself).

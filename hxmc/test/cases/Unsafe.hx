@@ -77,11 +77,12 @@ class Unsafe {
 		for (s in keep)
 			total += sumUnits(s) + s.length;
 		Sys.println("strings " + keep.length + " " + total + " " + keep[3]);
+		// (from a two-byte literal, a unit above 0xFF after the five; "hello" itself has a byte per unit)
 		var dst = makeString(5, 46);
-		copyUnits(dst, "hello", 5);
+		copyUnits(dst, "hello\u20AC", 5);
 		Sys.println(dst + " " + (dst == "hello"));
 		// zeroed objects: an Int array's raw data block is all zero
-		var z = Mem.alloc(3, hxmc.rt.Types.T_ADATA_RAW, K_RAW);
+		var z = Mem.alloc(3, hxmc.rt.Types.naType(hxmc.rt.Types.AK_I32), K_RAW);
 		Sys.println(Mem.getI64(Mem.addr(z), 0) == 0 && Mem.getI64(Mem.addr(z), 16) == 0 ? "zeroed" : "not zeroed");
 		// the target, as the code generator knows it
 		Sys.println(Mem.os() >= 0 && Mem.os() <= 3 ? "os ok" : "os bad");

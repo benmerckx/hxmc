@@ -87,21 +87,55 @@ anyway; one root mechanism is simpler. Worth trying again only with:
 
 ## Compact strings (Latin-1 / UTF-16)
 
-Strings are UTF-16 (32-bit length, 16-bit code units), as on hxc and
-HashLink. Keep UTF-16 *semantics* (O(1) `charAt`/`charCodeAt`/`substr`,
-`length` in code units, the same results as JS, HashLink, JVM, C#), but
-store a string as Latin-1, one byte per character, when every character
-fits, with a flag in the header (as JDK 9's compact strings and V8 do).
+Built. Strings keep UTF-16 *semantics* (O(1) `charAt`/`charCodeAt`/`substr`,
+`length` in code units, the same results as JS, HashLink, JVM, C#), stored
+as one of two types, as V8's one-byte and two-byte strings
+(`hxmc.rt.Types`, [heap-layout.md](heap-layout.md#strings)): `T_STRING1`
+(17) a byte per unit, every unit below 0x100, and `T_STRING` (16) UTF-16.
 
-- Gains: about half the memory of ASCII-heavy text; UTF-8 I/O of ASCII
-  text becomes a copy instead of a conversion.
-- Cost: every string operation handles both representations.
+- Either type may hold a string whose units all fit in a byte (as in V8):
+  no result depends on the type, only the time it takes. Equality,
+  comparison, hashing (FNV-1a over the units, as before) and search take any
+  pair; a pair of each type compares unit by unit.
+- What makes strings makes one-byte ones where every unit fits: the
+  literals (`DataGen`), UTF-8 decoding (its counting pass notes a lead byte
+  of 0xC4 or more, or a malformed byte), substrings (a two-byte string's
+  range narrowed when it fits), numbers, `charAt`, `fromCharCode`, case
+  mapping (but the upper cases of U+00B5 and U+00FF), StringBuf (one-byte
+  storage until a unit above 0xFF comes, then widened; `toString` narrows a
+  two-byte buffer whose units fit), Windows' wide strings. A concatenation
+  with a two-byte string is two-byte.
+- Code generation (`MirBuild`): `charCodeAt` loads the type and branches,
+  `StringBuf.addChar`'s inline path takes a unit below 0x100 into one-byte
+  storage with room (one comparison tests both), string equality is
+  unchanged (the lengths, then `hx_str_eq_slow`, which compares the types).
+- WasmGC keeps UTF-16 strings (`GcRepr`'s one-byte operations are its
+  two-byte ones).
 - Not planned: UTF-8 semantics. It gives up O(1) indexing or
   Haxe-compatible results (`"😀".length` is 2 on UTF-16 targets) for gains
   the compact representation mostly gets anyway.
-- Measured: in the port's self-compile, strings are 5.5 MB live, 1.6 MB of
-  which Latin-1 storage would save (under 1% of the heap). I/O-heavy
-  programs gain more than the compiler does.
+
+Measured (Xeon E-2356G, 6 cores / 12 threads, Linux 6.1; the port's
+self-compile to HXB, pinned to one core, 8 interleaved runs on a quiet
+machine, medians; HXB identical):
+
+| | UTF-16 | compact | |
+| --- | --- | --- | --- |
+| instructions | 31,845.7 M | 32,205.3 M | +1.1% |
+| cycles | 16,551 M | 16,546 M | 0.0% |
+| time (task clock) | 3,779 ms | 3,775 ms | −0.1% |
+| peak RSS | 657 MB | 638 MB | −2.9% |
+| allocated | 5,209 MB | 4,969 MB | −4.6% |
+| minor collections | 327 (0.85 s) | 312 (0.71 s) | |
+| live strings at exit | 17.6 MB | 13.6 MB | −23% |
+| the port's executable | 20,826,176 B | 20,621,376 B | −1.0% |
+
+The instructions added are the lexer's: a branch per unit read
+(`Lexer.token`, `mIdent`, `startsAt`, about +240 M), well predicted;
+copies, decoding and the collector take fewer (`memcpy` −89 M,
+`Gc.drainMinor` −77 M, `Str.ofUtf8` −63 M). Programs that embed text gain
+most: 4.0 M units of source as 257 literals make an executable of 4.74 MB
+instead of 8.28 MB (−43%).
 
 ## Direct system calls on Linux
 

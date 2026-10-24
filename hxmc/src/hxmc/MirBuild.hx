@@ -1695,11 +1695,20 @@ class MirBuild extends MirWriter {
 				nullCheck(xs[0]);
 				var r = newVar(I32);
 				writeVar(r, cur, iconst(0));
-				var ok = newBlock(), join = newBlock();
+				var ok = newBlock(), one = newBlock(), two = newBlock(), join = newBlock();
 				br(cmp(CULt, xs[1], strLen(xs[0])), ok, join);
 				seal(ok);
 				cur = ok;
-				writeVar(r, cur, load(I32, 2, xs[0], 4, false, op1(SExt, I64, xs[1]), 2)); // (the units after the length)
+				// (the units after the length: a byte each in a one-byte string)
+				var i = op1(SExt, I64, xs[1]);
+				br(cmp(CEq, strType(xs[0]), iconst(Abi.T_STRING1)), one, two);
+				seal(one);
+				seal(two);
+				cur = one;
+				writeVar(r, cur, load(I32, 1, xs[0], 4, false, i, 1));
+				jmp(join);
+				cur = two;
+				writeVar(r, cur, load(I32, 2, xs[0], 4, false, i, 2));
 				jmp(join);
 				seal(join);
 				cur = join;
@@ -2290,6 +2299,10 @@ class MirBuild extends MirWriter {
 	function strLen(s:Int):Int
 		return loadM(Opt.MConst, I32, 4, s, 0);
 
+	// a string's type index: Abi.T_STRING1 if it has a byte per unit (hxmc.rt.Types)
+	function strType(s:Int):Int
+		return loadM(Opt.MConst, I32, 2, s, Abi.HDR_TINDEX);
+
 	// the type of NativeArray storage of element kind k (hxmc.rt.Types.naType)
 	public static function naType(k:Int):Int
 		return Abi.T_NATIVE_ARRAY - k;
@@ -2318,21 +2331,24 @@ class MirBuild extends MirWriter {
 		return readVar(r, cur);
 	}
 
-	// StringBuf_addChar (Str.hx): the common case inline
+	// StringBuf_addChar (Str.hx): the common case inline, a unit below 0x100
+	// into one-byte storage with room (hxmc.rt.MemRepr: slot 0 the length,
+	// slot 1 the storage, a string as long as the capacity)
 	function stringBufAddChar(b:Int, c:Int):Int {
 		var len = load(I32, 4, b, 0);
 		var d = load(I64, 8, b, 8);
 		var c2 = newBlock(), fast = newBlock(), slow = newBlock(), join = newBlock();
 		slow.cold = true;
-		br(cmp(CULt, c, iconst(0x10000)), c2, slow);
+		// (one comparison: the storage's type, if not T_STRING1, sets bits above the unit's)
+		var other = op2(Xor, I32, strType(d), iconst(Abi.T_STRING1));
+		br(cmp(CULt, op2(Or, I32, c, op2(Shl, I32, other, iconst(16))), iconst(0x100)), c2, slow);
 		seal(c2);
 		cur = c2;
-		var cap = op2(Shl, I32, load(I32, 4, d, -4), iconst(2));
-		br(cmp(CULt, len, cap), fast, slow);
+		br(cmp(CULt, len, strLen(d)), fast, slow);
 		seal(fast);
 		seal(slow);
 		cur = fast;
-		store(2, d, 0, c, op1(SExt, I64, len), 2);
+		store(1, d, 4, c, op1(SExt, I64, len), 1);
 		store(4, b, 0, op2(Add, I32, len, iconst(1)));
 		jmp(join);
 		cur = slow;

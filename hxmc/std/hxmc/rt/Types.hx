@@ -23,8 +23,10 @@ class Types {
 	public static inline var T_NATIVE_OPEN = 7;
 	public static inline var T_NATIVE_WRAP = 8;
 	public static inline var T_TYPEOBJ = 14;
+	// strings: 16 of UTF-16 units, 17 of one byte per unit (Latin-1: each
+	// unit below 0x100), as V8's two-byte and one-byte strings (isString)
 	public static inline var T_STRING = 16;
-	public static inline var T_ADATA_RAW = 17; // slots
+	public static inline var T_STRING1 = 17;
 	public static inline var T_NATIVE = 18; // slots: a C resource, an AtomicInt cell
 	// NativeArray storage, by element kind: T_NATIVE_ARRAY - AK_* (naType:
 	// AK_BYTE's 19 to AK_PTR's 24, references). T_BYTES: the storage of bytes
@@ -92,7 +94,8 @@ class Types {
 	//     that many or more: lenWords), its length in elements (a u32 at -4);
 	//     whether the elements are references, and their size, its type says;
 	//   string: its words as an array's, its content hash (a u32 at -4, 0
-	//     until computed); its length (a u32 at 0), then its UTF-16 units;
+	//     until computed); its length (a u32 at 0), then its units, two bytes
+	//     each (T_STRING) or one (T_STRING1: every unit below 0x100);
 	//   forwarded (by the collector): T_FWD, the copy's address in slot 0
 	// (every object on the heap has a slot: an empty array or string is static).
 
@@ -101,6 +104,10 @@ class Types {
 
 	public static inline function isRecord(t:Int):Bool
 		return !isArray(t);
+
+	// a string, of either width
+	public static inline function isString(t:Int):Bool
+		return t & 0xFFFE == T_STRING;
 
 	// an array without references (a string too), by its type or its
 	// header's first word
@@ -132,7 +139,7 @@ class Types {
 	// words or more (lenWords: its length, a string's at p, the others' at p - 4)
 	public static inline function wordsAt(p:Ptr, w0:Int):Int {
 		var n = w0 >>> 16;
-		return n == 0xFFFF ? lenWords(w0 & 0xFFFF, Mem.getI32(p, w0 & 0xFFFF == T_STRING ? 0 : -4)) : n;
+		return n == 0xFFFF ? lenWords(w0 & 0xFFFF, Mem.getI32(p, isString(w0 & 0xFFFF) ? 0 : -4)) : n;
 	}
 
 	// the words of an array of type t and length len, by its elements' size:
@@ -140,8 +147,8 @@ class Types {
 	// else 8-byte slots (inline: the collector's loops make no call)
 	public static inline function lenWords(t:Int, len:Int):Int {
 		var k = naKind(t);
-		var size = t == T_STRING ? 2 : Mem.ult(k, AK_COUNT) ? akSize(k) : 8;
-		return ((((len : I64) * size) + (t == T_STRING ? 11 : 7)) >>> 3).toInt();
+		var size = t == T_STRING ? 2 : t == T_STRING1 ? 1 : Mem.ult(k, AK_COUNT) ? akSize(k) : 8;
+		return ((((len : I64) * size) + (isString(t) ? 11 : 7)) >>> 3).toInt();
 	}
 
 	// how an object whose first header word is w0 is scanned: K_OBJ (a

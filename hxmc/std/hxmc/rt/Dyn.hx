@@ -42,9 +42,8 @@ class Dyn {
 	// any other unit answers false, and the caller asks the C table)
 	@:hxmc.noGc static function nameIs(p:Ptr, s:String):Bool {
 		var n = Str.len(s);
-		var c = Str.unitsAddr(s);
 		for (i in 0...n) {
-			var u = Mem.getU16At(c, 0, i);
+			var u = Str.unit(s, i);
 			if (u >= 0x80 || Mem.getU8At(p, 0, i) != u) return false;
 		}
 		return Mem.getU8At(p, 0, n) == 0;
@@ -276,7 +275,7 @@ class Dyn {
 		var st = findStatic(o, fid);
 		if (!st.isNull()) return staticGet(st);
 		var t = tindex(o);
-		if (t == T_STRING && isLength(fid)) return (Str.len(o) : Dynamic);
+		if (isString(t) && isLength(fid)) return (Str.len(o) : Dynamic);
 		if (t == T_ARRAY && isLength(fid)) return ((o : Array<Dynamic>).length : Dynamic);
 		if (isNativeArray(t) && isLength(fid)) return (arrLength(o) : Dynamic);
 		if (isNativeArray(t)) return null;
@@ -456,11 +455,11 @@ class Dyn {
 		if (Str.isNull(o)) Rt.rt_throw("Null Access");
 		var t = tindex(o);
 		if (Str.len(name) == 6 && name == "length") {
-			if (t == T_STRING) return (Str.len(o) : Dynamic);
+			if (isString(t)) return (Str.len(o) : Dynamic);
 			if (t == T_ARRAY) return ((o : Array<Dynamic>).length : Dynamic);
 			if (isNativeArray(t)) return (arrLength(o) : Dynamic);
 		}
-		if ((t == T_STRING || t == T_ARRAY) && isBuiltin(t, name)) return builtinMethod(o, name);
+		if ((isString(t) || t == T_ARRAY) && isBuiltin(t, name)) return builtinMethod(o, name);
 		// (an enum's constructor by name: its value, or a function making one, as on
 		// Eval; upstream's TestReflect)
 		if (t == T_TYPEOBJ && tk(ty(described(o))) == TK_ENUM) {
@@ -474,7 +473,7 @@ class Dyn {
 	// "charAt"): it was null; upstream's Issue6276): a function of any arguments
 	// calling it on o (VarArgs, callBuiltin)
 	static function isBuiltin(t:Int, name:String):Bool
-		return if (t == T_STRING) switch name {
+		return if (isString(t)) switch name {
 			case "charAt" | "charCodeAt" | "indexOf" | "lastIndexOf" | "substr" | "substring" | "toLowerCase" | "toUpperCase" | "toString" | "split": true;
 			case _: false;
 		} else switch name {
@@ -526,10 +525,10 @@ class Dyn {
 	// through Dynamic: its result, or NOT_BUILTIN
 	static function callBuiltin(o:Dynamic, nm:String, args:Array<Dynamic>, n:Int):Dynamic {
 		var t = tindex(o);
-		if (t != T_ARRAY && t != T_STRING) return NOT_BUILTIN;
+		if (t != T_ARRAY && !isString(t)) return NOT_BUILTIN;
 		var a0:Dynamic = n > 0 ? args[0] : null, a1:Dynamic = n > 1 ? args[1] : null;
 		var r:Dynamic = null;
-		if (t == T_STRING) {
+		if (isString(t)) {
 			var s:String = o;
 			switch nm {
 				case "charAt": r = Str.charAt(s, a0);
@@ -577,7 +576,7 @@ class Dyn {
 
 	@:hxmc.export("hx_dyn_call_field") static function dynCallField(o:Dynamic, name:String, args:Array<Dynamic>):Dynamic {
 		var t = Str.isNull(o) ? 0 : tindex(o);
-		if ((t == T_ARRAY || t == T_STRING) && Str.len(name) < 30) {
+		if ((t == T_ARRAY || isString(t)) && Str.len(name) < 30) {
 			var a = Str.isNull(args) ? [] : args.copy();
 			var r = callBuiltin(o, name, a, a.length);
 			if (!isNotBuiltin(r)) return r;
@@ -595,7 +594,7 @@ class Dyn {
 
 	@:hxmc.host("hx_dyn_call_field_fid") static function dynCallFieldFid(o:Dynamic, fid:Int, args:Array<Dynamic>):Dynamic {
 		var t = Str.isNull(o) ? 0 : tindex(o);
-		if (t == T_ARRAY || t == T_STRING) {
+		if (t == T_ARRAY || isString(t)) {
 			var a = Str.isNull(args) ? [] : args.copy();
 			var r = callBuiltin(o, Names.fidStr(fid), a, a.length);
 			if (!isNotBuiltin(r)) return r;
@@ -674,12 +673,12 @@ class Dyn {
 		if (ta == tb) {
 			if (ta == T_BOXFLOAT) return Mem.getF64(Mem.addr(a), 0) == Mem.getF64(Mem.addr(b), 0);
 			if (ta == T_BOXINT || ta == T_BOXBOOL) return Mem.getI32(Mem.addr(a), 0) == Mem.getI32(Mem.addr(b), 0);
-			if (ta == T_STRING) return Str.len(a) == Str.len(b) && Str.eqSlow(a, b);
+			if (isString(ta)) return Str.len(a) == Str.len(b) && Str.eqSlow(a, b);
 		}
 		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) return unboxI64(a) == unboxI64(b);
 		if (isNum(a) && isNum(b)) return unboxFloat(a) == unboxFloat(b);
 		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return Mem.getI32(Mem.addr(a), 0) == Mem.getI32(Mem.addr(b), 0);
-		if (ta == T_STRING && tb == T_STRING) return Str.len(a) == Str.len(b) && Str.eqSlow(a, b);
+		if (isString(ta) && isString(tb)) return Str.len(a) == Str.len(b) && Str.eqSlow(a, b);
 		if (ta == T_TYPEOBJ && tb == T_TYPEOBJ) return described(a) == described(b);
 		// (two closures of one method and object: equal, as on Eval and hl)
 		if (ta == tb && ta >= T_FIRST && (tk(ty(ta)) == TK_BOUND || isMethodClosure(ta))) return compareMethods(a, b);
@@ -725,7 +724,7 @@ class Dyn {
 			var x = unboxFloat(a), y = unboxFloat(b);
 			return x < y ? -1 : x > y ? 1 : 0;
 		}
-		if (!Str.isNull(a) && !Str.isNull(b) && tindex(a) == T_STRING && tindex(b) == T_STRING) return Str.cmp(a, b);
+		if (!Str.isNull(a) && !Str.isNull(b) && isString(tindex(a)) && isString(tindex(b))) return Str.cmp(a, b);
 		if (Mem.addr(a) == Mem.addr(b)) return 0;
 		// two dates: by time, as JavaScript's `a == b ? 0 : a > b ? 1 : -1`
 		// (Eval: -1 but for the same date)
@@ -738,7 +737,7 @@ class Dyn {
 
 	// a op b on Dynamic values (FnLower.opCode: 0 + 1 - 2 * 3 / 4 % 5 & 6 | 7 ^ 8 << 9 >> 10 >>>)
 	@:hxmc.host("hx_dyn_op") static function dynOp(op:Int, a:Dynamic, b:Dynamic):Dynamic {
-		if (op == 0 && ((!Str.isNull(a) && tindex(a) == T_STRING) || (!Str.isNull(b) && tindex(b) == T_STRING)))
+		if (op == 0 && ((!Str.isNull(a) && isString(tindex(a))) || (!Str.isNull(b) && isString(tindex(b)))))
 			return Str.concat(stdString(a), stdString(b));
 		var ints = !Str.isNull(a) && !Str.isNull(b) && tindex(a) != T_BOXFLOAT && tindex(b) != T_BOXFLOAT;
 		if (op >= 5 || (ints && op != 3)) {
@@ -804,6 +803,7 @@ class Dyn {
 			case T_NATIVE_ARRAY:
 				return isNativeArray(t);
 			case T_BOXBOOL | T_STRING | T_ARRAY | T_DATE:
+				if (t == T_STRING1) return c == T_STRING;
 				return t == c;
 			case _:
 		}
@@ -865,7 +865,7 @@ class Dyn {
 		var t = tindex(v);
 		var p = Mem.addr(v);
 		switch t {
-			case T_STRING:
+			case T_STRING | T_STRING1:
 				return v;
 			case T_BOXINT:
 				return Str.ofInt(Mem.getI32(p, 0));
@@ -1001,7 +1001,7 @@ class Dyn {
 	@:hxmc.noGc public static function objHash(o:Dynamic):Int {
 		if (Str.isNull(o)) return 0;
 		var t = tindex(o);
-		if (t == T_STRING) return Str.hash(o) * (0x9E3779B1 : Int);
+		if (isString(t)) return Str.hash(o) * (0x9E3779B1 : Int);
 		if (isArray(t)) return (arrLength(o) * 31 + t) * (0x9E3779B1 : Int);
 		var hp = Mem.addr(o).add(-8);
 		var h = Mem.getI32(hp, 4);
@@ -1041,7 +1041,7 @@ class Dyn {
 				return 3;
 			case T_BOXI64:
 				return 12;
-			case T_STRING:
+			case T_STRING | T_STRING1:
 				return 8;
 			case T_ARRAY:
 				return 9;
@@ -1065,7 +1065,8 @@ class Dyn {
 		if (Str.isNull(v)) return null;
 		var t = tindex(v);
 		// (a Bytes is an instance of its class: upstream's TestSerialize)
-		if (t == T_STRING || t == T_ARRAY || t == T_DATE) return typeObj(t);
+		if (isString(t)) return typeObj(T_STRING);
+		if (t == T_ARRAY || t == T_DATE) return typeObj(t);
 		if (t >= T_FIRST && tk(ty(t)) == TK_CLASS) return typeObj(t);
 		return null;
 	}
@@ -1278,7 +1279,7 @@ class Dyn {
 	public static function getField(o:Dynamic, name:String):Dynamic {
 		if (Str.isNull(o)) return null;
 		var t = tindex(o);
-		if (t < T_FIRST && t != T_STRING && t != T_ARRAY && t != T_TYPEOBJ) return null;
+		if (t < T_FIRST && !isString(t) && t != T_ARRAY && t != T_TYPEOBJ) return null;
 		return dynGet(o, name);
 	}
 

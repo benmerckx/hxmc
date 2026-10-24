@@ -35,18 +35,28 @@ class GcRepr {
 	public static inline function unboxedBool(x:Dynamic):Int
 		return W.unboxBool(x) ? 1 : 0;
 
-	// ---- strings
+	// ---- strings: always two-byte (the one-byte operations of MemRepr are
+	// the two-byte ones; isOne is false)
 
 	public static inline function len(s:String):Int
 		return W.strLen(s);
 
+	public static inline function isOne(s:String):Bool
+		return false;
+
 	public static inline function unit(s:String, i:Int):Int
 		return W.strGet(s, i);
 
-	public static inline function chars(s:String):GcChars
+	public static inline function chars1(s:String):GcChars
 		return s;
 
-	public static inline function make(n:Int):String
+	public static inline function chars2(s:String):GcChars
+		return s;
+
+	public static inline function make1(n:Int):String
+		return W.strNew(n);
+
+	public static inline function make2(n:Int):String
 		return W.strNew(n);
 
 	// (no room for a hash: computed each time)
@@ -55,7 +65,10 @@ class GcRepr {
 
 	public static inline function storeHash(s:String, h:Int) {}
 
-	public static inline function setUnit(s:String, i:Int, v:Int)
+	public static inline function setUnit1(s:String, i:Int, v:Int)
+		W.strSet(s, i, v);
+
+	public static inline function setUnit2(s:String, i:Int, v:Int)
 		W.strSet(s, i, v);
 
 	public static inline function copy(dst:GcChars, src:GcChars, n:Int)
@@ -67,6 +80,25 @@ class GcRepr {
 	public static inline function copyTo(dst:GcChars, di:Int, src:GcChars, n:Int)
 		W.strCopy(dst, di, src, 0, n);
 
+	public static inline function copy1(dst:GcChars, src:GcChars, n:Int)
+		W.strCopy(dst, 0, src, 0, n);
+
+	public static inline function copyFrom1(dst:GcChars, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, 0, src, si, n);
+
+	public static inline function copyTo1(dst:GcChars, di:Int, src:GcChars, n:Int)
+		W.strCopy(dst, di, src, 0, n);
+
+	public static inline function widen(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
+
+	public static inline function narrow(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
+
+	// (nothing to narrow to)
+	public static inline function fitsOne(src:GcChars, si:Int, n:Int):Bool
+		return false;
+
 	// c[i, i + m) == d[0, m)
 	public static inline function eqUnits(c:GcChars, i:Int, d:GcChars, m:Int):Bool {
 		var k = 0;
@@ -75,7 +107,13 @@ class GcRepr {
 		return k == m;
 	}
 
+	public static inline function eqUnits1(c:GcChars, i:Int, d:GcChars, m:Int):Bool
+		return eqUnits(c, i, d, m);
+
 	public static inline function matchAt(c:GcChars, d:GcChars, i:Int, m:Int):Bool
+		return eqUnits(c, i, d, m);
+
+	public static inline function matchAt1(c:GcChars, d:GcChars, i:Int, m:Int):Bool
 		return eqUnits(c, i, d, m);
 
 	// ---- StringBuf: a GcStringBuf
@@ -89,7 +127,13 @@ class GcRepr {
 	public static inline function sbSetLen(b:Dynamic, n:Int)
 		(b : GcStringBuf).len = n;
 
-	public static inline function sbChars(b:Dynamic):GcChars
+	public static inline function sbIsOne(b:Dynamic):Bool
+		return false;
+
+	public static inline function sbChars1(b:Dynamic):GcChars
+		return (b : GcStringBuf).chars;
+
+	public static inline function sbChars2(b:Dynamic):GcChars
 		return (b : GcStringBuf).chars;
 
 	public static inline function sbCapacity(b:Dynamic):Int
@@ -100,6 +144,9 @@ class GcRepr {
 		W.strCopy(r, 0, (b : GcStringBuf).chars, 0, n);
 		(b : GcStringBuf).chars = r;
 	}
+
+	public static inline function sbWiden(b:Dynamic, cap:Int, n:Int)
+		sbGrow(b, cap, n);
 
 	// ---- arrays: of any element kind (W.arr*: elements boxed in and out where
 	// the kind is not known)

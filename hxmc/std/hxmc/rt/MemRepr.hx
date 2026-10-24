@@ -10,7 +10,7 @@ import hxmc.unsafe.Ptr;
 // heap objects valid until the next GC point).
 class MemRepr {
 	static inline var T_STRING = Types.T_STRING;
-	static inline var T_ADATA_RAW = Types.T_ADATA_RAW;
+	static inline var T_STRING1 = Types.T_STRING1;
 	static inline var T_STRINGBUF = 10;
 	static inline var K_OBJ = 0;
 	static inline var K_RAW = 2;
@@ -53,22 +53,38 @@ class MemRepr {
 	public static inline function fail(msg:String)
 		Rt.rt_throw(msg);
 
-	// ---- strings (Types): the header's content hash (a u32 at -4, 0 until
-	// computed); the length (a u32 at 0), the UTF-16 units from offset 4
+	// ---- strings (Types): the header's type, T_STRING1 (a byte per unit,
+	// each below 0x100) or T_STRING (UTF-16: two bytes per unit), and its
+	// content hash (a u32 at -4, 0 until computed); the length (a u32 at 0),
+	// the units from offset 4. Either width may hold a string whose units all
+	// fit in a byte (as V8's): no result depends on the width, only the time
+	// it takes; producers make one-byte strings where they know every unit fits.
 
 	public static inline function len(s:String):Int
 		return Mem.getI32(Mem.addr(s), 0);
 
-	public static inline function unit(s:String, i:Int):Int
-		return Mem.getU16At(Mem.addr(s), 4, i);
+	// whether s has a byte per unit
+	public static inline function isOne(s:String):Bool
+		return Mem.getU16(Mem.addr(s), -8) == T_STRING1;
 
-	public static inline function chars(s:String):MemChars
+	public static inline function unit(s:String, i:Int):Int
+		return isOne(s) ? Mem.getU8At(Mem.addr(s), 4, i) : Mem.getU16At(Mem.addr(s), 4, i);
+
+	// the units of a one-byte string (chars1), of a two-byte one (chars2)
+	public static inline function chars1(s:String):MemChars1
 		return Mem.addr(s).add(4);
 
-	// length set, hash 0, the units not written (none: the static empty
-	// string, as every object on the heap has a slot: Gc)
-	public static inline function make(n:Int):String
-		return n == 0 ? "" : withLength(Mem.allocArrayRaw(T_STRING, 0, (n + 5) >> 2), n); // (0: the hash, where an array has its length)
+	public static inline function chars2(s:String):MemChars
+		return Mem.addr(s).add(4);
+
+	// a string of n units, one byte each (make1: every unit written below
+	// 0x100) or two (make2): length set, hash 0, the units not written (none:
+	// the static empty string, as every object on the heap has a slot: Gc)
+	public static inline function make1(n:Int):String
+		return n == 0 ? "" : withLength(Mem.allocArrayRaw(T_STRING1, 0, (n + 11) >> 3), n); // (0: the hash, where an array has its length)
+
+	public static inline function make2(n:Int):String
+		return n == 0 ? "" : withLength(Mem.allocArrayRaw(T_STRING, 0, (n + 5) >> 2), n);
 
 	static inline function withLength(s:String, n:Int):String {
 		Mem.setI32(Mem.addr(s), 0, n);
@@ -81,12 +97,15 @@ class MemRepr {
 	public static inline function storeHash(s:String, h:Int)
 		Mem.setI32(Mem.addr(s), -4, h);
 
-	// unit i (a constant) of s set
-	public static inline function setUnit(s:String, i:Int, v:Int)
+	// unit i (a constant) of s set: of a one-byte string (setUnit1), a two-byte one
+	public static inline function setUnit1(s:String, i:Int, v:Int)
+		Mem.setI8(Mem.addr(s), 4 + i, v);
+
+	public static inline function setUnit2(s:String, i:Int, v:Int)
 		Mem.setI16(Mem.addr(s), 4 + 2 * i, v);
 
 	// dst[0, n) = src[0, n) (not overlapping); copyFrom: from src[si, si + n);
-	// copyTo: to dst[di, di + n)
+	// copyTo: to dst[di, di + n). Two-byte units; copy1...: one-byte ones
 	public static inline function copy(dst:MemChars, src:MemChars, n:Int)
 		LibC.memcpy(dst, src, (2 * n : I64));
 
@@ -96,28 +115,74 @@ class MemRepr {
 	public static inline function copyTo(dst:MemChars, di:Int, src:MemChars, n:Int)
 		LibC.memcpy(dst.at(di), src, (2 * n : I64));
 
-	// c[i, i + m) == d[0, m)
+	public static inline function copy1(dst:MemChars1, src:MemChars1, n:Int)
+		LibC.memcpy(dst, src, (n : I64));
+
+	public static inline function copyFrom1(dst:MemChars1, src:MemChars1, si:Int, n:Int)
+		LibC.memcpy(dst, src.at(si), (n : I64));
+
+	public static inline function copyTo1(dst:MemChars1, di:Int, src:MemChars1, n:Int)
+		LibC.memcpy(dst.at(di), src, (n : I64));
+
+	// dst[di, di + n) = src[si, si + n): one-byte units widened (widen), two-byte
+	// ones each below 0x100 narrowed (narrow)
+	@:hxmc.noGc public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
+		for (k in 0...n)
+			dst.set(di + k, src.get(si + k));
+
+	@:hxmc.noGc public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
+		for (k in 0...n)
+			dst.set(di + k, src.get(si + k));
+
+	// whether the two-byte units src[si, si + n) are each below 0x100 (four at a time)
+	@:hxmc.noGc public static function fitsOne(src:MemChars, si:Int, n:Int):Bool {
+		var p = src.at(si);
+		var k = 0;
+		// (0xFF00FF00FF00FF00, of positive halves: an Int literal of 0x80000000 or more is negative)
+		var half = ((0xFF00 : I64) << 16) | (0xFF00 : I64);
+		var hi = (half << 32) | half, none:I64 = 0;
+		while (k + 4 <= n) {
+			if (Mem.getI64(p, 2 * k) & hi != none) return false;
+			k += 4;
+		}
+		while (k < n) {
+			if (Mem.getU16(p, 2 * k) > 0xFF) return false;
+			k++;
+		}
+		return true;
+	}
+
+	// c[i, i + m) == d[0, m): two-byte units (eqUnits), one-byte ones (eqUnits1)
 	public static inline function eqUnits(c:MemChars, i:Int, d:MemChars, m:Int):Bool
 		return MemOps.compare(c.at(i), d, (2 * m : I64)) == 0;
+
+	public static inline function eqUnits1(c:MemChars1, i:Int, d:MemChars1, m:Int):Bool
+		return MemOps.compare(c.at(i), d, (m : I64)) == 0;
 
 	// the same, m >= 1: the first unit compared first
 	@:hxmc.noGc public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
 		return Mem.getU16At(c, 0, i) == Mem.getU16(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(2 * i + 2), (d : Ptr).add(2), (2 * (m - 1) : I64)) == 0);
 
-	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 a K_RAW block of
-	// units (its capacity from its header: 4 units per slot)
+	@:hxmc.noGc public static inline function matchAt1(c:MemChars1, d:MemChars1, i:Int, m:Int):Bool
+		return Mem.getU8At(c, 0, i) == Mem.getU8(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(i + 1), (d : Ptr).add(1), ((m - 1) : I64)) == 0);
+
+	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 its units: a
+	// string whose length is the capacity, one-byte until a unit above 0xFF
+	// is added (MirBuild.stringBufAddChar reads it too)
+
+	// (the first storage: 60 one-byte units, a 64-byte payload)
+	static inline var SB_WORDS = 8;
 
 	public static inline function sbNew():Dynamic {
 		var b = Mem.alloc(2, T_STRINGBUF, K_OBJ);
-		var d = Mem.allocRaw(8, T_ADATA_RAW, K_RAW);
-		Mem.setRefBarrier(b, 8, d);
+		sbInit(b);
 		return b;
 	}
 
 	// an instance of a class extending StringBuf, whose first slots are
 	// T_STRINGBUF's (Lower.classInfo)
 	public static inline function sbInit(b:Dynamic) {
-		var d = Mem.allocRaw(8, T_ADATA_RAW, K_RAW);
+		var d = withLength(Mem.allocArrayRaw(T_STRING1, 0, SB_WORDS), 8 * SB_WORDS - 4);
 		Mem.setRefBarrier(b, 8, d);
 	}
 
@@ -127,19 +192,35 @@ class MemRepr {
 	public static inline function sbSetLen(b:Dynamic, n:Int)
 		Mem.setI32(Mem.addr(b), 0, n);
 
-	static inline function sbData(b:Dynamic):Dynamic
+	static inline function sbData(b:Dynamic):String
 		return Mem.getRef(Mem.addr(b), 8);
 
-	public static inline function sbChars(b:Dynamic):MemChars
-		return Mem.addr(sbData(b));
+	// whether its units are bytes; the units (sbChars1: one-byte, sbChars2: two-byte)
+	public static inline function sbIsOne(b:Dynamic):Bool
+		return isOne(sbData(b));
+
+	public static inline function sbChars1(b:Dynamic):MemChars1
+		return chars1(sbData(b));
+
+	public static inline function sbChars2(b:Dynamic):MemChars
+		return chars2(sbData(b));
 
 	public static inline function sbCapacity(b:Dynamic):Int
-		return Mem.getI32(Mem.addr(sbData(b)), -4) << 2; // (its slots: Types)
+		return len(sbData(b));
 
-	// new storage of `cap` units, the first n copied
+	// new storage of `cap` units, of the same width, the first n copied
 	public static inline function sbGrow(b:Dynamic, cap:Int, n:Int) {
-		var nd = Mem.allocRaw((cap + 3) >> 2, T_ADATA_RAW, K_RAW);
-		LibC.memcpy(Mem.addr(nd), Mem.addr(sbData(b)), (2 * n : I64));
+		var d = sbData(b);
+		var one = isOne(d);
+		var nd = one ? make1(cap) : make2(cap);
+		LibC.memcpy(Mem.addr(nd).add(4), Mem.addr(d).add(4), one ? (n : I64) : (2 * n : I64));
+		Mem.setRefBarrier(b, 8, nd);
+	}
+
+	// new two-byte storage of `cap` units, the first n widened from the one-byte ones
+	public static inline function sbWiden(b:Dynamic, cap:Int, n:Int) {
+		var nd = make2(cap);
+		widen(chars2(nd), 0, sbChars1(b), 0, n);
 		Mem.setRefBarrier(b, 8, nd);
 	}
 
@@ -497,7 +578,7 @@ class MemRepr {
 	}
 }
 
-// a string's UTF-16 units: the address of the first
+// a two-byte string's units (UTF-16): the address of the first
 abstract MemChars(Ptr) from Ptr to Ptr {
 	public inline function get(i:Int):Int
 		return Mem.getU16At(this, 0, i);
@@ -508,6 +589,19 @@ abstract MemChars(Ptr) from Ptr to Ptr {
 	// the address of unit i
 	public inline function at(i:Int):Ptr
 		return this.add(2 * i);
+}
+
+// a one-byte string's units: the address of the first
+abstract MemChars1(Ptr) from Ptr to Ptr {
+	public inline function get(i:Int):Int
+		return Mem.getU8At(this, 0, i);
+
+	public inline function set(i:Int, v:Int)
+		Mem.setU8At(this, 0, i, v);
+
+	// the address of unit i
+	public inline function at(i:Int):Ptr
+		return this.add(i);
 }
 
 // a broken-down time: a struct tm

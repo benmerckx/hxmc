@@ -233,14 +233,15 @@ class Facts {
 	function assignTypes() {
 		// (hxmc.rt.Types: records below 16, with their slots; 16 to 31 arrays,
 		// whose slots their headers describe, of bytes to 23, of references
-		// from 24; 19 to 24 NativeArray storage by element kind (19 that of
+		// from 24; 16 and 17 strings (of two bytes and of one per unit); 19
+		// to 24 NativeArray storage by element kind (19 that of
 		// bytes, haxe.io.BytesData); 7 and 8 the wrapper made for an erased
 		// type parameter; 15 a Date, its time: hxmc.rt.MemRepr.dateOf; 28
 		// Math's class value, an extern class the runtime implements, with no
 		// instances)
 		var rtNames = [
 			"None", "ArrayIterator", "Int", "Float", "Bool", "Array", "haxe.Int64", "hxmc.NativeArray", "hxmc.NativeArray", "haxe.io.BytesBuffer", "StringBuf",
-			"Ref", "Ref", "Ref", "Class", "Date", "String", "ArrayData", "Native", "hxmc.NativeArray", "hxmc.NativeArray", "hxmc.NativeArray", "hxmc.NativeArray",
+			"Ref", "Ref", "Ref", "Class", "Date", "String", "String", "Native", "hxmc.NativeArray", "hxmc.NativeArray", "hxmc.NativeArray", "hxmc.NativeArray",
 			"hxmc.NativeArray", "hxmc.NativeArray", "ArrayData", "Overflow", "Native", "Math"
 		];
 		var rtSlots:Array<Array<Null<Ty>>> = [
