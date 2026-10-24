@@ -1894,6 +1894,22 @@ class TypeBinding {
 	public static var untypedBodyHook:Null<(ctx:Typer, c:TClass, cf:TClassField, fctx:FieldInitCtx, args:FunctionArguments, t:T, ret:T,
 		e:Expr, p:Pos) -> Null<TExpr>> = null;
 
+	// port: (hxmc) a method whose body is typed when it is asked for: its
+	// cf_expr a function of its arguments (typed, with their default values)
+	// whose body only throws, its type the one written (an inline method's:
+	// lazy, which an inlined call forces), the typing in lazyBodies until
+	// its engine takes it (core.TFunctions.lazyType of its `r`: cf_expr is
+	// then the function typed; `late`: typed once its class's filters had
+	// run, which then are its engine's to run). true: one of those (a type
+	// written in full, with full typing: -D hxmc.macros=mir, the std's
+	// bodies in the macro context, hxmc.interp.MacroRuntime)
+	public static var lazyBodyHook:Null<(ctx:Typer, c:TClass, cf:TClassField, fctx:FieldInitCtx, t:T) -> Bool> = null;
+	public static var lazyBodies = new haxe.ds.ObjectMap<TClassField, {ctx:Typer, c:TClass, r:TLazy, late:Bool}>();
+	// port: (hxmc) the bodies of lazyBodies of a context typed, before its
+	// modules are encoded (CommonCache.cacheContext, hxmc's module cache):
+	// an encoded module has its bodies
+	public static var typeLazyBodies:Null<CommonContext->Void> = null;
+
 	public static function bindMethod(ctxField:Typer, cctx:ClassInitCtx, fctx:FieldInitCtx, fmode:CurrentFun, cf:TClassField, t:T,
 			args:FunctionArguments, ret:T, e:Null<Expr>, functionMode:FunctionMode, p:Pos):Void {
 		var c = cctx.tclass;
@@ -1927,7 +1943,8 @@ class TypeBinding {
 						case OverloadOverride(f):
 							f();
 					}
-					var body = TypeloadFunction.typeFunction(ctx, args, ret, e, fctx.isDisplayField, p);
+					// port: (a body the parse skipped: syntax.ParserEntry.SkippedBodies)
+					var body = TypeloadFunction.typeFunction(ctx, args, ret, syntax.ParserEntry.SkippedBodies.body(e), fctx.isDisplayField, p);
 					check();
 					switch checkResult {
 						case NormalOverride(rctx): TypeloadCheck.checkCallSuper(ctx.com, rctx, body);
@@ -1954,6 +1971,20 @@ class TypeBinding {
 		function maybeBind():T {
 			if (!ctx.g.returnPartialType) bind();
 			return t;
+		}
+		// port: (lazyBodyHook)
+		if (lazyBodyHook != null && e != null && ctx.com.display.dmsFullTyping && !fctx.isDisplayField && lazyBodyHook(ctx, c, cf, fctx, t)) {
+			var lb = {ctx: ctx, c: c, r: null, late: false};
+			lb.r = makeUnforcedLazy(t, function() {
+				lb.late = c.clModule.mExtra.mProcessed != 0;
+				return maybeBind();
+			}, "type_fun");
+			var msg = Globals.sTypePath(c.clPath) + "." + cf.cfName + ": its body is not typed (TypeBinding.lazyBodies)";
+			var tf:TFunc = {tfArgs: args.forExpr(ctx), tfType: ret, tfExpr: mk(TThrow(mk(TConst(TString(msg)), ctx.t.tstring, p)), ctx.t.tvoid, p)};
+			cf.cfExpr = mk(TFunction(tf), t, p);
+			cf.cfType = fctx.isInline ? TLazy(lb.r) : t;
+			lazyBodies.set(cf, lb);
+			return;
 		}
 		var r = makeUnforcedLazy(t, maybeBind, "type_fun");
 		bindType(ctx, cctx, fctx, cf, r, p);

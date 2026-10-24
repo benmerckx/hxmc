@@ -122,6 +122,11 @@ class BundleCache {
 		use(p);
 	}
 
+	// the object kept under key named in this generation's list, not read (a
+	// function compiled when first called, MirMacros: a later build may call it)
+	public function keep(key:String)
+		use(path(key));
+
 	// the list of the objects this generation used (what the store's trim keeps)
 	public function record()
 		store.record(names);

@@ -100,7 +100,11 @@ class TypeloadParse {
 	public static function parseFileFromString(com:CommonContext, file:String, p:Pos, source:String):ParseResult<Package> {
 		return core.Timer.time(com.timerCtx, ["parsing"], function(source:String) {
 			com.requestScope.stats.sFilesParsed++;
-			var result = try ParserEntry.parse(ParserConfig.fileParserConfig(com, file), Grammar.parseFileStream, Lexer.createFileCtx(file),
+			var config = ParserConfig.fileParserConfig(com, file);
+			// port: (skipBodiesHook)
+			if (skipBodiesHook != null && !config.inDisplay && skipBodiesHook(com, file) && !hasSurrogates(source))
+				config.skipBodies = new syntax.ParserEntry.SkippedBodies(config, source, file);
+			var result = try ParserEntry.parse(config, Grammar.parseFileStream, Lexer.createFileCtx(file),
 				new Lexer(source, file), file) catch (_:syntax.Lexer.MalFormed)
 				raiseTypingError("Malformed file. Source files must be encoded with UTF-8.", Globals.filePos(file));
 			switch [com.display.dmsKind, result] {
@@ -146,16 +150,21 @@ class TypeloadParse {
 			// port: bytes that are not UTF-8 decode to lone surrogates, which the
 			// lexer rejects as upstream's does (syntax.Lexer.MalFormed)
 			contents = core.StringHelper.ofBytes(bytes);
-			// port: (sourceHook)
-			if (sourceHook != null) contents = sourceHook(com, rfile.file, contents);
 		}
 		return parseFileFromString(com, rfile.file, p, contents);
 	}
 
-	// port: (hxmc) a file's source as it is parsed, from its content: -D
-	// hxmc.macros=mir blanks bodies of the runtime the macro context never
-	// types (hxmc.MacroCuts, hxmc.interp.MacroRuntime)
-	public static var sourceHook:Null<(com:CommonContext, file:String, source:String) -> String> = null;
+	// port: (hxmc) whether a file's method bodies are parsed when they are
+	// asked for (syntax.ParserEntry.SkippedBodies): -D hxmc.macros=mir, the
+	// std's in the macro context (hxmc.interp.MacroRuntime)
+	public static var skipBodiesHook:Null<(com:CommonContext, file:String) -> Bool> = null;
+
+	// port: (skipBodiesHook: a source's positions are its indices without them)
+	static function hasSurrogates(s:String):Bool {
+		for (i in 0...s.length)
+			if (StringTools.fastCodeAt(s, i) & 0xF800 == 0xD800) return true;
+		return false;
+	}
 
 	public static var parseHook:CommonContext->ResolvedFile->Pos->ParseResult<Package> = parseFile;
 

@@ -244,7 +244,7 @@ class ParserEntry {
 
 	// parse main
 	public static function parse<T>(config:ParserConfiguration, entry:ParserContext->Stream<syntax.Lexer.LexedToken>->T,
-			lctx:LexerContext, code:Lexer, file:String):ParseResult<T> {
+			lctx:LexerContext, code:Lexer, file:String, toEnd = true):ParseResult<T> {
 		var defines = config.defines;
 		var ctx = Parser.createContext(lctx, config, Define.rawDefined(defines, "macro"), code);
 		var parseEntry = entry.bind(ctx);
@@ -389,7 +389,8 @@ class ParserEntry {
 			// null: Eof could already have been consumed
 			// Eof: This is what we want
 			// anything else: This isn't
-			if (next != null && next.token != Eof) Parser.error(Unexpected(next.token), next.pos);
+			// port: (toEnd false: what follows the entry is not read, SkippedBodies)
+			if (toEnd && next != null && next.token != Eof) Parser.error(Unexpected(next.token), next.pos);
 			var errors = ctx.syntaxErrors.copy();
 			errors.reverse();
 			var warnings = ctx.syntaxWarnings.copy();
@@ -468,5 +469,105 @@ class ParserEntry {
 			case ParseSuccess(data, display): ParseSuccess(loop(data), display);
 			case ParseError(data, error, errors): ParseError(loop(data), error, errors);
 		};
+	}
+}
+
+// port: (hxmc) the method bodies a file's parse skipped (Grammar.skipBody:
+// -D hxmc.macros=mir, the std's in the macro context, which types few of
+// them, hxmc.interp.MacroRuntime): each an empty block at the body's
+// position, parsed from the file's source when it is asked for (`body`),
+// its positions as a parse of the whole file gives them
+class SkippedBodies {
+	static var all = new haxe.ds.ObjectMap<Expr, SkippedBodies>();
+	// the bodies that have a `return` of a value (their own or a local
+	// function's: Lexer.skippedReturn), unknown for those the stream passed over
+	static var returns = new haxe.ds.ObjectMap<Expr, Bool>();
+	static final lock = new sys.thread.Mutex();
+
+	final config:ParserConfiguration;
+	final source:String;
+	final file:String;
+	// (a parse of the whole file: what a body that the conditional compilation around it splits is taken from)
+	var whole:Null<Map<Int, Expr>> = null;
+
+	public function new(config:ParserConfiguration, source:String, file:String) {
+		this.config = config.clone();
+		this.source = source;
+		this.file = file;
+	}
+
+	// whether a method's body may be skipped: not a constructor's, an
+	// __init__'s, a macro's, a dynamic method's, an extern or abstract
+	// one's, an overloaded or generic one's
+	public static function skippable(name:String, al:Array<PlacedAccess>, meta:Metadata):Bool {
+		if (name == "new" || name == "__init__") return false;
+		for (a in al)
+			switch a.access {
+				case AMacro | ADynamic | AExtern | AAbstract | AOverload: return false;
+				case _:
+			}
+		for (m in meta)
+			switch m.meta {
+				case core.MetaList.StrictMeta.Generic | core.MetaList.StrictMeta.Overload | core.MetaList.StrictMeta.AstSource: return false;
+				case _:
+			}
+		return true;
+	}
+
+	public function add(e:Expr, returnsValue:Null<Bool>) {
+		lock.acquire();
+		all.set(e, this);
+		if (returnsValue != null) returns.set(e, returnsValue);
+		lock.release();
+	}
+
+	// whether a skipped body has no `return` of a value: true, else null (unknown)
+	public static function returnsNothing(e:Expr):Null<Bool> {
+		lock.acquire();
+		var r = returns.get(e);
+		lock.release();
+		return r == false ? true : null;
+	}
+
+	// the body e stands for, parsed (e itself when it is no skipped body)
+	public static function body(e:Null<Expr>):Null<Expr> {
+		if (e == null) return e;
+		lock.acquire();
+		var sb = all.get(e);
+		lock.release();
+		return sb == null ? e : sb.parse(e);
+	}
+
+	function parse(e:Expr):Expr {
+		var p = e.pos;
+		if (whole == null) {
+			// (the source's positions are its indices: it has no surrogate pair, TypeloadParse)
+			var code = new Lexer(source, file);
+			@:privateAccess code.index = p.pmin;
+			var r = try ParserEntry.parse(config, Grammar.parseExpressionStream, Lexer.createTempCtx(file), code, file, false) catch (_:Dynamic) null;
+			switch r {
+				case ParseSuccess(b, _) if (b.pos.pmin == p.pmin && b.pos.pmax == p.pmax): return b;
+				case _:
+			}
+			whole = new Map();
+			var config = this.config.clone();
+			switch ParserEntry.parse(config, Grammar.parseFileStream, Lexer.createTempCtx(file), new Lexer(source, file), file) {
+				case ParseSuccess(pkg, _):
+					for (d in pkg.declarations)
+						switch d.definition {
+							case EClass(cd):
+								for (f in cd.data)
+									switch f.cffKind {
+										case FFun(fd) if (fd.fExpr != null): whole.set(fd.fExpr.pos.pmin, fd.fExpr);
+										case _:
+									}
+							case _:
+						}
+				case _:
+			}
+		}
+		var b = whole.get(p.pmin);
+		if (b == null) Parser.error(Custom("a body the parse skipped could not be parsed again (ParserEntry.SkippedBodies)"), p);
+		return b;
 	}
 }

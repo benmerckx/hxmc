@@ -174,22 +174,35 @@ class DataGen {
 	// here, never 0, so Str.hash does not store it; the collector leaves what
 	// is outside the heap alone; a string's identity hash is its content's)
 	function strings() {
+		for (s in e.strOrder)
+			string(s, e.strNames.get(s));
+	}
+
+	// the string literals the object refers to and does not define (a Mir
+	// host's bundles and the functions compiled after them, interp.MirMacros)
+	public function stringsUsed() {
+		var names = [];
+		for (s in obj.symbols)
+			if (s.section == null && !s.abs && e.strByName.exists(s.name)) names.push(s.name);
+		names.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		for (n in names)
+			string(e.strByName.get(n), n);
+	}
+
+	function string(s:String, n:String) {
 		var buf = rodata.buf;
-		for (s in e.strOrder) {
-			var n = e.strNames.get(s);
-			var units = [for (i in 0...s.length) s.charCodeAt(i)];
-			buf.align(8);
-			obj.define(n, rodata, buf.len, 8 + 4 + 2 * (units.length + 1), true);
-			// the header (hxmc.rt.Types): T_STRING, its words, its hash (as
-			// Str.hash computes it); the length, the units, then a 0 unit
-			var words = (units.length + 5) >> 2;
-			buf.u32(Abi.T_STRING | ((words < 0xFFFF ? words : 0xFFFF) << 16));
-			buf.u32(hxmc.ir.FnLower.strHash(s));
-			buf.u32(s.length);
-			for (u in units)
-				buf.u16(u);
-			buf.u16(0);
-		}
+		var units = [for (i in 0...s.length) s.charCodeAt(i)];
+		buf.align(8);
+		obj.define(n, rodata, buf.len, 8 + 4 + 2 * (units.length + 1), true);
+		// the header (hxmc.rt.Types): T_STRING, its words, its hash (as
+		// Str.hash computes it); the length, the units, then a 0 unit
+		var words = (units.length + 5) >> 2;
+		buf.u32(Abi.T_STRING | ((words < 0xFFFF ? words : 0xFFFF) << 16));
+		buf.u32(hxmc.ir.FnLower.strHash(s));
+		buf.u32(s.length);
+		for (u in units)
+			buf.u16(u);
+		buf.u16(0);
 	}
 
 	function fieldNames() {

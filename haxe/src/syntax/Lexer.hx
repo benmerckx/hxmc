@@ -603,6 +603,129 @@ class Lexer {
 		}
 	}
 
+	// port: (hxmc) the code after a `{` (from index) up to its `}`, passed
+	// over without tokens (syntax.ParserEntry.SkippedBodies): its strings,
+	// comments and regular expressions known, its lines recorded as the
+	// rules would. false, nothing passed over, at a preprocessor directive
+	// (the stream's to read) or the source's end
+	public function skipBlock():Bool {
+		skippedReturn = false;
+		var start = index, f = lines;
+		var nlines = f == null ? 0 : f.llines.length, line = f == null ? 0 : f.lline;
+		if (skipCode()) return true;
+		index = start;
+		if (f != null) {
+			f.llines.resize(nlines);
+			f.lline = line;
+		}
+		return false;
+	}
+
+	// (skipBlock) whether the code passed over has a `return` of a value
+	// (its own, or a local function's)
+	public var skippedReturn = false;
+
+	// (skipBlock: up to the `}` that closes the code, index after it)
+	function skipCode():Bool {
+		var n = source.length, depth = 1;
+		while (index < n) {
+			var c = StringTools.fastCodeAt(source, index++);
+			switch c {
+				case "{".code:
+					depth++;
+				case "}".code:
+					if (--depth == 0) return true;
+				case "\n".code:
+					newlineAt(index);
+				case "\r".code:
+					if (index < n && StringTools.fastCodeAt(source, index) == "\n".code) index++;
+					newlineAt(index);
+				case "\"".code | "'".code:
+					if (!skipString(c)) return false;
+				case "/".code if (index < n && StringTools.fastCodeAt(source, index) == "/".code):
+					while (index < n && StringTools.fastCodeAt(source, index) != "\n".code && StringTools.fastCodeAt(source, index) != "\r".code)
+						index++;
+				case "/".code if (index < n && StringTools.fastCodeAt(source, index) == "*".code):
+					index++;
+					while (true) {
+						if (index >= n) return false;
+						var d = StringTools.fastCodeAt(source, index++);
+						if (d == "*".code && index < n && StringTools.fastCodeAt(source, index) == "/".code) {
+							index++;
+							break;
+						}
+						if (d == "\n".code) newlineAt(index) else if (d == "\r".code) {
+							if (index < n && StringTools.fastCodeAt(source, index) == "\n".code) index++;
+							newlineAt(index);
+						}
+					}
+				case "~".code if (index < n && StringTools.fastCodeAt(source, index) == "/".code):
+					index++;
+					while (true) {
+						if (index >= n) return false;
+						var d = StringTools.fastCodeAt(source, index++);
+						if (d == "\\".code) index++ else if (d == "/".code) break else if (d == "\n".code || d == "\r".code) return false;
+					}
+				case "#".code:
+					return false;
+				case "r".code if (!skippedReturn && word(index - 1, "return")):
+					index += 5;
+					var k = index;
+					while (k < n && (StringTools.fastCodeAt(source, k) == " ".code || StringTools.fastCodeAt(source, k) == "\t".code))
+						k++;
+					if (k >= n || StringTools.fastCodeAt(source, k) != ";".code) skippedReturn = true;
+				case _:
+			}
+		}
+		return false;
+	}
+
+	static inline function identChar(c:Int):Bool
+		return c >= "a".code && c <= "z".code || c >= "A".code && c <= "Z".code || c >= "0".code && c <= "9".code || c == "_".code;
+
+	// (skipCode) whether the identifier w is at i, a word of its own
+	function word(i:Int, w:String):Bool {
+		var n = source.length, k = w.length;
+		if (i + k > n || i > 0 && identChar(StringTools.fastCodeAt(source, i - 1)) || i + k < n && identChar(StringTools.fastCodeAt(source, i + k)))
+			return false;
+		for (j in 0...k)
+			if (StringTools.fastCodeAt(source, i + j) != StringTools.fastCodeAt(w, j)) return false;
+		return true;
+	}
+
+	// (skipBlock: a string after its quote q, index after its end; a
+	// single-quoted one's interpolations are code)
+	function skipString(q:Int):Bool {
+		var n = source.length;
+		while (index < n) {
+			var c = StringTools.fastCodeAt(source, index++);
+			if (c == q) return true;
+			switch c {
+				case "\\".code:
+					if (index < n) {
+						var d = StringTools.fastCodeAt(source, index++);
+						if (d == "\n".code) newlineAt(index) else if (d == "\r".code) {
+							if (index < n && StringTools.fastCodeAt(source, index) == "\n".code) index++;
+							newlineAt(index);
+						}
+					}
+				case "\n".code:
+					newlineAt(index);
+				case "\r".code:
+					if (index < n && StringTools.fastCodeAt(source, index) == "\n".code) index++;
+					newlineAt(index);
+				case "$".code if (q == "'".code && index < n):
+					var d = StringTools.fastCodeAt(source, index);
+					if (d == "$".code) index++ else if (d == "{".code) {
+						index++;
+						if (!skipCode()) return false;
+					}
+				case _:
+			}
+		}
+		return false;
+	}
+
 	// port: the newline rule of string, string2, code_string and not_xml (c at index):
 	// stored, its line recorded
 	function storeNewline(buf:StringBuf, c:Int):Void {

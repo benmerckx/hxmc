@@ -756,6 +756,11 @@ class MacroContext {
 		macroInterpCache = mint;
 	}
 
+	// port: (hxmc) the expression filters `ready` runs (flushMacroContext's
+	// latest), on the body of a field typed after its class was handed over
+	// (TypeBinding.lazyBodies)
+	public static var lateFieldFilters:Null<(c:TClass, cf:TClassField) -> Void> = null;
+
 	public static function flushMacroContext(mint:macros.eval.EvalContext.Context, mctx:TyperContext):Void {
 		function f(_:Null<Bool>):Null<Bool> {
 			var mctx = mctx.g.macros == null ? Globals.die("", "typing/MacroContext.hx") : mctx.g.macros.typer;
@@ -830,6 +835,15 @@ class MacroContext {
 				function(_, mt) minimalRestore(mt),
 				function(_, mt) maybeApplyNativePaths(mt),
 			];
+			// port: (lateFieldFilters)
+			lateFieldFilters = function(c:TClass, cf:TClassField) {
+				var local = context.SafeCom.adaptScomToMt(scom, TClassDecl(c));
+				local.curfield = cf;
+				var e = cf.cfExpr;
+				for (filter in exprFilters)
+					e = filter.run(local, e);
+				cf.cfExpr = e;
+			};
 			function ready(t:ModuleType):Void {
 				var scom = context.SafeCom.adaptScomToMt(scom, t);
 				filters.FiltersCommon.applyFiltersOnce(mctx, scom, exprFilters, t);

@@ -149,6 +149,7 @@ enum abstract IOp(Int) from Int to Int {
 	var CALLXI; // f d len c n args shape: an indirect call, entries c and c + 1 its inline cache (an interpreted function: run here)
 	var SPECIAL; // k d a b c: an expansion of the instruction selections (hxmc$*: atomics, float32 conversions; SP_*)
 	var FENCE; // a store's release (arm64)
+	var LAZY; // k: a function not compiled yet (its descriptor a stub): compiled, then called (lazy)
 }
 
 // An interpreter of hxmc's Mir inside the running program (-D hxmc.interp):
@@ -185,15 +186,25 @@ enum abstract IOp(Int) from Int to Int {
 @:access(hxmc.rt.Threads)
 class Interp {
 	// a descriptor (InterpGen): magic, registers, frame bytes, code words,
-	// the symbol table's offset, constants, their offset, parameters, the
-	// offset of the parameters' sources (an entry's: their byte offsets in
-	// the register image), flags (D_*); the code from HEADER. Registers: the
-	// constants, the parameters, the values
-	static inline var HEADER = 40;
+	// constants, parameters, flags (D_*), then the offsets from the
+	// descriptor (64 bits) of its code, symbol table, constants and
+	// parameters' sources (an entry's: their byte offsets in the register
+	// image); the code from HEADER. Registers: the constants, the
+	// parameters, the values. A stub's header (LAZY) becomes its function's
+	// once it is compiled: whatever holds the descriptor calls the function
+	static inline var HEADER = 64;
+	static inline var H_NREGS = 4;
+	static inline var H_FRAME = 8;
+	static inline var H_NCONSTS = 16;
+	static inline var H_NPARAMS = 20;
+	static inline var H_CODE = 32;
+	static inline var H_SYMS = 40;
+	static inline var H_CONSTS = 48;
+	static inline var H_SOURCES = 56;
 	static inline var D_FLOAT = 1; // it returns a double
 	static inline var D_STACK = 2; // its arguments take stack words
 	static inline var D_NOENTRY = 4; // more than the image's stack words
-	static inline var MAGIC = 0x31495848; // "HXI1"
+	static inline var MAGIC = 0x32495848; // "HXI2"
 	// a frame (on the interpreter's stack): its code, symbol table,
 	// registers, slots, where its result goes, end, where it goes on (a try ended), the
 	// tries entered, their handlers
@@ -318,8 +329,8 @@ class Interp {
 		if (isp.isNull()) initStack();
 		var base = isp;
 		try {
-			var regs = base.add(FRAME), nc = Mem.getI32(desc, 20);
-			for (k in 0...Mem.getI32(desc, 28))
+			var regs = base.add(FRAME), nc = Mem.getI32(desc, H_NCONSTS);
+			for (k in 0...Mem.getI32(desc, H_NPARAMS))
 				Mem.setI64At(regs, 0, nc + k, Mem.getI64At(args, 0, k));
 			run(desc, args);
 		} catch (e:Dynamic) {
@@ -331,27 +342,64 @@ class Interp {
 
 	// a frame of the function at isp (its arguments written in its registers), run; its result written at res
 	static function run(desc:Ptr, res:Ptr) {
-		var nregs = Mem.getI32(desc, 4);
+		var nregs = Mem.getI32(desc, H_NREGS);
 		var fr = isp;
 		var regs = fr.add(FRAME);
 		var slots = regs.add((nregs * 8 + 15) & ~15);
-		var top = slots.add(Mem.getI32(desc, 8));
+		var top = slots.add(Mem.getI32(desc, H_FRAME));
 		if (!top.ult(iend)) throw "hxmc interp: stack overflow";
 		isp = top;
-		var code = desc.add(HEADER);
+		var code = desc.addL(Mem.getI64(desc, H_CODE));
 		Mem.setPtr(fr, F_CODE, code);
-		Mem.setPtr(fr, F_SYMS, desc.add(Mem.getI32(desc, 16)));
+		Mem.setPtr(fr, F_SYMS, desc.addL(Mem.getI64(desc, H_SYMS)));
 		Mem.setPtr(fr, F_REGS, regs);
 		Mem.setPtr(fr, F_SLOTS, slots);
 		Mem.setPtr(fr, F_RES, res);
 		Mem.setPtr(fr, F_TOP, top);
 		Mem.setI32(fr, F_NTRIES, 0);
 		// the constants
-		var consts = desc.add(Mem.getI32(desc, 24));
-		for (k in 0...Mem.getI32(desc, 20))
+		var consts = desc.addL(Mem.getI64(desc, H_CONSTS));
+		for (k in 0...Mem.getI32(desc, H_NCONSTS))
 			Mem.setI64At(regs, 0, k, Mem.getI64At(consts, 0, k));
 		exec(fr, code);
 		isp = fr;
+	}
+
+	// compiles the function of stub desc (LAZY's k), whose arguments are
+	// regs' first words (references among them kept across the collections
+	// compiling makes), and makes desc's header the function's (code loaded
+	// at run time: interp.MirMacros)
+	public static var lazyHook:Null<(k:Int, desc:Ptr, regs:Ptr) -> Void> = null;
+
+	// whether desc is a stub still (LAZY at its code's start, after its header)
+	public static function isStub(desc:Ptr):Bool
+		return Mem.getI64(desc, H_CODE) == (HEADER : I64) && Mem.getI32(desc, HEADER) == LAZY;
+
+	// stub's header made the one of desc, its function compiled (its parts'
+	// offsets from the stub): what calls the stub calls the function
+	public static function become(stub:Ptr, desc:Ptr) {
+		for (o in [H_NREGS, H_FRAME, 12, H_NCONSTS])
+			Mem.setI32(stub, o, Mem.getI32(desc, o));
+		for (o in [H_CODE, H_SYMS, H_CONSTS, H_SOURCES])
+			Mem.setI64(stub, o, desc.toI64() + Mem.getI64(desc, o) - stub.toI64());
+	}
+
+	// a stub's frame (LAZY at its code's start, after its header): its
+	// function compiled, then run in this frame, its arguments moved after
+	// its constants
+	static function lazy(fr:Ptr, ip:Ptr):Int {
+		var desc = ip.add(-HEADER);
+		var regs = Mem.getPtr(fr, F_REGS), res = Mem.getPtr(fr, F_RES);
+		var n = Mem.getI32(desc, H_NPARAMS);
+		if (lazyHook == null) throw "hxmc interp: a function not compiled, and no compiler";
+		lazyHook(o(ip, 1), desc, regs);
+		var nc = Mem.getI32(desc, H_NCONSTS);
+		var k = n;
+		while (k-- > 0)
+			Mem.setI64At(regs, 0, nc + k, Mem.getI64At(regs, 0, k));
+		isp = fr;
+		run(desc, res);
+		return RETURNED;
 	}
 
 	// the frame's try at the setjmp (level: the tries entered before), the
@@ -463,7 +511,7 @@ class Interp {
 	// (none: a word of its frame)
 	static inline function callInterp(regs:Ptr, ip:Ptr, desc:Ptr, d:Int, n:Int, first:Int) {
 		var callee = isp.add(FRAME);
-		var nc = Mem.getI32(desc, 20);
+		var nc = Mem.getI32(desc, H_NCONSTS);
 		for (k in 0...n)
 			Mem.setI64At(callee, 0, nc + k, gl(regs, o(ip, first + k)));
 		run(desc, d >= 0 ? regs.add(d << 3) : isp.add(F_IP));
@@ -651,9 +699,9 @@ class Interp {
 		if (isp.isNull()) initStack();
 		var base = isp;
 		try {
-			var regs = base.add(FRAME), nc = Mem.getI32(desc, 20);
-			var src = desc.add(Mem.getI32(desc, 32));
-			for (j in 0...Mem.getI32(desc, 28))
+			var regs = base.add(FRAME), nc = Mem.getI32(desc, H_NCONSTS);
+			var src = desc.addL(Mem.getI64(desc, H_SOURCES));
+			for (j in 0...Mem.getI32(desc, H_NPARAMS))
 				Mem.setI64At(regs, 0, nc + j, Mem.getI64(img, Mem.getI32(src, 4 * j)));
 			run(desc, img);
 		} catch (e:Dynamic) {
@@ -1118,6 +1166,8 @@ class Interp {
 				case FENCE:
 					hxmc.unsafe.Atomic.fence();
 					ip = ip.add(4);
+				case LAZY:
+					return lazy(fr, ip);
 				case UNREACH:
 					throw "hxmc interp: unreachable code reached";
 				case _:

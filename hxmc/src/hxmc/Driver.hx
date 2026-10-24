@@ -288,9 +288,6 @@ class Driver {
 		}
 	}
 
-	// (a Mir host) the bodies of the runtime its Mir macros' context need not
-	// parse, given the compiler's fingerprints (Main: MacroCuts.cuts)
-	public static var hostCuts:Null<hxmc.macro.HostTable.HostFps->String> = null;
 	// (a Mir host) the program's types by ident, true for the std's (Main: HostTable.idents)
 	public static var hostIdents:Null<Map<String, Bool>> = null;
 
@@ -649,7 +646,7 @@ class Driver {
 		// a Mir host: what code loaded at run time crosses into native code
 		// through (interp.InterpAbi: the call-outs, the entries' pools, the
 		// thread-local variables' accessors), then the table of the
-		// executable's symbols, fingerprints and cuts it links against
+		// executable's symbols and fingerprints it links against
 		// (macro.HostTable)
 		if (o.mirHost) {
 			var th = new Obj();
@@ -662,11 +659,7 @@ class Driver {
 			var idents = hostIdents != null ? hostIdents : new Map();
 			var named = n -> hxmc.macro.HostTable.named(n, idents);
 			var fps = hostFingerprints().filter(x -> named(x.sym));
-			var map = new Map<String, {key:String, flags:Int}>();
-			for (x in fps)
-				map.set(x.sym, {key: x.key, flags: x.flags});
-			var cuts = hostCuts != null ? hostCuts(new hxmc.macro.HostTable.HostFps(map)) : "";
-			all.push(hxmc.macro.HostTable.build(all, abi, fps, cuts, hxmc.macro.HostTable.imports(all, abi), named, o.stats));
+			all.push(hxmc.macro.HostTable.build(all, abi, fps, hxmc.macro.HostTable.imports(all, abi), named, o.stats));
 		}
 		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios) : null;
 		// the runtime objects' sections and the runtime's Haxe functions that

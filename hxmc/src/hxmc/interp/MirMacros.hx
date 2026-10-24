@@ -12,9 +12,11 @@ import macros.MacroApi.CompilerApi;
 // interpreter, without Eval. The macro context is typed for hxmc
 // (MacroContext.macroPlatformHook: hxmc's std, the hxmc custom target,
 // `macro` defined), its functions are lowered as macros call them (one
-// Lower, grown call by call), compiled for the interpreter and linked into
-// the running compiler (macro.Loader: a bundle per step, sharing the earlier
-// ones' numbers, globals and functions), and called directly. Its values are
+// Lower, grown call by call; the std's bodies typed as it needs them:
+// MacroRuntime), linked into the running compiler (macro.Loader: a bundle
+// per step, sharing the earlier ones' numbers, globals and functions),
+// each compiled for the interpreter the first time it is called
+// (compileLazy), and called directly. Its values are
 // the compiler's own Haxe values (MacroApi.MacroNativeValues); Context's API
 // is the compiler's (hxmc.MacroHost: hxmc_mir_macro_load, exported here).
 @:access(hxmc.Driver)
@@ -110,6 +112,18 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		n == null ? COLD_WORDS : n;
 	}
 	static inline var COLD_WORDS = 8000;
+	// a function is compiled the first time it is called (a bundle has a stub
+	// of it, InterpGen.stub, LAZY k: compileLazy), but for the static
+	// initializers, which its load runs; most functions a bundle reaches never
+	// run (the formatter's macros: 65 of 212). HXMC_MIR_LAZY=0: every
+	// function compiled with its bundle
+	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
+	// the functions not compiled yet, by stub number, with their bundle's step
+	var lazies:Array<{f:FuncInfo, key:Null<String>, cold:Bool, step:StepState}> = [];
+	static final lazyLock = new sys.thread.Mutex();
+	// (the generation's latest step: what compiles its functions later)
+	var lineage:Null<{latest:StepState}> = null;
+	var lazyCompiled = 0;
 	// a compilation error was reported: no more macro calls (as Eval's had_error)
 	var hadError = false;
 	var tCompile = 0.0;
@@ -189,6 +203,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = order;
 			r;
 		};
+		hxmc.rt.Interp.lazyHook = (k, desc, regs) -> self.compileLazy(k, desc, regs);
 		macros.MacroApi.MacroNativeValues.resolveClass = name -> {
 			var c = Type.resolveClass(name);
 			if (c == null && self.apiTypesPending()) {
@@ -365,6 +380,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			}
 		l = null;
 		opts = null;
+		lineage = null;
 		compiled = new Map();
 		native = new Map();
 		entries = new Map();
@@ -491,7 +507,48 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// compiled and loaded (main: the macro class, if a function of it is called)
 	function build(main:Null<TClass>) {
 		if (l == null) start();
+		if (typingBodies) throw "-D hxmc.macros=mir: a macro called while the macro context types the std's bodies Mir macros lower (hxmc.interp.MacroRuntime; HXMC_MIR_LAZY_BODIES=0 types them all first)";
 		hxmc.ir.Lower.basic = com.basic;
+		scan();
+		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
+		hxmc.ir.Lower.bodyReady = MacroRuntime.ready;
+		phase("before lowering");
+		try {
+			l.drain();
+			// (the std's bodies the macro context has not typed: typed, the types
+			// they load handed over, then lowered with what they reach)
+			while (l.deferred.length > 0) {
+				rounds++;
+				phase("lowering");
+				typingBodies = true;
+				MacroRuntime.typeBodies([for (d in l.deferred) d.cf]);
+				typingBodies = false;
+				phase("typing the std's bodies");
+				scan();
+				l.resume();
+				l.drain();
+			}
+			l.finish();
+			phase("lowering");
+		} catch (e:Dynamic) {
+			typingBodies = false;
+			hxmc.ir.Lower.callSites = null;
+			hxmc.ir.Lower.bodyReady = null;
+			throw e;
+		}
+		hxmc.ir.Lower.callSites = null;
+		hxmc.ir.Lower.bodyReady = null;
+		step(main);
+	}
+
+	// (MacroRuntime.typeBodies running: what macro code it would call finds bodies not lowered)
+	var typingBodies = false;
+	// (HXMC_MACRO_STATS: the bodies' typings between drains)
+	var rounds = 0;
+
+	// the types handed over since the last scan: the macro API's (its enums,
+	// Error's constructor), the runtime's implementations (Lower.findHosts)
+	function scan() {
 		var fresh = [for (k => t in processed) if (!scanned.exists(k)) t];
 		for (k in processed.keys())
 			scanned.set(k, true);
@@ -507,18 +564,6 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				case _:
 			}
 		l.findHosts(fresh);
-		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
-		phase("before lowering");
-		try {
-			l.drain();
-			l.finish();
-			phase("lowering");
-		} catch (e:Dynamic) {
-			hxmc.ir.Lower.callSites = null;
-			throw e;
-		}
-		hxmc.ir.Lower.callSites = null;
-		step(main);
 	}
 
 	function start() {
@@ -632,41 +677,29 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		d.interp = new InterpGen.InterpSet(opts.interp, prep, MirRun.notHere(prog, funcs, compiled, native), true);
 		var abi = Abi.get(opts.target);
 		var obj = new Obj();
-		var emit = Target.emitter(abi, obj);
-		var ras = new Regalloc.Scratch(Target.selector(abi));
-		function compile(f:FuncInfo, into:Obj) {
-			var opt = opts.opt;
-			if (cold.exists(f)) opts.opt = false;
-			try
-				d.compileFunc(f, into, emit, ras)
-			catch (x:Dynamic) {
-				opts.opt = opt;
-				throw x;
-			}
-			opts.opt = opt;
-		}
+		var st = new StepState(d, abi, opts, cache);
+		if (lineage == null) lineage = {latest: st};
+		lineage.latest = st;
+		st.lineage = lineage;
+		// (compiled with the bundle: the static initializers, which run as it
+		// loads, and the functions whose calls are no GC point, Facts.GcPoints:
+		// their callers keep references in registers across them, which a
+		// collection while compiling would leave pointing at what it moved)
+		var initFns = new Map<FuncInfo, Bool>();
+		for (f in prog.inits)
+			initFns.set(f, true);
+		var stubs = 0;
 		for (f in funcs) {
 			var key = keys.get(f);
-			if (key == null) {
-				compile(f, obj);
+			var sym = prep.funcSym(f);
+			if (lazyOn && !initFns.exists(f) && !(f.noGc && !f.blocks) && InterpGen.stub(obj, abi, f, sym, lazies.length)) {
+				lazies.push({f: f, key: key, cold: cold.exists(f), step: st});
+				// (kept in the store's list: a later build may call it)
+				if (key != null) cache.keep(key);
+				stubs++;
 				continue;
 			}
-			// (an object per function, kept or compiled, appended in order: the bundle is the same)
-			var sym = prep.funcSym(f);
-			var fo = cache.get(key, sym, d.interp);
-			if (fo == null) {
-				fo = new Obj();
-				var deps = InterpGen.deps = [];
-				try
-					compile(f, fo)
-				catch (x:Dynamic) {
-					InterpGen.deps = null;
-					throw x;
-				}
-				InterpGen.deps = null;
-				cache.put(key, sym, fo, deps);
-			}
-			obj.append(fo);
+			st.compile(f, sym, key, cold.exists(f), obj);
 		}
 		if (cache != null) {
 			cache.record();
@@ -677,15 +710,16 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (no native code: the signatures' trampolines interpreted too, the allocations' slow paths and the
 		// expansions the interpreter's own, InterpGen)
 		var dg = new DataGen(prep, abi, obj, mf -> d.compileInterp(mf, obj));
-		dg.strings();
 		for (s in prog.sigs) {
 			d.compileInterp(dg.dynTrampoline(s), obj);
 			d.compileInterp(dg.boundTrampoline(s), obj);
 		}
+		dg.stringsUsed();
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
 		dg.resources([]);
 		phase("data, trampolines");
+		st.gen = hxmc.macro.Loader.gen();
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
 		phase("load");
 		codeBytes += b.codeBytes;
@@ -695,7 +729,70 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();
-		if (stats) Sys.stderr().writeString('hxmc.macros=mir: step $steps: ${funcs.length} functions (${Lambda.count(found)} native), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
+		if (stats) Sys.stderr().writeString('hxmc.macros=mir: step $steps: ${funcs.length} functions (${Lambda.count(found)} native, $stubs compiled when first called), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
+	}
+
+	// (hxmc.rt.Interp.lazyHook) the function of stub k called the first time
+	// (its stub desc, its arguments in regs): compiled as its bundle would have
+	// (with its generation's latest step: each step's Prep numbers the
+	// program's types again, in its objects), loaded (Loader.loadLate) and
+	// desc made its descriptor
+	function compileLazy(k:Int, desc:Ptr, regs:Ptr) {
+		var t0 = haxe.Timer.stamp();
+		var p = lazies[k];
+		var f = p.f;
+		var st = p.step.lineage.latest;
+		var sym = st.d.prep.funcSym(f);
+		// (the arguments' references, kept across the collections compiling makes)
+		var n = f.args.length;
+		var refs:Array<Dynamic> = [];
+		refs.resize(n);
+		for (j in 0...n)
+			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) refs[j] = Mem.obj(Mem.getPtr(regs, 8 * j));
+		// (macro code's threads: one compiles, the others find it compiled)
+		lazyLock.acquire();
+		if (!hxmc.rt.Interp.isStub(desc)) {
+			lazyLock.release();
+			for (j in 0...n)
+				if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
+			return;
+		}
+		var order = hxmc.rt.EvalCompat.on;
+		hxmc.rt.EvalCompat.on = false;
+		try {
+			st.enter();
+			var obj = new Obj();
+			st.compile(f, sym, p.key, p.cold, obj);
+			// (the literals of a kept object: its step's fingerprints named them, in its Prep)
+			if (p.step != st)
+				for (s in obj.symbols) {
+					var lit = s.section == null && !s.abs && !st.d.prep.e.strByName.exists(s.name) ? p.step.d.prep.e.strByName.get(s.name) : null;
+					if (lit != null) st.d.prep.addStr(lit, s.name);
+				}
+			var dg = new DataGen(st.d.prep, st.abi, obj, mf -> st.d.compileInterp(mf, obj));
+			dg.stringsUsed();
+			dg.cstrLiterals([]);
+			dg.emptyArrays([]);
+			dg.resources([]);
+			hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + sym, st.gen));
+			st.leave();
+		} catch (x:Dynamic) {
+			st.leave();
+			hxmc.rt.EvalCompat.on = order;
+			lazyLock.release();
+			// (the compiler's failure: no handler of the macro code catches it)
+			hxmc.rt.Interp.uncatchable = x;
+			throw x;
+		}
+		if (st.cache != null && Driver.resident) CacheDir.settle();
+		hxmc.rt.EvalCompat.on = order;
+		lazyLock.release();
+		for (j in 0...n)
+			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
+		lazyCompiled++;
+		var dt = haxe.Timer.stamp() - t0;
+		tCompile += dt;
+		if (stats) phases.set("compiled when first called", (phases.exists("compiled when first called") ? phases.get("compiled when first called") : 0.0) + dt);
 	}
 
 	// the bytes of the bundles loaded (code: always 0, interp.InterpAbi)
@@ -751,11 +848,102 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function report() {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
+			Sys.stderr().writeString('hxmc.macros=mir: functions compiled when first called: ${lazyCompiled} of ${lazies.length} (${hxmc.macro.Loader.lateBytes} bytes)\n');
+			Sys.stderr().writeString('hxmc.macros=mir: the std\'s bodies typed when asked for: ${MacroRuntime.lazyTyped} of ${MacroRuntime.lazyCount} ($rounds rounds)\n');
 			if (cache != null) Sys.stderr().writeString('hxmc.macros=mir: functions kept (BundleCache): ${cache.hits} found, ${cache.misses} compiled\n');
 			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		}
 		if (stats)
 			for (k => v in phases)
 				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');
+	}
+}
+
+// what a step's bundle compiles its functions with, kept for those compiled
+// when first called (MirMacros.compileLazy, with the latest step of their
+// generation: `lineage`): its driver (the program, its facts, which
+// functions are interpreted), the inlining candidates and the thread-local
+// variables of its time, the store, and what its generation's bundles share
+// (Loader.gen, set as it loads)
+@:access(hxmc.Driver)
+private class StepState {
+	public final d:Driver;
+	public final abi:Abi;
+	final opts:Options;
+	public final cache:Null<BundleCache>;
+	public var gen:Null<hxmc.macro.Loader.Gen> = null;
+	public var lineage:Null<{latest:StepState}> = null;
+	final emit:Target.Emitter;
+	final ras:Regalloc.Scratch;
+	final cands:Null<Map<FuncInfo, Bool>>;
+	final refSlots:Null<Map<Int, haxe.ds.Vector<Bool>>>;
+	final tls:Null<Map<String, Int>>;
+	final nativeTls:String->Bool;
+	// (the statics of the step running when a function is compiled later)
+	var saved:Null<Array<Dynamic>> = null;
+
+	public function new(d, abi, opts, cache) {
+		this.d = d;
+		this.abi = abi;
+		this.opts = opts;
+		this.cache = cache;
+		emit = Target.emitter(abi, new Obj());
+		ras = new Regalloc.Scratch(Target.selector(abi));
+		cands = MirBuild.inlineCands;
+		refSlots = Escape.refSlots;
+		tls = InterpGen.emulatedTls;
+		nativeTls = InterpGen.nativeTls;
+	}
+
+	public function enter() {
+		saved = [MirBuild.inlineCands, Escape.refSlots, InterpGen.emulatedTls, InterpGen.nativeTls];
+		MirBuild.inlineCands = cands;
+		Escape.refSlots = refSlots;
+		InterpGen.emulatedTls = tls;
+		InterpGen.nativeTls = nativeTls;
+	}
+
+	public function leave() {
+		if (saved == null) return;
+		MirBuild.inlineCands = saved[0];
+		Escape.refSlots = saved[1];
+		InterpGen.emulatedTls = saved[2];
+		InterpGen.nativeTls = saved[3];
+		saved = null;
+	}
+
+	// f into obj: its object kept under key in the store, or compiled (and kept)
+	public function compile(f:FuncInfo, sym:String, key:Null<String>, cold:Bool, obj:Obj) {
+		if (key == null) {
+			compileFunc(f, cold, obj);
+			return;
+		}
+		// (an object per function, kept or compiled, appended in order: the bundle is the same)
+		var fo = cache.get(key, sym, d.interp);
+		if (fo == null) {
+			fo = new Obj();
+			var deps = InterpGen.deps = [];
+			try
+				compileFunc(f, cold, fo)
+			catch (x:Dynamic) {
+				InterpGen.deps = null;
+				throw x;
+			}
+			InterpGen.deps = null;
+			cache.put(key, sym, fo, deps);
+		}
+		obj.append(fo);
+	}
+
+	function compileFunc(f:FuncInfo, cold:Bool, into:Obj) {
+		var opt = opts.opt;
+		if (cold) opts.opt = false;
+		try
+			d.compileFunc(f, into, emit, ras)
+		catch (x:Dynamic) {
+			opts.opt = opt;
+			throw x;
+		}
+		opts.opt = opt;
 	}
 }

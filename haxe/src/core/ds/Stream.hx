@@ -17,6 +17,9 @@ class Stream<T> {
 
 	public function count():Int return consumed;
 
+	// port: (hxmc) the tokens produced and not consumed (Grammar.skipBody: none, the lexer is where the stream is)
+	public function pending():Int return buffered.length - head;
+
 	inline function fill(n:Int):Void {
 		while (!ended && buffered.length - head < n) {
 			var value = produce(produced);

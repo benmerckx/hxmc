@@ -18,7 +18,10 @@ using StringTools;
 // (its copy elsewhere, then its date changed) finds nothing; objects that
 // do not read as theirs (truncated, of another function) are compiled again;
 // HXMC_MIR_CACHE=0 keeps nothing; with the module cache on (the default) a
-// rebuild after an edit of the main module finds every function. In
+// rebuild after an edit of the main module finds every function. (Dep.label:
+// a method its class brings into the first macro's bundle, first called by
+// the last macro, kept, not inlined: its string literal named by its own
+// bundle's fingerprints only.) In
 // bin/hxmc-t/mir-cache (removed when every check passes):
 //   HXMC_HAXE=<haxe> HXMC_STD=<hxmc std> bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run MirCacheCheck
 class MirCacheCheck {
@@ -38,7 +41,7 @@ class MirCacheCheck {
 	}
 
 	static final FILES = [
-		"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\ttrace(Gen.value());\n\t\ttrace(Gen.small());\n\t\ttrace(Gen.flag());\n\t}\n}\n",
+		"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\ttrace(Gen.value());\n\t\ttrace(Gen.small());\n\t\ttrace(Gen.flag());\n\t\ttrace(Gen.label());\n\t}\n}\n",
 		"src/Gen.hx" => [
 			"import haxe.macro.Expr;",
 			"class Gen {",
@@ -53,9 +56,11 @@ class MirCacheCheck {
 			"\t\treturn macro \"off\";",
 			"\t\t#end",
 			"\t}",
+			"",
+			"\tpublic static macro function label():Expr return macro $v{Dep.last.label()};",
 			"}"
 		].join("\n") + "\n",
-		"src/Dep.hx" => "class Dep {\n\tpublic static function compute(n:Int):Int {\n\t\tvar s = 0;\n\t\tfor (i in 0...n)\n\t\t\ts += i * 3;\n\t\treturn s;\n\t}\n}\n",
+		"src/Dep.hx" => "class Dep {\n\tpublic static var last:Dep;\n\n\tvar count:Int;\n\n\tfunction new(count:Int) {\n\t\tthis.count = count;\n\t}\n\n\tpublic function label():String {\n\t\ttry\n\t\t\treturn \"dep \" + count\n\t\tcatch (_:Dynamic)\n\t\t\treturn null;\n\t}\n\n\tpublic static function compute(n:Int):Int {\n\t\tlast = new Dep(n);\n\t\tvar s = 0;\n\t\tfor (i in 0...n)\n\t\t\ts += i * 3;\n\t\treturn s;\n\t}\n}\n",
 		"src/Tiny.hx" => "class Tiny {\n\tpublic static function k():Int return 7;\n}\n"
 	];
 

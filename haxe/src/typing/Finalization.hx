@@ -155,6 +155,8 @@ class Finalization {
 			if (key(a.aPath) != key(p)) loop(TAbstractDecl(a));
 		}
 		inline function walkStaticField(p:GlobalTypePath, c:TClass, cf:TClassField):Void {
+			// port: (hxmc) a body typed when it is asked for (TypeBinding.lazyBodies): its dependencies
+			if (typing.TypeloadFields.TypeBinding.lazyBodies.exists(cf)) lazyType(typing.TypeloadFields.TypeBinding.lazyBodies.get(cf).r);
 			if (cf.cfExpr != null && !statics.exists(staticKey(c, cf.cfName))) {
 				statics.set(staticKey(c, cf.cfName), true);
 				walkExpr(p, sortExpr(c, cf, cf.cfExpr));

@@ -179,8 +179,7 @@ class Main {
 			hxmc.wasmgc.GcGen.run(prog, out, opts);
 			return;
 		}
-		// (a Mir host: the runtime's bodies its Mir macros' context need not parse, MacroCuts; the std's types)
-		Driver.hostCuts = opts.mirHost ? fps -> MacroCuts.text(com, fps) : null;
+		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
