@@ -371,6 +371,10 @@ class Interp {
 	// at run time: interp.MirMacros)
 	public static var lazyHook:Null<(k:Int, desc:Ptr, regs:Ptr) -> Void> = null;
 
+	// whether desc is a stub still (LAZY at its code's start, after its header)
+	public static function isStub(desc:Ptr):Bool
+		return Mem.getI64(desc, H_CODE) == (HEADER : I64) && Mem.getI32(desc, HEADER) == LAZY;
+
 	// stub's header made the one of desc, its function compiled (its parts'
 	// offsets from the stub): what calls the stub calls the function
 	public static function become(stub:Ptr, desc:Ptr) {

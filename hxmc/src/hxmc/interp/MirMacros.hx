@@ -118,6 +118,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
 	// the functions not compiled yet, by stub number, with their bundle's step
 	var lazies:Array<{f:FuncInfo, key:Null<String>, cold:Bool, step:StepState}> = [];
+	static final lazyLock = new sys.thread.Mutex();
 	// (the generation's latest step: what compiles its functions later)
 	var lineage:Null<{latest:StepState}> = null;
 	var lazyCompiled = 0;
@@ -746,6 +747,14 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		refs.resize(n);
 		for (j in 0...n)
 			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) refs[j] = Mem.obj(Mem.getPtr(regs, 8 * j));
+		// (macro code's threads: one compiles, the others find it compiled)
+		lazyLock.acquire();
+		if (!hxmc.rt.Interp.isStub(desc)) {
+			lazyLock.release();
+			for (j in 0...n)
+				if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
+			return;
+		}
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = false;
 		try {
@@ -768,12 +777,14 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		} catch (x:Dynamic) {
 			st.leave();
 			hxmc.rt.EvalCompat.on = order;
+			lazyLock.release();
 			// (the compiler's failure: no handler of the macro code catches it)
 			hxmc.rt.Interp.uncatchable = x;
 			throw x;
 		}
 		if (st.cache != null && Driver.resident) CacheDir.settle();
 		hxmc.rt.EvalCompat.on = order;
+		lazyLock.release();
 		for (j in 0...n)
 			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
 		lazyCompiled++;
