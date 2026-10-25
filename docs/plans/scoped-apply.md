@@ -297,6 +297,58 @@ allocation per function). Not started: at best a fifth to a third of the
 promoted garbage and a few percent of the GC's time, for the largest
 rewrite of the plan (below, "Decisions").
 
+### Scope-bound classes (item 1, the owner's option B)
+
+Built as a general feature (docs/plans/lowlevel.md, "Scope-bound
+classes"): `@:hxmc.scopeBound` classes, objects with identity on the
+data stack of the scope that makes them (on WasmGC ordinary objects
+under the same checks), holding scalars, struct values, scoped values
+and each other, never GC references; the root checker treats an object
+as fresh memory of its scope, a method's object as its last parameter,
+and what a constructor or method allocates into its object as the
+object's. Tests: the corpus' `ScopedBound` natively, on wasm32 and under
+Mir's `--run`, `GcCheck` on WasmGC, collections minor and major while
+objects are live; ten `reject/ScopedBound*` cases (a GC object's field, a
+static, Dynamic, a closure's capture, a method as a value, a loop
+body's object kept outside, a method storing from a loop, GC code's
+result, a GC reference field, a subclass).
+
+Measured on binary trees (`make bench-scoped`'s `Trees`: n trees of
+depth 16 built, walked and dropped, one of depth 14 kept; median of 5,
+peak RSS; Linux x86-64, the same VM):
+
+| n | scope-bound | GC | scope-bound, wasm32 | GC, wasm32 | scope-bound, WasmGC | GC, WasmGC |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | 0.37 s, 3 MB | 0.46 s, 206 MB | 0.41 s | 0.49 s | 0.79 s | 0.86 s |
+| 1000 | 1.79 s, 3 MB | 2.32 s, 267 MB | 1.79 s | 2.09 s | 3.29 s | 3.25 s |
+
+(Node's own memory on wasm32 and WasmGC: their RSS is the engine's.) An
+object's allocation is the data stack's bump and its words zeroed by
+stores; with `memset` (a call on wasm32) the wasm32 version was 12%
+slower than GC objects, with stores 14% faster.
+
+The back end's passes: not converted (conservative, below,
+"Decisions"). The passes are GC objects that hold the function's graph
+in their fields (`Escape`, `Sroa`, `Opt`, `Frames`, `Fold` hold the
+`MFunc`; `IselBase` the `LFunc` and the `MFunc`), and the two that build
+Mir share a base class (`MirWriter`, for `MirBuild` and `MemLower`), as
+the instruction selectors do (`IselBase`); a scope-bound object is
+held by no GC object and has no subclass. So the first step is the
+whole of one IR: Lir (`LIns`, `LBlock`, `LFunc`: about 5,000 lines of
+the selectors, the allocator and the emitters of both targets, with
+symbols as indices into a per-thread table, the blocks' lists as
+`Grow`s, the selectors' state passed instead of inherited), or Mir
+(more passes, and Mir macros keep compiled functions across builds,
+`interp/BundleCache.hx`). By the census their gain is bounded: Lir's
+objects are 0.67 GB of the 12.6 GB allocated and 45 MB of the 1.34 GB
+promoted, Mir's 0.93 GB and about 0.11 GB (with their arrays somewhat more);
+a minor collection's cost is what it copies, so all of both would save
+about a sixth of the 1.5 s of minor collections, Lir alone 3-5% of it (under 0.1 s of 13 s, below
+this VM's noise), and peak RSS no more than what they promote. The
+measured allocation hot spot of the back end is elsewhere: Array
+growth (`hx_apush_slow`, 3.2% of the self-build's instructions, its
+callers the IR builders' pushes).
+
 ## Decisions for the owner
 
 - The back end's graphs (item 1): the owner chose scope-bound classes
@@ -306,7 +358,13 @@ rewrite of the plan (below, "Decisions").
   its scope), then the passes as scope-bound objects over the function's
   scoped storage, the instructions' GC references as ids into long-lived
   tables. Built as a general feature first, then applied pass by pass,
-  each step measured and kept only if it wins.
+  each step measured and kept only if it wins. The feature is built
+  ("Scope-bound classes": binary trees 23% faster natively, 14% on
+  wasm32, 3 MB against 267 MB). Its first step on the back end is a
+  whole IR (Lir or Mir) with its passes restructured (no GC object may
+  hold the graph, no subclassing), for a gain the census bounds under
+  this VM's noise: not started, the conservative choice; for the owner
+  whether to go ahead with Lir anyway.
 - The self-build's peak RSS (1.5 GB against 500 MB live) is promoted
   garbage the old generation never collected (the limit is 3 GB): the
   owner approved a major collection when the old generation grows well

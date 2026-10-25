@@ -26,6 +26,13 @@ using core.TFunctions;
 // resets them where they end: a function's own scope only when its result
 // holds no references (a function returning one leaves what it allocated
 // to its caller's scope).
+//
+// Scope-bound classes (@:hxmc.scopeBound): an object is fresh memory of the
+// scope making it, reached by reference: a field read is a load, a field
+// write a store into its memory, a method a function whose last parameter
+// is the object (this). What a method allocates in its own scope and stores
+// into the object is the object's scope's (the method keeps it: no reset),
+// so that a constructor fills its fields.
 
 // where memory lives: what bounds its lifetime
 class Root {
@@ -164,6 +171,28 @@ class Scoped {
 	public static function isReprArray(c:TClass):Bool
 		return Lower.wasmGc && Lower.isNativeArray(c);
 
+	// a scope-bound class: its objects scoped memory of the scope making them
+	public static function isBound(c:TClass):Bool
+		return c.clMeta.length > 0 && Lower.hasMeta(":hxmc.scopeBound", c.clMeta);
+
+	// a scope-bound class's declaration: methods called directly (no
+	// superclass, subclass or interface), no GC reference among its fields
+	// (an index into a table instead); errors at their positions
+	public static function checkBound(c:TClass) {
+		var name = core.Globals.sTypePath(c.clPath);
+		if (c.clSuper != null) throw at(c.clPos) + '$name: a scope-bound class extends no class';
+		if (c.clImplements.length > 0) throw at(c.clPos) + '$name: a scope-bound class implements no interface (its methods are called directly)';
+		if (c.clParams.length > 0) throw at(c.clPos) + '$name: a scope-bound class has no type parameters';
+		for (cf in c.clOrderedFields)
+			switch cf.cfKind {
+				case Var(_) if (Analysis.isGcType(cf.cfType)):
+					throw at(cf.cfPos) + '$name.${cf.cfName}: a scope-bound object holds no GC reference (the collector never scans it), and this is a ' + core.TPrinting.sTypes(core.ds.VectorTools.vector(cf.cfType)) + ': an index into a table instead';
+				case Method(MethDynamic):
+					throw at(cf.cfPos) + '$name.${cf.cfName}: a scope-bound class has no dynamic methods';
+				case _:
+			}
+	}
+
 	public static function isScopedField(c:TClass, cf:TClassField):Bool {
 		if (cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", cf.cfMeta)) return true;
 		var r = scopedClasses.get(c);
@@ -177,16 +206,17 @@ class Scoped {
 	// checks function tf (cf of class c, null for a closure; scoped: a
 	// @:hxmc.scoped one) and plans its marks; null: GC code that touches no
 	// scoped value. Throws the first error, at its position ("File.hx:12: ...").
-	// (inRuntime: a function of hxmc's runtime, whose GC code may view a String's units)
-	public static function check(cf:Null<TClassField>, tf:TFunc, display:String, scoped:Bool, inRuntime = false):Null<Plan> {
-		if (!scoped && ((runtime == null && !Lower.wasmGc) || !touches(tf))) return null;
-		var a = new Analysis(tf, display, !scoped);
+	// (inRuntime: a function of hxmc's runtime, whose GC code may view a
+	// String's units; self: a scope-bound class's method or constructor)
+	public static function check(cf:Null<TClassField>, tf:TFunc, display:String, scoped:Bool, inRuntime = false, self = false):Null<Plan> {
+		if (!scoped && !self && ((runtime == null && !Lower.wasmGc) || !touches(tf))) return null;
+		var a = new Analysis(tf, display, !scoped, self);
 		a.inRuntime = inRuntime;
 		a.run();
 		if (cf != null && !summaries.exists(cf)) summaries.set(cf, a.summary);
 		// (WasmGC: checked the same, no marks: the engine's collector reclaims)
 		if (runtime == null) return {fnMark: false, scopes: new ObjectMap(), retRefs: a.retRefs};
-		return {fnMark: a.fnAllocates && !a.retRefs, scopes: a.allocScopes, retRefs: a.retRefs};
+		return {fnMark: a.fnAllocates && !a.retRefs && !a.keepsFresh, scopes: a.allocScopes, retRefs: a.retRefs};
 	}
 
 	// whether GC code tf touches scoped values: a call of a scoped function or
@@ -203,6 +233,8 @@ class Scoped {
 					found = true;
 				case TVar(v, _) if (holdsScoped(v.vType)):
 					found = true;
+				case TNew(c, _, _) if (isBound(c)):
+					found = true;
 				case TFunction(_):
 					// (a closure is a function of its own)
 				case _:
@@ -213,8 +245,9 @@ class Scoped {
 		return found;
 	}
 
-	// the summary of function cf (its body checked on the way)
-	public static function summary(c:TClass, cf:TClassField, scoped:Bool):Summary {
+	// the summary of function cf (its body checked on the way; self: a
+	// scope-bound class's method or constructor)
+	public static function summary(c:TClass, cf:TClassField, scoped:Bool, self = false):Summary {
 		var s = summaries.get(cf);
 		if (s != null) return s;
 		var p = inProgress.get(cf);
@@ -233,7 +266,7 @@ class Scoped {
 			inProgress.set(cf, cur);
 			var outer = unstable;
 			unstable = false;
-			var a = new Analysis(tf, core.Globals.sTypePath(c.clPath) + "." + cf.cfName, !scoped);
+			var a = new Analysis(tf, core.Globals.sTypePath(c.clPath) + "." + cf.cfName, !scoped, self);
 			a.run();
 			var again = unstable && !a.summary.same(cur);
 			unstable = outer || unstable;
@@ -272,6 +305,9 @@ class Scoped {
 					}
 					if (core.Meta.has(CoreType, a.aMeta)) break;
 					cur = TFunctions.applyParams(a.aParams, params, a.aThis);
+				case TInst(c, _) if (isBound(c)):
+					r = 3;
+					break;
 				case TInst(c, _) if (CInterop.isStruct(c)):
 					r = structBits(c, TFunctions.follow(cur), scoped || scopedType(cur));
 					break;
@@ -309,7 +345,7 @@ class Scoped {
 					if (core.Meta.has(CoreType, a.aMeta)) return false;
 					t = core.Abstract.getUnderlyingType(a, params);
 				case TInst(c, _):
-					return core.HxmcScoped.isClass(c) || c.clPath.pack.length == 2 && c.clPath.pack[0] == "hxmc" && c.clPath.pack[1] == "scoped";
+					return core.HxmcScoped.isClass(c) || isBound(c) || c.clPath.pack.length == 2 && c.clPath.pack[0] == "hxmc" && c.clPath.pack[1] == "scoped";
 				case TEnum(en, _):
 					return CInterop.isScopedEnum(en);
 				case _:
@@ -375,11 +411,17 @@ private class Analysis {
 	public var allocScopes = new ObjectMap<TExpr, Bool>();
 
 	public var inRuntime = false;
+	// a scope-bound class's method: its object (this), the last parameter
+	var self:Bool;
+	var selfRoot:Null<Root> = null;
+	// fresh memory of the function's scope stored into the object: kept (no reset)
+	public var keepsFresh = false;
 
-	public function new(tf, display, gc) {
+	public function new(tf, display, gc, self = false) {
 		this.tf = tf;
 		this.display = display;
 		this.gc = gc;
+		this.self = self;
 		retRefs = Scoped.holdsRefs(tf.tfType);
 	}
 
@@ -400,6 +442,7 @@ private class Analysis {
 			literals = new Map();
 			summary = new Summary();
 			fnAllocates = false;
+			keepsFresh = false;
 			allocScopes = new ObjectMap();
 			retRoots = [];
 			pass();
@@ -457,6 +500,11 @@ private class Analysis {
 			var r = params[i];
 			setVar(v.vId, Scoped.carries(v.vType) ? [r] : []);
 			levels.set(v.vId, 2);
+		}
+		if (self) {
+			var i = tf.tfArgs.length;
+			if (params.length <= i) params.push(new Root(Root.PARAM, 1, i, "this", lineOf(tf.tfExpr.epos)));
+			selfRoot = params[i];
 		}
 		// (the function's body: its own scope)
 		switch tf.tfExpr.eexpr {
@@ -559,6 +607,12 @@ private class Analysis {
 							case Root.FRESH if (retRefs):
 								// (this function does not reset: its fresh memory is the caller's)
 								if (!summary.hasStore(-1, d.param)) summary.stores.push({src: -1, dst: d.param});
+							case Root.FRESH if (d == selfRoot && r.level == 2):
+								// (a scope-bound object's method: what it allocates in its own
+								// scope and stores into the object is the object's caller's)
+								keepsFresh = true;
+								summary.allocates = true;
+								if (!summary.hasStore(-1, d.param)) summary.stores.push({src: -1, dst: d.param});
 							case _:
 								fail(p, 'storing a reference rooted at ${r.describe()} into ${into}memory of the caller (${d.name}), which outlives it');
 						}
@@ -610,10 +664,10 @@ private class Analysis {
 		return core.TPrinting.sTypes(core.ds.VectorTools.vector(t));
 
 	// a GC reference (scoped code holds none)
-	static function isGcType(t:T):Bool {
+	public static function isGcType(t:T):Bool {
 		return switch TFunctions.followWithoutNull(t) {
 			case TInst(c, _) if (c.clKind.match(KTypeParameter(_))): true;
-			case TInst(c, _): !Scoped.isValue(c) && !CInterop.isOpaque(c) && !Scoped.isRepr(c) && !Scoped.isReprArray(c);
+			case TInst(c, _): !Scoped.isValue(c) && !CInterop.isOpaque(c) && !Scoped.isRepr(c) && !Scoped.isReprArray(c) && !Scoped.isBound(c);
 			case TAnon(_) | TDynamic(_) | TFun(_) | TMono(_): true;
 			case TEnum(en, _): !CInterop.isScopedEnum(en);
 			case TAbstract(a, [p]) if (a.aPath.name == "Null" && a.aPath.pack.length == 0): true;
@@ -697,6 +751,7 @@ private class Analysis {
 
 	function ev0(e:TExpr):Roots {
 		return switch e.eexpr {
+			case TConst(TThis) if (selfRoot != null): [selfRoot];
 			case TConst(_) | TTypeExpr(_) | TIdent(_) | TBreak | TContinue: [];
 			case TLocal(v): env.exists(v.vId) ? env.get(v.vId) : [];
 			case TParenthesis(e1) | TMeta(_, e1): ev(e1);
@@ -772,6 +827,17 @@ private class Analysis {
 				for (a in args)
 					ev(a);
 				fresh(e, "");
+			case TNew(c, _, args) if (Scoped.isBound(c)):
+				// (a scope-bound object: fresh memory of this scope, its
+				// constructor a method of it)
+				var r = fresh(e, "");
+				var ctor = c.clConstructor;
+				if (ctor == null) {
+					for (a in args)
+						ev(a);
+				} else
+					method(c, ctor, e, r, args, e, c.clPath.name + ".new");
+				r;
 			case TNew(c, _, args):
 				if (!Scoped.isValue(c) && !Scoped.isRepr(c)) {
 					if (!gc) fail(e.epos, 'scoped code holds no GC references: new ${c.clPath.name} makes an object');
@@ -903,7 +969,7 @@ private class Analysis {
 					setVar(v.vId, union(env.exists(v.vId) ? env.get(v.vId) : [], rs));
 				} else
 					storeMem(rs, placeRoots(obj), describePlace(lhs), e.epos);
-			case TField(obj, FInstance(c, _, _)) if (Scoped.isRepr(c)):
+			case TField(obj, FInstance(c, _, _)) if (Scoped.isRepr(c) || Scoped.isBound(c)):
 				storeMem(rs, ev(obj), describePlace(lhs), e.epos);
 			case TField(obj, _):
 				// (a field of an object: the GC heap)
@@ -946,6 +1012,7 @@ private class Analysis {
 					ev(args[k]);
 				r;
 			case TField(o, FInstance(c, _, _)) if (Scoped.isValue(c)): placeRoots(o);
+			case TField(o, FInstance(c, _, _)) if (Scoped.isBound(c)): ev(o);
 			case TCall({eexpr: TField(a, FInstance(c, _, cf))}, args) if (Scoped.isReprArray(c) && cf.cfName == "unsafeGet"):
 				// (an element of a representation's array: in its memory)
 				var r = ev(a);
@@ -1000,6 +1067,12 @@ private class Analysis {
 					fail(e.epos, 'scoped code holds no GC references: the static ${cf.cfName} is a ${sType(cf.cfType)}');
 				[];
 			case FEnum(_, _): [];
+			case FInstance(c, _, _) if (Scoped.isBound(c)):
+				// (a scope-bound object's field: what was stored into its memory)
+				var r = ev(obj);
+				Scoped.carries(e.etype) ? load(r) : [];
+			case FClosure(k, cf) if (k != null && Scoped.isBound(k.cls)):
+				fail(e.epos, 'a method of a scope-bound object as a function value: a closure (the GC heap) would keep the object');
 			case FInstance(c, _, _) if (Scoped.isValue(c) || Scoped.isRepr(c)):
 				var r = ev(obj);
 				Scoped.carries(e.etype) ? r : [];
@@ -1184,6 +1257,8 @@ private class Analysis {
 							ev(a);
 						return [];
 				}
+			case TField(obj, FInstance(c, _, cf)) if (Scoped.isBound(c)):
+				return method(c, cf, obj, ev(obj), args, e, c.clPath.name + "." + cf.cfName);
 			case TField(obj, FInstance(c, _, cf)) if (Scoped.isValue(c)):
 				fail(e.epos, 'a struct has no methods (yet)');
 			case TField(_, FEnum(_, _)):
@@ -1215,6 +1290,27 @@ private class Analysis {
 				fail(e.epos, 'scoped code calls only functions known at compile time (no closures, no dynamic or virtual calls)');
 		}
 		return [];
+	}
+
+	// a call of method cf of scope-bound class c on object obj, with roots
+	// self (its summary's last parameter)
+	function method(c:TClass, cf:TClassField, obj:TExpr, self:Roots, args:haxe.ds.Vector<TExpr>, e:TExpr, name:String):Roots {
+		var scoped = Scoped.isScopedField(c, cf);
+		if (Lower.isUnsafe(cf.cfMeta) || Lower.isUnsafe(c.clMeta) || cf.cfExpr == null) {
+			// (the trusted layer: what the object's memory holds is no longer known)
+			unknown(self);
+			for (a in args)
+				unknown(ev(a));
+			return [];
+		}
+		if (!gc && !scoped) fail(e.epos, 'scoped code calls $name, which is neither @:hxmc.scoped nor @:hxmc.unsafe');
+		var rs = [for (a in args) ev(a)];
+		rs.push(self);
+		var xs = new haxe.ds.Vector<TExpr>(args.length + 1);
+		for (i in 0...args.length)
+			xs[i] = args[i];
+		xs[args.length] = obj;
+		return applySummary(Scoped.summary(c, cf, scoped, true), rs, xs, name, e);
 	}
 
 	function applySummary(s:Summary, rs:Array<Roots>, args:haxe.ds.Vector<TExpr>, name:String, e:TExpr):Roots {

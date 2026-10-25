@@ -5,13 +5,14 @@ using StringTools;
 
 // Scoped memory against ordinary hxmc Haxe (docs/plans/lowlevel.md, "Scoped
 // memory"): each program has a scoped version and a GC one, which must print
-// the same. Table: the maps' index (hxmc.rt.MapIndex) on both faces.
+// the same. Table: the maps' index (hxmc.rt.MapIndex) on both faces; Trees: binary
+// trees of scope-bound objects against GC ones.
 //   bin/hxmc/hxmc -cp hxmc/test/scoped -cp haxe/test --run ScopedBench [-n RUNS] [--wasm] [--gc] [--large] [case ...]
 // (--wasm: as wasm32 modules too; --gc: as WasmGC modules too, hxmc/bootstrap/wasmgc.mjs)
 // Reported per program, size and version: the median wall time of RUNS runs
 // and the peak RSS (/usr/bin/time), Linux; with --large a larger size too.
 class ScopedBench {
-	static final CASES = [{name: "Table", sizes: [1000000, 8000000]}];
+	static final CASES = [{name: "Table", sizes: [1000000, 8000000]}, {name: "Trees", sizes: [200, 1000]}];
 	static final OUT = "bin/scoped-bench";
 
 	static function main() {

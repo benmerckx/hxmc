@@ -138,7 +138,7 @@ class FnLower {
 		// (the trusted layer, @:hxmc.unsafe: unchecked; the runtime and the std's
 		// maps, GC faces that view their own GC memory, as runtime code)
 		var face = StringTools.startsWith(fi.module, "hxmc.rt") || StringTools.startsWith(fi.module, "haxe.ds.");
-		if ((fi.scoped || !fi.declUnsafe) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face);
+		if ((fi.scoped || !fi.declUnsafe) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face, self != null && self.bound);
 		allocates = plan != null && Scoped.runtime != null && (plan.fnMark || plan.scopes.keys().hasNext());
 		// (WasmGC: NativeArrays of scoped classes of scalars as structs of
 		// arrays, then a scoped class's objects copied where struct values are)
@@ -168,6 +168,15 @@ class FnLower {
 
 	function dataStacks(name:String):FuncInfo
 		return l.staticFunc(Scoped.runtime, Scoped.runtime.clStatics.get(name));
+
+	// a scope-bound object (linear memory): on stack 0, the current scope's
+	// memory, zeroed, with an object's header (its words: Mem.headerOf, which
+	// MirBuild makes once the layout is known)
+	function newBound(ci:ClassInfo):Ex {
+		if (Scoped.runtime == null) fail('new ${ci.name}: a scope-bound class needs hxmc.rt.DataStacks (import hxmc.scoped.Scope)', null);
+		var p = temp(TI64, ECall(dataStacks("object"), vector(ECallHost("hxmc_unsafe_Mem_headerOf", vector(EType(TRClass(ci))), TI32))));
+		return ECallHost("hxmc_unsafe_Mem_obj", vector(p), TRef(RObj(ci)));
+	}
 
 	// a thread-local variable of DataStacks (top0, owned): its global
 	function dataStacksVar(name:String):Int
@@ -1606,7 +1615,7 @@ class FnLower {
 				var k = c;
 				while (k.clConstructor == null && k.clSuper != null)
 					k = k.clSuper.cls;
-				var obj = temp(TRef(RObj(ci)), ENewObj(ci));
+				var obj = temp(TRef(RObj(ci)), ci.bound && !Lower.wasmGc ? newBound(ci) : ENewObj(ci));
 				if (k.clConstructor != null) {
 					var ctor = l.ctor(k);
 					var xs = args(cargs, tys(ctor), defaultValues(ctor), 1, ctor, () -> obj);

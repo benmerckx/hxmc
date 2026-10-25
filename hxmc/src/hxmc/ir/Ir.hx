@@ -58,6 +58,7 @@ class ClassInfo {
 	public var ctor:Null<FuncInfo>;
 	public var tindex:Int = -1;
 	public var isInterface = false;
+	public var bound = false; // a scope-bound class (Scoped.isBound): its objects are scoped memory
 	public var ifaces:Array<ClassInfo> = []; // implemented interfaces, including inherited ones
 	// statics reachable through the class value (Dynamic access, Reflect): set once
 	// the class is used as a value, in the order Type.getClassFields lists them

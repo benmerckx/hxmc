@@ -81,7 +81,7 @@ class CInterop {
 	// (docs/plans/lowlevel.md, "Scoped memory"); one of static functions only
 	// is not (its functions are scoped code)
 	public static function isScopedValue(c:TClass):Bool {
-		if (!core.HxmcScoped.isClass(c) || c.clKind.match(KModuleFields(_))) return false;
+		if (!core.HxmcScoped.isClass(c) || c.clKind.match(KModuleFields(_)) || Scoped.isBound(c)) return false;
 		if (c.clConstructor != null) return true;
 		for (cf in c.clOrderedFields)
 			if (cf.cfKind.match(Var(_))) return true;

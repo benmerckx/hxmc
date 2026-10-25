@@ -106,6 +106,23 @@ class DataStacks {
 		return p;
 	}
 
+	// a scope-bound object (FnLower.newBound): an object's header w0 (its
+	// type index, its slots from bit 16) and its slots zeroed, on the fixed
+	// stack; its address past the header, as an object's
+	@:keep @:hxmc.unsafe @:hxmc.alloc public static function object(w0:Int):Ptr {
+		var bytes = 8 * ((w0 >>> 16) + 1);
+		var p = alloc(bytes);
+		// (a few words: stores, no call)
+		Mem.setI32(p, 0, w0);
+		Mem.setI32(p, 4, 0);
+		var i = 8;
+		while (i < bytes) {
+			Mem.setI64(p, i, 0);
+			i += 8;
+		}
+		return p.add(8);
+	}
+
 	// a copy of the units of s on the fixed stack, a 0 unit after them (for
 	// the system: Str.copyOf, GC code)
 	@:hxmc.unsafe @:hxmc.alloc public static function copyString(s:String):Ptr {

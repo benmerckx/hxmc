@@ -396,6 +396,7 @@ Declined: `Ref<T>` read without `.value` (the owner's decision).
 | `Rel<T>` | an element of a Grow by its index: 32 bits, the index + 1 (0 none); `Rel.at(i)`, `r.get(g)` (a `Ref`, the index checked); a copy is as good as the original (serialization, below) | (a scalar: none) |
 | `@:hxmc.scoped` classes | struct values (`@:hxmc.struct`'s representation) whose fields may also be the types above | the union of their fields' roots |
 | `@:hxmc.scoped` enums | value enums (below) | the union of their payloads' roots |
+| `@:hxmc.scopeBound` classes | objects with identity on the data stack of the scope making them (below) | that scope; their fields, what was stored into them |
 
 T is a scalar (`Int`, `Float`, `Bool`, the C scalars of `hxmc.unsafe`), a
 scoped class or enum, or one of the types above.
@@ -659,6 +660,56 @@ payloads are value types (no recursion but through `Ref`/`Rel`). A
 variable-size mode (each value its own constructor's size, sequential
 arrays) is left for later: a `Grow` of variable-size elements cannot be indexed,
 and Haxe has no syntax to choose the mode at the point of use.
+
+### Scope-bound classes
+
+A `@:hxmc.scopeBound` class has objects with identity, as a GC class's,
+whose memory is the scope that makes them (the owner's decision for the
+back end's per-function state, docs/plans/scoped-apply.md):
+
+```haxe
+@:hxmc.scoped @:hxmc.scopeBound class Node {   // scoped methods (without @:hxmc.scoped: GC code's)
+  public var key:Int;
+  public var next:Node;                       // another scope-bound object
+  public var name:Str;                        // scoped values
+  public function new(key:Int, next:Node, name:Str) {
+    this.key = key; this.next = next;
+    this.name = Str.copy(name);               // kept: the object's scope's
+  }
+}
+var head:Node = null;
+head = new Node(1, head, "a");                // fresh memory of this scope, freed at its end
+```
+
+- Representation: an object (its header and fields, the layout of a GC
+  class), linearly on stack 0 of the data stacks, zeroed
+  (`DataStacks.object`, from `Mem.headerOf`, which MirBuild makes once the
+  layout is known); on WasmGC an ordinary object, under the same checks.
+  The collector never scans or moves it (its fields hold no GC
+  reference), and leaves its address, outside the heap, where roots hold
+  it.
+- Fields: scalars, struct values, scoped values (`Str`, `Slice`, `Grow`,
+  `Ref`, `Fixed`), other scope-bound objects; a GC reference is an error
+  (an index into a table instead). No superclass, subclass, interface,
+  type parameter or dynamic method: its methods are called directly.
+- Checked as a scoped value rooted at its scope: `new` is fresh memory of
+  the current scope; a field read is a load from the object's memory, a
+  field write a store into it; a method's object is its last parameter
+  (`this`), so its summary says what it stores into the object. Never
+  in the GC heap: a field of a GC object, a static, `Dynamic`, a closure's
+  capture, a method as a function value, GC code's result are errors.
+- What a constructor or method allocates in its own scope (not a loop's
+  or a block's) and stores into its object is the object's: the function
+  does not reset, its caller's scope does (as for a function returning
+  references); a store from a loop body is an error.
+- A class that is also `@:hxmc.scoped` has scoped methods (no-GC code,
+  callable from scoped code); otherwise its methods are GC code, checked.
+- Corpus: `ScopedBound` (natively, wasm32, Mir's `--run`; `GcCheck` on
+  WasmGC; collections, minor and major, while objects are live);
+  `reject/ScopedBound*`.
+- Binary trees (`make bench-scoped`'s `Trees`, 1000 trees of depth 16):
+  1.79 s and 3 MB against 2.32 s and 267 MB with GC objects natively,
+  1.79 against 2.09 s on wasm32, equal on WasmGC.
 
 ### GC code and scoped code
 
@@ -1088,7 +1139,7 @@ the std's cores take a Slice of a Grow only to read it.
 
 Built (2026-10-25): the data stacks (`hxmc.rt.DataStacks`); `Grow`,
 `Slice`, `Str`, `Ref`, `Pool`, `Scope`, `IntTable`; scoped classes and
-enums; the root checker with summaries and what memory holds; scopes in
+enums; scope-bound classes; the root checker with summaries and what memory holds; scopes in
 scoped code and in GC code that touches scoped values; native, wasm32
 and WasmGC, each abstraction in two representations (the corpus'
 `Scoped*` cases natively and on wasm32, `GcCheck`'s on WasmGC, under

@@ -1,0 +1,5 @@
+exit 0
+ScopedBound.hx:101: gc code, 6, 3, 30, true
+ScopedBound.hx:115: 999000, true, 63
+ScopedBound.hx:116: 5503
+ScopedBound.hx:120: 6, de3

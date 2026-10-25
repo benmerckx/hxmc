@@ -2224,6 +2224,16 @@ class MirBuild extends MirWriter {
 					case EType(TRClass(c)) | ECast(_, EType(TRClass(c))) if (!c.isInterface): tyConst(c.tindex);
 					case _: throw new Unsupported("Mem.typeIndexOf: a class, by name");
 				}
+			case "headerOf":
+				// (a scope-bound object's header word: its type index and slots,
+				// as alloc's; FnLower.newBound)
+				switch args[0] {
+					case EType(TRClass(c)):
+						var n = c.nslots < 1 ? 1 : c.nslots;
+						if (n >= 0xFFFF) throw new Unsupported(c.name + ": a scope-bound class of 65535 slots or more");
+						tyConst(c.tindex, n << 16);
+					case _: throw new Unsupported("Mem.headerOf: a class");
+				}
 			case "os": iconst(abi.osCode());
 			case "arm": iconst(abi.arm ? 1 : 0);
 			case "target": iconst(targetCode(abi));

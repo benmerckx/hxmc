@@ -201,7 +201,7 @@ help:
 ##               (hxmc/test/CompileBench.hx; COMPILE_BENCH_ARGS)
 ##   bench-micro WHICH=arrays|maps (default both): Array vs NativeArray vs Vector (ARRAY_BENCH_ARGS),
 ##               ObjectMap and StringMap (MAP_BENCH_ARGS)
-##   bench-scoped  scoped memory against GC'd hxmc (the maps' index on both faces)
+##   bench-scoped  scoped memory against GC'd hxmc (the maps' index on both faces; binary trees of scope-bound objects)
 ##               (hxmc/test/scoped/ScopedBench.hx; SCOPED_BENCH_ARGS)
 ##   measure     peak memory and time of the self-compile (ours, the reference) and of the tool's
 ##               builds (haxe/test/Measure.hx)

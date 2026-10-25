@@ -878,6 +878,10 @@ class Lower implements LowerQueries {
 		// and the inline addChar read; its constructor fills them
 		// (stringBufCtor). Its class is not a subclass of StringBuf to
 		// reflection (Std.isOfType, Type.getSuperClass).
+		// (a scope-bound class: Scoped.checkBound)
+		if (c.clSuper != null && Scoped.isBound(c.clSuper.cls)) throw new LowerError(Scoped.at(c.clPos) + core.Globals.sTypePath(c.clPath) + ": a scope-bound class has no subclasses", "");
+		var bound = Scoped.isBound(c);
+		if (bound) try Scoped.checkBound(c) catch (msg:String) throw new LowerError(msg, "");
 		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
 		if (sbuf && wasmGc) fail(c.clPath.name + " extends StringBuf, the runtime's class, which a class of WasmGC cannot extend");
 		var sup = c.clSuper != null && !sbuf ? classInfo(c.clSuper.cls) : root;
@@ -886,6 +890,7 @@ class Lower implements LowerQueries {
 		ci = classes.get(c);
 		if (ci != null) return ci;
 		ci = new ClassInfo(core.Globals.sTypePath(c.clPath), nativeName(c), sup);
+		ci.bound = bound;
 		classes.set(c, ci);
 		tclasses.push(c);
 		var k = c.clSuper;
@@ -1340,6 +1345,8 @@ class Lower implements LowerQueries {
 		ctors.set(c, fi);
 		// (WasmGC: a scoped class's constructor fills its object, as a struct's fills its memory: unchecked)
 		fi.repr = Scoped.isRepr(c) || CInterop.isWasmValue(c);
+		// (a scope-bound class's: scoped code as its methods are)
+		if (ci.bound && c.clConstructor != null) fi.scoped = Scoped.isScopedField(c, c.clConstructor);
 		prog.funcs.push(fi);
 		if (c.clConstructor == null) {
 			// no constructor: the parent's, or nothing
