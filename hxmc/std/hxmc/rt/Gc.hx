@@ -1183,9 +1183,19 @@ class Gc {
 
 	// the pages of a view of scoped memory passed to C on Windows, touched
 	// first: WinRt commits the data stacks' pages on a fault in user code,
-	// which a fault in the kernel never makes (WinSys.touch; FnLower.cCall)
-	@:hxmc.host("hx_view_touch") @:hxmc.unsafe static function viewTouch(p:Ptr, n:Int):Void
-		if (Mem.os() == 2) WinSys.touch(p, n);
+	// which a fault in the kernel never makes (FnLower.cCall). Read, not
+	// written as WinSys.touch does a heap buffer: a view may be of read-only
+	// memory (a literal); an atomic load of each page's aligned word, which no
+	// pass removes.
+	@:hxmc.host("hx_view_touch") @:hxmc.unsafe static function viewTouch(p:Ptr, n:Int):Void {
+		if (Mem.os() != 2 || n <= 0) return;
+		var off = 0;
+		while (off < n) {
+			Atomic.load32(new Ptr(p.add(off).toI64() & ~(3 : I64)));
+			off += 4096;
+		}
+		Atomic.load32(new Ptr(p.add(n - 1).toI64() & ~(3 : I64)));
+	}
 
 	// ---- the write barrier's slow path (generated code's inline part and
 	// GcPaths: obj is old, the slot now holds a young pointer and held none)
