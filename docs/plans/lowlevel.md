@@ -719,12 +719,59 @@ Structures built from relative references are their own file format:
   on Linux x86-64; the corpus cases run on every target in CI.
 - wasm32: data stacks as regions of the linear memory, same code; their
   size is fixed when made (`RT_DATA_STACK_MB`), as a thread's C stack is.
-- WasmGC (`-D hxmc.wasm-gc`): scoped code is a compile error ("scoped
-  memory needs a linear memory: not available with -D hxmc.wasm-gc").
-  A later lowering could keep data stacks in a linear memory beside the
-  engine's GC heap (WasmGC modules may have one), struct values and Grows
-  as offsets in it, the same checker; struct values there are objects
-  today, which would have to change first.
+- WasmGC (`-D hxmc.wasm-gc`): the same scoped code over the engine's
+  objects (below).
+
+### Two representations, one core
+
+The std's core runs on every target, so the scoped code itself never
+names an address: it uses the scoped abstractions only (`Slice`, `Grow`,
+`Str`, `Ref`, `Pool`, `Scope`, the views the cores define over them,
+such as the maps' `IndexView`). `Ptr` and `Mem` appear inside those
+abstractions' linear-memory representation and in the trusted layer (d),
+nowhere else. Each abstraction has two representations, chosen per target
+inside the abstract (`#if hxmc.wasm_gc`), the core's code being the same:
+
+| | linear (native, wasm32) | WasmGC |
+| --- | --- | --- |
+| allocation | bump on a data stack | an object of the engine's heap |
+| scope exit | the data stack reset | nothing (the engine's collector reclaims) |
+| `Slice<T>` | address, length | GC array, offset, length |
+| `Str` | address, length (UTF-16 units) | i16 array (a String's own), offset, length |
+| `Grow<T>` | header on the fixed stack; elements on a stack of its own, never moved | header object over a GC array that is reallocated as it grows |
+| `Ref<T>` | address | the storage (a Grow's header, or a holder of a Slice's array) and an index: never an address, never dangling |
+| scoped class (struct value) | bytes in its holder (frame, element, field) | an object, copied where a struct is copied (below) |
+| scoped enum | tag and payload words | the enum value (immutable: nothing to copy), `==` by value |
+| `Pool` | a Grow of bytes | a counter (what it makes is an object) |
+
+The root checker runs the same on both: what it proves (nothing outlives
+its root) holds whatever the representation; on WasmGC it is what keeps
+a program portable to the linear targets, where breaking it is a crash.
+`Str` and String share the representation on WasmGC (an array of units),
+so the faces convert without copying (`Str.copyOf` there views the
+String: it is immutable); linearly a `Str` of a String's units is a view
+valid until the next GC point, as the maps' index is.
+
+Struct values on WasmGC: an engine object has identity, a struct value
+does not, so where a struct is copied (a variable initialized or assigned
+from another place, an argument, a returned place, a field or an element
+stored) the object is copied (a shallow copy: its fields are scalars and
+scoped values, which are values or views); a value just made (`new`, a
+call's result) is not. Haxe's inline constructors already keep objects
+whose fields are all final in locals, so the views (`Slice`, `Str`,
+`IndexView`) cost no allocation where they do not escape.
+
+Arrays of scoped classes: WasmGC has no inline structs in arrays. The
+first representation is an array of the element objects (a Grow's push
+stores a copy; `s[i].x = 1` writes the element in place; reading an
+element into a variable copies it). Struct of arrays (one GC array per
+field, `Ref` = Grow and index) is the next step: no object per element,
+the layout the engines optimize.
+
+What a Slice of a Grow sees on WasmGC: the elements as of when it was
+taken; after the Grow reallocates, writes through the old Slice are the old
+array's (linearly nothing moves). The checker does not tell the two apart;
+the std's cores take a Slice of a Grow only to read it.
 
 ### What Haxe cannot express (and what stands in)
 
