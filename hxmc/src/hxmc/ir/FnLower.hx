@@ -2807,6 +2807,28 @@ class FnLower {
 		};
 		var t = ty(s.ret);
 		var xs = args(cargs, s.args.map(a -> ty(a.type)), null);
+		// (a view of scoped memory: its address and its length, read from its
+		// struct after every argument is evaluated: CInterop.viewParam)
+		var views = [for (a in s.args) CInterop.viewParam(a.type)];
+		if (Lambda.exists(views, v -> v != null)) {
+			var ys = [];
+			for (k in 0...xs.length) {
+				var vc = k < views.length ? views[k] : null;
+				if (vc == null) {
+					ys.push(xs[k]);
+					continue;
+				}
+				var p = xs[k].match(ELocal(_)) ? xs[k] : ELocal(asLocal(xs[k], TI64));
+				var fs = CInterop.layout(vc).fields;
+				var fp = Lambda.find(fs, f -> f.name == "ptr"), fl = Lambda.find(fs, f -> f.name == "length");
+				var a = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(p, EInt(fp.off)), TI64));
+				var n = temp(TI32, ECallHost("hxmc_unsafe_Mem_getI32", vector(p, EInt(fl.off)), TI32));
+				// (wasm32: both 32-bit, CInterop.declare)
+				ys.push(Lower.targetCode == 6 ? EConv(L2I, a) : a);
+				ys.push(Lower.targetCode == 6 ? n : EConv(I2L, n));
+			}
+			xs = Vector.fromArrayCopy(ys);
+		}
 		if (t.match(TStruct(_))) {
 			// (the result's slot in this frame, MirBuild.cStructRet)
 			var lo = newLocal("cr", t);

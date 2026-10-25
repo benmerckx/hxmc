@@ -632,6 +632,14 @@ class Facts {
 						return;
 					}
 					if (n == "hxmc_unsafe_Mem_addr") addr = true;
+					// (scoped code holds no GC reference: a C call in a safe
+					// region only blocks it, its memory never moves; unsafe
+					// code's raw addresses would)
+					if (f.scoped && CInterop.BLOCKING.exists(n)) {
+						here = true;
+						Facts.iterEx(ex, e);
+						return;
+					}
 					gc = gc || GcPoints.gcPoint(e) != 0;
 				case EFieldAddr(_):
 					addr = true;

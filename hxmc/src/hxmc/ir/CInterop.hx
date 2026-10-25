@@ -571,6 +571,25 @@ class CInterop {
 	static function path(a:TAbstract):String
 		return a.aPath.pack.length == 0 ? a.aPath.name : a.aPath.pack.join(".") + "." + a.aPath.name;
 
+	// a parameter of a C function that is a view of scoped memory (Slice,
+	// Str): passed as its address and its length (docs/plans/lowlevel.md,
+	// "The scoped C boundary"); its struct (the linear representation)
+	public static function viewParam(t:T):Null<TClass> {
+		return switch TFunctions.follow(t) {
+			case TAbstract(a, params) if (path(a) == "hxmc.scoped.Slice" || path(a) == "hxmc.scoped.Str"):
+				switch TFunctions.follow(core.Abstract.getUnderlyingType(a, params)) {
+					case TInst(c, _) if (isStruct(c)): c;
+					case _: null;
+				}
+			case _: null;
+		}
+	}
+
+	// a C function that keeps a pointer it is passed (@:hxmc.retains): scoped
+	// memory may not be passed to it
+	public static function retains(c:TClass, cf:TClassField):Bool
+		return meta(":hxmc.retains", c, cf);
+
 	public static function ctype(t:T):CTy {
 		var t = TFunctions.follow(t);
 		return switch t {
@@ -755,6 +774,13 @@ class CInterop {
 			return ct == CNone && fast ? CPtr : ct;
 		var args = [];
 		for (i in 0...s.args.length) {
+			// (a view of scoped memory: its address and its length, a size_t;
+			// wasm32: both 32-bit, as its C and WASI take them)
+			if (viewParam(s.args[i].type) != null) {
+				args.push(Lower.targetCode == 6 ? CI32 : CPtr);
+				args.push(Lower.targetCode == 6 ? CI32 : CI64);
+				continue;
+			}
 			var ct = gc(ctype(s.args[i].type));
 			if (!isScalar(ct) && !ct.match(CStruct(_)))
 				throw new LowerError('C function $sym: parameter ${s.args[i].name} has no C type a call can pass (${describe(ct)}; scalars, Ptr, CString and structs)', where);

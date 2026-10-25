@@ -1152,6 +1152,13 @@ private class Analysis {
 				}
 				var trusted = c.hasClassFlag(CExtern) || Lower.isUnsafe(cf.cfMeta)
 					|| Lower.isUnsafe(c.clMeta) || cf.cfExpr == null;
+				// (C keeps no pointer it is passed, unless declared @:hxmc.retains)
+				if (trusted && !scoped && CInterop.retains(c, cf)) {
+					for (a in args)
+						if (ev(a).length > 0)
+							fail(a.epos, 'scoped memory passed to ${c.clPath.name}.${cf.cfName}, which keeps the pointer (@:hxmc.retains)');
+					return [];
+				}
 				if (!scoped && (trusted || !takes)) {
 					if (!gc && !trusted) fail(e.epos, 'scoped code calls ${c.clPath.name}.${cf.cfName}, which is neither @:hxmc.scoped nor @:hxmc.unsafe');
 					// (the trusted no-GC layer, C, GC code taking no scoped value: unchecked, the global root)

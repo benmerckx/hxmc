@@ -522,6 +522,33 @@ object-access shells of (c) and the C declarations of (b), the only code
 that touches raw memory. Scoped code barred from `Mem` outside the
 `hxmc.scoped` std would then make the boundary checked.
 
+### The scoped C boundary
+
+A C function (`@:hxmc.c` externs, docs/hxmc.md) may declare a parameter
+as a view of scoped memory: `Slice<T>` or `Str`. A call passes its address
+and its length (a `size_t`; on wasm32 both 32-bit, as its C and WASI take
+them: `path_open`'s path and length), so scoped code hands data-stack,
+`Fixed` (`f.view()`) and literal memory to C without taking an address of
+its own:
+
+```haxe
+@:hxmc.c extern class LibCViews {
+	static function strnlen(s:Slice<UInt8>):I64; // strnlen(s.ptr, s.length)
+}
+```
+
+- The declaration is the trusted edge: C keeps no pointer it is passed.
+  One that does is declared `@:hxmc.retains`, and the checker rejects
+  scoped memory passed to it (by its roots: a `Ptr` taken from a `Slice`
+  too).
+- A call in a safe region (not `@:hxmc.fast`) is allowed in scoped code:
+  its memory never moves, and it holds no GC reference the collector
+  could move meanwhile. The function then blocks (`FuncInfo.blocks`): its
+  callers take its calls as GC points, as for any blocking call. Unsafe
+  code still may not (its raw addresses of GC objects would move).
+- On WasmGC there is no C (the OS layers are the engine's): a view
+  parameter has no C type there.
+
 ### The root checker
 
 A pass over the typed AST of each scoped function, and of each GC
