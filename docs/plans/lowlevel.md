@@ -28,8 +28,9 @@ Status: built are the runtime's internal subset, the first milestone
 `@:hxmc.noGc` rule and the raw-address check), structs by value in C
 calls on every ABI ("Calls and linking") and struct values in the
 language ("Struct values": locals, parameters, results, inline fields,
-statics, `Slice`, scalar replacement). Next: scoped memory (section 4:
-data stacks, the `hxmc.scoped` types, value enums, the root checker),
+statics, `Slice`, scalar replacement) and scoped memory (section 4: data stacks,
+the `hxmc.scoped` types, value enums, the root checker, the maps' index as one
+core with two faces). Next: the std onto the scoped core, area by area;
 instance methods on structs.
 
 ## 1. How other languages do C interop
@@ -319,9 +320,10 @@ import hxmc.scoped.*;
 
 class Main {                               // GC code
   static function main() {
-    trace(Bench.push(4000000));            // scoped call, a scalar result: nothing to copy
-    var s:String = Scoped.run(Bench.firstWord(Str.copyOf("hello world")).toString());
-  }
+    trace(Bench.push(4000000));            // a scoped call, a scalar back: nothing to copy
+    var w = Bench.firstWord(Str.copyOf("hello world"));   // a scoped value in a local
+    var s:String = w.toString();           // copied out, into the GC heap
+  }                                        // main's scope ends: w's memory freed
 }
 ```
 
@@ -329,13 +331,14 @@ class Main {                               // GC code
 
 | Type | What it is | Root of what it yields |
 | --- | --- | --- |
-| `Grow<T>` | grow-only array: a header (base, length, stack) and its elements on a data stack it owns alone, so `push` is a bounds test and a pointer bump; never moves | `push` returns a `Ref<T>` to the new element, rooted at the Grow; elements read out are rooted at the Grow |
-| `Slice<T>` | a view: an address and a length, bounds-checked | the root of what it views |
-| `Str` | a `Slice` of UTF-16 code units (strings stay UTF-16 on both faces); a literal converts to one (static data: the global root) | as `Slice`; `Str.copy` makes a fresh one |
+| `Grow<T>` | grow-only array: a header (base, end, length) on the fixed stack and its elements on a data stack it owns alone, so `push` is a test and a pointer bump; never moves; the value is the header's address (passing a Grow passes it by reference) | `push` and `ref(i)` return a `Ref<T>` to an element, rooted at the Grow; elements read out are rooted at what was pushed |
+| `Slice<T>` | a view: an address and a length, bounds-checked; `Scope.slice<T>(n)` makes one on the data stack | the root of what it views |
+| `Str` | a view of UTF-16 code units (strings stay UTF-16 on both faces); a literal converts to one (static data: the global root); `Str.copy`, `Str.copyOf(String)` (GC code) copy onto the data stack, `toString()` copies into a String (GC code) | as `Slice` |
 | `Ref<T>` | an address of one T (`r.value`, `r.value.x = 1` in place) | the root of the memory it points into |
-| `Pool` | a bump region (a `Grow` of bytes) for values whose lifetime is a caller's: `pool.str(s)`, `pool.make(Item)` | the pool |
-| `Fixed<T, N>` | a fixed-size array inline in a struct or frame, `N` a constant (`@:genericBuild` with a `@:const` parameter) | the variable holding it |
-| `Rel<T>` | a 32-bit self-relative reference (serialization, below) | the array it points into |
+| `Pool` | a bump region (a Grow of bytes) for values whose lifetime is a caller's: `pool.str(s)`, `pool.slice(n)`, `pool.bytes(n)` | the pool |
+| `IntTable<V>` | a table of Int keys: the maps' index (`hxmc.rt.MapIndex`) over slots in a Pool, keys and values in Grows; grows only | the table |
+| `Fixed<T, N>` | (not built) a fixed-size array inline in a struct or frame, `N` a constant (`@:genericBuild` with a `@:const` parameter) | the variable holding it |
+| `Rel<T>` | (not built) a 32-bit self-relative reference (serialization, below) | the array it points into |
 | `@:hxmc.scoped` classes | struct values (`@:hxmc.struct`'s representation) whose fields may also be the types above | the union of their fields' roots |
 | `@:hxmc.scoped` enums | value enums (below) | the union of their payloads' roots |
 
@@ -346,51 +349,60 @@ scoped class or enum, or one of the types above.
 
 A runtime piece next to the shadow stack (`hxmc.rt.DataStacks`, no-GC
 Haxe): per thread, up to 16 data stacks, each a reservation with a bump
-pointer, made on first use. Natively each reserves 8 GB of address space
-(committed as it is touched: `MAP_NORESERVE`, WinRt's commit on touch); on
-wasm32, which has no virtual memory, each is a region of the linear memory
-(`Heap.regionZero`: pages stay uncommitted until touched), 64 MB unless
-`RT_DATA_STACK_MB` says otherwise. Running past the end aborts with a
-message (scoped code cannot throw, below), as Goose's guard pages do.
+pointer, made on first use (a table of their tops, ends and bases, and the
+owned mask, behind one thread-local). Natively each reserves 8 GB of
+address space (committed as it is touched: `MAP_NORESERVE`, WinRt's commit
+on touch), released when the thread ends (`Threads.exit` calls it through
+an address the first use set, so that programs without scoped memory do
+not load it); on wasm32, which has no virtual memory, each is a region of
+the linear memory (`Heap.regionZero`: pages stay uncommitted until
+touched), 256 MB unless `RT_DATA_STACK_MB` says otherwise (the 4 GB of
+wasm32 hold a few such). Running past the end aborts with a message, as
+Goose's guard pages do: scoped code cannot throw, and its failures
+(`hxmc.rt.Abort`: an index out of range, a full stack, too many Grows) end
+the program with exit status 70. They are `@:hxmc.noReturn`: nothing is
+live across their calls (MirBuild ends the block), so a test costs no
+registers.
 
-- One stack is the *fixed* one: everything that does not grow (a `Str`
-  copy, a `Grow`'s header, a `Pool`'s first block, a struct made for a
-  `Ref`) is bumped there.
-- A `Grow` claims a stack of its own, which no other value uses while the
-  Grow lives: its elements are always on top, so growth is a bump and
-  never moves anything. The claim is a bit in the thread's owned mask.
-  More growable values live at once than stacks is an abort naming the
-  limit (Goose's analysis computes N statically; the dynamic claim is
-  simpler and costs a mask test).
-- A *mark* (a frame area: the owned mask and each stack's top) is taken
-  where a scope that allocates starts; *reset* restores the tops of the
-  stacks that were not owned at the mark and the mask: everything the
-  scope allocated, Grows it opened included, is freed by a few stores,
-  however much it holds.
+- Stack 0 is the *fixed* one: everything that does not grow (a `Str`
+  copy, a Grow's header, a `Scope.slice`) is bumped there.
+- A Grow or a Pool claims one of the others for itself (a bit in the owned
+  mask): its elements are always on top, so growth is a bump and never
+  moves anything. More growable values live at once than 15 is an abort
+  naming the limit (Goose's analysis computes N statically; the dynamic
+  claim is simpler and costs a mask test). A stack nobody owns is always
+  empty above its base.
+- A *mark* is two locals of the frame: stack 0's top and the owned mask.
+  A *reset* puts stack 0's top back and empties the stacks claimed since
+  (their tops back to their bases): everything the scope allocated, the
+  Grows it opened included, is freed by a few stores, however much it
+  holds.
 
 ### Scopes
 
-The scopes that reset are the function body and each loop body (Goose
-also resets at every block; a block or branch is not a reset point here,
-so the checker is less strict there: see the deviations).
+The scopes are the function's body, each loop (its condition and body)
+and each block in statement position, as in Goose; the checker's levels
+are the same. The plan the checker makes says which of them allocate
+(FnLower marks those, and only those: a function that allocates nothing
+pays nothing).
 
-- A scoped function marks on entry and resets at every return if it
-  allocates into its own scope (it calls an allocating primitive, or a
-  function whose result holds references) and its own result holds no
-  references.
+- A function marks on entry and resets at every return if it allocates
+  (it calls an allocating primitive, or a function that leaves memory to
+  its caller) and its own result holds no references.
 - A function whose result holds references (a `Str`, a `Grow`, a struct
-  with a `Slice` field) does not reset: what it allocated, its result
-  included, belongs to the caller's scope, and the caller's next reset
-  frees it. This is how a result is "built in place" here: it stays where
-  it was built. The scratch of such a function lives as long (Goose frees
-  it; split the scratch into a helper that returns a scalar).
-- A loop body that allocates marks at its start and resets at its end and
-  at `continue` and `break` of that loop.
-- Scoped code cannot throw (it is no-GC code: a throw allocates); an index
-  out of range, a stack overrun or a claim past the limit aborts with a
-  message. So a scope always ends by a return or the end of its block, and
-  the reset is never skipped. GC code that calls scoped code is where
-  exceptions are, and `Scoped.run` resets on them (below).
+  with a `Slice` field) does not reset its own scope: what it allocated,
+  its result included, belongs to the caller's scope, and the caller's
+  reset frees it. This is how a result is "built in place" here: it stays
+  where it was built. Scratch in such a function's own scope lives as long
+  (Goose frees it); scratch in its loops and blocks does not.
+- A loop that allocates marks at the start of each iteration and resets at
+  its end and at `break` and `continue`; a block, at its end.
+- Scoped code cannot throw (it is no-GC code: a throw allocates). GC code
+  can: in a program with scoped memory, each `try` marks where it starts
+  and each catch resets to it, so the scopes an exception left are freed
+  where it is caught (a `try` costs two loads more; programs that do not
+  load `hxmc.rt.DataStacks` pay nothing).
+- The same lowering applies to GC code that touches scoped values (below).
 
 ### Rules of scoped code
 
@@ -411,8 +423,9 @@ function:
 - No moves: assignment, arguments and results copy struct values (as
   `@:hxmc.struct`); a `Grow`'s header is not copied (a `Grow` is the
   address of its header), so passing a Grow passes it by reference.
-- Statics may hold scoped values whose roots are global only (literals,
-  `Fixed` data).
+- Statics may hold scoped values whose roots are global only (literals).
+- A `Str` views a string literal only: `Mem.addr` of any other String is an
+  error (it moves with the collector); `Str.copyOf` copies one.
 - `Ptr` and `Mem` stay the unchecked escape hatch: an address made from an
   integer or returned by C has the global root. The `hxmc.scoped` types are
   written with them, inline, and the checker follows roots through them
@@ -450,15 +463,17 @@ property it checks (no GC point) is still what the code generator relies
 on. Once (a) and (b) have moved, an alias `@:hxmc.unsafe` (noGc and allowed
 to use `Mem`) with scoped code barred from `Mem` outside the
 `hxmc.scoped` std would make the boundary checked; noGc stays accepted.
-Nothing beyond the pilot below is migrated on this branch.
 
 ### The root checker
 
-A pass over the typed AST of each scoped function, after Haxe's inlining
-(so the `hxmc.scoped` types' inline operations are plain code by then) and
-before lowering (`hxmc/src/hxmc/ir/Scoped.hx`, called from the lowering,
-so errors carry the source positions the typer gave, inlined code at its
-call site). No annotations: every root is inferred.
+A pass over the typed AST of each scoped function, and of each GC
+function that touches scoped values, after Haxe's inlining (so the
+`hxmc.scoped` types' inline operations are plain code by then) and before
+lowering (`hxmc/src/hxmc/ir/Scoped.hx`, called by FnLower, so errors carry
+the source positions the typer gave, inlined code at its call site). No
+annotations: every root is inferred. `HXMC_SCOPED_DEBUG=1` prints the
+typed body of a function it rejects, `HXMC_SCOPED_TRACE=1` every
+expression's roots.
 
 *Roots.* A root names where memory lives and so how long it lives:
 
@@ -466,8 +481,8 @@ call site). No annotations: every root is inferred.
 | --- | --- |
 | global: literals, statics, addresses from integers or C | 0 (outlives everything) |
 | a parameter's: what the caller passed | 1 |
-| fresh memory of a scope: the data-stack memory a scope allocated (named after the variable it was first bound to, else "a temporary at line N") | 2 for the function body, 2 + d for a loop body at depth d |
-| a frame: `Mem.stack`, a struct local's address | as its scope, never returned |
+| fresh memory of a scope: the data-stack memory a scope allocated, one root per expression that allocates (named after the variable of the source it was first bound to, else "a temporary"), and per call that leaves memory to its caller | 2 for the function's scope, one more per nested scope |
+| a frame: `Mem.stack` | the function's, never returned |
 
 *Values.* Every expression gets a set of roots: the memory it may point
 into. Scalars have none; a `Ptr`, an address held as `I64`, and a struct
@@ -481,9 +496,14 @@ fields'). The transfer functions:
 - address arithmetic, casts and conversions between `Ptr` and `I64`: the
   operand's roots; integer to address: global;
 - a load of an address or a struct through an address with roots R (a
-  `Mem.getPtr`, `p[i]`, `p.value`): R ("read back": whatever was stored
-  there outlives the container, so the container bounds it, as Goose's
-  inexact roots);
+  `Mem.getPtr`, `p[i]`, `p.value`): what was stored into that memory.
+  Each fresh root records the roots stored into its memory (`held`), so
+  the words of a string read out of a Grow are rooted at the string they
+  view, not at the Grow. Where that is not known (a parameter's memory,
+  whose stores are the caller's; memory handed to the unchecked layer) the
+  load is bounded by the memory's own root ("read back": whatever was
+  stored there outlives it, Goose's inexact roots). What memory holds only
+  grows, so the analysis repeats until it is stable;
 - a struct literal or constructor call: the union of its arguments'; a
   field of a struct value: the struct's;
 - a local variable: what was assigned to it on the paths reaching the
@@ -507,24 +527,31 @@ when its level is not deeper.
   caller's); a frame root may not.
 - Statics: a store of anything but global roots is an error.
 
-*Summaries.* Each scoped function gets one, computed from its body on
+*Summaries.* Each called function gets one, computed from its body on
 first use (recursive cycles iterate to a fixed point from empty): which
-parameters its result may be rooted at, whether it may be fresh, and which
+parameters its result may be rooted at; the fresh memory it may reach, as
+regions (at most 8, else one), each with the parameters' roots and the
+regions it holds; whether it leaves memory to its caller; and which
 parameter's roots (or its fresh memory) it stores into which parameter's
 memory. A call's result is then rooted at the arguments behind those
-parameters plus, if fresh, the caller's innermost resetting scope; each
-store constraint is checked with the arguments' roots, or passed on to the
-caller's own summary when they are its parameters. This is Goose's
-specialization per root, done with summaries: one body per function, and a
-caller sees `longer(a, b)` rooted at `a` and `b`.
+parameters plus one fresh root per region, in the caller's current scope,
+holding what the summary says; each store constraint is checked with the
+arguments' roots, or passed on to the caller's own summary when they are
+its parameters. This is Goose's specialization per root, done with
+summaries: one body per function, and a caller sees `longer(a, b)` rooted
+at `a` and `b`, and the words `split(text)` returns rooted at `text`.
 
 *Errors* name the root and the destination, at the store:
 
 ```
-Bench.hx:37: storing a reference rooted at tmp (fresh memory of the loop body at line 35) into w, which outlives it
-Bench.hx:52: Bench.link stores its argument x into the memory of dst: x is rooted at inner (line 50), which does not outlive dst's root outer
-Bench.hx:61: returning a reference rooted at buf (a frame area), which ends with the function
+ScopedLoopEscape.hx:10: Code.bad: storing a reference rooted at tmp (made at line 9, memory of that scope) into w, which outlives it
+ScopedCallStore.hx:13: Code.run: Code.put stores its argument s into the memory of its argument g: storing a reference rooted at s (made at line 12, memory of that scope) into memory rooted at g (made at line 10, memory of the function), which outlives it
+ScopedParamStore.hx:8: Code.fill: storing a reference rooted at a temporary (made at line 8, memory of that scope) into memory of the caller (g), which outlives it
+ScopedGcField.hx:13: ScopedGcField.main: storing a reference rooted at a temporary (made at line 13, memory of the function) into h.s (the GC heap), which outlives it
 ```
+
+(`hxmc/test/reject/Scoped*.hx`: sixteen such errors, by message and
+position; `hxmc/test/cases/ScopedRoots.hx`: what must be accepted.)
 
 *Not checked:* what `Ptr`, `Mem` and C do with addresses (global roots: the
 escape hatch), and data races (scoped memory is per thread; values cross
@@ -551,22 +578,24 @@ and Haxe has no syntax to choose the mode at the point of use.
 
 ### GC code and scoped code
 
-- GC code calls scoped functions directly. Arguments are scalars, struct
-  values and enum values (copies); a `String` becomes a `Str` by copying
-  it onto the data stack (`Str.copyOf`). A call whose result holds no
-  references needs nothing else: the callee resets its own scope.
-- A result holding references (a `Str`, a `Slice`) is read inside
-  `Scoped.run(expr)`, a macro that marks, evaluates `expr` and resets
-  (also when `expr` throws: GC code can), so what the scoped calls inside
-  allocated is freed when the GC code has copied out what it wants:
-  `Scoped.run(f(x).toString())`. In GC code, values holding references
-  exist only inside such a region: locals declared there, arguments of
-  scoped calls, never stored in a field, an array, a static or a closure,
-  never the region's result. The checker enforces it in each GC function
-  that mentions a type holding references.
-- Copies out: `Str.toString()` (a new `String`), `Slice.toArray()`;
-  elements are copied, as a value crossing between the two worlds always
-  is.
+- GC code calls scoped functions directly and may hold scoped values in
+  its locals: `var alive = step(ps, dt); particles = alive.toArray();`.
+  A `String` becomes a `Str` by copying it onto the data stack
+  (`Str.copyOf`).
+- A GC function that touches scoped values (calls a scoped function or an
+  allocating primitive, or has a local or parameter of a scoped type: a
+  cheap walk finds them) gets the same scopes and marks as scoped code,
+  and nothing else does. Its loop bodies are scopes too, so a long-running
+  GC loop calling scoped code each iteration does not grow the data
+  stack; an exception is caught by a `try` that resets.
+- The root checker runs on it with the GC references allowed: scoped
+  values holding references may not escape into the GC heap (a field of an
+  object, a static, an Array element, Dynamic, a type parameter, a box, a
+  closure's capture, a thrown value, the function's result). Copying out
+  is the explicit way: `toString`, a value copy.
+- The collector never scans the data stacks (they hold no GC references)
+  and nothing there moves, so a scoped value held across safepoints stays
+  valid.
 
 ### One core, two faces
 
@@ -586,28 +615,61 @@ worlds:
 How the storage is a parameter: the core's functions are `inline` and
 take the storage as a value of one of two kinds.
 
-1. A view (`Slice<T>`, `Str`): an address and a length. The scoped face
-   passes data-stack memory; the GC face passes a view of its buffer's
-   payload taken right before the call (`Slice.ofGc`). The core has no GC
-   point, so the buffer cannot move while the view is in use, and the
-   raw-address check (`Facts.checkRawAddresses`) rejects a view kept
-   across an allocation of the GC wrapper. This covers storage of scalars
-   and value types: indexes, hashes, text, numbers.
+1. A view: an address and a size (a `Slice`, a `Str`, or a view of the
+   core's own shape). The scoped face passes data-stack memory; the GC
+   face passes a view of its buffer's payload taken right before the call.
+   The core has no GC point, so the buffer cannot move while the view is in
+   use, and the raw-address check (`Facts.checkRawAddresses`, which now
+   follows an address into a struct value) rejects a view kept across a
+   GC point of the GC wrapper (`hxmc/test/reject/RawView.hx`). This covers
+   storage of scalars and value types: indexes, hashes, text, numbers.
 2. Accessors: inline function arguments (compile-time function values,
-   inlined), for storage of GC references, whose stores need the write
-   barrier: the GC face passes accessors that store through it, the scoped
-   face plain ones.
+   inlined), for what only the face knows: the GC face's key comparison
+   (a String's `==`, an object's identity), and stores of GC references,
+   which need the write barrier.
 
 (Haxe's `@:generic` does not do this: a generic function's body is typed
 once against its constraint, and an abstract over a buffer satisfies no
 structural constraint; inline functions are monomorphised by inlining.)
 
-The pilot on this branch: the maps' index (`haxe.ds.IntMap`'s and
-`StringMap`'s open-addressing index with backward-shift deletion,
-`MapSlots`) as a scoped core over a `Slice<Int>`, used by the maps (GC
-face) and by a scoped hash table (`hxmc.scoped.IntTable`, scoped face),
-the old code deleted in the same change; same test results, and measured
-for speed (`make bench-micro WHICH=maps`).
+The pilot, built: the maps' index. `hxmc.rt.MapIndex` is the
+open-addressing index with linear probing and backward-shift deletion,
+written once as scoped code over an `IndexView` (the slots' address and
+the mask; every slot number is masked in the access, so the accesses need
+no bounds test, and a view's size is checked against the mask when it is
+made, or is the maps' invariant for the GC face, which would otherwise read
+the array's header, another cache line, on every lookup). The GC face is
+`haxe.ds.IntMap`, `StringMap` and `ObjectMap` (`MapSlots.index` views the
+index's GC array; `same` compares the keys, `home` gives a tag's home
+slot), whose own probe, insert and removal loops are gone; the scoped face
+is `hxmc.scoped.IntTable` (slots in a Pool, keys and values in Grows).
+Same results in the corpus natively, on wasm32 and on WasmGC (where the
+view is the GC array and Haxe's inline constructors make it locals);
+`hxmc/test/cases/ScopedTable.hx` checks that both faces give the same
+answers. What the core needed of the compiler: `(x & m) & m` folded (Opt),
+`@:hxmc.noReturn`. Speed (`make bench-micro WHICH=maps`, ns per operation,
+the fastest of 11 rounds, two runs each, the old code and the new built by
+the same compiler, Linux x86-64): within the runs' spread, a lookup that
+misses faster, a hit at 10,000 keys up to 10% slower in some runs (the
+instruction counts went down: the remaining differences follow code
+placement):
+
+| | 10k before | 10k after | 1M before | 1M after |
+| --- | ---: | ---: | ---: | ---: |
+| IntMap get (hit) | 14.5-14.6 | 15.2-16.9 | 78-91 | 76-77 |
+| IntMap set (insert) | 37.3-37.5 | 38.9-39.6 | 109-110 | 111-112 |
+| ObjectMap get (hit) | 8.7-8.8 | 8.9-9.1 | 155-159 | 157-163 |
+| ObjectMap exists (hit) | 8.2 | 9.0-9.1 | 100-105 | 103-106 |
+| ObjectMap get (miss) | 5.5 | 4.7 | 57 | 54-55 |
+| ObjectMap set (insert) | 23.9-24.4 | 23.6-24.1 | 147-148 | 158 |
+| ObjectMap remove + set | 38.8-40.1 | 38.9-40.6 | 375-394 | 382-404 |
+| StringMap get (hit) | 10.6-10.7 | 10.9-11.1 | 53-58 | 57-61 |
+| StringMap set (insert) | 46.4-46.8 | 46.6-49.9 | 117-123 | 120-122 |
+
+The scoped face against the GC face on the same index (ScopedBench's
+`Table`: n random Int keys inserted with updates, then 8n lookups):
+IntTable takes about half the time of IntMap (no `Null<Int>` boxes, no
+dynamic values) and less memory, below.
 
 Next candidates, in order: `FloatText` (the digits into a `Grow<UInt16>`
 or a `StringBuf`'s buffer), `CaseMap`, the string search and comparison
@@ -634,8 +696,10 @@ format; the same fits scoped memory:
 
 ### Targets
 
-- Native, all six targets: data stacks as reservations (above).
-- wasm32: data stacks as regions of the linear memory, same code.
+- Native, all six targets: data stacks as reservations (above). Tested
+  on Linux x86-64; the corpus cases run on every target in CI.
+- wasm32: data stacks as regions of the linear memory, same code; their
+  size is fixed when made (`RT_DATA_STACK_MB`), as a thread's C stack is.
 - WasmGC (`-D hxmc.wasm-gc`): scoped code is a compile error ("scoped
   memory needs a linear memory: not available with -D hxmc.wasm-gc").
   A later lowering could keep data stacks in a linear memory beside the
@@ -666,21 +730,58 @@ format; the same fits scoped memory:
 
 - Dynamic claims instead of a static stack assignment: no whole-program
   analysis of which values grow at once; a mask test per `new Grow`.
-- Resets at function and loop bodies only, not at every block: fewer marks
-  (a mark is a few stores), and a branch's values may be kept in a
-  variable declared before it (Goose rejects that).
-- Callee scratch of a function returning references lives until the
-  caller's reset: no in-place construction through calls; results stay
-  where they were built.
+- A block in value position (an inlined function's body is one) is not a
+  scope: its memory is the enclosing scope's, so an inline function may
+  return what it allocated. Goose rejects a reference out of a branch
+  value; here it is the enclosing scope's, which is safe.
+- Scratch in the own scope of a function returning references lives until
+  the caller's reset: no in-place construction through calls; results
+  stay where they were built.
 - Summaries per function instead of one body per root: one compiled body
   (Haxe compiles each function once), at the price of precision where a
   function treats its parameters differently on different calls.
+- GC code is checked too, and gets scopes: Goose has no GC side.
 - Out-of-range indexes abort, as in Goose; the GC faces keep Haxe's
   behaviour by testing before they call.
 
 ### Status
 
-Design (2026-10-25); what is built is recorded here as it lands.
+Built (2026-10-25): the data stacks (`hxmc.rt.DataStacks`); `Grow`,
+`Slice`, `Str`, `Ref`, `Pool`, `Scope`, `IntTable`; scoped classes and
+enums; the root checker with summaries and what memory holds; scopes in
+scoped code and in GC code that touches scoped values; native and wasm32
+(the corpus' `Scoped*` cases on both, `reject/Scoped*`); WasmGC refuses
+scoped code. Not built: `Fixed<T, N>`, `Rel<T>` and the generated
+`verify`/`fromBytes` (designed above), Goose's variable-size enums,
+methods on scoped classes (structs have none yet), checking the
+`hxmc.scoped` std's own inline functions apart from their callers.
+
+Benchmarks: Goose's programs ported (`make bench-scoped`,
+`hxmc/test/scoped`; each program prints the same in both versions), the
+median wall time of 5 runs and the peak RSS, Linux x86-64 (4 cores),
+2026-10-25; Goose built from its repository with gcc 13 (its default
+`goose build`, -O2). Sizes: Goose's own (binary-trees' depth, the
+elements, the words) and a larger one.
+
+| Program | Size | scoped | GC | scoped, wasm32 | GC, wasm32 | Goose |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| BinaryTrees | 17 | 0.24 s, 10 MB | 0.35 s, 79 MB | 0.28 s, 59 MB | 0.49 s, 109 MB | 0.08 s, 7 MB |
+| BinaryTrees | 20 | 2.84 s, 96 MB | 5.73 s, 599 MB | 2.46 s, 145 MB | 5.99 s, 464 MB | 0.87 s, 49 MB |
+| Push | 4M | 0.04 s, 31 MB | 0.19 s, 132 MB | 0.11 s, 80 MB | 0.31 s, 210 MB | 0.03 s, 32 MB |
+| Push | 32M | 0.39 s, 248 MB | 2.58 s, 1146 MB | 0.49 s, 296 MB | 3.23 s, 1339 MB | 0.28 s, 249 MB |
+| StrList | 400k | 0.03 s, 15 MB | 0.10 s, 77 MB | 0.11 s, 64 MB | 0.19 s, 115 MB | 0.03 s, 12 MB |
+| StrList | 4M | 0.48 s, 156 MB | 1.13 s, 504 MB | 0.69 s, 205 MB | 1.79 s, 775 MB | 0.36 s, 108 MB |
+| Table | 1M | 0.31 s, 48 MB | 0.61 s, 67 MB | 0.42 s, 98 MB | 0.84 s, 161 MB | |
+| Table | 8M | 6.50 s, 219 MB | 9.86 s, 352 MB | 9.73 s, 268 MB | 12.31 s, 565 MB | |
+
+Scoped code takes 1.5 to 6.6 times less time than the same program over
+GC objects natively (1.3 to 6.6 on wasm32), and 1.4 to 8 times less
+memory (wasm32's RSS is node's). Against Goose: as fast on strlist at
+Goose's size, 1.3 to 1.4 times slower on push and strlist otherwise, and
+3 to 3.3 times slower on binary-trees: its nodes are 8 bytes (4-byte
+relative references, `Rel`, not built here) against 16, and gcc inlines
+the recursion, which hxmc's code generator does not (the scoped `make` has
+the push inline and no allocation call).
 
 ### Struct values (built)
 

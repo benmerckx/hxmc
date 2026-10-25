@@ -661,7 +661,9 @@ open-addressing index with linear probing finds them. The index is at most
 half full (a table that only grows doubles; a rebuild drops the removed
 entries and leaves room for twice the live ones, so it moves at most one
 entry per removal), and a removal shifts its probe chain back (no
-tombstones). Each slot is two Ints, what is compared first and the entry +
+tombstones); the index is written once, as scoped code over a view of its
+slots, and shared with `hxmc.scoped.IntTable` (`hxmc.rt.MapIndex`;
+[plans/lowlevel.md](plans/lowlevel.md), "One core, two faces"). Each slot is two Ints, what is compared first and the entry +
 1 (0: empty): IntMap's key, StringMap's hash (the string's FNV-1a hash,
 cached in it, mixed: its low bits alone pick slots for keys that differ in
 their last units), ObjectMap's hash of the key's address; so a miss reads
