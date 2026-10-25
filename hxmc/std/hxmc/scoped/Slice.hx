@@ -67,6 +67,12 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	@:noCompletion public static inline function copyInts(dst:Slice<Int>, src:Slice<Int>, n:Int)
 		NativeArray.blit(src.array(), src.offset(), dst.array(), dst.offset(), n);
 
+	// dst[di, di + n) = src[si, si + n), checked (they may overlap: as memmove)
+	public static inline function copyBytes(dst:Slice<UInt8>, di:Int, src:Slice<UInt8>, si:Int, n:Int) {
+		if (n < 0 || di < 0 || si < 0 || di > dst.length - n || si > src.length - n) Abort.outOfRange();
+		NativeArray.blit(src.array(), src.offset() + si, dst.array(), dst.offset() + di, n);
+	}
+
 	// the bytes i .. i + 3 of s as an Int, little-endian, unchecked (the cores')
 	@:noCompletion public static inline function word(s:Slice<UInt8>, i:Int):Int {
 		var a:NativeArray<UInt8> = s.array(), k = s.offset() + i;
@@ -119,6 +125,12 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	// the first n Ints of src into dst, unchecked (the cores')
 	@:noCompletion public static inline function copyInts(dst:Slice<Int>, src:Slice<Int>, n:Int)
 		LibC.memmove(dst.ptr(), src.ptr(), (4 * n : I64));
+
+	// dst[di, di + n) = src[si, si + n), checked (they may overlap: as memmove)
+	public static inline function copyBytes(dst:Slice<UInt8>, di:Int, src:Slice<UInt8>, si:Int, n:Int) {
+		if (n < 0 || di < 0 || si < 0 || di > dst.length - n || si > src.length - n) Abort.outOfRange();
+		LibC.memmove((dst.ptr() : Ptr).add(di), (src.ptr() : Ptr).add(si), (n : I64));
+	}
 
 	// the bytes i .. i + 3 of s as an Int, little-endian, unchecked (the cores')
 	@:noCompletion public static inline function word(s:Slice<UInt8>, i:Int):Int
