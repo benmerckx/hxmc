@@ -120,6 +120,7 @@ class Scoped {
 	static var summaries = new ObjectMap<TClassField, Summary>();
 	static var inProgress = new ObjectMap<TClassField, Summary>();
 	static var refMemo = new ObjectMap<{}, Int>();
+	static var scopedClasses = new ObjectMap<TClass, Bool>();
 	public static var unstable = false;
 
 	// a new program (Lower)
@@ -127,6 +128,7 @@ class Scoped {
 		summaries = new ObjectMap();
 		inProgress = new ObjectMap();
 		refMemo = new ObjectMap();
+		scopedClasses = new ObjectMap();
 		runtime = null;
 		CInterop.objCopy = null;
 		for (t in types)
@@ -155,8 +157,15 @@ class Scoped {
 	public static function isReprArray(c:TClass):Bool
 		return Lower.wasmGc && Lower.isNativeArray(c);
 
-	public static function isScopedField(c:TClass, cf:TClassField):Bool
-		return cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", cf.cfMeta) || c.clMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", c.clMeta);
+	public static function isScopedField(c:TClass, cf:TClassField):Bool {
+		if (cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", cf.cfMeta)) return true;
+		var r = scopedClasses.get(c);
+		if (r == null) {
+			r = c.clMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", c.clMeta);
+			scopedClasses.set(c, r);
+		}
+		return r;
+	}
 
 	// checks function tf (cf of class c, null for a closure; scoped: a
 	// @:hxmc.scoped one) and plans its marks; null: GC code that touches no
@@ -439,7 +448,7 @@ private class Analysis {
 			if (!gc && isGcType(v.vType)) fail(v.vPos, 'scoped code holds no GC references: the parameter ${v.vName} is a ${sType(v.vType)}');
 			if (params.length <= i) params.push(new Root(Root.PARAM, 1, i, v.vName, lineOf(v.vPos)));
 			var r = params[i];
-			env.set(v.vId, Scoped.carries(v.vType) ? [r] : []);
+			setVar(v.vId, Scoped.carries(v.vType) ? [r] : []);
 			levels.set(v.vId, 2);
 		}
 		// (the function's body: its own scope)
@@ -569,6 +578,10 @@ private class Analysis {
 			r.set(k, r.exists(k) ? union(r.get(k), v) : v);
 		return r;
 	}
+
+	// (a local holding no roots has no entry: what a loop compares stays small)
+	inline function setVar(id:Int, rs:Roots)
+		if (rs.length == 0) env.remove(id) else env.set(id, rs);
 
 	function sameEnv(a:Map<Int, Roots>, b:Map<Int, Roots>):Bool {
 		for (k => v in a)
@@ -704,7 +717,7 @@ private class Analysis {
 					fail(e.epos, 'scoped code holds no GC references: ${v.vName} is a ${sType(v.vType)}');
 				if (!Scoped.carries(v.vType)) rs = [];
 				storeVar(rs, level, v.vName, e.epos);
-				env.set(v.vId, rs);
+				setVar(v.vId, rs);
 				[];
 			case TBinop(OpAssign, lhs, rhs):
 				var rs = ev(rhs);
@@ -770,7 +783,7 @@ private class Analysis {
 				switchOf(sw, false);
 			case TWhile(c, body, _):
 				scope(e, () -> {
-					var start = env.copy();
+					var start = env.copy(), outer = level;
 					for (_ in 0...32) {
 						ev(c);
 						switch body.eexpr {
@@ -780,7 +793,10 @@ private class Analysis {
 							case _:
 								stmt(body);
 						}
-						var next = merge(start, env);
+						// (the locals declared before the loop: the body's own start again on each iteration)
+						var next = start.copy();
+						for (k => v in env)
+							if (v.length > 0 && (!levels.exists(k) || levels.get(k) < outer)) next.set(k, next.exists(k) ? union(next.get(k), v) : v);
 						if (sameEnv(next, start)) break;
 						start = next;
 						env = start.copy();
@@ -863,7 +879,7 @@ private class Analysis {
 		switch strip(lhs).eexpr {
 			case TLocal(v):
 				storeVar(rs, levels.exists(v.vId) ? levels.get(v.vId) : 2, v.vName, e.epos);
-				env.set(v.vId, rs);
+				setVar(v.vId, rs);
 			case TField(_, FStatic(_, cf)):
 				storeVar(rs, 0, "the static " + cf.cfName, e.epos);
 			case TField(obj, FInstance(c, _, cf)) if (Scoped.isValue(c)):
@@ -871,7 +887,7 @@ private class Analysis {
 				var v = baseLocal(obj);
 				if (v != null && levels.exists(v.vId)) {
 					storeVar(rs, levels.get(v.vId), describePlace(lhs), e.epos);
-					env.set(v.vId, union(env.exists(v.vId) ? env.get(v.vId) : [], rs));
+					setVar(v.vId, union(env.exists(v.vId) ? env.get(v.vId) : [], rs));
 				} else
 					storeMem(rs, placeRoots(obj), describePlace(lhs), e.epos);
 			case TField(obj, FInstance(c, _, _)) if (Scoped.isRepr(c)):

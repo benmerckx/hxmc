@@ -144,18 +144,30 @@ class FnLower {
 	function dataStacks(name:String):FuncInfo
 		return l.staticFunc(Scoped.runtime, Scoped.runtime.clStatics.get(name));
 
+	// a thread-local variable of DataStacks (top0, owned): its global
+	function dataStacksVar(name:String):Int
+		return l.staticVar(Scoped.runtime, Scoped.runtime.clStatics.get(name));
+
+	inline function readGlobal(g:Int):Ex
+		return EGlobal(g, l.globalTy(g));
+
+	// a mark: stack 0's top and the owned mask, read (no call)
 	function mark():{top:Local, mask:Local} {
 		var top = newLocal("dsTop", TI64), mask = newLocal("dsMask", TI32);
-		out.push(SSet(top, ECall(dataStacks("markTop"), vector())));
-		out.push(SSet(mask, ECall(dataStacks("markMask"), vector())));
+		out.push(SSet(top, readGlobal(dataStacksVar("top0"))));
+		out.push(SSet(mask, readGlobal(dataStacksVar("owned"))));
 		return {top: top, mask: mask};
 	}
 
 	inline function pushMark()
 		marks.push(mark());
 
-	function reset(m:{top:Local, mask:Local})
-		out.push(SExpr(ECall(dataStacks("reset"), vector(ELocal(m.top), ELocal(m.mask)))));
+	// back to a mark: the stacks claimed since released (a call, when there
+	// are), stack 0's top set
+	function reset(m:{top:Local, mask:Local}) {
+		out.push(SIf(EBin(Ne, readGlobal(dataStacksVar("owned")), ELocal(m.mask)), vector(SExpr(ECall(dataStacks("release"), vector(ELocal(m.mask))))), vector()));
+		out.push(SSetGlobal(dataStacksVar("top0"), ELocal(m.top)));
+	}
 
 	inline function resetTo(k:Int)
 		reset(marks[k]);

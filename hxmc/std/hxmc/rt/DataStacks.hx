@@ -9,18 +9,19 @@ import hxmc.unsafe.*;
 // a Str's copy, a Grow's header); a Grow or a Pool claims one of the others
 // for itself alone (a bit in the owned mask), so its elements are always on
 // top and growth never moves them. A scope marks (stack 0's top and the
-// owned mask, two locals of the frame: FnLower) where it starts and resets
-// where it ends: stack 0's top back, the stacks claimed since released
-// (their tops back to their bases: a stack nobody owns is always empty
-// above its base). Natively each stack reserves RESERVE bytes of address
+// owned mask, two thread-local variables read into locals of the frame:
+// FnLower) where it starts and resets where it ends: stack 0's top back,
+// the stacks claimed since released (their tops back to their bases: a
+// stack nobody owns is always empty above its base). Natively each stack reserves RESERVE bytes of address
 // space, committed as touched (Os.reserve); on wasm32 it is a region of the
 // linear memory (Heap.regionZero) of RT_DATA_STACK_MB megabytes (256 unless
 // set). Running past a stack's end, or more Grows at once than stacks,
 // aborts with a message: scoped code cannot throw.
 //
-// The table (malloc'ed, per thread): the owned mask (int32 at 0), then per
-// stack its top, end and base (at 16 + 32 * i). No GC reference anywhere:
-// the collector never scans or moves any of it.
+// The table (malloc'ed, per thread): per stack its top, end and base (at
+// 16 + 32 * i); stack 0's top and end, and the owned mask, are thread-local
+// variables of their own (a mark is two loads, no call). No GC reference
+// anywhere: the collector never scans or moves any of it.
 @:allow(hxmc.scoped)
 class DataStacks {
 	public static inline var K = 16;
@@ -30,6 +31,14 @@ class DataStacks {
 	static inline var RESERVE:Int = 1 << 30; // (natively: 8 * this, below)
 
 	@:hxmc.threadLocal static var table:Ptr;
+	// stack 0's top (null before its first allocation, and after a reset to
+	// a mark taken then: its base), base and end (null until the table is
+	// made), the owned mask (@:keep: the lowering reads and sets them,
+	// FnLower.mark)
+	@:keep @:hxmc.threadLocal static var top0:Ptr;
+	@:hxmc.threadLocal static var base0:Ptr;
+	@:hxmc.threadLocal static var end0:Ptr;
+	@:keep @:hxmc.threadLocal static var owned:Int;
 
 	static inline function stack(t:Ptr, i:Int):Ptr
 		return t.add(16 + 32 * i);
@@ -46,6 +55,8 @@ class DataStacks {
 		LibC.memset(t, 0, bytes);
 		table = t;
 		open(t, 0);
+		base0 = Mem.getPtr(stack(t, 0), BASE);
+		end0 = Mem.getPtr(stack(t, 0), END);
 		#if (hxmc.target != "wasm32-wasi")
 		Threads.dataStacksExit = Callback.addr(threadExit);
 		#end
@@ -75,11 +86,23 @@ class DataStacks {
 
 	// `bytes` bytes on the fixed stack, 8-byte aligned, not zeroed
 	@:hxmc.noGc @:hxmc.alloc public static function alloc(bytes:Int):Ptr {
-		var s = stack(tab(), 0);
-		var p:Ptr = Mem.getPtr(s, TOP);
+		var p = top0;
+		if (p.isNull()) p = base0;
 		var q = p.add((bytes + 7) & ~7);
-		if (Mem.ult(Mem.getPtr(s, END).toI64(), q.toI64())) overflow();
-		Mem.setPtr(s, TOP, q);
+		// (no table yet: end0 is null)
+		if (Mem.ult(end0.toI64(), q.toI64())) return allocFirst(bytes);
+		top0 = q;
+		return p;
+	}
+
+	// (the table made first)
+	@:hxmc.noGc @:hxmc.alloc static function allocFirst(bytes:Int):Ptr {
+		tab();
+		var p = top0;
+		if (p.isNull()) p = base0;
+		var q = p.add((bytes + 7) & ~7);
+		if (Mem.ult(end0.toI64(), q.toI64())) overflow();
+		top0 = q;
 		return p;
 	}
 
@@ -103,14 +126,14 @@ class DataStacks {
 	// a stack of its own for a Grow or a Pool: its index
 	@:hxmc.noGc @:hxmc.alloc public static function claim():Int {
 		var t = tab();
-		var owned = Mem.getI32(t, 0);
+		var o = owned;
 		var i = 1;
-		while (i < K && owned & (1 << i) != 0)
+		while (i < K && o & (1 << i) != 0)
 			i++;
 		if (i == K) die(Mem.cstr("hxmc: scoped memory: more than 15 growable values (Grow, Pool) live at once\n"));
 		var s = stack(t, i);
 		if (Mem.getPtr(s, BASE).isNull()) open(t, i);
-		Mem.setI32(t, 0, owned | (1 << i));
+		owned = o | (1 << i);
 		return i;
 	}
 
@@ -122,50 +145,43 @@ class DataStacks {
 	public static inline function end(i:Int):Ptr
 		return Mem.getPtr(stack(table, i), END);
 
-	// ---- scopes: a mark is stack 0's top (null before the first use) and the owned mask
-	// (@:keep: the lowering calls them, FnLower.mark)
+	// ---- scopes: a mark is top0 and owned, read by the lowering (FnLower.mark),
+	// which resets to it (top0 set back; release when owned is not the mask)
 
-	@:keep @:hxmc.noGc public static function markTop():Ptr {
-		var t = table;
-		return t.isNull() ? Ptr.nil() : Mem.getPtr(stack(t, 0), TOP);
+	// the stacks claimed since the mark released (@:keep: FnLower.reset calls it)
+	@:keep @:hxmc.noGc public static function release(mask:Int) {
+		var t = table, released = owned & ~mask;
+		for (i in 1...K)
+			if (released & (1 << i) != 0) {
+				var si = stack(t, i);
+				Mem.setPtr(si, TOP, Mem.getPtr(si, BASE));
+			}
+		owned = mask;
 	}
 
-	@:keep @:hxmc.noGc public static function markMask():Int {
-		var t = table;
-		return t.isNull() ? 0 : Mem.getI32(t, 0);
-	}
+	// (a compiler built before the marks were variables calls these: kept
+	// so that it builds this std)
+	@:keep @:hxmc.noGc public static function markTop():Ptr
+		return top0;
+
+	@:keep @:hxmc.noGc public static function markMask():Int
+		return owned;
 
 	@:keep @:hxmc.noGc public static function reset(top:Ptr, mask:Int) {
-		var t = table;
-		if (t.isNull()) return;
-		var s = stack(t, 0);
-		Mem.setPtr(s, TOP, top.isNull() ? Mem.getPtr(s, BASE) : top);
-		var owned = Mem.getI32(t, 0);
-		if (owned != mask) {
-			var released = owned & ~mask;
-			for (i in 1...K)
-				if (released & (1 << i) != 0) {
-					var si = stack(t, i);
-					Mem.setPtr(si, TOP, Mem.getPtr(si, BASE));
-				}
-			Mem.setI32(t, 0, mask);
-		}
+		if (owned != mask) release(mask);
+		top0 = top;
 	}
 
 	// the bytes in use on the fixed stack, and the stacks claimed (tests, reports)
 	@:hxmc.noGc public static function used():Int {
-		var t = table;
-		if (t.isNull()) return 0;
-		var s = stack(t, 0);
-		return (Mem.getPtr(s, TOP).diff(Mem.getPtr(s, BASE))).toInt();
+		var p = top0;
+		return p.isNull() ? 0 : p.diff(base0).toInt();
 	}
 
 	@:hxmc.noGc public static function claimed():Int {
-		var t = table;
-		if (t.isNull()) return 0;
-		var n = 0, owned = Mem.getI32(t, 0);
+		var n = 0, o = owned;
 		for (i in 1...K)
-			if (owned & (1 << i) != 0) n++;
+			if (o & (1 << i) != 0) n++;
 		return n;
 	}
 
@@ -188,6 +204,10 @@ class DataStacks {
 		}
 		LibC.free(t);
 		table = Ptr.nil();
+		top0 = Ptr.nil();
+		base0 = Ptr.nil();
+		end0 = Ptr.nil();
+		owned = 0;
 		return table;
 	}
 	#end

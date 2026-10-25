@@ -828,12 +828,15 @@ the std's cores take a Slice of a Grow only to read it.
 Built (2026-10-25): the data stacks (`hxmc.rt.DataStacks`); `Grow`,
 `Slice`, `Str`, `Ref`, `Pool`, `Scope`, `IntTable`; scoped classes and
 enums; the root checker with summaries and what memory holds; scopes in
-scoped code and in GC code that touches scoped values; native and wasm32
-(the corpus' `Scoped*` cases on both, `reject/Scoped*`); WasmGC refuses
-scoped code. Not built: `Fixed<T, N>`, `Rel<T>` and the generated
+scoped code and in GC code that touches scoped values; native, wasm32
+and WasmGC, each abstraction in two representations (the corpus'
+`Scoped*` cases natively and on wasm32, `GcCheck`'s on WasmGC, under
+Mir's `--run` too; `reject/Scoped*`); the std's cores moved so far (the
+migration above). Not built: `Fixed<T, N>`, `Rel<T>` and the generated
 `verify`/`fromBytes` (designed above), variable-size enums,
 methods on scoped classes (structs have none yet), checking the
-`hxmc.scoped` std's own inline functions apart from their callers.
+`hxmc.scoped` std's own inline functions apart from their callers,
+struct of arrays on WasmGC.
 
 Scoped against GC on the maps' index (`make bench-scoped`, `Table`: n
 random Int keys inserted with updates, then 8n lookups; `IntTable` against
