@@ -1,0 +1,4 @@
+exit 0
+ScopedRoots.hx:113: 5027075
+ScopedRoots.hx:115: 2
+ScopedRoots.hx:116: hello world, 2026

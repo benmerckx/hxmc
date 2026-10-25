@@ -112,8 +112,9 @@ class DataStacks {
 		return i;
 	}
 
-	// the base and the end of stack i (claimed)
-	public static inline function base(i:Int):Ptr
+	// the base and the end of stack i (claimed): its base is fresh memory of
+	// the scope that claimed it, for the root checker
+	@:hxmc.noGc @:hxmc.alloc public static function base(i:Int):Ptr
 		return Mem.getPtr(stack(table, i), BASE);
 
 	public static inline function end(i:Int):Ptr

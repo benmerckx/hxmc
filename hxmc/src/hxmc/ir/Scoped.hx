@@ -39,6 +39,10 @@ class Root {
 	public var name:String;
 	public var weakName = false; // (named after an inlined function's variable)
 	public var line:Int;
+	// what was stored into this memory (null: not known, then it is bounded
+	// by this root itself: a store must outlive the memory it goes into);
+	// a parameter's memory is the caller's, whose stores are not seen
+	public var held:Null<Array<Root>> = [];
 
 	public function new(kind, level, param, name, line) {
 		this.kind = kind;
@@ -52,7 +56,7 @@ class Root {
 		return switch kind {
 			case PARAM: name;
 			case FRAME: '$name (a frame area)';
-			case _: (name == "" ? "a temporary" : name) + ' (made at line $line, memory of ${level > 2 ? "that scope" : "the function"})';
+			case _: (name == "" || weakName ? "a temporary" : name) + ' (made at line $line, memory of ${level > 2 ? "that scope" : "the function"})';
 		}
 }
 
@@ -64,6 +68,11 @@ class Root {
 class Summary {
 	public var ret:Array<Int> = [];
 	public var retFresh = false;
+	// the fresh memory a result may reach: per region what it holds (those
+	// parameters' roots and those regions; unknown: not known), and the
+	// regions the result itself points into (retTop)
+	public var retNodes:Array<{params:Array<Int>, held:Array<Int>, unknown:Bool}> = [];
+	public var retTop:Array<Int> = [];
 	public var allocates = false;
 	public var stores:Array<{src:Int, dst:Int}> = [];
 
@@ -71,12 +80,16 @@ class Summary {
 
 	public function same(o:Summary):Bool {
 		if (retFresh != o.retFresh || allocates != o.allocates || ret.length != o.ret.length || stores.length != o.stores.length) return false;
+		if (graph() != o.graph()) return false;
 		for (i in ret)
 			if (o.ret.indexOf(i) < 0) return false;
 		for (s in stores)
 			if (!o.hasStore(s.src, s.dst)) return false;
 		return true;
 	}
+
+	public function graph():String
+		return retTop.join(",") + ";" + [for (n in retNodes) n.params.join(",") + "/" + n.held.join(",") + (n.unknown ? "?" : "")].join(";");
 
 	public function hasStore(src:Int, dst:Int):Bool {
 		for (s in stores)
@@ -154,7 +167,7 @@ class Scoped {
 	}
 
 	// the summary of function cf (its body checked on the way)
-	public static function summary(cf:TClassField, scoped:Bool):Summary {
+	public static function summary(c:TClass, cf:TClassField, scoped:Bool):Summary {
 		var s = summaries.get(cf);
 		if (s != null) return s;
 		var p = inProgress.get(cf);
@@ -173,7 +186,7 @@ class Scoped {
 			inProgress.set(cf, cur);
 			var outer = unstable;
 			unstable = false;
-			var a = new Analysis(tf, cf.cfName, !scoped);
+			var a = new Analysis(tf, core.Globals.sTypePath(c.clPath) + "." + cf.cfName, !scoped);
 			a.run();
 			var again = unstable && !a.summary.same(cur);
 			unstable = outer || unstable;
@@ -287,6 +300,14 @@ private class Analysis {
 	var literals = new Map<Int, Bool>(); // String locals bound to literals
 	var level = 2;
 	var scopes:Array<TExpr> = []; // the scopes the current point is in (null: the function's)
+	// the roots of fresh memory and frame areas, per expression making them
+	// (the same object on every pass), and whether a pass added to what
+	// memory holds (another pass then: loads read it)
+	var sites = new ObjectMap<TExpr, Root>();
+	var callSites = new ObjectMap<TExpr, Array<Root>>();
+	var retRoots:Roots = []; // the fresh memory results point into
+	var params:Array<Root> = [];
+	var changed = false;
 
 	public var summary = new Summary();
 	public var retRefs:Bool;
@@ -310,13 +331,68 @@ private class Analysis {
 		return p == null || p.pfile == null ? 0 : CInterop.lineOf(p.pfile, p.pmin);
 
 	public function run() {
+		for (_ in 0...16) {
+			changed = false;
+			env = new Map();
+			levels = new Map();
+			literals = new Map();
+			summary = new Summary();
+			fnAllocates = false;
+			allocScopes = new ObjectMap();
+			retRoots = [];
+			pass();
+			graph();
+			if (!changed) break;
+		}
+	}
+
+	// the summary's regions: the fresh memory results reach (at most 8,
+	// else one holding all that they hold)
+	function graph() {
+		var index = new ObjectMap<Root, Int>();
+		var nodes = summary.retNodes = [];
+		function node(r:Root):Int {
+			var k = index.get(r);
+			if (k != null) return k;
+			k = nodes.length;
+			index.set(r, k);
+			var n = {params: [], held: [], unknown: r.held == null};
+			nodes.push(n);
+			if (r.held != null)
+				for (h in r.held)
+					switch h.kind {
+						case Root.PARAM:
+							if (n.params.indexOf(h.param) < 0) n.params.push(h.param);
+						case Root.FRESH:
+							var j = node(h);
+							if (n.held.indexOf(j) < 0) n.held.push(j);
+						case _:
+					}
+			return k;
+		}
+		summary.retTop = [for (r in retRoots) node(r)];
+		if (nodes.length > 8) {
+			var all = {params: [], held: [0], unknown: false};
+			for (n in nodes) {
+				for (p in n.params)
+					if (all.params.indexOf(p) < 0) all.params.push(p);
+				all.unknown = all.unknown || n.unknown;
+			}
+			summary.retNodes = [all];
+			summary.retTop = [0];
+		}
+	}
+
+	function pass() {
 		if (gc && Scoped.holdsScoped(tf.tfType))
 			fail(tf.tfExpr.epos, 'GC code returns no scoped value holding references: copy it out (toString, a Slice\'s elements) or make the function @:hxmc.scoped');
 		for (i in 0...tf.tfArgs.length) {
 			var v = tf.tfArgs[i].variable;
 			if (!gc && TFunctions.follow(v.vType).match(TFun(_)))
 				fail(v.vPos, 'the parameter ${v.vName} is a function: scoped functions take function values only when inline (a compile-time function value)');
-			var r = new Root(Root.PARAM, 1, i, v.vName, lineOf(v.vPos));
+			if (!gc && isGcType(v.vType)) fail(v.vPos, 'scoped code holds no GC references: the parameter ${v.vName} is a ${sType(v.vType)}');
+			if (params.length <= i) params.push(new Root(Root.PARAM, 1, i, v.vName, lineOf(v.vPos)));
+			var r = params[i];
 			env.set(v.vId, Scoped.carries(v.vType) ? [r] : []);
 			levels.set(v.vId, 2);
 		}
@@ -348,11 +424,46 @@ private class Analysis {
 		return true;
 	}
 
-	// fresh memory of the current scope (which therefore allocates)
-	function fresh(name:String, p:core.Globals.Pos):Roots {
-		allocated();
-		return [new Root(Root.FRESH, level, -1, name, lineOf(p))];
+	// the root of what expression e makes (one object per expression)
+	function site(e:TExpr, kind:Int, l:Int, name:String):Root {
+		var r = sites.get(e);
+		if (r == null) {
+			r = new Root(kind, l, -1, name, lineOf(e.epos));
+			sites.set(e, r);
+		}
+		return r;
 	}
+
+	// fresh memory of the current scope (which therefore allocates), made by e
+	function fresh(e:TExpr, name:String):Roots {
+		allocated();
+		return [site(e, Root.FRESH, level, name)];
+	}
+
+	// a load through an address with roots rs: what was stored there
+	static function load(rs:Roots):Roots {
+		var r:Roots = [];
+		for (x in rs)
+			r = union(r, x.kind == Root.PARAM || x.held == null ? [x] : x.held);
+		return r;
+	}
+
+	// what memory with roots ds holds now includes rs
+	function hold(ds:Roots, rs:Roots) {
+		if (rs.length == 0) return;
+		for (d in ds)
+			if (d.kind != Root.PARAM && d.held != null)
+				for (r in rs)
+					if (d.held.indexOf(r) < 0) {
+						d.held.push(r);
+						changed = true;
+					}
+	}
+
+	// memory handed to the unchecked layer: what it holds is no longer known
+	static function unknown(rs:Roots)
+		for (r in rs)
+			if (r.kind != Root.PARAM) r.held = null;
 
 	function allocated() {
 		if (scopes.length == 0) fnAllocates = true else allocScopes.set(scopes[scopes.length - 1], true);
@@ -373,7 +484,8 @@ private class Analysis {
 	// a store of a value with roots rs into memory with roots ds (none:
 	// global memory, which outlives every scope)
 	function storeMem(rs:Roots, ds:Roots, dst:String, p:core.Globals.Pos) {
-		if (ds.length == 0) storeVar(rs, 0, dst + " (memory outside the data stacks)", p);
+		var into = dst == "" ? "" : dst + ", ";
+		if (ds.length == 0) storeVar(rs, 0, into + "memory outside the data stacks", p);
 		for (d in ds)
 			for (r in rs) {
 				if (r == d) continue;
@@ -386,12 +498,13 @@ private class Analysis {
 								// (this function does not reset: its fresh memory is the caller's)
 								if (!summary.hasStore(-1, d.param)) summary.stores.push({src: -1, dst: d.param});
 							case _:
-								fail(p, 'storing a reference rooted at ${r.describe()} into $dst, memory of the caller (${d.name}), which outlives it');
+								fail(p, 'storing a reference rooted at ${r.describe()} into ${into}memory of the caller (${d.name}), which outlives it');
 						}
 					case _:
-						if (!outlivesLevel(r, d.level)) fail(p, 'storing a reference rooted at ${r.describe()} into $dst, memory rooted at ${d.describe()}, which outlives it');
+						if (!outlivesLevel(r, d.level)) fail(p, 'storing a reference rooted at ${r.describe()} into ${into}memory rooted at ${d.describe()}, which outlives it');
 				}
 			}
+		hold(ds, rs);
 	}
 
 	// a value of type `from` (with roots rs) where a value of type `to` is
@@ -533,7 +646,7 @@ private class Analysis {
 					if (strip(init).eexpr.match(TConst(TString(_)))) literals.set(v.vId, true);
 					// (fresh memory first bound to a variable of the source is named
 					// after it: an inlined function's variables are declared elsewhere)
-					var own = v.vPos != null && e.epos != null && v.vPos.pfile == e.epos.pfile;
+					var own = own(v, e);
 					for (r in rs)
 						if (r.kind == Root.FRESH && (r.name == "" || r.weakName && own)) {
 							r.name = v.vName;
@@ -665,6 +778,16 @@ private class Analysis {
 					if (summary.ret.indexOf(r.param) < 0) summary.ret.push(r.param);
 				case Root.FRESH:
 					summary.retFresh = true;
+					if (retRoots.indexOf(r) < 0) retRoots.push(r);
+					// (what it reaches may not be a frame area)
+					var seen:Roots = [];
+					function reach(m:Root) {
+						if (seen.indexOf(m) >= 0 || m.held == null) return;
+						seen.push(m);
+						for (h in m.held)
+							if (h.kind == Root.FRAME) fail(x.epos, 'returning memory that holds a reference rooted at ${h.describe()}, which ends with the function') else reach(h);
+					}
+					reach(r);
 				case _:
 					fail(x.epos, 'returning a reference rooted at ${r.describe()}, which ends with the function');
 			}
@@ -684,13 +807,12 @@ private class Analysis {
 				storeVar(rs, 0, "the static " + cf.cfName, e.epos);
 			case TField(obj, FInstance(c, _, cf)) if (CInterop.isStruct(c)):
 				// (a field of a struct: of a local, a weak update of it; else memory behind an address)
-				switch strip(obj).eexpr {
-					case TLocal(v) if (levels.exists(v.vId)):
-						storeVar(rs, levels.get(v.vId), v.vName + "." + cf.cfName, e.epos);
-						env.set(v.vId, union(env.exists(v.vId) ? env.get(v.vId) : [], rs));
-					case _:
-						storeMem(rs, ev(obj), describePlace(lhs), e.epos);
-				}
+				var v = baseLocal(obj);
+				if (v != null && levels.exists(v.vId)) {
+					storeVar(rs, levels.get(v.vId), describePlace(lhs), e.epos);
+					env.set(v.vId, union(env.exists(v.vId) ? env.get(v.vId) : [], rs));
+				} else
+					storeMem(rs, placeRoots(obj), describePlace(lhs), e.epos);
 			case TField(obj, _):
 				// (a field of an object: the GC heap)
 				ev(obj);
@@ -698,11 +820,36 @@ private class Analysis {
 			case TArray(a, i):
 				ev(a);
 				ev(i);
-				storeVar(rs, 0, describePlace(lhs) + " (the GC heap)", e.epos);
+				storeVar(rs, 0, "an array element (the GC heap)", e.epos);
 			case _:
 				storeMem(rs, ev(lhs), describePlace(lhs), e.epos);
 		}
 	}
+
+	// the local a struct place is a field of (of a field of...)
+	static function baseLocal(e:TExpr):Null<TVar>
+		return switch strip(e).eexpr {
+			case TLocal(v): v;
+			case TField(o, FInstance(c, _, _)) if (CInterop.isStruct(c)): baseLocal(o);
+			case _: null;
+		}
+
+	// the roots of the memory a struct place is in (its address's, for one
+	// reached through an address)
+	function placeRoots(obj:TExpr):Roots
+		return switch strip(obj).eexpr {
+			case TCall({eexpr: TField(_, FStatic(c, cf))}, args) if (isPtrImpl(c) && (cf.cfName == "get_value" || cf.cfName == "get")):
+				var r = ev(args[0]);
+				for (k in 1...args.length)
+					ev(args[k]);
+				r;
+			case TField(o, FInstance(c, _, _)) if (CInterop.isStruct(c)): placeRoots(o);
+			case TBlock(es) if (es.length > 0):
+				for (k in 0...es.length - 1)
+					stmt(es[k]);
+				placeRoots(es[es.length - 1]);
+			case _: ev(obj);
+		}
 
 	// a place's subexpressions evaluated (for their effects)
 	function placeEv(lhs:TExpr)
@@ -715,14 +862,24 @@ private class Analysis {
 			case _: ev(lhs);
 		}
 
-	static function describePlace(e:TExpr):String
+	// a place as the source names it ("": none, an inlined function's variable)
+	static function describePlace(e:TExpr):String {
+		inline function of(s:String, suffix:String):String
+			return s == "" ? "" : s + suffix;
 		return switch strip(e).eexpr {
-			case TLocal(v): v.vName;
-			case TField(obj, fa): describePlace(obj) + "." + TFunctions.fieldName(fa);
-			case TCall(_, args) if (args.length > 0): describePlace(args[0]) + "'s target";
-			case TArray(a, _): describePlace(a) + "[]";
-			case _: "memory";
+			case TLocal(v): own(v, e) ? v.vName : "";
+			case TField(obj, fa): of(describePlace(obj), "." + TFunctions.fieldName(fa));
+			case TCall(_, args) if (args.length > 0): of(describePlace(args[0]), "'s target");
+			case TCast(e1, _): describePlace(e1);
+			case TArray(a, _): of(describePlace(a), "[]");
+			case _: "";
 		}
+	}
+
+	// v declared in the source, not by an inlined function (whose
+	// expressions have the call's position, its variables their own)
+	static function own(v:TVar, at:TExpr):Bool
+		return v.vPos == null || at.epos == null || v.vPos.pfile == at.epos.pfile;
 
 	function field(obj:TExpr, fa:TFieldAccess, e:TExpr):Roots {
 		return switch fa {
@@ -760,14 +917,15 @@ private class Analysis {
 		}
 
 	// arguments of a call of GC code that does not take them as scoped values
-	function escapingArgs(args:haxe.ds.Vector<TExpr>, ft:Null<T>, e:TExpr) {
+	// (or of the unchecked layer: what their memory holds is no longer known)
+	function escapingArgs(args:haxe.ds.Vector<TExpr>, ft:Null<T>, e:TExpr, trusted = false) {
 		var ps = ft == null ? null : switch TFunctions.follow(ft) {
 			case TFun(s): s.args;
 			case _: null;
 		};
 		for (k in 0...args.length) {
 			var r = ev(args[k]);
-			convert(r, args[k].etype, ps != null && k < ps.length ? ps[k].type : TDynamic(null), "an argument", e.epos);
+			if (trusted) unknown(r) else convert(r, args[k].etype, ps != null && k < ps.length ? ps[k].type : TDynamic(null), "an argument", e.epos);
 		}
 	}
 
@@ -778,7 +936,7 @@ private class Analysis {
 			ev(args[k]);
 		var v = args[args.length - 1];
 		var rs = ev(v);
-		if (Scoped.carries(v.etype)) storeMem(rs, p, describePlace(args[0]) + "'s target", e.epos);
+		if (Scoped.carries(v.etype)) storeMem(rs, p, describePlace(args[0]) == "" ? "" : describePlace(args[0]) + "'s target", e.epos);
 		return rs;
 	}
 
@@ -795,8 +953,10 @@ private class Analysis {
 							var r = ev(args[0]);
 							for (k in 1...args.length)
 								ev(args[k]);
-
-							return Scoped.carries(e.etype) ? r : [];
+							return switch cf.cfName {
+								case "get_value" | "get": Scoped.carries(e.etype) ? load(r) : [];
+								case _: Scoped.carries(e.etype) ? r : [];
+							}
 					}
 				if (isMem(c))
 					switch cf.cfName {
@@ -814,7 +974,7 @@ private class Analysis {
 									return [];
 							}
 						case "stack":
-							return [new Root(Root.FRAME, 2, -1, "the area at line " + lineOf(e.epos), lineOf(e.epos))];
+							return [site(e, Root.FRAME, 2, "the area at line " + lineOf(e.epos))];
 						case n if (StringTools.startsWith(n, "set")):
 							storeArgs(args, e);
 							return [];
@@ -822,7 +982,7 @@ private class Analysis {
 							var r = ev(args[0]);
 							for (k in 1...args.length)
 								ev(args[k]);
-							return r;
+							return load(r);
 						case _:
 							for (a in args)
 								ev(a);
@@ -831,7 +991,7 @@ private class Analysis {
 				if (cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.alloc", cf.cfMeta)) {
 					for (a in args)
 						ev(a);
-					if (Scoped.carries(e.etype)) return fresh("", e.epos);
+					if (Scoped.carries(e.etype)) return fresh(e, "");
 					allocated();
 					return [];
 				}
@@ -848,11 +1008,11 @@ private class Analysis {
 				if (!scoped && (trusted || !takes)) {
 					if (!gc && !trusted) fail(e.epos, 'scoped code calls ${c.clPath.name}.${cf.cfName}, which is neither @:hxmc.scoped nor @:hxmc.noGc');
 					// (the trusted no-GC layer, C, GC code taking no scoped value: unchecked, the global root)
-					escapingArgs(args, cf.cfType, e);
+					escapingArgs(args, cf.cfType, e, trusted);
 					return [];
 				}
 				var rs = [for (a in args) ev(a)];
-				return applySummary(Scoped.summary(cf, scoped), rs, args, c.clPath.name + "." + cf.cfName, e);
+				return applySummary(Scoped.summary(c, cf, scoped), rs, args, c.clPath.name + "." + cf.cfName, e);
 			case TField(obj, FInstance(c, _, cf)) if (CInterop.isStruct(c)):
 				fail(e.epos, 'a struct has no methods (yet)');
 			case TField(_, FEnum(_, _)):
@@ -875,7 +1035,7 @@ private class Analysis {
 					return [];
 				}
 				var rs = [for (a in args) ev(a)];
-				return applySummary(Scoped.summary(cf, false), rs, args, c.clPath.name + "." + cf.cfName, e);
+				return applySummary(Scoped.summary(c, cf, false), rs, args, c.clPath.name + "." + cf.cfName, e);
 			case _ if (gc):
 				ev(f);
 				escapingArgs(args, f.etype, e);
@@ -891,11 +1051,30 @@ private class Analysis {
 		for (i in s.ret)
 			if (i < rs.length) r = union(r, rs[i]);
 		if (s.allocates) allocated();
-		if (s.retFresh) r = union(r, [new Root(Root.FRESH, level, -1, "the result of " + name, lineOf(e.epos))]);
+		// (what the callee allocates is the caller's, in this scope: its
+		// regions as the summary says, one root each, the same on every pass)
+		var nodes = callSites.get(e);
+		if (nodes == null || nodes.length != s.retNodes.length) {
+			nodes = [for (k in 0...s.retNodes.length) new Root(Root.FRESH, level, -1, (s.retTop.indexOf(k) >= 0 ? "the result of " : "memory allocated by ") + name, lineOf(e.epos))];
+			callSites.set(e, nodes);
+		}
+		for (k in 0...nodes.length) {
+			var n = s.retNodes[k];
+			if (n.unknown) nodes[k].held = null else {
+				var h:Roots = [];
+				for (i in n.params)
+					if (i < rs.length) h = union(h, rs[i]);
+				for (j in n.held)
+					h = union(h, [nodes[j]]);
+				hold([nodes[k]], h);
+			}
+		}
+		for (k in s.retTop)
+			r = union(r, [nodes[k]]);
 		for (st in s.stores) {
 			if (st.dst >= rs.length) continue;
-			var src = st.src < 0 ? [new Root(Root.FRESH, level, -1, "memory " + name + " allocates", lineOf(e.epos))] : (st.src < rs.length ? rs[st.src] : []);
-			try storeMem(src, rs[st.dst], "the memory of " + describePlace(args[st.dst]), e.epos) catch (msg:String) {
+			var src = st.src < 0 ? (nodes.length > 0 ? nodes : [site(e, Root.FRESH, level, "memory allocated by " + name)]) : (st.src < rs.length ? rs[st.src] : []);
+			try storeMem(src, rs[st.dst], "", e.epos) catch (msg:String) {
 				var k = msg.indexOf("storing ");
 				throw Scoped.at(e.epos) + display + ": " + name + " stores " + (st.src < 0 ? "memory it allocates" : "its argument " + describePlace(args[st.src]))
 					+ " into the memory of its argument " + describePlace(args[st.dst]) + ": " + (k >= 0 ? msg.substr(k) : msg);
