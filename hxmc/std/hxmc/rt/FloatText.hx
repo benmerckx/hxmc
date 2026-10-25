@@ -21,7 +21,7 @@ import hxmc.unsafe.Ptr;
 // faces"): the GC face is String's (Std.string, Str.ofFloat here) and the
 // runtime's reports, which pass a frame area; the scoped face is
 // hxmc.scoped.Str's ofFloat and toFloat.
-@:keep @:allow(hxmc.rt) @:allow(hxmc.scoped) @:hxmc.scoped
+@:keep @:allow(hxmc.rt) @:allow(hxmc.scoped) @:hxmc.noGc @:hxmc.scoped
 class FloatText {
 	static inline var LIMBS = 256;
 	static inline var BIG = 8 + 4 * LIMBS;

@@ -36,7 +36,7 @@ import hxmc.unsafe.Ptr;
 // CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-@:keep @:hxmc.scoped
+@:keep @:hxmc.noGc @:hxmc.scoped
 class LibM {
 	// ---- the tables (pow_data.c, exp_data.c, log.c's, rem_pio2_large.c's
 	// ipio2), as hexadecimal bit patterns: read-only data of the program

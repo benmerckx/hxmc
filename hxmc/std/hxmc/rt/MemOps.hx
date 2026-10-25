@@ -9,7 +9,7 @@ import hxmc.unsafe.Ptr;
 // time (hxmc/c/rtlibc.c once replaced it on Linux); the C library's own
 // stays for C code. WebAssembly's memcmp (wasm/Heap.hx) is this.
 class MemOps {
-	#if !hxmc.wasm_gc @:hxmc.scoped #else @:hxmc.noGc #end public static function compare(a:Ptr, b:Ptr, n:I64):Int {
+	@:hxmc.noGc #if !hxmc.wasm_gc @:hxmc.scoped #end public static function compare(a:Ptr, b:Ptr, n:I64):Int {
 		var k = n.toInt();
 		var i = 0;
 		while (i + 8 <= k && Mem.getI64(a, i) == Mem.getI64(b, i))
