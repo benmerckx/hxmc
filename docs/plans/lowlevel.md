@@ -727,6 +727,69 @@ parked, below, "GC references in the core"): the natives over GC
 references (`Array`'s, whose elements the collector traces and whose
 `sort` calls back into Haxe; `Dyn`, `Boxes`), and the trusted core (d).
 
+### GC references in the core (research; Array, Dyn and Boxes parked)
+
+The cores so far hold scalars: units, bytes, Ints, Floats. `Array`'s
+natives, `Dyn` and `Boxes` work on GC references, which differ in three
+ways:
+
+- reading a reference is a load, as a scalar's: what only reads (search,
+  comparison, hashing) needs nothing more than the view the maps already
+  use (no GC point under it, which the raw-address check enforces);
+- storing one into an old object needs the write barrier (the remembered
+  set), or the next minor collection misses a young object;
+- some operations call Haxe (`sort`'s comparator, `filter`, `map`,
+  `Dyn`'s field functions): a dynamic call is a GC point, which scoped
+  code cannot make.
+
+The options:
+
+1. A storage parameter on the core that supplies barriered stores (a
+   `RefSlots` view whose `set` runs the barrier). Each store then
+   costs the barrier's test, where the runtime does better today: a move
+   of many references (reverse, shifts, blit, concat) is raw word moves
+   then one `rt_barrier_range` over what changed (`MemRepr.arrReverse`,
+   `barrierAll`). The same shape works for a core: it moves words in a
+   view, the face calls the range barrier after it (on WasmGC the engine
+   needs none). Callbacks do not fit either way: a core that calls the
+   comparator would be a resumable machine ("the next pair to compare",
+   as `MapIndex.next` hands the face the next candidate), its state on
+   the data stack.
+2. Only the scalar and pure parts on the core: search in the scalar kinds
+   (Int, Float, Bool arrays are unboxed), identity search, comparison,
+   and the word moves with the face's range barrier; the face keeps
+   Haxe's equality rules, the callbacks and the allocation.
+3. Keep them GC code: they are written once already (over `Repr`, both
+   heaps), and what they do between calls into the collector or Haxe is
+   little.
+
+Measured (Linux x86-64, 1M elements, the median of two runs):
+
+| | now | other shape |
+| --- | ---: | ---: |
+| `Array<Int>.sort` with a comparator | 474-498 ms (boxed copies, merge sort) | 533-649 ms: a merge sort of an index permutation (what a core over Ints would do), the comparator called the same |
+| `Array<P>.sort` (objects) | 318-350 ms | 327-387 ms (the same) |
+| `Array<Int>.indexOf`, a miss, x100 | 54-70 ms | |
+| `Array<P>.indexOf`, a miss, x100 | 1140-1249 ms (`Dyn.dynEq` per element) | 93-96 ms: a loop comparing references |
+| `reverse`, Int and objects, x100 | 49-63 ms both | |
+
+The comparator's dynamic call dominates a sort: an index permutation
+saves the boxed copies and gains nothing, so a resumable sorting core is
+not worth its complexity. Search is where the shape matters: equality to
+a class instance is identity, so the face can classify the needle once
+(not a boxed number, a String or an enum value: `Dyn.dynEq`'s cases) and
+scan words, 12 times faster; for the other needles the face keeps
+`dynEq`. Moves are already raw words plus a range barrier.
+
+Recommendation: option 2, small. Move the searches (`indexOf`,
+`lastIndexOf`, `contains`, `remove`'s search) onto a core over views
+of the element storage: scalar kinds by value, references by identity
+once the face has classified the needle; give the core word moves
+(reverse, shifts, blit) with the range barrier staying the face's call.
+Keep `sort`, `filter`, `map`, `Dyn` and `Boxes` GC code (option 3:
+callbacks, boxing and object layouts are their work, not an algorithm
+over storage). Not built: waiting for the owner's decision.
+
 ### Serialization: relative references
 
 Structures built from relative references are their own file format:
