@@ -19,6 +19,80 @@ class Holder {
 	public function new() {}
 }
 
+enum Ex {
+	Local(n:Int);
+	Paren(e:Ex);
+	Other(n:Int);
+}
+
+// a variable set to one of several closures in a switch, then captured (the
+// shape of genphp7's CodeWriter.writeExprSwitch): its box is read back from
+// its rooted slot where they are stored, their region as far as its
+class Writer {
+	public var out:Array<String> = [];
+
+	public function new() {}
+
+	@:noinline public function write(s:String)
+		out.push(s);
+
+	@:noinline public function writeExpr(e:Ex)
+		switch e {
+			case Local(n) | Other(n): write("e" + n);
+			case Paren(e): writeExpr(e);
+		}
+
+	@:noinline function needEq(e:Ex, c:Int):Bool
+		return c % 2 == 0;
+
+	@:noinline function writeAsBlock(c:Int)
+		write("{" + c + "}");
+
+	public function writeSwitch(sw:Ex, cases:Array<Array<Int>>, dflt:Null<Int>):Void {
+		var writeSw = switch sw {
+			case Local(_):
+				(() -> writeExpr(sw));
+			case Paren(e = Local(_)):
+				(() -> writeExpr(e));
+			case _:
+				write("$s = ");
+				writeExpr(sw);
+				write(";");
+				(() -> write("$s"));
+		}
+		function writeConditions(conditions:Array<Int>):Void {
+			for (i in 0...conditions.length) {
+				var c = conditions[i];
+				if (needEq(sw, c)) {
+					write("eq(");
+					writeSw();
+					write(", " + c + ")");
+				} else {
+					writeSw();
+					write(" === " + c);
+				}
+				if (i < conditions.length - 1) write(" || ");
+			}
+		}
+		function writeCases(cases:Array<Array<Int>>):Void {
+			for (i in 0...cases.length) {
+				write("if (");
+				writeConditions(cases[i]);
+				write(") ");
+				writeAsBlock(i);
+				if (i < cases.length - 1) write(" else ");
+			}
+		}
+		writeCases(cases);
+		switch dflt {
+			case null:
+			case d:
+				write(" else ");
+				writeAsBlock(d);
+		}
+	}
+}
+
 class StackClosures {
 	static var kept:Int->Int;
 
@@ -259,6 +333,12 @@ class StackClosures {
 		for (i in 0...300)
 			b += branches(t, i % 37, i % 2 == 0);
 		Sys.println(b);
+		var w = new Writer();
+		for (k in 0...300) {
+			var sw = k % 3 == 0 ? Local(k) : k % 3 == 1 ? Paren(Local(k)) : Other(k);
+			w.writeSwitch(sw, [for (i in 0...(k % 4)) [for (j in 0...(i + 1)) j + k]], k % 5 == 0 ? null : k);
+		}
+		Sys.println(w.out.length + " " + w.out.slice(0, 30).join(""));
 		Sys.println(mapTree(t, x -> x * 3).join(","));
 		Sys.println(evenOdd(20));
 		Sys.println(leaking(t) + " " + leaked(t.kids[1]));

@@ -125,7 +125,7 @@ class MemLower extends MirWriter {
 	// and in the handlers of a try outside it (a throw leaves it without an
 	// edge).
 	function clearFrameObjs() {
-		var objs = [], moves = [], stores = [], handlers = [];
+		var objs = [], moves = [], stores = [], handlers = [], cells = [];
 		for (b in f.blocks) {
 			if (b.handler) handlers.push(b);
 			for (i in b.ins) {
@@ -134,11 +134,29 @@ class MemLower extends MirWriter {
 					case New if (i.info.stack): objs.push(i);
 					case Phi | Copy: moves.push(i);
 					case SetField | InitField if (i.b >= 0): stores.push(i);
+					case Load | Store if (i.b < 0 && i.size == 8): cells.push(i);
 					case _:
 				}
 			}
 		}
 		if (objs.length == 0) return;
+		// (a memory word: its address's base, past additions of constants, and offset)
+		var slotLoads = new Map<String, Array<MIns>>(), slotStores = new Map<String, Array<MIns>>();
+		for (i in cells) {
+			var v = i.a, off = i.imm, n = 0;
+			while (n++ < 16) {
+				var x = f.vals[v];
+				if (x.op == Copy) v = x.a else if (x.op == Add && f.vals[x.b].op == Const && f.vals[x.b].sym == null) {
+					off += f.vals[x.b].imm;
+					v = x.a;
+				} else break;
+			}
+			var k = v + ":" + off;
+			var m = i.op == Load ? slotLoads : slotStores;
+			var l = m.get(k);
+			if (l == null) m.set(k, l = []);
+			l.push(i);
+		}
 		var cfg = f.cfg();
 		cfg.dom();
 		inline function ncd(a:Int, b:Int):Int {
@@ -158,14 +176,25 @@ class MemLower extends MirWriter {
 			var x = objs[q];
 			var root = cfg.index(x.block);
 			var alias = [x.id => true], grew = true;
+			inline function add(i:MIns) {
+				alias.set(i.id, true);
+				root = ncd(root, cfg.index(i.block));
+				grew = true;
+			}
 			while (grew) {
 				grew = false;
 				for (i in moves)
-					if (!alias.exists(i.id) && (alias.exists(i.a) || i.args.exists(v -> alias.exists(v)))) {
-						alias.set(i.id, true);
-						root = ncd(root, cfg.index(i.block));
-						grew = true;
-					}
+					if (!alias.exists(i.id) && (alias.exists(i.a) || i.args.exists(v -> alias.exists(v)))) add(i);
+				// (what is read back from a word it was stored into: a rooted local's slot)
+				for (k => st in slotStores)
+					for (s in st)
+						if (alias.exists(s.c)) {
+							var ls = slotLoads.get(k);
+							if (ls != null)
+								for (l in ls)
+									if (!alias.exists(l.id)) add(l);
+							break;
+						}
 			}
 			roots[q] = root;
 			aliases.push(alias);
