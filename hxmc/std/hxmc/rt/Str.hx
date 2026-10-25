@@ -529,7 +529,7 @@ class Str {
 		return r.end == 0 ? Math.NaN : r.value;
 	}
 
-	@:hxmc.host("Std_random") @:hxmc.unsafe static function random(max:Int):Int {
+	@:hxmc.host("Std_random") @:hxmc.scoped static function random(max:Int):Int {
 		if (max <= 0) return 0;
 		#if (hxmc.wasm_gc)
 		return Std.int(hxmc.rt.gc.W.random() * max);

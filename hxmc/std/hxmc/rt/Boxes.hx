@@ -60,7 +60,7 @@ class Boxes {
 	@:hxmc.export("hx_box_bool") @:hxmc.unsafe static function boxBool(v:Int):Dynamic
 		return Mem.obj(boolBoxes.add(v != 0 ? 24 : 8));
 
-	@:hxmc.unsafe static function f2l(f:Float):I64 {
+	@:hxmc.scoped static function f2l(f:Float):I64 {
 		if (f != f) return 0;
 		if (f >= 9223372036854775808.0) return ((1 : I64) << 63) - 1;
 		if (f < -9223372036854775808.0) return (1 : I64) << 63;
@@ -69,10 +69,10 @@ class Boxes {
 	}
 
 	// Std.int / Int casts: truncation in range; NaN gives 0, wider values wrap
-	@:hxmc.unsafe static inline function f2i(f:Float):Int
+	@:hxmc.scoped static inline function f2i(f:Float):Int
 		return f > -2147483649.0 && f < 2147483648.0 ? (cast f : Int) : f2iSlow(f);
 
-	@:hxmc.export("hx_f2i_slow") @:hxmc.unsafe static function f2iSlow(f:Float):Int {
+	@:hxmc.export("hx_f2i_slow") @:hxmc.scoped static function f2iSlow(f:Float):Int {
 		if (f != f) return 0;
 		if (f >= 2147483648.0 || f <= -2147483649.0) {
 			var l:I64 = cast M.fmod(f, 4294967296.0);

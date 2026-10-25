@@ -34,13 +34,13 @@ class Libc {
 		#end
 	}
 
-	@:hxmc.export("rand") @:hxmc.unsafe static function rand():Int {
+	@:hxmc.export("rand") @:hxmc.scoped static function rand():Int {
 		var a:I64 = ((0x5851F42D : I64) << 32) | (0x4C957F2D : I64);
 		seed = a * seed + 1;
 		return (seed >>> 33).toInt();
 	}
 
-	@:hxmc.export("srand") @:hxmc.unsafe static function srand(s:Int):Void
+	@:hxmc.export("srand") @:hxmc.scoped static function srand(s:Int):Void
 		seed = ((s : I64) & m32()) - 1;
 
 	@:hxmc.export("__errno_location") @:hxmc.unsafe static function errnoLocation():Ptr {
@@ -58,7 +58,7 @@ class Libc {
 	}
 
 	// days since 1970-01-01 of a civil date (proleptic Gregorian; Howard Hinnant's algorithm)
-	@:hxmc.unsafe static function daysFromCivil(y:Int, m:Int, d:Int):I64 {
+	@:hxmc.scoped static function daysFromCivil(y:Int, m:Int, d:Int):I64 {
 		if (m <= 2) y--;
 		var era = Std.int((y >= 0 ? y : y - 399) / 400);
 		var yoe = y - era * 400;

@@ -698,7 +698,7 @@ class Dyn {
 		}
 	}
 
-	@:hxmc.unsafe static inline function f2l(f:Float):I64 {
+	@:hxmc.scoped static inline function f2l(f:Float):I64 {
 		// (the conversion of the language: NaN 0, saturating)
 		var x:I64 = cast f;
 		return x;

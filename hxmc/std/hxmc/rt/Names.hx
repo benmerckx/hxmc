@@ -228,7 +228,7 @@ class Names {
 
 	// ---- inline caches
 
-	@:hxmc.unsafe static inline function keyHash(key:I64):Int
+	@:hxmc.scoped static inline function keyHash(key:I64):Int
 		return ((key * haxe.Int64.make(0x9E3779B9, 0x7F4A7C15)) >>> 32).toInt();
 
 	@:hxmc.unsafe static function localGet(o:Dynamic, fid:Int):Ptr {

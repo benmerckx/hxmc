@@ -147,7 +147,7 @@ class Date {
 
 	#if !(hxmc.wasm_gc)
 	// ---- Math.random: [0, 1) from rand() (the UCRT's has 15 bits: two make 30)
-	@:hxmc.host("Math_random") @:hxmc.unsafe static function random():Float {
+	@:hxmc.host("Math_random") @:hxmc.scoped static function random():Float {
 		if (windows()) return ((LibC.rand() << 15) ^ LibC.rand()) / 1073741824.0;
 		return LibC.rand() / 2147483648.0;
 	}

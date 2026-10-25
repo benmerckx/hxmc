@@ -236,7 +236,7 @@ Then the OS layers move onto it, area by area, their raw versions gone:
 | inflate and CRC-32 (NativeZip) | 9 → 0 | 0 → 2 | 71 → 0 | 13 → 0 | above | |
 | Windows files, processes, environment (WinSys, Win32, SysCore) | 23 → 12 | 0 → 7 | 80 → 20 | 92 → 50 | SysNatives, SafeRegionRoots, NetNatives, ScopedCBoundary under wine | |
 | Windows sockets (WinNet, Winsock, NetCore) | 29 → 11 | 0 → 18 | 68 → 21 | 29 → 13 | SysNatives, SafeRegionRoots, NetNatives, ScopedCBoundary under wine | |
-| the calendar (Date, MemRepr's dates, LibC's time functions, Ssl's certificate dates) | 20 → 2 | 0 → 2 | 21 → 3 | 11 → 0 | 200k dates' fields, offset, toString, now, new: 230-270 ms both | +1.0 KB of 109 KB |
+| the calendar (Date, MemRepr's dates, LibC's time functions, Ssl's certificate dates) | 20 → 1 | 0 → 3 | 21 → 3 | 11 → 0 | 200k dates' fields, offset, toString, now, new: 230-270 ms both | +1.0 KB of 109 KB |
 
 (Raw-memory lines: lines calling `Mem` other than the target's constants
 `os`, `target`, `arm`, `platform`; `Ptr` lines: lines naming the type.)
@@ -244,16 +244,21 @@ The structures C fills are `Fixed` buffers of the frame read through
 `hxmc.scoped.LE` (little-endian scalars of a byte view, one range test
 each); with `ImageIO`'s byte-by-byte checked reads, function calls each,
 select was 30% slower. The self-build does not call these layers in its
-hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 542
+hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 532
 (the runtime gained three small ones: Str.jsonRun, Gc.viewTouch,
-DataStacks.object).
+DataStacks.object). Ten natives of pure arithmetic are scoped code now
+(Math.random, Std.random, the float-to-integer conversions of Boxes and
+Dyn, Names' inline caches' hash, wasm32's rand, srand and
+daysFromCivil): a host native that is not a GC point must be unsafe or
+scoped, and scoped code allocating nothing is lowered as unsafe code is
+(the programs built are the same bytes).
 The calendar's struct tm is a 64-byte `Fixed` C fills (the nine ints
 first on every target), its time_t an 8-byte one; what stays unsafe is
-the date object's slot (`Date.ms`) and Math.random. Its fields, offset,
-text and times are the same as before in three time zones natively, on
-wasm32 and under wine. The offset ignored daylight saving (the UTC fields
-were read back as standard time; New York's summer gave 300, not 240):
-they now take the local time's `tm_isdst`, matching node's Date in five zones
+the date object's slot (`Date.ms`). Its fields, offset, text and times
+are the same as before in three time zones natively, on wasm32 and under
+wine. The offset ignored daylight saving (the UTC fields were read back
+as standard time; New York's summer gave 300, not 240): they now take
+the local time's `tm_isdst`, matching node's Date in five zones
 (StdNatives checks a summer date). wasm32's own calendar (wasm/Libc:
 gmtime_r, mktime) as scoped code over a view, tried: 4% slower on 200k
 dates' calls (range tests per field), its unsafe uses the same (the
