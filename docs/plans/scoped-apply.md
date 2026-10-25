@@ -294,8 +294,11 @@ Interleaved, before against after (three runs each): wall 13.20 against
 its own old space plus what is live, and the live size grows through
 the build. Unchanged: tsc-haxe (its programs' default first limit is
 256 MB and it runs no major collection: peak 529 MB at any factor), the
-formatter build (75 MB promoted, no major collection), `make bench` (no
-program's default changed). The compilation server keeps its 4 GB
+formatter build (75 MB promoted, no major collection), the benchmarks'
+programs (no default changed: binarytrees and alloc built with the
+collector before and after run the same collections, 313 minor and none
+major, 263 minor and 3 major; medians 0.77 against 0.81 s and 1.74
+against 1.76 s, the binaries' layout differing). The compilation server keeps its 4 GB
 (`--server`): it holds every module between builds, not measured here.
 
 ### The back end's graphs (item 1): what is promoted
