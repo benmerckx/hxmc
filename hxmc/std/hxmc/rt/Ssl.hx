@@ -466,13 +466,13 @@ class Ssl {
 
 	@:hxmc.callback @:hxmc.unsafe static function bioWrite(s:Ptr, buf:Ptr, len:I64):Int {
 		var fd = Mem.getI32(s, SSL_FD);
-		var r:I64 = os() == 2 ? (Winsock.send((fd : I64), buf, len.toInt(), 0) : I64) : Posix.send(fd, buf, len, 0);
+		var r:I64 = os() == 2 ? (Winsock.send((fd : I64), buf, len.toInt(), 0) : I64) : Posix.send(fd, hxmc.scoped.Slice.raw(buf, len.toInt()), 0);
 		return r < 0 ? bioFailed(s, true) : r.toInt();
 	}
 
 	@:hxmc.callback @:hxmc.unsafe static function bioRead(s:Ptr, buf:Ptr, len:I64):Int {
 		var fd = Mem.getI32(s, SSL_FD);
-		var r:I64 = os() == 2 ? (Winsock.recv((fd : I64), buf, len.toInt(), 0) : I64) : Posix.recv(fd, buf, len, 0);
+		var r:I64 = os() == 2 ? (Winsock.recv((fd : I64), buf, len.toInt(), 0) : I64) : Posix.recv(fd, hxmc.scoped.Slice.raw(buf, len.toInt()), 0);
 		return r < 0 ? bioFailed(s, false) : r.toInt();
 	}
 

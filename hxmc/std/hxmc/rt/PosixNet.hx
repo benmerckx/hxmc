@@ -2,11 +2,16 @@ package hxmc.rt;
 
 import hxmc.I64;
 import hxmc.rt.C;
-import hxmc.unsafe.Atomic;
+import hxmc.scoped.Fixed;
+import hxmc.scoped.LE;
+import hxmc.scoped.Ref;
+import hxmc.scoped.Scope;
+import hxmc.scoped.Slice;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Posix;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
 
 // BSD sockets of hxmc.NativeNet on Linux and macOS (formerly rt_net.c;
 // Windows: WinNet), standing for the OCaml Unix
@@ -15,7 +20,9 @@ import hxmc.unsafe.Ptr;
 // names select select$1050, as its headers do). With several threads, a
 // call on a blocking socket does not block the process: it is made without
 // blocking and the thread waits for the descriptor in the scheduler
-// (rt_wait_fd, rt_wait_fds).
+// (rt_wait_fd, rt_wait_fds). The C library's calls take views of scoped
+// memory (hxmc.unsafe.Posix): addresses, options and descriptor sets in
+// Fixed buffers of the frame, read and written little-endian (hxmc.scoped.LE).
 class PosixNet {
 	static inline function mac():Bool
 		return Mem.os() == 1;
@@ -60,16 +67,16 @@ class PosixNet {
 	static inline var F_GETFL = 3;
 	static inline var F_SETFL = 4;
 
-	@:hxmc.unsafe static function errno():Int
+	@:hxmc.scoped static function errno():Int
 		return (mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location()).value;
 
-	@:hxmc.unsafe static function setErrno(e:Int)
+	@:hxmc.scoped static function setErrno(e:Int)
 		(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location()).value = e;
 
 	// the last failure's errno, per thread
 	@:hxmc.threadLocal static var netErrno:Int;
 
-	@:hxmc.unsafe static function ret(r:Int):Int {
+	@:hxmc.scoped static function ret(r:Int):Int {
 		if (r < 0) netErrno = errno();
 		return r;
 	}
@@ -77,22 +84,22 @@ class PosixNet {
 	static inline function lastErrno():Int
 		return netErrno;
 
-	@:hxmc.unsafe public static function getErrno():Int
+	@:hxmc.scoped public static function getErrno():Int
 		return lastErrno();
 
 	// with other threads, a blocking socket's calls wait in the scheduler
-	@:hxmc.unsafe static function cooperative(fd:Int):Bool {
+	@:hxmc.scoped static function cooperative(fd:Int):Bool {
 		if (threads() <= 1) return false;
 		var flags = Posix.fcntl(fd, F_GETFL, 0);
 		return flags >= 0 && (flags & O_NONBLOCK()) == 0;
 	}
 
 	// SO_RCVTIMEO/SO_SNDTIMEO (setTimeout): seconds, -1 when none
-	@:hxmc.unsafe static function sockTimeout(fd:Int, opt:Int):Float {
-		var tv = Mem.stack(16), n = Mem.stack(8);
-		Mem.setI32(n, 0, 16);
-		if (Posix.getsockopt(fd, SOL_SOCKET(), opt, tv, n) < 0) return -1;
-		var s = Mem.getI64(tv, 0), us = Mem.getI32(tv, 8);
+	@:hxmc.scoped static function sockTimeout(fd:Int, opt:Int):Float {
+		var tv = new Fixed<UInt8, 16>(), n = new Fixed<Int, 1>();
+		n[0] = 16;
+		if (Posix.getsockopt(fd, SOL_SOCKET(), opt, tv.view().ref(0), n.view().ref(0)) < 0) return -1;
+		var s = LE.i64(tv.view(), 0), us = LE.i32(tv.view(), 8);
 		if (s == 0 && us == 0) return -1;
 		var sf:Float = cast s;
 		return sf + us * 1e-6;
@@ -108,15 +115,14 @@ class PosixNet {
 	}
 
 	public static function strerror(err:Int):String {
-		var s = Posix.strerror(err);
-		return Str.ofUtf8(s, LibC.strlen(s).toInt());
+		return SysCore.ofC(Posix.strerror(err));
 	}
 
 	// haxe/src/compiler/haxe.ml ignores SIGPIPE for the whole process; the
 	// port's entry point does not, so the first socket does it
 	static var sigpipeIgnored:Bool;
 
-	@:hxmc.unsafe public static function socket():Int {
+	@:hxmc.scoped public static function socket():Int {
 		if (!sigpipeIgnored) {
 			Posix.signal(13, Ptr.ofI64(1)); // SIGPIPE, SIG_IGN
 			sigpipeIgnored = true;
@@ -130,42 +136,38 @@ class PosixNet {
 		return fd;
 	}
 
-	@:hxmc.unsafe public static function close(fd:Int):Int {
+	@:hxmc.scoped public static function close(fd:Int):Int {
 		Leaf.rt_fd_closed(fd);
 		return ret(Posix.close(fd));
 	}
 
 	public static function accept(fd:Int):Int {
 		if (cooperative(fd) && !waitSock(fd, false)) return ret(-1);
-		var a = Mem.stack(128), n = Mem.stack(8);
-		Mem.setI32(n, 0, 128);
-		if (!mac()) return ret(Posix.accept4(fd, a, n, 0x80000)); // SOCK_CLOEXEC
+		var a = new Fixed<UInt8, 128>(), n = new Fixed<Int, 1>();
+		n[0] = 128;
+		if (!mac()) return ret(Posix.accept4(fd, a.view().ref(0), n.view().ref(0), 0x80000)); // SOCK_CLOEXEC
 		Threads.lockSafe(Gc.fdLock);
-		var c = ret(PosixSys.cloexec(Posix.accept(fd, a, n)));
+		var c = ret(PosixSys.cloexec(Posix.accept(fd, a.view().ref(0), n.view().ref(0))));
 		Os.unlock(Gc.fdLock);
 		return c;
 	}
 
 	// sockaddr_in of ip (host order) and port: Linux u16 family; macOS u8
 	// length, u8 family; then the port and the address in network order
-	@:hxmc.unsafe static function inetAddr(a:Ptr, ip:Int, port:Int) {
-		LibC.memset(a, 0, 16);
+	@:hxmc.scoped static function inetAddr(a:Slice<UInt8>, ip:Int, port:Int) {
 		if (mac()) {
-			Mem.setI8(a, 0, 16);
-			Mem.setI8(a, 1, 2);
-		} else Mem.setI16(a, 0, 2);
-		Mem.setI8(a, 2, port >> 8);
-		Mem.setI8(a, 3, port);
-		Mem.setI8(a, 4, ip >>> 24);
-		Mem.setI8(a, 5, ip >> 16);
-		Mem.setI8(a, 6, ip >> 8);
-		Mem.setI8(a, 7, ip);
+			a[0] = 16;
+			a[1] = 2;
+		} else LE.put16(a, 0, 2);
+		a[2] = port >> 8;
+		a[3] = port;
+		LE.put32(a, 4, ((ip >>> 24) & 0xff) | ((ip >> 8) & 0xff00) | ((ip << 8) & 0xff0000) | (ip << 24));
 	}
 
-	@:hxmc.unsafe public static function bind(fd:Int, ip:Int, port:Int):Int {
-		var a = Mem.stack(16);
-		inetAddr(a, ip, port);
-		return ret(Posix.bind(fd, a, 16));
+	@:hxmc.scoped public static function bind(fd:Int, ip:Int, port:Int):Int {
+		var a = new Fixed<UInt8, 16>();
+		inetAddr(a.view(), ip, port);
+		return ret(Posix.bind(fd, a.view().ref(0), 16));
 	}
 
 	public static function connect(fd:Int, ip:Int, port:Int):Int {
@@ -175,11 +177,10 @@ class PosixNet {
 			var r = connectTo(fd, ip, port);
 			if (r < 0 && errno() == EINPROGRESS()) {
 				if (waitSock(fd, true)) {
-					var e = Mem.stack(8), n = Mem.stack(8);
-					Mem.setI32(e, 0, 0);
-					Mem.setI32(n, 0, 4);
-					Posix.getsockopt(fd, SOL_SOCKET(), SO_ERROR(), e, n);
-					var err = Mem.getI32(e, 0);
+					var e = new Fixed<UInt8, 4>(), n = new Fixed<Int, 1>();
+					n[0] = 4;
+					Posix.getsockopt(fd, SOL_SOCKET(), SO_ERROR(), e.view().ref(0), n.view().ref(0));
+					var err = LE.i32(e.view(), 0);
 					r = err != 0 ? -1 : 0;
 					setErrno(err);
 				} else r = -1;
@@ -192,28 +193,34 @@ class PosixNet {
 		return ret(connectTo(fd, ip, port));
 	}
 
-	@:hxmc.unsafe static function connectTo(fd:Int, ip:Int, port:Int):Int {
-		var a = Mem.stack(16);
-		inetAddr(a, ip, port);
-		return Posix.connect(fd, a, 16);
+	@:hxmc.scoped static function connectTo(fd:Int, ip:Int, port:Int):Int {
+		var a = new Fixed<UInt8, 16>();
+		inetAddr(a.view(), ip, port);
+		return Posix.connect(fd, a.view().ref(0), 16);
 	}
 
-	@:hxmc.unsafe public static function listen(fd:Int, n:Int):Int
+	@:hxmc.scoped public static function listen(fd:Int, n:Int):Int
 		return ret(Posix.listen(fd, n));
 
 	public static function sockName(fd:Int, peer:Bool):Array<Int> {
-		var s = Mem.stack(128), n = Mem.stack(8);
-		Mem.setI32(n, 0, 128);
-		var r = peer ? Posix.getpeername(fd, s, n) : Posix.getsockname(fd, s, n);
+		var a = new Fixed<UInt8, 128>(), n = new Fixed<Int, 1>();
+		n[0] = 128;
+		var s = a.view();
+		var r = peer ? Posix.getpeername(fd, s.ref(0), n.view().ref(0)) : Posix.getsockname(fd, s.ref(0), n.view().ref(0));
 		if (r < 0) {
 			ret(-1);
 			return null;
 		}
-		var family = mac() ? Mem.getU8(s, 1) : Mem.getU16(s, 0);
+		var family = mac() ? s[1] : LE.u16(s, 0);
 		if (family != 2) return [0, -1];
-		var ip = (Mem.getU8(s, 4) << 24) | (Mem.getU8(s, 5) << 16) | (Mem.getU8(s, 6) << 8) | Mem.getU8(s, 7);
-		return [ip, (Mem.getU8(s, 2) << 8) | Mem.getU8(s, 3)];
+		var ip = (s[4] << 24) | (s[5] << 16) | (s[6] << 8) | s[7];
+		return [ip, (s[2] << 8) | s[3]];
 	}
+
+	// the bytes [pos, pos + len) of the Bytes b, a view for a call that does
+	// not block (nothing collects during it)
+	static inline function bytesView(b:Dynamic, pos:Int, len:Int):Slice<UInt8>
+		return Slice.raw(Bytes.bytes(b).add(pos), len);
 
 	// OCaml's Unix.recv/send check the range (Invalid_argument "Unix.recv")
 	public static function recv(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
@@ -221,7 +228,7 @@ class PosixNet {
 		if (cooperative(fd)) {
 			var r = 0;
 			while (true) {
-				r = Posix.recv(fd, Bytes.bytes(b).add(pos), len, MSG_DONTWAIT()).toInt();
+				r = Posix.recv(fd, bytesView(b, pos, len), MSG_DONTWAIT()).toInt();
 				if (r >= 0) break;
 				var e = errno();
 				if (e != EAGAIN() && e != EINTR) break;
@@ -229,7 +236,7 @@ class PosixNet {
 			}
 			return ret(r);
 		}
-		return ret(Posix.recv(fd, Bytes.bytes(b).add(pos), len, 0).toInt());
+		return ret(Posix.recv(fd, bytesView(b, pos, len), 0).toInt());
 	}
 
 	public static function send(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
@@ -237,7 +244,7 @@ class PosixNet {
 		if (cooperative(fd)) { // may send part of the buffer, as a signal-interrupted send does
 			var r = 0;
 			while (true) {
-				r = Posix.send(fd, Bytes.bytes(b).add(pos), len, MSG_DONTWAIT()).toInt();
+				r = Posix.send(fd, bytesView(b, pos, len), MSG_DONTWAIT()).toInt();
 				if (r >= 0) break;
 				var e = errno();
 				if (e != EAGAIN() && e != EINTR) break;
@@ -245,35 +252,36 @@ class PosixNet {
 			}
 			return ret(r);
 		}
-		return ret(Posix.send(fd, Bytes.bytes(b).add(pos), len, 0).toInt());
+		return ret(Posix.send(fd, bytesView(b, pos, len), 0).toInt());
 	}
 
 	// an fd_set (1024 bits, the same bytes on Linux and macOS) of the
 	// descriptors of a; false when one is out of range
-	static function toFdset(a:Array<Int>, s:Ptr, maxfd:Ptr):Bool {
-		LibC.memset(s, 0, 128);
+	// (s zero)
+	static function toFdset(a:Array<Int>, s:Slice<UInt8>, maxfd:Ref<Int>):Bool {
 		if (Str.isNull(a)) return true;
 		for (i in 0...a.length) {
 			var fd = a[i];
 			if (fd < 0 || fd >= 1024) return false;
-			Mem.setI8(s, fd >> 3, Mem.getU8(s, fd >> 3) | (1 << (fd & 7)));
-			if (fd > Mem.getI32(maxfd, 0)) Mem.setI32(maxfd, 0, fd);
+			s[fd >> 3] = s[fd >> 3] | (1 << (fd & 7));
+			if (fd > maxfd.value) maxfd.value = fd;
 		}
 		return true;
 	}
 
-	static function fromFdset(a:Array<Int>, s:Ptr) {
+	static function fromFdset(a:Array<Int>, s:Slice<UInt8>) {
 		if (Str.isNull(a)) return;
 		for (i in 0...a.length) {
 			var fd = a[i];
-			if ((Mem.getU8(s, fd >> 3) >> (fd & 7)) & 1 == 0) a[i] = -1;
+			if ((s[fd >> 3] >> (fd & 7)) & 1 == 0) a[i] = -1;
 		}
 	}
 
 	// Unix.select (otherlib/unix/select_unix.c): a negative timeout waits forever
 	public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
-		var rs = Mem.stack(128), ws = Mem.stack(128), os = Mem.stack(128), maxfd = Mem.stack(8);
-		Mem.setI32(maxfd, 0, -1);
+		var sets = new Fixed<UInt8, 384>(), top = new Fixed<Int, 1>();
+		var rs = sets.view().sub(0, 128), ws = sets.view().sub(128, 128), os = sets.view().sub(256, 128), maxfd = top.view().ref(0);
+		maxfd.value = -1;
 		if (!toFdset(r, rs, maxfd) || !toFdset(w, ws, maxfd) || !toFdset(o, os, maxfd)) {
 			netErrno = EINVAL;
 			return -1;
@@ -283,23 +291,23 @@ class PosixNet {
 			// passes, then select looks without waiting
 			var nr = Str.isNull(r) ? 0 : r.length, nw = Str.isNull(w) ? 0 : w.length, no = Str.isNull(o) ? 0 : o.length;
 			NetCore.waitFds(r, nr, w, nw, o, no, timeout);
-			Mem.setI32(maxfd, 0, -1);
+			sets = new Fixed<UInt8, 384>();
+			maxfd.value = -1;
 			if (!toFdset(r, rs, maxfd) || !toFdset(w, ws, maxfd) || !toFdset(o, os, maxfd)) {
 				netErrno = EBADF;
 				return -1;
 			}
 			timeout = 0;
 		}
-		var tv = Mem.stack(16);
-		var tvp = Ptr.nil();
+		var tv:Fixed<UInt8, 16> = Fixed.scratch();
+		var tvp:Ref<UInt8> = Ref.nil();
 		if (timeout >= 0) {
 			var s:I64 = cast timeout;
-			Mem.setI64(tv, 0, s);
-			var us:I64 = cast(1e6 * (timeout - (cast s : Float)));
-			Mem.setI64(tv, 8, us);
-			tvp = tv;
+			LE.put64(tv.view(), 0, s);
+			LE.put64(tv.view(), 8, cast(1e6 * (timeout - (cast s : Float))));
+			tvp = tv.view().ref(0);
 		}
-		var n = doSelect(Mem.getI32(maxfd, 0) + 1, rs, ws, os, tvp);
+		var n = doSelect(maxfd.value + 1, rs.ref(0), ws.ref(0), os.ref(0), tvp);
 		if (n < 0) {
 			ret(-1);
 			return -1;
@@ -310,55 +318,54 @@ class PosixNet {
 		return n;
 	}
 
-	@:hxmc.unsafe static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
+	@:hxmc.scoped static function doSelect(n:Int, r:Ref<UInt8>, w:Ref<UInt8>, o:Ref<UInt8>, tv:Ref<UInt8>):Int
 		return Mem.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);
 
-	@:hxmc.unsafe static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
+	@:hxmc.scoped static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
 		return NetCore.setBool(fd, level, opt, b);
 
-	@:hxmc.unsafe public static function setNoDelay(fd:Int, b:Bool):Int
+	@:hxmc.scoped public static function setNoDelay(fd:Int, b:Bool):Int
 		return setBool(fd, 6, 1, b); // IPPROTO_TCP, TCP_NODELAY
 
-	@:hxmc.unsafe public static function setBroadcast(fd:Int, b:Bool):Int
+	@:hxmc.scoped public static function setBroadcast(fd:Int, b:Bool):Int
 		return setBool(fd, SOL_SOCKET(), SO_BROADCAST(), b);
 
-	@:hxmc.unsafe public static function setReuseAddr(fd:Int, b:Bool):Int
+	@:hxmc.scoped public static function setReuseAddr(fd:Int, b:Bool):Int
 		return setBool(fd, SOL_SOCKET(), SO_REUSEADDR(), b);
 
 	// Unix.setsockopt_float SO_RCVTIMEO, then SO_SNDTIMEO (struct timeval:
 	// 64-bit seconds, then microseconds: a long on Linux, an int on macOS)
-	@:hxmc.unsafe public static function setTimeout(fd:Int, t:Float):Int {
-		var tv = Mem.stack(16);
-		LibC.memset(tv, 0, 16);
+	@:hxmc.scoped public static function setTimeout(fd:Int, t:Float):Int {
+		var tv = new Fixed<UInt8, 16>();
 		var s:I64 = cast t;
-		Mem.setI64(tv, 0, s);
-		Mem.setI32(tv, 8, Std.int((t - (cast s : Float)) * 1e6));
-		if (Posix.setsockopt(fd, SOL_SOCKET(), SO_RCVTIMEO(), tv, 16) < 0) return ret(-1);
-		return ret(Posix.setsockopt(fd, SOL_SOCKET(), SO_SNDTIMEO(), tv, 16));
+		LE.put64(tv.view(), 0, s);
+		LE.put32(tv.view(), 8, Std.int((t - (cast s : Float)) * 1e6));
+		if (Posix.setsockopt(fd, SOL_SOCKET(), SO_RCVTIMEO(), tv.view().ref(0), 16) < 0) return ret(-1);
+		return ret(Posix.setsockopt(fd, SOL_SOCKET(), SO_SNDTIMEO(), tv.view().ref(0), 16));
 	}
 
-	@:hxmc.unsafe public static function shutdown(fd:Int, mode:Int):Int
+	@:hxmc.scoped public static function shutdown(fd:Int, mode:Int):Int
 		return ret(Posix.shutdown(fd, mode == 0 ? 0 : mode == 1 ? 1 : 2));
 
 	// for sys.net.Socket.setBlocking (hxmc std; the Eval socket natives are blocking)
-	@:hxmc.unsafe public static function setBlocking(fd:Int, b:Bool):Int {
+	@:hxmc.scoped public static function setBlocking(fd:Int, b:Bool):Int {
 		var flags = Posix.fcntl(fd, F_GETFL, 0);
 		if (flags < 0) return ret(-1);
 		return ret(Posix.fcntl(fd, F_SETFL, b ? flags & ~O_NONBLOCK() : flags | O_NONBLOCK()));
 	}
 
 	// whether the last failure was EAGAIN/EWOULDBLOCK (a non-blocking socket not ready)
-	@:hxmc.unsafe public static function blocked():Bool
+	@:hxmc.scoped public static function blocked():Bool
 		return lastErrno() == EAGAIN();
 
 	public static function gethostname():String {
-		var buf = Mem.stack(4096);
-		if (Posix.gethostname(buf, 4095) < 0) {
+		var buf:Slice<UInt8> = Scope.slice(4096);
+		if (Posix.gethostname(buf.sub(0, 4095)) < 0) {
 			ret(-1);
 			return null;
 		}
-		Mem.setI8(buf, 4095, 0);
-		return Str.ofUtf8(buf, LibC.strlen(buf).toInt());
+		buf[4095] = 0;
+		return SysCore.ofC(buf.ref(0));
 	}
 
 	// gethostbyname/gethostbyaddr return static data: one thread at a time

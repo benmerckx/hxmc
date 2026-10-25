@@ -3,7 +3,7 @@ package hxmc.rt;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.scoped.Fixed;
-import hxmc.scoped.Image.ImageIO;
+import hxmc.scoped.LE;
 import hxmc.scoped.Ref;
 import hxmc.scoped.Scope;
 import hxmc.scoped.Slice;
@@ -18,7 +18,7 @@ import hxmc.unsafe.UInt8;
 // (hxmc.unsafe.Posix), whose calls take views of scoped memory
 // (docs/plans/lowlevel.md, "The scoped C boundary"): paths and arguments
 // as UTF-8 on the data stack, the structures the system fills in Fixed
-// buffers of the frame read little-endian (ImageIO; their offsets per
+// buffers of the frame read little-endian (hxmc.scoped.LE; their offsets per
 // target below), no heap address crossing a call that may block. With
 // several threads, reads and waits go through the runtime's scheduler
 // (rt_wait_fd, safe regions: Threads.hx).
@@ -116,8 +116,8 @@ class PosixSys {
 		var t:Fixed<UInt8, 16> = Fixed.scratch(); // (written before the call)
 		var v = t.view();
 		var s:I64 = cast seconds;
-		ImageIO.put64(v, 0, s);
-		ImageIO.put64(v, 8, cast((seconds - (cast s : Float)) * 1e9));
+		LE.put64(v, 0, s);
+		LE.put64(v, 8, cast((seconds - (cast s : Float)) * 1e9));
 		while (Posix.nanosleep(v.ref(0), v.ref(0)) != 0 && errno() == EINTR) {}
 	}
 
@@ -176,8 +176,8 @@ class PosixSys {
 		var tv:Fixed<UInt8, 16> = Fixed.scratch(); // (C fills it)
 		var v = tv.view();
 		Posix.gettimeofday(v.ref(0), Ref.nil());
-		var s:Float = cast ImageIO.i64(v, 0);
-		return s + ImageIO.i32(v, 8) / 1e6;
+		var s:Float = cast LE.i64(v, 0);
+		return s + LE.i32(v, 8) / 1e6;
 	}
 
 	// clock() / CLOCKS_PER_SEC (1000000 on Linux and macOS)
@@ -223,7 +223,7 @@ class PosixSys {
 			rv = raw.view();
 			var off = mac() ? 24 : 12;
 			var flags = (mac() ? 0x100 : 2) | (echo ? 0 : 8);
-			ImageIO.put32(rv, off, ImageIO.i32(rv, off) & ~flags);
+			LE.put32(rv, off, LE.i32(rv, off) & ~flags);
 			Posix.tcsetattr(0, 0, rv.ref(0));
 		}
 		var c = new Fixed<UInt8, 8>();
@@ -304,10 +304,10 @@ class PosixSys {
 	// struct stat (144 bytes or fewer): st_mode, st_size (and the rest for
 	// stat()) per target
 	static inline function stMode(st:Slice<UInt8>):Int
-		return mac() ? ImageIO.u16(st, 4) : Mem.arm() ? ImageIO.i32(st, 16) : ImageIO.i32(st, 24);
+		return mac() ? LE.u16(st, 4) : Mem.arm() ? LE.i32(st, 16) : LE.i32(st, 24);
 
 	static inline function stSize(st:Slice<UInt8>):I64
-		return mac() ? ImageIO.i64(st, 96) : ImageIO.i64(st, 48);
+		return mac() ? LE.i64(st, 96) : LE.i64(st, 48);
 
 	static inline function doStat(p:Ref<UInt8>, st:Slice<UInt8>):Int
 		return inode64() ? Posix.statInode64(p, st.ref(0)) : Posix.stat(p, st.ref(0));
@@ -420,13 +420,13 @@ class PosixSys {
 		inline function u(v:Int):Float
 			return f((v : I64) & (((1 : I64) << 32) - 1));
 		inline function i32(o:Int):Int
-			return ImageIO.i32(st, o);
+			return LE.i32(st, o);
 		inline function i64(o:Int):I64
-			return ImageIO.i64(st, o);
+			return LE.i64(st, o);
 		if (mac())
 			return [
-				u(i32(20)), u(i32(16)), f(i64(32)), f(i64(48)), f(i64(64)), u(i32(0)), f(i64(8)), ImageIO.u16(st, 6), u(i32(24)), f(i64(96)),
-				ImageIO.u16(st, 4)
+				u(i32(20)), u(i32(16)), f(i64(32)), f(i64(48)), f(i64(64)), u(i32(0)), f(i64(8)), LE.u16(st, 6), u(i32(24)), f(i64(96)),
+				LE.u16(st, 4)
 			];
 		if (Mem.arm())
 			return [

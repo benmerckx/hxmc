@@ -70,25 +70,25 @@ import hxmc.scoped.Slice;
 	@:native("realpath$DARWIN_EXTSN") static function realpathExtsn(path:Ref<UInt8>, buf:Ref<UInt8>):Ref<UInt8>;
 	// sockets (hxmc.rt.PosixNet)
 	static function socket(domain:Int, type:Int, protocol:Int):Int;
-	static function bind(fd:Int, addr:Ptr, len:Int):Int;
-	static function connect(fd:Int, addr:Ptr, len:Int):Int;
-	static function accept(fd:Int, addr:Ptr, len:Ptr):Int;
-	static function accept4(fd:Int, addr:Ptr, len:Ptr, flags:Int):Int; // (not on macOS)
+	static function bind(fd:Int, addr:Ref<UInt8>, len:Int):Int;
+	static function connect(fd:Int, addr:Ref<UInt8>, len:Int):Int;
+	static function accept(fd:Int, addr:Ref<UInt8>, len:Ref<Int>):Int;
+	static function accept4(fd:Int, addr:Ref<UInt8>, len:Ref<Int>, flags:Int):Int; // (not on macOS)
 	static function listen(fd:Int, backlog:Int):Int;
-	static function getsockname(fd:Int, addr:Ptr, len:Ptr):Int;
-	static function getpeername(fd:Int, addr:Ptr, len:Ptr):Int;
-	static function getsockopt(fd:Int, level:Int, opt:Int, v:Ptr, len:Ptr):Int;
-	static function setsockopt(fd:Int, level:Int, opt:Int, v:Ptr, len:Int):Int;
-	static function recv(fd:Int, p:Ptr, n:I64, flags:Int):I64;
-	static function send(fd:Int, p:Ptr, n:I64, flags:Int):I64;
-	static function select(n:Int, r:Ptr, w:Ptr, e:Ptr, tv:Ptr):Int;
-	@:native("select$1050") static function select1050(n:Int, r:Ptr, w:Ptr, e:Ptr, tv:Ptr):Int;
+	static function getsockname(fd:Int, addr:Ref<UInt8>, len:Ref<Int>):Int;
+	static function getpeername(fd:Int, addr:Ref<UInt8>, len:Ref<Int>):Int;
+	static function getsockopt(fd:Int, level:Int, opt:Int, v:Ref<UInt8>, len:Ref<Int>):Int;
+	static function setsockopt(fd:Int, level:Int, opt:Int, v:Ref<UInt8>, len:Int):Int;
+	static function recv(fd:Int, buf:Slice<UInt8>, flags:Int):I64;
+	static function send(fd:Int, buf:Slice<UInt8>, flags:Int):I64;
+	static function select(n:Int, r:Ref<UInt8>, w:Ref<UInt8>, e:Ref<UInt8>, tv:Ref<UInt8>):Int;
+	@:native("select$1050") static function select1050(n:Int, r:Ref<UInt8>, w:Ref<UInt8>, e:Ref<UInt8>, tv:Ref<UInt8>):Int;
 	static function shutdown(fd:Int, how:Int):Int;
 	static function signal(sig:Int, handler:Ptr):Ptr;
-	static function strerror(err:Int):Ptr;
-	static function gethostname(buf:Ptr, n:I64):Int;
-	static function gethostbyname(name:Ptr):Ptr;
-	static function gethostbyaddr(addr:Ptr, len:Int, type:Int):Ptr;
+	static function strerror(err:Int):Ref<UInt8>;
+	static function gethostname(buf:Slice<UInt8>):Int;
+	static function gethostbyname(name:Ref<UInt8>):Ptr;
+	static function gethostbyaddr(addr:Ref<UInt8>, len:Int, type:Int):Ptr;
 	static function strdup(s:Ptr):Ptr;
 	static function sched_yield():Int;
 	// loading shared libraries at run time (graphics drivers: libGL,

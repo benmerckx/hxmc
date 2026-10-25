@@ -18,9 +18,14 @@ import hxmc.unsafe.Winsock;
 extern class NetCore {
 	// a Boolean socket option (an int)
 	public static inline function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
-		var v = Mem.stack(8);
-		Mem.setI32(v, 0, b ? 1 : 0);
-		return Mem.os() == 2 ? WinNet.ret(Winsock.setsockopt(WinNet.sock(fd), level, opt, v, 4)) : PosixNet.ret(Posix.setsockopt(fd, level, opt, v, 4));
+		if (Mem.os() == 2) {
+			var w = Mem.stack(8);
+			Mem.setI32(w, 0, b ? 1 : 0);
+			return WinNet.ret(Winsock.setsockopt(WinNet.sock(fd), level, opt, w, 4));
+		}
+		var v = new hxmc.scoped.Fixed<hxmc.unsafe.UInt8, 4>();
+		hxmc.scoped.LE.put32(v.view(), 0, b ? 1 : 0);
+		return PosixNet.ret(Posix.setsockopt(fd, level, opt, v.view().ref(0), 4));
 	}
 
 	// select with other threads: they run until a descriptor is ready or
@@ -73,7 +78,7 @@ extern class NetCore {
 		var r:I64 = 0;
 		Leaf.rt_blocking_enter();
 		if (Mem.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
-		var h = Mem.os() == 2 ? Winsock.gethostbyname(n) : Posix.gethostbyname(n);
+		var h = Mem.os() == 2 ? Winsock.gethostbyname(n) : Posix.gethostbyname(hxmc.scoped.Ref.raw(n));
 		if (!h.isNull() && (Mem.os() == 2 ? Mem.getI16(h, 16) : Mem.getI32(h, 16)) == 2) {
 			var list = Mem.getPtr(h, 24);
 			var a = Mem.getPtr(list, 0);
@@ -97,7 +102,7 @@ extern class NetCore {
 		var name = Ptr.nil();
 		Leaf.rt_blocking_enter();
 		if (Mem.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
-		var h = Mem.os() == 2 ? Winsock.gethostbyaddr(a, 4, 2) : Posix.gethostbyaddr(a, 4, 2);
+		var h = Mem.os() == 2 ? Winsock.gethostbyaddr(a, 4, 2) : Posix.gethostbyaddr(hxmc.scoped.Ref.raw(a), 4, 2);
 		if (!h.isNull() && !Mem.getPtr(h, 0).isNull()) name = Mem.os() == 2 ? Winsock._strdup(Mem.getPtr(h, 0)) : Posix.strdup(Mem.getPtr(h, 0));
 		if (Mem.os() == 2) WinNet.unlockResolver() else PosixNet.unlockResolver();
 		Leaf.rt_blocking_leave();
