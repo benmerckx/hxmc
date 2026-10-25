@@ -21,3 +21,4 @@ document, native-or-drawn, syntax, ui-next, graphics) moved with them to
 | [packaging.md](packaging.md) | npm, haxelib, verifying native builds |
 | [math.md](math.md) | LibM and the libm branch |
 | [lowlevel.md](lowlevel.md) | C interop, native memory, manual memory, struct values |
+| [scoped-apply.md](scoped-apply.md) | scoped memory applied to hxmc itself: where it allocates (measured), the order of the work, each item before and after |
