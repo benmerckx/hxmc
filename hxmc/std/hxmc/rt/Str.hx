@@ -100,11 +100,11 @@ class Str {
 		return hxmc.scoped.Str.view(s);
 
 	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count
-	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int
+	@:hxmc.host("hx_str_utf8_into") @:hxmc.unsafe public static function utf8Into(s:String, buf:Octets):Int
 		return TextCore.utf8Encode(view(s), Repr.byteView(buf, 3 * len(s) + 1));
 
 	// a malloc'ed UTF-8 copy ("null" for null)
-	@:hxmc.host("hx_str_to_utf8") @:hxmc.noGc static function toUtf8(s:String):Ptr {
+	@:hxmc.host("hx_str_to_utf8") @:hxmc.unsafe static function toUtf8(s:String):Ptr {
 		if (isNull(s)) {
 			var p = LibC.malloc(5);
 			Mem.setI32(p, 0, 0x6c6c756e); // "null"
@@ -118,10 +118,10 @@ class Str {
 
 	// ---- comparison, hashing
 
-	@:hxmc.export("hx_str_eq_slow") @:hxmc.noGc static function eqSlow(a:String, b:String):Bool
+	@:hxmc.export("hx_str_eq_slow") @:hxmc.unsafe static function eqSlow(a:String, b:String):Bool
 		return MemOps.compare(unitsAddr(a), unitsAddr(b), (2 * len(a) : I64)) == 0;
 
-	@:hxmc.host("hx_str_cmp") @:hxmc.noGc static function cmp(a:String, b:String):Int {
+	@:hxmc.host("hx_str_cmp") @:hxmc.unsafe static function cmp(a:String, b:String):Int {
 		if (Repr.same(a, b)) return 0;
 		if (isNull(a)) return -1;
 		if (isNull(b)) return 1;
@@ -132,12 +132,12 @@ class Str {
 	// has room (a benign race between threads: they store the same value).
 	// FnLower.strHash computes the same at compile time (DataGen stores it in
 	// the literals).
-	@:hxmc.host("hx_str_hash") @:hxmc.noGc static function hash(s:String):Int {
+	@:hxmc.host("hx_str_hash") @:hxmc.unsafe static function hash(s:String):Int {
 		var h = Repr.storedHash(s);
 		return h != 0 ? h : hashSlow(s);
 	}
 
-	@:hxmc.noGc static function hashSlow(s:String):Int {
+	@:hxmc.unsafe static function hashSlow(s:String):Int {
 		var x = TextCore.hash(view(s));
 		Repr.storeHash(s, x);
 		return x;
@@ -153,7 +153,7 @@ class Str {
 
 	// ---- concatenation and conversions
 
-	@:hxmc.host("hx_str_or_null") @:hxmc.noGc static function orNull(s:String):String
+	@:hxmc.host("hx_str_or_null") @:hxmc.unsafe static function orNull(s:String):String
 		return isNull(s) ? "null" : s;
 
 	@:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
@@ -190,7 +190,7 @@ class Str {
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_bool") @:hxmc.noGc static function ofBool(v:Bool):String
+	@:hxmc.host("hx_str_of_bool") @:hxmc.unsafe static function ofBool(v:Bool):String
 		return v ? "true" : "false";
 
 	// ---- String
@@ -223,11 +223,11 @@ class Str {
 	}
 
 	// ("" past the end: the length, as String.indexOf says; upstream's TestString)
-	@:hxmc.host("String_indexOf") @:hxmc.noGc static function indexOf(s:String, sub:String, start:Null<Int>):Int
+	@:hxmc.host("String_indexOf") @:hxmc.unsafe static function indexOf(s:String, sub:String, start:Null<Int>):Int
 		return TextCore.indexOf(view(s), view(sub), start == null ? 0 : start);
 
 	// ("" before the start: 0, as Eval and ECMAScript; upstream's Issue5271)
-	@:hxmc.host("String_lastIndexOf") @:hxmc.noGc static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
+	@:hxmc.host("String_lastIndexOf") @:hxmc.unsafe static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
 		var n = len(s);
 		return TextCore.lastIndexOf(view(s), view(sub), start == null ? n : start);
 	}
@@ -288,11 +288,11 @@ class Str {
 		return r;
 	}
 
-	@:hxmc.host("String_toString") @:hxmc.noGc static function toString(s:String):String
+	@:hxmc.host("String_toString") @:hxmc.unsafe static function toString(s:String):String
 		return s;
 
 	// new String(s): strings do not change, s itself
-	@:hxmc.host("String_new") @:hxmc.noGc static function ofString(s:String):String
+	@:hxmc.host("String_new") @:hxmc.unsafe static function ofString(s:String):String
 		return s;
 
 	@:hxmc.host("String_split") static function split(s:String, delim:String):Array<String> {
@@ -372,10 +372,10 @@ class Str {
 	@:hxmc.host("StringBuf_addSub") static function sbAddSub(b:Dynamic, s:String, pos:Int, lenp:Null<Int>):Void
 		sbAddStr(b, substr(s, pos, lenp));
 
-	@:hxmc.host("StringBuf_clear") @:hxmc.noGc static function sbClear(b:Dynamic):Void
+	@:hxmc.host("StringBuf_clear") @:hxmc.unsafe static function sbClear(b:Dynamic):Void
 		Repr.sbSetLen(b, 0);
 
-	@:hxmc.host("StringBuf_get_length") @:hxmc.noGc static function sbGetLength(b:Dynamic):Int
+	@:hxmc.host("StringBuf_get_length") @:hxmc.unsafe static function sbGetLength(b:Dynamic):Int
 		return sbLen(b);
 
 	@:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
@@ -400,7 +400,7 @@ class Str {
 		return r.end == 0 ? Math.NaN : r.value;
 	}
 
-	@:hxmc.host("Std_random") @:hxmc.noGc static function random(max:Int):Int {
+	@:hxmc.host("Std_random") @:hxmc.unsafe static function random(max:Int):Int {
 		if (max <= 0) return 0;
 		#if (hxmc.wasm_gc)
 		return Std.int(hxmc.rt.gc.W.random() * max);

@@ -93,32 +93,32 @@ class Ssl {
 	}
 
 	// the collector's free callbacks (no-GC: it runs them while the world is stopped)
-	@:hxmc.callback @:hxmc.noGc static function freeCtrDrbg(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeCtrDrbg(p:Ptr):Void {
 		M.mbedtls_ctr_drbg_free(p);
 		LibC.free(p);
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function freeEntropy(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeEntropy(p:Ptr):Void {
 		M.mbedtls_entropy_free(p);
 		LibC.free(p);
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function freeX509Crt(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeX509Crt(p:Ptr):Void {
 		M.mbedtls_x509_crt_free(p);
 		LibC.free(p);
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function freeSslConfig(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeSslConfig(p:Ptr):Void {
 		M.mbedtls_ssl_config_free(p);
 		LibC.free(p);
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function freePk(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freePk(p:Ptr):Void {
 		M.mbedtls_pk_free(p);
 		LibC.free(p);
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function freeSsl(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeSsl(p:Ptr):Void {
 		M.mbedtls_ssl_free(p);
 		LibC.free(p);
 	}
@@ -275,7 +275,7 @@ class Ssl {
 	// upstream's Windows verify callback (ml_mbedtls_ssl_config_init): a chain
 	// mbedtls rejects (other than for its name) is checked by the system, which
 	// may know intermediate or root certificates the CA chain lacks
-	@:hxmc.callback @:hxmc.noGc static function verifyCallback(param:Ptr, crt:Ptr, depth:Int, flags:Ptr):Int {
+	@:hxmc.callback @:hxmc.unsafe static function verifyCallback(param:Ptr, crt:Ptr, depth:Int, flags:Ptr):Int {
 		var f = Mem.getI32(flags, 0);
 		if (f == 0 || f & BADCERT_CN_MISMATCH != 0) return 0;
 		// CERT_STORE_PROV_MEMORY, CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG
@@ -457,20 +457,20 @@ class Ssl {
 
 	// the BIO: Unix.send / Unix.recv socket bytes 0 (Bytes.length bytes) []
 	// (called by mbedtls inside the handshake, read or write: in their safe region)
-	@:hxmc.noGc static function bioFailed(s:Ptr, send:Bool):Int {
+	@:hxmc.unsafe static function bioFailed(s:Ptr, send:Bool):Int {
 		var e = os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : Mem.getI32(os() == 1 ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 		Mem.setI32(s, SSL_BIO_ERRNO, e);
 		Mem.setI32(s, SSL_BIO_SEND, send ? 1 : 0);
 		return send ? ERR_NET_SEND_FAILED : ERR_NET_RECV_FAILED;
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function bioWrite(s:Ptr, buf:Ptr, len:I64):Int {
+	@:hxmc.callback @:hxmc.unsafe static function bioWrite(s:Ptr, buf:Ptr, len:I64):Int {
 		var fd = Mem.getI32(s, SSL_FD);
 		var r:I64 = os() == 2 ? (Winsock.send((fd : I64), buf, len.toInt(), 0) : I64) : Posix.send(fd, buf, len, 0);
 		return r < 0 ? bioFailed(s, true) : r.toInt();
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function bioRead(s:Ptr, buf:Ptr, len:I64):Int {
+	@:hxmc.callback @:hxmc.unsafe static function bioRead(s:Ptr, buf:Ptr, len:I64):Int {
 		var fd = Mem.getI32(s, SSL_FD);
 		var r:I64 = os() == 2 ? (Winsock.recv((fd : I64), buf, len.toInt(), 0) : I64) : Posix.recv(fd, buf, len, 0);
 		return r < 0 ? bioFailed(s, false) : r.toInt();

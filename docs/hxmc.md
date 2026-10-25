@@ -223,10 +223,10 @@ dates, inflate, the POSIX and Windows system layers, and Math: musl's libm
 ported, `LibM.hx`, with the same results on every target), written with a
 small internal API (`hxmc.unsafe`: `Ptr`, `Mem` loads, stores, allocation
 and symbols, `Atomic`; `@:hxmc.c` and `@:hxmc.rt` externs of C functions,
-`@:hxmc.noGc` functions, `@:hxmc.export`/`@:hxmc.host` implementations of
+`@:hxmc.unsafe` functions, `@:hxmc.export`/`@:hxmc.host` implementations of
 runtime functions, `@:hxmc.callback` functions C calls,
 `@:hxmc.threadLocal` statics; the compiler rejects an address from `Mem.addr`
-live across a GC point outside `@:hxmc.noGc` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
+live across a GC point outside `@:hxmc.unsafe` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
 handshake, startup and `rt_throw` are Haxe too (`Gc.hx`, `Threads.hx`,
 `Start.hx`; the heap census with `-D hxmc.census`): no C of hxmc's own is
 linked, only the C library, mbedtls and libuv ([plans/lowlevel.md](plans/lowlevel.md),

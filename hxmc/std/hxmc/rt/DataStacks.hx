@@ -49,7 +49,7 @@ class DataStacks {
 		return t.isNull() ? init() : t;
 	}
 
-	@:hxmc.noGc static function init():Ptr {
+	@:hxmc.unsafe static function init():Ptr {
 		var bytes:I64 = 16 + 32 * K;
 		var t = LibC.malloc(bytes);
 		LibC.memset(t, 0, bytes);
@@ -64,7 +64,7 @@ class DataStacks {
 	}
 
 	// stack i reserved (its top at its base)
-	@:hxmc.noGc static function open(t:Ptr, i:Int) {
+	@:hxmc.unsafe static function open(t:Ptr, i:Int) {
 		var s = stack(t, i);
 		#if (hxmc.target == "wasm32-wasi")
 		var mb = hxmc.rt.wasm.Wasi.envInt("RT_DATA_STACK_MB", 256);
@@ -85,7 +85,7 @@ class DataStacks {
 	// ---- allocation (the root checker knows these: @:hxmc.alloc, fresh memory of the scope)
 
 	// `bytes` bytes on the fixed stack, 8-byte aligned, not zeroed
-	@:hxmc.noGc @:hxmc.alloc public static function alloc(bytes:Int):Ptr {
+	@:hxmc.unsafe @:hxmc.alloc public static function alloc(bytes:Int):Ptr {
 		var p = top0;
 		if (p.isNull()) p = base0;
 		var q = p.add((bytes + 7) & ~7);
@@ -96,7 +96,7 @@ class DataStacks {
 	}
 
 	// (the table made first)
-	@:hxmc.noGc @:hxmc.alloc static function allocFirst(bytes:Int):Ptr {
+	@:hxmc.unsafe @:hxmc.alloc static function allocFirst(bytes:Int):Ptr {
 		tab();
 		var p = top0;
 		if (p.isNull()) p = base0;
@@ -108,7 +108,7 @@ class DataStacks {
 
 	// a copy of the units of s on the fixed stack, a 0 unit after them (for
 	// the system: Str.copyOf, GC code)
-	@:hxmc.noGc @:hxmc.alloc public static function copyString(s:String):Ptr {
+	@:hxmc.unsafe @:hxmc.alloc public static function copyString(s:String):Ptr {
 		var n = Str.len(s);
 		var p = alloc(2 * n + 2);
 		LibC.memcpy(p, Str.unitsAddr(s), (2 * n : I64));
@@ -124,7 +124,7 @@ class DataStacks {
 	}
 
 	// a stack of its own for a Grow or a Pool: its index
-	@:hxmc.noGc @:hxmc.alloc public static function claim():Int {
+	@:hxmc.unsafe @:hxmc.alloc public static function claim():Int {
 		var t = tab();
 		var o = owned;
 		var i = 1;
@@ -139,7 +139,7 @@ class DataStacks {
 
 	// the base and the end of stack i (claimed): its base is fresh memory of
 	// the scope that claimed it, for the root checker
-	@:hxmc.noGc @:hxmc.alloc public static function base(i:Int):Ptr
+	@:hxmc.unsafe @:hxmc.alloc public static function base(i:Int):Ptr
 		return Mem.getPtr(stack(table, i), BASE);
 
 	public static inline function end(i:Int):Ptr
@@ -149,7 +149,7 @@ class DataStacks {
 	// which resets to it (top0 set back; release when owned is not the mask)
 
 	// the stacks claimed since the mark released (@:keep: FnLower.reset calls it)
-	@:keep @:hxmc.noGc public static function release(mask:Int) {
+	@:keep @:hxmc.unsafe public static function release(mask:Int) {
 		var t = table, released = owned & ~mask;
 		for (i in 1...K)
 			if (released & (1 << i) != 0) {
@@ -161,24 +161,24 @@ class DataStacks {
 
 	// (a compiler built before the marks were variables calls these: kept
 	// so that it builds this std)
-	@:keep @:hxmc.noGc public static function markTop():Ptr
+	@:keep @:hxmc.unsafe public static function markTop():Ptr
 		return top0;
 
-	@:keep @:hxmc.noGc public static function markMask():Int
+	@:keep @:hxmc.unsafe public static function markMask():Int
 		return owned;
 
-	@:keep @:hxmc.noGc public static function reset(top:Ptr, mask:Int) {
+	@:keep @:hxmc.unsafe public static function reset(top:Ptr, mask:Int) {
 		if (owned != mask) release(mask);
 		top0 = top;
 	}
 
 	// the bytes in use on the fixed stack, and the stacks claimed (tests, reports)
-	@:hxmc.noGc public static function used():Int {
+	@:hxmc.unsafe public static function used():Int {
 		var p = top0;
 		return p.isNull() ? 0 : p.diff(base0).toInt();
 	}
 
-	@:hxmc.noGc public static function claimed():Int {
+	@:hxmc.unsafe public static function claimed():Int {
 		var n = 0, o = owned;
 		for (i in 1...K)
 			if (o & (1 << i) != 0) n++;
@@ -187,7 +187,7 @@ class DataStacks {
 
 	// ---- failures: scoped code cannot throw
 
-	@:hxmc.noGc @:hxmc.noReturn public static function overflow()
+	@:hxmc.unsafe @:hxmc.noReturn public static function overflow()
 		Abort.die("hxmc: scoped memory: a data stack is full (RT_DATA_STACK_MB on wasm32)\n");
 
 	static inline function die(msg:Ptr)
@@ -195,7 +195,7 @@ class DataStacks {
 
 	#if (hxmc.target != "wasm32-wasi")
 	// a thread ends: its stacks and table released (Threads, through dataStacksExit)
-	@:hxmc.callback @:hxmc.noGc static function threadExit(_:Ptr):Ptr {
+	@:hxmc.callback @:hxmc.unsafe static function threadExit(_:Ptr):Ptr {
 		var t = table;
 		if (t.isNull()) return t;
 		for (i in 0...K) {

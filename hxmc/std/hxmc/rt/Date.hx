@@ -34,11 +34,11 @@ class Date {
 	static inline function ms(d:Dynamic):Float
 		return Repr.dateMs(d);
 
-	@:hxmc.noGc static function mktime(tm:Ptr):I64
+	@:hxmc.unsafe static function mktime(tm:Ptr):I64
 		return windows() ? LibC._mktime64(tm) : LibC.mktime(tm);
 
 	// the broken-down time of `ms` into tm (local or UTC)
-	@:hxmc.noGc static function breakDown(ms:Float, utc:Bool, tm:Ptr) {
+	@:hxmc.unsafe static function breakDown(ms:Float, utc:Bool, tm:Ptr) {
 		var t = Mem.stack(8);
 		var s:I64 = cast Math.ffloor(ms / 1000.0);
 		Mem.setI64(t, 0, s);
@@ -76,55 +76,55 @@ class Date {
 		return null;
 	}
 
-	@:hxmc.host("Date_getTime") @:hxmc.noGc static function getTime(d:Dynamic):Float
+	@:hxmc.host("Date_getTime") @:hxmc.unsafe static function getTime(d:Dynamic):Float
 		return ms(d);
 
-	@:hxmc.noGc static function field(d:Dynamic, utc:Bool, f:Int):Int
+	@:hxmc.unsafe static function field(d:Dynamic, utc:Bool, f:Int):Int
 		return Repr.dateField(d, utc, f);
 
-	@:hxmc.host("Date_getFullYear") @:hxmc.noGc static function getFullYear(d:Dynamic):Int
+	@:hxmc.host("Date_getFullYear") @:hxmc.unsafe static function getFullYear(d:Dynamic):Int
 		return field(d, false, Repr.F_YEAR) + Repr.YEAR_BASE;
 
-	@:hxmc.host("Date_getMonth") @:hxmc.noGc static function getMonth(d:Dynamic):Int
+	@:hxmc.host("Date_getMonth") @:hxmc.unsafe static function getMonth(d:Dynamic):Int
 		return field(d, false, Repr.F_MON);
 
-	@:hxmc.host("Date_getDate") @:hxmc.noGc static function getDate(d:Dynamic):Int
+	@:hxmc.host("Date_getDate") @:hxmc.unsafe static function getDate(d:Dynamic):Int
 		return field(d, false, Repr.F_MDAY);
 
-	@:hxmc.host("Date_getDay") @:hxmc.noGc static function getDay(d:Dynamic):Int
+	@:hxmc.host("Date_getDay") @:hxmc.unsafe static function getDay(d:Dynamic):Int
 		return field(d, false, Repr.F_WDAY);
 
-	@:hxmc.host("Date_getHours") @:hxmc.noGc static function getHours(d:Dynamic):Int
+	@:hxmc.host("Date_getHours") @:hxmc.unsafe static function getHours(d:Dynamic):Int
 		return field(d, false, Repr.F_HOUR);
 
-	@:hxmc.host("Date_getMinutes") @:hxmc.noGc static function getMinutes(d:Dynamic):Int
+	@:hxmc.host("Date_getMinutes") @:hxmc.unsafe static function getMinutes(d:Dynamic):Int
 		return field(d, false, Repr.F_MIN);
 
-	@:hxmc.host("Date_getSeconds") @:hxmc.noGc static function getSeconds(d:Dynamic):Int
+	@:hxmc.host("Date_getSeconds") @:hxmc.unsafe static function getSeconds(d:Dynamic):Int
 		return field(d, false, Repr.F_SEC);
 
-	@:hxmc.host("Date_getUTCFullYear") @:hxmc.noGc static function getUTCFullYear(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCFullYear") @:hxmc.unsafe static function getUTCFullYear(d:Dynamic):Int
 		return field(d, true, Repr.F_YEAR) + Repr.YEAR_BASE;
 
-	@:hxmc.host("Date_getUTCMonth") @:hxmc.noGc static function getUTCMonth(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCMonth") @:hxmc.unsafe static function getUTCMonth(d:Dynamic):Int
 		return field(d, true, Repr.F_MON);
 
-	@:hxmc.host("Date_getUTCDate") @:hxmc.noGc static function getUTCDate(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCDate") @:hxmc.unsafe static function getUTCDate(d:Dynamic):Int
 		return field(d, true, Repr.F_MDAY);
 
-	@:hxmc.host("Date_getUTCDay") @:hxmc.noGc static function getUTCDay(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCDay") @:hxmc.unsafe static function getUTCDay(d:Dynamic):Int
 		return field(d, true, Repr.F_WDAY);
 
-	@:hxmc.host("Date_getUTCHours") @:hxmc.noGc static function getUTCHours(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCHours") @:hxmc.unsafe static function getUTCHours(d:Dynamic):Int
 		return field(d, true, Repr.F_HOUR);
 
-	@:hxmc.host("Date_getUTCMinutes") @:hxmc.noGc static function getUTCMinutes(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCMinutes") @:hxmc.unsafe static function getUTCMinutes(d:Dynamic):Int
 		return field(d, true, Repr.F_MIN);
 
-	@:hxmc.host("Date_getUTCSeconds") @:hxmc.noGc static function getUTCSeconds(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCSeconds") @:hxmc.unsafe static function getUTCSeconds(d:Dynamic):Int
 		return field(d, true, Repr.F_SEC);
 
-	@:hxmc.host("Date_getTimezoneOffset") @:hxmc.noGc static function getTimezoneOffset(d:Dynamic):Int
+	@:hxmc.host("Date_getTimezoneOffset") @:hxmc.unsafe static function getTimezoneOffset(d:Dynamic):Int
 		return Repr.timezoneOffset(d);
 
 	// "%04d-%02d-%02d %02d:%02d:%02d" of the local time: hxmc.rt.DateText
@@ -144,7 +144,7 @@ class Date {
 
 	#if !(hxmc.wasm_gc)
 	// ---- Math.random: [0, 1) from rand() (the UCRT's has 15 bits: two make 30)
-	@:hxmc.host("Math_random") @:hxmc.noGc static function random():Float {
+	@:hxmc.host("Math_random") @:hxmc.unsafe static function random():Float {
 		if (windows()) return ((LibC.rand() << 15) ^ LibC.rand()) / 1073741824.0;
 		return LibC.rand() / 2147483648.0;
 	}

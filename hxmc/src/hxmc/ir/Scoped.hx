@@ -1153,7 +1153,7 @@ private class Analysis {
 				var trusted = c.hasClassFlag(CExtern) || Lower.isUnsafe(cf.cfMeta)
 					|| Lower.isUnsafe(c.clMeta) || cf.cfExpr == null;
 				if (!scoped && (trusted || !takes)) {
-					if (!gc && !trusted) fail(e.epos, 'scoped code calls ${c.clPath.name}.${cf.cfName}, which is neither @:hxmc.scoped nor @:hxmc.noGc');
+					if (!gc && !trusted) fail(e.epos, 'scoped code calls ${c.clPath.name}.${cf.cfName}, which is neither @:hxmc.scoped nor @:hxmc.unsafe');
 					// (the trusted no-GC layer, C, GC code taking no scoped value: unchecked, the global root)
 					escapingArgs(args, cf.cfType, e, trusted);
 					return [];

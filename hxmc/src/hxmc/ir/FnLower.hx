@@ -135,10 +135,10 @@ class FnLower {
 	function scopedBody(tf:TFunc) {
 		// (hxmc.scoped.Image's parts for each T: Images)
 		if (Images.image != null) tf = {tfArgs: tf.tfArgs, tfType: tf.tfType, tfExpr: Images.rewrite(tf.tfExpr)};
-		// (the trusted layer, @:hxmc.noGc: unchecked; the runtime and the std's
+		// (the trusted layer, @:hxmc.unsafe: unchecked; the runtime and the std's
 		// maps, GC faces that view their own GC memory, as runtime code)
 		var face = StringTools.startsWith(fi.module, "hxmc.rt") || StringTools.startsWith(fi.module, "haxe.ds.");
-		if ((fi.scoped || !fi.declNoGc) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face);
+		if ((fi.scoped || !fi.declUnsafe) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face);
 		allocates = plan != null && Scoped.runtime != null && (plan.fnMark || plan.scopes.keys().hasNext());
 		// (WasmGC: NativeArrays of scoped classes of scalars as structs of
 		// arrays, then a scoped class's objects copied where struct values are)
@@ -837,11 +837,11 @@ class FnLower {
 	// reads it without a test, tested against null before the call (the
 	// program's own methods test what they read: MirBuild.nullCheck); null
 	// throws "Null Access", as the native targets' fault handler does where
-	// the runtime reads it (hxmc.rt.Faults); none in a @:hxmc.noGc function,
+	// the runtime reads it (hxmc.rt.Faults); none in a @:hxmc.unsafe function,
 	// which promises no GC point (a throw is one: Facts.findNoGc) and reads
 	// memory unchecked, as the runtime's own code does
 	function receiverCheck(x:Ex, t:Ty):Ex {
-		if (!Lower.nullChecks || fi.declNoGc || !Ir.isRef(t)) return x;
+		if (!Lower.nullChecks || fi.noGcDeclared() || !Ir.isRef(t)) return x;
 		switch x {
 			case EStr(_) | EType(_): return x;
 			case _:

@@ -12,7 +12,7 @@ import hxmc.unsafe.Ptr;
 // core"): addresses, which scoped code does not name; the cores compare
 // through Str.matchAt, whose linear representation calls it.
 class MemOps {
-	@:hxmc.noGc public static function compare(a:Ptr, b:Ptr, n:I64):Int {
+	@:hxmc.unsafe public static function compare(a:Ptr, b:Ptr, n:I64):Int {
 		var k = n.toInt();
 		var i = 0;
 		while (i + 8 <= k && Mem.getI64(a, i) == Mem.getI64(b, i))

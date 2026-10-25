@@ -223,7 +223,7 @@ class Arr {
 		arr[n - 1] = null;
 	}
 
-	@:hxmc.host("Array_reverse") @:hxmc.noGc static function reverse(a:Dynamic):Void {
+	@:hxmc.host("Array_reverse") @:hxmc.unsafe static function reverse(a:Dynamic):Void {
 		var n = len(a);
 		if (n < 2) return;
 		ArrayCore.reverse(ArrayView.of(a, n), Repr.elemSize(a));

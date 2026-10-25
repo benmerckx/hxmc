@@ -17,7 +17,7 @@ class Libc {
 
 	// musl: seed = 6364136223846793005 * seed + 1, the top 31 bits
 	// correctly rounded (hxmc.rt.FloatText)
-	@:hxmc.export("strtod") @:hxmc.noGc static function strtod(s:Ptr, end:Ptr):Float {
+	@:hxmc.export("strtod") @:hxmc.unsafe static function strtod(s:Ptr, end:Ptr):Float {
 		#if hxmc.wasm_gc
 		// (typed under -D hxmc.wasm-gc, not run there)
 		return 0;
@@ -34,22 +34,22 @@ class Libc {
 		#end
 	}
 
-	@:hxmc.export("rand") @:hxmc.noGc static function rand():Int {
+	@:hxmc.export("rand") @:hxmc.unsafe static function rand():Int {
 		var a:I64 = ((0x5851F42D : I64) << 32) | (0x4C957F2D : I64);
 		seed = a * seed + 1;
 		return (seed >>> 33).toInt();
 	}
 
-	@:hxmc.export("srand") @:hxmc.noGc static function srand(s:Int):Void
+	@:hxmc.export("srand") @:hxmc.unsafe static function srand(s:Int):Void
 		seed = ((s : I64) & m32()) - 1;
 
-	@:hxmc.export("__errno_location") @:hxmc.noGc static function errnoLocation():Ptr {
+	@:hxmc.export("__errno_location") @:hxmc.unsafe static function errnoLocation():Ptr {
 		if (errnoCell.isNull()) errnoCell = Heap.calloc(1, 8);
 		return errnoCell;
 	}
 
 	// struct timespec: int64 seconds, int64 nanoseconds
-	@:hxmc.export("clock_gettime") @:hxmc.noGc static function clockGettime(clock:Int, ts:Ptr):Int {
+	@:hxmc.export("clock_gettime") @:hxmc.unsafe static function clockGettime(clock:Int, ts:Ptr):Int {
 		var ns = Wasi.clockNs(clock);
 		var s = ns / 1000000000;
 		Mem.setI64(ts, 0, s);
@@ -58,7 +58,7 @@ class Libc {
 	}
 
 	// days since 1970-01-01 of a civil date (proleptic Gregorian; Howard Hinnant's algorithm)
-	@:hxmc.noGc static function daysFromCivil(y:Int, m:Int, d:Int):I64 {
+	@:hxmc.unsafe static function daysFromCivil(y:Int, m:Int, d:Int):I64 {
 		if (m <= 2) y--;
 		var era = Std.int((y >= 0 ? y : y - 399) / 400);
 		var yoe = y - era * 400;
@@ -69,7 +69,7 @@ class Libc {
 
 	// struct tm: nine ints (sec min hour mday mon year wday yday isdst), then
 	// long tm_gmtoff and const char *tm_zone (musl)
-	@:hxmc.export("gmtime_r") @:hxmc.noGc static function gmtimeR(t:Ptr, tm:Ptr):Ptr {
+	@:hxmc.export("gmtime_r") @:hxmc.unsafe static function gmtimeR(t:Ptr, tm:Ptr):Ptr {
 		var secs = Mem.getI64(t, 0);
 		var days = secs / 86400;
 		var rem = (secs - days * 86400).toInt();
@@ -105,11 +105,11 @@ class Libc {
 		return tm;
 	}
 
-	@:hxmc.export("localtime_r") @:hxmc.noGc static function localtimeR(t:Ptr, tm:Ptr):Ptr
+	@:hxmc.export("localtime_r") @:hxmc.unsafe static function localtimeR(t:Ptr, tm:Ptr):Ptr
 		return gmtimeR(t, tm);
 
 	// timegm (normalizing the fields as mktime does)
-	@:hxmc.export("mktime") @:hxmc.noGc static function mktime(tm:Ptr):I64 {
+	@:hxmc.export("mktime") @:hxmc.unsafe static function mktime(tm:Ptr):I64 {
 		var mon = Mem.getI32(tm, 16);
 		var y = Mem.getI32(tm, 20) + 1900;
 		var ym = Std.int(mon / 12);
@@ -127,12 +127,12 @@ class Libc {
 		return t;
 	}
 
-	@:hxmc.export("fflush") @:hxmc.noGc static function fflush(f:Ptr):Int {
+	@:hxmc.export("fflush") @:hxmc.unsafe static function fflush(f:Ptr):Int {
 		Wasi.flush();
 		return 0;
 	}
 
-	@:hxmc.export("exit") @:hxmc.noGc static function exit(code:Int):Void {
+	@:hxmc.export("exit") @:hxmc.unsafe static function exit(code:Int):Void {
 		Wasi.exit(code);
 	}
 }

@@ -101,7 +101,7 @@ class MemRepr {
 		LibC.memcpy(dst.at(di), src, (2 * n : I64));
 
 	// c[i, i + m) == d[0, m), m >= 1: the first unit compared first
-	@:hxmc.noGc public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
+	@:hxmc.unsafe public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
 		return Mem.getU16At(c, 0, i) == Mem.getU16(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(2 * i + 2), (d : Ptr).add(2), (2 * (m - 1) : I64)) == 0);
 
 	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 a K_RAW block of
@@ -347,7 +347,7 @@ class MemRepr {
 		LibC.memset(octets(b).at(pos), v, n);
 
 	// the difference of the first differing bytes of [0, n), else 0
-	@:hxmc.noGc public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
+	@:hxmc.unsafe public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
 		return MemOps.compare(a, b, n);
 
 	// ---- BytesBuffer (T_BYTESBUFFER): slot 0 the length, slot 1 a Bytes

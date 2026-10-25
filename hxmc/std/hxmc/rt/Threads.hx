@@ -68,7 +68,7 @@ class Threads {
 
 	// ---- records
 
-	@:hxmc.noGc static function newRecord():Ptr<Mutator> {
+	@:hxmc.unsafe static function newRecord():Ptr<Mutator> {
 		var m:Ptr<Mutator> = LibC.malloc(Struct.sizeOf(Mutator));
 		LibC.memset(m, 0, Struct.sizeOf(Mutator));
 		var r = LibC.malloc(8 * 256);
@@ -77,7 +77,7 @@ class Threads {
 		return m;
 	}
 
-	@:hxmc.noGc static function newParker():Ptr {
+	@:hxmc.unsafe static function newParker():Ptr {
 		var p = LibC.malloc(Os.MUTEX_BYTES + Os.COND_BYTES + 8);
 		Os.mutexInit(p);
 		Os.condInit(p.add(Os.MUTEX_BYTES), true);
@@ -86,7 +86,7 @@ class Threads {
 	}
 
 	// from rt_init: the main thread's record (its shadow stack: Gc)
-	@:hxmc.noGc static function init(sbase:Ptr) {
+	@:hxmc.unsafe static function init(sbase:Ptr) {
 		nthreads = 1;
 		nextId = 2;
 		wl = LibC.malloc(Os.MUTEX_BYTES);
@@ -118,7 +118,7 @@ class Threads {
 		}
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function thrReport():Void {
+	@:hxmc.callback @:hxmc.unsafe static function thrReport():Void {
 		var r = new Report(Mem.stack(Report.BYTES));
 		r.str("threads: ");
 		r.int(stSpawned, 0);
@@ -137,7 +137,7 @@ class Threads {
 	}
 
 	// the collector's part of the thread-local state into the record
-	@:hxmc.noGc static inline function publish(m:Ptr<Mutator>) {
+	@:hxmc.unsafe static inline function publish(m:Ptr<Mutator>) {
 		m.value.sp = Gc.sp;
 		m.value.hw = Gc.hw;
 		m.value.exn = Gc.exn;
@@ -146,7 +146,7 @@ class Threads {
 		m.value.yrlim = Gc.yrlim;
 	}
 
-	@:hxmc.noGc static inline function reload(m:Ptr<Mutator>) {
+	@:hxmc.unsafe static inline function reload(m:Ptr<Mutator>) {
 		Gc.sp = m.value.sp;
 		Gc.hw = m.value.hw;
 		Gc.exn = m.value.exn;
@@ -155,20 +155,20 @@ class Threads {
 		Gc.yrlim = m.value.yrlim;
 	}
 
-	@:hxmc.noGc static inline function stateOf(m:Ptr<Mutator>):Int
+	@:hxmc.unsafe static inline function stateOf(m:Ptr<Mutator>):Int
 		return Atomic.load32(m.add(Struct.offsetOf(Mutator, "state")));
 
-	@:hxmc.noGc static inline function setState(m:Ptr<Mutator>, s:Int):Int
+	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int
 		return Atomic.exchange32(m.add(Struct.offsetOf(Mutator, "state")), s);
 
-	@:hxmc.noGc static inline function requested():Bool
+	@:hxmc.unsafe static inline function requested():Bool
 		return Atomic.load32(Mem.sym("rt_gc_requested")) != 0;
 
 	// ---- the handshake
 
 	// under wl, while a collection is requested: safe until it ends (the
 	// record is current)
-	@:hxmc.noGc static function waitHere() {
+	@:hxmc.unsafe static function waitHere() {
 		var m = self;
 		setState(m, SAFE);
 		Os.broadcast(wlStopped);
@@ -178,7 +178,7 @@ class Threads {
 	}
 
 	// under wl, a running thread: stopped until the collection ends
-	@:hxmc.noGc static function stopHere() {
+	@:hxmc.unsafe static function stopHere() {
 		var m = self;
 		publish(m);
 		waitHere();
@@ -190,7 +190,7 @@ class Threads {
 	// worldResume). False when another thread was collecting meanwhile: the
 	// caller waited for it as at a safepoint, and should retry its allocation
 	// instead of collecting.
-	@:hxmc.noGc static function worldStop():Bool {
+	@:hxmc.unsafe static function worldStop():Bool {
 		var t0 = thrStats ? Os.now() : 0.0;
 		Os.lock(wl);
 		if (requested()) {
@@ -224,7 +224,7 @@ class Threads {
 		return true; // wl stays held during the collection
 	}
 
-	@:hxmc.noGc static function worldResume() {
+	@:hxmc.unsafe static function worldResume() {
 		collector = Ptr.nil();
 		reload(self);
 		Atomic.store32(Mem.sym("rt_gc_requested"), 0);
@@ -233,11 +233,11 @@ class Threads {
 	}
 
 	// at an allocation slow path: stopped while another thread collects
-	@:hxmc.noGc static inline function safepoint() {
+	@:hxmc.unsafe static inline function safepoint() {
 		if (Atomic.load32(Mem.sym("rt_gc_requested")) != 0) safepointSlow();
 	}
 
-	@:hxmc.noGc static function safepointSlow() {
+	@:hxmc.unsafe static function safepointSlow() {
 		Os.lock(wl);
 		if (requested()) stopHere();
 		Os.unlock(wl);
@@ -248,7 +248,7 @@ class Threads {
 	// looked sees it safe, else this thread sees the request and wakes the
 	// collector. Both keep errno (natives read it after their blocking call).
 	// (Entering again inside a safe region changes nothing.)
-	@:hxmc.export("rt_blocking_enter") @:hxmc.noGc static function blockingEnter():Void {
+	@:hxmc.export("rt_blocking_enter") @:hxmc.unsafe static function blockingEnter():Void {
 		var m = self;
 		if (m.value.state == SAFE) return;
 		publish(m);
@@ -265,7 +265,7 @@ class Threads {
 	// Leaving it waits for a collection in progress, then takes the state back
 	// (a collection may have moved what it refers to). Outside a safe region
 	// (a callback called by a fast C call) it changes nothing.
-	@:hxmc.export("rt_blocking_leave") @:hxmc.noGc static function blockingLeave():Void {
+	@:hxmc.export("rt_blocking_leave") @:hxmc.unsafe static function blockingLeave():Void {
 		var m = self;
 		if (setState(m, RUNNING) == RUNNING) return;
 		if (requested()) {
@@ -280,7 +280,7 @@ class Threads {
 
 	// Takes a mutex that a thread may hold while it leaves a safe region (and
 	// so waits for a collection): a thread blocked on it must be in a safe region.
-	@:hxmc.noGc static function lockSafe(m:Ptr) {
+	@:hxmc.unsafe static function lockSafe(m:Ptr) {
 		if (Os.tryLock(m)) return;
 		Leaf.rt_blocking_enter();
 		Os.lock(m);
@@ -288,7 +288,7 @@ class Threads {
 	}
 
 	// waits on c (m held), in a safe region: false when the deadline passed
-	@:hxmc.noGc static function condWaitSafe(c:Ptr, m:Ptr, deadline:Ptr):Bool {
+	@:hxmc.unsafe static function condWaitSafe(c:Ptr, m:Ptr, deadline:Ptr):Bool {
 		var r = true;
 		Leaf.rt_blocking_enter();
 		if (deadline.isNull()) Os.condWait(c, m) else r = Os.condTimedWait(c, m, deadline);
@@ -301,7 +301,7 @@ class Threads {
 	// a new thread's first function (the OS's thread entry, t its record):
 	// it is safe until its Haxe part leaves the safe region (the wrapper of
 	// the @:hxmc.callback run), and safe again when it ends
-	@:hxmc.callback @:hxmc.noGc static function entry(t:Ptr):Ptr {
+	@:hxmc.callback @:hxmc.unsafe static function entry(t:Ptr):Ptr {
 		var m:Ptr<Mutator> = t;
 		self = m;
 		Gc.hcur = Ptr.nil();
@@ -327,7 +327,7 @@ class Threads {
 	}
 
 	// a thread's end, in a safe region: it touches no heap object
-	@:hxmc.noGc static function exit(m:Ptr<Mutator>) {
+	@:hxmc.unsafe static function exit(m:Ptr<Mutator>) {
 		Os.lock(wl);
 		if (!m.value.prev.isNull()) m.value.prev.value.next = m.value.next else allThreads = m.value.next;
 		if (!m.value.next.isNull()) m.value.next.value.prev = m.value.prev;
@@ -399,7 +399,7 @@ class Threads {
 	// record and a shadow stack, safe until a @:hxmc.callback's wrapper leaves
 	// the safe region (it calls Haxe through such a callback from then on);
 	// kept until the process ends. False when it is one already.
-	@:hxmc.noGc static function attach():Bool {
+	@:hxmc.unsafe static function attach():Bool {
 		if (!self.isNull()) return false;
 		var m = newRecord();
 		var sbase = Os.reserve(SSTACK_BYTES);
@@ -420,7 +420,7 @@ class Threads {
 	}
 
 	// (no safepoint from the call to the insertion: job is a root from then on)
-	@:hxmc.noGc static function insert(m:Ptr<Mutator>, job:Dynamic):Int {
+	@:hxmc.unsafe static function insert(m:Ptr<Mutator>, job:Dynamic):Int {
 		Os.lock(wl);
 		m.value.job = Mem.addr(job);
 		var id = nextId++;
@@ -444,11 +444,11 @@ class Threads {
 		return id;
 	}
 
-	@:hxmc.noGc static function current():Int
+	@:hxmc.unsafe static function current():Int
 		return self.value.id;
 
 	// the record of thread id, or null (under wl)
-	@:hxmc.noGc static function byIdGet(id:Int):Ptr<Mutator>
+	@:hxmc.unsafe static function byIdGet(id:Int):Ptr<Mutator>
 		return id > 0 && id < byIdCap ? Mem.getPtr(byId, 8 * id) : Ptr.nil();
 
 	// ---- waiting for descriptors, sleeping
@@ -471,7 +471,7 @@ class Threads {
 		sleepSafe(seconds);
 	}
 
-	@:hxmc.noGc static function sleepSafe(seconds:Float) {
+	@:hxmc.unsafe static function sleepSafe(seconds:Float) {
 		Leaf.rt_blocking_enter();
 		Os.sleep(seconds);
 		Leaf.rt_blocking_leave();
@@ -485,11 +485,11 @@ class Threads {
 
 	@:hxmc.bss(16384) static var fdGens:Ptr;
 
-	@:hxmc.noGc static inline function fdGen(fd:Int):Int
+	@:hxmc.unsafe static inline function fdGen(fd:Int):Int
 		return fd >= 0 && fd < FD_GENS ? Atomic.load32(fdGens.add(4 * fd)) : 0;
 
 	// before close(fd): waiters on fd fail instead of polling a reused number
-	@:hxmc.host("rt_fd_closed") @:hxmc.noGc static function fdClosed(fd:Int):Void
+	@:hxmc.host("rt_fd_closed") @:hxmc.unsafe static function fdClosed(fd:Int):Void
 		if (fd >= 0 && fd < FD_GENS) Atomic.add32(fdGens.add(4 * fd), 1);
 
 	// waits for any of n struct pollfd (revents set), letting other threads
@@ -497,7 +497,7 @@ class Threads {
 	@:hxmc.host("rt_wait_fds") @:hxmc.collects static function waitFds(fds:Ptr, n:Int, timeout:Float):Int
 		return waitFdsSafe(fds, n, timeout);
 
-	@:hxmc.noGc static function waitFdsSafe(fds:Ptr, n:Int, timeout:Float):Int {
+	@:hxmc.unsafe static function waitFdsSafe(fds:Ptr, n:Int, timeout:Float):Int {
 		var size = L.POLLFD_SIZE, rev = L.POLLFD_REVENTS;
 		for (i in 0...n)
 			Mem.setI16(fds, size * i + rev, 0);

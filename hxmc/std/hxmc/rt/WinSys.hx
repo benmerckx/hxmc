@@ -27,7 +27,7 @@ class WinSys {
 	static inline function wide(s:String):Ptr
 		return SysCore.wide(s);
 
-	@:hxmc.noGc static function wlen(w:Ptr):Int {
+	@:hxmc.unsafe static function wlen(w:Ptr):Int {
 		var n = 0;
 		while (Mem.getU16At(w, 0, n) != 0)
 			n++;
@@ -55,10 +55,10 @@ class WinSys {
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
 
-	@:hxmc.noGc static function errno():Int
+	@:hxmc.unsafe static function errno():Int
 		return Mem.getI32(Win32._errno(), 0);
 
-	@:hxmc.noGc static function writeAll(fd:Int, p:Ptr, n:Int) {
+	@:hxmc.unsafe static function writeAll(fd:Int, p:Ptr, n:Int) {
 		while (n > 0) {
 			var w = Win32._write(fd, p, n);
 			if (w <= 0) return;
@@ -184,7 +184,7 @@ class WinSys {
 		return Mem.getI64(p, 0);
 
 	// seconds since the epoch: FILETIME counts 100 ns from 1601
-	@:hxmc.noGc public static function time():Float {
+	@:hxmc.unsafe public static function time():Float {
 		var ft = Mem.stack(8);
 		Win32.GetSystemTimePreciseAsFileTime(ft);
 		var t:Float = cast(filetime(ft) - ((116444736 : I64) * (1000000000 : I64)));
@@ -192,7 +192,7 @@ class WinSys {
 	}
 
 	// user and kernel time of the process (clock() is wall-clock time on Windows)
-	@:hxmc.noGc public static function cpuTime():Float {
+	@:hxmc.unsafe public static function cpuTime():Float {
 		var t = Mem.stack(32);
 		if (Win32.GetProcessTimes(Win32.GetCurrentProcess(), t, t.add(8), t.add(16), t.add(24)) == 0) return 0;
 		var s:Float = cast(filetime(t.add(16)) + filetime(t.add(24)));
@@ -251,7 +251,7 @@ class WinSys {
 	// (ERROR_NOACCESS) where user code would have committed it. So the pages of
 	// a buffer the system reads or writes are touched first (a byte of each
 	// page read and written back).
-	@:hxmc.noGc public static function touch(p:Ptr, n:Int) {
+	@:hxmc.unsafe public static function touch(p:Ptr, n:Int) {
 		var off = 0;
 		while (off < n) {
 			Mem.setI8(p, off, Mem.getU8(p, off));
@@ -260,13 +260,13 @@ class WinSys {
 		if (n > 0) Mem.setI8(p, n - 1, Mem.getU8(p, n - 1));
 	}
 
-	@:hxmc.noGc static function readHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe static function readHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		var p = Bytes.bytes(b).add(pos);
 		touch(p, len);
 		return Win32._read(fd, p, len);
 	}
 
-	@:hxmc.noGc static function writeHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe static function writeHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		var p = Bytes.bytes(b).add(pos);
 		touch(p, len);
 		return Win32._write(fd, p, len);
@@ -310,7 +310,7 @@ class WinSys {
 		if (Win32._lseeki64(fd, p, whence < 0 || whence > 2 ? 0 : whence) < 0) Rt.rt_throw("seek failed");
 	}
 
-	@:hxmc.noGc public static function fileTell(fd:Int):Int
+	@:hxmc.unsafe public static function fileTell(fd:Int):Int
 		return Win32._telli64(fd).toInt();
 
 	// struct _stat64 (UCRT): st_dev u32 0, st_ino u16 4, st_mode u16 6,
@@ -355,11 +355,11 @@ class WinSys {
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
 
-	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool
+	@:hxmc.unsafe static function saveAll(fd:Int, d:Ptr, n:Int):Bool
 		return SysCore.saveAll(fd, d, n);
 
 	// Sys.file_exists, Sys.is_directory: _wstat64
-	@:hxmc.noGc static function pathStat(p:Ptr, st:Ptr):Int
+	@:hxmc.unsafe static function pathStat(p:Ptr, st:Ptr):Int
 		return Win32._wstat64(p, st);
 
 	public static function exists(path:String):Bool {
@@ -389,7 +389,7 @@ class WinSys {
 		return r == 0;
 	}
 
-	@:hxmc.noGc static function deleteW(p:Ptr):Int {
+	@:hxmc.unsafe static function deleteW(p:Ptr):Int {
 		var r = Win32._wunlink(p);
 		if (r == -1 && errno() == 13) { // EACCES
 			var attrs = Win32.GetFileAttributesW(p);
@@ -415,7 +415,7 @@ class WinSys {
 		return ok;
 	}
 
-	@:hxmc.noGc static function renameW(a:Ptr, b:Ptr):Bool {
+	@:hxmc.unsafe static function renameW(a:Ptr, b:Ptr):Bool {
 		// MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH; FILE_ATTRIBUTE_DIRECTORY 0x10
 		var flags = 1 | 2 | 8;
 		var na = -1, oa = Win32.GetFileAttributesW(a);
@@ -482,7 +482,7 @@ class WinSys {
 		return s;
 	}
 
-	@:hxmc.noGc static function realPathW(p:Ptr):Ptr {
+	@:hxmc.unsafe static function realPathW(p:Ptr):Ptr {
 		var n = Win32.GetFullPathNameW(p, 0, Ptr.nil(), Ptr.nil());
 		if (n == 0) return Ptr.nil();
 		var cap = n + 1 + 4 * 260;
@@ -554,17 +554,17 @@ class WinSys {
 	static var nprocs:Int;
 	static var procsCap:Int;
 
-	@:hxmc.noGc static function lock(k:Int) {
+	@:hxmc.unsafe static function lock(k:Int) {
 		var l = Mem.sym("rt_spin").add(4 * k);
 		while (Atomic.cas32(l, 0, 1) != 0)
 			Win32.Sleep(0);
 	}
 
-	@:hxmc.noGc static function unlock(k:Int)
+	@:hxmc.unsafe static function unlock(k:Int)
 		Atomic.store32(Mem.sym("rt_spin").add(4 * k), 0);
 
 	// a copy of the process's handle (closed by the caller), null when unknown
-	@:hxmc.noGc static function procHandle(pid:Int):Ptr {
+	@:hxmc.unsafe static function procHandle(pid:Int):Ptr {
 		var h = Mem.stack(8);
 		Mem.setPtr(h, 0, Ptr.nil());
 		var self = Win32.GetCurrentProcess();
@@ -612,7 +612,7 @@ class WinSys {
 
 	// caml_search_exe_in_path: SearchPath with .exe, else the name as given
 	// (a malloc'ed wide string)
-	@:hxmc.noGc static function searchExe(name:Ptr, ext:Ptr):Ptr {
+	@:hxmc.unsafe static function searchExe(name:Ptr, ext:Ptr):Ptr {
 		var n = Win32.SearchPathW(Ptr.nil(), name, ext, 0, Ptr.nil(), Ptr.nil());
 		if (n > 0) {
 			var f = LibC.malloc(2 * (n + 1));
@@ -663,7 +663,7 @@ class WinSys {
 
 	// CreateProcess with three pipes: a malloc'ed {in fd, out fd, err fd,
 	// pid}, or null
-	@:hxmc.noGc static function spawn(exe:Ptr, wline:Ptr):Ptr {
+	@:hxmc.unsafe static function spawn(exe:Ptr, wline:Ptr):Ptr {
 		// pipes: the child's ends are inheritable copies, the parent's are not
 		var sa = Mem.stack(24);
 		Mem.setI64(sa, 0, 24); // nLength (and padding)
@@ -734,7 +734,7 @@ class WinSys {
 	}
 
 	// CONOUT$ opens when the process has a console
-	@:hxmc.noGc static function hasConsole():Bool {
+	@:hxmc.unsafe static function hasConsole():Bool {
 		var name = LibC.malloc(16);
 		var s = "CONOUT$";
 		for (i in 0...7)
@@ -749,7 +749,7 @@ class WinSys {
 	}
 
 	// the parent's end of a pipe as a descriptor (_O_BINARY | _O_NOINHERIT)
-	@:hxmc.noGc static function pipeFd(h:Ptr, flags:Int):Int {
+	@:hxmc.unsafe static function pipeFd(h:Ptr, flags:Int):Int {
 		var fd = Win32._open_osfhandle(h, flags | 0x8000 | 0x80);
 		if (fd < 0) Win32.CloseHandle(h);
 		return fd;
@@ -766,7 +766,7 @@ class WinSys {
 		return reap(pid, h, r);
 	}
 
-	@:hxmc.noGc static function reap(pid:Int, h:Ptr, r:Int):Int {
+	@:hxmc.unsafe static function reap(pid:Int, h:Ptr, r:Int):Int {
 		var code = Mem.stack(8);
 		var got = r == 0 && Win32.GetExitCodeProcess(h, code) != 0; // WAIT_OBJECT_0
 		Win32.CloseHandle(h);
@@ -786,7 +786,7 @@ class WinSys {
 	}
 
 	// Unix.kill pid Sys.sigkill: TerminateProcess with exit code 0
-	@:hxmc.noGc public static function processKill(pid:Int):Void {
+	@:hxmc.unsafe public static function processKill(pid:Int):Void {
 		var h = procHandle(pid);
 		if (!h.isNull()) {
 			Win32.TerminateProcess(h, 0);

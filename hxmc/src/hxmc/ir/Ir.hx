@@ -233,10 +233,16 @@ class FuncInfo {
 	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
-	public var declNoGc:Bool = false; // declared @:hxmc.noGc: Facts.findNoGc fails the build unless noGc
-	// @:hxmc.scoped (docs/plans/lowlevel.md, "Scoped memory"): declared noGc,
-	// its body checked by the root checker (Scoped) and its scopes reset
+	public var declUnsafe:Bool = false; // declared @:hxmc.unsafe (the trusted raw-memory layer)
+	// @:hxmc.scoped (docs/plans/lowlevel.md, "Scoped memory"): no GC point by
+	// construction, its body checked by the root checker (Scoped) and its
+	// scopes reset
 	public var scoped:Bool = false;
+
+	// declared to reach no GC point (@:hxmc.unsafe or @:hxmc.scoped):
+	// Facts.findNoGc fails the build unless noGc; lowered without frames
+	public inline function noGcDeclared():Bool
+		return declUnsafe || scoped;
 	public var repr:Bool = false; // of a WasmGC representation class of the scoped abstractions (Scoped.isRepr): unchecked
 	// @:hxmc.noReturn: it never returns (it ends the program): nothing is live after its calls
 	public var noReturn:Bool = false;

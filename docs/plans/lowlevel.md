@@ -15,7 +15,7 @@ The three layers build on each other:
 3. **Scoped memory**: values on per-thread data stacks the
    compiler manages, reclaimed at scope end, every reference checked
    against the root that bounds its lifetime; scoped code has the
-   properties of `@:hxmc.noGc` (the checked boundary between GC code and
+   properties of `@:hxmc.unsafe` (the checked boundary between GC code and
    code that never touches the GC heap) by construction.
 
 The names below are illustrative, except in the last sections: the
@@ -25,7 +25,7 @@ without C of our own").
 
 Status: built are the runtime's internal subset, the first milestone
 (externs on the six ABIs and WebAssembly, `Arena`, the checked
-`@:hxmc.noGc` rule and the raw-address check), structs by value in C
+`@:hxmc.unsafe` rule and the raw-address check), structs by value in C
 calls on every ABI ("Calls and linking") and struct values in the
 language ("Struct values": locals, parameters, results, inline fields,
 statics, `Slice`, scalar replacement) and scoped memory (section 4: data stacks,
@@ -224,7 +224,7 @@ class Window {
   handler), calls the function, and catches exceptions so they never
   unwind through C frames.
 - Threads created by C attach to the runtime before calling GC code (a
-  public attach/detach entry point); `@:hxmc.noGc` and scoped callbacks
+  public attach/detach entry point); `@:hxmc.unsafe` and scoped callbacks
   (section 4) need no attachment.
 
 ### Safety
@@ -258,7 +258,7 @@ This replaces the explicit-allocator dialect planned here before (an
 `Allocator` interface passed to every function, containers with `deinit`,
 "no borrow checker"): there is nothing to pass and nothing to free, and use
 after free is a compile error instead of a debug-build check. What still
-applies is kept below: struct values (built), the `@:hxmc.noGc` property
+applies is kept below: struct values (built), the `@:hxmc.unsafe` property
 (which scoped code has by construction), the raw-address check, and Arenas
 for C (section 3).
 
@@ -466,14 +466,14 @@ pays nothing).
 ### Rules of scoped code
 
 A `@:hxmc.scoped` function (or every function of a `@:hxmc.scoped`
-class) is checked by the root checker and lowered as a `@:hxmc.noGc`
+class) is checked by the root checker and lowered as a `@:hxmc.unsafe`
 function:
 
 - No GC allocation, no throw, no try, no calls to GC code, no GC
   references at all (no `String` but literals, `Array`, class instances,
   `Dynamic`, closures, `Null<T>` boxes): the no-GC check (Facts) and the
   checker report the culprit.
-- Calls to other scoped functions, to `@:hxmc.noGc` functions (the trusted
+- Calls to other scoped functions, to `@:hxmc.unsafe` functions (the trusted
   layer) and to C.
 - A function-typed parameter only on `inline` functions and macros: a
   function literal passed to one is inlined (Haxe's inliner does it), a
@@ -490,38 +490,37 @@ function:
   written with them, inline, and the checker follows roots through them
   (below), so their operations need no special cases.
 
-### Relation to `@:hxmc.noGc`
+### Relation to `@:hxmc.unsafe`
 
-Scoped code has the properties of `@:hxmc.noGc` by construction: no GC
-allocation, no safepoints, no shadow-stack frames (it holds no GC
-references), so it is safe on threads the runtime does not know (audio and
-other C callbacks) and keeps the caller's references in registers.
-`@:hxmc.scoped` is therefore implemented on noGc's path, not beside it: a
-scoped function is a declared-noGc function (`FuncInfo.declNoGc`, checked
-by `Facts.findNoGc`, lowered without frames and safepoints) plus the root
-checker and the marks. What scoped adds is safety: noGc code works on raw
-`Ptr`/`Mem` memory that nothing checks; scoped code works on typed values
-whose lifetimes are checked.
+`@:hxmc.unsafe` (formerly `@:hxmc.noGc`) marks the trusted layer: code
+that works on raw `Ptr`/`Mem` memory, which nothing checks, and promises
+to reach no GC point (`Facts.findNoGc` checks that promise and names the
+call chain to the first GC point when it is broken). Scoped code has the
+same no-GC property by construction: no GC allocation, no safepoints, no
+shadow-stack frames (it holds no GC references), so it is safe on threads
+the runtime does not know (audio and other C callbacks) and keeps the
+caller's references in registers. `@:hxmc.scoped` is therefore lowered
+as unsafe code is, not beside it (`FuncInfo.noGcDeclared`: frames and
+safepoints left out, the same `Facts.findNoGc` check), plus the root
+checker and the marks. But scoped code is checked, not unsafe: it works on
+typed values whose lifetimes the checker follows, where unsafe code works
+on addresses.
 
-The `@:hxmc.noGc` uses of the std today (649 functions and classes in
-`hxmc/std`; with the compiler's and the tests', about 700 mentions), by
-what they could become:
+The `@:hxmc.unsafe` uses of the std today (626 functions and classes in
+`hxmc/std`; with the compiler's and the tests', 674), by what they could
+become:
 
-| Kind | Files (noGc uses) | Could become |
+| Kind | Files (unsafe uses) | Could become |
 | --- | --- | --- |
-| (a) pure algorithms | FloatText (20), Date (20), LibM (19), Layouts' error tables (2), CaseMap (1), MemOps (1): 63 | scoped code, the GC face a thin wrapper (one core, two faces, below) |
-| (b) OS and C layers | Os (35), WinNet (29), wasm/Wasi (27), PosixNet (25), WinSys (24), Uv (19), WinRt (18), PosixSys (14), wasm/Libc (11), WasiSys (10), Ssl (10), NativeZip (9): 231 | scoped code once C calls take scoped values: a `Slice` or `Str` passed to C is data-stack memory, which never moves, so blocking calls need no pinning; the C declarations stay the trusted boundary |
-| (c) raw access to GC objects' layouts | Dyn (34), Names (20), Bytes (16), Str (15), Boxes (14), MemRepr (2), IdHash (2), ObjectMap (2), gc/GcDyn (2), Arr (1), NArray (1), gc/GcStr (1): 110 | the algorithms move to the scoped core (comparison, search, hashing, formatting); the shell that reads an object's header, length and payload stays unsafe |
-| (d) the trusted core | Gc (60), wasm/Gc (41), Threads (29), wasm/Heap (25), ThreadApi (19), Stacks (18), Faults (17), Census (11), wasm/Threads (5), Start (1), GcPaths (1), wasm/Exit (1), and the primitives of `hxmc.unsafe` and `haxe.atomic` (Arena 4, Callback 2, Ptr 1, AtomicInt 6, AtomicObject 4): 245 | stays unsafe: it implements the collector, threads, the stacks themselves |
+| (a) pure algorithms | Date (20), MemOps (1): 21 (FloatText, LibM, CaseMap and Layouts' tables are scoped code now) | scoped code, the GC face a thin wrapper (one core, two faces, below) |
+| (b) OS and C layers | Os (35), WinNet (29), wasm/Wasi (27), PosixNet (25), WinSys (23), Uv (19), WinRt (18), PosixSys (14), wasm/Libc (11), WasiSys (10), Ssl (10), NativeZip (9): 230 | scoped code once C calls take scoped values: a `Slice` or `Str` passed to C is data-stack memory, which never moves, so blocking calls need no pinning; the C declarations stay the trusted boundary |
+| (c) raw access to GC objects' layouts | Dyn (35), Names (20), Bytes (16), Str (15), Boxes (14), MemRepr (2), IdHash (2), ObjectMap (2), gc/GcDyn (2), Arr (1), NArray (1), gc/GcStr (1): 111 | the algorithms move to the scoped core (comparison, search, hashing, formatting); the shell that reads an object's header, length and payload stays unsafe |
+| (d) the trusted core | Gc (60), wasm/Gc (41), Threads (29), wasm/Heap (25), ThreadApi (19), Stacks (18), Faults (17), DataStacks (15), Census (11), wasm/Threads (5), Abort (4), Start (1), GcPaths (1), wasm/Exit (1), and the primitives of `hxmc.unsafe` and `haxe.atomic` (Arena 4, Callback 2, Ptr 1, AtomicInt 6, AtomicObject 4): 264 | stays unsafe: it implements the collector, threads, the stacks themselves |
 
-Afterwards `@:hxmc.noGc` is the small trusted layer: (d), the object-access
-shells of (c) and the C declarations of (b), the only code that touches
-raw memory. A rename (`@:hxmc.unsafe`) would say that better, but not yet:
-the name is in some 700 places and in the committed stage0, and the
-property it checks (no GC point) is still what the code generator relies
-on. Once (a) and (b) have moved, an alias `@:hxmc.unsafe` (noGc and allowed
-to use `Mem`) with scoped code barred from `Mem` outside the
-`hxmc.scoped` std would make the boundary checked; noGc stays accepted.
+Afterwards `@:hxmc.unsafe` is the small trusted layer: (d), the
+object-access shells of (c) and the C declarations of (b), the only code
+that touches raw memory. Scoped code barred from `Mem` outside the
+`hxmc.scoped` std would then make the boundary checked.
 
 ### The root checker
 
@@ -763,7 +762,7 @@ replaces (no second implementation stays):
   other buffers a call needs only while it runs went the same way
   (Windows' program path, full path, a blocking read's or write's copy;
   select's poll entries, which must not move in a safe region). What a
-  noGc helper returns (a search result, a real path, a looked-up name) and
+  unsafe helper returns (a search result, a real path, a looked-up name) and
   what grows with C's realloc (a file read whole) stay `malloc`'ed;
 - `Date`'s text (a): `DateText`, `fromString`'s forms read into six Ints
   on the data stack, `toString` written into the String's units (no
@@ -1226,7 +1225,7 @@ s[3].y = 2;                                  // in place
 | arbitrary-width and packed integers (`u3`, packed structs with bit fields, varints) | abstracts over `Int` with masking | clumsy |
 | overflow as an error, wrapping `+%`, saturating `+|` | Haxe's `Int` wraps; checked and saturating arithmetic as functions or abstracts | acceptable |
 | `*const T`, `*T` vs `[*]T`, sentinel slices `[:0]u8` | distinct abstracts (`ConstPtr<T>`, `Ptr<T>`, `Slice<T>`, `CString`) | acceptable |
-| no hidden allocations | the no-GC check of scoped and `@:hxmc.noGc` code (Facts) | built |
+| no hidden allocations | the no-GC check of scoped and `@:hxmc.unsafe` code (Facts) | built |
 | `@Vector` (SIMD) | hxmc intrinsics | needs work |
 | `anytype` | `@:generic` or macros | good |
 | `extern union` / untagged unions (C) | `@:hxmc.union` structs with overlapping fields, for C interop | not built |
@@ -1240,7 +1239,7 @@ equivalents of the GC-interop pieces, mostly for cgo and its own runtime:
 | --- | --- |
 | `Handle` | `runtime/cgo.Handle` (`cgo.NewHandle(v)`, `h.Value()`, `h.Delete()`) |
 | `pin` | `runtime.Pinner` (Go 1.21+), plus cgo's rule that C may not keep Go pointers |
-| `@:hxmc.noGc` as a checked rule | `//go:nowritebarrierrec`, `//go:nosplit`, `//go:systemstack` and a not-in-heap marker type, enforced by the compiler but only inside the runtime |
+| `@:hxmc.unsafe` as a checked rule | `//go:nowritebarrierrec`, `//go:nosplit`, `//go:systemstack` and a not-in-heap marker type, enforced by the compiler but only inside the runtime |
 | arenas | the experimental `arena` package (`GOEXPERIMENT=arenas`, Go 1.20), on hold indefinitely: use after free and API composition proved hard to make safe in a GC language |
 | implicit stack allocation | escape analysis |
 
@@ -1261,7 +1260,7 @@ hours, macOS and Windows arm64 about 2.7 hours, the runtime move about 8.
 | 2. Native memory: arenas, segments, `pin`, `Handle`, callbacks, thread attach | 0.6–0.9k | 1–1.5k | about a day (`pin` in a copying collector needs a non-moving space, in the C and the Haxe collectors) |
 | 3. C declaration parser, header generator | | 1.5–2k (macro code) | half a day |
 | 4. Manual memory: `Allocator`, `Slice`, containers; struct values | 2–3k | 1.5–2.5k | 1.5–2 days (struct values touch lowering, Mir, all three back ends and the linkers' data) |
-| 5. `@:hxmc.noGc` complete, raw-address check | 0.5–1k | | half a day |
+| 5. `@:hxmc.unsafe` complete, raw-address check | 0.5–1k | | half a day |
 | 6. Value enums, `defer` macro, structs by value across C calls, optional tcc | 2–3k | 0.3k | 1–2 days |
 | 7. Runtime and collector rewritten in this style | | rewrite | open-ended, optional |
 
@@ -1282,7 +1281,7 @@ Included:
 2. Externs with direct calls for scalars and pointers on the six ABIs;
    static linking of prebuilt objects; user DLLs (PE) and dylibs (Mach-O)
    by generalizing the runtime's existing system imports.
-3. `@:hxmc.noGc` complete, plus the raw-address check (built): the tool
+3. `@:hxmc.unsafe` complete, plus the raw-address check (built): the tool
    for rewriting std hot paths, already the runtime's style (`Mem`
    intrinsics in non-collecting functions), made a checked rule.
 4. Minimal temporary memory: `Arena.scoped(a -> ...)`, a malloc-backed
@@ -1307,7 +1306,7 @@ hand at first); structs by value across C calls; tcc; `defer`; the rest of the Z
 step 7.
 
 Estimate: about 2–3.5k lines (types and extern lowering 1–1.5k compiler
-lines, fast calls small, the `noGc` check 0.5–1k, the scoped arena a few
+lines, fast calls small, the no-GC check 0.5–1k, the scoped arena a few
 hundred lines of Haxe), roughly one agent-day. Each deferred piece can be
 added later without redesigning these.
 
@@ -1371,7 +1370,7 @@ than with the C runtime.
 4. Scoped memory: data stacks, the `hxmc.scoped` types, scoped structs
    and enums, the root checker, the cores with two faces (struct values
    and `hxmc.unsafe.Slice` done: "Struct values").
-5. `@:hxmc.noGc` as a public, complete rule, including the raw-address
+5. `@:hxmc.unsafe` as a public, complete rule, including the raw-address
    check.
 6. Structs by value across C calls (done on every ABI, callbacks
    included: "Calls and linking"); the optional embedded tcc.

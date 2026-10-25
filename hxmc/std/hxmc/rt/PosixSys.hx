@@ -24,7 +24,7 @@ class PosixSys {
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
-	@:hxmc.noGc static function errno():Int
+	@:hxmc.unsafe static function errno():Int
 		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 
 	static inline var EINTR = 4;
@@ -36,7 +36,7 @@ class PosixSys {
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
 
-	@:hxmc.noGc static function writeAll(fd:Int, p:Ptr, n:Int) {
+	@:hxmc.unsafe static function writeAll(fd:Int, p:Ptr, n:Int) {
 		while (n > 0) {
 			var w = Posix.write(fd, p, n).toInt();
 			if (w < 0) {
@@ -167,7 +167,7 @@ class PosixSys {
 		if (Mem.target() >= 9) Os.exit(code) else Posix.exit(code);
 	}
 
-	@:hxmc.noGc public static function time():Float {
+	@:hxmc.unsafe public static function time():Float {
 		var tv = Mem.stack(16);
 		Posix.gettimeofday(tv, Ptr.nil());
 		var s:Float = cast Mem.getI64(tv, 0);
@@ -175,7 +175,7 @@ class PosixSys {
 	}
 
 	// clock() / CLOCKS_PER_SEC (1000000 on Linux and macOS)
-	@:hxmc.noGc public static function cpuTime():Float {
+	@:hxmc.unsafe public static function cpuTime():Float {
 		var c:Float = cast Posix.clock();
 		return c / 1e6;
 	}
@@ -209,7 +209,7 @@ class PosixSys {
 	// this one is static and immortal)
 	static var procExe:Ptr;
 
-	@:hxmc.noGc static function procSelfExe():Ptr {
+	@:hxmc.unsafe static function procSelfExe():Ptr {
 		var p = procExe;
 		if (p.isNull()) {
 			p = LibC.malloc(16);
@@ -303,7 +303,7 @@ class PosixSys {
 		if (Posix.lseek(fd, p, whence < 0 || whence > 2 ? 0 : whence) < 0) Rt.rt_throw("seek failed");
 	}
 
-	@:hxmc.noGc public static function fileTell(fd:Int):Int
+	@:hxmc.unsafe public static function fileTell(fd:Int):Int
 		return Posix.lseek(fd, 0, 1).toInt();
 
 	// struct stat: st_mode, st_size (and the rest for stat()) per target
@@ -316,10 +316,10 @@ class PosixSys {
 	static inline function stSize(st:Ptr):I64
 		return mac() ? Mem.getI64(st, 96) : Mem.getI64(st, 48);
 
-	@:hxmc.noGc static function doStat(p:Ptr, st:Ptr):Int
+	@:hxmc.unsafe static function doStat(p:Ptr, st:Ptr):Int
 		return inode64() ? Posix.statInode64(p, st) : Posix.stat(p, st);
 
-	@:hxmc.noGc static function doFstat(fd:Int, st:Ptr):Int
+	@:hxmc.unsafe static function doFstat(fd:Int, st:Ptr):Int
 		return inode64() ? Posix.fstatInode64(fd, st) : Posix.fstat(fd, st);
 
 	static inline function isReg(mode:Int):Bool
@@ -366,7 +366,7 @@ class PosixSys {
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
 
-	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool
+	@:hxmc.unsafe static function saveAll(fd:Int, d:Ptr, n:Int):Bool
 		return SysCore.saveAll(fd, d, n);
 
 	public static function exists(path:String):Bool {
@@ -504,7 +504,7 @@ class PosixSys {
 	// on Linux; macOS has no pipe2: pipe, then FD_CLOEXEC under the
 	// descriptor lock, which fork takes too (spawn). False: a failure, with
 	// nothing left open.
-	@:hxmc.noGc static function pipes(p:Ptr):Bool {
+	@:hxmc.unsafe static function pipes(p:Ptr):Bool {
 		if (!mac()) {
 			for (k in 0...3)
 				if (Posix.pipe2(p.add(8 * k), oCloexec()) != 0) {
@@ -525,13 +525,13 @@ class PosixSys {
 		return false;
 	}
 
-	@:hxmc.noGc static function closeFds(p:Ptr, n:Int)
+	@:hxmc.unsafe static function closeFds(p:Ptr, n:Int)
 		for (i in 0...n)
 			Posix.close(Mem.getI32(p, 4 * i));
 
 	// macOS: fd, a descriptor just created, close-on-exec; the caller holds
 	// the descriptor lock (see pipes)
-	@:hxmc.noGc public static function cloexec(fd:Int):Int {
+	@:hxmc.unsafe public static function cloexec(fd:Int):Int {
 		if (fd >= 0) Posix.fcntl(fd, 2, 1); // F_SETFD, FD_CLOEXEC
 		return fd;
 	}
@@ -539,7 +539,7 @@ class PosixSys {
 	// fork and exec with the three pipes, all close-on-exec: the child's ends
 	// become 0, 1 and 2 by dup2, which clears the flag, and exec closes the
 	// rest; the child calls only the C library
-	@:hxmc.noGc static function spawn(argv:Ptr, p:Ptr):Int {
+	@:hxmc.unsafe static function spawn(argv:Ptr, p:Ptr):Int {
 		Posix.fflush(Ptr.nil());
 		if (mac()) Threads.lockSafe(Gc.fdLock);
 		var pid = Posix.fork();
@@ -573,6 +573,6 @@ class PosixSys {
 		return exitCode(Mem.getI32(st, 0));
 	}
 
-	@:hxmc.noGc public static function processKill(pid:Int):Void
+	@:hxmc.unsafe public static function processKill(pid:Int):Void
 		Posix.kill(pid, 9);
 }

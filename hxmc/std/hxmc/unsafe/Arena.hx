@@ -14,7 +14,7 @@ import hxmc.I64;
 //   });                                      // freed here, also on exceptions
 //
 // The arena itself lives in malloc'ed memory (no GC object): create/dispose
-// work in @:hxmc.noGc code too. Memory never moves, so pointers into it may
+// work in @:hxmc.unsafe code too. Memory never moves, so pointers into it may
 // be kept across GC points and passed to blocking C calls.
 abstract Arena(Ptr) {
 	// header: the current chunk's free part [cur, end), the chunk list (each
@@ -46,7 +46,7 @@ abstract Arena(Ptr) {
 		return r;
 	}
 
-	@:hxmc.noGc public static function create():Arena {
+	@:hxmc.unsafe public static function create():Arena {
 		var p = LibC.malloc((FIRST : I64));
 		Mem.setPtr(p, CUR, p.add(HEADER + 8));
 		Mem.setPtr(p, END, p.add(FIRST));
@@ -56,7 +56,7 @@ abstract Arena(Ptr) {
 	}
 
 	// frees every chunk and the arena
-	@:hxmc.noGc public function dispose():Void {
+	@:hxmc.unsafe public function dispose():Void {
 		var c:Ptr = Mem.getPtr(this, CHUNKS);
 		while (!c.isNull()) {
 			var next = Mem.getPtr(c, 0);
@@ -67,7 +67,7 @@ abstract Arena(Ptr) {
 	}
 
 	// `bytes` zeroed bytes aligned to `align` (a power of two, at most 16)
-	@:hxmc.noGc public function alloc(bytes:Int, align:Int = 8):Ptr {
+	@:hxmc.unsafe public function alloc(bytes:Int, align:Int = 8):Ptr {
 		var cur:Ptr = Mem.getPtr(this, CUR);
 		var mask:I64 = (align - 1 : I64);
 		var p = Ptr.ofI64((cur.toI64() + mask) & ~mask);
