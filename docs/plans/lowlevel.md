@@ -954,6 +954,27 @@ RSS, Linux x86-64, 2026-10-25:
 | 1M | 0.31 s, 48 MB | 0.61 s, 67 MB | 0.42 s, 98 MB | 0.84 s, 161 MB |
 | 8M | 6.50 s, 219 MB | 9.86 s, 352 MB | 9.73 s, 268 MB | 12.31 s, 565 MB |
 
+Whole programs, main (4a88f8e) against this branch, Linux x86-64 on a
+4-core VM (medians of interleaved runs, cold module cache; the VM's
+spread is 5-15%), 2026-10-25:
+
+| | main | branch |
+| --- | ---: | ---: |
+| compiler self-build: wall / user / peak RSS | 12.24 s / 18.04 s / 1525 MB | 12.26 s / 17.94 s / 1563 MB |
+| self-build, same input, callgrind | 98.86 G instr. | 100.71 G (+1.9%: more std to compile, the checker) |
+| compiler binary | 19,879,552 | 20,030,208 |
+| compiler as wasm32 (gzip -9) | 15,735,669 (3,189,156) | 15,880,653 (3,225,801) |
+| playground hih.wasm (gzip -9) | 11,431,484 (2,249,829) | 11,452,116 (2,254,604) |
+| tsc-haxe on the TS6 sources, native: check / decl / full | 3.54 / 3.55 / 5.01 s | 3.30 / 3.61 / 5.40 s |
+| same, check, callgrind | 18.92 G instr. | 18.89 G |
+| same, wasm32 under node | 6.68 / 7.03 / 9.60 s | 6.73 / 7.08 / 9.28 s |
+| formatter build, Mir macros: cold / warm / config edited | 0.82 / 0.13 / 0.97 s | 0.78 / 0.15 / 0.93 s |
+
+tsc-haxe's output is byte-identical between the two. `make bench` (hxmc
+targets): times within noise; sizes natively +0-8 KB, wasm32 +2-9 KB,
+WasmGC +10-25 KB (FloatText, LibM and TextCore there instead of the
+engine's JavaScript: mandelbrot 14 to 24 KB, json 65 to 90 KB).
+
 ### Struct values (built)
 
 `@:hxmc.struct` classes are value types (2026-10-17):
