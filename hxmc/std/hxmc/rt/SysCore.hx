@@ -39,15 +39,16 @@ extern class SysCore {
 		#end
 	}
 
-	// s as a wide C string, UTF-16, on the data stack (hxmc.scoped.Str.copyOf)
-	public static inline function wide(s:String):Ptr
-		return #if hxmc.wasm_gc Ptr.nil() #else hxmc.scoped.Str.copyOf(s).ptr() #end;
+	// s as a wide C string, UTF-16, on the data stack (hxmc.scoped.Str.copyOf),
+	// for a call taking views (hxmc.unsafe.Win32)
+	public static inline function wref(s:String):hxmc.scoped.Ref<hxmc.unsafe.UInt16>
+		return #if hxmc.wasm_gc hxmc.scoped.Ref.nil() #else hxmc.scoped.Ref.raw(hxmc.scoped.Str.copyOf(s).ptr()) #end;
 
 	// s to a descriptor, as UTF-8
 	public static inline function printTo(fd:Int, s:String) {
 		#if !hxmc.wasm_gc // (typed under WasmGC, never run: hxmc.rt.gc.GcSys)
 		var u = hxmc.scoped.Str.utf8Of(s);
-		if (Mem.os() == 2) WinSys.writeAll(fd, u.ptr(), u.length) else PosixSys.writeAll(fd, u);
+		if (Mem.os() == 2) WinSys.writeAll(fd, u) else PosixSys.writeAll(fd, u);
 		#end
 	}
 
@@ -74,7 +75,7 @@ extern class SysCore {
 	// ---- the calls
 
 	static inline function write(fd:Int, p:Ptr, n:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else Mem.os() == 2 ? Win32._write(fd, p, n) : Posix.write(fd, hxmc.scoped.Slice.raw(p, n)).toInt() #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else Mem.os() == 2 ? Win32._write(fd, hxmc.scoped.Slice.raw(p, n)) : Posix.write(fd, hxmc.scoped.Slice.raw(p, n)).toInt() #end;
 
 	// (POSIX: a negative count; Windows and WASI: none written either)
 	static inline function writeFailed(w:Int):Bool

@@ -2,10 +2,17 @@ package hxmc.rt;
 
 import hxmc.I64;
 import hxmc.rt.C;
+import hxmc.scoped.Fixed;
+import hxmc.scoped.LE;
+import hxmc.scoped.Ref;
+import hxmc.scoped.Scope;
+import hxmc.scoped.Slice;
 import hxmc.unsafe.Atomic;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt16;
+import hxmc.unsafe.UInt8;
 import hxmc.unsafe.Win32;
 
 // The operating-system primitives of hxmc.NativeSys on Windows (formerly
@@ -18,52 +25,41 @@ import hxmc.unsafe.Win32;
 // arguments: Unix.open_process_full); a program with arguments is found as
 // Unix.create_process finds it (SearchPath with .exe) and its command line
 // quotes the arguments as Unix.make_cmdline does; exit codes are the
-// processes' own.
+// processes' own. Over the C runtime and kernel32 (hxmc.unsafe.Win32), whose
+// calls take views of scoped memory (docs/plans/lowlevel.md, "The scoped C
+// boundary"): the wide strings on the data stack, the structures the system
+// fills in Fixed buffers of the frame read little-endian (hxmc.scoped.LE).
 class WinSys {
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
-	// (on the data stack: SysCore.wide)
-	static inline function wide(s:String):Ptr
-		return SysCore.wide(s);
+	// s as a wide C string on the data stack (SysCore.wref)
+	static inline function wide(s:String):Ref<UInt16>
+		return SysCore.wref(s);
 
-	@:hxmc.unsafe static function wlen(w:Ptr):Int {
-		var n = 0;
-		while (Mem.getU16At(w, 0, n) != 0)
-			n++;
-		return n;
-	}
-
-	// a NUL-terminated UTF-16 string (outside the heap) as a String
-	// n bytes of the data stack, not zeroed, for the system to fill (freed
-	// where the calling function's scope ends: Scope.scratch); touched, as the
-	// data stacks' pages are committed on a touch from user code (touch, below)
-	static inline function scratch(n:Int):Ptr {
-		var s:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.scratch(n);
-		var p = #if hxmc.wasm_gc Ptr.nil() #else s.ptr() #end;
-		touch(p, n);
-		return p;
-	}
-
-	static function ofWide(w:Ptr):String {
-		var n = wlen(w);
+	// n units at p (outside the heap: the system's memory, the data stack) as a String
+	static function ofUnits(p:Ptr, n:Int):String {
 		var s = Str.make(n);
-		LibC.memcpy(Str.unitsAddr(s), w, 2 * n);
+		LibC.memcpy(Str.unitsAddr(s), p, 2 * n);
 		return s;
 	}
+
+	// the wide C string at r, memory of the system's, as a String (null for none)
+	static function ofWide(r:Ref<UInt16>):String
+		return r.isNull() ? null : ofUnits(r.ptr(), Win32.wcslen(r).toInt());
 
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
 
-	@:hxmc.unsafe static function errno():Int
-		return Mem.getI32(Win32._errno(), 0);
+	@:hxmc.scoped static function errno():Int
+		return Win32._errno().value;
 
-	@:hxmc.unsafe static function writeAll(fd:Int, p:Ptr, n:Int) {
-		while (n > 0) {
-			var w = Win32._write(fd, p, n);
+	@:hxmc.scoped static function writeAll(fd:Int, s:Slice<UInt8>) {
+		var p = 0;
+		while (p < s.length) {
+			var w = Win32._write(fd, s.sub(p, s.length - p));
 			if (w <= 0) return;
-			p = p.add(w);
-			n -= w;
+			p += w;
 		}
 	}
 
@@ -92,20 +88,13 @@ class WinSys {
 	public static function argv0():String
 		return argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : null;
 
-	public static function getEnv(s:String):String {
-		var n = wide(s);
-		var v = Win32._wgetenv(n);
-		var r = v.isNull() ? null : ofWide(v);
-		return r;
-	}
+	public static function getEnv(s:String):String
+		return ofWide(Win32._wgetenv(wide(s)));
 
 	// _wputenv_s updates the C runtime's table and the process environment
 	// (which child processes inherit); an empty value removes the variable
-	public static function putEnv(s:String, v:String):Void {
-		var n = wide(s);
-		var w = Str.isNull(v) ? wide("") : wide(v);
-		Win32._wputenv_s(n, w);
-	}
+	public static function putEnv(s:String, v:String):Void
+		Win32._wputenv_s(wide(s), wide(Str.isNull(v) ? "" : v));
 
 	// the process environment ("=C:=C:\..." entries included: Sys.environment skips them)
 	public static function environ():Array<String> {
@@ -116,13 +105,13 @@ class WinSys {
 		var e = block;
 		var n = 0;
 		while (Mem.getU16(e, 0) != 0) {
-			e = e.add(2 * (wlen(e) + 1));
+			e = e.add(2 * (Win32.wcslen(Ref.raw(e)).toInt() + 1));
 			n++;
 		}
 		e = block;
 		for (_ in 0...n) {
-			a.push(ofWide(e));
-			e = e.add(2 * (wlen(e) + 1));
+			a.push(ofWide(Ref.raw(e)));
+			e = e.add(2 * (Win32.wcslen(Ref.raw(e)).toInt() + 1));
 		}
 		Win32.FreeEnvironmentStringsW(block);
 		return a;
@@ -141,18 +130,15 @@ class WinSys {
 	public static function getCwd():String {
 		var w = Win32._wgetcwd(Ptr.nil(), 0);
 		if (w.isNull()) Rt.rt_throw("getCwd failed");
-		var s = ofWide(w);
+		var s = ofWide(Ref.raw(w));
 		LibC.free(w);
 		var n = Str.len(s);
 		if (n == 0 || (Str.unit(s, n - 1) != "/".code && Str.unit(s, n - 1) != "\\".code)) s = Str.concat(s, "/");
 		return s;
 	}
 
-	public static function setCwd(s:String):Bool {
-		var w = wide(s);
-		var r = Win32._wchdir(w);
-		return r == 0;
-	}
+	public static function setCwd(s:String):Bool
+		return Win32._wchdir(wide(s)) == 0;
 
 	public static function systemName():String
 		return "Windows";
@@ -179,30 +165,27 @@ class WinSys {
 		Win32.exit(code);
 	}
 
-	// a FILETIME (100 ns units) as a 64-bit count
-	static inline function filetime(p:Ptr):I64
-		return Mem.getI64(p, 0);
-
-	// seconds since the epoch: FILETIME counts 100 ns from 1601
-	@:hxmc.unsafe public static function time():Float {
-		var ft = Mem.stack(8);
-		Win32.GetSystemTimePreciseAsFileTime(ft);
-		var t:Float = cast(filetime(ft) - ((116444736 : I64) * (1000000000 : I64)));
+	// seconds since the epoch: a FILETIME counts 100 ns from 1601
+	@:hxmc.scoped public static function time():Float {
+		var ft = new Fixed<I64, 1>();
+		Win32.GetSystemTimePreciseAsFileTime(ft.view().ref(0));
+		var t:Float = cast(ft[0] - ((116444736 : I64) * (1000000000 : I64)));
 		return t / 1e7;
 	}
 
 	// user and kernel time of the process (clock() is wall-clock time on Windows)
-	@:hxmc.unsafe public static function cpuTime():Float {
-		var t = Mem.stack(32);
-		if (Win32.GetProcessTimes(Win32.GetCurrentProcess(), t, t.add(8), t.add(16), t.add(24)) == 0) return 0;
-		var s:Float = cast(filetime(t.add(16)) + filetime(t.add(24)));
+	@:hxmc.scoped public static function cpuTime():Float {
+		var t = new Fixed<I64, 4>();
+		var v = t.view();
+		if (Win32.GetProcessTimes(Win32.GetCurrentProcess(), v.ref(0), v.ref(1), v.ref(2), v.ref(3)) == 0) return 0;
+		var s:Float = cast(t[2] + t[3]);
 		return s / 1e7;
 	}
 
 	public static function programPath():String {
-		var buf = scratch(65536);
-		var n = Win32.GetModuleFileNameW(Ptr.nil(), buf, 32768);
-		return n == 0 || n >= 32768 ? (argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : "") : ofWide(buf);
+		var buf:Slice<UInt16> = Scope.slice(32768);
+		var n = Win32.GetModuleFileNameW(Ptr.nil(), buf);
+		return n == 0 || n >= 32768 ? (argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : "") : ofWide(buf.ref(0));
 	}
 
 	// extc's sys_getch: the console without line buffering, or a byte of a
@@ -216,13 +199,14 @@ class WinSys {
 			Leaf.rt_blocking_leave();
 			return c;
 		}
-		var c = Mem.stack(8);
+		var c = new Fixed<UInt8, 8>();
+		var b = c.view().sub(0, 1);
 		Leaf.rt_blocking_enter();
-		var r = Win32._read(0, c, 1);
+		var r = Win32._read(0, b);
 		Leaf.rt_blocking_leave();
 		if (r <= 0) Rt.rt_throw("Eof");
-		if (echo) Win32._write(1, c, 1);
-		return Mem.getU8(c, 0);
+		if (echo) Win32._write(1, b);
+		return c[0];
 	}
 
 	// ---- files: C runtime descriptors in binary mode, not inherited
@@ -237,9 +221,7 @@ class WinSys {
 			case 3: 2 | 0x100;
 			case _: return -1;
 		}
-		var p = wide(path);
-		var fd = Win32._wopen(p, flags | 0x8000 | 0x80, 0x180);
-		return fd;
+		return Win32._wopen(wide(path), flags | 0x8000 | 0x80, 0x180);
 	}
 
 	static inline function outside()
@@ -250,7 +232,8 @@ class WinSys {
 	// reaches: ReadFile, WriteFile or recv on an untouched page of a Bytes fails
 	// (ERROR_NOACCESS) where user code would have committed it. So the pages of
 	// a buffer the system reads or writes are touched first (a byte of each
-	// page read and written back).
+	// page read and written back); a view passed to C is touched by the call
+	// (hx_view_touch, FnLower.cCall).
 	@:hxmc.unsafe public static function touch(p:Ptr, n:Int) {
 		var off = 0;
 		while (off < n) {
@@ -260,17 +243,10 @@ class WinSys {
 		if (n > 0) Mem.setI8(p, n - 1, Mem.getU8(p, n - 1));
 	}
 
-	@:hxmc.unsafe static function readHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		var p = Bytes.bytes(b).add(pos);
-		touch(p, len);
-		return Win32._read(fd, p, len);
-	}
-
-	@:hxmc.unsafe static function writeHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		var p = Bytes.bytes(b).add(pos);
-		touch(p, len);
-		return Win32._write(fd, p, len);
-	}
+	// len bytes of b at pos, a view for a call that does not block: the heap's
+	// own memory (no collection can move it meanwhile)
+	@:hxmc.unsafe static inline function heapView(b:Dynamic, pos:Int, len:Int):Slice<UInt8>
+		return Slice.raw(Bytes.bytes(b).add(pos), len);
 
 	// Reads and writes of pipes and consoles block: with other threads they go
 	// through a buffer on the data stack in a safe region (a collection may
@@ -278,27 +254,27 @@ class WinSys {
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1) {
-			var tmp = scratch(len > 0 ? len : 1);
+			var tmp:Slice<UInt8> = Scope.scratch(len > 0 ? len : 1);
 			Leaf.rt_blocking_enter();
-			var r = Win32._read(fd, tmp, len);
+			var r = Win32._read(fd, tmp.sub(0, len));
 			Leaf.rt_blocking_leave();
-			if (r > 0) LibC.memcpy(Bytes.bytes(b).add(pos), tmp, r);
+			if (r > 0) Slice.copyBytes(heapView(b, pos, r), 0, tmp, 0, r);
 			return r;
 		}
-		return readHeap(fd, b, pos, len);
+		return Win32._read(fd, heapView(b, pos, len));
 	}
 
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1) {
-			var tmp = scratch(len > 0 ? len : 1);
-			LibC.memcpy(tmp, Bytes.bytes(b).add(pos), len);
+			var tmp:Slice<UInt8> = Scope.scratch(len > 0 ? len : 1);
+			Slice.copyBytes(tmp, 0, heapView(b, pos, len), 0, len);
 			Leaf.rt_blocking_enter();
-			var r = Win32._write(fd, tmp, len);
+			var r = Win32._write(fd, tmp.sub(0, len));
 			Leaf.rt_blocking_leave();
 			return r;
 		}
-		return writeHeap(fd, b, pos, len);
+		return Win32._write(fd, heapView(b, pos, len));
 	}
 
 	public static function fileClose(fd:Int):Void {
@@ -316,23 +292,25 @@ class WinSys {
 	// struct _stat64 (UCRT): st_dev u32 0, st_ino u16 4, st_mode u16 6,
 	// st_nlink i16 8, st_uid i16 10, st_gid i16 12, st_rdev u32 16, st_size
 	// 24, st_atime 32, st_mtime 40, st_ctime 48 (64-bit)
-	static inline function stMode(st:Ptr):Int
-		return Mem.getU16(st, 6);
+	static inline var STAT = 64;
+
+	static inline function i16(v:Slice<UInt8>, at:Int):Int
+		return (LE.u16(v, at) << 16) >> 16;
 
 	public static function fileContent(path:String):Dynamic {
-		var p = wide(path);
-		var fd = Win32._wopen(p, 0x8000 | 0x80, 0);
+		var fd = Win32._wopen(wide(path), 0x8000 | 0x80, 0);
 		if (fd < 0) return null;
 		var cap = 65536, n = 0;
-		var st = Mem.stack(64);
-		if (Win32._fstat64(fd, st) == 0 && (stMode(st) & 0xF000) == 0x8000) cap = Mem.getI64(st, 24).toInt() + 1;
+		var st:Fixed<UInt8, 64> = Fixed.scratch(); // (C fills it)
+		var sv = st.view();
+		if (Win32._fstat64(fd, sv.ref(0)) == 0 && (LE.u16(sv, 6) & 0xF000) == 0x8000) cap = LE.i64(sv, 24).toInt() + 1;
 		var buf = LibC.malloc(cap);
 		while (true) {
 			if (n == cap) {
 				cap *= 2;
 				buf = LibC.realloc(buf, cap);
 			}
-			var r = Win32._read(fd, buf.add(n), cap - n);
+			var r = Win32._read(fd, Slice.raw(buf.add(n), cap - n));
 			if (r < 0) {
 				LibC.free(buf);
 				Win32._close(fd);
@@ -349,8 +327,7 @@ class WinSys {
 	}
 
 	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
-		var p = wide(path);
-		var fd = Win32._wopen(p, 1 | 0x100 | 0x8000 | 0x80 | (append ? 8 : 0x200), 0x180);
+		var fd = Win32._wopen(wide(path), 1 | 0x100 | 0x8000 | 0x80 | (append ? 8 : 0x200), 0x180);
 		if (fd < 0) return false;
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
@@ -358,38 +335,29 @@ class WinSys {
 	@:hxmc.unsafe static function saveAll(fd:Int, d:Ptr, n:Int):Bool
 		return SysCore.saveAll(fd, d, n);
 
-	// Sys.file_exists, Sys.is_directory: _wstat64
-	@:hxmc.unsafe static function pathStat(p:Ptr, st:Ptr):Int
-		return Win32._wstat64(p, st);
-
-	public static function exists(path:String):Bool {
-		var p = wide(path);
-		var st = Mem.stack(64);
-		var r = pathStat(p, st) == 0;
-		return r;
+	// Sys.file_exists, Sys.is_directory: _wstat64; the mode, or -1
+	static function pathMode(path:String):Int {
+		var st:Fixed<UInt8, 64> = Fixed.scratch(); // (C fills it)
+		var sv = st.view();
+		return Win32._wstat64(wide(path), sv.ref(0)) == 0 ? LE.u16(sv, 6) : -1;
 	}
+
+	public static function exists(path:String):Bool
+		return pathMode(path) >= 0;
 
 	public static function isDirectory(path:String):Bool {
-		var p = wide(path);
-		var st = Mem.stack(64);
-		var r = pathStat(p, st) == 0 && (stMode(st) & 0xF000) == 0x4000;
-		return r;
+		var m = pathMode(path);
+		return m >= 0 && (m & 0xF000) == 0x4000;
 	}
 
-	public static function createDirectory(path:String):Bool {
-		var p = wide(path);
-		var r = Win32._wmkdir(p) == 0;
-		return r;
-	}
+	public static function createDirectory(path:String):Bool
+		return Win32._wmkdir(wide(path)) == 0;
 
 	// caml_win32_unlink: a read-only file is made writable, then removed
-	public static function deleteFile(path:String):Bool {
-		var p = wide(path);
-		var r = deleteW(p);
-		return r == 0;
-	}
+	public static function deleteFile(path:String):Bool
+		return deleteW(wide(path)) == 0;
 
-	@:hxmc.unsafe static function deleteW(p:Ptr):Int {
+	@:hxmc.scoped static function deleteW(p:Ref<UInt16>):Int {
 		var r = Win32._wunlink(p);
 		if (r == -1 && errno() == 13) { // EACCES
 			var attrs = Win32.GetFileAttributesW(p);
@@ -401,21 +369,15 @@ class WinSys {
 		return r;
 	}
 
-	public static function deleteDirectory(path:String):Bool {
-		var p = wide(path);
-		var r = Win32._wrmdir(p) == 0;
-		return r;
-	}
+	public static function deleteDirectory(path:String):Bool
+		return Win32._wrmdir(wide(path)) == 0;
 
 	// caml_win32_rename: MoveFileEx replacing the target, a directory over an
 	// empty directory, never a directory over a file
-	public static function rename(path:String, newPath:String):Bool {
-		var a = wide(path), b = wide(newPath);
-		var ok = renameW(a, b);
-		return ok;
-	}
+	public static function rename(path:String, newPath:String):Bool
+		return renameW(wide(path), wide(newPath));
 
-	@:hxmc.unsafe static function renameW(a:Ptr, b:Ptr):Bool {
+	@:hxmc.scoped static function renameW(a:Ref<UInt16>, b:Ref<UInt16>):Bool {
 		// MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH; FILE_ATTRIBUTE_DIRECTORY 0x10
 		var flags = 1 | 2 | 8;
 		var na = -1, oa = Win32.GetFileAttributesW(a);
@@ -435,113 +397,120 @@ class WinSys {
 	static inline var FIND_DATA = 592;
 	static inline var FIND_NAME = 44;
 
+	// the name of a WIN32_FIND_DATAW, a String
+	static function findName(data:Slice<UInt8>):String {
+		var n = 0;
+		while (n < 260 && LE.u16(data, FIND_NAME + 2 * n) != 0)
+			n++;
+		return ofUnits(data.ptr().add(FIND_NAME), n);
+	}
+
 	// Sys.readdir (caml_read_directory: FindFirstFile over dir\*)
 	public static function readDirectory(path:String):Array<String> {
 		var n = Str.len(path);
 		var last = n > 0 ? Str.unit(path, n - 1) : 0;
 		var pat = n > 0 && last != "/".code && last != "\\".code && last != ":".code ? Str.concat(path, "\\*") : Str.concat(path, "*");
-		var w = wide(pat);
-		var fd = LibC.malloc(FIND_DATA);
-		var h = Win32.FindFirstFileW(w, fd);
+		var data:Slice<UInt8> = Scope.slice(FIND_DATA);
+		var h = Win32.FindFirstFileW(wide(pat), data.ref(0));
 		if (h.toI64() == -1) {
-			LibC.free(fd);
 			if (Win32.GetLastError() != 2) return null; // ERROR_FILE_NOT_FOUND
 			return [];
 		}
 		var names:Array<String> = [];
 		do {
-			var name = fd.add(FIND_NAME);
-			var dot = Mem.getU16(name, 0) == ".".code && (Mem.getU16(name, 2) == 0 || (Mem.getU16(name, 2) == ".".code && Mem.getU16(name, 4) == 0));
-			if (!dot) names.push(ofWide(name)); // (the find data is outside the heap)
-		} while (Win32.FindNextFileW(h, fd) != 0);
+			var c0 = LE.u16(data, FIND_NAME), c1 = LE.u16(data, FIND_NAME + 2);
+			var dot = c0 == ".".code && (c1 == 0 || (c1 == ".".code && LE.u16(data, FIND_NAME + 4) == 0));
+			if (!dot) names.push(findName(data));
+		} while (Win32.FindNextFileW(h, data.ref(0)) != 0);
 		Win32.FindClose(h);
-		LibC.free(fd);
 		return names;
 	}
 
 	// Extc.get_full_path: GetFullPathName (the file need not exist)
 	public static function fullPath(path:String):String {
 		var p = wide(path);
-		var n = Win32.GetFullPathNameW(p, 0, Ptr.nil(), Ptr.nil());
-		if (n == 0) {
-			return null;
-		}
-		var buf = scratch(2 * (n + 1));
-		var m = Win32.GetFullPathNameW(p, n + 1, buf, Ptr.nil());
-		return m == 0 || m > n ? null : ofWide(buf);
+		var n = Win32.GetFullPathNameW(p, 0, Ref.nil(), Ptr.nil());
+		if (n == 0) return null;
+		var buf:Slice<UInt16> = Scope.slice(n + 1);
+		var m = Win32.GetFullPathNameW(p, n + 1, buf.ref(0), Ptr.nil());
+		return m == 0 || m > n ? null : ofWide(buf.ref(0));
 	}
 
 	// Extc.get_real_path: the full path with the drive letter upper-cased and
 	// each existing component as the file system spells it
 	public static function realPath(path:String):String {
 		var p = wide(path);
-		var out = realPathW(p);
-		if (out.isNull()) return null;
-		var s = ofWide(out);
-		LibC.free(out);
-		return s;
+		var n = Win32.GetFullPathNameW(p, 0, Ref.nil(), Ptr.nil());
+		if (n == 0) return null;
+		var cap = n + 1 + 4 * 260;
+		var out:Slice<UInt16> = Scope.slice(cap);
+		var m = Win32.GetFullPathNameW(p, n + 1, out.ref(0), Ptr.nil());
+		if (m == 0 || m > n) return null;
+		var len = 0;
+		while (out[len] != 0)
+			len++;
+		return ofUnits(out.ptr(), realPathW(out, len));
 	}
 
-	@:hxmc.unsafe static function realPathW(p:Ptr):Ptr {
-		var n = Win32.GetFullPathNameW(p, 0, Ptr.nil(), Ptr.nil());
-		if (n == 0) return Ptr.nil();
-		var cap = n + 1 + 4 * 260;
-		var out = LibC.malloc(2 * cap);
-		var m = Win32.GetFullPathNameW(p, n + 1, out, Ptr.nil());
-		if (m == 0 || m > n) {
-			LibC.free(out);
-			return Ptr.nil();
-		}
-		inline function at(k:Int):Int
-			return Mem.getU16At(out, 0, k);
-		inline function put(k:Int, v:Int)
-			Mem.setU16At(out, 0, k, v);
-		var len = wlen(out), i = 0;
-		if (len >= 2 && at(1) == ":".code) {
-			if (at(0) >= "a".code && at(0) <= "z".code) put(0, at(0) - 32);
-			i = len >= 3 && at(2) == "\\".code ? 3 : 2;
+	// each component of the full path out (len units, a 0 after) as the file
+	// system spells it, in place: the new length
+	static function realPathW(out:Slice<UInt16>, len:Int):Int {
+		var i = 0;
+		if (len >= 2 && out[1] == ":".code) {
+			if (out[0] >= "a".code && out[0] <= "z".code) out[0] = out[0] - 32;
+			i = len >= 3 && out[2] == "\\".code ? 3 : 2;
 		}
 		var last = i;
-		var data = LibC.malloc(FIND_DATA);
+		var data:Slice<UInt8> = Scope.slice(FIND_DATA);
 		while (i < len) {
-			while (i < len && at(i) != "\\".code)
+			while (i < len && out[i] != "\\".code)
 				i++;
-			put(i, 0);
-			var h = Win32.FindFirstFileW(out, data);
+			out[i] = 0;
+			var h = Win32.FindFirstFileW(out.ref(0), data.ref(0));
 			if (!(h.toI64() == -1)) {
-				var name = data.add(FIND_NAME);
-				var klen = wlen(name);
-				if (klen != i - last && len + klen < cap) { // a ~ (short name) was expanded
+				var klen = 0;
+				while (klen < 260 && LE.u16(data, FIND_NAME + 2 * klen) != 0)
+					klen++;
+				if (klen != i - last && len + klen < out.length) { // a ~ (short name) was expanded
 					var d = klen - (i - last);
-					LibC.memmove(out.add(2 * (i + d)), out.add(2 * i), 2 * (len - i + 1));
+					// (the rest, its 0 included, moved by d units)
+					if (d > 0) {
+						var k = len;
+						while (k >= i) {
+							out[k + d] = out[k];
+							k--;
+						}
+					} else
+						for (k in i...len + 1)
+							out[k + d] = out[k];
 					len += d;
 					i += d;
 				}
-				if (klen == i - last) LibC.memcpy(out.add(2 * last), name, 2 * klen);
+				if (klen == i - last)
+					for (k in 0...klen)
+						out[last + k] = LE.u16(data, FIND_NAME + 2 * k);
 				Win32.FindClose(h);
 			}
-			if (i < len) put(i, "\\".code);
+			if (i < len) out[i] = "\\".code;
 			i++;
 			last = i;
 		}
-		LibC.free(data);
-		return out;
+		return len;
 	}
 
 	// Unix.stat as Windows' C runtime fills it (uid, gid, ino: 0)
 	// gid uid atime mtime ctime dev ino nlink rdev size mode
 	public static function stat(path:String):Array<Float> {
-		var p = wide(path);
-		var st = Mem.stack(64);
-		var r = pathStat(p, st);
-		if (r != 0) return null;
-		inline function f(v:I64):Float
-			return cast v;
-		inline function u32(v:Int):Float
-			return f((v : I64) & (((1 : I64) << 32) - 1));
+		var st:Fixed<UInt8, 64> = Fixed.scratch(); // (C fills it)
+		var v = st.view();
+		if (Win32._wstat64(wide(path), v.ref(0)) != 0) return null;
+		inline function f(x:I64):Float
+			return cast x;
+		inline function u32(at:Int):Float
+			return f((LE.i32(v, at) : I64) & (((1 : I64) << 32) - 1));
 		return [
-			Mem.getI16(st, 12), Mem.getI16(st, 10), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 40)), f(Mem.getI64(st, 48)), u32(Mem.getI32(st, 0)),
-			Mem.getU16(st, 4), Mem.getI16(st, 8), u32(Mem.getI32(st, 16)), f(Mem.getI64(st, 24)), Mem.getU16(st, 6)
+			i16(v, 12), i16(v, 10), f(LE.i64(v, 32)), f(LE.i64(v, 40)), f(LE.i64(v, 48)), u32(0), LE.u16(v, 4), i16(v, 8), u32(16), f(LE.i64(v, 24)),
+			LE.u16(v, 6)
 		];
 	}
 
@@ -563,18 +532,20 @@ class WinSys {
 	@:hxmc.unsafe static function unlock(k:Int)
 		Atomic.store32(Mem.sym("rt_spin").add(4 * k), 0);
 
+	static inline function handle(x:I64):Ptr
+		return new Ptr(x);
+
 	// a copy of the process's handle (closed by the caller), null when unknown
 	@:hxmc.unsafe static function procHandle(pid:Int):Ptr {
-		var h = Mem.stack(8);
-		Mem.setPtr(h, 0, Ptr.nil());
+		var h = new Fixed<I64, 1>();
 		var self = Win32.GetCurrentProcess();
 		lock(1);
 		for (i in 0...nprocs)
 			if (Mem.getI64(procs, 16 * i) == (pid : I64)
-				&& Win32.DuplicateHandle(self, Mem.getPtr(procs, 16 * i + 8), self, h, 0, 0, 2) == 0) // DUPLICATE_SAME_ACCESS
-				Mem.setPtr(h, 0, Ptr.nil());
+				&& Win32.DuplicateHandle(self, Mem.getPtr(procs, 16 * i + 8), self, h.view().ref(0), 0, 0, 2) == 0) // DUPLICATE_SAME_ACCESS
+				h[0] = 0;
 		unlock(1);
-		return Mem.getPtr(h, 0);
+		return handle(h[0]);
 	}
 
 	// Unix.make_cmdline's maybe_quote: Filename.quote (the C runtime's
@@ -611,24 +582,24 @@ class WinSys {
 	}
 
 	// caml_search_exe_in_path: SearchPath with .exe, else the name as given
-	// (a malloc'ed wide string)
-	@:hxmc.unsafe static function searchExe(name:Ptr, ext:Ptr):Ptr {
-		var n = Win32.SearchPathW(Ptr.nil(), name, ext, 0, Ptr.nil(), Ptr.nil());
+	// (on the data stack, a 0 after)
+	static function searchExe(name:Ref<UInt16>, ext:Ref<UInt16>):Slice<UInt16> {
+		var n = Win32.SearchPathW(Ptr.nil(), name, ext, 0, Ref.nil(), Ptr.nil());
 		if (n > 0) {
-			var f = LibC.malloc(2 * (n + 1));
-			var m = Win32.SearchPathW(Ptr.nil(), name, ext, n + 1, f, Ptr.nil());
+			var f:Slice<UInt16> = Scope.slice(n + 1);
+			var m = Win32.SearchPathW(Ptr.nil(), name, ext, n + 1, f.ref(0), Ptr.nil());
 			if (m > 0 && m <= n) return f;
-			LibC.free(f);
 		}
-		var l = wlen(name);
-		var c = LibC.malloc(2 * l + 2);
-		LibC.memcpy(c, name, 2 * l + 2);
+		var l = Win32.wcslen(name).toInt();
+		var c:Slice<UInt16> = Scope.slice(l + 1), src:Slice<UInt16> = Slice.raw(name.ptr(), l);
+		for (k in 0...l)
+			c[k] = src[k];
 		return c;
 	}
 
 	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
 		var line:String;
-		var exe:Ptr;
+		var exe:Slice<UInt16>;
 		var ext = wide(".exe");
 		if (!Str.isNull(args)) {
 			// Unix.create_process cmd (cmd :: args)
@@ -637,112 +608,101 @@ class WinSys {
 			for (a in args)
 				cmdlineAdd(b, false, a);
 			line = b.toString();
-			var wc = wide(cmd);
-			exe = searchExe(wc, ext);
+			exe = searchExe(wide(cmd), ext);
 		} else {
 			// Unix.open_process_full: %COMSPEC% /c cmd
-			var cs = wide("COMSPEC");
-			var shell = Win32._wgetenv(cs);
-			if (shell.isNull()) {
-				return -1;
-			}
+			var shell = Win32._wgetenv(wide("COMSPEC"));
+			if (shell.isNull()) return -1;
 			line = Str.concat(Str.concat(ofWide(shell), " /c "), cmd);
-			exe = searchExe(Win32._wgetenv(wide("COMSPEC")), ext);
+			exe = searchExe(shell, ext);
 		}
-		var wline = wide(line);
-		var r = spawn(exe, wline);
-		LibC.free(exe);
-		if (r.isNull()) return -1;
-		fds[0] = Mem.getI32(r, 0);
-		fds[1] = Mem.getI32(r, 4);
-		fds[2] = Mem.getI32(r, 8);
-		var pid = Mem.getI32(r, 12);
-		LibC.free(r);
-		return pid;
+		var r = new Fixed<Int, 4>();
+		if (!spawn(exe.ref(0), wide(line), r.view())) return -1;
+		fds[0] = r[0];
+		fds[1] = r[1];
+		fds[2] = r[2];
+		return r[3];
 	}
 
-	// CreateProcess with three pipes: a malloc'ed {in fd, out fd, err fd,
-	// pid}, or null
-	@:hxmc.unsafe static function spawn(exe:Ptr, wline:Ptr):Ptr {
+	// CreateProcess with three pipes: r its in, out and err descriptors and
+	// its pid; false on a failure
+	@:hxmc.unsafe static function spawn(exe:Ref<UInt16>, wline:Ref<UInt16>, r:Slice<Int>):Bool {
 		// pipes: the child's ends are inheritable copies, the parent's are not
-		var sa = Mem.stack(24);
-		Mem.setI64(sa, 0, 24); // nLength (and padding)
-		Mem.setPtr(sa, 8, Ptr.nil());
-		Mem.setI64(sa, 16, 0); // bInheritHandle FALSE
-		var hs = Mem.stack(48); // in_r, in_w, out_r, out_w, err_r, err_w
-		if (Win32.CreatePipe(hs, hs.add(8), sa, 0) == 0) return Ptr.nil();
-		if (Win32.CreatePipe(hs.add(16), hs.add(24), sa, 0) == 0) {
-			Win32.CloseHandle(Mem.getPtr(hs, 0));
-			Win32.CloseHandle(Mem.getPtr(hs, 8));
-			return Ptr.nil();
+		var sa = new Fixed<UInt8, 24>();
+		var sv = sa.view();
+		LE.put64(sv, 0, 24); // nLength (and padding); lpSecurityDescriptor null, bInheritHandle FALSE
+		var hs = new Fixed<I64, 6>(); // in_r, in_w, out_r, out_w, err_r, err_w
+		var hv = hs.view();
+		if (Win32.CreatePipe(hv.ref(0), hv.ref(1), sv.ref(0), 0) == 0) return false;
+		if (Win32.CreatePipe(hv.ref(2), hv.ref(3), sv.ref(0), 0) == 0) {
+			Win32.CloseHandle(handle(hs[0]));
+			Win32.CloseHandle(handle(hs[1]));
+			return false;
 		}
-		if (Win32.CreatePipe(hs.add(32), hs.add(40), sa, 0) == 0) {
+		if (Win32.CreatePipe(hv.ref(4), hv.ref(5), sv.ref(0), 0) == 0) {
 			for (k in 0...4)
-				Win32.CloseHandle(Mem.getPtr(hs, 8 * k));
-			return Ptr.nil();
+				Win32.CloseHandle(handle(hs[k]));
+			return false;
 		}
 		// STARTUPINFOW (104 bytes): cb, dwFlags at 60, wShowWindow at 64,
 		// hStdInput 80, hStdOutput 88, hStdError 96
-		var si = Mem.stack(104);
-		LibC.memset(si, 0, 104);
-		Mem.setI32(si, 0, 104);
+		var si = new Fixed<UInt8, 104>();
+		var siv = si.view();
+		LE.put32(siv, 0, 104);
 		var siFlags = 0x100; // STARTF_USESTDHANDLES
 		var flags = 0x400; // CREATE_UNICODE_ENVIRONMENT
 		if (!hasConsole()) {
 			flags |= 0x10; // CREATE_NEW_CONSOLE
 			siFlags |= 1; // STARTF_USESHOWWINDOW
-			Mem.setI16(si, 64, 0); // SW_HIDE
+			LE.put16(siv, 64, 0); // SW_HIDE
 		}
-		Mem.setI32(si, 60, siFlags);
-		var pi = Mem.stack(24); // hProcess, hThread, dwProcessId, dwThreadId
+		LE.put32(siv, 60, siFlags);
+		var pi = new Fixed<UInt8, 24>(); // hProcess, hThread, dwProcessId, dwThreadId
+		var piv = pi.view();
+		var std = new Fixed<I64, 3>(); // the child's ends, inheritable
+		var stdv = std.view();
 		var self = Win32.GetCurrentProcess();
 		lock(2);
-		Win32.DuplicateHandle(self, Mem.getPtr(hs, 0), self, si.add(80), 0, 1, 2);
-		Win32.DuplicateHandle(self, Mem.getPtr(hs, 24), self, si.add(88), 0, 1, 2);
-		Win32.DuplicateHandle(self, Mem.getPtr(hs, 40), self, si.add(96), 0, 1, 2);
-		var ok = Win32.CreateProcessW(exe, wline, Ptr.nil(), Ptr.nil(), 1, flags, Ptr.nil(), Ptr.nil(), si, pi) != 0;
-		Win32.CloseHandle(Mem.getPtr(si, 80));
-		Win32.CloseHandle(Mem.getPtr(si, 88));
-		Win32.CloseHandle(Mem.getPtr(si, 96));
+		Win32.DuplicateHandle(self, handle(hs[0]), self, stdv.ref(0), 0, 1, 2);
+		Win32.DuplicateHandle(self, handle(hs[3]), self, stdv.ref(1), 0, 1, 2);
+		Win32.DuplicateHandle(self, handle(hs[5]), self, stdv.ref(2), 0, 1, 2);
+		for (k in 0...3)
+			LE.put64(siv, 80 + 8 * k, std[k]);
+		var ok = Win32.CreateProcessW(exe, wline, Ptr.nil(), Ptr.nil(), 1, flags, Ptr.nil(), Ptr.nil(), siv.ref(0), piv.ref(0)) != 0;
+		for (k in 0...3)
+			Win32.CloseHandle(handle(std[k]));
 		unlock(2);
-		Win32.CloseHandle(Mem.getPtr(hs, 0));
-		Win32.CloseHandle(Mem.getPtr(hs, 24));
-		Win32.CloseHandle(Mem.getPtr(hs, 40));
+		Win32.CloseHandle(handle(hs[0]));
+		Win32.CloseHandle(handle(hs[3]));
+		Win32.CloseHandle(handle(hs[5]));
 		if (!ok) {
-			Win32.CloseHandle(Mem.getPtr(hs, 8));
-			Win32.CloseHandle(Mem.getPtr(hs, 16));
-			Win32.CloseHandle(Mem.getPtr(hs, 32));
-			return Ptr.nil();
+			Win32.CloseHandle(handle(hs[1]));
+			Win32.CloseHandle(handle(hs[2]));
+			Win32.CloseHandle(handle(hs[4]));
+			return false;
 		}
-		Win32.CloseHandle(Mem.getPtr(pi, 8));
-		var pid = Mem.getI32(pi, 16);
+		Win32.CloseHandle(handle(LE.i64(piv, 8)));
+		var pid = LE.i32(piv, 16);
 		lock(1);
 		if (nprocs == procsCap) {
 			procsCap = procsCap > 0 ? procsCap * 2 : 16;
 			procs = LibC.realloc(procs, 16 * procsCap);
 		}
 		Mem.setI64(procs, 16 * nprocs, pid);
-		Mem.setPtr(procs, 16 * nprocs + 8, Mem.getPtr(pi, 0));
+		Mem.setI64(procs, 16 * nprocs + 8, LE.i64(piv, 0));
 		nprocs++;
 		unlock(1);
-		var r = LibC.malloc(16);
-		Mem.setI32(r, 0, pipeFd(Mem.getPtr(hs, 8), 1)); // _O_WRONLY
-		Mem.setI32(r, 4, pipeFd(Mem.getPtr(hs, 16), 0)); // _O_RDONLY
-		Mem.setI32(r, 8, pipeFd(Mem.getPtr(hs, 32), 0));
-		Mem.setI32(r, 12, pid);
-		return r;
+		r[0] = pipeFd(handle(hs[1]), 1); // _O_WRONLY
+		r[1] = pipeFd(handle(hs[2]), 0); // _O_RDONLY
+		r[2] = pipeFd(handle(hs[4]), 0);
+		r[3] = pid;
+		return true;
 	}
 
 	// CONOUT$ opens when the process has a console
-	@:hxmc.unsafe static function hasConsole():Bool {
-		var name = LibC.malloc(16);
-		var s = "CONOUT$";
-		for (i in 0...7)
-			Mem.setU16At(name, 0, i, Str.unit(s, i));
-		Mem.setI16(name, 14, 0);
+	static function hasConsole():Bool {
 		// GENERIC_WRITE, FILE_SHARE_WRITE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL
-		var h = Win32.CreateFileW(name, 0x40000000, 2, Ptr.nil(), 3, 0x80, Ptr.nil());
-		LibC.free(name);
+		var h = Win32.CreateFileW(wide("CONOUT$"), 0x40000000, 2, Ptr.nil(), 3, 0x80, Ptr.nil());
 		if (h.toI64() == -1) return false;
 		Win32.CloseHandle(h);
 		return true;
@@ -767,8 +727,8 @@ class WinSys {
 	}
 
 	@:hxmc.unsafe static function reap(pid:Int, h:Ptr, r:Int):Int {
-		var code = Mem.stack(8);
-		var got = r == 0 && Win32.GetExitCodeProcess(h, code) != 0; // WAIT_OBJECT_0
+		var code = new Fixed<Int, 1>();
+		var got = r == 0 && Win32.GetExitCodeProcess(h, code.view().ref(0)) != 0; // WAIT_OBJECT_0
 		Win32.CloseHandle(h);
 		if (!got) return -1;
 		// reaped: the handle is closed (the std caches the exit code)
@@ -782,7 +742,7 @@ class WinSys {
 				break;
 			}
 		unlock(1);
-		return Mem.getI32(code, 0);
+		return code[0];
 	}
 
 	// Unix.kill pid Sys.sigkill: TerminateProcess with exit code 0
