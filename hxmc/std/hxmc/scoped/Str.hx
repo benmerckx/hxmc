@@ -35,6 +35,19 @@ abstract Str(StrData) {
 	public static inline function copyOf(s:String):Str
 		return cast StrData.fresh(s, 0, W.strLen(s));
 
+	public static inline function join(parts:Slice<Str>):Str {
+		var n = 0;
+		for (s in parts)
+			n += s.length;
+		var r:GcChars = W.strNew(n);
+		var o = 0;
+		for (s in parts) {
+			W.strCopy(r, o, s.chars(), s.start(), s.length);
+			o += s.length;
+		}
+		return cast StrData.fresh(r, 0, n);
+	}
+
 	@:noCompletion public inline function chars():GcChars
 		return this.s;
 
@@ -208,6 +221,21 @@ abstract Str(StrData) {
 		var n = s.length;
 		var p = DataStacks.alloc(2 * n);
 		LibC.memcpy(p, s.ptr(), (2 * n : I64));
+		return new Str(p, n);
+	}
+
+	// the parts one after another, on the data stack (a string with
+	// interpolations expected as a Str: typing.HxmcLiterals)
+	public static inline function join(parts:Slice<Str>):Str {
+		var n = 0;
+		for (s in parts)
+			n += s.length;
+		var p = DataStacks.alloc(2 * n);
+		var o = 0;
+		for (s in parts) {
+			LibC.memcpy(p.add(2 * o), s.ptr(), (2 * s.length : I64));
+			o += s.length;
+		}
 		return new Str(p, n);
 	}
 

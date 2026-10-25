@@ -1358,6 +1358,9 @@ class Typer {
 	}
 
 	public static function typeArrayDecl(ctx:TyperContext, el:Vector<Expr>, withType:WithTypeValue, p:Pos):TExpr {
+		// (hxmc: a Slice, a Grow or a Fixed where one is expected)
+		var scoped = HxmcLiterals.arrayDecl(ctx, el, withType, p);
+		if (scoped != null) return scoped;
 		var allowDynamic = false;
 		function loop(seen:Array<T>, t:T):Null<T> return switch follow(t) {
 			case TInst({clPath: {pack: [], name: "Array"}}, [tp]): switch follow(tp) {
@@ -1813,7 +1816,10 @@ class Typer {
 					case _: throw "Invalid EReg class";
 				};
 				mk(TNew(c, vector(), vector(str, options)), t, p);
-			case EConst(String(s, SSingleQuotes)) if (s != ""): typeExpr(ctx, formatString(ctx, s, p), withType);
+			case EConst(String(s, SSingleQuotes)) if (s != ""):
+				// (hxmc: a Str where one is expected)
+				var scoped = HxmcLiterals.formatStr(ctx, s, withType, p);
+				scoped != null ? scoped : typeExpr(ctx, formatString(ctx, s, p), withType);
 			case EConst(Int(s, suffix)) if (suffix != null): switch suffix {
 					case "i32": try mk(TConst(TInt(core.ds.OcamlInt32.ofString(s))), ctx.com.basic.tint,
 							p) catch (_:Dynamic) raiseTypingError("Cannot represent " + s + " with a 32 bit integer", p);

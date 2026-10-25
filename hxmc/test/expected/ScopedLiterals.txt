@@ -1,0 +1,7 @@
+exit 0
+ScopedLiterals.hx:53: 612
+ScopedLiterals.hx:54: 7
+ScopedLiterals.hx:55: 8.75
+ScopedLiterals.hx:56: 1234
+ScopedLiterals.hx:57: it: n=41, f=2.5, ok=true, sum=42
+ScopedLiterals.hx:58: 32

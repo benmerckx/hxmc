@@ -345,6 +345,15 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   hi:Int}` for GC code to name. Fields are variables; a structure with
   methods, optional fields or type parameters stays a structure, which
   scoped code refuses.
+- Literals where a scoped value is expected (`typing.HxmcLiterals`): an
+  array literal as a `Slice<T>` is `Scope.slice(n)` filled, as a
+  `Grow<T>` a new Grow pushed to, as a `Fixed<T, N>` a new Fixed of its
+  N elements (`var t:Fixed<Float, 3> = [1.5, 2, 4];`); a string with
+  interpolations as a `Str` is `Str.join` of its parts, Str values as
+  they are, Int and Float through `Str.ofInt` and `Str.ofFloat`, Bool as
+  `true` or `false` (`return '$name: $n';`). The elements are evaluated
+  first, in order, in locals of the literal; all of it is the enclosing
+  scope's memory, as a call's result would be.
 - A module whose type of its own name is `@:hxmc.scoped` has scoped
   module-level functions (and its typedefs' structures are values).
 - `-D hxmc.scoped-packages=geo,app.core`: every class, enum and typedef of
@@ -352,8 +361,7 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   `@:hxmc.gc` keeps one GC code (a `main`, say).
 
 Declined: `Ref<T>` read without `.value` (the owner's decision).
-Not built yet: array literals and string interpolation building a `Grow`,
-a `Slice` or a `Str`, `@:try` for scoped error values.
+Not built yet: `@:try` for scoped error values.
 
 ### Types (`hxmc.scoped`)
 

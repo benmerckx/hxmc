@@ -30,6 +30,10 @@ abstract Fixed<T, Rest>(NativeArray<T>) {
 	@:noCompletion public static inline function scratch<T, N>():Fixed<T, N>
 		return @:hxmc.scratch new Fixed<T, N>();
 
+	// zeroed (the lowering's new; an array literal expected as a Fixed: HxmcLiterals)
+	@:noCompletion public static inline function make<T, N>():Fixed<T, N>
+		return new Fixed<T, N>();
+
 	public var length(get, never):Int;
 
 	@:arrayAccess public inline function get(i:Int):T
