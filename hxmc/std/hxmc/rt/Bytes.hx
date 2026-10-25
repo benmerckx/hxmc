@@ -142,32 +142,18 @@ class Bytes {
 		#end
 	}
 
+	// (TextCore: the views taken after the allocation, no GC point under them)
 	@:hxmc.host("hxmc_NativeBytes_toHex") static function toHex(b:Dynamic):String {
 		var n = len(b);
 		var s = Str.make(2 * n);
-		var d = Str.chars(s), p = Repr.octets(b);
-		inline function hex(v:Int):Int
-			return v < 10 ? 48 + v : 87 + v;
-		for (i in 0...n) {
-			var v = p.get(i);
-			d.set(2 * i, hex(v >> 4));
-			d.set(2 * i + 1, hex(v & 15));
-		}
+		TextCore.hexEncode(Repr.byteView(Repr.octets(b), n), hxmc.scoped.Str.view(s));
 		return s;
 	}
 
 	@:hxmc.host("hxmc_NativeBytes_ofHex") static function ofHex(s:String):Dynamic {
 		var n = Str.len(s) >> 1;
 		var b = allocUninit(n);
-		var c = Str.chars(s), p = Repr.octets(b);
-		for (i in 0...n) {
-			var v = 0;
-			for (k in 0...2) {
-				var u = c.get(2 * i + k);
-				v = v * 16 + (u >= 48 && u <= 57 ? u - 48 : u >= 97 && u <= 102 ? u - 87 : u >= 65 && u <= 70 ? u - 55 : 0);
-			}
-			p.set(i, v);
-		}
+		TextCore.hexDecode(hxmc.scoped.Str.view(s), Repr.byteView(Repr.octets(b), n));
 		return b;
 	}
 

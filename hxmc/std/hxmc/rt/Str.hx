@@ -306,17 +306,9 @@ class Str {
 				// split("") gives the code units
 				if (start >= n) break;
 				at = start + 1;
-			} else {
-				var c = chars(s), d = chars(delim);
-				var i = start;
-				while (i + m <= n) {
-					if (Repr.eqUnits(c, i, d, m)) {
-						at = i;
-						break;
-					}
-					i++;
-				}
-			}
+			} else
+				// (the views taken again after each piece: an allocation)
+				at = TextCore.indexOf(view(s), view(delim), start);
 			var end = at < 0 ? n : at;
 			arr.push(range(s, start, end - start));
 			if (at < 0) break;

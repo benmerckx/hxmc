@@ -219,6 +219,34 @@ class TextCore {
 		return x >= lo && x <= hi;
 	}
 
+	// ---- hexadecimal
+
+	// the bytes of b as lower-case hexadecimal into d (2 units a byte, checked)
+	public static inline function hexEncode(b:Slice<UInt8>, d:Str) {
+		var n = b.length;
+		if (d.length < 2 * n) Abort.outOfRange();
+		for (i in 0...n) {
+			var v:Int = b.unsafeGet(i);
+			d.setUnit(2 * i, hexDigit(v >> 4));
+			d.setUnit(2 * i + 1, hexDigit(v & 15));
+		}
+	}
+
+	static inline function hexDigit(v:Int):Int
+		return v < 10 ? 48 + v : 87 + v;
+
+	// the bytes the pairs of hexadecimal digits of c give into b (length(c) / 2
+	// of them, checked; a unit that is no digit counts as 0)
+	public static inline function hexDecode(c:Str, b:Slice<UInt8>) {
+		var n = c.length >> 1;
+		if (b.length < n) Abort.outOfRange();
+		for (i in 0...n)
+			put(b, i, (hexValue(c.unit(2 * i)) << 4) | hexValue(c.unit(2 * i + 1)));
+	}
+
+	static inline function hexValue(u:Int):Int
+		return u >= 48 && u <= 57 ? u - 48 : u >= 97 && u <= 102 ? u - 87 : u >= 65 && u <= 70 ? u - 55 : 0;
+
 	// ---- numbers
 
 	// the units of v in decimal

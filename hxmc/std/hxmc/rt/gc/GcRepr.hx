@@ -68,15 +68,12 @@ class GcRepr {
 		W.strCopy(dst, di, src, 0, n);
 
 	// c[i, i + m) == d[0, m)
-	public static inline function eqUnits(c:GcChars, i:Int, d:GcChars, m:Int):Bool {
+	public static inline function matchAt(c:GcChars, d:GcChars, i:Int, m:Int):Bool {
 		var k = 0;
 		while (k < m && c.get(i + k) == d.get(k))
 			k++;
 		return k == m;
 	}
-
-	public static inline function matchAt(c:GcChars, d:GcChars, i:Int, m:Int):Bool
-		return eqUnits(c, i, d, m);
 
 	// ---- StringBuf: a GcStringBuf
 
