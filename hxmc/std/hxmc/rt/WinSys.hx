@@ -35,6 +35,13 @@ class WinSys {
 	}
 
 	// a NUL-terminated UTF-16 string (outside the heap) as a String
+	// n bytes of the data stack, not zeroed, for the system to fill (freed
+	// where the calling function's scope ends: Scope.scratch)
+	static inline function scratch(n:Int):Ptr {
+		var s:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.scratch(n);
+		return #if hxmc.wasm_gc Ptr.nil() #else s.ptr() #end;
+	}
+
 	static function ofWide(w:Ptr):String {
 		var n = wlen(w);
 		var s = Str.make(n);
@@ -190,11 +197,9 @@ class WinSys {
 	}
 
 	public static function programPath():String {
-		var buf = LibC.malloc(65536);
+		var buf = scratch(65536);
 		var n = Win32.GetModuleFileNameW(Ptr.nil(), buf, 32768);
-		var s = n == 0 || n >= 32768 ? (argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : "") : ofWide(buf);
-		LibC.free(buf);
-		return s;
+		return n == 0 || n >= 32768 ? (argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : "") : ofWide(buf);
 	}
 
 	// extc's sys_getch: the console without line buffering, or a byte of a
@@ -265,16 +270,16 @@ class WinSys {
 	}
 
 	// Reads and writes of pipes and consoles block: with other threads they go
-	// through a malloc'ed buffer in a safe region (a collection may move the Bytes)
+	// through a buffer on the data stack in a safe region (a collection may
+	// move the Bytes; the data stacks do not move)
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1) {
-			var tmp = LibC.malloc(len > 0 ? len : 1);
+			var tmp = scratch(len > 0 ? len : 1);
 			Leaf.rt_blocking_enter();
 			var r = Win32._read(fd, tmp, len);
 			Leaf.rt_blocking_leave();
 			if (r > 0) LibC.memcpy(Bytes.bytes(b).add(pos), tmp, r);
-			LibC.free(tmp);
 			return r;
 		}
 		return readHeap(fd, b, pos, len);
@@ -283,12 +288,11 @@ class WinSys {
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1) {
-			var tmp = LibC.malloc(len > 0 ? len : 1);
+			var tmp = scratch(len > 0 ? len : 1);
 			LibC.memcpy(tmp, Bytes.bytes(b).add(pos), len);
 			Leaf.rt_blocking_enter();
 			var r = Win32._write(fd, tmp, len);
 			Leaf.rt_blocking_leave();
-			LibC.free(tmp);
 			return r;
 		}
 		return writeHeap(fd, b, pos, len);
@@ -459,11 +463,9 @@ class WinSys {
 		if (n == 0) {
 			return null;
 		}
-		var buf = LibC.malloc(2 * (n + 1));
+		var buf = scratch(2 * (n + 1));
 		var m = Win32.GetFullPathNameW(p, n + 1, buf, Ptr.nil());
-		var s = m == 0 || m > n ? null : ofWide(buf);
-		LibC.free(buf);
-		return s;
+		return m == 0 || m > n ? null : ofWide(buf);
 	}
 
 	// Extc.get_real_path: the full path with the drive letter upper-cased and
