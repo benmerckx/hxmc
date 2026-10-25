@@ -152,11 +152,132 @@ own); String operands are passed as they are (the runtime reads null as
 Kept: smaller code everywhere and the chains themselves 40% faster; the
 compiler and tsc-haxe build few chains in their hot paths.
 
+### haxe.Json's strings and StringBuf.addSub (item 4)
+
+The JSON benchmark (HaxeBenchmarks' json: the formatter's schema
+stringified and parsed 500 times) spent 27% of its instructions in
+`JsonPrinter.quote` (a call per unit into the StringBuf) and 11% in
+`JsonParser.parseString` (a loop of `nextChar`). hxmc's std now has its
+own `JsonPrinter` and `JsonParser` (upstream's, with one change each):
+`quote` is one runtime call, `StringBuf.addJsonString`, which copies the
+runs without an escape whole; `parseString` skips the units up to a
+quote, a backslash or a 0 (the hxmc end of input) with `Str.jsonRun`.
+Both scan four units at a time in linear memory (one 64-bit load, the
+lanes tested together; unit by unit on WasmGC). `StringBuf.addSub` copies
+the range instead of making the substring first.
+
+| | before | after |
+| --- | ---: | ---: |
+| json benchmark (best of 8) | 0.44 s | 0.39 s |
+| instructions | 4.01 G | 3.40 G (-15%) |
+| allocated | 284 MB | 275 MB |
+| LOC | | +100 (runtime), two std files copied from upstream |
+
+Not scoped memory: the buffer is a GC object (a StringBuf) and the
+strings are the program's; the cores are the runtime's, over its
+representation (both heaps).
+
+### Inflate and CRC-32 as a scoped core (item 4)
+
+`hxmc.NativeZip` (the compiler's ZIP reader; DEFLATE and CRC-32) was
+unsafe code over raw addresses, and on WasmGC copied its input into
+linear memory and its output back. It is now scoped code over views of
+the Bytes (one core, two faces): the decoder's state a scoped struct,
+the Huffman tables `Fixed` buffers of the frame, a block's codes decoded
+with the stream's state in locals, back-references and stored blocks
+copied by `Slice.copyBytes` (memmove; the engine's array copy).
+
+| | before | after |
+| --- | ---: | ---: |
+| inflate, 464 KB (best of 8), native | 145 ms | 128 ms |
+| CRC-32, 20 × 464 KB, native | 29 ms | 31 ms |
+| inflate, WasmGC | 144 ms | 233 ms |
+| CRC-32, WasmGC | 41 ms | 26 ms |
+| `@:hxmc.unsafe` / raw-memory lines / `Ptr` lines | 9 / 71 / 13 | 0 / 0 / 0 |
+
+Kept: faster natively, no unsafe code left, no copies through linear
+memory on WasmGC; inflate on WasmGC is 60% slower (the engine's checked
+array accesses where linear memory had raw loads), a cost of WasmGC's
+representation.
+
+### The scoped C boundary (item 5)
+
+A C function may take a view of scoped memory: a `Slice<T>` or `Str`
+parameter passes its address and its length (docs/plans/lowlevel.md,
+"The scoped C boundary"), a `Ref<T>` its address; `@:hxmc.retains`
+marks a function that keeps a pointer, to which the checker passes no
+scoped memory; scoped code may call C in a safe region (it then blocks).
+Then the OS layers move onto it, area by area, their raw versions gone:
+
+| area | `@:hxmc.unsafe` | scoped | raw-memory lines | `Ptr` lines | benchmark (best of 12) | program's text |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| POSIX files, processes, environment (PosixSys, Posix, SysCore) | 14 → 2 | 0 → 10 | 69 → 17 | 89 → 46 | 200k exists, isDirectory, getCwd, getEnv: 305 → 304 ms | +1.7 KB of 180 KB |
+| POSIX sockets (PosixNet, NetCore, Posix) | 25 → 4 | 0 → 21 | 59 → 19 | 44 → 25 | 100k select, setTimeout, host, setFastSend: 158 → 158 ms | +2.0 KB of 223 KB |
+| inflate and CRC-32 (NativeZip) | 9 → 0 | 0 → 2 | 71 → 0 | 13 → 0 | above | |
+
+(Raw-memory lines: lines calling `Mem` other than the target's constants
+`os`, `target`, `arm`, `platform`; `Ptr` lines: lines naming the type.)
+The structures C fills are `Fixed` buffers of the frame read through
+`hxmc.scoped.LE` (little-endian scalars of a byte view, one range test
+each); with `ImageIO`'s byte-by-byte checked reads, function calls each,
+select was 30% slower. The self-build does not call these layers in its
+hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 589 (the runtime gained two small ones: Str.jsonRun, Gc.viewTouch).
+On Windows the boundary touches each view's pages before the call
+(`hx_view_touch`): WinRt commits the data stacks' pages on a fault in
+user code, which a fault in the kernel never makes.
+
+### The back end's graphs (item 1): what is promoted
+
+Whether the back end's per-function graphs are worth scoped memory
+depends on what a minor collection copies out of the nursery: an object
+that dies young costs its allocation only (bump and the TLAB's zeroing),
+one that is promoted costs a copy, old-space room and, at the end, the
+peak RSS (no major collection runs). The census build now counts the
+objects minor collections copy, by type (`promoted by minor collections`,
+Gc.copyTo and the scan's inline copy). Self-build:
+
+| type | promoted MB | of its allocation |
+| --- | ---: | ---: |
+| all | 1339 | 10.6% of 12.6 GB |
+| NativeArray (three kinds) | 386 | 9.6% |
+| core.TExpr, its TExprDefs, TVar, Pos, Expr | ~375 | most of the typed AST (live until lowered) |
+| hxmc.MIns | 97 | 12% |
+| Array | 59 | 5% |
+| String | 54 | 9% |
+| hxmc.LIns | 42 | 6.6% |
+| hxmc.Reloc, Symbol (the output) | 32 | |
+| hxmc.OInfo, MBlock, LBlock | ~15 | |
+
+The back end's own objects are about 160 MB of the 1339 promoted (12%),
+and most of its 2.5 GB dies young. Against what is live at exit (500
+MB), about 840 MB of what was promoted is garbage: the back end's
+objects 155 MB of it (with their arrays, a share of the 287 MB of
+NativeArrays), the typed AST's copies about 190 MB (the analyzer's), the
+rest arrays and strings of every phase: the graphs of the functions
+being compiled when a collection comes, four threads at a time. An index IR for Mir and Lir (a scalar
+instruction record in a Grow, operand lists in a pool, GC-referencing
+fields as ids into program tables, handle abstracts at the call sites)
+would take about 2 GB of allocation and 150 MB of promotion away, a few
+percent of the GC's work, for a rewrite of every pass of both IRs (MirBuild,
+Opt, Escape, Sroa, MemLower, Frames, Fold, both instruction selectors,
+the register allocator, both emitters, InterpGen, wasmgc's MirGen). The
+register allocator's scratch tables are already reused per thread (no
+allocation per function). Not started: at best a fifth to a third of the
+promoted garbage and a few percent of the GC's time, for the largest
+rewrite of the plan (below, "Decisions").
+
 ## Decisions for the owner
 
-- The back end's graphs on scoped memory need either the passes rewritten
-  as functions over a scoped context (every pass of Mir and Lir, both
-  targets), or objects that may hold scoped values because they live in
-  a scope themselves (a scope-bound class: allocated on the data stack,
-  never stored in the GC heap, checked as a scoped value is). The second
-  keeps the passes' shape. Until decided: only function-local tables.
+- The back end's graphs (item 1): the owner chose scope-bound classes
+  (a class allocated in a scope, linearly on the data stack, on WasmGC an
+  ordinary object with the same checks; it may hold scoped values, is
+  never stored in the GC heap, and is checked as a scoped value rooted at
+  its scope), then the passes as scope-bound objects over the function's
+  scoped storage, the instructions' GC references as ids into long-lived
+  tables. Built as a general feature first, then applied pass by pass,
+  each step measured and kept only if it wins.
+- The self-build's peak RSS (1.5 GB against 500 MB live) is promoted
+  garbage the old generation never collected (the limit is 3 GB): the
+  owner approved a major collection when the old generation grows well
+  past the live size measured after the last major one (a factor tuned
+  by measurement, with a floor), on the native and wasm32 collectors.
