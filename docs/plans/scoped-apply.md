@@ -315,8 +315,27 @@ formatter build (75 MB promoted, no major collection), the benchmarks'
 programs (no default changed: binarytrees and alloc built with the
 collector before and after run the same collections, 313 minor and none
 major, 263 minor and 3 major; medians 0.77 against 0.81 s and 1.74
-against 1.76 s, the binaries' layout differing). The compilation server keeps its 4 GB
-(`--server`): it holds every module between builds, not measured here.
+against 1.76 s, the binaries' layout differing).
+
+The compilation server (`hxmc --server`) keeps its 4 GB. Measured with
+the self-build sent ten times (a comment edited in one module before
+each but the first; the server's RSS after each build and its peak):
+
+| first limit / factor | RSS after builds 1-4 | first major | live after majors | peak (10 builds) | warm build, with a major |
+| --- | --- | --- | --- | ---: | --- |
+| 4096 MB / 300% (now) | 1.6, 2.5, 3.1, 3.8 GB | build 5, 3.9 GB old, +8 s | 1.59 GB | 5.8 GB, the next at a 5.6 GB limit | 5.5 s, 13.7 s |
+| 4096 MB / 150% | the same | build 5, +8 s | 1.43-1.59 GB | 5.8 GB | 5 s, 7.6-7.9 s |
+| 2048 MB / 150% | 1.6, 1.6, 2.1, 2.7 GB | build 2, 2.0 GB old | 1.14-1.59 GB | 4.8 GB | 5.2 s, 7-8 s |
+| 1536 MB / 150% | 1.1, 1.9, 2.0, 2.7 GB | build 1 | 0.75-1.59 GB | 4.8 GB | 5 s, 7.1-7.4 s |
+| 768 MB / 300% | 1.1, 1.9, 2.6, 3.2 GB | build 1 | | 4.9 GB by build 5 | 5.5-6 s, 9.4 s |
+
+Each warm build promotes about 620 MB, and the server holds about 1.5
+GB live (no growth across the ten builds: no leak). The first limit only
+moves the first major collection; what bounds the server is the factor:
+at 300% the old space grows to three times the live size (the next
+peak, by its limit, about 7 GB), at 150% a major comes every two or
+three builds (2-3 s each) and the peak stays near 4.8 GB. Left as it
+is (below, "Decisions").
 
 ### The back end's graphs (item 1): what is promoted
 
@@ -434,8 +453,10 @@ callers the IR builders' pushes).
   Done ("The old generation's limit"): the factor was already there
   (three times, twice on wasm32) and a factor of two cost more; the
   tool's first limit, 768 MB, took the peak from 1.56 to 1.23 GB. The
-  compilation server keeps its 4 GB (it holds every module between
-  builds; not measured here): lower it too?
+  compilation server keeps its 4 GB and the factor of 300%: measured
+  ("The old generation's limit"), the factor bounds it, not the first
+  limit (150%: peak 4.8 GB over ten builds, a major every two or three
+  builds; 300%: growing toward 7 GB). Set the server's factor to 150%?
 - WASI's layer on the boundary (tried, not kept: "The scoped C boundary"):
   `WasiApi` and `Wasi`'s path functions are also an API programs call,
   under WasmGC too; converting it means a second, view-taking
