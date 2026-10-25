@@ -1597,6 +1597,8 @@ class Typer {
 				expression();
 			case MetaTag.Fixed if (ctx.com.platform == Cpp): preserve();
 			case MetaTag.NullSafety: preserve();
+			// (hxmc: a scoped error value returned at once, HxmcTry)
+			case MetaTag.Custom(":try"): HxmcTry.type(ctx, e1, withType, p);
 			// (hxmc: hxmc.scoped.Fixed.scratch's, for the lowering)
 			case MetaTag.Custom(":hxmc.scratch"): preserve();
 			case MetaTag.BypassAccessor:

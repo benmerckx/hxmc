@@ -354,6 +354,14 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   `true` or `false` (`return '$name: $n';`). The elements are evaluated
   first, in order, in locals of the literal; all of it is the enclosing
   scope's memory, as a call's result would be.
+- `@:try e` (`typing.HxmcTry`), Zig's `try`: e a value of a scoped
+  enum with a constructor `Ok` of one argument or none, its others the
+  errors. `Ok(v)` gives v (nothing for `Ok`); an error is returned from
+  the function at once, as the constructor of the same name and arguments
+  of the enum the function returns (the same enum, or one with a value of
+  another type and the same errors): `t += @:try digit(s, i);`. The
+  typer makes it a switch over e's constructors. (No site in the std yet:
+  its scoped code has no error enums.)
 - A module whose type of its own name is `@:hxmc.scoped` has scoped
   module-level functions (and its typedefs' structures are values).
 - `-D hxmc.scoped-packages=geo,app.core`: every class, enum and typedef of
@@ -361,7 +369,6 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   `@:hxmc.gc` keeps one GC code (a `main`, say).
 
 Declined: `Ref<T>` read without `.value` (the owner's decision).
-Not built yet: `@:try` for scoped error values.
 
 ### Types (`hxmc.scoped`)
 

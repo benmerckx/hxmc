@@ -1,0 +1,6 @@
+exit 0
+ScopedTry.hx:61: 10
+ScopedTry.hx:62: -102
+ScopedTry.hx:63: -1
+ScopedTry.hx:64: 0
+ScopedTry.hx:65: -101
