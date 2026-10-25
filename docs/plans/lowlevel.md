@@ -947,8 +947,32 @@ Arrays of scoped classes: WasmGC has no inline structs in arrays. The
 first representation is an array of the element objects (a Grow's push
 stores a copy; `s[i].x = 1` writes the element in place; reading an
 element into a variable copies it). Struct of arrays (one GC array per
-field, `Ref` = Grow and index) is the next step: no object per element,
-the layout the engines optimize.
+field, `Ref` = Grow and index) was to be the next step: no object per
+element, the layout the engines optimize.
+
+Measured first (not built; a decision for the owner): 10^6 particles of
+four Floats moved 20 times, as a `Grow<P>` (one object per element) and
+as four `Grow<Float>` (struct of arrays written by hand), and two
+`Grow<Float>` against two `Array<Float>`; medians of 5 runs, Linux
+x86-64, node 22, 2026-10-25:
+
+| | WasmGC | node RSS | native |
+| --- | ---: | ---: | ---: |
+| `Grow<P>`, P of 4 Floats | 1140 ms | 176 MB | 83 ms |
+| 4 `Grow<Float>` (by hand) | 1420 ms | 115 MB | 207 ms |
+| 2 `Grow<Float>` | 800 ms | 86 MB | 87 ms |
+| 2 `Array<Float>` | 203 ms | 85 MB | 60 ms |
+
+Struct of arrays saves the objects (a third of the memory here) but is
+slower as things are: a Grow's elements on WasmGC are 4 times slower to
+reach than an Array's (its storage is a field of the generic `GrowData`,
+read through the erased element type: the dynamic access path, which
+boxes scalars), and a struct of arrays multiplies those accesses by its
+fields. Recommendation: first give the scoped abstractions' storage its
+element type where the inlined code knows it (a Grow's or Slice's array
+read as the typed array of its kind, as an Array's is), which every
+scoped program on WasmGC gains from; then struct of arrays for Grows of
+scalar-only scoped classes, measured again.
 
 What a Slice of a Grow sees on WasmGC: the elements as of when it was
 taken; after the Grow reallocates, writes through the old Slice are the old
@@ -1013,7 +1037,7 @@ fast as with the data stack natively, and 5-10% faster on wasm32.
 T). Not built: variable-size enums, scoped enums in images, methods on
 scoped classes (structs have none yet), checking the `hxmc.scoped` std's
 own inline functions apart from their callers, struct of arrays on
-WasmGC.
+WasmGC (measured in "Two representations, one core": a decision first).
 
 Scoped against GC on the maps' index (`make bench-scoped`, `Table`: n
 random Int keys inserted with updates, then 8n lookups; `IntTable` against
