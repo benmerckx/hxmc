@@ -914,7 +914,7 @@ inside the abstract (`#if hxmc.wasm_gc`), the core's code being the same:
 | scope exit | the data stack reset | nothing (the engine's collector reclaims) |
 | `Slice<T>` | address, length | GC array, offset, length |
 | `Str` | address, length (UTF-16 units) | i16 array (a String's own), offset, length |
-| `Grow<T>` | header on the fixed stack; elements on a stack of its own, never moved | header object over a GC array that is reallocated as it grows |
+| `Grow<T>` | header on the fixed stack; elements on a stack of its own, never moved | header object over a GC array that is reallocated as it grows (for a scoped class of scalars, a struct of arrays) |
 | `Ref<T>` | address | the storage (a Grow's header, or a holder of a Slice's array) and an index: never an address, never dangling |
 | scoped class (struct value) | bytes in its holder (frame, element, field) | an object, copied where a struct is copied (below) |
 | scoped enum | tag and payload words | the enum value (immutable: nothing to copy), `==` by value |
@@ -943,12 +943,22 @@ target (no copy of it can be told from another), so a core returning one
 from an inline function (`LibM`'s reduced argument, `FloatText`'s parse
 result: structures of final fields) leaves it in registers.
 
-Arrays of scoped classes: WasmGC has no inline structs in arrays. The
-first representation is an array of the element objects (a Grow's push
-stores a copy; `s[i].x = 1` writes the element in place; reading an
-element into a variable copies it). Struct of arrays (one GC array per
-field, `Ref` = Grow and index) was to be the next step: no object per
-element, the layout the engines optimize.
+Arrays of scoped classes: WasmGC has no inline structs in arrays. An array
+of a scoped class holding a struct value or a Fixed is an array of the
+element objects (a Grow's push stores a copy; `s[i].x = 1` writes the
+element in place; reading an element into a variable copies it). One of a
+scoped class of scalars only is a struct of arrays (`hxmc.ir.Soa`, built):
+an object of a class made for it, its length and one engine array per
+field, no object per element. The typed code's uses are rewritten before
+the lowering: a field of an element read or written (`=`, `+=`, `++`) is
+an element of that field's array; an element read whole is made from them
+(by its own constructor when it is the one that takes the fields, which
+Escape then keeps in values); one written whole is spread over them, and
+one copied from another such array goes field by field; a Fixed of them
+is one too (copied array by array). Its type is the companion class's
+everywhere (`Lower.lowerTy`); the scoped abstractions' generic classes
+only pass it on, and anything else done to such a NativeArray is an error
+at compile time. `Ref` stays the holder and the index.
 
 Typed storage first (built): a Grow's, a Slice's (and so a Fixed's view's,
 an IntTable's) storage is a field of a generic class (`GrowData<T>`,
@@ -977,6 +987,21 @@ particles of four Floats moved 20 times, and two Floats per element added
 `make bench-scoped` (`ScopedBench --gc`), Table at 10^6 keys on WasmGC:
 1.06 s before, 0.88 s after. `make wasmgc-bench`: times within noise,
 modules 0.1-1.5 KB larger (the view's inline test).
+
+Struct of arrays then (built, kept: it wins on both): the same particles,
+and a whole-element workload (10^6 elements, 10 passes reading each
+element whole and writing it back whole); WasmGC, medians of 5 runs:
+
+| | objects per element | struct of arrays | native |
+| --- | ---: | ---: | ---: |
+| `Grow<P>` particles, fields in place | 617 ms, 178 MB | 204 ms, 120 MB | 65 ms |
+| `Grow<P>`, whole elements read and written | 2200 ms, 384 MB | 270 ms, 119 MB | 94 ms |
+| for comparison: 4 `Grow<Float>` by hand | | 368 ms, 118 MB | 128 ms |
+| 4 `Array<Float>` by hand | | 335 ms, 105 MB | 120 ms |
+| `Array<P>`, P a GC class | 327 ms, 155 MB | | 123 ms |
+
+Natively and on wasm32 nothing changes (the same bytes). `make
+wasmgc-bench`: times within noise, modules within 1 KB.
 
 What a Slice of a Grow sees on WasmGC: the elements as of when it was
 taken; after the Grow reallocates, writes through the old Slice are the old
@@ -1038,10 +1063,11 @@ not zeroed: zeroing its 6 KB per call made `Std.string` of a double 35%
 slower and `Std.parseFloat` of a long one 45%; not zeroed, both are as
 fast as with the data stack natively, and 5-10% faster on wasm32.
 `Rel<T>` and images (`Image.of`, `Image.load`, the check made for each
-T). Not built: variable-size enums, scoped enums in images, methods on
-scoped classes (structs have none yet), checking the `hxmc.scoped` std's
-own inline functions apart from their callers, struct of arrays on
-WasmGC (next: "Two representations, one core").
+T). On WasmGC, scoped storage read as typed arrays and struct of arrays
+for scoped classes of scalars ("Two representations, one core"). Not
+built: variable-size enums, scoped enums in images, methods on scoped
+classes (structs have none yet), checking the `hxmc.scoped` std's own
+inline functions apart from their callers.
 
 Scoped against GC on the maps' index (`make bench-scoped`, `Table`: n
 random Int keys inserted with updates, then 8n lookups; `IntTable` against

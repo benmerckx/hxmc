@@ -692,8 +692,11 @@ class Lower implements LowerQueries {
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
-						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : boxed(ty(params[0]))));
-						else if (CInterop.isStruct(c)) {
+						else if (isNativeArray(c)) {
+							// (WasmGC: a struct of arrays of a scoped class of scalars, Soa)
+							var sc = Soa.elemOf(t);
+							sc != null ? TRef(RObj(classInfo(Soa.companion(sc)))) : TRef(RNativeArr(isByte(params[0]) ? TU8 : boxed(ty(params[0]))));
+						} else if (CInterop.isStruct(c)) {
 							var n = core.Globals.sTypePath(c.clPath);
 							structClasses.set(n, c);
 							TStruct(n, CInterop.layout(c).size);

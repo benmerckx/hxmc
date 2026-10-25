@@ -898,8 +898,6 @@ class FuncGen {
 		}
 	}
 
-	// br_on_cast_fail to the enclosing block (its result an eqref) unless the
-	// eqref on the stack is a (non-null) t; else that, as a t
 	// the NativeArray on the stack (eqref) as storage of kind k: itself when it
 	// is (a null too), else the runtime's view (function view)
 	function viewOf(k:Int, view:Int) {
@@ -928,6 +926,8 @@ class FuncGen {
 		release("p", x);
 	}
 
+	// br_on_cast_fail to the enclosing block (its result an eqref) unless the
+	// eqref on the stack is a (non-null) t; else that, as a t
 	function brOnCastFail(t:Int) {
 		op(0xFB);
 		op(0x19);

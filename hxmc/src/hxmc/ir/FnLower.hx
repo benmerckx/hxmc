@@ -140,8 +140,9 @@ class FnLower {
 		var face = StringTools.startsWith(fi.module, "hxmc.rt") || StringTools.startsWith(fi.module, "haxe.ds.");
 		if ((fi.scoped || !fi.declNoGc) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face);
 		allocates = plan != null && Scoped.runtime != null && (plan.fnMark || plan.scopes.keys().hasNext());
-		// (WasmGC: a scoped class's objects copied where struct values are)
-		var body = Lower.wasmGc ? CInterop.valueCopies(tf.tfExpr) : tf.tfExpr;
+		// (WasmGC: NativeArrays of scoped classes of scalars as structs of
+		// arrays, then a scoped class's objects copied where struct values are)
+		var body = Lower.wasmGc ? CInterop.valueCopies(Soa.rewrite(tf.tfExpr)) : tf.tfExpr;
 		function run() {
 			if (plan != null && plan.fnMark) pushMark();
 			stmt(body);

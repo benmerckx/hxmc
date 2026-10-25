@@ -1,0 +1,5 @@
+exit 0
+ScopedSoa.hx:85: 7385
+ScopedSoa.hx:86: 126
+ScopedSoa.hx:87: 7642.5
+ScopedSoa.hx:88: 64125

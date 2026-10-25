@@ -299,14 +299,6 @@ class CInterop {
 		if (objCopy == null) return e;
 		function copy(x:TExpr):TExpr {
 			if (!isWasmValueType(x.etype) || !isPlace(x)) return x;
-			// (a Fixed: its array copied, Fixed.copyOf)
-			switch TFunctions.followWithoutNull(x.etype) {
-				case TAbstract(a, _) if (isFixed(a) && a.aImpl != null):
-					var cf = a.aImpl.clStatics.get("copyOf");
-					var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(a.aImpl)), TDynamic(null), x.epos), FStatic(a.aImpl, cf)), cf.cfType, x.epos);
-					return TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), x.epos), null), x.etype, x.epos);
-				case _:
-			}
 			return deepCopy(x);
 		}
 		function map(e:TExpr):TExpr {
@@ -324,6 +316,7 @@ class CInterop {
 					switch TFunctions.follow(a.etype) {
 						case TInst(_, [et]):
 							switch TFunctions.followWithoutNull(et) {
+								case TInst(ec, _) if (Soa.eligible(ec)): a;
 								case TInst(ec, _) if (isWasmValue(ec)): zeroElements(a, ec, wCall("naLen", [a], Lower.basic.tint, e.epos), a.etype, e.epos);
 								case _: a;
 							}
@@ -420,6 +413,17 @@ class CInterop {
 	static function deepCopy(x:TExpr):TExpr {
 		var p = x.epos;
 		switch TFunctions.followWithoutNull(x.etype) {
+			case TAbstract(a, params) if (isFixed(a) && params.length > 0 && switch TFunctions.followWithoutNull(params[0]) {
+				case TInst(sc, _): Soa.eligible(sc);
+				case _: false;
+			}):
+				// (a struct of arrays: its arrays copied, Soa)
+				var sc = switch TFunctions.followWithoutNull(params[0]) {
+					case TInst(sc, _): sc;
+					case _: null;
+				};
+				var arrT = TInst(@:privateAccess Soa.companion(sc), haxe.ds.Vector.fromArrayCopy([]));
+				return TFunctions.mk(TCast(Soa.copy(sc, TFunctions.mk(TCast(x, null), arrT, p), p), null), x.etype, p);
 			case TAbstract(a, _) if (isFixed(a) && a.aImpl != null):
 				// (its array copied, Fixed.copyOf: struct elements each copied, then what they hold)
 				var cf = a.aImpl.clStatics.get("copyOf");
@@ -456,6 +460,12 @@ class CInterop {
 					case _: throw new LowerError("a zero Fixed", posOf(p));
 				};
 				var n = fixedLength(params[1], a);
+				// (of a scoped class of scalars: a struct of arrays, Soa)
+				switch TFunctions.followWithoutNull(params[0]) {
+					case TInst(sc, _) if (Soa.eligible(sc)):
+						return TFunctions.mk(TCast(Soa.make(sc, TFunctions.mk(TConst(TInt(n)), Lower.basic.tint, p), p), null), t, p);
+					case _:
+				}
 				var arr = TFunctions.mk(TNew(nc, switch TFunctions.follow(na) { case TInst(_, ps): ps; case _: null; }, core.ds.VectorTools.vector(TFunctions.mk(TConst(TInt(n)), Lower.basic.tint, p))), na, p);
 				var ec = fixedElem(t);
 				var made = TFunctions.mk(TCast(arr, null), t, p);

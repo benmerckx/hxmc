@@ -132,8 +132,12 @@ class Scoped {
 		runtime = null;
 		CInterop.objCopy = null;
 		Images.reset();
+		Soa.reset();
+		Soa.setNativeArray(null);
 		for (t in types)
 			switch t {
+				case TClassDecl(c) if (Lower.isNativeArray(c)):
+					Soa.setNativeArray(c);
 				case TClassDecl(c) if (c.clPath.pack.length == 2 && c.clPath.pack[0] == "hxmc" && c.clPath.pack[1] == "scoped" && (c.clPath.name == "ImageParts" || c.clPath.name == "ImageIO")):
 					if (c.clPath.name == "ImageParts") Images.image = c else Images.io = c;
 				case TClassDecl(c) if (Lower.wasmGc && c.clPath.name == "W" && c.clPath.pack.join(".") == "hxmc.rt.gc"):
