@@ -59,8 +59,8 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	@:noCompletion public inline function unsafeSet(i:Int, v:T)
 		this.a.unsafeSet(this.off + i, v);
 
-	// the first n elements of src into dst, unchecked (the cores')
-	@:noCompletion public static inline function copy<T>(dst:Slice<T>, src:Slice<T>, n:Int)
+	// the first n Ints of src into dst, unchecked (the cores')
+	@:noCompletion public static inline function copyInts(dst:Slice<Int>, src:Slice<Int>, n:Int)
 		NativeArray.blit(src.array(), src.offset(), dst.array(), dst.offset(), n);
 
 	// the bytes i .. i + 3 of s as an Int, little-endian, unchecked (the cores')
@@ -108,9 +108,9 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	@:noCompletion public inline function unsafeSet(i:Int, v:T)
 		(this.ptr : Ptr<T>)[i] = v;
 
-	// the first n elements of src into dst, unchecked (the cores')
-	@:noCompletion public static inline function copy<T>(dst:Slice<T>, src:Slice<T>, n:Int)
-		LibC.memmove(dst.ptr(), src.ptr(), (src.ptr() : Ptr<T>).offset(n).toI64() - src.ptr().toI64());
+	// the first n Ints of src into dst, unchecked (the cores')
+	@:noCompletion public static inline function copyInts(dst:Slice<Int>, src:Slice<Int>, n:Int)
+		LibC.memmove(dst.ptr(), src.ptr(), (4 * n : I64));
 
 	// the bytes i .. i + 3 of s as an Int, little-endian, unchecked (the cores')
 	@:noCompletion public static inline function word(s:Slice<UInt8>, i:Int):Int

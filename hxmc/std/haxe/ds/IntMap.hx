@@ -46,8 +46,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	inline function find(k:Int):Int {
 		if (live == 0) return -1;
 		var idx = slots.index(0, mask);
-		var i = MapIndex.next(idx, hashOf(k), k);
-		return i < 0 ? -1 : idx.entry(i) - 1;
+		return MapIndex.first(idx, hashOf(k), k);
 	}
 
 	/**
@@ -93,7 +92,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	public function remove(k:Int):Bool {
 		if (live == 0) return false;
 		var idx = slots.index(0, mask);
-		var i = MapIndex.next(idx, hashOf(k), k);
+		var i = MapIndex.slot(idx, hashOf(k), k);
 		if (i < 0) return false;
 		var e = idx.entry(i);
 		MapIndex.unindex(idx, i, true);

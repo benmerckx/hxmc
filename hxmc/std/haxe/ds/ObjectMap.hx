@@ -81,10 +81,12 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 	inline function find(k:Dynamic, h:Int):Int {
 		var kvs = this.kvs;
 		var idx = slots.index(2, mask);
-		var i = MapIndex.next(idx, h, h);
-		while (i >= 0 && !hxmc.Native.refEq(kvs[2 * (idx.entry(i) - 1)], k))
-			i = MapIndex.next(idx, i + 1, h);
-		return i < 0 ? -1 : idx.entry(i) - 1;
+		var e = MapIndex.first(idx, h, h);
+		while (e >= 0) {
+			if (hxmc.Native.refEq(kvs[2 * e], k)) break;
+			e = MapIndex.next(idx, h, h, e);
+		}
+		return e;
 	}
 
 	/**
@@ -164,11 +166,14 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		var kvs = this.kvs;
 		var h = hashOf(k);
 		var idx = slots.index(2, mask);
-		var i = MapIndex.next(idx, h, h);
-		while (i >= 0 && !hxmc.Native.refEq(kvs[2 * (idx.entry(i) - 1)], k))
-			i = MapIndex.next(idx, i + 1, h);
+		var i = MapIndex.slot(idx, h, h), e = 0;
+		while (i >= 0) {
+			e = idx.entry(i) - 1;
+			if (hxmc.Native.refEq(kvs[2 * e], k)) break;
+			i = MapIndex.slot(idx, i + 1, h);
+		}
 		if (i < 0) return false;
-		var e = slots[3 + 2 * i];
+		e++; // (as the slot holds it: the entry + 1)
 		unindex(i);
 		dead[e - 1] = true;
 		kvs[2 * e - 2] = null;
@@ -240,9 +245,9 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 					// (its slot, in the probe chain of the hash it was added with)
 					var h = young[2 * j + 1];
 					var idx = slots.index(2, mask);
-					var i = MapIndex.next(idx, h, h);
-					while (i >= 0 && idx.entry(i) - 1 != e)
-						i = MapIndex.next(idx, i + 1, h);
+					var i = MapIndex.slot(idx, h, h);
+					while (idx.entry(i) - 1 != e)
+						i = MapIndex.slot(idx, i + 1, h);
 					unindex(i);
 					index(hashOf(kvs[2 * e]), e);
 				}

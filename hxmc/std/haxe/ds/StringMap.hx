@@ -52,10 +52,12 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		var kvs = this.kvs;
 		if (live == 0) return -1;
 		var idx = slots.index(0, mask);
-		var i = MapIndex.next(idx, h, h);
-		while (i >= 0 && (kvs[2 * (idx.entry(i) - 1)] : String) != k)
-			i = MapIndex.next(idx, i + 1, h);
-		return i < 0 ? -1 : idx.entry(i) - 1;
+		var e = MapIndex.first(idx, h, h);
+		while (e >= 0) {
+			if ((kvs[2 * e] : String) == k) break;
+			e = MapIndex.next(idx, h, h, e);
+		}
+		return e;
 	}
 
 	/**
@@ -105,11 +107,14 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		var kvs = this.kvs;
 		var h = hashOf(k);
 		var idx = slots.index(0, mask);
-		var i = MapIndex.next(idx, h, h);
-		while (i >= 0 && (kvs[2 * (idx.entry(i) - 1)] : String) != k)
-			i = MapIndex.next(idx, i + 1, h);
+		var i = MapIndex.slot(idx, h, h), e = 0;
+		while (i >= 0) {
+			e = idx.entry(i) - 1;
+			if ((kvs[2 * e] : String) == k) break;
+			i = MapIndex.slot(idx, i + 1, h);
+		}
 		if (i < 0) return false;
-		var e = idx.entry(i);
+		e++; // (as the slot holds it: the entry + 1)
 		MapIndex.unindex(idx, i, false);
 		if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1);
 		dead[e - 1] = true;

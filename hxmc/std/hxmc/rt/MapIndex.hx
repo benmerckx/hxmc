@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.I64;
 import hxmc.scoped.Slice;
 
 // The maps' index (docs/hxmc.md, "Maps"), written once as scoped code
@@ -15,10 +16,46 @@ import hxmc.scoped.Slice;
 // between calls of `next` (no function value: a closure would be a GC point
 // and a dynamic call where nothing inlines it, as in macros run by Mir).
 @:hxmc.scoped class MapIndex {
-	// the first slot from i on (the slot numbers run on, the view masks them)
-	// with tag t before an empty one, masked; -1: none. A caller that rejects
-	// the entry at r (idx.entry(r) - 1) goes on from r + 1
-	public static inline function next(idx:IndexView, i:Int, t:Int):Int {
+	// the first entry with tag t on the probe chain from home h; -1: none
+	public static inline function first(idx:IndexView, h:Int, t:Int):Int {
+		var i = h;
+		var r = -1;
+		while (true) {
+			var e = idx.entry(i);
+			if (e == 0) break;
+			if (idx.tag(i) == t) {
+				r = e - 1;
+				break;
+			}
+			i++;
+		}
+		return r;
+	}
+
+	// the next entry with tag t after entry `after` on that chain (a caller
+	// that rejects an entry: rarely, two keys with one tag); -1: none
+	public static inline function next(idx:IndexView, h:Int, t:Int, after:Int):Int {
+		var i = h;
+		while (idx.entry(i) != after + 1)
+			i++;
+		i++;
+		var r = -1;
+		while (true) {
+			var e = idx.entry(i);
+			if (e == 0) break;
+			if (idx.tag(i) == t) {
+				r = e - 1;
+				break;
+			}
+			i++;
+		}
+		return r;
+	}
+
+	// the first slot from i on (the slot numbers run on) with tag t before an
+	// empty one, masked; -1: none (a removal, which needs the slot: a caller
+	// that rejects its entry, idx.entry(r) - 1, goes on from r + 1)
+	public static inline function slot(idx:IndexView, i:Int, t:Int):Int {
 		var r = -1;
 		while (true) {
 			if (idx.entry(i) == 0) break;

@@ -64,7 +64,7 @@ class FloatText {
 	}
 
 	static inline function bcopy(d:Slice<Int>, s:Slice<Int>)
-		Slice.copy(d, s, blen(s) + 1);
+		Slice.copyInts(d, s, blen(s) + 1);
 
 	// b = b * m + add (m, add < 2^32)
 	static function bmulAdd(b:Slice<Int>, m:I64, add:I64) {
