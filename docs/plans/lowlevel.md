@@ -678,8 +678,11 @@ replaces (no second implementation stays):
   `Str.ofFloat`, `toFloat`), over `Slice`s on every target, WasmGC too
   (which used the engine's JavaScript forms before, and so printed `-0` as
   `0` and read `0x1p3` as 0), `CaseMap` (`Str.toCase`, its runs on WasmGC
-  decoded into the engine's array), `LibM`, `MemOps.compare`, the errno
-  tables of `Layouts`;
+  decoded into the engine's array), `LibM` (Math and Float's %: on WasmGC
+  too, where the engine's Math was used; its tables `LibMData`, the trusted
+  layer's: read-only data linearly, decoded arrays on WasmGC), the errno
+  tables of `Layouts`; `MemOps.compare` compares addresses, the trusted
+  layer's, under `Str.matchAt`;
 - String's algorithms: `hxmc.rt.TextCore` (search, order, hash, UTF-8
   both ways, integers to text and back) over code units and bytes, whose GC face is String's natives
   (`hxmc.rt.Str`, `Bytes.getString`) and scoped face `hxmc.scoped.Str`
@@ -763,7 +766,11 @@ stored) the object is copied (a shallow copy: its fields are scalars and
 scoped values, which are values or views); a value just made (`new`, a
 call's result) is not. Haxe's inline constructors already keep objects
 whose fields are all final in locals, so the views (`Slice`, `Str`,
-`IndexView`) cost no allocation where they do not escape.
+`IndexView`) cost no allocation where they do not escape. A struct value
+whose fields are all final keeps its inline constructor on every target
+(no copy of it can be told from another), so a core returning one from an
+inline function (`LibM`'s reduced argument, `FloatText`'s parse result)
+leaves it in registers.
 
 Arrays of scoped classes: WasmGC has no inline structs in arrays. The
 first representation is an array of the element objects (a Grow's push

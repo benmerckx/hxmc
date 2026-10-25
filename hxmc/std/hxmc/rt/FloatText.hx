@@ -784,7 +784,7 @@ class FloatText {
 	public final value:Float;
 	public final end:Int;
 
-	public function new(value:Float, end:Int) {
+	public inline function new(value:Float, end:Int) {
 		this.value = value;
 		this.end = end;
 	}

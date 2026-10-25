@@ -191,7 +191,8 @@ class CInterop {
 			com.callbacks.addAfterTyping(types -> {
 				for (t in types)
 					switch t {
-						case TClassDecl(c) if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)) && (isStruct(c) || isWasmValue(c))):
+						// (one whose fields are all final keeps it: no copy can be told from another)
+						case TClassDecl(c) if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)) && (isStruct(c) || isWasmValue(c)) && !immutable(c)):
 							c.clConstructor.cfKind = Method(MethNormal);
 						case _:
 					}
