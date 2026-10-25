@@ -374,7 +374,7 @@ Not built yet: `@:try` for scoped error values.
 | `Pool` | a bump region (a Grow of bytes) for values whose lifetime is a caller's: `pool.str(s)`, `pool.slice(n)`, `pool.bytes(n)` | the pool |
 | `IntTable<V>` | a table of Int keys: the maps' index (`hxmc.rt.MapIndex`) over slots in a Pool, keys and values in Grows; grows only | the table |
 | `Fixed<T, N>` | N elements of T inline in what holds it (a frame, a struct, a Grow's element), a struct value; `N` a constant type parameter (`new Fixed<Int, 16>()`, zeroed; `Fixed.scratch()`, numbers left as they were, for the std's cores that write before they read), read by the lowering from the type; `f[i]`, `f.length`, `f.view()` (a Slice of the same memory). T a scalar or a struct value holding no reference. Linearly the value's bytes (a struct class made per T and N: `CInterop.fixedStruct`; more than 16 words copied and zeroed in a loop), on WasmGC an array of the engine copied where a struct value is (its struct elements objects, each copied) | the memory holding it: a local's frame area, its holder's |
-| `Rel<T>` | (not built) a 32-bit self-relative reference (serialization, below) | the array it points into |
+| `Rel<T>` | an element of a Grow by its index: 32 bits, the index + 1 (0 none); `Rel.at(i)`, `r.get(g)` (a `Ref`, the index checked); a copy is as good as the original (serialization, below) | (a scalar: none) |
 | `@:hxmc.scoped` classes | struct values (`@:hxmc.struct`'s representation) whose fields may also be the types above | the union of their fields' roots |
 | `@:hxmc.scoped` enums | value enums (below) | the union of their payloads' roots |
 
@@ -853,21 +853,34 @@ WasmGC under node):
 
 ### Serialization: relative references
 
-Structures built from relative references are their own file format:
+Structures built from relative references are their own file format
+(built: `hxmc.scoped.Rel`, `hxmc.scoped.Image`):
 
-- `Rel<T>`: a 32-bit signed offset from the field itself to a T in the
-  same `Grow` (0 is null), read as a `Ref<T>` (`r.get()`), set from one
-  (`r.set(ref)`: the checker requires the target's root to be the same
-  Grow as the field's, exactly: the one rule that needs a root's identity
-  rather than its lifetime).
+- `Rel<T>`: an element of a `Grow` by its index, 32 bits (the index +
+  1, 0 none), read with the Grow it points into: `r.get(g)` is a
+  `Ref<T>`, the index checked as `g.ref(i)` checks it. The design had an
+  offset from the field itself, read without the Grow; an index instead,
+  because a struct value is copied (into a local, another Grow) and a
+  self-relative offset in the copy would point anywhere, which no check at
+  the read could catch, and because WasmGC has no addresses to be relative
+  to. An index means the same in a copy, on every target, and needs no
+  rule of the root checker.
 - A structure of value types and `Rel`s in one `Grow` is position
-  independent: saving it is writing its bytes (`g.bytes()`), loading is
-  reading them into a `Grow` and verifying.
-- Per scoped type a generated `verify(bytes, at):Bool` (a build macro on
-  `@:hxmc.scoped` classes and enums): every enum tag in range, every
-  `Rel` landing on an element start inside the image, every length within
-  it; `Grow.fromBytes<T>(bytes)` copies and verifies, and gives an empty
-  Grow and `false` on hostile bytes, never a wild reference.
+  independent: `Image.of(g)` is its bytes (linearly the elements' memory
+  itself, a view rooted at g; on WasmGC written field by field), in linear
+  memory's layout, little-endian, the same bytes on every target;
+  `Image.load(bytes, into)` checks them and appends the elements to an
+  empty Grow.
+- The check, made by the lowering for each T (`hxmc.ir.Images`: no
+  macro; the std's `Image` calls `ImageParts`, an extern class whose
+  calls are replaced, before the root checker, by what T's layout makes of
+  them): the length a multiple of T's size, every `Bool` 0 or 1, every
+  `Rel` none or one of the image's elements; every other bit pattern of
+  a scalar is a value. `load` is false on hostile bytes, the Grow left
+  empty, never a wild reference. T's fields: scalars, Rels, scoped classes
+  and Fixed of those; a reference (`Str`, `Slice`, `Ref`, `Grow`, a GC
+  type) is an error at compile time, as is a scoped enum (not yet: its
+  tags would need checks too).
 
 ### Targets
 
@@ -986,11 +999,12 @@ and `Str.ofFloat`'s buffer (in the frame: no data stack, no scope, no
 mark; stage0 was made again for it). FloatText's are `Fixed.scratch()`,
 not zeroed: zeroing its 6 KB per call made `Std.string` of a double 35%
 slower and `Std.parseFloat` of a long one 45%; not zeroed, both are as
-fast as with the data stack natively, and 5-10% faster on wasm32. Not built: `Rel<T>` and the generated
-`verify`/`fromBytes` (designed above), variable-size enums,
-methods on scoped classes (structs have none yet), checking the
-`hxmc.scoped` std's own inline functions apart from their callers,
-struct of arrays on WasmGC.
+fast as with the data stack natively, and 5-10% faster on wasm32.
+`Rel<T>` and images (`Image.of`, `Image.load`, the check made for each
+T). Not built: variable-size enums, scoped enums in images, methods on
+scoped classes (structs have none yet), checking the `hxmc.scoped` std's
+own inline functions apart from their callers, struct of arrays on
+WasmGC.
 
 Scoped against GC on the maps' index (`make bench-scoped`, `Table`: n
 random Int keys inserted with updates, then 8n lookups; `IntTable` against

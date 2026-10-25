@@ -133,6 +133,8 @@ class FnLower {
 	// its result holds references; a loop's at its end, break and continue)
 
 	function scopedBody(tf:TFunc) {
+		// (hxmc.scoped.Image's parts for each T: Images)
+		if (Images.image != null) tf = {tfArgs: tf.tfArgs, tfType: tf.tfType, tfExpr: Images.rewrite(tf.tfExpr)};
 		// (the trusted layer, @:hxmc.noGc: unchecked; the runtime and the std's
 		// maps, GC faces that view their own GC memory, as runtime code)
 		var face = StringTools.startsWith(fi.module, "hxmc.rt") || StringTools.startsWith(fi.module, "haxe.ds.");

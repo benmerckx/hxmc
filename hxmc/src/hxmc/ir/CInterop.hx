@@ -385,14 +385,14 @@ class CInterop {
 	}
 
 	// `o.f = x`
-	static function setField(o:TExpr, c:TClass, cf:TClassField, x:TExpr, p:core.Globals.Pos):TExpr
+	public static function setField(o:TExpr, c:TClass, cf:TClassField, x:TExpr, p:core.Globals.Pos):TExpr
 		return TFunctions.mk(TBinop(OpAssign, TFunctions.mk(TField(o, FInstance(c, haxe.ds.Vector.fromArrayCopy([]), cf)), cf.cfType, p), x), cf.cfType, p);
 
-	static function getField(o:TExpr, c:TClass, cf:TClassField, p:core.Globals.Pos):TExpr
+	public static function getField(o:TExpr, c:TClass, cf:TClassField, p:core.Globals.Pos):TExpr
 		return TFunctions.mk(TField(o, FInstance(c, haxe.ds.Vector.fromArrayCopy([]), cf)), cf.cfType, p);
 
 	// `var i = 0; while (i < n) { body(i); i = i + 1; }`
-	static function forIndex(n:TExpr, body:TExpr->TExpr, p:core.Globals.Pos):Array<TExpr> {
+	public static function forIndex(n:TExpr, body:TExpr->TExpr, p:core.Globals.Pos):Array<TExpr> {
 		var tint = Lower.basic.tint, tbool = Lower.basic.tbool;
 		var i = TFunctions.allocVar(VGenerated, "_hx_i", tint, p);
 		var li = TFunctions.mk(TLocal(i), tint, p);
