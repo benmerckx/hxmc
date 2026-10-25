@@ -226,6 +226,37 @@ On Windows the boundary touches each view's pages before the call
 (`hx_view_touch`): WinRt commits the data stacks' pages on a fault in
 user code, which a fault in the kernel never makes.
 
+### The old generation's limit (the owner's GC change)
+
+The self-build's peak was promoted garbage: no major collection ran
+under the tool's first old-space limit of 3 GB, so the 1.3 GB promoted
+stayed against 0.5 GB live. The collectors already set the next limit
+from what a major collection leaves live (natively three times, on
+wasm32 twice); that factor is now `RT_OLD_GROWTH` (percent; 300 and 200
+by default), and the tool's first limit is 768 MB. A copying major
+collection peaks at what the old space holds plus what is live, so the
+first limit decides the peak more than the factor. Self-build (cold
+module cache, `RT_STATS=1`; peak RSS, wall, the major collections):
+
+| first limit / growth | peak RSS | wall | majors |
+| --- | ---: | ---: | --- |
+| 3072 MB / 300 (before) | 1.55-1.58 GB | 12.6-15.1 s | none |
+| 1024 MB / 300, 250, 200 | 1.65-1.66 GB | 14.0-14.9 s | one, 1.0-1.1 s |
+| 768 MB / 300 (after) | 1.22-1.24 GB | 12.9-14.3 s | one, 0.6-0.8 s |
+| 768 MB / 250 | 1.24 GB | | one |
+| 512 MB / 300 | 1.98-2.01 GB | | two, 2.3-3.5 s |
+| 640 MB / 200, 896 MB / 300 | 1.36-1.46 GB, 1.40 GB | | |
+
+Interleaved, before against after (three runs each): wall 13.20 against
+13.50 s (median), user 19.2 against 19.5 s, peak RSS 1.56 against 1.23 GB
+(-21%). Two major collections cost more than they save: each peaks at
+its own old space plus what is live, and the live size grows through
+the build. Unchanged: tsc-haxe (its programs' default first limit is
+256 MB and it runs no major collection: peak 529 MB at any factor), the
+formatter build (75 MB promoted, no major collection), `make bench` (no
+program's default changed). The compilation server keeps its 4 GB
+(`--server`): it holds every module between builds, not measured here.
+
 ### The back end's graphs (item 1): what is promoted
 
 Whether the back end's per-function graphs are worth scoped memory
@@ -281,3 +312,6 @@ rewrite of the plan (below, "Decisions").
   owner approved a major collection when the old generation grows well
   past the live size measured after the last major one (a factor tuned
   by measurement, with a floor), on the native and wasm32 collectors.
+  Done ("The old generation's limit"): the factor was already there
+  (three times, twice on wasm32) and a factor of two cost more; the
+  tool's first limit, 768 MB, took the peak from 1.56 to 1.23 GB.

@@ -148,7 +148,7 @@ archives, without it.
   `-D disable-parallelism`. A define read again costs a lookup. The tool's
   first old-space limit is 3 GB, up from 2 GB: the port's cold build with
   the cache promotes just over 2 GB, which cost a major collection of
-  about a second.
+  about a second (since 768 MB, for a lower peak: docs/plans/scoped-apply.md).
 - Measured (one 4-core VM shared with other builds). Each entry gives the
   time to the start of lowering, the whole build with the objects cached,
   and the number of modules typed or processed again. Before is main's tool,
