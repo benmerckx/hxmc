@@ -58,6 +58,12 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 
 	@:noCompletion public inline function unsafeSet(i:Int, v:T)
 		this.a.unsafeSet(this.off + i, v);
+
+	// the bytes i .. i + 3 of s as an Int, little-endian, unchecked (the cores')
+	@:noCompletion public static inline function word(s:Slice<UInt8>, i:Int):Int {
+		var a:NativeArray<UInt8> = s.array(), k = s.offset() + i;
+		return (a.unsafeGet(k) : Int) | ((a.unsafeGet(k + 1) : Int) << 8) | ((a.unsafeGet(k + 2) : Int) << 16) | ((a.unsafeGet(k + 3) : Int) << 24);
+	}
 	#else
 	public inline function new(p:Ptr<T>, length:Int)
 		this = new SliceData(p, length);
@@ -97,6 +103,10 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 
 	@:noCompletion public inline function unsafeSet(i:Int, v:T)
 		(this.ptr : Ptr<T>)[i] = v;
+
+	// the bytes i .. i + 3 of s as an Int, little-endian, unchecked (the cores')
+	@:noCompletion public static inline function word(s:Slice<UInt8>, i:Int):Int
+		return Mem.getI32(s.ptr(), i);
 	#end
 }
 

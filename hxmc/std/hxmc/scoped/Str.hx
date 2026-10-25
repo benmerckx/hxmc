@@ -46,17 +46,6 @@ abstract Str(StrData) {
 	inline function get_length():Int
 		return this.length;
 
-	// the units from 0 (TextCore's view: the String itself, or a copy of a
-	// Str that starts further in)
-	inline function units():GcChars {
-		var s = this.s;
-		if (this.off != 0) {
-			s = W.strNew(this.length);
-			W.strCopy(s, 0, this.s, this.off, this.length);
-		}
-		return s;
-	}
-
 	@:arrayAccess public inline function at(i:Int):Int {
 		if ((i : UInt) >= (this.length : UInt)) Abort.outOfRange();
 		return W.strGet(this.s, this.off + i);
@@ -91,41 +80,37 @@ abstract Str(StrData) {
 	}
 
 	public inline function find(s:Str, from:Int = 0):Int
-		return TextCore.indexOf(units(), this.length, s.units(), s.length, from);
+		return TextCore.indexOf(abstract, s, from);
 
 	public inline function findLast(s:Str, from:Int):Int
-		return TextCore.lastIndexOf(units(), this.length, s.units(), s.length, from);
+		return TextCore.lastIndexOf(abstract, s, from);
 
 	public inline function compare(o:Str):Int
-		return TextCore.compare(units(), this.length, o.units(), o.length);
+		return TextCore.compare(abstract, o);
 
 	public inline function hash():Int
-		return TextCore.hash(units(), this.length);
+		return TextCore.hash(abstract);
 
 	public static inline function ofInt(v:Int):Str {
 		var n = TextCore.intLength(v);
-		var s:GcChars = W.strNew(n);
-		TextCore.intWrite(v, s, n);
-		return cast StrData.fresh(s, 0, n);
+		var s:Str = cast StrData.fresh(W.strNew(n), 0, n);
+		TextCore.intWrite(v, s);
+		return s;
 	}
 
 	public inline function toInt(none:Int):Int {
-		var r = TextCore.parseInt(units(), this.length);
+		var r = TextCore.parseInt(abstract);
 		return r == 0 ? none : r.toInt();
 	}
 
-	public inline function utf8(buf:Slice<UInt8>):Int {
-		if (buf.length < 3 * this.length + 1) Abort.outOfRange();
-		return TextCore.utf8Encode(units(), this.length, cast buf.array(), buf.offset());
-	}
+	public inline function utf8(buf:Slice<UInt8>):Int
+		return TextCore.utf8Encode(abstract, buf);
 
 	public static inline function ofUtf8(b:Slice<UInt8>, n:Int):Str {
-		if ((n : UInt) > (b.length : UInt)) Abort.outOfRange();
-		var o:hxmc.rt.gc.GcRepr.GcOctets = cast b.array();
-		var from = b.offset();
-		var s:GcChars = W.strNew(TextCore.utf8Units(o, from, from + n));
-		TextCore.utf8Decode(o, from, from + n, s);
-		return cast StrData.fresh(s, 0, W.strLen(s));
+		var units = TextCore.utf8Units(b, 0, n);
+		var s:Str = cast StrData.fresh(W.strNew(units), 0, units);
+		TextCore.utf8Decode(b, 0, n, s);
+		return s;
 	}
 
 	public inline function toCase(toUpper:Bool):Str {
@@ -164,6 +149,35 @@ abstract Str(StrData) {
 		}
 		return s;
 	}
+
+	// ---- for the std's cores (hxmc.rt.TextCore), unchecked: in range by
+	// construction, and writing only units they made
+
+	@:noCompletion public inline function unit(i:Int):Int
+		return W.strGet(this.s, this.off + i);
+
+	@:noCompletion public inline function setUnit(i:Int, u:Int)
+		W.strSet(this.s, this.off + i, u);
+
+	// whether the units from i are d's (d not empty)
+	@:noCompletion public inline function matchAt(i:Int, d:Str):Bool {
+		var m = d.length, k = 0;
+		while (k < m && W.strGet(this.s, this.off + i + k) == d.unit(k))
+			k++;
+		return k == m;
+	}
+
+	// the four bytes of x (ASCII, little-endian) as units j .. j + 3
+	@:noCompletion public inline function setAscii4(j:Int, x:Int) {
+		setUnit(j, x & 0xFF);
+		setUnit(j + 1, (x >>> 8) & 0xFF);
+		setUnit(j + 2, (x >>> 16) & 0xFF);
+		setUnit(j + 3, x >>> 24);
+	}
+
+	// the units of the String s (the runtime's GC faces)
+	@:noCompletion public static inline function view(s:String):Str
+		return new Str(s, 0, W.strLen(s));
 }
 
 @:hxmc.repr @:noCompletion class StrData {
@@ -248,51 +262,47 @@ abstract Str(StrData) {
 	// the first index from `from` where the units of s start, or -1 (String's
 	// indexOf: hxmc.rt.TextCore)
 	public inline function find(s:Str, from:Int = 0):Int
-		return TextCore.indexOf(this.ptr, this.length, (s.ptr() : Ptr), s.length, from);
+		return TextCore.indexOf(abstract, s, from);
 
 	// the last index at most `from` where they start, or -1 (lastIndexOf)
 	public inline function findLast(s:Str, from:Int):Int
-		return TextCore.lastIndexOf(this.ptr, this.length, (s.ptr() : Ptr), s.length, from);
+		return TextCore.lastIndexOf(abstract, s, from);
 
 	// -1, 0 or 1, as Reflect.compare orders Strings
 	public inline function compare(o:Str):Int
-		return TextCore.compare(this.ptr, this.length, (o.ptr() : Ptr), o.length);
+		return TextCore.compare(abstract, o);
 
 	// String's hash (FNV-1a over the units, never 0)
 	public inline function hash():Int
-		return TextCore.hash(this.ptr, this.length);
+		return TextCore.hash(abstract);
 
 	// the first n bytes of b decoded from UTF-8 (as String's: a byte that
 	// begins no well-formed sequence is one unit U+DC80 to U+DCFF), fresh
 	// memory of the scope
 	public static inline function ofUtf8(b:Slice<UInt8>, n:Int):Str {
-		if ((n : UInt) > (b.length : UInt)) Abort.outOfRange();
-		var p = b.ptr();
-		var units = TextCore.utf8Units((p : Ptr), 0, n);
+		var units = TextCore.utf8Units(b, 0, n);
 		var d = DataStacks.alloc(2 * units);
-		TextCore.utf8Decode((p : Ptr), 0, n, d);
+		TextCore.utf8Decode(b, 0, n, new Str(d, units));
 		return new Str(d, units);
 	}
 
 	// the UTF-8 bytes into buf (3 * length + 1 bytes), NUL-terminated: the byte count
-	public inline function utf8(buf:Slice<UInt8>):Int {
-		if (buf.length < 3 * this.length + 1) Abort.outOfRange();
-		return TextCore.utf8Encode(this.ptr, this.length, (buf.ptr() : Ptr));
-	}
+	public inline function utf8(buf:Slice<UInt8>):Int
+		return TextCore.utf8Encode(abstract, buf);
 
 
 	// v in decimal (Std.string's), fresh memory of the scope
 	public static inline function ofInt(v:Int):Str {
 		var n = TextCore.intLength(v);
-		var p = DataStacks.alloc(2 * n);
-		TextCore.intWrite(v, p, n);
-		return new Str(p, n);
+		var s = new Str(DataStacks.alloc(2 * n), n);
+		TextCore.intWrite(v, s);
+		return s;
 	}
 
 	// the integer the text starts with, as Std.parseInt reads it; `none` when
 	// there is none
 	public inline function toInt(none:Int):Int {
-		var r = TextCore.parseInt(this.ptr, this.length);
+		var r = TextCore.parseInt(abstract);
 		return r == 0 ? none : r.toInt();
 	}
 
@@ -341,6 +351,32 @@ abstract Str(StrData) {
 	// a String of the units (GC code)
 	public inline function toString():String
 		return DataStacks.stringOf(this.ptr, this.length);
+
+	// ---- for the std's cores (hxmc.rt.TextCore), unchecked: in range by
+	// construction, and writing only units they made
+
+	@:noCompletion public inline function unit(i:Int):Int
+		return Mem.getU16At(this.ptr, 0, i);
+
+	@:noCompletion public inline function setUnit(i:Int, u:Int)
+		Mem.setU16At(this.ptr, 0, i, u);
+
+	// whether the units from i are d's (d not empty)
+	@:noCompletion public inline function matchAt(i:Int, d:Str):Bool {
+		var m = d.length;
+		return Mem.getU16At(this.ptr, 0, i) == d.unit(0)
+			&& (m == 1 || hxmc.rt.MemOps.compare((this.ptr : Ptr).add(2 * i + 2), (d.ptr() : Ptr).add(2), (2 * (m - 1) : I64)) == 0);
+	}
+
+	// the four bytes of x (ASCII, little-endian) as units j .. j + 3
+	@:noCompletion public inline function setAscii4(j:Int, x:Int) {
+		Mem.setI32(this.ptr, 2 * j, (x & 0xFF) | ((x & 0xFF00) << 8));
+		Mem.setI32(this.ptr, 2 * j + 4, ((x >>> 16) & 0xFF) | ((x >>> 8) & 0xFF0000));
+	}
+
+	// the units of the String s (the runtime's GC faces: valid until the next GC point)
+	@:noCompletion public static inline function view(s:String):Str
+		return new Str(hxmc.rt.Str.unitsAddr(s), hxmc.rt.Str.len(s));
 }
 
 @:hxmc.struct @:noCompletion class StrData {

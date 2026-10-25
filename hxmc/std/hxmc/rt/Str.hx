@@ -90,14 +90,18 @@ class Str {
 	// allocating before it: in linear memory o may be the address of a heap
 	// object's)
 	public static inline function decode(o:Octets, from:Int, end:Int):String {
-		var s = make(TextCore.utf8Units(o, from, end));
-		TextCore.utf8Decode(o, from, end, chars(s));
+		var s = make(TextCore.utf8Units(Repr.byteView(o, end), from, end));
+		TextCore.utf8Decode(Repr.byteView(o, end), from, end, view(s));
 		return s;
 	}
 
+	// the units of s as a scoped Str, for TextCore (no GC point while it is used)
+	static inline function view(s:String):hxmc.scoped.Str
+		return hxmc.scoped.Str.view(s);
+
 	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count
 	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int
-		return TextCore.utf8Encode(chars(s), len(s), buf);
+		return TextCore.utf8Encode(view(s), Repr.byteView(buf, 3 * len(s) + 1));
 
 	// a malloc'ed UTF-8 copy ("null" for null)
 	@:hxmc.host("hx_str_to_utf8") @:hxmc.noGc static function toUtf8(s:String):Ptr {
@@ -121,7 +125,7 @@ class Str {
 		if (Repr.same(a, b)) return 0;
 		if (isNull(a)) return -1;
 		if (isNull(b)) return 1;
-		return TextCore.compare(chars(a), len(a), chars(b), len(b));
+		return TextCore.compare(view(a), view(b));
 	}
 
 	// FNV-1a over the units, never 0, kept in the string's header where it
@@ -134,7 +138,7 @@ class Str {
 	}
 
 	@:hxmc.noGc static function hashSlow(s:String):Int {
-		var x = TextCore.hash(chars(s), len(s));
+		var x = TextCore.hash(view(s));
 		Repr.storeHash(s, x);
 		return x;
 	}
@@ -166,16 +170,14 @@ class Str {
 	}
 
 	@:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
-		var n = TextCore.intLength(v);
-		var s = make(n);
-		TextCore.intWrite(v, chars(s), n);
+		var s = make(TextCore.intLength(v));
+		TextCore.intWrite(v, view(s));
 		return s;
 	}
 
 	@:hxmc.host("hx_str_of_i64") static function ofI64(v:I64):String {
-		var n = TextCore.i64Length(v);
-		var s = make(n);
-		TextCore.i64Write(v, chars(s), n);
+		var s = make(TextCore.i64Length(v));
+		TextCore.i64Write(v, view(s));
 		return s;
 	}
 
@@ -222,12 +224,12 @@ class Str {
 
 	// ("" past the end: the length, as String.indexOf says; upstream's TestString)
 	@:hxmc.host("String_indexOf") @:hxmc.noGc static function indexOf(s:String, sub:String, start:Null<Int>):Int
-		return TextCore.indexOf(chars(s), len(s), chars(sub), len(sub), start == null ? 0 : start);
+		return TextCore.indexOf(view(s), view(sub), start == null ? 0 : start);
 
 	// ("" before the start: 0, as Eval and ECMAScript; upstream's Issue5271)
 	@:hxmc.host("String_lastIndexOf") @:hxmc.noGc static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
 		var n = len(s);
-		return TextCore.lastIndexOf(chars(s), n, chars(sub), len(sub), start == null ? n : start);
+		return TextCore.lastIndexOf(view(s), view(sub), start == null ? n : start);
 	}
 
 	@:hxmc.host("String_substr") static function substr(s:String, pos:Int, lenp:Null<Int>):String {
@@ -395,7 +397,7 @@ class Str {
 
 	@:hxmc.host("Std_parseInt") static function parseInt(s:String):Null<Int> {
 		if (isNull(s)) return null;
-		var r = TextCore.parseInt(chars(s), len(s));
+		var r = TextCore.parseInt(view(s));
 		return r == 0 ? null : r.toInt();
 	}
 

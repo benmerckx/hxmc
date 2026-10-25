@@ -701,10 +701,12 @@ class FloatText {
 	}
 }
 
-// a number read and the index after it (FloatText.parse)
-@:hxmc.scoped class Parsed {
-	public var value:Float;
-	public var end:Int;
+// a number read and the index after it (FloatText.parse): a struct value
+// (@:hxmc.struct too, for the tools that build hxmc from its stage0, to which
+// a scoped class is an object; its fields final, an object on WasmGC)
+@:hxmc.struct @:hxmc.scoped class Parsed {
+	public final value:Float;
+	public final end:Int;
 
 	public function new(value:Float, end:Int) {
 		this.value = value;

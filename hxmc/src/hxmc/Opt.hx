@@ -1475,6 +1475,7 @@ class Opt {
 					if (i.dead) continue;
 					var op = i.op;
 					if (op == Store || objStore(i)) {
+						if (op == Store && i.size <= 2) narrowStore(i);
 						if (op == Store && !forwards(i)) continue;
 						var h = op == Store ? hashOf(Load, i.a, i.b, -1, i.imm, i.imm2, ver[i.id]) : op == VarSet ? hashOf(VarGet, -1, -1, -1, i.info.n, 0,
 							ver[i.id]) : hashOf(GetField, i.a, -1, -1, fieldOff(i.info), 0, ver[i.id]);
@@ -1493,6 +1494,15 @@ class Opt {
 					// index masks its slot numbers again in each access, hxmc.rt.MapIndex)
 					if (op == And) {
 						var m = masked(i);
+						if (m >= 0) {
+							repl[i.id] = m;
+							i.dead = true;
+							continue;
+						}
+					}
+					// (x * 1 is x: an element's offset in a Ptr<T> of 1-byte T, hxmc.scoped.Slice)
+					if (op == Mul) {
+						var m = timesOne(i);
 						if (m >= 0) {
 							repl[i.id] = m;
 							i.dead = true;
@@ -1550,6 +1560,34 @@ class Opt {
 				}
 			}
 		}
+	}
+
+	// a byte (two) stored of x & 0xFF (0xFFFF): x stored, the store truncating
+	// it (UInt8's conversion of what goes into a Slice<UInt8>, hxmc.rt.TextCore;
+	// narrow stores forward no value to loads: forwards)
+	function narrowStore(i:MIns) {
+		if (i.c < 0) return;
+		var v = f.vals[res(i.c)];
+		if (v == null || v.op != And || v.a < 0 || v.b < 0) return;
+		var mask = i.size == 1 ? 0xFF : 0xFFFF;
+		inline function isMask(x:Int):Bool {
+			var k = f.vals[res(x)];
+			return k != null && k.op == Const && k.sym == null && k.imm == mask && k.imm2 == 0;
+		}
+		if (isMask(v.b)) i.c = res(v.a) else if (isMask(v.a)) i.c = res(v.b);
+	}
+
+	// Mul(x, 1) or Mul(1, x) of x's type: x; else -1
+	function timesOne(i:MIns):Int {
+		if (i.a < 0 || i.b < 0) return -1;
+		var a = res(i.a), b = res(i.b);
+		inline function one(x:Int):Bool {
+			var k = f.vals[x];
+			return k != null && k.op == Const && k.sym == null && k.imm == 1 && (k.ty == I32 || k.imm2 == 0);
+		}
+		inline function same(x:Int):Bool
+			return f.vals[x] != null && f.vals[x].ty == i.ty;
+		return one(b) && same(a) ? a : one(a) && same(b) ? b : -1;
 	}
 
 	// And(x, m) where x is And(_, m) (or the other way round): x; else -1

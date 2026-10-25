@@ -2618,9 +2618,36 @@ class FnLower {
 						case _: EBin(LAdd, p, EBin(LMul, EConv(I2L, k), EConv(I2L, EInt(size))));
 					}
 				}
+				// (a scalar at index i: the indexed access, base and scaled index in
+				// the instruction, as Mem.getI32At)
+				var getAt = switch ct {
+					case CU8 | CBool: "getU8At";
+					case CU16: "getU16At";
+					case CI32: "getI32At";
+					case CI64 | CPtr: "getI64At";
+					case CF64: "getF64At";
+					case _: null;
+				}
+				var setAt = switch ct {
+					case CI8 | CU8 | CBool: "setU8At";
+					case CI16 | CU16: "setU16At";
+					case CI32: "setI32At";
+					case CI64 | CPtr: "setI64At";
+					case CF64: "setF64At";
+					case _: null;
+				}
 				return switch n {
 					case "get_value": cLoad(ELocal(asLocal(p, TI64)), 0, ct, e);
+					case "get" if (getAt != null):
+						var t = ct == CF64 ? TF64 : ct == CI64 || ct == CPtr ? TI64 : TI32;
+						var x = temp(t, ECallHost("hxmc_unsafe_Mem_" + getAt, vector(p, EInt(0), coerce(xs[1], tyOf(cargs[1]), TI32)), t));
+						ct == CBool ? coerce(EBin(Ne, x, EInt(0)), TBool, tyOf(e)) : coerce(x, t, tyOf(e));
 					case "get": cLoad(ELocal(asLocal(at(xs[1], tyOf(cargs[1])), TI64)), 0, ct, e);
+					case "set" if (setAt != null):
+						var v = ELocal(asLocal(xs[2], tyOf(cargs[2])));
+						var t = ct == CF64 ? TF64 : ct == CI64 || ct == CPtr ? TI64 : TI32;
+						out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + setAt, vector(p, EInt(0), coerce(xs[1], tyOf(cargs[1]), TI32), coerce(v, tyOf(cargs[2]), t)), TVoid)));
+						coerce(v, tyOf(cargs[2]), tyOf(e));
 					case "set_value":
 						var v = ELocal(asLocal(xs[1], tyOf(cargs[1])));
 						cStore(ELocal(asLocal(p, TI64)), 0, ct, v, tyOf(cargs[1]), e);

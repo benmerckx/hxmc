@@ -93,8 +93,8 @@ class Bytes {
 		if (pos < 0 || n < 0 || pos + n > len(b)) outside();
 		// (the units counted, the string made, a GC point, then the bytes, which
 		// may have moved, decoded: TextCore)
-		var s = Str.make(TextCore.utf8Units(Repr.octets(b), pos, pos + n));
-		TextCore.utf8Decode(Repr.octets(b), pos, pos + n, Str.chars(s));
+		var s = Str.make(TextCore.utf8Units(Repr.byteView(Repr.octets(b), pos + n), pos, pos + n));
+		TextCore.utf8Decode(Repr.byteView(Repr.octets(b), pos + n), pos, pos + n, hxmc.scoped.Str.view(s));
 		return s;
 	}
 

@@ -345,6 +345,10 @@ class MemRepr {
 	public static inline function bytesLen(b:Dynamic):Int
 		return Mem.getI32(Mem.addr(b), -4);
 
+	// the first n bytes at o as a Slice (the cores' view: hxmc.rt.TextCore)
+	public static inline function byteView(o:MemOctets, n:Int):hxmc.scoped.Slice<hxmc.unsafe.UInt8>
+		return new hxmc.scoped.Slice(((o : Ptr) : Ptr<hxmc.unsafe.UInt8>), n);
+
 	public static inline function octets(b:Dynamic):MemOctets
 		return Mem.addr(b);
 

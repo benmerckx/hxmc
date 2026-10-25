@@ -209,6 +209,10 @@ class GcRepr {
 	public static inline function bytesLen(b:Dynamic):Int
 		return W.bytesLen(b);
 
+	// the first n bytes of o as a Slice (the cores' view: hxmc.rt.TextCore)
+	public static inline function byteView(o:GcOctets, n:Int):hxmc.scoped.Slice<hxmc.unsafe.UInt8>
+		return new hxmc.scoped.Slice(cast o, 0, n);
+
 	public static inline function octets(b:Dynamic):GcOctets
 		return b;
 
