@@ -36,10 +36,13 @@ class WinSys {
 
 	// a NUL-terminated UTF-16 string (outside the heap) as a String
 	// n bytes of the data stack, not zeroed, for the system to fill (freed
-	// where the calling function's scope ends: Scope.scratch)
+	// where the calling function's scope ends: Scope.scratch); touched, as the
+	// data stacks' pages are committed on a touch from user code (touch, below)
 	static inline function scratch(n:Int):Ptr {
 		var s:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.scratch(n);
-		return #if hxmc.wasm_gc Ptr.nil() #else s.ptr() #end;
+		var p = #if hxmc.wasm_gc Ptr.nil() #else s.ptr() #end;
+		touch(p, n);
+		return p;
 	}
 
 	static function ofWide(w:Ptr):String {
