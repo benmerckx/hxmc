@@ -1180,6 +1180,12 @@ class Gc {
 		return p.add(8);
 	}
 
+	// the pages of a view of scoped memory passed to C on Windows, touched
+	// first: WinRt commits the data stacks' pages on a fault in user code,
+	// which a fault in the kernel never makes (WinSys.touch; FnLower.cCall)
+	@:hxmc.host("hx_view_touch") @:hxmc.unsafe static function viewTouch(p:Ptr, n:Int):Void
+		if (Mem.os() == 2) WinSys.touch(p, n);
+
 	// ---- the write barrier's slow path (generated code's inline part and
 	// GcPaths: obj is old, the slot now holds a young pointer and held none)
 

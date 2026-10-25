@@ -518,7 +518,7 @@ class FnLower {
 		m;
 	};
 	// natives that never allocate (not GC points), with side effects
-	public static var NOGC = ["Math_random" => true, "hx_box_bool" => true];
+	public static var NOGC = ["Math_random" => true, "hx_box_bool" => true, "hx_view_touch" => true];
 
 	public static function isPure(n:String):Bool
 		return PURE.exists(n) || MATH.exists(n) || PURE_INTRINSICS.exists(n)
@@ -2823,6 +2823,9 @@ class FnLower {
 				var fp = Lambda.find(fs, f -> f.name == "ptr"), fl = Lambda.find(fs, f -> f.name == "length");
 				var a = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(p, EInt(fp.off)), TI64));
 				var n = temp(TI32, ECallHost("hxmc_unsafe_Mem_getI32", vector(p, EInt(fl.off)), TI32));
+				// (Windows commits the data stacks' pages on a touch from user code,
+				// which a fault in the kernel never makes: touched first)
+				if (Lower.targetOs == 2) out.push(SExpr(ECallHost(l.native("hx_view_touch"), vector(a, n), TVoid)));
 				// (wasm32: both 32-bit, CInterop.declare)
 				ys.push(Lower.targetCode == 6 ? EConv(L2I, a) : a);
 				ys.push(Lower.targetCode == 6 ? n : EConv(I2L, n));

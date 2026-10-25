@@ -159,6 +159,7 @@ class RuntimeSymbols {
 		{sym: "hx_is_typeobj", kind: IMPL, families: LINEAR, by: "FnLower: Std.isOfType(v, Class)"},
 		{sym: "hx_clos_of_sig", kind: IMPL, families: LINEAR, by: "FnLower: a function of another signature"},
 		{sym: "hx_narray_view", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray seen typed"},
+		{sym: "hx_view_touch", kind: IMPL, families: NATIVE, by: "FnLower: a view passed to C (Windows)"},
 		{sym: "hx_narray_open", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray of a type parameter"},
 		{sym: "hx_narray_default", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray read out of bounds, silent"},
 		{sym: "hx_narray_oob", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray access out of bounds, throws", when: boundsThrow},
