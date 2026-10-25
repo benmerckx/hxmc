@@ -541,10 +541,11 @@ class Lower implements LowerQueries {
 	public static function isNativeArray(c:TClass):Bool
 		return c.clPath.name == "NativeArray" && c.clPath.pack.join(".") == "hxmc";
 
-	// hxmc.Byte (through typedefs): a NativeArray of them stores bytes (TU8)
+	// hxmc.Byte (through typedefs), hxmc.unsafe.UInt8: a NativeArray of them
+	// stores bytes (TU8; a Slice<UInt8> on WasmGC: hxmc.scoped.Slice)
 	static function isByte(t:T):Bool
 		return switch TFunctions.followWithoutNull(t) {
-			case TAbstract(a, _): a.aPath.name == "Byte" && a.aPath.pack.join(".") == "hxmc";
+			case TAbstract(a, _): a.aPath.name == "Byte" && a.aPath.pack.join(".") == "hxmc" || a.aPath.name == "UInt8" && a.aPath.pack.join(".") == "hxmc.unsafe";
 			case _: false;
 		};
 
@@ -1152,6 +1153,7 @@ class Lower implements LowerQueries {
 		if (c.clMeta.length > 0 && hasMeta(":hxmc.noGc", c.clMeta)) fi.declNoGc = true;
 		// (@:hxmc.scoped: noGc's lowering, plus the root checker: Scoped)
 		if (c.clMeta.length > 0 && hasMeta(":hxmc.scoped", c.clMeta)) fi.declNoGc = fi.scoped = true;
+		fi.repr = Scoped.isRepr(c);
 		if (cf.cfMeta.length == 0) return;
 		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
 		if (hasMeta(":hxmc.scoped", cf.cfMeta)) fi.declNoGc = fi.scoped = true;
@@ -1316,6 +1318,8 @@ class Lower implements LowerQueries {
 		fi.display = core.Globals.sTypePath(c.clPath) + ".new";
 		ci.ctor = fi;
 		ctors.set(c, fi);
+		// (WasmGC: a scoped class's constructor fills its object, as a struct's fills its memory: unchecked)
+		fi.repr = Scoped.isRepr(c) || CInterop.isWasmValue(c);
 		prog.funcs.push(fi);
 		if (c.clConstructor == null) {
 			// no constructor: the parent's, or nothing

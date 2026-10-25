@@ -73,10 +73,10 @@ class TextCore {
 		return x == 0 ? 1 : x;
 	}
 
-	// UTF-8 of the n units c into buf (3 * n + 1 bytes), NUL-terminated: the
-	// byte count
-	public static inline function utf8Encode(c:Chars, n:Int, buf:Octets):Int {
-		var j = 0, i = 0;
+	// UTF-8 of the n units c into buf from byte `to` (3 * n + 1 bytes),
+	// NUL-terminated: the byte count
+	public static inline function utf8Encode(c:Chars, n:Int, buf:Octets, to:Int = 0):Int {
+		var j = to, i = 0;
 		while (i < n) {
 			var cp = c.get(i);
 			if (cp < 0x80) {
@@ -111,7 +111,7 @@ class TextCore {
 			i++;
 		}
 		buf.set(j, 0);
-		return j;
+		return j - to;
 	}
 
 	// the units the UTF-8 bytes [from, end) of o decode to

@@ -56,7 +56,7 @@ import hxmc.scoped.*;
 	}
 
 	static function find(c:Ref<Cell>, key:Int):Ref<Cell> {
-		if (c.ptr().isNull() || c.value.key == key) return c;
+		if (c.isNull() || c.value.key == key) return c;
 		return find(c.value.next, key);
 	}
 

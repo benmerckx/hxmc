@@ -1,14 +1,50 @@
 package hxmc.scoped;
 
+#if !hxmc.wasm_gc
 import hxmc.rt.DataStacks;
+#end
 import hxmc.rt.Abort;
 import hxmc.unsafe.*;
 import hxmc.scoped.Slice;
 
 // A bump region in scoped memory (docs/plans/lowlevel.md, "Scoped memory"):
-// a Grow of bytes for values whose lifetime is a caller's, passed in, as
-// Goose passes pools to recursive functions: what it makes is rooted at the
-// pool. The address of its header, as a Grow's.
+// for values whose lifetime is a caller's, passed in, as Goose passes pools
+// to recursive functions: what it makes is rooted at the pool. Linear memory:
+// a Grow of bytes, the address of its header, as a Grow's; WasmGC ("Two
+// representations, one core"): a count of the bytes it would hold, what it
+// makes being the engine's objects.
+#if hxmc.wasm_gc
+abstract Pool(PoolData) {
+	public inline function new()
+		this = new PoolData();
+
+	// a copy of s in the pool (WasmGC: the units themselves, which no Str
+	// changes)
+	public inline function str(s:Str):Str {
+		this.used += (2 * s.length + 7) & ~7;
+		return cast hxmc.scoped.Str.StrData.of(this, s.chars(), s.start(), s.length);
+	}
+
+	// n zeroed elements in the pool
+	public inline function slice<T>(n:Int):Slice<T> {
+		this.used += 8 * n;
+		return cast hxmc.scoped.Slice.SliceData.of(this, new NativeArray<T>(n), n);
+	}
+
+	// the bytes used
+	public var used(get, never):Int;
+
+	inline function get_used():Int
+		return this.used;
+}
+
+@:hxmc.repr @:hxmc.fresh @:noCompletion class PoolData {
+	public var used:Int;
+
+	public function new()
+		used = 0;
+}
+#else
 abstract Pool(Ptr) {
 	static inline var BASE = 0;
 	static inline var END = 8;
@@ -56,3 +92,4 @@ abstract Pool(Ptr) {
 	inline function get_used():Int
 		return Mem.getI32(this, USED);
 }
+#end

@@ -237,6 +237,7 @@ class FuncInfo {
 	// @:hxmc.scoped (docs/plans/lowlevel.md, "Scoped memory"): declared noGc,
 	// its body checked by the root checker (Scoped) and its scopes reset
 	public var scoped:Bool = false;
+	public var repr:Bool = false; // of a WasmGC representation class of the scoped abstractions (Scoped.isRepr): unchecked
 	// @:hxmc.noReturn: it never returns (it ends the program): nothing is live after its calls
 	public var noReturn:Bool = false;
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)

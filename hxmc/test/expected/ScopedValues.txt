@@ -1,13 +1,13 @@
 exit 0
-ScopedValues.hx:247: 1052
-ScopedValues.hx:248: 100
-ScopedValues.hx:249: 80
-ScopedValues.hx:250: 285511
-ScopedValues.hx:251: 17755001
-ScopedValues.hx:252: 1000000
-ScopedValues.hx:253: 350
-ScopedValues.hx:260: 753250
-ScopedValues.hx:262: from gc 42 10
-ScopedValues.hx:269: 490000
-ScopedValues.hx:276: freed
-ScopedValues.hx:277: 1
+ScopedValues.hx:246: 1052
+ScopedValues.hx:247: 100
+ScopedValues.hx:248: 80
+ScopedValues.hx:249: 285511
+ScopedValues.hx:250: 17755001
+ScopedValues.hx:251: 1000000
+ScopedValues.hx:252: 350
+ScopedValues.hx:259: 753250
+ScopedValues.hx:261: from gc 42 10
+ScopedValues.hx:268: 490000
+ScopedValues.hx:275: freed
+ScopedValues.hx:277: claims bounded

@@ -72,7 +72,7 @@ class FloatText {
 	}
 
 	@:hxmc.noReturn static function overflow()
-		Abort.die(Mem.cstr("hxmc: FloatText: number too large\n"));
+		Abort.die("hxmc: FloatText: number too large\n");
 
 	// b *= 10^k
 	static function bmulPow10(b:Ptr, k:Int) {

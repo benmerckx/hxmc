@@ -92,6 +92,6 @@ class ScopedTable {
 		trace(a);
 		for (i in 0...3)
 			if (g[i] != a[i]) trace("differs at " + i);
-		trace(hxmc.rt.DataStacks.used() < 4096 ? "small" : "large: " + hxmc.rt.DataStacks.used());
+		trace(Scope.used() < 4096 ? "small" : "large: " + Scope.used());
 	}
 }

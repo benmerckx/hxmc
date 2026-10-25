@@ -67,14 +67,20 @@ class CInterop {
 	}
 
 	// (-D hxmc.wasm-gc: a struct whose fields are all final is an object, there
-	// being no copy to tell from it; the others live in the linear memory)
+	// being no copy to tell from it; the others live in the linear memory; a
+	// scoped class is an object copied where a struct would be: isWasmValue)
 	public static function isStruct(c:TClass):Bool
-		return c.clMeta.length > 0 && (Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c)) || isScopedValue(c));
+		return c.clMeta.length > 0 && (Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c)) || isScopedValue(c) && !Lower.wasmGc);
+
+	// -D hxmc.wasm-gc: a scoped class (a struct value elsewhere), an object
+	// copied where a struct value is copied (valueCopies)
+	public static function isWasmValue(c:TClass):Bool
+		return Lower.wasmGc && c.clMeta.length > 0 && isScopedValue(c);
 
 	// a @:hxmc.scoped class with variables or a constructor is a struct value
 	// (docs/plans/lowlevel.md, "Scoped memory"); one of static functions only
 	// is not (its functions are scoped code)
-	static function isScopedValue(c:TClass):Bool {
+	public static function isScopedValue(c:TClass):Bool {
 		if (!Lower.hasMeta(":hxmc.scoped", c.clMeta) || c.clKind.match(KAbstractImpl(_))) return false;
 		if (c.clConstructor != null) return true;
 		for (cf in c.clOrderedFields)
@@ -185,7 +191,7 @@ class CInterop {
 			com.callbacks.addAfterTyping(types -> {
 				for (t in types)
 					switch t {
-						case TClassDecl(c) if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)) && isStruct(c)):
+						case TClassDecl(c) if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)) && (isStruct(c) || isWasmValue(c))):
 							c.clConstructor.cfKind = Method(MethNormal);
 						case _:
 					}
@@ -199,7 +205,7 @@ class CInterop {
 		for (_ in 0...16)
 			switch TFunctions.followWithoutNull(t) {
 				case TInst(c, _):
-					return isStruct(c);
+					return isStruct(c) || isWasmValue(c);
 				case TEnum(en, _):
 					return isScopedEnum(en) && !Lower.wasmGc;
 				case TAbstract(a, params) if (!core.Meta.has(CoreType, a.aMeta) && !core.Meta.has(MultiType, a.aMeta)):
@@ -245,6 +251,77 @@ class CInterop {
 				case _: core.Texpr.checkExpr(loop, e);
 			}
 		return loop(body);
+	}
+
+	// -D hxmc.wasm-gc: a value of a scoped class copied where it is copied
+	// from a place (a variable, a field, an element) into another: a variable
+	// or a field set, an argument, a result, a constructor's argument (not a
+	// value just made: new, a call's result, which the callee copied); a
+	// scoped enum's values compared by value (Type.enumEq), as linear memory's
+	// are
+	public static var objCopy:Null<{c:TClass, cf:TClassField}> = null;
+
+	static function isWasmValueType(t:T):Bool {
+		for (_ in 0...16)
+			switch TFunctions.followWithoutNull(t) {
+				case TInst(c, _):
+					return isWasmValue(c);
+				case TAbstract(a, params) if (!core.Meta.has(CoreType, a.aMeta) && !core.Meta.has(MultiType, a.aMeta)):
+					t = TFunctions.applyParams(a.aParams, params, a.aThis);
+				case _:
+					return false;
+			}
+		return false;
+	}
+
+	static function isScopedEnumType(t:T):Bool
+		return switch TFunctions.followWithoutNull(t) {
+			case TEnum(en, _): isScopedEnum(en);
+			case _: false;
+		}
+
+	// an expression that reads a place (an array element read by unsafeGet too)
+	static function isPlace(e:TExpr):Bool
+		return switch strip(e).eexpr {
+			case TLocal(_) | TField(_, _) | TArray(_, _) | TConst(TThis): true;
+			case TCall({eexpr: TField(_, FInstance(c, _, cf))}, _): Lower.isNativeArray(c) && cf.cfName == "unsafeGet";
+			case TCast(e1, _): isPlace(e1);
+			case TBlock(es) if (es.length > 0): isPlace(es[es.length - 1]);
+			case _: false;
+		}
+
+	public static function valueCopies(e:TExpr):TExpr {
+		if (objCopy == null) return e;
+		function copy(x:TExpr):TExpr {
+			if (!isWasmValueType(x.etype) || !isPlace(x)) return x;
+			var w = objCopy;
+			var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(w.c)), TDynamic(null), x.epos), FStatic(w.c, w.cf)), w.cf.cfType, x.epos);
+			return TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), x.epos), null), x.etype, x.epos);
+		}
+		function map(e:TExpr):TExpr {
+			var e = core.Texpr.mapExpr(map, e);
+			return switch e.eexpr {
+				case TVar(v, init) if (init != null && isWasmValueType(v.vType)):
+					TFunctions.mk(TVar(v, copy(init)), e.etype, e.epos);
+				case TBinop(OpAssign, lhs, rhs) if (isWasmValueType(lhs.etype)):
+					TFunctions.mk(TBinop(OpAssign, lhs, copy(rhs)), e.etype, e.epos);
+				case TCall(f, args):
+					TFunctions.mk(TCall(f, args.map(copy)), e.etype, e.epos);
+				case TNew(c, ps, args):
+					TFunctions.mk(TNew(c, ps, args.map(copy)), e.etype, e.epos);
+				case TReturn(x) if (x != null):
+					TFunctions.mk(TReturn(copy(x)), e.etype, e.epos);
+				case TArrayDecl(xs):
+					TFunctions.mk(TArrayDecl(xs.map(copy)), e.etype, e.epos);
+				case TBinop(op = OpEq | OpNotEq, a, b) if (isScopedEnumType(a.etype) && isScopedEnumType(b.etype)):
+					var w = objCopy.c, eq = objCopy.c.clStatics.get("enumEq");
+					var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(w)), TDynamic(null), e.epos), FStatic(w, eq)), eq.cfType, e.epos);
+					var c = TFunctions.mk(TCall(f, core.ds.VectorTools.vector(a, b)), e.etype, e.epos);
+					op == OpEq ? c : TFunctions.mk(TUnop(Not, Prefix, c), e.etype, e.epos);
+				case _: e;
+			}
+		}
+		return map(e);
 	}
 
 	static function copyArgument(v:TVar, arg:TExpr, body:TExpr):Bool

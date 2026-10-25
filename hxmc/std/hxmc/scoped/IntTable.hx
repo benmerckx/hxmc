@@ -1,6 +1,8 @@
 package hxmc.scoped;
 
+#if !hxmc.wasm_gc
 import hxmc.rt.DataStacks;
+#end
 import hxmc.rt.MapIndex;
 import hxmc.rt.MapIndex.IndexView;
 import hxmc.unsafe.*;
@@ -11,8 +13,88 @@ import hxmc.scoped.Slice;
 // too) over slots in a Pool, the keys and values in Grows, in insertion
 // order; a reference to a value stays valid as the table grows. It only
 // grows (no removal): a growth makes the slots anew in the pool, the old
-// ones stay there until the scope ends (at most as much again). The value
-// is the address of its header (on the fixed stack), as a Grow's.
+// ones stay there until the scope ends (at most as much again). Linear
+// memory: the address of its header (on the fixed stack), as a Grow's;
+// WasmGC: a header object ("Two representations, one core").
+#if hxmc.wasm_gc
+abstract IntTable<V>(IntTableData<V>) {
+	public inline function new()
+		this = new IntTableData(new Pool(), new Grow<Int>(), new Grow<V>());
+
+	static inline function hashOf(k:Int):Int {
+		var h = k * 0x9E3779B1;
+		return h ^ (h >>> 16);
+	}
+
+	inline function index():IndexView
+		return new IndexView(this.slots, this.mask);
+
+	public var length(get, never):Int;
+
+	inline function get_length():Int
+		return this.keys.length;
+
+	inline function find(k:Int):Int
+		return this.keys.length == 0 ? -1 : MapIndex.find(index(), hashOf(k), k, _ -> true);
+
+	public inline function exists(k:Int):Bool
+		return find(k) >= 0;
+
+	public inline function get(k:Int, def:V):V {
+		var e = find(k);
+		return e < 0 ? def : this.vals[e];
+	}
+
+	public inline function ref(k:Int):Ref<V> {
+		var e = find(k);
+		return e < 0 ? Ref.nil() : this.vals.ref(e);
+	}
+
+	public inline function set(k:Int, v:V) {
+		var e = find(k);
+		if (e >= 0) this.vals[e] = v else {
+			var n = this.keys.length;
+			if (2 * (n + 1) > this.mask + 1) grow(n);
+			this.keys.push(k);
+			this.vals.push(v);
+			MapIndex.insert(index(), hashOf(k), k, n);
+		}
+	}
+
+	inline function grow(n:Int) {
+		var cap = 16;
+		while (cap < 4 * (n + 1))
+			cap *= 2;
+		this.slots = this.pool.slice(2 * cap);
+		this.mask = cap - 1;
+		var idx = index(), ks = this.keys;
+		for (e in 0...n)
+			MapIndex.insert(idx, hashOf(ks[e]), ks[e], e);
+	}
+
+	public inline function keySlice():Slice<Int>
+		return this.keys.slice();
+
+	public inline function valueSlice():Slice<V>
+		return this.vals.slice();
+}
+
+@:hxmc.repr @:hxmc.fresh @:noCompletion class IntTableData<V> {
+	public var slots:Slice<Int>;
+	public var mask:Int;
+	public final pool:Pool;
+	public final keys:Grow<Int>;
+	public final vals:Grow<V>;
+
+	public function new(pool:Pool, keys:Grow<Int>, vals:Grow<V>) {
+		this.pool = pool;
+		this.keys = keys;
+		this.vals = vals;
+		slots = pool.slice(0);
+		mask = -1;
+	}
+}
+#else
 abstract IntTable<V>(Ptr) {
 	static inline var SLOTS = 0;
 	static inline var MASK = 8;
@@ -44,7 +126,7 @@ abstract IntTable<V>(Ptr) {
 
 	inline function index():IndexView {
 		var mask = Mem.getI32(this, MASK);
-		return new IndexView(Mem.getPtr(this, SLOTS), 8 * (mask + 1), mask);
+		return new IndexView(new Slice((Mem.getPtr(this, SLOTS) : Ptr<Int>), 2 * (mask + 1)), mask);
 	}
 
 	public var length(get, never):Int;
@@ -68,7 +150,7 @@ abstract IntTable<V>(Ptr) {
 	// a reference to the value of k (null: no such key)
 	public inline function ref(k:Int):Ref<V> {
 		var e = find(k);
-		return e < 0 ? new Ref(Ptr.nil()) : vals().ref(e);
+		return e < 0 ? Ref.nil() : vals().ref(e);
 	}
 
 	// k's value set to v (a copy)
@@ -105,3 +187,4 @@ abstract IntTable<V>(Ptr) {
 	public inline function valueSlice():Slice<V>
 		return vals().slice();
 }
+#end

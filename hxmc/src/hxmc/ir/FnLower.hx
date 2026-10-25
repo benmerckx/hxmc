@@ -131,10 +131,13 @@ class FnLower {
 	// its result holds references; a loop's at its end, break and continue)
 
 	function scopedBody(tf:TFunc) {
-		// (the trusted layer, @:hxmc.noGc: unchecked)
-		if (fi.scoped || !fi.declNoGc) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, StringTools.startsWith(fi.module, "hxmc.rt"));
+		// (the trusted layer, @:hxmc.noGc: unchecked; the runtime and the std's
+		// maps, GC faces that view their own GC memory, as runtime code)
+		var face = StringTools.startsWith(fi.module, "hxmc.rt") || StringTools.startsWith(fi.module, "haxe.ds.");
+		if ((fi.scoped || !fi.declNoGc) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face);
 		if (plan != null && plan.fnMark) pushMark();
-		stmt(tf.tfExpr);
+		// (WasmGC: a scoped class's objects copied where struct values are)
+		stmt(Lower.wasmGc ? CInterop.valueCopies(tf.tfExpr) : tf.tfExpr);
 		if (plan != null && plan.fnMark) resetTo(0);
 	}
 

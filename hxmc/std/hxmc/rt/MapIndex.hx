@@ -1,6 +1,6 @@
 package hxmc.rt;
 
-import hxmc.unsafe.*;
+import hxmc.scoped.Slice;
 
 // The maps' index (docs/hxmc.md, "Maps"), written once as scoped code
 // (docs/plans/lowlevel.md, "One core, two faces"): the GC face is
@@ -76,73 +76,45 @@ import hxmc.unsafe.*;
 	}
 }
 
-// The slots of an index (mask + 1 of them): its memory, whose size was
+// The slots of an index (mask + 1 of them, two Ints each): a Slice of Ints
+// (on each target its representation: hxmc.scoped.Slice), whose length was
 // checked against the mask when the view was made (or is the maps' trusted
 // shell's invariant), so that a slot number, masked, is always in range: the
-// accesses need no other test. Natively a
-// struct value (an address and the mask, in registers); WasmGC, which has
-// no addresses, the GC array and where the slots start (an object that
-// Haxe's inline constructors turn into locals).
-#if hxmc.wasm_gc
-@:noCompletion class IndexView {
-	var a:MapSlots<Int>;
-	var base:Int;
-
-	public var mask(default, null):Int;
-
-	public inline function new(a:MapSlots<Int>, base:Int, mask:Int) {
-		this.a = a;
-		this.base = base;
-		this.mask = mask;
-	}
-
-	public inline function tag(i:Int):Int
-		return a[base + 2 * (i & mask)];
-
-	public inline function entry(i:Int):Int
-		return a[base + 2 * (i & mask) + 1];
-
-	public inline function setTag(i:Int, v:Int)
-		a[base + 2 * (i & mask)] = v;
-
-	public inline function setEntry(i:Int, v:Int)
-		a[base + 2 * (i & mask) + 1] = v;
-}
-#else
+// accesses need no other test. A struct value natively (in registers); an
+// object of final fields on WasmGC, which Haxe's inline constructors turn
+// into locals.
 @:forward(mask)
 abstract IndexView(IndexViewData) {
-	// the slots at p, of which there are mask + 1 in `bytes` bytes (checked)
-	public inline function new(p:Ptr, bytes:Int, mask:Int) {
-		if (bytes < 8 * (mask + 1)) Abort.outOfRange();
-		this = new IndexViewData(p, mask);
+	public inline function new(slots:Slice<Int>, mask:Int) {
+		if (slots.length < 2 * (mask + 1)) Abort.outOfRange();
+		this = new IndexViewData(slots, mask);
 	}
 
 	// the same, unchecked: for the maps (MapSlots.index), which keep their
 	// array's size so, as the trusted shell around the core (a test here
 	// would read the array's header, another cache line, on every lookup)
-	public static inline function trusted(p:Ptr, mask:Int):IndexView
-		return cast new IndexViewData(p, mask);
+	public static inline function trusted(slots:Slice<Int>, mask:Int):IndexView
+		return cast new IndexViewData(slots, mask);
 
 	public inline function tag(i:Int):Int
-		return Mem.getI32At(this.ptr, 0, 2 * (i & this.mask));
+		return this.slots.unsafeGet(2 * (i & this.mask));
 
 	public inline function entry(i:Int):Int
-		return Mem.getI32At(this.ptr, 4, 2 * (i & this.mask));
+		return this.slots.unsafeGet(2 * (i & this.mask) + 1);
 
 	public inline function setTag(i:Int, v:Int)
-		Mem.setI32At(this.ptr, 0, 2 * (i & this.mask), v);
+		this.slots.unsafeSet(2 * (i & this.mask), v);
 
 	public inline function setEntry(i:Int, v:Int)
-		Mem.setI32At(this.ptr, 4, 2 * (i & this.mask), v);
+		this.slots.unsafeSet(2 * (i & this.mask) + 1, v);
 }
 
-@:hxmc.struct @:noCompletion class IndexViewData {
-	public var ptr:Ptr;
-	public var mask:Int;
+@:hxmc.struct @:hxmc.repr @:noCompletion class IndexViewData {
+	public final slots:Slice<Int>;
+	public final mask:Int;
 
-	public inline function new(p:Ptr, mask:Int) {
-		ptr = p;
+	public inline function new(slots:Slice<Int>, mask:Int) {
+		this.slots = slots;
 		this.mask = mask;
 	}
 }
-#end

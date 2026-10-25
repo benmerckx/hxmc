@@ -44,6 +44,14 @@ class Root {
 	// a parameter's memory is the caller's, whose stores are not seen
 	public var held:Null<Array<Root>> = [];
 
+	// WasmGC: an array the representation makes, rooted by the object that
+	// keeps it (stores into it unchecked, it outlives everything)
+	public static final ANY = {
+		var r = new Root(FRESH, 0, -1, "", 0);
+		r.held = null;
+		r;
+	};
+
 	public function new(kind, level, param, name, line) {
 		this.kind = kind;
 		this.level = level;
@@ -105,7 +113,8 @@ typedef Plan = {fnMark:Bool, scopes:ObjectMap<TExpr, Bool>, retRefs:Bool};
 private typedef Roots = Array<Root>;
 
 class Scoped {
-	// hxmc.rt.DataStacks, the runtime's data stacks (null: the program has none)
+	// hxmc.rt.DataStacks, the runtime's data stacks (null: the program has
+	// none; WasmGC, where scopes end without a reset, has none)
 	public static var runtime:Null<TClass> = null;
 
 	static var summaries = new ObjectMap<TClassField, Summary>();
@@ -119,13 +128,32 @@ class Scoped {
 		inProgress = new ObjectMap();
 		refMemo = new ObjectMap();
 		runtime = null;
+		CInterop.objCopy = null;
 		for (t in types)
 			switch t {
-				case TClassDecl(c) if (c.clPath.name == "DataStacks" && c.clPath.pack.length == 2 && c.clPath.pack[1] == "rt" && c.clPath.pack[0] == "hxmc"):
+				case TClassDecl(c) if (Lower.wasmGc && c.clPath.name == "W" && c.clPath.pack.join(".") == "hxmc.rt.gc"):
+					var cf = c.clStatics.get("objCopy");
+					if (cf != null) CInterop.objCopy = {c: c, cf: cf};
+				case TClassDecl(c) if (!Lower.wasmGc && c.clPath.name == "DataStacks" && c.clPath.pack.length == 2 && c.clPath.pack[1] == "rt" && c.clPath.pack[0] == "hxmc"):
 					runtime = c;
 				case _:
 			}
 	}
+
+	// WasmGC: the objects of the scoped abstractions' representation
+	// (docs/plans/lowlevel.md, "Two representations, one core"; @:hxmc.repr)
+	// carry roots as struct values do, but are reached by reference: a field
+	// stored is a store into their memory; their arrays (NativeArray) are
+	// memory as an address's
+	public static function isRepr(c:TClass):Bool
+		return Lower.wasmGc && c.clMeta.length > 0 && Lower.hasMeta(":hxmc.repr", c.clMeta);
+
+	// a struct value (WasmGC: a scoped class's object, copied as one)
+	public static function isValue(c:TClass):Bool
+		return CInterop.isStruct(c) || CInterop.isWasmValue(c);
+
+	public static function isReprArray(c:TClass):Bool
+		return Lower.wasmGc && Lower.isNativeArray(c);
 
 	public static function isScopedField(c:TClass, cf:TClassField):Bool
 		return cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", cf.cfMeta) || c.clMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", c.clMeta);
@@ -135,12 +163,13 @@ class Scoped {
 	// scoped value. Throws the first error, at its position ("File.hx:12: ...").
 	// (inRuntime: a function of hxmc's runtime, whose GC code may view a String's units)
 	public static function check(cf:Null<TClassField>, tf:TFunc, display:String, scoped:Bool, inRuntime = false):Null<Plan> {
-		if (!scoped && (runtime == null || !touches(tf))) return null;
-		if (scoped && Lower.wasmGc) throw at(tf.tfExpr.epos) + display + ": scoped memory needs a linear memory: not available with -D hxmc.wasm-gc";
+		if (!scoped && ((runtime == null && !Lower.wasmGc) || !touches(tf))) return null;
 		var a = new Analysis(tf, display, !scoped);
 		a.inRuntime = inRuntime;
 		a.run();
 		if (cf != null && !summaries.exists(cf)) summaries.set(cf, a.summary);
+		// (WasmGC: checked the same, no marks: the engine's collector reclaims)
+		if (runtime == null) return {fnMark: false, scopes: new ObjectMap(), retRefs: a.retRefs};
 		return {fnMark: a.fnAllocates && !a.retRefs, scopes: a.allocScopes, retRefs: a.retRefs};
 	}
 
@@ -229,6 +258,19 @@ class Scoped {
 					cur = TFunctions.applyParams(a.aParams, params, a.aThis);
 				case TInst(c, _) if (CInterop.isStruct(c)):
 					r = structBits(c, TFunctions.follow(cur), scoped || scopedType(cur));
+					break;
+				case TInst(c, _) if (isRepr(c) || CInterop.isWasmValue(c)):
+					var rb = 0;
+					var k = c;
+					while (k != null) {
+						for (cf in k.clOrderedFields)
+							if (cf.cfKind.match(Var(_))) rb |= refBits(cf.cfType);
+						k = k.clSuper == null ? null : k.clSuper.cls;
+					}
+					r = rb != 0 && (scoped || scopedType(cur)) ? 3 : rb;
+					break;
+				case TInst(c, _) if (isReprArray(c)):
+					r = scoped ? 3 : 1;
 					break;
 				case TEnum(en, _) if (CInterop.isScopedEnum(en) && !Lower.wasmGc):
 					r = structBits(CInterop.enumStruct(en), TFunctions.follow(cur), true);
@@ -492,7 +534,7 @@ private class Analysis {
 		if (ds.length == 0) storeVar(rs, 0, into + "memory outside the data stacks", p);
 		for (d in ds)
 			for (r in rs) {
-				if (r == d) continue;
+				if (r == d || d == Root.ANY || r == Root.ANY) continue;
 				switch d.kind {
 					case Root.PARAM:
 						switch r.kind {
@@ -551,7 +593,7 @@ private class Analysis {
 	static function isGcType(t:T):Bool {
 		return switch TFunctions.followWithoutNull(t) {
 			case TInst(c, _) if (c.clKind.match(KTypeParameter(_))): true;
-			case TInst(c, _): !CInterop.isStruct(c) && !CInterop.isOpaque(c);
+			case TInst(c, _): !Scoped.isValue(c) && !CInterop.isOpaque(c) && !Scoped.isRepr(c) && !Scoped.isReprArray(c);
 			case TAnon(_) | TDynamic(_) | TFun(_) | TMono(_): true;
 			case TEnum(en, _): !CInterop.isScopedEnum(en);
 			case TAbstract(a, [p]) if (a.aPath.name == "Null" && a.aPath.pack.length == 0): true;
@@ -684,13 +726,28 @@ private class Analysis {
 				var r = ev(e1);
 				Scoped.carries(e.etype) ? r : [];
 			case TField(obj, fa): field(obj, fa, e);
+			case TArray(a, i) if (reprArray(a.etype)):
+				var r = ev(a);
+				ev(i);
+				Scoped.carries(e.etype) ? load(r) : [];
 			case TArray(a, i):
 				var r = ev(a);
 				ev(i);
 				Scoped.carries(e.etype) ? r : [];
 			case TCall(f, args): call(f, args, e);
+			case TNew(c, _, args) if (Scoped.isReprArray(c)):
+				// (an array of the representation: memory the object that keeps it
+				// roots; unchecked itself, as a Grow's array reallocated)
+				for (a in args)
+					ev(a);
+				[Root.ANY];
+			case TNew(c, _, args) if (Scoped.isRepr(c) && c.clMeta.length > 0 && Lower.hasMeta(":hxmc.fresh", c.clMeta)):
+				// (WasmGC's allocation of scoped memory: fresh memory of the scope, as a data stack's)
+				for (a in args)
+					ev(a);
+				fresh(e, "");
 			case TNew(c, _, args):
-				if (!CInterop.isStruct(c)) {
+				if (!Scoped.isValue(c) && !Scoped.isRepr(c)) {
 					if (!gc) fail(e.epos, 'scoped code holds no GC references: new ${c.clPath.name} makes an object');
 					escapingArgs(args, c.clConstructor == null ? null : c.clConstructor.cfType, e);
 					[];
@@ -809,7 +866,7 @@ private class Analysis {
 				env.set(v.vId, rs);
 			case TField(_, FStatic(_, cf)):
 				storeVar(rs, 0, "the static " + cf.cfName, e.epos);
-			case TField(obj, FInstance(c, _, cf)) if (CInterop.isStruct(c)):
+			case TField(obj, FInstance(c, _, cf)) if (Scoped.isValue(c)):
 				// (a field of a struct: of a local, a weak update of it; else memory behind an address)
 				var v = baseLocal(obj);
 				if (v != null && levels.exists(v.vId)) {
@@ -817,10 +874,16 @@ private class Analysis {
 					env.set(v.vId, union(env.exists(v.vId) ? env.get(v.vId) : [], rs));
 				} else
 					storeMem(rs, placeRoots(obj), describePlace(lhs), e.epos);
+			case TField(obj, FInstance(c, _, _)) if (Scoped.isRepr(c)):
+				storeMem(rs, ev(obj), describePlace(lhs), e.epos);
 			case TField(obj, _):
 				// (a field of an object: the GC heap)
 				ev(obj);
 				storeVar(rs, 0, describePlace(lhs) + " (the GC heap)", e.epos);
+			case TArray(a, i) if (reprArray(a.etype)):
+				var p = ev(a);
+				ev(i);
+				storeMem(rs, p, describePlace(lhs), e.epos);
 			case TArray(a, i):
 				ev(a);
 				ev(i);
@@ -834,7 +897,7 @@ private class Analysis {
 	static function baseLocal(e:TExpr):Null<TVar>
 		return switch strip(e).eexpr {
 			case TLocal(v): v;
-			case TField(o, FInstance(c, _, _)) if (CInterop.isStruct(c)): baseLocal(o);
+			case TField(o, FInstance(c, _, _)) if (Scoped.isValue(c)): baseLocal(o);
 			case _: null;
 		}
 
@@ -847,7 +910,17 @@ private class Analysis {
 				for (k in 1...args.length)
 					ev(args[k]);
 				r;
-			case TField(o, FInstance(c, _, _)) if (CInterop.isStruct(c)): placeRoots(o);
+			case TField(o, FInstance(c, _, _)) if (Scoped.isValue(c)): placeRoots(o);
+			case TCall({eexpr: TField(a, FInstance(c, _, cf))}, args) if (Scoped.isReprArray(c) && cf.cfName == "unsafeGet"):
+				// (an element of a representation's array: in its memory)
+				var r = ev(a);
+				for (x in args)
+					ev(x);
+				r;
+			case TArray(a, i) if (reprArray(a.etype)):
+				var r = ev(a);
+				ev(i);
+				r;
 			case TBlock(es) if (es.length > 0):
 				for (k in 0...es.length - 1)
 					stmt(es[k]);
@@ -892,9 +965,12 @@ private class Analysis {
 					fail(e.epos, 'scoped code holds no GC references: the static ${cf.cfName} is a ${sType(cf.cfType)}');
 				[];
 			case FEnum(_, _): [];
-			case FInstance(c, _, _) if (CInterop.isStruct(c)):
+			case FInstance(c, _, _) if (Scoped.isValue(c) || Scoped.isRepr(c)):
 				var r = ev(obj);
 				Scoped.carries(e.etype) ? r : [];
+			case FInstance(c, _, _) if (Scoped.isReprArray(c)):
+				ev(obj);
+				[];
 			case FInstance(c, _, cf) if (Lower.isCore(c, "String") && cf.cfName == "length"):
 				ev(obj);
 				[];
@@ -904,6 +980,12 @@ private class Analysis {
 				[];
 		}
 	}
+
+	static function reprArray(t:T):Bool
+		return switch TFunctions.follow(t) {
+			case TInst(c, _): Scoped.isReprArray(c);
+			case _: false;
+		}
 
 	static function isPtrImpl(c:TClass):Bool
 		return switch c.clKind {
@@ -946,6 +1028,12 @@ private class Analysis {
 
 	function call(f:TExpr, args:haxe.ds.Vector<TExpr>, e:TExpr):Roots {
 		switch strip(f).eexpr {
+			case TField(_, FStatic(c, cf)) if (Scoped.isRepr(c)):
+				// (WasmGC's representation, trusted: `fresh...` makes scoped
+				// memory, fresh as a data stack's; `of` memory rooted at its first
+				// argument, a Pool)
+				var rs = [for (a in args) ev(a)];
+				return StringTools.startsWith(cf.cfName, "fresh") ? fresh(e, "") : cf.cfName == "of" ? union(rs[0], [Root.ANY]) : [];
 			case TField(_, FStatic(c, cf)):
 				// Ptr's typed access (FnLower.ptrAccess): loads keep the roots
 				// of the address, stores are stores into its memory
@@ -1017,7 +1105,24 @@ private class Analysis {
 				}
 				var rs = [for (a in args) ev(a)];
 				return applySummary(Scoped.summary(c, cf, scoped), rs, args, c.clPath.name + "." + cf.cfName, e);
-			case TField(obj, FInstance(c, _, cf)) if (CInterop.isStruct(c)):
+			case TField(obj, FInstance(c, _, cf)) if (Scoped.isReprArray(c)):
+				// (an array of the representation: memory, as an address's)
+				var p = ev(obj);
+				switch cf.cfName {
+					case "unsafeGet":
+						ev(args[0]);
+						return Scoped.carries(e.etype) ? load(p) : [];
+					case "unsafeSet":
+						ev(args[0]);
+						var rs = ev(args[1]);
+						if (Scoped.carries(args[1].etype)) storeMem(rs, p, "", e.epos);
+						return [];
+					case _:
+						for (a in args)
+							ev(a);
+						return [];
+				}
+			case TField(obj, FInstance(c, _, cf)) if (Scoped.isValue(c)):
 				fail(e.epos, 'a struct has no methods (yet)');
 			case TField(_, FEnum(_, _)):
 				var r:Roots = [];

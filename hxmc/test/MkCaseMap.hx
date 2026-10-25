@@ -73,18 +73,19 @@ class MkCaseMap {
 // toLowerCase beyond ASCII, the simple mappings of the BMP (each code unit
 // mapped alone, as Eval and hl map them). Runs (lo, hi, stride, delta):
 // natively read-only data (Mem.words); WasmGC, which has none, decodes them
-// into a GC array on first use (MkCaseMap.hx says how they are encoded).
+// into the engine\'s array on first use (CaseRuns, the representation\'s
+// trusted code; MkCaseMap.hx says how they are encoded).
 // The search is scoped code (docs/plans/lowlevel.md, "One core, two faces"):
 // String\'s case mappings are the GC face, hxmc.scoped.Str\'s the scoped one.
 package hxmc.rt;
 
-#if !hxmc.wasm_gc @:hxmc.scoped #end
+@:hxmc.scoped
 class CaseMap {
 	static inline var UPPER = ${up.length >> 2};
 	static inline var LOWER = ${low.length >> 2};
 
 	// the code unit c in upper case (toUpper) or in lower case
-	#if !hxmc.wasm_gc @:hxmc.noGc #end public static function map(c:Int, toUpper:Bool):Int {
+	@:hxmc.noGc public static function map(c:Int, toUpper:Bool):Int {
 		if (c < 128) return toUpper ? (c >= 97 && c <= 122 ? c - 32 : c) : (c >= 65 && c <= 90 ? c + 32 : c);
 		var t = runs(toUpper);
 		// (the last run starting at or below c)
@@ -102,17 +103,24 @@ class CaseMap {
 	static inline function runs(toUpper:Bool):hxmc.scoped.Slice<Int>
 		return toUpper ? new hxmc.scoped.Slice((hxmc.unsafe.Mem.words("${words(up)}", 16) : hxmc.unsafe.Ptr<Int>), 4 * UPPER) : new hxmc.scoped.Slice((hxmc.unsafe.Mem.words("${words(low)}", 16) : hxmc.unsafe.Ptr<Int>), 4 * LOWER);
 	#else
-	static var upper:Null<Array<Int>>;
-	static var lower:Null<Array<Int>>;
+	static inline function runs(toUpper:Bool):hxmc.scoped.Slice<Int>
+		return cast CaseRuns.get(toUpper);
+	#end
+}
+
+#if hxmc.wasm_gc
+@:hxmc.repr @:noCompletion class CaseRuns {
+	static var upper:Null<hxmc.NativeArray<Int>>;
+	static var lower:Null<hxmc.NativeArray<Int>>;
 
 	// (decoded on first use)
-	static function runs(toUpper:Bool):Array<Int> {
+	public static function get(toUpper:Bool):hxmc.scoped.Slice.SliceData<Int> {
 		var t = toUpper ? upper : lower;
 		if (t == null) {
-			t = decode(toUpper ? "${enc(up)}" : "${enc(low)}");
+			t = hxmc.NativeArray.fromArray(decode(toUpper ? "${enc(up)}" : "${enc(low)}"));
 			if (toUpper) upper = t else lower = t;
 		}
-		return t;
+		return new hxmc.scoped.Slice.SliceData(t, 0, t.length);
 	}
 
 	// lo, hi, stride, delta per run (lo and hi absolute)
@@ -140,8 +148,8 @@ class CaseMap {
 		}
 		return out;
 	}
-	#end
 }
+#end
 ';
 		sys.io.File.saveContent("hxmc/std/hxmc/rt/CaseMap.hx", src);
 		Sys.println('hxmc/std/hxmc/rt/CaseMap.hx: ${up.length >> 2} upper runs, ${low.length >> 2} lower runs');

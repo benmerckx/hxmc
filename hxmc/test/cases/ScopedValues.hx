@@ -1,5 +1,4 @@
 import hxmc.scoped.*;
-import hxmc.rt.DataStacks;
 
 // Scoped memory (docs/plans/lowlevel.md, "Scoped memory"): scoped classes
 // (struct values with Str and Ref fields), scoped enums (value enums:
@@ -151,14 +150,14 @@ import hxmc.rt.DataStacks;
 			var n = cur.value;
 			if (key == n.key) return;
 			if (key < n.key) {
-				if (n.leaf || n.left.ptr().isNull()) {
+				if (n.leaf || n.left.isNull()) {
 					cur.value.left = pool.push(new Node(key));
 					cur.value.leaf = false;
 					return;
 				}
 				cur = n.left;
 			} else {
-				if (n.right.ptr().isNull()) {
+				if (n.right.isNull()) {
 					cur.value.right = pool.push(new Node(key));
 					cur.value.leaf = false;
 					return;
@@ -169,13 +168,13 @@ import hxmc.rt.DataStacks;
 	}
 
 	static function depth(n:Ref<Node>):Int {
-		if (n.ptr().isNull()) return 0;
+		if (n.isNull()) return 0;
 		var l = depth(n.value.left), r = depth(n.value.right);
 		return 1 + (l > r ? l : r);
 	}
 
 	static function count(n:Ref<Node>):Int
-		return n.ptr().isNull() ? 0 : 1 + count(n.value.left) + count(n.value.right);
+		return n.isNull() ? 0 : 1 + count(n.value.left) + count(n.value.right);
 
 	public static function tree(n:Int):Int {
 		var pool = new Grow<Node>();
@@ -251,7 +250,7 @@ class ScopedValues {
 		trace(Code.tree(20000));
 		trace(Code.loops(1000000));
 		trace(Code.pooled());
-		var before = DataStacks.used();
+		var before = Scope.used();
 		// GC code: scoped values in locals, across allocations, copied out
 		var items = Code.makeItems(1000);
 		var keep = [];
@@ -273,7 +272,8 @@ class ScopedValues {
 				var big = Code.makeItems(10000);
 				if (big.length > 0) throw new Fail();
 			} catch (e:Fail) {}
-		trace(DataStacks.used() - before > 100000 ? "kept" : "freed");
-		trace(DataStacks.claimed());
+		trace(Scope.used() - before > 100000 ? "kept" : "freed");
+		// (natively the Grow main holds, items, keeps its stack; WasmGC claims none)
+		trace(Scope.claimed() <= 1 ? "claims bounded" : "claims: " + Scope.claimed());
 	}
 }

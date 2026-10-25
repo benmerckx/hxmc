@@ -172,10 +172,10 @@ class DataStacks {
 	// ---- failures: scoped code cannot throw
 
 	@:hxmc.noGc @:hxmc.noReturn public static function overflow()
-		Abort.die(Mem.cstr("hxmc: scoped memory: a data stack is full (RT_DATA_STACK_MB on wasm32)\n"));
+		Abort.die("hxmc: scoped memory: a data stack is full (RT_DATA_STACK_MB on wasm32)\n");
 
 	static inline function die(msg:Ptr)
-		Abort.die(msg);
+		Abort.dieC(msg);
 
 	#if (hxmc.target != "wasm32-wasi")
 	// a thread ends: its stacks and table released (Threads, through dataStacksExit)

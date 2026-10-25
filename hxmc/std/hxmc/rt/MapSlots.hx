@@ -26,9 +26,9 @@ abstract MapSlots<T>(hxmc.NativeArray<T>) {
 	// array's memory, valid until the next GC point
 	public inline function index(base:Int, mask:Int):IndexView {
 		#if hxmc.wasm_gc
-		return new IndexView(cast this, base, mask);
+		return IndexView.trusted(new hxmc.scoped.Slice(cast this, base, 2 * (mask + 1)), mask);
 		#else
-		return IndexView.trusted(hxmc.unsafe.Mem.addr(this).add(4 * base), mask);
+		return IndexView.trusted(new hxmc.scoped.Slice((hxmc.unsafe.Mem.addr(this).add(4 * base) : hxmc.unsafe.Ptr<Int>), 2 * (mask + 1)), mask);
 		#end
 	}
 }

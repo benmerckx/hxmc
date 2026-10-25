@@ -46,8 +46,8 @@ import hxmc.unsafe.UInt8;
 	// the UTF-8 round trip: the units again, and the byte count
 	public static function utf8(text:Str, out:Grow<Int>):Int {
 		var buf:Slice<UInt8> = Scope.slice(3 * text.length + 1);
-		var n = text.utf8(buf.ptr());
-		var s = Str.ofUtf8(buf.ptr(), n);
+		var n = text.utf8(buf);
+		var s = Str.ofUtf8(buf, n);
 		for (i in 0...s.length)
 			out.push(s[i]);
 		return n;
