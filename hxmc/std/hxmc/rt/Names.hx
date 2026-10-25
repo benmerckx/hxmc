@@ -6,12 +6,15 @@ import hxmc.unsafe.Atomic;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.rt.MapIndex.IndexView;
+import hxmc.scoped.Slice;
 
 // The table of field names and the inline-cache misses (once hxmc/c/rt_dyn.c
 // and wasm/Names.hx). The generated table (rt_field_names, sorted) is
 // searched by bisection; names seen only at run time are appended, in
 // malloc'ed chunks that never move (a reader needs no lock for a name it got
-// an id for), with a hash table; adding, and searching the added names,
+// an id for), with an index (hxmc.rt.MapIndex, the maps' core: tags the
+// names' hashes); adding, and searching the added names,
 // holds a spin lock (held for a few instructions, never across a safepoint).
 // Field names as Strings are immortal copies outside the heap, laid out like
 // the string literals (the collector leaves both alone).
@@ -19,7 +22,7 @@ import hxmc.unsafe.Ptr;
 // Inline caches with several threads (rt_ic): a filled entry is never
 // rewritten (a reader could see half of it); a miss on an entry filled for
 // another type looks the field up into a per-thread table of immutable
-// entries by (type, field id). Before the second thread starts, entries are
+// entries by (type, field id), indexed by MapIndex too. Before the second thread starts, entries are
 // refilled on each miss.
 @:keep @:allow(hxmc.rt)
 class Names {
@@ -35,16 +38,24 @@ class Names {
 	// the added names: chunk pointers (CHUNKS), each CHUNK C strings
 	@:hxmc.bss(32768) static var chunks:Ptr;
 	static var nextra:Int;
-	static var hash:Ptr; // int32 index + 1, open addressing
-	static var hashCap:Int; // a power of two, at least twice nextra
+	static var hash:Ptr; // MapIndex's slots (two Ints each: the name's hash, its index + 1)
+	static var hashCap:Int; // slots: a power of two, at least twice nextra
 	static var strs:Ptr; // fid -> immortal String
 	static var strsCap:Int;
 
-	// the running thread's table of inline-cache entries (keys: type << 32 | fid, 0 free)
+	// the running thread's table of inline-cache entries: their keys (type
+	// << 32 | fid) and entries in arrays (room for icCap / 2), indexed by
+	// MapIndex (icCap slots, tagged with the keys' hashes)
+	@:hxmc.threadLocal static var icIndex:Ptr;
 	@:hxmc.threadLocal static var icKeys:Ptr;
 	@:hxmc.threadLocal static var icVals:Ptr;
 	@:hxmc.threadLocal static var icCap:Int;
 	@:hxmc.threadLocal static var icN:Int;
+
+	// slots of MapIndex in malloc'ed memory (cap of them; typed under -D
+	// hxmc.wasm-gc, never run: hxmc.rt.gc has its own)
+	static inline function view(slots:Ptr, cap:Int):IndexView
+		return #if hxmc.wasm_gc cast null #else IndexView.trusted(new Slice((slots : Ptr<Int>), 2 * cap), cap - 1) #end;
 
 	@:hxmc.noGc static function multithreaded():Bool {
 		if (Mem.os() == 3) return false;
@@ -95,20 +106,18 @@ class Names {
 	// (the lock held)
 	@:hxmc.noGc static function findExtra(name:Ptr):Int {
 		if (hashCap == 0) return -1;
-		var i = nameHash(name) & (hashCap - 1);
-		while (true) {
-			var e = Mem.getI32(hash, 4 * i);
-			if (e == 0) return -1;
-			if (LibC.strcmp(extraName(e - 1), name) == 0) return nstatic() + e - 1;
-			i = (i + 1) & (hashCap - 1);
+		var h = nameHash(name), idx = view(hash, hashCap);
+		var e = MapIndex.first(idx, h, h);
+		while (e >= 0) {
+			if (LibC.strcmp(extraName(e), name) == 0) return nstatic() + e;
+			e = MapIndex.next(idx, h, h, e);
 		}
+		return -1;
 	}
 
 	@:hxmc.noGc static function hashIn(i:Int) {
-		var j = nameHash(extraName(i)) & (hashCap - 1);
-		while (Mem.getI32(hash, 4 * j) != 0)
-			j = (j + 1) & (hashCap - 1);
-		Mem.setI32(hash, 4 * j, i + 1);
+		var h = nameHash(extraName(i));
+		MapIndex.insert(view(hash, hashCap), h, h, i);
 	}
 
 	@:hxmc.noGc static function strdup(s:Ptr):Ptr {
@@ -139,7 +148,7 @@ class Names {
 			if (nextra * 2 > hashCap) {
 				LibC.free(hash);
 				hashCap = hashCap == 0 ? 1024 : hashCap * 2;
-				var bytes:I64 = 4 * hashCap;
+				var bytes:I64 = 8 * hashCap;
 				hash = LibC.malloc(bytes);
 				LibC.memset(hash, 0, bytes);
 				for (i in 0...nextra)
@@ -219,53 +228,53 @@ class Names {
 
 	// ---- inline caches
 
-	@:hxmc.noGc static inline function slotOf(key:I64, cap:Int):Int
-		return ((key * haxe.Int64.make(0x9E3779B9, 0x7F4A7C15)) >>> 32).toInt() & (cap - 1);
+	@:hxmc.noGc static inline function keyHash(key:I64):Int
+		return ((key * haxe.Int64.make(0x9E3779B9, 0x7F4A7C15)) >>> 32).toInt();
 
 	@:hxmc.noGc static function localGet(o:Dynamic, fid:Int):Ptr {
 		var key = ((tindex(o) : I64) << 32) | ((fid : I64) & 0xFFFFFFFF);
-		if (icN * 2 >= icCap) {
-			var ncap = icCap == 0 ? 256 : icCap * 2;
-			var nk = LibC.malloc(8 * ncap), nv = LibC.malloc(8 * ncap);
-			LibC.memset(nk, 0, 8 * ncap);
-			for (i in 0...icCap) {
-				var k = Mem.getI64(icKeys, 8 * i);
-				if (!(k == 0)) {
-					var j = slotOf(k, ncap);
-					while (!(Mem.getI64(nk, 8 * j) == 0))
-						j = (j + 1) & (ncap - 1);
-					Mem.setI64(nk, 8 * j, k);
-					Mem.setPtr(nv, 8 * j, Mem.getPtr(icVals, 8 * i));
-				}
+		var h = keyHash(key);
+		if (icCap > 0) {
+			var idx = view(icIndex, icCap);
+			var e = MapIndex.first(idx, h, h);
+			while (e >= 0) {
+				if (Mem.getI64(icKeys, 8 * e) == key) return Mem.getPtr(icVals, 8 * e);
+				e = MapIndex.next(idx, h, h, e);
 			}
-			LibC.free(icKeys);
-			LibC.free(icVals);
-			icKeys = nk;
-			icVals = nv;
-			icCap = ncap;
 		}
-		var j = slotOf(key, icCap);
-		while (true) {
-			var k = Mem.getI64(icKeys, 8 * j);
-			if (k == 0) break;
-			if (k == key) return Mem.getPtr(icVals, 8 * j);
-			j = (j + 1) & (icCap - 1);
+		if (icN * 2 >= icCap) {
+			// (twice the slots: the index made again, the arrays' room doubled)
+			var ncap = icCap == 0 ? 256 : icCap * 2;
+			LibC.free(icIndex);
+			icIndex = LibC.malloc(8 * ncap);
+			LibC.memset(icIndex, 0, 8 * ncap);
+			icKeys = LibC.realloc(icKeys, 4 * ncap);
+			icVals = LibC.realloc(icVals, 4 * ncap);
+			icCap = ncap;
+			var idx = view(icIndex, ncap);
+			for (i in 0...icN) {
+				var k = keyHash(Mem.getI64(icKeys, 8 * i));
+				MapIndex.insert(idx, k, k, i);
+			}
 		}
 		var e = LibC.malloc(IC_SIZE);
 		Dyn.icacheFill(o, fid, e);
 		Mem.setI32(e, 0, tindex(o));
-		Mem.setI64(icKeys, 8 * j, key);
-		Mem.setPtr(icVals, 8 * j, e);
+		Mem.setI64(icKeys, 8 * icN, key);
+		Mem.setPtr(icVals, 8 * icN, e);
+		MapIndex.insert(view(icIndex, icCap), h, h, icN);
 		icN++;
 		return e;
 	}
 
 	// a thread's end (Threads.exit): its entries go
 	@:hxmc.host("rt_dyn_thread_exit") @:hxmc.noGc static function threadExit():Void {
-		for (i in 0...icCap)
-			if (!(Mem.getI64(icKeys, 8 * i) == 0)) LibC.free(Mem.getPtr(icVals, 8 * i));
+		for (i in 0...icN)
+			LibC.free(Mem.getPtr(icVals, 8 * i));
+		LibC.free(icIndex);
 		LibC.free(icKeys);
 		LibC.free(icVals);
+		icIndex = Ptr.nil();
 		icKeys = Ptr.nil();
 		icVals = Ptr.nil();
 		icCap = 0;
