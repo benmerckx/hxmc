@@ -704,11 +704,28 @@ replaces (no second implementation stays):
   `Str.copyOf`), where each was a `malloc` and a `free` on every
   return path; the function's scope frees them, on a throw too. A C string
   stored where it outlives its scope (a process's argv, built in a loop)
-  stays `malloc`'ed: the checker does not follow raw addresses.
+  stays `malloc`'ed: the checker does not follow raw addresses. The
+  other buffers a call needs only while it runs went the same way
+  (Windows' program path, full path, a blocking read's or write's copy;
+  select's poll entries, which must not move in a safe region). What a
+  noGc helper returns (a search result, a real path, a looked-up name) and
+  what grows with C's realloc (a file read whole) stay `malloc`'ed;
+- `Date`'s text (a): `DateText`, `fromString`'s forms read into six Ints
+  on the data stack, `toString` written into the String's units (no
+  StringBuf, Array or intermediate Strings); the calendar stays the C
+  library's (the host's on WasmGC);
+- the algorithms inside the natives over GC objects (c): `String.split`'s
+  search (`TextCore.indexOf`, the views taken again after each piece),
+  `Bytes.toHex`/`ofHex` (`TextCore.hexEncode`/`hexDecode`), `Names`'
+  table of names added at run time and its per-thread inline-cache table
+  (each had its own probe loops: both are `MapIndex` over slots in
+  `malloc`'ed memory). What is left of String's, StringBuf's and Bytes'
+  natives moves units and bytes between GC buffers (Repr's shells).
 
-What stays GC code: the natives over GC references (`Array`'s, whose
-elements the collector traces and whose `sort` calls back into Haxe;
-`Dyn`, `Boxes`), and the trusted core (d).
+What stays GC code, for now (provisional: `Array`, `Dyn` and `Boxes` are
+parked, below, "GC references in the core"): the natives over GC
+references (`Array`'s, whose elements the collector traces and whose
+`sort` calls back into Haxe; `Dyn`, `Boxes`), and the trusted core (d).
 
 ### Serialization: relative references
 
