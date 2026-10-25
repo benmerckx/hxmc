@@ -242,6 +242,20 @@ class Fail {
 }
 
 class ScopedValues {
+	// GC code whose scope allocates, left by an exception: it resets on the way out
+	static function leave(n:Int) {
+		var big = Code.makeItems(n);
+		if (big.length > 0) throw new Fail();
+	}
+
+	// (no scoped value here: nothing marked, the catch resets nothing)
+	static function probe() {
+		for (i in 0...3)
+			try
+				leave(10000)
+			catch (e:Fail) {}
+	}
+
 	static function main() {
 		trace(Code.shapes());
 		trace(Code.stable(100000));
@@ -273,6 +287,8 @@ class ScopedValues {
 				if (big.length > 0) throw new Fail();
 			} catch (e:Fail) {}
 		trace(Scope.used() - before > 100000 ? "kept" : "freed");
+		probe();
+		trace(Scope.used() - before > 100000 ? "left: kept" : "left: freed");
 		// (natively the Grow main holds, items, keeps its stack; WasmGC claims none)
 		trace(Scope.claimed() <= 1 ? "claims bounded" : "claims: " + Scope.claimed());
 	}

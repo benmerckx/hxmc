@@ -43,6 +43,8 @@ class FnLower {
 	// outermost first), and for each loop being lowered the number of marks
 	// outside it
 	var plan:Null<Scoped.Plan> = null;
+	// the function has scopes that allocate (its try/catch statements mark)
+	var allocates = false;
 	var marks:Array<{top:Local, mask:Local}> = [];
 	var loopMarks:Array<Int> = [];
 
@@ -135,10 +137,30 @@ class FnLower {
 		// maps, GC faces that view their own GC memory, as runtime code)
 		var face = StringTools.startsWith(fi.module, "hxmc.rt") || StringTools.startsWith(fi.module, "haxe.ds.");
 		if ((fi.scoped || !fi.declNoGc) && !fi.repr) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, face);
-		if (plan != null && plan.fnMark) pushMark();
+		allocates = plan != null && Scoped.runtime != null && (plan.fnMark || plan.scopes.keys().hasNext());
 		// (WasmGC: a scoped class's objects copied where struct values are)
-		stmt(Lower.wasmGc ? CInterop.valueCopies(tf.tfExpr) : tf.tfExpr);
-		if (plan != null && plan.fnMark) resetTo(0);
+		var body = Lower.wasmGc ? CInterop.valueCopies(tf.tfExpr) : tf.tfExpr;
+		function run() {
+			if (plan != null && plan.fnMark) pushMark();
+			stmt(body);
+			if (plan != null && plan.fnMark) resetTo(0);
+		}
+		// GC code whose scopes allocate, outside the runtime's faces (which
+		// throw outside their scopes): an exception leaving it resets the data
+		// stacks to where it started, then goes on (scoped code cannot throw;
+		// so a try/catch elsewhere has nothing to reset, and marks nothing)
+		if (allocates && !fi.scoped && !face) {
+			fi.hasTry = true;
+			var entry = mark();
+			var exn = newLocal("exn", TRef(RAny));
+			var b = block(run);
+			var h = block(() -> {
+				reset(entry);
+				out.push(SThrow(ELocal(exn)));
+			});
+			out.push(STry(b, vector(({test: null, l: exn, body: h} : IrCatch))));
+		} else
+			run();
 	}
 
 	function dataStacks(name:String):FuncInfo
@@ -1344,9 +1366,9 @@ class FnLower {
 
 	function tryStmt(body:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>, target:Null<Local>) {
 		fi.hasTry = true;
-		// (a program with scoped memory: a catch frees what the scopes an
+		// (a function whose scopes allocate: a catch frees what those an
 		// exception left had on the data stacks, back to the try's mark)
-		var dm = Scoped.runtime != null ? mark() : null;
+		var dm = allocates ? mark() : null;
 		var b = branch(body, target);
 		var cs = new Vector<IrCatch>(catches.length);
 		for (ci in 0...catches.length) {
