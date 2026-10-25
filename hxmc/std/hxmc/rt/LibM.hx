@@ -1083,7 +1083,7 @@ class LibM {
 }
 
 // x reduced by multiples of pi/2: n and y0 + y1 (struct values: the module is scoped)
-private typedef Reduced = {n:Int, y0:Float, y1:Float};
+private typedef Reduced = {final n:Int; final y0:Float; final y1:Float;};
 
 // a value as hi + lo
-private typedef Split = {hi:Float, lo:Float};
+private typedef Split = {final hi:Float; final lo:Float;};

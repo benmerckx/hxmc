@@ -931,15 +931,17 @@ valid until the next GC point, as the maps' index is.
 Struct values on WasmGC: an engine object has identity, a struct value
 does not, so where a struct is copied (a variable initialized or assigned
 from another place, an argument, a returned place, a field or an element
-stored) the object is copied (a shallow copy: its fields are scalars and
-scoped values, which are values or views); a value just made (`new`, a
-call's result) is not. Haxe's inline constructors already keep objects
-whose fields are all final in locals, so the views (`Slice`, `Str`,
-`IndexView`) cost no allocation where they do not escape. A struct value
-whose fields are all final keeps its inline constructor on every target
-(no copy of it can be told from another), so a core returning one from an
-inline function (`LibM`'s reduced argument, `FloatText`'s parse result)
-leaves it in registers.
+stored) the object is copied, and so are the objects in it that are values
+themselves (a field of a scoped class or a Fixed: `CInterop.deepCopy`; the
+others are scalars and views); a value just made (`new`, a call's result)
+is not, and a new one holds zero values where linear memory's bytes would
+be zero (`CInterop.zeroValue`). Haxe's inline constructors already keep
+objects whose fields are all final in locals, so the views (`Slice`,
+`Str`, `IndexView`) cost no allocation where they do not escape. A struct
+value whose fields are all final keeps its inline constructor on every
+target (no copy of it can be told from another), so a core returning one
+from an inline function (`LibM`'s reduced argument, `FloatText`'s parse
+result: structures of final fields) leaves it in registers.
 
 Arrays of scoped classes: WasmGC has no inline structs in arrays. The
 first representation is an array of the element objects (a Grow's push

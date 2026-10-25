@@ -784,4 +784,4 @@ class FloatText {
 
 // a number read and the index after it (FloatText.parse; a struct value:
 // the module is scoped)
-typedef Parsed = {value:Float, end:Int};
+typedef Parsed = {final value:Float; final end:Int;};
