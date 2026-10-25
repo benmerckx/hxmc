@@ -182,8 +182,8 @@ class Str {
 	}
 
 	@:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
-		var buf:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.scratch(32);
-		var n = FloatText.format(v, buf);
+		var buf:hxmc.scoped.Fixed<hxmc.unsafe.UInt8, 32> = hxmc.scoped.Fixed.scratch();
+		var n = FloatText.format(v, buf.view());
 		var s = make(n);
 		for (i in 0...n)
 			Repr.setUnit(s, i, buf[i]);

@@ -270,11 +270,11 @@ class FloatText {
 			r = h.value;
 		} else {
 			var d = decimal(s, p);
-			if (d.end == p) return new Parsed(0, 0);
+			if (d.end == p) return {value: 0, end: 0};
 			p = d.end;
 			r = d.value;
 		}
-		return new Parsed(neg ? -r : r, p);
+		return {value: neg ? -r : r, end: p};
 	}
 
 	static inline function isHex(c:Int):Bool
@@ -328,7 +328,7 @@ class FloatText {
 			m /= 2;
 			e++;
 		}
-		return new Parsed(m, p);
+		return {value: m, end: p};
 	}
 
 	// a decimal number at p: its value and end (p: none). Its digits scanned
@@ -369,7 +369,7 @@ class FloatText {
 			}
 			p++;
 		}
-		if (!any) return new Parsed(0, start);
+		if (!any) return {value: 0, end: start};
 		var e10 = 0;
 		if (lower(at(s, p)) == "e".code) {
 			var q = p + 1;
@@ -395,11 +395,11 @@ class FloatText {
 			intDigits = nz;
 		}
 		nd = nz;
-		if (nd == 0) return new Parsed(0.0, p);
+		if (nd == 0) return {value: 0.0, end: p};
 		var k = intDigits > 0 ? e10 + dropped - (nd - intDigits) : e10 - fracZeros - nd;
 		if (nd <= 15 && k >= -22 && k <= 22) {
 			var v:Float = cast mantNz;
-			return new Parsed(k >= 0 ? v * pow10(k) : v / pow10(-k), p);
+			return {value: k >= 0 ? v * pow10(k) : v / pow10(-k), end: p};
 		}
 		return decimalExact(s, start);
 	}
@@ -442,7 +442,7 @@ class FloatText {
 			}
 			p++;
 		}
-		if (!any) return new Parsed(0, start);
+		if (!any) return {value: 0, end: start};
 		var e10 = 0;
 		if (lower(at(s, p)) == "e".code) {
 			var q = p + 1;
@@ -469,20 +469,20 @@ class FloatText {
 				dropped++;
 			}
 		}
-		if (nd == 0) return new Parsed(0.0, p);
+		if (nd == 0) return {value: 0.0, end: p};
 		// value = D * 10^k, D the nd digits (with a sticky 1 appended when digits were dropped)
 		var k:Int;
 		if (intDigits > 0) k = e10 + dropped - (nd - intDigits);
 		else k = e10 - fracZeros - nd;
 		// out of range
-		if (nd + k > 310) return new Parsed(inf(), p);
-		if (nd + k < -330) return new Parsed(0.0, p);
+		if (nd + k > 310) return {value: inf(), end: p};
+		if (nd + k < -330) return {value: 0.0, end: p};
 		// Clinger's fast path: D exact in a double, 10^|k| too
 		if (nd <= 15 && !sticky && k >= -22 && k <= 22) {
 			var v = 0.0;
 			for (i in 0...nd)
 				v = v * 10 + (dig.unsafeGet(i) : Int);
-			return new Parsed(k >= 0 ? v * pow10(k) : v / pow10(-k), p);
+			return {value: k >= 0 ? v * pow10(k) : v / pow10(-k), end: p};
 		}
 		var bd:Fixed<Int, 257> = Fixed.scratch();
 		var d = bd.view();
@@ -513,7 +513,7 @@ class FloatText {
 			}
 			est /= pow10(-ek);
 		}
-		return new Parsed(refine(d, kk, est), p);
+		return {value: refine(d, kk, est), end: p};
 	}
 
 	// ---- formatting
@@ -782,13 +782,6 @@ class FloatText {
 	}
 }
 
-// a number read and the index after it (FloatText.parse)
-@:hxmc.scoped class Parsed {
-	public final value:Float;
-	public final end:Int;
-
-	public inline function new(value:Float, end:Int) {
-		this.value = value;
-		this.end = end;
-	}
-}
+// a number read and the index after it (FloatText.parse; a struct value:
+// the module is scoped)
+typedef Parsed = {value:Float, end:Int};

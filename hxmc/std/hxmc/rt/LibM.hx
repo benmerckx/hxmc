@@ -234,7 +234,7 @@ class LibM {
 				y0 = r - w;
 			}
 		}
-		return new Reduced(n, y0, (r - y0) - w);
+		return {n: n, y0: y0, y1: (r - y0) - w};
 	}
 
 	// (inline: its result a struct value in registers)
@@ -275,7 +275,7 @@ class LibM {
 			y0 = m.y0;
 			y1 = m.y1;
 		}
-		return new Reduced(n, y0, y1);
+		return {n: n, y0: y0, y1: y1};
 	}
 
 	// (apart: remPio2 stays a leaf function, without a frame)
@@ -298,21 +298,16 @@ class LibM {
 		while (tx[i] == 0.0)
 			i--;
 		var n = remPio2Large(tx.view(), ty.view(), (ix >>> 20) - (0x3ff + 23), i + 1);
-		return sign ? new Reduced(-n, -ty[0], -ty[1]) : new Reduced(n, ty[0], ty[1]);
+		return sign ? {n: -n, y0: -ty[0], y1: -ty[1]} : {n: n, y0: ty[0], y1: ty[1]};
 	}
 
 
 	// __rem_pio2_large for prec = 1 (doubles): x[nx] (24-bit chunks) in tx, y[2] into ty
 	static function remPio2Large(x:Slice<Float>, y:Slice<Float>, e0:Int, nx:Int):Int {
-		var PIo2 = new Fixed<Float, 8>();
-		PIo2[0] = 1.57079625129699707031e+00;
-		PIo2[1] = 7.54978941586159635335e-08;
-		PIo2[2] = 5.39030252995776476554e-15;
-		PIo2[3] = 3.28200341580791294123e-22;
-		PIo2[4] = 1.27065575308067607349e-29;
-		PIo2[5] = 1.22933308981111328932e-36;
-		PIo2[6] = 2.73370053816464559624e-44;
-		PIo2[7] = 2.16741683877804819444e-51;
+		var PIo2:Fixed<Float, 8> = [
+			1.57079625129699707031e+00, 7.54978941586159635335e-08, 5.39030252995776476554e-15, 3.28200341580791294123e-22,
+			1.27065575308067607349e-29, 1.22933308981111328932e-36, 2.73370053816464559624e-44, 2.16741683877804819444e-51
+		];
 		var iq = new Fixed<Int, 20>(), f = new Fixed<Float, 20>(), fq = new Fixed<Float, 20>(), q = new Fixed<Float, 20>();
 		var jk = 4; // init_jk[prec = 1]
 		var jp = jk;
@@ -868,7 +863,7 @@ class LibM {
 		var p = ar3 * (A(1) + r * A(2) + ar2 * (A(3) + r * A(4) + ar2 * (A(5) + r * A(6))));
 		var lo_ = lo1 + lo2 + lo3 + lo4 + p;
 		var y = hi_ + lo_;
-		return new Split(y, hi_ - y + lo_);
+		return {hi: y, lo: hi_ - y + lo_};
 	}
 
 	static function specialcase(tmp:Float, sbits:I64, ki:I64):Float {
@@ -1087,26 +1082,8 @@ class LibM {
 	}
 }
 
-// x reduced by multiples of pi/2: n and y0 + y1
-@:hxmc.scoped @:noCompletion class Reduced {
-	public final n:Int;
-	public final y0:Float;
-	public final y1:Float;
-
-	public inline function new(n:Int, y0:Float, y1:Float) {
-		this.n = n;
-		this.y0 = y0;
-		this.y1 = y1;
-	}
-}
+// x reduced by multiples of pi/2: n and y0 + y1 (struct values: the module is scoped)
+private typedef Reduced = {n:Int, y0:Float, y1:Float};
 
 // a value as hi + lo
-@:hxmc.scoped @:noCompletion class Split {
-	public final hi:Float;
-	public final lo:Float;
-
-	public inline function new(hi:Float, lo:Float) {
-		this.hi = hi;
-		this.lo = lo;
-	}
-}
+private typedef Split = {hi:Float, lo:Float};
