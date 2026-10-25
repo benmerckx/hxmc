@@ -176,6 +176,11 @@ class OInfo {
 	// barrier into it, the collector scanning it with the stack (Gc.scanStack)
 	public var stack = false;
 	public var stackOff = -1;
+	// (Escape) its group's aliases (copies, phis, what is read back from
+	// rooted slots) and the objects of the frame holding it (closures it is
+	// a capture of, the box it is in): what its region covers (MemLower)
+	public var aliases:Null<Array<MIns>>;
+	public var holders:Null<Array<MIns>>;
 	// ArrayGet, ArraySet, ArrayPush: where the array's header and the index
 	// widened start among the arguments (Opt.operands; -1: none)
 	public var ops = -1;
@@ -217,6 +222,8 @@ class OInfo {
 		o.fresh = fresh;
 		o.stack = stack;
 		o.stackOff = stackOff;
+		o.aliases = aliases;
+		o.holders = holders;
 		o.ops = ops;
 		return o;
 	}

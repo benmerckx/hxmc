@@ -1910,8 +1910,15 @@ class Escape {
 					escape(g.root, "no frame");
 					continue;
 				}
+				var aliases = [for (a in g.aliases) f.vals[a]];
+				var holders = [];
+				for (t in g.deps.concat(g.boxDeps))
+					for (h in ok.get(find(t)).sites)
+						holders.push(h.v);
 				for (x in g.sites) {
 					var o = x.v.info;
+					o.aliases = aliases;
+					o.holders = holders;
 					var off = frameArea(o.n + 1);
 					o.stack = true;
 					o.stackOff = off;

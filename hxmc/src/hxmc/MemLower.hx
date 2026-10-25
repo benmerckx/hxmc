@@ -118,14 +118,15 @@ class MemLower extends MirWriter {
 	// code ends, so that what is above the stack top holds no header of one
 	// (Gc.scanStack) nor a word that is not a reference. Each one's region:
 	// the dominator subtree of the nearest common dominator of its block,
-	// its phis' and the regions of the objects of the frame it is stored
-	// into (a closure's capture, a box's content: they use it while they
-	// are used); every use is in it, which is entered again only through
+	// its aliases' (Escape's, OInfo.aliases: what is read back from rooted
+	// slots too; their copies and phis) and the regions of the objects of
+	// the frame holding it (OInfo.holders, and stores: a closure's capture,
+	// a box's content: they use it while they are used); every use is in it, which is entered again only through
 	// its root. Cleared on the edges that leave it, at the returns in it,
 	// and in the handlers of a try outside it (a throw leaves it without an
 	// edge).
 	function clearFrameObjs() {
-		var objs = [], moves = [], stores = [], handlers = [], cells = [];
+		var objs = [], moves = [], stores = [], handlers = [];
 		for (b in f.blocks) {
 			if (b.handler) handlers.push(b);
 			for (i in b.ins) {
@@ -134,29 +135,11 @@ class MemLower extends MirWriter {
 					case New if (i.info.stack): objs.push(i);
 					case Phi | Copy: moves.push(i);
 					case SetField | InitField if (i.b >= 0): stores.push(i);
-					case Load | Store if (i.b < 0 && i.size == 8): cells.push(i);
 					case _:
 				}
 			}
 		}
 		if (objs.length == 0) return;
-		// (a memory word: its address's base, past additions of constants, and offset)
-		var slotLoads = new Map<String, Array<MIns>>(), slotStores = new Map<String, Array<MIns>>();
-		for (i in cells) {
-			var v = i.a, off = i.imm, n = 0;
-			while (n++ < 16) {
-				var x = f.vals[v];
-				if (x.op == Copy) v = x.a else if (x.op == Add && f.vals[x.b].op == Const && f.vals[x.b].sym == null) {
-					off += f.vals[x.b].imm;
-					v = x.a;
-				} else break;
-			}
-			var k = v + ":" + off;
-			var m = i.op == Load ? slotLoads : slotStores;
-			var l = m.get(k);
-			if (l == null) m.set(k, l = []);
-			l.push(i);
-		}
 		var cfg = f.cfg();
 		cfg.dom();
 		inline function ncd(a:Int, b:Int):Int {
@@ -181,27 +164,35 @@ class MemLower extends MirWriter {
 				root = ncd(root, cfg.index(i.block));
 				grew = true;
 			}
+			// (Escape's aliases, what is read back from rooted slots among them, then their copies and phis)
+			if (x.info.aliases != null)
+				for (i in x.info.aliases)
+					if (!i.dead && !alias.exists(i.id) && i.block != null) add(i);
 			while (grew) {
 				grew = false;
 				for (i in moves)
 					if (!alias.exists(i.id) && (alias.exists(i.a) || i.args.exists(v -> alias.exists(v)))) add(i);
-				// (what is read back from a word it was stored into: a rooted local's slot)
-				for (k => st in slotStores)
-					for (s in st)
-						if (alias.exists(s.c)) {
-							var ls = slotLoads.get(k);
-							if (ls != null)
-								for (l in ls)
-									if (!alias.exists(l.id)) add(l);
-							break;
-						}
 			}
 			roots[q] = root;
 			aliases.push(alias);
 		}
+		var index = new Map<Int, Int>();
+		for (q in 0...n)
+			index.set(objs[q].id, q);
 		var changed = true;
 		while (changed) {
 			changed = false;
+			for (x in 0...n)
+				if (objs[x].info.holders != null)
+					for (h in objs[x].info.holders) {
+						var y = index.get(h.id);
+						if (y == null) continue;
+						var r = ncd(roots[x], roots[y]);
+						if (r != roots[x]) {
+							roots[x] = r;
+							changed = true;
+						}
+					}
 			for (i in stores)
 				for (x in 0...n)
 					if (aliases[x].exists(i.b))
