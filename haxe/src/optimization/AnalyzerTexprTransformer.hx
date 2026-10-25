@@ -562,6 +562,8 @@ private class FunctionGraphBuilder {
 			bb;
 		// branching
 		case TMeta({meta: core.MetaList.StrictMeta.MergeBlock}, {eexpr: TBlock(el)}): blockEl(true, bb, el);
+		// (hxmc: an inlined store of the scoped std, no scope of its own: Inline.inlineMetadata)
+		case TMeta({meta: core.MetaList.StrictMeta.Custom(":hxmc.noScope")}, {eexpr: TBlock(el)}): blockEl(true, bb, el);
 		case TBlock([]) if (core.TOther.ExtType.isVoid(follow(e.etype))): bb;
 		case TBlock(el):
 			var sub = createNode(BKSub, e.etype, e.epos);

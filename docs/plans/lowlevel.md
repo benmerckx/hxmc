@@ -353,7 +353,19 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   they are, Int and Float through `Str.ofInt` and `Str.ofFloat`, Bool as
   `true` or `false` (`return '$name: $n';`). The elements are evaluated
   first, in order, in locals of the literal; all of it is the enclosing
-  scope's memory, as a call's result would be.
+  scope's memory, as a call's result would be. A literal written through
+  `[]` to a `Grow`, a `Slice` or a `Fixed` is typed as its element
+  (`g[i] = {x: 1, y: 2}`, `names[0] = 'n=$n'`; other values are typed
+  alone, as Haxe types them, so that an abstract's operators keep their
+  meaning).
+- Stores into the scoped abstractions keep what they store: the inlined
+  body of a store of the std (`push`, `[]=`, `Ref.value =`, `IntTable.set`:
+  `@:hxmc.noScope`) is no scope of its own, so what its argument allocates
+  is the enclosing scope's (`g[0] = Str.copy(s)`). A `Fixed` written through
+  a field or a `Ref` stays where it is: Haxe's inliner and its `+=`/`++` on
+  `[]` would copy the receiver into a variable when the value has effects
+  (`box.data[0] = next()`, `g.ref(0).value.data[1] += next()`); for a Fixed
+  they keep the place (`CInterop.keepPlace`, `Inline.keepPlaceHook`).
 - `@:try e` (`typing.HxmcTry`), Zig's `try`: e a value of a scoped
   enum with a constructor `Ok` of one argument or none, its others the
   errors. `Ok(v)` gives v (nothing for `Ok`); an error is returned from

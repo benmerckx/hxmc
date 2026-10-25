@@ -33,7 +33,7 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	@:arrayAccess inline function get(i:Int):T
 		return this.a.unsafeGet(at(i));
 
-	@:arrayAccess inline function set(i:Int, v:T):T {
+	@:hxmc.noScope @:arrayAccess inline function set(i:Int, v:T):T {
 		this.a.unsafeSet(at(i), v);
 		return v;
 	}
@@ -80,7 +80,7 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 		return (this.ptr : Ptr<T>)[i];
 	}
 
-	@:arrayAccess inline function set(i:Int, v:T):T {
+	@:hxmc.noScope @:arrayAccess inline function set(i:Int, v:T):T {
 		if ((i : UInt) >= (this.length : UInt)) Abort.outOfRange();
 		return (this.ptr : Ptr<T>)[i] = v;
 	}

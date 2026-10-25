@@ -26,7 +26,7 @@ abstract Ref<T>(#if hxmc.wasm_gc RefData<T> #else Ptr<T> #end) {
 	inline function get_value():T
 		return this.h.a.unsafeGet(this.i);
 
-	inline function set_value(v:T):T {
+	@:hxmc.noScope inline function set_value(v:T):T {
 		this.h.a.unsafeSet(this.i, v);
 		return v;
 	}
@@ -46,7 +46,7 @@ abstract Ref<T>(#if hxmc.wasm_gc RefData<T> #else Ptr<T> #end) {
 	inline function get_value():T
 		return this.value;
 
-	inline function set_value(v:T):T
+	@:hxmc.noScope inline function set_value(v:T):T
 		return this.value = v;
 
 	public inline function ptr():Ptr<T>

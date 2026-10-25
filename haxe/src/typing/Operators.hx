@@ -556,7 +556,10 @@ class Operators {
 			case AKExpr(lhs): assignTo(lhs);
 			case AKAccessor(fa): new CallUnification.CallDispatcher(ctx, MSet(e2), wt, p).accessorCall(fa, vector(), vector(e2));
 			case AKAccess(a, tl, c, base, key):
-				var r = rhs(WithTypeTools.value);
+				// (hxmc: a literal written to a scoped collection's element typed as
+				// its element, HxmcLiterals)
+				var et = HxmcLiterals.literal(e2) ? HxmcLiterals.elementType(ctx, a, tl, key, p) : null;
+				var r = rhs(et == null ? WithTypeTools.value : WithTypeTools.withType(et));
 				mkArraySetCall(ctx, context.AbstractCast.findArrayWriteAccess(ctx, a, tl, key, r, p), c, base, p);
 			case AKResolve(sea, name):
 				var n = Texpr.Builder.makeString(ctx.t, name, nullPos);
@@ -655,7 +658,8 @@ class Operators {
 					var constant = Optimizer.makeConstantExpression(SafeCom.ofTyper(ctx), e);
 					return constant == null ? vr.asVar(name, e) : constant;
 				}
-				base = temp("base", base);
+				// (hxmc: a place written in place, a Fixed: kept, not copied into a variable)
+				if (optimization.Inline.keepPlaceHook == null || !optimization.Inline.keepPlaceHook(base)) base = temp("base", base);
 				key = temp("key", get.index);
 				var read = mkArrayGetCall(ctx, core.ds.Record.withFields(get, {index: key}), c, base, p);
 				var r = api.typeRhs(read, e2);
@@ -853,8 +857,10 @@ class Operators {
 				generate(lhs.vr, r.out, result);
 			case AKAccess(a, tl, c, base, key): try {
 					var vb = allocVar(VGenerated, "tmp", base.etype, base.epos);
-					var initBase = mk(TVar(vb, base), ctx.com.basic.tvoid, base.epos);
-					var eb = mk(TLocal(vb), base.etype, base.epos);
+					// (hxmc: a place written in place, a Fixed: kept, not copied into a variable)
+					var inPlace = optimization.Inline.keepPlaceHook != null && optimization.Inline.keepPlaceHook(base);
+					var initBase = inPlace ? mk(TBlock(vector()), ctx.com.basic.tvoid, base.epos) : mk(TVar(vb, base), ctx.com.basic.tvoid, base.epos);
+					var eb = inPlace ? base : mk(TLocal(vb), base.etype, base.epos);
 					var vk = allocVar(VGenerated, "tmp", key.etype, key.epos);
 					var initKey = mk(TVar(vk, key), ctx.com.basic.tvoid, key.epos);
 					var ek = mk(TLocal(vk), key.etype, key.epos);

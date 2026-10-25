@@ -86,6 +86,10 @@ class Inline {
 	// ... forces a temporary for the argument (v the parameter's substitute in the mapped body); always null
 	// ... in the compiler itself.
 	public static var copyArgumentHook:Null<(v:TVar, arg:TExpr, body:TExpr) -> Bool> = null;
+	// port: hxmc's (CInterop.keepPlace): an abstract's `this` that is a place of a value
+	// written in place (a Fixed: its elements), read once, stays that place where
+	// the arguments after it would have made it a temporary (a copy)
+	public static var keepPlaceHook:Null<(arg:TExpr) -> Bool> = null;
 
 	public static function mkUntypedCall(name:String, p:Pos,
 			params:Vector<TExpr>):TExpr return mk(TCall(mk(TIdent(name), tDynamic, p), params), tDynamic, p);
@@ -315,6 +319,10 @@ class Inline {
 		for (m in meta) switch m {
 			case {meta: core.MetaList.StrictMeta.Pure, exprs: [{expr: EConst(Ident("inferredPure"))}]}:
 			case {meta: core.MetaList.StrictMeta.Deprecated | core.MetaList.StrictMeta.Pure | core.MetaList.StrictMeta.NullSafety}:
+				e = mk(TMeta(m, e), e.etype, e.epos);
+			// (hxmc: a store of the scoped std, whose inlined body is no scope of
+			// its own, hxmc.ir.Scoped; the analyzer merges it into the enclosing block)
+			case {meta: core.MetaList.StrictMeta.Custom(":hxmc.noScope")} if (e.eexpr.match(TBlock(_))):
 				e = mk(TMeta(m, e), e.etype, e.epos);
 			case _:
 		}
@@ -842,6 +850,8 @@ class InlineState {
 	public function finalize(e:TExpr, tl:Vector<{name:String, optional:Bool, type:T}>, tret:T, hasParams:Bool, mapType:T->T, p:Pos):TExpr {
 		if (hadSideEffect) for (item in inlinedVars) if (mightBeAffected(item.expr)
 			&& !core.TOther.ExtType.hasValueSemantics(item.expr.etype)) item.local.iForceTemp = true;
+		if (Inline.keepPlaceHook != null) for (item in inlinedVars) if (item.local.iForceTemp && item.local.iAbstractThis && item.local.iRead <= 1
+			&& !item.local.iWrite && item.local.iDefaultValue == null && Inline.keepPlaceHook(item.expr)) item.local.iForceTemp = false;
 		// port: hxmc's struct values (Inline.copyArgumentHook): the temporary is a copy, not one the analyzer
 		// ... fuses back into the argument as a compiler-generated variable (VGenerated, VAbstractThis)
 		var copies = [];

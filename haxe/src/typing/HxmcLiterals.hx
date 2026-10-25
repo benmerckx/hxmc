@@ -45,6 +45,40 @@ class HxmcLiterals {
 	static function int(i:Int, p:Pos):Expr
 		return {expr: EConst(Int(Std.string(i), null)), pos: p};
 
+	// an object or array literal, or a string with interpolations: what is
+	// typed against the element type a write to a scoped collection takes
+	// (other values are typed alone, as Haxe types them: an operator on an
+	// abstract would otherwise apply to the element's type)
+	public static function literal(e:Expr):Bool
+		return switch e.expr {
+			case EObjectDecl(_) | EArrayDecl(_) | EConst(String(_, SSingleQuotes)): true;
+			case EParenthesis(x) | EMeta(_, x): literal(x);
+			case _: false;
+		}
+
+	// the element type `g[key] = v` writes, for a collection of hxmc.scoped
+	// (Grow, Slice, Fixed): a literal v typed as it, so that it makes one
+	// (Haxe types it alone otherwise); null: none, or more than one
+	public static function elementType(ctx:Typer, a:TAbstract, tl:TParams, key:TExpr, p:Pos):Null<T> {
+		if (a.aPath.pack.length != 2 || a.aPath.pack[0] != "hxmc" || a.aPath.pack[1] != "scoped") return null;
+		var found:Null<T> = null;
+		for (cf in a.aArray) {
+			var prepared = context.AbstractCast.prepareArrayAccessField(ctx, a, tl, cf, p);
+			switch follow(prepared.map(cf.cfType)) {
+				case TFun(sig) if (sig.args.length == 3):
+					try {
+						core.TUnification.unify(key.etype, sig.args[1].type);
+					} catch (_:Dynamic) {
+						continue;
+					}
+					if (found != null) return null;
+					found = sig.args[2].type;
+				case _:
+			}
+		}
+		return found;
+	}
+
 	public static function arrayDecl(ctx:Typer, el:Vector<Expr>, withType:WithTypeValue, p:Pos):Null<TExpr> {
 		var s = scoped(withType);
 		if (s == null) return null;

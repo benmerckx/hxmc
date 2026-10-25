@@ -634,6 +634,12 @@ private class Analysis {
 	// e in statement position (its value unused)
 	function stmt(e:TExpr) {
 		switch e.eexpr {
+			// (a block merged into the enclosing one: `var a, b`, and the inlined
+			// body of a store of the scoped std, @:hxmc.noScope, so that what its
+			// arguments make is the enclosing scope's, as what it stores is)
+			case TMeta({meta: core.MetaList.StrictMeta.MergeBlock | core.MetaList.StrictMeta.Custom(":hxmc.noScope")}, {eexpr: TBlock(es)}):
+				for (x in es)
+					stmt(x);
 			case TBlock(es):
 				scope(e, () -> for (x in es) stmt(x));
 			case TParenthesis(e1) | TMeta(_, e1):

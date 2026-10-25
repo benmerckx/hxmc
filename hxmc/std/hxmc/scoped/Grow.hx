@@ -28,7 +28,7 @@ abstract Grow<T>(GrowData<T>) {
 		return this.len;
 
 	// appends v (a copy); a reference to the new element
-	public inline function push(v:T):Ref<T> {
+	@:hxmc.noScope public inline function push(v:T):Ref<T> {
 		var n = this.len;
 		// (the array reallocated: the Grow's own memory, moved)
 		if (n == this.a.length) {
@@ -50,7 +50,7 @@ abstract Grow<T>(GrowData<T>) {
 	@:arrayAccess inline function get(i:Int):T
 		return this.a.unsafeGet(at(i));
 
-	@:arrayAccess inline function set(i:Int, v:T):T {
+	@:hxmc.noScope @:arrayAccess inline function set(i:Int, v:T):T {
 		this.a.unsafeSet(at(i), v);
 		return v;
 	}
@@ -98,7 +98,7 @@ abstract Grow<T>(Ptr) {
 		return Mem.getI32(this, LEN);
 
 	// appends v (a copy); a reference to the new element
-	public inline function push(v:T):Ref<T> {
+	@:hxmc.noScope public inline function push(v:T):Ref<T> {
 		var n = Mem.getI32(this, LEN);
 		var p:Ptr<T> = (Mem.getPtr(this, BASE) : Ptr<T>).offset(n);
 		if (Mem.ult(Mem.getPtr(this, END).toI64(), p.offset(1).toI64())) DataStacks.overflow();
@@ -112,7 +112,7 @@ abstract Grow<T>(Ptr) {
 		return (Mem.getPtr(this, BASE) : Ptr<T>)[i];
 	}
 
-	@:arrayAccess inline function set(i:Int, v:T):T {
+	@:hxmc.noScope @:arrayAccess inline function set(i:Int, v:T):T {
 		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) Abort.outOfRange();
 		return (Mem.getPtr(this, BASE) : Ptr<T>)[i] = v;
 	}

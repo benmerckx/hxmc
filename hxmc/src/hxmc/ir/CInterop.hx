@@ -186,6 +186,7 @@ class CInterop {
 			if (prev != null) prev(com, actx);
 			var on = com.platform.match(CustomTarget("hxmc"));
 			optimization.Inline.copyArgumentHook = on ? copyArgument : null;
+			optimization.Inline.keepPlaceHook = on ? keepPlace : null;
 			optimization.AnalyzerTexpr.keepCopyHook = on ? keepCopy : null;
 			if (!on) return;
 			com.callbacks.addAfterTyping(types -> {
@@ -484,6 +485,13 @@ class CInterop {
 		es.push(body);
 		return TFunctions.mk(TBlock(haxe.ds.Vector.fromArrayCopy(es)), Lower.basic.tvoid, p);
 	}
+
+	// a Fixed's place: its methods write its elements in place (Inline.keepPlaceHook)
+	static function keepPlace(arg:TExpr):Bool
+		return switch TFunctions.followWithoutNull(arg.etype) {
+			case TAbstract(a, params): isFixed(a) && isFixedConst(params) && isPlace(arg);
+			case _: false;
+		}
 
 	static function copyArgument(v:TVar, arg:TExpr, body:TExpr):Bool
 		return isStructValue(v.vType) && !fresh(arg) && writesThrough(v, body);

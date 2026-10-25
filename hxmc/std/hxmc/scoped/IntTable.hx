@@ -49,7 +49,7 @@ abstract IntTable<V>(IntTableData<V>) {
 		return e < 0 ? Ref.nil() : this.vals.ref(e);
 	}
 
-	public inline function set(k:Int, v:V) {
+	@:hxmc.noScope public inline function set(k:Int, v:V) {
 		var e = find(k);
 		if (e >= 0) this.vals[e] = v else {
 			var n = this.keys.length;
@@ -152,7 +152,7 @@ abstract IntTable<V>(Ptr) {
 	}
 
 	// k's value set to v (a copy)
-	public inline function set(k:Int, v:V) {
+	@:hxmc.noScope public inline function set(k:Int, v:V) {
 		var e = find(k);
 		if (e >= 0) vals()[e] = v else {
 			var n = keys().length;

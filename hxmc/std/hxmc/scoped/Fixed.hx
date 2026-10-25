@@ -39,7 +39,7 @@ abstract Fixed<T, Rest>(NativeArray<T>) {
 	@:arrayAccess public inline function get(i:Int):T
 		return view()[i];
 
-	@:arrayAccess public inline function set(i:Int, v:T):T
+	@:hxmc.noScope @:arrayAccess public inline function set(i:Int, v:T):T
 		return view()[i] = v;
 
 	public inline function iterator():SliceIterator<T>
