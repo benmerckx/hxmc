@@ -61,6 +61,7 @@ class Lower implements LowerQueries {
 	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
 		Lower.basic = basic;
 		if (l == null) l = new Lower();
+		Scoped.reset(types);
 		var mainField = main.clStatics.get("main");
 		l.prog.main = l.staticFunc(main, mainField);
 		// (haxe.EntryPoint.run after main, as Finalization.maybeAddEntrypoint adds
@@ -691,6 +692,12 @@ class Lower implements LowerQueries {
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
 				}
+			case TEnum(e, _) if (CInterop.isScopedEnum(e) && !wasmGc):
+				// (a value enum: a struct value, CInterop.enumStruct)
+				var c = CInterop.enumStruct(e);
+				var n = core.Globals.sTypePath(c.clPath);
+				structClasses.set(n, c);
+				TStruct(n, CInterop.layout(c).size);
 			case TEnum(e, _): TRef(REnum(enumInfo(e)));
 			case TFun(s): TRef(RClos(prog.sig([for (a in s.args) a.optional ? optionalTy(ty(a.type)) : ty(a.type)], ty(s.ret))));
 			case TAnon(an):
@@ -1143,8 +1150,11 @@ class Lower implements LowerQueries {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
 		if (c.clMeta.length > 0 && hasMeta(":hxmc.noGc", c.clMeta)) fi.declNoGc = true;
+		// (@:hxmc.scoped: noGc's lowering, plus the root checker: Scoped)
+		if (c.clMeta.length > 0 && hasMeta(":hxmc.scoped", c.clMeta)) fi.declNoGc = fi.scoped = true;
 		if (cf.cfMeta.length == 0) return;
 		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
+		if (hasMeta(":hxmc.scoped", cf.cfMeta)) fi.declNoGc = fi.scoped = true;
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);

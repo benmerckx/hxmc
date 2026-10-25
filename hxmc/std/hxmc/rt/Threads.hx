@@ -41,6 +41,9 @@ class Threads {
 	@:hxmc.threadLocal("rt_mut") public static var self:Ptr<Mutator>;
 
 	static var wl:Ptr; // the world lock
+	// DataStacks.threadExit's address once a thread used scoped memory (null:
+	// none did; Threads does not load DataStacks)
+	public static var dataStacksExit:Ptr;
 	// the thread collecting, with the world stopped (a fault there is not a
 	// null access of the program's: Faults)
 	static var collector:Ptr<Mutator>;
@@ -353,6 +356,7 @@ class Threads {
 		LibC.free(m.value.robjs);
 		LibC.free(m.value.recent);
 		Names.threadExit();
+		if (!dataStacksExit.isNull()) Ind.call1(dataStacksExit, Ptr.nil());
 		Os.release(m.value.sbase, SSTACK_BYTES);
 		LibC.free(m);
 	}

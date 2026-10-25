@@ -234,6 +234,9 @@ class FuncInfo {
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
 	public var declNoGc:Bool = false; // declared @:hxmc.noGc: Facts.findNoGc fails the build unless noGc
+	// @:hxmc.scoped (docs/plans/lowlevel.md, "Scoped memory"): declared noGc,
+	// its body checked by the root checker (Scoped) and its scopes reset
+	public var scoped:Bool = false;
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
 	public var withStacks:Bool = false;
 	public var pos:Null<core.Globals.Pos>; // the declaration (errors)

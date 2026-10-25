@@ -69,7 +69,87 @@ class CInterop {
 	// (-D hxmc.wasm-gc: a struct whose fields are all final is an object, there
 	// being no copy to tell from it; the others live in the linear memory)
 	public static function isStruct(c:TClass):Bool
-		return Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c));
+		return c.clMeta.length > 0 && (Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c)) || isScopedValue(c));
+
+	// a @:hxmc.scoped class with variables or a constructor is a struct value
+	// (docs/plans/lowlevel.md, "Scoped memory"); one of static functions only
+	// is not (its functions are scoped code)
+	static function isScopedValue(c:TClass):Bool {
+		if (!Lower.hasMeta(":hxmc.scoped", c.clMeta) || c.clKind.match(KAbstractImpl(_))) return false;
+		if (c.clConstructor != null) return true;
+		for (cf in c.clOrderedFields)
+			if (cf.cfKind.match(Var(_))) return true;
+		return false;
+	}
+
+	// ---- scoped enums: value enums (docs/plans/lowlevel.md, "Scoped enums"),
+	// lowered as struct values of a class made for them: a 32-bit tag at 0,
+	// each constructor's arguments from the payload's start (overlapping),
+	// copied and compared as 8-byte words
+
+	public static function isScopedEnum(en:TEnum):Bool
+		return en.eMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", en.eMeta);
+
+	static var enumStructs = new Map<TEnum, TClass>();
+	// per scoped enum: each constructor's arguments (by index), at their offsets
+	static var enumArgs = new Map<TEnum, Array<Array<CField>>>();
+
+	// the struct class of scoped enum en
+	public static function enumStruct(en:TEnum):TClass {
+		var c = enumStructs.get(en);
+		if (c != null) return c;
+		var where = en.ePath.name;
+		if (en.eParams.length > 0) throw new LowerError('@:hxmc.scoped enum $where cannot have type parameters', posOf(en.ePos));
+		if (inProgress.exists(cast en)) throw new LowerError('@:hxmc.scoped enum $where contains itself (use a Ref)', posOf(en.ePos));
+		inProgress.set(cast en, true);
+		var payload = 4;
+		var ctors:Array<Array<CField>> = [];
+		for (name in en.eNames) {
+			var ef = en.eConstrs.get(name);
+			var fields:Array<CField> = [];
+			var off = 0;
+			switch TFunctions.follow(ef.efType) {
+				case TFun(s):
+					for (a in s.args) {
+						var ct = ctype(a.type);
+						switch ct {
+							case CStruct(_) | CBool | CI8 | CU8 | CI16 | CU16 | CI32 | CI64 | CF32 | CF64 | CPtr:
+							case _: throw new LowerError('@:hxmc.scoped enum $where: ${ef.efName}: the argument ${a.name} is no value type (scalars, Ptr, scoped and struct values)', posOf(ef.efPos));
+						}
+						var al = alignOf(ct);
+						off = (off + al - 1) & ~(al - 1);
+						fields.push({name: a.name, off: off, ty: ct, t: a.type});
+						off += sizeOf(ct);
+						if (al > payload) payload = al;
+					}
+				case _:
+			}
+			ctors[ef.efIndex] = fields;
+		}
+		inProgress.remove(cast en);
+		// (the payload starts at 4 when no argument needs more alignment)
+		var end = 0;
+		for (fields in ctors)
+			if (fields != null)
+				for (f in fields) {
+					f.off += payload;
+					if (f.off + sizeOf(f.ty) > end) end = f.off + sizeOf(f.ty);
+				}
+		var size = (end + 7) & ~7;
+		if (size < 8) size = 8;
+		var c = TFunctions.mkClass(en.eModule, en.ePath, en.ePos, en.ePos);
+		var words:Array<CField> = [for (k in 0...(size >> 3)) {name: "w" + k, off: 8 * k, ty: CI64, t: null}];
+		layouts.set(c, {size: size, align: 8, fields: words});
+		enumStructs.set(en, c);
+		enumArgs.set(en, ctors);
+		return c;
+	}
+
+	// argument i of constructor ef of scoped enum en: its offset and C type
+	public static function enumArg(en:TEnum, ef:TEnumField, i:Int):CField {
+		enumStruct(en);
+		return enumArgs.get(en)[ef.efIndex][i];
+	}
 
 	static function immutable(c:TClass):Bool {
 		for (cf in c.clOrderedFields)
@@ -120,6 +200,8 @@ class CInterop {
 			switch TFunctions.followWithoutNull(t) {
 				case TInst(c, _):
 					return isStruct(c);
+				case TEnum(en, _):
+					return isScopedEnum(en) && !Lower.wasmGc;
 				case TAbstract(a, params) if (!core.Meta.has(CoreType, a.aMeta) && !core.Meta.has(MultiType, a.aMeta)):
 					t = TFunctions.applyParams(a.aParams, params, a.aThis);
 				case _:
@@ -203,6 +285,8 @@ class CInterop {
 				}
 			case TInst(c, _):
 				if (isStruct(c)) CStruct(c) else if (isOpaque(c)) COpaque(c) else CNone;
+			case TEnum(en, _) if (isScopedEnum(en) && !Lower.wasmGc):
+				CStruct(enumStruct(en));
 			case _: CNone;
 		}
 	}
@@ -252,6 +336,8 @@ class CInterop {
 	public static function resetCaches() {
 		layouts = new Map();
 		inProgress = new Map();
+		enumStructs = new Map();
+		enumArgs = new Map();
 		lineCache = new Map();
 	}
 

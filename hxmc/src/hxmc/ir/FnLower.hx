@@ -38,6 +38,13 @@ class FnLower {
 	var structCtor = false; // (lowering a struct's constructor)
 	var out:Array<Stmt> = []; // (the statements of the block being lowered)
 	var nextLocal = 0;
+	// scoped memory (Scoped): which scopes of the body mark the data stacks
+	// (null: none), the marks taken where the lowering is (their locals,
+	// outermost first), and for each loop being lowered the number of marks
+	// outside it
+	var plan:Null<Scoped.Plan> = null;
+	var marks:Array<{top:Local, mask:Local}> = [];
+	var loopMarks:Array<Int> = [];
 
 	public function new(l, fi, self, lambda) {
 		this.l = l;
@@ -114,8 +121,49 @@ class FnLower {
 		}
 		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
 		bindArgs(tf, off);
-		stmt(tf.tfExpr);
+		scopedBody(tf);
 	}
+
+	// ---- scoped memory (docs/plans/lowlevel.md, "Scoped memory"): the
+	// function checked by the root checker (a @:hxmc.scoped one, or GC code
+	// touching scoped values), its scopes that allocate marked where they
+	// start and reset where they end (a function's own at its returns, unless
+	// its result holds references; a loop's at its end, break and continue)
+
+	function scopedBody(tf:TFunc) {
+		// (the trusted layer, @:hxmc.noGc: unchecked)
+		if (fi.scoped || !fi.declNoGc) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped);
+		if (plan != null && plan.fnMark) pushMark();
+		stmt(tf.tfExpr);
+		if (plan != null && plan.fnMark) resetTo(0);
+	}
+
+	function dataStacks(name:String):FuncInfo
+		return l.staticFunc(Scoped.runtime, Scoped.runtime.clStatics.get(name));
+
+	function mark():{top:Local, mask:Local} {
+		var top = newLocal("dsTop", TI64), mask = newLocal("dsMask", TI32);
+		out.push(SSet(top, ECall(dataStacks("markTop"), vector())));
+		out.push(SSet(mask, ECall(dataStacks("markMask"), vector())));
+		return {top: top, mask: mask};
+	}
+
+	inline function pushMark()
+		marks.push(mark());
+
+	function reset(m:{top:Local, mask:Local})
+		out.push(SExpr(ECall(dataStacks("reset"), vector(ELocal(m.top), ELocal(m.mask)))));
+
+	inline function resetTo(k:Int)
+		reset(marks[k]);
+
+	// scope e (a block or a loop) marks
+	inline function marked(e:TExpr):Bool
+		return plan != null && plan.scopes.exists(e);
+
+	// before a break or continue: back to the mark of the loop's scope
+	function resetLoop()
+		if (loopMarks.length > 0 && marks.length > loopMarks[loopMarks.length - 1]) resetTo(loopMarks[loopMarks.length - 1]);
 
 	// the constructor of a @:hxmc.struct class (Lower.structCtor): this is
 	// the struct's address
@@ -168,7 +216,7 @@ class FnLower {
 		}
 		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
 		bindArgs(tf, 1);
-		stmt(tf.tfExpr);
+		scopedBody(tf);
 	}
 
 	// static initializer: every static var with an expression, then __init__
@@ -979,6 +1027,12 @@ class FnLower {
 
 	function stmt1(e:TExpr) {
 		switch e.eexpr {
+			case TBlock(es) if (marked(e)):
+				pushMark();
+				for (x in es)
+					stmt(x);
+				resetTo(marks.length - 1);
+				marks.pop();
 			case TBlock(es):
 				for (x in es)
 					stmt(x);
@@ -1026,28 +1080,51 @@ class FnLower {
 					if (k != 0) stmt(a) else if (b != null) stmt(b);
 				} else out.push(SIf(cx, block(() -> stmt(a)), b != null ? block(() -> stmt(b)) : vector()));
 			case TWhile(c, body, NormalWhile):
+				var m = marked(e);
+				loopMarks.push(marks.length);
 				out.push(SLoop(block(() -> {
+					if (m) pushMark();
 					var cx = cond(c);
-					out.push(SIf(ENot(cx), vector(SBreak), vector()));
+					out.push(SIf(ENot(cx), block(() -> {
+						resetLoop();
+						out.push(SBreak);
+					}), vector()));
 					stmt(body);
+					if (m) {
+						resetTo(marks.length - 1);
+						marks.pop();
+					}
 				})));
+				loopMarks.pop();
 			case TWhile(c, body, DoWhile):
 				// first iteration skips the test, so `continue` reaches it
+				var m = marked(e);
 				var first = newLocal("first", TBool);
 				out.push(SSet(first, EInt(1)));
+				loopMarks.push(marks.length);
 				out.push(SLoop(block(() -> {
+					if (m) pushMark();
 					out.push(SIf(ENot(ELocal(first)), block(() -> {
 						var cx = cond(c);
-						out.push(SIf(ENot(cx), vector(SBreak), vector()));
+						out.push(SIf(ENot(cx), block(() -> {
+							resetLoop();
+							out.push(SBreak);
+						}), vector()));
 					}), vector()));
 					out.push(SSet(first, EInt(0)));
 					stmt(body);
+					if (m) {
+						resetTo(marks.length - 1);
+						marks.pop();
+					}
 				})));
+				loopMarks.pop();
 			case TSwitch(sw):
 				switchStmt(sw, null);
 			case TTry(body, catches):
 				tryStmt(body, catches, null);
 			case TReturn(null):
+				if (marks.length > 0 && !plan.retRefs) resetTo(0);
 				out.push(SReturn(null));
 			case TReturn(r) if (sretLocal != null):
 				// a struct result: into the caller's memory (built there by a constructor)
@@ -1059,13 +1136,27 @@ class FnLower {
 						if (!x.match(ELocal(_) | EGlobal(_, _))) x = ELocal(asLocal(x, tyOf(r)));
 						if (!isLocal(x, sretLocal)) copyStruct(ELocal(sretLocal), x, sc);
 				}
+				if (marks.length > 0 && !plan.retRefs) resetTo(0);
 				out.push(SReturn(ELocal(sretLocal)));
+			case TReturn(r) if (marks.length > 0 && !plan.retRefs):
+				// (the result read before the reset)
+				var x = value(r);
+				if (fi.ret == TVoid) {
+					resetTo(0);
+					out.push(SReturn(null));
+				} else {
+					var t = temp(fi.ret, coerce(x, tyOf(r), fi.ret));
+					resetTo(0);
+					out.push(SReturn(t));
+				}
 			case TReturn(r):
 				var x = value(r);
 				out.push(fi.ret == TVoid ? SReturn(null) : SReturn(coerce(x, tyOf(r), fi.ret)));
 			case TBreak:
+				resetLoop();
 				out.push(SBreak);
 			case TContinue:
+				resetLoop();
 				out.push(SContinue);
 			case TThrow(x):
 				// as the exceptions filter does for wildcard-catch targets: a haxe.Exception
@@ -1238,6 +1329,9 @@ class FnLower {
 
 	function tryStmt(body:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>, target:Null<Local>) {
 		fi.hasTry = true;
+		// (a program with scoped memory: a catch frees what the scopes an
+		// exception left had on the data stacks, back to the try's mark)
+		var dm = Scoped.runtime != null ? mark() : null;
 		var b = branch(body, target);
 		var cs = new Vector<IrCatch>(catches.length);
 		for (ci in 0...catches.length) {
@@ -1262,6 +1356,7 @@ class FnLower {
 				};
 			}
 			var handler = block(() -> {
+				if (dm != null) reset(dm);
 				var src:Ex = ELocal(exn);
 				if (caught != null) {
 					out.push(SSet(caught, ECall(l.staticFunc(base, base.clStatics.get("caught")), vector(ELocal(exn)))));
@@ -1389,6 +1484,13 @@ class FnLower {
 				}
 				EType(typeRef(mt));
 			case TField(obj, fa): field(obj, fa, e);
+			case TEnumIndex(e1) if (scopedEnum(e1.etype) != null):
+				// (a scoped enum: its tag, at 0)
+				var p = placeOf(e1);
+				var a = p.addr();
+				cLoad(a.match(ELocal(_)) ? a : ELocal(asLocal(a, TI64)), 0, CI32, e);
+			case TEnumParameter(e1, ef, i) if (scopedEnum(e1.etype) != null):
+				enumArgGet(e1, CInterop.enumArg(scopedEnum(e1.etype), ef, i), e);
 			case TEnumIndex(e1):
 				var en = switch TFunctions.follow(e1.etype) {
 					case TEnum(en, _): l.enumInfo(en);
@@ -1620,6 +1722,12 @@ class FnLower {
 				} else if (cf.cfKind.match(Method(MethDynamic)) && cl.cls.hasClassFlag(CInterface)) {
 					anonGet(cf.cfName, obj, e);
 				} else methodClosure(obj, cl.cls, cf, e);
+			case FEnum(en, ef) if (CInterop.isScopedEnum(en) && !Lower.wasmGc):
+				switch TFunctions.follow(ef.efType) {
+					case TFun(_): cfail('the constructor ${ef.efName} of the scoped enum ${en.ePath.name} used as a function (call it)', e);
+					case _:
+				}
+				newEnumValue(en, ef, vector(), e);
 			case FEnum(en, ef):
 				var ci = l.ctorInfo(ef, en);
 				if (ci.global >= 0) coerce(EGlobal(ci.global, TRef(RCtor(ci))), TRef(RCtor(ci)), tyOf(e)) else {
@@ -2338,6 +2446,8 @@ class FnLower {
 				var before = out.length;
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 1, fn, () -> o = receiverLocal(o, tyOf(obj), before));
 				return callFn(fn, VectorTools.cons(spillBefore(o, tyOf(obj), before), xs), rt);
+			case TField(_, FEnum(en, ef)) if (CInterop.isScopedEnum(en) && !Lower.wasmGc):
+				return coerce(newEnumValue(en, ef, cargs, e), structTy(CInterop.enumStruct(en)), rt);
 			case TField(_, FEnum(en, ef)):
 				var ci = l.ctorInfo(ef, en);
 				var xs = args(cargs, ci.params, null);
@@ -2570,6 +2680,44 @@ class FnLower {
 			return coerce(ELocal(lo), t, tyOf(e));
 		}
 		return coerceRhs(ECallHost(sym, xs, t), t, tyOf(e));
+	}
+
+	// ---- scoped enums (CInterop.enumStruct): struct values, a 32-bit tag at
+	// 0 and the arguments of the constructor at their offsets
+
+	function scopedEnum(t:core.TType.T):Null<TEnum>
+		return switch TFunctions.follow(t) {
+			case TEnum(en, _) if (CInterop.isScopedEnum(en) && !Lower.wasmGc): en;
+			case _: null;
+		}
+
+	// constructor ef of scoped enum en with arguments cargs: a fresh slot
+	function newEnumValue(en:TEnum, ef:TEnumField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var c = CInterop.enumStruct(en);
+		var ts = [for (k in 0...cargs.length) ty(CInterop.enumArg(en, ef, k).t)];
+		var xs = args(cargs, Vector.fromArrayCopy(ts), null);
+		var s = newSlot(structTy(c), true);
+		zeroStruct(ELocal(s), c);
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(s), EInt(0), EInt(ef.efIndex)), TVoid)));
+		for (k in 0...cargs.length) {
+			var f = CInterop.enumArg(en, ef, k);
+			cStore(ELocal(s), f.off, f.ty, xs[k], ts[k], e);
+		}
+		return ELocal(s);
+	}
+
+	// an argument of a scoped enum value: a load (a struct: its address, copied out of an object)
+	function enumArgGet(obj:TExpr, f:CInterop.CField, e:TExpr):Ex {
+		var p = placeOf(obj);
+		switch f.ty {
+			case CStruct(sc) if (p.heap):
+				var s = newSlot(structTy(sc), true);
+				copyStruct(ELocal(s), EBin(LAdd, p.addr(), EConv(I2L, EInt(f.off))), sc);
+				return coerce(ELocal(s), structTy(sc), tyOf(e));
+			case _:
+		}
+		var a = p.addr();
+		return cLoad(a.match(ELocal(_)) ? a : ELocal(asLocal(a, TI64)), f.off, f.ty, e);
 	}
 
 	// a field of a @:hxmc.struct object (an address): a load
