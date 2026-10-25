@@ -307,17 +307,28 @@ class CInterop {
 					return TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), x.epos), null), x.etype, x.epos);
 				case _:
 			}
-			var w = objCopy;
-			var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(w.c)), TDynamic(null), x.epos), FStatic(w.c, w.cf)), w.cf.cfType, x.epos);
-			return TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), x.epos), null), x.etype, x.epos);
+			return deepCopy(x);
 		}
 		function map(e:TExpr):TExpr {
 			var e = core.Texpr.mapExpr(map, e);
 			return switch e.eexpr {
 				case TVar(v, init) if (init != null && isWasmValueType(v.vType)):
 					TFunctions.mk(TVar(v, copy(init)), e.etype, e.epos);
+				// (a struct local without a value: zero, as linear memory's)
+				case TVar(v, null) if (isWasmValueType(v.vType)):
+					TFunctions.mk(TVar(v, zeroValue(v.vType, e.epos)), e.etype, e.epos);
 				case TBinop(OpAssign, lhs, rhs) if (isWasmValueType(lhs.etype)):
 					TFunctions.mk(TBinop(OpAssign, lhs, copy(rhs)), e.etype, e.epos);
+				// (Scope.slice's array: struct elements made, zero)
+				case TCall({eexpr: TField(_, FStatic(c, {cfName: "zeroed"}))}, [a]) if (c.clPath.name == "SliceData" && c.clPath.pack.join(".") == "hxmc.scoped"):
+					switch TFunctions.follow(a.etype) {
+						case TInst(_, [et]):
+							switch TFunctions.followWithoutNull(et) {
+								case TInst(ec, _) if (isWasmValue(ec)): zeroElements(a, ec, wCall("naLen", [a], Lower.basic.tint, e.epos), a.etype, e.epos);
+								case _: a;
+							}
+						case _: a;
+					}
 				case TCall(f, args):
 					TFunctions.mk(TCall(f, args.map(copy)), e.etype, e.epos);
 				case TNew(c, ps, args):
@@ -335,6 +346,133 @@ class CInterop {
 			}
 		}
 		return map(e);
+	}
+
+	// ---- -D hxmc.wasm-gc: struct values that hold struct values (a scoped
+	// class's field of a scoped class or a Fixed) are objects holding objects:
+	// a copy copies those too, and a new one has them (zero), as linear
+	// memory's struct holds its fields' bytes
+
+	// (the arguments as Dynamic: the objects themselves, not copies, to valueCopies)
+	static function wCall(name:String, args:Array<TExpr>, t:T, p:core.Globals.Pos):TExpr {
+		var w = objCopy.c, cf = w.clStatics.get(name);
+		var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(w)), TDynamic(null), p), FStatic(w, cf)), cf.cfType, p);
+		var xs = [for (a in args) isWasmValueType(a.etype) ? TFunctions.mk(TCast(a, null), TDynamic(null), a.epos) : a];
+		return TFunctions.mk(TCall(f, haxe.ds.Vector.fromArrayCopy(xs)), t, p);
+	}
+
+	// c's fields that are values themselves
+	static function valueFields(c:TClass):Array<TClassField>
+		return [for (cf in c.clOrderedFields) if (cf.cfKind.match(Var(_)) && isWasmValueType(cf.cfType)) cf];
+
+	static function fixedElem(t:T):Null<TClass>
+		return switch TFunctions.followWithoutNull(t) {
+			case TAbstract(a, params) if (isFixed(a)):
+				switch TFunctions.followWithoutNull(params[0]) {
+					case TInst(c, _) if (isWasmValue(c)): c;
+					case _: null;
+				}
+			case _: null;
+		}
+
+	// `{ var v = init; f(v)...; v }`, typed t
+	static function withLocal(name:String, t:T, init:TExpr, body:TExpr->Array<TExpr>, p:core.Globals.Pos):TExpr {
+		var v = TFunctions.allocVar(VGenerated, name, t, p);
+		var lv = TFunctions.mk(TLocal(v), t, p);
+		var es = [TFunctions.mk(TVar(v, init), Lower.basic.tvoid, p)].concat(body(lv));
+		es.push(lv);
+		return TFunctions.mk(TBlock(haxe.ds.Vector.fromArrayCopy(es)), t, p);
+	}
+
+	// `o.f = x`
+	static function setField(o:TExpr, c:TClass, cf:TClassField, x:TExpr, p:core.Globals.Pos):TExpr
+		return TFunctions.mk(TBinop(OpAssign, TFunctions.mk(TField(o, FInstance(c, haxe.ds.Vector.fromArrayCopy([]), cf)), cf.cfType, p), x), cf.cfType, p);
+
+	static function getField(o:TExpr, c:TClass, cf:TClassField, p:core.Globals.Pos):TExpr
+		return TFunctions.mk(TField(o, FInstance(c, haxe.ds.Vector.fromArrayCopy([]), cf)), cf.cfType, p);
+
+	// `var i = 0; while (i < n) { body(i); i = i + 1; }`
+	static function forIndex(n:TExpr, body:TExpr->TExpr, p:core.Globals.Pos):Array<TExpr> {
+		var tint = Lower.basic.tint, tbool = Lower.basic.tbool;
+		var i = TFunctions.allocVar(VGenerated, "_hx_i", tint, p);
+		var li = TFunctions.mk(TLocal(i), tint, p);
+		var step = TFunctions.mk(TBinop(OpAssign, li, TFunctions.mk(TBinop(OpAdd, li, TFunctions.mk(TConst(TInt(1)), tint, p)), tint, p)), tint, p);
+		var cond = TFunctions.mk(TBinop(OpLt, li, n), tbool, p);
+		return [
+			TFunctions.mk(TVar(i, TFunctions.mk(TConst(TInt(0)), tint, p)), Lower.basic.tvoid, p),
+			TFunctions.mk(TWhile(cond, TFunctions.mk(TBlock(haxe.ds.Vector.fromArrayCopy([body(li), step])), Lower.basic.tvoid, p), NormalWhile), Lower.basic.tvoid, p)
+		];
+	}
+
+	// for each element of the engine's array a (n of them): body(element), the element an object of class c
+	static function eachElement(a:TExpr, c:TClass, n:TExpr, body:TExpr->Array<TExpr>, p:core.Globals.Pos):Array<TExpr> {
+		var et = TInst(c, haxe.ds.Vector.fromArrayCopy([]));
+		return forIndex(n, li -> withLocal("_hx_e", et, TFunctions.mk(TCast(wCall("naGet", [a, li], TDynamic(null), p), null), et, p), body, p), p);
+	}
+
+	// the engine's array a (n elements) with each element a new zero object of class c
+	static function zeroElements(a:TExpr, c:TClass, n:TExpr, t:T, p:core.Globals.Pos):TExpr {
+		var et = TInst(c, haxe.ds.Vector.fromArrayCopy([]));
+		return withLocal("_hx_zero", t, a, r -> forIndex(n, li -> wCall("naSet", [r, li, zeroValue(et, p)], Lower.basic.tvoid, p), p), p);
+	}
+
+	// a copy of the value x (a place)
+	static function deepCopy(x:TExpr):TExpr {
+		var p = x.epos;
+		switch TFunctions.followWithoutNull(x.etype) {
+			case TAbstract(a, _) if (isFixed(a) && a.aImpl != null):
+				// (its array copied, Fixed.copyOf: struct elements each copied, then what they hold)
+				var cf = a.aImpl.clStatics.get("copyOf");
+				var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(a.aImpl)), TDynamic(null), p), FStatic(a.aImpl, cf)), cf.cfType, p);
+				var shallow = TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), p), null), x.etype, p);
+				var ec = fixedElem(x.etype);
+				if (ec == null || valueFields(ec).length == 0) return shallow;
+				return withLocal("_hx_copy", x.etype, shallow, r -> eachElement(r, ec, wCall("naLen", [r], Lower.basic.tint, p), e -> [
+					for (vf in valueFields(ec)) setField(e, ec, vf, deepCopy(getField(e, ec, vf, p)), p)
+				], p), p);
+			case TInst(c, _):
+				var shallow = TFunctions.mk(TCast(wCall("objCopy", [x], TDynamic(null), p), null), x.etype, p);
+				var vfs = valueFields(c);
+				if (vfs.length == 0) return shallow;
+				return withLocal("_hx_copy", x.etype, shallow, o -> [for (vf in vfs) setField(o, c, vf, deepCopy(getField(o, c, vf, p)), p)], p);
+			case _:
+				return x;
+		}
+	}
+
+	// a new zero value of the value type t (its values zero, as linear memory's are)
+	public static function zeroValue(t:T, p:core.Globals.Pos):TExpr {
+		switch TFunctions.followWithoutNull(t) {
+			case TInst(c, _):
+				var made = TFunctions.mk(TCast(wCall("createEmpty", [TFunctions.mk(TTypeExpr(TClassDecl(c)), TDynamic(null), p)], TDynamic(null), p), null), t, p);
+				var vfs = valueFields(c);
+				if (vfs.length == 0) return made;
+				return withLocal("_hx_zero", t, made, o -> [for (vf in vfs) setField(o, c, vf, zeroValue(vf.cfType, p), p)], p);
+			case TAbstract(a, params) if (isFixed(a)):
+				// (the engine's array, N zero elements: Fixed.zeroed)
+				var na = core.Abstract.getUnderlyingType(a, params);
+				var nc = switch TFunctions.follow(na) {
+					case TInst(nc, _): nc;
+					case _: throw new LowerError("a zero Fixed", posOf(p));
+				};
+				var n = fixedLength(params[1], a);
+				var arr = TFunctions.mk(TNew(nc, switch TFunctions.follow(na) { case TInst(_, ps): ps; case _: null; }, core.ds.VectorTools.vector(TFunctions.mk(TConst(TInt(n)), Lower.basic.tint, p))), na, p);
+				var ec = fixedElem(t);
+				var made = TFunctions.mk(TCast(arr, null), t, p);
+				return ec == null ? made : zeroElements(made, ec, TFunctions.mk(TConst(TInt(n)), Lower.basic.tint, p), t, p);
+			case _:
+				throw new LowerError("a zero value of " + core.TPrinting.sType(core.TPrinting.printContext(), t), posOf(p));
+		}
+	}
+
+	// a WasmGC value class's constructor body: its value fields made zero first
+	public static function zeroFields(c:TClass, body:TExpr):TExpr {
+		var vfs = valueFields(c);
+		if (vfs.length == 0 || objCopy == null) return body;
+		var p = body.epos, self = TFunctions.mk(TConst(TThis), TInst(c, haxe.ds.Vector.fromArrayCopy([])), p);
+		var es = [for (vf in vfs) setField(self, c, vf, zeroValue(vf.cfType, p), p)];
+		es.push(body);
+		return TFunctions.mk(TBlock(haxe.ds.Vector.fromArrayCopy(es)), Lower.basic.tvoid, p);
 	}
 
 	static function copyArgument(v:TVar, arg:TExpr, body:TExpr):Bool

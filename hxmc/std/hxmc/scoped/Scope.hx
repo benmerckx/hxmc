@@ -16,7 +16,7 @@ class Scope {
 	// n zeroed elements
 	public static inline function slice<T>(n:Int):Slice<T> {
 		#if hxmc.wasm_gc
-		return cast SliceData.fresh(new NativeArray<T>(n), n);
+		return cast SliceData.fresh(SliceData.zeroed(new NativeArray<T>(n)), n);
 		#else
 		var bytes = (Ptr.nil() : Ptr<T>).offset(n).toI64().toInt();
 		var p = DataStacks.alloc(bytes);

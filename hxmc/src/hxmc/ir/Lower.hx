@@ -1334,6 +1334,8 @@ class Lower implements LowerQueries {
 		var tf = funcOf(c.clConstructor);
 		signature(fi, tf, TRef(RObj(ci)));
 		fi.ret = TVoid;
+		// (WasmGC: a scoped class's fields that are values made first, zero)
+		if (CInterop.isWasmValue(c)) tf = {tfArgs: tf.tfArgs, tfType: tf.tfType, tfExpr: CInterop.zeroFields(c, tf.tfExpr)};
 		pending.push(guarded(fi, () -> lowerBody(fi, c.clConstructor, () -> {
 			var fl = new FnLower(this, fi, ci, null);
 			fl.run(tf, true);

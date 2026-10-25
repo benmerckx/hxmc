@@ -2937,31 +2937,8 @@ class FnLower {
 						case CI8 | CU8 | CI16 | CU16 | CI32 | CI64 | CF32 | CF64:
 						case _: return cfail("Fixed.scratch: its elements are numbers (others start zeroed: new Fixed)", e);
 					}
-				if (Lower.wasmGc) {
-					// (new NativeArray<T>(N): the abstract's underlying type)
-					var na = switch TFunctions.followWithoutNull(e.etype) {
-						case TAbstract(a, params): core.Abstract.getUnderlyingType(a, params);
-						case _: return fail("new Fixed", e);
-					};
-					var arr = switch TFunctions.follow(na) {
-						case TInst(c, ps): TFunctions.mk(TNew(c, ps, vector(TFunctions.mk(TConst(TInt(info.n)), Lower.basic.tint, e.epos))), na, e.epos);
-						case _: return fail("new Fixed", e);
-					};
-					// (struct values, objects here: each made, Fixed.filled)
-					switch TFunctions.followWithoutNull(info.elem) {
-						case TInst(ec, _) if (CInterop.isWasmValue(ec)):
-							var impl = switch TFunctions.followWithoutNull(e.etype) {
-								case TAbstract(a, _): a.aImpl;
-								case _: null;
-							};
-							var cf = impl.clStatics.get("filled");
-							var callee = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(impl)), TDynamic(null), e.epos), FStatic(impl, cf)), cf.cfType, e.epos);
-							var cl = TFunctions.mk(TTypeExpr(TClassDecl(ec)), TDynamic(null), e.epos);
-							arr = TFunctions.mk(TCast(TFunctions.mk(TCall(callee, vector(arr, cl)), TDynamic(null), e.epos), null), na, e.epos);
-						case _:
-					}
-					return rhs(arr);
-				}
+				// (WasmGC: the engine's array, its struct elements made: CInterop.zeroValue)
+				if (Lower.wasmGc) return rhs(CInterop.zeroValue(e.etype, e.epos));
 				var c = structOf(e.etype);
 				var lo = newSlot(structTy(c), true);
 				if (zeroed) zeroStruct(ELocal(lo), c);

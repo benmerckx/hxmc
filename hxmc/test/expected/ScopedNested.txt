@@ -1,0 +1,5 @@
+exit 0
+ScopedNested.hx:64: 346
+ScopedNested.hx:65: 92378
+ScopedNested.hx:66: 43
+ScopedNested.hx:67: 15

@@ -138,6 +138,10 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	// memory of the pool (to the root checker: rooted at it, as linearly)
 	public static function of<T>(pool:Dynamic, a:NativeArray<T>, length:Int):SliceData<T>
 		return new SliceData(a, 0, length);
+
+	// a with its struct elements made, zero (the lowering's: CInterop.valueCopies)
+	public static function zeroed<T>(a:NativeArray<T>):NativeArray<T>
+		return a;
 }
 
 // (an inline constructor: Haxe's inliner makes its fields locals)

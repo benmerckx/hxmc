@@ -52,14 +52,6 @@ abstract Fixed<T, Rest>(NativeArray<T>) {
 	public inline function view():Slice<T>
 		return new Slice(this, 0, this.length);
 
-	// a's elements made (the lowering's, for a new Fixed of struct values:
-	// zeroed objects of class cl)
-	@:noCompletion public static function filled(a:Dynamic, cl:Dynamic):Dynamic {
-		for (i in 0...hxmc.rt.gc.W.naLen(a))
-			hxmc.rt.gc.W.naSet(a, i, hxmc.rt.gc.W.createEmpty(cl));
-		return a;
-	}
-
 	// a copy (the lowering's, where a struct value is copied: CInterop.valueCopies)
 	@:noCompletion public static function copyOf(a:Dynamic):Dynamic {
 		var n = hxmc.rt.gc.W.naLen(a), k = hxmc.rt.gc.W.naKind(a);
