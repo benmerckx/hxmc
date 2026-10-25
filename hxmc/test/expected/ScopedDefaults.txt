@@ -1,0 +1,5 @@
+exit 0
+ScopedDefaults.hx:25: 22
+ScopedDefaults.hx:26: 4950
+ScopedDefaults.hx:27: 6
+ScopedDefaults.hx:28: 285

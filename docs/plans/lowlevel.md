@@ -327,6 +327,28 @@ class Main {                               // GC code
 }
 ```
 
+Less to write (typer and lowering rules over Haxe's syntax, no macro;
+`core.HxmcScoped` decides for both):
+
+- An object literal makes a scoped class with fields, as Haxe's
+  `@:structInit` does (by the constructor's parameter names, or the
+  fields when it has none): `var p:Item = {key: 1, val: 2};`,
+  `items.push({key: i, val: 0})`.
+- A module whose type of its own name is `@:hxmc.scoped` has scoped
+  module-level functions.
+- `-D hxmc.scoped-packages=geo,app.core`: every class and enum of those
+  packages (and their subpackages) is scoped without the metadata;
+  `@:hxmc.gc` keeps one GC code (a `main`, say).
+
+Not built (the rest of the list): `Ref<T>` read without `.value`
+(`@:forward` forwards to the abstract's underlying type, here an address
+and on WasmGC a holder and an index, not `T`; `@:op(a.b)` types its
+result as its declared type, so either needs the typer to see a Ref as its
+target: a rule of its own), anonymous structures as value types in scoped
+code, array literals and string interpolation building a `Grow`, a
+`Slice` or a `Str`, `Fixed<T, N>`'s constant parameter, `@:try` for
+scoped error values.
+
 ### Types (`hxmc.scoped`)
 
 | Type | What it is | Root of what it yields |

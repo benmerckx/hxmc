@@ -192,7 +192,7 @@ class TyperDisplay {
 		function fromType(t:T):CompletionTypeKind return CompletionType.fromType(Display.getImportStatus.bind(ctx), t);
 		var tFollowed = core.TFunctions.map(follow, follow(t));
 		var compatible = switch tFollowed {
-			case TInst(c, tl) if (Meta.has(MetaTag.StructInit, c.clMeta)):
+			case TInst(c, tl) if (Meta.has(MetaTag.StructInit, c.clMeta) || core.HxmcScoped.structInit(c)):
 				var fields = Fields.getStructInitAnonFields(c, tl);
 				var ta = mkAnon(Closed, fields);
 				[fromType(ta)];
@@ -878,7 +878,7 @@ class TyperDisplay {
 									case _: AnonymousStructure(an);
 								};
 								handleStructureDisplay(ctx, e, an.aFields, origin);
-							case TInst(c, tl) if (Meta.has(MetaTag.StructInit, c.clMeta)):
+							case TInst(c, tl) if (Meta.has(MetaTag.StructInit, c.clMeta) || core.HxmcScoped.structInit(c)):
 								var fields = Fields.getStructInitAnonFields(c, tl);
 								handleStructureDisplay(ctx, e, fields, Self(TClassDecl(c)));
 							case _:

@@ -70,18 +70,18 @@ class CInterop {
 	// being no copy to tell from it; the others live in the linear memory; a
 	// scoped class is an object copied where a struct would be: isWasmValue)
 	public static function isStruct(c:TClass):Bool
-		return c.clMeta.length > 0 && (Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c)) || isScopedValue(c) && !Lower.wasmGc);
+		return c.clMeta.length > 0 && Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c)) || !Lower.wasmGc && isScopedValue(c);
 
 	// -D hxmc.wasm-gc: a scoped class (a struct value elsewhere), an object
 	// copied where a struct value is copied (valueCopies)
 	public static function isWasmValue(c:TClass):Bool
-		return Lower.wasmGc && c.clMeta.length > 0 && isScopedValue(c);
+		return Lower.wasmGc && isScopedValue(c);
 
 	// a @:hxmc.scoped class with variables or a constructor is a struct value
 	// (docs/plans/lowlevel.md, "Scoped memory"); one of static functions only
 	// is not (its functions are scoped code)
 	public static function isScopedValue(c:TClass):Bool {
-		if (!Lower.hasMeta(":hxmc.scoped", c.clMeta) || c.clKind.match(KAbstractImpl(_))) return false;
+		if (!core.HxmcScoped.isClass(c) || c.clKind.match(KModuleFields(_))) return false;
 		if (c.clConstructor != null) return true;
 		for (cf in c.clOrderedFields)
 			if (cf.cfKind.match(Var(_))) return true;
@@ -94,7 +94,7 @@ class CInterop {
 	// copied and compared as 8-byte words
 
 	public static function isScopedEnum(en:TEnum):Bool
-		return en.eMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", en.eMeta);
+		return core.HxmcScoped.isEnum(en);
 
 	static var enumStructs = new Map<TEnum, TClass>();
 	// per scoped enum: each constructor's arguments (by index), at their offsets

@@ -743,7 +743,7 @@ class Typer {
 					case TDynamic(t) if (t != null):
 						dynamicParameter = t;
 						ODKWithStructure({aStatus: Closed, aFields: new haxe.ds.StringMap()});
-					case TInst(c, tl) if (!hadCast && Meta.has(MetaTag.StructInit, c.clMeta)): ODKWithClass(c, tl);
+					case TInst(c, tl) if (!hadCast && (Meta.has(MetaTag.StructInit, c.clMeta) || core.HxmcScoped.structInit(c))): ODKWithClass(c, tl);
 					case _: ODKPlain;
 				}
 				loop(false, [], t);

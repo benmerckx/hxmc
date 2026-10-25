@@ -1152,7 +1152,7 @@ class Lower implements LowerQueries {
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
 		if (c.clMeta.length > 0 && hasMeta(":hxmc.noGc", c.clMeta)) fi.declNoGc = true;
 		// (@:hxmc.scoped: noGc's lowering, plus the root checker: Scoped)
-		if (c.clMeta.length > 0 && hasMeta(":hxmc.scoped", c.clMeta)) fi.declNoGc = fi.scoped = true;
+		if (core.HxmcScoped.isClass(c)) fi.declNoGc = fi.scoped = true;
 		fi.repr = Scoped.isRepr(c);
 		if (cf.cfMeta.length == 0) return;
 		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;

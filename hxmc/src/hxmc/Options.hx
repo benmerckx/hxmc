@@ -107,6 +107,8 @@ class Options {
 
 	public static function read(com:context.Common.CommonContext):Options {
 		var o = new Options();
+		// (the packages scoped by default: the lowering asks too, after typing or from hxb)
+		core.HxmcScoped.configure(com.defines);
 		inline function def(k:String):Null<String>
 			return core.Define.rawDefined(com.defines, k) ? core.Define.rawDefinedValue(com.defines, k) : null;
 		var env = Sys.getEnv;

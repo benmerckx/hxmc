@@ -1696,6 +1696,12 @@ class TypeloadFields {
 			structInitPos = MetadataTools.get(StructInit, c.clMeta).pos;
 			hasStructInit = true;
 		} catch (_:NotFound) {}
+		// (hxmc: a scoped class with instance fields, as if @:structInit: core.HxmcScoped)
+		core.HxmcScoped.configure(com.defines);
+		if (!hasStructInit && core.HxmcScoped.isClass(c) && core.ds.ArrayTools.exists(fields, f -> !hasAccess(AStatic, f.cffAccess) && f.cffKind.match(FVar(_, _) | FProp(_, _, _, _)))) {
+			structInitPos = c.clPos;
+			hasStructInit = true;
+		}
 		if (hasStructInit) {
 			if (hasClassFlag(c, CInterface)) displayError(com, "@:structInit is not allowed on interfaces", structInitPos);
 			else ensureStructInitConstructor(ctxC, c, fields, p);

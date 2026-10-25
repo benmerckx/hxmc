@@ -161,7 +161,7 @@ class Scoped {
 		if (cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", cf.cfMeta)) return true;
 		var r = scopedClasses.get(c);
 		if (r == null) {
-			r = c.clMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", c.clMeta);
+			r = core.HxmcScoped.isClass(c);
 			scopedClasses.set(c, r);
 		}
 		return r;
@@ -302,7 +302,7 @@ class Scoped {
 					if (core.Meta.has(CoreType, a.aMeta)) return false;
 					t = core.Abstract.getUnderlyingType(a, params);
 				case TInst(c, _):
-					return c.clMeta.length > 0 && Lower.hasMeta(":hxmc.scoped", c.clMeta) || c.clPath.pack.length == 2 && c.clPath.pack[0] == "hxmc" && c.clPath.pack[1] == "scoped";
+					return core.HxmcScoped.isClass(c) || c.clPath.pack.length == 2 && c.clPath.pack[0] == "hxmc" && c.clPath.pack[1] == "scoped";
 				case TEnum(en, _):
 					return CInterop.isScopedEnum(en);
 				case _:
