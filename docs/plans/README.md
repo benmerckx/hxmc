@@ -11,6 +11,7 @@ document, native-or-drawn, syntax, ui-next, graphics) moved with them to
 
 | | |
 | --- | --- |
+| [lean.md](lean.md) | heading for less code: one IR, one wasm (WasmGC retired), one cache, one macro engine; safe memory without a tracing GC (counted objects, scoped values, a checked real-time subset), the safety rules, the order and its gates |
 | [compiler.md](compiler.md) | the module cache, the central object cache, macro-heavy builds, Mir macros' size and speed and code generation at run time |
 | [runtime.md](runtime.md) | the collector, stack maps, compact strings, system calls, TLS and the event loop |
 | [heap-layout.md](heap-layout.md) | the object header decided by the type index: records, arrays, strings; exact lengths, NativeArray without its word, Array over NativeArray (a proof of concept, measured) |
