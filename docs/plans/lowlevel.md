@@ -507,9 +507,9 @@ checker and the marks. But scoped code is checked, not unsafe: it works on
 typed values whose lifetimes the checker follows, where unsafe code works
 on addresses.
 
-The `@:hxmc.unsafe` uses of the std today (626 functions and classes in
-`hxmc/std`; with the compiler's and the tests', 674), by what they could
-become:
+The `@:hxmc.unsafe` uses of the std before the OS layers moved (626
+functions and classes in `hxmc/std`; with the compiler's and the tests',
+674; 532 since, docs/plans/scoped-apply.md), by what they could become:
 
 | Kind | Files (unsafe uses) | Could become |
 | --- | --- | --- |
