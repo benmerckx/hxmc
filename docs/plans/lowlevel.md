@@ -349,8 +349,10 @@ scoped class or enum, or one of the types above.
 
 A runtime piece next to the shadow stack (`hxmc.rt.DataStacks`, no-GC
 Haxe): per thread, up to 16 data stacks, each a reservation with a bump
-pointer, made on first use (a table of their tops, ends and bases, and the
-owned mask, behind one thread-local). Natively each reserves 8 GB of
+pointer, made on first use (a table of their tops, ends and bases, behind
+one thread-local; the fixed stack's top, base and end and the owned mask
+are thread-locals of their own, so a mark is two loads and a reset a store,
+with a call only when stacks were claimed since). Natively each reserves 8 GB of
 address space (committed as it is touched: `MAP_NORESERVE`, WinRt's commit
 on touch), released when the thread ends (`Threads.exit` calls it through
 an address the first use set, so that programs without scoped memory do
@@ -397,11 +399,13 @@ pays nothing).
   scratch in its loops and blocks does not.
 - A loop that allocates marks at the start of each iteration and resets at
   its end and at `break` and `continue`; a block, at its end.
-- Scoped code cannot throw (it is no-GC code: a throw allocates). GC code
-  can: in a program with scoped memory, each `try` marks where it starts
-  and each catch resets to it, so the scopes an exception left are freed
-  where it is caught (a `try` costs two loads more; programs that do not
-  load `hxmc.rt.DataStacks` pay nothing).
+- Scoped code cannot throw (it is no-GC code: a throw allocates), and the
+  runtime's faces throw outside their scopes. Other GC code can: a GC
+  function whose scopes allocate resets to where it started when an
+  exception leaves it, then rethrows (a catch-all around its body), and
+  each `try` inside such a function marks where it starts and its catches
+  reset to it. A `try` anywhere else marks nothing: an exception reaching
+  it has left no scope's memory behind.
 - The same lowering applies to GC code that touches scoped values (below).
 
 ### Rules of scoped code

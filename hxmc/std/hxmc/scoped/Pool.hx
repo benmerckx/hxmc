@@ -8,8 +8,8 @@ import hxmc.unsafe.*;
 import hxmc.scoped.Slice;
 
 // A bump region in scoped memory (docs/plans/lowlevel.md, "Scoped memory"):
-// for values whose lifetime is a caller's, passed in, as Goose passes pools
-// to recursive functions: what it makes is rooted at the pool. Linear memory:
+// for values whose lifetime is a caller's, passed in (to recursive functions,
+// say): what it makes is rooted at the pool. Linear memory:
 // a Grow of bytes, the address of its header, as a Grow's; WasmGC ("Two
 // representations, one core"): a count of the bytes it would hold, what it
 // makes being the engine's objects.
