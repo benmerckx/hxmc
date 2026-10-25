@@ -370,7 +370,7 @@ class WinNet {
 		var n = 0;
 		while (v[n] != 0)
 			n++;
-		return Str.ofUtf8(v.ptr(), n);
+		return Str.ofUtf8(SysCore.viewAddr(v), n);
 	}
 
 	// one lookup at a time (Names.spin[4]), in a safe region (it may block on the network)

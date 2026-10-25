@@ -39,6 +39,14 @@ extern class SysCore {
 		#end
 	}
 
+	// the address of a view or a reference, linear memory's (the system
+	// layers are typed under -D hxmc.wasm-gc too, never run there)
+	public static inline function viewAddr<T>(s:hxmc.scoped.Slice<T>):Ptr
+		return #if hxmc.wasm_gc Ptr.nil() #else s.ptr() #end;
+
+	public static inline function refAddr<T>(r:hxmc.scoped.Ref<T>):Ptr
+		return #if hxmc.wasm_gc Ptr.nil() #else r.ptr() #end;
+
 	// s as a wide C string, UTF-16, on the data stack (hxmc.scoped.Str.copyOf),
 	// for a call taking views (hxmc.unsafe.Win32)
 	public static inline function wref(s:String):hxmc.scoped.Ref<hxmc.unsafe.UInt16>

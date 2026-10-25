@@ -46,7 +46,7 @@ class WinSys {
 
 	// the units of the wide C string at r, before its 0
 	@:hxmc.unsafe static function wlen(r:Ref<UInt16>):Int {
-		var p = r.ptr(), n = 0;
+		var p = SysCore.refAddr(r), n = 0;
 		while (Mem.getU16At(p, 0, n) != 0)
 			n++;
 		return n;
@@ -54,7 +54,7 @@ class WinSys {
 
 	// the wide C string at r, memory of the system's, as a String (null for none)
 	static function ofWide(r:Ref<UInt16>):String
-		return r.isNull() ? null : ofUnits(r.ptr(), wlen(r));
+		return r.isNull() ? null : ofUnits(SysCore.refAddr(r), wlen(r));
 
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
@@ -410,7 +410,7 @@ class WinSys {
 		var n = 0;
 		while (n < 260 && LE.u16(data, FIND_NAME + 2 * n) != 0)
 			n++;
-		return ofUnits(data.ptr().add(FIND_NAME), n);
+		return ofUnits(SysCore.viewAddr(data).add(FIND_NAME), n);
 	}
 
 	// Sys.readdir (caml_read_directory: FindFirstFile over dir\*)
@@ -457,7 +457,7 @@ class WinSys {
 		var len = 0;
 		while (out[len] != 0)
 			len++;
-		return ofUnits(out.ptr(), realPathW(out, len));
+		return ofUnits(SysCore.viewAddr(out), realPathW(out, len));
 	}
 
 	// each component of the full path out (len units, a 0 after) as the file
@@ -599,7 +599,7 @@ class WinSys {
 			if (m > 0 && m <= n) return f;
 		}
 		var l = wlen(name);
-		var c:Slice<UInt16> = Scope.slice(l + 1), src:Slice<UInt16> = Slice.raw(name.ptr(), l);
+		var c:Slice<UInt16> = Scope.slice(l + 1), src:Slice<UInt16> = Slice.raw(SysCore.refAddr(name), l);
 		for (k in 0...l)
 			c[k] = src[k];
 		return c;
