@@ -78,6 +78,8 @@ WHICH ?= arrays maps
 ARRAY_BENCH_ARGS ?=
 # `make bench-micro WHICH=maps`: keys, rounds
 MAP_BENCH_ARGS ?=
+# `make bench-scoped`: the arguments of hxmc/test/scoped/ScopedBench.hx (e.g. "-n 5 --wasm --large")
+SCOPED_BENCH_ARGS ?=
 # `make crosshost`: the arguments of hxmc/test/Crosshost.hx (CI splits the targets: "--targets a,b")
 CROSSHOST_ARGS ?= --tool
 
@@ -133,7 +135,7 @@ endef
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
 	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check dev-check \
-	bench bench-compile bench-micro measure wasmgc-check wasmgc-bench quick check full clean distclean
+	bench bench-compile bench-micro bench-scoped measure wasmgc-check wasmgc-bench quick check full clean distclean
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -199,6 +201,8 @@ help:
 ##               (hxmc/test/CompileBench.hx; COMPILE_BENCH_ARGS)
 ##   bench-micro WHICH=arrays|maps (default both): Array vs NativeArray vs Vector (ARRAY_BENCH_ARGS),
 ##               ObjectMap and StringMap (MAP_BENCH_ARGS)
+##   bench-scoped  scoped memory against GC'd hxmc on ports of Goose's benchmarks
+##               (hxmc/test/scoped/ScopedBench.hx; SCOPED_BENCH_ARGS; GOOSE, GOOSE_BENCH: Goose's too)
 ##   measure     peak memory and time of the self-compile (ours, the reference) and of the tool's
 ##               builds (haxe/test/Measure.hx)
 ##   wasmgc-bench  wasmgc-check's programs as WasmGC, linear-memory wasm and native: times, peak RSS, sizes
@@ -599,6 +603,9 @@ bench-micro: $(foreach w,$(WHICH),$(or $(MICRO_BIN_$(w)),bench-micro-unknown-$(w
 	$(foreach w,$(WHICH),$(MICRO_BIN_$(w)) $(MICRO_ARGS_$(w)) &&) true
 bench-micro-unknown-%:
 	@echo "bench-micro: no microbenchmark $* (WHICH: arrays maps)"; exit 1
+
+bench-scoped: $(TOOL) $(STD) $(HOST_RT)
+	$(TOOL) -cp hxmc/test/scoped -cp haxe/test --run ScopedBench $(SCOPED_BENCH_ARGS)
 
 bin/vector-bench/m: $(TOOL) $(STD) $(HOST_RT) hxmc/test/bench/VectorBench.hx hxmc/test/bench/VectorBenchMacro.hx
 	$(call hxmc,$@,-cp hxmc/test/bench -main VectorBench $(HXMC_ARGS))

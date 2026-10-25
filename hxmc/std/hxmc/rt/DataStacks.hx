@@ -14,7 +14,7 @@ import hxmc.unsafe.*;
 // (their tops back to their bases: a stack nobody owns is always empty
 // above its base). Natively each stack reserves RESERVE bytes of address
 // space, committed as touched (Os.reserve); on wasm32 it is a region of the
-// linear memory (Heap.regionZero) of RT_DATA_STACK_MB megabytes (64 unless
+// linear memory (Heap.regionZero) of RT_DATA_STACK_MB megabytes (256 unless
 // set). Running past a stack's end, or more Grows at once than stacks,
 // aborts with a message: scoped code cannot throw.
 //
@@ -56,7 +56,7 @@ class DataStacks {
 	@:hxmc.noGc static function open(t:Ptr, i:Int) {
 		var s = stack(t, i);
 		#if (hxmc.target == "wasm32-wasi")
-		var mb = hxmc.rt.wasm.Wasi.envInt("RT_DATA_STACK_MB", 64);
+		var mb = hxmc.rt.wasm.Wasi.envInt("RT_DATA_STACK_MB", 256);
 		if (mb < 1) mb = 1;
 		var bytes = mb << 20;
 		var p = hxmc.rt.wasm.Heap.regionZero(bytes);
