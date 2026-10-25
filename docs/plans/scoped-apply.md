@@ -111,21 +111,23 @@ By allocation volume and what scoped memory can reach:
 
 ## Order
 
-Chosen by effort and impact (the owner left it open):
+Chosen by effort and impact (the owner left it open), revised as the
+owner's decisions came:
 
 1. String concatenation (item 4, first part): small, every target, the
    largest allocator of tsc-haxe and a common one of the compiler.
 2. The scoped C boundary and the POSIX layers on it (item 5): the largest
    unsafe surface, each area a self-contained change; the owner's
    priority when time is short.
-3. The other runtime hot spots (item 4): StringBuf's storage, then
-   haxe.Json, the regex engine's match state, inflate and SSL buffers.
-4. The back end (item 1): the function-local tables of the passes (work
-   lists, visited sets, numbering) on scoped memory where a function
-   builds and drops them; the graphs themselves need a decision (below).
-5. Byte buffers (item 3), then the module cache as Images (item 2): the
-   least volume for the most change; the same field rule as 1 for the
-   buffers.
+3. The other runtime hot spots (item 4): haxe.Json, inflate and CRC-32;
+   Array growth tried.
+4. The old generation's limit (the owner's GC change): small, the
+   self-build's peak RSS.
+5. Scope-bound classes (item 1, the owner's option B): the general
+   feature; the back end where it wins (below, "Decisions").
+6. The Windows layers on the boundary (item 5), then WASI (tried), byte buffers
+   (item 3) and the module cache as Images (item 2): the least volume
+   for the most change.
 
 ## Items
 
@@ -200,6 +202,24 @@ memory on WasmGC; inflate on WasmGC is 60% slower (the engine's checked
 array accesses where linear memory had raw loads), a cost of WasmGC's
 representation.
 
+### The passes' per-function tables (item 1): not worth moving
+
+The tables a pass builds for one function and drops (`MFunc.ints`: the
+frame's offsets and slots in Frames, Escape's sites, Opt's dead-code
+marks, Inline's numbering) are 0.16% of the self-build's instructions,
+their allocation and filling included (callgrind, inclusive); most are
+fields of the pass objects, which scoped values cannot be. Not moved.
+
+### Array growth (item 4): not kept
+
+`hx_apush_slow`, an Array push that grows its storage, is 3.2% of the
+self-build's instructions with what it calls (its callers are the IR
+builders' pushes: MirWriter.add and edge, the instruction selectors,
+BlockDefs.set). Growing from 4 elements instead of 2 (twice the capacity
+each time either way): the formatter build's instructions 5.529 G →
+5.510 G (-0.3%), the self-build's allocation +0.5% and its wall time
+the same within noise (13.03 against 13.11 s median of 3). Not kept.
+
 ### The scoped C boundary (item 5)
 
 A C function may take a view of scoped memory: a `Slice<T>` or `Str`
@@ -214,6 +234,8 @@ Then the OS layers move onto it, area by area, their raw versions gone:
 | POSIX files, processes, environment (PosixSys, Posix, SysCore) | 14 → 2 | 0 → 10 | 69 → 17 | 89 → 46 | 200k exists, isDirectory, getCwd, getEnv: 305 → 304 ms | +1.7 KB of 180 KB |
 | POSIX sockets (PosixNet, NetCore, Posix) | 25 → 4 | 0 → 21 | 59 → 19 | 44 → 25 | 100k select, setTimeout, host, setFastSend: 158 → 158 ms | +2.0 KB of 223 KB |
 | inflate and CRC-32 (NativeZip) | 9 → 0 | 0 → 2 | 71 → 0 | 13 → 0 | above | |
+| Windows files, processes, environment (WinSys, Win32, SysCore) | 23 → 12 | 0 → 7 | 80 → 20 | 92 → 50 | SysNatives, SafeRegionRoots, NetNatives, ScopedCBoundary under wine | |
+| Windows sockets (WinNet, Winsock, NetCore) | 29 → 11 | 0 → 18 | 68 → 21 | 29 → 13 | SysNatives, SafeRegionRoots, NetNatives, ScopedCBoundary under wine | |
 
 (Raw-memory lines: lines calling `Mem` other than the target's constants
 `os`, `target`, `arm`, `platform`; `Ptr` lines: lines naming the type.)
@@ -221,10 +243,29 @@ The structures C fills are `Fixed` buffers of the frame read through
 `hxmc.scoped.LE` (little-endian scalars of a byte view, one range test
 each); with `ImageIO`'s byte-by-byte checked reads, function calls each,
 select was 30% slower. The self-build does not call these layers in its
-hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 589 (the runtime gained two small ones: Str.jsonRun, Gc.viewTouch).
-On Windows the boundary touches each view's pages before the call
-(`hx_view_touch`): WinRt commits the data stacks' pages on a fault in
-user code, which a fault in the kernel never makes.
+hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 560
+(the runtime gained three small ones: Str.jsonRun, Gc.viewTouch,
+DataStacks.object).
+
+The Windows layers are built here for windows-x86_64 and windows-arm64,
+run here under wine (the corpus' system, process, network and boundary
+cases) and by CI (its Windows corpus and the port's self-compile). What
+stays unsafe there: the process table and the non-blocking sockets'
+table (malloc'ed, under spin locks), the heap's Bytes touched before a
+call, the hostent the resolver returns. On Windows the boundary touches
+each view's pages before the call (`hx_view_touch`, reading them: a
+view may be of a literal): WinRt commits the data stacks' pages on a
+fault in user code, which a fault in the kernel never makes. The
+Windows layers are typed under WasmGC too (never run there), so their
+views' addresses go through `SysCore.viewAddr` and `refAddr`.
+
+WASI's layer stays as it was. Tried (its paths as scoped code over UTF-8
+on the data stack, `WasiApi`'s calls taking views, a `Ref` parameter
+32-bit on wasm32), it passed natively, on wasm32 and the port as wasm32,
+but `Wasi`'s path functions and `WasiApi`'s Int pointers are also the API
+programs call themselves, under WasmGC too (tsc-haxe's go.OsWasi, the
+WasmGC check's WasiPaths), over linear-memory C strings that views
+cannot express there; a scoped copy beside them would duplicate them.
 
 ### The old generation's limit (the owner's GC change)
 
@@ -372,4 +413,12 @@ callers the IR builders' pushes).
   by measurement, with a floor), on the native and wasm32 collectors.
   Done ("The old generation's limit"): the factor was already there
   (three times, twice on wasm32) and a factor of two cost more; the
-  tool's first limit, 768 MB, took the peak from 1.56 to 1.23 GB.
+  tool's first limit, 768 MB, took the peak from 1.56 to 1.23 GB. The
+  compilation server keeps its 4 GB (it holds every module between
+  builds; not measured here): lower it too?
+- WASI's layer on the boundary (tried, not kept: "The scoped C boundary"):
+  `WasiApi` and `Wasi`'s path functions are also an API programs call,
+  under WasmGC too; converting it means a second, view-taking
+  declaration of the same imports for WasiSys (the same signatures on
+  wasm32, so they can coexist) and the paths' code kept twice, or those
+  programs moved to the views.

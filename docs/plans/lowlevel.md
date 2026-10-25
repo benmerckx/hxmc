@@ -549,6 +549,10 @@ its own:
   code still may not (its raw addresses of GC objects would move).
 - On WasmGC there is no C (the OS layers are the engine's): a view
   parameter has no C type there.
+- The OS layers on it (docs/plans/scoped-apply.md): POSIX (PosixSys,
+  PosixNet over `hxmc.unsafe.Posix`) and Windows (WinSys, WinNet over
+  `Win32` and `Winsock`); WASI's stays on `WasiApi`'s Int pointers, the API
+  programs also call themselves under WasmGC.
 
 ### The root checker
 
