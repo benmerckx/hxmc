@@ -2,17 +2,26 @@ package hxmc.rt;
 
 import hxmc.I64;
 import hxmc.rt.C;
+import hxmc.scoped.Fixed;
+import hxmc.scoped.Image.ImageIO;
+import hxmc.scoped.Ref;
+import hxmc.scoped.Scope;
+import hxmc.scoped.Slice;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Posix;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
 
 // The operating-system primitives of hxmc.NativeSys on Linux and macOS
-// (formerly rt_sys.c; NativeSys calls them only there). Over the C library (hxmc.unsafe.Posix): its
-// constants and structure offsets per target below. Paths and arguments are
-// passed as malloc'ed UTF-8 copies (no heap address crosses a call that
-// may block). With several threads, reads and waits go through the
-// runtime's scheduler (rt_wait_fd, safe regions: Threads.hx).
+// (formerly rt_sys.c; NativeSys calls them only there). Over the C library
+// (hxmc.unsafe.Posix), whose calls take views of scoped memory
+// (docs/plans/lowlevel.md, "The scoped C boundary"): paths and arguments
+// as UTF-8 on the data stack, the structures the system fills in Fixed
+// buffers of the frame read little-endian (ImageIO; their offsets per
+// target below), no heap address crossing a call that may block. With
+// several threads, reads and waits go through the runtime's scheduler
+// (rt_wait_fd, safe regions: Threads.hx).
 class PosixSys {
 	static inline function mac():Bool
 		return Mem.os() == 1;
@@ -24,27 +33,27 @@ class PosixSys {
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
-	@:hxmc.unsafe static function errno():Int
-		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+	@:hxmc.scoped static function errno():Int
+		return (mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location()).value;
 
 	static inline var EINTR = 4;
 
-	// (on the data stack: SysCore.cstr)
-	static inline function cstr(s:String):Ptr
-		return SysCore.cstr(s);
+	// s as a C string, on the data stack (SysCore.cref)
+	static inline function cstr(s:String):Ref<UInt8>
+		return SysCore.cref(s);
 
-	static inline function ofC(p:Ptr):String
-		return Str.ofUtf8(p, LibC.strlen(p).toInt());
+	static inline function ofC(r:Ref<UInt8>, off = 0):String
+		return SysCore.ofC(r, off);
 
-	@:hxmc.unsafe static function writeAll(fd:Int, p:Ptr, n:Int) {
-		while (n > 0) {
-			var w = Posix.write(fd, p, n).toInt();
+	@:hxmc.scoped static function writeAll(fd:Int, s:Slice<UInt8>) {
+		var p = 0;
+		while (p < s.length) {
+			var w = Posix.write(fd, s.sub(p, s.length - p)).toInt();
 			if (w < 0) {
 				if (errno() == EINTR) continue;
 				return;
 			}
-			p = p.add(w);
-			n -= w;
+			p += w;
 		}
 	}
 
@@ -61,7 +70,7 @@ class PosixSys {
 	static function strArray(v:Ptr, n:Int):Array<String> {
 		var a:Array<String> = [];
 		for (i in 0...n)
-			a.push(ofC(Mem.getPtr(v, 8 * i)));
+			a.push(ofC(Ref.raw(Mem.getPtr(v, 8 * i))));
 		return a;
 	}
 
@@ -75,20 +84,14 @@ class PosixSys {
 		return strArray(argv().add(8), argc() > 0 ? argc() - 1 : 0);
 
 	public static function argv0():String
-		return argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : null;
+		return argc() > 0 ? ofC(Ref.raw(Mem.getPtr(argv(), 0))) : null;
 
-	public static function getEnv(s:String):String {
-		var n = cstr(s);
-		var v = Posix.getenv(n);
-		return v.isNull() ? null : ofC(v);
-	}
+	public static function getEnv(s:String):String
+		return ofC(Posix.getenv(cstr(s)));
 
 	public static function putEnv(s:String, v:String):Void {
 		var n = cstr(s);
-		if (!Str.isNull(v)) {
-			var u = cstr(v);
-			Posix.setenv(n, u, 1);
-		} else Posix.unsetenv(n);
+		if (!Str.isNull(v)) Posix.setenv(n, cstr(v), 1) else Posix.unsetenv(n);
 	}
 
 	public static function environ():Array<String> {
@@ -105,31 +108,32 @@ class PosixSys {
 			Rt.rt_sleep(seconds); // 0: give way to the other runnable threads
 			return;
 		}
-		if (seconds <= 0) return;
-		var t = Mem.stack(16);
+		if (seconds > 0) nap(seconds);
+	}
+
+	// struct timespec: seconds, nanoseconds
+	@:hxmc.scoped static function nap(seconds:Float) {
+		var t:Fixed<UInt8, 16> = Fixed.scratch(); // (written before the call)
+		var v = t.view();
 		var s:I64 = cast seconds;
-		Mem.setI64(t, 0, s);
-		var ns:I64 = cast((seconds - (cast s : Float)) * 1e9);
-		Mem.setI64(t, 8, ns);
-		while (Posix.nanosleep(t, t) != 0 && errno() == EINTR) {}
+		ImageIO.put64(v, 0, s);
+		ImageIO.put64(v, 8, cast((seconds - (cast s : Float)) * 1e9));
+		while (Posix.nanosleep(v.ref(0), v.ref(0)) != 0 && errno() == EINTR) {}
 	}
 
 	public static function getCwd():String {
-		var buf = Mem.stack(4104);
-		if (Posix.getcwd(buf, 4096).isNull()) Rt.rt_throw("getCwd failed");
-		var n = LibC.strlen(buf).toInt();
-		if (n == 0 || Mem.getU8(buf, n - 1) != "/".code) {
-			Mem.setI8(buf, n, "/".code);
-			Mem.setI8(buf, n + 1, 0);
+		var buf:Slice<UInt8> = Scope.slice(4104);
+		if (Posix.getcwd(buf.sub(0, 4096)).isNull()) Rt.rt_throw("getCwd failed");
+		var n = Posix.strnlen(buf).toInt();
+		if (n == 0 || buf[n - 1] != "/".code) {
+			buf[n] = "/".code;
+			buf[n + 1] = 0;
 		}
-		return ofC(buf);
+		return ofC(buf.ref(0));
 	}
 
-	public static function setCwd(s:String):Bool {
-		var n = cstr(s);
-		var r = Posix.chdir(n);
-		return r == 0;
-	}
+	public static function setCwd(s:String):Bool
+		return Posix.chdir(cstr(s)) == 0;
 
 	public static function systemName():String
 		return mac() ? "Mac" : "Linux";
@@ -167,79 +171,67 @@ class PosixSys {
 		if (Mem.target() >= 9) Os.exit(code) else Posix.exit(code);
 	}
 
-	@:hxmc.unsafe public static function time():Float {
-		var tv = Mem.stack(16);
-		Posix.gettimeofday(tv, Ptr.nil());
-		var s:Float = cast Mem.getI64(tv, 0);
-		return s + Mem.getI32(tv, 8) / 1e6;
+	// struct timeval: seconds, microseconds
+	@:hxmc.scoped public static function time():Float {
+		var tv:Fixed<UInt8, 16> = Fixed.scratch(); // (C fills it)
+		var v = tv.view();
+		Posix.gettimeofday(v.ref(0), Ref.nil());
+		var s:Float = cast ImageIO.i64(v, 0);
+		return s + ImageIO.i32(v, 8) / 1e6;
 	}
 
 	// clock() / CLOCKS_PER_SEC (1000000 on Linux and macOS)
-	@:hxmc.unsafe public static function cpuTime():Float {
+	@:hxmc.scoped public static function cpuTime():Float {
 		var c:Float = cast Posix.clock();
 		return c / 1e6;
 	}
 
 	public static function programPath():String {
-		var buf = Mem.stack(4104);
+		var buf:Slice<UInt8> = Scope.slice(4104);
 		if (mac()) {
 			// the executable's path as dyld loaded it (argv[0] may be a bare
 			// name found on PATH), then without links
-			var path = Mem.stack(4104);
-			var size = Mem.stack(8);
-			Mem.setI32(size, 0, 4096);
-			if (Posix._NSGetExecutablePath(path, size) == 0) {
-				var r = Posix.realpathExtsn(path, buf);
-				return ofC(r.isNull() ? path : buf);
+			var path:Slice<UInt8> = Scope.slice(4104);
+			var size = new Fixed<Int, 1>();
+			size[0] = 4096;
+			if (Posix._NSGetExecutablePath(path.ref(0), size.view().ref(0)) == 0) {
+				var r = Posix.realpathExtsn(path.ref(0), buf.ref(0));
+				return ofC(r.isNull() ? path.ref(0) : buf.ref(0));
 			}
 		}
-		var n = Posix.readlink(procSelfExe(), buf, 4096).toInt();
+		var n = Posix.readlink(cstr("/proc/self/exe"), buf.sub(0, 4096)).toInt();
 		if (n > 0) {
-			Mem.setI8(buf, n, 0);
-			return ofC(buf);
+			buf[n] = 0;
+			return ofC(buf.ref(0));
 		}
 		if (argc() > 0) {
-			var r = mac() ? Posix.realpathExtsn(Mem.getPtr(argv(), 0), buf) : Posix.realpath(Mem.getPtr(argv(), 0), buf);
-			return ofC(r.isNull() ? Mem.getPtr(argv(), 0) : buf);
+			var a0:Ref<UInt8> = Ref.raw(Mem.getPtr(argv(), 0));
+			var r = mac() ? Posix.realpathExtsn(a0, buf.ref(0)) : Posix.realpath(a0, buf.ref(0));
+			return ofC(r.isNull() ? a0 : buf.ref(0));
 		}
 		return "";
-	}
-
-	// "/proc/self/exe" as a C string (a frame area of the caller's would do;
-	// this one is static and immortal)
-	static var procExe:Ptr;
-
-	@:hxmc.unsafe static function procSelfExe():Ptr {
-		var p = procExe;
-		if (p.isNull()) {
-			p = LibC.malloc(16);
-			var s = "/proc/self/exe";
-			for (i in 0...14)
-				Mem.setU8At(p, 0, i, Str.unit(s, i));
-			Mem.setI8(p, 14, 0);
-			procExe = p;
-		}
-		return p;
 	}
 
 	// struct termios: c_lflag at 12 (4 bytes) on Linux, at 24 (8) on macOS;
 	// ICANON 2 / 0x100, ECHO 8 on both; TCSANOW 0
 	public static function getChar(echo:Bool):Int {
-		var old = Mem.stack(128), raw = Mem.stack(128);
-		var tty = Posix.isatty(0) != 0 && Posix.tcgetattr(0, old) == 0;
+		var old:Fixed<UInt8, 128> = Fixed.scratch(), raw:Fixed<UInt8, 128> = Fixed.scratch();
+		var ov = old.view(), rv = raw.view();
+		var tty = Posix.isatty(0) != 0 && Posix.tcgetattr(0, ov.ref(0)) == 0;
 		if (tty) {
-			LibC.memcpy(raw, old, 128);
+			raw = old;
+			rv = raw.view();
 			var off = mac() ? 24 : 12;
 			var flags = (mac() ? 0x100 : 2) | (echo ? 0 : 8);
-			Mem.setI32(raw, off, Mem.getI32(raw, off) & ~flags);
-			Posix.tcsetattr(0, 0, raw);
+			ImageIO.put32(rv, off, ImageIO.i32(rv, off) & ~flags);
+			Posix.tcsetattr(0, 0, rv.ref(0));
 		}
-		var c = Mem.stack(8);
+		var c = new Fixed<UInt8, 8>();
 		if (threads() > 1) Rt.rt_wait_fd(0, 0, -1);
-		var r = Posix.read(0, c, 1).toInt();
-		if (tty) Posix.tcsetattr(0, 0, old);
+		var r = Posix.read(0, c.view().sub(0, 1)).toInt();
+		if (tty) Posix.tcsetattr(0, 0, ov.ref(0));
 		if (r <= 0) Rt.rt_throw("Eof");
-		return Mem.getU8(c, 0);
+		return c[0];
 	}
 
 	// ---- files
@@ -265,20 +257,23 @@ class PosixSys {
 			case 3: 2 | oCreat(); // O_RDWR
 			case _: return -1;
 		}
-		var p = cstr(path);
-		var fd = Posix.open(p, flags | oCloexec(), 438); // 0666
-		return fd;
+		return Posix.open(cstr(path), flags | oCloexec(), 438); // 0666
 	}
 
 	static inline function outside()
 		throw haxe.io.Error.OutsideBounds;
+
+	// the bytes [pos, pos + len) of the Bytes b, a view for a call that does
+	// not block (nothing collects during it)
+	static inline function bytesView(b:Dynamic, pos:Int, len:Int):Slice<UInt8>
+		return Slice.raw(Bytes.bytes(b).add(pos), len);
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1 && Rt.rt_wait_fd(fd, 0, -1) < 0) return -1; // closed while waiting
 		while (true) {
 			// (ready: the read does not block, and nothing collects during it)
-			var r = Posix.read(fd, Bytes.bytes(b).add(pos), len).toInt();
+			var r = Posix.read(fd, bytesView(b, pos, len)).toInt();
 			if (r < 0 && errno() == EINTR) continue;
 			return r;
 		}
@@ -288,7 +283,7 @@ class PosixSys {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1 && Rt.rt_wait_fd(fd, 1, -1) < 0) return -1;
 		while (true) {
-			var r = Posix.write(fd, Bytes.bytes(b).add(pos), len).toInt();
+			var r = Posix.write(fd, bytesView(b, pos, len)).toInt();
 			if (r < 0 && errno() == EINTR) continue;
 			return r;
 		}
@@ -303,24 +298,22 @@ class PosixSys {
 		if (Posix.lseek(fd, p, whence < 0 || whence > 2 ? 0 : whence) < 0) Rt.rt_throw("seek failed");
 	}
 
-	@:hxmc.unsafe public static function fileTell(fd:Int):Int
+	@:hxmc.scoped public static function fileTell(fd:Int):Int
 		return Posix.lseek(fd, 0, 1).toInt();
 
-	// struct stat: st_mode, st_size (and the rest for stat()) per target
-	static inline function statSize():Int
-		return 144;
+	// struct stat (144 bytes or fewer): st_mode, st_size (and the rest for
+	// stat()) per target
+	static inline function stMode(st:Slice<UInt8>):Int
+		return mac() ? ImageIO.u16(st, 4) : Mem.arm() ? ImageIO.i32(st, 16) : ImageIO.i32(st, 24);
 
-	static inline function stMode(st:Ptr):Int
-		return mac() ? Mem.getU16(st, 4) : Mem.arm() ? Mem.getI32(st, 16) : Mem.getI32(st, 24);
+	static inline function stSize(st:Slice<UInt8>):I64
+		return mac() ? ImageIO.i64(st, 96) : ImageIO.i64(st, 48);
 
-	static inline function stSize(st:Ptr):I64
-		return mac() ? Mem.getI64(st, 96) : Mem.getI64(st, 48);
+	static inline function doStat(p:Ref<UInt8>, st:Slice<UInt8>):Int
+		return inode64() ? Posix.statInode64(p, st.ref(0)) : Posix.stat(p, st.ref(0));
 
-	@:hxmc.unsafe static function doStat(p:Ptr, st:Ptr):Int
-		return inode64() ? Posix.statInode64(p, st) : Posix.stat(p, st);
-
-	@:hxmc.unsafe static function doFstat(fd:Int, st:Ptr):Int
-		return inode64() ? Posix.fstatInode64(fd, st) : Posix.fstat(fd, st);
+	static inline function doFstat(fd:Int, st:Slice<UInt8>):Int
+		return inode64() ? Posix.fstatInode64(fd, st.ref(0)) : Posix.fstat(fd, st.ref(0));
 
 	static inline function isReg(mode:Int):Bool
 		return (mode & 0xF000) == 0x8000;
@@ -329,20 +322,19 @@ class PosixSys {
 		return (mode & 0xF000) == 0x4000;
 
 	public static function fileContent(path:String):Dynamic {
-		var p = cstr(path);
-		var fd = Posix.open(p, oCloexec(), 0);
+		var fd = Posix.open(cstr(path), oCloexec(), 0);
 		if (fd < 0) return null;
 		// read into malloc'ed memory first: the size may not be known (pipes)
 		var cap = 65536, n = 0;
-		var st = Mem.stack(256);
-		if (doFstat(fd, st) == 0 && isReg(stMode(st))) cap = stSize(st).toInt() + 1;
+		var st:Fixed<UInt8, 256> = Fixed.scratch(); // (C fills it)
+		if (doFstat(fd, st.view()) == 0 && isReg(stMode(st.view()))) cap = stSize(st.view()).toInt() + 1;
 		var buf = LibC.malloc(cap);
 		while (true) {
 			if (n == cap) {
 				cap *= 2;
 				buf = LibC.realloc(buf, cap);
 			}
-			var r = Posix.read(fd, buf.add(n), cap - n).toInt();
+			var r = Posix.read(fd, Slice.raw(buf.add(n), cap - n)).toInt();
 			if (r < 0 && errno() == EINTR) continue;
 			if (r < 0) {
 				LibC.free(buf);
@@ -360,8 +352,7 @@ class PosixSys {
 	}
 
 	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
-		var p = cstr(path);
-		var fd = Posix.open(p, 1 | oCreat() | oCloexec() | (append ? oAppend() : oTrunc()), 438);
+		var fd = Posix.open(cstr(path), 1 | oCreat() | oCloexec() | (append ? oAppend() : oTrunc()), 438);
 		if (fd < 0) return false;
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
@@ -370,42 +361,26 @@ class PosixSys {
 		return SysCore.saveAll(fd, d, n);
 
 	public static function exists(path:String):Bool {
-		var p = cstr(path);
-		var st = Mem.stack(256);
-		var r = doStat(p, st) == 0;
-		return r;
+		var st:Fixed<UInt8, 256> = Fixed.scratch(); // (C fills it)
+		return doStat(cstr(path), st.view()) == 0;
 	}
 
 	public static function isDirectory(path:String):Bool {
-		var p = cstr(path);
-		var st = Mem.stack(256);
-		var r = doStat(p, st) == 0 && isDir(stMode(st));
-		return r;
+		var st:Fixed<UInt8, 256> = Fixed.scratch(); // (C fills it)
+		return doStat(cstr(path), st.view()) == 0 && isDir(stMode(st.view()));
 	}
 
-	public static function createDirectory(path:String):Bool {
-		var p = cstr(path);
-		var r = Posix.mkdir(p, 511) == 0; // 0777
-		return r;
-	}
+	public static function createDirectory(path:String):Bool
+		return Posix.mkdir(cstr(path), 511) == 0; // 0777
 
-	public static function deleteFile(path:String):Bool {
-		var p = cstr(path);
-		var r = Posix.unlink(p) == 0;
-		return r;
-	}
+	public static function deleteFile(path:String):Bool
+		return Posix.unlink(cstr(path)) == 0;
 
-	public static function deleteDirectory(path:String):Bool {
-		var p = cstr(path);
-		var r = Posix.rmdir(p) == 0;
-		return r;
-	}
+	public static function deleteDirectory(path:String):Bool
+		return Posix.rmdir(cstr(path)) == 0;
 
-	public static function rename(path:String, newPath:String):Bool {
-		var a = cstr(path), b = cstr(newPath);
-		var r = Posix.rename(a, b) == 0;
-		return r;
-	}
+	public static function rename(path:String, newPath:String):Bool
+		return Posix.rename(cstr(path), cstr(newPath)) == 0;
 
 	// struct dirent: d_name at 19 (Linux), 21 (macOS, 64-bit inodes)
 	public static function readDirectory(path:String):Array<String> {
@@ -417,9 +392,8 @@ class PosixSys {
 		while (true) {
 			var e = inode64() ? Posix.readdirInode64(d) : Posix.readdir(d);
 			if (e.isNull()) break;
-			var n = e.add(off);
-			if (Mem.getU8(n, 0) == ".".code && (Mem.getU8(n, 1) == 0 || (Mem.getU8(n, 1) == ".".code && Mem.getU8(n, 2) == 0))) continue;
-			names.push(ofC(n)); // (the directory stream is outside the heap)
+			var n = ofC(e, off); // (the directory stream is outside the heap)
+			if (n != "." && n != "..") names.push(n);
 		}
 		Posix.closedir(d);
 		return names;
@@ -427,9 +401,9 @@ class PosixSys {
 
 	public static function fullPath(path:String):String {
 		var p = cstr(path);
-		var buf = Mem.stack(4104);
-		var r = mac() ? Posix.realpathExtsn(p, buf) : Posix.realpath(p, buf);
-		return r.isNull() ? null : ofC(buf);
+		var buf:Slice<UInt8> = Scope.slice(4104);
+		var r = mac() ? Posix.realpathExtsn(p, buf.ref(0)) : Posix.realpath(p, buf.ref(0));
+		return r.isNull() ? null : ofC(buf.ref(0));
 	}
 
 	// Extc.get_real_path is get_full_path outside Windows
@@ -438,27 +412,28 @@ class PosixSys {
 
 	// gid uid atime mtime ctime dev ino nlink rdev size mode
 	public static function stat(path:String):Array<Float> {
-		var p = cstr(path);
-		var st = Mem.stack(256);
-		var r = doStat(p, st);
-		if (r != 0) return null;
+		var buf:Fixed<UInt8, 256> = Fixed.scratch(); // (C fills it)
+		var st = buf.view();
+		if (doStat(cstr(path), st) != 0) return null;
 		inline function f(v:I64):Float
 			return cast v;
 		inline function u(v:Int):Float
 			return f((v : I64) & (((1 : I64) << 32) - 1));
+		inline function i32(o:Int):Int
+			return ImageIO.i32(st, o);
+		inline function i64(o:Int):I64
+			return ImageIO.i64(st, o);
 		if (mac())
 			return [
-				u(Mem.getI32(st, 20)), u(Mem.getI32(st, 16)), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 48)), f(Mem.getI64(st, 64)), u(Mem.getI32(st, 0)),
-				f(Mem.getI64(st, 8)), Mem.getU16(st, 6), u(Mem.getI32(st, 24)), f(Mem.getI64(st, 96)), Mem.getU16(st, 4)
+				u(i32(20)), u(i32(16)), f(i64(32)), f(i64(48)), f(i64(64)), u(i32(0)), f(i64(8)), ImageIO.u16(st, 6), u(i32(24)), f(i64(96)),
+				ImageIO.u16(st, 4)
 			];
 		if (Mem.arm())
 			return [
-				u(Mem.getI32(st, 28)), u(Mem.getI32(st, 24)), f(Mem.getI64(st, 72)), f(Mem.getI64(st, 88)), f(Mem.getI64(st, 104)), f(Mem.getI64(st, 0)),
-				f(Mem.getI64(st, 8)), u(Mem.getI32(st, 20)), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 48)), u(Mem.getI32(st, 16))
+				u(i32(28)), u(i32(24)), f(i64(72)), f(i64(88)), f(i64(104)), f(i64(0)), f(i64(8)), u(i32(20)), f(i64(32)), f(i64(48)), u(i32(16))
 			];
 		return [
-			u(Mem.getI32(st, 32)), u(Mem.getI32(st, 28)), f(Mem.getI64(st, 72)), f(Mem.getI64(st, 88)), f(Mem.getI64(st, 104)), f(Mem.getI64(st, 0)),
-			f(Mem.getI64(st, 8)), f(Mem.getI64(st, 16)), f(Mem.getI64(st, 40)), f(Mem.getI64(st, 48)), u(Mem.getI32(st, 24))
+			u(i32(32)), u(i32(28)), f(i64(72)), f(i64(88)), f(i64(104)), f(i64(0)), f(i64(8)), f(i64(16)), f(i64(40)), f(i64(48)), u(i32(24))
 		];
 	}
 
@@ -480,21 +455,22 @@ class PosixSys {
 			Mem.setPtr(argv, 24, Ptr.nil());
 			n = 2;
 		}
-		var p = Mem.stack(32);
-		var pid = pipes(p) ? spawn(argv, p) : -2;
+		// in[2], out[2], err[2]
+		var p = new Fixed<Int, 6>();
+		var pid = pipes(p.view()) ? spawn(argv, p.view()) : -2;
 		for (i in 0...n + 1)
 			LibC.free(Mem.getPtr(argv, 8 * i));
 		LibC.free(argv);
 		if (pid == -2) Rt.rt_throw("Process creation failure");
 		if (pid < 0) {
-			Posix.close(Mem.getI32(p, 4));
-			Posix.close(Mem.getI32(p, 8));
-			Posix.close(Mem.getI32(p, 16));
+			Posix.close(p[1]);
+			Posix.close(p[2]);
+			Posix.close(p[4]);
 			Rt.rt_throw("Process creation failure");
 		}
-		fds[0] = Mem.getI32(p, 4);
-		fds[1] = Mem.getI32(p, 8);
-		fds[2] = Mem.getI32(p, 16);
+		fds[0] = p[1];
+		fds[1] = p[2];
+		fds[2] = p[4];
 		return pid;
 	}
 
@@ -504,10 +480,10 @@ class PosixSys {
 	// on Linux; macOS has no pipe2: pipe, then FD_CLOEXEC under the
 	// descriptor lock, which fork takes too (spawn). False: a failure, with
 	// nothing left open.
-	@:hxmc.unsafe static function pipes(p:Ptr):Bool {
+	@:hxmc.scoped static function pipes(p:Slice<Int>):Bool {
 		if (!mac()) {
 			for (k in 0...3)
-				if (Posix.pipe2(p.add(8 * k), oCloexec()) != 0) {
+				if (Posix.pipe2(p.ref(2 * k), oCloexec()) != 0) {
 					closeFds(p, 2 * k);
 					return false;
 				}
@@ -515,23 +491,23 @@ class PosixSys {
 		}
 		Threads.lockSafe(Gc.fdLock);
 		var k = 0;
-		while (k < 3 && Posix.pipe(p.add(8 * k)) == 0)
+		while (k < 3 && Posix.pipe(p.ref(2 * k)) == 0)
 			k++;
 		for (i in 0...2 * k)
-			Posix.fcntl(Mem.getI32(p, 4 * i), 2, 1); // F_SETFD, FD_CLOEXEC
+			Posix.fcntl(p[i], 2, 1); // F_SETFD, FD_CLOEXEC
 		Os.unlock(Gc.fdLock);
 		if (k == 3) return true;
 		closeFds(p, 2 * k);
 		return false;
 	}
 
-	@:hxmc.unsafe static function closeFds(p:Ptr, n:Int)
+	@:hxmc.scoped static function closeFds(p:Slice<Int>, n:Int)
 		for (i in 0...n)
-			Posix.close(Mem.getI32(p, 4 * i));
+			Posix.close(p[i]);
 
 	// macOS: fd, a descriptor just created, close-on-exec; the caller holds
 	// the descriptor lock (see pipes)
-	@:hxmc.unsafe public static function cloexec(fd:Int):Int {
+	@:hxmc.scoped public static function cloexec(fd:Int):Int {
 		if (fd >= 0) Posix.fcntl(fd, 2, 1); // F_SETFD, FD_CLOEXEC
 		return fd;
 	}
@@ -539,13 +515,13 @@ class PosixSys {
 	// fork and exec with the three pipes, all close-on-exec: the child's ends
 	// become 0, 1 and 2 by dup2, which clears the flag, and exec closes the
 	// rest; the child calls only the C library
-	@:hxmc.unsafe static function spawn(argv:Ptr, p:Ptr):Int {
+	@:hxmc.unsafe static function spawn(argv:Ptr, p:Slice<Int>):Int {
 		Posix.fflush(Ptr.nil());
 		if (mac()) Threads.lockSafe(Gc.fdLock);
 		var pid = Posix.fork();
 		if (pid == 0) {
 			for (k in 0...3) {
-				var fd = Mem.getI32(p, k == 0 ? 0 : 8 * k + 4);
+				var fd = p[k == 0 ? 0 : 2 * k + 1];
 				// (dup2 of a descriptor onto itself keeps the flag)
 				if (fd == k) Posix.fcntl(k, 2, 0) else Posix.dup2(fd, k);
 			}
@@ -553,26 +529,26 @@ class PosixSys {
 			Posix._exit(127);
 		}
 		if (mac()) Os.unlock(Gc.fdLock);
-		Posix.close(Mem.getI32(p, 0));
-		Posix.close(Mem.getI32(p, 12));
-		Posix.close(Mem.getI32(p, 20));
+		Posix.close(p[0]);
+		Posix.close(p[3]);
+		Posix.close(p[5]);
 		return pid;
 	}
 
 	// OS threads: waits in a safe region; WNOHANG 1
 	public static function processWait(pid:Int, block:Bool):Int {
-		var st = Mem.stack(8);
+		var st = new Fixed<Int, 1>();
 		while (true) {
 			Leaf.rt_blocking_enter();
-			var r = Posix.waitpid(pid, st, block ? 0 : 1);
+			var r = Posix.waitpid(pid, st.view().ref(0), block ? 0 : 1);
 			Leaf.rt_blocking_leave();
 			if (r < 0 && errno() == EINTR) continue;
 			if (r <= 0) return -1;
 			break;
 		}
-		return exitCode(Mem.getI32(st, 0));
+		return exitCode(st[0]);
 	}
 
-	@:hxmc.unsafe public static function processKill(pid:Int):Void
+	@:hxmc.scoped public static function processKill(pid:Int):Void
 		Posix.kill(pid, 9);
 }

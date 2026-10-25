@@ -61,10 +61,10 @@ class PosixNet {
 	static inline var F_SETFL = 4;
 
 	@:hxmc.unsafe static function errno():Int
-		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		return (mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location()).value;
 
 	@:hxmc.unsafe static function setErrno(e:Int)
-		Mem.setI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0, e);
+		(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location()).value = e;
 
 	// the last failure's errno, per thread
 	@:hxmc.threadLocal static var netErrno:Int;

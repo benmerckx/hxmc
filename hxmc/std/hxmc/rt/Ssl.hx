@@ -458,7 +458,7 @@ class Ssl {
 	// the BIO: Unix.send / Unix.recv socket bytes 0 (Bytes.length bytes) []
 	// (called by mbedtls inside the handshake, read or write: in their safe region)
 	@:hxmc.unsafe static function bioFailed(s:Ptr, send:Bool):Int {
-		var e = os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : Mem.getI32(os() == 1 ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		var e = os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : (os() == 1 ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location()).value;
 		Mem.setI32(s, SSL_BIO_ERRNO, e);
 		Mem.setI32(s, SSL_BIO_SEND, send ? 1 : 0);
 		return send ? ERR_NET_SEND_FAILED : ERR_NET_RECV_FAILED;

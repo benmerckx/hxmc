@@ -1426,12 +1426,12 @@ class Gc {
 		Mem.setI64(out, 0, 0);
 		Mem.setI64(out, 8, 0);
 		if (Mem.os() != 0) return;
-		var fd = Posix.open(Mem.cstr("/proc/self/status"), 0x80000, 0); // O_CLOEXEC
+		var fd = Posix.open(hxmc.scoped.Ref.raw(Mem.cstr("/proc/self/status")), 0x80000, 0); // O_CLOEXEC
 		if (fd < 0) return;
 		var buf = Mem.stack(8192);
 		var n = 0;
 		while (n < 8191) {
-			var r = Posix.read(fd, buf.add(n), (8191 - n : I64)).toInt();
+			var r = Posix.read(fd, hxmc.scoped.Slice.raw(buf.add(n), 8191 - n)).toInt();
 			if (r <= 0) break;
 			n += r;
 		}

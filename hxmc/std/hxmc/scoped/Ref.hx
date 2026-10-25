@@ -18,6 +18,10 @@ abstract Ref<T>(#if hxmc.wasm_gc RefData<T> #else Ptr<T> #end) {
 	public static inline function nil<T>():Ref<T>
 		return cast null;
 
+	// (memory at an address: linear memory only; typed here, never run)
+	@:noCompletion public static inline function raw<T>(p:Ptr):Ref<T>
+		return nil();
+
 	public inline function isNull():Bool
 		return this == null;
 
@@ -37,6 +41,10 @@ abstract Ref<T>(#if hxmc.wasm_gc RefData<T> #else Ptr<T> #end) {
 	// no element (an absent entry's reference)
 	public static inline function nil<T>():Ref<T>
 		return new Ref(Ptr.nil());
+
+	// the T at an address (the trusted layer's: C's memory, a C call's argument)
+	@:noCompletion public static inline function raw<T>(p:Ptr):Ref<T>
+		return new Ref<T>(cast p);
 
 	public inline function isNull():Bool
 		return this.isNull();

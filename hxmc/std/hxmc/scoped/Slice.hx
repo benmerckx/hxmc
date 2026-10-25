@@ -19,6 +19,10 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	public inline function new(a:NativeArray<T>, off:Int, length:Int)
 		this = new SliceData(a, off, length);
 
+	// (memory at an address: linear memory only; typed here, never run)
+	@:noCompletion public static inline function raw<T>(p:Ptr, length:Int):Slice<T>
+		return new Slice(new NativeArray<T>(0), 0, 0);
+
 	@:noCompletion public inline function array():NativeArray<T>
 		return this.a;
 
@@ -71,6 +75,10 @@ abstract Slice<T>(#if hxmc.wasm_gc SliceData<T> #else SliceData #end) {
 	#else
 	public inline function new(p:Ptr<T>, length:Int)
 		this = new SliceData(p, length);
+
+	// the n Ts at an address (the trusted layer's: a C call's argument)
+	@:noCompletion public static inline function raw<T>(p:Ptr, length:Int):Slice<T>
+		return new Slice<T>(cast p, length);
 
 	public inline function ptr():Ptr<T>
 		return this.ptr;

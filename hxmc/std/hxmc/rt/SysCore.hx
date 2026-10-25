@@ -24,14 +24,31 @@ extern class SysCore {
 	public static inline function cstr(s:String):Ptr
 		return #if hxmc.wasm_gc Str.toUtf8(s) #else hxmc.scoped.Str.utf8Of(s).ptr() #end;
 
+	// s as a C string (cstr) for a call taking views (hxmc.unsafe.Posix)
+	public static inline function cref(s:String):hxmc.scoped.Ref<hxmc.unsafe.UInt8>
+		return #if hxmc.wasm_gc hxmc.scoped.Ref.nil() #else hxmc.scoped.Ref.raw(cstr(s)) #end;
+
+	// the C string at r + off, memory of C's (UTF-8), as a String (null for none)
+	public static inline function ofC(r:hxmc.scoped.Ref<hxmc.unsafe.UInt8>, off = 0):String {
+		#if hxmc.wasm_gc
+		return null;
+		#else
+		if (r.isNull()) return null;
+		var p = r.ptr().add(off);
+		return Str.ofUtf8(p, LibC.strlen(p).toInt());
+		#end
+	}
+
 	// s as a wide C string, UTF-16, on the data stack (hxmc.scoped.Str.copyOf)
 	public static inline function wide(s:String):Ptr
 		return #if hxmc.wasm_gc Ptr.nil() #else hxmc.scoped.Str.copyOf(s).ptr() #end;
 
 	// s to a descriptor, as UTF-8
 	public static inline function printTo(fd:Int, s:String) {
-		var u = cstr(s);
-		if (Mem.os() == 2) WinSys.writeAll(fd, u, LibC.strlen(u).toInt()) else PosixSys.writeAll(fd, u, LibC.strlen(u).toInt());
+		#if !hxmc.wasm_gc // (typed under WasmGC, never run: hxmc.rt.gc.GcSys)
+		var u = hxmc.scoped.Str.utf8Of(s);
+		if (Mem.os() == 2) WinSys.writeAll(fd, u.ptr(), u.length) else PosixSys.writeAll(fd, u);
+		#end
 	}
 
 	// n bytes at d written to fd, which is then closed: false when either failed
@@ -57,7 +74,7 @@ extern class SysCore {
 	// ---- the calls
 
 	static inline function write(fd:Int, p:Ptr, n:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else Mem.os() == 2 ? Win32._write(fd, p, n) : Posix.write(fd, p, n).toInt() #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else Mem.os() == 2 ? Win32._write(fd, p, n) : Posix.write(fd, hxmc.scoped.Slice.raw(p, n)).toInt() #end;
 
 	// (POSIX: a negative count; Windows and WASI: none written either)
 	static inline function writeFailed(w:Int):Bool
