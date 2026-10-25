@@ -388,8 +388,118 @@ class Str {
 		}
 	}
 
-	@:hxmc.host("StringBuf_addSub") static function sbAddSub(b:Dynamic, s:String, pos:Int, lenp:Null<Int>):Void
-		sbAddStr(b, substr(s, pos, lenp));
+	// (substr's range, copied without the substring)
+	@:hxmc.host("StringBuf_addSub") static function sbAddSub(b:Dynamic, s:String, pos:Int, lenp:Null<Int>):Void {
+		if (isNull(s)) {
+			sbAddStr(b, substr(s, pos, lenp));
+			return;
+		}
+		var n = len(s);
+		var l:Int = lenp == null ? n : lenp;
+		if (pos < 0) {
+			pos += n;
+			if (pos < 0) pos = 0;
+		}
+		if (pos > n) return;
+		if (l < 0) {
+			l += n - pos;
+			if (l < 0) return;
+		}
+		if (pos + l > n) l = n - pos;
+		if (l == 0) return;
+		reserve(b, l);
+		var at = sbLen(b);
+		Repr.copyAt(Repr.sbChars(b), at, chars(s), pos, l);
+		Repr.sbSetLen(b, at + l);
+	}
+
+	#if !hxmc.wasm_gc
+	// four UTF-16 units of a 64-bit word at a time (the parts' 16-bit lanes):
+	// lanes of x that are zero; of x below 0x20 (lanes from 0x8000 never)
+	static inline function lanes(n:Int):I64
+		return ((n * 0x10001 : I64) << 32) | (((n * 0x10001 : I64) << 32) >>> 32);
+
+	static inline function zeroLane(x:I64):Bool
+		return (x - lanes(1)) & ~x & lanes(0x8000) != (0 : I64);
+
+	static inline function lowLane(x:I64):Bool
+		return (x - lanes(0x20)) & ~x & lanes(0x8000) != (0 : I64);
+
+	static inline function anyQuoteOrZero(w:I64):Bool
+		return zeroLane(w) || zeroLane(w ^ lanes('"'.code)) || zeroLane(w ^ lanes('\\'.code));
+
+	// (any unit below 0x20: the escapes among them are found unit by unit)
+	static inline function anyJsonEscape(w:I64):Bool
+		return lowLane(w) || zeroLane(w ^ lanes('"'.code)) || zeroLane(w ^ lanes('\\'.code));
+	#end
+
+	// the index of the first quote, backslash or 0 unit of s from pos (its
+	// length if none): haxe.format.JsonParser.parseString's units to skip
+	// (hxmc's)
+	@:hxmc.unsafe public static function jsonRun(s:String, pos:Int):Int {
+		var n = len(s), c = chars(s);
+		var i = pos < 0 ? 0 : pos;
+		#if !hxmc.wasm_gc
+		while (i + 4 <= n && !anyQuoteOrZero(Mem.getI64(c.at(i), 0)))
+			i += 4;
+		#end
+		while (i < n) {
+			var u = c.get(i);
+			if (u == '"'.code || u == '\\'.code || u == 0) break;
+			i++;
+		}
+		return i;
+	}
+
+	// s as haxe.format.JsonPrinter quotes a string (its seven escapes, the
+	// other units as they are), appended in one go: the runs without an
+	// escape copied whole (JsonPrinter.quote, hxmc's)
+	@:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
+		// (room for s and the quotes; an escape makes room for itself and the
+		// rest, the addresses read again after: it may collect)
+		var n = len(s);
+		reserve(b, n + 2);
+		var at = sbLen(b);
+		var d = Repr.sbChars(b), c = chars(s);
+		d.set(at++, '"'.code);
+		var i = 0;
+		while (i < n) {
+			var j = i;
+			var u = 0;
+			#if !hxmc.wasm_gc
+			while (j + 4 <= n && !anyJsonEscape(Mem.getI64(c.at(j), 0)))
+				j += 4;
+			#end
+			while (j < n) {
+				u = c.get(j);
+				if (u == '"'.code || u == '\\'.code || u <= 13 && (u == 10 || u == 13 || u == 9 || u == 8 || u == 12)) break;
+				j++;
+			}
+			if (j > i) {
+				Repr.copyAt(d, at, c, i, j - i);
+				at += j - i;
+			}
+			if (j == n) break;
+			if (at + 2 + (n - j - 1) + 1 > Repr.sbCapacity(b)) {
+				Repr.sbSetLen(b, at);
+				reserve(b, 2 + (n - j - 1) + 1);
+				d = Repr.sbChars(b);
+				c = chars(s);
+			}
+			d.set(at++, '\\'.code);
+			d.set(at++, switch u {
+				case 10: 'n'.code;
+				case 13: 'r'.code;
+				case 9: 't'.code;
+				case 8: 'b'.code;
+				case 12: 'f'.code;
+				case _: u;
+			});
+			i = j + 1;
+		}
+		d.set(at++, '"'.code);
+		Repr.sbSetLen(b, at);
+	}
 
 	@:hxmc.host("StringBuf_clear") @:hxmc.unsafe static function sbClear(b:Dynamic):Void
 		Repr.sbSetLen(b, 0);

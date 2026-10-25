@@ -8,6 +8,8 @@ extern class StringBuf {
 	function add<T>(x:T):Void;
 	function addChar(c:Int):Void;
 	function addSub(s:String, pos:Int, ?len:Int):Void;
+	// (haxe.format.JsonPrinter's: s quoted, hxmc.rt.Str.sbAddJson)
+	@:noCompletion function addJsonString(s:String):Void;
 	function clear():Void;
 	function toString():String;
 }

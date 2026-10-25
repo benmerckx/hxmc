@@ -100,6 +100,10 @@ class MemRepr {
 	public static inline function copyTo(dst:MemChars, di:Int, src:MemChars, n:Int)
 		LibC.memcpy(dst.at(di), src, (2 * n : I64));
 
+	// dst[di, di + n) = src[si, si + n)
+	public static inline function copyAt(dst:MemChars, di:Int, src:MemChars, si:Int, n:Int)
+		LibC.memcpy(dst.at(di), src.at(si), (2 * n : I64));
+
 	// c[i, i + m) == d[0, m), m >= 1: the first unit compared first
 	@:hxmc.unsafe public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
 		return Mem.getU16At(c, 0, i) == Mem.getU16(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(2 * i + 2), (d : Ptr).add(2), (2 * (m - 1) : I64)) == 0);

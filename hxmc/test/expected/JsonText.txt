@@ -1,0 +1,27 @@
+exit 0
+"" same
+"a" same
+"ab\"" same
+"abc\"" same
+"abcd\"" same
+"abcde\\" same
+"\"\"\"\"\"" same
+"\\\\\\\\" same
+"line\nbreak" same
+"tab\there" same
+"cr\rlf\n" same
+"\bbs\fff" same
+"plain text longer than a few words of four units each, with no escape at all" same
+"é ü ñ 中文 😀 end" same
+"ctlchars" same
+"mixed \"q\" and \\b\\ and \n" same
+{"a":"x\"y","b":["1","two\n"],"c":{"d":"\\"}}
+"Aé😀"
+"a/b"
+{"k":"v","w":"\"q\""}
+"abcdefgh\"ij"
+error: Unclosed string
+error: Unclosed string
+error: Invalid escape sequence \x at position 3
+error: Unclosed string
+abccdefghihiabcdfghijailil 26

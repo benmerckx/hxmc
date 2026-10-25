@@ -74,6 +74,9 @@ class GcRepr {
 	public static inline function copyTo(dst:GcChars, di:Int, src:GcChars, n:Int)
 		W.strCopy(dst, di, src, 0, n);
 
+	public static inline function copyAt(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
+
 	// c[i, i + m) == d[0, m)
 	public static inline function matchAt(c:GcChars, d:GcChars, i:Int, m:Int):Bool {
 		var k = 0;

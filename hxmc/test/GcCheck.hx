@@ -19,7 +19,7 @@ class GcCheck {
 	// (the corpus cases that need nothing WasmGC lacks: the others' counterparts
 	// are in hxmc/test/wasmgc, without the collector's API and raw memory)
 	static final CASES = [
-		"AnonFields", "ClosureElements", "CreateInstance", "DateValues", "EnumIdentity", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads",
+		"AnonFields", "ClosureElements", "CreateInstance", "DateValues", "EnumIdentity", "JsonText", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads",
 		"ResourceBytes", "Resources", "ScopedAnon", "ScopedDefaults", "ScopedFixed", "ScopedImage", "ScopedLiterals", "ScopedNested", "ScopedPlaces", "ScopedRoots", "ScopedSoa", "ScopedTable", "ScopedTry", "ScopedText", "ScopedValues", "StringChains", "Utf8Bytes", "VectorLength"
 	];
 
