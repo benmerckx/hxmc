@@ -38,6 +38,11 @@ import hxmc.scoped.Slice;
 	static function nanosleep(req:Ref<UInt8>, rem:Ref<UInt8>):Int;
 	static function gettimeofday(tv:Ref<UInt8>, tz:Ref<UInt8>):Int;
 	static function clock():I64;
+	// time (hxmc.rt.Date): struct tm (nine ints first), time_t and timespec 64-bit
+	static function mktime(tm:Ref<UInt8>):I64;
+	static function localtime_r(t:Ref<UInt8>, tm:Ref<UInt8>):Ref<UInt8>;
+	static function gmtime_r(t:Ref<UInt8>, tm:Ref<UInt8>):Ref<UInt8>;
+	static function clock_gettime(clock:Int, ts:Ref<UInt8>):Int;
 	static function readlink(path:Ref<UInt8>, buf:Slice<UInt8>):I64;
 	static function realpath(path:Ref<UInt8>, buf:Ref<UInt8>):Ref<UInt8>;
 	static function system(cmd:Ref<UInt8>):Int;

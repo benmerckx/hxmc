@@ -4,7 +4,12 @@ import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
+import hxmc.unsafe.Posix;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
+import hxmc.scoped.Fixed;
+import hxmc.scoped.LE;
+import hxmc.scoped.Slice;
 
 // hxmc.rt.Repr in linear memory, over Mem (rt.h's layouts; addresses of
 // heap objects valid until the next GC point).
@@ -401,47 +406,55 @@ class MemRepr {
 
 	// a local time's milliseconds
 	public static inline function dateLocal(y:Int, m:Int, d:Int, h:Int, mi:Int, s:Int):Float {
-		var tm = Mem.stack(64);
-		LibC.memset(tm, 0, 64);
-		Mem.setI32(tm, F_YEAR, y - 1900);
-		Mem.setI32(tm, F_MON, m);
-		Mem.setI32(tm, F_MDAY, d);
-		Mem.setI32(tm, F_HOUR, h);
-		Mem.setI32(tm, F_MIN, mi);
-		Mem.setI32(tm, F_SEC, s);
-		Mem.setI32(tm, F_ISDST, -1);
-		var t:Float = cast @:privateAccess Date.mktime(tm);
+		var tm = new Fixed<UInt8, 64>();
+		var v = tm.view();
+		LE.put32(v, F_YEAR, y - 1900);
+		LE.put32(v, F_MON, m);
+		LE.put32(v, F_MDAY, d);
+		LE.put32(v, F_HOUR, h);
+		LE.put32(v, F_MIN, mi);
+		LE.put32(v, F_SEC, s);
+		LE.put32(v, F_ISDST, -1);
+		var t:Float = cast @:privateAccess Date.mktime(v);
 		return t * 1000.0;
 	}
 
 	public static inline function dateNow():Float {
-		var ts = Mem.stack(16);
-		LibC.clock_gettime(0, ts); // CLOCK_REALTIME
-		var sec:Float = cast Mem.getI64(ts, 0);
-		var nsec:Float = Mem.getI32(ts, 8);
+		var ts:Fixed<UInt8, 16> = Fixed.scratch();
+		var v = ts.view();
+		Posix.clock_gettime(0, v.ref(0)); // CLOCK_REALTIME
+		var sec:Float = cast LE.i64(v, 0);
+		var nsec:Float = LE.i32(v, 8);
 		return sec * 1000.0 + nsec / 1e6;
 	}
 
-	// a field of the date d (local or UTC)
-	public static inline function dateField(d:Dynamic, utc:Bool, f:Int):Int {
-		var tm = Mem.stack(64);
-		@:privateAccess Date.breakDown(dateMs(d), utc, tm);
-		return Mem.getI32(tm, f);
+	// a field of the date of ms (local or UTC)
+	public static inline function dateField(ms:Float, utc:Bool, f:Int):Int {
+		var tm:Fixed<UInt8, 64> = Fixed.scratch();
+		var v = tm.view();
+		@:privateAccess Date.breakDown(ms, utc, v);
+		return LE.i32(v, f);
 	}
 
-	// the local fields of the date d
-	public static inline function dateFields(d:Dynamic):MemTm {
-		var tm = Mem.stack(64);
-		@:privateAccess Date.breakDown(dateMs(d), false, tm);
-		return tm;
+	// the local year (from YEAR_BASE), month, day, hours, minutes and seconds of ms
+	public static inline function dateFields(ms:Float, into:Slice<Int>) {
+		var tm:Fixed<UInt8, 64> = Fixed.scratch();
+		var v = tm.view();
+		@:privateAccess Date.breakDown(ms, false, v);
+		into[0] = LE.i32(v, F_YEAR);
+		into[1] = LE.i32(v, F_MON);
+		into[2] = LE.i32(v, F_MDAY);
+		into[3] = LE.i32(v, F_HOUR);
+		into[4] = LE.i32(v, F_MIN);
+		into[5] = LE.i32(v, F_SEC);
 	}
 
 	// minutes from local time to UTC
-	public static inline function timezoneOffset(d:Dynamic):Int {
-		var l = Mem.stack(64), u = Mem.stack(64);
-		@:privateAccess Date.breakDown(dateMs(d), false, l);
-		@:privateAccess Date.breakDown(dateMs(d), true, u);
-		return ((@:privateAccess Date.mktime(u) - @:privateAccess Date.mktime(l)) / 60).toInt();
+	public static inline function timezoneOffset(ms:Float):Int {
+		var l:Fixed<UInt8, 64> = Fixed.scratch(), u:Fixed<UInt8, 64> = Fixed.scratch();
+		@:privateAccess Date.breakDown(ms, false, l.view());
+		@:privateAccess Date.breakDown(ms, true, u.view());
+		return ((@:privateAccess Date.mktime(u.view()) - @:privateAccess Date.mktime(l.view())) / 60).toInt();
 	}
 
 	// ---- bit patterns (through a frame area)
@@ -502,12 +515,6 @@ abstract MemChars(Ptr) from Ptr to Ptr {
 	// the address of unit i
 	public inline function at(i:Int):Ptr
 		return this.add(2 * i);
-}
-
-// a broken-down time: a struct tm
-abstract MemTm(Ptr) from Ptr to Ptr {
-	public inline function get(f:Int):Int
-		return Mem.getI32(this, f);
 }
 
 // an array's elements: the address of the first

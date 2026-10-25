@@ -227,15 +227,15 @@ class Ssl {
 
 	// upstream leaves the other fields of `info` (tm_isdst) uninitialized
 	static function timeToTimeT(t:Ptr<X509Time>):Float {
-		var tm:Ptr<Int32> = Mem.stack(64);
-		LibC.memset(tm, 0, 64);
-		tm[5] = t.value.year - 1900;
-		tm[4] = t.value.mon - 1;
-		tm[3] = t.value.day;
-		tm[2] = t.value.hour;
-		tm[1] = t.value.min;
-		tm[0] = t.value.sec;
-		var t:Float = cast (os() == 2 ? LibC._mktime64(tm) : LibC.mktime(tm));
+		var tm = new hxmc.scoped.Fixed<UInt8, 64>();
+		var v = tm.view();
+		hxmc.scoped.LE.put32(v, 20, t.value.year - 1900);
+		hxmc.scoped.LE.put32(v, 16, t.value.mon - 1);
+		hxmc.scoped.LE.put32(v, 12, t.value.day);
+		hxmc.scoped.LE.put32(v, 8, t.value.hour);
+		hxmc.scoped.LE.put32(v, 4, t.value.min);
+		hxmc.scoped.LE.put32(v, 0, t.value.sec);
+		var t:Float = cast (os() == 2 ? Win32._mktime64(v.ref(0)) : Posix.mktime(v.ref(0)));
 		return t;
 	}
 

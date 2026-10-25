@@ -35,6 +35,10 @@ import hxmc.scoped.Slice;
 	static function _getch():Int;
 	static function _getche():Int;
 	static function _errno():Ref<Int>;
+	// time (hxmc.rt.Date): struct tm, __time64_t
+	static function _mktime64(tm:Ref<UInt8>):I64;
+	static function _localtime64_s(tm:Ref<UInt8>, t:Ref<UInt8>):Int;
+	static function _gmtime64_s(tm:Ref<UInt8>, t:Ref<UInt8>):Int;
 	static function _open_osfhandle(h:Ptr, flags:Int):Int;
 	static function _get_osfhandle(fd:Int):Ptr;
 	static function fflush(f:Ptr):Int;

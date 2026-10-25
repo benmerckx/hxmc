@@ -550,9 +550,10 @@ its own:
 - On WasmGC there is no C (the OS layers are the engine's): a view
   parameter has no C type there.
 - The OS layers on it (docs/plans/scoped-apply.md): POSIX (PosixSys,
-  PosixNet over `hxmc.unsafe.Posix`) and Windows (WinSys, WinNet over
-  `Win32` and `Winsock`); WASI's stays on `WasiApi`'s Int pointers, the API
-  programs also call themselves under WasmGC.
+  PosixNet over `hxmc.unsafe.Posix`), Windows (WinSys, WinNet over
+  `Win32` and `Winsock`) and the calendar (Date: struct tm in a
+  `Fixed`); WASI's stays on `WasiApi`'s Int pointers, the API programs
+  also call themselves under WasmGC.
 
 ### The root checker
 

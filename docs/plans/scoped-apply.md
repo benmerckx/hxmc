@@ -236,6 +236,7 @@ Then the OS layers move onto it, area by area, their raw versions gone:
 | inflate and CRC-32 (NativeZip) | 9 → 0 | 0 → 2 | 71 → 0 | 13 → 0 | above | |
 | Windows files, processes, environment (WinSys, Win32, SysCore) | 23 → 12 | 0 → 7 | 80 → 20 | 92 → 50 | SysNatives, SafeRegionRoots, NetNatives, ScopedCBoundary under wine | |
 | Windows sockets (WinNet, Winsock, NetCore) | 29 → 11 | 0 → 18 | 68 → 21 | 29 → 13 | SysNatives, SafeRegionRoots, NetNatives, ScopedCBoundary under wine | |
+| the calendar (Date, MemRepr's dates, LibC's time functions, Ssl's certificate dates) | 20 → 2 | 0 → 2 | 21 → 3 | 11 → 0 | 200k dates' fields, offset, toString, now, new: 230-270 ms both | +1.0 KB of 109 KB |
 
 (Raw-memory lines: lines calling `Mem` other than the target's constants
 `os`, `target`, `arm`, `platform`; `Ptr` lines: lines naming the type.)
@@ -243,9 +244,14 @@ The structures C fills are `Fixed` buffers of the frame read through
 `hxmc.scoped.LE` (little-endian scalars of a byte view, one range test
 each); with `ImageIO`'s byte-by-byte checked reads, function calls each,
 select was 30% slower. The self-build does not call these layers in its
-hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 560
+hot paths. Across the std, `@:hxmc.unsafe` uses went from 626 to 542
 (the runtime gained three small ones: Str.jsonRun, Gc.viewTouch,
 DataStacks.object).
+The calendar's struct tm is a 64-byte `Fixed` C fills (the nine ints
+first on every target), its time_t an 8-byte one; what stays unsafe is
+the date object's slot (`Date.ms`) and Math.random. Its fields, offset,
+text and times are the same as before in three time zones natively, on
+wasm32 and under wine.
 
 The Windows layers are built here for windows-x86_64 and windows-arm64,
 run here under wine (the corpus' system, process, network and boundary

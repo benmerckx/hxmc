@@ -304,14 +304,21 @@ class GcRepr {
 	public static inline function dateNow():Float
 		return W.dateNum(16, 0, 0, 0, 0, 0, 0, 0);
 
-	public static inline function dateField(d:Dynamic, utc:Bool, f:Int):Int
-		return Std.int(W.dateNum(utc ? f + 7 : f, dateMs(d), 0, 0, 0, 0, 0, 0));
+	public static inline function dateField(ms:Float, utc:Bool, f:Int):Int
+		return Std.int(W.dateNum(utc ? f + 7 : f, ms, 0, 0, 0, 0, 0, 0));
 
-	public static inline function dateFields(d:Dynamic):GcTm
-		return dateMs(d);
+	// the local year (from YEAR_BASE), month, day, hours, minutes and seconds of ms
+	public static inline function dateFields(ms:Float, into:hxmc.scoped.Slice<Int>) {
+		into[0] = dateField(ms, false, F_YEAR);
+		into[1] = dateField(ms, false, F_MON);
+		into[2] = dateField(ms, false, F_MDAY);
+		into[3] = dateField(ms, false, F_HOUR);
+		into[4] = dateField(ms, false, F_MIN);
+		into[5] = dateField(ms, false, F_SEC);
+	}
 
-	public static inline function timezoneOffset(d:Dynamic):Int
-		return Std.int(W.dateNum(15, dateMs(d), 0, 0, 0, 0, 0, 0));
+	public static inline function timezoneOffset(ms:Float):Int
+		return Std.int(W.dateNum(15, ms, 0, 0, 0, 0, 0, 0));
 
 	// ---- bit patterns
 
@@ -346,12 +353,6 @@ abstract GcChars(String) from String to String {
 
 	public inline function set(i:Int, v:Int)
 		W.strSet(this, i, v);
-}
-
-// a broken-down local time: the time, its fields asked for
-abstract GcTm(Float) from Float {
-	public inline function get(f:Int):Int
-		return Std.int(W.dateNum(f, this, 0, 0, 0, 0, 0, 0));
 }
 
 // an array's elements: the array (W.arrGet*: of the kind, else converted)
