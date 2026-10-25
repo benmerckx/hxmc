@@ -675,6 +675,30 @@ class Census {
 		Mem.setI64(e, 8, Mem.getI64(e, 8) + bytes);
 	}
 
+	// closures by their code (the function's address, the object's first
+	// word): an open-addressed table of code, count, bytes
+	static inline var CODE_N = 1 << 16;
+	static var codeTab:Ptr;
+
+	@:hxmc.noGc static function countCode(code:I64, bytes:I64) {
+		if (codeTab.isNull()) {
+			codeTab = LibC.malloc((CODE_N : I64) * 24);
+			LibC.memset(codeTab, 0, (CODE_N : I64) * 24);
+		}
+		var h = ((code >> 4).toInt() * 0x9E3779B1) & (CODE_N - 1);
+		for (_ in 0...CODE_N) {
+			var e = codeTab.add(24 * h);
+			var c = Mem.getI64(e, 0);
+			if (c == code || c == 0) {
+				Mem.setI64(e, 0, code);
+				Mem.setI64(e, 8, Mem.getI64(e, 8) + 1);
+				Mem.setI64(e, 16, Mem.getI64(e, 16) + bytes);
+				return;
+			}
+			h = (h + 1) & (CODE_N - 1);
+		}
+	}
+
 	@:hxmc.noGc public static function countYoung(start:Ptr, end:Ptr) {
 		if (Mem.getI32(Mem.sym("rt_nthreads"), 0) > 1) allocMulti = true;
 		var p = start;
@@ -686,6 +710,8 @@ class Census {
 			}
 			var b = objSize(p.add(8));
 			countAlloc(h, b);
+			var t = h.toInt() & 0xFFFF;
+			if (t < ntypes() && Types.tk(Types.ty(t)) == Types.TK_CLOSURE) countCode(Mem.getI64(p, 8), b);
 			p = p.addL(b);
 		}
 	}
@@ -734,5 +760,23 @@ class Census {
 			r.flush();
 		}
 		LibC.free(order);
+		if (codeTab.isNull()) return;
+		// (the closures by code: their functions' addresses, decimal, as in <exe>.syms)
+		r.str("closures by code:\n");
+		r.flush();
+		var co = sortDesc(codeTab, 24, 8, CODE_N);
+		for (i in 0...(top < CODE_N ? top : CODE_N)) {
+			var e = codeTab.add(24 * Mem.getI32(co, 4 * i));
+			if (Mem.getI64(e, 8) == 0) break;
+			r.str("  code ");
+			r.int(Mem.getI64(e, 0), 12);
+			r.ch(" ".code);
+			r.int(Mem.getI64(e, 8), 10);
+			r.ch(" ".code);
+			r.fixed(mb(Mem.getI64(e, 16)), 2, 9);
+			r.str("\n");
+			r.flush();
+		}
+		LibC.free(co);
 	}
 }
