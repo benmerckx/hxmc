@@ -44,9 +44,17 @@ class WinSys {
 		return s;
 	}
 
+	// the units of the wide C string at r, before its 0
+	@:hxmc.unsafe static function wlen(r:Ref<UInt16>):Int {
+		var p = r.ptr(), n = 0;
+		while (Mem.getU16At(p, 0, n) != 0)
+			n++;
+		return n;
+	}
+
 	// the wide C string at r, memory of the system's, as a String (null for none)
 	static function ofWide(r:Ref<UInt16>):String
-		return r.isNull() ? null : ofUnits(r.ptr(), Win32.wcslen(r).toInt());
+		return r.isNull() ? null : ofUnits(r.ptr(), wlen(r));
 
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
@@ -105,13 +113,13 @@ class WinSys {
 		var e = block;
 		var n = 0;
 		while (Mem.getU16(e, 0) != 0) {
-			e = e.add(2 * (Win32.wcslen(Ref.raw(e)).toInt() + 1));
+			e = e.add(2 * (wlen(Ref.raw(e)) + 1));
 			n++;
 		}
 		e = block;
 		for (_ in 0...n) {
 			a.push(ofWide(Ref.raw(e)));
-			e = e.add(2 * (Win32.wcslen(Ref.raw(e)).toInt() + 1));
+			e = e.add(2 * (wlen(Ref.raw(e)) + 1));
 		}
 		Win32.FreeEnvironmentStringsW(block);
 		return a;
@@ -583,14 +591,14 @@ class WinSys {
 
 	// caml_search_exe_in_path: SearchPath with .exe, else the name as given
 	// (on the data stack, a 0 after)
-	static function searchExe(name:Ref<UInt16>, ext:Ref<UInt16>):Slice<UInt16> {
+	@:hxmc.scoped static function searchExe(name:Ref<UInt16>, ext:Ref<UInt16>):Slice<UInt16> {
 		var n = Win32.SearchPathW(Ptr.nil(), name, ext, 0, Ref.nil(), Ptr.nil());
 		if (n > 0) {
 			var f:Slice<UInt16> = Scope.slice(n + 1);
 			var m = Win32.SearchPathW(Ptr.nil(), name, ext, n + 1, f.ref(0), Ptr.nil());
 			if (m > 0 && m <= n) return f;
 		}
-		var l = Win32.wcslen(name).toInt();
+		var l = wlen(name);
 		var c:Slice<UInt16> = Scope.slice(l + 1), src:Slice<UInt16> = Slice.raw(name.ptr(), l);
 		for (k in 0...l)
 			c[k] = src[k];
@@ -598,30 +606,29 @@ class WinSys {
 	}
 
 	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
-		var line:String;
-		var exe:Slice<UInt16>;
-		var ext = wide(".exe");
-		if (!Str.isNull(args)) {
-			// Unix.create_process cmd (cmd :: args)
-			var b = new StringBuf();
-			cmdlineAdd(b, true, cmd);
-			for (a in args)
-				cmdlineAdd(b, false, a);
-			line = b.toString();
-			exe = searchExe(wide(cmd), ext);
-		} else {
-			// Unix.open_process_full: %COMSPEC% /c cmd
-			var shell = Win32._wgetenv(wide("COMSPEC"));
-			if (shell.isNull()) return -1;
-			line = Str.concat(Str.concat(ofWide(shell), " /c "), cmd);
-			exe = searchExe(shell, ext);
-		}
+		// Unix.create_process cmd (cmd :: args); without arguments,
+		// Unix.open_process_full: %COMSPEC% /c cmd (the wide strings in the
+		// function's own scope: no branch's)
+		var direct = !Str.isNull(args);
+		var shell = direct ? Ref.nil() : Win32._wgetenv(wide("COMSPEC"));
+		if (!direct && shell.isNull()) return -1;
+		var exe = searchExe(direct ? wide(cmd) : shell, wide(".exe"));
+		var line = direct ? cmdline(cmd, args) : Str.concat(Str.concat(ofWide(shell), " /c "), cmd);
 		var r = new Fixed<Int, 4>();
 		if (!spawn(exe.ref(0), wide(line), r.view())) return -1;
 		fds[0] = r[0];
 		fds[1] = r[1];
 		fds[2] = r[2];
 		return r[3];
+	}
+
+	// Unix.make_cmdline: cmd and its arguments, quoted
+	static function cmdline(cmd:String, args:Array<String>):String {
+		var b = new StringBuf();
+		cmdlineAdd(b, true, cmd);
+		for (a in args)
+			cmdlineAdd(b, false, a);
+		return b.toString();
 	}
 
 	// CreateProcess with three pipes: r its in, out and err descriptors and

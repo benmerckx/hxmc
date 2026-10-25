@@ -32,7 +32,6 @@ import hxmc.scoped.Slice;
 	static function _wmkdir(path:Ref<UInt16>):Int;
 	static function _wunlink(path:Ref<UInt16>):Int;
 	static function _wrmdir(path:Ref<UInt16>):Int;
-	static function wcslen(s:Ref<UInt16>):I64;
 	static function _getch():Int;
 	static function _getche():Int;
 	static function _errno():Ref<Int>;
