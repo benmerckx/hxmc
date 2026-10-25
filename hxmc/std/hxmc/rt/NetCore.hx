@@ -26,9 +26,12 @@ extern class NetCore {
 	// select with other threads: they run until a descriptor is ready or
 	// the timeout passes (rt_wait_fds polls them in a safe region), then
 	// select looks without waiting. The entries: struct pollfd (int fd,
-	// short events, short revents) or WSAPOLLFD (SOCKET, short, short).
+	// short events, short revents) or WSAPOLLFD (SOCKET, short, short), on
+	// the data stack (it does not move during the safe region; freed where
+	// the calling function's scope ends, on a throw too).
 	public static inline function waitFds(r:Array<Int>, nr:Int, w:Array<Int>, nw:Int, o:Array<Int>, no:Int, timeout:Float) {
-		var p = Mem.os() == 2 ? LibC.malloc(16 * (nr + nw + no + 1)) : LibC.malloc(8 * (nr + nw + no + 1));
+		var entries:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.scratch((Mem.os() == 2 ? 16 : 8) * (nr + nw + no + 1));
+		var p = #if hxmc.wasm_gc Ptr.nil() #else entries.ptr() #end;
 		var k = 0;
 		inline function add(fd:Int, events:Int) {
 			Mem.setI32(p, 8 * k, fd);
@@ -49,7 +52,6 @@ extern class NetCore {
 		for (i in 0...no)
 			if (Mem.os() == 2) addWin(o[i], 0x200) else add(o[i], 2); // POLLRDBAND, POLLPRI
 		Rt.rt_wait_fds(p, k, timeout);
-		LibC.free(p);
 	}
 
 	// gethostbyname/gethostbyaddr return static data: one lookup at a time
