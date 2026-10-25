@@ -1,10 +1,13 @@
 import hxmc.scoped.*;
+import hxmc.unsafe.UInt8;
 
 // The text cores on both faces (docs/plans/lowlevel.md, "One core, two
 // faces"): numbers to text and back (hxmc.rt.FloatText: Std.string and
 // Std.parseFloat on the GC face, Str.ofFloat and toFloat on the scoped one)
-// and case mapping beyond ASCII (hxmc.rt.CaseMap: String's toUpperCase and
-// toLowerCase, Str.toCase). The two faces must agree on every value.
+// case mapping beyond ASCII (hxmc.rt.CaseMap: String's toUpperCase and
+// toLowerCase, Str.toCase) and String's search, order, hash and UTF-8
+// (hxmc.rt.TextCore: Str's find, findLast, compare, hash, utf8, ofUtf8).
+// The two faces must agree on every value.
 @:hxmc.scoped class Code {
 	public static function ofFloat(v:Float, out:Grow<Int>) {
 		var s = Str.ofFloat(v);
@@ -19,6 +22,25 @@ import hxmc.scoped.*;
 		var s = text.toCase(toUpper);
 		for (i in 0...s.length)
 			out.push(s[i]);
+	}
+
+	public static function search(a:Str, b:Str, out:Grow<Int>) {
+		out.push(a.find(b));
+		out.push(a.find(b, 2));
+		out.push(a.findLast(b, a.length));
+		out.push(a.findLast(b, 1));
+		out.push(a.compare(b));
+		out.push(a.hash());
+	}
+
+	// the UTF-8 round trip: the units again, and the byte count
+	public static function utf8(text:Str, out:Grow<Int>):Int {
+		var buf:Slice<UInt8> = Scope.slice(3 * text.length + 1);
+		var n = text.utf8(buf.ptr());
+		var s = Str.ofUtf8(buf.ptr(), n);
+		for (i in 0...s.length)
+			out.push(s[i]);
+		return n;
 	}
 }
 
@@ -63,7 +85,30 @@ class ScopedText {
 					bad++;
 				}
 			}
+		var hashes = [];
+		var pairs = [["hello", "l"], ["hello", "lo"], ["abcabc", "bc"], ["", ""], ["x", ""], ["abc", "abd"], ["ab", "abc"], ["Ωμέγα", "έ"], ["a😀b", "😀"]];
+		for (p in pairs) {
+			var a = p[0], b = p[1];
+			var g = new Grow<Int>();
+			Code.search(Str.copyOf(a), Str.copyOf(b), g);
+			hashes.push(g[5]);
+			var expect = [a.indexOf(b), a.indexOf(b, 2), a.lastIndexOf(b, a.length), a.lastIndexOf(b, 1), Reflect.compare(a, b)];
+			for (i in 0...expect.length)
+				if (g[i] != expect[i]) {
+					trace('search("$a", "$b") #$i: ${g[i]}, String: ${expect[i]}');
+					bad++;
+				}
+		}
+		for (w in words.concat(["a😀b", "\u{10FFFF}x"])) {
+			var g = new Grow<Int>();
+			var n = Code.utf8(Str.copyOf(w), g);
+			if (units(g) != w || n != haxe.io.Bytes.ofString(w).length) {
+				trace('utf8("$w"): $n');
+				bad++;
+			}
+		}
 		trace(bad == 0 ? "the faces agree" : '$bad differ');
+		trace(hashes.join(" "));
 		trace([for (v in values) Std.string(v)].join(" "));
 		trace([for (t in texts) Std.string(Std.parseFloat(t))].join(" "));
 		trace([for (w in words) w.toUpperCase() + "/" + w.toLowerCase()].join(" "));

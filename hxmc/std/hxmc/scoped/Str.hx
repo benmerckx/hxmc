@@ -2,6 +2,7 @@ package hxmc.scoped;
 
 import hxmc.rt.DataStacks;
 import hxmc.rt.Abort;
+import hxmc.rt.TextCore;
 import hxmc.unsafe.*;
 
 // Text in scoped memory (docs/plans/lowlevel.md, "Scoped memory"): a view of
@@ -67,13 +68,38 @@ abstract Str(StrData) {
 		return r;
 	}
 
-	// FNV-1a over the units (String's hash)
-	public inline function hash():Int {
-		var h = 0x811C9DC5;
-		for (i in 0...this.length)
-			h = (h ^ Mem.getU16(this.ptr, 2 * i)) * 0x01000193;
-		return h;
+	#if !hxmc.wasm_gc // (TextCore over linear memory's units)
+	// the first index from `from` where the units of s start, or -1 (String's
+	// indexOf: hxmc.rt.TextCore)
+	public inline function find(s:Str, from:Int = 0):Int
+		return TextCore.indexOf(this.ptr, this.length, (s.ptr() : Ptr), s.length, from);
+
+	// the last index at most `from` where they start, or -1 (lastIndexOf)
+	public inline function findLast(s:Str, from:Int):Int
+		return TextCore.lastIndexOf(this.ptr, this.length, (s.ptr() : Ptr), s.length, from);
+
+	// -1, 0 or 1, as Reflect.compare orders Strings
+	public inline function compare(o:Str):Int
+		return TextCore.compare(this.ptr, this.length, (o.ptr() : Ptr), o.length);
+
+	// String's hash (FNV-1a over the units, never 0)
+	public inline function hash():Int
+		return TextCore.hash(this.ptr, this.length);
+
+	// the n UTF-8 bytes at p decoded (as String's: a byte that begins no
+	// well-formed sequence is one unit U+DC80 to U+DCFF), fresh memory of the scope
+	public static inline function ofUtf8(p:Ptr<UInt8>, n:Int):Str {
+		var units = TextCore.utf8Units((p : Ptr), 0, n);
+		var d = DataStacks.alloc(2 * units);
+		TextCore.utf8Decode((p : Ptr), 0, n, d);
+		return new Str(d, units);
 	}
+
+	// the UTF-8 bytes into buf (3 * length + 1 bytes), NUL-terminated: the byte count
+	public inline function utf8(buf:Ptr<UInt8>):Int
+		return TextCore.utf8Encode(this.ptr, this.length, (buf : Ptr));
+
+	#end
 
 	// a copy in upper case (toUpper) or lower case, as String's
 	// (hxmc.rt.CaseMap: the simple mappings of the BMP), fresh memory of the scope

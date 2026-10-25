@@ -86,138 +86,18 @@ class Str {
 	@:hxmc.host("hx_str_of_utf8") public static function ofUtf8(c:Ptr, n:Int):String
 		return decode(Repr.octetsAt(c, n), 0, n);
 
-	// the UTF-8 bytes [from, end) of o as a string (not allocating
-	// before it: in linear memory o may be the address of a heap object's).
-	// A byte that does not begin a well-formed sequence (a stray continuation
-	// byte; a sequence cut short, overlong, of a surrogate or past U+10FFFF)
-	// becomes one unit, U+DC80 to U+DCFF for 0x80 to 0xFF (as Python's
-	// surrogateescape), which utf8Into writes back as that byte: any bytes
-	// decoded and encoded again are the same bytes.
+	// the UTF-8 bytes [from, end) of o as a string (TextCore.utf8Decode; not
+	// allocating before it: in linear memory o may be the address of a heap
+	// object's)
 	public static inline function decode(o:Octets, from:Int, end:Int):String {
-		// UTF-16 units first
-		var units = 0, i = from;
-		while (i < end) {
-			#if !hxmc.wasm_gc
-			// (four ASCII bytes at a time)
-			if (i + 4 <= end && Mem.getI32(o.at(i), 0) & 0x80808080 == 0) {
-				units += 4;
-				i += 4;
-				continue;
-			}
-			#end
-			var b = o.get(i);
-			if (b < 0x80) {
-				units++;
-				i++;
-			} else {
-				var k = seqLen(o, i, end, b);
-				if (k == 0) {
-					units++;
-					i++;
-				} else {
-					units += k == 4 ? 2 : 1;
-					i += k;
-				}
-			}
-		}
-		var s = make(units);
-		var d = chars(s);
-		var j = 0;
-		i = from;
-		while (i < end) {
-			#if !hxmc.wasm_gc
-			// (four ASCII bytes at a time: two units per store)
-			if (i + 4 <= end) {
-				var x = Mem.getI32(o.at(i), 0);
-				if (x & 0x80808080 == 0) {
-					Mem.setI32(d.at(j), 0, (x & 0xFF) | ((x & 0xFF00) << 8));
-					Mem.setI32(d.at(j + 2), 0, ((x >>> 16) & 0xFF) | ((x >>> 8) & 0xFF0000));
-					i += 4;
-					j += 4;
-					continue;
-				}
-			}
-			#end
-			var b = o.get(i);
-			if (b < 0x80) {
-				d.set(j++, b);
-				i++;
-				continue;
-			}
-			var k = seqLen(o, i, end, b);
-			if (k == 0) {
-				d.set(j++, 0xDC00 | b);
-				i++;
-				continue;
-			}
-			var cp = if (k == 2) ((b & 0x1F) << 6) | (o.get(i + 1) & 0x3F) else if (k == 3)
-				((b & 0x0F) << 12) | ((o.get(i + 1) & 0x3F) << 6) | (o.get(i + 2) & 0x3F) else
-				((b & 0x07) << 18) | ((o.get(i + 1) & 0x3F) << 12) | ((o.get(i + 2) & 0x3F) << 6) | (o.get(i + 3) & 0x3F);
-			i += k;
-			if (cp >= 0x10000) {
-				cp -= 0x10000;
-				d.set(j++, 0xD800 | (cp >> 10));
-				d.set(j++, 0xDC00 | (cp & 0x3FF));
-			} else d.set(j++, cp);
-		}
+		var s = make(TextCore.utf8Units(o, from, end));
+		TextCore.utf8Decode(o, from, end, chars(s));
 		return s;
 	}
 
-	// the length of the well-formed UTF-8 sequence at i, whose first byte b is
-	// not ASCII (Unicode's table 3-7); 0 when there is none
-	static inline function seqLen(o:Octets, i:Int, end:Int, b:Int):Int {
-		return if (b < 0xC2) 0 else if (b < 0xE0) (inByte(o, i + 1, end, 0x80, 0xBF) ? 2 : 0) else if (b < 0xF0)
-			(inByte(o, i + 1, end, b == 0xE0 ? 0xA0 : 0x80, b == 0xED ? 0x9F : 0xBF) && inByte(o, i + 2, end, 0x80, 0xBF) ? 3 : 0) else if (b < 0xF5)
-			(inByte(o, i + 1, end, b == 0xF0 ? 0x90 : 0x80, b == 0xF4 ? 0x8F : 0xBF)
-				&& inByte(o, i + 2, end, 0x80, 0xBF)
-				&& inByte(o, i + 3, end, 0x80, 0xBF) ? 4 : 0) else 0;
-	}
-
-	static inline function inByte(o:Octets, p:Int, end:Int, lo:Int, hi:Int):Bool {
-		return p < end && o.get(p) >= lo && o.get(p) <= hi;
-	}
-
-	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count.
-	// A lone U+DC80 to U+DCFF is the byte decode read it from (0x80 to 0xFF).
-	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int {
-		var c = chars(s);
-		var n = len(s), j = 0, i = 0;
-		while (i < n) {
-			var cp = c.get(i);
-			if (cp < 0x80) {
-				buf.set(j++, cp);
-				i++;
-				continue;
-			}
-			if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < n) {
-				var lo = c.get(i + 1);
-				if (lo >= 0xDC00 && lo < 0xE000) {
-					cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-					i++;
-				}
-			} else if (cp >= 0xDC80 && cp < 0xDD00) {
-				buf.set(j++, cp & 0xFF);
-				i++;
-				continue;
-			}
-			if (cp < 0x800) {
-				buf.set(j++, 0xC0 | (cp >> 6));
-				buf.set(j++, 0x80 | (cp & 0x3F));
-			} else if (cp < 0x10000) {
-				buf.set(j++, 0xE0 | (cp >> 12));
-				buf.set(j++, 0x80 | ((cp >> 6) & 0x3F));
-				buf.set(j++, 0x80 | (cp & 0x3F));
-			} else {
-				buf.set(j++, 0xF0 | (cp >> 18));
-				buf.set(j++, 0x80 | ((cp >> 12) & 0x3F));
-				buf.set(j++, 0x80 | ((cp >> 6) & 0x3F));
-				buf.set(j++, 0x80 | (cp & 0x3F));
-			}
-			i++;
-		}
-		buf.set(j, 0);
-		return j;
-	}
+	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count
+	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int
+		return TextCore.utf8Encode(chars(s), len(s), buf);
 
 	// a malloc'ed UTF-8 copy ("null" for null)
 	@:hxmc.host("hx_str_to_utf8") @:hxmc.noGc static function toUtf8(s:String):Ptr {
@@ -241,14 +121,7 @@ class Str {
 		if (Repr.same(a, b)) return 0;
 		if (isNull(a)) return -1;
 		if (isNull(b)) return 1;
-		var na = len(a), nb = len(b);
-		var n = na < nb ? na : nb;
-		var ca = chars(a), cb = chars(b);
-		for (i in 0...n) {
-			var x = ca.get(i), y = cb.get(i);
-			if (x != y) return x < y ? -1 : 1;
-		}
-		return na < nb ? -1 : na > nb ? 1 : 0;
+		return TextCore.compare(chars(a), len(a), chars(b), len(b));
 	}
 
 	// FNV-1a over the units, never 0, kept in the string's header where it
@@ -261,11 +134,7 @@ class Str {
 	}
 
 	@:hxmc.noGc static function hashSlow(s:String):Int {
-		var c = chars(s);
-		var x = 0x811C9DC5;
-		for (i in 0...len(s))
-			x = (x ^ c.get(i)) * 16777619;
-		if (x == 0) x = 1;
+		var x = TextCore.hash(chars(s), len(s));
 		Repr.storeHash(s, x);
 		return x;
 	}
@@ -388,34 +257,14 @@ class Str {
 		return r;
 	}
 
-	@:hxmc.host("String_indexOf") @:hxmc.noGc static function indexOf(s:String, sub:String, start:Null<Int>):Int {
-		var n = len(s), m = len(sub);
-		var from:Int = start == null ? 0 : start;
-		if (from < 0) from = 0;
-		// ("" past the end: the length, as String.indexOf says; upstream's TestString)
-		if (m == 0) return from <= n ? from : n;
-		var c = chars(s), d = chars(sub);
-		var i = from;
-		while (i + m <= n) {
-			if (Repr.matchAt(c, d, i, m)) return i;
-			i++;
-		}
-		return -1;
-	}
+	// ("" past the end: the length, as String.indexOf says; upstream's TestString)
+	@:hxmc.host("String_indexOf") @:hxmc.noGc static function indexOf(s:String, sub:String, start:Null<Int>):Int
+		return TextCore.indexOf(chars(s), len(s), chars(sub), len(sub), start == null ? 0 : start);
 
+	// ("" before the start: 0, as Eval and ECMAScript; upstream's Issue5271)
 	@:hxmc.host("String_lastIndexOf") @:hxmc.noGc static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
-		var n = len(s), m = len(sub);
-		var from:Int = start == null ? n : start;
-		if (from > n - m) from = n - m;
-		// ("" before the start: 0, as Eval and ECMAScript; upstream's Issue5271)
-		if (m == 0) return from >= 0 ? from : 0;
-		var c = chars(s), d = chars(sub);
-		var i = from;
-		while (i >= 0) {
-			if (Repr.matchAt(c, d, i, m)) return i;
-			i--;
-		}
-		return -1;
+		var n = len(s);
+		return TextCore.lastIndexOf(chars(s), n, chars(sub), len(sub), start == null ? n : start);
 	}
 
 	@:hxmc.host("String_substr") static function substr(s:String, pos:Int, lenp:Null<Int>):String {
