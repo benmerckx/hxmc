@@ -38,7 +38,7 @@ class FloatText {
 	// past LIMBS (overflow ends the program first)
 
 	static inline function big():Slice<Int>
-		return Scope.slice(LIMBS + 1);
+		return Scope.scratch(LIMBS + 1);
 
 	static inline function blen(b:Slice<Int>):Int
 		return b.unsafeGet(0);
@@ -63,9 +63,8 @@ class FloatText {
 		setLen(b, n);
 	}
 
-	static function bcopy(d:Slice<Int>, s:Slice<Int>)
-		for (i in 0...blen(s) + 1)
-			d.unsafeSet(i, s.unsafeGet(i));
+	static inline function bcopy(d:Slice<Int>, s:Slice<Int>)
+		Slice.copy(d, s, blen(s) + 1);
 
 	// b = b * m + add (m, add < 2^32)
 	static function bmulAdd(b:Slice<Int>, m:I64, add:I64) {
@@ -219,11 +218,11 @@ class FloatText {
 	static inline function lower(c:Int):Int
 		return c >= "A".code && c <= "Z".code ? c + 32 : c;
 
-	// the byte at p (p >= 0), 0 past the end
-	static inline function at(s:Slice<UInt8>, p:Int):Int
-		return p < s.length ? s.unsafeGet(p) : 0;
+	// the unit at p (p >= 0), 0 past the end
+	static inline function at(s:Str, p:Int):Int
+		return p < s.length ? s.unit(p) : 0;
 
-	static function matchWord(s:Slice<UInt8>, p:Int, lit:Str):Bool {
+	static function matchWord(s:Str, p:Int, lit:Str):Bool {
 		for (i in 0...lit.length)
 			if (lower(at(s, p + i)) != lit[i]) return false;
 		return true;
@@ -240,9 +239,10 @@ class FloatText {
 		return r;
 	}
 
-	// the number s starts with (after blanks), as strtod reads it, and the
-	// index after it (0: none, the value then 0)
-	public static function parse(s:Slice<UInt8>):Parsed {
+	// the number the text s starts with (after blanks), as strtod reads it
+	// (a unit past ASCII ends it), and the index after it (0: none, the value
+	// then 0)
+	public static function parse(s:Str):Parsed {
 		var p = 0;
 		while (at(s, p) == 32 || (at(s, p) >= 9 && at(s, p) <= 13))
 			p++;
@@ -285,7 +285,7 @@ class FloatText {
 		return isDigit(c) ? c - "0".code : lower(c) - "a".code + 10;
 
 	// hexadecimal (after "0x"): its value and end
-	static function hex(s:Slice<UInt8>, p:Int):Parsed {
+	static function hex(s:Str, p:Int):Parsed {
 		var m = 0.0;
 		var e = 0, digits = 0;
 		var seenDot = false;
@@ -332,12 +332,85 @@ class FloatText {
 		return new Parsed(m, p);
 	}
 
-	// a decimal number at p: its value and end (p: none)
-	static function decimal(s:Slice<UInt8>, p:Int):Parsed {
+	// a decimal number at p: its value and end (p: none). Its digits scanned
+	// first without memory of their own: a short one in range (Clinger's fast
+	// path: at most 15 significant digits, a power of ten up to 22) is exact
+	// in double arithmetic; any other is read again by decimalExact
+	static function decimal(s:Str, p:Int):Parsed {
+		var start = p;
+		var nd = 0, nz = 0, dropped = 0, intDigits = 0, fracZeros = 0;
+		var any = false, seenDot = false, sticky = false, lead = true;
+		var mant:I64 = 0, mantNz:I64 = 0;
+		while (true) {
+			var c = at(s, p);
+			if (c == ".".code && !seenDot) {
+				seenDot = true;
+				p++;
+				continue;
+			}
+			if (!isDigit(c)) break;
+			any = true;
+			if (lead && c == "0".code) {
+				if (seenDot) fracZeros++;
+				p++;
+				continue;
+			}
+			lead = false;
+			if (nd < MAXDIG) {
+				if (nd < 18) mant = mant * 10 + (c - "0".code);
+				nd++;
+				if (c != "0".code) {
+					nz = nd;
+					mantNz = mant;
+				}
+				if (!seenDot) intDigits++;
+			} else {
+				if (c != "0".code) sticky = true;
+				if (!seenDot) dropped++;
+			}
+			p++;
+		}
+		if (!any) return new Parsed(0, start);
+		var e10 = 0;
+		if (lower(at(s, p)) == "e".code) {
+			var q = p + 1;
+			var eneg = false;
+			if (at(s, q) == "-".code || at(s, q) == "+".code) {
+				eneg = at(s, q) == "-".code;
+				q++;
+			}
+			if (isDigit(at(s, q))) {
+				var x = 0;
+				while (isDigit(at(s, q))) {
+					if (x < 100000) x = x * 10 + at(s, q) - "0".code;
+					q++;
+				}
+				e10 = eneg ? -x : x;
+				p = q;
+			}
+		}
+		if (sticky) return decimalExact(s, start);
+		// trailing zeros of the kept digits do not count
+		if (nz < intDigits) {
+			dropped += intDigits - nz;
+			intDigits = nz;
+		}
+		nd = nz;
+		if (nd == 0) return new Parsed(0.0, p);
+		var k = intDigits > 0 ? e10 + dropped - (nd - intDigits) : e10 - fracZeros - nd;
+		if (nd <= 15 && k >= -22 && k <= 22) {
+			var v:Float = cast mantNz;
+			return new Parsed(k >= 0 ? v * pow10(k) : v / pow10(-k), p);
+		}
+		return decimalExact(s, start);
+	}
+
+	// the same, any number of digits, exactly
+	static function decimalExact(s:Str, p:Int):Parsed {
 		var start = p;
 		// (no more digits than the text has left)
 		var rest = s.length - p;
-		var dig:Slice<UInt8> = Scope.slice((rest < MAXDIG ? rest : MAXDIG) + 8);
+		var dig:Slice<UInt8> = Scope.scratch((rest < MAXDIG ? rest : MAXDIG) + 8);
 		var nd = 0, dropped = 0, intDigits = 0;
 		var any = false, seenDot = false, sticky = false;
 		var lead = true;
@@ -358,7 +431,9 @@ class FloatText {
 			}
 			lead = false;
 			if (nd < MAXDIG) {
-				dig[nd] = c - "0".code;
+				// (unchecked: nd is below the digits read, which fit)
+				var digit = c - "0".code;
+				dig.unsafeSet(nd, digit);
 				nd++;
 				if (!seenDot) intDigits++;
 			} else {
@@ -387,7 +462,7 @@ class FloatText {
 			}
 		}
 		// trailing zeros of the kept digits do not count
-		while (nd > 0 && dig[nd - 1] == 0 && !sticky) {
+		while (nd > 0 && dig.unsafeGet(nd - 1) == 0 && !sticky) {
 			nd--;
 			if (nd < intDigits) {
 				intDigits--;
@@ -406,13 +481,13 @@ class FloatText {
 		if (nd <= 15 && !sticky && k >= -22 && k <= 22) {
 			var v = 0.0;
 			for (i in 0...nd)
-				v = v * 10 + dig[i];
+				v = v * 10 + (dig.unsafeGet(i) : Int);
 			return new Parsed(k >= 0 ? v * pow10(k) : v / pow10(-k), p);
 		}
 		var d = big();
 		bset(d, 0);
 		for (i in 0...nd)
-			bmulAdd(d, 10, dig[i]);
+			bmulAdd(d, 10, (dig.unsafeGet(i) : Int));
 		var kk = k;
 		if (sticky) {
 			bmulAdd(d, 10, 1);
@@ -422,7 +497,7 @@ class FloatText {
 		var est = 0.0;
 		var n17 = nd < 17 ? nd : 17;
 		for (i in 0...n17)
-			est = est * 10 + dig[i];
+			est = est * 10 + (dig.unsafeGet(i) : Int);
 		var ek = k + nd - n17;
 		if (ek > 0) {
 			while (ek > 22) {
@@ -471,7 +546,7 @@ class FloatText {
 		}
 		// decimal digits, 9 at a time from the low end (unchecked: a double's
 		// exact value has fewer than 1100 digits)
-		var tmp:Slice<UInt8> = Scope.slice(1200);
+		var tmp:Slice<UInt8> = Scope.scratch(1200);
 		var nt = 0;
 		while (blen(n) > 0) {
 			var r = bdivSmall(n, 1000000000);
@@ -523,7 +598,7 @@ class FloatText {
 			return o;
 		}
 		// the exact digits d1 d2 ... with d1 at 10^e10; those kept: down to 10^-decimals
-		var dig:Slice<UInt8> = Scope.slice(1200);
+		var dig:Slice<UInt8> = Scope.scratch(1200);
 		var nd = 0, e10 = 0;
 		if (v != 0) {
 			var ep:Slice<Int> = Scope.slice(1);
@@ -539,16 +614,15 @@ class FloatText {
 		if (keep < nd) {
 			var first = keep >= 0 ? digit(keep) : 0;
 			if (keep < 0) up = false else if (first > 5) up = true else if (first == 5) {
-				var rest = false;
-				for (i in keep + 1...nd)
-					if (digit(i) != 0) rest = true;
+				// (exactDigits drops trailing zeros: the last digit is not 0)
+				var rest = nd > keep + 1;
 				up = rest || (keep > 0 && digit(keep - 1) % 2 == 1);
 			}
 		}
 		// the kept digits as a number string: integer part from 10^max(e10, 0)
 		var top = e10 > 0 ? e10 : 0;
 		var n = top + decimals + 1; // digits from 10^top down to 10^-decimals
-		var d:Slice<UInt8> = Scope.slice(1400);
+		var d:Slice<UInt8> = Scope.scratch(1400);
 		for (k in 0...n) {
 			var i = e10 - (top - k); // index of 10^(top - k)
 			d[k] = i < keep ? digit(i) : 0;
@@ -576,9 +650,11 @@ class FloatText {
 	// the shortest representation that reads back as the same double,
 	// formatted like JavaScript, into out (at most 24 bytes): its length
 	public static function format(v:Float, out:Slice<UInt8>):Int {
+		// (written unchecked: at most 24 bytes, out checked for them)
+		if (out.length < 24) Abort.outOfRange();
 		var o = 0;
 		inline function put(c:Int) {
-			out[o] = c;
+			out.unsafeSet(o, c);
 			o++;
 		}
 		if (v != v) {
@@ -601,14 +677,14 @@ class FloatText {
 		}
 		var neg = v < 0;
 		if (neg) v = -v;
-		var dig:Slice<UInt8> = Scope.slice(1200);
+		var dig:Slice<UInt8> = Scope.scratch(1200);
 		var ep:Slice<Int> = Scope.slice(1);
 		var nd = exactDigits(v, dig, ep);
 		var e10 = ep[0];
 		// (the digits read unchecked: below nd, which exactDigits keeps within
 		// dig, and below prec, at most 17, within cand)
 		// the first precision whose correctly rounded decimal reads back as v
-		var cand:Slice<UInt8> = Scope.slice(24);
+		var cand:Slice<UInt8> = Scope.scratch(24);
 		var b = bits(v);
 		var ex = ((b >>> 52) & 0x7FF).toInt();
 		var m = b & ((((1 : I64) << 52)) - 1);
@@ -626,9 +702,9 @@ class FloatText {
 				cand.unsafeSet(i, i < nd ? dig.unsafeGet(i) : 0);
 			if (nd > prec) {
 				var next:Int = dig.unsafeGet(prec);
-				var rest = false;
-				for (i in prec + 1...nd)
-					if (dig.unsafeGet(i) != 0) rest = true;
+				// (a digit past the next that is not 0: the last is not, exactDigits
+				// drops trailing zeros)
+				var rest = nd > prec + 1;
 				var up = next > 5 || (next == 5 && (rest || (cand.unsafeGet(prec - 1) & 1) != 0));
 				if (up) {
 					var i = prec - 1;

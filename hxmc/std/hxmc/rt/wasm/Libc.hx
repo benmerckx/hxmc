@@ -22,7 +22,13 @@ class Libc {
 		// (typed under -D hxmc.wasm-gc, not run there)
 		return 0;
 		#else
-		var r = hxmc.rt.FloatText.parse(new hxmc.scoped.Slice((s : Ptr<hxmc.unsafe.UInt8>), Heap.strlen(s).toInt()));
+		// (the bytes as units, ASCII as they are)
+		var n = Heap.strlen(s).toInt();
+		var u = Heap.malloc(2 * n + 2);
+		for (i in 0...n)
+			Mem.setU16At(u, 0, i, Mem.getU8(s, i));
+		var r = hxmc.rt.FloatText.parse(new hxmc.scoped.Str(u, n));
+		Heap.free(u);
 		if (!end.isNull()) Mem.setPtr(end, 0, s.add(r.end));
 		return r.value;
 		#end

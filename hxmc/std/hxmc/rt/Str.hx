@@ -182,7 +182,7 @@ class Str {
 	}
 
 	@:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
-		var buf:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.slice(32);
+		var buf:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.scratch(32);
 		var n = FloatText.format(v, buf);
 		var s = make(n);
 		for (i in 0...n)
@@ -403,15 +403,8 @@ class Str {
 
 	@:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
 		if (isNull(s)) return Math.NaN;
-		// ASCII bytes for FloatText (any other unit ends the number, as its UTF-8 would)
-		var n = len(s);
-		var buf:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.slice(n);
-		var c = chars(s);
-		for (i in 0...n) {
-			var u = c.get(i);
-			buf[i] = u < 0x80 ? u : 0x80;
-		}
-		var r = FloatText.parse(buf);
+		// (any unit past ASCII ends the number, as its UTF-8 would)
+		var r = FloatText.parse(view(s));
 		return r.end == 0 ? Math.NaN : r.value;
 	}
 

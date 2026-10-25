@@ -131,13 +131,7 @@ abstract Str(StrData) {
 	}
 
 	public inline function toFloat():Float {
-		var n = this.length;
-		var buf:Slice<UInt8> = Scope.slice(n);
-		for (i in 0...n) {
-			var u = W.strGet(this.s, this.off + i);
-			buf[i] = u < 0x80 ? u : 0x80;
-		}
-		var r = hxmc.rt.FloatText.parse(buf);
+		var r = hxmc.rt.FloatText.parse(abstract);
 		return r.end == 0 ? Math.NaN : r.value;
 	}
 
@@ -338,13 +332,7 @@ abstract Str(StrData) {
 	// the number the text starts with (after blanks), as Std.parseFloat reads
 	// it; NaN: none
 	public inline function toFloat():Float {
-		var n = this.length;
-		var buf:Slice<UInt8> = Scope.slice(n);
-		for (i in 0...n) {
-			var u = Mem.getU16(this.ptr, 2 * i);
-			buf[i] = u < 0x80 ? u : 0x80;
-		}
-		var r = hxmc.rt.FloatText.parse(buf);
+		var r = hxmc.rt.FloatText.parse(abstract);
 		return r.end == 0 ? Math.NaN : r.value;
 	}
 

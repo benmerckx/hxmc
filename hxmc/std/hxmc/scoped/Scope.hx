@@ -25,6 +25,18 @@ class Scope {
 		#end
 	}
 
+	// n elements not zeroed (WasmGC's are): for the std's cores, which write
+	// every element before reading it, of scalars only (garbage read as a
+	// reference would not be memory safe)
+	@:noCompletion public static inline function scratch<T>(n:Int):Slice<T> {
+		#if hxmc.wasm_gc
+		return cast SliceData.fresh(new NativeArray<T>(n), n);
+		#else
+		var p = DataStacks.alloc((Ptr.nil() : Ptr<T>).offset(n).toI64().toInt());
+		return new Slice((p : Ptr<T>), n);
+		#end
+	}
+
 	// the bytes of the current thread's scoped memory in use, and its
 	// Grows and Pools live (WasmGC: none, the engine's collector holding it)
 	public static inline function used():Int
