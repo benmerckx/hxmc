@@ -33,6 +33,10 @@ class MemRepr {
 	public static inline function stdString(v:Dynamic):String
 		return Dyn.stdString(v);
 
+	// whether Haxe's == of x and any value is identity (Dyn.identityEq)
+	public static inline function identityEq(x:Dynamic):Bool
+		return Dyn.identityEq(x);
+
 	public static inline function dynEq(a:Dynamic, b:Dynamic):Bool
 		return Dyn.dynEq(a, b);
 
@@ -276,37 +280,10 @@ class MemRepr {
 		if (arrKind(a) == AK_PTR) barrier(arrStore(a), d.add(8 * pos), n - pos + 1);
 	}
 
-	// the n >= 2 elements in reverse order
-	public static inline function arrReverse(a:Dynamic, n:Int) {
-		var d = arrData(a);
-		var i = 0, j = n - 1;
-		var es = elemSize(a);
-		if (es == 1)
-			while (i < j) {
-				var t = Mem.getU8At(d, 0, i);
-				Mem.setU8At(d, 0, i, Mem.getU8At(d, 0, j));
-				Mem.setU8At(d, 0, j, t);
-				i++;
-				j--;
-			}
-		else if (es == 4)
-			while (i < j) {
-				var t = Mem.getI32At(d, 0, i);
-				Mem.setI32At(d, 0, i, Mem.getI32At(d, 0, j));
-				Mem.setI32At(d, 0, j, t);
-				i++;
-				j--;
-			}
-		else
-			while (i < j) {
-				var t = Mem.getI64At(d, 0, i);
-				Mem.setI64At(d, 0, i, Mem.getI64At(d, 0, j));
-				Mem.setI64At(d, 0, j, t);
-				i++;
-				j--;
-			}
-		if (arrKind(a) == AK_PTR) barrier(arrStore(a), d, n);
-	}
+	// the barrier over a reference array's n elements, after they moved in
+	// place (ArrayCore.reverse)
+	public static inline function arrBarrier(a:Dynamic, n:Int)
+		if (arrKind(a) == AK_PTR && n > 0) barrier(arrStore(a), arrData(a), n);
 
 	// a[pos, pos + l) moved to r (new), the rest of a's n elements down
 	public static inline function arrSplice(a:Dynamic, r:Dynamic, pos:Int, l:Int, n:Int) {

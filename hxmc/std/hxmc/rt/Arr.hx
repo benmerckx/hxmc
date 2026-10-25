@@ -1,6 +1,8 @@
 package hxmc.rt;
 
 import hxmc.I64;
+import hxmc.rt.ArrayView;
+import hxmc.rt.ArrayView.RefKey;
 import hxmc.rt.Repr;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
@@ -50,6 +52,8 @@ class Arr {
 		return r;
 	}
 
+	// (the searches: ArrayCore, over a view taken right before the call;
+	// identity where it is the equality, else dynEq here)
 	static function indexFrom(a:Dynamic, x:Dynamic, from:Int):Int {
 		var n = len(a);
 		if (from < 0) {
@@ -64,24 +68,16 @@ class Arr {
 					if (f != Math.ffloor(f)) return -1;
 				}
 				var v:Int = x;
-				var d = Repr.elems(a);
-				for (i in from...n)
-					if (d.getInt(i) == v) return i;
-				return -1;
+				return ArrayCore.indexInt(ArrayView.of(a, n), v, from);
 			case Repr.AK_BOOL:
 				if (Repr.isNull(x) || !Repr.isBoxedBool(x)) return -1;
-				var v = Repr.unboxedBool(x);
-				var d = Repr.elems(a);
-				for (i in from...n)
-					if (d.getBool(i) == v) return i;
-				return -1;
+				return ArrayCore.indexBool(ArrayView.of(a, n), Repr.unboxedBool(x), from);
 			case Repr.AK_F64:
 				if (Repr.isNull(x)) return -1;
 				var v:Float = x;
-				var d = Repr.elems(a);
-				for (i in from...n)
-					if (d.getFloat(i) == v) return i;
-				return -1;
+				return ArrayCore.indexFloat(ArrayView.of(a, n), v, from);
+			case Repr.AK_PTR if (Repr.identityEq(x)):
+				return ArrayCore.indexRef(ArrayView.of(a, n), RefKey.of(x), from);
 			case _:
 				for (i in from...n) {
 					var e = Repr.elems(a).getRef(i);
@@ -99,24 +95,23 @@ class Arr {
 		var f:Int = from == null ? n - 1 : from;
 		if (f < 0) f += n;
 		if (f >= n) f = n - 1;
-		var i = f;
-		while (i >= 0) {
-			if (kindOf(a) == Repr.AK_PTR) {
+		if (f < 0) return -1;
+		var k = kindOf(a);
+		if (k == Repr.AK_PTR) {
+			if (Repr.identityEq(x)) return ArrayCore.lastIndexRef(ArrayView.of(a, n), RefKey.of(x), f);
+			var i = f;
+			while (i >= 0) {
 				var e = Repr.elems(a).getRef(i);
 				if (Repr.same(e, x) || Repr.dynEq(e, x)) return i;
-			} else if (kindOf(a) == Repr.AK_BOOL) {
-				if (!Repr.isNull(x) && Repr.isBoxedBool(x) && Repr.elems(a).getBool(i) == Repr.unboxedBool(x)) return i;
-			} else if (!Repr.isNull(x)) {
-				var v:Float = x;
-				var e = kindOf(a) == Repr.AK_I32 ? (Repr.elems(a).getInt(i) : Float) : kindOf(a) == Repr.AK_F64 ? Repr.elems(a).getFloat(i) : {
-					var l:Float = cast Repr.elems(a).getI64(i);
-					l;
-				};
-				if (e == v) return i;
+				i--;
 			}
-			i--;
+			return -1;
 		}
-		return -1;
+		if (k == Repr.AK_BOOL)
+			return Repr.isNull(x) || !Repr.isBoxedBool(x) ? -1 : ArrayCore.lastIndexBool(ArrayView.of(a, n), Repr.unboxedBool(x), f);
+		if (Repr.isNull(x)) return -1;
+		var v:Float = x;
+		return ArrayCore.lastIndexNum(ArrayView.of(a, n), k, v, f);
 	}
 
 	@:hxmc.host("Array_contains") static function contains(a:Dynamic, x:Dynamic):Bool
@@ -231,7 +226,8 @@ class Arr {
 	@:hxmc.host("Array_reverse") @:hxmc.noGc static function reverse(a:Dynamic):Void {
 		var n = len(a);
 		if (n < 2) return;
-		Repr.arrReverse(a, n);
+		ArrayCore.reverse(ArrayView.of(a, n), Repr.elemSize(a));
+		Repr.arrBarrier(a, n);
 	}
 
 	@:hxmc.host("Array_slice") static function slice(a:Dynamic, pos:Int, endp:Null<Int>):Dynamic {

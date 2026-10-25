@@ -340,14 +340,11 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   packages (and their subpackages) is scoped without the metadata;
   `@:hxmc.gc` keeps one GC code (a `main`, say).
 
-Not built (the rest of the list): `Ref<T>` read without `.value`
-(`@:forward` forwards to the abstract's underlying type, here an address
-and on WasmGC a holder and an index, not `T`; `@:op(a.b)` types its
-result as its declared type, so either needs the typer to see a Ref as its
-target: a rule of its own), anonymous structures as value types in scoped
-code, array literals and string interpolation building a `Grow`, a
-`Slice` or a `Str`, `Fixed<T, N>`'s constant parameter, `@:try` for
-scoped error values.
+Declined: `Ref<T>` read without `.value` (the owner's decision).
+Not built yet: anonymous structures as value types in scoped code, array
+literals and string interpolation building a `Grow`, a `Slice` or a
+`Str`, `Fixed<T, N>`'s constant parameter, `@:try` for scoped error
+values.
 
 ### Types (`hxmc.scoped`)
 
@@ -744,12 +741,12 @@ replaces (no second implementation stays):
   `malloc`'ed memory). What is left of String's, StringBuf's and Bytes'
   natives moves units and bytes between GC buffers (Repr's shells).
 
-What stays GC code, for now (provisional: `Array`, `Dyn` and `Boxes` are
-parked, below, "GC references in the core"): the natives over GC
-references (`Array`'s, whose elements the collector traces and whose
-`sort` calls back into Haxe; `Dyn`, `Boxes`), and the trusted core (d).
+What stays GC code: `Array`'s natives but its searches and reversal
+(below, "GC references in the core": `sort`, `filter`, `map` call back
+into Haxe, the rest allocates or is one move), `Dyn` and `Boxes` (by the
+owner's decision, with the reasons below), and the trusted core (d).
 
-### GC references in the core (research; Array, Dyn and Boxes parked)
+### GC references in the core
 
 The cores so far hold scalars: units, bytes, Ints, Floats. `Array`'s
 natives, `Dyn` and `Boxes` work on GC references, which differ in three
@@ -810,7 +807,32 @@ once the face has classified the needle; give the core word moves
 (reverse, shifts, blit) with the range barrier staying the face's call.
 Keep `sort`, `filter`, `map`, `Dyn` and `Boxes` GC code (option 3:
 callbacks, boxing and object layouts are their work, not an algorithm
-over storage). Not built: waiting for the owner's decision.
+over storage).
+
+Built (the owner's go): `hxmc.rt.ArrayCore` over an `ArrayView` (linearly
+the storage's address and length, references compared as words through a
+`RefKey`, the needle's address; on WasmGC the Array object read through
+the engine's accessors and the reference itself): `indexOf`,
+`lastIndexOf`, `contains` and `remove`'s search by value for the
+scalar kinds and by identity where `identityEq` says it is the
+equality, `reverse` in place (one loop per element size); the barrier
+over a reference array that moved stays the face's (`Repr.arrBarrier`),
+`MemRepr.arrReverse` and `GcRepr.arrReverse` and the search loops of
+`Arr` are gone. The shifts (`removeAt`, `insert`'s rotation,
+`splice`) are one `memmove` or `arrBlit` each and stay `Repr`'s.
+Before and after, 1M elements x100, each search a miss (Linux x86-64;
+WasmGC under node):
+
+| | native before | native after | WasmGC before | WasmGC after |
+| --- | ---: | ---: | ---: | ---: |
+| `Array<Int>.indexOf` | 67 ms | 59 ms | 144 ms | 116 ms |
+| `Array<Int>.lastIndexOf` | 332-360 ms | 122-153 ms | 1031 ms | 223 ms |
+| `Array<Float>.indexOf` | 75 ms | 76 ms | 484 ms | 535 ms |
+| `Array<P>.indexOf` (objects) | 1125 ms | 59 ms | 1873 ms | 480 ms |
+| `Array<P>.lastIndexOf` | 1142 ms | 56 ms | 2384 ms | 453 ms |
+| `Array<P>.contains` | 1188 ms | 58 ms | 1980 ms | 450 ms |
+| `Array<String>.indexOf` (10k x1000, dynEq kept) | 40-43 ms | 35-36 ms | 217 ms | 171 ms |
+| `reverse`, Int and objects | 87-90 ms | 87-93 ms | 3510 ms | 3749 ms |
 
 ### Serialization: relative references
 

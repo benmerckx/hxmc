@@ -20,6 +20,13 @@ class GcRepr {
 	public static inline function fail(msg:String)
 		throw msg;
 
+	// whether == of x and any value is identity: not a number, a Bool, a
+	// String or an Int64 (GcDyn.eq)
+	public static inline function identityEq(x:Dynamic):Bool {
+		var k = W.kind(x);
+		return !(k == 1 || k == 2 || k == 3 || k == 4 || k == 9);
+	}
+
 	public static inline function dynEq(a:Dynamic, b:Dynamic):Bool
 		return GcDyn.eq(a, b);
 
@@ -152,16 +159,12 @@ class GcRepr {
 		W.arrSet(a, pos, t);
 	}
 
-	public static inline function arrReverse(a:Dynamic, n:Int) {
-		var i = 0, j = n - 1;
-		while (i < j) {
-			var t = W.arrGet(a, i);
-			W.arrSet(a, i, W.arrGet(a, j));
-			W.arrSet(a, j, t);
-			i++;
-			j--;
-		}
-	}
+	// (the engine's references need no barrier)
+	public static inline function arrBarrier(a:Dynamic, n:Int) {}
+
+	// (the core's linear element size: unused here)
+	public static inline function elemSize(a:Dynamic):Int
+		return 8;
 
 	public static inline function arrSplice(a:Dynamic, r:Dynamic, pos:Int, l:Int, n:Int) {
 		W.arrBlit(r, 0, a, pos, l);
