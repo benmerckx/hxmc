@@ -532,6 +532,10 @@ class Lower implements LowerQueries {
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
 
+	// @:hxmc.unsafe (the trusted raw-memory layer; @:hxmc.noGc, its former name)
+	public static function isUnsafe(ml:core.Ast.Metadata):Bool
+		return ml.length > 0 && (hasMeta(":hxmc.unsafe", ml) || hasMeta(":hxmc.noGc", ml));
+
 	// the string literal argument of hxmc's metadata `name`, or null
 	public static function metaString(name:String, ml:core.Ast.Metadata):Null<String>
 		return metaArg(core.Meta.getOpt(Custom(name), ml));
@@ -1163,12 +1167,12 @@ class Lower implements LowerQueries {
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
-		if (c.clMeta.length > 0 && hasMeta(":hxmc.noGc", c.clMeta)) fi.declNoGc = true;
+		if (isUnsafe(c.clMeta)) fi.declNoGc = true;
 		// (@:hxmc.scoped: noGc's lowering, plus the root checker: Scoped)
 		if (core.HxmcScoped.isClass(c)) fi.declNoGc = fi.scoped = true;
 		fi.repr = Scoped.isRepr(c);
 		if (cf.cfMeta.length == 0) return;
-		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
+		if (isUnsafe(cf.cfMeta)) fi.declNoGc = true;
 		if (hasMeta(":hxmc.scoped", cf.cfMeta)) fi.declNoGc = fi.scoped = true;
 		fi.noReturn = hasMeta(":hxmc.noReturn", cf.cfMeta);
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);

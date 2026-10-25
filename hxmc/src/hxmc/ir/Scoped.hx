@@ -1150,8 +1150,8 @@ private class Analysis {
 							if (Scoped.holdsScoped(a.type)) takes = true;
 					case _:
 				}
-				var trusted = c.hasClassFlag(CExtern) || cf.cfMeta.length > 0 && Lower.hasMeta(":hxmc.noGc", cf.cfMeta)
-					|| c.clMeta.length > 0 && Lower.hasMeta(":hxmc.noGc", c.clMeta) || cf.cfExpr == null;
+				var trusted = c.hasClassFlag(CExtern) || Lower.isUnsafe(cf.cfMeta)
+					|| Lower.isUnsafe(c.clMeta) || cf.cfExpr == null;
 				if (!scoped && (trusted || !takes)) {
 					if (!gc && !trusted) fail(e.epos, 'scoped code calls ${c.clPath.name}.${cf.cfName}, which is neither @:hxmc.scoped nor @:hxmc.noGc');
 					// (the trusted no-GC layer, C, GC code taking no scoped value: unchecked, the global root)
