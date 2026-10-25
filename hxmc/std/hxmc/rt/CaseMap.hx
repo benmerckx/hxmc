@@ -15,7 +15,7 @@ class CaseMap {
 	static inline var LOWER = 162;
 
 	// the code unit c in upper case (toUpper) or in lower case
-	@:hxmc.noGc public static function map(c:Int, toUpper:Bool):Int {
+	public static function map(c:Int, toUpper:Bool):Int {
 		if (c < 128) return toUpper ? (c >= 97 && c <= 122 ? c - 32 : c) : (c >= 65 && c <= 90 ? c + 32 : c);
 		var t = runs(toUpper);
 		// (the last run starting at or below c)

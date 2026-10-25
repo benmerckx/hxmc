@@ -46,8 +46,7 @@ extern class Mem {
 	// target() (one comparison folds)
 	static function mirHost():Int;
 	// the Apple platform where os() is 1: 0 macOS, 1 iOS, 2 the iOS simulator
-	// (target() 3 for both: macos-arm64's libSystem and layouts; packages
-	// only, not the runtime: the committed stage0 does not know it)
+	// (target() 3 for both: macos-arm64's libSystem and layouts)
 	static function platform():Int;
 	// a frame area of `bytes` (a constant), 16-byte aligned, valid while the function runs
 	static function stack(bytes:Int):Ptr;

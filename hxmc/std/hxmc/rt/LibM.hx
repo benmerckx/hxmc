@@ -38,7 +38,7 @@ import hxmc.scoped.Slice;
 // CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-@:keep @:hxmc.noGc @:hxmc.scoped @:hxmc.anyHeap
+@:keep @:hxmc.scoped @:hxmc.anyHeap
 class LibM {
 	// ---- the tables (LibMData: the trusted layer's, on every target)
 
@@ -1095,10 +1095,8 @@ class LibM {
 	}
 }
 
-// x reduced by multiples of pi/2: n and y0 + y1 (struct values: @:hxmc.struct
-// too, for the stage0 tool, to which a scoped class is an object; fields final,
-// an object on WasmGC)
-@:hxmc.struct @:hxmc.scoped @:noCompletion class Reduced {
+// x reduced by multiples of pi/2: n and y0 + y1
+@:hxmc.scoped @:noCompletion class Reduced {
 	public final n:Int;
 	public final y0:Float;
 	public final y1:Float;
@@ -1111,7 +1109,7 @@ class LibM {
 }
 
 // a value as hi + lo
-@:hxmc.struct @:hxmc.scoped @:noCompletion class Split {
+@:hxmc.scoped @:noCompletion class Split {
 	public final hi:Float;
 	public final lo:Float;
 

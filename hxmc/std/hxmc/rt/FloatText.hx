@@ -24,7 +24,7 @@ import hxmc.unsafe.UInt8;
 // every target, WasmGC too: the GC face is String's (Std.string,
 // Std.parseFloat: hxmc.rt.Str), the runtime's reports and wasm32's strtod;
 // the scoped face is hxmc.scoped.Str's ofFloat and toFloat.
-@:keep @:allow(hxmc.rt) @:allow(hxmc.scoped) @:hxmc.noGc @:hxmc.scoped
+@:keep @:allow(hxmc.rt) @:allow(hxmc.scoped) @:hxmc.scoped
 class FloatText {
 	static inline var LIMBS = 256;
 	static inline var MAXDIG = 800; // significant digits kept when reading (more only round)
@@ -777,10 +777,8 @@ class FloatText {
 	}
 }
 
-// a number read and the index after it (FloatText.parse): a struct value
-// (@:hxmc.struct too, for the tools that build hxmc from its stage0, to which
-// a scoped class is an object; its fields final, an object on WasmGC)
-@:hxmc.struct @:hxmc.scoped class Parsed {
+// a number read and the index after it (FloatText.parse)
+@:hxmc.scoped class Parsed {
 	public final value:Float;
 	public final end:Int;
 
