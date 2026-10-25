@@ -1,6 +1,7 @@
 package hxmc.scoped;
 
 import hxmc.rt.DataStacks;
+import hxmc.rt.Abort;
 import hxmc.unsafe.*;
 import hxmc.scoped.Slice;
 

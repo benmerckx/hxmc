@@ -1,6 +1,7 @@
 package hxmc.scoped;
 
 import hxmc.rt.DataStacks;
+import hxmc.rt.Abort;
 import hxmc.unsafe.*;
 
 // Text in scoped memory (docs/plans/lowlevel.md, "Scoped memory"): a view of
@@ -39,13 +40,13 @@ abstract Str(StrData) {
 
 	// the code unit at i
 	@:arrayAccess public inline function at(i:Int):Int {
-		if ((i : UInt) >= (this.length : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (this.length : UInt)) Abort.outOfRange();
 		return Mem.getU16(this.ptr, 2 * i);
 	}
 
 	// the units pos .. pos + len - 1, the same memory
 	public inline function sub(pos:Int, len:Int):Str {
-		if (pos < 0 || len < 0 || pos + len > this.length) DataStacks.outOfRange();
+		if (pos < 0 || len < 0 || pos + len > this.length) Abort.outOfRange();
 		return new Str((this.ptr : Ptr<UInt16>).offset(pos), len);
 	}
 

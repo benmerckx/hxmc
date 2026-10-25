@@ -1,6 +1,6 @@
 // Identity-keyed and string-keyed maps: haxe.ds.ObjectMap get/set/exists on
 // objects (hits and misses, keys looked up in a shuffled order), and
-// StringMap's for comparison (make bench-micro WHICH=maps; MAP_BENCH_ARGS: keys, rounds).
+// StringMap's and IntMap's for comparison (make bench-micro WHICH=maps; MAP_BENCH_ARGS: keys, rounds).
 // Prints the fastest and the median nanoseconds per operation of each workload.
 class MapBench {
 	static var sink = 0;
@@ -79,6 +79,26 @@ class MapBench {
 					var t = 0;
 					for (s in sh) t += sm.get(s);
 					sink += t;
+				});
+				time("str remove+set", size, () -> for (s in sh) {
+					sm.remove(s);
+					sm.set(s, 2);
+				});
+				var im = new haxe.ds.IntMap<Int>();
+				time("int set (insert)", size, () -> for (k in keys) im.set(k.id * 7, k.id));
+				time("int get (hit)", size * reps, () -> for (_ in 0...reps) {
+					var t = 0;
+					for (k in shuffled) t += im.get(k.id * 7);
+					sink += t;
+				});
+				time("int get (miss)", size * reps, () -> for (_ in 0...reps) {
+					var t = 0;
+					for (k in shuffled) if (im.get(-1 - k.id) == null) t++;
+					sink += t;
+				});
+				time("int remove+set", size, () -> for (k in shuffled) {
+					im.remove(k.id * 7);
+					im.set(k.id * 7, 1);
 				});
 			}
 			Sys.println('$size keys (${reps}x), ns/op over $rounds rounds, min / median:');

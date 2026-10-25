@@ -8,7 +8,7 @@ using StringTools;
 // bench/goose): each program has a scoped version and a GC one, which must
 // print the same; with GOOSE (the goose compiler) and GOOSE_BENCH (its
 // bench/goose directory), Goose's own programs too (`goose build`, which
-// needs a C compiler).
+// needs a C compiler). Table: the maps' index on both faces (no Goose program).
 //   bin/hxmc/hxmc -cp hxmc/test/scoped -cp haxe/test --run ScopedBench [-n RUNS] [--wasm] [--large] [case ...]
 // Reported per program, size and version: the median wall time of RUNS runs
 // and the peak RSS (/usr/bin/time), Linux. Sizes: Goose's (its BENCH_N), and
@@ -18,7 +18,8 @@ class ScopedBench {
 	static final CASES = [
 		{name: "BinaryTrees", goose: "bintrees", sizes: [17, 20]},
 		{name: "Push", goose: "push", sizes: [4000000, 32000000]},
-		{name: "StrList", goose: "strlist", sizes: [400000, 4000000]}
+		{name: "StrList", goose: "strlist", sizes: [400000, 4000000]},
+		{name: "Table", goose: null, sizes: [1000000, 8000000]}
 	];
 	static final OUT = "bin/scoped-bench";
 
@@ -46,7 +47,7 @@ class ScopedBench {
 					cmds.push(["scoped wasm32"].concat(node).concat(["scoped", n]));
 					cmds.push(["gc wasm32"].concat(node).concat(["gc", n]));
 				}
-				if (goose != null && gooseBench != null) {
+				if (goose != null && gooseBench != null && c.goose != null) {
 					// (its size: the BENCH_N line, in a copy next to it)
 					var src = sys.io.File.getContent(gooseBench + "/" + c.goose + ".goose");
 					var lines = [for (l in src.split("\n")) l.indexOf("// BENCH_N") >= 0 ? ~/= *[0-9]+/.replace(l, "= " + n) : l];

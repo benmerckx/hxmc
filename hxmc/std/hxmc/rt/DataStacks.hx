@@ -168,24 +168,11 @@ class DataStacks {
 
 	// ---- failures: scoped code cannot throw
 
-	@:hxmc.noGc public static function overflow()
-		die(Mem.cstr("hxmc: scoped memory: a data stack is full (RT_DATA_STACK_MB on wasm32)\n"));
+	@:hxmc.noGc @:hxmc.noReturn public static function overflow()
+		Abort.die(Mem.cstr("hxmc: scoped memory: a data stack is full (RT_DATA_STACK_MB on wasm32)\n"));
 
-	@:hxmc.noGc public static function outOfRange()
-		die(Mem.cstr("hxmc: scoped memory: index out of range\n"));
-
-	@:hxmc.noGc public static function die(msg:Ptr) {
-		#if (hxmc.target == "wasm32-wasi")
-		var n = LibC.strlen(msg).toInt();
-		hxmc.rt.wasm.Wasi.writeRaw(2, msg, n);
-		hxmc.rt.wasm.Wasi.exit(70);
-		#else
-		var r = new Os.Report(Mem.stack(Os.Report.BYTES));
-		r.cstr(msg, 0, -1);
-		r.flush();
-		Os.exit(70);
-		#end
-	}
+	static inline function die(msg:Ptr)
+		Abort.die(msg);
 
 	#if (hxmc.target != "wasm32-wasi")
 	// a thread ends: its stacks and table released (Threads, through dataStacksExit)

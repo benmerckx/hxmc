@@ -1,6 +1,7 @@
 package hxmc.scoped;
 
 import hxmc.rt.DataStacks;
+import hxmc.rt.Abort;
 import hxmc.unsafe.*;
 import hxmc.scoped.Slice;
 import hxmc.scoped.Slice.SliceIterator;
@@ -43,18 +44,18 @@ abstract Grow<T>(Ptr) {
 	}
 
 	@:arrayAccess inline function get(i:Int):T {
-		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) Abort.outOfRange();
 		return (Mem.getPtr(this, BASE) : Ptr<T>)[i];
 	}
 
 	@:arrayAccess inline function set(i:Int, v:T):T {
-		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) Abort.outOfRange();
 		return (Mem.getPtr(this, BASE) : Ptr<T>)[i] = v;
 	}
 
 	// a reference to element i
 	public inline function ref(i:Int):Ref<T> {
-		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (Mem.getI32(this, LEN) : UInt)) Abort.outOfRange();
 		return new Ref((Mem.getPtr(this, BASE) : Ptr<T>).offset(i));
 	}
 

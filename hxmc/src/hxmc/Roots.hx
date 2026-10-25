@@ -135,13 +135,29 @@ class Roots {
 	}
 
 	// the locals that may hold a raw heap address: the largest fixpoint of
-	// "assigned an expression derived from Mem.addr or from such a local"
+	// "assigned an expression derived from Mem.addr or from such a local";
+	// also the struct values one is stored into (the address of a frame slot
+	// whose memory holds it: a view such as hxmc.rt.MapIndex's), and what is
+	// loaded from them
 	static function rawLocals(f:FuncInfo, n:Int):Bits {
 		var raw = new Bits(n);
 		var sets:Array<{l:Local, e:Ex}> = [];
 		function st(s:Stmt) {
 			switch s {
 				case SSet(l, e): sets.push({l: l, e: e});
+				case SExpr(ECallHost("hxmc_unsafe_Mem_setI64", args, _)) if (args.length == 3 && args[0].match(ELocal({ty: TStruct(_)}))):
+					switch args[0] {
+						case ELocal(l): sets.push({l: l, e: args[2]});
+						case _:
+					}
+				case SExpr(ECall(g, args)) if (g.name.indexOf("__new") >= 0 || args.length > 0 && args[0].match(ELocal({ty: TStruct(_)}))):
+					// (a struct's constructor: the struct at its first argument holds the others)
+					switch args.length > 0 ? args[0] : null {
+						case ELocal(l) if (l.ty.match(TStruct(_))):
+							for (k in 1...args.length)
+								sets.push({l: l, e: args[k]});
+						case _:
+					}
 				case _:
 			}
 			hxmc.ir.Facts.iterStmt(st, _ -> {}, s);
@@ -164,6 +180,8 @@ class Roots {
 	static function derived(e:Ex, raw:Bits):Bool
 		return switch e {
 			case ECallHost("hxmc_unsafe_Mem_addr", _, _) | EFieldAddr(_): true;
+			case ECallHost("hxmc_unsafe_Mem_getI64", args, _) if (args.length == 2 && args[0].match(ELocal({ty: TStruct(_)}))):
+				derived(args[0], raw);
 			case ELocal(l): raw.get(l.id);
 			case EBin(LAdd | LSub | LAnd | LOr | LXor, a, b): derived(a, raw) || derived(b, raw);
 			case ECast(_, a): derived(a, raw);

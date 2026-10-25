@@ -656,6 +656,10 @@ class MirBuild extends MirWriter {
 				coldList = null;
 			case SSet(l, e):
 				writeLocal(l, ex(e));
+			case SExpr(e = ECall(g, _)) if (g.noReturn):
+				// (@:hxmc.noReturn: nothing is live after it)
+				ex(e);
+				add(mk(Unreachable, Void));
 			case SExpr(e):
 				ex(e);
 			case SSetField(c, idx, obj, v):
@@ -1313,6 +1317,7 @@ class MirBuild extends MirWriter {
 				c.keepsFrame = keepsFrame(c.sym);
 				c.args = xs;
 				c.argTys = g.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));
+				c.noReturn = g.noReturn;
 				var id = add(c);
 				if (inlineCands != null && inlineCands.exists(g) && g != fn) inlineSites.push({call: c, fn: g});
 				id;

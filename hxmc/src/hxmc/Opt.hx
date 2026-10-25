@@ -1489,6 +1489,16 @@ class Opt {
 					// (comparisons are recomputed: they fuse with their branch)
 					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0) || op == Cmp) continue;
 					if (fold(i)) continue;
+					// ((x & m) & m is x & m: an index masked twice, as the maps'
+					// index masks its slot numbers again in each access, hxmc.rt.MapIndex)
+					if (op == And) {
+						var m = masked(i);
+						if (m >= 0) {
+							repl[i.id] = m;
+							i.dead = true;
+							continue;
+						}
+					}
 					var h = hash(i);
 					h = (h ^ (h >>> 15)) * 0x2c1b3c6d;
 					var bk = (h ^ (h >>> 12)) & mask;
@@ -1540,6 +1550,17 @@ class Opt {
 				}
 			}
 		}
+	}
+
+	// And(x, m) where x is And(_, m) (or the other way round): x; else -1
+	function masked(i:MIns):Int {
+		if (i.a < 0 || i.b < 0) return -1;
+		var a = res(i.a), b = res(i.b);
+		inline function inner(x:Int, m:Int):Bool {
+			var v = f.vals[x];
+			return v != null && v.op == And && v.ty == i.ty && v.a >= 0 && v.b >= 0 && (res(v.a) == m || res(v.b) == m);
+		}
+		return inner(a, b) ? a : inner(b, a) ? b : -1;
 	}
 
 	// constant folding: integer arithmetic, extensions and bit casts of

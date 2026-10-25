@@ -12,9 +12,11 @@
 // indexed again, after a major one every entry. Removals shift the probe
 // chain back (no tombstones). WasmGC has no addresses: there the hash is the
 // one the engine's object keeps (hxmc.Native.objHash), which never changes.
+// The index is hxmc.rt.MapIndex, scoped code shared with hxmc.scoped.IntTable.
 
 package haxe.ds;
 
+import hxmc.rt.MapIndex;
 import hxmc.rt.MapSlots;
 import hxmc.rt.MapSlots.RefSlots;
 #if !hxmc.wasm_gc
@@ -75,20 +77,10 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 	}
 
 	// the entry of k (whose hash is h), or -1; the index is up to date
+	// (MapIndex: its slots' tags are the hashes, from element 2)
 	inline function find(k:Dynamic, h:Int):Int {
-		var slots = this.slots, kvs = this.kvs, mask = this.mask;
-		var i = h & mask;
-		var r = -1;
-		while (true) {
-			var e = slots[3 + 2 * i];
-			if (e == 0) break;
-			if (slots[2 + 2 * i] == h && hxmc.Native.refEq(kvs[2 * e - 2], k)) {
-				r = e - 1;
-				break;
-			}
-			i = (i + 1) & mask;
-		}
-		return r;
+		var kvs = this.kvs;
+		return MapIndex.find(slots.index(2, mask), h, h, e -> hxmc.Native.refEq(kvs[2 * e], k));
 	}
 
 	/**
@@ -151,33 +143,12 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		#end
 	}
 
-	inline function index(h:Int, e:Int) {
-		var slots = this.slots, mask = this.mask;
-		var i = h & mask;
-		while (slots[3 + 2 * i] != 0)
-			i = (i + 1) & mask;
-		slots[2 + 2 * i] = h;
-		slots[3 + 2 * i] = e + 1;
-	}
+	inline function index(h:Int, e:Int)
+		MapIndex.insert(slots.index(2, mask), h, h, e);
 
-	// empties slot i, moving back the slots after it whose probe chain
-	// passes through it (backward-shift deletion: no tombstones)
-	@:hxmc.noGc function unindex(i:Int) {
-		var slots = this.slots, mask = this.mask;
-		var j = i;
-		while (true) {
-			j = (j + 1) & mask;
-			var e = slots[3 + 2 * j];
-			if (e == 0) break;
-			var home = slots[2 + 2 * j] & mask;
-			// (j stays where it is when its home is cyclically in (i, j])
-			if (i <= j ? (i < home && home <= j) : (i < home || home <= j)) continue;
-			slots[2 + 2 * i] = slots[2 + 2 * j];
-			slots[3 + 2 * i] = e;
-			i = j;
-		}
-		slots[3 + 2 * i] = 0;
-	}
+	// empties slot i (backward-shift deletion: no tombstones)
+	@:hxmc.noGc function unindex(i:Int)
+		MapIndex.unindex(slots.index(2, mask), i, t -> t);
 
 	/**
 		See `Map.remove`
@@ -186,22 +157,17 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		if (live == 0) return false;
 		if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1); // (before the hash)
 		sync();
-		var slots = this.slots, kvs = this.kvs, mask = this.mask;
+		var kvs = this.kvs;
 		var h = hashOf(k);
-		var i = h & mask;
-		while (true) {
-			var e = slots[3 + 2 * i];
-			if (e == 0) return false;
-			if (slots[2 + 2 * i] == h && hxmc.Native.refEq(kvs[2 * e - 2], k)) {
-				unindex(i);
-				dead[e - 1] = true;
-				kvs[2 * e - 2] = null;
-				kvs[2 * e - 1] = null;
-				live--;
-				return true;
-			}
-			i = (i + 1) & mask;
-		}
+		var i = MapIndex.slot(slots.index(2, mask), h, h, e -> hxmc.Native.refEq(kvs[2 * e], k));
+		if (i < 0) return false;
+		var e = slots[3 + 2 * i];
+		unindex(i);
+		dead[e - 1] = true;
+		kvs[2 * e - 2] = null;
+		kvs[2 * e - 1] = null;
+		live--;
+		return true;
 	}
 
 	// rebuild with removed entries dropped and room for twice the live ones
@@ -265,9 +231,8 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 					var e = young[2 * j];
 					if (dead != null && dead[e]) continue;
 					// (its slot, in the probe chain of the hash it was added with)
-					var i = young[2 * j + 1] & mask;
-					while (slots[3 + 2 * i] != e + 1)
-						i = (i + 1) & mask;
+					var h = young[2 * j + 1];
+					var i = MapIndex.slot(slots.index(2, mask), h, h, x -> x == e);
 					unindex(i);
 					index(hashOf(kvs[2 * e]), e);
 				}

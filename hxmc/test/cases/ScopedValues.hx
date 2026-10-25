@@ -192,7 +192,7 @@ import hxmc.rt.DataStacks;
 	public static function loops(k:Int):Int {
 		var t = 0;
 		for (i in 0...k) {
-			var s = Slice.alloc(64);
+			var s = Scope.slice(64);
 			s[63] = i;
 			t += s[63] & 1;
 		}

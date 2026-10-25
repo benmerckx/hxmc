@@ -1,0 +1,4 @@
+exit 0
+ScopedTable.hx:91: [78903,78903,320080816,99,999,0,7992000,199901]
+ScopedTable.hx:92: [78903,78903,320080816]
+ScopedTable.hx:95: small

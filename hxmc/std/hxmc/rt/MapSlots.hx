@@ -1,5 +1,7 @@
 package hxmc.rt;
 
+import hxmc.rt.MapIndex.IndexView;
+
 // The storage of haxe.ds.IntMap, StringMap and ObjectMap: fixed-size arrays
 // of zeros, false or nulls, read and written without the test of the index
 // (the maps keep theirs in bounds). A NativeArray (one allocation, Int and
@@ -17,6 +19,17 @@ abstract MapSlots<T>(hxmc.NativeArray<T>) {
 	@:op([]) inline function set(i:Int, v:T):T {
 		this.unsafeSet(i, v);
 		return v;
+	}
+
+	// the maps' index in this Int array from element `base`, mask + 1 slots
+	// (MapIndex; the maps make the array that large): natively a view of the
+	// array's memory, valid until the next GC point
+	public inline function index(base:Int, mask:Int):IndexView {
+		#if hxmc.wasm_gc
+		return new IndexView(cast this, base, mask);
+		#else
+		return IndexView.trusted(hxmc.unsafe.Mem.addr(this).add(4 * base), mask);
+		#end
 	}
 }
 

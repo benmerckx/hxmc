@@ -1,6 +1,6 @@
 package hxmc.scoped;
 
-import hxmc.rt.DataStacks;
+import hxmc.rt.Abort;
 import hxmc.unsafe.*;
 
 // A view of a run of T (docs/plans/lowlevel.md, "Scoped memory"): an address
@@ -8,41 +8,35 @@ import hxmc.unsafe.*;
 // elements), rooted at what it views. Indexes are checked: out of range
 // aborts (scoped code cannot throw). T is a scalar, a scoped class or enum,
 // or another scoped type; a struct element is reached in place (`s[i].x = 1`).
+// Scope.slice makes one on the data stack; it brings in no data stacks itself
+// (the maps' index views GC memory with it: hxmc.rt.MapIndex).
 @:forward(length)
 abstract Slice<T>(SliceData) {
 	public inline function new(p:Ptr<T>, length:Int)
 		this = new SliceData(p, length);
 
-	// n zeroed elements, fresh memory of the scope
-	public static inline function alloc<T>(n:Int):Slice<T> {
-		var bytes = (Ptr.nil() : Ptr<T>).offset(n).toI64().toInt();
-		var p = DataStacks.alloc(bytes);
-		LibC.memset(p, 0, (bytes : I64));
-		return new Slice((p : Ptr<T>), n);
-	}
-
 	public inline function ptr():Ptr<T>
 		return this.ptr;
 
 	@:arrayAccess inline function get(i:Int):T {
-		if ((i : UInt) >= (this.length : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (this.length : UInt)) Abort.outOfRange();
 		return (this.ptr : Ptr<T>)[i];
 	}
 
 	@:arrayAccess inline function set(i:Int, v:T):T {
-		if ((i : UInt) >= (this.length : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (this.length : UInt)) Abort.outOfRange();
 		return (this.ptr : Ptr<T>)[i] = v;
 	}
 
 	// a reference to element i
 	public inline function ref(i:Int):Ref<T> {
-		if ((i : UInt) >= (this.length : UInt)) DataStacks.outOfRange();
+		if ((i : UInt) >= (this.length : UInt)) Abort.outOfRange();
 		return new Ref((this.ptr : Ptr<T>).offset(i));
 	}
 
 	// the elements pos .. pos + len - 1, the same memory
 	public inline function sub(pos:Int, len:Int):Slice<T> {
-		if (pos < 0 || len < 0 || pos + len > this.length) DataStacks.outOfRange();
+		if (pos < 0 || len < 0 || pos + len > this.length) Abort.outOfRange();
 		return new Slice((this.ptr : Ptr<T>).offset(pos), len);
 	}
 

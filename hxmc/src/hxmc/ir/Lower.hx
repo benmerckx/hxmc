@@ -1155,6 +1155,7 @@ class Lower implements LowerQueries {
 		if (cf.cfMeta.length == 0) return;
 		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
 		if (hasMeta(":hxmc.scoped", cf.cfMeta)) fi.declNoGc = fi.scoped = true;
+		fi.noReturn = hasMeta(":hxmc.noReturn", cf.cfMeta);
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);
