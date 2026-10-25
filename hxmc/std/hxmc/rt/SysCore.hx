@@ -17,11 +17,21 @@ import hxmc.rt.wasm.WasiApi;
 // interrupted; Windows and WASI have no signals to interrupt one.
 @:access(hxmc.rt.PosixSys) @:access(hxmc.rt.WinSys) #if (hxmc.target == "wasm32-wasi") @:access(hxmc.rt.WasiSys) #end
 extern class SysCore {
+	// s as a C string, UTF-8 ("null" for null), on the data stack
+	// (hxmc.scoped.Str.utf8Of): valid until the function, or the loop
+	// iteration, that made it ends (typed under -D hxmc.wasm-gc, never run:
+	// hxmc.rt.gc.GcSys)
+	public static inline function cstr(s:String):Ptr
+		return #if hxmc.wasm_gc Str.toUtf8(s) #else hxmc.scoped.Str.utf8Of(s).ptr() #end;
+
+	// s as a wide C string, UTF-16, on the data stack (hxmc.scoped.Str.copyOf)
+	public static inline function wide(s:String):Ptr
+		return #if hxmc.wasm_gc Ptr.nil() #else hxmc.scoped.Str.copyOf(s).ptr() #end;
+
 	// s to a descriptor, as UTF-8
 	public static inline function printTo(fd:Int, s:String) {
-		var u = Str.toUtf8(Str.orNull(s));
+		var u = cstr(s);
 		if (Mem.os() == 2) WinSys.writeAll(fd, u, LibC.strlen(u).toInt()) else PosixSys.writeAll(fd, u, LibC.strlen(u).toInt());
-		LibC.free(u);
 	}
 
 	// n bytes at d written to fd, which is then closed: false when either failed

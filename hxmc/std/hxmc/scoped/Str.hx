@@ -4,6 +4,7 @@ import hxmc.rt.DataStacks;
 import hxmc.rt.Abort;
 import hxmc.rt.TextCore;
 import hxmc.unsafe.*;
+import hxmc.scoped.Slice;
 
 // Text in scoped memory (docs/plans/lowlevel.md, "Scoped memory"): a view of
 // UTF-16 code units (as String's, on both faces), an address and a length.
@@ -27,7 +28,8 @@ abstract Str(StrData) {
 		return new Str(p, n);
 	}
 
-	// a copy of the String s on the data stack (GC code)
+	// a copy of the String s on the data stack, a 0 unit after it (not in the
+	// length: a wide C string for the system), GC code
 	public static inline function copyOf(s:String):Str
 		return new Str(DataStacks.copyString(s), s.length);
 
@@ -99,6 +101,14 @@ abstract Str(StrData) {
 	public inline function utf8(buf:Ptr<UInt8>):Int
 		return TextCore.utf8Encode(this.ptr, this.length, (buf : Ptr));
 
+
+	// the UTF-8 of the String s ("null" for null), NUL-terminated (not counted
+	// in the length), fresh memory of the scope: a C string for the system (GC code)
+	public static inline function utf8Of(s:String):Slice<UInt8> {
+		if (s == null) s = "null";
+		var p = DataStacks.alloc(3 * s.length + 1);
+		return new Slice((p : Ptr<UInt8>), hxmc.rt.Str.utf8Into(s, p));
+	}
 	#end
 
 	// a copy in upper case (toUpper) or lower case, as String's

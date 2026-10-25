@@ -375,9 +375,7 @@ class WinNet {
 
 	public static function resolve(name:String):Array<Int> {
 		Winsock.rt_win_sockets_init();
-		var n = Str.toUtf8(name);
-		var ip = lookup(n);
-		LibC.free(n);
+		var ip = lookup(SysCore.cstr(name));
 		setLast(0);
 		if ((ip >>> 32).toInt() == 0) return null;
 		return [ip.toInt()];

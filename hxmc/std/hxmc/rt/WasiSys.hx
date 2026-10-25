@@ -23,8 +23,9 @@ class WasiSys {
 	static inline function a32(p:Ptr):Int
 		return Wasi.a32(p);
 
+	// (on the data stack: SysCore.cstr)
 	static inline function cstr(s:String):Ptr
-		return Str.toUtf8(s);
+		return SysCore.cstr(s);
 
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, Heap.strlen(p).toInt());
@@ -53,7 +54,6 @@ class WasiSys {
 	public static function getEnv(s:String):String {
 		var n = cstr(s);
 		var v = Wasi.getenv(n);
-		Heap.free(n);
 		return v.isNull() ? null : ofC(v);
 	}
 
@@ -77,11 +77,9 @@ class WasiSys {
 			Wasm.memcpy(x, n, len);
 			Mem.setI8(x, len, "=".code);
 			Wasm.memcpy(x.add(len + 1), u, vl + 1);
-			Heap.free(u);
 			Mem.setPtr(e, 8 * k, x);
 			k++;
 		}
-		Heap.free(n);
 		Wasi.setEnvBlock(e, k);
 	}
 
@@ -114,7 +112,6 @@ class WasiSys {
 		if (!isDirectory(s)) return false;
 		var p = cstr(s);
 		var a = Wasi.absolute(p);
-		Heap.free(p);
 		if (Mem.getU8(a, 0) != "/".code) {
 			Heap.free(a);
 			return false;
@@ -226,7 +223,6 @@ class WasiSys {
 		}
 		var p = cstr(path);
 		var fd = open(p, oflags, fdflags, mode == 0 ? 1 : mode == 3 ? 3 : 2);
-		Heap.free(p);
 		return fd;
 	}
 
@@ -279,7 +275,6 @@ class WasiSys {
 	public static function fileContent(path:String):Dynamic {
 		var p = cstr(path);
 		var fd = open(p, 0, 0, 1);
-		Heap.free(p);
 		if (fd < 0) return null;
 		var cap = 65536, n = 0;
 		var st = Mem.stack(64);
@@ -309,7 +304,6 @@ class WasiSys {
 	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = cstr(path);
 		var fd = open(p, append ? 1 : 1 | 8, append ? 1 : 0, 2);
-		Heap.free(p);
 		if (fd < 0) return false;
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
@@ -324,7 +318,6 @@ class WasiSys {
 		var r = pathOp(p, 0, st);
 		// (a directory above the preopened ones: a directory)
 		var t = r == 0 ? Mem.getU8(st, 16) : Wasi.preopenAncestor(p) ? 3 : -1;
-		Heap.free(p);
 		return t;
 	}
 
@@ -337,7 +330,6 @@ class WasiSys {
 	static function simple(path:String, op:Int):Bool {
 		var p = cstr(path);
 		var r = pathOp(p, op, Ptr.nil());
-		Heap.free(p);
 		return r == 0;
 	}
 
@@ -353,8 +345,6 @@ class WasiSys {
 	public static function rename(path:String, newPath:String):Bool {
 		var p = cstr(path), q = cstr(newPath);
 		var a = Wasi.absolute(p), b = Wasi.absolute(q);
-		Heap.free(p);
-		Heap.free(q);
 		var ra = Mem.stack(8), rb = Mem.stack(8);
 		var da = Wasi.resolve(a, ra), db = Wasi.resolve(b, rb);
 		var ok = false;
@@ -370,7 +360,6 @@ class WasiSys {
 	public static function readDirectory(path:String):Array<String> {
 		var p = cstr(path);
 		var fd = open(p, 2, 0, 1); // O_DIRECTORY
-		Heap.free(p);
 		if (fd < 0) return null;
 		var names:Array<String> = [];
 		var cap = 4096;
@@ -411,7 +400,6 @@ class WasiSys {
 		if (!exists(path)) return null;
 		var p = cstr(path);
 		var a = Wasi.absolute(p);
-		Heap.free(p);
 		var s = ofC(a);
 		Heap.free(a);
 		return s;
@@ -425,7 +413,6 @@ class WasiSys {
 		var p = cstr(path);
 		var st = Mem.stack(64);
 		var r = pathOp(p, 0, st);
-		Heap.free(p);
 		if (r != 0) return null;
 		inline function f(v:I64):Float
 			return cast v;

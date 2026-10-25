@@ -371,9 +371,7 @@ class PosixNet {
 		NetCore.unlockResolver();
 
 	public static function resolve(name:String):Array<Int> {
-		var n = Str.toUtf8(name);
-		var ip = lookup(n);
-		LibC.free(n);
+		var ip = lookup(SysCore.cstr(name));
 		netErrno = 0;
 		if ((ip >>> 32).toInt() == 0) return null;
 		return [ip.toInt()];

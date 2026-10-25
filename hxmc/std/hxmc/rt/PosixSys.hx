@@ -29,9 +29,9 @@ class PosixSys {
 
 	static inline var EINTR = 4;
 
-	// a malloc'ed UTF-8 copy of s
+	// (on the data stack: SysCore.cstr)
 	static inline function cstr(s:String):Ptr
-		return Str.toUtf8(s);
+		return SysCore.cstr(s);
 
 	static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
@@ -80,7 +80,6 @@ class PosixSys {
 	public static function getEnv(s:String):String {
 		var n = cstr(s);
 		var v = Posix.getenv(n);
-		LibC.free(n);
 		return v.isNull() ? null : ofC(v);
 	}
 
@@ -89,9 +88,7 @@ class PosixSys {
 		if (!Str.isNull(v)) {
 			var u = cstr(v);
 			Posix.setenv(n, u, 1);
-			LibC.free(u);
 		} else Posix.unsetenv(n);
-		LibC.free(n);
 	}
 
 	public static function environ():Array<String> {
@@ -131,7 +128,6 @@ class PosixSys {
 	public static function setCwd(s:String):Bool {
 		var n = cstr(s);
 		var r = Posix.chdir(n);
-		LibC.free(n);
 		return r == 0;
 	}
 
@@ -153,9 +149,8 @@ class PosixSys {
 		var c = cstr(cmd);
 		Posix.fflush(Ptr.nil());
 		Leaf.rt_blocking_enter();
-		var r = Posix.system(c); // c is malloc'ed: no heap address
+		var r = Posix.system(c); // (c is on the data stack: no heap address)
 		Leaf.rt_blocking_leave();
-		LibC.free(c);
 		if (r == -1) return -1;
 		return (r & 0x7f) == 0 ? (r >> 8) & 0xff : 128 + (r & 0x7f);
 	}
@@ -272,7 +267,6 @@ class PosixSys {
 		}
 		var p = cstr(path);
 		var fd = Posix.open(p, flags | oCloexec(), 438); // 0666
-		LibC.free(p);
 		return fd;
 	}
 
@@ -337,7 +331,6 @@ class PosixSys {
 	public static function fileContent(path:String):Dynamic {
 		var p = cstr(path);
 		var fd = Posix.open(p, oCloexec(), 0);
-		LibC.free(p);
 		if (fd < 0) return null;
 		// read into malloc'ed memory first: the size may not be known (pipes)
 		var cap = 65536, n = 0;
@@ -369,7 +362,6 @@ class PosixSys {
 	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = cstr(path);
 		var fd = Posix.open(p, 1 | oCreat() | oCloexec() | (append ? oAppend() : oTrunc()), 438);
-		LibC.free(p);
 		if (fd < 0) return false;
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
@@ -381,7 +373,6 @@ class PosixSys {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st) == 0;
-		LibC.free(p);
 		return r;
 	}
 
@@ -389,36 +380,30 @@ class PosixSys {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st) == 0 && isDir(stMode(st));
-		LibC.free(p);
 		return r;
 	}
 
 	public static function createDirectory(path:String):Bool {
 		var p = cstr(path);
 		var r = Posix.mkdir(p, 511) == 0; // 0777
-		LibC.free(p);
 		return r;
 	}
 
 	public static function deleteFile(path:String):Bool {
 		var p = cstr(path);
 		var r = Posix.unlink(p) == 0;
-		LibC.free(p);
 		return r;
 	}
 
 	public static function deleteDirectory(path:String):Bool {
 		var p = cstr(path);
 		var r = Posix.rmdir(p) == 0;
-		LibC.free(p);
 		return r;
 	}
 
 	public static function rename(path:String, newPath:String):Bool {
 		var a = cstr(path), b = cstr(newPath);
 		var r = Posix.rename(a, b) == 0;
-		LibC.free(a);
-		LibC.free(b);
 		return r;
 	}
 
@@ -426,7 +411,6 @@ class PosixSys {
 	public static function readDirectory(path:String):Array<String> {
 		var p = cstr(path);
 		var d = inode64() ? Posix.opendirInode64(p) : Posix.opendir(p);
-		LibC.free(p);
 		if (d.isNull()) return null;
 		var names:Array<String> = [];
 		var off = mac() ? 21 : 19;
@@ -445,7 +429,6 @@ class PosixSys {
 		var p = cstr(path);
 		var buf = Mem.stack(4104);
 		var r = mac() ? Posix.realpathExtsn(p, buf) : Posix.realpath(p, buf);
-		LibC.free(p);
 		return r.isNull() ? null : ofC(buf);
 	}
 
@@ -458,7 +441,6 @@ class PosixSys {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st);
-		LibC.free(p);
 		if (r != 0) return null;
 		inline function f(v:I64):Float
 			return cast v;
@@ -487,14 +469,14 @@ class PosixSys {
 		var n = Str.isNull(args) ? 0 : args.length;
 		var argv = LibC.malloc(8 * (n + 4));
 		if (!Str.isNull(args)) {
-			Mem.setPtr(argv, 0, cstr(cmd));
+			Mem.setPtr(argv, 0, Str.toUtf8(cmd));
 			for (i in 0...n)
-				Mem.setPtr(argv, 8 * (i + 1), cstr(args[i]));
+				Mem.setPtr(argv, 8 * (i + 1), Str.toUtf8(args[i]));
 			Mem.setPtr(argv, 8 * (n + 1), Ptr.nil());
 		} else {
 			Mem.setPtr(argv, 0, Str.toUtf8("/bin/sh"));
 			Mem.setPtr(argv, 8, Str.toUtf8("-c"));
-			Mem.setPtr(argv, 16, cstr(cmd));
+			Mem.setPtr(argv, 16, Str.toUtf8(cmd));
 			Mem.setPtr(argv, 24, Ptr.nil());
 			n = 2;
 		}

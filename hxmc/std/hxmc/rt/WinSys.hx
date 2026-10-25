@@ -23,14 +23,9 @@ class WinSys {
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
-	// a malloc'ed NUL-terminated UTF-16 copy of s
-	@:hxmc.noGc static function wide(s:String):Ptr {
-		var n = Str.len(s);
-		var w = LibC.malloc(2 * n + 2);
-		LibC.memcpy(w, Str.unitsAddr(s), 2 * n);
-		Mem.setI16(w, 2 * n, 0);
-		return w;
-	}
+	// (on the data stack: SysCore.wide)
+	static inline function wide(s:String):Ptr
+		return SysCore.wide(s);
 
 	@:hxmc.noGc static function wlen(w:Ptr):Int {
 		var n = 0;
@@ -91,7 +86,6 @@ class WinSys {
 		var n = wide(s);
 		var v = Win32._wgetenv(n);
 		var r = v.isNull() ? null : ofWide(v);
-		LibC.free(n);
 		return r;
 	}
 
@@ -101,8 +95,6 @@ class WinSys {
 		var n = wide(s);
 		var w = Str.isNull(v) ? wide("") : wide(v);
 		Win32._wputenv_s(n, w);
-		LibC.free(n);
-		LibC.free(w);
 	}
 
 	// the process environment ("=C:=C:\..." entries included: Sys.environment skips them)
@@ -149,7 +141,6 @@ class WinSys {
 	public static function setCwd(s:String):Bool {
 		var w = wide(s);
 		var r = Win32._wchdir(w);
-		LibC.free(w);
 		return r == 0;
 	}
 
@@ -164,9 +155,8 @@ class WinSys {
 	public static function command(cmd:String):Int {
 		var w = wide(cmd);
 		Leaf.rt_blocking_enter();
-		var r = Win32._wsystem(w); // w is malloc'ed: no heap address
+		var r = Win32._wsystem(w); // (w is on the data stack: no heap address)
 		Leaf.rt_blocking_leave();
-		LibC.free(w);
 		return r;
 	}
 
@@ -241,7 +231,6 @@ class WinSys {
 		}
 		var p = wide(path);
 		var fd = Win32._wopen(p, flags | 0x8000 | 0x80, 0x180);
-		LibC.free(p);
 		return fd;
 	}
 
@@ -326,7 +315,6 @@ class WinSys {
 	public static function fileContent(path:String):Dynamic {
 		var p = wide(path);
 		var fd = Win32._wopen(p, 0x8000 | 0x80, 0);
-		LibC.free(p);
 		if (fd < 0) return null;
 		var cap = 65536, n = 0;
 		var st = Mem.stack(64);
@@ -356,7 +344,6 @@ class WinSys {
 	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = wide(path);
 		var fd = Win32._wopen(p, 1 | 0x100 | 0x8000 | 0x80 | (append ? 8 : 0x200), 0x180);
-		LibC.free(p);
 		if (fd < 0) return false;
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
@@ -372,7 +359,6 @@ class WinSys {
 		var p = wide(path);
 		var st = Mem.stack(64);
 		var r = pathStat(p, st) == 0;
-		LibC.free(p);
 		return r;
 	}
 
@@ -380,14 +366,12 @@ class WinSys {
 		var p = wide(path);
 		var st = Mem.stack(64);
 		var r = pathStat(p, st) == 0 && (stMode(st) & 0xF000) == 0x4000;
-		LibC.free(p);
 		return r;
 	}
 
 	public static function createDirectory(path:String):Bool {
 		var p = wide(path);
 		var r = Win32._wmkdir(p) == 0;
-		LibC.free(p);
 		return r;
 	}
 
@@ -395,7 +379,6 @@ class WinSys {
 	public static function deleteFile(path:String):Bool {
 		var p = wide(path);
 		var r = deleteW(p);
-		LibC.free(p);
 		return r == 0;
 	}
 
@@ -414,7 +397,6 @@ class WinSys {
 	public static function deleteDirectory(path:String):Bool {
 		var p = wide(path);
 		var r = Win32._wrmdir(p) == 0;
-		LibC.free(p);
 		return r;
 	}
 
@@ -423,8 +405,6 @@ class WinSys {
 	public static function rename(path:String, newPath:String):Bool {
 		var a = wide(path), b = wide(newPath);
 		var ok = renameW(a, b);
-		LibC.free(a);
-		LibC.free(b);
 		return ok;
 	}
 
@@ -456,7 +436,6 @@ class WinSys {
 		var w = wide(pat);
 		var fd = LibC.malloc(FIND_DATA);
 		var h = Win32.FindFirstFileW(w, fd);
-		LibC.free(w);
 		if (h.toI64() == -1) {
 			LibC.free(fd);
 			if (Win32.GetLastError() != 2) return null; // ERROR_FILE_NOT_FOUND
@@ -478,12 +457,10 @@ class WinSys {
 		var p = wide(path);
 		var n = Win32.GetFullPathNameW(p, 0, Ptr.nil(), Ptr.nil());
 		if (n == 0) {
-			LibC.free(p);
 			return null;
 		}
 		var buf = LibC.malloc(2 * (n + 1));
 		var m = Win32.GetFullPathNameW(p, n + 1, buf, Ptr.nil());
-		LibC.free(p);
 		var s = m == 0 || m > n ? null : ofWide(buf);
 		LibC.free(buf);
 		return s;
@@ -494,7 +471,6 @@ class WinSys {
 	public static function realPath(path:String):String {
 		var p = wide(path);
 		var out = realPathW(p);
-		LibC.free(p);
 		if (out.isNull()) return null;
 		var s = ofWide(out);
 		LibC.free(out);
@@ -553,7 +529,6 @@ class WinSys {
 		var p = wide(path);
 		var st = Mem.stack(64);
 		var r = pathStat(p, st);
-		LibC.free(p);
 		if (r != 0) return null;
 		inline function f(v:I64):Float
 			return cast v;
@@ -659,24 +634,19 @@ class WinSys {
 			line = b.toString();
 			var wc = wide(cmd);
 			exe = searchExe(wc, ext);
-			LibC.free(wc);
 		} else {
 			// Unix.open_process_full: %COMSPEC% /c cmd
 			var cs = wide("COMSPEC");
 			var shell = Win32._wgetenv(cs);
-			LibC.free(cs);
 			if (shell.isNull()) {
-				LibC.free(ext);
 				return -1;
 			}
 			line = Str.concat(Str.concat(ofWide(shell), " /c "), cmd);
 			exe = searchExe(Win32._wgetenv(wide("COMSPEC")), ext);
 		}
-		LibC.free(ext);
 		var wline = wide(line);
 		var r = spawn(exe, wline);
 		LibC.free(exe);
-		LibC.free(wline);
 		if (r.isNull()) return -1;
 		fds[0] = Mem.getI32(r, 0);
 		fds[1] = Mem.getI32(r, 4);

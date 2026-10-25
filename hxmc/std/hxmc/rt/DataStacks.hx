@@ -83,11 +83,13 @@ class DataStacks {
 		return p;
 	}
 
-	// a copy of the units of s on the fixed stack (Str.copyOf: GC code)
+	// a copy of the units of s on the fixed stack, a 0 unit after them (for
+	// the system: Str.copyOf, GC code)
 	@:hxmc.noGc @:hxmc.alloc public static function copyString(s:String):Ptr {
 		var n = Str.len(s);
-		var p = alloc(2 * n);
+		var p = alloc(2 * n + 2);
 		LibC.memcpy(p, Str.unitsAddr(s), (2 * n : I64));
+		Mem.setI16(p, 2 * n, 0);
 		return p;
 	}
 
@@ -121,18 +123,19 @@ class DataStacks {
 		return Mem.getPtr(stack(table, i), END);
 
 	// ---- scopes: a mark is stack 0's top (null before the first use) and the owned mask
+	// (@:keep: the lowering calls them, FnLower.mark)
 
-	@:hxmc.noGc public static function markTop():Ptr {
+	@:keep @:hxmc.noGc public static function markTop():Ptr {
 		var t = table;
 		return t.isNull() ? Ptr.nil() : Mem.getPtr(stack(t, 0), TOP);
 	}
 
-	@:hxmc.noGc public static function markMask():Int {
+	@:keep @:hxmc.noGc public static function markMask():Int {
 		var t = table;
 		return t.isNull() ? 0 : Mem.getI32(t, 0);
 	}
 
-	@:hxmc.noGc public static function reset(top:Ptr, mask:Int) {
+	@:keep @:hxmc.noGc public static function reset(top:Ptr, mask:Int) {
 		var t = table;
 		if (t.isNull()) return;
 		var s = stack(t, 0);
