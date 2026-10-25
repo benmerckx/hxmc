@@ -90,6 +90,8 @@ class HxmcValues {
 		addDependency(ctx.m.curmod, mg, MDepFromTyping);
 		typing.Generic.setTypeParameterDependencies(mg, haxe.ds.Vector.fromArrayCopy(types));
 		TypeloadFields.ensureStructInitConstructor(ctx, c, [], p);
+		// (inline, as a written struct class's would be: built in place)
+		c.clConstructor.cfKind = Method(MethInline);
 		return TInst(c, vector());
 	}
 
