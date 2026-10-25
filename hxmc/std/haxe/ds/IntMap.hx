@@ -39,14 +39,16 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	public function new()
 		mask = -1; // no arrays: the first set grows the table
 
-	inline function hashOf(k:Int):Int {
-		var h = k * 0x9E3779B1;
-		return h ^ (h >>> 16);
-	}
+	inline function hashOf(k:Int):Int
+		return MapIndex.intHome(k);
 
 	// the index (MapIndex): its slots' tags are the keys
-	inline function find(k:Int):Int
-		return live == 0 ? -1 : MapIndex.find(slots.index(0, mask), hashOf(k), k, _ -> true);
+	inline function find(k:Int):Int {
+		if (live == 0) return -1;
+		var idx = slots.index(0, mask);
+		var i = MapIndex.next(idx, hashOf(k), k);
+		return i < 0 ? -1 : idx.entry(i) - 1;
+	}
 
 	/**
 		See `Map.get`
@@ -91,10 +93,10 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	public function remove(k:Int):Bool {
 		if (live == 0) return false;
 		var idx = slots.index(0, mask);
-		var i = MapIndex.slot(idx, hashOf(k), k, _ -> true);
+		var i = MapIndex.next(idx, hashOf(k), k);
 		if (i < 0) return false;
 		var e = idx.entry(i);
-		MapIndex.unindex(idx, i, t -> hashOf(t));
+		MapIndex.unindex(idx, i, true);
 		if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1);
 		dead[e - 1] = true;
 		vs[e - 1] = null;

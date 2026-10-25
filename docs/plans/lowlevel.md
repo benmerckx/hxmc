@@ -622,10 +622,12 @@ take the storage as a value of one of two kinds.
    follows an address into a struct value) rejects a view kept across a
    GC point of the GC wrapper (`hxmc/test/reject/RawView.hx`). This covers
    storage of scalars and value types: indexes, hashes, text, numbers.
-2. Accessors: inline function arguments (compile-time function values,
-   inlined), for what only the face knows: the GC face's key comparison
-   (a String's `==`, an object's identity), and stores of GC references,
-   which need the write barrier.
+2. What only the face knows (the GC face's key comparison: a String's
+   `==`, an object's identity; stores of GC references, which need the
+   write barrier) stays in the face, between calls of the core: an inline
+   function argument (a compile-time function value) would do it where
+   Haxe inlines it, but where nothing does (macros run by Mir) it is a
+   closure, its call a dynamic call and a GC point under a view.
 
 (Haxe's `@:generic` does not do this: a generic function's body is typed
 once against its constraint, and an abstract over a buffer satisfies no
@@ -639,8 +641,10 @@ no bounds test, and a view's size is checked against the mask when it is
 made, or is the maps' invariant for the GC face, which would otherwise read
 the array's header, another cache line, on every lookup). The GC face is
 `haxe.ds.IntMap`, `StringMap` and `ObjectMap` (`MapSlots.index` views the
-index's GC array; `same` compares the keys, `home` gives a tag's home
-slot), whose own probe, insert and removal loops are gone; the scoped face
+index's GC array; the core's `next` gives the next slot of a tag, the face
+tells the keys apart between calls: no function value, which would be a
+closure and a dynamic call where nothing inlines it, as in macros run by
+Mir), whose own probe, insert and removal loops are gone; the scoped face
 is `hxmc.scoped.IntTable` (slots in a Pool, keys and values in Grows).
 Same results in the corpus natively, on wasm32 and on WasmGC (where the
 view is the GC array and Haxe's inline constructors make it locals);

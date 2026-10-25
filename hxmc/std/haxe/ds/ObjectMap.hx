@@ -80,7 +80,11 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 	// (MapIndex: its slots' tags are the hashes, from element 2)
 	inline function find(k:Dynamic, h:Int):Int {
 		var kvs = this.kvs;
-		return MapIndex.find(slots.index(2, mask), h, h, e -> hxmc.Native.refEq(kvs[2 * e], k));
+		var idx = slots.index(2, mask);
+		var i = MapIndex.next(idx, h, h);
+		while (i >= 0 && !hxmc.Native.refEq(kvs[2 * (idx.entry(i) - 1)], k))
+			i = MapIndex.next(idx, i + 1, h);
+		return i < 0 ? -1 : idx.entry(i) - 1;
 	}
 
 	/**
@@ -148,7 +152,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 
 	// empties slot i (backward-shift deletion: no tombstones)
 	@:hxmc.noGc function unindex(i:Int)
-		MapIndex.unindex(slots.index(2, mask), i, t -> t);
+		MapIndex.unindex(slots.index(2, mask), i, false);
 
 	/**
 		See `Map.remove`
@@ -159,7 +163,10 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		sync();
 		var kvs = this.kvs;
 		var h = hashOf(k);
-		var i = MapIndex.slot(slots.index(2, mask), h, h, e -> hxmc.Native.refEq(kvs[2 * e], k));
+		var idx = slots.index(2, mask);
+		var i = MapIndex.next(idx, h, h);
+		while (i >= 0 && !hxmc.Native.refEq(kvs[2 * (idx.entry(i) - 1)], k))
+			i = MapIndex.next(idx, i + 1, h);
 		if (i < 0) return false;
 		var e = slots[3 + 2 * i];
 		unindex(i);
@@ -232,7 +239,10 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 					if (dead != null && dead[e]) continue;
 					// (its slot, in the probe chain of the hash it was added with)
 					var h = young[2 * j + 1];
-					var i = MapIndex.slot(slots.index(2, mask), h, h, x -> x == e);
+					var idx = slots.index(2, mask);
+					var i = MapIndex.next(idx, h, h);
+					while (i >= 0 && idx.entry(i) - 1 != e)
+						i = MapIndex.next(idx, i + 1, h);
 					unindex(i);
 					index(hashOf(kvs[2 * e]), e);
 				}

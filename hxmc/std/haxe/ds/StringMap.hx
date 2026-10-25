@@ -50,7 +50,12 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	// the index (MapIndex): its slots' tags are the hashes
 	inline function find(k:String, h:Int):Int {
 		var kvs = this.kvs;
-		return live == 0 ? -1 : MapIndex.find(slots.index(0, mask), h, h, e -> (kvs[2 * e] : String) == k);
+		if (live == 0) return -1;
+		var idx = slots.index(0, mask);
+		var i = MapIndex.next(idx, h, h);
+		while (i >= 0 && (kvs[2 * (idx.entry(i) - 1)] : String) != k)
+			i = MapIndex.next(idx, i + 1, h);
+		return i < 0 ? -1 : idx.entry(i) - 1;
 	}
 
 	/**
@@ -100,10 +105,12 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		var kvs = this.kvs;
 		var h = hashOf(k);
 		var idx = slots.index(0, mask);
-		var i = MapIndex.slot(idx, h, h, e -> (kvs[2 * e] : String) == k);
+		var i = MapIndex.next(idx, h, h);
+		while (i >= 0 && (kvs[2 * (idx.entry(i) - 1)] : String) != k)
+			i = MapIndex.next(idx, i + 1, h);
 		if (i < 0) return false;
 		var e = idx.entry(i);
-		MapIndex.unindex(idx, i, t -> t);
+		MapIndex.unindex(idx, i, false);
 		if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1);
 		dead[e - 1] = true;
 		kvs[2 * e - 2] = null;

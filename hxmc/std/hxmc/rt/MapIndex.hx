@@ -10,19 +10,19 @@ import hxmc.scoped.Slice;
 // whose slots are on a data stack. Open addressing with linear probing: slot
 // i is two Ints, a tag (IntMap's key, the others' hash) and the entry + 1 (0:
 // empty); removals shift the probe chain back (no tombstones). The caller
-// keeps the index at most half full and says where a tag's probe chain starts
-// (home, before the mask) and which entry with a tag is the key (same).
+// keeps the index at most half full, says where a tag's probe chain starts
+// (home, before the mask) and tells the entries with a tag apart itself,
+// between calls of `next` (no function value: a closure would be a GC point
+// and a dynamic call where nothing inlines it, as in macros run by Mir).
 @:hxmc.scoped class MapIndex {
-	// the slot of the entry with tag t that `same` accepts (its entry
-	// number), probing from home h; -1: none (the slot numbers run on from
-	// h, the view masks them)
-	public static inline function slot(idx:IndexView, h:Int, t:Int, same:Int->Bool):Int {
-		var i = h;
+	// the first slot from i on (the slot numbers run on, the view masks them)
+	// with tag t before an empty one, masked; -1: none. A caller that rejects
+	// the entry at r (idx.entry(r) - 1) goes on from r + 1
+	public static inline function next(idx:IndexView, i:Int, t:Int):Int {
 		var r = -1;
 		while (true) {
-			var e = idx.entry(i);
-			if (e == 0) break;
-			if (idx.tag(i) == t && same(e - 1)) {
+			if (idx.entry(i) == 0) break;
+			if (idx.tag(i) == t) {
 				r = i & idx.mask;
 				break;
 			}
@@ -31,20 +31,10 @@ import hxmc.scoped.Slice;
 		return r;
 	}
 
-	// the entry with tag t that `same` accepts, or -1
-	public static inline function find(idx:IndexView, h:Int, t:Int, same:Int->Bool):Int {
-		var i = h;
-		var r = -1;
-		while (true) {
-			var e = idx.entry(i);
-			if (e == 0) break;
-			if (idx.tag(i) == t && same(e - 1)) {
-				r = e - 1;
-				break;
-			}
-			i++;
-		}
-		return r;
+	// IntMap's and IntTable's home slot of key k, the tag (before the mask)
+	public static inline function intHome(k:Int):Int {
+		var h = k * 0x9E3779B1;
+		return h ^ (h >>> 16);
 	}
 
 	// entry e (tag t, home h) indexed: in the first empty slot of its chain
@@ -57,15 +47,17 @@ import hxmc.scoped.Slice;
 	}
 
 	// slot i emptied, the slots after it whose probe chain passes through it
-	// moved back (backward-shift deletion); home: a tag's home slot
-	public static inline function unindex(idx:IndexView, i:Int, home:Int->Int) {
+	// moved back (backward-shift deletion); a tag's home slot is the tag, or
+	// intHome of it (intKeys)
+	public static inline function unindex(idx:IndexView, i:Int, intKeys:Bool) {
 		var mask = idx.mask;
 		var j = i;
 		while (true) {
 			j = (j + 1) & mask;
 			var e = idx.entry(j);
 			if (e == 0) break;
-			var h = home(idx.tag(j)) & mask;
+			var t = idx.tag(j);
+			var h = (intKeys ? intHome(t) : t) & mask;
 			// (j stays where it is when its home is cyclically in (i, j])
 			if (i <= j ? (i < h && h <= j) : (i < h || h <= j)) continue;
 			idx.setTag(i, idx.tag(j));

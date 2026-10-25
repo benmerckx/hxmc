@@ -21,10 +21,11 @@ abstract IntTable<V>(IntTableData<V>) {
 	public inline function new()
 		this = new IntTableData(new Pool(), new Grow<Int>(), new Grow<V>());
 
-	static inline function hashOf(k:Int):Int {
-		var h = k * 0x9E3779B1;
-		return h ^ (h >>> 16);
-	}
+	static inline function hashOf(k:Int):Int
+		return MapIndex.intHome(k);
+
+	static inline function entryOf(idx:IndexView, i:Int):Int
+		return i < 0 ? -1 : idx.entry(i) - 1;
 
 	inline function index():IndexView
 		return new IndexView(this.slots, this.mask);
@@ -35,7 +36,7 @@ abstract IntTable<V>(IntTableData<V>) {
 		return this.keys.length;
 
 	inline function find(k:Int):Int
-		return this.keys.length == 0 ? -1 : MapIndex.find(index(), hashOf(k), k, _ -> true);
+		return this.keys.length == 0 ? -1 : entryOf(index(), MapIndex.next(index(), hashOf(k), k));
 
 	public inline function exists(k:Int):Bool
 		return find(k) >= 0;
@@ -113,10 +114,11 @@ abstract IntTable<V>(Ptr) {
 		this = h;
 	}
 
-	static inline function hashOf(k:Int):Int {
-		var h = k * 0x9E3779B1;
-		return h ^ (h >>> 16);
-	}
+	static inline function hashOf(k:Int):Int
+		return MapIndex.intHome(k);
+
+	static inline function entryOf(idx:IndexView, i:Int):Int
+		return i < 0 ? -1 : idx.entry(i) - 1;
 
 	inline function keys():Grow<Int>
 		return cast Mem.getPtr(this, KEYS);
@@ -136,7 +138,7 @@ abstract IntTable<V>(Ptr) {
 
 	// the entry of k, or -1
 	inline function find(k:Int):Int
-		return keys().length == 0 ? -1 : MapIndex.find(index(), hashOf(k), k, _ -> true);
+		return keys().length == 0 ? -1 : entryOf(index(), MapIndex.next(index(), hashOf(k), k));
 
 	public inline function exists(k:Int):Bool
 		return find(k) >= 0;
