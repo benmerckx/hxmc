@@ -129,7 +129,28 @@ Chosen by effort and impact (the owner left it open):
 
 ## Items
 
-None finished yet.
+### String concatenation chains (item 4)
+
+`a + b + c + d` made a string per `+`: FnLower now lowers a chain of `+`
+on Strings to `hx_str_concat3`/`hx_str_concat4` (four at a time, one
+string), each operand converted where the binary chain converts it
+(the first two after both are evaluated, the others right after their
+own); String operands are passed as they are (the runtime reads null as
+"null"), where each was wrapped in `hx_str_or_null` before.
+
+| | before | after |
+| --- | ---: | ---: |
+| microbenchmark (2M chains of 5-7 operands) | 330-370 ms | 204-222 ms |
+| self-build allocated | 12.70-12.72 GB | 12.62 GB |
+| self-build wall / peak RSS | 13.2-13.9 s / 1.51-1.55 GB | 13.1-14.3 s / 1.54-1.57 GB (noise) |
+| self-build GC | 344-350 minor, 1.59-1.61 s | 338 minor, 1.57-1.67 s |
+| tool's text | 17,300,089 B | 17,162,745 B (-0.8%) |
+| tsc-haxe full: allocated / wall | 1303 MB / 5.75-5.87 s | 1302 MB / 5.77-5.88 s |
+| tsc-haxe's text | 7,514,031 B | 7,511,439 B |
+| LOC | | +80 (FnLower 59, Str 19, symbols 2) |
+
+Kept: smaller code everywhere and the chains themselves 40% faster; the
+compiler and tsc-haxe build few chains in their hot paths.
 
 ## Decisions for the owner
 

@@ -1986,10 +1986,69 @@ class FnLower {
 				var isNull = Ir.isRef(lo.ty) ? EBin(RefEq, ELocal(lo), ENull(lo.ty)) : EInt(0);
 				out.push(SIf(isNull, other, block(() -> out.push(SSet(r, coerce(ELocal(lo), lo.ty, t))))));
 				return ELocal(r);
+			case OpAdd if (isConcat(e) && isConcat(a)):
+				return concatChain(e);
 			case _:
 				var xa = value(a);
 				return arith(op, xa, tyOf(a), () -> {x: value(b), t: tyOf(b)}, tyOf(e), e);
 		}
+	}
+
+	function isConcat(e:TExpr):Bool
+		return e.eexpr.match(TBinop(OpAdd, _, _)) && tyOf(e).match(TRef(RStr));
+
+	// a + b + c...: joined four at a time (hx_str_concat3, 4), no string
+	// in between; each operand evaluated and converted where the chain of
+	// binary + would (the first two after both are evaluated, the others
+	// right after their own)
+	function concatChain(e:TExpr):Ex {
+		var es = [];
+		var x = e;
+		while (isConcat(x))
+			switch x.eexpr {
+				case TBinop(_, a, b):
+					es.push(b);
+					x = a;
+				case _:
+			}
+		es.push(x);
+		es.reverse();
+		var n = es.length;
+		var xs = new Vector<Ex>(n);
+		var str = (i:Int) -> {
+			var t = tyOf(es[i]);
+			if (!t.match(TRef(RStr))) xs[i] = toStr(xs[i], t);
+		};
+		for (k in 0...n) {
+			var before = out.length;
+			var v = value(es[k]);
+			if (out.length != before) {
+				var spills = [];
+				for (i in 0...k)
+					if (!isConst(xs[i]) && !stableFrom(xs[i], before)) {
+						var lo = newLocal("s", k > 1 ? TRef(RStr) : tyOf(es[i]));
+						spills.push(SSet(lo, xs[i]));
+						xs[i] = ELocal(lo);
+					}
+				for (j in 0...spills.length)
+					out.insert(before + j, spills[j]);
+			}
+			xs[k] = v;
+			if (k == 1) str(0);
+			if (k >= 1) str(k);
+		}
+		var acc = xs[0];
+		var i = 1;
+		while (i < n) {
+			var m = n - i < 3 ? n - i : 3;
+			var args = new Vector<Ex>(m + 1);
+			args[0] = acc;
+			for (j in 0...m)
+				args[j + 1] = xs[i + j];
+			acc = temp(TRef(RStr), ECallHost(l.native(m == 1 ? "hx_str_concat" : "hx_str_concat" + (m + 1)), args, TRef(RStr)));
+			i += m;
+		}
+		return acc;
 	}
 
 	// a op b, with a already lowered; b lowered by the callback (after a)

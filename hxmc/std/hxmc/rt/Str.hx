@@ -169,6 +169,25 @@ class Str {
 		return s;
 	}
 
+	// a + b + c (+ d) in one string: no intermediate ones (FnLower: a chain of +)
+	@:hxmc.host("hx_str_concat3") static function concat3(a:String, b:String, c:String):String
+		return concat4(a, b, c, "");
+
+	@:hxmc.host("hx_str_concat4") static function concat4(a:String, b:String, c:String, d:String):String {
+		if (isNull(a)) a = "null";
+		if (isNull(b)) b = "null";
+		if (isNull(c)) c = "null";
+		if (isNull(d)) d = "null";
+		var na = len(a), nb = len(b), nc = len(c), nd = len(d);
+		var s = make(na + nb + nc + nd);
+		var u = chars(s);
+		Repr.copy(u, chars(a), na);
+		Repr.copyTo(u, na, chars(b), nb);
+		Repr.copyTo(u, na + nb, chars(c), nc);
+		Repr.copyTo(u, na + nb + nc, chars(d), nd);
+		return s;
+	}
+
 	@:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
 		var s = make(TextCore.intLength(v));
 		TextCore.intWrite(v, view(s));
