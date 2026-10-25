@@ -656,23 +656,35 @@ class Census {
 	// ---- allocations (RT_CENSUS set): every object allocated, by type. The
 	// collector counts the nursery's objects before each collection empties
 	// it (with one thread its used part is contiguous objects and zeroed
-	// gaps) and large objects allocated in the old space as they come.
+	// gaps) and large objects allocated in the old space as they come; and
+	// what minor collections copy out of the nursery (promoted), by type.
 	static var allocTab:Ptr; // per type: count, bytes
+	static var promoTab:Ptr; // (the same of the objects minor collections copied out of the nursery)
 	static var allocMulti:Bool; // the nursery was counted with several threads: approximate
 
-	@:hxmc.unsafe static inline function allocEntry(t:Int):Ptr {
+	@:hxmc.unsafe static inline function newTab():Ptr {
 		var nt = ntypes();
-		if (allocTab.isNull()) {
-			allocTab = LibC.malloc((nt : I64) * 16);
-			LibC.memset(allocTab, 0, (nt : I64) * 16);
-		}
-		return allocTab.add(16 * (t < nt ? t : 0));
+		var t = LibC.malloc((nt : I64) * 16);
+		LibC.memset(t, 0, (nt : I64) * 16);
+		return t;
+	}
+
+	@:hxmc.unsafe static inline function count(tab:Ptr, header:I64, bytes:I64) {
+		var t = header.toInt() & 0xFFFF;
+		var e = tab.add(16 * (t < ntypes() ? t : 0));
+		Mem.setI64(e, 0, Mem.getI64(e, 0) + 1);
+		Mem.setI64(e, 8, Mem.getI64(e, 8) + bytes);
 	}
 
 	@:hxmc.unsafe public static function countAlloc(header:I64, bytes:I64) {
-		var e = allocEntry(header.toInt() & 0xFFFF);
-		Mem.setI64(e, 0, Mem.getI64(e, 0) + 1);
-		Mem.setI64(e, 8, Mem.getI64(e, 8) + bytes);
+		if (allocTab.isNull()) allocTab = newTab();
+		count(allocTab, header, bytes);
+	}
+
+	// an object a minor collection copies out of the nursery (Gc.copyTo)
+	@:hxmc.unsafe public static function countPromoted(header:I64, bytes:I64) {
+		if (promoTab.isNull()) promoTab = newTab();
+		count(promoTab, header, bytes);
 	}
 
 	@:hxmc.unsafe public static function countYoung(start:Ptr, end:Ptr) {
@@ -691,16 +703,20 @@ class Census {
 	}
 
 	@:hxmc.unsafe public static function allocReport() {
-		if (allocTab.isNull()) return;
+		if (!allocTab.isNull()) typeTable(allocTab, Mem.cstr("allocations: "));
+		if (!promoTab.isNull()) typeTable(promoTab, Mem.cstr("promoted by minor collections: "));
+	}
+
+	@:hxmc.unsafe static function typeTable(tab:Ptr, title:Ptr) {
 		var top = Os.envInt("RT_CENSUS_TOP", 40);
 		var nt = ntypes();
 		var n:I64 = 0, total:I64 = 0;
 		for (t in 0...nt) {
-			n += Mem.getI64(allocTab, 16 * t);
-			total += Mem.getI64(allocTab, 16 * t + 8);
+			n += Mem.getI64(tab, 16 * t);
+			total += Mem.getI64(tab, 16 * t + 8);
 		}
 		var r = new Report(Mem.stack(Report.BYTES));
-		r.str("allocations: ");
+		r.cstr(title, 0, -1);
 		r.int(n, 0);
 		r.str(" objects, ");
 		r.fixed(mb(total), 1, 0);
@@ -711,12 +727,12 @@ class Census {
 			r.ch(" ".code);
 		r.str("      count        MB   B/obj\n");
 		r.flush();
-		var order = sortDesc(allocTab, 16, 8, nt);
+		var order = sortDesc(tab, 16, 8, nt);
 		var nb = Mem.stack(256);
 		var shown = 0;
 		for (i in 0...nt) {
 			var t = Mem.getI32(order, 4 * i);
-			var e = allocTab.add(16 * t);
+			var e = tab.add(16 * t);
 			if (Mem.getI64(e, 0) == 0) continue;
 			if (shown >= top) break;
 			shown++;

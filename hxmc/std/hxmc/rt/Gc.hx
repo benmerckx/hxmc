@@ -255,6 +255,9 @@ class Gc {
 	static inline function copyTo(p:Ptr, n:Int):Ptr {
 		var words = n + 1;
 		var dst = oldPtr, s = p.add(-8);
+		#if hxmc.census
+		if (census != 0 && !major) Census.countPromoted(Mem.getI64(s, 0), (words : I64) << 3);
+		#end
 		if (words <= 8) { // most objects: a few words, no call (unrolled)
 			do {
 				Mem.setI64(dst, 0, Mem.getI64(s, 0));
@@ -428,6 +431,9 @@ class Gc {
 				// (copyTo, without the call of memcpy)
 				var words = wordsOf(v, vw0) + 1;
 				var dst = oldPtr;
+				#if hxmc.census
+				if (census != 0) Census.countPromoted(Mem.getI64(v, -8), (words : I64) << 3);
+				#end
 				if (words <= 8) {
 					do {
 						Mem.setI64(dst, 0, Mem.getI64(v, -8));
