@@ -75,6 +75,46 @@ abstract Str(StrData) {
 		return h;
 	}
 
+	// a copy in upper case (toUpper) or lower case, as String's
+	// (hxmc.rt.CaseMap: the simple mappings of the BMP), fresh memory of the scope
+	public inline function toCase(toUpper:Bool):Str {
+		var n = this.length;
+		var p = DataStacks.alloc(2 * n);
+		for (i in 0...n)
+			Mem.setI16(p, 2 * i, hxmc.rt.CaseMap.map(Mem.getU16(this.ptr, 2 * i), toUpper));
+		return new Str(p, n);
+	}
+
+	// v as Std.string writes it (hxmc.rt.FloatText: the shortest decimal that
+	// reads back as v), fresh memory of the scope
+	public static inline function ofFloat(v:Float):Str {
+		var buf = Mem.stack(48);
+		hxmc.rt.FloatText.format(v, buf);
+		var n = LibC.strlen(buf).toInt();
+		var p = DataStacks.alloc(2 * n);
+		for (i in 0...n)
+			Mem.setI16(p, 2 * i, Mem.getU8(buf, i));
+		return new Str(p, n);
+	}
+
+	// the number the text starts with (after blanks), as Std.parseFloat reads
+	// it; NaN: none
+	public inline function toFloat():Float {
+		var n = this.length;
+		var buf = DataStacks.alloc(n + 1);
+		var k = 0;
+		while (k < n && (Mem.getU16(this.ptr, 2 * k) == 32 || Mem.getU16(this.ptr, 2 * k) == 9 || Mem.getU16(this.ptr, 2 * k) == 10 || Mem.getU16(this.ptr, 2 * k) == 13))
+			k++;
+		for (i in k...n) {
+			var u = Mem.getU16(this.ptr, 2 * i);
+			Mem.setI8(buf, i - k, u < 0x80 ? u : 0x80);
+		}
+		Mem.setI8(buf, n - k, 0);
+		var end = Mem.stack(8);
+		var d = hxmc.rt.FloatText.parse(buf, end);
+		return Mem.getPtr(end, 0) == buf ? Math.NaN : d;
+	}
+
 	// a String of the units (GC code)
 	public inline function toString():String
 		return DataStacks.stringOf(this.ptr, this.length);

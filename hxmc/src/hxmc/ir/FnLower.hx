@@ -132,7 +132,7 @@ class FnLower {
 
 	function scopedBody(tf:TFunc) {
 		// (the trusted layer, @:hxmc.noGc: unchecked)
-		if (fi.scoped || !fi.declNoGc) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped);
+		if (fi.scoped || !fi.declNoGc) plan = Scoped.check(null, tf, fi.display != null ? fi.display : fi.name, fi.scoped, StringTools.startsWith(fi.module, "hxmc.rt"));
 		if (plan != null && plan.fnMark) pushMark();
 		stmt(tf.tfExpr);
 		if (plan != null && plan.fnMark) resetTo(0);

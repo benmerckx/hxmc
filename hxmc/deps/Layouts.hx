@@ -440,12 +440,12 @@ class Layouts {
 		}
 		var np = (winErr.length - 7) >> 1;
 		out.add("\n\t// Windows: a Win32 error as the errno OCaml's runtime maps it to (caml_win32_maperr)\n");
-		out.add("\t@:hxmc.noGc public static function winErrno(e:Int):Int {\n\t\treturn switch e {\n" + cases(we, np));
+		out.add("\t@:hxmc.scoped public static function winErrno(e:Int):Int {\n\t\treturn switch e {\n" + cases(we, np));
 		var r = we.slice(2 * np);
 		out.add('\t\t\tcase _: e >= ${r[0]} && e <= ${r[1]} ? ${r[2]} : e >= ${r[3]} && e <= ${r[4]} ? ${r[5]} : ${r[6]};\n\t\t}\n\t}\n');
 		var ns = (wsaErr.length - 1) >> 1;
 		out.add("\n\t// Windows: a Winsock error as the errno OCaml's Unix library reports it (unixsupport_win32.c)\n");
-		out.add("\t@:hxmc.noGc public static function wsaErrno(e:Int):Int {\n\t\treturn switch e {\n" + cases(se, ns));
+		out.add("\t@:hxmc.scoped public static function wsaErrno(e:Int):Int {\n\t\treturn switch e {\n" + cases(se, ns));
 		out.add('\t\t\tcase _: ${se[2 * ns]};\n\t\t}\n\t}\n');
 		out.add("}\n");
 		for (o in [{path: OUT, text: out.toString()}, {path: UV_OUT, text: uv.toString()}]) {

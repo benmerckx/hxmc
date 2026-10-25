@@ -455,11 +455,10 @@ class Str {
 	@:hxmc.host("String_toLowerCase") static function toLowerCase(s:String):String {
 		var n = len(s);
 		var r = make(n);
-		var t = CaseMap.table(false);
 		var c = chars(s), d = chars(r);
 		for (i in 0...n) {
 			var u = c.get(i);
-			d.set(i, u < 128 ? (u >= 65 && u <= 90 ? u + 32 : u) : CaseMap.map(t, u));
+			d.set(i, u < 128 ? (u >= 65 && u <= 90 ? u + 32 : u) : CaseMap.map(u, false));
 		}
 		return r;
 	}
@@ -467,11 +466,10 @@ class Str {
 	@:hxmc.host("String_toUpperCase") static function toUpperCase(s:String):String {
 		var n = len(s);
 		var r = make(n);
-		var t = CaseMap.table(true);
 		var c = chars(s), d = chars(r);
 		for (i in 0...n) {
 			var u = c.get(i);
-			d.set(i, u < 128 ? (u >= 97 && u <= 122 ? u - 32 : u) : CaseMap.map(t, u));
+			d.set(i, u < 128 ? (u >= 97 && u <= 122 ? u - 32 : u) : CaseMap.map(u, true));
 		}
 		return r;
 	}
@@ -629,7 +627,7 @@ class Str {
 		// the host's (JavaScript's parseFloat, as strtod reads)
 		return hxmc.rt.gc.W.parseFloat(s);
 		#else
-		// ASCII bytes for strtod (any other unit ends the number, as its UTF-8 would)
+		// ASCII bytes for FloatText (any other unit ends the number, as its UTF-8 would)
 		var n = len(s);
 		var small = Mem.stack(128);
 		var buf = n < 128 ? small : LibC.malloc((n + 1 : I64));
@@ -643,7 +641,7 @@ class Str {
 		while (Mem.getU8(p, 0) == 32 || Mem.getU8(p, 0) == 9 || Mem.getU8(p, 0) == 10 || Mem.getU8(p, 0) == 13)
 			p = p.add(1);
 		var end = Mem.stack(8);
-		var d = LibC.strtod(p, end);
+		var d = FloatText.parse(p, end);
 		if (Mem.getPtr(end, 0) == p) d = Math.NaN;
 		if (buf != small) LibC.free(buf);
 		return d;

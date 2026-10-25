@@ -1,0 +1,5 @@
+exit 0
+ScopedText.hx:66: the faces agree
+ScopedText.hx:67: 0 -0 1 -1.5 0.1 0.3333333333333333 1e+21 1e-7 123456789.125 5e-324 1.7976931348623157e+308 Infinity -Infinity NaN 2.5e-310 9007199254740992 0.30000000000000004
+ScopedText.hx:68: 0 42 -1500 8 Infinity -0 Infinity -Infinity NaN 3.14 NaN NaN 0.5 5 1 0.1 2.225073858507201e-308 7
+ScopedText.hx:69: HELLO/hello ÉTÉ/été STRAßE/straße ǅUNGLA/ǆungla ΩΜΈΓΑ/ωμέγα АБВГД/абвгд ǈ/ǉ ﬃ/ﬃ MIXED CASE 123/mixed case 123

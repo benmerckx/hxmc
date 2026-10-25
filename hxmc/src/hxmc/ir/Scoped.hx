@@ -133,10 +133,12 @@ class Scoped {
 	// checks function tf (cf of class c, null for a closure; scoped: a
 	// @:hxmc.scoped one) and plans its marks; null: GC code that touches no
 	// scoped value. Throws the first error, at its position ("File.hx:12: ...").
-	public static function check(cf:Null<TClassField>, tf:TFunc, display:String, scoped:Bool):Null<Plan> {
+	// (inRuntime: a function of hxmc's runtime, whose GC code may view a String's units)
+	public static function check(cf:Null<TClassField>, tf:TFunc, display:String, scoped:Bool, inRuntime = false):Null<Plan> {
 		if (!scoped && (runtime == null || !touches(tf))) return null;
 		if (scoped && Lower.wasmGc) throw at(tf.tfExpr.epos) + display + ": scoped memory needs a linear memory: not available with -D hxmc.wasm-gc";
 		var a = new Analysis(tf, display, !scoped);
+		a.inRuntime = inRuntime;
 		a.run();
 		if (cf != null && !summaries.exists(cf)) summaries.set(cf, a.summary);
 		return {fnMark: a.fnAllocates && !a.retRefs, scopes: a.allocScopes, retRefs: a.retRefs};
@@ -313,6 +315,8 @@ private class Analysis {
 	public var retRefs:Bool;
 	public var fnAllocates = false;
 	public var allocScopes = new ObjectMap<TExpr, Bool>();
+
+	public var inRuntime = false;
 
 	public function new(tf, display, gc) {
 		this.tf = tf;
@@ -967,7 +971,7 @@ private class Analysis {
 								case TLocal(v) if (literals.exists(v.vId)): return [];
 								case _ if (!gc):
 									fail(e.epos, 'scoped code holds no GC references: Mem.addr of a heap object (a Str views a string literal only: Str.copyOf copies a String)');
-								case _ if (isString(a.etype)):
+								case _ if (isString(a.etype) && !inRuntime):
 									fail(e.epos, 'a Str views a string literal only (a String moves with the collector): Str.copyOf copies one');
 								case _:
 									ev(args[0]);
