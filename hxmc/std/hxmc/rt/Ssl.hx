@@ -431,26 +431,28 @@ class Ssl {
 		return MBlocking.mbedtls_ssl_handshake(s);
 	}
 
-	// mbedtls reads and writes a malloc'ed copy (the call is in a safe region:
-	// a collection may move `buf` meanwhile)
+	// mbedtls reads and writes a copy on the data stack (the call is in a safe
+	// region: a collection may move `buf` meanwhile)
 	public static function sslRead(ssl:Dynamic, buf:Bytes, pos:Int, len:Int):Int {
 		var s = ptr(ssl);
 		Mem.setI32(s, SSL_BIO_ERRNO, 0);
-		var tmp = LibC.malloc((len > 0 ? len : 1 : I64));
+		var tmp = scratch(len);
 		var r = MBlocking.mbedtls_ssl_read(s, tmp, (len : I64));
 		if (r > 0) LibC.memcpy(bytes(buf).add(pos), tmp, (r : I64));
-		LibC.free(tmp);
 		return r;
 	}
 
 	public static function sslWrite(ssl:Dynamic, buf:Bytes, pos:Int, len:Int):Int {
 		var s = ptr(ssl);
 		Mem.setI32(s, SSL_BIO_ERRNO, 0);
-		var tmp = LibC.malloc((len > 0 ? len : 1 : I64));
+		var tmp = scratch(len);
 		if (len > 0) LibC.memcpy(tmp, bytes(buf).add(pos), (len : I64));
-		var r = MBlocking.mbedtls_ssl_write(s, tmp, (len : I64));
-		LibC.free(tmp);
-		return r;
+		return MBlocking.mbedtls_ssl_write(s, tmp, (len : I64));
+	}
+
+	static inline function scratch(len:Int):Ptr {
+		var t:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.slice(len > 0 ? len : 1);
+		return t.ptr();
 	}
 
 	// the BIO: Unix.send / Unix.recv socket bytes 0 (Bytes.length bytes) []
