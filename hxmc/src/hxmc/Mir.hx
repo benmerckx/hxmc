@@ -170,6 +170,12 @@ class OInfo {
 	// SetField of a reference into an object allocated since the last point
 	// where a collection may happen: no write barrier (Opt.freshTargets)
 	public var fresh = false;
+	// New: an object in the function's shadow-stack frame (Escape: it does
+	// not outlive the function, nor its next allocation here), its header
+	// at stackOff from the frame's address (args[0]); no allocation, no
+	// barrier into it, the collector scanning it with the stack (Gc.scanStack)
+	public var stack = false;
+	public var stackOff = -1;
 	// ArrayGet, ArraySet, ArrayPush: where the array's header and the index
 	// widened start among the arguments (Opt.operands; -1: none)
 	public var ops = -1;
@@ -209,6 +215,8 @@ class OInfo {
 		o.ph = ph;
 		o.young = young;
 		o.fresh = fresh;
+		o.stack = stack;
+		o.stackOff = stackOff;
 		o.ops = ops;
 		return o;
 	}

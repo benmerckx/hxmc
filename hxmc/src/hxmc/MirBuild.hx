@@ -825,7 +825,11 @@ class MirBuild extends MirWriter {
 		cur = hb;
 		var h3 = stackAddr(slot);
 		tlsStore("rt_hcur", load(I64, 8, h3, abi.handlerPrev));
-		tlsStore("rt_sp", load(I64, 8, h3, abi.handlerSp));
+		// (the frames the throw left: cleared, their objects with them,
+		// Escape's stack allocation; rt_sp is still the thrower's)
+		var sp = load(I64, 8, h3, abi.handlerSp);
+		call("memset", vector(sp, iconst(0), op2(Sub, I64, tlsLoad("rt_sp"), sp)), I64);
+		tlsStore("rt_sp", sp);
 		var exn = tlsLoad("rt_exn");
 		for (c in catches)
 			writeLocal(c.l, exn);

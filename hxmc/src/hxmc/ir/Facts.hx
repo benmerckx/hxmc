@@ -59,6 +59,7 @@ class Facts {
 			if (f.cSymbol != null && StringTools.startsWith(f.module, "hxmc.rt.")) f.rtFamilies = RuntimeSymbols.familiesOf(f.cSymbol);
 		}
 		findNoGc();
+		findNoEscape();
 		markCold();
 		checkRawAddresses();
 		assignTypes();
@@ -601,6 +602,241 @@ class Facts {
 		}
 	}
 
+	// ---- what parameters escape (Escape's objects of the frame: docs/plans/codegen.md,
+	// "Escape analysis")
+
+	// Per function, the arguments its body never lets escape (argNoEscape),
+	// and per closure, the captures its body never lets escape (capNoEscape)
+	// and the captured boxes whose contents it never lets escape
+	// (capContentNoEscape): a value escapes when it is stored (a field, an
+	// array, a box, a global, a new object or closure), returned, thrown,
+	// converted to a non-reference, given to the runtime, a virtual,
+	// structural or closure call, or to a parameter of a callee that lets it
+	// escape (or has no body here); reading it, testing it, calling it as a
+	// closure (the closure's code only reads its captures, unless a closure
+	// of that signature lets its own escape) and copies into locals do not.
+	// The least set of escapes: optimistic, then the dependencies' escapes
+	// propagated to a fixpoint.
+	function findNoEscape() {
+		var scans = new Map<FuncInfo, EscScan>();
+		for (f in p.funcs)
+			if (escAnalyzable(f)) scans.set(f, escScan(f));
+		// (per function: what escapes, a mask per kind of source)
+		var esc = new Map<FuncInfo, Vector<Int>>();
+		var leaky = new Map<Int, Bool>(); // closure signatures whose code lets its closure escape
+		var callers = new Map<FuncInfo, Array<FuncInfo>>(), sigUsers = new Map<Int, Array<FuncInfo>>();
+		var work:Array<FuncInfo> = [];
+		for (f => sc in scans) {
+			esc.set(f, sc.own.copy());
+			for (g in sc.depFn) {
+				var cs = callers.get(g);
+				if (cs == null) callers.set(g, cs = []);
+				if (cs.length == 0 || cs[cs.length - 1] != f) cs.push(f);
+			}
+			for (s in sc.closSig) {
+				var us = sigUsers.get(s);
+				if (us == null) sigUsers.set(s, us = []);
+				if (us.length == 0 || us[us.length - 1] != f) us.push(f);
+			}
+			work.push(f);
+		}
+		while (work.length > 0) {
+			var f = work.pop();
+			var sc = scans.get(f);
+			var e = esc.get(f);
+			var was = e[0], changed = false;
+			inline function add(m:Array<Int>, at:Int)
+				for (q in 0...KINDS)
+					if (e[q] | m[at + q] != e[q]) {
+						e[q] |= m[at + q];
+						changed = true;
+					}
+			for (k in 0...sc.depFn.length) {
+				var ge = esc.get(sc.depFn[k]);
+				if (ge == null || (ge[0] >> sc.depJ[k]) & 1 != 0) add(sc.depMasks, KINDS * k);
+			}
+			for (k in 0...sc.closSig.length)
+				if (leaky.exists(sc.closSig[k])) add(sc.closMasks, KINDS * k);
+			if (!changed || e[0] == was) continue;
+			var cs = callers.get(f);
+			if (cs != null)
+				for (x in cs)
+					work.push(x);
+			if (f.lambda != null && e[0] & 1 != 0 && !leaky.exists(f.lambda.sig.id)) {
+				leaky.set(f.lambda.sig.id, true);
+				var us = sigUsers.get(f.lambda.sig.id);
+				if (us != null)
+					for (x in us)
+						work.push(x);
+			}
+		}
+		// (only what is followed: what may be an object of the frame)
+		for (f in p.funcs) {
+			var e = esc.get(f);
+			if (e == null) {
+				f.argNoEscape = 0;
+				if (f.lambda != null) f.lambda.capNoEscape = f.lambda.capContentNoEscape = 0;
+				continue;
+			}
+			var args = 0;
+			for (k in 0...f.args.length)
+				if (k < 30 && (mayHold(f.args[k].ty) || k == 0 && f.lambda != null)) args |= 1 << k;
+			f.argNoEscape = ~e[0] & args;
+			var l = f.lambda;
+			if (l != null) {
+				var caps = 0, boxes = 0;
+				for (k in 0...l.captures.length)
+					if (k < 30) {
+						var t = l.captures[k].ty;
+						if (mayHold(t)) caps |= 1 << k;
+						switch t {
+							case TRef(RBox(c)) if (mayHold(c)): boxes |= 1 << k;
+							case _:
+						}
+					}
+				l.capNoEscape = ~e[1] & caps;
+				l.capContentNoEscape = ~e[2] & boxes;
+			}
+		}
+	}
+
+	// (escScan: the kinds of sources, masks of: the arguments, the captures,
+	// the contents of the captured boxes)
+	static inline var KINDS = 3;
+	// (escScan: how a value is used)
+	static inline var SAFE = 0;
+	static inline var ESC = 1;
+	static inline var DEP = 2;
+	static inline var CLOS = 3;
+
+	// whether a value of type t may be an object of the frame (a closure, a
+	// box, or as Dynamic): what the summaries follow
+	static function mayHold(t:Ty):Bool
+		return t.match(TRef(RClos(_) | RBox(_) | RAny));
+
+	static function escAnalyzable(f:FuncInfo):Bool
+		return !f.hostCode && f.body.length > 0;
+
+	// a body's escapes of its own (own: a mask per kind) and its
+	// dependencies: the sources (masks) given to a callee's parameter (depFn,
+	// depJ, depMasks), or called as closures of a signature (closSig, closMasks)
+	static function escScan(f:FuncInfo):EscScan {
+		var sc = new EscScan();
+		// what each local may hold: the sources (a mask per kind), over
+		// copies, flow-insensitive
+		var held = new Map<Int, Vector<Int>>();
+		for (k in 0...f.args.length)
+			if (k < 30 && (mayHold(f.args[k].ty) || k == 0 && f.lambda != null)) held.set(f.args[k].id, vector(1 << k, 0, 0));
+		var lam = f.lambda;
+		// (no argument that may be an object of the frame: nothing to follow)
+		if (lam == null && !held.iterator().hasNext()) return sc;
+		var none = vector(0, 0, 0);
+		function src(e:Ex):Vector<Int>
+			return switch e {
+				case ELocal(l): held.exists(l.id) ? held.get(l.id) : none;
+				case ECast(TRef(_), a): src(a);
+				case ECapture(l, idx, c) if (l == lam && idx < 30 && mayHold(l.captures[idx].ty) && src(c)[0] & 1 != 0): vector(0, 1 << idx, 0);
+				case EBoxGet(t, b) if (mayHold(t) && src(b)[1] != 0): vector(0, 0, src(b)[1]);
+				case _: none;
+			};
+		var changed = true;
+		function flow(s:Stmt) {
+			switch s {
+				case SSet(l, e):
+					var m = src(e);
+					if (m != none) {
+						var o = held.get(l.id);
+						if (o == null) held.set(l.id, o = vector(0, 0, 0));
+						for (q in 0...KINDS)
+							if (o[q] | m[q] != o[q]) {
+								o[q] |= m[q];
+								changed = true;
+							}
+					}
+				case _:
+					Facts.iterStmt(flow, _ -> {}, s);
+			}
+		}
+		while (changed) {
+			changed = false;
+			for (s in f.body)
+				flow(s);
+		}
+		// the uses
+		var walk:Ex->Void = null;
+		function use(e:Ex, ctx:Int, ?g:FuncInfo, j = 0) {
+			var m = src(e);
+			if (m[0] != 0 || m[1] != 0 || m[2] != 0)
+				switch ctx {
+					case ESC:
+						for (q in 0...KINDS)
+							sc.own[q] |= m[q];
+					case DEP:
+						for (q in 0...KINDS)
+							sc.depMasks.push(m[q]);
+						sc.depFn.push(g);
+						sc.depJ.push(j);
+					case CLOS:
+						for (q in 0...KINDS)
+							sc.closMasks.push(m[q]);
+						sc.closSig.push(j);
+					case _:
+				}
+			walk(e);
+		}
+		walk = e -> {
+			switch e {
+				case ECast(TRef(_), a):
+					walk(a);
+				case ECast(_, a) | EFieldAddr(_, _, a) | EAnonGet(_, _, a, _):
+					use(a, ESC);
+				case ECapture(_, _, a) | EField(_, _, a) | ENot(a) | EConv(_, a) | EBox(_, a) | EUnbox(_, a) | EInstOf(_, a) | EEnumTag(a, _) | EEnumParam(_, _, a) | EArrLen(a) | EBoxGet(_, a):
+					use(a, SAFE);
+				case EBin(_, a, b) | EArrGet(_, a, b) | EArrGetU(_, a, b):
+					use(a, SAFE);
+					use(b, SAFE);
+				case ECall(g, args):
+					var ok = escAnalyzable(g);
+					for (j in 0...args.length)
+						if (ok && j < 30) use(args[j], DEP, g, j) else use(args[j], ESC);
+				case ECallClos(s, c, args):
+					use(c, CLOS, null, s.id);
+					for (x in args)
+						use(x, ESC);
+				case _:
+					Facts.iterEx(x -> use(x, ESC), e);
+			}
+		};
+		function st(s:Stmt) {
+			switch s {
+				case SSet(_, e) | SExpr(e):
+					use(e, SAFE);
+				case SSetField(_, _, o, v) | SBoxSet(_, o, v):
+					use(o, SAFE);
+					use(v, ESC);
+				case SArrSet(_, _, i, v):
+					use(i, SAFE);
+					use(v, ESC);
+				case SIf(c, _, _) | SSwitch(c, _, _):
+					use(c, SAFE);
+					Facts.iterStmt(st, _ -> {}, s);
+				case STry(body, catches):
+					for (x in body)
+						st(x);
+					for (c in catches) {
+						if (c.test != null) use(c.test(ELocal(c.l)), SAFE);
+						for (x in c.body)
+							st(x);
+					}
+				case _:
+					Facts.iterStmt(st, x -> use(x, ESC), s);
+			}
+		}
+		for (s in f.body)
+			st(s);
+		return sc;
+	}
+
 	// a function's body as findNoGc needs it: its own GC points, its callees,
 	// whether it enters a safe region or takes a raw address, the names it
 	// reads or writes by name
@@ -834,4 +1070,16 @@ class GcPoints {
 		Facts.iterEx(x -> if (gcPoint(x) > 0 || nestedGc(x)) r = true, e);
 		return r;
 	}
+}
+
+// (Facts.findNoEscape) what a body does with its arguments and captures
+private class EscScan {
+	public var own = vector(0, 0, 0);
+	public var depMasks:Array<Int> = [];
+	public var depFn:Array<FuncInfo> = [];
+	public var depJ:Array<Int> = [];
+	public var closMasks:Array<Int> = [];
+	public var closSig:Array<Int> = [];
+
+	public function new() {}
 }

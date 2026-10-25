@@ -176,6 +176,13 @@ class LambdaInfo {
 	public var captures:Vector<Local>;
 	public var fn:FuncInfo;
 	public var tindex:Int = -1;
+	// (Facts.findNoEscape) the captures its body never lets escape: bit k,
+	// captures[k] (read from the closure, only called, read, passed to such
+	// parameters)
+	public var capNoEscape:Int = 0;
+	// and the captured boxes whose contents it never lets escape (a
+	// recursive local function in its own box)
+	public var capContentNoEscape:Int = 0;
 
 	public function new(id, sig, captures, fn) {
 		this.id = id;
@@ -224,6 +231,10 @@ class FuncInfo {
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)
 	public var blocks:Bool = false;
 	public var blocksHere:Bool = false;
+	// (Facts.findNoEscape) the arguments it never lets escape: bit k, args[k]
+	// (only called, read, compared, passed to such parameters; never stored,
+	// returned, thrown or captured): a caller may give it memory of its frame
+	public var argNoEscape:Int = 0;
 	// (Facts: what a scan of its body found, made once: a program lowered in
 	// steps, interp.MirMacros, makes its facts again at each step)
 	public var gcScan:Null<{gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>}> = null;

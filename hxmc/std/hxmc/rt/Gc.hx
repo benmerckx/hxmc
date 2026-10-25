@@ -588,21 +588,42 @@ class Gc {
 		}
 	}
 
+	// a thread's shadow stack: references, and objects of the frames
+	// (Escape's stack allocation), each a header marked by the top bit of
+	// its second word (no reference has it) and its slots, scanned as the
+	// heap's by its type's pointer map; a frame clears its objects when it
+	// returns, a throw the frames it leaves (Start.throwValue), so that what
+	// is above the stack top holds no mark
 	@:hxmc.noGc static function scanStack(base:Ptr, top:Ptr, root:Bool) {
 		var s = base;
-		if (root) {
-			while (s.ult(top)) {
-				var v = Mem.getPtr(s, 0);
-				if (!v.isNull()) Mem.setPtr(s, 0, fwdRoot(v));
-				s = s.add(8);
+		while (s.ult(top)) {
+			if (Mem.getI32(s, 4) < 0) {
+				s = scanFrameObject(s, root);
+				continue;
 			}
-		} else
-			while (s.ult(top)) {
-				var v = Mem.getPtr(s, 0);
-				if (!v.isNull()) Mem.setPtr(s, 0, fwd(v));
-				s = s.add(8);
-			}
+			var v = Mem.getPtr(s, 0);
+			if (!v.isNull()) Mem.setPtr(s, 0, root ? fwdRoot(v) : fwd(v));
+			s = s.add(8);
+		}
 	}
+
+	// an object of a frame at h (its header): its references forwarded; what follows it
+	@:hxmc.noGc static function scanFrameObject(h:Ptr, root:Bool):Ptr {
+		var w0 = Mem.getI32(h, 0);
+		var n = w0 >>> 16, o = h.add(8);
+		var pm = ptrmapOfType(w0 & 0xFFFF);
+		if (!pm.isNull())
+			for (i in 0...n)
+				if (isPtrSlot(pm, i)) {
+					var v = Mem.getPtr(o, 8 * i);
+					if (!v.isNull()) Mem.setPtr(o, 8 * i, root ? fwdRoot(v) : fwd(v));
+				}
+		return o.add(8 * n);
+	}
+
+	// whether p is in the running thread's shadow stack (an object of a frame)
+	static inline function inFrames(p:Ptr):Bool
+		return !p.ult(Threads.self.value.base) && p.ult(sp);
 
 	// the collector's own thread first (its stack), then the others' (their
 	// entry closures, Tls values, stacks and current exceptions), the

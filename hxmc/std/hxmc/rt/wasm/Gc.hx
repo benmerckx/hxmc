@@ -334,7 +334,8 @@ class Gc {
 	// ---- the write barrier
 
 	@:hxmc.export("hxmc_barrier_slow") @:hxmc.noGc static function barrierSlow(obj:Ptr, slot:Ptr, v:Ptr, prev:Ptr):Void {
-		if (inYoung(v) && !inYoung(prev)) remember(slot);
+		// (not an object of a frame: the stack is scanned, Gc.hx's barrierSlow)
+		if (inYoung(v) && !inYoung(prev) && (obj.ult(stackBase) || !obj.ult(Mem.tlsGet("rt_sp")))) remember(slot);
 	}
 
 	@:hxmc.export("rt_write_barrier") @:hxmc.noGc static function writeBarrier(obj:Ptr, slot:Ptr, v:Ptr):Void
@@ -478,10 +479,23 @@ class Gc {
 		}
 	}
 
+	// (the shadow stack: references, and objects of the frames, each a
+	// header marked by the top bit of its second word and its slots, as the
+	// native Gc.scanStack)
 	@:hxmc.noGc static function scanRoots() {
 		var sp = Mem.tlsGet("rt_sp");
 		var s = stackBase;
 		while (s.ult(sp)) {
+			if (Mem.getI32(s, 4) < 0) {
+				var w0 = Mem.getI32(s, 0);
+				var n = w0 >>> 16, o = s.add(8);
+				var pm = ptrmapAt(w0 & 0xFFFF);
+				if (!pm.isNull())
+					for (i in 0...n)
+						if (isPtrSlot(pm, i)) rootAt(o.add(8 * i));
+				s = o.add(8 * n);
+				continue;
+			}
 			rootAt(s);
 			s = s.add(8);
 		}

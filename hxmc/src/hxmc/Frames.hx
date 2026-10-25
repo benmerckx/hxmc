@@ -46,7 +46,7 @@ class Frames {
 		var off = MFunc.ints(vals.length, NONE);
 		off[r.id] = 0;
 		var slot = MFunc.ints(vals.length, -1);
-		var nslots = 0, stores = 0, reads = 0;
+		var nslots = 0, stores = 0, reads = 0, objs = 0;
 		var read:Array<Bool> = []; // (the slots some load reads)
 		var manage:Array<MIns> = [], takers:Array<MIns> = [], phis:Array<MIns> = [];
 		for (b in order)
@@ -82,6 +82,9 @@ class Frames {
 					manage.push(i);
 				} else if (op == Cmp && da && !db && i.imm == CUGt) {
 					manage.push(i);
+				} else if (op == New && i.info.stack && !da && !db && !dc && i.args.length == 1) {
+					// (an object of the frame, Escape: the frame stays)
+					objs++;
 				} else if (i.isObj() && !da && !db && !dc && i.info.fr && i.args[i.info.nspill] == r.id) {
 					// (only as an operation's frame: OInfo.fr)
 					for (k in 0...i.args.length)
@@ -233,7 +236,7 @@ class Frames {
 		}
 		// a frame nothing reads: not pushed (its operations push their
 		// spills on their slow paths)
-		if (reads == 0) {
+		if (reads == 0 && objs == 0) {
 			for (i in manage)
 				if (i.op == Cmp) {
 					i.op = Const;

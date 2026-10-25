@@ -71,7 +71,8 @@ class MemLower extends MirWriter {
 	// gives it a continuation (OInfo.cont), its last block here
 	public static function branches(op:Op, o:OInfo):Bool {
 		return switch op {
-			case New | NewDyn | TypeTest | AnonGet | AnonCall | ArrayGet | ArraySet | ArrayPush | NewNArray | NArrayDyn | RefStore: true;
+			case New: !o.stack;
+			case NewDyn | TypeTest | AnonGet | AnonCall | ArrayGet | ArraySet | ArrayPush | NewNArray | NArrayDyn | RefStore: true;
 			case SetField: o.t.match(TRef(_)) && !o.flag && !o.fresh;
 			case AnonStore: o.t.match(TRef(_));
 			case ArrayInit: !o.t.match(TF64 | TI64 | TI32 | TBool);
@@ -82,6 +83,7 @@ class MemLower extends MirWriter {
 	}
 
 	public function run() {
+		clearFrameObjs();
 		// (the blocks numbered from 0, as the SSA variables' tables are)
 		for (k in 0...f.blocks.length) {
 			f.blocks[k].id = k;
@@ -110,6 +112,177 @@ class MemLower extends MirWriter {
 					for (q in 0...i.args.length)
 						i.args[q] = r(i.args[q]);
 				}
+	}
+
+	// The objects of the frame (Escape, OInfo.stack) cleared where their
+	// code ends, so that what is above the stack top holds no header of one
+	// (Gc.scanStack) nor a word that is not a reference. Each one's region:
+	// the dominator subtree of the nearest common dominator of its block,
+	// its phis' and the regions of the objects of the frame it is stored
+	// into (a closure's capture, a box's content: they use it while they
+	// are used); every use is in it, which is entered again only through
+	// its root. Cleared on the edges that leave it, at the returns in it,
+	// and in the handlers of a try outside it (a throw leaves it without an
+	// edge).
+	function clearFrameObjs() {
+		var objs = [], moves = [], stores = [], handlers = [];
+		for (b in f.blocks) {
+			if (b.handler) handlers.push(b);
+			for (i in b.ins) {
+				if (i.dead) continue;
+				switch i.op {
+					case New if (i.info.stack): objs.push(i);
+					case Phi | Copy: moves.push(i);
+					case SetField | InitField if (i.b >= 0): stores.push(i);
+					case _:
+				}
+			}
+		}
+		if (objs.length == 0) return;
+		var cfg = f.cfg();
+		cfg.dom();
+		inline function ncd(a:Int, b:Int):Int {
+			if (a < 0 || b < 0) return a < 0 ? b : a;
+			while (a != b) {
+				while (a > b)
+					a = cfg.idom[a];
+				while (b > a)
+					b = cfg.idom[b];
+			}
+			return a;
+		}
+		var n = objs.length;
+		var roots = new Vector<Int>(n);
+		var aliases = [];
+		for (q in 0...n) {
+			var x = objs[q];
+			var root = cfg.index(x.block);
+			var alias = [x.id => true], grew = true;
+			while (grew) {
+				grew = false;
+				for (i in moves)
+					if (!alias.exists(i.id) && (alias.exists(i.a) || i.args.exists(v -> alias.exists(v)))) {
+						alias.set(i.id, true);
+						root = ncd(root, cfg.index(i.block));
+						grew = true;
+					}
+			}
+			roots[q] = root;
+			aliases.push(alias);
+		}
+		var changed = true;
+		while (changed) {
+			changed = false;
+			for (i in stores)
+				for (x in 0...n)
+					if (aliases[x].exists(i.b))
+						for (y in 0...n)
+							if (y != x && aliases[y].exists(i.a)) {
+								var r = ncd(roots[x], roots[y]);
+								if (r != roots[x]) {
+									roots[x] = r;
+									changed = true;
+								}
+							}
+		}
+		var nextId = 0;
+		for (b in f.blocks)
+			if (b.id >= nextId) nextId = b.id + 1;
+		// (per block: the stores before its terminator)
+		var at = new Map<MBlock, Array<{base:Int, off:Int}>>();
+		function clear(b:MBlock, x:MIns) {
+			var l = at.get(b);
+			if (l == null) at.set(b, l = []);
+			var o = x.info, m = clearMask(o);
+			for (w in 0...o.n + 1)
+				if ((m >> w) & 1 != 0) l.push({base: x.args[0], off: o.stackOff + 8 * w});
+		}
+		for (q in 0...n) {
+			var x = objs[q], root = roots[q];
+			if (root < 0) continue;
+			var inside = new Map<MBlock, Bool>();
+			var work = [root];
+			while (work.length > 0) {
+				var k = work.pop();
+				inside.set(cfg.rpo[k], true);
+				var c = cfg.childHead[k];
+				while (c >= 0) {
+					work.push(c);
+					c = cfg.childNext[c];
+				}
+			}
+			for (h in handlers)
+				if (!inside.exists(h)) clear(h, x);
+			for (b in inside.keys()) {
+				var t = b.term();
+				if (t == null) continue;
+				if (t.op == Ret) {
+					clear(b, x);
+					continue;
+				}
+				for (k in 0...t.targets.length) {
+					var y = t.targets[k];
+					if (inside.exists(y)) continue;
+					if (t.targets.length == 1) {
+						clear(b, x);
+						continue;
+					}
+					// (an edge of a branch: a block of its own)
+					var e = new MBlock(nextId++);
+					e.cold = b.cold;
+					e.sealed = e.filled = true;
+					f.blocks.push(e);
+					var j = new MIns(Jmp, Void);
+					j.id = f.vals.length;
+					f.vals.push(j);
+					j.block = e;
+					j.targets = vector(y);
+					e.ins.push(j);
+					e.preds.push(b);
+					e.succs.push(y);
+					t.targets[k] = e;
+					b.succs[b.succs.indexOf(y)] = e;
+					y.preds[y.preds.indexOf(b)] = e;
+					clear(e, x);
+				}
+			}
+		}
+		for (b => l in at) {
+			var t = b.ins.pop();
+			var z = new MIns(Const, I64);
+			z.id = f.vals.length;
+			f.vals.push(z);
+			z.block = b;
+			b.ins.push(z);
+			for (c in l) {
+				var st = new MIns(Store, Void);
+				st.id = f.vals.length;
+				f.vals.push(st);
+				st.block = b;
+				st.a = c.base;
+				st.c = z.id;
+				st.imm = c.off;
+				st.imm2 = 1;
+				st.size = 8;
+				st.mem = Opt.MFrame;
+				b.ins.push(st);
+			}
+			b.ins.push(t);
+		}
+		f.edited();
+	}
+
+	// the words of an object of the frame cleared: its header and what is
+	// not a reference (a reference is valid where it is, as the frame's
+	// slots' are); -1: all
+	static function clearMask(o:OInfo):Int {
+		if (o.n >= 30) return -1;
+		var m = 3; // (the header; a closure's code, a box's value unless a reference)
+		if (o.name == OInfo.NEW_BOX && o.tindex == Abi.T_REFBOX_P) m = 1;
+		if (o.lambda != null)
+			for (k in 0...o.lambda.captures.length)
+				if (!o.lambda.captures[k].ty.match(TRef(_))) m |= 1 << (k + 2);
+		return m;
 	}
 
 	inline function r(v:Int):Int {
@@ -255,7 +428,7 @@ class MemLower extends MirWriter {
 				nullTest(r(x.a), o.key);
 				-1;
 			case New:
-				var v = alloc(o.n, o.tindex, o.kind, o.zero);
+				var v = o.stack ? frameObj(r(x.args[0]), o) : alloc(o.n, o.tindex, o.kind, o.zero);
 				switch o.name {
 					case OInfo.NEW_ENUM:
 						if (o.next >= 0) storeM(Opt.MInit, 8, v, 8 * o.next, lconst(0, 0));
@@ -589,6 +762,16 @@ class MemLower extends MirWriter {
 	// differ with RT_VERIFY=1 (Gc.hx: zeroing allocations then take the slow
 	// path). At a cold site the live references are stored on the shadow
 	// stack around the slow call only
+	// an object of the frame (Escape): its header at its offset from the
+	// frame's address fr, marked by the top bit of its second word, which no
+	// reference has (Gc.scanStack); its slots written as a new one's are
+	function frameObj(fr:Int, o:OInfo):Int {
+		var h = op2(Add, I64, fr, lconst32(o.stackOff));
+		storeM(Opt.MFrame, 4, h, 0, tyConst(o.tindex, (o.n < 0xFFFF ? o.n : 0xFFFF) << 16));
+		storeM(Opt.MFrame, 4, h, 4, iconst(1 << 31));
+		return op2(Add, I64, h, lconst32(8));
+	}
+
 	function alloc(n:Int, tidx:Int, kind:Int, zero:Bool):Int {
 		var bytes = 8 * (n + 1);
 		var ptr = tlsLoad("rt_young_ptr");

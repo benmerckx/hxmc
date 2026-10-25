@@ -74,12 +74,16 @@ class Escape {
 	// hxmc.unsafe's loads and stores, keep those on the shadow stack
 	public static var refSlots:Null<Map<Int, Vector<Bool>>>;
 
+	// (HXMC_STACK=0: no objects of the frame)
+	static var stackOn = Sys.getEnv("HXMC_STACK") != "0";
+
 	// (HXMC_ESCAPE_LOG=1) what happens to each allocation that is analyzed
 	static var log = Sys.getEnv("HXMC_ESCAPE_LOG") == "1";
 
 	var f:MFunc;
 
 	public var removed = 0; // allocation sites replaced
+	public var stacked = 0; // allocation sites made objects of the frame
 	public var folds = 0; // tests folded on known objects
 
 	var nv = 0; // values when analyzed: abstract values below are Mir values, from here virtual phis
@@ -111,9 +115,16 @@ class Escape {
 	var closure:Array<Int> = [];
 	var parent:Vector<Int> = vector(); // union-find of sites
 	var escaped:Vector<Bool> = vector();
+	var stackBad:Vector<Bool> = vector(); // (a group escaping the frame too: no stack allocation)
 	var uniform:Vector<Bool> = vector();
 	var whys:Vector<Null<String>> = vector();
 	var lastFail:Null<MIns>;
+
+	// the arguments a callee never lets escape (hxmc.ir.Facts.findNoEscape),
+	// by its symbol (the Driver gives it): a closure or a box given only to
+	// those may be an object of the frame (null: none is)
+	public var noEscapeOf:Null<String->Int>;
+	public var wasm = false; // (linear memory: a frame of its own tests the shadow stack's end)
 
 	public function new(f:MFunc)
 		this.f = f;
@@ -130,14 +141,21 @@ class Escape {
 	function go() {
 		if (f.allocs == 0 || !allowed(f.name)) return;
 		f.edited();
+		// (a try, setjmp: values the handler reads stay in memory, as objects
+		// of the frame may; nothing replaced or folded)
 		for (b in f.blocks)
 			for (i in b.ins)
-				if (i.op == Call && i.returnsTwice) return;
+				if (i.op == Call && i.returnsTwice) {
+					if (noEscapeOf == null || !stackOn) return;
+					tries = true;
+				}
 		// (again after a replacement: an object stored into a replaced one's
 		// field no longer is)
-		for (_ in 0...(part("again") ? 3 : 1))
+		for (_ in 0...(part("again") && !tries ? 3 : 1))
 			if (!once()) break;
 	}
+
+	var tries = false;
 
 	function once():Bool {
 		screenFolds = 0;
@@ -147,19 +165,27 @@ class Escape {
 			if (!findSites()) return false;
 			if (round == 0) deadPhis();
 			analyze();
-			if (round == 2 || !foldKnown()) break;
+			if (round == 2 || tries || !foldKnown()) break;
 		}
 		if (!part("replace")) return false;
 		var groups = check();
 		var any = false;
+		if (tries) {
+			for (g in groups)
+				if (sites[g.root].stackKind) stackGroups.push(g);
+			groups = [];
+		}
 		for (g in groups)
 			if (replace(g)) any = true else escape(g.root, "fields overlap");
+		// (objects of the frame let no other one be replaced: no round after them alone)
+		var stacked = stackFrames();
 		if (log) report();
-		if (!any) return false;
+		if (!any && !stacked) return false;
 		sweep();
+		if (!any) return false;
 		prune();
 		Ssa.trivialPhis(f.vals, newPhis);
-		if (part("frames")) elideFrames();
+		if (part("frames") && !tries) elideFrames();
 		return true;
 	}
 
@@ -324,9 +350,11 @@ class Escape {
 		switch i.op {
 			case New:
 				var o = i.info;
-				// (not an empty Array: the runtime takes it for any growth)
-				if (o.name == OInfo.NEW_ARRAY || o.tindex == Abi.T_ARRAY) return null;
+				// (not an empty Array: the runtime takes it for any growth; not an
+				// object of the frame already)
+				if (o.name == OInfo.NEW_ARRAY || o.tindex == Abi.T_ARRAY || o.stack) return null;
 				var s = new Site(i, i.block);
+				s.stackKind = stackOn && !f.gc && noEscapeOf != null && (o.name == OInfo.NEW_CLOSURE || o.name == OInfo.NEW_BOX);
 				s.raw = o.name == OInfo.NEW_RAW;
 				// (its values are defined where it is first used: what its
 				// continuation computes before, its constructor's arguments, may
@@ -463,6 +491,8 @@ class Escape {
 		var sure = new Vector<Bool>(all.length);
 		inline function isDer(v:Int):Bool
 			return v >= 0 && der[v] != -1;
+		inline function stackable(v:Int):Bool
+			return v >= 0 && der[v] >= 0 && all[der[v]].stackKind;
 		function markSure(v:Int) {
 			var d = der[v];
 			if (d >= 0) sure[root(d)] = true;
@@ -483,14 +513,23 @@ class Escape {
 					case _ if (b.cold):
 					case Call | VirtualCall | ClosureCall | AnonCall if (ignore == null || !ignore.exists(i.id)):
 						if (isDer(i.a)) markSure(i.a);
-						for (a in i.args)
-							if (isDer(a)) markSure(a);
+						// (a closure or box given to a parameter that does not let it
+						// escape, or a closure called: may be an object of the frame)
+						var ne = i.op == Call && i.a < 0 && noEscapeOf != null ? noEscapeOf(i.sym) : 0;
+						for (k in 0...i.args.length) {
+							var a = i.args[k];
+							if (isDer(a) && !(stackable(a) && (i.op == ClosureCall && k == 0 || (ne >> k) & 1 != 0))) markSure(a);
+						}
 					case Ret | TlsStore if (isDer(i.a)):
 						markSure(i.a);
 					case Store if (isDer(i.c) && (i.mem == Opt.MField || i.mem == Opt.MElem || i.mem == Opt.MGlobal || i.mem == Opt.MInit)):
 						markSure(i.c);
 					case SetField | InitField | ArrayInit | NArrayInit | AnonStore if (isDer(i.b)):
-						markSure(i.b);
+						// (a capture of a closure being made, a closure in a box:
+						// maybe of the frame, both)
+						if (!((i.op == InitField || i.op == SetField) && stackable(i.b) && stackable(i.a)
+							&& all[der[i.a]].v.info.name == (i.op == InitField ? OInfo.NEW_CLOSURE : OInfo.NEW_BOX)))
+							markSure(i.b);
 					case ArraySet | ArrayPush | NArraySet | NArrayDyn | RefStore if (isDer(i.c)):
 						markSure(i.c);
 					case _:
@@ -506,9 +545,9 @@ class Escape {
 		for (i in tests) {
 			var x = i.op == Cmp ? (exact[i.a] >= 0 ? i.a : i.b) : i.a;
 			var k = exact[x];
-			if (sure[root(k)] && foldOn(i, all[k], x)) n++;
+			if (!tries && sure[root(k)] && foldOn(i, all[k], x)) n++;
 		}
-		if (n > 0) {
+		if (n > 0 && !tries) {
 			folds += n;
 			constFold();
 			prune();
@@ -735,6 +774,9 @@ class Escape {
 		cellVps = [];
 		parent = MFunc.iota(sites.length);
 		escaped = new Vector(sites.length);
+		stackBad = new Vector(sites.length);
+		for (k in 0...sites.length)
+			if (!sites[k].stackKind) stackBad[k] = true;
 		whys = new Vector(sites.length);
 		// the closure: what may be an alias
 		closure = [];
@@ -851,9 +893,11 @@ class Escape {
 		return k;
 	}
 
-	function escape(s:Int, why:String) {
+	// (memOnly: it needs its memory, as an object of the frame at least)
+	function escape(s:Int, why:String, memOnly = false) {
 		var r = find(s);
 		escaped[r] = true;
+		if (!memOnly) stackBad[r] = true;
 		if (log && whys[r] == null) whys[r] = why;
 	}
 
@@ -871,6 +915,7 @@ class Escape {
 		if (ra == rb) return ra;
 		// (the smaller index the root: deterministic)
 		var e = escaped[ra] || escaped[rb];
+		var sb = stackBad[ra] || stackBad[rb];
 		var w = whys[ra] != null ? whys[ra] : whys[rb];
 		if (rb < ra) {
 			var t = ra;
@@ -879,6 +924,7 @@ class Escape {
 		}
 		parent[rb] = ra;
 		escaped[ra] = e;
+		stackBad[ra] = sb;
 		whys[ra] = w;
 		return ra;
 	}
@@ -1271,7 +1317,7 @@ class Escape {
 		for (x in closure) {
 			if (x >= nv) continue;
 			var s = src[x];
-			if (s < 0 || escaped[s]) continue;
+			if (s < 0 || escaped[s] && stackBad[s]) continue;
 			if (acc[s] == null) acc[s] = new Group(s);
 			var g = acc[s];
 			g.aliases.push(x);
@@ -1280,20 +1326,28 @@ class Escape {
 		}
 		// the instance used is the group's latest
 		for (g in acc) {
-			if (g == null || escaped[g.root]) continue;
+			if (g == null || escaped[g.root] && stackBad[g.root]) continue;
 			for (k in 0...g.accesses.length)
 				if (!latest(g, g.bases[k], g.accesses[k])) {
 					escape(g.root, "not the latest instance" + (log ? " (" + MFunc.insString(g.accesses[k]) + ")" : ""));
 					break;
 				}
+			// (an object of the frame: every use, as its next allocation reuses the memory)
+			if (!stackBad[g.root])
+				for (k in 0...g.mem.length)
+					if (!latest(g, g.memBases[k], g.mem[k])) {
+						escape(g.root, "not the latest instance" + (log ? " (" + MFunc.insString(g.mem[k]) + ")" : ""));
+						break;
+					}
 		}
 		var r = [];
+		stackGroups = [];
 		for (k in 0...acc.length)
-			if (acc[k] != null && !escaped[k]) {
+			if (acc[k] != null && (!escaped[k] || !stackBad[k])) {
 				var g = acc[k];
 				for (j in 0...sites.length)
 					if (find(j) == k) g.sites.push(sites[j]);
-				r.push(g);
+				if (!escaped[k]) r.push(g) else stackGroups.push(g);
 			}
 		return r;
 	}
@@ -1301,6 +1355,7 @@ class Escape {
 	// the uses of alias x (false: an escape)
 	function uses1(g:Group, x:Int):Bool {
 		var box = sites[g.root].box, raw = sites[g.root].raw;
+		var stack = !stackBad[g.root];
 		for (q in useStart[x]...useStart[x + 1]) {
 			var u = useList[q];
 			if (u.dead) continue;
@@ -1314,8 +1369,38 @@ class Escape {
 					g.access(u, x);
 				case SetField | InitField if (box == 0 && !raw && u.a == x && u.b != x):
 					var c = srcOf(u.b);
-					if (c >= 0) escape(c, "stored into an object"); // (one level)
+					// (one level; it may still be an object of the frame: its own uses say)
+					if (c >= 0) escape(c, "stored into an object", true);
 					g.access(u, x);
+				// (an object of the frame: given to a parameter that does not
+				// let it escape, called as a closure, a capture of a closure of
+				// the frame whose code does not let it escape)
+				case Call if (stack && u.a < 0 && u.sym != null && noEscapeOf != null):
+					var ne = noEscapeOf(u.sym);
+					for (k in 0...u.args.length)
+						if (u.args[k] == x && (ne >> k) & 1 == 0) return false;
+					g.memUse(u, x);
+					escape(g.root, "given to a call", true);
+				case ClosureCall if (stack && u.args[0] == x):
+					for (k in 1...u.args.length)
+						if (u.args[k] == x) return false;
+					g.memUse(u, x);
+					escape(g.root, "called", true);
+				case InitField if (stack && u.b == x && u.a != x):
+					var t = srcOf(u.a);
+					if (t < 0 || sites[t].v.info.name != OInfo.NEW_CLOSURE) return false;
+					var ct = u.info.t.match(TI32 | TBool) ? (u.info.loc >> 1) - 1 : u.info.loc - 1;
+					g.memUse(u, x);
+					g.deps.push(t);
+					g.depCaps.push(ct);
+					escape(g.root, "a capture", true);
+				// (a recursive local function: the closure in its own box)
+				case SetField if (stack && u.b == x && u.a != x):
+					var t = srcOf(u.a);
+					if (t < 0 || sites[t].v.info.name != OInfo.NEW_BOX) return false;
+					g.memUse(u, x);
+					g.boxDeps.push(t);
+					escape(g.root, "stored into a box", true);
 				// (Mem.alloc's object: hxmc.unsafe's loads and stores at constant offsets)
 				case Load if (raw && u.a == x && u.b < 0):
 					g.access(u, x);
@@ -1427,7 +1512,7 @@ class Escape {
 		for (k in 0...sites.length) {
 			var r = find(k);
 			var s = sites[k];
-			var w = escaped[r] ? (whys[r] == null ? "?" : whys[r]) : "replaced";
+			var w = s.v.info != null && s.v.info.stack ? "on the frame" : escaped[r] ? (whys[r] == null ? "?" : whys[r]) : "replaced";
 			lines.push('escape: ${f.name}: ${s.what()}: $w');
 		}
 		Sys.println(lines.join("\n"));
@@ -1770,13 +1855,169 @@ class Escape {
 		return true;
 	}
 
+	// ---- objects of the frame
+
+	var stackGroups:Array<Group> = [];
+
+	// The groups that need their memory but do not escape the function (given
+	// only to parameters that do not let them escape, called as closures,
+	// captured by closures of the frame whose code does not let them escape):
+	// objects of the shadow-stack frame (OInfo.stack), each site its own (the
+	// latest instance is the one used: a site's next allocation reuses its
+	// memory). False: none.
+	function stackFrames():Bool {
+		if (stackGroups.length == 0) return false;
+		var ok = new Map<Int, Group>();
+		for (g in stackGroups)
+			if (!stackBad[g.root]) ok.set(g.root, g);
+		// (a capture: of a closure of the frame whose code does not let it escape)
+		var changed = true;
+		while (changed) {
+			changed = false;
+			for (g in stackGroups) {
+				if (!ok.exists(g.root)) continue;
+				for (k in 0...g.deps.length) {
+					var t = ok.get(find(g.deps[k]));
+					var bad = t == null;
+					if (!bad)
+						for (x in t.sites) {
+							var l = x.v.info.lambda;
+							if (l == null || (l.capNoEscape >> g.depCaps[k]) & 1 == 0) bad = true;
+						}
+					if (bad) {
+						ok.remove(g.root);
+						escape(g.root, "a capture of an object that escapes, or of code that lets it");
+						changed = true;
+						break;
+					}
+				}
+				if (!ok.exists(g.root)) continue;
+				for (t in g.boxDeps) {
+					var b = ok.get(find(t));
+					if (b == null || !contentStays(b, ok) || !follows(b, g)) {
+						ok.remove(g.root);
+						escape(g.root, "in a box whose content may escape");
+						changed = true;
+						break;
+					}
+				}
+			}
+		}
+		var any = false;
+		for (g in stackGroups)
+			if (ok.exists(g.root)) {
+				if (!frameReady(true)) {
+					escape(g.root, "no frame");
+					continue;
+				}
+				for (x in g.sites) {
+					var o = x.v.info;
+					var off = frameArea(o.n + 1);
+					o.stack = true;
+					o.stackOff = off;
+					o.cold = false;
+					o.nspill = 0;
+					o.fr = false;
+					o.spillBase = -1;
+					o.relocs = null;
+					x.v.args = vector(frameRoot);
+				}
+				// (no write barrier: the collector scans the frame)
+				for (u in g.accesses)
+					if (u.op == SetField) u.info.fresh = true;
+				stacked += g.sites.length;
+				any = true;
+			}
+		return any;
+	}
+
+	// whether nothing lets box b's content escape: its reads here only
+	// called, given to parameters that do not let them escape, tested; the
+	// closures capturing it only reading it so (capContentNoEscape); the box
+	// given to no call
+	function contentStays(b:Group, ok:Map<Int, Group>):Bool {
+		for (u in b.mem)
+			if (u.op != InitField) return false;
+		for (k in 0...b.deps.length) {
+			var t = ok.get(find(b.deps[k]));
+			if (t == null) return false;
+			for (x in t.sites) {
+				var l = x.v.info.lambda;
+				if (l == null || (l.capContentNoEscape >> b.depCaps[k]) & 1 == 0) return false;
+			}
+		}
+		var ne = noEscapeOf;
+		for (a in b.accesses) {
+			if (a.op != GetField) continue;
+			var v = a.id;
+			for (q in useStart[v]...useStart[v + 1]) {
+				var u = useList[q];
+				if (u.dead) continue;
+				var fine = switch u.op {
+					case ClosureCall:
+						var once = u.args[0] == v;
+						for (k in 1...u.args.length)
+							if (u.args[k] == v) once = false;
+						once;
+					case Call if (u.a < 0 && u.sym != null):
+						var m = ne(u.sym), all = true;
+						for (k in 0...u.args.length)
+							if (u.args[k] == v && (m >> k) & 1 == 0) all = false;
+						all;
+					case NullCheck: true;
+					case Cmp: (u.imm == CEq || u.imm == CNe) && (u.a == v && isConst(u.b, 0) || u.b == v && isConst(u.a, 0));
+					case _: false;
+				};
+				if (!fine) return false;
+			}
+		}
+		return true;
+	}
+
+	// whether closure group c's allocation is reached from box group b's
+	// alone: each new box gets the closure made after it, before another one
+	// is (one site each; the blocks from the box's to the closure's entered
+	// from no other)
+	function follows(b:Group, c:Group):Bool {
+		if (b.sites.length != 1 || c.sites.length != 1) return false;
+		var from = b.sites[0].v.block, to = c.sites[0].v.block;
+		if (from == to) {
+			var bi = from.ins.indexOf(b.sites[0].v), ci = from.ins.indexOf(c.sites[0].v);
+			return bi >= 0 && bi < ci;
+		}
+		var seen = f.newMark();
+		var work = [from];
+		from.mark = seen;
+		while (work.length > 0) {
+			var x = work.pop();
+			for (s in x.succs) {
+				if (s.mark == seen || s.preds.length != 1) continue;
+				if (s == to) return true;
+				s.mark = seen;
+				work.push(s);
+			}
+		}
+		return false;
+	}
+
+	// a new area of the frame, of so many words (its offset)
+	function frameArea(words:Int):Int {
+		var off = frameBytes;
+		frameBytes += 8 * words;
+		var k = newIns(Const, I64, f.entry, frameTop);
+		k.imm = frameBytes;
+		frameTop.b = k.id;
+		return off;
+	}
+
 	// the function's shadow-stack frame (pushed in its entry block): its
 	// base (an rt_sp value), the push's size, made larger by frameSlot
 	var frameRoot = -1;
 	var frameTop:Null<MIns> = null;
 	var frameBytes = 0;
 
-	function frameReady():Bool {
+	// (create: a function without one gets one, MirBuild's push and pops)
+	function frameReady(create = false):Bool {
 		if (frameTop != null) return true;
 		for (i in f.entry.ins)
 			if (!i.dead && i.op == TlsStore && i.sym == "rt_sp") {
@@ -1789,7 +2030,119 @@ class Escape {
 				frameBytes = c.imm;
 				return true;
 			}
-		return false;
+		if (!create) return false;
+		makeFrame();
+		return true;
+	}
+
+	// a frame of no slots yet, pushed after the parameters (rt_sp_hw raised
+	// on a cold path, on WebAssembly with the overflow test: MirWriter.raiseHw)
+	// and popped before each return
+	function makeFrame() {
+		var e = f.entry;
+		var nextId = 0;
+		for (b in f.blocks)
+			if (b.id >= nextId) nextId = b.id + 1;
+		function block(cold:Bool):MBlock {
+			var b = new MBlock(nextId++);
+			b.cold = cold;
+			b.sealed = b.filled = true;
+			f.blocks.push(b);
+			return b;
+		}
+		inline function edge(a:MBlock, b:MBlock) {
+			a.succs.push(b);
+			b.preds.push(a);
+		}
+		function ins(b:MBlock, op:Op, ty:MTy):MIns {
+			var x = new MIns(op, ty);
+			x.id = f.vals.length;
+			f.vals.push(x);
+			x.block = b;
+			b.ins.push(x);
+			return x;
+		}
+		function jmp(a:MBlock, b:MBlock) {
+			var j = ins(a, Jmp, Void);
+			j.targets = vector(b);
+			edge(a, b);
+		}
+		// (the entry's code after the parameters: a block of its own)
+		var k = 0;
+		while (k < e.ins.length && e.ins[k].op == Param)
+			k++;
+		var rest = block(false);
+		rest.ins = e.ins.splice(k, e.ins.length - k);
+		for (i in rest.ins)
+			i.block = rest;
+		rest.succs = e.succs;
+		for (s in rest.succs)
+			for (q in 0...s.preds.length)
+				if (s.preds[q] == e) s.preds[q] = rest;
+		e.succs = [];
+		var r = ins(e, TlsLoad, I64);
+		r.sym = "rt_sp";
+		var c = ins(e, Const, I64);
+		var top = ins(e, Add, I64);
+		top.a = r.id;
+		top.b = c.id;
+		var st = ins(e, TlsStore, Void);
+		st.sym = "rt_sp";
+		st.a = top.id;
+		var hw = ins(e, TlsLoad, I64);
+		hw.sym = "rt_sp_hw";
+		var gt = ins(e, Cmp, I32);
+		gt.imm = CUGt;
+		gt.a = top.id;
+		gt.b = hw.id;
+		var up = block(true);
+		var br = ins(e, Br, Void);
+		br.a = gt.id;
+		br.targets = vector(up, rest);
+		edge(e, up);
+		edge(e, rest);
+		var raise = up;
+		if (wasm) {
+			var lim = ins(up, SymAddr, I64);
+			lim.sym = "rt_sp_limit";
+			var l = ins(up, Load, I64);
+			l.a = lim.id;
+			l.size = 8;
+			l.imm2 = 1;
+			l.mem = Opt.MCallOnly;
+			var over = ins(up, Cmp, I32);
+			over.imm = CUGt;
+			over.a = top.id;
+			over.b = l.id;
+			var ob = block(true), fits = block(true);
+			var b2 = ins(up, Br, Void);
+			b2.a = over.id;
+			b2.targets = vector(ob, fits);
+			edge(up, ob);
+			edge(up, fits);
+			var call = ins(ob, Call, Void);
+			call.sym = "rt_stack_overflow";
+			call.noReturn = true;
+			ins(ob, Unreachable, Void);
+			raise = fits;
+		}
+		var sh = ins(raise, TlsStore, Void);
+		sh.sym = "rt_sp_hw";
+		sh.a = top.id;
+		jmp(raise, rest);
+		for (b in f.blocks) {
+			var t = b.term();
+			if (t == null || t.op != Ret) continue;
+			b.ins.pop();
+			var pop = ins(b, TlsStore, Void);
+			pop.sym = "rt_sp";
+			pop.a = r.id;
+			b.ins.push(t);
+		}
+		f.edited();
+		frameRoot = r.id;
+		frameTop = top;
+		frameBytes = 0;
 	}
 
 	// a new slot of the frame (its offset)
@@ -1892,6 +2245,7 @@ private class Site {
 	public var box = 0; // 1 Int, 2 Float, 3 Int64 (0: an object)
 	public var raw = false; // Mem.alloc's: its words read and written by hxmc.unsafe's loads and stores
 	public var key:Null<String>; // the layout: a group's sites agree
+	public var stackKind = false; // a closure or a box: may be an object of the frame
 	public var defAt:MIns; // the instruction its values are defined before
 
 	public function new(v, block) {
@@ -1916,8 +2270,21 @@ private class Group {
 	public var cellStores:Array<MIns> = [];
 	public var nulls:Array<MIns> = [];
 	public var spills:Array<MIns> = []; // cold sites' GC points keeping an alias
+	// (an object of the frame) the uses that need its memory, with their alias;
+	// the closures it is a capture of (their groups) and the captures
+	public var mem:Array<MIns> = [];
+	public var memBases:Array<Int> = [];
+	public var deps:Array<Int> = [];
+	public var depCaps:Array<Int> = [];
+	public var boxDeps:Array<Int> = []; // the boxes it is stored into (their groups)
+
 	public function new(root)
 		this.root = root;
+
+	public function memUse(u:MIns, x:Int) {
+		mem.push(u);
+		memBases.push(x);
+	}
 
 	public function access(u:MIns, x:Int) {
 		accesses.push(u);

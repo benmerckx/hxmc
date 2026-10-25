@@ -99,6 +99,7 @@ class Driver {
 	static var sroa = Sys.getEnv("HXMC_SROA") != "0";
 	var raRounds = 0;
 	var escRemoved = 0;
+	var escStacked = 0;
 	var escFolds = 0;
 	var allocsFolded = 0; // (Fold)
 	var rootStores = 0; // (Frames)
@@ -110,6 +111,12 @@ class Driver {
 	var escSlow:Array<{name:String, t:Float}> = [];
 	var raInsns = 0;
 	var raFuncs = 0;
+
+	// the arguments a function never lets escape, by its symbol (Escape's objects of the frame)
+	function noEscapeOf(sym:String):Int {
+		var g = prep.e.bySymbol.get(sym);
+		return g == null ? 0 : g.argNoEscape;
+	}
 
 	// the Mir of the callees inlined, built once (shared by the threads: read only once made)
 	var templates = new haxe.ds.ObjectMap<FuncInfo, {t:Null<Inline.Template>}>();
@@ -181,11 +188,14 @@ class Driver {
 			// (not for the interpreter: no gain there, measured on the macro benchmarks, and a third of the passes' time)
 			if (o.opt && Escape.on && (interp == null || !interp.wants(fn))) {
 				var es = new Escape(mf);
+				es.noEscapeOf = noEscapeOf;
+				es.wasm = abi.wasm;
 				var te = haxe.Timer.stamp();
 				es.run();
 				te = haxe.Timer.stamp() - te;
 				lock.acquire();
 				escRemoved += es.removed;
+				escStacked += es.stacked;
 				escFolds += es.folds;
 				escTime += te;
 				if (o.stats && te > 0.005) escSlow.push({name: name + " (" + mf.vals.length + " values)", t: te});
@@ -341,7 +351,7 @@ class Driver {
 		Sys.println('hxmc: ${prep.p.funcs.length} functions');
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
-		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
+		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escStacked made objects of the frame, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
 		var ks = [for (k in foldWhy.keys()) k];

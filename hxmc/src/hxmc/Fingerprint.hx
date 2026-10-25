@@ -440,6 +440,7 @@ class Fingerprint {
 				for (a in f.args)
 					ty(a.ty);
 				ty(f.ret);
+				word(f.argNoEscape);
 				args(xs);
 				// a callee that may be inlined: its body too (Inline), as its digest
 				if (depth < Inline.DEPTH && inlined != null) {
@@ -523,6 +524,10 @@ class Fingerprint {
 				word(l.captures.length);
 				for (c in l.captures)
 					ty(c.ty);
+				// (what its code lets escape: Escape's stack allocation)
+				word(l.capNoEscape);
+				word(l.capContentNoEscape);
+				word(l.fn.argNoEscape);
 				args(xs);
 			case ENewBox(t, x):
 				word(E_NEWBOX);
