@@ -532,9 +532,9 @@ class Lower implements LowerQueries {
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
 
-	// @:hxmc.unsafe (the trusted raw-memory layer; @:hxmc.noGc, its former name)
+	// @:hxmc.unsafe: the trusted raw-memory layer
 	public static function isUnsafe(ml:core.Ast.Metadata):Bool
-		return ml.length > 0 && (hasMeta(":hxmc.unsafe", ml) || hasMeta(":hxmc.noGc", ml));
+		return ml.length > 0 && hasMeta(":hxmc.unsafe", ml);
 
 	// the string literal argument of hxmc's metadata `name`, or null
 	public static function metaString(name:String, ml:core.Ast.Metadata):Null<String>
@@ -1167,6 +1167,9 @@ class Lower implements LowerQueries {
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
+		// (the former name: an error rather than ignored)
+		if (hasMeta(":hxmc.noGc", c.clMeta) || hasMeta(":hxmc.noGc", cf.cfMeta))
+			throw new LowerError('${fi.display}: @:hxmc.noGc is now @:hxmc.unsafe', "");
 		if (isUnsafe(c.clMeta)) fi.declUnsafe = true;
 		// (@:hxmc.scoped: lowered as @:hxmc.unsafe code is, plus the root checker: Scoped)
 		if (core.HxmcScoped.isClass(c)) fi.scoped = true;
