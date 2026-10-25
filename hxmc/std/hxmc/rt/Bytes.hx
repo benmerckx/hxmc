@@ -91,17 +91,11 @@ class Bytes {
 
 	@:hxmc.host("hxmc_NativeBytes_getString") static function getString(b:Dynamic, pos:Int, n:Int, encoding:Dynamic):String {
 		if (pos < 0 || n < 0 || pos + n > len(b)) outside();
-		#if (hxmc.wasm_gc)
-		return Str.decode(b, pos, pos + n);
-		#else
-		// decoding allocates: the bytes copied out of the heap first
-		var small = Mem.stack(256);
-		var buf = n <= 256 ? small : LibC.malloc(n);
-		LibC.memcpy(buf, bytes(b).add(pos), n);
-		var s = Str.ofUtf8(buf, n);
-		if (buf != small) LibC.free(buf);
+		// (the units counted, the string made, a GC point, then the bytes, which
+		// may have moved, decoded: TextCore)
+		var s = Str.make(TextCore.utf8Units(Repr.octets(b), pos, pos + n));
+		TextCore.utf8Decode(Repr.octets(b), pos, pos + n, Str.chars(s));
 		return s;
-		#end
 	}
 
 	@:hxmc.host("hxmc_NativeBytes_ofString") static function ofString(s:String, encoding:Dynamic):Dynamic {
@@ -113,13 +107,10 @@ class Bytes {
 		Repr.copyOctets(b, buf, n);
 		return b;
 		#else
-		var small = Mem.stack(512);
-		var cap = 3 * Str.len(s) + 1;
-		var buf = cap <= 512 ? small : LibC.malloc(cap);
-		var n = Str.utf8Into(s, buf);
-		var b = allocUninit(n);
-		LibC.memcpy(bytes(b), buf, n);
-		if (buf != small) LibC.free(buf);
+		// (encoded on the data stack, then copied)
+		var u = hxmc.scoped.Str.utf8Of(s);
+		var b = allocUninit(u.length);
+		LibC.memcpy(bytes(b), u.ptr(), u.length);
 		return b;
 		#end
 	}

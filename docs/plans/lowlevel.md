@@ -670,9 +670,29 @@ The scoped face against the GC face on the same index (ScopedBench's
 IntTable takes about half the time of IntMap (no `Null<Int>` boxes, no
 dynamic values) and less memory, below.
 
-Next candidates, in order: `FloatText` (the digits into a `Grow<UInt16>`
-or a `StringBuf`'s buffer), `CaseMap`, the string search and comparison
-of `hxmc.rt.Str`, then the OS layers' buffers (b).
+The std moves onto the core area by area, each move deleting the code it
+replaces (no second implementation stays):
+
+- pure algorithms (a): `FloatText` (Std.string and Std.parseFloat of a
+  Float; the scoped face `Str.ofFloat`, `toFloat`), `LibM`, `CaseMap`
+  (`Str.toCase`), `MemOps.compare`, the errno tables of `Layouts`;
+- String's algorithms: `hxmc.rt.TextCore` (search, order, hash, UTF-8
+  both ways) over code units and bytes, whose GC face is String's natives
+  (`hxmc.rt.Str`, `Bytes.getString`) and scoped face `hxmc.scoped.Str`
+  (`find`, `findLast`, `compare`, `hash`, `utf8`, `ofUtf8`);
+  `Bytes.getString` decodes in place (the units counted, the string made,
+  the bytes taken again) where it copied them out of the heap first;
+- the OS layers' temporary C strings (b): paths, environment variables,
+  commands, host names and what `Sys.print` writes are UTF-8 (UTF-16 on
+  Windows) on the data stack (`SysCore.cstr`, `wide`: `Str.utf8Of`,
+  `Str.copyOf`), where each was a `malloc` and a `free` on every
+  return path; the function's scope frees them, on a throw too. A C string
+  stored where it outlives its scope (a process's argv, built in a loop)
+  stays `malloc`'ed: the checker does not follow raw addresses.
+
+What stays GC code: the natives over GC references (`Array`'s, whose
+elements the collector traces and whose `sort` calls back into Haxe;
+`Dyn`, `Boxes`), and the trusted core (d).
 
 ### Serialization: relative references
 
