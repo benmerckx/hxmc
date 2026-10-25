@@ -449,11 +449,13 @@ class MemRepr {
 		into[5] = LE.i32(v, F_SEC);
 	}
 
-	// minutes from local time to UTC
+	// minutes from local time to UTC: the UTC fields read as a local time in
+	// the local time's daylight saving, less the local time
 	public static inline function timezoneOffset(ms:Float):Int {
 		var l:Fixed<UInt8, 64> = Fixed.scratch(), u:Fixed<UInt8, 64> = Fixed.scratch();
 		@:privateAccess Date.breakDown(ms, false, l.view());
 		@:privateAccess Date.breakDown(ms, true, u.view());
+		LE.put32(u.view(), F_ISDST, LE.i32(l.view(), F_ISDST));
 		return ((@:privateAccess Date.mktime(u.view()) - @:privateAccess Date.mktime(l.view())) / 60).toInt();
 	}
 

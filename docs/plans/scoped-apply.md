@@ -251,7 +251,13 @@ The calendar's struct tm is a 64-byte `Fixed` C fills (the nine ints
 first on every target), its time_t an 8-byte one; what stays unsafe is
 the date object's slot (`Date.ms`) and Math.random. Its fields, offset,
 text and times are the same as before in three time zones natively, on
-wasm32 and under wine.
+wasm32 and under wine. The offset ignored daylight saving (the UTC fields
+were read back as standard time; New York's summer gave 300, not 240):
+they now take the local time's `tm_isdst`, matching node's Date in five zones
+(StdNatives checks a summer date). wasm32's own calendar (wasm/Libc:
+gmtime_r, mktime) as scoped code over a view, tried: 4% slower on 200k
+dates' calls (range tests per field), its unsafe uses the same (the
+exports): not kept.
 
 The Windows layers are built here for windows-x86_64 and windows-arm64,
 run here under wine (the corpus' system, process, network and boundary
