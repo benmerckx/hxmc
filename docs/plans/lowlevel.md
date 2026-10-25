@@ -674,8 +674,12 @@ The std moves onto the core area by area, each move deleting the code it
 replaces (no second implementation stays):
 
 - pure algorithms (a): `FloatText` (Std.string and Std.parseFloat of a
-  Float; the scoped face `Str.ofFloat`, `toFloat`), `LibM`, `CaseMap`
-  (`Str.toCase`), `MemOps.compare`, the errno tables of `Layouts`;
+  Float, wasm32's strtod, the runtime's reports; the scoped face
+  `Str.ofFloat`, `toFloat`), over `Slice`s on every target, WasmGC too
+  (which used the engine's JavaScript forms before, and so printed `-0` as
+  `0` and read `0x1p3` as 0), `CaseMap` (`Str.toCase`, its runs on WasmGC
+  decoded into the engine's array), `LibM`, `MemOps.compare`, the errno
+  tables of `Layouts`;
 - String's algorithms: `hxmc.rt.TextCore` (search, order, hash, UTF-8
   both ways, integers to text and back) over code units and bytes, whose GC face is String's natives
   (`hxmc.rt.Str`, `Bytes.getString`) and scoped face `hxmc.scoped.Str`

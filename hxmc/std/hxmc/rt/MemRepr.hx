@@ -477,6 +477,19 @@ class MemRepr {
 		return Mem.getI32(p, 0);
 	}
 
+	// a double's bits, and back
+	public static inline function doubleBits(v:Float):I64 {
+		var p = Mem.stack(8);
+		Mem.setF64(p, 0, v);
+		return Mem.getI64(p, 0);
+	}
+
+	public static inline function bitsDouble(b:I64):Float {
+		var p = Mem.stack(8);
+		Mem.setI64(p, 0, b);
+		return Mem.getF64(p, 0);
+	}
+
 	public static inline function i64ToDouble(low:Int, high:Int):Float {
 		var p = Mem.stack(8);
 		Mem.setI32(p, 0, low);

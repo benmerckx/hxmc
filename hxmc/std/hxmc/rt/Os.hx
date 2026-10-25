@@ -350,7 +350,8 @@ abstract Report(Ptr) {
 	// v with `decimals` digits after the point, right-aligned in `width`: printf's %N.Df
 	@:hxmc.noGc public function fixed(v:Float, decimals:Int, width:Int) {
 		var tmp = Mem.stack(400);
-		var k = FloatText.fixed(v, decimals, tmp);
+		// (linear memory's: typed under -D hxmc.wasm-gc, not run there)
+		var k = #if hxmc.wasm_gc 0 #else FloatText.fixed(v, decimals, new hxmc.scoped.Slice((tmp : Ptr<UInt8>), 400)) #end;
 		var w = k;
 		while (w < width) {
 			ch(" ".code);

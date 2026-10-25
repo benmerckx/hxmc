@@ -308,6 +308,13 @@ class GcRepr {
 
 	// ---- bit patterns
 
+	// a double's bits, and back
+	public static inline function doubleBits(v:Float):hxmc.I64
+		return W.f64Bits(v);
+
+	public static inline function bitsDouble(b:hxmc.I64):Float
+		return W.bitsF64(b);
+
 	public static inline function i32ToFloat(i:Int):Float
 		return W.bitsF32(i);
 

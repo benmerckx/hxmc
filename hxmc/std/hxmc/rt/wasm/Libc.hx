@@ -17,8 +17,16 @@ class Libc {
 
 	// musl: seed = 6364136223846793005 * seed + 1, the top 31 bits
 	// correctly rounded (hxmc.rt.FloatText)
-	@:hxmc.export("strtod") @:hxmc.noGc static function strtod(s:Ptr, end:Ptr):Float
-		return hxmc.rt.FloatText.parse(s, end);
+	@:hxmc.export("strtod") @:hxmc.noGc static function strtod(s:Ptr, end:Ptr):Float {
+		#if hxmc.wasm_gc
+		// (typed under -D hxmc.wasm-gc, not run there)
+		return 0;
+		#else
+		var r = hxmc.rt.FloatText.parse(new hxmc.scoped.Slice((s : Ptr<hxmc.unsafe.UInt8>), Heap.strlen(s).toInt()));
+		if (!end.isNull()) Mem.setPtr(end, 0, s.add(r.end));
+		return r.value;
+		#end
+	}
 
 	@:hxmc.export("rand") @:hxmc.noGc static function rand():Int {
 		var a:I64 = ((0x5851F42D : I64) << 32) | (0x4C957F2D : I64);

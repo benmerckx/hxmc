@@ -136,13 +136,25 @@ abstract Str(StrData) {
 		return cast StrData.fresh(s, 0, n);
 	}
 
-	// (the engine's shortest form and reading, as Std.string and
-	// Std.parseFloat: FloatText is linear memory's)
-	public static inline function ofFloat(v:Float):Str
-		return cast StrData.freshFloat(v);
+	public static inline function ofFloat(v:Float):Str {
+		var buf:Slice<UInt8> = Scope.slice(32);
+		var n = hxmc.rt.FloatText.format(v, buf);
+		var s:GcChars = W.strNew(n);
+		for (i in 0...n)
+			W.strSet(s, i, buf[i]);
+		return cast StrData.fresh(s, 0, n);
+	}
 
-	public inline function toFloat():Float
-		return StrData.toFloat(this.s, this.off, this.length);
+	public inline function toFloat():Float {
+		var n = this.length;
+		var buf:Slice<UInt8> = Scope.slice(n);
+		for (i in 0...n) {
+			var u = W.strGet(this.s, this.off + i);
+			buf[i] = u < 0x80 ? u : 0x80;
+		}
+		var r = hxmc.rt.FloatText.parse(buf);
+		return r.end == 0 ? Math.NaN : r.value;
+	}
 
 	public inline function toString():String {
 		var s:String = this.s;
@@ -173,16 +185,6 @@ abstract Str(StrData) {
 	public static function of(pool:Dynamic, s:GcChars, off:Int, length:Int):StrData
 		return new StrData(s, off, length);
 
-	public static function freshFloat(v:Float):StrData {
-		var s = Std.string(v);
-		return new StrData(s, 0, W.strLen(s));
-	}
-
-	public static function toFloat(s:GcChars, off:Int, length:Int):Float {
-		var t = W.strNew(length);
-		W.strCopy(t, 0, s, off, length);
-		return Std.parseFloat(t);
-	}
 }
 #else
 abstract Str(StrData) {
@@ -315,12 +317,11 @@ abstract Str(StrData) {
 	// v as Std.string writes it (hxmc.rt.FloatText: the shortest decimal that
 	// reads back as v), fresh memory of the scope
 	public static inline function ofFloat(v:Float):Str {
-		var buf = Mem.stack(48);
-		hxmc.rt.FloatText.format(v, buf);
-		var n = LibC.strlen(buf).toInt();
+		var buf:Slice<UInt8> = Scope.slice(32);
+		var n = hxmc.rt.FloatText.format(v, buf);
 		var p = DataStacks.alloc(2 * n);
 		for (i in 0...n)
-			Mem.setI16(p, 2 * i, Mem.getU8(buf, i));
+			Mem.setI16(p, 2 * i, buf[i]);
 		return new Str(p, n);
 	}
 
@@ -328,18 +329,13 @@ abstract Str(StrData) {
 	// it; NaN: none
 	public inline function toFloat():Float {
 		var n = this.length;
-		var buf = DataStacks.alloc(n + 1);
-		var k = 0;
-		while (k < n && (Mem.getU16(this.ptr, 2 * k) == 32 || Mem.getU16(this.ptr, 2 * k) == 9 || Mem.getU16(this.ptr, 2 * k) == 10 || Mem.getU16(this.ptr, 2 * k) == 13))
-			k++;
-		for (i in k...n) {
+		var buf:Slice<UInt8> = Scope.slice(n);
+		for (i in 0...n) {
 			var u = Mem.getU16(this.ptr, 2 * i);
-			Mem.setI8(buf, i - k, u < 0x80 ? u : 0x80);
+			buf[i] = u < 0x80 ? u : 0x80;
 		}
-		Mem.setI8(buf, n - k, 0);
-		var end = Mem.stack(8);
-		var d = hxmc.rt.FloatText.parse(buf, end);
-		return Mem.getPtr(end, 0) == buf ? Math.NaN : d;
+		var r = hxmc.rt.FloatText.parse(buf);
+		return r.end == 0 ? Math.NaN : r.value;
 	}
 
 	// a String of the units (GC code)

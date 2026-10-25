@@ -180,15 +180,12 @@ class Str {
 	}
 
 	@:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
-		#if (hxmc.wasm_gc)
-		// the host's shortest form (JavaScript's, as FloatText formats); integral values as Ints
-		if (v == Std.int(v) && (v != 0 || 1 / v > 0)) return ofInt(Std.int(v));
-		return hxmc.rt.gc.W.fmt(v);
-		#else
-		var buf = Mem.stack(48);
-		FloatText.format(v, buf);
-		return ofBytes(buf, LibC.strlen(buf).toInt());
-		#end
+		var buf:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.slice(32);
+		var n = FloatText.format(v, buf);
+		var s = make(n);
+		for (i in 0...n)
+			Repr.setUnit(s, i, buf[i]);
+		return s;
 	}
 
 	@:hxmc.host("hx_str_of_bool") @:hxmc.noGc static function ofBool(v:Bool):String
@@ -404,29 +401,16 @@ class Str {
 
 	@:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
 		if (isNull(s)) return Math.NaN;
-		#if (hxmc.wasm_gc)
-		// the host's (JavaScript's parseFloat, as strtod reads)
-		return hxmc.rt.gc.W.parseFloat(s);
-		#else
 		// ASCII bytes for FloatText (any other unit ends the number, as its UTF-8 would)
 		var n = len(s);
-		var small = Mem.stack(128);
-		var buf = n < 128 ? small : LibC.malloc((n + 1 : I64));
+		var buf:hxmc.scoped.Slice<hxmc.unsafe.UInt8> = hxmc.scoped.Scope.slice(n);
 		var c = chars(s);
 		for (i in 0...n) {
 			var u = c.get(i);
-			Mem.setU8At(buf, 0, i, u < 0x80 ? u : 0x80);
+			buf[i] = u < 0x80 ? u : 0x80;
 		}
-		Mem.setU8At(buf, 0, n, 0);
-		var p = buf;
-		while (Mem.getU8(p, 0) == 32 || Mem.getU8(p, 0) == 9 || Mem.getU8(p, 0) == 10 || Mem.getU8(p, 0) == 13)
-			p = p.add(1);
-		var end = Mem.stack(8);
-		var d = FloatText.parse(p, end);
-		if (Mem.getPtr(end, 0) == p) d = Math.NaN;
-		if (buf != small) LibC.free(buf);
-		return d;
-		#end
+		var r = FloatText.parse(buf);
+		return r.end == 0 ? Math.NaN : r.value;
 	}
 
 	@:hxmc.host("Std_random") @:hxmc.noGc static function random(max:Int):Int {
