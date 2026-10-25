@@ -563,7 +563,12 @@ class Typeload {
 				}, "constraint");
 				TLazy(r);
 			case CTExtend(tl, fields):
-				var ta = loadComplexType(ctx, allowDisplay, LoadNormal, {type: CTAnonymous(fields), pos: p});
+				HxmcValues.suspended++;
+				var ta = try loadComplexType(ctx, allowDisplay, LoadNormal, {type: CTAnonymous(fields), pos: p}) catch (e:Dynamic) {
+					HxmcValues.suspended--;
+					throw e;
+				}
+				HxmcValues.suspended--;
 				var a = switch ta {
 					case TAnon(a): a;
 					case _: throw "Invalid anonymous extension";
@@ -706,7 +711,9 @@ class Typeload {
 					delay(ctx.g, PBuildClass,
 						function() context.display.DisplayEmitter.displayField(ctx, AnonymousStructure(a), CFSMember, cf, cf.cfNamePos));
 				}
-				TAnon(a);
+				// (hxmc: in scoped code, a struct value)
+				var value = HxmcValues.applies(ctx) ? HxmcValues.ofAnon(ctx, a, p) : null;
+				value != null ? value : TAnon(a);
 			case CTFunction(args, ret):
 				var voidArg = args.length == 1 && switch args[0].type {
 					case CTPath({path: {tpackage: [], tparams: [], tname: "Void"}}): true;

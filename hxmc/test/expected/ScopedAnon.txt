@@ -1,0 +1,7 @@
+exit 0
+ScopedAnon.hx:77: -191
+ScopedAnon.hx:78: 15
+ScopedAnon.hx:79: 123
+ScopedAnon.hx:81: 7
+ScopedAnon.hx:82: 7
+ScopedAnon.hx:84: hello, scoped world

@@ -334,16 +334,26 @@ Less to write (typer and lowering rules over Haxe's syntax, no macro;
   `@:structInit` does (by the constructor's parameter names, or the
   fields when it has none): `var p:Item = {key: 1, val: 2};`,
   `items.push({key: i, val: 0})`.
+- Anonymous structures are struct values in scoped code: a structure
+  type written in a scoped class (fields, signatures, bodies) or in a
+  scoped typedef, and an object literal there with no structure expected,
+  is a scoped class made for its fields (`typing.HxmcValues`: one per set
+  of field names and types, so the same structure written anywhere is one
+  type): `static function minMax(s:Slice<Int>):{min:Int, max:Int}`,
+  `var p = {x: 1, y: 2}` (a copy is another value),
+  `new Grow<{k:Int, v:Float}>()`, `@:hxmc.scoped typedef Range = {lo:Int,
+  hi:Int}` for GC code to name. Fields are variables; a structure with
+  methods, optional fields or type parameters stays a structure, which
+  scoped code refuses.
 - A module whose type of its own name is `@:hxmc.scoped` has scoped
-  module-level functions.
-- `-D hxmc.scoped-packages=geo,app.core`: every class and enum of those
-  packages (and their subpackages) is scoped without the metadata;
+  module-level functions (and its typedefs' structures are values).
+- `-D hxmc.scoped-packages=geo,app.core`: every class, enum and typedef of
+  those packages (and their subpackages) is scoped without the metadata;
   `@:hxmc.gc` keeps one GC code (a `main`, say).
 
 Declined: `Ref<T>` read without `.value` (the owner's decision).
-Not built yet: anonymous structures as value types in scoped code, array
-literals and string interpolation building a `Grow`, a `Slice` or a
-`Str`, `@:try` for scoped error values.
+Not built yet: array literals and string interpolation building a `Grow`,
+a `Slice` or a `Str`, `@:try` for scoped error values.
 
 ### Types (`hxmc.scoped`)
 

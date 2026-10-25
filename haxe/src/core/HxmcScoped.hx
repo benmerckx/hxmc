@@ -60,6 +60,21 @@ class HxmcScoped {
 	public static function isEnum(e:TEnum):Bool
 		return marked(e.eMeta) || !optedOut(e.eMeta) && inPackage(e.ePath.pack);
 
+	// a typedef whose structures are struct values (typing.HxmcValues): as a
+	// class, by its metadata, its module's type of its own name, its package
+	public static function isTypedef(t:TDef):Bool {
+		if (marked(t.tMeta)) return true;
+		if (optedOut(t.tMeta)) return false;
+		var name = t.tModule.mPath.name;
+		for (o in t.tModule.mTypes)
+			switch o {
+				case TClassDecl(c) if (c.clPath.name == name && marked(c.clMeta)): return true;
+				case TEnumDecl(e) if (e.ePath.name == name && marked(e.eMeta)): return true;
+				case _:
+			}
+		return inPackage(t.tPath.pack);
+	}
+
 	// a scoped class with instance variables: an object literal makes one
 	// (Typer.typeObjectDecl), as for @:structInit
 	public static function structInit(c:TClass):Bool {

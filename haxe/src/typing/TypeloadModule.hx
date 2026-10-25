@@ -543,8 +543,16 @@ class TypeloadModule {
 			&& core.display.DisplayPosition.displayPosition.enclosedIn(d.name.pos)) context.display.DisplayEmitter.displayModuleType(ctx,
 				TTypeDecl(t), d.name.pos);
 		TypeloadCheck.checkGlobalMetadata(ctx, t.tMeta, function(meta) t.tMeta = [meta].concat(t.tMeta), t.tModule.mPath, t.tPath, null);
-		var local = TyperManager.cloneForTypedef(ctx, t),
-			type = Typeload.loadComplexType(local, true, LoadNormal, d.data);
+		var local = TyperManager.cloneForTypedef(ctx, t);
+		// (hxmc: a scoped typedef's structures are struct values, HxmcValues)
+		core.HxmcScoped.configure(ctx.com.defines);
+		var values = core.HxmcScoped.isTypedef(t);
+		if (values) HxmcValues.inTypedef++;
+		var type = try Typeload.loadComplexType(local, true, LoadNormal, d.data) catch (e:Dynamic) {
+			if (values) HxmcValues.inTypedef--;
+			throw e;
+		}
+		if (values) HxmcValues.inTypedef--;
 		var result = switch d.data.type {
 			case CTExtend(_, _): type;
 			case CTPath({path: {tpackage: ["haxe", "macro"], tname: "MacroType"}}):

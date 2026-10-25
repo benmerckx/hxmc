@@ -835,8 +835,14 @@ class Typer {
 				}
 			}
 			var anon:TAnon = {aStatus: Const, aFields: types};
-			ctx.e.opened.unshift(anon);
-			return mk(TObjectDecl(fields), TAnon(anon), p);
+			// (hxmc: in scoped code, a struct value)
+			var value = HxmcValues.applies(ctx) ? HxmcValues.ofAnon(ctx, anon, p) : null;
+			return switch value {
+				case TInst(c, _): HxmcValues.literal(ctx, c, fields, p);
+				case _:
+					ctx.e.opened.unshift(anon);
+					mk(TObjectDecl(fields), TAnon(anon), p);
+			}
 		}
 		return switch kind {
 			case ODKPlain | ODKFailed: plain();

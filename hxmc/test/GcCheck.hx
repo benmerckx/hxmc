@@ -20,7 +20,7 @@ class GcCheck {
 	// are in hxmc/test/wasmgc, without the collector's API and raw memory)
 	static final CASES = [
 		"AnonFields", "ClosureElements", "CreateInstance", "DateValues", "EnumIdentity", "MapTables", "ObjectMapGc", "NativeArrayBoundsSilent", "NullAccess", "NullAccessThreads",
-		"ResourceBytes", "Resources", "ScopedDefaults", "ScopedFixed", "ScopedRoots", "ScopedTable", "ScopedText", "ScopedValues", "Utf8Bytes", "VectorLength"
+		"ResourceBytes", "Resources", "ScopedAnon", "ScopedDefaults", "ScopedFixed", "ScopedRoots", "ScopedTable", "ScopedText", "ScopedValues", "Utf8Bytes", "VectorLength"
 	];
 
 	static function run(cmd:String, args:Array<String>):{code:Int, out:String, err:String} {
