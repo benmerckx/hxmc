@@ -6,7 +6,8 @@ using StringTools;
 // Scoped memory against ordinary hxmc Haxe (docs/plans/lowlevel.md, "Scoped
 // memory"): each program has a scoped version and a GC one, which must print
 // the same. Table: the maps' index (hxmc.rt.MapIndex) on both faces.
-//   bin/hxmc/hxmc -cp hxmc/test/scoped -cp haxe/test --run ScopedBench [-n RUNS] [--wasm] [--large] [case ...]
+//   bin/hxmc/hxmc -cp hxmc/test/scoped -cp haxe/test --run ScopedBench [-n RUNS] [--wasm] [--gc] [--large] [case ...]
+// (--wasm: as wasm32 modules too; --gc: as WasmGC modules too, hxmc/bootstrap/wasmgc.mjs)
 // Reported per program, size and version: the median wall time of RUNS runs
 // and the peak RSS (/usr/bin/time), Linux; with --large a larger size too.
 class ScopedBench {
@@ -16,7 +17,7 @@ class ScopedBench {
 	static function main() {
 		var a = parseArgs(Sys.args(), ["-n"]);
 		var runs = a.int("-n", 5);
-		var wasm = a.has("--wasm"), large = a.has("--large");
+		var wasm = a.has("--wasm"), wasmGc = a.has("--gc"), large = a.has("--large");
 		var cases = a.rest.length == 0 ? CASES : CASES.filter(c -> a.rest.contains(c.name));
 		mkdirs(OUT);
 		var rows = [];
@@ -28,6 +29,10 @@ class ScopedBench {
 				var w = exec(["bin/hxmc/hxmc", exe + ".wasm", "-cp", "hxmc/test/scoped", "-cp", "bin/hxmc/std", "-main", c.name, "--custom-target", "hxmc", "-D", "hxmc.target=wasm32-wasi"]);
 				if (w.code != 0) fail(c.name + " (wasm32): " + w.out + w.err);
 			}
+			if (wasmGc) {
+				var w = exec(["bin/hxmc/hxmc", exe + ".gc.wasm", "-cp", "hxmc/test/scoped", "-cp", "bin/hxmc/std", "-main", c.name, "--custom-target", "hxmc", "-D", "hxmc.target=wasm32-wasi", "-D", "hxmc.wasm-gc"]);
+				if (w.code != 0) fail(c.name + " (WasmGC): " + w.out + w.err);
+			}
 			for (size in (large ? c.sizes : [c.sizes[0]])) {
 				var n = Std.string(size);
 				var cmds = [["scoped", exe, "scoped", n], ["gc", exe, "gc", n]];
@@ -35,6 +40,11 @@ class ScopedBench {
 					var node = ["node", "--no-warnings", FileSystem.fullPath("hxmc/bootstrap/wasi.mjs"), exe + ".wasm"];
 					cmds.push(["scoped wasm32"].concat(node).concat(["scoped", n]));
 					cmds.push(["gc wasm32"].concat(node).concat(["gc", n]));
+				}
+				if (wasmGc) {
+					var node = ["node", "--no-warnings", FileSystem.fullPath("hxmc/bootstrap/wasmgc.mjs"), exe + ".gc.wasm"];
+					cmds.push(["scoped WasmGC"].concat(node).concat(["scoped", n]));
+					cmds.push(["gc WasmGC"].concat(node).concat(["gc", n]));
 				}
 				var expected:Null<String> = null;
 				for (cmd in cmds) {

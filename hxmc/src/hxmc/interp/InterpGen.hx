@@ -1078,7 +1078,7 @@ class InterpGen {
 			case Unreachable:
 				code.push(UNREACH);
 			case NullCheck | New | NewDyn | InitField | GetField | SetField | FieldAddr | EnumTag | TypeTest | Box | Unbox | VirtualCall | ClosureCall | AnonGet |
-				AnonTest | AnonStore | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush | NewArray | ArrayInit | NewNArray | NArrayInit | NArrayLength |
+				AnonTest | AnonStore | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush | NewArray | ArrayInit | NewNArray | NArrayInit | NArrayLength | NArrayView |
 				NArrayGet | NArraySet | NArrayDyn | RefStore | IrNode | VarGet | VarSet | Try | Catch:
 				// (the interpreter runs lowered Mir, as the back ends)
 				throw "-D hxmc.interp: " + MFunc.opName(i.op) + " is object-level (MemLower lowers it first)";

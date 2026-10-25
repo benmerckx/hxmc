@@ -262,7 +262,7 @@ class Opt {
 							var c = objLoadClass(i);
 							c >= 0 && kills & (1 << c) == 0 && nonNull(baseOf(i.a), outside, 0);
 						case EnumTag: nonNull(baseOf(i.a), outside, 0);
-						case TypeTest | FieldAddr: true;
+						case TypeTest | FieldAddr | NArrayView: true;
 						case _ if (i.isObj()): false;
 						case Load | TlsLoad:
 							safeLoad(i, vals) && kills & (1 << (i.op == TlsLoad ? tlsClass(i.sym) : i.mem)) == 0
@@ -1015,7 +1015,7 @@ class Opt {
 
 	// object-level operations whose value depends on their operands alone
 	static inline function objPure(op:Op):Bool
-		return op == EnumTag || op == TypeTest || op == FieldAddr;
+		return op == EnumTag || op == TypeTest || op == FieldAddr || op == NArrayView;
 
 	// object-level operations whose lowering calls on the fast path (LICM: a call)
 	static inline function objCall(op:Op):Bool
@@ -1035,6 +1035,7 @@ class Opt {
 			case VarGet | VarSet: i.info.n;
 			case ArrayGet: i.info.flag ? 1 : 0;
 			case NArrayGet: i.info.n;
+			case NArrayView: i.info.kind;
 			case TypeTest: i.info.cls.tindex;
 			case FieldAddr: i.info.loc;
 			case _: 0;
@@ -1043,7 +1044,7 @@ class Opt {
 	// the classes an object-level operation writes
 	function objKill(i:MIns):Int
 		return switch i.op {
-			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | InitField | VarGet | Catch: 0;
+			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArrayView | InitField | VarGet | Catch: 0;
 			case VarSet: 1 << MVar;
 			case ArrayGet: ptrElem(i.info.t) ? ALL : 0;
 			case SetField: i.info.t.match(TVoid) ? 0 : (1 << fieldCls(i.info)) | (1 << MField) | (1 << MOther);

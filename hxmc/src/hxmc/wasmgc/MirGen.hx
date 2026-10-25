@@ -287,11 +287,15 @@ class MirGen extends FuncGen {
 			case Cmp | ArrayLength | EnumTag | TypeTest: "i";
 			case Call:
 				var g = funcOf(i);
-				repr(g.ret) == "v" ? null : m.retKey(g);
+				var k = viewKind(i, g);
+				k >= 0 ? "t" + m.naType(GcModule.NA_KINDS[k]) : repr(g.ret) == "v" ? null : m.retKey(g);
 			case New: "t" + newType(i);
 			case NewArray: "t" + m.arrType(GcModule.elemKind(o.t));
 			case GetField: getKey(i);
 			case Box: "p";
+			case NArrayView: "t" + m.naType(GcModule.NA_KINDS[o.kind]);
+			case NArrayGet: o.name == "p" ? "p" : o.name == "f" ? "f" : o.name == "l" ? "l" : "i";
+			case NArraySet: null;
 			case Unbox | ArrayGet | AnonGet: scalarOr(repr(o.t));
 			case VirtualCall | ClosureCall | AnonCall: repr(o.sig.ret) == "v" ? null : repr(o.sig.ret);
 			case IrNode if (o.ex != null):
@@ -341,6 +345,13 @@ class MirGen extends FuncGen {
 		var o = i.info;
 		return if (o.cls != null) m.fieldKey(o.cls, idxOf(o.loc, o.t)) else if (o.ctor != null) m.ctorParamKey(o.ctor, idxOf(o.loc, o.t)) else if (o.lambda != null)
 			m.captureKey(o.lambda, idxOf(o.loc, o.t) - 1) else scalarOr(repr(o.t));
+	}
+
+	// the kind a call of the runtime's NativeArray view takes (a constant), else -1
+	function viewKind(i:MIns, g:FuncInfo):Int {
+		if (g != hxmc.ir.Lower.narrayView || i.args.length != 2) return -1;
+		var k = vals[i.args[1]];
+		return k.op == Const && k.ty == I32 && k.imm >= 0 && k.imm < GcModule.NA_KINDS.length ? k.imm : -1;
 	}
 
 	function funcOf(i:MIns):FuncInfo {
@@ -1058,10 +1069,36 @@ class MirGen extends FuncGen {
 			case Call:
 				// (as FuncGen's ECall: each argument as its parameter's key, the result the callee's)
 				var g = funcOf(i);
-				for (k in 0...i.args.length)
-					push(i.args[k], m.paramKey(g, k));
-				call(m.funcOf(g));
-				if (repr(g.ret) != "v") result(i);
+				var vk = viewKind(i, g);
+				if (vk >= 0) {
+					// (a NativeArray's view as its kind: typed storage of the kind as it
+					// is, else the runtime's view)
+					push(i.args[0], "p");
+					viewOf(vk, m.funcOf(g));
+					result(i);
+				} else {
+					for (k in 0...i.args.length)
+						push(i.args[k], m.paramKey(g, k));
+					call(m.funcOf(g));
+					if (repr(g.ret) != "v") result(i);
+				}
+			case NArrayView:
+				push(i.a, "p");
+				viewOf(o.kind, m.funcOf(hxmc.ir.Lower.narrayView));
+				result(i);
+			case NArrayGet:
+				var d = m.naType(o.name);
+				push(i.a, "t" + d);
+				push(i.b, "i");
+				// (Bools and Bytes: unsigned bytes)
+				gc(o.name == "b" || o.name == "u" ? 0x0D : 0x0B, d);
+				result(i);
+			case NArraySet:
+				var d = m.naType(o.name);
+				push(i.a, "t" + d);
+				push(i.b, "i");
+				push(i.c, o.name == "p" ? "p" : o.name == "f" ? "f" : o.name == "l" ? "l" : "i");
+				gc(0x0E, d);
 			case NullCheck:
 				// (explicit null tests: the operations after it read the value unchecked)
 				push(i.a, "p");

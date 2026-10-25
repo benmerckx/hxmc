@@ -280,7 +280,9 @@ class Uses {
 		var called = new Map<String, Bool>();
 		for (b in mf.blocks)
 			for (i in b.ins)
-				if (!i.dead && i.op == Call && i.sym != null) called.set(i.sym, true);
+				if (!i.dead && i.op == Call && i.sym != null) called.set(i.sym, true)
+				// (a view calls the runtime's on its slow path: MirGen)
+				else if (!i.dead && i.op == NArrayView) called.set(MirBuild.gcSymOf(hxmc.ir.Lower.narrayView), true);
 		var into = inlined.get(f);
 		var out:Array<Stmt> = [];
 		var open:Array<FuncInfo> = [f];

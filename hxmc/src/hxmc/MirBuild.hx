@@ -896,6 +896,9 @@ class MirBuild extends MirWriter {
 		return x.id;
 	}
 
+	static function gcElemBytes(k:String):Int
+		return k == "b" || k == "u" ? 1 : k == "i" ? 4 : 8;
+
 	// the expressions WasmGC keeps as the IR's (-1: the others)
 	function gcEx(e:Ex):Int {
 		var vals = [], phs = [];
@@ -913,6 +916,27 @@ class MirBuild extends MirWriter {
 			case EFieldAddr(c, idx, o):
 				var oe = irOperand(o, vals, phs);
 				op(EFieldAddr(c, idx, oe));
+			// (typed storage: object-level reads and writes, which Opt sees: wasmgc.MirGen)
+			case ECallHost(name, [a, ix], ret) if (StringTools.startsWith(name, "hxmc_narray_get_")):
+				var xa = ex(a), xi = ex(ix);
+				nullCheck(xa);
+				var i = info();
+				i.name = name.substr(name.length - 1);
+				i.n = gcElemBytes(i.name);
+				obj(NArrayGet, mty(ret), i, xa, xi).id;
+			case ECallHost(name, [a, ix, x], _) if (StringTools.startsWith(name, "hxmc_narray_set_")):
+				var xa = ex(a), xi = ex(ix), xv = ex(x);
+				nullCheck(xa);
+				var i = info();
+				i.name = name.substr(name.length - 1);
+				i.n = gcElemBytes(i.name);
+				i.flag = i.name == "p";
+				obj(NArraySet, Void, i, xa, xi, xv);
+				iconst(0);
+			case ECall(g, [a, EInt(k)]) if (g == hxmc.ir.Lower.narrayView && k >= 0):
+				var i = info();
+				i.kind = k;
+				obj(NArrayView, I64, i, ex(a)).id;
 			case ECallHost(name, args, ret):
 				var xs = [for (a in args) irOperand(a, vals, phs)];
 				irOp(mty(ret), vals, phs, ECallHost(name, Vector.fromArrayCopy(xs), ret));

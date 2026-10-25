@@ -107,6 +107,7 @@ enum abstract Op(Int) to Int {
 	var VarSet; // a: the value (info.n)
 	var Try; // a try body entered: targets: the body's first block, the handler's (its first instruction: Catch)
 	var Catch; // the exception caught (the handler's first instruction)
+	var NArrayView; // a: a NativeArray as the storage of kind info.kind (rt.gc.GcNArray.view: itself when it is); depends on a alone
 }
 
 // the static part of an object-level operation (MIns.info): what it is about
@@ -501,7 +502,7 @@ class MFunc {
 		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr", "nullcheck", "new",
 		"newdyn", "initfield", "getfield", "setfield", "fieldaddr", "enumtag", "typetest", "box", "unbox", "virtualcall", "closurecall", "anonget", "anontest",
 		"anonstore", "anoncall", "arraylength", "arrayget", "arrayset", "arraypush", "newarray", "arrayinit", "newnarray", "narrayinit", "narraylength",
-		"narrayget", "narrayset", "narraydyn", "refstore", "irnode", "varget", "varset", "try", "catch");
+		"narrayget", "narrayset", "narraydyn", "refstore", "irnode", "varget", "varset", "try", "catch", "narrayview");
 
 	public static function opName(o:Op):String
 		return OPS[(o : Int)];

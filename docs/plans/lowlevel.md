@@ -950,29 +950,33 @@ element into a variable copies it). Struct of arrays (one GC array per
 field, `Ref` = Grow and index) was to be the next step: no object per
 element, the layout the engines optimize.
 
-Measured first (not built; a decision for the owner): 10^6 particles of
-four Floats moved 20 times, as a `Grow<P>` (one object per element) and
-as four `Grow<Float>` (struct of arrays written by hand), and two
-`Grow<Float>` against two `Array<Float>`; medians of 5 runs, Linux
-x86-64, node 22, 2026-10-25:
+Typed storage first (built): a Grow's, a Slice's (and so a Fixed's view's,
+an IntTable's) storage is a field of a generic class (`GrowData<T>`,
+`SliceData<T>`), read through the erased element type; where the inlined
+code knows the element type, FnLower takes it as typed storage through the
+runtime's view (`GcNArray.view`). On WasmGC that view was a call per access
+and the accesses opaque IR to the optimizer. Now the view is an operation of
+its own (`NArrayView`: the storage itself after one `ref.test` when it is
+of the kind, the runtime's view otherwise), which depends on its operand
+alone, and typed reads and writes are `NArrayGet`/`NArraySet`, which
+write array elements only: Opt keeps the storage and the length in values
+across a loop instead of reading them again at each access. Natively and on
+wasm32 nothing changes (the same bytes for the programs compared). 10^6
+particles of four Floats moved 20 times, and two Floats per element added
+20 times; medians of 5 runs, Linux x86-64, node 22, 2026-10-25:
 
-| | WasmGC | node RSS | native |
-| --- | ---: | ---: | ---: |
-| `Grow<P>`, P of 4 Floats | 1140 ms | 176 MB | 83 ms |
-| 4 `Grow<Float>` (by hand) | 1420 ms | 115 MB | 207 ms |
-| 2 `Grow<Float>` | 800 ms | 86 MB | 87 ms |
-| 2 `Array<Float>` | 203 ms | 85 MB | 60 ms |
+| | WasmGC before | WasmGC after | node RSS | native |
+| --- | ---: | ---: | ---: | ---: |
+| `Grow<P>`, P a scoped class of 4 Floats | 868 ms | 617 ms | 177 MB | 65 ms |
+| 4 `Grow<Float>` (struct of arrays by hand) | 1279 ms | 368 ms | 115 MB | 128 ms |
+| `Array<P>`, P a GC class | 348 ms | 327 ms | 155 MB | 123 ms |
+| 4 `Array<Float>` | 310 ms | 335 ms | 105 MB | 120 ms |
+| 2 `Grow<Float>` | 648 ms | 198 ms | 86 MB | 90 ms |
+| 2 `Array<Float>` | 161 ms | 161 ms | 85 MB | 54 ms |
 
-Struct of arrays saves the objects (a third of the memory here) but is
-slower as things are: a Grow's elements on WasmGC are 4 times slower to
-reach than an Array's (its storage is a field of the generic `GrowData`,
-read through the erased element type: the dynamic access path, which
-boxes scalars), and a struct of arrays multiplies those accesses by its
-fields. Recommendation: first give the scoped abstractions' storage its
-element type where the inlined code knows it (a Grow's or Slice's array
-read as the typed array of its kind, as an Array's is), which every
-scoped program on WasmGC gains from; then struct of arrays for Grows of
-scalar-only scoped classes, measured again.
+`make bench-scoped` (`ScopedBench --gc`), Table at 10^6 keys on WasmGC:
+1.06 s before, 0.88 s after. `make wasmgc-bench`: times within noise,
+modules 0.1-1.5 KB larger (the view's inline test).
 
 What a Slice of a Grow sees on WasmGC: the elements as of when it was
 taken; after the Grow reallocates, writes through the old Slice are the old
@@ -1037,7 +1041,7 @@ fast as with the data stack natively, and 5-10% faster on wasm32.
 T). Not built: variable-size enums, scoped enums in images, methods on
 scoped classes (structs have none yet), checking the `hxmc.scoped` std's
 own inline functions apart from their callers, struct of arrays on
-WasmGC (measured in "Two representations, one core": a decision first).
+WasmGC (next: "Two representations, one core").
 
 Scoped against GC on the maps' index (`make bench-scoped`, `Table`: n
 random Int keys inserted with updates, then 8n lookups; `IntTable` against

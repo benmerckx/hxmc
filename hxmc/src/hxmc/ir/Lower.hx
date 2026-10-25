@@ -60,6 +60,7 @@ class Lower implements LowerQueries {
 	// reuses function bodies across builds, see `lowerBody`); otherwise none
 	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
 		Lower.basic = basic;
+		narrayView = null;
 		if (l == null) l = new Lower();
 		Scoped.reset(types);
 		var mainField = main.clStatics.get("main");
@@ -290,7 +291,12 @@ class Lower implements LowerQueries {
 	// keeps one branch (its symbols stay out of the other targets' links).
 	// An expression nothing changes in is kept; the statement lists are new
 	// (Facts.markCold rewrites them in place).
+	// (WasmGC: the runtime's view of a NativeArray as its kind, rt.gc.GcNArray.view,
+	// whose calls take the typed storage inline first: MirGen, FuncGen)
+	public static var narrayView:Null<FuncInfo> = null;
+
 	function bindHosts(fi:FuncInfo) {
+		if (wasmGc && narrayView == null) narrayView = hostImpl("hx_narray_view");
 		function fold(e:Ex):Ex {
 			return switch e {
 				case EBin(op, EInt(a), EInt(b)):

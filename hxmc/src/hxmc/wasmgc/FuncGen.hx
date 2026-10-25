@@ -608,6 +608,11 @@ class FuncGen {
 			case EType(tr):
 				op(0x23);
 				Enc.uleb(b, m.typeValue(tr));
+			case ECall(fn, [a, EInt(k)]) if (fn == hxmc.ir.Lower.narrayView && k >= 0 && k < GcModule.NA_KINDS.length):
+				// (a NativeArray's view as its kind: typed storage of the kind as it is,
+				// else the runtime's view: MirGen's too)
+				expr(a);
+				viewOf(k, m.funcOf(fn));
 			case ECall(fn, args):
 				for (k in 0...args.length) {
 					var pk = m.paramKey(fn, k);
@@ -895,6 +900,34 @@ class FuncGen {
 
 	// br_on_cast_fail to the enclosing block (its result an eqref) unless the
 	// eqref on the stack is a (non-null) t; else that, as a t
+	// the NativeArray on the stack (eqref) as storage of kind k: itself when it
+	// is (a null too), else the runtime's view (function view)
+	function viewOf(k:Int, view:Int) {
+		var t = m.naType(GcModule.NA_KINDS[k]);
+		var x = temp("p");
+		localTee(x);
+		// (ref.test null t)
+		op(0xFB);
+		op(0x15);
+		Enc.sleb(b, t);
+		op(0x04);
+		op(0x63);
+		Enc.sleb(b, t);
+		localGet(x);
+		op(0xFB);
+		op(0x17);
+		Enc.sleb(b, t);
+		op(0x05);
+		localGet(x);
+		i32(k);
+		call(view);
+		op(0xFB);
+		op(0x17);
+		Enc.sleb(b, t);
+		op(0x0B);
+		release("p", x);
+	}
+
 	function brOnCastFail(t:Int) {
 		op(0xFB);
 		op(0x19);
