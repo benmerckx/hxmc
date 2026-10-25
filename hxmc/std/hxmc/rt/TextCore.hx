@@ -2,6 +2,7 @@ package hxmc.rt;
 
 import hxmc.rt.Repr.Chars;
 import hxmc.rt.Repr.Octets;
+import hxmc.I64;
 import hxmc.unsafe.*;
 
 // String's algorithms, written once as scoped code (docs/plans/lowlevel.md,
@@ -184,6 +185,98 @@ class TextCore {
 			} else d.set(j++, cp);
 		}
 	}
+
+	// ---- numbers
+
+	// the units of v in decimal
+	public static inline function intLength(v:Int):Int {
+		var n = v < 0 ? 2 : 1;
+		var t:I64 = v;
+		if (t < 0) t = -t;
+		while (t >= 10) {
+			t = (t * m10()) >>> 35;
+			n++;
+		}
+		return n;
+	}
+
+	// v in decimal into the n (intLength) units d
+	public static inline function intWrite(v:Int, d:Chars, n:Int) {
+		var u:I64 = v;
+		if (u < 0) u = -u;
+		var k = n;
+		do {
+			var q = (u * m10()) >>> 35;
+			d.set(--k, 48 + (u - q * 10).toInt());
+			u = q;
+		} while (u > 0);
+		if (v < 0) d.set(0, 45);
+	}
+
+	// (|v| <= 2^31 as an I64: u / 10 is (u * 0xCCCCCCCD) >>> 35)
+	static inline function m10():I64
+		return ((0xCCCC : I64) << 16) | (0xCCCD : I64);
+
+	// the units of v in decimal (digits of the negative value: no overflow at
+	// the minimum)
+	public static inline function i64Length(v:I64):Int {
+		var n = v < 0 ? 2 : 1;
+		var t = v < 0 ? v : -v;
+		while (t <= -10) {
+			t = t / 10;
+			n++;
+		}
+		return n;
+	}
+
+	public static inline function i64Write(v:I64, d:Chars, n:Int) {
+		var m = v < 0 ? v : -v;
+		var k = n;
+		do {
+			var q = m / 10;
+			d.set(--k, 48 + (q * 10 - m).toInt());
+			m = q;
+		} while (m < 0);
+		if (v < 0) d.set(0, 45);
+	}
+
+	// the integer the n units c start with, as Std.parseInt reads it (blanks,
+	// a sign, decimal digits kept to 32 bits, or 0x and hexadecimal ones), with
+	// 1 << 32 set; 0: none
+	public static inline function parseInt(c:Chars, n:Int):I64 {
+		var i = 0;
+		// (space, \t, \n, \v, \f, \r: upstream's TestStd)
+		while (i < n && (c.get(i) == 32 || (c.get(i) >= 9 && c.get(i) <= 13)))
+			i++;
+		var neg = false;
+		if (i < n && (c.get(i) == 45 || c.get(i) == 43)) {
+			neg = c.get(i) == 45;
+			i++;
+		}
+		var v:I64 = 0;
+		var any = false;
+		if (i + 1 < n && c.get(i) == 48 && (c.get(i + 1) == 120 || c.get(i + 1) == 88)) {
+			i += 2;
+			while (i < n) {
+				var u = c.get(i);
+				var d = u >= 48 && u <= 57 ? u - 48 : u >= 97 && u <= 102 ? u - 87 : u >= 65 && u <= 70 ? u - 55 : -1;
+				if (d < 0) break;
+				v = ((v << 4) + d) & low32();
+				any = true;
+				i++;
+			}
+		} else {
+			while (i < n && c.get(i) >= 48 && c.get(i) <= 57) {
+				v = (v * 10 + (c.get(i) - 48)) & low32();
+				any = true;
+				i++;
+			}
+		}
+		return any ? (((neg ? -v : v) & low32()) | ((1 : I64) << 32)) : 0;
+	}
+
+	static inline function low32():I64
+		return ((1 : I64) << 32) - 1;
 
 	// the length of the well-formed UTF-8 sequence at i, whose first byte b is
 	// not ASCII (Unicode's table 3-7); 0 when there is none

@@ -677,9 +677,10 @@ replaces (no second implementation stays):
   Float; the scoped face `Str.ofFloat`, `toFloat`), `LibM`, `CaseMap`
   (`Str.toCase`), `MemOps.compare`, the errno tables of `Layouts`;
 - String's algorithms: `hxmc.rt.TextCore` (search, order, hash, UTF-8
-  both ways) over code units and bytes, whose GC face is String's natives
+  both ways, integers to text and back) over code units and bytes, whose GC face is String's natives
   (`hxmc.rt.Str`, `Bytes.getString`) and scoped face `hxmc.scoped.Str`
-  (`find`, `findLast`, `compare`, `hash`, `utf8`, `ofUtf8`);
+  (`find`, `findLast`, `compare`, `hash`, `utf8`, `ofUtf8`, `ofInt`,
+  `toInt`);
   `Bytes.getString` decodes in place (the units counted, the string made,
   the bytes taken again) where it copied them out of the heap first;
 - the OS layers' temporary C strings (b): paths, environment variables,

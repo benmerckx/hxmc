@@ -6,7 +6,8 @@ import hxmc.unsafe.UInt8;
 // Std.parseFloat on the GC face, Str.ofFloat and toFloat on the scoped one)
 // case mapping beyond ASCII (hxmc.rt.CaseMap: String's toUpperCase and
 // toLowerCase, Str.toCase) and String's search, order, hash and UTF-8
-// (hxmc.rt.TextCore: Str's find, findLast, compare, hash, utf8, ofUtf8).
+// and integers (hxmc.rt.TextCore: Str's find, findLast, compare, hash,
+// utf8, ofUtf8, ofInt, toInt).
 // The two faces must agree on every value.
 @:hxmc.scoped class Code {
 	public static function ofFloat(v:Float, out:Grow<Int>) {
@@ -17,6 +18,15 @@ import hxmc.unsafe.UInt8;
 
 	public static function toFloat(text:Str):Float
 		return text.toFloat();
+
+	public static function ofInt(v:Int, out:Grow<Int>) {
+		var s = Str.ofInt(v);
+		for (i in 0...s.length)
+			out.push(s[i]);
+	}
+
+	public static function toInt(text:Str):Int
+		return text.toInt(-12345);
 
 	public static function toCase(text:Str, toUpper:Bool, out:Grow<Int>) {
 		var s = text.toCase(toUpper);
@@ -71,6 +81,21 @@ class ScopedText {
 			var a = Code.toFloat(Str.copyOf(t)), b = Std.parseFloat(t);
 			if (!(a == b || (Math.isNaN(a) && Math.isNaN(b))) || (a == 0 && 1 / a != 1 / b)) {
 				trace('toFloat("$t"): $a, Std.parseFloat: $b');
+				bad++;
+			}
+		}
+		for (v in [0, 7, -7, 10, 2147483647, -2147483648, 1000000000]) {
+			var g = new Grow<Int>();
+			Code.ofInt(v, g);
+			if (units(g) != Std.string(v)) {
+				trace('ofInt($v): ' + units(g));
+				bad++;
+			}
+		}
+		for (t in ["12", " -3", "0x1f", "x", "", "99999999999", "+0"]) {
+			var a = Code.toInt(Str.copyOf(t)), b = Std.parseInt(t);
+			if (a != (b == null ? -12345 : b)) {
+				trace('toInt("$t"): $a, Std.parseInt: $b');
 				bad++;
 			}
 		}

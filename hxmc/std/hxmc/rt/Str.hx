@@ -166,50 +166,16 @@ class Str {
 	}
 
 	@:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
-		// |v| <= 2^31 as an I64; u / 10 as (u * 0xCCCCCCCD) >>> 35
-		var m10 = ((0xCCCC : I64) << 16) | (0xCCCD : I64);
-		var neg = v < 0;
-		var u:I64 = v;
-		if (neg) u = -u;
-		var n = 1;
-		var t = u;
-		while (t >= 10) {
-			t = (t * m10) >>> 35;
-			n++;
-		}
-		if (neg) n++;
+		var n = TextCore.intLength(v);
 		var s = make(n);
-		var d = chars(s);
-		var k = n;
-		do {
-			var q = (u * m10) >>> 35;
-			d.set(--k, 48 + (u - q * 10).toInt());
-			u = q;
-		} while (u > 0);
-		if (neg) d.set(0, 45);
+		TextCore.intWrite(v, chars(s), n);
 		return s;
 	}
 
 	@:hxmc.host("hx_str_of_i64") static function ofI64(v:I64):String {
-		// digits of the negative value (no overflow at the minimum)
-		var neg = v < 0;
-		var m = neg ? v : -v;
-		var n = 1;
-		var t = m;
-		while (t <= -10) {
-			t = t / 10;
-			n++;
-		}
-		if (neg) n++;
+		var n = TextCore.i64Length(v);
 		var s = make(n);
-		var d = chars(s);
-		var k = n;
-		do {
-			var q = m / 10;
-			d.set(--k, 48 + (q * 10 - m).toInt());
-			m = q;
-		} while (m < 0);
-		if (neg) d.set(0, 45);
+		TextCore.i64Write(v, chars(s), n);
 		return s;
 	}
 
@@ -432,42 +398,8 @@ class Str {
 
 	@:hxmc.host("Std_parseInt") static function parseInt(s:String):Null<Int> {
 		if (isNull(s)) return null;
-		var n = len(s), i = 0;
-		inline function at(k:Int):Int
-			return unit(s, k);
-		// (space, \t, \n, \v, \f, \r: upstream's TestStd)
-		while (i < n && (at(i) == 32 || (at(i) >= 9 && at(i) <= 13)))
-			i++;
-		var neg = false;
-		if (i < n && (at(i) == 45 || at(i) == 43)) {
-			neg = at(i) == 45;
-			i++;
-		}
-		if (i + 1 < n && at(i) == 48 && (at(i + 1) == 120 || at(i + 1) == 88)) {
-			i += 2;
-			var v = 0, any = false;
-			while (i < n) {
-				var c = at(i);
-				var d = c >= 48 && c <= 57 ? c - 48 : c >= 97 && c <= 102 ? c - 87 : c >= 65 && c <= 70 ? c - 55 : -1;
-				if (d < 0) break;
-				v = (v << 4) + d;
-				any = true;
-				i++;
-			}
-			if (!any) return null;
-			return neg ? -v : v;
-		}
-		var v:I64 = 0;
-		var any = false;
-		var low32 = ((1 : I64) << 32) - 1;
-		while (i < n && at(i) >= 48 && at(i) <= 57) {
-			v = v * 10 + (at(i) - 48);
-			if (v > low32) v = v & low32;
-			any = true;
-			i++;
-		}
-		if (!any) return null;
-		return (neg ? -v : v).toInt();
+		var r = TextCore.parseInt(chars(s), len(s));
+		return r == 0 ? null : r.toInt();
 	}
 
 	@:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {

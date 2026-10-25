@@ -102,6 +102,21 @@ abstract Str(StrData) {
 		return TextCore.utf8Encode(this.ptr, this.length, (buf : Ptr));
 
 
+	// v in decimal (Std.string's), fresh memory of the scope
+	public static inline function ofInt(v:Int):Str {
+		var n = TextCore.intLength(v);
+		var p = DataStacks.alloc(2 * n);
+		TextCore.intWrite(v, p, n);
+		return new Str(p, n);
+	}
+
+	// the integer the text starts with, as Std.parseInt reads it; `none` when
+	// there is none
+	public inline function toInt(none:Int):Int {
+		var r = TextCore.parseInt(this.ptr, this.length);
+		return r == 0 ? none : r.toInt();
+	}
+
 	// the UTF-8 of the String s ("null" for null), NUL-terminated (not counted
 	// in the length), fresh memory of the scope: a C string for the system (GC code)
 	public static inline function utf8Of(s:String):Slice<UInt8> {
