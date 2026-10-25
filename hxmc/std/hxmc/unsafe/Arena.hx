@@ -112,7 +112,13 @@ abstract Arena(Ptr) {
 		if (s == null) return Ptr.nil();
 		var n = s.length;
 		var p:Ptr<UInt16> = alloc(2 * n + 2, 2);
-		LibC.memcpy(p, Mem.addr(s).add(4), (2 * n : I64)); // (the units, after the length: hxmc.rt.Types)
+		// (the units, after the length, a byte each in a one-byte string: hxmc.rt.Types)
+		var u = Mem.addr(s).add(4);
+		if (hxmc.rt.MemRepr.isOne(s))
+			for (i in 0...n)
+				Mem.setU16At(p, 0, i, Mem.getU8At(u, 0, i));
+		else
+			LibC.memcpy(p, u, (2 * n : I64));
 		return p;
 	}
 

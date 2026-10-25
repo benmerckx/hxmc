@@ -95,7 +95,6 @@ it.
   [targets.md](docs/plans/targets.md#ios)).
 - A GUI subsystem define on Windows, a dynamic musl mode on Linux
   ([targets.md](docs/plans/targets.md#windows)).
-- Compact strings ([runtime.md](docs/plans/runtime.md#compact-strings-latin-1--utf-16)).
 - Direct system calls on Linux ([runtime.md](docs/plans/runtime.md#direct-system-calls-on-linux)).
 - The libm branch: correctly rounded math ([math.md](docs/plans/math.md#later-the-libm-branch)).
 - The `hxmc` haxelib; verified native builds ([packaging.md](docs/plans/packaging.md)).

@@ -33,7 +33,7 @@ class EvalCompat {
 		if (Str.isNull(v)) return "null";
 		var t = tindex(v);
 		switch t {
-			case T_STRING | T_BOXINT | T_BOXFLOAT | T_BOXI64 | T_BOXBOOL:
+			case T_STRING | T_STRING1 | T_BOXINT | T_BOXFLOAT | T_BOXI64 | T_BOXBOOL:
 				return own(v);
 			case T_TYPEOBJ:
 				var d = described(v);

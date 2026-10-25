@@ -11,11 +11,16 @@ import hxmc.unsafe.Ptr;
 // formatting, the String, StringBuf and Std natives, written over
 // hxmc.rt.Repr for both runtimes (@:hxmc.anyHeap). In linear memory a
 // string is an array without references (hxmc.rt.Types: its hash in its
-// header, 0 until computed), its int32 length, then its UTF-16 units;
-// StringBuf keeps the runtime's layout (T_STRINGBUF: slot 0 the length,
-// slot 1 a K_RAW block of units), which generated code's
-// inline addChar reads too (MirBuild.stringBufAddChar). Under -D
-// hxmc.wasm-gc a string is an array of units (hxmc.rt.gc.GcRepr).
+// header, 0 until computed), its int32 length, then its units: a byte each
+// (T_STRING1, where every unit is below 0x100) or two (T_STRING), as V8's
+// one-byte and two-byte strings. Every operation takes either width (and a
+// two-byte string whose units would fit in bytes: no result depends on the
+// width); what this makes is one-byte wherever every unit fits, but for the
+// concatenations of a two-byte string. StringBuf keeps the runtime's layout
+// (T_STRINGBUF: slot 0 the length, slot 1 its units, a string as long as
+// its capacity, one-byte until a unit above 0xFF comes), which generated
+// code's inline addChar reads too (MirBuild.stringBufAddChar). Under -D
+// hxmc.wasm-gc a string is an array of UTF-16 units (hxmc.rt.gc.GcRepr).
 //
 // @:hxmc.export functions are called by the runtime's C code too (by that
 // symbol); @:hxmc.host ones only replace generated code's calls. Written
@@ -24,8 +29,8 @@ import hxmc.unsafe.Ptr;
 // The functions over C strings (Ptr) are linear memory's.
 @:keep @:allow(hxmc.rt) @:hxmc.anyHeap
 class Str {
-	public static inline var T_STRING = 16; // (Types.T_STRING, Types.T_ADATA_RAW)
-	public static inline var T_ADATA_RAW = 17;
+	public static inline var T_STRING = 16; // (Types.T_STRING, Types.T_STRING1)
+	public static inline var T_STRING1 = 17;
 	public static inline var T_STRINGBUF = 10;
 	public static inline var K_OBJ = 0;
 	public static inline var K_RAW = 2;
@@ -38,48 +43,68 @@ class Str {
 	public static inline function len(s:String):Int
 		return Repr.len(s);
 
+	// whether s has a byte per unit (never under -D hxmc.wasm-gc)
+	public static inline function isOne(s:String):Bool
+		return Repr.isOne(s);
+
 	public static inline function unit(s:String, i:Int):Int
 		return Repr.unit(s, i);
 
-	// the units (in linear memory the address of unit 0: valid until the next GC point)
-	public static inline function chars(s:String):Chars
-		return Repr.chars(s);
+	// the units of a one-byte string (chars1), a two-byte one (chars2) (in
+	// linear memory the address of unit 0: valid until the next GC point)
+	public static inline function chars1(s:String):Chars1
+		return Repr.chars1(s);
+
+	public static inline function chars2(s:String):Chars
+		return Repr.chars2(s);
 
 	// linear memory's: the address of unit 0, after the length (valid until the next GC point)
 	public static inline function unitsAddr(s:String):Ptr
 		return Mem.addr(s).add(4);
 
-	// a string of `n` units, not yet written
-	public static inline function make(n:Int):String
-		return Repr.make(n);
+	// a string of `n` units, not yet written: one-byte (make1: each unit
+	// written below 0x100), two-byte (make2)
+	public static inline function make1(n:Int):String
+		return Repr.make1(n);
 
-	// the units [pos, pos + n) of s as a new string
+	public static inline function make2(n:Int):String
+		return Repr.make2(n);
+
+	// the units [pos, pos + n) of s as a new string (one-byte where they fit)
 	static function range(s:String, pos:Int, n:Int):String {
-		var r = make(n);
-		Repr.copyFrom(chars(r), chars(s), pos, n);
+		if (isOne(s)) {
+			var r = make1(n);
+			Repr.copyFrom1(chars1(r), chars1(s), pos, n);
+			return r;
+		}
+		if (Repr.fitsOne(chars2(s), pos, n)) {
+			var r = make1(n);
+			Repr.narrow(chars1(r), 0, chars2(s), pos, n);
+			return r;
+		}
+		var r = make2(n);
+		Repr.copyFrom(chars2(r), chars2(s), pos, n);
 		return r;
 	}
 
 	@:hxmc.host("hx_str_alloc") static function alloc(n:Int):String
-		return make(n);
+		return make2(n);
 
 	// ---- C strings
 
-	@:hxmc.host("hx_str_of_ascii") static function ofAscii(c:Ptr):String {
-		var n = LibC.strlen(c).toInt();
-		var s = make(n);
-		var d = chars(s);
-		for (i in 0...n)
-			d.set(i, Mem.getU8At(c, 0, i));
-		return s;
-	}
+	@:hxmc.host("hx_str_of_ascii") static function ofAscii(c:Ptr):String
+		return ofBytes(c, LibC.strlen(c).toInt());
 
-	// ASCII bytes [p, p + n) (outside the heap) as a string
+	// bytes [p, p + n) (outside the heap) as a string, a unit each
 	static function ofBytes(p:Ptr, n:Int):String {
-		var s = make(n);
-		var d = chars(s);
+		var s = make1(n);
+		#if (hxmc.wasm_gc)
+		var d = chars1(s);
 		for (i in 0...n)
 			d.set(i, Mem.getU8At(p, 0, i));
+		#else
+		if (n > 0) LibC.memcpy(chars1(s), p, (n : I64));
+		#end
 		return s;
 	}
 
@@ -94,8 +119,9 @@ class Str {
 	// surrogateescape), which utf8Into writes back as that byte: any bytes
 	// decoded and encoded again are the same bytes.
 	public static inline function decode(o:Octets, from:Int, end:Int):String {
-		// UTF-16 units first
-		var units = 0, i = from;
+		// UTF-16 units first, and whether one is above 0xFF (a sequence led by
+		// 0xC4 or more, a byte of none)
+		var units = 0, i = from, wide = false;
 		while (i < end) {
 			#if !hxmc.wasm_gc
 			// (four ASCII bytes at a time)
@@ -114,14 +140,17 @@ class Str {
 				if (k == 0) {
 					units++;
 					i++;
+					wide = true;
 				} else {
 					units += k == 4 ? 2 : 1;
 					i += k;
+					if (b >= 0xC4) wide = true;
 				}
 			}
 		}
-		var s = make(units);
-		var d = chars(s);
+		if (!wide) return decodeOne(o, from, end, units);
+		var s = make2(units);
+		var d = chars2(s);
 		var j = 0;
 		i = from;
 		while (i < end) {
@@ -163,6 +192,44 @@ class Str {
 		return s;
 	}
 
+	// decode's one-byte string: the bytes are ASCII and well-formed two-byte
+	// sequences of U+0080 to U+00FF, `units` of them
+	static function decodeOne(o:Octets, from:Int, end:Int, units:Int):String {
+		var s = make1(units);
+		var d = chars1(s);
+		#if !hxmc.wasm_gc
+		// (ASCII: the bytes themselves)
+		if (units == end - from) {
+			if (units > 0) LibC.memcpy(d, o.at(from), (units : I64));
+			return s;
+		}
+		#end
+		var j = 0, i = from;
+		while (i < end) {
+			#if !hxmc.wasm_gc
+			// (four ASCII bytes at a time)
+			if (i + 4 <= end) {
+				var x = Mem.getI32(o.at(i), 0);
+				if (x & 0x80808080 == 0) {
+					Mem.setI32(d.at(j), 0, x);
+					i += 4;
+					j += 4;
+					continue;
+				}
+			}
+			#end
+			var b = o.get(i);
+			if (b < 0x80) {
+				d.set(j++, b);
+				i++;
+			} else {
+				d.set(j++, ((b & 0x1F) << 6) | (o.get(i + 1) & 0x3F));
+				i += 2;
+			}
+		}
+		return s;
+	}
+
 	// the length of the well-formed UTF-8 sequence at i, whose first byte b is
 	// not ASCII (Unicode's table 3-7); 0 when there is none
 	static inline function seqLen(o:Octets, i:Int, end:Int, b:Int):Int {
@@ -180,8 +247,34 @@ class Str {
 	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count.
 	// A lone U+DC80 to U+DCFF is the byte decode read it from (0x80 to 0xFF).
 	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int {
-		var c = chars(s);
 		var n = len(s), j = 0, i = 0;
+		if (isOne(s)) {
+			var c = chars1(s);
+			while (i < n) {
+				#if !hxmc.wasm_gc
+				// (four ASCII units at a time)
+				if (i + 4 <= n) {
+					var x = Mem.getI32(c.at(i), 0);
+					if (x & 0x80808080 == 0) {
+						Mem.setI32(buf.at(j), 0, x);
+						i += 4;
+						j += 4;
+						continue;
+					}
+				}
+				#end
+				var cp = c.get(i++);
+				if (cp < 0x80)
+					buf.set(j++, cp);
+				else {
+					buf.set(j++, 0xC0 | (cp >> 6));
+					buf.set(j++, 0x80 | (cp & 0x3F));
+				}
+			}
+			buf.set(j, 0);
+			return j;
+		}
+		var c = chars2(s);
 		while (i < n) {
 			var cp = c.get(i);
 			if (cp < 0x80) {
@@ -234,8 +327,21 @@ class Str {
 
 	// ---- comparison, hashing
 
-	@:hxmc.export("hx_str_eq_slow") @:hxmc.noGc static function eqSlow(a:String, b:String):Bool
-		return MemOps.compare(unitsAddr(a), unitsAddr(b), (2 * len(a) : I64)) == 0;
+	// a and b of the same length (MirBuild.strEq)
+	@:hxmc.export("hx_str_eq_slow") @:hxmc.noGc static function eqSlow(a:String, b:String):Bool {
+		var n = len(a);
+		var one = isOne(a);
+		if (one == isOne(b)) return MemOps.compare(unitsAddr(a), unitsAddr(b), one ? (n : I64) : (2 * n : I64)) == 0;
+		return one ? eqMixed(a, b, n) : eqMixed(b, a, n);
+	}
+
+	// the n units of a one-byte string and of a two-byte one
+	@:hxmc.noGc static function eqMixed(one:String, two:String, n:Int):Bool {
+		var c = chars1(one), d = chars2(two);
+		for (i in 0...n)
+			if (c.get(i) != d.get(i)) return false;
+		return true;
+	}
 
 	@:hxmc.host("hx_str_cmp") @:hxmc.noGc static function cmp(a:String, b:String):Int {
 		if (Repr.same(a, b)) return 0;
@@ -243,11 +349,24 @@ class Str {
 		if (isNull(b)) return 1;
 		var na = len(a), nb = len(b);
 		var n = na < nb ? na : nb;
-		var ca = chars(a), cb = chars(b);
-		for (i in 0...n) {
-			var x = ca.get(i), y = cb.get(i);
-			if (x != y) return x < y ? -1 : 1;
-		}
+		var oa = isOne(a), ob = isOne(b);
+		if (oa && ob) {
+			var ca = chars1(a), cb = chars1(b);
+			for (i in 0...n) {
+				var x = ca.get(i), y = cb.get(i);
+				if (x != y) return x < y ? -1 : 1;
+			}
+		} else if (!oa && !ob) {
+			var ca = chars2(a), cb = chars2(b);
+			for (i in 0...n) {
+				var x = ca.get(i), y = cb.get(i);
+				if (x != y) return x < y ? -1 : 1;
+			}
+		} else
+			for (i in 0...n) {
+				var x = unit(a, i), y = unit(b, i);
+				if (x != y) return x < y ? -1 : 1;
+			}
 		return na < nb ? -1 : na > nb ? 1 : 0;
 	}
 
@@ -261,10 +380,16 @@ class Str {
 	}
 
 	@:hxmc.noGc static function hashSlow(s:String):Int {
-		var c = chars(s);
 		var x = 0x811C9DC5;
-		for (i in 0...len(s))
-			x = (x ^ c.get(i)) * 16777619;
+		if (isOne(s)) {
+			var c = chars1(s);
+			for (i in 0...len(s))
+				x = (x ^ c.get(i)) * 16777619;
+		} else {
+			var c = chars2(s);
+			for (i in 0...len(s))
+				x = (x ^ c.get(i)) * 16777619;
+		}
 		if (x == 0) x = 1;
 		Repr.storeHash(s, x);
 		return x;
@@ -289,10 +414,17 @@ class Str {
 		var na = len(a), nb = len(b);
 		if (na == 0) return b;
 		if (nb == 0) return a;
-		var s = make(na + nb);
-		var d = chars(s);
-		Repr.copy(d, chars(a), na);
-		Repr.copyTo(d, na, chars(b), nb);
+		if (isOne(a) && isOne(b)) {
+			var s = make1(na + nb);
+			var d = chars1(s);
+			Repr.copy1(d, chars1(a), na);
+			Repr.copyTo1(d, na, chars1(b), nb);
+			return s;
+		}
+		var s = make2(na + nb);
+		var d = chars2(s);
+		if (isOne(a)) Repr.widen(d, 0, chars1(a), 0, na) else Repr.copy(d, chars2(a), na);
+		if (isOne(b)) Repr.widen(d, na, chars1(b), 0, nb) else Repr.copyTo(d, na, chars2(b), nb);
 		return s;
 	}
 
@@ -309,8 +441,8 @@ class Str {
 			n++;
 		}
 		if (neg) n++;
-		var s = make(n);
-		var d = chars(s);
+		var s = make1(n);
+		var d = chars1(s);
 		var k = n;
 		do {
 			var q = (u * m10) >>> 35;
@@ -332,8 +464,8 @@ class Str {
 			n++;
 		}
 		if (neg) n++;
-		var s = make(n);
-		var d = chars(s);
+		var s = make1(n);
+		var d = chars1(s);
 		var k = n;
 		do {
 			var q = m / 10;
@@ -362,12 +494,20 @@ class Str {
 	// ---- String
 
 	@:hxmc.host("String_charAt") static function charAt(s:String, i:Int):String {
-		if (Repr.ult(i, len(s))) {
-			var r = make(1);
-			Repr.setUnit(r, 0, unit(s, i));
+		if (Repr.ult(i, len(s))) return ofUnit(unit(s, i));
+		return "";
+	}
+
+	// the string of one unit u (0 to 0xFFFF)
+	static function ofUnit(u:Int):String {
+		if (u < 0x100) {
+			var r = make1(1);
+			Repr.setUnit1(r, 0, u);
 			return r;
 		}
-		return "";
+		var r = make2(1);
+		Repr.setUnit2(r, 0, u);
+		return r;
 	}
 
 	@:hxmc.host("String_charCodeAt") static function charCodeAt(s:String, i:Int):Null<Int> {
@@ -377,15 +517,13 @@ class Str {
 
 	@:hxmc.host("String_fromCharCode") static function fromCharCode(code:Int):String {
 		if (code >= 0x10000) {
-			var r = make(2);
+			var r = make2(2);
 			code -= 0x10000;
-			Repr.setUnit(r, 0, 0xD800 | (code >> 10));
-			Repr.setUnit(r, 1, 0xDC00 | (code & 0x3FF));
+			Repr.setUnit2(r, 0, 0xD800 | (code >> 10));
+			Repr.setUnit2(r, 1, 0xDC00 | (code & 0x3FF));
 			return r;
 		}
-		var r = make(1);
-		Repr.setUnit(r, 0, code);
-		return r;
+		return ofUnit(code & 0xFFFF);
 	}
 
 	@:hxmc.host("String_indexOf") @:hxmc.noGc static function indexOf(s:String, sub:String, start:Null<Int>):Int {
@@ -394,13 +532,42 @@ class Str {
 		if (from < 0) from = 0;
 		// ("" past the end: the length, as String.indexOf says; upstream's TestString)
 		if (m == 0) return from <= n ? from : n;
-		var c = chars(s), d = chars(sub);
+		return find(s, sub, from);
+	}
+
+	// the first i >= from where sub (not empty) is in s; -1 if none
+	@:hxmc.noGc static function find(s:String, sub:String, from:Int):Int {
+		var n = len(s), m = len(sub);
 		var i = from;
-		while (i + m <= n) {
-			if (Repr.matchAt(c, d, i, m)) return i;
-			i++;
-		}
+		var one = isOne(s);
+		if (one == isOne(sub)) {
+			if (one) {
+				var c = chars1(s), d = chars1(sub);
+				while (i + m <= n) {
+					if (Repr.matchAt1(c, d, i, m)) return i;
+					i++;
+				}
+			} else {
+				var c = chars2(s), d = chars2(sub);
+				while (i + m <= n) {
+					if (Repr.matchAt(c, d, i, m)) return i;
+					i++;
+				}
+			}
+		} else
+			while (i + m <= n) {
+				if (unitsAt(s, i, sub, m)) return i;
+				i++;
+			}
 		return -1;
+	}
+
+	// s[i, i + m) == sub[0, m), of any widths
+	@:hxmc.noGc static inline function unitsAt(s:String, i:Int, sub:String, m:Int):Bool {
+		var k = 0;
+		while (k < m && unit(s, i + k) == unit(sub, k))
+			k++;
+		return k == m;
 	}
 
 	@:hxmc.host("String_lastIndexOf") @:hxmc.noGc static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
@@ -409,12 +576,27 @@ class Str {
 		if (from > n - m) from = n - m;
 		// ("" before the start: 0, as Eval and ECMAScript; upstream's Issue5271)
 		if (m == 0) return from >= 0 ? from : 0;
-		var c = chars(s), d = chars(sub);
 		var i = from;
-		while (i >= 0) {
-			if (Repr.matchAt(c, d, i, m)) return i;
-			i--;
-		}
+		var one = isOne(s);
+		if (one == isOne(sub)) {
+			if (one) {
+				var c = chars1(s), d = chars1(sub);
+				while (i >= 0) {
+					if (Repr.matchAt1(c, d, i, m)) return i;
+					i--;
+				}
+			} else {
+				var c = chars2(s), d = chars2(sub);
+				while (i >= 0) {
+					if (Repr.matchAt(c, d, i, m)) return i;
+					i--;
+				}
+			}
+		} else
+			while (i >= 0) {
+				if (unitsAt(s, i, sub, m)) return i;
+				i--;
+			}
 		return -1;
 	}
 
@@ -452,27 +634,40 @@ class Str {
 	}
 
 	// (beyond ASCII: Eval's simple mappings of the BMP, CaseMap; upstream's TestUnicode)
-	@:hxmc.host("String_toLowerCase") static function toLowerCase(s:String):String {
-		var n = len(s);
-		var r = make(n);
-		var t = CaseMap.table(false);
-		var c = chars(s), d = chars(r);
-		for (i in 0...n) {
-			var u = c.get(i);
-			d.set(i, u < 128 ? (u >= 65 && u <= 90 ? u + 32 : u) : CaseMap.map(t, u));
-		}
-		return r;
-	}
+	@:hxmc.host("String_toLowerCase") static function toLowerCase(s:String):String
+		return mapCase(s, false);
 
-	@:hxmc.host("String_toUpperCase") static function toUpperCase(s:String):String {
+	@:hxmc.host("String_toUpperCase") static function toUpperCase(s:String):String
+		return mapCase(s, true);
+
+	static inline function caseOf(t:Array<Int>, upper:Bool, u:Int):Int
+		return if (u >= 128) CaseMap.map(t, u) else if (upper) (u >= 97 && u <= 122 ? u - 32 : u) else (u >= 65 && u <= 90 ? u + 32 : u);
+
+	// s in upper or lower case: one-byte from a one-byte string, unless a
+	// unit's case is above 0xFF (the upper cases of U+00B5 and U+00FF)
+	static function mapCase(s:String, upper:Bool):String {
 		var n = len(s);
-		var r = make(n);
-		var t = CaseMap.table(true);
-		var c = chars(s), d = chars(r);
-		for (i in 0...n) {
-			var u = c.get(i);
-			d.set(i, u < 128 ? (u >= 97 && u <= 122 ? u - 32 : u) : CaseMap.map(t, u));
+		var t = CaseMap.table(upper);
+		if (isOne(s)) {
+			var r = make1(n);
+			var c = chars1(s), d = chars1(r);
+			var i = 0;
+			while (i < n) {
+				var u = caseOf(t, upper, c.get(i));
+				if (u > 0xFF) break;
+				d.set(i++, u);
+			}
+			if (i == n) return r;
+			var w = make2(n);
+			var c1 = chars1(s), d2 = chars2(w);
+			for (k in 0...n)
+				d2.set(k, caseOf(t, upper, c1.get(k)));
+			return w;
 		}
+		var r = make2(n);
+		var c = chars2(s), d = chars2(r);
+		for (i in 0...n)
+			d.set(i, caseOf(t, upper, c.get(i)));
 		return r;
 	}
 
@@ -494,17 +689,8 @@ class Str {
 				// split("") gives the code units
 				if (start >= n) break;
 				at = start + 1;
-			} else {
-				var c = chars(s), d = chars(delim);
-				var i = start;
-				while (i + m <= n) {
-					if (Repr.eqUnits(c, i, d, m)) {
-						at = i;
-						break;
-					}
-					i++;
-				}
-			}
+			} else
+				at = find(s, delim, start);
 			var end = at < 0 ? n : at;
 			arr.push(range(s, start, end - start));
 			if (at < 0) break;
@@ -514,7 +700,8 @@ class Str {
 	}
 
 	// ---- StringBuf: in linear memory slot 0 the length, slot 1 the units
-	// (K_RAW, capacity 4 units per slot); its storage is Repr's
+	// (a string as long as the capacity, one-byte until a unit above 0xFF is
+	// added); its storage is Repr's
 
 	static inline function sbLen(b:Dynamic):Int
 		return Repr.sbLen(b);
@@ -543,17 +730,38 @@ class Str {
 		var n = len(s);
 		reserve(b, n);
 		var at = sbLen(b);
-		Repr.copyTo(Repr.sbChars(b), at, chars(s), n);
+		if (Repr.sbIsOne(b)) {
+			if (isOne(s))
+				Repr.copyTo1(Repr.sbChars1(b), at, chars1(s), n);
+			else if (Repr.fitsOne(chars2(s), 0, n))
+				Repr.narrow(Repr.sbChars1(b), at, chars2(s), 0, n);
+			else {
+				Repr.sbWiden(b, Repr.sbCapacity(b), at);
+				Repr.copyTo(Repr.sbChars2(b), at, chars2(s), n);
+			}
+		} else if (isOne(s))
+			Repr.widen(Repr.sbChars2(b), at, chars1(s), 0, n);
+		else
+			Repr.copyTo(Repr.sbChars2(b), at, chars2(s), n);
 		Repr.sbSetLen(b, at + n);
 	}
 
 	@:hxmc.host("StringBuf_add") static function sbAdd(b:Dynamic, x:Dynamic):Void
 		sbAddStr(b, Repr.stdString(x));
 
+	// (the inline fast path's misses: a unit above 0xFF, a two-byte buffer, a full one)
 	@:hxmc.export("StringBuf_addChar_slow") static function sbAddCharSlow(b:Dynamic, c:Int):Void {
 		reserve(b, 2);
 		var n = sbLen(b);
-		var d = Repr.sbChars(b);
+		if (Repr.sbIsOne(b)) {
+			if (Repr.ult(c, 0x100)) {
+				Repr.sbChars1(b).set(n, c);
+				Repr.sbSetLen(b, n + 1);
+				return;
+			}
+			Repr.sbWiden(b, Repr.sbCapacity(b), n);
+		}
+		var d = Repr.sbChars2(b);
 		if (c >= 0x10000) {
 			c -= 0x10000;
 			d.set(n, 0xD800 | (c >> 10));
@@ -574,10 +782,21 @@ class Str {
 	@:hxmc.host("StringBuf_get_length") @:hxmc.noGc static function sbGetLength(b:Dynamic):Int
 		return sbLen(b);
 
+	// (one-byte where every unit fits: a buffer widened, then cleared, may hold none above 0xFF)
 	@:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
 		var n = sbLen(b);
-		var s = make(n);
-		Repr.copy(chars(s), Repr.sbChars(b), n);
+		if (Repr.sbIsOne(b)) {
+			var s = make1(n);
+			Repr.copy1(chars1(s), Repr.sbChars1(b), n);
+			return s;
+		}
+		if (Repr.fitsOne(Repr.sbChars2(b), 0, n)) {
+			var s = make1(n);
+			Repr.narrow(chars1(s), 0, Repr.sbChars2(b), 0, n);
+			return s;
+		}
+		var s = make2(n);
+		Repr.copy(chars2(s), Repr.sbChars2(b), n);
 		return s;
 	}
 
@@ -633,9 +852,8 @@ class Str {
 		var n = len(s);
 		var small = Mem.stack(128);
 		var buf = n < 128 ? small : LibC.malloc((n + 1 : I64));
-		var c = chars(s);
 		for (i in 0...n) {
-			var u = c.get(i);
+			var u = unit(s, i);
 			Mem.setU8At(buf, 0, i, u < 0x80 ? u : 0x80);
 		}
 		Mem.setU8At(buf, 0, n, 0);

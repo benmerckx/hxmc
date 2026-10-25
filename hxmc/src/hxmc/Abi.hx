@@ -20,6 +20,7 @@ class Abi {
 	public static inline var T_FIRST = 32;
 	public static inline var T_ARRAY = 5;
 	public static inline var T_STRING = 16;
+	public static inline var T_STRING1 = 17; // a string of a byte per unit (hxmc.rt.Types)
 	public static inline var T_NATIVE_ARRAY = 24; // - the element kind (AK_*): MirBuild.naType
 	public static inline var T_DATE = 15; // a Date: a record (hxmc.rt.Types)
 	public static inline var T_MATH = 28; // Math's class value (hxmc.rt.Types)

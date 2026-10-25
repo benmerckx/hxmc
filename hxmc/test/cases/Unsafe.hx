@@ -77,11 +77,22 @@ class Unsafe {
 		for (s in keep)
 			total += sumUnits(s) + s.length;
 		Sys.println("strings " + keep.length + " " + total + " " + keep[3]);
+		// (from a two-byte literal, a unit above 0xFF after the five; "hello" itself has a byte per unit)
 		var dst = makeString(5, 46);
-		copyUnits(dst, "hello", 5);
+		copyUnits(dst, "hello\u20AC", 5);
 		Sys.println(dst + " " + (dst == "hello"));
+		// wide strings (Arena.wstring, as Windows' API takes them) of a one-byte string and of a two-byte one
+		hxmc.unsafe.Arena.scoped(a -> {
+			for (w in ["Root", "R\u00F6\u20ACt"]) {
+				var p = a.wstring(w);
+				var ok = Mem.getU16At(p, 0, w.length) == 0;
+				for (i in 0...w.length)
+					if (Mem.getU16At(p, 0, i) != StringTools.fastCodeAt(w, i)) ok = false;
+				Sys.println("wstring " + w.length + (ok ? " ok" : " bad"));
+			}
+		});
 		// zeroed objects: an Int array's raw data block is all zero
-		var z = Mem.alloc(3, hxmc.rt.Types.T_ADATA_RAW, K_RAW);
+		var z = Mem.alloc(3, hxmc.rt.Types.naType(hxmc.rt.Types.AK_I32), K_RAW);
 		Sys.println(Mem.getI64(Mem.addr(z), 0) == 0 && Mem.getI64(Mem.addr(z), 16) == 0 ? "zeroed" : "not zeroed");
 		// the target, as the code generator knows it
 		Sys.println(Mem.os() >= 0 && Mem.os() <= 3 ? "os ok" : "os bad");

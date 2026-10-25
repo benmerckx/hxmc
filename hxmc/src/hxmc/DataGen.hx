@@ -192,17 +192,30 @@ class DataGen {
 	function string(s:String, n:String) {
 		var buf = rodata.buf;
 		var units = [for (i in 0...s.length) s.charCodeAt(i)];
+		var one = true;
+		for (u in units)
+			if (u > 0xFF) {
+				one = false;
+				break;
+			}
 		buf.align(8);
-		obj.define(n, rodata, buf.len, 8 + 4 + 2 * (units.length + 1), true);
-		// the header (hxmc.rt.Types): T_STRING, its words, its hash (as
-		// Str.hash computes it); the length, the units, then a 0 unit
-		var words = (units.length + 5) >> 2;
-		buf.u32(Abi.T_STRING | ((words < 0xFFFF ? words : 0xFFFF) << 16));
+		obj.define(n, rodata, buf.len, 8 + 4 + (one ? 1 : 2) * (units.length + 1), true);
+		// the header (hxmc.rt.Types): T_STRING1 where every unit fits in a byte
+		// (a byte each), else T_STRING; its words, its hash (as Str.hash
+		// computes it); the length, the units, then a 0 unit
+		var words = one ? (units.length + 11) >> 3 : (units.length + 5) >> 2;
+		buf.u32((one ? Abi.T_STRING1 : Abi.T_STRING) | ((words < 0xFFFF ? words : 0xFFFF) << 16));
 		buf.u32(hxmc.ir.FnLower.strHash(s));
 		buf.u32(s.length);
-		for (u in units)
-			buf.u16(u);
-		buf.u16(0);
+		if (one) {
+			for (u in units)
+				buf.u8(u);
+			buf.u8(0);
+		} else {
+			for (u in units)
+				buf.u16(u);
+			buf.u16(0);
+		}
 	}
 
 	function fieldNames() {

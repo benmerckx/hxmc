@@ -10,9 +10,11 @@ package hxmc.rt;
 #if (hxmc.wasm_gc)
 typedef Repr = hxmc.rt.gc.GcRepr;
 typedef Chars = hxmc.rt.gc.GcRepr.GcChars;
+typedef Chars1 = hxmc.rt.gc.GcRepr.GcChars;
 typedef Octets = hxmc.rt.gc.GcRepr.GcOctets;
 #else
 typedef Repr = hxmc.rt.MemRepr;
 typedef Chars = hxmc.rt.MemRepr.MemChars;
+typedef Chars1 = hxmc.rt.MemRepr.MemChars1;
 typedef Octets = hxmc.rt.MemRepr.MemOctets;
 #end
