@@ -201,8 +201,8 @@ help:
 ##               (hxmc/test/CompileBench.hx; COMPILE_BENCH_ARGS)
 ##   bench-micro WHICH=arrays|maps (default both): Array vs NativeArray vs Vector (ARRAY_BENCH_ARGS),
 ##               ObjectMap and StringMap (MAP_BENCH_ARGS)
-##   bench-scoped  scoped memory against GC'd hxmc on ports of Goose's benchmarks
-##               (hxmc/test/scoped/ScopedBench.hx; SCOPED_BENCH_ARGS; GOOSE, GOOSE_BENCH: Goose's too)
+##   bench-scoped  scoped memory against GC'd hxmc (the maps' index on both faces)
+##               (hxmc/test/scoped/ScopedBench.hx; SCOPED_BENCH_ARGS)
 ##   measure     peak memory and time of the self-compile (ours, the reference) and of the tool's
 ##               builds (haxe/test/Measure.hx)
 ##   wasmgc-bench  wasmgc-check's programs as WasmGC, linear-memory wasm and native: times, peak RSS, sizes

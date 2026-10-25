@@ -12,7 +12,7 @@ The three layers build on each other:
    convention, C structs, pointers.
 2. **Native memory with lifetimes** (after Java's FFM API): arenas,
    bounds-checked segments, pinning and handles for the moving GC.
-3. **Scoped memory** (after Goose): values on per-thread data stacks the
+3. **Scoped memory**: values on per-thread data stacks the
    compiler manages, reclaimed at scope end, every reference checked
    against the root that bounds its lifetime; scoped code has the
    properties of `@:hxmc.noGc` (the checked boundary between GC code and
@@ -241,11 +241,11 @@ Differences from Java's FFM: struct types over memory give typed field
 access compiled to plain loads and stores (Java needs `get`/`set` with
 layouts); the scoped closure replaces try-with-resources.
 
-## 4. Scoped memory (after Goose)
+## 4. Scoped memory
 
 An opt-in subset for low-level code with deterministic memory and no
-allocator, after [Goose](https://github.com/aardappel/goose): no heap
-allocator, no GC and no lifetime annotations. Every dynamic value lives
+allocator (the model is [Goose](https://github.com/aardappel/goose)'s): no
+heap allocator, no GC and no lifetime annotations. Every dynamic value lives
 inline on a per-thread data stack the compiler manages; growth bumps a
 pointer and never moves data; memory is reclaimed when its scope ends; and
 every reference has a compile-time *root*, the scope that bounds its
@@ -358,7 +358,7 @@ not load it); on wasm32, which has no virtual memory, each is a region of
 the linear memory (`Heap.regionZero`: pages stay uncommitted until
 touched), 256 MB unless `RT_DATA_STACK_MB` says otherwise (the 4 GB of
 wasm32 hold a few such). Running past the end aborts with a message, as
-Goose's guard pages do: scoped code cannot throw, and its failures
+guard pages would: scoped code cannot throw, and its failures
 (`hxmc.rt.Abort`: an index out of range, a full stack, too many Grows) end
 the program with exit status 70. They are `@:hxmc.noReturn`: nothing is
 live across their calls (MirBuild ends the block), so a test costs no
@@ -369,8 +369,8 @@ registers.
 - A Grow or a Pool claims one of the others for itself (a bit in the owned
   mask): its elements are always on top, so growth is a bump and never
   moves anything. More growable values live at once than 15 is an abort
-  naming the limit (Goose's analysis computes N statically; the dynamic
-  claim is simpler and costs a mask test). A stack nobody owns is always
+  naming the limit (a static assignment would need a whole-program
+  analysis; the dynamic claim costs a mask test). A stack nobody owns is always
   empty above its base.
 - A *mark* is two locals of the frame: stack 0's top and the owned mask.
   A *reset* puts stack 0's top back and empties the stacks claimed since
@@ -381,7 +381,7 @@ registers.
 ### Scopes
 
 The scopes are the function's body, each loop (its condition and body)
-and each block in statement position, as in Goose; the checker's levels
+and each block in statement position; the checker's levels
 are the same. The plan the checker makes says which of them allocate
 (FnLower marks those, and only those: a function that allocates nothing
 pays nothing).
@@ -394,7 +394,7 @@ pays nothing).
   its result included, belongs to the caller's scope, and the caller's
   reset frees it. This is how a result is "built in place" here: it stays
   where it was built. Scratch in such a function's own scope lives as long
-  (Goose frees it); scratch in its loops and blocks does not.
+  scratch in its loops and blocks does not.
 - A loop that allocates marks at the start of each iteration and resets at
   its end and at `break` and `continue`; a block, at its end.
 - Scoped code cannot throw (it is no-GC code: a throw allocates). GC code
@@ -418,7 +418,7 @@ function:
   layer) and to C.
 - A function-typed parameter only on `inline` functions and macros: a
   function literal passed to one is inlined (Haxe's inliner does it), a
-  compile-time function value as Goose's blocks; no closure exists at run
+  compile-time function value; no closure exists at run
   time and none can escape.
 - No moves: assignment, arguments and results copy struct values (as
   `@:hxmc.struct`); a `Grow`'s header is not copied (a `Grow` is the
@@ -502,7 +502,7 @@ fields'). The transfer functions:
   view, not at the Grow. Where that is not known (a parameter's memory,
   whose stores are the caller's; memory handed to the unchecked layer) the
   load is bounded by the memory's own root ("read back": whatever was
-  stored there outlives it, Goose's inexact roots). What memory holds only
+  stored there outlives it). What memory holds only
   grows, so the analysis repeats until it is stable;
 - a struct literal or constructor call: the union of its arguments'; a
   field of a struct value: the struct's;
@@ -537,8 +537,8 @@ memory. A call's result is then rooted at the arguments behind those
 parameters plus one fresh root per region, in the caller's current scope,
 holding what the summary says; each store constraint is checked with the
 arguments' roots, or passed on to the caller's own summary when they are
-its parameters. This is Goose's specialization per root, done with
-summaries: one body per function, and a caller sees `longer(a, b)` rooted
+its parameters. Specialization per root, done with summaries: one body
+per function, and a caller sees `longer(a, b)` rooted
 at `a` and `b`, and the words `split(text)` returns rooted at `text`.
 
 *Errors* name the root and the destination, at the store:
@@ -559,8 +559,7 @@ threads by copy).
 
 ### Scoped enums
 
-A `@:hxmc.scoped` enum is a value enum (Zig's tagged union, Goose's fixed
-mode): a 32-bit tag and room for the largest payload, inline wherever it
+A `@:hxmc.scoped` enum is a value enum (Zig's tagged union): a 32-bit tag and room for the largest payload, inline wherever it
 is stored, copied on assignment, never allocated. The typer sees an
 ordinary enum, so constructors, `switch`, exhaustiveness and guards work
 unchanged; the lowering treats its type as a struct value whose layout is
@@ -571,9 +570,9 @@ the tag, `TEnumParameter` to a load at the argument's offset. Copies and
 values are equal when they are the same constructor with the same bits).
 Restrictions: no `null`, no identity, no reflection (`Type.enumParameters`
 and friends see a box where a reference is needed, as struct values do),
-payloads are value types (no recursion but through `Ref`/`Rel`). Goose's
-variable mode (each value its own constructor's size, sequential arrays)
-is left for later: a `Grow` of variable-size elements cannot be indexed,
+payloads are value types (no recursion but through `Ref`/`Rel`). A
+variable-size mode (each value its own constructor's size, sequential
+arrays) is left for later: a `Grow` of variable-size elements cannot be indexed,
 and Haxe has no syntax to choose the mode at the point of use.
 
 ### GC code and scoped code
@@ -677,8 +676,7 @@ of `hxmc.rt.Str`, then the OS layers' buffers (b).
 
 ### Serialization: relative references
 
-Goose's structures built from relative references are their own file
-format; the same fits scoped memory:
+Structures built from relative references are their own file format:
 
 - `Rel<T>`: a 32-bit signed offset from the field itself to a T in the
   same `Grow` (0 is null), read as a `Ref<T>` (`r.get()`), set from one
@@ -711,37 +709,35 @@ format; the same fits scoped memory:
 
 - Const generics only through `@:genericBuild`: `Fixed<Int, 16>` is a
   macro-built struct; there is no type-level arithmetic.
-- No moves: values are copied (as in Goose, which leaves moves out too); a
+- No moves: values are copied; a
   `Grow` is a reference to its header, which is the cheap way to pass one.
-- No `return err from f`: Haxe has neither the syntax nor a cheap
+- No return across several calls: Haxe has neither the syntax nor a cheap
   multi-frame return; scoped code returns error values (a scoped enum)
   instead, and cannot throw.
 - No transparent references or `.=`: `Ref<T>` with `r.value`, and
   rebinding is assignment.
-- No variable-size values inline in an array (Goose's `u8[][>..]`): a
+- No variable-size values inline in an array: a
   `Str` is a view; text that must outlive a function goes into a `Pool`
   or a `Grow<UInt16>` passed in.
 - Storage as a type parameter of a generic algorithm (see "One core, two
   faces"): inline functions and their function-literal arguments instead.
-- No mode choice at the point of use (Goose's `Shape..`): one
+- No choice of an enum's representation at the point of use: one
   representation per enum.
 
-### Deviations from Goose, and why
+### Design choices, and why
 
 - Dynamic claims instead of a static stack assignment: no whole-program
   analysis of which values grow at once; a mask test per `new Grow`.
 - A block in value position (an inlined function's body is one) is not a
   scope: its memory is the enclosing scope's, so an inline function may
-  return what it allocated. Goose rejects a reference out of a branch
-  value; here it is the enclosing scope's, which is safe.
+  return what it allocated.
 - Scratch in the own scope of a function returning references lives until
   the caller's reset: no in-place construction through calls; results
   stay where they were built.
 - Summaries per function instead of one body per root: one compiled body
   (Haxe compiles each function once), at the price of precision where a
   function treats its parameters differently on different calls.
-- GC code is checked too, and gets scopes: Goose has no GC side.
-- Out-of-range indexes abort, as in Goose; the GC faces keep Haxe's
+- Out-of-range indexes abort; the GC faces keep Haxe's
   behaviour by testing before they call.
 
 ### Status
@@ -752,36 +748,19 @@ enums; the root checker with summaries and what memory holds; scopes in
 scoped code and in GC code that touches scoped values; native and wasm32
 (the corpus' `Scoped*` cases on both, `reject/Scoped*`); WasmGC refuses
 scoped code. Not built: `Fixed<T, N>`, `Rel<T>` and the generated
-`verify`/`fromBytes` (designed above), Goose's variable-size enums,
+`verify`/`fromBytes` (designed above), variable-size enums,
 methods on scoped classes (structs have none yet), checking the
 `hxmc.scoped` std's own inline functions apart from their callers.
 
-Benchmarks: Goose's programs ported (`make bench-scoped`,
-`hxmc/test/scoped`; each program prints the same in both versions), the
-median wall time of 5 runs and the peak RSS, Linux x86-64 (4 cores),
-2026-10-25; Goose built from its repository with gcc 13 (its default
-`goose build`, -O2). Sizes: Goose's own (binary-trees' depth, the
-elements, the words) and a larger one.
+Scoped against GC on the maps' index (`make bench-scoped`, `Table`: n
+random Int keys inserted with updates, then 8n lookups; `IntTable` against
+`haxe.ds.IntMap` over the same core), the median of 5 runs and the peak
+RSS, Linux x86-64, 2026-10-25:
 
-| Program | Size | scoped | GC | scoped, wasm32 | GC, wasm32 | Goose |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| BinaryTrees | 17 | 0.24 s, 10 MB | 0.35 s, 79 MB | 0.28 s, 59 MB | 0.49 s, 109 MB | 0.08 s, 7 MB |
-| BinaryTrees | 20 | 2.84 s, 96 MB | 5.73 s, 599 MB | 2.46 s, 145 MB | 5.99 s, 464 MB | 0.87 s, 49 MB |
-| Push | 4M | 0.04 s, 31 MB | 0.19 s, 132 MB | 0.11 s, 80 MB | 0.31 s, 210 MB | 0.03 s, 32 MB |
-| Push | 32M | 0.39 s, 248 MB | 2.58 s, 1146 MB | 0.49 s, 296 MB | 3.23 s, 1339 MB | 0.28 s, 249 MB |
-| StrList | 400k | 0.03 s, 15 MB | 0.10 s, 77 MB | 0.11 s, 64 MB | 0.19 s, 115 MB | 0.03 s, 12 MB |
-| StrList | 4M | 0.48 s, 156 MB | 1.13 s, 504 MB | 0.69 s, 205 MB | 1.79 s, 775 MB | 0.36 s, 108 MB |
-| Table | 1M | 0.31 s, 48 MB | 0.61 s, 67 MB | 0.42 s, 98 MB | 0.84 s, 161 MB | |
-| Table | 8M | 6.50 s, 219 MB | 9.86 s, 352 MB | 9.73 s, 268 MB | 12.31 s, 565 MB | |
-
-Scoped code takes 1.5 to 6.6 times less time than the same program over
-GC objects natively (1.3 to 6.6 on wasm32), and 1.4 to 8 times less
-memory (wasm32's RSS is node's). Against Goose: as fast on strlist at
-Goose's size, 1.3 to 1.4 times slower on push and strlist otherwise, and
-3 to 3.3 times slower on binary-trees: its nodes are 8 bytes (4-byte
-relative references, `Rel`, not built here) against 16, and gcc inlines
-the recursion, which hxmc's code generator does not (the scoped `make` has
-the push inline and no allocation call).
+| n | scoped | GC | scoped, wasm32 | GC, wasm32 |
+| ---: | ---: | ---: | ---: | ---: |
+| 1M | 0.31 s, 48 MB | 0.61 s, 67 MB | 0.42 s, 98 MB | 0.84 s, 161 MB |
+| 8M | 6.50 s, 219 MB | 9.86 s, 352 MB | 9.73 s, 268 MB | 12.31 s, 565 MB |
 
 ### Struct values (built)
 
@@ -886,14 +865,14 @@ s[3].y = 2;                                  // in place
 - References that survive growth, inline nested data, deterministic
   memory, next to GC code for everything else.
 
-### Other Zig and Goose constructs and how they map
+### Other Zig constructs and how they map
 
-| Zig / Goose | Haxe on hxmc | Fit |
+| Zig | Haxe on hxmc | Fit |
 | --- | --- | --- |
 | `comptime` generics (`fn ArrayList(comptime T: type) type`) | inline abstracts over `Ptr<T>` (the `hxmc.scoped` types), `@:generic` | good |
-| `comptime` computation, `inline for`, Goose's function blocks | macros (run in Eval, different semantics), inlining with function-literal arguments, constant folding | partial |
+| `comptime` computation, `inline for`, function blocks | macros (run in Eval, different semantics), inlining with function-literal arguments, constant folding | partial |
 | `defer` / `errdefer` | a macro rewriting `@:defer expr` into cleanup on every exit (try/catch and rethrow: Haxe has no `finally`); scoped code needs none (the reset is the cleanup) | good with a macro |
-| error unions, `try`, `catch`; Goose's `return err from` | exceptions in GC code; in scoped code error values (a scoped enum) | acceptable |
+| error unions, `try`, `catch`; returning across calls | exceptions in GC code; in scoped code error values (a scoped enum) | acceptable |
 | arbitrary-width and packed integers (`u3`, packed structs with bit fields, varints) | abstracts over `Int` with masking | clumsy |
 | overflow as an error, wrapping `+%`, saturating `+|` | Haxe's `Int` wraps; checked and saturating arithmetic as functions or abstracts | acceptable |
 | `*const T`, `*T` vs `[*]T`, sentinel slices `[:0]u8` | distinct abstracts (`ConstPtr<T>`, `Ptr<T>`, `Slice<T>`, `CString`) | acceptable |
