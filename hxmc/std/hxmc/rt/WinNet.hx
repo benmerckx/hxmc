@@ -2,10 +2,15 @@ package hxmc.rt;
 
 import hxmc.I64;
 import hxmc.rt.C;
+import hxmc.scoped.Fixed;
+import hxmc.scoped.LE;
+import hxmc.scoped.Ref;
+import hxmc.scoped.Slice;
 import hxmc.unsafe.Atomic;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
 import hxmc.unsafe.Win32;
 import hxmc.unsafe.Winsock;
 
@@ -17,7 +22,10 @@ import hxmc.unsafe.Winsock;
 // those. Sockets are not inherited by child processes. Winsock has no way
 // to ask whether a socket blocks, so the sockets the program made
 // non-blocking (setBlocking) are remembered here (a malloc'ed table under
-// a spin lock, Names.spin[3]).
+// a spin lock, Names.spin[3]). Over hxmc.unsafe.Winsock, whose calls take
+// views of scoped memory (docs/plans/lowlevel.md, "The scoped C boundary"):
+// the addresses, options and descriptor sets in Fixed buffers of the frame,
+// read and written little-endian (hxmc.scoped.LE).
 class WinNet {
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
@@ -45,18 +53,18 @@ class WinNet {
 	static inline function lastErrno():Int
 		return netErrno;
 
-	@:hxmc.unsafe static function fail():Int {
+	@:hxmc.scoped static function fail():Int {
 		setLast(Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()));
 		return -1;
 	}
 
-	@:hxmc.unsafe static function ret(r:Int):Int
+	@:hxmc.scoped static function ret(r:Int):Int
 		return r == -1 ? fail() : r; // SOCKET_ERROR
 
 	static inline function sock(fd:Int):I64
 		return fd;
 
-	@:hxmc.unsafe public static function getErrno():Int
+	@:hxmc.scoped public static function getErrno():Int
 		return lastErrno();
 
 	public static function strerror(err:Int):String {
@@ -112,14 +120,19 @@ class WinNet {
 	@:hxmc.unsafe static function cooperative(s:I64):Bool
 		return threads() > 1 && !isNonblocking(s);
 
+	// an int option
+	@:hxmc.scoped static function intOption(s:I64, opt:Int):Int {
+		var v = new Fixed<UInt8, 4>(), n = new Fixed<Int, 1>();
+		n[0] = 4;
+		if (Winsock.getsockopt(s, SOL_SOCKET, opt, v.view().ref(0), n.view().ref(0)) != 0) return 0;
+		return LE.i32(v.view(), 0);
+	}
+
 	// SO_RCVTIMEO/SO_SNDTIMEO (milliseconds on Windows): seconds, -1 when none
-	@:hxmc.unsafe static function sockTimeout(s:I64, opt:Int):Float {
-		var ms = Mem.stack(8), n = Mem.stack(8);
-		Mem.setI32(ms, 0, 0);
-		Mem.setI32(n, 0, 4);
-		if (Winsock.getsockopt(s, SOL_SOCKET, opt, ms, n) != 0 || Mem.getI32(ms, 0) == 0) return -1;
-		var v:I64 = Mem.getI32(ms, 0);
-		var f:Float = cast(v & (((1 : I64) << 32) - 1));
+	@:hxmc.scoped static function sockTimeout(s:I64, opt:Int):Float {
+		var ms = intOption(s, opt);
+		if (ms == 0) return -1;
+		var f:Float = cast((ms : I64) & (((1 : I64) << 32) - 1));
 		return f / 1000.0;
 	}
 
@@ -132,7 +145,7 @@ class WinNet {
 		return false;
 	}
 
-	@:hxmc.unsafe public static function socket():Int {
+	@:hxmc.scoped public static function socket():Int {
 		Winsock.rt_win_sockets_init();
 		var s = Winsock.socket(2, 1, 0); // AF_INET, SOCK_STREAM
 		if (s == -1) return fail(); // INVALID_SOCKET
@@ -149,134 +162,125 @@ class WinNet {
 	public static function accept(fd:Int):Int {
 		var s = sock(fd);
 		if (cooperative(s) && !waitSock(s, false)) return -1;
-		var a = Mem.stack(128), n = Mem.stack(8);
-		Mem.setI32(n, 0, 128);
-		var c = Winsock.accept(s, a, n);
+		var a = new Fixed<UInt8, 128>(), n = new Fixed<Int, 1>();
+		n[0] = 128;
+		var c = Winsock.accept(s, a.view().ref(0), n.view().ref(0));
 		if (c == -1) return fail();
 		Winsock.SetHandleInformation(c, 1, 0);
 		return c.toInt();
 	}
 
 	// sockaddr_in: u16 family, the port and the address in network order
-	@:hxmc.unsafe static function inetAddr(a:Ptr, ip:Int, port:Int) {
-		LibC.memset(a, 0, 16);
-		Mem.setI16(a, 0, 2);
-		Mem.setI8(a, 2, port >> 8);
-		Mem.setI8(a, 3, port);
-		Mem.setI8(a, 4, ip >>> 24);
-		Mem.setI8(a, 5, ip >> 16);
-		Mem.setI8(a, 6, ip >> 8);
-		Mem.setI8(a, 7, ip);
+	@:hxmc.scoped static function inetAddr(a:Slice<UInt8>, ip:Int, port:Int) {
+		LE.put16(a, 0, 2);
+		a[2] = port >> 8;
+		a[3] = port;
+		LE.put32(a, 4, ((ip >>> 24) & 0xff) | ((ip >> 8) & 0xff00) | ((ip << 8) & 0xff0000) | (ip << 24));
 	}
 
-	@:hxmc.unsafe public static function bind(fd:Int, ip:Int, port:Int):Int {
-		var a = Mem.stack(16);
-		inetAddr(a, ip, port);
-		return ret(Winsock.bind(sock(fd), a, 16));
+	@:hxmc.scoped public static function bind(fd:Int, ip:Int, port:Int):Int {
+		var a = new Fixed<UInt8, 16>();
+		inetAddr(a.view(), ip, port);
+		return ret(Winsock.bind(sock(fd), a.view().ref(0), 16));
+	}
+
+	// FIONBIO: non-blocking (1) or blocking (0)
+	@:hxmc.scoped static function nonblock(s:I64, on:Bool):Int {
+		var arg = new Fixed<Int, 1>();
+		arg[0] = on ? 1 : 0;
+		return Winsock.ioctlsocket(s, FIONBIO, arg.view().ref(0));
 	}
 
 	public static function connect(fd:Int, ip:Int, port:Int):Int {
 		var s = sock(fd);
 		if (cooperative(s)) { // a non-blocking connect, then wait until it completes
-			var arg = Mem.stack(8);
-			Mem.setI32(arg, 0, 1);
-			Winsock.ioctlsocket(s, FIONBIO, arg);
+			nonblock(s, true);
 			var r = connectTo(s, ip, port);
 			var e = r == -1 ? Winsock.WSAGetLastError() : 0;
 			if (e == WSAEWOULDBLOCK) {
 				if (waitSock(s, true)) {
-					var err = Mem.stack(8), n = Mem.stack(8);
-					Mem.setI32(err, 0, 0);
-					Mem.setI32(n, 0, 4);
-					Winsock.getsockopt(s, SOL_SOCKET, SO_ERROR, err, n);
-					var x = Mem.getI32(err, 0);
+					var x = intOption(s, SO_ERROR);
 					r = x != 0 ? -1 : 0;
 					if (x != 0) setLast(Winsock.rt_win_sock_errno(x));
 				} else r = -1;
 			} else if (e != 0) setLast(Winsock.rt_win_sock_errno(e));
-			Mem.setI32(arg, 0, 0);
-			Winsock.ioctlsocket(s, FIONBIO, arg);
+			nonblock(s, false);
 			return r;
 		}
 		return ret(connectTo(s, ip, port));
 	}
 
-	@:hxmc.unsafe static function connectTo(s:I64, ip:Int, port:Int):Int {
-		var a = Mem.stack(16);
-		inetAddr(a, ip, port);
-		return Winsock.connect(s, a, 16);
+	@:hxmc.scoped static function connectTo(s:I64, ip:Int, port:Int):Int {
+		var a = new Fixed<UInt8, 16>();
+		inetAddr(a.view(), ip, port);
+		return Winsock.connect(s, a.view().ref(0), 16);
 	}
 
-	@:hxmc.unsafe public static function listen(fd:Int, n:Int):Int
+	@:hxmc.scoped public static function listen(fd:Int, n:Int):Int
 		return ret(Winsock.listen(sock(fd), n));
 
 	public static function sockName(fd:Int, peer:Bool):Array<Int> {
-		var s = Mem.stack(128), n = Mem.stack(8);
-		Mem.setI32(n, 0, 128);
-		var r = peer ? Winsock.getpeername(sock(fd), s, n) : Winsock.getsockname(sock(fd), s, n);
+		var a = new Fixed<UInt8, 128>(), n = new Fixed<Int, 1>();
+		n[0] = 128;
+		var s = a.view();
+		var r = peer ? Winsock.getpeername(sock(fd), s.ref(0), n.view().ref(0)) : Winsock.getsockname(sock(fd), s.ref(0), n.view().ref(0));
 		if (r != 0) {
 			fail();
 			return null;
 		}
-		if (Mem.getU16(s, 0) != 2) return [0, -1];
-		var ip = (Mem.getU8(s, 4) << 24) | (Mem.getU8(s, 5) << 16) | (Mem.getU8(s, 6) << 8) | Mem.getU8(s, 7);
-		return [ip, (Mem.getU8(s, 2) << 8) | Mem.getU8(s, 3)];
+		if (LE.u16(s, 0) != 2) return [0, -1];
+		var ip = (s[4] << 24) | (s[5] << 16) | (s[6] << 8) | s[7];
+		return [ip, (s[2] << 8) | s[3]];
 	}
+
+	// the bytes [pos, pos + len) of the Bytes b, a view for a call that does
+	// not block (nothing collects during it; its pages are touched first,
+	// hx_view_touch)
+	static inline function bytesView(b:Dynamic, pos:Int, len:Int):Slice<UInt8>
+		return Slice.raw(Bytes.bytes(b).add(pos), len);
 
 	// OCaml's Unix.recv/send check the range (Invalid_argument "Unix.recv")
 	public static function recv(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) Rt.rt_throw("Unix.recv");
 		var s = sock(fd);
 		if (cooperative(s) && !waitSock(s, false)) return -1;
-		return ret(recvHeap(s, b, pos, len));
+		return ret(Winsock.recv(s, bytesView(b, pos, len), 0));
 	}
 
 	public static function send(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) Rt.rt_throw("Unix.send");
 		var s = sock(fd);
 		if (cooperative(s) && !waitSock(s, true)) return -1;
-		return ret(sendHeap(s, b, pos, len));
-	}
-
-	// (the buffer's pages committed first: WinSys.touch)
-	@:hxmc.unsafe static function recvHeap(s:I64, b:Dynamic, pos:Int, len:Int):Int {
-		var p = Bytes.bytes(b).add(pos);
-		WinSys.touch(p, len);
-		return Winsock.recv(s, p, len, 0);
-	}
-
-	@:hxmc.unsafe static function sendHeap(s:I64, b:Dynamic, pos:Int, len:Int):Int {
-		var p = Bytes.bytes(b).add(pos);
-		WinSys.touch(p, len);
-		return Winsock.send(s, p, len, 0);
+		return ret(Winsock.send(s, bytesView(b, pos, len), 0));
 	}
 
 	// Winsock's fd_set: u32 fd_count, then the SOCKETs (FD_SETSIZE 64)
 	static inline var FD_SETSIZE = 64;
+	static inline var FD_SET = 8 + 8 * FD_SETSIZE;
 
-	static function toFdset(a:Array<Int>, s:Ptr) {
-		Mem.setI32(s, 0, 0);
+	static function toFdset(a:Array<Int>, s:Slice<UInt8>) {
+		LE.put32(s, 0, 0);
 		if (Str.isNull(a)) return;
 		for (i in 0...a.length) {
 			var fd = sock(a[i]);
-			var n = Mem.getI32(s, 0);
+			var n = LE.i32(s, 0);
 			var found = false;
 			for (k in 0...n)
-				if (Mem.getI64(s, 8 + 8 * k) == fd) found = true;
+				if (LE.i64(s, 8 + 8 * k) == fd) found = true;
 			if (!found && n < FD_SETSIZE) {
-				Mem.setI64(s, 8 + 8 * n, fd);
-				Mem.setI32(s, 0, n + 1);
+				LE.put64(s, 8 + 8 * n, fd);
+				LE.put32(s, 0, n + 1);
 			}
 		}
 	}
 
-	static function fromFdset(a:Array<Int>, s:Ptr) {
+	static function fromFdset(a:Array<Int>, s:Slice<UInt8>) {
 		if (Str.isNull(a)) return;
 		for (i in 0...a.length) {
 			var fd = sock(a[i]);
 			var found = false;
-			for (k in 0...Mem.getI32(s, 0))
-				if (Mem.getI64(s, 8 + 8 * k) == fd) found = true;
+			for (k in 0...LE.i32(s, 0))
+				if (LE.i64(s, 8 + 8 * k) == fd) found = true;
 			if (!found) a[i] = -1;
 		}
 	}
@@ -299,20 +303,21 @@ class WinNet {
 			NetCore.waitFds(r, nr, w, nw, o, no, timeout);
 			timeout = 0;
 		}
-		var rs = Mem.stack(528), ws = Mem.stack(528), os = Mem.stack(528);
+		var sets:Fixed<UInt8, 1584> = Fixed.scratch(); // (each count written first)
+		var rs = sets.view().sub(0, FD_SET), ws = sets.view().sub(FD_SET, FD_SET), os = sets.view().sub(2 * FD_SET, FD_SET);
 		toFdset(r, rs);
 		toFdset(w, ws);
 		toFdset(o, os);
-		var tv = Mem.stack(16);
-		var tvp = Ptr.nil();
+		// struct timeval: two longs (32 bits on Windows)
+		var tv = new Fixed<UInt8, 8>();
+		var tvp:Ref<UInt8> = Ref.nil();
 		if (timeout >= 0) {
-			// struct timeval: two longs (32 bits on Windows)
 			var s = Std.int(timeout);
-			Mem.setI32(tv, 0, s);
-			Mem.setI32(tv, 4, Std.int(1e6 * (timeout - s)));
-			tvp = tv;
+			LE.put32(tv.view(), 0, s);
+			LE.put32(tv.view(), 4, Std.int(1e6 * (timeout - s)));
+			tvp = tv.view().ref(0);
 		}
-		var n = Winsock.select(0, rs, ws, os, tvp);
+		var n = Winsock.select(0, rs.ref(0), ws.ref(0), os.ref(0), tvp);
 		if (n == -1) return fail();
 		fromFdset(r, rs);
 		fromFdset(w, ws);
@@ -320,50 +325,52 @@ class WinNet {
 		return n;
 	}
 
-	@:hxmc.unsafe static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
+	@:hxmc.scoped static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
 		return NetCore.setBool(fd, level, opt, b);
 
-	@:hxmc.unsafe public static function setNoDelay(fd:Int, b:Bool):Int
+	@:hxmc.scoped public static function setNoDelay(fd:Int, b:Bool):Int
 		return setBool(fd, 6, 1, b); // IPPROTO_TCP, TCP_NODELAY
 
-	@:hxmc.unsafe public static function setBroadcast(fd:Int, b:Bool):Int
+	@:hxmc.scoped public static function setBroadcast(fd:Int, b:Bool):Int
 		return setBool(fd, SOL_SOCKET, SO_BROADCAST, b);
 
-	@:hxmc.unsafe public static function setReuseAddr(fd:Int, b:Bool):Int
+	@:hxmc.scoped public static function setReuseAddr(fd:Int, b:Bool):Int
 		return setBool(fd, SOL_SOCKET, SO_REUSEADDR, b);
 
 	// Unix.setsockopt_float SO_RCVTIMEO, then SO_SNDTIMEO (milliseconds)
-	@:hxmc.unsafe public static function setTimeout(fd:Int, t:Float):Int {
-		var ms = Mem.stack(8);
+	@:hxmc.scoped public static function setTimeout(fd:Int, t:Float):Int {
+		var ms = new Fixed<UInt8, 4>();
 		var v:I64 = cast(t * 1000.0);
-		Mem.setI32(ms, 0, v.toInt());
-		if (Winsock.setsockopt(sock(fd), SOL_SOCKET, SO_RCVTIMEO, ms, 4) != 0) return fail();
-		return ret(Winsock.setsockopt(sock(fd), SOL_SOCKET, SO_SNDTIMEO, ms, 4));
+		LE.put32(ms.view(), 0, v.toInt());
+		if (Winsock.setsockopt(sock(fd), SOL_SOCKET, SO_RCVTIMEO, ms.view().ref(0), 4) != 0) return fail();
+		return ret(Winsock.setsockopt(sock(fd), SOL_SOCKET, SO_SNDTIMEO, ms.view().ref(0), 4));
 	}
 
-	@:hxmc.unsafe public static function shutdown(fd:Int, mode:Int):Int
+	@:hxmc.scoped public static function shutdown(fd:Int, mode:Int):Int
 		return ret(Winsock.shutdown(sock(fd), mode == 0 ? 0 : mode == 1 ? 1 : 2));
 
 	@:hxmc.unsafe public static function setBlocking(fd:Int, b:Bool):Int {
-		var nb = Mem.stack(8);
-		Mem.setI32(nb, 0, b ? 0 : 1);
-		if (Winsock.ioctlsocket(sock(fd), FIONBIO, nb) != 0) return fail();
+		if (nonblock(sock(fd), !b) != 0) return fail();
 		setNonblocking(sock(fd), !b);
 		return 0;
 	}
 
-	@:hxmc.unsafe public static function blocked():Bool
+	@:hxmc.scoped public static function blocked():Bool
 		return lastErrno() == EAGAIN || lastErrno() == EWOULDBLOCK;
 
 	public static function gethostname():String {
 		Winsock.rt_win_sockets_init();
-		var buf = Mem.stack(4096);
-		if (Winsock.gethostname(buf, 4095) != 0) {
+		var buf:Fixed<UInt8, 4096> = Fixed.scratch(); // (C fills it)
+		var v = buf.view();
+		if (Winsock.gethostname(v.sub(0, 4095)) != 0) {
 			fail();
 			return null;
 		}
-		Mem.setI8(buf, 4095, 0);
-		return Str.ofUtf8(buf, LibC.strlen(buf).toInt());
+		v[4095] = 0;
+		var n = 0;
+		while (v[n] != 0)
+			n++;
+		return Str.ofUtf8(v.ptr(), n);
 	}
 
 	// one lookup at a time (Names.spin[4]), in a safe region (it may block on the network)
