@@ -205,6 +205,8 @@ class CInterop {
 	public static function isStructValue(t:T):Bool {
 		for (_ in 0...16)
 			switch TFunctions.followWithoutNull(t) {
+				case TAbstract(a, params) if (isFixed(a) && isFixedConst(params)):
+					return !Lower.wasmGc;
 				case TInst(c, _):
 					return isStruct(c) || isWasmValue(c);
 				case TEnum(en, _):
@@ -267,6 +269,8 @@ class CInterop {
 			switch TFunctions.followWithoutNull(t) {
 				case TInst(c, _):
 					return isWasmValue(c);
+				case TAbstract(a, params) if (isFixed(a) && isFixedConst(params)):
+					return Lower.wasmGc;
 				case TAbstract(a, params) if (!core.Meta.has(CoreType, a.aMeta) && !core.Meta.has(MultiType, a.aMeta)):
 					t = TFunctions.applyParams(a.aParams, params, a.aThis);
 				case _:
@@ -295,6 +299,14 @@ class CInterop {
 		if (objCopy == null) return e;
 		function copy(x:TExpr):TExpr {
 			if (!isWasmValueType(x.etype) || !isPlace(x)) return x;
+			// (a Fixed: its array copied, Fixed.copyOf)
+			switch TFunctions.followWithoutNull(x.etype) {
+				case TAbstract(a, _) if (isFixed(a) && a.aImpl != null):
+					var cf = a.aImpl.clStatics.get("copyOf");
+					var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(a.aImpl)), TDynamic(null), x.epos), FStatic(a.aImpl, cf)), cf.cfType, x.epos);
+					return TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), x.epos), null), x.etype, x.epos);
+				case _:
+			}
 			var w = objCopy;
 			var f = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(w.c)), TDynamic(null), x.epos), FStatic(w.c, w.cf)), w.cf.cfType, x.epos);
 			return TFunctions.mk(TCast(TFunctions.mk(TCall(f, core.ds.VectorTools.vector(x)), TDynamic(null), x.epos), null), x.etype, x.epos);
@@ -331,6 +343,68 @@ class CInterop {
 	static function keepCopy(t:T, e:TExpr):Bool
 		return isStructValue(t) && !fresh(e);
 
+	// ---- hxmc.scoped.Fixed<T, N> (docs/plans/lowlevel.md, "Types"): linearly
+	// a struct value of N elements of T, its class made for it here; on WasmGC
+	// the engine's array (copied: valueCopies)
+
+	public static function isFixed(a:TAbstract):Bool
+		return a.aPath.name == "Fixed" && a.aPath.pack.length == 2 && a.aPath.pack[0] == "hxmc" && a.aPath.pack[1] == "scoped";
+
+	// T and N of a Fixed type, or null
+	public static function fixedOf(t:T):Null<{elem:T, n:Int}> {
+		return switch TFunctions.followWithoutNull(t) {
+			case TAbstract(a, params) if (isFixed(a) && isFixedConst(params)):
+				{elem: params[0], n: fixedLength(params[1], a)};
+			case _: null;
+		}
+	}
+
+	// whether N is a constant (not the abstract's own parameter, in its functions)
+	public static function isFixedConst(params:core.TType.TParams):Bool
+		return params.length == 2 && switch TFunctions.follow(params[1]) {
+			case TInst({clKind: KTypeParameter(_)}, _): false;
+			case _: true;
+		};
+
+	static function fixedLength(nt:T, a:TAbstract):Int {
+		switch TFunctions.follow(nt) {
+			case TInst({clKind: KExpr({expr: EConst(core.Ast.Constant.Int(v, _))})}, _):
+				var n = Std.parseInt(v);
+				if (n != null && n > 0) return n;
+			case _:
+		}
+		throw new LowerError('Fixed<T, N>: N must be a positive Int constant (' + core.TPrinting.sType(core.TPrinting.printContext(), nt) + ')', posOf(a.aPos));
+	}
+
+	static var fixedStructs = new Map<String, TClass>();
+
+	// the struct class of Fixed<T, N>: its elements, each at a multiple of
+	// T's size (scalars as 8-byte words: copied and zeroed so)
+	public static function fixedStruct(a:TAbstract, params:core.TType.TParams):TClass {
+		var et = params[0], n = fixedLength(params[1], a);
+		var ct = ctype(et);
+		var where = 'Fixed<' + core.TPrinting.sType(core.TPrinting.printContext(), et) + ', ' + n + '>';
+		switch ct {
+			case CStruct(_) | CBool | CI8 | CU8 | CI16 | CU16 | CI32 | CI64 | CF32 | CF64:
+			case _: throw new LowerError(where + ': its elements are scalars or struct values (not Ptr, references or GC types)', posOf(a.aPos));
+		}
+		if (Scoped.holdsRefs(et) || Scoped.holdsScoped(et)) throw new LowerError(where + ': its elements hold references (a Slice, a Str, a Ref): a Grow of them instead', posOf(a.aPos));
+		var key = name(ct) + ':' + (switch ct { case CStruct(sc): core.Globals.sTypePath(sc.clPath); case _: ''; }) + ':' + n;
+		var c = fixedStructs.get(key);
+		if (c != null) return c;
+		var es = sizeOf(ct), al = alignOf(ct);
+		if (al < 8) al = 8;
+		var size = (n * es + 7) & ~7;
+		var fields:Array<CField> = switch ct {
+			case CStruct(_): [for (k in 0...n) {name: 'e' + k, off: k * es, ty: ct, t: et}];
+			case _: [for (k in 0...(size >> 3)) {name: 'w' + k, off: 8 * k, ty: CI64, t: null}];
+		};
+		c = TFunctions.mkClass(a.aModule, {pack: ['hxmc', 'scoped'], name: 'Fixed_' + key.split(':').join('_').split('.').join('_')}, a.aPos, a.aPos);
+		layouts.set(c, {size: size, align: al, fields: fields});
+		fixedStructs.set(key, c);
+		return c;
+	}
+
 	public static function isOpaque(c:TClass):Bool
 		return Lower.hasMeta(":hxmc.opaque", c.clMeta);
 
@@ -358,6 +432,7 @@ class CInterop {
 					case "Float": CF64;
 					case "Void": CVoid;
 					case "Null" | "Any" | "Class" | "Enum" | "EnumValue": CNone;
+					case "hxmc.scoped.Fixed" if (!Lower.wasmGc && isFixedConst(params)): CStruct(fixedStruct(a, params));
 					case _:
 						if (core.Meta.has(CoreType, a.aMeta)) CNone else ctype(core.Abstract.getUnderlyingType(a, params));
 				}
@@ -416,6 +491,7 @@ class CInterop {
 		inProgress = new Map();
 		enumStructs = new Map();
 		enumArgs = new Map();
+		fixedStructs = new Map();
 		lineCache = new Map();
 	}
 

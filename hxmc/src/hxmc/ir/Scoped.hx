@@ -919,6 +919,12 @@ private class Analysis {
 
 	// the roots of the memory a struct place is in (its address's, for one
 	// reached through an address)
+	static function isFixedImpl(c:TClass):Bool
+		return switch c.clKind {
+			case KAbstractImpl(a): CInterop.isFixed(a);
+			case _: false;
+		}
+
 	function placeRoots(obj:TExpr):Roots
 		return switch strip(obj).eexpr {
 			case TCall({eexpr: TField(_, FStatic(c, cf))}, args) if (isPtrImpl(c) && (cf.cfName == "get_value" || cf.cfName == "get")):
@@ -1044,6 +1050,26 @@ private class Analysis {
 
 	function call(f:TExpr, args:haxe.ds.Vector<TExpr>, e:TExpr):Roots {
 		switch strip(f).eexpr {
+			case TField(_, FStatic(c, cf)) if (isFixedImpl(c) && (cf.cfName == "_new" || cf.cfName == "_hx_new" || !Lower.wasmGc && (cf.cfName == "view" || cf.cfName == "get_length"))):
+				// (hxmc.scoped.Fixed, linearly the lowering's: a view is of the
+				// memory holding the Fixed, a local's frame area or its holder's)
+				if (cf.cfName != "view") {
+					for (x in args)
+						ev(x);
+					return [];
+				}
+				var x = args[0];
+				for (_ in 0...8)
+					switch x.eexpr {
+						case TCast(y, null) | TParenthesis(y) | TMeta(_, y) if (CInterop.fixedOf(x.etype) == null): x = y;
+						case _: break;
+					}
+				return switch strip(x).eexpr {
+					case TLocal(v):
+						ev(x);
+						[site(e, Root.FRAME, levels.exists(v.vId) ? levels.get(v.vId) : 2, "the Fixed " + v.vName)];
+					case _: placeRoots(x);
+				};
 			case TField(_, FStatic(c, cf)) if (Scoped.isRepr(c)):
 				// (WasmGC's representation, trusted: `fresh...` makes scoped
 				// memory, fresh as a data stack's; `of` memory rooted at its first

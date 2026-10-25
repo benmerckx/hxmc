@@ -6,8 +6,7 @@ import hxmc.rt.Repr;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
-import hxmc.scoped.Scope;
-import hxmc.scoped.Slice;
+import hxmc.scoped.Fixed;
 
 // The Date natives and Math.random (formerly in rt_std.c), written over
 // hxmc.rt.Repr for both runtimes (@:hxmc.anyHeap). A Date holds the
@@ -62,8 +61,8 @@ class Date {
 	// HxOverrides.strDate: "hh:mm:ss" (UTC time of day), "YYYY-MM-DD",
 	// "YYYY-MM-DD hh:mm:ss" (local): hxmc.rt.DateText
 	@:hxmc.host("Date_fromString") static function fromString(s:String):Dynamic {
-		var f:Slice<Int> = Scope.scratch(6);
-		switch DateText.parse(hxmc.scoped.Str.view(s), f) {
+		var f = new Fixed<Int, 6>();
+		switch DateText.parse(hxmc.scoped.Str.view(s), f.view()) {
 			case 1:
 				return of((f[3] * 3600.0 + f[4] * 60 + f[5]) * 1000.0);
 			case 2:
@@ -131,15 +130,15 @@ class Date {
 	// "%04d-%02d-%02d %02d:%02d:%02d" of the local time: hxmc.rt.DateText
 	@:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
 		var tm = Repr.dateFields(d);
-		var f:Slice<Int> = Scope.scratch(6);
+		var f = new Fixed<Int, 6>();
 		f[0] = tm.get(Repr.F_YEAR) + Repr.YEAR_BASE;
 		f[1] = tm.get(Repr.F_MON) + 1;
 		f[2] = tm.get(Repr.F_MDAY);
 		f[3] = tm.get(Repr.F_HOUR);
 		f[4] = tm.get(Repr.F_MIN);
 		f[5] = tm.get(Repr.F_SEC);
-		var s = Str.make(DateText.length(f));
-		DateText.write(f, hxmc.scoped.Str.view(s));
+		var s = Str.make(DateText.length(f.view()));
+		DateText.write(f.view(), hxmc.scoped.Str.view(s));
 		return s;
 	}
 

@@ -2336,6 +2336,9 @@ class FnLower {
 				for (i in 0...el.length)
 					nativeWrite(elem, a, EInt(i), ELocal(asLocal(coerce(xs[i], tyOf(el[i]), elemValue(elem)), elemValue(elem))));
 				return a;
+			// hxmc.scoped.Fixed's constructor, length and view (CInterop.fixedStruct)
+			case TField(_, FStatic(c, cf)) if (fixedImpl(c) && fixedOp(cf.cfName)):
+				return fixedCall(cf.cfName, cargs, e, rt);
 			case TField(_, FStatic(_, cf)) if (cf.cfKind.match(Var(_))):
 				return callValue(f, cargs, e);
 			case TField(_, FStatic(c, cf)) if (cf.cfName == "names" && c.clPath.name == "NativeResource" && c.clPath.pack.join(".") == "hxmc"):
@@ -2843,6 +2846,10 @@ class FnLower {
 
 	// the struct at src copied to dst, scalar by scalar (dst and src: pure)
 	function copyStruct(dst:Ex, src:Ex, c:TClass) {
+		if (wordStruct(c)) {
+			wordLoop(dst, src, CInterop.layout(c).size >> 3);
+			return;
+		}
 		for (f in CInterop.scalars(c, 0)) {
 			var a = rawAccess(f.ty);
 			var v = ECallHost("hxmc_unsafe_Mem_" + a.get, vector(src, EInt(f.off)), a.t);
@@ -2851,9 +2858,117 @@ class FnLower {
 	}
 
 	function zeroStruct(dst:Ex, c:TClass) {
+		if (wordStruct(c)) {
+			wordLoop(dst, null, CInterop.layout(c).size >> 3);
+			return;
+		}
 		for (f in CInterop.scalars(c, 0)) {
 			var a = rawAccess(f.ty);
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + a.set, vector(dst, EInt(f.off), nullOf(a.t)), TVoid)));
+		}
+	}
+
+	// a struct of more than 16 8-byte words only (a Fixed of scalars): copied
+	// and zeroed in a loop
+	static function wordStruct(c:TClass):Bool {
+		var l = CInterop.layout(c);
+		if (l.fields.length <= 16 || l.fields.length * 8 != l.size) return false;
+		for (f in l.fields)
+			if (f.ty != CI64) return false;
+		return true;
+	}
+
+	// n words of dst set from src (null: zero)
+	function wordLoop(dst:Ex, src:Null<Ex>, n:Int) {
+		var d = ELocal(asLocal(dst, TI64)), sr = src == null ? null : ELocal(asLocal(src, TI64));
+		var k = newLocal("k", TI32);
+		out.push(SSet(k, EInt(0)));
+		out.push(SLoop(block(() -> {
+			out.push(SIf(EBin(Ge, ELocal(k), EInt(n)), vector(SBreak), vector()));
+			var off = EBin(Shl, ELocal(k), EInt(3));
+			var v = sr == null ? EConv(I2L, EInt(0)) : ECallHost("hxmc_unsafe_Mem_getI64", vector(sr, off), TI64);
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(d, off, v), TVoid)));
+			out.push(SSet(k, EBin(Add, ELocal(k), EInt(1))));
+		})));
+	}
+
+	// ---- hxmc.scoped.Fixed (CInterop.fixedStruct): linearly a struct value
+	// (its elements its bytes), on WasmGC the engine's array
+
+	static function fixedOp(name:String):Bool
+		return name == "_new" || name == "_hx_new" || name == "get_length" && !Lower.wasmGc || name == "view" && !Lower.wasmGc;
+
+	static function fixedImpl(c:TClass):Bool
+		return switch c.clKind {
+			case KAbstractImpl(a): CInterop.isFixed(a);
+			case _: false;
+		}
+
+	// the Fixed an argument is (an inlined abstract's this: under casts)
+	static function fixedArg(e:TExpr):TExpr {
+		var x = e;
+		for (_ in 0...8) {
+			if (CInterop.fixedOf(x.etype) != null) return x;
+			switch x.eexpr {
+				case TCast(y, null) | TParenthesis(y) | TMeta(_, y): x = y;
+				case _: break;
+			}
+		}
+		return e;
+	}
+
+	function fixedCall(name:String, cargs:Vector<TExpr>, e:TExpr, rt:Ty):Ex {
+		switch name {
+			case "_new" | "_hx_new":
+				var info = CInterop.fixedOf(e.etype);
+				if (info == null) return fail("new Fixed of an unknown length", e);
+				if (Lower.wasmGc) {
+					// (new NativeArray<T>(N): the abstract's underlying type)
+					var na = switch TFunctions.followWithoutNull(e.etype) {
+						case TAbstract(a, params): core.Abstract.getUnderlyingType(a, params);
+						case _: return fail("new Fixed", e);
+					};
+					var arr = switch TFunctions.follow(na) {
+						case TInst(c, ps): TFunctions.mk(TNew(c, ps, vector(TFunctions.mk(TConst(TInt(info.n)), Lower.basic.tint, e.epos))), na, e.epos);
+						case _: return fail("new Fixed", e);
+					};
+					// (struct values, objects here: each made, Fixed.filled)
+					switch TFunctions.followWithoutNull(info.elem) {
+						case TInst(ec, _) if (CInterop.isWasmValue(ec)):
+							var impl = switch TFunctions.followWithoutNull(e.etype) {
+								case TAbstract(a, _): a.aImpl;
+								case _: null;
+							};
+							var cf = impl.clStatics.get("filled");
+							var callee = TFunctions.mk(TField(TFunctions.mk(TTypeExpr(TClassDecl(impl)), TDynamic(null), e.epos), FStatic(impl, cf)), cf.cfType, e.epos);
+							var cl = TFunctions.mk(TTypeExpr(TClassDecl(ec)), TDynamic(null), e.epos);
+							arr = TFunctions.mk(TCast(TFunctions.mk(TCall(callee, vector(arr, cl)), TDynamic(null), e.epos), null), na, e.epos);
+						case _:
+					}
+					return rhs(arr);
+				}
+				var c = structOf(e.etype);
+				var lo = newSlot(structTy(c), true);
+				zeroStruct(ELocal(lo), c);
+				return coerce(ELocal(lo), structTy(c), rt);
+			case "get_length":
+				var info = CInterop.fixedOf(fixedArg(cargs[0]).etype);
+				if (info == null) return fail("Fixed.length of an unknown length", e);
+				return EInt(info.n);
+			case "view":
+				var x = fixedArg(cargs[0]);
+				var info = CInterop.fixedOf(x.etype);
+				if (info == null) return fail("Fixed.view of an unknown length", e);
+				var p = placeOf(x, true);
+				if (p.heap) return cfail("a Fixed in a GC object cannot be viewed (the collector moves the object): copy it into a local", e);
+				var sc = structOf(e.etype);
+				var lo = newSlot(structTy(sc), true);
+				var pf = CInterop.field(sc, "ptr"), lf = CInterop.field(sc, "length");
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(lo), EInt(pf.off), p.addr()), TVoid)));
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(lo), EInt(lf.off), EInt(info.n)), TVoid)));
+				return coerce(ELocal(lo), structTy(sc), rt);
+			case _:
+				return fail("Fixed." + name + ": no such operation", e);
 		}
 	}
 

@@ -47,7 +47,7 @@ class Lower implements LowerQueries {
 	}
 
 	// the program's basic types (the coroutine types: Coroutine below)
-	static var basic:core.TType.BasicTypes;
+	public static var basic:core.TType.BasicTypes;
 
 	// follows `t`, a coroutine type as the function taking the continuation
 	public static function followFun(t:T):T
@@ -664,6 +664,10 @@ class Lower implements LowerQueries {
 					case "EnumValue" if (isStd): TRef(REnum(null));
 					case "UInt" if (isStd): TI32;
 					case "I64" if (a.aPath.pack.join(".") == "hxmc"): TI64;
+					// (hxmc.scoped.Fixed<T, N>: a struct value of N Ts, CInterop.fixedStruct)
+					case "Fixed" if (CInterop.isFixed(a) && CInterop.isFixedConst(params) && !wasmGc):
+						var c = CInterop.fixedStruct(a, params);
+						TStruct(core.Globals.sTypePath(c.clPath), CInterop.layout(c).size);
 					// in macro mode (Mir macros, hxmc.interp.MirMacros): the compiler's position, opaque
 					case "Position" if (a.aPath.pack.join(".") == "haxe.macro"): TRef(RAny);
 					// a coroutine is a function taking the continuation, as on HashLink
