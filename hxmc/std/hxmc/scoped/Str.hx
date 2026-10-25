@@ -122,8 +122,8 @@ abstract Str(StrData) {
 	}
 
 	public static inline function ofFloat(v:Float):Str {
-		var buf:Slice<UInt8> = Scope.slice(32);
-		var n = hxmc.rt.FloatText.format(v, buf);
+		var buf = new Fixed<UInt8, 32>();
+		var n = hxmc.rt.FloatText.format(v, buf.view());
 		var s:GcChars = W.strNew(n);
 		for (i in 0...n)
 			W.strSet(s, i, buf[i]);
@@ -321,8 +321,8 @@ abstract Str(StrData) {
 	// v as Std.string writes it (hxmc.rt.FloatText: the shortest decimal that
 	// reads back as v), fresh memory of the scope
 	public static inline function ofFloat(v:Float):Str {
-		var buf:Slice<UInt8> = Scope.slice(32);
-		var n = hxmc.rt.FloatText.format(v, buf);
+		var buf = new Fixed<UInt8, 32>();
+		var n = hxmc.rt.FloatText.format(v, buf.view());
 		var p = DataStacks.alloc(2 * n);
 		for (i in 0...n)
 			Mem.setI16(p, 2 * i, buf[i]);

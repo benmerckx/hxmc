@@ -1588,6 +1588,8 @@ class Typer {
 				expression();
 			case MetaTag.Fixed if (ctx.com.platform == Cpp): preserve();
 			case MetaTag.NullSafety: preserve();
+			// (hxmc: hxmc.scoped.Fixed.scratch's, for the lowering)
+			case MetaTag.Custom(":hxmc.scratch"): preserve();
 			case MetaTag.BypassAccessor:
 				var counter = ctx.e.bypassAccessor;
 				ctx.e.bypassAccessor = counter + 1;

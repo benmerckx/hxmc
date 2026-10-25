@@ -23,6 +23,13 @@ abstract Fixed<T, Rest>(NativeArray<T>) {
 	public function new()
 		this = null;
 
+	// elements not zeroed (WasmGC's are), of numbers only: for the std's
+	// cores, which write every element before reading it, where zeroing would
+	// cost (`var b:Fixed<Int, 257> = Fixed.scratch();`: N from the type; a
+	// compiler that does not know the metadata zeroes them)
+	@:noCompletion public static inline function scratch<T, N>():Fixed<T, N>
+		return @:hxmc.scratch new Fixed<T, N>();
+
 	public var length(get, never):Int;
 
 	@:arrayAccess public inline function get(i:Int):T

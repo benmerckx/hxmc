@@ -355,7 +355,7 @@ literals and string interpolation building a `Grow`, a `Slice` or a
 | `Ref<T>` | an address of one T (`r.value`, `r.value.x = 1` in place) | the root of the memory it points into |
 | `Pool` | a bump region (a Grow of bytes) for values whose lifetime is a caller's: `pool.str(s)`, `pool.slice(n)`, `pool.bytes(n)` | the pool |
 | `IntTable<V>` | a table of Int keys: the maps' index (`hxmc.rt.MapIndex`) over slots in a Pool, keys and values in Grows; grows only | the table |
-| `Fixed<T, N>` | N elements of T inline in what holds it (a frame, a struct, a Grow's element), a struct value; `N` a constant type parameter (`new Fixed<Int, 16>()`, zeroed), read by the lowering from the type; `f[i]`, `f.length`, `f.view()` (a Slice of the same memory). T a scalar or a struct value holding no reference. Linearly the value's bytes (a struct class made per T and N: `CInterop.fixedStruct`; more than 16 words copied and zeroed in a loop), on WasmGC an array of the engine copied where a struct value is (its struct elements objects, each copied) | the memory holding it: a local's frame area, its holder's |
+| `Fixed<T, N>` | N elements of T inline in what holds it (a frame, a struct, a Grow's element), a struct value; `N` a constant type parameter (`new Fixed<Int, 16>()`, zeroed; `Fixed.scratch()`, numbers left as they were, for the std's cores that write before they read), read by the lowering from the type; `f[i]`, `f.length`, `f.view()` (a Slice of the same memory). T a scalar or a struct value holding no reference. Linearly the value's bytes (a struct class made per T and N: `CInterop.fixedStruct`; more than 16 words copied and zeroed in a loop), on WasmGC an array of the engine copied where a struct value is (its struct elements objects, each copied) | the memory holding it: a local's frame area, its holder's |
 | `Rel<T>` | (not built) a 32-bit self-relative reference (serialization, below) | the array it points into |
 | `@:hxmc.scoped` classes | struct values (`@:hxmc.struct`'s representation) whose fields may also be the types above | the union of their fields' roots |
 | `@:hxmc.scoped` enums | value enums (below) | the union of their payloads' roots |
@@ -963,11 +963,12 @@ and WasmGC, each abstraction in two representations (the corpus'
 `Scoped*` cases natively and on wasm32, `GcCheck`'s on WasmGC, under
 Mir's `--run` too; `reject/Scoped*`); the std's cores moved so far (the
 migration above); `Fixed<T, N>`, which the std uses for `Date`'s six
-fields (in the frame: no data stack, no scope, no mark). stage0 predates
-it and lowers a Fixed as its underlying array, which is GC code: until
-stage0 is made again, the std's no-GC code (`LibM`'s large reduction,
-`FloatText`) and what the bootstrap's first compiler runs (`Str.ofFloat`)
-keep their data-stack scratch. Not built: `Rel<T>` and the generated
+fields, `LibM`'s large reduction, `FloatText`'s big integers and digits
+and `Str.ofFloat`'s buffer (in the frame: no data stack, no scope, no
+mark; stage0 was made again for it). FloatText's are `Fixed.scratch()`,
+not zeroed: zeroing its 6 KB per call made `Std.string` of a double 35%
+slower and `Std.parseFloat` of a long one 45%; not zeroed, both are as
+fast as with the data stack natively, and 5-10% faster on wasm32. Not built: `Rel<T>` and the generated
 `verify`/`fromBytes` (designed above), variable-size enums,
 methods on scoped classes (structs have none yet), checking the
 `hxmc.scoped` std's own inline functions apart from their callers,

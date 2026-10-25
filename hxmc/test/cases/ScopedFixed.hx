@@ -91,6 +91,14 @@ import hxmc.scoped.*;
 		s[4] = 9;
 		return f[4] + s.length;
 	}
+
+	// not zeroed: every element written before it is read
+	public static function scratch():Int {
+		var f:Fixed<Int, 600> = Fixed.scratch();
+		for (i in 0...f.length)
+			f[i] = i;
+		return f[599] + f[1];
+	}
 }
 
 class ScopedFixed {
@@ -102,5 +110,6 @@ class ScopedFixed {
 		trace(Code.inGrow());
 		trace(Code.big());
 		trace(Code.view());
+		trace(Code.scratch());
 	}
 }

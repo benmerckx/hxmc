@@ -1506,6 +1506,12 @@ class FnLower {
 				var lo = local(v, e);
 				var x:Ex = isBoxed(v) ? EBoxGet(ty(v.vType), ELocal(lo)) : ELocal(lo);
 				coerce(x, ty(v.vType), tyOf(e));
+			case TMeta(m, e1) if (Lower.hasMeta(":hxmc.scratch", [m])):
+				// (Fixed.scratch: the new Fixed under it not zeroed)
+				unzeroed = true;
+				var x = rhs(e1);
+				unzeroed = false;
+				coerceRhs(x, tyOf(e1), tyOf(e));
 			case TParenthesis(e1) | TMeta(_, e1): coerceRhs(rhs(e1), tyOf(e1), tyOf(e));
 			case TCast(e1, null): coerceRhs(rhs(e1), tyOf(e1), tyOf(e));
 			case TCast(e1, mt):
@@ -2895,6 +2901,8 @@ class FnLower {
 	// ---- hxmc.scoped.Fixed (CInterop.fixedStruct): linearly a struct value
 	// (its elements its bytes), on WasmGC the engine's array
 
+	var unzeroed = false; // (rhs: under @:hxmc.scratch)
+
 	static function fixedOp(name:String):Bool
 		return name == "_new" || name == "_hx_new" || name == "get_length" && !Lower.wasmGc || name == "view" && !Lower.wasmGc;
 
@@ -2922,6 +2930,13 @@ class FnLower {
 			case "_new" | "_hx_new":
 				var info = CInterop.fixedOf(e.etype);
 				if (info == null) return fail("new Fixed of an unknown length", e);
+				var zeroed = !unzeroed;
+				unzeroed = false;
+				if (!zeroed)
+					switch CInterop.ctype(info.elem) {
+						case CI8 | CU8 | CI16 | CU16 | CI32 | CI64 | CF32 | CF64:
+						case _: return cfail("Fixed.scratch: its elements are numbers (others start zeroed: new Fixed)", e);
+					}
 				if (Lower.wasmGc) {
 					// (new NativeArray<T>(N): the abstract's underlying type)
 					var na = switch TFunctions.followWithoutNull(e.etype) {
@@ -2949,7 +2964,7 @@ class FnLower {
 				}
 				var c = structOf(e.etype);
 				var lo = newSlot(structTy(c), true);
-				zeroStruct(ELocal(lo), c);
+				if (zeroed) zeroStruct(ELocal(lo), c);
 				return coerce(ELocal(lo), structTy(c), rt);
 			case "get_length":
 				var info = CInterop.fixedOf(fixedArg(cargs[0]).etype);

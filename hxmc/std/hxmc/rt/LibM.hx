@@ -1,7 +1,7 @@
 package hxmc.rt;
 
 import hxmc.I64;
-import hxmc.scoped.Scope;
+import hxmc.scoped.Fixed;
 import hxmc.scoped.Slice;
 
 // Math on every target (docs/hxmc.md; docs/plans/math.md): the functions
@@ -285,7 +285,7 @@ class LibM {
 		ui = ui & ((-1 : I64) >>> 12);
 		ui = ui | (((0x3ff + 23) : I64) << 52);
 		var z = ofBits(ui);
-		var tx:Slice<Float> = Scope.slice(3), ty:Slice<Float> = Scope.slice(2);
+		var tx = new Fixed<Float, 3>(), ty = new Fixed<Float, 2>();
 		var i = 0;
 		while (i < 2) {
 			var t:Float = Std.int(z);
@@ -297,14 +297,14 @@ class LibM {
 		// skip zero terms, first term is non-zero
 		while (tx[i] == 0.0)
 			i--;
-		var n = remPio2Large(tx, ty, (ix >>> 20) - (0x3ff + 23), i + 1);
+		var n = remPio2Large(tx.view(), ty.view(), (ix >>> 20) - (0x3ff + 23), i + 1);
 		return sign ? new Reduced(-n, -ty[0], -ty[1]) : new Reduced(n, ty[0], ty[1]);
 	}
 
 
 	// __rem_pio2_large for prec = 1 (doubles): x[nx] (24-bit chunks) in tx, y[2] into ty
 	static function remPio2Large(x:Slice<Float>, y:Slice<Float>, e0:Int, nx:Int):Int {
-		var PIo2:Slice<Float> = Scope.slice(8);
+		var PIo2 = new Fixed<Float, 8>();
 		PIo2[0] = 1.57079625129699707031e+00;
 		PIo2[1] = 7.54978941586159635335e-08;
 		PIo2[2] = 5.39030252995776476554e-15;
@@ -313,15 +313,7 @@ class LibM {
 		PIo2[5] = 1.22933308981111328932e-36;
 		PIo2[6] = 2.73370053816464559624e-44;
 		PIo2[7] = 2.16741683877804819444e-51;
-		var iq:Slice<Int> = Scope.slice(20), f:Slice<Float> = Scope.slice(20), fq:Slice<Float> = Scope.slice(20), q:Slice<Float> = Scope.slice(20);
-		inline function geti(p:Slice<Int>, k:Int):Int
-			return p[k];
-		inline function seti(p:Slice<Int>, k:Int, v:Int)
-			p[k] = v;
-		inline function getf(p:Slice<Float>, k:Int):Float
-			return p[k];
-		inline function setf(p:Slice<Float>, k:Int, v:Float)
-			p[k] = v;
+		var iq = new Fixed<Int, 20>(), f = new Fixed<Float, 20>(), fq = new Fixed<Float, 20>(), q = new Fixed<Float, 20>();
 		var jk = 4; // init_jk[prec = 1]
 		var jp = jk;
 		// determine jx,jv,q0, note that 3>q0
@@ -335,7 +327,7 @@ class LibM {
 		var m = jx + jk;
 		var i = 0;
 		while (i <= m) {
-			setf(f, i, j < 0 ? 0.0 : ipio2(j));
+			f[i] = j < 0 ? 0.0 : ipio2(j);
 			i++;
 			j++;
 		}
@@ -345,10 +337,10 @@ class LibM {
 			var fw = 0.0;
 			j = 0;
 			while (j <= jx) {
-				fw += getf(x, j) * getf(f, jx + i - j);
+				fw += x[j] * f[jx + i - j];
 				j++;
 			}
-			setf(q, i, fw);
+			q[i] = fw;
 			i++;
 		}
 		var jz = jk;
@@ -358,11 +350,11 @@ class LibM {
 			// distill q[] into iq[] reversingly
 			i = 0;
 			j = jz;
-			z = getf(q, jz);
+			z = q[jz];
 			while (j > 0) {
 				var fw:Float = Std.int(5.9604644775390625e-08 * z);
-				seti(iq, i, Std.int(z - 16777216.0 * fw));
-				z = getf(q, j - 1) + fw;
+				iq[i] = Std.int(z - 16777216.0 * fw);
+				z = q[j - 1] + fw;
 				i++;
 				j--;
 			}
@@ -373,31 +365,31 @@ class LibM {
 			z -= n;
 			ih = 0;
 			if (q0 > 0) { // need iq[jz-1] to determine n
-				i = geti(iq, jz - 1) >> (24 - q0);
+				i = iq[jz - 1] >> (24 - q0);
 				n += i;
-				seti(iq, jz - 1, geti(iq, jz - 1) - (i << (24 - q0)));
-				ih = geti(iq, jz - 1) >> (23 - q0);
+				iq[jz - 1] = iq[jz - 1] - (i << (24 - q0));
+				ih = iq[jz - 1] >> (23 - q0);
 			} else if (q0 == 0)
-				ih = geti(iq, jz - 1) >> 23;
+				ih = iq[jz - 1] >> 23;
 			else if (z >= 0.5) ih = 2;
 			if (ih > 0) { // q > 0.5
 				n += 1;
 				var carry = 0;
 				i = 0;
 				while (i < jz) { // compute 1-q
-					j = geti(iq, i);
+					j = iq[i];
 					if (carry == 0) {
 						if (j != 0) {
 							carry = 1;
-							seti(iq, i, 0x1000000 - j);
+							iq[i] = 0x1000000 - j;
 						}
 					} else
-						seti(iq, i, 0xffffff - j);
+						iq[i] = 0xffffff - j;
 					i++;
 				}
 				if (q0 > 0) { // rare case: chance is 1 in 12
-					if (q0 == 1) seti(iq, jz - 1, geti(iq, jz - 1) & 0x7fffff);
-					if (q0 == 2) seti(iq, jz - 1, geti(iq, jz - 1) & 0x3fffff);
+					if (q0 == 1) iq[jz - 1] = iq[jz - 1] & 0x7fffff;
+					if (q0 == 2) iq[jz - 1] = iq[jz - 1] & 0x3fffff;
 				}
 				if (ih == 2) {
 					z = 1.0 - z;
@@ -409,23 +401,23 @@ class LibM {
 				j = 0;
 				i = jz - 1;
 				while (i >= jk) {
-					j |= geti(iq, i);
+					j |= iq[i];
 					i--;
 				}
 				if (j == 0) { // need recomputation
 					var k = 1;
-					while (geti(iq, jk - k) == 0)
+					while (iq[jk - k] == 0)
 						k++; // k = no. of terms needed
 					i = jz + 1;
 					while (i <= jz + k) { // add q[jz+1] to q[jz+k]
-						setf(f, jx + i, ipio2(jv + i));
+						f[jx + i] = ipio2(jv + i);
 						var fw = 0.0;
 						j = 0;
 						while (j <= jx) {
-							fw += getf(x, j) * getf(f, jx + i - j);
+							fw += x[j] * f[jx + i - j];
 							j++;
 						}
-						setf(q, i, fw);
+						q[i] = fw;
 						i++;
 					}
 					jz += k;
@@ -438,7 +430,7 @@ class LibM {
 		if (z == 0.0) {
 			jz -= 1;
 			q0 -= 24;
-			while (geti(iq, jz) == 0) {
+			while (iq[jz] == 0) {
 				jz--;
 				q0 -= 24;
 			}
@@ -446,18 +438,18 @@ class LibM {
 			z = scalbn(z, -q0);
 			if (z >= 16777216.0) {
 				var fw:Float = Std.int(5.9604644775390625e-08 * z);
-				seti(iq, jz, Std.int(z - 16777216.0 * fw));
+				iq[jz] = Std.int(z - 16777216.0 * fw);
 				jz += 1;
 				q0 += 24;
-				seti(iq, jz, Std.int(fw));
+				iq[jz] = Std.int(fw);
 			} else
-				seti(iq, jz, Std.int(z));
+				iq[jz] = Std.int(z);
 		}
 		// convert integer "bit" chunk to floating-point value
 		var fw = scalbn(1.0, q0);
 		i = jz;
 		while (i >= 0) {
-			setf(q, i, fw * geti(iq, i));
+			q[i] = fw * iq[i];
 			fw *= 5.9604644775390625e-08;
 			i--;
 		}
@@ -467,27 +459,27 @@ class LibM {
 			fw = 0.0;
 			var k = 0;
 			while (k <= jp && k <= jz - i) {
-				fw += getf(PIo2, k) * getf(q, i + k);
+				fw += PIo2[k] * q[i + k];
 				k++;
 			}
-			setf(fq, jz - i, fw);
+			fq[jz - i] = fw;
 			i--;
 		}
 		// compress fq[] into y[] (prec 1)
 		fw = 0.0;
 		i = jz;
 		while (i >= 0) {
-			fw += getf(fq, i);
+			fw += fq[i];
 			i--;
 		}
-		setf(y, 0, ih == 0 ? fw : -fw);
-		fw = getf(fq, 0) - fw;
+		y[0] = ih == 0 ? fw : -fw;
+		fw = fq[0] - fw;
 		i = 1;
 		while (i <= jz) {
-			fw += getf(fq, i);
+			fw += fq[i];
 			i++;
 		}
-		setf(y, 1, ih == 0 ? fw : -fw);
+		y[1] = ih == 0 ? fw : -fw;
 		return n & 7;
 	}
 

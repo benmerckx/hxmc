@@ -2,7 +2,7 @@ package hxmc.rt;
 
 import hxmc.I64;
 import hxmc.rt.Repr;
-import hxmc.scoped.Scope;
+import hxmc.scoped.Fixed;
 import hxmc.scoped.Slice;
 import hxmc.scoped.Str;
 import hxmc.unsafe.UInt8;
@@ -32,13 +32,11 @@ class FloatText {
 	static inline function m32():I64
 		return ((1 : I64) << 32) - 1;
 
-	// ---- big integers: the length at 0, limbs (little-endian) from 1. Their
-	// accesses are unchecked (Slice.unsafeGet: in range by construction, as the
-	// maps' masked slots are): every big is LIMBS + 1 Ints, a length never
-	// past LIMBS (overflow ends the program first)
-
-	static inline function big():Slice<Int>
-		return Scope.scratch(LIMBS + 1);
+	// ---- big integers: the length at 0, limbs (little-endian) from 1, in a
+	// Fixed<Int, 257> (LIMBS + 1) of the caller's frame, passed as its view.
+	// Their accesses are unchecked (Slice.unsafeGet: in range by construction,
+	// as the maps' masked slots are): a length never past LIMBS (overflow ends
+	// the program first)
 
 	static inline function blen(b:Slice<Int>):Int
 		return b.unsafeGet(0);
@@ -180,7 +178,8 @@ class FloatText {
 	// the double nearest to D * 10^k (D a big integer, positive), ties to even,
 	// starting from the estimate z
 	static function refine(d:Slice<Int>, k:Int, z:Float):Float {
-		var t1 = big(), t2 = big();
+		var b1:Fixed<Int, 257> = Fixed.scratch(), b2:Fixed<Int, 257> = Fixed.scratch();
+		var t1 = b1.view(), t2 = b2.view();
 		var b = bits(z);
 		if (b == 0) b = 1; // (from the smallest denormal)
 		if (b >= ((0x7FF : I64) << 52)) b = ((0x7FF : I64) << 52) - 1; // (from the largest double)
@@ -410,7 +409,8 @@ class FloatText {
 		var start = p;
 		// (no more digits than the text has left)
 		var rest = s.length - p;
-		var dig:Slice<UInt8> = Scope.scratch((rest < MAXDIG ? rest : MAXDIG) + 8);
+		var digits:Fixed<UInt8, 808> = Fixed.scratch(); // MAXDIG + 8
+		var dig = digits.view();
 		var nd = 0, dropped = 0, intDigits = 0;
 		var any = false, seenDot = false, sticky = false;
 		var lead = true;
@@ -484,7 +484,8 @@ class FloatText {
 				v = v * 10 + (dig.unsafeGet(i) : Int);
 			return new Parsed(k >= 0 ? v * pow10(k) : v / pow10(-k), p);
 		}
-		var d = big();
+		var bd:Fixed<Int, 257> = Fixed.scratch();
+		var d = bd.view();
 		bset(d, 0);
 		for (i in 0...nd)
 			bmulAdd(d, 10, (dig.unsafeGet(i) : Int));
@@ -528,7 +529,8 @@ class FloatText {
 			m = m | ((1 : I64) << 52);
 			e = ex - 1075;
 		}
-		var n = big();
+		var bn:Fixed<Int, 257> = Fixed.scratch();
+		var n = bn.view();
 		bset(n, m);
 		var frac = 0;
 		if (e >= 0) bshl(n, e) else {
@@ -546,7 +548,8 @@ class FloatText {
 		}
 		// decimal digits, 9 at a time from the low end (unchecked: a double's
 		// exact value has fewer than 1100 digits)
-		var tmp:Slice<UInt8> = Scope.scratch(1200);
+		var digs:Fixed<UInt8, 1200> = Fixed.scratch();
+		var tmp = digs.view();
 		var nt = 0;
 		while (blen(n) > 0) {
 			var r = bdivSmall(n, 1000000000);
@@ -598,11 +601,11 @@ class FloatText {
 			return o;
 		}
 		// the exact digits d1 d2 ... with d1 at 10^e10; those kept: down to 10^-decimals
-		var dig:Slice<UInt8> = Scope.scratch(1200);
+		var dig:Fixed<UInt8, 1200> = Fixed.scratch();
 		var nd = 0, e10 = 0;
 		if (v != 0) {
-			var ep:Slice<Int> = Scope.slice(1);
-			nd = exactDigits(v, dig, ep);
+			var ep = new Fixed<Int, 1>();
+			nd = exactDigits(v, dig.view(), ep.view());
 			e10 = ep[0];
 		}
 		// kept digits: positions e10 down to -decimals (index i is 10^(e10 - i))
@@ -622,7 +625,7 @@ class FloatText {
 		// the kept digits as a number string: integer part from 10^max(e10, 0)
 		var top = e10 > 0 ? e10 : 0;
 		var n = top + decimals + 1; // digits from 10^top down to 10^-decimals
-		var d:Slice<UInt8> = Scope.scratch(1400);
+		var d:Fixed<UInt8, 1400> = Fixed.scratch();
 		for (k in 0...n) {
 			var i = e10 - (top - k); // index of 10^(top - k)
 			d[k] = i < keep ? digit(i) : 0;
@@ -677,14 +680,15 @@ class FloatText {
 		}
 		var neg = v < 0;
 		if (neg) v = -v;
-		var dig:Slice<UInt8> = Scope.scratch(1200);
-		var ep:Slice<Int> = Scope.slice(1);
-		var nd = exactDigits(v, dig, ep);
+		var digits:Fixed<UInt8, 1200> = Fixed.scratch(), ep = new Fixed<Int, 1>();
+		var dig = digits.view();
+		var nd = exactDigits(v, dig, ep.view());
 		var e10 = ep[0];
 		// (the digits read unchecked: below nd, which exactDigits keeps within
 		// dig, and below prec, at most 17, within cand)
 		// the first precision whose correctly rounded decimal reads back as v
-		var cand:Slice<UInt8> = Scope.scratch(24);
+		var digs:Fixed<UInt8, 24> = Fixed.scratch();
+		var cand = digs.view();
 		var b = bits(v);
 		var ex = ((b >>> 52) & 0x7FF).toInt();
 		var m = b & ((((1 : I64) << 52)) - 1);
@@ -693,7 +697,8 @@ class FloatText {
 			m = m | ((1 : I64) << 52);
 			e = ex - 1075;
 		}
-		var t1 = big(), t2 = big(), cb = big();
+		var b1:Fixed<Int, 257> = Fixed.scratch(), b2:Fixed<Int, 257> = Fixed.scratch(), b3:Fixed<Int, 257> = Fixed.scratch();
+		var t1 = b1.view(), t2 = b2.view(), cb = b3.view();
 		var prec = 1, ce = e10;
 		while (prec <= 17) {
 			// round dig to prec digits (ties to even, on the exact value)
