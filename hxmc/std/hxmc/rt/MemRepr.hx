@@ -33,6 +33,10 @@ class MemRepr {
 	public static inline function stdString(v:Dynamic):String
 		return Dyn.stdString(v);
 
+	// whether Haxe's == of x and any value is identity (Dyn.identityEq)
+	public static inline function identityEq(x:Dynamic):Bool
+		return Dyn.identityEq(x);
+
 	public static inline function dynEq(a:Dynamic, b:Dynamic):Bool
 		return Dyn.dynEq(a, b);
 
@@ -124,18 +128,26 @@ class MemRepr {
 	public static inline function copyTo1(dst:MemChars1, di:Int, src:MemChars1, n:Int)
 		LibC.memcpy(dst.at(di), src, (n : I64));
 
+	// dst[di, di + n) = src[si, si + n) (not overlapping), two-byte units
+	// (copyAt) or one-byte ones (copyAt1)
+	public static inline function copyAt(dst:MemChars, di:Int, src:MemChars, si:Int, n:Int)
+		LibC.memcpy(dst.at(di), src.at(si), (2 * n : I64));
+
+	public static inline function copyAt1(dst:MemChars1, di:Int, src:MemChars1, si:Int, n:Int)
+		LibC.memcpy(dst.at(di), src.at(si), (n : I64));
+
 	// dst[di, di + n) = src[si, si + n): one-byte units widened (widen), two-byte
 	// ones each below 0x100 narrowed (narrow)
-	@:hxmc.noGc public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
+	@:hxmc.unsafe public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
 
-	@:hxmc.noGc public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
+	@:hxmc.unsafe public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
 
 	// whether the two-byte units src[si, si + n) are each below 0x100 (four at a time)
-	@:hxmc.noGc public static function fitsOne(src:MemChars, si:Int, n:Int):Bool {
+	@:hxmc.unsafe public static function fitsOne(src:MemChars, si:Int, n:Int):Bool {
 		var p = src.at(si);
 		var k = 0;
 		// (0xFF00FF00FF00FF00, of positive halves: an Int literal of 0x80000000 or more is negative)
@@ -160,10 +172,10 @@ class MemRepr {
 		return MemOps.compare(c.at(i), d, (m : I64)) == 0;
 
 	// the same, m >= 1: the first unit compared first
-	@:hxmc.noGc public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
+	@:hxmc.unsafe public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
 		return Mem.getU16At(c, 0, i) == Mem.getU16(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(2 * i + 2), (d : Ptr).add(2), (2 * (m - 1) : I64)) == 0);
 
-	@:hxmc.noGc public static inline function matchAt1(c:MemChars1, d:MemChars1, i:Int, m:Int):Bool
+	@:hxmc.unsafe public static inline function matchAt1(c:MemChars1, d:MemChars1, i:Int, m:Int):Bool
 		return Mem.getU8At(c, 0, i) == Mem.getU8(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(i + 1), (d : Ptr).add(1), ((m - 1) : I64)) == 0);
 
 	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 its units: a
@@ -451,7 +463,7 @@ class MemRepr {
 		LibC.memset(octets(b).at(pos), v, n);
 
 	// the difference of the first differing bytes of [0, n), else 0
-	@:hxmc.noGc public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
+	@:hxmc.unsafe public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
 		return MemOps.compare(a, b, n);
 
 	// ---- BytesBuffer (T_BYTESBUFFER): slot 0 the length, slot 1 a Bytes
@@ -536,11 +548,13 @@ class MemRepr {
 		return tm;
 	}
 
-	// minutes from local time to UTC
+	// minutes from local time to UTC: the UTC fields read as a local time in
+	// the local time's daylight saving, less the local time
 	public static inline function timezoneOffset(d:Dynamic):Int {
 		var l = Mem.stack(64), u = Mem.stack(64);
 		@:privateAccess Date.breakDown(dateMs(d), false, l);
 		@:privateAccess Date.breakDown(dateMs(d), true, u);
+		Mem.setI32(u, F_ISDST, Mem.getI32(l, F_ISDST));
 		return ((@:privateAccess Date.mktime(u) - @:privateAccess Date.mktime(l)) / 60).toInt();
 	}
 

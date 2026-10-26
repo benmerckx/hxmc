@@ -19,7 +19,7 @@ class Start {
 	// linker can make of an address computation but not of a load)
 	public static var environ:Ptr;
 
-	@:hxmc.export("rt_init") @:hxmc.noGc static function init(ng:Int, ac:Int, av:Ptr):Void {
+	@:hxmc.export("rt_init") @:hxmc.unsafe static function init(ng:Int, ac:Int, av:Ptr):Void {
 		if (Mem.os() == 2) {
 			WinRt.init();
 			// the arguments as UTF-8, from the UTF-16 command line (OCaml's

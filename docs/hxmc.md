@@ -223,10 +223,11 @@ dates, inflate, the POSIX and Windows system layers, and Math: musl's libm
 ported, `LibM.hx`, with the same results on every target), written with a
 small internal API (`hxmc.unsafe`: `Ptr`, `Mem` loads, stores, allocation
 and symbols, `Atomic`; `@:hxmc.c` and `@:hxmc.rt` externs of C functions,
-`@:hxmc.noGc` functions, `@:hxmc.export`/`@:hxmc.host` implementations of
+`@:hxmc.unsafe` functions (no GC point reached, checked; `@:hxmc.noGc`, the
+former name, is still accepted), `@:hxmc.export`/`@:hxmc.host` implementations of
 runtime functions, `@:hxmc.callback` functions C calls,
 `@:hxmc.threadLocal` statics; the compiler rejects an address from `Mem.addr`
-live across a GC point outside `@:hxmc.noGc` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
+live across a GC point outside `@:hxmc.unsafe` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
 handshake, startup and `rt_throw` are Haxe too (`Gc.hx`, `Threads.hx`,
 `Start.hx`; the heap census with `-D hxmc.census`): no C of hxmc's own is
 linked, only the C library, mbedtls and libuv ([plans/lowlevel.md](plans/lowlevel.md),
@@ -1120,7 +1121,7 @@ no threads, sockets or processes). mbedtls 2.28 and libuv 1.48
 use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_ESCAPE=0` (no escape analysis; `HXMC_ESCAPE_LOG=1`: what happens to each allocation analyzed and why it stays; `HXMC_ESCAPE_NO=<closures,frames,again,boxes,replace,screen>` and `HXMC_ESCAPE_HASH=<lo>-<hi>` to bisect a miscompilation; none of them are in the object cache's key), `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
-`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
+`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB` (the old space's first limit; the tool sets 768 for a build, 2048 for the compilation server), `RT_OLD_GROWTH` (its next limits, in percent of what a major collection left live: 300 natively, 200 on wasm32; the compilation server 150), `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
 `RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown); with `RT_CENSUS_WHY=<type>` (its name in the census) also a path from a global to each of the first `RT_CENSUS_WHY_MAX` (8) objects of that type, what keeps a leak alive (global `i` is the symbol of value `8 * i` in `<exe>.syms`).
 
 ### Target flags

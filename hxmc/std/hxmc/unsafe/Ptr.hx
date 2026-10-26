@@ -11,7 +11,7 @@ import hxmc.I64;
 //
 // The address of a heap object (Mem.addr) is valid only until the next GC
 // point: the compiler rejects one that is live across a GC point outside a
-// @:hxmc.noGc function (Facts' raw-address check).
+// @:hxmc.unsafe function (Facts' raw-address check).
 abstract Ptr<T = Void>(I64) {
 	public static inline function nil<T>():Ptr<T>
 		return new Ptr(0);

@@ -1,5 +1,5 @@
 // The low-level intrinsics the runtime's Haxe code is written with
-// (hxmc.unsafe: Mem, Atomic, Ptr, LibC; @:hxmc.noGc), exercised directly.
+// (hxmc.unsafe: Mem, Atomic, Ptr, LibC; @:hxmc.unsafe), exercised directly.
 import hxmc.I64;
 import hxmc.unsafe.Atomic;
 import hxmc.unsafe.LibC;
@@ -25,7 +25,7 @@ class Unsafe {
 	}
 
 	// raw addresses across C calls: no GC point between taking and using them
-	@:hxmc.noGc static function sumUnits(s:String):Int {
+	@:hxmc.unsafe static function sumUnits(s:String):Int {
 		var p = Mem.addr(s);
 		var n = Mem.getI32(p, 0), t = 0;
 		for (i in 0...n)
@@ -33,7 +33,7 @@ class Unsafe {
 		return t;
 	}
 
-	@:hxmc.noGc static function copyUnits(dst:String, src:String, n:Int):Void {
+	@:hxmc.unsafe static function copyUnits(dst:String, src:String, n:Int):Void {
 		LibC.memcpy(Mem.addr(dst).add(4), Mem.addr(src).add(4), (2 * n : I64));
 	}
 

@@ -51,12 +51,12 @@ class Uv {
 	static inline var T_LOCK = 4;
 	static inline var T_CHUNKS = 8;
 
-	@:hxmc.noGc static function lock(p:Ptr) {
+	@:hxmc.unsafe static function lock(p:Ptr) {
 		while (Atomic.cas32(p, 0, 1) != 0)
 			Threads.current(); // (spins: held for a few instructions)
 	}
 
-	@:hxmc.noGc static function unlock(p:Ptr)
+	@:hxmc.unsafe static function unlock(p:Ptr)
 		Atomic.store32(p, 0);
 
 	static function objAdd(p:Ptr):Int {
@@ -80,7 +80,7 @@ class Uv {
 		return id;
 	}
 
-	@:hxmc.noGc static function slotOf(id:Int):Ptr {
+	@:hxmc.unsafe static function slotOf(id:Int):Ptr {
 		var t = state();
 		return Mem.getPtr(t, T_CHUNKS + 8 * (id >> 10)).add(8 * (id & 1023));
 	}
@@ -93,11 +93,11 @@ class Uv {
 		return p;
 	}
 
-	@:hxmc.noGc static function objClear(id:Int)
+	@:hxmc.unsafe static function objClear(id:Int)
 		Mem.setPtr(slotOf(id), 0, Ptr.nil());
 
 	// (once: a race between two threads' first calls leaks one table)
-	@:hxmc.noGc static function state():Ptr {
+	@:hxmc.unsafe static function state():Ptr {
 		if (table.isNull()) {
 			var size:I64 = T_CHUNKS + 8 * OBJ_CHUNKS;
 			var t = LibC.malloc(size);
@@ -152,7 +152,7 @@ class Uv {
 		return b == null ? Ptr.nil() : data(b);
 
 	// a C long (32 bits on Windows)
-	@:hxmc.noGc static inline function getLong(p:Ptr, off:Int):I64
+	@:hxmc.unsafe static inline function getLong(p:Ptr, off:Int):I64
 		return L.LONG_SIZE == 4 ? (Mem.getI32(p, off) : I64) : Mem.getI64(p, off);
 
 	// ---- errors: luv's Error.t, in evalLuv.ml's encode_uv_error order
@@ -320,7 +320,7 @@ class Uv {
 	// the largest uv handle (uv_handle_size of each type), once
 	static var handleSize:Int;
 
-	@:hxmc.noGc static function handleBytes():Int {
+	@:hxmc.unsafe static function handleBytes():Int {
 		if (handleSize == 0) {
 			var m = 0;
 			for (t in 1...L.UV_HANDLE_TYPE_MAX) {
@@ -339,10 +339,10 @@ class Uv {
 	static inline function uvh(id:Int):Ptr
 		return objGet(id).add(H_UV);
 
-	@:hxmc.noGc static inline function hx(uh:Ptr):Ptr
+	@:hxmc.unsafe static inline function hx(uh:Ptr):Ptr
 		return uh.add(-H_UV);
 
-	@:hxmc.noGc static inline function hid(uh:Ptr):Int
+	@:hxmc.unsafe static inline function hid(uh:Ptr):Int
 		return Mem.getI32(uh, -H_UV + H_ID);
 
 	static function newHandle(kind:Int):Ptr {
@@ -354,7 +354,7 @@ class Uv {
 		return h;
 	}
 
-	@:hxmc.noGc static function freeHandle(h:Ptr) {
+	@:hxmc.unsafe static function freeHandle(h:Ptr) {
 		objClear(Mem.getI32(h, H_ID));
 		LibC.free(Mem.getPtr(h, H_RBUF));
 		LibC.free(h);
@@ -395,7 +395,7 @@ class Uv {
 		dispatch(id, EV_CLOSE, 0, null);
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function closeSilentCb(uh:Ptr):Void
+	@:hxmc.callback @:hxmc.unsafe static function closeSilentCb(uh:Ptr):Void
 		freeHandle(hx(uh));
 
 	// Handle.close: nothing when already closing
@@ -512,7 +512,7 @@ class Uv {
 
 	static var reqSize:Int;
 
-	@:hxmc.noGc static function reqBytes():Int {
+	@:hxmc.unsafe static function reqBytes():Int {
 		if (reqSize == 0) {
 			var m = 0;
 			for (t in 1...L.UV_REQ_TYPE_MAX) {
@@ -530,7 +530,7 @@ class Uv {
 	static inline function uvr(id:Int):Ptr
 		return objGet(id).add(R_UV);
 
-	@:hxmc.noGc static inline function rid(req:Ptr):Int
+	@:hxmc.unsafe static inline function rid(req:Ptr):Int
 		return Mem.getI32(req, -R_UV + R_ID);
 
 	public static function reqNew():Int {
@@ -543,7 +543,7 @@ class Uv {
 		return id;
 	}
 
-	@:hxmc.noGc static function reqClear(r:Ptr) {
+	@:hxmc.unsafe static function reqClear(r:Ptr) {
 		LibC.free(Mem.getPtr(r, R_SCRATCH));
 		Mem.setPtr(r, R_SCRATCH, Ptr.nil());
 		Mem.setI64(r, R_SCRATCH_LEN, 0);
@@ -572,7 +572,7 @@ class Uv {
 		dispatch(rid(req), EV_REQ, status, null);
 
 	// a uv_buf_t (Windows: ULONG len, then base; elsewhere base, then size_t len)
-	@:hxmc.noGc static function setBuf(buf:Ptr, base:Ptr, len:Int) {
+	@:hxmc.unsafe static function setBuf(buf:Ptr, base:Ptr, len:Int) {
 		Mem.setPtr(buf, L.UV_BUF_BASE, base);
 		if (L.UV_BUF_LEN_SIZE == 4) Mem.setI32(buf, L.UV_BUF_LEN, len) else Mem.setI64(buf, L.UV_BUF_LEN, u32(len));
 	}
@@ -623,11 +623,11 @@ class Uv {
 		});
 	}
 
-	@:hxmc.noGc static function family(s:Ptr):Int
+	@:hxmc.unsafe static function family(s:Ptr):Int
 		return L.SA_FAMILY_SIZE == 1 ? Mem.getU8(s, L.SA_FAMILY) : Mem.getU16(s, L.SA_FAMILY);
 
 	// network order
-	@:hxmc.noGc static function port16(s:Ptr, off:Int):Int
+	@:hxmc.unsafe static function port16(s:Ptr, off:Int):Int
 		return (Mem.getU8(s, off) << 8) | Mem.getU8(s, off + 1);
 
 	// Sockaddr.port: -1 for None
@@ -725,7 +725,7 @@ class Uv {
 		setBuf(buf, Mem.getPtr(h, H_RBUF), n);
 	}
 
-	@:hxmc.noGc static function bufBase(buf:Ptr):Ptr
+	@:hxmc.unsafe static function bufBase(buf:Ptr):Ptr
 		return Mem.getPtr(buf, L.UV_BUF_BASE);
 
 	@:hxmc.callback static function readCb(s:Ptr, nread:I64, buf:Ptr):Void {
@@ -1212,7 +1212,7 @@ class Uv {
 		return bytesOfC(U.uv_fs_get_ptr(uvr(req)));
 
 	// 20 int64: dev mode nlink uid gid rdev ino size blksize blocks flags gen, then sec/nsec of atim mtim ctim birthtim
-	@:hxmc.noGc static function statInto(p:Ptr, s:Ptr) {
+	@:hxmc.unsafe static function statInto(p:Ptr, s:Ptr) {
 		for (i in 0...12)
 			Mem.setI64(p, 8 * i, Mem.getI64(s, 8 * i));
 		for (i in 0...4) {

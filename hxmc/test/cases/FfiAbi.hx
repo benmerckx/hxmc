@@ -181,8 +181,8 @@ import hxmc.unsafe.*;
 		return r;
 	}
 
-	// (@:hxmc.noGc: called in any state)
-	@:hxmc.callback @:hxmc.noGc static function f3(a:F3, b:F3):F3 {
+	// (@:hxmc.unsafe: called in any state)
+	@:hxmc.callback @:hxmc.unsafe static function f3(a:F3, b:F3):F3 {
 		var r = a;
 		r.x = (a.x : Float) + (b.x : Float);
 		r.y = (a.y : Float) + (b.y : Float);

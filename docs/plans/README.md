@@ -13,6 +13,7 @@ document, native-or-drawn, syntax, ui-next, graphics) moved with them to
 | --- | --- |
 | [compiler.md](compiler.md) | the module cache, the central object cache, macro-heavy builds, Mir macros' size and speed and code generation at run time |
 | [runtime.md](runtime.md) | the collector, stack maps, compact strings, system calls, TLS and the event loop |
+| [memory.md](memory.md) | where hxmc allocates, measured: the self-build's heap, the old space's limits (the tool, the compilation server), runtime hot spots, what was tried |
 | [heap-layout.md](heap-layout.md) | the object header decided by the type index: records, arrays, strings; exact lengths, NativeArray without its word, Array over NativeArray (a proof of concept, measured) |
 | [codegen.md](codegen.md) | escape analysis, debugging information (PDB, `__unwind_info`, variables, wasm DWARF), small codegen items |
 | [targets.md](targets.md) | WebAssembly (and WasmGC), Android, iOS, shared libraries, Linux and macOS items |

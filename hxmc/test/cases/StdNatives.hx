@@ -105,6 +105,10 @@ class StdNatives {
 		var tz = d1.getTimezoneOffset();
 		var utcMinutes = d1.getHours() * 60 + d1.getMinutes() + tz;
 		Sys.println((Std.int((utcMinutes + 1440) / 60) % 24 == d1.getUTCHours()) + " " + ((utcMinutes + 1440) % 60 == d1.getUTCMinutes()) + " " + d1.getUTCSeconds());
+		// (in summer: daylight saving where the zone has it)
+		var d4 = new Date(2020, 6, 15, 13, 45, 30);
+		var utc4 = d4.getHours() * 60 + d4.getMinutes() + d4.getTimezoneOffset();
+		Sys.println((Std.int((utc4 + 1440) / 60) % 24 == d4.getUTCHours()) + " " + ((utc4 + 1440) % 60 == d4.getUTCMinutes()) + " " + d4.getUTCSeconds());
 		var now = Date.now();
 		Sys.println(now.getFullYear() >= 2024 && now.getTime() > d1.getTime());
 		try {

@@ -20,7 +20,7 @@ class GcPaths {
 	// now holds a young pointer, and held none (a slot of an old object that
 	// holds a young pointer is remembered already: every such store comes
 	// through here or rt_barrier_range)
-	@:hxmc.export("hxmc_barrier_slow") @:hxmc.noGc static function barrierSlow(obj:Ptr, slot:Ptr, v:Ptr, prev:Ptr):Void {
+	@:hxmc.export("hxmc_barrier_slow") @:hxmc.unsafe static function barrierSlow(obj:Ptr, slot:Ptr, v:Ptr, prev:Ptr):Void {
 		if (Gc.inYoung(v) && !Gc.inYoung(prev)) Gc.remember(slot);
 	}
 }

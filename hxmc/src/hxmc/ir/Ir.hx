@@ -233,7 +233,7 @@ class FuncInfo {
 	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
-	public var declNoGc:Bool = false; // declared @:hxmc.noGc: Facts.findNoGc fails the build unless noGc
+	public var declNoGc:Bool = false; // declared @:hxmc.unsafe: Facts.findNoGc fails the build unless noGc
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
 	public var withStacks:Bool = false;
 	public var pos:Null<core.Globals.Pos>; // the declaration (errors)

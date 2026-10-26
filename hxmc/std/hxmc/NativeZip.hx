@@ -48,7 +48,7 @@ class NativeZip {
 	static inline function fail(s:Ptr)
 		Mem.setI32(s, ERR, 1);
 
-	@:hxmc.noGc static function bits(s:Ptr, need:Int):Int {
+	@:hxmc.unsafe static function bits(s:Ptr, need:Int):Int {
 		var val:I64 = Mem.getI32(s, BITBUF);
 		val = val & (((1 : I64) << 32) - 1);
 		var cnt = Mem.getI32(s, BITCNT);
@@ -67,7 +67,7 @@ class NativeZip {
 		return (val & (((1 : I64) << need) - 1)).toInt();
 	}
 
-	@:hxmc.noGc static function decode(s:Ptr, h:Ptr):Int {
+	@:hxmc.unsafe static function decode(s:Ptr, h:Ptr):Int {
 		var code = 0, first = 0, index = 0;
 		for (len in 1...16) {
 			code |= bits(s, 1);
@@ -84,7 +84,7 @@ class NativeZip {
 	}
 
 	// 0 for a complete code, > 0 for an incomplete one, < 0 for an oversubscribed one
-	@:hxmc.noGc static function construct(h:Ptr, length:Ptr, n:Int):Int {
+	@:hxmc.unsafe static function construct(h:Ptr, length:Ptr, n:Int):Int {
 		var offs = Mem.stack(32);
 		for (len in 0...16)
 			Mem.setI16(h, 2 * len, 0);
@@ -113,7 +113,7 @@ class NativeZip {
 		return left;
 	}
 
-	@:hxmc.noGc static function codes(s:Ptr, lencode:Ptr, distcode:Ptr) {
+	@:hxmc.unsafe static function codes(s:Ptr, lencode:Ptr, distcode:Ptr) {
 		while (true) {
 			var symbol = decode(s, lencode);
 			if (err(s)) return;
@@ -155,7 +155,7 @@ class NativeZip {
 		}
 	}
 
-	@:hxmc.noGc static function stored(s:Ptr) {
+	@:hxmc.unsafe static function stored(s:Ptr) {
 		Mem.setI32(s, BITBUF, 0); // skip to the next byte boundary
 		Mem.setI32(s, BITCNT, 0);
 		var inpos = Mem.getI64(s, INPOS), inlen = Mem.getI64(s, INLEN);
@@ -180,7 +180,7 @@ class NativeZip {
 		Mem.setI64(s, OUTPOS, outpos + len);
 	}
 
-	@:hxmc.noGc static function fixed(s:Ptr) {
+	@:hxmc.unsafe static function fixed(s:Ptr) {
 		var lencode = Mem.stack(HUFF), distcode = Mem.stack(HUFF);
 		var lengths = Mem.stack(640);
 		for (sym in 0...288)
@@ -192,7 +192,7 @@ class NativeZip {
 		codes(s, lencode, distcode);
 	}
 
-	@:hxmc.noGc static function dynamicBlock(s:Ptr) {
+	@:hxmc.unsafe static function dynamicBlock(s:Ptr) {
 		var lengths = Mem.stack(640);
 		var lencode = Mem.stack(HUFF), distcode = Mem.stack(HUFF);
 		var nlen = bits(s, 5) + 257;
@@ -284,7 +284,7 @@ class NativeZip {
 
 	// the raw DEFLATE stream of inLen bytes at inp inflated into the outLen
 	// bytes at out (inflateRaw's result)
-	@:hxmc.noGc static function inflate(inp:Ptr, inLen:Int, out:Ptr, outLen:Int):Int {
+	@:hxmc.unsafe static function inflate(inp:Ptr, inLen:Int, out:Ptr, outLen:Int):Int {
 		var s = Mem.stack(64);
 		Mem.setPtr(s, IN, inp);
 		Mem.setI64(s, INLEN, inLen);
@@ -311,7 +311,7 @@ class NativeZip {
 	// write the same values)
 	static var crcTable:Ptr;
 
-	@:hxmc.noGc static function table():Ptr {
+	@:hxmc.unsafe static function table():Ptr {
 		var t = crcTable;
 		if (!t.isNull()) return t;
 		t = LibC.malloc(1024);

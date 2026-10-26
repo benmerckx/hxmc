@@ -14,7 +14,7 @@ class DeepFrames {
 	static var calls:Map<String, Int->Int>;
 
 	// 4 KB of frame area per level, written before the call below and read after it
-	@:hxmc.noGc static function down(n:Int):Int {
+	@:hxmc.unsafe static function down(n:Int):Int {
 		var buf = Mem.stack(4096);
 		for (i in 0...1024)
 			Mem.setI32(buf, 4 * i, n * 31 + i);

@@ -43,7 +43,7 @@ class Bytes {
 		Repr.bytesMove(b, pos, src, srcpos, n);
 	}
 
-	@:hxmc.host("hxmc_NativeBytes_fill") @:hxmc.noGc static function fill(b:Dynamic, pos:Int, n:Int, v:Int):Void
+	@:hxmc.host("hxmc_NativeBytes_fill") @:hxmc.unsafe static function fill(b:Dynamic, pos:Int, n:Int, v:Int):Void
 		Repr.bytesFill(b, pos, n, v);
 
 	@:hxmc.host("hxmc_NativeBytes_sub") static function sub(b:Dynamic, pos:Int, n:Int):Dynamic {
@@ -54,7 +54,7 @@ class Bytes {
 	}
 
 	// the difference of the first differing bytes, else of the lengths
-	@:hxmc.host("hxmc_NativeBytes_compare") @:hxmc.noGc static function compare(a:Dynamic, b:Dynamic):Int {
+	@:hxmc.host("hxmc_NativeBytes_compare") @:hxmc.unsafe static function compare(a:Dynamic, b:Dynamic):Int {
 		var na = len(a), nb = len(b);
 		var n = na < nb ? na : nb;
 		var pa = Repr.octets(a), pb = Repr.octets(b);
@@ -63,29 +63,29 @@ class Bytes {
 		return na - nb;
 	}
 
-	@:hxmc.host("hxmc_NativeBytes_getUInt16") @:hxmc.noGc static function getUInt16(b:Dynamic, pos:Int):Int
+	@:hxmc.host("hxmc_NativeBytes_getUInt16") @:hxmc.unsafe static function getUInt16(b:Dynamic, pos:Int):Int
 		return Repr.octets(b).getU16(pos);
 
-	@:hxmc.host("hxmc_NativeBytes_setUInt16") @:hxmc.noGc static function setUInt16(b:Dynamic, pos:Int, v:Int):Void
+	@:hxmc.host("hxmc_NativeBytes_setUInt16") @:hxmc.unsafe static function setUInt16(b:Dynamic, pos:Int, v:Int):Void
 		Repr.octets(b).setU16(pos, v);
 
 	#if !(hxmc.wasm_gc)
-	@:hxmc.host("hxmc_NativeBytes_getInt32") @:hxmc.noGc static function getInt32(b:Dynamic, pos:Int):Int
+	@:hxmc.host("hxmc_NativeBytes_getInt32") @:hxmc.unsafe static function getInt32(b:Dynamic, pos:Int):Int
 		return Mem.getI32(bytes(b), pos);
 
-	@:hxmc.host("hxmc_NativeBytes_setInt32") @:hxmc.noGc static function setInt32(b:Dynamic, pos:Int, v:Int):Void
+	@:hxmc.host("hxmc_NativeBytes_setInt32") @:hxmc.unsafe static function setInt32(b:Dynamic, pos:Int, v:Int):Void
 		Mem.setI32(bytes(b), pos, v);
 
-	@:hxmc.host("hxmc_NativeBytes_getDouble") @:hxmc.noGc static function getDouble(b:Dynamic, pos:Int):Float
+	@:hxmc.host("hxmc_NativeBytes_getDouble") @:hxmc.unsafe static function getDouble(b:Dynamic, pos:Int):Float
 		return Mem.getF64(bytes(b), pos);
 
-	@:hxmc.host("hxmc_NativeBytes_setDouble") @:hxmc.noGc static function setDouble(b:Dynamic, pos:Int, v:Float):Void
+	@:hxmc.host("hxmc_NativeBytes_setDouble") @:hxmc.unsafe static function setDouble(b:Dynamic, pos:Int, v:Float):Void
 		Mem.setF64(bytes(b), pos, v);
 
-	@:hxmc.host("hxmc_NativeBytes_getFloat") @:hxmc.noGc static function getFloat(b:Dynamic, pos:Int):Float
+	@:hxmc.host("hxmc_NativeBytes_getFloat") @:hxmc.unsafe static function getFloat(b:Dynamic, pos:Int):Float
 		return Mem.getF32(bytes(b), pos);
 
-	@:hxmc.host("hxmc_NativeBytes_setFloat") @:hxmc.noGc static function setFloat(b:Dynamic, pos:Int, v:Float):Void
+	@:hxmc.host("hxmc_NativeBytes_setFloat") @:hxmc.unsafe static function setFloat(b:Dynamic, pos:Int, v:Float):Void
 		Mem.setF32(bytes(b), pos, v);
 	#end
 
@@ -191,7 +191,7 @@ class Bytes {
 	@:hxmc.host("haxe_io_BytesBuffer_new") static function bbNew():Dynamic
 		return Repr.bbNew();
 
-	@:hxmc.host("haxe_io_BytesBuffer_get_length") @:hxmc.noGc static function bbGetLength(bb:Dynamic):Int
+	@:hxmc.host("haxe_io_BytesBuffer_get_length") @:hxmc.unsafe static function bbGetLength(bb:Dynamic):Int
 		return bbLen(bb);
 
 	// room for n more bytes
@@ -253,18 +253,18 @@ class Bytes {
 
 	// ---- FPHelper (bit patterns: Repr's)
 
-	@:hxmc.host("haxe_io_FPHelper_i32ToFloat") @:hxmc.noGc static function i32ToFloat(i:Int):Float
+	@:hxmc.host("haxe_io_FPHelper_i32ToFloat") @:hxmc.unsafe static function i32ToFloat(i:Int):Float
 		return Repr.i32ToFloat(i);
 
-	@:hxmc.host("haxe_io_FPHelper_floatToI32") @:hxmc.noGc static function floatToI32(v:Float):Int
+	@:hxmc.host("haxe_io_FPHelper_floatToI32") @:hxmc.unsafe static function floatToI32(v:Float):Int
 		return Repr.floatToI32(v);
 
-	@:hxmc.host("haxe_io_FPHelper_i64ToDouble") @:hxmc.noGc static function i64ToDouble(low:Int, high:Int):Float
+	@:hxmc.host("haxe_io_FPHelper_i64ToDouble") @:hxmc.unsafe static function i64ToDouble(low:Int, high:Int):Float
 		return Repr.i64ToDouble(low, high);
 
-	@:hxmc.host("haxe_io_FPHelper_doubleLow") @:hxmc.noGc static function doubleLow(v:Float):Int
+	@:hxmc.host("haxe_io_FPHelper_doubleLow") @:hxmc.unsafe static function doubleLow(v:Float):Int
 		return Repr.doubleLow(v);
 
-	@:hxmc.host("haxe_io_FPHelper_doubleHigh") @:hxmc.noGc static function doubleHigh(v:Float):Int
+	@:hxmc.host("haxe_io_FPHelper_doubleHigh") @:hxmc.unsafe static function doubleHigh(v:Float):Int
 		return Repr.doubleHigh(v);
 }

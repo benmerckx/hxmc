@@ -19,14 +19,14 @@ class Lib {
 	@:hxmc.export("lib_result") static var result:Int = 0;
 
 	// the library's entry: the runtime runs main on a thread it starts
-	@:hxmc.export("lib_run") @:hxmc.noGc static function run(arg:Int):Int {
+	@:hxmc.export("lib_run") @:hxmc.unsafe static function run(arg:Int):Int {
 		var t = Mem.stack(16);
 		if (P.pthread_create(t, Ptr.nil(), Callback.addr(thread), Ptr.ofI64(arg)) != 0) return -1;
 		P.pthread_join(Mem.getI64(t, 0), Ptr.nil());
 		return result;
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function thread(arg:Ptr):Ptr {
+	@:hxmc.callback @:hxmc.unsafe static function thread(arg:Ptr):Ptr {
 		P.main(0, Ptr.nil());
 		return Ptr.nil();
 	}

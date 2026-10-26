@@ -32,7 +32,7 @@ class Heap {
 	static var arena:Ptr;
 	static var arenaEnd:Ptr;
 
-	@:hxmc.noGc static function init() {
+	@:hxmc.unsafe static function init() {
 		if (!top.isNull()) return;
 		top = Mem.sym("__heap_base");
 		memEnd = new Ptr((Wasm.wasm_memory_size() : I64) * PAGE);
@@ -51,7 +51,7 @@ class Heap {
 	// self-compile, growing by the 1 MB chunks of the old space, made 400
 	// collections, half a second of pauses and twice that on node's other
 	// threads); memory above `fresh` holds zeros and stays untouched
-	@:hxmc.noGc static function tryEnsure(p:Ptr):Bool {
+	@:hxmc.unsafe static function tryEnsure(p:Ptr):Bool {
 		if (!memEnd.ult(p)) return true;
 		var need = p.diff(memEnd);
 		if (need > ((1 : I64) << 32)) {
@@ -68,7 +68,7 @@ class Heap {
 		return true;
 	}
 
-	@:hxmc.noGc static function ensure(p:Ptr) {
+	@:hxmc.unsafe static function ensure(p:Ptr) {
 		if (!tryEnsure(p)) outOfMemory();
 	}
 
@@ -77,7 +77,7 @@ class Heap {
 	// loader shows)
 	// (Wasi.exit: with no current handler, the pads of the frames below do not
 	// take proc_exit's host exception for a Haxe exception and run on)
-	@:hxmc.noGc public static function outOfMemory() {
+	@:hxmc.unsafe public static function outOfMemory() {
 		#if (hxmc.wasm_gc)
 		throw "out of memory";
 		#else
@@ -94,12 +94,12 @@ class Heap {
 	}
 
 	// the end of what was ever handed out (memory above it holds zeros)
-	@:hxmc.noGc public static function freshFrom():Ptr
+	@:hxmc.unsafe public static function freshFrom():Ptr
 		return fresh;
 
 	// zeroes [p, p + bytes) where it may not hold zeros: below `before`
 	// (freshFrom() from before p was handed out)
-	@:hxmc.noGc public static function zeroBelow(p:Ptr, bytes:Int, before:Ptr) {
+	@:hxmc.unsafe public static function zeroBelow(p:Ptr, bytes:Int, before:Ptr) {
 		if (!p.ult(before)) return;
 		var n:I64 = before.diff(p);
 		if (n > (bytes : I64)) n = bytes;
@@ -107,18 +107,18 @@ class Heap {
 	}
 
 	// the size of linear memory in bytes
-	@:hxmc.noGc public static function memoryBytes():I64
+	@:hxmc.unsafe public static function memoryBytes():I64
 		return memEnd.toI64();
 
 	// a region of `bytes` (16-aligned, not zeroed when reused)
-	@:hxmc.noGc public static function region(bytes:Int):Ptr {
+	@:hxmc.unsafe public static function region(bytes:Int):Ptr {
 		var p = tryRegion(bytes);
 		if (p.isNull()) outOfMemory();
 		return p;
 	}
 
 	// the same, or null when memory cannot grow so far
-	@:hxmc.noGc public static function tryRegion(bytes:Int):Ptr {
+	@:hxmc.unsafe public static function tryRegion(bytes:Int):Ptr {
 		init();
 		bytes = (bytes + 15) & ~15;
 		for (i in 0...nfree) {
@@ -141,7 +141,7 @@ class Heap {
 
 	// a region of `bytes` starting at a multiple of `align` (a power of two),
 	// or null when memory cannot grow so far; what alignment skips stays free
-	@:hxmc.noGc public static function tryRegionAligned(bytes:Int, align:Int):Ptr {
+	@:hxmc.unsafe public static function tryRegionAligned(bytes:Int, align:Int):Ptr {
 		init();
 		bytes = (bytes + 15) & ~15;
 		var mask:I64 = align - 1;
@@ -167,7 +167,7 @@ class Heap {
 		return a;
 	}
 
-	@:hxmc.noGc static function addFree(p:Ptr, bytes:I64) {
+	@:hxmc.unsafe static function addFree(p:Ptr, bytes:I64) {
 		if (nfree == MAX_FREE) return; // (lost: the table is full)
 		Mem.setPtr(freeTab, 16 * nfree, p);
 		Mem.setI64(freeTab, 16 * nfree + 8, bytes);
@@ -176,7 +176,7 @@ class Heap {
 
 	// a region of `bytes`, zeroed (only what was handed out before: memory
 	// fresh from memory.grow is zero, and stays uncommitted until touched)
-	@:hxmc.noGc public static function regionZero(bytes:Int):Ptr {
+	@:hxmc.unsafe public static function regionZero(bytes:Int):Ptr {
 		var before = fresh;
 		var p = region(bytes);
 		zeroBelow(p, (bytes + 15) & ~15, before);
@@ -185,7 +185,7 @@ class Heap {
 
 	// grows the region [p, p + bytes) in place to `to` bytes when it is the
 	// last one (false: it is not, or memory cannot grow so far)
-	@:hxmc.noGc public static function tryExtend(p:Ptr, bytes:Int, to:Int):Bool {
+	@:hxmc.unsafe public static function tryExtend(p:Ptr, bytes:Int, to:Int):Bool {
 		bytes = (bytes + 15) & ~15;
 		to = (to + 15) & ~15;
 		if (p.add(bytes) != top || !tryEnsure(p.add(to))) return false;
@@ -194,7 +194,7 @@ class Heap {
 		return true;
 	}
 
-	@:hxmc.noGc static function removeFree(i:Int) {
+	@:hxmc.unsafe static function removeFree(i:Int) {
 		nfree--;
 		if (i < nfree) {
 			Mem.setPtr(freeTab, 16 * i, Mem.getPtr(freeTab, 16 * nfree));
@@ -203,7 +203,7 @@ class Heap {
 	}
 
 	// returns a region; neighbours merge, and one at the top lowers it
-	@:hxmc.noGc public static function release(p:Ptr, size:Int) {
+	@:hxmc.unsafe public static function release(p:Ptr, size:Int) {
 		var bytes:I64 = (size + 15) & ~15;
 		var merged = true;
 		while (merged) {
@@ -238,7 +238,7 @@ class Heap {
 	static inline function classHead(c:Int):Ptr
 		return freeTab.add(16 * MAX_FREE + 8 * c);
 
-	@:hxmc.noGc static function classOf(n:Int):Int {
+	@:hxmc.unsafe static function classOf(n:Int):Int {
 		var c = MIN_CLASS;
 		while ((1 << c) < n + 8)
 			c++;
@@ -247,7 +247,7 @@ class Heap {
 
 	// the block's header (8 bytes before it): twice its class (even), or for a region
 	// (larger than the largest class) its size + 1
-	@:hxmc.export("malloc") @:hxmc.noGc public static function malloc(n:I64):Ptr {
+	@:hxmc.export("malloc") @:hxmc.unsafe public static function malloc(n:I64):Ptr {
 		init();
 		var size = n.toInt();
 		if (size < 0 || n > (0x7fff0000 : I64)) return Ptr.nil();
@@ -274,7 +274,7 @@ class Heap {
 		return blk.add(8);
 	}
 
-	@:hxmc.export("free") @:hxmc.noGc public static function free(p:Ptr):Void {
+	@:hxmc.export("free") @:hxmc.unsafe public static function free(p:Ptr):Void {
 		if (p.isNull()) return;
 		var hdr = Mem.getI64(p, -8).toInt();
 		if ((hdr & 1) != 0) {
@@ -286,12 +286,12 @@ class Heap {
 		Mem.setPtr(h, 0, p);
 	}
 
-	@:hxmc.noGc static function usable(p:Ptr):Int {
+	@:hxmc.unsafe static function usable(p:Ptr):Int {
 		var hdr = Mem.getI64(p, -8).toInt();
 		return (hdr & 1) != 0 ? hdr - 1 - 16 : (1 << (hdr >> 1)) - 8;
 	}
 
-	@:hxmc.export("realloc") @:hxmc.noGc public static function realloc(p:Ptr, n:I64):Ptr {
+	@:hxmc.export("realloc") @:hxmc.unsafe public static function realloc(p:Ptr, n:I64):Ptr {
 		if (p.isNull()) return malloc(n);
 		var have = usable(p);
 		if (n <= (have : I64)) return p;
@@ -302,7 +302,7 @@ class Heap {
 		return q;
 	}
 
-	@:hxmc.export("calloc") @:hxmc.noGc public static function calloc(n:I64, size:I64):Ptr {
+	@:hxmc.export("calloc") @:hxmc.unsafe public static function calloc(n:I64, size:I64):Ptr {
 		var bytes = n * size;
 		var before = fresh;
 		var p = malloc(bytes);
@@ -312,14 +312,14 @@ class Heap {
 
 	// ---- C strings
 
-	@:hxmc.export("strlen") @:hxmc.noGc public static function strlen(s:Ptr):I64 {
+	@:hxmc.export("strlen") @:hxmc.unsafe public static function strlen(s:Ptr):I64 {
 		var n = 0;
 		while (Mem.getU8(s, n) != 0)
 			n++;
 		return n;
 	}
 
-	@:hxmc.export("strcmp") @:hxmc.noGc public static function strcmp(a:Ptr, b:Ptr):Int {
+	@:hxmc.export("strcmp") @:hxmc.unsafe public static function strcmp(a:Ptr, b:Ptr):Int {
 		var i = 0;
 		while (true) {
 			var x = Mem.getU8(a, i), y = Mem.getU8(b, i);
@@ -329,10 +329,10 @@ class Heap {
 		}
 	}
 
-	@:hxmc.export("memcmp") @:hxmc.noGc public static function memcmp(a:Ptr, b:Ptr, n:I64):Int
+	@:hxmc.export("memcmp") @:hxmc.unsafe public static function memcmp(a:Ptr, b:Ptr, n:I64):Int
 		return hxmc.rt.MemOps.compare(a, b, n);
 
-	@:hxmc.export("strdup") @:hxmc.noGc public static function strdup(s:Ptr):Ptr {
+	@:hxmc.export("strdup") @:hxmc.unsafe public static function strdup(s:Ptr):Ptr {
 		var n = strlen(s);
 		var p = malloc(n + 1);
 		Wasm.memcpy(p, s, n + 1);

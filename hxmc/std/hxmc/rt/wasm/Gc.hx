@@ -18,7 +18,7 @@ import hxmc.unsafe.Ptr;
 // memory cannot afford), no thread handshake (one thread, thread-locals are
 // globals), no native handles (no C resources), and finalisers are
 // registered but never run. Every function here is
-// @:hxmc.noGc: it runs while objects move, with raw addresses.
+// @:hxmc.unsafe: it runs while objects move, with raw addresses.
 @:hxmc.wasm @:keep
 class Gc {
 	static inline var MINOR_MAX = 32 << 20;
@@ -51,6 +51,7 @@ class Gc {
 	static var oldEnd:Ptr; // its end
 	static var oldBytes:I64; // the size of the old space's chunks and regions
 	static var oldLimit:I64; // a major collection rather than growing past it
+	static var growth:Int; // the next limit, in percent of what a major collection left live (RT_OLD_GROWTH)
 	static var pool:Ptr; // free chunks, linked through their first word
 	static var poolBytes:I64;
 	// a byte per 64 KB of memory: 1 in the old space (the from-space during a
@@ -95,7 +96,7 @@ class Gc {
 
 	// ---- startup
 
-	@:hxmc.export("rt_init") @:hxmc.noGc static function init(ng:Int, argc:Int, argv:Ptr):Void {
+	@:hxmc.export("rt_init") @:hxmc.unsafe static function init(ng:Int, argc:Int, argv:Ptr):Void {
 		Heap.malloc(0); // (the heap's tables)
 		Wasi.init();
 		var m = Wasi.envInt("RT_MINOR_KB", -1);
@@ -115,6 +116,7 @@ class Gc {
 		emptyChunk();
 		var om = Wasi.envInt("RT_OLD_MB", 32);
 		oldLimit = (om : I64) << 20;
+		growth = Wasi.envInt("RT_OLD_GROWTH", 200);
 		gran = Heap.regionZero(1 << (32 - GRAN_SHIFT));
 		chunksCap = 256;
 		chunks = Heap.malloc(24 * chunksCap);
@@ -160,7 +162,7 @@ class Gc {
 		}
 	}
 
-	@:hxmc.noGc static function setYoungEnd(e:Ptr) {
+	@:hxmc.unsafe static function setYoungEnd(e:Ptr) {
 		youngEnd = e;
 		Mem.setPtr(Mem.sym("rt_young_end"), 0, e);
 	}
@@ -168,7 +170,7 @@ class Gc {
 	// the nursery in the region r of cap bytes (empty: at startup, or right
 	// after a minor collection); what the region holds below `before`
 	// (Heap.freshFrom() before it was taken) may not be zeros
-	@:hxmc.noGc static function placeNursery(r:Ptr, cap:Int, before:Ptr) {
+	@:hxmc.unsafe static function placeNursery(r:Ptr, cap:Int, before:Ptr) {
 		nurseryCap = cap;
 		youngStart = r;
 		Mem.setPtr(Mem.sym("rt_young_start"), 0, r);
@@ -181,7 +183,7 @@ class Gc {
 	static var cstackBase:Ptr;
 	static inline var CSTACK_RESERVE = 64 << 10;
 
-	@:hxmc.export("rt_stack_overflow") @:hxmc.noGc static function stackOverflow():Void {
+	@:hxmc.export("rt_stack_overflow") @:hxmc.unsafe static function stackOverflow():Void {
 		Wasi.writeLit(2, "stack overflow: the shadow stack's ");
 		Wasi.writeInt(2, stackMb);
 		Wasi.writeLit(2, " MB are full (RT_STACK_MB sets its size)\n");
@@ -189,15 +191,15 @@ class Gc {
 	}
 
 	// the stack of frame slots (_start, DataGen): its end and its top
-	@:hxmc.export("rt_cstack_lo") @:hxmc.noGc static function cstackLo():Ptr
+	@:hxmc.export("rt_cstack_lo") @:hxmc.unsafe static function cstackLo():Ptr
 		return cstackBase.add(CSTACK_RESERVE);
 
-	@:hxmc.export("rt_cstack_top") @:hxmc.noGc static function cstackTop():Ptr
+	@:hxmc.export("rt_cstack_top") @:hxmc.unsafe static function cstackTop():Ptr
 		return cstackBase.add((stackMb << 20) + CSTACK_RESERVE);
 
 	// a frame would go below rt_cstack_lo (WasmGen's prologue). Without a
 	// frame itself: the reserve below the end becomes the stack for the message
-	@:hxmc.export("rt_cstack_overflow") @:hxmc.noGc static function cstackOverflow():Void {
+	@:hxmc.export("rt_cstack_overflow") @:hxmc.unsafe static function cstackOverflow():Void {
 		Mem.tlsSet("rt_cstack_lo", cstackBase);
 		Wasi.writeLit(2, "stack overflow: the frame stack's ");
 		Wasi.writeInt(2, stackMb);
@@ -215,14 +217,14 @@ class Gc {
 	// instead of zeros, the chunk is the whole free nursery, and
 	// rt_young_limit is null, so those take the slow path, which zeroes them.
 
-	@:hxmc.noGc static function emptyChunk() {
+	@:hxmc.unsafe static function emptyChunk() {
 		Mem.tlsSet("rt_young_ptr", youngStart);
 		Mem.tlsSet("rt_young_rlimit", youngStart);
 		Mem.tlsSet("rt_young_limit", youngStart);
 	}
 
 	// the next chunk, from the allocation pointer, with room for bytes (false: none)
-	@:hxmc.noGc static function nextChunk(bytes:Int):Bool {
+	@:hxmc.unsafe static function nextChunk(bytes:Int):Bool {
 		var p = Mem.tlsGet("rt_young_ptr");
 		var avail = youngEnd.diff(p);
 		if (avail < (bytes : I64)) return false;
@@ -277,7 +279,7 @@ class Gc {
 	// ---- the old space
 
 	// `bytes` in the old space (null: memory cannot grow so far)
-	@:hxmc.noGc static function oldAlloc(bytes:Int):Ptr {
+	@:hxmc.unsafe static function oldAlloc(bytes:Int):Ptr {
 		var p = oldPtr;
 		if (oldEnd.diff(p) >= (bytes : I64)) {
 			oldPtr = p.add(bytes);
@@ -286,7 +288,7 @@ class Gc {
 		return oldAllocSlow(bytes);
 	}
 
-	@:hxmc.noGc static function oldAllocSlow(bytes:Int):Ptr {
+	@:hxmc.unsafe static function oldAllocSlow(bytes:Int):Ptr {
 		if (bytes > LARGE) {
 			var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
 			var r = Heap.tryRegionAligned(size, GRAN);
@@ -309,7 +311,7 @@ class Gc {
 		return c;
 	}
 
-	@:hxmc.noGc static function addChunk(start:Ptr, end:Ptr, size:Int) {
+	@:hxmc.unsafe static function addChunk(start:Ptr, end:Ptr, size:Int) {
 		if (nchunks == chunksCap) {
 			chunksCap *= 2;
 			chunks = Heap.realloc(chunks, 24 * chunksCap);
@@ -322,27 +324,27 @@ class Gc {
 		mark(start, size, newState);
 	}
 
-	@:hxmc.noGc static function mark(start:Ptr, size:Int, state:Int) {
+	@:hxmc.unsafe static function mark(start:Ptr, size:Int, state:Int) {
 		var g = (start.toI64() >>> GRAN_SHIFT).toInt();
 		for (i in 0...(size >> GRAN_SHIFT))
 			Mem.setI8(gran, g + i, state);
 	}
 
 	// the current chunk's used end into the list
-	@:hxmc.noGc static function syncCur() {
+	@:hxmc.unsafe static function syncCur() {
 		if (cur >= 0) Mem.setPtr(chunks, 24 * cur + 8, oldPtr);
 	}
 
 	// ---- the write barrier
 
-	@:hxmc.export("hxmc_barrier_slow") @:hxmc.noGc static function barrierSlow(obj:Ptr, slot:Ptr, v:Ptr, prev:Ptr):Void {
+	@:hxmc.export("hxmc_barrier_slow") @:hxmc.unsafe static function barrierSlow(obj:Ptr, slot:Ptr, v:Ptr, prev:Ptr):Void {
 		if (inYoung(v) && !inYoung(prev)) remember(slot);
 	}
 
-	@:hxmc.export("rt_write_barrier") @:hxmc.noGc static function writeBarrier(obj:Ptr, slot:Ptr, v:Ptr):Void
+	@:hxmc.export("rt_write_barrier") @:hxmc.unsafe static function writeBarrier(obj:Ptr, slot:Ptr, v:Ptr):Void
 		remember(slot);
 
-	@:hxmc.noGc static function remember(slot:Ptr) {
+	@:hxmc.unsafe static function remember(slot:Ptr) {
 		if (remLen == remCap) {
 			remCap *= 2;
 			rem = Heap.realloc(rem, 8 * remCap);
@@ -351,7 +353,7 @@ class Gc {
 		remLen++;
 	}
 
-	@:hxmc.noGc static function rememberObj(o:Ptr) {
+	@:hxmc.unsafe static function rememberObj(o:Ptr) {
 		var h = (o.toI64() >> 4).toInt() & 255;
 		if (Mem.getPtr(robjsRecent, 8 * h) == o) return;
 		Mem.setPtr(robjsRecent, 8 * h, o);
@@ -363,7 +365,7 @@ class Gc {
 		robjsLen++;
 	}
 
-	@:hxmc.export("rt_barrier_range") @:hxmc.noGc static function barrierRange(obj:Ptr, from:Ptr, n:Int):Void {
+	@:hxmc.export("rt_barrier_range") @:hxmc.unsafe static function barrierRange(obj:Ptr, from:Ptr, n:Int):Void {
 		if (inYoung(obj)) return;
 		if (n > 16) {
 			rememberObj(obj);
@@ -375,7 +377,7 @@ class Gc {
 
 	// ---- collection
 
-	@:hxmc.noGc static function copyTo(dst:Ptr, obj:Ptr):Ptr {
+	@:hxmc.unsafe static function copyTo(dst:Ptr, obj:Ptr):Ptr {
 		var words = nslotsOf(obj) + 1;
 		var s = obj.add(-8);
 		if (words <= 8) {
@@ -386,10 +388,10 @@ class Gc {
 		return dst.add(8);
 	}
 
-	@:hxmc.noGc static function forwardTo(p:Ptr, n:Ptr)
+	@:hxmc.unsafe static function forwardTo(p:Ptr, n:Ptr)
 		setFwd(p, n);
 
-	@:hxmc.noGc static function fwd(p:Ptr):Ptr {
+	@:hxmc.unsafe static function fwd(p:Ptr):Ptr {
 		if (!inYoung(p) && !(major && inFrom(p))) return p;
 		if (isFwdAt(p)) return fwdAddr(p);
 		var bytes = objBytes(p);
@@ -402,7 +404,7 @@ class Gc {
 		return n;
 	}
 
-	@:hxmc.noGc static function push(o:Ptr) {
+	@:hxmc.unsafe static function push(o:Ptr) {
 		if (gcTop == gcCap) {
 			gcCap *= 2;
 			gcStack = Heap.realloc(gcStack, 16 * gcCap);
@@ -412,7 +414,7 @@ class Gc {
 		gcTop++;
 	}
 
-	@:hxmc.noGc static function drain() {
+	@:hxmc.unsafe static function drain() {
 		while (gcTop > 0) {
 			var f = gcStack.add(16 * (gcTop - 1));
 			var o = Mem.getPtr(f, 0);
@@ -450,7 +452,7 @@ class Gc {
 		}
 	}
 
-	@:hxmc.noGc static function fwdRoot(p:Ptr):Ptr {
+	@:hxmc.unsafe static function fwdRoot(p:Ptr):Ptr {
 		var before = copies;
 		var n = fwd(p);
 		if (copies != before) {
@@ -460,12 +462,12 @@ class Gc {
 		return n;
 	}
 
-	@:hxmc.noGc static function rootAt(slot:Ptr) {
+	@:hxmc.unsafe static function rootAt(slot:Ptr) {
 		var v = Mem.getPtr(slot, 0);
 		if (!v.isNull()) Mem.setPtr(slot, 0, fwdRoot(v));
 	}
 
-	@:hxmc.noGc static function scanObject(o:Ptr) {
+	@:hxmc.unsafe static function scanObject(o:Ptr) {
 		var n = nslotsOf(o);
 		switch kindOf(o) {
 			case K_OBJ:
@@ -480,7 +482,7 @@ class Gc {
 		}
 	}
 
-	@:hxmc.noGc static function scanRoots() {
+	@:hxmc.unsafe static function scanRoots() {
 		var sp = Mem.tlsGet("rt_sp");
 		var s = stackBase;
 		while (s.ult(sp)) {
@@ -494,7 +496,7 @@ class Gc {
 		if (!e.isNull()) Mem.tlsSet("rt_exn", fwdRoot(e));
 	}
 
-	@:hxmc.noGc static function minorGc() {
+	@:hxmc.unsafe static function minorGc() {
 		var used = Mem.tlsGet("rt_young_ptr").diff(youngStart);
 		// (what survives fills chunks to within LARGE of their end: an eighth more)
 		if (oldBytes + used + (used >> 3) + CHUNK > oldLimit) {
@@ -514,7 +516,7 @@ class Gc {
 		Wasm.memset(robjsRecent, 0, 8 * 256);
 	}
 
-	@:hxmc.noGc static function majorGc(need:Int) {
+	@:hxmc.unsafe static function majorGc(need:Int) {
 		majors++;
 		collections++;
 		// the old space's chunks become the from-space; the to-space's are taken
@@ -553,11 +555,11 @@ class Gc {
 		}
 		for (i in 0...nchunks)
 			mark(Mem.getPtr(chunks, 24 * i), Mem.getI64(chunks, 24 * i + 16).toInt(), 1);
-		// the next limit: twice what is live and room for the nursery, but at
-		// most half of what the rest of a wasm32 memory (4 GB) leaves: the next
-		// collection's from-space and to-space must both fit
+		// the next limit: `growth` percent of what is live (twice) and room for
+		// the nursery, but at most half of what the rest of a wasm32 memory (4
+		// GB) leaves: the next collection's from-space and to-space must both fit
 		var live = oldBytes;
-		var limit = live * 2 + (minorSize : I64) * 4 + need;
+		var limit = live * growth / 100 + (minorSize : I64) * 4 + need;
 		if (limit < (MIN_OLD : I64)) limit = MIN_OLD;
 		var other = Heap.memoryBytes() - oldBytes - poolBytes;
 		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
@@ -573,7 +575,7 @@ class Gc {
 	// thread, doubled after a collection that promoted more than a 16th and
 	// halved after LOW_PROMOTION_AFTER in a row that promoted less than a
 	// 64th, between MINOR_MIN and MINOR_MAX
-	@:hxmc.noGc static function adaptNursery(promoted:Int, used:Int) {
+	@:hxmc.unsafe static function adaptNursery(promoted:Int, used:Int) {
 		if ((promoted : I64) * 16 > (used : I64)) {
 			lowFor = 0;
 			if (!growthOff && minorSize < MINOR_MAX) resizeNursery(minorSize * 2);
@@ -587,7 +589,7 @@ class Gc {
 	}
 
 	// (right after a minor collection: the nursery is empty, so it may move)
-	@:hxmc.noGc static function resizeNursery(size:Int) {
+	@:hxmc.unsafe static function resizeNursery(size:Int) {
 		if (stats) {
 			Wasi.writeLit(2, "gc: nursery ");
 			Wasi.writeInt(2, size >> 10);
@@ -620,7 +622,7 @@ class Gc {
 		setYoungEnd(youngStart.add(size));
 	}
 
-	@:hxmc.noGc static function collectFor(full:Bool, need:Int) {
+	@:hxmc.unsafe static function collectFor(full:Bool, need:Int) {
 		var hi = Mem.tlsGet("rt_young_rlimit");
 		if (youngDirty.ult(hi)) youngDirty = hi;
 		if (verifying) verify(false);
@@ -650,7 +652,7 @@ class Gc {
 	static var verifying:Bool;
 	static inline var POISON = 0xA5;
 
-	@:hxmc.noGc static function verify(after:Bool) {
+	@:hxmc.unsafe static function verify(after:Bool) {
 		syncCur();
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);
 		var count = 0;
@@ -678,7 +680,7 @@ class Gc {
 
 	// RT_VERIFY=1, before each collection: every young reference in the old
 	// space is in a remembered slot or object (the write barrier missed none)
-	@:hxmc.noGc static function checkRemembered() {
+	@:hxmc.unsafe static function checkRemembered() {
 		var cap = 1;
 		while (cap < 2 * (remLen + robjsLen) + 16)
 			cap <<= 1;
@@ -729,7 +731,7 @@ class Gc {
 		Heap.free(tab);
 	}
 
-	@:hxmc.noGc static function bad(lit:String, a:Int, b:Int, c:Int) {
+	@:hxmc.unsafe static function bad(lit:String, a:Int, b:Int, c:Int) {
 		Wasi.writeLit(2, lit);
 		Wasi.writeInt(2, a);
 		Wasi.writeLit(2, " ");
@@ -746,16 +748,16 @@ class Gc {
 		collectFor(full, 0);
 
 	// (finalisers never run: WebAssembly programs have no resources to free behind values)
-	@:hxmc.noGc public static function finalise(fn:Dynamic->Void, v:Dynamic):Void {}
+	@:hxmc.unsafe public static function finalise(fn:Dynamic->Void, v:Dynamic):Void {}
 
-	@:hxmc.noGc public static function runFinalisers():Void {}
+	@:hxmc.unsafe public static function runFinalisers():Void {}
 
-	@:hxmc.noGc public static function heapBytes():Float {
+	@:hxmc.unsafe public static function heapBytes():Float {
 		var b:Float = cast oldLimit;
 		return b + minorSize;
 	}
 
-	@:hxmc.noGc public static function reached():Bool
+	@:hxmc.unsafe public static function reached():Bool
 		return false;
 
 	// (no object sizes: 0)

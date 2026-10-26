@@ -10,13 +10,13 @@ import hxmc.unsafe.*;
 class AndroidHello {
 	static var activity:Ptr;
 
-	@:hxmc.export("ANativeActivity_onCreate") @:hxmc.noGc static function onCreate(a:Ptr, saved:Ptr, savedSize:Int64):Void {
+	@:hxmc.export("ANativeActivity_onCreate") @:hxmc.unsafe static function onCreate(a:Ptr, saved:Ptr, savedSize:Int64):Void {
 		activity = a;
 		var t = Mem.stack(8);
 		Threads.pthread_create(t, Ptr.nil(), Callback.addr(programThread), Ptr.nil());
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function programThread(arg:Ptr):Ptr {
+	@:hxmc.callback @:hxmc.unsafe static function programThread(arg:Ptr):Ptr {
 		var argv = Mem.stack(16);
 		Mem.setPtr(argv, 0, Mem.cstr("app"));
 		Mem.setPtr(argv, 8, Ptr.nil());
