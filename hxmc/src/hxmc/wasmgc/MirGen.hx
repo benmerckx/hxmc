@@ -588,7 +588,7 @@ class MirGen extends FuncGen {
 	// itself (null: none, or FuncGen writes it from locals)
 	function rawOps(i:MIns):Null<Array<Int>> {
 		return switch i.op {
-			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Div | Rem | FAdd | FSub | FMul | FDiv: [i.a, i.b];
+			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Div | Rem | UDiv | URem | FAdd | FSub | FMul | FDiv: [i.a, i.b];
 			case Not | FNeg | FSqrt | FAbs | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | NullCheck | VarSet: [i.a];
 			case Cmp:
 				var ka = valueKey(i.a), kb = valueKey(i.b);
@@ -623,7 +623,7 @@ class MirGen extends FuncGen {
 	function producer(i:MIns):Bool {
 		if (keys[i.id] == null) return false;
 		return switch i.op {
-			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Div | Rem | FAdd | FSub | FMul | FDiv | Neg | Not | FNeg | FSqrt | FAbs | SExt | ZExt
+			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Div | Rem | UDiv | URem | FAdd | FSub | FMul | FDiv | Neg | Not | FNeg | FSqrt | FAbs | SExt | ZExt
 				| Trunc | I2F | F2I | BitsToF | FToBits | Cmp | Select | Call | GetField | EnumTag | TypeTest | Box | Unbox | VirtualCall | ClosureCall | AnonGet
 				| AnonCall | ArrayLength | ArrayGet: true;
 			case IrNode: i.info.ex != null;
@@ -1027,7 +1027,7 @@ class MirGen extends FuncGen {
 					push(i.a, keys[i.id]);
 					localSet(locs[i.id]);
 				}
-			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Div | Rem:
+			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Div | Rem | UDiv | URem:
 				arith(i);
 			case FAdd | FSub | FMul | FDiv:
 				push(i.a, "f");
@@ -1269,6 +1269,8 @@ class MirGen extends FuncGen {
 			case Mul: w ? 0x7E : 0x6C;
 			case Div: w ? 0x7F : 0x6D;
 			case Rem: w ? 0x81 : 0x6F;
+			case UDiv: w ? 0x80 : 0x6E;
+			case URem: w ? 0x82 : 0x70;
 			case And: w ? 0x83 : 0x71;
 			case Or: w ? 0x84 : 0x72;
 			case Xor: w ? 0x85 : 0x73;

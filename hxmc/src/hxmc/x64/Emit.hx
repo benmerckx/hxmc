@@ -458,7 +458,7 @@ class Emit implements hxmc.Target.Emitter {
 			case CQO:
 				a.signExtendAx(i.size);
 			case IDIV:
-				a.idiv(i.size, i.s1);
+				a.unary(i.cond == 6 ? 6 : 7, i.size, i.s1);
 			case CMP:
 				a.aluRR(Asm.CMP, i.size, i.s1, i.s2);
 			case CMPI:

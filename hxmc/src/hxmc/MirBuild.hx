@@ -2233,6 +2233,8 @@ class MirBuild extends MirWriter {
 			// (a struct value's memory: FnLower.newSlot)
 			case "structSlot": stackAddr(f.slot((intLiteral(args[0], "a struct slot") + 7) & ~7, intLiteral(args[1], "a struct slot")));
 			case "ult": cmp(CULt, ex(args[0]), ex(args[1]));
+			case "udiv": op2(UDiv, I64, ex(args[0]), ex(args[1]));
+			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));
 			case "bitsF64": op1(BitsToF, F64, ex(args[0]));
 			case "getI8": ld(I32, 1, true);
