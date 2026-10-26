@@ -26,6 +26,7 @@ import macros.MacroApi.CompilerApi;
 @:access(hxmc.macro.BundleFacts)
 @:access(hxmc.macro.Loader)
 @:access(hxmc.rt.Interp)
+@:access(hxmc.rt.Gc)
 @:access(hxmc.interp.MirRun)
 @:access(macros.MacroApi.MacroApiImpl)
 class MirMacros implements macros.MacroEngine.IMacroEngine {
@@ -743,18 +744,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var f = p.f;
 		var st = p.step.lineage.latest;
 		var sym = st.d.prep.funcSym(f);
-		// (the arguments' references, kept across the collections compiling makes)
-		var n = f.args.length;
-		var refs:Array<Dynamic> = [];
-		refs.resize(n);
-		for (j in 0...n)
-			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) refs[j] = Mem.obj(Mem.getPtr(regs, 8 * j));
+		// (the arguments' references, kept across the collections compiling
+		// makes: rooted before anything is allocated, which may collect and
+		// move them while regs still has their old addresses)
+		var refs = rootArgs(f, regs);
 		// (macro code's threads: one compiles, the others find it compiled)
 		lazyLock.acquire();
 		if (!hxmc.rt.Interp.isStub(desc)) {
 			lazyLock.release();
-			for (j in 0...n)
-				if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
+			unrootArgs(f, regs, refs);
 			return;
 		}
 		var order = hxmc.rt.EvalCompat.on;
@@ -787,12 +785,34 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (st.cache != null && Driver.resident) CacheDir.settle();
 		hxmc.rt.EvalCompat.on = order;
 		lazyLock.release();
-		for (j in 0...n)
-			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) Mem.setPtr(regs, 8 * j, Mem.addr(refs[j]));
+		unrootArgs(f, regs, refs);
 		lazyCompiled++;
 		var dt = haxe.Timer.stamp() - t0;
 		tCompile += dt;
 		if (stats) phases.set("compiled when first called", (phases.exists("compiled when first called") ? phases.get("compiled when first called") : 0.0) + dt);
+	}
+
+	// the references among f's arguments at regs (the interpreter's
+	// registers, which no collection sees) pushed on this thread's shadow
+	// stack, nothing allocated before; the first slot. Inline: pushed in the
+	// caller's frame, above its slots, given back as it returns or unwinds
+	// (its frame's pop); per thread, as threads may call stubs at once
+	static inline function rootArgs(f:FuncInfo, regs:Ptr):Ptr {
+		var first = hxmc.rt.Gc.sp;
+		for (j in 0...f.args.length)
+			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) hxmc.rt.Gc.pushRoot(Mem.obj(Mem.getPtr(regs, 8 * j)));
+		return first;
+	}
+
+	// (rootArgs' references, as collections left them, written back to regs)
+	static inline function unrootArgs(f:FuncInfo, regs:Ptr, first:Ptr) {
+		var s = first;
+		for (j in 0...f.args.length)
+			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) {
+				Mem.setPtr(regs, 8 * j, Mem.getPtr(s, 0));
+				s = s.add(8);
+			}
+		hxmc.rt.Gc.popRoots(first);
 	}
 
 	// the bytes of the bundles loaded (code: always 0, interp.InterpAbi)
@@ -803,6 +823,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// the interpreter's words (hxmc.rt.Interp.enter), its result back
 	function call(fi:FuncInfo, desc:Ptr, args:Array<Dynamic>, api:CompilerApi):Dynamic {
 		var n = fi.args.length;
+		// (the macro function's site: the macro call's position, as
+		// EvalMain.callPath's frame has it; before the addresses are written,
+		// as it may allocate: a collection then would leave them stale)
+		pending = site(api.pos);
 		var buf = LibC.malloc(((n > 0 ? n : 1) * 8 : I64));
 		for (k in 0...n) {
 			var v:Dynamic = k < args.length ? args[k] : null;
@@ -817,8 +841,6 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 					Mem.setPtr(buf, 8 * k, Mem.addr(v));
 			}
 		}
-		// (the macro function's site: the macro call's position, as EvalMain.callPath's frame has it)
-		pending = site(api.pos);
 		// (no collection between the addresses written and the frame taking them;
 		// the macro code sees values as Eval shows them: hxmc.rt.EvalCompat)
 		var order = hxmc.rt.EvalCompat.on;
