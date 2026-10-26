@@ -1,6 +1,6 @@
 {
   "name": "{pkg}",
-  "description": "The native compiler of @hxmc/cli for {os} {cpu} (the Haxe compiler ported to Haxe, with hxmc built in)",
+  "description": "The native compiler of @hxmc/cli for {os} {cpu} (the Haxe compiler ported to Haxe, with hxmc built in) and the runtime objects of {rtList}",
   "os": [
     "{os}"
   ],
@@ -9,6 +9,8 @@
   ],
   "files": [
     "{exe}",
+    "LICENSE.mbedtls",
+    "LICENSE.libuv",
     "LICENSE",
     "COPYING"
   ]

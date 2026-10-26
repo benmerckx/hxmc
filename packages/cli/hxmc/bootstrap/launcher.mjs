@@ -1,20 +1,23 @@
-// The `haxe` command of the npm package @hxmc/cli (docs/using.md):
+// The `haxe` and `hxmc` commands of the npm package @hxmc/cli (docs/using.md):
 // runs, in this order,
 // - the compiler `hxmc-rebuild` built from @hxmc/source (in the cache), while
-//   @hxmc/source is installed;
+//   @hxmc/source is installed (packages/source: not published);
 // - the platform package's native compiler (@hxmc/<os>-<cpu>, an optional
-//   dependency), when it can run here;
-// - else the compiler as a WebAssembly module (@hxmc/wasm under node's WASI:
-//   installed, or downloaded once into the cache: wasm.mjs).
+//   dependency);
+// with neither, it says which machines it runs on and exits non-zero.
+// It gives the compiler the std (haxe/upstream/std), hxmc's std
+// (hxmc/bootstrap/hxmc-std: HXMC_STD) and the directories of the runtime
+// objects (HXMC_RT_DIR: rtDirs()).
 // On Unix the native compiler then replaces hxmc/bootstrap/haxe and dist/haxe,
-// so npm's link and lix run it without node.
+// so npm's link and lix run it without node (builds for the hxmc target come
+// back here: hxmc.HaxeMain runs haxe.mjs).
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { PLATFORMS } from './platforms.mjs';
 
 export const bootDir = path.dirname(fileURLToPath(import.meta.url));
@@ -22,12 +25,13 @@ export const pkgDir = path.dirname(path.dirname(bootDir));
 export const pkgJson = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
 export const version = pkgJson.version;
 // (the repository's packages/cli, where these files are sources)
-const checkout = fs.existsSync(path.join(pkgDir, '..', '..', 'hxmc', 'bootstrap', 'stage0.wasm.br'));
+const repo = path.join(pkgDir, '..', '..');
+const checkout = fs.existsSync(path.join(repo, 'hxmc', 'bootstrap', 'stage0.wasm.br'));
 // upstream's std: haxe/upstream/std of the package (of the repository in a checkout)
-const stdDir = path.join(pkgDir, ...(checkout ? ['..', '..'] : []), 'haxe', 'upstream', 'std');
+const stdDir = path.join(checkout ? repo : pkgDir, 'haxe', 'upstream', 'std');
 const require = createRequire(import.meta.url);
 
-// hxmc's name of this machine (null: no native build, WebAssembly only)
+// hxmc's name of this machine (null: no platform package)
 export function hostTarget() {
 	const arch = { x64: 'x86_64', arm64: 'arm64' }[process.arch];
 	const plat = { linux: 'linux', darwin: 'macos', win32: 'windows' }[process.platform];
@@ -47,20 +51,58 @@ export function cacheBase() {
 }
 
 // what the npm packages of this version keep there: <cache>/npm/<version>/
-// (wasm/: @hxmc/wasm downloaded; rebuild/<target>/: hxmc-rebuild's compiler)
+// (rebuild/<target>/: hxmc-rebuild's compiler)
 export function npmCache() {
 	return path.join(cacheBase(), 'npm', version);
 }
 
 export const exeName = process.platform === 'win32' ? 'haxe.exe' : 'haxe';
 
+// a package of this version beside this one (resolved from here, else from
+// the working directory: the project's node_modules): its directory, or null
+export function findPackage(name) {
+	for (const from of [import.meta.url, path.join(process.cwd(), 'index.js')]) {
+		try {
+			const p = createRequire(from).resolve(`${name}/package.json`);
+			if (JSON.parse(fs.readFileSync(p, 'utf8')).version === version) return path.dirname(p);
+		} catch {}
+	}
+	return null;
+}
+
+// hxmc's std (hxmc/std merged with upstream's by hxmc/src/hxmc/MkStd.hx):
+// the package's hxmc/bootstrap/hxmc-std (`make npm` writes it there in a
+// checkout, else bin/hxmc/std, `make std`)
+function hxmcStd() {
+	const own = path.join(bootDir, 'hxmc-std');
+	if (!checkout || fs.existsSync(own)) return own;
+	return path.join(repo, 'bin', 'hxmc', 'std');
+}
+
+// the directories of the runtime objects (<dir>/<target>/rt.o, ssl.o, uv.o),
+// in this order: this machine's platform package; the other platform
+// packages of this version installed (cross builds: `npm i -D --force
+// @hxmc/win32-x64`); then HXMC_RT_DIR's. In a checkout: bin/hxmc/rt (`make rt`).
+export function rtDirs() {
+	const own = (process.env.HXMC_RT_DIR ?? '').split(path.delimiter).filter(d => d);
+	if (checkout) return [path.join(repo, 'bin', 'hxmc', 'rt'), ...own];
+	const host = PLATFORMS[hostTarget()];
+	const dirs = [];
+	for (const p of [...(host ? [host] : []), ...Object.values(PLATFORMS).filter(p => p !== host)]) {
+		const d = findPackage(p.pkg);
+		if (d && p.rt.some(t => fs.existsSync(path.join(d, t, 'rt.o')))) dirs.push(d);
+	}
+	return [...dirs, ...own];
+}
+
 // what the compilers need to find the package's std, hxmc's std and the
-// runtime objects (hxmc.HaxeMain finds them itself as hxmc/bootstrap/haxe)
+// runtime objects (HXMC_RT_DIR always set: hxmc.HaxeMain, run without this
+// launcher, passes a build for the hxmc target on to it)
 export function toolEnv(extra = {}) {
 	const env = { ...process.env, ...extra };
 	if (!env.HAXE_STD_PATH) env.HAXE_STD_PATH = stdDir;
-	if (!env.HXMC_STD) env.HXMC_STD = path.join(bootDir, 'hxmc-std');
-	if (!env.HXMC_RT_DIR) env.HXMC_RT_DIR = path.join(bootDir, 'rt');
+	if (!env.HXMC_STD) env.HXMC_STD = hxmcStd();
+	env.HXMC_RT_DIR = [...rtDirs(), npmCache()].join(path.delimiter);
 	// (`haxe --dev`: the dev loop's server, docs/dev.md)
 	if (!env.HXMC_DEV_SCRIPT) env.HXMC_DEV_SCRIPT = path.join(bootDir, 'dev.mjs');
 	return env;
@@ -104,10 +146,10 @@ export function notice(text) {
 }
 
 // the native compiler of the platform package (@hxmc/<os>-<cpu>, an optional
-// dependency), unless HXMC_PLATFORM_PACKAGE=0
+// dependency)
 export function platformBinary() {
 	const p = PLATFORMS[hostTarget()];
-	if (!p || process.env.HXMC_PLATFORM_PACKAGE === '0') return null;
+	if (!p) return null;
 	try {
 		const bin = path.join(path.dirname(require.resolve(`${p.pkg}/package.json`)), p.exe);
 		return fs.existsSync(bin) ? bin : null;
@@ -117,8 +159,7 @@ export function platformBinary() {
 }
 
 // whether a native compiler starts here (not on a noexec file system, in a
-// sandbox without processes such as WebContainers, under an emulator without
-// that architecture, ...)
+// sandbox without processes, under an emulator without that architecture, ...)
 export function nativeRuns(bin) {
 	try {
 		const r = spawnSync(bin, ['--version'], { stdio: 'ignore', timeout: 60000, windowsHide: true });
@@ -155,43 +196,26 @@ export function rebuilt() {
 }
 
 export async function main(args) {
-	const host = hostTarget();
 	setupDist();
-	if (host && process.env.HXMC_NATIVE !== '0') {
-		const r = rebuilt();
-		const native = r?.bin ?? platformBinary();
-		if (native) {
-			const p = spawnSync(native, args, { stdio: 'inherit', env: toolEnv(r?.env) });
-			// (an error: it did not start; it ran otherwise, whatever its exit)
-			if (!p.error) {
-				if (!r) install(native);
-				process.exit(p.status ?? (p.signal ? 1 : 0));
-			}
-			notice(`hxmc: the native compiler cannot run here (${p.error.code ?? p.error.message}): using the WebAssembly one\n`);
-		}
+	const r = rebuilt();
+	const native = r?.bin ?? platformBinary();
+	if (!native) {
+		const hosts = Object.values(PLATFORMS).map(p => `${p.os}-${p.cpu}`).join(', ');
+		const p = PLATFORMS[hostTarget()];
+		fail(p
+			? `${p.pkg}, the compiler for this machine, is not installed (an install without optional dependencies?): npm i -D @hxmc/cli@${version} ${p.pkg}@${version}`
+			: `no compiler for ${process.platform}-${process.arch}: @hxmc/cli runs on ${hosts}`);
 	}
-	// no native compiler that runs here: the WebAssembly one
-	const { wasmPackage } = await import('./wasm.mjs');
-	process.exitCode = await wasm(await wasmPackage(), args, host);
+	const p = spawnSync(native, args, { stdio: 'inherit', env: toolEnv(r?.env) });
+	// (an error: it did not start; it ran otherwise, whatever its exit)
+	if (p.error) fail(`the native compiler ${native} cannot run here (${p.error.code ?? p.error.message})`);
+	if (!r) install(native);
+	process.exit(p.status ?? (p.signal ? 1 : 0));
 }
 
-// the WebAssembly compiler (@hxmc/wasm's haxe.wasm under its wasi.mjs):
-// executables it writes are marked here (WASI has no chmod)
-export async function wasm(dir, args, host, env = {}) {
-	const { runWasm } = await import(pathToFileURL(path.join(dir, 'wasi.mjs')).href);
-	const list = path.join(os.tmpdir(), `hxmc-${process.pid}.exe-list`);
-	const extra = { ...env, HXMC_EXE_LIST: list };
-	if (host) extra.HXMC_HOST = host;
-	try {
-		return runWasm(path.join(dir, 'haxe.wasm'), args, toolEnv(extra));
-	} finally {
-		if (fs.existsSync(list)) {
-			// (Windows has no executable bit)
-			if (process.platform !== 'win32')
-				for (const f of fs.readFileSync(list, 'utf8').split('\n')) if (f) try { fs.chmodSync(f, 0o755); } catch {}
-			fs.rmSync(list, { force: true });
-		}
-	}
+function fail(text) {
+	process.stderr.write(`hxmc: ${text}\n`);
+	process.exit(1);
 }
 
 // The native compiler replaces the launcher where npm's link and lix point:

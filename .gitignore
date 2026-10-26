@@ -5,7 +5,6 @@
 *.tgz
 # generated for the npm package @hxmc/cli (make npm)
 /packages/cli/hxmc/bootstrap/hxmc-std/
-/packages/cli/hxmc/bootstrap/rt/
 # written on first use of @hxmc/cli (lix installation)
 /packages/cli/dist/std
 /packages/cli/dist/platform.txt

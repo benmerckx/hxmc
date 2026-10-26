@@ -55,12 +55,14 @@
 #   macro and the formatter's build timed against Eval.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
-# - npm: the nine packages (@hxmc/cli, its six platform packages, @hxmc/wasm,
-#   @hxmc/source) installed in fresh projects on each target's machine: native
-#   at once, -lib (lix's scopes, node_modules, haxelib), --ignore-scripts; and on linux-x64 (on
-#   all six on main, tags and nightly, before publish-npm) lix, the
-#   WebAssembly fallback (downloaded, installed) and hxmc-rebuild;
-#   publish-npm publishes them on v* tags and (as nightlies) from main.
+# - npm: the seven packages (@hxmc/cli and its six platform packages, each
+#   with the compiler and the runtime objects of its machine) installed from
+#   their tarballs in fresh projects on each target's machine: native at once,
+#   -lib (lix's scopes, node_modules, haxelib), --ignore-scripts; on
+#   linux-x64 a cross build with another platform package (--force) and
+#   without; and on linux-x64 (on all six on main, tags and nightly, before
+#   publish-npm) lix; publish-npm publishes them on v* tags and (as
+#   nightlies) from main.
 # - upstream-tests: upstream's compiler-side suite (RunCi macro) with the
 #   release binaries as haxe (upstream-tests.yml).
 # - release: a rolling `nightly` pre-release on pushes to main, a release on
@@ -487,9 +489,9 @@ jobs:
         if: matrix.wasmgc
         run: make wasmgc-check
 
-  # the npm packages (packages/): @hxmc/cli, its six platform packages,
-  # @hxmc/wasm and @hxmc/source, at one version: the tag's (v*), a nightly
-  # prerelease on main, packages/cli/package.json's elsewhere
+  # the npm packages (packages/): @hxmc/cli and its six platform packages,
+  # at one version: the tag's (v*), a nightly prerelease on main,
+  # packages/cli/package.json's elsewhere
   npm-pack:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
@@ -526,11 +528,9 @@ jobs:
           # -lib: lix's scopes, node_modules, haxelib (and the npm job's copy of the test)
           make test-libraries
           cp hxmc/test/Libraries.hx bin/npm/
-          # what WebAssembly programs see of the file system (the npm job on Windows)
-          bin/hxmc/hxmc bin/npm/probe.wasm -cp hxmc/test -main WasiProbe -cp bin/hxmc/std --custom-target hxmc -D hxmc.target=wasm32-wasi
           cat bin/npm/sizes.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
-        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/probe.wasm\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
+        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
 
   # the website (site/, make site): its pages, their JavaScript, the
   # playground's WebAssembly, lix under tools/, the benchmark history and the
@@ -1222,12 +1222,9 @@ jobs:
   # package installed before publish-npm publishes them): @hxmc/cli with its
   # platform package (native at once, node_modules/.bin/haxe the native
   # compiler on Unix; -lib from lix's scopes, node_modules and haxelib; with --ignore-scripts after the
-  # first call) on all six every run; and the full set on linux-x64 (on all
-  # six on main, tags and nightly: changes.outputs.npm_full): lix with
-  # dist/; the WebAssembly fallback (no platform package: @hxmc/wasm downloaded
-  # into the cache, here from the local tarball through HXMC_WASM_TARBALL, or
-  # installed); @hxmc/source (an edit, hxmc-rebuild, haxe runs the rebuilt
-  # compiler, --reset)
+  # first call) on all six every run; on linux-x64 a cross build (another
+  # machine's platform package, --force); and on linux-x64 (on all six on
+  # main, tags and nightly: changes.outputs.npm_full) lix with dist/
   # (build: lix)
   npm:
     needs: [changes, npm-pack, build]
@@ -1258,6 +1255,8 @@ jobs:
       - uses: actions/download-artifact@v8
         if: matrix.lix && env.FULL == 'true'
         with: {name: lix, path: dl/lix}
+      # (from the tarballs alone: the other platform packages, optional, are
+      # found nowhere)
       - name: Install @hxmc/cli and its platform package
         run: |
           set -ex
@@ -1268,8 +1267,10 @@ jobs:
           printf 'class Main { static function main() { Sys.println("hello from " + Sys.systemName()); } }\n' > src/Main.hx
           printf 'class Js { static function main() { trace("hello from js"); } }\n' > src/Js.hx
           printf -- '-cp src\n-main Main\n--custom-target hxmc=bin/app\n' > build.hxml
-          # (no compiler sources and no WebAssembly compiler in @hxmc/cli)
-          test ! -e node_modules/@hxmc/cli/haxe/src && test ! -e node_modules/@hxmc/cli/hxmc/bootstrap/haxe.wasm
+          # (no compiler sources, no runtime objects in @hxmc/cli: they are the platform package's)
+          test ! -e node_modules/@hxmc/cli/haxe/src && test ! -e node_modules/@hxmc/cli/hxmc/bootstrap/rt
+          test -d node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std
+          ls node_modules/@hxmc/${{ matrix.plat }}/*/rt.o
           # Unix: the postinstall put the native compiler where npm's link points
           if [ "$RUNNER_OS" != Windows ]; then head -c 4 node_modules/.bin/haxe | od -An -tx1 | tee magic.txt; ! grep -q "23 21" magic.txt; fi
       - name: Native at once
@@ -1279,12 +1280,15 @@ jobs:
           npx haxe --version > version.out 2> version.err
           cat version.out
           test ! -s version.err
-          test ! -e "$HXMC_CACHE/npm"
+          npx hxmc --version
           npx haxe -cp src -main Main --interp | tee out.txt
           grep -q "hello from" out.txt
           time npx haxe build.hxml
           if [ "$RUNNER_OS" = Windows ]; then ./bin/app.exe; ls -l node_modules/@hxmc/cli/dist/haxe.exe; else ./bin/app; fi
-          npx haxe -cp src -main Js --js main.js && node main.js
+          npx haxe -cp src -main Js --js main.js && node main.js | tee js.out
+          grep -q "hello from js" js.out
+          # Windows: the native compiler run without node passes a build for hxmc to the launcher
+          if [ "$RUNNER_OS" = Windows ]; then rm -rf bin && node_modules/@hxmc/cli/dist/haxe.exe build.hxml && ./bin/app.exe; fi
       # -lib: lix's scopes, node_modules, haxelib (hxmc/test/Libraries.hx), by the
       # native compiler run without node (npm's link to it on Unix, dist/haxe.exe on Windows)
       - name: -lib from lix's scopes, node_modules, haxelib
@@ -1304,6 +1308,28 @@ jobs:
           head -c 2 node_modules/.bin/haxe | grep -q '#!'
           npx haxe --version
           head -c 4 node_modules/.bin/haxe | od -An -tx1 | tee magic.txt; ! grep -q "23 21" magic.txt
+      # cross builds (docs/using.md): without another machine's platform
+      # package a build for it says which to install; with it (--force: its
+      # os and cpu are not this machine's) its runtime objects are used
+      - name: Cross build
+        if: matrix.plat == 'linux-x64'
+        run: |
+          set -ex
+          v=$(cat dl/VERSION)
+          cd "$RUNNER_TEMP/app"
+          if npx haxe -cp src -main Main --custom-target hxmc=bin/cross -D hxmc.target=windows-x86_64 2> cross.err; then exit 1; fi
+          cat cross.err; grep -q "@hxmc/win32-x64" cross.err; test ! -e bin/cross.exe
+          # (and so for the native compiler run without node)
+          if node_modules/.bin/haxe -cp src -main Main --custom-target hxmc=bin/cross -D hxmc.target=windows-x86_64 2> cross2.err; then exit 1; fi
+          grep -q "@hxmc/win32-x64" cross2.err
+          npm install --force --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-win32-x64-$v.tgz"
+          npx haxe -cp src -main Main --custom-target hxmc=bin/cross -D hxmc.target=windows-x86_64
+          test -s bin/cross.exe
+          # (the native compiler of this machine still runs)
+          npx haxe build.hxml && ./bin/app
+          # Android: in no package
+          if npx haxe -cp src -main Main --custom-target hxmc=bin/app.so -D hxmc.target=android-arm64 2> android.err; then exit 1; fi
+          cat android.err; grep -q "release archive" android.err
       # lix with the package's installation (dist/) as its Haxe
       - name: lix
         if: matrix.lix && env.FULL == 'true'
@@ -1321,87 +1347,6 @@ jobs:
           printf -- '-cp src\n-main Main\n--custom-target hxmc=bin/applix\n' > lix.hxml
           haxe lix.hxml
           ./bin/applix
-      # the WebAssembly fallback: without a native compiler (no platform
-      # package) the first call downloads @hxmc/wasm into the cache, checked
-      # against the integrity @hxmc/cli pins (the local tarball here: this
-      # version is not on the registry yet)
-      - name: WebAssembly fallback, downloaded
-        if: env.FULL == 'true'
-        env:
-          HXMC_PLATFORM_PACKAGE: '0'
-          HXMC_CACHE: ${{ github.workspace }}/hxmc-cache-wasm
-        run: |
-          set -ex
-          v=$(cat dl/VERSION)
-          mkdir -p "$RUNNER_TEMP/fallback/src" && cd "$RUNNER_TEMP/fallback"
-          npm init -y > /dev/null
-          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-cli-$v.tgz"
-          cp "$RUNNER_TEMP/app/src/Main.hx" src/
-          # offline: one line on stderr, a non-zero exit
-          if HXMC_WASM_TARBALL="$RUNNER_TEMP/missing.tgz" npx haxe --version > off.out 2> off.err; then exit 1; fi
-          cat off.err; grep -q "could not be downloaded" off.err; test ! -s off.out
-          # a tarball that is not the pinned one
-          if HXMC_WASM_TARBALL="$GITHUB_WORKSPACE/dl/hxmc-source-$v.tgz" npx haxe --version 2> bad.err; then exit 1; fi
-          grep -q "integrity mismatch" bad.err
-          export HXMC_WASM_TARBALL="$GITHUB_WORKSPACE/dl/hxmc-wasm-$v.tgz"
-          npx haxe --version > version.out 2> version.err
-          cat version.out version.err
-          test ! -s version.err
-          test -f "$HXMC_CACHE/npm/$v/wasm/haxe.wasm"
-          # (from the cache now)
-          HXMC_WASM_TARBALL="$RUNNER_TEMP/missing.tgz" npx haxe -cp src -main Main --custom-target hxmc=bin/app
-          if [ "$RUNNER_OS" = Windows ]; then ./bin/app.exe; else ./bin/app; fi
-          npx haxe -cp src -main Main --interp | tee out.txt
-          grep -q "hello from Wasi" out.txt
-      # @hxmc/wasm installed (WebContainers, noexec sandboxes): used, nothing downloaded
-      - name: WebAssembly fallback, installed
-        if: env.FULL == 'true'
-        env:
-          HXMC_PLATFORM_PACKAGE: '0'
-          HXMC_CACHE: ${{ github.workspace }}/hxmc-cache-wasm2
-          HXMC_WASM_TARBALL: ${{ runner.temp }}/missing.tgz
-        run: |
-          set -ex
-          v=$(cat dl/VERSION)
-          mkdir -p "$RUNNER_TEMP/wasmpkg/src" && cd "$RUNNER_TEMP/wasmpkg"
-          npm init -y > /dev/null
-          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-cli-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-wasm-$v.tgz"
-          cp "$RUNNER_TEMP/app/src/Main.hx" src/
-          npx haxe -cp src -main Main --interp | tee out.txt
-          grep -q "hello from Wasi" out.txt
-          test ! -e "$HXMC_CACHE/npm"
-          # -lib from node_modules, by the WebAssembly compiler
-          mkdir -p node_modules/hxdemo/src/demo
-          printf '{"name": "hxdemo", "version": "1.0.0", "haxe": {"name": "hxdemo", "classPath": "src"}}\n' > node_modules/hxdemo/package.json
-          printf 'package demo;\nclass Demo {\n\tpublic static function hi() return "hi from node_modules";\n}\n' > node_modules/hxdemo/src/demo/Demo.hx
-          printf 'class UseDemo {\n\tstatic function main() Sys.println(demo.Demo.hi());\n}\n' > src/UseDemo.hx
-          npx haxe -cp src -lib hxdemo -main UseDemo --interp | tee demo.txt
-          grep -q "hi from node_modules" demo.txt
-      # @hxmc/source: hxmc-rebuild builds the edited compiler with the native
-      # one, haxe runs it while @hxmc/source is installed, --reset returns to
-      # the published one
-      - name: hxmc-rebuild
-        if: env.FULL == 'true'
-        env:
-          HXMC_CACHE: ${{ github.workspace }}/hxmc-cache-source
-        run: |
-          set -ex
-          v=$(cat dl/VERSION)
-          mkdir -p "$RUNNER_TEMP/source/src" && cd "$RUNNER_TEMP/source"
-          npm init -y > /dev/null
-          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-cli-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-${{ matrix.plat }}-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-source-$v.tgz"
-          cp "$RUNNER_TEMP/app/src/Main.hx" src/
-          sed -i.bak 's/"preview\.1"/"preview.1.rebuilt"/' node_modules/@hxmc/source/haxe/src/core/Globals.hx
-          grep -q rebuilt node_modules/@hxmc/source/haxe/src/core/Globals.hx
-          time npx hxmc-rebuild
-          npx haxe --version | tee version.out
-          grep -q "rebuilt" version.out
-          npx haxe -cp src -main Main --custom-target hxmc=bin/app
-          if [ "$RUNNER_OS" = Windows ]; then ./bin/app.exe; else ./bin/app; fi
-          npx hxmc-rebuild --reset
-          npx haxe --version | tee version.out
-          ! grep -q "rebuilt" version.out
-          if [ "$RUNNER_OS" != Windows ]; then head -c 4 node_modules/.bin/haxe | od -An -tx1 | tee magic.txt; ! grep -q "23 21" magic.txt; fi
 
   # upstream Haxe's compiler-side suite (RunCi macro) with the release
   # binaries as haxe (upstream-tests.yml)
@@ -1410,10 +1355,10 @@ jobs:
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     uses: ./.github/workflows/upstream-tests.yml
 
-  # npm: the nine packages at one version (npm-pack's), installed and
-  # tested by the npm job: the six platform packages, @hxmc/wasm,
-  # @hxmc/source, then @hxmc/cli: on v* tags (dist-tag latest) and pushes to main (a nightly, dist-tag
-  # next); never from other branches.
+  # npm: the seven packages at one version (npm-pack's), installed and
+  # tested by the npm job: the six platform packages, then @hxmc/cli: on v*
+  # tags (dist-tag latest) and pushes to main (a nightly, dist-tag next);
+  # never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
     needs: [changes, build, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
@@ -1423,15 +1368,16 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # (npm's trusted publishing, OIDC through id-token: npm 11.5.1 or
+      # later, which node 24 ships; each package is registered on npm for
+      # this repository and build.yml, without an environment)
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@v8
         with: {name: npm, path: dl}
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -ex
           v=$(cat dl/VERSION)
@@ -1444,12 +1390,17 @@ jobs:
             if npm view "$1@$v" version >/dev/null 2>&1; then echo "$1@$v is published already"; return; fi
             npm publish --access public --provenance --tag $tag "$2"
           }
-          # (all nine at this version, each one's dependencies first: @hxmc/cli
-          # last, whose optional dependencies and pinned @hxmc/wasm must exist)
-          for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64 wasm source cli; do
-            test "$(tar xzf "dl/hxmc-$p-$v.tgz" -O package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).version')" = "$v"
+          # (the seven at this version, each one's dependencies first:
+          # @hxmc/cli last, whose optional dependencies must exist)
+          pkgs="linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64 cli"
+          # (exactly these tarballs, each at this version and named for its package)
+          test "$(ls dl/*.tgz | wc -l)" -eq 7
+          for p in $pkgs; do
+            test "$(tar xzf "dl/hxmc-$p-$v.tgz" -O package/package.json | node -p 'const m = JSON.parse(require("fs").readFileSync(0)); m.name + "@" + m.version')" = "@hxmc/$p@$v"
           done
-          for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64 wasm source cli; do
+          # (@hxmc/cli's optional dependencies: the six, at this version)
+          tar xzf "dl/hxmc-cli-$v.tgz" -O package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0)); const d = m.optionalDependencies; if (Object.keys(d).sort().join() !== process.argv[2].split(" ").filter(p => p !== "cli").map(p => "@hxmc/" + p).sort().join()) throw new Error(Object.keys(d).join()); for (const [k, x] of Object.entries(d)) if (x !== process.argv[1]) throw new Error(k + "@" + x)' "$v" "$pkgs"
+          for p in $pkgs; do
             publish "@hxmc/$p" "./dl/hxmc-$p-$v.tgz"
           done
 

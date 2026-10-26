@@ -33,7 +33,7 @@ repository and is unstable; hxmc does not depend on it.
 ## Install
 
 ```sh
-npm i -D @hxmc/cli      # node 22+; then `npx haxe`
+npm i -D @hxmc/cli      # node 22+; then `npx haxe` (or `npx hxmc`)
 ```
 
 `haxe` is the full Haxe command line with hxmc built in: every target works as
@@ -47,10 +47,17 @@ executable.
 # -D hxmc.target=windows-x86_64   # cross-compile to another target
 ```
 
-npm installs a native compiler for your platform. Where none can run, `haxe`
-falls back to a WebAssembly build under node. Details on the packages,
-editors, lix and rebuilding the compiler from source:
-[docs/using.md](docs/using.md).
+npm installs the native compiler for your machine (Linux, macOS, Windows;
+x86-64 or ARM64) with the runtime objects of its targets. To cross-compile
+for another of those machines, install its package too, with `--force`:
+
+```sh
+npm i -D --force @hxmc/win32-x64   # windows-x86_64's runtime objects
+```
+
+Android's runtime objects are not on npm: use the release archive of the
+runtime objects or build them from source. Details on the packages, editors
+and lix: [docs/using.md](docs/using.md).
 
 ### Options
 

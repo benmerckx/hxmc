@@ -1,28 +1,24 @@
 // The npm packages (docs/using.md; `make npm`, CI). Each folder of
 // packages/ is one package, or for `platform` the template of six:
-//   node packages/pack.mjs <version> <natives dir> <out dir>
-// <natives dir>/<target>/haxe[.exe] are the native compilers and
-// <natives dir>/wasm32-wasi/haxe.wasm the WebAssembly one (hxmc.HaxeMain,
-// cross-built by the tool). Writes to <out dir>, in the order they are
-// published (each one's dependencies first), all at <version>:
+//   node packages/pack.mjs <version> <natives dir> <out dir> [<rt dir>]
+// <natives dir>/<target>/haxe[.exe] are the native compilers, <rt dir>/<target>/
+// {rt,ssl,uv}.o the runtime objects (default bin/hxmc/rt). Writes to <out dir>,
+// in the order they are published (each one's dependencies first), all at
+// <version>:
 //   hxmc-<os>-<cpu>-<version>.tgz  the six platform packages @hxmc/<os>-<cpu>
-//                                  (packages/platform, its {pkg}, {os}, {cpu}
-//                                  and {exe} filled in): the native compiler
-//   hxmc-wasm-<version>.tgz        @hxmc/wasm (packages/wasm): the compiler as
-//                                  a wasm32-wasi module (haxe.wasm) and its
-//                                  runner (hxmc/bootstrap/wasi.mjs)
-//   hxmc-source-<version>.tgz      @hxmc/source (packages/source: hxmc-rebuild):
-//                                  haxe/src, hxmc/src, hxmc/std, a peer
-//                                  dependency on @hxmc/cli at this version
+//                                  (packages/platform, its {pkg}, {os}, {cpu},
+//                                  {exe} and {rtList} filled in): the native
+//                                  compiler and the runtime objects of the
+//                                  machine's targets (<target>/; Linux's with
+//                                  the glibc mode's), with the licenses of
+//                                  mbedtls and libuv
 //   hxmc-cli-<version>.tgz         @hxmc/cli (packages/cli: the launcher, dist/
-//                                  for lix, hxmc's merged std and the runtime
-//                                  objects `make npm` puts there): with
-//                                  upstream's std, its optional dependencies on
-//                                  the platform packages at this version and
-//                                  the integrity of @hxmc/wasm's tarball
-//                                  ("hxmc": {"wasmIntegrity"}: the launcher's
-//                                  download)
-// and sizes.md, their sizes.
+//                                  for lix, hxmc's merged std that `make npm`
+//                                  puts there): with upstream's std and its
+//                                  optional dependencies on the platform
+//                                  packages at this version
+// and sizes.md, their sizes. (packages/source, @hxmc/source with
+// hxmc-rebuild, is not published.)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,9 +41,9 @@ function pack(cwd, outAbs) {
 }
 
 const argv = process.argv.slice(2);
-const [version, natives, out] = argv;
+const [version, natives, out, rtDir = path.join(root, 'bin', 'hxmc', 'rt')] = argv;
 if (!version || !natives || !out) {
-	console.error('usage: node packages/pack.mjs <version> <natives dir> <out dir>');
+	console.error('usage: node packages/pack.mjs <version> <natives dir> <out dir> [<rt dir>]');
 	process.exit(2);
 }
 fs.mkdirSync(out, { recursive: true });
@@ -86,20 +82,16 @@ function stage(template, vars, files, exec = [], edit = m => m) {
 	return pack(dir, outAbs);
 }
 
-for (const [target, p] of Object.entries(PLATFORMS))
-	stage('platform', p, [[p.exe, path.resolve(natives, target, p.exe)]], [p.exe]);
-
-const wasm = stage('wasm', {}, [['haxe.wasm', path.resolve(natives, 'wasm32-wasi', 'haxe.wasm')], ['wasi.mjs', 'hxmc/bootstrap/wasi.mjs']]);
-
-stage('source', {}, [['haxe/src', 'haxe/src'], ['hxmc/src', 'hxmc/src'], ['hxmc/std', 'hxmc/std']], ['hxmc/bootstrap/hxmc-rebuild']);
+for (const [target, p] of Object.entries(PLATFORMS)) {
+	const files = [[p.exe, path.resolve(natives, target, p.exe)]];
+	for (const t of p.rt) for (const f of ['rt.o', 'ssl.o', 'uv.o']) files.push([`${t}/${f}`, path.resolve(rtDir, t, f)]);
+	for (const l of ['LICENSE.mbedtls', 'LICENSE.libuv']) files.push([l, path.resolve(rtDir, l)]);
+	stage('platform', { ...p, rtList: p.rt.join(' and ') }, files, [p.exe], m => ({ ...m, files: [...m.files, ...p.rt.map(t => `${t}/`)] }));
+}
 
 // (the repository's README is the package's page on npm)
 stage('cli', {}, [['haxe/upstream/std', 'haxe/upstream/std'], ['haxe/upstream/LICENSE', 'haxe/upstream/LICENSE'], ['README.md', 'README.md']],
-	['hxmc/bootstrap/haxe', 'dist/haxe'], m => ({
-		...m,
-		optionalDependencies: Object.fromEntries(Object.values(PLATFORMS).map(p => [p.pkg, version])),
-		hxmc: { wasmIntegrity: wasm.integrity },
-	}));
+	['hxmc/bootstrap/haxe', 'dist/haxe']);
 
 const kb = n => `${(n / 1024 / 1024).toFixed(1)} MB`;
 fs.writeFileSync(path.join(outAbs, 'sizes.md'), [
