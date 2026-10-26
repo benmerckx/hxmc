@@ -981,7 +981,21 @@ caught typing error is a `haxe.macro.Error` with its `childErrors`; `$v{}`
 of an integral Float is a Float. A compilation that types the macro context
 again (`--next`, the compilation server) starts a new generation of bundles,
 as Eval drops its prototypes, and a reused macro context runs its static
-initializers again (`EvalMain.doReuse`).
+initializers again (`EvalMain.doReuse`), in the order of the classes' paths'
+hashes as Eval's `static_prototypes#reset` walks them; statics without an
+initializer keep their values. A bundle's static initializers run in the
+order their classes were handed over (`EvalPrototype.addTypes`). Eval
+drops only the prototypes of the types typed again, so a class of the new
+generation whose module is the same as an earlier generation's carries
+its statics over (`Loader`: the slot of a reference, the value of a
+scalar) and does not run its initializer as it loads; this holds when the
+macro context is typed again partway through a compilation too. Each
+compilation hands over the types of the modules not typed again as other
+objects of the same modules, which a generation lowers as the first ones
+(`Lower.samePaths`). `Context.error` ends its macro only: the call has no
+value, as Eval's `catch_exceptions` makes of `Abort`. `make
+mir-server-check` (`hxmc/test/MirServerCheck.hx`, in the Mir lane but on
+Windows) compares a server with Mir macros to the reference's through edits.
 
 The std and the runtime in the macro context: hxmc's std loads all of the
 runtime (`Std` imports `hxmc.rt.Runtime`), and a macro reaches few of the

@@ -83,8 +83,20 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// the types this compilation handed over so far (a new generation keeps
 	// those; the others are handed over again if the compilation has them)
 	var delivered = new Map<String, Bool>();
-	// the static initializers of the classes loaded, in order (run again by doReuse)
-	var inits:Array<Ptr> = [];
+	// the static initializers of the classes loaded, by class path (run again by
+	// doReuse, as EvalMain.doReuse resets the static prototypes): a class's from
+	// the generation that loaded it last, while its module is the same (a new
+	// generation carries its statics over: Loader, facts.globals' keep), as
+	// Eval keeps the prototype of a type not typed again
+	var inits = new Map<String, {p:Ptr, key:Int, mId:Int}>();
+	// the classes whose statics a bundle has, with their modules' ids (a new
+	// generation keeps them while the module is the same: Loader, facts.globals' keep)
+	var withStatics = new Map<String, Int>();
+	// (the initializers of no class: Lower.reflectEnum's, this generation's)
+	var plainInits:Array<Ptr> = [];
+	// the order the types were handed over in (EvalPrototype.addTypes initializes
+	// a batch's classes in it): a bundle's static initializers run in it
+	var deliveredAt = new Map<String, Int>();
 	// (the types whose runtime implementations the lowering knows: Lower.findHosts, once each)
 	var scanned = new Map<String, Bool>();
 	var l:Null<hxmc.ir.Lower> = null;
@@ -199,6 +211,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = true;
 			var r:Dynamic = try call() catch (x:Dynamic) {
 				hxmc.rt.EvalCompat.on = order;
+				// (Context.error's: no value, EvalMisc.prepare_callback's catch_exceptions)
+				if (Std.isOfType(x, macros.MacroApi.Abort)) return null;
 				throw x;
 			}
 			hxmc.rt.EvalCompat.on = order;
@@ -313,6 +327,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			newGeneration();
 			processed = new Map();
 			mIds = new Map();
+			inits = new Map();
+			withStatics = new Map();
 		}
 		reused = false;
 		delivered = new Map();
@@ -333,8 +349,13 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				if (reused) newGeneration();
 				reused = false;
 			}
+			// (a class typed again: its statics start again, EvalPrototype.addTypes' static_prototypes#remove)
+			var x = inits.get(k);
+			if (x != null && x.mId != m) inits.remove(k);
+			if (withStatics.exists(k) && withStatics.get(k) != m) withStatics.remove(k);
 			processed.set(k, t);
 			mIds.set(k, m);
+			deliveredAt.set(k, nDelivered++);
 			ready(t);
 			// (a class's runtime metadata, which Eval's static prototypes carry,
 			// EvalPrototype.create_static_prototype: the __meta__ static of the
@@ -347,6 +368,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 	}
 
+	var nDelivered = 0;
+
 	public function doReuse(ctx:macros.eval.EvalContext.Context, api:CompilerApi, args:Array<String>):Void {
 		hadError = false;
 		this.api = api;
@@ -356,10 +379,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the statics' initial values again: EvalMain.doReuse's staticPrototypes.reset)
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = true;
-		try
-			for (p in inits)
-				hxmc.macro.Loader.run0(p)
-		catch (x:Dynamic) {
+		// (in the order of the paths' hashes, descending: static_prototypes#reset walks an IntMap, Globals.IntMap)
+		var resets = [for (x in inits) x];
+		resets.sort((a, b) -> a.key > b.key ? -1 : a.key < b.key ? 1 : 0);
+		try {
+			for (p in plainInits)
+				hxmc.macro.Loader.run0(p);
+			for (x in resets)
+				hxmc.macro.Loader.run0(x.p);
+		} catch (x:Dynamic) {
 			hxmc.rt.EvalCompat.on = order;
 			throw toCompilerError(x, api);
 		}
@@ -388,7 +416,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		scanned = new Map();
 		lastPrep = null;
 		stdRoots = [];
-		inits = [];
+		plainInits = [];
 		macros.MacroApi.MacroNativeValues.reset();
 		macros.MacroApi.MacroNativeValues.dropValues();
 	}
@@ -411,6 +439,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			return Some(r);
 		} catch (x:Dynamic) {
 			this.api = prev;
+			// (Context.error's: reported, the call has no value, EvalExceptions.catch_exceptions)
+			if (Std.isOfType(x, macros.MacroApi.Abort)) return None;
 			throw toCompilerError(x, api);
 		}
 	}
@@ -580,6 +610,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.resources = [];
 		hxmc.ir.Lower.basic = com.basic;
 		l = new hxmc.ir.Lower();
+		// (each compilation hands over the types of a module not typed again as other objects)
+		l.samePaths = true;
 		if (hxmc.ir.Lower.hostOverrides == null) hxmc.ir.Lower.hostOverrides = hxmc.macro.Loader.hostOverrides();
 		for (cp in com.classPaths.asList())
 			if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx")))
@@ -663,7 +695,22 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the types handed over so far: com.types may not have them yet)
 		phase("fingerprints");
 		var types = [for (t in processed) t];
-		var facts:Dynamic = hxmc.macro.BundleFacts.facts(com, prog, e, l, main, types);
+		// (the static initializers in the order their classes were handed over)
+		var at = new Map<FuncInfo, Int>();
+		for (i in 0...prog.inits.length)
+			at.set(prog.inits[i], i);
+		var rank = (f:FuncInfo) -> {
+			var c = l.initOf.get(f);
+			var d = c == null ? null : deliveredAt.get(core.Globals.sTypePath(c.clPath));
+			c == null ? -1 : d == null ? nDelivered : d;
+		};
+		prog.inits.sort((a, b) -> {
+			var x = rank(a), y = rank(b);
+			x != y ? x - y : at.get(a) - at.get(b);
+		});
+		// (a class whose statics an earlier generation has, its module the same: kept)
+		var kept = (c:TClass) -> withStatics.get(core.Globals.sTypePath(c.clPath)) == c.clModule.mId;
+		var facts:Dynamic = hxmc.macro.BundleFacts.facts(com, prog, e, l, main, types, kept);
 		MirRun.unshare(facts, host, l, e, com, types);
 		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
 		phase("facts");
@@ -725,8 +772,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		phase("load");
 		codeBytes += b.codeBytes;
 		dataBytes += b.dataBytes;
-		for (p in b.inits)
-			inits.push(p);
+		for (i in 0...b.inits.length) {
+			var path = b.initPaths[i];
+			if (path == null) plainInits.push(b.inits[i]) else inits.set(path, {p: b.inits[i], key: b.initKeys[i], mId: b.initMods[i]});
+		}
+		for (_ => c in l.globalOwner)
+			withStatics.set(core.Globals.sTypePath(c.clPath), c.clModule.mId);
 		for (f in funcs)
 			compiled.set(f, true);
 		macros.MacroApi.MacroNativeValues.reset();

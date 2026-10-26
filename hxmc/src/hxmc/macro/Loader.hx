@@ -29,6 +29,9 @@ class Bundle {
 	public var shapes:Array<{tindex:Int, fields:Array<String>}> = []; // the anonymous structures (TK_ANON)
 	public var singletons = new Map<Int, Int>(); // constructor type index -> its rt_globals index
 	public var inits:Array<Ptr> = []; // the static initializers' descriptors, run in order (Loader.run0)
+	public var initKeys:Array<Null<Int>> = []; // their classes' path hashes (interp.MirMacros: the order a compilation resets them in)
+	public var initPaths:Array<Null<String>> = []; // and their paths
+	public var initMods:Array<Null<Int>> = []; // and their modules' ids
 	public var codeBytes = 0; // (always 0: a bundle has no code)
 	public var dataBytes = 0;
 
@@ -83,6 +86,9 @@ class Loader {
 	// start (Eval's code of a dropped prototype finds the new one's by its path)
 	static var genGlobals = new Map<String, Int>();
 	static var oldGlobals = new Map<String, Int>();
+	// the scalar statics' addresses, alike (a kept class's value carried over: facts.globals' keep)
+	static var genScalars = new Map<String, Ptr>();
+	static var oldScalars = new Map<String, Ptr>();
 	// the empty anonymous structure (one for every bundle)
 	static var emptyAnon = -1;
 
@@ -106,6 +112,9 @@ class Loader {
 			oldSigs.set(k, v);
 		for (k => v in genGlobals)
 			oldGlobals.set(k, v);
+		for (k => v in genScalars)
+			oldScalars.set(k, v);
+		genScalars = new Map();
 		genTypes = new Map();
 		genSigs = new Map();
 		genGlobals = new Map();
@@ -406,6 +415,7 @@ class Loader {
 		var newGlobals = [];
 		var gindex = new Map<String, Int>();
 		var newScalars:Array<String> = []; // (in the bundle's memory, after the rows)
+		var keptScalars = new Map<String, Bool>();
 		for (g in globals) {
 			if (g.ref) {
 				var v = abs(g.sym, g.share);
@@ -413,7 +423,8 @@ class Loader {
 				if (v == null) {
 					if (idx != null) {
 						oldGlobals.remove(g.sym);
-						Mem.setRef(Gc.globals, 8 * idx, null);
+						// (a kept class's: its value stays, as Eval keeps an unchanged type's prototype)
+						if (g.keep != true) Mem.setRef(Gc.globals, 8 * idx, null);
 					} else
 						idx = nglobals++;
 					newGlobals.push({idx: idx, init: g.init});
@@ -424,7 +435,10 @@ class Loader {
 				gindex.set(g.name, idx);
 			} else {
 				var a = dataAddr(g.sym, g.share);
-				if (a != null) extra.set(g.sym, ptr(a)) else newScalars.push(g.sym);
+				if (a != null) extra.set(g.sym, ptr(a)) else {
+					newScalars.push(g.sym);
+					if (g.keep == true) keptScalars.set(g.sym, true);
+				}
 			}
 		}
 		// @:hxmc.bss blocks: the compiler's, else new (in the bundle's memory, zeroed: after the scalars)
@@ -486,8 +500,16 @@ class Loader {
 		var base = region.toI64();
 		for (s in addr.keys())
 			addr.set(s, addr.get(s) + base);
-		for (i in 0...newScalars.length)
-			extra.set(newScalars[i], region.add(scalarsAt + 8 * i));
+		for (i in 0...newScalars.length) {
+			var a = region.add(scalarsAt + 8 * i);
+			extra.set(newScalars[i], a);
+			var old = oldScalars.get(newScalars[i]);
+			if (old != null) {
+				oldScalars.remove(newScalars[i]);
+				if (keptScalars.exists(newScalars[i])) Mem.setI64(a, 0, Mem.getI64(old, 0));
+			}
+			genScalars.set(newScalars[i], a);
+		}
 		for (x in newBss)
 			extra.set(x.sym, region.add(x.at));
 		for (k in 0...selectors.length)
@@ -726,11 +748,19 @@ class Loader {
 		// ---- the static initializers of the new classes, in order
 		dbg("the static initializers of the new classes, in order");
 		var inits:Array<Dynamic> = facts.inits;
+		var run = [];
 		for (i in inits)
 			// (a class without a type entry: new unless a bundle loaded before, or for
 			// the std the compiler, has its initializer)
-			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || xb.exists(hxmc.interp.InterpGen.DESC + i.fn) || (i.share && h.exists(i.fn))))
-				b.inits.push(runnable(i.fn));
+			if (i.ty != null ? isNew.exists(i.ty) : !(xb.exists(i.fn) || xb.exists(hxmc.interp.InterpGen.DESC + i.fn) || (i.share && h.exists(i.fn)))) {
+				var p = runnable(i.fn);
+				b.inits.push(p);
+				b.initKeys.push(i.key);
+				b.initPaths.push(i.cls);
+				b.initMods.push(i.mod);
+				// (a kept class's statics have their values: it runs when a compilation resets them)
+				if (i.keep != true) run.push(p);
+			}
 		// what the next bundles share: the numbers, the globals and type objects, the functions
 		for (n => v in num)
 			xb.set(n, {k: "a", v: v});
@@ -742,7 +772,7 @@ class Loader {
 		Mem.setI32(Mem.sym("rt_ntypes"), 0, nextType);
 		// (run once the bundle is shared: a function they call may be compiled
 		// then, against it, interp.MirMacros)
-		for (p in b.inits)
+		for (p in run)
 			run0(p);
 		var ens:Array<Dynamic> = facts.entries;
 		for (en in ens)
