@@ -126,7 +126,7 @@ class Stacks {
 		}
 		var h = ((ret.toI64() >> 2).toInt() ^ (ret.toI64() >> 15).toInt()) & (CACHE - 1);
 		if (Mem.getPtr(cache, 8 * h) == ret) return true;
-		if (find(ret.add(-1)).isNull()) return false;
+		if (find(ret.add(-1)).isNull() && findMade(ret.add(-1)) < 0) return false;
 		Mem.setPtr(cache, 8 * h, ret);
 		return true;
 	}
@@ -253,17 +253,72 @@ class Stacks {
 		var desc = code.add(-Interp.HEADER);
 		var off = Mem.getI32(desc, Interp.H_POSITIONS);
 		if (off == 0) return {name: null, file: null, line: 0};
-		var t = desc.add(off);
+		return describeRows(desc.add(off), call.isNull() ? 0 : call.diff(code).toInt() >> 2);
+	}
+
+	// the function, file and line at position `at` of lines t (InterpGen's
+	// format: the rows' count, each one's position, line and file's string,
+	// then the strings, the first the function's name; a row holds from its
+	// position to the next one's, the first from the start)
+	static function describeRows(t:Ptr, at:Int):{name:Null<String>, file:Null<String>, line:Int} {
 		var n = Mem.getI32(t, 0);
-		var word = call.isNull() ? 0 : call.diff(code).toInt() >> 2;
+		var strs = t.add(4 + 12 * n);
+		var name = interpStr(strs, 0);
+		if (name == "") name = null;
+		if (n == 0) return {name: name, file: null, line: 0};
 		var found = 0;
 		for (j in 1...n) {
-			if (Mem.getI32(t, 4 + 12 * j) > word) break;
+			if (Mem.getI32(t, 4 + 12 * j) > at) break;
 			found = j;
 		}
-		var strs = t.add(4 + 12 * n);
 		var e = t.add(4 + 12 * found);
-		return {name: interpStr(strs, 0), file: interpStr(strs, Mem.getI32(e, 8)), line: Mem.getI32(e, 4)};
+		return {name: name, file: interpStr(strs, Mem.getI32(e, 8)), line: Mem.getI32(e, 4)};
+	}
+
+	// ---- the native code made at run time (interp.Tier: functions of code
+	// loaded at run time compiled to native code, hxmc.macro.Loader.loadNative),
+	// which the program's table has not: its functions, sorted by address, 24
+	// bytes each (start, end, their lines in describeRows' format, the rows'
+	// positions byte offsets in the function), so that a walk goes through
+	// their frames and names them as it would the interpreted frames they
+	// replace: a stack is the same whichever runs
+	static var made:Ptr;
+	static var madeCount = 0;
+	static var madeRoom = 0;
+
+	// (Loader) the function at [start, start + size), its lines (copied)
+	public static function addMade(start:Ptr, size:Int, lines:haxe.io.Bytes) {
+		var t = LibC.malloc(lines.length);
+		LibC.memcpy(t, Bytes.bytes(lines.getData()), (lines.length : I64));
+		if (madeCount == madeRoom) {
+			// (the old array is left: a walk on another thread may be reading it)
+			var room = madeRoom == 0 ? 256 : 2 * madeRoom;
+			var a = LibC.malloc((room : I64) * 24);
+			if (madeCount > 0) LibC.memcpy(a, made, (madeCount : I64) * 24);
+			made = a;
+			madeRoom = room;
+		}
+		var k = madeCount;
+		while (k > 0 && start.ult(Mem.getPtr(made, 24 * (k - 1)))) {
+			for (j in 0...3)
+				Mem.setI64(made, 24 * k + 8 * j, Mem.getI64(made, 24 * (k - 1) + 8 * j));
+			k--;
+		}
+		Mem.setPtr(made, 24 * k, start);
+		Mem.setPtr(made, 24 * k + 8, start.add(size));
+		Mem.setPtr(made, 24 * k + 16, t);
+		madeCount++;
+	}
+
+	// the index of the function made at run time holding code address a, or -1
+	@:hxmc.unsafe static function findMade(a:Ptr):Int {
+		var lo = 0, hi = madeCount - 1;
+		while (lo <= hi) {
+			var mid = (lo + hi) >> 1;
+			if (a.ult(Mem.getPtr(made, 24 * mid))) hi = mid - 1 else if (!a.ult(Mem.getPtr(made, 24 * mid + 8))) lo = mid + 1 else
+				return mid;
+		}
+		return -1;
 	}
 
 	// string k of a line table's strings (their count, then each one's byte length and bytes)
@@ -457,7 +512,11 @@ class Stacks {
 	// of the table)
 	public static function describe(a:Ptr):Null<{name:Null<String>, file:Null<String>, line:Int}> {
 		var e = find(a.add(-1));
-		if (e.isNull()) return null;
+		if (e.isNull()) {
+			var k = findMade(a.add(-1));
+			if (k < 0) return null;
+			return describeRows(Mem.getPtr(made, 24 * k + 16), a.diff(Mem.getPtr(made, 24 * k)).toInt() - 1);
+		}
 		var r = row(e, a);
 		var f = (r >> 32).toInt();
 		return {name: name(e), file: f == 0 ? null : str(f), line: (r & 0xffffffff).toInt()};
@@ -489,6 +548,11 @@ class Stacks {
 	// whether the frame at word k of a stack capture made is the Mir interpreter's
 	@:hxmc.unsafe public static function interpreted(b:haxe.io.Bytes, k:Int):Bool
 		return words(Bytes.bytes(b.getData()), k) == 2;
+
+	// whether the frame at word k of a stack capture made is of code loaded at
+	// run time: interpreted, or the native tier's compilation of it (addMade)
+	@:hxmc.unsafe public static function loaded(b:haxe.io.Bytes, k:Int):Bool
+		return interpreted(b, k) || findMade(Ptr.ofI64(word(b, k)).add(-1)) >= 0;
 
 	// whether a frame is the runtime's own (not shown in stacks)
 	public static function internal(name:Null<String>):Bool

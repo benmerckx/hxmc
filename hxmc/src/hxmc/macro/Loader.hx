@@ -1078,11 +1078,43 @@ class Loader {
 		}
 		if (tpos > 0) codeDone(code, tpos);
 		hxmc.rt.Faults.addCode(ptr(WINDOW_LO), ptr(lowNext));
+		// (its functions in the stacks, named and at their lines as the interpreted code they replace)
+		for (r in obj.funcs)
+			if (r.sym.section != null && r.sym.section.kind == Text && addr.exists(r.sym.section))
+				hxmc.rt.Stacks.addMade(ptr(addr.get(r.sym.section) + r.sym.offset), r.sym.size, stackLines(r, obj.files));
 		nativeBytes += tpos;
 		share(defs, gen, s -> addr.get(s.section) + s.offset);
 		var d = defs.get(sym);
 		if (d == null || d.section == null || d.section.kind != Text) throw "no code of " + sym;
 		return ptr(addr.get(d.section) + d.offset);
+	}
+
+	// a function's lines for hxmc.rt.Stacks.addMade (InterpGen's format, the
+	// rows' positions byte offsets in the function): its rows, then its name
+	// and files
+	static function stackLines(r:hxmc.Obj.FuncRec, files:Array<String>):haxe.io.Bytes {
+		var b = new hxmc.Buf(64);
+		var strs = [r.name == null ? "" : r.name], index = new Map<Int, Int>();
+		var rows = r.lines == null ? 0 : Std.int(r.lines.length / 3);
+		b.u32(rows);
+		for (j in 0...rows) {
+			var f = r.lines[3 * j + 1];
+			var k = index.get(f);
+			if (k == null) {
+				index.set(f, k = strs.length);
+				strs.push(files[f]);
+			}
+			b.u32(r.lines[3 * j]);
+			b.u32(r.lines[3 * j + 2]);
+			b.u32(k);
+		}
+		b.u32(strs.length);
+		for (x in strs) {
+			var bytes = haxe.io.Bytes.ofString(x);
+			b.u32(bytes.length);
+			b.bytes(bytes);
+		}
+		return b.b.sub(0, b.len);
 	}
 
 	// null when the compiler's type `idx` has the bundle's layout (slots, pointer map, fields)

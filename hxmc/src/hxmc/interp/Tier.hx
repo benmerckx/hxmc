@@ -100,10 +100,12 @@ class Tier {
 	}
 
 	// the function of descriptor desc may be compiled to native code by site
-	// (its number in the descriptor's flags: Interp.tierCheck)
-	public static function add(desc:Ptr, f:FuncInfo, site:TierSite) {
+	// (its number in the descriptor's flags: Interp.tierCheck), with the
+	// optimizer as for the interpreter (`optimize`: its inlining decides
+	// which frames a stack has, hxmc.rt.Stacks.addMade)
+	public static function add(desc:Ptr, f:FuncInfo, site:TierSite, optimize = true) {
 		if (!on() || f.cAbi != null || f.sret) return;
-		fns.push(new TierFn(desc, f, site));
+		fns.push(new TierFn(desc, f, site, optimize));
 		var flags = Mem.getI32(desc, InterpGen.H_FLAGS);
 		Mem.setI32(desc, InterpGen.H_FLAGS, (flags & 0xff) | (fns.length << 8));
 	}
@@ -137,7 +139,7 @@ class Tier {
 		hxmc.rt.EvalCompat.on = false;
 		var t0 = haxe.Timer.stamp();
 		compilePending();
-		compile(t, true);
+		compile(t, t.optimize);
 		time += haxe.Timer.stamp() - t0;
 		hxmc.rt.EvalCompat.on = order;
 		lock.release();
@@ -178,7 +180,7 @@ class Tier {
 			var t = fns[fresh++];
 			if (t.f.noGc && !t.f.blocks && (t.state == TierState.WAITING || t.state == TierState.PENDING)) {
 				if (t.state == TierState.PENDING) pending--;
-				compile(t, true);
+				compile(t, t.optimize);
 			}
 		}
 		time += haxe.Timer.stamp() - t0;
@@ -195,7 +197,7 @@ class Tier {
 		if (pending == 0) return;
 		pending = 0;
 		for (p in fns)
-			if (p.state == TierState.PENDING) compile(p, true);
+			if (p.state == TierState.PENDING) compile(p, p.optimize);
 	}
 
 	// the references among f's arguments at args (the interpreter's
@@ -320,12 +322,14 @@ private class TierFn {
 	public final desc:Ptr;
 	public final f:FuncInfo;
 	public final site:TierSite;
+	public final optimize:Bool;
 	public var state:TierState = TierState.WAITING;
 
-	public function new(desc, f, site) {
+	public function new(desc, f, site, optimize) {
 		this.desc = desc;
 		this.f = f;
 		this.site = site;
+		this.optimize = optimize;
 	}
 }
 

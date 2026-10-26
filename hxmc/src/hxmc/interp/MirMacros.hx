@@ -502,10 +502,11 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var r = [];
 		var k = 0;
 		while (k < b.length >> 3) {
-			var interpreted = hxmc.rt.Stacks.interpreted(b, k);
+			// (interpreted, or compiled by the native tier: the same frames, interp.Tier)
+			var loaded = hxmc.rt.Stacks.loaded(b, k);
 			var d = hxmc.rt.Stacks.frame(b, k);
 			k = hxmc.rt.Stacks.frameEnd(b, k);
-			if (!interpreted || d == null || d.file == null || hxmc.rt.Stacks.internal(d.name)) continue;
+			if (!loaded || d == null || d.file == null || hxmc.rt.Stacks.internal(d.name)) continue;
 			r.push({name: d.name, pos: linePos(d.file, d.line)});
 		}
 		return r;
@@ -839,7 +840,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			var site = new MacroSite(st);
 			for (f in funcs) {
 				var x = hxmc.macro.Loader.xb.get(InterpGen.DESC + prep.funcSym(f));
-				if (x != null && !initFns.exists(f)) Tier.add(Ptr.ofI64(x.v), f, site);
+				if (x != null && !initFns.exists(f)) Tier.add(Ptr.ofI64(x.v), f, site, !cold.exists(f));
 			}
 			Tier.loaded();
 		}

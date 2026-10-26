@@ -1183,8 +1183,9 @@ the interpreter counts each descriptor's calls (a word of its header), and
 every `HXMC_MIR_TIER` calls (a power of two, 1024 by default; 0: never) it
 gives the function's number (in its flags' upper bits, from `Tier.add`)
 and arguments to `Interp.tierHook`. The function is compiled as the
-program's own code is (the optimizer on, Escape too: `InterpSet.nativeNow`
-makes it native for that compilation), with its literals, empty arrays and
+program's own code is (the optimizer on unless it is off for the
+interpreter's compilation, Escape too: `InterpSet.nativeNow` makes it
+native for that compilation), with its literals, empty arrays and
 data bound to its generation's (with the tier, the Loader keeps every data
 symbol of a bundle, so the native code has the same objects) and its
 allocation stubs (`DataGen.allocStubs`), then loaded
@@ -1212,6 +1213,24 @@ window is full, bundles take malloc's memory and the tier stops
 (`Loader.full`: nothing is counted or compiled any more); the code loaded
 before reaches only what was loaded before it. `HXMC_MIR_TIER_WINDOW=<KB>`
 makes the window that small, to test it.
+
+Stacks are the same whichever runs: an uncaught exception's report in a
+macro and `haxe.CallStack` in macro code or `--run` name the same frames at
+the same lines. The interpreter's frames are named through their
+descriptors' lines (`InterpGen`, `Stacks.describeInterp`); native code
+loaded at run time is not in the compiler's table of functions and lines,
+so `Loader.loadNative` gives `hxmc.rt.Stacks` each of its functions' range,
+Haxe name and lines (`Stacks.addMade`, from the records the program's table
+is written from, `FuncRec.lines`). A walk goes through those frames as
+through the image's, names them as it would the interpreted frames they
+replace, and leaves out a forwarder's frame, which has no lines. The
+uncaught-exception report keeps the frames of code loaded at run time,
+interpreted or not (`Stacks.loaded`). The tier compiles a function with the
+optimizer setting its interpreted code had, so the same calls are inlined,
+and does not inline the closures a function calls where it makes them
+(`Driver`: the interpreter keeps their frames). `make mir-server-check` runs
+its uncaught exceptions and a `CallStack` on a server with
+`HXMC_MIR_TIER=native` too, against the interpreter's output.
 
 Compiling collects. The hook pushes the function's reference arguments on
 the thread's shadow stack before anything is allocated (`Tier.root`,

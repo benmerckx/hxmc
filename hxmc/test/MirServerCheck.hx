@@ -24,7 +24,10 @@ using StringTools;
 // Context.error ends its macro only. And an uncaught exception of macro code
 // is reported at the line it was thrown on, then its callers' lines (through
 // recursion, a lambda, a callback of the compiler, a build macro): those
-// lines expected (EXPECTED), the exit code the reference's. In
+// lines expected (EXPECTED), the exit code the reference's; and so is
+// haxe.CallStack.callStack() in a macro. The exceptions are run on a third
+// server too, whose macros are compiled to native code (HXMC_MIR_TIER=native,
+// interp.Tier): its output must be the interpreter's. In
 // bin/hxmc-t/mir-server (removed when every check passes):
 //   HXMC_HAXE=<haxe> HAXE_REFERENCE=<haxe> bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run MirServerCheck
 class MirServerCheck {
@@ -229,6 +232,22 @@ class E {
 		fail(\"in build\");
 		return null;
 	}
+
+	public static function stack() {
+		outer();
+	}
+
+	static function outer(n = 1) {
+		if (n == 0) show(\"E.hx\") else outer(n - 1);
+	}
+
+	static function show(file:String) {
+		for (s in haxe.CallStack.callStack())
+			switch s {
+				case FilePos(_, f, line, _) if (f == file): Sys.println('at $f:$line');
+				case _:
+			}
+	}
 }
 ",
 		"Built.hx" => "@:build(E.build()) class Built {
@@ -265,6 +284,7 @@ class E {
 		{name: "rethrow", lines: ["E.hx:51: characters 1-57 : Uncaught exception first again\n(unknown) : Called from here"]},
 		{name: "build", lines: ["E.hx:55: characters 1-20 : Uncaught exception in build\nBuilt.hx:1: characters 1-8 : Called from here"]},
 		{name: "boom-again", lines: ["E.hx:5: characters 1-16 : Uncaught exception boom\n(unknown) : Called from here"]},
+		{name: "stack", lines: ["at E.hx:68\nat E.hx:64\nat E.hx:64\nat E.hx:60\n"]},
 	];
 
 	static function macros(names:Array<String>):Array<String> {
@@ -274,7 +294,10 @@ class E {
 		return a;
 	}
 
-	static final SCENARIOS:Array<{name:String, files:Map<String, String>, steps:Array<{name:String, ?edit:Map<String, String>, args:Array<String>, ?expect:Array<String>}>}> = [
+	// (tier: also on a server whose Mir macros are compiled to native code
+	// when first called, HXMC_MIR_TIER=native, interp.Tier: the same output
+	// as the interpreter's, stacks included)
+	static final SCENARIOS:Array<{name:String, files:Map<String, String>, ?tier:Bool, steps:Array<{name:String, ?edit:Map<String, String>, args:Array<String>, ?expect:Array<String>}>}> = [
 		{
 			name: "probe",
 			files: PROBE,
@@ -306,6 +329,7 @@ class E {
 		{
 			name: "exceptions",
 			files: EXCEPTIONS,
+			tier: true,
 			steps: [
 				for (e in EXPECTED)
 					{name: e.name, args: CLASSIC.concat(e.name == "build" ? ["-main", "UseBuilt"] : macros(["E." + (e.name == "boom-again" ? "boom" : e.name) + "()"])), expect: e.lines}
@@ -340,6 +364,7 @@ class E {
 				File.saveContent('$proj/$f', text);
 			var r = startServer("reference", [ref], '$dir/${sc.name}-reference.log');
 			var p = startServer("port", mir, '$dir/${sc.name}-port.log');
+			var n = sc.tier == true ? startServer("port-native", ["env", "HXMC_MIR_TIER=native"].concat(mir), '$dir/${sc.name}-port-native.log') : null;
 			for (s in sc.steps) {
 				if (s.edit != null) {
 					Sys.sleep(1.1); // file times have one-second resolution on some hosts
@@ -352,17 +377,25 @@ class E {
 				var what = '${sc.name}:${s.name}';
 				// (expected lines: the reference's exit code, and these lines in the report)
 				var same = s.expect != null ? a.code == b.code && Lambda.foreach(s.expect, l -> (b.out + b.err).indexOf(l) >= 0) : a.code == b.code && a.out == b.out && a.err == b.err;
+				var outs = [{who: "reference", o: a}, {who: "mir", o: b}];
+				if (n != null) {
+					// (native code: what the interpreter gave, exactly)
+					var c = client(mir, n.port, args, proj);
+					same = same && c.code == b.code && c.out == b.out && c.err == b.err;
+					outs.push({who: "mir, HXMC_MIR_TIER=native", o: c});
+				}
 				if (same) {
 					Sys.println("ok    " + what);
 				} else {
 					failures++;
 					Sys.println("FAIL  " + what);
-					for (x in [{who: "reference", o: a}, {who: "mir", o: b}])
+					for (x in outs)
 						Sys.println('      ${x.who} (exit ${x.o.code}):\n' + [for (l in (x.o.out + x.o.err).trim().split("\n")) "        " + l].join("\n"));
 				}
 			}
 			stopServer(r);
 			stopServer(p);
+			if (n != null) stopServer(n);
 		}
 		if (failures > 0) {
 			Sys.println('MirServerCheck: $failures failures (in $dir)');

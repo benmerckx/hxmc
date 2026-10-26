@@ -164,8 +164,10 @@ class Driver {
 				// closures called where they are made: the call goes to their
 				// function, inlined when it may be and is of this module (its
 				// body and its callees' are in the module's key), so that
-				// Escape may replace the closure
-				if (Escape.on && (interp == null || !interp.wants(fn)) && mf.allocs > 0 && Escape.part("closures") && Escape.allowed(name)) {
+				// Escape may replace the closure (not for code loaded at run time
+				// compiled to native code, interp.Tier: the closure's frame
+				// stays in stacks, as when interpreted)
+				if (Escape.on && (interp == null || (!interp.wants(fn) && interp.nativeNow != fn)) && mf.allocs > 0 && Escape.part("closures") && Escape.allowed(name)) {
 					var todo = [];
 					for (c in Escape.closureCalls(mf, g -> g.module == fn.module && MirBuild.inlineCands.exists(g), prep.funcSym))
 						todo.push(c);

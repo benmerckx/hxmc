@@ -148,7 +148,7 @@ class MirRun {
 			var site = new RunSite(d, gen);
 			for (f in funcs) {
 				var x = @:privateAccess hxmc.macro.Loader.xb.get(InterpGen.DESC + prep.funcSym(f));
-				if (x != null) Tier.add(Ptr.ofI64(x.v), f, site);
+				if (x != null) Tier.add(Ptr.ofI64(x.v), f, site, o.opt);
 			}
 			Tier.loaded();
 		}
@@ -381,7 +381,7 @@ class MirRun {
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = false;
 		try {
-			if (hxmc.rt.Interp.isStub(desc) && !Tier.compileStub(desc, true)) {
+			if (hxmc.rt.Interp.isStub(desc) && !Tier.compileStub(desc, d.o.opt)) {
 				var obj = new Obj();
 				var abi = d.abi;
 				d.compileFunc(f, obj, Target.emitter(abi, obj), new Regalloc.Scratch(Target.selector(abi)));
