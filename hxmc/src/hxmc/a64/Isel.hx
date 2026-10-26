@@ -20,7 +20,7 @@ enum abstract AOp(Int) to Int from Int {
 	var ALUI; // d <- s1 op imm
 	var ADDSH; // d <- s1 + (s2 << imm)
 	var MUL;
-	var SDIV;
+	var SDIV; // d <- s1 / s2 (flag: udiv)
 	var MSUB; // d <- s3 - s1 * s2
 	var SHIFT; // d <- s1 (cond: 2 lsl, 3 lsr, 4 asr) s2
 	var SHIFTI; // d <- s1 op imm
@@ -58,6 +58,7 @@ enum abstract AOp(Int) to Int from Int {
 	var FMOVWS; // d (32 bits) <- s1 (fpr, single)
 	var FCVTSD; // d (double) <- s1 (single)
 	var FCVTDS; // d (single) <- s1 (double)
+	var MULH; // d <- the high 64 bits of s1 * s2 (flag: umulh, else smulh)
 }
 
 // Mir -> LIR for AArch64 (AAPCS64 and its Apple and Windows variants:
@@ -124,7 +125,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case STORE:
 				u(i.s1);
 				mem();
-			case ALU | ADDSH | MUL | SDIV | SHIFT | FOP2 | CSEL:
+			case ALU | ADDSH | MUL | SDIV | MULH | SHIFT | FOP2 | CSEL:
 				defs.push(i.d);
 				u(i.s1);
 				u(i.s2);
@@ -390,16 +391,25 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					x.s2 = use(i.b);
 					x.size = sz(i.ty);
 				}
-			case Div:
+			case Div | UDiv:
 				var x = emit(SDIV);
 				x.d = reg(i.id);
 				x.s1 = use(i.a);
 				x.s2 = use(i.b);
+				x.flag = i.op == UDiv;
 				x.size = sz(i.ty);
-			case Rem:
+			case MulHi | UMulHi:
+				var x = emit(MULH);
+				x.d = reg(i.id);
+				x.s1 = use(i.a);
+				x.s2 = use(i.b);
+				x.flag = i.op == UMulHi;
+				x.size = 8;
+			case Rem | URem:
 				var a = use(i.a), bb = use(i.b);
 				var q = f.newReg(false);
 				var x = emit(SDIV);
+				x.flag = i.op == URem;
 				x.d = q;
 				x.s1 = a;
 				x.s2 = bb;

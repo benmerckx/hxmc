@@ -222,6 +222,8 @@ class Driver {
 					lock.release();
 				}
 			}
+			// divisions by constants multiplied (not interpreted: one instruction there)
+			if (o.opt && DivConst.on && (interp == null || !interp.wants(fn))) new DivConst(mf, !abi.wasm).run();
 			if (o.opt) Opt.lowered(mf);
 			if (dumpSet != null && dumpSet.exists(name)) Sys.println(mf.dump());
 			if (interp != null && interp.wants(fn)) {

@@ -349,7 +349,9 @@ class Emit implements hxmc.Target.Emitter {
 			case MUL:
 				a.mul(x, i.d, i.s1, i.s2);
 			case SDIV:
-				a.dp2(1, x, i.d, i.s1, i.s2);
+				a.dp2(i.flag ? 0 : 1, x, i.d, i.s1, i.s2);
+			case MULH:
+				a.mulh(i.flag, i.d, i.s1, i.s2);
 			case MSUB:
 				a.msub(x, i.d, i.s1, i.s2, i.s3);
 			case SHIFT:

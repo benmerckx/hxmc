@@ -141,6 +141,9 @@ class EncTest {
 				emit('neg ${r(d, size)}', a -> a.neg(size, d));
 				emit('not ${r(d, size)}', a -> a.not(size, d));
 				emit('idiv ${r(d, size)}', a -> a.idiv(size, d));
+				emit('div ${r(d, size)}', a -> a.unary(6, size, d));
+				emit('imul ${r(d, size)}', a -> a.unary(5, size, d));
+				emit('mul ${r(d, size)}', a -> a.unary(4, size, d));
 				emit('shl ${r(d, size)}, cl', a -> a.shiftCl(Asm.SHL, size, d));
 				emit('shr ${r(d, size)}, cl', a -> a.shiftCl(Asm.SHR, size, d));
 				emit('sar ${r(d, size)}, cl', a -> a.shiftCl(Asm.SAR, size, d));

@@ -66,6 +66,10 @@ enum abstract Op(Int) to Int {
 	var Unreachable; // after a call that does not return
 	// values (late additions)
 	var Rotr; // a rotated right by the constant b (I32/I64)
+	var UDiv; // unsigned, machine semantics (b != 0: Mem.udiv)
+	var URem;
+	var MulHi; // the high 64 bits of the signed 128-bit product (I64; DivConst, native targets only)
+	var UMulHi; // unsigned
 	// object-level operations (docs/plans/codegen.md, "Object-level Mir"):
 	// MirBuild makes them, MemLower lowers them to the instructions above
 	// (layouts, loads and stores, allocation, barriers, the shadow stack);
@@ -498,7 +502,7 @@ class MFunc {
 
 	static final OPS:Vector<String> = vector("param", "const", "constf", "symaddr", "tlsload", "tlsstore", "stackaddr", "copy", "phi", "add", "sub", "mul", "and",
 		"or", "xor", "shl", "sar", "shr", "neg", "not", "div", "rem", "fadd", "fsub", "fmul", "fdiv", "fneg", "fsqrt", "fabs", "cmp", "sext", "zext", "trunc",
-		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr", "nullcheck", "new",
+		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr", "udiv", "urem", "mulhi", "umulhi", "nullcheck", "new",
 		"newdyn", "initfield", "getfield", "setfield", "fieldaddr", "enumtag", "typetest", "box", "unbox", "virtualcall", "closurecall", "anonget", "anontest",
 		"anonstore", "anoncall", "arraylength", "arrayget", "arrayset", "arraypush", "newarray", "arrayinit", "newnarray", "narrayinit", "narraylength",
 		"narrayget", "narrayset", "narraydyn", "refstore", "irnode", "varget", "varset", "try", "catch");
