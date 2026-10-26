@@ -16,7 +16,7 @@ import hxmc.unsafe.*;
 // never follows a frame pointer it cannot trust; with an empty table (the
 // program names no stacks, -D hxmc.no-stacks) or no frame records
 // (-D hxmc.no-frame-pointers, WebAssembly) the stacks are empty.
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:keep @:allow(hxmc.rt) @:access(hxmc.rt.Interp)
 class Stacks {
 	// the frames a stack keeps at most
 	public static inline var MAX = 256;
@@ -133,9 +133,13 @@ class Stacks {
 
 	// the return addresses from frame record f up, at most max, into out,
 	// below `limit` (an address in a frame: the frames of the functions it
-	// calls are below it, the stack growing down; null: none); how many
-	@:hxmc.unsafe static function walkFrom(f:Ptr, out:Ptr, max:Int, limit:Ptr):Int {
+	// calls are below it, the stack growing down; null: none); how many.
+	// `callee`: what f's function is to the interpreter (interpKind; the
+	// function calling walkFrom: OTHER); `ic`: the interpreted frames not met
+	// yet, innermost first (interpFrames: those running)
+	@:hxmc.unsafe static function walkFrom(f:Ptr, out:Ptr, max:Int, limit:Ptr, callee:Int, ic:Ptr):Int {
 		var n = 0;
+		var interp = !ic.isNull();
 		while (n < max && !f.isNull() && (f.toI64() & 7) == 0 && (limit.isNull() || f.ult(limit))) {
 			var ret = Mem.getPtr(f, 8);
 			var up = Mem.getPtr(f, 0);
@@ -148,21 +152,133 @@ class Stacks {
 				// table; an address of C code is left out when named, describe)
 				break;
 			}
-			Mem.setPtr(out, 8 * n, ret);
-			n++;
+			var kind = interp ? interpKind(ret) : OTHER;
+			if (kind == EXEC) {
+				// (the next interpreted frame, in the place of the exec making its
+				// call; none: an exec under a try's or a stub's, which run the
+				// frame in another exec, the one making the call)
+				if (callee != AGAIN && !ic.isNull()) {
+					if (n + 2 > max) break;
+					Mem.setI64(out, 8 * n, Mem.getPtr(ic, F_CODE).toI64() | interpTag());
+					Mem.setPtr(out, 8 * n + 8, Mem.getPtr(ic, F_CALLIP));
+					n += 2;
+					ic = Mem.getPtr(ic, F_PREV);
+					walkInterp = true;
+				}
+			} else {
+				Mem.setPtr(out, 8 * n, ret);
+				n++;
+			}
+			callee = kind;
 			f = up;
 		}
 		walkEnd = f;
+		walkEndKind = callee;
+		walkEndFrames = ic;
 		return n;
 	}
 
-	// the record a walk stopped at (walkFrom)
+	// the record a walk stopped at (walkFrom), what its function is to the
+	// interpreter (interpKind), and whether the walk met an interpreted frame
 	@:hxmc.threadLocal static var walkEnd:Ptr;
+	@:hxmc.threadLocal static var walkEndKind:Int;
+	@:hxmc.threadLocal static var walkEndFrames:Ptr;
+	@:hxmc.threadLocal static var walkInterp:Bool;
+
+	// ---- the Mir interpreter's frames (hxmc.rt.Interp: code loaded at run
+	// time, in a Mir host: Mem.mirHost), which have no code of their own:
+	// each runs in a call of Interp.exec, met by a walk as the caller of what
+	// the frame calls. The interpreter links its frames (interpCur, then each
+	// one's F_PREV, innermost first, as a walk meets their execs) and keeps
+	// in each the call it makes (F_CALLIP); a walk puts each frame in its
+	// exec's place, as two words: its code with interpTag set, then the
+	// call's address there, named through the lines InterpGen writes into
+	// its descriptor (Interp.H_POSITIONS). A try (Interp.enterTry) and a
+	// function's stub (Interp.lazy) run their frame in an exec of their own:
+	// the exec calling them is not the frame's.
+
+	// the innermost interpreted frame of this thread (null: none runs)
+	@:hxmc.threadLocal public static var interpCur:Ptr;
+	public static inline var F_CODE = 0;
+	public static inline var F_PREV = 192;
+	public static inline var F_CALLIP = 200;
+
+	// the interpreted frames running (a walk from here)
+	@:hxmc.unsafe static inline function interpFrames():Ptr
+		return Mem.mirHost() == 1 ? interpCur : Ptr.nil();
+
+	// (no return address has the top bit)
+	@:hxmc.unsafe static inline function interpTag():I64
+		return (1 : I64) << 63;
+
+	// what a function is to the interpreter: Interp.exec, one running its
+	// caller's frame again (enterTry, lazy), or another
+	static inline var OTHER = 0;
+	static inline var EXEC = 1;
+	static inline var AGAIN = 2;
+
+	// the code of Interp.exec, enterTry and lazy (start, end each)
+	static var interpCode:Ptr;
+
+	// (into c's range k) the code of the function at address a
+	@:hxmc.unsafe static function codeRange(c:Ptr, k:Int, a:Ptr) {
+		var e = find(a);
+		var lo = e.isNull() ? Ptr.nil() : e.addL((Mem.getI32(e, 0) : I64));
+		Mem.setPtr(c, 16 * k, lo);
+		Mem.setPtr(c, 16 * k + 8, e.isNull() ? lo : lo.add(Mem.getI32(e, 4)));
+	}
+
+	// what the function of return address ret is to the interpreter
+	@:hxmc.unsafe static function interpKind(ret:Ptr):Int {
+		if (Mem.mirHost() != 1) {
+			// (no interpreter: no symbol of its)
+			return OTHER;
+		} else {
+			if (interpCode.isNull()) {
+				var c = LibC.malloc(48);
+				codeRange(c, 0, Mem.sym("F_hxmc_rt_Interp_exec"));
+				codeRange(c, 1, Mem.sym("F_hxmc_rt_Interp_enterTry"));
+				codeRange(c, 2, Mem.sym("F_hxmc_rt_Interp_lazy"));
+				interpCode = c;
+			}
+			for (k in 0...3)
+				if (Mem.getPtr(interpCode, 16 * k).ult(ret) && !Mem.getPtr(interpCode, 16 * k + 8).ult(ret)) return k == 0 ? EXEC : AGAIN;
+			return OTHER;
+		}
+	}
+
+	// the function, file and line of an interpreted frame, its code and the
+	// call it makes (null: none yet, its first line)
+	static function describeInterp(code:Ptr, call:Ptr):{name:Null<String>, file:Null<String>, line:Int} {
+		var desc = code.add(-Interp.HEADER);
+		var off = Mem.getI32(desc, Interp.H_POSITIONS);
+		if (off == 0) return {name: null, file: null, line: 0};
+		var t = desc.add(off);
+		var n = Mem.getI32(t, 0);
+		var word = call.isNull() ? 0 : call.diff(code).toInt() >> 2;
+		var found = 0;
+		for (j in 1...n) {
+			if (Mem.getI32(t, 4 + 12 * j) > word) break;
+			found = j;
+		}
+		var strs = t.add(4 + 12 * n);
+		var e = t.add(4 + 12 * found);
+		return {name: interpStr(strs, 0), file: interpStr(strs, Mem.getI32(e, 8)), line: Mem.getI32(e, 4)};
+	}
+
+	// string k of a line table's strings (their count, then each one's byte length and bytes)
+	static function interpStr(strs:Ptr, k:Int):String {
+		var p = strs.add(4);
+		for (_ in 0...k)
+			p = p.add(4 + Mem.getI32(p, 0));
+		var len = Mem.getI32(p, 0);
+		return Str.decode(Repr.octetsAt(p.add(4), len), 0, len);
+	}
 
 	// the return addresses from the caller's caller up (the function calling
 	// walk is the first frame)
 	@:hxmc.unsafe public static function walk(out:Ptr, max:Int):Int
-		return walkFrom(Mem.frame(), out, max, Ptr.nil());
+		return walkFrom(Mem.frame(), out, max, Ptr.nil(), OTHER, interpFrames());
 
 	// the stack here, from the caller of the function calling capture, as
 	// the bytes of its return addresses (8 each)
@@ -191,15 +307,51 @@ class Stacks {
 	// throws 2.3 million times, 150 frames deep on average: 2.3 s more
 	// recorded whole, against 7 s)
 	@:hxmc.unsafe @:hxmc.withStacks public static function recordThrow(handler:Ptr) {
-		if ((flags() & EXCEPTION_STACKS) == 0) return;
-		if (thrown.isNull()) thrown = LibC.malloc(8 * MAX);
-		thrownLen = walkFrom(Mem.frame(), thrown, MAX, handler);
-		thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
+		if (rethrowing) {
+			rethrowing = false;
+			// (the first throw's record stopped at the catch passing it on, whose frame is live)
+			if (thrown.isNull() || thrownTop.isNull() || thrownLen >= MAX) return;
+			thrownLen += walkFrom(thrownTop, thrown.add(8 * thrownLen), MAX - thrownLen, handler, thrownTopKind, thrownTopFrames);
+			thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
+			thrownTopKind = walkEndKind;
+			thrownTopFrames = walkEndFrames;
+			return;
+		}
+		if ((flags() & EXCEPTION_STACKS) != 0) {
+			if (thrown.isNull()) thrown = LibC.malloc(8 * MAX);
+			thrownLen = walkFrom(Mem.frame(), thrown, MAX, handler, OTHER, interpFrames());
+			thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
+			thrownTopKind = walkEndKind;
+			thrownTopFrames = walkEndFrames;
+		} else if (Mem.mirHost() == 1 && !interpCur.isNull()) {
+			// (while interpreted code runs, a throw its frames see: their stacks
+			// are read, interp.MirMacros; not one of the native code working for
+			// them, caught there: compiling, the macro API)
+			var buf = Mem.stack(8 * MAX);
+			walkInterp = false;
+			var n = walkFrom(Mem.frame(), buf, MAX, handler, OTHER, interpCur);
+			if (!walkInterp) return;
+			if (thrown.isNull()) thrown = LibC.malloc(8 * MAX);
+			LibC.memcpy(thrown, buf, (8 * n : I64));
+			thrownLen = n;
+			thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
+			thrownTopKind = walkEndKind;
+			thrownTopFrames = walkEndFrames;
+		}
 	}
 
 	// the frame record of the function that caught the last throw (where its
 	// recorded stack stops: recordThrow), per thread
 	@:hxmc.threadLocal static var thrownTop:Ptr;
+	// (and what its function is to the interpreter, interpKind, and the
+	// interpreted frames above it)
+	@:hxmc.threadLocal static var thrownTopKind:Int;
+	@:hxmc.threadLocal static var thrownTopFrames:Ptr;
+
+	// set by a catch before it passes its exception on (the interpreter's
+	// entries and tries, which catch to give back their frames): that
+	// throw's stack is the first's, going on from the catch
+	@:hxmc.threadLocal public static var rethrowing:Bool;
 
 	// the last throw's stack (of this thread), as capture's: the frames up to
 	// the function catching it, then, while that function runs (a catch
@@ -222,7 +374,7 @@ class Stacks {
 		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(Mem.getPtr(f, 8)))
 			f = Mem.getPtr(f, 0);
 		if (f != top) return n;
-		return n + walkFrom(top, buf.add(8 * n), MAX - n, Ptr.nil());
+		return n + walkFrom(top, buf.add(8 * n), MAX - n, Ptr.nil(), thrownTopKind, thrownTopFrames);
 	}
 
 	// ---- names
@@ -311,9 +463,32 @@ class Stacks {
 		return {name: name(e), file: f == 0 ? null : str(f), line: (r & 0xffffffff).toInt()};
 	}
 
-	// the return address k of a stack capture made
-	@:hxmc.unsafe public static function at(b:haxe.io.Bytes, k:Int):Ptr
-		return Mem.getPtr(Bytes.bytes(b.getData()), 8 * k);
+	// the frame of a stack's word w: a return address, or with w1, the word
+	// after it, an interpreted frame's two words (walkFrom)
+	static function describeWords(w:I64, w1:I64):Null<{name:Null<String>, file:Null<String>, line:Int}> {
+		if (w >= (0 : I64)) return describe(Ptr.ofI64(w));
+		return describeInterp(Ptr.ofI64(w ^ interpTag()), Ptr.ofI64(w1));
+	}
+
+	// word k of a stack capture made (0 past its end)
+	@:hxmc.unsafe static function word(b:haxe.io.Bytes, k:Int):I64
+		return 8 * k < b.length ? Mem.getI64(Bytes.bytes(b.getData()), 8 * k) : (0 : I64);
+
+	// how many words the frame at word k of a stack's words takes
+	@:hxmc.unsafe static inline function words(p:Ptr, k:Int):Int
+		return Mem.getI64(p, 8 * k) < (0 : I64) ? 2 : 1;
+
+	// the frame at word k of a stack capture made (capture, lastThrow), and
+	// the word after it (frameEnd)
+	public static function frame(b:haxe.io.Bytes, k:Int):Null<{name:Null<String>, file:Null<String>, line:Int}>
+		return describeWords(word(b, k), word(b, k + 1));
+
+	@:hxmc.unsafe public static function frameEnd(b:haxe.io.Bytes, k:Int):Int
+		return k + words(Bytes.bytes(b.getData()), k);
+
+	// whether the frame at word k of a stack capture made is the Mir interpreter's
+	@:hxmc.unsafe public static function interpreted(b:haxe.io.Bytes, k:Int):Bool
+		return words(Bytes.bytes(b.getData()), k) == 2;
 
 	// whether a frame is the runtime's own (not shown in stacks)
 	public static function internal(name:Null<String>):Bool
@@ -341,8 +516,10 @@ class Stacks {
 		var buf = Mem.stack(8 * MAX);
 		var n = walk(buf, MAX);
 		var s = new StringBuf();
-		for (k in 0...n) {
-			var d = describe(Mem.getPtr(buf, 8 * k));
+		var k = 0;
+		while (k < n) {
+			var d = describeWords(Mem.getI64(buf, 8 * k), k + 1 < n ? Mem.getI64(buf, 8 * k + 8) : (0 : I64));
+			k += words(buf, k);
 			if (d == null || d.file == null || internal(d.name)) continue;
 			s.add("Called from ");
 			s.add(d.name);

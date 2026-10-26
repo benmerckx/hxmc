@@ -1,7 +1,8 @@
 // hxmc: haxe/upstream/std/hl/_std/haxe/NativeStackTrace.hx, the stacks of
 // the runtime (hxmc.rt.Stacks: walked through the frame records, named
 // through the program's table of functions and lines, hxmc/src/hxmc/StackTable.hx).
-// A native stack is the bytes of its return addresses, innermost first; empty
+// A native stack is the bytes of its return addresses, innermost first (and
+// the Mir interpreter's frames: two words each, hxmc.rt.Stacks.frame); empty
 // on WebAssembly (no frame records) and with -D hxmc.no-stacks.
 
 package haxe;
@@ -44,8 +45,10 @@ class NativeStackTrace {
 		if (native == null) return stack;
 		var b:haxe.io.Bytes = native;
 		var leading = true;
-		for (k in 0...(b.length >> 3)) {
-			var d = hxmc.rt.Stacks.describe(hxmc.rt.Stacks.at(b, k));
+		var k = 0;
+		while (k < b.length >> 3) {
+			var d = hxmc.rt.Stacks.frame(b, k);
+			k = hxmc.rt.Stacks.frameEnd(b, k);
 			// (glue without lines: the closures forwarding to a function, adapters)
 			if (d == null || d.file == null || hxmc.rt.Stacks.internal(d.name)) continue;
 			var name:String = d.name;

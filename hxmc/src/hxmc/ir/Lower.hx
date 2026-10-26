@@ -838,7 +838,55 @@ class Lower implements LowerQueries {
 	public static function isRuntimeStringBuf(c:TClass):Bool
 		return isCore(c, "StringBuf") && c.hasClassFlag(CExtern);
 
+	// a class, an enum by its path (samePaths: Mir macros, whose compilations
+	// hand over the types of a module again, other objects of the same module,
+	// which a generation of bundles lowers as one): the first object lowered
+	public var samePaths = false;
+	var classByPath = new Map<String, TClass>();
+	var enumByPath = new Map<String, TEnum>();
+	var canonClasses = new haxe.ds.ObjectMap<TClass, TClass>();
+	var canonEnums = new haxe.ds.ObjectMap<TEnum, TEnum>();
+
+	public function canonClass(c:TClass):TClass {
+		if (!samePaths) return c;
+		var o = canonClasses.get(c);
+		if (o != null) return o;
+		var k = core.Globals.sTypePath(c.clPath);
+		o = classByPath.get(k);
+		if (o == null || o.clModule.mId != c.clModule.mId) {
+			classByPath.set(k, c);
+			o = c;
+		}
+		canonClasses.set(c, o);
+		return o;
+	}
+
+	public function canonEnum(e:TEnum):TEnum {
+		if (!samePaths) return e;
+		var o = canonEnums.get(e);
+		if (o != null) return o;
+		var k = core.Globals.sTypePath(e.ePath);
+		o = enumByPath.get(k);
+		if (o == null || o.eModule.mId != e.eModule.mId) {
+			enumByPath.set(k, e);
+			o = e;
+		}
+		canonEnums.set(e, o);
+		return o;
+	}
+
+	// a field of c as a field of the class canonClass(c) is (its own object of the field)
+	public function canonField(c:TClass, cf:TClassField):TClassField {
+		if (!samePaths) return cf;
+		var o = canonClass(c);
+		if (o == c) return cf;
+		if (cf == c.clConstructor) return o.clConstructor != null ? o.clConstructor : cf;
+		var x = c.clStatics.get(cf.cfName) == cf ? o.clStatics.get(cf.cfName) : o.clFields.get(cf.cfName);
+		return x != null ? x : cf;
+	}
+
 	public function classInfo(c:TClass):ClassInfo {
+		c = canonClass(c);
 		var ci = classes.get(c);
 		if (ci != null) return ci;
 		if (c.hasClassFlag(CExtern)) fail("extern class " + c.clPath.name + " used as a class");
@@ -870,8 +918,8 @@ class Lower implements LowerQueries {
 		tclasses.push(c);
 		var k = c.clSuper;
 		while (k != null) {
-			var subs = subclasses.get(k.cls);
-			if (subs == null) subclasses.set(k.cls, subs = []);
+			var subs = subclasses.get(canonClass(k.cls));
+			if (subs == null) subclasses.set(canonClass(k.cls), subs = []);
 			subs.push(c);
 			k = k.cls.clSuper;
 		}
@@ -931,6 +979,7 @@ class Lower implements LowerQueries {
 	}
 
 	public function enumInfo(e:TEnum):EnumInfo {
+		e = canonEnum(e);
 		var ei = enums.get(e);
 		if (ei != null) return ei;
 		ei = new EnumInfo(core.Globals.sTypePath(e.ePath), ident(e.ePath.pack, e.ePath.name));
@@ -1009,6 +1058,8 @@ class Lower implements LowerQueries {
 	}
 
 	public function staticFunc(c:TClass, cf:TClassField):FuncInfo {
+		cf = canonField(c, cf);
+		c = canonClass(c);
 		var fi = funcs.get(cf);
 		if (fi != null) return fi;
 		var tf = funcOf(cf);
@@ -1180,6 +1231,8 @@ class Lower implements LowerQueries {
 	}
 
 	public function method(c:TClass, cf:TClassField):FuncInfo {
+		cf = canonField(c, cf);
+		c = canonClass(c);
 		var fi = funcs.get(cf);
 		if (fi != null) return fi;
 		var tf = funcOf(cf);
@@ -1302,6 +1355,7 @@ class Lower implements LowerQueries {
 	}
 
 	public function ctor(c:TClass):FuncInfo {
+		c = canonClass(c);
 		var fi = ctors.get(c);
 		if (fi != null) return fi;
 		if (isRuntimeStringBuf(c)) return stringBufCtor(c);
@@ -1349,6 +1403,7 @@ class Lower implements LowerQueries {
 	var structCtors = new Map<TClass, FuncInfo>();
 
 	public function structCtor(c:TClass):FuncInfo {
+		c = canonClass(c);
 		var fi = structCtors.get(c);
 		if (fi != null) return fi;
 		fi = new FuncInfo(nativeName(c) + "_new", moduleOf(c));
@@ -1561,13 +1616,19 @@ class Lower implements LowerQueries {
 	}
 
 	var staticVars = new Map<TClassField, Int>();
+	// the class whose static variable a global is (interp.MirMacros: what a new
+	// generation of macro bundles carries over)
+	public var globalOwner = new Map<Int, TClass>();
 
 	// a class static variable: a global, initialized by the static initializer
 	public function staticVar(c:TClass, cf:TClassField):Int {
+		cf = canonField(c, cf);
+		c = canonClass(c);
 		var g = staticVars.get(cf);
 		if (g != null) return g;
 		var t = ty(cf.cfType); // first: it may register globals itself (enum constructors)
 		g = prog.globals.length;
+		globalOwner.set(g, c);
 		var name = nativeName(c) + "_" + cf.cfName;
 		// @:hxmc.threadLocal("symbol"): a scalar or Ptr per thread (zero in a new
 		// thread: no initializer), in the thread-local storage of each format
@@ -1614,11 +1675,12 @@ class Lower implements LowerQueries {
 	}
 
 	var initialized = new Map<TClass, Bool>();
-	var initOf = new Map<FuncInfo, TClass>();
+	public var initOf = new Map<FuncInfo, TClass>();
 
 	// static variable initializers and __init__ of a class, run at startup
 	// (in the order of com.types, see `program`)
 	function initClass(c:TClass) {
+		c = canonClass(c);
 		if (initialized.exists(c)) return;
 		initialized.set(c, true);
 		var fi = new FuncInfo(nativeName(c) + "__init", moduleOf(c));
@@ -1708,7 +1770,7 @@ class Lower implements LowerQueries {
 		if (lookupMethod(c, name) == null) return true;
 		var f = c.clFields.get(name);
 		if (f != null && f.hasClassFieldFlag(CfFinal)) return false;
-		var subs = subclasses.get(c);
+		var subs = subclasses.get(canonClass(c));
 		if (subs != null)
 			for (d in subs)
 				if (d.clFields.exists(name) && d.clFields.get(name).cfExpr != null) return true;

@@ -30,7 +30,7 @@ class BundleFacts {
 
 	// what the loader needs to number, register and initialize the program's parts
 	// (types: the program's, com.types by default; the macro context's handed over so far for interp.MirMacros)
-	static function facts(com:context.Common.CommonContext, p:Program, e:hxmc.ir.Facts, l:hxmc.ir.Lower, main:Null<TClass>, ?types:Array<ModuleType>):Dynamic {
+	static function facts(com:context.Common.CommonContext, p:Program, e:hxmc.ir.Facts, l:hxmc.ir.Lower, main:Null<TClass>, ?types:Array<ModuleType>, ?kept:TClass->Bool):Dynamic {
 		var tn = e.typeNames;
 		// what may be the compiler's own: the std's types and statics (hxmc's std, with the
 		// runtime, included); the program's are its own even when named as one of the compiler's
@@ -52,7 +52,7 @@ class BundleFacts {
 			switch t {
 				case TClassDecl(c):
 					for (cf in c.clOrderedStatics) {
-						var g = l.staticVars.get(cf);
+						var g = l.staticVars.get(l.canonField(c, cf));
 						if (g != null) globalShare.set(g, std);
 					}
 				case _:
@@ -120,15 +120,27 @@ class BundleFacts {
 				share: globalShare.get(g) == true,
 				sym: ref ? "GIOFF_" + e.globalNames[g].substr(3) : e.scalarGlobal(g),
 				size: gl.ty == TI32 || gl.ty == TBool ? 4 : 8,
-				init: gl.init == null ? null : tn[gl.init.tindex]
+				init: gl.init == null ? null : tn[gl.init.tindex],
+				// (a static of a class an earlier generation of macro bundles had, unchanged: its value carried over)
+				keep: kept != null && l.globalOwner.exists(g) && kept(l.globalOwner.get(g))
 			});
 		}
 		var inits = [];
 		for (f in p.inits) {
 			var c = l.initOf.get(f);
 			if (c != null && runtimeClass(c)) continue;
-			var ci = c == null ? null : l.classes.get(c);
-			inits.push({fn: e.symbol(f), ty: ci == null || ci.tindex < 0 ? null : tn[ci.tindex], share: c != null && stdTypes.exists(core.Globals.sTypePath(c.clPath))});
+			var ci = c == null ? null : l.classes.get(l.canonClass(c));
+			inits.push({
+				fn: e.symbol(f),
+				ty: ci == null || ci.tindex < 0 ? null : tn[ci.tindex],
+				share: c != null && stdTypes.exists(core.Globals.sTypePath(c.clPath)),
+				// (a kept class: its initializer not run as it loads, its statics carried over)
+				keep: kept != null && c != null && kept(c),
+				// (the order in which a compilation resets them: Eval's static prototypes, by their paths' hashes)
+				key: c == null ? null : macros.eval.EvalHash.pathHash(c.clPath),
+				cls: c == null ? null : core.Globals.sTypePath(c.clPath),
+				mod: c == null ? null : c.clModule.mId
+			});
 		}
 		// (each class's effective methods once, as findMethod finds them: the
 		// rows of each selector in the classes' order)
@@ -151,7 +163,7 @@ class BundleFacts {
 		var entries = [];
 		if (main != null)
 			for (cf in main.clOrderedStatics) {
-				var f = l.funcs.get(cf);
+				var f = l.funcs.get(l.canonField(main, cf));
 				if (f != null && cf.cfName != "main" && p.isLive(f)) entries.push({name: cf.cfName, sym: e.symbol(f)});
 			}
 		// the singletons of constructors without arguments (the bridge's enum values)

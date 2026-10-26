@@ -236,7 +236,13 @@ class InterpSet {
 // registers when a frame starts, so a constant is never an operation) and
 // the symbol table (8 bytes each, relocated: call-out stubs, other
 // descriptors; zeroed: inline caches), then the parameters' sources (32
-// bits each: an entry's byte offset in InterpAbi's register image).
+// bits each: an entry's byte offset in InterpAbi's register image), then
+// (hxmc.ir.Lower.lines) its lines, whose offset from the descriptor is the
+// header's word at H_POSITIONS (0: none): their count, each one's code word
+// (where its code starts), line and file's string, then the strings (their
+// count, each one's byte length and bytes), the first the function's name:
+// hxmc.rt.Stacks names an interpreted frame there, as a native one through
+// the program's table of functions and lines.
 //
 // Registers: the constants (deduplicated), the parameters (a caller writes
 // its arguments there), then the other values, then
@@ -253,6 +259,8 @@ class InterpGen {
 	public static inline var HEADER = 64;
 	// (the header's flags: Loader reads them before the descriptor is in memory)
 	public static inline var H_FLAGS = 24;
+	// (the header's offset of the positions' table: 0, none)
+	public static inline var H_POSITIONS = 28;
 	// the runtime's thread-local variables the interpreter reads itself (Interp.T_*)
 	static var TLS = [
 		"rt_sp" => 0, "rt_sp_hw" => 1, "rt_hcur" => 2, "rt_exn" => 3, "rt_young_ptr" => 4, "rt_young_limit" => 5, "rt_young_rlimit" => 6,
@@ -288,6 +296,8 @@ class InterpGen {
 	final targets = new Map<Int, Int>();
 	final allocs = new Map<Int, Array<Int>>();
 	final cc:CallConv;
+	// (Lower.lines) the function's Haxe name in stacks (pack.Class.field)
+	public var display:Null<String> = null;
 
 	public function new(prep, abi, obj, mf, set, compile) {
 		this.prep = prep;
@@ -406,11 +416,19 @@ class InterpGen {
 			for (i in b.ins)
 				if (i.op == Param && i.imm >= 0 && reg[i.id] < 0) reg[i.id] = nc + i.imm;
 		var pcOf = new Map<Int, Int>();
+		// (the lines, from the code word where each one's code starts)
+		var sites:Array<{at:Int, file:String, line:Int}> = [];
+		var lastPos = 0;
 		for (b in blocks) {
 			pcOf.set(b.id, code.length);
 			for (i in b.ins)
 				if (!i.dead) {
 					insStart = code.length;
+					if (i.pos != lastPos) {
+						lastPos = i.pos;
+						var p = SrcPos.get(i.pos);
+						if (lastPos != 0 && p.file != "") sites.push({at: code.length, file: p.file, line: p.line});
+					}
 					ins(i, b, slotOff);
 				}
 		}
@@ -431,7 +449,8 @@ class InterpGen {
 		var symOff = constOff + 8 * consts.length;
 		var srcOff = symOff + 8 * syms.length;
 		var entry = entrySources(abi, cc, mf, set.loaded);
-		header(b, nregs + scratch, frame, code.length, consts.length, mf.params.length, entry.flags, constOff, symOff, srcOff);
+		var posOff = sites.length == 0 ? 0 : srcOff + 4 * entry.sources.length;
+		header(b, nregs + scratch, frame, code.length, consts.length, mf.params.length, entry.flags, constOff, symOff, srcOff, posOff);
 		for (w in code)
 			b.u32(w);
 		b.align(8);
@@ -445,11 +464,32 @@ class InterpGen {
 		}
 		for (s in entry.sources)
 			b.u32(s);
+		if (sites.length > 0) {
+			var files = [display != null ? display : mf.name], fileIndex = new Map<String, Int>();
+			b.u32(sites.length);
+			for (x in sites) {
+				var k = fileIndex.get(x.file);
+				if (k == null) {
+					fileIndex.set(x.file, k = files.length);
+					files.push(x.file);
+				}
+				b.u32(x.at);
+				b.u32(x.line);
+				b.u32(k);
+			}
+			b.u32(files.length);
+			for (name in files) {
+				var bytes = haxe.io.Bytes.ofString(name);
+				b.u32(bytes.length);
+				for (k in 0...bytes.length)
+					b.u8(bytes.get(k));
+			}
+		}
 		obj.define(DESC + mf.name, sec, start, b.len - start, true);
 		if (!set.loaded) entryStub();
 	}
 
-	static function header(b:hxmc.Buf, nregs:Int, frame:Int, words:Int, nconsts:Int, nparams:Int, flags:Int, constOff:Int, symOff:Int, srcOff:Int) {
+	static function header(b:hxmc.Buf, nregs:Int, frame:Int, words:Int, nconsts:Int, nparams:Int, flags:Int, constOff:Int, symOff:Int, srcOff:Int, posOff = 0) {
 		b.u32(MAGIC);
 		b.u32(nregs);
 		b.u32(frame);
@@ -457,7 +497,7 @@ class InterpGen {
 		b.u32(nconsts);
 		b.u32(nparams);
 		b.u32(flags);
-		b.u32(0);
+		b.u32(posOff);
 		for (off in [HEADER, symOff, constOff, srcOff])
 			b.u64(off, 0);
 	}

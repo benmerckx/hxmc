@@ -188,6 +188,26 @@ an uncaught exception uses too:
   noise (7.1 s either way). `-D hxmc.no-stacks` leaves the positions, the
   table and the recording out (stacks are empty); `-D hxmc.stacks` keeps
   them in every program.
+- A Mir host (the compiler, the tool: Macros on the Mir interpreter,
+  below) keeps every function and always has the table, its call-outs and
+  entries' pools in it (`Reach` does not run), so the stacks of the code it
+  loads go through its frames; its own throws record no stack
+  (`hxmc_stack_flags` 0), and an uncaught exception of its own prints its
+  frames. The compiler grows by 1.5 MB (5.8%; 9% gzipped) on linux-x86_64.
+- The Mir interpreter's frames have no code of their own: each runs in a
+  call of `Interp.exec`, which a walk meets as the caller of what the frame
+  calls. The interpreter links its frames (`Stacks.interpCur`, innermost
+  first, the order a walk meets their execs in) and keeps in each the call
+  it makes; a walk puts each frame in its exec's place, as two words (its
+  code with the top bit set, then the call's address), named through the
+  lines and the name InterpGen writes into the function's descriptor. A
+  try (`Interp.enterTry`) and a function's stub (`Interp.lazy`) run their
+  frame in an exec of their own: the exec calling them is not the frame's.
+  Nothing is stored per frame but the call (a store per call: the macro
+  benchmarks unchanged). While interpreted
+  code runs, a throw whose walk reaches one of its frames is recorded (a
+  throw of the native code working for it, caught there, is not); a catch
+  passing an exception on keeps that record (`Stacks.rethrowing`).
 - Exceptions: `haxe.Exception` (hxmc's, after hl's) records the stack where
   it is made, or for a value caught (`Exception.caught`) the stack of its
   throw; its `stack` leaves out the frames of the exception's constructors
@@ -982,7 +1002,46 @@ caught typing error is a `haxe.macro.Error` with its `childErrors`; `$v{}`
 of an integral Float is a Float. A compilation that types the macro context
 again (`--next`, the compilation server) starts a new generation of bundles,
 as Eval drops its prototypes, and a reused macro context runs its static
-initializers again (`EvalMain.doReuse`).
+initializers again (`EvalMain.doReuse`), in the order of the classes' paths'
+hashes as Eval's `static_prototypes#reset` walks them; statics without an
+initializer keep their values. A bundle's static initializers run in the
+order their classes were handed over (`EvalPrototype.addTypes`). Eval
+drops only the prototypes of the types typed again, so a class of the new
+generation whose module is the same as an earlier generation's carries
+its statics over (`Loader`: the slot of a reference, the value of a
+scalar) and does not run its initializer as it loads; this holds when the
+macro context is typed again partway through a compilation too. Each
+compilation hands over the types of the modules not typed again as other
+objects of the same modules, which a generation lowers as the first ones
+(`Lower.samePaths`). `Context.error` ends its macro only: the call has no
+value, as Eval's `catch_exceptions` makes of `Abort`. `make
+mir-server-check` (`hxmc/test/MirServerCheck.hx`, in the Mir lane but on
+Windows) compares a server with Mir macros to the reference's through edits.
+
+An uncaught exception of macro code is reported at the line of its
+innermost frame of macro code, then each caller's line ("Called from
+pack.Class.field", a frame repeated once with its count), the macro
+call's position last; a `haxe.macro.Expr.Error` at its position with its
+child errors; a callback the compiler calls (`Context.onAfterTyping`, ...)
+without a macro call's position. The stacks are the runtime's
+(`hxmc.rt.Stacks`, "Debugging"): the macro code is lowered with its lines
+as a native build is (`Lower.lines`), InterpGen writes each function's
+lines and name into its descriptor (`H_POSITIONS`), and an interpreted
+frame links the one it was called from (`Stacks.interpCur`) and keeps the
+call it makes. A walk puts each interpreted frame in the place of the
+`Interp.exec` running it, so `haxe.CallStack`
+(`callStack`, `exceptionStack`) works in macro code, and the frames of
+the compiler around it are named through its table of functions and
+lines, which a Mir host always has (its own throws record no stack:
+`hxmc_stack_flags` 0). While interpreted code runs, a throw that reaches
+one of its frames is recorded; the interpreter's catches that pass an
+exception on keep that record (`Stacks.rethrowing`). A function without
+calls of its own may be inlined, as natively: its throw is at its caller's
+line. The lines do not count in a function's size for the cold
+path (`COLD_WORDS`: its `Fingerprint` without positions), so the same
+functions are optimized as without them. `MirServerCheck` checks the reports (`EXPECTED`). `haxe.Exception`'s
+`stack` stays empty in macro code: it would record a stack for each of the
+compiler's own exceptions while a macro runs.
 
 The std and the runtime in the macro context: hxmc's std loads all of the
 runtime (`Std` imports `hxmc.rt.Runtime`), and a macro reaches few of the
