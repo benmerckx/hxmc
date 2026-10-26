@@ -95,14 +95,18 @@ class Options {
 		return d == "" ? "./" : haxe.io.Path.addTrailingSlash(d);
 	}
 
-	// the directory of the runtime objects (<dir><target>/rt.o; HXMC_RT_DIR,
-	// else <tool dir>rt/)
-	public static var rtDirOverride:Null<String> = null;
-
-	public static function rtDir():String {
-		if (rtDirOverride != null) return rtDirOverride;
+	// the directory of a target's runtime objects (rt.o, ssl.o, uv.o; with a
+	// trailing slash): <dir><rtName>/ of the first directory of HXMC_RT_DIR
+	// (a list, by the host's path delimiter: the npm launcher passes the
+	// installed @hxmc/rt-<target> packages and its cache) that has its rt.o,
+	// else of the first one; HXMC_RT_DIR unset: <tool dir>rt/
+	public static function rtDir(rtName:String):String {
 		var env = Sys.getEnv("HXMC_RT_DIR");
-		return env != null && env != "" ? haxe.io.Path.addTrailingSlash(env) : toolDir() + "rt/";
+		var dirs = env == null || env == "" ? [] : [for (d in env.split(Sys.systemName() == "Windows" ? ";" : ":")) if (d != "") haxe.io.Path.addTrailingSlash(d)];
+		if (dirs.length == 0) dirs.push(toolDir() + "rt/");
+		for (d in dirs)
+			if (sys.FileSystem.exists(d + rtName + "/rt.o")) return d + rtName + "/";
+		return dirs[0] + rtName + "/";
 	}
 
 	public static function read(com:context.Common.CommonContext):Options {

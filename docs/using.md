@@ -1,6 +1,6 @@
 # Using hxmc in depth
 
-The short version is in the [README](../README.md). This covers the npm packages, how `haxe` picks a compiler, editors and lix, libraries from npm, and fast rebuilds.
+The short version is in the [README](../README.md). This covers the npm packages (which to install, how `haxe` picks a compiler and finds the runtime objects), editors and lix, libraries from npm, and fast rebuilds.
 
 ## All options
 
@@ -22,60 +22,88 @@ The short version is in the [README](../README.md). This covers the npm packages
 
 ## The npm packages
 
-Packages, all published at one version:
+Which package to install:
+
+| You want | Install | You get |
+| --- | --- | --- |
+| Haxe with hxmc: native executables | `npm i -D @hxmc/cli` | `haxe` and `hxmc` (the same command): every Haxe target, and `--custom-target hxmc=<out>` for this machine; the runtime objects of a target are downloaded on the first build for it |
+| The same, offline or in CI, or cross builds without a download | `npm i -D @hxmc/cli @hxmc/rt-<target> ...` | the runtime objects of those targets installed with it (for example `@hxmc/rt-windows-x86_64` on a Linux machine) |
+| The Haxe compiler alone (js, hl, jvm, `--interp`, ...) | `npm i -D @hxmc/haxe` | `haxe`; a build for the hxmc target says to install `@hxmc/cli` (or `@hxmc/target` beside it) |
+
+The packages, all published at one version:
 
 | Package | Size (tarball, unpacked) | |
 | --- | --- | --- |
-| `@hxmc/cli` | 5.9 MB, 26 MB | what you install: the `haxe` launcher, the std (upstream's and hxmc's), the runtime objects of the six targets, `dist/` for lix; optional dependencies on the six platform packages |
-| `@hxmc/linux-x64`, `@hxmc/linux-arm64`, `@hxmc/darwin-x64`, `@hxmc/darwin-arm64`, `@hxmc/win32-x64`, `@hxmc/win32-arm64` | 6.1-6.7 MB, 21-25 MB each | the native compiler built by CI for one platform (npm installs the one that matches, by their `os` and `cpu` fields) |
-| `@hxmc/wasm` | 3.2 MB, 17 MB | the compiler as a wasm32-wasi module, with its WASI runner for node: the fallback where no native compiler runs |
-| `@hxmc/source` | 1.9 MB, 7.5 MB | the compiler's sources (`haxe/src`, `hxmc/src`, `hxmc/std`) and `hxmc-rebuild`; a peer dependency on `@hxmc/cli` at the same version |
+| `@hxmc/cli` | 11 KB, 29 KB | the main install: the commands `haxe` and `hxmc`, which run `@hxmc/haxe`'s launcher; depends on `@hxmc/haxe` and `@hxmc/target` |
+| `@hxmc/haxe` | 1.0 MB, 6.3 MB | the port alone: the `haxe` launcher, upstream's std, `dist/` for lix; optional dependencies on the six platform packages |
+| `@hxmc/haxe-linux-x64`, `@hxmc/haxe-linux-arm64`, `@hxmc/haxe-darwin-x64`, `@hxmc/haxe-darwin-arm64`, `@hxmc/haxe-win32-x64`, `@hxmc/haxe-win32-arm64` | 7.3-7.9 MB, 24-28 MB each | the native compiler built by CI for one platform (npm installs the one that matches, by their `os` and `cpu` fields) |
+| `@hxmc/haxe-wasm` | 4.0 MB, 20 MB | the compiler as a wasm32-wasi module, with its WASI runner for node: the fallback where no native compiler runs |
+| `@hxmc/target` | 0.3 MB, 1.4 MB | hxmc's std (the target's runtime and std, in Haxe), and the integrity hashes of the runtime objects' tarballs |
+| `@hxmc/rt-<target>`: `linux-x86_64`, `linux-x86_64-glibc`, `linux-arm64`, `linux-arm64-glibc`, `macos-x86_64`, `macos-arm64`, `windows-x86_64`, `windows-arm64`, `android-arm64`, `android-x86_64` | 0.3-1.5 MB, 1.0-6.3 MB each | the runtime objects of one target (`<target>/rt.o`, `ssl.o` with mbedtls, `uv.o` with libuv), named as `-D hxmc.target` names it (`-glibc`: `-D hxmc.libc=glibc`; the iOS targets use `macos-arm64`'s); no `os` or `cpu` field, so any of them installs on any machine |
 
-(Sizes of a nightly; CI's job summary lists each build's.) `haxe` runs, in
-this order: the compiler `hxmc-rebuild` built, while `@hxmc/source` is
-installed; the platform package's native compiler; else, when there is none
+(Sizes of 0.1.0 as packed; CI's job summary lists each build's.)
+
+`haxe` runs the platform package's native compiler; else, when there is none
 or it cannot start here (an unsupported machine, an install without optional
 dependencies, a noexec file system, StackBlitz's WebContainers;
 `HXMC_PLATFORM_PACKAGE=0` and `HXMC_NATIVE=0` force this path), the compiler
-as a WebAssembly module under node: `@hxmc/wasm` when it is installed (`npm i
--D @hxmc/cli @hxmc/wasm` where no native compiler can run), else downloaded
-on first use. The download is the `@hxmc/wasm` tarball of the same version
-from the npm registry (`npm_config_registry`, which npm and npx set, else the
-`registry` of an `.npmrc`, else registry.npmjs.org), checked against the
-integrity hash pinned in `@hxmc/cli`'s `package.json` when it was packed,
-and unpacked into the cache (`hxmc/npm/<version>/wasm/`); offline, `haxe`
-prints one line saying so and exits non-zero. The cache is the user's
-(`HXMC_CACHE` above; "hxmc").
+as a WebAssembly module under node: `@hxmc/haxe-wasm` when it is installed
+(`npm i -D @hxmc/cli @hxmc/haxe-wasm` where no native compiler can run), else
+downloaded on first use.
+
+hxmc's std comes from `@hxmc/target`, found beside `@hxmc/haxe` (or in the
+project's `node_modules`) at the same version. The runtime objects of a
+target come, in this order, from an installed `@hxmc/rt-<target>` of the same
+version, from the cache (`hxmc/npm/<version>/rt-<target>/`), else from a
+download on the first build that needs them: never at install, so CI and
+offline machines can install the runtime-object packages they need instead.
+`haxe` finds the targets a build needs from its arguments and the hxml files
+they name (`--custom-target hxmc`, `-D hxmc.target=`, `-D hxmc.libc=glibc`);
+a target set elsewhere (a library's `extraParams.hxml`) is not downloaded,
+and the build says which package to install.
+
+Both downloads are the package's tarball of the same version from the npm
+registry (`npm_config_registry`, which npm and npx set, else the `registry` of
+an `.npmrc`, else registry.npmjs.org), checked against the integrity hash
+pinned when the packages were packed (`@hxmc/haxe-wasm`'s in `@hxmc/haxe`'s
+`package.json`, the runtime objects' in `@hxmc/target`'s), and unpacked into
+the cache (`hxmc/npm/<version>/`); offline, `haxe` prints one line saying so
+and exits non-zero. The cache is the user's (`HXMC_CACHE` above; "hxmc").
+`HXMC_WASM_TARBALL` (a path or URL) and `HXMC_RT_TARBALLS` (a directory or URL
+holding `npm pack`'s files, `hxmc-rt-<target>-<version>.tgz`) replace the
+registry (CI's tests).
+
+For offline or cross builds, install the runtime objects with the project:
+
+```sh
+npm i -D @hxmc/cli @hxmc/rt-linux-x86_64 @hxmc/rt-windows-x86_64 @hxmc/rt-android-arm64
+```
 
 ## Without node
 
-Without node: on Linux and macOS a postinstall script (best effort, offline,
-it only writes inside the package) checks that the native compiler runs and
-copies it over `hxmc/bootstrap/haxe` and `dist/haxe`, so
-`node_modules/.bin/haxe` (a link to it) starts the compiler directly; with
-install scripts disabled (`--ignore-scripts`, pnpm's default) the first call
-through node does the same. On Windows npm's `haxe.cmd` always starts node
-(about 40-60 ms per call), which runs the native compiler; point editors and
-lix at `node_modules/@hxmc/cli/dist/haxe.exe` to bypass it. Nothing but the
-compiler's own output goes to stdout or stderr (editors run `haxe --wait
-stdio`, whose answers are on stderr, and parse `haxe --version`); notices
-(the WebAssembly fallback, its download) go to an interactive terminal only,
-and a failure prints one line and exits non-zero. `HXMC_INSTALL=0` keeps the
-launcher in place.
+Without node: on Linux and macOS a postinstall script of `@hxmc/haxe` (best
+effort, offline, it only writes inside the package) checks that the native
+compiler runs and copies it over `hxmc/bootstrap/haxe` and `dist/haxe`, so
+`node_modules/@hxmc/haxe/hxmc/bootstrap/haxe` (and `node_modules/.bin/haxe`
+when it links that one: an install of `@hxmc/haxe` itself) starts the compiler
+directly; with install scripts disabled (`--ignore-scripts`, pnpm's default)
+the first call through node does the same. `@hxmc/cli`'s `haxe` and `hxmc`
+start node, which runs the native compiler, as npm's `haxe.cmd` does on
+Windows (about 40-60 ms per call); point editors and lix at
+`node_modules/@hxmc/haxe/dist/haxe` (Windows: `dist/haxe.exe`) to bypass it.
+Run that way, a build for the hxmc target goes through node all the same
+(the launcher finds hxmc's std and the runtime objects); the other targets do
+not. Nothing but the compiler's own output goes to stdout or stderr (editors
+run `haxe --wait stdio`, whose answers are on stderr, and parse `haxe
+--version`); notices (the WebAssembly fallback, a download) go to an
+interactive terminal only, and a failure prints one line and exits non-zero.
+`HXMC_INSTALL=0` keeps the launcher in place.
 
 ## Changing the compiler
 
-Changing the compiler: `npm i -D @hxmc/source`, edit its sources in
-`node_modules/@hxmc/source`, and run `npx hxmc-rebuild`: the installed native
-compiler builds the edited one (about 20 s, then only the changed modules
-again) into the cache (`hxmc/npm/<version>/rebuild/<target>/`, with hxmc's
-std merged from its `hxmc/std`), and `haxe` runs it from then on, through the
-launcher, while `@hxmc/source` is installed. Without a native compiler that
-runs, `@hxmc/wasm` builds it (installed or downloaded as above; about a
-minute). `npx hxmc-rebuild --reset` returns to the published compiler. (On
-Windows the WebAssembly path runs on node's WASI, whose gaps the launcher
-fills: `fd_readdir`, drive roots, Windows paths in arguments; checked in CI
-on Windows too.)
+The compiler's sources and `hxmc-rebuild` (`packages/source`, `@hxmc/source`)
+are not published for now: change the compiler in a checkout of this
+repository ([development.md](development.md)).
 
 ## Libraries
 
@@ -138,11 +166,11 @@ compiler sees them, the same way.
 Editors and lix: vshaxe with `"haxe.executable": "auto"` (the default) runs
 the workspace's `node_modules/.bin/haxe` when there is one (as for the lix
 npm package; expected from vshaxe's documentation of `auto`, not verified in
-an editor here); on Windows set it to `node_modules/@hxmc/cli/dist/haxe.exe`.
-`dist/` (`packages/cli/dist` in this repository) is an installation lix
+an editor here); on Windows set it to `node_modules/@hxmc/haxe/dist/haxe.exe`.
+`dist/` (`packages/haxe/dist` in this repository) is an installation lix
 accepts as a path version (`dist/haxe`, `dist/std`, `dist/platform.txt`,
-written on install or first use): `lix use haxe ./node_modules/@hxmc/cli/dist`, or `.haxerc` with
-`{"version": "./node_modules/@hxmc/cli/dist", "resolveLibs": "scoped"}`; lix's
+written on install or first use): `lix use haxe ./node_modules/@hxmc/haxe/dist`, or `.haxerc` with
+`{"version": "./node_modules/@hxmc/haxe/dist", "resolveLibs": "scoped"}`; lix's
 `haxe` shim then runs hxmc (checked with this repository's lix on Linux and
 macOS in CI). With the lix npm package in the same project both packages
 declare a `haxe` bin: npm reports nothing and `node_modules/.bin/haxe` is

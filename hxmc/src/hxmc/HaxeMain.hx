@@ -2,25 +2,45 @@ package hxmc;
 
 import haxe.io.Path;
 
-// `haxe` with hxmc built in (the npm package): the port's command line, where
-// `--custom-target hxmc=<out>` compiles the program to an executable for the
-// host (-D hxmc.target=<target> names another). In the package:
+// `haxe` with hxmc built in (the npm packages, docs/using.md): the port's
+// command line, where `--custom-target hxmc=<out>` compiles the program to an
+// executable for the host (-D hxmc.target=<target> names another). In
+// @hxmc/haxe:
 //   hxmc/bootstrap/haxe[.exe]        this binary (in place of the launcher; also dist/haxe
 //                                    for lix, with dist/std), or
-//                                    @hxmc/wasm's haxe.wasm, its WebAssembly build, run by it
+//                                    @hxmc/haxe-wasm's haxe.wasm, its WebAssembly build, run by it
 //   haxe/upstream/std                the std (HAXE_STD_PATH unless set)
-//   hxmc/bootstrap/hxmc-std          hxmc's std (hxmc/std merged by MkStd.hx),
-//                                    added last when the arguments (or the hxml
-//                                    files they name) select --custom-target hxmc
-//   hxmc/bootstrap/rt/<target>       the runtime objects (rt.o, ssl.o, uv.o)
-// Elsewhere (the launcher runs it from its cache) HAXE_STD_PATH, HXMC_STD and
-// HXMC_RT_DIR name them. The WebAssembly build learns the host from HXMC_HOST.
+// The launcher (hxmc/bootstrap/launcher.mjs) runs it with HXMC_STD, hxmc's std
+// (@hxmc/target's, added last when the arguments, or the hxml files they name,
+// select --custom-target hxmc), and HXMC_RT_DIR, the directories of the
+// runtime objects (@hxmc/rt-<target>, or its cache: Options.rtDir). Run
+// without the launcher (in its place), a build for the hxmc target goes
+// through the launcher, which finds them (and downloads runtime objects).
+// The WebAssembly build learns the host from HXMC_HOST.
 class HaxeMain {
 	static function main() {
 		Sys.exit(run(Sys.args()));
 	}
 
 	public static function run(args:Array<String>):Int {
+		// (through links to the binary, as npm's node_modules/.bin/haxe)
+		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
+		// (hxmc/bootstrap/haxe, or dist/haxe: the installation lix uses)
+		var boot = Path.directory(exe);
+		if (!sys.FileSystem.exists(boot + "/launcher.mjs") && sys.FileSystem.exists(boot + "/../hxmc/bootstrap/launcher.mjs"))
+			boot = Path.directory(boot) + "/hxmc/bootstrap";
+		if (sys.FileSystem.exists(boot + "/launcher.mjs")) {
+			// (not run by the launcher, which always sets HXMC_RT_DIR: a build
+			// for hxmc needs what it finds, hxmc's std and the runtime objects)
+			if (Sys.getEnv("HXMC_RT_DIR") == null && selectsHxmc(args, 0)) {
+				var node = Sys.getEnv("HXMC_NODE");
+				return Sys.command(node == null || node == "" ? "node" : node, [boot + "/haxe.mjs"].concat(args));
+			}
+			// the port looks for the std next to the binary as upstream does
+			// (<bin>/lib/haxe/std, ...): this layout's through HAXE_STD_PATH
+			if (Sys.getEnv("HAXE_STD_PATH") == null)
+				Sys.putEnv("HAXE_STD_PATH", Path.directory(Path.directory(boot)) + "/haxe/upstream/std");
+		}
 		Defines.install();
 		if (args[0] == "--dev") return dev(args.slice(1));
 		// the engines: -D hxmc.macros=mir|eval for macros, -D hxmc.run=mir|eval
@@ -48,23 +68,6 @@ class HaxeMain {
 		}
 		#end
 		var failed = null;
-		// (through links to the binary, as npm's node_modules/.bin/haxe)
-		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
-		// (hxmc/bootstrap/haxe, or dist/haxe: the installation lix uses)
-		var boot = Path.directory(exe);
-		if (!sys.FileSystem.exists(boot + "/launcher.mjs") && sys.FileSystem.exists(boot + "/../hxmc/bootstrap/launcher.mjs"))
-			boot = Path.directory(boot) + "/hxmc/bootstrap";
-		if (sys.FileSystem.exists(boot + "/launcher.mjs")) {
-			var pkg = Path.directory(Path.directory(boot));
-			if (Sys.getEnv("HXMC_RT_DIR") == null)
-				Options.rtDirOverride = boot + "/rt/";
-			// the port looks for the std next to the binary as upstream does
-			// (<bin>/lib/haxe/std, ...): this layout's through HAXE_STD_PATH
-			if (Sys.getEnv("HAXE_STD_PATH") == null)
-				Sys.putEnv("HAXE_STD_PATH", pkg + "/haxe/upstream/std");
-			if (Sys.getEnv("HXMC_STD") == null)
-				Sys.putEnv("HXMC_STD", boot + "/hxmc-std");
-		}
 		// hxmc's std, given last (a custom target gets no std of its own)
 		var hxmcStd = Sys.getEnv("HXMC_STD");
 		if (hxmcStd != null && selectsHxmc(args, 0)) args = args.concat(["-cp", hxmcStd]);
@@ -171,13 +174,13 @@ class HaxeMain {
 
 	// `haxe --dev <arguments>`, `hxmc dev <arguments>`: the dev loop (docs/dev.md),
 	// node running dev.mjs (beside this binary in the npm package, HXMC_DEV_SCRIPT
-	// from the launcher, packages/cli in the repository), which keeps this
+	// from the launcher, packages/haxe in the repository), which keeps this
 	// compiler resident as a compilation server
 	public static function dev(args:Array<String>):Int {
 		var exe = try sys.FileSystem.fullPath(Sys.programPath()) catch (_:Dynamic) Sys.programPath();
 		var dir = Path.directory(exe);
 		var script = Sys.getEnv("HXMC_DEV_SCRIPT");
-		for (c in [dir + "/dev.mjs", dir + "/../hxmc/bootstrap/dev.mjs", dir + "/../../packages/cli/hxmc/bootstrap/dev.mjs"])
+		for (c in [dir + "/dev.mjs", dir + "/../hxmc/bootstrap/dev.mjs", dir + "/../../packages/haxe/hxmc/bootstrap/dev.mjs"])
 			if (script == null && sys.FileSystem.exists(c)) script = c;
 		if (script == null) {
 			Sys.stderr().writeString("hxmc dev: dev.mjs is not beside the compiler (" + dir + ")\n");

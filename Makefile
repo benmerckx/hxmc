@@ -208,7 +208,7 @@ help:
 ##   site-check  bin/site in headless browsers (site/tools/browser-test.mjs; Playwright; BROWSERS)
 ##   release     bin/release/TARGET/haxe[.exe]: the port cross-built by hxmc, with mbedtls and libuv
 ##   lix-dist    bin/lix-dist/lix-<target>[.exe]: lix for the six targets (the release, the site's tools/)
-##   npm         bin/npm/*.tgz: the nine npm packages of packages/ (packages/pack.mjs; NPM_VERSION)
+##   npm         bin/npm/*.tgz: the npm packages of packages/ (packages/pack.mjs; NPM_VERSION)
 ##
 ## Dev
 ##   clean       remove the build outputs (keeps the tool, the runtime objects and the reference)
@@ -333,19 +333,14 @@ bin/wasm/hih-legacy.wasm: $(TOOL) $(PORT_SRC) $(STD)
 
 # --- The npm packages (packages/, packed by packages/pack.mjs) ---
 
-# what @hxmc/cli ships besides its sources (packages/cli): hxmc's merged std
-# and the runtime objects
-CLI_BOOT := packages/cli/hxmc/bootstrap
-NPM_GEN := $(CLI_BOOT)/hxmc-std/.stamp $(CLI_BOOT)/rt/HASH
-$(CLI_BOOT)/hxmc-std/.stamp: hxmc/src/hxmc/MkStd.hx $(STD_SRC)
-	$(RUN) -cp hxmc/src --run hxmc.MkStd hxmc/std haxe/upstream/std $(CLI_BOOT)/hxmc-std
-$(CLI_BOOT)/rt/HASH: $(HOST_RT)
-	rm -rf $(CLI_BOOT)/rt
-	for t in $(RT_TARGETS); do mkdir -p $(CLI_BOOT)/rt/$$t && cp bin/hxmc/rt/$$t/rt.o bin/hxmc/rt/$$t/ssl.o bin/hxmc/rt/$$t/uv.o $(CLI_BOOT)/rt/$$t/ || exit 1; done
-	cp bin/hxmc/rt/LICENSE.* $(CLI_BOOT)/rt/ 2>/dev/null || true
-	$(NODE) hxmc/bootstrap/rt.mjs hash > $@
-# the compilers: native for the platform packages (@hxmc/<os>-<cpu>), with
-# every generator as a wasm32-wasi module (@hxmc/wasm)
+# @hxmc/target's std (packages/target/std): hxmc's merged std; the runtime
+# objects' packages (@hxmc/rt-<target>) are packed from bin/hxmc/rt
+TARGET_STD := packages/target/std
+NPM_GEN := $(TARGET_STD)/.stamp $(HOST_RT)
+$(TARGET_STD)/.stamp: hxmc/src/hxmc/MkStd.hx $(STD_SRC)
+	$(RUN) -cp hxmc/src --run hxmc.MkStd hxmc/std haxe/upstream/std $(TARGET_STD)
+# the compilers: native for the platform packages (@hxmc/haxe-<os>-<cpu>), with
+# every generator as a wasm32-wasi module (@hxmc/haxe-wasm)
 NPM_NATIVES := $(foreach t,$(TARGETS),bin/npm/native/$(t)/haxe$(call EXE,$(t))) bin/npm/native/wasm32-wasi/haxe.wasm
 bin/npm/native/wasm32-wasi/haxe.wasm: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD)
 	$(call hxmc,$@,$(PKG_ARGS) -D hxmc.target=wasm32-wasi)
@@ -353,7 +348,7 @@ bin/npm/native/%/haxe: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
 	$(call hxmc,$@,$(PKG_ARGS) -D hxmc.target=$*)
 bin/npm/native/%/haxe.exe: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
 	$(call hxmc,$@,$(PKG_ARGS) -D hxmc.target=$*)
-# NPM_VERSION: the version of all nine packages (default packages/cli/package.json's)
+# NPM_VERSION: the version of all the packages (default packages/cli/package.json's)
 NPM_VERSION ?= $(shell $(NODE) -p "require('./packages/cli/package.json').version")
 npm: $(NPM_GEN) $(NPM_NATIVES)
 	rm -f bin/npm/*.tgz
@@ -627,7 +622,7 @@ full: $(TOOL) $(STD) $(HOST_RT)
 
 clean:
 	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/android bin/ios bin/dev bin/corpus \
-		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(CLI_BOOT)/hxmc-std $(CLI_BOOT)/rt
+		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(TARGET_STD)
 
 distclean: clean
 	rm -rf bin

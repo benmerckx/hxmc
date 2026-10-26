@@ -3,10 +3,9 @@
 /.claude/worktrees/
 *.o
 *.tgz
-# generated for the npm package @hxmc/cli (make npm)
-/packages/cli/hxmc/bootstrap/hxmc-std/
-/packages/cli/hxmc/bootstrap/rt/
-# written on first use of @hxmc/cli (lix installation)
-/packages/cli/dist/std
-/packages/cli/dist/platform.txt
-/packages/cli/dist/haxe.exe
+# generated for the npm package @hxmc/target (make npm)
+/packages/target/std/
+# written on first use of @hxmc/haxe (lix installation)
+/packages/haxe/dist/std
+/packages/haxe/dist/platform.txt
+/packages/haxe/dist/haxe.exe
