@@ -4,7 +4,7 @@ import hxmc.I64;
 
 // C functions called directly with the target's C ABI (@:hxmc.c: the
 // field's name, or its @:native name, is the C symbol; @:hxmc.fast: calls
-// stay in the running state and are not GC points, docs/plans/lowlevel.md). Scalars and pointers only: Int is a C int (32 bits), I64 and Ptr
+// stay in the running state and are not GC points, docs/interop.md). Scalars and pointers only: Int is a C int (32 bits), I64 and Ptr
 // 64 bits (size_t, pointers, long long), Float a double. Every function
 // the runtime's Haxe code calls in the C library is listed in mkrt.sh's
 // `libc` (the Linux runtime object links them from musl).

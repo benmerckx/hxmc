@@ -8,7 +8,7 @@ import hxmc.unsafe.*;
 // mbedtls behind hxmc.NativeSsl (the Eval natives of mbedtls.* and sys.ssl.*,
 // src/macros/eval/EvalSsl.hx), mirroring the OCaml bindings
 // haxe/libs/mbedtls/mbedtls_stubs.c used by haxe/src/macro/eval/evalSsl.ml;
-// once C (rt_ssl.c), now Haxe calling mbedtls directly (docs/plans/lowlevel.md).
+// once C (rt_ssl.c), now Haxe calling mbedtls directly (docs/hxmc.md, "Runtime in Haxe").
 // mbedtls itself stays the prebuilt ssl.o, linked when a program uses it.
 //
 // Contexts are T_NATIVE objects whose slot 0 holds the malloc'ed mbedtls

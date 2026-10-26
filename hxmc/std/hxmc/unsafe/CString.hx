@@ -1,7 +1,7 @@
 package hxmc.unsafe;
 
 // C's `const char *`: a NUL-terminated string of UTF-8 bytes outside the
-// GC heap (docs/plans/lowlevel.md, "C interop"). Made by Arena.cstring (copied
+// GC heap (docs/interop.md, "C interop"). Made by Arena.cstring (copied
 // once into the arena); read back as a Haxe String with toString.
 abstract CString(Ptr<UInt8>) from Ptr<UInt8> to Ptr<UInt8> {
 	public inline function isNull():Bool

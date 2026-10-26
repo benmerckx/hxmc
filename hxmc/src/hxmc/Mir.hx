@@ -68,7 +68,7 @@ enum abstract Op(Int) to Int {
 	var Rotr; // a rotated right by the constant b (I32/I64)
 	var UDiv; // unsigned, machine semantics (b != 0: Mem.udiv)
 	var URem;
-	// object-level operations (docs/plans/codegen.md, "Object-level Mir"):
+	// object-level operations (docs/hxmc.md, "Pipeline"):
 	// MirBuild makes them, MemLower lowers them to the instructions above
 	// (layouts, loads and stores, allocation, barriers, the shadow stack);
 	// no back end sees them. Their static part is MIns.info (OInfo)
@@ -103,7 +103,7 @@ enum abstract Op(Int) to Int {
 	var NArrayDyn; // a: storage, b: the index, c: the value (-1: a read) of a NativeArray seen as Dynamic; args as New
 	var RefStore; // a: an object, b: the offset of a reference in it, c: the value (Mem.setRefBarrier)
 	// WasmGC's object-level Mir only (MFunc.gc: no memory lowering; wasmgc.MirGen
-	// emits it, docs/plans/codegen.md, "Object-level Mir"):
+	// emits it, docs/hxmc.md, "Pipeline"):
 	var IrNode; // an expression or a statement of the IR (info.ex, info.stmt) over the values args (its placeholder locals, info.ph)
 	var VarGet; // a local kept out of SSA (a try function's: MFunc.vars; info.n: its index)
 	var VarSet; // a: the value (info.n)
@@ -243,8 +243,8 @@ class MIns {
 	// class instance, an array and its element kind, a closure's signature,
 	// an enum or one of its constructors, Dynamic, a struct value, a plain
 	// scalar); null: a machine value without one (an address, a header word,
-	// what a lowering computes). Object-level passes read it (docs/plans/codegen.md,
-	// "Object-level Mir"); the back ends never do
+	// what a lowering computes). Object-level passes read it (docs/hxmc.md,
+	// "Pipeline"); the back ends never do
 	public var vty:Null<hxmc.ir.Ir.Ty>;
 	public var info:Null<OInfo>; // an object-level operation's static part
 	public var id:Int = -1; // value number (every instruction gets one)

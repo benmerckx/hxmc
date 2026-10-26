@@ -14,8 +14,8 @@ private enum Ctx {
 }
 
 // One function's object-level Mir (MirBuild.gc, after Inline, Escape and
-// Opt) as a WasmGC function body (docs/plans/codegen.md, "Object-level Mir",
-// stage 5). The control flow is structured as wasm/WasmGen structures the
+// Opt) as a WasmGC function body (docs/hxmc.md, "Pipeline"). The control
+// flow is structured as wasm/WasmGen structures the
 // linear-memory Mir (Ramsey's "Beyond Relooper" over the dominator tree:
 // merge children in blocks around their dominator, loop headers in loops,
 // the others inlined at their branch); a try is a legacy try around its

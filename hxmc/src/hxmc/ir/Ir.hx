@@ -5,7 +5,7 @@ import core.ds.VectorTools.vector;
 
 // The typed IR between the typed AST and hxmc's code generator (MirBuild):
 // hxc's IR, copied with its lowering (Lower, FnLower) when hxmc separated
-// from hxc (docs/hxmc.md, "Origin"). Statements are
+// from hxc (docs/hxmc.md, "Pipeline"). Statements are
 // structured (no gotos); expressions are pure except as the right-hand side
 // of SSet/SExpr, so evaluation order and GC points are explicit.
 
@@ -19,7 +19,7 @@ enum Ty {
 	TI64; // haxe.Int64 (hxmc.I64): an int64_t, boxed in Dynamic
 	TVoid;
 	TRef(r:RefTy);
-	// a @:hxmc.struct value (docs/plans/lowlevel.md, "Struct values"): the address
+	// a @:hxmc.struct value (docs/interop.md, "Struct values"): the address
 	// of its memory (an I64), which the lowering copies on assignment;
 	// the class's dot path and its size in bytes
 	TStruct(name:String, size:Int);

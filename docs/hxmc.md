@@ -1,9 +1,15 @@
-# hxmc internals
+# How hxmc works
+
+The internals of the hxmc target, for contributors: the pipeline from typed
+AST to executable, the runtime and collector, the linkers and each
+target's specifics. Using hxmc is in [using.md](using.md); building and
+testing it in [development.md](development.md) and
+[testing.md](testing.md); open designs in [plans/](plans/README.md).
 
 ## Pipeline
 
-hxmc turns a typed Haxe program into a native executable with its own code
-generator and linker: no C compiler, assembler or system linker at build time.
+hxmc turns the typed program into machine code or WebAssembly with its own
+code generator and linkers.
 
 ```
 typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, Opt, Frames)--> --(MemLower)--> Mir (SSA) --(Fold, DivConst)-->
@@ -14,881 +20,401 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 
 | File (`hxmc/src/hxmc/`) | |
 | --- | --- |
-| `Main.hx`, `Options.hx`, `Driver.hx` | the tool: runs the port's compiler with a generate hook, compiles every module (in parallel, cached) and links; `--server` keeps the compilation server resident |
-| `HaxeMain.hx` | `haxe` with hxmc built in (the npm package): `--custom-target hxmc=<out>` |
-| `ir/Ir.hx`, `Lower.hx`, `FnLower.hx`, `LowerQueries.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the filtered typed AST; a function body asks the program's lowering only what `LowerQueries` lists, each query tagged with how the server's reuse of bodies covers it |
-| `ir/Reach.hx` | the functions the program can run (Reachability, below): the others are not compiled |
-| `ir/RuntimeSymbols.hx` | the runtime's symbols generated code calls by name, per family of targets, checked on every build against what `hxmc.rt.Runtime` imports (Runtime in Haxe, below) |
-| `ir/Facts.hx`, `Prep.hx` | the program-wide facts: names, layouts, type indices, field ids, no-GC functions, cold sites, GC points, as symbols |
-| `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, each module's object reused when its fingerprint is unchanged, lowered bodies reused by the server |
-| `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels: object-level Mir (objects made, their fields, arrays, structural access, type tests, boxes, closures, virtual calls as operations; values typed from the IR) that `MirBuild` makes from the IR, and the memory-level Mir every back end takes, which `MemLower` makes from it (layouts, the nursery's allocation, barriers, inline caches, null tests, the shadow stack around cold sites' slow paths); `MirWriter` writes instructions and SSA variables for both ([plans/codegen.md](plans/codegen.md), "Object-level Mir") |
-| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | the control-flow analyses (reverse postorder, dominator tree, loop nest; generic over the block type), SSA construction on a finished graph (Escape, Sroa), inlining, escape analysis (allocations that stay in their function replaced by their fields: [plans/codegen.md](plans/codegen.md), "Escape analysis"), scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code, the write barriers into objects just allocated left out (all on object-level Mir), the shadow-stack slots and frames nothing reads after them dropped |
-| `DivConst.hx` | Int divisions and remainders by constants as a multiplication by the reciprocal (Granlund and Montgomery) or shifts, after the memory lowering |
-| `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection (`IselBase`: the walk over the blocks, phi copies on split edges, the switch strategy, thread-local bases, parameters and calls; each architecture its instructions, folding, compares and branches), linear-scan allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
-| `Unwind.hx`, `Dwarf.hx` | unwind tables from the emitters' frame records (`.eh_frame`, `.pdata`/`.xdata`, `__eh_frame`), `-debug`'s DWARF lines (Debugging, below) |
-| `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers (`LinkCore.hx`: resolution, dead sections, GOT and import slots, placement and relocations, shared by static ELF, `LinkDyn.hx` dynamic ELF against glibc, PE with imports written directly, Mach-O with an ad-hoc signature; `wasm/LinkWasm.hx` shares the resolution), the runtime-object builder, the program's data |
-| `wasm/` | wasm32-wasi: structured code from Mir, the linker, exception handling with `exnref` (or the legacy instructions) |
-| `wasmgc/` | `-D hxmc.wasm-gc`: the object-level Mir of each function as WasmGC code (`MirGen`, over `FuncGen`'s expressions), the module, its types and helpers (`GcModule`, `Helpers`), reflection's tables (`Meta`), the pipeline (`GcGen`) |
-| `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI (System V, Win64, AAPCS64 with its Apple and Windows variants: argument and result registers, where each argument goes, the registers a call clobbers and keeps; for calls and parameters alike); how each C ABI passes structs by value |
-| `MkStd.hx` | hxmc's std merged with the Eval originals (the macro context shares the program's class paths; a custom target gets no `_std` directory in the reference compiler) |
-| `macro/` | what links code compiled for the Mir interpreter into the running compiler (`Loader.hx`, `BundleFacts.hx`) and what the compiler carries for it (`HostTable.hx`, `MirHost.hx`): Mir macros and `--run` (Macros on the Mir interpreter, below) |
-| `interp/` | the Mir interpreter's encoding (`InterpGen.hx`; the loop is `hxmc.rt.Interp`) and its two uses in the native compiler (a Mir host): `--interp`/`--run` (`-D hxmc.run=mir`, `MirRun.hx`) and macros (`-D hxmc.macros=mir`, `MirMacros.hx`; the runtime and the std in their context: `MacroRuntime.hx`; Macros on the Mir interpreter, below) |
+| `Main.hx`, `Options.hx`, `Driver.hx` | the tool: runs the port's compiler with a generate hook, compiles modules in parallel (cached) and links; `--server` keeps a compilation server resident |
+| `HaxeMain.hx` | `haxe` with hxmc built in (the npm package) |
+| `ir/Ir.hx`, `Lower.hx`, `FnLower.hx`, `LowerQueries.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the typed AST. A body asks the program's lowering only what `LowerQueries` lists |
+| `ir/Reach.hx` | the functions the program can run ([Reachability](#reachability)) |
+| `ir/RuntimeSymbols.hx` | the runtime symbols generated code calls by name ([below](#the-symbols-generated-code-calls)) |
+| `ir/Facts.hx`, `Prep.hx` | program-wide facts: names, layouts, type indices, field ids, no-GC functions, GC points |
+| `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint, lowered bodies reused by the server |
+| `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
+| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM, dead code, barriers and frame slots nothing needs |
+| `Fold.hx`, `DivConst.hx` | allocation folding; division by constants |
+| `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection, linear-scan register allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
+| `Unwind.hx`, `Dwarf.hx`, `StackTable.hx` | unwind tables, DWARF lines, the call-stack table ([Debugging](#debugging)) |
+| `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers, the runtime-object builder, the program's data |
+| `wasm/` | wasm32-wasi: structured code from Mir, the linker, exception handling |
+| `wasmgc/` | `-D hxmc.wasm-gc` ([WasmGC](#wasmgc)) |
+| `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI; how each C ABI passes structs |
+| `MkStd.hx` | merges hxmc's std with the Eval originals into `bin/hxmc/std` |
+| `macro/`, `interp/` | the Mir interpreter's encoding and its uses: Mir macros and `--run` ([below](#macros-on-the-mir-interpreter)) |
+| `android/`, `ios/` | the APK and app bundle writers |
 
-Conventions: references live across a GC point are shadow-stack slots
-(cold sites spill only on the slow path; a reference live across the slow
-paths of more than 32 is rooted instead, `Roots.hx`); `try` is `rt_handler` with the C
-library's `_setjmp`; calls follow the target's C ABI; a `@:hxmc.struct`
-value is the address of its memory (a frame slot, an object's inline
-field, memory behind a `Ptr`), copied on assignment (also through Haxe's
-inliner and analyzer: hooks set by `ir/CInterop.install`), its result written
-where a hidden last argument says ([plans/lowlevel.md](plans/lowlevel.md),
-"Struct values"); thread-locals use
-local-exec TLS on Linux, `_tls_index` on Windows, the TLV template on macOS;
-program-wide numbers (type indices, field ids, offsets) are absolute symbols
-resolved by the linker, so a module's code does not change when the numbering
-does.
+Conventions:
 
-## Debugging
-
-Frame pointers: every function keeps a frame record (x86-64: `push rbp;
-mov rbp, rsp`, rbp kept out of register allocation; arm64: the x29/x30 pair,
-which Apple's ABI requires), so `perf record -g` (frame-pointer mode),
-debuggers and `Mem.frame()` (the caller's record; the corpus case
-`FrameChain` walks it) walk the stack; the chain runs through the
-runtime's Haxe code and stops in the C library. On x86-64 they are the
-default since 2026-10-17 (0.9% more code, no time measurable in the noise of
-the self-compile, the tool's build of the port or the benchmarks); `-D
-hxmc.no-frame-pointers` (or `HXMC_FRAME_POINTERS=0`, for builds whose
-command line is fixed) leaves them out.
-
-Unwind tables, always written (`hxmc/src/hxmc/Unwind.hx`): the emitters
-(`x64/Emit.hx`, `a64/Emit.hx`) record what each prologue and epilogue does
-to the frame (pushes, the frame pointer's setting, the allocation, saved
-registers, and back), with the offsets where each instruction ends
-(`Obj.FuncRec`, kept in the cached objects), and each linker writes them in
-its format: ELF `.eh_frame` with its search table `.eh_frame_hdr`
-(`PT_GNU_EH_FRAME`; with the entries of the runtime object's live C code),
-Mach-O `__eh_frame` (no `__unwind_info`: the system's unwinder and lldb read
-the DWARF), Windows `.pdata` with `.xdata` (x86-64 `UNWIND_INFO`, the
-epilogues recognized by the unwinder; arm64 unwind codes with an epilogue
-scope per epilogue; identical ones shared; sorted with the runtime
-object's). A function's frame is the same at every instruction of its body:
-outgoing stack arguments are part of the frame (no adjustment around calls),
-nothing allocates on the stack dynamically, and `hxmc_call_on_stack`, the
-stack switch of the main thread, runs on its frame pointer, which unwinders
-follow back to the old stack. On arm64 the callee-saved registers are stored
-right above the outgoing arguments, where Windows' unwind codes reach them
-(at most 504 bytes above sp; beyond that the outgoing arguments are
-allocated after the stores). DWARF unwinding (gdb and lldb backtraces
-without heuristics, `perf --call-graph dwarf`, C++-style unwinders such as
-glibc's `backtrace()`) and Windows' (`RtlVirtualUnwind`, debuggers, crash
-dumps, SEH walking through generated frames) need them. They cost, for the
-tool itself (24,400 functions): ELF 1.0 MB (5.7% of 17.5 MB; 6.0% on arm64),
-Mach-O 0.98 MB (5.1%), Windows 12 (x86-64) or 8 (arm64) bytes per function
-in `.pdata` (1.2%) and the shared `.xdata`.
-
-Source lines: positions flow from the typed AST to the emitted code: the
-lowering puts a `SPos` statement (file, line) before each statement's code
-(`FnLower.stmt`), `MirBuild` gives the instructions it builds the current
-one (`MIns.pos`, `SrcPos`; the inliner gives the copies the position of the
-call they replace: an inlined function's code is its caller's, as a frame
-and a line, which is what a stack shows and what DWARF shows without
-inlined subroutines), instruction selection passes it to the target
-instructions (`LIns.pos`), and the emitters record a row where it changes
-(`FuncRec.lines`, mapped through branch relaxation). Native builds record
-them always (the call stacks below need them; `-D hxmc.no-stacks` leaves
-them out); every pass steps over the positions, so the code is the same
-with and without them (DebugCheck compares the code of both builds), and
-recording them costs no measurable build time. With `-debug` (or `-D
-hxmc.lines` alone) the linkers write them as DWARF 4
-(`hxmc/src/hxmc/Dwarf.hx`): `.debug_line`, `.debug_info` with a
-compilation unit per module and a subprogram per function named by its
-Haxe name (`pack.Class.field`), and `.debug_aranges`/`.debug_ranges`; in
-ELF files, in Mach-O files' `__DWARF` segment, and in PE files as MinGW's
-toolchain writes them (with a COFF symbol table: gdb, lldb and
-llvm-symbolizer read them; no PDB, so not the Visual Studio debugger or
-WinDbg: [plans/codegen.md](plans/codegen.md)); they add 2.7 MB (15.6%) to
-the tool. `-debug` also writes the symbol table (`-D hxmc.symbols` or
-`HXMC_SYMBOLS=1` alone).
-
-Checks: the corpus case `UnwindTables` compares the system's own unwinders
-with the frame-pointer chain from a recursion, a closure the runtime's sort
-calls back and after a caught exception (glibc's `backtrace()` in the glibc
-mode, `RtlCaptureStackBackTrace` on Windows and under Wine, libunwind's
-`_Unwind_Backtrace` on macOS); `hxmc/test/DebugCheck.hx` (in `make check`
-and CI's test jobs) builds `hxmc/test/debug/Lines.hx` with `-debug` and runs
-gdb in batch mode (lldb without gdb; lldb on macOS): a breakpoint at a Haxe
-line, then a backtrace that must name the Haxe functions with the lines of
-their calls, as in
-
-```
-Breakpoint 1, Lines.inner () at hxmc/test/debug/Lines.hx:10
-10			seen.push(depth); // break here
-#0  Lines.inner () at hxmc/test/debug/Lines.hx:10
-#1  0x0000000000408550 in Lines.inner () at hxmc/test/debug/Lines.hx:9
-#2  0x0000000000408550 in Lines.inner () at hxmc/test/debug/Lines.hx:9
-#3  0x000000000040859c in F_Lines_inner__sclos ()
-#4  0x0000000000408467 in Lines.outer () at hxmc/test/debug/Lines.hx:20
-#5  0x0000000000408295 in Lines.main () at hxmc/test/debug/Lines.hx:29
-#6  0x0000000000408141 in hx_main_body ()
-#7  0x0000000000408241 in hxmc_call_on_stack ()
-#8  0x000000000040df06 in hxmc.rt.Start.runMain () at .../hxmc/rt/Start.hx:92
-#9  0x000000000040817a in main ()
-```
-
-and checks every target's tables with readelf, llvm-readobj and
-llvm-dwarfdump.
-
-### Call stacks
-
-`haxe.CallStack.callStack()`, an exception's `stack` and
-`haxe.CallStack.exceptionStack()` come from the same records as the DWARF
-lines, through one runtime facility, `hxmc.rt.Stacks`, which the report of
-an uncaught exception uses too:
-
-- The table: the linker writes the program's functions, their Haxe names and
-  their line rows into a read-only table at `hxmc_stacks`
-  (`hxmc/src/hxmc/StackTable.hx`, from `FuncRec.lines`, so it cannot
-  disagree with `.debug_line`): 16 bytes per function (its address as a
-  PC-relative offset, no load-time fixup; its size; its class and the rest:
-  the field and the rows, LEB128 deltas, a row only where the file or line
-  changes), the strings once each. The linkers' dead-section removal
-  (LinkCore, on every native target) does not count the table's references
-  (it is rebuilt with the functions it keeps). Where `.debug_line` is 1.1 MB for the tool, the
-  table is 0.64 MB (3.6% of the tool, the port 0.78 MB: 3.8%).
-- The walk: up the frame records (x86-64 by default, arm64 always:
-  above), while a frame's return address is in a function of the table
-  (looked up once per address in a small cache, then a binary search of the
-  table sorted on first use), so it stops at the first frame of C code (the
-  C library's start, a thread's entry, a callback's caller) and never
-  follows a frame pointer it cannot trust. A stack keeps at most 256
-  frames. Frames without lines (closures forwarding to a function,
-  adapters) and the runtime's own (`hxmc.rt`, `hxmc.unsafe`) are not
-  shown; a closure forwarding to a function into which it was inlined has
-  that function's name.
-- What a program pays: a program reads stacks when `haxe.NativeStackTrace`'s
-  `toHaxe` (haxe.CallStack) or `toHaxeSkipping` (an exception's `stack`) is
-  live after `Reach`; only then does it get the table, and the functions
-  marked `@:hxmc.withStacks` (an exception recording its stack where it is
-  made, `Stacks.recordThrow` at each throw, `Stacks.report`) are live:
-  until then `Reach` holds their calls back, and drops them otherwise. A
-  hello world is the same with and without stacks (125,920 bytes); one
-  printing `CallStack.callStack()` is 12 KB larger (8.6%: the table).
-  `hxmc_stack_flags`, an absolute symbol, says what the program reads (1:
-  exception stacks, `exceptionStack` live: throws record theirs; 2: an
-  exception's `stack`, `get_stack` live: an exception records its stack
-  where it is made), so that a program reading neither walks no stack.
-  A throw records the frames from the throw up to the frame of the try that
-  catches it only (its handler is in that frame: the walk stops below it,
-  each record above the previous one, inside the stack's memory, so not
-  checked against the table), and `exceptionStack()` adds, while the
-  catching function runs, its callers as they are: the port's self-compile
-  throws 2.3 million times, on average 150 frames deep, which recorded
-  whole took it from 7.0 to 9.3 s; now its time is the same within the
-  noise (7.1 s either way). `-D hxmc.no-stacks` leaves the positions, the
-  table and the recording out (stacks are empty); `-D hxmc.stacks` keeps
-  them in every program.
-- A Mir host (the compiler, the tool: Macros on the Mir interpreter,
-  below) keeps every function and always has the table, its call-outs and
-  entries' pools in it (`Reach` does not run), so the stacks of the code it
-  loads go through its frames; its own throws record no stack
-  (`hxmc_stack_flags` 0), and an uncaught exception of its own prints its
-  frames. The compiler grows by 1.5 MB (5.8%; 9% gzipped) on linux-x86_64.
-- The Mir interpreter's frames have no code of their own: each runs in a
-  call of `Interp.exec`, which a walk meets as the caller of what the frame
-  calls. The interpreter links its frames (`Stacks.interpCur`, innermost
-  first, the order a walk meets their execs in) and keeps in each the call
-  it makes; a walk puts each frame in its exec's place, as two words (its
-  code with the top bit set, then the call's address), named through the
-  lines and the name InterpGen writes into the function's descriptor. A
-  try (`Interp.enterTry`) and a function's stub (`Interp.lazy`) run their
-  frame in an exec of their own: the exec calling them is not the frame's.
-  Nothing is stored per frame but the call (a store per call: the macro
-  benchmarks unchanged). While interpreted
-  code runs, a throw whose walk reaches one of its frames is recorded (a
-  throw of the native code working for it, caught there, is not); a catch
-  passing an exception on keeps that record (`Stacks.rethrowing`).
-- Exceptions: `haxe.Exception` (hxmc's, after hl's) records the stack where
-  it is made, or for a value caught (`Exception.caught`) the stack of its
-  throw; its `stack` leaves out the frames of the exception's constructors
-  (the class and its superclasses, from the runtime's types: no
-  reflection), of `thrown`, `caught` and its own recording, by name (hl
-  counts them).
-- Reports: an uncaught exception, a null access (a fault turned into a
-  throw: Faults) among them, prints its frames after its message on stderr,
-  as `haxe.CallStack.toString` prints them (`Called from Main.f
-  (src/Main.hx line 3)`), when the program has the table (it reads stacks,
-  or `-D hxmc.stacks`).
-
-Upstream's `TestExceptions.testExceptionStack` and `TestCallStack` pass
-natively; the corpus case `CallStacks` checks the stacks against the
-reference's `--interp` (which names only the catching function for an
-exception stack, where hxmc names the frames from the throw, as hl and
-cpp), natively, on Windows (Wine) and arm64. Not done: WebAssembly, where
-a module cannot read its own stack (no frame records, and WASI gives no
-access to the engine's): `haxe.CallStack` is empty there (the two upstream
-tests are skipped on wasm32-wasi, the corpus case excluded); a stack
-shows the frame of an inlined function as its caller's, at the call (no
-inlined frames: DWARF's `DW_TAG_inlined_subroutine` would give both);
-`-D hxmc.no-frame-pointers` on x86-64 leaves stacks empty (an unwinder
-reading the unwind tables instead would not); the null-access report's innermost
-line may be the statement before (the address the fault handler gives
-rt_null_access as its return address is the faulting instruction's, not
-the end of a call).
+- References live across a GC point are shadow-stack slots. Cold sites
+  spill only on their slow path.
+- `try` is a handler record and the C library's `_setjmp`; `throw` calls
+  `rt_throw`, which `longjmp`s.
+- Calls follow the target's C ABI.
+- A `@:hxmc.struct` value is the address of its memory, copied on
+  assignment; a result goes where a hidden last argument points.
+- Thread-locals: local-exec TLS on Linux, `_tls_index` on Windows, TLV on
+  macOS.
+- Program-wide numbers (type indices, field ids, offsets) are absolute
+  symbols the linker resolves, so a module's code does not change when the
+  numbering does.
+- A change of the runtime's interface or the IR's conventions needs a tool
+  that knows it: build once against the previous runtime first, or
+  bootstrap again.
 
 ## Runtime in Haxe
 
-Runtime in Haxe: most of the runtime is Haxe compiled with the program
-(`hxmc/std/hxmc/rt`: strings, Dynamic access, reflection, arrays, bytes,
-dates, inflate, the POSIX and Windows system layers, and Math: musl's libm
-ported, `LibM.hx`, with the same results on every target), written with a
-small internal API (`hxmc.unsafe`: `Ptr`, `Mem` loads, stores, allocation
-and symbols, `Atomic`; `@:hxmc.c` and `@:hxmc.rt` externs of C functions,
-`@:hxmc.unsafe` functions (no GC point reached, checked; `@:hxmc.noGc`, the
-former name, is still accepted), `@:hxmc.export`/`@:hxmc.host` implementations of
-runtime functions, `@:hxmc.callback` functions C calls,
-`@:hxmc.threadLocal` statics; the compiler rejects an address from `Mem.addr`
-live across a GC point outside `@:hxmc.unsafe` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
-handshake, startup and `rt_throw` are Haxe too (`Gc.hx`, `Threads.hx`,
-`Start.hx`; the heap census with `-D hxmc.census`): no C of hxmc's own is
-linked, only the C library, mbedtls and libuv ([plans/lowlevel.md](plans/lowlevel.md),
-"The runtime without C of our own"). What is the same across targets is
-written once, inline so that each target compiles to what its own copy
-did: the object model both collectors read (`GcCore.hx`: the header, the
-size and kind of an object, forwarding, pointer maps; the native `Gc.hx`
-and `wasm/Gc.hx` keep their own spaces, copies and remembered sets), and
-what the system layers do the same way over the calls that differ
-(`SysCore.hx` for PosixSys, WinSys and WasiSys; `NetCore.hx` for PosixNet
-and WinNet: the resolver, select's wait with other threads, Boolean
-options), the system chosen by `Mem.os`, which folds while lowering. The nursery's size adapts (unless
-`RT_MINOR_KB` fixes it, to 16 KB at least: generated code stores into an
-object allocated since the last collection point without a write barrier,
-and allocation folding makes allocations of up to 4 KB, which need them
-young; Gc.hx): it starts at 4 MB, doubles after a minor
-collection that promoted more than a 16th of what was allocated since the
-previous one and halves after 8 that promoted less than a 64th, between a
-floor of 4 MB per thread that allocated in the last cycles (at most 32 MB)
-and a ceiling of 16 MB per such thread (at most 256 MB). Programs whose
-objects die young keep a nursery that stays in the caches; the port typing
-or compiling macro-heavy code grows it to 16 MB, which keeps medium-lived
-objects out of the old space (6-17% faster, up to 31% less peak memory);
-parallel phases get a larger one, so their threads stop for fewer
-collections and promote less of what they are working on (the tool's
-parallel code generation: 256 MB). Threads take at most 64 KB of it at a time
-(their TLAB, zeroed while it fits in the cache; `RT_TLAB_KB`), in fresh
-pages up to a 2 MB boundary, so that no two threads fault in the same
-transparent huge page. With `-D hxmc.gc-prefault` (the compilers' builds
-pass it: `COMPILER_ARGS`), on Linux, once the old space passes 64 MB, a
-helper thread faults in its pages ahead of the minor collections, which
-would otherwise wait for the kernel to zero each fresh page they copy into
-(`RT_PREFAULT=0`: no helper). It trades CPU time for wall time: the
-HaxeBenchmarks' alloc takes 7.6% less wall time and 20% more CPU time with it. `RT_STATS=1` prints the resizes and what was promoted.
+The runtime is Haxe compiled with the program (`hxmc/std/hxmc/rt`):
+strings, Dynamic access, reflection, arrays, bytes, dates, inflate, the
+POSIX, Windows and WASI system layers, the collector (`Gc.hx`), threads and
+the stop-the-world handshake (`Threads.hx`), startup and `rt_throw`
+(`Start.hx`), and Math (musl's libm ported, `LibM.hx`, the same results on
+every target). No C of hxmc's own is linked; only the C library, mbedtls
+and libuv, prebuilt per target by zig from `hxmc/deps`.
 
-Threads that race on a field see objects whole: a store of a reference
-into an object, an array or a static publishes it (`MIns.release`), so a
-thread that reads the reference also sees the stores that initialised the
-object, as OCaml's `caml_modify` (a release store) guarantees the
-reference compiler's code. Upstream's parallel phases rely on it: Dce reads
-`a_meta` without its lock and adds the `@:used` entry under it. Free on
-x86-64; arm64 orders the stores with a `dmb ishst` before each such store
-(not before initialising stores or null ones); the reading thread's loads
-through the reference are ordered by their address dependency. Without
-it, the port on arm64 read a new metadata array whose length was there but
-not its element: a null access in a child compiler in about one run in 700
-of TestUnicode (some 230 compilers each through testIPC; 9 in 6000 runs,
-none in 10 080 with the barrier). It costs arm64 1-2% of the port's
-self-compile and 12% of HaxeBenchmarks' binarytrees (two such stores per
-node, in its constructor); json and formatter stay within 3%.
+It is written with an internal API, `hxmc.unsafe` (`Ptr`, `Mem` loads,
+stores and allocation, `Atomic`) and metadata: `@:hxmc.c` and `@:hxmc.rt`
+externs, `@:hxmc.unsafe` functions (no GC point, checked),
+`@:hxmc.export`/`@:hxmc.host` implementations of runtime functions,
+`@:hxmc.callback`, `@:hxmc.threadLocal` statics. The user-facing part is in
+[interop.md](interop.md).
 
-Strings are UTF-16; they cross the system boundaries (files, processes,
-sockets, the environment, `Bytes.getString` and `ofString`) as UTF-8
-(`Str.decode`, `Str.utf8Into`). A byte that does not begin a well-formed
-sequence decodes to one unit, U+DC80 to U+DCFF for 0x80 to 0xFF (as Python's
-surrogateescape), which encodes back to that byte, so any bytes read and
-written again are the same bytes (the corpus' `Utf8Bytes`; the port keeps
-OCaml's byte strings this way: [porting.md](porting.md)).
+What is the same across targets is written once and inlined:
 
-A Date is an object of a runtime type of its own, `T_DATE` (`Types.hx`,
-`Abi.hx`), holding the milliseconds since the epoch (`MemRepr.dateOf`): `Dyn`
-prints it as the reference does (`Date.toString`, local time), gives `Date`
-as its class (`Type.getClass`, `typeof`, `resolveClass`), tests it
-(`Std.isOfType`, `downcast`, casts, `catch`), copies it (`Reflect.copy`, a new
-date, as Eval) and orders two dates by time (`Reflect.compare`, Dynamic's
-`<`, as JavaScript; Eval answers -1 but for the same date). `Std.string`
-reaches `Date.toString` through `Date.printer`, which `Date.of`, making every
-date, sets: a program that makes none has no calendar code (natively the C
-library's time zones, 12 KB of a hello world). On WasmGC a date is the
-runtime's `GcDate`, whose class is `Date`'s (`GcGen.Uses.dateClass`: its
-class value, named Date, and the type tests against Date; its time is not a
-field to reflection). `hxmc/test/cases/DateValues.hx` checks these against
-the reference's `--interp`, natively and on WasmGC (`GcCheck`).
+- `GcCore.hx`: the object model both collectors read (header, size,
+  forwarding, pointer maps).
+- `SysCore.hx` for PosixSys, WinSys and WasiSys; `NetCore.hx` for PosixNet
+  and WinNet. `Mem.os()` picks the system and folds at compile time.
+- `Str`, `Arr`, `Bytes`, `Date` (`@:hxmc.anyHeap`): written over
+  `hxmc.rt.Repr`, which is `MemRepr` in linear memory and `GcRepr` on
+  WasmGC.
 
-A change of the runtime's
-interface or of the IR's conventions needs a tool that knows it: build once
-against the previous runtime first, or bootstrap again.
+### Object layout
+
+The 8 bytes before an object (`Types.hx`) start with its type index, which
+decides the rest:
+
+```
+          p-8          p-6                         p-4
+record:   [ type:16 ][ slots:16                ][ identity hash:32        ]
+array:    [ type:16 ][ words:16 (0xFFFF: more) ][ length:32, in elements ]
+string:   [ type:16 ][ words:16 (0xFFFF: more) ][ content hash:32         ]
+          then its length (u32 at +0) and its units from +4
+forwarded (while the collector copies): type 0xFFFF, the copy in slot 0
+```
+
+- The size is the 16 bits at -6, in 8-byte words. An array or string of
+  0xFFFF words or more computes it from its length.
+- Types 16 to 23 are arrays without references, 24 to 31 arrays of
+  references; the rest are records, scanned by their type's pointer map.
+- Every heap object has at least one slot (for the forwarding address).
+  Empty arrays and `""` are static.
+
+| Type | |
+| --- | --- |
+| 1 | ArrayIterator |
+| 2, 3, 4, 6 | Int, Float, Bool, Int64 boxes |
+| 5 | Array: length and kind, then its storage (a NativeArray) |
+| 7, 8 | NativeArray of an erased type parameter, open and fixed |
+| 11, 12, 13 | captured variables (reference, Int, Float) |
+| 14 | type object |
+| 15 | Date |
+| 16, 17 | String: UTF-16, or one byte per unit when every unit is below 0x100 |
+| 18 | slots: a C resource, an AtomicInt cell |
+| 19 to 24 | NativeArray storage by element kind: Byte (a Bytes' data) 19, Bool 20, Int64 21, Float 22, Int 23, references 24 |
+| 25 | slots of references (thread-local slots, AtomicObject's cell) |
+| 26 | a structure's added fields |
+| 27 | a C resource with references |
+| 28 | Math (its class value) |
+| 32 and up | the program's types |
+
+A `haxe.io.Bytes` is an object holding a `NativeArray<Byte>` (`b`); its
+`length` is `b`'s (`@:hxmc.lengthOf`). A small Bytes is allocated together
+with its data. Arrays have no identity hash.
+
+### The collector
+
+A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
+wasm32). The nursery is collected by copying into the old space; the old
+space by copying into a new region.
+
+- **Nursery size** adapts: it starts at 4 MB, doubles after a minor
+  collection that promoted more than 1/16 of what was allocated, and halves
+  after 8 that promoted less than 1/64. Floor: 4 MB per allocating thread
+  (at most 32 MB); ceiling: 16 MB per such thread (at most 256 MB).
+  `RT_MINOR_KB` fixes it, at 16 KB at least: generated code stores into
+  objects allocated since the last GC point without a barrier, and
+  allocation folding makes objects of up to 4 KB, so these must be young.
+- **TLABs**: each thread takes at most 64 KB at a time (`RT_TLAB_KB`), in
+  fresh pages up to a 2 MB boundary.
+- **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
+  ones in percent of what a major collection left live (300 natively, 200
+  on wasm32). The tool sets 768 MB for a build; the compilation server
+  2048 MB and 150%.
+- **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
+  64 MB, a helper thread faults in its pages ahead of minor collections.
+  The compilers are built with it. `RT_PREFAULT=0` turns it off.
+- **Publication**: a store of a reference into an object, array or static
+  is a release store (`MIns.release`), so a thread that reads the reference
+  also sees the object's initialisation, as OCaml guarantees the reference
+  compiler. Upstream's parallel phases rely on it. Free on x86-64; arm64
+  emits `dmb ishst` before such stores.
+
+`RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
+nursery with a pattern so missed roots show at once.
+
+### Strings and dates
+
+Strings are UTF-16 in semantics, stored as one byte per unit when every
+unit fits (type 17, as V8's one-byte strings). They cross system
+boundaries (files, processes, sockets, the environment, `Bytes`) as UTF-8.
+A byte that does not start a well-formed sequence decodes to one unit
+U+DC80 to U+DCFF and encodes back to that byte, so bytes read and written
+again are unchanged (the corpus' `Utf8Bytes`; the port keeps OCaml's byte
+strings this way).
+
+A Date is a runtime type of its own (`T_DATE`) holding milliseconds since
+the epoch. `Std.string` reaches `Date.toString` only through
+`Date.printer`, which every date's creation sets, so a program that makes
+no date has no calendar code. `DateValues` checks dates against the
+reference's `--interp`.
 
 ### The symbols generated code calls
 
-Generated code calls a fixed set of the runtime's functions by name, and
-natively reads some of its variables by name: `hxmc/src/hxmc/ir/RuntimeSymbols.hx`
-lists them (`SYMBOLS`), per family of targets (native, wasm32, WasmGC), each
-with where generated code refers to it. They are the exported functions
-MirBuild, DataGen, the emitters and LinkWasm's `rt_throw` call (`rt_throw`,
-`rt_null_access`, `hx_box_int`, `hxmc_alloc_slow`, `rt_cstack_overflow`,
-`hx_uncaught`, ...), the Haxe implementations of what the lowering calls
-(`hx_dyn_get`, `hx_std_string`, `fmod`, ...: `Lower.bindHosts` binds them),
-the WasmGC generator's exports (`gc_anon_get`, `gc_is`, ...), and natively
-the variables (`rt_globals`, `rt_young_start`) and thread-locals (`rt_sp`,
-`rt_hcur`, ...). A program gets the runtime's modules through
-`hxmc.rt.Runtime`, whose imports differ by target, and hxmc compiles only
-the functions it calls, and the exported ones: a symbol whose module only
-something else loads is in some programs and not in others (`rt_null_access`
-was in `Faults`, which only the native targets' `Start` loads, so a
-WebAssembly program that loaded nothing bringing `Faults` in did not link:
-"wasm: undefined: rt_null_access"). Each build (`Main.generate`, before the
-lowering) therefore checks that the modules `Runtime.hx` imports for the
-target (the file parsed with the build's defines; the typed program keeps no
-imports) define every symbol of the family as generated code needs it (an
-exported function, an implementation, a variable, a thread-local), whether
-or not this program calls it, and fails otherwise:
+Generated code calls a fixed set of runtime functions by name, and natively
+reads some runtime variables by name. `ir/RuntimeSymbols.hx` lists them
+per family of targets (native, wasm32, WasmGC), with where generated code
+refers to each.
+
+A program gets the runtime through `hxmc.rt.Runtime`, whose imports differ
+by target, and hxmc compiles only what is called. So each build checks,
+before lowering, that the modules `Runtime.hx` imports for the target
+define every listed symbol, whether this program calls it or not:
 
 ```
-hxmc: the runtime symbol rt_null_access is not defined: its module is not loaded by hxmc.rt.Runtime (for wasm32-wasi; MemLower.nullBlock)
 hxmc: the runtime symbol rt_null_access is defined in hxmc.rt.Faults, which hxmc.rt.Runtime does not import (for wasm32-wasi; MemLower.nullBlock)
 ```
 
-The second where a module the program loads otherwise has it. So the rule is
-that `Runtime.hx` imports each module defining such a symbol itself
-(`hxmc.rt.gc.GcNArray` on WasmGC, which `GcDyn` loads too), for every target
-needing it, rather than that some module loads it. The check costs about 0.1
-ms and changes nothing written. A symbol generated code refers to only under
-a define or feature has the generator's own condition (`when`, on Lower's
-statics: `rt_null_access` on WebAssembly with `-D hxmc.null-checks`,
-`hx_narray_oob` with `-D hxmc.native-array-outofbounds=throws`) and is
-required only then; a module that `Runtime.hx` imports only under a define
-(`#if hxmc.census`) is seen only with it, as the imports are read with the
-build's defines, so a symbol only such a module defines gets that condition
-too. The list is kept by hand, next to the generators; `MirWriter.call` (on
-`FuncInfo.rtFamilies`, which Facts sets: no lookup of its own) and
-`GcModule.exportOf` fail the build when generated code calls an exported
-function of the runtime that it does not list for the family ("generated
-code calls the runtime's hx_box_int by its symbol, which
-hxmc.ir.RuntimeSymbols does not list for the native targets"), so a new one
-cannot be left out; the few other fixed references (DataGen's method tables,
-the emitters' allocation stubs, WasmGen, LinkWasm) are listed by where they
-are. Not listed: what a target's linker, C library or DataGen defines
-(`rt_types` and the program's tables, `_setjmp`, `memcpy`, `floor`, wasm32's
-linker cells and thread-local globals, LinkWasm's builtins, the stubs
-`hxmc_zero`, `hxmc_frame`, `hxmc_call_on_stack`, `hxmc_tls_base`), and the
-names the lowering makes from the std's externs (`String_toUpperCase`,
-`Math_sin`), whose missing implementation fails the build of a program that
-calls one, by its name (universe's examples, built for each of their
-targets, were where CI first saw that failure).
+The rule: `Runtime.hx` imports each module that defines such a symbol,
+for every target that needs it. A symbol needed only under a define has
+that condition in the list. `MirWriter.call` and `GcModule.exportOf` fail
+the build when generated code calls an exported runtime function the list
+lacks, so the list cannot fall behind. Not listed: what a linker, the C
+library or DataGen defines, and the std's extern implementations
+(`String_toUpperCase`), which fail the build of a program that calls a
+missing one.
+
+## Reachability
+
+Haxe's default DCE keeps every field of a user class.
+`ir/Reach.hx` then keeps only what the program can run, a rapid type
+analysis over the IR before anything is compiled. From `main`, the exported
+functions and `@:keep` methods:
+
+- a function is live when live code calls it or makes a closure of it;
+- a static initializer is live when live code uses a static it sets;
+- a method is live when live code instantiates its class (or a subclass)
+  and either dispatches on its selector or can look its name up.
+
+Names looked up are those of structural and Dynamic access, literal names
+passed to the runtime's lookups (`Reflect.field(o, "x")`), and names from
+the runtime's own tables. A name computed any other way keeps every method
+of the instantiated classes.
+
+Dropped functions leave the method tables, so `Type.getInstanceFields`
+lists the methods kept, as with `-dce full`. Dispatch rows are laid over
+each other. Closures share a type when their signatures and captures
+match; a closure capturing nothing is static data.
+
+- **Statics through a class value** (`Reflect.field(C, "x")`,
+  `Type.getClassFields`, `haxe.rtti.Meta`): a class used as a value gets a
+  table of its statics, in Eval's order, kept when live code can have the
+  class value. Functions not otherwise live are left out.
+- **`Type.createInstance`**: once it is used, each class whose value live
+  code can have keeps a constructor entry. A class without a constructor,
+  or whose entry was dropped, fails as on Eval (`Instance constructor not
+  found`).
+
+`HXMC_STATS=1` prints the live functions and the data's parts;
+`HXMC_REACH_WHY=<pack.Class.method>` the chain that keeps a function;
+`HXMC_REACH=0` keeps everything.
 
 ## Anonymous structures
 
 An object literal's layout is a shape (`ir.ShapeInfo`): slot 0, then its
-fields sorted by name (Int and Bool two to a slot), a runtime type of kind
-`TK_ANON` whose field table is sorted by field id (the program's names
-numbered in sorted order: by name). Structural reads and writes test the
-shape's type index or go through an inline cache, else the runtime
-(`hx_anon_get_slow`, `hx_anon_set_slow`). A field the layout lacks (`o.x =
-1` on a Dynamic, `Reflect.setField`; the Unserializer starts from `{}`,
-the macro bridge from the closest shape) is added in slot 0: an array of
-(field id, value) pairs in the order they were added (`Dyn.overflowSet`).
-What reads a structure's fields reads both: structural and Dynamic access,
-`Reflect.fields`, `hasField`, `field`, `copy`, `deleteField`, and
-`Std.string`, which prints `{ a : 1, b : 2 }` (the corpus' format, from
-hxc; Eval prints `{a: 1, b: 2}`): the structure's own fields by name, then
-the added ones in the order they were added. That is `Reflect.fields`'
-order, and so `haxe.Json`'s and `haxe.Serializer`'s (Eval's is its own, by
-hash). `Reflect.deleteField` removes an added field (the pairs left without
-a hole; added again, it comes last); a field of the structure's own stays
-and the call answers false (Eval removes it): the layout is fixed, the
-type index cannot change (the generated code reads it as a constant,
-`Opt.MConst`: its loads are shared and hoisted), and a mark beside the
-field would not be seen by the inline caches' stores. WasmGC keeps the
-added fields in a `GcFields` (names, values) beside the layout's struct
-fields, with the same order, printing and deletion (`GcDyn.anonString`,
-`GcNative`). `hxmc/test/cases/AnonFields.hx` checks each of these against
-the reference's `--interp`, natively and on WasmGC (`GcCheck`).
+fields sorted by name, with Int and Bool two to a slot. Structural reads
+and writes test the shape's type index or go through an inline cache, else
+the runtime (`hx_anon_get_slow`, `hx_anon_set_slow`).
 
-## Reachability
-
-Haxe's default DCE (`-dce std`) keeps every field of a user class, and the
-lowering makes every method of each class it sees (method tables reach them
-by name: structural and Dynamic access, `Reflect`). `hxmc/src/hxmc/ir/Reach.hx`
-then keeps what the program can run, a rapid type analysis over the IR before
-anything is compiled: from `main`, the exported functions and `@:keep` methods,
-a function is live when live code calls it or makes a closure of it, a static
-initializer when live code uses a static it sets (as the lowering already
-initializes only the classes whose statics it meets), and a method when live
-code instantiates its class or a subclass and either dispatches on its
-selector or can look its name up. Names looked up: those of structural and
-Dynamic access (a structural read only where the field's type is a
-function's or Dynamic: a method unifies with no other), literals passed to
-the runtime's lookups or to functions
-passing them on (`Reflect.field(o, "x")`, `Reflect.getProperty`'s
-`"get_" + field`), and names from the runtime's own tables (`Reflect.fields`,
-`Type.getInstanceFields`), which name only what the tables keep; a name
-computed any other way keeps every method of the instantiated classes.
-Dropped: the functions, their entries in the method tables (so
-`Type.getInstanceFields` lists the methods kept, as with `-dce full`), the
-dispatch rows of selectors no live code calls, the types of dead closures.
-The dispatch rows themselves (DataGen: a row per selector, indexed by type)
-are laid over each other, as a call reads only the entries of the classes
-implementing the selector. Closures share a type when their signatures and
-captures' representations are the same (the code is in the object), only
-the signatures of methods in the tables have a bound-method type and
-trampoline, only closures' signatures a dynamic-call one, and a closure
-capturing nothing is an object in the data, made once (Prep.staticClosures),
-not allocated where it is used. The tool: 16.8 MB instead of 18.4; ui's
-counter example (with the ui changes of the same work): 1.21 MB instead of
-1.77. `HXMC_STATS=1` prints the live
-functions (and where a name is computed) and the data's parts;
-`HXMC_REACH_WHY=<pack.Class.method>` the chain that keeps a function;
-`HXMC_REACH=0` keeps everything. WasmGC uses the same analysis (WasmGC
-below).
-
-Statics through a class value (`Reflect.field(C, "x")`, `c.x` on a Dynamic
-holding `C`, `Type.getClassFields`, `haxe.rtti.Meta`'s `__meta__`): a class
-or interface used as a value gets a table of its statics
-(`Lower.reflectStatics`: those Eval has, an inline variable too, not its
-superclasses'), in the order the reference lists them (Eval's: by the names'
-hashes), kept when live code can have the class value (it names the class, or
-can get a value's class, resolve a class by name, or get a superclass): its
-variables, whose static initializers then run, and its functions that are
-live otherwise or looked up by name, as closures; the others are left out, as
-with `-dce full` (`Reflect.field` gives null, `Type.getClassFields` does not
-list them). A class never used as a value has no table (WasmGC: nor an
-interface).
-
-`Type.createInstance`: once the lowering meets the runtime's function
-(`Dyn.createInstance`), every class gets an entry (`ClassInfo.maker`,
-`Lower.maker`): the constructor `new` calls (a superclass's when the class has
-none), or, where it has default values for numbers or Bools, its entry for
-dynamic calls taking those nullable (as a method's in the tables), so that
-missing trailing arguments and nulls take the default values, as on Eval.
-`Reach` keeps the entries of the classes whose value live code can have (as
-for the statics above: named, resolved by name, an instance's class, a
-superclass), whose constructors run then; the rest are dropped, and a program
-that never calls `Type.createInstance` has none (the same bytes as before).
-`rt_type` holds it where an enum constructor's singleton and constructors are
-(`Types.maker`: a function called as a bound method of the new instance, of
-the arguments' signature, through the dynamic call of `Reflect.callMethod`);
-the `Loader` writes a bundle's (Mir macros and `--run`). A class without any
-constructor fails, as Eval's does (`Instance constructor not found`), as does
-one whose entry was dropped, or an extern class the runtime implements (its
-class value is `T_NONE`'s, but `Math`'s, a runtime type of its own named Math, `T_MATH`, which `Type.resolveClass` finds); `String`'s and `Array`'s are Eval's. WasmGC:
-`Meta.createInstance`, a dispatch on the class making the instance and calling
-the entry. With `Type.resolveClass` live too, every class's constructor and
-its signature's trampolines stay: the port would grow by 66 KB (0.34%).
+A field the layout lacks (`o.x = 1` on a Dynamic, `Reflect.setField`) goes
+in slot 0: an array of (field id, value) pairs in insertion order. Every
+reader sees both. `Reflect.fields`, `haxe.Json` and `haxe.Serializer` list
+the own fields by name, then the added ones in order. `Std.string` prints
+`{ a : 1, b : 2 }`. `Reflect.deleteField` removes added fields only; for an
+own field it returns false, because the layout and type index are fixed.
+WasmGC keeps added fields in a `GcFields` with the same behaviour.
+`AnonFields` checks this against the reference's `--interp`.
 
 ## Native arrays
 
-`hxmc.NativeArray<T>` (`hxmc/std/hxmc/NativeArray.hx`) is fixed-size storage
-with a single GC allocation: a header, a length/kind word and packed
-elements. Bool uses 1 byte, Int 4, Float and Int64 8, and reference elements
-8 bytes. Nullable numbers and Dynamic use reference storage. Concrete
-indexing lowers to direct loads/stores in `MemLower`, without bounds,
-growth or storage-kind checks; references keep the generational write
-barrier. The collectors skip the length/kind word in reference arrays.
-Copies preserve the runtime layout even in erased generic code; reference
-copies retain the bulk write barrier. Array conversions copy.
+`hxmc.NativeArray<T>` is fixed-size storage in one GC allocation: header,
+then packed elements. Bool takes 1 byte, Int 4, Float and Int64 8,
+references 8; nullable numbers and Dynamic use reference storage. Indexing
+lowers to plain loads and stores; references keep the write barrier.
 
-A NativeArray whose element type is Dynamic (`Dynamic`, `Any`, an
-abstract over them, an erased type parameter) may hold storage of any
-kind: its accesses test the kind inline (reference storage directly) and
-go through `rt/NArray.hx` otherwise. Haxe lets any NativeArray be seen so,
-and lets `Vector<Int>` and `Vector<Null<Int>>` alias. Storage taken as a
-typed NativeArray (from a Dynamic-typed one, from a Dynamic, between Int
-and Null<Int>) is checked once there (`hx_narray_view`), and a mismatch
-throws, as a cast does on HL and the JVM; a `cast` is not checked. A
-NativeArray made for an erased type parameter is a wrapper (a NativeArray
-of one reference) of reference storage: the first typed view converts the
-storage to its kind if needed and the wrapper keeps pointing at the result,
-so generic code and typed code share it (HL's `ArrayDyn` does the same); a
-view of another kind later throws.
+`haxe.ds.Vector` (`hxmc/std/haxe/ds/Vector.hx`) is an abstract over it.
+`MkStd` keeps upstream's Vector for Eval and macros.
 
-An array of no elements cannot change: typed code that makes one gets the
-program's empty array of its kind (`MirBuild.EMPTY_ARRAY`, static data as
-string literals are, defined by `DataGen.emptyArrays`), so `new Vector(0)`
-allocates nothing; the runtime does not refer to those, so that a tool that
-does not define them can still build it. A copy of an empty array is itself,
-and any empty array serves as the view of any kind.
-
-`NativeArray.literal([a, b, c])` (of an array literal only; what the port's
-`vector(a, b, c)` is on hxmc where the element type is known) makes the
-elements' NativeArray as an Array literal is made: FnLower lowers it to the
-host call `hxmc_narray_lit`, which `MirBuild` turns into the empty array of
-the kind, or one call of the runtime (`hx_narray_new_n`, `rt/NArray.hx`) and
-a store per element. Its operands are read after that allocation, so they
-are roots across it, as an `ENewArr`'s are (`GcPoints.gcPoint` 2; the corpus
-case `NativeArrayLiteral` stores young objects in a loop). `new NativeArray(n)` inlines its allocation and its
-test of `n`, which a literal does not need: a function returning a literal
-of three references is 224 bytes of x86-64 against 650 for `new Vector(3)`
-and three stores. For an erased type parameter, and under WasmGC, it is
-`new NativeArray(n)` and its stores.
-
-`hxmc/std/haxe/ds/Vector.hx` shadows the reference standard library on the
-hxmc target and implements `haxe.ds.Vector<T>` as an abstract over
-`hxmc.NativeArray<T>`. Indexing, length and construction inline to the same
-operations as NativeArray. `toData`/`fromData` share NativeArray storage;
-`toArray`/`fromArrayCopy` copy. `MkStd` keeps the upstream
-Vector for Eval and macros in the merged `bin/hxmc/std`. `make bench-micro
-WHICH=arrays` compares Array, NativeArray and Vector
-([measurement notes](../hxmc/test/bench/README.md)).
-
-WasmGC (`-D hxmc.wasm-gc`, below) has the same NativeArray over the engine's
-arrays: one of a known element type is the bare GC array of its kind (i32,
-f64, i64, eqref, Bool i8), its accesses
-`array.get`/`array.set`/`array.len`, `blit` of one kind `array.copy`
-(`FuncGen.narray`); the empty arrays are one immutable global per kind. One
-of a Dynamic element is an `eqref`: reference storage is accessed inline
-(`br_on_cast`), other kinds and the wrapper (a struct of its storage and
-whether a view took it) through `Helpers.na*` and `rt/gc/GcNArray`, which
-has `rt/NArray`'s views, wrappers, copies, defaults and errors. There the
-engine checks every index too: an access out of bounds that the define
-leaves untested traps.
-
-`-D hxmc.native-array-outofbounds` decides what an index out of bounds
-does, at code generation (`Lower.bounds`, `FnLower.nativeRead`): not
-defined, nothing is tested (the result is unspecified, as Haxe leaves it);
-`throws`, an access tests its index (one unsigned comparison, negative
-indices too) and throws `haxe.exceptions.ArgumentException` with the
-position of the access; `silent`, a read out of bounds gives the element
-type's default (0, false, null) and a write does nothing. The test is IR,
-so the collector's roots account for the throw, and the optimizer drops a
-test a dominating one decides (`v[i] += x` tests once with `throws`).
-The std's own loops use `unsafeGet`/`unsafeSet`, which are never tested;
-`blit` copies so when both ranges are in bounds, else element by element
-with the define's accesses. Dynamic indexing follows the define too
-(`Dyn.dynAget`, WasmGC's `GcDyn.aget`; an error when it is not defined). The define is registered
-for `haxe --help-defines` by `hxmc.Defines`, leaving `haxe/src` unchanged.
+- **Dynamic element type**: storage of any kind. Accesses test the kind
+  inline. A typed view of such storage is checked once
+  (`hx_narray_view`); a mismatch throws, as a cast does on HL. A
+  NativeArray made for an erased type parameter is a wrapper whose first
+  typed view converts the storage.
+- **Empty arrays** are static, one per kind: `new Vector(0)` allocates
+  nothing.
+- **`NativeArray.literal([a, b, c])`** allocates once and stores each
+  element.
+- **Bounds**: `-D hxmc.native-array-outofbounds` decides at code
+  generation (`Lower.bounds`). The test is IR, so the optimizer drops a test
+  a dominating one decides. The std's own loops use `unsafeGet`/`unsafeSet`.
+- **WasmGC**: the engine's array of the element kind; the engine checks
+  every index, so an untested out-of-bounds access traps.
 
 ## Null access
 
-A read or write through a null reference throws the String `"Null
-Access"`, which `try`/`catch` catches as any exception (`catch (e:String)`,
-or `haxe.Exception` with that message): a field of a class instance, of an
-anonymous structure or of an enum value (a `switch` reads its tag), an
-Array's index, length and methods, a String's length, `charCodeAt`,
-`fastCodeAt` and methods, a Vector, Bytes, a map, a call through a null
-function, a dispatched (virtual or interface) call. Nothing caught, the
-program ends as with any uncaught exception (`Uncaught exception: Null
-Access` on stderr, exit 1). Dynamic access throws the same (`Dyn.hx`,
-WasmGC's `GcDyn`, `GcNative`): `d[0]`, `d[0] = v`, `d.x = v`, `d.f()`,
-and `d.x` too, where Eval gives null: the typed `o.x` throws, and so do the
-targets that test for null (HashLink, the JVM, hxcpp's checks; JavaScript's
-TypeError); `Reflect.field(null, "x")` stays null. A call of a null Dynamic
-throws `Cannot call null`, Eval's message. The corpus case `NullAccess`
-(and `NullAccessThreads`) prints the same as the reference's `--interp`
-but where Eval words it otherwise: `field access on null` for the field
-reads of class instances and structures and for a String's length (a
-fault cannot tell those from the other accesses), `Cannot call null` for a
-typed call of a null function or a method of null taken as a value, and a
-method called directly (not dispatched) on null runs on every hxmc target
-until it reads `this` (Eval throws at the call: testing every such
-receiver costs the native port 0.9% more instructions and 0.7% more code).
+A read or write through null throws `"Null Access"`: a field, an enum's
+tag, an Array, a String's methods, a Vector, Bytes, a map, a call through a
+null function, a virtual or interface call. Dynamic access throws the same
+(`d.x` too, where Eval gives null). A call of a null Dynamic throws `Cannot
+call null`. Where hxmc words it differently from Eval: `field access on
+null` for field reads and a String's length (a fault cannot tell those
+apart), and a method called directly on null runs until it reads `this`.
+`NullAccess` and `NullAccessThreads` check this against the reference.
 
 ### Native targets: the fault handler
 
-The generated code reads through references without testing them: a null
-one faults near address 0 (a field is at a small offset from the
-object's address, its header just below it), and the fault handler
-(`hxmc/std/hxmc/rt/Faults.hx`, installed by `rt_init`: `sigaction` for
-SIGSEGV and SIGBUS with `SA_SIGINFO` on Linux, Android, macOS and iOS; a
-vectored exception handler, called before the runtime's own, on Windows)
-turns it into a throw. It does not unwind itself: it changes the
-interrupted context so that, once it returns, the thread runs
-`rt_null_access` as if the faulting instruction had called it (x86-64:
-its address pushed as the return address, below the red zone the kernel
-leaves, or on Windows below the 32 bytes a callee may use; arm64: in the
-link register; the stack pointer aligned as at a call), Go's way. The
-kernel (or `NtContinue`) restores the signal mask and the rest of the
-state, and `rt_null_access` throws as any throw does: `rt_throw` with the
-literal (nothing allocated), a `longjmp` to the innermost try's handler,
-which restores the shadow stack (`rt_sp`) and the handler chain from its
-record. The frames between are abandoned as when a callee throws; the
-collector finds their shadow-stack slots valid, if dead. Two rules keep
-the handler's view right where a throw can now come from any load or
-store, not only a call: `Roots` roots what a try's handlers read (they
-are entered from any point of the body; their tests may collect), and
-`Opt.forwardStores` keeps a store before an access through a reference
-nothing has gone through yet (the handler may read it). With no fault,
-nothing runs: the port's self-compile to HXB takes 31,050.31 million
-instructions where it took 31,050.16 (+0.0005%, the same time), the port
-is 48 bytes larger (19,534,496), the tool 17.7 KB (17,166,184: the tests'
-code generation, and the stores Opt now keeps in its own code, with which
-its cold build of the port takes 0.1% more instructions, the same time;
-Xeon E-2356G, 6 cores/12 threads, 62 GB, Linux 6.1).
+Generated code reads through references without testing them. A null one
+faults near address 0, and the fault handler (`rt/Faults.hx`: `sigaction`
+on Linux, Android, macOS and iOS; a vectored exception handler on Windows)
+turns the fault into a throw. It does not unwind itself: it changes the
+interrupted context so the thread runs `rt_null_access` as if the faulting
+instruction had called it, Go's way. Two rules keep this right: `Roots`
+roots what a try's handlers read, and `Opt.forwardStores` keeps a store
+before an access through a reference not yet dereferenced. With no fault
+there is no cost.
 
-A fault is a null access when the hardware reported it (`si_code` above 0;
-not a signal a process sent, not Linux's address-less `SI_KERNEL`), its
-address is within 64 KB of 0 on either side (Linux never maps the first
-64 KB, Windows reserves them, macOS's page zero is 4 GB), its instruction
-is in the program's image (ELF: `__ehdr_start` to `_end`; Mach-O: the
-`__TEXT` segment of the image `dladdr` names; PE: `SizeOfImage`), the thread is one of the runtime's, running Haxe code
-(not in a blocking call's safe region, and not the collector with the
-world stopped: `Threads.collector`), and the innermost handler is at or
-above the faulting frame (null: uncaught). Any other fault goes to the
-action that was there before: the default restored, the instruction
-faults again and the process dies of the signal (exit 139, a core dump),
-as without the handler; a handler of a host process (a shared library's,
-Android's ART) is called. A shared library's runtime puts the earlier
-actions back when it ends (`Gc.releaseHeap`). `RT_NULL_ACCESS=0` installs
-nothing. Every thread is covered alike, and so is an interpreter written in
-Haxe (a load of its interpreted code through null faults in its own
-compiled code).
+A fault counts as a null access only when the hardware reported it, its
+address is within 64 KB of 0, its instruction is in the program's image,
+the thread is one of the runtime's running Haxe code (not in a safe region
+or the stopped-world collector), and the innermost handler is at or above
+the faulting frame. Any other fault goes to the previous action: the
+process dies of the signal as before, or a host's handler runs. A shared
+library puts the previous actions back when it ends. `RT_NULL_ACCESS=0`
+installs nothing.
 
-Limits: an element of a Vector read without a bounds test (the default)
-at a large index of a null Vector is beyond 64 KB and crashes; a fault in
-code outside the image (the system's C library in the glibc mode, a
-driver) crashes as before (that code may hold locks the throw would leave
-taken); a fault inside the runtime while it holds one of its own locks
-would leave it taken (the runtime reads its arguments before it locks).
+Limits: a large index into a null Vector without bounds tests lands beyond
+64 KB and crashes; a fault outside the image (the glibc mode's C library, a
+driver) crashes; a fault inside the runtime while it holds a lock would
+leave the lock taken.
 
 ### Core dumps
 
-The runtime reserves 35 GB of address space natively (the old space's two
-16 GB regions, the nursery's 256 MB, the main thread's 1 GB C stack and 1
-GB shadow stack, 64 MB of shadow stack per thread: Gc, Start, Threads), and
-Linux dumps a mapping whole once a page of it is touched, its untouched
-pages as zeros. A core file skips them (it is sparse), but a core going
-through a pipe carries them: Ubuntu, and GitHub's runners, pipe cores to
-systemd-coredump (or apport), which the core limit (`ulimit -c 0`) does
-not stop. A crash took minutes: NullAccessCrash (a fault at 1 MB, exit
-139) ran 165 to 300 s in every linux-x86_64 test job and into the 300 s
-timeout of some (#43), where with `kernel.core_pattern=core` it took
-1.5 s. So on Linux and Android (`Os.coreDump`: `madvise`'s
-`MADV_DONTDUMP` and `MADV_DODUMP`) the reservations are left out of a core
-dump but for what the program uses of them: each region up to its
-limit (`Gc.dumpOld`: at start, after each major collection, and for a
-major collection's copies; the region it leaves is left out again), the
-nursery up to its size (`dumpYoung`), each stack's 8 MB at the end it
-grows from (`Os.stackCoreDump`), and, on a fault that ends the program
-(`Faults.chain`), the faulting thread's stacks as they are used
-(`Faults.dumpStacks`). NullAccessCrash's core is 17.9 MB, where it was
-36.8 GB; a core holds every page the heap and the stacks wrote (the
-corpus case `CoreDumpSize` checks it through `/proc/self/smaps`). Limits:
-a thread's C stack (64 MB, the C library's mapping) is dumped whole once
-touched; a stack used beyond its 8 MB is cut there in the core when another
-thread faulted or another signal ended the program (`abort`).
+The runtime reserves about 35 GB of address space natively (two 16 GB
+old-space regions, the nursery, 1 GB stacks for the main thread). On Linux
+and Android the reservations are marked `MADV_DONTDUMP`, except what the
+program uses: each old-space region up to its limit, the nursery up to its
+size, each stack's last 8 MB, and the faulting thread's stacks. Without
+this, a crash piped to systemd-coredump wrote tens of gigabytes. The corpus
+case `CoreDumpSize` checks it.
 
 ### WebAssembly: explicit tests
 
-WebAssembly has no faults to catch: in linear memory a null access read
-the zeros below the data (4 KB) or wrote over them, and an object's
-header (at -4) or an index out of the memory trapped; WasmGC's
-`struct.get` and `array.len` trap on null. A trap ends the module: no
-handler sees it. So with `-D hxmc.null-checks` (`Lower.nullChecks`; on by
-default for `wasm32-wasi`, `=0` turns it off, `=1` adds the tests to the
-native targets) each dereference tests its reference: `MirBuild.nullCheck`, `MemLower.nullTest`
-(a branch to a block calling `rt_null_access`, one per try a function's
-tests share: a try's body is the dominator subtree of its first block,
-WasmGen; WasmGC: `MirBuild.nullCheck`'s `NullCheck`, a call of `nn_any`, and `FuncGen.derefAs` in the IR's own operations, a call of a per-type helper, `nn_<t>`,
-which gives a `(ref null t)` back as a `(ref t)`: 2 or 3 bytes a test),
-and `FnLower.receiverCheck` for the receiver of a method the runtime
-implements (it reads it untested). A test is dropped where the value is
-known: data at a symbol, an object made here, a constructor's object, a
-closure's own, a value or a local tested on every path since its last
-assignment (`checkedLocals`, `FuncGen.checked`; a reference the collector
-moves stays non-null). The cost, on the port (`-D hih_no_generators` for
-wasm32) and its self-compile under node 24 (the same machine): wasm32
-10,204,974 to 10,788,189 bytes (+5.7%) and 4.7% more instructions (2% more
-time); WasmGC 10,195,586 to 10,627,834 bytes (+4.2%) and 6.1% more
-instructions; with `-D hxmc.null-checks=0`, as before (97 and 167 bytes
-more). Per test: a compare and a branch to the shared block (wasm32), a
-call of `nn_<t>` (WasmGC).
+WebAssembly has no faults to catch, so `-D hxmc.null-checks` (on by default
+for `wasm32-wasi`) tests each dereference (`MirBuild.nullCheck`,
+`MemLower.nullTest`). The tests share one block per try that calls
+`rt_null_access`. WasmGC calls a per-type helper `nn_<t>`. A test is
+dropped where the value is known non-null: data at a symbol, an object made
+here, a value tested on every path. The cost is about 5% in size and
+instructions.
 
 ## Maps
 
-`haxe.ds.IntMap`, `StringMap` and `ObjectMap` (`hxmc/std/haxe/ds`) are
-compact insertion-ordered tables, as Python's and JavaScript's: entries are
-appended to an array (keys and values interleaved; iteration follows
-insertion order, a key removed and set again comes last) and an
-open-addressing index with linear probing finds them. The index is at most
-half full (a table that only grows doubles; a rebuild drops the removed
-entries and leaves room for twice the live ones, so it moves at most one
-entry per removal), and a removal shifts its probe chain back (no
-tombstones). Each slot is two Ints, what is compared first and the entry +
-1 (0: empty): IntMap's key, StringMap's hash (the string's FNV-1a hash,
-cached in it, mixed: its low bits alone pick slots for keys that differ in
-their last units), ObjectMap's hash of the key's address; so a miss reads
-the index only and a hit one entry. The keys and values are a NativeArray
-of a class type (`MapSlots.RefSlots`): plain loads and stores, where a
-Dynamic element's accesses test the storage's kind, with a slow path that
-would make every lookup a GC point.
+`IntMap`, `StringMap` and `ObjectMap` (`hxmc/std/haxe/ds`) are compact
+insertion-ordered tables, as in Python and JavaScript: entries appended to
+an array, found through an open-addressing index with linear probing, at
+most half full, no tombstones. Each index slot holds what is compared
+first (the key, a string's cached FNV-1a hash, or an address hash) and the
+entry number, so a miss reads only the index.
 
-Identity maps: ObjectMap (also what `Map<SomeClass, V>` and maps of
-anonymous objects or functions are) hashes the
-key's address, as Go's `map[*T]V` does, without reading the key: the high
-half of the address times 2^64/φ (`hxmc.rt.IdHash`). The collector moves
-objects, so every collection counts (`hxmc_gc_count`, the major ones
-`hxmc_gc_majors`: Gc.hx, wasm/Gc.hx), the index keeps the count it is up to
-date with (its element 0, read with acquire semantics: `ldar` on arm64) and
-each operation compares it first (a load and a compare). An index found
-out of date is brought up to date before anything is hashed: after minor
-collections only the keys that were in the nursery when they were added
-moved, which the map lists (entry and hash) while they may be young, and
-those entries are found by their old hash and indexed again by the new
-one; after a major collection (or when most entries were young) every entry
-is indexed again. Objects never move into the nursery and it is empty after
-every collection, so the list empties at each update. Nothing on a lookup's
-path allocates; `set` and `remove` make their allocations first, then hash.
-A map shared by threads that only read it is brought up to date by the
-first that finds it out of date, under a lock (`hxmc_idhash_lock`), which
-stores the count last. The cost: nothing per object (no header bits), two
-counters in the collector, and in each map used after collections the
-entries added young since the last one (after a minor collection) or all
-of them (after a major one, which copied all of them anyway). The header's
-16-bit identity hash (`hxmc.Native.objHash`, set when first asked) stays
-for other uses; WasmGC, which has no addresses, hashes ObjectMap's keys
-with it (the engine object's, which never moves), times 2^32/φ: the slot
-is hash & mask, and the bare 16 bits would leave every slot past 65,536
-home to no key (a map of the TypeScript compiler's emit, 200,000 keys
-in one probe run: 67 s instead of 6). `Map<SomeEnum, V>` is
-upstream's `EnumValueMap` (a balanced tree ordered by the constructors'
-indices and parameters), not an identity map.
+### Identity maps
 
-`hxmc/test/cases/ObjectMapGc.hx` checks maps across collections (keys
-added young, removals, keys that never move, keys allocated in the old
-space, threads reading one map), natively, on wasm32 and on WasmGC
-(`GcCheck`); `make bench-micro WHICH=maps` measures them (`hxmc/test/bench/MapBench.hx`;
-the numbers of 2026-10-20 below, Linux x86-64, nanoseconds per operation,
-the fastest of 11 rounds (a range: two runs), before (16-bit header hashes, a 4-byte index
-without hashes, tombstones, up to 3/4 full) and after):
-
-| | 10k keys before | after | 1M keys before | after | Go 1.24, 1M |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| ObjectMap get (hit) | 9.9 | 8.2 | 152 | 116-133 | 125 |
-| exists (hit) | 8.9 | 8.0 | 160 | 96-117 | 86 |
-| get (miss) | 12.1 | 4.0 | 137 | 54 | 45 |
-| set (insert) | 32 | 23 | 151 | 123-134 | 181 |
-| set (update) | 11.3 | 10.0 | 167 | 93-131 | 107 |
-| remove + set | 47 | 37 | 375 | 377-381 | 196 |
-| StringMap get (hit) | 11.0 | 9.6 | 69 | 58 | 144 |
-
-A lookup in a large map is two cache misses (the index, the entry), as in
-Go's; before, the 16-bit header hashes collided past 65,536 keys and their
-probes read the entries. The TypeScript compiler's port (tsc-haxe, the
-ts6-compiler check) runs 2.3% fewer instructions (ObjectMap.get 1.10 to 0.73
-billion, the header hash's 0.22 billion gone; bringing indexes up to date
-0.08 billion of 28.7), the port's self-build 0.9% fewer.
+`ObjectMap` (also `Map<SomeClass, V>`, maps of anonymous objects and
+functions) hashes the key's address, as Go's `map[*T]V` does
+(`hxmc.rt.IdHash`). The collector moves objects, so it counts collections
+(`hxmc_gc_count`, `hxmc_gc_majors`). Each map records the count it is
+current with and checks it first. After minor collections only the keys
+that were young when added can have moved; the map lists those and
+reindexes them. After a major collection every entry is reindexed. A map
+shared by reading threads is updated by the first that finds it stale,
+under `hxmc_idhash_lock`. WasmGC has no addresses and hashes with the
+header's identity hash instead. `Map<SomeEnum, V>` is upstream's
+`EnumValueMap`, not an identity map. `ObjectMapGc` checks maps across
+collections; `make bench-micro WHICH=maps` measures them.
 
 ## Module cache
 
 The compilation server's HXB module cache, made durable
-(`hxmc/src/hxmc/ModuleCache.hx` with a build's state in
-`ModuleCacheState.hx`, the callbacks it watches in `WatchedCallbacks.hx`,
-the writer that checks what it encodes in `CheckingHxbWriter.hx` and the
-type sort's walks in `Skeletons.hx`; `ModuleStore.hx`; on by default,
-`HXMC_MODULE_CACHE=0` or `-D hxmc.no-module-cache` off; through `haxe` and
-the tool, for every target): a successful build writes its typed modules
-(HXB chunks, dependencies, file and check policy) into a store in the user
-cache directory (`$XDG_CACHE_HOME/hxmc` or `~/.cache/hxmc`, macOS
-`~/Library/Caches/hxmc`, Windows `%LOCALAPPDATA%\hxmc\cache`; `HXMC_CACHE`
-overrides; one that cannot be written is not used), in `modules/<tool>/`
-for each build of the tool: an index per working directory, class paths
-and std (`<key>.idx`), the modules' HXB in blobs (one pack per build that
-writes some, `b/<name>.pk`, written beside the rest of the build), read only
-for the modules a build restores, and the compiled objects (`o/`, `ObjectStore.hx`:
-named by the hash of their lowered IR, shared by every output; per output
-the list of objects its last build used and its up-to-date record; the
-objects stay next to the output, in `<out>.hxmc/`, only where the cache
-directory cannot be written); once a day a build removes the tool
-directories, indexes and object lists unused for 14 days and the packs and
-objects nothing names. The cap (1 GB, `HXMC_CACHE_SIZE`) holds as builds
-write: a build that wrote adds its bytes to `modules/size.txt` (one line
-appended; one that wrote nothing reads nothing), and when the sum passes
-the cap it trims at once, down to 80%: the other tools' directories first,
-then indexes and object lists least recently used first, each pack or
-object with the last one naming it. Removals tolerate builds running
-beside (a tool directory is renamed before it is removed; a pack or object
-found missing is typed or compiled again) (`CacheDir.hx`, checked by
-`hxmc/test/CacheCheck.hx`). An index keeps variants of each module, each
-with the defines it read (its file's conditions, its macros'
-`Context.defined`, and those the compiler read in the build that typed
-it): a build restores the variant whose reads have its values, so a define
-only some modules read leaves the others (the std) good. Several
-variants can match, for a module whose typing depends on defines only
-through its dependencies (GLBackend inlines `BytesPtr`, whose file reads
-`-D hxmc.wasm-gc`, and calls the functions `GL`'s build macro makes for the
-target; Std depends on the runtime): of those, the one typed with the
-build's defines (its context's signature) is restored, and a variant typed
-with other defines is kept beside one with the same reads (at most four
-per module), so builds that alternate (WasmGC, linear, native) each
-restore their own (universe's graphics programs check it). The server's
-checks decide which modules are good, lazily, for the modules the build
-loads, also those a restored module's HXB names (decoded from the store
-only once checked, else typed from source); beyond them, a module's file
-is compared by content hash where its date or size changed, its path
-must still resolve to it (shadowing), and each dependency must have the hash it had when the module was typed: the
-hash of its interface (`ModuleInterface.hx`: its declarations without the
-bodies of functions whose type is written out; positions only for the
-expressions kept, which inlining copies), or of its whole content across
-contexts (a macro's code runs). A module typed again whose interface did
-not change leaves its dependents restored (early cutoff: a body edited in
-a central module of the port types that module again, not its
-dependents); an edit undone restores the earlier variant (a module a macro
-defined, with no file of its own, the variant whose dependencies are as
-they were: the one typed with the variant restored for the module whose
-macro defines it). A restored module that refers to one typed again reads
-that module's fields once they exist: one read while a class of a module it
-depends on, or of its cycle, is being built is typed from its source too,
-and the fields Haxe makes in a later pass (an interface's property
-accessors) are made before it reads them. Modules built by
-macros are restored too; the state macros keep between calls is tracked:
-the static variables of macro classes (not the std's) the macros run in a
-module's typing use are kept with it (a registry an `@:autoBuild` fills
-for another macro, a counter naming generated types). Such a module is
-restored while no macro of the build uses that state; a macro that uses
-it after such a module was restored makes the build run again, those
-modules typed (`HXMC_MODULE_CACHE_RETYPE`), and an edited one has the
-others that keep state there typed from the start. A class's build (its
-fields made, its build macros run, lazily, when first asked for) is part of
-the typing of its module, whichever module's typing asks for it. A callback a macro
-registers while a module is typed (`onGenerate`, `onAfterTyping`,
-`onAfterGenerate`) makes that module typed every build. Not used for
-display requests, the server itself, several compilations, init macros,
-deprecated defines, HXB libraries or output, WASI; such a callback
-registered outside the typing of a module, or a macro defining something,
-makes the build write nothing. The output is the same as
-without the cache (`make test-module-cache`; `make fixpoint`: the tool
-building itself with the cache cold, warm and off): the cache also keeps
-the modifiers of unbound monomorphs and what the sort of the types walks
-of each module before the filters, which HXB does not keep. What a macro's
-result depends on beyond the sources is learned from the macro std's
-natives (`EvalStdLib.volatileHook`, `fileHook`, `envHook`), for the module
-being typed when the macro runs (the one the static-variable tracking
-names). A call whose result changes from run to run (`Date.now`,
-`Sys.time`, `Sys.cpuTime`, `Timer.stamp`, `Math.random`, `Std.random`,
-sockets, `sys.net.Host`, `sys.Http`, `sys.ssl`, `Sys.command`,
-`sys.io.Process`, `Sys.getChar`, eval.luv's network, processes, signals,
-time, random, file system and system information) makes the module
-typed every build, its macros run again; its dependents stay restored
-through its interface as parsed, unless the call was where they copy the
-result (an inline or macro field, a field whose type is not written out,
-a build macro): then its interface counts as new every build. A file a
-macro reads (`File.getContent`, `getBytes`, `read`; `FileSystem.exists`,
-`isDirectory`, `stat`, `readDirectory`, `fullPath`) is a read of the module
-kept with what the macro saw (the content's hash, the listing, whether it
-exists, the status, the full path), as an environment variable it reads
-(`Sys.getEnv`, `Sys.environment`, eval.luv's `Env`) is with its value: the
-module is restored while they are the same (a file touched but not changed
-leaves it), its interface is its whole content (they may change it), and a
-variant per value is kept (`registerModuleDependency` keeps working, the
-file then both a dependency and a read; a macro reading its module's own
-file adds nothing). `@:hxmc.noCache` on a type, or
-`-D hxmc.no-cache=<package, module or library directory,...>` (read without
-entering the key), makes a module typed every build, its dependents with
-it; `HXMC_MODULE_CACHE_LOG=1` says why a module was typed (`Clock typed
-every build (macro called Date.now at src/Macros.hx:4)`, `Data dirty: ...
-(data.txt, read by a macro)`), `HXMC_STATS=1` counts the modules typed from
-source and those typed every build. A module whose types share a path
-(an abstract whose implementation class `@:native` renamed to it, processed
-in the macros' context: eval's `mbedtls.SslAuthmode`) is not kept: HXB names
-a type by its module and name. Plans: [plans/compiler.md](plans/compiler.md)
+(`ModuleCache.hx`, `ModuleCacheState.hx`, `WatchedCallbacks.hx`,
+`CheckingHxbWriter.hx`, `Skeletons.hx`, `ModuleStore.hx`,
+`ObjectStore.hx`, `CacheDir.hx`). Usage: [using.md](using.md#fast-rebuilds).
+
+**The store** is `<cache>/modules/<tool>/`, one directory per build of the
+tool:
+
+- an index per working directory, class paths and std (`<key>.idx`);
+- the modules' HXB in packs, one per build that writes (`b/<name>.pk`),
+  written on a thread beside the build;
+- compiled objects (`o/`), named by the hash of their lowered IR and shared
+  by every output; per output, the objects its last build used and its
+  up-to-date record. `<out>.hxmc/` holds them only where the cache cannot be
+  written.
+
+Once a day a build removes what has been unused for 14 days. The size cap
+holds as builds write: each build appends its bytes to `modules/size.txt`,
+and past the cap it trims to 80%, other tools' directories first. Removal
+tolerates concurrent builds. `CacheCheck` tests the store.
+
+**Variants and keys.** An index keeps variants of each module, each with
+the defines it read (its file's conditions, its macros'
+`Context.defined`, and what the compiler read while typing it). A build
+restores the variant whose reads match, so a define only some modules read
+leaves the others restored. Up to four variants per module are kept, so
+builds that alternate (native, wasm, WasmGC) each restore their own.
+
+**Validation** is lazy, for the modules a build loads. A file is compared
+by content hash where its date or size changed; its path must still
+resolve to it; each dependency must have the hash it had: the hash of its
+interface (`ModuleInterface.hx`: declarations without the bodies of
+functions with written types), or of its whole content across contexts.
+A module typed again whose interface did not change leaves its dependents
+restored (early cutoff). An undone edit restores the earlier variant.
+
+**Macros.** Modules built by macros are restored. Static variables of
+macro classes used during a module's typing are kept with it; if a later
+macro uses that state, the build runs again with those modules typed
+(`HXMC_MODULE_CACHE_RETYPE`). A callback registered during a module's
+typing (`onGenerate`, ...) types that module every build. What a macro's
+result depends on beyond the sources comes from hooks in the macro std
+(`EvalStdLib.volatileHook`, `fileHook`, `envHook`): volatile calls make the
+module typed every build; file and environment reads are recorded with
+their values. HXB does not keep the modifiers of unbound monomorphs or the
+type sort's walks; the cache keeps those too.
+
+**Not cached**: display requests, the server itself, several
+compilations, init macros, deprecated defines, HXB libraries and output,
+WASI. A callback registered outside a module's typing, or a macro defining
+something, makes the build write nothing. A module whose types share a path
+(eval's `mbedtls.SslAuthmode`) is not kept.
+
+`make test-module-cache` checks that outputs are byte-identical with and
+without the cache; `make fixpoint` builds the tool cold, warm and off.
+Open items: [plans/compiler.md](plans/compiler.md#cached-modules).
 
 ## Macros on the Mir interpreter
 
@@ -1189,433 +715,254 @@ speed".
 
 ## Targets
 
-Targets: Linux (static ELF with musl's members; with `-D hxmc.libc=glibc`, an
-executable dynamically linked against the system's glibc: PT_INTERP, DT_NEEDED,
-imports with the symbol versions of glibc 2.17 bound at load time, a
-generated `_start` calling `__libc_start_main`; runtime objects of their own,
-`<target>-glibc`, the runtime's Haxe code the same), Windows (PE over the UCRT,
-imports written from the import libraries), macOS (Mach-O against
-libSystem, ad-hoc signed), each on x86-64 and ARM64, Android (a shared
-library of position-independent code against Bionic, in an APK hxmc writes:
-Android, below), iOS and its simulator on ARM64 (macOS's Mach-O and
-runtime, in an app bundle hxmc writes: iOS, below), and wasm32-wasi (the
-whole runtime in Haxe; exception handling with `exnref`, or with
-`-D hxmc.wasm-eh=legacy` the legacy `try`/`catch_all`/`rethrow`, which node 22
-runs without flags and wasmtime not at all; run with
-`node hxmc/bootstrap/wasi.mjs m.wasm` or `wasmtime run -W exceptions=y --dir . m.wasm`;
-no threads, sockets or processes). mbedtls 2.28 and libuv 1.48
-(`hxmc/deps/deps.sh`) become `ssl.o` and `uv.o`, linked only into programs that
-use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
-`HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_ESCAPE=0` (no escape analysis; `HXMC_ESCAPE_LOG=1`: what happens to each allocation analyzed and why it stays; `HXMC_ESCAPE_NO=<closures,frames,again,boxes,replace,screen>` and `HXMC_ESCAPE_HASH=<lo>-<hi>` to bisect a miscompilation; none of them are in the object cache's key), `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
-`HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
-`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB` (the old space's first limit; the tool sets 768 for a build, 2048 for the compilation server), `RT_OLD_GROWTH` (its next limits, in percent of what a major collection left live: 300 natively, 200 on wasm32; the compilation server 150), `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
-`RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown); with `RT_CENSUS_WHY=<type>` (its name in the census) also a path from a global to each of the first `RT_CENSUS_WHY_MAX` (8) objects of that type, what keeps a leak alive (global `i` is the symbol of value `8 * i` in `<exe>.syms`).
+| Target | How |
+| --- | --- |
+| Linux | static ELF with musl's members. With `-D hxmc.libc=glibc` (`LinkDyn.hx`): dynamically linked, `PT_INTERP`, `DT_NEEDED`, imports with glibc 2.17's symbol versions bound at load time, a generated `_start` calling `__libc_start_main`, its own runtime objects (`<target>-glibc`) |
+| Windows | PE over the UCRT, imports written directly from the import libraries |
+| macOS | Mach-O against libSystem, ad hoc signed (`CodeSign.hx`) |
+| Android | a shared library against Bionic in an APK hxmc writes ([below](#android)) |
+| iOS | macOS's Mach-O and runtime objects with the iOS platform ([below](#ios)) |
+| wasm32-wasi | the whole runtime in Haxe; exceptions with `exnref` or, with `-D hxmc.wasm-eh=legacy`, `try`/`catch_all`/`rethrow` |
+
+mbedtls 2.28 and libuv 1.48 (`hxmc/deps/deps.sh`) become `ssl.o` and
+`uv.o`, linked only into programs that use `sys.ssl` or `eval.luv`.
+`LinkCore.hx` is shared by the native linkers: resolution, dead sections,
+GOT and import slots, placement and relocations.
 
 ### Target flags
 
-The conditional-compilation flags code tests to choose what a target
-supports (upstream's unit suite picks its tests by them). A custom target
-starts from the default platform configuration (`Common.defaultConfig`),
-from which the compiler defines `static` and `target.static`, `sys` and
-`target.sys`, `utf16` and `target.utf16`, `target.unicode`, and
-`custom_target` with `target.name` = `hxmc`; all of them hold for hxmc:
-static types (an Int is never null, as on hl, cpp and jvm), the sys API,
-UTF-16 strings, full Unicode. `hxmc/src/hxmc/TargetFlags.hx` adds, once the
-target is initialized and before the init macros and typing:
+A custom target starts from upstream's default platform configuration,
+which defines `static`, `sys`, `utf16`, `target.unicode` and their
+`target.*` forms, and `target.name` = `hxmc`. `TargetFlags.hx` adds
+`target.threaded` on the native targets and `target.atomics` everywhere,
+once the target is initialized and before init macros run. They are
+defines only. wasm32-wasi is not `target.threaded`: creating a thread
+throws there (`rt/wasm/Threads.hx`). On WasmGC a created thread runs when
+another waits for it (`GcThreads`).
 
-| Flag | Where | |
-| --- | --- | --- |
-| `target.threaded` | the native targets | OS threads in parallel (`sys.thread`, `haxe.EventLoop`'s per-thread loops, `Thread.events`), as on hl, cpp and jvm |
-| `target.atomics` | every target | `haxe.atomic` (`hxmc/std/haxe/atomic`) |
+### Android
 
-wasm32-wasi is not `target.threaded`: its threads run one at a time
-(`hxmc.NativeThread`), so `sys.thread` compiles there but code that tests
-the flag takes its single-threaded path. They are defines only: nothing else
-in the compiler reads those fields of the platform configuration. (The
-custom target's own way, an `hxmc.Init.init()` macro calling
-`Compiler.setPlatformConfiguration`, would also turn off skipping
-non-nullable optional arguments, which that call's decoding always does, and
-an init macro cannot define a `target.*` flag.) `hxmc` itself is not a
-define: code tests `target.name == "hxmc"`.
+Android 10 (API 29) and later, the first Bionic with ELF thread-locals.
 
-## Android
+**The library** (`LinkDyn.hx`, shared with `-D hxmc.shared` in the glibc
+mode): ET_DYN at address 0. The code is PC-relative already, so data
+addresses become `R_*_RELATIVE` relocations and imports become GOT slots
+bound at load (`BIND_NOW`). Thread-locals go through a linker-written
+`hxmc_tls_base` stub: TLSDESC on arm64, `__tls_get_addr` on x86-64
+(Bionic has no TLSDESC there). 16 KB segments (Android 15's pages).
+`DT_HASH`, `DT_SONAME`, only the exports visible, section headers (Bionic's
+linker reads `.dynamic` through them).
 
-`-D hxmc.target=android-arm64` (phones) or `android-x86_64` (emulators):
-Android 10 (API 29) and later, the first with ELF thread-locals in Bionic.
-The output is the program's shared library (`lib<name>.so`), or with an
-output ending in `.apk` an APK holding it as `lib/<abi>/libmain.so`, which
-the framework's `NativeActivity` loads (no Java, no `classes.dex`, no SDK or
-NDK at build time):
+**Bionic**: the runtime's C calls are imports of `libc.so`, `libm.so` and
+`libdl.so` with Bionic's symbol versions. The runtime objects hold the
+table of what those export to API 29 apps, made by `mkrt.sh` from Bionic's
+version scripts. `deps.sh` fetches Bionic's headers at a pinned AOSP commit
+for mbedtls, libuv and `Layouts.hx`. `Mem.target()` 9 and 10 are Android;
+`Mem.os()` is Linux's. Other libraries (`libandroid.so`, `liblog.so`,
+`libEGL.so`) are imported unversioned.
 
-```sh
-haxe -cp hxmc/test/android -main AndroidHello \
-  --custom-target hxmc=bin/hello.apk -D hxmc.target=android-arm64 -D hxmc.android-package=org.example.hello
-adb install -r bin/hello.apk
-adb shell am start -n org.example.hello/android.app.NativeActivity
-adb logcat -s hxmc        # its line
-```
+**The app**: the program exports `ANativeActivity_onCreate` in no-GC Haxe
+(it runs on the UI thread, which the runtime does not know); it starts the
+program's thread, where the runtime starts.
 
-| Option | |
+**The APK** (`android/Apk.hx`): a binary-XML manifest (`Axml.hx`), the
+library stored and aligned to 16 KB, then an APK Signature Scheme v2 block,
+ECDSA P-256 in plain Haxe (`P256.hx`, RFC 6979 nonces, so signing is
+deterministic) with a debug key kept in the cache. A program that uses the
+Java glue gets a `classes.dex` (`Dex.hx`: a minimal DEX writer; `Glue.hx`:
+`org.hxmc.Glue`, one listener class whose methods call a registered
+native, and `org.hxmc.Activity`, a `NativeActivity` whose window draws
+views).
+
+### iOS
+
+`ios-arm64` and `ios-sim-arm64` share macOS arm64's libSystem, layouts and
+runtime objects (`Mem.os()` 1, `Mem.target()` 3; `Mem.platform()` 1 or 2
+tells iOS from the simulator). The Mach-O carries the platform in
+`LC_BUILD_VERSION` (minimum 15.0, SDK 18.0). iOS 15 is the floor because
+`UILaunchScreen` is iOS 14's and current Xcodes start at 15.
+
+**The bundle** (`ios/Bundle.hx`): the executable, an XML `Info.plist`
+(`Plist.hx`), and `_CodeSignature/CodeResources`. The linker writes the ad
+hoc signature (`CodeSign.hx`), identified by the bundle id, whose special
+slots bind the `Info.plist`, an empty requirement set, `CodeResources` and
+the entitlements, as `codesign -s -` does. An `.ipa` is the bundle under
+`Payload/`.
+
+**The app**: a program that defines `hxmc_ui_main` (`DataGen.UI_MAIN`) has
+the generated `main` run that on the big main stack instead of the body,
+and runs the body once the app has launched.
+
+Device signing goes into `CodeSign.Identity`:
+[plans/targets.md](plans/targets.md#ios).
+
+### WebAssembly
+
+The playground runs the port as a wasm32-wasi module, and `make crosshost` checks that the tool built as one writes the same bytes as the native tool.
+
+#### Memory
+
+Linear memory only grows, and browsers refuse it early, so the runtime
+(`rt/wasm/Heap.hx`, `Gc.hx`) takes only what it uses:
+
+- The nursery's region is the nursery's size (4 MB, sized like the native
+  one, up to 32 MB), grown in place or moved after a minor collection.
+- The old space is 1 MB chunks taken as objects are promoted; `RT_OLD_MB`
+  (32) is when the first major collection comes, not a reservation.
+- The shadow stack is `RT_STACK_MB` (4 MB; `wasi.mjs` sets it from node's
+  `--stack-size`). The first time a frame goes deeper than since the last
+  collection, it is checked against the end; an overflow exits with a
+  message.
+- The frame stack (`Mem.stack`, below `__stack_pointer`) is a region of the
+  same size, checked in every prologue.
+- Memory grows by an eighth of its size at a time when that is enough,
+  because node collects its own heap after each `memory.grow`.
+- Only memory handed out before and freed is zeroed: fresh memory from
+  `memory.grow` is zero already.
+
+When `memory.grow` fails the runtime prints "out of memory: linear memory
+is N MB, growing it by M MB failed" and exits.
+
+#### WasmGC
+
+With `-D hxmc.wasm-gc` the program becomes a WasmGC module
+(`hxmc/src/hxmc/wasmgc/`): values live in the engine's collector, with no
+shadow stack or barriers. Each function goes through the native
+pipeline's object level: `MirBuild.gc` (no roots; fields by index; what is
+memory-level natively stays the IR's own as `IrNode` operations; a `try`
+is a `Try` terminator and `Catch`), `Inline`, `Inline.devirtualize`,
+`Escape` and `Opt`. Then `MirGen` writes structured control flow, each
+value a local of its wasm type, using `FuncGen` for the IR's expressions.
+Reachability runs twice: before building the Mir and over what the Mir
+still calls (`Uses.summary`).
+
+- **Types**: one recursion group, so the class hierarchy is wasm subtyping
+  (`ref.test`; leaf classes final). A reference has the wasm type its IR
+  type proves (`GcModule.keyOf`), else `eqref` cast where used.
+- **Calls**: methods have typed signatures; virtual and interface calls go
+  through a funcref table by class and selector; closures are structs
+  whose first field is a typed function reference.
+- **Runtime**: `Str`, `Arr`, `Bytes`, `Date` over `GcRepr`; the rest in
+  `hxmc/std/hxmc/rt/gc` (Dynamic, reflection over `Meta`'s tables, the
+  system over the host). Math's transcendental functions and float
+  formatting are the host's (`hxmc/bootstrap/wasmgc.mjs` under node).
+- **System** (`GcSys`): files, directories, the shell, processes (run by a
+  worker of the host), no sockets, no `Sys.getChar`.
+- **Threads**: one. A created thread runs to its end when a running one
+  waits on something nothing else would end, so fork-join works.
+- **Hybrid module**: a program that uses `hxmc.unsafe` or C functions also
+  gets a small linear memory (`GcModule.memory`) for `Mem`, `Ptr`, frame
+  areas, malloc and the imports, exported as `memory`. A Bytes crosses to C
+  through `BytesPtr`, which copies. A `@:hxmc.struct` class with only final
+  fields is an object here.
+
+A runtime function not covered yet fails the build with its name;
+`HXMC_GC_SURVEY=1` lists every such construct (`=2` also writes the module,
+those functions trapping). The port builds as WasmGC and passes the
+conformance lanes ([testing.md](testing.md#the-port-as-a-wasmgc-module)).
+Why it is not the browser default yet:
+[plans/targets.md](plans/targets.md#wasmgc).
+
+## Debugging
+
+**Frame pointers.** Every function keeps a frame record (x86-64: `push
+rbp; mov rbp, rsp`, rbp out of register allocation; arm64: x29/x30, always),
+so `perf record -g`, debuggers and `Mem.frame()` walk the stack.
+`-D hxmc.no-frame-pointers` (or `HXMC_FRAME_POINTERS=0`) drops them on
+x86-64.
+
+**Unwind tables** are always written (`Unwind.hx`), from the frame records
+the emitters keep (`Obj.FuncRec`): ELF `.eh_frame` with `.eh_frame_hdr`,
+Mach-O `__eh_frame` (no `__unwind_info`), Windows `.pdata`/`.xdata` for
+x86-64 and arm64. A function's frame is the same at every instruction of
+its body: outgoing arguments are part of it and nothing allocates on the
+stack dynamically. `hxmc_call_on_stack`, the main thread's stack switch,
+runs on its frame pointer, which unwinders follow back.
+
+**Source lines** flow from the typed AST: `SPos` statements
+(`FnLower.stmt`), `MIns.pos` (an inlined copy takes its call's position),
+`LIns.pos`, and a row per change in `FuncRec.lines`. Native builds always
+record them (call stacks need them); no pass looks at them, so the code is
+the same with or without. With `-debug` (or `-D hxmc.lines`) the linkers
+write DWARF 4 (`Dwarf.hx`): `.debug_line`, `.debug_info` with a unit per
+module and a subprogram per function named `pack.Class.field`,
+`.debug_aranges`. In PE files this is MinGW's layout with a COFF symbol
+table. `-debug` also writes the symbol table.
+
+**Checks**: the corpus case `UnwindTables` compares the system's unwinders
+with the frame-pointer chain. `hxmc/test/DebugCheck.hx` builds
+`hxmc/test/debug/Lines.hx` with `-debug`, sets a breakpoint with gdb (or
+lldb) and checks the backtrace's Haxe names and lines, then checks every
+target's tables with readelf, llvm-readobj and llvm-dwarfdump.
+
+### Call stacks
+
+`haxe.CallStack.callStack()`, an exception's `stack`,
+`exceptionStack()` and the report of an uncaught exception all go through
+`hxmc.rt.Stacks`.
+
+- **The table**: the linker writes the program's functions, their Haxe
+  names and line rows at `hxmc_stacks` (`StackTable.hx`, from the same
+  `FuncRec.lines` as `.debug_line`): 16 bytes per function, line rows as
+  LEB128 deltas, each string once.
+- **The walk** follows frame records while the return address is in a
+  function of the table (a small cache, then binary search), so it stops at
+  the first C frame. At most 256 frames. Frames without lines and the
+  runtime's own are hidden.
+- **Cost**: a program gets the table only when `haxe.NativeStackTrace`'s
+  `toHaxe` or `toHaxeSkipping` is live after `Reach`. Functions marked
+  `@:hxmc.withStacks` are live only then. `hxmc_stack_flags` says what the
+  program reads, so one that reads neither walks no stack. A throw records
+  only the frames up to the catching try.
+- **Mir hosts** (the compiler, the tool) always have the table; their own
+  throws record no stack. Interpreted frames have no code of their own:
+  the interpreter links them (`Stacks.interpCur`) and a walk puts each in
+  the place of its `Interp.exec`.
+- **Exceptions**: `haxe.Exception` records its stack where it is made, or
+  for a caught value where it was thrown; `stack` leaves out the
+  exception's constructors.
+
+Upstream's `TestExceptions.testExceptionStack` and `TestCallStack` pass
+natively; `CallStacks` checks against the reference on Linux, Windows
+(Wine) and arm64. Not done: WebAssembly (a module cannot read its own
+stack), inlined frames, stacks without frame pointers, and the null-access
+report's innermost line, which may be the statement before.
+
+## Environment variables
+
+For the tool and the compiler (build time):
+
+| Variable | |
 | --- | --- |
-| `-D hxmc.android-package=<id>` | the application id (default `org.hxmc.<the output's name>`) |
-| `-D hxmc.android-label=<text>` | the launcher's label (the output's name) |
-| `-D hxmc.android-version=<n>`, `-D hxmc.android-version-name=<text>` | `versionCode` (1), `versionName` (1.0) |
-| `-D hxmc.android-min-sdk=<n>`, `-D hxmc.android-target-sdk=<n>` | 29 (the floor: ELF TLS), 35 |
-| `-D hxmc.android-permissions=<names>` | `uses-permission`s (`INTERNET`: `android.permission.INTERNET`; a name with a dot as it is); none by default |
-| `-D hxmc.android-key=<file>`, `HXMC_ANDROID_KEY` | the debug key's file (default `<cache>/android/debug-key`, made on first use) |
-| `-D hxmc.exports=<names>` | what the library exports besides `ANativeActivity_onCreate` |
+| `HXMC_STATS=1` | what the build did and how long it took; live functions |
+| `HXMC_OPT=0` | no Mir optimizations |
+| `HXMC_INLINE=<flat>,<loop>,<runtime>` | inlining limits |
+| `HXMC_ESCAPE=0`, `HXMC_ESCAPE_LOG=1`, `HXMC_ESCAPE_NO=<...>`, `HXMC_ESCAPE_HASH=<lo>-<hi>` | escape analysis off, logged, or bisected (not in the object cache's key) |
+| `HXMC_FOLD=0`, `HXMC_FOLD_WHY=1` | allocation folding off, or why an allocation did not fold |
+| `HXMC_REACH=0`, `HXMC_REACH_WHY=<fn>` | keep everything; why a function is kept |
+| `HXMC_SYMBOLS=1` | a symbol table |
+| `HXMC_SIZE_STATS=1` | sizes by part |
+| `HXMC_DUMP=<functions>` | print machine code |
+| `HXMC_MAP=<file>` | Windows: a link map |
+| `HXMC_FRAME_POINTERS=0` | no frame pointers on x86-64 |
+| `HXMC_JOBS=<n>` | parallel module compilations |
+| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories (the npm launcher passes the installed platform packages first), or one object |
+| `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
+| `HXMC_GC_SURVEY=1` | WasmGC: list unsupported constructs |
+| `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
 
-The shared library (`LinkDyn.hx`, shared with `-D hxmc.shared` in the glibc
-mode, `hxmc/test/SharedCheck.hx`): ET_DYN at address 0; the code was
-pc-relative already (program-wide numbers are absolute symbols, not
-addresses), so an address in data becomes an `R_*_RELATIVE` relocation (the
-read-only data holding one moves to the writable segment), an import a GOT
-slot bound at load time (`BIND_NOW`; calls through a stub), a library's
-variable its slot too (the address computation that names it, adrp+add or
-lea, made a load of the slot; the runtime takes `environ`'s address once,
-`Start.hx`, since a load cannot be rewritten so); thread-locals as on macOS:
-generated code calls `hxmc_tls_base` once per function, a stub the linker
-writes that returns the module's TLS block for the thread (TLSDESC on arm64,
-the general dynamic model's `__tls_get_addr` on x86-64, where Bionic has no
-TLSDESC; initial-exec is refused for a dlopen'ed library); 16 KB segments
-(Android 15's pages); `DT_HASH`, `DT_SONAME`, the exports (`Abi.exports`:
-`ANativeActivity_onCreate`) in `.dynsym`, every other symbol hidden; section
-headers (Bionic's linker reads `.dynamic` and `.dynstr` through them).
+For compiled programs (run time):
 
-Bionic: the runtime's C library calls are imports of `libc.so`, `libm.so`
-and `libdl.so` with Bionic's symbol versions (`LIBC`, `LIBC_N`, ... `LIBC_Q`):
-the runtime objects `android-arm64` and `android-x86_64` hold the table of
-everything those libraries export to API 29 apps, made by `mkrt.sh` from
-Bionic's version scripts (their arch and `introduced=` tags), and
-compiler-rt's helpers; `deps.sh` fetches Bionic's headers at a pinned AOSP
-commit, against which mbedtls and libuv are compiled (`sys.ssl` and
-`eval.luv` link; not exercised on a device yet) and `Layouts.hx` reads the layouts (Bionic's pthread types,
-`_SC_PAGESIZE` 39). The runtime's differences: `__errno`, `__cxa_atexit` with
-the library's `__dso_handle` (Bionic's `atexit` is crtbegin's), `environ`'s
-address (`Mem.target()` 9 and 10: `Mem.target() >= 9` is Android, `Mem.os()`
-is Linux's). Other libraries (`libandroid.so`, `liblog.so`, `libEGL.so`) are
-imported unversioned; `@:hxmc.lib("libEGL.so.1")` names `libEGL.so` there.
-
-The app: the program exports `ANativeActivity_onCreate` (`@:hxmc.export`, in
-no-GC Haxe: it runs on the activity's UI thread, which the runtime does not
-know), which NativeActivity calls with the activity; it sets the activity's
-callbacks and starts the program's thread, where the runtime starts (the
-generated `main`, called as C's). `hxmc/test/android/AndroidHello.hx` is the
-smallest such app (a thread, the program, a line to logcat through
-`liblog`, the activity finished); a library that gives programs windows,
-input and a loop on Android does what the NDK's `android_native_app_glue`
-does in C, in the same way (universe's `@hxmc/os`: a looper watching a pipe
-of the callbacks' commands, stdout and stderr to logcat, EGL on the
-`ANativeWindow`).
-
-The APK (`hxmc/src/hxmc/android/Apk.hx`): `AndroidManifest.xml` in binary
-XML (`Axml.hx`: `hasCode="false"`, `NativeActivity` with
-`android.app.lib_name`, `extractNativeLibs="false"`, the configuration
-changes the activity keeps, a framework theme; no `resources.arsc`), the
-library stored and aligned to 16 KB (the rest to 4 bytes: what `zipalign -P
-16` does), then the APK Signature Scheme v2 block, ECDSA P-256 with SHA-256
-in plain Haxe (`P256.hx`, RFC 6979's deterministic nonces, so an APK signs
-the same way each time; the self-signed certificate `Der.hx` writes) with a
-debug key kept in the user's cache directory, so reinstalls keep their
-signature. AndroidHello's APK: about 125 KB (its library about 108 KB on
-arm64, 92 KB on x86-64).
-
-Views and Java (no Java compiler or SDK either): Java calls back through a
-few classes in a `classes.dex` that hxmc writes
-(`hxmc/src/hxmc/android/Dex.hx`: a minimal DEX 035 writer, the pools
-sorted as the runtime requires, the map, the SHA-1 signature and Adler-32
-checksum, and a reader that checks that structure; `Glue.hx`: the classes,
-written as Dalvik instructions): `org.hxmc.Glue`, one listener for every
-kind of widget (click, text, checked, progress, editor action, layout
-change, surface holder, key), whose methods call one static native, which
-the program registers with `RegisterNatives`; and `org.hxmc.Activity`, a
-`NativeActivity` that gives back the surface and the input queue
-NativeActivity took, so that its window draws views. Apk adds `classes.dex`
-(`hasCode="true"`) when the program has the Glue's native
-(`hxmc.os.android.Glue.event`, `Glue.USED_BY`), and makes
-`org.hxmc.Activity` the activity, in the system's
-`Theme.DeviceDefault.DayNight`, when it sets the activity's content
-(`Glue.VIEWS_USED_BY`): `hxmc/test/android/AndroidViews.hx` has both, as
-universe's `@hxmc/os` (JNI bound in Haxe, views on Java's main thread) does;
-`classes.dex` is 3 KB.
-
-Checks: `hxmc/test/ApkCheck.hx` (`make android-check`: AndroidHello and
-AndroidViews, the zip, the manifest read back, the library's ELF, the
-signature's digest and signature, `classes.dex` read back by `Dex.check`;
-`zipalign`, `aapt`, `apksigner`, `dexdump` where installed), `make
-shared-check`, and on a device or emulator (`make android-device-check`; CI:
-an x86-64 emulator) `hxmc/test/android/android.sh` (AndroidHello's line in
-logcat). Not yet: one ABI per APK,
-release signing (a keystore), icons and resources, the clipboard
-([plans/targets.md](plans/targets.md#android)).
-
-## iOS
-
-`-D hxmc.target=ios-arm64` (devices) or `ios-sim-arm64` (the simulator on
-Apple silicon): iOS 15 and later. Darwin is macOS's: the same libSystem,
-struct layouts and runtime objects as `macos-arm64` (`Mem.os()` 1,
-`Mem.target()` 3; `Mem.platform()` 1 or 2 tells iOS and the simulator
-apart, for packages), Mach-O with the iOS or the simulator's platform in
-`LC_BUILD_VERSION` (minimum 15.0, SDK 18.0), TLV descriptors as on macOS,
-the system's frameworks (UIKit, Foundation, Metal, ...) loaded by their
-install names from dyld's shared cache. The output is an executable, or with
-an output ending in `.app` an app bundle, `.ipa` the bundle zipped (no
-Xcode or SDK at build time):
-
-```sh
-haxe -cp hxmc/test/ios -main IosHello \
-  --custom-target hxmc=bin/Hello.app -D hxmc.target=ios-sim-arm64 -D hxmc.ios-bundle-id=org.example.hello
-xcrun simctl install booted bin/Hello.app
-xcrun simctl launch --console-pty booted org.example.hello   # what the app prints
-```
-
-| Option | |
+| Variable | |
 | --- | --- |
-| `-D hxmc.ios-bundle-id=<id>` | `CFBundleIdentifier`, the code signature's identifier (default `org.hxmc.<the output's name>`) |
-| `-D hxmc.ios-name=<text>` | the home screen's label (the output's name) |
-| `-D hxmc.ios-version=<n>`, `-D hxmc.ios-version-name=<text>` | `CFBundleVersion` (1), `CFBundleShortVersionString` (1.0) |
-| `-D hxmc.ios-min-version=<major.minor>` | `MinimumOSVersion` and the build version's minimum (15.0, the floor) |
-| `-D hxmc.ios-entitlements=<file>` | entitlements (an XML plist) signed with the code |
-
-Why 15.0: `UILaunchScreen` (the screen's own size without a storyboard) is
-iOS 14's, current Xcodes and the App Store start at 15, which runs on every
-device since the A9; nothing here needs more.
-
-The bundle (`hxmc/src/hxmc/ios/Bundle.hx`): `<name>.app` holds the
-executable `<name>`, `Info.plist` (XML, `Plist.hx`: the bundle id, the
-executable, an empty `UILaunchScreen`, the platform, `MinimumOSVersion`, the
-orientations) and `_CodeSignature/CodeResources` (the other files' SHA-1 and
-SHA-256 with codesign's default rules). The executable's code signature is
-written by the linker (`hxmc/src/hxmc/CodeSign.hx`, shared with macOS, where
-it is the linker-signed ad hoc signature ld64 writes): for a bundle, ad hoc,
-identified by the bundle id, its CodeDirectory's special slots binding the
-`Info.plist`, an empty requirement set and `CodeResources` (and the
-entitlements), as `codesign -s -` signs, which `codesign --verify` accepts
-and the simulator runs. An `.ipa` is the bundle under `Payload/`, stored,
-the executable with mode 0755. A hello world's executable: 134 KB.
-
-The app: a program runs as on any other target, its `main` called by the
-generated `main` (`hxmc/test/ios/IosHello.hx`: a line printed, then the
-process ends). UIKit wants `UIApplicationMain` on the main thread before
-any window, and it never returns: a program that defines
-`hxmc_ui_main` (`DataGen.UI_MAIN`; universe's `@hxmc/os`, `UIKitApp`) has the
-generated `main` run that instead of the program's body, on the big stack
-the body would have had, and runs the body itself once the app has
-launched (`mainBody`).
-
-Checks: `hxmc/test/IosCheck.hx` (`make ios-check IOS_TARGET=ios-arm64|ios-sim-arm64`:
-the bundle, `Info.plist` read back, the Mach-O's header and load commands,
-the code signature's CodeDirectory with its page hashes and special slots
-recomputed, `CodeResources`; `llvm-objdump` where installed, `codesign` and
-`plutil` on a Mac), and on a Mac with Xcode `make ios-sim-check`
-(`hxmc/test/ios/ios.sh`: `codesign --verify`, `plutil -lint`, a new
-simulator booted, IosHello installed and launched with its stdout in a
-file, its line there; CI's `ios` and `ios-simulator` jobs, the latter on a
-macOS runner). Devices need
-what is left ([plans/targets.md](plans/targets.md#ios)): a signature by the
-developer's certificate (a CMS blob over the CodeDirectory), the
-provisioning profile (`embedded.mobileprovision`) and its entitlements
-(`application-identifier`, `com.apple.developer.team-identifier`,
-`get-task-allow`, also in DER), the designated requirement; `CodeSign.Identity`
-is where they go.
-
-## WebAssembly
-
-WebAssembly is the seventh target, described with the others under Targets above; the playground and the npm fallback run the port as a wasm32-wasi module.
-
-Programs in the browser: externs that are imports of a module
-(`@:hxmc.lib("<module>")`) are satisfied by the page, which gives the
-module its imports (and WASI preview 1, without a file system) and runs
-`_start` (universe's packages do it with an `imports.mjs` per package and
-`@hxmc/os`'s `browser.mjs`). The runtime stays intact after `_start`
-returns, and JavaScript calls a `@:hxmc.callback` by its index in the
-exported `__indirect_function_table` (corpus case `WasmCallback`): a canvas
-window can run its loop from `requestAnimationFrame` that way.
-
-### Memory
-
-A wasm32 module's linear memory only grows, and browsers (phones above all,
-and several islands on one page) refuse it early, so the runtime
-(`hxmc/std/hxmc/rt/wasm/Heap.hx`, `Gc.hx`) takes only what it uses: the
-nursery's region is as large as the nursery (4 MB, then sized as the
-native one with one thread: doubled after a minor collection that promoted
-more than a 16th of what was allocated since the previous one, halved after
-8 that promoted less than a 64th, up to 32 MB, which the port's
-self-compile keeps: 6% less time than at 4 MB, three major collections
-instead of six, 18% less peak memory; grown in place when it is the last region, else
-moved to a new one right after a minor collection, when it is empty; it
-stays as it is when memory cannot grow); the old space is chunks of 1 MB
-taken as objects are promoted (`RT_OLD_MB`, 32, is when the first major
-collection comes, not a reservation); the shadow stack is `RT_STACK_MB`
-(4 MB; `wasi.mjs` sets it from node's `--stack-size`, as deep as node's
-stack: 64 MB for the compiler under `--stack-size=65500`). There is no guard
-page: the first time a frame goes deeper than the shadow stack has been
-since the last collection (the slow path that raises `rt_sp_hw`), it is
-compared with the end, `rt_sp_limit`, and an overflow exits with "stack
-overflow: the shadow stack's 4 MB are full". A browser's wasm stack (about
-1 MB) runs out first: a recursion of frames of a few references fills 1 MB
-of shadow stack where node's 8 MB stack is full at 2 to 4 MB. The stack
-of frame areas (`Mem.stack`, a try function's locals kept in memory: below
-the `__stack_pointer` global) is a region of the same size: the linker's
-64 KB right above the data runs `rt_init` only, then `_start` moves the
-stack pointer to the runtime's (`Gc.init`), and every frame's prologue
-compares it with that stack's end (`rt_cstack_lo`): an overflow exits with
-"stack overflow: the frame stack's 4 MB are full". (It was the linker's
-1 MB, unchecked: deeper frames went on into the data and overwrote the
-statics and the method tables; the compiler typing about 440 generated
-modules at once needs 2 MB; corpus case `DeepFrames`.) Memory
-memory.grow gave is zero, so only what was handed out before and freed is
-zeroed (`Heap.freshFrom`: the highest the regions reached): the nursery, the
-two stacks and the 64 KB granule table cost address space, not pages,
-until they are used. Memory grows by an eighth of its size at a time when
-that is more than is needed (else, or when the host refuses it, by what is
-needed): node collects its own heap after a memory.grow (V8 counts the
-grown buffer as new external memory), which in the port's self-compile,
-growing by the old space's 1 MB chunks, made 400 collections. When
-memory.grow fails the runtime writes "out of memory: linear memory is N
-MB, growing it by M MB failed" and exits;
-a page can turn a RangeError of the browser's (a new instance's memory, an
-ArrayBuffer) into the same message (universe's `browser.mjs` does).
-
-The memory of the website's examples before the split (now universe's;
-`memory.buffer.byteLength`, Chromium with a phone's emulation, after they start and after a few seconds of taps; the playground's
-compiler after `--version` and after running a hello world with `--interp`),
-and the renderer's resident memory (the examples page alone: about 108 MB):
-
-| | before | after | renderer RSS before | after |
-| --- | --- | --- | --- | --- |
-| gfx-cube | 98.3 MB | 10.3 MB | 229 MB | 134 MB |
-| ui-counter | 101.6 MB | 21.6 MB | 240 MB | 151 MB |
-| ui-gallery | 100.8, then 105.5 MB | 20.8 MB | 252 MB | 169 MB |
-| os-tone | 98.3 MB | 10.3 MB | 232 MB | 135 MB |
-| hih (playground) | 99.6, then 111.6 MB | 11.6, then 28.6 MB | 381 MB | 221 MB |
-
-Before, every instance reserved and zeroed the nursery's largest size (32
-MB) and a 64 MB shadow stack at startup.
-
-### WasmGC (-D hxmc.wasm-gc, an experiment)
-
-With `-D hxmc.wasm-gc` (and `-D hxmc.target=wasm32-wasi`) the program becomes
-a WasmGC module instead (`hxmc/src/hxmc/wasmgc/`): Haxe's values live in the
-engine's collector, with no shadow stack or barriers. Each function goes
-through the native pipeline's object level (docs/plans/codegen.md,
-"Object-level Mir"): `MirBuild` in its WasmGC mode (`MirBuild.gc`: no
-roots, fields by index; what is memory-level natively, globals, strings,
-the runtime's intrinsics, `throw`, stays the IR's own as `IrNode`
-operations; a `try` is a `Try` terminator and the handler's `Catch`, the
-locals a handler reads `VarGet`/`VarSet`; the branch an if on a constant
-does not take is not built), `Inline` (the native templates and limits;
-also, in a loop, a callee that an object made here meets, passed or
-returned, judged on what WasmGC makes of it, so that the object may be
-replaced), the closures called where they are made, `Inline.devirtualize`,
-`Escape` and `Opt`; then `MirGen` writes it: its control flow structured
-as `wasm/WasmGen` structures linear memory's, each value a local of the
-wasm type its operation gives it (a value used once, right where it is
-made, left on the stack instead), the operations it does not write
-itself written by `FuncGen` as the IR's expressions and statements over
-locals standing for their operands (struct and array types, casts, the
-inline array and structural paths, the intrinsics: one place). What is
-emitted is what the reachability above keeps (method-level, by name), run
-twice: before building the Mir and over what the Mir still calls
-(`Uses.summary`: each function's IR with the callees inlined into it
-followed), so a function inlined everywhere is dropped (the runtime's
-exports are live where this target's code calls them:
-`GcGen.runtimeCalls`). A reference has the wasm type its IR type proves
-(classes, strings, arrays, enums, closures, Bytes: `GcModule.keyOf`), else
-`eqref` cast where it is used (an untyped object whose fields a block
-reads or writes more than once: cast once there, `MirGen.classOperand`).
-All types are in one recursion
-group, so the class hierarchy is wasm's subtyping (`instanceof` is
-`ref.test`; leaf classes are final types); methods have their own typed
-signatures, virtual and interface calls go through a funcref table indexed
-by class and selector holding wrappers of the table's signature; closures
-are structs whose first field is a typed function reference (`call_ref`);
-array accesses and structural field accesses test the expected kind or
-layouts inline before falling back to the runtime (an Array's or a
-String's methods called structurally: `gc_anon_call`); `hxmc.NativeArray`
-(and so `haxe.ds.Vector`) is the engine's bare array of its kind (Native
-arrays, above); Ints of -128...1023 are
-boxed once; literals of 24 characters and more come from passive data
-segments; exceptions are the legacy try/catch instructions. The natives of
-strings, StringBuf, arrays, Bytes, BytesBuffer and Date are the linear
-runtime's own (`Str`, `Arr`, `Bytes`, `Date`: `@:hxmc.anyHeap`), written
-over `hxmc.rt.Repr`, the representation chosen at compile time:
-`MemRepr` over `Mem` in linear memory, `hxmc.rt.gc.GcRepr` here, over
-intrinsics (`hxmc.rt.gc.W`, expanded by `FuncGen.host`); the rest of
-this runtime is `hxmc/std/hxmc/rt/gc` (Dynamic's comparisons, reflection
-over Meta's tables, the system over the host, what linear memory's
-generated code does inline), whose `@:hxmc.wasmgc` classes and the
-`@:hxmc.anyHeap` ones are the only ones whose `@:hxmc.host` functions are
-bound; Math's transcendental functions, float
-formatting and parsing are the host's (`hxmc/bootstrap/wasmgc.mjs`, which
-runs a module under node; universe's `browser.mjs` gives the same host in
-a browser). So is the system (`GcSys`): files whole and by descriptor
-(positions kept by the host, node's fs having no seek), directories in the
-order the system lists them, the shell, processes (`sys.io.Process`: a
-worker thread of the host runs them, the module waiting for each answer,
-so their streams behave as natively; a command that cannot be run exits
-127), and the collector's API (`GcCollector`: collections are the
-engine's to start, finalisers never run); there are no sockets and no
-`Sys.getChar`. There is one thread (the module sees
-`NUMBER_OF_PROCESSORS=1`, and the port runs its parallel passes
-sequentially): a thread created (`GcThreads`) runs, to its end, when a
-running one waits for what nothing else would end (a lock, a queue, a
-condition or a park, without a timeout), then the wait is tried again, so
-fork-join works (the port reads a process's two streams so, calling
-haxelib for `-lib`), threads that interleave with others do not. The
-atomics are a NativeArray of one element; `hxmc.NativeZip` is the same
-decoder, over copies of the Bytes in the linear memory (below). Reflection
-reaches the statics of a class used as a value (`Lower.reflectStatics`:
-their names by class index, read and written by
-`Meta.staticGet`/`staticSet`, a method as a closure; `hxmc.ir.Reach`
-takes `GcNative.find`'s names as it takes `Dyn`'s), copies objects
-(`Reflect.copy`), tests a type known at run time only
-(`GcNative.isOfType`: a switch on the class's id; an interface, which has
-none, gets -1 minus its index in its type value), and calls the methods of
-Arrays and Strings through Dynamic as through structural types
-(`gc_anon_call`); calling what is not a function throws. The port builds
-so and passed the conformance lanes as the port (docs/testing.md, "The
-port as a WasmGC module", which says how to run them; `make wasmgc-check`
-keeps the lowering checked in CI).
-
-A program that uses `hxmc.unsafe` or C functions gets a small linear
-memory besides (a hybrid module, `GcModule.memory`): `Mem`'s loads and
-stores, `Ptr`, frame areas (`Mem.stack`, a struct's slot: a stack pointer
-global, each frame given back on return and where an exception is
-caught), C string literals in a data segment, malloc's heap
-(`hxmc.rt.wasm.Heap`, `@:hxmc.anyHeap`), `Arena` and `CString` work on
-it as in linear memory. It is exported as `memory`, with the
-`@:hxmc.callback` functions in `__indirect_function_table`, so the
-packages' imports (`imports.mjs`) and `browser.mjs` treat the module as
-a linear one: `@:hxmc.lib` externs are imports with wasm32's C ABI
-(pointers as i32 into that memory, floats as f32). So are
-`hxmc.rt.wasm.WasiApi`'s functions, from `wasi_snapshot_preview1`
-(`GcModule.libOf`), which `wasmgc.mjs` gives with node's WASI (the file
-system preopened as `/`); `hxmc.rt.wasm.Wasi` reads the preopened
-directories on the first path it resolves and takes the host's working
-directory for relative ones, so a program that makes WASI's path calls
-itself (tsc-haxe's `go.OsWasi`) runs as either kind of module
-(`hxmc/test/wasmgc/WasiPaths.hx`). A Bytes stays an array
-of the collector; where it crosses to C, `hxmc.unsafe.BytesPtr` copies
-it through the linear memory (in linear memory: its own address, no
-copy); strings cross as UTF-8 through it (`Repr.utf8To`,
-`Repr.octetsAt`). A `@:hxmc.struct` class whose fields are all final is
-an object here (a value that cannot change needs no copies); the others
-live in the linear memory. The name section is written with
-`-debug`, `-D hxmc.symbols` or `HXMC_SYMBOLS=1`, as linear memory's.
-universe's browser tests (`gfx-web-check`, `ui-web-check`) run on such
-builds too. A runtime function
-not covered yet fails the build with its name; `HXMC_GC_SURVEY=1` lists
-every such construct of a program instead (`=2` also writes the module,
-those functions trapping). `make wasmgc-check` compares `hxmc/test/wasmgc`'s
-programs (`Unsafe.hx`: the linear memory), and the corpus cases
-`GcCheck.CASES` that need nothing WasmGC lacks, with their native output and exit code (a
-program's `// define:` lines apply to both builds); `make wasmgc-bench`
-adds the linear-memory build: times, peak RSS, sizes.
-
-## Origin
-
-hxmc began as the second back end of hxc, the C target this repository had
-until 2026-10-14; its IR, runtime and std came from there, and its corpus's
-golden files are hxc's outputs. Plans: [ROADMAP.md](../ROADMAP.md) and
-[plans/](plans/README.md); the low-level API and C interop design: [plans/lowlevel.md](plans/lowlevel.md).
+| `RT_MINOR_KB` | a fixed nursery size (16 KB at least) |
+| `RT_TLAB_KB` | the largest TLAB (64 KB) |
+| `RT_OLD_MB`, `RT_OLD_GROWTH` | the old space's first limit, and its growth in percent of what is live |
+| `RT_PREFAULT=0` | no prefault helper |
+| `RT_STATS=1` | the collector's resizes and promotions |
+| `RT_VERIFY=1` | fill the free nursery with a pattern |
+| `RT_NULL_ACCESS=0` | no fault handler |
+| `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
+| `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |
+| `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
+| `RT_CENSUS_WHY=<type>` | also a path from a global to the first `RT_CENSUS_WHY_MAX` (8) objects of that type; global `i` is the symbol of value `8 * i` in `<exe>.syms` |

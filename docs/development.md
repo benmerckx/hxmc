@@ -1,85 +1,100 @@
-# Developing hxmc and the port
+# Developing hxmc
+
+For contributors: the repository's layout, how to build everything, how
+the bootstrap works, and the everyday edit-test loop. Tests and CI are in
+[testing.md](testing.md); the rules for changing the port are in
+[porting.md](porting.md).
 
 ## Layout
 
 | Path | |
 | --- | --- |
 | `haxe/src/` | the port, module by module after upstream's `haxe/upstream/src/` |
-| `haxe/upstream/` | upstream Haxe (submodule, commit `066bd8331`): the reference sources and std |
-| `haxe/test/` | the port's tests: conformance against the reference (HXB, display, server, JSON-RPC, `--interp`, `-L`, upstream's target suites), the fuzzer (`fuzz/`), unit tests of port modules (`unit/`, `unit.hxml`), peak memory and times (`Measure.hx`) |
-| `hxmc/src/hxmc/` | hxmc's sources (package `hxmc`, class path `hxmc/src`): the IR and lowering (`ir/`), the code generators (`x64/`, `a64/`, `wasm/`), the linkers, the driver, `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
-| `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime's Haxe part (`hxmc.rt`), merged with the Eval originals by `hxmc/src/hxmc/MkStd.hx` |
-| `hxmc/deps/` | no C of ours: `deps.sh` (mbedtls and libuv), `mkrt.sh` (the runtime objects: the C library's members, or the glibc mode's import table, mbedtls, libuv), `Layouts.hx` (system and libuv struct layouts per target, checked against the C headers), `probe.c` (build-time layout probe), `zig-version` |
-| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs `expected/`, frozen fuzzer programs `fuzz-1000.zip`), the encoder tests (`encoder/`), the scripts that run them (`Corpus`, `Check`, `Crosshost`, `Selfcheck`, `Tiers`, `EncCheck`), `-lib` with the npm package's compiler (`Libraries`) and its resolution against haxelib and lix (`LibResolution`), the release smoke test (`smoke.sh`), the smallest Android and iOS apps (`android/`, `ios/`: `ApkCheck`, `IosCheck`), the dev loop's tests (`dev/`), the benchmarks (`Bench`, with the cases' check programs in `bench/`; `CompileBench`, the compiler's) |
-| `site/` | the website: plain pages (`*.html`) and their stylesheet, the pages' scripts (`client/`: the playground, which runs the port as a WebAssembly module, the benchmark tables), the measured data (`data/`), the playground's examples (`playground/`), the browser tests and tools (`tools/`) |
+| `haxe/upstream/` | upstream Haxe (submodule, commit `066bd8331`): the reference sources and std. Never edit it |
+| `haxe/test/` | the port's tests: conformance against the reference, the fuzzer (`fuzz/`), unit tests of port modules (`unit/`), `Measure.hx` |
+| `hxmc/src/hxmc/` | hxmc's compiler (class path `hxmc/src`): IR and lowering (`ir/`), code generators (`x64/`, `a64/`, `wasm/`, `wasmgc/`), linkers, the driver; `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
+| `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime (`hxmc.rt`), merged with the Eval originals by `MkStd.hx` |
+| `hxmc/deps/` | the third-party C: `deps.sh` (mbedtls, libuv), `mkrt.sh` (the runtime objects), `Layouts.hx` (struct layouts per target, checked against the C headers), `probe.c`, `zig-version` |
+| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the Android and iOS apps, the dev loop's tests, the benchmarks |
 | `hxmc/bootstrap/` | the committed stage0 (`stage0.wasm.br`), node's WASI runner (`wasi.mjs`), the runtime objects by hash (`rt.mjs`) |
-| `packages/` | everything published to npm, one folder per package, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`, laid out as its tarball, with the launcher, `dist/haxe` for lix and hxmc's std, which `make npm` writes there), `platform` (the template of the six `@hxmc/<os>-<cpu>`: the native compiler and the machine's runtime objects); `source` (with `hxmc-rebuild`) is not published |
-| `tools/lix/` | lix (the lix client and haxeshim) ported to build with hxmc |
+| `packages/` | the npm packages, one folder each, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`: the launcher, `dist/` for lix, upstream's and hxmc's std), `platform` (template of the six `@hxmc/<os>-<cpu>`: the native compiler and that machine's runtime objects); `source` (`hxmc-rebuild`) is not published |
+| `site/` | the website: plain HTML pages, their scripts (`client/`: the playground, the benchmark tables), measured data (`data/`), browser tests (`tools/`) |
+| `tools/lix/` | lix (client and haxeshim), built with hxmc |
 
 ## Building
 
 ```sh
 git submodule update --init
-make hxmc           # bin/hxmc/hxmc, the tool: on first use node runs the stage0, then the tool rebuilds itself
-make port           # bin/port/haxe: the port with every generator (seconds after an edit)
-make release TARGET=macos-arm64   # bin/release/<target>/haxe[.exe], with mbedtls and libuv
+make hxmc           # bin/hxmc/hxmc, the tool
+make port           # bin/port/haxe: the port with every generator
+make release TARGET=macos-arm64   # bin/release/<target>/haxe[.exe]
 make lix            # bin/lix/lix
-make npm            # bin/npm/*.tgz: the npm packages of packages/ (packages/pack.mjs)
-make site           # bin/site: the website (The site, below)
+make npm            # bin/npm/*.tgz: the npm packages
+make site           # bin/site: the website
+make reference      # bin/reference/haxe: the reference compiler
 make help           # everything else
 ```
 
-The [Makefile](../Makefile) needs GNU make, node 22 and git; zig only for the
-runtime objects. Everything is cross-built from Linux (macOS works as a host
-too).
+The [Makefile](../Makefile) needs GNU make, node 22 and git. zig is needed
+only to build the runtime objects. Everything cross-builds from Linux or
+macOS.
 
-Bootstrap, as Zig does: `hxmc/bootstrap/stage0.wasm.br` is the tool built for
-wasm32-wasi (brotli, 1.4 MB), committed and replaced only when the sources need
-a newer one (`make stage0`). node runs it to build the first native tool from
-source (`bin/hxmc/boot/hxmc1`, about 25 s), which builds `bin/hxmc/hxmc`; that
-one rebuilds itself byte-identically (`make fixpoint`). `make bootstrap` does
-all three (about a minute). Scripts run on the tool's Eval (`bin/hxmc/hxmc
--cp ... --run X`: a first argument starting with `-` makes the tool the
-compiler's command line), or on the stage0's before there is a tool.
+Scripts are Haxe run on the tool's Eval: `bin/hxmc/hxmc -cp ... --run X`.
+A first argument starting with `-` makes the tool the compiler's command
+line. There is no Python.
 
-Runtime objects: `rt.o`, `ssl.o` and `uv.o` for the six targets are built by
-zig from `hxmc/deps` (the C library's members, mbedtls, libuv), which a source-only
-bootstrap cannot do. They are keyed by a hash of `hxmc/deps` (scripts, pinned
-versions, flags, the zig version) and published as the GitHub release
-`rt-<hash>` (`node hxmc/bootstrap/rt.mjs hash|fetch|pack`); `make rt` downloads
-them and falls back to `make rt-build` (zig) when the release is missing. CI
-builds them only then (one job per target), publishes the release from
-pushes to main and hxmc, and passes them to its other jobs as an artifact.
+### Bootstrap
 
-The reference compiler is the official nightly of the pinned upstream commit
-(build.haxe.org), downloaded by lix: `make reference` (`bin/reference/haxe`,
-cached by CI). Nothing builds OCaml.
+As Zig does: `hxmc/bootstrap/stage0.wasm.br` is the tool built for
+wasm32-wasi (brotli), committed and replaced only when the sources need a
+newer one (`make stage0`).
+
+1. node runs the stage0 to build the first native tool from source
+   (`bin/hxmc/boot/hxmc1`).
+2. That builds `bin/hxmc/hxmc`.
+3. `bin/hxmc/hxmc` rebuilds itself byte-identically (`make fixpoint`).
+
+`make bootstrap` does all three.
+
+### Runtime objects
+
+`rt.o`, `ssl.o` and `uv.o` per target are built by zig from `hxmc/deps`.
+They are keyed by a hash of `hxmc/deps` (scripts, versions, flags, zig's
+version) and published as the GitHub release `rt-<hash>`
+(`node hxmc/bootstrap/rt.mjs hash|fetch|pack`). `make rt` downloads them
+and falls back to `make rt-build` (zig) when the release is missing. CI
+builds them only then.
+
+### The reference compiler
+
+The official nightly of the pinned upstream commit (build.haxe.org),
+downloaded by lix: `make reference`. Nothing builds OCaml.
+
+## The edit-test loop
+
+| | When |
+| --- | --- |
+| `make hxmc` | after an edit of hxmc or the port: rebuilds the tool (unchanged modules come from the cache) |
+| `make port` | after an edit of the port |
+| `make quick` | after every edit of hxmc (`CASES="Int64Gc Bench"` restricts the corpus) |
+| `make check` | before a commit (`PORT=1` adds the port's self-compile) |
+| `make full` | before a push |
+| `make test LANES="..."` | after an edit of the port: conformance against the reference |
+
+What each runs, and which lanes a change needs: [testing.md](testing.md).
+Never commit `bin/`.
 
 ## The site
 
 `make site` builds `bin/site`; any static server shows it (`npx http-server
-bin/site`), and `make site-check` tests it in headless Chromium, Firefox and
-WebKit (Playwright with its browsers; `BROWSERS=chromium` for one). The
-pages are plain HTML (`site/index.html`, `benchmarks.html`,
-`playground.html`) with one stylesheet; the Makefile copies them and adds
-their scripts (`site/build.hxml`, compiled by the port: the playground and
-its compiler's worker, the benchmark tables, the build facts), the
-playground's compiler (`bin/wasm`) and examples, the std the playground
-reads (`site/tools/MkBundle.hx`), the measured data (`site/data`, or the
-bench-data branch's with `BENCH_DATA`: the benchmark histories, the
-programs' and the compiler's, and the target generators' table), lix under `tools/` (`LIX_DIR`) and the build
-facts (`build-info.json`). Every file a page loads carries the commit in
-its address (`?v=`, `Version.hx`). CI builds it in the `site` job, tests it
-in `playground` and deploys it from main in `pages`.
+bin/site`). `make site-check` tests it in headless Chromium, Firefox and
+WebKit (Playwright; `BROWSERS=chromium` for one).
 
-## Developer loop
-
-| | |
-| --- | --- |
-| `make hxmc` | the tool after an edit of hxmc or the port: about 11 s (8 s of it typing the port; unchanged modules' objects come from the cache directory, `docs/hxmc.md`, "Module cache") |
-| `make port` | the port after an edit: about 13 s (an edit of a central module such as the typer recompiles every module: 26 s) |
-| `make quick` | after every edit of hxmc: the x64 corpus, again with `RT_VERIFY=1`, the wasm corpus under node, the module cache's store (about 20 s; `CASES="Int64Gc Bench"` restricts it) |
-| `make check` | before a commit: quick, arm64 (qemu), x64 Windows (wine), a 16 KB nursery, the wasm corpus with legacy exception handling, ThreadNatives x30, crosshost on three cases, Android's APKs and iOS's apps checked (`PORT=1`: the port's self-compile) |
-| `make full` | before a push: every nursery and `RT_VERIFY`, wasmtime, the port's self-compile natively and as a module, crosshost on everything, the fixpoint |
-| `make test` | HXB conformance of the port against the reference (seconds per 100 cases); `LANES="display server ..."` for the other harnesses (docs/testing.md) |
-| `make check PORT=1` | check, and the port built by hxmc self-compiles to the reference's HXB |
+The pages are plain HTML (`site/index.html`, `benchmarks.html`,
+`playground.html`) with one stylesheet. The build adds their scripts
+(`site/build.hxml`, compiled by the port), the playground's compiler
+(`bin/wasm`) and examples, the std it reads, the measured data (`site/data`,
+or the `bench-data` branch's with `BENCH_DATA=<checkout>`), lix
+(`LIX_DIR`) and `build-info.json`. Every file a page loads carries the
+commit in its address. CI builds the site in `site`, tests it in
+`playground` and deploys it from main in `pages`.

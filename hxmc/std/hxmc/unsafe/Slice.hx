@@ -1,7 +1,7 @@
 package hxmc.unsafe;
 
 // A run of T in memory outside the GC heap (an Arena's, C's): a Ptr and a
-// length, bounds-checked (docs/plans/lowlevel.md, "Struct values"). A struct value
+// length, bounds-checked (docs/interop.md, "Struct values"). A struct value
 // itself: passing one copies its two words, not the elements. T is a C
 // scalar, a Ptr or a @:hxmc.struct class, whose elements are stored inline
 // and reached in place (`s[i].x = 1`); reading one into a variable copies it.

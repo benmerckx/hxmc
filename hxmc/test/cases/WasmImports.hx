@@ -1,6 +1,6 @@
 import hxmc.unsafe.*;
 
-// C functions on WebAssembly (docs/plans/lowlevel.md): imports of the module
+// C functions on WebAssembly (docs/interop.md, "WebAssembly"): imports of the module
 // @:hxmc.lib names ("env" by default), in wasm32's C convention (pointers
 // as i32, Float32 as f32, Int64 as i64); the host here is WasmImports.cjs
 // (HXMC_WASM_IMPORTS, hxmc/bootstrap/wasi.mjs). WebAssembly only.

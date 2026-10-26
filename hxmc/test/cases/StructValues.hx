@@ -1,6 +1,6 @@
 import hxmc.unsafe.*;
 
-// @:hxmc.struct values (docs/plans/lowlevel.md, "Struct values"): locals,
+// @:hxmc.struct values (docs/interop.md, "Struct values"): locals,
 // parameters and results are copies; fields of structs and of objects hold
 // them inline (an object's moves with it at each collection: the corpus runs
 // with a small nursery); statics; memory behind a Ptr or in a Slice;

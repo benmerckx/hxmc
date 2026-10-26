@@ -1,24 +1,18 @@
-# Design docs
+# Plans
 
-Open designs and decisions, with their reasoning, by area. What is next
-and in which order: [ROADMAP.md](../../ROADMAP.md). What is built:
-[docs/hxmc.md](../hxmc.md), [docs/using.md](../using.md),
-[docs/testing.md](../testing.md).
-
-The plans about the app and GUI packages (ui, view, web, theme, 3d,
-document, native-or-drawn, syntax, ui-next, graphics) moved with them to
-[universe](https://github.com/benmerckx/universe) (its `docs/plans/`).
+Open designs and decisions, by area. Each file lists open items only:
+what, why, and the approach decided. What comes next and in which order:
+[ROADMAP.md](../../ROADMAP.md). What is built: [docs/](../hxmc.md).
 
 | | |
 | --- | --- |
-| [compiler.md](compiler.md) | the module cache, the central object cache, macro-heavy builds, Mir macros' size and speed and code generation at run time |
-| [runtime.md](runtime.md) | the collector, stack maps, compact strings, system calls, TLS and the event loop |
-| [memory.md](memory.md) | where hxmc allocates, measured: the self-build's heap, the old space's limits (the tool, the compilation server), runtime hot spots, what was tried |
-| [heap-layout.md](heap-layout.md) | the object header decided by the type index: records, arrays, strings; exact lengths, NativeArray without its word, Array over NativeArray (a proof of concept, measured) |
-| [codegen.md](codegen.md) | escape analysis, debugging information (PDB, `__unwind_info`, variables, wasm DWARF), small codegen items |
-| [targets.md](targets.md) | WebAssembly (and WasmGC), Android, iOS, shared libraries, Linux and macOS items |
-| [dev-loop.md](dev-loop.md) | the dev loop's mechanism in the target: `hxmc dev`, swap hosts, snapshot hooks (built: [dev.md](../dev.md)) |
-| [haxe-versions.md](haxe-versions.md) | parked: any Haxe version per project, 4.0 onwards, the compiler generated from upstream's OCaml (ml2hx, PR #5; the draft PR #9) |
-| [packaging.md](packaging.md) | npm, haxelib, verifying native builds |
-| [math.md](math.md) | LibM and the libm branch |
-| [lowlevel.md](lowlevel.md) | C interop, native memory, manual memory, struct values |
+| [compiler.md](compiler.md) | the module cache, faster rebuilds, macro-heavy builds, Mir macros, code generation at run time |
+| [runtime.md](runtime.md) | the collector, pauses, background work, system calls, TLS and the event loop |
+| [heap-layout.md](heap-layout.md) | the object header, Bytes, strings and arrays |
+| [codegen.md](codegen.md) | escape analysis, allocation folding, debugging information |
+| [targets.md](targets.md) | WebAssembly and WasmGC, Android, iOS, Windows, Linux, macOS |
+| [dev-loop.md](dev-loop.md) | the dev loop: faster reloads, snapshot hooks, Windows, iOS devices |
+| [lowlevel.md](lowlevel.md) | C interop and low-level Haxe: native memory, manual memory, value enums |
+| [packaging.md](packaging.md) | npm, haxelib, verified native builds |
+| [math.md](math.md) | correctly rounded math |
+| [haxe-versions.md](haxe-versions.md) | parked: any Haxe version per project |

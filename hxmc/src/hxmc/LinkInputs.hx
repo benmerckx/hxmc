@@ -4,7 +4,7 @@ import haxe.io.Bytes;
 import hxmc.Obj;
 import hxmc.CoffReader;
 
-// The program's own native inputs (docs/plans/lowlevel.md, "Calls and linking"):
+// The program's own native inputs (docs/interop.md, "Calls and linking"):
 // prebuilt objects and archives in the target's format, named by
 // `-D hxmc.link=<path>[,<path>...]` or `@:hxmc.link("<path>")`, linked as a
 // linker would: every object, and the archive members that define what the

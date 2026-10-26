@@ -1,4 +1,4 @@
-// Struct values (docs/plans/lowlevel.md, "Struct values") through Haxe's inliner:
+// Struct values (docs/interop.md, "Struct values") through Haxe's inliner:
 // an argument of an inline function is the function's own copy, as for a
 // call. Haxe passes a local (or a field) argument into the inlined body as
 // itself; where the body writes through a struct parameter (a field, a
