@@ -27,7 +27,7 @@ enum abstract XOp(Int) to Int from Int {
 	var NEG;
 	var NOT;
 	var CQO; // rdx <- sign of rax (size)
-	var IDIV; // rax, rdx <- rdx:rax / s1 (cond 6: unsigned)
+	var IDIV; // rax, rdx <- rdx:rax / s1
 	var CMP; // flags <- s1 - s2
 	var CMPI; // flags <- s1 - imm
 	var TESTI; // flags <- s1 & imm
@@ -65,7 +65,6 @@ enum abstract XOp(Int) to Int from Int {
 	var MOVDXR; // d (xmm) <- s1 (32 bits)
 	var MOVDRX; // d (32 bits) <- s1 (xmm)
 	var FOPK; // d <- d (cond: as FOP) f (constant pool)
-	var MUL1; // rdx:rax <- rax * s1 (cond 4: unsigned, 5: signed; size 8)
 }
 
 // Mir -> LIR for x86-64 (System V and Win64: CallConv); the walk, the
@@ -164,11 +163,6 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				defs.push(RDX);
 				uses.push(RAX);
 				uses.push(RDX);
-				uses.push(i.s1);
-			case MUL1:
-				defs.push(RAX);
-				defs.push(RDX);
-				uses.push(RAX);
 				uses.push(i.s1);
 			case CMP | TEST | UCOMI:
 				uses.push(i.s1);
@@ -684,27 +678,6 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.s1 = dv;
 				x.size = size;
 				mov(reg(i.id), i.op == Div ? RAX : RDX, size);
-			case UDiv | URem:
-				var size = sz(i.ty);
-				var dv = use(i.b);
-				mov(RAX, use(i.a), size);
-				var z = emit(MOVI);
-				z.flag = true; // (mov: flags may be live)
-				z.d = RDX;
-				z.size = 4;
-				var x = emit(IDIV);
-				x.s1 = dv;
-				x.cond = 6;
-				x.size = size;
-				mov(reg(i.id), i.op == UDiv ? RAX : RDX, size);
-			case MulHi | UMulHi:
-				var s = use(i.b);
-				mov(RAX, use(i.a), 8);
-				var x = emit(MUL1);
-				x.s1 = s;
-				x.cond = i.op == MulHi ? 5 : 4;
-				x.size = 8;
-				mov(reg(i.id), RDX, 8);
 			case FAdd | FSub | FMul | FDiv:
 				// commutative: a constant as the second operand (a memory
 				// operand), else the operand used only here as the destination

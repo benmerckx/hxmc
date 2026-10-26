@@ -1122,7 +1122,7 @@ class WasmGen {
 				}
 			case Copy:
 				valueAs(i.a, t);
-			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Div | Rem | UDiv | URem | Rotr:
+			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Div | Rem | Rotr:
 				valueAs(i.a, t);
 				valueAs(i.b, t);
 				var w = t == I64;
@@ -1138,8 +1138,6 @@ class WasmGen {
 					case Shr: w ? Op.I64ShrU : Op.I32ShrU;
 					case Div: w ? Op.I64DivS : Op.I32DivS;
 					case Rem: w ? Op.I64RemS : Op.I32RemS;
-					case UDiv: w ? Op.I64DivU : Op.I32DivU;
-					case URem: w ? Op.I64RemU : Op.I32RemU;
 					case _: w ? Op.I64Rotr : Op.I32Rotr;
 				});
 			case Neg:

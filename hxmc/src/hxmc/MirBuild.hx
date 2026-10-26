@@ -1524,31 +1524,12 @@ class MirBuild extends MirWriter {
 		return readVar(r, cur);
 	}
 
-	// Std.int(a / b) of Ints (FnLower: b a constant): b == 0 gives 0 and b ==
-	// -1 gives -a (wrapping), as the conversion of the Float quotient does
+	// Std.int(a / b) of an Int by a constant (FnLower): by 0 it gives 0, by -1 -a
+	// (wrapping), as the Float quotient converted does
 	function idiv(a:Int, b:Int):Int {
 		var c = divisorKind(b);
-		if (c == 1) return op2(Div, I32, a, b);
-		if (c == 0) return iconst(0);
-		if (c == -1) return op1(Neg, I32, a);
-		var r = newVar(I32);
-		writeVar(r, cur, iconst(0));
-		var nz = newBlock(), neg = newBlock(), div = newBlock(), join = newBlock();
-		br(cmp(CNe, b, iconst(0)), nz, join);
-		seal(nz);
-		cur = nz;
-		br(cmp(CEq, b, iconst(-1)), neg, div);
-		seal(neg);
-		seal(div);
-		cur = neg;
-		writeVar(r, cur, op1(Neg, I32, a));
-		jmp(join);
-		cur = div;
-		writeVar(r, cur, op2(Div, I32, a, b));
-		jmp(join);
-		seal(join);
-		cur = join;
-		return readVar(r, cur);
+		if (c == null) throw "hxmc: Std.int(a / b) of a run-time b as an Int division";
+		return c == 0 ? iconst(0) : c == -1 ? op1(Neg, I32, a) : op2(Div, I32, a, b);
 	}
 
 	// hx_ldiv: b == -1 gives -a (no overflow trap)
@@ -2248,8 +2229,6 @@ class MirBuild extends MirWriter {
 			// (a struct value's memory: FnLower.newSlot)
 			case "structSlot": stackAddr(f.slot((intLiteral(args[0], "a struct slot") + 7) & ~7, intLiteral(args[1], "a struct slot")));
 			case "ult": cmp(CULt, ex(args[0]), ex(args[1]));
-			case "udiv": op2(UDiv, I64, ex(args[0]), ex(args[1]));
-			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));
 			case "bitsF64": op1(BitsToF, F64, ex(args[0]));
 			case "getI8": ld(I32, 1, true);

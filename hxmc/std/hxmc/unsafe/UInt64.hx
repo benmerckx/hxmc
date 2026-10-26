@@ -24,11 +24,4 @@ abstract UInt64(I64) from I64 to I64 {
 
 	@:op(a >= b) static inline function ge(a:UInt64, b:UInt64):Bool
 		return !Mem.ult(a, b);
-
-	// (b not 0: a division by 0 traps, as I64's)
-	@:op(a / b) static inline function div(a:UInt64, b:UInt64):UInt64
-		return Mem.udiv(a, b);
-
-	@:op(a % b) static inline function mod(a:UInt64, b:UInt64):UInt64
-		return Mem.urem(a, b);
 }

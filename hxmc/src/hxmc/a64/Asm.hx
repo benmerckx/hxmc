@@ -253,10 +253,6 @@ class Asm {
 	public function mul(x:Bool, d:Int, n:Int, m:Int)
 		madd(x, d, n, m, ZR);
 
-	// smulh / umulh (64 bits)
-	public function mulh(unsigned:Bool, d:Int, n:Int, m:Int)
-		w((unsigned ? 0x9BC07C00 : 0x9B407C00) | (m << 16) | (n << 5) | d);
-
 	// bitfield moves: sbfm (signed) / ubfm
 	public function bfm(signed:Bool, x:Bool, d:Int, n:Int, immr:Int, imms:Int)
 		w(sf(x) | (signed ? 0x13000000 : 0x53000000) | (x ? 1 << 22 : 0) | (immr << 16) | (imms << 10) | (n << 5) | d);

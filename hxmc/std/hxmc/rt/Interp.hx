@@ -150,8 +150,6 @@ enum abstract IOp(Int) from Int to Int {
 	var SPECIAL; // k d a b c: an expansion of the instruction selections (hxmc$*: atomics, float32 conversions; SP_*)
 	var FENCE; // a store's release (arm64)
 	var LAZY; // k: a function not compiled yet (its descriptor a stub): compiled, then called (lazy)
-	var UDIV64; // d a b: unsigned (Mem.udiv)
-	var UREM64;
 }
 
 // An interpreter of hxmc's Mir inside the running program (-D hxmc.interp):
@@ -473,16 +471,6 @@ class Interp {
 
 	static inline function zext(v:Int):I64
 		return ((v : I64) << 32) >>> 32;
-
-	// n / d, unsigned (the Haxe of this runtime has no unsigned division: the
-	// committed stage0 compiles it)
-	static function udiv(n:I64, d:I64):I64 {
-		if (d < 0) return Mem.ult(n, d) ? 0 : 1;
-		if (n >= 0) return n / d;
-		var q = ((n >>> 1) / d) << 1;
-		if (!Mem.ult(n - q * d, d)) q += 1;
-		return q;
-	}
 
 	static inline function b2i(b:Bool):Int
 		return b ? 1 : 0;
@@ -1180,13 +1168,6 @@ class Interp {
 					ip = ip.add(4);
 				case LAZY:
 					return lazy(fr, ip);
-				case UDIV64:
-					sl(regs, o(ip, 1), udiv(gl(regs, o(ip, 2)), gl(regs, o(ip, 3))));
-					ip = ip.add(16);
-				case UREM64:
-					var x = gl(regs, o(ip, 2)), y = gl(regs, o(ip, 3));
-					sl(regs, o(ip, 1), x - udiv(x, y) * y);
-					ip = ip.add(16);
 				case UNREACH:
 					throw "hxmc interp: unreachable code reached";
 				case _:

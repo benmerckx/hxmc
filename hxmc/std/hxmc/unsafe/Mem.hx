@@ -53,9 +53,6 @@ extern class Mem {
 	static function stack(bytes:Int):Ptr;
 	// unsigned comparison
 	static function ult(a:I64, b:I64):Bool;
-	// unsigned division and remainder (b not 0: as I64's, a division by 0 traps)
-	static function udiv(a:I64, b:I64):I64;
-	static function urem(a:I64, b:I64):I64;
 	// the bits of a double, and the double of bits (a register move)
 	static function f64Bits(v:Float):I64;
 	static function bitsF64(b:I64):Float;

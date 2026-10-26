@@ -444,7 +444,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -2446,14 +2446,11 @@ class FnLower {
 				var mm = intMinMax(cargs[0]);
 				if (mm != null) return coerce(mm, TI32, tyOf(e));
 				var x = coerce(value(cargs[0]), tyOf(cargs[0]), TF64);
-				// Std.int(a / b) of an Int by a constant: their integer division
-				// (MirBuild.idiv; DivConst multiplies), the same Int for every a and
-				// b: the Float quotient of two Ints is never rounded across an
-				// integer (its error, below 2^-22 / |b|, is less than its distance to
-				// one, 1 / |b|), MIN / -1 (2^31) converts to MIN, as -MIN wraps, and
-				// a / 0 (an infinity, or NaN) to 0 (hx_f2i_slow). (By an Int known
-				// only at run time the Float division stays: faster than idiv and
-				// its tests of 0 and -1 on x86-64, measured.)
+				// Std.int(a / b) of an Int by a constant: an Int division (MirBuild.idiv),
+				// the same Int for every a: the Float quotient of two Ints is never
+				// rounded across an integer (error below 2^-22 / |b|, distance at least
+				// 1 / |b|), MIN / -1 (2^31) converts to MIN as -MIN wraps, a / 0 to 0.
+				// (By a run-time b the Float division stays: faster than a guarded idiv.)
 				switch x {
 					case EBin(FDiv, xa, xb = (EConv(I2F, EInt(_)) | EF64(_))) if (intOperand(xa) != null && intOperand(xb) != null):
 						return coerce(EBin(Div, intOperand(xa), intOperand(xb)), TI32, tyOf(e));
