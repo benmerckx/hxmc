@@ -2446,14 +2446,16 @@ class FnLower {
 				var mm = intMinMax(cargs[0]);
 				if (mm != null) return coerce(mm, TI32, tyOf(e));
 				var x = coerce(value(cargs[0]), tyOf(cargs[0]), TF64);
-				// Std.int(a / b) of Ints: their integer division (MirBuild.idiv).
-				// The same Int for every a and b: the Float quotient of two Ints
-				// is never rounded across an integer (its error, below 2^-22 /
-				// |b|, is less than its distance to one, 1 / |b|), MIN / -1 (2^31)
-				// converts to MIN, as -MIN wraps, and a / 0 (an infinity, or NaN)
-				// to 0 (hx_f2i_slow)
+				// Std.int(a / b) of an Int by a constant: their integer division
+				// (MirBuild.idiv; DivConst multiplies), the same Int for every a and
+				// b: the Float quotient of two Ints is never rounded across an
+				// integer (its error, below 2^-22 / |b|, is less than its distance to
+				// one, 1 / |b|), MIN / -1 (2^31) converts to MIN, as -MIN wraps, and
+				// a / 0 (an infinity, or NaN) to 0 (hx_f2i_slow). (By an Int known
+				// only at run time the Float division stays: faster than idiv and
+				// its tests of 0 and -1 on x86-64, measured.)
 				switch x {
-					case EBin(FDiv, xa, xb) if (intOperand(xa) != null && intOperand(xb) != null):
+					case EBin(FDiv, xa, xb = (EConv(I2F, EInt(_)) | EF64(_))) if (intOperand(xa) != null && intOperand(xb) != null):
 						return coerce(EBin(Div, intOperand(xa), intOperand(xb)), TI32, tyOf(e));
 					case _:
 				}

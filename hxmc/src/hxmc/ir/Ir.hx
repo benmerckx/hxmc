@@ -365,7 +365,8 @@ enum BinOp {
 	LGt;
 	LGe;
 	// Std.int(a / b) of Ints, truncating: b == 0 gives 0, b == -1 gives -a
-	// (wrapping), as the Float quotient converted does (FnLower.intrinsicStatic)
+	// (wrapping), as the Float quotient converted does (FnLower.intrinsicStatic:
+	// b a constant)
 	Div;
 }
 

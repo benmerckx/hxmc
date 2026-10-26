@@ -1524,8 +1524,8 @@ class MirBuild extends MirWriter {
 		return readVar(r, cur);
 	}
 
-	// Std.int(a / b) of Ints (FnLower): b == 0 gives 0 and b == -1 gives -a
-	// (wrapping), as the conversion of the Float quotient does
+	// Std.int(a / b) of Ints (FnLower: b a constant): b == 0 gives 0 and b ==
+	// -1 gives -a (wrapping), as the conversion of the Float quotient does
 	function idiv(a:Int, b:Int):Int {
 		var c = divisorKind(b);
 		if (c == 1) return op2(Div, I32, a, b);
