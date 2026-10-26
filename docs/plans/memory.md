@@ -50,12 +50,13 @@ warm build promotes about 600 MB):
 | first limit / growth | major collections | old space's limit | peak RSS |
 | --- | --- | ---: | ---: |
 | 4096 MB / 300% (before) | builds 6 and 12 | 4.9 GB | 6.66 GB |
-| 4096 MB / 150% (now) | builds 6, 8, 11 | 2.9-3.1 GB | 5.79 GB |
-| 2048 MB / 150% | five | 2.6-3.2 GB | 4.78 GB |
+| 4096 MB / 150% | builds 6, 8, 11 | 2.9-3.1 GB | 5.79 GB |
+| 2048 MB / 150% (now) | five | 2.6-3.2 GB | 4.78 GB |
 
 The growth bounds the server: at 300% its old space grows toward three
 times what is live. At 150% the peak is the first major collection's, at
-the first limit; a first limit of 2 GB would lower it to 4.8 GB (open).
+the first limit, so the server's first limit is 2 GB: 4.8 GB at its peak,
+for two more major collections in twelve builds.
 
 ## Runtime hot spots
 

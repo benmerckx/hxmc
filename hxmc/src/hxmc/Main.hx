@@ -57,15 +57,15 @@ class Main {
 		// -D hxmc.out=<path>)
 		if (args[0] == "--server") {
 			args.shift();
-			// (its old space's first limit 4 GB; after each major collection
+			// (its old space's first limit 2 GB; after each major collection
 			// 150% of what is live, not 300%: the server keeps about 1.4 GB live
 			// and each warm self-build promotes about 600 MB. Twelve self-builds,
-			// a module edited before each: at 300% a major collection every six
-			// builds, the old space's limit near 4.9 GB, peak 6.7 GB; at 150% one
-			// every two or three builds, the limit near 3 GB, peak 5.8 GB, the
-			// first major collection's at the first limit (at 2 GB: 4.8 GB))
+			// a module edited before each: with 4 GB and 300% a major collection
+			// every six builds, peak 6.7 GB; 4 GB and 150%, three, peak 5.8 GB
+			// (the first major collection's, at the first limit); 2 GB and 150%,
+			// five, peak 4.8 GB)
 			if ((Sys.getEnv("RT_OLD_MB") == null || Sys.getEnv("RT_OLD_GROWTH") == null) && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
-				if (Sys.getEnv("RT_OLD_MB") == null) Sys.putEnv("RT_OLD_MB", "4096");
+				if (Sys.getEnv("RT_OLD_MB") == null) Sys.putEnv("RT_OLD_MB", "2048");
 				if (Sys.getEnv("RT_OLD_GROWTH") == null) Sys.putEnv("RT_OLD_GROWTH", "150");
 				Sys.exit(Sys.command(Sys.programPath(), ["--server"].concat(args)));
 			}
