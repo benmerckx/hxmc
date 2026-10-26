@@ -2445,7 +2445,19 @@ class FnLower {
 			case "Std_int" if (cargs.length == 1):
 				var mm = intMinMax(cargs[0]);
 				if (mm != null) return coerce(mm, TI32, tyOf(e));
-				coerce(EConv(F2I, coerce(value(cargs[0]), tyOf(cargs[0]), TF64)), TI32, tyOf(e));
+				var x = coerce(value(cargs[0]), tyOf(cargs[0]), TF64);
+				// Std.int(a / b) of Ints: their integer division (MirBuild.idiv).
+				// The same Int for every a and b: the Float quotient of two Ints
+				// is never rounded across an integer (its error, below 2^-22 /
+				// |b|, is less than its distance to one, 1 / |b|), MIN / -1 (2^31)
+				// converts to MIN, as -MIN wraps, and a / 0 (an infinity, or NaN)
+				// to 0 (hx_f2i_slow)
+				switch x {
+					case EBin(FDiv, xa, xb) if (intOperand(xa) != null && intOperand(xb) != null):
+						return coerce(EBin(Div, intOperand(xa), intOperand(xb)), TI32, tyOf(e));
+					case _:
+				}
+				coerce(EConv(F2I, x), TI32, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && typeObjectKind(cargs[1]) >= 0):
 				// Std.isOfType(v, Class), (v, Enum): whether v is a type object of a
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
@@ -2461,6 +2473,15 @@ class FnLower {
 			case TTypeExpr(TAbstractDecl(a)) if (a.aPath.pack.length == 0 && a.aPath.name == "Class"): 0;
 			case TTypeExpr(TAbstractDecl(a)) if (a.aPath.pack.length == 0 && a.aPath.name == "Enum"): 1;
 			case _: -1;
+		}
+	}
+
+	// the Int a Float operand is exactly (an Int converted, an integral literal), or null
+	static function intOperand(x:Ex):Null<Ex> {
+		return switch x {
+			case EConv(I2F, i) if (Ir.typeOf(i) == TI32): i;
+			case EF64(v) if (v == Math.ffloor(v) && v >= -2147483648.0 && v <= 2147483647.0): EInt(Std.int(v));
+			case _: null;
 		}
 	}
 

@@ -1,12 +1,13 @@
 // Division and remainder by constants (DivConst: a multiplication by the
 // reciprocal, shifts and masks for powers of two): Int `%` and Std.int(a / b)
-// of Ints, haxe.Int64's `/` and `%`; positive and negative divisors, powers
-// of two, MIN, dividends known not to be negative, a quotient and a remainder
-// of the same dividend; each against the same operation by a divisor known
-// only at run time, and its results summed (the same sums on every target).
-// Std.int(a / b) by 0 and -1 (and MIN / -1), Int % 0 and % -1, and
-// hxmc.unsafe.UInt64's unsigned `/` and `%` (by constants and by run-time
-// divisors, against a long division) last.
+// of Ints (an integer division), haxe.Int64's `/` and `%`; positive and
+// negative divisors, powers of two, MIN, dividends known not to be negative,
+// a quotient and a remainder of the same dividend; each against the same
+// operation by a divisor known only at run time, and its results summed (the
+// same sums on every target). Std.int(a / b) by 0 and -1 (and MIN / -1), as
+// the Float quotient converts, Int % 0 and % -1, and hxmc.unsafe.UInt64's
+// unsigned `/` and `%` (by constants and by run-time divisors, against a long
+// division) last.
 import haxe.Int64;
 import hxmc.unsafe.UInt64;
 
@@ -125,6 +126,17 @@ class IntDivConst {
 			} while (v != 0);
 		}
 		Sys.println('digits $n $digits');
+
+		// Std.int(a / b) of two Ints known only at run time (0, -1 and MIN
+		// among them) as the Float quotient converted
+		var pairs = 0;
+		for (a in xs)
+			for (b in xs) {
+				var fa = a + 0.0;
+				check("f/", a, b, Std.int(a / b), Std.int(fa / b));
+				pairs++;
+			}
+		Sys.println('pairs $pairs');
 
 		Sys.println("Int64");
 		long(1);

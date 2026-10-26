@@ -1448,6 +1448,7 @@ class MirBuild extends MirWriter {
 			case Sub: op2(Sub, I32, a, b);
 			case Mul: op2(Mul, I32, a, b);
 			case Mod: imod(a, b, I32);
+			case Div: idiv(a, b);
 			case And: op2(And, I32, a, b);
 			case Or: op2(Or, I32, a, b);
 			case Xor: op2(Xor, I32, a, b);
@@ -1517,6 +1518,33 @@ class MirBuild extends MirWriter {
 		seal(b2);
 		cur = b2;
 		writeVar(r, cur, op2(Rem, t, a, b));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(r, cur);
+	}
+
+	// Std.int(a / b) of Ints (FnLower): b == 0 gives 0 and b == -1 gives -a
+	// (wrapping), as the conversion of the Float quotient does
+	function idiv(a:Int, b:Int):Int {
+		var c = divisorKind(b);
+		if (c == 1) return op2(Div, I32, a, b);
+		if (c == 0) return iconst(0);
+		if (c == -1) return op1(Neg, I32, a);
+		var r = newVar(I32);
+		writeVar(r, cur, iconst(0));
+		var nz = newBlock(), neg = newBlock(), div = newBlock(), join = newBlock();
+		br(cmp(CNe, b, iconst(0)), nz, join);
+		seal(nz);
+		cur = nz;
+		br(cmp(CEq, b, iconst(-1)), neg, div);
+		seal(neg);
+		seal(div);
+		cur = neg;
+		writeVar(r, cur, op1(Neg, I32, a));
+		jmp(join);
+		cur = div;
+		writeVar(r, cur, op2(Div, I32, a, b));
 		jmp(join);
 		seal(join);
 		cur = join;

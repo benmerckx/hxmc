@@ -439,7 +439,7 @@ class FuncGen {
 
 	public static function binR(o:BinOp):String
 		return switch o {
-			case Add | Sub | Mul | Mod | And | Or | Xor | Shl | Shr | UShr: "i";
+			case Add | Sub | Mul | Mod | Div | And | Or | Xor | Shl | Shr | UShr: "i";
 			case Eq | Ne | Lt | Le | Gt | Ge | RefEq | RefNe: "i";
 			case FAdd | FSub | FMul | FDiv | FMod: "f";
 			case FEq | FNe | FLt | FLe | FGt | FGe: "i";
@@ -918,6 +918,7 @@ class FuncGen {
 			case Sub: op(0x6B);
 			case Mul: op(0x6C);
 			case Mod: op(0x6F);
+			case Div: op(0x6D); // (as Mod: the Mir path guards it)
 			case And: op(0x71);
 			case Or: op(0x72);
 			case Xor: op(0x73);
