@@ -1213,10 +1213,13 @@ jobs:
       - uses: actions/download-artifact@v8
         with: {name: site, path: site-dist}
       - name: The website in Chromium, Firefox and WebKit
+        timeout-minutes: 20
         run: |
           set -ex
           npm install --no-save --silent playwright@1.56.1
-          npx playwright install --with-deps chromium firefox webkit > /dev/null
+          # (the browsers' download at times stalls with no output: bounded, tried again)
+          retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
+          retry timeout 300 npx playwright install --with-deps chromium firefox webkit > /dev/null
           node site/tools/browser-test.mjs site-dist chromium firefox webkit
 
   # the npm packages in fresh projects, on each target's machine (every
