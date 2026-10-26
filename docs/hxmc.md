@@ -627,6 +627,33 @@ driver) crashes as before (that code may hold locks the throw would leave
 taken); a fault inside the runtime while it holds one of its own locks
 would leave it taken (the runtime reads its arguments before it locks).
 
+### Core dumps
+
+The runtime reserves 35 GB of address space natively (the old space's two
+16 GB regions, the nursery's 256 MB, the main thread's 1 GB C stack and 1
+GB shadow stack, 64 MB of shadow stack per thread: Gc, Start, Threads), and
+Linux dumps a mapping whole once a page of it is touched, its untouched
+pages as zeros. A core file skips them (it is sparse), but a core going
+through a pipe carries them: Ubuntu, and GitHub's runners, pipe cores to
+systemd-coredump (or apport), which the core limit (`ulimit -c 0`) does
+not stop. A crash took minutes: NullAccessCrash (a fault at 1 MB, exit
+139) ran 165 to 300 s in every linux-x86_64 test job and into the 300 s
+timeout of some (#43), where with `kernel.core_pattern=core` it took
+1.5 s. So on Linux and Android (`Os.coreDump`: `madvise`'s
+`MADV_DONTDUMP` and `MADV_DODUMP`) the reservations are left out of a core
+dump but for what the program uses of them: each region up to its
+limit (`Gc.dumpOld`: at start, after each major collection, and for a
+major collection's copies; the region it leaves is left out again), the
+nursery up to its size (`dumpYoung`), each stack's 8 MB at the end it
+grows from (`Os.stackCoreDump`), and, on a fault that ends the program
+(`Faults.chain`), the faulting thread's stacks as they are used
+(`Faults.dumpStacks`). NullAccessCrash's core is 17.9 MB, where it was
+36.8 GB; a core holds every page the heap and the stacks wrote (the
+corpus case `CoreDumpSize` checks it through `/proc/self/smaps`). Limits:
+a thread's C stack (64 MB, the C library's mapping) is dumped whole once
+touched; a stack used beyond its 8 MB is cut there in the core when another
+thread faulted or another signal ended the program (`abort`).
+
 ### WebAssembly: explicit tests
 
 WebAssembly has no faults to catch: in linear memory a null access read

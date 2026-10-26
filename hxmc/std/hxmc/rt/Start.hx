@@ -106,6 +106,9 @@ class Start {
 			return;
 		}
 		Os.guard(stack, Os.pageSize());
+		Os.stackCoreDump(stack, bytes, true);
+		Gc.cstackLo = stack;
+		Gc.cstackHi = stack.addL(bytes);
 		Mem.callOnStack(stack.addL(bytes), body);
 		#if hxmc.shared
 		// (a library's program ended: its stack given back, as the library may be closed: hxmc dev's host)
