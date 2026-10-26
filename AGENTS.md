@@ -1,8 +1,8 @@
 # Agents
 
-Read README.md first: the layout, how to build and test, and the porting
-rules (docs/porting.md), which apply to every change of
-`haxe/src`. In short:
+Read README.md first, then docs/development.md (layout, building),
+docs/testing.md (tests) and docs/porting.md (rules for every change of
+`haxe/src`). In short:
 
 - `haxe/upstream` is the reference: never edit it or commit inside it.
 - Port upstream modules directly, at the matching path, in upstream's order,
