@@ -1,77 +1,226 @@
-# Using hxmc in depth
+# Using hxmc
 
-The short version is in the [README](../README.md). This covers the npm packages (which to install, how `haxe` picks a compiler and finds the runtime objects), editors and lix, libraries from npm, and fast rebuilds.
+The user guide: which targets hxmc builds for, its options, what it
+writes, how it finds libraries, how rebuilds stay fast, how to debug a
+program, and what does not work yet. For a first build, see the
+[README](../README.md).
 
-## All options
+## Targets
 
-| Option | |
+Pick one with `-D hxmc.target=<target>`. The default is the machine you
+build on. Any host builds for any target.
+
+| Target | Output |
 | --- | --- |
-| `-D hxmc.target=<target>` | `linux-x86_64`, `linux-arm64`, `windows-x86_64`, `windows-arm64`, `macos-x86_64`, `macos-arm64`, `android-arm64`, `android-x86_64` (an output ending in `.apk`: an APK, [hxmc.md](hxmc.md#android)), `ios-arm64`, `ios-sim-arm64` (an output ending in `.app` or `.ipa`: an app bundle, [hxmc.md](hxmc.md#ios)), `wasm32-wasi` (default: this machine) |
-| `-D hxmc.libc=glibc` | Linux: an executable linked dynamically against the system's glibc (2.17 or later; the default is static with musl), which can import C functions of shared libraries (`@:hxmc.lib("libGL.so.1")`) and load them at run time (`hxmc.unsafe.Posix.dlopen`) |
-| `-debug`, `-D hxmc.symbols` | a symbol table (profilers), wasm: a name section |
-| `-D hxmc.shared`, `-D hxmc.exports=<names>` | a shared library exporting the named `@:hxmc.export` functions (Linux in the glibc mode; a Mach-O dylib on macOS and iOS; a DLL on Windows, `-D hxmc.dll-base=<hex>` its preferred base; Android's output always is one) |
-| `-D hxmc.output=<path>` | the output, instead of `--custom-target`'s (`hxmc dev`: the iOS simulator's builds as dylibs) |
-| `-D hxmc.pic` | a position-independent executable (refused: not written yet) |
-| `-D hxmc.jobs=<n>` | parallel module compilations (default: the cores) |
-| `-D hxmc.native-array-outofbounds=throws\|silent` | what a Vector (or `hxmc.NativeArray`) access out of bounds does: `throws` `haxe.exceptions.ArgumentException`, `silent` reads the default value (0, false, null) and writes nothing; not defined: not tested (the fastest; the result is unspecified, as Haxe leaves it). Also listed by `haxe --help-defines`. |
-| `-D hxmc.wasm-eh=legacy` | wasm: the legacy exception-handling instructions (`try`/`catch_all`/`rethrow`: Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |
-| `HXMC_STATS=1` | what the build did and how long it took |
-| `HXMC_CACHE=<dir>` | the cache directory (default `~/.cache/hxmc`, macOS `~/Library/Caches/hxmc`, Windows `%LOCALAPPDATA%\hxmc\cache`; "hxmc" below) |
-| `HXMC_CACHE_SIZE=<bytes>[K\|M\|G]` | the most the module cache's store keeps (default `1G`; beyond it the least recently used goes, older builds of the tool first) |
-| `HXMC_MODULE_CACHE=0`, `-D hxmc.no-module-cache` | no module cache: every build types its modules from source (the cache keeps typed modules between builds; see "Macros and the module cache") |
+| `linux-x86_64`, `linux-arm64` | static ELF executable (musl); with `-D hxmc.libc=glibc`, linked against the system's glibc 2.17+ |
+| `macos-x86_64`, `macos-arm64` | Mach-O executable, ad hoc signed |
+| `windows-x86_64`, `windows-arm64` | PE executable over the UCRT |
+| `android-arm64`, `android-x86_64` | a shared library; an APK when the output ends in `.apk` ([Android](#android)) |
+| `ios-arm64`, `ios-sim-arm64` | Mach-O executable; an app bundle when the output ends in `.app`, zipped when `.ipa` ([iOS](#ios)) |
+| `wasm32-wasi` | WebAssembly module ([WebAssembly](#webassembly)) |
+
+Code can test the target with `target.name == "hxmc"` (there is no `hxmc`
+define) and with these flags:
+
+| Flag | Where |
+| --- | --- |
+| `static`, `sys`, `utf16`, `target.unicode` | every target: static types (an `Int` is never null), the sys API, UTF-16 strings |
+| `target.threaded` | the native targets: OS threads run in parallel |
+| `target.atomics` | every target: `haxe.atomic` |
+
+## Options
+
+Defines go on the command line or in the hxml file. `haxe --help-defines`
+lists the ones marked with *.
+
+| Option | Effect |
+| --- | --- |
+| `-D hxmc.target=<target>` | the target (above) |
+| `-D hxmc.libc=glibc` | Linux: link dynamically against glibc, so the program can import shared libraries (`@:hxmc.lib("libGL.so.1")`) and `dlopen` them |
+| `-D hxmc.shared` | a shared library: Linux in the glibc mode, a dylib on macOS and iOS, a DLL on Windows; Android's output always is one |
+| `-D hxmc.exports=<names>` | the `@:hxmc.export` functions a shared library exports |
+| `-D hxmc.dll-base=<hex>` | Windows: a DLL's preferred base address |
+| `-D hxmc.output=<path>` | the output path, instead of `--custom-target`'s |
+| `-D hxmc.link=<paths>` | extra objects and archives to link (also `@:hxmc.link("path")` on a class) |
+| `-D hxmc.jobs=<n>` | parallel module compilations (default: the number of cores; also `HXMC_JOBS`) |
+| `-debug` | DWARF lines and a symbol table ([Debugging](#debugging)) |
+| `-D hxmc.symbols` | a symbol table only (wasm: a name section) |
+| `-D hxmc.lines` | DWARF lines only |
+| `-D hxmc.no-stacks` | no call stacks: `haxe.CallStack` and exception stacks are empty |
+| `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
+| `-D hxmc.no-frame-pointers` | x86-64: no frame pointers (arm64 always keeps them; also `HXMC_FRAME_POINTERS=0`) |
+| `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
+| `-D hxmc.native-array-outofbounds=throws\|silent` * | `haxe.ds.Vector` and `hxmc.NativeArray` accesses out of bounds: `throws` an `ArgumentException`, or `silent` (reads give the default value, writes do nothing). Default: not tested, the result is unspecified |
+| `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling (Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |
+| `-D hxmc.wasm-gc` | wasm: a WasmGC module (experimental: [WasmGC](#wasmgc)) |
+| `-D hxmc.gc-prefault` * | Linux: a helper thread faults in the old space's pages ahead of the collector: less wall time, more CPU time |
+| `-D hxmc.census` | a heap census at exit, by type (`RT_CENSUS=1` at run time) |
+| `-D hxmc.no-module-cache` | no module cache for this build (also `HXMC_MODULE_CACHE=0`) |
+| `-D hxmc.no-cache=<packages>` | type these packages, modules or library directories in every build ([Macros and the cache](#macros-and-the-module-cache)) |
+| `-D hxmc.macros=mir` | experimental: run macros on hxmc's Mir interpreter instead of Eval ([Mir macros](#mir-macros)) |
+| `-D hxmc.run=mir` | experimental: run `--interp`/`--run` on the Mir interpreter |
+| `-D hxmc.pic` | a position-independent executable: refused, not written yet |
+
+## Outputs
+
+### Native executables
+
+An executable links only what it uses. mbedtls (`sys.ssl`) and libuv
+(`eval.luv`) are linked only into programs that use them. A hello world is
+about 125 KB on linux-x86_64.
+
+In the default static mode on Linux a program cannot import shared
+libraries; such an import is a compile error that names
+`-D hxmc.libc=glibc`.
+
+### Shared libraries
+
+`-D hxmc.shared` with `-D hxmc.exports=<names>` writes a library that
+exports the named `@:hxmc.export` functions. Each library has its own
+runtime and heap; `Gc.releaseHeap` gives the heap back when its main
+returns, so a host can load, run and unload builds in turn (the
+[dev loop](dev.md) does this).
+
+### Android
+
+`android-arm64` (phones) and `android-x86_64` (emulators), Android 10 (API
+29) and later. With an output ending in `.apk`, hxmc writes and signs an APK
+whose `NativeActivity` loads the program. No SDK, NDK or Java at build time.
+
+```sh
+haxe -cp hxmc/test/android -main AndroidHello \
+  --custom-target hxmc=bin/hello.apk -D hxmc.target=android-arm64 -D hxmc.android-package=org.example.hello
+adb install -r bin/hello.apk
+adb shell am start -n org.example.hello/android.app.NativeActivity
+adb logcat -s hxmc
+```
+
+| Option | Default |
+| --- | --- |
+| `-D hxmc.android-package=<id>` | `org.hxmc.<output name>` |
+| `-D hxmc.android-label=<text>` | the output name |
+| `-D hxmc.android-version=<n>`, `-D hxmc.android-version-name=<text>` | 1, 1.0 |
+| `-D hxmc.android-min-sdk=<n>`, `-D hxmc.android-target-sdk=<n>` | 29 (the floor), 35 |
+| `-D hxmc.android-permissions=<names>` | none (`INTERNET` means `android.permission.INTERNET`) |
+| `-D hxmc.android-key=<file>`, `HXMC_ANDROID_KEY` | a debug key in the cache, made on first use |
+| `-D hxmc.exports=<names>` | exports besides `ANativeActivity_onCreate` |
+
+The program exports `ANativeActivity_onCreate` and starts its own thread
+(see `hxmc/test/android/AndroidHello.hx`). A program that uses views gets a
+small `classes.dex` that hxmc writes.
+
+Not yet: several ABIs in one APK, release signing, icons and resources,
+`.aab` bundles.
+
+### iOS
+
+`ios-arm64` (devices) and `ios-sim-arm64` (the simulator on Apple silicon),
+iOS 15 and later. With an output ending in `.app` hxmc writes an ad hoc
+signed app bundle; `.ipa` zips it. No Xcode or SDK at build time.
+
+```sh
+haxe -cp hxmc/test/ios -main IosHello \
+  --custom-target hxmc=bin/Hello.app -D hxmc.target=ios-sim-arm64 -D hxmc.ios-bundle-id=org.example.hello
+xcrun simctl install booted bin/Hello.app
+xcrun simctl launch --console-pty booted org.example.hello
+```
+
+| Option | Default |
+| --- | --- |
+| `-D hxmc.ios-bundle-id=<id>` | `org.hxmc.<output name>` |
+| `-D hxmc.ios-name=<text>` | the output name |
+| `-D hxmc.ios-version=<n>`, `-D hxmc.ios-version-name=<text>` | 1, 1.0 |
+| `-D hxmc.ios-min-version=<major.minor>` | 15.0 (the floor) |
+| `-D hxmc.ios-entitlements=<file>` | none |
+
+A UI library that defines `hxmc_ui_main` gets `UIApplicationMain` on the
+main thread, and the program's body runs once the app has launched.
+
+Not yet: signing for devices (developer certificate, provisioning profile),
+app icons and asset catalogs.
+
+### WebAssembly
+
+`wasm32-wasi` writes a linear-memory module with the whole runtime inside.
+Run it with:
+
+```sh
+node hxmc/bootstrap/wasi.mjs app.wasm
+wasmtime run -W exceptions=y --dir . app.wasm     # needs exnref: not with -D hxmc.wasm-eh=legacy
+```
+
+node 22 runs both exception encodings without flags.
+
+In a browser, the page instantiates the module, provides its imports (WASI
+preview 1 without a file system, and any `@:hxmc.lib("<module>")` externs)
+and runs `_start`. The runtime stays alive after `_start` returns, so
+JavaScript can call a `@:hxmc.callback` through the exported
+`__indirect_function_table`, for example from `requestAnimationFrame`.
+Calling C from wasm: [interop.md](interop.md#webassembly).
+
+The module grows its memory only as it needs it. The shadow stack and the
+frame stack are 4 MB each (`RT_STACK_MB`); an overflow exits with a
+message. When memory cannot grow, the program prints "out of memory" and
+exits.
+
+#### WasmGC
+
+`-D hxmc.wasm-gc -D hxmc.target=wasm32-wasi` writes a WasmGC module
+instead: objects live in the engine's collector. It is experimental. It
+runs under node with `hxmc/bootstrap/wasmgc.mjs`. Compared with linear
+memory it gives smaller modules but is slower on allocation-heavy code.
+It has one thread (a created thread runs when another waits for it), no
+sockets, and Math's transcendental functions come from the host. A
+construct it does not cover fails the build with its name;
+`HXMC_GC_SURVEY=1` lists all of them.
 
 ## The npm packages
 
-Which package to install:
-
 | You want | Install | You get |
 | --- | --- | --- |
-| Haxe with hxmc: native executables | `npm i -D @hxmc/cli` | `haxe` and `hxmc` (the same command): every Haxe target, and `--custom-target hxmc=<out>` for this machine; the runtime objects of a target are downloaded on the first build for it |
-| The same, offline or in CI, or cross builds without a download | `npm i -D @hxmc/cli @hxmc/rt-<target> ...` | the runtime objects of those targets installed with it (for example `@hxmc/rt-windows-x86_64` on a Linux machine) |
-| The Haxe compiler alone (js, hl, jvm, `--interp`, ...) | `npm i -D @hxmc/haxe` | `haxe`; a build for the hxmc target says to install `@hxmc/cli` (or `@hxmc/target` beside it) |
+| Haxe with hxmc | `npm i -D @hxmc/cli` | `haxe` and `hxmc` (the same command): every Haxe target, and `--custom-target hxmc=<out>`; a target's runtime objects are downloaded on its first build |
+| The same, offline, in CI, or cross builds without a download | `npm i -D @hxmc/cli @hxmc/rt-<target> ...` | those targets' runtime objects installed with it |
+| The Haxe compiler alone (js, hl, jvm, `--interp`, ...) | `npm i -D @hxmc/haxe` | `haxe`; a build for hxmc says to install `@hxmc/cli` (or `@hxmc/target` beside it) |
 
-The packages, all published at one version:
+All packages are published at one version:
 
-| Package | Size (tarball, unpacked) | |
+| Package | Size (tarball, unpacked) | Contents |
 | --- | --- | --- |
-| `@hxmc/cli` | 11 KB, 29 KB | the main install: the commands `haxe` and `hxmc`, which run `@hxmc/haxe`'s launcher; depends on `@hxmc/haxe` and `@hxmc/target` |
-| `@hxmc/haxe` | 1.0 MB, 6.3 MB | the port alone: the `haxe` launcher, upstream's std, `dist/` for lix; optional dependencies on the six platform packages |
-| `@hxmc/haxe-linux-x64`, `@hxmc/haxe-linux-arm64`, `@hxmc/haxe-darwin-x64`, `@hxmc/haxe-darwin-arm64`, `@hxmc/haxe-win32-x64`, `@hxmc/haxe-win32-arm64` | 7.3-7.9 MB, 24-28 MB each | the native compiler built by CI for one platform (npm installs the one that matches, by their `os` and `cpu` fields) |
-| `@hxmc/haxe-wasm` | 4.0 MB, 20 MB | the compiler as a wasm32-wasi module, with its WASI runner for node: the fallback where no native compiler runs |
-| `@hxmc/target` | 0.3 MB, 1.4 MB | hxmc's std (the target's runtime and std, in Haxe), and the integrity hashes of the runtime objects' tarballs |
-| `@hxmc/rt-<target>`: `linux-x86_64`, `linux-x86_64-glibc`, `linux-arm64`, `linux-arm64-glibc`, `macos-x86_64`, `macos-arm64`, `windows-x86_64`, `windows-arm64`, `android-arm64`, `android-x86_64` | 0.3-1.5 MB, 1.0-6.3 MB each | the runtime objects of one target (`<target>/rt.o`, `ssl.o` with mbedtls, `uv.o` with libuv), named as `-D hxmc.target` names it (`-glibc`: `-D hxmc.libc=glibc`; the iOS targets use `macos-arm64`'s); no `os` or `cpu` field, so any of them installs on any machine |
+| `@hxmc/cli` | 11 KB, 29 KB | the commands `haxe` and `hxmc`, which run `@hxmc/haxe`'s launcher; depends on `@hxmc/haxe` and `@hxmc/target` |
+| `@hxmc/haxe` | 1.0 MB, 6.3 MB | the port alone: the launcher, upstream's std, `dist/` for lix; optional dependencies on the six platform packages |
+| `@hxmc/haxe-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64`, `-win32-x64`, `-win32-arm64` | 7.3-7.9 MB, 24-28 MB each | the native compiler for one platform; npm installs the matching one |
+| `@hxmc/haxe-wasm` | 4.0 MB, 20 MB | the compiler as a wasm32-wasi module with its WASI runner: the fallback where no native compiler runs |
+| `@hxmc/target` | 0.3 MB, 1.4 MB | hxmc's std, and the integrity hashes of the runtime objects' tarballs |
+| `@hxmc/rt-<target>` | 0.3-1.5 MB, 1.0-6.3 MB each | one target's runtime objects (`rt.o`, `ssl.o`, `uv.o`), for `linux-x86_64`, `linux-x86_64-glibc`, `linux-arm64`, `linux-arm64-glibc`, `macos-x86_64`, `macos-arm64`, `windows-x86_64`, `windows-arm64`, `android-arm64`, `android-x86_64`; the iOS targets use `macos-arm64`'s. No `os` or `cpu` field, so any installs anywhere |
 
-(Sizes of 0.1.0 as packed; CI's job summary lists each build's.)
+Sizes are of 0.1.0; CI's job summary lists each build's.
 
-`haxe` runs the platform package's native compiler; else, when there is none
-or it cannot start here (an unsupported machine, an install without optional
-dependencies, a noexec file system, StackBlitz's WebContainers;
-`HXMC_PLATFORM_PACKAGE=0` and `HXMC_NATIVE=0` force this path), the compiler
-as a WebAssembly module under node: `@hxmc/haxe-wasm` when it is installed
-(`npm i -D @hxmc/cli @hxmc/haxe-wasm` where no native compiler can run), else
-downloaded on first use.
+**Which compiler runs.** `haxe` runs the platform package's native
+compiler. If there is none or it cannot start (an unsupported machine, no
+optional dependencies, a noexec file system, StackBlitz), it runs the
+WebAssembly compiler under node: `@hxmc/haxe-wasm` if installed, else
+downloaded on first use. `HXMC_PLATFORM_PACKAGE=0` or `HXMC_NATIVE=0` forces
+the WebAssembly path.
 
-hxmc's std comes from `@hxmc/target`, found beside `@hxmc/haxe` (or in the
-project's `node_modules`) at the same version. The runtime objects of a
-target come, in this order, from an installed `@hxmc/rt-<target>` of the same
-version, from the cache (`hxmc/npm/<version>/rt-<target>/`), else from a
-download on the first build that needs them: never at install, so CI and
-offline machines can install the runtime-object packages they need instead.
-`haxe` finds the targets a build needs from its arguments and the hxml files
-they name (`--custom-target hxmc`, `-D hxmc.target=`, `-D hxmc.libc=glibc`);
-a target set elsewhere (a library's `extraParams.hxml`) is not downloaded,
-and the build says which package to install.
+**Where hxmc's std and runtime objects come from.** The std comes from
+`@hxmc/target` at the same version, beside `@hxmc/haxe` or in the project's
+`node_modules`. A target's runtime objects come, in order, from an
+installed `@hxmc/rt-<target>` of the same version, from the cache
+(`hxmc/npm/<version>/rt-<target>/`), or from a download on the first build
+that needs them. Nothing is downloaded at install. `haxe` reads the targets
+from the build's arguments and hxml files (`--custom-target hxmc`,
+`-D hxmc.target=`, `-D hxmc.libc=glibc`). A target set elsewhere, such as a
+library's `extraParams.hxml`, is not downloaded; the build names the package
+to install.
 
-Both downloads are the package's tarball of the same version from the npm
-registry (`npm_config_registry`, which npm and npx set, else the `registry` of
-an `.npmrc`, else registry.npmjs.org), checked against the integrity hash
-pinned when the packages were packed (`@hxmc/haxe-wasm`'s in `@hxmc/haxe`'s
-`package.json`, the runtime objects' in `@hxmc/target`'s), and unpacked into
-the cache (`hxmc/npm/<version>/`); offline, `haxe` prints one line saying so
-and exits non-zero. The cache is the user's (`HXMC_CACHE` above; "hxmc").
-`HXMC_WASM_TARBALL` (a path or URL) and `HXMC_RT_TARBALLS` (a directory or URL
-holding `npm pack`'s files, `hxmc-rt-<target>-<version>.tgz`) replace the
-registry (CI's tests).
+**Downloads** fetch the package's tarball of the same version from the npm
+registry (`npm_config_registry`, else an `.npmrc`'s `registry`, else
+registry.npmjs.org). They are checked against the integrity hash pinned at
+packing (`@hxmc/haxe-wasm`'s in `@hxmc/haxe`, the runtime objects' in
+`@hxmc/target`) and unpacked into the cache (`hxmc/npm/<version>/`).
+Offline, `haxe` prints one line and exits non-zero. `HXMC_WASM_TARBALL` (a
+path or URL) and `HXMC_RT_TARBALLS` (a directory or URL of
+`hxmc-rt-<target>-<version>.tgz` files) replace the registry.
 
 For offline or cross builds, install the runtime objects with the project:
 
@@ -79,131 +228,201 @@ For offline or cross builds, install the runtime objects with the project:
 npm i -D @hxmc/cli @hxmc/rt-linux-x86_64 @hxmc/rt-windows-x86_64 @hxmc/rt-android-arm64
 ```
 
-## Without node
+### Without node
 
-Without node: on Linux and macOS a postinstall script of `@hxmc/haxe` (best
-effort, offline, it only writes inside the package) checks that the native
-compiler runs and copies it over `hxmc/bootstrap/haxe` and `dist/haxe`, so
-`node_modules/@hxmc/haxe/hxmc/bootstrap/haxe` (and `node_modules/.bin/haxe`
-when it links that one: an install of `@hxmc/haxe` itself) starts the compiler
-directly; with install scripts disabled (`--ignore-scripts`, pnpm's default)
-the first call through node does the same. `@hxmc/cli`'s `haxe` and `hxmc`
-start node, which runs the native compiler, as npm's `haxe.cmd` does on
-Windows (about 40-60 ms per call); point editors and lix at
-`node_modules/@hxmc/haxe/dist/haxe` (Windows: `dist/haxe.exe`) to bypass it.
-Run that way, a build for the hxmc target goes through node all the same
-(the launcher finds hxmc's std and the runtime objects); the other targets do
-not. Nothing but the compiler's own output goes to stdout or stderr (editors
-run `haxe --wait stdio`, whose answers are on stderr, and parse `haxe
---version`); notices (the WebAssembly fallback, a download) go to an
-interactive terminal only, and a failure prints one line and exits non-zero.
-`HXMC_INSTALL=0` keeps the launcher in place.
+On Linux and macOS, `@hxmc/haxe`'s postinstall script checks that the
+native compiler runs and copies it over `hxmc/bootstrap/haxe` and
+`dist/haxe`. It is best effort, offline, and writes only inside the
+package. `node_modules/@hxmc/haxe/hxmc/bootstrap/haxe` then starts the
+compiler directly (so does `node_modules/.bin/haxe` in a project that
+installed `@hxmc/haxe` itself). With install scripts disabled
+(`--ignore-scripts`, pnpm's default), the first call through node does the
+same. `HXMC_INSTALL=0` keeps the launcher in place.
 
-## Changing the compiler
+`@hxmc/cli`'s `haxe` and `hxmc`, and npm's `haxe.cmd` on Windows, start
+node, which runs the native compiler (about 40-60 ms per call). To bypass
+node, point editors and lix at `node_modules/@hxmc/haxe/dist/haxe`
+(Windows: `dist/haxe.exe`). Builds for the hxmc target still go through node
+(the launcher finds hxmc's std and runtime objects); other targets do not.
 
-The compiler's sources and `hxmc-rebuild` (`packages/source`, `@hxmc/source`)
-are not published for now: change the compiler in a checkout of this
-repository ([development.md](development.md)).
+The launcher writes nothing but the compiler's own output to stdout and
+stderr, since editors parse them. Notices (the WebAssembly fallback, a
+download) go to an interactive terminal only. A failure prints one line
+and exits non-zero.
 
-## Libraries
+### Changing the compiler
 
-Libraries: the compiler resolves `-lib <name>` (also `-L`, `--library`, and
-in hxml files) itself, without a `haxelib` or lix process
-(`hxmc/src/hxmc/libs`), from three places, as below: lix's scopes, npm
-packages and haxelib's repositories. Within a lix scope it resolves as lix's
-`haxe` shim would before calling the compiler; elsewhere as the compiler
-does through `haxelib path`, node_modules first.
-
-**lix's scopes.** The scope is the nearest `.haxerc` from the working
-directory up (or the one `HAXESHIM_SCOPE` names), else lix's global one,
-`$HAXESHIM_ROOT/.haxerc` (default `~/haxe`), when it exists; with neither,
-there is none. Its `"resolveLibs"` (`scoped` by default, `mixed` for the
-global scope) decides:
-
-- `scoped`, `mixed`: `haxe_libraries/<name>.hxml` beside the `.haxerc`,
-  read as lix reads it (one argument per line, a flag and its value split at
-  the first space, `${VAR}` from the environment, `HAXE_LIBCACHE`,
-  `SCOPE_DIR`, `CWD`, `__dirname`), with its `-lib` and hxml files
-  resolved in turn, in the place of the `-lib`;
-- `mixed`, `haxelib`: the others through haxelib (lix's root's
-  `haxelib` repository), after the build's arguments;
-- `scoped`: a library without its hxml is an error, unless node_modules has
-  it.
-
-Each library comes once per build (`--next` part), and a missing class path
-of a library is an error, as with lix. The `"version"` is not looked at (the
-compiler is the one running).
-
-**npm packages.** A package is a library when its package.json has a
-`"haxe"` field, `{"name": "mylib", "classPath": "src", "hxml":
-"extraParams.hxml"}` (`hxml` optional); `-lib` takes that name or the
-package's own (`-lib @scope/mylib`), and `-lib <name>:<version>` only that
-version. It expands as haxelib's libraries do: the hxml's lines, the class
-path, `-D <name>=<version>`, then its dependencies (the packages of its
-`dependencies` and `peerDependencies` that have a `"haxe"` field), each
-library once. The nearest `node_modules` holding it counts (from the working
-directory up, as node looks): after a lix scope's hxml, before haxelib.
-
-**haxelib.** What `haxelib path` answers (haxelib 4.2.0, the version upstream
-ships): a `.haxelib` repository in the working directory or a parent, else
-the global one (`HAXELIB_PATH`, `~/.haxelib`, ...); `name:version`, the
-dev path or the current version; haxelib.json's class path and
-dependencies, `extraParams.hxml`, `ndll/`; haxelib's messages.
-
-The cpp generator's `haxelib path hxcpp` (`hxcpp=` in `Options.txt`) is
-answered the same way: within a lix scope as lix's `haxelib` shim answers it
-(from `haxe_libraries/hxcpp.hxml`), elsewhere as haxelib does. Running a
-library (`haxelib run hxcpp`, `haxelib run hashlink`, the native builds)
-still needs haxelib or lix.
-
-All of it works without node (`node_modules/.bin/haxe` as the native
-compiler) and without lix or haxelib installed. Run through lix's own `haxe`
-shim (the `dist/` version below), the shim resolves the libraries before the
-compiler sees them, the same way.
+The compiler's sources and `hxmc-rebuild` (`packages/source`,
+`@hxmc/source`) are not published for now. Change the compiler in a
+checkout of this repository ([development.md](development.md)).
 
 ## Editors and lix
 
-Editors and lix: vshaxe with `"haxe.executable": "auto"` (the default) runs
-the workspace's `node_modules/.bin/haxe` when there is one (as for the lix
-npm package; expected from vshaxe's documentation of `auto`, not verified in
-an editor here); on Windows set it to `node_modules/@hxmc/haxe/dist/haxe.exe`.
-`dist/` (`packages/haxe/dist` in this repository) is an installation lix
-accepts as a path version (`dist/haxe`, `dist/std`, `dist/platform.txt`,
-written on install or first use): `lix use haxe ./node_modules/@hxmc/haxe/dist`, or `.haxerc` with
-`{"version": "./node_modules/@hxmc/haxe/dist", "resolveLibs": "scoped"}`; lix's
-`haxe` shim then runs hxmc (checked with this repository's lix on Linux and
-macOS in CI). With the lix npm package in the same project both packages
-declare a `haxe` bin: npm reports nothing and `node_modules/.bin/haxe` is
-whichever it linked last (both orders occur), so use lix's shim with the
-`dist/` version there.
+- **vshaxe**: `"haxe.executable": "auto"` (the default) runs the workspace's
+  `node_modules/.bin/haxe`. On Windows, set it to
+  `node_modules/@hxmc/haxe/dist/haxe.exe`.
+- **lix**: `dist/` (`packages/haxe/dist` in this repository) is an
+  installation lix accepts as a path version: `lix use haxe
+  ./node_modules/@hxmc/haxe/dist`, or a `.haxerc` with
+  `{"version": "./node_modules/@hxmc/haxe/dist", "resolveLibs": "scoped"}`.
+  lix's `haxe` shim then runs hxmc. CI checks this on Linux and macOS.
+- **lix's npm package in the same project**: both packages declare a `haxe`
+  bin, and npm links whichever comes last. Use lix's shim with the `dist/`
+  version there.
+
+## Libraries
+
+The compiler resolves `-lib <name>` (also `-L`, `--library`, and in hxml
+files) itself, with no haxelib or lix process. It looks in three places, in
+this order: a lix scope, npm packages, haxelib repositories. This works
+without node and without lix or haxelib installed.
+
+**lix scopes.** The scope is the nearest `.haxerc` from the working
+directory up (or the one `HAXESHIM_SCOPE` names), else lix's global
+`$HAXESHIM_ROOT/.haxerc` (default `~/haxe`). Its `"resolveLibs"` decides:
+
+| `resolveLibs` | Behaviour |
+| --- | --- |
+| `scoped` (default) | `haxe_libraries/<name>.hxml` beside the `.haxerc`; a library without one is an error unless `node_modules` has it |
+| `mixed` (default for the global scope) | `haxe_libraries` first, then haxelib |
+| `haxelib` | haxelib only |
+
+The hxml files are read as lix reads them: one argument per line,
+`${VAR}` from the environment, `HAXE_LIBCACHE`, `SCOPE_DIR`, `CWD`,
+`__dirname`. Each library comes once per build, and a missing class path is
+an error. The `.haxerc`'s `"version"` is ignored.
+
+**npm packages.** A package is a library when its `package.json` has a
+`"haxe"` field:
+
+```json
+"haxe": {"name": "mylib", "classPath": "src", "hxml": "extraParams.hxml"}
+```
+
+`-lib` takes that name or the package's (`-lib @scope/mylib`);
+`-lib <name>:<version>` takes only that version. It expands as a haxelib
+library does: the hxml's lines, the class path, `-D <name>=<version>`, then
+its `dependencies` and `peerDependencies` that are libraries. The nearest
+`node_modules` from the working directory up counts.
+
+**haxelib.** As `haxelib path` (4.2.0) answers: a `.haxelib` repository in
+the working directory or a parent, else the global one (`HAXELIB_PATH`,
+`~/.haxelib`); dev paths and current versions; `haxelib.json`'s class path
+and dependencies, `extraParams.hxml`, `ndll/`.
+
+The cpp generator's `haxelib path hxcpp` is answered the same way. Running
+a library (`haxelib run hxcpp`) still needs haxelib or lix.
 
 ## Fast rebuilds
 
-Fast rebuilds: the typed modules and the compiled objects of every build are
-kept in the user cache directory (`HXMC_CACHE` overrides; only what changed
-is typed and compiled again, and outputs share objects), and the compilation server keeps
-typed modules, lowered bodies and compiled objects in memory:
-`haxe --wait 6000`, then `haxe --connect 6000 build.hxml` (a no-change rebuild
-of a small program in about 0.4 s). `haxe --dev build.hxml` does that for you,
-watching the sources and running the new build on each save: [dev.md](dev.md).
+**The module cache.** Every build keeps its typed modules and compiled
+objects in the user's cache directory. The next build types and compiles
+only what changed, and outputs share objects. It is on by default, for
+every target.
+
+| Variable | |
+| --- | --- |
+| `HXMC_CACHE=<dir>` | the cache directory. Default: `$XDG_CACHE_HOME/hxmc` or `~/.cache/hxmc`; macOS `~/Library/Caches/hxmc`; Windows `%LOCALAPPDATA%\hxmc\cache` |
+| `HXMC_CACHE_SIZE=<n>[K\|M\|G]` | the cap (default `1G`); the least recently used entries go first |
+| `HXMC_MODULE_CACHE=0` | off (or `-D hxmc.no-module-cache`) |
+| `HXMC_MODULE_CACHE_LOG=1` | why each module was typed again |
+| `HXMC_STATS=1` | what the build did and how long it took |
+
+Entries unused for 14 days are removed.
+
+**The compilation server** keeps typed modules, lowered bodies and compiled
+objects in memory: `haxe --wait 6000`, then `haxe --connect 6000
+build.hxml`.
+
+**The dev loop.** `haxe --dev build.hxml` (`hxmc dev build.hxml` with the
+repository's tool) builds the program, runs it, and on every save rebuilds
+it and runs the new build. A build with errors leaves the last good build
+running. Programs that want to keep their state across reloads speak a
+small protocol: [dev.md](dev.md).
 
 ### Macros and the module cache
 
 A module restored from the cache does not run its macros again, so the
-cache watches what they look at. A macro that reads the time or a random
-number, starts a process or uses the network (`Date.now`, `Sys.time`,
-`Math.random`, `Sys.command`, `sys.io.Process`, `sys.Http`, sockets) makes
-the module it ran for typed again in every build; the modules that use it
-stay cached unless it copied the result into them (an `inline` field, a
-field without a written type). A file a macro reads (`sys.io.File`,
-`FileSystem.exists`, `readDirectory`, `stat`) or an environment variable
-(`Sys.getEnv`) is checked instead: the module is typed again when the
-file's content or the variable's value changes. Where that is not enough
-(a macro using state the cache cannot see, a file it writes),
-`@:hxmc.noCache` on a class types its module every build,
-`-D hxmc.no-cache=<package or library>` does so for a package or a library,
-and `HXMC_MODULE_CACHE=0` turns the cache off. `HXMC_MODULE_CACHE_LOG=1`
-prints why each module was typed again, for example
-`Clock typed every build (macro called Date.now at src/Macros.hx:4)`. The
-compilation server (`--wait`) keeps upstream's behaviour: its macros'
-results last until their module changes.
+cache watches what macros depend on:
+
+- A macro that reads the time or a random number, or starts a process or
+  uses the network (`Date.now`, `Sys.time`, `Math.random`, `Sys.command`,
+  `sys.io.Process`, `sys.Http`, sockets, ...) makes its module typed again in
+  every build. Modules that use it stay cached, unless the result was
+  copied into them (an `inline` field, a field without a written type).
+- A file a macro reads (`sys.io.File`, `FileSystem.exists`,
+  `readDirectory`, `stat`) or an environment variable (`Sys.getEnv`) is
+  recorded. The module is typed again when the content or value changes.
+- Static variables of macro classes are tracked, so an `@:autoBuild`
+  registry keeps working.
+
+Where that is not enough (a macro writes a file, or keeps state elsewhere):
+
+- `@:hxmc.noCache` on a class types its module in every build;
+- `-D hxmc.no-cache=<package, module or library directory,...>` does so for
+  those;
+- `HXMC_MODULE_CACHE=0` turns the cache off.
+
+`HXMC_MODULE_CACHE_LOG=1` prints the reason, for example
+`Clock typed every build (macro called Date.now at src/Macros.hx:4)`.
+
+The cache is not used for display requests, the compilation server, builds
+with init macros (`--macro`), several compilations (`--next`), or HXB
+libraries and output, or by the WebAssembly compiler. The compilation
+server keeps upstream's behaviour.
+
+### Mir macros
+
+`-D hxmc.macros=mir` runs macros on hxmc's Mir interpreter inside the
+native compiler, instead of Eval. It is experimental. Compute-bound macros
+run several times faster; cold builds are slower. It is not in the
+WebAssembly compiler. The differences from Eval are listed in
+[hxmc.md](hxmc.md#macros-on-the-mir-interpreter).
+
+## Debugging
+
+- **Backtraces and breakpoints.** Build with `-debug` for DWARF lines and a
+  symbol table. gdb and lldb then stop at Haxe lines and name Haxe functions
+  (`pack.Class.field`) in backtraces. On Windows the DWARF is in the PE as
+  MinGW writes it: gdb, lldb and llvm-symbolizer read it; Visual Studio and
+  WinDbg do not (no PDB).
+- **Profilers.** Every function keeps a frame pointer (x86-64 by default,
+  arm64 always), so `perf record -g` works. Unwind tables are always
+  written. `-D hxmc.symbols` alone gives profilers names.
+- **Call stacks.** `haxe.CallStack` and exception stacks work natively. A
+  program gets the table of functions and lines only if it reads stacks.
+  With `-D hxmc.stacks` every program has it, and an uncaught exception
+  prints its frames (`Called from Main.f (src/Main.hx line 3)`).
+- **Runtime variables.** `RT_STATS=1` prints the collector's work,
+  `RT_VERIFY=1` checks the heap, `RT_MINOR_KB=<n>` fixes the nursery size.
+  More in [hxmc.md](hxmc.md#environment-variables).
+
+### Null access
+
+Reading or writing through null throws the String `"Null Access"`, which
+`catch` catches as any exception. Uncaught, the program prints `Uncaught
+exception: Null Access` and exits with 1. A call of a null Dynamic throws
+`Cannot call null`. `Reflect.field(null, "x")` stays null.
+
+Natively this costs nothing until it happens: the access faults and a
+fault handler turns the fault into a throw. A fault that is not a null
+access still kills the process. On WebAssembly each access is tested
+instead.
+
+## Known limitations
+
+- **WebAssembly**: no threads (creating one throws), sockets or processes;
+  `haxe.CallStack` is empty.
+- **Reflection** sees only what the program can reach: a class it never
+  constructs or uses as a value is not found by `Type.resolveClass`, and
+  methods nothing calls are not in `Type.getInstanceFields`
+  ([hxmc.md](hxmc.md#reachability)).
+- **`Reflect.deleteField`** removes only fields added at run time, not a
+  structure's own fields (as on cpp).
+- **A dynamic method set to null** is its own method again when read.
+- **Call stacks** show an inlined function's frame as its caller's.
+  `-D hxmc.no-frame-pointers` on x86-64 leaves stacks empty.
+- **`Std.string` of a structure** prints `{ a : 1, b : 2 }`, fields by
+  name, then fields added at run time.
+- **Debugging**: no variables in the debugger yet, no PDB on Windows.
+- **Android and iOS**: no release or device signing yet.
