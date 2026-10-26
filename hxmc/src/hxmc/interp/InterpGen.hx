@@ -165,6 +165,8 @@ class InterpSet {
 	// calls of native code and native code's calls of it go through the
 	// compiler's functions of InterpAbi, not stubs of its own
 	public final loaded:Bool;
+	// (loaded) the function being compiled to native code (interp.Tier)
+	public var nativeNow:Null<FuncInfo> = null;
 
 	public function new(spec:String, prep:Prep, ?exclude:Map<FuncInfo, Bool>, loaded = false) {
 		this.exclude = exclude;
@@ -175,7 +177,7 @@ class InterpSet {
 	}
 
 	public function wants(f:FuncInfo):Bool {
-		if (loaded) return exclude == null || !exclude.exists(f);
+		if (loaded) return f != nativeNow && (exclude == null || !exclude.exists(f));
 		if (f.module == null || StringTools.startsWith(f.module, "hxmc.rt.") || StringTools.startsWith(f.module, "hxmc.unsafe.") || f.cAbi != null) return false;
 		if (exclude != null && exclude.exists(f)) return false;
 		if (prefixes == null) return true;

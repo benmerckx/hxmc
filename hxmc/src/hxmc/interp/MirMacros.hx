@@ -121,7 +121,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
 	// the functions not compiled yet, by stub number, with their bundle's step
 	var lazies:Array<{f:FuncInfo, key:Null<String>, cold:Bool, step:StepState}> = [];
-	static final lazyLock = new sys.thread.Mutex();
+	// (the native tier compiles with the same steps: one lock)
+	static final lazyLock = Tier.lock;
 	// (the generation's latest step: what compiles its functions later)
 	var lineage:Null<{latest:StepState}> = null;
 	var lazyCompiled = 0;
@@ -205,6 +206,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			r;
 		};
 		hxmc.rt.Interp.lazyHook = (k, desc, regs) -> self.compileLazy(k, desc, regs);
+		// (hot functions compiled to native code: interp.Tier)
+		Tier.install();
 		macros.MacroApi.MacroNativeValues.resolveClass = name -> {
 			var c = Type.resolveClass(name);
 			if (c == null && self.apiTypesPending()) {
@@ -729,6 +732,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			inits.push(p);
 		for (f in funcs)
 			compiled.set(f, true);
+		// (each may be compiled to native code once it is called often: interp.Tier)
+		if (Tier.on()) {
+			var site = new MacroSite(st);
+			for (f in funcs) {
+				var x = hxmc.macro.Loader.xb.get(InterpGen.DESC + prep.funcSym(f));
+				if (x != null && !initFns.exists(f)) Tier.add(Ptr.ofI64(x.v), f, site);
+			}
+			Tier.loaded();
+		}
 		macros.MacroApi.MacroNativeValues.reset();
 		if (stats) Sys.stderr().writeString('hxmc.macros=mir: step $steps: ${funcs.length} functions (${Lambda.count(found)} native, $stubs compiled when first called), ${b.codeBytes} bytes of code, ${b.dataBytes} of data\n');
 	}
@@ -747,33 +759,36 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the arguments' references, kept across the collections compiling
 		// makes: rooted before anything is allocated, which may collect and
 		// move them while regs still has their old addresses)
-		var refs = rootArgs(f, regs);
+		var refs = Tier.root(f, regs);
 		// (macro code's threads: one compiles, the others find it compiled)
 		lazyLock.acquire();
 		if (!hxmc.rt.Interp.isStub(desc)) {
 			lazyLock.release();
-			unrootArgs(f, regs, refs);
+			Tier.unroot(f, regs, refs);
 			return;
 		}
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = false;
 		try {
-			st.enter();
-			var obj = new Obj();
-			st.compile(f, sym, p.key, p.cold, obj);
-			// (the literals of a kept object: its step's fingerprints named them, in its Prep)
-			if (p.step != st)
-				for (s in obj.symbols) {
-					var lit = s.section == null && !s.abs && !st.d.prep.e.strByName.exists(s.name) ? p.step.d.prep.e.strByName.get(s.name) : null;
-					if (lit != null) st.d.prep.addStr(lit, s.name);
-				}
-			var dg = new DataGen(st.d.prep, st.abi, obj, mf -> st.d.compileInterp(mf, obj));
-			dg.stringsUsed();
-			dg.cstrLiterals([]);
-			dg.emptyArrays([]);
-			dg.resources([]);
-			hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + sym, st.gen));
-			st.leave();
+			// (HXMC_MIR_TIER=native: to native code instead, the interpreter's when that fails)
+			if (!Tier.compileStub(desc, !p.cold)) {
+				st.enter();
+				var obj = new Obj();
+				st.compile(f, sym, p.key, p.cold, obj);
+				// (the literals of a kept object: its step's fingerprints named them, in its Prep)
+				if (p.step != st)
+					for (s in obj.symbols) {
+						var lit = s.section == null && !s.abs && !st.d.prep.e.strByName.exists(s.name) ? p.step.d.prep.e.strByName.get(s.name) : null;
+						if (lit != null) st.d.prep.addStr(lit, s.name);
+					}
+				var dg = new DataGen(st.d.prep, st.abi, obj, mf -> st.d.compileInterp(mf, obj));
+				dg.stringsUsed();
+				dg.cstrLiterals([]);
+				dg.emptyArrays([]);
+				dg.resources([]);
+				hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + sym, st.gen));
+				st.leave();
+			}
 		} catch (x:Dynamic) {
 			st.leave();
 			hxmc.rt.EvalCompat.on = order;
@@ -785,34 +800,11 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (st.cache != null && Driver.resident) CacheDir.settle();
 		hxmc.rt.EvalCompat.on = order;
 		lazyLock.release();
-		unrootArgs(f, regs, refs);
+		Tier.unroot(f, regs, refs);
 		lazyCompiled++;
 		var dt = haxe.Timer.stamp() - t0;
 		tCompile += dt;
 		if (stats) phases.set("compiled when first called", (phases.exists("compiled when first called") ? phases.get("compiled when first called") : 0.0) + dt);
-	}
-
-	// the references among f's arguments at regs (the interpreter's
-	// registers, which no collection sees) pushed on this thread's shadow
-	// stack, nothing allocated before; the first slot. Inline: pushed in the
-	// caller's frame, above its slots, given back as it returns or unwinds
-	// (its frame's pop); per thread, as threads may call stubs at once
-	static inline function rootArgs(f:FuncInfo, regs:Ptr):Ptr {
-		var first = hxmc.rt.Gc.sp;
-		for (j in 0...f.args.length)
-			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) hxmc.rt.Gc.pushRoot(Mem.obj(Mem.getPtr(regs, 8 * j)));
-		return first;
-	}
-
-	// (rootArgs' references, as collections left them, written back to regs)
-	static inline function unrootArgs(f:FuncInfo, regs:Ptr, first:Ptr) {
-		var s = first;
-		for (j in 0...f.args.length)
-			if (f.args[j].ty.match(hxmc.ir.Ir.Ty.TRef(_))) {
-				Mem.setPtr(regs, 8 * j, Mem.getPtr(s, 0));
-				s = s.add(8);
-			}
-		hxmc.rt.Gc.popRoots(first);
 	}
 
 	// the bytes of the bundles loaded (code: always 0, interp.InterpAbi)
@@ -871,6 +863,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (stats && steps > 0) {
 			Sys.stderr().writeString('hxmc.macros=mir: ${steps} steps, compile ${Std.int(tCompile * 1000)} ms, spare entries taken ${hxmc.macro.Loader.used()}\n');
 			Sys.stderr().writeString('hxmc.macros=mir: functions compiled when first called: ${lazyCompiled} of ${lazies.length} (${hxmc.macro.Loader.lateBytes} bytes)\n');
+			if (Tier.on()) Sys.stderr().writeString('hxmc.macros=mir: ' + Tier.report() + '\n');
 			Sys.stderr().writeString('hxmc.macros=mir: the std\'s bodies typed when asked for: ${MacroRuntime.lazyTyped} of ${MacroRuntime.lazyCount} ($rounds rounds)\n');
 			if (cache != null) Sys.stderr().writeString('hxmc.macros=mir: functions kept (BundleCache): ${cache.hits} found, ${cache.misses} compiled\n');
 			Sys.stderr().writeString('hxmc.macros=mir: bundles: ${codeBytes} bytes of code, ${dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
@@ -878,6 +871,40 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (stats)
 			for (k => v in phases)
 				Sys.stderr().writeString('  ${k}: ${Std.int(v * 1000)} ms\n');
+	}
+}
+
+// (interp.Tier) a step's functions compiled to native code: with the latest
+// step of their generation, as compileLazy compiles them
+@:access(hxmc.Driver)
+private class MacroSite extends Tier.TierSite {
+	final own:StepState;
+
+	public function new(own) {
+		super();
+		this.own = own;
+	}
+
+	override function driver():Driver
+		return own.lineage.latest.d;
+
+	override function gen():hxmc.macro.Loader.Gen
+		return own.lineage.latest.gen;
+
+	override function enter()
+		own.lineage.latest.enter();
+
+	override function leave()
+		own.lineage.latest.leave();
+
+	// (the literals its own step's fingerprints named, in that step's Prep)
+	override function literals(obj:Obj) {
+		var st = own.lineage.latest;
+		if (own != st)
+			for (s in obj.symbols) {
+				var lit = s.section == null && !s.abs && !st.d.prep.e.strByName.exists(s.name) ? own.d.prep.e.strByName.get(s.name) : null;
+				if (lit != null) st.d.prep.addStr(lit, s.name);
+			}
 	}
 }
 

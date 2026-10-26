@@ -114,8 +114,18 @@ class MirRun {
 		var obj = new Obj();
 		var emit = Target.emitter(abi, obj);
 		var ras = new Regalloc.Scratch(Target.selector(abi));
-		for (f in funcs)
+		// (HXMC_MIR_TIER=native: a stub of each function, compiled to native
+		// code when first called, but for the static initializers and the
+		// functions whose calls are no GC point, as MirMacros' stubs)
+		var lazies:Array<FuncInfo> = [];
+		var initFns = [for (f in prog.inits) f => true];
+		for (f in funcs) {
+			if (Tier.eager && Tier.on() && !initFns.exists(f) && !(f.noGc && !f.blocks) && InterpGen.stub(obj, abi, f, prep.funcSym(f), lazies.length)) {
+				lazies.push(f);
+				continue;
+			}
 			d.compileFunc(f, obj, emit, ras);
+		}
 		// (no native code: interp.InterpAbi)
 		var dg = new DataGen(prep, abi, obj, mf -> d.compileInterp(mf, obj));
 		dg.strings();
@@ -128,14 +138,29 @@ class MirRun {
 		dg.resources([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
+		// (hot functions compiled to native code: interp.Tier)
+		Tier.install();
+		var gen = hxmc.macro.Loader.gen();
+		if (lazies.length > 0) hxmc.rt.Interp.lazyHook = (k, desc, regs) -> compileLazy(d, gen, lazies[k], desc, regs);
 		var b = hxmc.macro.Loader.loadObj(obj, facts);
+		if (Tier.on()) {
+			var site = new RunSite(d, gen);
+			for (f in funcs) {
+				var x = @:privateAccess hxmc.macro.Loader.xb.get(InterpGen.DESC + prep.funcSym(f));
+				if (x != null) Tier.add(Ptr.ofI64(x.v), f, site);
+			}
+			Tier.loaded();
+		}
 		if (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")
 			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
 		var main = b.entries.get("main");
+		var report = () -> if (Tier.on() && (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")) Sys.stderr().writeString('hxmc mir-run: ' + Tier.report() + '\n');
 		try {
 			hxmc.macro.Loader.run0(main);
 			if (b.entries.exists("entryRun")) hxmc.macro.Loader.run0(b.entries.get("entryRun"));
+			report();
 		} catch (e:Dynamic) {
+			report();
 			// (as the program would: hxmc.rt.Start's rt_throw without a handler)
 			hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
 			Sys.exit(1);
@@ -344,6 +369,39 @@ class MirRun {
 
 	// the runtime's argc and argv the program reads (Sys.args): the compiler's
 	// path, then the program's arguments
+	// (hxmc.rt.Interp.lazyHook, HXMC_MIR_TIER=native) the function f of stub
+	// desc called the first time, its arguments in regs: compiled to native
+	// code (Tier.compileStub), or for the interpreter when that fails (a
+	// static initializer's call: before the functions are registered) and
+	// loaded as MirMacros.compileLazy does
+	static function compileLazy(d:Driver, gen:hxmc.macro.Loader.Gen, f:FuncInfo, desc:Ptr, regs:Ptr) {
+		var refs = Tier.root(f, regs);
+		Tier.lock.acquire();
+		var order = hxmc.rt.EvalCompat.on;
+		hxmc.rt.EvalCompat.on = false;
+		try {
+			if (hxmc.rt.Interp.isStub(desc) && !Tier.compileStub(desc, true)) {
+				var obj = new Obj();
+				var abi = d.abi;
+				d.compileFunc(f, obj, Target.emitter(abi, obj), new Regalloc.Scratch(Target.selector(abi)));
+				var dg = new DataGen(d.prep, abi, obj, mf -> d.compileInterp(mf, obj));
+				dg.stringsUsed();
+				dg.cstrLiterals([]);
+				dg.emptyArrays([]);
+				dg.resources([]);
+				hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + d.prep.funcSym(f), gen));
+			}
+		} catch (x:Dynamic) {
+			hxmc.rt.EvalCompat.on = order;
+			Tier.lock.release();
+			hxmc.rt.Interp.uncatchable = x;
+			throw x;
+		}
+		hxmc.rt.EvalCompat.on = order;
+		Tier.lock.release();
+		Tier.unroot(f, regs, refs);
+	}
+
 	static function setArgs() {
 		var all = [Sys.programPath()].concat(args);
 		var a = LibC.malloc(((all.length + 1) * 8 : I64));
@@ -359,4 +417,23 @@ class MirRun {
 		hxmc.rt.Start.argc = all.length;
 		hxmc.rt.Start.argv = a;
 	}
+}
+
+// (interp.Tier) --run's functions compiled to native code: its one step
+@:access(hxmc.Driver)
+private class RunSite extends Tier.TierSite {
+	final d:Driver;
+	final g:hxmc.macro.Loader.Gen;
+
+	public function new(d, g) {
+		super();
+		this.d = d;
+		this.g = g;
+	}
+
+	override function driver():Driver
+		return d;
+
+	override function gen():hxmc.macro.Loader.Gen
+		return g;
 }

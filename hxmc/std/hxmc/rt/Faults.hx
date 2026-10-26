@@ -36,6 +36,9 @@ class Faults {
 	// the image's code [lo, hi) (ELF: the whole image; Mach-O: __TEXT; PE: the image)
 	static var codeLo:Ptr;
 	static var codeHi:Ptr;
+	// code made at run time [lo, hi) (a Mir host's native tier: hxmc.interp.Tier), or empty
+	static var jitLo:Ptr;
+	static var jitHi:Ptr;
 	// POSIX: the actions installed before (struct sigaction, SA_BYTES each), SIGSEGV's then SIGBUS's
 	static var prev:Ptr;
 	static var installed:Bool;
@@ -159,7 +162,13 @@ class Faults {
 	}
 
 	@:hxmc.noGc static inline function inCode(pc:Ptr):Bool
-		return !pc.ult(codeLo) && pc.ult(codeHi);
+		return (!pc.ult(codeLo) && pc.ult(codeHi)) || (!pc.ult(jitLo) && pc.ult(jitHi));
+
+	// code made at run time in [lo, hi): its null accesses throw too (one range)
+	public static function addCode(lo:Ptr, hi:Ptr) {
+		jitLo = lo;
+		jitHi = hi;
+	}
 
 	@:hxmc.noGc static inline function near(a:Ptr):Bool
 		return Mem.ult(a.toI64() + NEAR, 2 * NEAR);

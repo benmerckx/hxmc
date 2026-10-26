@@ -378,8 +378,9 @@ linux-x86_64 native compiler.
    of the formatter build's instructions, the policy 2.5%; but json then
    runs 19% slower and mandelbrot (its loop in one call) 2.6 times slower,
    so the functions of compute-bound macros (under 3,000 words) stay
-   optimized. Tiering up hot functions is not done: no measured workload
-   has a hot function over the threshold (decision below).
+   optimized. Tiering up to the interpreter's optimized code is not done:
+   no measured workload has a hot function over the threshold; hot
+   functions are compiled to native code instead (decision below).
 4. **Results** (MirBench, interleaved, the median of five, wall time; the
    caches warm: the module cache and the compiled functions, each
    compiler its own, filled by a first build, then each run after the edit
@@ -490,16 +491,23 @@ macro context. Levers, none done:
 
 Open decisions:
 
-- **Tiering up.** Options: (a) none, the static size policy only (now);
-  (b) counts of calls in each descriptor (from interpreted callers: native
-  ones enter with addresses the collector does not see) and, at a
-  threshold, the function compiled with the optimizer into a bundle of
-  its own and the old descriptor forwarding to it (the interpreter checks
-  the forward pointer where it enters a function, so frames running the
-  old one finish on it); (c) (b) with counts of backward jumps too, for a
-  loop in one call, which needs entering the new code in the middle of a
-  frame. (b) covers a giant function called often, (c) mandelbrot's shape
-  over the threshold; neither has a measured workload yet.
+- **Tiering up.** (b) is done, to native code rather than optimized
+  interpreter code (docs/hxmc.md, "The native tier"; linux-x86_64): calls
+  counted in each descriptor, from every caller (pool entries enter
+  through `Interp.run` too), and at a threshold the function compiled
+  natively and its descriptor made a forwarder's. json as a macro 2.18 to
+  0.72 s, `--run` sha256 1.7 to 0.32 s, the rest unchanged. Left:
+  - (c), counts of backward jumps for a loop in one call (mandelbrot as a
+    macro 4.5 s, nbody under `--run` 9 s, unchanged): entering native code
+    in the middle of a frame, the interpreter's registers mapped onto the
+    native code's values at the loop's header;
+  - native code calling the native code of another tiered function
+    directly (it calls the pool entry, then the forwarder, now);
+  - the other targets: arm64 (branches of ±128 MB: a window near the
+    image, or veneers), macOS (`MAP_JIT`, W^X toggling per thread),
+    Windows (`VirtualAlloc`, unwind tables for the fault handler);
+  - more than one thread running interpreted code: `become` as one
+    atomic store (a descriptor's header behind a pointer).
 - **The default engine.** Mir macros match Eval where the module cache
   holds unchanged and under the server, are 2.4 to 13 times faster on
   compute-bound macros, and are behind on cold builds (by a fifth to a

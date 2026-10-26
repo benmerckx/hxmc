@@ -1087,6 +1087,85 @@ of their compilation and gains them nothing measurable, as they run a few
 times each; compute-bound macros' functions are far smaller (json's and
 mandelbrot's: under 3,000 words).
 
+### The native tier
+
+On linux-x86_64, a function of code loaded at run time (Mir macros, `--run`
+on Mir) that is called often is compiled to native code (`interp.Tier`):
+the interpreter counts each descriptor's calls (a word of its header), and
+every `HXMC_MIR_TIER` calls (a power of two, 1024 by default; 0: never) it
+gives the function's number (in its flags' upper bits, from `Tier.add`)
+and arguments to `Interp.tierHook`. The function is compiled as the
+program's own code is (the optimizer on, Escape too: `InterpSet.nativeNow`
+makes it native for that compilation), with its literals, empty arrays and
+data bound to its generation's (with the tier, the Loader keeps every data
+symbol of a bundle, so the native code has the same objects) and its
+allocation stubs (`DataGen.allocStubs`), then loaded
+(`Loader.loadNative`): its code in pages of its own, made executable once
+relocated, its data beside the bundles'. Its descriptor is then made a
+forwarder's (`Interp.become`): an interpreted function of its signature
+whose one call is a call-out to the native code. Whatever holds the
+descriptor (a call's symbol table, a pool entry, a static initializer's
+list) reaches the native code through it from then on; frames running the
+interpreted code finish on it. The native code calls interpreted
+functions through their pool entries, as the compiler's code does, and the
+compiler's functions and thread-local variables directly (the host table
+keeps each thread-local variable's offset from the thread pointer on
+linux-x86_64, made at the link as a local-exec relocation).
+
+Native code there reaches the compiler's image, the bundles' memory and
+itself with 32-bit displacements, as code linked with it would: with the
+tier on, every bundle's memory is in a window below 2 GB above the image
+(`Loader.alloc`, 0x40000000 to 0x7fff0000; the image is static from 4 MB),
+and so is native code, whose null accesses throw as the image's do
+(`Faults.addCode`). Nothing there is unmapped, as nothing is unloaded.
+
+Compiling collects. The hook pushes the function's reference arguments on
+the thread's shadow stack before anything is allocated (`Tier.root`,
+inline: above the caller's frame, popped with it): what it reads from the
+interpreter's registers is no root, and an allocation before it is rooted
+may move the object, leaving a stale copy to be copied again
+(`MirMacros.compileLazy` roots them the same way; a static array of roots
+would be shared by threads calling stubs at once). It compiles only at a GC point: a function whose
+calls are none (its callers keep references in registers across it,
+`f.noGc && !f.blocks`) is noted without allocating and compiled when a
+function that is one is counted. A stub (a function not compiled for the
+interpreter yet) is compiled for the interpreter first, so the BundleCache
+keeps its object. Nothing is compiled once a second thread has run
+interpreted code (`Interp.threads`): another thread's caller reads a
+descriptor's header in parts, which `become` rewrites. A function the tier
+cannot compile or load (a symbol the compiler lacks, an emulated
+thread-local variable, the pools' entries nearly given out: an eighth of
+each is kept) stays interpreted. `HXMC_MIR_TIER_LOG=1` (or
+`HXMC_MACRO_STATS=1`) names each function compiled and why one stays
+interpreted; `HXMC_MIR_TIER_MAX=<n>` compiles at most n, to bisect.
+`HXMC_MIR_TIER=native` skips the interpreter where it can: a function is
+compiled to native code at its first call (its stub's, `Tier.compileStub`;
+the interpreter's code only when that fails, or once a second thread runs
+interpreted code; `--run` on Mir then has stubs too), and the functions
+whose calls are no GC point, which have no stub, once their bundle is
+loaded (`Tier.loaded`: the loader is a GC point); a function the
+optimizer is off for (`HXMC_MIR_COLD`) is compiled so natively too. What
+remains interpreted is each forwarder's one call-out, the static
+initializers (run as their bundle loads) and what the tier cannot
+compile. Functions compiled late share the data they define with their
+generation (`Loader.share`: an empty array is one object). It pays where
+hot code runs in a few long calls (mandelbrot as a macro, nbody), which
+the counting tier leaves interpreted until OSR, and costs where much code
+runs once (every function called is compiled, optimized).
+`HXMC_MIR_TIER=1` compiles every function at its second call, a stress
+test: `make mir-run-check` passes so with `RT_VERIFY=1` and nurseries of 16
+to 64 KB, but for FrameChain, whose chain then passes through the
+interpreter's frames between native ones; `mir-macros-check` and
+`mir-cache-check` pass so too.
+
+Measured (Intel Xeon E-2356G, 6 cores / 12 threads, Linux 6.1, the median
+of five, tier off / on): json as a macro 2.18 / 0.72 s (Eval 5.3 s; five
+functions compiled in 3 ms), `--run` sha256 1.7 / 0.32 s, binarytrees 5.7
+/ 3.4 s; the formatter's build (two functions compiled, 1 ms), the trivial
+macro and the server's edit unchanged. A loop in one call (mandelbrot,
+nbody) is not helped: that needs entering native code in the middle of a
+frame (plans/compiler.md, "Tiering up").
+
 Cost (MirBench, wall time, the median of five, Intel Xeon @ 2.10 GHz,
 4 vCPUs, module cache off): a trivial macro (`macro 1` called from main,
 `--js`) 0.20 s (Eval 0.16 s; 0.28 s while every function reached was
