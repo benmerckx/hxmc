@@ -9,7 +9,7 @@ import hxmc.unsafe.*;
 
 // libuv behind hxmc.NativeUv (the Eval natives of eval.luv.*,
 // src/macros/eval/EvalLuv.hx), standing for the OCaml luv library; once C
-// (rt_uv.c), now Haxe calling libuv directly (docs/plans/lowlevel.md). libuv
+// (rt_uv.c), now Haxe calling libuv directly (docs/hxmc.md, "Runtime in Haxe"). libuv
 // itself stays the prebuilt uv.o, linked when a program uses it.
 //
 // Loops, handles, requests and directories are integer ids into a table of

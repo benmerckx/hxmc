@@ -4,8 +4,8 @@ import hxmc.Mir;
 import hxmc.Lir.Bits;
 import haxe.ds.Vector;
 
-// The shadow-stack frame after optimization (docs/plans/codegen.md,
-// "Object-level Mir"). Roots gives the rooted locals their slots on the IR,
+// The shadow-stack frame after optimization (docs/hxmc.md,
+// "Pipeline"). Roots gives the rooted locals their slots on the IR,
 // before inlining, Escape and Opt; after them, a store into a slot that no
 // load of the slot can see any more goes (Opt took the stored value where
 // nothing could collect in between, or the collection points were inlined

@@ -306,7 +306,7 @@ class LinkWasm {
 		section(m, 6, s);
 		// exports: the memory, _start and the table (the host calls a
 		// @:hxmc.callback through the address it was given, also after _start
-		// returned: docs/plans/lowlevel.md, "WebAssembly")
+		// returned: docs/interop.md, "WebAssembly")
 		s = new Buf(64);
 		Enc.uleb(s, 3);
 		Enc.name(s, "memory");

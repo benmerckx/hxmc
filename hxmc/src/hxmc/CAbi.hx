@@ -36,7 +36,7 @@ enum CRet {
 	RScalar(off:Int, ty:CTy);
 }
 
-// Structs by value in C calls, one place per ABI (docs/plans/lowlevel.md, "Calls
+// Structs by value in C calls, one place per ABI (docs/interop.md, "Calls
 // and linking"); MirBuild applies it to calls of C functions and to the
 // entries of @:hxmc.callback functions, CallConv places the parts
 // (MIns.cGroups, MIns.cRet, MFunc.cParams, MFunc.cRet) in registers and on

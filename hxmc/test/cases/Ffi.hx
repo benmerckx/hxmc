@@ -1,6 +1,6 @@
 import hxmc.unsafe.*;
 
-// C interop (docs/plans/lowlevel.md, "First milestone"): externs called directly
+// C interop (docs/interop.md, "C interop"): externs called directly
 // in the target's C convention (narrow integers, floats, bool, many
 // arguments on the stack, variadic calls), a prebuilt object linked
 // statically (Ffi.c) and a dynamic library (Ffi_dyn.c: a DLL on Windows, a

@@ -1,6 +1,6 @@
 package hxmc.unsafe;
 
-// Haxe functions called by C (docs/plans/lowlevel.md, "Callbacks"): a static
+// Haxe functions called by C (docs/interop.md, "Callbacks"): a static
 // function declared @:hxmc.callback, passed to C as its address:
 //
 //   @:hxmc.callback @:hxmc.unsafe static function onFree(p:Ptr):Void LibC.free(p);

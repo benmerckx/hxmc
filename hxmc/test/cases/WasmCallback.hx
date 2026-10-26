@@ -1,6 +1,6 @@
 import hxmc.unsafe.*;
 
-// Haxe called by JavaScript after main returned (docs/plans/lowlevel.md,
+// Haxe called by JavaScript after main returned (docs/interop.md,
 // "WebAssembly"), as a browser's requestAnimationFrame calls a frame: main
 // hands the host the addresses of @:hxmc.callback functions (their indices
 // in the exported __indirect_function_table) and returns; the host

@@ -3,7 +3,7 @@ package hxmc.unsafe;
 import hxmc.I64;
 
 // C's uint64_t (and size_t): the 64 bits of an I64 read as unsigned
-// (docs/plans/lowlevel.md, "C interop"). Arithmetic is I64's (wrapping, the same
+// (docs/interop.md, "C interop"). Arithmetic is I64's (wrapping, the same
 // bits); comparisons and division are unsigned.
 abstract UInt64(I64) from I64 to I64 {
 	// the low 32 bits

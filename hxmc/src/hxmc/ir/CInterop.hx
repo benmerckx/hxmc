@@ -8,7 +8,7 @@ import hxmc.ir.Lower.LowerError;
 
 using core.TFunctions;
 
-// C interop (docs/plans/lowlevel.md, "C interop"): the C type of a Haxe type in
+// C interop (docs/interop.md, "C interop"): the C type of a Haxe type in
 // extern signatures, struct fields and pointer accesses, the C layout of
 // @:hxmc.struct classes, and what the program's C externs are (filled while
 // lowering, read by MirBuild and the linkers).

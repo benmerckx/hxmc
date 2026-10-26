@@ -10,8 +10,8 @@ import core.ds.VectorTools.vector;
 using core.ds.VectorTools;
 
 // hxmc's IR (hxmc.ir.Ir: structured statements in A-normal form) of one
-// function to Mir: object-level Mir (docs/plans/codegen.md, "Object-level
-// Mir": objects made, their fields, arrays, structural access, type tests,
+// function to Mir: object-level Mir (docs/hxmc.md, "Pipeline": objects
+// made, their fields, arrays, structural access, type tests,
 // boxes, closures and virtual calls as operations, values typed: MIns.vty),
 // (objects), which the object-level passes (Inline, Escape) work on and
 // MemLower turns into memory-level Mir (lower). Here:

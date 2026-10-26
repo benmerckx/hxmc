@@ -16,8 +16,8 @@ using core.ds.VectorTools;
 // allocation with its slow path's stub, write barriers and the release
 // store of references, arrays' fast paths and the runtime's slow ones,
 // inline caches for structural access, explicit null tests, the shadow
-// stack around the slow paths of cold sites (docs/plans/codegen.md,
-// "Object-level Mir").
+// stack around the slow paths of cold sites (docs/hxmc.md,
+// "Pipeline").
 //
 // It runs after the object-level passes (Inline, Escape, Sroa, Opt,
 // Frames), on what is left, its write barriers and spills only where
