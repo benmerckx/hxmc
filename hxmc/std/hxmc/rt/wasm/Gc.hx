@@ -102,7 +102,9 @@ class Gc {
 		var m = Wasi.envInt("RT_MINOR_KB", -1);
 		minorFixed = m >= 0;
 		minorSize = (m >= 0 ? m : 4096) << 10;
-		if (minorSize < 4096) minorSize = 4096;
+		// (16 KB at least: an allocation of up to 4 KB is always made in the
+		// nursery, as generated code assumes, hxmc/rt/Gc.hx)
+		if (minorSize < 16384) minorSize = 16384;
 		if (minorSize > MINOR_MAX) minorSize = MINOR_MAX;
 		stats = Wasi.envInt("RT_STATS", -1) >= 0;
 		verifying = Wasi.envInt("RT_VERIFY", -1) >= 0;

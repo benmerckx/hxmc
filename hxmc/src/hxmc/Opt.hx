@@ -1203,7 +1203,7 @@ class Opt {
 	public var freshStores = 0; // (stats: the stores freshTargets took the barrier of)
 
 	// the largest object (slots) the runtime always allocates in the nursery
-	// (Gc.allocNow: a quarter of it at most; it is 4 KB at least)
+	// (Gc.allocNow: a quarter of it at most; it is 16 KB at least)
 	static inline var YOUNG_SLOTS = 63;
 
 	// A reference stored into an object allocated since the last point where

@@ -14,7 +14,10 @@ import core.ds.VectorTools.vector;
 // object is the first's address plus the first's bytes. Runs after MemLower
 // (Escape's replacements are not folded; Opt.lowered cleans up after it).
 class Fold {
-	// the most bytes one allocation takes for the objects folded into it
+	// the most bytes one allocation takes for the objects folded into it: no
+	// more than the runtime always allocates in the nursery (Gc.allocNow: a
+	// quarter of it, which is 16 KB at least), as the objects' initializing
+	// stores have no write barrier (Opt.freshTargets)
 	static inline var MAX_BYTES = 4096;
 
 	public static var on = Sys.getEnv("HXMC_FOLD") != "0";
