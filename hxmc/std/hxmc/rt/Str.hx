@@ -428,6 +428,41 @@ class Str {
 		return s;
 	}
 
+	// a + b + c (+ d) in one string: no intermediate ones (FnLower: a chain
+	// of +); one-byte when every operand is
+	@:hxmc.host("hx_str_concat3") static function concat3(a:String, b:String, c:String):String
+		return concat4(a, b, c, "");
+
+	@:hxmc.host("hx_str_concat4") static function concat4(a:String, b:String, c:String, d:String):String {
+		if (isNull(a)) a = "null";
+		if (isNull(b)) b = "null";
+		if (isNull(c)) c = "null";
+		if (isNull(d)) d = "null";
+		var na = len(a), nb = len(b), nc = len(c), nd = len(d);
+		if ((na == 0 || isOne(a)) && (nb == 0 || isOne(b)) && (nc == 0 || isOne(c)) && (nd == 0 || isOne(d))) {
+			var s = make1(na + nb + nc + nd);
+			var u = chars1(s);
+			if (na > 0) Repr.copy1(u, chars1(a), na);
+			if (nb > 0) Repr.copyTo1(u, na, chars1(b), nb);
+			if (nc > 0) Repr.copyTo1(u, na + nb, chars1(c), nc);
+			if (nd > 0) Repr.copyTo1(u, na + nb + nc, chars1(d), nd);
+			return s;
+		}
+		var s = make2(na + nb + nc + nd);
+		var u = chars2(s);
+		put2(u, 0, a, na);
+		put2(u, na, b, nb);
+		put2(u, na + nb, c, nc);
+		put2(u, na + nb + nc, d, nd);
+		return s;
+	}
+
+	// s's n units into the two-byte units u from ui (widened if one-byte)
+	static inline function put2(u:Chars, ui:Int, s:String, n:Int) {
+		if (n == 0) return;
+		if (isOne(s)) Repr.widen(u, ui, chars1(s), 0, n) else Repr.copyTo(u, ui, chars2(s), n);
+	}
+
 	@:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
 		// |v| <= 2^31 as an I64; u / 10 as (u * 0xCCCCCCCD) >>> 35
 		var m10 = ((0xCCCC : I64) << 16) | (0xCCCD : I64);
