@@ -149,9 +149,9 @@ class Worker {
 	static function handle(m:Request):Promise<Void> {
 		switch m.type {
 			case "warmup":
-				// (one run: the engine compiles the module's code meanwhile)
-				return instance("Main.hx", "", (_) -> {}, (_) -> {}).then((c) -> {
-					c.run(["--version"]);
+				// (one run: the engine compiles the module's code meanwhile; once
+				// more after an engine fault, as a request's)
+				return runOnce("Main.hx", "", (_) -> {}, (_) -> {}, ["--version"]).then((_) -> {
 					post({type: "ready"});
 				});
 			case "display" | "check":
