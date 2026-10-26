@@ -29,10 +29,10 @@ at one version:
 
 | Package | Size (tarball, unpacked) | |
 | --- | --- | --- |
-| `@hxmc/cli` | SIZE_CLI | what you install: the launcher (`haxe`, `hxmc`), upstream's std, hxmc's std, `dist/` for lix; optional dependencies on the six platform packages |
-| `@hxmc/linux-x64`, `@hxmc/linux-arm64` | SIZE_LINUX each | the native compiler for that machine and the runtime objects of its targets: `linux-<arch>/` (static, musl) and `linux-<arch>-glibc/` (`-D hxmc.libc=glibc`) |
-| `@hxmc/darwin-x64`, `@hxmc/darwin-arm64` | SIZE_DARWIN each | the same for macOS: `macos-x86_64/`, `macos-arm64/` (also the iOS targets') |
-| `@hxmc/win32-x64`, `@hxmc/win32-arm64` | SIZE_WIN each | the same for Windows: `windows-x86_64/`, `windows-arm64/` |
+| `@hxmc/cli` | 1.3 MB, 7.7 MB | what you install: the launcher (`haxe`, `hxmc`), upstream's std, hxmc's std, `dist/` for lix; optional dependencies on the six platform packages |
+| `@hxmc/linux-x64`, `@hxmc/linux-arm64` | about 10 MB, 34–38 MB each | the native compiler for that machine and the runtime objects of its targets: `linux-<arch>/` (static, musl) and `linux-<arch>-glibc/` (`-D hxmc.libc=glibc`) |
+| `@hxmc/darwin-x64`, `@hxmc/darwin-arm64` | about 8 MB, 26–28 MB each | the same for macOS: `macos-x86_64/`, `macos-arm64/` (also the iOS targets') |
+| `@hxmc/win32-x64`, `@hxmc/win32-arm64` | about 8 MB, 26–28 MB each | the same for Windows: `windows-x86_64/`, `windows-arm64/` |
 
 (Sizes of 0.1.0 as packed; CI's job summary lists each build's.) npm installs
 the platform package that matches the machine (by their `os` and `cpu`
