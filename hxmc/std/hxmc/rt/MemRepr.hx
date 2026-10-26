@@ -128,6 +128,14 @@ class MemRepr {
 	public static inline function copyTo1(dst:MemChars1, di:Int, src:MemChars1, n:Int)
 		LibC.memcpy(dst.at(di), src, (n : I64));
 
+	// dst[di, di + n) = src[si, si + n) (not overlapping), two-byte units
+	// (copyAt) or one-byte ones (copyAt1)
+	public static inline function copyAt(dst:MemChars, di:Int, src:MemChars, si:Int, n:Int)
+		LibC.memcpy(dst.at(di), src.at(si), (2 * n : I64));
+
+	public static inline function copyAt1(dst:MemChars1, di:Int, src:MemChars1, si:Int, n:Int)
+		LibC.memcpy(dst.at(di), src.at(si), (n : I64));
+
 	// dst[di, di + n) = src[si, si + n): one-byte units widened (widen), two-byte
 	// ones each below 0x100 narrowed (narrow)
 	@:hxmc.noGc public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)

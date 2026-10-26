@@ -761,24 +761,31 @@ class Str {
 		}
 	}
 
-	static function sbAddStr(b:Dynamic, s:String) {
-		var n = len(s);
+	static inline function sbAddStr(b:Dynamic, s:String)
+		sbAddRange(b, s, 0, len(s));
+
+	// s's units [pos, pos + n) appended (the buffer widened first if one of
+	// them is above 0xFF)
+	static function sbAddRange(b:Dynamic, s:String, pos:Int, n:Int) {
 		reserve(b, n);
 		var at = sbLen(b);
+		if (Repr.sbIsOne(b) && !isOne(s) && !Repr.fitsOne(chars2(s), pos, n)) Repr.sbWiden(b, Repr.sbCapacity(b), at);
+		sbPut(b, at, s, pos, n);
+		Repr.sbSetLen(b, at + n);
+	}
+
+	// s's units [pos, pos + n) written at `at` (room made; a two-byte
+	// buffer if any is above 0xFF; no GC point)
+	static inline function sbPut(b:Dynamic, at:Int, s:String, pos:Int, n:Int) {
 		if (Repr.sbIsOne(b)) {
 			if (isOne(s))
-				Repr.copyTo1(Repr.sbChars1(b), at, chars1(s), n);
-			else if (Repr.fitsOne(chars2(s), 0, n))
-				Repr.narrow(Repr.sbChars1(b), at, chars2(s), 0, n);
-			else {
-				Repr.sbWiden(b, Repr.sbCapacity(b), at);
-				Repr.copyTo(Repr.sbChars2(b), at, chars2(s), n);
-			}
+				Repr.copyAt1(Repr.sbChars1(b), at, chars1(s), pos, n);
+			else
+				Repr.narrow(Repr.sbChars1(b), at, chars2(s), pos, n);
 		} else if (isOne(s))
-			Repr.widen(Repr.sbChars2(b), at, chars1(s), 0, n);
+			Repr.widen(Repr.sbChars2(b), at, chars1(s), pos, n);
 		else
-			Repr.copyTo(Repr.sbChars2(b), at, chars2(s), n);
-		Repr.sbSetLen(b, at + n);
+			Repr.copyAt(Repr.sbChars2(b), at, chars2(s), pos, n);
 	}
 
 	@:hxmc.host("StringBuf_add") static function sbAdd(b:Dynamic, x:Dynamic):Void
@@ -808,8 +815,161 @@ class Str {
 		}
 	}
 
-	@:hxmc.host("StringBuf_addSub") static function sbAddSub(b:Dynamic, s:String, pos:Int, lenp:Null<Int>):Void
-		sbAddStr(b, substr(s, pos, lenp));
+	// (substr's range, copied without the substring)
+	@:hxmc.host("StringBuf_addSub") static function sbAddSub(b:Dynamic, s:String, pos:Int, lenp:Null<Int>):Void {
+		if (isNull(s)) {
+			sbAddStr(b, substr(s, pos, lenp));
+			return;
+		}
+		var n = len(s);
+		var l:Int = lenp == null ? n : lenp;
+		if (pos < 0) {
+			pos += n;
+			if (pos < 0) pos = 0;
+		}
+		if (pos > n) return;
+		if (l < 0) {
+			l += n - pos;
+			if (l < 0) return;
+		}
+		if (pos + l > n) l = n - pos;
+		if (l > 0) sbAddRange(b, s, pos, l);
+	}
+
+	// unit u (below 0x100) written at `at` (room made)
+	static inline function sbUnit(b:Dynamic, at:Int, u:Int)
+		if (Repr.sbIsOne(b)) Repr.sbChars1(b).set(at, u) else Repr.sbChars2(b).set(at, u);
+
+	#if !hxmc.wasm_gc
+	// eight one-byte units (lanes1) or four two-byte ones (lanes2) of a 64-bit
+	// word at a time: whether a lane of x is zero, or below 0x20
+	static inline function lanes1(n:Int):I64
+		return ((n * 0x1010101 : I64) << 32) | (((n * 0x1010101 : I64) << 32) >>> 32);
+
+	static inline function lanes2(n:Int):I64
+		return ((n * 0x10001 : I64) << 32) | (((n * 0x10001 : I64) << 32) >>> 32);
+
+	static inline function zero1(x:I64):Bool
+		return (x - lanes1(1)) & ~x & lanes1(0x80) != (0 : I64);
+
+	static inline function low1(x:I64):Bool
+		return (x - lanes1(0x20)) & ~x & lanes1(0x80) != (0 : I64);
+
+	static inline function zero2(x:I64):Bool
+		return (x - lanes2(1)) & ~x & lanes2(0x8000) != (0 : I64);
+
+	static inline function low2(x:I64):Bool
+		return (x - lanes2(0x20)) & ~x & lanes2(0x8000) != (0 : I64);
+	#end
+
+	// the index of the first quote, backslash or 0 unit of s from pos (its
+	// length if none): haxe.format.JsonParser.parseString's units to skip
+	// (hxmc's)
+	@:hxmc.noGc public static function jsonRun(s:String, pos:Int):Int {
+		var n = len(s);
+		var i = pos < 0 ? 0 : pos;
+		if (isOne(s)) {
+			var c = chars1(s);
+			#if !hxmc.wasm_gc
+			while (i + 8 <= n) {
+				var w = Mem.getI64(c.at(i), 0);
+				if (zero1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
+				i += 8;
+			}
+			#end
+			while (i < n) {
+				var u = c.get(i);
+				if (u == '"'.code || u == '\\'.code || u == 0) break;
+				i++;
+			}
+			return i;
+		}
+		var c = chars2(s);
+		#if !hxmc.wasm_gc
+		while (i + 4 <= n) {
+			var w = Mem.getI64(c.at(i), 0);
+			if (zero2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
+			i += 4;
+		}
+		#end
+		while (i < n) {
+			var u = c.get(i);
+			if (u == '"'.code || u == '\\'.code || u == 0) break;
+			i++;
+		}
+		return i;
+	}
+
+	static inline function jsonEscaped(u:Int):Bool
+		return u == '"'.code || u == '\\'.code || u <= 13 && (u == 10 || u == 13 || u == 9 || u == 8 || u == 12);
+
+	// the index of the first unit of s from i, before n, that JsonPrinter
+	// escapes (n if none); the words skipped stop at any unit below 0x20
+	@:hxmc.noGc static function jsonPlain(s:String, i:Int, n:Int):Int {
+		if (isOne(s)) {
+			var c = chars1(s);
+			#if !hxmc.wasm_gc
+			while (i + 8 <= n) {
+				var w = Mem.getI64(c.at(i), 0);
+				if (low1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
+				i += 8;
+			}
+			#end
+			while (i < n && !jsonEscaped(c.get(i)))
+				i++;
+			return i;
+		}
+		var c = chars2(s);
+		#if !hxmc.wasm_gc
+		while (i + 4 <= n) {
+			var w = Mem.getI64(c.at(i), 0);
+			if (low2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
+			i += 4;
+		}
+		#end
+		while (i < n && !jsonEscaped(c.get(i)))
+			i++;
+		return i;
+	}
+
+	// s as haxe.format.JsonPrinter quotes a string (its seven escapes, the
+	// other units as they are), appended in one go: the runs without an
+	// escape copied whole (JsonPrinter.quote, hxmc's)
+	@:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
+		// (room for s and the quotes; an escape makes room for itself and
+		// the rest: it may collect)
+		var n = len(s);
+		reserve(b, n + 2);
+		var at = sbLen(b);
+		if (Repr.sbIsOne(b) && !isOne(s) && !Repr.fitsOne(chars2(s), 0, n)) Repr.sbWiden(b, Repr.sbCapacity(b), at);
+		sbUnit(b, at++, '"'.code);
+		var i = 0;
+		while (i < n) {
+			var j = jsonPlain(s, i, n);
+			if (j > i) {
+				sbPut(b, at, s, i, j - i);
+				at += j - i;
+			}
+			if (j == n) break;
+			var u = unit(s, j);
+			if (at + 2 + (n - j - 1) + 1 > Repr.sbCapacity(b)) {
+				Repr.sbSetLen(b, at);
+				reserve(b, 2 + (n - j - 1) + 1);
+			}
+			sbUnit(b, at++, '\\'.code);
+			sbUnit(b, at++, switch u {
+				case 10: 'n'.code;
+				case 13: 'r'.code;
+				case 9: 't'.code;
+				case 8: 'b'.code;
+				case 12: 'f'.code;
+				case _: u;
+			});
+			i = j + 1;
+		}
+		sbUnit(b, at++, '"'.code);
+		Repr.sbSetLen(b, at);
+	}
 
 	@:hxmc.host("StringBuf_clear") @:hxmc.noGc static function sbClear(b:Dynamic):Void
 		Repr.sbSetLen(b, 0);

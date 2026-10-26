@@ -96,6 +96,12 @@ class GcRepr {
 	public static inline function copyTo1(dst:GcChars, di:Int, src:GcChars, n:Int)
 		W.strCopy(dst, di, src, 0, n);
 
+	public static inline function copyAt(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
+
+	public static inline function copyAt1(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
+
 	public static inline function widen(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
 		W.strCopy(dst, di, src, si, n);
 
