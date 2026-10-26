@@ -1,14 +1,13 @@
 // `hxmc-rebuild` (packages/source, @hxmc/source: not published for now):
 // builds the compiler again from the package's (possibly edited) haxe/src,
-// hxmc/src and hxmc/std, with @hxmc/haxe's std and the installed runtime
-// objects, into the cache (<cache>/npm/<version>/rebuild/<target>/: haxe[.exe]
-// and hxmc-std), where @hxmc/haxe's launcher prefers it while @hxmc/source is
-// installed.
+// hxmc/src and hxmc/std, with @hxmc/cli's std and the platform package's
+// runtime objects, into the cache (<cache>/npm/<version>/rebuild/<target>/:
+// haxe[.exe] and hxmc-std), where @hxmc/cli's launcher prefers it while
+// @hxmc/source is installed.
 //   hxmc-rebuild            the native compiler builds it (the platform
 //                           package's: seconds; its compiled modules are kept
 //                           in build/, so the next rebuild compiles only what
-//                           changed); without one that runs, the WebAssembly
-//                           compiler (@hxmc/haxe-wasm, installed or downloaded)
+//                           changed)
 //   hxmc-rebuild --reset    back to the published compiler
 // One build at a time: <dir>/build.lock holds the builder's process id.
 import { createRequire } from 'node:module';
@@ -19,18 +18,18 @@ import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const srcDir = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-// @hxmc/haxe's launcher
+// @hxmc/cli's launcher
 let launcherPath;
 try {
-	launcherPath = path.join(path.dirname(createRequire(import.meta.url).resolve('@hxmc/haxe/package.json')), 'hxmc', 'bootstrap', 'launcher.mjs');
+	launcherPath = path.join(path.dirname(createRequire(import.meta.url).resolve('@hxmc/cli/package.json')), 'hxmc', 'bootstrap', 'launcher.mjs');
 } catch {
-	console.error('hxmc-rebuild: @hxmc/haxe is not installed (npm i -D @hxmc/cli @hxmc/source)');
+	console.error('hxmc-rebuild: @hxmc/cli is not installed (npm i -D @hxmc/cli @hxmc/source)');
 	process.exit(1);
 }
 const L = await import(pathToFileURL(launcherPath).href);
 const srcVersion = JSON.parse(fs.readFileSync(path.join(srcDir, 'package.json'), 'utf8')).version;
 if (srcVersion !== L.version) {
-	console.error(`hxmc-rebuild: @hxmc/source ${srcVersion} needs @hxmc/haxe ${srcVersion} (installed: ${L.version})`);
+	console.error(`hxmc-rebuild: @hxmc/source ${srcVersion} needs @hxmc/cli ${srcVersion} (installed: ${L.version})`);
 	process.exit(1);
 }
 const host = L.hostTarget();
@@ -66,23 +65,15 @@ while (true) {
 
 let code = 1;
 try {
-	// the compiler that builds: the platform package's native one, else WebAssembly
+	// the compiler that builds: the platform package's native one
 	const native = L.platformBinary();
-	let run;
-	if (native && L.nativeRuns(native)) {
-		console.log(`hxmc-rebuild: building with ${native}`);
-		run = (args, env) => {
-			const r = spawnSync(native, args, { stdio: 'inherit', env: L.toolEnv(env) });
-			if (r.error) throw r.error;
-			return r.status ?? 1;
-		};
-	} else {
-		const { wasmPackage } = await import(pathToFileURL(path.join(path.dirname(launcherPath), 'wasm.mjs')).href);
-		const wasm = await wasmPackage();
-		const { wasiPath } = await import(pathToFileURL(path.join(wasm, 'wasi.mjs')).href);
-		console.log(`hxmc-rebuild: no native compiler runs here: building with the WebAssembly one (${wasm}; slower)`);
-		run = (args, env) => L.wasm(wasm, args.map(a => a.startsWith('hxmc=') ? `hxmc=${wasiPath(a.slice(5))}` : a), host, env);
-	}
+	if (!native || !L.nativeRuns(native)) throw new Error(`no native compiler runs here (${L.hostTarget()})`);
+	console.log(`hxmc-rebuild: building with ${native}`);
+	const run = (args, env) => {
+		const r = spawnSync(native, args, { stdio: 'inherit', env: L.toolEnv(env) });
+		if (r.error) throw r.error;
+		return r.status ?? 1;
+	};
 	const t0 = Date.now();
 	// hxmc's std as programs see it (hxmc/src/hxmc/MkStd.hx, on Eval)
 	const std = path.join(dir, 'hxmc-std');

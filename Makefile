@@ -333,15 +333,15 @@ bin/wasm/hih-legacy.wasm: $(TOOL) $(PORT_SRC) $(STD)
 
 # --- The npm packages (packages/, packed by packages/pack.mjs) ---
 
-# @hxmc/target's std (packages/target/std): hxmc's merged std; the runtime
-# objects' packages (@hxmc/rt-<target>) are packed from bin/hxmc/rt
-TARGET_STD := packages/target/std
-NPM_GEN := $(TARGET_STD)/.stamp $(HOST_RT)
-$(TARGET_STD)/.stamp: hxmc/src/hxmc/MkStd.hx $(STD_SRC)
-	$(RUN) -cp hxmc/src --run hxmc.MkStd hxmc/std haxe/upstream/std $(TARGET_STD)
-# the compilers: native for the platform packages (@hxmc/haxe-<os>-<cpu>), with
-# every generator as a wasm32-wasi module (@hxmc/haxe-wasm)
-NPM_NATIVES := $(foreach t,$(TARGETS),bin/npm/native/$(t)/haxe$(call EXE,$(t))) bin/npm/native/wasm32-wasi/haxe.wasm
+# what @hxmc/cli ships besides its sources (packages/cli): hxmc's merged std
+# (the platform packages take the runtime objects from bin/hxmc/rt)
+CLI_BOOT := packages/cli/hxmc/bootstrap
+NPM_GEN := $(CLI_BOOT)/hxmc-std/.stamp $(HOST_RT)
+$(CLI_BOOT)/hxmc-std/.stamp: hxmc/src/hxmc/MkStd.hx $(STD_SRC)
+	$(RUN) -cp hxmc/src --run hxmc.MkStd hxmc/std haxe/upstream/std $(CLI_BOOT)/hxmc-std
+# the compilers: native for the platform packages (@hxmc/<os>-<cpu>); also
+# every generator as a wasm32-wasi module (make measure; not packed)
+NPM_NATIVES := $(foreach t,$(TARGETS),bin/npm/native/$(t)/haxe$(call EXE,$(t)))
 bin/npm/native/wasm32-wasi/haxe.wasm: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD)
 	$(call hxmc,$@,$(PKG_ARGS) -D hxmc.target=wasm32-wasi)
 bin/npm/native/%/haxe: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
@@ -622,7 +622,7 @@ full: $(TOOL) $(STD) $(HOST_RT)
 
 clean:
 	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/android bin/ios bin/dev bin/corpus \
-		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(TARGET_STD)
+		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(CLI_BOOT)/hxmc-std
 
 distclean: clean
 	rm -rf bin

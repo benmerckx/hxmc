@@ -1,8 +1,8 @@
-// @hxmc/haxe's postinstall (best effort: never fails the install, no
+// @hxmc/cli's postinstall (best effort: never fails the install, no
 // network, writes only inside the package): the native compiler of the
-// platform package (@hxmc/haxe-<os>-<cpu>) in place of the launcher, once it is
-// seen to run here (not in WebContainers or on a noexec file system, where the
-// launcher runs the WebAssembly compiler), so that on Unix
+// platform package (@hxmc/<os>-<cpu>) in place of the launcher, once it is
+// seen to run here (not on a noexec file system, in a sandbox without
+// processes, ...), so that on Unix
 // node_modules/.bin/haxe runs it without node (on Windows npm's haxe.cmd always
 // starts node; dist/haxe.exe is the native compiler for editors and lix).
 // With install scripts disabled, the launcher does the same on its first call.

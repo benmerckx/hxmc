@@ -16,8 +16,7 @@ tech". The designs behind each item are in
   Trust that it is the same compiler comes from the tests: the conformance
   lanes, the fuzzer, upstream's suites, and real code bases.
 - **Distribution through npm.** `@hxmc/cli` with a native compiler per
-  platform and a WebAssembly fallback, `@hxmc/haxe` for the port alone, the
-  runtime objects per target; later the sources and `hxmc-rebuild` for
+  platform, with that machine's runtime objects; later the sources and `hxmc-rebuild` for
   anyone who wants a compiler of their own
   ([packaging.md](docs/plans/packaging.md)).
 - **Divergent additions only where they never change output**: the module

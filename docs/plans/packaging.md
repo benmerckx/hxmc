@@ -6,35 +6,33 @@ the six desktop targets: [docs/using.md](../using.md) and
 
 ## The npm packages (from 0.1.0)
 
-- `@hxmc/cli`: the main install. `haxe` and `hxmc`, both `@hxmc/haxe`'s
-  launcher; depends on `@hxmc/haxe` and `@hxmc/target` at its version.
-- `@hxmc/haxe`: the port alone, usable without the hxmc target (js, hl,
-  jvm, ...): the launcher, upstream's std, `dist/` for lix; optional
-  dependencies on `@hxmc/haxe-<os>-<cpu>` (the six native compilers), and
-  `@hxmc/haxe-wasm` downloaded on demand where none runs (its integrity
-  pinned in `@hxmc/haxe`'s `package.json`).
-- `@hxmc/target`: hxmc's std, and the integrity of each runtime-object
-  tarball.
-- `@hxmc/rt-<target>` (the ten directories of `bin/hxmc/rt`): the runtime
-  objects of one target, without `os` or `cpu` fields, so any installs
-  anywhere (cross builds). The launcher takes an installed one, else the
-  cache's, else downloads it on the first build that needs it (never at
-  install: CI and offline machines install the ones they need).
+Seven packages, under the names the nightlies used:
 
-The runtime objects were in `@hxmc/cli` before (33 MB unpacked of all
-targets, most of the package); now a project gets only its targets'. Not
-published from 0.1.0: `@hxmc/source` (the compiler's sources and
+- `@hxmc/cli`: the one install. The launcher (`haxe`, `hxmc`), upstream's
+  std, hxmc's std, `dist/` for lix; optional dependencies on the six
+  platform packages.
+- `@hxmc/<os>-<cpu>` (linux-x64, linux-arm64, darwin-x64, darwin-arm64,
+  win32-x64, win32-arm64): the native compiler of that machine and the
+  runtime objects of its targets (Linux's with the glibc mode's), selected
+  by npm through `os` and `cpu`.
+
+The runtime objects of all targets were in `@hxmc/cli` before (most of the
+package); now an install gets its machine's. A cross build installs the
+other machine's platform package with `--force` (its compiler unused).
+Android's runtime objects are in no package for now (the `rt-<hash>`
+release, or a build from source, through `HXMC_RT_DIR`).
+
+Not published from 0.1.0: `@hxmc/source` (the compiler's sources and
 `hxmc-rebuild`, kept in `packages/source`: the hackable compiler comes
-later), and the nightlies' names `@hxmc/<os>-<cpu>` and `@hxmc/wasm`
-(now `@hxmc/haxe-<os>-<cpu>` and `@hxmc/haxe-wasm`); their npm pages can
-say so with `npm deprecate`.
+later), and `@hxmc/wasm` (the compiler as a WebAssembly module, the
+fallback where no native compiler ran: gone with the launcher's path to
+it); their npm pages can say so with `npm deprecate`.
 
 ## Open
 
 - **Verifying the native build**: builds are deterministic (the port
   self-compiles to identical HXB, the tool rebuilds itself identically),
-  so a compiler built on the user's machine (`hxmc-rebuild`, or the
-  WebAssembly fallback building a native one) can be checked against a
+  so a compiler built on the user's machine (`hxmc-rebuild`) can be checked against a
   hash published with the package: stronger than trusting a downloaded
   binary.
 - **First run**: the std's modules from the module cache, warmed at

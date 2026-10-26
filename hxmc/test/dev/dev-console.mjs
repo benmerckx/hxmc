@@ -41,7 +41,7 @@ fs.writeFileSync(path.join(work, 'build.hxml'), ['-cp src', '-main Main', `--cus
 
 const lines = [];
 const waiters = [];
-const dev = spawn(process.execPath, [path.join(repo, 'packages/haxe/hxmc/bootstrap/dev.mjs'), compiler, 'build.hxml'],
+const dev = spawn(process.execPath, [path.join(repo, 'packages/cli/hxmc/bootstrap/dev.mjs'), compiler, 'build.hxml'],
 	{ cwd: work, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HAXE_STD_PATH: process.env.HAXE_STD_PATH ?? path.join(repo, 'haxe/upstream/std') } });
 const onLine = (l) => {
 	lines.push(l);

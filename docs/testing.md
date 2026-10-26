@@ -297,24 +297,18 @@ tooltips and tables; the
 playground's compiler with both modules, its fallback to the legacy one in a
 Chromium without exnref, and its worker running a request again after a
 fault of the engine, faked (the WebKit of Safari 26.0 at times faults in
-correct code: `site/client/Worker.hx`)), `npm` (the packages, installed from
-their tarballs in fresh projects on each of the six machines: native at once
-through the platform package with the runtime objects of the machine, also
-run without node, `-lib` from lix's scopes, node_modules and haxelib
-(`hxmc/test/Libraries.hx`), `--ignore-scripts`; on linux-x64 `@hxmc/haxe`
-alone (js, and the hxmc target's message), cross builds with the runtime
-objects of windows-x86_64 and android-arm64 installed, and runtime objects
-downloaded on first use (from local tarballs: `HXMC_RT_TARBALLS`; offline,
-a tarball that is not the pinned one); and on linux-x64, or on all six on
-main, tags and the nightly run, lix with `dist/`, the WebAssembly fallback,
-downloaded (from the local tarball: `HXMC_WASM_TARBALL`, a path or URL in
-place of the registry's) and installed (with `-lib` by the WebAssembly
-compiler)), `upstream-tests`, and `publish-npm` (after every check; all of
-them at one version, their names, versions and pinned dependencies checked,
-skipping those published already: the six platform packages,
-`@hxmc/haxe-wasm`, `@hxmc/haxe`, the ten `@hxmc/rt-<target>`,
-`@hxmc/target`, then `@hxmc/cli`, with provenance, through npm's trusted publishing (OIDC; no token): on `v*` tags as
-`latest`, from main as a
+correct code: `site/client/Worker.hx`)), `npm` (the seven packages, installed
+from their tarballs in fresh projects on each of the six machines: native at
+once through the platform package, js, `-lib` from lix's scopes,
+node_modules and haxelib (`hxmc/test/Libraries.hx`), `--ignore-scripts`; on
+linux-x64 a cross build for windows-x86_64, failing with the package to
+install, then with `@hxmc/win32-x64` installed (`--force`), and Android's
+message; and on linux-x64, or on all six on main, tags and the nightly run,
+lix with `dist/`), `upstream-tests`, and `publish-npm` (after every check; the
+seven at one version, their names, versions and `@hxmc/cli`'s optional
+dependencies checked, skipping those published already: the six platform
+packages, then `@hxmc/cli`, with provenance, through npm's trusted publishing
+(OIDC; no token): on `v*` tags as `latest`, from main as a
 nightly prerelease `<version>-nightly.<date>.<commit>` tagged `next`; never
 from other branches), the nightly release and the website.
 
