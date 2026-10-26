@@ -1311,6 +1311,19 @@ class Dyn {
 	public static function callMethod(f:Dynamic, args:Array<Dynamic>):Dynamic
 		return dynCall(f, args);
 
+	// whether dynEq of x and any value is their identity: x null, or not a
+	// box, a String (of either width), a type object or a closure (each of
+	// which dynEq compares otherwise); Array's searches then compare words
+	@:hxmc.noGc public static function identityEq(x:Dynamic):Bool {
+		if (Str.isNull(x)) return true;
+		var t = tindex(x);
+		if (t >= T_FIRST) {
+			var k = tk(ty(t));
+			return k != TK_CLOSURE && k != TK_BOUND;
+		}
+		return !(t == T_BOXINT || t == T_BOXFLOAT || t == T_BOXBOOL || t == T_BOXI64 || isString(t) || t == T_TYPEOBJ);
+	}
+
 	@:hxmc.noGc static function isMethodClosure(t:Int):Bool {
 		if (tk(ty(t)) != TK_CLOSURE) return false;
 		var nm = name(ty(t));

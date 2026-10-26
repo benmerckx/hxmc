@@ -33,6 +33,10 @@ class MemRepr {
 	public static inline function stdString(v:Dynamic):String
 		return Dyn.stdString(v);
 
+	// whether Haxe's == of x and any value is identity (Dyn.identityEq)
+	public static inline function identityEq(x:Dynamic):Bool
+		return Dyn.identityEq(x);
+
 	public static inline function dynEq(a:Dynamic, b:Dynamic):Bool
 		return Dyn.dynEq(a, b);
 
