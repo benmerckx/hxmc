@@ -27,7 +27,7 @@ enum abstract XOp(Int) to Int from Int {
 	var NEG;
 	var NOT;
 	var CQO; // rdx <- sign of rax (size)
-	var IDIV; // rax, rdx <- rdx:rax / s1
+	var IDIV; // rax, rdx <- rdx:rax / s1 (cond 6: unsigned)
 	var CMP; // flags <- s1 - s2
 	var CMPI; // flags <- s1 - imm
 	var TESTI; // flags <- s1 & imm
@@ -678,6 +678,19 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.s1 = dv;
 				x.size = size;
 				mov(reg(i.id), i.op == Div ? RAX : RDX, size);
+			case UDiv | URem:
+				var size = sz(i.ty);
+				var dv = use(i.b);
+				mov(RAX, use(i.a), size);
+				var z = emit(MOVI);
+				z.flag = true; // (mov: flags may be live)
+				z.d = RDX;
+				z.size = 4;
+				var x = emit(IDIV);
+				x.s1 = dv;
+				x.cond = 6;
+				x.size = size;
+				mov(reg(i.id), i.op == UDiv ? RAX : RDX, size);
 			case FAdd | FSub | FMul | FDiv:
 				// commutative: a constant as the second operand (a memory
 				// operand), else the operand used only here as the destination

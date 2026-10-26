@@ -20,7 +20,7 @@ enum abstract AOp(Int) to Int from Int {
 	var ALUI; // d <- s1 op imm
 	var ADDSH; // d <- s1 + (s2 << imm)
 	var MUL;
-	var SDIV;
+	var SDIV; // d <- s1 / s2 (flag: udiv)
 	var MSUB; // d <- s3 - s1 * s2
 	var SHIFT; // d <- s1 (cond: 2 lsl, 3 lsr, 4 asr) s2
 	var SHIFTI; // d <- s1 op imm
@@ -390,16 +390,18 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					x.s2 = use(i.b);
 					x.size = sz(i.ty);
 				}
-			case Div:
+			case Div | UDiv:
 				var x = emit(SDIV);
 				x.d = reg(i.id);
 				x.s1 = use(i.a);
 				x.s2 = use(i.b);
+				x.flag = i.op == UDiv;
 				x.size = sz(i.ty);
-			case Rem:
+			case Rem | URem:
 				var a = use(i.a), bb = use(i.b);
 				var q = f.newReg(false);
 				var x = emit(SDIV);
+				x.flag = i.op == URem;
 				x.d = q;
 				x.s1 = a;
 				x.s2 = bb;

@@ -147,6 +147,8 @@ enum abstract IOp(Int) from Int to Int {
 	var SPECIAL;
 	var FENCE;
 	var LAZY;
+	var UDIV64;
+	var UREM64;
 }
 
 // The functions -D hxmc.interp interprets: those of the program's modules
@@ -1002,6 +1004,12 @@ class InterpGen {
 				op2(i.ty == I32 ? REM32 : REM64, i);
 			case Rotr:
 				op2(i.ty == I32 ? ROTR32 : ROTR64, i);
+			case UDiv if (i.ty == I64):
+				op2(UDIV64, i);
+			case URem if (i.ty == I64):
+				op2(UREM64, i);
+			case UDiv | URem:
+				throw new MirBuild.Unsupported("-D hxmc.interp: " + MFunc.opName(i.op) + " of " + MFunc.tyName(i.ty));
 			case FAdd:
 				op2(FADD, i);
 			case FSub:
