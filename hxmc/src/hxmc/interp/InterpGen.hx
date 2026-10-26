@@ -237,11 +237,12 @@ class InterpSet {
 // the symbol table (8 bytes each, relocated: call-out stubs, other
 // descriptors; zeroed: inline caches), then the parameters' sources (32
 // bits each: an entry's byte offset in InterpAbi's register image), then
-// (hxmc.ir.Lower.sitePositions: Mir macros) the positions of the calls and
-// throws, whose offset from the descriptor is the header's word at
-// H_POSITIONS (0: none): their count, each one's code word, characters
-// (min, max) and file's index, then the files (their byte length, their
-// bytes): hxmc.rt.Stacks.interpFrames' frames read as positions there.
+// (hxmc.ir.Lower.lines) its lines, whose offset from the descriptor is the
+// header's word at H_POSITIONS (0: none): their count, each one's code word
+// (where its code starts), line and file's string, then the strings (their
+// count, each one's byte length and bytes), the first the function's name:
+// hxmc.rt.Stacks names an interpreted frame there, as a native one through
+// the program's table of functions and lines.
 //
 // Registers: the constants (deduplicated), the parameters (a caller writes
 // its arguments there), then the other values, then
@@ -295,6 +296,8 @@ class InterpGen {
 	final targets = new Map<Int, Int>();
 	final allocs = new Map<Int, Array<Int>>();
 	final cc:CallConv;
+	// (Lower.lines) the function's Haxe name in stacks (pack.Class.field)
+	public var display:Null<String> = null;
 
 	public function new(prep, abi, obj, mf, set, compile) {
 		this.prep = prep;
@@ -413,8 +416,8 @@ class InterpGen {
 			for (i in b.ins)
 				if (i.op == Param && i.imm >= 0 && reg[i.id] < 0) reg[i.id] = nc + i.imm;
 		var pcOf = new Map<Int, Int>();
-		// (the calls' and throws' positions, from the code word where they start)
-		var sites:Array<{at:Int, file:String, min:Int, max:Int}> = [];
+		// (the lines, from the code word where each one's code starts)
+		var sites:Array<{at:Int, file:String, line:Int}> = [];
 		var lastPos = 0;
 		for (b in blocks) {
 			pcOf.set(b.id, code.length);
@@ -424,7 +427,7 @@ class InterpGen {
 					if (i.pos != lastPos) {
 						lastPos = i.pos;
 						var p = SrcPos.get(i.pos);
-						if (p.min >= 0) sites.push({at: code.length, file: p.file, min: p.min, max: p.max});
+						if (lastPos != 0 && p.file != "") sites.push({at: code.length, file: p.file, line: p.line});
 					}
 					ins(i, b, slotOff);
 				}
@@ -462,7 +465,7 @@ class InterpGen {
 		for (s in entry.sources)
 			b.u32(s);
 		if (sites.length > 0) {
-			var files = [], fileIndex = new Map<String, Int>();
+			var files = [display != null ? display : mf.name], fileIndex = new Map<String, Int>();
 			b.u32(sites.length);
 			for (x in sites) {
 				var k = fileIndex.get(x.file);
@@ -471,8 +474,7 @@ class InterpGen {
 					files.push(x.file);
 				}
 				b.u32(x.at);
-				b.u32(x.min);
-				b.u32(x.max);
+				b.u32(x.line);
 				b.u32(k);
 			}
 			b.u32(files.length);

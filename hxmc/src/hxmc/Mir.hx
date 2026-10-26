@@ -515,28 +515,24 @@ class SrcPos {
 	static var ids = new Map<String, Int>();
 	static var files:Array<String> = [""];
 	static var lines:Array<Int> = [0];
-	static var ranges:Array<Int> = [-1, -1];
 
-	// (min, max: the characters of a call or a throw, Ir.Stmt.SPos; else -1)
-	public static function id(file:String, line:Int, min = -1, max = -1):Int {
-		var k = min < 0 ? line + ":" + file : line + ":" + min + ":" + max + ":" + file;
+	public static function id(file:String, line:Int):Int {
+		var k = line + ":" + file;
 		lock.acquire();
 		var v = ids.get(k);
 		if (v == null) {
 			v = files.length;
 			files.push(file);
 			lines.push(line);
-			ranges.push(min);
-			ranges.push(max);
 			ids.set(k, v);
 		}
 		lock.release();
 		return v;
 	}
 
-	public static function get(p:Int):{file:String, line:Int, min:Int, max:Int} {
+	public static function get(p:Int):{file:String, line:Int} {
 		lock.acquire();
-		var r = {file: files[p], line: lines[p], min: ranges[2 * p], max: ranges[2 * p + 1]};
+		var r = {file: files[p], line: lines[p]};
 		lock.release();
 		return r;
 	}

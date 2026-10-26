@@ -22,9 +22,10 @@ using StringTools;
 // set (the module's types handed over again as other objects); a closure
 // kept from an earlier compilation reads the statics of its own class; a
 // Context.error ends its macro only. And an uncaught exception of macro code
-// is reported where it was thrown, called from its frames' calls (through
-// recursion, a lambda, a callback of the compiler, a build macro). In bin/hxmc-t/mir-server (removed when
-// every check passes):
+// is reported at the line it was thrown on, then its callers' lines (through
+// recursion, a lambda, a callback of the compiler, a build macro): those
+// lines expected (EXPECTED), the exit code the reference's. In
+// bin/hxmc-t/mir-server (removed when every check passes):
 //   HXMC_HAXE=<haxe> HAXE_REFERENCE=<haxe> bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run MirServerCheck
 class MirServerCheck {
 	static final MAIN = "class Main {\n\tstatic function main() {}\n}\n";
@@ -242,6 +243,30 @@ class E {
 ",
 	];
 
+	// (one message per line, the frames' positions as written)
+	static final CLASSIC = ["-D", "message.reporting=classic"];
+
+	// what each one reports: at the line of its innermost frame of macro code
+	// (a function without calls of its own, inlined, is its caller's), then
+	// each caller's line, the macro call last (unknown: --macro's)
+	static final EXPECTED = [
+		{name: "boom", lines: ["E.hx:5: characters 1-16 : Uncaught exception boom\n(unknown) : Called from here"]},
+		{
+			name: "rec",
+			lines: [
+				"E.hx:9: characters 1-41 : Uncaught exception deep null\nE.hx:9: characters 1-41 : Called from E.deep (3 times)\nE.hx:22: characters 1-11 : Called from E.rec\n(unknown) : Called from here"
+			]
+		},
+		{name: "err", lines: ["(unknown) : an error"]},
+		{name: "lam", lines: ["E.hx:30: characters 1-51 : Uncaught exception in lambda\nE.hx:30: characters 1-51 : Called from E.lam\n(unknown) : Called from here"]},
+		{name: "caught", lines: ["E.hx:35: characters 1-23 : Uncaught exception after catch\n(unknown) : Called from here"]},
+		{name: "exc", lines: ["E.hx:39: characters 1-35 : Uncaught exception exc\n(unknown) : Called from here"]},
+		{name: "callback", lines: ["E.hx:43: characters 1-51 : Uncaught exception in callback"]},
+		{name: "rethrow", lines: ["E.hx:51: characters 1-57 : Uncaught exception first again\n(unknown) : Called from here"]},
+		{name: "build", lines: ["E.hx:55: characters 1-20 : Uncaught exception in build\nBuilt.hx:1: characters 1-8 : Called from here"]},
+		{name: "boom-again", lines: ["E.hx:5: characters 1-16 : Uncaught exception boom\n(unknown) : Called from here"]},
+	];
+
 	static function macros(names:Array<String>):Array<String> {
 		var a = [];
 		for (n in names)
@@ -249,7 +274,7 @@ class E {
 		return a;
 	}
 
-	static final SCENARIOS:Array<{name:String, files:Map<String, String>, steps:Array<{name:String, ?edit:Map<String, String>, args:Array<String>}>}> = [
+	static final SCENARIOS:Array<{name:String, files:Map<String, String>, steps:Array<{name:String, ?edit:Map<String, String>, args:Array<String>, ?expect:Array<String>}>}> = [
 		{
 			name: "probe",
 			files: PROBE,
@@ -282,9 +307,9 @@ class E {
 			name: "exceptions",
 			files: EXCEPTIONS,
 			steps: [
-				for (m in ["boom", "rec", "err", "lam", "caught", "exc", "callback", "rethrow"])
-					{name: m, args: macros(["E." + m + "()"])}
-			].concat([{name: "build", args: ["-main", "UseBuilt"]}, {name: "boom-again", args: macros(["E.boom()"])}])
+				for (e in EXPECTED)
+					{name: e.name, args: CLASSIC.concat(e.name == "build" ? ["-main", "UseBuilt"] : macros(["E." + (e.name == "boom-again" ? "boom" : e.name) + "()"])), expect: e.lines}
+			]
 		},
 		{
 			name: "later",
@@ -325,7 +350,9 @@ class E {
 				var a = client([ref], r.port, args, proj);
 				var b = client(mir, p.port, args, proj);
 				var what = '${sc.name}:${s.name}';
-				if (a.code == b.code && a.out == b.out && a.err == b.err) {
+				// (expected lines: the reference's exit code, and these lines in the report)
+				var same = s.expect != null ? a.code == b.code && Lambda.foreach(s.expect, l -> (b.out + b.err).indexOf(l) >= 0) : a.code == b.code && a.out == b.out && a.err == b.err;
+				if (same) {
 					Sys.println("ok    " + what);
 				} else {
 					failures++;

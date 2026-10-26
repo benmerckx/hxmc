@@ -26,10 +26,14 @@ class Fingerprint {
 	// the threads are done
 	public var newStrings:Array<String> = [];
 	var seen = new Map<String, Bool>();
+	// (false: the positions of the code, SPos, left out: the size of a
+	// function without its lines, Lower.lines, interp.MirMacros' cold ones)
+	var positions:Bool;
 
-	public function new(prep:Prep, inlined:Null<Inlined>) {
+	public function new(prep:Prep, inlined:Null<Inlined>, positions = true) {
 		this.prep = prep;
 		this.inlined = inlined;
+		this.positions = positions;
 	}
 
 	// a 64-bit hash of a string (two 32-bit lanes), as 16 hex digits
@@ -211,6 +215,15 @@ class Fingerprint {
 
 	function stmts(ss:haxe.ds.Vector<Stmt>) {
 		word(LIST);
+		if (!positions) {
+			var n = 0;
+			for (s in ss)
+				if (!s.match(SPos(_))) n++;
+			word(n);
+			for (s in ss)
+				if (!s.match(SPos(_))) stmt(s);
+			return;
+		}
 		word(ss.length);
 		for (s in ss)
 			stmt(s);
@@ -305,14 +318,10 @@ class Fingerprint {
 			case SCold(_, x):
 				word(S_COLD);
 				stmt(x);
-			case SPos(file, line, min, max):
+			case SPos(file, line):
 				word(S_POS);
 				str(file);
 				word(line);
-				if (min >= 0) {
-					word(min);
-					word(max);
-				}
 		}
 	}
 

@@ -389,9 +389,8 @@ enum Stmt {
 	SCold(id:Int, s:Stmt);
 	// (Lower.lines) the code of the statements that follow comes from
 	// this line of the source (the typed AST's position); nothing else: every
-	// pass steps over it, so the code is the same as without it. min and max:
-	// the characters of a call or a throw (Lower.sitePositions), else -1
-	SPos(file:String, line:Int, min:Int, max:Int);
+	// pass steps over it, so the code is the same as without it
+	SPos(file:String, line:Int);
 }
 
 // a case of SSwitch: its values and its body

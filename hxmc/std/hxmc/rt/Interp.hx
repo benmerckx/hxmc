@@ -201,6 +201,8 @@ class Interp {
 	static inline var H_SYMS = 40;
 	static inline var H_CONSTS = 48;
 	static inline var H_SOURCES = 56;
+	// (the offset of the function's lines, InterpGen.H_POSITIONS: Stacks)
+	static inline var H_POSITIONS = 28;
 	static inline var D_FLOAT = 1; // it returns a double
 	static inline var D_STACK = 2; // its arguments take stack words
 	static inline var D_NOENTRY = 4; // more than the image's stack words
@@ -208,7 +210,7 @@ class Interp {
 	// a frame (on the interpreter's stack): its code, symbol table,
 	// registers, slots, where its result goes, end, where it goes on (a try ended), the
 	// tries entered, their handlers, the frame it was called from and the
-	// call it makes (Stacks.interpCur: an exception's interpreted frames)
+	// call it makes (Stacks: the interpreted frames of a stack)
 	static inline var F_CODE = 0;
 	static inline var F_SYMS = 8;
 	static inline var F_REGS = 16;
@@ -340,7 +342,7 @@ class Interp {
 			// (a native handler catches: this entry's frames are given back)
 			isp = base;
 			Stacks.interpCur = cur;
-			Stacks.interpRethrow = true;
+			Stacks.rethrowing = true;
 			throw e;
 		}
 	}
@@ -445,7 +447,7 @@ class Interp {
 			if (uncatchable != null && Mem.addr(e) == Mem.addr(uncatchable)) {
 				// (on past this try: its handler h unlinked, as the interpreted code would)
 				Gc.hcur = Mem.getPtr(h, hprevOff);
-				Stacks.interpRethrow = true;
+				Stacks.rethrowing = true;
 				throw e;
 			}
 			Gc.exn = Mem.addr(e);
@@ -720,7 +722,7 @@ class Interp {
 		} catch (e:Dynamic) {
 			isp = base;
 			Stacks.interpCur = cur;
-			Stacks.interpRethrow = true;
+			Stacks.rethrowing = true;
 			throw e;
 		}
 		return Mem.getI64(img, 0);

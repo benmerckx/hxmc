@@ -99,11 +99,6 @@ class Lower implements LowerQueries {
 	// statements carry their source lines (Stmt.SPos): native builds but with
 	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
-	// (-D hxmc.macros=mir: hxmc.interp.MirMacros) the calls and throws of the
-	// files it accepts carry their positions (Stmt.SPos with characters), which
-	// hxmc.interp.InterpGen writes into the descriptor: an uncaught exception's
-	// stack of macro frames (a function with them is not inlined: Inline)
-	public static var sitePositions:Null<String->Bool> = null;
 	// (-D hxmc.macros=mir: hxmc.interp.MirMacros) the macro code's calls note
 	// where they are, as Eval's frames do (env_leave_pmin/pmax, which the
 	// macro API's get_api_call_pos reads): before each call, the call's site
