@@ -1,0 +1,9 @@
+{
+  "name": "@hxmc/target",
+  "description": "hxmc's std (the native target's runtime and std, in Haxe), which @hxmc/haxe's launcher gives the compiler for --custom-target hxmc; the runtime objects of each target are @hxmc/rt-<target>",
+  "files": [
+    "std/",
+    "LICENSE",
+    "COPYING"
+  ]
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `haxe` (@hxmc/cli): the native compiler for this machine, else the
+// `haxe` (@hxmc/haxe): the native compiler for this machine, else the
 // WebAssembly one (launcher.mjs); on Unix the native compiler replaces this file
 import { main } from './launcher.mjs';
 main(process.argv.slice(2));

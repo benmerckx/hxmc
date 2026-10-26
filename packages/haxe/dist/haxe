@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// An installation for lix (`lix use haxe ./node_modules/@hxmc/cli/dist`): the
+// An installation for lix (`lix use haxe ./node_modules/@hxmc/haxe/dist`): the
 // package's `haxe` (hxmc/bootstrap/launcher.mjs), replaced by the native
 // compiler on Unix once it runs; dist/std and dist/platform.txt are written
 // on install or first use

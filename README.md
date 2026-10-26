@@ -33,12 +33,21 @@ repository and is unstable; hxmc does not depend on it.
 ## Install
 
 ```sh
-npm i -D @hxmc/cli      # node 22+; then `npx haxe`
+npm i -D @hxmc/cli      # node 22+; then `npx haxe` (or `npx hxmc`)
 ```
 
 `haxe` is the full Haxe command line with hxmc built in: every target works as
 usual (`--js`, `--interp`, ...), and `--custom-target hxmc=<out>` writes an
-executable.
+executable. The runtime objects of a target (`@hxmc/rt-<target>`) are
+downloaded on the first build for it; to build offline, in CI or for other
+targets without a download, install them with it:
+
+```sh
+npm i -D @hxmc/cli @hxmc/rt-linux-x86_64 @hxmc/rt-windows-x86_64
+```
+
+Only the Haxe compiler, for Haxe's own targets (js, hl, jvm, ...):
+`npm i -D @hxmc/haxe`.
 
 ```hxml
 -cp src
@@ -49,8 +58,7 @@ executable.
 
 npm installs a native compiler for your platform. Where none can run, `haxe`
 falls back to a WebAssembly build under node. Details on the packages,
-editors, lix and rebuilding the compiler from source:
-[docs/using.md](docs/using.md).
+editors and lix: [docs/using.md](docs/using.md).
 
 ### Options
 

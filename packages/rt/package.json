@@ -1,0 +1,11 @@
+{
+  "name": "@hxmc/rt-{target}",
+  "description": "hxmc's runtime objects for {target} (rt.o, ssl.o with mbedtls, uv.o with libuv): what @hxmc/cli links into programs for -D hxmc.target={target}; installable on any machine (cross builds)",
+  "files": [
+    "{target}/",
+    "LICENSE.mbedtls",
+    "LICENSE.libuv",
+    "LICENSE",
+    "COPYING"
+  ]
+}

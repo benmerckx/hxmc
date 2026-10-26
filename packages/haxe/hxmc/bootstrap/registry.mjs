@@ -1,37 +1,21 @@
-// The compiler as a WebAssembly module (@hxmc/wasm: haxe.wasm and its WASI
-// runner wasi.mjs), for machines where no native compiler runs: the
-// installed package (npm i @hxmc/wasm, e.g. in WebContainers), else the one
-// downloaded into the cache (<cache>/npm/<version>/wasm/), else downloaded
-// now: the tarball of the same version from the npm registry
-// (npm_config_registry, else the registry of an .npmrc, else
-// registry.npmjs.org), checked against the integrity pack.mjs pinned in
-// @hxmc/cli's package.json ("hxmc": {"wasmIntegrity"}). HXMC_WASM_TARBALL (a
-// path or a URL) replaces the registry's tarball (tests).
+// Packages the launcher downloads from the npm registry on first use, into
+// the cache (<cache>/npm/<version>/): @hxmc/haxe-wasm (wasm.mjs) and the
+// runtime objects of a target, @hxmc/rt-<target> (launcher.mjs, runtime()). The tarball
+// of the same version, from npm_config_registry, else the registry of an
+// .npmrc, else registry.npmjs.org, checked against the integrity hash
+// packages/pack.mjs pinned when it packed the package that downloads it
+// (@hxmc/haxe's "hxmc": {"wasmIntegrity"}, @hxmc/target's "hxmc":
+// {"rtIntegrity"}), then unpacked next to its place and renamed into it.
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import zlib from 'node:zlib';
-import { notice, npmCache, pkgJson, version } from './launcher.mjs';
+import { notice, version } from './launcher.mjs';
 
-const NAME = '@hxmc/wasm';
-
-// the directory of a @hxmc/wasm of this version (haxe.wasm, wasi.mjs)
-export async function wasmPackage() {
-	try {
-		const p = createRequire(import.meta.url).resolve(`${NAME}/package.json`);
-		if (JSON.parse(fs.readFileSync(p, 'utf8')).version === version) return path.dirname(p);
-	} catch {}
-	const dir = path.join(npmCache(), 'wasm');
-	if (fs.existsSync(path.join(dir, 'haxe.wasm'))) return dir;
-	await download(dir);
-	return dir;
-}
-
-function fail(text) {
+export function fail(text) {
 	process.stderr.write(`hxmc: ${text}\n`);
 	process.exit(1);
 }
@@ -83,34 +67,46 @@ async function fetchBytes(url) {
 	throw first.cause ?? first;
 }
 
-async function download(dir) {
-	const integrity = pkgJson.hxmc?.wasmIntegrity;
-	const url = process.env.HXMC_WASM_TARBALL || `${registry().replace(/\/+$/, '')}/${NAME}/-/wasm-${version}.tgz`;
-	const how = `install it (npm i ${NAME}@${version})`;
-	if (!integrity) fail(`no native compiler runs here, and this @hxmc/cli pins no ${NAME} to download: ${how}`);
-	notice(`hxmc: no native compiler runs here: downloading ${NAME}@${version} (${url})\n`);
+// the tarball's URL on the registry (npm's: <registry>/@hxmc/<name>/-/<name>-<version>.tgz)
+export function tarballUrl(name) {
+	const base = name.split('/').pop();
+	return `${registry().replace(/\/+$/, '')}/${name}/-/${base}-${version}.tgz`;
+}
+
+// npm pack's file name of a package's tarball (@hxmc/rt-x -> hxmc-rt-x-<version>.tgz)
+export function tarballFile(name) {
+	return `${name.replace('@', '').replace('/', '-')}-${version}.tgz`;
+}
+
+// name@version into dir (its files without npm's package/ prefix), when the
+// downloaded tarball has the integrity pinned for it and contains check:
+//   url: where from (a URL, a path or a file: URL); why: what needs it (the
+//   messages); how: what else the user can do; pinner: the package that pins it
+export async function download({ name, integrity, dir, check, url, why, how, pinner }) {
+	if (!integrity) fail(`${why}, and this ${pinner} pins no ${name} to download: ${how}`);
+	notice(`hxmc: ${why}: downloading ${name}@${version} (${url})\n`);
 	let tgz;
 	try {
 		tgz = await fetchBytes(url);
 	} catch (e) {
-		fail(`no native compiler runs here, and ${NAME}@${version} could not be downloaded from ${url} (${/^HTTP /.test(e.message) ? e.message : `${e.code ?? e.message}; offline?`}): ${how}, or connect to the network`);
+		fail(`${why}, and ${name}@${version} could not be downloaded from ${url} (${/^HTTP /.test(e.message) ? e.message : `${e.code ?? e.message}; offline?`}): ${how}, or connect to the network`);
 	}
 	const [algo, want] = integrity.split('-', 2);
-	if (crypto.createHash(algo).update(tgz).digest('base64') !== want) fail(`${url} is not the ${NAME}@${version} this @hxmc/cli pins (integrity mismatch)`);
+	if (crypto.createHash(algo).update(tgz).digest('base64') !== want) fail(`${url} is not the ${name}@${version} this ${pinner} pins (integrity mismatch)`);
 	// extracted next to its place, then renamed into place (a concurrent download wins)
 	fs.mkdirSync(path.dirname(dir), { recursive: true });
 	const tmp = fs.mkdtempSync(`${dir}.tmp-`);
 	try {
 		untar(zlib.gunzipSync(tgz), tmp);
-		if (!fs.existsSync(path.join(tmp, 'haxe.wasm'))) throw new Error('no haxe.wasm in the tarball');
+		if (!fs.existsSync(path.join(tmp, check))) throw new Error(`no ${check} in the tarball`);
 		try {
 			fs.renameSync(tmp, dir);
 		} catch (e) {
-			if (!fs.existsSync(path.join(dir, 'haxe.wasm'))) throw e;
+			if (!fs.existsSync(path.join(dir, check))) throw e;
 		}
-		notice(`hxmc: ${NAME}@${version} is in ${dir}\n`);
+		notice(`hxmc: ${name}@${version} is in ${dir}\n`);
 	} catch (e) {
-		fail(`unpacking ${NAME}@${version} into ${dir} failed: ${e.message}`);
+		fail(`unpacking ${name}@${version} into ${dir} failed: ${e.message}`);
 	} finally {
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
