@@ -893,6 +893,8 @@ class Loader {
 			full = true;
 			return Ptr.nil();
 		}
+		// (Linux only: Mem.os folds the call away on the others, which have no mmap)
+		if (Mem.os() != 0) throw "the native tier: Linux only";
 		var p = Vm.mmap(Ptr.ofI64((lowNext : I64)), (size : I64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		var a = p.toI64();
 		if (a != (lowNext : I64)) throw "the native tier: cannot map memory at 0x" + StringTools.hex(lowNext) + " (got " + a + ")";
@@ -961,6 +963,7 @@ class Loader {
 	static function protect(p:Ptr, n:Int, prot:Int) {
 		var lo = p.toI64() & ~(4095 : I64);
 		var hi = (p.toI64() + n + 4095) & ~(4095 : I64);
+		if (Mem.os() != 0) throw "the native tier: Linux only";
 		if (Vm.mprotect(Ptr.ofI64(lo), hi - lo, prot) != 0) throw "the native tier: mprotect failed";
 	}
 
