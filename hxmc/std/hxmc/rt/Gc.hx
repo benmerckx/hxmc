@@ -134,8 +134,9 @@ class Gc {
 	static var poison:Bool;
 
 	// ---- the old space: it alternates between two large reserved regions;
-	// oldEnd is a soft limit, set after each major collection to three times
-	// the live size
+	// oldEnd is a soft limit, set after each major collection to `growth`
+	// percent of the live size (RT_OLD_GROWTH, 300: three times)
+	static var growth:Int;
 	static var oldStart:Ptr;
 	@:hxmc.export("hxmc_old_ptr") static var oldPtr:Ptr;
 	static var oldEnd:Ptr;
@@ -839,7 +840,7 @@ class Gc {
 		// a little less system time for as much more memory as the old space held)
 		if (releasePages) Os.decommit(fromStart, fromEnd.diff(fromStart));
 		var live = oldPtr.diff(oldStart);
-		var limit = live * 3 + minorSize * 4 + need;
+		var limit = live * growth / 100 + minorSize * 4 + need;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
 		if (limit > regionBytes) limit = regionBytes;
 		oldEnd = oldStart.addL(limit);
@@ -1366,6 +1367,7 @@ class Gc {
 		oldStart = region0;
 		oldPtr = region0;
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
+		growth = Os.envInt("RT_OLD_GROWTH", 300);
 		if (oldStart.addL(regionBytes).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes);
 		// the shadow stack: reserved, committed as touched, with a guard page
 		// above it: as deep as the main C stack (rt_run_main)
@@ -1523,18 +1525,6 @@ class Gc {
 		Census.why(oldStart, oldPtr, globals, nglobals);
 	}
 	#end
-
-	// The old space's soft limit while no major collection has run (RT_OLD_MB,
-	// 256 MB by default, which wins over this): a program that knows it keeps
-	// more than that from the start (a compiler's syntax trees and types)
-	// raises it, so its first major collection does not copy what it is
-	// still building, and its peak memory is lower without that copy.
-	@:hxmc.noGc public static function setOldLimit(mb:Int):Void {
-		if (majors > 0 || Os.has("RT_OLD_MB")) return;
-		var e = oldStart.addL((mb : I64) << 20);
-		if (oldStart.addL(regionBytes).ult(e)) e = oldStart.addL(regionBytes);
-		if (oldEnd.ult(e)) oldEnd = e;
-	}
 
 	// ---- hxmc.NativeGc's measurements (the port's server/memory, in place
 	// of OCaml's Objsize and Gc heap words)

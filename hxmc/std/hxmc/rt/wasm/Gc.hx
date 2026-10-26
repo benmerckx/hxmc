@@ -51,6 +51,7 @@ class Gc {
 	static var oldEnd:Ptr; // its end
 	static var oldBytes:I64; // the size of the old space's chunks and regions
 	static var oldLimit:I64; // a major collection rather than growing past it
+	static var growth:Int; // the next limit, in percent of what a major collection left live (RT_OLD_GROWTH)
 	static var pool:Ptr; // free chunks, linked through their first word
 	static var poolBytes:I64;
 	// a byte per 64 KB of memory: 1 in the old space (the from-space during a
@@ -113,6 +114,7 @@ class Gc {
 		emptyChunk();
 		var om = Wasi.envInt("RT_OLD_MB", 32);
 		oldLimit = (om : I64) << 20;
+		growth = Wasi.envInt("RT_OLD_GROWTH", 200);
 		gran = Heap.regionZero(1 << (32 - GRAN_SHIFT));
 		chunksCap = 256;
 		chunks = Heap.malloc(24 * chunksCap);
@@ -551,11 +553,11 @@ class Gc {
 		}
 		for (i in 0...nchunks)
 			mark(Mem.getPtr(chunks, 24 * i), Mem.getI64(chunks, 24 * i + 16).toInt(), 1);
-		// the next limit: twice what is live and room for the nursery, but at
-		// most half of what the rest of a wasm32 memory (4 GB) leaves: the next
-		// collection's from-space and to-space must both fit
+		// the next limit: `growth` percent of what is live (twice) and room for
+		// the nursery, but at most half of what the rest of a wasm32 memory (4
+		// GB) leaves: the next collection's from-space and to-space must both fit
 		var live = oldBytes;
-		var limit = live * 2 + (minorSize : I64) * 4 + need;
+		var limit = live * growth / 100 + (minorSize : I64) * 4 + need;
 		if (limit < (MIN_OLD : I64)) limit = MIN_OLD;
 		var other = Heap.memoryBytes() - oldBytes - poolBytes;
 		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
