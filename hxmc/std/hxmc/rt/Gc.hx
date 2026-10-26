@@ -149,6 +149,17 @@ class Gc {
 	static var fromStart:Ptr;
 	static var fromEnd:Ptr;
 	static var releasePages:Bool;
+	// core dumps (Linux: Os.coreDump): each region and the nursery are left
+	// out of one but for what the heap may use of them, [region, dumpTop0 or
+	// dumpTop1) and [youngStart, youngDump): a core of a program that touched
+	// a page of its 32 GB of regions was 32 GB, written out as zeros through a
+	// pipe in minutes (#43)
+	static var dumpTop0:Ptr;
+	static var dumpTop1:Ptr;
+	static var youngDump:Ptr;
+	// the main thread's C stack (Start.runMain; null: the system's)
+	static var cstackLo:Ptr;
+	static var cstackHi:Ptr;
 
 	@:hxmc.export("rt_globals") static var globals:Ptr;
 	static var nglobals:Int;
@@ -796,6 +807,7 @@ class Gc {
 		curRegion ^= 1;
 		oldStart = region(curRegion);
 		oldPtr = oldStart;
+		dumpOld(oldStart.addL(fromEnd.diff(fromStart) + youngNext.diff(youngStart))); // (what it copies at most)
 		var scan = oldPtr;
 		major = true;
 		scanRoots(!gcBfs);
@@ -839,11 +851,15 @@ class Gc {
 		// resident, so the next major collection copies into faulted-in pages:
 		// a little less system time for as much more memory as the old space held)
 		if (releasePages) Os.decommit(fromStart, fromEnd.diff(fromStart));
+		var from = region(curRegion ^ 1);
+		Os.coreDump(from, (curRegion == 0 ? dumpTop1 : dumpTop0).diff(from), false);
+		if (curRegion == 0) dumpTop1 = from else dumpTop0 = from;
 		var live = oldPtr.diff(oldStart);
 		var limit = live * growth / 100 + minorSize * 4 + need;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
 		if (limit > regionBytes) limit = regionBytes;
 		oldEnd = oldStart.addL(limit);
+		dumpOld(oldEnd);
 		if (stats) {
 			var r = new Report(Mem.stack(Report.BYTES));
 			r.str("gc: major ");
@@ -862,12 +878,33 @@ class Gc {
 		#end
 	}
 
+	// [region, top) of the old space's region in a core dump (2 MB aligned:
+	// huge pages stay whole)
+	@:hxmc.unsafe static function dumpOld(top:Ptr) {
+		var d = curRegion == 0 ? dumpTop0 : dumpTop1;
+		var a = top.toI64() + ((2 << 20) - 1);
+		top = Ptr.ofI64(a - (a & ((2 << 20) - 1)));
+		var end = oldStart.addL(regionBytes);
+		if (end.ult(top)) top = end;
+		if (!d.ult(top)) return;
+		Os.coreDump(d, top.diff(d), true);
+		if (curRegion == 0) dumpTop0 = top else dumpTop1 = top;
+	}
+
+	// the nursery up to its size in a core dump
+	@:hxmc.unsafe static function dumpYoung() {
+		if (!youngDump.ult(youngEnd)) return;
+		Os.coreDump(youngDump, youngEnd.diff(youngDump), true);
+		youngDump = youngEnd;
+	}
+
 	// The nursery: a reserved range (pages committed as touched) that it grows
 	// and shrinks in, so resizing allocates nothing.
 	@:hxmc.unsafe static function nurseryAlloc(bytes:I64):Ptr {
 		var reserve:I64 = bytes > (MINOR_MAX : I64) ? bytes : MINOR_MAX;
 		var p = Os.reserve(reserve + (2 << 20));
 		if (p.isNull()) die("cannot reserve the nursery\n");
+		Os.coreDump(p, reserve + (2 << 20), false);
 		#if (hxmc.shared || hxmc.dev_host)
 		nurseryBase = p;
 		nurseryBytes = reserve + (2 << 20);
@@ -890,6 +927,7 @@ class Gc {
 		}
 		minorSize = size;
 		youngEnd = youngStart.addL(minorSize);
+		dumpYoung();
 		if (!Os.has("RT_TLAB_KB")) tlabSize = minorSize / 16 < (TLAB_MAX : I64) ? minorSize / 16 : TLAB_MAX;
 		if (stats) {
 			var r = new Report(Mem.stack(Report.BYTES));
@@ -1340,6 +1378,8 @@ class Gc {
 		hugePages = L.MADV_HUGEPAGE != 0 && Os.envInt("RT_HUGE", 0) != 0; // opt-in: it costs more kernel time than it saves here
 		youngStart = nurseryAlloc(minorSize);
 		youngEnd = youngStart.addL(minorSize);
+		youngDump = youngStart;
+		dumpYoung();
 		youngNext = youngStart; // rt_young_ptr = rt_young_limit = null: the first allocation takes a TLAB
 		youngDirty = youngStart; // fresh pages
 		poison = Os.has("RT_VERIFY");
@@ -1363,6 +1403,7 @@ class Gc {
 			}
 			if (r.isNull()) die("cannot reserve heap\n");
 			if (hugePages) Os.hugePages(r, regionBytes);
+			Os.coreDump(r, regionBytes, false);
 			if (i == 0) region0 = r else region1 = r;
 			i++;
 		}
@@ -1371,6 +1412,9 @@ class Gc {
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
 		growth = Os.envInt("RT_OLD_GROWTH", 300);
 		if (oldStart.addL(regionBytes).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes);
+		dumpTop0 = region0;
+		dumpTop1 = region1;
+		dumpOld(oldEnd);
 		// the shadow stack: reserved, committed as touched, with a guard page
 		// above it: as deep as the main C stack (rt_run_main)
 		var sbytes:I64 = (1 : I64) << 30, page = Os.pageSize();
@@ -1381,6 +1425,7 @@ class Gc {
 		sstackBytes = sbytes + page;
 		#end
 		Os.guard(sstack.addL(sbytes), page);
+		Os.stackCoreDump(sstack, sbytes, false);
 		sp = sstack;
 		hw = sstack;
 		nglobals = ng;

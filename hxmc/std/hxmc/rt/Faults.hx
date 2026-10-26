@@ -215,16 +215,17 @@ class Faults {
 			redirect(ctx, pcOff, spOff, lrOff);
 			return;
 		}
-		chain(sig, info, uc, code);
+		chain(sig, info, uc, code, Mem.getPtr(ctx, spOff));
 	}
 
 	// another fault: the action before ours. Its handler is called; the
 	// default (or ignoring it) is restored, and the fault happens again when
 	// the handler returns, now with it (a signal a process sent is sent again)
-	@:hxmc.unsafe static function chain(sig:Int, info:Ptr, uc:Ptr, code:Int) {
+	@:hxmc.unsafe static function chain(sig:Int, info:Ptr, uc:Ptr, code:Int, sp:Ptr) {
 		var p = prev.add(sig == SIGSEGV ? 0 : SA_BYTES);
 		var h = Mem.getPtr(p, SA_HANDLER);
 		if (Mem.ult(h.toI64(), 2)) { // SIG_DFL, SIG_IGN
+			dumpStacks(sp);
 			S.sigaction(sig, p, Ptr.nil());
 			installed = false;
 			if (code <= 0) {
@@ -235,6 +236,20 @@ class Faults {
 			return;
 		}
 		if (Mem.getI32(p, SA_FLAGS) & SA_SIGINFO != 0) Ind.call3(h, sig, info, uc) else Ind.call1(h, sig);
+	}
+
+	// the faulting thread's stacks in the core dump of the default action
+	// (Os.stackCoreDump keeps the last 8 MB of the runtime's in one): its C
+	// stack from below the stack pointer, its shadow stack up to where it
+	// reached since the last collection (only madvise: a system call)
+	@:hxmc.unsafe static function dumpStacks(sp:Ptr) {
+		var lo = Gc.cstackLo, hi = Gc.cstackHi;
+		if (!sp.ult(lo) && sp.ult(hi)) {
+			var a = sp.add(-65536); // (the red zone, the signal frame)
+			Os.coreDump(a.ult(lo) ? lo : a, hi.diff(a.ult(lo) ? lo : a), true);
+		}
+		var m = Threads.self;
+		if (!m.isNull() && m.value.base.ult(Gc.hw)) Os.coreDump(m.value.base, Gc.hw.diff(m.value.base), true);
 	}
 
 	// EXCEPTION_POINTERS: the record at 0, the context at 8; EXCEPTION_RECORD:

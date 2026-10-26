@@ -135,6 +135,36 @@ class Os {
 		return C.madvise(p, bytes, L.MADV_DONTNEED) == 0;
 	}
 
+	// core dumps (Linux and Android): whether a core dump holds [p, p + bytes)
+	// (on: the pages around it, off: the pages within it). The kernel dumps a
+	// mapping whole once a page of it is touched, its untouched pages as
+	// zeros, written out when the core goes through a pipe (systemd-coredump,
+	// apport), so the runtime's reservations are left out but for what it
+	// uses of them (docs/hxmc.md, "Core dumps")
+	@:hxmc.unsafe public static function coreDump(p:Ptr, bytes:I64, on:Bool) {
+		if (Mem.os() == 0) {
+			var mask:I64 = (pageSize() : I64) - 1;
+			var lo = p.toI64(), hi = lo + bytes;
+			if (on) {
+				lo -= lo & mask;
+				hi += (mask + 1 - (hi & mask)) & mask;
+			} else {
+				lo += (mask + 1 - (lo & mask)) & mask;
+				hi -= hi & mask;
+			}
+			if (lo < hi) C.madvise(Ptr.ofI64(lo), hi - lo, on ? 17 : 16); // MADV_DODUMP, MADV_DONTDUMP (every Linux architecture's)
+		}
+	}
+
+	// a stack's reservation in a core dump: its STACK_DUMP bytes at the end
+	// it grows from (a C stack's top, a shadow stack's bottom); a fault puts
+	// back what the faulting thread's stacks hold (Faults.dumpStacks)
+	public static inline var STACK_DUMP = 8 << 20;
+
+	@:hxmc.unsafe public static function stackCoreDump(p:Ptr, bytes:I64, down:Bool) {
+		if (bytes > (STACK_DUMP : I64)) coreDump(down ? p : p.add(STACK_DUMP), bytes - STACK_DUMP, false);
+	}
+
 	// transparent huge pages (Linux only: RT_HUGE)
 	@:hxmc.unsafe public static function hugePages(p:Ptr, bytes:I64)
 		if (Mem.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);

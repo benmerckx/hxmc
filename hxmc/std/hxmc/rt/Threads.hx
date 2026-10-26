@@ -367,6 +367,7 @@ class Threads {
 			Rt.rt_throw("cannot allocate the stacks of a new thread");
 			return 0;
 		}
+		Os.stackCoreDump(sbase, SSTACK_BYTES, false);
 		m.value.sbase = sbase;
 		m.value.base = sbase;
 		m.value.sp = sbase;
@@ -400,6 +401,7 @@ class Threads {
 		var m = newRecord();
 		var sbase = Os.reserve(SSTACK_BYTES);
 		if (sbase.isNull()) Gc.dieC(Mem.cstr("cannot allocate the shadow stack of an attached thread\n"));
+		Os.stackCoreDump(sbase, SSTACK_BYTES, false);
 		m.value.sbase = sbase;
 		m.value.base = sbase;
 		m.value.sp = sbase;
