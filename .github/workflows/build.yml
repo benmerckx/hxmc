@@ -964,7 +964,8 @@ jobs:
           # Haxe 4.3.7 has no Linux ARM64 build: lix (as the npm package)
           # downloads the x86-64 one there, which does not run
           if [ "${{ matrix.target }}" = linux-arm64 ]; then "$H" --run resolve-args -lib tink_json; exit 0; fi
-          "$H" -version
+          # ("stable" in .haxerc: the version looked up on haxe.org first)
+          retry "$H" -version
           "$H" --run resolve-args -lib tink_core
           "$H" --run resolve-args -lib tink_json
           "$H" -cp src -lib tink_core --run Main a b
