@@ -91,6 +91,9 @@ extern class Mem {
 	// stores at p + off (narrowing); setRef has no write barrier (young
 	// objects, or the runtime's own roots), setRefBarrier stores into heap
 	// object `o` at payload offset `off` through the write barrier
+	// (the optimizer takes a store to write no scalar static, an Int, Float,
+	// Bool, I64 or Ptr one, unless its address is made from a sym() in the
+	// same function: hxmc.Opt.killMask)
 	static function setI8(p:Ptr, off:Int, v:Int):Void;
 	static function setI16(p:Ptr, off:Int, v:Int):Void;
 	static function setI32(p:Ptr, off:Int, v:Int):Void;
