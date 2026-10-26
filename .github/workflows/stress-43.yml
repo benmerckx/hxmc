@@ -1,6 +1,6 @@
 # Temporary (issue #43): measures NullAccessCrash's crash on the runners with
-# main's runtime and with the fix, and stages the wasm32-wasi corpus again
-# and again to catch a truncated HXB archive. The branch is deleted after.
+# main's runtime and with the fix, (the corpus staging loop ran in the first
+# commit's run). The branch is deleted after.
 name: stress-43
 on:
   push:
@@ -34,6 +34,7 @@ jobs:
         run: make rt && make hxmc
       - name: NullAccessCrash
         run: |
+          set +e
           mkdir -p t
           bin/hxmc/hxmc t/m -cp hxmc/test/cases -cp bin/hxmc/std -main NullAccessCrash --custom-target hxmc | tail -1
           for i in 1 2; do
@@ -46,37 +47,3 @@ jobs:
       - name: CoreDumpSize
         if: matrix.ref == 'fix'
         run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus -v CoreDumpSize NullAccessCrash
-  stage:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 55
-    strategy:
-      fail-fast: false
-      matrix:
-        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-          ref: main
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - name: The tool
-        run: make rt && make hxmc
-      - name: The wasm32-wasi corpus staged again and again
-        run: |
-          ulimit -s unlimited
-          end=$((SECONDS + 2400)); i=0
-          while [ $SECONDS -lt $end ]; do
-            i=$((i + 1)); rm -rf bin/hxmc-t bin/corpus/w
-            if ! bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus -v --target wasm32-wasi --stage bin/corpus/w > out.txt 2>&1; then
-              echo "iteration $i failed"; grep -vE '  (ok|excluded) ' out.txt
-              mkdir -p bad; cp out.txt bad/
-              for d in $(grep -E '(hxmc|hxb)-fail' out.txt | awk '{print $1}'); do cp -r bin/hxmc-t/$d bad/; done
-              exit 1
-            fi
-            echo "iteration $i: $(tail -1 out.txt)"
-          done
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with: {name: 'bad-${{ matrix.n }}', path: bad, retention-days: 7}
