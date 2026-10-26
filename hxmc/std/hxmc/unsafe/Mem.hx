@@ -77,7 +77,9 @@ extern class Mem {
 	// of the stub hxmc_frame. Not a GC point.
 	static function frame():Ptr;
 
-	// loads at p + off (8/16-bit and f32 loads widen; getI32 of 4 bytes)
+	// loads at p + off (8/16-bit and f32 loads widen; getI32 of 4 bytes); an
+	// off written x + c or x - c (c a constant) is x, extended to 64 bits,
+	// plus c: not wrapped at 32 bits (as the indexed ones' i + c)
 	static function getI8(p:Ptr, off:Int):Int;
 	static function getU8(p:Ptr, off:Int):Int;
 	static function getI16(p:Ptr, off:Int):Int;
