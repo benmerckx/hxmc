@@ -590,12 +590,12 @@ class Facts {
 						work.push(c);
 					}
 		}
-		// @:hxmc.noGc: a promise the runtime's Haxe code relies on (raw
+		// @:hxmc.unsafe: a promise the runtime's Haxe code relies on (raw
 		// addresses kept across calls), checked: every violation, with the
 		// chain of calls to the first GC point
 		var errors = [];
 		for (f in p.funcs)
-			if (f.declNoGc && !f.noGc) errors.push(where(f) + '${displayName(f)} is declared @:hxmc.noGc but reaches a GC point: ${noGcCulprit(f, cand, 0, [])}');
+			if (f.declNoGc && !f.noGc) errors.push(where(f) + '${displayName(f)} is declared @:hxmc.unsafe but reaches a GC point: ${noGcCulprit(f, cand, 0, [])}');
 		if (errors.length > 0) {
 			errors.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 			throw errors.join("\n");
@@ -724,7 +724,7 @@ class Facts {
 
 	// The raw-address check (docs/hxmc.md, "Runtime in Haxe"): the address of a heap object
 	// (Mem.addr, and arithmetic on it) is valid until the next GC point, where
-	// the collector may move the object. Outside @:hxmc.noGc functions,
+	// the collector may move the object. Outside @:hxmc.unsafe functions,
 	// none may be live across a GC point, nor be passed to a call that is one.
 	function checkRawAddresses() {
 		var errors = [];
@@ -733,7 +733,7 @@ class Facts {
 			if (f.noGc || f.rawChecked) continue;
 			f.rawChecked = true;
 			for (v in Roots.rawViolations(f))
-				errors.push(where(f) + '${displayName(f)}: a raw heap address (Mem.addr) $v; take the address after the GC point, or move the work into a @:hxmc.noGc function');
+				errors.push(where(f) + '${displayName(f)}: a raw heap address (Mem.addr) $v; take the address after the GC point, or move the work into a @:hxmc.unsafe function');
 		}
 		if (errors.length > 0) throw errors.join("\n");
 	}

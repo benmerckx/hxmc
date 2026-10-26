@@ -60,7 +60,7 @@ extern class Slow {
 }
 
 class Ffi {
-	@:hxmc.callback @:hxmc.noGc static function twice(v:Int):Int
+	@:hxmc.callback @:hxmc.unsafe static function twice(v:Int):Int
 		return 2 * v;
 
 	static var made:Array<String> = [];

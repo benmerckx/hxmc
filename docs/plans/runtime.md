@@ -5,7 +5,7 @@ no C of hxmc's own: [docs/hxmc.md](../hxmc.md), "Runtime in Haxe", and
 [lowlevel.md](lowlevel.md), "The runtime without C of our own". Built
 along the way: the adaptive nursery (docs/hxmc.md), the raw-address check
 (`Facts.checkRawAddresses`: no address from `Mem.addr` live across a GC
-point outside `@:hxmc.noGc` code), mbedtls and libuv linked per target
+point outside `@:hxmc.unsafe` code), mbedtls and libuv linked per target
 (docs/hxmc.md, "Targets").
 
 ## The collector, longer term

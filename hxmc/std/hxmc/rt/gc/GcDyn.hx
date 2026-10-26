@@ -6,7 +6,7 @@ import hxmc.rt.gc.GcRepr.GcDate;
 // -D hxmc.wasm-gc: Dynamic's comparisons and printing (W.kind), as hxmc.rt.Dyn's
 @:keep @:hxmc.wasmgc
 class GcDyn {
-	@:hxmc.host("hx_dyn_eq") @:hxmc.noGc public static function eq(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.host("hx_dyn_eq") @:hxmc.unsafe public static function eq(a:Dynamic, b:Dynamic):Bool {
 		var ka = W.kind(a), kb = W.kind(b);
 		// (an Int64, with an Int64 or an Int)
 		if ((ka == 9 || kb == 9) && (ka == 9 || ka == 1) && (kb == 9 || kb == 1)) return W.unboxI64(a) == W.unboxI64(b);
@@ -20,7 +20,7 @@ class GcDyn {
 	static inline function same(a:Dynamic, b:Dynamic):Bool
 		return W.same(a, b);
 
-	@:hxmc.host("hx_dyn_cmp") @:hxmc.noGc static function cmp(a:Dynamic, b:Dynamic):Int {
+	@:hxmc.host("hx_dyn_cmp") @:hxmc.unsafe static function cmp(a:Dynamic, b:Dynamic):Int {
 		var ka = W.kind(a), kb = W.kind(b);
 		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) {
 			var x = W.unboxFloat(a), y = W.unboxFloat(b);

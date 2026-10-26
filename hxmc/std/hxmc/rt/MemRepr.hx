@@ -138,16 +138,16 @@ class MemRepr {
 
 	// dst[di, di + n) = src[si, si + n): one-byte units widened (widen), two-byte
 	// ones each below 0x100 narrowed (narrow)
-	@:hxmc.noGc public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
+	@:hxmc.unsafe public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
 
-	@:hxmc.noGc public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
+	@:hxmc.unsafe public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
 
 	// whether the two-byte units src[si, si + n) are each below 0x100 (four at a time)
-	@:hxmc.noGc public static function fitsOne(src:MemChars, si:Int, n:Int):Bool {
+	@:hxmc.unsafe public static function fitsOne(src:MemChars, si:Int, n:Int):Bool {
 		var p = src.at(si);
 		var k = 0;
 		// (0xFF00FF00FF00FF00, of positive halves: an Int literal of 0x80000000 or more is negative)
@@ -172,10 +172,10 @@ class MemRepr {
 		return MemOps.compare(c.at(i), d, (m : I64)) == 0;
 
 	// the same, m >= 1: the first unit compared first
-	@:hxmc.noGc public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
+	@:hxmc.unsafe public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
 		return Mem.getU16At(c, 0, i) == Mem.getU16(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(2 * i + 2), (d : Ptr).add(2), (2 * (m - 1) : I64)) == 0);
 
-	@:hxmc.noGc public static inline function matchAt1(c:MemChars1, d:MemChars1, i:Int, m:Int):Bool
+	@:hxmc.unsafe public static inline function matchAt1(c:MemChars1, d:MemChars1, i:Int, m:Int):Bool
 		return Mem.getU8At(c, 0, i) == Mem.getU8(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(i + 1), (d : Ptr).add(1), ((m - 1) : I64)) == 0);
 
 	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 its units: a
@@ -463,7 +463,7 @@ class MemRepr {
 		LibC.memset(octets(b).at(pos), v, n);
 
 	// the difference of the first differing bytes of [0, n), else 0
-	@:hxmc.noGc public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
+	@:hxmc.unsafe public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
 		return MemOps.compare(a, b, n);
 
 	// ---- BytesBuffer (T_BYTESBUFFER): slot 0 the length, slot 1 a Bytes

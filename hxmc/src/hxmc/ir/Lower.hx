@@ -404,7 +404,7 @@ class Lower implements LowerQueries {
 						fail('the Haxe implementation ${impl.name} of the runtime\'s $n does not have its signature');
 					// a pure runtime function may be nested in an expression:
 					// its implementation must not reach a GC point
-					if (hxmc.ir.FnLower.noGcHost(n) && !impl.declNoGc) fail('${impl.name} implements the runtime\'s $n, which is not a GC point: it must be @:hxmc.noGc');
+					if (hxmc.ir.FnLower.noGcHost(n) && !impl.declNoGc) fail('${impl.name} implements the runtime\'s $n, which is not a GC point: it must be @:hxmc.unsafe');
 					ECall(impl, xs);
 				}
 			case ENewEnum(c, args):
@@ -521,7 +521,7 @@ class Lower implements LowerQueries {
 
 	static var lambdaDisplays = new Map<String, String>();
 
-	// hxmc's own metadata (@:hxmc.c, @:hxmc.noGc, @:hxmc.export, @:hxmc.host)
+	// hxmc's own metadata (@:hxmc.c, @:hxmc.unsafe, @:hxmc.export, @:hxmc.host)
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
 
@@ -1060,7 +1060,7 @@ class Lower implements LowerQueries {
 
 	// @:hxmc.callback: a static function C calls through its address
 	// (hxmc.unsafe.Callback.addr) in the C convention (hxmc's own). Its
-	// symbol is fixed (the address C keeps names it). A @:hxmc.noGc callback
+	// symbol is fixed (the address C keeps names it). A @:hxmc.unsafe callback
 	// is the function itself: it may run on any thread, in any state. Any
 	// other is reached through a wrapper that leaves the safe region the
 	// calling thread is in (a call of C that is not @:hxmc.fast, the only
@@ -1141,9 +1141,9 @@ class Lower implements LowerQueries {
 		prog.funcs.push(w);
 	}
 
-	// hxmc's attributes of a function: @:hxmc.noGc (checked by Facts.findNoGc),
+	// hxmc's attributes of a function: @:hxmc.unsafe (checked by Facts.findNoGc),
 	// @:hxmc.collects (it runs the collector), @:hxmc.export (its symbol)
-	// (@:hxmc.noGc on a class: on each of its functions)
+	// (@:hxmc.unsafe on a class: on each of its functions)
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;

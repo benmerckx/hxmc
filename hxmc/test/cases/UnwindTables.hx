@@ -38,7 +38,7 @@ class UnwindTables {
 	static var sink:Array<Array<Int>> = [];
 
 	// (_Unwind_Backtrace's callback: each frame's address)
-	@:hxmc.callback @:hxmc.noGc static function step(ctx:Ptr, arg:Ptr):Int {
+	@:hxmc.callback @:hxmc.unsafe static function step(ctx:Ptr, arg:Ptr):Int {
 		if (count >= MAX) return 5; // _URC_END_OF_STACK
 		Mem.setPtr(buf, 8 * count, LibUnwind._Unwind_GetIP(ctx));
 		count++;

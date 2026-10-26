@@ -162,7 +162,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 
 	// empties slot i, moving back the slots after it whose probe chain
 	// passes through it (backward-shift deletion: no tombstones)
-	@:hxmc.noGc function unindex(i:Int) {
+	@:hxmc.unsafe function unindex(i:Int) {
 		var slots = this.slots, mask = this.mask;
 		var j = i;
 		while (true) {
@@ -246,7 +246,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 	// the index brought up to date with the collections since it last was
 	// (the first thread to find it out of date does it: a map may be shared
 	// by threads that only read it); no allocation
-	@:hxmc.noGc function update() {
+	@:hxmc.unsafe function update() {
 		IdHash.lock();
 		var n = IdHash.count();
 		if (IdHash.seen(slots) != n) {

@@ -38,7 +38,7 @@ class FloatText {
 	static inline function setLimb(b:Ptr, i:Int, v:I64)
 		Mem.setI32(b, 8 + 4 * i, v.toInt());
 
-	@:hxmc.noGc static function bset(b:Ptr, v:I64) {
+	@:hxmc.unsafe static function bset(b:Ptr, v:I64) {
 		Mem.setI32(b, 0, 0);
 		var n = 0;
 		while (!(v == 0)) {
@@ -49,11 +49,11 @@ class FloatText {
 		Mem.setI32(b, 0, n);
 	}
 
-	@:hxmc.noGc static function bcopy(d:Ptr, s:Ptr)
+	@:hxmc.unsafe static function bcopy(d:Ptr, s:Ptr)
 		LibC.memcpy(d, s, 8 + 4 * blen(s));
 
 	// b = b * m + add (m, add < 2^32)
-	@:hxmc.noGc static function bmulAdd(b:Ptr, m:I64, add:I64) {
+	@:hxmc.unsafe static function bmulAdd(b:Ptr, m:I64, add:I64) {
 		var n = blen(b);
 		var carry = add;
 		for (i in 0...n) {
@@ -68,7 +68,7 @@ class FloatText {
 		}
 	}
 
-	@:hxmc.noGc static function overflow() {
+	@:hxmc.unsafe static function overflow() {
 		var msg = "hxmc: FloatText: number too large\n";
 		// (the WebAssembly runtime is typed for a program built for it only)
 		#if (hxmc.target == "wasm32-wasi")
@@ -89,7 +89,7 @@ class FloatText {
 	}
 
 	// b *= 10^k
-	@:hxmc.noGc static function bmulPow10(b:Ptr, k:Int) {
+	@:hxmc.unsafe static function bmulPow10(b:Ptr, k:Int) {
 		while (k >= 9) {
 			bmulAdd(b, 1000000000, 0);
 			k -= 9;
@@ -101,7 +101,7 @@ class FloatText {
 	}
 
 	// b <<= s
-	@:hxmc.noGc static function bshl(b:Ptr, s:Int) {
+	@:hxmc.unsafe static function bshl(b:Ptr, s:Int) {
 		var n = blen(b);
 		if (n == 0 || s == 0) return;
 		var w = s >> 5, r = s & 31;
@@ -125,7 +125,7 @@ class FloatText {
 		Mem.setI32(b, 0, nn);
 	}
 
-	@:hxmc.noGc static function bcmp(a:Ptr, b:Ptr):Int {
+	@:hxmc.unsafe static function bcmp(a:Ptr, b:Ptr):Int {
 		var na = blen(a), nb = blen(b);
 		if (na != nb) return na < nb ? -1 : 1;
 		var i = na - 1;
@@ -138,7 +138,7 @@ class FloatText {
 	}
 
 	// b /= d (d < 2^32): the remainder
-	@:hxmc.noGc static function bdivSmall(b:Ptr, d:I64):Int {
+	@:hxmc.unsafe static function bdivSmall(b:Ptr, d:I64):Int {
 		var n = blen(b);
 		var r:I64 = 0;
 		var i = n - 1;
@@ -161,23 +161,23 @@ class FloatText {
 
 	// ---- doubles
 
-	@:hxmc.noGc static function bits(v:Float):I64 {
+	@:hxmc.unsafe static function bits(v:Float):I64 {
 		var t = Mem.stack(8);
 		Mem.setF64(t, 0, v);
 		return Mem.getI64(t, 0);
 	}
 
-	@:hxmc.noGc static function ofBits(b:I64):Float {
+	@:hxmc.unsafe static function ofBits(b:I64):Float {
 		var t = Mem.stack(8);
 		Mem.setI64(t, 0, b);
 		return Mem.getF64(t, 0);
 	}
 
-	@:hxmc.noGc static inline function inf():Float
+	@:hxmc.unsafe static inline function inf():Float
 		return ofBits((0x7FF : I64) << 52);
 
 	// is X (dig: decimal digits, nd of them, value 0.d1d2... * 10^e10... as D * 10^k) vs b * 2^f
-	@:hxmc.noGc static function cmpDecBin(d:Ptr, k:Int, b:I64, f:Int, t1:Ptr, t2:Ptr):Int {
+	@:hxmc.unsafe static function cmpDecBin(d:Ptr, k:Int, b:I64, f:Int, t1:Ptr, t2:Ptr):Int {
 		bcopy(t1, d);
 		if (k > 0) bmulPow10(t1, k);
 		bset(t2, b);
@@ -188,7 +188,7 @@ class FloatText {
 
 	// the double nearest to D * 10^k (D a big integer, positive), ties to even,
 	// starting from the estimate z
-	@:hxmc.noGc static function refine(d:Ptr, k:Int, z:Float):Float {
+	@:hxmc.unsafe static function refine(d:Ptr, k:Int, z:Float):Float {
 		var t1 = Mem.stack(BIG), t2 = Mem.stack(BIG);
 		var b = bits(z);
 		if (b == 0) b = 1; // (from the smallest denormal)
@@ -227,7 +227,7 @@ class FloatText {
 	static inline function lower(c:Int):Int
 		return c >= "A".code && c <= "Z".code ? c + 32 : c;
 
-	@:hxmc.noGc static function matchWord(s:Ptr, lit:String):Bool {
+	@:hxmc.unsafe static function matchWord(s:Ptr, lit:String):Bool {
 		for (i in 0...hxmc.rt.Str.len(lit))
 			if (lower(Mem.getU8(s, i)) != hxmc.rt.Str.unit(lit, i)) return false;
 		return true;
@@ -244,7 +244,7 @@ class FloatText {
 		return r;
 	}
 
-	@:hxmc.noGc public static function parse(s:Ptr, end:Ptr):Float {
+	@:hxmc.unsafe public static function parse(s:Ptr, end:Ptr):Float {
 		var p = 0;
 		while (Mem.getU8(s, p) == 32 || (Mem.getU8(s, p) >= 9 && Mem.getU8(s, p) <= 13))
 			p++;
@@ -292,7 +292,7 @@ class FloatText {
 		return isDigit(c) ? c - "0".code : lower(c) - "a".code + 10;
 
 	// hexadecimal (after "0x"): the end; the value at res
-	@:hxmc.noGc static function hex(s:Ptr, p:Int, res:Ptr):Int {
+	@:hxmc.unsafe static function hex(s:Ptr, p:Int, res:Ptr):Int {
 		var m = 0.0;
 		var e = 0, digits = 0;
 		var seenDot = false;
@@ -341,7 +341,7 @@ class FloatText {
 	}
 
 	// a decimal number at p: the end (p: none); the value at res
-	@:hxmc.noGc static function decimal(s:Ptr, p:Int, res:Ptr):Int {
+	@:hxmc.unsafe static function decimal(s:Ptr, p:Int, res:Ptr):Int {
 		var start = p;
 		var dig = Mem.stack(MAXDIG + 8);
 		var nd = 0, dropped = 0, intDigits = 0;
@@ -461,7 +461,7 @@ class FloatText {
 
 	// the exact decimal digits of v (> 0, finite) into dig: their number;
 	// the decimal exponent of the first at *e10 (value = 0.d1d2... no: d1.d2... * 10^e10)
-	@:hxmc.noGc static function exactDigits(v:Float, dig:Ptr, e10:Ptr):Int {
+	@:hxmc.unsafe static function exactDigits(v:Float, dig:Ptr, e10:Ptr):Int {
 		var b = bits(v);
 		var ex = ((b >>> 52) & 0x7FF).toInt();
 		var m = b & ((((1 : I64) << 52)) - 1);
@@ -513,7 +513,7 @@ class FloatText {
 	// printf's %.<decimals>f of v into out (at most 330 + decimals bytes, no
 	// NUL): its length. The exact value rounded to nearest, ties to even, as the
 	// C library rounds (the runtime's reports: RT_STATS, the census).
-	@:hxmc.noGc public static function fixed(v:Float, decimals:Int, out:Ptr):Int {
+	@:hxmc.unsafe public static function fixed(v:Float, decimals:Int, out:Ptr):Int {
 		var o = 0;
 		inline function put(c:Int) {
 			Mem.setI8(out, o, c);
@@ -587,7 +587,7 @@ class FloatText {
 	}
 
 	// shortest representation that reads back as the same double, formatted like JavaScript
-	@:hxmc.host("hx_format_float") @:hxmc.noGc static function format(v:Float, out:Ptr):Void {
+	@:hxmc.host("hx_format_float") @:hxmc.unsafe static function format(v:Float, out:Ptr):Void {
 		var o = 0;
 		inline function put(c:Int) {
 			Mem.setI8(out, o, c);

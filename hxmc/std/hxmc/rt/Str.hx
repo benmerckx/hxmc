@@ -246,7 +246,7 @@ class Str {
 
 	// UTF-8 bytes of s into buf (3 * length + 1 bytes), NUL-terminated; the byte count.
 	// A lone U+DC80 to U+DCFF is the byte decode read it from (0x80 to 0xFF).
-	@:hxmc.host("hx_str_utf8_into") @:hxmc.noGc public static function utf8Into(s:String, buf:Octets):Int {
+	@:hxmc.host("hx_str_utf8_into") @:hxmc.unsafe public static function utf8Into(s:String, buf:Octets):Int {
 		var n = len(s), j = 0, i = 0;
 		if (isOne(s)) {
 			var c = chars1(s);
@@ -313,7 +313,7 @@ class Str {
 	}
 
 	// a malloc'ed UTF-8 copy ("null" for null)
-	@:hxmc.host("hx_str_to_utf8") @:hxmc.noGc static function toUtf8(s:String):Ptr {
+	@:hxmc.host("hx_str_to_utf8") @:hxmc.unsafe static function toUtf8(s:String):Ptr {
 		if (isNull(s)) {
 			var p = LibC.malloc(5);
 			Mem.setI32(p, 0, 0x6c6c756e); // "null"
@@ -328,7 +328,7 @@ class Str {
 	// ---- comparison, hashing
 
 	// a and b of the same length (MirBuild.strEq)
-	@:hxmc.export("hx_str_eq_slow") @:hxmc.noGc static function eqSlow(a:String, b:String):Bool {
+	@:hxmc.export("hx_str_eq_slow") @:hxmc.unsafe static function eqSlow(a:String, b:String):Bool {
 		var n = len(a);
 		var one = isOne(a);
 		if (one == isOne(b)) return MemOps.compare(unitsAddr(a), unitsAddr(b), one ? (n : I64) : (2 * n : I64)) == 0;
@@ -336,14 +336,14 @@ class Str {
 	}
 
 	// the n units of a one-byte string and of a two-byte one
-	@:hxmc.noGc static function eqMixed(one:String, two:String, n:Int):Bool {
+	@:hxmc.unsafe static function eqMixed(one:String, two:String, n:Int):Bool {
 		var c = chars1(one), d = chars2(two);
 		for (i in 0...n)
 			if (c.get(i) != d.get(i)) return false;
 		return true;
 	}
 
-	@:hxmc.host("hx_str_cmp") @:hxmc.noGc static function cmp(a:String, b:String):Int {
+	@:hxmc.host("hx_str_cmp") @:hxmc.unsafe static function cmp(a:String, b:String):Int {
 		if (Repr.same(a, b)) return 0;
 		if (isNull(a)) return -1;
 		if (isNull(b)) return 1;
@@ -374,12 +374,12 @@ class Str {
 	// has room (a benign race between threads: they store the same value).
 	// FnLower.strHash computes the same at compile time (DataGen stores it in
 	// the literals).
-	@:hxmc.host("hx_str_hash") @:hxmc.noGc static function hash(s:String):Int {
+	@:hxmc.host("hx_str_hash") @:hxmc.unsafe static function hash(s:String):Int {
 		var h = Repr.storedHash(s);
 		return h != 0 ? h : hashSlow(s);
 	}
 
-	@:hxmc.noGc static function hashSlow(s:String):Int {
+	@:hxmc.unsafe static function hashSlow(s:String):Int {
 		var x = 0x811C9DC5;
 		if (isOne(s)) {
 			var c = chars1(s);
@@ -405,7 +405,7 @@ class Str {
 
 	// ---- concatenation and conversions
 
-	@:hxmc.host("hx_str_or_null") @:hxmc.noGc static function orNull(s:String):String
+	@:hxmc.host("hx_str_or_null") @:hxmc.unsafe static function orNull(s:String):String
 		return isNull(s) ? "null" : s;
 
 	@:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
@@ -523,7 +523,7 @@ class Str {
 		#end
 	}
 
-	@:hxmc.host("hx_str_of_bool") @:hxmc.noGc static function ofBool(v:Bool):String
+	@:hxmc.host("hx_str_of_bool") @:hxmc.unsafe static function ofBool(v:Bool):String
 		return v ? "true" : "false";
 
 	// ---- String
@@ -561,7 +561,7 @@ class Str {
 		return ofUnit(code & 0xFFFF);
 	}
 
-	@:hxmc.host("String_indexOf") @:hxmc.noGc static function indexOf(s:String, sub:String, start:Null<Int>):Int {
+	@:hxmc.host("String_indexOf") @:hxmc.unsafe static function indexOf(s:String, sub:String, start:Null<Int>):Int {
 		var n = len(s), m = len(sub);
 		var from:Int = start == null ? 0 : start;
 		if (from < 0) from = 0;
@@ -571,7 +571,7 @@ class Str {
 	}
 
 	// the first i >= from where sub (not empty) is in s; -1 if none
-	@:hxmc.noGc static function find(s:String, sub:String, from:Int):Int {
+	@:hxmc.unsafe static function find(s:String, sub:String, from:Int):Int {
 		var n = len(s), m = len(sub);
 		var i = from;
 		var one = isOne(s);
@@ -598,14 +598,14 @@ class Str {
 	}
 
 	// s[i, i + m) == sub[0, m), of any widths
-	@:hxmc.noGc static inline function unitsAt(s:String, i:Int, sub:String, m:Int):Bool {
+	@:hxmc.unsafe static inline function unitsAt(s:String, i:Int, sub:String, m:Int):Bool {
 		var k = 0;
 		while (k < m && unit(s, i + k) == unit(sub, k))
 			k++;
 		return k == m;
 	}
 
-	@:hxmc.host("String_lastIndexOf") @:hxmc.noGc static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
+	@:hxmc.host("String_lastIndexOf") @:hxmc.unsafe static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
 		var n = len(s), m = len(sub);
 		var from:Int = start == null ? n : start;
 		if (from > n - m) from = n - m;
@@ -706,11 +706,11 @@ class Str {
 		return r;
 	}
 
-	@:hxmc.host("String_toString") @:hxmc.noGc static function toString(s:String):String
+	@:hxmc.host("String_toString") @:hxmc.unsafe static function toString(s:String):String
 		return s;
 
 	// new String(s): strings do not change, s itself
-	@:hxmc.host("String_new") @:hxmc.noGc static function ofString(s:String):String
+	@:hxmc.host("String_new") @:hxmc.unsafe static function ofString(s:String):String
 		return s;
 
 	@:hxmc.host("String_split") static function split(s:String, delim:String):Array<String> {
@@ -865,7 +865,7 @@ class Str {
 	// the index of the first quote, backslash or 0 unit of s from pos (its
 	// length if none): haxe.format.JsonParser.parseString's units to skip
 	// (hxmc's)
-	@:hxmc.noGc public static function jsonRun(s:String, pos:Int):Int {
+	@:hxmc.unsafe public static function jsonRun(s:String, pos:Int):Int {
 		var n = len(s);
 		var i = pos < 0 ? 0 : pos;
 		if (isOne(s)) {
@@ -905,7 +905,7 @@ class Str {
 
 	// the index of the first unit of s from i, before n, that JsonPrinter
 	// escapes (n if none); the words skipped stop at any unit below 0x20
-	@:hxmc.noGc static function jsonPlain(s:String, i:Int, n:Int):Int {
+	@:hxmc.unsafe static function jsonPlain(s:String, i:Int, n:Int):Int {
 		if (isOne(s)) {
 			var c = chars1(s);
 			#if !hxmc.wasm_gc
@@ -971,10 +971,10 @@ class Str {
 		Repr.sbSetLen(b, at);
 	}
 
-	@:hxmc.host("StringBuf_clear") @:hxmc.noGc static function sbClear(b:Dynamic):Void
+	@:hxmc.host("StringBuf_clear") @:hxmc.unsafe static function sbClear(b:Dynamic):Void
 		Repr.sbSetLen(b, 0);
 
-	@:hxmc.host("StringBuf_get_length") @:hxmc.noGc static function sbGetLength(b:Dynamic):Int
+	@:hxmc.host("StringBuf_get_length") @:hxmc.unsafe static function sbGetLength(b:Dynamic):Int
 		return sbLen(b);
 
 	// (one-byte where every unit fits: a buffer widened, then cleared, may hold none above 0xFF)
@@ -1063,7 +1063,7 @@ class Str {
 		#end
 	}
 
-	@:hxmc.host("Std_random") @:hxmc.noGc static function random(max:Int):Int {
+	@:hxmc.host("Std_random") @:hxmc.unsafe static function random(max:Int):Int {
 		if (max <= 0) return 0;
 		#if (hxmc.wasm_gc)
 		return Std.int(hxmc.rt.gc.W.random() * max);

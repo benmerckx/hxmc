@@ -43,7 +43,7 @@ class Census {
 	static inline function cstrEq(p:Ptr, s:String):Bool
 		return !p.isNull() && LibC.strcmp(p, Mem.cstr(s)) == 0;
 
-	@:hxmc.noGc static function findMaps() {
+	@:hxmc.unsafe static function findMaps() {
 		var n = ntypes();
 		mapTypes = LibC.malloc((n : I64));
 		LibC.memset(mapTypes, 0, (n : I64));
@@ -61,7 +61,7 @@ class Census {
 
 	// a type's display name into buf (at most n - 1 bytes, NUL-terminated):
 	// anonymous structures list their fields
-	@:hxmc.noGc static function tname(t:Int, buf:Ptr, n:Int) {
+	@:hxmc.unsafe static function tname(t:Int, buf:Ptr, n:Int) {
 		var k = 0;
 		inline function put(c:Int)
 			if (k < n - 1) Mem.setI8(buf, k++, c);
@@ -101,7 +101,7 @@ class Census {
 
 	// bytes of an object and what it owns exclusively in our layout: arrays
 	// with their storage (none: the static empty one), maps with their arrays
-	@:hxmc.noGc static function deep(o:Ptr):I64 {
+	@:hxmc.unsafe static function deep(o:Ptr):I64 {
 		if (o.isNull()) return 0;
 		var t = tindexOf(o);
 		var b = objSize(o);
@@ -120,7 +120,7 @@ class Census {
 
 	// indices 0...n ordered by the I64 at base + stride * i + off, largest first
 	// (a merge sort: stable)
-	@:hxmc.noGc static function sortDesc(base:Ptr, stride:Int, off:Int, n:Int):Ptr {
+	@:hxmc.unsafe static function sortDesc(base:Ptr, stride:Int, off:Int, n:Int):Ptr {
 		var idx = LibC.malloc(((n + 1) : I64) * 4), tmp = LibC.malloc(((n + 1) : I64) * 4);
 		for (i in 0...n)
 			Mem.setI32(idx, 4 * i, i);
@@ -146,7 +146,7 @@ class Census {
 	}
 
 	// "    length <label>:<count> ...": the labels separated by spaces, the counts at h
-	@:hxmc.noGc static function hist(r:Report, labels:Ptr, h:Ptr) {
+	@:hxmc.unsafe static function hist(r:Report, labels:Ptr, h:Ptr) {
 		r.str("    length ");
 		var k = 0, i = 0;
 		while (Mem.getU8(labels, i) != 0) {
@@ -163,7 +163,7 @@ class Census {
 		r.flush();
 	}
 
-	@:hxmc.noGc public static function run(start:Ptr, end:Ptr, when:Ptr, young:I64, oldLimit:I64, remembered:I64, gcstack:I64, shadow:I64,
+	@:hxmc.unsafe public static function run(start:Ptr, end:Ptr, when:Ptr, young:I64, oldLimit:I64, remembered:I64, gcstack:I64, shadow:I64,
 			minors:Int, majors:Int, nglobals:Int) {
 		if (mapTypes.isNull()) findMaps();
 		var top = Os.envInt("RT_CENSUS_TOP", 40);
@@ -542,7 +542,7 @@ class Census {
 	// one path each, by a breadth-first walk from them that records every
 	// object's first referrer (what keeps a leak alive; what only a stack
 	// reaches has no path)
-	@:hxmc.noGc public static function why(start:Ptr, end:Ptr, globals:Ptr, nglobals:Int) {
+	@:hxmc.unsafe public static function why(start:Ptr, end:Ptr, globals:Ptr, nglobals:Int) {
 		var want = Os.getenv("RT_CENSUS_WHY");
 		if (want.isNull()) return;
 		var max = Os.envInt("RT_CENSUS_WHY_MAX", 8);
@@ -668,32 +668,32 @@ class Census {
 	static var promoTab:Ptr; // (the same of the objects minor collections copied out of the nursery)
 	static var allocMulti:Bool; // the nursery was counted with several threads: approximate
 
-	@:hxmc.noGc static inline function newTab():Ptr {
+	@:hxmc.unsafe static inline function newTab():Ptr {
 		var nt = ntypes();
 		var t = LibC.malloc((nt : I64) * 16);
 		LibC.memset(t, 0, (nt : I64) * 16);
 		return t;
 	}
 
-	@:hxmc.noGc static inline function count(tab:Ptr, header:I64, bytes:I64) {
+	@:hxmc.unsafe static inline function count(tab:Ptr, header:I64, bytes:I64) {
 		var t = header.toInt() & 0xFFFF;
 		var e = tab.add(16 * (t < ntypes() ? t : 0));
 		Mem.setI64(e, 0, Mem.getI64(e, 0) + 1);
 		Mem.setI64(e, 8, Mem.getI64(e, 8) + bytes);
 	}
 
-	@:hxmc.noGc public static function countAlloc(header:I64, bytes:I64) {
+	@:hxmc.unsafe public static function countAlloc(header:I64, bytes:I64) {
 		if (allocTab.isNull()) allocTab = newTab();
 		count(allocTab, header, bytes);
 	}
 
 	// an object a minor collection copies out of the nursery (Gc.copyTo)
-	@:hxmc.noGc public static function countPromoted(header:I64, bytes:I64) {
+	@:hxmc.unsafe public static function countPromoted(header:I64, bytes:I64) {
 		if (promoTab.isNull()) promoTab = newTab();
 		count(promoTab, header, bytes);
 	}
 
-	@:hxmc.noGc public static function countYoung(start:Ptr, end:Ptr) {
+	@:hxmc.unsafe public static function countYoung(start:Ptr, end:Ptr) {
 		if (Mem.getI32(Mem.sym("rt_nthreads"), 0) > 1) allocMulti = true;
 		var p = start;
 		while (p.ult(end)) {
@@ -708,12 +708,12 @@ class Census {
 		}
 	}
 
-	@:hxmc.noGc public static function allocReport() {
+	@:hxmc.unsafe public static function allocReport() {
 		if (!allocTab.isNull()) typeTable(allocTab, Mem.cstr("allocations: "));
 		if (!promoTab.isNull()) typeTable(promoTab, Mem.cstr("promoted by minor collections: "));
 	}
 
-	@:hxmc.noGc static function typeTable(tab:Ptr, title:Ptr) {
+	@:hxmc.unsafe static function typeTable(tab:Ptr, title:Ptr) {
 		var top = Os.envInt("RT_CENSUS_TOP", 40);
 		var nt = ntypes();
 		var n:I64 = 0, total:I64 = 0;

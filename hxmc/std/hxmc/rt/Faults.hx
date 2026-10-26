@@ -45,7 +45,7 @@ class Faults {
 	// Windows: the vectored handler
 	static var veh:Ptr;
 
-	@:hxmc.noGc static inline function windows():Bool
+	@:hxmc.unsafe static inline function windows():Bool
 		return Mem.os() == 2;
 
 	// struct sigaction: Linux (musl, glibc) 152 bytes, the handler at 0, the
@@ -54,27 +54,27 @@ class Faults {
 	// the flags at 12 (16 bytes)
 	static var SA_BYTES(get, never):Int;
 
-	@:hxmc.noGc static inline function get_SA_BYTES():Int
+	@:hxmc.unsafe static inline function get_SA_BYTES():Int
 		return Mem.os() == 1 ? 16 : Mem.target() >= 9 ? 32 : 152;
 
 	static var SA_HANDLER(get, never):Int;
 
-	@:hxmc.noGc static inline function get_SA_HANDLER():Int
+	@:hxmc.unsafe static inline function get_SA_HANDLER():Int
 		return Mem.target() >= 9 ? 8 : 0;
 
 	static var SA_FLAGS(get, never):Int;
 
-	@:hxmc.noGc static inline function get_SA_FLAGS():Int
+	@:hxmc.unsafe static inline function get_SA_FLAGS():Int
 		return Mem.os() == 1 ? 12 : Mem.target() >= 9 ? 0 : 136;
 
 	static var SA_SIGINFO(get, never):Int;
 
-	@:hxmc.noGc static inline function get_SA_SIGINFO():Int
+	@:hxmc.unsafe static inline function get_SA_SIGINFO():Int
 		return Mem.os() == 1 ? 0x40 : 4;
 
 	static var SIGBUS(get, never):Int;
 
-	@:hxmc.noGc static inline function get_SIGBUS():Int
+	@:hxmc.unsafe static inline function get_SIGBUS():Int
 		return Mem.os() == 1 ? 10 : 7;
 
 	static inline var SIGSEGV = 11;
@@ -82,11 +82,11 @@ class Faults {
 	// siginfo_t: si_code at 8, si_addr at 16 (Linux) or 24 (macOS)
 	static var SI_ADDR(get, never):Int;
 
-	@:hxmc.noGc static inline function get_SI_ADDR():Int
+	@:hxmc.unsafe static inline function get_SI_ADDR():Int
 		return Mem.os() == 1 ? 24 : 16;
 
 	// from rt_init (Start), once the collector and the threads are set up
-	@:hxmc.noGc static function init() {
+	@:hxmc.unsafe static function init() {
 		var off = Os.getenv("RT_NULL_ACCESS");
 		if (!off.isNull() && Mem.getU8(off, 0) == "0".code) return;
 		imageCode();
@@ -113,7 +113,7 @@ class Faults {
 
 	// a shared library's runtime that ends (Gc.releaseHeap): the actions
 	// before it are back, where its own are still installed
-	@:hxmc.noGc static function uninstall() {
+	@:hxmc.unsafe static function uninstall() {
 		if (windows()) {} else if (installed) {
 			installed = false;
 			var n = SA_BYTES;
@@ -126,7 +126,7 @@ class Faults {
 		}
 	}
 
-	@:hxmc.noGc static function imageCode() {
+	@:hxmc.unsafe static function imageCode() {
 		if (Mem.os() == 1) {
 			// the Mach-O image holding this code (an executable or a dylib): its
 			// header starts __TEXT, whose size its load command gives
@@ -158,10 +158,10 @@ class Faults {
 		}
 	}
 
-	@:hxmc.noGc static inline function inCode(pc:Ptr):Bool
+	@:hxmc.unsafe static inline function inCode(pc:Ptr):Bool
 		return !pc.ult(codeLo) && pc.ult(codeHi);
 
-	@:hxmc.noGc static inline function near(a:Ptr):Bool
+	@:hxmc.unsafe static inline function near(a:Ptr):Bool
 		return Mem.ult(a.toI64() + NEAR, 2 * NEAR);
 
 	// whether this fault becomes a throw: the thread is one of the runtime's,
@@ -169,7 +169,7 @@ class Faults {
 	// and may not run any; not collecting), and its innermost handler, when
 	// there is one, is a frame above this one (a handler that is not would
 	// fault again in the longjmp)
-	@:hxmc.noGc static function throwable(pc:Ptr, a:Ptr, sp:Ptr):Bool {
+	@:hxmc.unsafe static function throwable(pc:Ptr, a:Ptr, sp:Ptr):Bool {
 		if (!near(a) || !inCode(pc)) return false;
 		var m = Threads.self;
 		if (m.isNull() || Threads.stateOf(m) != Threads.RUNNING || Threads.collector == m) return false;
@@ -183,7 +183,7 @@ class Faults {
 	// below the 32 bytes the callee may use, in the exception frame's top
 	// part, which the dispatcher no longer needs: as Go does); arm64: in the
 	// link register. The stack pointer 16-byte aligned as at a call.
-	@:hxmc.noGc static function redirect(ctx:Ptr, pcOff:Int, spOff:Int, lrOff:Int) {
+	@:hxmc.unsafe static function redirect(ctx:Ptr, pcOff:Int, spOff:Int, lrOff:Int) {
 		var pc = Mem.getPtr(ctx, pcOff);
 		var sp = Mem.getI64(ctx, spOff) & ~(15 : I64);
 		if (Mem.arm()) {
@@ -201,7 +201,7 @@ class Faults {
 	// ucontext_t: the program counter, stack pointer and link register
 	// (Linux and Android: in uc_mcontext; macOS: in the thread state behind
 	// the uc_mcontext pointer at 48, past its 16 bytes of exception state)
-	@:hxmc.callback @:hxmc.noGc static function onSignal(sig:Int, info:Ptr, uc:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function onSignal(sig:Int, info:Ptr, uc:Ptr):Void {
 		var code = Mem.getI32(info, 8);
 		var a = Mem.getPtr(info, SI_ADDR);
 		var ctx = Mem.os() == 1 ? Mem.getPtr(uc, 48) : uc;
@@ -221,7 +221,7 @@ class Faults {
 	// another fault: the action before ours. Its handler is called; the
 	// default (or ignoring it) is restored, and the fault happens again when
 	// the handler returns, now with it (a signal a process sent is sent again)
-	@:hxmc.noGc static function chain(sig:Int, info:Ptr, uc:Ptr, code:Int) {
+	@:hxmc.unsafe static function chain(sig:Int, info:Ptr, uc:Ptr, code:Int) {
 		var p = prev.add(sig == SIGSEGV ? 0 : SA_BYTES);
 		var h = Mem.getPtr(p, SA_HANDLER);
 		if (Mem.ult(h.toI64(), 2)) { // SIG_DFL, SIG_IGN
@@ -240,7 +240,7 @@ class Faults {
 	// EXCEPTION_POINTERS: the record at 0, the context at 8; EXCEPTION_RECORD:
 	// the code at 0, NumberParameters at 24, the access's address at 40;
 	// CONTEXT: x86-64 Rsp at 152 and Rip at 248; arm64 Lr at 248, Sp at 256, Pc at 264
-	@:hxmc.callback @:hxmc.noGc static function onException(e:Ptr):Int {
+	@:hxmc.callback @:hxmc.unsafe static function onException(e:Ptr):Int {
 		var r = Mem.getPtr(e, 0);
 		if (Mem.getI32(r, 0) != 0xC0000005 || Mem.getI32(r, 24) < 2) return 0; // EXCEPTION_ACCESS_VIOLATION; EXCEPTION_CONTINUE_SEARCH
 		var ctx = Mem.getPtr(e, 8);
