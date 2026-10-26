@@ -54,16 +54,22 @@ class Inline {
 	// collector (@:hxmc.collects): the calls in its body are to the
 	// collector's own no-GC code, during which its callers' shadow-stack
 	// slots would be taken to keep their values (MIns.keepsFrame); not one
-	// without its body (FuncInfo.hostCode)
+	// without its body (FuncInfo.hostCode); not one whose calls or throws carry
+	// their positions (Lower.sitePositions: its frame is in a stack)
 	public static function candidate(f:FuncInfo):Bool {
 		if (f.hasTry || f.collects || f.hostCode) return false;
-		var n = 0;
+		var n = 0, sited = false;
 		function ex(e:Ex) {
 			if (++n > MAX_IR) return;
 			hxmc.ir.Facts.iterEx(ex, e);
 		}
 		function st(s:Stmt) {
-			if (s.match(SPos(_))) return; // (-debug: the same decisions)
+			switch s {
+				case SPos(_, _, min, _):
+					if (min >= 0) sited = true;
+					return; // (-debug: the same decisions)
+				case _:
+			}
 			if (++n > MAX_IR) return;
 			hxmc.ir.Facts.iterStmt(st, ex, s);
 		}
@@ -71,7 +77,7 @@ class Inline {
 			st(s);
 			if (n > MAX_IR) return false;
 		}
-		return true;
+		return !sited;
 	}
 
 	// the instructions of f outside slow paths once lowered, from its

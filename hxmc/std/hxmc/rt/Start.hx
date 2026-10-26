@@ -130,6 +130,8 @@ class Start {
 		var h = Gc.hcur;
 		// (the thrower's stack up to the catch, when exception stacks are read: Stacks)
 		Stacks.recordThrow(h);
+		// (the Mir interpreter's frames, when it runs: Stacks)
+		if (!Stacks.interpCur.isNull() || Stacks.interpRethrow) Stacks.recordInterp();
 		if (h.isNull()) {
 			Gc.uncaught("Uncaught exception: ", v);
 			// (where it was thrown, when the program has its table of lines)

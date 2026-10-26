@@ -51,6 +51,14 @@ class FnLower {
 		}
 	}
 
+	// (Lower.sitePositions) the position of a call or a throw: the code after it
+	// (the call, rt_throw's) has it, as Eval's frame its env_leave_pmin/pmax
+	function markSite(e:TExpr) {
+		var p = e.epos;
+		if (p.pfile == null || p.pfile == "" || p.pmin < 0 || !Lower.sitePositions(p.pfile)) return;
+		out.push(SPos(p.pfile, 0, p.pmin, p.pmax));
+	}
+
 	// (Lower.callSites) this function's site: where it was called from
 	var site:Null<Local> = null;
 
@@ -953,7 +961,7 @@ class FnLower {
 	function pos(e:TExpr):Int {
 		var p = e.epos;
 		if (p.pfile == null || p.pfile == "" || p.pfile == "?" || p.pmin < 0) return -1;
-		var s = SPos(p.pfile, syntax.Lexer.findPos(p).line);
+		var s = SPos(p.pfile, syntax.Lexer.findPos(p).line, -1, -1);
 		if (out.length > 0 && out[out.length - 1].match(SPos(_))) {
 			out[out.length - 1] = s;
 			return out.length - 1;
@@ -1073,6 +1081,7 @@ class FnLower {
 				var v = coerce(value(x), tyOf(x), TRef(RAny));
 				var base = exceptionBase(x.etype);
 				if (base != null) v = temp(TRef(RAny), ECall(l.staticFunc(base, base.clStatics.get("thrown")), vector(v)));
+				if (Lower.sitePositions != null) markSite(e);
 				out.push(SThrow(v));
 			case TCall(_, _) | TNew(_, _, _) | TBinop(OpAssign | OpAssignOp(_), _, _) | TUnop(Increment | Decrement, _, _):
 				var x = rhs(e);
@@ -1426,6 +1435,11 @@ class FnLower {
 			case TCall(f, cargs) if (site != null):
 				var x = call(f, cargs, e);
 				if (x.match(ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | ECallHost(_))) noteCall(e);
+				if (Lower.sitePositions != null) markSite(e);
+				x;
+			case TCall(f, cargs) if (Lower.sitePositions != null):
+				var x = call(f, cargs, e);
+				markSite(e);
 				x;
 			case TCall(f, cargs): call(f, cargs, e);
 			case TNew(c, params, cargs) if (Lower.isNativeArray(c)):

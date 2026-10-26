@@ -305,10 +305,14 @@ class Fingerprint {
 			case SCold(_, x):
 				word(S_COLD);
 				stmt(x);
-			case SPos(file, line):
+			case SPos(file, line, min, max):
 				word(S_POS);
 				str(file);
 				word(line);
+				if (min >= 0) {
+					word(min);
+					word(max);
+				}
 		}
 	}
 

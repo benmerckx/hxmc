@@ -21,7 +21,9 @@ using StringTools;
 // first called in a later compilation shares the statics the earlier ones
 // set (the module's types handed over again as other objects); a closure
 // kept from an earlier compilation reads the statics of its own class; a
-// Context.error ends its macro only. In bin/hxmc-t/mir-server (removed when
+// Context.error ends its macro only. And an uncaught exception of macro code
+// is reported where it was thrown, called from its frames' calls (through
+// recursion, a lambda, a callback of the compiler, a build macro). In bin/hxmc-t/mir-server (removed when
 // every check passes):
 //   HXMC_HAXE=<haxe> HAXE_REFERENCE=<haxe> bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run MirServerCheck
 class MirServerCheck {
@@ -167,6 +169,79 @@ class Probe {
 ",
 	];
 
+	// uncaught exceptions of macro code: where they were thrown, called from where
+	static final EXCEPTIONS = [
+		"E.hx" => "import haxe.macro.Context;
+
+class E {
+	public static function boom() {
+		throw \"boom\";
+	}
+
+	static function deep(n:Int) {
+		if (n == 0) inner(); else deep(n - 1);
+	}
+
+	static function inner() {
+		var o:Dynamic = null;
+		helper(o);
+	}
+
+	static function helper(o:Dynamic) {
+		throw \"deep \" + Std.string(o);
+	}
+
+	public static function rec() {
+		deep(3);
+	}
+
+	public static function err() {
+		throw new haxe.macro.Expr.Error(\"an error\", Context.currentPos());
+	}
+
+	public static function lam() {
+		[1, 2].map(x -> x == 2 ? throw \"in lambda\" : x);
+	}
+
+	public static function caught() {
+		try boom() catch (e:String) {}
+		throw \"after catch\";
+	}
+
+	public static function exc() {
+		throw new haxe.Exception(\"exc\");
+	}
+
+	public static function callback() {
+		Context.onAfterTyping(_ -> fail(\"in callback\"));
+	}
+
+	static function fail(s:String) {
+		throw s;
+	}
+
+	public static function rethrow() {
+		try fail(\"first\") catch (e:String) throw e + \" again\";
+	}
+
+	public static macro function build():Array<haxe.macro.Expr.Field> {
+		fail(\"in build\");
+		return null;
+	}
+}
+",
+		"Built.hx" => "@:build(E.build()) class Built {
+	public function new() {}
+}
+",
+		"UseBuilt.hx" => "class UseBuilt {
+	static function main() {
+		new Built();
+	}
+}
+",
+	];
+
 	static function macros(names:Array<String>):Array<String> {
 		var a = [];
 		for (n in names)
@@ -204,6 +279,14 @@ class Probe {
 			]
 		},
 		{
+			name: "exceptions",
+			files: EXCEPTIONS,
+			steps: [
+				for (m in ["boom", "rec", "err", "lam", "caught", "exc", "callback", "rethrow"])
+					{name: m, args: macros(["E." + m + "()"])}
+			].concat([{name: "build", args: ["-main", "UseBuilt"]}, {name: "boom-again", args: macros(["E.boom()"])}])
+		},
+		{
 			name: "later",
 			files: LATER,
 			steps: [
@@ -238,7 +321,7 @@ class Probe {
 					for (f => text in s.edit)
 						File.saveContent('$proj/$f', text);
 				}
-				var args = ["-cp", ".", "-main", "Main", "--interp", "--no-output"].concat(s.args);
+				var args = ["-cp", ".", "--interp", "--no-output"].concat(s.args.indexOf("-main") < 0 ? ["-main", "Main"] : []).concat(s.args);
 				var a = client([ref], r.port, args, proj);
 				var b = client(mir, p.port, args, proj);
 				var what = '${sc.name}:${s.name}';

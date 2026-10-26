@@ -197,6 +197,51 @@ class Stacks {
 		thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
 	}
 
+	// ---- the Mir interpreter's frames (hxmc.rt.Interp: code loaded at run
+	// time, Mir macros), which no native walk names: each frame links the one
+	// it was called from, and keeps where its code is and the call it makes
+
+	// the innermost interpreted frame of this thread (null: none runs)
+	@:hxmc.threadLocal("rt_interp_cur") public static var interpCur:Ptr;
+	// (Interp: a frame's link to the frame it was called from, its code, the call it makes)
+	public static inline var F_CODE = 0;
+	public static inline var F_PREV = 192;
+	public static inline var F_CALLIP = 200;
+	// the interpreted frames of the last throw, innermost first: their code
+	// and the code address of the call each one makes, per thread; set
+	// interpRethrow before passing a caught exception on (Interp's handlers):
+	// that throw keeps the frames of the first
+	@:hxmc.threadLocal static var interpThrown:Ptr;
+	@:hxmc.threadLocal static var interpThrownLen:Int;
+	@:hxmc.threadLocal public static var interpRethrow:Bool;
+
+	// (Start.throwValue) a throw while interpreted frames run: their frames
+	static function recordInterp() {
+		if (interpRethrow) {
+			interpRethrow = false;
+			return;
+		}
+		if (interpThrown.isNull()) interpThrown = LibC.malloc(16 * MAX);
+		var f = interpCur, n = 0;
+		while (!f.isNull() && n < MAX) {
+			Mem.setPtr(interpThrown, 16 * n, Mem.getPtr(f, F_CODE));
+			Mem.setPtr(interpThrown, 16 * n + 8, Mem.getPtr(f, F_CALLIP));
+			f = Mem.getPtr(f, F_PREV);
+			n++;
+		}
+		interpThrownLen = n;
+	}
+
+	// the last throw's interpreted frames: code, the call's address, in pairs (innermost first)
+	public static function interpFrames():Array<I64> {
+		var r = [];
+		for (k in 0...(interpThrown.isNull() ? 0 : interpThrownLen)) {
+			r.push(Mem.getI64(interpThrown, 16 * k));
+			r.push(Mem.getI64(interpThrown, 16 * k + 8));
+		}
+		return r;
+	}
+
 	// the frame record of the function that caught the last throw (where its
 	// recorded stack stops: recordThrow), per thread
 	@:hxmc.threadLocal static var thrownTop:Ptr;

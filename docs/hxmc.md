@@ -997,6 +997,24 @@ value, as Eval's `catch_exceptions` makes of `Abort`. `make
 mir-server-check` (`hxmc/test/MirServerCheck.hx`, in the Mir lane but on
 Windows) compares a server with Mir macros to the reference's through edits.
 
+An uncaught exception of macro code is reported as Eval reports it
+(`EvalExceptions.catch_exceptions`): at its throw, then "Called from here"
+for each frame's call in progress (consecutive ones once, with their
+count), innermost first, the macro call's position last; a
+`haxe.macro.Expr.Error` at its position with its child errors, else its
+frames; a callback the compiler calls (`Context.onAfterTyping`, ...) without
+a macro call's position. The lowering marks the calls and throws of the
+macro code outside hxmc's std (whose functions are Eval's builtins) with
+their characters (`Lower.sitePositions`, `Stmt.SPos`; such a function is not
+inlined, so its frame stays), and InterpGen writes each function's
+positions into its descriptor (`H_POSITIONS`). An interpreted frame links
+the one it was called from (`Stacks.interpCur`) and keeps the call it
+makes; a throw (`rt_throw`) records the frames (`Stacks.recordInterp`;
+the interpreter's and MirMacros' rethrows keep the first record), and
+MirMacros reads their positions. A fault (a null access) has the stack too,
+but not Eval's position of the value that was null: its innermost frame is
+at its last call. `MirServerCheck` compares the reports with the reference's.
+
 The std and the runtime in the macro context: hxmc's std loads all of the
 runtime (`Std` imports `hxmc.rt.Runtime`), and a macro reaches few of the
 functions of the std's files the macro context loads, so their bodies are

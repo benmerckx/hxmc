@@ -236,7 +236,12 @@ class InterpSet {
 // registers when a frame starts, so a constant is never an operation) and
 // the symbol table (8 bytes each, relocated: call-out stubs, other
 // descriptors; zeroed: inline caches), then the parameters' sources (32
-// bits each: an entry's byte offset in InterpAbi's register image).
+// bits each: an entry's byte offset in InterpAbi's register image), then
+// (hxmc.ir.Lower.sitePositions: Mir macros) the positions of the calls and
+// throws, whose offset from the descriptor is the header's word at
+// H_POSITIONS (0: none): their count, each one's code word, characters
+// (min, max) and file's index, then the files (their byte length, their
+// bytes): hxmc.rt.Stacks.interpFrames' frames read as positions there.
 //
 // Registers: the constants (deduplicated), the parameters (a caller writes
 // its arguments there), then the other values, then
@@ -253,6 +258,8 @@ class InterpGen {
 	public static inline var HEADER = 64;
 	// (the header's flags: Loader reads them before the descriptor is in memory)
 	public static inline var H_FLAGS = 24;
+	// (the header's offset of the positions' table: 0, none)
+	public static inline var H_POSITIONS = 28;
 	// the runtime's thread-local variables the interpreter reads itself (Interp.T_*)
 	static var TLS = [
 		"rt_sp" => 0, "rt_sp_hw" => 1, "rt_hcur" => 2, "rt_exn" => 3, "rt_young_ptr" => 4, "rt_young_limit" => 5, "rt_young_rlimit" => 6,
@@ -406,11 +413,19 @@ class InterpGen {
 			for (i in b.ins)
 				if (i.op == Param && i.imm >= 0 && reg[i.id] < 0) reg[i.id] = nc + i.imm;
 		var pcOf = new Map<Int, Int>();
+		// (the calls' and throws' positions, from the code word where they start)
+		var sites:Array<{at:Int, file:String, min:Int, max:Int}> = [];
+		var lastPos = 0;
 		for (b in blocks) {
 			pcOf.set(b.id, code.length);
 			for (i in b.ins)
 				if (!i.dead) {
 					insStart = code.length;
+					if (i.pos != lastPos) {
+						lastPos = i.pos;
+						var p = SrcPos.get(i.pos);
+						if (p.min >= 0) sites.push({at: code.length, file: p.file, min: p.min, max: p.max});
+					}
 					ins(i, b, slotOff);
 				}
 		}
@@ -431,7 +446,8 @@ class InterpGen {
 		var symOff = constOff + 8 * consts.length;
 		var srcOff = symOff + 8 * syms.length;
 		var entry = entrySources(abi, cc, mf, set.loaded);
-		header(b, nregs + scratch, frame, code.length, consts.length, mf.params.length, entry.flags, constOff, symOff, srcOff);
+		var posOff = sites.length == 0 ? 0 : srcOff + 4 * entry.sources.length;
+		header(b, nregs + scratch, frame, code.length, consts.length, mf.params.length, entry.flags, constOff, symOff, srcOff, posOff);
 		for (w in code)
 			b.u32(w);
 		b.align(8);
@@ -445,11 +461,33 @@ class InterpGen {
 		}
 		for (s in entry.sources)
 			b.u32(s);
+		if (sites.length > 0) {
+			var files = [], fileIndex = new Map<String, Int>();
+			b.u32(sites.length);
+			for (x in sites) {
+				var k = fileIndex.get(x.file);
+				if (k == null) {
+					fileIndex.set(x.file, k = files.length);
+					files.push(x.file);
+				}
+				b.u32(x.at);
+				b.u32(x.min);
+				b.u32(x.max);
+				b.u32(k);
+			}
+			b.u32(files.length);
+			for (name in files) {
+				var bytes = haxe.io.Bytes.ofString(name);
+				b.u32(bytes.length);
+				for (k in 0...bytes.length)
+					b.u8(bytes.get(k));
+			}
+		}
 		obj.define(DESC + mf.name, sec, start, b.len - start, true);
 		if (!set.loaded) entryStub();
 	}
 
-	static function header(b:hxmc.Buf, nregs:Int, frame:Int, words:Int, nconsts:Int, nparams:Int, flags:Int, constOff:Int, symOff:Int, srcOff:Int) {
+	static function header(b:hxmc.Buf, nregs:Int, frame:Int, words:Int, nconsts:Int, nparams:Int, flags:Int, constOff:Int, symOff:Int, srcOff:Int, posOff = 0) {
 		b.u32(MAGIC);
 		b.u32(nregs);
 		b.u32(frame);
@@ -457,7 +495,7 @@ class InterpGen {
 		b.u32(nconsts);
 		b.u32(nparams);
 		b.u32(flags);
-		b.u32(0);
+		b.u32(posOff);
 		for (off in [HEADER, symOff, constOff, srcOff])
 			b.u64(off, 0);
 	}

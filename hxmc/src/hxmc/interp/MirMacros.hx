@@ -200,6 +200,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				hxmc.rt.EvalCompat.on = order;
 				// (no handler of the macro code catches the compiler's own exceptions)
 				if (self.compilerOwn(x)) hxmc.rt.Interp.uncatchable = x;
+				hxmc.rt.Stacks.interpRethrow = true;
 				throw x;
 			}
 			hxmc.rt.EvalCompat.on = order;
@@ -213,7 +214,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				hxmc.rt.EvalCompat.on = order;
 				// (Context.error's: no value, EvalMisc.prepare_callback's catch_exceptions)
 				if (Std.isOfType(x, macros.MacroApi.Abort)) return null;
-				throw x;
+				// (an exception of the macro code: a compiler error there, with no macro call's position)
+				throw self.toCompilerError(x, null);
 			}
 			hxmc.rt.EvalCompat.on = order;
 			r;
@@ -453,15 +455,91 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	// an exception the macro code did not catch: its haxe.macro.Error as the
 	// compiler's error, anything else as an uncaught exception (as Eval reports them)
-	function toCompilerError(x:Dynamic, api:CompilerApi):Dynamic {
+	// an exception of the macro code, uncaught: a compiler error, as
+	// EvalExceptions.catch_exceptions makes it (at its throw, called from
+	// its frames' calls, the last one the macro call's position)
+	function toCompilerError(x:Dynamic, api:Null<CompilerApi>):Dynamic {
 		if (Std.isOfType(x, core.Error.TypingError) || Std.isOfType(x, core.Error.FatalError) || Std.isOfType(x, macros.MacroApi.Abort) || Std.isOfType(x, macros.eval.EvalTypes.SysExit) || compilerOwn(x)) return x;
+		// (the frames' positions, innermost first: the throw's, then the
+		// calls'; the macro call's, EvalMain.callPath's frame, last)
+		var stack = thrownStack();
+		if (api != null) stack.push(api.pos);
+		if (stack.length == 0) stack.push(core.Globals.nullPos);
 		var c = macros.MacroApi.MacroNativeValues.resolveClass("haxe.macro.Error");
 		if (c != null && Std.isOfType(x, c)) {
-			var msg:String = Reflect.field(x, "message");
+			var msg = exceptionMessage(x);
 			var pos:core.Globals.Pos = Reflect.field(x, "pos");
-			return new core.Error.TypingError(core.Error.makeError(Custom(msg), pos == null ? api.pos : pos));
+			if (pos == null) pos = stack[stack.length - 1];
+			var children:Null<Array<Dynamic>> = Reflect.field(x, "childErrors");
+			var sub = children != null ? [
+				for (e in children)
+					core.Error.makeError(Custom(exceptionMessage(e)), Reflect.field(e, "pos"))
+			] : [
+				for (k in 0...stack.length - 1)
+					core.Error.makeError(Custom("Called from here"), stack[stack.length - 1 - k])
+			];
+			return new core.Error.TypingError(core.Error.makeError(Custom(msg), pos, sub));
 		}
-		return new core.Error.TypingError(core.Error.makeError(Custom("Uncaught exception " + Std.string(x)), api.pos));
+		// (consecutive frames at one position once, with their count)
+		var at = stack[0], counted:Array<{p:core.Globals.Pos, n:Int}> = [];
+		for (k in 1...stack.length) {
+			var p = stack[k];
+			if (counted.length > 0 && samePos(counted[0].p, p)) counted[0].n++ else counted.unshift({p: p, n: 1});
+		}
+		var sub = [
+			for (c in counted)
+				core.Error.makeError(Custom("Called from here" + (c.n > 1 ? ' (${c.n} times)' : "")), c.p)
+		];
+		return new core.Error.TypingError(core.Error.makeError(Custom("Uncaught exception " + Std.string(x)), at, sub));
+	}
+
+	// (hxmc's haxe.Exception keeps it in a field, `message` its getter)
+	static function exceptionMessage(x:Dynamic):String {
+		var m:Null<String> = Reflect.field(x, "__exceptionMessage");
+		return m != null ? m : Std.string(Reflect.field(x, "message"));
+	}
+
+	static function samePos(a:core.Globals.Pos, b:core.Globals.Pos):Bool
+		return a.pfile == b.pfile && a.pmin == b.pmin && a.pmax == b.pmax;
+
+	// the positions of the last throw's interpreted frames, innermost first
+	// (hxmc.rt.Stacks.interpFrames: each frame's throw or call in progress,
+	// from the positions InterpGen writes into its descriptor), as Eval's
+	// frames' env_leave_pmin/pmax; the frames of hxmc's std, whose functions
+	// are Eval's builtins, and those without positions left out
+	function thrownStack():Array<core.Globals.Pos> {
+		var frames = hxmc.rt.Stacks.interpFrames();
+		var r = [];
+		var k = 0;
+		while (k < frames.length) {
+			var code = Ptr.ofI64(frames[k]), callAt = Ptr.ofI64(frames[k + 1]);
+			k += 2;
+			if (code.isNull() || callAt.isNull()) continue;
+			var desc = code.add(-InterpGen.HEADER);
+			var off = Mem.getI32(desc, InterpGen.H_POSITIONS);
+			if (off == 0) continue;
+			var t = desc.add(off);
+			var n = Mem.getI32(t, 0);
+			var word = callAt.diff(code).toInt() >> 2;
+			var found = -1;
+			for (j in 0...n) {
+				if (Mem.getI32(t, 4 + 16 * j) > word) break;
+				found = j;
+			}
+			if (found < 0) continue;
+			var e = t.add(4 + 16 * found);
+			// (the files after the entries: their count, then each one's length and bytes)
+			var fp = t.add(4 + 16 * n + 4);
+			for (_ in 0...Mem.getI32(e, 12))
+				fp = fp.add(4 + Mem.getI32(fp, 0));
+			var bytes = haxe.io.Bytes.alloc(Mem.getI32(fp, 0));
+			for (b in 0...bytes.length)
+				bytes.set(b, Mem.getU8(fp, 4 + b));
+			var file = bytes.toString();
+			if (hxmcStd != null && StringTools.startsWith(file, hxmcStd)) continue;
+			r.push(new core.Globals.Pos(file, Mem.getI32(e, 4), Mem.getI32(e, 8)));
+		}
+		return r;
 	}
 
 	// ---- compiling and loading
@@ -542,6 +620,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.basic = com.basic;
 		scan();
 		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
+		hxmc.ir.Lower.sitePositions = file -> hxmcStd == null || !StringTools.startsWith(file, hxmcStd);
 		hxmc.ir.Lower.bodyReady = MacroRuntime.ready;
 		phase("before lowering");
 		try {
@@ -564,10 +643,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		} catch (e:Dynamic) {
 			typingBodies = false;
 			hxmc.ir.Lower.callSites = null;
+			hxmc.ir.Lower.sitePositions = null;
 			hxmc.ir.Lower.bodyReady = null;
 			throw e;
 		}
 		hxmc.ir.Lower.callSites = null;
+		hxmc.ir.Lower.sitePositions = null;
 		hxmc.ir.Lower.bodyReady = null;
 		step(main);
 	}
@@ -902,6 +983,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = order;
 			hxmc.rt.Interp.uncatchable = null;
 			LibC.free(buf);
+			// (passed on: the frames recorded are its throw's)
+			hxmc.rt.Stacks.interpRethrow = true;
 			throw x;
 		}
 		hxmc.rt.EvalCompat.on = order;

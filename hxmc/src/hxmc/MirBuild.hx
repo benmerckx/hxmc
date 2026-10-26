@@ -607,8 +607,8 @@ class MirBuild extends MirWriter {
 		var saved = curPos;
 		for (s in ss) {
 			switch s {
-				case SPos(file, line):
-					curPos = SrcPos.id(file, line);
+				case SPos(file, line, min, max):
+					curPos = SrcPos.id(file, line, min, max);
 					continue;
 				case _:
 			}
@@ -783,8 +783,8 @@ class MirBuild extends MirWriter {
 				add(mk(Unreachable, Void));
 			case STry(body, catches):
 				tryStmt(body, catches);
-			case SPos(file, line):
-				curPos = SrcPos.id(file, line);
+			case SPos(file, line, min, max):
+				curPos = SrcPos.id(file, line, min, max);
 		}
 	}
 
