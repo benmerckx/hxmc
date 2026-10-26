@@ -77,7 +77,9 @@ extern class Mem {
 	// of the stub hxmc_frame. Not a GC point.
 	static function frame():Ptr;
 
-	// loads at p + off (8/16-bit and f32 loads widen; getI32 of 4 bytes)
+	// loads at p + off (8/16-bit and f32 loads widen; getI32 of 4 bytes); an
+	// off written x + c or x - c (c a constant) is x, extended to 64 bits,
+	// plus c: not wrapped at 32 bits (as the indexed ones' i + c)
 	static function getI8(p:Ptr, off:Int):Int;
 	static function getU8(p:Ptr, off:Int):Int;
 	static function getI16(p:Ptr, off:Int):Int;
@@ -91,6 +93,9 @@ extern class Mem {
 	// stores at p + off (narrowing); setRef has no write barrier (young
 	// objects, or the runtime's own roots), setRefBarrier stores into heap
 	// object `o` at payload offset `off` through the write barrier
+	// (the optimizer takes a store to write no scalar static, an Int, Float,
+	// Bool, I64 or Ptr one, unless its address is made from a sym() in the
+	// same function: hxmc.Opt.killMask)
 	static function setI8(p:Ptr, off:Int, v:Int):Void;
 	static function setI16(p:Ptr, off:Int, v:Int):Void;
 	static function setI32(p:Ptr, off:Int, v:Int):Void;

@@ -12,7 +12,8 @@ using core.ds.VectorTools;
 //    tree): a pure operation, or a load, equal to one in a dominating
 //    position is replaced by it. Loads also need the same version of the
 //    memory they read: memory is told apart by class (MIns.mem, set by
-//    MirBuild: array headers, elements, object fields, globals,
+//    MirBuild: array headers, elements, object fields, globals (the
+//    scalar ones apart: raw memory does not write them, killMask),
 //    shadow-stack slots, memory only calls change, immutable memory); a
 //    store or call that may write a class gives it a new version, and so
 //    does a join where the predecessors disagree, or a loop header whose
@@ -63,7 +64,13 @@ class Opt {
 	static inline var MFrameAt = 22;
 	// WasmGC's locals out of SSA (VarGet, VarSet: written by their stores only)
 	static inline var MVar = 30;
-	static inline var NCLS = 31;
+	// scalar global variables (an Int, Float, Bool, I64 or Ptr static, at
+	// its own symbol), apart from the reference ones (slots of rt_globals,
+	// MGlobal's own version): raw memory writes them only through a
+	// symbol's address (killMask)
+	static inline var MScalar = 31;
+	static inline var NCLS = 32;
+	static inline var EVERY = -1; // (every class: 32 bits)
 	static inline var TLS_BITS = (1 << MTls) | (1 << MTlsSp) | (1 << MTlsHw) | (1 << MTlsYp) | (1 << MTlsYl);
 
 	static function tlsClass(sym:String):Int
@@ -265,7 +272,7 @@ class Opt {
 						case TypeTest | FieldAddr: true;
 						case _ if (i.isObj()): false;
 						case Load | TlsLoad:
-							safeLoad(i, vals) && kills & (1 << (i.op == TlsLoad ? tlsClass(i.sym) : i.mem)) == 0
+							safeLoad(i, vals) && kills & (1 << (i.op == TlsLoad ? tlsClass(i.sym) : memClass(i))) == 0
 							// (a field, an array's header or immutable memory of an object the
 							// loop does not write there, dereferenced before it: not null, so
 							// the load cannot fault before the loop; a loop that may collect
@@ -949,7 +956,28 @@ class Opt {
 
 	// the version class of a load or store
 	inline function memClass(i:MIns):Int
-		return i.b >= 0 ? i.mem : i.mem == MField ? fieldClass(i) : i.mem == MFrame ? frameClass(i) : i.mem;
+		return i.b >= 0 ? i.mem : i.mem == MField ? fieldClass(i) : i.mem == MFrame ? frameClass(i) : i.mem == MGlobal
+			&& f.vals[res(i.a)].op == SymAddr ? MScalar : i.mem;
+
+	// whether an address may lie at a symbol: one of its operands, through
+	// arithmetic, copies, extensions and merges, is a symbol's address
+	// (Mem.sym, the one way raw memory reaches a scalar global)
+	function atSymbol(v:Int, depth:Int):Bool {
+		if (v < 0) return false;
+		if (depth > 8) return true;
+		var x = f.vals[res(v)];
+		return switch x.op {
+			case SymAddr: true;
+			case Copy | SExt | ZExt | Trunc: atSymbol(x.a, depth + 1);
+			case Add | Sub | And | Or | Xor | Select: atSymbol(x.a, depth + 1) || atSymbol(x.b, depth + 1) || atSymbol(x.c, depth + 1);
+			case Phi:
+				var any = false;
+				for (a in x.args)
+					if (!any && atSymbol(a, depth + 1)) any = true;
+				any;
+			case _: false;
+		};
+	}
 
 	// the classes an instruction writes, as a bit set (0: none)
 	function killMask(i:MIns):Int {
@@ -958,17 +986,29 @@ class Opt {
 			case Store:
 				switch i.mem {
 					case MInit: 0;
-					case MOther: ((1 << NCLS) - 1) & ~(1 << MConst) & ~(1 << MCallOnly) & ~TLS_BITS;
+					// Raw memory (hxmc.unsafe.Mem) may be any memory but a
+					// scalar global's: that is reached only through its
+					// symbol, so a store at an address made from a symbol's
+					// in this function (Mem.sym) may write one, and no other
+					// does. A pointer read from memory or a static, passed
+					// in, or returned by a call is taken never to address a
+					// scalar static (it is malloc'ed or mapped memory, an
+					// object, the stack, the runtime's data or a @:hxmc.bss
+					// block): a static's value is reused across such stores,
+					// and leaves loops of them (Store.base + an offset, the
+					// raw memory of packages)
+					case MOther:
+						EVERY & ~(1 << MConst) & ~(1 << MCallOnly) & ~TLS_BITS & (atSymbol(i.a, 0) || atSymbol(i.b, 0) ? -1 : ~(1 << MScalar));
 					case MField if (i.b < 0): (1 << fieldClass(i)) | (1 << MField) | (1 << MOther);
 					case MField: FIELD_BITS | (1 << MField) | (1 << MOther);
 					case MFrame if (i.b < 0): (1 << frameClass(i)) | (1 << MFrame) | (1 << MOther);
 					case MFrame: FRAME_BITS | (1 << MFrame) | (1 << MOther);
-					case c: (1 << c) | (1 << MOther);
+					case _: (1 << memClass(i)) | (1 << MOther);
 				}
 			case TlsStore: 1 << tlsClass(i.sym);
 			// (one during which nothing collects leaves the shadow-stack slots as they are)
 			case Call if (i.returnsTwice || i.sym == null || !readOnly.exists(i.sym)):
-				((1 << NCLS) - 1) & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1);
+				EVERY & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1);
 			case _: 0;
 		};
 	}
@@ -976,7 +1016,7 @@ class Opt {
 	// ---- object-level operations
 
 	// every class but immutable memory (what a call may write)
-	static inline var ALL = ((1 << NCLS) - 1) & ~(1 << MConst);
+	static inline var ALL = EVERY & ~(1 << MConst);
 
 	// a field's byte offset (OInfo.loc: an Int's or Bool's is a 4-byte index; MemLower.access)
 	static inline function fieldOff(o:OInfo):Int
@@ -1049,7 +1089,7 @@ class Opt {
 			case SetField: i.info.t.match(TVoid) ? 0 : (1 << fieldCls(i.info)) | (1 << MField) | (1 << MOther);
 			case AnonStore: FIELD_BITS | (1 << MField) | (1 << MOther);
 			case NArraySet | ArrayInit | NArrayInit: (1 << MElem) | (1 << MOther);
-			case RefStore: ((1 << NCLS) - 1) & ~(1 << MConst) & ~(1 << MCallOnly) & ~TLS_BITS;
+			case RefStore: EVERY & ~(1 << MConst) & ~(1 << MCallOnly) & ~TLS_BITS;
 			case _: ALL;
 		};
 
