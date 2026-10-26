@@ -20,7 +20,7 @@ class Boxes {
 	@:hxmc.bss(18432) static var smallI64s:Ptr; // likewise for Int64 (OCaml's ints in converted code: ml2hx)
 
 	// at startup (rt_init; WebAssembly's Gc.init)
-	@:hxmc.host("hx_boxes_init") @:hxmc.noGc public static function init() {
+	@:hxmc.host("hx_boxes_init") @:hxmc.unsafe public static function init() {
 		var n = SMALL_MAX - SMALL_MIN + 1;
 		for (i in 0...n) {
 			Mem.setI64(smallInts, 16 * i, Types.recordHdr(T_BOXINT, 1));
@@ -57,10 +57,10 @@ class Boxes {
 		return b;
 	}
 
-	@:hxmc.export("hx_box_bool") @:hxmc.noGc static function boxBool(v:Int):Dynamic
+	@:hxmc.export("hx_box_bool") @:hxmc.unsafe static function boxBool(v:Int):Dynamic
 		return Mem.obj(boolBoxes.add(v != 0 ? 24 : 8));
 
-	@:hxmc.noGc static function f2l(f:Float):I64 {
+	@:hxmc.unsafe static function f2l(f:Float):I64 {
 		if (f != f) return 0;
 		if (f >= 9223372036854775808.0) return ((1 : I64) << 63) - 1;
 		if (f < -9223372036854775808.0) return (1 : I64) << 63;
@@ -69,10 +69,10 @@ class Boxes {
 	}
 
 	// Std.int / Int casts: truncation in range; NaN gives 0, wider values wrap
-	@:hxmc.noGc static inline function f2i(f:Float):Int
+	@:hxmc.unsafe static inline function f2i(f:Float):Int
 		return f > -2147483649.0 && f < 2147483648.0 ? (cast f : Int) : f2iSlow(f);
 
-	@:hxmc.export("hx_f2i_slow") @:hxmc.noGc static function f2iSlow(f:Float):Int {
+	@:hxmc.export("hx_f2i_slow") @:hxmc.unsafe static function f2iSlow(f:Float):Int {
 		if (f != f) return 0;
 		if (f >= 2147483648.0 || f <= -2147483649.0) {
 			var l:I64 = cast M.fmod(f, 4294967296.0);
@@ -81,7 +81,7 @@ class Boxes {
 		return cast f;
 	}
 
-	@:hxmc.export("hx_unbox_int") @:hxmc.noGc static function unboxInt(v:Dynamic):Int {
+	@:hxmc.export("hx_unbox_int") @:hxmc.unsafe static function unboxInt(v:Dynamic):Int {
 		var p = Mem.addr(v);
 		if (p.isNull()) return 0;
 		return switch tindex(v) {
@@ -92,7 +92,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_unbox_float") @:hxmc.noGc static function unboxFloat(v:Dynamic):Float {
+	@:hxmc.export("hx_unbox_float") @:hxmc.unsafe static function unboxFloat(v:Dynamic):Float {
 		var p = Mem.addr(v);
 		if (p.isNull()) return 0;
 		return switch tindex(v) {
@@ -105,7 +105,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_unbox_i64") @:hxmc.noGc static function unboxI64(v:Dynamic):I64 {
+	@:hxmc.export("hx_unbox_i64") @:hxmc.unsafe static function unboxI64(v:Dynamic):I64 {
 		var p = Mem.addr(v);
 		if (p.isNull()) return 0;
 		return switch tindex(v) {
@@ -116,7 +116,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_unbox_bool") @:hxmc.noGc static function unboxBool(v:Dynamic):Int {
+	@:hxmc.export("hx_unbox_bool") @:hxmc.unsafe static function unboxBool(v:Dynamic):Int {
 		var p = Mem.addr(v);
 		if (p.isNull()) return 0;
 		return switch tindex(v) {
@@ -205,13 +205,13 @@ class Boxes {
 		Mem.setRefBarrier(a, 8, nd);
 	}
 
-	@:hxmc.noGc static function inYoungObj(o:Dynamic):Bool {
+	@:hxmc.unsafe static function inYoungObj(o:Dynamic):Bool {
 		var p = Mem.addr(o);
 		return !p.ult(Mem.getPtr(Mem.sym("rt_young_start"), 0)) && p.ult(Mem.getPtr(Mem.sym("rt_young_end"), 0));
 	}
 
 	// the barrier of the first n elements of reference storage o
-	@:hxmc.noGc static function Gc_barrierRange(o:Dynamic, n:Int)
+	@:hxmc.unsafe static function Gc_barrierRange(o:Dynamic, n:Int)
 		hxmc.rt.C.Leaf.rt_barrier_range(o, Mem.addr(o), n);
 
 	@:hxmc.host("hx_arr_to_ptr") static function arrToPtr(slot:Ptr):Void {
@@ -230,7 +230,7 @@ class Boxes {
 		Mem.setRefBarrier(a, 8, nd);
 	}
 
-	@:hxmc.export("hx_aget_i_slow") @:hxmc.noGc static function agetI(a:Dynamic, i:Int):Int {
+	@:hxmc.export("hx_aget_i_slow") @:hxmc.unsafe static function agetI(a:Dynamic, i:Int):Int {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		var d = arrData(a);
 		return switch arrKind(a) {
@@ -242,7 +242,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_aget_l_slow") @:hxmc.noGc static function agetL(a:Dynamic, i:Int):I64 {
+	@:hxmc.export("hx_aget_l_slow") @:hxmc.unsafe static function agetL(a:Dynamic, i:Int):I64 {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		var d = arrData(a);
 		return switch arrKind(a) {
@@ -254,7 +254,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_aget_f_slow") @:hxmc.noGc static function agetF(a:Dynamic, i:Int):Float {
+	@:hxmc.export("hx_aget_f_slow") @:hxmc.unsafe static function agetF(a:Dynamic, i:Int):Float {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		var d = arrData(a);
 		return switch arrKind(a) {

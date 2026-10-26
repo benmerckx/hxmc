@@ -53,23 +53,23 @@ abstract AtomicObject<T:{}>(Dynamic) {
 	// (the cell's address is taken in functions that never reach a GC point:
 	// inlined into the program, it could be taken before an allocation that
 	// moves the cell)
-	@:hxmc.noGc static function get(a:Dynamic):Dynamic
+	@:hxmc.unsafe static function get(a:Dynamic):Dynamic
 		return Mem.obj(Ptr.ofI64(Atomic.load64(Mem.addr(a))));
 
-	@:hxmc.noGc static function put(a:Dynamic, v:Dynamic) {
+	@:hxmc.unsafe static function put(a:Dynamic, v:Dynamic) {
 		var p = Mem.addr(a);
 		Atomic.store64(p, Mem.addr(v).toI64());
 		Leaf.rt_barrier_range(a, p, 1);
 	}
 
-	@:hxmc.noGc static function swap(a:Dynamic, v:Dynamic):Dynamic {
+	@:hxmc.unsafe static function swap(a:Dynamic, v:Dynamic):Dynamic {
 		var p = Mem.addr(a);
 		var o = Atomic.exchange64(p, Mem.addr(v).toI64());
 		Leaf.rt_barrier_range(a, p, 1);
 		return Mem.obj(Ptr.ofI64(o));
 	}
 
-	@:hxmc.noGc static function cas(a:Dynamic, e:Dynamic, r:Dynamic):Dynamic {
+	@:hxmc.unsafe static function cas(a:Dynamic, e:Dynamic, r:Dynamic):Dynamic {
 		var p = Mem.addr(a);
 		var ei = Mem.addr(e).toI64();
 		var o = Atomic.cas64(p, ei, Mem.addr(r).toI64());

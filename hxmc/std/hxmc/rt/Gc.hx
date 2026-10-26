@@ -69,7 +69,7 @@ import hxmc.unsafe.*;
 // writing.
 //
 // Every function here but the allocation slow path, the finalisers' calls
-// and NativeGc's entry points is @:hxmc.noGc: it runs while objects move,
+// and NativeGc's entry points is @:hxmc.unsafe: it runs while objects move,
 // with raw addresses.
 @:hxmc.native @:keep @:allow(hxmc.rt)
 class Gc {
@@ -134,8 +134,9 @@ class Gc {
 	static var poison:Bool;
 
 	// ---- the old space: it alternates between two large reserved regions;
-	// oldEnd is a soft limit, set after each major collection to three times
-	// the live size
+	// oldEnd is a soft limit, set after each major collection to `growth`
+	// percent of the live size (RT_OLD_GROWTH, 300: three times)
+	static var growth:Int;
 	static var oldStart:Ptr;
 	@:hxmc.export("hxmc_old_ptr") static var oldPtr:Ptr;
 	static var oldEnd:Ptr;
@@ -242,7 +243,7 @@ class Gc {
 
 	// a young or from-space object's copy at the end of the old space, made
 	// now unless it was already (its header then says so, slot 0 has the copy)
-	@:hxmc.noGc static function copyOut(p:Ptr):Ptr
+	@:hxmc.unsafe static function copyOut(p:Ptr):Ptr
 		return copyIn(p);
 
 	// (inline in the drain loops: no call per copied object)
@@ -255,6 +256,9 @@ class Gc {
 	static inline function copyTo(p:Ptr, n:Int):Ptr {
 		var words = n + 1;
 		var dst = oldPtr, s = p.add(-8);
+		#if hxmc.census
+		if (census != 0 && !major) Census.countPromoted(Mem.getI64(s, 0), (words : I64) << 3);
+		#end
 		if (words <= 8) { // most objects: a few words, no call (unrolled)
 			do {
 				Mem.setI64(dst, 0, Mem.getI64(s, 0));
@@ -292,12 +296,12 @@ class Gc {
 
 	// a root forwarded, then everything reachable from it that is still to
 	// copy (depth-first), or forwarded alone (the breadth-first scan)
-	@:hxmc.noGc static function fwdAs(p:Ptr, root:Bool):Ptr
+	@:hxmc.unsafe static function fwdAs(p:Ptr, root:Bool):Ptr
 		return root ? fwdRoot(p) : fwd(p);
 
 	// (few values live across the copies' calls: they stay in registers; one
 	// loop per forwarding)
-	@:hxmc.noGc static function drain()
+	@:hxmc.unsafe static function drain()
 		if (major) drainMajor() else drainMinor();
 
 	// a minor collection's: each object is scanned once, when popped, its
@@ -309,7 +313,7 @@ class Gc {
 	// objects of more than SMALL_SLOTS slots are scanned out of the loop,
 	// LARGE_SLICE slots at a time, scanLarge, which also keeps the stack
 	// small).
-	@:hxmc.noGc static function drainMinor() {
+	@:hxmc.unsafe static function drainMinor() {
 		while (gcTop > 0) {
 			if (gcTop + SMALL_SLOTS + 1 > gcCap) reserve(gcTop + SMALL_SLOTS + 1);
 			var top = gcTop - 1;
@@ -331,7 +335,7 @@ class Gc {
 	// a large object on top of the stack: its next LARGE_SLICE slots (from
 	// the entry's slot index), the entry left below the children they push
 	// while slots remain
-	@:hxmc.noGc static function scanLarge(o:Ptr) {
+	@:hxmc.unsafe static function scanLarge(o:Ptr) {
 		if (gcTop + LARGE_SLICE > gcCap) reserve(gcTop + LARGE_SLICE);
 		var at = gcTop - 1;
 		var e = gcStack.add(at << 4);
@@ -428,6 +432,9 @@ class Gc {
 				// (copyTo, without the call of memcpy)
 				var words = wordsOf(v, vw0) + 1;
 				var dst = oldPtr;
+				#if hxmc.census
+				if (census != 0) Census.countPromoted(Mem.getI64(v, -8), (words : I64) << 3);
+				#end
 				if (words <= 8) {
 					do {
 						Mem.setI64(dst, 0, Mem.getI64(v, -8));
@@ -468,13 +475,13 @@ class Gc {
 	}
 
 	// room for this many entries on the collector's stack
-	@:hxmc.noGc static function reserve(entries:Int) {
+	@:hxmc.unsafe static function reserve(entries:Int) {
 		while (gcCap < entries)
 			gcCap *= 2;
 		gcStack = LibC.realloc(gcStack, (gcCap : I64) * 16);
 	}
 
-	@:hxmc.noGc static function drainMajor()
+	@:hxmc.unsafe static function drainMajor()
 		drainWith(true);
 
 	static inline function drainWith(maj:Bool) {
@@ -535,12 +542,12 @@ class Gc {
 		gcTop++;
 	}
 
-	@:hxmc.noGc static function grow() {
+	@:hxmc.unsafe static function grow() {
 		gcCap *= 2;
 		gcStack = LibC.realloc(gcStack, (gcCap : I64) * 16);
 	}
 
-	@:hxmc.noGc static function fwdRoot(p:Ptr):Ptr {
+	@:hxmc.unsafe static function fwdRoot(p:Ptr):Ptr {
 		var before = oldPtr;
 		var n = fwd(p);
 		if (oldPtr != before) {
@@ -550,7 +557,7 @@ class Gc {
 		return n;
 	}
 
-	@:hxmc.noGc static function scanObject(o:Ptr, root:Bool) {
+	@:hxmc.unsafe static function scanObject(o:Ptr, root:Bool) {
 		var n = nslotsOf(o);
 		switch kindOf(o) {
 			case K_OBJ:
@@ -580,7 +587,7 @@ class Gc {
 	}
 
 	// the breadth-first scan of what was copied from `scan` on
-	@:hxmc.noGc static function scanFrom(scan:Ptr) {
+	@:hxmc.unsafe static function scanFrom(scan:Ptr) {
 		while (scan.ult(oldPtr)) {
 			var o = scan.add(8);
 			scan = scan.add(objBytes(o));
@@ -588,7 +595,7 @@ class Gc {
 		}
 	}
 
-	@:hxmc.noGc static function scanStack(base:Ptr, top:Ptr, root:Bool) {
+	@:hxmc.unsafe static function scanStack(base:Ptr, top:Ptr, root:Bool) {
 		var s = base;
 		if (root) {
 			while (s.ult(top)) {
@@ -607,7 +614,7 @@ class Gc {
 	// the collector's own thread first (its stack), then the others' (their
 	// entry closures, Tls values, stacks and current exceptions), the
 	// globals, the collector's current exception, the finalisers
-	@:hxmc.noGc static function scanRoots(root:Bool) {
+	@:hxmc.unsafe static function scanRoots(root:Bool) {
 		var me = Threads.self;
 		scanStack(me.value.base, me.value.sp, root);
 		var t = Threads.allThreads;
@@ -635,12 +642,12 @@ class Gc {
 
 	// ---- remembered sets: every started thread's, and the ended threads'
 
-	@:hxmc.noGc static function forgetObjs(m:Ptr<Mutator>) {
+	@:hxmc.unsafe static function forgetObjs(m:Ptr<Mutator>) {
 		m.value.robjsLen = 0;
 		LibC.memset(m.value.recent, 0, 8 * 256);
 	}
 
-	@:hxmc.noGc static function forwardRemembered(m:Ptr<Mutator>, root:Bool) {
+	@:hxmc.unsafe static function forwardRemembered(m:Ptr<Mutator>, root:Bool) {
 		var rem = m.value.rem;
 		for (i in 0...m.value.remLen) {
 			var s = Mem.getPtr(rem, 8 * i);
@@ -653,7 +660,7 @@ class Gc {
 		forgetObjs(m);
 	}
 
-	@:hxmc.noGc static function forwardAllRemembered(root:Bool) {
+	@:hxmc.unsafe static function forwardAllRemembered(root:Bool) {
 		var t = Threads.allThreads;
 		while (!t.isNull()) {
 			if (t.value.started != 0) forwardRemembered(t, root);
@@ -662,7 +669,7 @@ class Gc {
 		forwardRemembered(Threads.deadMut, root);
 	}
 
-	@:hxmc.noGc static function clearAllRemembered() {
+	@:hxmc.unsafe static function clearAllRemembered() {
 		var t = Threads.allThreads;
 		while (!t.isNull()) {
 			if (t.value.started != 0) {
@@ -689,7 +696,7 @@ class Gc {
 		return o;
 	}
 
-	@:hxmc.noGc static function nativeRegister(o:Dynamic, p:Ptr, freeFn:Ptr) {
+	@:hxmc.unsafe static function nativeRegister(o:Dynamic, p:Ptr, freeFn:Ptr) {
 		Mem.setPtr(Mem.addr(o), 0, p);
 		lockLeaf(nativesLock);
 		if (nnatives == nativesCap) {
@@ -708,7 +715,7 @@ class Gc {
 	// handles found dead together are freed newest first: a resource that
 	// points into another one (an SSL context into its configuration) is
 	// usually created after it.
-	@:hxmc.noGc static function sweepNatives(lo:Ptr, hi:Ptr) {
+	@:hxmc.unsafe static function sweepNatives(lo:Ptr, hi:Ptr) {
 		var live = 0, ndead = 0;
 		for (i in 0...nnatives) {
 			var e = natives.add(24 * i);
@@ -740,7 +747,7 @@ class Gc {
 
 	// ---- collections
 
-	@:hxmc.noGc static function minor() {
+	@:hxmc.unsafe static function minor() {
 		var t0 = stats ? Os.now() : 0.0;
 		var m0 = majors;
 		minorCollect();
@@ -748,7 +755,7 @@ class Gc {
 		if (stats && majors == m0) minorSecs += Os.now() - t0;
 	}
 
-	@:hxmc.noGc static function minorCollect() {
+	@:hxmc.unsafe static function minorCollect() {
 		var youngUsed = youngNext.diff(youngStart);
 		if (oldEnd.diff(oldPtr) < youngUsed + 64) {
 			majorAndTime(0);
@@ -772,13 +779,13 @@ class Gc {
 		scanFrom(scan);
 	}
 
-	@:hxmc.noGc static function majorAndTime(need:I64) {
+	@:hxmc.unsafe static function majorAndTime(need:I64) {
 		var t0 = stats ? Os.now() : 0.0;
 		majorCollect(need);
 		if (stats) majorSecs += Os.now() - t0;
 	}
 
-	@:hxmc.noGc static function majorCollect(need:I64) {
+	@:hxmc.unsafe static function majorCollect(need:I64) {
 		majors++;
 		collections++;
 		#if hxmc.gc_prefault
@@ -833,7 +840,7 @@ class Gc {
 		// a little less system time for as much more memory as the old space held)
 		if (releasePages) Os.decommit(fromStart, fromEnd.diff(fromStart));
 		var live = oldPtr.diff(oldStart);
-		var limit = live * 3 + minorSize * 4 + need;
+		var limit = live * growth / 100 + minorSize * 4 + need;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
 		if (limit > regionBytes) limit = regionBytes;
 		oldEnd = oldStart.addL(limit);
@@ -857,7 +864,7 @@ class Gc {
 
 	// The nursery: a reserved range (pages committed as touched) that it grows
 	// and shrinks in, so resizing allocates nothing.
-	@:hxmc.noGc static function nurseryAlloc(bytes:I64):Ptr {
+	@:hxmc.unsafe static function nurseryAlloc(bytes:I64):Ptr {
 		var reserve:I64 = bytes > (MINOR_MAX : I64) ? bytes : MINOR_MAX;
 		var p = Os.reserve(reserve + (2 << 20));
 		if (p.isNull()) die("cannot reserve the nursery\n");
@@ -872,7 +879,7 @@ class Gc {
 	}
 
 	// (the nursery is empty: between collections)
-	@:hxmc.noGc static function resizeNursery(size:I64) {
+	@:hxmc.unsafe static function resizeNursery(size:I64) {
 		// (macOS: MADV_DONTNEED may leave the pages as they were, so they stay
 		// dirty: the nursery grows again into them)
 		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size) && Mem.os() != 1) {
@@ -895,7 +902,7 @@ class Gc {
 
 	// after a minor collection that promoted `promoted` of `used` bytes, by
 	// `threads` threads (the policy above)
-	@:hxmc.noGc static function adaptNursery(promoted:I64, used:I64, threads:Int) {
+	@:hxmc.unsafe static function adaptNursery(promoted:I64, used:I64, threads:Int) {
 		adaptThreads(threads);
 		var floor:I64 = (MINOR_MIN : I64) * mutators;
 		var ceiling:I64 = (MINOR_CAP : I64) * mutators;
@@ -917,7 +924,7 @@ class Gc {
 
 	// the threads that allocated in the cycle that ended: more at once, fewer
 	// after FEWER_THREADS_AFTER collections (then the most of those cycles)
-	@:hxmc.noGc static function adaptThreads(n:Int) {
+	@:hxmc.unsafe static function adaptThreads(n:Int) {
 		if (n < 1) n = 1;
 		if (n >= mutators) {
 			mutators = n;
@@ -934,7 +941,7 @@ class Gc {
 	}
 
 	// the slots a thread's frames left above its stack top (see rt_sp_hw)
-	@:hxmc.noGc static function zeroAbove(m:Ptr<Mutator>) {
+	@:hxmc.unsafe static function zeroAbove(m:Ptr<Mutator>) {
 		if (m.value.sp.ult(m.value.hw)) LibC.memset(m.value.sp, 0, m.value.hw.diff(m.value.sp));
 		m.value.hw = m.value.sp;
 	}
@@ -968,7 +975,7 @@ class Gc {
 	@:hxmc.export("hxmc_pf_gen") static var pfGen:Int; // major collections (Atomic)
 
 	// after a minor collection that promoted `promoted` bytes
-	@:hxmc.noGc static function prefaultAhead(promoted:I64) {
+	@:hxmc.unsafe static function prefaultAhead(promoted:I64) {
 		if (pfState == 0) {
 			if (oldPtr.diff(oldStart) < (PF_START : I64)) return;
 			if (Mem.os() != 0) {
@@ -1000,7 +1007,7 @@ class Gc {
 	}
 
 	// (a major collection moves the old space)
-	@:hxmc.noGc static function prefaultCancel() {
+	@:hxmc.unsafe static function prefaultCancel() {
 		Os.lock(pfLock);
 		Atomic.add32(Mem.sym("hxmc_pf_gen"), 1);
 		pfFrom = Ptr.nil();
@@ -1009,7 +1016,7 @@ class Gc {
 	}
 
 	// the helper thread: PF_STEP of the requested pages at a time
-	@:hxmc.callback @:hxmc.noGc static function prefaulter(arg:Ptr):Ptr {
+	@:hxmc.callback @:hxmc.unsafe static function prefaulter(arg:Ptr):Ptr {
 		var page:I64 = Os.pageSize();
 		Os.lock(pfLock);
 		while (true) {
@@ -1035,7 +1042,7 @@ class Gc {
 
 	// a collection, with every other thread stopped (unless another thread
 	// collected meanwhile: the caller then retries its allocation)
-	@:hxmc.noGc static function collectFor(full:Bool, need:I64) {
+	@:hxmc.unsafe static function collectFor(full:Bool, need:I64) {
 		if (!Threads.worldStop()) return;
 		if (youngDirty.ult(youngNext)) youngDirty = youngNext;
 		#if hxmc.census
@@ -1086,7 +1093,7 @@ class Gc {
 	// TLAB starts it when that was the last one taken (with one thread,
 	// always: the free nursery stays contiguous). youngDirty changes only
 	// while the world is stopped.
-	@:hxmc.noGc static function tlabRefill(bytes:Int):Bool {
+	@:hxmc.unsafe static function tlabRefill(bytes:Int):Bool {
 		if (myEpoch != epoch) {
 			myEpoch = epoch;
 			Atomic.add32(Mem.sym("hxmc_allocating"), 1);
@@ -1139,7 +1146,7 @@ class Gc {
 		return allocNow(header, bytes);
 	}
 
-	@:hxmc.noGc static function allocNow(header:I64, bytes:Int):Ptr {
+	@:hxmc.unsafe static function allocNow(header:I64, bytes:Int):Ptr {
 		var p:Ptr;
 		// large objects go straight to the old space (with one thread, unless
 		// the free nursery has room: they may die young)
@@ -1177,10 +1184,10 @@ class Gc {
 	// ---- the write barrier's slow path (generated code's inline part and
 	// GcPaths: obj is old, the slot now holds a young pointer and held none)
 
-	@:hxmc.host("rt_write_barrier") @:hxmc.noGc static function writeBarrier(obj:Ptr, slot:Ptr, v:Ptr):Void
+	@:hxmc.host("rt_write_barrier") @:hxmc.unsafe static function writeBarrier(obj:Ptr, slot:Ptr, v:Ptr):Void
 		remember(slot);
 
-	@:hxmc.noGc static inline function remember(slot:Ptr) {
+	@:hxmc.unsafe static inline function remember(slot:Ptr) {
 		var m = Threads.self;
 		var n = m.value.remLen;
 		if (n == m.value.remCap) {
@@ -1194,7 +1201,7 @@ class Gc {
 	// old objects whose every slot may hold a young pointer, scanned whole by
 	// the next minor collection (per thread); a small cache drops repeated
 	// entries for one object
-	@:hxmc.noGc static function rememberObj(obj:Ptr) {
+	@:hxmc.unsafe static function rememberObj(obj:Ptr) {
 		var m = Threads.self;
 		var h = (obj.toI64() >> 4).toInt() & 255;
 		if (Mem.getPtr(m.value.recent, 8 * h) == obj) return;
@@ -1214,7 +1221,7 @@ class Gc {
 	// whole object once instead: recording its slots made the set grow by the
 	// array's length at every insertion (16M entries, 128 MB, on the
 	// self-compile).
-	@:hxmc.host("rt_barrier_range") @:hxmc.noGc static function barrierRange(obj:Dynamic, from:Ptr, n:Int):Void {
+	@:hxmc.host("rt_barrier_range") @:hxmc.unsafe static function barrierRange(obj:Dynamic, from:Ptr, n:Int):Void {
 		var o = Mem.addr(obj);
 		if (inYoung(o)) return;
 		if (n > 16) {
@@ -1229,7 +1236,7 @@ class Gc {
 
 	// Gc.finalise f v: values outside the heap (static objects, null) are
 	// never collected, so their finalisers never run
-	@:hxmc.noGc public static function finalise(fn:Dynamic, val:Dynamic):Void {
+	@:hxmc.unsafe public static function finalise(fn:Dynamic, val:Dynamic):Void {
 		var v = Mem.addr(val);
 		if (v.isNull() || !(inYoung(v) || inOld(v))) return;
 		lockLeaf(finalsLock);
@@ -1277,7 +1284,7 @@ class Gc {
 	}
 
 	// the next call's index in the queue, under its lock (released by dequeued), or -1
-	@:hxmc.noGc static function dequeue():Int {
+	@:hxmc.unsafe static function dequeue():Int {
 		lockLeaf(finalsLock);
 		if (finalQhead >= finalQlen) {
 			unlockLeaf(finalsLock);
@@ -1286,7 +1293,7 @@ class Gc {
 		return finalQhead;
 	}
 
-	@:hxmc.noGc static function dequeued(i:Int) {
+	@:hxmc.unsafe static function dequeued(i:Int) {
 		if (++finalQhead == finalQlen) finalQhead = finalQlen = 0;
 		unlockLeaf(finalsLock);
 	}
@@ -1302,7 +1309,7 @@ class Gc {
 	// ---- startup (from rt_init, Start): the heap's reservations and the
 	// main thread's shadow stack (its bottom)
 
-	@:hxmc.noGc static function init(ng:Int):Ptr {
+	@:hxmc.unsafe static function init(ng:Int):Ptr {
 		var m = Os.getenv("RT_MINOR_KB");
 		minorFixed = !m.isNull();
 		minorSize = minorFixed ? (Os.atoi(m) : I64) << 10 : (MINOR_MIN : I64);
@@ -1362,6 +1369,7 @@ class Gc {
 		oldStart = region0;
 		oldPtr = region0;
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
+		growth = Os.envInt("RT_OLD_GROWTH", 300);
 		if (oldStart.addL(regionBytes).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes);
 		// the shadow stack: reserved, committed as touched, with a guard page
 		// above it: as deep as the main C stack (rt_run_main)
@@ -1398,7 +1406,7 @@ class Gc {
 	// is closed (hxmc dev's host: a build swapped out): the heap, the nursery
 	// and the main shadow stack given back to the system. Nothing of the
 	// heap is used after this (the program's threads have ended).
-	@:hxmc.noGc public static function releaseHeap() {
+	@:hxmc.unsafe public static function releaseHeap() {
 		Faults.uninstall(); // (its handler's code goes with the library)
 		if (!region0.isNull()) Os.release(region0, regionBytes);
 		if (!region1.isNull()) Os.release(region1, regionBytes);
@@ -1414,7 +1422,7 @@ class Gc {
 	static inline function die(msg:String)
 		dieC(Mem.cstr(msg));
 
-	@:hxmc.noGc static function dieC(msg:Ptr) {
+	@:hxmc.unsafe static function dieC(msg:Ptr) {
 		var r = new Report(Mem.stack(Report.BYTES));
 		r.cstr(msg, 0, -1);
 		r.flush();
@@ -1424,7 +1432,7 @@ class Gc {
 	// ---- reports (atexit: RT_STATS, the census)
 
 	// RSS and its peak in KB, from /proc (Linux; 0 elsewhere)
-	@:hxmc.noGc static function procRss(out:Ptr) {
+	@:hxmc.unsafe static function procRss(out:Ptr) {
 		Mem.setI64(out, 0, 0);
 		Mem.setI64(out, 8, 0);
 		if (Mem.os() != 0) return;
@@ -1450,7 +1458,7 @@ class Gc {
 	}
 
 	// p starts with the C string s
-	@:hxmc.noGc static function startsWith(p:Ptr, s:Ptr):Bool {
+	@:hxmc.unsafe static function startsWith(p:Ptr, s:Ptr):Bool {
 		var i = 0;
 		while (Mem.getU8(s, i) != 0) {
 			if (Mem.getU8(p, i) != Mem.getU8(s, i)) return false;
@@ -1459,7 +1467,7 @@ class Gc {
 		return true;
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function report():Void {
+	@:hxmc.callback @:hxmc.unsafe static function report():Void {
 		if (stats) {
 			var rss = Mem.stack(16);
 			procRss(rss);
@@ -1512,7 +1520,7 @@ class Gc {
 	// exit; 2, also after each major collection (Census)
 	static var census:Int;
 
-	@:hxmc.noGc static function censusNow(when:Ptr) {
+	@:hxmc.unsafe static function censusNow(when:Ptr) {
 		var me = Threads.self;
 		Census.run(oldStart, oldPtr, when, minorSize, oldEnd.diff(oldStart), (me.value.remCap + me.value.robjsCap : I64) * 8,
 			(gcCap : I64) * 16, sp.diff(me.value.base), minors, majors, nglobals);
@@ -1520,23 +1528,11 @@ class Gc {
 	}
 	#end
 
-	// The old space's soft limit while no major collection has run (RT_OLD_MB,
-	// 256 MB by default, which wins over this): a program that knows it keeps
-	// more than that from the start (a compiler's syntax trees and types)
-	// raises it, so its first major collection does not copy what it is
-	// still building, and its peak memory is lower without that copy.
-	@:hxmc.noGc public static function setOldLimit(mb:Int):Void {
-		if (majors > 0 || Os.has("RT_OLD_MB")) return;
-		var e = oldStart.addL((mb : I64) << 20);
-		if (oldStart.addL(regionBytes).ult(e)) e = oldStart.addL(regionBytes);
-		if (oldEnd.ult(e)) oldEnd = e;
-	}
-
 	// ---- hxmc.NativeGc's measurements (the port's server/memory, in place
 	// of OCaml's Objsize and Gc heap words)
 
 	// the bytes the heap spaces take
-	@:hxmc.noGc public static function heapBytes():Float {
+	@:hxmc.unsafe public static function heapBytes():Float {
 		var o:Float = cast oldEnd.diff(oldStart);
 		var y:Float = cast youngEnd.diff(youngStart);
 		return o + y;
@@ -1544,14 +1540,14 @@ class Gc {
 
 	static var objsizeReached:Bool;
 
-	@:hxmc.noGc public static function reached():Bool
+	@:hxmc.unsafe public static function reached():Bool
 		return objsizeReached;
 
 	static inline function inHeap(p:Ptr):Bool
 		return !p.isNull() && (inYoung(p) || inOld(p));
 
 	// a set of addresses: (keys, capacity, length) at s; open addressing
-	@:hxmc.noGc static function psetNew(s:Ptr, cap:Int) {
+	@:hxmc.unsafe static function psetNew(s:Ptr, cap:Int) {
 		var k = LibC.malloc((cap : I64) * 8);
 		LibC.memset(k, 0, (cap : I64) * 8);
 		Mem.setPtr(s, 0, k);
@@ -1559,7 +1555,7 @@ class Gc {
 		Mem.setI64(s, 16, 0);
 	}
 
-	@:hxmc.noGc static function psetSlot(keys:Ptr, cap:I64, p:Ptr):Int {
+	@:hxmc.unsafe static function psetSlot(keys:Ptr, cap:I64, p:Ptr):Int {
 		var h = (p.toI64() >>> 3) * (((0x9E3779B9 : I64) << 32) | ((0x7F4A7C15 : I64) & 0xFFFFFFFF));
 		var i = (h & (cap - 1)).toInt();
 		while (true) {
@@ -1570,7 +1566,7 @@ class Gc {
 	}
 
 	// adds p; false if it was there already
-	@:hxmc.noGc static function psetAdd(s:Ptr, p:Ptr):Bool {
+	@:hxmc.unsafe static function psetAdd(s:Ptr, p:Ptr):Bool {
 		var cap = Mem.getI64(s, 8), len = Mem.getI64(s, 16);
 		if ((len + 1) * 2 > cap) {
 			var keys = Mem.getPtr(s, 0);
@@ -1594,12 +1590,12 @@ class Gc {
 		return true;
 	}
 
-	@:hxmc.noGc static function psetHas(s:Ptr, p:Ptr):Bool {
+	@:hxmc.unsafe static function psetHas(s:Ptr, p:Ptr):Bool {
 		var keys = Mem.getPtr(s, 0);
 		return !Mem.getPtr(keys, 8 * psetSlot(keys, Mem.getI64(s, 8), p)).isNull();
 	}
 
-	@:hxmc.noGc static function psetAddArray(s:Ptr, a:Dynamic) {
+	@:hxmc.unsafe static function psetAddArray(s:Ptr, a:Dynamic) {
 		var ap = Mem.addr(a);
 		if (ap.isNull() || Mem.getI32(ap, 4) != Types.AK_PTR) return;
 		var d = Mem.getPtr(ap, 8);
@@ -1614,7 +1610,7 @@ class Gc {
 	// without entering the objects of the array `exclude`; reaching an object
 	// of the array `out` sets the flag reached() returns (and is not entered
 	// either). Objects outside the heap (static data) are neither counted nor entered.
-	@:hxmc.noGc public static function objsize(v:Dynamic, exclude:Dynamic, out:Dynamic):Float {
+	@:hxmc.unsafe public static function objsize(v:Dynamic, exclude:Dynamic, out:Dynamic):Float {
 		var seen = Mem.stack(24), ex = Mem.stack(24), outs = Mem.stack(24);
 		psetNew(seen, 1024);
 		psetNew(ex, 64);
@@ -1662,7 +1658,7 @@ class Gc {
 	// ---- the runtime's own roots on the shadow stack (once rt.h's RT_ROOT): o stays
 	// alive (and its slot up to date) until popRoots(the first slot)
 
-	@:hxmc.noGc static function pushRoot(o:Dynamic):Ptr {
+	@:hxmc.unsafe static function pushRoot(o:Dynamic):Ptr {
 		var r = sp;
 		sp = r.add(8);
 		if (hw.ult(sp)) hw = sp;
@@ -1670,7 +1666,7 @@ class Gc {
 		return r;
 	}
 
-	@:hxmc.noGc static inline function popRoots(first:Ptr)
+	@:hxmc.unsafe static inline function popRoots(first:Ptr)
 		sp = first;
 }
 

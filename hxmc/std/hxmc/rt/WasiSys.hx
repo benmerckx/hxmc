@@ -135,16 +135,16 @@ class WasiSys {
 	public static function commandArgs(cmd:String, args:Array<String>):Int
 		return unsupported("Sys.command");
 
-	@:hxmc.noGc public static function exit(code:Int):Void {
+	@:hxmc.unsafe public static function exit(code:Int):Void {
 		Wasi.exit(code);
 	}
 
-	@:hxmc.noGc public static function time():Float {
+	@:hxmc.unsafe public static function time():Float {
 		var ns:Float = cast Wasi.clockNs(0);
 		return ns / 1e9;
 	}
 
-	@:hxmc.noGc public static function cpuTime():Float {
+	@:hxmc.unsafe public static function cpuTime():Float {
 		var ns:Float = cast Wasi.clockNs(2);
 		if (ns == 0) ns = cast Wasi.clockNs(1);
 		return ns / 1e9;
@@ -165,7 +165,7 @@ class WasiSys {
 
 	// opens path relative to its preopened directory: the fd, or -1
 	// access: 1 read, 2 write, 3 both
-	@:hxmc.noGc static function open(path:Ptr, oflags:Int, fdflags:Int, access:Int):Int {
+	@:hxmc.unsafe static function open(path:Ptr, oflags:Int, fdflags:Int, access:Int):Int {
 		var a = Wasi.absolute(path);
 		var rel = Mem.stack(8);
 		var dir = Wasi.resolve(a, rel);
@@ -188,7 +188,7 @@ class WasiSys {
 	}
 
 	// an operation on a path: 0 stat (into buf), 1 mkdir, 2 unlink, 3 rmdir; the errno, -1 without a preopen
-	@:hxmc.noGc static function pathOp(path:Ptr, op:Int, buf:Ptr):Int {
+	@:hxmc.unsafe static function pathOp(path:Ptr, op:Int, buf:Ptr):Int {
 		var a = Wasi.absolute(path);
 		var rel = Mem.stack(8);
 		var dir = Wasi.resolve(a, rel);
@@ -233,7 +233,7 @@ class WasiSys {
 	static inline function outside()
 		throw haxe.io.Error.OutsideBounds;
 
-	@:hxmc.noGc static function rw(write:Bool, fd:Int, p:Ptr, n:Int):Int {
+	@:hxmc.unsafe static function rw(write:Bool, fd:Int, p:Ptr, n:Int):Int {
 		var io = Mem.stack(16);
 		Mem.setI32(io, 0, a32(p));
 		Mem.setI32(io, 4, n);
@@ -257,10 +257,10 @@ class WasiSys {
 	}
 
 	// (Sys.stdout().flush(): what a callback printed, after main returned)
-	@:hxmc.noGc public static function fileFlush(fd:Int):Void
+	@:hxmc.unsafe public static function fileFlush(fd:Int):Void
 		if (fd == 1) Wasi.flush();
 
-	@:hxmc.noGc public static function fileClose(fd:Int):Void {
+	@:hxmc.unsafe public static function fileClose(fd:Int):Void {
 		if (fd == 1) Wasi.flush();
 		WasiApi.fd_close(fd);
 	}
@@ -270,7 +270,7 @@ class WasiSys {
 		if (WasiApi.fd_seek(fd, p, whence < 0 || whence > 2 ? 0 : whence, a32(out)) != 0) Rt.rt_throw("seek failed");
 	}
 
-	@:hxmc.noGc public static function fileTell(fd:Int):Int {
+	@:hxmc.unsafe public static function fileTell(fd:Int):Int {
 		var out = Mem.stack(8);
 		if (WasiApi.fd_tell(fd, a32(out)) != 0) return -1;
 		return Mem.getI64(out, 0).toInt();
@@ -314,7 +314,7 @@ class WasiSys {
 		return saveAll(fd, Bytes.bytes(b), Bytes.len(b));
 	}
 
-	@:hxmc.noGc static function saveAll(fd:Int, d:Ptr, n:Int):Bool
+	@:hxmc.unsafe static function saveAll(fd:Int, d:Ptr, n:Int):Bool
 		return SysCore.saveAll(fd, d, n);
 
 	// the file type of a path (filestat.filetype: 3 directory, 4 regular file), -1: none

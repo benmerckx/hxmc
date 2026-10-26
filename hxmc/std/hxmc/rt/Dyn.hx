@@ -21,7 +21,7 @@ class Dyn {
 	// entries outside the heap (Names.fidCache), each checked against
 	// the name it claims (a racing writer leaves an old or a new entry, both
 	// checked), in front of the C table
-	@:hxmc.host("hx_fid") @:hxmc.noGc static function fid(name:String):Int {
+	@:hxmc.host("hx_fid") @:hxmc.unsafe static function fid(name:String):Int {
 		var h = Str.hash(name);
 		var e = Names.fidCache.add(8 * (h & 4095));
 		var v = Atomic.load64(e);
@@ -35,12 +35,12 @@ class Dyn {
 	}
 
 	// the fid of a name if it has one (not interned): -1 otherwise
-	@:hxmc.noGc static function fidFind(name:String):Int
+	@:hxmc.unsafe static function fidFind(name:String):Int
 		return Names.fidFind(name);
 
 	// whether the C string at p (UTF-8) is the string s (ASCII names only:
 	// any other unit answers false, and the caller asks the C table)
-	@:hxmc.noGc static function nameIs(p:Ptr, s:String):Bool {
+	@:hxmc.unsafe static function nameIs(p:Ptr, s:String):Bool {
 		var n = Str.len(s);
 		for (i in 0...n) {
 			var u = Str.unit(s, i);
@@ -51,7 +51,7 @@ class Dyn {
 
 	// ---- lookups (binary searches: the tables are sorted by fid)
 
-	@:hxmc.noGc static function findField(ty:Ptr, fid:Int):Ptr {
+	@:hxmc.unsafe static function findField(ty:Ptr, fid:Int):Ptr {
 		var lo = 0, hi = nfields(ty) - 1;
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
@@ -63,7 +63,7 @@ class Dyn {
 		return Ptr.nil();
 	}
 
-	@:hxmc.noGc static function findMethod(ty:Ptr, fid:Int):Ptr {
+	@:hxmc.unsafe static function findMethod(ty:Ptr, fid:Int):Ptr {
 		var lo = 0, hi = nmethods(ty) - 1;
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
@@ -78,7 +78,7 @@ class Dyn {
 	// rt_icache (Names.hx): uint32 t, int32 slot (> 0: field slot + 1; 0: a
 	// method; -1: none), char kind, void *fn, int32 sig. The C side
 	// (rt_icache_miss) publishes it.
-	@:hxmc.host("rt_icache_fill") @:hxmc.noGc static function icacheFill(o:Dynamic, fid:Int, c:Ptr):Void {
+	@:hxmc.host("rt_icache_fill") @:hxmc.unsafe static function icacheFill(o:Dynamic, fid:Int, c:Ptr):Void {
 		var ty = ty(tindex(o));
 		Mem.setPtr(c, 16, Ptr.nil());
 		Mem.setI32(c, 24, -1);
@@ -262,7 +262,7 @@ class Dyn {
 
 	static var fidLength = 0; // fid of "length" + 1 (0: not looked up yet)
 
-	@:hxmc.noGc static function isLength(fid:Int):Bool {
+	@:hxmc.unsafe static function isLength(fid:Int):Bool {
 		if (fidLength == 0) fidLength = fidFind("length") + 1;
 		return fid == fidLength - 1;
 	}
@@ -391,7 +391,7 @@ class Dyn {
 		}
 	}
 
-	@:hxmc.export("hx_arrayiter_hasNext") @:hxmc.noGc static function arrayIterHasNext(it:Dynamic):Bool {
+	@:hxmc.export("hx_arrayiter_hasNext") @:hxmc.unsafe static function arrayIterHasNext(it:Dynamic):Bool {
 		var p = Mem.addr(it);
 		return Mem.getI32(p, 8) < Mem.getI32(Mem.getPtr(p, 0), 0);
 	}
@@ -495,7 +495,7 @@ class Dyn {
 	// capture), else f: called dynamically, it takes every argument, not
 	// the function type's (a Reflect.makeVarArgs function typed String ->
 	// String and passed on as Dynamic: upstream's Issue12028)
-	@:hxmc.noGc static function unadapt(f:Dynamic):Dynamic {
+	@:hxmc.unsafe static function unadapt(f:Dynamic):Dynamic {
 		while (!Str.isNull(f) && tindex(f) >= T_FIRST) {
 			var t = ty(tindex(f));
 			if (tk(t) != TK_CLOSURE || tag(t) != TAG_DYN_ADAPTER) break;
@@ -662,10 +662,10 @@ class Dyn {
 		return t == T_BOXI64 || t == T_BOXINT;
 	}
 
-	@:hxmc.noGc public static function isInt64(v:Dynamic):Bool
+	@:hxmc.unsafe public static function isInt64(v:Dynamic):Bool
 		return !Str.isNull(v) && tindex(v) == T_BOXI64;
 
-	@:hxmc.host("hx_dyn_eq") @:hxmc.noGc static function dynEq(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.host("hx_dyn_eq") @:hxmc.unsafe static function dynEq(a:Dynamic, b:Dynamic):Bool {
 		if (Mem.addr(a) == Mem.addr(b)) return true;
 		if (Str.isNull(a) || Str.isNull(b)) return false;
 		var ta = tindex(a), tb = tindex(b);
@@ -687,7 +687,7 @@ class Dyn {
 	}
 
 	// the unboxings (no GC point)
-	@:hxmc.noGc static function unboxI64(v:Dynamic):I64 {
+	@:hxmc.unsafe static function unboxI64(v:Dynamic):I64 {
 		var p = Mem.addr(v);
 		return switch tindex(v) {
 			case T_BOXINT | T_BOXBOOL: (Mem.getI32(p, 0) : I64);
@@ -697,13 +697,13 @@ class Dyn {
 		}
 	}
 
-	@:hxmc.noGc static inline function f2l(f:Float):I64 {
+	@:hxmc.unsafe static inline function f2l(f:Float):I64 {
 		// (the conversion of the language: NaN 0, saturating)
 		var x:I64 = cast f;
 		return x;
 	}
 
-	@:hxmc.noGc static function unboxFloat(v:Dynamic):Float {
+	@:hxmc.unsafe static function unboxFloat(v:Dynamic):Float {
 		var p = Mem.addr(v);
 		return switch tindex(v) {
 			case T_BOXINT | T_BOXBOOL: Mem.getI32(p, 0);
@@ -715,7 +715,7 @@ class Dyn {
 		}
 	}
 
-	@:hxmc.host("hx_dyn_cmp") @:hxmc.noGc static function dynCmp(a:Dynamic, b:Dynamic):Int {
+	@:hxmc.host("hx_dyn_cmp") @:hxmc.unsafe static function dynCmp(a:Dynamic, b:Dynamic):Int {
 		if (!Str.isNull(a) && !Str.isNull(b) && (tindex(a) == T_BOXI64 || tindex(b) == T_BOXI64) && isI64(a) && isI64(b)) {
 			var x = unboxI64(a), y = unboxI64(b);
 			return x < y ? -1 : x > y ? 1 : 0;
@@ -732,7 +732,7 @@ class Dyn {
 		return Str.isNull(a) ? -1 : 1;
 	}
 
-	@:hxmc.noGc public static function compare(a:Dynamic, b:Dynamic):Int
+	@:hxmc.unsafe public static function compare(a:Dynamic, b:Dynamic):Int
 		return dynCmp(a, b);
 
 	// a op b on Dynamic values (FnLower.opCode: 0 + 1 - 2 * 3 / 4 % 5 & 6 | 7 ^ 8 << 9 >> 10 >>>)
@@ -771,7 +771,7 @@ class Dyn {
 
 	// ---- type tests
 
-	@:hxmc.noGc static function classExtends(t:Int, c:Int):Bool {
+	@:hxmc.unsafe static function classExtends(t:Int, c:Int):Bool {
 		while (t >= 0) {
 			if (t == c) return true;
 			t = sup(ty(t));
@@ -779,14 +779,14 @@ class Dyn {
 		return false;
 	}
 
-	@:hxmc.noGc static function implementsIface(t:Int, i:Int):Bool {
+	@:hxmc.unsafe static function implementsIface(t:Int, i:Int):Bool {
 		var ty = ty(t);
 		for (k in 0...nifaces(ty))
 			if (iface(ty, k) == i) return true;
 		return false;
 	}
 
-	@:hxmc.host("hx_is") @:hxmc.noGc static function isOf(v:Dynamic, type:Dynamic):Bool {
+	@:hxmc.host("hx_is") @:hxmc.unsafe static function isOf(v:Dynamic, type:Dynamic):Bool {
 		if (Str.isNull(v) || Str.isNull(type)) return false;
 		var c = described(type);
 		var t = tindex(v);
@@ -822,17 +822,17 @@ class Dyn {
 		return null;
 	}
 
-	@:hxmc.host("Std_isOfType") @:hxmc.noGc static function isOfType(v:Dynamic, t:Dynamic):Bool
+	@:hxmc.host("Std_isOfType") @:hxmc.unsafe static function isOfType(v:Dynamic, t:Dynamic):Bool
 		return isOf(v, t);
 
 	// Std.isOfType(v, Class) (kind 0: a type object, not an enum's), (v, Enum) (1)
-	@:hxmc.host("hx_is_typeobj") @:hxmc.noGc static function isTypeObject(v:Dynamic, kind:Int):Bool {
+	@:hxmc.host("hx_is_typeobj") @:hxmc.unsafe static function isTypeObject(v:Dynamic, kind:Int):Bool {
 		if (Str.isNull(v) || tindex(v) != T_TYPEOBJ) return false;
 		var enum_ = described(v) >= T_FIRST && tk(ty(described(v))) == TK_ENUM;
 		return kind == 1 ? enum_ : !enum_;
 	}
 
-	@:hxmc.host("Std_downcast") @:hxmc.noGc static function downcast(v:Dynamic, t:Dynamic):Dynamic
+	@:hxmc.host("Std_downcast") @:hxmc.unsafe static function downcast(v:Dynamic, t:Dynamic):Dynamic
 		return isOf(v, t) ? v : null;
 
 	// ---- Std.string
@@ -992,13 +992,13 @@ class Dyn {
 	@:hxmc.threadLocal static var hashSeed:Int;
 
 	// the running thread's id (hxmc.NativeThread.current, without typing the threads' API)
-	@:hxmc.noGc static inline function threadId():Int
+	@:hxmc.unsafe static inline function threadId():Int
 		return #if (hxmc.target == "wasm32-wasi") hxmc.rt.wasm.Threads.current() #else Threads.current() #end;
 
 	// (Types: a record's 32 bits at -4; a string's content hash; an array has
 	// none (Vectors, Bytes as keys through Dynamic: its type and length, which
 	// never change, all such keys of a length colliding))
-	@:hxmc.noGc public static function objHash(o:Dynamic):Int {
+	@:hxmc.unsafe public static function objHash(o:Dynamic):Int {
 		if (Str.isNull(o)) return 0;
 		var t = tindex(o);
 		if (isString(t)) return Str.hash(o) * (0x9E3779B1 : Int);
@@ -1024,12 +1024,12 @@ class Dyn {
 		return h * (0x9E3779B1 : Int);
 	}
 
-	@:hxmc.noGc public static function refEq(a:Dynamic, b:Dynamic):Bool
+	@:hxmc.unsafe public static function refEq(a:Dynamic, b:Dynamic):Bool
 		return Mem.addr(a) == Mem.addr(b);
 
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 anonymous object, 5 function, 6 class
 	// instance, 7 enum value, 8 String, 9 Array, 10 a type object, 11 other
-	@:hxmc.noGc public static function typeKind(v:Dynamic):Int {
+	@:hxmc.unsafe public static function typeKind(v:Dynamic):Int {
 		if (Str.isNull(v)) return 0;
 		var t = tindex(v);
 		switch t {
@@ -1061,7 +1061,7 @@ class Dyn {
 		}
 	}
 
-	@:hxmc.noGc public static function getClass(v:Dynamic):Dynamic {
+	@:hxmc.unsafe public static function getClass(v:Dynamic):Dynamic {
 		if (Str.isNull(v)) return null;
 		var t = tindex(v);
 		// (a Bytes is an instance of its class: upstream's TestSerialize)
@@ -1071,14 +1071,14 @@ class Dyn {
 		return null;
 	}
 
-	@:hxmc.noGc public static function getEnum(v:Dynamic):Dynamic {
+	@:hxmc.unsafe public static function getEnum(v:Dynamic):Dynamic {
 		if (Str.isNull(v)) return null;
 		var t = tindex(v);
 		if (t >= T_FIRST && tk(ty(t)) == TK_CTOR) return typeObj(sup(ty(t)));
 		return null;
 	}
 
-	@:hxmc.noGc public static function superClass(c:Dynamic):Dynamic {
+	@:hxmc.unsafe public static function superClass(c:Dynamic):Dynamic {
 		var t = ty(described(c));
 		var s = sup(t);
 		// (not the root every class extends, which has no superclass: Type.getSuperClass
@@ -1175,7 +1175,7 @@ class Dyn {
 		return o;
 	}
 
-	@:hxmc.noGc public static function enumIndex(v:Dynamic):Int
+	@:hxmc.unsafe public static function enumIndex(v:Dynamic):Int
 		return tag(ty(tindex(v)));
 
 	public static function enumCtorName(v:Dynamic):String
@@ -1311,7 +1311,20 @@ class Dyn {
 	public static function callMethod(f:Dynamic, args:Array<Dynamic>):Dynamic
 		return dynCall(f, args);
 
-	@:hxmc.noGc static function isMethodClosure(t:Int):Bool {
+	// whether dynEq of x and any value is their identity: x null, or not a
+	// box, a String (of either width), a type object or a closure (each of
+	// which dynEq compares otherwise); Array's searches then compare words
+	@:hxmc.unsafe public static function identityEq(x:Dynamic):Bool {
+		if (Str.isNull(x)) return true;
+		var t = tindex(x);
+		if (t >= T_FIRST) {
+			var k = tk(ty(t));
+			return k != TK_CLOSURE && k != TK_BOUND;
+		}
+		return !(t == T_BOXINT || t == T_BOXFLOAT || t == T_BOXBOOL || t == T_BOXI64 || isString(t) || t == T_TYPEOBJ);
+	}
+
+	@:hxmc.unsafe static function isMethodClosure(t:Int):Bool {
 		if (tk(ty(t)) != TK_CLOSURE) return false;
 		var nm = name(ty(t));
 		return Mem.getU8(nm, 0) == "<".code && Mem.getU8(nm, 1) == "m".code;
@@ -1319,19 +1332,19 @@ class Dyn {
 
 	// what an adapter converts to its function type (Lower.adapter,
 	// dynAdapter: its capture), else f
-	@:hxmc.noGc static function peel(f:Dynamic):Dynamic {
+	@:hxmc.unsafe static function peel(f:Dynamic):Dynamic {
 		while (isAdapter(f))
 			f = Mem.getRef(Mem.addr(f), 8);
 		return f;
 	}
 
-	@:hxmc.noGc static function isAdapter(f:Dynamic):Bool {
+	@:hxmc.unsafe static function isAdapter(f:Dynamic):Bool {
 		if (Str.isNull(f) || tindex(f) < T_FIRST) return false;
 		var t = ty(tindex(f));
 		return tk(t) == TK_CLOSURE && (tag(t) == TAG_ADAPTER || tag(t) == TAG_DYN_ADAPTER);
 	}
 
-	@:hxmc.noGc public static function compareMethods(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.unsafe public static function compareMethods(a:Dynamic, b:Dynamic):Bool {
 		if (Mem.addr(a) == Mem.addr(b)) return true;
 		// (two adapters of one method, `a.push` made where it is used: that
 		// method's; upstream's TestReflect)

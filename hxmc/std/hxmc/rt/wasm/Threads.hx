@@ -24,17 +24,17 @@ class Threads {
 		return 0;
 	}
 
-	@:hxmc.noGc public static function current():Int
+	@:hxmc.unsafe public static function current():Int
 		return 1;
 
 	// (no other threads call in)
-	@:hxmc.noGc public static function attach():Bool
+	@:hxmc.unsafe public static function attach():Bool
 		return false;
 
-	@:hxmc.noGc public static function count():Int
+	@:hxmc.unsafe public static function count():Int
 		return 1;
 
-	@:hxmc.noGc public static function parallel():Bool
+	@:hxmc.unsafe public static function parallel():Bool
 		return false;
 
 	public static function park(timeout:Float):Bool {
@@ -51,7 +51,7 @@ class Threads {
 		if (id == 1) unparked = true;
 	}
 
-	@:hxmc.noGc public static function yield():Void {}
+	@:hxmc.unsafe public static function yield():Void {}
 
 	public static function mutexNew():Dynamic
 		return new Counter(0);

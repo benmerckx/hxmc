@@ -13,7 +13,7 @@ The three layers build on each other:
 2. **Native memory with lifetimes** (after Java's FFM API): arenas,
    bounds-checked segments, pinning and handles for the moving GC.
 3. **Manual memory** (after Zig): an `Allocator` interface, containers
-   over it, and `@:hxmc.noGc` as a checked boundary between GC code and
+   over it, and `@:hxmc.unsafe` as a checked boundary between GC code and
    code that never touches the GC heap.
 
 The names below are illustrative, except in the last sections: the
@@ -23,7 +23,7 @@ without C of our own").
 
 Status: built are the runtime's internal subset, the first milestone
 (externs on the six ABIs and WebAssembly, `Arena`, the checked
-`@:hxmc.noGc` rule and the raw-address check), structs by value in C
+`@:hxmc.unsafe` rule and the raw-address check), structs by value in C
 calls on every ABI ("Calls and linking") and struct values in the
 language ("Struct values": locals, parameters, results, inline fields,
 statics, `Slice`, scalar replacement). Next: instance methods on structs,
@@ -221,7 +221,7 @@ class Window {
   handler), calls the function, and catches exceptions so they never
   unwind through C frames.
 - Threads created by C attach to the runtime before calling GC code (a
-  public attach/detach entry point); `@:hxmc.noGc` callbacks (section 4)
+  public attach/detach entry point); `@:hxmc.unsafe` callbacks (section 4)
   need no attachment.
 
 ### Safety
@@ -255,7 +255,7 @@ interface Allocator {
 // WebAssembly memory.grow), Debug (wraps another; detects leaks, double
 // frees and use after free in debug builds)
 
-@:hxmc.noGc class ArrayList<T> {
+@:hxmc.unsafe class ArrayList<T> {
   var items:Slice<T>; var len:Int; final alloc:Allocator;
   public function new(alloc:Allocator) { this.alloc = alloc; items = Slice.empty(); len = 0; }
   public function push(v:T) { if (len == items.length) grow(); items[len++] = v; }
@@ -264,7 +264,7 @@ interface Allocator {
 
 @:hxmc.struct class Particle { var x:Float32; var y:Float32; var vx:Float32; var vy:Float32; }
 
-@:hxmc.noGc
+@:hxmc.unsafe
 function step(alloc:Allocator, ps:Slice<Particle>, dt:Float32):Slice<Particle> {
   var alive = new ArrayList<Particle>(alloc);
   for (p in ps) {                               // p points into the slice, no copy
@@ -284,14 +284,14 @@ function onFrame() {
 
 ### Rules the compiler enforces
 
-- A `@:hxmc.noGc` function never touches the GC heap: no GC allocation
+- A `@:hxmc.unsafe` function never touches the GC heap: no GC allocation
   (`new` of an ordinary class, capturing closures, string concatenation,
   `Array`, `Dynamic`, boxing), no calls to functions that may collect, no
   stores of references to GC objects. Facts already checks most of this
   for the runtime and names the culprit; it becomes a documented,
   complete rule.
 - Allowed: scalars, `@:hxmc.struct` values, `Ptr<T>`, `Slice<T>`,
-  `Segment<T>`, `Allocator` parameters, calls to other `@:hxmc.noGc`
+  `Segment<T>`, `Allocator` parameters, calls to other `@:hxmc.unsafe`
   functions and to C.
 - GC code calls manual code freely; manual code reaches GC objects only
   through `Handle.get` and `pin`.
@@ -309,7 +309,7 @@ function onFrame() {
 - Generics specialized per type for structs (`ArrayList<Particle>`
   storing structs by value), as Zig does with `comptime` types; Haxe's
   `@:generic` is the starting point.
-- No shadow-stack frame, safepoint or write barrier in `@:hxmc.noGc`
+- No shadow-stack frame, safepoint or write barrier in `@:hxmc.unsafe`
   functions (they hold no GC references): faster and smaller code, and
   safe to run on threads the runtime does not know (C callbacks on
   foreign threads, audio callbacks).
@@ -435,7 +435,7 @@ and `null`. An enum can therefore opt into a value representation:
   Rect(w:Float32, h:Float32);
 }
 
-@:hxmc.noGc function area(s:Shape):Float32
+@:hxmc.unsafe function area(s:Shape):Float32
   return switch s {                       // ordinary Haxe pattern matching
     case Circle(r): 3.14159 * r * r;
     case Rect(w, h): w * h;
@@ -474,7 +474,7 @@ unchanged. Restrictions:
 | arbitrary-width and packed integers (`u3`, packed structs with bit fields) | abstracts over `Int` with masking | clumsy |
 | overflow as an error, wrapping `+%`, saturating `+|` | Haxe's `Int` wraps; checked and saturating arithmetic as functions or abstracts | acceptable |
 | `*const T`, `*T` vs `[*]T`, sentinel slices `[:0]u8` | distinct abstracts (`ConstPtr<T>`, `Ptr<T>`, `Slice<T>`, `CString`) | acceptable |
-| no hidden allocations | Haxe allocates implicitly (closures, string concatenation, array literals, boxing): `@:hxmc.noGc` must be a compiler check | needs the check |
+| no hidden allocations | Haxe allocates implicitly (closures, string concatenation, array literals, boxing): `@:hxmc.unsafe` must be a compiler check | needs the check |
 | `@Vector` (SIMD) | hxmc intrinsics | needs work |
 | `anytype` | `@:generic` or macros | good |
 
@@ -490,7 +490,7 @@ equivalents of the GC-interop pieces, mostly for cgo and its own runtime:
 | --- | --- |
 | `Handle` | `runtime/cgo.Handle` (`cgo.NewHandle(v)`, `h.Value()`, `h.Delete()`) |
 | `pin` | `runtime.Pinner` (Go 1.21+), plus cgo's rule that C may not keep Go pointers |
-| `@:hxmc.noGc` as a checked rule | `//go:nowritebarrierrec`, `//go:nosplit`, `//go:systemstack` and a not-in-heap marker type, enforced by the compiler but only inside the runtime |
+| `@:hxmc.unsafe` as a checked rule | `//go:nowritebarrierrec`, `//go:nosplit`, `//go:systemstack` and a not-in-heap marker type, enforced by the compiler but only inside the runtime |
 | arenas | the experimental `arena` package (`GOEXPERIMENT=arenas`, Go 1.20), on hold indefinitely: use after free and API composition proved hard to make safe in a GC language |
 | implicit stack allocation | escape analysis |
 
@@ -511,7 +511,7 @@ hours, macOS and Windows arm64 about 2.7 hours, the runtime move about 8.
 | 2. Native memory: arenas, segments, `pin`, `Handle`, callbacks, thread attach | 0.6–0.9k | 1–1.5k | about a day (`pin` in a copying collector needs a non-moving space, in the C and the Haxe collectors) |
 | 3. C declaration parser, header generator | | 1.5–2k (macro code) | half a day |
 | 4. Manual memory: `Allocator`, `Slice`, containers; struct values | 2–3k | 1.5–2.5k | 1.5–2 days (struct values touch lowering, Mir, all three back ends and the linkers' data) |
-| 5. `@:hxmc.noGc` complete, raw-address check | 0.5–1k | | half a day |
+| 5. `@:hxmc.unsafe` complete, raw-address check | 0.5–1k | | half a day |
 | 6. Value enums, `defer` macro, structs by value across C calls, optional tcc | 2–3k | 0.3k | 1–2 days |
 | 7. Runtime and collector rewritten in this style | | rewrite | open-ended, optional |
 
@@ -532,7 +532,7 @@ Included:
 2. Externs with direct calls for scalars and pointers on the six ABIs;
    static linking of prebuilt objects; user DLLs (PE) and dylibs (Mach-O)
    by generalizing the runtime's existing system imports.
-3. `@:hxmc.noGc` complete, plus the raw-address check (built): the tool
+3. `@:hxmc.unsafe` complete, plus the raw-address check (built): the tool
    for rewriting std hot paths, already the runtime's style (`Mem`
    intrinsics in non-collecting functions), made a checked rule.
 4. Minimal temporary memory: `Arena.scoped(a -> ...)`, a malloc-backed
@@ -557,7 +557,7 @@ hand at first); structs by value across C calls; tcc; `defer`; the rest of the Z
 step 7.
 
 Estimate: about 2–3.5k lines (types and extern lowering 1–1.5k compiler
-lines, fast calls small, the `noGc` check 0.5–1k, the scoped arena a few
+lines, fast calls small, the `@:hxmc.unsafe` check 0.5–1k, the scoped arena a few
 hundred lines of Haxe), roughly one agent-day. Each deferred piece can be
 added later without redesigning these.
 
@@ -621,7 +621,7 @@ than with the C runtime.
 4. Manual memory: `Allocator` and its implementations, `Slice`, struct
    values, specialized generics, the containers (struct values and
    `Slice` done: "Struct values").
-5. `@:hxmc.noGc` as a public, complete rule, including the raw-address
+5. `@:hxmc.unsafe` as a public, complete rule, including the raw-address
    check.
 6. Structs by value across C calls (done on every ABI, callbacks
    included: "Calls and linking"); the optional embedded tcc.

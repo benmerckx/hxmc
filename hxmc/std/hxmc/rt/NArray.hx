@@ -105,7 +105,7 @@ class NArray {
 	// for references; true. False when the storages are of other kinds
 	// (generic code's views of another type), nothing done: the caller's
 	// loop. A leaf: no frame for the collector.
-	@:hxmc.noGc public static function move(d:Dynamic, di:Int, s:Dynamic, si:Int, n:Int):Bool {
+	@:hxmc.unsafe public static function move(d:Dynamic, di:Int, s:Dynamic, si:Int, n:Int):Bool {
 		if (n <= 0) return true;
 		var ds = storage(d), ss = storage(s);
 		var k = kindOf(ds);

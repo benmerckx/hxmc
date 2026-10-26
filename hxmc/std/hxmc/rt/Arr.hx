@@ -82,6 +82,12 @@ class Arr {
 				for (i in from...n)
 					if (d.getFloat(i) == v) return i;
 				return -1;
+			case Repr.AK_PTR if (Repr.identityEq(x)):
+				// (== is this needle's identity: the words compared, no call)
+				var d = Repr.elems(a);
+				for (i in from...n)
+					if (Repr.same(d.getRef(i), x)) return i;
+				return -1;
 			case _:
 				for (i in from...n) {
 					var e = Repr.elems(a).getRef(i);
@@ -100,15 +106,25 @@ class Arr {
 		if (f < 0) f += n;
 		if (f >= n) f = n - 1;
 		var i = f;
+		var k = kindOf(a);
+		if (k == Repr.AK_PTR && Repr.identityEq(x)) {
+			// (as indexFrom's)
+			var d = Repr.elems(a);
+			while (i >= 0) {
+				if (Repr.same(d.getRef(i), x)) return i;
+				i--;
+			}
+			return -1;
+		}
 		while (i >= 0) {
-			if (kindOf(a) == Repr.AK_PTR) {
+			if (k == Repr.AK_PTR) {
 				var e = Repr.elems(a).getRef(i);
 				if (Repr.same(e, x) || Repr.dynEq(e, x)) return i;
-			} else if (kindOf(a) == Repr.AK_BOOL) {
+			} else if (k == Repr.AK_BOOL) {
 				if (!Repr.isNull(x) && Repr.isBoxedBool(x) && Repr.elems(a).getBool(i) == Repr.unboxedBool(x)) return i;
 			} else if (!Repr.isNull(x)) {
 				var v:Float = x;
-				var e = kindOf(a) == Repr.AK_I32 ? (Repr.elems(a).getInt(i) : Float) : kindOf(a) == Repr.AK_F64 ? Repr.elems(a).getFloat(i) : {
+				var e = k == Repr.AK_I32 ? (Repr.elems(a).getInt(i) : Float) : k == Repr.AK_F64 ? Repr.elems(a).getFloat(i) : {
 					var l:Float = cast Repr.elems(a).getI64(i);
 					l;
 				};
@@ -228,7 +244,7 @@ class Arr {
 		arr[n - 1] = null;
 	}
 
-	@:hxmc.host("Array_reverse") @:hxmc.noGc static function reverse(a:Dynamic):Void {
+	@:hxmc.host("Array_reverse") @:hxmc.unsafe static function reverse(a:Dynamic):Void {
 		var n = len(a);
 		if (n < 2) return;
 		Repr.arrReverse(a, n);

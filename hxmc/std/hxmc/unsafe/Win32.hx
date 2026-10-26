@@ -33,6 +33,11 @@ import hxmc.I64;
 	static function fflush(f:Ptr):Int;
 	static function exit(code:Int):Void;
 	// kernel32
+	// address space (a library's own allocator): type MEM_COMMIT 0x1000,
+	// MEM_RESERVE 0x2000; VirtualFree's MEM_DECOMMIT 0x4000, MEM_RELEASE
+	// 0x8000 (size 0); protect PAGE_NOACCESS 1, PAGE_READWRITE 4
+	static function VirtualAlloc(p:Ptr, size:I64, type:Int, protect:Int):Ptr;
+	static function VirtualFree(p:Ptr, size:I64, type:Int):Int;
 	static function GetEnvironmentStringsW():Ptr;
 	static function FreeEnvironmentStringsW(p:Ptr):Int;
 	static function Sleep(ms:Int):Void;

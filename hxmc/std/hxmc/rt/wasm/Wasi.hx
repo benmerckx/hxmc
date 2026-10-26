@@ -27,7 +27,7 @@ class Wasi {
 	public static inline function ofA32(x:Int):Ptr
 		return new Ptr((x : I64) & ((((1 : I64) << 32) - 1)));
 
-	@:hxmc.noGc public static function init() {
+	@:hxmc.unsafe public static function init() {
 		var t = Mem.stack(16);
 		// arguments
 		WasiApi.args_sizes_get(a32(t), a32(t.add(4)));
@@ -81,7 +81,7 @@ class Wasi {
 	}
 
 	// the preopened directories: fd 3 on until EBADF (t: 8 bytes of scratch)
-	@:hxmc.noGc static inline function initPreopens(t:Ptr) {
+	@:hxmc.unsafe static inline function initPreopens(t:Ptr) {
 		pre = Heap.calloc(64, 16);
 		npre = 0;
 		var fd = 3;
@@ -104,7 +104,7 @@ class Wasi {
 		}
 	}
 
-	@:hxmc.noGc static function findPre(lit:String):Int {
+	@:hxmc.unsafe static function findPre(lit:String):Int {
 		for (i in 0...npre) {
 			var n = Mem.getPtr(pre, 16 * i + 8);
 			var ok = true;
@@ -117,7 +117,7 @@ class Wasi {
 	}
 
 	// the value of an environment variable (a C string in the environment block), or null
-	@:hxmc.noGc public static function getenvC(lit:String):Ptr {
+	@:hxmc.unsafe public static function getenvC(lit:String):Ptr {
 		var len = hxmc.rt.Str.len(lit);
 		for (i in 0...nenv) {
 			var e = Mem.getPtr(env, 8 * i);
@@ -132,7 +132,7 @@ class Wasi {
 		return Ptr.nil();
 	}
 
-	@:hxmc.export("getenv") @:hxmc.noGc public static function getenv(name:Ptr):Ptr {
+	@:hxmc.export("getenv") @:hxmc.unsafe public static function getenv(name:Ptr):Ptr {
 		var len = Heap.strlen(name).toInt();
 		for (i in 0...nenv) {
 			var e = Mem.getPtr(env, 8 * i);
@@ -142,7 +142,7 @@ class Wasi {
 	}
 
 	// a decimal environment variable, or def
-	@:hxmc.noGc public static function envInt(lit:String, def:Int):Int {
+	@:hxmc.unsafe public static function envInt(lit:String, def:Int):Int {
 		var v = getenvC(lit);
 		if (v.isNull()) return def;
 		var n = 0, i = 0;
@@ -153,27 +153,27 @@ class Wasi {
 		return n;
 	}
 
-	@:hxmc.noGc public static function argCount():Int
+	@:hxmc.unsafe public static function argCount():Int
 		return argc;
 
-	@:hxmc.noGc public static function arg(i:Int):Ptr
+	@:hxmc.unsafe public static function arg(i:Int):Ptr
 		return Mem.getPtr(argv, 8 * i);
 
-	@:hxmc.noGc public static function envCount():Int
+	@:hxmc.unsafe public static function envCount():Int
 		return nenv;
 
-	@:hxmc.noGc public static function envAt(i:Int):Ptr
+	@:hxmc.unsafe public static function envAt(i:Int):Ptr
 		return Mem.getPtr(env, 8 * i);
 
 	// replaces the environment block (putEnv): n entries
-	@:hxmc.noGc public static function setEnvBlock(e:Ptr, n:Int) {
+	@:hxmc.unsafe public static function setEnvBlock(e:Ptr, n:Int) {
 		env = e;
 		nenv = n;
 	}
 
 	// ---- output (fd 1 buffered)
 
-	@:hxmc.noGc public static function writeRaw(fd:Int, p:Ptr, n:Int) {
+	@:hxmc.unsafe public static function writeRaw(fd:Int, p:Ptr, n:Int) {
 		var io = Mem.stack(16);
 		while (n > 0) {
 			Mem.setI32(io, 0, a32(p));
@@ -190,13 +190,13 @@ class Wasi {
 	// site's browser glue) and its exception crosses the try blocks of the
 	// frames below: with no current handler, none of their pads takes it for
 	// a Haxe exception (WasmGen: a pad handles its own handler only)
-	@:hxmc.noGc public static function exit(code:Int):Void {
+	@:hxmc.unsafe public static function exit(code:Int):Void {
 		flush();
 		Mem.tlsSet("rt_hcur", Ptr.nil());
 		WasiApi.proc_exit(code);
 	}
 
-	@:hxmc.noGc public static function flush() {
+	@:hxmc.unsafe public static function flush() {
 		if (outLen > 0) {
 			var n = outLen;
 			outLen = 0;
@@ -204,7 +204,7 @@ class Wasi {
 		}
 	}
 
-	@:hxmc.noGc public static function write(fd:Int, p:Ptr, n:Int) {
+	@:hxmc.unsafe public static function write(fd:Int, p:Ptr, n:Int) {
 		if (fd != 1) {
 			flush();
 			writeRaw(fd, p, n);
@@ -222,7 +222,7 @@ class Wasi {
 	}
 
 	// a string literal (Latin-1) without allocating
-	@:hxmc.noGc public static function writeLit(fd:Int, lit:String) {
+	@:hxmc.unsafe public static function writeLit(fd:Int, lit:String) {
 		var len = hxmc.rt.Str.len(lit);
 		var b = Mem.stack(128);
 		var i = 0;
@@ -237,13 +237,13 @@ class Wasi {
 		}
 	}
 
-	@:hxmc.noGc public static function writeStr(fd:Int, s:String) {
+	@:hxmc.unsafe public static function writeStr(fd:Int, s:String) {
 		var u = hxmc.rt.Str.toUtf8(s);
 		write(fd, u, Heap.strlen(u).toInt());
 		Heap.free(u);
 	}
 
-	@:hxmc.noGc public static function writeInt(fd:Int, v:Int) {
+	@:hxmc.unsafe public static function writeInt(fd:Int, v:Int) {
 		var b = Mem.stack(16);
 		var k = 16;
 		if (v == 0) {
@@ -259,7 +259,7 @@ class Wasi {
 	}
 
 	// "gc: major <n>: <a> MB live, limit <b> MB, memory <m> MB" (RT_STATS)
-	@:hxmc.noGc public static function statLine(lit:String, n:Int, a:Int, b:Int, m:Int) {
+	@:hxmc.unsafe public static function statLine(lit:String, n:Int, a:Int, b:Int, m:Int) {
 		writeLit(2, lit);
 		writeInt(2, n);
 		writeLit(2, ": ");
@@ -271,14 +271,14 @@ class Wasi {
 		writeLit(2, " MB\n");
 	}
 
-	@:hxmc.export("write") @:hxmc.noGc public static function posixWrite(fd:Int, p:Ptr, n:I64):I64 {
+	@:hxmc.export("write") @:hxmc.unsafe public static function posixWrite(fd:Int, p:Ptr, n:I64):I64 {
 		write(fd, p, n.toInt());
 		return n;
 	}
 
 	// ---- clocks
 
-	@:hxmc.noGc public static function clockNs(id:Int):I64 {
+	@:hxmc.unsafe public static function clockNs(id:Int):I64 {
 		var t = Mem.stack(8);
 		if (WasiApi.clock_time_get(id, 1000, a32(t)) != 0) return 0;
 		return Mem.getI64(t, 0);
@@ -288,7 +288,7 @@ class Wasi {
 
 	// the absolute, normalized path of p (a C string) when the working
 	// directory is known; else p normalized (relative)
-	@:hxmc.noGc public static function absolute(p:Ptr):Ptr {
+	@:hxmc.unsafe public static function absolute(p:Ptr):Ptr {
 		ready();
 		var n = Heap.strlen(p).toInt();
 		var full:Ptr;
@@ -313,7 +313,7 @@ class Wasi {
 	}
 
 	// removes ".", empty components and "x/.." in place
-	@:hxmc.noGc static function normalize(p:Ptr) {
+	@:hxmc.unsafe static function normalize(p:Ptr) {
 		var abs = Mem.getU8(p, 0) == "/".code;
 		var r = 0, w = 0;
 		var n = Heap.strlen(p).toInt();
@@ -356,7 +356,7 @@ class Wasi {
 
 	// the preopened directory for an absolute or relative normalized path:
 	// its fd; *rel (a pointer into p) the rest. -1: none
-	@:hxmc.noGc public static function resolve(p:Ptr, rel:Ptr):Int {
+	@:hxmc.unsafe public static function resolve(p:Ptr, rel:Ptr):Int {
 		ready();
 		var best = -1, bestLen = -1;
 		var abs = Mem.getU8(p, 0) == "/".code;
@@ -399,7 +399,7 @@ class Wasi {
 
 	// whether p (a C string) names a directory above a preopened one (/c above
 	// node's /c/Users on Windows): those directories exist for the program
-	@:hxmc.noGc public static function preopenAncestor(p:Ptr):Bool {
+	@:hxmc.unsafe public static function preopenAncestor(p:Ptr):Bool {
 		var a = absolute(p);
 		var alen = Heap.strlen(a).toInt();
 		var found = false;
@@ -414,9 +414,9 @@ class Wasi {
 		return found;
 	}
 
-	@:hxmc.noGc public static function getCwd():Ptr
+	@:hxmc.unsafe public static function getCwd():Ptr
 		return cwd;
 
-	@:hxmc.noGc public static function setCwd(p:Ptr)
+	@:hxmc.unsafe public static function setCwd(p:Ptr)
 		cwd = p;
 }

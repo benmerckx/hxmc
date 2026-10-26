@@ -149,6 +149,8 @@ class RuntimeSymbols {
 		{sym: "hx_str_of_i64", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Int64 as a String"},
 		{sym: "hx_str_of_bool", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a Bool as a String"},
 		{sym: "hx_str_concat", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: +"},
+		{sym: "hx_str_concat3", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a + b + c"},
+		{sym: "hx_str_concat4", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a + b + c + d"},
 		{sym: "hx_str_eq", kind: IMPL, families: WASMGC, by: "FnLower: == on Strings"},
 		{sym: "hx_str_cmp", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: < on Strings"},
 		{sym: "hx_str_hash", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a switch on Strings"},

@@ -83,6 +83,12 @@ import hxmc.I64;
 	static function gethostbyaddr(addr:Ptr, len:Int, type:Int):Ptr;
 	static function strdup(s:Ptr):Ptr;
 	static function sched_yield():Int;
+	// address space (a library's own allocator: reserve with PROT_NONE,
+	// commit with mprotect). prot: PROT_READ 1, PROT_WRITE 2; flags:
+	// MAP_PRIVATE 2, MAP_ANONYMOUS 0x20 on Linux, 0x1000 on macOS (MAP_FAILED: -1)
+	static function mmap(addr:Ptr, len:I64, prot:Int, flags:Int, fd:Int, off:I64):Ptr;
+	static function munmap(addr:Ptr, len:I64):Int;
+	static function mprotect(addr:Ptr, len:I64, prot:Int):Int;
 	// loading shared libraries at run time (graphics drivers: libGL,
 	// libvulkan): glibc's libdl.so.2 in the dynamic glibc mode (-D
 	// hxmc.libc=glibc), libSystem's on macOS; none in the static musl mode

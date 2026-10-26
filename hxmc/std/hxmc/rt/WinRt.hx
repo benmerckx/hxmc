@@ -40,7 +40,7 @@ class WinRt {
 	static var pageSize:Int;
 	static var socketsReady:Bool;
 
-	@:hxmc.host("rt_win_page_size") @:hxmc.noGc static function rtPageSize():I64 {
+	@:hxmc.host("rt_win_page_size") @:hxmc.unsafe static function rtPageSize():I64 {
 		if (pageSize == 0) {
 			var si = Mem.stack(64); // SYSTEM_INFO: dwPageSize at 4
 			K.GetSystemInfo(si);
@@ -49,13 +49,13 @@ class WinRt {
 		return pageSize;
 	}
 
-	@:hxmc.noGc static inline function lockOf():Ptr
+	@:hxmc.unsafe static inline function lockOf():Ptr
 		return table;
 
-	@:hxmc.noGc static inline function range(i:Int):Ptr
+	@:hxmc.unsafe static inline function range(i:Int):Ptr
 		return table.add(8 + RANGE * i);
 
-	@:hxmc.noGc static function findRange(a:Ptr):Ptr {
+	@:hxmc.unsafe static function findRange(a:Ptr):Ptr {
 		for (i in 0...MAX_RANGES) {
 			var r = range(i);
 			var s = Mem.getPtr(r, 0);
@@ -65,7 +65,7 @@ class WinRt {
 	}
 
 	// commits the chunk around a in r (the caller holds the lock, shared)
-	@:hxmc.noGc static function commitAt(r:Ptr, a:Ptr):Bool {
+	@:hxmc.unsafe static function commitAt(r:Ptr, a:Ptr):Bool {
 		var start = Mem.getPtr(r, 0), end = Mem.getPtr(r, 8);
 		var gs = Mem.getPtr(r, 16), ge = Mem.getPtr(r, 24);
 		if (!a.ult(gs) && a.ult(ge)) return false;
@@ -86,7 +86,7 @@ class WinRt {
 
 	// EXCEPTION_POINTERS: the record at 0; EXCEPTION_RECORD: the code at 0,
 	// NumberParameters at 24, ExceptionInformation at 32
-	@:hxmc.callback @:hxmc.noGc static function commitHandler(e:Ptr):Int {
+	@:hxmc.callback @:hxmc.unsafe static function commitHandler(e:Ptr):Int {
 		var r = Mem.getPtr(e, 0);
 		if (Mem.getI32(r, 0) != EXCEPTION_ACCESS_VIOLATION || Mem.getI32(r, 24) < 2) return EXCEPTION_CONTINUE_SEARCH;
 		var a = Mem.getPtr(r, 40);
@@ -97,7 +97,7 @@ class WinRt {
 		return ok ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 	}
 
-	@:hxmc.host("rt_win_reserve") @:hxmc.noGc static function reserve(bytes:I64):Ptr {
+	@:hxmc.host("rt_win_reserve") @:hxmc.unsafe static function reserve(bytes:I64):Ptr {
 		var p = K.VirtualAlloc(Ptr.nil(), bytes, MEM_RESERVE, PAGE_READWRITE);
 		if (p.isNull()) return p;
 		if (table.isNull()) {
@@ -125,7 +125,7 @@ class WinRt {
 		return p;
 	}
 
-	@:hxmc.host("rt_win_release") @:hxmc.noGc static function release(p:Ptr, bytes:I64):Void {
+	@:hxmc.host("rt_win_release") @:hxmc.unsafe static function release(p:Ptr, bytes:I64):Void {
 		K.AcquireSRWLockExclusive(lockOf());
 		var r = findRange(p);
 		if (!r.isNull()) {
@@ -136,7 +136,7 @@ class WinRt {
 		K.VirtualFree(p, 0, MEM_RELEASE);
 	}
 
-	@:hxmc.host("rt_win_guard") @:hxmc.noGc static function guard(p:Ptr, bytes:I64):Void {
+	@:hxmc.host("rt_win_guard") @:hxmc.unsafe static function guard(p:Ptr, bytes:I64):Void {
 		K.AcquireSRWLockExclusive(lockOf());
 		var r = findRange(p);
 		if (!r.isNull()) {
@@ -147,12 +147,12 @@ class WinRt {
 		K.VirtualFree(p, bytes, MEM_DECOMMIT);
 	}
 
-	@:hxmc.host("rt_win_decommit") @:hxmc.noGc static function decommit(p:Ptr, bytes:I64):Void {
+	@:hxmc.host("rt_win_decommit") @:hxmc.unsafe static function decommit(p:Ptr, bytes:I64):Void {
 		if (bytes != (0 : I64)) K.VirtualFree(p, bytes, MEM_DECOMMIT);
 	}
 
 	// a malloc'ed UTF-8 copy of a wide string (invalid sequences become U+FFFD)
-	@:hxmc.host("rt_win_utf8") @:hxmc.noGc static function utf8(w:Ptr):Ptr {
+	@:hxmc.host("rt_win_utf8") @:hxmc.unsafe static function utf8(w:Ptr):Ptr {
 		var n = K.WideCharToMultiByte(CP_UTF8, 0, w, -1, Ptr.nil(), 0, Ptr.nil(), Ptr.nil());
 		var s = LibC.malloc((n > 0 ? n : 1 : I64));
 		if (n <= 0 || K.WideCharToMultiByte(CP_UTF8, 0, w, -1, s, n, Ptr.nil(), Ptr.nil()) == 0) Mem.setI8(s, 0, 0);
@@ -160,15 +160,15 @@ class WinRt {
 	}
 
 	// a Winsock error as the errno OCaml's Unix library reports (unixsupport_win32.c)
-	@:hxmc.host("rt_win_sock_errno") @:hxmc.noGc static function sockErrno(wsa:Int):Int
+	@:hxmc.host("rt_win_sock_errno") @:hxmc.unsafe static function sockErrno(wsa:Int):Int
 		return L.wsaErrno(wsa);
 
 	// a Win32 error as the errno OCaml's runtime maps it to (caml_win32_maperr)
-	@:hxmc.noGc public static function errnoOf(err:Int):Int
+	@:hxmc.unsafe public static function errnoOf(err:Int):Int
 		return L.winErrno(err);
 
 	// WSAStartup, once (two threads racing call it twice: it counts)
-	@:hxmc.host("rt_win_sockets_init") @:hxmc.noGc static function socketsInit():Void {
+	@:hxmc.host("rt_win_sockets_init") @:hxmc.unsafe static function socketsInit():Void {
 		if (socketsReady) return;
 		var d = Mem.stack(512); // WSADATA
 		Ws.WSAStartup(0x0202, d);
@@ -180,7 +180,7 @@ class WinRt {
 	// neither a debugger's stack trace nor an unhandled-exception filter can
 	// be relied on); HXMC_TRACE reports the start
 
-	@:hxmc.host("rt_win_init") @:hxmc.noGc static function init():Void {
+	@:hxmc.host("rt_win_init") @:hxmc.unsafe static function init():Void {
 		K.AddVectoredExceptionHandler(0, Callback.addr(crash));
 		var v = Mem.stack(16);
 		var name = Mem.stack(16);
@@ -191,7 +191,7 @@ class WinRt {
 		if (K.GetEnvironmentVariableA(name, v, 4) > 0) say("hxmc: started\n");
 	}
 
-	@:hxmc.noGc static function say(msg:String) {
+	@:hxmc.unsafe static function say(msg:String) {
 		var buf = Mem.stack(64);
 		for (i in 0...msg.length)
 			Mem.setI8(buf, i, StringTools.fastCodeAt(msg, i));
@@ -199,7 +199,7 @@ class WinRt {
 		K.WriteFile(K.GetStdHandle(-12), buf, msg.length, n, Ptr.nil()); // STD_ERROR_HANDLE
 	}
 
-	@:hxmc.noGc static function hex(p:Ptr, at:Int, v:I64, n:Int) {
+	@:hxmc.unsafe static function hex(p:Ptr, at:Int, v:I64, n:Int) {
 		var i = n - 1;
 		while (i >= 0) {
 			var d = (v & 15).toInt();
@@ -209,7 +209,7 @@ class WinRt {
 		}
 	}
 
-	@:hxmc.callback @:hxmc.noGc static function crash(e:Ptr):Int {
+	@:hxmc.callback @:hxmc.unsafe static function crash(e:Ptr):Int {
 		var r = Mem.getPtr(e, 0);
 		var c = Mem.getI32(r, 0);
 		// access violation, illegal and privileged instruction, stack

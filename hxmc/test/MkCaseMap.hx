@@ -67,7 +67,7 @@ class CaseMap {
 		return t;
 	}
 
-	@:hxmc.noGc public static function map(t:Array<Int>, c:Int):Int {
+	@:hxmc.unsafe public static function map(t:Array<Int>, c:Int):Int {
 		// (the last run starting at or below c)
 		var a = 0, b = (t.length >> 2) - 1;
 		if (b < 0 || c < t[0]) return c;

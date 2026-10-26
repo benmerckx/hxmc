@@ -54,13 +54,13 @@ class IdHash {
 	// (kept: only named by its symbol, which --dce full does not see; corpus case ObjectMapDce)
 	@:keep @:hxmc.export("hxmc_idhash_lock") static var lockWord:Int;
 
-	@:hxmc.noGc static function lock() {
+	@:hxmc.unsafe static function lock() {
 		if (Threads.mt == 0) return;
 		while (Atomic.cas32(Mem.sym("hxmc_idhash_lock"), 0, 1) != 0)
 			Os.yield();
 	}
 
-	@:hxmc.noGc static function unlock() {
+	@:hxmc.unsafe static function unlock() {
 		if (Threads.mt == 0) return;
 		Atomic.store32(Mem.sym("hxmc_idhash_lock"), 0);
 	}

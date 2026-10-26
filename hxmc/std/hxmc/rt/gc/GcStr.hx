@@ -7,7 +7,7 @@ import hxmc.rt.gc.GcRepr.GcStringBuf;
 // hxmc.rt.Str's
 @:keep @:hxmc.wasmgc
 class GcStr {
-	@:hxmc.host("hx_str_eq") @:hxmc.noGc static function eq(a:String, b:String):Bool {
+	@:hxmc.host("hx_str_eq") @:hxmc.unsafe static function eq(a:String, b:String):Bool {
 		if (W.isNull(a) || W.isNull(b)) return W.isNull(a) && W.isNull(b);
 		var n = W.strLen(a);
 		if (n != W.strLen(b)) return false;

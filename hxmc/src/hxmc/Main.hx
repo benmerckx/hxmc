@@ -57,8 +57,16 @@ class Main {
 		// -D hxmc.out=<path>)
 		if (args[0] == "--server") {
 			args.shift();
-			if (Sys.getEnv("RT_OLD_MB") == null && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
-				Sys.putEnv("RT_OLD_MB", "4096");
+			// (its old space's first limit 2 GB; after each major collection
+			// 150% of what is live, not 300%: the server keeps about 1.4 GB live
+			// and each warm self-build promotes about 600 MB. Twelve self-builds,
+			// a module edited before each: with 4 GB and 300% a major collection
+			// every six builds, peak 6.7 GB; 4 GB and 150%, three, peak 5.8 GB
+			// (the first major collection's, at the first limit); 2 GB and 150%,
+			// five, peak 4.8 GB)
+			if ((Sys.getEnv("RT_OLD_MB") == null || Sys.getEnv("RT_OLD_GROWTH") == null) && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
+				if (Sys.getEnv("RT_OLD_MB") == null) Sys.putEnv("RT_OLD_MB", "2048");
+				if (Sys.getEnv("RT_OLD_GROWTH") == null) Sys.putEnv("RT_OLD_GROWTH", "150");
 				Sys.exit(Sys.command(Sys.programPath(), ["--server"].concat(args)));
 			}
 			Driver.resident = true;
@@ -89,11 +97,14 @@ class Main {
 			Sys.exit(0);
 		}
 		if (key != null) UpToDate.forget(out);
-		// a whole-program build keeps most of what it makes (the typed program,
-		// then every module's code until the link): a large first old-space
-		// limit spares it major collections (3 GB: the port's cold build with
-		// the module cache's encoding promotes about 2 GB, just past 2 GB, which
-		// cost a major collection of a second). The nursery is the runtime's
+		// a whole-program build keeps much of what it makes (the typed program,
+		// then every module's code until the link) and promotes as much
+		// garbage: its first old-space limit is 768 MB. A copying major
+		// collection peaks at what the old space holds plus what is live: at
+		// 768 MB the self-build has one (0.7-1.3 s, 0.35 GB live) and peaks at
+		// 1.18 GB, against 1.45-1.50 GB under a 3 GB limit (no major collection,
+		// the garbage kept), in as much wall time; at 512 MB it has two and peaks
+		// at 1.9 GB, at 1024 MB one at 1.6-1.7 GB. The nursery is the runtime's
 		// adaptive one: up to 16 MB for the front end, 16 MB per thread for the
 		// parallel code generation (against a fixed 32 MB that 12 threads
 		// shared: the cold self-build 11% faster with 21% less peak memory; a
@@ -101,7 +112,7 @@ class Main {
 		// reads the limit at startup, so the tool runs itself again with it set
 		// (not under WASI: no processes).
 		if (Sys.getEnv("RT_OLD_MB") == null && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
-			Sys.putEnv("RT_OLD_MB", "3072");
+			Sys.putEnv("RT_OLD_MB", "768");
 			Sys.exit(Sys.command(Sys.programPath(), [out].concat(args)));
 		}
 		compiler.Compiler.generateHook = function(com) {
