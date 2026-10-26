@@ -525,6 +525,11 @@ class Lower implements LowerQueries {
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
 
+	// @:hxmc.unsafe, or its former name @:hxmc.noGc (still accepted): no GC
+	// point is reached (Facts.findNoGc checks it)
+	public static function isUnsafe(ml:core.Ast.Metadata):Bool
+		return hasMeta(":hxmc.unsafe", ml) || hasMeta(":hxmc.noGc", ml);
+
 	// the string literal argument of hxmc's metadata `name`, or null
 	public static function metaString(name:String, ml:core.Ast.Metadata):Null<String>
 		return metaArg(core.Meta.getOpt(Custom(name), ml));
@@ -1142,9 +1147,9 @@ class Lower implements LowerQueries {
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
-		if (c.clMeta.length > 0 && hasMeta(":hxmc.noGc", c.clMeta)) fi.declNoGc = true;
+		if (c.clMeta.length > 0 && isUnsafe(c.clMeta)) fi.declNoGc = true;
 		if (cf.cfMeta.length == 0) return;
-		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
+		if (isUnsafe(cf.cfMeta)) fi.declNoGc = true;
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);
