@@ -855,7 +855,12 @@ class Loader {
 	// ---- the native tier's memory (interp.Tier): a window below 2 GB, above
 	// the compiler's image (static, from 4 MB), so that code there reaches
 	// the image, the bundles' data and itself with 32-bit displacements, as
-	// code linked with it would; nothing is unmapped, as nothing is unloaded
+	// code linked with it would; nothing is unmapped, as nothing is unloaded.
+	// Once it is full (HXMC_MIR_TIER_WINDOW=<KB> makes it smaller, to test),
+	// bundles take malloc's memory and the tier stops (full): the code loaded
+	// before reaches only what was loaded before it, in the window, and a
+	// function compiled later that reached further would not load (its
+	// relocations' range is checked)
 	static inline var PROT_READ = 1;
 	static inline var PROT_WRITE = 2;
 	static inline var PROT_EXEC = 4;
@@ -864,6 +869,12 @@ class Loader {
 	public static inline var WINDOW_LO = 0x40000000;
 	public static inline var WINDOW_HI = 0x7fff0000;
 	static inline var CHUNK = 4 << 20;
+	static var windowHi = {
+		var kb = Std.parseInt(Sys.getEnv("HXMC_MIR_TIER_WINDOW") ?? "");
+		kb == null || kb <= 0 || kb >= ((WINDOW_HI - WINDOW_LO) >> 10) ? WINDOW_HI : WINDOW_LO + (kb << 10);
+	};
+	// (the window full: bundles in malloc's memory, the tier stopped, interp.Tier)
+	public static var full = false;
 
 	// bundles' memory in the window (set by interp.Tier before the first bundle loads)
 	public static var low = false;
@@ -875,10 +886,13 @@ class Loader {
 	public static function nativeTier():Bool
 		return Mem.os() == 0 && !Mem.arm() && Mem.mirHost() == 1;
 
-	// n bytes of pages in the window, read and write
+	// n bytes of pages in the window, read and write; null once it is full
 	static function lowMap(n:Int):Ptr {
 		var size = (n + 4095) & ~4095;
-		if (lowNext + size > WINDOW_HI || lowNext + size < lowNext) throw "the native tier's window is full";
+		if (full || lowNext + size > windowHi || lowNext + size < lowNext) {
+			full = true;
+			return Ptr.nil();
+		}
 		var p = Vm.mmap(Ptr.ofI64((lowNext : I64)), (size : I64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		var a = p.toI64();
 		if (a != (lowNext : I64)) throw "the native tier: cannot map memory at 0x" + StringTools.hex(lowNext) + " (got " + a + ")";
@@ -897,8 +911,14 @@ class Loader {
 		}
 		n = (n + 63) & ~63;
 		if (n > chunkLeft) {
-			if (n >= CHUNK) return lowMap(n);
-			chunk = lowMap(CHUNK);
+			var c = lowMap(n >= CHUNK ? n : CHUNK);
+			if (c.isNull()) {
+				// (the window full: malloc's, as without the tier)
+				low = false;
+				return alloc(n);
+			}
+			if (n >= CHUNK) return c;
+			chunk = c;
 			chunkLeft = CHUNK;
 		}
 		var p = chunk;
@@ -909,6 +929,40 @@ class Loader {
 
 	// the bytes of native code loaded (HXMC_MACRO_STATS)
 	public static var nativeBytes = 0;
+
+	// native code's memory: chunks of the window, functions one after the
+	// other (16-byte aligned); the pages a function is written to are made
+	// writable for that (the last one may hold code loaded before: no other
+	// thread runs code loaded at run time while the tier loads, interp.Tier),
+	// executable again by codeDone
+	static inline var CODE_CHUNK = 256 << 10;
+	static var codeNext = Ptr.nil();
+	static var codeLeft = 0;
+
+	static function codeAlloc(n:Int):Ptr {
+		n = (n + 15) & ~15;
+		if (n > codeLeft) {
+			var size = n > CODE_CHUNK ? (n + 4095) & ~4095 : CODE_CHUNK;
+			var c = lowMap(size);
+			if (c.isNull()) throw "the native tier's window is full";
+			codeNext = c;
+			codeLeft = size;
+		}
+		var p = codeNext;
+		codeNext = codeNext.add(n);
+		codeLeft -= n;
+		protect(p, n, PROT_READ | PROT_WRITE);
+		return p;
+	}
+
+	static function codeDone(p:Ptr, n:Int)
+		protect(p, n, PROT_READ | PROT_EXEC);
+
+	static function protect(p:Ptr, n:Int, prot:Int) {
+		var lo = p.toI64() & ~(4095 : I64);
+		var hi = (p.toI64() + n + 4095) & ~(4095 : I64);
+		if (Vm.mprotect(Ptr.ofI64(lo), hi - lo, prot) != 0) throw "the native tier: mprotect failed";
+	}
 
 	// a function's native code (interp.Tier), its object alone: its code in
 	// pages of its own in the window, made executable once relocated, its
@@ -946,44 +1000,50 @@ class Loader {
 			if (addr.exists(sec) && sec.kind != Bss)
 				for (r in sec.relocs)
 					if (r.sym.section == null && !r.sym.abs && !defs.exists(r.sym.name)) vals.set(r, lateValue(r.sym, defs, zero, gen, h, extra));
-		var code = lowMap(tpos);
-		var data = alloc(dpos);
-		for (s in text)
-			addr.set(s, addr.get(s) + code.toI64());
-		for (s in rest)
-			addr.set(s, addr.get(s) + data.toI64());
-		for (sec in obj.sections) {
-			if (!addr.exists(sec) || sec.kind == Bss) continue;
-			var at = addr.get(sec);
-			var buf = sec.buf;
-			for (r in sec.relocs) {
-				var sv = vals.exists(r) ? vals.get(r) : lateValue(r.sym, defs, addr, gen, h, extra);
-				var v = sv.v + r.addend;
-				switch r.kind {
-					case RAbs64:
-						if (sv.tls) throw "an absolute relocation against the thread-local variable " + r.sym.name;
-						buf.set64(r.offset, v.toInt(), (v >> 32).toInt());
-					case RAbs32 | RAbs32S:
-						if (sv.tls) throw "an absolute relocation against the thread-local variable " + r.sym.name;
-						if (v >> 31 != (0 : I64) && v >> 31 != (-1 : I64)) throw "a 32-bit relocation against " + r.sym.name + " beyond 32 bits";
-						buf.set32(r.offset, v.toInt());
-					case RPc32 | RCall32:
-						if (sv.tls) throw "a relative relocation against the thread-local variable " + r.sym.name;
-						var d = v - (at + r.offset);
-						if (d >> 31 != (0 : I64) && d >> 31 != (-1 : I64)) throw "a relative relocation against " + r.sym.name + " beyond 2 GB";
-						buf.set32(r.offset, d.toInt());
-					case RTpOff32:
-						if (!sv.tls) throw "a thread-local relocation against " + r.sym.name;
-						buf.set32(r.offset, v.toInt());
-					case _:
-						throw "relocation " + r.kind + " against " + r.sym.name + " in native code loaded at run time";
+		var code = tpos > 0 ? codeAlloc(tpos) : Ptr.nil();
+		// (its pages executable again whatever happens: they may hold code loaded before)
+		try {
+			var data = alloc(dpos);
+			for (s in text)
+				addr.set(s, addr.get(s) + code.toI64());
+			for (s in rest)
+				addr.set(s, addr.get(s) + data.toI64());
+			for (sec in obj.sections) {
+				if (!addr.exists(sec) || sec.kind == Bss) continue;
+				var at = addr.get(sec);
+				var buf = sec.buf;
+				for (r in sec.relocs) {
+					var sv = vals.exists(r) ? vals.get(r) : lateValue(r.sym, defs, addr, gen, h, extra);
+					var v = sv.v + r.addend;
+					switch r.kind {
+						case RAbs64:
+							if (sv.tls) throw "an absolute relocation against the thread-local variable " + r.sym.name;
+							buf.set64(r.offset, v.toInt(), (v >> 32).toInt());
+						case RAbs32 | RAbs32S:
+							if (sv.tls) throw "an absolute relocation against the thread-local variable " + r.sym.name;
+							if (v >> 31 != (0 : I64) && v >> 31 != (-1 : I64)) throw "a 32-bit relocation against " + r.sym.name + " beyond 32 bits";
+							buf.set32(r.offset, v.toInt());
+						case RPc32 | RCall32:
+							if (sv.tls) throw "a relative relocation against the thread-local variable " + r.sym.name;
+							var d = v - (at + r.offset);
+							if (d >> 31 != (0 : I64) && d >> 31 != (-1 : I64)) throw "a relative relocation against " + r.sym.name + " beyond 2 GB";
+							buf.set32(r.offset, d.toInt());
+						case RTpOff32:
+							if (!sv.tls) throw "a thread-local relocation against " + r.sym.name;
+							buf.set32(r.offset, v.toInt());
+						case _:
+							throw "relocation " + r.kind + " against " + r.sym.name + " in native code loaded at run time";
+					}
 				}
+				var p = ptr(at);
+				for (i in 0...buf.len)
+					Mem.setI8(p, i, buf.b.get(i));
 			}
-			var p = ptr(at);
-			for (i in 0...buf.len)
-				Mem.setI8(p, i, buf.b.get(i));
+		} catch (e:Dynamic) {
+			if (tpos > 0) codeDone(code, tpos);
+			throw e;
 		}
-		if (tpos > 0 && Vm.mprotect(code, (((tpos + 4095) & ~4095) : I64), PROT_READ | PROT_EXEC) != 0) throw "the native tier: mprotect failed";
+		if (tpos > 0) codeDone(code, tpos);
 		hxmc.rt.Faults.addCode(ptr(WINDOW_LO), ptr(lowNext));
 		nativeBytes += tpos;
 		share(defs, gen, s -> addr.get(s.section) + s.offset);

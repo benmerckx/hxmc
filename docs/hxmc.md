@@ -1100,8 +1100,9 @@ makes it native for that compilation), with its literals, empty arrays and
 data bound to its generation's (with the tier, the Loader keeps every data
 symbol of a bundle, so the native code has the same objects) and its
 allocation stubs (`DataGen.allocStubs`), then loaded
-(`Loader.loadNative`): its code in pages of its own, made executable once
-relocated, its data beside the bundles'. Its descriptor is then made a
+(`Loader.loadNative`): its code right after the code loaded before it
+(chunks of 256 KB; the pages it is written to are made writable for that,
+executable again once it is relocated), its data beside the bundles'. Its descriptor is then made a
 forwarder's (`Interp.become`): an interpreted function of its signature
 whose one call is a call-out to the native code. Whatever holds the
 descriptor (a call's symbol table, a pool entry, a static initializer's
@@ -1117,7 +1118,12 @@ itself with 32-bit displacements, as code linked with it would: with the
 tier on, every bundle's memory is in a window below 2 GB above the image
 (`Loader.alloc`, 0x40000000 to 0x7fff0000; the image is static from 4 MB),
 and so is native code, whose null accesses throw as the image's do
-(`Faults.addCode`). Nothing there is unmapped, as nothing is unloaded.
+(`Faults.addCode`). Nothing there is unmapped, as nothing is unloaded
+(nor is it without the tier: bundles' memory is never freed). Once the
+window is full, bundles take malloc's memory and the tier stops
+(`Loader.full`: nothing is counted or compiled any more); the code loaded
+before reaches only what was loaded before it. `HXMC_MIR_TIER_WINDOW=<KB>`
+makes the window that small, to test it.
 
 Compiling collects. The hook pushes the function's reference arguments on
 the thread's shadow stack before anything is allocated (`Tier.root`,

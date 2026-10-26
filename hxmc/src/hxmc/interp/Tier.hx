@@ -44,7 +44,9 @@ class TierSite {
 // function whose calls are no GC point (its callers keep references in
 // registers across it) waits until a function that is one is counted.
 // A function the native tier cannot load (a symbol it lacks, a thread-local
-// variable emulated for the interpreter) stays interpreted.
+// variable emulated for the interpreter) stays interpreted. Once the
+// window is full (Loader.full) the tier stops: nothing is counted any more,
+// and what is compiled from then on is compiled for the interpreter.
 //
 // HXMC_MIR_TIER=native: a function is compiled to native code when first
 // called (its stub's, compileStub: the interpreter's code only when that
@@ -114,6 +116,10 @@ class Tier {
 	// made another's (Interp.become) is read by its callers in parts.
 	static function hook(id:Int, args:Ptr) {
 		if (busy || hxmc.rt.Interp.threads > 1) return;
+		if (Loader.full) {
+			stop();
+			return;
+		}
 		var t = fns[id - 1];
 		// (a stub is compiled for the interpreter first, interp.MirMacros: its object is kept, BundleCache)
 		if (t.state != TierState.WAITING || hxmc.rt.Interp.isStub(t.desc)) return;
@@ -147,7 +153,7 @@ class Tier {
 	// code as for the hook, the native tier failed)
 	public static function compileStub(desc:Ptr, optimize:Bool):Bool {
 		var id = Mem.getI32(desc, InterpGen.H_FLAGS) >>> 8;
-		if (!eager || id == 0 || busy || hxmc.rt.Interp.threads > 1) return false;
+		if (!eager || id == 0 || busy || hxmc.rt.Interp.threads > 1 || Loader.full) return false;
 		var t = fns[id - 1];
 		busy = true;
 		var t0 = haxe.Timer.stamp();
@@ -162,7 +168,7 @@ class Tier {
 	// GC point (no stub: they are compiled with the bundle) compiled now, at
 	// the loader's GC point, as none of their calls is one
 	public static function loaded() {
-		if (!eager || !on() || hxmc.rt.Interp.threads > 1) return;
+		if (!eager || !on() || hxmc.rt.Interp.threads > 1 || Loader.full) return;
 		lock.acquire();
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = false;
@@ -226,6 +232,10 @@ class Tier {
 	// the forwarder's; on a failure, it stays interpreted
 	static function compile(t:TierFn, optimize:Bool) {
 		if (t.state == TierState.DONE || t.state == TierState.FAILED) return;
+		if (Loader.full) {
+			settle(t, TierState.FAILED);
+			return;
+		}
 		var site = t.site, f = t.f;
 		if (max >= 0 && tiered >= max) {
 			settle(t, TierState.FAILED);
@@ -293,6 +303,13 @@ class Tier {
 			if (stats) Sys.stderr().writeString('hxmc tier: ${d.prep.funcSym(f)} stays interpreted: ${Std.string(x)}\n');
 		}
 		site.leave();
+	}
+
+	// (the window full) no more counting, nor compiling
+	static function stop() {
+		if (hxmc.rt.Interp.tierMask == -1) return;
+		hxmc.rt.Interp.tierMask = -1;
+		if (stats) Sys.stderr().writeString('hxmc tier: the window is full: stopped, ${Loader.nativeBytes} bytes of code\n');
 	}
 
 	public static function report():String
