@@ -536,11 +536,13 @@ class MemRepr {
 		return tm;
 	}
 
-	// minutes from local time to UTC
+	// minutes from local time to UTC: the UTC fields read as a local time in
+	// the local time's daylight saving, less the local time
 	public static inline function timezoneOffset(d:Dynamic):Int {
 		var l = Mem.stack(64), u = Mem.stack(64);
 		@:privateAccess Date.breakDown(dateMs(d), false, l);
 		@:privateAccess Date.breakDown(dateMs(d), true, u);
+		Mem.setI32(u, F_ISDST, Mem.getI32(l, F_ISDST));
 		return ((@:privateAccess Date.mktime(u) - @:privateAccess Date.mktime(l)) / 60).toInt();
 	}
 
