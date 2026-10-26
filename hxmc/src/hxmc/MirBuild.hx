@@ -1448,6 +1448,7 @@ class MirBuild extends MirWriter {
 			case Sub: op2(Sub, I32, a, b);
 			case Mul: op2(Mul, I32, a, b);
 			case Mod: imod(a, b, I32);
+			case Div: idiv(a, b);
 			case And: op2(And, I32, a, b);
 			case Or: op2(Or, I32, a, b);
 			case Xor: op2(Xor, I32, a, b);
@@ -1485,15 +1486,20 @@ class MirBuild extends MirWriter {
 		}
 	}
 
-	function constOf(v:Int):Null<Int> {
+	// a constant without a symbol: 0, -1 or another (1); else null
+	function divisorKind(v:Int):Null<Int> {
 		var i = f.vals[v];
-		return i.op == Const && i.ty == I32 ? i.imm : null;
+		if (i.op != Const || i.sym != null) return null;
+		var hi = i.ty == I32 ? (i.imm < 0 ? -1 : 0) : i.imm2;
+		return hi == 0 && i.imm == 0 ? 0 : hi == -1 && i.imm == -1 ? -1 : 1;
 	}
 
 	// IMOD (Int): b == 0 or b == -1 give 0; hx_lmod (Int64): b == -1 gives 0
+	// (a constant divisor: no test; DivConst multiplies)
 	function imod(a:Int, b:Int, t:MTy):Int {
-		var c = t == I32 ? constOf(b) : null;
-		if (c != null && c != 0 && c != -1) return op2(Rem, t, a, b);
+		var c = divisorKind(b);
+		if (c == 1 || t == I64 && c == 0) return op2(Rem, t, a, b);
+		if (c != null) return t == I32 ? iconst(0) : lconst(0, 0);
 		var r = newVar(t);
 		writeVar(r, cur, t == I32 ? iconst(0) : lconst(0, 0));
 		var b1 = newBlock(), b2 = newBlock(), join = newBlock();
@@ -1518,8 +1524,19 @@ class MirBuild extends MirWriter {
 		return readVar(r, cur);
 	}
 
+	// Std.int(a / b) of an Int by a constant (FnLower): by 0 it gives 0, by -1 -a
+	// (wrapping), as the Float quotient converted does
+	function idiv(a:Int, b:Int):Int {
+		var c = divisorKind(b);
+		if (c == null) throw "hxmc: Std.int(a / b) of a run-time b as an Int division";
+		return c == 0 ? iconst(0) : c == -1 ? op1(Neg, I32, a) : op2(Div, I32, a, b);
+	}
+
 	// hx_ldiv: b == -1 gives -a (no overflow trap)
 	function ldiv(a:Int, b:Int):Int {
+		var c = divisorKind(b);
+		if (c == -1) return op1(Neg, I64, a);
+		if (c != null) return op2(Div, I64, a, b);
 		var r = newVar(I64);
 		var neg = newBlock(), div = newBlock(), join = newBlock();
 		br(cmp(CEq, b, lconst(-1, -1)), neg, div);

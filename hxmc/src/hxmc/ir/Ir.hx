@@ -364,6 +364,10 @@ enum BinOp {
 	LLe;
 	LGt;
 	LGe;
+	// Std.int(a / b) of Ints, truncating: b == 0 gives 0, b == -1 gives -a
+	// (wrapping), as the Float quotient converted does (FnLower.intrinsicStatic:
+	// b a constant)
+	Div;
 }
 
 enum Stmt {
@@ -513,7 +517,7 @@ class Ir {
 			case ELocal(l): l.ty;
 			case EBin(op, _, _):
 				switch op {
-					case Add | Sub | Mul | Mod | And | Or | Xor | Shl | Shr | UShr: TI32;
+					case Add | Sub | Mul | Mod | Div | And | Or | Xor | Shl | Shr | UShr: TI32;
 					case FAdd | FSub | FMul | FDiv | FMod: TF64;
 					case LAdd | LSub | LMul | LDiv | LMod | LAnd | LOr | LXor | LShl | LShr | LUShr: TI64;
 					case _: TBool;
