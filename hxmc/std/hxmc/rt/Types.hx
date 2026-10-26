@@ -85,7 +85,7 @@ class Types {
 	public static inline function akSize(k:Int):Int
 		return k >= AK_BOOL ? 1 : k == AK_I32 ? 4 : 8;
 
-	// ---- headers (docs/plans/heap-layout.md): the 8 bytes before an
+	// ---- headers (docs/hxmc.md, "Object layout"): the 8 bytes before an
 	// object, its type index first (a u16 at -8), which decides the rest:
 	//   record (a size its type fixes): its slots (a u16 at -6; 65534 at
 	//     most), its identity hash (a u32 at -4; the NativeArray wrapper: its

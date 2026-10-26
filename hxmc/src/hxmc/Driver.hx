@@ -50,7 +50,7 @@ class Driver {
 	// (a Mir host, Options.mirHost: every function stays, for the code it
 	// loads, which calls the std's and the runtime's functions it has; and no
 	// closure is made static, Prep.staticClosures, which costs a Mir host more
-	// than it saves: measured, docs/plans/compiler.md, "Mir macros: size and speed")
+	// than it saves: measured, docs/plans/compiler.md, "Mir macros")
 	public static function run(prog:Program, out:String, o:Options) {
 		var t0 = haxe.Timer.stamp();
 		if (!o.mirHost) hxmc.ir.Reach.run(prog, o.stats);

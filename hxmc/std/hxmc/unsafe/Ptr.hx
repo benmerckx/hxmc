@@ -2,7 +2,7 @@ package hxmc.unsafe;
 
 import hxmc.I64;
 
-// A raw machine address (docs/plans/lowlevel.md, "C interop"): an int64_t the
+// A raw machine address (docs/interop.md, "C interop"): an int64_t the
 // collector neither traces nor moves. `Ptr` alone (Ptr<Void>) is C's
 // `void *`; `Ptr<T>` points at a T: a scalar (Int8 .. UInt64, Int, Float,
 // Float32, Bool: C's bool, one byte), another Ptr, or a @:hxmc.struct class

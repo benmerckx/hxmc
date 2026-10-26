@@ -2,7 +2,7 @@ package hxmc.unsafe;
 
 import hxmc.I64;
 
-// Temporary native memory (docs/plans/lowlevel.md, "First milestone"): a bump
+// Temporary native memory (docs/interop.md, "Native memory"): a bump
 // allocator over malloc'ed chunks, for strings and buffers passed to C.
 // Everything allocated is freed at once, when the scope ends:
 //

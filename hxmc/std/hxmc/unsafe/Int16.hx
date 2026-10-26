@@ -1,6 +1,6 @@
 package hxmc.unsafe;
 
-// C's int16_t: an Int holding the value of a 16-bit signed integer (docs/plans/lowlevel.md,
+// C's int16_t: an Int holding the value of a 16-bit signed integer (docs/interop.md,
 // "C interop"). Arithmetic is Int's; converting an Int back wraps, as C's
 // conversion does. In memory (Ptr<Int16>, @:hxmc.struct fields) and in calls
 // of C functions it takes 2 bytes.

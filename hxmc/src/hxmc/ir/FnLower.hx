@@ -2506,7 +2506,7 @@ class FnLower {
 		return null;
 	}
 
-	// ---- C interop (docs/plans/lowlevel.md, CInterop)
+	// ---- C interop (docs/interop.md; CInterop)
 
 	static inline function where(e:TExpr):String
 		return CInterop.posOf(e.epos);
@@ -2667,7 +2667,7 @@ class FnLower {
 		return cLoad(a.match(ELocal(_)) ? a : ELocal(asLocal(a, TI64)), f.off, f.ty, e);
 	}
 
-	// ---- struct values (docs/plans/lowlevel.md, "Struct values"): the address
+	// ---- struct values (docs/interop.md, "Struct values"): the address
 	// of their memory, which assignments, arguments and results copy
 
 	static function isLocal(x:Ex, lo:Local):Bool

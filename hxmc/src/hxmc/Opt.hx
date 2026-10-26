@@ -24,8 +24,8 @@ using core.ds.VectorTools;
 //  - loop-invariant code motion: pure operations, and loads that cannot
 //    fault of memory the loop does not write, move to a block before the
 //    loop.
-// It runs on object-level Mir, before MemLower (docs/plans/codegen.md,
-// "Object-level Mir"): a field read (GetField) is a load of its field's
+// It runs on object-level Mir, before MemLower (docs/hxmc.md,
+// "Pipeline"): a field read (GetField) is a load of its field's
 // class, a field write (SetField, InitField) a store that answers it, an
 // array's length and elements loads of theirs; type tests and enum tags are
 // pure; an operation that may collect or call writes every class (a call's
