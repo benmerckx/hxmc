@@ -749,7 +749,7 @@ class FnLower {
 	// reads it without a test, tested against null before the call (the
 	// program's own methods test what they read: MirBuild.nullCheck); null
 	// throws "Null Access", as the native targets' fault handler does where
-	// the runtime reads it (hxmc.rt.Faults); none in a @:hxmc.noGc function,
+	// the runtime reads it (hxmc.rt.Faults); none in a @:hxmc.unsafe function,
 	// which promises no GC point (a throw is one: Facts.findNoGc) and reads
 	// memory unchecked, as the runtime's own code does
 	function receiverCheck(x:Ex, t:Ty):Ex {
@@ -1832,10 +1832,69 @@ class FnLower {
 				var isNull = Ir.isRef(lo.ty) ? EBin(RefEq, ELocal(lo), ENull(lo.ty)) : EInt(0);
 				out.push(SIf(isNull, other, block(() -> out.push(SSet(r, coerce(ELocal(lo), lo.ty, t))))));
 				return ELocal(r);
+			case OpAdd if (isConcat(e) && isConcat(a)):
+				return concatChain(e);
 			case _:
 				var xa = value(a);
 				return arith(op, xa, tyOf(a), () -> {x: value(b), t: tyOf(b)}, tyOf(e), e);
 		}
+	}
+
+	function isConcat(e:TExpr):Bool
+		return e.eexpr.match(TBinop(OpAdd, _, _)) && tyOf(e).match(TRef(RStr));
+
+	// a + b + c...: joined four at a time (hx_str_concat3, 4), no string
+	// in between; each operand evaluated and converted where the chain of
+	// binary + would (the first two after both are evaluated, the others
+	// right after their own)
+	function concatChain(e:TExpr):Ex {
+		var es = [];
+		var x = e;
+		while (isConcat(x))
+			switch x.eexpr {
+				case TBinop(_, a, b):
+					es.push(b);
+					x = a;
+				case _:
+			}
+		es.push(x);
+		es.reverse();
+		var n = es.length;
+		var xs = new Vector<Ex>(n);
+		var str = (i:Int) -> {
+			var t = tyOf(es[i]);
+			if (!t.match(TRef(RStr))) xs[i] = toStr(xs[i], t);
+		};
+		for (k in 0...n) {
+			var before = out.length;
+			var v = value(es[k]);
+			if (out.length != before) {
+				var spills = [];
+				for (i in 0...k)
+					if (!isConst(xs[i]) && !stableFrom(xs[i], before)) {
+						var lo = newLocal("s", k > 1 ? TRef(RStr) : tyOf(es[i]));
+						spills.push(SSet(lo, xs[i]));
+						xs[i] = ELocal(lo);
+					}
+				for (j in 0...spills.length)
+					out.insert(before + j, spills[j]);
+			}
+			xs[k] = v;
+			if (k == 1) str(0);
+			if (k >= 1) str(k);
+		}
+		var acc = xs[0];
+		var i = 1;
+		while (i < n) {
+			var m = n - i < 3 ? n - i : 3;
+			var args = new Vector<Ex>(m + 1);
+			args[0] = acc;
+			for (j in 0...m)
+				args[j + 1] = xs[i + j];
+			acc = temp(TRef(RStr), ECallHost(l.native(m == 1 ? "hx_str_concat" : "hx_str_concat" + (m + 1)), args, TRef(RStr)));
+			i += m;
+		}
+		return acc;
 	}
 
 	// a op b, with a already lowered; b lowered by the callback (after a)
@@ -2386,7 +2445,18 @@ class FnLower {
 			case "Std_int" if (cargs.length == 1):
 				var mm = intMinMax(cargs[0]);
 				if (mm != null) return coerce(mm, TI32, tyOf(e));
-				coerce(EConv(F2I, coerce(value(cargs[0]), tyOf(cargs[0]), TF64)), TI32, tyOf(e));
+				var x = coerce(value(cargs[0]), tyOf(cargs[0]), TF64);
+				// Std.int(a / b) of an Int by a constant: an Int division (MirBuild.idiv),
+				// the same Int for every a: the Float quotient of two Ints is never
+				// rounded across an integer (error below 2^-22 / |b|, distance at least
+				// 1 / |b|), MIN / -1 (2^31) converts to MIN as -MIN wraps, a / 0 to 0.
+				// (By a run-time b the Float division stays: faster than a guarded idiv.)
+				switch x {
+					case EBin(FDiv, xa, xb = (EConv(I2F, EInt(_)) | EF64(_))) if (intOperand(xa) != null && intOperand(xb) != null):
+						return coerce(EBin(Div, intOperand(xa), intOperand(xb)), TI32, tyOf(e));
+					case _:
+				}
+				coerce(EConv(F2I, x), TI32, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && typeObjectKind(cargs[1]) >= 0):
 				// Std.isOfType(v, Class), (v, Enum): whether v is a type object of a
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
@@ -2402,6 +2472,15 @@ class FnLower {
 			case TTypeExpr(TAbstractDecl(a)) if (a.aPath.pack.length == 0 && a.aPath.name == "Class"): 0;
 			case TTypeExpr(TAbstractDecl(a)) if (a.aPath.pack.length == 0 && a.aPath.name == "Enum"): 1;
 			case _: -1;
+		}
+	}
+
+	// the Int a Float operand is exactly (an Int converted, an integral literal), or null
+	static function intOperand(x:Ex):Null<Ex> {
+		return switch x {
+			case EConv(I2F, i) if (Ir.typeOf(i) == TI32): i;
+			case EF64(v) if (v == Math.ffloor(v) && v >= -2147483648.0 && v <= 2147483647.0): EInt(Std.int(v));
+			case _: null;
 		}
 	}
 

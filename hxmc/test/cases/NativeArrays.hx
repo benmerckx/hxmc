@@ -19,9 +19,9 @@ class NativeArrays {
 		a.fill(value);
 		return a;
 	}
-	@:hxmc.noGc static function words<T>(a:NativeArray<T>):Int return hxmc.rt.Types.nslots(a);
-	@:hxmc.noGc static function addFirst(a:NativeArray<Int>):Void a[0] += a[1];
-	@:hxmc.noGc static function setItem(a:NativeArray<NativeItem>, i:Int, v:NativeItem):Void a[i] = v;
+	@:hxmc.unsafe static function words<T>(a:NativeArray<T>):Int return hxmc.rt.Types.nslots(a);
+	@:hxmc.unsafe static function addFirst(a:NativeArray<Int>):Void a[0] += a[1];
+	@:hxmc.unsafe static function setItem(a:NativeArray<NativeItem>, i:Int, v:NativeItem):Void a[i] = v;
 	static function main() {
 		var a = new NativeArray<Int>(5);
 		var f = new NativeArray<Float>(3);

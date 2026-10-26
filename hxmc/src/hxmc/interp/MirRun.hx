@@ -70,6 +70,7 @@ class MirRun {
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
 		hxmc.ir.Lower.mirHost = 0; // (a bundle: code loaded, not a loader)
 		hxmc.ir.Lower.bounds = o.bounds;
+		hxmc.ir.Lower.lines = o.debugLines || o.stacks; // (as Main: hxmc.rt.Stacks names an interpreted frame by its lines)
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		var t0 = haxe.Timer.stamp();
 		var l = new hxmc.ir.Lower();

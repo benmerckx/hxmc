@@ -117,7 +117,7 @@ class Layouts {
 
 
 	// Windows: a Win32 error as the errno OCaml's runtime maps it to (caml_win32_maperr)
-	@:hxmc.noGc public static function winErrno(e:Int):Int {
+	@:hxmc.unsafe public static function winErrno(e:Int):Int {
 		return switch e {
 			case 1: 22;
 			case 2: 2;
@@ -172,7 +172,7 @@ class Layouts {
 	}
 
 	// Windows: a Winsock error as the errno OCaml's Unix library reports it (unixsupport_win32.c)
-	@:hxmc.noGc public static function wsaErrno(e:Int):Int {
+	@:hxmc.unsafe public static function wsaErrno(e:Int):Int {
 		return switch e {
 			case 10004: 4;
 			case 10009: 9;

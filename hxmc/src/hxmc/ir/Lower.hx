@@ -404,7 +404,7 @@ class Lower implements LowerQueries {
 						fail('the Haxe implementation ${impl.name} of the runtime\'s $n does not have its signature');
 					// a pure runtime function may be nested in an expression:
 					// its implementation must not reach a GC point
-					if (hxmc.ir.FnLower.noGcHost(n) && !impl.declNoGc) fail('${impl.name} implements the runtime\'s $n, which is not a GC point: it must be @:hxmc.noGc');
+					if (hxmc.ir.FnLower.noGcHost(n) && !impl.declNoGc) fail('${impl.name} implements the runtime\'s $n, which is not a GC point: it must be @:hxmc.unsafe');
 					ECall(impl, xs);
 				}
 			case ENewEnum(c, args):
@@ -521,9 +521,14 @@ class Lower implements LowerQueries {
 
 	static var lambdaDisplays = new Map<String, String>();
 
-	// hxmc's own metadata (@:hxmc.c, @:hxmc.noGc, @:hxmc.export, @:hxmc.host)
+	// hxmc's own metadata (@:hxmc.c, @:hxmc.unsafe, @:hxmc.export, @:hxmc.host)
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
+
+	// @:hxmc.unsafe, or its former name @:hxmc.noGc (still accepted): no GC
+	// point is reached (Facts.findNoGc checks it)
+	public static function isUnsafe(ml:core.Ast.Metadata):Bool
+		return hasMeta(":hxmc.unsafe", ml) || hasMeta(":hxmc.noGc", ml);
 
 	// the string literal argument of hxmc's metadata `name`, or null
 	public static function metaString(name:String, ml:core.Ast.Metadata):Null<String>
@@ -833,7 +838,55 @@ class Lower implements LowerQueries {
 	public static function isRuntimeStringBuf(c:TClass):Bool
 		return isCore(c, "StringBuf") && c.hasClassFlag(CExtern);
 
+	// a class, an enum by its path (samePaths: Mir macros, whose compilations
+	// hand over the types of a module again, other objects of the same module,
+	// which a generation of bundles lowers as one): the first object lowered
+	public var samePaths = false;
+	var classByPath = new Map<String, TClass>();
+	var enumByPath = new Map<String, TEnum>();
+	var canonClasses = new haxe.ds.ObjectMap<TClass, TClass>();
+	var canonEnums = new haxe.ds.ObjectMap<TEnum, TEnum>();
+
+	public function canonClass(c:TClass):TClass {
+		if (!samePaths) return c;
+		var o = canonClasses.get(c);
+		if (o != null) return o;
+		var k = core.Globals.sTypePath(c.clPath);
+		o = classByPath.get(k);
+		if (o == null || o.clModule.mId != c.clModule.mId) {
+			classByPath.set(k, c);
+			o = c;
+		}
+		canonClasses.set(c, o);
+		return o;
+	}
+
+	public function canonEnum(e:TEnum):TEnum {
+		if (!samePaths) return e;
+		var o = canonEnums.get(e);
+		if (o != null) return o;
+		var k = core.Globals.sTypePath(e.ePath);
+		o = enumByPath.get(k);
+		if (o == null || o.eModule.mId != e.eModule.mId) {
+			enumByPath.set(k, e);
+			o = e;
+		}
+		canonEnums.set(e, o);
+		return o;
+	}
+
+	// a field of c as a field of the class canonClass(c) is (its own object of the field)
+	public function canonField(c:TClass, cf:TClassField):TClassField {
+		if (!samePaths) return cf;
+		var o = canonClass(c);
+		if (o == c) return cf;
+		if (cf == c.clConstructor) return o.clConstructor != null ? o.clConstructor : cf;
+		var x = c.clStatics.get(cf.cfName) == cf ? o.clStatics.get(cf.cfName) : o.clFields.get(cf.cfName);
+		return x != null ? x : cf;
+	}
+
 	public function classInfo(c:TClass):ClassInfo {
+		c = canonClass(c);
 		var ci = classes.get(c);
 		if (ci != null) return ci;
 		if (c.hasClassFlag(CExtern)) fail("extern class " + c.clPath.name + " used as a class");
@@ -865,8 +918,8 @@ class Lower implements LowerQueries {
 		tclasses.push(c);
 		var k = c.clSuper;
 		while (k != null) {
-			var subs = subclasses.get(k.cls);
-			if (subs == null) subclasses.set(k.cls, subs = []);
+			var subs = subclasses.get(canonClass(k.cls));
+			if (subs == null) subclasses.set(canonClass(k.cls), subs = []);
 			subs.push(c);
 			k = k.cls.clSuper;
 		}
@@ -926,6 +979,7 @@ class Lower implements LowerQueries {
 	}
 
 	public function enumInfo(e:TEnum):EnumInfo {
+		e = canonEnum(e);
 		var ei = enums.get(e);
 		if (ei != null) return ei;
 		ei = new EnumInfo(core.Globals.sTypePath(e.ePath), ident(e.ePath.pack, e.ePath.name));
@@ -1004,6 +1058,8 @@ class Lower implements LowerQueries {
 	}
 
 	public function staticFunc(c:TClass, cf:TClassField):FuncInfo {
+		cf = canonField(c, cf);
+		c = canonClass(c);
 		var fi = funcs.get(cf);
 		if (fi != null) return fi;
 		var tf = funcOf(cf);
@@ -1055,7 +1111,7 @@ class Lower implements LowerQueries {
 
 	// @:hxmc.callback: a static function C calls through its address
 	// (hxmc.unsafe.Callback.addr) in the C convention (hxmc's own). Its
-	// symbol is fixed (the address C keeps names it). A @:hxmc.noGc callback
+	// symbol is fixed (the address C keeps names it). A @:hxmc.unsafe callback
 	// is the function itself: it may run on any thread, in any state. Any
 	// other is reached through a wrapper that leaves the safe region the
 	// calling thread is in (a call of C that is not @:hxmc.fast, the only
@@ -1136,15 +1192,15 @@ class Lower implements LowerQueries {
 		prog.funcs.push(w);
 	}
 
-	// hxmc's attributes of a function: @:hxmc.noGc (checked by Facts.findNoGc),
+	// hxmc's attributes of a function: @:hxmc.unsafe (checked by Facts.findNoGc),
 	// @:hxmc.collects (it runs the collector), @:hxmc.export (its symbol)
-	// (@:hxmc.noGc on a class: on each of its functions)
+	// (@:hxmc.unsafe on a class: on each of its functions)
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
-		if (c.clMeta.length > 0 && hasMeta(":hxmc.noGc", c.clMeta)) fi.declNoGc = true;
+		if (c.clMeta.length > 0 && isUnsafe(c.clMeta)) fi.declNoGc = true;
 		if (cf.cfMeta.length == 0) return;
-		if (hasMeta(":hxmc.noGc", cf.cfMeta)) fi.declNoGc = true;
+		if (isUnsafe(cf.cfMeta)) fi.declNoGc = true;
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);
@@ -1175,6 +1231,8 @@ class Lower implements LowerQueries {
 	}
 
 	public function method(c:TClass, cf:TClassField):FuncInfo {
+		cf = canonField(c, cf);
+		c = canonClass(c);
 		var fi = funcs.get(cf);
 		if (fi != null) return fi;
 		var tf = funcOf(cf);
@@ -1297,6 +1355,7 @@ class Lower implements LowerQueries {
 	}
 
 	public function ctor(c:TClass):FuncInfo {
+		c = canonClass(c);
 		var fi = ctors.get(c);
 		if (fi != null) return fi;
 		if (isRuntimeStringBuf(c)) return stringBufCtor(c);
@@ -1344,6 +1403,7 @@ class Lower implements LowerQueries {
 	var structCtors = new Map<TClass, FuncInfo>();
 
 	public function structCtor(c:TClass):FuncInfo {
+		c = canonClass(c);
 		var fi = structCtors.get(c);
 		if (fi != null) return fi;
 		fi = new FuncInfo(nativeName(c) + "_new", moduleOf(c));
@@ -1556,13 +1616,19 @@ class Lower implements LowerQueries {
 	}
 
 	var staticVars = new Map<TClassField, Int>();
+	// the class whose static variable a global is (interp.MirMacros: what a new
+	// generation of macro bundles carries over)
+	public var globalOwner = new Map<Int, TClass>();
 
 	// a class static variable: a global, initialized by the static initializer
 	public function staticVar(c:TClass, cf:TClassField):Int {
+		cf = canonField(c, cf);
+		c = canonClass(c);
 		var g = staticVars.get(cf);
 		if (g != null) return g;
 		var t = ty(cf.cfType); // first: it may register globals itself (enum constructors)
 		g = prog.globals.length;
+		globalOwner.set(g, c);
 		var name = nativeName(c) + "_" + cf.cfName;
 		// @:hxmc.threadLocal("symbol"): a scalar or Ptr per thread (zero in a new
 		// thread: no initializer), in the thread-local storage of each format
@@ -1609,11 +1675,12 @@ class Lower implements LowerQueries {
 	}
 
 	var initialized = new Map<TClass, Bool>();
-	var initOf = new Map<FuncInfo, TClass>();
+	public var initOf = new Map<FuncInfo, TClass>();
 
 	// static variable initializers and __init__ of a class, run at startup
 	// (in the order of com.types, see `program`)
 	function initClass(c:TClass) {
+		c = canonClass(c);
 		if (initialized.exists(c)) return;
 		initialized.set(c, true);
 		var fi = new FuncInfo(nativeName(c) + "__init", moduleOf(c));
@@ -1703,7 +1770,7 @@ class Lower implements LowerQueries {
 		if (lookupMethod(c, name) == null) return true;
 		var f = c.clFields.get(name);
 		if (f != null && f.hasClassFieldFlag(CfFinal)) return false;
-		var subs = subclasses.get(c);
+		var subs = subclasses.get(canonClass(c));
 		if (subs != null)
 			for (d in subs)
 				if (d.clFields.exists(name) && d.clFields.get(name).cfExpr != null) return true;

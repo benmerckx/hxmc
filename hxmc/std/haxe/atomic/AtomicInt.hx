@@ -62,23 +62,23 @@ abstract AtomicInt(Dynamic) {
 	// (the cell's address is taken in functions that never reach a GC point:
 	// inlined into the program, it could be taken before an allocation that
 	// moves the cell)
-	@:hxmc.noGc static function add32(a:Dynamic, v:Int):Int
+	@:hxmc.unsafe static function add32(a:Dynamic, v:Int):Int
 		return Atomic.add32(Mem.addr(a), v);
 
-	@:hxmc.noGc static function cas32(a:Dynamic, e:Int, r:Int):Int
+	@:hxmc.unsafe static function cas32(a:Dynamic, e:Int, r:Int):Int
 		return Atomic.cas32(Mem.addr(a), e, r);
 
-	@:hxmc.noGc static function exchange32(a:Dynamic, v:Int):Int
+	@:hxmc.unsafe static function exchange32(a:Dynamic, v:Int):Int
 		return Atomic.exchange32(Mem.addr(a), v);
 
-	@:hxmc.noGc static function load32(a:Dynamic):Int
+	@:hxmc.unsafe static function load32(a:Dynamic):Int
 		return Atomic.load32(Mem.addr(a));
 
-	@:hxmc.noGc static function store32(a:Dynamic, v:Int)
+	@:hxmc.unsafe static function store32(a:Dynamic, v:Int)
 		Atomic.store32(Mem.addr(a), v);
 
 	// a compare-exchange loop (op 0 and, 1 or, 2 xor): the previous value
-	@:hxmc.noGc static function bitwise(a:Dynamic, v:Int, op:Int):Int {
+	@:hxmc.unsafe static function bitwise(a:Dynamic, v:Int, op:Int):Int {
 		var p = Mem.addr(a);
 		var o = Atomic.load32(p);
 		while (true) {

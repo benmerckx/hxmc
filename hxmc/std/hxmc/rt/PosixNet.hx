@@ -60,16 +60,16 @@ class PosixNet {
 	static inline var F_GETFL = 3;
 	static inline var F_SETFL = 4;
 
-	@:hxmc.noGc static function errno():Int
+	@:hxmc.unsafe static function errno():Int
 		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 
-	@:hxmc.noGc static function setErrno(e:Int)
+	@:hxmc.unsafe static function setErrno(e:Int)
 		Mem.setI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0, e);
 
 	// the last failure's errno, per thread
 	@:hxmc.threadLocal static var netErrno:Int;
 
-	@:hxmc.noGc static function ret(r:Int):Int {
+	@:hxmc.unsafe static function ret(r:Int):Int {
 		if (r < 0) netErrno = errno();
 		return r;
 	}
@@ -77,18 +77,18 @@ class PosixNet {
 	static inline function lastErrno():Int
 		return netErrno;
 
-	@:hxmc.noGc public static function getErrno():Int
+	@:hxmc.unsafe public static function getErrno():Int
 		return lastErrno();
 
 	// with other threads, a blocking socket's calls wait in the scheduler
-	@:hxmc.noGc static function cooperative(fd:Int):Bool {
+	@:hxmc.unsafe static function cooperative(fd:Int):Bool {
 		if (threads() <= 1) return false;
 		var flags = Posix.fcntl(fd, F_GETFL, 0);
 		return flags >= 0 && (flags & O_NONBLOCK()) == 0;
 	}
 
 	// SO_RCVTIMEO/SO_SNDTIMEO (setTimeout): seconds, -1 when none
-	@:hxmc.noGc static function sockTimeout(fd:Int, opt:Int):Float {
+	@:hxmc.unsafe static function sockTimeout(fd:Int, opt:Int):Float {
 		var tv = Mem.stack(16), n = Mem.stack(8);
 		Mem.setI32(n, 0, 16);
 		if (Posix.getsockopt(fd, SOL_SOCKET(), opt, tv, n) < 0) return -1;
@@ -116,7 +116,7 @@ class PosixNet {
 	// port's entry point does not, so the first socket does it
 	static var sigpipeIgnored:Bool;
 
-	@:hxmc.noGc public static function socket():Int {
+	@:hxmc.unsafe public static function socket():Int {
 		if (!sigpipeIgnored) {
 			Posix.signal(13, Ptr.ofI64(1)); // SIGPIPE, SIG_IGN
 			sigpipeIgnored = true;
@@ -130,7 +130,7 @@ class PosixNet {
 		return fd;
 	}
 
-	@:hxmc.noGc public static function close(fd:Int):Int {
+	@:hxmc.unsafe public static function close(fd:Int):Int {
 		Leaf.rt_fd_closed(fd);
 		return ret(Posix.close(fd));
 	}
@@ -148,7 +148,7 @@ class PosixNet {
 
 	// sockaddr_in of ip (host order) and port: Linux u16 family; macOS u8
 	// length, u8 family; then the port and the address in network order
-	@:hxmc.noGc static function inetAddr(a:Ptr, ip:Int, port:Int) {
+	@:hxmc.unsafe static function inetAddr(a:Ptr, ip:Int, port:Int) {
 		LibC.memset(a, 0, 16);
 		if (mac()) {
 			Mem.setI8(a, 0, 16);
@@ -162,7 +162,7 @@ class PosixNet {
 		Mem.setI8(a, 7, ip);
 	}
 
-	@:hxmc.noGc public static function bind(fd:Int, ip:Int, port:Int):Int {
+	@:hxmc.unsafe public static function bind(fd:Int, ip:Int, port:Int):Int {
 		var a = Mem.stack(16);
 		inetAddr(a, ip, port);
 		return ret(Posix.bind(fd, a, 16));
@@ -192,13 +192,13 @@ class PosixNet {
 		return ret(connectTo(fd, ip, port));
 	}
 
-	@:hxmc.noGc static function connectTo(fd:Int, ip:Int, port:Int):Int {
+	@:hxmc.unsafe static function connectTo(fd:Int, ip:Int, port:Int):Int {
 		var a = Mem.stack(16);
 		inetAddr(a, ip, port);
 		return Posix.connect(fd, a, 16);
 	}
 
-	@:hxmc.noGc public static function listen(fd:Int, n:Int):Int
+	@:hxmc.unsafe public static function listen(fd:Int, n:Int):Int
 		return ret(Posix.listen(fd, n));
 
 	public static function sockName(fd:Int, peer:Bool):Array<Int> {
@@ -310,24 +310,24 @@ class PosixNet {
 		return n;
 	}
 
-	@:hxmc.noGc static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
+	@:hxmc.unsafe static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
 		return Mem.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);
 
-	@:hxmc.noGc static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
+	@:hxmc.unsafe static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
 		return NetCore.setBool(fd, level, opt, b);
 
-	@:hxmc.noGc public static function setNoDelay(fd:Int, b:Bool):Int
+	@:hxmc.unsafe public static function setNoDelay(fd:Int, b:Bool):Int
 		return setBool(fd, 6, 1, b); // IPPROTO_TCP, TCP_NODELAY
 
-	@:hxmc.noGc public static function setBroadcast(fd:Int, b:Bool):Int
+	@:hxmc.unsafe public static function setBroadcast(fd:Int, b:Bool):Int
 		return setBool(fd, SOL_SOCKET(), SO_BROADCAST(), b);
 
-	@:hxmc.noGc public static function setReuseAddr(fd:Int, b:Bool):Int
+	@:hxmc.unsafe public static function setReuseAddr(fd:Int, b:Bool):Int
 		return setBool(fd, SOL_SOCKET(), SO_REUSEADDR(), b);
 
 	// Unix.setsockopt_float SO_RCVTIMEO, then SO_SNDTIMEO (struct timeval:
 	// 64-bit seconds, then microseconds: a long on Linux, an int on macOS)
-	@:hxmc.noGc public static function setTimeout(fd:Int, t:Float):Int {
+	@:hxmc.unsafe public static function setTimeout(fd:Int, t:Float):Int {
 		var tv = Mem.stack(16);
 		LibC.memset(tv, 0, 16);
 		var s:I64 = cast t;
@@ -337,18 +337,18 @@ class PosixNet {
 		return ret(Posix.setsockopt(fd, SOL_SOCKET(), SO_SNDTIMEO(), tv, 16));
 	}
 
-	@:hxmc.noGc public static function shutdown(fd:Int, mode:Int):Int
+	@:hxmc.unsafe public static function shutdown(fd:Int, mode:Int):Int
 		return ret(Posix.shutdown(fd, mode == 0 ? 0 : mode == 1 ? 1 : 2));
 
 	// for sys.net.Socket.setBlocking (hxmc std; the Eval socket natives are blocking)
-	@:hxmc.noGc public static function setBlocking(fd:Int, b:Bool):Int {
+	@:hxmc.unsafe public static function setBlocking(fd:Int, b:Bool):Int {
 		var flags = Posix.fcntl(fd, F_GETFL, 0);
 		if (flags < 0) return ret(-1);
 		return ret(Posix.fcntl(fd, F_SETFL, b ? flags & ~O_NONBLOCK() : flags | O_NONBLOCK()));
 	}
 
 	// whether the last failure was EAGAIN/EWOULDBLOCK (a non-blocking socket not ready)
-	@:hxmc.noGc public static function blocked():Bool
+	@:hxmc.unsafe public static function blocked():Bool
 		return lastErrno() == EAGAIN();
 
 	public static function gethostname():String {
@@ -364,10 +364,10 @@ class PosixNet {
 	// gethostbyname/gethostbyaddr return static data: one thread at a time
 	// (a spin lock: Names.spin[0]), in a safe region (they may block
 	// on the network), results copied out under the lock
-	@:hxmc.noGc static function lockResolver()
+	@:hxmc.unsafe static function lockResolver()
 		NetCore.lockResolver();
 
-	@:hxmc.noGc static function unlockResolver()
+	@:hxmc.unsafe static function unlockResolver()
 		NetCore.unlockResolver();
 
 	public static function resolve(name:String):Array<Int> {
@@ -380,7 +380,7 @@ class PosixNet {
 	}
 
 	// the host-order IPv4 address of n, with 1 << 32 set when found
-	@:hxmc.noGc static function lookup(n:Ptr):I64
+	@:hxmc.unsafe static function lookup(n:Ptr):I64
 		return NetCore.lookup(n);
 
 	public static function reverse(ip:Int):String {
@@ -393,6 +393,6 @@ class PosixNet {
 	}
 
 	// a malloc'ed copy of the name of ip (host order), or null
-	@:hxmc.noGc static function reverseLookup(ip:Int):Ptr
+	@:hxmc.unsafe static function reverseLookup(ip:Int):Ptr
 		return NetCore.reverseLookup(ip);
 }

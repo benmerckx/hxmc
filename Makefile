@@ -132,7 +132,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
-	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check dev-check \
+	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro measure wasmgc-check wasmgc-bench quick check full clean distclean
 
 help:
@@ -187,6 +187,8 @@ help:
 ##               MIR_MACROS_KNOWN: Eval's own packages)
 ##   mir-cache-check  Mir macros' compiled functions kept across builds (interp/BundleCache.hx): what
 ##               invalidates them, each build against Eval's macros (hxmc/test/MirCacheCheck.hx)
+##   mir-server-check  Mir macros' statics in the compilation server through edits, against the
+##               reference's server (hxmc/test/MirServerCheck.hx)
 ##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
 ##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
 ##               run on a simulator (a Mac), shared libraries of the glibc mode
@@ -582,6 +584,10 @@ mir-macros-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
 # invalidates them, against Eval's macros)
 mir-cache-check: $(TOOL) $(STD) $(HOST_RT) $(HOST_HAXE)
 	export HXMC_HAXE=$(abspath $(HOST_HAXE)) HXMC_STD=$(abspath bin/hxmc/std); $(SCRIPT) MirCacheCheck
+
+# (Mir macros' statics in the compilation server through edits, against the reference's server)
+mir-server-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
+	export HXMC_HAXE=$(abspath $(HOST_HAXE)) HXMC_STD=$(abspath bin/hxmc/std) HAXE_REFERENCE=$(abspath $(REFERENCE)); $(SCRIPT) MirServerCheck
 
 bench: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) bin/lix/lix
 	$(SCRIPT) Bench $(BENCH_ARGS)

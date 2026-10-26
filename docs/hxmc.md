@@ -6,7 +6,7 @@ hxmc turns a typed Haxe program into a native executable with its own code
 generator and linker: no C compiler, assembler or system linker at build time.
 
 ```
-typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, Opt, Frames)--> --(MemLower)--> Mir (SSA) --(Fold)-->
+typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, Opt, Frames)--> --(MemLower)--> Mir (SSA) --(Fold, DivConst)-->
     --(x64|a64 Isel)--> LIR --(Regalloc, Emit)--> Obj (per module, cached) | --(wasm/WasmGen)--> wasm
     --(DataGen: tables, strings)--> Obj --(Link: ELF | LinkPE | LinkMachO | LinkWasm)--> executable
 -D hxmc.wasm-gc: hxmc IR --(ir.Reach)--> --(MirBuild.gc)--> object-level Mir --(Inline, Escape, Opt)--> --(wasmgc.MirGen, GcModule)--> WasmGC module
@@ -23,6 +23,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, each module's object reused when its fingerprint is unchanged, lowered bodies reused by the server |
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels: object-level Mir (objects made, their fields, arrays, structural access, type tests, boxes, closures, virtual calls as operations; values typed from the IR) that `MirBuild` makes from the IR, and the memory-level Mir every back end takes, which `MemLower` makes from it (layouts, the nursery's allocation, barriers, inline caches, null tests, the shadow stack around cold sites' slow paths); `MirWriter` writes instructions and SSA variables for both ([plans/codegen.md](plans/codegen.md), "Object-level Mir") |
 | `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | the control-flow analyses (reverse postorder, dominator tree, loop nest; generic over the block type), SSA construction on a finished graph (Escape, Sroa), inlining, escape analysis (allocations that stay in their function replaced by their fields: [plans/codegen.md](plans/codegen.md), "Escape analysis"), scalar replacement of frame slots (struct values), value numbering, store forwarding, LICM, dead code, the write barriers into objects just allocated left out (all on object-level Mir), the shadow-stack slots and frames nothing reads after them dropped |
+| `DivConst.hx` | Int divisions and remainders by constants as a multiplication by the reciprocal (Granlund and Montgomery) or shifts, after the memory lowering |
 | `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection (`IselBase`: the walk over the blocks, phi copies on split edges, the switch strategy, thread-local bases, parameters and calls; each architecture its instructions, folding, compares and branches), linear-scan allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
 | `Unwind.hx`, `Dwarf.hx` | unwind tables from the emitters' frame records (`.eh_frame`, `.pdata`/`.xdata`, `__eh_frame`), `-debug`'s DWARF lines (Debugging, below) |
 | `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers (`LinkCore.hx`: resolution, dead sections, GOT and import slots, placement and relocations, shared by static ELF, `LinkDyn.hx` dynamic ELF against glibc, PE with imports written directly, Mach-O with an ad-hoc signature; `wasm/LinkWasm.hx` shares the resolution), the runtime-object builder, the program's data |
@@ -187,6 +188,26 @@ an uncaught exception uses too:
   noise (7.1 s either way). `-D hxmc.no-stacks` leaves the positions, the
   table and the recording out (stacks are empty); `-D hxmc.stacks` keeps
   them in every program.
+- A Mir host (the compiler, the tool: Macros on the Mir interpreter,
+  below) keeps every function and always has the table, its call-outs and
+  entries' pools in it (`Reach` does not run), so the stacks of the code it
+  loads go through its frames; its own throws record no stack
+  (`hxmc_stack_flags` 0), and an uncaught exception of its own prints its
+  frames. The compiler grows by 1.5 MB (5.8%; 9% gzipped) on linux-x86_64.
+- The Mir interpreter's frames have no code of their own: each runs in a
+  call of `Interp.exec`, which a walk meets as the caller of what the frame
+  calls. The interpreter links its frames (`Stacks.interpCur`, innermost
+  first, the order a walk meets their execs in) and keeps in each the call
+  it makes; a walk puts each frame in its exec's place, as two words (its
+  code with the top bit set, then the call's address), named through the
+  lines and the name InterpGen writes into the function's descriptor. A
+  try (`Interp.enterTry`) and a function's stub (`Interp.lazy`) run their
+  frame in an exec of their own: the exec calling them is not the frame's.
+  Nothing is stored per frame but the call (a store per call: the macro
+  benchmarks unchanged). While interpreted
+  code runs, a throw whose walk reaches one of its frames is recorded (a
+  throw of the native code working for it, caught there, is not); a catch
+  passing an exception on keeps that record (`Stacks.rethrowing`).
 - Exceptions: `haxe.Exception` (hxmc's, after hl's) records the stack where
   it is made, or for a value caught (`Exception.caught`) the stack of its
   throw; its `stack` leaves out the frames of the exception's constructors
@@ -223,10 +244,11 @@ dates, inflate, the POSIX and Windows system layers, and Math: musl's libm
 ported, `LibM.hx`, with the same results on every target), written with a
 small internal API (`hxmc.unsafe`: `Ptr`, `Mem` loads, stores, allocation
 and symbols, `Atomic`; `@:hxmc.c` and `@:hxmc.rt` externs of C functions,
-`@:hxmc.noGc` functions, `@:hxmc.export`/`@:hxmc.host` implementations of
+`@:hxmc.unsafe` functions (no GC point reached, checked; `@:hxmc.noGc`, the
+former name, is still accepted), `@:hxmc.export`/`@:hxmc.host` implementations of
 runtime functions, `@:hxmc.callback` functions C calls,
 `@:hxmc.threadLocal` statics; the compiler rejects an address from `Mem.addr`
-live across a GC point outside `@:hxmc.noGc` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
+live across a GC point outside `@:hxmc.unsafe` code, `Facts.checkRawAddresses`). The collector, threads and the stop-the-world
 handshake, startup and `rt_throw` are Haxe too (`Gc.hx`, `Threads.hx`,
 `Start.hx`; the heap census with `-D hxmc.census`): no C of hxmc's own is
 linked, only the C library, mbedtls and libuv ([plans/lowlevel.md](plans/lowlevel.md),
@@ -626,6 +648,33 @@ driver) crashes as before (that code may hold locks the throw would leave
 taken); a fault inside the runtime while it holds one of its own locks
 would leave it taken (the runtime reads its arguments before it locks).
 
+### Core dumps
+
+The runtime reserves 35 GB of address space natively (the old space's two
+16 GB regions, the nursery's 256 MB, the main thread's 1 GB C stack and 1
+GB shadow stack, 64 MB of shadow stack per thread: Gc, Start, Threads), and
+Linux dumps a mapping whole once a page of it is touched, its untouched
+pages as zeros. A core file skips them (it is sparse), but a core going
+through a pipe carries them: Ubuntu, and GitHub's runners, pipe cores to
+systemd-coredump (or apport), which the core limit (`ulimit -c 0`) does
+not stop. A crash took minutes: NullAccessCrash (a fault at 1 MB, exit
+139) ran 165 to 300 s in every linux-x86_64 test job and into the 300 s
+timeout of some (#43), where with `kernel.core_pattern=core` it took
+1.5 s. So on Linux and Android (`Os.coreDump`: `madvise`'s
+`MADV_DONTDUMP` and `MADV_DODUMP`) the reservations are left out of a core
+dump but for what the program uses of them: each region up to its
+limit (`Gc.dumpOld`: at start, after each major collection, and for a
+major collection's copies; the region it leaves is left out again), the
+nursery up to its size (`dumpYoung`), each stack's 8 MB at the end it
+grows from (`Os.stackCoreDump`), and, on a fault that ends the program
+(`Faults.chain`), the faulting thread's stacks as they are used
+(`Faults.dumpStacks`). NullAccessCrash's core is 17.9 MB, where it was
+36.8 GB; a core holds every page the heap and the stacks wrote (the
+corpus case `CoreDumpSize` checks it through `/proc/self/smaps`). Limits:
+a thread's C stack (64 MB, the C library's mapping) is dumped whole once
+touched; a stack used beyond its 8 MB is cut there in the core when another
+thread faulted or another signal ended the program (`abort`).
+
 ### WebAssembly: explicit tests
 
 WebAssembly has no faults to catch: in linear memory a null access read
@@ -953,7 +1002,46 @@ caught typing error is a `haxe.macro.Error` with its `childErrors`; `$v{}`
 of an integral Float is a Float. A compilation that types the macro context
 again (`--next`, the compilation server) starts a new generation of bundles,
 as Eval drops its prototypes, and a reused macro context runs its static
-initializers again (`EvalMain.doReuse`).
+initializers again (`EvalMain.doReuse`), in the order of the classes' paths'
+hashes as Eval's `static_prototypes#reset` walks them; statics without an
+initializer keep their values. A bundle's static initializers run in the
+order their classes were handed over (`EvalPrototype.addTypes`). Eval
+drops only the prototypes of the types typed again, so a class of the new
+generation whose module is the same as an earlier generation's carries
+its statics over (`Loader`: the slot of a reference, the value of a
+scalar) and does not run its initializer as it loads; this holds when the
+macro context is typed again partway through a compilation too. Each
+compilation hands over the types of the modules not typed again as other
+objects of the same modules, which a generation lowers as the first ones
+(`Lower.samePaths`). `Context.error` ends its macro only: the call has no
+value, as Eval's `catch_exceptions` makes of `Abort`. `make
+mir-server-check` (`hxmc/test/MirServerCheck.hx`, in the Mir lane but on
+Windows) compares a server with Mir macros to the reference's through edits.
+
+An uncaught exception of macro code is reported at the line of its
+innermost frame of macro code, then each caller's line ("Called from
+pack.Class.field", a frame repeated once with its count), the macro
+call's position last; a `haxe.macro.Expr.Error` at its position with its
+child errors; a callback the compiler calls (`Context.onAfterTyping`, ...)
+without a macro call's position. The stacks are the runtime's
+(`hxmc.rt.Stacks`, "Debugging"): the macro code is lowered with its lines
+as a native build is (`Lower.lines`), InterpGen writes each function's
+lines and name into its descriptor (`H_POSITIONS`), and an interpreted
+frame links the one it was called from (`Stacks.interpCur`) and keeps the
+call it makes. A walk puts each interpreted frame in the place of the
+`Interp.exec` running it, so `haxe.CallStack`
+(`callStack`, `exceptionStack`) works in macro code, and the frames of
+the compiler around it are named through its table of functions and
+lines, which a Mir host always has (its own throws record no stack:
+`hxmc_stack_flags` 0). While interpreted code runs, a throw that reaches
+one of its frames is recorded; the interpreter's catches that pass an
+exception on keep that record (`Stacks.rethrowing`). A function without
+calls of its own may be inlined, as natively: its throw is at its caller's
+line. The lines do not count in a function's size for the cold
+path (`COLD_WORDS`: its `Fingerprint` without positions), so the same
+functions are optimized as without them. `MirServerCheck` checks the reports (`EXPECTED`). `haxe.Exception`'s
+`stack` stays empty in macro code: it would record a stack for each of the
+compiler's own exceptions while a macro runs.
 
 The std and the runtime in the macro context: hxmc's std loads all of the
 runtime (`Std` imports `hxmc.rt.Runtime`), and a macro reaches few of the
@@ -1205,7 +1293,7 @@ no threads, sockets or processes). mbedtls 2.28 and libuv 1.48
 use `sys.ssl` or `eval.luv`. Environment for development: `HXMC_OPT=0`,
 `HXMC_INLINE=<flat>,<loop>,<runtime>`, `HXMC_ESCAPE=0` (no escape analysis; `HXMC_ESCAPE_LOG=1`: what happens to each allocation analyzed and why it stays; `HXMC_ESCAPE_NO=<closures,frames,again,boxes,replace,screen>` and `HXMC_ESCAPE_HASH=<lo>-<hi>` to bisect a miscompilation; none of them are in the object cache's key), `HXMC_SYMBOLS=1`, `HXMC_SIZE_STATS=1`,
 `HXMC_DUMP=<function>`, `HXMC_MAP=<file>` (Windows), `HXMC_FRAME_POINTERS=0`,
-`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB`, `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
+`RT_MINOR_KB` (a fixed nursery), `RT_TLAB_KB`, `RT_OLD_MB` (the old space's first limit; the tool sets 768 for a build, 2048 for the compilation server), `RT_OLD_GROWTH` (its next limits, in percent of what a major collection left live: 300 natively, 200 on wasm32; the compilation server 150), `RT_PREFAULT`, `RT_STATS`, `RT_VERIFY`, `RT_NULL_ACCESS=0` (no fault handler: Null access),
 `RT_STACK_MB` (wasm32: the shadow stack and the stack of frame areas; WebAssembly, Memory); `RT_CENSUS=1|2` in a `-D hxmc.census` build: the live heap by type at exit (2: after every major collection too) and every allocation by type, bytes and objects (`RT_CENSUS_TOP`: rows shown); with `RT_CENSUS_WHY=<type>` (its name in the census) also a path from a global to each of the first `RT_CENSUS_WHY_MAX` (8) objects of that type, what keeps a leak alive (global `i` is the symbol of value `8 * i` in `<exe>.syms`).
 
 ### Target flags

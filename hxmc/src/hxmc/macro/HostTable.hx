@@ -177,9 +177,8 @@ class HostTable {
 		var seen = new Map<String, String>();
 		for (n in names) {
 			var s = defs.get(n);
-			var kind = s == null ? (bound ? K_BOUND : K_CODE) : s.abs ? K_ABS : switch s.section.kind {
+			var kind = s == null ? (bound ? K_BOUND : K_CODE) : s.abs ? K_ABS : threadLocal(s) ? K_TLS : switch s.section.kind {
 				case Text: K_CODE;
-				case Tdata | Tbss: K_TLS;
 				case _: K_DATA;
 			};
 			hash(n);
@@ -350,12 +349,17 @@ class HostTable {
 
 	static final MACHO_LINKER = ["__dso_handle", "hxmc_tls_start", "hxmc_tls_base"];
 
+	// a thread-local variable (Mach-O: its symbol names its descriptor in
+	// __thread_vars, DataGen.tbssGlobal)
+	static function threadLocal(s:Symbol):Bool
+		return s.section.kind == Tdata || s.section.kind == Tbss || StringTools.endsWith(s.section.name, "__thread_vars");
+
 	// the thread-local variables the objects define (their accessors: InterpAbi.tlsAccessors)
 	public static function tlsNames(objs:Array<Obj>):Array<String> {
 		var r = [], seen = new Map<String, Bool>();
 		for (o in objs)
 			for (s in o.symbols)
-				if (s.global && s.section != null && (s.section.kind == Tdata || s.section.kind == Tbss) && !seen.exists(s.name)) {
+				if (s.global && s.section != null && threadLocal(s) && !seen.exists(s.name)) {
 					seen.set(s.name, true);
 					r.push(s.name);
 				}

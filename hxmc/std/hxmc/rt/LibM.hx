@@ -94,7 +94,7 @@ class LibM {
 		return ofBits((0x7FF : I64) << 52);
 
 	// musl's scalbn
-	@:hxmc.noGc static function scalbn(x:Float, n:Int):Float {
+	@:hxmc.unsafe static function scalbn(x:Float, n:Int):Float {
 		var y = x;
 		if (n > 1023) {
 			y *= ofBits((0x7FE : I64) << 52); // 0x1p1023
@@ -234,7 +234,7 @@ class LibM {
 		return n;
 	}
 
-	@:hxmc.noGc static function remPio2(x:Float, yp:Ptr):Int {
+	@:hxmc.unsafe static function remPio2(x:Float, yp:Ptr):Int {
 		var u = bits(x);
 		var sign = !((u >>> 63) == 0);
 		var ix = (u >>> 32).toInt() & 0x7fffffff;
@@ -307,7 +307,7 @@ class LibM {
 	}
 
 	// (apart: remPio2 stays a leaf function, without a frame)
-	@:hxmc.noGc static function remPio2Large1(x:Float, yp:Ptr, ix:Int, sign:Bool):Int {
+	@:hxmc.unsafe static function remPio2Large1(x:Float, yp:Ptr, ix:Int, sign:Bool):Int {
 		inline function set(a:Float, b:Float) {
 			Mem.setF64(yp, 0, a);
 			Mem.setF64(yp, 8, b);
@@ -340,7 +340,7 @@ class LibM {
 
 
 	// __rem_pio2_large for prec = 1 (doubles): x[nx] (24-bit chunks) in tx, y[2] into ty
-	@:hxmc.noGc static function remPio2Large(x:Ptr, y:Ptr, e0:Int, nx:Int):Int {
+	@:hxmc.unsafe static function remPio2Large(x:Ptr, y:Ptr, e0:Int, nx:Int):Int {
 		var PIo2 = Mem.stack(64);
 		Mem.setF64(PIo2, 0, 1.57079625129699707031e+00);
 		Mem.setF64(PIo2, 8, 7.54978941586159635335e-08);
@@ -528,7 +528,7 @@ class LibM {
 		return n & 7;
 	}
 
-	@:hxmc.host("Math_sin") @:hxmc.noGc static function sin(x:Float):Float {
+	@:hxmc.host("Math_sin") @:hxmc.unsafe static function sin(x:Float):Float {
 		var ix = hi(x) & 0x7fffffff;
 		// |x| ~< pi/4
 		if (ix <= 0x3fe921fb) {
@@ -548,7 +548,7 @@ class LibM {
 		}
 	}
 
-	@:hxmc.host("Math_cos") @:hxmc.noGc static function cos(x:Float):Float {
+	@:hxmc.host("Math_cos") @:hxmc.unsafe static function cos(x:Float):Float {
 		var ix = hi(x) & 0x7fffffff;
 		// |x| ~< pi/4
 		if (ix <= 0x3fe921fb) {
@@ -568,7 +568,7 @@ class LibM {
 		}
 	}
 
-	@:hxmc.host("Math_tan") @:hxmc.noGc static function tan(x:Float):Float {
+	@:hxmc.host("Math_tan") @:hxmc.unsafe static function tan(x:Float):Float {
 		var ix = hi(x) & 0x7fffffff;
 		// |x| ~< pi/4
 		if (ix <= 0x3fe921fb) {
@@ -595,7 +595,7 @@ class LibM {
 	static inline var PIO2_HI = 1.57079632679489655800e+00;
 	static inline var PIO2_LO = 6.12323399573676603587e-17;
 
-	@:hxmc.host("Math_asin") @:hxmc.noGc static function asin(x:Float):Float {
+	@:hxmc.host("Math_asin") @:hxmc.unsafe static function asin(x:Float):Float {
 		var hx = hi(x);
 		var ix = hx & 0x7fffffff;
 		// |x| >= 1 or nan
@@ -626,7 +626,7 @@ class LibM {
 		return (hx >>> 31) != 0 ? -res : res;
 	}
 
-	@:hxmc.host("Math_acos") @:hxmc.noGc static function acos(x:Float):Float {
+	@:hxmc.host("Math_acos") @:hxmc.unsafe static function acos(x:Float):Float {
 		var hx = hi(x);
 		var ix = hx & 0x7fffffff;
 		// |x| >= 1 or nan
@@ -658,7 +658,7 @@ class LibM {
 		return 2.0 * (df + w);
 	}
 
-	@:hxmc.host("Math_atan") @:hxmc.noGc static function atan(x:Float):Float {
+	@:hxmc.host("Math_atan") @:hxmc.unsafe static function atan(x:Float):Float {
 		var u = bits(x);
 		var ix = (u >>> 32).toInt() & 0x7fffffff;
 		var sign = !((u >>> 63) == 0);
@@ -716,7 +716,7 @@ class LibM {
 		return sign ? -zr : zr;
 	}
 
-	@:hxmc.host("Math_atan2") @:hxmc.noGc static function atan2(y:Float, x:Float):Float {
+	@:hxmc.host("Math_atan2") @:hxmc.unsafe static function atan2(y:Float, x:Float):Float {
 		var pi = 3.1415926535897931160E+00;
 		var pi_lo = 1.2246467991473531772E-16;
 		if (x != x || y != y) return x + y;
@@ -781,7 +781,7 @@ class LibM {
 
 	// ---- exp (zig's exp: musl's former exp.c), log (musl's log.c)
 
-	@:hxmc.host("Math_exp") @:hxmc.noGc static function exp(x:Float):Float {
+	@:hxmc.host("Math_exp") @:hxmc.unsafe static function exp(x:Float):Float {
 		var ln2hi = 6.93147180369123816490e-01;
 		var ln2lo = 1.90821492927058770002e-10;
 		var invln2 = 1.44269504088896338700e+00;
@@ -826,7 +826,7 @@ class LibM {
 		return k >= -1022 && k <= 1023 ? y * ofBits(((0x3ff + k) : I64) << 52) : scalbn(y, k);
 	}
 
-	@:hxmc.host("Math_log") @:hxmc.noGc static function log(x:Float):Float {
+	@:hxmc.host("Math_log") @:hxmc.unsafe static function log(x:Float):Float {
 		var ix = bits(x);
 		var LO = bits(1.0 - 0.0625);
 		var HI = bits(1.0 + 0.064697265625); // 1.0 + 0x1.09p-4
@@ -920,7 +920,7 @@ class LibM {
 		return y;
 	}
 
-	@:hxmc.noGc static function specialcase(tmp:Float, sbits:I64, ki:I64):Float {
+	@:hxmc.unsafe static function specialcase(tmp:Float, sbits:I64, ki:I64):Float {
 		if ((ki & ((1 : I64) << 31)) == 0) {
 			// k > 0, the exponent of scale might have overflowed by <= 460
 			sbits = sbits - ((1009 : I64) << 52);
@@ -955,7 +955,7 @@ class LibM {
 	}
 
 	// exp_inline for tiny x, and for huge x (inf and nan are already handled)
-	@:hxmc.noGc static function expEdge(x:Float, signBias:Int):Float {
+	@:hxmc.unsafe static function expEdge(x:Float, signBias:Int):Float {
 		var abstop = top12(x) & 0x7ff;
 		var small = top12(5.551115123125783e-17); // 0x1p-54
 		if (uge(abstop - small, 0x80000000)) {
@@ -993,7 +993,7 @@ class LibM {
 	}
 
 	// 0 if not int, 1 if odd int, 2 if even int (iy: a non-zero finite double)
-	@:hxmc.noGc static function checkint(iy:I64):Int {
+	@:hxmc.unsafe static function checkint(iy:I64):Int {
 		var e = ((iy >>> 52) & 0x7ff).toInt();
 		if (e < 0x3ff) return 0;
 		if (e > 0x3ff + 52) return 2;
@@ -1006,7 +1006,7 @@ class LibM {
 	static inline function zeroinfnan(i:I64):Bool
 		return !Mem.ult(i * 2 - 1, bits(inf()) * 2 - 1);
 
-	@:hxmc.host("Math_pow") @:hxmc.noGc static function pow(x:Float, y:Float):Float {
+	@:hxmc.host("Math_pow") @:hxmc.unsafe static function pow(x:Float, y:Float):Float {
 		var topx = top12(x), topy = top12(y);
 		// (the special cases apart: nothing lives across a call here)
 		if (uge(topx - 0x001, 0x7ff - 0x001) || uge((topy & 0x7ff) - 0x3be, 0x43e - 0x3be)) return powSpecial(x, y);
@@ -1014,7 +1014,7 @@ class LibM {
 	}
 
 	// pow for (x < 0x1p-126 or inf or nan) or (|y| < 0x1p-65 or |y| >= 0x1p63 or nan)
-	@:hxmc.noGc static function powSpecial(x:Float, y:Float):Float {
+	@:hxmc.unsafe static function powSpecial(x:Float, y:Float):Float {
 		var signBias = 0;
 		var ix = bits(x), iy = bits(y);
 		var topx = top12(x), topy = top12(y);
@@ -1074,7 +1074,7 @@ class LibM {
 	}
 
 	// musl's fmod (src/math/fmod.c)
-	@:hxmc.host("fmod") @:hxmc.noGc static function fmod(x:Float, y:Float):Float {
+	@:hxmc.host("fmod") @:hxmc.unsafe static function fmod(x:Float, y:Float):Float {
 		var ux = bits(x), uy = bits(y);
 		var ex = ((ux >>> 52) & 0x7ff).toInt();
 		var ey = ((uy >>> 52) & 0x7ff).toInt();

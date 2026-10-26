@@ -83,8 +83,20 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// the types this compilation handed over so far (a new generation keeps
 	// those; the others are handed over again if the compilation has them)
 	var delivered = new Map<String, Bool>();
-	// the static initializers of the classes loaded, in order (run again by doReuse)
-	var inits:Array<Ptr> = [];
+	// the static initializers of the classes loaded, by class path (run again by
+	// doReuse, as EvalMain.doReuse resets the static prototypes): a class's from
+	// the generation that loaded it last, while its module is the same (a new
+	// generation carries its statics over: Loader, facts.globals' keep), as
+	// Eval keeps the prototype of a type not typed again
+	var inits = new Map<String, {p:Ptr, key:Int, mId:Int}>();
+	// the classes whose statics a bundle has, with their modules' ids (a new
+	// generation keeps them while the module is the same: Loader, facts.globals' keep)
+	var withStatics = new Map<String, Int>();
+	// (the initializers of no class: Lower.reflectEnum's, this generation's)
+	var plainInits:Array<Ptr> = [];
+	// the order the types were handed over in (EvalPrototype.addTypes initializes
+	// a batch's classes in it): a bundle's static initializers run in it
+	var deliveredAt = new Map<String, Int>();
 	// (the types whose runtime implementations the lowering knows: Lower.findHosts, once each)
 	var scanned = new Map<String, Bool>();
 	var l:Null<hxmc.ir.Lower> = null;
@@ -189,6 +201,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				hxmc.rt.EvalCompat.on = order;
 				// (no handler of the macro code catches the compiler's own exceptions)
 				if (self.compilerOwn(x)) hxmc.rt.Interp.uncatchable = x;
+				// (its stack: from here, the macro code's call, hxmc.rt.Stacks.recordThrow)
 				throw x;
 			}
 			hxmc.rt.EvalCompat.on = order;
@@ -200,7 +213,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = true;
 			var r:Dynamic = try call() catch (x:Dynamic) {
 				hxmc.rt.EvalCompat.on = order;
-				throw x;
+				// (Context.error's: no value, EvalMisc.prepare_callback's catch_exceptions)
+				if (Std.isOfType(x, macros.MacroApi.Abort)) return null;
+				// (an exception of the macro code: a compiler error there, with no macro call's position)
+				throw self.toCompilerError(x, null);
 			}
 			hxmc.rt.EvalCompat.on = order;
 			r;
@@ -316,6 +332,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			newGeneration();
 			processed = new Map();
 			mIds = new Map();
+			inits = new Map();
+			withStatics = new Map();
 		}
 		reused = false;
 		delivered = new Map();
@@ -336,8 +354,13 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				if (reused) newGeneration();
 				reused = false;
 			}
+			// (a class typed again: its statics start again, EvalPrototype.addTypes' static_prototypes#remove)
+			var x = inits.get(k);
+			if (x != null && x.mId != m) inits.remove(k);
+			if (withStatics.exists(k) && withStatics.get(k) != m) withStatics.remove(k);
 			processed.set(k, t);
 			mIds.set(k, m);
+			deliveredAt.set(k, nDelivered++);
 			ready(t);
 			// (a class's runtime metadata, which Eval's static prototypes carry,
 			// EvalPrototype.create_static_prototype: the __meta__ static of the
@@ -350,6 +373,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 	}
 
+	var nDelivered = 0;
+
 	public function doReuse(ctx:macros.eval.EvalContext.Context, api:CompilerApi, args:Array<String>):Void {
 		hadError = false;
 		this.api = api;
@@ -359,10 +384,15 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the statics' initial values again: EvalMain.doReuse's staticPrototypes.reset)
 		var order = hxmc.rt.EvalCompat.on;
 		hxmc.rt.EvalCompat.on = true;
-		try
-			for (p in inits)
-				hxmc.macro.Loader.run0(p)
-		catch (x:Dynamic) {
+		// (in the order of the paths' hashes, descending: static_prototypes#reset walks an IntMap, Globals.IntMap)
+		var resets = [for (x in inits) x];
+		resets.sort((a, b) -> a.key > b.key ? -1 : a.key < b.key ? 1 : 0);
+		try {
+			for (p in plainInits)
+				hxmc.macro.Loader.run0(p);
+			for (x in resets)
+				hxmc.macro.Loader.run0(x.p);
+		} catch (x:Dynamic) {
 			hxmc.rt.EvalCompat.on = order;
 			throw toCompilerError(x, api);
 		}
@@ -391,7 +421,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		scanned = new Map();
 		lastPrep = null;
 		stdRoots = [];
-		inits = [];
+		plainInits = [];
 		macros.MacroApi.MacroNativeValues.reset();
 		macros.MacroApi.MacroNativeValues.dropValues();
 	}
@@ -414,6 +444,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			return Some(r);
 		} catch (x:Dynamic) {
 			this.api = prev;
+			// (Context.error's: reported, the call has no value, EvalExceptions.catch_exceptions)
+			if (Std.isOfType(x, macros.MacroApi.Abort)) return None;
 			throw toCompilerError(x, api);
 		}
 	}
@@ -424,17 +456,67 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	function compilerOwn(x:Dynamic):Bool
 		return Reflect.isObject(x) && Type.getClass(x) != null && !processed.exists(Type.getClassName(Type.getClass(x)));
 
-	// an exception the macro code did not catch: its haxe.macro.Error as the
-	// compiler's error, anything else as an uncaught exception (as Eval reports them)
-	function toCompilerError(x:Dynamic, api:CompilerApi):Dynamic {
+	// an exception of the macro code, uncaught: a haxe.macro.Error as the
+	// compiler's error at its position (with its child errors), anything else
+	// as an uncaught exception at the line of its innermost frame of macro
+	// code, then where each caller of that frame was, the macro call last
+	// (hxmc.rt.Stacks: the last throw's stack, the interpreter's frames in it)
+	function toCompilerError(x:Dynamic, api:Null<CompilerApi>):Dynamic {
 		if (Std.isOfType(x, core.Error.TypingError) || Std.isOfType(x, core.Error.FatalError) || Std.isOfType(x, macros.MacroApi.Abort) || Std.isOfType(x, macros.eval.EvalTypes.SysExit) || compilerOwn(x)) return x;
+		var at = api != null ? api.pos : core.Globals.nullPos;
 		var c = macros.MacroApi.MacroNativeValues.resolveClass("haxe.macro.Error");
 		if (c != null && Std.isOfType(x, c)) {
-			var msg:String = Reflect.field(x, "message");
 			var pos:core.Globals.Pos = Reflect.field(x, "pos");
-			return new core.Error.TypingError(core.Error.makeError(Custom(msg), pos == null ? api.pos : pos));
+			var children:Null<Array<Dynamic>> = Reflect.field(x, "childErrors");
+			var sub = children == null ? [] : [
+				for (e in children)
+					core.Error.makeError(Custom(exceptionMessage(e)), Reflect.field(e, "pos"))
+			];
+			return new core.Error.TypingError(core.Error.makeError(Custom(exceptionMessage(x)), pos == null ? at : pos, sub));
 		}
-		return new core.Error.TypingError(core.Error.makeError(Custom("Uncaught exception " + Std.string(x)), api.pos));
+		var frames = thrownFrames();
+		// (the callers, outermost first: the compiler shows a sub-error list from
+		// its end; a frame repeated, once with its count)
+		var sub = frames.length > 0 && api != null ? [core.Error.makeError(Custom("Called from here"), at)] : [];
+		var k = frames.length - 1;
+		while (k >= 1) {
+			var f = frames[k], n = 1;
+			while (k - n >= 1 && frames[k - n].name == f.name && frames[k - n].pos.pmin == f.pos.pmin && frames[k - n].pos.pfile == f.pos.pfile)
+				n++;
+			sub.push(core.Error.makeError(Custom("Called from " + f.name + (n > 1 ? ' ($n times)' : "")), f.pos));
+			k -= n;
+		}
+		return new core.Error.TypingError(core.Error.makeError(Custom("Uncaught exception " + Std.string(x)), frames.length > 0 ? frames[0].pos : at, sub));
+	}
+
+	// (hxmc's haxe.Exception keeps it in a field, `message` its getter)
+	static function exceptionMessage(x:Dynamic):String {
+		var m:Null<String> = Reflect.field(x, "__exceptionMessage");
+		return m != null ? m : Std.string(Reflect.field(x, "message"));
+	}
+
+	// the last throw's frames of macro code (the interpreted ones: the
+	// compiler's are its own), innermost first, each at its line
+	static function thrownFrames():Array<{name:String, pos:core.Globals.Pos}> {
+		var b = hxmc.rt.Stacks.lastThrow();
+		var r = [];
+		var k = 0;
+		while (k < b.length >> 3) {
+			var interpreted = hxmc.rt.Stacks.interpreted(b, k);
+			var d = hxmc.rt.Stacks.frame(b, k);
+			k = hxmc.rt.Stacks.frameEnd(b, k);
+			if (!interpreted || d == null || d.file == null || hxmc.rt.Stacks.internal(d.name)) continue;
+			r.push({name: d.name, pos: linePos(d.file, d.line)});
+		}
+		return r;
+	}
+
+	// line `line` of a file, from its start to its end
+	static function linePos(file:String, line:Int):core.Globals.Pos {
+		var lines = syntax.Lexer.findFile(file).llines;
+		for (k in 0...lines.length)
+			if (lines[k].line == line) return new core.Globals.Pos(file, lines[k].offset, k + 1 < lines.length ? lines[k + 1].offset - 1 : lines[k].offset);
+		return new core.Globals.Pos(file, 0, 0);
 	}
 
 	// ---- compiling and loading
@@ -515,6 +597,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.basic = com.basic;
 		scan();
 		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
+		// (the lines of the code, as a native build's: hxmc.rt.Stacks names an interpreted frame by them)
+		hxmc.ir.Lower.lines = true;
 		hxmc.ir.Lower.bodyReady = MacroRuntime.ready;
 		phase("before lowering");
 		try {
@@ -583,6 +667,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.resources = [];
 		hxmc.ir.Lower.basic = com.basic;
 		l = new hxmc.ir.Lower();
+		// (each compilation hands over the types of a module not typed again as other objects)
+		l.samePaths = true;
 		if (hxmc.ir.Lower.hostOverrides == null) hxmc.ir.Lower.hostOverrides = hxmc.macro.Loader.hostOverrides();
 		for (cp in com.classPaths.asList())
 			if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx")))
@@ -643,15 +729,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		for (f in funcs) {
 			var fp = new Fingerprint(prep, inlined);
 			if (tk != null) fp.text(tk);
-			var w0 = @:privateAccess fp.words;
 			fp.func(f);
-			// (the size of its own IR, without the inlined callees' digests)
-			var size = @:privateAccess fp.words - w0;
-			if (inlined != null) {
-				var own = new Fingerprint(prep, null);
-				own.func(f);
-				size = @:privateAccess own.words;
-			}
+			// (the size of its own IR, without the inlined callees' digests nor
+			// its lines, Lower.lines: a statement's file would count again)
+			var own = new Fingerprint(prep, null, false);
+			own.func(f);
+			var size = @:privateAccess own.words;
 			if (opts.opt && coldWords > 0 && size > coldWords) {
 				cold.set(f, true);
 				fp.text("|cold");
@@ -666,7 +749,22 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the types handed over so far: com.types may not have them yet)
 		phase("fingerprints");
 		var types = [for (t in processed) t];
-		var facts:Dynamic = hxmc.macro.BundleFacts.facts(com, prog, e, l, main, types);
+		// (the static initializers in the order their classes were handed over)
+		var at = new Map<FuncInfo, Int>();
+		for (i in 0...prog.inits.length)
+			at.set(prog.inits[i], i);
+		var rank = (f:FuncInfo) -> {
+			var c = l.initOf.get(f);
+			var d = c == null ? null : deliveredAt.get(core.Globals.sTypePath(c.clPath));
+			c == null ? -1 : d == null ? nDelivered : d;
+		};
+		prog.inits.sort((a, b) -> {
+			var x = rank(a), y = rank(b);
+			x != y ? x - y : at.get(a) - at.get(b);
+		});
+		// (a class whose statics an earlier generation has, its module the same: kept)
+		var kept = (c:TClass) -> withStatics.get(core.Globals.sTypePath(c.clPath)) == c.clModule.mId;
+		var facts:Dynamic = hxmc.macro.BundleFacts.facts(com, prog, e, l, main, types, kept);
 		MirRun.unshare(facts, host, l, e, com, types);
 		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
 		phase("facts");
@@ -728,8 +826,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		phase("load");
 		codeBytes += b.codeBytes;
 		dataBytes += b.dataBytes;
-		for (p in b.inits)
-			inits.push(p);
+		for (i in 0...b.inits.length) {
+			var path = b.initPaths[i];
+			if (path == null) plainInits.push(b.inits[i]) else inits.set(path, {p: b.inits[i], key: b.initKeys[i], mId: b.initMods[i]});
+		}
+		for (_ => c in l.globalOwner)
+			withStatics.set(core.Globals.sTypePath(c.clPath), c.clModule.mId);
 		for (f in funcs)
 			compiled.set(f, true);
 		// (each may be compiled to native code once it is called often: interp.Tier)
@@ -843,6 +945,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			hxmc.rt.EvalCompat.on = order;
 			hxmc.rt.Interp.uncatchable = null;
 			LibC.free(buf);
+			// (passed on: its stack goes on from its throw's, Stacks.rethrowing)
+			hxmc.rt.Stacks.rethrowing = true;
 			throw x;
 		}
 		hxmc.rt.EvalCompat.on = order;

@@ -189,27 +189,30 @@ class Interp {
 	// constants, parameters, flags (D_*), then the offsets from the
 	// descriptor (64 bits) of its code, symbol table, constants and
 	// parameters' sources (an entry's: their byte offsets in the register
-	// image); the code from HEADER. Registers: the constants, the
+	// image), the calls counted (64 bits: tierHook); the code from HEADER. Registers: the constants, the
 	// parameters, the values. A stub's header (LAZY) becomes its function's
 	// once it is compiled: whatever holds the descriptor calls the function
-	static inline var HEADER = 64;
+	static inline var HEADER = 72;
 	static inline var H_NREGS = 4;
 	static inline var H_FRAME = 8;
 	static inline var H_NCONSTS = 16;
 	static inline var H_NPARAMS = 20;
 	static inline var H_FLAGS = 24;
-	static inline var H_CALLS = 28; // (the calls counted so far: tierHook)
 	static inline var H_CODE = 32;
 	static inline var H_SYMS = 40;
 	static inline var H_CONSTS = 48;
 	static inline var H_SOURCES = 56;
+	static inline var H_CALLS = 64; // (the calls counted so far: tierHook)
+	// (the offset of the function's lines, InterpGen.H_POSITIONS: Stacks)
+	static inline var H_POSITIONS = 28;
 	static inline var D_FLOAT = 1; // it returns a double
 	static inline var D_STACK = 2; // its arguments take stack words
 	static inline var D_NOENTRY = 4; // more than the image's stack words
 	static inline var MAGIC = 0x32495848; // "HXI2"
 	// a frame (on the interpreter's stack): its code, symbol table,
 	// registers, slots, where its result goes, end, where it goes on (a try ended), the
-	// tries entered, their handlers
+	// tries entered, their handlers, the frame it was called from and the
+	// call it makes (Stacks: the interpreted frames of a stack)
 	static inline var F_CODE = 0;
 	static inline var F_SYMS = 8;
 	static inline var F_REGS = 16;
@@ -220,7 +223,9 @@ class Interp {
 	static inline var F_NTRIES = 56;
 	static inline var F_TRIES = 64;
 	static inline var MAX_TRIES = 16;
-	static inline var FRAME = 192;
+	static inline var F_PREV = Stacks.F_PREV;
+	static inline var F_CALLIP = Stacks.F_CALLIP;
+	static inline var FRAME = 208;
 	// exec's results: the function returned, a try ended (enterTry goes on),
 	// or the level of the try popped
 	static inline var RETURNED = -1;
@@ -333,7 +338,7 @@ class Interp {
 	// arguments are 8-byte words at args, the result is written at args
 	@:hxmc.export("hxmc_interp_enter") static function enter(desc:Ptr, args:Ptr):Void {
 		if (isp.isNull()) initStack();
-		var base = isp;
+		var base = isp, cur = Stacks.interpCur;
 		try {
 			var regs = base.add(FRAME), nc = Mem.getI32(desc, H_NCONSTS);
 			for (k in 0...Mem.getI32(desc, H_NPARAMS))
@@ -342,6 +347,8 @@ class Interp {
 		} catch (e:Dynamic) {
 			// (a native handler catches: this entry's frames are given back)
 			isp = base;
+			Stacks.interpCur = cur;
+			Stacks.rethrowing = true;
 			throw e;
 		}
 	}
@@ -412,11 +419,15 @@ class Interp {
 		Mem.setPtr(fr, F_RES, res);
 		Mem.setPtr(fr, F_TOP, top);
 		Mem.setI32(fr, F_NTRIES, 0);
+		Mem.setPtr(fr, F_PREV, Stacks.interpCur);
+		Mem.setPtr(fr, F_CALLIP, Ptr.nil());
+		Stacks.interpCur = fr;
 		// the constants
 		var consts = desc.addL(Mem.getI64(desc, H_CONSTS));
 		for (k in 0...Mem.getI32(desc, H_NCONSTS))
 			Mem.setI64At(regs, 0, k, Mem.getI64At(consts, 0, k));
 		exec(fr, code);
+		Stacks.interpCur = Mem.getPtr(fr, F_PREV);
 		isp = fr;
 	}
 
@@ -453,6 +464,8 @@ class Interp {
 		while (k-- > 0)
 			Mem.setI64At(regs, 0, nc + k, Mem.getI64At(regs, 0, k));
 		isp = fr;
+		// (this frame is the function's: run anew in its place)
+		Stacks.interpCur = Mem.getPtr(fr, F_PREV);
 		run(desc, res);
 		return RETURNED;
 	}
@@ -485,9 +498,11 @@ class Interp {
 			// the interpreted code reads its exception from)
 			isp = Mem.getPtr(fr, F_TOP);
 			Mem.setI32(fr, F_NTRIES, level);
+			Stacks.interpCur = fr;
 			if (uncatchable != null && Mem.addr(e) == Mem.addr(uncatchable)) {
 				// (on past this try: its handler h unlinked, as the interpreted code would)
 				Gc.hcur = Mem.getPtr(h, hprevOff);
+				Stacks.rethrowing = true;
 				throw e;
 			}
 			Gc.exn = Mem.addr(e);
@@ -752,7 +767,7 @@ class Interp {
 	@:hxmc.export("hxmc_interp_pool_enter") static function poolEnter(k:Int, img:Ptr):I64 {
 		var desc = Mem.getPtr(poolDescs, 8 * k);
 		if (isp.isNull()) initStack();
-		var base = isp;
+		var base = isp, cur = Stacks.interpCur;
 		try {
 			var regs = base.add(FRAME), nc = Mem.getI32(desc, H_NCONSTS);
 			var src = desc.addL(Mem.getI64(desc, H_SOURCES));
@@ -761,6 +776,8 @@ class Interp {
 			run(desc, img);
 		} catch (e:Dynamic) {
 			isp = base;
+			Stacks.interpCur = cur;
+			Stacks.rethrowing = true;
 			throw e;
 		}
 		return Mem.getI64(img, 0);
@@ -1067,10 +1084,12 @@ class Interp {
 					Mem.setF32(indexed(regs, ip, 1), o(ip, 4), gf(regs, o(ip, 5)));
 					ip = ip.add(24);
 				case CALLN:
+					Mem.setPtr(fr, F_CALLIP, ip);
 					var n = o(ip, 3);
 					callOut(regs, ip, Mem.getPtr(syms, o(ip, 1) << 3), 0, o(ip, 2), n, 4);
 					ip = ip.add(16 + 4 * n);
 				case CALLNI:
+					Mem.setPtr(fr, F_CALLIP, ip);
 					var n = o(ip, 4);
 					var fn = gl(regs, o(ip, 2));
 					// (an entry stub: its function run here; the last two entries cached at the call)
@@ -1090,6 +1109,7 @@ class Interp {
 					if (!e.isNull()) callInterp(regs, ip, Mem.getPtr(e, 8), o(ip, 3), n, 6) else callOut(regs, ip, Mem.getPtr(syms, o(ip, 1) << 3), fn, o(ip, 3), n, 6);
 					ip = ip.add(24 + 4 * n);
 				case CALLI:
+					Mem.setPtr(fr, F_CALLIP, ip);
 					var n = o(ip, 3);
 					callInterp(regs, ip, Mem.getPtr(syms, o(ip, 1) << 3), o(ip, 2), n, 4);
 					ip = ip.add(16 + 4 * n);
@@ -1194,9 +1214,11 @@ class Interp {
 					Mem.setI64At(tlsBlock(), 0, o(ip, 2), gl(regs, o(ip, 1)));
 					ip = ip.add(12);
 				case CALLX:
+					Mem.setPtr(fr, F_CALLIP, ip);
 					callX(regs, ip, gl(regs, o(ip, 1)), o(ip, 2), o(ip, 4), 5);
 					ip = ip.add(4 * o(ip, 3));
 				case CALLXI:
+					Mem.setPtr(fr, F_CALLIP, ip);
 					var n = o(ip, 5);
 					var fn = gl(regs, o(ip, 1));
 					// (an interpreted function's entry: run here; the last two cached at the call)

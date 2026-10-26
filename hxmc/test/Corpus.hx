@@ -141,7 +141,7 @@ class Corpus {
 		var files = [for (f in FileSystem.readDirectory(CASES)) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
 		files.sort(compare);
 		for (f in files) cases.push({name: f, cps: [CASES], main: f});
-		// programs the compiler must reject (@:hxmc.noGc, raw addresses, C types): reject-<Name>
+		// programs the compiler must reject (@:hxmc.unsafe, raw addresses, C types): reject-<Name>
 		var rejects = [for (f in FileSystem.readDirectory(REJECT)) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
 		rejects.sort(compare);
 		for (f in rejects) cases.push({name: "reject-" + f, cps: [REJECT], main: f});

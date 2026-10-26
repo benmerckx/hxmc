@@ -28,7 +28,7 @@ class ThreadApi {
 		return m.add(Os.MUTEX_BYTES + 8);
 
 	// a handle's C resource (slot 0)
-	@:hxmc.noGc static inline function res(o:Dynamic):Ptr
+	@:hxmc.unsafe static inline function res(o:Dynamic):Ptr
 		return Mem.getPtr(Mem.addr(o), 0);
 
 	// a new thread running job (a `() -> Void`)
@@ -38,18 +38,18 @@ class ThreadApi {
 	// the calling thread, started by someone else (a system's thread calling
 	// Haxe through @:hxmc.callback functions), made a Haxe thread; call it
 	// before its first such call (from no-GC code): false when it is one already
-	@:hxmc.noGc public static function attach():Bool
+	@:hxmc.unsafe public static function attach():Bool
 		return Threads.attach();
 
-	@:hxmc.noGc public static inline function current():Int
+	@:hxmc.unsafe public static inline function current():Int
 		return Threads.current();
 
 	// live threads
-	@:hxmc.noGc public static function count():Int
+	@:hxmc.unsafe public static function count():Int
 		return Atomic.load32(Mem.sym("rt_nthreads"));
 
 	// threads run in parallel (1:1 build)
-	@:hxmc.noGc public static function parallel():Bool
+	@:hxmc.unsafe public static function parallel():Bool
 		return true;
 
 	@:hxmc.collects public static function yield():Void
@@ -63,7 +63,7 @@ class ThreadApi {
 	@:hxmc.collects public static function park(timeout:Float):Bool
 		return parkSafe(timeout);
 
-	@:hxmc.noGc static function parkSafe(timeout:Float):Bool {
+	@:hxmc.unsafe static function parkSafe(timeout:Float):Bool {
 		var p = Threads.self.value.pk;
 		var c = p.add(Os.MUTEX_BYTES), permit = p.add(Os.MUTEX_BYTES + Os.COND_BYTES);
 		var ts = Ptr.nil();
@@ -87,7 +87,7 @@ class ThreadApi {
 	@:hxmc.collects public static function unpark(id:Int):Void
 		unparkSafe(id);
 
-	@:hxmc.noGc static function unparkSafe(id:Int) {
+	@:hxmc.unsafe static function unparkSafe(id:Int) {
 		Os.lock(Threads.wl);
 		var t = Threads.byIdGet(id);
 		var p = t.isNull() ? Ptr.nil() : t.value.pk;
@@ -101,7 +101,7 @@ class ThreadApi {
 
 	// ---- mutexes
 
-	@:hxmc.callback @:hxmc.noGc static function freeMutex(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeMutex(p:Ptr):Void {
 		Os.mutexDestroy(p);
 		LibC.free(p);
 	}
@@ -129,7 +129,7 @@ class ThreadApi {
 		Mem.setI32(depthAt(m), 0, 1);
 	}
 
-	@:hxmc.noGc static function lockContended(m:Ptr) {
+	@:hxmc.unsafe static function lockContended(m:Ptr) {
 		var t0 = Threads.thrStats ? Os.now() : 0.0;
 		Leaf.rt_blocking_enter();
 		Os.lock(m);
@@ -141,7 +141,7 @@ class ThreadApi {
 		}
 	}
 
-	@:hxmc.noGc public static function mutexTryAcquire(mo:Dynamic):Bool {
+	@:hxmc.unsafe public static function mutexTryAcquire(mo:Dynamic):Bool {
 		var m = res(mo);
 		var me:Ptr = Threads.self;
 		if (owner(m) == me) {
@@ -155,7 +155,7 @@ class ThreadApi {
 	}
 
 	// (ignored unless the calling thread holds it)
-	@:hxmc.noGc public static function mutexRelease(mo:Dynamic):Void {
+	@:hxmc.unsafe public static function mutexRelease(mo:Dynamic):Void {
 		var m = res(mo);
 		if (owner(m) != (Threads.self : Ptr)) return;
 		var d = Mem.getI32(depthAt(m), 0) - 1;
@@ -167,7 +167,7 @@ class ThreadApi {
 
 	// ---- condition variables
 
-	@:hxmc.callback @:hxmc.noGc static function freeCond(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeCond(p:Ptr):Void {
 		Os.condDestroy(p);
 		LibC.free(p);
 	}
@@ -199,15 +199,15 @@ class ThreadApi {
 		return r;
 	}
 
-	@:hxmc.noGc public static function condSignal(co:Dynamic):Void
+	@:hxmc.unsafe public static function condSignal(co:Dynamic):Void
 		Os.signal(res(co));
 
-	@:hxmc.noGc public static function condBroadcast(co:Dynamic):Void
+	@:hxmc.unsafe public static function condBroadcast(co:Dynamic):Void
 		Os.broadcast(res(co));
 
 	// ---- counting semaphores: a mutex, a condition, the count
 
-	@:hxmc.callback @:hxmc.noGc static function freeSem(p:Ptr):Void {
+	@:hxmc.callback @:hxmc.unsafe static function freeSem(p:Ptr):Void {
 		Os.mutexDestroy(p);
 		Os.condDestroy(p.add(Os.MUTEX_BYTES));
 		LibC.free(p);
@@ -230,7 +230,7 @@ class ThreadApi {
 		return r;
 	}
 
-	@:hxmc.noGc static function semAcquireSafe(s:Ptr, timeout:Float):Bool {
+	@:hxmc.unsafe static function semAcquireSafe(s:Ptr, timeout:Float):Bool {
 		var c = s.add(Os.MUTEX_BYTES), count = s.add(Os.MUTEX_BYTES + Os.COND_BYTES);
 		var ts = Ptr.nil();
 		if (timeout > 0) {
@@ -265,10 +265,10 @@ class ThreadApi {
 
 	@:hxmc.bss(8) static var tlsNext:Ptr;
 
-	@:hxmc.noGc public static function tlsNew():Int
+	@:hxmc.unsafe public static function tlsNew():Int
 		return Atomic.add32(tlsNext, 1);
 
-	@:hxmc.noGc public static function tlsGet(id:Int):Dynamic {
+	@:hxmc.unsafe public static function tlsGet(id:Int):Dynamic {
 		var a = Threads.self.value.tls;
 		return !a.isNull() && id >= 0 && id < Mem.getI32(a, -4) ? Mem.getRef(a, 8 * id) : null;
 	}
@@ -286,7 +286,7 @@ class ThreadApi {
 	}
 
 	// (after the allocation: the old values, read again, into the new array)
-	@:hxmc.noGc static function grow(na:Dynamic) {
+	@:hxmc.unsafe static function grow(na:Dynamic) {
 		var a = Threads.self.value.tls;
 		if (!a.isNull())
 			for (i in 0...Mem.getI32(a, -4))

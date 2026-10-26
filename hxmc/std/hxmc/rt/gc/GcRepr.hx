@@ -20,6 +20,13 @@ class GcRepr {
 	public static inline function fail(msg:String)
 		throw msg;
 
+	// whether == of x and any value is identity: not a number, a Bool, a
+	// String or an Int64 (GcDyn.eq)
+	public static inline function identityEq(x:Dynamic):Bool {
+		var k = W.kind(x);
+		return !(k == 1 || k == 2 || k == 3 || k == 4 || k == 9);
+	}
+
 	public static inline function dynEq(a:Dynamic, b:Dynamic):Bool
 		return GcDyn.eq(a, b);
 
@@ -88,6 +95,12 @@ class GcRepr {
 
 	public static inline function copyTo1(dst:GcChars, di:Int, src:GcChars, n:Int)
 		W.strCopy(dst, di, src, 0, n);
+
+	public static inline function copyAt(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
+
+	public static inline function copyAt1(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
+		W.strCopy(dst, di, src, si, n);
 
 	public static inline function widen(dst:GcChars, di:Int, src:GcChars, si:Int, n:Int)
 		W.strCopy(dst, di, src, si, n);

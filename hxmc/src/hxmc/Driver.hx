@@ -54,6 +54,10 @@ class Driver {
 	public static function run(prog:Program, out:String, o:Options) {
 		var t0 = haxe.Timer.stamp();
 		if (!o.mirHost) hxmc.ir.Reach.run(prog, o.stats);
+		// (a Mir host keeps every function, and the table of its functions and
+		// lines: the stacks of the code it loads go through its frames,
+		// hxmc.rt.Stacks; its own throws record none, StackTable.flags)
+		else prog.stacks = hxmc.ir.Lower.lines;
 		var d = new Driver(prog, out, o);
 		d.prep.staticClosures = !o.mirHost;
 		var t1 = haxe.Timer.stamp();
@@ -222,10 +226,14 @@ class Driver {
 					lock.release();
 				}
 			}
+			// divisions by constants multiplied (not interpreted: one instruction there)
+			if (o.opt && (interp == null || !interp.wants(fn))) DivConst.run(mf);
 			if (o.opt) Opt.lowered(mf);
 			if (dumpSet != null && dumpSet.exists(name)) Sys.println(mf.dump());
 			if (interp != null && interp.wants(fn)) {
-				new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (m, global) -> compileStub(m, emit, global)).run();
+				var g = new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (m, global) -> compileStub(m, emit, global));
+				g.display = fn.display;
+				g.run();
 				if (mb.icaches > 0) {
 					var bss = obj.section(".bss", Bss, 16);
 					bss.bssSize = (bss.bssSize + 15) & ~15;
@@ -562,7 +570,7 @@ class Driver {
 		// (the functions and their lines for the runtime's stacks: StackTable)
 		Dwarf.enabled = o.debugLines;
 		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
-		data.defineAbs(StackTable.FLAGS, prep.p.stacks && !abi.wasm ? StackTable.flags(prep.p) : 0);
+		data.defineAbs(StackTable.FLAGS, prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0);
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
@@ -655,6 +663,9 @@ class Driver {
 			hxmc.interp.InterpAbi.poolTables(th);
 			hxmc.interp.InterpAbi.tlsAccessors(prep, abi, hxmc.macro.HostTable.tlsNames(all), mf -> compileMir(mf, temit, th));
 			all.push(th);
+			// (the table of functions and lines with them: a walk goes on through
+			// them to the interpreted frames and the native code calling them, hxmc.rt.Stacks)
+			StackTable.rebuild(all, _ -> true);
 			// (what code loaded at run time can reach: the std's and the runtime's, HostTable.named)
 			var idents = hostIdents != null ? hostIdents : new Map();
 			var named = n -> hxmc.macro.HostTable.named(n, idents);

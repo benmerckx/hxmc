@@ -46,18 +46,18 @@ class Names {
 	@:hxmc.threadLocal static var icCap:Int;
 	@:hxmc.threadLocal static var icN:Int;
 
-	@:hxmc.noGc static function multithreaded():Bool {
+	@:hxmc.unsafe static function multithreaded():Bool {
 		if (Mem.os() == 3) return false;
 		return Mem.getI32(Mem.sym("rt_mt"), 0) != 0;
 	}
 
-	@:hxmc.noGc static function lock() {
+	@:hxmc.unsafe static function lock() {
 		if (Mem.os() == 3) return;
 		var l = spin.add(32);
 		while (Atomic.cas32(l, 0, 1) != 0) {}
 	}
 
-	@:hxmc.noGc static function unlock() {
+	@:hxmc.unsafe static function unlock() {
 		if (Mem.os() != 3) Atomic.store32(spin.add(32), 0);
 	}
 
@@ -67,10 +67,10 @@ class Names {
 	static inline function staticName(i:Int):Ptr
 		return Mem.getPtr(Mem.sym("rt_field_names"), 8 * i);
 
-	@:hxmc.noGc static inline function extraName(i:Int):Ptr
+	@:hxmc.unsafe static inline function extraName(i:Int):Ptr
 		return Mem.getPtr(Mem.getPtr(chunks, 8 * (i >> 10)), 8 * (i & (CHUNK - 1)));
 
-	@:hxmc.noGc static function findStatic(name:Ptr):Int {
+	@:hxmc.unsafe static function findStatic(name:Ptr):Int {
 		var lo = 0, hi = nstatic() - 1;
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
@@ -81,7 +81,7 @@ class Names {
 		return -1;
 	}
 
-	@:hxmc.noGc static function nameHash(s:Ptr):Int {
+	@:hxmc.unsafe static function nameHash(s:Ptr):Int {
 		var h = 0x811c9dc5; // FNV-1a
 		var i = 0;
 		while (true) {
@@ -93,7 +93,7 @@ class Names {
 	}
 
 	// (the lock held)
-	@:hxmc.noGc static function findExtra(name:Ptr):Int {
+	@:hxmc.unsafe static function findExtra(name:Ptr):Int {
 		if (hashCap == 0) return -1;
 		var i = nameHash(name) & (hashCap - 1);
 		while (true) {
@@ -104,21 +104,21 @@ class Names {
 		}
 	}
 
-	@:hxmc.noGc static function hashIn(i:Int) {
+	@:hxmc.unsafe static function hashIn(i:Int) {
 		var j = nameHash(extraName(i)) & (hashCap - 1);
 		while (Mem.getI32(hash, 4 * j) != 0)
 			j = (j + 1) & (hashCap - 1);
 		Mem.setI32(hash, 4 * j, i + 1);
 	}
 
-	@:hxmc.noGc static function strdup(s:Ptr):Ptr {
+	@:hxmc.unsafe static function strdup(s:Ptr):Ptr {
 		var n = LibC.strlen(s) + 1;
 		var p = LibC.malloc(n);
 		LibC.memcpy(p, s, n);
 		return p;
 	}
 
-	@:hxmc.noGc static function intern(name:Ptr):Int {
+	@:hxmc.unsafe static function intern(name:Ptr):Int {
 		var f = findStatic(name);
 		if (f >= 0) return f;
 		lock();
@@ -151,7 +151,7 @@ class Names {
 		return f;
 	}
 
-	@:hxmc.host("hx_fid_c") @:hxmc.noGc static function fidC(name:Ptr):Int {
+	@:hxmc.host("hx_fid_c") @:hxmc.unsafe static function fidC(name:Ptr):Int {
 		var f = findStatic(name);
 		if (f >= 0) return f;
 		lock();
@@ -160,7 +160,7 @@ class Names {
 		return f;
 	}
 
-	@:hxmc.host("hx_fid_slow") @:hxmc.noGc static function fidSlow(name:String):Int {
+	@:hxmc.host("hx_fid_slow") @:hxmc.unsafe static function fidSlow(name:String):Int {
 		var u = Str.toUtf8(name);
 		var f = intern(u);
 		LibC.free(u);
@@ -168,17 +168,17 @@ class Names {
 	}
 
 	// the id of a name if it has one (no interning): -1 otherwise
-	@:hxmc.host("hx_fid_find") @:hxmc.noGc static function fidFind(name:String):Int {
+	@:hxmc.host("hx_fid_find") @:hxmc.unsafe static function fidFind(name:String):Int {
 		var u = Str.toUtf8(name);
 		var f = fidC(u);
 		LibC.free(u);
 		return f;
 	}
 
-	@:hxmc.host("hx_fid_name") @:hxmc.noGc static function fidName(f:Int):Ptr
+	@:hxmc.host("hx_fid_name") @:hxmc.unsafe static function fidName(f:Int):Ptr
 		return f < nstatic() ? staticName(f) : extraName(f - nstatic());
 
-	@:hxmc.noGc static function strOf(f:Int):Ptr {
+	@:hxmc.unsafe static function strOf(f:Int):Ptr {
 		lock();
 		var r = f < strsCap ? Mem.getPtr(strs, 8 * f) : Ptr.nil();
 		unlock();
@@ -194,7 +194,7 @@ class Names {
 		return immortal(s, f);
 	}
 
-	@:hxmc.noGc static function immortal(s:String, f:Int):String {
+	@:hxmc.unsafe static function immortal(s:String, f:Int):String {
 		var bytes:I64 = 8 + 8 * nslots(s);
 		var copy = LibC.malloc(bytes);
 		LibC.memcpy(copy, Mem.addr(s).add(-8), bytes);
@@ -219,10 +219,10 @@ class Names {
 
 	// ---- inline caches
 
-	@:hxmc.noGc static inline function slotOf(key:I64, cap:Int):Int
+	@:hxmc.unsafe static inline function slotOf(key:I64, cap:Int):Int
 		return ((key * haxe.Int64.make(0x9E3779B9, 0x7F4A7C15)) >>> 32).toInt() & (cap - 1);
 
-	@:hxmc.noGc static function localGet(o:Dynamic, fid:Int):Ptr {
+	@:hxmc.unsafe static function localGet(o:Dynamic, fid:Int):Ptr {
 		var key = ((tindex(o) : I64) << 32) | ((fid : I64) & 0xFFFFFFFF);
 		if (icN * 2 >= icCap) {
 			var ncap = icCap == 0 ? 256 : icCap * 2;
@@ -261,7 +261,7 @@ class Names {
 	}
 
 	// a thread's end (Threads.exit): its entries go
-	@:hxmc.host("rt_dyn_thread_exit") @:hxmc.noGc static function threadExit():Void {
+	@:hxmc.host("rt_dyn_thread_exit") @:hxmc.unsafe static function threadExit():Void {
 		for (i in 0...icCap)
 			if (!(Mem.getI64(icKeys, 8 * i) == 0)) LibC.free(Mem.getPtr(icVals, 8 * i));
 		LibC.free(icKeys);
@@ -272,7 +272,7 @@ class Names {
 		icN = 0;
 	}
 
-	@:hxmc.export("rt_icache_miss") @:hxmc.noGc static function icacheMiss(o:Dynamic, fid:Int, c:Ptr):Ptr {
+	@:hxmc.export("rt_icache_miss") @:hxmc.unsafe static function icacheMiss(o:Dynamic, fid:Int, c:Ptr):Ptr {
 		if (multithreaded()) {
 			if (Atomic.cas32(c, 0, IC_BUSY) == 0) {
 				Dyn.icacheFill(o, fid, c);
