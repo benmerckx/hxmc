@@ -553,9 +553,8 @@ class FloatText {
 		if (keep < nd) {
 			var first = keep >= 0 ? digit(keep) : 0;
 			if (keep < 0) up = false else if (first > 5) up = true else if (first == 5) {
-				var rest = false;
-				for (i in keep + 1...nd)
-					if (digit(i) != 0) rest = true;
+				// (a nonzero digit past it: exactDigits drops trailing zeros)
+				var rest = nd > keep + 1;
 				up = rest || (keep > 0 && digit(keep - 1) % 2 == 1);
 			}
 		}
@@ -639,9 +638,8 @@ class FloatText {
 				Mem.setI8(cand, i, i < nd ? Mem.getU8(dig, i) : 0);
 			if (nd > prec) {
 				var next = Mem.getU8(dig, prec);
-				var rest = false;
-				for (i in prec + 1...nd)
-					if (Mem.getU8(dig, i) != 0) rest = true;
+				// (a nonzero digit past it: exactDigits drops trailing zeros)
+				var rest = nd > prec + 1;
 				var up = next > 5 || (next == 5 && (rest || (Mem.getU8(cand, prec - 1) & 1) != 0));
 				if (up) {
 					var i = prec - 1;
