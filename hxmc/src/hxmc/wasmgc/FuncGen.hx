@@ -1742,6 +1742,10 @@ class FuncGen {
 				expr(args[1]);
 				// (Ints: NativeArray's bounds tests, FnLower.inBounds)
 				op(rOf(args[0]) == "i" ? 0x49 : 0x54);
+			case "udiv" | "urem":
+				expr(args[0]);
+				expr(args[1]);
+				op(name == "udiv" ? 0x80 : 0x82);
 			case "f64Bits":
 				expr(args[0]);
 				op(0xBD);

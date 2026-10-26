@@ -4,8 +4,11 @@
 // of two, MIN, dividends known not to be negative, a quotient and a remainder
 // of the same dividend; each against the same operation by a divisor known
 // only at run time, and its results summed (the same sums on every target).
-// Std.int(a / b) by 0 and -1 (and MIN / -1), Int % 0 and % -1 last.
+// Std.int(a / b) by 0 and -1 (and MIN / -1), Int % 0 and % -1, and
+// hxmc.unsafe.UInt64's unsigned `/` and `%` (by constants and by run-time
+// divisors, against a long division) last.
 import haxe.Int64;
+import hxmc.unsafe.UInt64;
 
 class IntDivConst {
 	static var xs:Array<Int> = [
@@ -155,5 +158,56 @@ class IntDivConst {
 		Sys.println('Std.int(a / b): ${Std.int(7 / zero)} ${Std.int(-7 / zero)} ${Std.int(0 / zero)} ${Std.int(7 / m1)} ${Std.int(min / m1)} ${Std.int(min / -1)} ${Std.int(min / 1)}');
 		var mn = min;
 		Sys.println('Int %: ${7 % zero} ${7 % m1} ${mn % -1} ${mn % m1} ${mn % 0}');
+
+		// unsigned
+		var us:Array<UInt64> = [];
+		for (x in ls)
+			us.push((cast x : hxmc.I64));
+		var ubad = 0, s:hxmc.I64 = 0;
+		inline function u(d:UInt64) {
+			var dv:UInt64 = (cast opaque64(cast d) : hxmc.I64);
+			for (x in us) {
+				var q = x / d, r = x % d;
+				var lq = udiv(x, dv);
+				var want = Int64.toStr(cast lq) + " " + Int64.toStr(cast ((x : hxmc.I64) - (lq : hxmc.I64) * (dv : hxmc.I64)));
+				if (Int64.toStr(cast q) + " " + Int64.toStr(cast r) != want || Int64.toStr(cast (x / dv)) + " " + Int64.toStr(cast (x % dv)) != want) {
+					if (ubad++ < 20) Sys.println('MISMATCH unsigned ${Int64.toStr(cast x)} by ${Int64.toStr(cast d)}: ${Int64.toStr(cast q)} ${Int64.toStr(cast r)}, want $want');
+				}
+				s = s * 31 + (q : hxmc.I64) + (r : hxmc.I64);
+			}
+			Sys.println('u ${Int64.toStr(cast d)}: ${Int64.toStr(cast (us[us.length - 1] / d))} ${Int64.toStr(cast (us[us.length - 1] % d))}');
+		}
+		u(1);
+		u(2);
+		u(3);
+		u(7);
+		u(10);
+		u(64);
+		u(1000);
+		u(1000000007);
+		u((cast Int64.make(0, 0x80000000) : hxmc.I64));
+		u((cast Int64.make(0x12345678, 0x9ABCDEF0) : hxmc.I64));
+		u((cast Int64.make(0x7FFFFFFF, 0xFFFFFFFF) : hxmc.I64));
+		u((cast Int64.make(0x80000000, 0) : hxmc.I64));
+		u((cast Int64.make(0x80000000, 1) : hxmc.I64));
+		u((cast Int64.make(0xFFFFFFFF, 0xFFFFFFFF) : hxmc.I64));
+		Sys.println('unsigned ${ubad == 0 ? "same as a long division" : ubad + " mismatches"} ${Int64.toStr(cast s)}');
+	}
+
+	// n / d unsigned, one bit at a time
+	static function udiv(n:UInt64, d:UInt64):UInt64 {
+		var q:hxmc.I64 = 0, r:UInt64 = 0;
+		var i = 63;
+		while (i >= 0) {
+			var carry = (r : hxmc.I64) < 0;
+			r = ((r : hxmc.I64) << 1) | (((n : hxmc.I64) >>> i) & 1);
+			q = q << 1;
+			if (carry || r >= d) {
+				r = (r : hxmc.I64) - (d : hxmc.I64);
+				q = q | 1;
+			}
+			i--;
+		}
+		return q;
 	}
 }
