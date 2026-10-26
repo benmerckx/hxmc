@@ -798,7 +798,7 @@ Device signing goes into `CodeSign.Identity`:
 
 ### WebAssembly
 
-The playground and the npm fallback run the port as a wasm32-wasi module.
+The playground runs the port as a wasm32-wasi module, and `make crosshost` checks that the tool built as one writes the same bytes as the native tool.
 
 #### Memory
 
@@ -946,7 +946,7 @@ For the tool and the compiler (build time):
 | `HXMC_MAP=<file>` | Windows: a link map |
 | `HXMC_FRAME_POINTERS=0` | no frame pointers on x86-64 |
 | `HXMC_JOBS=<n>` | parallel module compilations |
-| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories (the npm launcher passes installed `@hxmc/rt-<target>` packages and its cache), or one object |
+| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories (the npm launcher passes the installed platform packages first), or one object |
 | `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
 | `HXMC_GC_SURVEY=1` | WasmGC: list unsupported constructs |
 | `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |

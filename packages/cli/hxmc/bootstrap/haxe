@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// `haxe` and `hxmc` (@hxmc/cli): the native compiler of the platform package
+// (launcher.mjs); on Unix the native compiler replaces this file
+import { main } from './launcher.mjs';
+main(process.argv.slice(2));

@@ -98,7 +98,7 @@ class Options {
 	// the directory of a target's runtime objects (rt.o, ssl.o, uv.o; with a
 	// trailing slash): <dir><rtName>/ of the first directory of HXMC_RT_DIR
 	// (a list, by the host's path delimiter: the npm launcher passes the
-	// installed @hxmc/rt-<target> packages and its cache) that has its rt.o,
+	// installed platform packages and the user's HXMC_RT_DIR) that has its rt.o,
 	// else of the first one; HXMC_RT_DIR unset: <tool dir>rt/
 	public static function rtDir(rtName:String):String {
 		var env = Sys.getEnv("HXMC_RT_DIR");
@@ -107,6 +107,26 @@ class Options {
 		for (d in dirs)
 			if (sys.FileSystem.exists(d + rtName + "/rt.o")) return d + rtName + "/";
 		return dirs[0] + rtName + "/";
+	}
+
+	// where the runtime objects of a target come from, for the error that
+	// says they are missing: npm's platform package that has them (another
+	// machine's installs with --force), else a release archive or a build
+	// from source (make rt)
+	public static function rtHint(rtName:String):String {
+		var pkg = switch rtName {
+			case "linux-x86_64" | "linux-x86_64-glibc": "linux-x64";
+			case "linux-arm64" | "linux-arm64-glibc": "linux-arm64";
+			case "macos-x86_64": "darwin-x64";
+			case "macos-arm64": "darwin-arm64";
+			case "windows-x86_64": "win32-x64";
+			case "windows-arm64": "win32-arm64";
+			case _: null;
+		}
+		if (pkg != null) return 'npm: install @hxmc/$pkg (npm i -D --force @hxmc/$pkg on another machine); a checkout: make rt';
+		return StringTools.startsWith(rtName, "android-")
+			? "Android builds need the runtime objects of a release archive or a build from source (make rt): HXMC_RT_DIR names their directory"
+			: "make rt";
 	}
 
 	public static function read(com:context.Common.CommonContext):Options {

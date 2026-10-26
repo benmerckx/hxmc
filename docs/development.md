@@ -17,7 +17,7 @@ the bootstrap works, and the everyday edit-test loop. Tests and CI are in
 | `hxmc/deps/` | the third-party C: `deps.sh` (mbedtls, libuv), `mkrt.sh` (the runtime objects), `Layouts.hx` (struct layouts per target, checked against the C headers), `probe.c`, `zig-version` |
 | `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the Android and iOS apps, the dev loop's tests, the benchmarks |
 | `hxmc/bootstrap/` | the committed stage0 (`stage0.wasm.br`), node's WASI runner (`wasi.mjs`), the runtime objects by hash (`rt.mjs`) |
-| `packages/` | the npm packages, one folder each, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`), `haxe` (`@hxmc/haxe`: the launcher, `dist/` for lix), `platform` (template of the six `@hxmc/haxe-<os>-<cpu>`), `wasm` (`@hxmc/haxe-wasm`), `target` (`@hxmc/target`: hxmc's std), `rt` (template of the ten `@hxmc/rt-<target>`); `source` (`hxmc-rebuild`) is not published |
+| `packages/` | the npm packages, one folder each, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`: the launcher, `dist/` for lix, upstream's and hxmc's std), `platform` (template of the six `@hxmc/<os>-<cpu>`: the native compiler and that machine's runtime objects); `source` (`hxmc-rebuild`) is not published |
 | `site/` | the website: plain HTML pages, their scripts (`client/`: the playground, the benchmark tables), measured data (`data/`), browser tests (`tools/`) |
 | `tools/lix/` | lix (client and haxeshim), built with hxmc |
 

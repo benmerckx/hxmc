@@ -175,12 +175,12 @@ a release is published only when all of them pass.
 | `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
-| `npm` | yes | the packages installed from their tarballs in fresh projects on each machine: native at once, without node, `-lib` from lix, node_modules and haxelib, `--ignore-scripts`; on linux-x64 also `@hxmc/haxe` alone, cross builds with installed runtime objects, runtime objects downloaded on first use (`HXMC_RT_TARBALLS`), and on all six on main, tags and nightly: lix with `dist/`, the WebAssembly fallback (`HXMC_WASM_TARBALL`) |
+| `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
 | `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
 | `android` | no (experimental) | `make android-check`, `make shared-check`, AndroidHello on an x86-64 emulator |
 | `ios`, `ios-simulator` | no (experimental) | `make ios-check` on Linux; IosHello on an iPhone simulator on macOS |
 | `upstream-tests` | no | upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
-| `publish-npm` | | after every gate: all packages at one version, with provenance through npm's trusted publishing; on `v*` tags as `latest`, from main as `<version>-nightly.<date>.<commit>` tagged `next` |
+| `publish-npm` | | after every gate: the seven packages at one version (the six platform packages, then `@hxmc/cli`), names, versions and optional dependencies checked, with provenance through npm's trusted publishing; on `v*` tags as `latest`, from main as `<version>-nightly.<date>.<commit>` tagged `next` |
 | `release`, `pages` | | the nightly release or a tagged release; the website from main |
 
 **What runs when.** Main, tags, the nightly schedule (02:41 UTC) and

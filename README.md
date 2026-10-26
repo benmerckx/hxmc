@@ -41,19 +41,18 @@ npm i -D @hxmc/cli      # node 22+; then `npx haxe` (or `npx hxmc`)
 
 `haxe` is the full Haxe command line with hxmc built in. Every Haxe target
 works as usual (`--js`, `--interp`, ...), and `--custom-target hxmc=<out>`
-writes an executable. The runtime objects of a target
-(`@hxmc/rt-<target>`) are downloaded on the first build for it. To build
-offline, in CI or for other targets without a download, install them too:
+writes an executable.
+
+npm installs the native compiler for your machine (Linux, macOS or Windows;
+x86-64 or ARM64) with the runtime objects of its targets. To cross-compile
+for another of those machines, install its package too, with `--force`:
 
 ```sh
-npm i -D @hxmc/cli @hxmc/rt-linux-x86_64 @hxmc/rt-windows-x86_64
+npm i -D --force @hxmc/win32-x64   # windows-x86_64's runtime objects
 ```
 
-For the Haxe compiler alone, for Haxe's own targets (js, hl, jvm, ...):
-`npm i -D @hxmc/haxe`.
-
-npm installs a native compiler for your platform. Where none can run, `haxe`
-falls back to a WebAssembly build under node. Packages, editors and lix:
+Android's runtime objects are not on npm: use the release archive of the
+runtime objects or build them from source. Packages, editors and lix:
 [docs/using.md](docs/using.md).
 
 ## Quick start

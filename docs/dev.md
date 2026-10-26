@@ -17,7 +17,7 @@ is the program the dev server runs.
 ## What happens
 
 - **The compiler stays resident.** The dev server
-  (`packages/haxe/hxmc/bootstrap/dev.mjs`) starts it as a compilation
+  (`packages/cli/hxmc/bootstrap/dev.mjs`) starts it as a compilation
   server (`--server-connect`) and sends each build to it with `-D hxmc.dev`
   added. A build types again only the modules that changed and their
   dependents. Typed modules are kept in memory (`-D disable-hxb-cache`);

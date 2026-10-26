@@ -192,8 +192,9 @@ const log = (s) => {
 };
 
 // hxmc's std, given last to each build as the compiler does to its own
-// arguments (hxmc.HaxeMain): HXMC_STD (the npm packages' launcher sets it to
-// @hxmc/target's), else beside the compiler (the repository's bin/hxmc/std)
+// arguments (hxmc.HaxeMain): HXMC_STD (the npm package's launcher sets it to
+// its hxmc/bootstrap/hxmc-std), else beside the compiler (the repository's
+// bin/hxmc/std)
 const compilerDir = path.dirname(compiler);
 const hxmcStd = [process.env.HXMC_STD, path.join(compilerDir, 'std')]
 	.find((d) => d && fs.existsSync(d));
