@@ -239,9 +239,10 @@ what the system layers do the same way over the calls that differ
 (`SysCore.hx` for PosixSys, WinSys and WasiSys; `NetCore.hx` for PosixNet
 and WinNet: the resolver, select's wait with other threads, Boolean
 options), the system chosen by `Mem.os`, which folds while lowering. The nursery's size adapts (unless
-`RT_MINOR_KB` fixes it, to 4 KB at least: generated code stores into an
-object of up to 1 KB allocated since the last collection point without a
-write barrier, which needs it young; Gc.hx): it starts at 4 MB, doubles after a minor
+`RT_MINOR_KB` fixes it, to 16 KB at least: generated code stores into an
+object allocated since the last collection point without a write barrier,
+and allocation folding makes allocations of up to 4 KB, which need them
+young; Gc.hx): it starts at 4 MB, doubles after a minor
 collection that promoted more than a 16th of what was allocated since the
 previous one and halves after 8 that promoted less than a 64th, between a
 floor of 4 MB per thread that allocated in the last cycles (at most 32 MB)

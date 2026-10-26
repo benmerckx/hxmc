@@ -213,7 +213,8 @@ changes from here (no byte-identity with stage 3).
   `OInfo.fresh`; the store still publishes what it stores,
   `MIns.release`). The object must be young: the runtime allocates an
   object of a quarter of the nursery or less there, and the nursery is now
-  4 KB at least (`RT_MINOR_KB`), so objects of up to 63 slots qualify.
+  16 KB at least (`RT_MINOR_KB`), so objects of up to 63 slots qualify, and
+  `Fold`'s allocations of up to 4096 bytes are young too.
 - **Roots after optimization** (`Frames.hx`): `Roots` still gives the
   rooted locals their shadow-stack slots on the IR, but after `Opt` (which
   takes a stored value back where nothing collects in between) a slot
