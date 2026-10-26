@@ -2121,9 +2121,13 @@ class MirBuild extends MirWriter {
 		}
 
 	// an offset operand: a constant displacement, or an index (scale 1)
+	// (an offset x + c or x - c: c in the displacement, as memAtIndexed's
+	// index, so that accesses at x + 0, x + 8, ... share one extension of x)
 	function memAt(off:Ex):{disp:Int, index:Int} {
 		return switch off {
 			case EInt(v): {disp: v, index: -1};
+			case EBin(Add, a, EInt(c)) | EBin(Add, EInt(c), a) if (c > -0x100000 && c < 0x100000): {disp: c, index: op1(SExt, I64, ex(a))};
+			case EBin(Sub, a, EInt(c)) if (c > -0x100000 && c < 0x100000): {disp: -c, index: op1(SExt, I64, ex(a))};
 			case _: {disp: 0, index: op1(SExt, I64, ex(off))};
 		}
 	}
