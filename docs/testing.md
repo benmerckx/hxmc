@@ -298,16 +298,18 @@ tooltips and tables; the
 playground's compiler with both modules, its fallback to the legacy one in a
 Chromium without exnref, and its worker running a request again after a
 fault of the engine, faked (the WebKit of Safari 26.0 at times faults in
-correct code: `site/client/Worker.hx`)), `npm` (the nine packages in fresh projects on each of the six
-machines: native at once through the platform package, `-lib` from lix's
-scopes, node_modules and haxelib (`hxmc/test/Libraries.hx`), `--ignore-scripts`; and on linux-x64,
-or on all six on main, tags and the nightly run, lix with `dist/`, the
-WebAssembly fallback, downloaded (from the local tarball: `HXMC_WASM_TARBALL`,
-a path or URL in place of the registry's) and installed (with `-lib` by the
-WebAssembly compiler), and `hxmc-rebuild` with `--reset`), `upstream-tests`,
-and `publish-npm` (after every check; all nine at one version, skipping those
-published already: the six platform packages, `@hxmc/wasm`, `@hxmc/source`,
-then `@hxmc/cli`, with provenance: on `v*` tags as `latest`, from main as a
+correct code: `site/client/Worker.hx`)), `npm` (the seven packages, installed
+from their tarballs in fresh projects on each of the six machines: native at
+once through the platform package, js, `-lib` from lix's scopes,
+node_modules and haxelib (`hxmc/test/Libraries.hx`), `--ignore-scripts`; on
+linux-x64 a cross build for windows-x86_64, failing with the package to
+install, then with `@hxmc/win32-x64` installed (`--force`), and Android's
+message; and on linux-x64, or on all six on main, tags and the nightly run,
+lix with `dist/`), `upstream-tests`, and `publish-npm` (after every check; the
+seven at one version, their names, versions and `@hxmc/cli`'s optional
+dependencies checked, skipping those published already: the six platform
+packages, then `@hxmc/cli`, with provenance, through npm's trusted publishing
+(OIDC; no token): on `v*` tags as `latest`, from main as a
 nightly prerelease `<version>-nightly.<date>.<commit>` tagged `next`; never
 from other branches), the nightly release and the website.
 

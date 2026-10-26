@@ -1,36 +1,37 @@
 {
   "name": "@hxmc/cli",
   "version": "0.1.0",
-  "description": "The Haxe compiler ported to Haxe, with hxmc built in: native executables for Linux, macOS and Windows (x86-64, ARM64) and WebAssembly",
+  "description": "The Haxe compiler ported to Haxe, with hxmc built in: every Haxe target, and native executables for Linux, macOS and Windows (x86-64, ARM64) with --custom-target hxmc; `haxe` and `hxmc`",
   "license": "GPL-2.0-or-later",
   "type": "module",
   "bin": {
-    "haxe": "hxmc/bootstrap/haxe"
+    "haxe": "hxmc/bootstrap/haxe",
+    "hxmc": "hxmc/bootstrap/haxe"
   },
   "scripts": {
     "postinstall": "node hxmc/bootstrap/postinstall.mjs"
   },
   "files": [
     "haxe/upstream/std/",
+    "haxe/upstream/LICENSE",
     "hxmc/bootstrap/haxe",
+    "hxmc/bootstrap/haxe.mjs",
     "hxmc/bootstrap/launcher.mjs",
     "hxmc/bootstrap/dev.mjs",
     "hxmc/bootstrap/platforms.mjs",
     "hxmc/bootstrap/postinstall.mjs",
-    "hxmc/bootstrap/wasm.mjs",
     "hxmc/bootstrap/hxmc-std/",
-    "hxmc/bootstrap/rt/",
     "dist/haxe",
     "COPYING",
     "LICENSE"
   ],
   "optionalDependencies": {
-    "@hxmc/linux-x64": "0.1.0",
-    "@hxmc/linux-arm64": "0.1.0",
-    "@hxmc/darwin-x64": "0.1.0",
-    "@hxmc/darwin-arm64": "0.1.0",
-    "@hxmc/win32-x64": "0.1.0",
-    "@hxmc/win32-arm64": "0.1.0"
+    "@hxmc/linux-x64": "{version}",
+    "@hxmc/linux-arm64": "{version}",
+    "@hxmc/darwin-x64": "{version}",
+    "@hxmc/darwin-arm64": "{version}",
+    "@hxmc/win32-x64": "{version}",
+    "@hxmc/win32-arm64": "{version}"
   },
   "engines": {
     "node": ">=22"
