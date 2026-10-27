@@ -115,7 +115,7 @@ class Reflect {
 		If `f` is null, the result is false.
 	**/
 	public static function isFunction(f:Dynamic):Bool
-		return Native.typeKind(f) == 5 #if !hxmc.wasm_gc || Std.isOfType(f, hxmc.rt.VarArgs) #end;
+		return Native.typeKind(f) == 5 || Std.isOfType(f, hxmc.rt.VarArgs);
 
 	/**
 		Compares `a` and `b`.
@@ -210,11 +210,7 @@ class Reflect {
 	**/
 	@:overload(function(f:Array<Dynamic>->Void):Dynamic {})
 	public static function makeVarArgs<T>(f:Array<Dynamic>->T):Dynamic {
-		#if hxmc.wasm_gc
-		throw "Reflect.makeVarArgs is not supported on WasmGC";
-		#else
 		// (hxmc: called by Dyn.dynCall)
 		return new hxmc.rt.VarArgs(cast f);
-		#end
 	}
 }

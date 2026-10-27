@@ -36,7 +36,7 @@ class Bytes {
 
 	// [pos, pos + n) inside (n a constant: for one byte one unsigned comparison)
 	inline function inRange(pos:Int, n:Int):Bool
-		return #if !hxmc.wasm_gc n == 1 ? hxmc.unsafe.Mem.ult(pos, length) : #end pos >= 0 && pos <= length - n;
+		return n == 1 ? hxmc.unsafe.Mem.ult(pos, length) : pos >= 0 && pos <= length - n;
 
 	public inline function blit(pos:Int, src:Bytes, srcpos:Int, len:Int):Void
 		NativeBytes.blit(b, pos, src.b, srcpos, len);
@@ -47,7 +47,6 @@ class Bytes {
 	}
 
 	public function sub(pos:Int, len:Int):Bytes {
-		#if !hxmc.wasm_gc
 		var words = (len + 7) >> 3;
 		if (len > 0 && words <= SHARED_MAX && pos >= 0 && pos + len <= length) {
 			var r = shared(len, words);
@@ -55,7 +54,6 @@ class Bytes {
 			hxmc.unsafe.LibC.memcpy(hxmc.unsafe.Mem.addr(r.b), hxmc.unsafe.Mem.addr(b).add(pos), (len : hxmc.I64));
 			return r;
 		}
-		#end
 		// (and the others' OutsideBounds)
 		return new Bytes(NativeBytes.sub(b, pos, len));
 	}
@@ -122,14 +120,11 @@ class Bytes {
 
 	// (zeroed, as the other targets leave them: hxmc.NativeArray's)
 	public static inline function alloc(length:Int):Bytes {
-		#if !hxmc.wasm_gc
 		var words = (length + 7) >> 3;
 		if (length > 0 && words <= SHARED_MAX) return shared(length, words);
-		#end
 		return new Bytes(new BytesData(length));
 	}
 
-	#if !hxmc.wasm_gc
 	// the most words of bytes allocated with their Bytes (hxmc.rt.Boxes.arrNewN's for an Array)
 	static inline var SHARED_MAX = 64;
 
@@ -148,7 +143,6 @@ class Bytes {
 		hxmc.unsafe.Mem.setPtr(p, 0, p.add(8 * n + 8));
 		return o;
 	}
-	#end
 
 	public static function ofString(s:String, ?encoding:Encoding):Bytes
 		return new Bytes(NativeBytes.ofString(s, encoding));

@@ -15,19 +15,11 @@ class NativeStackTrace {
 	static public inline function saveStack(exception:Any):Void {}
 
 	static public function callStack():Any {
-		#if hxmc.wasm_gc
-		return null;
-		#else
 		return hxmc.rt.Stacks.capture();
-		#end
 	}
 
 	static public function exceptionStack():Any {
-		#if hxmc.wasm_gc
-		return null;
-		#else
 		return hxmc.rt.Stacks.lastThrow();
-		#end
 	}
 
 	// the stack's items from its frame `skip` (the frames of the runtime, of
@@ -41,7 +33,6 @@ class NativeStackTrace {
 	@:allow(haxe.Exception)
 	static function toHaxeSkipping(native:Any, skip:Int, top:Null<Array<String>>):Array<StackItem> {
 		var stack:Array<StackItem> = [];
-		#if !hxmc.wasm_gc
 		if (native == null) return stack;
 		var b:haxe.io.Bytes = native;
 		var leading = true;
@@ -69,7 +60,6 @@ class NativeStackTrace {
 				name.substr(dot + 1)) : Module(name);
 			stack.push(FilePos(item, d.file, d.line));
 		}
-		#end
 		return stack;
 	}
 }

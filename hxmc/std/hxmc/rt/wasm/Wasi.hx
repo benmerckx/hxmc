@@ -65,21 +65,6 @@ class Wasi {
 		outLen = 0;
 	}
 
-	// -D hxmc.wasm-gc: the module's system is its host's (hxmc.rt.gc.GcSys);
-	// its WASI imports (a program's own calls, over this class's paths) see
-	// the preopened directories, read when the first path is resolved, and
-	// the host's working directory, asked for each relative path
-	static inline function ready() {
-		#if hxmc.wasm_gc
-		if (pre.isNull()) {
-			initPreopens(Mem.stack(16));
-			dot = Heap.malloc(2);
-			Mem.setI8(dot, 0, ".".code);
-			Mem.setI8(dot, 1, 0);
-		}
-		#end
-	}
-
 	// the preopened directories: fd 3 on until EBADF (t: 8 bytes of scratch)
 	@:hxmc.unsafe static inline function initPreopens(t:Ptr) {
 		pre = Heap.calloc(64, 16);
@@ -289,12 +274,8 @@ class Wasi {
 	// the absolute, normalized path of p (a C string) when the working
 	// directory is known; else p normalized (relative)
 	@:hxmc.unsafe public static function absolute(p:Ptr):Ptr {
-		ready();
 		var n = Heap.strlen(p).toInt();
 		var full:Ptr;
-		#if hxmc.wasm_gc
-		var cwd = Mem.getU8(p, 0) == "/".code ? Ptr.nil() : @:privateAccess hxmc.rt.Str.toUtf8(hxmc.rt.gc.GcSys.getCwd());
-		#end
 		if (Mem.getU8(p, 0) == "/".code || cwd.isNull()) {
 			full = Heap.malloc(n + 1);
 			Wasm.memcpy(full, p, n + 1);
@@ -305,9 +286,6 @@ class Wasi {
 			Mem.setI8(full, c, "/".code);
 			Wasm.memcpy(full.add(c + 1), p, n + 1);
 		}
-		#if hxmc.wasm_gc
-		if (!cwd.isNull()) Heap.free(cwd);
-		#end
 		normalize(full);
 		return full;
 	}
@@ -357,7 +335,6 @@ class Wasi {
 	// the preopened directory for an absolute or relative normalized path:
 	// its fd; *rel (a pointer into p) the rest. -1: none
 	@:hxmc.unsafe public static function resolve(p:Ptr, rel:Ptr):Int {
-		ready();
 		var best = -1, bestLen = -1;
 		var abs = Mem.getU8(p, 0) == "/".code;
 		for (i in 0...npre) {

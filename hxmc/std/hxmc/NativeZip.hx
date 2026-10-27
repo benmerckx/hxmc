@@ -267,19 +267,8 @@ class NativeZip {
 	public static function inflateRaw(src:haxe.io.Bytes, srcPos:Int, srcLen:Int, dst:haxe.io.Bytes, dstPos:Int, dstLen:Int):Int {
 		if (srcPos < 0 || srcLen < 0 || srcPos + srcLen > src.length || dstPos < 0 || dstLen < 0 || dstPos + dstLen > dst.length)
 			outside();
-		#if (hxmc.wasm_gc)
-		// (-D hxmc.wasm-gc: a BytesData is the collector's, without an address: the
-		// stream inflated from a copy in the module's linear memory into a buffer
-		// there, copied out)
-		var out = LibC.malloc(dstLen > 0 ? dstLen : 1);
-		var n = inflate(BytesPtr.of(src, srcPos, srcLen), srcLen, out, dstLen);
-		if (n > 0) BytesPtr.copyIn(dst, dstPos, out, n);
-		LibC.free(out);
-		return n;
-		#else
 		// (no GC point from here: the buffers' addresses stay valid)
 		return inflate(Bytes.bytes(src.getData()).add(srcPos), srcLen, Bytes.bytes(dst.getData()).add(dstPos), dstLen);
-		#end
 	}
 
 	// the raw DEFLATE stream of inLen bytes at inp inflated into the outLen
@@ -329,8 +318,7 @@ class NativeZip {
 	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > b.length) outside();
 		var t = table();
-		// (-D hxmc.wasm-gc: a copy in the module's linear memory, as inflateRaw)
-		var p = #if (hxmc.wasm_gc) BytesPtr.of(b, pos, len) #else Bytes.bytes(b.getData()).add(pos) #end;
+		var p = Bytes.bytes(b.getData()).add(pos);
 		var c = 0xFFFFFFFF;
 		for (i in 0...len)
 			c = Mem.getI32At(t, 0, (c ^ Mem.getU8At(p, 0, i)) & 0xFF) ^ (c >>> 8);

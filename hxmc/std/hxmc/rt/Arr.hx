@@ -6,14 +6,13 @@ import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 
 // The Array natives (formerly in rt_std.c): generic natives over arrays of
-// any element kind, written over hxmc.rt.Repr for both runtimes
-// (@:hxmc.anyHeap): the arguments' meaning here, the elements' storage
-// there (in linear memory Boxes': slot 0 the length and the element kind,
-// slot 1 the storage, a NativeArray of that kind as long as the capacity;
-// the element access, growth and kind conversion themselves stay with the
-// collector, hx_arr_*). The rest are the language's own array
-// operations on Array<Dynamic>, which go through them.
-@:keep @:allow(hxmc.rt) @:hxmc.anyHeap
+// any element kind, written over hxmc.rt.Repr: the arguments' meaning
+// here, the elements' storage there (Boxes': slot 0 the length and the
+// element kind, slot 1 the storage, a NativeArray of that kind as long as
+// the capacity; the element access, growth and kind conversion themselves
+// stay with the collector, hx_arr_*). The rest are the language's own
+// array operations on Array<Dynamic>, which go through them.
+@:keep @:allow(hxmc.rt)
 class Arr {
 	static inline function len(a:Dynamic):Int
 		return Repr.arrLen(a);
@@ -183,11 +182,7 @@ class Arr {
 
 	// iterator and keyValueIterator as values (their calls are inline)
 	@:hxmc.host("Array_iterator") static function iterator(a:Dynamic):Dynamic {
-		#if hxmc.wasm_gc
-		return new haxe.iterators.ArrayIterator<Dynamic>(a);
-		#else
 		return Dyn.arrayIterator(a);
-		#end
 	}
 
 	@:hxmc.host("Array_keyValueIterator") static function keyValueIterator(a:Dynamic):Dynamic
@@ -207,19 +202,16 @@ class Arr {
 			return;
 		}
 		if (n == m) return;
-		#if !(hxmc.wasm_gc)
 		// within the capacity: the slots past the length are zero (shrinking
 		// clears them)
 		if (n <= Boxes.arrCap(a)) {
 			MemRepr.arrSetLen(a, n);
 			return;
 		}
-		#end
 		grow(a, n);
 	}
 
 	@:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
-		#if !(hxmc.wasm_gc)
 		// past the capacity, the storage allocated at twice the capacity, or
 		// at the new length when that is more (from empty: the length), as a
 		// push grows it (growing by one at a time stays amortised); the
@@ -247,7 +239,6 @@ class Arr {
 				return;
 			}
 		}
-		#end
 		// a store past the end grows the array (zeros in between, the kind kept)
 		var arr:Array<Dynamic> = a;
 		arr[n - 1] = null;

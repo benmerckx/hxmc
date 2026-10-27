@@ -156,12 +156,9 @@ abstract IoBuffer(Ptr) {
 		return b;
 	}
 
-	#if !(hxmc.wasm_gc)
 	// a haxe.io.Bytes over this buffer's bytes, without a copy: reads and
 	// writes of either are the other's. It is valid until free: a view used
-	// after free reads and writes freed memory. (Not under -D hxmc.wasm-gc,
-	// where a Bytes' data is an array of the engine's collector.)
+	// after free reads and writes freed memory.
 	public function view():Bytes
 		return Bytes.ofData(cast Mem.obj(this.add(HEADER)));
-	#end
 }
