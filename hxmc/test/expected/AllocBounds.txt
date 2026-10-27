@@ -16,3 +16,7 @@ push Int: ok
 resize within capacity: ok
 resize from empty: ok
 1033 4096 4096 1000 0 null 0
+for struct literal, continue: ok
+for struct literal, break: ok
+for struct literal: ok
+2865041

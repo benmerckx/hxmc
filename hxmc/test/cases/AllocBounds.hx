@@ -39,6 +39,7 @@ class AllocBounds {
 		#end
 		maps();
 		arrays();
+		structLoops();
 		#if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
 		hxmc.rt.Gc.stats = false; // (no report at the exit)
 		#end
@@ -124,5 +125,53 @@ class AllocBounds {
 		Sys.println(a.length + " " + o.length + " " + p.length + " " + e.length + " " + a[1000] + " " + o[4095] + " " + e[999]);
 	}
 
+	// a for over an array literal of struct values: unrolled by the typer
+	// without a continue or a break, else a loop over the literal (helder: it
+	// allocated the array and boxed each element, 112 B per run)
+	static var fsink = 0.0;
+
+	static function structLoops() {
+		var b0 = bytes();
+		for (k in 0...1000)
+			for (v in [new V3(k, 0, 0), new V3(0, k, 0)]) {
+				if (v.y > 500) continue;
+				fsink += v.y;
+			}
+		check("for struct literal, continue", b0, bytes(), 1000, 0);
+		b0 = bytes();
+		for (k in 0...1000)
+			for (v in [new V3(k, 1, 0), new V3(0, k, 1), new V3(1, 0, k)]) {
+				if (v.z > 700) break;
+				fsink += v.x + v.y * 2 + v.z * 3;
+			}
+		check("for struct literal, break", b0, bytes(), 1000, 0);
+		b0 = bytes();
+		for (k in 0...1000)
+			for (v in [new V3(k, 0, 0), new V3(0, k, 0)])
+				fsink += v.y;
+		check("for struct literal", b0, bytes(), 1000, 0);
+		// (one element; a nested loop over another literal)
+		for (v in [new V3(1, 2, 3)]) {
+			if (v.x < 0) continue;
+			for (w in [v, new V3(v.z, v.y, v.x)]) {
+				if (w.x == 2) continue;
+				fsink += w.x * 10;
+			}
+		}
+		Sys.println(fsink);
+	}
+
 	function new() {}
+}
+
+@:hxmc.struct final class V3 {
+	public final x:Float;
+	public final y:Float;
+	public final z:Float;
+
+	public inline function new(x:Float, y:Float, z:Float) {
+		this.x = x;
+		this.y = y;
+		this.z = z;
+	}
 }

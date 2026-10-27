@@ -980,8 +980,15 @@ class FnLower {
 	function stmt1(e:TExpr) {
 		switch e.eexpr {
 			case TBlock(es):
-				for (x in es)
-					stmt(x);
+				var i = 0;
+				while (i < es.length) {
+					if (i + 2 < es.length && structLiteralLoop(es, i)) {
+						i += 3;
+						continue;
+					}
+					stmt(es[i]);
+					i++;
+				}
 			case TParenthesis(e1) | TMeta(_, e1):
 				stmt(e1);
 			case TVar(v, init):
@@ -1081,6 +1088,96 @@ class FnLower {
 				var x = rhs(e);
 				if (isImpure(x)) out.push(SExpr(x));
 		}
+	}
+
+	// A for loop over an array literal of struct values that the typer did not
+	// unroll (its body has a continue or a break: ForLoop unrolls only bodies
+	// without), as it leaves it in a block:
+	//   var g = 0; var a = [e0, ..., en]; while (g < a.length) { var v = a[g]; ++g; body }
+	// with the array read nowhere else: the elements in struct slots of the
+	// frame, evaluated in order as the literal would be, and v a copy of the
+	// g-th, picked by a switch. An array would box each element (Array<struct>
+	// holds references) and allocate itself, on every run of the loop.
+	function structLiteralLoop(es:Vector<TExpr>, i:Int):Bool {
+		var g = switch strip(es[i]).eexpr {
+			case TVar(g, {eexpr: TConst(TInt(0))}) if (!isBoxed(g)): g;
+			case _: return false;
+		}
+		var a:TVar, el:Vector<TExpr>;
+		switch strip(es[i + 1]).eexpr {
+			case TVar(v, init) if (init != null && v.vKind.match(VGenerated)):
+				switch strip(init).eexpr {
+					case TArrayDecl(xs) if (xs.length > 0):
+						a = v;
+						el = xs;
+					case _:
+						return false;
+				}
+			case _:
+				return false;
+		}
+		function isLocal(e:TExpr, v:TVar):Bool
+			return switch strip(e).eexpr {
+				case TLocal(w): w.vId == v.vId;
+				case _: false;
+			}
+		var body = switch strip(es[i + 2]).eexpr {
+			case TWhile(c, b, NormalWhile):
+				switch strip(c).eexpr {
+					case TBinop(OpLt, x, {eexpr: TField(y, FInstance(_, _, {cfName: "length"}))}) if (isLocal(x, g) && isLocal(y, a)):
+					case _: return false;
+				}
+				switch strip(b).eexpr {
+					case TBlock(bs) if (bs.length >= 2): bs;
+					case _: return false;
+				}
+			case _:
+				return false;
+		}
+		var v = switch strip(body[0]).eexpr {
+			case TVar(v, {eexpr: TArray(x, y)}) if (isLocal(x, a) && isLocal(y, g) && !isBoxed(v)): v;
+			case _: return false;
+		}
+		switch strip(body[1]).eexpr {
+			case TUnop(Increment, Prefix, x) if (isLocal(x, g)):
+			case _: return false;
+		}
+		var sc = structOf(v.vType);
+		if (sc == null) return false;
+		for (x in el)
+			if (structOf(x.etype) != sc) return false;
+		// (the array and the counter read only there: nothing else in the
+		// loop's body nor after it in the block)
+		var found = false;
+		function reads(e:TExpr) {
+			if (found) return;
+			switch e.eexpr {
+				case TLocal(w) if (w.vId == a.vId || w.vId == g.vId):
+					found = true;
+				case _:
+					core.Texpr.iter(reads, e);
+			}
+		}
+		for (k in 2...body.length)
+			reads(body[k]);
+		for (k in i + 3...es.length)
+			reads(es[k]);
+		if (found) return false;
+		var slots = [for (x in el) structOwn(x, sc)];
+		stmt(es[i]);
+		var gl = locals.get(g.vId);
+		out.push(SLoop(block(() -> {
+			out.push(SIf(EBin(Ge, ELocal(gl), EInt(slots.length)), vector(SBreak), vector()));
+			var s = newSlot(structTy(sc), false);
+			var cases = new Vector<IrCase>(slots.length - 1);
+			for (k in 0...slots.length - 1)
+				cases[k] = {values: vector(k), body: block(() -> copyStruct(ELocal(s), ELocal(slots[k]), sc))};
+			out.push(SSwitch(ELocal(gl), cases, block(() -> copyStruct(ELocal(s), ELocal(slots[slots.length - 1]), sc))));
+			locals.set(v.vId, s);
+			for (k in 1...body.length)
+				stmt(body[k]);
+		})));
+		return true;
 	}
 
 	// value of an SSet: calls stay at the top, converted afterwards if needed
