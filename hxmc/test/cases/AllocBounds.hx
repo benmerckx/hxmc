@@ -40,6 +40,7 @@ class AllocBounds {
 		maps();
 		arrays();
 		structLoops();
+		sorts();
 		#if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
 		hxmc.rt.Gc.stats = false; // (no report at the exit)
 		#end
@@ -159,6 +160,68 @@ class AllocBounds {
 			}
 		}
 		Sys.println(fsink);
+	}
+
+	// sorting small arrays (helder: 1.7 KB per sort of 100 Ints with a
+	// comparator, a merge sort's buffers of boxed copies); large ones keep
+	// the order, stable
+	var key:Int;
+
+	static function sorts() {
+		var ints = [for (i in 0...100) 100000 + (i * 7919) % 101];
+		var objs = [for (i in 0...100) {var o = new AllocBounds(); o.key = (i * 37) % 10; o;}];
+		var work = ints.copy(), owork = objs.copy();
+		var total = 0.0;
+		for (k in 0...100) {
+			for (i in 0...100) work[i] = ints[i];
+			var b0 = bytes();
+			work.sort((x, y) -> x - y);
+			total += bytes() - b0;
+		}
+		check("sort 100 Ints", 0, total, 100, 64);
+		total = 0.0;
+		for (k in 0...100) {
+			for (i in 0...100) owork[i] = objs[i];
+			var b0 = bytes();
+			owork.sort((a, b) -> a.key - b.key);
+			total += bytes() - b0;
+		}
+		check("sort 100 objects", 0, total, 100, 64);
+		var floats = [for (i in 0...100) ((i * 7919) % 101) / 3], fwork = floats.copy();
+		total = 0.0;
+		for (k in 0...100) {
+			for (i in 0...100) fwork[i] = floats[i];
+			var b0 = bytes();
+			fwork.sort((x, y) -> x < y ? -1 : x > y ? 1 : 0);
+			total += bytes() - b0;
+		}
+		check("sort 100 Floats", 0, total, 100, 64);
+		Sys.println(work.slice(0, 5) + " " + work.slice(95) + " " + [for (o in owork.slice(0, 12)) o.key + ":" + objs.indexOf(o)].join(","));
+		// (stable, at every size around the thresholds)
+		var ok = true;
+		for (n in [0, 1, 2, 7, 8, 9, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 255, 256, 257, 1000, 5000]) {
+			var a = [for (i in 0...n) {var o = new AllocBounds(); o.key = (i * 7919 + 13) % (n > 10 ? 10 : 3); o;}];
+			var idx = new haxe.ds.ObjectMap<AllocBounds, Int>();
+			for (i in 0...n) idx.set(a[i], i);
+			a.sort((x, y) -> x.key - y.key);
+			for (i in 1...n)
+				if (a[i - 1].key > a[i].key || a[i - 1].key == a[i].key && idx.get(a[i - 1]) > idx.get(a[i])) ok = false;
+			var b = [for (i in 0...n) (i * 7919 + 13) % 1009];
+			b.sort((x, y) -> y - x);
+			for (i in 1...n)
+				if (b[i - 1] < b[i]) ok = false;
+			var c = [for (i in 0...n) ((i * 7919 + 13) % 1009) / 7];
+			c.sort((x, y) -> x < y ? -1 : x > y ? 1 : 0);
+			for (i in 1...n)
+				if (c[i - 1] > c[i]) ok = false;
+			// (a comparator of Dynamic arguments: the generic sort)
+			var d = [for (i in 0...n) (i * 7919 + 13) % 1009];
+			var cmp:Dynamic->Dynamic->Int = (x, y) -> (x : Int) - (y : Int);
+			d.sort(cmp);
+			for (i in 1...n)
+				if (d[i - 1] > d[i]) ok = false;
+		}
+		Sys.println("sorted and stable: " + ok);
 	}
 
 	function new() {}

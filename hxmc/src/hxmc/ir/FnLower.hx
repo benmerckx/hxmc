@@ -2435,6 +2435,16 @@ class FnLower {
 				var o = asLocal(value(obj), tyOf(obj));
 				var xs = args(cargs, s.args, null);
 				return coerceRhs(ECallAnon(cf.cfName, s, ELocal(o), xs), s.ret, rt);
+			case TField(obj, FInstance(c, _, cf)) if (Lower.isCore(c, "Array") && cf.cfName == "sort" && sortElem(tyOf(obj), cargs[0]) != null):
+				// Array<Int> and Array<Float> sorted with a comparator of their
+				// type: Arr.sortInt, sortFloat, which call it with their
+				// elements unboxed (Array_sort takes Dynamic ones: a box per
+				// element read)
+				var elem = sortElem(tyOf(obj), cargs[0]);
+				var cmp = TRef(RClos(l.sig([elem, elem], TI32)));
+				var xs = args(VectorTools.cons(obj, cargs), vector(tyOf(obj), cmp), null);
+				xs[0] = receiverCheck(xs[0], tyOf(obj));
+				return coerceRhs(ECallHost(l.native(elem == TI32 ? "Array_sortInt" : "Array_sortFloat"), xs, TVoid), TVoid, rt);
 			case TField(obj, FInstance(c, _, cf)) if (c.hasClassFlag(CExtern) || Lower.isCore(c, "String") || Lower.isCore(c, "Array")):
 				var s = switch TFunctions.follow(cf.cfType) {
 					case TFun(s): s;
@@ -2595,6 +2605,19 @@ class FnLower {
 				out.push(SSet(r, ELocal(xb)));
 				out.push(SIf(EBin(cf.cfName == "min" ? Lt : Gt, ELocal(xa), ELocal(xb)), vector(SSet(r, ELocal(xa))), vector()));
 				ELocal(r);
+			case _: null;
+		}
+	}
+
+	// the element type of an Array<Int> or Array<Float> sorted with a
+	// comparator of that type (Int or Float arguments, an Int result), else null
+	function sortElem(at:Ty, cmp:TExpr):Null<Ty> {
+		var elem = switch at {
+			case TRef(RArr(t)) if (t == TI32 || t == TF64): t;
+			case _: return null;
+		}
+		return switch tyOf(cmp) {
+			case TRef(RClos(s)) if (s.args.length == 2 && s.args[0] == elem && s.args[1] == elem && s.ret == TI32): elem;
 			case _: null;
 		}
 	}

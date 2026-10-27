@@ -299,41 +299,44 @@ class Arr {
 	@:hxmc.host("Array_toString") static function toString(a:Dynamic):String
 		return Repr.stdString(a);
 
-	// a stable merge sort over boxed copies (the comparator may allocate);
-	// the result written back through the array's own stores (its kind kept)
-	static inline var RUN = 8;
+	// A stable sort, the same order for every consistent comparator: up to
+	// SMALL elements a binary insertion sort in place (no allocation; each
+	// insertion one move of memory), larger arrays runs of RUN sorted so, then
+	// merged bottom-up between the array and one buffer. Generic: an
+	// Array<Int> or Array<Float> with a comparator of its own type (FnLower:
+	// Array_sortInt, Array_sortFloat) is sorted without boxing its elements;
+	// any other array as Array<Dynamic>, through the array's own loads and
+	// stores (its kind kept).
+	static inline var SMALL = 128;
+	static inline var RUN = 32;
 
-	@:hxmc.host("Array_sort") static function sort(a:Dynamic, f:Dynamic->Dynamic->Int):Void {
-		var arr:Array<Dynamic> = a;
+	@:generic static function sortWith<T>(arr:Array<T>, f:T->T->Int):Void {
 		var n = arr.length;
 		if (n < 2) return;
-		var src:Array<Dynamic> = [];
-		src.resize(n);
-		for (i in 0...n)
-			src[i] = arr[i];
-		// runs of RUN elements by insertion, then merged: stable both, so the
-		// same order as merging from single elements
+		var run = n <= SMALL ? n : RUN;
 		var lo = 0;
 		while (lo < n) {
-			var hi = lo + RUN < n ? lo + RUN : n;
+			var hi = lo + run < n ? lo + run : n;
 			for (i in lo + 1...hi) {
-				var x = src[i];
-				var j = i;
-				while (j > lo && f(x, src[j - 1]) < 0) {
-					src[j] = src[j - 1];
-					j--;
+				var x = arr[i];
+				// (in order already: one comparison)
+				if (f(x, arr[i - 1]) >= 0) continue;
+				// after the last element not greater than x (stable)
+				var a = lo, b = i - 1;
+				while (a < b) {
+					var m = (a + b) >> 1;
+					if (f(x, arr[m]) < 0) b = m else a = m + 1;
 				}
-				if (j < i) src[j] = x;
+				// (x moved to a, those from a one up: one move of memory, the
+				// elements as stored whatever the array's kind)
+				Repr.arrRotate(arr, a, i);
 			}
 			lo = hi;
 		}
-		if (n <= RUN) {
-			for (i in 0...n)
-				arr[i] = src[i];
-			return;
-		}
-		var dst:Array<Dynamic> = [];
-		dst.resize(n);
+		if (n <= SMALL) return;
+		var buf:Array<T> = [];
+		buf.resize(n);
+		var src = arr, dst = buf;
 		var width = RUN;
 		while (width < n) {
 			var start = 0;
@@ -355,9 +358,19 @@ class Arr {
 			dst = t;
 			width *= 2;
 		}
-		for (i in 0...n)
-			arr[i] = src[i];
+		if (src != arr)
+			for (i in 0...n)
+				arr[i] = src[i];
 	}
+
+	@:hxmc.host("Array_sort") static function sort(a:Dynamic, f:Dynamic->Dynamic->Int):Void
+		sortWith((a : Array<Dynamic>), f);
+
+	@:hxmc.host("Array_sortInt") static function sortInt(a:Dynamic, f:Int->Int->Int):Void
+		sortWith((a : Array<Int>), f);
+
+	@:hxmc.host("Array_sortFloat") static function sortFloat(a:Dynamic, f:Float->Float->Int):Void
+		sortWith((a : Array<Float>), f);
 
 	@:hxmc.host("Array_filter") static function filter(a:Dynamic, f:Dynamic->Bool):Dynamic {
 		var arr:Array<Dynamic> = a;

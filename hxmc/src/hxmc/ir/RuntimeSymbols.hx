@@ -163,6 +163,8 @@ class RuntimeSymbols {
 		{sym: "hx_narray_default", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray read out of bounds, silent"},
 		{sym: "hx_narray_oob", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray access out of bounds, throws", when: boundsThrow},
 		{sym: "Array_resize", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Array's length set"},
+		{sym: "Array_sortInt", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Array<Int> sorted with an Int comparator"},
+		{sym: "Array_sortFloat", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Array<Float> sorted with a Float comparator"},
 		{sym: "fmod", kind: IMPL, families: LINEAR, by: "Lower.bindHosts: Float's %"},
 		// the WasmGC generator (hxmc.wasmgc: GcGen.runtimeCalls, GcModule.exportOf)
 		{sym: "gc_anon_get", kind: FUNC, families: WASMGC, by: "FuncGen: a structure's field read"},
