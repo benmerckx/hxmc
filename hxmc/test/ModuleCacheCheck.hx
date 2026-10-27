@@ -37,7 +37,8 @@ using StringTools;
 // repository's. In bin/hxmc-t/module-cache (removed when every check passes):
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run ModuleCacheCheck [--port] [--haxe <haxe>]
 // --port adds the port itself (haxe/src: a large program) for the hxmc target;
-// --nondet runs only the cases of macros whose results change from run to run;
+// --nondet runs only the cases of macros whose results change from run to run,
+// --late those of modules macros define outside the typing of a module;
 // --haxe names `haxe` with hxmc built in (default: bin/npm/native/<host>/haxe).
 class ModuleCacheCheck {
 	static var dir:String;
@@ -423,6 +424,115 @@ class ModuleCacheCheck {
 		extraEnv = new Map();
 	}
 
+	// a module a macro defines outside the typing of a module (an
+	// onAfterTyping callback's Context.defineType, as helder's view macros
+	// make their late classes): two programs (A, B) of one class path built
+	// one after the other with the cache. The callback's module is not the
+	// typing of the module the compiler names as its definer (the macro
+	// API's current module: Shared, whose build macro made the macros'
+	// context), so restoring Shared must not bring back A's class into B: B
+	// defines its own (named by a counter: "Cannot redefine module Late_0";
+	// named by the program: A's class in B's output), as without the cache,
+	// nor the module the callback asked for in A (Only_a, by Context.getType,
+	// a dependency of Shared then). And a module a macro defines in the
+	// typing of the first module that asks for it (Gen, by DA in MA, by DB in
+	// MB): MB, whose DB finds it (Context.getType), must not get MA's, nor
+	// DA with it; MA, warm, gets it with DA restored
+	static function lateDefined(target:String) {
+		var files = [
+			"src/Macro.hx" => [
+				"#if macro",
+				"import haxe.macro.Context;",
+				"#end",
+				"import haxe.macro.Expr;",
+				"",
+				"class Macro {",
+				"\tstatic var hooked = false;",
+				"\tstatic var n = 0;",
+				"\tstatic var seen:Array<String> = [];",
+				"",
+				"\tpublic static macro function noop():Array<Field>",
+				"\t\treturn null;",
+				"",
+				"\tpublic static macro function mark(s:String):Expr {",
+				"\t\tseen.push(s);",
+				"\t\tif (!hooked) {",
+				"\t\t\thooked = true;",
+				"\t\t\tContext.onAfterTyping(late);",
+				"\t\t}",
+				"\t\treturn macro null;",
+				"\t}",
+				"",
+				"\t#if macro",
+				"\tstatic function late(types:Array<haxe.macro.Type.ModuleType>) {",
+				"\t\tif (seen.length == 0) return;",
+				"\t\tvar msg = seen.join(\",\");",
+				"\t\tseen = [];",
+				"\t\tfor (s in msg.split(\",\")) Context.getType(\"Only_\" + s);",
+				"\t\tvar name = \"Late_\" + (Context.defined(\"late_by_main\") ? msg : Std.string(n++));",
+				"\t\tContext.defineType({",
+				"\t\t\tpack: [],",
+				"\t\t\tname: name,",
+				"\t\t\tpos: Context.currentPos(),",
+				"\t\t\tkind: TDClass(),",
+				"\t\t\tmeta: [{name: \":keep\", pos: Context.currentPos()}],",
+				"\t\t\tfields: (macro class {",
+				"\t\t\t\tstatic function __init__() trace($v{name + \": \" + msg});",
+				"\t\t\t}).fields",
+				"\t\t});",
+				"\t}",
+				"\t#end",
+				"}"
+			].join("\n") + "\n",
+			"src/Shared.hx" => "@:build(Macro.noop())\nclass Shared {\n\tpublic static function f() {}\n}\n",
+			"src/A.hx" => "class A {\n\tstatic function main() {\n\t\tShared.f();\n\t\tMacro.mark(\"a\");\n\t}\n}\n",
+			"src/B.hx" => "class B {\n\tstatic function main() {\n\t\tShared.f();\n\t\tMacro.mark(\"b\");\n\t}\n}\n",
+			"src/Only_a.hx" => "@:keep class Only_a {\n\tstatic function __init__() trace(\"only a\");\n}\n",
+			"src/Only_b.hx" => "@:keep class Only_b {\n\tstatic function __init__() trace(\"only b\");\n}\n",
+			// (a module defined in the typing of a module, Gen: by DA in MA, by
+			// DB in MB; MB must not restore MA's, nor DA with it)
+			"src/Def.hx" => [
+				"#if macro",
+				"import haxe.macro.Context;",
+				"#end",
+				"",
+				"class Def {",
+				"\tpublic static macro function ensure():haxe.macro.Expr {",
+				"\t\tvar by = Context.getLocalModule();",
+				"\t\ttry Context.getType(\"Gen\") catch (_:Dynamic) Context.defineType({",
+				"\t\t\tpack: [],",
+				"\t\t\tname: \"Gen\",",
+				"\t\t\tpos: Context.currentPos(),",
+				"\t\t\tkind: TDClass(),",
+				"\t\t\tmeta: [{name: \":keep\", pos: Context.currentPos()}],",
+				"\t\t\tfields: (macro class {",
+				"\t\t\t\tstatic function __init__() trace($v{\"Gen by \" + by});",
+				"\t\t\t}).fields",
+				"\t\t});",
+				"\t\treturn macro null;",
+				"\t}",
+				"}"
+			].join("\n") + "\n",
+			"src/DA.hx" => "class DA {\n\tstatic function __init__() trace(\"DA\");\n\n\tpublic static function f() Def.ensure();\n}\n",
+			"src/DB.hx" => "class DB {\n\tpublic static function f() Def.ensure();\n}\n",
+			"src/MA.hx" => "class MA {\n\tstatic function main() {\n\t\tDA.f();\n\t\tDB.f();\n\t}\n}\n",
+			"src/MB.hx" => "class MB {\n\tstatic function main() {\n\t\tDB.f();\n\t}\n}\n"
+		];
+		var pdir = dir + "/" + target + "-late";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		for (byMain in [false, true]) {
+			var how = byMain ? "named by the program" : "named by a counter";
+			var extra = byMain ? ["-D", "late_by_main"] : [];
+			rmrf(dir + "/cache");
+			for (m in ["A", "B", "A", "B"])
+				gate('late class $how, $m', target, pdir, ["-cp", "src", "-main", m].concat(extra));
+		}
+		rmrf(dir + "/cache");
+		for (m in ["MA", "MB", "MA", "MB"])
+			gate('a module defined in the typing of another, $m', target, pdir, ["-cp", "src", "-main", m]);
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
@@ -442,6 +552,9 @@ class ModuleCacheCheck {
 		copyTree("haxe/upstream/std", dir + "/upstream-std");
 		// (--nondet: only the nondeterministic macros' cases)
 		var only = Sys.args().contains("--nondet");
+		// (--late: only the late-defined modules' cases)
+		var late = Sys.args().contains("--late");
+		if (late) only = true;
 		for (target in ["hxmc", "js", "interp", "haxe-hxmc"]) {
 			for (p in programs()) {
 				if (only) continue;
@@ -578,7 +691,9 @@ class ModuleCacheCheck {
 			}
 		}
 		for (target in ["hxmc", "js", "interp"])
-			nondeterministic(target);
+			if (!late) nondeterministic(target);
+		for (target in ["hxmc", "js", "interp"])
+			lateDefined(target);
 		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";

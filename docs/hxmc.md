@@ -459,10 +459,25 @@ module typed every build; file and environment reads are recorded with
 their values. HXB does not keep the modifiers of unbound monomorphs or the
 type sort's walks; the cache keeps those too.
 
+**Modules macros define** (`Context.defineType`, `defineModule`) are kept
+with the module whose typing defined them: restored only when that module
+is part of the build (restored, or typed again with the same content: the
+defined module depends on it by content), never on their own (a later
+`Context.getType` would bring the old definer, and what it depends on, into
+a build that does not have it). A dependency on a defined module has no
+early cutoff: it has no source to be typed again from, so its dependents are
+typed again and their macros define it again. What a callback a macro
+registered (`onAfterTyping`, `onGenerate`) defines or adds as a dependency
+outside the typing of a module is not kept: the compiler attributes it to
+the macro API's current module, whichever module's typing made the macros'
+context, and restored with that module it would come back into other
+programs, or into a build whose callback defines it again ("Cannot
+redefine module"). The callback runs every build and makes it again.
+
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
-WASI. A callback registered outside a module's typing, or a macro defining
-something, makes the build write nothing. A module whose types share a path
+WASI. A callback registered outside a module's typing, or a macro setting
+a define, makes the build write nothing. A module whose types share a path
 (eval's `mbedtls.SslAuthmode`) is not kept.
 
 `make test-module-cache` checks that outputs are byte-identical with and

@@ -70,6 +70,13 @@ using core.ds.VectorTools;
 // typed every build; outside the typing of a module, the build writes
 // nothing (a module restored later would not do it again).
 //
+// Modules macros define (Context.defineType, defineModule): kept with the
+// module whose typing defined them and restored only with it, part of the
+// build (check: definedBy), its dependency by content; no early cutoff on
+// a dependency on one (no source to type it again from). What a callback
+// defines, or adds as a dependency, outside the typing of a module is not
+// kept (onDefined, onDependency).
+//
 // Macro state: the static variables of macro classes (not the std's) the
 // macros run in a module's typing use are kept with its variant
 // (EvalJit.staticVarHook: state such as a registry an @:autoBuild fills
@@ -136,6 +143,8 @@ class ModuleCache {
 		compiler.hxb.HxbReader.missingFieldHook = onMissingField;
 		core.TUnification.maybeUsedHook = onMaybeUsed;
 		macros.eval.EvalJit.staticVarHook = onStaticVar;
+		typing.MacroContext.definedHook = onDefined;
+		core.TFunctions.dependencyHook = onDependency;
 		macros.eval.EvalStdLib.volatileHook = onVolatile;
 		macros.eval.EvalStdLib.fileHook = onFileRead;
 		macros.eval.EvalStdLib.envHook = onEnvRead;
@@ -264,6 +273,61 @@ class ModuleCache {
 		// (restored modules' macros kept state there, which they did not make
 		// again in this build: the build again, the modules typed)
 		if (r != null && r.length > 0) again(s, name, r);
+	}
+
+	// MacroContext.definedHook: a macro defined a module (defineType,
+	// defineModule), made a dependency of mdep (the macro API's current
+	// module). Outside the typing of a module (an onAfterTyping or onGenerate
+	// callback) that module is only the one whose typing first made the
+	// macros' context, not what made the definition: kept with it, the
+	// defined module would come back whenever it is restored, into another
+	// program, or into a build whose callback defines it again ("Cannot
+	// redefine module"). Such a module is not kept, nor that edge to it; the
+	// callback, run every build, defines it again.
+	static function onDefined(mnew:ModuleDef, mdep:ModuleDef) {
+		var s = state;
+		if (s == null || s.typingStack.length > 0) return;
+		mutex.acquire();
+		s.lateDefined.set(mnew.mExtra.mSign + "|" + key(mnew.mPath), true);
+		mutex.release();
+		if (s.log) Sys.println("hxmc: module cache: " + core.Globals.sTypePath(mnew.mPath) + " defined by a macro outside the typing of a module (not kept)");
+	}
+
+	// TFunctions.dependencyHook: a dependency about to be added. One a macro's
+	// callback adds outside the typing of a module (the macro API's calls:
+	// Context.getType, defineType, ...) is added to the module the API names
+	// as current, whatever it is (see onDefined): restored, that module would
+	// bring it, and what it depends on, into builds that do not have it. It
+	// is not kept with that module (one the module's own typing adds is)
+	static function onDependency(m:ModuleDef, mdep:ModuleDef, origin:ModuleDepOrigin) {
+		var s = state;
+		if (s == null) return;
+		var outside = s.inCallback > 0 && s.typingStack.length == 0;
+		if (!outside && s.callbackDepCount == 0) return;
+		var k = mdep.mExtra.mSign + "|" + key(mdep.mPath);
+		mutex.acquire();
+		var l = s.callbackDeps.get(m);
+		if (outside) {
+			// (not when its typing had added it already)
+			if (!m.mExtra.mDeps.exists(mdep.mId) && (l == null || !l.exists(k))) {
+				if (l == null) s.callbackDeps.set(m, l = new Map());
+				l.set(k, true);
+				s.callbackDepCount++;
+				if (s.log)
+					Sys.println("hxmc: module cache: " + core.Globals.sTypePath(m.mPath) + " -> " + core.Globals.sTypePath(mdep.mPath)
+						+ " added by a macro's callback outside the typing of a module (not kept)");
+			}
+		} else if (l != null && l.remove(k))
+			s.callbackDepCount--;
+		mutex.release();
+	}
+
+	// the dependencies of m not kept with it (onDefined, onDependency)
+	static function droppedDep(s:ModuleCacheState, m:ModuleDef, d:ModuleDep):Bool {
+		var k = d.mdSign + "|" + key(d.mdPath);
+		if (d.mdOrigin == MDepFromMacroDefine && s.lateDefined.exists(k)) return true;
+		var l = s.callbackDeps.get(m);
+		return l != null && l.exists(k);
 	}
 
 	// the build run again, with the modules whose macros keep state in the
@@ -866,7 +930,20 @@ class ModuleCache {
 		var s = state;
 		if (s == null) return false;
 		var role = s.roleOfSign(mExtra.mSign);
+		// (not for a module a macro defined, definedBy: it has no source to be
+		// typed again from, its dependents' macros define it again)
+		if (dep.mdOrigin == MDepFromMacroDefine) return false;
+		var dx = try com.cs.getContext(dep.mdSign).findModuleExtra(dep.mdPath) catch (_:core.ds.NotFound) null;
+		if (dx != null && definedBy(dx).length > 0) return false;
 		return role >= 0 && s.approved.exists(role + "|" + key(mPath));
+	}
+
+	// the modules whose typing defined a module (a macro's defineType or
+	// defineModule: no file of its own, a dependency on its definer by
+	// MDepFromMacro); none for other modules
+	static function definedBy(mExtra:ModuleDefExtra):Array<ModuleDep> {
+		if (!(mExtra.mKind == MFake || mExtra.mKind == MMacro) || mExtra.mTime != 0) return [];
+		return [for (d in mExtra.mDeps) if (d.mdOrigin == MDepFromMacro) d];
 	}
 
 	// the macros' context's defines, as MacroContext.createMacroContext
@@ -990,6 +1067,18 @@ class ModuleCache {
 		for (c in v.macroState)
 			if (StringTools.startsWith(c, "Context.") || s.retype.exists(c) || s.touched.exists(c))
 				return FileChanged(file + " (its macros keep state in " + c + ", " + (StringTools.startsWith(c, "Context.") ? "every build" : "used by this build's macros") + ")");
+		// (a module a macro defined: restored only with the module whose
+		// typing defined it, part of this build (checked in it: restored, or
+		// typed again with the same content: its dependency on it is by
+		// content); else, asked for on its own (Context.getType), it would
+		// bring that module, and what it depends on, into a build that does
+		// not have it, standing for what this build's macros define: they
+		// define it again)
+		for (d in definedBy(mExtra)) {
+			var dx = try com.cs.getContext(d.mdSign).findModuleExtra(d.mdPath) catch (_:core.ds.NotFound) null;
+			if (dx == null || dx.mChecked != com.sctx.compilationStep)
+				return DependencyDirty(d.mdPath, FileChanged("(the module whose macro defined it, not in this build)"));
+		}
 		switch mExtra.mKind {
 			case MCode | MMacro:
 				// (a module of the macros' context checked from the program's
@@ -1126,6 +1215,10 @@ class ModuleCache {
 					skip("kind");
 					continue;
 				}
+				if (s.lateDefined.exists(x.mSign + "|" + key(m.mPath))) {
+					skip("defined by a macro outside the typing of a module");
+					continue;
+				}
 				// (two types with one path: an abstract whose implementation class
 				// @:native gave the abstract's path, processed in the macros'
 				// context, eval's mbedtls.SslAuthmode; HXB names a type by its
@@ -1176,7 +1269,7 @@ class ModuleCache {
 				v.path = m.mPath;
 				v.key = key(m.mPath);
 				v.id = m.mId;
-				v.extra = ModuleStore.writeExtra(x);
+				v.extra = ModuleStore.writeExtra(x, d -> droppedDep(s, m, d));
 				v.signs = s.signs.copy();
 				v.kind = x.mKind;
 				v.processed = x.mProcessed != 0 ? -1 : 0;
@@ -1188,6 +1281,7 @@ class ModuleCache {
 				var macroDefines = false;
 				var ok = true;
 				for (d in x.mDeps) {
+					if (droppedDep(s, m, d)) continue;
 					var r = s.signs.indexOf(d.mdSign);
 					if (r < 0) {
 						ok = false;
@@ -1200,7 +1294,9 @@ class ModuleCache {
 					// (in the same context its interface stands for it, also for a
 					// macro that looked at it; across contexts, a macro's module, its
 					// whole content: its code runs)
-					var eligible = r == role;
+					// (a module a macro defined: by its definer's whole content, the
+					// macro's input)
+					var eligible = r == role && !(d.mdOrigin == MDepFromMacro && definedBy(x).length > 0);
 					deps.push({role: r, path: d.mdPath, key: key(d.mdPath), eligible: eligible, expect: ""});
 				}
 				if (!ok) {

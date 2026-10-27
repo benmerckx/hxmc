@@ -76,6 +76,17 @@ class ModuleCacheState {
 	// the files parsed, as the parser read them (their date, size and
 	// content hash)
 	public var parsed = new Map<String, StoredFile>();
+	// the modules macros defined outside the typing of a module (an
+	// onAfterTyping or onGenerate callback's), by their context's signature
+	// and key: not kept, nor the edge to them from the module the compiler
+	// made their definer (ModuleCache.onDefined)
+	public var lateDefined = new Map<String, Bool>();
+	// the callbacks macros registered while typing (WatchedCallbacks), running
+	public var inCallback = 0;
+	// per module, the dependencies such a callback added to it outside the
+	// typing of a module (sign|key; ModuleCache.onDependency): not kept
+	public var callbackDeps = new haxe.ds.ObjectMap<ModuleDef, Map<String, Bool>>();
+	public var callbackDepCount = 0;
 
 	public function new(dir:String, indexPath:String, com:CommonContext) {
 		this.dir = dir;
