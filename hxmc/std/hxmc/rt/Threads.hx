@@ -495,14 +495,19 @@ class Threads {
 	@:hxmc.host("rt_wait_fds") @:hxmc.collects static function waitFds(fds:Ptr, n:Int, timeout:Float):Int
 		return waitFdsSafe(fds, n, timeout);
 
-	@:hxmc.unsafe static function waitFdsSafe(fds:Ptr, n:Int, timeout:Float):Int {
+	@:hxmc.unsafe static function waitFdsSafe(fds:Ptr, n:Int, timeout:Float):Int
+		return waitFdsIn(fds, n, timeout, Ptr.nil());
+
+	// waitFdsSafe with scratch room for n ints (hxmc.net.Poll's per-thread
+	// buffer), or null: then a malloc'ed one beyond 8 descriptors
+	@:hxmc.unsafe static function waitFdsIn(fds:Ptr, n:Int, timeout:Float, scratch:Ptr):Int {
 		var size = L.POLLFD_SIZE, rev = L.POLLFD_REVENTS;
 		for (i in 0...n)
 			Mem.setI16(fds, size * i + rev, 0);
 		var r = Os.poll(fds, n, 0);
 		if (r != 0 || timeout == 0) return r != 0 ? 1 : 0; // a poll failure: let the caller's own call report it
 		var gensBuf = Mem.stack(32);
-		var gens = n <= 8 ? gensBuf : LibC.malloc((n : I64) * 4);
+		var gens = !scratch.isNull() ? scratch : n <= 8 ? gensBuf : LibC.malloc((n : I64) * 4);
 		for (i in 0...n)
 			Mem.setI32(gens, 4 * i, fdGen(Mem.getI32(fds, size * i)));
 		var deadline = timeout < 0 ? -1.0 : Os.now() + timeout;
@@ -525,7 +530,7 @@ class Threads {
 			}
 		}
 		Leaf.rt_blocking_leave();
-		if (gens != gensBuf) LibC.free(gens);
+		if (gens != gensBuf && gens != scratch) LibC.free(gens);
 		if (closed) {
 			Os.setErrno(L.EBADF);
 			return -1;

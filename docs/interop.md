@@ -31,6 +31,7 @@ same for that function.
 | `@:hxmc.lib("name")` | the library: `lib<name>.so` (or a full name such as `libGL.so.1`), a DLL, a dylib; a wasm import module |
 | `@:hxmc.link("path")` | an object or archive linked with the program (also `-D hxmc.link=`) |
 | `@:hxmc.fast` | the call stays in the running state: no collection runs during it, so it may take addresses of GC objects. It must be short and must not block or call back |
+| `@:hxmc.blocking` | the call runs in a safe region entered at the call site ([Blocking calls](#blocking-calls)); on a field it overrides its class' `@:hxmc.fast` |
 | `@:hxmc.varargs(n)` | a variadic function with `n` fixed arguments |
 | `@:hxmc.indirect` | a call through a C function pointer, the first argument |
 | `@:hxmc.struct` | a class with C layout, used as a value ([Struct values](#struct-values)) |
@@ -45,6 +46,41 @@ Types (`hxmc.unsafe`): `Int8` .. `Int64`, `UInt8` .. `UInt64`, `Float32`,
 
 A call that is not `@:hxmc.fast` enters a safe region, so other threads may
 collect meanwhile. Pass it native memory, not GC objects.
+
+### Blocking calls
+
+Collections stop the world: they wait until every other thread is at an
+allocation or in a safe region. A thread waiting in C (`read`,
+`io_uring_enter`, `GetQueuedCompletionStatusEx`) must be in one, or other
+threads' collections wait for it.
+
+- **Every extern call not `@:hxmc.fast`** runs in one already.
+- **`@:hxmc.blocking`** says so explicitly, and works where a function is
+  also declared `@:hxmc.fast` elsewhere, as the runtime declares `read`,
+  `write`, `poll`, `nanosleep` and `Sleep`: the call site enters and leaves
+  the safe region, evaluating the arguments before it. It takes no GC
+  references.
+- **`hxmc.unsafe.Blocking.enter()` and `leave()`** enter and leave it by
+  hand, around fast calls in a loop. Between them: no allocation, no heap
+  object, no address of one; leave on every path. Prefer the metadata.
+
+```haxe
+@:hxmc.c extern class Io {
+  @:hxmc.blocking static function read(fd:Int, p:Ptr, n:Int64):Int64;
+}
+```
+
+`BlockingCalls` checks it on the native targets: two threads wait on empty
+pipes while the main thread collects.
+
+### System calls
+
+`hxmc.unsafe.Linux.syscall(nr, a, b, c, d, e, f)` calls the C library's
+`syscall(2)` (musl's in static executables, glibc's with
+`-D hxmc.libc=glibc`), for calls without a wrapper such as
+`io_uring_setup` (`Linux.SYS_io_uring_setup`). It returns -1 on failure
+and `Linux.errno()` the error. It is `@:hxmc.blocking`. Other targets
+reject the module at compile time. `LinuxSyscall` checks it on Linux.
 
 ### Calls and linking
 
@@ -80,6 +116,30 @@ values.
 `hxmc.unsafe.BytesPtr` hands a `haxe.io.Bytes` to C: its address natively,
 a copy through linear memory on WasmGC. Use it in a `@:hxmc.fast` call or
 copy back with `written`/`copyIn`.
+
+### I/O buffers
+
+`hxmc.unsafe.IoBuffer` is malloc'ed memory whose address stays valid
+until `free`, through collections, safe regions and threads: for I/O that
+keeps a buffer's address while the program runs on (io_uring, IOCP's
+overlapped reads). It is a value; its owner frees it once the last
+operation on it completed.
+
+```haxe
+var buf = IoBuffer.alloc(65536);             // zeroed
+submitRead(fd, buf.ptr, buf.length);         // the kernel writes there later
+...
+buf.blitToBytes(0, bytes, 0, n);             // or buf.getBytes(0, n), buf.get(i)
+var view = buf.view();                       // a haxe.io.Bytes over it, no copy
+buf.free();                                  // view is invalid from here
+```
+
+Accessors (`get`, `getInt32`, `getI64`, `getDouble`, their setters,
+`fill`, `blit`, `blitFromBytes`, `blitToBytes`) test their range.
+`view()` wraps the buffer in a `haxe.io.Bytes` whose data is the buffer
+itself: the collector moves the Bytes object, not its data, which is
+outside its spaces. Not under `-D hxmc.wasm-gc`. `IoBuffers` checks it
+through forced collections.
 
 ### Callbacks
 
@@ -144,10 +204,17 @@ s[3].y = 2;                                  // in place
   constructor. `==` compares field by field.
 - **Inlining**: an inline function gets its own copy of a struct argument
   it writes to, as a call would.
-- **Boxes**: where a reference is needed (`Dynamic`, `Array<S>`,
-  `Map<K, S>`, `Null<S>`, an enum argument), the value is copied into an
-  immutable box. `arr[i].x = 1` is a compile error: copy out, change,
-  store back.
+- **Boxes**: where a reference is needed, the value is copied into an
+  immutable box, an allocation on every store or pass (32 B for three
+  Floats): `Array<S>` and `Vector<S>` elements, `Map<K, S>` values, a type
+  parameter (not `@:generic`), `Dynamic` and `Std.string`, an enum argument
+  that escapes, and `Null<S>`: an optional argument `?s:S` when given, a
+  `Null<S>` result (boxed even when the caller only tests it for null) or
+  local. `arr[i].x = 1` is a compile error: copy out, change, store back.
+  In hot paths use a sentinel value (`Size.NONE`) or a `Bool` result with
+  an out parameter instead of `Null<S>`, an overload instead of `?s:S`, a
+  `Slice<S>` instead of `Array<S>`, `@:generic` or `inline` for generic
+  code. The list and the reasons: [hxmc.md](hxmc.md#where-struct-values-are-boxed).
 - **Closures** may take and return struct values, but not capture a
   struct local.
 - **Performance**: scalar replacement keeps struct math in registers;

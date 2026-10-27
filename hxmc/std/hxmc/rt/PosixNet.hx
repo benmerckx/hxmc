@@ -51,6 +51,9 @@ class PosixNet {
 	static inline function EINPROGRESS():Int
 		return mac() ? 36 : 115;
 
+	static inline function EALREADY():Int
+		return mac() ? 37 : 114;
+
 	static inline function O_NONBLOCK():Int
 		return mac() ? 4 : 0x800;
 
@@ -255,7 +258,7 @@ class PosixNet {
 		if (Str.isNull(a)) return true;
 		for (i in 0...a.length) {
 			var fd = a[i];
-			if (fd < 0 || fd >= 1024) return false;
+			if (fd < 0 || fd >= FD_SETSIZE) return false;
 			Mem.setI8(s, fd >> 3, Mem.getU8(s, fd >> 3) | (1 << (fd & 7)));
 			if (fd > Mem.getI32(maxfd, 0)) Mem.setI32(maxfd, 0, fd);
 		}
@@ -270,13 +273,17 @@ class PosixNet {
 		}
 	}
 
-	// Unix.select (otherlib/unix/select_unix.c): a negative timeout waits forever
+	public static inline var FD_SETSIZE = 1024;
+
+	// Unix.select (otherlib/unix/select_unix.c): a negative timeout waits
+	// forever. A descriptor from FD_SETSIZE on fails with EINVAL, as OCaml's
+	// does; -2 then (sys.net.Socket.select says why).
 	public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
 		var rs = Mem.stack(128), ws = Mem.stack(128), os = Mem.stack(128), maxfd = Mem.stack(8);
 		Mem.setI32(maxfd, 0, -1);
 		if (!toFdset(r, rs, maxfd) || !toFdset(w, ws, maxfd) || !toFdset(o, os, maxfd)) {
 			netErrno = EINVAL;
-			return -1;
+			return -2;
 		}
 		if (threads() > 1 && timeout != 0) {
 			// other threads run until a descriptor is ready or the timeout
@@ -308,6 +315,24 @@ class PosixNet {
 		fromFdset(w, ws);
 		fromFdset(o, os);
 		return n;
+	}
+
+	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a descriptor closed while waiting)
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
+		return NetCore.poll(fds, events, revents, n, timeout);
+
+	// the thread's buffer for poll, at least bytes long (kept, not freed
+	// when the thread ends)
+	@:hxmc.threadLocal static var pollBuf:Ptr;
+	@:hxmc.threadLocal static var pollCap:Int;
+
+	@:hxmc.unsafe static function pollBuffer(bytes:Int):Ptr {
+		if (bytes > pollCap) {
+			LibC.free(pollBuf);
+			pollCap = bytes > 1024 ? bytes : 1024;
+			pollBuf = LibC.malloc(pollCap);
+		}
+		return pollBuf;
 	}
 
 	@:hxmc.unsafe static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
@@ -350,6 +375,21 @@ class PosixNet {
 	// whether the last failure was EAGAIN/EWOULDBLOCK (a non-blocking socket not ready)
 	@:hxmc.unsafe public static function blocked():Bool
 		return lastErrno() == EAGAIN();
+
+	// whether the last failure was a non-blocking connect in progress
+	// (EINPROGRESS, or EALREADY for a second one)
+	@:hxmc.unsafe public static function inProgress():Bool
+		return lastErrno() == EINPROGRESS() || lastErrno() == EALREADY();
+
+	// SO_ERROR: the socket's pending error, which reading clears (0: none);
+	// -1 when getsockopt fails
+	@:hxmc.unsafe public static function socketError(fd:Int):Int {
+		var e = Mem.stack(8), n = Mem.stack(8);
+		Mem.setI32(e, 0, 0);
+		Mem.setI32(n, 0, 4);
+		if (Posix.getsockopt(fd, SOL_SOCKET(), SO_ERROR(), e, n) < 0) return ret(-1);
+		return Mem.getI32(e, 0);
+	}
 
 	public static function gethostname():String {
 		var buf = Mem.stack(4096);

@@ -62,7 +62,14 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	/**
 		See `Map.get`
 	**/
-	public function get(k:Int):Null<T> {
+	@:runtime public inline function get(k:Int):Null<T>
+		return getInt(k);
+
+	// (get, exists, set and remove share the signature of IMap's declarations
+	// when the program keeps those, the key a type parameter there: a boxed
+	// Int. On an IntMap they are inlined into a call of these, which take an
+	// Int: nothing allocated)
+	function getInt(k:Int):Null<T> {
 		var e = find(k);
 		return e < 0 ? null : vs[e];
 	}
@@ -70,13 +77,19 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	/**
 		See `Map.exists`
 	**/
-	public function exists(k:Int):Bool
+	@:runtime public inline function exists(k:Int):Bool
+		return existsInt(k);
+
+	function existsInt(k:Int):Bool
 		return find(k) >= 0;
 
 	/**
 		See `Map.set`
 	**/
-	public function set(k:Int, v:T):Void {
+	@:runtime public inline function set(k:Int, v:T):Void
+		setInt(k, v);
+
+	function setInt(k:Int, v:T):Void {
 		var e = find(k);
 		if (e >= 0) {
 			vs[e] = v;
@@ -122,7 +135,10 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	/**
 		See `Map.remove`
 	**/
-	public function remove(k:Int):Bool {
+	@:runtime public inline function remove(k:Int):Bool
+		return removeInt(k);
+
+	function removeInt(k:Int):Bool {
 		if (live == 0) return false;
 		var slots = this.slots, mask = this.mask;
 		var i = hashOf(k) & mask;

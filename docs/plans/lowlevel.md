@@ -48,7 +48,8 @@ h.release();
 
 - **`pin`** keeps a GC object in place for a scoped call. A copying
   collector needs a non-moving space for it. `@:hxmc.fast` calls cover the
-  short cases meanwhile.
+  short cases meanwhile; I/O that outlives a call uses off-heap buffers
+  (`IoBuffer`), and pinning is rejected for it ([io.md](io.md)).
 - **`Handle`** gives C a stable token; `Handle.get` looks the object up.
 - **Segments** check that their arena is open (an epoch compare) and their
   bounds; release builds may drop the checks.
@@ -94,6 +95,59 @@ What it needs from the compiler:
   checked for the runtime already).
 - **GC references inside structs**, and struct locals captured by
   closures.
+
+## Struct values in generic storage
+
+A struct value stored where the type is not the struct is boxed: 32 B
+for three Floats on every store ([hxmc.md](../hxmc.md#where-struct-values-are-boxed)).
+Two cases are common enough in numeric code to remove.
+
+**`Array<S>` storing values.** Structs hold no GC references, so their
+elements can live in storage without references: a new element kind,
+`AK_STRUCT`, whose storage is a byte NativeArray of `n * size` bytes, the
+struct's type index kept in the array's kind word (beside the kind) for
+the runtime.
+
+- The lowering of an `Array<S>` (S known): `a[i]` is the address
+  `data + i * size` (a read copies out, as a struct field's does; `a[i].x
+  = 1` can then write in place), `a[i] = v` and `push` copy in, growth as
+  for the other kinds (`hx_arr_grow` with the element size).
+- The runtime's natives over any kind (`Arr`, `MemRepr`: copy, concat,
+  slice, splice, reverse, `arrRotate` for sort, insert, resize) already go
+  through `elemSize`; it learns the struct's size. `indexOf` and `==`
+  compare field by field; `Std.string` and `join` box each element to
+  print it.
+- Seen as `Array<Dynamic>` or through a type parameter: a read boxes a copy
+  (the type index gives the box's type); a store of a value that is not an
+  `S` converts the storage to references (boxes), as an Int array takes a
+  Float today.
+- `[for ...]` literals and `NativeArray.literal` make the kind directly;
+  `Array<Null<S>>` stays boxed. WasmGC keeps boxes (a struct value is an
+  object there).
+- Cost: a kind in every generic array path of the runtime, the lowering of
+  element access, the corpus' kind conversions; the port is unaffected
+  (it has no struct values).
+
+**`Null<S>` as a nullable address.** A struct value is already the address
+of its memory; `Null<S>` can be that address or 0, so an optional
+argument `?s:S` and a `Null<S>` result need no box:
+
+- An argument: the caller passes the address of its copy, or 0 for `null`
+  or a missing argument (the defaults' entry, `__dflt`, likewise). The
+  callee copies it into its frame when it writes it.
+- A result: the caller passes the sret memory as for `S`; the callee
+  returns that address, or 0. A `Null<S>` local is a frame slot and an
+  address (0 or the slot).
+- Boxing moves to where a reference is really needed: `Null<S>` to
+  `Dynamic` boxes a non-zero address; `Dynamic` to `Null<S>` copies the
+  box's struct into a frame slot (a box can move: its address is never
+  kept).
+- To change: `Lower.ty` of `Null<S>`, call and return lowering, the closure
+  adapters and dynamic calls between `Null<S>` and `Dynamic` signatures,
+  interface and override signatures that mix them, and the Mir
+  interpreter's calls. One representation covers both arguments and
+  results; a presence flag beside a copied value would cost a second
+  argument and a second result register for the same.
 
 ## Value enums
 
