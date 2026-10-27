@@ -323,8 +323,18 @@ class WinNet {
 	}
 
 	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a socket closed while waiting)
-	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
+	// WSAPoll waits for sockets only, and what it does with another handle
+	// differs (wine fails with WSAENOTSOCK, Windows does not), so each entry
+	// is asked first (getsockopt SO_TYPE): one that is not a socket fails as
+	// WSAENOTSOCK does (ENOTSOCK, 128)
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
+		for (i in 0...n)
+			if (fds[i] >= 0 && !isSocket(fds[i])) {
+				setLast(128);
+				return -1;
+			}
 		return NetCore.poll(fds, events, revents, n, timeout);
+	}
 
 	// the thread's buffer for poll, at least bytes long (kept, not freed
 	// when the thread ends)
@@ -380,11 +390,11 @@ class WinNet {
 	@:hxmc.unsafe public static function inProgress():Bool
 		return lastErrno() == EWOULDBLOCK || lastErrno() == EINPROGRESS || lastErrno() == EALREADY;
 
-	// whether fd is a socket (SO_TYPE: WSAENOTSOCK otherwise)
+	// whether fd is a socket: getsockopt SO_TYPE succeeds
 	@:hxmc.unsafe static function isSocket(fd:Int):Bool {
 		var t = Mem.stack(8), n = Mem.stack(8);
 		Mem.setI32(n, 0, 4);
-		return Winsock.getsockopt(sock(fd), SOL_SOCKET, 0x1008, t, n) == 0 || Winsock.WSAGetLastError() != 10038; // SO_TYPE
+		return Winsock.getsockopt(sock(fd), SOL_SOCKET, 0x1008, t, n) == 0; // SO_TYPE
 	}
 
 	// SO_ERROR as an errno, which reading clears (0: none); -1 when getsockopt fails

@@ -23,10 +23,16 @@ class NetPollFds {
 		out.close();
 		sys.FileSystem.deleteFile(path);
 		Sys.println("file: " + file);
+		// (Windows: checked by hxmc before WSAPoll, whose answer differs
+		// between Windows and wine; what was got goes to stderr)
 		var raw = try {
-			Poll.wait([0], [Poll.IN], [0], 1, 0);
+			var r = Poll.wait([0], [Poll.IN], [0], 1, 0);
+			if (windows) Sys.stderr().writeString("NetPollFds: wait on descriptor 0 returned " + r + "\n");
 			!windows;
-		} catch (e:haxe.io.Error) windows && socketsOnly(e);
+		} catch (e:haxe.io.Error) {
+			if (!windows || !socketsOnly(e)) Sys.stderr().writeString("NetPollFds: " + e + "\n");
+			windows && socketsOnly(e);
+		}
 		Sys.println("a descriptor that is not a socket: " + raw);
 		if (windows) {
 			Sys.println("2 [0,4]\n1 1\ngot x\ntrue\nCustom(Poll.inputFd: the stream is closed)");

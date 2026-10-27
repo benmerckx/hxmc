@@ -64,6 +64,8 @@ extern class NetCore {
 	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
 		var size = Mem.os() == 2 ? 16 : 8, ev = Mem.os() == 2 ? 8 : 4;
 		var p = Mem.os() == 2 ? WinNet.pollBuffer((size + 4) * n) : PosixNet.pollBuffer((size + 4) * n);
+		// (Windows: a negative entry, a closed socket's -1, is never ready, as
+		// POSIX poll ignores it)
 		for (i in 0...n) {
 			var e = events[i];
 			if (Mem.os() == 2) {
@@ -78,20 +80,11 @@ extern class NetCore {
 			r = Os.poll(p, n, 0);
 			err = Os.errno();
 		}
-		// Windows: WSAPoll reports a handle that is not a socket as POLLNVAL
-		// (wine fails with WSAENOTSOCK): asked with getsockopt, it fails as
-		// WSAENOTSOCK does (ENOTSOCK, 128); a negative entry is never ready, as
-		// POSIX poll ignores it
 		if (r >= 0)
 			for (i in 0...n) {
 				var e = Mem.getU16(p, size * i + ev + 2);
 				if (Mem.os() == 2) {
 					if (fds[i] < 0) e = 0;
-					else if ((e & 4) != 0 && !WinNet.isSocket(fds[i])) {
-						r = -1;
-						err = 128;
-						break;
-					}
 					e = ((e & 0x100) != 0 ? 1 : 0) | ((e & 0x200) != 0 ? 2 : 0) | ((e & 0x10) != 0 ? 4 : 0) | ((e & 1) != 0 ? 8 : 0) | ((e & 2) != 0 ? 16 : 0) | ((e & 4) != 0 ? 32 : 0);
 				}
 				revents[i] = e;
