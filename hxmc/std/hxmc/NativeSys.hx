@@ -189,7 +189,20 @@ class NativeSys {
 	public static inline function processWait(pid:Int, block:Bool):Int
 		return #if (hxmc.wasm_gc) GcSys.processWait(pid, block) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else Mem.os() == 2 ? WinSys.processWait(pid, block) : PosixSys.processWait(pid, block) #end;
 
+	// SIGKILL (Windows: TerminateProcess with exit code 0, as upstream's Unix.kill)
 	public static inline function processKill(pid:Int):Void {
 		#if (hxmc.wasm_gc) GcSys.processKill(pid); #elseif (hxmc.target == "wasm32-wasi") WasiSys.processKill(pid); #else if (Mem.os() == 2) WinSys.processKill(pid) else PosixSys.processKill(pid); #end
 	}
+
+	// signals for processSignal (the same numbers on Linux and macOS)
+	public static inline var SIGINT = 2;
+	public static inline var SIGKILL = 9;
+	public static inline var SIGTERM = 15;
+
+	// sends signal sig to a process this process started; false when there is
+	// none (reaped already). Windows: any signal is TerminateProcess with exit
+	// code 128 + sig, the code a POSIX process killed by it reports (SIGINT
+	// included: a console's Ctrl+C reaches a whole console, not one process)
+	public static inline function processSignal(pid:Int, sig:Int):Bool
+		return #if (hxmc.wasm_gc) GcSys.processSignal(pid, sig) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processSignal(pid, sig) #else Mem.os() == 2 ? WinSys.processSignal(pid, sig) : PosixSys.processSignal(pid, sig) #end;
 }

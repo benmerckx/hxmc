@@ -447,4 +447,7 @@ class WasiSys {
 
 	public static function processKill(pid:Int):Void
 		unsupported("sys.io.Process");
+
+	public static function processSignal(pid:Int, sig:Int):Bool
+		return unsupported("sys.io.Process");
 }

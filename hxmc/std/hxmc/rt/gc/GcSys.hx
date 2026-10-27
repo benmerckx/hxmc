@@ -165,5 +165,8 @@ class GcSys {
 		return W.fileIo(7, pid, null, block ? 1 : 0, 0);
 
 	public static function processKill(pid:Int):Void
-		W.fileIo(8, pid, null, 0, 0);
+		W.fileIo(8, pid, null, 9, 0);
+
+	public static function processSignal(pid:Int, sig:Int):Bool
+		return W.fileIo(8, pid, null, sig, 0) > 0;
 }

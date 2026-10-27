@@ -616,4 +616,7 @@ class PosixSys {
 
 	@:hxmc.unsafe public static function processKill(pid:Int):Void
 		Posix.kill(pid, 9);
+
+	@:hxmc.unsafe public static function processSignal(pid:Int, sig:Int):Bool
+		return pid > 0 && Posix.kill(pid, sig) == 0;
 }

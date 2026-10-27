@@ -827,11 +827,18 @@ class WinSys {
 	}
 
 	// Unix.kill pid Sys.sigkill: TerminateProcess with exit code 0
-	@:hxmc.unsafe public static function processKill(pid:Int):Void {
+	@:hxmc.unsafe public static function processKill(pid:Int):Void
+		terminate(pid, 0);
+
+	// NativeSys.processSignal: any signal ends the process, with 128 + sig
+	@:hxmc.unsafe public static function processSignal(pid:Int, sig:Int):Bool
+		return terminate(pid, 128 + sig);
+
+	@:hxmc.unsafe static function terminate(pid:Int, code:Int):Bool {
 		var h = procHandle(pid);
-		if (!h.isNull()) {
-			Win32.TerminateProcess(h, 0);
-			Win32.CloseHandle(h);
-		}
+		if (h.isNull()) return false;
+		var ok = Win32.TerminateProcess(h, code) != 0;
+		Win32.CloseHandle(h);
+		return ok;
 	}
 }

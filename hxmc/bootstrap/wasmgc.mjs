@@ -181,8 +181,8 @@ parentPort.on("message", m => {
 			p.waiter = true;
 			return;
 		case "kill":
-			if (p && p.child && p.code === null) p.child.kill("SIGKILL");
-			return reply(0);
+			// (1: the signal was sent)
+			return reply(p && p.child && p.code === null && p.child.kill(m.sig) ? 1 : 0);
 	}
 });
 `;
@@ -349,7 +349,7 @@ const hxmc = {
 	// GcSys's descriptors: 0 open (x the path, a the mode: 0 read, 1 write, 2
 	// append, 3 update), 1 read and 2 write (x the bytes, at a, b of them), 3
 	// close, 4 seek (to a, b: whence), 5 tell; processes: 6 run (the pid), 7 wait
-	// (fd the pid, a: block; -1 while it runs), 8 kill; -1 on errors
+	// (fd the pid, a: block; -1 while it runs), 8 kill (a: the signal; 1 sent); -1 on errors
 	fileIo(op, fd, x, a, b) {
 		if (fd >= PROC_FD && op >= 1 && op <= 3) return procIo(op, fd, x, a, b);
 		try {
@@ -427,7 +427,7 @@ const hxmc = {
 				case 7:
 					return procCall({ op: "wait", pid: fd, block: a !== 0 });
 				case 8:
-					return procCall({ op: "kill", pid: fd });
+					return procCall({ op: "kill", pid: fd, sig: a });
 				default:
 					return -1;
 			}
