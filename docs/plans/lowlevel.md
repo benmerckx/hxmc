@@ -48,7 +48,8 @@ h.release();
 
 - **`pin`** keeps a GC object in place for a scoped call. A copying
   collector needs a non-moving space for it. `@:hxmc.fast` calls cover the
-  short cases meanwhile.
+  short cases meanwhile; I/O that outlives a call uses off-heap buffers
+  (`IoBuffer`), and pinning is rejected for it ([io.md](io.md)).
 - **`Handle`** gives C a stable token; `Handle.get` looks the object up.
 - **Segments** check that their arena is open (an epoch compare) and their
   bounds; release builds may drop the checks.
