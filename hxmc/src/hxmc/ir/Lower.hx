@@ -1201,6 +1201,7 @@ class Lower implements LowerQueries {
 		if (c.clMeta.length > 0 && isUnsafe(c.clMeta)) fi.declNoGc = true;
 		if (cf.cfMeta.length == 0) return;
 		if (isUnsafe(cf.cfMeta)) fi.declNoGc = true;
+		fi.declBlocking = hasMeta(":hxmc.blocking", cf.cfMeta);
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);

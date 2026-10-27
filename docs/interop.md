@@ -60,6 +60,18 @@ threads' collections wait for it.
   `write`, `poll`, `nanosleep` and `Sleep`: the call site enters and leaves
   the safe region, evaluating the arguments before it. It takes no GC
   references.
+- **`@:hxmc.blocking` on an `@:hxmc.unsafe` static Haxe function**: its
+  calls run in a safe region, for GC-free jobs (a loop over native memory)
+  that would otherwise stall other threads' collections until their next
+  GC point. The compiler checks the body by construction: `@:hxmc.unsafe`
+  (no allocation, no GC point), no value of a GC type anywhere
+  (parameters, result, locals, expressions; string literals are static
+  and allowed), and calls only of `@:hxmc.blocking` functions and of C or
+  runtime functions that are no GC point (`@:hxmc.fast` or
+  `@:hxmc.blocking` externs, `Mem`, `Atomic`). Calls between such
+  functions enter no new region. A call through a closure, or of an
+  `inline` one (Haxe inlines the call away), runs outside a region: still
+  correct, only not safe for collections.
 - **`hxmc.unsafe.Blocking.enter()` and `leave(region)`** enter and leave
   it by hand, around fast calls in a loop or a long loop without a GC
   point. Between them: no allocation, no heap object, no address of one;
@@ -81,10 +93,17 @@ Blocking.leave(region);
 @:hxmc.c extern class Io {
   @:hxmc.blocking static function read(fd:Int, p:Ptr, n:Int64):Int64;
 }
+
+@:hxmc.unsafe @:hxmc.blocking static function checksum(p:Ptr<UInt8>, n:Int):Int {
+  var s = 0;
+  for (i in 0...n) s = (s * 31 + p[i]) & 0xFFFFFF;
+  return s;
+}
 ```
 
 `BlockingCalls` checks it on the native targets: two threads wait on empty
-pipes while the main thread collects. `NestedRegions` checks the nesting.
+pipes while the main thread collects. `NestedRegions` checks the nesting,
+`BlockingFunctions` the Haxe functions, `reject/Blocking*` the rule.
 
 ### System calls
 

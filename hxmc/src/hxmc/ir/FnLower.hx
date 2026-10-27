@@ -2301,6 +2301,9 @@ class FnLower {
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 0, fn);
+				// (@:hxmc.blocking: in a safe region, unless called from one)
+				if (fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3)
+					return inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt);
 				return callFn(fn, xs, rt);
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)):
 				var impl = l.lookupMethod(c, cf.cfName);
@@ -2643,7 +2646,7 @@ class FnLower {
 		var ats = s.args.map(a -> ty(a.type));
 		var xs = args(cargs, ats, null);
 		// @:hxmc.blocking: the call in a safe region entered here
-		if (CInterop.blockingCall(c, cf) && Lower.targetOs != 3)
+		if (CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3)
 			return inRegion(xs, ats, xs -> ECallHost(sym, xs, t), t, tyOf(e));
 		if (t.match(TStruct(_))) {
 			// (the result's slot in this frame, MirBuild.cStructRet)
