@@ -184,6 +184,12 @@ class Corpus {
 			if (wasm) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
 			var r = exec(cmd.concat(defines));
 			if (r.code != 0) return {name: c.name, status: "hxb-fail", detail: tail(r.out + r.err, 1500)};
+			// (a type parameter the HXB writer finds unbound: an expression of hxmc's std
+			// or the case whose type left its scope, the archive keeping a type of nothing)
+			if ((r.out + r.err).indexOf("WUnboundTypeParameter") >= 0) {
+				FileSystem.deleteFile(hxb);
+				return {name: c.name, status: "hxb-warning", detail: tail(r.out + r.err, 1500)};
+			}
 		}
 		var expected = EXPECTED + "/" + c.name + ".txt";
 		if (!FileSystem.exists(expected) && !bless)
