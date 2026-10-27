@@ -91,9 +91,9 @@ abstract Arena(Ptr) {
 	public inline function make<T>(c:Class<T>):Ptr<T>
 		return alloc(Struct.sizeOf(c), Struct.alignOf(c) > 16 ? 16 : Struct.alignOf(c));
 
-	// n zeroed instances of the @:hxmc.struct class c
+	// n zeroed instances of the @:hxmc.struct class c (the Ptr<T> spelled out: the implicit one leaves slice a type HXB finds unbound)
 	public inline function makeArray<T>(c:Class<T>, n:Int):Ptr<T>
-		return alloc(Struct.sizeOf(c) * n, Struct.alignOf(c) > 16 ? 16 : Struct.alignOf(c));
+		return (alloc(Struct.sizeOf(c) * n, Struct.alignOf(c) > 16 ? 16 : Struct.alignOf(c)) : Ptr<T>);
 
 	// the same as a bounds-checked Slice
 	public inline function slice<T>(c:Class<T>, n:Int):Slice<T>
