@@ -675,6 +675,10 @@ class PosixSys {
 	@:hxmc.unsafe public static function processKill(pid:Int):Void
 		Posix.kill(pid, 9);
 
+	// SYS_pidfd_open: 434 on x86-64 and arm64 (the C libraries have no wrapper before glibc 2.36)
+	@:hxmc.unsafe public static function processExitFd(pid:Int):Int
+		return mac() || pid <= 0 ? -1 : Posix.syscall(434, pid, 0).toInt();
+
 	@:hxmc.unsafe public static function processSignal(pid:Int, sig:Int):Bool
 		return pid > 0 && Posix.kill(pid, sig) == 0;
 }

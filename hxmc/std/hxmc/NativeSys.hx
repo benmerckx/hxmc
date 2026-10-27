@@ -211,6 +211,15 @@ class NativeSys {
 		#if (hxmc.wasm_gc) GcSys.processKill(pid); #elseif (hxmc.target == "wasm32-wasi") WasiSys.processKill(pid); #else if (Mem.os() == 2) WinSys.processKill(pid) else PosixSys.processKill(pid); #end
 	}
 
+	// a descriptor that becomes readable when the process exits, to poll with
+	// others instead of calling processWait(pid, false) every round (the
+	// process is still reaped by processWait; close it with fileClose):
+	// Linux's pidfd (pidfd_open, kernel 5.3), close-on-exec. -1 elsewhere
+	// (macOS: kqueue's EVFILT_PROC; Windows: the process handle; neither is
+	// exposed yet), on an older kernel, or when the process is gone
+	public static inline function processExitFd(pid:Int):Int
+		return #if (hxmc.wasm_gc || hxmc.target == "wasm32-wasi") -1 #else Mem.os() == 0 ? PosixSys.processExitFd(pid) : -1 #end;
+
 	// signals for processSignal (the same numbers on Linux and macOS)
 	public static inline var SIGINT = 2;
 	public static inline var SIGKILL = 9;
