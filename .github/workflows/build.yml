@@ -1223,7 +1223,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with: {name: site, path: site-dist}
       - name: The website in Chromium, Firefox and WebKit
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           set -ex
           npm install --no-save --silent playwright@1.56.1
@@ -1232,11 +1232,14 @@ jobs:
           # and a try waits for the dpkg lock an earlier one still holds
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "300";\n' | sudo tee /etc/apt/apt.conf.d/99ci-timeouts > /dev/null
           retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
-          # in two parts, so a log shows which one stalls: the system
-          # packages (apt, under the timeouts above), then the browsers'
-          # downloads, which stalled with no output too: each try of those
-          # ends after 5 minutes (it needs well under 1) and the next starts
-          retry npx playwright install-deps chromium firefox webkit > /dev/null
+          # in two parts: the system packages, then the browsers' downloads.
+          # The packages stalled with no output until the step's limit even
+          # with apt's timeouts: apt's man-db trigger, slow on these runners,
+          # is off, each try ends after 6 minutes (one needs about 1), and a
+          # failed try prints its log's end, so a stall shows where it was
+          sudo rm -f /var/lib/man-db/auto-update
+          deps() { timeout -k 10 360 npx playwright install-deps chromium firefox webkit > deps.log 2>&1 || { tail -n 40 deps.log; return 1; }; }
+          retry deps
           retry timeout -k 10 300 npx playwright install chromium firefox webkit > /dev/null
           node site/tools/browser-test.mjs site-dist chromium firefox webkit
 
