@@ -15,7 +15,6 @@ code generator and linkers.
 typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, Opt, Frames)--> --(MemLower)--> Mir (SSA) --(Fold, DivConst)-->
     --(x64|a64 Isel)--> LIR --(Regalloc, Emit)--> Obj (per module, cached) | --(wasm/WasmGen)--> wasm
     --(DataGen: tables, strings)--> Obj --(Link: ELF | LinkPE | LinkMachO | LinkWasm)--> executable
--D hxmc.wasm-gc: hxmc IR --(ir.Reach)--> --(MirBuild.gc)--> object-level Mir --(Inline, Escape, Opt)--> --(wasmgc.MirGen, GcModule)--> WasmGC module
 ```
 
 | File (`hxmc/src/hxmc/`) | |
@@ -34,7 +33,6 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `Unwind.hx`, `Dwarf.hx`, `StackTable.hx` | unwind tables, DWARF lines, the call-stack table ([Debugging](#debugging)) |
 | `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers, the runtime-object builder, the program's data |
 | `wasm/` | wasm32-wasi: structured code from Mir, the linker, exception handling |
-| `wasmgc/` | `-D hxmc.wasm-gc` ([WasmGC](#wasmgc)) |
 | `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI; how each C ABI passes structs |
 | `MkStd.hx` | merges hxmc's std with the Eval originals into `bin/hxmc/std` |
 | `StdDce.hx` | DCE of hxmc's std overrides as of the std ([Reachability](#reachability)) |
@@ -82,9 +80,7 @@ What is the same across targets is written once and inlined:
   forwarding, pointer maps).
 - `SysCore.hx` for PosixSys, WinSys and WasiSys; `NetCore.hx` for PosixNet
   and WinNet. `Mem.os()` picks the system and folds at compile time.
-- `Str`, `Arr`, `Bytes`, `Date` (`@:hxmc.anyHeap`): written over
-  `hxmc.rt.Repr`, which is `MemRepr` in linear memory and `GcRepr` on
-  WasmGC.
+- `Str`, `Arr`, `Bytes`, `Date`: written over `hxmc.rt.Repr` (`MemRepr`).
 
 ### Object layout
 
@@ -192,7 +188,7 @@ reference's `--interp`.
 
 Generated code calls a fixed set of runtime functions by name, and natively
 reads some runtime variables by name. `ir/RuntimeSymbols.hx` lists them
-per family of targets (native, wasm32, WasmGC), with where generated code
+per family of targets (native, wasm32), with where generated code
 refers to each.
 
 A program gets the runtime through `hxmc.rt.Runtime`, whose imports differ
@@ -271,7 +267,6 @@ reader sees both. `Reflect.fields`, `haxe.Json` and `haxe.Serializer` list
 the own fields by name, then the added ones in order. `Std.string` prints
 `{ a : 1, b : 2 }`. `Reflect.deleteField` removes added fields only; for an
 own field it returns false, because the layout and type index are fixed.
-WasmGC keeps added fields in a `GcFields` with the same behaviour.
 `AnonFields` checks this against the reference's `--interp`.
 
 ## Native arrays
@@ -296,8 +291,6 @@ lowers to plain loads and stores; references keep the write barrier.
 - **Bounds**: `-D hxmc.native-array-outofbounds` decides at code
   generation (`Lower.bounds`). The test is IR, so the optimizer drops a test
   a dominating one decides. The std's own loops use `unsafeGet`/`unsafeSet`.
-- **WasmGC**: the engine's array of the element kind; the engine checks
-  every index, so an untested out-of-bounds access traps.
 
 ## Where struct values are boxed
 
@@ -389,7 +382,7 @@ case `CoreDumpSize` checks it.
 WebAssembly has no faults to catch, so `-D hxmc.null-checks` (on by default
 for `wasm32-wasi`) tests each dereference (`MirBuild.nullCheck`,
 `MemLower.nullTest`). The tests share one block per try that calls
-`rt_null_access`. WasmGC calls a per-type helper `nn_<t>`. A test is
+`rt_null_access`. A test is
 dropped where the value is known non-null: data at a symbol, an object made
 here, a value tested on every path. The cost is about 5% in size and
 instructions.
@@ -413,8 +406,7 @@ current with and checks it first. After minor collections only the keys
 that were young when added can have moved; the map lists those and
 reindexes them. After a major collection every entry is reindexed. A map
 shared by reading threads is updated by the first that finds it stale,
-under `hxmc_idhash_lock`. WasmGC has no addresses and hashes with the
-header's identity hash instead. `Map<SomeEnum, V>` is upstream's
+under `hxmc_idhash_lock`. `Map<SomeEnum, V>` is upstream's
 `EnumValueMap`, not an identity map. `ObjectMapGc` checks maps across
 collections; `make bench-micro WHICH=maps` measures them.
 
@@ -446,7 +438,7 @@ the defines it read (its file's conditions, its macros'
 `Context.defined`, and what the compiler read while typing it). A build
 restores the variant whose reads match, so a define only some modules read
 leaves the others restored. Up to four variants per module are kept, so
-builds that alternate (native, wasm, WasmGC) each restore their own.
+builds that alternate (native, wasm) each restore their own.
 
 **Validation** is lazy, for the modules a build loads. A file is compared
 by content hash where its date or size changed; its path must still
@@ -901,8 +893,7 @@ which defines `static`, `sys`, `utf16`, `target.unicode` and their
 `target.threaded` on the native targets and `target.atomics` everywhere,
 once the target is initialized and before init macros run. They are
 defines only. wasm32-wasi is not `target.threaded`: creating a thread
-throws there (`rt/wasm/Threads.hx`). On WasmGC a created thread runs when
-another waits for it (`GcThreads`).
+throws there (`rt/wasm/Threads.hx`).
 
 ### Android
 
@@ -997,46 +988,6 @@ object that does not fit in the old space's region even after a major
 collection exits with "out of memory: an object does not fit in the old
 space's region (RT_REGION_MB)".
 
-#### WasmGC
-
-With `-D hxmc.wasm-gc` the program becomes a WasmGC module
-(`hxmc/src/hxmc/wasmgc/`): values live in the engine's collector, with no
-shadow stack or barriers. Each function goes through the native
-pipeline's object level: `MirBuild.gc` (no roots; fields by index; what is
-memory-level natively stays the IR's own as `IrNode` operations; a `try`
-is a `Try` terminator and `Catch`), `Inline`, `Inline.devirtualize`,
-`Escape` and `Opt`. Then `MirGen` writes structured control flow, each
-value a local of its wasm type, using `FuncGen` for the IR's expressions.
-Reachability runs twice: before building the Mir and over what the Mir
-still calls (`Uses.summary`).
-
-- **Types**: one recursion group, so the class hierarchy is wasm subtyping
-  (`ref.test`; leaf classes final). A reference has the wasm type its IR
-  type proves (`GcModule.keyOf`), else `eqref` cast where used.
-- **Calls**: methods have typed signatures; virtual and interface calls go
-  through a funcref table by class and selector; closures are structs
-  whose first field is a typed function reference.
-- **Runtime**: `Str`, `Arr`, `Bytes`, `Date` over `GcRepr`; the rest in
-  `hxmc/std/hxmc/rt/gc` (Dynamic, reflection over `Meta`'s tables, the
-  system over the host). Math's transcendental functions and float
-  formatting are the host's (`hxmc/bootstrap/wasmgc.mjs` under node).
-- **System** (`GcSys`): files, directories, the shell, processes (run by a
-  worker of the host), no sockets, no `Sys.getChar`.
-- **Threads**: one. A created thread runs to its end when a running one
-  waits on something nothing else would end, so fork-join works.
-- **Hybrid module**: a program that uses `hxmc.unsafe` or C functions also
-  gets a small linear memory (`GcModule.memory`) for `Mem`, `Ptr`, frame
-  areas, malloc and the imports, exported as `memory`. A Bytes crosses to C
-  through `BytesPtr`, which copies. A `@:hxmc.struct` class with only final
-  fields is an object here.
-
-A runtime function not covered yet fails the build with its name;
-`HXMC_GC_SURVEY=1` lists every such construct (`=2` also writes the module,
-those functions trapping). The port builds as WasmGC and passes the
-conformance lanes ([testing.md](testing.md#the-port-as-a-wasmgc-module)).
-Why it is not the browser default yet:
-[plans/targets.md](plans/targets.md#wasmgc).
-
 ## Debugging
 
 **Frame pointers.** Every function keeps a frame record (x86-64: `push
@@ -1122,7 +1073,6 @@ For the tool and the compiler (build time):
 | `HXMC_JOBS=<n>` | parallel module compilations |
 | `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories (the npm launcher passes the installed platform packages first), or one object |
 | `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
-| `HXMC_GC_SURVEY=1` | WasmGC: list unsupported constructs |
 | `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
 
 For compiled programs (run time):

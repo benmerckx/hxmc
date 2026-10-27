@@ -66,16 +66,8 @@ class CInterop {
 		FnLower.C_VARIADIC = new Map();
 	}
 
-	// (-D hxmc.wasm-gc: a struct whose fields are all final is an object, there
-	// being no copy to tell from it; the others live in the linear memory)
 	public static function isStruct(c:TClass):Bool
-		return Lower.hasMeta(":hxmc.struct", c.clMeta) && !(Lower.wasmGc && immutable(c));
-
-	static function immutable(c:TClass):Bool {
-		for (cf in c.clOrderedFields)
-			if (cf.cfKind.match(Var(_)) && !cf.hasClassFieldFlag(CfFinal)) return false;
-		return true;
-	}
+		return Lower.hasMeta(":hxmc.struct", c.clMeta);
 
 	// Haxe's inline constructors (a filter) turn an object of a class with an
 	// inline constructor into locals shared by every variable it is assigned

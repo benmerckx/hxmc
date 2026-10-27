@@ -122,8 +122,7 @@ the runtime.
   `S` converts the storage to references (boxes), as an Int array takes a
   Float today.
 - `[for ...]` literals and `NativeArray.literal` make the kind directly;
-  `Array<Null<S>>` stays boxed. WasmGC keeps boxes (a struct value is an
-  object there).
+  `Array<Null<S>>` stays boxed.
 - Cost: a kind in every generic array path of the runtime, the lowering of
   element access, the corpus' kind conversions; the port is unaffected
   (it has no struct values).

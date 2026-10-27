@@ -20,15 +20,11 @@ abstract MapSlots<T>(hxmc.NativeArray<T>) {
 	}
 }
 
-#if hxmc.wasm_gc
-typedef RefSlots = MapSlots<Dynamic>;
-#else
 // The maps' keys and values: storage of references, as MapSlots<Dynamic>,
 // but typed with a class (never instantiated), so that its accesses are a
 // load or a store (with the write barrier): a Dynamic element's test the
 // storage's kind first, and their slow path (another kind: a conversion)
-// would be a GC point in every lookup. WasmGC keeps MapSlots<Dynamic> (a cast
-// to the class would be checked there).
+// would be a GC point in every lookup.
 abstract RefSlots(hxmc.NativeArray<RefSlot>) {
 	public inline function new(n:Int) {
 		this = new hxmc.NativeArray<RefSlot>(n);
@@ -44,4 +40,3 @@ abstract RefSlots(hxmc.NativeArray<RefSlot>) {
 }
 
 private class RefSlot {}
-#end

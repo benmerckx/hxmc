@@ -31,9 +31,6 @@ class Options {
 	// -D hxmc.wasm-eh=legacy: wasm32-wasi with the legacy exception-handling instructions
 	// (try/catch_all/rethrow) for engines without exnref (default: exnref)
 	public var wasmLegacyEh = false;
-	// -D hxmc.wasm-gc: wasm32-wasi as a WasmGC module (objects in the engine's
-	// collector: hxmc.wasmgc), an experiment to compare with linear memory
-	public var wasmGc = false;
 	// -D hxmc.native-array-outofbounds=throws|silent: NativeArray (Vector)
 	// accesses out of bounds throw, or read the default and write nothing
 	// (default: not tested; hxmc.ir.Lower.bounds)
@@ -167,7 +164,8 @@ class Options {
 			case _: throw "hxmc: -D hxmc.wasm-eh=" + eh + ": exnref or legacy";
 		}
 		o.libc = def("hxmc.libc");
-		o.wasmGc = def("hxmc.wasm_gc") != null;
+		// (the WasmGC back end is gone, issue #80: an error rather than a linear-memory module)
+		if (def("hxmc.wasm_gc") != null) throw "hxmc: -D hxmc.wasm-gc was removed (wasm32-wasi modules use linear memory and hxmc's collector)";
 		var oob = def("hxmc.native_array_outofbounds"); // (-D turns the dashes into underscores)
 		if (oob != null) o.bounds = switch oob {
 			case "throws": hxmc.ir.Lower.BOUNDS_THROWS;
@@ -181,7 +179,6 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
-		if (o.wasmGc && o.target != "wasm32-wasi") throw "hxmc: -D hxmc.wasm-gc: -D hxmc.target=wasm32-wasi";
 		var fp = def("hxmc.frame_pointers"), fpEnv = env("HXMC_FRAME_POINTERS");
 		o.framePointers = fpEnv != null && fpEnv != "" ? fpEnv != "0" : def("hxmc.no_frame_pointers") != null ? false : fp == null || fp != "0";
 		o.debugLines = def("debug") != null || def("hxmc.lines") != null;

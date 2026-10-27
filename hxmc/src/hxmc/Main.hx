@@ -147,7 +147,6 @@ class Main {
 		var abi = Abi.get(opts.target);
 		abi.setLibc(opts.libc);
 		hxmc.ir.Lower.targetOs = abi.osCode();
-		hxmc.ir.Lower.wasmGc = opts.wasmGc;
 		// (genjs's order: `Hashtbl.fold (fun name data acc -> (name,data) :: acc) com.resources []`)
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		hxmc.ir.Lower.bounds = opts.bounds;
@@ -163,7 +162,7 @@ class Main {
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
 		// (a compiler with Mir macros and --run, for a native target: Mem.mirHost)
-		hxmc.ir.Lower.mirHost = !abi.wasm && !opts.wasmGc && Lambda.exists(com.types, t -> switch t {
+		hxmc.ir.Lower.mirHost = !abi.wasm && Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): c.clPath.pack.join(".") == "hxmc.interp" && c.clPath.name == "MirMacros";
 			case _: false;
 		}) ? 1 : 0;
@@ -176,8 +175,7 @@ class Main {
 		hxmc.ir.Reach.stacksAlways = opts.stacksAlways;
 		// the runtime's symbols generated code may call by name, defined by the
 		// modules hxmc.rt.Runtime imports for the target, whatever this program calls
-		hxmc.ir.RuntimeSymbols.check(com, opts.wasmGc ? hxmc.ir.RuntimeSymbols.WASMGC : abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE,
-			abi.name + (opts.wasmGc ? " with -D hxmc.wasm-gc" : ""));
+		hxmc.ir.RuntimeSymbols.check(com, abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE, abi.name);
 		var t0 = haxe.Timer.stamp();
 		// resident: bodies of the fields the server kept are reused (LowerCache)
 		var useCache = Driver.resident && Sys.getEnv("HXMC_LOWER_CACHE") != "0";
@@ -188,10 +186,6 @@ class Main {
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
 		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
-		if (opts.wasmGc) {
-			hxmc.wasmgc.GcGen.run(prog, out, opts);
-			return;
-		}
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);

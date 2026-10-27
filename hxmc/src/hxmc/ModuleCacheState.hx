@@ -195,7 +195,7 @@ class ModuleCacheState {
 	// newest (checked dirty). The reads of a module are its own (its file's
 	// conditions, its macros'): one whose typing depends on defines through a
 	// module it depends on (an inline function of a module whose file reads
-	// -D hxmc.wasm-gc, inlined; the fields a build macro makes for the
+	// a define, inlined; the fields a build macro makes for the
 	// target) has a variant per build that matches every such build, the one
 	// typed with the build's defines the one whose dependencies are as they
 	// were (the checks decide; reselect for a module a macro defined)

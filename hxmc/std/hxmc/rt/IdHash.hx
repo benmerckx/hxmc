@@ -1,6 +1,5 @@
 package hxmc.rt;
 
-#if !hxmc.wasm_gc
 import hxmc.I64;
 import hxmc.unsafe.Atomic;
 import hxmc.unsafe.Mem;
@@ -66,4 +65,3 @@ class IdHash {
 	}
 	#end
 }
-#end

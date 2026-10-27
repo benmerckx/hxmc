@@ -1,6 +1,6 @@
-// Dates as values (a type index of their own, T_DATE: hxmc.rt.Dyn; the
-// runtime's GcDate, named Date, on WasmGC: GcModule.typeValue, GcDyn,
-// GcNative): printed (trace, Std.string, concatenation, StringBuf, inside
+// Dates as values (a type index of their own, T_DATE: hxmc.rt.Dyn and
+// hxmc.rt.Date):
+// printed (trace, Std.string, concatenation, StringBuf, inside
 // arrays, structures and enum arguments), their class (Type.getClass,
 // getClassName, typeof, resolveClass, Std.isOfType, downcast, casts, catch),
 // equality and Reflect.compare, haxe.Serializer and Unserializer, haxe.Json,

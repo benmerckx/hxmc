@@ -133,7 +133,7 @@ endef
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
 	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
-	bench bench-compile bench-micro measure wasmgc-check wasmgc-bench quick check full clean distclean
+	bench bench-compile bench-micro measure quick check full clean distclean
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -174,8 +174,6 @@ help:
 ##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
 ##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
 ##               JS (hxmc/test/ModuleCacheCheck.hx; PORT=1 adds the port itself)
-##   wasmgc-check  -D hxmc.wasm-gc: hxmc/test/wasmgc's programs and corpus cases as WasmGC modules
-##               under node against the native build's output (hxmc/test/GcCheck.hx)
 ##   dev-check   the dev loop: `hxmc dev` through edits and a compile error, the compilation server's
 ##               builds against fresh ones (hxmc/test/dev)
 ##   mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.run=mir,
@@ -203,7 +201,6 @@ help:
 ##               ObjectMap and StringMap (MAP_BENCH_ARGS)
 ##   measure     peak memory and time of the self-compile (ours, the reference) and of the tool's
 ##               builds (haxe/test/Measure.hx)
-##   wasmgc-bench  wasmgc-check's programs as WasmGC, linear-memory wasm and native: times, peak RSS, sizes
 ##
 ## Site & release
 ##   site        bin/site: the website (site/; LIX_DIR's lix binaries, BENCH_DATA's benchmark history)
@@ -613,12 +610,6 @@ measure: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(PORT_BIN) bin/npm/native/wasm3
 
 quick: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers quick $(CASES)
-
-wasmgc-check: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) GcCheck
-
-wasmgc-bench: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) GcCheck --bench
 
 check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers check $(if $(PORT),--port) $(CASES)

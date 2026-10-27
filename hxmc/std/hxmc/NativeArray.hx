@@ -6,8 +6,7 @@ package hxmc;
 	Bool and `hxmc.Byte` use 8-bit elements (a Byte read as an Int from 0
 	to 255: `haxe.io.BytesData`, which a `haxe.io.Bytes` holds), Int uses 32
 	bits, Float and Int64 use 64 bits, and other types use references
-	(including boxed nullable numbers). With `-D hxmc.wasm-gc`, it is the
-	engine's array of that type.
+	(including boxed nullable numbers).
 	Elements start at zero, false or null. Out of bounds, `-D
 	hxmc.native-array-outofbounds` decides: not tested when not defined,
 	`throws`, `silent` (as haxe.ds.Vector). Casts between storage types are
@@ -51,12 +50,10 @@ package hxmc;
 	public inline function toArray():Array<T> {
 		var result:Array<T> = [];
 		result.resize(length);
-		#if !(hxmc.wasm_gc)
 		// (more than a few elements: blit's memmove into the Array's storage, a
 		// NativeArray of the Array's kind, unless the kinds differ; a few are
 		// copied below, cheaper than the call)
 		if (length > 4 && hxmc.rt.NArray.move(hxmc.rt.NArray.ofArray(result), 0, this, 0, length)) {} else
-		#end
 		for (i in 0...length) result[i] = unsafeGet(i);
 		return result;
 	}
@@ -64,10 +61,8 @@ package hxmc;
 	public static inline function fromArray<T>(array:Array<T>):NativeArray<T> {
 		var n = array.length;
 		var result = new NativeArray<T>(n);
-		#if !(hxmc.wasm_gc)
 		// (as toArray: blit's memmove from the Array's storage)
 		if (n > 4 && hxmc.rt.NArray.move(result, 0, hxmc.rt.NArray.ofArray(array), 0, n)) {} else
-		#end
 		for (i in 0...n) result.unsafeSet(i, array[i]);
 		return result;
 	}
@@ -78,7 +73,7 @@ package hxmc;
 		`-D hxmc.native-array-outofbounds` says.
 	**/
 	public static inline function blit<T>(src:NativeArray<T>, srcPos:Int, dest:NativeArray<T>, destPos:Int, length:Int):Void {
-		#if !(hxmc.wasm_gc || hxmc.native_array_outofbounds)
+		#if !hxmc.native_array_outofbounds
 		// (accesses out of bounds not tested: a few elements copied here,
 		// typed, without the test of the range)
 		if (length <= 4) {
@@ -97,15 +92,10 @@ package hxmc;
 
 	static inline function blitRange<T>(src:NativeArray<T>, srcPos:Int, dest:NativeArray<T>, destPos:Int, length:Int):Void {
 		var inBounds = (srcPos | destPos | length) >= 0 && length <= src.length - srcPos && length <= dest.length - destPos;
-		#if hxmc.wasm_gc
-		// (-D hxmc.wasm-gc: storage of one kind by array.copy, which overlapping ranges take too)
-		if (inBounds && hxmc.rt.gc.W.naCopy(dest, destPos, src, srcPos, length)) {} else
-		#else
 		// (more than a few elements: one memmove by the runtime, the
 		// collector's barrier for references; a few are copied below, typed,
 		// cheaper than the call)
 		if (inBounds && length > 4 && hxmc.rt.NArray.move(dest, destPos, src, srcPos, length)) {} else
-		#end
 		if (src == dest && srcPos < destPos) {
 			var i = length;
 			if (inBounds)

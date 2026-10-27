@@ -8,21 +8,19 @@ import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
 // The Date natives and Math.random (formerly in rt_std.c), written over
-// hxmc.rt.Repr for both runtimes (@:hxmc.anyHeap). A Date holds the
-// milliseconds since the epoch (a double); its calendar fields come from
-// the C library in linear memory (mktime, localtime_r, gmtime_r; the UCRT's
-// _mktime64, _localtime64_s, _gmtime64_s on Windows), whose struct tm
-// starts with nine ints on every target, and from the host's Date under
-// -D hxmc.wasm-gc.
-@:keep @:hxmc.anyHeap
+// hxmc.rt.Repr. A Date holds the milliseconds since the epoch (a double);
+// its calendar fields come from the C library (mktime, localtime_r,
+// gmtime_r; the UCRT's _mktime64, _localtime64_s, _gmtime64_s on Windows),
+// whose struct tm starts with nine ints on every target.
+@:keep
 class Date {
 	static inline function windows():Bool
 		return Mem.os() == 2;
 
-	// toString, for Std.string of a value of any type (hxmc.rt.Dyn.stdString,
-	// hxmc.rt.gc.GcDyn.string): set by `of`, which makes every date (a copy
-	// aside: Reflect.copy), so that a program making none has no calendar code
-	// (natively the C library's time zones)
+	// toString, for Std.string of a value of any type (hxmc.rt.Dyn.stdString):
+	// set by `of`, which makes every date (a copy aside: Reflect.copy), so that
+	// a program making none has no calendar code (natively the C library's
+	// time zones)
 	@:allow(hxmc.rt) static var printer:Null<Dynamic->String>;
 
 	@:allow(hxmc.rt) static function of(ms:Float):Dynamic {
@@ -165,11 +163,9 @@ class Date {
 		return b.toString();
 	}
 
-	#if !(hxmc.wasm_gc)
 	// ---- Math.random: [0, 1) from rand() (the UCRT's has 15 bits: two make 30)
 	@:hxmc.host("Math_random") @:hxmc.unsafe static function random():Float {
 		if (windows()) return ((LibC.rand() << 15) ^ LibC.rand()) / 1073741824.0;
 		return LibC.rand() / 2147483648.0;
 	}
-	#end
 }

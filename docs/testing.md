@@ -82,21 +82,6 @@ Float without converting it, which works around a bug in the reference's
 Eval. The kept cases `exec-<seed>` are hxmc bugs this lane found. CI runs
 each lane on the kept cases and 400 random programs.
 
-### The port as a WasmGC module
-
-The port built with `-D hxmc.wasm-gc` passes the same lanes as natively:
-`Conformance`, `Interp` (with `eval-eventLoop-compile` skipped), `Display`,
-`Haxelib` without `--server`, and `UpstreamTargets`. The server lanes need
-sockets, which it lacks. There is no make target; CI checks the lowering
-with `make wasmgc-check`. To run it:
-
-```sh
-bin/hxmc/hxmc bin/wasmgc-port/haxe.wasm -cp haxe/src -main haxe.Main -D disable-parallelism \
-  -cp bin/hxmc/std --custom-target hxmc -D hxmc.target=wasm32-wasi -D hxmc.wasm-gc
-# a script that runs: node --stack-size=65500 hxmc/bootstrap/wasmgc.mjs bin/wasmgc-port/haxe.wasm "$@"
-make -o <script> test PORT_BIN=<script> LANES="hxb display ..."
-```
-
 ## hxmc's own tests
 
 | Check | Make target | What |
@@ -108,7 +93,6 @@ make -o <script> test PORT_BIN=<script> LANES="hxb display ..."
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
 | `LowerQueriesCheck` | `quick` | each lowering query is covered by the server's reuse of bodies |
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
-| `GcCheck` | `wasmgc-check` | `hxmc/test/wasmgc`'s programs and corpus cases as WasmGC modules against native output |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `ApkCheck` | `android-check` | APKs: the zip and alignment, the manifest, `classes.dex`, the ELF, the v2 signature verified by openssl; `zipalign`, `aapt`, `apksigner`, `dexdump` where installed |
 | `android.sh` | `android-device-check` | AndroidHello on a device or emulator: its line in logcat |
@@ -173,7 +157,7 @@ a release is published only when all of them pass.
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the module cache checks, `make dev-check`, the release binaries and lix for the six targets |
 | `corpus` | yes | the corpus for every target (three jobs), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
-| `crosshost` | yes | `make crosshost` (two jobs; the second also `make wasmgc-check`) |
+| `crosshost` | yes | `make crosshost` (two jobs) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
 | `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
@@ -202,7 +186,6 @@ branch cancels its run; runs on main, `hxmc` and tags always finish.
 | `bench-compile` | the port built by hxmc (native, wasm under node and wasmtime) against the reference, compiling `hello`, `stdlib` and itself to HXB; every archive compared before its times count (`hxmc/test/CompileBench.hx`) |
 | `bench-micro` | `WHICH=arrays`: Array, NativeArray and Vector ([notes](../hxmc/test/bench/README.md)); `WHICH=maps`: ObjectMap and StringMap |
 | `measure` | peak RSS, wall and CPU time of the self-compile (ours and the reference's) and of the tool's builds (`haxe/test/Measure.hx`) |
-| `wasmgc-bench` | `wasmgc-check`'s programs as WasmGC, linear wasm and native |
 
 `.github/workflows/bench.yml` runs them nightly on main (skipped when the
 commit is measured already), on dispatch, and on pushes to main whose

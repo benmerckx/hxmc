@@ -2322,7 +2322,7 @@ class FnLower {
 			// NativeArray.literal([a, b, c]) (VectorTools' `vector(a, b, c)`): one
 			// allocation and the elements stored in order, as an Array literal is
 			// (MirBuild, hxmc_narray_lit); the storage of an erased type parameter
-			// and WasmGC's as `new NativeArray(n)` and its stores
+			// as `new NativeArray(n)` and its stores
 			case TField(_, FStatic(c, cf)) if (Lower.isNativeArray(c) && cf.cfName == "literal"):
 				var el = switch strip(cargs[0]).eexpr {
 					case TArrayDecl(el): el;
@@ -2340,10 +2340,9 @@ class FnLower {
 					case _: false;
 				};
 				var xs = operands(el);
-				if (!erased && !Lower.wasmGc)
+				if (!erased)
 					return ECallHost("hxmc_narray_lit", VectorTools.cons(EInt(nativeKind(elem)), xs.mapi((i, x) -> coerce(x, tyOf(el[i]), elemValue(elem)))), rt);
-				var a = ELocal(asLocal(erased ? ECallHost(l.native("hx_narray_open"), vector(EInt(el.length)), rt) : ECallHost("hxmc_narray_new",
-					vector(EInt(nativeKind(elem)), EInt(el.length)), rt), rt));
+				var a = ELocal(asLocal(ECallHost(l.native("hx_narray_open"), vector(EInt(el.length)), rt), rt));
 				for (i in 0...el.length)
 					nativeWrite(elem, a, EInt(i), ELocal(asLocal(coerce(xs[i], tyOf(el[i]), elemValue(elem)), elemValue(elem))));
 				return a;

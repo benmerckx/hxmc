@@ -9,14 +9,12 @@ import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
 // haxe.io.Bytes's natives (hxmc.NativeBytes), BytesBuffer's and FPHelper's
-// (formerly in rt_std.c), written over hxmc.rt.Repr for both runtimes
-// (@:hxmc.anyHeap). They take and make haxe.io.BytesData, which a
-// haxe.io.Bytes wraps: in linear memory NativeArray storage of bytes
-// (NativeArray<hxmc.Byte>: T_BYTES, its length in its header, the bytes from
-// offset 0); under -D hxmc.wasm-gc an array of bytes, some accessors of which
-// are instructions (hxmc.wasmgc.FuncGen). BytesBuffer (T_BYTESBUFFER): slot 0
-// the length, slot 1 its storage (its capacity).
-@:keep @:allow(hxmc) @:hxmc.anyHeap
+// (formerly in rt_std.c), written over hxmc.rt.Repr. They take and make
+// haxe.io.BytesData, which a haxe.io.Bytes wraps: NativeArray storage of
+// bytes (NativeArray<hxmc.Byte>: T_BYTES, its length in its header, the bytes
+// from offset 0). BytesBuffer (T_BYTESBUFFER): slot 0 the length, slot 1
+// its storage (its capacity).
+@:keep @:allow(hxmc)
 class Bytes {
 	static inline function len(b:Dynamic):Int
 		return Repr.bytesLen(b);
@@ -34,9 +32,9 @@ class Bytes {
 	static function allocUninit(n:Int):Dynamic
 		return Repr.bytesAllocUninit(n);
 
-	// zeroed storage (WasmGC's arrays start zeroed)
+	// zeroed storage
 	static inline function alloc(n:Int):Dynamic
-		return #if (hxmc.wasm_gc) Repr.bytesAllocUninit(n) #else NArray.alloc(AK_BYTE, n) #end;
+		return NArray.alloc(AK_BYTE, n);
 
 	@:hxmc.host("hxmc_NativeBytes_blit") static function blit(b:Dynamic, pos:Int, src:Dynamic, srcpos:Int, n:Int):Void {
 		if (pos < 0 || srcpos < 0 || n < 0 || pos + n > len(b) || srcpos + n > len(src)) outside();
@@ -69,7 +67,6 @@ class Bytes {
 	@:hxmc.host("hxmc_NativeBytes_setUInt16") @:hxmc.unsafe static function setUInt16(b:Dynamic, pos:Int, v:Int):Void
 		Repr.octets(b).setU16(pos, v);
 
-	#if !(hxmc.wasm_gc)
 	@:hxmc.host("hxmc_NativeBytes_getInt32") @:hxmc.unsafe static function getInt32(b:Dynamic, pos:Int):Int
 		return Mem.getI32(bytes(b), pos);
 
@@ -87,13 +84,9 @@ class Bytes {
 
 	@:hxmc.host("hxmc_NativeBytes_setFloat") @:hxmc.unsafe static function setFloat(b:Dynamic, pos:Int, v:Float):Void
 		Mem.setF32(bytes(b), pos, v);
-	#end
 
 	@:hxmc.host("hxmc_NativeBytes_getString") static function getString(b:Dynamic, pos:Int, n:Int, encoding:Dynamic):String {
 		if (pos < 0 || n < 0 || pos + n > len(b)) outside();
-		#if (hxmc.wasm_gc)
-		return Str.decode(b, pos, pos + n);
-		#else
 		// decoding allocates: the bytes copied out of the heap first
 		var small = Mem.stack(256);
 		var buf = n <= 256 ? small : LibC.malloc(n);
@@ -101,18 +94,9 @@ class Bytes {
 		var s = Str.ofUtf8(buf, n);
 		if (buf != small) LibC.free(buf);
 		return s;
-		#end
 	}
 
 	@:hxmc.host("hxmc_NativeBytes_ofString") static function ofString(s:String, encoding:Dynamic):Dynamic {
-		#if (hxmc.wasm_gc)
-		// (encoded into a buffer kept for this, then copied)
-		var buf = hxmc.rt.gc.GcRepr.scratch(3 * Str.len(s) + 1);
-		var n = Str.utf8Into(s, buf);
-		var b = allocUninit(n);
-		Repr.copyOctets(b, buf, n);
-		return b;
-		#else
 		var small = Mem.stack(512);
 		var cap = 3 * Str.len(s) + 1;
 		var buf = cap <= 512 ? small : LibC.malloc(cap);
@@ -121,16 +105,12 @@ class Bytes {
 		LibC.memcpy(bytes(b), buf, n);
 		if (buf != small) LibC.free(buf);
 		return b;
-		#end
 	}
 
-	// haxe.Resource's bytes (hxmc.NativeResource). In linear memory the table
-	// DataGen.resources writes in the read-only data: per resource, the offset
-	// of its bytes from the table and their length (32 bits each), the bytes
-	// after it; outside the heap, so they stay where they are while the copy is
-	// allocated. Under -D hxmc.wasm-gc bytes(i) is an instruction
-	// (array.new_data of resource i's segment: GcModule.resourceBytes).
-	#if !(hxmc.wasm_gc)
+	// haxe.Resource's bytes (hxmc.NativeResource): the table DataGen.resources
+	// writes in the read-only data: per resource, the offset of its bytes from
+	// the table and their length (32 bits each), the bytes after it; outside
+	// the heap, so they stay where they are while the copy is allocated.
 	@:hxmc.host("hxmc_NativeResource_bytes") static function resourceBytes(i:Int):Dynamic {
 		var t = Mem.sym("hxmc_resources");
 		var n = Mem.getI32(t, 8 * i + 4);
@@ -138,17 +118,11 @@ class Bytes {
 		LibC.memcpy(bytes(b), t.add(Mem.getI32(t, 8 * i)), n);
 		return b;
 	}
-	#end
 
 	// (decoded where the bytes are: linear memory's, without a copy)
 	@:hxmc.host("hxmc_NativeResource_string") static function resourceString(i:Int):String {
-		#if (hxmc.wasm_gc)
-		var b = hxmc.NativeResource.bytes(i);
-		return Str.decode(Repr.octets(b), 0, len(b));
-		#else
 		var t = Mem.sym("hxmc_resources");
 		return Str.ofUtf8(t.add(Mem.getI32(t, 8 * i)), Mem.getI32(t, 8 * i + 4));
-		#end
 	}
 
 	@:hxmc.host("hxmc_NativeBytes_toHex") static function toHex(b:Dynamic):String {

@@ -35,19 +35,15 @@ class Exception {
 	public function new(message:String, ?previous:Exception, ?native:Any) {
 		__exceptionMessage = message;
 		__previousException = previous;
-		#if !hxmc.wasm_gc
 		recordStack(this, native != null);
-		#end
 		__nativeException = native != null ? native : this;
 	}
 
-	#if !hxmc.wasm_gc
 	// (left out of a program without the table of its functions and lines)
 	@:hxmc.withStacks static function recordStack(e:Exception, caught:Bool) {
 		if ((hxmc.rt.Stacks.flags() & hxmc.rt.Stacks.STACKS) != 0)
 			e.__nativeStack = caught ? hxmc.rt.Stacks.lastThrow() : hxmc.rt.Stacks.capture();
 	}
-	#end
 
 	function unwrap():Any
 		return __nativeException;
@@ -70,15 +66,11 @@ class Exception {
 	// (hxcoro copies stacks between exceptions: set_stack)
 	function get_stack():CallStack {
 		if (__exceptionStack == null) {
-			#if hxmc.wasm_gc
-			__exceptionStack = [];
-			#else
 			var top = hxmc.rt.Stacks.constructors(this);
 			top.push("haxe.Exception.recordStack");
 			top.push("haxe.Exception.thrown");
 			top.push("haxe.Exception.caught");
 			__exceptionStack = NativeStackTrace.toHaxeSkipping(__nativeStack, 0, top);
-			#end
 		}
 		return __exceptionStack;
 	}

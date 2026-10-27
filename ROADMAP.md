@@ -40,7 +40,7 @@ Where hxmc is going, in order. The designs behind each item are in
 ## Later
 
 - Collector: a memory limit, a mark-region old generation ([runtime.md](docs/plans/runtime.md#collector)).
-- WebAssembly threads; WasmGC for browser builds ([targets.md](docs/plans/targets.md#webassembly)).
+- WebAssembly threads ([targets.md](docs/plans/targets.md#webassembly)).
 - Android and iOS for store release ([targets.md](docs/plans/targets.md#android)).
 - A GUI subsystem on Windows, a dynamic musl mode on Linux ([targets.md](docs/plans/targets.md#windows)).
 - Direct system calls on Linux ([runtime.md](docs/plans/runtime.md#direct-system-calls-on-linux)).

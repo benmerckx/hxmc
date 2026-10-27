@@ -67,7 +67,7 @@ class HaxeMain {
 		// Mem.mirHost, because it has these classes; the WebAssembly one has
 		// nothing to link such code into, and does not type them: its
 		// Type.createInstance would keep them)
-		#if (hxmc.target != "wasm32-wasi" && !hxmc.wasm_gc)
+		#if (hxmc.target != "wasm32-wasi")
 		// (-D hxmc.run=mir: --interp and --run on the Mir interpreter, interp.MirRun)
 		if (runEngine == "mir") args = hxmc.interp.MirRun.rewrite(args);
 		#else
@@ -103,7 +103,7 @@ class HaxeMain {
 					Sys.println("hxmc dev: generating");
 					Sys.stdout().flush();
 				}
-				#if (hxmc.target != "wasm32-wasi" && !hxmc.wasm_gc)
+				#if (hxmc.target != "wasm32-wasi")
 				if (hxmc.interp.MirRun.selected(com)) {
 					hxmc.interp.MirRun.run(com);
 					return;
@@ -124,7 +124,7 @@ class HaxeMain {
 		// (not among the compilation's defines: its defines are the reference's,
 		// Compiler.getDefine, hxcpp's Options.txt, the modules' signatures)
 		args = without(args, MACROS);
-		#if (hxmc.target != "wasm32-wasi" && !hxmc.wasm_gc)
+		#if (hxmc.target != "wasm32-wasi")
 		// (the runtime's functions macro code calls: in the executable)
 		hxmc.macro.MirHost.runtime();
 		// (-D hxmc.macros=mir: macros on the Mir interpreter, the macro context typed for hxmc)

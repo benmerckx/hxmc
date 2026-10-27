@@ -52,7 +52,6 @@ lists the ones marked with *.
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
 | `-D hxmc.native-array-outofbounds=throws\|silent` * | `haxe.ds.Vector` and `hxmc.NativeArray` accesses out of bounds: `throws` an `ArgumentException`, or `silent` (reads give the default value, writes do nothing). Default: not tested, the result is unspecified |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling (Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |
-| `-D hxmc.wasm-gc` | wasm: a WasmGC module (experimental: [WasmGC](#wasmgc)) |
 | `-D hxmc.gc-prefault` * | Linux: a helper thread faults in the old space's pages ahead of the collector: less wall time, more CPU time |
 | `-D hxmc.census` | a heap census at exit, by type (`RT_CENSUS=1` at run time) |
 | `-D hxmc.no-module-cache` | no module cache for this build (also `HXMC_MODULE_CACHE=0`) |
@@ -162,17 +161,6 @@ The module grows its memory only as it needs it. The shadow stack and the
 frame stack are 4 MB each (`RT_STACK_MB`); an overflow exits with a
 message. When memory cannot grow, the program prints "out of memory" and
 exits.
-
-#### WasmGC
-
-`-D hxmc.wasm-gc -D hxmc.target=wasm32-wasi` writes a WasmGC module
-instead: objects live in the engine's collector. It is experimental. It
-runs under node with `hxmc/bootstrap/wasmgc.mjs`. Compared with linear
-memory it gives smaller modules but is slower on allocation-heavy code.
-It has one thread (a created thread runs when another waits for it), no
-sockets, and Math's transcendental functions come from the host. A
-construct it does not cover fails the build with its name;
-`HXMC_GC_SURVEY=1` lists all of them.
 
 ## The npm packages
 
@@ -469,8 +457,7 @@ kept, whether read or not: a few additions, three clock reads and a
 record's four stores in a ring of 64 per collection, and a few more
 instructions when a thread takes a new allocation buffer. With several
 threads, `bytesAllocated` counts other threads' current allocation
-buffers whole until the next collection. With `-D hxmc.wasm-gc` the engine
-collects and every counter reads 0. `RT_STATS=1` prints the totals at exit
+buffers whole until the next collection. `RT_STATS=1` prints the totals at exit
 on both targets.
 
 ### Null access

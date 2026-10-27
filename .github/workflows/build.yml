@@ -21,8 +21,7 @@
 #     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
 #   - crosshost (two jobs): the tool as a WebAssembly module building the
-#     corpus and itself byte-identical; the second also -D hxmc.wasm-gc's
-#     programs as WasmGC modules under node (make wasmgc-check);
+#     corpus and itself byte-identical;
 #   - npm-pack: the npm packages (with the compiler as a WebAssembly module;
 #     built with the module cache off);
 #   - site: the website (site/: plain pages, their scripts, the playground's
@@ -450,9 +449,7 @@ jobs:
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
   # itself, byte-identical to the native tool (make crosshost; the targets in
-  # two jobs); the second job also checks -D hxmc.wasm-gc (make wasmgc-check:
-  # hxmc/test/wasmgc's programs and corpus cases as WasmGC modules under node,
-  # their output against the native build's)
+  # two jobs)
   crosshost:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
@@ -462,7 +459,7 @@ jobs:
       matrix:
         include:
           - {args: '--tool --targets linux-x86_64,linux-arm64,linux-x86_64-glibc,linux-arm64-glibc'}
-          - {args: '--targets windows-x86_64,windows-arm64,macos-x86_64,macos-arm64,wasm32-wasi', wasmgc: true}
+          - {args: '--targets windows-x86_64,windows-arm64,macos-x86_64,macos-arm64,wasm32-wasi'}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -485,9 +482,6 @@ jobs:
           make hxmc
       - name: hxmc as a WebAssembly module, byte-identical output
         run: make crosshost CROSSHOST_ARGS="${{ matrix.args }}"
-      - name: WasmGC
-        if: matrix.wasmgc
-        run: make wasmgc-check
 
   # the npm packages (packages/): @hxmc/cli and its six platform packages,
   # at one version: the tag's (v*), a nightly prerelease on main,

@@ -59,7 +59,6 @@ class LowerCache {
 	var platform = -1; // (and its Apple platform: Mem.platform)
 	var mirHost = 0; // (and whether the program loads code for the Mir interpreter: Mem.mirHost)
 	var lines = false; // and whether they have their positions (Lower.lines)
-	var wasmGc = false; // (and the runtime's implementations they call: Lower.wasmGc)
 	// (and haxe.Resource's names, literals of its bodies: Lower.resources; the
 	// bytes are DataGen's, written again every build)
 	var resources:Array<String> = [];
@@ -77,7 +76,7 @@ class LowerCache {
 		hits = misses = keyed = 0;
 		why = null;
 		build++;
-		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.lines != lines || Lower.wasmGc != wasmGc
+		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.lines != lines
 			|| Lower.bounds != bounds || Lower.nullChecks != nullChecks || !sameNames(Lower.resources, resources)) {
 			entries = new haxe.ds.ObjectMap();
 			lambdas = new haxe.ds.ObjectMap();
@@ -86,7 +85,6 @@ class LowerCache {
 			platform = Lower.targetPlatform;
 			mirHost = Lower.mirHost;
 			lines = Lower.lines;
-			wasmGc = Lower.wasmGc;
 			resources = [for (r in Lower.resources) r.name];
 			bounds = Lower.bounds;
 			nullChecks = Lower.nullChecks;

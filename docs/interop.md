@@ -149,9 +149,9 @@ Arena.scoped(a -> {
 closure is allocated. `a.slice(T, n)` and `a.makeArray(T, n)` hold struct
 values.
 
-`hxmc.unsafe.BytesPtr` hands a `haxe.io.Bytes` to C: its address natively,
-a copy through linear memory on WasmGC. Use it in a `@:hxmc.fast` call or
-copy back with `written`/`copyIn`.
+`hxmc.unsafe.BytesPtr` hands a `haxe.io.Bytes` to C by its address, valid
+until the next GC point: use it in a `@:hxmc.fast` call, or copy C's bytes
+into one with `copyIn`.
 
 ### I/O buffers
 
@@ -178,7 +178,7 @@ Accessors (`get`, `getInt32`, `getI64`, `getDouble`, their setters,
 `fill`, `blit`, `blitFromBytes`, `blitToBytes`) test their range.
 `view()` wraps the buffer in a `haxe.io.Bytes` whose data is the buffer
 itself: the collector moves the Bytes object, not its data, which is
-outside its spaces. Not under `-D hxmc.wasm-gc`. `IoBuffers` checks it
+outside its spaces. `IoBuffers` checks it
 through forced collections.
 
 ### Callbacks
@@ -290,7 +290,7 @@ var pid = NativeSys.processRun("cargo", ["build"], fds, "crates/app", env);
 | `processExitFd(pid)` | Linux: a pidfd (`pidfd_open`, kernel 5.3+), readable once the process exits, to poll with other descriptors instead of `processWait(pid, false)` each round; close it with `fileClose`, reap with `processWait`. -1 elsewhere: macOS's kqueue `EVFILT_PROC` and Windows' process handle are not exposed yet. The pid is `processRun`'s result (`Process.getPid()`) |
 | `processKill(pid)` | `sys.io.Process.kill`: `SIGKILL`; on Windows `TerminateProcess` with exit code 0, as upstream |
 | `statTimes(path)` | `[atime, ns, mtime, ns, ctime, ns, size]`, one stat for a watcher: seconds (`FileSystem.stat`'s, whose Dates hold whole seconds on hxmc) and nanoseconds, from `st_mtim` and the like (macOS `st_mtimespec`), Windows' `GetFileTime` (100 ns; ctime is the creation time, as `stat`'s), WASI's filestat; null when the path cannot be stat'ed |
-| `fileSetBlocking(fd, blocking)` | `O_NONBLOCK` on or off; on Windows pipes only (`PIPE_NOWAIT`); false where it cannot (WasmGC) |
+| `fileSetBlocking(fd, blocking)` | `O_NONBLOCK` on or off; on Windows pipes only (`PIPE_NOWAIT`); false where it cannot |
 | `fileRead`, `fileWrite` | bytes read (0 at the end) or written, -1 on an error, `WOULD_BLOCK` (-2) when a non-blocking descriptor is not ready (`EAGAIN`; on Windows reads only). `sys.io.FileInput` and `FileOutput` throw `haxe.io.Error.Blocked` then. With other threads running, a blocking descriptor is waited for in a safe region first; a non-blocking one is not |
 
-Processes do not exist on wasm32-wasi. On WasmGC the host (node) runs them.
+Processes do not exist on wasm32-wasi.

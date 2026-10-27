@@ -11,9 +11,8 @@ import hxmc.unsafe.Ptr;
 // are kept in a list and reused first (sizes are 64-bit: merged free regions
 // may exceed 2 GB of the 4 GB). malloc/free: size classes of powers
 // of two (16 bytes to 1 MB) with free lists, carved from 1 MB arenas;
-// larger blocks are regions. One thread: no locks. Also -D hxmc.wasm-gc's
-// (@:hxmc.anyHeap): its linear memory holds what hxmc.unsafe works on.
-@:hxmc.wasm @:hxmc.anyHeap @:keep
+// larger blocks are regions. One thread: no locks.
+@:hxmc.wasm @:keep
 class Heap {
 	static inline var PAGE = 65536;
 	static inline var MAX_FREE = 256;
@@ -82,9 +81,6 @@ class Heap {
 	// (Wasi.exit: with no current handler, the pads of the frames below do not
 	// take proc_exit's host exception for a Haxe exception and run on)
 	@:hxmc.unsafe public static function outOfMemory() {
-		#if (hxmc.wasm_gc)
-		throw "out of memory";
-		#else
 		Wasi.writeLit(2, "out of memory: linear memory is ");
 		Wasi.writeInt(2, ((memEnd.toI64() + (1 << 20) - 1) >> 20).toInt());
 		if (refused > 0) {
@@ -94,7 +90,6 @@ class Heap {
 		} else
 			Wasi.writeLit(2, " MB\n");
 		Wasi.exit(2);
-		#end
 	}
 
 	// the end of what was ever handed out (memory above it holds zeros)
