@@ -22,6 +22,15 @@ other machine's platform package with `--force` (its compiler unused).
 Android's runtime objects are in no package for now (the `rt-<hash>`
 release, or a build from source, through `HXMC_RT_DIR`).
 
+The compiler finds a target's runtime objects without the launcher
+(`hxmc/src/hxmc/Options.hx`, `rtSearch`): first the directories of
+`HXMC_RT_DIR`, which add to the search; then its own directory (the
+platform package: `<pkg>/<target>/rt.o`), its `rt/` (a checkout's
+`bin/hxmc/rt`), and the target's platform package beside its own, of the
+same version (`<pkg>/../win32-x64/windows-x86_64/rt.o`). A missing one's
+error lists every directory searched. The launcher still sets
+`HXMC_RT_DIR` (yours, then the installed platform packages).
+
 Not published from 0.1.0: `@hxmc/source` (the compiler's sources and
 `hxmc-rebuild`, kept in `packages/source`: the hackable compiler comes
 later), and `@hxmc/wasm` (the compiler as a WebAssembly module, the

@@ -1251,7 +1251,8 @@ jobs:
   # the npm packages in fresh projects, on each target's machine (every
   # package installed before publish-npm publishes them): @hxmc/cli with its
   # platform package (native at once, node_modules/.bin/haxe the native
-  # compiler on Unix; -lib from lix's scopes, node_modules and haxelib; with --ignore-scripts after the
+  # compiler on Unix; -lib from lix's scopes, node_modules and haxelib; the
+  # platform package's compiler run directly without HXMC_RT_DIR; with --ignore-scripts after the
   # first call) on all six every run; on linux-x64 a cross build (another
   # machine's platform package, --force); and on linux-x64 (on all six on
   # main, tags and nightly: changes.outputs.npm_full) lix with dist/
@@ -1347,6 +1348,33 @@ jobs:
           rm -rf bin
           "$hx" --connect 6301 -cp src -main Main --custom-target hxmc=bin/app
           ./$app
+      # the platform package's native compiler run directly, without the
+      # launcher and with HXMC_RT_DIR unset (the std as the launcher passes
+      # it): it finds its runtime objects beside itself (Options.rtSearch),
+      # for a build and for a compilation server's
+      - name: The platform package's compiler, run directly
+        run: |
+          set -ex
+          cd "$RUNNER_TEMP/app"
+          unset HXMC_RT_DIR
+          export HAXE_STD_PATH="$PWD/node_modules/@hxmc/cli/haxe/upstream/std" HXMC_STD="$PWD/node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std"
+          if [ "$RUNNER_OS" = Windows ]; then hx="$PWD/node_modules/@hxmc/${{ matrix.plat }}/haxe.exe"; app=bin/direct.exe; else hx="$PWD/node_modules/@hxmc/${{ matrix.plat }}/haxe"; app=bin/direct; fi
+          rm -rf bin
+          "$hx" -cp src -main Main --custom-target hxmc=bin/direct
+          ./$app | tee direct.out
+          grep -q "hello from" direct.out
+          # (HXMC_RT_DIR adds to the search: a directory without them)
+          mkdir -p empty-rt
+          rm -rf bin
+          HXMC_RT_DIR="$PWD/empty-rt" "$hx" -cp src -main Main --custom-target hxmc=bin/direct
+          ./$app
+          "$hx" --wait 6302 > direct-server.log 2>&1 &
+          srv=$!
+          trap 'kill $srv 2>/dev/null || true' EXIT
+          for i in $(seq 1 150); do if "$hx" --connect 6302 --version > /dev/null 2>&1; then break; fi; sleep 0.2; done
+          rm -rf bin
+          "$hx" --connect 6302 -cp src -main Main --custom-target hxmc=bin/direct || { cat direct-server.log; exit 1; }
+          ./$app
       - name: With --ignore-scripts, the first call installs the native compiler
         if: runner.os != 'Windows'
         run: |
@@ -1375,6 +1403,15 @@ jobs:
           npm install --force --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-win32-x64-$v.tgz"
           npx haxe -cp src -main Main --custom-target hxmc=bin/cross -D hxmc.target=windows-x86_64
           test -s bin/cross.exe
+          # (and so for the platform package's compiler run directly, HXMC_RT_DIR
+          # unset: the platform package beside its own)
+          rm bin/cross.exe
+          (unset HXMC_RT_DIR; export HAXE_STD_PATH="$PWD/node_modules/@hxmc/cli/haxe/upstream/std" HXMC_STD="$PWD/node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std"
+            node_modules/@hxmc/linux-x64/haxe -cp src -main Main --custom-target hxmc=bin/cross -D hxmc.target=windows-x86_64
+            test -s bin/cross.exe
+            # (HXMC_RT_DIR naming another machine's objects keeps this one's)
+            HXMC_RT_DIR="$PWD/node_modules/@hxmc/win32-x64" node_modules/@hxmc/linux-x64/haxe -cp src -main Main --custom-target hxmc=bin/direct2
+            ./bin/direct2)
           # (the native compiler of this machine still runs)
           npx haxe build.hxml && ./bin/app
           # Android: in no package
