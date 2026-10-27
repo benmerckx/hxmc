@@ -97,6 +97,10 @@ class Gc {
 	static var maxPause:Float;
 	static var minorSecs:Float;
 	static var majorSecs:Float;
+	// the last RECORDS collections (hxmc.GcStats.records, as the native Gc.hx's)
+	public static inline var RECORDS = 64;
+	static var records:Ptr;
+	static var nrecords:Int;
 
 	// (the header: read through GcCore, as the native Gc.hx reads it)
 	static inline function inYoung(p:Ptr):Bool
@@ -668,8 +672,17 @@ class Gc {
 		var sp = Mem.tlsGet("rt_sp"), hw = Mem.tlsGet("rt_sp_hw");
 		if (sp.ult(hw)) Wasm.memset(sp, 0, hw.diff(sp));
 		Mem.tlsSet("rt_sp_hw", sp);
-		var ns:Float = cast(Wasi.clockNs(1) - t0);
+		var t1 = Wasi.clockNs(1);
+		var ns:Float = cast(t1 - t0);
 		var pause = ns * 1e-9;
+		if (records.isNull()) records = Heap.malloc(32 * RECORDS);
+		var r = records.add(32 * (nrecords % RECORDS));
+		var start:Float = cast t0;
+		Mem.setF64(r, 0, start * 1e-9);
+		Mem.setF64(r, 8, start * 1e-9); // (one thread: stopped at once)
+		Mem.setF64(r, 16, start * 1e-9 + pause);
+		Mem.setF64(r, 24, majors != m0 ? 1.0 : 0.0);
+		nrecords++;
 		lastPause = pause;
 		totalPause += pause;
 		if (pause > maxPause) maxPause = pause;
@@ -791,6 +804,21 @@ class Gc {
 	@:hxmc.unsafe public static function bytesAllocated():Float {
 		var f:Float = cast(allocBytes + largeBytes + Mem.tlsGet("rt_young_ptr").diff(youngStart));
 		return f;
+	}
+
+	// (one thread)
+	@:hxmc.unsafe public static function threadBytesAllocated():Float
+		return bytesAllocated();
+
+	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
+		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
+
+	@:hxmc.unsafe public static function recordCount():Int
+		return nrecords;
+
+	@:hxmc.unsafe public static function clock():Float {
+		var ns:Float = cast Wasi.clockNs(1);
+		return ns * 1e-9;
 	}
 
 	@:hxmc.unsafe public static function counts(which:Int):Int

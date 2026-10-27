@@ -187,6 +187,12 @@ class Gc {
 	static var lastPause:Float;
 	static var totalPause:Float;
 	static var maxPause:Float;
+	// the last RECORDS collections (hxmc.GcStats.records): their start (the
+	// collecting thread's request), the world stopped, their end (seconds on
+	// Os.now's clock), and 1.0 for a major one; nrecords counts them all
+	public static inline var RECORDS = 64;
+	static var records:Ptr;
+	static var nrecords:Int;
 
 	// ---- finalisers (Gc.finalise in Eval): OCaml's Gc.finalise semantics. A
 	// finaliser's function is a root; its value is a root of minor collections
@@ -1095,8 +1101,10 @@ class Gc {
 	// a collection, with every other thread stopped (unless another thread
 	// collected meanwhile: the caller then retries its allocation)
 	@:hxmc.unsafe static function collectFor(full:Bool, need:I64) {
+		var s0 = Os.now();
 		if (!Threads.worldStop()) return;
 		var p0 = Os.now();
+		var m0 = majors;
 		var handed = youngNext.diff(youngStart);
 		if (youngDirty.ult(youngNext)) youngDirty = youngNext;
 		#if hxmc.census
@@ -1104,7 +1112,6 @@ class Gc {
 		#end
 		if (full) majorAndTime(need) else {
 			var before = oldPtr;
-			var m0 = majors;
 			var used = youngNext.diff(youngStart);
 			minor();
 			if (majors == m0) {
@@ -1127,6 +1134,8 @@ class Gc {
 		while (!t.isNull()) {
 			if (t.value.started != 0) {
 				if (!t.value.yptr.isNull() && t.value.yptr.ult(t.value.yrlim)) handed -= t.value.yrlim.diff(t.value.yptr);
+				if (!t.value.yptr.isNull() && !t.value.tlabStart.isNull()) t.value.allocated += t.value.yptr.diff(t.value.tlabStart);
+				t.value.tlabStart = Ptr.nil();
 				t.value.yptr = Ptr.nil();
 				t.value.ylim = Ptr.nil();
 				t.value.yrlim = Ptr.nil();
@@ -1140,7 +1149,9 @@ class Gc {
 			t = t.value.next;
 		}
 		allocBytes += handed;
-		var pause = Os.now() - p0;
+		var end = Os.now();
+		var pause = end - s0;
+		record(s0, p0, end, majors != m0);
 		lastPause = pause;
 		totalPause += pause;
 		if (pause > maxPause) maxPause = pause;
@@ -1184,6 +1195,12 @@ class Gc {
 			}
 			var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), e.toI64()));
 			if (seen == p) {
+				// (a new run of TLABs: the last one's bytes are the thread's)
+				if (s != yptr || yptr.isNull()) {
+					var m = Threads.self;
+					if (!yptr.isNull() && !m.value.tlabStart.isNull()) m.value.allocated += yptr.diff(m.value.tlabStart);
+					m.value.tlabStart = s;
+				}
 				// (below p: the rest of the thread's TLAB, zeroed already)
 				if (!poison && p.ult(youngDirty)) Mem.zero(p, (e.ult(youngDirty) ? e : youngDirty).diff(p));
 				yptr = s;
@@ -1213,6 +1230,7 @@ class Gc {
 		// the free nursery has room: they may die young)
 		if ((bytes : I64) > (minorSize >> 2) && !(Atomic.load32(Mem.sym("rt_nthreads")) == 1 && youngRoom(bytes))) {
 			Atomic.add64(Mem.sym("hxmc_gc_large_bytes"), bytes);
+			Threads.self.value.allocated += bytes;
 			var cell = Mem.sym("hxmc_old_ptr");
 			p = Ptr.ofI64(Atomic.load64(cell));
 			while (true) {
@@ -1613,6 +1631,36 @@ class Gc {
 		var f:Float = cast b;
 		return f;
 	}
+
+	// the calling thread's
+	@:hxmc.unsafe public static function threadBytesAllocated():Float {
+		var m = Threads.self;
+		var b = m.value.allocated;
+		if (!yptr.isNull() && !m.value.tlabStart.isNull()) b += yptr.diff(m.value.tlabStart);
+		var f:Float = cast b;
+		return f;
+	}
+
+	@:hxmc.unsafe static function record(start:Float, stopped:Float, end:Float, major:Bool) {
+		if (records.isNull()) records = LibC.malloc(32 * RECORDS);
+		var r = records.add(32 * (nrecords % RECORDS));
+		Mem.setF64(r, 0, start);
+		Mem.setF64(r, 8, stopped);
+		Mem.setF64(r, 16, end);
+		Mem.setF64(r, 24, major ? 1.0 : 0.0);
+		nrecords++;
+	}
+
+	// the field (0 start, 1 stopped, 2 end, 3 major) of collection k (counted
+	// from 0; one of the last RECORDS)
+	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
+		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
+
+	@:hxmc.unsafe public static function recordCount():Int
+		return nrecords;
+
+	@:hxmc.unsafe public static function clock():Float
+		return Os.now();
 
 	@:hxmc.unsafe public static function counts(which:Int):Int
 		return which == 0 ? collections : which == 1 ? minors : majors;

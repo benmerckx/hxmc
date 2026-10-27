@@ -1,8 +1,13 @@
 exit 0
 small: ok
+small, this thread: ok
 collected: true
 large: ok
+large, this thread: ok
 major: true
 pauses: true
 minor + major: true
+records: true true true
+in order: true
+threads: true
 still: true

@@ -19,6 +19,20 @@ class GcCollector {
 	public static function bytesAllocated():Float
 		return 0;
 
+	public static inline var RECORDS = 64;
+
+	public static function threadBytesAllocated():Float
+		return 0;
+
+	public static function recordField(k:Int, field:Int):Float
+		return 0;
+
+	public static function recordCount():Int
+		return 0;
+
+	public static function clock():Float
+		return haxe.Timer.stamp();
+
 	public static function counts(which:Int):Int
 		return 0;
 

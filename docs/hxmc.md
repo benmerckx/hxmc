@@ -162,9 +162,12 @@ nursery with a pattern so missed roots show at once.
 Both collectors keep the counters of `hxmc.GcStats`
 ([using.md](using.md#measuring-the-collector)): bytes allocated (the
 nursery up to the allocation pointer, what TLABs left unused taken off at
-each collection, and large objects), collections, and pauses timed from
-stopping the world to resuming it. wasm32 prints the same `RT_STATS` totals
-at exit as native.
+each collection, and large objects), per thread too (each thread's record,
+`Mutator.allocated`, gains the bytes of a run of TLABs when the thread
+starts another and when a collection ends it), collections, pauses from
+the collecting thread's request to resuming the world, and a ring of the
+last 64 collections' times. wasm32 prints the same `RT_STATS` totals at
+exit as native.
 
 ### Strings and dates
 

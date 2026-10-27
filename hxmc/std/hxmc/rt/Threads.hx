@@ -575,6 +575,11 @@ class Threads {
 	var tls:Ptr; // Tls values (a root)
 	var sbase:Ptr; // the shadow stack's reservation (the main thread's is Gc's)
 	var pk:Ptr; // park/unpark: a mutex, a condition, the permit
+	// hxmc.GcStats.threadBytesAllocated: bytes the thread allocated, up to
+	// the start of its current run of TLABs (written by the thread, and by
+	// the collector while it is stopped)
+	var allocated:I64;
+	var tlabStart:Ptr;
 }
 
 @:hxmc.c @:hxmc.fast private extern class C {
