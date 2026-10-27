@@ -220,13 +220,18 @@ class Arr {
 
 	@:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
 		#if !(hxmc.wasm_gc)
-		// past the capacity (including from empty), the storage
-		// allocated at the new length, the elements copied once (the new ones
-		// zero, the kind kept), unless another thread changed the array meanwhile
+		// past the capacity, the storage allocated at twice the capacity, or
+		// at the new length when that is more (from empty: the length), as a
+		// push grows it (growing by one at a time stays amortised); the
+		// elements copied once (the new ones zero, the kind kept), unless
+		// another thread changed the array meanwhile
 		var kind = kindOf(a);
-		if (n > Boxes.arrCap(a)) {
+		var cap = Boxes.arrCap(a);
+		if (n > cap) {
+			var ncap = cap * 2;
+			if (ncap < n) ncap = n;
 			var d0 = MemRepr.arrStore(a);
-			var nd:Dynamic = Boxes.dataAlloc(kind, n);
+			var nd:Dynamic = Boxes.dataAlloc(kind, Boxes.roomFor(kind, ncap));
 			var k = len(a);
 			if (MemRepr.arrStore(a) == d0 && kindOf(a) == kind && k <= n) {
 				if (k > 0) {

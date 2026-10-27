@@ -10,3 +10,9 @@ StringMap.exists: ok
 ObjectMap.get: ok
 ObjectMap.exists: ok
 hits 325731
+resize Int (+1): ok
+resize object (+1): ok
+push Int: ok
+resize within capacity: ok
+resize from empty: ok
+1033 4096 4096 1000 0 null 0

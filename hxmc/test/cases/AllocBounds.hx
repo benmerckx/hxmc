@@ -3,7 +3,9 @@
 // bytes it handed out before the last minor collections). Each line is
 // "<operation>: ok" when the bytes per operation are within the bound; the
 // count otherwise. WebAssembly, WasmGC and the interpreters have another
-// allocator: there every line is "ok" without a measurement.
+// allocator: there every line is "ok" without a measurement. (Objects
+// larger than a part of the nursery go to the old space, not counted: with
+// the corpus's 64 KB nursery, a large array's storage.)
 #if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
 @:access(hxmc.rt.Gc)
 #end
@@ -36,6 +38,7 @@ class AllocBounds {
 		hxmc.rt.Gc.stats = true;
 		#end
 		maps();
+		arrays();
 		#if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
 		hxmc.rt.Gc.stats = false; // (no report at the exit)
 		#end
@@ -90,6 +93,35 @@ class AllocBounds {
 		for (k in 0...100000) if (om.exists(keys[k & 63])) hits++;
 		check("ObjectMap.exists", b0, bytes(), 100000, 0);
 		Sys.println("hits " + hits);
+	}
+
+	// growing arrays one element at a time: amortised, as push (helder:
+	// resize to the length + 1 copied the storage every time, 2 KB per
+	// element up to 1000)
+	static function arrays() {
+		var a:Array<Int> = [];
+		var b0 = bytes();
+		for (k in 1...4097) a.resize(k);
+		check("resize Int (+1)", b0, bytes(), 4096, 16);
+		var o:Array<AllocBounds> = [];
+		b0 = bytes();
+		for (k in 1...4097) o.resize(k);
+		check("resize object (+1)", b0, bytes(), 4096, 32);
+		var p:Array<Int> = [];
+		b0 = bytes();
+		for (k in 0...4096) p.push(k);
+		check("push Int", b0, bytes(), 4096, 16);
+		// (within the capacity: nothing)
+		a.resize(10);
+		b0 = bytes();
+		for (k in 0...4096) a.resize(10 + (k & 1023));
+		check("resize within capacity", b0, bytes(), 4096, 0);
+		// (a resize from empty: the exact length, once)
+		var e:Array<Int> = [];
+		b0 = bytes();
+		e.resize(1000);
+		check("resize from empty", b0, bytes(), 1000, 4.1);
+		Sys.println(a.length + " " + o.length + " " + p.length + " " + e.length + " " + a[1000] + " " + o[4095] + " " + e[999]);
 	}
 
 	function new() {}
