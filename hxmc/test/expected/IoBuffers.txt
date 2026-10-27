@@ -1,0 +1,20 @@
+exit 0
+IoBuffers.hx:35: 100, 1048576, 0, 0
+IoBuffers.hx:36: true, true
+IoBuffers.hx:47: 100, 1048576, 15, 701, 2.5
+IoBuffers.hx:58: true, true
+IoBuffers.hx:59: true, 99, 701, 196, 147
+IoBuffers.hx:60: 20, 30, 87
+IoBuffers.hx:62: 15, 701, 2.5, 20014547599360
+IoBuffers.hx:65: 99, 200, 193
+IoBuffers.hx:66: 0306090c, c4c3c2c1
+IoBuffers.hx:69: 4, 140, 137
+IoBuffers.hx:71: 3, 12
+IoBuffers.hx:73: 1539, 200, true
+IoBuffers.hx:87: OutsideBounds
+IoBuffers.hx:87: OutsideBounds
+IoBuffers.hx:87: OutsideBounds
+IoBuffers.hx:87: OutsideBounds
+IoBuffers.hx:87: OutsideBounds
+IoBuffers.hx:90: 0, 0
+IoBuffers.hx:95: 40
