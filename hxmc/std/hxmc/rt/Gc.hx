@@ -857,6 +857,11 @@ class Gc {
 		var live = oldPtr.diff(oldStart);
 		var limit = live * growth / 100 + minorSize * 4 + need;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
+		// (room for what is live and the allocation it collected for, whatever
+		// the growth: RT_OLD_GROWTH below 100 left a large object no room, and
+		// its allocation collected again and again)
+		var least = live + need + minorSize;
+		if (limit < least) limit = least;
 		if (limit > regionBytes) limit = regionBytes;
 		oldEnd = oldStart.addL(limit);
 		dumpOld(oldEnd);
@@ -1195,6 +1200,9 @@ class Gc {
 				if (oldEnd.diff(p) < bytes) {
 					collectFor(true, bytes);
 					p = Ptr.ofI64(Atomic.load64(cell));
+					// (the region cannot hold it even after a major collection:
+					// another would not help, and the loop would never end)
+					if (oldStart.addL(regionBytes).diff(p) < bytes) die("out of memory: an object does not fit in the old space's region (RT_REGION_MB)\n");
 					continue;
 				}
 				var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), p.add(bytes).toI64()));

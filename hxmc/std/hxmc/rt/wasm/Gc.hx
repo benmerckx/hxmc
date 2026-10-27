@@ -30,6 +30,7 @@ class Gc {
 	static inline var LARGE = 128 << 10; // larger objects get a region of their own
 	static inline var GRAN_SHIFT = 16; // chunks and regions start at multiples of 64 KB
 	static inline var GRAN = 1 << GRAN_SHIFT;
+	static inline var MAX_LARGE = 0x7FFF0000 - GRAN; // the largest object (its region's size an Int)
 
 	static var nurseryCap:Int; // the nursery's region (from youngStart): its largest size so far
 	static var youngStart:Ptr;
@@ -290,6 +291,12 @@ class Gc {
 
 	@:hxmc.unsafe static function oldAllocSlow(bytes:Int):Ptr {
 		if (bytes > LARGE) {
+			// (an object of nearly 2 GB, the longest NArray, rounds to more than
+			// an Int: and memory could not hold it next to the rest anyway)
+			if (bytes > MAX_LARGE) {
+				Heap.refuse(bytes);
+				return Ptr.nil();
+			}
 			var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
 			var r = Heap.tryRegionAligned(size, GRAN);
 			if (!r.isNull()) addChunk(r, r.add(bytes), size);

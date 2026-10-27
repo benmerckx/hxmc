@@ -224,11 +224,13 @@ class Arr {
 		// allocated at the new length, the elements copied once (the new ones
 		// zero, the kind kept), unless another thread changed the array meanwhile
 		var kind = kindOf(a);
-		if (n > Boxes.arrCap(a)) {
-			var d0 = MemRepr.arrStore(a);
+		// (longer than the longest storage: arrGrow's error, below)
+		if (n > Boxes.arrCap(a) && n <= Boxes.MAX_CAP) {
+			// (a reference: the allocation's collection may move the storage, Boxes.arrGrow)
+			var d0:Dynamic = Mem.getRef(Mem.addr(a), 8);
 			var nd:Dynamic = Boxes.dataAlloc(kind, n);
 			var k = len(a);
-			if (MemRepr.arrStore(a) == d0 && kindOf(a) == kind && k <= n) {
+			if (MemRepr.arrStore(a) == Mem.addr(d0) && kindOf(a) == kind && k <= n) {
 				if (k > 0) {
 					LibC.memcpy(Mem.addr(nd), MemRepr.arrData(a), (MemRepr.elemSize(a) * k : I64));
 					if (kind == Repr.AK_PTR && !Boxes.inYoungObj(nd)) Boxes.Gc_barrierRange(nd, k);

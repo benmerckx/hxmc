@@ -924,7 +924,17 @@ Linear memory only grows, and browsers refuse it early, so the runtime
   `memory.grow` is zero already.
 
 When `memory.grow` fails the runtime prints "out of memory: linear memory
-is N MB, growing it by M MB failed" and exits.
+is N MB, growing it by M MB failed" and exits. Objects over 128 KB get a
+region of their own in the old space; an Array grown by doubling reaches
+about 134M Floats (1 GB of storage) before its next growth no longer fits
+next to the old storage and the collector's copy.
+
+On every target an Array's storage holds at most 268,435,453 elements
+(`Boxes.MAX_CAP`, 2 GB of 8-byte elements); growing past that throws "out
+of memory: an Array of N elements is longer than the longest". Natively, an
+object that does not fit in the old space's region even after a major
+collection exits with "out of memory: an object does not fit in the old
+space's region (RT_REGION_MB)".
 
 #### WasmGC
 
