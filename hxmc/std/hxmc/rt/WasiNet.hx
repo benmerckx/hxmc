@@ -44,6 +44,9 @@ class WasiNet {
 	public static function select(read:Array<Int>, write:Array<Int>, others:Array<Int>, timeout:Float):Int
 		return -1;
 
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
+		return -1;
+
 	public static function setNoDelay(fd:Int, b:Bool):Int
 		return -1;
 
@@ -64,6 +67,12 @@ class WasiNet {
 
 	public static function blocked():Bool
 		return false;
+
+	public static function inProgress():Bool
+		return false;
+
+	public static function socketError(fd:Int):Int
+		return -1;
 
 	public static function gethostname():Null<String>
 		return null;

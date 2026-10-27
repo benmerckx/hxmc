@@ -14,7 +14,7 @@ import hxmc.unsafe.Winsock;
 // over the calls that differ: inline, with the system chosen by Mem.os,
 // which folds while lowering, so each layer keeps only its own calls and
 // compiles to what its own copy did.
-@:access(hxmc.rt.PosixNet) @:access(hxmc.rt.WinNet)
+@:access(hxmc.rt.PosixNet) @:access(hxmc.rt.WinNet) @:access(hxmc.rt.Threads)
 extern class NetCore {
 	// a Boolean socket option (an int)
 	public static inline function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
@@ -50,6 +50,49 @@ extern class NetCore {
 			if (Mem.os() == 2) addWin(o[i], 0x200) else add(o[i], 2); // POLLRDBAND, POLLPRI
 		Rt.rt_wait_fds(p, k, timeout);
 		LibC.free(p);
+	}
+
+	// hxmc.net.Poll: struct pollfd (int fd, short events, short revents) or
+	// WSAPOLLFD (SOCKET, short, short) for each descriptor, waited for as
+	// select does (rt_wait_fds: other threads run, a descriptor closed
+	// meanwhile fails with EBADF), then polled without waiting. The flags
+	// are POSIX's (POLLIN 1, POLLPRI 2, POLLOUT 4, POLLERR 8, POLLHUP 16,
+	// POLLNVAL 32), Winsock's mapped to them (WSAPoll rejects POLLPRI:
+	// POLLRDBAND stands for it). The first n entries; -1 on failure, errno
+	// set. Nothing is allocated: the pollfds and rt_wait_fds' scratch are in
+	// a per-thread malloc'ed buffer (pollBuffer), kept for the next call.
+	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
+		var size = Mem.os() == 2 ? 16 : 8, ev = Mem.os() == 2 ? 8 : 4;
+		var p = Mem.os() == 2 ? WinNet.pollBuffer((size + 4) * n) : PosixNet.pollBuffer((size + 4) * n);
+		// (Windows: a negative entry, a closed socket's -1, is never ready, as
+		// POSIX poll ignores it)
+		for (i in 0...n) {
+			var e = events[i];
+			if (Mem.os() == 2) {
+				Mem.setI64(p, size * i, WinNet.sock(fds[i]));
+				e = ((e & 1) != 0 ? 0x100 : 0) | ((e & 2) != 0 ? 0x200 : 0) | ((e & 4) != 0 ? 0x10 : 0);
+			} else Mem.setI32(p, size * i, fds[i]);
+			Mem.setI16(p, size * i + ev, e);
+			Mem.setI16(p, size * i + ev + 2, 0);
+		}
+		var r = Threads.waitFdsIn(p, n, timeout, p.add(size * n)), err = 9; // EBADF: closed while waiting
+		if (r >= 0) {
+			r = Os.poll(p, n, 0);
+			err = Os.errno();
+		}
+		if (r >= 0)
+			for (i in 0...n) {
+				var e = Mem.getU16(p, size * i + ev + 2);
+				if (Mem.os() == 2) {
+					if (fds[i] < 0) e = 0;
+					e = ((e & 0x100) != 0 ? 1 : 0) | ((e & 0x200) != 0 ? 2 : 0) | ((e & 0x10) != 0 ? 4 : 0) | ((e & 1) != 0 ? 8 : 0) | ((e & 2) != 0 ? 16 : 0) | ((e & 4) != 0 ? 32 : 0);
+				}
+				revents[i] = e;
+			}
+		if (r < 0) {
+			if (Mem.os() == 2) WinNet.setLast(err) else PosixNet.netErrno = err;
+		}
+		return r;
 	}
 
 	// gethostbyname/gethostbyaddr return static data: one lookup at a time

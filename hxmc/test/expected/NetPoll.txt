@@ -1,0 +1,9 @@
+exit 0
+[0,4]
+[1]
+x
+[0]
+no socket and no timeout: true
+select: true
+0
+1 y
