@@ -126,7 +126,7 @@ parentPort.on("message", m => {
 	const p = procs.get(m.pid);
 	switch (m.op) {
 		case "run": {
-			const opts = { env: m.env, stdio: ["pipe", "pipe", "pipe"], shell: m.shell ? "/bin/sh" : false };
+			const opts = { env: m.env, cwd: m.cwd, stdio: ["pipe", "pipe", "pipe"], shell: m.shell ? "/bin/sh" : false };
 			let child = null;
 			try {
 				child = m.shell ? spawn(m.cmd, opts) : spawn(m.cmd, m.args, opts);
@@ -181,8 +181,8 @@ parentPort.on("message", m => {
 			p.waiter = true;
 			return;
 		case "kill":
-			if (p && p.child && p.code === null) p.child.kill("SIGKILL");
-			return reply(0);
+			// (1: the signal was sent)
+			return reply(p && p.child && p.code === null && p.child.kill(m.sig) ? 1 : 0);
 	}
 });
 `;
@@ -276,6 +276,11 @@ const hxmc = {
 					const t = (d) => Math.floor(d.getTime() / 1000);
 					return ofJs([st.gid, st.uid, t(st.atime), t(st.mtime), t(st.ctime), st.dev, st.ino, st.nlink, st.rdev, st.size, st.mode].join("\0"));
 				}
+				case 9: {
+					// (NativeSys.statTimes: seconds and nanoseconds, then the size)
+					const st = fs.statSync(s, { bigint: true }), g = 1000000000n;
+					return ofJs([...[st.atimeNs, st.mtimeNs, st.ctimeNs].flatMap(t => [t / g, t % g]), st.size].join("\0"));
+				}
 				default: return ofJs("Wasi");
 			}
 		} catch (e) {
@@ -349,7 +354,7 @@ const hxmc = {
 	// GcSys's descriptors: 0 open (x the path, a the mode: 0 read, 1 write, 2
 	// append, 3 update), 1 read and 2 write (x the bytes, at a, b of them), 3
 	// close, 4 seek (to a, b: whence), 5 tell; processes: 6 run (the pid), 7 wait
-	// (fd the pid, a: block; -1 while it runs), 8 kill; -1 on errors
+	// (fd the pid, a: block; -1 while it runs), 8 kill (a: the signal; 1 sent); -1 on errors
 	fileIo(op, fd, x, a, b) {
 		if (fd >= PROC_FD && op >= 1 && op <= 3) return procIo(op, fd, x, a, b);
 		try {
@@ -406,14 +411,28 @@ const hxmc = {
 				case 5:
 					return f ? f.pos : -1;
 				case 6: {
-					// (a process: x the command, then its arguments when a is 1, by NULs; else through the shell)
-					const parts = str(x).split("\0");
-					return procCall({ op: "run", cmd: parts[0], args: parts.slice(1), shell: a === 0, env: { ...process.env } });
+					// (a process: x the command, then its arguments when a is 1, by NULs; else through the shell;
+					// b: 1 a working directory, 2 an environment, before the command, each followed by \x01,
+					// the environment's "name=value" entries separated by \x02)
+					let s = str(x), cwd, env = { ...process.env };
+					if (b !== 0) {
+						const i = s.indexOf("\x01"), j = s.indexOf("\x01", i + 1);
+						if (b & 1) cwd = s.slice(0, i);
+						if (b & 2) env = Object.fromEntries(s.slice(i + 1, j).split("\x02").filter(e => e !== "").map(e => {
+							const k = e.indexOf("=", 1);
+							return [e.slice(0, k), e.slice(k + 1)];
+						}));
+						s = s.slice(j + 1);
+						// (a directory that cannot be entered: no process)
+						if (cwd !== undefined && !(fs.existsSync(cwd) && fs.statSync(cwd).isDirectory())) return -1;
+					}
+					const parts = s.split("\0");
+					return procCall({ op: "run", cmd: parts[0], args: parts.slice(1), shell: a === 0, env, cwd });
 				}
 				case 7:
 					return procCall({ op: "wait", pid: fd, block: a !== 0 });
 				case 8:
-					return procCall({ op: "kill", pid: fd });
+					return procCall({ op: "kill", pid: fd, sig: a });
 				default:
 					return -1;
 			}

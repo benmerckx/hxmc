@@ -275,7 +275,21 @@ class WinSys {
 	@:hxmc.unsafe static function readHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		var p = Bytes.bytes(b).add(pos);
 		touch(p, len);
-		return Win32._read(fd, p, len);
+		return readResult(Win32._read(fd, p, len));
+	}
+
+	// a failed read of a PIPE_NOWAIT pipe with nothing in it: ERROR_NO_DATA
+	// (the C runtime keeps the system's last error), NativeSys.WOULD_BLOCK
+	@:hxmc.unsafe static function readResult(r:Int):Int
+		return r < 0 && Win32.GetLastError() == 232 ? -2 : r;
+
+	// PIPE_NOWAIT (1) or PIPE_WAIT (0) on a pipe's handle (FILE_TYPE_PIPE 3)
+	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var h = Win32._get_osfhandle(fd);
+		if (h.toI64() == -1 || Win32.GetFileType(h) != 3) return false;
+		var mode = Mem.stack(8);
+		Mem.setI32(mode, 0, blocking ? 0 : 1);
+		return K.SetNamedPipeHandleState(h, mode, Ptr.nil(), Ptr.nil()) != 0;
 	}
 
 	@:hxmc.unsafe static function writeHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
@@ -291,7 +305,7 @@ class WinSys {
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
 			Leaf.rt_blocking_enter();
-			var r = Win32._read(fd, tmp, len);
+			var r = readResult(Win32._read(fd, tmp, len));
 			Leaf.rt_blocking_leave();
 			if (r > 0) LibC.memcpy(Bytes.bytes(b).add(pos), tmp, r);
 			LibC.free(tmp);
@@ -574,6 +588,32 @@ class WinSys {
 		];
 	}
 
+	// GetFileTime's FILETIMEs (100 ns units from 1601) of the file or
+	// directory (FILE_FLAG_BACKUP_SEMANTICS) the path names, links followed
+	public static function statTimes(path:String):Array<Float> {
+		var p = wide(path);
+		// FILE_READ_ATTRIBUTES, FILE_SHARE_READ | WRITE | DELETE, OPEN_EXISTING
+		var h = Win32.CreateFileW(p, 0x80, 7, Ptr.nil(), 3, 0x02000000, Ptr.nil());
+		LibC.free(p);
+		if (h.toI64() == -1) return null;
+		var ft = Mem.stack(32); // creation, access, write, size
+		var ok = K.GetFileTime(h, ft, ft.add(8), ft.add(16)) != 0;
+		// (a directory: 0, as stat's)
+		if (K.GetFileSizeEx(h, ft.add(24)) == 0) Mem.setI64(ft, 24, 0);
+		Win32.CloseHandle(h);
+		if (!ok) return null;
+		var a = [];
+		for (k in [1, 2, 0]) {
+			var t = filetime(ft.add(8 * k)) - ((116444736 : I64) * (1000000000 : I64));
+			var s = t / (10000000 : I64);
+			if (t < s * (10000000 : I64)) s = s - (1 : I64); // (floored before 1970)
+			a.push((cast s : Float));
+			a.push((cast((t - s * (10000000 : I64)) * (100 : I64)) : Float));
+		}
+		a.push((cast Mem.getI64(ft, 24) : Float));
+		return a;
+	}
+
 	// ---- processes: ids of processes this process created, with their
 	// handles, in a malloc'ed table (pid, handle) under a spin lock
 	// (rt_spin[1]); handles are made inheritable only for the CreateProcess
@@ -655,7 +695,9 @@ class WinSys {
 		return c;
 	}
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
+	// cwd: CreateProcess's lpCurrentDirectory; env ("name=value", sorted):
+	// its lpEnvironment, a UTF-16 block (CREATE_UNICODE_ENVIRONMENT)
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
 		var line:String;
 		var exe:Ptr;
 		var ext = wide(".exe");
@@ -683,9 +725,14 @@ class WinSys {
 		}
 		LibC.free(ext);
 		var wline = wide(line);
-		var r = spawn(exe, wline);
+		var wcwd = Str.isNull(cwd) ? Ptr.nil() : wide(cwd);
+		// (each entry NUL-terminated, then one more NUL; an empty block is two)
+		var wenv = Str.isNull(env) ? Ptr.nil() : wide(Str.concat(env.join("\x00"), "\x00"));
+		var r = spawn(exe, wline, wcwd, wenv);
 		LibC.free(exe);
 		LibC.free(wline);
+		if (!wcwd.isNull()) LibC.free(wcwd);
+		if (!wenv.isNull()) LibC.free(wenv);
 		if (r.isNull()) return -1;
 		fds[0] = Mem.getI32(r, 0);
 		fds[1] = Mem.getI32(r, 4);
@@ -697,7 +744,7 @@ class WinSys {
 
 	// CreateProcess with three pipes: a malloc'ed {in fd, out fd, err fd,
 	// pid}, or null
-	@:hxmc.unsafe static function spawn(exe:Ptr, wline:Ptr):Ptr {
+	@:hxmc.unsafe static function spawn(exe:Ptr, wline:Ptr, wcwd:Ptr, wenv:Ptr):Ptr {
 		// pipes: the child's ends are inheritable copies, the parent's are not
 		var sa = Mem.stack(24);
 		Mem.setI64(sa, 0, 24); // nLength (and padding)
@@ -734,7 +781,7 @@ class WinSys {
 		Win32.DuplicateHandle(self, Mem.getPtr(hs, 0), self, si.add(80), 0, 1, 2);
 		Win32.DuplicateHandle(self, Mem.getPtr(hs, 24), self, si.add(88), 0, 1, 2);
 		Win32.DuplicateHandle(self, Mem.getPtr(hs, 40), self, si.add(96), 0, 1, 2);
-		var ok = Win32.CreateProcessW(exe, wline, Ptr.nil(), Ptr.nil(), 1, flags, Ptr.nil(), Ptr.nil(), si, pi) != 0;
+		var ok = Win32.CreateProcessW(exe, wline, Ptr.nil(), Ptr.nil(), 1, flags, wenv, wcwd, si, pi) != 0;
 		Win32.CloseHandle(Mem.getPtr(si, 80));
 		Win32.CloseHandle(Mem.getPtr(si, 88));
 		Win32.CloseHandle(Mem.getPtr(si, 96));
@@ -820,11 +867,25 @@ class WinSys {
 	}
 
 	// Unix.kill pid Sys.sigkill: TerminateProcess with exit code 0
-	@:hxmc.unsafe public static function processKill(pid:Int):Void {
+	@:hxmc.unsafe public static function processKill(pid:Int):Void
+		terminate(pid, 0);
+
+	// NativeSys.processSignal: any signal ends the process, with 128 + sig
+	@:hxmc.unsafe public static function processSignal(pid:Int, sig:Int):Bool
+		return terminate(pid, 128 + sig);
+
+	@:hxmc.unsafe static function terminate(pid:Int, code:Int):Bool {
 		var h = procHandle(pid);
-		if (!h.isNull()) {
-			Win32.TerminateProcess(h, 0);
-			Win32.CloseHandle(h);
-		}
+		if (h.isNull()) return false;
+		var ok = Win32.TerminateProcess(h, code) != 0;
+		Win32.CloseHandle(h);
+		return ok;
 	}
+}
+
+// kernel32's functions outside the runtime objects' (hxmc/deps/mkrt.sh): imports of their own
+@:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class K {
+	static function SetNamedPipeHandleState(h:Ptr, mode:Ptr, maxCount:Ptr, timeout:Ptr):Int;
+	static function GetFileTime(h:Ptr, creation:Ptr, access:Ptr, write:Ptr):Int;
+	static function GetFileSizeEx(h:Ptr, size:Ptr):Int;
 }

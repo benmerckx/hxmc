@@ -1,0 +1,6 @@
+exit 0
+SIGTERM untrapped: true 143
+SIGKILL: true 137
+after exit: false
+SIGTERM trapped: term 3
+SIGINT trapped: int 4
