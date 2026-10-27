@@ -1,9 +1,9 @@
 // hxmc.NativeSys.processRun's working directory and environment: the child
 // runs in the directory given and sees exactly the variables given (a full
 // replacement; NativeSys.environment() is a copy of the current ones to
-// start from). On Linux and macOS the child is /bin/sh (also under
-// qemu-user, which cannot start the program itself without binfmt); on
-// Windows the program itself, which prints what the shell would. The lines
+// start from). The child is /bin/sh on Linux and macOS, cmd.exe on Windows
+// (not the program itself: qemu-user cannot start it without binfmt, and
+// under --mir-run Sys.programPath is the compiler). The lines
 // printed are the parent's checks, the same everywhere.
 import hxmc.NativeSys;
 import sys.FileSystem;
@@ -12,14 +12,6 @@ class ProcessCwdEnv {
 	static final DIR = "processcwdenv.tmp";
 
 	static function main() {
-		var args = Sys.args();
-		if (args.length > 0 && args[0] == "child") {
-			Sys.println(Sys.getCwd());
-			Sys.println(Sys.getEnv("HXMC_PCE_VAR") ?? "unset");
-			Sys.println(Sys.getEnv("HXMC_PCE_PARENT") ?? "unset");
-			Sys.println(Sys.getEnv("HXMC_PCE_ONLY") ?? "unset");
-			return;
-		}
 		var win = Sys.systemName() == "Windows";
 		if (!FileSystem.exists(DIR)) FileSystem.createDirectory(DIR);
 		Sys.putEnv("HXMC_PCE_PARENT", "1");
@@ -27,7 +19,7 @@ class ProcessCwdEnv {
 		var env = NativeSys.environment();
 		Sys.println(env.get("HXMC_PCE_PARENT"));
 		env.remove("HXMC_PCE_PARENT");
-		env.set("HXMC_PCE_VAR", "hello wörld = 2");
+		env.set("HXMC_PCE_VAR", "hello world = 2"); // (ASCII: cmd.exe echoes in the console's code page)
 		var lines = run(win, env, DIR);
 		var cwd = lines[0];
 		// (pwd: no separator at the end; Sys.getCwd: one, on Windows a slash after backslashes)
@@ -57,7 +49,8 @@ class ProcessCwdEnv {
 
 	static function run(win:Bool, env:Null<Map<String, String>>, cwd:Null<String>):Array<String> {
 		var fds = [0, 0, 0];
-		var pid = win ? NativeSys.processRun(Sys.programPath(), ["child"], fds, cwd, env) : NativeSys.processRun("/bin/sh",
+		// (cmd.exe echoes an unset variable as it is written: %NAME%)
+		var pid = win ? NativeSys.processRun("cd& echo %HXMC_PCE_VAR%& echo %HXMC_PCE_PARENT%& echo %HXMC_PCE_ONLY%", null, fds, cwd, env) : NativeSys.processRun("/bin/sh",
 			["-c", "pwd; echo \"${HXMC_PCE_VAR-unset}\"; echo \"${HXMC_PCE_PARENT-unset}\"; echo \"${HXMC_PCE_ONLY-unset}\""], fds, cwd, env);
 		if (pid < 0) throw "Process creation failure";
 		var out = @:privateAccess new sys.io.FileInput(fds[1]);
@@ -69,6 +62,11 @@ class ProcessCwdEnv {
 		err.close();
 		var code = NativeSys.processWait(pid, true);
 		if (code != 0) Sys.println("exit " + code);
-		return [for (l in s.split("\n")) StringTools.trim(l)];
+		return [
+			for (l in s.split("\n")) {
+				var t = StringTools.trim(l);
+				StringTools.startsWith(t, "%HXMC_") ? "unset" : t;
+			}
+		];
 	}
 }

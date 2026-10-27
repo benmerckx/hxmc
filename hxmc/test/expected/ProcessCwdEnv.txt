@@ -1,7 +1,7 @@
 exit 0
 1
 cwd: true
-var: hello wörld = 2
+var: hello world = 2
 removed: unset
 parent: true 1 null
 inherited: true unset 1

@@ -1,9 +1,8 @@
 // hxmc.NativeSys.processSignal: SIGTERM and SIGINT, which a child can trap,
 // besides SIGKILL (processKill). A child ended by a signal exits with 128 +
 // the signal's number, on Windows too, where every signal is
-// TerminateProcess with that code. The child is /bin/sh on Linux and macOS
-// (also under qemu-user, which cannot start the program itself without
-// binfmt), the program itself on Windows. Windows has no traps: there the
+// TerminateProcess with that code. The child is /bin/sh on Linux and macOS,
+// cmd.exe on Windows, waiting for a line of its stdin. Windows has no traps: there the
 // last two lines are printed as they are elsewhere. The corpus runs a case
 // as a background job of a non-interactive shell (Harness.exec), which
 // ignores SIGINT, and a child inherits that through fork and exec, and a
@@ -16,12 +15,6 @@ import hxmc.unsafe.Ptr;
 
 class ProcessSignals {
 	static function main() {
-		var args = Sys.args();
-		if (args.length > 0 && args[0] == "child") {
-			Sys.println("ready");
-			while (true)
-				Sys.sleep(0.05);
-		}
 		var win = Sys.systemName() == "Windows";
 		if (Mem.os() <= 1) Posix.signal(NativeSys.SIGINT, Ptr.nil()); // SIG_DFL (Linux, macOS)
 		var loop = "echo ready; while :; do sleep 0.05; done";
@@ -44,7 +37,7 @@ class ProcessSignals {
 	// a child that printed "ready"
 	static function start(win:Bool, script:String) {
 		var fds = [0, 0, 0];
-		var pid = win ? NativeSys.processRun(Sys.programPath(), ["child"], fds) : NativeSys.processRun("/bin/sh", ["-c", script], fds);
+		var pid = win ? NativeSys.processRun("cmd", ["/c", "echo ready& set /p x="], fds) : NativeSys.processRun("/bin/sh", ["-c", script], fds);
 		if (pid < 0) throw "Process creation failure";
 		var out = @:privateAccess new sys.io.FileInput(fds[1]);
 		var ready = out.readLine();

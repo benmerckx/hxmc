@@ -3,20 +3,14 @@
 // end (0), and sys.io.FileInput throws haxe.io.Error.Blocked. Also with a
 // second thread running, where reads wait for their descriptor in a safe
 // region first: a non-blocking descriptor must not wait. The child echoes
-// a line of its stdin: /bin/sh on Linux and macOS (also under qemu-user,
-// which cannot start the program itself without binfmt), the program itself
-// on Windows (a pipe in PIPE_NOWAIT mode).
+// a line of its stdin: /bin/sh on Linux and macOS, cmd.exe on Windows (a
+// pipe in PIPE_NOWAIT mode).
 import hxmc.NativeSys;
 import sys.thread.Lock;
 import sys.thread.Thread;
 
 class NonBlockingRead {
 	static function main() {
-		var args = Sys.args();
-		if (args.length > 0 && args[0] == "child") {
-			Sys.println("got " + Sys.stdin().readLine());
-			return;
-		}
 		round("");
 		var lock = new Lock();
 		Thread.create(() -> lock.wait());
@@ -27,7 +21,7 @@ class NonBlockingRead {
 	static function round(prefix:String) {
 		var win = Sys.systemName() == "Windows";
 		var fds = [0, 0, 0];
-		var pid = win ? NativeSys.processRun(Sys.programPath(), ["child"], fds) : NativeSys.processRun("/bin/sh", ["-c", "read x; echo \"got $x\""], fds);
+		var pid = win ? NativeSys.processRun("cmd", ["/v:on", "/c", "set /p x=& echo got !x!"], fds) : NativeSys.processRun("/bin/sh", ["-c", "read x; echo \"got $x\""], fds);
 		var b = haxe.io.Bytes.alloc(64);
 		Sys.println(prefix + "non-blocking: " + NativeSys.fileSetBlocking(fds[1], false));
 		Sys.println(prefix + "nothing yet: " + (NativeSys.fileRead(fds[1], b, 0, 64) == NativeSys.WOULD_BLOCK));
