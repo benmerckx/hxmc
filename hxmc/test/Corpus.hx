@@ -50,6 +50,8 @@ class Corpus {
 		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
+	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
+	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
 	// the cases known to fail under --mir-run (as --known: still run, their
@@ -163,6 +165,7 @@ class Corpus {
 		if (native.skip != null) return {name: c.name, status: "excluded", detail: native.skip};
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
+		if (!t.startsWith("linux") && LINUX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: LINUX_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
