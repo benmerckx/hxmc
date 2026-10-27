@@ -31,6 +31,7 @@ class FileInput extends haxe.io.Input {
 			atEof = true;
 			throw new haxe.io.Eof();
 		}
+		if (n == NativeSys.WOULD_BLOCK) throw haxe.io.Error.Blocked; // (a non-blocking descriptor: hxmc.NativeSys.fileSetBlocking)
 		if (n < 0) throw haxe.io.Error.Custom("read error");
 		return n;
 	}

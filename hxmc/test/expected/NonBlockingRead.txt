@@ -1,0 +1,15 @@
+exit 0
+non-blocking: true
+nothing yet: true
+FileInput: Blocked
+end: 0
+read: got hi
+exit: 0
+write-only: -1
+threads: non-blocking: true
+threads: nothing yet: true
+threads: FileInput: Blocked
+threads: end: 0
+threads: read: got hi
+threads: exit: 0
+threads: write-only: -1

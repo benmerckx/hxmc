@@ -181,5 +181,7 @@ var pid = NativeSys.processRun("cargo", ["build"], fds, "crates/app", env);
 | `environment()` | a copy of this process's environment as a map (on Windows with the `=C:` entries `Sys.environment` skips) |
 | `processSignal(pid, sig)` | sends `SIGTERM`, `SIGINT`, `SIGKILL` (constants of `NativeSys`) or another signal number (those differ between Linux and macOS); false when the process is gone. A process a signal ended exits with 128 + its number. Windows has no signals: each is `TerminateProcess` with that exit code (no Ctrl+C for one process) |
 | `processKill(pid)` | `sys.io.Process.kill`: `SIGKILL`; on Windows `TerminateProcess` with exit code 0, as upstream |
+| `fileSetBlocking(fd, blocking)` | `O_NONBLOCK` on or off; on Windows pipes only (`PIPE_NOWAIT`); false where it cannot (WasmGC) |
+| `fileRead`, `fileWrite` | bytes read (0 at the end) or written, -1 on an error, `WOULD_BLOCK` (-2) when a non-blocking descriptor is not ready (`EAGAIN`; on Windows reads only). `sys.io.FileInput` and `FileOutput` throw `haxe.io.Error.Blocked` then. With other threads running, a blocking descriptor is waited for in a safe region first; a non-blocking one is not |
 
 Processes do not exist on wasm32-wasi. On WasmGC the host (node) runs them.

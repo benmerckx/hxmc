@@ -29,6 +29,10 @@ class PosixSys {
 
 	static inline var EINTR = 4;
 
+	// EAGAIN (EWOULDBLOCK): Linux, macOS
+	static inline function eagain():Int
+		return mac() ? 35 : 11;
+
 	// a malloc'ed UTF-8 copy of s
 	static inline function cstr(s:String):Ptr
 		return Str.toUtf8(s);
@@ -266,6 +270,32 @@ class PosixSys {
 	static inline function oCloexec():Int
 		return mac() ? 0x1000000 : 0x80000;
 
+	static inline function oNonblock():Int
+		return mac() ? 4 : 0x800;
+
+	// F_GETFL 3, F_SETFL 4 (Linux, macOS)
+	@:hxmc.unsafe static function nonBlocking(fd:Int):Bool {
+		var fl = Posix.fcntl(fd, 3, 0);
+		return fl >= 0 && (fl & oNonblock()) != 0;
+	}
+
+	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var fl = Posix.fcntl(fd, 3, 0);
+		if (fl < 0) return false;
+		var nf = blocking ? fl & ~oNonblock() : fl | oNonblock();
+		return nf == fl || Posix.fcntl(fd, 4, nf) == 0;
+	}
+
+	// With other threads, a read or write first waits for its descriptor in a
+	// safe region (rt_wait_fd), so that the call does not block while the
+	// thread holds up collections; not a non-blocking descriptor, whose call
+	// returns at once (WOULD_BLOCK). 1: go on, -1: closed while waiting
+	static function waitReady(fd:Int, write:Int):Int {
+		var r = Rt.rt_wait_fd(fd, write, 0);
+		if (r != 0 || nonBlocking(fd)) return r != 0 ? r : 1;
+		return Rt.rt_wait_fd(fd, write, -1);
+	}
+
 	public static function fileOpen(path:String, mode:Int):Int {
 		var flags = switch mode {
 			case 0: 0; // O_RDONLY
@@ -285,21 +315,29 @@ class PosixSys {
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
-		if (threads() > 1 && Rt.rt_wait_fd(fd, 0, -1) < 0) return -1; // closed while waiting
+		if (threads() > 1 && waitReady(fd, 0) < 0) return -1; // closed while waiting
 		while (true) {
 			// (ready: the read does not block, and nothing collects during it)
 			var r = Posix.read(fd, Bytes.bytes(b).add(pos), len).toInt();
-			if (r < 0 && errno() == EINTR) continue;
+			if (r < 0) {
+				var e = errno();
+				if (e == EINTR) continue;
+				return e == eagain() ? -2 : -1;
+			}
 			return r;
 		}
 	}
 
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
-		if (threads() > 1 && Rt.rt_wait_fd(fd, 1, -1) < 0) return -1;
+		if (threads() > 1 && waitReady(fd, 1) < 0) return -1;
 		while (true) {
 			var r = Posix.write(fd, Bytes.bytes(b).add(pos), len).toInt();
-			if (r < 0 && errno() == EINTR) continue;
+			if (r < 0) {
+				var e = errno();
+				if (e == EINTR) continue;
+				return e == eagain() ? -2 : -1;
+			}
 			return r;
 		}
 	}

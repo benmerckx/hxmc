@@ -25,6 +25,7 @@ class FileOutput extends haxe.io.Output {
 	override public function writeBytes(b:haxe.io.Bytes, pos:Int, len:Int):Int {
 		if (fd < 0) throw haxe.io.Error.Custom("write error"); // (closed: as EBADF)
 		var n = NativeSys.fileWrite(fd, b, pos, len);
+		if (n == NativeSys.WOULD_BLOCK) throw haxe.io.Error.Blocked;
 		if (n < 0) throw haxe.io.Error.Custom("write error");
 		return n;
 	}

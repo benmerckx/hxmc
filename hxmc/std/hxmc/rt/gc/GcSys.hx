@@ -92,6 +92,10 @@ class GcSys {
 
 	public static function fileFlush(fd:Int):Void {}
 
+	// (the host's reads wait for data)
+	public static function fileSetBlocking(fd:Int, blocking:Bool):Bool
+		return blocking;
+
 	public static function fileClose(fd:Int):Void
 		W.fileIo(3, fd, null, 0, 0);
 

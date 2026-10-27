@@ -275,7 +275,21 @@ class WinSys {
 	@:hxmc.unsafe static function readHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		var p = Bytes.bytes(b).add(pos);
 		touch(p, len);
-		return Win32._read(fd, p, len);
+		return readResult(Win32._read(fd, p, len));
+	}
+
+	// a failed read of a PIPE_NOWAIT pipe with nothing in it: ERROR_NO_DATA
+	// (the C runtime keeps the system's last error), NativeSys.WOULD_BLOCK
+	@:hxmc.unsafe static function readResult(r:Int):Int
+		return r < 0 && Win32.GetLastError() == 232 ? -2 : r;
+
+	// PIPE_NOWAIT (1) or PIPE_WAIT (0) on a pipe's handle (FILE_TYPE_PIPE 3)
+	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var h = Win32._get_osfhandle(fd);
+		if (h.toI64() == -1 || Win32.GetFileType(h) != 3) return false;
+		var mode = Mem.stack(8);
+		Mem.setI32(mode, 0, blocking ? 0 : 1);
+		return K.SetNamedPipeHandleState(h, mode, Ptr.nil(), Ptr.nil()) != 0;
 	}
 
 	@:hxmc.unsafe static function writeHeap(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
@@ -291,7 +305,7 @@ class WinSys {
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
 			Leaf.rt_blocking_enter();
-			var r = Win32._read(fd, tmp, len);
+			var r = readResult(Win32._read(fd, tmp, len));
 			Leaf.rt_blocking_leave();
 			if (r > 0) LibC.memcpy(Bytes.bytes(b).add(pos), tmp, r);
 			LibC.free(tmp);
@@ -841,4 +855,9 @@ class WinSys {
 		Win32.CloseHandle(h);
 		return ok;
 	}
+}
+
+// kernel32's functions outside the runtime objects' (hxmc/deps/mkrt.sh): imports of their own
+@:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class K {
+	static function SetNamedPipeHandleState(h:Ptr, mode:Ptr, maxCount:Ptr, timeout:Ptr):Int;
 }

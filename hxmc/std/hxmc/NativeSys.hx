@@ -88,10 +88,20 @@ class NativeSys {
 	public static inline function fileOpen(path:String, mode:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileOpen(path, mode) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileOpen(path, mode) #else Mem.os() == 2 ? WinSys.fileOpen(path, mode) : PosixSys.fileOpen(path, mode) #end;
 
-	// 0 at end, -1 on error
+	// fileRead and fileWrite of a non-blocking descriptor that is not ready
+	// (EAGAIN; Windows: reads of a PIPE_NOWAIT pipe), distinct from an error
+	public static inline var WOULD_BLOCK = -2;
+
+	// a descriptor non-blocking or blocking again (O_NONBLOCK; Windows: pipes
+	// only, PIPE_NOWAIT; not on WasmGC); false on failure
+	public static inline function fileSetBlocking(fd:Int, blocking:Bool):Bool
+		return #if (hxmc.wasm_gc) GcSys.fileSetBlocking(fd, blocking) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileSetBlocking(fd, blocking) #else Mem.os() == 2 ? WinSys.fileSetBlocking(fd, blocking) : PosixSys.fileSetBlocking(fd, blocking) #end;
+
+	// 0 at end, -1 on error, WOULD_BLOCK
 	public static inline function fileRead(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileRead(fd, b.getData(), pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileRead(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileRead(fd, b.getData(), pos, len) : PosixSys.fileRead(fd, b.getData(), pos, len) #end;
 
+	// -1 on error, WOULD_BLOCK (not on Windows: there a full PIPE_NOWAIT pipe takes what fits)
 	public static inline function fileWrite(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileWrite(fd, b.getData(), pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileWrite(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileWrite(fd, b.getData(), pos, len) : PosixSys.fileWrite(fd, b.getData(), pos, len) #end;
 

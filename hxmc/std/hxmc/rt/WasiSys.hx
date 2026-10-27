@@ -238,7 +238,16 @@ class WasiSys {
 		Mem.setI32(io, 0, a32(p));
 		Mem.setI32(io, 4, n);
 		var r = write ? WasiApi.fd_write(fd, a32(io), 1, a32(io.add(8))) : WasiApi.fd_read(fd, a32(io), 1, a32(io.add(8)));
-		return r == 0 ? Mem.getI32(io, 8) : -1;
+		return r == 0 ? Mem.getI32(io, 8) : r == 6 ? -2 : -1; // (EAGAIN: NativeSys.WOULD_BLOCK)
+	}
+
+	// fdstat.fs_flags (u16 at 2): NONBLOCK 4
+	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var st = Mem.stack(24);
+		if (WasiApi.fd_fdstat_get(fd, a32(st)) != 0) return false;
+		var fl = Mem.getU16(st, 2);
+		var nf = blocking ? fl & ~4 : fl | 4;
+		return nf == fl || WasiApi.fd_fdstat_set_flags(fd, nf) == 0;
 	}
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
