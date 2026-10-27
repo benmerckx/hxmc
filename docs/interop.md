@@ -159,7 +159,11 @@ copy back with `written`/`copyIn`.
 until `free`, through collections, safe regions and threads: for I/O that
 keeps a buffer's address while the program runs on (io_uring, IOCP's
 overlapped reads). It is a value; its owner frees it once the last
-operation on it completed.
+operation on it completed. Ownership may move between threads: a buffer
+allocated on one thread may be freed on another (a worker fills it, the
+main thread frees it). Its memory is the C library's malloc, one heap for
+the process (musl, glibc, the UCRT), or the runtime's own on wasm32 (one
+thread, no per-thread caches). `IoBufferHandover` checks it.
 
 ```haxe
 var buf = IoBuffer.alloc(65536);             // zeroed
