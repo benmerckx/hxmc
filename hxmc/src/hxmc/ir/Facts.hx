@@ -445,46 +445,6 @@ class Facts {
 		}
 	}
 
-	// e with its subexpressions replaced by f's results (iterEx's order)
-	public static function mapEx(f:Ex->Ex, e:Ex):Ex {
-		inline function all(a:Vector<Ex>)
-			return a.map(f);
-		return switch e {
-			case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
-			case EBin(o, a, b): EBin(o, f(a), f(b));
-			case ENot(a): ENot(f(a));
-			case EConv(o, a): EConv(o, f(a));
-			case EBox(t, a): EBox(t, f(a));
-			case EUnbox(t, a): EUnbox(t, f(a));
-			case EField(c, i, a): EField(c, i, f(a));
-			case EFieldAddr(c, i, a): EFieldAddr(c, i, f(a));
-			case EAnonGet(n, t, a, h): EAnonGet(n, t, f(a), h);
-			case ECast(t, a): ECast(t, f(a));
-			case EInstOf(c, a): EInstOf(c, f(a));
-			case EEnumTag(a, en): EEnumTag(f(a), en);
-			case EEnumParam(c, i, a): EEnumParam(c, i, f(a));
-			case EArrLen(a): EArrLen(f(a));
-			case EArrGet(t, a, i): EArrGet(t, f(a), f(i));
-			case EArrGetU(t, a, i): EArrGetU(t, f(a), f(i));
-			case EBoxGet(t, a): EBoxGet(t, f(a));
-			case ECapture(l, i, a): ECapture(l, i, f(a));
-			case ENewBox(t, a): ENewBox(t, f(a));
-			case ECall(g, args): ECall(g, all(args));
-			case ECallDispatch(s, sig, args): ECallDispatch(s, sig, all(args));
-			case ECallHost(n, args, t): ECallHost(n, all(args), t);
-			case ENewEnum(c, args): ENewEnum(c, all(args));
-			case ENewArr(t, args): ENewArr(t, all(args));
-			case ENewClos(l, args): ENewClos(l, all(args));
-			case ENewAnon(s, args): ENewAnon(s, all(args));
-			case ECallClos(s, c, args):
-				var c2 = f(c);
-				ECallClos(s, c2, all(args));
-			case ECallAnon(n, s, c, args):
-				var c2 = f(c);
-				ECallAnon(n, s, c2, all(args));
-		}
-	}
-
 	public static function iterStmt(fs:Stmt->Void, fe:Ex->Void, s:Stmt) {
 		switch s {
 			case SSet(_, e) | SExpr(e) | SThrow(e) | SSetGlobal(_, e):

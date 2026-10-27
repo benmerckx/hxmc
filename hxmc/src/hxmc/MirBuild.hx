@@ -34,13 +34,6 @@ class MirBuild extends MirWriter {
 	var nslots = 0;
 	var fr = -1; // the frame's shadow-stack slots (value)
 	var memSlot = new Map<Local, Int>(); // try functions: frame slot of a scalar local
-	var varOf = new Map<Local, Int>(); // WasmGC's try functions: a local out of SSA (MFunc.vars)
-	// WasmGC (wasmgc.GcGen): object-level Mir only, never lowered to memory;
-	// what is memory-level here otherwise (globals, strings, the runtime's
-	// intrinsics, exceptions) is the IR's own (IrNode: wasmgc.MirGen emits it as
-	// the IR walker did); no Prep (p is null), fields at their index (at)
-	public var gc = false;
-	public static var gcSymOf:Null<FuncInfo->String>;
 	var loops:Array<{cont:MBlock, brk:MBlock, tries:Int}> = [];
 	var tries:Array<Int> = []; // frame slots of the enclosing handlers
 	var coldList:Null<Array<Local>> = null;
@@ -287,12 +280,7 @@ class MirBuild extends MirWriter {
 
 	function readLocal(l:Local):Int {
 		var s = refSlot.get(l);
-		var vi = varOf.get(l);
-		var v = if (vi != null) {
-			var i = info();
-			i.n = vi;
-			obj(VarGet, mty(l.ty), i).id;
-		} else if (s != null) loadM(Opt.MFrame, I64, 8, fr, 8 * s) else {
+		var v = if (s != null) loadM(Opt.MFrame, I64, 8, fr, 8 * s) else {
 			var m = memSlot.get(l);
 			if (m != null) {
 				var t = mty(l.ty);
@@ -306,13 +294,6 @@ class MirBuild extends MirWriter {
 
 	function writeLocal(l:Local, v:Int) {
 		if (hxmc.ir.Lower.nullChecks) checkedLocals.remove(l.id);
-		var vi = varOf.get(l);
-		if (vi != null) {
-			var i = info();
-			i.n = vi;
-			obj(VarSet, Void, i, v);
-			return;
-		}
 		var s = refSlot.get(l);
 		if (s != null) {
 			storeM(Opt.MFrame, 8, fr, 8 * s, v);
@@ -373,8 +354,7 @@ class MirBuild extends MirWriter {
 
 	// the function's object-level Mir (tidy)
 	public function objects():MFunc {
-		f = new MFunc(gc ? gcSymOf(fn) : p.funcSym(fn));
-		f.gc = gc;
+		f = new MFunc(p.funcSym(fn));
 		f.blocksHere = fn.blocksHere;
 		// (a parameter of type Void, a T->Void callback of a C<Void>: an i32, as a Void
 		// local is; WebAssembly has no value type for Void: corpus case VoidParam)
@@ -387,15 +367,14 @@ class MirBuild extends MirWriter {
 			localTy.set(l.id, l.ty);
 		}
 		nextVar = maxId;
-		// (WasmGC: the engine's collector, no shadow stack)
-		roots = gc ? null : Roots.analyze(fn);
+		roots = Roots.analyze(fn);
 		// the frame's slots: the rooted locals' (shared by locals that never
 		// live at the same time, Roots.assign), those that may be read
 		// unassigned last (zeroed, unshared; in a try function, a handler may
 		// read what its body had not assigned yet when it threw)
 		var all = fn.args.concat(fn.locals);
-		var unset = gc ? null : Roots.maybeUnset(fn);
-		var a = gc ? {slotOf: new Map<Int, Int>(), nslots: 0, nzero: 0} : roots.assign(all, unset, unset);
+		var unset = Roots.maybeUnset(fn);
+		var a = roots.assign(all, unset, unset);
 		for (l in all) {
 			var k = a.slotOf.get(l.id);
 			if (k != null) refSlot.set(l, k);
@@ -427,7 +406,7 @@ class MirBuild extends MirWriter {
 		seal(entry);
 		cur = entry;
 		var params = [];
-		if (fn.cAbi != null && !gc) params = cEntry() else
+		if (fn.cAbi != null) params = cEntry() else
 			for (i in 0...fn.args.length) {
 				var pi = mk(Param, f.params[i]);
 				pi.imm = i;
@@ -446,21 +425,16 @@ class MirBuild extends MirWriter {
 		// try functions: the scalars memLocals finds live in memory; the
 		// others are SSA values, which are immutable (in a slot or a
 		// callee-saved register across setjmp, both as they were at the call)
-		// (WasmGC: they are locals out of SSA, VarGet and VarSet, the handler
-		// seeing their latest values, references too)
 		if (fn.hasTry) {
 			var inMem = Sys.getEnv("HXMC_TRYMEM") == "all" ? assignedInTry(fn) : memLocals(fn);
 			for (l in fn.args.concat(fn.locals))
-				if (gc && inMem.exists(l.id) && mty(l.ty) != Void) {
-					varOf.set(l, f.vars.length);
-					f.vars.push(l.ty);
-				} else if (!refSlot.exists(l) && inMem.exists(l.id)) memSlot.set(l, f.slot(8, 8));
+				if (!refSlot.exists(l) && inMem.exists(l.id)) memSlot.set(l, f.slot(8, 8));
 		}
 		for (i in 0...fn.args.length)
 			writeLocal(fn.args[i], params[i]);
 		if (fn.hasTry)
 			for (l in fn.locals)
-				if (memSlot.exists(l) || varOf.exists(l)) {
+				if (memSlot.exists(l)) {
 					var t = mty(l.ty);
 					writeLocal(l, t == F64 ? fconst(0) : t == I64 ? lconst(0, 0) : iconst(0));
 				}
@@ -619,38 +593,9 @@ class MirBuild extends MirWriter {
 	}
 
 	function stmt(s:Stmt) {
-		if (gc)
-			switch s {
-				case SSetGlobal(g, v):
-					var vals = [], phs = [];
-					var t = SSetGlobal(g, irOperand(v, vals, phs));
-					irOp(Void, vals, phs, null, t);
-					return;
-				case SAnonSet(name, t, o, v):
-					var vals = [], phs = [];
-					var oe = irOperand(o, vals, phs);
-					var ve = irOperand(v, vals, phs);
-					irOp(Void, vals, phs, null, SAnonSet(name, t, oe, ve));
-					return;
-				case SThrow(e):
-					var vals = [], phs = [];
-					var t = SThrow(irOperand(e, vals, phs));
-					irOp(Void, vals, phs, null, t);
-					add(mk(Unreachable, Void));
-					return;
-				case STry(body, catches):
-					gcTry(body, catches);
-					return;
-				// (the branch an if on a constant does not take is not built: another
-				// target's code, `if (Mem.os() == 3)`, which this one may not take)
-				case SIf(EInt(c), x, y):
-					scoped(c != 0 ? x : y);
-					return;
-				case _:
-			}
 		switch s {
 			case SCold(id, x):
-				var list = gc ? null : roots.spills.get(id);
+				var list = roots.spills.get(id);
 				coldList = list == null ? [] : [for (l in list) if (!refSlot.exists(l)) l];
 				coldStmt(x);
 				coldList = null;
@@ -860,112 +805,9 @@ class MirBuild extends MirWriter {
 	static function isNullConst(e:Ex):Bool
 		return e.match(ENull(_));
 
-	// a field's slot (WasmGC: by its index, at)
+	// a field's slot
 	inline function fieldLoc(c:ClassInfo, idx:Int):Int
-		return gc ? at(idx, c.fields[idx].ty) : c.locs[idx];
-
-	// ---- WasmGC: the IR's own expressions and statements (IrNode)
-
-	// e as an operand of an IrNode template: a literal stays (the IR walker
-	// matches some), anything else is evaluated here, in order, and stands as
-	// a placeholder local (OInfo.ph) for its value
-	function irOperand(e:Ex, vals:Array<Int>, phs:Array<Local>):Ex {
-		return switch e {
-			case EInt(_) | EF64(_) | EStr(_) | EType(_) | ENull(_): e;
-			case _:
-				var v = ex(e);
-				var ph = new Local(-1 - phs.length, "_" + phs.length, Ir.typeOf(e));
-				vals.push(v);
-				phs.push(ph);
-				ELocal(ph);
-		}
-	}
-
-	function irOp(ty:MTy, vals:Array<Int>, phs:Array<Local>, ?e:Ex, ?s:Stmt):Int {
-		var i = info();
-		i.ex = e;
-		i.stmt = s;
-		i.ph = Vector.fromArrayCopy(phs);
-		var x = obj(IrNode, ty == Void ? Void : ty, i);
-		x.args = Vector.fromArrayCopy(vals);
-		if (e != null) x.vty = Ir.typeOf(e);
-		return x.id;
-	}
-
-	// the expressions WasmGC keeps as the IR's (-1: the others)
-	function gcEx(e:Ex):Int {
-		var vals = [], phs = [];
-		inline function op(t:Ex):Int
-			return irOp(mty(Ir.typeOf(t)), vals, phs, t);
-		return switch e {
-			case EStr(_) | EType(_) | EGlobal(_, _): op(e);
-			case EBin(o = Mod | FMod | LDiv | LMod, x, y):
-				var xe = irOperand(x, vals, phs);
-				var ye = irOperand(y, vals, phs);
-				op(EBin(o, xe, ye));
-			case EConv(c = F2I | F2L, x):
-				var xe = irOperand(x, vals, phs);
-				op(EConv(c, xe));
-			case EFieldAddr(c, idx, o):
-				var oe = irOperand(o, vals, phs);
-				op(EFieldAddr(c, idx, oe));
-			case ECallHost(name, args, ret):
-				var xs = [for (a in args) irOperand(a, vals, phs)];
-				irOp(mty(ret), vals, phs, ECallHost(name, Vector.fromArrayCopy(xs), ret));
-			case _: -1;
-		}
-	}
-
-	// a try (WasmGC): the Try terminator, the body (the dominator subtree of
-	// its first block, wasmgc.MirGen), the handler entered with the exception
-	// (Catch); what neither catch takes is thrown again
-	function gcTry(body:Vector<Stmt>, catches:Vector<IrCatch>) {
-		var tb = newBlock(), hb = newBlock(), join = newBlock();
-		hb.handler = true;
-		var t = mk(Try, Void);
-		t.targets = vector(tb, hb);
-		add(t);
-		edge(cur, tb);
-		edge(cur, hb);
-		seal(tb);
-		seal(hb);
-		cur = tb;
-		scoped(body);
-		jmp(join);
-		cur = hb;
-		var exn = mk(Catch, I64);
-		exn.vty = TRef(RAny);
-		var e = add(exn);
-		for (c in catches)
-			writeLocal(c.l, e);
-		var catchAll = false;
-		for (c in catches) {
-			if (c.test == null) {
-				scoped(c.body);
-				jmp(join);
-				catchAll = true;
-				break;
-			}
-			var tv = ex(c.test(ELocal(c.l)));
-			var yes = newBlock(), no = newBlock();
-			br(tv, yes, no);
-			seal(yes);
-			seal(no);
-			cur = yes;
-			scoped(c.body);
-			jmp(join);
-			cur = no;
-		}
-		if (!catchAll) {
-			var vals = [], phs = [];
-			var s = SThrow(irOperand(ELocal(catches[0].l), vals, phs));
-			irOp(Void, vals, phs, null, s);
-			add(mk(Unreachable, Void));
-		}
-		seal(join);
-		cur = join;
-		if (join.preds.length == 0) add(mk(Unreachable, Void));
-	}
+		return c.locs[idx];
 
 	// ---- object slots
 
@@ -1247,10 +1089,6 @@ class MirBuild extends MirWriter {
 	}
 
 	function exValue(e:Ex):Int {
-		if (gc) {
-			var v = gcEx(e);
-			if (v >= 0) return v;
-		}
 		return switch e {
 			case EInt(v): iconst(v);
 			case EF64(v): fconst(v);
@@ -1309,7 +1147,7 @@ class MirBuild extends MirWriter {
 			case ECall(g, args):
 				var xs = exs(args);
 				var c = mk(Call, mty(g.ret));
-				c.sym = gc ? gcSymOf(g) : p.funcSym(g);
+				c.sym = p.funcSym(g);
 				c.keepsFrame = keepsFrame(c.sym);
 				c.args = xs;
 				c.argTys = g.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));
@@ -1342,7 +1180,7 @@ class MirBuild extends MirWriter {
 			case ENewObj(c):
 				var i = info();
 				i.cls = c;
-				alloc(gc ? 2 * c.fields.length + 1 : c.nslots < 1 ? 1 : c.nslots, gc ? -1 : c.tindex, Abi.K_OBJ, true, i, OInfo.NEW_OBJECT);
+				alloc(c.nslots < 1 ? 1 : c.nslots, c.tindex, Abi.K_OBJ, true, i, OInfo.NEW_OBJECT);
 			case ENewEnum(c, args):
 				// (the storage is not zeroed: an Int's or Bool's word is cleared
 				// before the parameter is evaluated, OInfo.next)
@@ -1357,7 +1195,7 @@ class MirBuild extends MirWriter {
 					initField(o, at(i, c.params[i]), c.params[i], ex(args[i]), next(i + 1));
 				o;
 			case ENewArr(elem, vs): newArr(elem, vs);
-			case ENewClos(l, []) if (!gc && p.staticClosures):
+			case ENewClos(l, []) if (p.staticClosures):
 				// (capturing nothing: an object in the data, DataGen.closures)
 				symAddr(p.closureSym(l));
 			case ENewClos(l, caps):
@@ -1381,9 +1219,9 @@ class MirBuild extends MirWriter {
 			case ENewAnon(sh, vals):
 				var i = info();
 				i.shape = sh;
-				var o = alloc(gc ? 2 * sh.fields.length + 1 : sh.nslots, gc ? -1 : sh.tindex, Abi.K_OBJ, true, i, OInfo.NEW_ANON);
+				var o = alloc(sh.nslots, sh.tindex, Abi.K_OBJ, true, i, OInfo.NEW_ANON);
 				for (i in 0...vals.length)
-					initField(o, gc ? at(i, sh.fields[i].ty) : sh.locs[i], sh.fields[i].ty, ex(vals[i]));
+					initField(o, sh.locs[i], sh.fields[i].ty, ex(vals[i]));
 				o;
 		}
 	}

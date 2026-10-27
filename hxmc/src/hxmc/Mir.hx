@@ -102,13 +102,6 @@ enum abstract Op(Int) to Int {
 	var NArraySet; // a: storage, b: the index, c: the value (info.n; info.flag: a reference)
 	var NArrayDyn; // a: storage, b: the index, c: the value (-1: a read) of a NativeArray seen as Dynamic; args as New
 	var RefStore; // a: an object, b: the offset of a reference in it, c: the value (Mem.setRefBarrier)
-	// WasmGC's object-level Mir only (MFunc.gc: no memory lowering; wasmgc.MirGen
-	// emits it, docs/hxmc.md, "Pipeline"):
-	var IrNode; // an expression or a statement of the IR (info.ex, info.stmt) over the values args (its placeholder locals, info.ph)
-	var VarGet; // a local kept out of SSA (a try function's: MFunc.vars; info.n: its index)
-	var VarSet; // a: the value (info.n)
-	var Try; // a try body entered: targets: the body's first block, the handler's (its first instruction: Catch)
-	var Catch; // the exception caught (the handler's first instruction)
 }
 
 // the static part of an object-level operation (MIns.info): what it is about
@@ -163,11 +156,6 @@ class OInfo {
 	public var listIndex = -1;
 	// a store with the write barrier: its last two arguments are the
 	// nursery's start and size (Opt.operands, MemLower.setPtr)
-	// Ir: the IR's expression or statement (one of them), its placeholders
-	// (the locals that stand for the values args, in order)
-	public var ex:Null<hxmc.ir.Ir.Ex>;
-	public var stmt:Null<hxmc.ir.Ir.Stmt>;
-	public var ph:Null<haxe.ds.Vector<hxmc.ir.Ir.Local>>;
 	public var young = false;
 	// SetField of a reference into an object allocated since the last point
 	// where a collection may happen: no write barrier (Opt.freshTargets)
@@ -206,9 +194,6 @@ class OInfo {
 		o.fr = fr;
 		o.rootSlot = rootSlot;
 		o.listIndex = listIndex;
-		o.ex = ex;
-		o.stmt = stmt;
-		o.ph = ph;
 		o.young = young;
 		o.fresh = fresh;
 		o.ops = ops;
@@ -302,7 +287,7 @@ class MIns {
 	}
 
 	public inline function isTerm():Bool
-		return op == Jmp || op == Br || op == Switch || op == Ret || op == Unreachable || op == AnonTest || op == Try;
+		return op == Jmp || op == Br || op == Switch || op == Ret || op == Unreachable || op == AnonTest;
 
 	// an object-level operation (lowered by MemLower)
 	public inline function isObj():Bool
@@ -359,10 +344,6 @@ class MFunc {
 	public var slots:Array<{size:Int, align:Int}> = []; // frame slots (StackAddr)
 	public var blocksHere = false; // FuncInfo.blocksHere (Inline: its calls never keep the frame)
 	public var allocs = 0; // objects allocated inline and boxes made, at most (Escape: none, nothing to do)
-	// object-level Mir for WasmGC (MirBuild.gc): never lowered to memory; the
-	// locals kept out of SSA (VarGet, VarSet), by index: their types
-	public var gc = false;
-	public var vars:Array<hxmc.ir.Ir.Ty> = [];
 	// entered from C with structs by value (MirBuild.cEntry): the parameters'
 	// groups (MIns.cGroups) and C sizes (MIns.cSizes); a Param of index -1
 	// is x8 on arm64 (the address of a struct result); empty: not entered from C

@@ -433,7 +433,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				}
 			case NullCheck | New | NewDyn | InitField | GetField | SetField | FieldAddr | EnumTag | TypeTest | Box | Unbox | VirtualCall | ClosureCall | AnonGet |
 				AnonTest | AnonStore | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush | NewArray | ArrayInit | NewNArray | NArrayInit | NArrayLength |
-				NArrayGet | NArraySet | NArrayDyn | RefStore | IrNode | VarGet | VarSet | Try | Catch:
+				NArrayGet | NArraySet | NArrayDyn | RefStore:
 				objectLevel(i);
 			case Rotr:
 				var x = emit(SHIFTI);

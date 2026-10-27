@@ -1434,8 +1434,8 @@ class ModuleCache {
 			// the same defines, or the one it was restored from), at most
 			// MAX_VARIANTS per module. (A variant typed with other defines
 			// stays although its reads are the same: they are its own, and
-			// another build's dependencies can make its typing another, as
-			// -D hxmc.wasm-gc makes Std's, which reads no define of it.)
+			// another build's dependencies can make its typing another:
+			// a define it does not read, read by a module it depends on.)
 			var list = s.kept.copy();
 			var count = new Map<String, Int>();
 			var same = new Map<String, Bool>();
