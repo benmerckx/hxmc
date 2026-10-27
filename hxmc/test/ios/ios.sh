@@ -41,13 +41,22 @@ xcrun simctl install "$udid" "$app"
 check "install" $?
 rm -f "$stdout" "$out/stderr.txt"
 xcrun simctl launch --stdout="$stdout" --stderr="$out/stderr.txt" "$udid" $id
-check "launch" $?
+launched=$?
 i=0
 while [ $i -lt 60 ] && ! grep -q "hello from hxmc on" "$stdout" 2>/dev/null; do
 	sleep 1
 	i=$((i + 1))
 done
 cat "$stdout" "$out/stderr.txt" 2>/dev/null
+# the app prints its line and returns: when its process ends before simctl
+# has finished launching it, simctl reports "The process did launch, but has
+# since exited or crashed" (FBSOpenApplicationServiceErrorDomain code 3), so a
+# failed launch counts only when the line is missing too
+if [ $launched != 0 ] && grep -q "hello from hxmc on" "$stdout" 2>/dev/null; then
+	echo "ios.sh: launch: simctl reported a failure, but the app ran and printed its line (it had already exited)"
+	launched=0
+fi
+check "launch" $launched
 grep -q "hello from hxmc on .*: 998001 6 boom" "$stdout"
 check "its line on stdout" $?
 exit $failed
