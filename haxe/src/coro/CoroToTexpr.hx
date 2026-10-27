@@ -464,9 +464,17 @@ class CoroToTexpr {
 			)), com.basic.tvoid, p);
 		}
 		var cases = [];
+		// port: diverges from upstream (066bd83, and its development branch on
+		// ... 2026-10-27): a catch that handles the error clears the continuation's
+		// ... error slot. Upstream leaves it set, so a resumption state reached
+		// ... later in the same invokeResume (after a call that returns without
+		// ... suspending) reads it in its `error != null` check and throws the
+		// ... caught error again. Upstream issue draft: "[coro] A caught error is
+		// ... thrown again after a call that does not suspend"
+		// ... (hxmc/test/cases/CoroCatch.hx).
 		for (i in 0...excStateMap.length) if (excStateMap[i].length > 0) cases.push(({
 			casePatterns: excStateMap[i].mapToVector(function(i) return b.int(i, p)),
-			caseExpr: b.voidBlock(vector(setState(i)))
+			caseExpr: b.voidBlock(vector(b.assign(exprs.eerror, b.makeNull(exprs.eerror.etype, p)), setState(i)))
 		} : core.TType.TSwitchCase));
 		var def = b.voidBlock(vector(
 			b.assign(exprs.eerror, exprs.etmpError),

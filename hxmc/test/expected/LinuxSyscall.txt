@@ -1,0 +1,8 @@
+exit 0
+LinuxSyscall.hx:23: true, true
+LinuxSyscall.hx:24: true
+written by syscall(SYS_write)
+LinuxSyscall.hx:31: 30
+LinuxSyscall.hx:34: -1, true
+LinuxSyscall.hx:37: -1, true
+LinuxSyscall.hx:46: true

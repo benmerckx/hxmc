@@ -36,7 +36,7 @@ of each file.
 | --- | --- | --- | --- |
 | `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes | 293 + 12 expected failures, 67/67, 7/7 |
 | `Display` | `display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
-| `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, `--server-connect` | 633/633 |
+| `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, an empty connection ([a divergence](porting.md#divergences-from-the-reference)), `--server-connect` | 634/634 |
 | `ServerJsonRpc` | `jsonrpc` | the `server/*` methods, both cache modes | 107/107 |
 | `UpstreamTargets` | `targets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, jvm and flash by both, every output file | 12/12 identical |
 | `Interp` | `interp` | `--interp` runs of the case lists (not in CI) | 294/295 (`eval-eventLoop-compile` depends on thread timing) |
