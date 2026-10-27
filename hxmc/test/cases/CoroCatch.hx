@@ -6,6 +6,11 @@
 // its closest form), with cleanup that rethrows to an outer catch, with a
 // suspending call after the catch, with the catch inside a callee, and with
 // an error that a callee returns synchronously (no resumption, the control).
+// Built without the module cache: the hoisted fields are named after
+// variable ids (`_hx_hoisted<id>`, as upstream), which continue from the
+// cache's store, so Crosshost's native tool would name them otherwise than
+// the WebAssembly one (which has no cache).
+// define: hxmc.no-module-cache
 import haxe.coro.*;
 import haxe.coro.continuations.FunctionContinuation;
 import haxe.coro.context.Context;
