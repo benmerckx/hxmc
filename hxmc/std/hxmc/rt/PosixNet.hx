@@ -258,7 +258,7 @@ class PosixNet {
 		if (Str.isNull(a)) return true;
 		for (i in 0...a.length) {
 			var fd = a[i];
-			if (fd < 0 || fd >= 1024) return false;
+			if (fd < 0 || fd >= FD_SETSIZE) return false;
 			Mem.setI8(s, fd >> 3, Mem.getU8(s, fd >> 3) | (1 << (fd & 7)));
 			if (fd > Mem.getI32(maxfd, 0)) Mem.setI32(maxfd, 0, fd);
 		}
@@ -273,13 +273,17 @@ class PosixNet {
 		}
 	}
 
-	// Unix.select (otherlib/unix/select_unix.c): a negative timeout waits forever
+	public static inline var FD_SETSIZE = 1024;
+
+	// Unix.select (otherlib/unix/select_unix.c): a negative timeout waits
+	// forever. A descriptor from FD_SETSIZE on fails with EINVAL, as OCaml's
+	// does; -2 then (sys.net.Socket.select says why).
 	public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
 		var rs = Mem.stack(128), ws = Mem.stack(128), os = Mem.stack(128), maxfd = Mem.stack(8);
 		Mem.setI32(maxfd, 0, -1);
 		if (!toFdset(r, rs, maxfd) || !toFdset(w, ws, maxfd) || !toFdset(o, os, maxfd)) {
 			netErrno = EINVAL;
-			return -1;
+			return -2;
 		}
 		if (threads() > 1 && timeout != 0) {
 			// other threads run until a descriptor is ready or the timeout
@@ -312,6 +316,10 @@ class PosixNet {
 		fromFdset(o, os);
 		return n;
 	}
+
+	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a descriptor closed while waiting)
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, timeout:Float):Int
+		return NetCore.poll(fds, events, revents, timeout);
 
 	@:hxmc.unsafe static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
 		return Mem.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);

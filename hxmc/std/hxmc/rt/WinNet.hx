@@ -254,7 +254,7 @@ class WinNet {
 	}
 
 	// Winsock's fd_set: u32 fd_count, then the SOCKETs (FD_SETSIZE 64)
-	static inline var FD_SETSIZE = 64;
+	public static inline var FD_SETSIZE = 64;
 
 	static function toFdset(a:Array<Int>, s:Ptr) {
 		Mem.setI32(s, 0, 0);
@@ -289,7 +289,7 @@ class WinNet {
 		var nr = Str.isNull(r) ? 0 : r.length, nw = Str.isNull(w) ? 0 : w.length, no = Str.isNull(o) ? 0 : o.length;
 		if (nr > FD_SETSIZE || nw > FD_SETSIZE || no > FD_SETSIZE) {
 			setLast(EINVAL);
-			return -1;
+			return -2;
 		}
 		if (nr + nw + no == 0) {
 			if (timeout > 0) Rt.rt_sleep(timeout) else if (timeout < 0) Rt.rt_throw("select: no descriptor and no timeout");
@@ -321,6 +321,10 @@ class WinNet {
 		fromFdset(o, os);
 		return n;
 	}
+
+	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a socket closed while waiting)
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, timeout:Float):Int
+		return NetCore.poll(fds, events, revents, timeout);
 
 	@:hxmc.unsafe static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
 		return NetCore.setBool(fd, level, opt, b);

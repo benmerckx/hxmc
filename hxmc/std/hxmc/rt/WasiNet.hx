@@ -44,6 +44,9 @@ class WasiNet {
 	public static function select(read:Array<Int>, write:Array<Int>, others:Array<Int>, timeout:Float):Int
 		return -1;
 
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, timeout:Float):Int
+		return -1;
+
 	public static function setNoDelay(fd:Int, b:Bool):Int
 		return -1;
 

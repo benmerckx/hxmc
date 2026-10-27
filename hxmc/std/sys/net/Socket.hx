@@ -179,7 +179,14 @@ class Socket {
 		if (write == null) write = [];
 		if (others == null) others = [];
 		var r = [for (s in read) s.fd], w = [for (s in write) s.fd], o = [for (s in others) s.fd];
-		check(NativeNet.select(r, w, o, timeout == null ? -1.0 : timeout));
+		// hxmc: select(2) cannot go beyond FD_SETSIZE: a clear error there
+		var n = NativeNet.select(r, w, o, timeout == null ? -1.0 : timeout);
+		if (n == -2) {
+			var limit = NativeNet.selectLimit();
+			throw Custom("Socket.select: beyond FD_SETSIZE (" + limit + (limit == 64 ? " sockets a set" : " descriptors")
+				+ "); hxmc.net.Poll has no such limit");
+		}
+		check(n);
 		// NativeNet.select sets the descriptors that are not ready to -1
 		return {
 			read: [for (i in 0...read.length) if (r[i] >= 0) read[i]],

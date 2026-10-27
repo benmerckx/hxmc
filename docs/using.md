@@ -388,6 +388,19 @@ Socket.select(null, [s], [s], 5.0);
 s.finishConnect();                  // Custom("Connection refused")
 ```
 
+- **`Socket.select`** is limited by FD_SETSIZE: descriptors below 1024 on
+  Linux and macOS, 64 sockets a set on Windows. Beyond that it throws
+  `Custom("Socket.select: beyond FD_SETSIZE ...")`.
+- **`hxmc.net.Poll.poll(sockets, events, timeout)`** has no such limit
+  (poll(2), WSAPoll). `events` are `Poll.IN`, `PRI`, `OUT` per socket; it
+  returns each socket's ready events (0: none), `ERR`, `HUP` and `NVAL`
+  included. The timeout is in seconds (0: no wait, negative: no limit).
+  Other threads run while it waits. On wasm32-wasi it throws, as sockets do.
+
+```haxe
+var ready = Poll.poll(sockets, [for (_ in sockets) Poll.IN], 1.0);
+```
+
 ## Debugging
 
 - **Backtraces and breakpoints.** Build with `-debug` for DWARF lines and a
