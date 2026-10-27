@@ -159,6 +159,13 @@ space by copying into a new region.
 `RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
 nursery with a pattern so missed roots show at once.
 
+Both collectors keep the counters of `hxmc.GcStats`
+([using.md](using.md#measuring-the-collector)): bytes allocated (the
+nursery up to the allocation pointer, what TLABs left unused taken off at
+each collection, and large objects), collections, and pauses timed from
+stopping the world to resuming it. wasm32 prints the same `RT_STATS` totals
+at exit as native.
+
 ### Strings and dates
 
 Strings are UTF-16 in semantics, stored as one byte per unit when every

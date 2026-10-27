@@ -11,8 +11,12 @@ import hxmc.unsafe.Ptr;
 class Exit {
 	// ---- the program's end
 
-	@:hxmc.export("rt_main_done") @:hxmc.unsafe static function mainDone():Void
+	@:hxmc.export("rt_main_done") @:hxmc.unsafe static function mainDone():Void {
 		Wasi.flush();
+		#if !(hxmc.wasm_gc)
+		Gc.report(); // (RT_STATS)
+		#end
+	}
 
 	// rt_throw without a handler (wasm.LinkWasm's rt_throw calls it)
 	@:hxmc.export("hx_uncaught") static function uncaught(v:Dynamic):Void {

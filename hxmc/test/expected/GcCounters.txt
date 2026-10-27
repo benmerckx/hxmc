@@ -1,0 +1,8 @@
+exit 0
+small: ok
+collected: true
+large: ok
+major: true
+pauses: true
+minor + major: true
+still: true

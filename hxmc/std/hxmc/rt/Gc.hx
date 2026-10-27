@@ -178,6 +178,15 @@ class Gc {
 	static var youngBytes:I64; // RT_STATS: allocated in the nursery, and promoted from it
 	static var promotedBytes:I64;
 	static var majorSecs:Float;
+	// hxmc.GcStats (always kept: a few additions and two clock reads per
+	// collection): bytes allocated in the nursery up to the last collection
+	// (what each thread's TLAB used of it), and straight in the old space
+	// (large objects); the collections' pauses (stopping the world to resuming it)
+	static var allocBytes:I64;
+	@:hxmc.export("hxmc_gc_large_bytes") static var largeBytes:I64;
+	static var lastPause:Float;
+	static var totalPause:Float;
+	static var maxPause:Float;
 
 	// ---- finalisers (Gc.finalise in Eval): OCaml's Gc.finalise semantics. A
 	// finaliser's function is a root; its value is a root of minor collections
@@ -1087,6 +1096,8 @@ class Gc {
 	// collected meanwhile: the caller then retries its allocation)
 	@:hxmc.unsafe static function collectFor(full:Bool, need:I64) {
 		if (!Threads.worldStop()) return;
+		var p0 = Os.now();
+		var handed = youngNext.diff(youngStart);
 		if (youngDirty.ult(youngNext)) youngDirty = youngNext;
 		#if hxmc.census
 		if (census != 0) Census.countYoung(youngStart, youngNext);
@@ -1109,11 +1120,13 @@ class Gc {
 		epoch++;
 		youngNext = youngStart;
 		if (poison) LibC.memset(youngStart, POISON, minorSize);
-		// the nursery is empty again: every thread takes a new TLAB at its next allocation
+		// the nursery is empty again: every thread takes a new TLAB at its next
+		// allocation (what their TLABs had left was not allocated)
 		var me = Threads.self;
 		var t = Threads.allThreads;
 		while (!t.isNull()) {
 			if (t.value.started != 0) {
+				if (!t.value.yptr.isNull() && t.value.yptr.ult(t.value.yrlim)) handed -= t.value.yrlim.diff(t.value.yptr);
 				t.value.yptr = Ptr.nil();
 				t.value.ylim = Ptr.nil();
 				t.value.yrlim = Ptr.nil();
@@ -1126,6 +1139,11 @@ class Gc {
 			if (t.value.started != 0) zeroAbove(t);
 			t = t.value.next;
 		}
+		allocBytes += handed;
+		var pause = Os.now() - p0;
+		lastPause = pause;
+		totalPause += pause;
+		if (pause > maxPause) maxPause = pause;
 		Threads.worldResume();
 	}
 
@@ -1194,6 +1212,7 @@ class Gc {
 		// large objects go straight to the old space (with one thread, unless
 		// the free nursery has room: they may die young)
 		if ((bytes : I64) > (minorSize >> 2) && !(Atomic.load32(Mem.sym("rt_nthreads")) == 1 && youngRoom(bytes))) {
+			Atomic.add64(Mem.sym("hxmc_gc_large_bytes"), bytes);
 			var cell = Mem.sym("hxmc_old_ptr");
 			p = Ptr.ofI64(Atomic.load64(cell));
 			while (true) {
@@ -1583,6 +1602,23 @@ class Gc {
 
 	// ---- hxmc.NativeGc's measurements (the port's server/memory, in place
 	// of OCaml's Objsize and Gc heap words)
+
+	// ---- hxmc.GcStats
+
+	// bytes allocated since the start: in the nursery (up to the calling
+	// thread's allocation pointer; other threads' TLABs whole) and in the old space
+	@:hxmc.unsafe public static function bytesAllocated():Float {
+		var b = allocBytes + Atomic.load64(Mem.sym("hxmc_gc_large_bytes")) + youngNext.diff(youngStart);
+		if (!yptr.isNull() && yptr.ult(yrlim)) b -= yrlim.diff(yptr);
+		var f:Float = cast b;
+		return f;
+	}
+
+	@:hxmc.unsafe public static function counts(which:Int):Int
+		return which == 0 ? collections : which == 1 ? minors : majors;
+
+	@:hxmc.unsafe public static function pause(which:Int):Float
+		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
 
 	// the bytes the heap spaces take
 	@:hxmc.unsafe public static function heapBytes():Float {

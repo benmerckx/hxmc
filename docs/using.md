@@ -384,6 +384,31 @@ WebAssembly compiler. The differences from Eval are listed in
   `RT_VERIFY=1` checks the heap, `RT_MINOR_KB=<n>` fixes the nursery size.
   More in [hxmc.md](hxmc.md#environment-variables).
 
+### Measuring the collector
+
+`hxmc.GcStats` reads the collector's counters, the same way natively and on
+wasm32-wasi:
+
+| Function | |
+| --- | --- |
+| `bytesAllocated():Float` | bytes allocated since the program started, large objects included |
+| `collections():Int`, `minorCollections()`, `majorCollections()` | collections so far |
+| `lastPause():Float`, `totalPause()`, `maxPause()` | pauses in seconds, from stopping the program to resuming it |
+
+```haxe
+var b0 = hxmc.GcStats.bytesAllocated(), p0 = hxmc.GcStats.totalPause();
+work();
+trace('${hxmc.GcStats.bytesAllocated() - b0} bytes, ${hxmc.GcStats.totalPause() - p0} s paused');
+```
+
+Sizes are the collector's: an 8-byte header, then 8-byte slots (an
+`Array<Float>` of capacity n holds n * 8 + 8 bytes of storage; a `Vector`
+of 1000 Floats is 8008 bytes). The counters are always kept: a few
+additions and two clock reads per collection. With several threads, the
+other threads' current allocation buffers count whole until the next
+collection. With `-D hxmc.wasm-gc` the engine collects and every counter
+reads 0. `RT_STATS=1` prints the totals at exit on both targets.
+
 ### Null access
 
 Reading or writing through null throws the String `"Null Access"`, which
