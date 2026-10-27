@@ -444,7 +444,15 @@ class Server {
 			while (true) {
 				var conn = accept();
 				try {
-					var s = conn.read();
+					// port: diverges from upstream, where the read's Failure (a client
+					// that closes without a request, "Incomplete request", or sends
+					// nothing, "Aborting inactive connection") leaves this loop and
+					// ends the server (4.3's went on): here it drops the connection.
+					var s = try conn.read() catch (e:Failure) {
+						ServerMessage.socketMessage("Connection Aborted: " + e.message);
+						conn.close();
+						continue;
+					}
 					var idx = s.indexOf("\x01");
 					var stdin:Null<String>, hxml:String;
 					if (idx >= 0) {

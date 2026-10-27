@@ -1328,6 +1328,9 @@ jobs:
           rm -rf bin
           "$hx" --connect 6301 build.hxml || { cat server.log; exit 1; }
           ./$app
+          # (a client that connects and closes without a request, a probe, does not end it)
+          node -e "const s = require('net').connect(6301, '127.0.0.1', () => s.end())"
+          sleep 0.5
           rm -rf bin
           "$hx" --connect 6301 -cp src -main Main --custom-target hxmc=bin/app
           ./$app
