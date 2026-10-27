@@ -1,0 +1,2 @@
+exit 0
+IoBufferHandover.hx:75: freed here 2000 of the workers' buffers (0 wrong, seeds 3499000); the workers freed 2000 of the main thread's (0 wrong)

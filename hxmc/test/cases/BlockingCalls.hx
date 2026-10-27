@@ -47,9 +47,9 @@ class BlockingCalls {
 
 	// the same in a fast call, in a safe region entered by hand
 	@:hxmc.unsafe static function readByHand(r:I64, p:Ptr):Int {
-		Blocking.enter();
+		var region = Blocking.enter();
 		var n = Mem.os() == 2 ? readWin(r, p) : Posix.read(r.toInt(), p, 1).toInt();
-		Blocking.leave();
+		Blocking.leave(region);
 		return n;
 	}
 

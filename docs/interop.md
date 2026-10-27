@@ -60,18 +60,54 @@ threads' collections wait for it.
   `write`, `poll`, `nanosleep` and `Sleep`: the call site enters and leaves
   the safe region, evaluating the arguments before it. It takes no GC
   references.
-- **`hxmc.unsafe.Blocking.enter()` and `leave()`** enter and leave it by
-  hand, around fast calls in a loop. Between them: no allocation, no heap
-  object, no address of one; leave on every path. Prefer the metadata.
+- **`@:hxmc.blocking` on an `@:hxmc.unsafe` static Haxe function**: its
+  calls run in a safe region, for GC-free jobs (a loop over native memory)
+  that would otherwise stall other threads' collections until their next
+  GC point. The compiler checks the body by construction: `@:hxmc.unsafe`
+  (no allocation, no GC point), no value of a GC type anywhere
+  (parameters, result, locals, expressions; string literals are static
+  and allowed), and calls only of `@:hxmc.blocking` functions and of C or
+  runtime functions that are no GC point (`@:hxmc.fast` or
+  `@:hxmc.blocking` externs, `Mem`, `Atomic`). Calls between such
+  functions enter no new region. A call through a closure, or of an
+  `inline` one (Haxe inlines the call away), runs outside a region: still
+  correct, only not safe for collections.
+- **`hxmc.unsafe.Blocking.enter()` and `leave(region)`** enter and leave
+  it by hand, around fast calls in a loop or a long loop without a GC
+  point. Between them: no allocation, no heap object, no address of one;
+  leave on every path. Prefer the metadata.
+
+With `RT_VERIFY=1`, an allocation inside a region ends the program with
+"allocation in a safe region" (`SafeRegionAlloc`); without it, it goes
+unnoticed until a collection on another thread moves what it uses.
+
+Regions nest: `enter` returns the state it found and `leave` takes it
+back, so an inner region, a `@:hxmc.blocking` call or a call not
+`@:hxmc.fast` inside a region leaves it as it was; only the outermost
+`leave` ends it. (A callback's wrapper still leaves the region for the
+Haxe code C calls, and enters it again on return.)
+
+```haxe
+var region = Blocking.enter();
+while (!done(job)) step(job);    // no allocation, no GC object
+Blocking.leave(region);
+```
 
 ```haxe
 @:hxmc.c extern class Io {
   @:hxmc.blocking static function read(fd:Int, p:Ptr, n:Int64):Int64;
 }
+
+@:hxmc.unsafe @:hxmc.blocking static function checksum(p:Ptr<UInt8>, n:Int):Int {
+  var s = 0;
+  for (i in 0...n) s = (s * 31 + p[i]) & 0xFFFFFF;
+  return s;
+}
 ```
 
 `BlockingCalls` checks it on the native targets: two threads wait on empty
-pipes while the main thread collects.
+pipes while the main thread collects. `NestedRegions` checks the nesting,
+`BlockingFunctions` the Haxe functions, `reject/Blocking*` the rule.
 
 ### System calls
 
@@ -123,7 +159,11 @@ copy back with `written`/`copyIn`.
 until `free`, through collections, safe regions and threads: for I/O that
 keeps a buffer's address while the program runs on (io_uring, IOCP's
 overlapped reads). It is a value; its owner frees it once the last
-operation on it completed.
+operation on it completed. Ownership may move between threads: a buffer
+allocated on one thread may be freed on another (a worker fills it, the
+main thread frees it). Its memory is the C library's malloc, one heap for
+the process (musl, glibc, the UCRT), or the runtime's own on wasm32 (one
+thread, no per-thread caches). `IoBufferHandover` checks it.
 
 ```haxe
 var buf = IoBuffer.alloc(65536);             // zeroed

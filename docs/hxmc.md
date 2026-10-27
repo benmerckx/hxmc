@@ -157,7 +157,9 @@ space by copying into a new region.
   emits `dmb ishst` before such stores.
 
 `RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
-nursery with a pattern so missed roots show at once.
+nursery with a pattern so missed roots show at once, and ends the program
+at an allocation inside a safe region (every allocation takes the slow
+path then, which checks).
 
 Both collectors keep the counters of `hxmc.GcStats`
 ([using.md](using.md#measuring-the-collector)): bytes allocated (the
@@ -1121,7 +1123,7 @@ For compiled programs (run time):
 | `RT_OLD_MB`, `RT_OLD_GROWTH` | the old space's first limit, and its growth in percent of what is live |
 | `RT_PREFAULT=0` | no prefault helper |
 | `RT_STATS=1` | the collector's resizes and promotions |
-| `RT_VERIFY=1` | fill the free nursery with a pattern |
+| `RT_VERIFY=1` | fill the free nursery with a pattern; an allocation in a safe region is fatal |
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |

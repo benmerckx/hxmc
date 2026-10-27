@@ -158,6 +158,12 @@ class Threads {
 	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int
 		return Atomic.exchange32(m.add(Struct.offsetOf(Mutator, "state")), s);
 
+	// the running thread is in a safe region (RT_VERIFY's check of allocations: Gc.allocSlow)
+	@:hxmc.unsafe static inline function inRegion():Bool {
+		var m = self;
+		return !m.isNull() && stateOf(m) == SAFE;
+	}
+
 	@:hxmc.unsafe static inline function requested():Bool
 		return Atomic.load32(Mem.sym("rt_gc_requested")) != 0;
 
@@ -244,10 +250,14 @@ class Threads {
 	// (seq_cst): a collector that set rt_gc_requested before this thread
 	// looked sees it safe, else this thread sees the request and wakes the
 	// collector. Both keep errno (natives read it after their blocking call).
-	// (Entering again inside a safe region changes nothing.)
-	@:hxmc.export("rt_blocking_enter") @:hxmc.unsafe static function blockingEnter():Void {
+	// It returns the state it found, which rt_blocking_restore (generated
+	// code) and Regions.end (the runtime's own) take back: entering again
+	// inside a safe region changes nothing (SAFE), and restoring that leaves
+	// the outer region as it was, so regions nest.
+	// (Callers that ignore the result, as before it returned one, still work.)
+	@:hxmc.export("rt_blocking_enter") @:hxmc.unsafe static function blockingEnter():Int {
 		var m = self;
-		if (m.value.state == SAFE) return;
+		if (m.value.state == SAFE) return SAFE;
 		publish(m);
 		setState(m, SAFE);
 		if (requested()) {
@@ -257,9 +267,18 @@ class Threads {
 			Os.unlock(wl);
 			Os.setErrno(e);
 		}
+		return RUNNING;
 	}
 
-	// Leaving it waits for a collection in progress, then takes the state back
+	// The end of a region entered by rt_blocking_enter, which returned prev:
+	// nothing if it was nested in another (prev SAFE), else leaving it.
+	@:hxmc.export("rt_blocking_restore") @:hxmc.unsafe static function blockingRestore(prev:Int):Void {
+		if (prev == SAFE) return;
+		blockingLeave();
+	}
+
+	// Leaving it unconditionally (a callback's wrapper: Haxe code called
+	// from C inside a region, Lower.callback) waits for a collection in progress, then takes the state back
 	// (a collection may have moved what it refers to). Outside a safe region
 	// (a callback called by a fast C call) it changes nothing.
 	@:hxmc.export("rt_blocking_leave") @:hxmc.unsafe static function blockingLeave():Void {
@@ -279,17 +298,17 @@ class Threads {
 	// so waits for a collection): a thread blocked on it must be in a safe region.
 	@:hxmc.unsafe static function lockSafe(m:Ptr) {
 		if (Os.tryLock(m)) return;
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		Os.lock(m);
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 	}
 
 	// waits on c (m held), in a safe region: false when the deadline passed
 	@:hxmc.unsafe static function condWaitSafe(c:Ptr, m:Ptr, deadline:Ptr):Bool {
 		var r = true;
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		if (deadline.isNull()) Os.condWait(c, m) else r = Os.condTimedWait(c, m, deadline);
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		return r;
 	}
 
@@ -470,9 +489,9 @@ class Threads {
 	}
 
 	@:hxmc.unsafe static function sleepSafe(seconds:Float) {
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		Os.sleep(seconds);
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 	}
 
 	// per descriptor (below FD_GENS): incremented by rt_fd_closed; a thread
@@ -512,7 +531,7 @@ class Threads {
 			Mem.setI32(gens, 4 * i, fdGen(Mem.getI32(fds, size * i)));
 		var deadline = timeout < 0 ? -1.0 : Os.now() + timeout;
 		var result = 0, closed = false;
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		while (true) {
 			var slice = POLL_SLICE;
 			if (deadline >= 0) {
@@ -529,7 +548,7 @@ class Threads {
 				break;
 			}
 		}
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		if (gens != gensBuf && gens != scratch) LibC.free(gens);
 		if (closed) {
 			Os.setErrno(L.EBADF);

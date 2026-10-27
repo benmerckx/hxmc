@@ -35,7 +35,19 @@ import hxmc.unsafe.Ptr;
 	static function rt_write_barrier(obj:Ptr, slot:Ptr, v:Ptr):Void;
 	// a safe region (a blocking call holding no heap address: a collection
 	// may run meanwhile); before close(fd): waiters fail (Threads)
-	static function rt_blocking_enter():Void;
+	// (enter returns the state it found, which Regions.end takes: nested
+	// regions; leave ends the region whatever it was nested in)
+	static function rt_blocking_enter():Int;
 	static function rt_blocking_leave():Void;
 	static function rt_fd_closed(fd:Int):Void;
+}
+
+// The end of a region rt_blocking_enter returned `prev` for: leaving it,
+// unless it was nested in another (prev SAFE, 1). A call of
+// rt_blocking_leave by its symbol, which every code generator takes as the
+// marker it is, the committed stage0's too (generated code calls
+// rt_blocking_restore, the same test in the runtime: MirBuild.cCall).
+class Regions {
+	public static inline function end(prev:Int):Void
+		if (prev == 0) Leaf.rt_blocking_leave();
 }

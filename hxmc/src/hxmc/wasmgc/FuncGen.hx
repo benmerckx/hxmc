@@ -1572,7 +1572,10 @@ class FuncGen {
 				all();
 				op(0x08);
 				op(0);
-			case "rt_blocking_enter" | "rt_blocking_leave":
+			// (one thread: no safe region; enter's result, the state it found, RUNNING)
+			case "rt_blocking_enter":
+				if (ret != TVoid) i32(0);
+			case "rt_blocking_leave" | "rt_blocking_restore":
 			// (the linker's builtins of linear memory: hxmc.rt.wasm.Wasm)
 			case "memcpy" | "memmove" | "memset" if (m.memory):
 				var t = temp("l");

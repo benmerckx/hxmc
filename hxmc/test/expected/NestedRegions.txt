@@ -1,0 +1,6 @@
+exit 0
+NestedRegions.hx:42: inner enter/leave: collected while the worker was in its outer region, 1000
+NestedRegions.hx:42: @:hxmc.blocking call: collected while the worker was in its outer region, 1000
+NestedRegions.hx:42: extern call: collected while the worker was in its outer region, 1000
+NestedRegions.hx:42: three deep: collected while the worker was in its outer region, 1000
+NestedRegions.hx:66: allocated after leave, 20000

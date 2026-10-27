@@ -1,0 +1,3 @@
+exit 0
+without RT_VERIFY: exit 0, child allocated 10
+with RT_VERIFY: failed, the message: true

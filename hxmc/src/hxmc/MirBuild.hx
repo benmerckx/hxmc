@@ -1785,7 +1785,8 @@ class MirBuild extends MirWriter {
 	// float register; narrow results are extended (the callee leaves the
 	// upper bits undefined); a call not declared @:hxmc.fast runs in a safe
 	// region (one GC point: the references live across it are in their
-	// shadow-stack slots before rt_blocking_enter). WebAssembly has one
+	// shadow-stack slots before rt_blocking_enter; rt_blocking_restore ends
+	// it unless it was nested in another). WebAssembly has one
 	// thread: no safe region.
 	function cCall(name:String, sig:hxmc.ir.CInterop.CSig, xs:Vector<Int>, ret:Ty):Int {
 		var va = hxmc.ir.FnLower.C_VARIADIC.get(name);
@@ -1842,7 +1843,7 @@ class MirBuild extends MirWriter {
 					rt = ct == CF64 || ct == CF32 ? F64 : ct == CI64 || ct == CPtr ? I64 : I32;
 			}
 		var blocking = hxmc.ir.CInterop.BLOCKING.exists(name) && !abi.wasm;
-		if (blocking) call("rt_blocking_enter", vector(), Void);
+		var region = blocking ? call("rt_blocking_enter", vector(), I32) : -1;
 		var r = indirect ? callInd(xs[0], Vector.fromArrayCopy(args), rt) : call(name, Vector.fromArrayCopy(args), rt);
 		var ci = f.vals[r];
 		ci.cCall = true;
@@ -1857,7 +1858,7 @@ class MirBuild extends MirWriter {
 				case RSret if (abi.arm): ci.structRet = true;
 				case _:
 			}
-		if (blocking) call("rt_blocking_leave", vector(), Void);
+		if (blocking) call("rt_blocking_restore", vector(region), Void);
 		if (sret != null) {
 			switch sret.ret {
 				case RScalar(off, ct):
