@@ -229,7 +229,8 @@ disabled (`--ignore-scripts`, pnpm's default), the first call through node
 does the same. `HXMC_INSTALL=0` keeps the launcher in place.
 
 Builds for the hxmc target still go through node, which finds the runtime
-objects; other targets do not. On Windows, npm's `haxe.cmd` always starts
+objects; other targets do not. A compilation server (`haxe --wait`) asks
+node for their directories once, when it starts. On Windows, npm's `haxe.cmd` always starts
 node (about 40-60 ms per call); point editors and lix at
 `node_modules/@hxmc/cli/dist/haxe.exe` to bypass it.
 
