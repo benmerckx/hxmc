@@ -10,6 +10,20 @@ built: [hxmc.md](../hxmc.md#module-cache) and
   macro classes, not state kept elsewhere (a file a macro writes, a std
   class's statics, the macro API's registries). A conflict found late
   costs a second run of the build.
+- **Macro-defined modules.** A module `Context.defineType` or
+  `defineModule` makes is kept with its definer (the module whose typing
+  defined it) and restored only with it; one a callback (`onAfterTyping`,
+  `onGenerate`) defines is not kept, nor what such a callback adds to the
+  macro API's current module (hxmc.md, "Module cache"). Warm builds run the
+  callback and type its output every build (helder reports about 0.25 s
+  since its view classes are generated so). Reusing it soundly needs a key for the callback's result rather
+  than for a module: the callback's inputs (the types it is given, in
+  practice their metadata and fields as it reads them through the macro
+  API), the macro classes' static state it reads and writes, the defines
+  and files it reads (the existing hooks), and the code of the macro
+  itself (its module's whole content). Today's store keys modules by
+  their file and dependencies, so this belongs in the one per-module store
+  ("One cache" below), not beside it.
 - **Undone interface edits.** Undoing an edit restores the module's earlier
   variant but not its dependents'. Choose among a module's variants by its
   dependencies' hashes.
@@ -26,6 +40,46 @@ built: [hxmc.md](../hxmc.md#module-cache) and
 - **Decided against**: shipping the std as HXB. There is no single typed
   std (per target, per define, the macro context), init macros cannot
   change pre-typed modules, and the sources ship anyway.
+
+## One cache
+
+Not started. The plan (the `lean-plan` branch's lean.md, step 4): one
+per-module store, keyed by the module's source and the interface hashes of
+what it depends on, holding the typed module, the IR per function and the
+object code, with one invalidation rule, in place of `ModuleCache`,
+`ModuleCacheState`, `ModuleStore`, `ModuleInterface`, `LowerCache`,
+`ObjectStore` and `interp/BundleCache`, with `Fingerprint` and `CacheDir`
+folded in (with `WatchedCallbacks`, `CheckingHxbWriter`, `Skeletons` and
+`UpToDate`: 6,500 lines; 41 files of `hxmc/src` and `haxe/src` refer to
+them). What it must keep: the gate (`make test-module-cache`, with the
+macro-defined cases), the fixpoint cold, warm and off, the variants per
+define, nondeterministic macros, the cap and trim, the off switch, the
+server's reuse of lowered bodies, Mir's compiled functions.
+
+A module a macro defines has no source, so its entry is keyed by what made
+it instead:
+
+- the definer: the module whose typing ran the macro, by whole content (its
+  macro calls' arguments are in bodies the interface leaves out), and only
+  as part of that definer's entry, so it is restored with it and never on
+  its own;
+- the macro's code: the whole content of the macro's module and of what it
+  depends on (a macro's module already counts so across contexts);
+- the macro's inputs beyond the sources: defines, files and environment it
+  read, volatile calls (the existing hooks);
+- the macro context's state: the static variables of macro classes it read
+  (a counter, a registry), with their values, not only their names: two
+  programs of one class path can define the same path with different code;
+- for a callback's definitions, no definer module: an entry of the build
+  keyed by the types given to the callback, as the callback reads them.
+
+Stages, each green on `quick`, the fixpoint and the gate: (1) one key
+type and one store layout under `CacheDir` (index, packs, objects) with
+the current three users moved onto it, behaviour unchanged; (2) one
+validation pass (the server's checks with the interface hashes) feeding
+the module, lowered-body and object levels; (3) macro-defined entries with
+the key above; (4) remove what is left of the old parts. Rough size: 3,500
+to 4,500 lines in place of the 6,500, over four to six PRs.
 
 ## Faster rebuilds
 

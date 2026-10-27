@@ -235,6 +235,14 @@ match; a closure capturing nothing is static data.
   `Type.getClassFields`, `haxe.rtti.Meta`): a class used as a value gets a
   table of its statics, in Eval's order, kept when live code can have the
   class value. Functions not otherwise live are left out.
+- **Static initializers** run at startup, in Haxe's order, as on every
+  target, but only those of a class that has an `__init__` or whose statics
+  live code uses: a class nothing uses never runs them, whatever DCE kept
+  (`@:keep`, `@:ifFeature`). JS and Eval run those of every class DCE keeps,
+  so registering through a static initializer (`static var r =
+  register(...)` in a class nothing names) works there and not here; register
+  in an `__init__`, which always runs, or use one of the class's statics.
+  hxmc's own reachability, not the port: `porting.md` covers `haxe/src`.
 - **`Type.createInstance`**: once it is used, each class whose value live
   code can have keeps a constructor entry. A class without a constructor,
   or whose entry was dropped, fails as on Eval (`Instance constructor not
