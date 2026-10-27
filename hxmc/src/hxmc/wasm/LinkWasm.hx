@@ -51,7 +51,7 @@ class LinkWasm {
 	public static var WASI:Map<String, String> = [
 		"args_get" => "ii>i", "args_sizes_get" => "ii>i", "environ_get" => "ii>i", "environ_sizes_get" => "ii>i",
 		"clock_time_get" => "ili>i", "clock_res_get" => "ii>i", "fd_write" => "iiii>i", "fd_read" => "iiii>i", "fd_close" => "i>i",
-		"fd_seek" => "ilii>i", "fd_tell" => "ii>i", "fd_filestat_get" => "ii>i", "fd_fdstat_get" => "ii>i", "fd_prestat_get" => "ii>i",
+		"fd_seek" => "ilii>i", "fd_tell" => "ii>i", "fd_filestat_get" => "ii>i", "fd_fdstat_get" => "ii>i", "fd_fdstat_set_flags" => "ii>i", "fd_prestat_get" => "ii>i",
 		"fd_prestat_dir_name" => "iii>i", "fd_readdir" => "iiili>i", "fd_sync" => "i>i", "fd_filestat_set_size" => "il>i",
 		"path_open" => "iiiiillii>i", "path_filestat_get" => "iiiii>i", "path_create_directory" => "iii>i",
 		"path_remove_directory" => "iii>i", "path_unlink_file" => "iii>i", "path_rename" => "iiiiii>i", "proc_exit" => "i>v",

@@ -1,9 +1,9 @@
 # C interop and low-level Haxe
 
-How hxmc programs call C, pass memory to it, and use struct values. For
-library authors who bind a C library or write code that must not allocate.
-These APIs exist only on hxmc. Open work is in
-[plans/lowlevel.md](plans/lowlevel.md).
+How hxmc programs call C, pass memory to it, use struct values, and reach
+the system beyond the std. For library authors who bind a C library or
+write code that must not allocate. These APIs exist only on hxmc. Open
+work is in [plans/lowlevel.md](plans/lowlevel.md).
 
 ## C interop
 
@@ -226,3 +226,31 @@ references in structs.
 
 The corpus cases `StructValues`, `StructInline`, `StructInlineOpt` and
 `reject/Struct*` cover this on all seven targets.
+
+## Processes and files beyond the std
+
+`hxmc.NativeSys` is the system layer under `Sys`, `sys.io` and
+`sys.FileSystem`. Its functions take and return descriptors and process
+ids; `sys.io.FileInput` and `FileOutput` wrap a descriptor. It also has
+what the std's API cannot express:
+
+```haxe
+var env = NativeSys.environment();            // a copy of this process's
+env.set("RUST_LOG", "debug");
+env.remove("TOKEN");
+var fds = [0, 0, 0];                          // stdin, stdout, stderr
+var pid = NativeSys.processRun("cargo", ["build"], fds, "crates/app", env);
+```
+
+| Function | |
+| --- | --- |
+| `processRun(cmd, args, fds, ?cwd, ?env)` | `cwd`: the child's working directory; one that cannot be entered creates no process. `env`: the child's whole environment, replacing this process's; the program is looked up on its `PATH` (Windows: this process's). Null: this process's |
+| `environment()` | a copy of this process's environment as a map (on Windows with the `=C:` entries `Sys.environment` skips) |
+| `processSignal(pid, sig)` | sends `SIGTERM`, `SIGINT`, `SIGKILL` (constants of `NativeSys`) or another signal number (those differ between Linux and macOS); false when the process is gone. A process a signal ended exits with 128 + its number. Windows has no signals: each is `TerminateProcess` with that exit code (no Ctrl+C for one process) |
+| `processExitFd(pid)` | Linux: a pidfd (`pidfd_open`, kernel 5.3+), readable once the process exits, to poll with other descriptors instead of `processWait(pid, false)` each round; close it with `fileClose`, reap with `processWait`. -1 elsewhere: macOS's kqueue `EVFILT_PROC` and Windows' process handle are not exposed yet. The pid is `processRun`'s result (`Process.getPid()`) |
+| `processKill(pid)` | `sys.io.Process.kill`: `SIGKILL`; on Windows `TerminateProcess` with exit code 0, as upstream |
+| `statTimes(path)` | `[atime, ns, mtime, ns, ctime, ns, size]`, one stat for a watcher: seconds (`FileSystem.stat`'s, whose Dates hold whole seconds on hxmc) and nanoseconds, from `st_mtim` and the like (macOS `st_mtimespec`), Windows' `GetFileTime` (100 ns; ctime is the creation time, as `stat`'s), WASI's filestat; null when the path cannot be stat'ed |
+| `fileSetBlocking(fd, blocking)` | `O_NONBLOCK` on or off; on Windows pipes only (`PIPE_NOWAIT`); false where it cannot (WasmGC) |
+| `fileRead`, `fileWrite` | bytes read (0 at the end) or written, -1 on an error, `WOULD_BLOCK` (-2) when a non-blocking descriptor is not ready (`EAGAIN`; on Windows reads only). `sys.io.FileInput` and `FileOutput` throw `haxe.io.Error.Blocked` then. With other threads running, a blocking descriptor is waited for in a safe region first; a non-blocking one is not |
+
+Processes do not exist on wasm32-wasi. On WasmGC the host (node) runs them.

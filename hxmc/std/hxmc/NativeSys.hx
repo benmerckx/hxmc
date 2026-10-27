@@ -88,10 +88,20 @@ class NativeSys {
 	public static inline function fileOpen(path:String, mode:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileOpen(path, mode) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileOpen(path, mode) #else Mem.os() == 2 ? WinSys.fileOpen(path, mode) : PosixSys.fileOpen(path, mode) #end;
 
-	// 0 at end, -1 on error
+	// fileRead and fileWrite of a non-blocking descriptor that is not ready
+	// (EAGAIN; Windows: reads of a PIPE_NOWAIT pipe), distinct from an error
+	public static inline var WOULD_BLOCK = -2;
+
+	// a descriptor non-blocking or blocking again (O_NONBLOCK; Windows: pipes
+	// only, PIPE_NOWAIT; not on WasmGC); false on failure
+	public static inline function fileSetBlocking(fd:Int, blocking:Bool):Bool
+		return #if (hxmc.wasm_gc) GcSys.fileSetBlocking(fd, blocking) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileSetBlocking(fd, blocking) #else Mem.os() == 2 ? WinSys.fileSetBlocking(fd, blocking) : PosixSys.fileSetBlocking(fd, blocking) #end;
+
+	// 0 at end, -1 on error, WOULD_BLOCK
 	public static inline function fileRead(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileRead(fd, b.getData(), pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileRead(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileRead(fd, b.getData(), pos, len) : PosixSys.fileRead(fd, b.getData(), pos, len) #end;
 
+	// -1 on error, WOULD_BLOCK (not on Windows: there a full PIPE_NOWAIT pipe takes what fits)
 	public static inline function fileWrite(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return #if (hxmc.wasm_gc) GcSys.fileWrite(fd, b.getData(), pos, len) #elseif (hxmc.target == "wasm32-wasi") WasiSys.fileWrite(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileWrite(fd, b.getData(), pos, len) : PosixSys.fileWrite(fd, b.getData(), pos, len) #end;
 
@@ -154,16 +164,71 @@ class NativeSys {
 	public static inline function stat(path:String):Null<Array<Float>>
 		return #if (hxmc.wasm_gc) GcSys.stat(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.stat(path) #else Mem.os() == 2 ? WinSys.stat(path) : PosixSys.stat(path) #end;
 
+	// atime, mtime, ctime to the nanosecond: seconds since the epoch (stat's)
+	// and nanoseconds, each a whole Float, then the size: [atime s, ns, mtime
+	// s, ns, ctime s, ns, size]; null when the path cannot be stat'ed. Windows: 100 ns units, ctime
+	// the creation time (as stat's)
+	public static inline function statTimes(path:String):Null<Array<Float>>
+		return #if (hxmc.wasm_gc) GcSys.statTimes(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.statTimes(path) #else Mem.os() == 2 ? WinSys.statTimes(path) : PosixSys.statTimes(path) #end;
+
 	// processes
-	// pid, fds: stdin, stdout, stderr
-	public static inline function processRun(cmd:String, args:Null<Array<String>>, fds:Array<Int>):Int
-		return #if (hxmc.wasm_gc) GcSys.processRun(cmd, args, fds) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processRun(cmd, args, fds) #else Mem.os() == 2 ? WinSys.processRun(cmd, args, fds) : PosixSys.processRun(cmd, args, fds) #end;
+	// pid, fds: stdin, stdout, stderr. args null: cmd through the shell. cwd:
+	// the child's working directory (null: this process's; one that cannot be
+	// entered: no process). env: the child's whole environment, which replaces
+	// this process's (null: inherit it; environment() is a copy to change);
+	// the program is looked up on its PATH (Windows: on this process's)
+	public static inline function processRun(cmd:String, args:Null<Array<String>>, fds:Array<Int>, ?cwd:String, ?env:Map<String, String>):Int
+		return #if (hxmc.wasm_gc) GcSys.processRun(cmd, args, fds, cwd, envList(env)) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processRun(cmd, args, fds, cwd, envList(env)) #else Mem.os() == 2 ? WinSys.processRun(cmd, args, fds, cwd, envList(env)) : PosixSys.processRun(cmd, args, fds, cwd, envList(env)) #end;
+
+	// a copy of this process's environment, for processRun (Windows: with its
+	// "=C:" entries, the drives' working directories, which Sys.environment skips)
+	public static function environment():Map<String, String> {
+		var m = new Map<String, String>();
+		for (kv in environ()) {
+			var i = kv.indexOf("=", 1);
+			if (i > 0) m.set(kv.substr(0, i), kv.substr(i + 1));
+		}
+		return m;
+	}
+
+	// "name=value", sorted by name (Windows wants its environment blocks so)
+	static function envList(env:Null<Map<String, String>>):Null<Array<String>> {
+		if (env == null) return null;
+		var names = [for (k in env.keys()) k];
+		names.sort((a, b) -> {
+			var x = a.toUpperCase(), y = b.toUpperCase();
+			return x < y ? -1 : x > y ? 1 : 0;
+		});
+		return [for (k in names) k + "=" + env.get(k)];
+	}
 
 	// exit code, -1 while running
 	public static inline function processWait(pid:Int, block:Bool):Int
 		return #if (hxmc.wasm_gc) GcSys.processWait(pid, block) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else Mem.os() == 2 ? WinSys.processWait(pid, block) : PosixSys.processWait(pid, block) #end;
 
+	// SIGKILL (Windows: TerminateProcess with exit code 0, as upstream's Unix.kill)
 	public static inline function processKill(pid:Int):Void {
 		#if (hxmc.wasm_gc) GcSys.processKill(pid); #elseif (hxmc.target == "wasm32-wasi") WasiSys.processKill(pid); #else if (Mem.os() == 2) WinSys.processKill(pid) else PosixSys.processKill(pid); #end
 	}
+
+	// a descriptor that becomes readable when the process exits, to poll with
+	// others instead of calling processWait(pid, false) every round (the
+	// process is still reaped by processWait; close it with fileClose):
+	// Linux's pidfd (pidfd_open, kernel 5.3), close-on-exec. -1 elsewhere
+	// (macOS: kqueue's EVFILT_PROC; Windows: the process handle; neither is
+	// exposed yet), on an older kernel, or when the process is gone
+	public static inline function processExitFd(pid:Int):Int
+		return #if (hxmc.wasm_gc || hxmc.target == "wasm32-wasi") -1 #else Mem.os() == 0 ? PosixSys.processExitFd(pid) : -1 #end;
+
+	// signals for processSignal (the same numbers on Linux and macOS)
+	public static inline var SIGINT = 2;
+	public static inline var SIGKILL = 9;
+	public static inline var SIGTERM = 15;
+
+	// sends signal sig to a process this process started; false when there is
+	// none (reaped already). Windows: any signal is TerminateProcess with exit
+	// code 128 + sig, the code a POSIX process killed by it reports (SIGINT
+	// included: a console's Ctrl+C reaches a whole console, not one process)
+	public static inline function processSignal(pid:Int, sig:Int):Bool
+		return #if (hxmc.wasm_gc) GcSys.processSignal(pid, sig) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processSignal(pid, sig) #else Mem.os() == 2 ? WinSys.processSignal(pid, sig) : PosixSys.processSignal(pid, sig) #end;
 }
