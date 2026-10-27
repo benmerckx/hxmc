@@ -30,6 +30,7 @@ class Gc {
 	static inline var LARGE = 128 << 10; // larger objects get a region of their own
 	static inline var GRAN_SHIFT = 16; // chunks and regions start at multiples of 64 KB
 	static inline var GRAN = 1 << GRAN_SHIFT;
+	static inline var MAX_LARGE = 0x7FFF0000 - GRAN; // the largest object (its region's size an Int)
 
 	static var nurseryCap:Int; // the nursery's region (from youngStart): its largest size so far
 	static var youngStart:Ptr;
@@ -83,6 +84,23 @@ class Gc {
 	// nursery growth (the native Gc.adaptNursery)
 	static var lowFor:Int; // collections in a row that promoted little
 	static var growthOff:Bool; // memory cannot grow so far
+	// hxmc.GcStats and RT_STATS, as the native Gc.hx's (always kept: a few
+	// additions and two clock reads per collection): bytes allocated in the
+	// nursery up to the last collection and straight in the old space (large
+	// objects), what minor collections promoted, the collections' pauses
+	static var allocBytes:I64;
+	static var largeBytes:I64;
+	static var promotedBytes:I64;
+	static var youngBytes:I64; // (of the minor collections only, as promotedBytes)
+	static var lastPause:Float;
+	static var totalPause:Float;
+	static var maxPause:Float;
+	static var minorSecs:Float;
+	static var majorSecs:Float;
+	// the last RECORDS collections (hxmc.GcStats.records, as the native Gc.hx's)
+	public static inline var RECORDS = 64;
+	static var records:Ptr;
+	static var nrecords:Int;
 
 	// (the header: read through GcCore, as the native Gc.hx reads it)
 	static inline function inYoung(p:Ptr):Bool
@@ -259,6 +277,7 @@ class Gc {
 				p = oldAlloc(bytes);
 				if (p.isNull()) Heap.outOfMemory();
 			}
+			largeBytes += bytes;
 		} else {
 			if (Mem.tlsGet("rt_young_rlimit").diff(Mem.tlsGet("rt_young_ptr")) < (bytes : I64) && !nextChunk(bytes)) {
 				collectFor(false, 0);
@@ -290,6 +309,12 @@ class Gc {
 
 	@:hxmc.unsafe static function oldAllocSlow(bytes:Int):Ptr {
 		if (bytes > LARGE) {
+			// (an object of nearly 2 GB, the longest NArray, rounds to more than
+			// an Int: and memory could not hold it next to the rest anyway)
+			if (bytes > MAX_LARGE) {
+				Heap.refuse(bytes);
+				return Ptr.nil();
+			}
 			var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
 			var r = Heap.tryRegionAligned(size, GRAN);
 			if (!r.isNull()) addChunk(r, r.add(bytes), size);
@@ -623,16 +648,22 @@ class Gc {
 	}
 
 	@:hxmc.unsafe static function collectFor(full:Bool, need:Int) {
+		var t0 = Wasi.clockNs(1);
+		var m0 = majors;
+		var used = Mem.tlsGet("rt_young_ptr").diff(youngStart);
+		allocBytes += used;
 		var hi = Mem.tlsGet("rt_young_rlimit");
 		if (youngDirty.ult(hi)) youngDirty = hi;
 		if (verifying) verify(false);
 		if (verifying) checkRemembered();
 		if (full) majorGc(need) else {
 			var before = copiedBytes;
-			var m0 = majors;
-			var used = Mem.tlsGet("rt_young_ptr").diff(youngStart).toInt();
 			minorGc();
-			if (!minorFixed && majors == m0) adaptNursery((copiedBytes - before).toInt(), used);
+			if (majors == m0) {
+				youngBytes += used;
+				promotedBytes += copiedBytes - before;
+				if (!minorFixed) adaptNursery((copiedBytes - before).toInt(), used.toInt());
+			}
 		}
 		emptyChunk();
 		if (verifying) Wasm.memset(youngStart, POISON, minorSize);
@@ -641,6 +672,21 @@ class Gc {
 		var sp = Mem.tlsGet("rt_sp"), hw = Mem.tlsGet("rt_sp_hw");
 		if (sp.ult(hw)) Wasm.memset(sp, 0, hw.diff(sp));
 		Mem.tlsSet("rt_sp_hw", sp);
+		var t1 = Wasi.clockNs(1);
+		var ns:Float = cast(t1 - t0);
+		var pause = ns * 1e-9;
+		if (records.isNull()) records = Heap.malloc(32 * RECORDS);
+		var r = records.add(32 * (nrecords % RECORDS));
+		var start:Float = cast t0;
+		Mem.setF64(r, 0, start * 1e-9);
+		Mem.setF64(r, 8, start * 1e-9); // (one thread: stopped at once)
+		Mem.setF64(r, 16, start * 1e-9 + pause);
+		Mem.setF64(r, 24, majors != m0 ? 1.0 : 0.0);
+		nrecords++;
+		lastPause = pause;
+		totalPause += pause;
+		if (pause > maxPause) maxPause = pause;
+		if (majors == m0) minorSecs += pause else majorSecs += pause;
 	}
 
 	// RT_VERIFY=1: before and after each collection, the old space is checked
@@ -751,6 +797,64 @@ class Gc {
 	@:hxmc.unsafe public static function finalise(fn:Dynamic->Void, v:Dynamic):Void {}
 
 	@:hxmc.unsafe public static function runFinalisers():Void {}
+
+	// ---- hxmc.GcStats
+
+	// bytes allocated since the start, in the nursery and in the old space
+	@:hxmc.unsafe public static function bytesAllocated():Float {
+		var f:Float = cast(allocBytes + largeBytes + Mem.tlsGet("rt_young_ptr").diff(youngStart));
+		return f;
+	}
+
+	// (one thread)
+	@:hxmc.unsafe public static function threadBytesAllocated():Float
+		return bytesAllocated();
+
+	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
+		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
+
+	@:hxmc.unsafe public static function recordCount():Int
+		return nrecords;
+
+	@:hxmc.unsafe public static function clock():Float {
+		var ns:Float = cast Wasi.clockNs(1);
+		return ns * 1e-9;
+	}
+
+	@:hxmc.unsafe public static function counts(which:Int):Int
+		return which == 0 ? collections : which == 1 ? minors : majors;
+
+	@:hxmc.unsafe public static function pause(which:Int):Float
+		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
+
+	// RT_STATS at the program's end (Exit.mainDone), as the native Gc.report:
+	// "gc: <n> minor (<s>s), <m> major (<s>s), old <a> MB used; promoted <p> of <y> MB"
+	@:hxmc.unsafe public static function report() {
+		if (!stats) return;
+		Wasi.writeLit(2, "gc: ");
+		Wasi.writeInt(2, minors);
+		Wasi.writeLit(2, " minor (");
+		writeSecs(minorSecs);
+		Wasi.writeLit(2, "s), ");
+		Wasi.writeInt(2, majors);
+		Wasi.writeLit(2, " major (");
+		writeSecs(majorSecs);
+		Wasi.writeLit(2, "s), old ");
+		Wasi.writeInt(2, (oldBytes >> 20).toInt());
+		Wasi.writeLit(2, " MB used; promoted ");
+		Wasi.writeInt(2, (promotedBytes >> 20).toInt());
+		Wasi.writeLit(2, " of ");
+		Wasi.writeInt(2, (youngBytes >> 20).toInt());
+		Wasi.writeLit(2, " MB\n");
+	}
+
+	// seconds with two decimals
+	@:hxmc.unsafe static function writeSecs(s:Float) {
+		var c = Std.int(s * 100 + 0.5);
+		Wasi.writeInt(2, Std.int(c / 100));
+		if (c % 100 < 10) Wasi.writeLit(2, ".0") else Wasi.writeLit(2, ".");
+		Wasi.writeInt(2, c % 100);
+	}
 
 	@:hxmc.unsafe public static function heapBytes():Float {
 		var b:Float = cast oldLimit;

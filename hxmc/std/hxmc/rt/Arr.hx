@@ -227,13 +227,17 @@ class Arr {
 		// another thread changed the array meanwhile
 		var kind = kindOf(a);
 		var cap = Boxes.arrCap(a);
-		if (n > cap) {
+		// (longer than the longest storage: arrGrow's error, below; the
+		// doubled capacity stops at it)
+		if (n > cap && n <= Boxes.MAX_CAP) {
 			var ncap = cap * 2;
 			if (ncap < n) ncap = n;
-			var d0 = MemRepr.arrStore(a);
+			if (ncap > Boxes.MAX_CAP) ncap = Boxes.MAX_CAP;
+			// (a reference: the allocation's collection may move the storage, Boxes.arrGrow)
+			var d0:Dynamic = Mem.getRef(Mem.addr(a), 8);
 			var nd:Dynamic = Boxes.dataAlloc(kind, Boxes.roomFor(kind, ncap));
 			var k = len(a);
-			if (MemRepr.arrStore(a) == d0 && kindOf(a) == kind && k <= n) {
+			if (MemRepr.arrStore(a) == Mem.addr(d0) && kindOf(a) == kind && k <= n) {
 				if (k > 0) {
 					LibC.memcpy(Mem.addr(nd), MemRepr.arrData(a), (MemRepr.elemSize(a) * k : I64));
 					if (kind == Repr.AK_PTR && !Boxes.inYoungObj(nd)) Boxes.Gc_barrierRange(nd, k);

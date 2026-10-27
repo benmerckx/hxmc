@@ -161,6 +161,16 @@ nursery with a pattern so missed roots show at once, and ends the program
 at an allocation inside a safe region (every allocation takes the slow
 path then, which checks).
 
+Both collectors keep the counters of `hxmc.GcStats`
+([using.md](using.md#measuring-the-collector)): bytes allocated (the
+nursery up to the allocation pointer, what TLABs left unused taken off at
+each collection, and large objects), per thread too (each thread's record,
+`Mutator.allocated`, gains the bytes of a run of TLABs when the thread
+starts another and when a collection ends it), collections, pauses from
+the collecting thread's request to resuming the world, and a ring of the
+last 64 collections' times. wasm32 prints the same `RT_STATS` totals at
+exit as native.
+
 ### Strings and dates
 
 Strings are UTF-16 in semantics, stored as one byte per unit when every
@@ -964,7 +974,17 @@ Linear memory only grows, and browsers refuse it early, so the runtime
   `memory.grow` is zero already.
 
 When `memory.grow` fails the runtime prints "out of memory: linear memory
-is N MB, growing it by M MB failed" and exits.
+is N MB, growing it by M MB failed" and exits. Objects over 128 KB get a
+region of their own in the old space; an Array grown by doubling reaches
+about 134M Floats (1 GB of storage) before its next growth no longer fits
+next to the old storage and the collector's copy.
+
+On every target an Array's storage holds at most 268,435,453 elements
+(`Boxes.MAX_CAP`, 2 GB of 8-byte elements); growing past that throws "out
+of memory: an Array of N elements is longer than the longest". Natively, an
+object that does not fit in the old space's region even after a major
+collection exits with "out of memory: an object does not fit in the old
+space's region (RT_REGION_MB)".
 
 #### WasmGC
 
