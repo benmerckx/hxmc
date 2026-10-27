@@ -628,7 +628,7 @@ class Facts {
 					// (a safe region is no GC point of the function itself: it
 					// blocks, f.blocks, which its callers take as one, GcPoints)
 					if (n == "rt_blocking_enter") here = true;
-					if (n == "rt_blocking_enter" || n == "rt_blocking_leave") {
+					if (n == "rt_blocking_enter" || n == "rt_blocking_leave" || n == "rt_blocking_restore") {
 						Facts.iterEx(ex, e);
 						return;
 					}
@@ -823,7 +823,7 @@ class GcPoints {
 			// Without that, WinSys.fileRead copied a pipe's data into a
 			// Bytes the collection had moved, its old copy, and the
 			// reader lost it: the Windows corpus check)
-			case ECallHost("rt_blocking_enter" | "rt_blocking_leave", _, _): 1;
+			case ECallHost("rt_blocking_enter" | "rt_blocking_leave" | "rt_blocking_restore", _, _): 1;
 			case ECallHost(n, _, _): FnLower.noGcHost(n) ? 0 : 1;
 			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): 2;
 			case _: 0;

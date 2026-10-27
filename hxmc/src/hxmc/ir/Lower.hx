@@ -398,7 +398,7 @@ class Lower implements LowerQueries {
 				var xs = exs(args);
 				// (the safe region's markers stay calls by symbol: Facts tells
 				// the functions that enter one by them)
-				var impl = hostImpls.exists(n) && fi.cSymbol != n && n != "rt_blocking_enter" && n != "rt_blocking_leave" ? hostImpl(n) : null;
+				var impl = hostImpls.exists(n) && fi.cSymbol != n && n != "rt_blocking_enter" && n != "rt_blocking_leave" && n != "rt_blocking_restore" ? hostImpl(n) : null;
 				if (impl == null) xs == args ? e : ECallHost(n, xs, ret) else {
 					if (impl.args.length != xs.length || Ir.repr(impl.ret) != Ir.repr(ret))
 						fail('the Haxe implementation ${impl.name} of the runtime\'s $n does not have its signature');

@@ -2642,22 +2642,9 @@ class FnLower {
 		var t = ty(s.ret);
 		var ats = s.args.map(a -> ty(a.type));
 		var xs = args(cargs, ats, null);
-		// @:hxmc.blocking: the call between rt_blocking_enter and
-		// rt_blocking_leave here, its arguments evaluated before (a GC point
-		// among them would run in the safe region) and its result kept in a
-		// local (no safe region on WebAssembly, which has one thread)
-		if (CInterop.blockingCall(c, cf) && Lower.targetOs != 3) {
-			xs = Vector.fromArrayCopy([
-				for (i in 0...xs.length)
-					isConst(xs[i]) || xs[i].match(ELocal(_)) || ats[i].match(TStruct(_)) ? xs[i] : ELocal(asLocal(xs[i], ats[i]))
-			]);
-			out.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
-			var lo = t == TVoid ? null : newLocal("cr", t);
-			out.push(lo == null ? SExpr(ECallHost(sym, xs, t)) : SSet(lo, ECallHost(sym, xs, t)));
-			if (lo != null && t.match(TStruct(_))) freshSlots.set(lo, true);
-			out.push(SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)));
-			return lo == null ? EInt(0) : coerce(ELocal(lo), t, tyOf(e));
-		}
+		// @:hxmc.blocking: the call in a safe region entered here
+		if (CInterop.blockingCall(c, cf) && Lower.targetOs != 3)
+			return inRegion(xs, ats, xs -> ECallHost(sym, xs, t), t, tyOf(e));
 		if (t.match(TStruct(_))) {
 			// (the result's slot in this frame, MirBuild.cStructRet)
 			var lo = newLocal("cr", t);
@@ -2666,6 +2653,26 @@ class FnLower {
 			return coerce(ELocal(lo), t, tyOf(e));
 		}
 		return coerceRhs(ECallHost(sym, xs, t), t, tyOf(e));
+	}
+
+	// a call made by `call` of the operands xs (of types ats) in a safe
+	// region (@:hxmc.blocking): the operands evaluated before it (a GC point
+	// among them would run in the region), then rt_blocking_enter, the call,
+	// its result kept in a local, and rt_blocking_restore with what enter
+	// returned (inside another region it stays: regions nest). No safe
+	// region on WebAssembly, which has one thread (the callers' test).
+	function inRegion(xs:Vector<Ex>, ats:Vector<Ty>, call:Vector<Ex>->Ex, t:Ty, to:Ty):Ex {
+		xs = Vector.fromArrayCopy([
+			for (i in 0...xs.length)
+				isConst(xs[i]) || xs[i].match(ELocal(_)) || ats[i].match(TStruct(_)) ? xs[i] : ELocal(asLocal(xs[i], ats[i]))
+		]);
+		var region = newLocal("region", TI32);
+		out.push(SSet(region, ECallHost("rt_blocking_enter", vector(), TI32)));
+		var lo = t == TVoid ? null : newLocal("cr", t);
+		out.push(lo == null ? SExpr(call(xs)) : SSet(lo, call(xs)));
+		if (lo != null && t.match(TStruct(_))) freshSlots.set(lo, true);
+		out.push(SExpr(ECallHost("rt_blocking_restore", vector(ELocal(region)), TVoid)));
+		return lo == null ? EInt(0) : coerce(ELocal(lo), t, to);
 	}
 
 	// a field of a @:hxmc.struct object (an address): a load

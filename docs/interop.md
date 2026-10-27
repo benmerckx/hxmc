@@ -60,9 +60,22 @@ threads' collections wait for it.
   `write`, `poll`, `nanosleep` and `Sleep`: the call site enters and leaves
   the safe region, evaluating the arguments before it. It takes no GC
   references.
-- **`hxmc.unsafe.Blocking.enter()` and `leave()`** enter and leave it by
-  hand, around fast calls in a loop. Between them: no allocation, no heap
-  object, no address of one; leave on every path. Prefer the metadata.
+- **`hxmc.unsafe.Blocking.enter()` and `leave(region)`** enter and leave
+  it by hand, around fast calls in a loop or a long loop without a GC
+  point. Between them: no allocation, no heap object, no address of one;
+  leave on every path. Prefer the metadata.
+
+Regions nest: `enter` returns the state it found and `leave` takes it
+back, so an inner region, a `@:hxmc.blocking` call or a call not
+`@:hxmc.fast` inside a region leaves it as it was; only the outermost
+`leave` ends it. (A callback's wrapper still leaves the region for the
+Haxe code C calls, and enters it again on return.)
+
+```haxe
+var region = Blocking.enter();
+while (!done(job)) step(job);    // no allocation, no GC object
+Blocking.leave(region);
+```
 
 ```haxe
 @:hxmc.c extern class Io {
@@ -71,7 +84,7 @@ threads' collections wait for it.
 ```
 
 `BlockingCalls` checks it on the native targets: two threads wait on empty
-pipes while the main thread collects.
+pipes while the main thread collects. `NestedRegions` checks the nesting.
 
 ### System calls
 
