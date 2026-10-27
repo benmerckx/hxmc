@@ -109,7 +109,12 @@ each lane on the kept cases and 400 random programs.
 **The corpus.** Golden files are frozen: a new case gets one with
 `--bless` (checked by hand); a changed output is an edit of its golden file
 with the reason in the commit. A `// build-seconds: <n>` line bounds a
-case's build time. `Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases a
+case's build time. A `// not-live: <function>` line names a function
+reachability must drop when the case is also built from its source, as
+programs are (`HXMC_REACH_WHY`): the archive's build loads only the modules
+its program reaches, so what typing loads and DCE keeps shows only there
+(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop).
+`Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases a
 target cannot run. `RT_VERIFY=1` fills the free nursery with a pattern so
 uninitialized allocations and missed roots show at once. The corpus builds
 from HXB archives, without the module cache; CI's npm-pack job builds with
