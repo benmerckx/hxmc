@@ -1,0 +1,12 @@
+exit 0
+loop: ok
+IntMap.exists: ok
+IntMap.get: ok
+IntMap.get (missing): ok
+IntMap.set (present): ok
+IntMap.remove (missing): ok
+StringMap.get: ok
+StringMap.exists: ok
+ObjectMap.get: ok
+ObjectMap.exists: ok
+hits 325731
