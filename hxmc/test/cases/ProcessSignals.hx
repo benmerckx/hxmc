@@ -4,17 +4,17 @@
 // TerminateProcess with that code. The child is /bin/sh on Linux and macOS
 // (also under qemu-user, which cannot start the program itself without
 // binfmt), the program itself on Windows. Windows has no traps: there the
-// last two lines are printed as they are elsewhere. SIGINT's trap is node's:
-// the corpus runs a case as a background job of a non-interactive shell
-// (Harness.exec), which ignores SIGINT, and a shell cannot trap a signal
-// ignored when it started (it is inherited through fork and exec); node's
-// handler replaces the disposition.
+// last two lines are printed as they are elsewhere. The corpus runs a case
+// as a background job of a non-interactive shell (Harness.exec), which
+// ignores SIGINT, and a child inherits that through fork and exec, and a
+// shell cannot trap a signal ignored when it started: the program sets
+// SIGINT back to its default first.
 import hxmc.NativeSys;
+import hxmc.unsafe.Mem;
+import hxmc.unsafe.Posix;
+import hxmc.unsafe.Ptr;
 
 class ProcessSignals {
-	// (written out before exiting: node's writes to a pipe are asynchronous on macOS)
-	static final NODE_INT = "process.on('SIGINT', () => process.stdout.write('int\\n', () => process.exit(4))); process.stdout.write('ready\\n'); setInterval(() => {}, 1000);";
-
 	static function main() {
 		var args = Sys.args();
 		if (args.length > 0 && args[0] == "child") {
@@ -23,6 +23,7 @@ class ProcessSignals {
 				Sys.sleep(0.05);
 		}
 		var win = Sys.systemName() == "Windows";
+		if (Mem.os() <= 1) Posix.signal(NativeSys.SIGINT, Ptr.nil()); // SIG_DFL (Linux, macOS)
 		var loop = "echo ready; while :; do sleep 0.05; done";
 		var c = start(win, loop);
 		Sys.println("SIGTERM untrapped: " + NativeSys.processSignal(c.pid, NativeSys.SIGTERM) + " " + finish(c));
@@ -34,17 +35,16 @@ class ProcessSignals {
 			var c = start(win, "trap 'echo term; exit 3' TERM; " + loop);
 			NativeSys.processSignal(c.pid, NativeSys.SIGTERM);
 			Sys.println("SIGTERM trapped: " + finish(c));
-			var c = start(win, null);
+			var c = start(win, "trap 'echo int; exit 4' INT; " + loop);
 			NativeSys.processSignal(c.pid, NativeSys.SIGINT);
 			Sys.println("SIGINT trapped: " + finish(c));
 		} else Sys.println("SIGTERM trapped: term 3\nSIGINT trapped: int 4");
 	}
 
 	// a child that printed "ready"
-	static function start(win:Bool, script:Null<String>) {
+	static function start(win:Bool, script:String) {
 		var fds = [0, 0, 0];
-		var pid = win ? NativeSys.processRun(Sys.programPath(), ["child"], fds) : script != null ? NativeSys.processRun("/bin/sh", ["-c", script],
-			fds) : NativeSys.processRun("node", ["-e", NODE_INT], fds);
+		var pid = win ? NativeSys.processRun(Sys.programPath(), ["child"], fds) : NativeSys.processRun("/bin/sh", ["-c", script], fds);
 		if (pid < 0) throw "Process creation failure";
 		var out = @:privateAccess new sys.io.FileInput(fds[1]);
 		var ready = out.readLine();
