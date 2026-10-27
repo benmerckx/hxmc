@@ -1,6 +1,8 @@
 // hxmc: haxe/upstream/std/eval/_std/sys/net/Socket.hx: TCP sockets over hxmc.NativeNet
 // (rt_net.c, file descriptors). Non-blocking sockets throw
-// haxe.io.Error.Blocked when not ready.
+// haxe.io.Error.Blocked when not ready; their connect returns while the
+// connection is in progress, as on HashLink, hxcpp and Neko
+// (hxmc.net.SocketTools.connectError tells how it ended).
 
 package sys.net;
 
@@ -73,6 +75,7 @@ class Socket {
 	public var custom:Dynamic;
 
 	var fd:Int;
+	var nonBlocking:Bool;
 
 	public function new():Void {
 		init(check(NativeNet.socket()));
@@ -108,7 +111,10 @@ class Socket {
 	}
 
 	public function connect(host:Host, port:Int):Void {
-		check(NativeNet.connect(fd, host.ip, port));
+		// hxmc: a non-blocking socket's connection in progress is no error (as
+		// HashLink's, hxcpp's and Neko's socket_connect): the socket becomes
+		// writable once it completes or fails
+		if (NativeNet.connect(fd, host.ip, port) < 0 && !(nonBlocking && NativeNet.inProgress())) check(-1);
 	}
 
 	public function listen(connections:Int):Void {
@@ -160,6 +166,7 @@ class Socket {
 
 	public function setBlocking(b:Bool):Void {
 		check(NativeNet.setBlocking(fd, b));
+		nonBlocking = !b;
 	}
 
 	public function setFastSend(b:Bool):Void {

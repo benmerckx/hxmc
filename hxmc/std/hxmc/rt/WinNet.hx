@@ -33,6 +33,8 @@ class WinNet {
 	// the UCRT's errno values
 	static inline var EAGAIN = 11;
 	static inline var EWOULDBLOCK = 140;
+	static inline var EINPROGRESS = 112;
+	static inline var EALREADY = 103;
 	static inline var EBADF = 9;
 	static inline var EINVAL = 22;
 
@@ -354,6 +356,21 @@ class WinNet {
 
 	@:hxmc.unsafe public static function blocked():Bool
 		return lastErrno() == EAGAIN || lastErrno() == EWOULDBLOCK;
+
+	// a non-blocking connect in progress: WSAEWOULDBLOCK, WSAEINPROGRESS, or
+	// WSAEALREADY for a second one
+	@:hxmc.unsafe public static function inProgress():Bool
+		return lastErrno() == EWOULDBLOCK || lastErrno() == EINPROGRESS || lastErrno() == EALREADY;
+
+	// SO_ERROR as an errno, which reading clears (0: none); -1 when getsockopt fails
+	@:hxmc.unsafe public static function socketError(fd:Int):Int {
+		var e = Mem.stack(8), n = Mem.stack(8);
+		Mem.setI32(e, 0, 0);
+		Mem.setI32(n, 0, 4);
+		if (Winsock.getsockopt(sock(fd), SOL_SOCKET, SO_ERROR, e, n) != 0) return fail();
+		var x = Mem.getI32(e, 0);
+		return x == 0 ? 0 : Winsock.rt_win_sock_errno(x);
+	}
 
 	public static function gethostname():String {
 		Winsock.rt_win_sockets_init();

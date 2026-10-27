@@ -1,8 +1,8 @@
 # Using hxmc
 
 The user guide: which targets hxmc builds for, its options, what it
-writes, how it finds libraries, how rebuilds stay fast, how to debug a
-program, and what does not work yet. For a first build, see the
+writes, how it finds libraries, how rebuilds stay fast, sockets, how to
+debug a program, and what does not work yet. For a first build, see the
 [README](../README.md).
 
 ## Targets
@@ -365,6 +365,28 @@ native compiler, instead of Eval. It is experimental. Compute-bound macros
 run several times faster; cold builds are slower. It is not in the
 WebAssembly compiler. The differences from Eval are listed in
 [hxmc.md](hxmc.md#macros-on-the-mir-interpreter).
+
+## Sockets
+
+`sys.net.Socket` keeps upstream's API, natively (WebAssembly has no
+sockets). What upstream leaves open, hxmc does as follows, with additions in
+`hxmc.net`:
+
+- **A non-blocking connect** returns while the connection is in progress,
+  as on HashLink, hxcpp and Neko. The socket turns writable when the
+  connection completes or fails (on Windows a failure may show in
+  `select`'s `others` instead). Then `SocketTools.connectError(s)` gives
+  why it failed (SO_ERROR), or null; `finishConnect(s)` throws it as
+  `Custom(message)`.
+
+```haxe
+using hxmc.net.SocketTools;
+
+s.setBlocking(false);
+s.connect(host, port);              // returns at once
+Socket.select(null, [s], [s], 5.0);
+s.finishConnect();                  // Custom("Connection refused")
+```
 
 ## Debugging
 

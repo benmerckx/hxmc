@@ -65,6 +65,12 @@ class WasiNet {
 	public static function blocked():Bool
 		return false;
 
+	public static function inProgress():Bool
+		return false;
+
+	public static function socketError(fd:Int):Int
+		return -1;
+
 	public static function gethostname():Null<String>
 		return null;
 

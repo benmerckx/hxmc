@@ -82,6 +82,14 @@ class NativeNet {
 	public static inline function blocked():Bool
 		return #if (hxmc.target == "wasm32-wasi") WasiNet.blocked() #else Mem.os() == 2 ? WinNet.blocked() : PosixNet.blocked() #end;
 
+	// the last failure was a non-blocking connect in progress
+	public static inline function inProgress():Bool
+		return #if (hxmc.target == "wasm32-wasi") WasiNet.inProgress() #else Mem.os() == 2 ? WinNet.inProgress() : PosixNet.inProgress() #end;
+
+	// SO_ERROR: the socket's pending error as an errno, cleared (0: none); -1 on failure
+	public static inline function socketError(fd:Int):Int
+		return #if (hxmc.target == "wasm32-wasi") WasiNet.socketError(fd) #else Mem.os() == 2 ? WinNet.socketError(fd) : PosixNet.socketError(fd) #end;
+
 	// host names: null when the name is unknown (errno 0) or on failure
 	public static inline function gethostname():Null<String>
 		return #if (hxmc.target == "wasm32-wasi") WasiNet.gethostname() #else Mem.os() == 2 ? WinNet.gethostname() : PosixNet.gethostname() #end;

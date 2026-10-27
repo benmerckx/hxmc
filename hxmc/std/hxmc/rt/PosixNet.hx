@@ -51,6 +51,9 @@ class PosixNet {
 	static inline function EINPROGRESS():Int
 		return mac() ? 36 : 115;
 
+	static inline function EALREADY():Int
+		return mac() ? 37 : 114;
+
 	static inline function O_NONBLOCK():Int
 		return mac() ? 4 : 0x800;
 
@@ -350,6 +353,21 @@ class PosixNet {
 	// whether the last failure was EAGAIN/EWOULDBLOCK (a non-blocking socket not ready)
 	@:hxmc.unsafe public static function blocked():Bool
 		return lastErrno() == EAGAIN();
+
+	// whether the last failure was a non-blocking connect in progress
+	// (EINPROGRESS, or EALREADY for a second one)
+	@:hxmc.unsafe public static function inProgress():Bool
+		return lastErrno() == EINPROGRESS() || lastErrno() == EALREADY();
+
+	// SO_ERROR: the socket's pending error, which reading clears (0: none);
+	// -1 when getsockopt fails
+	@:hxmc.unsafe public static function socketError(fd:Int):Int {
+		var e = Mem.stack(8), n = Mem.stack(8);
+		Mem.setI32(e, 0, 0);
+		Mem.setI32(n, 0, 4);
+		if (Posix.getsockopt(fd, SOL_SOCKET(), SO_ERROR(), e, n) < 0) return ret(-1);
+		return Mem.getI32(e, 0);
+	}
 
 	public static function gethostname():String {
 		var buf = Mem.stack(4096);
