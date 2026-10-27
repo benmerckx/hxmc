@@ -37,6 +37,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `wasmgc/` | `-D hxmc.wasm-gc` ([WasmGC](#wasmgc)) |
 | `Target.hx`, `Abi.hx`, `CallConv.hx`, `CAbi.hx` | per-target facts; one calling convention per ABI; how each C ABI passes structs |
 | `MkStd.hx` | merges hxmc's std with the Eval originals into `bin/hxmc/std` |
+| `StdDce.hx` | DCE of hxmc's std overrides as of the std ([Reachability](#reachability)) |
 | `macro/`, `interp/` | the Mir interpreter's encoding and its uses: Mir macros and `--run` ([below](#macros-on-the-mir-interpreter)) |
 | `android/`, `ios/` | the APK and app bundle writers |
 
@@ -240,6 +241,16 @@ match; a closure capturing nothing is static data.
   code can have keeps a constructor entry. A class without a constructor,
   or whose entry was dropped, fails as on Eval (`Instance constructor not
   found`).
+
+Before it, DCE: hxmc's std is a user class path (`-cp bin/hxmc/std`, last so
+that its modules win), and Haxe's default DCE keeps the classes of user
+files whole, `__init__` included, which reachability takes as a root. So
+`hxmc.StdDce` gives every class and enum of an override (hxmc's std outside
+its `hxmc` package, the runtime's) `@:dce` after typing: DCE keeps of them
+what it keeps of the std module they replace. (Typing `haxe.Timer` for the
+inline `stamp` loads hxmc's `sys.thread.Thread`, whose `events` reads
+`haxe.EventLoop`; kept whole, it kept the event loop's `__init__` with the
+threads' callbacks, 110 KB of a 235 KB program.)
 
 `HXMC_STATS=1` prints the live functions and the data's parts;
 `HXMC_REACH_WHY=<pack.Class.method>` the chain that keeps a function;
