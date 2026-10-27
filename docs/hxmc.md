@@ -439,7 +439,7 @@ spare type, signature and global entries (`macro.MirHost`), and the
 std's parts for code it loads (`EvalCompat`, the interpreter's `CALLX`)
 are compiled in. Other programs lower none of it. There is no build
 flavor: on linux-x86_64 this costs the compiler 4.4% raw and nothing
-gzipped (plans/compiler.md, "Mir macros: size and speed").
+gzipped (plans/compiler.md, "Mir macros").
 
 A bundle for the interpreter carries no native code, so interpreted code
 never needs executable memory: its functions are descriptors

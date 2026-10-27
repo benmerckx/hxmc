@@ -1213,10 +1213,16 @@ jobs:
       - uses: actions/download-artifact@v8
         with: {name: site, path: site-dist}
       - name: The website in Chromium, Firefox and WebKit
+        timeout-minutes: 20
         run: |
           set -ex
           npm install --no-save --silent playwright@1.56.1
-          npx playwright install --with-deps chromium firefox webkit > /dev/null
+          # --with-deps runs apt-get, which at times stalled on a mirror with
+          # no output: apt's own timeouts and retries end a stalled request,
+          # and a try waits for the dpkg lock an earlier one still holds
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "300";\n' | sudo tee /etc/apt/apt.conf.d/99ci-timeouts > /dev/null
+          retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
+          retry npx playwright install --with-deps chromium firefox webkit > /dev/null
           node site/tools/browser-test.mjs site-dist chromium firefox webkit
 
   # the npm packages in fresh projects, on each target's machine (every
