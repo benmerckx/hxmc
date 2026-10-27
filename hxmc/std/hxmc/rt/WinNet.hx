@@ -380,6 +380,13 @@ class WinNet {
 	@:hxmc.unsafe public static function inProgress():Bool
 		return lastErrno() == EWOULDBLOCK || lastErrno() == EINPROGRESS || lastErrno() == EALREADY;
 
+	// whether fd is a socket (SO_TYPE: WSAENOTSOCK otherwise)
+	@:hxmc.unsafe static function isSocket(fd:Int):Bool {
+		var t = Mem.stack(8), n = Mem.stack(8);
+		Mem.setI32(n, 0, 4);
+		return Winsock.getsockopt(sock(fd), SOL_SOCKET, 0x1008, t, n) == 0 || Winsock.WSAGetLastError() != 10038; // SO_TYPE
+	}
+
 	// SO_ERROR as an errno, which reading clears (0: none); -1 when getsockopt fails
 	@:hxmc.unsafe public static function socketError(fd:Int):Int {
 		var e = Mem.stack(8), n = Mem.stack(8);

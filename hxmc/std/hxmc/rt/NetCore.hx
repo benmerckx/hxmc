@@ -78,15 +78,27 @@ extern class NetCore {
 			r = Os.poll(p, n, 0);
 			err = Os.errno();
 		}
-		if (r < 0) {
-			if (Mem.os() == 2) WinNet.setLast(err) else PosixNet.netErrno = err;
-		} else
+		// Windows: WSAPoll reports a handle that is not a socket as POLLNVAL
+		// (wine fails with WSAENOTSOCK): asked with getsockopt, it fails as
+		// WSAENOTSOCK does (ENOTSOCK, 128); a negative entry is never ready, as
+		// POSIX poll ignores it
+		if (r >= 0)
 			for (i in 0...n) {
 				var e = Mem.getU16(p, size * i + ev + 2);
-				if (Mem.os() == 2)
+				if (Mem.os() == 2) {
+					if (fds[i] < 0) e = 0;
+					else if ((e & 4) != 0 && !WinNet.isSocket(fds[i])) {
+						r = -1;
+						err = 128;
+						break;
+					}
 					e = ((e & 0x100) != 0 ? 1 : 0) | ((e & 0x200) != 0 ? 2 : 0) | ((e & 0x10) != 0 ? 4 : 0) | ((e & 1) != 0 ? 8 : 0) | ((e & 2) != 0 ? 16 : 0) | ((e & 4) != 0 ? 32 : 0);
+				}
 				revents[i] = e;
 			}
+		if (r < 0) {
+			if (Mem.os() == 2) WinNet.setLast(err) else PosixNet.netErrno = err;
+		}
 		return r;
 	}
 
