@@ -26,7 +26,6 @@ playground: <https://haxe-in-haxe.ben.mk>.
 | Rebuilds | the module cache on disk, the compilation server, `haxe --dev` |
 | **Experimental** | |
 | Android, iOS | APKs and app bundles written by hxmc, no SDK; not yet for store release |
-| WasmGC | `-D hxmc.wasm-gc` |
 | Mir macros | `-D hxmc.macros=mir`: macros on hxmc's own interpreter |
 | **Not yet** | |
 | | WebAssembly threads, sockets and processes; call stacks on WebAssembly |

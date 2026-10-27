@@ -1,6 +1,6 @@
 // Fields added to anonymous structures at run time (`o.x = ...` on a
-// Dynamic, Reflect.setField: slot 0's pairs, hxmc.rt.Dyn; GcFields on
-// WasmGC), seen wherever a structure's fields are: Std.string and trace
+// Dynamic, Reflect.setField: slot 0's pairs, hxmc.rt.Dyn), seen wherever
+// a structure's fields are: Std.string and trace
 // (nested in arrays, structures, enum arguments, maps' values), haxe.Json,
 // Reflect.copy, compare, fields, hasField, field, deleteField (an added
 // field leaves no hole; one of the structure's own cannot be removed:

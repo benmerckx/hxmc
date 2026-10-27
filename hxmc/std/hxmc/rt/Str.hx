@@ -9,25 +9,24 @@ import hxmc.unsafe.Ptr;
 
 // The runtime's strings (formerly rt_str.c): UTF-16 strings, number
 // formatting, the String, StringBuf and Std natives, written over
-// hxmc.rt.Repr for both runtimes (@:hxmc.anyHeap). In linear memory a
-// string is an array without references (hxmc.rt.Types: its hash in its
-// header, 0 until computed), its int32 length, then its units: a byte each
-// (T_STRING1, where every unit is below 0x100) or two (T_STRING), as V8's
-// one-byte and two-byte strings. Every operation takes either width (and a
-// two-byte string whose units would fit in bytes: no result depends on the
-// width); what this makes is one-byte wherever every unit fits, but for the
-// concatenations of a two-byte string. StringBuf keeps the runtime's layout
-// (T_STRINGBUF: slot 0 the length, slot 1 its units, a string as long as
-// its capacity, one-byte until a unit above 0xFF comes), which generated
-// code's inline addChar reads too (MirBuild.stringBufAddChar). Under -D
-// hxmc.wasm-gc a string is an array of UTF-16 units (hxmc.rt.gc.GcRepr).
+// hxmc.rt.Repr. A string is an array without references (hxmc.rt.Types:
+// its hash in its header, 0 until computed), its int32 length, then its
+// units: a byte each (T_STRING1, where every unit is below 0x100) or two
+// (T_STRING), as V8's one-byte and two-byte strings. Every operation takes
+// either width (and a two-byte string whose units would fit in bytes: no
+// result depends on the width); what this makes is one-byte wherever every
+// unit fits, but for the concatenations of a two-byte string. StringBuf
+// keeps the runtime's layout (T_STRINGBUF: slot 0 the length, slot 1 its
+// units, a string as long as its capacity, one-byte until a unit above 0xFF
+// comes), which generated code's inline addChar reads too
+// (MirBuild.stringBufAddChar).
 //
 // @:hxmc.export functions are called by the runtime's C code too (by that
 // symbol); @:hxmc.host ones only replace generated code's calls. Written
 // with the intrinsics only: an operation of the language that the runtime
 // implements here (string concatenation, Std.string...) would call itself.
 // The functions over C strings (Ptr) are linear memory's.
-@:keep @:allow(hxmc.rt) @:hxmc.anyHeap
+@:keep @:allow(hxmc.rt)
 class Str {
 	public static inline var T_STRING = 16; // (Types.T_STRING, Types.T_STRING1)
 	public static inline var T_STRING1 = 17;
@@ -43,7 +42,7 @@ class Str {
 	public static inline function len(s:String):Int
 		return Repr.len(s);
 
-	// whether s has a byte per unit (never under -D hxmc.wasm-gc)
+	// whether s has a byte per unit
 	public static inline function isOne(s:String):Bool
 		return Repr.isOne(s);
 
@@ -98,13 +97,7 @@ class Str {
 	// bytes [p, p + n) (outside the heap) as a string, a unit each
 	static function ofBytes(p:Ptr, n:Int):String {
 		var s = make1(n);
-		#if (hxmc.wasm_gc)
-		var d = chars1(s);
-		for (i in 0...n)
-			d.set(i, Mem.getU8At(p, 0, i));
-		#else
 		if (n > 0) LibC.memcpy(chars1(s), p, (n : I64));
-		#end
 		return s;
 	}
 
@@ -123,14 +116,12 @@ class Str {
 		// 0xC4 or more, a byte of none)
 		var units = 0, i = from, wide = false;
 		while (i < end) {
-			#if !hxmc.wasm_gc
 			// (four ASCII bytes at a time)
 			if (i + 4 <= end && Mem.getI32(o.at(i), 0) & 0x80808080 == 0) {
 				units += 4;
 				i += 4;
 				continue;
 			}
-			#end
 			var b = o.get(i);
 			if (b < 0x80) {
 				units++;
@@ -154,7 +145,6 @@ class Str {
 		var j = 0;
 		i = from;
 		while (i < end) {
-			#if !hxmc.wasm_gc
 			// (four ASCII bytes at a time: two units per store)
 			if (i + 4 <= end) {
 				var x = Mem.getI32(o.at(i), 0);
@@ -166,7 +156,6 @@ class Str {
 					continue;
 				}
 			}
-			#end
 			var b = o.get(i);
 			if (b < 0x80) {
 				d.set(j++, b);
@@ -197,16 +186,13 @@ class Str {
 	static function decodeOne(o:Octets, from:Int, end:Int, units:Int):String {
 		var s = make1(units);
 		var d = chars1(s);
-		#if !hxmc.wasm_gc
 		// (ASCII: the bytes themselves)
 		if (units == end - from) {
 			if (units > 0) LibC.memcpy(d, o.at(from), (units : I64));
 			return s;
 		}
-		#end
 		var j = 0, i = from;
 		while (i < end) {
-			#if !hxmc.wasm_gc
 			// (four ASCII bytes at a time)
 			if (i + 4 <= end) {
 				var x = Mem.getI32(o.at(i), 0);
@@ -217,7 +203,6 @@ class Str {
 					continue;
 				}
 			}
-			#end
 			var b = o.get(i);
 			if (b < 0x80) {
 				d.set(j++, b);
@@ -251,7 +236,6 @@ class Str {
 		if (isOne(s)) {
 			var c = chars1(s);
 			while (i < n) {
-				#if !hxmc.wasm_gc
 				// (four ASCII units at a time)
 				if (i + 4 <= n) {
 					var x = Mem.getI32(c.at(i), 0);
@@ -262,7 +246,6 @@ class Str {
 						continue;
 					}
 				}
-				#end
 				var cp = c.get(i++);
 				if (cp < 0x80)
 					buf.set(j++, cp);
@@ -512,15 +495,9 @@ class Str {
 	}
 
 	@:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
-		#if (hxmc.wasm_gc)
-		// the host's shortest form (JavaScript's, as FloatText formats); integral values as Ints
-		if (v == Std.int(v) && (v != 0 || 1 / v > 0)) return ofInt(Std.int(v));
-		return hxmc.rt.gc.W.fmt(v);
-		#else
 		var buf = Mem.stack(48);
 		FloatText.format(v, buf);
 		return ofBytes(buf, LibC.strlen(buf).toInt());
-		#end
 	}
 
 	@:hxmc.host("hx_str_of_bool") @:hxmc.unsafe static function ofBool(v:Bool):String
@@ -744,11 +721,9 @@ class Str {
 	@:hxmc.host("StringBuf_new") static function sbNew():Dynamic
 		return Repr.sbNew();
 
-	#if !hxmc.wasm_gc
 	// super() of a class extending StringBuf (Lower.stringBufCtor)
 	@:hxmc.host("StringBuf_init") static function sbInit(b:Dynamic):Void
 		Repr.sbInit(b);
-	#end
 
 	// room for `extra` more units
 	static function reserve(b:Dynamic, extra:Int) {
@@ -840,7 +815,6 @@ class Str {
 	static inline function sbUnit(b:Dynamic, at:Int, u:Int)
 		if (Repr.sbIsOne(b)) Repr.sbChars1(b).set(at, u) else Repr.sbChars2(b).set(at, u);
 
-	#if !hxmc.wasm_gc
 	// eight one-byte units (lanes1) or four two-byte ones (lanes2) of a 64-bit
 	// word at a time: whether a lane of x is zero, or below 0x20
 	static inline function lanes1(n:Int):I64
@@ -860,7 +834,6 @@ class Str {
 
 	static inline function low2(x:I64):Bool
 		return (x - lanes2(0x20)) & ~x & lanes2(0x8000) != (0 : I64);
-	#end
 
 	// the index of the first quote, backslash or 0 unit of s from pos (its
 	// length if none): haxe.format.JsonParser.parseString's units to skip
@@ -870,13 +843,11 @@ class Str {
 		var i = pos < 0 ? 0 : pos;
 		if (isOne(s)) {
 			var c = chars1(s);
-			#if !hxmc.wasm_gc
 			while (i + 8 <= n) {
 				var w = Mem.getI64(c.at(i), 0);
 				if (zero1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
 				i += 8;
 			}
-			#end
 			while (i < n) {
 				var u = c.get(i);
 				if (u == '"'.code || u == '\\'.code || u == 0) break;
@@ -885,13 +856,11 @@ class Str {
 			return i;
 		}
 		var c = chars2(s);
-		#if !hxmc.wasm_gc
 		while (i + 4 <= n) {
 			var w = Mem.getI64(c.at(i), 0);
 			if (zero2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
 			i += 4;
 		}
-		#end
 		while (i < n) {
 			var u = c.get(i);
 			if (u == '"'.code || u == '\\'.code || u == 0) break;
@@ -908,25 +877,21 @@ class Str {
 	@:hxmc.unsafe static function jsonPlain(s:String, i:Int, n:Int):Int {
 		if (isOne(s)) {
 			var c = chars1(s);
-			#if !hxmc.wasm_gc
 			while (i + 8 <= n) {
 				var w = Mem.getI64(c.at(i), 0);
 				if (low1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
 				i += 8;
 			}
-			#end
 			while (i < n && !jsonEscaped(c.get(i)))
 				i++;
 			return i;
 		}
 		var c = chars2(s);
-		#if !hxmc.wasm_gc
 		while (i + 4 <= n) {
 			var w = Mem.getI64(c.at(i), 0);
 			if (low2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
 			i += 4;
 		}
-		#end
 		while (i < n && !jsonEscaped(c.get(i)))
 			i++;
 		return i;
@@ -1039,10 +1004,6 @@ class Str {
 
 	@:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
 		if (isNull(s)) return Math.NaN;
-		#if (hxmc.wasm_gc)
-		// the host's (JavaScript's parseFloat, as strtod reads)
-		return hxmc.rt.gc.W.parseFloat(s);
-		#else
 		// ASCII bytes for strtod (any other unit ends the number, as its UTF-8 would)
 		var n = len(s);
 		var small = Mem.stack(128);
@@ -1060,14 +1021,10 @@ class Str {
 		if (Mem.getPtr(end, 0) == p) d = Math.NaN;
 		if (buf != small) LibC.free(buf);
 		return d;
-		#end
 	}
 
 	@:hxmc.host("Std_random") @:hxmc.unsafe static function random(max:Int):Int {
 		if (max <= 0) return 0;
-		#if (hxmc.wasm_gc)
-		return Std.int(hxmc.rt.gc.W.random() * max);
-		#else
 		if (Mem.os() == 2) {
 			// the C runtime's rand() has 15 bits: two make 30
 			var r:I64 = (LibC.rand() << 15) ^ LibC.rand();
@@ -1075,6 +1032,5 @@ class Str {
 		}
 		var r:I64 = LibC.rand();
 		return ((r * max) >> 31).toInt();
-		#end
 	}
 }

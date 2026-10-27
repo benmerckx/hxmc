@@ -11,8 +11,6 @@ using StringTools;
 // Benchmarks section, .github/workflows/bench.yml):
 //   hxmc        the tool (bin/hxmc/hxmc) with hxmc's std: a static linux-x86_64 executable
 //   hxmc-wasm   the same with -D hxmc.target=wasm32-wasi, run by node (hxmc/bootstrap/wasi.mjs)
-//   hxmc-wasmgc the same as a WasmGC module (-D hxmc.wasm-gc, an experiment: the engine's
-//               collector), run by node (hxmc/bootstrap/wasmgc.mjs)
 //   cpp         the port (bin/port/haxe) --cpp, then hxcpp (lix, pinned) with g++
 //   jvm         the port --jvm (with hxjava, lix, pinned), java -jar
 //   js          the port --js with hxnodejs (lix, pinned), node
@@ -86,7 +84,7 @@ class Bench {
 		// --jvm adds -lib hxjava (its Java standard library)
 		{name: "hxjava", repo: "HaxeFoundation/hxjava", commit: "f8c7dc6c56f4bf8f5912b4844a1b55ab094ee0cf"},
 	];
-	public static final TARGETS = ["hxmc", "hxmc-wasm", "cpp", "jvm", "js", "hlc", "hl", "hxmc-wasmgc"];
+	public static final TARGETS = ["hxmc", "hxmc-wasm", "cpp", "jvm", "js", "hlc", "hl"];
 	// history.json: the fields of each run's per case and target array
 	static final HISTORY_FIELDS = ["median", "min", "max", "rss_mb", "build_s", "haxe_s", "cc_s"];
 	static final DIR = "bin/bench";
@@ -351,11 +349,11 @@ class Bench {
 		var steps:Array<{cmd:Array<String>, ?cwd:String, ?cc:Bool}> = [];
 		var art:String, run:Array<String>;
 		switch target {
-			case "hxmc" | "hxmc-wasm" | "hxmc-wasmgc":
-				var wasm = target != "hxmc", gc = target == "hxmc-wasmgc";
+			case "hxmc" | "hxmc-wasm":
+				var wasm = target != "hxmc";
 				art = '$out/${wasm ? "main.wasm" : "main"}';
-				steps.push({cmd: [tool, art].concat(args).concat(["-cp", root + "/bin/hxmc/std", "--custom-target", "hxmc"]).concat(wasm ? ["-D", "hxmc.target=wasm32-wasi"] : []).concat(gc ? ["-D", "hxmc.wasm-gc"] : [])});
-				run = wasm ? ["node", "--stack-size=65500", root + (gc ? "/hxmc/bootstrap/wasmgc.mjs" : "/hxmc/bootstrap/wasi.mjs"), art] : [art];
+				steps.push({cmd: [tool, art].concat(args).concat(["-cp", root + "/bin/hxmc/std", "--custom-target", "hxmc"]).concat(wasm ? ["-D", "hxmc.target=wasm32-wasi"] : [])});
+				run = wasm ? ["node", "--stack-size=65500", root + "/hxmc/bootstrap/wasi.mjs", art] : [art];
 			case "cpp":
 				art = '$out/cpp/$main';
 				// the sources, then hxcpp as the compiler would run it (`haxelib run hxcpp Build.xml haxe`,

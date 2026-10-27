@@ -78,35 +78,16 @@ class Inline {
 	// object-level Mir: an object-level operation counts what MemLower makes
 	// of it outside slow paths (opSize), the others one each but constants
 	// and addresses, which fold into their users (-1: never inlined)
-	public static function size(f:MFunc, gc = false):Int {
+	public static function size(f:MFunc):Int {
 		var n = 0;
 		for (b in f.blocks)
 			if (!b.cold)
 				for (i in b.ins) {
 					if (i.op == Call && i.returnsTwice) return -1;
 					if (i.op != Const && i.op != ConstF && i.op != SymAddr && i.op != StackAddr && i.op != Param)
-						n += !i.isObj() ? 1 : gc ? gcOpSize(i) : opSize(i);
+						n += !i.isObj() ? 1 : opSize(i);
 				}
 		return n;
-	}
-
-	// what wasmgc.MirGen makes of an object-level operation (no barriers,
-	// nursery or inline caches: mostly one instruction and its casts; an
-	// array access its kind and range tests inline, a structural one its
-	// layout tests)
-	static function gcOpSize(i:MIns):Int {
-		var o = i.info;
-		return switch i.op {
-			case InitField | ArrayInit: 0; // (operands of the struct.new)
-			case TypeTest | ClosureCall: 2;
-			case VirtualCall: 3;
-			case AnonGet: o.shape != null ? 3 : 6;
-			case AnonCall: 10;
-			case ArrayGet: 4;
-			case ArraySet: 5;
-			case ArrayPush: 6;
-			case _: 1;
-		}
 	}
 
 	// what MemLower makes of an object-level operation outside its slow paths
@@ -191,32 +172,6 @@ class Inline {
 	}
 
 	public static var devirtOn = Sys.getEnv("HXMC_DEVIRT") != "0";
-
-	// whether inlining the call may let Escape replace an object: one made in
-	// the caller passed to it, or one the callee makes returned (WasmGC
-	// inlines those up to the native loop limit: an engine inlines small
-	// functions itself, but does not take objects out of the heap)
-	public static function objectsMeet(f:MFunc, call:MIns, t:Template):Bool {
-		for (a in call.args)
-			if (madeHere(f, a, 0)) return true;
-		for (b in t.mf.blocks) {
-			var r = b.term();
-			if (r != null && r.op == Ret && r.a >= 0 && madeHere(t.mf, r.a, 0)) return true;
-		}
-		return false;
-	}
-
-	// v is an object made in f (New, through copies and phis)
-	static function madeHere(f:MFunc, v:Int, depth:Int):Bool {
-		var x = f.vals[v];
-		while (x.op == Copy)
-			x = f.vals[x.a];
-		if (x.op == New) return x.info.name != OInfo.NEW_ARRAY;
-		if (x.op != Phi || depth > 2) return false;
-		for (a in x.args)
-			if (a != x.id && !madeHere(f, a, depth + 1)) return false;
-		return true;
-	}
 
 	// Devirtualization: a virtual call on an object made in f (New: its class
 	// exactly known) calls the class's implementation of the selector

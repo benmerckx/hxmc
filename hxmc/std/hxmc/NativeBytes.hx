@@ -4,8 +4,7 @@ import haxe.io.BytesData;
 import haxe.io.Encoding;
 
 // The runtime's functions over haxe.io.BytesData (NativeArray storage of
-// bytes, hxmc.rt.Bytes; under -D hxmc.wasm-gc some are instructions,
-// hxmc.wasmgc.FuncGen), which haxe.io.Bytes wraps: out of bounds, the ones
+// bytes, hxmc.rt.Bytes), which haxe.io.Bytes wraps: out of bounds, the ones
 // taking a range throw "OutsideBounds"; the accessors of a position do not
 // test it (as haxe.io.Bytes.get).
 extern class NativeBytes {

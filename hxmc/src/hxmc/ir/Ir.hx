@@ -284,7 +284,7 @@ enum Ex {
 	EEnumParam(c:CtorInfo, idx:Int, e:Ex);
 	EArrLen(a:Ex);
 	EArrGet(elem:Ty, a:Ex, i:Ex);
-	EArrGetU(elem:Ty, a:Ex, i:Ex); // an Array-backed haxe.ds.Vector (WasmGC): no bounds check (out of range is unspecified)
+	EArrGetU(elem:Ty, a:Ex, i:Ex); // an Array-backed haxe.ds.Vector: no bounds check (out of range is unspecified)
 	EBoxGet(t:Ty, b:Ex);
 	ECapture(l:LambdaInfo, idx:Int, clos:Ex);
 	EType(t:TypeRef); // runtime type descriptor (Class<T>, Enum<T> values)

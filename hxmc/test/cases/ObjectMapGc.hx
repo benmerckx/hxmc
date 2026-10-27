@@ -212,7 +212,7 @@ class ObjectMapGc {
 	// threads reading one map at once, collections meanwhile (the first to
 	// find the map out of date brings it up to date)
 	static function threads(m:ObjectMap<Key, Int>, keys:Array<Key>, vals:Array<Int>) {
-		#if (hxmc.target == "wasm32-wasi" || hxmc.wasm_gc)
+		#if (hxmc.target == "wasm32-wasi")
 		var bad = 0;
 		for (t in 0...4)
 			for (r in 0...20) {

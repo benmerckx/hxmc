@@ -206,9 +206,6 @@ class Lower implements LowerQueries {
 		if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) return false;
 		// @:hxmc.native: the runtime of the native targets only (over C libraries)
 		if (hasMeta(":hxmc.native", c.clMeta) && targetOs == 3) return false;
-		// @:hxmc.wasmgc: the runtime of -D hxmc.wasm-gc only; @:hxmc.anyHeap: of
-		// both (written over hxmc.rt.Repr); the others of linear memory only
-		if (hasMeta(":hxmc.wasmgc", c.clMeta) != wasmGc && !hasMeta(":hxmc.anyHeap", c.clMeta)) return false;
 		// @:hxmc.os("windows"): the runtime of one system only
 		var os = metaString(":hxmc.os", c.clMeta);
 		if (os != null && targetOs >= 0 && ["linux", "macos", "windows", "wasm"].indexOf(os) != targetOs) return false;
@@ -229,8 +226,6 @@ class Lower implements LowerQueries {
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
 	// Mem.mirHost: 1 when the program loads code for the Mir interpreter (Main)
 	public static var mirHost = 0;
-	// -D hxmc.wasm-gc (hxmc.wasmgc): the runtime's Haxe implementations are those of @:hxmc.wasmgc classes
-	public static var wasmGc = false;
 	// the program's resources (--resource, Context.addResource), haxe.Resource's
 	// content: each one's name and bytes, in genjs's order (Main.generate); the
 	// names are literals of the code (FnLower), the bytes DataGen's data
@@ -243,7 +238,7 @@ class Lower implements LowerQueries {
 	public static inline var BOUNDS_SILENT = 2; // a read gives the element type's default, a write does nothing
 	// -D hxmc.null-checks (default: WebAssembly): references are tested against
 	// null before they are dereferenced (MirBuild.nullCheck; the receivers of
-	// the runtime's methods: FnLower.receiverCheck; WasmGC: FuncGen), and null
+	// the runtime's methods: FnLower.receiverCheck), and null
 	// throws "Null Access"; without, the native targets fault and the runtime's
 	// handler throws (hxmc.rt.Faults)
 	public static var nullChecks = false;
@@ -907,7 +902,6 @@ class Lower implements LowerQueries {
 		// (stringBufCtor). Its class is not a subclass of StringBuf to
 		// reflection (Std.isOfType, Type.getSuperClass).
 		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
-		if (sbuf && wasmGc) fail(c.clPath.name + " extends StringBuf, the runtime's class, which a class of WasmGC cannot extend");
 		var sup = c.clSuper != null && !sbuf ? classInfo(c.clSuper.cls) : root;
 		// (the superclass's field types may name this class, which has its
 		// ClassInfo then: `class Node extends Base<Node>`, upstream's unit test TestGeneric)
@@ -1319,9 +1313,9 @@ class Lower implements LowerQueries {
 	// the class value; a program that never calls it gets none.
 	public var makers = false;
 
-	// the runtime's Type.createInstance (natively, on WasmGC): Reach's too
+	// the runtime's Type.createInstance: Reach's too
 	public static function isCreateInstance(name:String):Bool
-		return name == "hxmc_rt_Dyn_createInstance" || name == "hxmc_rt_gc_GcNative_createInstance";
+		return name == "hxmc_rt_Dyn_createInstance";
 
 	// (a constructor's entry, shared by the subclasses calling it)
 	var ctorEntries = new Map<FuncInfo, FuncInfo>();

@@ -8,8 +8,7 @@ import hxmc.rt.C;
 // Eval's for most null accesses (its field reads say "field access on
 // null"). The value thrown is the literal: nothing is allocated before
 // the handler runs. Its own module, loaded into every program (Runtime):
-// a test may be in any function, Faults is the native targets' only, and
-// WasmGC has its own (GcNative).
+// a test may be in any function, Faults is the native targets' only.
 @:keep @:allow(hxmc.rt)
 class NullAccess {
 	@:hxmc.export("rt_null_access") static function nullAccess():Void

@@ -21,8 +21,7 @@ Options:
   nursery could no longer be reset by one pointer move; pinned objects in
   the old space would hold back the region flip, or need a mark-region
   old generation ([runtime.md](runtime.md#collector)) first. A Bytes
-  allocated together with its data (`Bytes.shared`) pins its header too.
-  WasmGC's arrays cannot be pinned at all. And an operation in flight
+  allocated together with its data (`Bytes.shared`) pins its header too. And an operation in flight
   across threads would need its pin counted, released on completion.
 - **A non-moving space for a buffer kind**: a third space the collector
   scans but never copies, with its own free lists, fragmentation and
@@ -38,8 +37,7 @@ at -8: type `T_BYTES`, words, length). Both collectors forward only
 references inside their spaces (`inYoung`, `inFrom`; wasm32's granule
 map) and leave the rest, as they do the static empty arrays; the write
 barrier remembers only young values. So malloc'ed memory that starts
-with that header is a `BytesData` the collector never touches. Not on
-WasmGC, where a `BytesData` is an engine array.
+with that header is a `BytesData` the collector never touches.
 
 **Built**: `hxmc.unsafe.IoBuffer`, a `Ptr` to a 16-byte header (whose
 second word is the `BytesData` header) and the bytes. Range-tested

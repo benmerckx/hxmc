@@ -10,16 +10,13 @@
 // brought up to date before the next hash (update): after minor collections
 // only the entries whose key was young when added (listed in `young`) are
 // indexed again, after a major one every entry. Removals shift the probe
-// chain back (no tombstones). WasmGC has no addresses: there the hash is the
-// one the engine's object keeps (hxmc.Native.objHash), which never changes.
+// chain back (no tombstones).
 
 package haxe.ds;
 
 import hxmc.rt.MapSlots;
 import hxmc.rt.MapSlots.RefSlots;
-#if !hxmc.wasm_gc
 import hxmc.rt.IdHash;
-#end
 
 /**
 	ObjectMap allows mapping of object keys to arbitrary values.
@@ -58,20 +55,12 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		mask = -1; // no arrays: the first set grows the table
 
 	inline function hashOf(k:Dynamic):Int {
-		#if hxmc.wasm_gc
-		// (16 bits, spread over the 32: the slot is hash & mask, and past 65536 slots the bare hash would
-		// leave the upper slots as homes to none, piling every key into one run of the probes)
-		return hxmc.Native.objHash(k) * 0x9E3779B1;
-		#else
 		return IdHash.hash(k);
-		#end
 	}
 
-	// the index brought up to date with the collections since (none on WasmGC)
+	// the index brought up to date with the collections since
 	inline function sync() {
-		#if !hxmc.wasm_gc
 		if (IdHash.seen(slots) != IdHash.count()) update();
-		#end
 	}
 
 	// the entry of k (whose hash is h), or -1; the index is up to date
@@ -125,10 +114,8 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		// the allocations first: a collection they run moves keys, so the
 		// hash is taken after them
 		if (used >= (mask + 1) >> 1) grow();
-		#if !hxmc.wasm_gc
 		if (nyoung == youngCap && IdHash.young(k)) growYoung();
 		sync();
-		#end
 		add(k, v);
 	}
 
@@ -142,13 +129,11 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		live++;
 		var h = hashOf(k);
 		index(h, n);
-		#if !hxmc.wasm_gc
 		if (IdHash.young(k)) {
 			young[2 * nyoung] = n;
 			young[2 * nyoung + 1] = h;
 			nyoung++;
 		}
-		#end
 	}
 
 	inline function index(h:Int, e:Int) {
@@ -227,13 +212,10 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		mask = cap - 1;
 		for (j in 0...on)
 			if (od == null || !od[j]) add(okvs[2 * j], okvs[2 * j + 1]);
-		#if !hxmc.wasm_gc
 		majors = IdHash.majors();
 		IdHash.setSeen(s, IdHash.count());
-		#end
 	}
 
-	#if !hxmc.wasm_gc
 	function growYoung() {
 		var cap = youngCap == 0 ? 8 : 2 * youngCap;
 		var y = new MapSlots<Int>(2 * cap);
@@ -283,7 +265,6 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		}
 		IdHash.unlock();
 	}
-	#end
 
 	/**
 		See `Map.keys`

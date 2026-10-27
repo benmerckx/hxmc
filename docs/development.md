@@ -12,7 +12,7 @@ the bootstrap works, and the everyday edit-test loop. Tests and CI are in
 | `haxe/src/` | the port, module by module after upstream's `haxe/upstream/src/` |
 | `haxe/upstream/` | upstream Haxe (submodule, commit `066bd8331`): the reference sources and std. Never edit it |
 | `haxe/test/` | the port's tests: conformance against the reference, the fuzzer (`fuzz/`), unit tests of port modules (`unit/`), `Measure.hx` |
-| `hxmc/src/hxmc/` | hxmc's compiler (class path `hxmc/src`): IR and lowering (`ir/`), code generators (`x64/`, `a64/`, `wasm/`, `wasmgc/`), linkers, the driver; `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
+| `hxmc/src/hxmc/` | hxmc's compiler (class path `hxmc/src`): IR and lowering (`ir/`), code generators (`x64/`, `a64/`, `wasm/`), linkers, the driver; `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
 | `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime (`hxmc.rt`), merged with the Eval originals by `MkStd.hx` |
 | `hxmc/deps/` | the third-party C: `deps.sh` (mbedtls, libuv), `mkrt.sh` (the runtime objects), `Layouts.hx` (struct layouts per target, checked against the C headers), `probe.c`, `zig-version` |
 | `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the Android and iOS apps, the dev loop's tests, the benchmarks |

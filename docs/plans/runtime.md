@@ -75,6 +75,7 @@ not resumed since the last minor collection.
 
 - Array growth from 4 elements instead of 2: no gain, more allocated.
 - The passes' per-function tables outside the collected heap: 0.16%.
-- Inflate with its state in locals: faster natively, slower on WasmGC.
+- Inflate with its state in locals: faster natively, slower on WasmGC (since
+  removed: worth measuring again).
 - The write barrier testing the value's youth before its slow call: within
   noise, 2.6% more code.

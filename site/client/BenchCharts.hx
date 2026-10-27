@@ -67,7 +67,7 @@ typedef Latest = {
 class BenchCharts {
 	// the targets in their table order
 	static final TARGETS = [
-		["hxmc", "hxmc"], ["hxmc-wasm", "hxmc wasm"], ["hxmc-wasmgc", "hxmc WasmGC"], ["cpp", "C++"], ["jvm", "JVM"], ["js", "JS"], ["hlc", "HL/C"],
+		["hxmc", "hxmc"], ["hxmc-wasm", "hxmc wasm"], ["cpp", "C++"], ["jvm", "JVM"], ["js", "JS"], ["hlc", "HL/C"],
 		["hl", "HL JIT"],
 	];
 	static final CASES = [

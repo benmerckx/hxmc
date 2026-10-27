@@ -22,13 +22,13 @@ using core.TFunctions;
 // Runtime.hx and a look at those modules' statics, and changes nothing that
 // is written.
 //
-// The list is kept by hand, next to the generators; MirWriter.call and
-// GcModule.exportOf fail the build when generated code calls an exported
-// function of the runtime that it does not list for the family, so a new
-// one cannot be left out (the few fixed references elsewhere are listed
-// below by where they are). A symbol generated code refers to only under a
-// define or feature has `when`, the generator's own condition (Lower's
-// statics, set before the check), and is required only then (a module
+// The list is kept by hand, next to the generators; MirWriter.call fails
+// the build when generated code calls an exported function of the runtime
+// that it does not list for the family, so a new one cannot be left out
+// (the few fixed references elsewhere are listed below by where they are).
+// A symbol generated code refers to only under a define or feature has
+// `when`, the generator's own condition (Lower's statics, set before the
+// check), and is required only then (a module
 // Runtime.hx imports under a define, #if hxmc.census, is seen only with it,
 // so what only it defines takes that condition); one the
 // target's linker, C library or DataGen defines is not the runtime's and
@@ -43,7 +43,6 @@ class RuntimeSymbols {
 	// target families
 	public static inline var NATIVE = 1; // machine code over linear memory (x86-64 and arm64, every system)
 	public static inline var WASM32 = 2; // wasm32-wasi over linear memory
-	public static inline var WASMGC = 4; // wasm32-wasi with -D hxmc.wasm-gc
 	static inline var LINEAR = NATIVE | WASM32;
 
 	// how the runtime defines a symbol
@@ -129,54 +128,42 @@ class RuntimeSymbols {
 		{sym: "rt_young_ptr", kind: TLS, families: NATIVE, by: "MemLower.alloc"},
 		{sym: "rt_young_limit", kind: TLS, families: NATIVE, by: "MemLower.alloc"},
 		{sym: "rt_young_rlimit", kind: TLS, families: NATIVE, by: "MemLower.alloc"},
-		// FnLower's calls of the runtime (bound by Lower.bindHosts; MirBuild and
-		// FuncGen expand the others: hx_str_eq on linear memory, hx_dyn_call,
-		// hx_clos_of_sig, hx_is, hx_cast and hx_is_typeobj on WasmGC, the
-		// intrinsics); MirBuild.host's hx_dyn_get_fid & co. are reached only
-		// where hx_dyn_get & co. are not bound, which this keeps from happening
-		{sym: "hx_dyn_get", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: Dynamic's field read"},
-		{sym: "hx_dyn_set", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: Dynamic's field write"},
-		{sym: "hx_dyn_call_field", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: Dynamic's method call"},
+		// FnLower's calls of the runtime (bound by Lower.bindHosts; MirBuild
+		// expands the others: hx_str_eq, the intrinsics); MirBuild.host's
+		// hx_dyn_get_fid & co. are reached only where hx_dyn_get & co. are not
+		// bound, which this keeps from happening
+		{sym: "hx_dyn_get", kind: IMPL, families: LINEAR, by: "FnLower: Dynamic's field read"},
+		{sym: "hx_dyn_set", kind: IMPL, families: LINEAR, by: "FnLower: Dynamic's field write"},
+		{sym: "hx_dyn_call_field", kind: IMPL, families: LINEAR, by: "FnLower: Dynamic's method call"},
 		{sym: "hx_dyn_call", kind: IMPL, families: LINEAR, by: "FnLower: a Dynamic call"},
-		{sym: "hx_dyn_aget", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: Dynamic's index read"},
-		{sym: "hx_dyn_aset", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: Dynamic's index write"},
-		{sym: "hx_dyn_op", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an operator on Dynamic"},
-		{sym: "hx_dyn_eq", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: == on Dynamic"},
-		{sym: "hx_dyn_cmp", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: < on Dynamic"},
-		{sym: "hx_std_string", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a value as a String"},
-		{sym: "hx_str_or_null", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a String as a String"},
-		{sym: "hx_str_of_int", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Int as a String"},
-		{sym: "hx_str_of_float", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a Float as a String"},
-		{sym: "hx_str_of_i64", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Int64 as a String"},
-		{sym: "hx_str_of_bool", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a Bool as a String"},
-		{sym: "hx_str_concat", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: +"},
-		{sym: "hx_str_concat3", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a + b + c"},
-		{sym: "hx_str_concat4", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a + b + c + d"},
-		{sym: "hx_str_eq", kind: IMPL, families: WASMGC, by: "FnLower: == on Strings"},
-		{sym: "hx_str_cmp", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: < on Strings"},
-		{sym: "hx_str_hash", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a switch on Strings"},
+		{sym: "hx_dyn_aget", kind: IMPL, families: LINEAR, by: "FnLower: Dynamic's index read"},
+		{sym: "hx_dyn_aset", kind: IMPL, families: LINEAR, by: "FnLower: Dynamic's index write"},
+		{sym: "hx_dyn_op", kind: IMPL, families: LINEAR, by: "FnLower: an operator on Dynamic"},
+		{sym: "hx_dyn_eq", kind: IMPL, families: LINEAR, by: "FnLower: == on Dynamic"},
+		{sym: "hx_dyn_cmp", kind: IMPL, families: LINEAR, by: "FnLower: < on Dynamic"},
+		{sym: "hx_std_string", kind: IMPL, families: LINEAR, by: "FnLower: a value as a String"},
+		{sym: "hx_str_or_null", kind: IMPL, families: LINEAR, by: "FnLower: a String as a String"},
+		{sym: "hx_str_of_int", kind: IMPL, families: LINEAR, by: "FnLower: an Int as a String"},
+		{sym: "hx_str_of_float", kind: IMPL, families: LINEAR, by: "FnLower: a Float as a String"},
+		{sym: "hx_str_of_i64", kind: IMPL, families: LINEAR, by: "FnLower: an Int64 as a String"},
+		{sym: "hx_str_of_bool", kind: IMPL, families: LINEAR, by: "FnLower: a Bool as a String"},
+		{sym: "hx_str_concat", kind: IMPL, families: LINEAR, by: "FnLower: +"},
+		{sym: "hx_str_concat3", kind: IMPL, families: LINEAR, by: "FnLower: a + b + c"},
+		{sym: "hx_str_concat4", kind: IMPL, families: LINEAR, by: "FnLower: a + b + c + d"},
+			{sym: "hx_str_cmp", kind: IMPL, families: LINEAR, by: "FnLower: < on Strings"},
+		{sym: "hx_str_hash", kind: IMPL, families: LINEAR, by: "FnLower: a switch on Strings"},
 		{sym: "hx_is", kind: IMPL, families: LINEAR, by: "FnLower: a type test"},
 		{sym: "hx_cast", kind: IMPL, families: LINEAR, by: "FnLower: a checked cast"},
 		{sym: "hx_is_typeobj", kind: IMPL, families: LINEAR, by: "FnLower: Std.isOfType(v, Class)"},
 		{sym: "hx_clos_of_sig", kind: IMPL, families: LINEAR, by: "FnLower: a function of another signature"},
-		{sym: "hx_narray_view", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray seen typed"},
-		{sym: "hx_narray_open", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray of a type parameter"},
-		{sym: "hx_narray_default", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray read out of bounds, silent"},
-		{sym: "hx_narray_oob", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: a NativeArray access out of bounds, throws", when: boundsThrow},
-		{sym: "Array_resize", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Array's length set"},
-		{sym: "Array_sortInt", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Array<Int> sorted with an Int comparator"},
-		{sym: "Array_sortFloat", kind: IMPL, families: LINEAR | WASMGC, by: "FnLower: an Array<Float> sorted with a Float comparator"},
+		{sym: "hx_narray_view", kind: IMPL, families: LINEAR, by: "FnLower: a NativeArray seen typed"},
+		{sym: "hx_narray_open", kind: IMPL, families: LINEAR, by: "FnLower: a NativeArray of a type parameter"},
+		{sym: "hx_narray_default", kind: IMPL, families: LINEAR, by: "FnLower: a NativeArray read out of bounds, silent"},
+		{sym: "hx_narray_oob", kind: IMPL, families: LINEAR, by: "FnLower: a NativeArray access out of bounds, throws", when: boundsThrow},
+		{sym: "Array_resize", kind: IMPL, families: LINEAR, by: "FnLower: an Array's length set"},
+		{sym: "Array_sortInt", kind: IMPL, families: LINEAR, by: "FnLower: an Array<Int> sorted with an Int comparator"},
+		{sym: "Array_sortFloat", kind: IMPL, families: LINEAR, by: "FnLower: an Array<Float> sorted with a Float comparator"},
 		{sym: "fmod", kind: IMPL, families: LINEAR, by: "Lower.bindHosts: Float's %"},
-		// the WasmGC generator (hxmc.wasmgc: GcGen.runtimeCalls, GcModule.exportOf)
-		{sym: "gc_anon_get", kind: FUNC, families: WASMGC, by: "FuncGen: a structure's field read"},
-		{sym: "gc_anon_set", kind: FUNC, families: WASMGC, by: "FuncGen: a structure's field write"},
-		{sym: "gc_anon_call", kind: FUNC, families: WASMGC, by: "FuncGen, Helpers: a structure's method call"},
-		{sym: "gc_dyn_eq", kind: FUNC, families: WASMGC, by: "Meta: enum comparisons"},
-		{sym: "gc_is", kind: FUNC, families: WASMGC, by: "FuncGen.typeTest: a type known at run time"},
-		{sym: "gc_is_int", kind: FUNC, families: WASMGC, by: "FuncGen.typeTest: Int"},
-		{sym: "hx_narray_bad_length", kind: FUNC, families: WASMGC, by: "FuncGen.narray: a negative length"},
-		{sym: "hx_narray_set_slow", kind: FUNC, families: WASMGC, by: "FuncGen.narray: a Dynamic NativeArray's write"},
-		{sym: "rt_null_access", kind: FUNC, families: WASMGC, by: "FuncGen.derefAs, Helpers: a null test", when: nullChecks},
 	];
 
 	// the FUNC symbols, with their families (called)
@@ -188,7 +175,7 @@ class RuntimeSymbols {
 	};
 
 	static function familyName(family:Int):String
-		return family == NATIVE ? "the native targets" : family == WASM32 ? "wasm32-wasi" : "WasmGC";
+		return family == NATIVE ? "the native targets" : "wasm32-wasi";
 
 	// the families `sym` is listed for as a FUNC (0: none; Facts keeps it on
 	// the runtime's exported functions, FuncInfo.rtFamilies, for MirWriter.call)
@@ -198,7 +185,7 @@ class RuntimeSymbols {
 	}
 
 	// generated code calls the runtime's exported function `sym` by its
-	// symbol (MirWriter.call, GcModule.exportOf): it must be listed for the
+	// symbol (MirWriter.call): it must be listed for the
 	// family, which check keeps defined; else this list is wrong
 	public static function called(sym:String, family:Int) {
 		var f = FUNCS.get(sym);
@@ -311,7 +298,7 @@ class RuntimeSymbols {
 typedef RuntimeSymbol = {
 	sym:String,
 	kind:Int,
-	// the families that need it (RuntimeSymbols.NATIVE, WASM32, WASMGC)
+	// the families that need it (RuntimeSymbols.NATIVE, WASM32)
 	families:Int,
 	// where generated code refers to it
 	by:String,

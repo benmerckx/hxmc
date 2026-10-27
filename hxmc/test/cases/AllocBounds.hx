@@ -2,16 +2,16 @@
 // the native collector's counters (hxmc.rt.Gc: the nursery's pointer and the
 // bytes it handed out before the last minor collections). Each line is
 // "<operation>: ok" when the bytes per operation are within the bound; the
-// count otherwise. WebAssembly, WasmGC and the interpreters have another
+// count otherwise. WebAssembly and the interpreters have another
 // allocator: there every line is "ok" without a measurement. (Objects
 // larger than a part of the nursery go to the old space, not counted: with
 // the corpus's 64 KB nursery, a large array's storage.)
-#if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
+#if !(hxmc.target == "wasm32-wasi" || hxmc.interp || hxmc.run)
 @:access(hxmc.rt.Gc)
 #end
 class AllocBounds {
 	static inline function bytes():Float {
-		#if (hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
+		#if (hxmc.target == "wasm32-wasi" || hxmc.interp || hxmc.run)
 		return 0.0;
 		#else
 		var p = hxmc.rt.Gc.yptr;
@@ -34,14 +34,14 @@ class AllocBounds {
 	}
 
 	static function main() {
-		#if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
+		#if !(hxmc.target == "wasm32-wasi" || hxmc.interp || hxmc.run)
 		hxmc.rt.Gc.stats = true;
 		#end
 		maps();
 		arrays();
 		structLoops();
 		sorts();
-		#if !(hxmc.target == "wasm32-wasi" || hxmc.wasm_gc || hxmc.interp || hxmc.run)
+		#if !(hxmc.target == "wasm32-wasi" || hxmc.interp || hxmc.run)
 		hxmc.rt.Gc.stats = false; // (no report at the exit)
 		#end
 	}

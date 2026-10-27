@@ -7,8 +7,7 @@ package hxmc;
 // large objects included, in the collector's sizes (an 8-byte header and
 // 8-byte slots); with several threads, other threads' current TLABs count
 // whole in bytesAllocated. Pauses are in seconds, from the collecting
-// thread's request to resuming the world (stopping it included). With
-// -D hxmc.wasm-gc the engine collects and every counter reads 0.
+// thread's request to resuming the world (stopping it included).
 class GcStats {
 	// the collections records() keeps
 	public static inline var RECORDS = NativeGc.RECORDS;
