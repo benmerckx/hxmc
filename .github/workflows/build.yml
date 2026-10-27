@@ -1206,46 +1206,26 @@ jobs:
     needs: [changes, site]
     if: ${{ !cancelled() && needs.site.result == 'success' }}
     runs-on: ubuntu-24.04
+    # Playwright's own image: the three browsers and their system libraries
+    # are in it (and node), so there is no apt step and no browser download.
+    # Installing them on the runner stalled on Ubuntu's mirror several times
+    # (#88, #91). The image's tag must match the playwright package below;
+    # --user 1001 as Playwright's docs say for GitHub Actions
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
+      options: --user 1001
     steps:
       - uses: actions/checkout@v7
         with:
           sparse-checkout: |
             site/tools
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
       - uses: actions/download-artifact@v8
         with: {name: site, path: site-dist}
       - name: The website in Chromium, Firefox and WebKit
-        timeout-minutes: 30
+        timeout-minutes: 20
         run: |
           set -ex
           npm install --no-save --silent playwright@1.56.1
-          # --with-deps runs apt-get, which at times stalled on a mirror with
-          # no output: apt's own timeouts and retries end a stalled request,
-          # and a try waits for the dpkg lock an earlier one still holds
-          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "300";\n' | sudo tee /etc/apt/apt.conf.d/99ci-timeouts > /dev/null
-          retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
-          # in two parts: the system packages, then the browsers' downloads.
-          # The packages stalled with no output until the step's limit even
-          # with apt's timeouts (a download from the mirror that stops: apt's
-          # timeouts end a connection that stalls, not a slow transfer).
-          # apt's man-db trigger, slow on these runners, is off; each try ends
-          # after 6 minutes (one needs about 1) and prints its log's end. The
-          # time limit runs as root around npx, so it ends apt-get with it: a
-          # limit outside sudo left apt-get running with dpkg's lock, and the
-          # next tries failed at once; a failed try also ends any apt-get left
-          # and finishes dpkg's interrupted work
-          sudo rm -f /var/lib/man-db/auto-update
-          deps() {
-            sudo env "PATH=$PATH" timeout -k 10 360 npx playwright install-deps chromium firefox webkit > deps.log 2>&1 && return 0
-            tail -n 40 deps.log
-            sudo pkill -9 -x apt-get || true
-            sudo dpkg --configure -a || true
-            return 1
-          }
-          retry deps
-          retry timeout -k 10 300 npx playwright install chromium firefox webkit > /dev/null
           node site/tools/browser-test.mjs site-dist chromium firefox webkit
 
   # the npm packages in fresh projects, on each target's machine (every
