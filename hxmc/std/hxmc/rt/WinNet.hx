@@ -33,6 +33,8 @@ class WinNet {
 	// the UCRT's errno values
 	static inline var EAGAIN = 11;
 	static inline var EWOULDBLOCK = 140;
+	static inline var EINPROGRESS = 112;
+	static inline var EALREADY = 103;
 	static inline var EBADF = 9;
 	static inline var EINVAL = 22;
 
@@ -252,7 +254,7 @@ class WinNet {
 	}
 
 	// Winsock's fd_set: u32 fd_count, then the SOCKETs (FD_SETSIZE 64)
-	static inline var FD_SETSIZE = 64;
+	public static inline var FD_SETSIZE = 64;
 
 	static function toFdset(a:Array<Int>, s:Ptr) {
 		Mem.setI32(s, 0, 0);
@@ -287,7 +289,7 @@ class WinNet {
 		var nr = Str.isNull(r) ? 0 : r.length, nw = Str.isNull(w) ? 0 : w.length, no = Str.isNull(o) ? 0 : o.length;
 		if (nr > FD_SETSIZE || nw > FD_SETSIZE || no > FD_SETSIZE) {
 			setLast(EINVAL);
-			return -1;
+			return -2;
 		}
 		if (nr + nw + no == 0) {
 			if (timeout > 0) Rt.rt_sleep(timeout) else if (timeout < 0) Rt.rt_throw("select: no descriptor and no timeout");
@@ -318,6 +320,34 @@ class WinNet {
 		fromFdset(w, ws);
 		fromFdset(o, os);
 		return n;
+	}
+
+	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a socket closed while waiting)
+	// WSAPoll waits for sockets only, and what it does with another handle
+	// differs (wine fails with WSAENOTSOCK, Windows does not), so each entry
+	// is asked first (getsockopt SO_TYPE): one that is not a socket fails as
+	// WSAENOTSOCK does (ENOTSOCK, 128)
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
+		for (i in 0...n)
+			if (fds[i] >= 0 && !isSocket(fds[i])) {
+				setLast(128);
+				return -1;
+			}
+		return NetCore.poll(fds, events, revents, n, timeout);
+	}
+
+	// the thread's buffer for poll, at least bytes long (kept, not freed
+	// when the thread ends)
+	@:hxmc.threadLocal static var pollBuf:Ptr;
+	@:hxmc.threadLocal static var pollCap:Int;
+
+	@:hxmc.unsafe static function pollBuffer(bytes:Int):Ptr {
+		if (bytes > pollCap) {
+			LibC.free(pollBuf);
+			pollCap = bytes > 1024 ? bytes : 1024;
+			pollBuf = LibC.malloc(pollCap);
+		}
+		return pollBuf;
 	}
 
 	@:hxmc.unsafe static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
@@ -354,6 +384,28 @@ class WinNet {
 
 	@:hxmc.unsafe public static function blocked():Bool
 		return lastErrno() == EAGAIN || lastErrno() == EWOULDBLOCK;
+
+	// a non-blocking connect in progress: WSAEWOULDBLOCK, WSAEINPROGRESS, or
+	// WSAEALREADY for a second one
+	@:hxmc.unsafe public static function inProgress():Bool
+		return lastErrno() == EWOULDBLOCK || lastErrno() == EINPROGRESS || lastErrno() == EALREADY;
+
+	// whether fd is a socket: getsockopt SO_TYPE succeeds
+	@:hxmc.unsafe static function isSocket(fd:Int):Bool {
+		var t = Mem.stack(8), n = Mem.stack(8);
+		Mem.setI32(n, 0, 4);
+		return Winsock.getsockopt(sock(fd), SOL_SOCKET, 0x1008, t, n) == 0; // SO_TYPE
+	}
+
+	// SO_ERROR as an errno, which reading clears (0: none); -1 when getsockopt fails
+	@:hxmc.unsafe public static function socketError(fd:Int):Int {
+		var e = Mem.stack(8), n = Mem.stack(8);
+		Mem.setI32(e, 0, 0);
+		Mem.setI32(n, 0, 4);
+		if (Winsock.getsockopt(sock(fd), SOL_SOCKET, SO_ERROR, e, n) != 0) return fail();
+		var x = Mem.getI32(e, 0);
+		return x == 0 ? 0 : Winsock.rt_win_sock_errno(x);
+	}
 
 	public static function gethostname():String {
 		Winsock.rt_win_sockets_init();

@@ -1,0 +1,9 @@
+exit 0
+1
+cwd: true
+var: hello world = 2
+removed: unset
+parent: true 1 null
+inherited: true unset 1
+only: unset unset alone
+missing directory: an exception

@@ -238,7 +238,16 @@ class WasiSys {
 		Mem.setI32(io, 0, a32(p));
 		Mem.setI32(io, 4, n);
 		var r = write ? WasiApi.fd_write(fd, a32(io), 1, a32(io.add(8))) : WasiApi.fd_read(fd, a32(io), 1, a32(io.add(8)));
-		return r == 0 ? Mem.getI32(io, 8) : -1;
+		return r == 0 ? Mem.getI32(io, 8) : r == 6 ? -2 : -1; // (EAGAIN: NativeSys.WOULD_BLOCK)
+	}
+
+	// fdstat.fs_flags (u16 at 2): NONBLOCK 4
+	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var st = Mem.stack(24);
+		if (WasiApi.fd_fdstat_get(fd, a32(st)) != 0) return false;
+		var fl = Mem.getU16(st, 2);
+		var nf = blocking ? fl & ~4 : fl | 4;
+		return nf == fl || WasiApi.fd_fdstat_set_flags(fd, nf) == 0;
 	}
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
@@ -437,9 +446,27 @@ class WasiSys {
 		];
 	}
 
+	// filestat's atim, mtim, ctim: nanoseconds; size at 32
+	public static function statTimes(path:String):Array<Float> {
+		var p = cstr(path);
+		var st = Mem.stack(64);
+		var r = pathOp(p, 0, st);
+		Heap.free(p);
+		if (r != 0) return null;
+		var a = [];
+		for (k in 0...3) {
+			var ns = Mem.getI64(st, 40 + 8 * k);
+			var s = ns / (1000000000 : I64);
+			a.push((cast s : Float));
+			a.push((cast(ns - s * (1000000000 : I64)) : Float));
+		}
+		a.push((cast Mem.getI64(st, 32) : Float));
+		return a;
+	}
+
 	// ---- processes: none
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int
 		return unsupported("sys.io.Process");
 
 	public static function processWait(pid:Int, block:Bool):Int
@@ -447,4 +474,7 @@ class WasiSys {
 
 	public static function processKill(pid:Int):Void
 		unsupported("sys.io.Process");
+
+	public static function processSignal(pid:Int, sig:Int):Bool
+		return unsupported("sys.io.Process");
 }

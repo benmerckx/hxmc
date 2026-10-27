@@ -92,6 +92,10 @@ class GcSys {
 
 	public static function fileFlush(fd:Int):Void {}
 
+	// (the host's reads wait for data)
+	public static function fileSetBlocking(fd:Int, blocking:Bool):Bool
+		return blocking;
+
 	public static function fileClose(fd:Int):Void
 		W.fileIo(3, fd, null, 0, 0);
 
@@ -142,13 +146,24 @@ class GcSys {
 		return s == null ? null : [for (x in list(s)) Std.parseFloat(x)];
 	}
 
+	public static function statTimes(path:String):Array<Float> {
+		var s = W.sysStr(9, path, null);
+		return s == null ? null : [for (x in list(s)) Std.parseFloat(x)];
+	}
+
 	// processes: the host's (W.fileIo: 6 run, 7 wait, 8 kill), their standard
 	// streams the descriptors PROC_FD + 4 * pid + 0, 1, 2; a command that cannot
 	// be run exits 127, as a child whose exec fails (PosixSys)
 	static inline var PROC_FD = 0x40000000;
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
-		var pid = W.fileIo(6, 0, args == null ? cmd : [cmd].concat(args).join("\x00"), args == null ? 0 : 1, 0);
+	// (a working directory and an environment: before the command, each
+	// followed by \x01, the environment's entries separated by \x02; b: 1 the
+	// directory, 2 the environment)
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
+		var x = args == null ? cmd : [cmd].concat(args).join("\x00");
+		var b = (cwd == null ? 0 : 1) | (env == null ? 0 : 2);
+		if (b != 0) x = (cwd ?? "") + "\x01" + (env == null ? "" : env.join("\x02")) + "\x01" + x;
+		var pid = W.fileIo(6, 0, x, args == null ? 0 : 1, b);
 		if (pid < 0) return -1;
 		for (k in 0...3)
 			fds[k] = PROC_FD + 4 * pid + k;
@@ -159,5 +174,8 @@ class GcSys {
 		return W.fileIo(7, pid, null, block ? 1 : 0, 0);
 
 	public static function processKill(pid:Int):Void
-		W.fileIo(8, pid, null, 0, 0);
+		W.fileIo(8, pid, null, 9, 0);
+
+	public static function processSignal(pid:Int, sig:Int):Bool
+		return W.fileIo(8, pid, null, sig, 0) > 0;
 }

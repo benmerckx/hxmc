@@ -1,0 +1,9 @@
+exit 0
+connect returned
+true
+null
+hi
+true
+connect returned
+true
+as a blocking connect: true

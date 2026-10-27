@@ -18,6 +18,7 @@ import hxmc.I64;
 	static function fd_tell(fd:Int, offset:Int):Int;
 	static function fd_filestat_get(fd:Int, buf:Int):Int;
 	static function fd_fdstat_get(fd:Int, buf:Int):Int;
+	static function fd_fdstat_set_flags(fd:Int, flags:Int):Int;
 	static function fd_prestat_get(fd:Int, buf:Int):Int;
 	static function fd_prestat_dir_name(fd:Int, path:Int, len:Int):Int;
 	static function fd_readdir(fd:Int, buf:Int, len:Int, cookie:I64, used:Int):Int;

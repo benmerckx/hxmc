@@ -40,6 +40,7 @@ import hxmc.I64;
 	static function fflush(f:Ptr):Int;
 	static function waitpid(pid:Int, status:Ptr, options:Int):Int;
 	static function kill(pid:Int, sig:Int):Int;
+	@:hxmc.varargs(1) static function syscall(n:I64, a:I64, b:I64):I64; // (Linux)
 	static function mkdir(path:Ptr, mode:Int):Int;
 	static function unlink(path:Ptr):Int;
 	static function rmdir(path:Ptr):Int;

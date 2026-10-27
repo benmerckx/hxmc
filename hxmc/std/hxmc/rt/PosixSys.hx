@@ -29,6 +29,10 @@ class PosixSys {
 
 	static inline var EINTR = 4;
 
+	// EAGAIN (EWOULDBLOCK): Linux, macOS
+	static inline function eagain():Int
+		return mac() ? 35 : 11;
+
 	// a malloc'ed UTF-8 copy of s
 	static inline function cstr(s:String):Ptr
 		return Str.toUtf8(s);
@@ -94,8 +98,12 @@ class PosixSys {
 		LibC.free(n);
 	}
 
+	// the address of the C library's environ
+	@:hxmc.unsafe static function environAddr():Ptr
+		return mac() ? Posix._NSGetEnviron() : Mem.target() >= 9 ? Start.environ : Mem.sym("environ");
+
 	public static function environ():Array<String> {
-		var env = mac() ? Mem.getPtr(Posix._NSGetEnviron(), 0) : Mem.target() >= 9 ? Mem.getPtr(Start.environ, 0) : Mem.getPtr(Mem.sym("environ"), 0);
+		var env = Mem.getPtr(environAddr(), 0);
 		var n = 0;
 		while (!Mem.getPtr(env, 8 * n).isNull())
 			n++;
@@ -262,6 +270,32 @@ class PosixSys {
 	static inline function oCloexec():Int
 		return mac() ? 0x1000000 : 0x80000;
 
+	static inline function oNonblock():Int
+		return mac() ? 4 : 0x800;
+
+	// F_GETFL 3, F_SETFL 4 (Linux, macOS)
+	@:hxmc.unsafe static function nonBlocking(fd:Int):Bool {
+		var fl = Posix.fcntl(fd, 3, 0);
+		return fl >= 0 && (fl & oNonblock()) != 0;
+	}
+
+	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var fl = Posix.fcntl(fd, 3, 0);
+		if (fl < 0) return false;
+		var nf = blocking ? fl & ~oNonblock() : fl | oNonblock();
+		return nf == fl || Posix.fcntl(fd, 4, nf) == 0;
+	}
+
+	// With other threads, a read or write first waits for its descriptor in a
+	// safe region (rt_wait_fd), so that the call does not block while the
+	// thread holds up collections; not a non-blocking descriptor, whose call
+	// returns at once (WOULD_BLOCK). 1: go on, -1: closed while waiting
+	static function waitReady(fd:Int, write:Int):Int {
+		var r = Rt.rt_wait_fd(fd, write, 0);
+		if (r != 0 || nonBlocking(fd)) return r != 0 ? r : 1;
+		return Rt.rt_wait_fd(fd, write, -1);
+	}
+
 	public static function fileOpen(path:String, mode:Int):Int {
 		var flags = switch mode {
 			case 0: 0; // O_RDONLY
@@ -281,21 +315,29 @@ class PosixSys {
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
-		if (threads() > 1 && Rt.rt_wait_fd(fd, 0, -1) < 0) return -1; // closed while waiting
+		if (threads() > 1 && waitReady(fd, 0) < 0) return -1; // closed while waiting
 		while (true) {
 			// (ready: the read does not block, and nothing collects during it)
 			var r = Posix.read(fd, Bytes.bytes(b).add(pos), len).toInt();
-			if (r < 0 && errno() == EINTR) continue;
+			if (r < 0) {
+				var e = errno();
+				if (e == EINTR) continue;
+				return e == eagain() ? -2 : -1;
+			}
 			return r;
 		}
 	}
 
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
-		if (threads() > 1 && Rt.rt_wait_fd(fd, 1, -1) < 0) return -1;
+		if (threads() > 1 && waitReady(fd, 1) < 0) return -1;
 		while (true) {
 			var r = Posix.write(fd, Bytes.bytes(b).add(pos), len).toInt();
-			if (r < 0 && errno() == EINTR) continue;
+			if (r < 0) {
+				var e = errno();
+				if (e == EINTR) continue;
+				return e == eagain() ? -2 : -1;
+			}
 			return r;
 		}
 	}
@@ -480,10 +522,31 @@ class PosixSys {
 		];
 	}
 
+	// st_atim, st_mtim, st_ctim (macOS: st_atimespec ...), struct timespec
+	// each: at 72, 88, 104 on Linux (musl, glibc and Bionic; x86-64 and
+	// arm64), at 32, 48, 64 on macOS (its 64-bit-inode struct stat), as the
+	// headers give them
+	public static function statTimes(path:String):Array<Float> {
+		var p = cstr(path);
+		var st = Mem.stack(256);
+		var r = doStat(p, st);
+		LibC.free(p);
+		if (r != 0) return null;
+		var at = mac() ? 32 : 72;
+		var a = [];
+		for (k in 0...3) {
+			a.push((cast Mem.getI64(st, at + 16 * k) : Float));
+			a.push((cast Mem.getI64(st, at + 16 * k + 8) : Float));
+		}
+		a.push((cast stSize(st) : Float));
+		return a;
+	}
+
 	// ---- processes
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
-		// argv in malloc'ed C strings before forking
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
+		if (!Str.isNull(cwd) && !isDirectory(cwd)) Rt.rt_throw("Process creation failure");
+		// argv, the directory and the environment in malloc'ed C strings before forking
 		var n = Str.isNull(args) ? 0 : args.length;
 		var argv = LibC.malloc(8 * (n + 4));
 		if (!Str.isNull(args)) {
@@ -498,11 +561,23 @@ class PosixSys {
 			Mem.setPtr(argv, 24, Ptr.nil());
 			n = 2;
 		}
+		var dir = Str.isNull(cwd) ? Ptr.nil() : cstr(cwd);
+		var ne = Str.isNull(env) ? 0 : env.length;
+		var envp = Str.isNull(env) ? Ptr.nil() : LibC.malloc(8 * (ne + 1));
+		for (i in 0...ne)
+			Mem.setPtr(envp, 8 * i, cstr(env[i]));
+		if (!envp.isNull()) Mem.setPtr(envp, 8 * ne, Ptr.nil());
 		var p = Mem.stack(32);
-		var pid = pipes(p) ? spawn(argv, p) : -2;
+		var pid = pipes(p) ? spawn(argv, p, dir, envp) : -2;
 		for (i in 0...n + 1)
 			LibC.free(Mem.getPtr(argv, 8 * i));
 		LibC.free(argv);
+		if (!dir.isNull()) LibC.free(dir);
+		if (!envp.isNull()) {
+			for (i in 0...ne)
+				LibC.free(Mem.getPtr(envp, 8 * i));
+			LibC.free(envp);
+		}
 		if (pid == -2) Rt.rt_throw("Process creation failure");
 		if (pid < 0) {
 			Posix.close(Mem.getI32(p, 4));
@@ -556,9 +631,13 @@ class PosixSys {
 
 	// fork and exec with the three pipes, all close-on-exec: the child's ends
 	// become 0, 1 and 2 by dup2, which clears the flag, and exec closes the
-	// rest; the child calls only the C library
-	@:hxmc.unsafe static function spawn(argv:Ptr, p:Ptr):Int {
+	// rest; the child calls only the C library. dir: the directory it enters
+	// first (a failure ends it as a failed exec does, 127); envp: its
+	// environment, set as the C library's environ, which execvp passes on and
+	// whose PATH it searches
+	@:hxmc.unsafe static function spawn(argv:Ptr, p:Ptr, dir:Ptr, envp:Ptr):Int {
 		Posix.fflush(Ptr.nil());
+		var environ = environAddr();
 		if (mac()) Threads.lockSafe(Gc.fdLock);
 		var pid = Posix.fork();
 		if (pid == 0) {
@@ -567,6 +646,8 @@ class PosixSys {
 				// (dup2 of a descriptor onto itself keeps the flag)
 				if (fd == k) Posix.fcntl(k, 2, 0) else Posix.dup2(fd, k);
 			}
+			if (!dir.isNull() && Posix.chdir(dir) != 0) Posix._exit(127);
+			if (!envp.isNull()) Mem.setPtr(environ, 0, envp);
 			Posix.execvp(Mem.getPtr(argv, 0), argv);
 			Posix._exit(127);
 		}
@@ -593,4 +674,11 @@ class PosixSys {
 
 	@:hxmc.unsafe public static function processKill(pid:Int):Void
 		Posix.kill(pid, 9);
+
+	// SYS_pidfd_open: 434 on x86-64 and arm64 (the C libraries have no wrapper before glibc 2.36)
+	@:hxmc.unsafe public static function processExitFd(pid:Int):Int
+		return mac() || pid <= 0 ? -1 : Posix.syscall(434, pid, 0).toInt();
+
+	@:hxmc.unsafe public static function processSignal(pid:Int, sig:Int):Bool
+		return pid > 0 && Posix.kill(pid, sig) == 0;
 }
