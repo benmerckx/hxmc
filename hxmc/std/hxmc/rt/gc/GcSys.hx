@@ -147,8 +147,14 @@ class GcSys {
 	// be run exits 127, as a child whose exec fails (PosixSys)
 	static inline var PROC_FD = 0x40000000;
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
-		var pid = W.fileIo(6, 0, args == null ? cmd : [cmd].concat(args).join("\x00"), args == null ? 0 : 1, 0);
+	// (a working directory and an environment: before the command, each
+	// followed by \x01, the environment's entries separated by \x02; b: 1 the
+	// directory, 2 the environment)
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
+		var x = args == null ? cmd : [cmd].concat(args).join("\x00");
+		var b = (cwd == null ? 0 : 1) | (env == null ? 0 : 2);
+		if (b != 0) x = (cwd ?? "") + "\x01" + (env == null ? "" : env.join("\x02")) + "\x01" + x;
+		var pid = W.fileIo(6, 0, x, args == null ? 0 : 1, b);
 		if (pid < 0) return -1;
 		for (k in 0...3)
 			fds[k] = PROC_FD + 4 * pid + k;

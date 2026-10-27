@@ -655,7 +655,9 @@ class WinSys {
 		return c;
 	}
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
+	// cwd: CreateProcess's lpCurrentDirectory; env ("name=value", sorted):
+	// its lpEnvironment, a UTF-16 block (CREATE_UNICODE_ENVIRONMENT)
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
 		var line:String;
 		var exe:Ptr;
 		var ext = wide(".exe");
@@ -683,9 +685,14 @@ class WinSys {
 		}
 		LibC.free(ext);
 		var wline = wide(line);
-		var r = spawn(exe, wline);
+		var wcwd = Str.isNull(cwd) ? Ptr.nil() : wide(cwd);
+		// (each entry NUL-terminated, then one more NUL; an empty block is two)
+		var wenv = Str.isNull(env) ? Ptr.nil() : wide(Str.concat(env.join("\x00"), "\x00"));
+		var r = spawn(exe, wline, wcwd, wenv);
 		LibC.free(exe);
 		LibC.free(wline);
+		if (!wcwd.isNull()) LibC.free(wcwd);
+		if (!wenv.isNull()) LibC.free(wenv);
 		if (r.isNull()) return -1;
 		fds[0] = Mem.getI32(r, 0);
 		fds[1] = Mem.getI32(r, 4);
@@ -697,7 +704,7 @@ class WinSys {
 
 	// CreateProcess with three pipes: a malloc'ed {in fd, out fd, err fd,
 	// pid}, or null
-	@:hxmc.unsafe static function spawn(exe:Ptr, wline:Ptr):Ptr {
+	@:hxmc.unsafe static function spawn(exe:Ptr, wline:Ptr, wcwd:Ptr, wenv:Ptr):Ptr {
 		// pipes: the child's ends are inheritable copies, the parent's are not
 		var sa = Mem.stack(24);
 		Mem.setI64(sa, 0, 24); // nLength (and padding)
@@ -734,7 +741,7 @@ class WinSys {
 		Win32.DuplicateHandle(self, Mem.getPtr(hs, 0), self, si.add(80), 0, 1, 2);
 		Win32.DuplicateHandle(self, Mem.getPtr(hs, 24), self, si.add(88), 0, 1, 2);
 		Win32.DuplicateHandle(self, Mem.getPtr(hs, 40), self, si.add(96), 0, 1, 2);
-		var ok = Win32.CreateProcessW(exe, wline, Ptr.nil(), Ptr.nil(), 1, flags, Ptr.nil(), Ptr.nil(), si, pi) != 0;
+		var ok = Win32.CreateProcessW(exe, wline, Ptr.nil(), Ptr.nil(), 1, flags, wenv, wcwd, si, pi) != 0;
 		Win32.CloseHandle(Mem.getPtr(si, 80));
 		Win32.CloseHandle(Mem.getPtr(si, 88));
 		Win32.CloseHandle(Mem.getPtr(si, 96));

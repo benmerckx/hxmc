@@ -155,9 +155,35 @@ class NativeSys {
 		return #if (hxmc.wasm_gc) GcSys.stat(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.stat(path) #else Mem.os() == 2 ? WinSys.stat(path) : PosixSys.stat(path) #end;
 
 	// processes
-	// pid, fds: stdin, stdout, stderr
-	public static inline function processRun(cmd:String, args:Null<Array<String>>, fds:Array<Int>):Int
-		return #if (hxmc.wasm_gc) GcSys.processRun(cmd, args, fds) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processRun(cmd, args, fds) #else Mem.os() == 2 ? WinSys.processRun(cmd, args, fds) : PosixSys.processRun(cmd, args, fds) #end;
+	// pid, fds: stdin, stdout, stderr. args null: cmd through the shell. cwd:
+	// the child's working directory (null: this process's; one that cannot be
+	// entered: no process). env: the child's whole environment, which replaces
+	// this process's (null: inherit it; environment() is a copy to change);
+	// the program is looked up on its PATH (Windows: on this process's)
+	public static inline function processRun(cmd:String, args:Null<Array<String>>, fds:Array<Int>, ?cwd:String, ?env:Map<String, String>):Int
+		return #if (hxmc.wasm_gc) GcSys.processRun(cmd, args, fds, cwd, envList(env)) #elseif (hxmc.target == "wasm32-wasi") WasiSys.processRun(cmd, args, fds, cwd, envList(env)) #else Mem.os() == 2 ? WinSys.processRun(cmd, args, fds, cwd, envList(env)) : PosixSys.processRun(cmd, args, fds, cwd, envList(env)) #end;
+
+	// a copy of this process's environment, for processRun (Windows: with its
+	// "=C:" entries, the drives' working directories, which Sys.environment skips)
+	public static function environment():Map<String, String> {
+		var m = new Map<String, String>();
+		for (kv in environ()) {
+			var i = kv.indexOf("=", 1);
+			if (i > 0) m.set(kv.substr(0, i), kv.substr(i + 1));
+		}
+		return m;
+	}
+
+	// "name=value", sorted by name (Windows wants its environment blocks so)
+	static function envList(env:Null<Map<String, String>>):Null<Array<String>> {
+		if (env == null) return null;
+		var names = [for (k in env.keys()) k];
+		names.sort((a, b) -> {
+			var x = a.toUpperCase(), y = b.toUpperCase();
+			return x < y ? -1 : x > y ? 1 : 0;
+		});
+		return [for (k in names) k + "=" + env.get(k)];
+	}
 
 	// exit code, -1 while running
 	public static inline function processWait(pid:Int, block:Bool):Int

@@ -94,8 +94,12 @@ class PosixSys {
 		LibC.free(n);
 	}
 
+	// the address of the C library's environ
+	@:hxmc.unsafe static function environAddr():Ptr
+		return mac() ? Posix._NSGetEnviron() : Mem.target() >= 9 ? Start.environ : Mem.sym("environ");
+
 	public static function environ():Array<String> {
-		var env = mac() ? Mem.getPtr(Posix._NSGetEnviron(), 0) : Mem.target() >= 9 ? Mem.getPtr(Start.environ, 0) : Mem.getPtr(Mem.sym("environ"), 0);
+		var env = Mem.getPtr(environAddr(), 0);
 		var n = 0;
 		while (!Mem.getPtr(env, 8 * n).isNull())
 			n++;
@@ -482,8 +486,9 @@ class PosixSys {
 
 	// ---- processes
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int {
-		// argv in malloc'ed C strings before forking
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
+		if (!Str.isNull(cwd) && !isDirectory(cwd)) Rt.rt_throw("Process creation failure");
+		// argv, the directory and the environment in malloc'ed C strings before forking
 		var n = Str.isNull(args) ? 0 : args.length;
 		var argv = LibC.malloc(8 * (n + 4));
 		if (!Str.isNull(args)) {
@@ -498,11 +503,23 @@ class PosixSys {
 			Mem.setPtr(argv, 24, Ptr.nil());
 			n = 2;
 		}
+		var dir = Str.isNull(cwd) ? Ptr.nil() : cstr(cwd);
+		var ne = Str.isNull(env) ? 0 : env.length;
+		var envp = Str.isNull(env) ? Ptr.nil() : LibC.malloc(8 * (ne + 1));
+		for (i in 0...ne)
+			Mem.setPtr(envp, 8 * i, cstr(env[i]));
+		if (!envp.isNull()) Mem.setPtr(envp, 8 * ne, Ptr.nil());
 		var p = Mem.stack(32);
-		var pid = pipes(p) ? spawn(argv, p) : -2;
+		var pid = pipes(p) ? spawn(argv, p, dir, envp) : -2;
 		for (i in 0...n + 1)
 			LibC.free(Mem.getPtr(argv, 8 * i));
 		LibC.free(argv);
+		if (!dir.isNull()) LibC.free(dir);
+		if (!envp.isNull()) {
+			for (i in 0...ne)
+				LibC.free(Mem.getPtr(envp, 8 * i));
+			LibC.free(envp);
+		}
 		if (pid == -2) Rt.rt_throw("Process creation failure");
 		if (pid < 0) {
 			Posix.close(Mem.getI32(p, 4));
@@ -556,9 +573,13 @@ class PosixSys {
 
 	// fork and exec with the three pipes, all close-on-exec: the child's ends
 	// become 0, 1 and 2 by dup2, which clears the flag, and exec closes the
-	// rest; the child calls only the C library
-	@:hxmc.unsafe static function spawn(argv:Ptr, p:Ptr):Int {
+	// rest; the child calls only the C library. dir: the directory it enters
+	// first (a failure ends it as a failed exec does, 127); envp: its
+	// environment, set as the C library's environ, which execvp passes on and
+	// whose PATH it searches
+	@:hxmc.unsafe static function spawn(argv:Ptr, p:Ptr, dir:Ptr, envp:Ptr):Int {
 		Posix.fflush(Ptr.nil());
+		var environ = environAddr();
 		if (mac()) Threads.lockSafe(Gc.fdLock);
 		var pid = Posix.fork();
 		if (pid == 0) {
@@ -567,6 +588,8 @@ class PosixSys {
 				// (dup2 of a descriptor onto itself keeps the flag)
 				if (fd == k) Posix.fcntl(k, 2, 0) else Posix.dup2(fd, k);
 			}
+			if (!dir.isNull() && Posix.chdir(dir) != 0) Posix._exit(127);
+			if (!envp.isNull()) Mem.setPtr(environ, 0, envp);
 			Posix.execvp(Mem.getPtr(argv, 0), argv);
 			Posix._exit(127);
 		}

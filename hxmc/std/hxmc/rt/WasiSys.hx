@@ -439,7 +439,7 @@ class WasiSys {
 
 	// ---- processes: none
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>):Int
+	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int
 		return unsupported("sys.io.Process");
 
 	public static function processWait(pid:Int, block:Bool):Int

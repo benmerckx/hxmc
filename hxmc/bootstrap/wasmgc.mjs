@@ -126,7 +126,7 @@ parentPort.on("message", m => {
 	const p = procs.get(m.pid);
 	switch (m.op) {
 		case "run": {
-			const opts = { env: m.env, stdio: ["pipe", "pipe", "pipe"], shell: m.shell ? "/bin/sh" : false };
+			const opts = { env: m.env, cwd: m.cwd, stdio: ["pipe", "pipe", "pipe"], shell: m.shell ? "/bin/sh" : false };
 			let child = null;
 			try {
 				child = m.shell ? spawn(m.cmd, opts) : spawn(m.cmd, m.args, opts);
@@ -406,9 +406,23 @@ const hxmc = {
 				case 5:
 					return f ? f.pos : -1;
 				case 6: {
-					// (a process: x the command, then its arguments when a is 1, by NULs; else through the shell)
-					const parts = str(x).split("\0");
-					return procCall({ op: "run", cmd: parts[0], args: parts.slice(1), shell: a === 0, env: { ...process.env } });
+					// (a process: x the command, then its arguments when a is 1, by NULs; else through the shell;
+					// b: 1 a working directory, 2 an environment, before the command, each followed by \x01,
+					// the environment's "name=value" entries separated by \x02)
+					let s = str(x), cwd, env = { ...process.env };
+					if (b !== 0) {
+						const i = s.indexOf("\x01"), j = s.indexOf("\x01", i + 1);
+						if (b & 1) cwd = s.slice(0, i);
+						if (b & 2) env = Object.fromEntries(s.slice(i + 1, j).split("\x02").filter(e => e !== "").map(e => {
+							const k = e.indexOf("=", 1);
+							return [e.slice(0, k), e.slice(k + 1)];
+						}));
+						s = s.slice(j + 1);
+						// (a directory that cannot be entered: no process)
+						if (cwd !== undefined && !(fs.existsSync(cwd) && fs.statSync(cwd).isDirectory())) return -1;
+					}
+					const parts = s.split("\0");
+					return procCall({ op: "run", cmd: parts[0], args: parts.slice(1), shell: a === 0, env, cwd });
 				}
 				case 7:
 					return procCall({ op: "wait", pid: fd, block: a !== 0 });
