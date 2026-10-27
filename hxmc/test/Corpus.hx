@@ -17,7 +17,9 @@ using StringTools;
 // hxmc's own output, to be checked by hand). A `// define: <name>[=<value>]`
 // line of a case's source adds that -D to its build, a `// resource:
 // <file>@<name>` line that resource (the file next to the source), a `//
-// build-seconds: <n>` line a bound on hxmc's time to build it. --target cross-builds
+// build-seconds: <n>` line a bound on hxmc's time to build it, a `//
+// not-live: <function>` line a function reachability must drop when the
+// case is built from its source (notLive). --target cross-builds
 // for another target (linux-arm64 runs under qemu-aarch64-static, windows-x86_64 under
 // wine64, wasm32-wasi under node or, with HXMC_WASM_RUNNER=wasmtime,
 // wasmtime; --wasm-eh legacy: built with -D hxmc.wasm-eh=legacy, run under
@@ -206,6 +208,11 @@ class Corpus {
 		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
 		if (limit != null && r.seconds > Std.parseFloat(limit))
 			return {name: c.name, status: "slow-build", detail: 'built in ${Std.int(r.seconds)} s, more than $limit s: ' + tail(r.out, 1500)};
+		var notLive = caseLine(src, "not-live");
+		if (notLive != null) {
+			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
+			if (live != null) return {name: c.name, status: "live", detail: live};
+		}
 		var re = ~/hxmc: ([0-9]+) functions/;
 		var nf = re.match(r.out) ? re.matched(1) + " functions" : "";
 		if (stage != null) {
@@ -240,6 +247,24 @@ class Corpus {
 			return {name: c.name, status: "differs", detail: 'diff $expected $d/got.txt\n' + tail(r.err, 800)};
 		}
 		return {name: c.name, status: "ok", detail: '${fixed(now() - t0)}s $nf'};
+	}
+
+	// A `// not-live: <function>` case built from its source, as programs are
+	// (the archive's build loads only the modules its program reaches, so
+	// what typing a module loads and DCE keeps, such as an std override,
+	// shows only here): null when reachability drops the function (named as
+	// HXMC_REACH_WHY takes it: pack.Class.method, or the symbol), else why
+	// not. (exe: where to write it; args: the archive build's own, after its -main)
+	static function liveFrom(c:CorpusCase, exe:String, name:String, args:Array<String>):Null<String> {
+		if (FileSystem.exists(exe)) FileSystem.deleteFile(exe);
+		var cmd = [tool, exe];
+		for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
+		cmd = cmd.concat(["-cp", FileSystem.fullPath(STD), "-main", c.main]).concat(args);
+		var r = exec(cmd, {env: ["HXMC_REACH_WHY" => name]});
+		if (r.code != 0) return "the build from source failed: " + tail(r.out + r.err, 2000);
+		if (FileSystem.exists(exe)) FileSystem.deleteFile(exe);
+		if (r.out.split("\n").indexOf("hxmc: reach: why " + name) >= 0) return '$name is live:\n' + tail(r.out, 1500);
+		return null;
 	}
 
 	// a case run inside the compiler (--mir-run): typed, compiled for the Mir
