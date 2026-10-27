@@ -1232,7 +1232,12 @@ jobs:
           # and a try waits for the dpkg lock an earlier one still holds
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "300";\n' | sudo tee /etc/apt/apt.conf.d/99ci-timeouts > /dev/null
           retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
-          retry npx playwright install --with-deps chromium firefox webkit > /dev/null
+          # in two parts, so a log shows which one stalls: the system
+          # packages (apt, under the timeouts above), then the browsers'
+          # downloads, which stalled with no output too: each try of those
+          # ends after 5 minutes (it needs well under 1) and the next starts
+          retry npx playwright install-deps chromium firefox webkit > /dev/null
+          retry timeout -k 10 300 npx playwright install chromium firefox webkit > /dev/null
           node site/tools/browser-test.mjs site-dist chromium firefox webkit
 
   # the npm packages in fresh projects, on each target's machine (every
