@@ -437,6 +437,42 @@ while (Poll.wait(fds, events, revents, 2, -1) > 0) ...   // no allocation per ca
   `RT_VERIFY=1` checks the heap, `RT_MINOR_KB=<n>` fixes the nursery size.
   More in [hxmc.md](hxmc.md#environment-variables).
 
+### Measuring the collector
+
+`hxmc.GcStats` reads the collector's counters, the same way natively and on
+wasm32-wasi, without `@:access` into the runtime:
+
+| Function | |
+| --- | --- |
+| `bytesAllocated():Float` | bytes allocated since the program started, by every thread, large objects included |
+| `threadBytesAllocated():Float` | the same, by the calling thread |
+| `collections():Int`, `minorCollections()`, `majorCollections()` | collections so far |
+| `lastPause():Float`, `totalPause()`, `maxPause()` | pauses in seconds, from the collecting thread's request to resuming the program |
+| `records(since = 0):Array<GcRecord>` | the last `GcStats.RECORDS` (64) collections, oldest first, from index `since` on |
+| `now():Float` | the clock of the records (monotonic seconds) |
+
+A `GcRecord` has the collection's `index` (from 0), `start` (the request),
+`stopped` (every thread stopped; on wasm32 the same as `start`), `end` (the
+program resumed) and `major`. A profiler keeps the last index it saw and
+reads `records(last + 1)` once a frame.
+
+```haxe
+var b0 = hxmc.GcStats.bytesAllocated(), p0 = hxmc.GcStats.totalPause();
+work();
+trace('${hxmc.GcStats.bytesAllocated() - b0} bytes, ${hxmc.GcStats.totalPause() - p0} s paused');
+```
+
+Sizes are the collector's: an 8-byte header, then 8-byte slots (an
+`Array<Float>` of capacity n holds n * 8 + 8 bytes of storage; a `Vector`
+of 1000 Floats is 8008 bytes). The counters and the records are always
+kept, whether read or not: a few additions, three clock reads and a
+record's four stores in a ring of 64 per collection, and a few more
+instructions when a thread takes a new allocation buffer. With several
+threads, `bytesAllocated` counts other threads' current allocation
+buffers whole until the next collection. With `-D hxmc.wasm-gc` the engine
+collects and every counter reads 0. `RT_STATS=1` prints the totals at exit
+on both targets.
+
 ### Null access
 
 Reading or writing through null throws the String `"Null Access"`, which

@@ -180,20 +180,37 @@ class Boxes {
 		return a;
 	}
 
+	// the longest storage (NArray.open's bound): 2 GB of 8-byte elements
+	static inline var MAX_CAP = 0x0FFFFFFD;
+
+	// the capacity an array of capacity cap grows to for need elements: twice
+	// cap, at least 2 and need, at most MAX_CAP (more: an error)
+	static function grownCap(cap:Int, need:Int):Int {
+		if (need > MAX_CAP || need < 0) tooLong(need);
+		var ncap = cap * 2;
+		if (ncap < 2) ncap = 2;
+		if (ncap < need) ncap = need;
+		return ncap > MAX_CAP ? MAX_CAP : ncap;
+	}
+
+	static function tooLong(need:Int):Void
+		throw "out of memory: an Array of " + (need < 0 ? "more than 2147483647" : Std.string(need)) + " elements is longer than the longest, " + MAX_CAP;
+
 	@:hxmc.host("hx_arr_grow") static function arrGrow(slot:Ptr, need:Int):Void {
 		var a:Dynamic = Mem.getRef(slot, 0);
 		var cap = arrCap(a);
 		if (need <= cap) return;
-		var ncap = cap * 2;
-		if (ncap < 2) ncap = 2;
-		if (ncap < need) ncap = need;
+		var ncap = grownCap(cap, need);
 		var kind = arrKind(a);
-		var d0 = arrStore(a);
+		// (a reference, not an address: the allocation's collection may move
+		// the storage, which would look like a change and retry forever, each
+		// retry's allocation collecting again)
+		var d0:Dynamic = Mem.getRef(Mem.addr(a), 8);
 		var nd = NArray.make(kind, roomFor(kind, ncap));
 		// (another thread may have changed the array at the allocation: a
 		// replaced storage or kind retries)
 		a = Mem.getRef(slot, 0);
-		if (arrStore(a) != d0 || arrKind(a) != kind) {
+		if (arrStore(a) != Mem.addr(d0) || arrKind(a) != kind) {
 			arrGrow(slot, need);
 			return;
 		}
@@ -350,21 +367,21 @@ class Boxes {
 		var k = arrKind(a);
 		if (k != vk) return pushConv(slot, vk, v);
 		var n = arrLen(a);
-		var d = arrStore(a);
 		var cap = arrCap(a);
 		if (n < cap) {
 			setLen(a, n + 1);
-			storeKind(d, n, k, v);
+			storeKind(arrStore(a), n, k, v);
 			return n;
 		}
-		var ncap = cap * 2;
-		if (ncap < 2) ncap = 2;
-		if (ncap < n + 1) ncap = n + 1;
+		var ncap = grownCap(cap, n + 1);
+		// (a reference, not an address: the allocation's collection may move
+		// the storage, arrGrow)
+		var d:Dynamic = Mem.getRef(Mem.addr(a), 8);
 		var nd = NArray.make(k, roomFor(k, ncap));
 		a = Mem.getRef(slot, 0);
-		if (arrStore(a) != d || arrKind(a) != k || arrLen(a) != n) return pushConv(slot, vk, v);
+		if (arrStore(a) != Mem.addr(d) || arrKind(a) != k || arrLen(a) != n) return pushConv(slot, vk, v);
 		if (n > 0) {
-			LibC.memcpy(Mem.addr(nd), d, akSize(k) * n);
+			LibC.memcpy(Mem.addr(nd), Mem.addr(d), akSize(k) * n);
 			if (k == AK_PTR && !inYoungObj(nd)) Gc_barrierRange(nd, n);
 		}
 		Mem.setRefBarrier(a, 8, nd);

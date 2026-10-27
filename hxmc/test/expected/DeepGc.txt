@@ -1,0 +1,7 @@
+exit 0
+list 0: 500000500000
+tree 0: 29998 nodes, depth 9999, labels 146666, list 500000500000
+list 1: 500000500000
+tree 1: 29998 nodes, depth 9999, labels 146666, list 500000500000
+list 2: 500000500000
+tree 2: 29998 nodes, depth 9999, labels 146666, list 500000500000

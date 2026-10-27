@@ -68,6 +68,10 @@ class Heap {
 		return true;
 	}
 
+	// a request of `bytes` that cannot be met (outOfMemory's message)
+	@:hxmc.unsafe public static function refuse(bytes:Int)
+		refused = bytes;
+
 	@:hxmc.unsafe static function ensure(p:Ptr) {
 		if (!tryEnsure(p)) outOfMemory();
 	}

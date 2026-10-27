@@ -23,7 +23,10 @@ const { WASI } = await import('node:wasi');
 // node 22: exception handling with exnref is behind a flag (not needed by a
 // module built with -D hxmc.wasm-eh=legacy; HXMC_WASM_EXNREF=0 leaves it
 // off), and WASI's fd_write as a fast API call can collect V8's heap and
-// crash when the module's memory is large
+// crash when the module's memory is large (node 22.22: uvwasi_fd_write's
+// buffer, counted as external memory, starts a full collection inside the
+// fast call, which segfaults walking the optimized frames; any program run
+// by node's WASI, with any collector of its own)
 if (process.env.HXMC_WASM_EXNREF !== '0') v8.setFlagsFromString('--experimental-wasm-exnref');
 v8.setFlagsFromString('--no-turbo-fast-api-calls');
 

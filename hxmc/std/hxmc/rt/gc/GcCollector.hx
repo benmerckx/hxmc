@@ -15,6 +15,30 @@ class GcCollector {
 	public static function heapBytes():Float
 		return W.sysNum(13, null, null, 0);
 
+	// (hxmc.GcStats: the engine keeps no counters a module can read)
+	public static function bytesAllocated():Float
+		return 0;
+
+	public static inline var RECORDS = 64;
+
+	public static function threadBytesAllocated():Float
+		return 0;
+
+	public static function recordField(k:Int, field:Int):Float
+		return 0;
+
+	public static function recordCount():Int
+		return 0;
+
+	public static function clock():Float
+		return haxe.Timer.stamp();
+
+	public static function counts(which:Int):Int
+		return 0;
+
+	public static function pause(which:Int):Float
+		return 0;
+
 	public static function reached():Bool
 		return false;
 
