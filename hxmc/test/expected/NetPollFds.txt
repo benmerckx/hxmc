@@ -1,5 +1,5 @@
 exit 0
-stdin: true
+file: true
 a descriptor that is not a socket: true
 2 [0,4]
 1 1

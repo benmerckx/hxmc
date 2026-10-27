@@ -14,10 +14,15 @@ class NetPollFds {
 
 	static function main() {
 		var windows = Sys.systemName() == "Windows";
-		var stdin = try {
-			Poll.inputFd(Sys.stdin()) == 0 && !windows;
+		// a file's stream
+		var path = Sys.getCwd() + "/NetPollFds.tmp";
+		var out = sys.io.File.write(path);
+		var file = try {
+			Poll.outputFd(out) >= 0 && !windows;
 		} catch (e:haxe.io.Error) windows && socketsOnly(e);
-		Sys.println("stdin: " + stdin);
+		out.close();
+		sys.FileSystem.deleteFile(path);
+		Sys.println("file: " + file);
 		var raw = try {
 			Poll.wait([0], [Poll.IN], [0], 1, 0);
 			!windows;
