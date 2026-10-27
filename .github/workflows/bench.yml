@@ -574,3 +574,12 @@ jobs:
             cd ../.. && sleep $((attempt * 5))
           done
           exit 1
+      # the target generators' gate (Targets.hx --strict, docs/testing.md) on
+      # the joined rows: a reference failure outside Targets.hx's
+      # expected-unsupported list, a port failure, different outputs; after
+      # publishing, so the failing run still reaches bench-data and the site
+      # (the targets jobs stay green when they measured every row: the publish
+      # step takes their results only then)
+      - name: Target generators gate
+        if: always() && hashFiles('bin/bench-targets/targets.json') != ''
+        run: bin/hxmc/hxmc -cp haxe/test --run Targets --check bin/bench-targets/targets.json

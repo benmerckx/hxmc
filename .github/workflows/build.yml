@@ -761,6 +761,16 @@ jobs:
           else
             $M test LANES="${{ matrix.suite }}" SHARD="${{ matrix.shard }}" SUMMARY="$GITHUB_STEP_SUMMARY"
           fi
+      # the reference still compiles the port's own sources, the outputs
+      # identical (the nightly's target generators, haxe/test/Targets.hx
+      # --strict, on two rows: hl for the generator's typing, neko for its
+      # bytecode compiler), sequential, one run
+      - name: The port's sources with the reference (Targets, self -> hl, neko)
+        if: ${{ !cancelled() && matrix.suite == 'targets' }}
+        run: |
+          set -ex
+          ulimit -s unlimited
+          HAXE_STD_PATH=$PWD/haxe/upstream/std bin/port/haxe -cp haxe/test --run Targets --strict -p self -t hl,neko -n 1 --modes seq
 
   # the fuzzer's exec lanes (docs/testing.md): the kept programs and a random
   # batch run by the reference's Eval and built by hxmc (a native executable,

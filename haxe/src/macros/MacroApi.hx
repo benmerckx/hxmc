@@ -272,54 +272,61 @@ class MacroApi {
 class MacroApiImpl {
 	// port: InterpImpl (Eval), or the compiler's own values when a host sets
 	// nativeValues (hook, not upstream: MacroNativeValues)
+	// port: a native value goes through Dynamic to the declared type explicitly
+	// (the reference's hl generator cannot cast e.g. an Array to the Value enum
+	// directly once these are inlined)
 	public static var nativeValues = false;
 
 	public static var vnull(get, never):Value;
 
 	static inline function get_vnull():Value return nativeValues ? null : VNull;
 
-	static inline function vint(i:Int):Value return nativeValues ? (i : Dynamic) : VInt32(i);
+	static inline function vint(i:Int):Value return nativeValues ? ((i : Dynamic) : Value) : VInt32(i);
 
-	static inline function vint32(i:Int):Value return nativeValues ? (i : Dynamic) : VInt32(i);
+	static inline function vint32(i:Int):Value return nativeValues ? ((i : Dynamic) : Value) : VInt32(i);
 
-	static inline function vfloat(f:Float):Value return nativeValues ? (f : Dynamic) : VFloat(f);
+	static inline function vfloat(f:Float):Value return nativeValues ? ((f : Dynamic) : Value) : VFloat(f);
 
-	static inline function vbool(b:Bool):Value return nativeValues ? (b : Dynamic) : b ? VTrue : VFalse;
+	static inline function vbool(b:Bool):Value return nativeValues ? ((b : Dynamic) : Value) : b ? VTrue : VFalse;
 
-	public static inline function encodeArray(l:Array<Value>):Value return nativeValues ? (l : Dynamic) : macros.eval.EvalEncode.encodeArray(l);
+	public static inline function encodeArray(l:Array<Value>):Value return nativeValues ? ((l : Dynamic) : Value) : macros.eval.EvalEncode.encodeArray(l);
 
 	// port: a Vector as macro code's Array (native values: a copy)
-	public static inline function encodeArrayV(v:Vector<Value>):Value return nativeValues ? (v.toArray() : Dynamic) : macros.eval.EvalEncode.encodeArrayV(v);
+	public static inline function encodeArrayV(v:Vector<Value>):Value return nativeValues ? ((v.toArray() : Dynamic) : Value) : macros.eval.EvalEncode.encodeArrayV(v);
 
-	static inline function encodeString(s:String):Value return nativeValues ? (s : Dynamic) : macros.eval.EvalEncode.encodeString(s);
+	static inline function encodeString(s:String):Value return nativeValues ? ((s : Dynamic) : Value) : macros.eval.EvalEncode.encodeString(s);
 
 	// port: EvalMain.encode_obj = EvalEncode.encode_obj_s
 	static inline function encodeObj(l:Array<ObjField>):Value return nativeValues ? MacroNativeValues.encodeObj(cast l) : macros.eval.EvalEncode.encodeObjS(l);
 
 	static inline function encodeLazy(l:AtomicLazy<Value>):Value return nativeValues ? l.force() : macros.eval.EvalEncode.encodeLazy(l);
 
-	static inline function vfun0(f:Void->Value):Value return nativeValues ? (() -> MacroNativeValues.apiCall(() -> f()) : Dynamic) : macros.eval.EvalEncode.vfun0(f);
+	// port: not inline: inlined, each function of macroApi's list became a
+	// temporary of its own (over a hundred locals in one scope, where the
+	// reference's neko bytecode compiler splits the list's array without end:
+	// Stack overflow), its closure twice
+	static function vfun0(f:Void->Value):Value return nativeValues ? ((() -> MacroNativeValues.apiCall(() -> f()) : Dynamic) : Value) : macros.eval.EvalEncode.vfun0(f);
 
-	static inline function vfun1(f:Value->Value):Value return nativeValues ? ((a) -> MacroNativeValues.apiCall(() -> f(a)) : Dynamic) : macros.eval.EvalEncode.vfun1(f);
+	static function vfun1(f:Value->Value):Value return nativeValues ? (((a) -> MacroNativeValues.apiCall(() -> f(a)) : Dynamic) : Value) : macros.eval.EvalEncode.vfun1(f);
 
-	static inline function vfun2(f:Value->Value->Value):Value return nativeValues ? ((a, b) -> MacroNativeValues.apiCall(() -> f(a, b)) : Dynamic) : macros.eval.EvalEncode.vfun2(f);
+	static function vfun2(f:Value->Value->Value):Value return nativeValues ? (((a, b) -> MacroNativeValues.apiCall(() -> f(a, b)) : Dynamic) : Value) : macros.eval.EvalEncode.vfun2(f);
 
-	static inline function vfun3(f:Value->Value->Value->Value):Value return nativeValues ? ((a, b, c) -> MacroNativeValues.apiCall(() -> f(a, b, c)) : Dynamic) : macros.eval.EvalEncode.vfun3(f);
+	static function vfun3(f:Value->Value->Value->Value):Value return nativeValues ? (((a, b, c) -> MacroNativeValues.apiCall(() -> f(a, b, c)) : Dynamic) : Value) : macros.eval.EvalEncode.vfun3(f);
 
-	static inline function vfun4(f:Value->Value->Value->Value->Value):Value return nativeValues ? ((a, b, c, d) -> MacroNativeValues.apiCall(() -> f(a, b, c, d)) : Dynamic) : macros.eval.EvalEncode.vfun4(f);
+	static function vfun4(f:Value->Value->Value->Value->Value):Value return nativeValues ? (((a, b, c, d) -> MacroNativeValues.apiCall(() -> f(a, b, c, d)) : Dynamic) : Value) : macros.eval.EvalEncode.vfun4(f);
 
-	static inline function vfun5(f:Value->Value->Value->Value->Value->Value):Value return nativeValues ? ((a, b, c, d, e) -> MacroNativeValues.apiCall(() -> f(a, b, c, d, e)) : Dynamic) : macros.eval.EvalEncode.vfun5(f);
+	static function vfun5(f:Value->Value->Value->Value->Value->Value):Value return nativeValues ? (((a, b, c, d, e) -> MacroNativeValues.apiCall(() -> f(a, b, c, d, e)) : Dynamic) : Value) : macros.eval.EvalEncode.vfun5(f);
 
-	static inline function encodePos(p:Pos):Value return nativeValues ? (p : Dynamic) : macros.eval.EvalEncode.encodePos(p);
+	static inline function encodePos(p:Pos):Value return nativeValues ? ((p : Dynamic) : Value) : macros.eval.EvalEncode.encodePos(p);
 
 	static inline function encodeStringMap<A>(convert:A->Value,
 			m:StringMap<A>):Value return nativeValues ? MacroNativeValues.encodeStringMap(convert, m) : macros.eval.EvalEncode.encodeStringMap(convert, m);
 
-	static inline function encodeTdecl(t:ModuleType):Value return nativeValues ? (t : Dynamic) : macros.eval.EvalEncode.encodeTdecl(t);
+	static inline function encodeTdecl(t:ModuleType):Value return nativeValues ? ((t : Dynamic) : Value) : macros.eval.EvalEncode.encodeTdecl(t);
 
 	static inline function encodeLazytype(t:TLazy, f:Void->Value):Value return nativeValues ? MacroNativeValues.encodeLazytype(t, f) : macros.eval.EvalEncode.encodeLazytype(t, f);
 
-	static inline function encodeUnsafe(o:Dynamic):Value return nativeValues ? (new NativeRef(o, () -> null, () -> "<unsafe>") : Dynamic) : macros.eval.EvalEncode.encodeUnsafe(o);
+	static inline function encodeUnsafe(o:Dynamic):Value return nativeValues ? ((new NativeRef(o, () -> null, () -> "<unsafe>") : Dynamic) : Value) : macros.eval.EvalEncode.encodeUnsafe(o);
 
 	// port: EvalMain.field v f =EvalField.field v (EvalHash.hash f)
 	static inline function field(v:Value, f:String):Value return nativeValues ? Reflect.field(v, f) : macros.eval.EvalField.field(v, macros.eval.EvalHash.hash(f));
@@ -338,7 +345,7 @@ class MacroApiImpl {
 
 	static inline function decodeEnum(v:Value):DecodedEnum return nativeValues ? cast MacroNativeValues.decodeEnum(v) : macros.eval.EvalDecode.decodeEnum(v);
 
-	static inline function decodeTdecl(v:Value):ModuleType return nativeValues ? (v : Dynamic) : macros.eval.EvalDecode.decodeTdecl(v);
+	static inline function decodeTdecl(v:Value):ModuleType return nativeValues ? ((v : Dynamic) : ModuleType) : macros.eval.EvalDecode.decodeTdecl(v);
 
 	static inline function decodeLazytype(v:Value):TLazy return nativeValues ? MacroNativeValues.decodeLazytype(v) : macros.eval.EvalDecode.decodeLazytype(v);
 
@@ -366,9 +373,9 @@ class MacroApiImpl {
 	// port: returns `Digest.to_hex` of upstream's raw digest (see EvalMain)
 	static inline function valueSignature(v:Value):String return nativeValues ? MacroNativeValues.valueSignature(v) : macros.eval.EvalMain.valueSignature(v);
 
-	static inline function encodeBytes(b:haxe.io.Bytes):Value return nativeValues ? (b : Dynamic) : macros.eval.EvalEncode.encodeBytes(b);
+	static inline function encodeBytes(b:haxe.io.Bytes):Value return nativeValues ? ((b : Dynamic) : Value) : macros.eval.EvalEncode.encodeBytes(b);
 
-	static inline function decodeBytes(v:Value):haxe.io.Bytes return nativeValues ? (v : Dynamic) : macros.eval.EvalDecode.decodeBytes(v); // haxe.io.Bytes
+	static inline function decodeBytes(v:Value):haxe.io.Bytes return nativeValues ? ((v : Dynamic) : haxe.io.Bytes) : macros.eval.EvalDecode.decodeBytes(v); // haxe.io.Bytes
 
 	// port: EvalMain.prepare_callback = EvalMisc.prepare_callback
 	static inline function prepareCallback(v:Value, nargs:Int):Array<Value>->Value return nativeValues ? cast MacroNativeValues.prepareCallback(v, nargs) : macros.eval.EvalMisc.prepareCallback(v, nargs);
