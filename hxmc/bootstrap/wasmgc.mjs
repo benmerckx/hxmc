@@ -452,6 +452,9 @@ if (WebAssembly.Module.imports(module).some((i) => i.module === "wasi_snapshot_p
 	process.emitWarning = (w, ...rest) => {
 		if (!String(w).includes("WASI")) emitWarning.call(process, w, ...rest);
 	};
+	// (WASI's fd_write as a fast API call can start V8's collector, which
+	// then crashes walking the frames: wasi.mjs's --no-turbo-fast-api-calls)
+	(await import("node:v8")).setFlagsFromString("--no-turbo-fast-api-calls");
 	const { WASI } = await import("node:wasi");
 	wasi = new WASI({ version: "preview1", args: [path.resolve(file), ...args], env: process.env, preopens: { "/": "/" }, returnOnExit: true });
 	imports.wasi_snapshot_preview1 = wasi.wasiImport;
