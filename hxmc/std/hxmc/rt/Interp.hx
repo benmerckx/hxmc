@@ -191,18 +191,20 @@ class Interp {
 	// constants, parameters, flags (D_*), then the offsets from the
 	// descriptor (64 bits) of its code, symbol table, constants and
 	// parameters' sources (an entry's: their byte offsets in the register
-	// image); the code from HEADER. Registers: the constants, the
+	// image), the calls counted (64 bits: tierHook); the code from HEADER. Registers: the constants, the
 	// parameters, the values. A stub's header (LAZY) becomes its function's
 	// once it is compiled: whatever holds the descriptor calls the function
-	static inline var HEADER = 64;
+	static inline var HEADER = 72;
 	static inline var H_NREGS = 4;
 	static inline var H_FRAME = 8;
 	static inline var H_NCONSTS = 16;
 	static inline var H_NPARAMS = 20;
+	static inline var H_FLAGS = 24;
 	static inline var H_CODE = 32;
 	static inline var H_SYMS = 40;
 	static inline var H_CONSTS = 48;
 	static inline var H_SOURCES = 56;
+	static inline var H_CALLS = 64; // (the calls counted so far: tierHook)
 	// (the offset of the function's lines, InterpGen.H_POSITIONS: Stacks)
 	static inline var H_POSITIONS = 28;
 	static inline var D_FLOAT = 1; // it returns a double
@@ -263,7 +265,11 @@ class Interp {
 	static var mask:Int;
 	static var count = 0;
 
+	// the threads that ran interpreted code (interp.Tier compiles while there is one)
+	@:hxmc.export("rt_interp_threads") public static var threads:Int;
+
 	static function initStack() {
+		hxmc.unsafe.Atomic.add32(Mem.sym("rt_interp_threads"), 1);
 		var n:I64 = STACK_BYTES;
 		var p = LibC.malloc(n);
 		if (p.isNull()) throw "hxmc interp: no memory for the interpreter's stack";
@@ -349,8 +355,57 @@ class Interp {
 		}
 	}
 
+	// a function called often (code loaded at run time: interp.Tier): every
+	// tierMask + 1 calls of a descriptor (counted in its header) numbered by
+	// the hook (its number in the flags' upper bits, 0: none), the hook is
+	// given the number and the arguments (rooted while it runs: it may
+	// compile), and may make the descriptor another's (Interp.become: native
+	// code's forwarder); -1: never
+	public static var tierHook:Null<(id:Int, args:Ptr) -> Void> = null;
+	public static var tierMask = -1;
+
+	// (run's frame at isp, its arguments after desc's constants: those moved
+	// after the new constants when the hook changed desc)
+	static function tierCheck(desc:Ptr) {
+		var id = Mem.getI32(desc, H_FLAGS) >>> 8;
+		if (id == 0 || tierHook == null) return;
+		var regs = isp.add(FRAME);
+		var nc = Mem.getI32(desc, H_NCONSTS), n = Mem.getI32(desc, H_NPARAMS);
+		var args = regs.add(8 * nc);
+		// (above the arguments: what the hook runs on the interpreter does not overwrite them)
+		var sp = isp;
+		isp = args.add(8 * n + 16);
+		try
+			tierHook(id, args)
+		catch (e:Dynamic) {
+			isp = sp;
+			throw e;
+		}
+		isp = sp;
+		var nc2 = Mem.getI32(desc, H_NCONSTS);
+		if (nc2 > nc) {
+			var k = n;
+			while (k-- > 0)
+				Mem.setI64At(regs, 0, nc2 + k, Mem.getI64At(regs, 0, nc + k));
+		} else if (nc2 < nc)
+			for (k in 0...n)
+				Mem.setI64At(regs, 0, nc2 + k, Mem.getI64At(regs, 0, nc + k));
+	}
+
+	// the entries left in the pool of a function of these flags, less an
+	// eighth of it (interp.Tier leaves those to what must have an entry)
+	public static function poolRoom(flags:Int):Int {
+		var t = Mem.sym("hxmc_interp_pools");
+		var kind = (flags & D_STACK != 0 ? 2 : 0) + (flags & D_FLOAT != 0 ? 1 : 0);
+		var size = Mem.getI64(t, 8 * kind).toInt();
+		return size - (size >> 3) - (poolUsed.isNull() ? 0 : Mem.getI64(poolUsed, 8 * kind).toInt());
+	}
+
 	// a frame of the function at isp (its arguments written in its registers), run; its result written at res
 	static function run(desc:Ptr, res:Ptr) {
+		var calls = Mem.getI32(desc, H_CALLS) + 1;
+		Mem.setI32(desc, H_CALLS, calls);
+		if (calls & tierMask == 0) tierCheck(desc);
 		var nregs = Mem.getI32(desc, H_NREGS);
 		var fr = isp;
 		var regs = fr.add(FRAME);

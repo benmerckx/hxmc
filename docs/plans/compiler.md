@@ -89,9 +89,15 @@ on a trivial macro's warm edit and where macros run again. The cold gap is
 compiling the few giant functions code-writing macros are made of
 (json2object's `DataBuilder`) and typing the macro context.
 
-- **A native tier** (in progress): hot macro functions compiled from the
-  same Mir to machine code, as a tier of the interpreter. A Mir-versus-Eval
-  verify mode can be rebuilt on it.
+- **The native tier** (linux-x86_64, [hxmc.md](../hxmc.md#the-native-tier)):
+  hot functions are compiled from the same Mir to machine code, their
+  descriptors made forwarders. Left: entering native code in the middle of
+  a frame, for a loop in one call (mandelbrot as a macro, nbody under
+  `--run`); native code calling another tiered function's code directly
+  (it goes through the pool entry and the forwarder now); arm64, macOS
+  (`MAP_JIT`) and Windows; more than one thread running interpreted code
+  (`become` as one atomic store). A Mir-versus-Eval verify mode can be
+  rebuilt on it.
 - **A cheap first tier**: a function's first calls run code translated from
   the lowered IR without MirBuild, Opt and MemLower. The formatter's cold
   build spends 70-100 ms compiling functions run once or twice.
@@ -108,9 +114,10 @@ compiling the few giant functions code-writing macros are made of
 
 Open decisions:
 
-- **Tiering up**: none (now: a size policy, `HXMC_MIR_COLD`); or call counts
-  per descriptor and a forward to optimized code; or that plus loop
-  back-edge counts. No measured workload needs it yet.
+- **Tiering up**: call counts per descriptor and, at a threshold, a forward
+  to native code (the native tier, on by default on linux-x86_64; the size
+  policy, `HXMC_MIR_COLD`, still decides what is optimized). Loop back-edge
+  counts are still open.
 - **The default engine**: Eval stays the default until Mir macros win the
   cold builds.
 

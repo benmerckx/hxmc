@@ -167,6 +167,8 @@ class InterpSet {
 	// calls of native code and native code's calls of it go through the
 	// compiler's functions of InterpAbi, not stubs of its own
 	public final loaded:Bool;
+	// (loaded) the function being compiled to native code (interp.Tier)
+	public var nativeNow:Null<FuncInfo> = null;
 
 	public function new(spec:String, prep:Prep, ?exclude:Map<FuncInfo, Bool>, loaded = false) {
 		this.exclude = exclude;
@@ -177,7 +179,7 @@ class InterpSet {
 	}
 
 	public function wants(f:FuncInfo):Bool {
-		if (loaded) return exclude == null || !exclude.exists(f);
+		if (loaded) return f != nativeNow && (exclude == null || !exclude.exists(f));
 		if (f.module == null || StringTools.startsWith(f.module, "hxmc.rt.") || StringTools.startsWith(f.module, "hxmc.unsafe.") || f.cAbi != null) return false;
 		if (exclude != null && exclude.exists(f)) return false;
 		if (prefixes == null) return true;
@@ -231,7 +233,7 @@ class InterpSet {
 // The descriptor: a header (MAGIC, registers, frame bytes, code words,
 // constants, parameters, flags: Interp.D_*, then the 64-bit offsets from
 // the descriptor of the code, the symbol table, the constants and the
-// parameters' sources: a stub's header, `stub`, is made its function's
+// parameters' sources, then the calls counted (interp.Tier): a stub's header, `stub`, is made its function's
 // when it is compiled), the code (words:
 // an operation and its operands, branch targets as byte offsets in the
 // code, relative to their instruction's start), the constants (8 bytes each, relocated: copied into the first
@@ -258,7 +260,7 @@ class InterpGen {
 	public static inline var TABLE = "hxmc_interp_fns";
 	static inline var STUB = "hxmc_ic$";
 	static inline var MAGIC = 0x32495848;
-	public static inline var HEADER = 64;
+	public static inline var HEADER = 72;
 	// (the header's flags: Loader reads them before the descriptor is in memory)
 	public static inline var H_FLAGS = 24;
 	// (the header's offset of the positions' table: 0, none)
@@ -502,6 +504,8 @@ class InterpGen {
 		b.u32(posOff);
 		for (off in [HEADER, symOff, constOff, srcOff])
 			b.u64(off, 0);
+		// (the calls counted so far, hxmc.rt.Interp.H_CALLS: interp.Tier)
+		b.u64(0, 0);
 	}
 
 	// a function not compiled yet (code loaded at run time: interp.MirMacros

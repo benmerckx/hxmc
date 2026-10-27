@@ -8,6 +8,12 @@ import hxmc.rt.Gc;
 import hxmc.rt.Dyn;
 import hxmc.unsafe.Ptr;
 
+// (Loader.lowMap: the native tier's memory, Linux only; the others fold its calls away, Mem.os)
+@:hxmc.c @:hxmc.fast private extern class Vm {
+	static function mmap(addr:Ptr, len:I64, prot:Int, flags:Int, fd:Int, off:I64):Ptr;
+	static function mprotect(addr:Ptr, len:I64, prot:Int):Int;
+}
+
 // What the bundles of a generation share, as a function compiled after its
 // bundle finds it (Loader.loadLate)
 class Gen {
@@ -55,6 +61,11 @@ class Bundle {
 // closures in data, makers, signature trampolines), is an entry of the
 // interpreter's pools (interp.InterpAbi), given out the first time it is
 // needed (`entry`).
+//
+// With the native tier (interp.Tier: hot functions compiled to native code,
+// linux-x86_64), bundles' memory is in a window below 2 GB, as the compiler's
+// image is, so that native code reaches all of it with 32-bit displacements
+// (`alloc`), and a function's native code is loaded there (`loadNative`).
 @:access(hxmc.rt.Gc)
 @:access(hxmc.rt.Dyn)
 @:access(hxmc.rt.Interp)
@@ -494,9 +505,7 @@ class Loader {
 		}
 		var size = (pos + 4095) & ~4095;
 		// (ordinary memory, never executable; zeroed: bss, rows, scalars; never freed, as nothing is unloaded)
-		var region = LibC.malloc((size : I64));
-		if (region.isNull()) throw "no memory for a bundle";
-		LibC.memset(region, 0, (size : I64));
+		var region = alloc(size);
 		var base = region.toI64();
 		for (s in addr.keys())
 			addr.set(s, addr.get(s) + base);
@@ -767,7 +776,9 @@ class Loader {
 		for (n => p in extra)
 			if (!StringTools.startsWith(n, "DSP_")) xb.set(n, {k: "d", v: p.toI64()}) else rows.set(n, p.toI64());
 		for (n => s in defs)
-			if (StringTools.startsWith(n, hxmc.interp.InterpGen.DESC)) xb.set(n, {k: "d", v: value(s).v});
+			if (StringTools.startsWith(n, hxmc.interp.InterpGen.DESC)) xb.set(n, {k: "d", v: value(s).v}) else if (low && s.section.kind != Text && !xb.exists(n))
+				// (its data, literals and empty arrays among them: native code loaded later uses the same, interp.Tier)
+				xb.set(n, {k: "d", v: value(s).v});
 		// (the runtime's walks of the types, Type.resolveClass, reach the new ones)
 		Mem.setI32(Mem.sym("rt_ntypes"), 0, nextType);
 		// (run once the bundle is shared: a function they call may be compiled
@@ -786,7 +797,7 @@ class Loader {
 	// then, which have every number it uses), then the compiler; its
 	// descriptor's address. Dispatch rows: the selector's latest, which has
 	// the types of every bundle loaded since.
-	public static function loadLate(obj:Obj, desc:String, gen:Gen):Ptr {
+	public static function loadLate(obj:Obj, desc:String, gen:Gen, ?extra:Map<String, I64>):Ptr {
 		var h = hostSyms();
 		var defs = new Map<String, Symbol>();
 		for (s in obj.symbols)
@@ -800,31 +811,11 @@ class Loader {
 			addr.set(s, pos);
 			pos += s.size();
 		}
-		var region = LibC.malloc(((pos < 8 ? 8 : pos) : I64));
-		if (region.isNull()) throw "no memory for a bundle";
-		LibC.memset(region, 0, ((pos < 8 ? 8 : pos) : I64));
+		var region = alloc(pos);
 		for (s in addr.keys())
 			addr.set(s, addr.get(s) + region.toI64());
-		function value(s:Symbol):I64 {
-			if (s.section != null) return addr.get(s.section) + s.offset;
-			if (s.abs) return s.offset;
-			var d = defs.get(s.name);
-			if (d != null) return value(d);
-			var n = s.name;
-			var x = gen.xb.get(n);
-			if (x != null) return x.v;
-			if (StringTools.startsWith(n, "DSP_") && gen.rows.exists(n)) return gen.rows.get(n);
-			var dn = hxmc.interp.InterpGen.DESC + n;
-			var dd = defs.get(dn);
-			if (dd != null) return entryOf(gen.entries, dn, ptr(value(dd)), dd.section.buf.b.getInt32(dd.offset + hxmc.interp.InterpGen.H_FLAGS)).toI64();
-			var xd = gen.xb.get(dn);
-			if (xd != null) return entryOf(gen.entries, dn, ptr(xd.v), Mem.getI32(ptr(xd.v), hxmc.interp.InterpGen.H_FLAGS)).toI64();
-			var hs = h.get(n);
-			if (hs != null) return hs.v;
-			var sys = systemSymbol(n);
-			if (!sys.isNull()) return sys.toI64();
-			throw "undefined symbol " + n;
-		}
+		function value(s:Symbol):I64
+			return lateValue(s, defs, addr, gen, h, extra).v;
 		for (sec in obj.sections) {
 			if (!addr.exists(sec) || sec.kind == Bss) continue;
 			var buf = sec.buf;
@@ -845,13 +836,286 @@ class Loader {
 				Mem.setI8(p, i, buf.b.get(i));
 		}
 		lateBytes += pos;
+		share(defs, gen, s -> value(s));
 		var d = defs.get(desc);
 		if (d == null) throw "no descriptor " + desc;
 		return ptr(value(d));
 	}
 
+	// (low: interp.Tier) the data a function loaded late defines, its
+	// literals and empty arrays, shared with what its generation loads next
+	// as a bundle's is (loadObj): the same objects
+	static function share(defs:Map<String, Symbol>, gen:Gen, value:Symbol->I64) {
+		if (!low) return;
+		for (n => s in defs)
+			if (s.section.kind != Text && !gen.xb.exists(n) && !StringTools.startsWith(n, hxmc.interp.InterpGen.DESC)) gen.xb.set(n, {k: "d", v: value(s)});
+	}
+
 	// the bytes of the functions loaded after their bundles (HXMC_MACRO_STATS)
 	public static var lateBytes = 0;
+
+	// a symbol of an object loaded after its bundle (loadLate, loadNative): its
+	// own, one of extra's, its generation's (a number, data, rows, an
+	// interpreted function's pool entry), the compiler's; tls: a thread-local
+	// variable of the compiler's (its offset from the thread pointer)
+	static function lateValue(s:Symbol, defs:Map<String, Symbol>, addr:Map<Section, I64>, gen:Gen, h:HostTable.HostSyms,
+			extra:Null<Map<String, I64>>):{v:I64, tls:Bool} {
+		if (s.section != null) return {v: addr.get(s.section) + s.offset, tls: false};
+		if (s.abs) return {v: s.offset, tls: false};
+		var d = defs.get(s.name);
+		if (d != null) return lateValue(d, defs, addr, gen, h, extra);
+		var n = s.name;
+		if (extra != null && extra.exists(n)) return {v: extra.get(n), tls: false};
+		var x = gen.xb.get(n);
+		if (x != null) return {v: x.v, tls: false};
+		if (StringTools.startsWith(n, "DSP_") && gen.rows.exists(n)) return {v: gen.rows.get(n), tls: false};
+		var dn = hxmc.interp.InterpGen.DESC + n;
+		var dd = defs.get(dn);
+		if (dd != null)
+			return {v: entryOf(gen.entries, dn, ptr(lateValue(dd, defs, addr, gen, h, extra).v), dd.section.buf.b.getInt32(dd.offset + hxmc.interp.InterpGen.H_FLAGS)).toI64(), tls: false};
+		var xd = gen.xb.get(dn);
+		if (xd != null) return {v: entryOf(gen.entries, dn, ptr(xd.v), Mem.getI32(ptr(xd.v), hxmc.interp.InterpGen.H_FLAGS)).toI64(), tls: false};
+		var hs = h.get(n);
+		if (hs != null) return {v: hs.v, tls: hs.k == "l"};
+		var sys = systemSymbol(n);
+		if (!sys.isNull()) return {v: sys.toI64(), tls: false};
+		throw "undefined symbol " + n;
+	}
+
+	// ---- the native tier's memory (interp.Tier): a window below 2 GB, above
+	// the compiler's image (static, from 4 MB), so that code there reaches
+	// the image, the bundles' data and itself with 32-bit displacements, as
+	// code linked with it would; nothing is unmapped, as nothing is unloaded.
+	// Once it is full (HXMC_MIR_TIER_WINDOW=<KB> makes it smaller, to test),
+	// bundles take malloc's memory and the tier stops (full): the code loaded
+	// before reaches only what was loaded before it, in the window, and a
+	// function compiled later that reached further would not load (its
+	// relocations' range is checked)
+	static inline var PROT_READ = 1;
+	static inline var PROT_WRITE = 2;
+	static inline var PROT_EXEC = 4;
+	static inline var MAP_PRIVATE = 2;
+	static inline var MAP_ANONYMOUS = 0x20;
+	public static inline var WINDOW_LO = 0x40000000;
+	public static inline var WINDOW_HI = 0x7fff0000;
+	static inline var CHUNK = 4 << 20;
+	static var windowHi = {
+		var kb = Std.parseInt(Sys.getEnv("HXMC_MIR_TIER_WINDOW") ?? "");
+		kb == null || kb <= 0 || kb >= ((WINDOW_HI - WINDOW_LO) >> 10) ? WINDOW_HI : WINDOW_LO + (kb << 10);
+	};
+	// (the window full: bundles in malloc's memory, the tier stopped, interp.Tier)
+	public static var full = false;
+
+	// bundles' memory in the window (set by interp.Tier before the first bundle loads)
+	public static var low = false;
+	static var lowNext = WINDOW_LO;
+	static var chunk = Ptr.nil();
+	static var chunkLeft = 0;
+
+	// whether this compiler can have the native tier (linux-x86_64: the window, the host table's TLS offsets)
+	public static function nativeTier():Bool
+		return Mem.os() == 0 && !Mem.arm() && Mem.mirHost() == 1;
+
+	// n bytes of pages in the window, read and write; null once it is full
+	static function lowMap(n:Int):Ptr {
+		var size = (n + 4095) & ~4095;
+		if (full || lowNext + size > windowHi || lowNext + size < lowNext) {
+			full = true;
+			return Ptr.nil();
+		}
+		// (Linux only: Mem.os folds the call away on the others, which have no mmap)
+		if (Mem.os() != 0) throw "the native tier: Linux only";
+		var p = Vm.mmap(Ptr.ofI64((lowNext : I64)), (size : I64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		var a = p.toI64();
+		if (a != (lowNext : I64)) throw "the native tier: cannot map memory at 0x" + StringTools.hex(lowNext) + " (got " + a + ")";
+		lowNext += size;
+		return p;
+	}
+
+	// n zeroed bytes for a bundle: in the window with the native tier, else malloc's (never freed)
+	static function alloc(n:Int):Ptr {
+		if (n < 8) n = 8;
+		if (!low) {
+			var p = LibC.malloc((n : I64));
+			if (p.isNull()) throw "no memory for a bundle";
+			LibC.memset(p, 0, (n : I64));
+			return p;
+		}
+		n = (n + 63) & ~63;
+		if (n > chunkLeft) {
+			var c = lowMap(n >= CHUNK ? n : CHUNK);
+			if (c.isNull()) {
+				// (the window full: malloc's, as without the tier)
+				low = false;
+				return alloc(n);
+			}
+			if (n >= CHUNK) return c;
+			chunk = c;
+			chunkLeft = CHUNK;
+		}
+		var p = chunk;
+		chunk = chunk.add(n);
+		chunkLeft -= n;
+		return p;
+	}
+
+	// the bytes of native code loaded (HXMC_MACRO_STATS)
+	public static var nativeBytes = 0;
+
+	// native code's memory: chunks of the window, functions one after the
+	// other (16-byte aligned); the pages a function is written to are made
+	// writable for that (the last one may hold code loaded before: no other
+	// thread runs code loaded at run time while the tier loads, interp.Tier),
+	// executable again by codeDone
+	static inline var CODE_CHUNK = 256 << 10;
+	static var codeNext = Ptr.nil();
+	static var codeLeft = 0;
+
+	static function codeAlloc(n:Int):Ptr {
+		n = (n + 15) & ~15;
+		if (n > codeLeft) {
+			var size = n > CODE_CHUNK ? (n + 4095) & ~4095 : CODE_CHUNK;
+			var c = lowMap(size);
+			if (c.isNull()) throw "the native tier's window is full";
+			codeNext = c;
+			codeLeft = size;
+		}
+		var p = codeNext;
+		codeNext = codeNext.add(n);
+		codeLeft -= n;
+		protect(p, n, PROT_READ | PROT_WRITE);
+		return p;
+	}
+
+	static function codeDone(p:Ptr, n:Int)
+		protect(p, n, PROT_READ | PROT_EXEC);
+
+	static function protect(p:Ptr, n:Int, prot:Int) {
+		var lo = p.toI64() & ~(4095 : I64);
+		var hi = (p.toI64() + n + 4095) & ~(4095 : I64);
+		if (Mem.os() != 0) throw "the native tier: Linux only";
+		if (Vm.mprotect(Ptr.ofI64(lo), hi - lo, prot) != 0) throw "the native tier: mprotect failed";
+	}
+
+	// a function's native code (interp.Tier), its object alone: its code in
+	// pages of its own in the window, made executable once relocated, its
+	// data (literals, inline caches) beside the bundles'; linked as loadLate
+	// links (extra first); the address of sym
+	public static function loadNative(obj:Obj, sym:String, gen:Gen, ?extra:Map<String, I64>):Ptr {
+		var h = hostSyms();
+		var defs = new Map<String, Symbol>();
+		for (s in obj.symbols)
+			if (s.section != null && s.global) defs.set(s.name, s);
+		var addr = new Map<Section, I64>();
+		var tpos = 0, dpos = 0;
+		var text = [], rest = [];
+		for (s in obj.sections) {
+			if (s.size() == 0 && s.kind != Bss) continue;
+			if (s.kind == Text) {
+				tpos = (tpos + s.align - 1) & ~(s.align - 1);
+				addr.set(s, tpos);
+				tpos += s.size();
+				text.push(s);
+			} else if (s.kind == RoData || s.kind == Data || s.kind == Bss) {
+				dpos = (dpos + s.align - 1) & ~(s.align - 1);
+				addr.set(s, dpos);
+				dpos += s.size();
+				rest.push(s);
+			} else
+				throw "section " + s.name + " (" + s.kind + ") in native code loaded at run time";
+		}
+		// (resolved before anything is mapped: a symbol missing leaves nothing behind)
+		var vals = new Map<Reloc, {v:I64, tls:Bool}>();
+		var zero = new Map<Section, I64>();
+		for (s in addr.keys())
+			zero.set(s, 0);
+		for (sec in obj.sections)
+			if (addr.exists(sec) && sec.kind != Bss)
+				for (r in sec.relocs)
+					if (r.sym.section == null && !r.sym.abs && !defs.exists(r.sym.name)) vals.set(r, lateValue(r.sym, defs, zero, gen, h, extra));
+		var code = tpos > 0 ? codeAlloc(tpos) : Ptr.nil();
+		// (its pages executable again whatever happens: they may hold code loaded before)
+		try {
+			var data = alloc(dpos);
+			for (s in text)
+				addr.set(s, addr.get(s) + code.toI64());
+			for (s in rest)
+				addr.set(s, addr.get(s) + data.toI64());
+			for (sec in obj.sections) {
+				if (!addr.exists(sec) || sec.kind == Bss) continue;
+				var at = addr.get(sec);
+				var buf = sec.buf;
+				for (r in sec.relocs) {
+					var sv = vals.exists(r) ? vals.get(r) : lateValue(r.sym, defs, addr, gen, h, extra);
+					var v = sv.v + r.addend;
+					switch r.kind {
+						case RAbs64:
+							if (sv.tls) throw "an absolute relocation against the thread-local variable " + r.sym.name;
+							buf.set64(r.offset, v.toInt(), (v >> 32).toInt());
+						case RAbs32 | RAbs32S:
+							if (sv.tls) throw "an absolute relocation against the thread-local variable " + r.sym.name;
+							if (v >> 31 != (0 : I64) && v >> 31 != (-1 : I64)) throw "a 32-bit relocation against " + r.sym.name + " beyond 32 bits";
+							buf.set32(r.offset, v.toInt());
+						case RPc32 | RCall32:
+							if (sv.tls) throw "a relative relocation against the thread-local variable " + r.sym.name;
+							var d = v - (at + r.offset);
+							if (d >> 31 != (0 : I64) && d >> 31 != (-1 : I64)) throw "a relative relocation against " + r.sym.name + " beyond 2 GB";
+							buf.set32(r.offset, d.toInt());
+						case RTpOff32:
+							if (!sv.tls) throw "a thread-local relocation against " + r.sym.name;
+							buf.set32(r.offset, v.toInt());
+						case _:
+							throw "relocation " + r.kind + " against " + r.sym.name + " in native code loaded at run time";
+					}
+				}
+				var p = ptr(at);
+				for (i in 0...buf.len)
+					Mem.setI8(p, i, buf.b.get(i));
+			}
+		} catch (e:Dynamic) {
+			if (tpos > 0) codeDone(code, tpos);
+			throw e;
+		}
+		if (tpos > 0) codeDone(code, tpos);
+		hxmc.rt.Faults.addCode(ptr(WINDOW_LO), ptr(lowNext));
+		// (its functions in the stacks, named and at their lines as the interpreted code they replace)
+		for (r in obj.funcs)
+			if (r.sym.section != null && r.sym.section.kind == Text && addr.exists(r.sym.section))
+				hxmc.rt.Stacks.addMade(ptr(addr.get(r.sym.section) + r.sym.offset), r.sym.size, stackLines(r, obj.files));
+		nativeBytes += tpos;
+		share(defs, gen, s -> addr.get(s.section) + s.offset);
+		var d = defs.get(sym);
+		if (d == null || d.section == null || d.section.kind != Text) throw "no code of " + sym;
+		return ptr(addr.get(d.section) + d.offset);
+	}
+
+	// a function's lines for hxmc.rt.Stacks.addMade (InterpGen's format, the
+	// rows' positions byte offsets in the function): its rows, then its name
+	// and files
+	static function stackLines(r:hxmc.Obj.FuncRec, files:Array<String>):haxe.io.Bytes {
+		var b = new hxmc.Buf(64);
+		var strs = [r.name == null ? "" : r.name], index = new Map<Int, Int>();
+		var rows = r.lines == null ? 0 : Std.int(r.lines.length / 3);
+		b.u32(rows);
+		for (j in 0...rows) {
+			var f = r.lines[3 * j + 1];
+			var k = index.get(f);
+			if (k == null) {
+				index.set(f, k = strs.length);
+				strs.push(files[f]);
+			}
+			b.u32(r.lines[3 * j]);
+			b.u32(r.lines[3 * j + 2]);
+			b.u32(k);
+		}
+		b.u32(strs.length);
+		for (x in strs) {
+			var bytes = haxe.io.Bytes.ofString(x);
+			b.u32(bytes.length);
+			b.bytes(bytes);
+		}
+		return b.b.sub(0, b.len);
+	}
 
 	// null when the compiler's type `idx` has the bundle's layout (slots, pointer map, fields)
 	static function sameLayout(idx:Int, t:Dynamic, fids:Map<String, Int>):Null<String> {

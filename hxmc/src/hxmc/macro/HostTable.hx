@@ -37,8 +37,9 @@ import hxmc.Obj;
 // keys (two 32-bit words) and flags (8 bits), to 8 bytes. A value is a
 // number for kind 3, for code, data and a
 // bound import's slot the 32-bit offset of the address from the value's own
-// place, 0 for a thread-local variable (its accessors are the compiler's:
-// InterpAbi.tlsAccessors).
+// place; for a thread-local variable its offset from the thread pointer
+// on linux-x86_64 (native code made at run time reads it so: interp.Tier),
+// 0 elsewhere (its accessors are the compiler's: InterpAbi.tlsAccessors).
 class HostTable {
 	public static inline var SYM = "hxmc_host_table";
 
@@ -228,6 +229,7 @@ class HostTable {
 				case K_ABS:
 					b.set32(at, r.sym.offset);
 				case K_TLS:
+					if (abi.os == "linux" && !abi.arm && abi.output == hxmc.Abi.OutputKind.Executable) sec.relocs.push(new Reloc(at, RelKind.RTpOff32, obj.sym(r.name), 0));
 				case K_BOUND:
 					var g = boundAt + 8 * boundOf.get(r.name);
 					sec.relocs.push(new Reloc(g, RelKind.RAbs64, obj.sym(r.name), 0));
@@ -452,7 +454,7 @@ class HostTable {
 		var place = values.add(4 * s);
 		return switch kindOf(s) {
 			case K_ABS: (v : hxmc.I64);
-			case K_TLS: (0 : hxmc.I64);
+			case K_TLS: (v : hxmc.I64);
 			case K_BOUND: hxmc.unsafe.Mem.getI64(place.add(v), 0);
 			case _: place.add(v).toI64();
 		};
