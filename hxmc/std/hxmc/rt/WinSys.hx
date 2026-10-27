@@ -172,9 +172,9 @@ class WinSys {
 	// is the exit code (OCaml's caml_sys_system_command on Windows)
 	public static function command(cmd:String):Int {
 		var w = wide(cmd);
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		var r = Win32._wsystem(w); // w is malloc'ed: no heap address
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		LibC.free(w);
 		return r;
 	}
@@ -222,15 +222,15 @@ class WinSys {
 		var h = Win32.GetStdHandle(-10); // STD_INPUT_HANDLE
 		var ft = !(h.toI64() == -1) ? Win32.GetFileType(h) : 2; // FILE_TYPE_CHAR
 		if (ft == 2) {
-			Leaf.rt_blocking_enter();
+			var region = Leaf.rt_blocking_enter();
 			var c = echo ? Win32._getche() : Win32._getch();
-			Leaf.rt_blocking_leave();
+			Regions.end(region);
 			return c;
 		}
 		var c = Mem.stack(8);
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		var r = Win32._read(0, c, 1);
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		if (r <= 0) Rt.rt_throw("Eof");
 		if (echo) Win32._write(1, c, 1);
 		return Mem.getU8(c, 0);
@@ -304,9 +304,9 @@ class WinSys {
 		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
-			Leaf.rt_blocking_enter();
+			var region = Leaf.rt_blocking_enter();
 			var r = readResult(Win32._read(fd, tmp, len));
-			Leaf.rt_blocking_leave();
+			Regions.end(region);
 			if (r > 0) LibC.memcpy(Bytes.bytes(b).add(pos), tmp, r);
 			LibC.free(tmp);
 			return r;
@@ -319,9 +319,9 @@ class WinSys {
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
 			LibC.memcpy(tmp, Bytes.bytes(b).add(pos), len);
-			Leaf.rt_blocking_enter();
+			var region = Leaf.rt_blocking_enter();
 			var r = Win32._write(fd, tmp, len);
-			Leaf.rt_blocking_leave();
+			Regions.end(region);
 			LibC.free(tmp);
 			return r;
 		}
@@ -841,9 +841,9 @@ class WinSys {
 	public static function processWait(pid:Int, block:Bool):Int {
 		var h = procHandle(pid);
 		if (h.isNull()) return -1;
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		var r = Win32.WaitForSingleObject(h, block ? -1 : 0); // INFINITE
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		return reap(pid, h, r);
 	}
 

@@ -1,0 +1,4 @@
+exit 0
+BlockingFunctions.hx:53: collected while the worker was in waitFor, 1000
+BlockingFunctions.hx:56: [1,2984370]
+BlockingFunctions.hx:57: 42, 14358569

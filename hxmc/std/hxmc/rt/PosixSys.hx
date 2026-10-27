@@ -160,9 +160,9 @@ class PosixSys {
 	public static function command(cmd:String):Int {
 		var c = cstr(cmd);
 		Posix.fflush(Ptr.nil());
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		var r = Posix.system(c); // c is malloc'ed: no heap address
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		LibC.free(c);
 		if (r == -1) return -1;
 		return (r & 0x7f) == 0 ? (r >> 8) & 0xff : 128 + (r & 0x7f);
@@ -662,9 +662,9 @@ class PosixSys {
 	public static function processWait(pid:Int, block:Bool):Int {
 		var st = Mem.stack(8);
 		while (true) {
-			Leaf.rt_blocking_enter();
+			var region = Leaf.rt_blocking_enter();
 			var r = Posix.waitpid(pid, st, block ? 0 : 1);
-			Leaf.rt_blocking_leave();
+			Regions.end(region);
 			if (r < 0 && errno() == EINTR) continue;
 			if (r <= 0) return -1;
 			break;

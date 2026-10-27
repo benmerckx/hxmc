@@ -316,7 +316,7 @@ class MirWriter {
 	function keepsFrameOf(sym:String, g:Null<FuncInfo>):Bool {
 		if (p == null || fn == null || f.blocksHere) return false;
 		if (g != null) return g.noGc && !g.blocks;
-		if (sym == "rt_blocking_enter" || sym == "rt_blocking_leave") return false;
+		if (sym == "rt_blocking_enter" || sym == "rt_blocking_leave" || sym == "rt_blocking_restore") return false;
 		return hxmc.ir.FnLower.noGcHost(sym) || QUIET.exists(sym) || StringTools.startsWith(sym, "hxmc$");
 	}
 

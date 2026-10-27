@@ -112,7 +112,7 @@ extern class NetCore {
 	// shorts, h_addr_list)
 	public static inline function lookup(n:Ptr):I64 {
 		var r:I64 = 0;
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		if (Mem.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
 		var h = Mem.os() == 2 ? Winsock.gethostbyname(n) : Posix.gethostbyname(n);
 		if (!h.isNull() && (Mem.os() == 2 ? Mem.getI16(h, 16) : Mem.getI32(h, 16)) == 2) {
@@ -124,7 +124,7 @@ extern class NetCore {
 			}
 		}
 		if (Mem.os() == 2) WinNet.unlockResolver() else PosixNet.unlockResolver();
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		return r;
 	}
 
@@ -136,12 +136,12 @@ extern class NetCore {
 		Mem.setI8(a, 2, ip >> 8);
 		Mem.setI8(a, 3, ip);
 		var name = Ptr.nil();
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		if (Mem.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
 		var h = Mem.os() == 2 ? Winsock.gethostbyaddr(a, 4, 2) : Posix.gethostbyaddr(a, 4, 2);
 		if (!h.isNull() && !Mem.getPtr(h, 0).isNull()) name = Mem.os() == 2 ? Winsock._strdup(Mem.getPtr(h, 0)) : Posix.strdup(Mem.getPtr(h, 0));
 		if (Mem.os() == 2) WinNet.unlockResolver() else PosixNet.unlockResolver();
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		return name;
 	}
 }

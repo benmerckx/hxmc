@@ -131,9 +131,9 @@ class ThreadApi {
 
 	@:hxmc.unsafe static function lockContended(m:Ptr) {
 		var t0 = Threads.thrStats ? Os.now() : 0.0;
-		Leaf.rt_blocking_enter();
+		var region = Leaf.rt_blocking_enter();
 		Os.lock(m);
-		Leaf.rt_blocking_leave();
+		Regions.end(region);
 		if (Threads.thrStats) {
 			// (approximate across mutexes)
 			Threads.stContended++;

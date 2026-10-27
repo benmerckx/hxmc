@@ -234,6 +234,9 @@ class FuncInfo {
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
 	public var declNoGc:Bool = false; // declared @:hxmc.unsafe: Facts.findNoGc fails the build unless noGc
+	// declared @:hxmc.blocking (with @:hxmc.unsafe): its calls run in a safe
+	// region (FnLower.inRegion), its body touches no GC value (Facts.blockingCulprit)
+	public var declBlocking:Bool = false;
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
 	public var withStacks:Bool = false;
 	public var pos:Null<core.Globals.Pos>; // the declaration (errors)

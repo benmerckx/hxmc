@@ -596,10 +596,56 @@ class Facts {
 		var errors = [];
 		for (f in p.funcs)
 			if (f.declNoGc && !f.noGc) errors.push(where(f) + '${displayName(f)} is declared @:hxmc.unsafe but reaches a GC point: ${noGcCulprit(f, cand, 0, [])}');
+		for (f in p.funcs)
+			if (f.declBlocking) {
+				var why = blockingCulprit(f);
+				if (why != null) errors.push(where(f) + '${displayName(f)} is declared @:hxmc.blocking but $why');
+			}
 		if (errors.length > 0) {
 			errors.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 			throw errors.join("\n");
 		}
+	}
+
+	// @:hxmc.blocking on a Haxe function: its calls run in a safe region, so
+	// it must not reach the GC heap at all. The rule, checked on the lowered
+	// body: @:hxmc.unsafe (no allocation, no GC point: findNoGc); no value of
+	// a GC type anywhere (parameters, result, locals, every expression but
+	// string literals, which are static: no heap object, no static holding
+	// one, no Mem.addr); calls only of
+	// @:hxmc.blocking functions and of C or runtime functions that are no GC
+	// point (@:hxmc.fast or @:hxmc.blocking externs, Mem's intrinsics). Null
+	// when it holds, else the first violation.
+	function blockingCulprit(f:FuncInfo):Null<String> {
+		if (!f.declNoGc) return "is not @:hxmc.unsafe";
+		if (Ir.isRef(f.ret)) return "returns a value of a GC type";
+		for (a in f.args)
+			if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type';
+		for (lo in f.locals)
+			if (Ir.isRef(lo.ty)) return 'its local ${lo.name} has a GC type';
+		var why:Null<String> = null;
+		function exWhy(e:Ex) {
+			if (why != null) return;
+			switch e {
+				// (a C function the runtime implements in Haxe, as WebAssembly's
+				// strlen and malloc, counts as the C function: @:hxmc.fast)
+				case ECall(g, _) if (!g.declBlocking && !(g.cSymbol != null && FnLower.C_EXTERNS.exists(g.cSymbol))): why = "it calls " + displayName(g) + ", which is not @:hxmc.blocking";
+				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a method, a closure or a structural field (only static @:hxmc.blocking functions)";
+				case ECallHost(n, _, _) if (!FnLower.noGcHost(n) && n != "rt_blocking_enter" && n != "rt_blocking_restore"): why = "it calls " + n + ", which may collect";
+				// (a string literal is static data, never moved: Mem.cstr's and Mem.sym's names)
+				case EStr(_):
+				case _ if (Ir.isRef(Ir.typeOf(e))): why = "it has a value of a GC type (" + e.getName() + ")";
+				case _:
+			}
+			Facts.iterEx(exWhy, e);
+		}
+		function stWhy(s:Stmt) {
+			if (why != null) return;
+			Facts.iterStmt(stWhy, exWhy, s);
+		}
+		for (s in f.body)
+			stWhy(s);
+		return why;
 	}
 
 	// a function's body as findNoGc needs it: its own GC points, its callees,
@@ -628,7 +674,7 @@ class Facts {
 					// (a safe region is no GC point of the function itself: it
 					// blocks, f.blocks, which its callers take as one, GcPoints)
 					if (n == "rt_blocking_enter") here = true;
-					if (n == "rt_blocking_enter" || n == "rt_blocking_leave") {
+					if (n == "rt_blocking_enter" || n == "rt_blocking_leave" || n == "rt_blocking_restore") {
 						Facts.iterEx(ex, e);
 						return;
 					}
@@ -823,7 +869,7 @@ class GcPoints {
 			// Without that, WinSys.fileRead copied a pipe's data into a
 			// Bytes the collection had moved, its old copy, and the
 			// reader lost it: the Windows corpus check)
-			case ECallHost("rt_blocking_enter" | "rt_blocking_leave", _, _): 1;
+			case ECallHost("rt_blocking_enter" | "rt_blocking_leave" | "rt_blocking_restore", _, _): 1;
 			case ECallHost(n, _, _): FnLower.noGcHost(n) ? 0 : 1;
 			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): 2;
 			case _: 0;
