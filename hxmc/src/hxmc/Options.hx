@@ -3,7 +3,7 @@ package hxmc;
 // What a run of the tool does (Main lists the defines and variables).
 class Options {
 	public var target = host();
-	public var rtObj:Null<String> = null; // the runtime object (default: <tool dir>/rt/<target>/rt.o)
+	public var rtObj:Null<String> = null; // the runtime object (default: <target>/rt.o of Options.rtDir)
 	public var stats = false;
 	public var verbose = false;
 	public var segAlign = 0; // -D hxmc.seg-align: the alignment of loadable segments (0: the target's)
@@ -85,33 +85,76 @@ class Options {
 		#end
 	}
 
-	// the directory of the hxmc binary (with a trailing slash)
+	// the directory of the hxmc binary (with a trailing slash; absolute)
 	public static function toolDir():String {
 		var p = Sys.programPath();
+		p = try sys.FileSystem.fullPath(p) catch (_:Dynamic) p;
 		var d = haxe.io.Path.directory(p);
 		return d == "" ? "./" : haxe.io.Path.addTrailingSlash(d);
 	}
 
-	// the directory of a target's runtime objects (rt.o, ssl.o, uv.o; with a
-	// trailing slash): <dir><rtName>/ of the first directory of HXMC_RT_DIR
-	// (a list, by the host's path delimiter: the npm launcher passes the
-	// installed platform packages and the user's HXMC_RT_DIR) that has its rt.o,
-	// else of the first one; HXMC_RT_DIR unset: <tool dir>rt/
-	public static function rtDir(rtName:String):String {
+	// the directories searched for a target's runtime objects (rt.o, ssl.o,
+	// uv.o: <dir><rtName>/, with a trailing slash), in this order:
+	// - those of HXMC_RT_DIR (a list, by the host's path delimiter; the npm
+	//   launcher passes the installed platform packages, after the user's),
+	//   which add to the search;
+	// - beside the binary, <tool dir><rtName>/: npm's platform package
+	//   (@hxmc/<os>-<cpu>/haxe, its targets' <target>/rt.o);
+	// - <tool dir>rt/<rtName>/: a checkout's bin/hxmc/rt (make rt), a release;
+	// - the platform package of the target beside this one, of the same
+	//   version: <tool dir>../<os>-<cpu>/<rtName>/ (a cross build's,
+	//   npm i -D --force @hxmc/win32-x64)
+	public static function rtSearch(rtName:String):Array<String> {
 		var env = Sys.getEnv("HXMC_RT_DIR");
 		var dirs = env == null || env == "" ? [] : [for (d in env.split(Sys.systemName() == "Windows" ? ";" : ":")) if (d != "") haxe.io.Path.addTrailingSlash(d)];
-		if (dirs.length == 0) dirs.push(toolDir() + "rt/");
-		for (d in dirs)
-			if (sys.FileSystem.exists(d + rtName + "/rt.o")) return d + rtName + "/";
-		return dirs[0] + rtName + "/";
+		var tool = toolDir();
+		dirs.push(tool);
+		dirs.push(tool + "rt/");
+		var pkg = platformPackage(rtName);
+		var toolPath = haxe.io.Path.removeTrailingSlashes(tool);
+		if (pkg != null && haxe.io.Path.withoutDirectory(toolPath) != pkg) {
+			var v = packageVersion(tool);
+			var sib = haxe.io.Path.directory(toolPath) + "/" + pkg + "/";
+			if (v != null && packageVersion(sib) == v) dirs.push(sib);
+		}
+		// (once each: the launcher's list names the package the binary is in)
+		var r = [], seen = new Map<String, Bool>();
+		for (d in dirs) {
+			var key = haxe.io.Path.normalize(d + rtName);
+			if (seen.exists(key)) continue;
+			seen.set(key, true);
+			r.push(d + rtName + "/");
+		}
+		return r;
 	}
 
-	// where the runtime objects of a target come from, for the error that
-	// says they are missing: npm's platform package that has them (another
-	// machine's installs with --force), else a release archive or a build
-	// from source (make rt)
-	public static function rtHint(rtName:String):String {
-		var pkg = switch rtName {
+	// the directory of a target's runtime objects: the first of rtSearch that
+	// has its rt.o, else the first
+	public static function rtDir(rtName:String):String {
+		var dirs = rtSearch(rtName);
+		for (d in dirs)
+			if (sys.FileSystem.exists(d + "rt.o")) return d;
+		return dirs[0];
+	}
+
+	// the error for a target whose rt.o none of rtSearch's directories has
+	public static function rtMissing(rtName:String):String {
+		return "hxmc: no runtime object for " + rtName + " (" + rtHint(rtName) + "); searched: " + [for (d in rtSearch(rtName)) d + "rt.o"].join(", ");
+	}
+
+	// the version of the npm package in dir (its package.json's), or null
+	static function packageVersion(dir:String):Null<String> {
+		var p = dir + "package.json";
+		if (!sys.FileSystem.exists(p)) return null;
+		var json:Dynamic = try haxe.Json.parse(sys.io.File.getContent(p)) catch (_:Dynamic) null;
+		var v:Dynamic = json == null ? null : json.version;
+		return Std.isOfType(v, String) ? v : null;
+	}
+
+	// npm's platform package with a target's runtime objects (its name in
+	// @hxmc/), or null
+	static function platformPackage(rtName:String):Null<String> {
+		return switch rtName {
 			case "linux-x86_64" | "linux-x86_64-glibc": "linux-x64";
 			case "linux-arm64" | "linux-arm64-glibc": "linux-arm64";
 			case "macos-x86_64": "darwin-x64";
@@ -120,6 +163,14 @@ class Options {
 			case "windows-arm64": "win32-arm64";
 			case _: null;
 		}
+	}
+
+	// where the runtime objects of a target come from, for the error that
+	// says they are missing: npm's platform package that has them (another
+	// machine's installs with --force), else a release archive or a build
+	// from source (make rt)
+	public static function rtHint(rtName:String):String {
+		var pkg = platformPackage(rtName);
 		if (pkg != null) return 'npm: install @hxmc/$pkg (npm i -D --force @hxmc/$pkg on another machine); a checkout: make rt';
 		return StringTools.startsWith(rtName, "android-")
 			? "Android builds need the runtime objects of a release archive or a build from source (make rt): HXMC_RT_DIR names their directory"

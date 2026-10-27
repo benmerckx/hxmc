@@ -587,7 +587,7 @@ class Driver {
 			return;
 		}
 		var rtPath = o.rtObj != null ? o.rtObj : Options.rtDir(abi.rtName) + "rt.o";
-		if (!sys.FileSystem.exists(rtPath)) throw "hxmc: the runtime object " + rtPath + " is missing (" + Options.rtHint(abi.rtName) + ")";
+		if (!sys.FileSystem.exists(rtPath)) throw o.rtObj != null ? "hxmc: the runtime object " + rtPath + " is missing (HXMC_RT_OBJ)" : Options.rtMissing(abi.rtName);
 		var rt = ElfReader.read(sys.io.File.getBytes(rtPath));
 		var t4 = haxe.Timer.stamp();
 		var all = [data].concat(objs).concat([rt]);

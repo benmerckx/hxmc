@@ -33,7 +33,8 @@ package hxmc;
 //                                   throws instead, hxmc.rt.Faults)
 //   -D hxmc.gc-prefault             Linux: the collector faults in the old space's pages on a helper
 //                                   thread: less wall time for more CPU time (the compilers' builds)
-//   HXMC_RT_OBJ                    the runtime object (default: <tool dir>/rt/<target>/rt.o)
+//   HXMC_RT_OBJ                     the runtime object (default: <target>/rt.o where Options.rtSearch finds it)
+//   HXMC_RT_DIR                     directories of runtime objects, searched first (added to the search)
 //   HXMC_STATS=1                    print what the build did and how long it took
 class Main {
 	static var start = haxe.Timer.stamp();

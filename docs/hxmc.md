@@ -1060,7 +1060,7 @@ For the tool and the compiler (build time):
 | `HXMC_MAP=<file>` | Windows: a link map |
 | `HXMC_FRAME_POINTERS=0` | no frame pointers on x86-64 |
 | `HXMC_JOBS=<n>` | parallel module compilations |
-| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories (the npm launcher passes the installed platform packages first), or one object |
+| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories searched first, before the compiler's own directory (npm's platform package), its `rt/` (a checkout's `bin/hxmc/rt`) and the target's platform package beside it ([using.md](using.md#cross-builds); the npm launcher adds the installed platform packages), or one object |
 | `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
 | `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
 

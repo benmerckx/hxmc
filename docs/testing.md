@@ -92,6 +92,7 @@ each lane on the kept cases and 400 random programs.
 | `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output; for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
 | `LowerQueriesCheck` | `quick` | each lowering query is covered by the server's reuse of bodies |
+| `RtSearchCheck` | `quick` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `ApkCheck` | `android-check` | APKs: the zip and alignment, the manifest, `classes.dex`, the ELF, the v2 signature verified by openssl; `zipalign`, `aapt`, `apksigner`, `dexdump` where installed |
@@ -159,7 +160,7 @@ a release is published only when all of them pass.
 | `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
-| `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
+| `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
 | `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
 | `android` | no (experimental) | `make android-check`, `make shared-check`, AndroidHello on an x86-64 emulator |
 | `ios`, `ios-simulator` | no (experimental) | `make ios-check` on Linux; IosHello on an iPhone simulator on macOS |

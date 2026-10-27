@@ -14,10 +14,12 @@ import haxe.io.Path;
 //                                    files they name) select --custom-target hxmc
 // The launcher (hxmc/bootstrap/launcher.mjs) runs it with HXMC_STD and
 // HXMC_RT_DIR, the directories of the runtime objects (the platform
-// packages, @hxmc/<os>-<cpu>: Options.rtDir). Run without the launcher (in
-// its place), a build for the hxmc target goes through the launcher, which
-// finds them, and a compilation server asks the launcher for them. The
-// WebAssembly build learns the host from HXMC_HOST.
+// packages, @hxmc/<os>-<cpu>: Options.rtSearch, which HXMC_RT_DIR adds to).
+// Run without the launcher in its place (hxmc/bootstrap/haxe, dist/haxe), a
+// build for the hxmc target goes through the launcher, which finds them, and
+// a compilation server asks the launcher for them. Run from the platform
+// package (@hxmc/<os>-<cpu>/haxe, no launcher beside it), the search finds
+// them beside the binary. The WebAssembly build learns the host from HXMC_HOST.
 class HaxeMain {
 	static function main() {
 		Sys.exit(run(Sys.args()));

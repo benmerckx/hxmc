@@ -186,10 +186,23 @@ optional dependencies does the same, naming the package to add.
 
 ### Cross builds
 
-A target's runtime objects come, in this order, from this machine's
-platform package, from any other platform package of the same version in
-the project, and from the directories `HXMC_RT_DIR` lists (separated by the
-system's path separator). To build for another desktop machine, install its
+A target's runtime objects (`<dir>/<target>/rt.o`) come from the first of
+these that has them:
+
+1. the directories `HXMC_RT_DIR` lists (separated by the system's path
+   separator). They add to the search; they do not replace it, so a cross
+   build that names another machine's runtime objects keeps this machine's
+   for macros and host tools;
+2. the compiler's own directory: the platform package it is in
+   (`node_modules/@hxmc/linux-x64/linux-x86_64/rt.o`);
+3. `rt/` beside the compiler: a checkout's `bin/hxmc/rt` (`make rt`);
+4. the target's platform package beside the compiler's, of the same version
+   (`node_modules/@hxmc/win32-x64/windows-x86_64/rt.o`).
+
+The launcher also passes the installed platform packages of its version in
+`HXMC_RT_DIR`, after yours. So the platform package's compiler, run
+directly without the launcher, needs no `HXMC_RT_DIR`. When no directory
+has them, the error lists every place searched. To build for another desktop machine, install its
 platform package with `--force`; its `os` and `cpu` do not match, and its
 compiler goes unused:
 

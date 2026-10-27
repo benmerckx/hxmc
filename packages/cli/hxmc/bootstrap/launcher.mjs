@@ -80,24 +80,27 @@ function hxmcStd() {
 }
 
 // the directories of the runtime objects (<dir>/<target>/rt.o, ssl.o, uv.o),
-// in this order: this machine's platform package; the other platform
-// packages of this version installed (cross builds: `npm i -D --force
-// @hxmc/win32-x64`); then HXMC_RT_DIR's. In a checkout: bin/hxmc/rt (`make rt`).
+// in this order: HXMC_RT_DIR's (added to the search, as the compiler's own
+// search does: hxmc/src/hxmc/Options.hx, rtSearch); this machine's platform
+// package; the other platform packages of this version installed (cross
+// builds: `npm i -D --force @hxmc/win32-x64`). In a checkout: bin/hxmc/rt
+// (`make rt`) after HXMC_RT_DIR's.
 export function rtDirs() {
 	const own = (process.env.HXMC_RT_DIR ?? '').split(path.delimiter).filter(d => d);
-	if (checkout) return [path.join(repo, 'bin', 'hxmc', 'rt'), ...own];
+	if (checkout) return [...own, path.join(repo, 'bin', 'hxmc', 'rt')];
 	const host = PLATFORMS[hostTarget()];
 	const dirs = [];
 	for (const p of [...(host ? [host] : []), ...Object.values(PLATFORMS).filter(p => p !== host)]) {
 		const d = findPackage(p.pkg);
 		if (d && p.rt.some(t => fs.existsSync(path.join(d, t, 'rt.o')))) dirs.push(d);
 	}
-	return [...dirs, ...own];
+	return [...own, ...dirs];
 }
 
 // what the compilers need to find the package's std, hxmc's std and the
 // runtime objects (HXMC_RT_DIR always set: hxmc.HaxeMain, run without this
-// launcher, passes a build for the hxmc target on to it)
+// launcher in its place, passes a build for the hxmc target on to it; the
+// platform package's compiler, run directly, also finds them beside itself)
 export function toolEnv(extra = {}) {
 	const env = { ...process.env, ...extra };
 	if (!env.HAXE_STD_PATH) env.HAXE_STD_PATH = stdDir;
