@@ -343,6 +343,13 @@ class CInterop {
 	static function meta(name:String, c:TClass, cf:TClassField):Bool
 		return Lower.hasMeta(name, cf.cfMeta) || Lower.hasMeta(name, c.clMeta);
 
+	// @:hxmc.blocking: its calls run in a safe region that the call site
+	// enters and leaves (FnLower.cCall), on the field, or on its class for
+	// the fields not @:hxmc.fast
+	public static function blockingCall(c:TClass, cf:TClassField):Bool
+		return Lower.hasMeta(":hxmc.blocking", cf.cfMeta)
+			|| Lower.hasMeta(":hxmc.blocking", c.clMeta) && !Lower.hasMeta(":hxmc.fast", cf.cfMeta);
+
 	static function metaStr(name:String, c:TClass, cf:TClassField):Null<String> {
 		var s = Lower.metaString(name, cf.cfMeta);
 		return s != null ? s : Lower.metaString(name, c.clMeta);
@@ -352,7 +359,13 @@ class CInterop {
 	// whether its calls stay in the running state (@:hxmc.fast), its library
 	public static function declare(sym:String, c:TClass, cf:TClassField, s:TSignature):CSig {
 		var where = posOf(cf.cfPos);
-		var fast = meta(":hxmc.fast", c, cf);
+		if (Lower.hasMeta(":hxmc.blocking", cf.cfMeta) && Lower.hasMeta(":hxmc.fast", cf.cfMeta))
+			throw new LowerError('C function $sym is declared both @:hxmc.blocking and @:hxmc.fast', where);
+		// (@:hxmc.blocking: the call site enters the safe region, FnLower.cCall;
+		// the symbol itself is called as a fast one, so the runtime's fast
+		// declaration of the same function, read or poll, may coexist)
+		var blocking = blockingCall(c, cf);
+		var fast = !blocking && meta(":hxmc.fast", c, cf);
 		// a fast call may take and return GC references (nothing moves during
 		// it: the runtime's own C functions); a call in a safe region may not
 		function gc(ct:CTy):CTy
@@ -372,7 +385,10 @@ class CInterop {
 		if (prev != null) {
 			if (!sameSig(prev, sig)) throw new LowerError('C function $sym is declared twice with different signatures', where);
 		} else SIGS.set(sym, sig);
-		if (fast) {
+		if (blocking) {
+			if (BLOCKING.exists(sym)) throw new LowerError('C function $sym is declared both @:hxmc.blocking and without it nor @:hxmc.fast: declare its calls the same way', where);
+			FnLower.C_EXTERNS.set(sym, true);
+		} else if (fast) {
 			if (BLOCKING.exists(sym)) throw new LowerError('C function $sym is declared both @:hxmc.fast and not', where);
 			FnLower.C_EXTERNS.set(sym, true);
 		} else {

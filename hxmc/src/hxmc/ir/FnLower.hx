@@ -2640,7 +2640,24 @@ class FnLower {
 			throw err;
 		};
 		var t = ty(s.ret);
-		var xs = args(cargs, s.args.map(a -> ty(a.type)), null);
+		var ats = s.args.map(a -> ty(a.type));
+		var xs = args(cargs, ats, null);
+		// @:hxmc.blocking: the call between rt_blocking_enter and
+		// rt_blocking_leave here, its arguments evaluated before (a GC point
+		// among them would run in the safe region) and its result kept in a
+		// local (no safe region on WebAssembly, which has one thread)
+		if (CInterop.blockingCall(c, cf) && Lower.targetOs != 3) {
+			xs = Vector.fromArrayCopy([
+				for (i in 0...xs.length)
+					isConst(xs[i]) || xs[i].match(ELocal(_)) || ats[i].match(TStruct(_)) ? xs[i] : ELocal(asLocal(xs[i], ats[i]))
+			]);
+			out.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
+			var lo = t == TVoid ? null : newLocal("cr", t);
+			out.push(lo == null ? SExpr(ECallHost(sym, xs, t)) : SSet(lo, ECallHost(sym, xs, t)));
+			if (lo != null && t.match(TStruct(_))) freshSlots.set(lo, true);
+			out.push(SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)));
+			return lo == null ? EInt(0) : coerce(ELocal(lo), t, tyOf(e));
+		}
 		if (t.match(TStruct(_))) {
 			// (the result's slot in this frame, MirBuild.cStructRet)
 			var lo = newLocal("cr", t);
