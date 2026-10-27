@@ -164,6 +164,13 @@ class NativeSys {
 	public static inline function stat(path:String):Null<Array<Float>>
 		return #if (hxmc.wasm_gc) GcSys.stat(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.stat(path) #else Mem.os() == 2 ? WinSys.stat(path) : PosixSys.stat(path) #end;
 
+	// atime, mtime, ctime to the nanosecond: seconds since the epoch (stat's)
+	// and nanoseconds, each a whole Float: [atime s, ns, mtime s, ns, ctime s,
+	// ns]; null when the path cannot be stat'ed. Windows: 100 ns units, ctime
+	// the creation time (as stat's)
+	public static inline function statTimes(path:String):Null<Array<Float>>
+		return #if (hxmc.wasm_gc) GcSys.statTimes(path) #elseif (hxmc.target == "wasm32-wasi") WasiSys.statTimes(path) #else Mem.os() == 2 ? WinSys.statTimes(path) : PosixSys.statTimes(path) #end;
+
 	// processes
 	// pid, fds: stdin, stdout, stderr. args null: cmd through the shell. cwd:
 	// the child's working directory (null: this process's; one that cannot be

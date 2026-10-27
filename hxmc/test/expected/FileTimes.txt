@@ -1,0 +1,7 @@
+exit 0
+times: 6
+stat's seconds: true true true
+nanoseconds: [true,true,true]
+later: true
+set: 1600000001 250000000 1600000001 250000000
+directory: true, missing: null

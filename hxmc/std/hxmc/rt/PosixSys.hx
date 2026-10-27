@@ -522,6 +522,25 @@ class PosixSys {
 		];
 	}
 
+	// st_atim, st_mtim, st_ctim (macOS: st_atimespec ...), struct timespec
+	// each: at 72, 88, 104 on Linux (musl, glibc and Bionic; x86-64 and
+	// arm64), at 32, 48, 64 on macOS (its 64-bit-inode struct stat), as the
+	// headers give them
+	public static function statTimes(path:String):Array<Float> {
+		var p = cstr(path);
+		var st = Mem.stack(256);
+		var r = doStat(p, st);
+		LibC.free(p);
+		if (r != 0) return null;
+		var at = mac() ? 32 : 72;
+		var a = [];
+		for (k in 0...3) {
+			a.push((cast Mem.getI64(st, at + 16 * k) : Float));
+			a.push((cast Mem.getI64(st, at + 16 * k + 8) : Float));
+		}
+		return a;
+	}
+
 	// ---- processes
 
 	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {

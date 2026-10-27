@@ -146,6 +146,11 @@ class GcSys {
 		return s == null ? null : [for (x in list(s)) Std.parseFloat(x)];
 	}
 
+	public static function statTimes(path:String):Array<Float> {
+		var s = W.sysStr(9, path, null);
+		return s == null ? null : [for (x in list(s)) Std.parseFloat(x)];
+	}
+
 	// processes: the host's (W.fileIo: 6 run, 7 wait, 8 kill), their standard
 	// streams the descriptors PROC_FD + 4 * pid + 0, 1, 2; a command that cannot
 	// be run exits 127, as a child whose exec fails (PosixSys)

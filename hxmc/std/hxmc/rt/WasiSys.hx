@@ -446,6 +446,23 @@ class WasiSys {
 		];
 	}
 
+	// filestat's atim, mtim, ctim: nanoseconds
+	public static function statTimes(path:String):Array<Float> {
+		var p = cstr(path);
+		var st = Mem.stack(64);
+		var r = pathOp(p, 0, st);
+		Heap.free(p);
+		if (r != 0) return null;
+		var a = [];
+		for (k in 0...3) {
+			var ns = Mem.getI64(st, 40 + 8 * k);
+			var s = ns / (1000000000 : I64);
+			a.push((cast s : Float));
+			a.push((cast(ns - s * (1000000000 : I64)) : Float));
+		}
+		return a;
+	}
+
 	// ---- processes: none
 
 	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int

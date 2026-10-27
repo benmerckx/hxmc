@@ -588,6 +588,29 @@ class WinSys {
 		];
 	}
 
+	// GetFileTime's FILETIMEs (100 ns units from 1601) of the file or
+	// directory (FILE_FLAG_BACKUP_SEMANTICS) the path names, links followed
+	public static function statTimes(path:String):Array<Float> {
+		var p = wide(path);
+		// FILE_READ_ATTRIBUTES, FILE_SHARE_READ | WRITE | DELETE, OPEN_EXISTING
+		var h = Win32.CreateFileW(p, 0x80, 7, Ptr.nil(), 3, 0x02000000, Ptr.nil());
+		LibC.free(p);
+		if (h.toI64() == -1) return null;
+		var ft = Mem.stack(24); // creation, access, write
+		var ok = K.GetFileTime(h, ft, ft.add(8), ft.add(16)) != 0;
+		Win32.CloseHandle(h);
+		if (!ok) return null;
+		var a = [];
+		for (k in [1, 2, 0]) {
+			var t = filetime(ft.add(8 * k)) - ((116444736 : I64) * (1000000000 : I64));
+			var s = t / (10000000 : I64);
+			if (t < s * (10000000 : I64)) s = s - (1 : I64); // (floored before 1970)
+			a.push((cast s : Float));
+			a.push((cast((t - s * (10000000 : I64)) * (100 : I64)) : Float));
+		}
+		return a;
+	}
+
 	// ---- processes: ids of processes this process created, with their
 	// handles, in a malloc'ed table (pid, handle) under a spin lock
 	// (rt_spin[1]); handles are made inheritable only for the CreateProcess
@@ -860,4 +883,5 @@ class WinSys {
 // kernel32's functions outside the runtime objects' (hxmc/deps/mkrt.sh): imports of their own
 @:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class K {
 	static function SetNamedPipeHandleState(h:Ptr, mode:Ptr, maxCount:Ptr, timeout:Ptr):Int;
+	static function GetFileTime(h:Ptr, creation:Ptr, access:Ptr, write:Ptr):Int;
 }
