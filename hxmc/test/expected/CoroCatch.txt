@@ -1,0 +1,19 @@
+exit 0
+-- catch, then a call that does not suspend
+caught x
+result after: 1, error null
+-- catch-all, then a call that does not suspend
+result cleaned true, after: 1, error null
+-- cleanup rethrown to an outer catch, then a call
+cleanup
+outer caught x
+result after: 1, error null
+-- catch, then a suspending call
+caught x
+result after: 2 1, error null
+-- the catch in a callee
+inner caught x
+result after: 11 1, error null
+-- a synchronous error caught, then a call
+caught y
+result after: 1, error null

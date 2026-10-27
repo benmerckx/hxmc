@@ -8,6 +8,7 @@ what, why, and the approach decided. What comes next and in which order:
 | --- | --- |
 | [compiler.md](compiler.md) | the module cache, faster rebuilds, macro-heavy builds, Mir macros, code generation at run time |
 | [runtime.md](runtime.md) | the collector, pauses, background work, system calls, TLS and the event loop |
+| [io.md](io.md) | completion-based I/O (io_uring, IOCP): off-heap buffers, system calls, blocking calls |
 | [heap-layout.md](heap-layout.md) | the object header, Bytes, strings and arrays |
 | [codegen.md](codegen.md) | escape analysis, allocation folding, debugging information |
 | [targets.md](targets.md) | WebAssembly and WasmGC, Android, iOS, Windows, Linux, macOS |

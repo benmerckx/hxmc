@@ -2,7 +2,8 @@
 
 The rules for every change to the port (`haxe/src`), for contributors.
 The port must behave exactly like the reference compiler of the pinned
-upstream commit.
+upstream commit, apart from the [divergences](#divergences-from-the-reference)
+listed below.
 
 ## The reference
 
@@ -79,6 +80,20 @@ runtime writes back as those bytes
 - Other lists are Arrays, except where a hot path relies on O(1)
   `x :: l` and shared tails: there use `core.ds.MlList` (`Nil`/`Cons`).
   The matcher's rows use it. Convert another site only when it measures.
+
+## Divergences from the reference
+
+A bug of the reference that breaks the compiler for its users, and that
+upstream's last release did not have, may be fixed in the port. Where the
+port diverges, a `// port: diverges from upstream` note says what upstream
+does; a harness case checks the port's behaviour and names the divergence;
+an issue is filed upstream. When the pin moves past upstream's fix, the
+divergence goes. The divergences:
+
+- The compilation server goes on after a client that connects and closes
+  without a request, or sends nothing: upstream's `wait_loop` (5.0) ends
+  there, 4.3's went on (`compiler.server.Server.waitLoop`; the Server
+  harness's `misc:empty-connection`).
 
 ## The one exception to byte identity
 

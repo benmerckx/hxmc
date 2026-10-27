@@ -1314,6 +1314,26 @@ jobs:
           cd "$RUNNER_TEMP/app"
           if [ "$RUNNER_OS" = Windows ]; then hx="$PWD/node_modules/@hxmc/cli/dist/haxe.exe"; else hx="$PWD/node_modules/.bin/haxe"; fi
           "$hx" -cp "$GITHUB_WORKSPACE/dl" --run Libraries --haxe "$hx" --dir "$RUNNER_TEMP/libraries"
+      # a compilation server (`haxe --wait`) from the native compiler run without
+      # node: its builds for hxmc find the platform package's runtime objects
+      - name: A compilation server
+        run: |
+          set -ex
+          cd "$RUNNER_TEMP/app"
+          if [ "$RUNNER_OS" = Windows ]; then hx="$PWD/node_modules/@hxmc/cli/dist/haxe.exe"; app=bin/app.exe; else hx="$PWD/node_modules/.bin/haxe"; app=bin/app; fi
+          "$hx" --wait 6301 > server.log 2>&1 &
+          srv=$!
+          trap 'kill $srv 2>/dev/null || true' EXIT
+          for i in $(seq 1 150); do if "$hx" --connect 6301 --version > /dev/null 2>&1; then break; fi; sleep 0.2; done
+          rm -rf bin
+          "$hx" --connect 6301 build.hxml || { cat server.log; exit 1; }
+          ./$app
+          # (a client that connects and closes without a request, a probe, does not end it)
+          node -e "const s = require('net').connect(6301, '127.0.0.1', () => s.end())"
+          sleep 0.5
+          rm -rf bin
+          "$hx" --connect 6301 -cp src -main Main --custom-target hxmc=bin/app
+          ./$app
       - name: With --ignore-scripts, the first call installs the native compiler
         if: runner.os != 'Windows'
         run: |

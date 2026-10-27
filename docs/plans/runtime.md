@@ -59,6 +59,9 @@ libraries.
 - **libuv** replaced by an event loop in Haxe over epoll, kqueue and IOCP,
   only if libuv's size or build becomes a problem (`eval.luv`'s API is
   libuv-shaped).
+- **Completion-based I/O** (io_uring, IOCP) for an async core in Haxe: the
+  groundwork (off-heap buffers, `syscall`, `@:hxmc.blocking`) and what is
+  left are in [io.md](io.md).
 
 ## Stack maps instead of the shadow stack
 
