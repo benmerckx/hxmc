@@ -1,6 +1,8 @@
 // hxmc: haxe/upstream/std/eval/_std/sys/net/Socket.hx: TCP sockets over hxmc.NativeNet
 // (rt_net.c, file descriptors). Non-blocking sockets throw
-// haxe.io.Error.Blocked when not ready.
+// haxe.io.Error.Blocked when not ready; their connect returns while the
+// connection is in progress, as on HashLink, hxcpp and Neko
+// (hxmc.net.SocketTools.connectError tells how it ended).
 
 package sys.net;
 
@@ -73,6 +75,7 @@ class Socket {
 	public var custom:Dynamic;
 
 	var fd:Int;
+	var nonBlocking:Bool;
 
 	public function new():Void {
 		init(check(NativeNet.socket()));
@@ -108,7 +111,10 @@ class Socket {
 	}
 
 	public function connect(host:Host, port:Int):Void {
-		check(NativeNet.connect(fd, host.ip, port));
+		// hxmc: a non-blocking socket's connection in progress is no error (as
+		// HashLink's, hxcpp's and Neko's socket_connect): the socket becomes
+		// writable once it completes or fails
+		if (NativeNet.connect(fd, host.ip, port) < 0 && !(nonBlocking && NativeNet.inProgress())) check(-1);
 	}
 
 	public function listen(connections:Int):Void {
@@ -160,6 +166,7 @@ class Socket {
 
 	public function setBlocking(b:Bool):Void {
 		check(NativeNet.setBlocking(fd, b));
+		nonBlocking = !b;
 	}
 
 	public function setFastSend(b:Bool):Void {
@@ -172,7 +179,14 @@ class Socket {
 		if (write == null) write = [];
 		if (others == null) others = [];
 		var r = [for (s in read) s.fd], w = [for (s in write) s.fd], o = [for (s in others) s.fd];
-		check(NativeNet.select(r, w, o, timeout == null ? -1.0 : timeout));
+		// hxmc: select(2) cannot go beyond FD_SETSIZE: a clear error there
+		var n = NativeNet.select(r, w, o, timeout == null ? -1.0 : timeout);
+		if (n == -2) {
+			var limit = NativeNet.selectLimit();
+			throw Custom("Socket.select: beyond FD_SETSIZE (" + limit + (limit == 64 ? " sockets a set" : " descriptors")
+				+ "); hxmc.net.Poll has no such limit");
+		}
+		check(n);
 		// NativeNet.select sets the descriptors that are not ready to -1
 		return {
 			read: [for (i in 0...read.length) if (r[i] >= 0) read[i]],
