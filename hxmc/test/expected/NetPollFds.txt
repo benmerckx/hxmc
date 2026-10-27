@@ -1,0 +1,8 @@
+exit 0
+stdin: true
+a descriptor that is not a socket: true
+2 [0,4]
+1 1
+got x
+true
+Custom(Poll.inputFd: the stream is closed)

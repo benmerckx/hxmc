@@ -57,6 +57,14 @@ class NativeNet {
 	public static inline function select(read:Array<Int>, write:Array<Int>, others:Array<Int>, timeout:Float):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiNet.select(read, write, others, timeout) #else Mem.os() == 2 ? WinNet.select(read, write, others, timeout) : PosixNet.select(read, write, others, timeout) #end;
 
+	// whether poll waits for sockets only (Windows' WSAPoll), and whether
+	// err is its failure on a descriptor that is not one (WSAENOTSOCK)
+	public static inline function socketsOnly():Bool
+		return #if (hxmc.target == "wasm32-wasi") false #else Mem.os() == 2 #end;
+
+	public static inline function notSocket(err:Int):Bool
+		return #if (hxmc.target == "wasm32-wasi") false #else Mem.os() == 2 && err == 128 #end; // (ENOTSOCK, the UCRT's)
+
 	// select's FD_SETSIZE: the bound of descriptors (POSIX), of sockets in a set (Windows)
 	public static inline function selectLimit():Int
 		return #if (hxmc.target == "wasm32-wasi") 0 #else Mem.os() == 2 ? WinNet.FD_SETSIZE : PosixNet.FD_SETSIZE #end;

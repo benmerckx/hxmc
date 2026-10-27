@@ -404,8 +404,14 @@ var ready = Poll.poll(sockets, [for (_ in sockets) Poll.IN], 1.0);
 - **`Poll.wait(fds, events, revents, count, timeout)`** allocates nothing:
   it waits for the first `count` entries of the caller's arrays and writes
   their ready events to `revents`, returning how many are ready. The
-  descriptors come from `Poll.socketFd(s)`. The system's structures live
-  in a per-thread buffer that is kept.
+  system's structures live in a per-thread buffer that is kept.
+- **Descriptors** come from `Poll.socketFd(s)`, or for file streams from
+  `Poll.inputFd(i)` and `Poll.outputFd(o)` (a process's pipes,
+  `Sys.stdin()`, files). Any other descriptor works too, such as a pidfd.
+  On Windows, WSAPoll waits for sockets only: `inputFd`, `outputFd` and
+  `wait` on anything else throw `Custom("... WSAPoll waits for sockets
+  only ...")`. Pipes would need overlapped I/O, which hxmc does not offer
+  yet.
 
 ```haxe
 var fds = [Poll.socketFd(a), Poll.socketFd(b)], events = [Poll.IN, Poll.IN], revents = [0, 0];
