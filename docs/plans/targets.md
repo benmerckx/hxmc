@@ -21,11 +21,10 @@ Open work per target. What is built: [using.md](../using.md#targets) and
 
 ### WasmGC: removed
 
-The WasmGC back end (`-D hxmc.wasm-gc`) was removed for issue #80: it did
+The WasmGC back end (`-D hxmc.wasm-gc`) was removed in #90 (issue #80): it did
 not work as well as hxmc's own collector over linear memory and cost about
 11k lines, for modules that were smaller, but not by much. Its code, tests,
-measurements and open items are in the git history before that removal's
-merge.
+measurements and open items are in the git history before #90's merge.
 
 ## Android
 
