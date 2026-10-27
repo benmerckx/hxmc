@@ -538,6 +538,7 @@ class PosixSys {
 			a.push((cast Mem.getI64(st, at + 16 * k) : Float));
 			a.push((cast Mem.getI64(st, at + 16 * k + 8) : Float));
 		}
+		a.push((cast stSize(st) : Float));
 		return a;
 	}
 

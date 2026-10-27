@@ -596,8 +596,10 @@ class WinSys {
 		var h = Win32.CreateFileW(p, 0x80, 7, Ptr.nil(), 3, 0x02000000, Ptr.nil());
 		LibC.free(p);
 		if (h.toI64() == -1) return null;
-		var ft = Mem.stack(24); // creation, access, write
+		var ft = Mem.stack(32); // creation, access, write, size
 		var ok = K.GetFileTime(h, ft, ft.add(8), ft.add(16)) != 0;
+		// (a directory: 0, as stat's)
+		if (K.GetFileSizeEx(h, ft.add(24)) == 0) Mem.setI64(ft, 24, 0);
 		Win32.CloseHandle(h);
 		if (!ok) return null;
 		var a = [];
@@ -608,6 +610,7 @@ class WinSys {
 			a.push((cast s : Float));
 			a.push((cast((t - s * (10000000 : I64)) * (100 : I64)) : Float));
 		}
+		a.push((cast Mem.getI64(ft, 24) : Float));
 		return a;
 	}
 
@@ -884,4 +887,5 @@ class WinSys {
 @:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class K {
 	static function SetNamedPipeHandleState(h:Ptr, mode:Ptr, maxCount:Ptr, timeout:Ptr):Int;
 	static function GetFileTime(h:Ptr, creation:Ptr, access:Ptr, write:Ptr):Int;
+	static function GetFileSizeEx(h:Ptr, size:Ptr):Int;
 }

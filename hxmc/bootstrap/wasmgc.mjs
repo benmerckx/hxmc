@@ -277,9 +277,9 @@ const hxmc = {
 					return ofJs([st.gid, st.uid, t(st.atime), t(st.mtime), t(st.ctime), st.dev, st.ino, st.nlink, st.rdev, st.size, st.mode].join("\0"));
 				}
 				case 9: {
-					// (NativeSys.statTimes: seconds and nanoseconds)
+					// (NativeSys.statTimes: seconds and nanoseconds, then the size)
 					const st = fs.statSync(s, { bigint: true }), g = 1000000000n;
-					return ofJs([st.atimeNs, st.mtimeNs, st.ctimeNs].flatMap(t => [t / g, t % g]).join("\0"));
+					return ofJs([...[st.atimeNs, st.mtimeNs, st.ctimeNs].flatMap(t => [t / g, t % g]), st.size].join("\0"));
 				}
 				default: return ofJs("Wasi");
 			}

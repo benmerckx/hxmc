@@ -1,8 +1,8 @@
 // hxmc.NativeSys.statTimes: a file's times to the nanosecond (sys.FileSystem
 // .stat's Dates hold whole seconds on hxmc): atime, mtime, ctime as seconds
-// (stat's) and nanoseconds. Two writes 50 ms apart get different times
-// (unless the file system keeps whole seconds); a time set to the
-// nanosecond reads back to the nanosecond: set by touch on Linux and macOS,
+// (stat's) and nanoseconds, then the size (a watcher needs one call). Two
+// writes 50 ms apart get different times (unless the file system keeps
+// whole seconds); a time set to the nanosecond reads back to the nanosecond: set by touch on Linux and macOS,
 // by SetFileTime on Windows (100 ns units: the value is a multiple), not on
 // wasm32-wasi (no processes: the line is printed as it is elsewhere).
 import hxmc.NativeSys;
@@ -24,14 +24,15 @@ class FileTimes {
 	static function main() {
 		File.saveContent(F, "a");
 		var a = NativeSys.statTimes(F);
-		Sys.println("times: " + a.length);
+		Sys.println("times and size: " + a.length + " " + a[6]);
 		var st = FileSystem.stat(F);
 		Sys.println("stat's seconds: " + (a[0] == st.atime.getTime() / 1000) + " " + (a[2] == st.mtime.getTime() / 1000) + " "
 			+ (a[4] == st.ctime.getTime() / 1000));
 		Sys.println("nanoseconds: " + [for (i in 0...3) a[2 * i + 1] >= 0 && a[2 * i + 1] < 1e9 && a[2 * i + 1] == Math.ffloor(a[2 * i + 1])]);
 		Sys.sleep(0.05);
-		File.saveContent(F, "b");
+		File.saveContent(F, "bcd");
 		var b = NativeSys.statTimes(F);
+		Sys.println("size: " + b[6] + " " + (b[6] == FileSystem.stat(F).size));
 		var coarse = a[3] == 0 && b[3] == 0;
 		Sys.println("later: " + (b[2] > a[2] || (b[2] == a[2] && (b[3] > a[3] || coarse))));
 		// 2020-09-13T12:26:41.25Z

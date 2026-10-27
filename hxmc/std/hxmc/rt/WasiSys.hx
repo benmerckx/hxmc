@@ -446,7 +446,7 @@ class WasiSys {
 		];
 	}
 
-	// filestat's atim, mtim, ctim: nanoseconds
+	// filestat's atim, mtim, ctim: nanoseconds; size at 32
 	public static function statTimes(path:String):Array<Float> {
 		var p = cstr(path);
 		var st = Mem.stack(64);
@@ -460,6 +460,7 @@ class WasiSys {
 			a.push((cast s : Float));
 			a.push((cast(ns - s * (1000000000 : I64)) : Float));
 		}
+		a.push((cast Mem.getI64(st, 32) : Float));
 		return a;
 	}
 
