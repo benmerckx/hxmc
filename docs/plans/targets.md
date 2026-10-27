@@ -19,38 +19,13 @@ Open work per target. What is built: [using.md](../using.md#targets) and
 - **Firefox's throws** walk the whole stack (0.17 µs per frame): lighter use
   of exceptions in the port's hot paths, or setjmp-free try blocks.
 
-### WasmGC
+### WasmGC: removed
 
-Built behind `-D hxmc.wasm-gc`, generated from the same object-level Mir as
-native code. **The call: not yet the browser default.** Linear memory
-stays for WASI, the compiler modules, threads, and engines without WasmGC.
-
-Current numbers (HaxeBenchmarks under node 22, seconds, medians of 5):
-
-| | WasmGC | linear |
-| --- | --- | --- |
-| alloc | 2.78 | 1.82 |
-| formatter_noio | 11.13 | 8.42 |
-| json | 0.94 | 0.91 |
-| mandelbrot_anon | 0.72 | 1.48 |
-| the port's module, gzip -9 | 3.19 MB | |
-
-WasmGC wins on module size and scalar-heavy code and loses where much is
-allocated (the engine's collector, casts of untyped values). A large
-compiler (tsc-haxe) is 15-22% slower and uses 18-25% more memory.
-Before revisiting:
-
-1. Startup of large modules: string literals made lazily, Meta's tables
-   only when reflection is used, the dispatch table overlaid; then measure
-   the first frame again (the UI examples' was up to 72% later in
-   Chromium).
-2. WebKit: profile frames (60% slower in the gallery) and reproduce an
-   unexplained trap.
-3. Smaller gzipped modules: fewer casts, the strings' encoding.
-4. The allocation-heavy benchmarks: the casts untyped locals cost.
-
-Switch browser builds when the first frame and WebKit hold, keeping linear
-memory as the fallback.
+The WasmGC back end (`-D hxmc.wasm-gc`) was removed for issue #80: it did
+not work as well as hxmc's own collector over linear memory and cost about
+11k lines, for modules that were smaller, but not by much. Its code, tests,
+measurements and open items are in the git history before that removal's
+merge.
 
 ## Android
 
