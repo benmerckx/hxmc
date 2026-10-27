@@ -77,6 +77,10 @@ threads' collections wait for it.
   point. Between them: no allocation, no heap object, no address of one;
   leave on every path. Prefer the metadata.
 
+With `RT_VERIFY=1`, an allocation inside a region ends the program with
+"allocation in a safe region" (`SafeRegionAlloc`); without it, it goes
+unnoticed until a collection on another thread moves what it uses.
+
 Regions nest: `enter` returns the state it found and `leave` takes it
 back, so an inner region, a `@:hxmc.blocking` call or a call not
 `@:hxmc.fast` inside a region leaves it as it was; only the outermost

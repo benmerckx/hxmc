@@ -158,6 +158,12 @@ class Threads {
 	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int
 		return Atomic.exchange32(m.add(Struct.offsetOf(Mutator, "state")), s);
 
+	// the running thread is in a safe region (RT_VERIFY's check of allocations: Gc.allocSlow)
+	@:hxmc.unsafe static inline function inRegion():Bool {
+		var m = self;
+		return !m.isNull() && stateOf(m) == SAFE;
+	}
+
 	@:hxmc.unsafe static inline function requested():Bool
 		return Atomic.load32(Mem.sym("rt_gc_requested")) != 0;
 

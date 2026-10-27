@@ -1177,6 +1177,11 @@ class Gc {
 		return yrlim.diff(yptr) >= bytes || tlabRefill(bytes);
 
 	@:hxmc.host("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr {
+		// RT_VERIFY: every allocation comes here (no TLAB limit, tlabRefill),
+		// so one in a safe region, which another thread may be collecting
+		// through, is caught (Blocking.enter, a @:hxmc.blocking job)
+		if (poison && Threads.inRegion())
+			die("hxmc: allocation in a safe region (between Blocking.enter and leave, or in a blocking call): another thread may collect meanwhile (RT_VERIFY)\n");
 		// a safepoint: the caller's live references are rooted here
 		Threads.safepoint();
 		// likewise for finaliser calls queued by an earlier major collection
