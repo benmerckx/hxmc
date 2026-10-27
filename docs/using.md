@@ -401,6 +401,17 @@ s.finishConnect();                  // Custom("Connection refused")
 var ready = Poll.poll(sockets, [for (_ in sockets) Poll.IN], 1.0);
 ```
 
+- **`Poll.wait(fds, events, revents, count, timeout)`** allocates nothing:
+  it waits for the first `count` entries of the caller's arrays and writes
+  their ready events to `revents`, returning how many are ready. The
+  descriptors come from `Poll.socketFd(s)`. The system's structures live
+  in a per-thread buffer that is kept.
+
+```haxe
+var fds = [Poll.socketFd(a), Poll.socketFd(b)], events = [Poll.IN, Poll.IN], revents = [0, 0];
+while (Poll.wait(fds, events, revents, 2, -1) > 0) ...   // no allocation per call
+```
+
 ## Debugging
 
 - **Backtraces and breakpoints.** Build with `-debug` for DWARF lines and a

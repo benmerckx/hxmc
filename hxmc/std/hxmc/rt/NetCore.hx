@@ -14,7 +14,7 @@ import hxmc.unsafe.Winsock;
 // over the calls that differ: inline, with the system chosen by Mem.os,
 // which folds while lowering, so each layer keeps only its own calls and
 // compiles to what its own copy did.
-@:access(hxmc.rt.PosixNet) @:access(hxmc.rt.WinNet)
+@:access(hxmc.rt.PosixNet) @:access(hxmc.rt.WinNet) @:access(hxmc.rt.Threads)
 extern class NetCore {
 	// a Boolean socket option (an int)
 	public static inline function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
@@ -58,11 +58,12 @@ extern class NetCore {
 	// meanwhile fails with EBADF), then polled without waiting. The flags
 	// are POSIX's (POLLIN 1, POLLPRI 2, POLLOUT 4, POLLERR 8, POLLHUP 16,
 	// POLLNVAL 32), Winsock's mapped to them (WSAPoll rejects POLLPRI:
-	// POLLRDBAND stands for it). -1 on failure, errno set.
-	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, timeout:Float):Int {
-		var n = fds.length;
+	// POLLRDBAND stands for it). The first n entries; -1 on failure, errno
+	// set. Nothing is allocated: the pollfds and rt_wait_fds' scratch are in
+	// a per-thread malloc'ed buffer (pollBuffer), kept for the next call.
+	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
 		var size = Mem.os() == 2 ? 16 : 8, ev = Mem.os() == 2 ? 8 : 4;
-		var p = LibC.malloc(size * (n + 1));
+		var p = Mem.os() == 2 ? WinNet.pollBuffer((size + 4) * n) : PosixNet.pollBuffer((size + 4) * n);
 		for (i in 0...n) {
 			var e = events[i];
 			if (Mem.os() == 2) {
@@ -72,7 +73,7 @@ extern class NetCore {
 			Mem.setI16(p, size * i + ev, e);
 			Mem.setI16(p, size * i + ev + 2, 0);
 		}
-		var r = Rt.rt_wait_fds(p, n, timeout), err = 9; // EBADF: closed while waiting
+		var r = Threads.waitFdsIn(p, n, timeout, p.add(size * n)), err = 9; // EBADF: closed while waiting
 		if (r >= 0) {
 			r = Os.poll(p, n, 0);
 			err = Os.errno();
@@ -86,7 +87,6 @@ extern class NetCore {
 					e = ((e & 0x100) != 0 ? 1 : 0) | ((e & 0x200) != 0 ? 2 : 0) | ((e & 0x10) != 0 ? 4 : 0) | ((e & 1) != 0 ? 8 : 0) | ((e & 2) != 0 ? 16 : 0) | ((e & 4) != 0 ? 32 : 0);
 				revents[i] = e;
 			}
-		LibC.free(p);
 		return r;
 	}
 

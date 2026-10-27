@@ -318,8 +318,22 @@ class PosixNet {
 	}
 
 	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a descriptor closed while waiting)
-	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, timeout:Float):Int
-		return NetCore.poll(fds, events, revents, timeout);
+	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
+		return NetCore.poll(fds, events, revents, n, timeout);
+
+	// the thread's buffer for poll, at least bytes long (kept, not freed
+	// when the thread ends)
+	@:hxmc.threadLocal static var pollBuf:Ptr;
+	@:hxmc.threadLocal static var pollCap:Int;
+
+	@:hxmc.unsafe static function pollBuffer(bytes:Int):Ptr {
+		if (bytes > pollCap) {
+			LibC.free(pollBuf);
+			pollCap = bytes > 1024 ? bytes : 1024;
+			pollBuf = LibC.malloc(pollCap);
+		}
+		return pollBuf;
+	}
 
 	@:hxmc.unsafe static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
 		return Mem.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);

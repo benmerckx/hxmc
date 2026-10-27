@@ -61,10 +61,10 @@ class NativeNet {
 	public static inline function selectLimit():Int
 		return #if (hxmc.target == "wasm32-wasi") 0 #else Mem.os() == 2 ? WinNet.FD_SETSIZE : PosixNet.FD_SETSIZE #end;
 
-	// poll(2) or WSAPoll (hxmc.net.Poll's flags): each descriptor's revents
-	// set; -1 on failure
-	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, timeout:Float):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiNet.poll(fds, events, revents, timeout) #else Mem.os() == 2 ? WinNet.poll(fds, events, revents, timeout) : PosixNet.poll(fds, events, revents, timeout) #end;
+	// poll(2) or WSAPoll (hxmc.net.Poll's flags) of the first n entries:
+	// their revents set, allocating nothing; -1 on failure
+	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
+		return #if (hxmc.target == "wasm32-wasi") WasiNet.poll(fds, events, revents, n, timeout) #else Mem.os() == 2 ? WinNet.poll(fds, events, revents, n, timeout) : PosixNet.poll(fds, events, revents, n, timeout) #end;
 
 	public static inline function setNoDelay(fd:Int, b:Bool):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiNet.setNoDelay(fd, b) #else Mem.os() == 2 ? WinNet.setNoDelay(fd, b) : PosixNet.setNoDelay(fd, b) #end;
