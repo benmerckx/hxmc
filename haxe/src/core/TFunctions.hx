@@ -379,6 +379,10 @@ class TFunctions {
 
 	public static final addDependencyMutex = new Mutex();
 
+	// port: hook (not upstream): a dependency about to be added (the tool's
+	// module cache: which module's typing added it)
+	public static var dependencyHook:Null<(ModuleDef, ModuleDef, ModuleDepOrigin) -> Void> = null;
+
 	public static function addDependency(m:ModuleDef, mdep:ModuleDef, origin:ModuleDepOrigin, skipPostprocess:Bool = false):Void {
 		switch origin {
 			// These module dependency origins should not add as a dependency
@@ -387,6 +391,7 @@ class TFunctions {
 			case _:
 		}
 		if (m != nullModule && mdep != nullModule && (m.mPath != mdep.mPath || m.mExtra.mSign != mdep.mExtra.mSign)) {
+			if (dependencyHook != null) dependencyHook(m, mdep, origin); // port: hook (not upstream)
 			addDependencyMutex.acquire();
 			try {
 				m.mExtra.mDeps.set(mdep.mId, createDependency(mdep, origin));

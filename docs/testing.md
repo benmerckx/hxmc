@@ -89,7 +89,7 @@ each lane on the kept cases and 400 random programs.
 | `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
-| `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output; for hxmc, JS and Eval (`PORT=1` adds the port) |
+| `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, modules macros define built into two programs of one class path one after the other (`--late`); for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
 | `LowerQueriesCheck` | `quick` | each lowering query is covered by the server's reuse of bodies |
 | `RtSearchCheck` | `quick` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |

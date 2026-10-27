@@ -209,7 +209,7 @@ class ModuleStore {
 
 	// a module's ModuleDefExtra (what the server's binary cache keeps of it;
 	// mProcessed only as processed or not)
-	public static function writeExtra(x:ModuleDefExtra):Bytes {
+	public static function writeExtra(x:ModuleDefExtra, ?skipDep:ModuleDep->Bool):Bytes {
 		var o = new BytesOutput();
 		str(o, core.Path.UniqueKey.lazyPath(x.mFile));
 		str(o, x.mSign);
@@ -219,7 +219,7 @@ class ModuleStore {
 		o.writeByte(x.mCheckPolicy.length);
 		for (p in x.mCheckPolicy)
 			o.writeByte(p.getIndex());
-		var ids = [for (k in x.mDeps.keys()) k];
+		var ids = [for (k => d in x.mDeps) if (skipDep == null || !skipDep(d)) k];
 		ids.sort((a, b) -> a - b);
 		o.writeInt32(ids.length);
 		for (id in ids) {

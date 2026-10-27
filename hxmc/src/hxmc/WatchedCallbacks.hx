@@ -67,19 +67,45 @@ class WatchedCallbacks extends CompilerCallbacks {
 		return false;
 	}
 
+	// (a callback registered while typing runs outside the typing of any
+	// module: what it adds to the module the macro API names as current is
+	// not that module's, ModuleCache.onDependency)
+	function typing():Bool
+		return com.stage.getIndex() < CTypingDone.getIndex();
+
+	static function outside<A>(f:A->Void):A->Void
+		return function(a:A) {
+			var s = ModuleCache.current();
+			if (s == null) {
+				f(a);
+				return;
+			}
+			s.inCallback++;
+			try f(a) catch (e:Dynamic) {
+				s.inCallback--;
+				throw e;
+			}
+			s.inCallback--;
+		};
+
+	static function outsideVoid(f:Void->Void):Void->Void {
+		var g = outside(_ -> f());
+		return () -> g(null);
+	}
+
 	override public function addAfterTyping(f:Array<ModuleType>->Void) {
 		early("onAfterTyping");
-		super.addAfterTyping(f);
+		super.addAfterTyping(typing() ? outside(f) : f);
 	}
 
 	override public function addBeforeSave(f:Void->Void) {
 		early("onGenerate");
-		super.addBeforeSave(f);
+		super.addBeforeSave(typing() ? outsideVoid(f) : f);
 	}
 
 	override public function addAfterSave(f:Void->Void) {
 		early("onGenerate");
-		super.addAfterSave(f);
+		super.addAfterSave(typing() ? outsideVoid(f) : f);
 	}
 
 	override public function addAfterFilters(f:Void->Void) {
