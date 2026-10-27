@@ -171,7 +171,7 @@ a release is published only when all of them pass.
 | `crosshost` | yes | `make crosshost` (two jobs; the second also `make wasmgc-check`) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
-| `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets`, the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
+| `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
 | `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
@@ -214,7 +214,13 @@ run. Program time is the whole process's wall time; size is the artifact
 gzipped; compile time is a cold build. The target generators' table
 (`Targets`, `targets.json`) compares the port with the reference on
 haxe-formatter and the port itself, sequential and parallel, every
-sequential output identical.
+sequential output identical. Its gate (`--strict`, or `--check` on result
+files; the nightly's `results` job, after publishing) fails on a reference
+failure outside `EXPECTED` in `Targets.hx` (self -> js, lua, php, swf and
+formatter -> swf: those targets cannot host the project), a port failure
+where the reference compiles, different sequential outputs, or a different
+parallel output that is not `varies` (the reference's own parallel output
+differs from its sequential one: hxb, jvm).
 
 `hxmc/test/micro` holds benchmarks run by hand, such as `VectorBlitBench`
 (`Vector.blit` against a plain loop).

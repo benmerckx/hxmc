@@ -11,9 +11,10 @@ using StringTools;
 // outputs must be identical.
 //   bin/hxmc/hxmc -cp haxe/test --run Targets [-n RUNS] [-p formatter,self]
 //       [-t js,lua,...] [--modes seq,par] [--port <exe>] [--reference <exe>]
-//       [--bench <dir>] [--shard <n>] [--json <file>] [--merge]
+//       [--bench <dir>] [--shard <n>] [--json <file>] [--merge] [--strict]
 //   bin/hxmc/hxmc -cp haxe/test --run Targets --join <out.json> <part.json>...
 //   bin/hxmc/hxmc -cp haxe/test --run Targets --history <dir>
+//   bin/hxmc/hxmc -cp haxe/test --run Targets --check <file.json>...
 // Projects:
 //   formatter  haxe-formatter with its libraries (Bench.hx's setup: <bench>/runner
 //              and <bench>/libs, bin/bench by default, else bin/haxebench), the
@@ -36,6 +37,14 @@ using StringTools;
 // byte; reference_repeats, port_repeats: whether each one's first and last
 // parallel runs agree), else different. --merge replaces only the measured project/target
 // rows of an existing --json file.
+//
+// --strict: exits 1 after the run when a row fails the gate (--check <file>...:
+// the same gate on result files, e.g. --join's): the reference
+// fails on a row not in EXPECTED (the rows whose target cannot host the
+// project, each with its reason), the reference compiles and the port fails,
+// the sequential outputs differ, or a parallel output differs without
+// `varies` (bench.yml's targets job; build.yml's conformance `targets` job on
+// self -> hl, neko).
 //
 // --join <out> <part>...: the parts of a sharded run (bench.yml: the targets
 // in groups, each group on its own machine, both compilers of a row on the
@@ -63,6 +72,40 @@ class Targets {
 		{name: "jvm", args: ["--jvm", "out/main.jar"], output: "zip:out/main.jar"},
 		{name: "swf", args: ["--swf", "out/main.swf"], output: "file:out/main.swf"},
 	];
+	// the rows the reference rejects for good (the target cannot host the
+	// project): --strict lets their reference failure pass
+	static final EXPECTED:Array<{project:String, target:String, reason:String}> = [
+		{project: "self", target: "js", reason: "the compiler needs sys classes js has not (#error \"This class is not available on this target\")"},
+		{project: "self", target: "lua", reason: "the compiler needs sys classes lua has not (#error \"This class is not available on this target\")"},
+		{project: "self", target: "php", reason: "the compiler needs sys classes php has not (#error \"This class is not available on this target\")"},
+		{project: "self", target: "swf", reason: "the compiler needs sys classes flash has not (#error \"This class is not available on this target\")"},
+		{project: "formatter", target: "swf", reason: "haxe-formatter uses the sys package, which flash has not"},
+	];
+
+	static function expected(project:String, target:String):Null<String> {
+		for (e in EXPECTED) if (e.project == project && e.target == target) return e.reason;
+		return null;
+	}
+
+	/** why a measured row fails --strict's gate (none: it passes) **/
+	static function problems(r:Dynamic, seq:Bool):Array<String> {
+		var out = [];
+		var reason = expected(r.project, r.target);
+		function check(mode:String, ref:Dynamic, port:Dynamic, identical:Null<Bool>, diff:Null<String>, varies:Bool) {
+			if (ref == null) return;
+			if (ref.status != "ok") {
+				if (reason == null) out.push('$mode: the reference fails (not an expected-unsupported row): ${tail(ref.status, 200)}');
+			} else if (port == null || port.status != "ok") {
+				out.push('$mode: the reference compiles, the port fails: ${port == null ? "not run" : tail(port.status, 200)}');
+			} else if (identical != true && !varies) {
+				out.push('$mode: the outputs differ: $diff');
+			}
+		}
+		if (seq) check("seq", r.reference, r.port, r.identical, r.diff, false);
+		var p:Dynamic = r.parallel;
+		if (p != null) check("par", p.reference, p.port, p.identical, p.diff, p.varies == true);
+		return out;
+	}
 
 	static function project(name:String, target:String):Array<String> {
 		return switch name {
@@ -84,10 +127,14 @@ class Targets {
 	static var env:Map<String, Null<String>> = [];
 
 	static function main() {
-		var a = parseArgs(Sys.args(), ["-n", "-p", "-t", "--port", "--reference", "--json", "--modes", "--bench", "--shard", "--join", "--history"]);
+		var a = parseArgs(Sys.args(), ["-n", "-p", "-t", "--port", "--reference", "--json", "--modes", "--bench", "--shard", "--join", "--history", "--check"]);
 		root = FileSystem.fullPath(".");
 		if (a.has("--join")) {
 			join(a.get("--join"), a.rest);
+			return;
+		}
+		if (a.has("--check")) {
+			checkFiles([a.get("--check")].concat(a.rest));
 			return;
 		}
 		if (a.has("--history")) {
@@ -104,7 +151,9 @@ class Targets {
 		var reference = FileSystem.fullPath(a.get("--reference", Sys.getEnv("HAXE_REFERENCE") ?? "bin/reference/haxe"));
 		var json = a.get("--json");
 		var shard = a.has("--shard") ? a.int("--shard", 0) : null;
-		benchDir = FileSystem.fullPath(a.get("--bench", !FileSystem.exists("bin/bench/libs") && FileSystem.exists("bin/haxebench/libs") ? "bin/haxebench" : "bin/bench"));
+		var bench = a.get("--bench", !FileSystem.exists("bin/bench/libs") && FileSystem.exists("bin/haxebench/libs") ? "bin/haxebench" : "bin/bench");
+		// (fullPath fails on a missing directory: the self project needs none)
+		benchDir = FileSystem.exists(bench) ? FileSystem.fullPath(bench) : haxe.io.Path.isAbsolute(bench) ? bench : root + "/" + bench;
 		if (projects.contains("formatter") && !FileSystem.exists(benchDir + "/libs/formatter"))
 			fail('$benchDir/libs is missing (bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --setup -t js)');
 		// (Bench's lix scope: hxnodejs for -lib, as Bench resolves it)
@@ -119,6 +168,8 @@ class Targets {
 		mkdirs(WORK);
 		var results:Array<Dynamic> = [];
 		var merge = a.has("--merge");
+		var strict = a.has("--strict");
+		var failed:Array<String> = [];
 		var meta = () -> machineMeta(runs, modes, port, reference, shard);
 		for (p in projects) for (tn in targets) {
 			var t = [for (t in TARGETS) if (t.name == tn) t][0];
@@ -138,6 +189,7 @@ class Targets {
 				portSeq = s.ours == null ? null : s.ours.out;
 				rejected = s.ref.row.status != "ok";
 				line += " seq " + s.line;
+				if (rejected && expected(p, tn) != null) line += " (expected: " + expected(p, tn) + ")";
 			}
 			if (par && !rejected) {
 				var s = side(reference, port, args, t.output, runs, "wall");
@@ -161,9 +213,36 @@ class Targets {
 			}
 			Sys.println(line);
 			results.push(row);
+			for (m in problems(row, seq)) failed.push('$p/$tn $m');
 			if (json != null) write(json, results, merge, meta());
 		}
 		if (json != null) write(json, results, merge, meta());
+		if (strict) gate(failed, results.length);
+	}
+
+	/** --check: --strict's gate on result files (--json, --join) **/
+	static function checkFiles(files:Array<String>) {
+		var failed = [], rows = 0;
+		for (f in files) {
+			var d:Dynamic = haxe.Json.parse(File.getContent(f));
+			var modes:Array<String> = d.meta.modes == null ? ["seq", "par"] : d.meta.modes;
+			for (r in (d.results : Array<Dynamic>)) {
+				rows++;
+				for (m in problems(r, modes.contains("seq"))) failed.push('${r.project}/${r.target} $m');
+			}
+		}
+		gate(failed, rows);
+	}
+
+	/** the gate's summary; exits 1 on a problem **/
+	static function gate(failed:Array<String>, rows:Int) {
+		var exp = [for (e in EXPECTED) e.project + "/" + e.target].join(", ");
+		if (failed.length > 0) {
+			Sys.println('strict: ${failed.length} problems (expected unsupported: $exp):');
+			for (f in failed) Sys.println("  " + f);
+			Sys.exit(1);
+		}
+		Sys.println('strict: $rows rows pass (expected unsupported: $exp)');
 	}
 
 	/** both compilers on one mode: the reference first, the port when the reference compiles the project; `metric`: the time printed **/
