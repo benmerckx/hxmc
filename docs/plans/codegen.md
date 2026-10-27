@@ -78,3 +78,10 @@ Then:
 - For math: a switch on small integers as a jump table, if-conversion
   (cmov), splitting live ranges around rare calls.
 - Devirtualization finds little; type-test folding is done in `Escape`.
+- A method shares the signature of the declaration it implements
+  (`Lower.rootDecl`): a parameter declared with a type parameter there is
+  boxed on every call, direct ones included, when DCE keeps that
+  declaration. `IntMap`'s key was (16 B per `get`); its std wraps the
+  methods in inline ones over private methods taking an Int. A bridge in
+  the method table, converting from the shared signature, would let every
+  implementation keep its own types.

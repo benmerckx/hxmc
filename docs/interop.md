@@ -144,10 +144,17 @@ s[3].y = 2;                                  // in place
   constructor. `==` compares field by field.
 - **Inlining**: an inline function gets its own copy of a struct argument
   it writes to, as a call would.
-- **Boxes**: where a reference is needed (`Dynamic`, `Array<S>`,
-  `Map<K, S>`, `Null<S>`, an enum argument), the value is copied into an
-  immutable box. `arr[i].x = 1` is a compile error: copy out, change,
-  store back.
+- **Boxes**: where a reference is needed, the value is copied into an
+  immutable box, an allocation on every store or pass (32 B for three
+  Floats): `Array<S>` and `Vector<S>` elements, `Map<K, S>` values, a type
+  parameter (not `@:generic`), `Dynamic` and `Std.string`, an enum argument
+  that escapes, and `Null<S>`: an optional argument `?s:S` when given, a
+  `Null<S>` result (boxed even when the caller only tests it for null) or
+  local. `arr[i].x = 1` is a compile error: copy out, change, store back.
+  In hot paths use a sentinel value (`Size.NONE`) or a `Bool` result with
+  an out parameter instead of `Null<S>`, an overload instead of `?s:S`, a
+  `Slice<S>` instead of `Array<S>`, `@:generic` or `inline` for generic
+  code. The list and the reasons: [hxmc.md](hxmc.md#where-struct-values-are-boxed).
 - **Closures** may take and return struct values, but not capture a
   struct local.
 - **Performance**: scalar replacement keeps struct math in registers;

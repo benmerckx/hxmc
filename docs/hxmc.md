@@ -276,6 +276,44 @@ lowers to plain loads and stores; references keep the write barrier.
 - **WasmGC**: the engine's array of the element kind; the engine checks
   every index, so an untested out-of-bounds access traps.
 
+## Where struct values are boxed
+
+A `@:hxmc.struct` value is the address of its memory in a frame, an
+object, a static or native memory ([interop.md](interop.md#struct-values)).
+Storage that is not typed with the struct holds references: there the
+value is copied into a box, an immutable object (8 bytes of header, then
+the struct; 32 B for three Floats), on every store. By design: Array,
+Vector, the maps and every type parameter are erased to element kinds that
+are scalars or references, and `null` needs a reference.
+
+| Boxed on every store or pass | Not boxed |
+| --- | --- |
+| `Array<S>` and `haxe.ds.Vector<S>` elements (a read copies out, without allocating) | locals, parameters, results (copied through the frame) |
+| `Map<K, S>` values, any `T` of a generic class or function (not `@:generic`) | fields of classes and structs, statics |
+| `Null<S>`: an optional argument `?s:S` when given, a `Null<S>` result or local | closures taking or returning `S` |
+| `Dynamic`, `Std.string`, string interpolation, `trace` | `Slice<S>` and `Ptr` (native memory: [interop.md](interop.md#native-memory)) |
+| an enum argument that escapes its function | a `for` over an array literal of struct values, even with a `continue` or `break` (`FnLower.structLiteralLoop`) |
+
+The box is never written: `arr[i].x = 1` is a compile error (copy out,
+change, store back). Escape analysis removes a box that does not leave its
+function (an enum value switched on where it is made).
+
+In a hot path:
+
+- **Sequences**: a `Slice<S>` from an `Arena`, or an object with one field
+  per element, rather than `Array<S>`; or parallel `Array<Float>`s.
+- **Optional values**: a sentinel (`static final NONE = new Size(-1,
+  -1)`, tested with a field) or a `Bool` result with an out parameter (a
+  struct field of the caller's object, or a `Ptr`), rather than `Null<S>`.
+  A `Null<S>` result is boxed even when the caller only tests it.
+- **Optional arguments**: an overload or a second function without the
+  argument, or the sentinel as the default, rather than `?s:S`.
+- **Generic code**: `@:generic` (a copy per type) or an `inline` function,
+  whose struct parameters stay structs.
+
+Open: unboxed `Array<S>` storage and `Null<S>` as a presence flag beside
+the value ([plans/lowlevel.md](plans/lowlevel.md#struct-values-in-generic-storage)).
+
 ## Null access
 
 A read or write through null throws `"Null Access"`: a field, an enum's
