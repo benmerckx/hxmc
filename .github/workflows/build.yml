@@ -1456,7 +1456,7 @@ jobs:
           npx haxe build.hxml && ./bin/app
           # Android: in no package
           if npx haxe -cp src -main Main --custom-target hxmc=bin/app.so -D hxmc.target=android-arm64 2> android.err; then exit 1; fi
-          cat android.err; grep -q "release archive" android.err
+          cat android.err; grep -q "hxmc.rt" android.err
       # @hxmc/source at @hxmc/cli's version (a fresh project: app has another
       # machine's platform package, --force): @hxmc/cli's haxe builds a
       # compiler from its sources with a main of its own, natively
