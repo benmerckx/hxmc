@@ -19,7 +19,7 @@ class Struct {
 	static function layout(c:Expr):{size:Int, align:Int} {
 		var t = Context.getType(haxe.macro.ExprTools.toString(c));
 		return switch t {
-			case TInst(_.get() => cl, _) if (cl.meta.has(":hxmc.struct")): hxmc.Span.SpanData.struct(cl, c.pos);
+			case TInst(cr, _) if (cr.get().meta.has(":hxmc.struct")): hxmc.Span.SpanData.struct(cr, c.pos);
 			case _: Context.error("Struct: " + haxe.macro.ExprTools.toString(c) + " is no @:hxmc.struct class", c.pos);
 		}
 	}

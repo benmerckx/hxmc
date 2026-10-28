@@ -263,16 +263,20 @@ class SpanError extends haxe.Exception {}
 					case "hxmc.I64" | "haxe.Int64": return scalar(I64, 8);
 					case _:
 				}
-			case TInst(_.get() => c, _) if (c.meta.has(":hxmc.struct")):
-				return struct(c, pos);
+			case TInst(cr, _) if (cr.get().meta.has(":hxmc.struct")):
+				return struct(cr, pos);
 			case _:
 		}
 		return Context.error('a span of ${haxe.macro.TypeTools.toString(t)}: its elements are C scalars or @:hxmc.struct classes', pos);
 	}
 
 	// a struct's C layout, its zeroed object, its copy (scalar fields only)
-	public static function struct(c:ClassType, pos:Position):{kind:Int, size:Int, align:Int, make:Expr, copy:Expr} {
-		var path = c.pack.concat([c.name]);
+	public static function struct(cr:Ref<ClassType>, pos:Position):{kind:Int, size:Int, align:Int, make:Expr, copy:Expr} {
+		var c = cr.get();
+		// the class as a value, already typed: no path names a private type in
+		// an expression (`pkg._Kern.State` is none, `pkg.Kern.State` the class
+		// Kern's field)
+		var cls = Context.storeTypedExpr({expr: TTypeExpr(TClassDecl(cr)), t: TDynamic(null), pos: pos});
 		var off = 0, align = 1, zero = [], copy = [];
 		for (f in c.fields.get()) {
 			if (!f.kind.match(FVar(_, _))) continue;
@@ -298,7 +302,7 @@ class SpanError extends haxe.Exception {}
 		}
 		var size = (off + align - 1) & -align;
 		var make = macro function():Dynamic {
-			var o:Dynamic = Type.createEmptyInstance($p{path});
+			var o:Dynamic = Type.createEmptyInstance(cast $cls);
 			$b{zero};
 			return o;
 		};
