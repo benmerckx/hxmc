@@ -1634,7 +1634,9 @@ class MirBuild extends MirWriter {
 		var args = [], sizes = [], groups = [], structs = false;
 		for (k in first...xs.length) {
 			var v = xs[k];
-			var ct = sig.args[k];
+			// (a variadic argument past the declaration in SIGS, another one's:
+			// a scalar, CInterop.sameSig)
+			var ct = k < sig.args.length ? sig.args[k] : CI64;
 			var k = k - first;
 			switch ct {
 				case CStruct(c):

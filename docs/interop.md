@@ -434,7 +434,12 @@ module or with `env`. The module exports `memory`, `_start` and
 Natively it is the name alone: a program's C symbols share one namespace
 when linked (static linking, and ELF's search of every library loaded), so
 the same name in two libraries is one function with one signature, and
-signatures that differ are a compile error.
+signatures that differ are a compile error. Declarations of a variadic
+function (`@:hxmc.varargs(n)`) may differ in their variadic arguments,
+which each call passes its own, as C allows (`syscall` with three
+arguments and with six), when they agree on `n`, the fixed arguments and
+the result, and no variadic argument is a struct; on WebAssembly, one
+import, they agree on all of it.
 
 A `@:hxmc.callback`'s address is its index in that table, so JavaScript
 calls it with `table.get(addr)(...)`, during an import call or after
