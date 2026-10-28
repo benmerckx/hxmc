@@ -458,7 +458,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -2926,7 +2926,8 @@ class FnLower {
 			}
 		// 0 <= i < n
 		function check(i:Ex, n:Ex)
-			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
+			// (Mem.ult, marked: Opt.condProp drops the checks a loop proves)
+			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
 		// [pos, pos + cnt) inside n (64-bit: no overflow; negative ones fail unsigned)
 		function range(pos:Ex, cnt:Ex, n:Ex) {
 			var n64 = EConv(I2L, n), p64 = EConv(I2L, pos);

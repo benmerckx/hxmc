@@ -114,7 +114,10 @@ case's build time. A `// not-live: <function>` line names a function
 reachability must drop when the case is also built from its source, as
 programs are (`HXMC_REACH_WHY`): the archive's build loads only the modules
 its program reaches, so what typing loads and DCE keeps shows only there
-(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). Writing a
+(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). A
+`// span-checks: <Class.function>=<n> ...` line names the span element
+checks left in each function's optimized code, which a build with
+`HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped). Writing a
 case's archive must not warn of an unbound type parameter (`hxb-warning`:
 an expression of the case or of hxmc's std whose type left its type
 parameter's scope, as `Arena.makeArray`'s did when inlined into `slice`).

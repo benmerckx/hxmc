@@ -209,6 +209,23 @@ a loop. Measured ([plans/io.md](plans/io.md#bounds-checks)): one to one and a ha
 instructions per access, 1.15 to 1.45 times a raw loop's time natively,
 1.1 to 1.2 on wasm32; without the checks, as fast as raw access.
 
+**Checks a loop proves are dropped**, and the loop is then as fast as raw
+access ([plans/io.md](plans/io.md#checks-a-loop-proves)). The compiler
+recognizes these patterns:
+
+- `s[i]` in `for (i in 0...s.length)` or in `while (i < s.length) { ...; i++; }`
+  with i starting at 0;
+- `s[i]` in `for (i in 0...n)` after the length was tested against n
+  (`if (n > s.length) return ...`), or through another span of a length
+  tested equal (`if (b.length != a.length) return ...`);
+- a sub-span's own loop (`var m = s.sub(p, k); for (i in 0...m.length) m[i]`);
+- a table's index masked below a length tested first
+  (`if (t.length < 256) return ...; t[x & 0xFF]`).
+
+Other accesses keep their check, as do counters that may start below 0 or
+step by more than 1. `SpanLoops` names the checks left in each of its
+kernels (the corpus's `// span-checks:` line).
+
 **Where spans exist: only in kernels**, as parameters, locals and
 results of `@:hxmc.kernel` and `@:hxmc.blocking` functions. Never a field,
 a static, a struct's field, an element, a capture, a type parameter's

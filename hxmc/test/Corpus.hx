@@ -220,6 +220,11 @@ class Corpus {
 			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
 			if (live != null) return {name: c.name, status: "live", detail: live};
 		}
+		var checks = caseLine(src, "span-checks");
+		if (checks != null && target == null && libc == null) {
+			var bad = spanChecks(d, cmd.concat(defines), checks);
+			if (bad != null) return {name: c.name, status: "span-checks", detail: bad};
+		}
 		var re = ~/hxmc: ([0-9]+) functions/;
 		var nf = re.match(r.out) ? re.matched(1) + " functions" : "";
 		if (stage != null) {
@@ -272,6 +277,39 @@ class Corpus {
 		if (FileSystem.exists(exe)) FileSystem.deleteFile(exe);
 		if (r.out.split("\n").indexOf("hxmc: reach: why " + name) >= 0) return '$name is live:\n' + tail(r.out, 1500);
 		return null;
+	}
+
+	// A `// span-checks: <Class.function>=<n> ...` line: the span element
+	// checks left in each function's code once optimized (Opt.condProp drops
+	// those its loop proves), counted in the Mir HXMC_DUMP prints (the calls
+	// of SpanSupport.outOfRange), from a build that compiles every function
+	// (a cache of its own): null when each count is the one named, else why
+	// not. (cmd: the case's build)
+	static function spanChecks(d:String, cmd:Array<String>, spec:String):Null<String> {
+		var want = new Map<String, Int>();
+		for (w in spec.split(" "))
+			if (w != "") {
+				var kv = w.split("=");
+				want.set("F_" + kv[0].replace(".", "_"), Std.parseInt(kv[1]));
+			}
+		var cache = d + "/span-checks-cache", out = d + "/span-checks";
+		rmrf(cache);
+		var args = cmd.copy();
+		args[1] = out;
+		var r = exec(args, {env: ["HXMC_DUMP" => [for (k in want.keys()) k].join(","), "HXMC_CACHE" => cache]});
+		rmrf(cache);
+		if (FileSystem.exists(out)) FileSystem.deleteFile(out);
+		if (r.code != 0) return "the build with HXMC_DUMP failed: " + tail(r.out + r.err, 1500);
+		var got = new Map<String, Int>(), fn = null;
+		for (l in r.out.split("\n")) {
+			if (l.startsWith("func ")) {
+				fn = l.substr(5, l.indexOf("(") - 5);
+				got.set(fn, 0);
+			} else if (fn != null && l.indexOf("call F_hxmc_SpanSupport_outOfRange") >= 0) got.set(fn, got.get(fn) + 1);
+		}
+		var bad = [for (k => n in want) if (got.get(k) != n) '$k: $n checks expected, ${got.exists(k) ? Std.string(got.get(k)) : "no code"} found'];
+		bad.sort(compare);
+		return bad.length == 0 ? null : bad.join("\n");
 	}
 
 	// a case run inside the compiler (--mir-run): typed, compiled for the Mir

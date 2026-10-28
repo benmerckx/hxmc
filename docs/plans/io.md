@@ -382,8 +382,48 @@ So a checked access costs one to one and a half instructions: in time 1.15
 to 1.3 times the raw loop for the byte sum and 1.4 to 1.45 for the axpy
 natively, 1.1 to 1.2 for the sum on wasm32 (the axpy within that
 machine's noise). Without the checks a span is as fast as raw access, or
-faster (its length stays in a register). The checks are not removed where a
-loop proves them yet (`for (i in 0...s.length)`): the next step.
+faster (its length stays in a register).
+
+### Checks a loop proves
+
+**Built**: the optimizer drops an element check that the loop around it
+proves. This rule is narrow and sound, and only spans' checks are
+considered, so code without spans compiles as before (`Opt.condProp`,
+`inRange`). FnLower marks a span's element check: `Mem.spanUlt`, a
+`Cmp ult` with `MIns.SPAN_CHECK` in `imm2`. The check `ult(i, n)` is
+decided when two things hold where it stands:
+
+- **i < n holds, signed**, from the facts of the dominating branches. The
+  fact may be direct (the loop's test `i < s.length`), or a chain `i < x`
+  with `x <= n` (`for (i in 0...k)` after `if (k > s.length) return`; `x`
+  and `n` also tested equal, as in `if (b.length != n) return`).
+- **i is never negative**: a phi whose operands are constants of at least
+  0, or the phi plus 1 computed only in blocks a test `phi < y` dominates,
+  so the increment cannot wrap.
+
+So `for (i in 0...s.length)`, `while (i < n) { ...; i++ }` from 0, and a
+sub-span's own loop are covered. A table's index `x & m` (m >= 0
+constant) is in range of a length that is a constant above m, or that was
+tested against one (`if (t.length < 256) return`). Counters that may start
+below 0, other steps, and bounds the length was not tested against keep
+their checks. `SpanLoops` covers both kinds (its `// span-checks:` line:
+Corpus counts the checks left in each kernel's optimized Mir).
+
+**Measured** (`SpanBench`, 2026-10-28, the same machine as above): the
+axpy now tests `x.length < n` once before its loop, so the loop proves
+every access. Instructions per element come from callgrind; times are
+the minimum and the median of 10 runs, in ns per element.
+
+| | sum, raw | sum, span | axpy, raw | axpy, span |
+| --- | ---: | ---: | ---: | ---: |
+| x86-64, instructions an element, checked | 10 | 9 (11 before) | 12 | 12 (16 before) |
+| x86-64, ns an element, checked | 0.78 / 0.89 | 0.52 / 0.59 | 0.72 / 0.88 | 0.73 / 0.91 |
+| x86-64, ns an element, `span-checks=0` | 0.71 / 0.80 | 0.48 / 0.57 | 0.71 / 0.76 | 0.71 / 0.79 |
+| wasm32 under node 22, ns an element, checked | 0.54 / 0.73 | 0.50 / 0.57 | 0.70 / 0.87 | 0.70 / 1.11 |
+
+The checked loops are now the raw loops' code: their Mir differs only in
+the span's two words loaded at entry. The checked sum is faster than raw
+(the raw kernel's bound is a parameter).
 
 ### Inlining, generics, closures
 

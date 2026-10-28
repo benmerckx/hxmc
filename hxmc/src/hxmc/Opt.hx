@@ -20,7 +20,8 @@ using core.ds.VectorTools;
 //    loop writes it. A load of the address a dominating store wrote, in
 //    the version the store left, takes the stored value.
 //  - dead code: pure operations and loads nothing uses.
-//  - branches decided by a dominating branch on the same comparison.
+//  - branches decided by a dominating branch on the same comparison, and
+//    a span's element checks a loop proves (inRange).
 //  - loop-invariant code motion: pure operations, and loads that cannot
 //    fault of memory the loop does not write, move to a block before the
 //    loop.
@@ -440,6 +441,9 @@ class Opt {
 								known = (fv[k] == (fc[k] == c.imm)) ? 1 : 2;
 							}
 						}
+						// (a span's element check a loop proves: Mem.spanUlt)
+						if (known == 0 && c.op == Cmp && c.imm2 == MIns.SPAN_CHECK && inRange(c, cfg, fc, fa, fb, fv))
+							known = c.imm == (CULt : Int) ? 1 : 2;
 						if (known != 0) {
 							var keep = known == 1 ? t.targets[0] : t.targets[1];
 							var drop = known == 1 ? t.targets[1] : t.targets[0];
@@ -478,6 +482,120 @@ class Opt {
 	}
 
 	var nullsDropped = false;
+
+	// ---- a span's element checks a loop proves (condProp)
+
+	// Whether a span's element check, ult(i, n) or uge(i, n) (MIns.SPAN_CHECK),
+	// is decided: i < n (signed) holds where it is, from the facts in force
+	// (directly, or i < x and x <= n, or i <= x and x < n: a loop's bound
+	// tested against the span's length), and i is never negative (nonNeg),
+	// so i < n unsigned too; or i is x & m (a table's index, m >= 0) and n a
+	// constant above m or tested against one. Only spans' checks: code
+	// without spans compiles as before.
+	function inRange(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Bool {
+		if (c.imm != (CULt : Int) && c.imm != (CUGe : Int)) return false;
+		var i = c.a, n = c.b;
+		if (f.vals[i].ty != I32) return false;
+		// (the facts as x < y (lt) or x <= y)
+		var lx:Array<Int> = [], ly:Array<Int> = [], strict:Array<Bool> = [];
+		inline function rel(x:Int, y:Int, lt:Bool) {
+			lx.push(x);
+			ly.push(y);
+			strict.push(lt);
+		}
+		for (k in 0...fc.length) {
+			var a = fa[k], b = fb[k], v = fv[k];
+			switch fc[k] {
+				case CLt: if (v) rel(a, b, true) else rel(b, a, false);
+				case CLe: if (v) rel(a, b, false) else rel(b, a, true);
+				case CGt: if (v) rel(b, a, true) else rel(a, b, false);
+				case CGe: if (v) rel(b, a, false) else rel(a, b, true);
+				case CEq | CNe if (v == (fc[k] == (CEq : Int))):
+					rel(a, b, false);
+					rel(b, a, false);
+				case _:
+			}
+		}
+		var lt = false;
+		for (k in 0...lx.length) {
+			if (lx[k] != i) continue;
+			if (ly[k] == n && strict[k]) lt = true;
+			else for (j in 0...lx.length)
+				if (lx[j] == ly[k] && ly[j] == n && (strict[k] || strict[j])) lt = true;
+			if (lt) break;
+		}
+		if (lt && nonNeg(i, cfg, 0)) return true;
+		// (a table's index: x & m, 0 <= m, against a length of at least m + 1,
+		// a constant or tested against one)
+		var x = f.vals[i];
+		var m = x.op != And ? -1 : constOf(x.b) >= 0 ? constOf(x.b) : constOf(x.a);
+		if (m < 0) return false;
+		if (constOf(n) > m) return true;
+		for (k in 0...lx.length)
+			if (ly[k] == n && constOf(lx[k]) >= 0 && (strict[k] ? constOf(lx[k]) >= m : constOf(lx[k]) > m)) return true;
+		return false;
+	}
+
+	// an I32 constant's value when it is not negative, else -1
+	function constOf(v:Int):Int {
+		var c = f.vals[v];
+		return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0 ? c.imm : -1;
+	}
+
+	// Whether v (an I32) is never negative: a constant, or a phi each of
+	// whose operands is, or is the phi plus 1 computed only where the phi is
+	// below some value (a loop's counter: below a bound, the increment
+	// cannot wrap)
+	function nonNeg(v:Int, cfg:Cfg<MBlock>, depth:Int):Bool {
+		var x = f.vals[v];
+		if (x.ty != I32 || depth > 4) return false;
+		switch x.op {
+			case Const:
+				return x.sym == null && x.imm >= 0;
+			case Phi:
+				for (a in x.args) {
+					if (a == v) continue;
+					var y = f.vals[a];
+					var one = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
+					if (one ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, depth + 1)) return false;
+				}
+				return true;
+			case _:
+				return false;
+		}
+	}
+
+	inline function isOne(v:Int):Bool {
+		var c = f.vals[v];
+		return c.op == Const && c.sym == null && c.imm == 1;
+	}
+
+	// whether a branch dominating block b found v < y (signed) for some y:
+	// a block on b's dominator path entered only by that branch's edge
+	function belowSome(v:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CLt if (taken && c.a == v): return true;
+							case CGe if (!taken && c.a == v): return true;
+							case CGt if (taken && c.b == v): return true;
+							case CLe if (!taken && c.b == v): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
 
 	static inline function isEqNe(c:Int):Bool
 		return c == (CEq : Int) || c == (CNe : Int);
