@@ -11,46 +11,38 @@ import hxmc.ios.Plist;
 // storyboard; the platform, the minimum version) and
 // _CodeSignature/CodeResources (the hashes of the bundle's other files,
 // with codesign's default rules); the executable's code signature
-// (CodeSign) is ad hoc, identified by the bundle id and binding the
-// Info.plist and CodeResources by their hashes, as `codesign -s -` signs:
-// enough for the simulator. A .ipa is that bundle under Payload/ in a
-// zip (the executable with its Unix mode), for devices later: their
+// (CodeSign.adhoc, as -D hxmc.codesign-* sign a plain output) is ad hoc,
+// identified by the bundle id and binding the Info.plist and CodeResources
+// by their hashes, as `codesign -s -` signs: enough for the simulator. A
+// .ipa is that bundle under Payload/ in a zip (the executable with its Unix
+// mode), for devices later: their
 // signature needs a certificate and a provisioning profile
 // (CodeSign.Identity; docs/hxmc.md, iOS). Options (Options.ios): -D
 // hxmc.ios-bundle-id=<id> (default org.hxmc.<the output's name>), -D
 // hxmc.ios-name=<text> (the home screen's label: the output's name), -D
 // hxmc.ios-version=<n> (CFBundleVersion, 1), -D
 // hxmc.ios-version-name=<text> (CFBundleShortVersionString, 1.0), -D
-// hxmc.ios-min-version=<major.minor> (15.0), -D
-// hxmc.ios-entitlements=<file> (an XML plist, signed with the code).
+// hxmc.ios-entitlements=<file> (an XML plist, signed with the code); the
+// minimum version is -D hxmc.ios-min-version's (Options.iosMinVersion, as
+// for any iOS output).
 class Bundle {
 	public final name:String; // the bundle's and its executable's
 	public final id:String;
 	public final info:Bytes;
 	public final resources:Bytes;
-	public final sign = new CodeSign();
-	// the minimum version (LC_BUILD_VERSION's, LinkMachO.minos)
-	public final minos:Int;
+	public final sign:CodeSign;
 
 	public static function isBundle(out:String):Bool
 		return StringTools.endsWith(out, ".app") || StringTools.endsWith(out, ".ipa");
 
-	public function new(out:String, abi:Abi, opts:Map<String, String>) {
+	public function new(out:String, abi:Abi, opts:Map<String, String>, min:String) {
 		name = haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(haxe.io.Path.removeTrailingSlashes(out)));
 		id = opts.get("bundle_id") ?? "org.hxmc." + ~/[^a-zA-Z0-9.-]/g.replace(name, "-");
 		if (!~/^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$/.match(id)) throw "hxmc: iOS: the bundle id " + id + " is not a reverse-DNS name (a.b.c: letters, digits, '-')";
-		var min = opts.get("min_version") ?? "15.0";
-		var v = ~/^([0-9]+)\.([0-9]+)$/;
-		if (!v.match(min) || Std.parseInt(v.matched(1)) < 15) throw "hxmc: iOS: -D hxmc.ios-min-version=" + min + ": major.minor, 15.0 or later";
-		minos = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
 		info = infoPlist(name, id, opts.get("name") ?? name, opts.get("version") ?? "1", opts.get("version_name") ?? "1.0", min, abi.platform == "ios-simulator");
 		resources = codeResources(["Info.plist" => info]);
-		sign.linkerSigned = false;
-		sign.identifier = id;
-		sign.infoPlist = info;
-		sign.resources = resources;
 		var ent = opts.get("entitlements");
-		if (ent != null) sign.entitlements = sys.io.File.getContent(ent);
+		sign = CodeSign.adhoc(id, info, resources, ent != null ? sys.io.File.getBytes(ent) : null);
 	}
 
 	// the bundle's files (paths in it) around the signed executable

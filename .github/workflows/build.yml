@@ -34,6 +34,10 @@
 #   - ios: the app bundles for ios-arm64 and ios-sim-arm64 checked, then
 #     (ios-simulator, on a macOS runner) IosHello on an iPhone simulator (make
 #     ios-sim-check; not required yet: continue-on-error).
+#   - native-output: the native output a packager builds on (make
+#     native-check): Android's .so (AndroidHello as libmain.so: its SONAME,
+#     ANativeActivity_onCreate exported) and iOS's plain Mach-O executables
+#     and dylibs (minimum version, code signature, -D hxmc.codesign-*).
 # - conformance: the port against the reference (make test LANES=..., make
 #   test-fuzz LANE=..., on the release binary's Eval): HXB of the upstream
 #   suites, macro and library cases (and hxmc's -lib resolution against
@@ -658,6 +662,34 @@ jobs:
           tar czf bin/ios.tar.gz -C bin ios
       - uses: actions/upload-artifact@v7
         with: {name: ios, path: bin/ios.tar.gz, retention-days: 7}
+
+  # the native-output contract (docs/using.md, "Native output for a
+  # packager"): make native-check, Linux only, no device, simulator or Mac:
+  # SharedCheck (the glibc mode's libraries, Android's .so, AndroidHello as
+  # libmain.so) and MachOCheck (IosHello as an iOS executable and dylib:
+  # LC_BUILD_VERSION, the code signature linker-signed or binding -D
+  # hxmc.codesign-*'s files)
+  native-output:
+    name: native-output smoke
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Android's .so and iOS's Mach-O
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make native-check
 
   ios-simulator:
     needs: [changes, ios]

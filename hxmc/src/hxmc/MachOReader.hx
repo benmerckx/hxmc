@@ -41,6 +41,19 @@ class MachOReader {
 		return {obj: o, arm: r.arm};
 	}
 
+	// the load commands of any 64-bit Mach-O (an executable or a dylib too:
+	// MachOCheck): each one's command, offset in the file and size
+	public static function commands(b:Bytes):Array<{cmd:Int, at:Int, size:Int}> {
+		if (b.length < 32 || b.getInt32(0) != 0xfeedfacf) throw "hxmc: not a 64-bit Mach-O file";
+		var out = [], at = 32;
+		for (_ in 0...b.getInt32(16)) {
+			var size = b.getInt32(at + 4);
+			out.push({cmd: b.getInt32(at), at: at, size: size});
+			at += size;
+		}
+		return out;
+	}
+
 	// the Mach-O name of a C symbol -> hxmc's
 	public static function cName(n:String):String
 		return StringTools.startsWith(n, "_") ? n.substr(1) : n;
