@@ -1,0 +1,5 @@
+exit 0
+MacroUnsafe.hx:17: true
+MacroUnsafe.hx:18: 10
+MacroUnsafe.hx:19: héllo 6
+MacroUnsafe.hx:20: true

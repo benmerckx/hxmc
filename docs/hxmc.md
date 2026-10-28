@@ -927,6 +927,19 @@ in a native build that names no target, so code behind
 type or run) stays out of it. Macro code reads the program's target with
 `Context.definedValue("hxmc.target")` (`test/cases/MacroTarget.hx`).
 
+Such a module may still mention `hxmc.unsafe` (an import, a field's type,
+a signature, a body no macro runs). Eval compiles every function of the
+modules that loads, and hxmc's externs (`hxmc.unsafe.Mem`, `LibC`,
+`Callback`, Ptr's extern methods, a program's `@:hxmc.c` classes) have no
+fields there, which upstream's Eval rejects ("Field index for ult not found
+on prototype hxmc.unsafe.Mem"). A port hook, `EvalJit.missingExternHook`,
+lets `TargetFlags` give each such use a function that throws when a macro
+calls it, naming it ("hxmc.unsafe.LibC.malloc is implemented by hxmc's code
+generator or runtime: a macro on Eval cannot use it"). `Arena` and
+`CString` keep hxmc's runtime out of Eval (`#if eval`). With
+`-D hxmc.macros=mir` they run as in the program
+(`test/cases/MacroUnsafe.hx`).
+
 ### Android
 
 Android 10 (API 29) and later, the first Bionic with ELF thread-locals.

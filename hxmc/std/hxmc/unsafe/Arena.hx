@@ -103,7 +103,8 @@ abstract Arena(Ptr) {
 	public function cstring(s:String):CString {
 		if (s == null) return Ptr.nil();
 		var p:Ptr<UInt8> = alloc(3 * s.length + 1, 1);
-		hxmc.rt.Repr.utf8To(s, p);
+		// (Eval, a macro's: hxmc's runtime is not typed there, docs/hxmc.md, "Target flags")
+		#if eval throw "hxmc.unsafe.Arena.cstring is implemented by hxmc's code generator or runtime: a macro on Eval cannot use it"; #else hxmc.rt.Repr.utf8To(s, p); #end
 		return p;
 	}
 
@@ -114,7 +115,8 @@ abstract Arena(Ptr) {
 		var p:Ptr<UInt16> = alloc(2 * n + 2, 2);
 		// (the units, after the length, a byte each in a one-byte string: hxmc.rt.Types)
 		var u = Mem.addr(s).add(4);
-		if (hxmc.rt.MemRepr.isOne(s))
+		// (Eval, a macro's: hxmc's runtime is not typed there, docs/hxmc.md, "Target flags")
+		if (#if eval throw "hxmc.unsafe.Arena.wstring is implemented by hxmc's code generator or runtime: a macro on Eval cannot use it" #else hxmc.rt.MemRepr.isOne(s) #end)
 			for (i in 0...n)
 				Mem.setU16At(p, 0, i, Mem.getU8At(u, 0, i));
 		else
