@@ -23,9 +23,8 @@ using StringTools;
 //          a module building three cases for x64, arm64 and wasm32-wasi
 //          byte-identical to the native tool, the debugging information and
 //          unwind tables (DebugCheck: gdb on the host, the tools elsewhere),
-//          shared libraries (SharedCheck), iOS's plain Mach-O outputs
-//          (MachOCheck), Android's APKs (ApkCheck) and iOS's app bundles
-//          (IosCheck);
+//          shared libraries (SharedCheck) and iOS's plain Mach-O outputs
+//          (MachOCheck);
 //          --port adds the native port's self-compile: before commits
 //   full   x64, arm64 and wine at 64, 16 and 256 KB, each with RT_VERIFY=1 too;
 //          x64 and arm64 in the glibc mode, also at 16 KB with RT_VERIFY=1;
@@ -189,10 +188,6 @@ class Tiers {
 			lane("glibc readelf", script(["ElfCheck", "bin/hxmc-t"]));
 			lane("shared libraries", script(["SharedCheck"]));
 			lane("iOS Mach-O", make(["macho-check"]));
-			for (t in ["android-arm64", "android-x86_64"])
-				lane('APKs $t', make(["android-check", "ANDROID_TARGET=" + t]));
-			for (t in ["ios-arm64", "ios-sim-arm64"])
-				lane('iOS apps $t', make(["ios-check", "IOS_TARGET=" + t]));
 			lane("wasm node legacy EH", corpus("wasm32-wasi", null, cases, LEGACY));
 			lane("ThreadNatives x30", threads(30, 16));
 			lane("ThreadNatives x30 adaptive", threads(30, 0));

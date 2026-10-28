@@ -12,16 +12,15 @@ package hxmc;
 //   -D hxmc.target=linux-x86_64     the target (Target.hx, Abi.hx: six of them)
 //   -D hxmc.wasm-eh=legacy          wasm32-wasi: legacy exception handling (default: exnref)
 //   -D hxmc.libc=glibc              Linux: dynamically linked against the system's glibc (default: musl, static)
-//   -D hxmc.shared                  a shared library (Linux in the glibc mode; Android's is always one: an
-//                                   output ending in .apk is an APK holding it, hxmc.android.Apk)
+//   -D hxmc.shared                  a shared library (Linux in the glibc mode; Android's is always one,
+//                                   which a packager puts in an APK)
 //   -D hxmc.exports=<names>         the names a shared library exports (its soname: the output's file name)
 //   -D hxmc.ios-min-version=<x.y>   iOS: the oldest version an output runs on (15.0, the floor)
 //   -D hxmc.codesign-id=<id>, -D hxmc.codesign-info-plist=<file>, -D hxmc.codesign-resources=<file>,
 //   -D hxmc.codesign-entitlements=<file>
 //                                   a Mach-O output signed ad hoc as `codesign -s -` signs, binding a
 //                                   bundle's files a packager wrote (default: linker-signed; CodeSign)
-//   -D hxmc.output=<path>           the output, instead of --custom-target's (hxmc dev: the iOS
-//                                   simulator's builds as dylibs, where the build names its app)
+//   -D hxmc.output=<path>           the output, instead of --custom-target's
 //   -D hxmc.no-frame-pointers       x86-64: no frame record in functions (the default keeps one, for
 //                                   perf -g and debuggers; HXMC_FRAME_POINTERS=0 off; arm64 always)
 //   -debug                          source lines for debuggers (DWARF on ELF and Mach-O), symbols

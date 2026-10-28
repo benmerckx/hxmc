@@ -14,9 +14,8 @@ import hxmc.LinkMachO.BeBuf;
 // Two kinds here:
 //   - linker-signed (the default, what ld64 writes for arm64 executables):
 //     ad hoc, the CodeDirectory alone, identifier "hxmc";
-//   - a bundle's (adhoc: hxmc.ios.Bundle, or -D hxmc.codesign-id,
-//     -info-plist, -resources, -entitlements for a packager that writes the
-//     bundle, Options): ad hoc, identified by the bundle id, with the
+//   - a bundle's (adhoc: -D hxmc.codesign-id, -info-plist, -resources,
+//     -entitlements for a packager that writes the bundle, Options): ad hoc, identified by the bundle id, with the
 //     Info.plist's and CodeResources' hashes, an empty requirement set and
 //     the entitlements if any (an XML plist): what `codesign -s -` writes,
 //     which the iOS simulator runs.

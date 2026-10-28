@@ -45,7 +45,7 @@ is the program the dev server runs.
 The dev server builds the host itself when the build uses a library that
 has one, and names each new build's library in the `reload` message.
 universe's `@hxmc/os` implements the program's side for windowed programs
-on Linux, macOS, Windows, Android, the iOS simulator and the browser.
+on Linux, macOS, Windows and the browser.
 
 ## The protocol
 
