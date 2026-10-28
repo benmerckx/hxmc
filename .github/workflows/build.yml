@@ -1444,7 +1444,8 @@ jobs:
           # Android: in no package
           if npx haxe -cp src -main Main --custom-target hxmc=bin/app.so -D hxmc.target=android-arm64 2> android.err; then exit 1; fi
           cat android.err; grep -q "release archive" android.err
-      # @hxmc/source at @hxmc/cli's version: @hxmc/cli's haxe builds a
+      # @hxmc/source at @hxmc/cli's version (a fresh project: app has another
+      # machine's platform package, --force): @hxmc/cli's haxe builds a
       # compiler from its sources with a main of its own, natively
       # (hxmc/test/frontend: a function added after the lowering,
       # docs/hxmc.md "Frontends"), which builds a program that calls it
@@ -1453,8 +1454,9 @@ jobs:
         run: |
           set -ex
           v=$(cat dl/VERSION)
-          cd "$RUNNER_TEMP/app"
-          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-source-$v.tgz"
+          mkdir -p "$RUNNER_TEMP/source" && cd "$RUNNER_TEMP/source"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-cli-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-${{ matrix.plat }}-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-source-$v.tgz"
           test "$(node -p 'require("@hxmc/source/package.json").version')" = "$v"
           # (sources only)
           test -d node_modules/@hxmc/source/haxe/src/core && test -f node_modules/@hxmc/source/hxmc/src/hxmc/Main.hx && test ! -e node_modules/@hxmc/source/hxmc/test && test ! -e node_modules/@hxmc/source/hxmc/bootstrap/stage0.wasm.br
@@ -1465,7 +1467,8 @@ jobs:
           ./bin/answer | tee answer.out
           test "$(cat answer.out)" = "$(printf 'answer 42\nanswer 1')"
           # (installed, it changes nothing for haxe while no hxmc-rebuild ran)
-          npx haxe build.hxml && ./bin/app
+          npx haxe -cp "$GITHUB_WORKSPACE/dl/frontend/app" -main Main --custom-target hxmc=bin/plain && ./bin/plain | tee plain.out
+          test "$(cat plain.out)" = "answer 1"
       # lix with the package's installation (dist/) as its Haxe
       - name: lix
         if: matrix.lix && env.FULL == 'true'
