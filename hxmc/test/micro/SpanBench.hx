@@ -40,8 +40,12 @@ class SpanBench {
 			Mem.setF64At(y, 0, i, a * Mem.getF64At(x, 0, i) + Mem.getF64At(y, 0, i));
 	}
 
+	// (the lengths compared once: the loop then proves every access, and the
+	// compiler drops their checks, Opt.condProp)
 	@:hxmc.kernel static function axpySpan(a:Float, x:ReadOnlySpan<Float>, y:Span<Float>) {
-		for (i in 0...y.length)
+		var n = y.length;
+		if (x.length < n) return;
+		for (i in 0...n)
 			y[i] = a * x[i] + y[i];
 	}
 

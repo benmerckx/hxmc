@@ -1,0 +1,8 @@
+exit 2
+SpanLoops.hx:98: sum, 126444, 0
+SpanLoops.hx:99: prefix, 28023327, -1
+SpanLoops.hx:100: dot, -2035327596
+SpanLoops.hx:101: middle, 398539
+SpanLoops.hx:103: squares, 81, 9
+SpanLoops.hx:105: crc, 414FA339, 414FA339, -1
+SpanLoops.hx:107: kept, 85, 350
