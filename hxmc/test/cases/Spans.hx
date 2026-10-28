@@ -8,8 +8,8 @@ import hxmc.unsafe.Ptr;
 import hxmc.unsafe.UInt8;
 
 // Checked spans (docs/interop.md, "Spans"): views of memory that exist only
-// in GC-free code, made by GC code only as arguments of a call of a GC-free
-// function. Element access by type (bytes, Int, Float, Float32, structs in
+// in kernels, made by GC code only as arguments of a call of a kernel.
+// Element access by type (bytes, Int, Float, Float32, structs in
 // place), sub-views, reinterpretation, blit (overlapping too), fill, a Span
 // passed as a ReadOnlySpan, Bytes and IoBuffers lent for one call (ranges
 // too: a bad one throws OutsideBounds in the caller), several in one call,
@@ -21,7 +21,7 @@ import hxmc.unsafe.UInt8;
 	var y:Float;
 }
 
-@:hxmc.gcfree class K {
+@:hxmc.kernel class K {
 	public static function sum(s:ReadOnlySpan<UInt8>):Int {
 		var t = 0;
 		for (i in 0...s.length)
@@ -29,7 +29,7 @@ import hxmc.unsafe.UInt8;
 		return t;
 	}
 
-	// (a sub-view of a parameter, returned to GC-free code)
+	// (a sub-view of a parameter, returned to a kernel)
 	static function middle(s:ReadOnlySpan<UInt8>):ReadOnlySpan<UInt8>
 		return s.sub(1, s.length - 2);
 

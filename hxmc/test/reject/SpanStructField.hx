@@ -1,5 +1,5 @@
 // Nor a struct's field: a struct value may be returned to GC code and stored anywhere.
-// expect: the field view of the struct Wrapped has a span type (gcfree: spans live in parameters and locals only)
+// expect: the field view of the struct Wrapped has a span type (kernel: spans live in parameters and locals only)
 import hxmc.ReadOnlySpan;
 import hxmc.unsafe.UInt8;
 
@@ -10,7 +10,7 @@ import hxmc.unsafe.UInt8;
 }
 
 class SpanStructField {
-	@:hxmc.gcfree static function wrap(s:ReadOnlySpan<UInt8>):Wrapped {
+	@:hxmc.kernel static function wrap(s:ReadOnlySpan<UInt8>):Wrapped {
 		var w = new Wrapped();
 		w.view = s;
 		return w;

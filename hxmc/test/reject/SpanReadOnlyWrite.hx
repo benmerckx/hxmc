@@ -1,5 +1,5 @@
 // A read-only span cannot be written through, also not a struct element's field.
-// expect: SpanReadOnlyWrite.hx:14: SpanReadOnlyWrite.reset: a write through a read-only span (gcfree: a ReadOnlySpan cannot be written through)
+// expect: SpanReadOnlyWrite.hx:14: SpanReadOnlyWrite.reset: a write through a read-only span (kernel: a ReadOnlySpan cannot be written through)
 import hxmc.ReadOnlySpan;
 import hxmc.unsafe.IoBuffer;
 import hxmc.unsafe.Ptr;
@@ -9,7 +9,7 @@ import hxmc.unsafe.Ptr;
 }
 
 class SpanReadOnlyWrite {
-	@:hxmc.gcfree static function reset(s:ReadOnlySpan<Cell>):Int {
+	@:hxmc.kernel static function reset(s:ReadOnlySpan<Cell>):Int {
 		var n = s.length;
 		s[0].v = 0;
 		return n;

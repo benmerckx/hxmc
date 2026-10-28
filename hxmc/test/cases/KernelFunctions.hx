@@ -2,15 +2,15 @@ import hxmc.unsafe.*;
 import sys.thread.Lock;
 import sys.thread.Thread;
 
-// @:hxmc.gcfree (docs/interop.md, "GC-free code"): checked as
+// @:hxmc.kernel (docs/interop.md, "Kernels"): checked as
 // @:hxmc.blocking is (no GC point, no value of a GC type, calls only of
-// GC-free functions) but its calls enter no safe region, so one kernel
+// kernels) but its calls enter no safe region, so one kernel
 // serves both paths: called on the main thread, and by a worker inside a
 // region it enters itself (Blocking.enter/leave, as a job pool does). A
-// GC-free function may call a @:hxmc.blocking one (its call enters a
-// region, which nests), and @:hxmc.gcfree on a class covers its functions.
-class GcFreeFunctions {
-	@:hxmc.unsafe @:hxmc.gcfree static function sum(p:Ptr<UInt8>, n:Int):Int {
+// kernel may call a @:hxmc.blocking one (its call enters a
+// region, which nests), and @:hxmc.kernel on a class covers its functions.
+class KernelFunctions {
+	@:hxmc.unsafe @:hxmc.kernel static function sum(p:Ptr<UInt8>, n:Int):Int {
 		var s = 0;
 		for (i in 0...n)
 			s = (s * 31 + p[i]) & 0xFFFFFF;
@@ -42,7 +42,7 @@ class GcFreeFunctions {
 	}
 }
 
-@:hxmc.unsafe @:hxmc.gcfree class Kernels {
+@:hxmc.unsafe @:hxmc.kernel class Kernels {
 	public static function twice(v:Int):Int
 		return v * 2;
 

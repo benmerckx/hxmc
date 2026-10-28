@@ -233,18 +233,18 @@ class FuncInfo {
 	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
-	// declared @:hxmc.unsafe, @:hxmc.gcfree or @:hxmc.blocking: Facts.findNoGc
+	// declared @:hxmc.unsafe, @:hxmc.kernel or @:hxmc.blocking: Facts.findNoGc
 	// fails the build unless noGc
 	public var declNoGc:Bool = false;
 	public var declUnsafe:Bool = false; // declared @:hxmc.unsafe (errors name the attribute written)
-	// declared @:hxmc.gcfree or @:hxmc.blocking: its body touches no GC value
-	// and calls only such functions (Facts.gcFreeCulprit)
-	public var declGcFree:Bool = false;
+	// declared @:hxmc.kernel or @:hxmc.blocking: its body touches no GC value
+	// and calls only such functions (Facts.kernelCulprit)
+	public var declKernel:Bool = false;
 	// declared @:hxmc.blocking (GC-free): its calls run in a safe region
 	// (FnLower.inRegion)
 	public var declBlocking:Bool = false;
-	// the constructor of a @:hxmc.struct class (Lower.structCtor): GC-free code
-	// may call it when its body is GC-free (Facts.gcFreeCulprit)
+	// the constructor of a @:hxmc.struct class (Lower.structCtor): a kernel
+	// may call it when its body is GC-free (Facts.kernelCulprit)
 	public var structCtor:Bool = false;
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
 	public var withStacks:Bool = false;

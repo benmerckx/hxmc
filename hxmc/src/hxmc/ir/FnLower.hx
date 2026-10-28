@@ -103,8 +103,8 @@ class FnLower {
 
 	// a function body; `fi.args` already holds the caller-visible signature
 	public function run(tf:TFunc, isCtor = false) {
-		// (GC-free and not @:hxmc.unsafe: the safe subset, docs/interop.md)
-		if (fi.declGcFree && !fi.declUnsafe) GcFreeCheck.check(l, fi, tf);
+		// (a kernel not @:hxmc.unsafe: the safe subset, docs/interop.md)
+		if (fi.declKernel && !fi.declUnsafe) KernelCheck.check(l, fi, tf);
 		spanSignature(tf);
 		if (boxed == null) boxed = Boxing.analyze(tf.tfExpr, tf.tfArgs.mapToArray(a -> a.variable));
 		var off = 0;
@@ -149,7 +149,7 @@ class FnLower {
 			// (a span: its two words copied into a slot of this frame, which no call
 			// takes, so that they stay in registers, Sroa: the caller's memory
 			// would be read again after every store, which may alias it)
-			var sc = GcFreeCheck.spanOf(v.vType) != null ? structOf(v.vType) : null;
+			var sc = KernelCheck.spanOf(v.vType) != null ? structOf(v.vType) : null;
 			if (sc != null && !boxed.exists(v.vId)) {
 				var own = newSlot(t, false);
 				copyStruct(ELocal(own), x, sc);
@@ -2411,10 +2411,10 @@ class FnLower {
 				return EInt(0);
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
-				// (spans made as arguments of a GC-free function: filled once
+				// (spans made as arguments of a kernel: filled once
 				// every argument is evaluated, spanCall)
 				var outer = boundary;
-				var made = fn.declGcFree ? [for (a in cargs) if (spanMaker(a)) strip(a)] : [];
+				var made = fn.declKernel ? [for (a in cargs) if (spanMaker(a)) strip(a)] : [];
 				boundary = made.length > 0 ? {direct: made, fills: []} : null;
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 0, fn);
 				var fills = boundary != null ? boundary.fills : null;
@@ -2714,7 +2714,7 @@ class FnLower {
 	// constants; null for any other call
 	function cInteropCall(c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Null<Ex> {
 		switch c.clKind {
-			case KAbstractImpl(a) if (GcFreeCheck.isSpanAbstract(a)):
+			case KAbstractImpl(a) if (KernelCheck.isSpanAbstract(a)):
 				return spanCall(a, cf, cargs, e);
 			case KAbstractImpl(a) if (a.aPath.name == "Ptr" && a.aPath.pack.join(".") == "hxmc.unsafe"):
 				var n = cf.cfName;
@@ -2786,7 +2786,7 @@ class FnLower {
 	// access checked (Lower.spanChecks), a range always
 
 	// the direct arguments, making spans (Span.ofBytes & co.), of the call of
-	// a GC-free function being lowered, and what fills those spans once every
+	// a kernel being lowered, and what fills those spans once every
 	// argument is evaluated: their addresses are taken last, after any GC
 	// point (Facts.checkHeapSpans: the callee of a Bytes' enters no region)
 	var boundary:Null<{direct:Array<TExpr>, fills:Array<() -> Void>}> = null;
@@ -2796,7 +2796,7 @@ class FnLower {
 		switch strip(e).eexpr {
 			case TCall({eexpr: TField(_, FStatic(c, cf))}, _):
 				switch c.clKind {
-					case KAbstractImpl(a) if (GcFreeCheck.isSpanAbstract(a)):
+					case KAbstractImpl(a) if (KernelCheck.isSpanAbstract(a)):
 						return cf.cfName == "ofBytes" || cf.cfName == "ofIoBuffer" || cf.cfName == "unsafeOf";
 					case _:
 				}
@@ -2810,17 +2810,17 @@ class FnLower {
 		return where(e) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
 
 	function spanFail(e:TExpr, what:String, rule:String):Dynamic
-		throw new LowerError(GcFreeCheck.spanError(where(e), fi.display != null ? fi.display : fi.name, what, rule), "");
+		throw new LowerError(KernelCheck.spanError(where(e), fi.display != null ? fi.display : fi.name, what, rule), "");
 
 	// a span type where GC code would hold it: an error
 	function spanInGcCode(t:T, e:TExpr, what:String) {
-		if (!fi.declGcFree && GcFreeCheck.spanOf(t) != null)
-			spanFail(e, what + " has a span type", GcFreeCheck.SPANS_GCFREE + ": only a @:hxmc.gcfree function holds one");
+		if (!fi.declKernel && KernelCheck.spanOf(t) != null)
+			spanFail(e, what + " has a span type", KernelCheck.SPANS_KERNEL + ": only a @:hxmc.kernel function holds one");
 	}
 
 	// a function's parameters and result: no span in GC code
 	function spanSignature(tf:TFunc) {
-		if (fi.declGcFree) return;
+		if (fi.declKernel) return;
 		var at:TExpr = {eexpr: TConst(TNull), etype: tf.tfType, epos: tf.tfExpr.epos};
 		for (a in tf.tfArgs)
 			spanInGcCode(a.variable.vType, ({eexpr: TConst(TNull), etype: a.variable.vType, epos: a.variable.vPos} : TExpr), "the parameter " + a.variable.vName);
@@ -2875,9 +2875,9 @@ class FnLower {
 			return isConst(x) ? x : ELocal(asLocal(x, t));
 		if (name == "ofBytes" || name == "ofIoBuffer" || name == "unsafeOf") {
 			var direct = boundary != null && boundary.direct.indexOf(e) >= 0;
-			if (!direct && !fi.declGcFree)
+			if (!direct && !fi.declKernel)
 				spanFail(e, "a span made outside a call's arguments",
-					GcFreeCheck.SPANS_GCFREE + "; pass " + a.aPath.name + "." + name + "(...) as an argument of a @:hxmc.gcfree function");
+					KernelCheck.SPANS_KERNEL + "; pass " + a.aPath.name + "." + name + "(...) as an argument of a @:hxmc.kernel function");
 			var xs = operands(cargs);
 			function arg(k:Int, d:Int):Ex
 				return k < xs.length && !strip(cargs[k]).eexpr.match(TConst(TNull)) ? loc(coerce(xs[k], tyOf(cargs[k]), TI32), TI32) : EInt(d);
@@ -2895,8 +2895,8 @@ class FnLower {
 					fill = () -> make(s, loc(ECall(spanSupport(sd, "bytesAddr"), vector(b, pos)), TI64), n);
 				case _:
 					var buf = loc(coerce(xs[0], tyOf(cargs[0]), TI64), TI64), pos = arg(1, 0), len = arg(2, -1);
-					// (GC code throws OutsideBounds; GC-free code cannot: it ends the program)
-					var n = fi.declGcFree ? loc(ECall(spanSupport(sd, "ioRangeFatal"), vector(buf, pos, len, at)),
+					// (GC code throws OutsideBounds; a kernel cannot: it ends the program)
+					var n = fi.declKernel ? loc(ECall(spanSupport(sd, "ioRangeFatal"), vector(buf, pos, len, at)),
 						TI32) : loc(ECall(spanSupport(sd, "ioRange"), vector(buf, pos, len)), TI32);
 					fill = () -> make(s, loc(ECall(spanSupport(sd, "ioAddr"), vector(buf, pos)), TI64), n);
 			}
@@ -2906,7 +2906,7 @@ class FnLower {
 		// (the element type: elem and setElem are called by the inline get and
 		// set, whose `this` is SpanData: their own type is the element's)
 		var elemT = if (name == "elem" || name == "setElem") e.etype else {
-			var sp = GcFreeCheck.spanOf(cargs[0].etype);
+			var sp = KernelCheck.spanOf(cargs[0].etype);
 			if (sp == null) cfail("hxmc." + a.aPath.name + "." + name + ": not called on a span", e);
 			sp.elem;
 		}
@@ -2958,7 +2958,7 @@ class FnLower {
 				make(s, elem(ptr, pos), cnt);
 				coerce(ELocal(s), sdt, tyOf(e));
 			case "reinterpret":
-				var to = GcFreeCheck.spanOf(e.etype);
+				var to = KernelCheck.spanOf(e.etype);
 				var sizeU = CInterop.sizeOf(ptrElemCt(to.elem, e));
 				var n = loc(EConv(L2I, ECallHost("hxmc_unsafe_Mem_udiv", vector(EBin(LMul, EConv(I2L, len), EConv(I2L, EInt(size))), EConv(I2L, EInt(sizeU))), TI64)), TI32);
 				var s = newSlot(sdt, true);

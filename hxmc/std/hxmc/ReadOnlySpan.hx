@@ -8,8 +8,8 @@ import hxmc.unsafe.UInt8;
 
 // A checked view of memory that cannot be written through (docs/interop.md,
 // "Spans"): hxmc.Span's reading half, a distinct type (a Span converts to
-// it, never back). It lives where a Span does: only in GC-free code, made by
-// GC code only as an argument of a call of a GC-free function.
+// it, never back). It lives where a Span does: only in kernels, made by
+// GC code only as an argument of a call of a kernel.
 abstract ReadOnlySpan<T>(SpanData) {
 	public var length(get, never):Int;
 

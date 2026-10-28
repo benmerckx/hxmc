@@ -27,7 +27,7 @@ import sys.thread.Thread;
 	function new() {}
 }
 
-@:hxmc.gcfree class Inflate {
+@:hxmc.kernel class Inflate {
 	public static inline var ERR = -1;
 	static inline var FAST = 10;
 	// (a code's Ints: the counts per length, the symbols, the table)

@@ -8,12 +8,12 @@ import hxmc.ir.Lower.LowerError;
 
 using core.TFunctions;
 
-// The safe subset of GC-free code (docs/interop.md, "GC-free code"): the
-// body of a function declared @:hxmc.gcfree or @:hxmc.blocking and not
+// The safe subset of kernels (docs/interop.md, "Kernels"): the
+// body of a function declared @:hxmc.kernel or @:hxmc.blocking and not
 // @:hxmc.unsafe, checked on the typed AST (FnLower.run) before it is
 // lowered. Whatever Haxe inlined into it is checked as its own code. What
 // GC-freedom itself asks (no GC point, no GC value, calls only of GC-free
-// functions) Facts.gcFreeCulprit checks again on the lowered body, for every
+// functions) Facts.kernelCulprit checks again on the lowered body, for every
 // build: a body the compilation server reuses is not checked here again.
 //
 // The rules, each error naming the rule and the expression:
@@ -24,9 +24,9 @@ using core.TFunctions;
 //     one, no call of Mem, Atomic, Callback or a C function;
 //   - no unchecked cast but between scalars;
 //   - no write of a static (reading one is fine);
-//   - no closure, no call but of static @:hxmc.gcfree functions, Math's
+//   - no closure, no call but of static @:hxmc.kernel functions, Math's
 //     and Std.int; no throw, no try, no untyped code.
-class GcFreeCheck {
+class KernelCheck {
 	var l:LowerQueries;
 	var fi:FuncInfo;
 	var errors:Array<String> = [];
@@ -39,7 +39,7 @@ class GcFreeCheck {
 
 	// the violations of fi's body tf (an error listing them all), or nothing
 	public static function check(l:LowerQueries, fi:FuncInfo, tf:TFunc) {
-		var c = new GcFreeCheck(l, fi);
+		var c = new KernelCheck(l, fi);
 		for (a in tf.tfArgs)
 			c.value(a.variable.vType, a.variable.vPos, "the parameter " + a.variable.vName);
 		c.value(tf.tfType, fi.pos, "the result");
@@ -49,7 +49,7 @@ class GcFreeCheck {
 
 	function fail(p:core.Globals.Pos, what:String, rule:String) {
 		var at = CInterop.posOf(p);
-		var msg = (at != "" ? at + ": " : "") + Facts.displayName(fi) + ": " + what + " (gcfree: " + rule + ")";
+		var msg = (at != "" ? at + ": " : "") + Facts.displayName(fi) + ": " + what + " (kernel: " + rule + ")";
 		if (seen.exists(msg)) return;
 		seen.set(msg, true);
 		errors.push(msg);
@@ -62,7 +62,7 @@ class GcFreeCheck {
 
 	// the rule of where spans exist, as errors name it
 	public static inline var SPANS_LOCAL = "spans live in parameters and locals only";
-	public static inline var SPANS_GCFREE = "spans exist only in GC-free code";
+	public static inline var SPANS_KERNEL = "spans exist only in kernels";
 
 	public static function isSpanAbstract(a:TAbstract):Bool
 		return a.aPath.pack.length == 1 && a.aPath.pack[0] == "hxmc" && (a.aPath.name == "Span" || a.aPath.name == "ReadOnlySpan");
@@ -74,10 +74,10 @@ class GcFreeCheck {
 			case _: null;
 		}
 
-	// the error of a span where it may not be (outside GC-free code, in a
+	// the error of a span where it may not be (outside a kernel, in a
 	// declaration): `what` names it
 	public static function spanError(at:String, fn:String, what:String, rule:String):String
-		return (at != "" ? at + ": " : "") + (fn != "" ? fn + ": " : "") + what + " (gcfree: " + rule + ")";
+		return (at != "" ? at + ": " : "") + (fn != "" ? fn + ": " : "") + what + " (kernel: " + rule + ")";
 
 	// ---- types
 
@@ -140,17 +140,17 @@ class GcFreeCheck {
 			case _: false;
 		}
 
-	static function isGcFreeDecl(c:TClass, cf:TClassField):Bool {
+	static function isKernelDecl(c:TClass, cf:TClassField):Bool {
 		inline function has(ml:core.Ast.Metadata, n:String)
 			return ml.length > 0 && Lower.hasMeta(n, ml);
-		if (has(cf.cfMeta, ":hxmc.gcfree") || has(cf.cfMeta, ":hxmc.blocking") || has(c.clMeta, ":hxmc.gcfree")) return true;
+		if (has(cf.cfMeta, ":hxmc.kernel") || has(cf.cfMeta, ":hxmc.blocking") || has(c.clMeta, ":hxmc.kernel")) return true;
 		return switch c.clKind {
-			case KAbstractImpl(a): has(a.aMeta, ":hxmc.gcfree");
+			case KAbstractImpl(a): has(a.aMeta, ":hxmc.kernel");
 			case _: false;
 		}
 	}
 
-	// the extern functions safe GC-free code may call: Math's, Std.int, Struct's layout constants
+	// the extern functions a safe kernel may call: Math's, Std.int, Struct's layout constants
 	static function allowedExtern(c:TClass, cf:TClassField):Bool {
 		switch c.clKind {
 			// (a span's accessors; making one from a Ptr needs @:hxmc.unsafe)
@@ -177,22 +177,22 @@ class GcFreeCheck {
 				if (c.hasClassFlag(CExtern) || cf.cfExpr == null || CInterop.cSymbol(c, cf) != null) {
 					if (!allowedExtern(c, cf))
 						fail(e.epos, "a call of " + name, "Mem, Atomic and C functions need @:hxmc.unsafe");
-				} else if (!isGcFreeDecl(c, cf))
-					fail(e.epos, "a call of " + name + ", which is not @:hxmc.gcfree", "calls only GC-free functions");
+				} else if (!isKernelDecl(c, cf))
+					fail(e.epos, "a call of " + name + ", which is not @:hxmc.kernel", "calls only kernels");
 			case TField(_, FInstance(c, _, cf)):
-				fail(e.epos, "a call of the method " + core.Globals.sTypePath(c.clPath) + "." + cf.cfName, "calls only static GC-free functions");
+				fail(e.epos, "a call of the method " + core.Globals.sTypePath(c.clPath) + "." + cf.cfName, "calls only static kernels");
 			case _:
-				fail(e.epos, "a call through a closure or a structural field", "calls only static GC-free functions");
+				fail(e.epos, "a call through a closure or a structural field", "calls only static kernels");
 		}
 	}
 
 	// a struct's constructor, called by `new`: its body is checked as this
-	// function's (once), unless declared GC-free itself
+	// function's (once), unless declared a kernel itself
 	var ctors:Array<TClass> = [];
 
 	function structCtor(c:TClass) {
 		var cf = c.clConstructor;
-		if (cf == null || ctors.indexOf(c) >= 0 || isGcFreeDecl(c, cf)) return;
+		if (cf == null || ctors.indexOf(c) >= 0 || isKernelDecl(c, cf)) return;
 		ctors.push(c);
 		switch cf.cfExpr {
 			case {eexpr: TFunction(tf)}:
@@ -271,10 +271,10 @@ class GcFreeCheck {
 				return;
 			case TBinop(OpAssign | OpAssignOp(_), lhs, _):
 				var s = writtenStatic(lhs);
-				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in GC-free code");
+				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in kernels");
 			case TUnop(Increment | Decrement, _, x):
 				var s = writtenStatic(x);
-				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in GC-free code");
+				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in kernels");
 			case _:
 		}
 		core.Texpr.iter(expr, e);

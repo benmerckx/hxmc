@@ -1,5 +1,5 @@
-// A @:hxmc.blocking function calls only @:hxmc.gcfree or @:hxmc.blocking functions (and fast or blocking C).
-// expect: BlockingCallsUnsafe.f is declared @:hxmc.blocking but it calls BlockingCallsUnsafe.g, which is not @:hxmc.gcfree (nor @:hxmc.blocking)
+// A @:hxmc.blocking function calls only @:hxmc.kernel or @:hxmc.blocking functions (and fast or blocking C).
+// expect: BlockingCallsUnsafe.f is declared @:hxmc.blocking but it calls BlockingCallsUnsafe.g, which is not @:hxmc.kernel (nor @:hxmc.blocking)
 class BlockingCallsUnsafe {
 	@:hxmc.unsafe static function g(v:Int):Int
 		return v * 2;
