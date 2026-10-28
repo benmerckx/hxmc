@@ -674,13 +674,9 @@ class Driver {
 			var fps = hostFingerprints().filter(x -> named(x.sym));
 			all.push(hxmc.macro.HostTable.build(all, abi, fps, hxmc.macro.HostTable.imports(all, abi), named, o.stats));
 		}
-		var bundle = abi.ios() && hxmc.ios.Bundle.isBundle(out) ? new hxmc.ios.Bundle(out, abi, o.ios, o.iosMinVersion) : null;
 		// (-D hxmc.codesign-*: a Mach-O output's signature binds the files a
 		// packager wrote for the bundle around it, Options)
-		if (o.codesigned()) {
-			if (abi.os != "macos") throw "hxmc: -D hxmc.codesign-*: a Mach-O output's (macOS, iOS) only";
-			if (bundle != null) throw "hxmc: -D hxmc.codesign-*: not with an app bundle (.app, .ipa), which signs its executable itself";
-		}
+		if (o.codesigned() && abi.os != "macos") throw "hxmc: -D hxmc.codesign-*: a Mach-O output's (macOS, iOS) only";
 		// the runtime objects' sections and the runtime's Haxe functions that
 		// nothing reaches are left out (LinkCore.gc; a Mir host: every runtime
 		// function stays, for the code it loads)
@@ -704,22 +700,20 @@ class Driver {
 			if (abi.output == SharedLibrary) l.installName = "@rpath/" + haxe.io.Path.withoutDirectory(out);
 			l.dylibs = dylibs;
 			if (abi.ios()) l.minos = o.iosMinos;
-			if (bundle != null) l.sign = bundle.sign;
-			else if (o.codesigned()) {
+			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;
 				l.sign = CodeSign.adhoc(o.codesignId ?? haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(out)), file(o.codesignInfoPlist),
 					file(o.codesignResources), file(o.codesignEntitlements));
 			}
 			l.link("main");
 		} : {
-			// (an APK: the library it holds, lib/<abi>/libmain.so, Apk)
-			var apk = abi.android && StringTools.endsWith(out, ".apk");
 			var l = if (abi.linksDynamically()) {
 				var d = new LinkDyn(all, abi);
 				d.libs = dylibs;
 				// (the soname: the output's file name, whatever packages it)
-				if (abi.output == SharedLibrary) d.soname = haxe.io.Path.withoutDirectory(apk ? "libmain.so" : out);
-				if (abi.android && !apk) d.optional = ["ANativeActivity_onCreate"];
+				if (abi.output == SharedLibrary) d.soname = haxe.io.Path.withoutDirectory(out);
+				// (Android: ANativeActivity_onCreate when the program defines it, an app's entry)
+				if (abi.android) d.optional = ["ANativeActivity_onCreate"];
 				// (a library named without a directory or a version: next to the executable)
 				d.origin = Lambda.exists([for (f in dylibs) f], f -> f.indexOf("/") < 0 && StringTools.endsWith(f, ".so"));
 				d;
@@ -733,22 +727,6 @@ class Driver {
 			exe;
 		};
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";
-		// iOS: the app bundle (or its .ipa) around the executable
-		if (bundle != null) {
-			bundle.write(out, exe);
-			return;
-		}
-		// Android: the shared library alone (lib<name>.so), or in an APK
-		if (abi.android && StringTools.endsWith(out, ".apk")) {
-			// (classes.dex: Glue's classes, for a program with listeners; views: org.hxmc.Activity)
-			var glue = false, views = false;
-			for (f in prep.p.funcs) {
-				if (f.name == hxmc.android.Glue.USED_BY) glue = true;
-				if (f.name == hxmc.android.Glue.VIEWS_USED_BY) views = true;
-			}
-			hxmc.android.Apk.write(out, exe, glue ? hxmc.android.Glue.dex() : null, views, abi, o.android, hxmc.android.Apk.keyFile(o.android, CacheDir.root()));
-			return;
-		}
 		sys.io.File.saveBytes(out, exe);
 		markExecutable(out);
 		if (o.stats && prep.p.stacks) Sys.println('hxmc: stack table: ' + StackTable.stats + ', flags ' + StackTable.flags(prep.p));

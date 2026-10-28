@@ -3,6 +3,13 @@
 Open work per target. What is built: [using.md](../using.md#targets) and
 [hxmc.md](../hxmc.md#targets).
 
+Packaging (APKs, app bundles, their signing, icons and resources, store
+bundles, running on devices) is a packager's, which builds on hxmc's
+native output
+([using.md](../using.md#native-output-for-a-packager)): Android's `.so`,
+its soname the output's file name; iOS's plain Mach-O, with `-D
+hxmc.ios-min-version` and `-D hxmc.codesign-*`.
+
 ## WebAssembly
 
 - **Threads**: shared memory, atomics and `memory.atomic.wait`, under
@@ -26,39 +33,19 @@ not work as well as hxmc's own collector over linear memory and cost about
 11k lines, for modules that were smaller, but not by much. Its code, tests,
 measurements and open items are in the git history before #90's merge.
 
-Packaging is planned to move to a downstream packager, which builds on hxmc's
-native output ([using.md](../using.md#native-output-for-a-packager)):
-Android's `.so`, its soname the output's file name; iOS's plain Mach-O,
-with `-D hxmc.ios-min-version` and `-D hxmc.codesign-*`.
-
 ## Android
 
-Built: NativeActivity apps and Java glue. Left:
-
-- several ABIs in one APK;
-- release signing with the developer's keystore (PKCS#12, v3 for key
-  rotation);
-- icons and a `resources.arsc`;
-- `.aab` bundles for Google Play (protobuf manifest and resources);
 - `DT_RELR` or packed relocations to shrink the RELATIVE table; RELRO for
   data that holds addresses.
 
 ## iOS
 
-Built: simulator and device bundles, ad hoc signed. Left:
-
-- **Device signing**: a CMS signature by the developer's certificate (RSA
-  or P-256; `P256.hx` has the curve), the provisioning profile as
-  `embedded.mobileprovision`, its entitlements (also as DER), the
-  designated requirement, the team id. `CodeSign.Identity` is the API,
-  filled from a PKCS#12 export and a downloaded profile. Install with
-  libimobiledevice or `xcrun devicectl`.
-- **Icons**: an asset catalog (`Assets.car`, undocumented); plain PNGs in
-  `CFBundleIcons` meanwhile. `PkgInfo`, a binary `Info.plist`.
-- **UIScene** (required after iOS 26) and `os_log` for output on a device.
-- **App Store checks**: the declared SDK and Xcode (`DT*` keys),
-  `LC_ENCRYPTION_INFO_64`, and the main stack's 1 GB reservation (iOS
-  limits address space).
+- **Device signing**: a CMS signature by the developer's certificate over
+  the CodeDirectory, the designated requirement and the team id, which the
+  linker writes (`CodeSign.Identity` is the API) or the packager adds; the
+  provisioning profile and the rest of the bundle are the packager's.
+- **App Store checks** of the executable: `LC_ENCRYPTION_INFO_64`, and the
+  main stack's 1 GB reservation (iOS limits address space).
 - `ios-sim-x86_64` is left out: it needs `objc_msgSend_stret`.
 
 ## Windows

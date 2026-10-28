@@ -54,7 +54,6 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -115,16 +114,6 @@ for (let i = 0; i < all.length; i++) {
 if (!out) usage('the build names no output (--custom-target hxmc=<out>)');
 out = path.resolve(out);
 const browser = out.endsWith('.wasm');
-// an APK: on the Android device or emulator adb reaches (the dev host: below)
-const android = out.endsWith('.apk');
-// an app for the iOS simulator: on the booted simulator (the app is the dev
-// host: each later build a dylib, -D hxmc.shared, written beside it as
-// -D hxmc.output names, which the simulator's app loads from the Mac's files)
-const defineOf = (k) => {
-	const i = all.findIndex((a, n) => (a === '-D' || a === '--define') && all[n + 1]?.startsWith(k + '='));
-	return i >= 0 ? all[i + 1].slice(k.length + 1) : null;
-};
-const iosSim = out.endsWith('.app') && (defineOf('hxmc.target') ?? '').startsWith('ios-sim');
 
 // the packages the build uses: a class path's package (the nearest
 // package.json with a "haxe" field) and the -lib packages from node_modules
@@ -303,32 +292,20 @@ const hxbCache = process.env.HXMC_DEV_HXB_CACHE === '1' ? [] : ['-D', 'disable-h
 // build, <out>.dev/<n>.so) and keeps the window and the GPU context across
 // builds; HXMC_DEV_HOST=0: a new process per build instead
 // (macOS: each build a dylib)
-const hosted = !browser && !android && !out.endsWith('.app') && osPackage && process.env.HXMC_DEV_HOST !== '0'
+const hosted = !browser && osPackage && process.env.HXMC_DEV_HOST !== '0'
 	&& (process.platform === 'darwin' || process.platform === 'win32'
 		|| process.platform === 'linux' && all.some((a, i) => (a === '-D' || a === '--define') && all[i + 1] === 'hxmc.libc=glibc'));
 const libExt = process.platform === 'darwin' ? '.dylib' : process.platform === 'win32' ? '.dll' : '.so';
-// Android: the APK is the dev host, installed once: its library's activity
-// glue keeps the window, the EGL context and the input queue, and each
-// later build's library (taken from its APK) is fetched by the running
-// build over the dev server's socket (adb reverse) into the app's files and
-// loaded there, in the same process; the APK built for this server's port
-// (-D hxmc.dev-server), asking for the INTERNET permission (its socket)
-const androidPort = Number(process.env.HXMC_DEV_ANDROID_PORT ?? port + 1);
-const IOS_APP = ['-D', 'hxmc.dev-host', '-D', 'hxmc.exports=hxmc_dev_run,hxmc_dev_state'];
-let iosInstalled = false;
-const hostArgs = hosted ? ['-D', 'hxmc.shared', '-D', 'hxmc.dev-host', '-D', 'hxmc.exports=hxmc_dev_run,hxmc_dev_state']
-	: android ? ['-D', 'hxmc.dev-host', '-D', 'hxmc.exports=hxmc_dev_run,hxmc_dev_state', '-D', 'hxmc.dev-server=127.0.0.1:' + androidPort,
-		'-D', 'hxmc.android-permissions=INTERNET'] : [];
+const hostArgs = hosted ? ['-D', 'hxmc.shared', '-D', 'hxmc.dev-host', '-D', 'hxmc.exports=hxmc_dev_run,hxmc_dev_state'] : [];
 const changedFiles = new Set();
 async function build() {
 	const files = [...changedFiles];
 	changedFiles.clear();
 	for (const file of files)
 		if (file.endsWith('.hx')) await request(['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file } })]);
-	// (the iOS simulator: the app first, then dylibs)
 	// (Windows: a DLL prefers one of two bases, the other build's while it is loaded)
 	const extra = hosted && process.platform === 'win32' ? [...hostArgs, '-D', 'hxmc.dll-base=' + (libCount % 2 === 0 ? '0x10000000' : '0x30000000')]
-		: !iosSim ? hostArgs : iosInstalled ? [...IOS_APP, '-D', 'hxmc.shared', '-D', 'hxmc.output=' + path.join(hostDir, 'next.dylib')] : IOS_APP;
+		: hostArgs;
 	return request([...args, '-D', 'hxmc.dev', ...extra, ...hxbCache, ...(hxmcStd ? ['-cp', hxmcStd] : [])]);
 }
 
@@ -336,10 +313,6 @@ async function build() {
 // its sources' and the compiler's hash), while the first build runs
 const hostDir = out + '.dev';
 let hostExe = null, hostBuilt = Promise.resolve(), libCount = 0;
-if (iosSim) {
-	fs.rmSync(hostDir, { recursive: true, force: true });
-	fs.mkdirSync(hostDir, { recursive: true });
-}
 if (hosted) {
 	fs.rmSync(hostDir, { recursive: true, force: true });
 	fs.mkdirSync(hostDir, { recursive: true });
@@ -386,15 +359,12 @@ function measured() {
 	if (!timing) return;
 	const t = timing;
 	timing = null;
-	log(`hxmc dev: ${browser || hosted || android || iosSim ? 'swapped' : 'reloaded'} in ${Math.round(performance.now() - t.seen)} ms (build ${t.build} ms)`);
+	log(`hxmc dev: ${browser || hosted ? 'swapped' : 'reloaded'} in ${Math.round(performance.now() - t.seen)} ms (build ${t.build} ms)`);
 }
 
-// natively: the program's connection (Android: also "lib <n>", a build's library asked for on a connection of its own)
+// natively: the program's connection
 const appServer = net.createServer((sock) => {
-	const before = childSocket;
 	childSocket = sock;
-	// (Android, the iOS simulator: the device's program reached the server)
-	if (android || iosSim) setTimeout(() => childSocket === sock && !sock.destroyed && log('hxmc dev: the program connected'), 50);
 	let buf = '';
 	sock.on('data', (d) => {
 		buf += d;
@@ -402,13 +372,6 @@ const appServer = net.createServer((sock) => {
 		while ((nl = buf.indexOf('\n')) >= 0) {
 			const line = buf.slice(0, nl);
 			buf = buf.slice(nl + 1);
-			if (line.startsWith('lib ')) {
-				if (childSocket === sock) childSocket = before;
-				const lib = androidLibs.get(line.slice(4).trim());
-				if (lib) sock.end(lib);
-				else sock.destroy();
-				return;
-			}
 			try {
 				const m = JSON.parse(line);
 				if (m.type === 'frame') measured();
@@ -420,73 +383,8 @@ const appServer = net.createServer((sock) => {
 	sock.on('close', () => {
 		if (childSocket === sock) childSocket = null;
 	});
-}).listen(android ? androidPort : 0, '127.0.0.1');
-await new Promise((r, reject) => {
-	appServer.on('listening', r);
-	appServer.on('error', (e) => (console.error('hxmc dev: the port for the device: ' + e.message + ' (HXMC_DEV_ANDROID_PORT)'), process.exit(1)));
-});
-
-// --- Android ---
-
-const androidLibs = new Map();
-let androidInstalled = false, androidCount = 0;
-const adb = (args, opts = {}) => new Promise((resolve) => {
-	const p = spawn(process.env.ADB ?? 'adb', args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
-	let o = '';
-	p.stdout.on('data', (d) => (o += d));
-	p.stderr.on('data', (d) => (o += d));
-	p.on('error', (e) => resolve({ code: -1, out: String(e) }));
-	p.on('exit', (code) => resolve({ code, out: o }));
-});
-// the APK's library (lib/<abi>/libmain.so: a zip's entry, stored or deflated)
-function apkLibrary(file) {
-	const b = fs.readFileSync(file);
-	let e = b.length - 22;
-	while (e >= 0 && b.readUInt32LE(e) !== 0x06054b50) e--;
-	let at = b.readUInt32LE(e + 16);
-	const n = b.readUInt16LE(e + 10);
-	for (let i = 0; i < n; i++) {
-		const method = b.readUInt16LE(at + 10), size = b.readUInt32LE(at + 20), nameLen = b.readUInt16LE(at + 28), extra = b.readUInt16LE(at + 30), comment = b.readUInt16LE(at + 32);
-		const local = b.readUInt32LE(at + 42), name = b.toString('utf8', at + 46, at + 46 + nameLen);
-		at += 46 + nameLen + extra + comment;
-		if (!/^lib\/[^/]+\/lib[^/]+\.so$/.test(name)) continue;
-		const data = local + 30 + b.readUInt16LE(local + 26) + b.readUInt16LE(local + 28);
-		const raw = b.subarray(data, data + size);
-		return method === 0 ? raw : zlib.inflateRawSync(raw);
-	}
-	throw new Error('hxmc dev: ' + file + ' has no library');
-}
-function androidPackage() {
-	const i = all.findIndex((a, k) => (a === '-D' || a === '--define') && all[k + 1]?.startsWith('hxmc.android-package='));
-	return i >= 0 ? all[i + 1].split('=')[1] : 'org.hxmc.' + path.basename(out, '.apk').toLowerCase().replace(/[^a-z0-9_]/g, '_');
-}
-async function androidStart() {
-	const pkg = androidPackage();
-	let r = await adb(['install', '-r', out]);
-	if (r.code !== 0) return console.error('hxmc dev: adb install failed:\n' + r.out);
-	r = await adb(['reverse', 'tcp:' + androidPort, 'tcp:' + androidPort]);
-	if (r.code !== 0) return console.error('hxmc dev: adb reverse failed:\n' + r.out);
-	await adb(['shell', 'am', 'force-stop', pkg]);
-	r = await adb(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1']);
-	if (r.code !== 0) return console.error('hxmc dev: the app did not start:\n' + r.out);
-	androidInstalled = true;
-	log(`hxmc dev: ${pkg} installed and started (its output: adb logcat -s hxmc)`);
-}
-// a build: the running one fetches its library and hands over to it; none running: the APK installed (again) and started
-async function swapAndroid() {
-	const sock = childSocket;
-	if (androidInstalled && sock) {
-		const n = String(++androidCount);
-		androidLibs.clear();
-		androidLibs.set(n, apkLibrary(out));
-		const saved = new Promise((r) => (sock.saved = r));
-		const closed = new Promise((r) => sock.once('close', r));
-		sock.write(JSON.stringify({ type: 'reload', snapshot: '-', fetch: n }) + '\n');
-		await Promise.race([saved, closed]);
-		return;
-	}
-	await androidStart();
-}
+}).listen(0, '127.0.0.1');
+await new Promise((r) => appServer.on('listening', r));
 
 function startNative(withSnapshot, lib) {
 	const env = { ...process.env, HXMC_DEV: '127.0.0.1:' + appServer.address().port };
@@ -526,45 +424,8 @@ async function swapHosted() {
 }
 
 // natively: the running program snapshots and exits; the new build starts with its state
-// the iOS simulator: the app installed and launched on the booted
-// simulator once; then each build's dylib handed over to by the running build
-async function swapIosSim() {
-	const sock = childSocket;
-	if (iosInstalled && sock) {
-		const lib = path.join(hostDir, `${++libCount}.dylib`);
-		fs.renameSync(path.join(hostDir, 'next.dylib'), lib);
-		try { fs.unlinkSync(snapshotFile); } catch {}
-		const saved = new Promise((r) => (sock.saved = r));
-		const closed = new Promise((r) => sock.once('close', r));
-		sock.write(JSON.stringify({ type: 'reload', snapshot: snapshotFile, library: lib }) + '\n');
-		await Promise.race([saved, closed]);
-		return;
-	}
-	if (iosInstalled) return log('hxmc dev: the app is not connected; relaunch it, or restart hxmc dev to install it again');
-	const id = defineOf('hxmc.ios-bundle-id') ?? 'org.hxmc.' + path.basename(out, '.app').replace(/[^a-zA-Z0-9.-]/g, '-');
-	const run = (a, env = {}) => new Promise((resolve) => {
-		const p = spawn('xcrun', ['simctl', ...a], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
-		let o = '';
-		p.stdout.on('data', (d) => (o += d));
-		p.stderr.on('data', (d) => (o += d));
-		p.on('error', (e) => resolve({ code: -1, out: String(e) }));
-		p.on('exit', (code) => resolve({ code, out: o }));
-	});
-	let r = await run(['install', 'booted', out]);
-	if (r.code !== 0) return console.error('hxmc dev: simctl install (a booted simulator?) failed:\n' + r.out);
-	try { fs.unlinkSync(snapshotFile); } catch {}
-	const logOut = path.join(hostDir, 'stdout.txt'), logErr = path.join(hostDir, 'stderr.txt');
-	r = await run(['launch', '--terminate-running-process', '--stdout=' + logOut, '--stderr=' + logErr, 'booted', id],
-		{ SIMCTL_CHILD_HXMC_DEV: '127.0.0.1:' + appServer.address().port, SIMCTL_CHILD_HXMC_DEV_SNAPSHOT: snapshotFile });
-	if (r.code !== 0) return console.error('hxmc dev: simctl launch failed:\n' + r.out);
-	iosInstalled = true;
-	log(`hxmc dev: ${id} installed and launched on the booted simulator (its output: ${path.relative(cwd, logOut)})`);
-}
-
 async function reloadNative() {
 	if (hosted) return swapHosted();
-	if (iosSim) return swapIosSim();
-	if (android) return swapAndroid();
 	const old = child, sock = childSocket;
 	let withSnapshot = false;
 	if (old) {
@@ -810,7 +671,7 @@ async function rebuild(seen) {
 	const t0 = performance.now();
 	// (natively: the running program's file moved aside, as a running executable cannot be written over)
 	const aside = out + '.running';
-	const moved = !browser && !hosted && !android && !iosSim && child !== null && fs.existsSync(out) && (() => {
+	const moved = !browser && !hosted && child !== null && fs.existsSync(out) && (() => {
 		try { fs.renameSync(out, aside); return true; } catch { return false; }
 	})();
 	const r = await build();

@@ -37,7 +37,7 @@ class LinkMachO extends LinkCore {
 
 	public var symbols = false; // a symbol table of the code (profilers, debuggers)
 	// the code signature (linker-signed by default; ad hoc with a bundle's
-	// inputs: hxmc.ios.Bundle, -D hxmc.codesign-*, CodeSign.adhoc)
+	// inputs: -D hxmc.codesign-*, CodeSign.adhoc)
 	public var sign = new CodeSign();
 	// iOS: the oldest version the output runs on (15.0: UILaunchScreen is
 	// 14's, and 15 is the floor of current Xcodes and the App Store's

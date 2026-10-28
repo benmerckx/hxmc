@@ -11,21 +11,13 @@ class Options {
 	public var pic = false; // -D hxmc.pic: position-independent executable
 	public var shared = false; // -D hxmc.shared: a shared library (Linux in the glibc mode; Android always)
 	public var dllBase:Null<String> = null; // -D hxmc.dll-base=0x<hex>: a Windows DLL's preferred base
-	public var output:Null<String> = null; // -D hxmc.output=<path>: the output, instead of --custom-target's (hxmc dev: the iOS simulator's dylibs, where the build names an app)
+	public var output:Null<String> = null; // -D hxmc.output=<path>: the output, instead of --custom-target's (a build that names one output and writes another)
 	// -D hxmc.exports=<name>[,<name>...]: what a shared library exports (Android: ANativeActivity_onCreate too)
 	public var exports:Array<String> = [];
-	// Android's APK (hxmc.android.Apk): -D hxmc.android-package=<id>, -D
-	// hxmc.android-label=<text>, -D hxmc.android-min-sdk=<n>, -D
-	// hxmc.android-target-sdk=<n>, -D hxmc.android-version=<code>
-	public var android = new Map<String, String>();
-	// iOS's app bundle (hxmc.ios.Bundle): -D hxmc.ios-bundle-id=<id>, -D
-	// hxmc.ios-name=<text>, -D hxmc.ios-version=<n>, -D
-	// hxmc.ios-version-name=<text>, -D hxmc.ios-entitlements=<file>
-	public var ios = new Map<String, String>();
 	// -D hxmc.ios-min-version=<major.minor>: the oldest iOS an iOS output runs
-	// on (LC_BUILD_VERSION's minimum, LinkMachO.minos; a bundle's
-	// MinimumOSVersion), 15.0 and the floor; iosMinos: as LinkMachO writes it
-	public var iosMinVersion = "15.0";
+	// on (LC_BUILD_VERSION's minimum, LinkMachO.minos; the packager writes
+	// the same in the bundle's MinimumOSVersion), 15.0 and the floor; as
+	// LinkMachO writes it
 	public var iosMinos = LinkMachO.IOS_MIN;
 	// a Mach-O output's code signature (CodeSign), for a packager that writes
 	// the bundle around it: -D hxmc.codesign-id=<identifier>, -D
@@ -220,20 +212,11 @@ class Options {
 		if (ex != null)
 			for (n in ex.split(","))
 				if (StringTools.trim(n) != "") o.exports.push(StringTools.trim(n));
-		for (k in ["package", "label", "min_sdk", "target_sdk", "version", "version_name", "key", "permissions"]) {
-			var v = def("hxmc.android_" + k); // (-D turns the dashes into underscores)
-			if (v != null) o.android.set(k, v);
-		}
-		for (k in ["bundle_id", "name", "version", "version_name", "entitlements"]) {
-			var v = def("hxmc.ios_" + k);
-			if (v != null) o.ios.set(k, v);
-		}
 		var min = def("hxmc.ios_min_version");
 		if (min != null) {
 			var v = ~/^([0-9]+)\.([0-9]+)$/;
 			if (!v.match(min) || Std.parseInt(v.matched(1)) < 15 || Std.parseInt(v.matched(2)) > 255)
 				throw "hxmc: iOS: -D hxmc.ios-min-version=" + min + ": major.minor, 15.0 or later";
-			o.iosMinVersion = min;
 			o.iosMinos = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
 		}
 		o.codesignId = def("hxmc.codesign_id");

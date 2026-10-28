@@ -37,7 +37,6 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `MkStd.hx` | merges hxmc's std with the Eval originals into `bin/hxmc/std` |
 | `StdDce.hx` | DCE of hxmc's std overrides as of the std ([Reachability](#reachability)) |
 | `macro/`, `interp/` | the Mir interpreter's encoding and its uses: Mir macros and `--run` ([below](#macros-on-the-mir-interpreter)) |
-| `android/`, `ios/` | the APK and app bundle writers |
 
 Conventions:
 
@@ -932,7 +931,7 @@ formatter 0.19 s (Eval 0.17 s); plans/compiler.md, "Mir macros".
 | Linux | static ELF with musl's members. With `-D hxmc.libc=glibc` (`LinkDyn.hx`): dynamically linked, `PT_INTERP`, `DT_NEEDED`, imports with glibc 2.17's symbol versions bound at load time, a generated `_start` calling `__libc_start_main`, its own runtime objects (`<target>-glibc`) |
 | Windows | PE over the UCRT, imports written directly from the import libraries |
 | macOS | Mach-O against libSystem, ad hoc signed (`CodeSign.hx`) |
-| Android | a shared library against Bionic in an APK hxmc writes ([below](#android)) |
+| Android | a shared library against Bionic, which a packager puts in an APK ([below](#android)) |
 | iOS | macOS's Mach-O and runtime objects with the iOS platform ([below](#ios)) |
 | wasm32-wasi | the whole runtime in Haxe; exceptions with `exnref` or, with `-D hxmc.wasm-eh=legacy`, `try`/`catch_all`/`rethrow` |
 
@@ -998,14 +997,9 @@ for mbedtls, libuv and `Layouts.hx`. `Mem.target()` 9 and 10 are Android;
 (it runs on the UI thread, which the runtime does not know); it starts the
 program's thread, where the runtime starts.
 
-**The APK** (`android/Apk.hx`): a binary-XML manifest (`Axml.hx`), the
-library stored and aligned to 16 KB, then an APK Signature Scheme v2 block,
-ECDSA P-256 in plain Haxe (`P256.hx`, RFC 6979 nonces, so signing is
-deterministic) with a debug key kept in the cache. A program that uses the
-Java glue gets a `classes.dex` (`Dex.hx`: a minimal DEX writer; `Glue.hx`:
-`org.hxmc.Glue`, one listener class whose methods call a registered
-native, and `org.hxmc.Activity`, a `NativeActivity` whose window draws
-views).
+**The APK**: a packager writes and signs it around the library
+(`--custom-target hxmc=<dir>/libmain.so`), with any Java glue
+([using.md](using.md#native-output-for-a-packager)).
 
 ### iOS
 
@@ -1015,12 +1009,13 @@ tells iOS from the simulator). The Mach-O carries the platform in
 `LC_BUILD_VERSION` (minimum 15.0, SDK 18.0). iOS 15 is the floor because
 `UILaunchScreen` is iOS 14's and current Xcodes start at 15.
 
-**The bundle** (`ios/Bundle.hx`): the executable, an XML `Info.plist`
-(`Plist.hx`), and `_CodeSignature/CodeResources`. The linker writes the ad
-hoc signature (`CodeSign.hx`), identified by the bundle id, whose special
+**The bundle**: a packager writes it (`Info.plist`,
+`_CodeSignature/CodeResources`, the `.ipa`) around a plain executable.
+It writes `Info.plist` and `CodeResources` first and passes them to the
+link (`-D hxmc.codesign-*`): the linker writes the ad hoc
+signature (`CodeSign.hx`), identified by the bundle id, whose special
 slots bind the `Info.plist`, an empty requirement set, `CodeResources` and
-the entitlements, as `codesign -s -` does. An `.ipa` is the bundle under
-`Payload/`.
+the entitlements, as `codesign -s -` does.
 
 **The app**: a program that defines `hxmc_ui_main` (`DataGen.UI_MAIN`) has
 the generated `main` run that on the big main stack instead of the body,
