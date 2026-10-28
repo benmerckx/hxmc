@@ -339,9 +339,19 @@ point. The compiler rejects one that is live across a GC point outside
 ### WebAssembly
 
 C functions become imports of the module `@:hxmc.lib` names (`env` by
-default), with pointers as i32. Functions the runtime implements in Haxe
-(`malloc`, `strlen`, `__errno_location`, ...) are called directly. The
-module exports `memory`, `_start` and `__indirect_function_table`.
+default), with pointers as i32. An import is its module and its name:
+`start` of `@:hxmc.lib("a")` and `start` of `@:hxmc.lib("b")` are two
+imports, each with its own signature, and each declaration calls its own.
+Declarations of one module and name are one import and must agree on the
+signature. Functions the runtime implements in Haxe (`malloc`, `strlen`,
+`__errno_location`, ...) are called directly when declared without a
+module or with `env`. The module exports `memory`, `_start` and
+`__indirect_function_table`.
+
+Natively it is the name alone: a program's C symbols share one namespace
+when linked (static linking, and ELF's search of every library loaded), so
+the same name in two libraries is one function with one signature, and
+signatures that differ are a compile error.
 
 A `@:hxmc.callback`'s address is its index in that table, so JavaScript
 calls it with `table.get(addr)(...)`, during an import call or after

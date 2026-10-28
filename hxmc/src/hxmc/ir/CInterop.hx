@@ -45,6 +45,9 @@ class CInterop {
 	// @:hxmc.lib: the library a symbol comes from (a DLL, a dylib, a
 	// WebAssembly import module)
 	public static var LIBS = new Map<String, String>();
+	// WebAssembly: the import's name of a symbol that importKey made (a C
+	// function of an @:hxmc.lib module other than "env")
+	public static var IMPORT_NAMES = new Map<String, String>();
 	// the externs of the program's own code (not hxmc's runtime): on
 	// WebAssembly, imports
 	public static var USER = new Map<String, Bool>();
@@ -61,6 +64,7 @@ class CInterop {
 		SIGS = new Map();
 		BLOCKING = new Map();
 		LIBS = new Map();
+		IMPORT_NAMES = new Map();
 		USER = new Map();
 		FnLower.C_EXTERNS = new Map();
 		FnLower.C_VARIADIC = new Map();
@@ -325,6 +329,22 @@ class CInterop {
 	// or @:hxmc.c on the field or its class (the field's @:native name, or
 	// its own name); null: not a C function
 	public static function cSymbol(c:TClass, cf:TClassField):Null<String> {
+		var name = cName(c, cf);
+		if (name == null || Lower.targetOs != 3) return name;
+		var lib = metaStr(":hxmc.lib", c, cf);
+		return lib != null && lib != "env" ? importKey(lib, name) : name;
+	}
+
+	// WebAssembly: a C function of the @:hxmc.lib module `lib` is the import
+	// (lib, name), so the same name in two modules is two functions, each
+	// with its own signature; their symbol in the program's objects (never a
+	// C identifier, and the module's length keeps two pairs apart). Natively
+	// C symbols share one namespace: the name alone (docs/interop.md)
+	static function importKey(lib:String, name:String):String
+		return "@import:" + lib.length + ":" + lib + "." + name;
+
+	// the C name of an extern function, as cSymbol describes it
+	public static function cName(c:TClass, cf:TClassField):Null<String> {
 		var m = core.Meta.getOpt(Custom(":hxmc.c"), cf.cfMeta);
 		if (m != null) {
 			var s = Lower.metaArg(m);
@@ -353,8 +373,13 @@ class CInterop {
 	// whether its calls stay in the running state (@:hxmc.fast), its library
 	public static function declare(sym:String, c:TClass, cf:TClassField, s:TSignature):CSig {
 		var where = posOf(cf.cfPos);
+		var lib = metaStr(":hxmc.lib", c, cf);
+		// (an import of WebAssembly, cSymbol: named by the module and the name)
+		var imported = !StringTools.startsWith(sym, INDIRECT) && lib != null && sym == importKey(lib, cName(c, cf));
+		if (imported) IMPORT_NAMES.set(sym, cName(c, cf));
+		var shown = imported ? IMPORT_NAMES.get(sym) + " of the import module " + lib : sym;
 		if (Lower.hasMeta(":hxmc.blocking", cf.cfMeta) && Lower.hasMeta(":hxmc.fast", cf.cfMeta))
-			throw new LowerError('C function $sym is declared both @:hxmc.blocking and @:hxmc.fast', where);
+			throw new LowerError('C function $shown is declared both @:hxmc.blocking and @:hxmc.fast', where);
 		// (@:hxmc.blocking: the call site enters the safe region, FnLower.cCall;
 		// the symbol itself is called as a fast one, so the runtime's fast
 		// declaration of the same function, read or poll, may coexist)
@@ -368,32 +393,31 @@ class CInterop {
 		for (i in 0...s.args.length) {
 			var ct = gc(ctype(s.args[i].type));
 			if (!isScalar(ct) && !ct.match(CStruct(_)))
-				throw new LowerError('C function $sym: parameter ${s.args[i].name} has no C type a call can pass (${describe(ct)}; scalars, Ptr, CString and structs)', where);
+				throw new LowerError('C function $shown: parameter ${s.args[i].name} has no C type a call can pass (${describe(ct)}; scalars, Ptr, CString and structs)', where);
 			args.push(ct);
 		}
 		var ret = gc(ctype(s.ret));
 		if (ret != CVoid && !isScalar(ret) && !ret.match(CStruct(_)))
-			throw new LowerError('C function $sym: the result has no C type a call can return (${describe(ret)}; scalars, Ptr, CString, a struct or Void)', where);
+			throw new LowerError('C function $shown: the result has no C type a call can return (${describe(ret)}; scalars, Ptr, CString, a struct or Void)', where);
 		var sig = {args: args, ret: ret};
 		var prev = SIGS.get(sym);
 		if (prev != null) {
-			if (!sameSig(prev, sig)) throw new LowerError('C function $sym is declared twice with different signatures', where);
+			if (!sameSig(prev, sig)) throw new LowerError('C function $shown is declared twice with different signatures', where);
 		} else SIGS.set(sym, sig);
 		if (blocking) {
-			if (BLOCKING.exists(sym)) throw new LowerError('C function $sym is declared both @:hxmc.blocking and without it nor @:hxmc.fast: declare its calls the same way', where);
+			if (BLOCKING.exists(sym)) throw new LowerError('C function $shown is declared both @:hxmc.blocking and without it nor @:hxmc.fast: declare its calls the same way', where);
 			FnLower.C_EXTERNS.set(sym, true);
 		} else if (fast) {
-			if (BLOCKING.exists(sym)) throw new LowerError('C function $sym is declared both @:hxmc.fast and not', where);
+			if (BLOCKING.exists(sym)) throw new LowerError('C function $shown is declared both @:hxmc.fast and not', where);
 			FnLower.C_EXTERNS.set(sym, true);
 		} else {
-			if (FnLower.C_EXTERNS.exists(sym)) throw new LowerError('C function $sym is declared both @:hxmc.fast and not', where);
+			if (FnLower.C_EXTERNS.exists(sym)) throw new LowerError('C function $shown is declared both @:hxmc.fast and not', where);
 			BLOCKING.set(sym, true);
 		}
 		if (StringTools.startsWith(sym, INDIRECT)) {
 			if (args.length == 0 || args[0] != CPtr) throw new LowerError('@:hxmc.indirect : the first parameter is the function\'s address (a Ptr)', where);
 			return sig;
 		}
-		var lib = metaStr(":hxmc.lib", c, cf);
 		if (lib != null) LIBS.set(sym, lib);
 		// (the program's, not the runtime's: outside the package hxmc, or of a
 		// library, as packages/os and packages/gfx declare theirs)
