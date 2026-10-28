@@ -43,7 +43,8 @@
 #   fuzzer's lanes, the last two in shards (haxe/test).
 # - fuzz-exec: the fuzzer's exec lanes, one job each (with its own tool from
 #   the stage0): random programs run by the reference's Eval and built by
-#   hxmc (native, wasm32-wasi), their output compared.
+#   hxmc (native, wasm32-wasi), their output compared; and hxmc's spans on
+#   Eval and JavaScript against hxmc's output (PortableCheck).
 # - upstream-suites: upstream's runtime suites (tests/unit, sys, threads)
 #   built by hxmc and run, natively and (unit) as a wasm32-wasi module under
 #   node, a job each (with its own tool from the stage0; make upstream-suites).
@@ -813,6 +814,12 @@ jobs:
           $F --cases haxe/test/fuzz/cases || failed="$failed cases"
           $F -n 400 || failed="$failed random"
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+      # hxmc's spans on Eval and JavaScript (over Bytes) print what hxmc's builds print
+      - name: Spans on other targets
+        if: matrix.lane == 'exec:interp,hxmc'
+        run: |
+          ulimit -s unlimited
+          HAXE_REFERENCE=$PWD/bin/reference/haxe bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run PortableCheck
       - uses: actions/upload-artifact@v7
         if: failure()
         with: {name: "fuzz-${{ strategy.job-index }}", path: "bin/test/fuzz/failures/", retention-days: 7, if-no-files-found: ignore}
