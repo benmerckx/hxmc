@@ -1168,6 +1168,11 @@ class Common {
 			sub: sub == null ? [] : sub
 		}));
 
+	// port: hook (not upstream): the defines a custom target names its program's target
+	// with, kept out of the macro context as the platforms' names are (hxmc's
+	// hxmc.target: hxmc/src/hxmc/TargetFlags.hx)
+	public static var macroDefinesHook:Null<DefineContext->Void> = null;
+
 	public static function adaptDefinesToMacroContext(defines:DefineContext):DefineContext {
 		var remove = ["java"].concat(Globals.platforms.map(Globals.platformName));
 		for (d in [Define.NoTraces]) remove.unshift(Define.getDefineKey(d));
@@ -1179,6 +1184,7 @@ class Common {
 		var result = ({values: values, definesSignature: null} : core.Define.DefineContext);
 		Define.define(result, Define.Macro);
 		Define.rawDefine(result, Globals.platformName(Eval));
+		if (macroDefinesHook != null) macroDefinesHook(result);
 		return result;
 	}
 

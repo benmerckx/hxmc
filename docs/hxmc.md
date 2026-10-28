@@ -918,6 +918,15 @@ once the target is initialized and before init macros run. They are
 defines only. wasm32-wasi is not `target.threaded`: creating a thread
 throws there (`rt/wasm/Threads.hx`).
 
+The macro context's defines leave out `hxmc.target` and `hxmc.libc`, as
+Haxe leaves the platforms' names out (`Common.macroDefinesHook`): the
+macro context's target is Eval, or the compiler's own with
+`-D hxmc.macros=mir`. A module typed there for a macro sees what it would
+in a native build that names no target, so code behind
+`#if (hxmc.target == "wasm32-wasi")` (hxmc's runtime, which Eval cannot
+type or run) stays out of it. Macro code reads the program's target with
+`Context.definedValue("hxmc.target")` (`test/cases/MacroTarget.hx`).
+
 ### Android
 
 Android 10 (API 29) and later, the first Bionic with ELF thread-locals.
