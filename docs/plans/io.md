@@ -165,7 +165,7 @@ The design, built in steps (a PR each):
 3. spans, checked views of buffers, and where they may
    exist (built);
 4. the bounds checks' define and their measured cost (built);
-5. a leaf routine of the std moved onto the subset.
+5. a leaf routine of the std moved onto the subset (built).
 
 ### The attribute
 
@@ -375,6 +375,18 @@ natively, 1.1 to 1.2 for the sum on wasm32 (the axpy within that
 machine's noise). Without the checks a span is as fast as raw access, or
 faster (its length stays in a register). The checks are not removed where a
 loop proves them yet (`for (i in 0...s.length)`): the next step.
+
+### A leaf of the std on spans
+
+**Built**: `hxmc.NativeZip.crc32` (the compiler's ZIP reader checks every
+entry with it) is a safe GC-free loop over two spans: the bytes, lent by
+`ReadOnlySpan.ofBytes` (its range checked there, `OutsideBounds` as
+before), and the table, malloc'ed once and kept, lent by `unsafeOf`. No
+raw access is left in it. Its cost, x86-64 (`crc32` of 1 MB, callgrind):
+15 instructions a byte before, 19 after (the byte's check and the table
+index's); 0.68 to 0.75 s against 0.73 to 0.83 s for 200 MB. Removing checks
+a loop proves would take back the byte's; the table's (`& 0xFF` against a
+length of 256) needs a range of values.
 
 ### Inlining, generics, closures
 
