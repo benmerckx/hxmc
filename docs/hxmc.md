@@ -216,6 +216,22 @@ the epoch. `Std.string` reaches `Date.toString` only through
 no date has no calendar code. `DateValues` checks dates against the
 reference's `--interp`.
 
+### Random numbers
+
+`Math.random` and `Std.random` draw from xoshiro256** (`Random.hx`), one
+state per thread (`@:hxmc.threadLocal`, no lock), seeded on the thread's
+first draw from the system: the `getrandom` system call on Linux and
+Android (by its number: glibc 2.17 has no wrapper), else `/dev/urandom`;
+`arc4random_buf` on macOS and iOS; `BCryptGenRandom` on Windows;
+`random_get` on WASI. Without any of them, the time and the thread's stack
+address mixed by splitmix64. So each run and each thread draws its own
+sequence; there is no way to seed it. `Math.random` has 53 random bits;
+`Std.random(n)` is unbiased (Lemire's multiply and reject), 0 for n <= 1
+as upstream specifies. The compiler's output never depends on them
+(`make fixpoint`); the identity hashes (`Dyn.objHash`) keep their fixed
+per-thread seeds. `RandomRanges` checks the ranges, `RandomSeed` that runs
+and threads differ.
+
 ### The symbols generated code calls
 
 Generated code calls a fixed set of runtime functions by name, and natively
