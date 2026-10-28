@@ -11,7 +11,8 @@ import haxe.io.Path;
 //   haxe/upstream/std                the std (HAXE_STD_PATH unless set)
 //   hxmc/bootstrap/hxmc-std          hxmc's std (hxmc/std merged by MkStd.hx),
 //                                    added last when the arguments (or the hxml
-//                                    files they name) select --custom-target hxmc
+//                                    files they name) select --custom-target hxmc;
+//                                    its hxmc-portable for another target
 // The launcher (hxmc/bootstrap/launcher.mjs) runs it with HXMC_STD and
 // HXMC_RT_DIR, the directories of the runtime objects (the platform
 // packages, @hxmc/<os>-<cpu>: Options.rtSearch, which HXMC_RT_DIR adds to).
@@ -81,7 +82,13 @@ class HaxeMain {
 		var failed = null;
 		// hxmc's std, given last (a custom target gets no std of its own)
 		var hxmcStd = Sys.getEnv("HXMC_STD");
-		if (hxmcStd != null && selectsHxmc(args, 0)) args = args.concat(["-cp", hxmcStd]);
+		if (hxmcStd != null) {
+			if (selectsHxmc(args, 0)) args = args.concat(["-cp", hxmcStd]);
+			// (another target: hxmc's spans over Bytes, MkStd's hxmc-portable,
+			// docs/interop.md, "Spans on other targets"; first: after --run come
+			// the program's arguments)
+			else if (!isServer(args) && sys.FileSystem.exists(hxmcStd + "/hxmc-portable")) args = ["-cp", hxmcStd + "/hxmc-portable"].concat(args);
+		}
 		var host = hostTarget();
 		// (the port calls the hook with --no-output too: e.g. writing HXB only)
 		var noOutput = args.contains("--no-output");

@@ -1,0 +1,7 @@
+exit 0
+SpanPortable.hx:115: scalars, [237,-19,52134,-13402,8,-878280356,3416686,100000001,11,507,11,43948464]
+SpanPortable.hx:116: views, 615041728
+SpanPortable.hx:117: structs, 240404450
+SpanPortable.hx:118: atomics, 424142
+SpanPortable.hx:120: range, OutsideBounds
+SpanPortable.hx:121: sub, 402, 197

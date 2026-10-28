@@ -260,6 +260,51 @@ region while the main thread sets it, and workers counting with
 `compareExchange` (on wasm32, without threads, the same calls on one
 thread); `reject/Span*` the rules.
 
+### Spans on other targets
+
+The same kernel source compiles for Eval, JavaScript and the other Haxe
+targets and behaves the same there. On those targets `hxmc.Span<T>` and
+`hxmc.ReadOnlySpan<T>` are views of a `haxe.io.Bytes` (an offset and a
+length), and the C scalars, `hxmc.I64` and `Struct.sizeOf` and `alignOf`
+are plain Haxe (`hxmc/portable`, which MkStd copies into hxmc's std as
+`hxmc-portable`). `@:hxmc.kernel` is ordinary metadata there and nothing
+checks it, so check a kernel by building it for hxmc. The `haxe` of
+`@hxmc/cli` adds that class path to every build for another target; with
+another compiler, pass `-cp <hxmc's std>/hxmc-portable`.
+
+| | On other targets |
+| --- | --- |
+| `ofBytes(b, ?pos, ?len)` | a view of `b`, no copy; a bad range throws `haxe.io.Error.OutsideBounds`, as on hxmc |
+| `ofIoBuffer`, `unsafeOf` | a compile error: `IoBuffer` and `Ptr` exist only on hxmc (`hxmc.unsafe`), so lend a `Bytes` instead |
+| a failed check | throws `hxmc.Span.SpanError` with hxmc's message (`span index 3 out of range [0, 3)`) |
+| elements | little-endian, as on every hxmc target; stores wrap as C's conversions do |
+| `load`, `store`, `compareExchange` | plain accesses: safe code cannot share a span between threads |
+| `reinterpret()` | needs the result's span type (`var w:Span<Int> = s.reinterpret()`), which a macro reads |
+
+Element types: every C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`,
+`UInt`, `Int64`, `Float32`, `Float`, `Bool`) and `@:hxmc.struct` classes
+whose fields are scalars. The gaps:
+
+- **Struct elements are objects of their own**, made zeroed when a span is
+  reinterpreted as structs. Writes through them stay out of the `Bytes`, and
+  a reinterpretation of the same memory as another type does not see them
+  (`SpanInflate`'s state and tables do not overlap, so it runs unchanged).
+  `s[i]` is the element itself, not a copy, as `@:hxmc.struct` values are
+  references on these targets: `s[i].x = v` writes in place, but
+  `var e = s[i]; e.x = v` changes the element too. Storing a struct
+  (`s[i] = v`, `fill`, `blit`) copies its fields. A struct field that is
+  itself a struct is hxmc's only.
+- `UInt64` elements and `I64`'s increment operators are hxmc's only.
+- `compareExchange` on a `Float` element throws at run time instead of
+  failing to compile.
+
+`PortableCheck` (`make portable-check`, CI's `fuzz-exec` job) builds
+`SpanInflate` (its paths over `Bytes`; the worker over IoBuffers is
+hxmc's) and `SpanPortable` (every element type, the views, struct elements,
+the atomic accesses) with the reference compiler, runs them on Eval and as
+JavaScript under node, and compares their output with the corpus's golden
+files. `hxmc/test/portable` holds the failed checks and the compile errors.
+
 ### System calls
 
 `hxmc.unsafe.Linux.syscall(nr, a, b, c, d, e, f)` calls the C library's

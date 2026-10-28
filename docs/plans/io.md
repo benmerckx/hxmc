@@ -228,6 +228,12 @@ never back. `T` is a C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`,
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1 |
 | `s.load(i)`, `s.store(i, v)`, `s.compareExchange(i, e, r)` | atomic accesses of an `Int`, `UInt` or `Int64` element, range-checked (Atomic's sequentially consistent operations: a job's cancel flag, a shared counter); `load` on a `ReadOnlySpan` too |
 
+**On other targets** (built, [interop.md](../interop.md#spans-on-other-targets)):
+the same API over a `Bytes`, an offset and a length (`hxmc/portable`), so
+a kernel compiles and behaves the same on Eval and JavaScript; a failed
+check throws there; `ofIoBuffer` and `unsafeOf` are compile errors;
+struct elements are objects beside the bytes (`PortableCheck`).
+
 **Layout and alignment.** Element i is at the address plus i * size(T),
 the size of `T`'s C type (a struct's C layout: `Struct.sizeOf`, a multiple
 of its alignment). Nothing requires alignment: an IoBuffer's bytes are
