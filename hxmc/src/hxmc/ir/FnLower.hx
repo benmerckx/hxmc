@@ -949,6 +949,153 @@ class FnLower {
 		}
 	}
 
+	// ---- appends to a string in a loop
+
+	// `s += x` in a loop (or `s = s + x + ...`) where nothing else reads or
+	// writes the local s: s's units go to a StringBuf, made at the second
+	// append (one append concatenates as before), and s becomes the buffer's
+	// string after the loop, so the loop copies each unit about twice rather
+	// than s's whole length at every append. Not inside a try of this
+	// function (a catch could read s after an exception left the loop), nor
+	// for a local a closure captures (it is boxed); every way out of the loop
+	// but an exception (its break, the end) reaches the code after it, and an
+	// exception leaves s dead. A read or write of s that the lowering meets
+	// anyway takes the buffer's string first (flushAppend).
+	var tryDepth = 0;
+	var appends = new Map<Int, {buf:Local, first:Local, s:Local}>();
+
+	static final SBUF = TRef(RNative("StringBuf"));
+
+	// the locals of the loop (condition c, body) whose units go to a buffer,
+	// their buffers declared (null: none)
+	function appendLoop(c:TExpr, body:TExpr):Null<Array<Int>> {
+		if (tryDepth > 0 || fi.declNoGc) return null;
+		var cands:Array<TVar> = [];
+		function find(e:TExpr) {
+			switch e.eexpr {
+				case TBinop(OpAssignOp(OpAdd), {eexpr: TLocal(v)}, _) | TBinop(OpAssign, {eexpr: TLocal(v)}, {eexpr: TBinop(OpAdd, _, _)})
+					if (!isBoxed(v) && !appends.exists(v.vId) && locals.exists(v.vId) && locals.get(v.vId).ty.match(TRef(RStr))
+						&& ty(v.vType).match(TRef(RStr)) && cands.indexOf(v) < 0):
+					cands.push(v);
+				case _:
+			}
+			core.Texpr.iter(find, e);
+		}
+		find(body);
+		var r = null;
+		for (v in cands)
+			if (onlyAppends(c, v, false) && onlyAppends(body, v, true)) {
+				var buf = newLocal(v.vName + "_buf", SBUF), first = newLocal(v.vName + "_first", TBool);
+				out.push(SSet(buf, ENull(SBUF)));
+				out.push(SSet(first, EInt(1)));
+				appends.set(v.vId, {buf: buf, first: first, s: locals.get(v.vId)});
+				if (r == null) r = [];
+				r.push(v.vId);
+			}
+		return r;
+	}
+
+	// after the loop: s from its buffer
+	function appendLoopEnd(ids:Null<Array<Int>>) {
+		if (ids == null) return;
+		for (id in ids) {
+			var a = appends.get(id);
+			appends.remove(id);
+			out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), vector(SSet(a.s, ECallHost(l.native("StringBuf_toString"), vector(ELocal(a.buf)), TRef(RStr)))), vector()));
+		}
+	}
+
+	// whether every use of v in e is an append as a statement (stmt: e is one)
+	function onlyAppends(e:TExpr, v:TVar, stmt:Bool):Bool {
+		inline function no(x:TExpr):Bool
+			return onlyAppends(x, v, false);
+		return switch e.eexpr {
+			case TBinop(OpAssignOp(OpAdd), {eexpr: TLocal(w)}, r) if (w == v):
+				stmt && no(r);
+			case TBinop(OpAssign, {eexpr: TLocal(w)}, r) if (w == v):
+				var xs = stmt ? appendedTo(r, v) : null;
+				if (xs == null) return false;
+				for (x in xs)
+					if (!no(x)) return false;
+				true;
+			case TLocal(w) | TVar(w, _) if (w == v): false;
+			case TParenthesis(x) | TMeta(_, x): onlyAppends(x, v, stmt);
+			case TBlock(es):
+				for (x in es)
+					if (!onlyAppends(x, v, stmt)) return false;
+				true;
+			case TIf(c, a, b): no(c) && onlyAppends(a, v, stmt) && (b == null || onlyAppends(b, v, stmt));
+			case TWhile(c, b, _): no(c) && onlyAppends(b, v, true);
+			case TSwitch(sw):
+				if (!no(sw.switchSubject)) return false;
+				for (c in sw.switchCases) {
+					for (x in c.casePatterns)
+						if (!no(x)) return false;
+					if (!onlyAppends(c.caseExpr, v, stmt)) return false;
+				}
+				sw.switchDefault == null || onlyAppends(sw.switchDefault, v, stmt);
+			case TTry(b, cs):
+				if (!onlyAppends(b, v, stmt)) return false;
+				for (c in cs)
+					if (!onlyAppends(c.expr, v, stmt)) return false;
+				true;
+			case _:
+				var ok = true;
+				core.Texpr.iter(x -> if (ok && !no(x)) ok = false, e);
+				ok;
+		}
+	}
+
+	// the operands r appends to v (r: v + x + ..., a chain of string +), or null
+	function appendedTo(r:TExpr, v:TVar):Null<Array<TExpr>> {
+		var xs = [];
+		var x = r;
+		while (isConcat(x))
+			switch x.eexpr {
+				case TBinop(_, a, b):
+					xs.push(b);
+					x = a;
+				case _:
+			}
+		return switch strip(x).eexpr {
+			case TLocal(w) if (w == v && xs.length > 0 && x.eexpr.match(TLocal(_))):
+				xs.reverse();
+				xs;
+			case _: null;
+		}
+	}
+
+	// the statement appending xs to s (appends has it): each operand
+	// evaluated and converted in turn, as + would, then all of them into the
+	// buffer (an exception meanwhile appends none: a try in the loop may catch
+	// it), or concatenated by the first append
+	function appendStmt(v:TVar, xs:Array<TExpr>) {
+		var a = appends.get(v.vId);
+		var sxs = [];
+		for (x in xs) {
+			var t = tyOf(x);
+			var sx = value(x);
+			sx = t.match(TRef(RStr)) ? (isConst(sx) ? sx : ELocal(asLocal(sx, t))) : toStr(sx, t);
+			sxs.push(sx);
+		}
+		var adds = [for (sx in sxs) SExpr(ECallHost(l.native("StringBuf_add"), vector(ELocal(a.buf), coerce(sx, TRef(RStr), TRef(RAny))), TVoid))];
+		var start = [
+			SSet(a.buf, ECallHost(l.native("StringBuf_new"), vector(), SBUF)),
+			SExpr(ECallHost(l.native("StringBuf_add"), vector(ELocal(a.buf), coerce(ELocal(a.s), TRef(RStr), TRef(RAny))), TVoid))
+		].concat(adds);
+		var concat = [for (sx in sxs) SSet(a.s, ECallHost(l.native("hx_str_concat"), vector(ELocal(a.s), sx), TRef(RStr)))].concat([SSet(a.first, EInt(0))]);
+		out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), Vector.fromArrayCopy(adds),
+			vector(SIf(ELocal(a.first), Vector.fromArrayCopy(concat), Vector.fromArrayCopy(start)))));
+	}
+
+	// s (appends has it) as the buffer holds it, for a read or write the
+	// lowering did not expect (the next append starts a new buffer)
+	function flushAppend(v:TVar) {
+		var a = appends.get(v.vId);
+		out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)),
+			vector(SSet(a.s, ECallHost(l.native("StringBuf_toString"), vector(ELocal(a.buf)), TRef(RStr))), SSet(a.buf, ENull(SBUF))), vector()));
+	}
+
 	// ---- statements
 
 	function stmt(e:TExpr) {
@@ -1048,12 +1195,15 @@ class FnLower {
 					if (k != 0) stmt(a) else if (b != null) stmt(b);
 				} else out.push(SIf(cx, block(() -> stmt(a)), b != null ? block(() -> stmt(b)) : vector()));
 			case TWhile(c, body, NormalWhile):
+				var ap = appendLoop(c, body);
 				out.push(SLoop(block(() -> {
 					var cx = cond(c);
 					out.push(SIf(ENot(cx), vector(SBreak), vector()));
 					stmt(body);
 				})));
+				appendLoopEnd(ap);
 			case TWhile(c, body, DoWhile):
+				var ap = appendLoop(c, body);
 				// first iteration skips the test, so `continue` reaches it
 				var first = newLocal("first", TBool);
 				out.push(SSet(first, EInt(1)));
@@ -1065,6 +1215,11 @@ class FnLower {
 					out.push(SSet(first, EInt(0)));
 					stmt(body);
 				})));
+				appendLoopEnd(ap);
+			case TBinop(OpAssignOp(OpAdd), {eexpr: TLocal(v)}, r) if (appends.exists(v.vId)):
+				appendStmt(v, [r]);
+			case TBinop(OpAssign, {eexpr: TLocal(v)}, r) if (appends.exists(v.vId) && appendedTo(r, v) != null):
+				appendStmt(v, appendedTo(r, v));
 			case TSwitch(sw):
 				switchStmt(sw, null);
 			case TTry(body, catches):
@@ -1350,7 +1505,9 @@ class FnLower {
 
 	function tryStmt(body:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>, target:Null<Local>) {
 		fi.hasTry = true;
+		tryDepth++;
 		var b = branch(body, target);
+		tryDepth--;
 		var cs = new Vector<IrCatch>(catches.length);
 		for (ci in 0...catches.length) {
 			var c = catches[ci];
@@ -1483,6 +1640,7 @@ class FnLower {
 				if (thisLocal == null) fail("super outside a method", e);
 				ELocal(thisLocal);
 			case TLocal(v):
+				if (appends.exists(v.vId)) flushAppend(v);
 				var lo = local(v, e);
 				var x:Ex = isBoxed(v) ? EBoxGet(ty(v.vType), ELocal(lo)) : ELocal(lo);
 				coerce(x, ty(v.vType), tyOf(e));
@@ -2200,6 +2358,7 @@ class FnLower {
 		var et = tyOf(e);
 		switch strip(lhs).eexpr {
 			case TLocal(v):
+				if (appends.exists(v.vId)) flushAppend(v);
 				var lo = local(v, e);
 				var t = ty(v.vType);
 				if (isBoxed(v)) {

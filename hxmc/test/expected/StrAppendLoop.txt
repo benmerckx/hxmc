@@ -1,0 +1,17 @@
+exit 0
+StrAppendLoop.hx:186: 180000 30000 lorem ipsum ipsum  109
+StrAppendLoop.hx:187: k:00.5falsenull[0]<0>x011.5truenull[1]<1>x122.5falsenull[2]<2>x2
+StrAppendLoop.hx:188: toString 0,toString 1,toString 2
+StrAppendLoop.hx:189: null nulla nullaaa
+StrAppendLoop.hx:190: c0-0;1-2;2-4;3-6;
+StrAppendLoop.hx:191: 1,2,4,5,7,8,10,11,13,14,
+StrAppendLoop.hx:192: returned at 4 e0123456789 returned at 0
+StrAppendLoop.hx:193: [0][01][012] 000/012/024/
+StrAppendLoop.hx:194: d01234
+StrAppendLoop.hx:195: éab€ab€ 7 AαBβCγ 6 945
+StrAppendLoop.hx:196: t0011!33 a0,b0,a1,b1,a2,b2,a3,b3
+StrAppendLoop.hx:197: ababababab
+StrAppendLoop.hx:198: 012 012
+StrAppendLoop.hx:199: 012stop
+StrAppendLoop.hx:200: reset3456789
+StrAppendLoop.hx:201: empty

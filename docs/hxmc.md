@@ -217,6 +217,13 @@ U+DC80 to U+DCFF and encodes back to that byte, so bytes read and written
 again are unchanged (the corpus' `Utf8Bytes`; the port keeps OCaml's byte
 strings this way).
 
+A string holds its units: `a + b` copies both. `s += x` in a loop where
+nothing else reads or writes the local `s` (`s = s + x + y` too; not in
+a `try` of the function, not captured by a closure) appends to a
+StringBuf instead, made at the second append, and `s` is its string after
+the loop (`FnLower.appendLoop`): the loop is linear in the length, not
+quadratic (`StrAppendLoop`; `hxmc/test/micro/StrConcatBench`).
+
 A Date is a runtime type of its own (`T_DATE`) holding milliseconds since
 the epoch. `Std.string` reaches `Date.toString` only through
 `Date.printer`, which every date's creation sets, so a program that makes
