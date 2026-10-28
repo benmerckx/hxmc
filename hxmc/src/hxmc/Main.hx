@@ -152,6 +152,7 @@ class Main {
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		hxmc.ir.Lower.bounds = opts.bounds;
 		hxmc.ir.Lower.nullChecks = opts.nullChecks;
+		hxmc.ir.Lower.spanChecks = opts.spanChecks;
 		hxmc.ir.Lower.interp = opts.interp != null;
 		// WebAssembly's runtime is typed with the program only for that target
 		if (abi.wasm && !Lambda.exists(com.types, t -> switch t {

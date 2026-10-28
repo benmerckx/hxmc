@@ -146,6 +146,15 @@ class FnLower {
 				out.push(SSet(lo, coerce(x, a.ty, t)));
 				x = ELocal(lo);
 			}
+			// (a span: its two words copied into a slot of this frame, which no call
+			// takes, so that they stay in registers, Sroa: the caller's memory
+			// would be read again after every store, which may alias it)
+			var sc = GcFreeCheck.spanOf(v.vType) != null ? structOf(v.vType) : null;
+			if (sc != null && !boxed.exists(v.vId)) {
+				var own = newSlot(t, false);
+				copyStruct(ELocal(own), x, sc);
+				x = ELocal(own);
+			}
 			if (boxed.exists(v.vId)) {
 				var b = newLocal(v.vName + "_box", TRef(RBox(t)));
 				out.push(SSet(b, ENewBox(t, x)));
@@ -2831,6 +2840,19 @@ class FnLower {
 		return fail("hxmc.SpanSupport is missing");
 	}
 
+	// Mem's indexed access of a C type (getU8At & co.: a scaled address), or null
+	static function indexed(ct:CTy, load:Bool):Null<{n:String, t:Ty}>
+		return switch ct {
+			case CU8: {n: "U8", t: TI32};
+			case CI8 if (!load): {n: "U8", t: TI32};
+			case CU16: {n: "U16", t: TI32};
+			case CI16 if (!load): {n: "U16", t: TI32};
+			case CI32: {n: "I32", t: TI32};
+			case CI64 | CPtr: {n: "I64", t: TI64};
+			case CF64: {n: "F64", t: TF64};
+			case _: null;
+		}
+
 	// a call of a span's method or maker (extern: expanded here)
 	function spanCall(a:core.TType.TAbstract, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var sd = structOf(a.aThis);
@@ -2840,8 +2862,10 @@ class FnLower {
 		var name = cf.cfName;
 		// (the failed check of an index or a range: the program ends)
 		var at = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(spanWhere(e))), TI64);
+		// (in a loop without an exit: the call does not return, and the path
+		// never joins the access again, so nothing lives across the call)
 		function fatal(f:String, xs:Array<Ex>):Stmt
-			return SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at]))));
+			return SLoop(vector(SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at]))))));
 		// a new span: p, n (locals or constants) into a fresh slot
 		function make(s:Local, p:Ex, n:Ex) {
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(s), EInt(ptrOff), p), TVoid)));
@@ -2916,12 +2940,16 @@ class FnLower {
 			case "elem":
 				var i = int(0);
 				check(i, len);
-				cLoad(elem(ptr, i), 0, ct, e);
+				// (the indexed load where there is one: a scaled address)
+				var k = indexed(ct, true);
+				k != null ? coerce(temp(k.t, ECallHost("hxmc_unsafe_Mem_get" + k.n + "At", vector(ptr, EInt(0), i), k.t)), k.t, tyOf(e)) : cLoad(elem(ptr, i), 0, ct, e);
 			case "setElem":
 				var i = int(0);
 				var v = ELocal(asLocal(rest[1], restTy(1)));
 				check(i, len);
-				cStore(elem(ptr, i), 0, ct, v, restTy(1), e);
+				var k = indexed(ct, false);
+				if (k != null) out.push(SExpr(ECallHost("hxmc_unsafe_Mem_set" + k.n + "At", vector(ptr, EInt(0), i, coerce(v, restTy(1), k.t)), TVoid))) else
+					cStore(elem(ptr, i), 0, ct, v, restTy(1), e);
 				coerce(v, restTy(1), tyOf(e));
 			case "sub":
 				var pos = int(0), cnt = int(1);

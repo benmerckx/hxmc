@@ -71,13 +71,14 @@ class LowerCache {
 	}
 	var bounds = Lower.BOUNDS_UNCHECKED; // and their tests of NativeArray indices (Lower.bounds)
 	var nullChecks = false; // and of references against null (Lower.nullChecks)
+	var spanChecks = true; // and of spans' elements (Lower.spanChecks)
 
 	public function lower(main:TClass, types:Array<ModuleType>, basic:BasicTypes):Program {
 		hits = misses = keyed = 0;
 		why = null;
 		build++;
 		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.lines != lines
-			|| Lower.bounds != bounds || Lower.nullChecks != nullChecks || !sameNames(Lower.resources, resources)) {
+			|| Lower.bounds != bounds || Lower.nullChecks != nullChecks || Lower.spanChecks != spanChecks || !sameNames(Lower.resources, resources)) {
 			entries = new haxe.ds.ObjectMap();
 			lambdas = new haxe.ds.ObjectMap();
 			byKey = new Map();
@@ -88,6 +89,7 @@ class LowerCache {
 			resources = [for (r in Lower.resources) r.name];
 			bounds = Lower.bounds;
 			nullChecks = Lower.nullChecks;
+			spanChecks = Lower.spanChecks;
 		}
 		var l = new CachedLower(this, true, types);
 		var prog = try Lower.program(main, types, basic, l) catch (m:Mismatch) {
