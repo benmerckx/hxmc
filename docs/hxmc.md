@@ -157,6 +157,16 @@ A `haxe.io.Bytes` is an object holding a `NativeArray<Byte>` (`b`); its
 `length` is `b`'s (`@:hxmc.lengthOf`). A small Bytes is allocated together
 with its data. Arrays have no identity hash.
 
+The program's classes take their type indices in preorder (`Lower.finish`),
+so an instance of a class or of a subclass is one unsigned comparison of
+its type index against the class's span (`MemLower.instOf`; null is no
+instance). Catch clauses test so, and `Std.isOfType`, `Std.downcast` and
+`cast` of a class literal (`FnLower.instClass`); interfaces, extern
+classes (String, Array, Date, the boxes), the runtime's types and the
+code of Mir macros' bundles (`Lower.classSpans`: a later bundle's class
+may extend an earlier one's, outside its span) go through `hx_is`, which
+walks the superclasses.
+
 ### The collector
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for

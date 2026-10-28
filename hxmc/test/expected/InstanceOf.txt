@@ -1,0 +1,28 @@
+exit 0
+InstanceOf.hx:86: 000000000000 null
+InstanceOf.hx:86: 100000000000 error Class cast error
+InstanceOf.hx:86: 110010000000 mid2
+InstanceOf.hx:86: 111010000000 mid3
+InstanceOf.hx:86: 100100000000 error Class cast error
+InstanceOf.hx:86: 000001100000 error Class cast error
+InstanceOf.hx:86: 000000010000 error Class cast error
+InstanceOf.hx:86: 000000010000 error Class cast error
+InstanceOf.hx:86: 000000001000 error Class cast error
+InstanceOf.hx:86: 000000000100 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000010 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000000 error Class cast error
+InstanceOf.hx:86: 000000000001 error Class cast error
+InstanceOf.hx:89: --- null null
+InstanceOf.hx:89: --- null null
+InstanceOf.hx:89: M-- mid2 null
+InstanceOf.hx:89: ML- mid3 mid3
+InstanceOf.hx:89: --O null null
+InstanceOf.hx:97: -,mid2,mid3,-,- 5
+InstanceOf.hx:100: 9 9
+InstanceOf.hx:102: true

@@ -1491,6 +1491,15 @@ class FnLower {
 			case TCast(e1, mt):
 				// checked cast: throws when the value doesn't have the type
 				var x = coerce(value(e1), tyOf(e1), TRef(RAny));
+				var ci = castClass(mt);
+				if (ci != null) {
+					// of a class: the instance test, hx_cast (which throws) only when it fails
+					var lo = asLocal(x, TRef(RAny));
+					var r = newLocal("cast", TRef(RAny));
+					out.push(SSet(r, ELocal(lo)));
+					out.push(SIf(ENot(EInstOf(ci, ELocal(lo))), vector(SSet(r, ECallHost(l.native("hx_cast"), vector(ELocal(lo), EType(TRClass(ci))), TRef(RAny)))), vector()));
+					return coerce(ELocal(r), TRef(RAny), tyOf(e));
+				}
 				var c = temp(TRef(RAny), ECallHost(l.native("hx_cast"), vector(x, EType(typeRef(mt))), TRef(RAny)));
 				coerce(c, TRef(RAny), tyOf(e));
 			case TTypeExpr(mt):
@@ -2592,11 +2601,43 @@ class FnLower {
 					case _:
 				}
 				coerce(EConv(F2I, x), TI32, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && instClass(cargs[1]) != null):
+				// Std.isOfType(v, C) of a class literal: the instance test, a range of
+				// type indices (MemLower.instOf; null is no instance), not hx_is's walk
+				var ci = instClass(cargs[1]);
+				coerce(EInstOf(ci, coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny))), TBool, tyOf(e));
+			case "Std_downcast" if (cargs.length == 2 && instClass(cargs[1]) != null):
+				var ci = instClass(cargs[1]);
+				var x = ELocal(asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), TRef(RAny)));
+				var r = newLocal("down", TRef(RAny));
+				out.push(SSet(r, ENull(TRef(RAny))));
+				out.push(SIf(EInstOf(ci, x), vector(SSet(r, x)), vector()));
+				coerce(ELocal(r), TRef(RAny), tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && typeObjectKind(cargs[1]) >= 0):
 				// Std.isOfType(v, Class), (v, Enum): whether v is a type object of a
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
 				var k = typeObjectKind(cargs[1]);
 				coerce(ECallHost(l.native("hx_is_typeobj"), vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
+			case _: null;
+		}
+	}
+
+	// the class whose instance test (EInstOf) Std.isOfType, Std.downcast and
+	// cast give for the type expression x, or null where hx_is must decide:
+	// an interface, an extern class (String, Array, Date, the boxes: the
+	// runtime's own type indices), a type parameter; any class while Mir macros
+	// lower their bundles (Lower.classSpans)
+	function instClass(x:TExpr):Null<ClassInfo> {
+		return switch strip(x).eexpr {
+			case TTypeExpr(mt): castClass(mt);
+			case _: null;
+		}
+	}
+
+	function castClass(mt:ModuleType):Null<ClassInfo> {
+		if (!Lower.classSpans) return null;
+		return switch mt {
+			case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_))): classOrBox(c);
 			case _: null;
 		}
 	}

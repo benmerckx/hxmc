@@ -601,6 +601,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the lines of the code, as a native build's: hxmc.rt.Stacks names an interpreted frame by them)
 		hxmc.ir.Lower.lines = true;
 		hxmc.ir.Lower.bodyReady = MacroRuntime.ready;
+		hxmc.ir.Lower.classSpans = false;
 		phase("before lowering");
 		try {
 			l.drain();
@@ -623,10 +624,12 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			typingBodies = false;
 			hxmc.ir.Lower.callSites = null;
 			hxmc.ir.Lower.bodyReady = null;
+			hxmc.ir.Lower.classSpans = true;
 			throw e;
 		}
 		hxmc.ir.Lower.callSites = null;
 		hxmc.ir.Lower.bodyReady = null;
+		hxmc.ir.Lower.classSpans = true;
 		step(main);
 	}
 
