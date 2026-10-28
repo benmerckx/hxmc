@@ -1,0 +1,4 @@
+exit 0
+KernelFunctions.hx:27: main thread, 2984369
+KernelFunctions.hx:39: in a worker's region, 2984369
+KernelFunctions.hx:40: 42, 255

@@ -3,12 +3,12 @@ import hxmc.unsafe.UInt8;
 import sys.thread.Lock;
 import sys.thread.Thread;
 
-// The safe subset of GC-free code (docs/interop.md, "GC-free code"): without
-// @:hxmc.unsafe a @:hxmc.gcfree or @:hxmc.blocking function computes with
+// The safe subset of kernels (docs/interop.md, "Kernels"): without
+// @:hxmc.unsafe a @:hxmc.kernel or @:hxmc.blocking function computes with
 // flat values (Int, Float, Bool, C scalars, enum abstracts), struct values
 // (their constructors checked as its own code), locals, loops, switches,
 // static reads, Math and calls of other such functions, and nothing else
-// (reject/GcFree*). Called on the main thread, in a worker's region, and as
+// (reject/Kernel*). Called on the main thread, in a worker's region, and as
 // a blocking function from a worker.
 @:hxmc.struct @:publicFields class Vec {
 	var x:Float;
@@ -25,20 +25,20 @@ enum abstract Shape(Int) {
 	var Circle;
 }
 
-class GcFreeSafe {
+class KernelSafe {
 	static final SIDES = 4;
 	static var scale = 2.0;
 
-	@:hxmc.gcfree static function area(s:Shape, r:Float):Float
+	@:hxmc.kernel static function area(s:Shape, r:Float):Float
 		return switch s {
 			case Square: r * r * scale;
 			case Circle: Math.PI * r * r;
 		}
 
-	@:hxmc.gcfree static function length(v:Vec):Float
+	@:hxmc.kernel static function length(v:Vec):Float
 		return Math.sqrt(v.x * v.x + v.y * v.y);
 
-	@:hxmc.gcfree static function walk(n:Int):Vec {
+	@:hxmc.kernel static function walk(n:Int):Vec {
 		var p = new Vec(0, 0);
 		for (i in 0...n) {
 			var d = new Vec(i % SIDES == 0 ? 1.0 : 0.5, i % 3 == 0 ? -0.25 : 0.75);
@@ -48,10 +48,10 @@ class GcFreeSafe {
 		return p;
 	}
 
-	@:hxmc.gcfree static function wrap(v:Int):UInt8
+	@:hxmc.kernel static function wrap(v:Int):UInt8
 		return v;
 
-	@:hxmc.gcfree static function collatz(n:Int):Int {
+	@:hxmc.kernel static function collatz(n:Int):Int {
 		var steps = 0;
 		while (n != 1) {
 			n = n & 1 == 0 ? n >> 1 : 3 * n + 1;

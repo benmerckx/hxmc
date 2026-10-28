@@ -936,8 +936,8 @@ class Lower implements LowerQueries {
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
 				case Var(v) if (isPhysical(c, f, v)):
-					if (GcFreeCheck.spanOf(f.cfType) != null)
-						throw new LowerError(GcFreeCheck.spanError(CInterop.posOf(f.cfPos), "", "the field " + f.cfName + " has a span type", GcFreeCheck.SPANS_LOCAL), "");
+					if (KernelCheck.spanOf(f.cfType) != null)
+						throw new LowerError(KernelCheck.spanError(CInterop.posOf(f.cfPos), "", "the field " + f.cfName + " has a span type", KernelCheck.SPANS_LOCAL), "");
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
@@ -1191,22 +1191,22 @@ class Lower implements LowerQueries {
 		prog.funcs.push(w);
 	}
 
-	// hxmc's attributes of a function: @:hxmc.unsafe, @:hxmc.gcfree and
+	// hxmc's attributes of a function: @:hxmc.unsafe, @:hxmc.kernel and
 	// @:hxmc.blocking (checked by Facts.findNoGc), @:hxmc.collects (it runs
 	// the collector), @:hxmc.export (its symbol) (@:hxmc.unsafe and
-	// @:hxmc.gcfree on a class: on each of its functions)
+	// @:hxmc.kernel on a class: on each of its functions)
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
 		if (c.clMeta.length > 0) {
 			if (isUnsafe(c.clMeta)) fi.declNoGc = fi.declUnsafe = true;
-			if (hasMeta(":hxmc.gcfree", c.clMeta)) fi.declNoGc = fi.declGcFree = true;
+			if (hasMeta(":hxmc.kernel", c.clMeta)) fi.declNoGc = fi.declKernel = true;
 		}
 		if (cf.cfMeta.length == 0) return;
 		if (isUnsafe(cf.cfMeta)) fi.declNoGc = fi.declUnsafe = true;
-		if (hasMeta(":hxmc.gcfree", cf.cfMeta)) fi.declNoGc = fi.declGcFree = true;
+		if (hasMeta(":hxmc.kernel", cf.cfMeta)) fi.declNoGc = fi.declKernel = true;
 		fi.declBlocking = hasMeta(":hxmc.blocking", cf.cfMeta);
-		if (fi.declBlocking) fi.declNoGc = fi.declGcFree = true;
+		if (fi.declBlocking) fi.declNoGc = fi.declKernel = true;
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);
@@ -1633,8 +1633,8 @@ class Lower implements LowerQueries {
 		c = canonClass(c);
 		var g = staticVars.get(cf);
 		if (g != null) return g;
-		if (GcFreeCheck.spanOf(cf.cfType) != null)
-			throw new LowerError(GcFreeCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " has a span type", GcFreeCheck.SPANS_LOCAL), "");
+		if (KernelCheck.spanOf(cf.cfType) != null)
+			throw new LowerError(KernelCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " has a span type", KernelCheck.SPANS_LOCAL), "");
 		var t = ty(cf.cfType); // first: it may register globals itself (enum constructors)
 		g = prog.globals.length;
 		globalOwner.set(g, c);

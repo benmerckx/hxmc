@@ -7,20 +7,20 @@ import hxmc.unsafe.UInt8;
 // accesses are not checked (as Burst's release builds); its ranges still
 // are: a sub-view out of range ends the program (exit 2) as with the checks.
 class SpanChecksOff {
-	@:hxmc.gcfree static function sum(s:ReadOnlySpan<UInt8>):Int {
+	@:hxmc.kernel static function sum(s:ReadOnlySpan<UInt8>):Int {
 		var t = 0;
 		for (i in 0...s.length)
 			t += s[i];
 		return t;
 	}
 
-	@:hxmc.gcfree static function twice(s:Span<UInt8>):Int {
+	@:hxmc.kernel static function twice(s:Span<UInt8>):Int {
 		for (i in 0...s.length)
 			s[i] = s[i] * 2;
 		return sum(s);
 	}
 
-	@:hxmc.gcfree static function cut(s:ReadOnlySpan<UInt8>, p:Int, n:Int):Int
+	@:hxmc.kernel static function cut(s:ReadOnlySpan<UInt8>, p:Int, n:Int):Int
 		return sum(s.sub(p, n));
 
 	static function main() {

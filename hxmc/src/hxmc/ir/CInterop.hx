@@ -270,8 +270,8 @@ class CInterop {
 				case Var(_):
 				case Method(_): throw new LowerError('@:hxmc.struct $where: ${cf.cfName}: a struct has no methods (yet)', posOf(cf.cfPos));
 			}
-			if (GcFreeCheck.spanOf(cf.cfType) != null)
-				throw new LowerError(GcFreeCheck.spanError(posOf(cf.cfPos), "", "the field " + cf.cfName + " of the struct " + where + " has a span type", GcFreeCheck.SPANS_LOCAL), "");
+			if (KernelCheck.spanOf(cf.cfType) != null)
+				throw new LowerError(KernelCheck.spanError(posOf(cf.cfPos), "", "the field " + cf.cfName + " of the struct " + where + " has a span type", KernelCheck.SPANS_LOCAL), "");
 			var ct = ctype(cf.cfType);
 			switch ct {
 				case COpaque(o): throw new LowerError('@:hxmc.struct $where: ${cf.cfName}: an opaque type (${o.clPath.name}) only stands behind a Ptr', posOf(cf.cfPos));

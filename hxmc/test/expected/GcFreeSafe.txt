@@ -1,6 +1,0 @@
-exit 0
-GcFreeSafe.hx:73: 18, 3141
-GcFreeSafe.hx:75: 6.5, 3.5, 7382
-GcFreeSafe.hx:76: 44, 111
-GcFreeSafe.hx:77: main thread, 928
-GcFreeSafe.hx:89: worker, 928, 118

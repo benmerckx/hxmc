@@ -143,9 +143,9 @@ percent in tight loops and needs every loop's live references in their
 slots at the back edge, so it stays opt-in and unbuilt while regions and
 `@:hxmc.blocking` jobs cover the known cases.
 
-## GC-free kernels
+## Kernels
 
-A job pool runs GC-free kernels (a decoder's inner loop over native
+A job pool runs kernels (a decoder's inner loop over native
 memory) on its threads inside a safe region, so that the main thread's
 collections never wait for them (helder's jobs: 0.5 ms pauses instead of
 35 to 55 ms). Two things stood in the way:
@@ -169,32 +169,34 @@ The design, built in steps (a PR each):
 
 ### The attribute
 
-**Built**: `@:hxmc.gcfree` on a static Haxe function or a class
-([interop.md](../interop.md#gc-free-code)): no GC point, no value of a GC
-type, calls only of GC-free functions (`Facts.gcFreeCulprit`, on the
+**Built**: `@:hxmc.kernel` on a static Haxe function or a class
+([interop.md](../interop.md#kernels)) marks a kernel: GC-free, and
+memory-safe unless also `@:hxmc.unsafe`. GC-free: no GC point, no value
+of a GC type, calls only of kernels (`Facts.kernelCulprit`, on the
 lowered body, every build), and its calls enter no region.
-`@:hxmc.blocking` on a Haxe function is `@:hxmc.gcfree` plus the region
+`@:hxmc.blocking` on a Haxe function is `@:hxmc.kernel` plus the region
 entered by a call from GC code.
 
-The name is not `nogc`: `@:hxmc.noGc` is `@:hxmc.unsafe`'s former name,
-still accepted, and an attribute that differed from it only in case would
+The name says what the function is for, not only what it avoids. It is
+not `nogc`: `@:hxmc.noGc` is `@:hxmc.unsafe`'s former name, still
+accepted, and an attribute that differed from it only in case would
 silently mean the other thing.
 
 ### The safe subset
 
-**Built**: without `@:hxmc.unsafe`, a GC-free function is memory-safe.
-Checked on the typed AST before lowering (`GcFreeCheck`), so the errors point at the
+**Built**: without `@:hxmc.unsafe`, a kernel is memory-safe.
+Checked on the typed AST before lowering (`KernelCheck`), so the errors point at the
 expression; what Haxe inlined into the function is checked as its own code:
 
 | Rule | Allowed | Rejected |
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars, enum abstracts and abstracts over these, `@:hxmc.struct` values, spans | GC types (below); raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
-| calls | static `@:hxmc.gcfree`/`@:hxmc.blocking` functions, `Math`, `Std.int`, `Struct`'s layout constants, spans' accessors | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| calls | static `@:hxmc.kernel`/`@:hxmc.blocking` functions, `Math`, `Std.int`, `Struct`'s layout constants, spans' accessors | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast (a struct as another, an Int as a span) |
 | statics | reads | writes (also of a struct static's fields) |
 | other | locals, loops, `switch`, struct values | closures, `throw`, `try`, `untyped` |
 
-`@:hxmc.gcfree` plus `@:hxmc.unsafe` keeps today's freedom: the escape
+`@:hxmc.kernel` plus `@:hxmc.unsafe` keeps today's freedom: the escape
 hatch, for trusted code (a pool's glue, the runtime).
 
 **What "GC type" means**: what the lowering represents as a reference.
@@ -236,13 +238,13 @@ address is a 32-bit linear-memory address held in the 64-bit word `Ptr`
 uses everywhere; the checks keep every access inside the span, so inside
 the memory too.
 
-### Where spans exist: only in GC-free code
+### Where spans exist: only in kernels
 
-**The rule.** A span is a parameter, local or result of a `@:hxmc.gcfree`
+**The rule.** A span is a parameter, local or result of a `@:hxmc.kernel`
 (or `@:hxmc.blocking`) function, and nothing else: never a field, a static,
 a struct's field, an array element, a closure's capture, a type
 parameter's value, `Dynamic`. GC code never holds one: it makes one only as
-an argument of a direct call of a GC-free function, and such a call's
+an argument of a direct call of a kernel, and such a call's
 result is not a span:
 
 ```haxe
@@ -252,8 +254,8 @@ var e = Png.decode(ReadOnlySpan.ofIoBuffer(file), Span.ofIoBuffer(rgba)); // sev
 
 | Made by | Valid for | The callee |
 | --- | --- | --- |
-| `ofIoBuffer(buf, ?pos, ?len)` | the call | any GC-free function, `@:hxmc.blocking` too |
-| `ofBytes(b, ?pos, ?len)` | the call | a GC-free function that never enters a safe region (not blocking, calls no function or C function that does: `FuncInfo.blocks`): a collection would move the Bytes |
+| `ofIoBuffer(buf, ?pos, ?len)` | the call | any kernel, `@:hxmc.blocking` too |
+| `ofBytes(b, ?pos, ?len)` | the call | a kernel that never enters a safe region (not blocking, calls no function or C function that does: `FuncInfo.blocks`): a collection would move the Bytes |
 | `unsafeOf(ptr, length)` | what its maker vouches for | `@:hxmc.unsafe` code: a pool's glue |
 | `s.sub`, `s.reinterpret` | as `s` | |
 
@@ -281,15 +283,15 @@ nothing between the two collects.
   capture the outer span, and a `Bytes` cannot be lent at all (the
   callback may collect).
 
-The call is the scope instead. During a call of a GC-free function
-nothing but GC-free code runs on the thread, which cannot free (no C
+The call is the scope instead. During a call of a kernel
+nothing but kernel code runs on the thread, which cannot free (no C
 functions, no raw memory without `@:hxmc.unsafe`), so a buffer cannot be
 freed under its span on that thread, by construction: no count, no state
 per buffer, nothing per access, nothing at run time but two words per
 span. Several buffers are several arguments, and a `Bytes` can be lent
 without a copy, as `BytesPtr` lends it today, but checked. What it gives
 up: GC code never sees a span. Code that reads a buffer from GC code reads
-the IoBuffer or Bytes itself, or is a GC-free function.
+the IoBuffer or Bytes itself, or is a kernel.
 
 **Soundness.** The claim: whenever safe code reads or writes through a
 span, the span's memory is allocated and does not move.
@@ -297,8 +299,8 @@ span, the span's memory is allocated and does not move.
 1. *Where spans come from.* A boundary argument (above), `unsafeOf` in
    `@:hxmc.unsafe` code (trusted), or `sub`/`reinterpret` of a span,
    which stay inside its memory.
-2. *Where they go.* Only through parameters, locals and results of GC-free
-   functions: GC-free code has no GC value, so no heap object, array,
+2. *Where they go.* Only through parameters, locals and results of
+   kernels: a kernel has no GC value, so no heap object, array,
    closure, box or `Dynamic` can hold one; struct fields and statics of a
    span type are rejected (a struct may be stored anywhere, also by GC
    code); GC code may not declare a span local or parameter, nor receive a
@@ -306,14 +308,14 @@ span, the span's memory is allocated and does not move.
    puts the span into GC code: rejected.
 3. *So spans live in the frames of one boundary call.* Every span on a
    thread's stack was made by a boundary call further down the same stack
-   (or by trusted code), and dies before that call returns. A GC-free
-   function returns a span only to a GC-free caller, and what it returns
+   (or by trusted code), and dies before that call returns. A
+   kernel returns a span only to a kernel caller, and what it returns
    came from its arguments or from trusted code: returned spans are
    derived from spans the caller already holds. (helder's "returned only
    as a sub-view of a parameter" holds without a flow check, because no
    other source exists.)
 4. *During the boundary call the memory stays.* The thread runs only
-   GC-free code. It reaches no GC point, so other threads' collections
+   kernel code. It reaches no GC point, so other threads' collections
    wait for it and a `Bytes` does not move; a `@:hxmc.blocking` callee lets
    them run, which is why `ofBytes` requires one that never enters a
    region. It frees nothing: safe code calls no C function and holds no
@@ -337,7 +339,7 @@ elements' bytes race.
 
 ### Bounds checks
 
-On in every build, debug or release. A failed check in GC-free code cannot
+On in every build, debug or release. A failed check in kernels cannot
 throw (a throw allocates); it ends the program with a message naming the
 index, the length and the function's position, as an out-of-bounds access
 does in Burst's checked builds or a Rust panic with `panic=abort`.
@@ -381,7 +383,7 @@ loop proves them yet (`for (i in 0...s.length)`): the next step.
 - **Inlining.** An inline function's body becomes the caller's code and is
   checked as such (the error's position is the call's). So an inline
   helper over raw memory (`IoBuffer.get`, a `Ptr` wrapper's) is rejected in
-  safe code: call a non-inline `@:hxmc.unsafe @:hxmc.gcfree` function
+  safe code: call a non-inline `@:hxmc.unsafe @:hxmc.kernel` function
   instead. `@:hxmc.unsafe` on an inline function does not carry into the
   copies Haxe inlines.
 - **Generics.** A value of a type parameter is erased to a reference
@@ -397,10 +399,10 @@ loop proves them yet (`for (i in 0...s.length)`): the next step.
 Each names the rule and the expression:
 
 ```
-Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (gcfree: raw memory needs @:hxmc.unsafe)
-Kernel.hx:14: Kernel.sum: a write of the static total (gcfree: statics are read-only in GC-free code)
-Kernel.hx:20: the field last has a span type (gcfree: spans live in parameters and locals only)
-Main.hx:8: Main.main: a span made outside a call's arguments (gcfree: spans exist only in GC-free code; pass ReadOnlySpan.ofBytes(...) as an argument of a @:hxmc.gcfree function)
-Main.hx:9: Main.main: a span over a Bytes is passed to Kernel.sum, which lets other threads collect (a safe region) while the Bytes may move (gcfree: a Bytes is lent only to a GC-free function that enters no region; lend an IoBuffer's instead)
-Kernel.hx:30: Kernel.reset: a write through a read-only span (gcfree: a ReadOnlySpan cannot be written through)
+Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (kernel: raw memory needs @:hxmc.unsafe)
+Kernel.hx:14: Kernel.sum: a write of the static total (kernel: statics are read-only in kernels)
+Kernel.hx:20: the field last has a span type (kernel: spans live in parameters and locals only)
+Main.hx:8: Main.main: a span made outside a call's arguments (kernel: spans exist only in kernels; pass ReadOnlySpan.ofBytes(...) as an argument of a @:hxmc.kernel function)
+Main.hx:9: Main.main: a span over a Bytes is passed to Kernel.sum, which lets other threads collect (a safe region) while the Bytes may move (kernel: a Bytes is lent only to a kernel that enters no region; lend an IoBuffer's instead)
+Kernel.hx:30: Kernel.reset: a write through a read-only span (kernel: a ReadOnlySpan cannot be written through)
 ```
