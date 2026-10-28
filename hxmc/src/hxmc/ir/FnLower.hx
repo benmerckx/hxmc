@@ -2990,6 +2990,28 @@ class FnLower {
 					out.push(SSet(k, EBin(Add, ELocal(k), EInt(1))));
 				})));
 				EInt(0);
+			case "load" | "store" | "compareExchange":
+				// (Atomic's 32- and 64-bit operations: integer elements only)
+				var w = switch ct {
+					case CI32: 32;
+					case CI64: 64;
+					case _: cfail("hxmc." + a.aPath.name + "." + name + ": atomic accesses are of Int, UInt and Int64 elements, not "
+						+ core.TPrinting.sTypes(vector(elemT)), e);
+				}
+				var t = w == 32 ? TI32 : TI64;
+				var i = int(0);
+				check(i, len);
+				var p = elem(ptr, i);
+				switch name {
+					case "load":
+						coerce(temp(t, ECallHost("hxmc_unsafe_Atomic_load" + w, vector(p), t)), t, tyOf(e));
+					case "store":
+						out.push(SExpr(ECallHost("hxmc_unsafe_Atomic_store" + w, vector(p, coerce(rest[1], restTy(1), t)), TVoid)));
+						EInt(0);
+					case _:
+						var expected = loc(coerce(rest[1], restTy(1), t), t), replacement = loc(coerce(rest[2], restTy(2), t), t);
+						coerce(temp(t, ECallHost("hxmc_unsafe_Atomic_cas" + w, vector(p, expected, replacement), t)), t, tyOf(e));
+				}
 			case _:
 				cfail("hxmc." + a.aPath.name + "." + name + " is not a span accessor", e);
 		}

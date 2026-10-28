@@ -52,6 +52,17 @@ abstract Span<T>(SpanData) {
 	// v in elements pos .. pos + len - 1
 	extern public function fill(pos:Int, len:Int, v:T):Void;
 
+	// atomic accesses of element i, checked as s[i] is: of Int, UInt (and
+	// their typedefs Int32, UInt32) and Int64 elements, a compile error for
+	// others. Sequentially consistent (hxmc.unsafe.Atomic's): a load
+	// acquires, a store releases
+	extern public function load(i:Int):T;
+
+	extern public function store(i:Int, v:T):Void;
+
+	// replacement into element i if it holds expected; the value it held
+	extern public function compareExchange(i:Int, expected:T, replacement:T):T;
+
 	@:to extern function toReadOnly():ReadOnlySpan<T>;
 
 	// a call's argument (GC code: only so): bytes [pos, pos + len) of b, len

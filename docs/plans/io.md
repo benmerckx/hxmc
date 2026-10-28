@@ -226,6 +226,7 @@ never back. `T` is a C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`,
 | `s.reinterpret()` | the same bytes as elements of another type, `var f:Span<Float> = bytes.reinterpret()`: length * size(T) / size(U) of them, rounded down |
 | `dst.blit(pos, src, srcpos, len)` | a copy between spans (overlapping too), range-checked |
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1 |
+| `s.load(i)`, `s.store(i, v)`, `s.compareExchange(i, e, r)` | atomic accesses of an `Int`, `UInt` or `Int64` element, range-checked (Atomic's sequentially consistent operations: a job's cancel flag, a shared counter); `load` on a `ReadOnlySpan` too |
 
 **Layout and alignment.** Element i is at the address plus i * size(T),
 the size of `T`'s C type (a struct's C layout: `Struct.sizeOf`, a multiple
