@@ -1,0 +1,11 @@
+exit 0
+Spans.hx:101: 597, 402, 197, 398
+Spans.hx:102: range, OutsideBounds
+Spans.hx:103: range, OutsideBounds
+Spans.hx:105: 4872, [28,35,9,9,35,42,49,49,56,56,63,70,77,91,98,105]
+Spans.hx:106: 33686020, 67372036
+Spans.hx:108: 7.25, 1.5
+Spans.hx:111: 106.5
+Spans.hx:113: 597, abcdef
+Spans.hx:116: 563004
+Spans.hx:117: 407572

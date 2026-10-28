@@ -105,6 +105,7 @@ class FnLower {
 	public function run(tf:TFunc, isCtor = false) {
 		// (GC-free and not @:hxmc.unsafe: the safe subset, docs/interop.md)
 		if (fi.declGcFree && !fi.declUnsafe) GcFreeCheck.check(l, fi, tf);
+		spanSignature(tf);
 		if (boxed == null) boxed = Boxing.analyze(tf.tfExpr, tf.tfArgs.mapToArray(a -> a.variable));
 		var off = 0;
 		if (self != null) {
@@ -125,6 +126,7 @@ class FnLower {
 		boxed = Boxing.analyze(tf.tfExpr, tf.tfArgs.mapToArray(a -> a.variable));
 		thisLocal = fi.args[0];
 		structCtor = true;
+		spanSignature(tf);
 		bindArgs(tf, 1);
 		stmt(tf.tfExpr);
 	}
@@ -169,6 +171,7 @@ class FnLower {
 			if (c.id == -1) thisLocal = lo else locals.set(c.id, lo);
 		}
 		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
+		spanSignature(tf);
 		bindArgs(tf, 1);
 		stmt(tf.tfExpr);
 	}
@@ -994,6 +997,7 @@ class FnLower {
 			case TParenthesis(e1) | TMeta(_, e1):
 				stmt(e1);
 			case TVar(v, init):
+				spanInGcCode(v.vType, e, "the local " + v.vName);
 				// (an inlined Class<T> argument naming a C struct: Struct's constants take it)
 				if (init != null) switch strip(init).eexpr {
 					case TTypeExpr(TClassDecl(sc)) if (CInterop.isNativeClass(sc)):
@@ -2398,7 +2402,18 @@ class FnLower {
 				return EInt(0);
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
+				// (spans made as arguments of a GC-free function: filled once
+				// every argument is evaluated, spanCall)
+				var outer = boundary;
+				var made = fn.declGcFree ? [for (a in cargs) if (spanMaker(a)) strip(a)] : [];
+				boundary = made.length > 0 ? {direct: made, fills: []} : null;
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 0, fn);
+				var fills = boundary != null ? boundary.fills : null;
+				boundary = outer;
+				if (fills != null)
+					for (fill in fills)
+						fill();
+				spanInGcCode(e.etype, e, "the result of " + (fn.display != null ? fn.display : fn.name));
 				// (@:hxmc.blocking: in a safe region, unless called from one)
 				if (fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3)
 					return inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt);
@@ -2690,6 +2705,8 @@ class FnLower {
 	// constants; null for any other call
 	function cInteropCall(c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Null<Ex> {
 		switch c.clKind {
+			case KAbstractImpl(a) if (GcFreeCheck.isSpanAbstract(a)):
+				return spanCall(a, cf, cargs, e);
 			case KAbstractImpl(a) if (a.aPath.name == "Ptr" && a.aPath.pack.join(".") == "hxmc.unsafe"):
 				var n = cf.cfName;
 				// (T: the result of value, [i] and their setters; offset returns Ptr<T>)
@@ -2753,6 +2770,201 @@ class FnLower {
 			}
 		}
 		return null;
+	}
+
+	// ---- spans (hxmc.Span, hxmc.ReadOnlySpan; docs/interop.md, "Spans"): a
+	// struct of two words, SpanData's address and number of elements; every
+	// access checked (Lower.spanChecks), a range always
+
+	// the direct arguments, making spans (Span.ofBytes & co.), of the call of
+	// a GC-free function being lowered, and what fills those spans once every
+	// argument is evaluated: their addresses are taken last, after any GC
+	// point (Facts.checkHeapSpans: the callee of a Bytes' enters no region)
+	var boundary:Null<{direct:Array<TExpr>, fills:Array<() -> Void>}> = null;
+
+	// whether e makes a span (ofBytes, ofIoBuffer, unsafeOf)
+	static function spanMaker(e:TExpr):Bool {
+		switch strip(e).eexpr {
+			case TCall({eexpr: TField(_, FStatic(c, cf))}, _):
+				switch c.clKind {
+					case KAbstractImpl(a) if (GcFreeCheck.isSpanAbstract(a)):
+						return cf.cfName == "ofBytes" || cf.cfName == "ofIoBuffer" || cf.cfName == "unsafeOf";
+					case _:
+				}
+			case _:
+		}
+		return false;
+	}
+
+	// (errors) where e is, and the function
+	function spanWhere(e:TExpr):String
+		return where(e) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
+
+	function spanFail(e:TExpr, what:String, rule:String):Dynamic
+		throw new LowerError(GcFreeCheck.spanError(where(e), fi.display != null ? fi.display : fi.name, what, rule), "");
+
+	// a span type where GC code would hold it: an error
+	function spanInGcCode(t:T, e:TExpr, what:String) {
+		if (!fi.declGcFree && GcFreeCheck.spanOf(t) != null)
+			spanFail(e, what + " has a span type", GcFreeCheck.SPANS_GCFREE + ": only a @:hxmc.gcfree function holds one");
+	}
+
+	// a function's parameters and result: no span in GC code
+	function spanSignature(tf:TFunc) {
+		if (fi.declGcFree) return;
+		var at:TExpr = {eexpr: TConst(TNull), etype: tf.tfType, epos: tf.tfExpr.epos};
+		for (a in tf.tfArgs)
+			spanInGcCode(a.variable.vType, ({eexpr: TConst(TNull), etype: a.variable.vType, epos: a.variable.vPos} : TExpr), "the parameter " + a.variable.vName);
+		spanInGcCode(tf.tfType, at, "the result");
+	}
+
+	// SpanSupport (hxmc.Span's module): what the expansion calls
+	function spanSupport(sd:TClass, name:String):FuncInfo {
+		for (t in sd.clModule.mTypes)
+			switch t {
+				case TClassDecl(c) if (c.clPath.name == "SpanSupport"):
+					var cf = c.clStatics.get(name);
+					if (cf == null) fail("hxmc.SpanSupport." + name + " is missing");
+					return l.staticFunc(c, cf);
+				case _:
+			}
+		return fail("hxmc.SpanSupport is missing");
+	}
+
+	// a call of a span's method or maker (extern: expanded here)
+	function spanCall(a:core.TType.TAbstract, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var sd = structOf(a.aThis);
+		if (sd == null) cfail("hxmc." + a.aPath.name + ": its data is no struct", e);
+		var sdt = structTy(sd);
+		var ptrOff = CInterop.field(sd, "ptr").off, lenOff = CInterop.field(sd, "length").off;
+		var name = cf.cfName;
+		// (the failed check of an index or a range: the program ends)
+		var at = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(spanWhere(e))), TI64);
+		function fatal(f:String, xs:Array<Ex>):Stmt
+			return SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at]))));
+		// a new span: p, n (locals or constants) into a fresh slot
+		function make(s:Local, p:Ex, n:Ex) {
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(s), EInt(ptrOff), p), TVoid)));
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(s), EInt(lenOff), n), TVoid)));
+		}
+		inline function loc(x:Ex, t:Ty):Ex
+			return isConst(x) ? x : ELocal(asLocal(x, t));
+		if (name == "ofBytes" || name == "ofIoBuffer" || name == "unsafeOf") {
+			var direct = boundary != null && boundary.direct.indexOf(e) >= 0;
+			if (!direct && !fi.declGcFree)
+				spanFail(e, "a span made outside a call's arguments",
+					GcFreeCheck.SPANS_GCFREE + "; pass " + a.aPath.name + "." + name + "(...) as an argument of a @:hxmc.gcfree function");
+			var xs = operands(cargs);
+			function arg(k:Int, d:Int):Ex
+				return k < xs.length && !strip(cargs[k]).eexpr.match(TConst(TNull)) ? loc(coerce(xs[k], tyOf(cargs[k]), TI32), TI32) : EInt(d);
+			var s = newSlot(sdt, true);
+			var fill:() -> Void;
+			switch name {
+				case "unsafeOf":
+					var p = loc(coerce(xs[0], tyOf(cargs[0]), TI64), TI64), n = arg(1, 0);
+					// (a negative length would pass every unsigned check)
+					out.push(SIf(EBin(Lt, n, EInt(0)), vector(fatal("badRange", [EInt(0), n, EInt(0)])), vector()));
+					fill = () -> make(s, p, n);
+				case "ofBytes":
+					var b = loc(xs[0], tyOf(cargs[0])), pos = arg(1, 0), len = arg(2, -1);
+					var n = loc(ECall(spanSupport(sd, "bytesRange"), vector(b, pos, len)), TI32);
+					fill = () -> make(s, loc(ECall(spanSupport(sd, "bytesAddr"), vector(b, pos)), TI64), n);
+				case _:
+					var buf = loc(coerce(xs[0], tyOf(cargs[0]), TI64), TI64), pos = arg(1, 0), len = arg(2, -1);
+					// (GC code throws OutsideBounds; GC-free code cannot: it ends the program)
+					var n = fi.declGcFree ? loc(ECall(spanSupport(sd, "ioRangeFatal"), vector(buf, pos, len, at)),
+						TI32) : loc(ECall(spanSupport(sd, "ioRange"), vector(buf, pos, len)), TI32);
+					fill = () -> make(s, loc(ECall(spanSupport(sd, "ioAddr"), vector(buf, pos)), TI64), n);
+			}
+			if (direct) boundary.fills.push(fill) else fill();
+			return coerce(ELocal(s), sdt, tyOf(e));
+		}
+		// (the element type: elem and setElem are called by the inline get and
+		// set, whose `this` is SpanData: their own type is the element's)
+		var elemT = if (name == "elem" || name == "setElem") e.etype else {
+			var sp = GcFreeCheck.spanOf(cargs[0].etype);
+			if (sp == null) cfail("hxmc." + a.aPath.name + "." + name + ": not called on a span", e);
+			sp.elem;
+		}
+		var base = ELocal(asLocal(placeOf(cargs[0]).addr(), TI64));
+		var rest = operands(Vector.fromArrayCopy([for (k in 1...cargs.length) cargs[k]]));
+		inline function restTy(k:Int):Ty
+			return tyOf(cargs[k + 1]);
+		var ct = ptrElemCt(elemT, e);
+		var size = CInterop.sizeOf(ct);
+		var ptr = loc(ECallHost("hxmc_unsafe_Mem_getI64", vector(base, EInt(ptrOff)), TI64), TI64);
+		var len = loc(ECallHost("hxmc_unsafe_Mem_getI32", vector(base, EInt(lenOff)), TI32), TI32);
+		// p + i * size
+		function elem(p:Ex, i:Ex):Ex
+			return switch i {
+				case EInt(0): p;
+				case _: loc(EBin(LAdd, p, EBin(LMul, EConv(I2L, i), EConv(I2L, EInt(size)))), TI64);
+			}
+		// 0 <= i < n
+		function check(i:Ex, n:Ex)
+			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
+		// [pos, pos + cnt) inside n (64-bit: no overflow; negative ones fail unsigned)
+		function range(pos:Ex, cnt:Ex, n:Ex) {
+			var n64 = EConv(I2L, n), p64 = EConv(I2L, pos);
+			var bad = vector(fatal("badRange", [pos, cnt, n]));
+			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(n64, p64), TBool), bad,
+				vector(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EBin(LSub, n64, p64), EConv(I2L, cnt)), TBool), bad, vector()))));
+		}
+		function int(k:Int):Ex
+			return loc(coerce(rest[k], restTy(k), TI32), TI32);
+		return switch name {
+			case "elem":
+				var i = int(0);
+				check(i, len);
+				cLoad(elem(ptr, i), 0, ct, e);
+			case "setElem":
+				var i = int(0);
+				var v = ELocal(asLocal(rest[1], restTy(1)));
+				check(i, len);
+				cStore(elem(ptr, i), 0, ct, v, restTy(1), e);
+				coerce(v, restTy(1), tyOf(e));
+			case "sub":
+				var pos = int(0), cnt = int(1);
+				range(pos, cnt, len);
+				var s = newSlot(sdt, true);
+				make(s, elem(ptr, pos), cnt);
+				coerce(ELocal(s), sdt, tyOf(e));
+			case "reinterpret":
+				var to = GcFreeCheck.spanOf(e.etype);
+				var sizeU = CInterop.sizeOf(ptrElemCt(to.elem, e));
+				var n = loc(EConv(L2I, ECallHost("hxmc_unsafe_Mem_udiv", vector(EBin(LMul, EConv(I2L, len), EConv(I2L, EInt(size))), EConv(I2L, EInt(sizeU))), TI64)), TI32);
+				var s = newSlot(sdt, true);
+				make(s, ptr, n);
+				coerce(ELocal(s), sdt, tyOf(e));
+			case "toReadOnly":
+				var s = newSlot(sdt, true);
+				make(s, ptr, len);
+				coerce(ELocal(s), sdt, tyOf(e));
+			case "blit":
+				var pos = int(0), srcpos = int(2), cnt = int(3);
+				var src = ELocal(asLocal(rest[1], restTy(1)));
+				var sptr = loc(ECallHost("hxmc_unsafe_Mem_getI64", vector(src, EInt(ptrOff)), TI64), TI64);
+				var slen = loc(ECallHost("hxmc_unsafe_Mem_getI32", vector(src, EInt(lenOff)), TI32), TI32);
+				range(pos, cnt, len);
+				range(srcpos, cnt, slen);
+				out.push(SExpr(ECall(spanSupport(sd, "move"), vector(elem(ptr, pos), elem(sptr, srcpos), EBin(LMul, EConv(I2L, cnt), EConv(I2L, EInt(size)))))));
+				EInt(0);
+			case "fill":
+				var pos = int(0), cnt = int(1);
+				var v = ELocal(asLocal(rest[2], restTy(2)));
+				range(pos, cnt, len);
+				var k = newLocal("k", TI32);
+				out.push(SSet(k, EInt(0)));
+				var p = elem(ptr, pos);
+				out.push(SLoop(block(() -> {
+					out.push(SIf(EBin(Lt, ELocal(k), cnt), vector(), vector(SBreak)));
+					cStore(loc(EBin(LAdd, p, EBin(LMul, EConv(I2L, ELocal(k)), EConv(I2L, EInt(size)))), TI64), 0, ct, v, restTy(2), e);
+					out.push(SSet(k, EBin(Add, ELocal(k), EInt(1))));
+				})));
+				EInt(0);
+			case _:
+				cfail("hxmc." + a.aPath.name + "." + name + " is not a span accessor", e);
+		}
 	}
 
 	// a call of a C function declared by an extern (CInterop.declare): the
@@ -2917,6 +3129,8 @@ class FnLower {
 				var idx = ci.fieldIndex(cf.cfName);
 				var o = asLocal(value(obj), tyOf(obj));
 				return {addr: () -> EFieldAddr(ci, idx, ELocal(o)), heap: true};
+			case TCall({eexpr: TField(_, FStatic(c, cf))}, _) if (write && cf.cfName == "elem" && c.clKind.match(KAbstractImpl({aPath: {pack: ["hxmc"], name: "ReadOnlySpan"}}))):
+				return spanFail(e, "a write through a read-only span", "a ReadOnlySpan cannot be written through");
 			case _:
 				var x = rhs(e);
 				var lo = switch x {

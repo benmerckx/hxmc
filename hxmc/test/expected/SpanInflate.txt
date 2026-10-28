@@ -1,0 +1,7 @@
+exit 0
+SpanInflate.hx:299: dynamic, 6709, true, AA43F0AA, AA43F0AA
+SpanInflate.hx:301: fixed, hello hello hello
+SpanInflate.hx:302: stored, stored!
+SpanInflate.hx:305: corrupt, error
+SpanInflate.hx:306: short output, error
+SpanInflate.hx:326: worker, 6709, true, 200

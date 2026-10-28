@@ -163,7 +163,7 @@ The design, built in steps (a PR each):
 1. the attribute (built);
 2. the memory-safe subset (built);
 3. spans, checked views of buffers, and where they may
-   exist;
+   exist (built);
 4. the bounds checks' define and their measured cost;
 5. a leaf routine of the std moved onto the subset.
 
@@ -209,7 +209,7 @@ memory safety: a torn flat value is a wrong value, never corruption.
 
 ### Spans
 
-Checked views of memory outside the GC heap, values of two words (the
+**Built** ([interop.md](../interop.md#spans)): checked views of memory, values of two words (the
 address and the length), in `hxmc`: `Span<T>` (writable) and
 `ReadOnlySpan<T>`, distinct types; a `Span` converts to a `ReadOnlySpan`,
 never back. `T` is a C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`,
@@ -367,6 +367,8 @@ Each names the rule and the expression:
 ```
 Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (gcfree: raw memory needs @:hxmc.unsafe)
 Kernel.hx:14: Kernel.sum: a write of the static total (gcfree: statics are read-only in GC-free code)
-Kernel.hx:20: Kernel.keep: the field last has a span type (gcfree: spans live in parameters and locals only)
-Main.hx:8: Main.main: a span made outside a call's arguments (gcfree: spans exist only in GC-free code; pass ReadOnlySpan.ofBytes(b) as an argument of a @:hxmc.gcfree function)
+Kernel.hx:20: the field last has a span type (gcfree: spans live in parameters and locals only)
+Main.hx:8: Main.main: a span made outside a call's arguments (gcfree: spans exist only in GC-free code; pass ReadOnlySpan.ofBytes(...) as an argument of a @:hxmc.gcfree function)
+Main.hx:9: Main.main: a span over a Bytes is passed to Kernel.sum, which lets other threads collect (a safe region) while the Bytes may move (gcfree: a Bytes is lent only to a GC-free function that enters no region; lend an IoBuffer's instead)
+Kernel.hx:30: Kernel.reset: a write through a read-only span (gcfree: a ReadOnlySpan cannot be written through)
 ```

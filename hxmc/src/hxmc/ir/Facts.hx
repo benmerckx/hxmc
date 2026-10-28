@@ -59,6 +59,7 @@ class Facts {
 			if (f.cSymbol != null && StringTools.startsWith(f.module, "hxmc.rt.")) f.rtFamilies = RuntimeSymbols.familiesOf(f.cSymbol);
 		}
 		findNoGc();
+		checkHeapSpans();
 		markCold();
 		checkRawAddresses();
 		assignTypes();
@@ -735,6 +736,47 @@ class Facts {
 		for (s in f.body)
 			stWhy(s);
 		return why != null ? why : "a callee reaches one";
+	}
+
+	// A span over a Bytes (hxmc.Span.ofBytes, an argument of a call of a
+	// GC-free function: FnLower.spanCall) holds the address of a heap
+	// object, taken last, right before the call (SpanSupport.bytesAddr): the
+	// call itself must never let another thread collect, so its callee must
+	// enter no safe region (not @:hxmc.blocking, no call of one or of a C
+	// function in one: blocks).
+	function checkHeapSpans() {
+		var addr:Null<FuncInfo> = null;
+		for (f in p.funcs)
+			if (f.display == "hxmc.SpanSupport.bytesAddr") addr = f;
+		if (addr == null) return;
+		var errors = [];
+		for (f in p.funcs) {
+			if (f.gcScan == null || f.gcScan.callees.indexOf(addr) < 0) continue;
+			// (in order: an address taken, then the call it is for)
+			var pending = false;
+			function ex(e:Ex) {
+				switch e {
+					case ECall(g, _) if (g == addr): pending = true;
+					// (the other spans' addresses, filled between)
+					case ECall(g, _) if (pending && g.display != null && StringTools.startsWith(g.display, "hxmc.SpanSupport.")):
+					case ECall(g, _) if (pending):
+						pending = false;
+						// (a blocking callee's region is entered by its caller)
+						if (g.blocks || g.declBlocking) {
+							var m = where(f) + displayName(f) + ": a span over a Bytes is passed to " + displayName(g)
+								+ ", which lets other threads collect (a safe region) while the Bytes may move (gcfree: a Bytes is lent only to a GC-free function that enters no region; lend an IoBuffer's instead)";
+							if (errors.indexOf(m) < 0) errors.push(m);
+						}
+					case _:
+				}
+				Facts.iterEx(ex, e);
+			}
+			function st(s:Stmt)
+				Facts.iterStmt(st, ex, s);
+			for (s in f.body)
+				st(s);
+		}
+		if (errors.length > 0) throw errors.join("\n");
 	}
 
 	// The raw-address check (docs/hxmc.md, "Runtime in Haxe"): the address of a heap object
