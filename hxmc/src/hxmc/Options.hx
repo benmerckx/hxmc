@@ -20,9 +20,26 @@ class Options {
 	public var android = new Map<String, String>();
 	// iOS's app bundle (hxmc.ios.Bundle): -D hxmc.ios-bundle-id=<id>, -D
 	// hxmc.ios-name=<text>, -D hxmc.ios-version=<n>, -D
-	// hxmc.ios-version-name=<text>, -D hxmc.ios-min-version=<major.minor>, -D
-	// hxmc.ios-entitlements=<file>
+	// hxmc.ios-version-name=<text>, -D hxmc.ios-entitlements=<file>
 	public var ios = new Map<String, String>();
+	// -D hxmc.ios-min-version=<major.minor>: the oldest iOS an iOS output runs
+	// on (LC_BUILD_VERSION's minimum, LinkMachO.minos; a bundle's
+	// MinimumOSVersion), 15.0 and the floor; iosMinos: as LinkMachO writes it
+	public var iosMinVersion = "15.0";
+	public var iosMinos = LinkMachO.IOS_MIN;
+	// a Mach-O output's code signature (CodeSign), for a packager that writes
+	// the bundle around it: -D hxmc.codesign-id=<identifier>, -D
+	// hxmc.codesign-info-plist=<file> (slot 1), -D
+	// hxmc.codesign-resources=<file> (_CodeSignature/CodeResources, slot 3),
+	// -D hxmc.codesign-entitlements=<file> (an XML plist, slot 5). Any of them:
+	// ad hoc as `codesign -s -` signs (CodeSign.adhoc); none: linker-signed
+	public var codesignId:Null<String> = null;
+	public var codesignInfoPlist:Null<String> = null;
+	public var codesignResources:Null<String> = null;
+	public var codesignEntitlements:Null<String> = null;
+
+	public function codesigned():Bool
+		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
@@ -207,10 +224,22 @@ class Options {
 			var v = def("hxmc.android_" + k); // (-D turns the dashes into underscores)
 			if (v != null) o.android.set(k, v);
 		}
-		for (k in ["bundle_id", "name", "version", "version_name", "min_version", "entitlements"]) {
+		for (k in ["bundle_id", "name", "version", "version_name", "entitlements"]) {
 			var v = def("hxmc.ios_" + k);
 			if (v != null) o.ios.set(k, v);
 		}
+		var min = def("hxmc.ios_min_version");
+		if (min != null) {
+			var v = ~/^([0-9]+)\.([0-9]+)$/;
+			if (!v.match(min) || Std.parseInt(v.matched(1)) < 15 || Std.parseInt(v.matched(2)) > 255)
+				throw "hxmc: iOS: -D hxmc.ios-min-version=" + min + ": major.minor, 15.0 or later";
+			o.iosMinVersion = min;
+			o.iosMinos = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
+		}
+		o.codesignId = def("hxmc.codesign_id");
+		o.codesignInfoPlist = def("hxmc.codesign_info_plist");
+		o.codesignResources = def("hxmc.codesign_resources");
+		o.codesignEntitlements = def("hxmc.codesign_entitlements");
 		o.opt = env("HXMC_OPT") != "0";
 		var eh = def("hxmc.wasm_eh"); // (-D turns the dash into an underscore)
 		if (eh != null) switch eh {

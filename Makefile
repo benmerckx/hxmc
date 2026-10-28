@@ -132,7 +132,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
-	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
+	android-check android-device-check shared-check macho-check native-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro measure quick check full clean distclean
 
 help:
@@ -192,6 +192,9 @@ help:
 ##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
 ##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
 ##               run on a simulator (a Mac), shared libraries of the glibc mode
+##   macho-check, native-check  the native output a packager builds on (docs/using.md): iOS's plain
+##               Mach-O executables and dylibs, minimum and code signature (hxmc/test/MachOCheck.hx);
+##               native-check: shared-check (Android's libmain.so too) and macho-check
 ##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
 ##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
 ##
@@ -543,6 +546,14 @@ android-check: android-programs
 # shared libraries of the glibc mode loaded by an hxmc program (hxmc/test/SharedCheck.hx), Android's built
 shared-check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) SharedCheck
+# iOS's native output without a bundle (hxmc/test/MachOCheck.hx: IosHello as an
+# executable and a dylib, -D hxmc.ios-min-version, the code signature,
+# linker-signed or with -D hxmc.codesign-*'s files)
+macho-check: $(TOOL) $(STD) $(HOST_RT)
+	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
+# the native-output contract a packager builds on (docs/using.md, "Native
+# output for a packager"; CI's native-output job): Android's .so, iOS's Mach-O
+native-check: shared-check macho-check
 # AndroidHello on the device or emulator adb reaches (hxmc/test/android/android.sh: its line in logcat)
 android-device-check: android-programs
 	sh hxmc/test/android/android.sh bin/android/$(ANDROID_TARGET)/AndroidHello.apk bin/android/$(ANDROID_TARGET)

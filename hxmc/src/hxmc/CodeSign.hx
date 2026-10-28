@@ -14,10 +14,12 @@ import hxmc.LinkMachO.BeBuf;
 // Two kinds here:
 //   - linker-signed (the default, what ld64 writes for arm64 executables):
 //     ad hoc, the CodeDirectory alone, identifier "hxmc";
-//   - a bundle's (hxmc.ios.Bundle): ad hoc, identified by the bundle id,
-//     with the Info.plist's and CodeResources' hashes, an empty requirement
-//     set and the entitlements if any (an XML plist): what `codesign -s -`
-//     writes, which the iOS simulator runs.
+//   - a bundle's (adhoc: hxmc.ios.Bundle, or -D hxmc.codesign-id,
+//     -info-plist, -resources, -entitlements for a packager that writes the
+//     bundle, Options): ad hoc, identified by the bundle id, with the
+//     Info.plist's and CodeResources' hashes, an empty requirement set and
+//     the entitlements if any (an XML plist): what `codesign -s -` writes,
+//     which the iOS simulator runs.
 // A device needs more (docs/hxmc.md, iOS): a CMS signature blob (slot
 // 0x10000) by the developer's certificate over the CodeDirectory, the
 // entitlements of the provisioning profile (also as DER), the designated
@@ -38,22 +40,36 @@ class CodeSign {
 	public var infoPlist:Null<Bytes> = null;
 	public var resources:Null<Bytes> = null;
 	// the entitlements (an XML plist; slot 5), null: none
-	public var entitlements:Null<String> = null;
+	public var entitlements:Null<Bytes> = null;
 	// a device's signature: not written yet (null: ad hoc)
 	public var identity:Null<Identity> = null;
 
 	public function new() {}
 
+	// ad hoc as `codesign -s -` signs a bundle's executable: identified by
+	// identifier, binding the bundle's Info.plist (slot 1), its
+	// _CodeSignature/CodeResources (slot 3) and the entitlements (slot 5),
+	// each optional
+	public static function adhoc(identifier:String, infoPlist:Null<Bytes>, resources:Null<Bytes>, entitlements:Null<Bytes>):CodeSign {
+		var s = new CodeSign();
+		s.linkerSigned = false;
+		s.identifier = identifier;
+		s.infoPlist = infoPlist;
+		s.resources = resources;
+		s.entitlements = entitlements;
+		return s;
+	}
+
 	// the blobs after the CodeDirectory, by slot
 	function blobs():Array<{slot:Int, data:Bytes}> {
 		if (linkerSigned) return [];
 		var out = [{slot: 2, data: requirements()}];
-		if (entitlements != null) out.push({slot: 5, data: blob(0xfade7171, Bytes.ofString(entitlements))});
+		if (entitlements != null) out.push({slot: 5, data: blob(0xfade7171, entitlements)});
 		return out;
 	}
 
 	function specialSlots():Int
-		return linkerSigned ? 0 : entitlements != null ? 5 : 3;
+		return linkerSigned ? 0 : entitlements != null ? 5 : resources != null ? 3 : 2;
 
 	// the bytes the signature takes for a file whose signed part ends at
 	// codeLimit (16-byte aligned: LC_CODE_SIGNATURE's size)

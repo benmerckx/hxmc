@@ -26,6 +26,11 @@ not work as well as hxmc's own collector over linear memory and cost about
 11k lines, for modules that were smaller, but not by much. Its code, tests,
 measurements and open items are in the git history before #90's merge.
 
+Packaging is planned to move to a downstream packager, which builds on hxmc's
+native output ([using.md](../using.md#native-output-for-a-packager)):
+Android's `.so`, its soname the output's file name; iOS's plain Mach-O,
+with `-D hxmc.ios-min-version` and `-D hxmc.codesign-*`.
+
 ## Android
 
 Built: NativeActivity apps and Java glue. Left:

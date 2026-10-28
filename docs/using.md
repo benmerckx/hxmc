@@ -138,6 +138,33 @@ main thread, and the program's body runs once the app has launched.
 Not yet: signing for devices (developer certificate, provisioning profile),
 app icons and asset catalogs.
 
+### Native output for a packager
+
+A packager that writes the APK or the app bundle itself builds on two
+outputs, checked by `make native-check`:
+
+- **Android**: any output name other than `.apk` gives the `.so` alone. Its
+  `DT_SONAME` is always the output's file name, so name it `libmain.so` for
+  `NativeActivity`. `ANativeActivity_onCreate` is exported when the program
+  defines it.
+- **iOS**: an output with no `.app` or `.ipa` gives a plain Mach-O
+  executable, or a dylib with `-D hxmc.shared`. `-D hxmc.ios-min-version`
+  sets its `LC_BUILD_VERSION` minimum. The linker signs it ad hoc, as
+  linker-signed. With any of the defines below it is signed as `codesign
+  -s -` signs a bundle's executable instead. The packager writes
+  `Info.plist` and `CodeResources` first, then links, then puts the files
+  together.
+
+| Option | Signs |
+| --- | --- |
+| `-D hxmc.codesign-id=<identifier>` | the identifier (default: the output's name) |
+| `-D hxmc.codesign-info-plist=<file>` | special slot 1, the bundle's `Info.plist` |
+| `-D hxmc.codesign-resources=<file>` | special slot 3, `_CodeSignature/CodeResources` |
+| `-D hxmc.codesign-entitlements=<file>` | special slot 5, the entitlements (an XML plist) |
+
+They apply to Mach-O outputs only (macOS and iOS), and not to `.app` or
+`.ipa` outputs, which sign themselves the same way.
+
 ### WebAssembly
 
 `wasm32-wasi` writes a linear-memory module with the whole runtime inside.
