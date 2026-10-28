@@ -193,7 +193,7 @@ exits.
 
 One install: `npm i -D @hxmc/cli` (node 22+). It brings `haxe` and `hxmc`
 (the same command): every Haxe target (js, hl, jvm, `--interp`, ...) and
-`--custom-target hxmc=<out>` for this machine. There are seven packages,
+`--custom-target hxmc=<out>` for this machine. There are eight packages,
 all published at one version:
 
 | Package | Size (tarball, unpacked) | Contents |
@@ -202,8 +202,9 @@ all published at one version:
 | `@hxmc/linux-x64`, `@hxmc/linux-arm64` | about 10 MB, 34–38 MB each | the native compiler for that machine and its targets' runtime objects: `linux-<arch>/` (static, musl) and `linux-<arch>-glibc/` (`-D hxmc.libc=glibc`) |
 | `@hxmc/darwin-x64`, `@hxmc/darwin-arm64` | about 8 MB, 26–28 MB each | the same for macOS: `macos-x86_64/`, `macos-arm64/` (also used for iOS) |
 | `@hxmc/win32-x64`, `@hxmc/win32-arm64` | about 8 MB, 26–28 MB each | the same for Windows: `windows-x86_64/`, `windows-arm64/` |
+| `@hxmc/source` | 2.4 MB, 9.1 MB | the compiler's sources, for building on it ([below](#building-on-the-compiler)); `hxmc-rebuild` |
 
-Sizes are of 0.1.0 as packed; CI's job summary lists each build's.
+Sizes are of 0.1.0 as packed (`@hxmc/source`'s of a later nightly); CI's job summary lists each build's.
 
 npm installs the platform package that matches the machine, by its `os`
 and `cpu` fields. A runtime-objects folder holds `rt.o`, `ssl.o` (mbedtls)
@@ -266,11 +267,32 @@ The launcher writes nothing but the compiler's own output to stdout and
 stderr, since editors parse them. A failure prints one line and exits
 non-zero.
 
-### Changing the compiler
+### Building on the compiler
 
-The compiler's sources and `hxmc-rebuild` (`packages/source`) are not
-published for now. Change the compiler in a checkout of this repository
-([development.md](development.md)).
+`@hxmc/source` holds the sources of `@hxmc/cli`'s compiler: the port
+(`haxe/src`), hxmc (`hxmc/src`) and hxmc's std (`hxmc/std`,
+`hxmc/portable`). Install it at `@hxmc/cli`'s version; `@hxmc/cli`'s
+`haxe` builds a compiler from it, natively, with a main of your own:
+
+```sh
+npm i -D @hxmc/cli@next @hxmc/source@next     # (one version: the nightlies' dist-tag)
+npx haxe -cp node_modules/@hxmc/source/haxe/src -cp node_modules/@hxmc/source/hxmc/src \
+  -cp src -main MyCompiler -D disable-parallelism --custom-target hxmc=bin/mycompiler
+```
+
+A frontend for another language adds its functions to the IR this way
+([hxmc.md](hxmc.md#frontends)). Run the compiler it builds as the platform
+package's is run directly: `HAXE_STD_PATH` set to
+`node_modules/@hxmc/cli/haxe/upstream/std`, `HXMC_STD` to
+`node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std`, and `HXMC_RT_DIR` to the
+platform package (`node_modules/@hxmc/linux-x64`), whose runtime objects it
+does not find beside itself.
+
+`npx hxmc-rebuild` builds `@hxmc/cli`'s own compiler again from the
+package's sources, edited or not, into the cache; `haxe` then runs that
+one while `@hxmc/source` is installed, and `hxmc-rebuild --reset` returns to
+the published one. To change the compiler for good, work in a checkout of
+this repository ([development.md](development.md)).
 
 ## Editors and lix
 

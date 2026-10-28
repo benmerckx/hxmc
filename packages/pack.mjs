@@ -17,8 +17,12 @@
 //                                  puts there): with upstream's std and its
 //                                  optional dependencies on the platform
 //                                  packages at this version
-// and sizes.md, their sizes. (packages/source, @hxmc/source with
-// hxmc-rebuild, is not published.)
+//   hxmc-source-<version>.tgz      @hxmc/source (packages/source: hxmc-rebuild):
+//                                  the compiler's sources (haxe/src, hxmc/src,
+//                                  hxmc/std, hxmc/portable), which @hxmc/cli's
+//                                  haxe builds (frontends, docs/hxmc.md); a
+//                                  peer dependency on @hxmc/cli at this version
+// and sizes.md, their sizes.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -92,6 +96,10 @@ for (const [target, p] of Object.entries(PLATFORMS)) {
 // (the repository's README is the package's page on npm)
 stage('cli', {}, [['haxe/upstream/std', 'haxe/upstream/std'], ['haxe/upstream/LICENSE', 'haxe/upstream/LICENSE'], ['README.md', 'README.md']],
 	['hxmc/bootstrap/haxe', 'dist/haxe']);
+
+// (sources only: no tests, no stage0; hxmc/portable for hxmc-rebuild's MkStd)
+stage('source', {}, [['haxe/src', 'haxe/src'], ['hxmc/src', 'hxmc/src'], ['hxmc/std', 'hxmc/std'], ['hxmc/portable', 'hxmc/portable']],
+	['hxmc/bootstrap/hxmc-rebuild']);
 
 const kb = n => `${(n / 1024 / 1024).toFixed(1)} MB`;
 fs.writeFileSync(path.join(outAbs, 'sizes.md'), [

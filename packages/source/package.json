@@ -1,6 +1,6 @@
 {
   "name": "@hxmc/source",
-  "description": "The sources of @hxmc/cli's compiler (the Haxe compiler ported to Haxe, hxmc) and hxmc-rebuild, which builds it again from them for @hxmc/cli (not published for now)",
+  "description": "The sources of @hxmc/cli's compiler (the Haxe compiler ported to Haxe, and hxmc), for frontends that build a compiler with them, and hxmc-rebuild, which builds @hxmc/cli's compiler again from them",
   "type": "module",
   "bin": {
     "hxmc-rebuild": "hxmc/bootstrap/hxmc-rebuild"
@@ -9,6 +9,7 @@
     "haxe/src/",
     "hxmc/src/",
     "hxmc/std/",
+    "hxmc/portable/",
     "hxmc/bootstrap/",
     "LICENSE",
     "COPYING"
