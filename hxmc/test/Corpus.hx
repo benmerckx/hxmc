@@ -54,6 +54,8 @@ class Corpus {
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)"];
+	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
+	public static final MUSL_ONLY = ["LinuxEntropy" => "getentropy and getrandom: musl's, the static mode on Linux only"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
 	// the cases known to fail under --mir-run (as --known: still run, their
@@ -169,6 +171,7 @@ class Corpus {
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
 		if (!t.startsWith("linux") && LINUX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: LINUX_ONLY[c.name]};
+		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
