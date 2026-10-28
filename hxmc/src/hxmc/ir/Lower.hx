@@ -1409,6 +1409,7 @@ class Lower implements LowerQueries {
 		if (fi != null) return fi;
 		fi = new FuncInfo(nativeName(c) + "_new", moduleOf(c));
 		fi.display = core.Globals.sTypePath(c.clPath) + ".new";
+		fi.structCtor = true;
 		structCtors.set(c, fi);
 		prog.funcs.push(fi);
 		var tf = funcOf(c.clConstructor);

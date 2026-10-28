@@ -61,7 +61,7 @@ threads' collections wait for it.
   `write`, `poll`, `nanosleep` and `Sleep`: the call site enters and leaves
   the safe region, evaluating the arguments before it. It takes no GC
   references.
-- **`@:hxmc.blocking` on an `@:hxmc.unsafe` static Haxe function**: its
+- **`@:hxmc.blocking` on a static Haxe function**: its
   calls run in a safe region, for GC-free jobs (a loop over native memory)
   that would otherwise stall other threads' collections until their next
   GC point. It is [`@:hxmc.gcfree`](#gc-free-code), checked as such, plus
@@ -130,7 +130,7 @@ entered by calls from GC code; a GC-free function may call a blocking one
 (the region nests).
 
 ```haxe
-@:hxmc.unsafe @:hxmc.gcfree static function checksum(p:Ptr<UInt8>, n:Int):Int {
+@:hxmc.unsafe @:hxmc.gcfree static function checksum(p:Ptr<UInt8>, n:Int):Int { // raw memory: also unsafe
   var s = 0;
   for (i in 0...n) s = (s * 31 + p[i]) & 0xFFFFFF;
   return s;
@@ -142,11 +142,36 @@ checksum(buf.ptr, buf.length);
 Blocking.leave(region);
 ```
 
-For now a `@:hxmc.gcfree` or `@:hxmc.blocking` Haxe function must also be
-declared `@:hxmc.unsafe`: it reaches memory raw, with no check of bounds
-or lifetime.
-`GcFreeFunctions` checks both paths, `reject/GcFree*` the rule. The plan
-for a memory-safe subset: [plans/io.md](plans/io.md#gc-free-kernels).
+**The safe subset.** Without `@:hxmc.unsafe`, a GC-free function is
+memory-safe too, checked on its typed body before it is lowered (so
+whatever Haxe inlined into it counts as its own code, at the call's
+position):
+
+| | Allowed | Rejected |
+| --- | --- | --- |
+| values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values | GC types; raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
+| calls | static `@:hxmc.gcfree` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| casts | unchecked casts between scalars | any other unchecked cast |
+| statics | reads | writes, also of a struct static's fields |
+| other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
+
+A GC type is one the lowering represents as a reference: class instances,
+`String`, arrays, anonymous objects, `Dynamic`, closures, enum values (also
+argument-less ones; an `enum abstract` over Int is the GC-free spelling),
+`Null<Int>` and the like (boxed), an erased type parameter (`@:generic`
+functions are checked per specialization). `@:hxmc.unsafe` on an inline
+function does not carry into the copies Haxe inlines: an inline helper
+over raw memory is rejected in safe code. Each error names the rule:
+
+```
+Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (gcfree: raw memory needs @:hxmc.unsafe)
+Kernel.hx:14: Kernel.sum: a write of the static total (gcfree: statics are read-only in GC-free code)
+```
+
+`@:hxmc.gcfree` plus `@:hxmc.unsafe` keeps the freedom of raw memory, as
+above: the escape hatch for trusted code. `GcFreeFunctions` (unsafe) and
+`GcFreeSafe` check both paths, `reject/GcFree*` the rules. The design:
+[plans/io.md](plans/io.md#gc-free-kernels).
 
 ### System calls
 

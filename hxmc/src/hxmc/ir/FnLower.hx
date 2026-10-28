@@ -103,6 +103,8 @@ class FnLower {
 
 	// a function body; `fi.args` already holds the caller-visible signature
 	public function run(tf:TFunc, isCtor = false) {
+		// (GC-free and not @:hxmc.unsafe: the safe subset, docs/interop.md)
+		if (fi.declGcFree && !fi.declUnsafe) GcFreeCheck.check(l, fi, tf);
 		if (boxed == null) boxed = Boxing.analyze(tf.tfExpr, tf.tfArgs.mapToArray(a -> a.variable));
 		var off = 0;
 		if (self != null) {

@@ -583,7 +583,6 @@ class Facts {
 	// point (@:hxmc.fast or @:hxmc.blocking externs, Mem's intrinsics). Null
 	// when it holds, else the first violation.
 	function gcFreeCulprit(f:FuncInfo):Null<String> {
-		if (!f.declUnsafe) return "is not @:hxmc.unsafe";
 		if (Ir.isRef(f.ret)) return "returns a value of a GC type";
 		for (a in f.args)
 			if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type';
@@ -595,6 +594,10 @@ class Facts {
 			switch e {
 				// (a C function the runtime implements in Haxe, as WebAssembly's
 				// strlen and malloc, counts as the C function: @:hxmc.fast)
+				// (a struct's constructor: when its own body is GC-free)
+				case ECall(g, _) if (g.structCtor && g != f):
+					var w = g.noGc ? gcFreeCulprit(g) : "reaches a GC point";
+					if (w != null) why = "it calls " + displayName(g) + ", which " + StringTools.replace(w, "it ", "");
 				case ECall(g, _) if (!g.declGcFree && !(g.cSymbol != null && FnLower.C_EXTERNS.exists(g.cSymbol))): why = "it calls " + displayName(g) + ", which is not @:hxmc.gcfree (nor @:hxmc.blocking)";
 				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a method, a closure or a structural field (only static @:hxmc.gcfree functions)";
 				case ECallHost(n, _, _) if (!FnLower.noGcHost(n) && n != "rt_blocking_enter" && n != "rt_blocking_restore"): why = "it calls " + n + ", which may collect";
