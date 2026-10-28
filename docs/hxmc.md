@@ -172,6 +172,13 @@ space by copying into a new region.
   allocation folding makes objects of up to 4 KB, so these must be young.
 - **TLABs**: each thread takes at most 64 KB at a time (`RT_TLAB_KB`), in
   fresh pages up to a 2 MB boundary.
+- **Zeroing** is in bulk: a TLAB is zeroed as it is taken (`hxmc_zero` in
+  a profile), so no allocation stores its own zeros. An allocation that
+  writes every slot before reading one (`Mem.allocRaw`, `allocArrayRaw`:
+  strings, numbers' storage) of an object without references takes its
+  memory unzeroed on the slow path (`hxmc_alloc_slow_raw`): the rest of
+  the TLAB it starts is zeroed, the object not, nor a large one in the old
+  space.
 - **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
   ones in percent of what a major collection left live (300 natively, 200
   on wasm32). The tool sets 768 MB for a build; the compilation server

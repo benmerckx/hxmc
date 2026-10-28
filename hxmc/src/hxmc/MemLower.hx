@@ -649,7 +649,8 @@ class MemLower extends MirWriter {
 		jmp(join);
 		cur = slow;
 		var sp = spillOpen(cold, 0);
-		var r = call("hxmc_alloc_slow", vector(w1, w0, op1(Trunc, I32, bytes)), I64);
+		// (not zero: an object without references is not zeroed there, GcPaths.allocSlowRaw)
+		var r = call(zero ? "hxmc_alloc_slow" : "hxmc_alloc_slow_raw", vector(w1, w0, op1(Trunc, I32, bytes)), I64);
 		spillClose(sp);
 		writeVar(res, cur, r);
 		jmp(join);

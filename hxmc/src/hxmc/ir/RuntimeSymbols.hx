@@ -87,6 +87,7 @@ class RuntimeSymbols {
 		{sym: "rt_blocking_leave", kind: FUNC, families: NATIVE, by: "Lower.callback: a callback's wrapper leaves the caller's safe region"},
 		{sym: "rt_blocking_restore", kind: FUNC, families: NATIVE, by: "MirBuild.cCall, FnLower.cCall: the end of a C call's safe region"},
 		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MemLower.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
+		{sym: "hxmc_alloc_slow_raw", kind: FUNC, families: LINEAR, by: "MemLower.allocDyn (Mem.allocRaw, Mem.allocArrayRaw)"},
 		{sym: "hxmc_barrier_slow", kind: FUNC, families: LINEAR, by: "MirBuild: the write barrier"},
 		{sym: "rt_icache_miss", kind: FUNC, families: LINEAR, by: "MirBuild: an inline cache's miss"},
 		{sym: "hx_box_int", kind: FUNC, families: LINEAR, by: "MemLower.boxFrom"},
