@@ -49,7 +49,7 @@ class Corpus {
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
 	static final WASM_EXCLUDED = ["ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
-		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)"];
+		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
@@ -65,7 +65,8 @@ class Corpus {
 		"CallStacksGc" => "interpreted frames are not in native call stacks",
 		"MethodAdapters" => "a function converted to another function type compares unequal to what it adapts",
 		"SafeRegionRoots" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler",
-		"SafeRegionAlloc" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler"
+		"SafeRegionAlloc" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler",
+		"RandomSeed" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler"
 	];
 
 	static var tool:String;
