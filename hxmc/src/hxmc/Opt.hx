@@ -349,7 +349,7 @@ class Opt {
 				var p = f.vals[x.a], c = f.vals[x.b];
 				return p.op == TlsLoad && p.sym == "rt_young_ptr" && c.op == Const && c.sym == null && c.imm == 8;
 			case Call:
-				return x.sym != null && (StringTools.startsWith(x.sym, MemLower.ALLOC_STUB) || x.sym == "hxmc_alloc_slow");
+				return x.sym != null && (StringTools.startsWith(x.sym, MemLower.ALLOC_STUB) || x.sym == "hxmc_alloc_slow" || x.sym == "hxmc_alloc_slow_raw");
 			case Phi:
 				for (a in x.args)
 					if (!fresh(a, depth + 1)) return false;

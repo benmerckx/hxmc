@@ -241,8 +241,10 @@ class Gc {
 		Mem.tlsSet("rt_young_limit", youngStart);
 	}
 
-	// the next chunk, from the allocation pointer, with room for bytes (false: none)
-	@:hxmc.unsafe static function nextChunk(bytes:Int):Bool {
+	// the next chunk, from the allocation pointer, with room for bytes
+	// (false: none); raw: its first bytes are not zeroed (allocSlow: an object
+	// without references that its allocation writes whole)
+	@:hxmc.unsafe static function nextChunk(bytes:Int, raw:Bool):Bool {
 		var p = Mem.tlsGet("rt_young_ptr");
 		var avail = youngEnd.diff(p);
 		if (avail < (bytes : I64)) return false;
@@ -253,6 +255,7 @@ class Gc {
 			// (up to the old chunk's end the nursery is zeroed already)
 			var z = Mem.tlsGet("rt_young_rlimit");
 			if (z.ult(p)) z = p;
+			if (raw && z.ult(p.add(bytes))) z = p.add(bytes);
 			var ze = e.ult(youngDirty) ? e : youngDirty;
 			if (z.ult(ze)) Wasm.memset(z, 0, ze.diff(z).toInt());
 		}
@@ -265,7 +268,18 @@ class Gc {
 	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlowParts(lo:Int, tindex:Int, bytes:Int):Ptr
 		return allocSlow(Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo), bytes);
 
-	@:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr {
+	// (raw: an allocation that writes every slot before it reads one, of an
+	// object without references, Types.K_RAW: not zeroed, as no scan reads
+	// its slots; MemLower.allocDyn, as the native GcPaths.allocSlowRaw)
+	@:hxmc.export("hxmc_alloc_slow_raw") @:hxmc.collects static function allocSlowRawParts(lo:Int, tindex:Int, bytes:Int):Ptr {
+		var header = Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo);
+		return allocAny(header, bytes, Types.kindOfWord(tindex) == Types.K_RAW);
+	}
+
+	@:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr
+		return allocAny(header, bytes, false);
+
+	@:hxmc.collects static function allocAny(header:I64, bytes:Int, raw:Bool):Ptr {
 		var p:Ptr;
 		if (bytes > minorSize >> 2 && youngEnd.diff(Mem.tlsGet("rt_young_ptr")) < (bytes : I64)) {
 			// large objects go straight to the old space (unless the free nursery
@@ -279,19 +293,19 @@ class Gc {
 			}
 			largeBytes += bytes;
 		} else {
-			if (Mem.tlsGet("rt_young_rlimit").diff(Mem.tlsGet("rt_young_ptr")) < (bytes : I64) && !nextChunk(bytes)) {
+			if (Mem.tlsGet("rt_young_rlimit").diff(Mem.tlsGet("rt_young_ptr")) < (bytes : I64) && !nextChunk(bytes, raw)) {
 				collectFor(false, 0);
-				nextChunk(bytes);
+				nextChunk(bytes, raw);
 			}
 			p = Mem.tlsGet("rt_young_ptr");
 			Mem.tlsSet("rt_young_ptr", p.add(bytes));
 			Mem.setI64(p, 0, header);
-			// (zeroed with its chunk, but for the pattern of RT_VERIFY)
-			if (verifying) Wasm.memset(p.add(8), 0, bytes - 8);
+			// (zeroed with its chunk, but for the pattern of RT_VERIFY, which a raw one keeps)
+			if (verifying && !raw) Wasm.memset(p.add(8), 0, bytes - 8);
 			return p.add(8);
 		}
 		Mem.setI64(p, 0, header);
-		Wasm.memset(p.add(8), 0, bytes - 8);
+		if (!raw) Wasm.memset(p.add(8), 0, bytes - 8);
 		return p.add(8);
 	}
 
