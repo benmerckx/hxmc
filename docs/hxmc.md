@@ -157,6 +157,16 @@ A `haxe.io.Bytes` is an object holding a `NativeArray<Byte>` (`b`); its
 `length` is `b`'s (`@:hxmc.lengthOf`). A small Bytes is allocated together
 with its data. Arrays have no identity hash.
 
+The program's classes take their type indices in preorder (`Lower.finish`),
+so an instance of a class or of a subclass is one unsigned comparison of
+its type index against the class's span (`MemLower.instOf`; null is no
+instance). Catch clauses test so, and `Std.isOfType`, `Std.downcast` and
+`cast` of a class literal (`FnLower.instClass`); interfaces, extern
+classes (String, Array, Date, the boxes), the runtime's types and the
+code of Mir macros' bundles (`Lower.classSpans`: a later bundle's class
+may extend an earlier one's, outside its span) go through `hx_is`, which
+walks the superclasses.
+
 ### The collector
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
@@ -229,6 +239,22 @@ the epoch. `Std.string` reaches `Date.toString` only through
 `Date.printer`, which every date's creation sets, so a program that makes
 no date has no calendar code. `DateValues` checks dates against the
 reference's `--interp`.
+
+### Random numbers
+
+`Math.random` and `Std.random` draw from xoshiro256** (`Random.hx`), one
+state per thread (`@:hxmc.threadLocal`, no lock), seeded on the thread's
+first draw from the system: the `getrandom` system call on Linux and
+Android (by its number: glibc 2.17 has no wrapper), else `/dev/urandom`;
+`arc4random_buf` on macOS and iOS; `BCryptGenRandom` on Windows;
+`random_get` on WASI. Without any of them, the time and the thread's stack
+address mixed by splitmix64. So each run and each thread draws its own
+sequence; there is no way to seed it. `Math.random` has 53 random bits;
+`Std.random(n)` is unbiased (Lemire's multiply and reject), 0 for n <= 1
+as upstream specifies. The compiler's output never depends on them
+(`make fixpoint`); the identity hashes (`Dyn.objHash`) keep their fixed
+per-thread seeds. `RandomRanges` checks the ranges, `RandomSeed` that runs
+and threads differ.
 
 ### The symbols generated code calls
 

@@ -245,6 +245,12 @@ class Lower implements LowerQueries {
 	// -D hxmc.span-checks: whether a span's element accesses are range-checked
 	// (FnLower.spanCall; default: yes); ranges always are
 	public static var spanChecks = true;
+	// Std.isOfType, Std.downcast and cast of a class literal test a span of type
+	// indices (FnLower.instClass); false while Mir macros lower their bundles
+	// (interp.MirMacros.build: a class of a later bundle may extend one of an
+	// earlier bundle, whose span cannot cover it, macro.Loader), whose tests
+	// walk the superclasses (hx_is)
+	public static var classSpans = true;
 	// -D hxmc.interp: functions of the program are interpreted (hxmc.interp.InterpGen: their entry stubs call hxmc_interp_enter)
 	public static var interp = false;
 

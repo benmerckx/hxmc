@@ -326,8 +326,6 @@ class CacheDir {
 		if (now() - Math.max(mtime(file), mtime(u)) > USED_REFRESH) touch(u);
 	}
 
-	// a name for temporary files (builds may write the same file at the same
-	// time, and rand() is the same sequence in every process)
 	// a 64-bit hash of bytes (two 32-bit lanes, four bytes a step), as 16
 	// hex digits: the store's content hashes (files, blobs), much cheaper
 	// than MD5 in the tool's code
@@ -355,6 +353,9 @@ class CacheDir {
 		return StringTools.hex(h1 ^ (h2 >>> 7), 8) + StringTools.hex(h2 ^ (h1 >>> 11), 8);
 	}
 
+	// a name for temporary files (builds may write the same file at the same
+	// time): the arguments, the time and Math.random, which is seeded per
+	// process and thread (hxmc.rt.Random); no output depends on it
 	public static function nonce():String
-		return Fingerprint.hash(Sys.args().join("\x00") + "|" + Sys.time() + "|" + haxe.Timer.stamp() + "|" + Sys.programPath()).substr(0, 16);
+		return Fingerprint.hash(Sys.args().join("\x00") + "|" + Sys.time() + "|" + haxe.Timer.stamp() + "|" + Sys.programPath() + "|" + Math.random()).substr(0, 16);
 }

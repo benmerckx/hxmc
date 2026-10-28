@@ -1023,14 +1023,7 @@ class Str {
 		return d;
 	}
 
-	@:hxmc.host("Std_random") @:hxmc.unsafe static function random(max:Int):Int {
-		if (max <= 0) return 0;
-		if (Mem.os() == 2) {
-			// the C runtime's rand() has 15 bits: two make 30
-			var r:I64 = (LibC.rand() << 15) ^ LibC.rand();
-			return ((r * max) >> 30).toInt();
-		}
-		var r:I64 = LibC.rand();
-		return ((r * max) >> 31).toInt();
-	}
+	// [0, max), unbiased; 0 when max <= 1 (hxmc.rt.Random)
+	@:hxmc.host("Std_random") @:hxmc.unsafe static function random(max:Int):Int
+		return Random.int(max);
 }
