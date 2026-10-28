@@ -361,19 +361,23 @@ class Coro {
 	}
 
 	public static function makeDeferredApi(ctx:CoroCtx, b:TexprBuilder):{deferred:CoroDeferredApi, install:CoroDeferredApi->Void} {
-		inline function makeDeferred(build:Void->TExpr, t:T):TExpr {
+		// port: diverges from upstream: `inputs`, the expressions the deferred expression is built from
+		// ... (ctx.deferredInputs; see CoroToTexpr.handleLocals).
+		inline function makeDeferred(build:Void->TExpr, t:T, inputs:Array<TExpr>):TExpr {
 			var v = allocVar(VGenerated, "_hx_coro_deferred", tDynamic, nullPos);
 			ctx.deferredExprs.set(v.vId, build);
+			ctx.deferredInputs.set(v.vId, inputs);
 			return b.call(b.local(v, v.vPos), vector(), t);
 		}
+		inline function callInputs(c:CoroSuspend):Array<TExpr> return [c.csFun].concat(c.csArgs.toArray());
 		// These refs will be filled in after the continuation API is created (step 4).
 		var api:Null<CoroDeferredApi> = null;
 		var deferred:CoroDeferredApi = {
-			makeInlineReturn: function(e, p) return makeDeferred(function() return api.makeInlineReturn(e, p), tDynamic), // TODO: ?
-			makeInlineTailCall: function(c) return makeDeferred(function() return api.makeInlineTailCall(c), tDynamic), // TODO: ?
-			makeSyncCall: function(c, e) return makeDeferred(function() return api.makeSyncCall(c, e), tDynamic),
-			makeThis: function(e) return makeDeferred(function() return api.makeThis(e), e.etype),
-			makeSuperField: function(e) return makeDeferred(function() return api.makeSuperField(e), e.etype)
+			makeInlineReturn: function(e, p) return makeDeferred(function() return api.makeInlineReturn(e, p), tDynamic, e == null ? [] : [e]), // TODO: ?
+			makeInlineTailCall: function(c) return makeDeferred(function() return api.makeInlineTailCall(c), tDynamic, callInputs(c)), // TODO: ?
+			makeSyncCall: function(c, e) return makeDeferred(function() return api.makeSyncCall(c, e), tDynamic, callInputs(c)),
+			makeThis: function(e) return makeDeferred(function() return api.makeThis(e), e.etype, [e]),
+			makeSuperField: function(e) return makeDeferred(function() return api.makeSuperField(e), e.etype, [e])
 		};
 		return {deferred: deferred, install: function(a) api = a};
 	}
@@ -569,6 +573,7 @@ class Coro {
 			coroType: type,
 			classNamePos: p,
 			deferredExprs: [],
+			deferredInputs: [],
 			hasCaptureVars: false,
 			capturesThis: false,
 			nextBlockId: 0,

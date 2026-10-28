@@ -190,6 +190,18 @@ class CoroToTexpr {
 					if (eo != null) loop(eo);
 				case TLocal(v) if (usages.exists(v.vId)):
 					usages.get(v.vId).add(state.csId);
+				// port: diverges from upstream (066bd83, and its development branch on
+				// ... 2026-10-28): a deferred expression's placeholder is a call without
+				// ... arguments, so upstream's walk misses the locals of what it is built
+				// ... from: a tail call's arguments (`return c ? f(x) : g(x)`) or a
+				// ... returned value. A local declared in an earlier state and read in a
+				// ... later one only by such an expression is not hoisted, and that
+				// ... state has no declaration of it ("Unbound variable"). The walk reads the placeholder's
+				// ... inputs (ctx.deferredInputs). Upstream issue draft: "[coro] A local
+				// ... read only by a tail call in a later state is not hoisted"
+				// ... (hxmc/test/cases/CoroTailLocal.hx).
+				case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredInputs.exists(v.vId)):
+					for (e in ctx.deferredInputs.get(v.vId)) loop(e);
 				case _:
 					core.Texpr.iter(loop, e);
 			};

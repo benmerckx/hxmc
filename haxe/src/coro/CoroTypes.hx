@@ -132,6 +132,9 @@ enum CoroNext {
 	public var coroType:CoroFor;
 	public var classNamePos:Pos;
 	public var deferredExprs:Map<Int, Void->TExpr>;
+	// port: diverges from upstream: the expressions each deferred expression is built from, by the id of its
+	// ... placeholder (CoroToTexpr.handleLocals reads their locals; see the note there).
+	public var deferredInputs:Map<Int, Array<TExpr>>;
 	public var hasCaptureVars:Bool;
 	public var capturesThis:Bool;
 	public var nextBlockId:Int;
@@ -140,7 +143,7 @@ enum CoroNext {
 	public var numStates:Int;
 
 	public inline function new(builder:TexprBuilder, typer:context.Typecore.Typer, config:CoroConfigData, coroType:CoroFor,
-			classNamePos:Pos, deferredExprs:Map<Int, Void->TExpr>, hasCaptureVars:Bool, capturesThis:Bool, nextBlockId:Int,
+			classNamePos:Pos, deferredExprs:Map<Int, Void->TExpr>, deferredInputs:Map<Int, Array<TExpr>>, hasCaptureVars:Bool, capturesThis:Bool, nextBlockId:Int,
 			currentCatch:Null<CoroBlock>, hasCatch:Bool, numStates:Int) {
 		this.builder = builder;
 		this.typer = typer;
@@ -148,6 +151,7 @@ enum CoroNext {
 		this.coroType = coroType;
 		this.classNamePos = classNamePos;
 		this.deferredExprs = deferredExprs;
+		this.deferredInputs = deferredInputs;
 		this.hasCaptureVars = hasCaptureVars;
 		this.capturesThis = capturesThis;
 		this.nextBlockId = nextBlockId;
@@ -157,7 +161,7 @@ enum CoroNext {
 	}
 
 	public inline function clone():CoroCtx return new CoroCtx(builder, typer, config, coroType, classNamePos, deferredExprs,
-		hasCaptureVars, capturesThis, nextBlockId, currentCatch, hasCatch, numStates);
+		deferredInputs, hasCaptureVars, capturesThis, nextBlockId, currentCatch, hasCatch, numStates);
 }
 
 enum abstract CbFlag(Int) to Int {
