@@ -26,6 +26,20 @@ class TargetFlags {
 					context.Common.rawDefine(com, f);
 			if (prev != null) prev(com, actx);
 		}
+		context.Common.macroDefinesHook = macroDefines;
+	}
+
+	// The macro context's target is not the program's: hxmc.target and
+	// hxmc.libc are left out of its defines, as Haxe leaves the platforms'
+	// names out (Common.adaptDefinesToMacroContext). Macro code reads the
+	// program's through Context.definedValue. A module the macro context types
+	// sees what it sees in a native build that names no target: else
+	// `#if (hxmc.target == "wasm32-wasi")` code typed there for a macro reaches
+	// hxmc's runtime, which Eval cannot type (hxmc.rt.Names' Int64 calls) or
+	// run. -D hxmc.macros=mir sets the compiler's own (MirMacros.setupPlatform).
+	static function macroDefines(defines:core.Define.DefineContext) {
+		core.Define.rawUndefine(defines, "hxmc.target");
+		core.Define.rawUndefine(defines, "hxmc.libc");
 	}
 
 	// the flags beyond the default configuration's for a target (null: the host, native)
