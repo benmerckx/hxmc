@@ -11,7 +11,9 @@ using StringTools;
 //   quick  the x64 corpus (64 KB nursery), again with RT_VERIFY=1, and the wasm
 //          corpus under node, the module cache's store (CacheCheck), the
 //          lowering's queries (LowerQueriesCheck), where the tool finds the
-//          runtime objects in npm's layout (RtSearchCheck): after every edit
+//          runtime objects in npm's layout (RtSearchCheck), a frontend's
+//          compiler adding a function after the lowering (FrontendCheck):
+//          after every edit
 //   check  quick + linux-arm64 (qemu) and windows-x86_64 (wine), x64 with a
 //          16 KB nursery, the wasm corpus with legacy exception handling
 //          (-D hxmc.wasm-eh=legacy) under node, the corpus in the dynamic glibc
@@ -175,6 +177,7 @@ class Tiers {
 			lane("module cache store", script(["CacheCheck"]));
 			lane("lower queries", script(["LowerQueriesCheck"]));
 			if (Sys.systemName() != "Windows") lane("runtime-object search", script(["RtSearchCheck"]));
+			lane("frontend seam", script(["FrontendCheck"]));
 		}
 		if (tier == "check") {
 			lane("x64 16K", corpus(null, ["RT_MINOR_KB" => "16"], cases));
