@@ -25,6 +25,9 @@ abstract ReadOnlySpan<T>(SpanData) {
 
 	extern public function reinterpret<U>():ReadOnlySpan<U>;
 
+	// an atomic load of element i (Span.load)
+	extern public function load(i:Int):T;
+
 	extern public static function ofBytes(b:Bytes, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
 
 	extern public static function ofIoBuffer(buf:IoBuffer, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
