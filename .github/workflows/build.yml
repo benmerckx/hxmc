@@ -59,14 +59,15 @@
 #   macro and the formatter's build timed against Eval.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
-# - npm: the seven packages (@hxmc/cli and its six platform packages, each
-#   with the compiler and the runtime objects of its machine) installed from
-#   their tarballs in fresh projects on each target's machine: native at once,
-#   -lib (lix's scopes, node_modules, haxelib), --ignore-scripts; on
-#   linux-x64 a cross build with another platform package (--force) and
-#   without; and on linux-x64 (on all six on main, tags and nightly, before
-#   publish-npm) lix; publish-npm publishes them on v* tags and (as
-#   nightlies) from main.
+# - npm: the eight packages (@hxmc/cli and its six platform packages, each
+#   with the compiler and the runtime objects of its machine; @hxmc/source,
+#   the compiler's sources) installed from their tarballs in fresh projects
+#   on each target's machine: native at once, -lib (lix's scopes,
+#   node_modules, haxelib), --ignore-scripts; on linux-x64 a cross build with
+#   another platform package (--force) and without, and a frontend's compiler
+#   built from @hxmc/source; and on linux-x64 (on all six on main, tags and
+#   nightly, before publish-npm) lix; publish-npm publishes them on v* tags
+#   and (as nightlies) from main.
 # - upstream-tests: upstream's compiler-side suite (RunCi macro) with the
 #   release binaries as haxe (upstream-tests.yml).
 # - release: a rolling `nightly` pre-release on pushes to main, a release on
@@ -265,6 +266,10 @@ jobs:
       # directories, the trim, a cache that cannot be written
       - name: Module cache store
         run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
+      # a frontend's compiler built from hxmc's sources adds a function after
+      # the lowering (hxmc.Main.beforeCodegen, docs/hxmc.md "Frontends")
+      - name: The frontends' seam
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run FrontendCheck
       # the persistent module cache: the same outputs with and without it
       # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
       - name: Module cache
@@ -488,8 +493,8 @@ jobs:
       - name: hxmc as a WebAssembly module, byte-identical output
         run: make crosshost CROSSHOST_ARGS="${{ matrix.args }}"
 
-  # the npm packages (packages/): @hxmc/cli and its six platform packages,
-  # at one version: the tag's (v*), a nightly prerelease on main,
+  # the npm packages (packages/): @hxmc/cli, its six platform packages and
+  # @hxmc/source, at one version: the tag's (v*), a nightly prerelease on main,
   # packages/cli/package.json's elsewhere
   npm-pack:
     needs: [changes, rt]
@@ -527,9 +532,11 @@ jobs:
           # -lib: lix's scopes, node_modules, haxelib (and the npm job's copy of the test)
           make test-libraries
           cp hxmc/test/Libraries.hx bin/npm/
+          # (the npm job's frontend, built from @hxmc/source: hxmc/test/frontend)
+          rm -rf bin/npm/frontend && cp -r hxmc/test/frontend bin/npm/frontend
           cat bin/npm/sizes.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
-        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
+        with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/frontend/\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
 
   # the website (site/, make site): its pages, their JavaScript, the
   # playground's WebAssembly, lix under tools/, the benchmark history and the
@@ -1273,7 +1280,8 @@ jobs:
   # compiler on Unix; -lib from lix's scopes, node_modules and haxelib; the
   # platform package's compiler run directly without HXMC_RT_DIR; with --ignore-scripts after the
   # first call) on all six every run; on linux-x64 a cross build (another
-  # machine's platform package, --force); and on linux-x64 (on all six on
+  # machine's platform package, --force) and a frontend's compiler built
+  # from @hxmc/source by @hxmc/cli's haxe; and on linux-x64 (on all six on
   # main, tags and nightly: changes.outputs.npm_full) lix with dist/
   # (build: lix)
   npm:
@@ -1436,6 +1444,31 @@ jobs:
           # Android: in no package
           if npx haxe -cp src -main Main --custom-target hxmc=bin/app.so -D hxmc.target=android-arm64 2> android.err; then exit 1; fi
           cat android.err; grep -q "release archive" android.err
+      # @hxmc/source at @hxmc/cli's version (a fresh project: app has another
+      # machine's platform package, --force): @hxmc/cli's haxe builds a
+      # compiler from its sources with a main of its own, natively
+      # (hxmc/test/frontend: a function added after the lowering,
+      # docs/hxmc.md "Frontends"), which builds a program that calls it
+      - name: A frontend built from @hxmc/source
+        if: matrix.plat == 'linux-x64'
+        run: |
+          set -ex
+          v=$(cat dl/VERSION)
+          mkdir -p "$RUNNER_TEMP/source" && cd "$RUNNER_TEMP/source"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/dl/hxmc-cli-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-${{ matrix.plat }}-$v.tgz" "$GITHUB_WORKSPACE/dl/hxmc-source-$v.tgz"
+          test "$(node -p 'require("@hxmc/source/package.json").version')" = "$v"
+          # (sources only)
+          test -d node_modules/@hxmc/source/haxe/src/core && test -f node_modules/@hxmc/source/hxmc/src/hxmc/Main.hx && test ! -e node_modules/@hxmc/source/hxmc/test && test ! -e node_modules/@hxmc/source/hxmc/bootstrap/stage0.wasm.br
+          src=node_modules/@hxmc/source
+          time npx haxe -cp $src/haxe/src -cp $src/hxmc/src -cp "$GITHUB_WORKSPACE/dl/frontend" -main Frontend -D disable-parallelism --custom-target hxmc=bin/frontend
+          (export HAXE_STD_PATH="$PWD/node_modules/@hxmc/cli/haxe/upstream/std" HXMC_STD="$PWD/node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std" HXMC_RT_DIR="$PWD/node_modules/@hxmc/linux-x64"
+            bin/frontend -cp "$GITHUB_WORKSPACE/dl/frontend/app" -main Main --custom-target hxmc=bin/answer)
+          ./bin/answer | tee answer.out
+          test "$(cat answer.out)" = "$(printf 'answer 42\nanswer 1')"
+          # (installed, it changes nothing for haxe while no hxmc-rebuild ran)
+          npx haxe -cp "$GITHUB_WORKSPACE/dl/frontend/app" -main Main --custom-target hxmc=bin/plain && ./bin/plain | tee plain.out
+          test "$(cat plain.out)" = "answer 1"
       # lix with the package's installation (dist/) as its Haxe
       - name: lix
         if: matrix.lix && env.FULL == 'true'
@@ -1461,10 +1494,10 @@ jobs:
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     uses: ./.github/workflows/upstream-tests.yml
 
-  # npm: the seven packages at one version (npm-pack's), installed and
-  # tested by the npm job: the six platform packages, then @hxmc/cli: on v*
-  # tags (dist-tag latest) and pushes to main (a nightly, dist-tag next);
-  # never from other branches.
+  # npm: the eight packages at one version (npm-pack's), installed and
+  # tested by the npm job: the six platform packages, then @hxmc/cli, then
+  # @hxmc/source: on v* tags (dist-tag latest) and pushes to main (a
+  # nightly, dist-tag next); never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
     needs: [changes, build, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
@@ -1496,17 +1529,21 @@ jobs:
             if npm view "$1@$v" version >/dev/null 2>&1; then echo "$1@$v is published already"; return; fi
             npm publish --access public --provenance --tag $tag "$2"
           }
-          # (the seven at this version, each one's dependencies first:
-          # @hxmc/cli last, whose optional dependencies must exist)
+          # (the eight at this version, each one's dependencies first:
+          # @hxmc/cli after the platform packages, its optional dependencies;
+          # @hxmc/source last, its peer dependency @hxmc/cli: a failure there
+          # leaves the compiler's packages published)
           pkgs="linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64 cli"
           # (exactly these tarballs, each at this version and named for its package)
-          test "$(ls dl/*.tgz | wc -l)" -eq 7
-          for p in $pkgs; do
+          test "$(ls dl/*.tgz | wc -l)" -eq 8
+          for p in $pkgs source; do
             test "$(tar xzf "dl/hxmc-$p-$v.tgz" -O package/package.json | node -p 'const m = JSON.parse(require("fs").readFileSync(0)); m.name + "@" + m.version')" = "@hxmc/$p@$v"
           done
           # (@hxmc/cli's optional dependencies: the six, at this version)
           tar xzf "dl/hxmc-cli-$v.tgz" -O package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0)); const d = m.optionalDependencies; if (Object.keys(d).sort().join() !== process.argv[2].split(" ").filter(p => p !== "cli").map(p => "@hxmc/" + p).sort().join()) throw new Error(Object.keys(d).join()); for (const [k, x] of Object.entries(d)) if (x !== process.argv[1]) throw new Error(k + "@" + x)' "$v" "$pkgs"
-          for p in $pkgs; do
+          # (@hxmc/source's peer dependency: @hxmc/cli at this version)
+          tar xzf "dl/hxmc-source-$v.tgz" -O package/package.json | node -e 'const m = JSON.parse(require("fs").readFileSync(0)); if (JSON.stringify(m.peerDependencies) !== JSON.stringify({"@hxmc/cli": process.argv[1]})) throw new Error(JSON.stringify(m.peerDependencies))' "$v"
+          for p in $pkgs source; do
             publish "@hxmc/$p" "./dl/hxmc-$p-$v.tgz"
           done
 
@@ -1539,7 +1576,7 @@ jobs:
 
           - hxmc-haxe-<os>-<arch>.tar.gz: Linux and macOS, haxe with std/; set HAXE_STD_PATH to it.
           - hxmc-haxe-windows-<arch>.zip: Windows, haxe.exe with std/; set HAXE_STD_PATH to it.
-          - hxmc-cli-<version>.tgz: the npm package @hxmc/cli (its platform packages, @hxmc/wasm and @hxmc/source are on npm).
+          - hxmc-cli-<version>.tgz: the npm package @hxmc/cli (its platform packages and @hxmc/source, the compiler's sources, are on npm).
 
           Each archive carries the licenses: LICENSE and COPYING (the port), LICENSE.mbedtls and LICENSE.libuv."
           if [ "$GITHUB_REF_TYPE" = tag ]; then

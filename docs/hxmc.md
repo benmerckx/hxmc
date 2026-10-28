@@ -57,6 +57,39 @@ Conventions:
   that knows it: build once against the previous runtime first, or
   bootstrap again.
 
+## Frontends
+
+A frontend for another language can reuse hxmc's code generator: it is a
+compiler built from hxmc's sources (`haxe/src` and `hxmc/src`, or the npm
+package `@hxmc/source` at `@hxmc/cli`'s version, [using.md](using.md#building-on-the-compiler))
+with its own main, which adds its functions to the IR program before code
+generation. The seam is in `hxmc/src/hxmc/Main.hx`:
+
+```haxe
+// called by every build for hxmc with the lowered program, before Driver.run
+public static var beforeCodegen:Null<(com:CommonContext, prog:hxmc.ir.Ir.Program) -> Void>;
+// the typed program to machine code at out (the tool's and HaxeMain's generate hook);
+// beforeCodegen: this build's, instead of Main.beforeCodegen
+public static function generate(com:CommonContext, out:String, ?beforeCodegen:(com, prog) -> Void):Void;
+```
+
+`generate` reads the options, sets the lowering's statics, checks the
+runtime symbols, lowers the program (`hxmc.ir.Lower`), calls the hook, then
+compiles and links (`Driver.run`, which computes reachability from
+`prog.main`, `prog.inits` and `prog.roots`). The simplest frontend sets
+the hook and runs `hxmc.HaxeMain.run(Sys.args())`: `haxe`'s whole
+command line, `-lib` and the module cache included. One with its own
+generate hook (`compiler.Compiler.generateHook`) calls `generate`.
+
+The hook may push functions on `prog.funcs` (a `FuncInfo` with a
+`module`: hxmc compiles each module's functions into one object), and
+reach them from code it changes or from `prog.roots`. Under a compilation
+server the lowered bodies are reused between builds (`LowerCache`): give a
+function a new `body` vector rather than writing into the one it has.
+`hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
+hxmc's internal format: it can change in any version, so a frontend builds
+against the sources of the `@hxmc/cli` it runs with.
+
 ## Runtime in Haxe
 
 The runtime is Haxe compiled with the program (`hxmc/std/hxmc/rt`):

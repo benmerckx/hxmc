@@ -6,7 +6,7 @@ the six desktop targets: [docs/using.md](../using.md) and
 
 ## The npm packages (from 0.1.0)
 
-Seven packages, under the names the nightlies used:
+Eight packages, under the names the nightlies used:
 
 - `@hxmc/cli`: the one install. The launcher (`haxe`, `hxmc`), upstream's
   std, hxmc's std, `dist/` for lix; optional dependencies on the six
@@ -15,6 +15,10 @@ Seven packages, under the names the nightlies used:
   win32-x64, win32-arm64): the native compiler of that machine and the
   runtime objects of its targets (Linux's with the glibc mode's), selected
   by npm through `os` and `cpu`.
+- `@hxmc/source`: the compiler's sources (`haxe/src`, `hxmc/src`,
+  `hxmc/std`, `hxmc/portable`) and `hxmc-rebuild`; a peer dependency on
+  `@hxmc/cli` at its version. For frontends that build a compiler from them
+  ([hxmc.md](../hxmc.md#frontends)).
 
 The runtime objects of all targets were in `@hxmc/cli` before (most of the
 package); now an install gets its machine's. A cross build installs the
@@ -31,11 +35,9 @@ same version (`<pkg>/../win32-x64/windows-x86_64/rt.o`). A missing one's
 error lists every directory searched. The launcher still sets
 `HXMC_RT_DIR` (yours, then the installed platform packages).
 
-Not published from 0.1.0: `@hxmc/source` (the compiler's sources and
-`hxmc-rebuild`, kept in `packages/source`: the hackable compiler comes
-later), and `@hxmc/wasm` (the compiler as a WebAssembly module, the
+Not published from 0.1.0: `@hxmc/wasm` (the compiler as a WebAssembly module, the
 fallback where no native compiler ran: gone with the launcher's path to
-it); their npm pages can say so with `npm deprecate`.
+it); its npm page can say so with `npm deprecate`.
 
 ## Open
 

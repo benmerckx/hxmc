@@ -143,7 +143,16 @@ class Main {
 		Sys.exit(code);
 	}
 
-	static function generate(com:context.Common.CommonContext, out:String) {
+	// A frontend's seam (docs/hxmc.md, "Frontends"): a compiler built from
+	// hxmc's sources with its own main sets it (then runs HaxeMain.run, or its
+	// own generate hook calling generate); generate calls it with the lowered
+	// program before Driver.run, to add functions to it
+	public static var beforeCodegen:Null<(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void> = null;
+
+	// the program typed (com) to machine code at out: lowered (hxmc.ir.Lower),
+	// given to beforeCodegen (this argument, else Main.beforeCodegen), compiled
+	public static function generate(com:context.Common.CommonContext, out:String, ?beforeCodegen:(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void) {
+		if (beforeCodegen == null) beforeCodegen = Main.beforeCodegen;
 		// the class whose static main the program runs, as the other targets
 		// find it (Common.getEntryPoint): the -main module's statics when they
 		// hold main (a module-level `function main()`), else its class of that name
@@ -193,12 +202,14 @@ class Main {
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
 		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
+		if (beforeCodegen != null) beforeCodegen(com, prog);
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
 		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {
 			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+			if (beforeCodegen != null) beforeCodegen(com, fresh);
 			Driver.run(fresh, out + ".check", opts);
 			var same = sys.io.File.getBytes(out).compare(sys.io.File.getBytes(out + ".check")) == 0;
 			Sys.println("hxmc: lowering check: " + (same ? "same executable" : "DIFFERENT executable"));

@@ -1,7 +1,7 @@
 // The `haxe` and `hxmc` commands of the npm package @hxmc/cli (docs/using.md):
 // runs, in this order,
 // - the compiler `hxmc-rebuild` built from @hxmc/source (in the cache), while
-//   @hxmc/source is installed (packages/source: not published);
+//   @hxmc/source is installed (packages/source);
 // - the platform package's native compiler (@hxmc/<os>-<cpu>, an optional
 //   dependency);
 // with neither, it says which machines it runs on and exits non-zero.

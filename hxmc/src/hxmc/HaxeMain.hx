@@ -118,7 +118,7 @@ class HaxeMain {
 					return;
 				}
 				#end
-				@:privateAccess Main.generate(com, com.file);
+				Main.generate(com, com.file);
 			} catch (e:Dynamic) {
 				// (a compilation server's client gets it as an error: hxmc dev)
 				if (Driver.resident) com.error("hxmc: " + Std.string(e), core.Globals.nullPos) else failed = Std.string(e);
