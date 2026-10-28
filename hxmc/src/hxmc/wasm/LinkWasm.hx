@@ -33,7 +33,8 @@ class LinkWasm {
 	// functions by symbol: their index; imports first
 	var funcIndex = new Map<String, Int>();
 	var funcs:Array<{name:String, sym:Null<Symbol>, sig:String, builtin:Bool}> = [];
-	var imports:Array<{name:String, sig:String, module:String}> = [];
+	// (name: the symbol; field: the import's name in its module)
+	var imports:Array<{name:String, sig:String, module:String, field:String}> = [];
 	var types:Array<String> = [];
 	var typeIndex = new Map<String, Int>();
 	var table:Array<String> = [];
@@ -140,12 +141,13 @@ class LinkWasm {
 		var names = [for (n in undefinedFns.keys()) n];
 		names.sort(cmpStr);
 		for (n in names) {
-			if (WASI.exists(n)) imports.push({name: n, sig: WASI.get(n), module: "wasi_snapshot_preview1"});
+			if (WASI.exists(n)) imports.push({name: n, sig: WASI.get(n), module: "wasi_snapshot_preview1", field: n});
 			else if (hxmc.ir.CInterop.USER.exists(n)) {
 				// a C function the program declares (@:hxmc.c): an import of the
-				// module its @:hxmc.lib names, "env" by default
-				var lib = hxmc.ir.CInterop.LIBS.get(n);
-				imports.push({name: n, sig: WasmGen.importSig(n), module: lib != null ? lib : "env"});
+				// module its @:hxmc.lib names, "env" by default; one per module
+				// and name (CInterop.cSymbol)
+				var lib = hxmc.ir.CInterop.LIBS.get(n), field = hxmc.ir.CInterop.IMPORT_NAMES.get(n);
+				imports.push({name: n, sig: WasmGen.importSig(n), module: lib != null ? lib : "env", field: field != null ? field : n});
 			} else if (!Builtins.has(n)) missing.push(n);
 		}
 		for (n in [for (n in undefinedData.keys()) n])
@@ -254,7 +256,7 @@ class LinkWasm {
 		Enc.uleb(s, imports.length);
 		for (im in imports) {
 			Enc.name(s, im.module);
-			Enc.name(s, im.name);
+			Enc.name(s, im.field);
 			s.u8(0);
 			Enc.uleb(s, typeIndex.get(im.sig));
 		}
@@ -401,7 +403,7 @@ class LinkWasm {
 			Enc.uleb(sub, funcs.length);
 			for (k in 0...funcs.length) {
 				Enc.uleb(sub, k);
-				Enc.name(sub, funcs[k].name);
+				Enc.name(sub, k < imports.length ? imports[k].field : funcs[k].name);
 			}
 			s.u8(1);
 			Enc.sized(s, sub);

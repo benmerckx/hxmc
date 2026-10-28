@@ -801,8 +801,11 @@ class CachedLower extends Lower {
 				var n = tc(k);
 				if (defaultsKey(fieldDefaults(n, tcf(k, n, cf))) != key) mismatch("default values of " + cf.cfName + " changed");
 			case CExtern(sym, k, cf):
-				var n = tc(k);
-				cExtern(sym, n, tcf(k, n, cf));
+				var n = tc(k), ncf = tcf(k, n, cf);
+				// (on WebAssembly the symbol names the import's module too: a
+				// changed @:hxmc.lib changes it)
+				if (!StringTools.startsWith(sym, hxmc.ir.CInterop.INDIRECT) && hxmc.ir.CInterop.cSymbol(n, ncf) != sym) mismatch("the C symbol " + sym + " changed");
+				cExtern(sym, n, ncf);
 		}
 	}
 
