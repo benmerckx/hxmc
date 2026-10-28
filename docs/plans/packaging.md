@@ -24,7 +24,8 @@ The runtime objects of all targets were in `@hxmc/cli` before (most of the
 package); now an install gets its machine's. A cross build installs the
 other machine's platform package with `--force` (its compiler unused).
 Android's runtime objects are in no package for now (the `rt-<hash>`
-release, or a build from source, through `HXMC_RT_DIR`).
+release, which `@hxmc/cli`'s `package.json` names as `hxmc.rt`, or a
+build from source, through `HXMC_RT_DIR`).
 
 The compiler finds a target's runtime objects without the launcher
 (`hxmc/src/hxmc/Options.hx`, `rtSearch`): first the directories of

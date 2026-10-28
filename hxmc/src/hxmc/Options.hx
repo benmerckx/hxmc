@@ -194,7 +194,7 @@ class Options {
 		var pkg = platformPackage(rtName);
 		if (pkg != null) return 'npm: install @hxmc/$pkg (npm i -D --force @hxmc/$pkg on another machine); a checkout: make rt';
 		return StringTools.startsWith(rtName, "android-")
-			? "Android builds need the runtime objects of a release archive or a build from source (make rt): HXMC_RT_DIR names their directory"
+			? "Android builds need the runtime objects of the GitHub release rt-<hash> (npm: the one @hxmc/cli's package.json names, hxmc.rt) or a build from source (make rt): HXMC_RT_DIR names their directory"
 			: "make rt";
 	}
 
