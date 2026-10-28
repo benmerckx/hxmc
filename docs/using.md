@@ -177,15 +177,16 @@ these that has them:
 1. the directories `HXMC_RT_DIR` lists (separated by the system's path
    separator). They add to the search; they do not replace it, so a cross
    build that names another machine's runtime objects keeps this machine's
-   for macros and host tools;
+   for macros and host tools. An empty `HXMC_RT_DIR` is the same as unset;
 2. the compiler's own directory: the platform package it is in
    (`node_modules/@hxmc/linux-x64/linux-x86_64/rt.o`);
 3. `rt/` beside the compiler: a checkout's `bin/hxmc/rt` (`make rt`);
 4. the target's platform package beside the compiler's, of the same version
    (`node_modules/@hxmc/win32-x64/windows-x86_64/rt.o`).
 
-The launcher also passes the installed platform packages of its version in
-`HXMC_RT_DIR`, after yours. So the platform package's compiler, run
+The launcher (`node_modules/.bin/haxe`, also when the native compiler
+stands in its place) also passes the installed platform packages of its
+version in `HXMC_RT_DIR`, after yours. So the platform package's compiler, run
 directly without the launcher, needs no `HXMC_RT_DIR`. When no directory
 has them, the error lists every place searched. To build for another desktop machine, install its
 platform package with `--force`; its `os` and `cpu` do not match, and its
@@ -200,10 +201,24 @@ A build for a target none of them has fails with one line naming the
 package to install.
 
 Android's runtime objects (`android-arm64`, `android-x86_64`) are in no npm
-package. Take them from the runtime objects' release (`rt-<hash>`, which
-`hxmc/bootstrap/rt.mjs fetch <dir>` downloads), or build them from source
-(`make rt`, [development.md](development.md)). Then name the directory in
-`HXMC_RT_DIR`.
+package. Take them from the runtime objects' GitHub release, or build them
+from source (`make rt`, [development.md](development.md)). Then name the
+directory in `HXMC_RT_DIR`. `@hxmc/cli`'s `package.json` names the
+release its packages were built with, `"hxmc": {"rt": "rt-<hash>"}` (the
+platform packages' runtime objects are that release's). Its assets are
+`<target>-<file>.gz`:
+
+```sh
+tag=$(node -p "require('@hxmc/cli/package.json').hxmc.rt")
+for f in rt.o ssl.o uv.o; do
+  mkdir -p rt/android-arm64
+  curl -fsSL "https://github.com/benmerckx/hxmc/releases/download/$tag/android-arm64-$f.gz" | gunzip > rt/android-arm64/$f
+done
+HXMC_RT_DIR=$PWD/rt npx haxe ... -D hxmc.target=android-arm64
+```
+
+In a checkout, `node hxmc/bootstrap/rt.mjs fetch <dir>` downloads the
+release of its `hxmc/deps`.
 
 ### Without node
 
@@ -215,7 +230,7 @@ disabled (`--ignore-scripts`, pnpm's default), the first call through node
 does the same. `HXMC_INSTALL=0` keeps the launcher in place.
 
 Builds for the hxmc target still go through node, which finds the runtime
-objects; other targets do not. A compilation server (`haxe --wait`) asks
+objects (with `HXMC_RT_DIR` set too: it adds to them); other targets do not. A compilation server (`haxe --wait`) asks
 node for their directories once, when it starts. On Windows, npm's `haxe.cmd` always starts
 node (about 40-60 ms per call); point editors and lix at
 `node_modules/@hxmc/cli/dist/haxe.exe` to bypass it.

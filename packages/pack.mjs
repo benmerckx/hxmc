@@ -16,7 +16,12 @@
 //                                  for lix, hxmc's merged std that `make npm`
 //                                  puts there): with upstream's std and its
 //                                  optional dependencies on the platform
-//                                  packages at this version
+//                                  packages at this version; its package.json's
+//                                  "hxmc": {"rt": "rt-<hash>"} names the GitHub
+//                                  release of the runtime objects packed here
+//                                  (<rt dir>/HASH, which must be this checkout's
+//                                  hxmc/bootstrap/rt.mjs hash): the source of the
+//                                  targets in no package (Android)
 //   hxmc-source-<version>.tgz      @hxmc/source (packages/source: hxmc-rebuild):
 //                                  the compiler's sources (haxe/src, hxmc/src,
 //                                  hxmc/std, hxmc/portable), which @hxmc/cli's
@@ -52,6 +57,16 @@ if (!version || !natives || !out) {
 }
 fs.mkdirSync(out, { recursive: true });
 const outAbs = path.resolve(out);
+
+// the runtime objects' identity: <rt dir>/HASH (rt.mjs fetch, make rt-layouts),
+// the hash of the hxmc/deps they were built from, which is this checkout's
+const stamp = path.join(rtDir, 'HASH');
+const rtHash = fs.existsSync(stamp) ? fs.readFileSync(stamp, 'utf8').trim() : null;
+const wantHash = execFileSync(process.execPath, [path.join(root, 'hxmc', 'bootstrap', 'rt.mjs'), 'hash']).toString().trim();
+if (rtHash !== wantHash) {
+	console.error(`pack: ${stamp} ${rtHash ? `says rt-${rtHash}` : 'is missing'}, hxmc/deps is rt-${wantHash} (make rt)`);
+	process.exit(1);
+}
 
 const cli = readJson(path.join(here, 'cli', 'package.json'));
 const common = { version, license: cli.license, repository: cli.repository };
@@ -94,8 +109,9 @@ for (const [target, p] of Object.entries(PLATFORMS)) {
 }
 
 // (the repository's README is the package's page on npm)
+// (the runtime objects' release: docs/using.md, "Cross builds")
 stage('cli', {}, [['haxe/upstream/std', 'haxe/upstream/std'], ['haxe/upstream/LICENSE', 'haxe/upstream/LICENSE'], ['README.md', 'README.md']],
-	['hxmc/bootstrap/haxe', 'dist/haxe']);
+	['hxmc/bootstrap/haxe', 'dist/haxe'], m => ({ ...m, hxmc: { ...m.hxmc, rt: `rt-${rtHash}` } }));
 
 // (sources only: no tests, no stage0; hxmc/portable for hxmc-rebuild's MkStd)
 stage('source', {}, [['haxe/src', 'haxe/src'], ['hxmc/src', 'hxmc/src'], ['hxmc/std', 'hxmc/std'], ['hxmc/portable', 'hxmc/portable']],

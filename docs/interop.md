@@ -332,6 +332,12 @@ and spans of private structs.
 and `Linux.errno()` the error. It is `@:hxmc.blocking`. Other targets
 reject the module at compile time. `LinuxSyscall` checks it on Linux.
 
+The system's random bytes, `getentropy(3)` and `getrandom(2)`, are C
+library functions for an `@:hxmc.c` extern (or the C a program links): in
+the static mode musl's, on Android Bionic's, on macOS libSystem's
+`getentropy`. glibc 2.17, the floor of `-D hxmc.libc=glibc`, has neither:
+use `syscall` there. `LinuxEntropy` checks them in the static mode.
+
 ### Calls and linking
 
 hxmc emits direct calls in each ABI's convention: System V x86-64, Win64,

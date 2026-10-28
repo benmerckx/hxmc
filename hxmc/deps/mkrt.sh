@@ -90,7 +90,11 @@ windows-*)
 	libc="$libc pthread_condattr_init pthread_condattr_setclock pthread_cond_init pthread_cond_destroy pthread_cond_wait"
 	libc="$libc pthread_cond_timedwait pthread_cond_signal pthread_cond_broadcast pthread_attr_init pthread_attr_destroy"
 	libc="$libc pthread_attr_setstacksize pthread_attr_setdetachstate pthread_create"
-	case $target in linux-*) libc="$libc __errno_location" ;; android-*) libc="$libc __errno __cxa_atexit" ;; esac ;;
+	case $target in linux-*) libc="$libc __errno_location" ;; android-*) libc="$libc __errno __cxa_atexit" ;; esac
+	# the system's random bytes, for programs and the C they link (musl's
+	# since 1.1.20; Bionic exports them, macOS's libSystem has getentropy;
+	# glibc 2.17, the dynamic mode's floor, has neither: syscall(2) there)
+	case $target in linux-x86_64|linux-arm64) libc="$libc getentropy getrandom" ;; esac ;;
 esac
 case $target in
 android-*)

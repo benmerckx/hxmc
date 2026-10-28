@@ -1215,6 +1215,19 @@ jobs:
           grep -q "hello from js" js.out
           # Windows: the native compiler run without node passes a build for hxmc to the launcher
           if [ "$RUNNER_OS" = Windows ]; then rm -rf bin && node_modules/@hxmc/cli/dist/haxe.exe build.hxml && ./bin/app.exe; fi
+      # HXMC_RT_DIR adds to the launcher's search (the native compiler in its
+      # place too): a directory without the runtime objects, and empty (unset)
+      - name: HXMC_RT_DIR through the launcher
+        run: |
+          set -ex
+          cd "$RUNNER_TEMP/app"
+          if [ "$RUNNER_OS" = Windows ]; then app=bin/app.exe; else app=bin/app; fi
+          mkdir -p empty-rt
+          rm -rf bin && HXMC_RT_DIR="$PWD/empty-rt" node_modules/.bin/haxe build.hxml && ./$app
+          rm -rf bin && HXMC_RT_DIR= node_modules/.bin/haxe build.hxml && ./$app
+          if [ "$RUNNER_OS" = Windows ]; then rm -rf bin && HXMC_RT_DIR="$PWD/empty-rt" node_modules/@hxmc/cli/dist/haxe.exe build.hxml && ./$app; fi
+          # (the release of the runtime objects packed: hxmc.rt)
+          node -p "require('./node_modules/@hxmc/cli/package.json').hxmc.rt" | grep -E '^rt-[0-9a-f]{16}$'
       # -lib: lix's scopes, node_modules, haxelib (hxmc/test/Libraries.hx), by the
       # native compiler run without node (npm's link to it on Unix, dist/haxe.exe on Windows)
       - name: -lib from lix's scopes, node_modules, haxelib
@@ -1311,7 +1324,7 @@ jobs:
           npx haxe build.hxml && ./bin/app
           # Android: in no package
           if npx haxe -cp src -main Main --custom-target hxmc=bin/app.so -D hxmc.target=android-arm64 2> android.err; then exit 1; fi
-          cat android.err; grep -q "release archive" android.err
+          cat android.err; grep -q "hxmc.rt" android.err
       # @hxmc/source at @hxmc/cli's version (a fresh project: app has another
       # machine's platform package, --force): @hxmc/cli's haxe builds a
       # compiler from its sources with a main of its own, natively
