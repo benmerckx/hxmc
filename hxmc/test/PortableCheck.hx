@@ -11,7 +11,8 @@ using StringTools;
 // files): SpanInflate's kernel over Bytes (its worker is hxmc's: threads and
 // IoBuffers) and SpanPortable. On those targets a failed check throws
 // (portable/SpanThrows, its `// expect:` lines), and ofIoBuffer and unsafeOf
-// are compile errors naming why (portable/Span*, `// error:`).
+// are compile errors naming why (portable/Span*, `// error:`). Private
+// structs as elements: portable/SpanPrivate (its kernel's in spanprivate/).
 //   make portable-check (HAXE_REFERENCE: the reference compiler, default
 //   bin/reference/haxe; the outputs in bin/test/portable)
 class PortableCheck {

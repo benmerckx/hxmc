@@ -320,7 +320,8 @@ whose fields are scalars. The gaps:
 hxmc's) and `SpanPortable` (every element type, the views, struct elements,
 the atomic accesses) with the reference compiler, runs them on Eval and as
 JavaScript under node, and compares their output with the corpus's golden
-files. `hxmc/test/portable` holds the failed checks and the compile errors.
+files. `hxmc/test/portable` holds the failed checks, the compile errors
+and spans of private structs.
 
 ### System calls
 
@@ -461,6 +462,8 @@ s[3].y = 2;                                  // in place
   of other structs, statics, behind a `Ptr`, in a `Slice`.
 - **Fields**: C scalars, `Int`, `Float`, `Bool`, `Ptr` and other structs.
   GC references are rejected.
+- **Layout**: C's, the variables in declaration order. DCE keeps every
+  variable of a struct it keeps (`-dce full` too), named in code or not.
 - **Semantics**: assignment, arguments and results copy. A field accessed
   through a pointer, a struct field or an object's field is read and
   written in place. `new S(...)` zeroes the memory and runs the

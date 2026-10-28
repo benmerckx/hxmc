@@ -101,11 +101,44 @@ class CInterop {
 			com.callbacks.addAfterTyping(types -> {
 				for (t in types)
 					switch t {
-						case TClassDecl(c) if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)) && isStruct(c)):
-							c.clConstructor.cfKind = Method(MethNormal);
+						case TClassDecl(c) if (isStruct(c)):
+							if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)))
+								c.clConstructor.cfKind = Method(MethNormal);
+							keepFields(c);
 						case _:
 					}
 			});
+		}
+	}
+
+	// A struct's variables are its C layout (layout): every one is kept with
+	// the class, used or not. Under `-dce full`, DCE kept only those the
+	// typed code reads or writes: a struct the lowering reaches itself
+	// (hxmc.Span's SpanData, whose ptr only FnLower.spanCall uses), or one
+	// whose fields C alone reads, lost fields, and so its layout. Each
+	// variable gets @:ifFeature("<the class>.*"), the feature DCE checks when
+	// it marks the class (optimization/Dce.hx, markClass).
+	static function keepFields(c:TClass) {
+		var feature = core.Globals.sTypePath(c.clPath) + ".*";
+		for (cf in c.clOrderedFields) {
+			if (!cf.cfKind.match(Var(_))) continue;
+			var exprs = [new core.Ast.Expr(EConst(String(feature, SDoubleQuotes)), cf.cfPos)];
+			var meta:core.Ast.Metadata = [];
+			var done = false;
+			for (m in cf.cfMeta)
+				if (m.meta == core.MetaList.StrictMeta.IfFeature) {
+					// (the field's own features too: DCE reads the first entry)
+					for (e in m.exprs)
+						switch e.expr {
+							case EConst(String(s, _)) if (s == feature): done = true;
+							case _: exprs.push(e);
+						}
+				} else
+					meta.push(m);
+			if (done) continue;
+			meta.push(new core.Ast.MetadataEntry(core.MetaList.StrictMeta.IfFeature, core.ds.VectorTools.ofArray(exprs), cf.cfPos));
+			// (metadata is replaced, never changed in place: Dce.hx)
+			cf.cfMeta = meta;
 		}
 	}
 
