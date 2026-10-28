@@ -243,6 +243,9 @@ class FuncInfo {
 	// declared @:hxmc.blocking (GC-free): its calls run in a safe region
 	// (FnLower.inRegion)
 	public var declBlocking:Bool = false;
+	// the constructor of a @:hxmc.struct class (Lower.structCtor): GC-free code
+	// may call it when its body is GC-free (Facts.gcFreeCulprit)
+	public var structCtor:Bool = false;
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
 	public var withStacks:Bool = false;
 	public var pos:Null<core.Globals.Pos>; // the declaration (errors)

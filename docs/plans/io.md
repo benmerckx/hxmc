@@ -161,7 +161,7 @@ collections never wait for them (helder's jobs: 0.5 ms pauses instead of
 The design, built in steps (a PR each):
 
 1. the attribute (built);
-2. the memory-safe subset;
+2. the memory-safe subset (built);
 3. spans, checked views of buffers, and where they may
    exist;
 4. the bounds checks' define and their measured cost;
@@ -182,8 +182,8 @@ silently mean the other thing.
 
 ### The safe subset
 
-Without `@:hxmc.unsafe`, a GC-free function is memory-safe. Checked on the
-typed AST before lowering (`GcFreeCheck`), so the errors point at the
+**Built**: without `@:hxmc.unsafe`, a GC-free function is memory-safe.
+Checked on the typed AST before lowering (`GcFreeCheck`), so the errors point at the
 expression; what Haxe inlined into the function is checked as its own code:
 
 | Rule | Allowed | Rejected |
