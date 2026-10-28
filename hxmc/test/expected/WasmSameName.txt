@@ -1,0 +1,9 @@
+exit 0
+WasmSameName.hx:45: 101
+WasmSameName.hx:47: 202
+WasmSameName.hx:49: 103
+WasmSameName.hx:51: 304
+WasmSameName.hx:53: 305
+WasmSameName.hx:54: 42
+WasmSameName.hx:55: 7.5
+WasmSameName.hx:56: 8, 7
