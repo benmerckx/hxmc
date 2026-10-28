@@ -1186,16 +1186,22 @@ class Lower implements LowerQueries {
 		prog.funcs.push(w);
 	}
 
-	// hxmc's attributes of a function: @:hxmc.unsafe (checked by Facts.findNoGc),
-	// @:hxmc.collects (it runs the collector), @:hxmc.export (its symbol)
-	// (@:hxmc.unsafe on a class: on each of its functions)
+	// hxmc's attributes of a function: @:hxmc.unsafe, @:hxmc.gcfree and
+	// @:hxmc.blocking (checked by Facts.findNoGc), @:hxmc.collects (it runs
+	// the collector), @:hxmc.export (its symbol) (@:hxmc.unsafe and
+	// @:hxmc.gcfree on a class: on each of its functions)
 	static function fieldAttrs(fi:FuncInfo, cf:TClassField, c:TClass) {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
-		if (c.clMeta.length > 0 && isUnsafe(c.clMeta)) fi.declNoGc = true;
+		if (c.clMeta.length > 0) {
+			if (isUnsafe(c.clMeta)) fi.declNoGc = fi.declUnsafe = true;
+			if (hasMeta(":hxmc.gcfree", c.clMeta)) fi.declNoGc = fi.declGcFree = true;
+		}
 		if (cf.cfMeta.length == 0) return;
-		if (isUnsafe(cf.cfMeta)) fi.declNoGc = true;
+		if (isUnsafe(cf.cfMeta)) fi.declNoGc = fi.declUnsafe = true;
+		if (hasMeta(":hxmc.gcfree", cf.cfMeta)) fi.declNoGc = fi.declGcFree = true;
 		fi.declBlocking = hasMeta(":hxmc.blocking", cf.cfMeta);
+		if (fi.declBlocking) fi.declNoGc = fi.declGcFree = true;
 		fi.collects = hasMeta(":hxmc.collects", cf.cfMeta);
 		fi.withStacks = hasMeta(":hxmc.withStacks", cf.cfMeta);
 		fi.cSymbol = metaString(":hxmc.export", cf.cfMeta);

@@ -31,7 +31,8 @@ same for that function.
 | `@:hxmc.lib("name")` | the library: `lib<name>.so` (or a full name such as `libGL.so.1`), a DLL, a dylib; a wasm import module |
 | `@:hxmc.link("path")` | an object or archive linked with the program (also `-D hxmc.link=`) |
 | `@:hxmc.fast` | the call stays in the running state: no collection runs during it, so it may take addresses of GC objects. It must be short and must not block or call back |
-| `@:hxmc.blocking` | the call runs in a safe region entered at the call site ([Blocking calls](#blocking-calls)); on a field it overrides its class' `@:hxmc.fast` |
+| `@:hxmc.blocking` | the call runs in a safe region entered at the call site ([Blocking calls](#blocking-calls)); on a field it overrides its class' `@:hxmc.fast`; on a Haxe function it is `@:hxmc.gcfree` too |
+| `@:hxmc.gcfree` | a Haxe function that never touches the GC heap, checked, whose calls enter no safe region ([GC-free code](#gc-free-code)) |
 | `@:hxmc.varargs(n)` | a variadic function with `n` fixed arguments |
 | `@:hxmc.indirect` | a call through a C function pointer, the first argument |
 | `@:hxmc.struct` | a class with C layout, used as a value ([Struct values](#struct-values)) |
@@ -63,15 +64,11 @@ threads' collections wait for it.
 - **`@:hxmc.blocking` on an `@:hxmc.unsafe` static Haxe function**: its
   calls run in a safe region, for GC-free jobs (a loop over native memory)
   that would otherwise stall other threads' collections until their next
-  GC point. The compiler checks the body by construction: `@:hxmc.unsafe`
-  (no allocation, no GC point), no value of a GC type anywhere
-  (parameters, result, locals, expressions; string literals are static
-  and allowed), and calls only of `@:hxmc.blocking` functions and of C or
-  runtime functions that are no GC point (`@:hxmc.fast` or
-  `@:hxmc.blocking` externs, `Mem`, `Atomic`). Calls between such
-  functions enter no new region. A call through a closure, or of an
-  `inline` one (Haxe inlines the call away), runs outside a region: still
-  correct, only not safe for collections.
+  GC point. It is [`@:hxmc.gcfree`](#gc-free-code), checked as such, plus
+  the region: calls from GC code enter one, calls between such functions
+  enter no new region. A call through a closure, or of an `inline` one
+  (Haxe inlines the call away), runs outside a region: still correct, only
+  not safe for collections.
 - **`hxmc.unsafe.Blocking.enter()` and `leave(region)`** enter and leave
   it by hand, around fast calls in a loop or a long loop without a GC
   point. Between them: no allocation, no heap object, no address of one;
@@ -108,6 +105,48 @@ Blocking.leave(region);
 `BlockingCalls` checks it on the native targets: two threads wait on empty
 pipes while the main thread collects. `NestedRegions` checks the nesting,
 `BlockingFunctions` the Haxe functions, `reject/Blocking*` the rule.
+
+### GC-free code
+
+`@:hxmc.gcfree` on a static Haxe function (or on a class: each of its
+functions) says it never touches the GC heap, and the compiler checks it
+by construction, on the lowered body:
+
+- no allocation and no GC point (as `@:hxmc.unsafe`, the chain of calls to
+  the first one named);
+- no value of a GC type anywhere: parameters, result, locals, every
+  expression (string literals are static data, allowed);
+- calls only of `@:hxmc.gcfree` or `@:hxmc.blocking` functions and of C or
+  runtime functions that are no GC point (`@:hxmc.fast` or
+  `@:hxmc.blocking` externs, `Mem`, `Atomic`); no call through a closure,
+  a method or a structural field.
+
+Unlike `@:hxmc.blocking`, a call of it enters no safe region. So one
+kernel serves both paths: called on the main thread like any function, and
+called inside a region its caller entered (a job pool's worker, between
+`Blocking.enter` and `leave`), where other threads collect meanwhile.
+`@:hxmc.blocking` on a Haxe function is `@:hxmc.gcfree` plus a region
+entered by calls from GC code; a GC-free function may call a blocking one
+(the region nests).
+
+```haxe
+@:hxmc.unsafe @:hxmc.gcfree static function checksum(p:Ptr<UInt8>, n:Int):Int {
+  var s = 0;
+  for (i in 0...n) s = (s * 31 + p[i]) & 0xFFFFFF;
+  return s;
+}
+
+checksum(buf.ptr, buf.length);              // on this thread, no region
+var region = Blocking.enter();              // a worker: other threads collect meanwhile
+checksum(buf.ptr, buf.length);
+Blocking.leave(region);
+```
+
+For now a `@:hxmc.gcfree` or `@:hxmc.blocking` Haxe function must also be
+declared `@:hxmc.unsafe`: it reaches memory raw, with no check of bounds
+or lifetime.
+`GcFreeFunctions` checks both paths, `reject/GcFree*` the rule. The plan
+for a memory-safe subset: [plans/io.md](plans/io.md#gc-free-kernels).
 
 ### System calls
 
