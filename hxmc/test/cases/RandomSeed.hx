@@ -3,8 +3,9 @@
 // runs itself twice as a child and compares the children's draws with each
 // other and with its own; its threads compare theirs. Nothing random is
 // printed. Under qemu-user without binfmt the child cannot start (127; the
-// glibc mode's execvp hands the file to /bin/sh, 2): no output and a failed
-// exit, and the children's part checks nothing.
+// glibc mode's execvp hands the file to /bin/sh, 2), and under --mir-run
+// Sys.programPath is the compiler: no output and a failed exit, and the
+// children's part checks nothing.
 class RandomSeed {
 	static function draws():String
 		return [for (_ in 0...4) Std.string(Math.random())].join(" ");

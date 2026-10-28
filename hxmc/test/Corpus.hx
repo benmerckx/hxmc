@@ -65,8 +65,7 @@ class Corpus {
 		"CallStacksGc" => "interpreted frames are not in native call stacks",
 		"MethodAdapters" => "a function converted to another function type compares unequal to what it adapts",
 		"SafeRegionRoots" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler",
-		"SafeRegionAlloc" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler",
-		"RandomSeed" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler"
+		"SafeRegionAlloc" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler"
 	];
 
 	static var tool:String;
