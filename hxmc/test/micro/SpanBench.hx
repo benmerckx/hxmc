@@ -2,13 +2,15 @@ import haxe.Timer;
 import hxmc.ReadOnlySpan;
 import hxmc.Span;
 import hxmc.unsafe.IoBuffer;
+import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 import hxmc.unsafe.UInt8;
 
 // A checked span's access against a raw one (docs/interop.md, "Spans"), in
 // tight loops over an IoBuffer: a byte sum (loads, Adler-32's inner loop)
 // and a Float axpy (loads and stores, y[i] = a * x[i] + y[i]), each written
-// on Ptr (@:hxmc.unsafe) and on spans. Built twice, with and without the
+// raw (@:hxmc.unsafe: Mem's indexed loads and stores, the fastest raw
+// form, as helder's kernels write them) and on spans. Built twice, with and without the
 // element checks; the median of 7 runs, in nanoseconds per element (the
 // buffers in the cache by default: the cost of the access, not of memory).
 // Not a corpus case (times vary); built and run by hand, natively or as a
@@ -22,7 +24,7 @@ class SpanBench {
 	@:hxmc.unsafe @:hxmc.gcfree static function sumRaw(p:Ptr<UInt8>, n:Int):Int {
 		var s = 0;
 		for (i in 0...n)
-			s += p[i];
+			s += Mem.getU8At(p, 0, i);
 		return s;
 	}
 
@@ -35,7 +37,7 @@ class SpanBench {
 
 	@:hxmc.unsafe @:hxmc.gcfree static function axpyRaw(a:Float, x:Ptr<Float>, y:Ptr<Float>, n:Int) {
 		for (i in 0...n)
-			y[i] = a * x[i] + y[i];
+			Mem.setF64At(y, 0, i, a * Mem.getF64At(x, 0, i) + Mem.getF64At(y, 0, i));
 	}
 
 	@:hxmc.gcfree static function axpySpan(a:Float, x:ReadOnlySpan<Float>, y:Span<Float>) {
