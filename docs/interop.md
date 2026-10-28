@@ -202,9 +202,9 @@ The checks are on in every build. `-D hxmc.span-checks=0` drops the
 element checks (as Burst's release builds do); ranges (`sub`, `blit`,
 `fill`, the spans GC code lends) stay checked. An element check is an
 unsigned compare and a branch; a span's two words stay in registers through
-a loop. Measured ([plans/io.md](plans/io.md#bounds-checks)): about 2
-instructions per access, +17 to 24% on tight loops natively; without the
-checks, the same instructions as raw `Ptr` access.
+a loop. Measured ([plans/io.md](plans/io.md#bounds-checks)): one to one and a half
+instructions per access, 1.15 to 1.45 times a raw loop's time natively,
+1.1 to 1.2 on wasm32; without the checks, as fast as raw access.
 
 **Where spans exist: only in GC-free code**, as parameters, locals and
 results of `@:hxmc.gcfree` and `@:hxmc.blocking` functions. Never a field,

@@ -2840,6 +2840,19 @@ class FnLower {
 		return fail("hxmc.SpanSupport is missing");
 	}
 
+	// Mem's indexed access of a C type (getU8At & co.: a scaled address), or null
+	static function indexed(ct:CTy, load:Bool):Null<{n:String, t:Ty}>
+		return switch ct {
+			case CU8: {n: "U8", t: TI32};
+			case CI8 if (!load): {n: "U8", t: TI32};
+			case CU16: {n: "U16", t: TI32};
+			case CI16 if (!load): {n: "U16", t: TI32};
+			case CI32: {n: "I32", t: TI32};
+			case CI64 | CPtr: {n: "I64", t: TI64};
+			case CF64: {n: "F64", t: TF64};
+			case _: null;
+		}
+
 	// a call of a span's method or maker (extern: expanded here)
 	function spanCall(a:core.TType.TAbstract, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var sd = structOf(a.aThis);
@@ -2927,12 +2940,16 @@ class FnLower {
 			case "elem":
 				var i = int(0);
 				check(i, len);
-				cLoad(elem(ptr, i), 0, ct, e);
+				// (the indexed load where there is one: a scaled address)
+				var k = indexed(ct, true);
+				k != null ? coerce(temp(k.t, ECallHost("hxmc_unsafe_Mem_get" + k.n + "At", vector(ptr, EInt(0), i), k.t)), k.t, tyOf(e)) : cLoad(elem(ptr, i), 0, ct, e);
 			case "setElem":
 				var i = int(0);
 				var v = ELocal(asLocal(rest[1], restTy(1)));
 				check(i, len);
-				cStore(elem(ptr, i), 0, ct, v, restTy(1), e);
+				var k = indexed(ct, false);
+				if (k != null) out.push(SExpr(ECallHost("hxmc_unsafe_Mem_set" + k.n + "At", vector(ptr, EInt(0), i, coerce(v, restTy(1), k.t)), TVoid))) else
+					cStore(elem(ptr, i), 0, ct, v, restTy(1), e);
 				coerce(v, restTy(1), tyOf(e));
 			case "sub":
 				var pos = int(0), cnt = int(1);
