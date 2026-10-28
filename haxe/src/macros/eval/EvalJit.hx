@@ -60,6 +60,25 @@ class EvalJit {
 		}
 	}
 
+	// port: hook (not upstream): called, when set, for a static field of an
+	// extern class, or an extern field, that is not on Eval's prototype (no
+	// builtin), as code using it is compiled; upstream raises "Field index for
+	// ... not found on prototype" there. The function it returns is the field's
+	// (p: the use's position); null keeps upstream's error. hxmc's externs, which
+	// its code generator implements, throw when a macro calls them
+	// (hxmc/src/hxmc/TargetFlags.hx)
+	public static var missingExternHook:Null<(c:TClass, cf:TClassField, p:Pos) -> Null<Vfunc>> = null;
+
+	static function missingExtern(proto:Vprototype, c:TClass, cf:TClassField, name:Int, p:Pos):Null<Vfunc> {
+		var h = missingExternHook;
+		if (h == null || !(hasClassFlag(c, CExtern) || hasClassFieldFlag(cf, CfExtern))) return null;
+		try {
+			EvalContext.getProtoFieldIndexRaise(proto, name);
+			return null;
+		} catch (_:NotFound)
+			return h(c, cf, p);
+	}
+
 	// Helper
 	public static function ropePath(t:T):String {
 		return switch follow(t) {
@@ -530,6 +549,11 @@ class EvalJit {
 						case FStatic(c = {clPath: path}, cf) if (staticVarHook != null && cf.cfKind.match(Var(_))):
 							var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), e1.epos);
 							return hookStatic(c, cf, false, EvalEmitter.emitProtoFieldRead(proto, EvalContext.getProtoFieldIndex(proto, name)));
+						case FStatic(c = {clPath: path}, cf) if (missingExternHook != null):
+							var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), e1.epos);
+							var stub = missingExtern(proto, c, cf, name, e.epos);
+							return stub != null ? EvalEmitter.emitConst(EvalValueTools.vstaticFunction(stub)) : EvalEmitter.emitProtoFieldRead(proto,
+								EvalContext.getProtoFieldIndex(proto, name));
 						case FStatic({clPath: path}, _) | FEnum({ePath: path}, _) |
 							FInstance({clPath: path}, _, {cfKind: Method(MethNormal | MethInline)}):
 							var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), e1.epos);
@@ -752,8 +776,10 @@ class EvalJit {
 						var key = EvalHash.pathHash(path);
 						var pos:Null<Pos> = e.epos;
 						return EvalEmitter.emitEnumConstruction(key, ef.efIndex, Vector.fromArrayCopy(execs), pos);
-					case FStatic({clPath: path}, cf) if (isProperMethod(cf)):
+					case FStatic(c = {clPath: path}, cf) if (isProperMethod(cf)):
 						var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), ef.epos);
+						var stub = missingExtern(proto, c, cf, name, e.epos);
+						if (stub != null) return EvalEmitter.emitProtoFieldCall(AtomicLazy.fromVal(stub), execs, e.epos);
 						var v = lazyProtoField(proto);
 						return EvalEmitter.emitProtoFieldCall(v, execs, e.epos);
 					case FInstance(c, _, cf) if (isProperMethod(cf)):

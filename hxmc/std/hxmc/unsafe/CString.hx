@@ -12,8 +12,9 @@ abstract CString(Ptr<UInt8>) from Ptr<UInt8> to Ptr<UInt8> {
 		return LibC.strlen(this).toInt();
 
 	// a Haxe String decoded from the UTF-8 bytes (null for a null pointer)
+	// (Eval, a macro's: hxmc's runtime is not typed there, docs/hxmc.md, "Target flags")
 	public function toString():String
-		return this.isNull() ? null : hxmc.rt.Str.ofUtf8(this, length());
+		return this.isNull() ? null : #if eval throw "hxmc.unsafe.CString.toString is implemented by hxmc's code generator or runtime: a macro on Eval cannot use it" #else hxmc.rt.Str.ofUtf8(this, length()) #end;
 
 	@:to inline function toVoid():Ptr<Void>
 		return this;

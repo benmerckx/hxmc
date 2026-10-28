@@ -27,6 +27,7 @@ class TargetFlags {
 			if (prev != null) prev(com, actx);
 		}
 		context.Common.macroDefinesHook = macroDefines;
+		macros.eval.EvalJit.missingExternHook = evalExtern;
 	}
 
 	// The macro context's target is not the program's: hxmc.target and
@@ -40,6 +41,22 @@ class TargetFlags {
 	static function macroDefines(defines:core.Define.DefineContext) {
 		core.Define.rawUndefine(defines, "hxmc.target");
 		core.Define.rawUndefine(defines, "hxmc.libc");
+	}
+
+	// hxmc's externs in the macro context on Eval: hxmc.unsafe's (Mem, LibC,
+	// Callback, ...), the runtime's, a program's @:hxmc.c classes. The code
+	// generator or the runtime implements them; Eval has none of their fields.
+	// A module typed for a macro may still mention them (an import, a field's
+	// type, a signature), and Eval compiles every function of the modules that
+	// loads, Ptr's methods calling Mem.ult among them: upstream fails there
+	// ("Field index for ult not found on prototype hxmc.unsafe.Mem"). Here the
+	// use compiles, and running it at macro time throws, naming the function.
+	// (-D hxmc.macros=mir types the macro context for hxmc: there they are
+	// what the code generator expands.)
+	static function evalExtern(c:core.TType.TClass, cf:core.TType.TClassField, p:core.Globals.Pos):Null<macros.eval.EvalValue.Vfunc> {
+		if (!cf.cfKind.match(Method(_)) || (c.clPath.pack[0] != "hxmc" && !core.Meta.has(Custom(":hxmc.c"), c.clMeta))) return null;
+		var msg = core.Globals.sTypePath(c.clPath) + "." + cf.cfName + " is implemented by hxmc's code generator or runtime: a macro on Eval cannot use it";
+		return _ -> macros.eval.EvalMisc.throwString(msg, p);
 	}
 
 	// the flags beyond the default configuration's for a target (null: the host, native)
