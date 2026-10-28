@@ -40,6 +40,10 @@ class Options {
 	// whose null accesses neither fault nor throw, off natively, where the
 	// runtime's fault handler throws (hxmc.rt.Faults)
 	public var nullChecks = false;
+	// -D hxmc.span-checks=0|1: whether a span's element accesses are
+	// range-checked (hxmc.ir.Lower.spanChecks; default 1, every build); ranges
+	// (sub, blit, fill, the spans GC code lends) stay checked
+	public var spanChecks = true;
 	// -D hxmc.libc=glibc: Linux, a dynamically linked executable against the system's glibc (Abi.setLibc; default: musl, static)
 	public var libc:Null<String> = null;
 	// x86-64 functions keep a frame record (push rbp; mov rbp, rsp), so
@@ -229,6 +233,12 @@ class Options {
 			case "0": false;
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
+		}
+		var sc = def("hxmc.span_checks");
+		o.spanChecks = switch sc {
+			case null | "1": true;
+			case "0": false;
+			case _: throw "hxmc: -D hxmc.span-checks=" + sc + ": 0 or 1";
 		}
 		var fp = def("hxmc.frame_pointers"), fpEnv = env("HXMC_FRAME_POINTERS");
 		o.framePointers = fpEnv != null && fpEnv != "" ? fpEnv != "0" : def("hxmc.no_frame_pointers") != null ? false : fp == null || fp != "0";

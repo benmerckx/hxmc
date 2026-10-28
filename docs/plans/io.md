@@ -164,7 +164,7 @@ The design, built in steps (a PR each):
 2. the memory-safe subset (built);
 3. spans, checked views of buffers, and where they may
    exist (built);
-4. the bounds checks' define and their measured cost;
+4. the bounds checks' define and their measured cost (built);
 5. a leaf routine of the std moved onto the subset.
 
 ### The attribute
@@ -340,9 +340,37 @@ elements' bytes race.
 On in every build, debug or release. A failed check in GC-free code cannot
 throw (a throw allocates); it ends the program with a message naming the
 index, the length and the function's position, as an out-of-bounds access
-does in Burst's checked builds or a Rust panic with `panic=abort`. A
-define drops the checks (as Burst's release builds do); `sub`'s and the
-boundary's checks stay.
+does in Burst's checked builds or a Rust panic with `panic=abort`.
+
+**Built**: `-D hxmc.span-checks=0` drops the element checks (as Burst's
+release builds do); ranges (`sub`, `blit`, `fill`, the boundary's) stay
+checked (`SpanChecksOff`). An element check is `ult(i, length)` and a
+branch to a call in a loop without an exit (the path never joins the
+access again, so nothing lives across the call: before that, an axpy took
+34 instructions an element instead of 21). A span parameter's two words are
+copied into the callee's own slot, which scalar replacement keeps in
+registers (the caller's memory would be read again after every store).
+
+**Measured** (`hxmc/test/micro/SpanBench.hx`, 2026-10-28, a shared 4-core
+Xeon at 2.1 GHz, buffers of 64 KB in the cache: the cost of the access,
+not of memory): a byte sum (loads, Adler-32's inner loop) and a Float axpy
+(`y[i] = a * x[i] + y[i]`: two loads and a store, three checks), each on
+`Ptr` (`@:hxmc.unsafe`) and on spans.
+
+| | sum, raw | sum, span | axpy, raw | axpy, span |
+| --- | ---: | ---: | ---: | ---: |
+| x86-64, instructions an element (callgrind), checked | 12 | 14 (+17%) | 17 | 21 (+24%) |
+| x86-64, instructions an element, `span-checks=0` | 12 | 12 | 17 | 17 |
+| x86-64, ns an element, checked (median of 7, three runs) | 0.76-0.84 | 1.03-1.25 | 1.06-1.72 | 1.24-1.77 |
+| x86-64, ns an element, `span-checks=0` | 0.79-1.34 | 0.76-1.06 | 1.09-1.78 | 1.06-1.81 |
+| wasm32 under node 22, ns an element, checked | 0.55-0.59 | 0.66-0.72 | 0.74-0.85 | 0.74-0.84 |
+| wasm32 under node 22, ns an element, `span-checks=0` | 0.56-0.63 | 0.51-0.56 | 0.72-1.04 | 0.70-0.77 |
+
+So a checked access costs about two instructions: in time 1.15 to 1.5
+times the raw loop for the byte sum, within this machine's noise for the
+axpy, natively and on wasm32. Without the checks a span is as fast as a
+`Ptr` (the same instructions). The checks are not removed where a loop
+proves them yet (`for (i in 0...s.length)`): the next step.
 
 ### Inlining, generics, closures
 

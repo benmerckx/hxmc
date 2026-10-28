@@ -198,6 +198,14 @@ program ends with exit code 2 and a message on stderr:
 hxmc: span index 3 out of range [0, 3) at Kernel.hx:10 (Kernel.at)
 ```
 
+The checks are on in every build. `-D hxmc.span-checks=0` drops the
+element checks (as Burst's release builds do); ranges (`sub`, `blit`,
+`fill`, the spans GC code lends) stay checked. An element check is an
+unsigned compare and a branch; a span's two words stay in registers through
+a loop. Measured ([plans/io.md](plans/io.md#bounds-checks)): about 2
+instructions per access, +17 to 24% on tight loops natively; without the
+checks, the same instructions as raw `Ptr` access.
+
 **Where spans exist: only in GC-free code**, as parameters, locals and
 results of `@:hxmc.gcfree` and `@:hxmc.blocking` functions. Never a field,
 a static, a struct's field, an element, a capture, a type parameter's

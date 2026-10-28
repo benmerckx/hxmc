@@ -242,8 +242,8 @@ class Lower implements LowerQueries {
 	// throws "Null Access"; without, the native targets fault and the runtime's
 	// handler throws (hxmc.rt.Faults)
 	public static var nullChecks = false;
-	// whether a span's element accesses are range-checked (FnLower.spanCall;
-	// hxmc.Span): always, for now
+	// -D hxmc.span-checks: whether a span's element accesses are range-checked
+	// (FnLower.spanCall; default: yes); ranges always are
 	public static var spanChecks = true;
 	// -D hxmc.interp: functions of the program are interpreted (hxmc.interp.InterpGen: their entry stubs call hxmc_interp_enter)
 	public static var interp = false;

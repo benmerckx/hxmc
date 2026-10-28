@@ -146,6 +146,15 @@ class FnLower {
 				out.push(SSet(lo, coerce(x, a.ty, t)));
 				x = ELocal(lo);
 			}
+			// (a span: its two words copied into a slot of this frame, which no call
+			// takes, so that they stay in registers, Sroa: the caller's memory
+			// would be read again after every store, which may alias it)
+			var sc = GcFreeCheck.spanOf(v.vType) != null ? structOf(v.vType) : null;
+			if (sc != null && !boxed.exists(v.vId)) {
+				var own = newSlot(t, false);
+				copyStruct(ELocal(own), x, sc);
+				x = ELocal(own);
+			}
 			if (boxed.exists(v.vId)) {
 				var b = newLocal(v.vName + "_box", TRef(RBox(t)));
 				out.push(SSet(b, ENewBox(t, x)));
@@ -2840,8 +2849,10 @@ class FnLower {
 		var name = cf.cfName;
 		// (the failed check of an index or a range: the program ends)
 		var at = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(spanWhere(e))), TI64);
+		// (in a loop without an exit: the call does not return, and the path
+		// never joins the access again, so nothing lives across the call)
 		function fatal(f:String, xs:Array<Ex>):Stmt
-			return SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at]))));
+			return SLoop(vector(SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at]))))));
 		// a new span: p, n (locals or constants) into a fresh slot
 		function make(s:Local, p:Ex, n:Ex) {
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(s), EInt(ptrOff), p), TVoid)));
