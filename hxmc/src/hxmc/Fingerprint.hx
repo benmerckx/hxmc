@@ -494,9 +494,11 @@ class Fingerprint {
 				var cs = hxmc.ir.CInterop.SIGS.get(n);
 				if (cs == null) word(0) else {
 					word(hxmc.ir.CInterop.BLOCKING.exists(n) ? 2 : 1);
-					word(cs.args.length);
-					for (a in cs.args)
-						str(hxmc.ir.CInterop.shape(a));
+					// (a variadic function's scalar variadic arguments: by the operands)
+					var na = hxmc.ir.CInterop.fixedArgs(n, cs);
+					word(na);
+					for (k in 0...na)
+						str(hxmc.ir.CInterop.shape(cs.args[k]));
 					str(hxmc.ir.CInterop.shape(cs.ret));
 				}
 				// (the names the intrinsics take are not string objects of the program)

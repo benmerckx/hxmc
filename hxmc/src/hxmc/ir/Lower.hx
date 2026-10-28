@@ -1736,14 +1736,7 @@ class Lower implements LowerQueries {
 			case TFun(s): s;
 			case _: fail("extern static " + cf.cfName + " is not a function");
 		}
-		var sig = CInterop.declare(sym, c, cf, s);
-		var va = core.Meta.getOpt(Custom(":hxmc.varargs"), cf.cfMeta);
-		if (va != null && va.exprs.length == 1)
-			switch va.exprs[0].expr {
-				case EConst(core.Ast.Constant.Int(k, _)): FnLower.C_VARIADIC.set(sym, Std.parseInt(k));
-				case _:
-			}
-		return sig;
+		return CInterop.declare(sym, c, cf, s);
 	}
 
 	public function lookupMethod(c:TClass, name:String):Null<{cls:TClass, field:TClassField}> {

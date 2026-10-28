@@ -1,0 +1,7 @@
+exit 0
+LinuxVarargs.hx:18: true
+LinuxVarargs.hx:19: true
+LinuxVarargs.hx:21: true
+LinuxVarargs.hx:23: -1, true
+LinuxVarargs.hx:24: -1, true
+LinuxVarargs.hx:30: true
