@@ -142,3 +142,231 @@ that stores the live references as an allocation does. It costs a few
 percent in tight loops and needs every loop's live references in their
 slots at the back edge, so it stays opt-in and unbuilt while regions and
 `@:hxmc.blocking` jobs cover the known cases.
+
+## GC-free kernels
+
+A job pool runs GC-free kernels (a decoder's inner loop over native
+memory) on its threads inside a safe region, so that the main thread's
+collections never wait for them (helder's jobs: 0.5 ms pauses instead of
+35 to 55 ms). Two things stood in the way:
+
+- `@:hxmc.blocking` checks that a function is GC-free but requires
+  `@:hxmc.unsafe`, which allows raw pointers: "GC-safe" meant
+  "memory-unsafe".
+- `@:hxmc.blocking` merged two things: "this function is GC-free" and "a
+  call of it runs in a safe region". One kernel could not serve both the
+  synchronous path (the main thread, no region) and the job path (inside
+  the pool's region).
+
+The design, built in steps (a PR each):
+
+1. the attribute (built);
+2. the memory-safe subset;
+3. spans, checked views of buffers, and where they may
+   exist;
+4. the bounds checks' define and their measured cost;
+5. a leaf routine of the std moved onto the subset.
+
+### The attribute
+
+**Built**: `@:hxmc.gcfree` on a static Haxe function or a class
+([interop.md](../interop.md#gc-free-code)): no GC point, no value of a GC
+type, calls only of GC-free functions (`Facts.gcFreeCulprit`, on the
+lowered body, every build), and its calls enter no region.
+`@:hxmc.blocking` on a Haxe function is `@:hxmc.gcfree` plus the region
+entered by a call from GC code.
+
+The name is not `nogc`: `@:hxmc.noGc` is `@:hxmc.unsafe`'s former name,
+still accepted, and an attribute that differed from it only in case would
+silently mean the other thing.
+
+### The safe subset
+
+Without `@:hxmc.unsafe`, a GC-free function is memory-safe. Checked on the
+typed AST before lowering (`GcFreeCheck`), so the errors point at the
+expression; what Haxe inlined into the function is checked as its own code:
+
+| Rule | Allowed | Rejected |
+| --- | --- | --- |
+| values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars, enum abstracts and abstracts over these, `@:hxmc.struct` values, spans | GC types (below); raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
+| calls | static `@:hxmc.gcfree`/`@:hxmc.blocking` functions, `Math`, `Std.int`, `Struct`'s layout constants, spans' accessors | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| casts | unchecked casts between scalars | any other unchecked cast (a struct as another, an Int as a span) |
+| statics | reads | writes (also of a struct static's fields) |
+| other | locals, loops, `switch`, struct values | closures, `throw`, `try`, `untyped` |
+
+`@:hxmc.gcfree` plus `@:hxmc.unsafe` keeps today's freedom: the escape
+hatch, for trusted code (a pool's glue, the runtime).
+
+**What "GC type" means**: what the lowering represents as a reference.
+Class instances, `String` (literals too: they are objects, if static
+ones), arrays and Vectors, anonymous objects, `Dynamic`, closures, enum
+values (argument-less ones too: references to static objects; an
+`enum abstract` over Int is the GC-free spelling), `Null<T>` of a basic
+type (boxed), and an erased type parameter. Constants: `inline` ones are
+literals; a `static final` or `static var` of a flat type may be read.
+Writing statics is rejected for determinism (two jobs writing one), not for
+memory safety: a torn flat value is a wrong value, never corruption.
+
+### Spans
+
+Checked views of memory outside the GC heap, values of two words (the
+address and the length), in `hxmc`: `Span<T>` (writable) and
+`ReadOnlySpan<T>`, distinct types; a `Span` converts to a `ReadOnlySpan`,
+never back. `T` is a C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`,
+`UInt32`, `Int64`, `Float32`, `Float`, `Bool`) or a `@:hxmc.struct`.
+
+| | |
+| --- | --- |
+| `s.length` | the number of elements |
+| `s[i]`, `s[i] = v` | element i, range-checked; writing only through a `Span` |
+| `s[i].x = v` | a struct element's field, in place (a `Span` only); `var e = s[i]` copies |
+| `s.sub(pos, len)` | elements pos .. pos + len - 1, the same memory, range-checked; the same type |
+| `s.reinterpret()` | the same bytes as elements of another type, `var f:Span<Float> = bytes.reinterpret()`: length * size(T) / size(U) of them, rounded down |
+| `dst.blit(pos, src, srcpos, len)` | a copy between spans (overlapping too), range-checked |
+| `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1 |
+
+**Layout and alignment.** Element i is at the address plus i * size(T),
+the size of `T`'s C type (a struct's C layout: `Struct.sizeOf`, a multiple
+of its alignment). Nothing requires alignment: an IoBuffer's bytes are
+16-byte aligned natively and 8 on wasm32, a `Bytes`' data 8, and `sub` or
+`reinterpret` at an odd offset gives misaligned elements, which x86-64,
+arm64 (normal memory) and wasm32 (alignment is a hint) load and store
+correctly, slower only where an access crosses a cache line. On wasm32 the
+address is a 32-bit linear-memory address held in the 64-bit word `Ptr`
+uses everywhere; the checks keep every access inside the span, so inside
+the memory too.
+
+### Where spans exist: only in GC-free code
+
+**The rule.** A span is a parameter, local or result of a `@:hxmc.gcfree`
+(or `@:hxmc.blocking`) function, and nothing else: never a field, a static,
+a struct's field, an array element, a closure's capture, a type
+parameter's value, `Dynamic`. GC code never holds one: it makes one only as
+an argument of a direct call of a GC-free function, and such a call's
+result is not a span:
+
+```haxe
+var sum = Adler32.of(ReadOnlySpan.ofBytes(bytes));                     // the synchronous path, no copy
+var e = Png.decode(ReadOnlySpan.ofIoBuffer(file), Span.ofIoBuffer(rgba)); // several buffers: several arguments
+```
+
+| Made by | Valid for | The callee |
+| --- | --- | --- |
+| `ofIoBuffer(buf, ?pos, ?len)` | the call | any GC-free function, `@:hxmc.blocking` too |
+| `ofBytes(b, ?pos, ?len)` | the call | a GC-free function that never enters a safe region (not blocking, calls no function or C function that does: `FuncInfo.blocks`): a collection would move the Bytes |
+| `unsafeOf(ptr, length)` | what its maker vouches for | `@:hxmc.unsafe` code: a pool's glue |
+| `s.sub`, `s.reinterpret` | as `s` | |
+
+The range of `ofIoBuffer` and `ofBytes` is checked where they are made,
+in GC code (`haxe.io.Error.OutsideBounds`). The other arguments are
+evaluated first, the spans' addresses taken last, just before the call, so
+nothing between the two collects.
+
+**Why not what helder proposed.** Three shapes were weighed:
+
+- *Span types local-only in all code* (`var s = Span.of(buf)` in GC code,
+  never stored): leaves `var s = Span.of(buf); buf.free(); s[0]` within
+  one function, which only a flow analysis of frees would catch.
+- *A generation in each buffer that `free` changes, checked at access*:
+  sound, but a load and compare on every access, the cost that made
+  helder.scoped lose.
+- *A scoped call with a callback and a borrow count*
+  (`buf.read(s -> kernel(s))`, `free` fatal while borrowed): sound only
+  if the callback stays a closure. Inlined (Haxe inlines a function
+  literal passed to an inline function), `outer = s` inside it becomes an
+  assignment of the caller's own local, which the compiler cannot tell
+  from one inside the scope, and the span outlives it. Not inlined, each
+  call allocates a closure, the callback (GC code) may free the buffer
+  (hence the count), several buffers need nested callbacks, which may not
+  capture the outer span, and a `Bytes` cannot be lent at all (the
+  callback may collect).
+
+The call is the scope instead. During a call of a GC-free function
+nothing but GC-free code runs on the thread, which cannot free (no C
+functions, no raw memory without `@:hxmc.unsafe`), so a buffer cannot be
+freed under its span on that thread, by construction: no count, no state
+per buffer, nothing per access, nothing at run time but two words per
+span. Several buffers are several arguments, and a `Bytes` can be lent
+without a copy, as `BytesPtr` lends it today, but checked. What it gives
+up: GC code never sees a span. Code that reads a buffer from GC code reads
+the IoBuffer or Bytes itself, or is a GC-free function.
+
+**Soundness.** The claim: whenever safe code reads or writes through a
+span, the span's memory is allocated and does not move.
+
+1. *Where spans come from.* A boundary argument (above), `unsafeOf` in
+   `@:hxmc.unsafe` code (trusted), or `sub`/`reinterpret` of a span,
+   which stay inside its memory.
+2. *Where they go.* Only through parameters, locals and results of GC-free
+   functions: GC-free code has no GC value, so no heap object, array,
+   closure, box or `Dynamic` can hold one; struct fields and statics of a
+   span type are rejected (a struct may be stored anywhere, also by GC
+   code); GC code may not declare a span local or parameter, nor receive a
+   span result. An inline function taking a span, called from GC code,
+   puts the span into GC code: rejected.
+3. *So spans live in the frames of one boundary call.* Every span on a
+   thread's stack was made by a boundary call further down the same stack
+   (or by trusted code), and dies before that call returns. A GC-free
+   function returns a span only to a GC-free caller, and what it returns
+   came from its arguments or from trusted code: returned spans are
+   derived from spans the caller already holds. (helder's "returned only
+   as a sub-view of a parameter" holds without a flow check, because no
+   other source exists.)
+4. *During the boundary call the memory stays.* The thread runs only
+   GC-free code. It reaches no GC point, so other threads' collections
+   wait for it and a `Bytes` does not move; a `@:hxmc.blocking` callee lets
+   them run, which is why `ofBytes` requires one that never enters a
+   region. It frees nothing: safe code calls no C function and holds no
+   raw handle.
+5. *What stays the owner's contract.* An IoBuffer has one owner, as
+   before: freeing it on another thread while a call uses it, or making a
+   span of one already freed, is the owner's error (`IoBuffer` is
+   hxmc.unsafe's). A job pool owns its buffers: it allocates them, makes
+   the spans for a job's duration and frees them after.
+
+**Aliasing and races.** Two spans over overlapping memory, also two
+writable ones, may be passed to one call: memory-safe, since elements are
+flat values and `blit` is a `memmove`. Safe code cannot hand a span to
+another thread (no static written, no closure, no heap); only trusted code
+(the pool) puts spans on several threads, and its contract is that a
+writable span never overlaps another span used at the same time on
+another thread. If that is broken, the results are wrong values, never
+corruption: a span's address and length are values in the thread's own
+frame and registers, and every access is checked against them; only the
+elements' bytes race.
+
+### Bounds checks
+
+On in every build, debug or release. A failed check in GC-free code cannot
+throw (a throw allocates); it ends the program with a message naming the
+index, the length and the function's position, as an out-of-bounds access
+does in Burst's checked builds or a Rust panic with `panic=abort`. A
+define drops the checks (as Burst's release builds do); `sub`'s and the
+boundary's checks stay.
+
+### Inlining, generics, closures
+
+- **Inlining.** An inline function's body becomes the caller's code and is
+  checked as such (the error's position is the call's). So an inline
+  helper over raw memory (`IoBuffer.get`, a `Ptr` wrapper's) is rejected in
+  safe code: call a non-inline `@:hxmc.unsafe @:hxmc.gcfree` function
+  instead. `@:hxmc.unsafe` on an inline function does not carry into the
+  copies Haxe inlines.
+- **Generics.** A value of a type parameter is erased to a reference
+  (boxed): a GC value, rejected. `@:generic` functions are specialized per
+  type and each specialization checked. A span of an unresolved `T` is
+  rejected (no element type to access).
+- **Closures and dynamic calls** are rejected: making a closure allocates,
+  and a call through one, through an interface or a virtual method, or
+  through a structural field has a callee the check cannot see.
+
+### Errors
+
+Each names the rule and the expression:
+
+```
+Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (gcfree: raw memory needs @:hxmc.unsafe)
+Kernel.hx:14: Kernel.sum: a write of the static total (gcfree: statics are read-only in GC-free code)
+Kernel.hx:20: Kernel.keep: the field last has a span type (gcfree: spans live in parameters and locals only)
+Main.hx:8: Main.main: a span made outside a call's arguments (gcfree: spans exist only in GC-free code; pass ReadOnlySpan.ofBytes(b) as an argument of a @:hxmc.gcfree function)
+```

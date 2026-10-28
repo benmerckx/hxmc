@@ -233,9 +233,15 @@ class FuncInfo {
 	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
 	public var coldMarked:Bool = false;
-	public var declNoGc:Bool = false; // declared @:hxmc.unsafe: Facts.findNoGc fails the build unless noGc
-	// declared @:hxmc.blocking (with @:hxmc.unsafe): its calls run in a safe
-	// region (FnLower.inRegion), its body touches no GC value (Facts.blockingCulprit)
+	// declared @:hxmc.unsafe, @:hxmc.gcfree or @:hxmc.blocking: Facts.findNoGc
+	// fails the build unless noGc
+	public var declNoGc:Bool = false;
+	public var declUnsafe:Bool = false; // declared @:hxmc.unsafe (errors name the attribute written)
+	// declared @:hxmc.gcfree or @:hxmc.blocking: its body touches no GC value
+	// and calls only such functions (Facts.gcFreeCulprit)
+	public var declGcFree:Bool = false;
+	// declared @:hxmc.blocking (GC-free): its calls run in a safe region
+	// (FnLower.inRegion)
 	public var declBlocking:Bool = false;
 	// @:hxmc.withStacks: live only where the program reads stacks (Reach: its calls are dropped otherwise)
 	public var withStacks:Bool = false;

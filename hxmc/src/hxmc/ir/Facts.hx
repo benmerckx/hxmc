@@ -552,14 +552,15 @@ class Facts {
 		}
 		// @:hxmc.unsafe: a promise the runtime's Haxe code relies on (raw
 		// addresses kept across calls), checked: every violation, with the
-		// chain of calls to the first GC point
+		// chain of calls to the first GC point; @:hxmc.gcfree and
+		// @:hxmc.blocking make the same promise, and more (gcFreeCulprit)
 		var errors = [];
 		for (f in p.funcs)
-			if (f.declNoGc && !f.noGc) errors.push(where(f) + '${displayName(f)} is declared @:hxmc.unsafe but reaches a GC point: ${noGcCulprit(f, cand, 0, [])}');
+			if (f.declNoGc && !f.noGc) errors.push(where(f) + '${displayName(f)} is declared ${declared(f)} but reaches a GC point: ${noGcCulprit(f, cand, 0, [])}');
 		for (f in p.funcs)
-			if (f.declBlocking) {
-				var why = blockingCulprit(f);
-				if (why != null) errors.push(where(f) + '${displayName(f)} is declared @:hxmc.blocking but $why');
+			if (f.declGcFree) {
+				var why = gcFreeCulprit(f);
+				if (why != null) errors.push(where(f) + '${displayName(f)} is declared ${declared(f)} but $why');
 			}
 		if (errors.length > 0) {
 			errors.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
@@ -567,17 +568,22 @@ class Facts {
 		}
 	}
 
-	// @:hxmc.blocking on a Haxe function: its calls run in a safe region, so
-	// it must not reach the GC heap at all. The rule, checked on the lowered
-	// body: @:hxmc.unsafe (no allocation, no GC point: findNoGc); no value of
-	// a GC type anywhere (parameters, result, locals, every expression but
-	// string literals, which are static: no heap object, no static holding
-	// one, no Mem.addr); calls only of
-	// @:hxmc.blocking functions and of C or runtime functions that are no GC
+	// the attribute that made f's promise, as written (errors)
+	static function declared(f:FuncInfo):String
+		return f.declBlocking ? "@:hxmc.blocking" : f.declGcFree ? "@:hxmc.gcfree" : "@:hxmc.unsafe";
+
+	// @:hxmc.gcfree on a Haxe function (and @:hxmc.blocking, which is
+	// @:hxmc.gcfree whose calls run in a safe region): it never reaches the
+	// GC heap at all, so it may run while other threads collect. The rule,
+	// checked on the lowered body: no allocation, no GC point (findNoGc); no
+	// value of a GC type anywhere (parameters, result, locals, every
+	// expression but string literals, which are static: no heap object, no
+	// static holding one, no Mem.addr); calls only of @:hxmc.gcfree (or
+	// @:hxmc.blocking) functions and of C or runtime functions that are no GC
 	// point (@:hxmc.fast or @:hxmc.blocking externs, Mem's intrinsics). Null
 	// when it holds, else the first violation.
-	function blockingCulprit(f:FuncInfo):Null<String> {
-		if (!f.declNoGc) return "is not @:hxmc.unsafe";
+	function gcFreeCulprit(f:FuncInfo):Null<String> {
+		if (!f.declUnsafe) return "is not @:hxmc.unsafe";
 		if (Ir.isRef(f.ret)) return "returns a value of a GC type";
 		for (a in f.args)
 			if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type';
@@ -589,8 +595,8 @@ class Facts {
 			switch e {
 				// (a C function the runtime implements in Haxe, as WebAssembly's
 				// strlen and malloc, counts as the C function: @:hxmc.fast)
-				case ECall(g, _) if (!g.declBlocking && !(g.cSymbol != null && FnLower.C_EXTERNS.exists(g.cSymbol))): why = "it calls " + displayName(g) + ", which is not @:hxmc.blocking";
-				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a method, a closure or a structural field (only static @:hxmc.blocking functions)";
+				case ECall(g, _) if (!g.declGcFree && !(g.cSymbol != null && FnLower.C_EXTERNS.exists(g.cSymbol))): why = "it calls " + displayName(g) + ", which is not @:hxmc.gcfree (nor @:hxmc.blocking)";
+				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a method, a closure or a structural field (only static @:hxmc.gcfree functions)";
 				case ECallHost(n, _, _) if (!FnLower.noGcHost(n) && n != "rt_blocking_enter" && n != "rt_blocking_restore"): why = "it calls " + n + ", which may collect";
 				// (a string literal is static data, never moved: Mem.cstr's and Mem.sym's names)
 				case EStr(_):
