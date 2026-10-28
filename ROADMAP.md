@@ -41,7 +41,7 @@ Where hxmc is going, in order. The designs behind each item are in
 
 - Collector: a memory limit, a mark-region old generation ([runtime.md](docs/plans/runtime.md#collector)).
 - WebAssembly threads ([targets.md](docs/plans/targets.md#webassembly)).
-- Android and iOS for store release ([targets.md](docs/plans/targets.md#android)).
+- Android and iOS: the linker's part of store release, e.g. device signing ([targets.md](docs/plans/targets.md#ios)); the packaging is a packager's.
 - A GUI subsystem on Windows, a dynamic musl mode on Linux ([targets.md](docs/plans/targets.md#windows)).
 - Direct system calls on Linux ([runtime.md](docs/plans/runtime.md#direct-system-calls-on-linux)).
 - Correctly rounded math ([math.md](docs/plans/math.md)).

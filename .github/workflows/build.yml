@@ -26,14 +26,6 @@
 #     built with the module cache off);
 #   - site: the website (site/: plain pages, their scripts, the playground's
 #     compiler, lix, the benchmark history);
-#   - android: the APKs for android-arm64 and android-x86_64 checked (make
-#     android-check: AndroidHello, AndroidViews), shared libraries (make
-#     shared-check), then AndroidHello on an x86-64 emulator (make
-#     android-device-check: its line in logcat; not required yet:
-#     continue-on-error).
-#   - ios: the app bundles for ios-arm64 and ios-sim-arm64 checked, then
-#     (ios-simulator, on a macOS runner) IosHello on an iPhone simulator (make
-#     ios-sim-check; not required yet: continue-on-error).
 #   - native-output: the native output a packager builds on (make
 #     native-check): Android's .so (AndroidHello as libmain.so: its SONAME,
 #     ANativeActivity_onCreate exported) and iOS's plain Mach-O executables
@@ -576,100 +568,6 @@ jobs:
         with:
           path: bin/site
 
-  # Android (docs/hxmc.md, "Android"): the APKs hxmc writes for android-arm64
-  # and android-x86_64, checked without a device (make android-check: zip,
-  # manifest, ELF, v2 signature; the SDK's zipalign, aapt and apksigner),
-  # and shared libraries (make shared-check), then AndroidHello.apk on an
-  # x86-64 emulator with KVM (make android-device-check,
-  # hxmc/test/android/android.sh: installed, launched, its line in logcat;
-  # logcat as an artifact). Not a required check yet
-  # (continue-on-error): emulators on hosted runners are slow to boot and
-  # sometimes flaky.
-  android:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
-    runs-on: ubuntu-24.04
-    continue-on-error: true
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: actions/download-artifact@v8
-        if: needs.changes.outputs.rt_hit != 'true'
-        with: {name: rt, path: bin/hxmc/rt}
-      - name: The APKs and their checks
-        run: |
-          set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          export PATH="$PATH:$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          make android-check ANDROID_TARGET=android-arm64
-          make android-check ANDROID_TARGET=android-x86_64
-      - name: Shared libraries (glibc mode)
-        run: make shared-check
-      - name: KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: AndroidHello on an emulator (x86-64, API 34)
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: default
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
-          # (the APKs of the step above: -o, not rebuilt)
-          script: |
-            make -o android-programs android-device-check ANDROID_TARGET=android-x86_64
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: android
-          path: |
-            bin/android/android-x86_64/*.txt
-            bin/android/*/*.apk
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # iOS (docs/hxmc.md, "iOS"): the app bundles hxmc writes for ios-sim-arm64
-  # and ios-arm64 (IosHello, also as an .ipa), checked without a Mac (make
-  # ios-check: Info.plist, Mach-O, the code signature; llvm-objdump), then
-  # IosHello.app on an iPhone simulator of a macOS runner (ios-simulator:
-  # make ios-sim-check, hxmc/test/ios/ios.sh: codesign --verify, its line on
-  # stdout). Not
-  # required checks yet (continue-on-error), as android.
-  ios:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
-    runs-on: ubuntu-24.04
-    continue-on-error: true
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: actions/download-artifact@v8
-        if: needs.changes.outputs.rt_hit != 'true'
-        with: {name: rt, path: bin/hxmc/rt}
-      - name: The app bundles and their checks
-        run: |
-          set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make ios-check IOS_TARGET=ios-arm64
-          make ios-check IOS_TARGET=ios-sim-arm64
-          du -sh bin/ios/*/*.app bin/ios/*/*.ipa
-          tar czf bin/ios.tar.gz -C bin ios
-      - uses: actions/upload-artifact@v7
-        with: {name: ios, path: bin/ios.tar.gz, retention-days: 7}
-
   # the native-output contract (docs/using.md, "Native output for a
   # packager"): make native-check, Linux only, no device, simulator or Mac:
   # SharedCheck (the glibc mode's libraries, Android's .so, AndroidHello as
@@ -697,36 +595,6 @@ jobs:
           set -ex
           make rt && touch bin/hxmc/rt/*/*.o
           make native-check
-
-  ios-simulator:
-    needs: [changes, ios]
-    if: ${{ !cancelled() && needs.ios.result == 'success' }}
-    runs-on: macos-15
-    continue-on-error: true
-    timeout-minutes: 40
-    steps:
-      # (the Makefile comes with the root's files; the bundle from the ios job:
-      # -o, not rebuilt)
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: |
-            hxmc/test/ios
-      - uses: actions/download-artifact@v8
-        with: {name: ios, path: dl}
-      - name: IosHello on an iPhone simulator
-        run: |
-          set -ex
-          mkdir -p bin && tar xzf dl/ios.tar.gz -C bin
-          xcodebuild -version
-          make -o ios-programs ios-sim-check
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ios-simulator
-          path: |
-            bin/ios/ios-sim-arm64/*.txt
-          retention-days: 7
-          if-no-files-found: ignore
 
   # the port against the reference compiler (docs/testing.md): make test
   # LANES=<suite> and make test-fuzz LANE=<lane>, as locally, on the release

@@ -172,8 +172,8 @@ class Abi {
 	// iOS (ios-arm64, ios-sim-arm64): Darwin's kernel and libSystem, the
 	// layouts and runtime objects of macos-arm64 (Mem.os() 1, Mem.target()
 	// 3), Mach-O with the iOS or the simulator's platform in its build
-	// version (LinkMachO) and an app bundle (hxmc.ios.Bundle);
-	// Mem.platform() 1 or 2
+	// version (LinkMachO; a packager writes the app bundle around it,
+	// docs/using.md); Mem.platform() 1 or 2
 	function setIos(simulator:Bool) {
 		platform = simulator ? "ios-simulator" : "ios";
 		rtName = "macos-arm64";

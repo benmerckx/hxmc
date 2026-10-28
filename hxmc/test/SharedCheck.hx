@@ -15,9 +15,9 @@ using StringTools;
 // - readelf: a shared object at address 0, no interpreter or text
 //   relocations, its SONAME, the exports defined and nothing else, the
 //   generated main hidden;
-// - the same library for android-arm64 and android-x86_64 (not run here:
-//   ApkCheck and CI's emulator): 16 KB segments, Bionic's imports, the TLS
-//   models Bionic implements for a dlopen'ed library;
+// - the same library for android-arm64 and android-x86_64 (not run
+//   here): 16 KB segments, Bionic's imports, the TLS models Bionic
+//   implements for a dlopen'ed library;
 // - hxmc/test/android/AndroidHello.hx as libmain.so for both, as a
 //   packager builds the library its APK holds (docs/using.md, "Native output
 //   for a packager"): the SONAME the output's file name, libmain.so, and

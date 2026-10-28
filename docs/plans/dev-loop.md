@@ -44,13 +44,6 @@ everything held twice in memory.
 - Add a Windows test asserting the second edit is much faster than the
   first.
 
-## iOS devices
-
-The simulator `dlopen`s each new dylib. On a device code must be signed:
-first verify whether a dylib signed with the developer identity loads in a
-debug build. Else run the program on the Mir interpreter in the host, and a
-restart is the last resort.
-
 ## Assets without a rebuild
 
 The protocol reserves `assets`: data a running build takes without a new

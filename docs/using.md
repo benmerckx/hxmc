@@ -15,8 +15,8 @@ build on. Any host builds for any target.
 | `linux-x86_64`, `linux-arm64` | static ELF executable (musl); with `-D hxmc.libc=glibc`, linked against the system's glibc 2.17+ |
 | `macos-x86_64`, `macos-arm64` | Mach-O executable, ad hoc signed |
 | `windows-x86_64`, `windows-arm64` | PE executable over the UCRT |
-| `android-arm64`, `android-x86_64` | a shared library; an APK when the output ends in `.apk` ([Android](#android)) |
-| `ios-arm64`, `ios-sim-arm64` | Mach-O executable; an app bundle when the output ends in `.app`, zipped when `.ipa` ([iOS](#ios)) |
+| `android-arm64`, `android-x86_64` | a shared library ([Android](#android)) |
+| `ios-arm64`, `ios-sim-arm64` | Mach-O executable ([iOS](#ios)) |
 | `wasm32-wasi` | WebAssembly module ([WebAssembly](#webassembly)) |
 
 Code can test the target with `target.name == "hxmc"` (there is no `hxmc`
@@ -83,73 +83,31 @@ returns, so a host can load, run and unload builds in turn (the
 ### Android
 
 `android-arm64` (phones) and `android-x86_64` (emulators), Android 10 (API
-29) and later. With an output ending in `.apk`, hxmc writes and signs an APK
-whose `NativeActivity` loads the program. No SDK, NDK or Java at build time.
-
-```sh
-haxe -cp hxmc/test/android -main AndroidHello \
-  --custom-target hxmc=bin/hello.apk -D hxmc.target=android-arm64 -D hxmc.android-package=org.example.hello
-adb install -r bin/hello.apk
-adb shell am start -n org.example.hello/android.app.NativeActivity
-adb logcat -s hxmc
-```
-
-| Option | Default |
-| --- | --- |
-| `-D hxmc.android-package=<id>` | `org.hxmc.<output name>` |
-| `-D hxmc.android-label=<text>` | the output name |
-| `-D hxmc.android-version=<n>`, `-D hxmc.android-version-name=<text>` | 1, 1.0 |
-| `-D hxmc.android-min-sdk=<n>`, `-D hxmc.android-target-sdk=<n>` | 29 (the floor), 35 |
-| `-D hxmc.android-permissions=<names>` | none (`INTERNET` means `android.permission.INTERNET`) |
-| `-D hxmc.android-key=<file>`, `HXMC_ANDROID_KEY` | a debug key in the cache, made on first use |
-| `-D hxmc.exports=<names>` | exports besides `ANativeActivity_onCreate` |
-
-The program exports `ANativeActivity_onCreate` and starts its own thread
-(see `hxmc/test/android/AndroidHello.hx`). A program that uses views gets a
-small `classes.dex` that hxmc writes.
-
-Not yet: several ABIs in one APK, release signing, icons and resources,
-`.aab` bundles.
+29) and later: a shared library against Bionic, which an APK's
+`NativeActivity` loads. The program exports `ANativeActivity_onCreate` and
+starts its own thread (see `hxmc/test/android/AndroidHello.hx`). A
+packager writes the APK around it ([below](#native-output-for-a-packager)).
 
 ### iOS
 
 `ios-arm64` (devices) and `ios-sim-arm64` (the simulator on Apple silicon),
-iOS 15 and later. With an output ending in `.app` hxmc writes an ad hoc
-signed app bundle; `.ipa` zips it. No Xcode or SDK at build time.
-
-```sh
-haxe -cp hxmc/test/ios -main IosHello \
-  --custom-target hxmc=bin/Hello.app -D hxmc.target=ios-sim-arm64 -D hxmc.ios-bundle-id=org.example.hello
-xcrun simctl install booted bin/Hello.app
-xcrun simctl launch --console-pty booted org.example.hello
-```
-
-| Option | Default |
-| --- | --- |
-| `-D hxmc.ios-bundle-id=<id>` | `org.hxmc.<output name>` |
-| `-D hxmc.ios-name=<text>` | the output name |
-| `-D hxmc.ios-version=<n>`, `-D hxmc.ios-version-name=<text>` | 1, 1.0 |
-| `-D hxmc.ios-min-version=<major.minor>` | 15.0 (the floor) |
-| `-D hxmc.ios-entitlements=<file>` | none |
-
+iOS 15 and later: a Mach-O executable, or a dylib with `-D hxmc.shared`.
 A UI library that defines `hxmc_ui_main` gets `UIApplicationMain` on the
-main thread, and the program's body runs once the app has launched.
-
-Not yet: signing for devices (developer certificate, provisioning profile),
-app icons and asset catalogs.
+main thread, and the program's body runs once the app has launched. A
+packager writes the app bundle around it ([below](#native-output-for-a-packager)).
 
 ### Native output for a packager
 
-A packager that writes the APK or the app bundle itself builds on two
-outputs, checked by `make native-check`:
+hxmc writes no APKs or app bundles: a packager writes them around hxmc's
+native output ([helder](https://github.com/benmerckx/helder) does). It
+builds on two outputs, checked by `make native-check`:
 
-- **Android**: any output name other than `.apk` gives the `.so` alone. Its
-  `DT_SONAME` is always the output's file name, so name it `libmain.so` for
-  `NativeActivity`. `ANativeActivity_onCreate` is exported when the program
-  defines it.
-- **iOS**: an output with no `.app` or `.ipa` gives a plain Mach-O
-  executable, or a dylib with `-D hxmc.shared`. `-D hxmc.ios-min-version`
-  sets its `LC_BUILD_VERSION` minimum. The linker signs it ad hoc, as
+- **Android**: the `.so`. Its `DT_SONAME` is always the output's file
+  name, so name it `libmain.so` for `NativeActivity`.
+  `ANativeActivity_onCreate` is exported when the program defines it.
+- **iOS**: a plain Mach-O executable, or a dylib with `-D hxmc.shared`.
+  `-D hxmc.ios-min-version=<major.minor>` sets its `LC_BUILD_VERSION`
+  minimum (15.0, the floor). The linker signs it ad hoc, as
   linker-signed. With any of the defines below it is signed as `codesign
   -s -` signs a bundle's executable instead. The packager writes
   `Info.plist` and `CodeResources` first, then links, then puts the files
@@ -162,8 +120,7 @@ outputs, checked by `make native-check`:
 | `-D hxmc.codesign-resources=<file>` | special slot 3, `_CodeSignature/CodeResources` |
 | `-D hxmc.codesign-entitlements=<file>` | special slot 5, the entitlements (an XML plist) |
 
-They apply to Mach-O outputs only (macOS and iOS), and not to `.app` or
-`.ipa` outputs, which sign themselves the same way.
+They apply to Mach-O outputs only (macOS and iOS).
 
 ### WebAssembly
 

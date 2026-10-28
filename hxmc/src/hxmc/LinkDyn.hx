@@ -47,7 +47,7 @@ class LinkDyn extends Link {
 	// a shared library's DT_SONAME (null: none)
 	public var soname:Null<String> = null;
 	// the exports left out when nothing defines them (Android's
-	// ANativeActivity_onCreate in a lib<name>.so that is not an app's)
+	// ANativeActivity_onCreate, in a library that is not an app's)
 	public var optional:Array<String> = [];
 	// the program's imports from shared libraries (@:hxmc.lib): name -> file
 	public var libs = new Map<String, String>();
@@ -346,7 +346,7 @@ class LinkDyn extends Link {
 			roots = [];
 			for (n in abi.exports)
 				if (globals.exists(n)) roots.push(n);
-				else if (optional.indexOf(n) < 0) throw 'hxmc: link: the shared library exports $n, which nothing defines' + (n == "ANativeActivity_onCreate" ? " (an Android app's entry: hxmc.os.App, packages/os)" : "");
+				else if (optional.indexOf(n) < 0) throw 'hxmc: link: the shared library exports $n, which nothing defines';
 		}
 		gc(entry);
 		// the imports the live code refers to, and how

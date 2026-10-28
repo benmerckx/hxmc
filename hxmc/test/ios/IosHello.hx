@@ -1,6 +1,6 @@
-// The smallest iOS app (make ios-check, ios-sim-check): no UIKit, the
-// program's main run by hxmc's generated main as on any other target; it
-// prints a line and returns, and the process ends.
+// The smallest iOS app's executable (make macho-check; a packager bundles it):
+// no UIKit, the program's main run by hxmc's generated main as on any other
+// target; it prints a line and returns, and the process ends.
 class IosHello {
 	static function main() {
 		// (the collector, a map, an exception: the runtime at work)
