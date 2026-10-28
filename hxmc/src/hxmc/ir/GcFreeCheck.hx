@@ -58,6 +58,27 @@ class GcFreeCheck {
 	static function typeName(t:T):String
 		return core.TPrinting.Printer.sType(t);
 
+	// ---- spans (hxmc.Span, hxmc.ReadOnlySpan: FnLower.spanCall)
+
+	// the rule of where spans exist, as errors name it
+	public static inline var SPANS_LOCAL = "spans live in parameters and locals only";
+	public static inline var SPANS_GCFREE = "spans exist only in GC-free code";
+
+	public static function isSpanAbstract(a:TAbstract):Bool
+		return a.aPath.pack.length == 1 && a.aPath.pack[0] == "hxmc" && (a.aPath.name == "Span" || a.aPath.name == "ReadOnlySpan");
+
+	// t a span type: its element type, and whether it is read-only; else null
+	public static function spanOf(t:T):Null<{ro:Bool, elem:T}>
+		return switch t.follow() {
+			case TAbstract(a, pl) if (pl.length == 1 && isSpanAbstract(a)): {ro: a.aPath.name == "ReadOnlySpan", elem: pl[0]};
+			case _: null;
+		}
+
+	// the error of a span where it may not be (outside GC-free code, in a
+	// declaration): `what` names it
+	public static function spanError(at:String, fn:String, what:String, rule:String):String
+		return (at != "" ? at + ": " : "") + (fn != "" ? fn + ": " : "") + what + " (gcfree: " + rule + ")";
+
 	// ---- types
 
 	// hxmc.unsafe's C scalars, values like Int (docs/interop.md, "C interop")
@@ -110,6 +131,15 @@ class GcFreeCheck {
 
 	// ---- expressions
 
+	// an abstract seen as its own underlying type (an inline method's `this`:
+	// what it then reads is checked as any value is); never the other way
+	static function toUnderlying(from:T, to:T):Bool
+		return switch from.follow() {
+			case TAbstract(a, pl) if (!core.Meta.has(core.Meta.CoreType, a.aMeta)):
+				core.TUnification.fastEq(core.TFunctions.applyParams(a.aParams, pl, a.aThis).follow(), to.follow());
+			case _: false;
+		}
+
 	static function isGcFreeDecl(c:TClass, cf:TClassField):Bool {
 		inline function has(ml:core.Ast.Metadata, n:String)
 			return ml.length > 0 && Lower.hasMeta(n, ml);
@@ -122,6 +152,11 @@ class GcFreeCheck {
 
 	// the extern functions safe GC-free code may call: Math's, Std.int, Struct's layout constants
 	static function allowedExtern(c:TClass, cf:TClassField):Bool {
+		switch c.clKind {
+			// (a span's accessors; making one from a Ptr needs @:hxmc.unsafe)
+			case KAbstractImpl(a) if (isSpanAbstract(a)): return cf.cfName != "unsafeOf";
+			case _:
+		}
 		var path = core.Globals.sTypePath(c.clPath);
 		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct";
 	}
@@ -227,7 +262,7 @@ class GcFreeCheck {
 			case TArray(a, _):
 				if (!value(a.etype, a.epos, "this array")) return;
 			case TCast(x, null):
-				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow())) {
+				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow()) && !toUnderlying(x.etype, e.etype)) {
 					fail(e.epos, "an unchecked cast from " + typeName(x.etype) + " to " + typeName(e.etype), "unchecked casts only between scalars");
 					return;
 				}

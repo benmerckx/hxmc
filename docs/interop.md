@@ -173,6 +173,79 @@ above: the escape hatch for trusted code. `GcFreeFunctions` (unsafe) and
 `GcFreeSafe` check both paths, `reject/GcFree*` the rules. The design:
 [plans/io.md](plans/io.md#gc-free-kernels).
 
+### Spans
+
+`hxmc.Span<T>` and `hxmc.ReadOnlySpan<T>` are checked views of memory for
+GC-free code: an address and a number of elements, a value of two words.
+`T` is a C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`, `UInt32`,
+`Int64`, `Float32`, `Float`, `Bool`) or a `@:hxmc.struct`. A `Span`
+converts to a `ReadOnlySpan`, never back.
+
+| | |
+| --- | --- |
+| `s.length` | the number of elements |
+| `s[i]`, `s[i] = v` | element i, checked; writing only through a `Span` |
+| `s[i].x = v` | a struct element's field, in place (a `Span` only); `var e = s[i]` copies |
+| `s.sub(pos, len)` | elements pos .. pos + len - 1, the same memory, checked; the same type |
+| `s.reinterpret()` | the same bytes as elements of another type: `var f:Span<Float> = bytes.reinterpret()`, length * size(T) / size(U) of them |
+| `dst.blit(pos, src, srcpos, len)` | a copy between spans, overlapping too, checked |
+| `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1, checked |
+
+A failed check cannot throw in GC-free code (a throw allocates): the
+program ends with exit code 2 and a message on stderr:
+
+```
+hxmc: span index 3 out of range [0, 3) at Kernel.hx:10 (Kernel.at)
+```
+
+**Where spans exist: only in GC-free code**, as parameters, locals and
+results of `@:hxmc.gcfree` and `@:hxmc.blocking` functions. Never a field,
+a static, a struct's field, an element, a capture, a type parameter's
+value. GC code makes one only as a direct argument of a call of a GC-free
+function, which lends the memory for that call, and such a call's result
+is not a span:
+
+```haxe
+@:hxmc.gcfree static function adler(s:ReadOnlySpan<UInt8>):Int { ... }
+
+var sum = adler(ReadOnlySpan.ofBytes(bytes));                       // no copy
+var e = Png.decode(ReadOnlySpan.ofIoBuffer(file), Span.ofIoBuffer(rgba), Span.ofIoBuffer(scratch));
+```
+
+| Made by | The callee |
+| --- | --- |
+| `ofBytes(b, ?pos, ?len)` | a GC-free function that never enters a safe region (not blocking, calls nothing that does): a collection would move the `Bytes` |
+| `ofIoBuffer(buf, ?pos, ?len)` | any GC-free function, `@:hxmc.blocking` too |
+| `unsafeOf(ptr, length)` | its maker vouches for the memory: `@:hxmc.unsafe` code (a pool's glue), or an argument in GC code |
+
+`ofBytes` and `ofIoBuffer` check their range in the caller
+(`haxe.io.Error.OutsideBounds`). The call's other arguments are evaluated
+first and the spans' addresses taken last, so nothing collects in between.
+During the call only GC-free code runs on the thread: it reaches no GC
+point (a `Bytes` stays where it is) and frees nothing (no C, no raw memory
+without `@:hxmc.unsafe`), so the memory outlives every span of it. An
+`IoBuffer` keeps one owner: freeing it on another thread while a call uses
+it is the owner's error, as before. A job pool owns its buffers: it
+allocates them, lends them for a job's duration (on its worker, inside the
+region it entered) and frees them after. Two spans over the same memory
+may be passed to one call; safe code cannot hand a span to another thread.
+Each error names the rule:
+
+```
+Main.hx:8: Main.main: the local s has a span type (gcfree: spans exist only in GC-free code: only a @:hxmc.gcfree function holds one)
+Main.hx:3: the field last has a span type (gcfree: spans live in parameters and locals only)
+```
+
+Haxe's typer applies no `@:from` in a compound assignment of an element
+(as for `Ptr`): `s[i] = s[i] + 1` for a `UInt8` element, `s[i] += 1` for
+an `Int` one. A struct parameter is a copy: GC-free state that functions
+update in place is a struct element of a span (`st[0].pos += n`).
+
+`Spans` (every target) and `SpanOutOfRange` check the API and the failure,
+`SpanInflate` a zlib inflate written on spans, over `Bytes` on the main
+thread and over IoBuffers on a worker inside its region while the main
+thread collects; `reject/Span*` the rules.
+
 ### System calls
 
 `hxmc.unsafe.Linux.syscall(nr, a, b, c, d, e, f)` calls the C library's

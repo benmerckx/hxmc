@@ -242,6 +242,9 @@ class Lower implements LowerQueries {
 	// throws "Null Access"; without, the native targets fault and the runtime's
 	// handler throws (hxmc.rt.Faults)
 	public static var nullChecks = false;
+	// whether a span's element accesses are range-checked (FnLower.spanCall;
+	// hxmc.Span): always, for now
+	public static var spanChecks = true;
 	// -D hxmc.interp: functions of the program are interpreted (hxmc.interp.InterpGen: their entry stubs call hxmc_interp_enter)
 	public static var interp = false;
 
@@ -933,6 +936,8 @@ class Lower implements LowerQueries {
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
 				case Var(v) if (isPhysical(c, f, v)):
+					if (GcFreeCheck.spanOf(f.cfType) != null)
+						throw new LowerError(GcFreeCheck.spanError(CInterop.posOf(f.cfPos), "", "the field " + f.cfName + " has a span type", GcFreeCheck.SPANS_LOCAL), "");
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
@@ -1628,6 +1633,8 @@ class Lower implements LowerQueries {
 		c = canonClass(c);
 		var g = staticVars.get(cf);
 		if (g != null) return g;
+		if (GcFreeCheck.spanOf(cf.cfType) != null)
+			throw new LowerError(GcFreeCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " has a span type", GcFreeCheck.SPANS_LOCAL), "");
 		var t = ty(cf.cfType); // first: it may register globals itself (enum constructors)
 		g = prog.globals.length;
 		globalOwner.set(g, c);
