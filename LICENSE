@@ -4,18 +4,27 @@ hxmc licenses
 This repository is a port of the Haxe compiler (https://github.com/HaxeFoundation/haxe)
 and follows its licensing.
 
-- The compiler port (haxe/src), the hxmc tool (hxmc/src, hxmc/bootstrap), the tests (haxe/test, hxmc/test), the npm packages' launcher (packages/) and the
-  website (site/)
-  are licensed under the GNU General Public License, version 2 or (at your
-  option) any later version (SPDX: GPL-2.0-or-later). The full text is in COPYING.
+- The compiler port (haxe/src) and its tests (haxe/test) are translated from
+  the upstream compiler and are licensed under the GNU General Public License,
+  version 2 or (at your option) any later version (SPDX: GPL-2.0-or-later).
+  The full text is in COPYING.
   Copyright (C) 2005-2025 Haxe Foundation (the upstream compiler this is
   translated from), (c) 2026 the haxe-in-haxe contributors.
 
-- Code that ends up in programs built with hxmc is licensed under the MIT License,
-  so those programs are not bound by the GPL:
-    hxmc/deps/ the scripts that build the runtime objects (hxmc/deps/LICENSE)
-    hxmc/std/  the hxmc target's standard library and the runtime's
-               Haxe part                              (hxmc/std/LICENSE)
+- Everything else written for this repository is licensed under the MIT License
+  (SPDX: MIT):
+    hxmc/      the hxmc target and tool: its back ends, linkers, macros, std,
+               runtime, bootstrap and tests        (hxmc/LICENSE; hxmc/std/LICENSE
+               and hxmc/deps/LICENSE for those directories)
+    packages/  the npm packages' sources             (packages/LICENSE)
+    site/      the website                           (site/LICENSE)
+  Programs built with hxmc are therefore not bound by the GPL.
+  Exception: hxmc/test/upstream/*.patch modify upstream Haxe's tests and follow
+  their license (GPL-2.0-or-later).
+
+- A built compiler (the hxmc and haxe executables, the npm packages @hxmc/cli
+  and @hxmc/<platform>, the release binaries) contains the compiler port and is
+  distributed as a whole under GPL-2.0-or-later.
 
 - haxe/src/libs/ reproduces OCaml libraries that upstream Haxe depends on, under
   their own licenses:

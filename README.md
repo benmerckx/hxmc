@@ -103,5 +103,6 @@ runtime objects, which are normally downloaded. See
 
 ## License
 
-GPL-2.0-or-later, like the Haxe compiler it is ported from. hxmc's runtime
-and std, which end up in compiled programs, are MIT. See [LICENSE](LICENSE).
+The compiler port (`haxe/src`) is GPL-2.0-or-later, like the Haxe compiler it
+is translated from, and so is a built compiler as a whole. Everything else,
+including the hxmc target, its runtime and std, is MIT. See [LICENSE](LICENSE).
