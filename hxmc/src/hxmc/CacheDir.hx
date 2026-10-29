@@ -5,11 +5,12 @@ import sys.FileSystem;
 import sys.io.File;
 
 // The user's cache directory and its upkeep (the module cache's store,
-// ModuleCache.hx): HXMC_CACHE, else $XDG_CACHE_HOME/hxmc or ~/.cache/hxmc,
+// CacheStore.hx): HXMC_CACHE, else $XDG_CACHE_HOME/hxmc or ~/.cache/hxmc,
 // macOS ~/Library/Caches/hxmc, Windows %LOCALAPPDATA%\hxmc\cache. A
 // directory of it (<cache>/modules/) holds one subdirectory per tool build
-// (toolStamp); <tool>/used is the last build that used it, <tool>/<f>.used
-// the last that used <f> (refreshed at most every USED_REFRESH). The trim
+// (CacheStore.toolName: the layout and toolStamp); <tool>/used is the last build
+// that used it, <tool>/i/<key>.used the last that used that index
+// (refreshed at most every USED_REFRESH). The trim
 // removes the tool directories and the running tool's entries unused for
 // MAX_UNUSED, the files of the running tool's directory nothing names, and,
 // while the whole exceeds maxSize, the other tools' directories and then the
@@ -126,8 +127,8 @@ class CacheDir {
 	}
 
 	// removes the tool directories of dir, and the entries of the running
-	// tool's (mine: <name>, its last use in <name>.used), unused for
-	// MAX_UNUSED, the files of mine's subdirectories no entry names written
+	// tool's (mine: its indexes i/<key>, their last use in <key>.used),
+	// unused for MAX_UNUSED, the files of mine's subdirectories no entry names written
 	// before ORPHAN_AGE, then, while the whole exceeds maxSize, the other
 	// tools' directories and mine's entries, least recently used first, down
 	// to LOW_WATER of it (a pack or object with the last entry naming it);
@@ -164,28 +165,39 @@ class CacheDir {
 						kids.set(rel + g, {size: st.size, mtime: st.mtime.getTime() / 1000, refs: 0});
 						total += st.size;
 					}
+				// (the leftovers of runs that did not finish)
+				function leftover(p:String):Bool {
+					if (p.indexOf(".tmp") < 0) return false;
+					if (t - mtime(p) > TRIM_INTERVAL) try FileSystem.deleteFile(p) catch (_:Dynamic) {}
+					return true;
+				}
 				for (f in names) {
+					// (the indexes: the entries)
+					if (f == "i") {
+						for (g in try FileSystem.readDirectory(d + "i") catch (_:Dynamic) []) {
+							var p = d + "i/" + g;
+							var sz = size(p);
+							total += sz;
+							if (leftover(p) || StringTools.endsWith(g, ".used")) continue;
+							var u = p + ".used";
+							var hasUsed = FileSystem.exists(u);
+							entries.push({
+								files: hasUsed ? [p, u] : [p],
+								dir: null,
+								used: Math.max(mtime(p), hasUsed ? mtime(u) : 0),
+								size: sz + (hasUsed ? size(u) : 0),
+								names: CacheDir.names(p)
+							});
+						}
+						continue;
+					}
 					// (the packs and objects: removed with the last entry naming them)
 					if (FileSystem.isDirectory(d + f)) {
 						walk(f + "/");
 						continue;
 					}
-					var sz = size(d + f);
-					total += sz;
-					// (the leftovers of runs that did not finish)
-					if (f.indexOf(".tmp") >= 0) {
-						if (t - mtime(d + f) > TRIM_INTERVAL) try FileSystem.deleteFile(d + f) catch (_:Dynamic) {}
-					} else if (f != "used" && !StringTools.endsWith(f, ".used")) {
-						var u = d + f + ".used";
-						var hasUsed = FileSystem.exists(u);
-						entries.push({
-							files: hasUsed ? [d + f, u] : [d + f],
-							dir: null,
-							used: Math.max(mtime(d + f), hasUsed ? mtime(u) : 0),
-							size: sz + (hasUsed ? size(u) : 0),
-							names: CacheDir.names(d + f)
-						});
-					}
+					total += size(d + f);
+					leftover(d + f);
 				}
 				continue;
 			}
@@ -250,12 +262,10 @@ class CacheDir {
 		} catch (_:Dynamic) {}
 	}
 
-	// the files of a tool directory an entry of it names (by their path in
-	// it): an index's packs, an object list's objects
+	// the files of a tool directory an index of it names (by their path in
+	// it: its packs, its objects), each once
 	static function names(file:String):Array<String> {
-		var l = try {
-			if (StringTools.endsWith(file, ".idx")) ModuleStore.packsOf(file) else if (StringTools.endsWith(file, ".objs")) ObjectStore.objectsOf(file) else [];
-		} catch (_:Dynamic) [];
+		var l = CacheStore.namesOf(file);
 		var seen = new Map<String, Bool>();
 		return [for (n in l) if (!seen.exists(n)) {
 			seen.set(n, true);
@@ -301,7 +311,7 @@ class CacheDir {
 			for (l in lines)
 				if (l != "") size += Std.parseFloat(l);
 		if (lines == null || !(size <= maxSize())) {
-			trim(dir, dir + toolStamp() + "/", true);
+			trim(dir, dir + CacheStore.toolName() + "/", true);
 			return;
 		}
 		if (lines.length > 256) {

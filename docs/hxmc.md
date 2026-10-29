@@ -494,24 +494,31 @@ collections; `make bench-micro WHICH=maps` measures them.
 
 The compilation server's HXB module cache, made durable
 (`ModuleCache.hx`, `ModuleCacheState.hx`, `WatchedCallbacks.hx`,
-`CheckingHxbWriter.hx`, `Skeletons.hx`, `ModuleStore.hx`,
-`ObjectStore.hx`, `CacheDir.hx`). Usage: [using.md](using.md#fast-rebuilds).
+`CheckingHxbWriter.hx`, `Skeletons.hx`, `ModuleStore.hx`; the store:
+`CacheStore.hx`, `CacheKey.hx`, `CacheDir.hx`). Usage:
+[using.md](using.md#fast-rebuilds).
 
-**The store** is `<cache>/modules/<tool>/`, one directory per build of the
-tool:
+**The store** is `<cache>/modules/<layout>-<tool>/`, one directory per
+build of the tool, in one layout for every user. Each entry is named by its
+key (`CacheKey`: a kind, then a hash of its content and of what it depends
+on):
 
-- an index per working directory, class paths and std (`<key>.idx`);
-- the modules' HXB in packs, one per build that writes (`b/<name>.pk`),
+- indexes (`i/<key>`): per working directory, class paths and std, the
+  typed modules; per output, the objects its last build used and its
+  up-to-date record; per command line, its Mir macros' objects. Each
+  starts with a header naming the packs and objects it keeps;
+- packs (`p/<name>.pk`): the modules' HXB, one per build that writes,
   written on a thread beside the build;
-- compiled objects (`o/`), named by the hash of their lowered IR and shared
-  by every output; per output, the objects its last build used and its
-  up-to-date record. `<out>.hxmc/` holds them only where the cache cannot be
-  written.
+- objects (`o/`): a module's, named by the hash of its lowered IR and shared
+  by every output, or a Mir macro function's. `<out>.hxmc/` holds them only
+  where the cache cannot be written.
 
-Once a day a build removes what has been unused for 14 days. The size cap
-holds as builds write: each build appends its bytes to `modules/size.txt`,
-and past the cap it trims to 80%, other tools' directories first. Removal
-tolerates concurrent builds. `CacheCheck` tests the store.
+Once a day a build removes what has been unused for 14 days, and the packs
+and objects no index names. The size cap holds as builds write: each build
+appends its bytes to `modules/size.txt`, and past the cap it trims to 80%,
+other tools' directories first (and those of an earlier layout, which no
+build reads). Removal tolerates concurrent builds. `CacheCheck` tests the
+store.
 
 **Variants and keys.** An index keeps variants of each module, each with
 the defines it read (its file's conditions, its macros'
@@ -814,7 +821,7 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   trivial macro's: 21 KB), and so do the pool entries they were given.
 
 Compiled functions are kept across builds (`interp.BundleCache`), in the
-module cache's store (`<cache>/modules/<tool>/o/<key>-mir.o`, per build of
+module cache's store (`<cache>/modules/<layout>-<tool>/o/<key>-mir.o`, per build of
 the compiler, with the store's limits and trim; the list of a command
 line's objects is what the trim keeps): each function a bundle compiles is
 an object of its own, under the key of its `Fingerprint` (its lowered IR,

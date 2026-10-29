@@ -1,14 +1,13 @@
 package hxmc.interp;
 
 import haxe.io.Bytes;
-import sys.io.File;
 import hxmc.Obj;
 
 // Mir macros' compiled functions kept across builds (docs/hxmc.md, "Macros
 // on the Mir interpreter"): each function a bundle compiles for the
 // interpreter (its descriptor, MirBuild to InterpGen) is an object of its
-// own in the module cache's store (ObjectStore: <cache>/modules/<tool>/o/,
-// per build of the compiler, with its limits and trim), under the key of
+// own in the module cache's store (CacheStore: <cache>/modules/<tool>/o/, per
+// build of the compiler, with its limits and trim), under the key of
 // its Fingerprint (its lowered IR, what MirBuild reads of the rest of the
 // program, the digests of the callees it may inline) with the compiler's
 // target and options (Driver.toolKey). What the descriptor depends on
@@ -27,16 +26,18 @@ import hxmc.Obj;
 class BundleCache {
 	static inline var MAGIC = 0x314d4248;
 
-	final store:ObjectStore;
+	final store:CacheStore;
+	final list:CacheKey;
 	final arm:Bool;
-	// the files of the store this generation used, for its list (ObjectStore.record)
+	// the files of the store this generation used, for its list (CacheStore.writeList)
 	var names:Array<String> = [];
 	var named = new Map<String, Bool>();
 	public var hits = 0;
 	public var misses = 0;
 
-	function new(store:ObjectStore, arm:Bool) {
+	function new(store:CacheStore, list:CacheKey, arm:Bool) {
 		this.store = store;
+		this.list = list;
 		this.arm = arm;
 	}
 
@@ -45,15 +46,12 @@ class BundleCache {
 		var env = Sys.getEnv("HXMC_MIR_CACHE");
 		if (env == "0" || env != "1" && (Sys.getEnv("HXMC_MODULE_CACHE") == "0" || CacheDir.define(com, "hxmc.no-module-cache") != null)) return null;
 		// (the list of the objects used: per command line and directory, as an output's is per output)
-		var store = ObjectStore.open(haxe.io.Path.join([Sys.getCwd(), ".hxmc-mir-macros-" + Fingerprint.hash(Sys.args().join("\x00"))]));
-		return store == null ? null : new BundleCache(store, arm);
+		var store = CacheStore.open();
+		return store == null ? null : new BundleCache(store, CacheKey.of(ObjectList, "hxmc-mir-macros|" + Sys.getCwd() + "|" + Sys.args().join("\x00")), arm);
 	}
 
-	function path(key:String):String
-		return store.objectPath(key, "mir");
-
-	function use(p:String) {
-		var n = haxe.io.Path.withoutDirectory(p);
+	function use(key:CacheKey) {
+		var n = CacheStore.objectName(key, "mir");
 		if (named.exists(n)) return;
 		named.set(n, true);
 		names.push(n);
@@ -61,18 +59,17 @@ class BundleCache {
 
 	// the object of the function kept under key, if it is that function's and
 	// what it depends on holds (null: compile it)
-	public function get(key:String, sym:String, set:InterpGen.InterpSet):Null<Obj> {
-		var p = path(key);
-		var b = try File.getBytes(p) catch (_:Dynamic) null;
+	public function get(key:CacheKey, sym:String, set:InterpGen.InterpSet):Null<Obj> {
+		var b = store.readObject(key, "mir");
 		var o = b == null ? null : read(b, key, sym, set);
 		if (o == null) misses++ else {
 			hits++;
-			use(p);
+			use(key);
 		}
 		return o;
 	}
 
-	function read(b:Bytes, key:String, sym:String, set:InterpGen.InterpSet):Null<Obj> {
+	function read(b:Bytes, key:CacheKey, sym:String, set:InterpGen.InterpSet):Null<Obj> {
 		var len = b.length;
 		if (len < 8 || b.getInt32(len - 4) != MAGIC) return null;
 		var n = b.getInt32(len - 8);
@@ -94,9 +91,9 @@ class BundleCache {
 	}
 
 	// a function compiled (its object alone, deps: InterpGen.deps), kept
-	public function put(key:String, sym:String, obj:Obj, deps:Array<String>) {
+	public function put(key:CacheKey, sym:String, obj:Obj, deps:Array<String>) {
 		var seen = new Map<String, Bool>();
-		var lines = [key, sym];
+		var lines:Array<String> = [key, sym];
 		for (d in deps) {
 			if (StringTools.startsWith(d, "!")) return;
 			if (seen.exists(d)) continue;
@@ -110,24 +107,17 @@ class BundleCache {
 		b.blit(elf.length, head, 0, head.length);
 		b.setInt32(elf.length + head.length, head.length);
 		b.setInt32(elf.length + head.length + 4, MAGIC);
-		// (written beside and renamed into place, over one whose dependencies did not hold)
-		var p = path(key);
-		var tmp = p + "." + CacheDir.nonce() + ".tmp";
-		try {
-			File.saveBytes(tmp, b);
-			if (CacheDir.replace(tmp, p)) CacheDir.wrote(b.length);
-		} catch (_:Dynamic) {
-			try sys.FileSystem.deleteFile(tmp) catch (_:Dynamic) {}
-		}
-		use(p);
+		// (over one whose dependencies did not hold)
+		store.writeObject(key, "mir", b, true);
+		use(key);
 	}
 
 	// the object kept under key named in this generation's list, not read (a
 	// function compiled when first called, MirMacros: a later build may call it)
-	public function keep(key:String)
-		use(path(key));
+	public function keep(key:CacheKey)
+		use(key);
 
 	// the list of the objects this generation used (what the store's trim keeps)
 	public function record()
-		store.record(names);
+		store.writeList(list, names);
 }

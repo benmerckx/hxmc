@@ -43,10 +43,10 @@ built: [hxmc.md](../hxmc.md#module-cache) and
 
 ## One cache
 
-Not started. The plan (the `lean-plan` branch's lean.md, step 4): one
-per-module store, keyed by the module's source and the interface hashes of
-what it depends on, holding the typed module, the IR per function and the
-object code, with one invalidation rule, in place of `ModuleCache`,
+The plan (the `lean-plan` branch's lean.md, step 4): one per-module
+store, keyed by the module's source and the interface hashes of what it
+depends on, holding the typed module, the IR per function and the object
+code, with one invalidation rule, in place of `ModuleCache`,
 `ModuleCacheState`, `ModuleStore`, `ModuleInterface`, `LowerCache`,
 `ObjectStore` and `interp/BundleCache`, with `Fingerprint` and `CacheDir`
 folded in (with `WatchedCallbacks`, `CheckingHxbWriter`, `Skeletons` and
@@ -55,6 +55,76 @@ them). What it must keep: the gate (`make test-module-cache`, with the
 macro-defined cases), the fixpoint cold, warm and off, the variants per
 define, nondeterministic macros, the cap and trim, the off switch, the
 server's reuse of lowered bodies, Mir's compiled functions.
+
+**Current state** (after stage 1; lines of `hxmc/src/hxmc`):
+
+| Part | Stores | Key | On disk | Invalidation | Read and written by | Tests |
+| --- | --- | --- | --- | --- | --- | --- |
+| typed modules: `ModuleCache` (1,709), `ModuleCacheState` (616), `WatchedCallbacks` (125), `CheckingHxbWriter` (69), `Skeletons` (207) | per module, up to four variants: HXB chunks, monomorphs' modifiers, skeletons, `ModuleDefExtra`, defines read, file record, dependencies with the hash each had, macro state, marks | the index: `CacheKey` `ModuleIndex` of working directory, std, class paths; a variant: its reads match the build's defines | `i/m<hash>` (header + `ModuleStore` index), `p/<nonce>.pk` | lazy, per module the build loads (`ServerCache.checkModuleHook`): file by content hash, path resolution, defines, each dependency's interface or whole-content hash (`Closure`), macro state (retype and rerun), volatile, file and environment reads; early cutoff; definer rule for macro-defined modules | the port's server hooks (`ServerCache`, `TFunctions.dependencyHook`, `MacroContext.definedHook`, `EvalStdLib` hooks), `finish` writes | `ModuleCacheCheck` (the gate), fixpoint, `CacheCheck` |
+| encoding: `ModuleStore` (571) | the index and blob formats | | inside the index and packs | `MAGIC` | `ModuleCache`, `ModuleCacheState` | as above |
+| interfaces: `ModuleInterface` (577) | nothing: hashes of a module's declarations without the bodies of functions with written types | | | | `ModuleCache` (as files are parsed) | as above |
+| lowered bodies: `LowerCache` (1,253) | in memory, server only: per field, the lowered body and the queries it asked with their answers | the field object, or module/class/field while the module's `m_processed` is the same | none | a query answered differently, or an object the binding does not know: the whole lowering again; target, flags and resources change: all | `Main.generate` under `Driver.resident` | `LowerQueriesCheck`, `make dev-check` (server-verify) |
+| module objects: `Driver` (was `ObjectStore`, 83) | per module, its object (ELF); in a server also in memory (`memObjs`) | `CacheKey` `ModuleObject` of the `Fingerprint` (tool key, IR, what `MirBuild` reads, inlined callees' digests) | `o/o<hash>-<module>.o`; per output `i/l<hash>` naming them; `<out>.hxmc/` without a store | content-addressed: a new key misses | `Driver.build` | fixpoint, corpus, `CacheCheck` |
+| Mir macro functions: `interp/BundleCache` (123) | per function, its object, its key and symbol, which calls are interpreted | `CacheKey` `MacroFunction` of the `Fingerprint` with the tool key and Mir options | `o/f<hash>-mir.o`; per command line `i/l<hash>` | content-addressed, plus its dependencies checked when read | `interp/MirMacros` | `MirCacheCheck` |
+| up to date: `UpToDate` (131) | per output, the build's key and the stamps of linked files | archive's ZIP directory, arguments, tool, runtime objects | `i/u<hash>` (else `<out>.hxmc/build.key`) | any change of the key or a stamp | `Main` (`--hxb-lib` builds only) | corpus (archive builds) |
+| hashes: `Fingerprint` (596) | | IR words, two lanes | | | `Driver`, `MirMacros`, `MirRun` | |
+| the store: `CacheStore` (238), `CacheKey` and `CacheKind` (52), `CacheDir` (371) | the layout; root, trim, cap, size | | `<cache>/modules/<layout>-<tool>/{i,p,o}`, `size.txt`, `trim.txt` | unused 14 days; past the cap, least recently used; packs and objects with their last index | everyone above | `CacheCheck` |
+
+### Stages
+
+1. **One key type and one layout** (done): `CacheKey` (a kind, then a
+   hash of content and dependency hashes) names every entry; `CacheStore`
+   owns the tool directory (`i/` indexes, each with a header naming the
+   packs and objects it keeps; `p/` packs; `o/` objects), its opening,
+   atomic writes and size accounting. The module index, the module
+   objects, Mir's functions and the up-to-date record moved onto it
+   (`ObjectStore` removed), and the trim reads only index headers (it
+   parsed whole module indexes before). The layout's number is in the tool
+   directory's name, so an earlier layout is never read and goes as
+   another tool's directory. Outputs, hits and misses unchanged.
+2. **One validation pass.** Today three checks decide reuse separately:
+   the server's per-module check (`ModuleCacheState.check`, `Closure`),
+   `LowerCache`'s replay keyed by `m_processed`, and the objects' content
+   keys. Steps:
+   - `ModuleCacheState`: compute each restored module's verdict once
+     (valid, typed again with the same interface, typed again with a new
+     one) and keep it per build (`ModuleCacheState.verdicts`), from
+     `check` and `dependencyDirtyHook`;
+   - `LowerCache`: take that verdict instead of `m_processed` for `byKey`
+     hits, so a body is reused in a one-shot build too, from a new
+     per-module entry kind (`CacheKind` `LoweredBodies`, `i/b<hash>`:
+     a module's lowered bodies and recorded queries, serialized; the
+     recorded objects are paths and names already, `CachedLower.stableKey`);
+   - `Driver`: a module whose verdict is valid and whose lowered bodies
+     were reused keeps its previous object key (stored with the module's
+     entry), skipping its `Fingerprint`;
+   - `CacheKey.of` for a module's entry: file content hash and its
+     dependencies' `expect` hashes, replacing `Closure`'s ad hoc strings.
+   Risks: the gate's typing-order cases (restoring changes it); bodies
+   that read program-wide facts (`LowerQueries` `@:logged` queries must all
+   be serializable: today some return objects by identity); server memory
+   (the server keeps both forms meanwhile).
+3. **Macro-defined entries** with the key below (definer, macro code,
+   inputs, state). Steps: a `CacheKind` `MacroResult` entry per definer
+   (`i/d<hash>`), written from `MacroContext.definedHook`; the static
+   values (not only names) from `EvalJit.staticVarHook` into the key;
+   callback results (`onAfterTyping`) keyed by the types given as the
+   callback reads them (`WatchedCallbacks` records the reads). Risks:
+   helder's late classes (`ModuleCacheCheck --late`), Mir macros' statics
+   (`MirServerCheck`), values that do not serialize (closures in statics:
+   then not kept).
+4. **Removal**: `ModuleStore`'s index format folds into the entries
+   (`CacheStore` holds per-module entries, not one index per class path),
+   `UpToDate` becomes an entry over the module entries (no ZIP directory),
+   `ObjectList` indexes go once objects belong to module entries,
+   `LowerCache`'s in-memory replay goes behind the stored bodies.
+   Expected size: 3,500 to 4,500 lines in place of the 6,500, over three
+   to five more PRs.
+
+Learned in stage 1: the store's users already shared one directory and
+the trim; what differs is what decides reuse, not where it is kept. The
+win of later stages is in one decision (stage 2), so keep stage 2's PRs
+split by level (modules, then bodies, then objects), each behind the gate.
 
 A module a macro defines has no source, so its entry is keyed by what made
 it instead:
@@ -72,14 +142,6 @@ it instead:
   programs of one class path can define the same path with different code;
 - for a callback's definitions, no definer module: an entry of the build
   keyed by the types given to the callback, as the callback reads them.
-
-Stages, each green on `quick`, the fixpoint and the gate: (1) one key
-type and one store layout under `CacheDir` (index, packs, objects) with
-the current three users moved onto it, behaviour unchanged; (2) one
-validation pass (the server's checks with the interface hashes) feeding
-the module, lowered-body and object levels; (3) macro-defined entries with
-the key above; (4) remove what is left of the old parts. Rough size: 3,500
-to 4,500 lines in place of the 6,500, over four to six PRs.
 
 ## Faster rebuilds
 

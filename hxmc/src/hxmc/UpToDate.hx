@@ -37,17 +37,21 @@ class UpToDate {
 		return Fingerprint.hash(tool + "\n" + args.join("\x00") + "\n" + dir);
 	}
 
-	// (in the store: ObjectStore; else next to the output)
-	static function keyFile(out:String):String {
-		var s = ObjectStore.open(out);
-		return s != null ? s.keyFile() : out + ".hxmc/build.key";
+	// the record: in the store (an index of its own), else next to the output
+	static function read(out:String):Null<String> {
+		var s = CacheStore.open();
+		if (s == null) return try sys.io.File.getContent(out + ".hxmc/build.key") catch (_:Dynamic) null;
+		var r = s.readIndex(Driver.outputKey(BuildRecord, out));
+		return r == null ? null : r.data.toString();
 	}
 
 	public static function check(key:Null<String>, out:String):Bool {
 		if (key == null) return false;
 		var exe = sys.FileSystem.exists(out) ? out : sys.FileSystem.exists(out + ".exe") ? out + ".exe" : null;
-		if (exe == null || !sys.FileSystem.exists(keyFile(out))) return false;
-		var lines = try sys.io.File.getContent(keyFile(out)).split("\n") catch (_:Dynamic) return false;
+		if (exe == null) return false;
+		var text = read(out);
+		if (text == null) return false;
+		var lines = text.split("\n");
 		if (lines[0] != key) return false;
 		for (k in 1...lines.length) {
 			var l = lines[k];
@@ -65,18 +69,24 @@ class UpToDate {
 
 	public static function record(key:Null<String>, out:String) {
 		if (key == null) return;
-		var f = keyFile(out);
-		var d = haxe.io.Path.directory(f);
-		if (!sys.FileSystem.exists(d)) sys.FileSystem.createDirectory(d);
 		var b = new StringBuf();
 		b.add(key);
 		for (p in hxmc.ir.CInterop.LINKS)
 			b.add("\n" + p + "\t" + stamp(p));
+		var s = CacheStore.open();
+		if (s != null) {
+			s.writeIndex(Driver.outputKey(BuildRecord, out), [], haxe.io.Bytes.ofString(b.toString()));
+			return;
+		}
+		var f = out + ".hxmc/build.key";
+		var d = haxe.io.Path.directory(f);
+		if (!sys.FileSystem.exists(d)) sys.FileSystem.createDirectory(d);
 		sys.io.File.saveContent(f, b.toString());
 	}
 
 	public static function forget(out:String) {
-		if (sys.FileSystem.exists(keyFile(out))) sys.FileSystem.deleteFile(keyFile(out));
+		var s = CacheStore.open();
+		if (s != null) s.removeIndex(Driver.outputKey(BuildRecord, out)) else try sys.FileSystem.deleteFile(out + ".hxmc/build.key") catch (_:Dynamic) {};
 	}
 
 	// "name crc size" per member, from the end-of-central-directory record

@@ -19,8 +19,8 @@ import hxmc.ModuleCache.Closure;
 using core.ds.VectorTools;
 
 class ModuleCacheState {
-	public var dir:String;
-	public var indexPath:String;
+	public var store:CacheStore;
+	public var indexKey:CacheKey;
 	public var com:CommonContext;
 	public var index:StoreIndex;
 	// per role (0: the program's context, 1: the macros'), its signature and
@@ -88,9 +88,9 @@ class ModuleCacheState {
 	public var callbackDeps = new haxe.ds.ObjectMap<ModuleDef, Map<String, Bool>>();
 	public var callbackDepCount = 0;
 
-	public function new(dir:String, indexPath:String, com:CommonContext) {
-		this.dir = dir;
-		this.indexPath = indexPath;
+	public function new(store:CacheStore, indexKey:CacheKey, com:CommonContext) {
+		this.store = store;
+		this.indexKey = indexKey;
 		this.com = com;
 	}
 
@@ -581,7 +581,7 @@ class ModuleCacheState {
 	// a variant's blob read, its chunks given to the server's copy
 	public function load(v:Variant):Bool {
 		if (v.loaded) return true;
-		if (!ModuleStore.loadBlob(dir, v)) return false;
+		if (!ModuleStore.loadBlob(store, v)) return false;
 		if (v.mc != null && v.mc.mcChunks.length == 0)
 			for (c in v.chunks)
 				v.mc.mcChunks.push(c);
