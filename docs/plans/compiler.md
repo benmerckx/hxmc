@@ -56,19 +56,19 @@ macro-defined cases), the fixpoint cold, warm and off, the variants per
 define, nondeterministic macros, the cap and trim, the off switch, the
 server's reuse of lowered bodies, Mir's compiled functions.
 
-**Current state** (after stage 1; lines of `hxmc/src/hxmc`):
+**Current state** (after stage 1 and 2a; lines of `hxmc/src/hxmc`):
 
 | Part | Stores | Key | On disk | Invalidation | Read and written by | Tests |
 | --- | --- | --- | --- | --- | --- | --- |
-| typed modules: `ModuleCache` (1,709), `ModuleCacheState` (616), `WatchedCallbacks` (125), `CheckingHxbWriter` (69), `Skeletons` (207) | per module, up to four variants: HXB chunks, monomorphs' modifiers, skeletons, `ModuleDefExtra`, defines read, file record, dependencies with the hash each had, macro state, marks | the index: `CacheKey` `ModuleIndex` of working directory, std, class paths; a variant: its reads match the build's defines | `i/m<hash>` (header + `ModuleStore` index), `p/<nonce>.pk` | lazy, per module the build loads (`ServerCache.checkModuleHook`): file by content hash, path resolution, defines, each dependency's interface or whole-content hash (`Closure`), macro state (retype and rerun), volatile, file and environment reads; early cutoff; definer rule for macro-defined modules | the port's server hooks (`ServerCache`, `TFunctions.dependencyHook`, `MacroContext.definedHook`, `EvalStdLib` hooks), `finish` writes | `ModuleCacheCheck` (the gate), fixpoint, `CacheCheck` |
-| encoding: `ModuleStore` (571) | the index and blob formats | | inside the index and packs | `MAGIC` | `ModuleCache`, `ModuleCacheState` | as above |
+| typed modules: `ModuleCache` (1,694), `ModuleCacheState` (663), `WatchedCallbacks` (125), `CheckingHxbWriter` (69), `Skeletons` (207) | per module, up to four variants: HXB chunks, monomorphs' modifiers, skeletons, `ModuleDefExtra`, defines read, file record, dependencies with the hash each had, what its dependents expected of it (`shape`), macro state, marks | the index: `CacheKey` `ModuleIndex` of working directory, std, class paths; a variant: its reads match the build's defines; a module: `CacheKey` `TypedModule` (file content, reads, dependencies' `expect`) | `i/m<hash>` (header + `ModuleStore` index), `p/<nonce>.pk` | lazy, per module the build loads (`ServerCache.checkModuleHook`): file by content hash, path resolution, defines, each dependency's interface or whole-content hash (`Closure`), macro state (retype and rerun), volatile, file and environment reads; early cutoff; definer rule for macro-defined modules; one verdict per module (`ModuleCacheState.verdicts`), final at the capture | the port's server hooks (`ServerCache`, `TFunctions.dependencyHook`, `MacroContext.definedHook`, `EvalStdLib` hooks), `finish` writes | `ModuleCacheCheck` (the gate), fixpoint, `CacheCheck` |
+| encoding: `ModuleStore` (589) | the index and blob formats | | inside the index and packs | `MAGIC` | `ModuleCache`, `ModuleCacheState` | as above |
 | interfaces: `ModuleInterface` (577) | nothing: hashes of a module's declarations without the bodies of functions with written types | | | | `ModuleCache` (as files are parsed) | as above |
 | lowered bodies: `LowerCache` (1,253) | in memory, server only: per field, the lowered body and the queries it asked with their answers | the field object, or module/class/field while the module's `m_processed` is the same | none | a query answered differently, or an object the binding does not know: the whole lowering again; target, flags and resources change: all | `Main.generate` under `Driver.resident` | `LowerQueriesCheck`, `make dev-check` (server-verify) |
 | module objects: `Driver` (was `ObjectStore`, 83) | per module, its object (ELF); in a server also in memory (`memObjs`) | `CacheKey` `ModuleObject` of the `Fingerprint` (tool key, IR, what `MirBuild` reads, inlined callees' digests) | `o/o<hash>-<module>.o`; per output `i/l<hash>` naming them; `<out>.hxmc/` without a store | content-addressed: a new key misses | `Driver.build` | fixpoint, corpus, `CacheCheck` |
 | Mir macro functions: `interp/BundleCache` (123) | per function, its object, its key and symbol, which calls are interpreted | `CacheKey` `MacroFunction` of the `Fingerprint` with the tool key and Mir options | `o/f<hash>-mir.o`; per command line `i/l<hash>` | content-addressed, plus its dependencies checked when read | `interp/MirMacros` | `MirCacheCheck` |
 | up to date: `UpToDate` (131) | per output, the build's key and the stamps of linked files | archive's ZIP directory, arguments, tool, runtime objects | `i/u<hash>` (else `<out>.hxmc/build.key`) | any change of the key or a stamp | `Main` (`--hxb-lib` builds only) | corpus (archive builds) |
 | hashes: `Fingerprint` (596) | | IR words, two lanes | | | `Driver`, `MirMacros`, `MirRun` | |
-| the store: `CacheStore` (238), `CacheKey` and `CacheKind` (52), `CacheDir` (371) | the layout; root, trim, cap, size | | `<cache>/modules/<layout>-<tool>/{i,p,o}`, `size.txt`, `trim.txt` | unused 14 days; past the cap, least recently used; packs and objects with their last index | everyone above | `CacheCheck` |
+| the store: `CacheStore` (238), `CacheKey` and `CacheKind` (61), `CacheDir` (371) | the layout; root, trim, cap, size | | `<cache>/modules/<layout>-<tool>/{i,p,o}`, `size.txt`, `trim.txt` | unused 14 days; past the cap, least recently used; packs and objects with their last index | everyone above | `CacheCheck` |
 
 ### Stages
 
@@ -84,28 +84,78 @@ server's reuse of lowered bodies, Mir's compiled functions.
    another tool's directory. Outputs, hits and misses unchanged; the
    self-build's cold, warm, off and server times within noise of
    before, the store 1.5 KB larger (the headers).
-2. **One validation pass.** Today three checks decide reuse separately:
-   the server's per-module check (`ModuleCacheState.check`, `Closure`),
-   `LowerCache`'s replay keyed by `m_processed`, and the objects' content
-   keys. Steps:
-   - `ModuleCacheState`: compute each restored module's verdict once
-     (valid, typed again with the same interface, typed again with a new
-     one) and keep it per build (`ModuleCacheState.verdicts`), from
-     `check` and `dependencyDirtyHook`;
-   - `LowerCache`: take that verdict instead of `m_processed` for `byKey`
-     hits, so a body is reused in a one-shot build too, from a new
-     per-module entry kind (`CacheKind` `LoweredBodies`, `i/b<hash>`:
-     a module's lowered bodies and recorded queries, serialized; the
-     recorded objects are paths and names already, `CachedLower.stableKey`);
-   - `Driver`: a module whose verdict is valid and whose lowered bodies
-     were reused keeps its previous object key (stored with the module's
-     entry), skipping its `Fingerprint`;
-   - `CacheKey.of` for a module's entry: file content hash and its
-     dependencies' `expect` hashes, replacing `Closure`'s ad hoc strings.
-   Risks: the gate's typing-order cases (restoring changes it); bodies
-   that read program-wide facts (`LowerQueries` `@:logged` queries must all
-   be serializable: today some return objects by identity); server memory
-   (the server keeps both forms meanwhile).
+2. **One validation pass**, split by level, each behind the gate:
+   - **2a, modules** (done): one verdict per module of the store
+     (`Verdict`, `ModuleCacheState.verdicts`), read by every user. Its
+     check gives `Valid` or `Retyped` while the build types (what the early
+     cutoff, `onDependencyDirty`, reads in place of the `approved` set);
+     the capture settles it for every module the build ends with:
+     restored, typed again with the same interface, or with a new one (the
+     capture's `Closure.di` of the new variant against the one the old
+     was written with, `Variant.shape`, which the index now keeps). A
+     module's key is `CacheKey` `TypedModule` (`Variant.typedKey`: its
+     file's content hash, its reads, each dependency's path and `expect`
+     hash); its check and `reselect` compare it with the key from the
+     dependencies' hashes now (`typedKeyNow`). `Closure`'s hashes are
+     `CacheKey`s (`Interface`, `Content`) of each member's own part and
+     its dependencies' hashes, then of the members, in place of the
+     concatenated strings; its unused `clean` is gone. Hits and misses are
+     unchanged (the self-build: 677 encoded cold, 676 checked and 0 typed
+     warm; a body edit of `Options.hx`: 675 valid, 1 typed again with the
+     same interface; a new class in it: 659 valid, 18 with a new interface);
+     outputs byte-identical.
+     Learned:
+     - a verdict read before the capture is provisional: the server's
+       own checks after the hook (shadowing, the file's date, a dependency
+       on a macro-defined module) and the cycle guard can still type a
+       module its check found valid. The lowering and `Driver` run after
+       the capture and before `finish`, so they read final verdicts
+       (`ModuleCache.current()`). A build that writes nothing (volatile
+       macros, errors) settles without comparing interfaces (`Retyped`);
+     - the module cache is off in the compilation server, so there are no
+       verdicts there: the server's reuse keeps its own test
+       (`m_processed`, the server's `mCacheState`) until the server
+       starts from the store;
+     - an undone interface edit still types the dependents again (the 18
+       above, edited back): `register` picks a variant by its file's hash
+       and signature. Picking, among the variants whose reads match, one
+       whose `typedKeyNow` equals its `typedKey` is the same test the check
+       makes, so sound; a small follow-up;
+     - where a warm self-build goes (4.2 s): 1.5 s to the lowering
+       (restoring, filters, DCE), 1.3 s lowering, 0.2 s preparing, 0.24 s
+       the objects' keys and reading them (`Fingerprint`), 0.7 s data and
+       linking. 2b is the large win; 2c saves at most the keys.
+   - **2b, bodies**: a `CacheKind` `LoweredBodies` entry per module
+     (`i/b<hash>`, keyed by `TypedModule` and the lowering's switches
+     `LowerCache.lower` compares: target, platform, Mir host, lines,
+     bounds, null and span checks, resources), holding its fields' lowered
+     bodies and recorded calls. A one-shot build replays it for a module
+     whose final verdict is `Valid` through the `byKey` path (`translating`:
+     each class and field the current build's of the same path), which
+     exists already. What it needs: a codec for `Stmt`/`Ex` and for
+     `LCall`'s arguments and results, whose objects (`T`, `TClass`,
+     `FuncInfo`, `ClassInfo`, `Ty`) are written by path and name (types
+     structurally: anonymous structures, functions, monomorphs bound or
+     not) and read back through the binding; `Entry.gen`'s numbers bound
+     anew, as a replay does. Keep the in-memory replay for the server. A
+     mismatch still abandons the whole lowering, so the gate and
+     `LowerQueriesCheck` must cover a stale entry. Risks: `@:logged`
+     queries that return objects by identity (each needs a name), entries
+     of DCE-removed fields (written only for what the build lowered),
+     store size (bodies are larger than HXB: measure on the self-build).
+   - **2c, objects**: a module's object depends on more than its bodies:
+     the digests of the callees it may inline from other modules
+     (`Fingerprint.Inlined`), the field layouts and signatures `MirBuild`
+     reads, no-GC flags. So keeping the previous object key needs the
+     module `Valid` with its bodies replayed **and** each inline candidate
+     it calls from another module `Valid` too (its digest unchanged), and
+     the layouts of the classes it touches unchanged (DCE can remove a
+     field of an unchanged class). Store per module, with its object key,
+     the inputs that are not its own (the callees' digests, a hash of the
+     layouts read), and reuse the key when they match; else `Fingerprint`
+     as today. The payoff is bounded by the keys' time (0.24 s above).
+   Risks for both: the gate's typing-order cases (restoring changes it);
+   server memory (the server keeps both forms meanwhile).
 3. **Macro-defined entries** with the key below (definer, macro code,
    inputs, state). Steps: a `CacheKind` `MacroResult` entry per definer
    (`i/d<hash>`), written from `MacroContext.definedHook`; the static

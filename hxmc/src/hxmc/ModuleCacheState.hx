@@ -18,6 +18,26 @@ import hxmc.ModuleCache;
 import hxmc.ModuleCache.Closure;
 using core.ds.VectorTools;
 
+// What a build made of a module of the store (ModuleCacheState.verdicts), in
+// one map read by every user: its check gives it while the build types
+// (Valid: its key, Variant.typedKey, the same now; else Retyped), the capture
+// settles it for every module the build ends with (restored: Valid; typed
+// again, from its check or because the server or its cycle made it so: its
+// interface with its dependencies' compared with the one it was written
+// with, Variant.shape). Its dependents are restored by their own checks
+// either way (early cutoff: their dependencies' hashes as expected)
+enum abstract Verdict(Int) {
+	// restored as it is (its key, Variant.typedKey, the same now)
+	var Valid = 0;
+	// typed again, its interface not compared yet (before the capture, or a
+	// build that writes nothing)
+	var Retyped = 1;
+	// typed again, what its dependents expect of it the same
+	var SameInterface = 2;
+	// typed again, its interface (or its dependencies') changed
+	var NewInterface = 3;
+}
+
 class ModuleCacheState {
 	public var store:CacheStore;
 	public var indexKey:CacheKey;
@@ -29,7 +49,8 @@ class ModuleCacheState {
 	public var defs = new haxe.ds.Vector<Null<haxe.ds.StringMap<String>>>(2);
 	// per role, the variant restored for each module (ModuleCache.key)
 	public var chosen:haxe.ds.Vector<Map<String, Variant>> = vector(new Map<String, Variant>(), new Map<String, Variant>());
-	public var approved = new Map<String, Bool>();
+	// per module of the store this build checked or ended with (role|key), its verdict
+	public var verdicts = new Map<String, Verdict>();
 	public var hashes = new Map<String, String>();
 	public var closure:Null<Closure> = null;
 	// the defines read: by the compiler (role and name), while parsing a file
@@ -320,10 +341,45 @@ class ModuleCacheState {
 
 	// whether a variant's dependencies have the hashes they had when it was
 	// typed
-	function depsMatch(v:Variant):Bool {
-		for (d in v.deps)
-			if (depHash(d) != d.expect) return false;
-		return true;
+	function depsMatch(v:Variant):Bool
+		return typedKeyNow(v) == v.typedKey();
+
+	// a variant's key with its dependencies' hashes now (its own part as
+	// stored: its file and reads are checked on their own)
+	public function typedKeyNow(v:Variant):CacheKey
+		return v.typedKeyWith([for (d in v.deps) depHash(d)]);
+
+	// the verdicts of the modules a build ends with (the capture): restored,
+	// or typed again with the interface it had or another (shape: what the
+	// capture's Closure gives the new variant; null, or no shape: not
+	// compared, Retyped)
+	public function settle(coms:Array<CommonContext>, ?shape:(role:Int, m:ModuleDef) -> Null<String>) {
+		for (role in 0...coms.length)
+			for (m in coms[role].modules) {
+				if (m.mExtra.mKind == MExtern) continue;
+				var w = chosen[role].get(ModuleCache.key(m.mPath));
+				if (w == null) continue;
+				var x = if (restored(m) == w) Valid else {
+					var h = shape == null ? null : shape(role, m);
+					h == null || w.shape == "" ? Retyped : h == w.shape ? SameInterface : NewInterface;
+				}
+				verdicts.set(w.roleKey(), x);
+				if (log && x != Valid)
+					Sys.println("hxmc: module cache: " + core.Globals.sTypePath(m.mPath) + " typed again"
+						+ (x == SameInterface ? ", its interface the same" : x == NewInterface ? ", a new interface" : ""));
+			}
+	}
+
+	// the verdicts of this build, counted (valid, same interface, new or not compared)
+	public function verdictCounts():{valid:Int, same:Int, changed:Int} {
+		var n = {valid: 0, same: 0, changed: 0};
+		for (x in verdicts)
+			switch x {
+				case Valid: n.valid++;
+				case SameInterface: n.same++;
+				case Retyped | NewInterface: n.changed++;
+			}
+		return n;
 	}
 
 	public function roleOfSign(sign:String):Int
@@ -544,7 +600,7 @@ class ModuleCacheState {
 	// would make the same interface typed in two builds two)
 	public function sFull(v:Variant):String {
 		if (leaky(v)) return unknown();
-		return Fingerprint.hash("full\n" + curFileHash(v) + "\n" + readsValues(v.reads) + buildValuesOf(v.buildReads));
+		return CacheKey.of(Content, curFileHash(v), [readsValues(v.reads), buildValuesOf(v.buildReads)]);
 	}
 
 	// whether a variant's dependents can copy results of its macros that
@@ -558,17 +614,8 @@ class ModuleCacheState {
 
 	public function sIface(v:Variant):String {
 		if (leaky(v)) return unknown();
-		if (v.iface == null) return Fingerprint.hash("own\n" + curFileHash(v) + "\n" + readsValues(v.reads));
-		return Fingerprint.hash("iface\n" + curIface(v));
-	}
-
-	// whether a variant can be restored as it is: its defines and its file's content
-	public function ownClean(v:Variant):Bool
-		return v.matched && (v.fileRec == null ? curFileHash(v) == "-" : curFileHash(v) == v.fileRec.hash);
-
-	public function sccClean(v:Variant):Bool {
-		if (closure == null) closure = new Closure(this, (role, k) -> chosen[role].get(k), "?");
-		return closure.clean(v);
+		if (v.iface == null) return CacheKey.of(Interface, "whole", [curFileHash(v), readsValues(v.reads)]);
+		return CacheKey.of(Interface, "declarations", [curIface(v)]);
 	}
 
 	// a dependency's hash now (its interface or its content)

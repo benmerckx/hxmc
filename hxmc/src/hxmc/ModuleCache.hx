@@ -47,7 +47,10 @@ using core.ds.VectorTools;
 // module and modules typed with macros. A dependency typed again whose
 // interface did not change leaves its dependents good (early cutoff:
 // ServerCache.dependencyDirtyHook; it is typed from its source where the
-// server expects it cached, loadDirtyModuleHook).
+// server expects it cached, loadDirtyModuleHook). Together these make the
+// module's key (Variant.typedKey); what the build made of each module is
+// its verdict (ModuleCacheState.verdicts: restored, typed again with the
+// same interface or a new one), settled at the capture.
 //
 // A build from the cache writes the same output as one without it
 // (hxmc/test/ModuleCacheCheck.hx), which takes two things the server's HXB
@@ -934,7 +937,7 @@ class ModuleCache {
 		if (dep.mdOrigin == MDepFromMacroDefine) return false;
 		var dx = try com.cs.getContext(dep.mdSign).findModuleExtra(dep.mdPath) catch (_:core.ds.NotFound) null;
 		if (dx != null && definedBy(dx).length > 0) return false;
-		return role >= 0 && s.approved.exists(role + "|" + key(mPath));
+		return role >= 0 && s.verdicts.get(role + "|" + key(mPath)) == Valid;
 	}
 
 	// the modules whose typing defined a module (a macro's defineType or
@@ -1035,8 +1038,8 @@ class ModuleCache {
 		var t0 = haxe.Timer.stamp();
 		var r = verify(com, s, v, mPath, mExtra);
 		s.checked++;
+		s.verdicts.set(v.roleKey(), r == null ? Valid : Retyped);
 		if (r == null) {
-			s.approved.set(v.roleKey(), true);
 			for (c in v.macroState) {
 				var l = s.restoredState.get(c);
 				if (l == null) s.restoredState.set(c, l = []);
@@ -1102,10 +1105,11 @@ class ModuleCache {
 			} catch (_:core.ds.NotFound) false;
 			if (!found) return DependencyDirty(d.mdPath, LibraryChanged);
 		}
-		// the dependencies as they were when it was typed: their interface,
-		// or their whole content
-		for (d in v.deps)
-			if (s.depHash(d) != d.expect) return DependencyDirty(d.path, FileChanged(d.eligible ? "(interface)" : "(content)"));
+		// the dependencies as they were when it was typed (their interface, or
+		// their whole content): its key the same now
+		if (s.typedKeyNow(v) != v.typedKey())
+			for (d in v.deps)
+				if (s.depHash(d) != d.expect) return DependencyDirty(d.path, FileChanged(d.eligible ? "(interface)" : "(content)"));
 		if (mExtra.mKind != MImport && !s.load(v)) return LibraryChanged;
 		return null;
 	}
@@ -1151,16 +1155,17 @@ class ModuleCache {
 		for (l in stateful)
 			for (c in l)
 				if (StringTools.startsWith(c, "!")) s.volatileCount++;
-		if (s.volatileReason != null) return;
-		if (Common.hasErrorToReport(com)) {
-			s.volatileReason = "errors";
-			return;
-		}
 		// (and the macros' context's, when it is the one predicted: not a
 		// context only an init macro used)
 		var mcom = com.getMacros();
 		var coms = [com];
 		if (mcom != null && context.CommonCache.getCacheSign(mcom) == s.signs[1]) coms.push(mcom);
+		// (a build that writes nothing: its verdicts without the interfaces)
+		if (s.volatileReason == null && Common.hasErrorToReport(com)) s.volatileReason = "errors";
+		if (s.volatileReason != null) {
+			s.settle(coms);
+			return;
+		}
 		// (every module restored, none processed again: the variants the
 		// store has, the index as it is)
 		var same = true;
@@ -1175,6 +1180,7 @@ class ModuleCache {
 			if (!same) break;
 		}
 		if (same) {
+			s.settle(coms);
 			s.captureTime = haxe.Timer.stamp() - t0;
 			return;
 		}
@@ -1445,12 +1451,19 @@ class ModuleCache {
 		}
 		var kept = [for (v in all) if (byKey[v.role].get(v.key) == v) v];
 		var closure = new Closure(s, (role, k) -> byKey[role].get(k), "!");
-		for (v in kept)
+		for (v in kept) {
 			for (d in v.deps) {
 				var w = byKey[d.role].get(d.key);
 				d.expect = d.eligible ? closure.di(w) : closure.df(w);
 			}
+			v.shape = closure.di(v);
+		}
 		s.kept = kept;
+		// (typed again: the new variant kept, encoded or the same as the old)
+		s.settle(coms, (role, m) -> {
+			var v = byKey[role].get(key(m.mPath));
+			v != null && (v.fresh || v.prev != null) ? v.shape : null;
+		});
 		s.written += jobs.length;
 		// the new blobs written in this build's pack beside the rest of the
 		// build (finish waits for it before the index names them), their bytes
@@ -1563,11 +1576,14 @@ class ModuleCache {
 					wrote = try s.store.writeIndex(s.indexKey, ModuleStore.packsOf(ix), ModuleStore.writeIndex(ix)) catch (_:Dynamic) false;
 			}
 		}
-		if (stats())
+		if (stats()) {
+			var n = s.verdictCounts();
 			Sys.println('hxmc: module cache: ${s.checked} checked (${Std.int(s.checkTime * 1000)} ms), ${s.written} modules encoded (${Std.int(s.captureTime * 1000)} ms), '
 				+ '${s.typedUnder} typed again under restored ones, ${s.cycleTyped} with their cycle, interfaces ${Std.int(s.ifaceTime * 1000)} ms, $blobs blobs, index ${wrote ? "written" : "unchanged"} (${ms(t0)} ms), '
 				+ '${s.typedCount} typed from source, ${s.volatileCount} every build, ${s.readingCount} reading files or the environment'
-				+ (s.volatileReason != null ? ' (not written: ${s.volatileReason})' : ''));
+				+ (s.volatileReason != null ? ' (not written: ${s.volatileReason})' : '')
+				+ '; verdicts: ${n.valid} valid, ${n.same} typed again with the same interface, ${n.changed} with another or not compared');
+		}
 		CacheDir.settle();
 	}
 }
@@ -1575,11 +1591,14 @@ class ModuleCache {
 // the hashes of modules' interfaces (di) and whole contents (df), with
 // their dependencies', per strongly connected component (Tarjan's): over
 // the variants a build restores (their files and defines now), or over the
-// modules a build ends with (when it writes them)
+// modules a build ends with (when it writes them). Each is a CacheKey
+// (Interface, Content): of each member, its own part (ModuleCacheState.sIface,
+// sFull) and its dependencies' hashes (one of the component: its path),
+// then of the members
 class Closure {
 	final s:ModuleCacheState;
 	final node:(Int, String) -> Null<Variant>;
-	final memo = new Map<String, {di:String, df:String, clean:Bool, scc:Int}>();
+	final memo = new Map<String, {di:String, df:String, scc:Int}>();
 	var sccs = 0;
 	final index = new Map<String, Int>();
 	final low = new Map<String, Int>();
@@ -1603,18 +1622,11 @@ class Closure {
 	public function df(v:Null<Variant>):String
 		return v == null ? missing : get(v).df;
 
-	// whether every module of its strongly connected component has the file
-	// and defines it was typed with (a module typed again in a cycle with
-	// restored ones would be referenced by them while it is typed: a cycle
-	// is restored whole or typed again whole)
-	public function clean(v:Variant):Bool
-		return get(v).clean;
-
 	// its strongly connected component's number
 	public function scc(v:Variant):Int
 		return get(v).scc;
 
-	function get(v:Variant):{di:String, df:String, clean:Bool, scc:Int} {
+	function get(v:Variant):{di:String, df:String, scc:Int} {
 		var h = memo.get(v.roleKey());
 		if (h == null) {
 			connect(v);
@@ -1654,56 +1666,32 @@ class Closure {
 		var inside = new Map<String, Bool>();
 		for (m in members)
 			inside.set(m.roleKey(), true);
-		var f = new StringBuf(), i = new StringBuf();
+		var fs:Array<String> = [], is:Array<String> = [];
 		var ineligibleInside = false;
-		var clean = true;
 		for (m in members) {
-			if (clean && !s.ownClean(m)) clean = false;
-			f.add(m.roleKey());
-			f.add("\n");
-			f.add(s.sFull(m));
-			i.add(m.roleKey());
-			i.add("\n");
-			i.add(s.sIface(m));
+			var f:Array<String> = [s.sFull(m)], i:Array<String> = [s.sIface(m)];
 			for (d in m.deps) {
 				var w = node(d.role, d.key);
 				if (w == null) {
-					f.add("\n" + missing);
-					i.add("\n" + missing);
+					f.push(missing);
+					i.push(missing);
 				} else if (inside.exists(w.roleKey())) {
-					f.add("\n~" + w.roleKey());
-					i.add("\n~" + w.roleKey());
+					f.push("~" + w.roleKey());
+					i.push("~" + w.roleKey());
 					if (!d.eligible) ineligibleInside = true;
 				} else {
 					var h = memo.get(w.roleKey());
-					f.add("\n" + h.df);
-					i.add("\n" + (d.eligible ? h.di : h.df));
+					f.push(h.df);
+					i.push(d.eligible ? h.di : h.df);
 				}
 			}
-			f.add("\n;");
-			i.add("\n;");
+			fs.push(CacheKey.of(Content, m.roleKey(), f));
+			is.push(CacheKey.of(Interface, m.roleKey(), i));
 		}
-		var dfh = Fingerprint.hash("F" + f.toString());
-		var dih = ineligibleInside ? dfh : Fingerprint.hash("I" + i.toString());
-		// (and each member's dependencies as they were when it was typed: a
-		// member typed again for its dependencies makes the cycle typed again)
-		if (clean)
-			for (m in members) {
-				for (d in m.deps) {
-					var w = node(d.role, d.key);
-					var actual = w == null ? missing : inside.exists(w.roleKey()) ? (d.eligible ? dih : dfh) : {
-						var h = memo.get(w.roleKey());
-						d.eligible ? h.di : h.df;
-					};
-					if (actual != d.expect) {
-						clean = false;
-						break;
-					}
-				}
-				if (!clean) break;
-			}
+		var dfh:String = CacheKey.of(Content, "", fs);
+		var dih:String = ineligibleInside ? dfh : CacheKey.of(Interface, "", is);
 		var n = sccs++;
 		for (m in members)
-			memo.set(m.roleKey(), {di: dih, df: dfh, clean: clean, scc: n});
+			memo.set(m.roleKey(), {di: dih, df: dfh, scc: n});
 	}
 }
