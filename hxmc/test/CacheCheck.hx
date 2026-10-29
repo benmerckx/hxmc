@@ -4,12 +4,12 @@ import sys.io.File;
 
 using StringTools;
 
-// The store of the module cache (hxmc/src/hxmc/ModuleCache.hx, CacheDir.hx)
+// The store of the module cache (hxmc/src/hxmc/CacheStore.hx, CacheDir.hx)
 // in a cache of its own (bin/hxmc-t/cache): a tool directory per build of
 // the tool, written and then read, two builds of the tool side by side, the
 // trim of a tool directory and of an index unused for a month while the
-// recent ones stay, of a pack of blobs no index names (and of the single
-// blobs earlier tools wrote), a cap held as builds write past it
+// recent ones stay, of a pack of blobs no index names, of the directory of
+// an earlier layout, a cap held as builds write past it
 // (HXMC_CACHE_SIZE), and a cache that cannot be written (a build without it). Unix (touch -d
 // backdates files).
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
@@ -60,8 +60,12 @@ class CacheCheck {
 		return r;
 	}
 
+	// a tool directory's module indexes (i/m<hash>)
 	static function packs(d:String):Array<String>
-		return [for (n in FileSystem.readDirectory(d)) if (n.endsWith(".idx")) d + "/" + n];
+		return [
+			for (n in (try FileSystem.readDirectory(d + "/i") catch (_:Dynamic) []))
+				if (n.startsWith("m") && !n.endsWith(".used")) d + "/i/" + n
+		];
 
 	static function backdate(path:String, ago:String)
 		exec(["touch", "-d", ago, path]);
@@ -90,7 +94,9 @@ class CacheCheck {
 		var old = mtime(pack);
 		check("second build", build(a, std, cache));
 		check("warm: the index is not written again", mtime(pack) == old);
-		check("no temporary files left", [for (n in FileSystem.readDirectory(ta[0])) if (n.contains(".tmp")) n].length == 0);
+		check("no temporary files left", [for (n in FileSystem.readDirectory(ta[0] + "/i")) if (n.contains(".tmp")) n].length == 0);
+		check("the layout: the tool directory named by it, indexes, packs and objects", ~/^[0-9]+-[0-9A-Fa-f]{16}$/.match(ta[0].substr(ta[0].lastIndexOf("/") + 1))
+			&& [for (d in ["i", "p", "o"]) if (FileSystem.isDirectory(ta[0] + "/" + d) && FileSystem.readDirectory(ta[0] + "/" + d).length > 0) d].length == 3);
 
 		// another build of the tool: its own directory beside
 		check("build by another tool", build(b, std, cache));
@@ -104,19 +110,21 @@ class CacheCheck {
 		backdate(ta[0] + "/used", "3 days ago");
 		check("a build within the day does not trim", build(a, std, cache) && tools(cache).length == 2);
 		// (a pack of the running tool unused for a month: another project's)
-		var stale = ta[0] + "/0000000000000000-old.idx";
+		var stale = ta[0] + "/i/m0000000000000000";
 		File.saveContent(stale, "stale");
 		backdate(stale, "30 days ago");
-		// (a pack no index names, written days ago, and a directory of
-		// single blobs as earlier tools wrote them)
-		var orphan = ta[0] + "/b/0000000000000000.pk";
+		// (a pack no index names, written days ago, and a tool directory of
+		// the earlier layout, unused for a month: another tool's, never read)
+		var orphan = ta[0] + "/p/0000000000000000.pk";
 		File.saveContent(orphan, "orphan");
 		backdate(orphan, "3 days ago");
-		mkdirs(ta[0] + "/b/00");
-		var single = ta[0] + "/b/00/00000000000000000000000000000000";
-		File.saveContent(single, "orphan");
-		backdate(single, "3 days ago");
-		var blobs = [for (f in FileSystem.readDirectory(ta[0] + "/b")) if (f.endsWith(".pk")) f].length;
+		var earlier = cache + "/modules/0123456789abcdef";
+		mkdirs(earlier + "/b");
+		File.saveContent(earlier + "/0000000000000000.idx", "hxmc-modules 13");
+		File.saveContent(earlier + "/b/0000000000000000.pk", "pack");
+		File.saveContent(earlier + "/used", "");
+		backdate(earlier + "/used", "30 days ago");
+		var blobs = [for (f in FileSystem.readDirectory(ta[0] + "/p")) if (f.endsWith(".pk")) f].length;
 		// (and an object no output's list names)
 		var orphanObj = ta[0] + "/o/0000000000000000-Orphan.o";
 		File.saveContent(orphanObj, "orphan");
@@ -125,8 +133,8 @@ class CacheCheck {
 		File.saveContent(cache + "/modules/trim.txt", "0");
 		check("a build after a day trims", build(a, std, cache));
 		check("a pack no index names is gone, the others stay", !FileSystem.exists(orphan)
-			&& [for (f in FileSystem.readDirectory(ta[0] + "/b")) if (f.endsWith(".pk")) f].length == blobs - 1 && blobs > 1);
-		check("the single blobs of an earlier tool are gone", !FileSystem.exists(ta[0] + "/b/00"));
+			&& [for (f in FileSystem.readDirectory(ta[0] + "/p")) if (f.endsWith(".pk")) f].length == blobs - 1 && blobs > 1);
+		check("the earlier layout's directory is gone", !FileSystem.exists(earlier));
 		check("an object no output names is gone, the others stay", !FileSystem.exists(orphanObj) && FileSystem.readDirectory(ta[0] + "/o").length == objects - 1);
 		check("an index unused for a month is gone, the build's stays", !FileSystem.exists(stale) && packs(ta[0]).length > 0);
 		check("the unused tool directory is gone, the recent one stays", tools(cache).join(",") == ta[0] && packs(ta[0]).length > 0);

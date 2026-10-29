@@ -132,7 +132,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// function compiled with its bundle
 	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
 	// the functions not compiled yet, by stub number, with their bundle's step
-	var lazies:Array<{f:FuncInfo, key:Null<String>, cold:Bool, step:StepState}> = [];
+	var lazies:Array<{f:FuncInfo, key:Null<CacheKey>, cold:Bool, step:StepState}> = [];
 	// (the native tier compiles with the same steps: one lock)
 	static final lazyLock = Tier.lock;
 	// (the generation's latest step: what compiles its functions later)
@@ -727,7 +727,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			}
 		}
 		var tk = cache == null ? null : d.toolKey() + "mir-bundle|opt=" + (opts.opt ? 1 : 0) + "|bounds=" + opts.bounds + "|";
-		var keys = new Map<FuncInfo, String>();
+		var keys = new Map<FuncInfo, CacheKey>();
 		// (the functions compiled without the optimizer: COLD_WORDS)
 		var cold = new Map<FuncInfo, Bool>();
 		for (f in funcs) {
@@ -743,7 +743,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				cold.set(f, true);
 				fp.text("|cold");
 			}
-			if (tk != null) keys.set(f, fp.key());
+			if (tk != null) keys.set(f, CacheKey.ofHash(MacroFunction, fp.key()));
 			var k = 0;
 			while (k < fp.newStrings.length) {
 				prep.addStr(fp.newStrings[k], fp.newStrings[k + 1]);
@@ -1070,7 +1070,7 @@ private class StepState {
 	}
 
 	// f into obj: its object kept under key in the store, or compiled (and kept)
-	public function compile(f:FuncInfo, sym:String, key:Null<String>, cold:Bool, obj:Obj) {
+	public function compile(f:FuncInfo, sym:String, key:Null<CacheKey>, cold:Bool, obj:Obj) {
 		if (key == null) {
 			compileFunc(f, cold, obj);
 			return;

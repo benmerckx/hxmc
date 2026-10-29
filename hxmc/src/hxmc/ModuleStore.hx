@@ -3,8 +3,6 @@ package hxmc;
 import haxe.io.Bytes;
 import haxe.io.BytesInput;
 import haxe.io.BytesOutput;
-import sys.FileSystem;
-import sys.io.File;
 import core.Globals.GlobalTypePath;
 import core.TType;
 import compiler.hxb.HxbData;
@@ -12,12 +10,13 @@ import core.Json.JsonValue;
 import core.Message.CompilerMessageKind;
 import core.Message.WarningMode;
 
-// The module cache's store on disk (ModuleCache.hx): in <cache>/modules/<tool>/,
-// an index per key (<key>.idx: the working directory, the class paths and
-// the std) and the modules' HXB in blobs (b/<xx>/<name>: the HXB chunks,
+// The module cache's entries in the store (CacheStore.hx; ModuleCache.hx): an
+// index per class path (CacheKey ModuleIndex: the working directory, the
+// class paths and the std) and the modules' HXB in blobs (the HXB chunks,
 // the monomorphs' modifiers, the skeletons; read only for the modules a
-// build restores), each named uniquely when written, never rewritten (its
-// size is in the index), removed once no index names it. An index lists variants of the modules, newest first: per module (its
+// build restores), in the packs of the builds that wrote them, never
+// rewritten (offset and size in the index), removed once no index names
+// them. An index lists variants of the modules, newest first: per module (its
 // role, the program's context or the macros', and its path) the variants
 // typed with different defines; each with what selects it (the defines it
 // read: its file's conditions, its macros' Context.defined, and those the
@@ -126,7 +125,7 @@ class StoreIndex {
 }
 
 class ModuleStore {
-	public static inline var MAGIC = "hxmc-modules 13";
+	public static inline var MAGIC = "hxmc-modules 14";
 
 	public static final chunkKinds:Array<ChunkKind> = [
 		STR, DOC, MDF, MTF, IMP, CLR, ENR, ABR, TDR, OFR, OFD, OBD, CLD, END, ABD, TDD, EOT, EFR, CFR, CFD, EFD, AFD, EOF, EXD, EOM
@@ -437,8 +436,7 @@ class ModuleStore {
 		return o.getBytes();
 	}
 
-	public static function readIndex(file:String):Null<StoreIndex> {
-		var b = try File.getBytes(file) catch (_:Dynamic) return null;
+	public static function readIndex(b:Bytes):Null<StoreIndex> {
 		var i = new BytesInput(b);
 		if (rstr(i) != MAGIC) return null;
 		var ix = new StoreIndex();
@@ -518,49 +516,10 @@ class ModuleStore {
 		return true;
 	}
 
-	// a build's blobs, in one file (b/<name>.pk: one write per build, not
-	// one per module)
-	public static function packPath(dir:String, name:String):String
-		return dir + "b/" + name + ".pk";
-
-	// (the packs open in this build)
-	static final packs = new Map<String, sys.io.FileInput>();
-	static final packsMutex = new sys.thread.Mutex();
-
-	static function readRange(path:String, off:Int, size:Int):Null<Bytes> {
-		packsMutex.acquire();
-		try {
-			var f = packs.get(path);
-			if (f == null) packs.set(path, f = File.read(path, true));
-			f.seek(off, SeekBegin);
-			var b = Bytes.alloc(size);
-			var n = 0;
-			while (n < size) {
-				var r = f.readBytes(b, n, size - n);
-				if (r <= 0) throw "short";
-				n += r;
-			}
-			packsMutex.release();
-			return b;
-		} catch (_:Dynamic) {
-			packsMutex.release();
-			return null;
-		}
-	}
-
-	// the packs opened by this build, closed
-	public static function closePacks() {
-		packsMutex.acquire();
-		for (f in packs)
-			try f.close() catch (_:Dynamic) {}
-		packs.clear();
-		packsMutex.release();
-	}
-
 	// the blob into the variant (false: missing or damaged)
-	public static function loadBlob(dir:String, v:Variant):Bool {
+	public static function loadBlob(store:CacheStore, v:Variant):Bool {
 		if (v.loaded) return true;
-		var b = readRange(packPath(dir, v.blob), v.blobOff, v.blobSize);
+		var b = store.readPack(v.blob, v.blobOff, v.blobSize);
 		if (b == null) return false;
 		try {
 			var i = new BytesInput(b);
@@ -581,13 +540,8 @@ class ModuleStore {
 
 	// a pack written (the blobs of the variants that have their bytes,
 	// their offsets set)
-	public static function savePack(dir:String, name:String, list:Array<Variant>):Bool {
-		var p = packPath(dir, name);
-		var tmp = p + ".tmp";
-		try {
-			var d = haxe.io.Path.directory(p);
-			if (!FileSystem.exists(d)) FileSystem.createDirectory(d);
-			var o = File.write(tmp, true);
+	public static function savePack(store:CacheStore, name:String, list:Array<Variant>):Bool
+		return store.writePack(name, o -> {
 			var off = 0;
 			for (v in list)
 				if (v.blobData != null) {
@@ -600,20 +554,18 @@ class ModuleStore {
 					o.write(b.getBytes());
 					off += v.blobSize;
 				}
-			o.close();
-			if (!CacheDir.replace(tmp, p)) return false;
-			CacheDir.wrote(off);
-			return true;
-		} catch (_:Dynamic) {
-			try FileSystem.deleteFile(tmp) catch (_:Dynamic) {}
-			return false;
-		}
-	}
+			off;
+		});
 
-	// the packs an index names (CacheDir.trim: removed with the last index
-	// naming them)
-	public static function packsOf(file:String):Array<String> {
-		var ix = readIndex(file);
-		return ix == null ? [] : [for (v in ix.variants) "b/" + v.blob + ".pk"];
+	// the packs an index names (CacheStore.packName: what the trim keeps), each once
+	public static function packsOf(ix:StoreIndex):Array<String> {
+		var seen = new Map<String, Bool>();
+		var r = [];
+		for (v in ix.variants)
+			if (!seen.exists(v.blob)) {
+				seen.set(v.blob, true);
+				r.push(CacheStore.packName(v.blob));
+			}
+		return r;
 	}
 }

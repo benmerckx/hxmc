@@ -8,7 +8,7 @@ import hxmc.MirBuild.Unsupported;
 // One run of the tool. Functions are compiled per Haxe module (the unit of
 // the object cache): each module becomes an object of its own, cached under
 // a key hashing its Fingerprint (with the tool and the target) in the store
-// (ObjectStore: shared by every output; else in <out>.hxmc/), so a rebuild
+// (CacheStore: shared by every output; else in <out>.hxmc/), so a rebuild
 // after an edit compiles only the modules whose code can change. The program's data (DataGen) is regenerated every time, and
 // everything is linked with the runtime object (Link).
 class Driver {
@@ -378,6 +378,10 @@ class Driver {
 	}
 
 	// what every key includes: the tool binary (its size and date) and the target
+	// the key of an output's entry in the store (by its absolute path)
+	public static function outputKey(kind:CacheKind, out:String):CacheKey
+		return CacheKey.of(kind, "hxmc-out|" + (try sys.FileSystem.absolutePath(out) catch (_:Dynamic) out));
+
 	function toolKey():String {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
@@ -430,8 +434,8 @@ class Driver {
 			}
 			fs.push(f);
 		}
-		// the objects: in the store (ObjectStore), else next to the output
-		var store = ObjectStore.open(out);
+		// the objects: in the store, else next to the output
+		var store = CacheStore.open();
 		var dir = out + ".hxmc";
 		if (store == null && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
 		var index = new Map<String, String>();
@@ -479,7 +483,7 @@ class Driver {
 			keys[mi] = key;
 			lits[mi] = fp.newStrings;
 			var mem = resident ? memObjs.get(memPaths[mi]) : null;
-			if (store != null) paths[mi] = store.objectPath(key, moduleFile(order[mi]));
+			if (store != null) paths[mi] = store.objectPath(CacheKey.ofHash(ModuleObject, key), moduleFile(order[mi]));
 			if (mem != null && mem.key == key) objs[mi] = mem.obj;
 			else if (!abi.wasm && (store != null || index.get(moduleFile(order[mi])) == key) && sys.FileSystem.exists(paths[mi])) {
 				var o = try ElfReader.read(sys.io.File.getBytes(paths[mi])) catch (_:Dynamic) null;
@@ -535,12 +539,12 @@ class Driver {
 			// (WebAssembly objects are not cached: ElfWriter has no relocations for them)
 			if (!abi.wasm) {
 				var b = ElfWriter.write(obj, abi.arm);
-				if (store != null) store.save(paths[mi], b) else sys.io.File.saveBytes(paths[mi], b);
+				if (store != null) store.writeObject(CacheKey.ofHash(ModuleObject, keys[mi]), moduleFile(order[mi]), b) else sys.io.File.saveBytes(paths[mi], b);
 			}
 			objs[mi] = obj;
 		});
 		if (store != null) {
-			if (!abi.wasm) store.record([for (p in paths) haxe.io.Path.withoutDirectory(p)]);
+			if (!abi.wasm) store.writeList(outputKey(ObjectList, out), [for (mi in 0...nm) CacheStore.objectName(CacheKey.ofHash(ModuleObject, keys[mi]), moduleFile(order[mi]))]);
 			// (a server build has no end where ModuleCache.finish settles it)
 			if (resident) CacheDir.settle();
 		} else

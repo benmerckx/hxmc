@@ -4,7 +4,6 @@ import haxe.io.Bytes;
 import haxe.io.BytesInput;
 import haxe.io.BytesOutput;
 import sys.FileSystem;
-import sys.io.File;
 import core.Globals.GlobalTypePath;
 import core.TType;
 import compiler.hxb.HxbData;
@@ -964,17 +963,11 @@ class ModuleCache {
 	// the store for this build: its index read, the variants that match put
 	// in the server's cache
 	static function open(com:CommonContext):Null<ModuleCacheState> {
-		var root = CacheDir.root();
-		if (root == null) return null;
 		var t0 = haxe.Timer.stamp();
-		var modules = root + "modules/";
-		var dir = modules + CacheDir.toolStamp() + "/";
-		var used = dir + "used";
-		if (!FileSystem.exists(used) || CacheDir.now() - CacheDir.mtime(used) > CacheDir.USED_REFRESH)
-			if (!CacheDir.touch(used)) return null;
-		CacheDir.trim(modules, dir);
-		var key = Fingerprint.hash(["hxmc-modules", Sys.getCwd(), Sys.getEnv("HAXE_STD_PATH"), com.classPaths.asStringList().join("\n")].join("\x00"));
-		var s = new ModuleCacheState(dir, dir + key + ".idx", com);
+		var store = CacheStore.open();
+		if (store == null) return null;
+		var key = CacheKey.of(ModuleIndex, [Sys.getCwd(), Sys.getEnv("HAXE_STD_PATH"), com.classPaths.asStringList().join("\n")].join("\x00"));
+		var s = new ModuleCacheState(store, key, com);
 		s.signs[0] = context.CommonCache.getCacheSign(com);
 		s.defs[0] = com.defines.values;
 		var mcom = com.getMacros();
@@ -985,8 +978,9 @@ class ModuleCache {
 				for (k in e.keys.keys())
 					s.global.set(role + "\x00" + k, true);
 		}
-		var ix = try ModuleStore.readIndex(s.indexPath) catch (e:Dynamic) {
-			if (stats()) Sys.println('hxmc: module cache: ${s.indexPath} unreadable ($e)');
+		var stored = store.readIndex(key);
+		var ix = stored == null ? null : try ModuleStore.readIndex(stored.data) catch (e:Dynamic) {
+			if (stats()) Sys.println('hxmc: module cache: ${store.indexPath(key)} unreadable ($e)');
 			null;
 		}
 		if (ix != null) {
@@ -996,7 +990,7 @@ class ModuleCache {
 		}
 		if (ix == null) ix = new StoreIndex();
 		s.index = ix;
-		if (ix.variants.length > 0) CacheDir.used(s.indexPath);
+		if (ix.variants.length > 0) store.used(key);
 		@:privateAccess {
 			if (core.TFunctions.moduleUid.load() < ix.moduleHigh) core.TFunctions.moduleUid.store(ix.moduleHigh);
 			if (core.TFunctions.varUid.load() < ix.varHigh) core.TFunctions.varUid.store(ix.varHigh);
@@ -1466,9 +1460,9 @@ class ModuleCache {
 		if (fresh.length > 0) {
 			var lock = new sys.thread.Lock();
 			s.packLock = lock;
-			var dir = s.dir;
+			var store = s.store;
 			sys.thread.Thread.create(function() {
-				var ok = try ModuleStore.savePack(dir, nonce, fresh) catch (_:Dynamic) false;
+				var ok = try ModuleStore.savePack(store, nonce, fresh) catch (_:Dynamic) false;
 				for (v in fresh)
 					v.blobData = null;
 				s.packOk = ok;
@@ -1520,7 +1514,7 @@ class ModuleCache {
 			return;
 		}
 		var t0 = haxe.Timer.stamp();
-		ModuleStore.closePacks();
+		CacheStore.closePacks();
 		if (s.packLock != null) s.packLock.wait();
 		var blobs = 0;
 		var wrote = false;
@@ -1565,20 +1559,8 @@ class ModuleCache {
 				ix.moduleHigh = @:privateAccess core.TFunctions.moduleUid.load();
 				ix.varHigh = @:privateAccess core.TFunctions.varUid.load();
 				ix.variants = list;
-				var tmp = s.indexPath + "." + CacheDir.nonce() + ".tmp";
 				if (ok)
-					wrote = try {
-						var b = ModuleStore.writeIndex(ix);
-						var was = try FileSystem.stat(s.indexPath).size catch (_:Dynamic) 0;
-						File.saveBytes(tmp, b);
-						if (CacheDir.replace(tmp, s.indexPath)) {
-							CacheDir.wrote(b.length - was);
-							true;
-						} else false;
-					} catch (e:Dynamic) {
-						try FileSystem.deleteFile(tmp) catch (_:Dynamic) {}
-						false;
-					}
+					wrote = try s.store.writeIndex(s.indexKey, ModuleStore.packsOf(ix), ModuleStore.writeIndex(ix)) catch (_:Dynamic) false;
 			}
 		}
 		if (stats())
