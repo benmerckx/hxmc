@@ -534,6 +534,11 @@ interface (`ModuleInterface.hx`: declarations without the bodies of
 functions with written types), or of its whole content across contexts.
 A module typed again whose interface did not change leaves its dependents
 restored (early cutoff). An undone edit restores the earlier variant.
+These make a module's key (`CacheKey` `TypedModule`: its file's content,
+its reads, the hashes its dependencies had), and each module of the store
+gets one verdict a build: restored, typed again with the same interface, or
+typed again with a new one (`ModuleCacheState.verdicts`; `HXMC_STATS=1`
+counts them).
 
 **Macros.** Modules built by macros are restored. Static variables of
 macro classes used during a module's typing are kept with it; if a later
