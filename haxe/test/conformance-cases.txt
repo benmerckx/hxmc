@@ -325,4 +325,4 @@ module optimization-Issue9943 haxe/upstream/tests/optimization/src issues.Issue9
 # statics of the other operator functions; the reference writes the archive
 # but cannot read it back (docs/porting.md, divergences).
 hxml callop-overloads haxe/test/hxblib/callop -cp lib -cp app --main Main --interp
-diverges callop-overloads the reader of an abstract's call operator overloads (compiler.hxb.HxbReader.readClassFields)
+diverges callop-overloads the reader of the call operator overloads of an abstract (compiler.hxb.HxbReader.readClassFields)

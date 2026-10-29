@@ -19,4 +19,4 @@ hxblib hl-Issue12357 haxe/upstream/tests/misc/hl/projects/Issue12357 "-cp src -m
 # the application: the reference cannot read its own library back (a
 # divergence, docs/porting.md); the port reads it.
 hxblib hxblib-callop haxe/test/hxblib/callop "-cp lib --main LibMain --interp" "-cp app --main Main --interp"
-diverges hxblib-callop the reader of an abstract's call operator overloads (compiler.hxb.HxbReader.readClassFields)
+diverges hxblib-callop the reader of the call operator overloads of an abstract (compiler.hxb.HxbReader.readClassFields)
