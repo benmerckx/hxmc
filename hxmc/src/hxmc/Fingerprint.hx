@@ -200,6 +200,7 @@ class Fingerprint {
 			case TRef(_): 6;
 			case TStruct(_): 7;
 			case TU8: 8;
+			case TId: 9;
 		});
 
 	function tyName(tindex:Int) {

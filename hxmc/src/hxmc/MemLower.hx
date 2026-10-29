@@ -74,7 +74,7 @@ class MemLower extends MirWriter {
 			case New | NewDyn | TypeTest | AnonGet | AnonCall | ArrayGet | ArraySet | ArrayPush | NewNArray | NArrayDyn | RefStore: true;
 			case SetField: o.t.match(TRef(_)) && !o.flag && !o.fresh;
 			case AnonStore: o.t.match(TRef(_));
-			case ArrayInit: !o.t.match(TF64 | TI64 | TI32 | TBool);
+			case ArrayInit: !o.t.match(TF64 | TI64 | TId | TI32 | TBool);
 			case NArrayInit: o.kind == Abi.AK_PTR;
 			case NArraySet: o.flag;
 			case _: false;
@@ -357,7 +357,7 @@ class MemLower extends MirWriter {
 				var v = r(x.b);
 				var i = o.loc;
 				switch o.t {
-					case TF64 | TI64: storeM(Opt.MElem, 8, d, 8 * i, v);
+					case TF64 | TI64 | TId: storeM(Opt.MElem, 8, d, 8 * i, v);
 					case TI32: storeM(Opt.MElem, 4, d, 4 * i, v);
 					case TBool: storeM(Opt.MElem, 1, d, i, v);
 					case _: setPtr(d, op2(Add, I64, d, lconst32(8 * i)), v, Opt.MElem);
@@ -399,7 +399,7 @@ class MemLower extends MirWriter {
 	// field access x becomes the load or store of slot loc of type t
 	// (value: the store's) where control is; a load's value is x's
 	function access(x:MIns, op:Op, cls:Int, o:Int, value:Int, loc:Int, t:Ty):Int {
-		var four = !t.match(TRef(_) | TF64 | TI64);
+		var four = !t.match(TRef(_) | TF64 | TI64 | TId);
 		x.op = op;
 		x.ty = op == Load ? (t == TF64 ? F64 : four ? I32 : I64) : Void;
 		x.info = null;
@@ -421,7 +421,7 @@ class MemLower extends MirWriter {
 		return switch t {
 			case TRef(_): loadM(Opt.MField, I64, 8, o, 8 * loc);
 			case TF64: loadM(Opt.MField, F64, 8, o, 8 * loc);
-			case TI64: loadM(Opt.MField, I64, 8, o, 8 * loc);
+			case TI64 | TId: loadM(Opt.MField, I64, 8, o, 8 * loc);
 			case TVoid: iconst(0);
 			case _: loadM(Opt.MField, I32, 4, o, 4 * loc);
 		};
@@ -431,7 +431,7 @@ class MemLower extends MirWriter {
 		switch t {
 			case TRef(_):
 				if (isNull) storeM(Opt.MField, 8, o, 8 * loc, v) else setPtr(o, op2(Add, I64, o, lconst32(8 * loc)), v, Opt.MField);
-			case TF64 | TI64: storeM(Opt.MField, 8, o, 8 * loc, v);
+			case TF64 | TI64 | TId: storeM(Opt.MField, 8, o, 8 * loc, v);
 			case TVoid:
 			case _: storeM(Opt.MField, 4, o, 4 * loc, v);
 		}
@@ -440,7 +440,7 @@ class MemLower extends MirWriter {
 	// a store into a new (young) object: no barrier
 	function storeInit(o:Int, loc:Int, t:Ty, v:Int) {
 		switch t {
-			case TRef(_) | TF64 | TI64: storeM(Opt.MInit, 8, o, 8 * loc, v);
+			case TRef(_) | TF64 | TI64 | TId: storeM(Opt.MInit, 8, o, 8 * loc, v);
 			case TVoid:
 			case _: storeM(Opt.MInit, 4, o, 4 * loc, v);
 		}
@@ -704,7 +704,7 @@ class MemLower extends MirWriter {
 			case TI32: Abi.AK_I32;
 			case TBool: Abi.AK_BOOL;
 			case TF64: Abi.AK_F64;
-			case TI64: Abi.AK_I64;
+			case TI64 | TId: Abi.AK_I64;
 			case _: Abi.AK_PTR;
 		};
 
@@ -958,7 +958,7 @@ class MemLower extends MirWriter {
 				cur = join;
 				readVar(r, cur);
 			case TF64: cmp(CEq, kind, iconst("f".code));
-			case TI64: cmp(CEq, kind, iconst("l".code));
+			case TI64 | TId: cmp(CEq, kind, iconst("l".code));
 			case _: cmp(CEq, kind, iconst("p".code));
 		}
 	}
@@ -967,7 +967,7 @@ class MemLower extends MirWriter {
 	function slotLoadDyn(o:Int, loc:Int, t:Ty):Int {
 		var ix = op1(SExt, I64, loc);
 		return switch t {
-			case TRef(_) | TI64: loadM(Opt.MField, I64, 8, o, 0, false, ix, 8);
+			case TRef(_) | TI64 | TId: loadM(Opt.MField, I64, 8, o, 0, false, ix, 8);
 			case TF64: loadM(Opt.MField, F64, 8, o, 0, false, ix, 8);
 			case _: loadM(Opt.MField, I32, 4, o, 0, false, ix, 4);
 		}
@@ -1034,7 +1034,7 @@ class MemLower extends MirWriter {
 		var loc = op1(SExt, I64, op2(Sub, I32, slot, iconst(1)));
 		switch t {
 			case TRef(_): setPtr(o, op2(Add, I64, o, op2(Shl, I64, loc, iconst(3))), v, Opt.MField);
-			case TF64 | TI64: storeM(Opt.MField, 8, o, 0, v, loc, 8);
+			case TF64 | TI64 | TId: storeM(Opt.MField, 8, o, 0, v, loc, 8);
 			case _: storeM(Opt.MField, 4, o, 0, v, loc, 4);
 		}
 	}

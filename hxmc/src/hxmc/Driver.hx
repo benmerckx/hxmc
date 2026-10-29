@@ -570,6 +570,7 @@ class Driver {
 		dg.stubs(objs, demit);
 		dg.cstrLiterals(objs);
 		dg.emptyArrays(objs);
+		dg.objcRefs(objs);
 		dg.resources(objs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);

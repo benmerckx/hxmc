@@ -70,6 +70,9 @@ class LinkMachO extends LinkCore {
 	static function isTlvSection(s:Section):Bool
 		return StringTools.endsWith(s.name, "__thread_vars");
 
+	static function isObjcSection(s:Section):Bool
+		return s.name == "__DATA,__objc_classrefs" || s.name == "__DATA,__objc_selrefs";
+
 	public function link(entry:String):Bytes {
 		// (whichever signature the driver set: a dylib's is not a main binary's)
 		sign.mainBinary = !dylib;
@@ -134,6 +137,15 @@ class LinkMachO extends LinkCore {
 		got = new Section("__DATA,__got", Data, 8);
 		extra.sections.push(stubs);
 		extra.sections.push(got);
+		// Objective-C (DataGen.objcRefs): with selector or class references,
+		// the image info (version 0, flags 0x40 as clang's) that has the loader
+		// hand the image to libobjc, which then fixes up its selectors
+		if (Lambda.exists(objs, o -> Lambda.exists(o.sections, s -> isLive(s) && isObjcSection(s)))) {
+			var info = new Section("__DATA,__objc_imageinfo", Data, 4);
+			info.buf.u32(0);
+			info.buf.u32(0x40);
+			extra.sections.push(info);
+		}
 		keep(extra);
 		if (tls.length > 0) {
 			globals.set("hxmc_tls_start", extra.sym("hxmc_tls_start"));
@@ -173,6 +185,7 @@ class LinkMachO extends LinkCore {
 					}
 		// ---- layout
 		var text = [], ro = [], roData = [], data = [], init = [], fini = [], tlv = [], tdata = [], tbss = [], bss = [];
+		var classrefs = [], selrefs = [], imageinfo = [];
 		for (o in objs)
 			for (s in o.sections) {
 				if (!isLive(s)) continue;
@@ -187,7 +200,12 @@ class LinkMachO extends LinkCore {
 								if (t == null || !t.abs) abs = true;
 							}
 						if (abs) roData.push(s) else ro.push(s);
-					case Data: if (isTlvSection(s)) tlv.push(s) else if (s != got) data.push(s);
+					case Data:
+						if (isTlvSection(s)) tlv.push(s);
+						else if (s.name == "__DATA,__objc_classrefs") classrefs.push(s);
+						else if (s.name == "__DATA,__objc_selrefs") selrefs.push(s);
+						else if (s.name == "__DATA,__objc_imageinfo") imageinfo.push(s);
+						else if (s != got) data.push(s);
 					case InitArray: init.push(s);
 					case FiniArray: fini.push(s);
 					case Tdata: tdata.push(s);
@@ -219,6 +237,9 @@ class LinkMachO extends LinkCore {
 		var oGot = group([got]);
 		var oDConst = group(roData);
 		var oData = group(data);
+		var oClassrefs = group(classrefs);
+		var oSelrefs = group(selrefs);
+		var oImageinfo = group(imageinfo);
 		var oInit = group(init);
 		var oFini = group(fini);
 		var oTlv = group(tlv);
@@ -263,7 +284,7 @@ class LinkMachO extends LinkCore {
 				rebases.push(gotAddr + at);
 			}
 		}
-		var all = text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(init).concat(fini).concat(tlv).concat(tdata);
+		var all = text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(classrefs).concat(selrefs).concat(imageinfo).concat(init).concat(fini).concat(tlv).concat(tdata);
 		for (s in all)
 			applyRelocs(s);
 		// ---- __LINKEDIT
@@ -410,7 +431,7 @@ class LinkMachO extends LinkCore {
 		var fileSize = leFileOff + sigOffInLe + sigLen;
 		var out = new Buf(fileSize + 16);
 		out.zeros(fileSize);
-		for (s in text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(init).concat(fini).concat(tlv).concat(tdata).concat([got]))
+		for (s in all.concat([got]))
 			out.b.blit(addr.get(s), s.buf.b, 0, s.buf.len);
 		var dsects = [], dwarfAddr = [];
 		var at = dwarfOff;
@@ -478,6 +499,10 @@ class LinkMachO extends LinkCore {
 			sec("__got", oGot, 0, false, 8),
 			sec("__const", oDConst, 0),
 			sec("__data", oData, 0),
+			// (S_ATTR_NO_DEAD_STRIP; the selectors' S_LITERAL_POINTERS)
+			sec("__objc_classrefs", oClassrefs, 0x10000000, false, 8),
+			sec("__objc_selrefs", oSelrefs, 0x10000005, false, 8),
+			sec("__objc_imageinfo", oImageinfo, 0, false, 4),
 			sec("__mod_init_func", oInit, 9, false, 8),
 			sec("__mod_term_func", oFini, 0xa, false, 8),
 			sec("__thread_vars", oTlv, 0x13, false, 8),

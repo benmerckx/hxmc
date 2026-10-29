@@ -1136,14 +1136,14 @@ class Opt {
 
 	// a field's byte offset (OInfo.loc: an Int's or Bool's is a 4-byte index; MemLower.access)
 	static inline function fieldOff(o:OInfo):Int
-		return o.t.match(TRef(_) | TF64 | TI64) ? 8 * o.loc : 4 * o.loc;
+		return o.t.match(TRef(_) | TF64 | TI64 | TId) ? 8 * o.loc : 4 * o.loc;
 
 	static inline function fieldCls(o:OInfo):Int
 		return MFieldAt + ((fieldOff(o) >> 3) & 7);
 
 	// an array element of this type is a reference (its slow path may box: a call)
 	static inline function ptrElem(t:hxmc.ir.Ir.Ty):Bool
-		return !t.match(TI32 | TBool | TF64 | TI64);
+		return !t.match(TI32 | TBool | TF64 | TI64 | TId);
 
 	// the class an object-level read loads from (-1: not one)
 	static function objLoadClass(i:MIns):Int

@@ -233,7 +233,7 @@ class CInterop {
 						if (core.Meta.has(CoreType, a.aMeta)) CNone else ctype(core.Abstract.getUnderlyingType(a, params));
 				}
 			case TInst(c, _):
-				if (isStruct(c)) CStruct(c) else if (isOpaque(c)) COpaque(c) else CNone;
+				if (isStruct(c)) CStruct(c) else if (isOpaque(c)) COpaque(c) else if (ObjC.isObjC(c) || ObjC.peerBase(c) != null) CPtr else CNone;
 			case _: CNone;
 		}
 	}

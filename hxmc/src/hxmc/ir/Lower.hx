@@ -664,6 +664,8 @@ class Lower implements LowerQueries {
 					case "Float" if (isStd): TF64;
 					case "Void" if (isStd): TVoid;
 					case "Null" if (isStd):
+						// (an Objective-C object: nil is its null)
+						if (ObjC.isIdType(params[0])) return TId;
 						var inner = ty(params[0]);
 						Ir.isScalar(inner) ? TRef(RNull(inner)) : boxed(inner);
 					case "Any" if (isStd): TRef(RAny);
@@ -696,6 +698,7 @@ class Lower implements LowerQueries {
 							TStruct(n, CInterop.layout(c).size);
 						}
 						else if (CInterop.isOpaque(c)) TI64; // the address of C memory (CInterop: through a Ptr only)
+						else if (ObjC.isObjC(c)) TId; // an Objective-C object: its id
 						else if (c.hasClassFlag(CInterface)) TRef(RObj(classInfo(c)));
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
@@ -832,6 +835,7 @@ class Lower implements LowerQueries {
 	public function boxed(t:Ty):Ty
 		return switch t {
 			case TStruct(n, _): TRef(RObj(structBox(n)));
+			case TId: TRef(RAny); // (an id box: FnLower.coerce)
 			case _: t;
 		}
 
@@ -911,7 +915,9 @@ class Lower implements LowerQueries {
 		// (stringBufCtor). Its class is not a subclass of StringBuf to
 		// reflection (Std.isOfType, Type.getSuperClass).
 		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
-		var sup = c.clSuper != null && !sbuf ? classInfo(c.clSuper.cls) : root;
+		// (a class extending an Objective-C one: a Haxe object with its id, ObjC)
+		var objc = c.clSuper != null && ObjC.isObjC(c.clSuper.cls);
+		var sup = c.clSuper != null && !sbuf && !objc ? classInfo(c.clSuper.cls) : root;
 		// (the superclass's field types may name this class, which has its
 		// ClassInfo then: `class Node extends Base<Node>`, upstream's unit test TestGeneric)
 		ci = classes.get(c);
@@ -938,6 +944,7 @@ class Lower implements LowerQueries {
 			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
 			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
 		}
+		if (objc) ci.fields.push({name: ObjC.ID_FIELD, ty: TId});
 		var own = [];
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
@@ -947,6 +954,7 @@ class Lower implements LowerQueries {
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
+					if (ObjC.isIdType(f.cfType)) ci.idFields.push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
@@ -963,6 +971,7 @@ class Lower implements LowerQueries {
 		// field types may refer back to this class
 		outsideUnfolding(() -> for (o in own)
 			o.slot.ty = ty(o.f.cfType));
+		if (objc) ci.objc = {name: ci.ident, methods: ObjC.imps(this, c, ci.ident)};
 		return ci;
 	}
 
@@ -1818,6 +1827,12 @@ class Lower implements LowerQueries {
 		prog.selectors.push({name: name, sig: sig});
 		usedSelectors.set(name, s);
 		return s;
+	}
+
+	public function classOf(ci:ClassInfo):Null<TClass> {
+		for (tc => c in classes)
+			if (c == ci) return tc;
+		return null;
 	}
 
 	public function superOf(ci:ClassInfo):TClass {

@@ -119,7 +119,7 @@ class DataGen {
 			case TI32: "i".code;
 			case TBool: "b".code;
 			case TF64: "f".code;
-			case TI64: "l".code;
+			case TI64 | TId: "l".code;
 			case _: "p".code;
 		};
 
@@ -563,6 +563,38 @@ class DataGen {
 				rodata.buf.u8(b.get(i));
 			if (!words) rodata.buf.u8(0);
 			obj.define(n, rodata, off, b.length + (words ? 0 : 1), true);
+		}
+	}
+
+	// the Objective-C classes and selectors the program sends messages to and
+	// with (ObjC.CLASSREF, ObjC.SELREF): a word each, as clang's, in
+	// __objc_classrefs (the class object, bound by the loader) and
+	// __objc_selrefs (the selector's name, replaced by its selector when
+	// libobjc maps the image: LinkMachO adds the __objc_imageinfo it looks for)
+	public function objcRefs(objs:Array<Obj>) {
+		var names = new Map<String, Bool>();
+		for (o in objs.concat([obj]))
+			for (s in o.symbols)
+				if (s.section == null && !s.abs && (StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASSREF) || StringTools.startsWith(s.name, hxmc.ir.ObjC.SELREF)
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(s.name, hxmc.ir.ObjC.IVAR_CELL)))
+					names.set(s.name, true);
+		var list = [for (n in names.keys()) n];
+		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		for (n in list) {
+			if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASSREF)) {
+				var sec = obj.section("__DATA,__objc_classrefs", Data, 8);
+				obj.define(n, sec, sec.buf.len, 8, true);
+				ptr(sec, hxmc.ir.ObjC.CLASS_SYM + n.substr(hxmc.ir.ObjC.CLASSREF.length));
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(n, hxmc.ir.ObjC.IVAR_CELL)) {
+				// (a peer class's: zero until it is registered)
+				data.buf.align(8);
+				obj.define(n, data, data.buf.len, 8, true);
+				data.buf.u64(0, 0);
+			} else {
+				var sec = obj.section("__DATA,__objc_selrefs", Data, 8);
+				obj.define(n, sec, sec.buf.len, 8, true);
+				ptrSym(sec, cstr(haxe.io.Bytes.ofHex(n.substr(hxmc.ir.ObjC.SELREF.length)).toString()));
+			}
 		}
 	}
 

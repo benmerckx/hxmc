@@ -125,7 +125,7 @@ class KernelCheck {
 	// a scalar: not a struct, not raw, not GC (an unchecked cast between two is a conversion)
 	function scalar(t:T):Bool
 		return !isRaw(t) && switch l.ty(t) {
-			case TI32 | TI64 | TF64 | TBool | TVoid: true;
+			case TI32 | TI64 | TId | TF64 | TBool | TVoid: true;
 			case _: false;
 		}
 

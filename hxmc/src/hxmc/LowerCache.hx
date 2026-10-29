@@ -1006,7 +1006,7 @@ class CachedLower extends Lower {
 		switch [o, n] {
 			case [TRef(a), TRef(b)]:
 				bindRef(a, b);
-			case [TI32, TI32] | [TBool, TBool] | [TU8, TU8] | [TF64, TF64] | [TI64, TI64] | [TVoid, TVoid]:
+			case [TI32, TI32] | [TBool, TBool] | [TU8, TU8] | [TF64, TF64] | [TI64, TI64] | [TId, TId] | [TVoid, TVoid]:
 			case [TStruct(a, x), TStruct(b, y)] if (a == b && x == y):
 			case _:
 				mismatch("type changed");

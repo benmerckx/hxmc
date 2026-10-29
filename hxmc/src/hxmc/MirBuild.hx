@@ -71,7 +71,7 @@ class MirBuild extends MirWriter {
 		return switch t {
 			case TI32 | TBool | TU8: I32;
 			case TF64: F64;
-			case TI64: I64;
+			case TI64 | TId: I64;
 			case TVoid: Void;
 			case TRef(_) | TStruct(_): I64;
 		};
@@ -618,7 +618,7 @@ class MirBuild extends MirWriter {
 			case SSetGlobal(g, v) if (tlsGlobal(g) != null):
 				var x = ex(v);
 				var t = p.p.globals[g].ty;
-				tlsStore(tlsGlobal(g), t == TF64 ? op1(FToBits, I64, x) : t == TI64 ? x : op1(SExt, I64, x));
+				tlsStore(tlsGlobal(g), t == TF64 ? op1(FToBits, I64, x) : (t == TI64 || t == TId) ? x : op1(SExt, I64, x));
 			case SSetGlobal(g, v):
 				var x = ex(v);
 				var t = p.p.globals[g].ty;
@@ -1099,7 +1099,7 @@ class MirBuild extends MirWriter {
 				symAddr(p.p.globals[g].sym);
 			case EGlobal(g, t) if (tlsGlobal(g) != null):
 				var v = tlsLoad(tlsGlobal(g));
-				t == TF64 ? op1(BitsToF, F64, v) : t == TI64 ? v : op1(Trunc, I32, v);
+				t == TF64 ? op1(BitsToF, F64, v) : (t == TI64 || t == TId) ? v : op1(Trunc, I32, v);
 			case EGlobal(g, t):
 				if (Ir.isRef(t)) loadM(Opt.MGlobal, I64, 8, globalAddr(g), 0) else {
 					var mt = mty(t);
@@ -1207,7 +1207,7 @@ class MirBuild extends MirWriter {
 				o;
 			case ENewBox(t, v):
 				var tt = switch t {
-					case TF64 | TI64: Abi.T_REFBOX_F;
+					case TF64 | TI64 | TId: Abi.T_REFBOX_F;
 					case TI32 | TBool: Abi.T_REFBOX_I;
 					case _: Abi.T_REFBOX_P;
 				};

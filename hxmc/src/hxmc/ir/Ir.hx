@@ -17,6 +17,10 @@ enum Ty {
 	TU8;
 	TF64;
 	TI64; // haxe.Int64 (hxmc.I64): an int64_t, boxed in Dynamic
+	// an Objective-C object (ObjC): an i64 at run time, its id; kept apart so
+	// that storage holds a reference to it (fields, statics, elements,
+	// captures) and Dynamic boxes it in an object that does
+	TId;
 	TVoid;
 	TRef(r:RefTy);
 	// a @:hxmc.struct value (docs/interop.md, "Struct values"): the address
@@ -72,6 +76,11 @@ class ClassInfo {
 	// can call Type.createInstance (Lower.makers); Reach keeps it where live
 	// code can have the class value (null: none)
 	public var maker:Null<{fn:Null<FuncInfo>}> = null;
+	// a class extending an Objective-C one (ObjC): the name it is registered
+	// as, and its methods Objective-C can call (ObjC.imps)
+	public var objc:Null<{name:String, methods:Array<{sel:String, sym:String, types:String}>}> = null;
+	// its own fields holding ids (ObjC: their stores retain, its death releases them)
+	public var idFields:Array<String> = [];
 
 	public function new(name, ident, sup) {
 		this.name = name;
@@ -507,6 +516,7 @@ class Ir {
 			case TBool: "b";
 			case TF64: "f";
 			case TI64: "l";
+			case TId: "l"; // (an i64: the same signatures and kinds)
 			case TVoid: "v";
 			case TRef(_): "p";
 			case TStruct(_): "s";
@@ -516,7 +526,7 @@ class Ir {
 		return t.match(TRef(_));
 
 	public static function isScalar(t:Ty):Bool
-		return t == TI32 || t == TBool || t == TF64 || t == TI64;
+		return t == TI32 || t == TBool || t == TF64 || t == TI64 || t == TId;
 
 	// the type of an expression's value (what MirBuild gives the Mir value
 	// it makes: MIns.vty)
