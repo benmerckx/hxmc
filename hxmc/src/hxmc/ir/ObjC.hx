@@ -271,7 +271,7 @@ class ObjC {
 			var ret = setter ? CVoid : CInterop.ctype(s.ret);
 			function ok(ct:CTy)
 				return CInterop.isScalar(ct) || ct.match(CStruct(_));
-			if (!Lambda.foreach(cts, ok) || !(ret == CVoid || CInterop.isScalar(ret))) {
+			if (!Lambda.foreach(cts, ok) || !(ret == CVoid || ok(ret))) {
 				if (decl != cf) throw new LowerError('${cf.cfName} overrides an Objective-C method, which has types C has not', CInterop.posOf(cf.cfPos));
 				continue;
 			}
@@ -283,7 +283,10 @@ class ObjC {
 			w.cAbi = {args: [CPtr, CPtr].concat(cts), ret: ret};
 			var self = new Local(0, "self", TI64);
 			w.args = [self, new Local(1, "_cmd", TI64)];
-			for (i in 1...fi.args.length)
+			// (a struct result: the method's sret, a slot of this frame; MirBuild.cEntry
+			// returns it by the C ABI's rules)
+			var n = fi.sret ? fi.args.length - 1 : fi.args.length;
+			for (i in 1...n)
 				w.args.push(new Local(i + 1, fi.args[i].name, fi.args[i].ty));
 			w.ret = setter ? TVoid : fi.ret;
 			var peer = new Local(w.args.length, "peer", TRef(RAny));
@@ -296,18 +299,38 @@ class ObjC {
 				SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))
 			];
 			var xs = [ECast(fi.args[0].ty, ELocal(peer))].concat([for (i in 2...w.args.length) (ELocal(w.args[i]) : Ex)]);
-			var call = ECall(fi, Vector.fromArrayCopy(xs));
-			if (w.ret == TVoid) {
-				body.push(SExpr(call));
-				body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
-				body.push(SReturn(null));
-			} else {
-				var res = new Local(w.args.length + 1, "r", fi.ret);
+			// the call, in a try: an exception leaving it would unwind through
+			// Objective-C's frames, which skips their cleanup (rt_objc_uncaught
+			// reports it and ends the program, as an uncaught one)
+			var call:Array<Stmt> = [];
+			var res:Null<Local> = null;
+			if (fi.sret) {
+				// (a struct result: the method's sret, a slot of this frame)
+				res = new Local(w.args.length + 1, "r", fi.ret);
 				w.locals.push(res);
-				body.push(SSet(res, call));
-				body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
-				body.push(SReturn(ELocal(res)));
+				var size = switch fi.ret {
+					case TStruct(_, size): size;
+					case _: 8;
+				};
+				body.push(SSet(res, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(size), EInt(8)), TI64)));
+				call.push(SExpr(ECall(fi, Vector.fromArrayCopy(xs.concat([ELocal(res)])))));
+			} else if (w.ret == TVoid) {
+				call.push(SExpr(ECall(fi, Vector.fromArrayCopy(xs))));
+			} else {
+				res = new Local(w.args.length + 1, "r", fi.ret);
+				w.locals.push(res);
+				call.push(SSet(res, ECall(fi, Vector.fromArrayCopy(xs))));
 			}
+			var exn = new Local(w.args.length + 2, "e", TRef(RAny));
+			w.locals.push(exn);
+			body.push(STry(Vector.fromArrayCopy(call), vector({
+				test: null,
+				l: exn,
+				body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
+			})));
+			w.hasTry = true;
+			body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
+			body.push(SReturn(res == null ? null : ELocal(res)));
 			w.body = Vector.fromArrayCopy(body);
 			l.prog.funcs.push(w);
 			r.push({

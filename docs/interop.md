@@ -611,6 +611,13 @@ variable leads back to it.
   types; a new method's selector is derived from its names (a delegate's
   `control(control, textView, doCommandBySelector)` is
   `control:textView:doCommandBySelector:`). Calls from Haxe are Haxe calls.
+- **`super.f(...)`** to an Objective-C method sends `objc_msgSendSuper`,
+  looked up from the Objective-C superclass (`super.set_frame(v)` in an
+  override of `set_frame`); struct results come back both ways.
+- **Exceptions**: a Haxe exception leaving a method Objective-C called is
+  reported as an uncaught one and ends the program: unwinding through
+  Objective-C's frames would skip their cleanup. An Objective-C exception
+  (`NSException`) ends it too.
 - **Passing** an instance where an `id` goes passes its `id`; `cast` turns
   an `id` of such a class back into its Haxe object (unchecked).
 
@@ -641,10 +648,8 @@ counted. Where references cross:
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: blocks, `super.f()` to an Objective-C method other than an
-initializer in the constructor, Haxe classes
-extending Haxe classes that extend Objective-C ones, struct results of Haxe
-methods Objective-C calls, overriding `dealloc`, `id`s captured by
+Not yet: blocks, Haxe classes extending Haxe classes that extend
+Objective-C ones, overriding `dealloc`, `id`s captured by
 closures (borrowed), x86-64's `objc_msgSend_stret` and `_fpret`, protocols,
 declarations generated from the SDK's headers.
 

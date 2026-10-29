@@ -125,6 +125,15 @@ class Start {
 
 	// ---- exceptions
 
+	// an exception that would leave a Haxe method Objective-C called (an
+	// entry of hxmc.ir.ObjC.imps): reported as an uncaught one, and the end of
+	// the program (unwinding Objective-C's frames would skip their cleanup)
+	@:hxmc.export("rt_objc_uncaught") static function objcUncaught(v:Dynamic):Void {
+		Gc.uncaught("Uncaught exception in a method Objective-C called: ", v);
+		Stacks.report();
+		Os.exit(1);
+	}
+
 	@:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
 		Gc.exn = Mem.addr(v);
 		var h = Gc.hcur;

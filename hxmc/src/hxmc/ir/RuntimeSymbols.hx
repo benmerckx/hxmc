@@ -91,6 +91,7 @@ class RuntimeSymbols {
 		{sym: "rt_objc_own", kind: FUNC, families: NATIVE, by: "FnLower.run: a constructor registers its object's id fields"},
 		{sym: "rt_objc_box", kind: FUNC, families: NATIVE, by: "FnLower.coerce: an id where a reference goes"},
 		{sym: "rt_objc_unbox", kind: FUNC, families: NATIVE, by: "FnLower.coerce: a boxed id"},
+		{sym: "rt_objc_uncaught", kind: FUNC, families: NATIVE, by: "ObjC.imps: an exception leaving a Haxe method Objective-C called"},
 		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MemLower.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
 		{sym: "hxmc_alloc_slow_raw", kind: FUNC, families: LINEAR, by: "MemLower.allocDyn (Mem.allocRaw, Mem.allocArrayRaw)"},
 		{sym: "hxmc_barrier_slow", kind: FUNC, families: LINEAR, by: "MirBuild: the write barrier"},

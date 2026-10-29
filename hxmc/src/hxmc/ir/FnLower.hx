@@ -2679,11 +2679,16 @@ class FnLower {
 				if (fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3)
 					return inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt);
 				return callFn(fn, xs, rt);
-			// `self = [super initX:...]` (ObjC); other messages to super: not yet (objc_msgSendSuper)
+			// a message to super (ObjC): in a constructor, an initializer
+			// (`self = [super initX:...]`); elsewhere, objc_msgSendSuper
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c)):
-				if (!inCtor || self == null || self.objc == null || !ObjC.isInit(cf))
-					return fail("super." + cf.cfName + "(...): to an Objective-C method only an initializer, in the constructor (other messages to super: not yet)", e);
-				return coerce(objcSuperInit(l.superOf(self), cf, cargs, e), TId, rt);
+				if (self == null || self.objc == null)
+					return fail("super." + cf.cfName + ": a message to super in a class that does not extend an Objective-C class", e);
+				if (ObjC.isInit(cf)) {
+					if (!inCtor) return fail("super." + cf.cfName + "(...): an initializer, called in the constructor only", e);
+					return coerce(objcSuperInit(l.superOf(self), cf, cargs, e), TId, rt);
+				}
+				return objcSendSuper(l.superOf(self), c, cf, cargs, e);
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)):
 				var impl = l.lookupMethod(c, cf.cfName);
 				if (impl == null) fail("super." + cf.cfName + " without implementation", e);
@@ -3365,6 +3370,28 @@ class FnLower {
 		}
 	}
 
+	// `super.f(args)` in a method of a class extending an Objective-C one
+	// (sup): objc_msgSendSuper, its receiver a struct objc_super in this
+	// frame (the object's id and the class the method is looked up from:
+	// sup, the registered class's superclass); a property's set_x as
+	// objcSend has it
+	function objcSendSuper(sup:TClass, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var s = objcSig(cf, e);
+		var ats = s.args.map(a -> ty(a.type));
+		var xs = args(cargs, ats, null);
+		var id = ELocal(asLocal(coerce(ELocal(thisLocal), TRef(RObj(self)), TId), TId));
+		var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), id), TVoid)));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), objcClass(sup)), TVoid)));
+		var types = [for (a in s.args) a.type];
+		if (xs.length == 1 && ObjC.isSetter(c, cf)) {
+			var v = ELocal(asLocal(xs[0], ats[0]));
+			out.push(SExpr(objcMsg(receiver, ObjC.selector(cf, s), types, [v], null, cf, e, TVoid, false, "objc_msgSendSuper")));
+			return coerce(v, ats[0], tyOf(e));
+		}
+		return objcMsg(receiver, ObjC.selector(cf, s), types, xs.toArray(), s.ret, cf, e, null, false, "objc_msgSendSuper");
+	}
+
 	// a message to obj (an instance method of an Objective-C class) or to the
 	// class (a static one, obj null)
 	function objcSend(obj:Null<TExpr>, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
@@ -3486,7 +3513,8 @@ class FnLower {
 	// objc_msgSend(self, sel, xs...) called through its address in the C
 	// types of the arguments (types) and the result (ret) (ObjC.declare); the
 	// selector from its selref (DataGen.objcRefs)
-	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:Null<TClassField>, e:TExpr, ?to:Ty, keep = false):Ex {
+	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:Null<TClassField>, e:TExpr, ?to:Ty, keep = false,
+			send = "objc_msgSend"):Ex {
 		if (to == null) to = tyOf(e);
 		if (cf != null) {
 			var lib = ObjC.memberLibrary(cf);
@@ -3499,9 +3527,8 @@ class FnLower {
 		var t = ret == null ? TVoid : ty(ret);
 		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
 		var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
-		ObjC.symbol("objc_msgSend");
-		var send = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr("objc_msgSend")), TI64));
-		var cx = ECallHost(key, Vector.fromArrayCopy([send, self, selector].concat(xs)), t);
+		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(send))), TI64));
+		var cx = ECallHost(key, Vector.fromArrayCopy([fn, self, selector].concat(xs)), t);
 		if (t == TId && !keep && ObjC.returnsRetained(sel))
 			cx = objcAutorelease(cx);
 		if (t.match(TStruct(_))) {

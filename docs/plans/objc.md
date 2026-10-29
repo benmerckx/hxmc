@@ -100,16 +100,16 @@ answer them.
    closures and anonymous objects need the same. A layout flag (Facts)
    and a list of such objects walked after each collection would replace
    the registration.
-6. **`super.f()`** to an Objective-C method (`objc_msgSendSuper`), and Haxe
-   classes extending Haxe classes that extend Objective-C ones (the class
-   to allocate is the instance's own, registered with its superclass's).
+6. **Haxe classes extending Haxe classes** that extend Objective-C ones
+   (view controllers): the class to allocate is the instance's own,
+   registered with its superclass's; `super.f()` then goes to the Haxe
+   superclass's method or, past it, `objc_msgSendSuper`.
 7. **Pools**: one around `main` and the threads hxmc starts, and an
    `autoreleasepool(() -> ...)` for long loops.
 8. **x86-64**: `objc_msgSend_stret` for struct results over 16 bytes and
    `objc_msgSend_fpret` (targets.md lists them for Metal and the x86-64 iOS
    simulator).
-9. **Smaller gaps**: struct results of Haxe methods Objective-C calls;
-   `dealloc` (its peer entry is gone when it runs); registration from two
+9. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); registration from two
    threads at once; `hx_dyn_eq` on two boxes of one `id`; reading retain
    counts while another thread is stopped inside libobjc holding its
    lock.
