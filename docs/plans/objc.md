@@ -67,10 +67,7 @@ answer them.
 
 ## Open, in order
 
-1. **`LowerQueries`**: `ClassInfo.objc` and `idFields` are computed by
-   `Lower` and read by `FnLower` outside the logged queries, so the
-   compilation server could replay a body against changed declarations.
-2. **Declarations from the SDK's headers.** clang's AST
+1. **Declarations from the SDK's headers.** clang's AST
    (`clang -fsyntax-only -Xclang -ast-dump=json`, 4.5 s and 400 MB for
    AppKit with what it imports) read by a tool in Haxe, emitting
    declarations in the syntax above: categories merged per class,
@@ -87,18 +84,18 @@ answer them.
    generics. A class method and an instance method of one name are fine
    (Haxe allows both on an extern). Only declarations, never the headers'
    comments (Apple's SDK terms); clang is needed when generating only.
-3. **Blocks** from closures: a block whose invoke function finds the
+2. **Blocks** from closures: a block whose invoke function finds the
    closure, copy and dispose helpers that keep it alive while Objective-C
    holds the block, and `id`s a closure captures holding references.
-4. **Release on death for every object with `TId` slots**: today a
+3. **Release on death for every object with `TId` slots**: today a
    constructor registers its class's own `id` fields (`rt_objc_own`);
    closures and anonymous objects need the same. A layout flag (Facts)
    and a list of such objects walked after each collection would replace
    the registration.
-5. **x86-64**: `objc_msgSend_stret` for struct results over 16 bytes and
+4. **x86-64**: `objc_msgSend_stret` for struct results over 16 bytes and
    `objc_msgSend_fpret` (targets.md lists them for Metal and the x86-64 iOS
    simulator).
-6. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); registration from two
+5. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); registration from two
    threads at once; a pool around `main` (nothing gained: it drains at exit); `hx_dyn_eq` on two boxes of one `id`; reading retain
    counts while another thread is stopped inside libobjc holding its
    lock.

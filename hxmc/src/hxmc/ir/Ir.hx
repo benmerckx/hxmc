@@ -82,7 +82,7 @@ class ClassInfo {
 	// the first such class (whose instance variable and its offset's cell
 	// every subclass shares), its methods Objective-C can call (ObjC.imps),
 	// the function registering it (ObjC.REGISTER)
-	public var objc:Null<{name:String, root:String, methods:Array<{sel:String, sym:String, types:String}>, register:FuncInfo}> = null;
+	public var objc:Null<ObjCClass> = null;
 	// its own fields holding ids (ObjC: their stores retain, its death releases them)
 	public var idFields:Array<String> = [];
 	// its own fields holding weak ids (@:hxmc.weak): a cell each, outside the heap
@@ -114,6 +114,9 @@ class ClassInfo {
 // a static reached through its class value (ClassInfo.statics): a function
 // (fn), as the closure calling it (clos), or a variable (its global)
 typedef StaticEntry = {name:String, clos:Null<LambdaInfo>, fn:Null<FuncInfo>, global:Int};
+
+// a class registered as an Objective-C one (ClassInfo.objc)
+typedef ObjCClass = {name:String, root:String, methods:Array<{sel:String, sym:String, types:String}>, register:FuncInfo};
 
 class EnumInfo {
 	public var name:String;

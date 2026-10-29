@@ -22,6 +22,11 @@ using core.TFunctions;
 // methods (their entries: imp), the id in the hidden field ID_FIELD, and
 // the Haxe object found from the id through the runtime's peers
 // (hxmc.rt.Gc: the index in the instance variable PEER_IVAR).
+//
+// What a body needs of the link beyond its own code (a message's C function,
+// libobjc's functions, a class's library, a category's) it declares through
+// LowerQueries.objcDeclare (a Decl), which the compilation server replays
+// when it reuses the body.
 @:access(hxmc.ir.Lower)
 class ObjC {
 	public static inline var LIB = "/usr/lib/libobjc.A.dylib";
@@ -158,12 +163,11 @@ class ObjC {
 		return SELREF + haxe.io.Bytes.ofString(sel).toHex();
 
 	// the classref of c, or null (library: no library declared)
-	public static function classRef(c:TClass):Null<String> {
+	public static function classRef(l:LowerQueries, c:TClass):Null<String> {
 		var lib = library(c);
 		if (lib == null) return null;
 		var name = className(c);
-		CInterop.LIBS.set(CLASS_SYM + name, lib);
-		CInterop.USER.set(CLASS_SYM + name, true);
+		l.objcDeclare(Symbol(CLASS_SYM + name, lib));
 		return CLASSREF + name;
 	}
 
@@ -209,7 +213,7 @@ class ObjC {
 	// named by its C types so that every message of the same types shares
 	// it; called in a safe region (Cocoa calls back into Haxe from inside
 	// many messages)
-	public static function declare(cf:Null<TClassField>, types:Array<T>, result:Null<T>):String {
+	public static function declare(l:LowerQueries, cf:Null<TClassField>, types:Array<T>, result:Null<T>):String {
 		var where = cf != null ? CInterop.posOf(cf.cfPos) : "";
 		var name = cf != null ? cf.cfName : "init";
 		var args = [CPtr, CPtr, CPtr];
@@ -223,29 +227,37 @@ class ObjC {
 		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('Objective-C method $name: the result has no C type a message can return', where);
 		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in args) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
-		if (!CInterop.SIGS.exists(key)) {
-			CInterop.SIGS.set(key, {args: args, ret: ret});
-			CInterop.BLOCKING.set(key, true);
-		}
+		l.objcDeclare(Func(key, {args: args, ret: ret}));
 		return key;
 	}
 
 	// libobjc's functions the lowering calls, declared once per program as an
 	// extern without @:hxmc.fast would be (the program may declare them so too)
-	public static function runtime(name:String, args:Array<CTy>, ret:CTy):String {
-		if (!CInterop.SIGS.exists(name)) {
-			CInterop.SIGS.set(name, {args: args, ret: ret});
-			CInterop.BLOCKING.set(name, true);
-		}
-		return symbol(name);
+	public static function runtime(l:LowerQueries, name:String, args:Array<CTy>, ret:CTy):String {
+		l.objcDeclare(Func(name, {args: args, ret: ret}));
+		return symbol(l, name);
 	}
 
 	// a symbol of libobjc (a function only its address is taken of)
-	public static function symbol(name:String):String {
-		CInterop.LIBS.set(name, LIB);
-		CInterop.USER.set(name, true);
+	public static function symbol(l:LowerQueries, name:String):String {
+		l.objcDeclare(Symbol(name, LIB));
 		return name;
 	}
+
+	// d, declared for this program (Lower.objcDeclare)
+	public static function define(d:Decl)
+		switch d {
+			case Func(sym, sig):
+				if (!CInterop.SIGS.exists(sym)) {
+					CInterop.SIGS.set(sym, sig);
+					CInterop.BLOCKING.set(sym, true);
+				}
+			case Symbol(sym, lib):
+				CInterop.LIBS.set(sym, lib);
+				CInterop.USER.set(sym, true);
+			case Load(lib):
+				CInterop.LOADS.set(lib, true);
+		}
 
 	// the methods of a peer class c (registered as `name`) that Objective-C
 	// can call: its own instance methods whose types C has, each by the
@@ -380,4 +392,14 @@ class ObjC {
 			case TFun(s): family(selector(cf, s)) == "init";
 			case _: false;
 		}
+}
+
+// what a body declares for the program's link (LowerQueries.objcDeclare)
+enum Decl {
+	// C function sym (a message's, ObjC.declare; libobjc's, runtime), called in a safe region
+	Func(sym:String, sig:CSig);
+	// symbol sym, of library lib (libobjc's; a class object, classRef)
+	Symbol(sym:String, lib:String);
+	// library lib, loaded though nothing is imported of it (a category's: memberLibrary)
+	Load(lib:String);
 }

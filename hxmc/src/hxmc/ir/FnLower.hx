@@ -843,10 +843,10 @@ class FnLower {
 				return ELocal(r);
 			// an id as an instance of such a class (an unchecked cast): its Haxe
 			// object, by the index in its instance variable (nil: null)
-			case [TId | TI64, TRef(RObj(ci))] if (ci.objc != null):
+			case [TId | TI64, TRef(RObj(ci))] if (l.objcPeer(ci) != null):
 				var id = asLocal(x, from);
 				var r = newLocal("peer", to);
-				var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + ci.objc.root)), TI64), EInt(0)), TI64);
+				var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(ci).root)), TI64), EInt(0)), TI64);
 				var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(id), off), EInt(0)), TI32);
 				out.push(SIf(EBin(LEq, ELocal(id), EConv(I2L, EInt(0))), vector(SSet(r, ENull(to))),
 					vector(SSet(r, ECast(to, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))))));
@@ -854,8 +854,8 @@ class FnLower {
 			// an id where a reference goes (Dynamic, an element, a type
 			// parameter): a box that holds a reference to it (nil: null)
 			case [TId, TRef(_)]:
-				var box = temp(TRef(RAny), ECallHost("rt_objc_box", vector(x, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol("objc_retain"))), TI64),
-					ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol("objc_release"))), TI64)), TRef(RAny)));
+				var box = temp(TRef(RAny), ECallHost("rt_objc_box", vector(x, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_retain"))), TI64),
+					ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_release"))), TI64)), TRef(RAny)));
 				return coerce(box, TRef(RAny), to);
 			// a box's id (or a Haxe object's whose class extends an Objective-C one)
 			case [TRef(_), TId]:
@@ -1895,7 +1895,7 @@ class FnLower {
 						var s = newSlot(structTy(sc), true);
 						copyStruct(ELocal(s), EFieldAddr(ci, ci.fieldIndex(cf.cfName), ELocal(o)), sc);
 						coerce(ELocal(s), structTy(sc), tyOf(e));
-					case Var(_) if (l.classInfo(c).weakFields.indexOf(cf.cfName) >= 0):
+					case Var(_) if (l.weakFields(l.classInfo(c)).indexOf(cf.cfName) >= 0):
 						var ci = l.classInfo(c);
 						coerce(objcLoadWeak(EField(ci, ci.fieldIndex(cf.cfName), value(obj))), TId, tyOf(e));
 					case Var(_):
@@ -2450,7 +2450,7 @@ class FnLower {
 				var idx = ci.fieldIndex(cf.cfName);
 				var t = ci.fields[idx].ty;
 				var o = ELocal(asLocal(value(obj), tyOf(obj)));
-				if (ci.weakFields.indexOf(cf.cfName) >= 0) {
+				if (l.weakFields(ci).indexOf(cf.cfName) >= 0) {
 					// (a weak id: stored in its cell, made by the first store; ObjC)
 					var x = pure(compute(() -> objcLoadWeak(EField(ci, idx, o)), TId, TId), TId);
 					var cell = asLocal(EField(ci, idx, o), TI64);
@@ -2458,7 +2458,7 @@ class FnLower {
 						SSet(cell, ECallHost("rt_objc_weak_cell", vector(), TI64)),
 						SSetField(ci, idx, o, ELocal(cell))
 					), vector()));
-					var storeWeak = ObjC.runtime("objc_storeWeak", [CPtr, CPtr], CPtr);
+					var storeWeak = ObjC.runtime(l, "objc_storeWeak", [CPtr, CPtr], CPtr);
 					out.push(SExpr(ECallHost(storeWeak, vector(ELocal(cell), x), TI64)));
 					return coerce(x, TId, et);
 				}
@@ -2697,7 +2697,7 @@ class FnLower {
 			// a message to super (ObjC): in a constructor, an initializer
 			// (`self = [super initX:...]`); elsewhere, objc_msgSendSuper
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c)):
-				if (self == null || self.objc == null)
+				if (self == null || l.objcPeer(self) == null)
 					return fail("super." + cf.cfName + ": a message to super in a class that does not extend an Objective-C class", e);
 				if (ObjC.isInit(cf)) {
 					if (!inCtor) return fail("super." + cf.cfName + "(...): an initializer, called in the constructor only", e);
@@ -3357,7 +3357,7 @@ class FnLower {
 	// reference to its id (nil: none), as an ARC strong variable
 
 	function objcRetain(x:Ex) {
-		var retain = ObjC.runtime("objc_retain", [CPtr], CPtr);
+		var retain = ObjC.runtime(l, "objc_retain", [CPtr], CPtr);
 		out.push(SExpr(ECallHost(retain, vector(x), TI64)));
 	}
 
@@ -3366,7 +3366,7 @@ class FnLower {
 	function objcLoadWeak(cell:Ex):Ex {
 		var c = asLocal(cell, TI64);
 		var r = newLocal("weak", TId);
-		var load = ObjC.runtime("objc_loadWeakRetained", [CPtr], CPtr);
+		var load = ObjC.runtime(l, "objc_loadWeakRetained", [CPtr], CPtr);
 		out.push(SIf(EBin(LEq, ELocal(c), EConv(I2L, EInt(0))), vector(SSet(r, EConv(I2L, EInt(0)))),
 			block(() -> out.push(SSet(r, objcAutorelease(ECallHost(load, vector(ELocal(c)), TId)))))));
 		return ELocal(r);
@@ -3374,28 +3374,28 @@ class FnLower {
 
 	// x (a +1 id) given to the autorelease pool
 	function objcAutorelease(x:Ex):Ex {
-		var autorelease = ObjC.runtime("objc_autorelease", [CPtr], CPtr);
+		var autorelease = ObjC.runtime(l, "objc_autorelease", [CPtr], CPtr);
 		return temp(TId, ECallHost(autorelease, vector(x), TId));
 	}
 
 	function objcRelease(x:Ex) {
-		var release = ObjC.runtime("objc_release", [CPtr], CVoid);
+		var release = ObjC.runtime(l, "objc_release", [CPtr], CVoid);
 		out.push(SExpr(ECallHost(release, vector(x), TVoid)));
 	}
 
 	// a constructor: its own id fields entered in the runtime's table, which
 	// releases what they hold once the object dies (hxmc.rt.Gc.own)
 	function objcOwnFields() {
-		if (self == null || self.idFields.length + self.weakFields.length == 0) return;
-		var release = ObjC.symbol("objc_release");
+		if (self == null || l.idFields(self).length + l.weakFields(self).length == 0) return;
+		var release = ObjC.symbol(l, "objc_release");
 		var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ECast(TRef(RAny), ELocal(thisLocal))), TI64));
-		for (n in self.idFields) {
+		for (n in l.idFields(self)) {
 			var at = EFieldAddr(self, self.fieldIndex(n), ELocal(thisLocal));
 			var off = EConv(L2I, EBin(LSub, at, base));
 			out.push(SExpr(ECallHost("rt_objc_own", vector(ECast(TRef(RAny), ELocal(thisLocal)), off, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TVoid)));
 		}
-		var destroyWeak = ObjC.symbol("objc_destroyWeak");
-		for (n in self.weakFields) {
+		var destroyWeak = ObjC.symbol(l, "objc_destroyWeak");
+		for (n in l.weakFields(self)) {
 			var off = EConv(L2I, EBin(LSub, EFieldAddr(self, self.fieldIndex(n), ELocal(thisLocal)), base));
 			out.push(SExpr(ECallHost("rt_objc_own_weak", vector(ECast(TRef(RAny), ELocal(thisLocal)), off, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(destroyWeak)), TI64)), TVoid)));
 		}
@@ -3415,7 +3415,7 @@ class FnLower {
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), id), TVoid)));
 		// (a Haxe superclass: its registered class, from its cell)
 		var superClass = ObjC.isObjC(sup) ? objcClass(sup)
-			: objcCellClass(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.classInfo(sup).objc.name)), TI64));
+			: objcCellClass(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(sup)).name)), TI64));
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), superClass), TVoid)));
 		var types = [for (a in s.args) a.type];
 		if (xs.length == 1 && ObjC.isSetter(c, cf)) {
@@ -3473,11 +3473,11 @@ class FnLower {
 		var sel = init != null ? ObjC.selector(init, s) : "init";
 		var id = asLocal(objcMsg(alloc, sel, s != null ? [for (a in s.args) a.type] : [], xs.toArray(), idType, init, e, TId, true), TId);
 		out.push(SSetField(self, self.fieldIndex(ObjC.ID_FIELD), ELocal(thisLocal), ELocal(id)));
-		var retainCount = ObjC.symbol("_objc_rootRetainCount");
-		var release = ObjC.symbol("objc_release");
+		var retainCount = ObjC.symbol(l, "_objc_rootRetainCount");
+		var release = ObjC.symbol(l, "objc_release");
 		var index = asLocal(ECallHost("rt_objc_peer_add", vector(ECast(TRef(RAny), ELocal(thisLocal)), ELocal(id),
 			ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(retainCount)), TI64), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TI32), TI32);
-		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + self.objc.root)), TI64), EInt(0)), TI64);
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(EBin(LAdd, ELocal(id), off), EInt(0), ELocal(index)), TVoid)));
 		return ELocal(id);
 	}
@@ -3498,9 +3498,9 @@ class FnLower {
 	// constructor to run is the most derived class's); and in the first such
 	// class's, plain init first when it calls no super.init...
 	function objcConstructor(tf:TFunc) {
-		if (self == null || self.objc == null) return;
+		if (self == null || l.objcPeer(self) == null) return;
 		var cellField = self.fieldIndex(ObjC.CELL_FIELD);
-		var own = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + self.objc.name)), TI64);
+		var own = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(self).name)), TI64);
 		out.push(SIf(EBin(LEq, EField(self, cellField, ELocal(thisLocal)), EConv(I2L, EInt(0))),
 			vector(SSetField(self, cellField, ELocal(thisLocal), own)), vector()));
 		var sup = l.superOf(self);
@@ -3527,19 +3527,19 @@ class FnLower {
 			return ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(s)), TI64);
 		inline function sym(s:String):Ex
 			return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
-		var name = self.objc.name;
-		var allocate = ObjC.runtime("objc_allocateClassPair", [CPtr, CPtr, CI64], CPtr);
-		var addIvar = ObjC.runtime("class_addIvar", [CPtr, CPtr, CI64, CU8, CPtr], CBool);
-		var addMethod = ObjC.runtime("class_addMethod", [CPtr, CPtr, CPtr, CPtr], CBool);
-		var register = ObjC.runtime("objc_registerClassPair", [CPtr], CVoid);
-		var getIvar = ObjC.runtime("class_getInstanceVariable", [CPtr, CPtr], CPtr);
-		var ivarOffset = ObjC.runtime("ivar_getOffset", [CPtr], CI64);
+		var name = l.objcPeer(self).name;
+		var allocate = ObjC.runtime(l, "objc_allocateClassPair", [CPtr, CPtr, CI64], CPtr);
+		var addIvar = ObjC.runtime(l, "class_addIvar", [CPtr, CPtr, CI64, CU8, CPtr], CBool);
+		var addMethod = ObjC.runtime(l, "class_addMethod", [CPtr, CPtr, CPtr, CPtr], CBool);
+		var register = ObjC.runtime(l, "objc_registerClassPair", [CPtr], CVoid);
+		var getIvar = ObjC.runtime(l, "class_getInstanceVariable", [CPtr, CPtr], CPtr);
+		var ivarOffset = ObjC.runtime(l, "ivar_getOffset", [CPtr], CI64);
 		var done = block(() -> {
-			var root = name == self.objc.root;
-			var superClass = root ? objcClass(parent) : objcCellClass(sym(ObjC.CLASS_CELL + l.classInfo(parent).objc.name));
+			var root = name == l.objcPeer(self).root;
+			var superClass = root ? objcClass(parent) : objcCellClass(sym(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(parent)).name));
 			var cls = asLocal(ECallHost(allocate, vector(superClass, cstr(name), EConv(I2L, EInt(0))), TI64), TI64);
 			if (root) out.push(SExpr(ECallHost(addIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR), EConv(I2L, EInt(4)), EInt(2), cstr("i")), TBool)));
-			for (m in self.objc.methods) {
+			for (m in l.objcPeer(self).methods) {
 				var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
 				var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
 				out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(m.sym), cstr(m.types)), TBool)));
@@ -3564,12 +3564,12 @@ class FnLower {
 
 	// the class object: its classref (ObjC.classRef), or looked up by name
 	function objcClass(c:TClass):Ex {
-		var classRef = ObjC.classRef(c);
+		var classRef = ObjC.classRef(l, c);
 		if (classRef != null) {
 			var ref = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(classRef)), TI64));
 			return temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(ref, EInt(0)), TI64));
 		}
-		var getClass = ObjC.runtime("objc_getClass", [CPtr], CPtr);
+		var getClass = ObjC.runtime(l, "objc_getClass", [CPtr], CPtr);
 		return temp(TI64, ECallHost(getClass, vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(ObjC.className(c))), TI64)), TI64));
 	}
 
@@ -3581,16 +3581,16 @@ class FnLower {
 		if (to == null) to = tyOf(e);
 		if (cf != null) {
 			var lib = ObjC.memberLibrary(cf);
-			if (lib != null) CInterop.LOADS.set(lib, true);
+			if (lib != null) l.objcDeclare(ObjC.Decl.Load(lib));
 		}
-		var key = try ObjC.declare(cf, types, ret) catch (err:LowerError) {
+		var key = try ObjC.declare(l, cf, types, ret) catch (err:LowerError) {
 			if (err.where == "") err.where = where(e);
 			throw err;
 		};
 		var t = ret == null ? TVoid : ty(ret);
 		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
 		var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
-		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(send))), TI64));
+		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, send))), TI64));
 		var cx = ECallHost(key, Vector.fromArrayCopy([fn, self, selector].concat(xs)), t);
 		if (t == TId && !keep && ObjC.returnsRetained(sel))
 			cx = objcAutorelease(cx);

@@ -1776,6 +1776,19 @@ class Lower implements LowerQueries {
 		return CInterop.declare(sym, c, cf, s);
 	}
 
+	// Objective-C's declaration d, for this program (as cExtern)
+	public function objcDeclare(d:ObjC.Decl):Void
+		ObjC.define(d);
+
+	public function objcPeer(ci:ClassInfo):Null<ObjCClass>
+		return ci.objc;
+
+	public function idFields(ci:ClassInfo):Array<String>
+		return ci.idFields;
+
+	public function weakFields(ci:ClassInfo):Array<String>
+		return ci.weakFields;
+
 	public function lookupMethod(c:TClass, name:String):Null<{cls:TClass, field:TClassField}> {
 		var k = c;
 		while (k != null) {

@@ -99,7 +99,7 @@ each lane on the kept cases and 400 random programs.
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
 | `MachOCheck` | `macho-check` | IosHello as a plain iOS executable and dylib: `LC_BUILD_VERSION`'s minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files) |
-| `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones |
+| `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run) |
 | `Corpus --mir-run` | `mir-run-check` | the corpus run inside the compiler on the Mir interpreter |
 | `Conformance --target-only` | `mir-macros-check` | the macro cases with Mir macros against the reference (66 of 67: Issue11631 uses Eval's `mbedtls`) |
 | `MirCacheCheck` | `mir-cache-check` | Mir macros' compiled functions kept across builds |

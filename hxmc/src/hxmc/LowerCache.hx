@@ -179,6 +179,7 @@ enum LCall {
 	CDefaults(f:FuncInfo, key:String); // (key: CachedLower.defaultsKey)
 	CFieldDefaults(c:TClass, cf:TClassField, key:String);
 	CExtern(sym:String, c:TClass, cf:TClassField);
+	CObjC(d:hxmc.ir.ObjC.Decl);
 }
 
 // The program's signatures and shapes asked by a body: logged
@@ -672,6 +673,11 @@ class CachedLower extends Lower {
 		return r;
 	}
 
+	override public function objcDeclare(d:hxmc.ir.ObjC.Decl) {
+		super.objcDeclare(d);
+		log(CObjC(d));
+	}
+
 	// the default values of a function's arguments as text (their typed
 	// expressions printed, with the position of one not a constant, and the
 	// names of the arguments), per ArgDefaults (argDefaults gives the same
@@ -808,8 +814,20 @@ class CachedLower extends Lower {
 				// changed @:hxmc.lib changes it)
 				if (!StringTools.startsWith(sym, hxmc.ir.CInterop.INDIRECT) && hxmc.ir.CInterop.cSymbol(n, ncf) != sym) mismatch("the C symbol " + sym + " changed");
 				cExtern(sym, n, ncf);
+			case CObjC(d):
+				objcDeclare(switch d {
+					// (a struct by value: the current build's class)
+					case Func(sym, s): Func(sym, {args: s.args.map(cty), ret: cty(s.ret)});
+					case _: d;
+				});
 		}
 	}
+
+	function cty(t:hxmc.ir.CInterop.CTy):hxmc.ir.CInterop.CTy
+		return switch t {
+			case CStruct(c): CStruct(tc(c));
+			case _: t;
+		}
 
 	// ---- the current build's objects for those a body recorded by another build calls with
 
@@ -906,11 +924,25 @@ class CachedLower extends Lower {
 		}
 		if (!bind(o, n)) return;
 		if (o.name != n.name || o.isInterface != n.isInterface || o.fields.length != n.fields.length) mismatch("class " + o.name + " changed");
+		if (!sameObjC(o, n)) mismatch("class " + o.name + " changed");
 		bindClass(o.sup, n.sup);
 		for (i in 0...o.fields.length) {
 			if (o.fields[i].name != n.fields[i].name) mismatch("class " + o.name + " changed");
 			bindTy(o.fields[i].ty, n.fields[i].ty);
 		}
+	}
+
+	// (Objective-C: a class's registration and its id fields, LowerQueries.objcPeer, idFields and weakFields)
+	static function sameObjC(o:ClassInfo, n:ClassInfo):Bool {
+		if (o.idFields.join(",") != n.idFields.join(",")) return false;
+		if (o.weakFields.join(",") != n.weakFields.join(",")) return false;
+		if (o.objc == null || n.objc == null) return o.objc == n.objc;
+		if (o.objc.name != n.objc.name || o.objc.root != n.objc.root || o.objc.methods.length != n.objc.methods.length) return false;
+		for (i in 0...o.objc.methods.length) {
+			var a = o.objc.methods[i], b = n.objc.methods[i];
+			if (a.sel != b.sel || a.sym != b.sym || a.types != b.types) return false;
+		}
+		return true;
 	}
 
 	function bindEnum(o:Null<EnumInfo>, n:Null<EnumInfo>) {
