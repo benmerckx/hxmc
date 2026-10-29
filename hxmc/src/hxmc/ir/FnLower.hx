@@ -1895,6 +1895,9 @@ class FnLower {
 						var s = newSlot(structTy(sc), true);
 						copyStruct(ELocal(s), EFieldAddr(ci, ci.fieldIndex(cf.cfName), ELocal(o)), sc);
 						coerce(ELocal(s), structTy(sc), tyOf(e));
+					case Var(_) if (l.classInfo(c).weakFields.indexOf(cf.cfName) >= 0):
+						var ci = l.classInfo(c);
+						coerce(objcLoadWeak(EField(ci, ci.fieldIndex(cf.cfName), value(obj))), TId, tyOf(e));
 					case Var(_):
 						var ci = l.classInfo(c);
 						var idx = ci.fieldIndex(cf.cfName);
@@ -2447,6 +2450,18 @@ class FnLower {
 				var idx = ci.fieldIndex(cf.cfName);
 				var t = ci.fields[idx].ty;
 				var o = ELocal(asLocal(value(obj), tyOf(obj)));
+				if (ci.weakFields.indexOf(cf.cfName) >= 0) {
+					// (a weak id: stored in its cell, made by the first store; ObjC)
+					var x = pure(compute(() -> objcLoadWeak(EField(ci, idx, o)), TId, TId), TId);
+					var cell = asLocal(EField(ci, idx, o), TI64);
+					out.push(SIf(EBin(LEq, ELocal(cell), EConv(I2L, EInt(0))), vector(
+						SSet(cell, ECallHost("rt_objc_weak_cell", vector(), TI64)),
+						SSetField(ci, idx, o, ELocal(cell))
+					), vector()));
+					var storeWeak = ObjC.runtime("objc_storeWeak", [CPtr, CPtr], CPtr);
+					out.push(SExpr(ECallHost(storeWeak, vector(ELocal(cell), x), TI64)));
+					return coerce(x, TId, et);
+				}
 				var x = pure(compute(() -> EField(ci, idx, o), t, t), t);
 				if (t == TId) {
 					// (an id: the field holds a reference, ObjC)
@@ -3346,6 +3361,17 @@ class FnLower {
 		out.push(SExpr(ECallHost(retain, vector(x), TI64)));
 	}
 
+	// the id a weak field's cell (an address; 0: never stored) holds, nil once
+	// the object is gone (borrowed: autoreleased, as every value)
+	function objcLoadWeak(cell:Ex):Ex {
+		var c = asLocal(cell, TI64);
+		var r = newLocal("weak", TId);
+		var load = ObjC.runtime("objc_loadWeakRetained", [CPtr], CPtr);
+		out.push(SIf(EBin(LEq, ELocal(c), EConv(I2L, EInt(0))), vector(SSet(r, EConv(I2L, EInt(0)))),
+			block(() -> out.push(SSet(r, objcAutorelease(ECallHost(load, vector(ELocal(c)), TId)))))));
+		return ELocal(r);
+	}
+
 	// x (a +1 id) given to the autorelease pool
 	function objcAutorelease(x:Ex):Ex {
 		var autorelease = ObjC.runtime("objc_autorelease", [CPtr], CPtr);
@@ -3360,13 +3386,18 @@ class FnLower {
 	// a constructor: its own id fields entered in the runtime's table, which
 	// releases what they hold once the object dies (hxmc.rt.Gc.own)
 	function objcOwnFields() {
-		if (self == null || self.idFields.length == 0) return;
+		if (self == null || self.idFields.length + self.weakFields.length == 0) return;
 		var release = ObjC.symbol("objc_release");
 		var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ECast(TRef(RAny), ELocal(thisLocal))), TI64));
 		for (n in self.idFields) {
 			var at = EFieldAddr(self, self.fieldIndex(n), ELocal(thisLocal));
 			var off = EConv(L2I, EBin(LSub, at, base));
 			out.push(SExpr(ECallHost("rt_objc_own", vector(ECast(TRef(RAny), ELocal(thisLocal)), off, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TVoid)));
+		}
+		var destroyWeak = ObjC.symbol("objc_destroyWeak");
+		for (n in self.weakFields) {
+			var off = EConv(L2I, EBin(LSub, EFieldAddr(self, self.fieldIndex(n), ELocal(thisLocal)), base));
+			out.push(SExpr(ECallHost("rt_objc_own_weak", vector(ECast(TRef(RAny), ELocal(thisLocal)), off, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(destroyWeak)), TI64)), TVoid)));
 		}
 	}
 

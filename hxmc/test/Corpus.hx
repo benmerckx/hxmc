@@ -53,7 +53,7 @@ class Corpus {
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of macOS only (Objective-C: libobjc and the system's frameworks)
-	public static final MACOS_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCInit", "ObjCProperties", "ObjCSuper", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCHierarchy"]) n => "Objective-C: macOS only"];
+	public static final MACOS_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCInit", "ObjCProperties", "ObjCSuper", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCHierarchy", "ObjCWeak"]) n => "Objective-C: macOS only"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)

@@ -349,6 +349,33 @@ class Gc {
 	@:hxmc.export("rt_objc_unbox") static function idUnbox(o:Dynamic):Ptr
 		return o == null ? Ptr.nil() : Mem.getPtr(Mem.addr(o), 0);
 
+	// a weak id field (@:hxmc.weak): it holds a cell outside the heap, the
+	// variable objc_storeWeak knows (a field moves with its object), which
+	// the object's death destroys (objc_destroyWeak) and frees; its entry's
+	// offset is -(offset + 1)
+	static var weakDestroy:Ptr;
+
+	// a new weak variable for such a field: nil
+	@:hxmc.export("rt_objc_weak_cell") static function weakCell():Ptr {
+		var cell = LibC.malloc(8);
+		Mem.setPtr(cell, 0, Ptr.nil());
+		return cell;
+	}
+
+	@:hxmc.export("rt_objc_own_weak") static function ownWeak(o:Dynamic, offset:Int, destroyWeak:Ptr):Void {
+		var p = Mem.addr(o);
+		lockLeaf(peersLock);
+		weakDestroy = destroyWeak;
+		if (nowned == ownedCap) {
+			ownedCap = ownedCap == 0 ? 64 : ownedCap * 2;
+			owned = LibC.realloc(owned, (ownedCap : I64) * 16);
+		}
+		Mem.setPtr(owned, 16 * nowned, p);
+		Mem.setI64(owned, 16 * nowned + 8, -((offset : I64) + 1));
+		nowned++;
+		unlockLeaf(peersLock);
+	}
+
 	@:hxmc.unsafe static function sweepOwned(lo:Ptr, hi:Ptr) {
 		var live = 0, ndead = 0;
 		for (i in 0...nowned) {
@@ -357,13 +384,16 @@ class Gc {
 			var off = Mem.getI64(e, 8);
 			if (inYoung(o) || (!o.ult(lo) && o.ult(hi))) {
 				if (!isFwd(hdrW0(o))) {
-					var id = Mem.getPtr(o.addL(off), 0);
-					if (!id.isNull()) {
+					var weak = off < 0;
+					var v = Mem.getPtr(o.addL(weak ? -off - 1 : off), 0);
+					if (!v.isNull()) {
 						if (ndead == deadOwnedCap) {
 							deadOwnedCap = deadOwnedCap == 0 ? 64 : deadOwnedCap * 2;
-							deadOwned = LibC.realloc(deadOwned, (deadOwnedCap : I64) * 8);
+							deadOwned = LibC.realloc(deadOwned, (deadOwnedCap : I64) * 16);
 						}
-						Mem.setPtr(deadOwned, 8 * ndead++, id);
+						Mem.setPtr(deadOwned, 16 * ndead, v);
+						Mem.setI64(deadOwned, 16 * ndead + 8, weak ? 1 : 0);
+						ndead++;
 					}
 					continue;
 				}
@@ -374,8 +404,13 @@ class Gc {
 			Mem.setI64(d, 8, off);
 		}
 		nowned = live;
-		for (k in 0...ndead)
-			Ind.call1(peerRelease, Mem.getPtr(deadOwned, 8 * k));
+		for (k in 0...ndead) {
+			var v = Mem.getPtr(deadOwned, 16 * k);
+			if (Mem.getI64(deadOwned, 16 * k + 8) == 0) Ind.call1(peerRelease, v) else {
+				Ind.call1(weakDestroy, v);
+				LibC.free(v);
+			}
+		}
 	}
 
 	// ---- the copy: depth-first, an object's descendants are copied right

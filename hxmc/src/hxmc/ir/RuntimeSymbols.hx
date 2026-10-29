@@ -89,6 +89,8 @@ class RuntimeSymbols {
 		{sym: "rt_objc_peer_add", kind: FUNC, families: NATIVE, by: "FnLower.objcSuperNew: a Haxe class's Objective-C object made"},
 		{sym: "rt_objc_peer_get", kind: FUNC, families: NATIVE, by: "ObjC.imp: a method's entry finds its Haxe object"},
 		{sym: "rt_objc_own", kind: FUNC, families: NATIVE, by: "FnLower.run: a constructor registers its object's id fields"},
+		{sym: "rt_objc_own_weak", kind: FUNC, families: NATIVE, by: "FnLower.objcOwnFields: a constructor registers its object's weak id fields"},
+		{sym: "rt_objc_weak_cell", kind: FUNC, families: NATIVE, by: "FnLower.assign: a weak id field's first store"},
 		{sym: "rt_objc_box", kind: FUNC, families: NATIVE, by: "FnLower.coerce: an id where a reference goes"},
 		{sym: "rt_objc_unbox", kind: FUNC, families: NATIVE, by: "FnLower.coerce: a boxed id"},
 		{sym: "rt_objc_uncaught", kind: FUNC, families: NATIVE, by: "ObjC.imps: an exception leaving a Haxe method Objective-C called"},

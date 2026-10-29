@@ -618,6 +618,10 @@ variable leads back to it.
   reported as an uncaught one and ends the program: unwinding through
   Objective-C's frames would skip their cleanup. An Objective-C exception
   (`NSException`) ends it too.
+- **Hierarchies**: a Haxe class extending such a class is an Objective-C
+  class of its own, registered after its superclass's; the class
+  allocated is the instance's own, whichever constructor calls the
+  initializer.
 - **Passing** an instance where an `id` goes passes its `id`; `cast` turns
   an `id` of such a class back into its Haxe object (unchecked).
 
@@ -638,18 +642,24 @@ counted. Where references cross:
   result, as `new`, `copy` and `mutableCopy` results, comes retained and
   is autoreleased at once, so every value is borrowed alike.
 - **`==`** on `id`s compares the objects, without boxes.
-- **Pools**: code outside the run loop (`main` before `run`) autoreleases
-  into the thread's pool, which nothing drains.
+- **Pools**: the run loop drains one per event;
+  `hxmc.objc.AutoreleasePool.run(() -> ...)` drains one around a loop of
+  many messages or on a thread hxmc started (also when `f` throws). Code
+  outside any (`main` before `run`) autoreleases into the thread's pool,
+  which nothing drains.
+- **Weak fields**: `@:hxmc.weak var owner:Null<NSView>` holds no reference;
+  reading it gives nil once the object is gone. Its variable is a cell
+  outside the heap (`objc_storeWeak` keeps the variable's address, and a
+  field moves with its object), destroyed with the object.
 - **Cycles** through both heaps (a Haxe object's field holds a view, the
   view holds a Haxe subclass's instance whose field holds the Haxe object)
   are not collected: neither side sees them. Cocoa's delegates are weak,
-  which avoids the common one.
+  which avoids the common one; `@:hxmc.weak` breaks others.
 
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: blocks, Haxe classes extending Haxe classes that extend
-Objective-C ones, overriding `dealloc`, `id`s captured by
+Not yet: blocks, overriding `dealloc`, `id`s captured by
 closures (borrowed), x86-64's `objc_msgSend_stret` and `_fpret`, protocols,
 declarations generated from the SDK's headers.
 

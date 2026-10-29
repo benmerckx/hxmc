@@ -67,15 +67,10 @@ answer them.
 
 ## Open, in order
 
-1. **Corpus cases** for what the scratch tests checked (messages, structs
-   by value, properties, constructors and overloads, classrefs and
-   selrefs, Haxe subclasses called by AppKit, toggle references, ownership
-   in fields, statics, boxes and through collections), macOS only; `make
-   check`, `fixpoint` and `crosshost` before any of it lands.
-2. **`LowerQueries`**: `ClassInfo.objc` and `idFields` are computed by
+1. **`LowerQueries`**: `ClassInfo.objc` and `idFields` are computed by
    `Lower` and read by `FnLower` outside the logged queries, so the
    compilation server could replay a body against changed declarations.
-3. **Declarations from the SDK's headers.** clang's AST
+2. **Declarations from the SDK's headers.** clang's AST
    (`clang -fsyntax-only -Xclang -ast-dump=json`, 4.5 s and 400 MB for
    AppKit with what it imports) read by a tool in Haxe, emitting
    declarations in the syntax above: categories merged per class,
@@ -92,25 +87,19 @@ answer them.
    generics. A class method and an instance method of one name are fine
    (Haxe allows both on an extern). Only declarations, never the headers'
    comments (Apple's SDK terms); clang is needed when generating only.
-4. **Blocks** from closures: a block whose invoke function finds the
+3. **Blocks** from closures: a block whose invoke function finds the
    closure, copy and dispose helpers that keep it alive while Objective-C
    holds the block, and `id`s a closure captures holding references.
-5. **Release on death for every object with `TId` slots**: today a
+4. **Release on death for every object with `TId` slots**: today a
    constructor registers its class's own `id` fields (`rt_objc_own`);
    closures and anonymous objects need the same. A layout flag (Facts)
    and a list of such objects walked after each collection would replace
    the registration.
-6. **Haxe classes extending Haxe classes** that extend Objective-C ones
-   (view controllers): the class to allocate is the instance's own,
-   registered with its superclass's; `super.f()` then goes to the Haxe
-   superclass's method or, past it, `objc_msgSendSuper`.
-7. **Pools**: one around `main` and the threads hxmc starts, and an
-   `autoreleasepool(() -> ...)` for long loops.
-8. **x86-64**: `objc_msgSend_stret` for struct results over 16 bytes and
+5. **x86-64**: `objc_msgSend_stret` for struct results over 16 bytes and
    `objc_msgSend_fpret` (targets.md lists them for Metal and the x86-64 iOS
    simulator).
-9. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); registration from two
-   threads at once; `hx_dyn_eq` on two boxes of one `id`; reading retain
+6. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); registration from two
+   threads at once; a pool around `main` (nothing gained: it drains at exit); `hx_dyn_eq` on two boxes of one `id`; reading retain
    counts while another thread is stopped inside libobjc holding its
    lock.
 

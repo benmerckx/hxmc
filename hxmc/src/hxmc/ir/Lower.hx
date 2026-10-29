@@ -957,7 +957,7 @@ class Lower implements LowerQueries {
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
-					if (ObjC.isIdType(f.cfType)) ci.idFields.push(f.cfName);
+					if (ObjC.isIdType(f.cfType)) (hasMeta(":hxmc.weak", f.cfMeta) ? ci.weakFields : ci.idFields).push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
@@ -974,6 +974,9 @@ class Lower implements LowerQueries {
 		// field types may refer back to this class
 		outsideUnfolding(() -> for (o in own)
 			o.slot.ty = ty(o.f.cfType));
+		// (a weak id field: the address of its cell, ObjC)
+		for (o in own)
+			if (ci.weakFields.indexOf(o.f.cfName) >= 0) o.slot.ty = TI64;
 		// (a class extending an Objective-C one, or such a class: its Objective-C
 		// class, registered by a function of its own when first needed)
 		if (objc || (sup.objc != null)) {

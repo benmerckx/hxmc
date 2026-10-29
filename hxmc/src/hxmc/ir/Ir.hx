@@ -85,6 +85,8 @@ class ClassInfo {
 	public var objc:Null<{name:String, root:String, methods:Array<{sel:String, sym:String, types:String}>, register:FuncInfo}> = null;
 	// its own fields holding ids (ObjC: their stores retain, its death releases them)
 	public var idFields:Array<String> = [];
+	// its own fields holding weak ids (@:hxmc.weak): a cell each, outside the heap
+	public var weakFields:Array<String> = [];
 
 	public function new(name, ident, sup) {
 		this.name = name;
