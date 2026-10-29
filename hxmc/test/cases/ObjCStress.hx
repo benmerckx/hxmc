@@ -59,11 +59,20 @@ class Peer extends NSObject {
 
 	public function applyTwice(f:(x:Int64) -> Int64):Int64
 		return f(f(seed));
+
+	// a block given a block, and a block returning a block
+	public function withOffset(f:(add:(x:Int64) -> Int64) -> Int64):Int64
+		return f(x -> x + seed);
+
+	public function scaler(k:Int64):(x:Int64) -> ((y:Int64) -> Int64)
+		return x -> y -> (x + y) * k + seed;
 }
 
 @:hxmc.objc extern class PeerMessages extends NSObject {
 	function compute(x:Int64):Int64;
 	function applyTwice(f:(x:Int64) -> Int64):Int64;
+	function withOffset(f:(add:(x:Int64) -> Int64) -> Int64):Int64;
+	function scaler(k:Int64):(x:Int64) -> ((y:Int64) -> Int64);
 }
 
 class ObjCStress {
@@ -121,6 +130,12 @@ class ObjCStress {
 			var mul = 3;
 			var r = pm.applyTwice(x -> x * mul);
 			if (r != (i : Int64) * 9) fail('applyTwice $i: $r');
+			// blocks of blocks, both ways
+			var w = pm.withOffset(add -> add(mul) + add(1));
+			if (w != (2 * i + 4 : Int64)) fail('withOffset $i: $w');
+			var sc = pm.scaler(mul)(2);
+			hxmc.rt.Gc.collect(false);
+			if (sc(i) != ((i + 2) * 3 + i : Int64)) fail('scaler $i');
 			// strings, unit for unit
 			var s = "iteration " + i + " € " + String.fromCharCode(0x4e00 + i % 100);
 			var back = Strings.ofNSString(Strings.toNSString(s));

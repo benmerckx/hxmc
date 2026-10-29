@@ -343,7 +343,7 @@ class ObjC {
 					continue;
 				}
 				var fn = local("fn", fi.args[i - 1].ty);
-				body.push(blockFunction(l, ELocal(w.args[i]), b, local("same", TRef(RAny)), local("box", TRef(RAny)), fn));
+				body.push(blockFunction(l, ELocal(w.args[i]), b, local("heap", TId), local("same", TRef(RAny)), local("box", TRef(RAny)), fn));
 				xs.push(ELocal(fn));
 			}
 			// the call, in a try: an exception leaving it would unwind through
@@ -419,6 +419,7 @@ class ObjC {
 	public static inline var GLOBAL_BLOCK = "hxmc$objcgblk$";
 	public static inline var GLOBAL_DESC = "hxmc$objcgdesc$";
 	public static inline var BLOCK_IS_GLOBAL = 1 << 28;
+	static inline var BLOCK_NEEDS_FREE = 1 << 24;
 	// (the global block's address, which MirBuild makes: the closure, the
 	// invoke's address, the types as a C string, the flags)
 	public static inline var GLOBAL_BLOCK_HOST = "hxmc_objc_global_block";
@@ -443,7 +444,9 @@ class ObjC {
 
 	// a block of function type ft: the closures' signature, the C types of
 	// its invoke's parameters (after the block) and result, its type encoding
-	// (the descriptor's signature: @? the block itself)
+	// (the descriptor's signature: @? the block itself), and the blocks of its
+	// parameters and result of function type (a pointer in C: a block taking
+	// or returning a block converts them as a method does)
 	public static function blockSig(l:LowerQueries, ft:T, where:String):BlockSig {
 		var s = switch TFunctions.follow(ft) {
 			case TFun(s): s;
@@ -455,36 +458,50 @@ class ObjC {
 		};
 		function ok(ct:CTy)
 			return CInterop.isScalar(ct) || ct.match(CStruct(_));
-		var args = [for (a in s.args) CInterop.ctype(a.type)];
+		var blocks = [for (a in s.args) isBlockType(a.type) ? blockSig(l, a.type, where) : null];
+		var args = [for (i in 0...s.args.length) blocks[i] != null ? CPtr : CInterop.ctype(s.args[i].type)];
 		for (i in 0...args.length)
 			if (!ok(args[i])) throw new LowerError('a block\'s parameter ${i + 1} has no C type a block can take', where);
-		var ret = CInterop.ctype(s.ret);
+		var retBlock = isBlockType(s.ret) ? blockSig(l, s.ret, where) : null;
+		var ret = retBlock != null ? CPtr : CInterop.ctype(s.ret);
 		if (ret != CVoid && !ok(ret)) throw new LowerError("a block's result has no C type a block can return", where);
-		return {sig: sig, args: args, ret: ret, types: encoding(ret) + "@?" + [for (a in args) encoding(a)].join("")};
+		return {
+			sig: sig,
+			args: args,
+			ret: ret,
+			types: (retBlock != null ? "@?" : encoding(ret)) + "@?" + [for (i in 0...args.length) blocks[i] != null ? "@?" : encoding(args[i])].join(""),
+			blocks: blocks,
+			retBlock: retBlock
+		};
 	}
 
 	// the key of a block's invoke (and of its caller, Lower.blockCaller): the
-	// closures' signature and the C types
-	public static function blockKey(sig:SigInfo, args:Array<CTy>, ret:CTy):String
-		return sig.key + "|" + [for (a in args) CInterop.shape(a)].join(",") + ">" + CInterop.shape(ret);
+	// closures' signature and the C types, a block's its key
+	public static function blockKey(b:BlockSig):String {
+		function shape(ct:CTy, nb:Null<BlockSig>)
+			return nb != null ? "B(" + blockKey(nb) + ")" : CInterop.shape(ct);
+		return b.sig.key + "|" + [for (i in 0...b.args.length) shape(b.args[i], b.blocks[i])].join(",") + ">" + shape(b.ret, b.retBlock);
+	}
 
-	// the invoke of the blocks of closures of signature sig (Lower.blockInvoke,
+	// the invoke of the blocks of closures of signature b.sig (Lower.blockInvoke,
 	// once per signature): sym, a C function (block, arguments...) that
 	// attaches the thread when the runtime did not start it (GCD's workers),
 	// leaves the safe region the caller is in, calls sym__call, and enters
 	// it again; sym__call finds the closure (rt_objc_block_get: the index in
-	// the block) and calls it, in a try as a method's entry (imps). Two
-	// functions: the first has no frame, which a thread not yet attached
-	// could not push
-	public static function invoke(l:Lower, sym:String, sig:SigInfo, args:Array<CTy>, ret:CTy) {
+	// the block) and calls it, in a try as a method's entry (imps), its
+	// arguments that are blocks made functions and a function result a
+	// block. Two functions: the first has no frame, which a thread not yet
+	// attached could not push
+	public static function invoke(l:Lower, sym:String, b:BlockSig) {
+		var sig = b.sig;
 		var sret = sig.ret.match(TStruct(_));
 		var fi = new FuncInfo(sym + "__call", "_closures");
 		fi.display = "(a block's invoke)";
 		var block = new Local(0, "block", TI64);
 		fi.args = [block];
 		for (i in 0...sig.args.length)
-			fi.args.push(new Local(i + 1, "a" + i, sig.args[i]));
-		fi.ret = sig.ret;
+			fi.args.push(new Local(i + 1, "a" + i, b.blocks[i] != null ? TId : sig.args[i]));
+		fi.ret = b.retBlock != null ? TId : sig.ret;
 		var sretLocal = null;
 		if (sret) {
 			sretLocal = new Local(fi.args.length, "sret", TI64);
@@ -495,19 +512,42 @@ class ObjC {
 		var clos = new Local(n, "clos", TRef(RClos(sig)));
 		var exn = new Local(n + 1, "e", TRef(RAny));
 		fi.locals = [clos, exn];
-		var res = sig.ret == TVoid || sret ? null : new Local(n + 2, "r", sig.ret);
-		if (res != null) fi.locals.push(res);
-		var xs = [for (i in 1...n) (ELocal(fi.args[i]) : Ex)];
+		var next = n + 2;
+		function local(name:String, t:Ty) {
+			var lo = new Local(next++, name, t);
+			fi.locals.push(lo);
+			return lo;
+		}
+		var res = sig.ret == TVoid || sret ? null : local("r", sig.ret);
+		var body:Array<Stmt> = [SSet(clos, ECast(TRef(RClos(sig)), ECallHost("rt_objc_block_get", vector(ELocal(block)), TRef(RAny))))];
+		var xs:Array<Ex> = [];
+		for (i in 0...sig.args.length) {
+			var nb = b.blocks[i];
+			if (nb == null) {
+				xs.push(ELocal(fi.args[i + 1]));
+				continue;
+			}
+			var fn = local("fn", sig.args[i]);
+			body.push(blockFunction(l, ELocal(fi.args[i + 1]), nb, local("heap", TId), local("same", TRef(RAny)), local("box", TRef(RAny)), fn));
+			xs.push(ELocal(fn));
+		}
 		var call = ECallClos(sig, ELocal(clos), Vector.fromArrayCopy(xs));
-		fi.body = vector(SSet(clos, ECast(TRef(RClos(sig)), ECallHost("rt_objc_block_get", vector(ELocal(block)), TRef(RAny)))),
-			STry(vector(res == null ? SExpr(call) : SSet(res, call)), vector({
-				test: null,
-				l: exn,
-				body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
-			})), SReturn(sret ? ELocal(sretLocal) : res == null ? null : ELocal(res)));
+		body.push(STry(vector(res == null ? SExpr(call) : SSet(res, call)), vector({
+			test: null,
+			l: exn,
+			body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
+		})));
+		if (b.retBlock != null) {
+			// (a function result: a block)
+			var id = local("rb", TId);
+			body.push(SIf(EBin(RefEq, ELocal(res), ENull(res.ty)), vector(SSet(id, EConv(I2L, EInt(0)))), vector(SSet(id, blockNew(l, ELocal(res), b.retBlock)))));
+			res = id;
+		}
+		body.push(SReturn(sret ? ELocal(sretLocal) : res == null ? null : ELocal(res)));
+		fi.body = Vector.fromArrayCopy(body);
 		fi.hasTry = true;
 		l.prog.funcs.push(fi);
-		var w = entry(sym, sym, "_closures", fi, sig.args.length + 1, {args: [CPtr].concat(args), ret: ret});
+		var w = entry(sym, sym, "_closures", fi, sig.args.length + 1, {args: [CPtr].concat(b.args), ret: b.ret});
 		w.display = fi.display;
 		l.prog.funcs.push(w);
 	}
@@ -560,26 +600,33 @@ class ObjC {
 		// (a closure capturing nothing, an object in the data with static
 		// closures, which a Mir host has not: a global block, GLOBAL_BLOCK)
 		if (Lower.mirHost == 0 && c.match(ENewClos(_, [])))
-			return ECallHost(GLOBAL_BLOCK_HOST, vector(c, sym(l.blockInvoke(b.sig, b.args, b.ret)), ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(b.types)), TI64),
+			return ECallHost(GLOBAL_BLOCK_HOST, vector(c, sym(l.blockInvoke(b)), ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(b.types)), TI64),
 				EInt(flags)), TId);
-		return ECallHost("rt_objc_block_new", vector(ECast(TRef(RAny), c), sym(l.blockInvoke(b.sig, b.args, b.ret)),
+		return ECallHost("rt_objc_block_new", vector(ECast(TRef(RAny), c), sym(l.blockInvoke(b)),
 			sym(BLOCK_DESC + haxe.io.Bytes.ofString(b.types).toHex()), ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(b.types)), TI64), EInt(flags),
 			sym("_NSConcreteStackBlock"), sym("_Block_copy"), sym(symbol(l, "objc_autorelease"))), TId);
 	}
 
-	// block id (a local) as a closure of b's signature, into r: null for nil,
-	// the function a block made of one is (same: rt_objc_block_fn, when its
+	// block id as a closure of b's signature, into r: null for nil, the
+	// function a block made of one is (same: rt_objc_block_fn, when its
 	// invoke is this signature's), else a closure calling it (Lower.blockCaller)
 	// holding its box (box: a reference to the block, released once the
-	// closure dies)
-	public static function blockFunction(l:LowerQueries, id:Ex, b:BlockSig, same:Local, box:Local, r:Local):Stmt {
+	// closure dies). A block on its caller's stack (neither a heap block nor
+	// a global one: an argument, which the callee copies to keep) is copied
+	// first (heap: objc_retainBlock's copy, autoreleased)
+	public static function blockFunction(l:LowerQueries, id:Ex, b:BlockSig, heap:Local, same:Local, box:Local, r:Local):Stmt {
 		var fn = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(symbol(l, s))), TI64);
+		var flags = ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(heap), EInt(8)), TI32);
+		var copy = ECallHost(runtime(l, "objc_retainBlock", [CPtr], CPtr), vector(ELocal(heap)), TId);
 		return SIf(EBin(LEq, id, EConv(I2L, EInt(0))), vector(SSet(r, ENull(r.ty))), vector(
-			SSet(same, ECallHost("rt_objc_block_fn", vector(id, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(l.blockInvoke(b.sig, b.args, b.ret))), TI64)), TRef(RAny))),
+			SSet(heap, id),
+			SIf(EBin(Eq, EBin(And, flags, EInt(BLOCK_NEEDS_FREE | BLOCK_IS_GLOBAL)), EInt(0)),
+				vector(SSet(heap, ECallHost(runtime(l, "objc_autorelease", [CPtr], CPtr), vector(copy), TId))), vector()),
+			SSet(same, ECallHost("rt_objc_block_fn", vector(ELocal(heap), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(l.blockInvoke(b))), TI64)), TRef(RAny))),
 			SIf(EBin(RefEq, ELocal(same), ENull(TRef(RAny))), vector(
-				SSet(box, ECallHost("rt_objc_box", vector(id, fn("objc_retain"), fn("objc_release"), fn("object_getClass"), fn("class_getInstanceVariable"),
+				SSet(box, ECallHost("rt_objc_box", vector(ELocal(heap), fn("objc_retain"), fn("objc_release"), fn("object_getClass"), fn("class_getInstanceVariable"),
 					fn("ivar_getOffset")), TRef(RAny))),
-				SSet(r, ENewClos(l.blockCaller(b.sig, b.args, b.ret), vector(ELocal(box))))
+				SSet(r, ENewClos(l.blockCaller(b), vector(ELocal(box))))
 			), vector(SSet(r, ECast(r.ty, ELocal(same)))))
 		));
 	}
@@ -628,7 +675,15 @@ class ObjC {
 }
 
 // a block's types (ObjC.blockSig)
-typedef BlockSig = {sig:SigInfo, args:Array<CTy>, ret:CTy, types:String};
+// (blocks, retBlock: of the parameters and result of function type, else null)
+typedef BlockSig = {
+	sig:SigInfo,
+	args:Array<CTy>,
+	ret:CTy,
+	types:String,
+	blocks:Array<Null<BlockSig>>,
+	retBlock:Null<BlockSig>
+};
 
 // what a body declares for the program's link (LowerQueries.objcDeclare)
 enum Decl {

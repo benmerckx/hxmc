@@ -39,6 +39,17 @@ import hxmc.unsafe.*;
 	function runUntilDate(date:NSDate):Void;
 }
 
+@:hxmc.framework("Foundation") @:hxmc.objc extern class NSURL extends NSObject {
+	static function fileURLWithPath(path:NSObject):NSURL;
+}
+
+@:hxmc.framework("Foundation") @:hxmc.objc extern class NSFileCoordinator extends NSObject {
+	static function alloc():NSFileCoordinator;
+	function initWithFilePresenter(presenter:NSObject):NSFileCoordinator;
+	@:selector("prepareForReadingItemsAtURLs:options:writingItemsAtURLs:options:error:byAccessor:") function prepareForReadingItemsAtURLs(readingURLs:NSArray, readingOptions:Int64, writingItemsAtURLs:NSArray, writingOptions:Int64, error:Ptr,
+		byAccessor:(completionHandler:() -> Void) -> Void):Void;
+}
+
 @:hxmc.framework("Foundation") @:hxmc.objc extern class NSDate extends NSObject {
 	static function dateWithTimeIntervalSinceNow(s:Float):NSDate;
 }
@@ -73,11 +84,20 @@ class Calls extends NSObject {
 
 	public function adder(n:Int64):(x:Int64) -> Int64
 		return x -> x + n;
+
+	// blocks taking and returning blocks
+	public function twice(f:(g:(x:Int64) -> Int64) -> Int64):Int64
+		return f(x -> x * 2) + f(x -> x * 3);
+
+	public function curried(n:Int64):(x:Int64) -> ((y:Int64) -> Int64)
+		return x -> y -> n * 100 + x * 10 + y;
 }
 
 @:hxmc.objc extern class CallsMessages extends NSObject {
 	function callTwice(f:(x:Int64) -> Int64):Int64;
 	function adder(n:Int64):(x:Int64) -> Int64;
+	function twice(f:(g:(x:Int64) -> Int64) -> Int64):Int64;
+	function curried(n:Int64):(x:Int64) -> ((y:Int64) -> Int64);
 }
 
 class Holder {
@@ -199,6 +219,36 @@ class ObjCBlocks {
 		Dispatch.dispatch_async(Dispatch.dispatch_get_global_queue(0, 0), signalWorker);
 		Dispatch.dispatch_semaphore_wait(sema, -1);
 		trace("global calls: " + visited);
+
+		// blocks taking and returning blocks: through Objective-C's methods,
+		// and through the invokes (a block cast to another signature of the
+		// same C types), both ways at each level
+		trace("block of a block: " + calls.twice(g -> g(5) + 1));
+		var c = calls.curried(1);
+		var c2 = c(2);
+		hxmc.rt.Gc.collect(true);
+		trace("curried: " + c2(3) + " " + c(4)(5));
+		var outer:Block<(k:(p:Ptr) -> Int64) -> ((p:Ptr) -> Int64)> = k -> p -> k(p) * 2 + 1;
+		var asObj:(k:(o:NSObject) -> Int64) -> ((o:NSObject) -> Int64) = (cast outer : Block<(k:(o:NSObject) -> Int64) -> ((o:NSObject) -> Int64)>);
+		var inner = asObj(o -> (cast o : Ptr).toI64() + 7);
+		hxmc.rt.Gc.collect(true);
+		trace("through the invokes: " + inner(cast Ptr.ofI64(10)) + " " + (asObj(null) != null));
+
+		// Foundation's: a completion handler given to a block, kept and called later
+		var url = NSURL.fileURLWithPath(cast hxmc.objc.Strings.toNSString("/tmp"));
+		var urls:NSArray = cast NSMutableArray.alloc().init();
+		(cast urls : NSMutableArray).addObject(url);
+		var handler:() -> Void = null;
+		var steps = [];
+		NSFileCoordinator.alloc().initWithFilePresenter(null).prepareForReadingItemsAtURLs(urls, 0, null, 0, Ptr.nil(), done -> {
+			steps.push("accessor");
+			handler = done;
+		});
+		for (_ in 0...2)
+			hxmc.rt.Gc.collect(true);
+		steps.push("later");
+		handler();
+		trace("completion handler: " + steps);
 	});
 
 	static var visited = 0;

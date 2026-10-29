@@ -180,8 +180,8 @@ enum LCall {
 	CFieldDefaults(c:TClass, cf:TClassField, key:String);
 	CExtern(sym:String, c:TClass, cf:TClassField);
 	CObjC(d:hxmc.ir.ObjC.Decl);
-	CBlockInvoke(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy, r:String);
-	CBlockCaller(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy, r:LambdaInfo);
+	CBlockInvoke(b:hxmc.ir.ObjC.BlockSig, r:String);
+	CBlockCaller(b:hxmc.ir.ObjC.BlockSig, r:LambdaInfo);
 }
 
 // The program's signatures and shapes asked by a body: logged
@@ -680,19 +680,19 @@ class CachedLower extends Lower {
 		log(CObjC(d));
 	}
 
-	override public function blockInvoke(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy):String {
+	override public function blockInvoke(b:hxmc.ir.ObjC.BlockSig):String {
 		depth++;
-		var r = super.blockInvoke(sig, args, ret);
+		var r = super.blockInvoke(b);
 		depth--;
-		log(CBlockInvoke(sig, args, ret, r));
+		log(CBlockInvoke(b, r));
 		return r;
 	}
 
-	override public function blockCaller(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy):LambdaInfo {
+	override public function blockCaller(b:hxmc.ir.ObjC.BlockSig):LambdaInfo {
 		depth++;
-		var r = super.blockCaller(sig, args, ret);
+		var r = super.blockCaller(b);
 		depth--;
-		log(CBlockCaller(sig, args, ret, r));
+		log(CBlockCaller(b, r));
 		return r;
 	}
 
@@ -838,12 +838,22 @@ class CachedLower extends Lower {
 					case Func(sym, s): Func(sym, {args: s.args.map(cty), ret: cty(s.ret)});
 					case _: d;
 				});
-			case CBlockInvoke(s, args, ret, r):
-				if (blockInvoke(obj(s), args.map(cty), cty(ret)) != r) mismatch("the invoke " + r + " changed");
-			case CBlockCaller(s, args, ret, r):
-				bindLambda(r, blockCaller(obj(s), args.map(cty), cty(ret)));
+			case CBlockInvoke(b, r):
+				if (blockInvoke(bsig(b)) != r) mismatch("the invoke " + r + " changed");
+			case CBlockCaller(b, r):
+				bindLambda(r, blockCaller(bsig(b)));
 		}
 	}
+
+	function bsig(b:Null<hxmc.ir.ObjC.BlockSig>):Null<hxmc.ir.ObjC.BlockSig>
+		return b == null ? null : {
+			sig: obj(b.sig),
+			args: b.args.map(cty),
+			ret: cty(b.ret),
+			types: b.types,
+			blocks: b.blocks.map(bsig),
+			retBlock: bsig(b.retBlock)
+		};
 
 	function cty(t:hxmc.ir.CInterop.CTy):hxmc.ir.CInterop.CTy
 		return switch t {

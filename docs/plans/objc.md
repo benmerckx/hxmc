@@ -97,8 +97,8 @@ answer them.
    comments (Apple's SDK terms); clang is needed when generating only.
 2. **Blocks**: built (a closure's entry in the runtime's table, counted
    by the block's helpers; a closure capturing nothing: a global block in
-   the data; [interop.md](../interop.md#blocks)). Open: blocks taking or
-   returning blocks.
+   the data; blocks taking and returning blocks, converted at each level;
+   [interop.md](../interop.md#blocks)).
 3. **Release on death by layout**: a constructor registers its class's own
    `id` fields, a closure its captured `id`s, a captured variable's box its
    own (`rt_objc_own`: an entry per slot, appended under a lock; every

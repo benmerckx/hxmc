@@ -123,8 +123,8 @@ interface LowerQueries {
 	// an Objective-C block's invoke for closures of signature sig, its C
 	// types (args, ret): its symbol (made once per program: ObjC.invoke); and
 	// the closure calling such a block (as adapter: once per program)
-	@:logged function blockInvoke(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):String;
-	@:logged function blockCaller(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):LambdaInfo;
+	@:logged function blockInvoke(b:ObjC.BlockSig):String;
+	@:logged function blockCaller(b:ObjC.BlockSig):LambdaInfo;
 	// the symbol of a @:hxmc.callback function: of its name (staticFunc)
 	@:derived function callbackSym(f:FuncInfo):String;
 	// the @:hxmc.struct class of a struct type's name (ty's TStruct)

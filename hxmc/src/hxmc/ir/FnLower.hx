@@ -384,24 +384,36 @@ class FnLower {
 
 	// closure body calling an Objective-C block (its capture: the block's box,
 	// which holds a reference to it) through its invoke, the block first
-	// (ObjC.blockFunction), in a safe region as a message
-	public function blockCall(cargs:Array<CInterop.CTy>, cret:CInterop.CTy) {
+	// (ObjC.blockFunction), in a safe region as a message; arguments that are
+	// functions made blocks, a block result a function
+	public function blockCall(b:ObjC.BlockSig) {
 		boxed = new Map();
 		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
 		var box = newLocal("box", TRef(RAny));
 		out.push(SSet(box, ECapture(lambda, 0, ELocal(fi.args[0]))));
 		var id = temp(TI64, ECallHost("rt_objc_unbox", vector(ELocal(box)), TI64));
 		var invoke = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(id, EInt(16)), TI64));
-		var key = ObjC.declareBlockCall(l, cargs, cret);
+		var key = ObjC.declareBlockCall(l, b.args, b.ret);
 		var n = fi.sret ? fi.args.length - 1 : fi.args.length;
-		var xs = [invoke, id].concat([for (i in 1...n) (ELocal(fi.args[i]) : Ex)]);
-		var t = lambda.sig.ret;
+		var xs = [invoke, id];
+		for (i in 1...n) {
+			var nb = b.blocks[i - 1];
+			xs.push(nb == null ? ELocal(fi.args[i]) : blockNew(ELocal(fi.args[i]), nb));
+		}
+		var t = b.retBlock != null ? TId : lambda.sig.ret;
 		var cx = ECallHost(key, Vector.fromArrayCopy(xs), t);
 		var r = t == TVoid ? null : newLocal("r", t);
 		out.push(r == null ? SExpr(cx) : SSet(r, cx));
 		if (r != null && t.match(TStruct(_))) freshSlots.set(r, true);
 		// (the box read again after the call: kept alive through it, as the block)
 		out.push(SExpr(ECallHost("rt_objc_unbox", vector(ELocal(box)), TI64)));
+		if (b.retBlock != null) {
+			var ct = lambda.sig.ret;
+			var fn = newLocal("fn", ct);
+			out.push(ObjC.blockFunction(l, ELocal(r), b.retBlock, newLocal("heap", TId), newLocal("same", TRef(RAny)), newLocal("box", TRef(RAny)), fn));
+			out.push(SReturn(ELocal(fn)));
+			return;
+		}
 		switch t {
 			case TStruct(n, _):
 				copyStruct(ELocal(sretLocal), ELocal(r), l.structClass(n));
@@ -3411,14 +3423,18 @@ class FnLower {
 
 	function blockOf(x:Ex, from:Ty, ft:core.TType.T, e:TExpr):Ex {
 		var b = ObjC.blockSig(l, ft, where(e));
+		return blockNew(coerce(x, from, TRef(RClos(b.sig))), b);
+	}
+
+	// closure c (of b's signature) as a block, nil for null
+	function blockNew(c:Ex, b:ObjC.BlockSig):Ex {
 		var ct = TRef(RClos(b.sig));
-		var cx = coerce(x, from, ct);
 		// (a closure capturing nothing: never null, a global block with static closures, MirBuild)
-		var sc = capturesNothing(cx);
+		var sc = capturesNothing(c);
 		if (sc != null) return temp(TId, ObjC.blockNew(l, sc, b));
-		var c = asLocal(cx, ct);
+		var cl = asLocal(c, ct);
 		var r = newLocal("block", TId);
-		out.push(SIf(EBin(RefEq, ELocal(c), ENull(ct)), vector(SSet(r, EConv(I2L, EInt(0)))), vector(SSet(r, ObjC.blockNew(l, ELocal(c), b)))));
+		out.push(SIf(EBin(RefEq, ELocal(cl), ENull(ct)), vector(SSet(r, EConv(I2L, EInt(0)))), vector(SSet(r, ObjC.blockNew(l, ELocal(cl), b)))));
 		return ELocal(r);
 	}
 
@@ -3446,7 +3462,7 @@ class FnLower {
 		var ct = TRef(RClos(b.sig));
 		var id = asLocal(x, TId);
 		var r = newLocal("fn", ct);
-		out.push(ObjC.blockFunction(l, ELocal(id), b, newLocal("same", TRef(RAny)), newLocal("box", TRef(RAny)), r));
+		out.push(ObjC.blockFunction(l, ELocal(id), b, newLocal("heap", TId), newLocal("same", TRef(RAny)), newLocal("box", TRef(RAny)), r));
 		return coerce(ELocal(r), ct, to);
 	}
 

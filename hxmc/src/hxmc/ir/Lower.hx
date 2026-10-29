@@ -1646,24 +1646,24 @@ class Lower implements LowerQueries {
 	// signature and C types
 	var blockInvokes = new Map<String, String>();
 
-	public function blockInvoke(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):String {
-		var key = ObjC.blockKey(sig, args, ret);
+	public function blockInvoke(b:ObjC.BlockSig):String {
+		var key = ObjC.blockKey(b);
 		var sym = blockInvokes.get(key);
 		if (sym != null) return sym;
 		sym = ObjC.INVOKE + haxe.io.Bytes.ofString(key).toHex();
 		blockInvokes.set(key, sym);
-		ObjC.invoke(this, sym, sig, args, ret);
+		ObjC.invoke(this, sym, b);
 		return sym;
 	}
 
 	var blockCallers = new Map<String, LambdaInfo>();
 
-	public function blockCaller(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):LambdaInfo {
-		var key = ObjC.blockKey(sig, args, ret);
+	public function blockCaller(b:ObjC.BlockSig):LambdaInfo {
+		var key = ObjC.blockKey(b);
 		var li = blockCallers.get(key);
 		if (li != null) return li;
 		var box = new Local(-1, "block", TRef(RAny));
-		li = newLambda(sig, vector(box), fl -> fl.blockCall(args, ret), "blockcall__" + key, "_closures");
+		li = newLambda(b.sig, vector(box), fl -> fl.blockCall(b), "blockcall__" + key, "_closures");
 		blockCallers.set(key, li);
 		return li;
 	}

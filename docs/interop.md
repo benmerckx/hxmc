@@ -660,13 +660,16 @@ Dispatch.dispatch_async(Mem.sym("_dispatch_main_q"), () -> done = true);
   function and signature, never copied nor freed, so making it costs
   nothing (not on a Mir host, which has no static closures).
 - **A block made a function** calls the block, holding a reference to it;
-  a block made of a Haxe function is that function again.
+  a block made of a Haxe function is that function again. A block on its
+  caller's stack (an argument: Foundation passes completion handlers so)
+  is copied first, so the function may be kept after the call.
 - **Calls** run the closure as a method's entry does: out of the caller's
   safe region, an exception reported as an uncaught one. A thread the
   runtime did not start (GCD's workers) is attached at its first call.
-- **Types**: those of messages; a block's parameter or result that is a
-  block is not supported yet. On x86-64, a struct result over 16 bytes
-  is returned through memory (`BLOCK_USE_STRET`).
+- **Types**: those of messages, a block's parameter or result of function
+  type a block too (a handler given a completion handler, as NSDocument's
+  `performAsynchronousFileAccessUsingBlock:`). On x86-64, a struct result
+  over 16 bytes is returned through memory (`BLOCK_USE_STRET`).
 
 ### Memory
 
@@ -711,7 +714,7 @@ counted. Where references cross:
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: blocks taking or returning blocks, overriding `dealloc`, protocols,
+Not yet: overriding `dealloc`, protocols,
 declarations generated from the SDK's headers.
 
 ## Processes and files beyond the std
