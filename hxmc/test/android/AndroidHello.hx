@@ -1,9 +1,9 @@
 import hxmc.unsafe.*;
 
-// The smallest Android app (make android-check, android-device-check): a
-// NativeActivity's library, its entry ANativeActivity_onCreate in no-GC
-// Haxe (Android calls it on the activity's UI thread, which the runtime does
-// not know). It starts a thread for the program: hxmc's generated main (the
+// The smallest Android app's library (make shared-check: as libmain.so,
+// which a packager puts in an APK): a NativeActivity's library, its entry
+// ANativeActivity_onCreate in no-GC Haxe (Android calls it on the
+// activity's UI thread, which the runtime does not know). It starts a thread for the program: hxmc's generated main (the
 // runtime, then main below), whose lines go to logcat under the tag "hxmc";
 // then the activity finishes and the process ends.
 @:keep

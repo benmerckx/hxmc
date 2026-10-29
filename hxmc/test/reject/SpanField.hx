@@ -1,5 +1,5 @@
 // A span is never a field: it would outlive the call that lends its memory.
-// expect: SpanField.hx:8: the field last has a span type (gcfree: spans live in parameters and locals only)
+// expect: SpanField.hx:8: the field last has a span type (kernel: spans live in parameters and locals only)
 import hxmc.Span;
 import hxmc.unsafe.UInt8;
 

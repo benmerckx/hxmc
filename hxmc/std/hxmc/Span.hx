@@ -10,15 +10,15 @@ import hxmc.unsafe.UInt8;
 // value of two words; ReadOnlySpan<T> is the view that cannot be written
 // through, and a Span converts to one.
 //
-// A span exists only in GC-free code (@:hxmc.gcfree, @:hxmc.blocking): as a
+// A span exists only in kernels (@:hxmc.kernel, @:hxmc.blocking): as a
 // parameter, a local or a result, never a field, a static, an element, a
 // capture. GC code makes one only as an argument of a direct call of a
-// GC-free function, which lends the memory for that call:
+// kernel, which lends the memory for that call:
 //
 //   var sum = Kernel.adler(ReadOnlySpan.ofBytes(bytes));
 //   var e = Png.decode(ReadOnlySpan.ofIoBuffer(file), Span.ofIoBuffer(rgba));
 //
-// Accesses are range-checked (a failure ends the program: GC-free code
+// Accesses are range-checked (a failure ends the program: a kernel
 // cannot throw); the compiler expands them (FnLower.spanCall).
 abstract Span<T>(SpanData) {
 	// the number of elements
@@ -51,6 +51,17 @@ abstract Span<T>(SpanData) {
 
 	// v in elements pos .. pos + len - 1
 	extern public function fill(pos:Int, len:Int, v:T):Void;
+
+	// atomic accesses of element i, checked as s[i] is: of Int, UInt (and
+	// their typedefs Int32, UInt32) and Int64 elements, a compile error for
+	// others. Sequentially consistent (hxmc.unsafe.Atomic's): a load
+	// acquires, a store releases
+	extern public function load(i:Int):T;
+
+	extern public function store(i:Int, v:T):Void;
+
+	// replacement into element i if it holds expected; the value it held
+	extern public function compareExchange(i:Int, expected:T, replacement:T):T;
 
 	@:to extern function toReadOnly():ReadOnlySpan<T>;
 
@@ -96,17 +107,17 @@ abstract Span<T>(SpanData) {
 		return r;
 	}
 
-	// (GC-free code: the program ends)
-	@:hxmc.unsafe @:hxmc.gcfree public static function ioRangeFatal(buf:IoBuffer, pos:Int, len:Int, where:Ptr):Int {
+	// (a kernel: the program ends)
+	@:hxmc.unsafe @:hxmc.kernel public static function ioRangeFatal(buf:IoBuffer, pos:Int, len:Int, where:Ptr):Int {
 		var n = ioLength(buf), r = range(n, pos, len);
 		if (r < 0) badRange(pos, len, n, where);
 		return r;
 	}
 
-	@:hxmc.unsafe @:hxmc.gcfree static function ioLength(buf:IoBuffer):Int
+	@:hxmc.unsafe @:hxmc.kernel static function ioLength(buf:IoBuffer):Int
 		return buf.length;
 
-	@:hxmc.unsafe @:hxmc.gcfree public static function ioAddr(buf:IoBuffer, pos:Int):Ptr
+	@:hxmc.unsafe @:hxmc.kernel public static function ioAddr(buf:IoBuffer, pos:Int):Ptr
 		return buf.ptr.add(pos);
 
 	// the address of b's byte pos: valid while nothing collects (Facts.checkHeapSpans:
@@ -114,8 +125,8 @@ abstract Span<T>(SpanData) {
 	@:hxmc.unsafe public static function bytesAddr(b:Bytes, pos:Int):Ptr
 		return hxmc.unsafe.BytesPtr.of(b, pos, 0);
 
-	// a failed check: the program ends (GC-free code cannot throw)
-	@:hxmc.unsafe @:hxmc.gcfree public static function outOfRange(i:Int, n:Int, where:Ptr):Void {
+	// a failed check: the program ends (a kernel cannot throw)
+	@:hxmc.unsafe @:hxmc.kernel public static function outOfRange(i:Int, n:Int, where:Ptr):Void {
 		var r = report("hxmc: span index ");
 		r.int(i, 0);
 		r.str(" out of range [0, ");
@@ -123,7 +134,7 @@ abstract Span<T>(SpanData) {
 		end(r, where);
 	}
 
-	@:hxmc.unsafe @:hxmc.gcfree public static function badRange(pos:Int, len:Int, n:Int, where:Ptr):Void {
+	@:hxmc.unsafe @:hxmc.kernel public static function badRange(pos:Int, len:Int, n:Int, where:Ptr):Void {
 		var r = report("hxmc: span range ");
 		r.int(pos, 0);
 		r.str(" + ");
@@ -139,7 +150,7 @@ abstract Span<T>(SpanData) {
 		return r;
 	}
 
-	@:hxmc.unsafe @:hxmc.gcfree static function end(r:hxmc.rt.Os.Report, where:Ptr) {
+	@:hxmc.unsafe @:hxmc.kernel static function end(r:hxmc.rt.Os.Report, where:Ptr) {
 		r.str(") at ");
 		r.cstr(where, 0, -1);
 		r.ch(10);
@@ -147,6 +158,6 @@ abstract Span<T>(SpanData) {
 		hxmc.rt.Os.exit(2);
 	}
 
-	@:hxmc.unsafe @:hxmc.gcfree public static function move(dst:Ptr, src:Ptr, bytes:hxmc.I64):Void
+	@:hxmc.unsafe @:hxmc.kernel public static function move(dst:Ptr, src:Ptr, bytes:hxmc.I64):Void
 		hxmc.unsafe.LibC.memmove(dst, src, bytes);
 }

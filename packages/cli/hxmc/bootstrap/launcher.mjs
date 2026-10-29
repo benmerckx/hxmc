@@ -1,7 +1,7 @@
 // The `haxe` and `hxmc` commands of the npm package @hxmc/cli (docs/using.md):
 // runs, in this order,
 // - the compiler `hxmc-rebuild` built from @hxmc/source (in the cache), while
-//   @hxmc/source is installed (packages/source: not published);
+//   @hxmc/source is installed (packages/source);
 // - the platform package's native compiler (@hxmc/<os>-<cpu>, an optional
 //   dependency);
 // with neither, it says which machines it runs on and exits non-zero.
@@ -84,7 +84,8 @@ function hxmcStd() {
 // search does: hxmc/src/hxmc/Options.hx, rtSearch); this machine's platform
 // package; the other platform packages of this version installed (cross
 // builds: `npm i -D --force @hxmc/win32-x64`). In a checkout: bin/hxmc/rt
-// (`make rt`) after HXMC_RT_DIR's.
+// (`make rt`) after HXMC_RT_DIR's. An empty HXMC_RT_DIR, as an empty entry,
+// adds nothing.
 export function rtDirs() {
 	const own = (process.env.HXMC_RT_DIR ?? '').split(path.delimiter).filter(d => d);
 	if (checkout) return [...own, path.join(repo, 'bin', 'hxmc', 'rt')];
@@ -98,14 +99,17 @@ export function rtDirs() {
 }
 
 // what the compilers need to find the package's std, hxmc's std and the
-// runtime objects (HXMC_RT_DIR always set: hxmc.HaxeMain, run without this
-// launcher in its place, passes a build for the hxmc target on to it; the
-// platform package's compiler, run directly, also finds them beside itself)
+// runtime objects (HXMC_RT_DIR always set, yours first), and HXMC_LAUNCHED:
+// hxmc.HaxeMain, run without this launcher in its place, passes a build for
+// the hxmc target on to it unless HXMC_LAUNCHED says it ran (HXMC_RT_DIR
+// alone may be yours, which adds to what the launcher finds); the platform
+// package's compiler, run directly, also finds them beside itself
 export function toolEnv(extra = {}) {
 	const env = { ...process.env, ...extra };
 	if (!env.HAXE_STD_PATH) env.HAXE_STD_PATH = stdDir;
 	if (!env.HXMC_STD) env.HXMC_STD = hxmcStd();
 	env.HXMC_RT_DIR = [...rtDirs(), npmCache()].join(path.delimiter);
+	env.HXMC_LAUNCHED = '1';
 	// (`haxe --dev`: the dev loop's server, docs/dev.md)
 	if (!env.HXMC_DEV_SCRIPT) env.HXMC_DEV_SCRIPT = path.join(bootDir, 'dev.mjs');
 	return env;

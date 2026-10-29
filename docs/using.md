@@ -15,8 +15,8 @@ build on. Any host builds for any target.
 | `linux-x86_64`, `linux-arm64` | static ELF executable (musl); with `-D hxmc.libc=glibc`, linked against the system's glibc 2.17+ |
 | `macos-x86_64`, `macos-arm64` | Mach-O executable, ad hoc signed |
 | `windows-x86_64`, `windows-arm64` | PE executable over the UCRT |
-| `android-arm64`, `android-x86_64` | a shared library; an APK when the output ends in `.apk` ([Android](#android)) |
-| `ios-arm64`, `ios-sim-arm64` | Mach-O executable; an app bundle when the output ends in `.app`, zipped when `.ipa` ([iOS](#ios)) |
+| `android-arm64`, `android-x86_64` | a shared library ([Android](#android)) |
+| `ios-arm64`, `ios-sim-arm64` | Mach-O executable ([iOS](#ios)) |
 | `wasm32-wasi` | WebAssembly module ([WebAssembly](#webassembly)) |
 
 Code can test the target with `target.name == "hxmc"` (there is no `hxmc`
@@ -83,60 +83,44 @@ returns, so a host can load, run and unload builds in turn (the
 ### Android
 
 `android-arm64` (phones) and `android-x86_64` (emulators), Android 10 (API
-29) and later. With an output ending in `.apk`, hxmc writes and signs an APK
-whose `NativeActivity` loads the program. No SDK, NDK or Java at build time.
-
-```sh
-haxe -cp hxmc/test/android -main AndroidHello \
-  --custom-target hxmc=bin/hello.apk -D hxmc.target=android-arm64 -D hxmc.android-package=org.example.hello
-adb install -r bin/hello.apk
-adb shell am start -n org.example.hello/android.app.NativeActivity
-adb logcat -s hxmc
-```
-
-| Option | Default |
-| --- | --- |
-| `-D hxmc.android-package=<id>` | `org.hxmc.<output name>` |
-| `-D hxmc.android-label=<text>` | the output name |
-| `-D hxmc.android-version=<n>`, `-D hxmc.android-version-name=<text>` | 1, 1.0 |
-| `-D hxmc.android-min-sdk=<n>`, `-D hxmc.android-target-sdk=<n>` | 29 (the floor), 35 |
-| `-D hxmc.android-permissions=<names>` | none (`INTERNET` means `android.permission.INTERNET`) |
-| `-D hxmc.android-key=<file>`, `HXMC_ANDROID_KEY` | a debug key in the cache, made on first use |
-| `-D hxmc.exports=<names>` | exports besides `ANativeActivity_onCreate` |
-
-The program exports `ANativeActivity_onCreate` and starts its own thread
-(see `hxmc/test/android/AndroidHello.hx`). A program that uses views gets a
-small `classes.dex` that hxmc writes.
-
-Not yet: several ABIs in one APK, release signing, icons and resources,
-`.aab` bundles.
+29) and later: a shared library against Bionic, which an APK's
+`NativeActivity` loads. The program exports `ANativeActivity_onCreate` and
+starts its own thread (see `hxmc/test/android/AndroidHello.hx`). A
+packager writes the APK around it ([below](#native-output-for-a-packager)).
 
 ### iOS
 
 `ios-arm64` (devices) and `ios-sim-arm64` (the simulator on Apple silicon),
-iOS 15 and later. With an output ending in `.app` hxmc writes an ad hoc
-signed app bundle; `.ipa` zips it. No Xcode or SDK at build time.
-
-```sh
-haxe -cp hxmc/test/ios -main IosHello \
-  --custom-target hxmc=bin/Hello.app -D hxmc.target=ios-sim-arm64 -D hxmc.ios-bundle-id=org.example.hello
-xcrun simctl install booted bin/Hello.app
-xcrun simctl launch --console-pty booted org.example.hello
-```
-
-| Option | Default |
-| --- | --- |
-| `-D hxmc.ios-bundle-id=<id>` | `org.hxmc.<output name>` |
-| `-D hxmc.ios-name=<text>` | the output name |
-| `-D hxmc.ios-version=<n>`, `-D hxmc.ios-version-name=<text>` | 1, 1.0 |
-| `-D hxmc.ios-min-version=<major.minor>` | 15.0 (the floor) |
-| `-D hxmc.ios-entitlements=<file>` | none |
-
+iOS 15 and later: a Mach-O executable, or a dylib with `-D hxmc.shared`.
 A UI library that defines `hxmc_ui_main` gets `UIApplicationMain` on the
-main thread, and the program's body runs once the app has launched.
+main thread, and the program's body runs once the app has launched. A
+packager writes the app bundle around it ([below](#native-output-for-a-packager)).
 
-Not yet: signing for devices (developer certificate, provisioning profile),
-app icons and asset catalogs.
+### Native output for a packager
+
+hxmc writes no APKs or app bundles: a packager writes them around hxmc's
+native output ([helder](https://github.com/benmerckx/helder) does). It
+builds on two outputs, checked by `make native-check`:
+
+- **Android**: the `.so`. Its `DT_SONAME` is always the output's file
+  name, so name it `libmain.so` for `NativeActivity`.
+  `ANativeActivity_onCreate` is exported when the program defines it.
+- **iOS**: a plain Mach-O executable, or a dylib with `-D hxmc.shared`.
+  `-D hxmc.ios-min-version=<major.minor>` sets its `LC_BUILD_VERSION`
+  minimum (15.0, the floor). The linker signs it ad hoc, as
+  linker-signed. With any of the defines below it is signed as `codesign
+  -s -` signs a bundle's executable instead. The packager writes
+  `Info.plist` and `CodeResources` first, then links, then puts the files
+  together.
+
+| Option | Signs |
+| --- | --- |
+| `-D hxmc.codesign-id=<identifier>` | the identifier (default: the output's name) |
+| `-D hxmc.codesign-info-plist=<file>` | special slot 1, the bundle's `Info.plist` |
+| `-D hxmc.codesign-resources=<file>` | special slot 3, `_CodeSignature/CodeResources` |
+| `-D hxmc.codesign-entitlements=<file>` | special slot 5, the entitlements (an XML plist) |
+
+They apply to Mach-O outputs only (macOS and iOS).
 
 ### WebAssembly
 
@@ -166,7 +150,7 @@ exits.
 
 One install: `npm i -D @hxmc/cli` (node 22+). It brings `haxe` and `hxmc`
 (the same command): every Haxe target (js, hl, jvm, `--interp`, ...) and
-`--custom-target hxmc=<out>` for this machine. There are seven packages,
+`--custom-target hxmc=<out>` for this machine. There are eight packages,
 all published at one version:
 
 | Package | Size (tarball, unpacked) | Contents |
@@ -175,8 +159,9 @@ all published at one version:
 | `@hxmc/linux-x64`, `@hxmc/linux-arm64` | about 10 MB, 34–38 MB each | the native compiler for that machine and its targets' runtime objects: `linux-<arch>/` (static, musl) and `linux-<arch>-glibc/` (`-D hxmc.libc=glibc`) |
 | `@hxmc/darwin-x64`, `@hxmc/darwin-arm64` | about 8 MB, 26–28 MB each | the same for macOS: `macos-x86_64/`, `macos-arm64/` (also used for iOS) |
 | `@hxmc/win32-x64`, `@hxmc/win32-arm64` | about 8 MB, 26–28 MB each | the same for Windows: `windows-x86_64/`, `windows-arm64/` |
+| `@hxmc/source` | 2.4 MB, 9.1 MB | the compiler's sources, for building on it ([below](#building-on-the-compiler)); `hxmc-rebuild` |
 
-Sizes are of 0.1.0 as packed; CI's job summary lists each build's.
+Sizes are of 0.1.0 as packed (`@hxmc/source`'s of a later nightly); CI's job summary lists each build's.
 
 npm installs the platform package that matches the machine, by its `os`
 and `cpu` fields. A runtime-objects folder holds `rt.o`, `ssl.o` (mbedtls)
@@ -192,15 +177,16 @@ these that has them:
 1. the directories `HXMC_RT_DIR` lists (separated by the system's path
    separator). They add to the search; they do not replace it, so a cross
    build that names another machine's runtime objects keeps this machine's
-   for macros and host tools;
+   for macros and host tools. An empty `HXMC_RT_DIR` is the same as unset;
 2. the compiler's own directory: the platform package it is in
    (`node_modules/@hxmc/linux-x64/linux-x86_64/rt.o`);
 3. `rt/` beside the compiler: a checkout's `bin/hxmc/rt` (`make rt`);
 4. the target's platform package beside the compiler's, of the same version
    (`node_modules/@hxmc/win32-x64/windows-x86_64/rt.o`).
 
-The launcher also passes the installed platform packages of its version in
-`HXMC_RT_DIR`, after yours. So the platform package's compiler, run
+The launcher (`node_modules/.bin/haxe`, also when the native compiler
+stands in its place) also passes the installed platform packages of its
+version in `HXMC_RT_DIR`, after yours. So the platform package's compiler, run
 directly without the launcher, needs no `HXMC_RT_DIR`. When no directory
 has them, the error lists every place searched. To build for another desktop machine, install its
 platform package with `--force`; its `os` and `cpu` do not match, and its
@@ -215,10 +201,24 @@ A build for a target none of them has fails with one line naming the
 package to install.
 
 Android's runtime objects (`android-arm64`, `android-x86_64`) are in no npm
-package. Take them from the runtime objects' release (`rt-<hash>`, which
-`hxmc/bootstrap/rt.mjs fetch <dir>` downloads), or build them from source
-(`make rt`, [development.md](development.md)). Then name the directory in
-`HXMC_RT_DIR`.
+package. Take them from the runtime objects' GitHub release, or build them
+from source (`make rt`, [development.md](development.md)). Then name the
+directory in `HXMC_RT_DIR`. `@hxmc/cli`'s `package.json` names the
+release its packages were built with, `"hxmc": {"rt": "rt-<hash>"}` (the
+platform packages' runtime objects are that release's). Its assets are
+`<target>-<file>.gz`:
+
+```sh
+tag=$(node -p "require('@hxmc/cli/package.json').hxmc.rt")
+for f in rt.o ssl.o uv.o; do
+  mkdir -p rt/android-arm64
+  curl -fsSL "https://github.com/benmerckx/hxmc/releases/download/$tag/android-arm64-$f.gz" | gunzip > rt/android-arm64/$f
+done
+HXMC_RT_DIR=$PWD/rt npx haxe ... -D hxmc.target=android-arm64
+```
+
+In a checkout, `node hxmc/bootstrap/rt.mjs fetch <dir>` downloads the
+release of its `hxmc/deps`.
 
 ### Without node
 
@@ -230,7 +230,7 @@ disabled (`--ignore-scripts`, pnpm's default), the first call through node
 does the same. `HXMC_INSTALL=0` keeps the launcher in place.
 
 Builds for the hxmc target still go through node, which finds the runtime
-objects; other targets do not. A compilation server (`haxe --wait`) asks
+objects (with `HXMC_RT_DIR` set too: it adds to them); other targets do not. A compilation server (`haxe --wait`) asks
 node for their directories once, when it starts. On Windows, npm's `haxe.cmd` always starts
 node (about 40-60 ms per call); point editors and lix at
 `node_modules/@hxmc/cli/dist/haxe.exe` to bypass it.
@@ -239,11 +239,32 @@ The launcher writes nothing but the compiler's own output to stdout and
 stderr, since editors parse them. A failure prints one line and exits
 non-zero.
 
-### Changing the compiler
+### Building on the compiler
 
-The compiler's sources and `hxmc-rebuild` (`packages/source`) are not
-published for now. Change the compiler in a checkout of this repository
-([development.md](development.md)).
+`@hxmc/source` holds the sources of `@hxmc/cli`'s compiler: the port
+(`haxe/src`), hxmc (`hxmc/src`) and hxmc's std (`hxmc/std`,
+`hxmc/portable`). Install it at `@hxmc/cli`'s version; `@hxmc/cli`'s
+`haxe` builds a compiler from it, natively, with a main of your own:
+
+```sh
+npm i -D @hxmc/cli@next @hxmc/source@next     # (one version: the nightlies' dist-tag)
+npx haxe -cp node_modules/@hxmc/source/haxe/src -cp node_modules/@hxmc/source/hxmc/src \
+  -cp src -main MyCompiler -D disable-parallelism --custom-target hxmc=bin/mycompiler
+```
+
+A frontend for another language adds its functions to the IR this way
+([hxmc.md](hxmc.md#frontends)). Run the compiler it builds as the platform
+package's is run directly: `HAXE_STD_PATH` set to
+`node_modules/@hxmc/cli/haxe/upstream/std`, `HXMC_STD` to
+`node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std`, and `HXMC_RT_DIR` to the
+platform package (`node_modules/@hxmc/linux-x64`), whose runtime objects it
+does not find beside itself.
+
+`npx hxmc-rebuild` builds `@hxmc/cli`'s own compiler again from the
+package's sources, edited or not, into the cache; `haxe` then runs that
+one while `@hxmc/source` is installed, and `hxmc-rebuild --reset` returns to
+the published one. To change the compiler for good, work in a checkout of
+this repository ([development.md](development.md)).
 
 ## Editors and lix
 

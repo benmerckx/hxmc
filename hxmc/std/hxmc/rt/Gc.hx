@@ -1161,11 +1161,13 @@ class Gc {
 	// ---- allocation
 
 	// a TLAB with room for `bytes`, zeroed (but under RT_VERIFY: the pattern;
-	// the whole free nursery then with one thread). The rest of the thread's
+	// the whole free nursery then with one thread), but for its first `bytes`
+	// when raw: an object without references that its allocation writes
+	// whole (allocNow) takes them. The rest of the thread's
 	// TLAB starts it when that was the last one taken (with one thread,
 	// always: the free nursery stays contiguous). youngDirty changes only
 	// while the world is stopped.
-	@:hxmc.unsafe static function tlabRefill(bytes:Int):Bool {
+	@:hxmc.unsafe static function tlabRefill(bytes:Int, raw:Bool):Bool {
 		if (myEpoch != epoch) {
 			myEpoch = epoch;
 			Atomic.add32(Mem.sym("hxmc_allocating"), 1);
@@ -1201,8 +1203,11 @@ class Gc {
 					if (!yptr.isNull() && !m.value.tlabStart.isNull()) m.value.allocated += yptr.diff(m.value.tlabStart);
 					m.value.tlabStart = s;
 				}
-				// (below p: the rest of the thread's TLAB, zeroed already)
-				if (!poison && p.ult(youngDirty)) Mem.zero(p, (e.ult(youngDirty) ? e : youngDirty).diff(p));
+				// (below p: the rest of the thread's TLAB, zeroed already; a raw
+				// object's bytes, at s, are its allocation's to write)
+				var z = raw && p.ult(s.add(bytes)) ? s.add(bytes) : p;
+				var ze = e.ult(youngDirty) ? e : youngDirty;
+				if (!poison && z.ult(ze)) Mem.zero(z, ze.diff(z));
 				yptr = s;
 				yrlim = e;
 				ylim = poison ? Ptr.nil() : e;
@@ -1213,8 +1218,8 @@ class Gc {
 	}
 
 	// room for `bytes` in the thread's TLAB, refilled if needed (false: the nursery is full)
-	static inline function youngRoom(bytes:Int):Bool
-		return yrlim.diff(yptr) >= bytes || tlabRefill(bytes);
+	static inline function youngRoom(bytes:Int, raw:Bool):Bool
+		return yrlim.diff(yptr) >= bytes || tlabRefill(bytes, raw);
 
 	@:hxmc.host("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr {
 		// RT_VERIFY: every allocation comes here (no TLAB limit, tlabRefill),
@@ -1226,14 +1231,26 @@ class Gc {
 		Threads.safepoint();
 		// likewise for finaliser calls queued by an earlier major collection
 		if (finalQlen != 0 && finalsRunning == 0) callFinalisers(false);
-		return allocNow(header, bytes);
+		return allocNow(header, bytes, false);
 	}
 
-	@:hxmc.unsafe static function allocNow(header:I64, bytes:Int):Ptr {
+	// allocSlow for an allocation that writes every slot before reading it
+	// (Mem.allocRaw, Mem.allocArrayRaw: GcPaths.allocSlowRaw), of an object
+	// without references (Types.K_RAW: a string, the storage of numbers),
+	// which is not zeroed: no scan reads its slots
+	@:hxmc.collects static function allocSlowRaw(header:I64, bytes:Int):Ptr {
+		if (poison && Threads.inRegion())
+			die("hxmc: allocation in a safe region (between Blocking.enter and leave, or in a blocking call): another thread may collect meanwhile (RT_VERIFY)\n");
+		Threads.safepoint();
+		if (finalQlen != 0 && finalsRunning == 0) callFinalisers(false);
+		return allocNow(header, bytes, true);
+	}
+
+	@:hxmc.unsafe static function allocNow(header:I64, bytes:Int, raw:Bool):Ptr {
 		var p:Ptr;
 		// large objects go straight to the old space (with one thread, unless
 		// the free nursery has room: they may die young)
-		if ((bytes : I64) > (minorSize >> 2) && !(Atomic.load32(Mem.sym("rt_nthreads")) == 1 && youngRoom(bytes))) {
+		if ((bytes : I64) > (minorSize >> 2) && !(Atomic.load32(Mem.sym("rt_nthreads")) == 1 && youngRoom(bytes, raw))) {
 			Atomic.add64(Mem.sym("hxmc_gc_large_bytes"), bytes);
 			Threads.self.value.allocated += bytes;
 			var cell = Mem.sym("hxmc_old_ptr");
@@ -1252,17 +1269,17 @@ class Gc {
 				p = seen;
 			}
 		} else {
-			while (!youngRoom(bytes))
+			while (!youngRoom(bytes, raw))
 				collectFor(false, 0); // (room already: another thread collected meanwhile)
 			p = yptr;
 			yptr = p.add(bytes);
 			Mem.setI64(p, 0, header);
-			// (zeroed with its TLAB, but for the pattern of RT_VERIFY)
-			if (poison) LibC.memset(p.add(8), 0, bytes - 8);
+			// (zeroed with its TLAB, but for the pattern of RT_VERIFY, which a raw one keeps)
+			if (poison && !raw) LibC.memset(p.add(8), 0, bytes - 8);
 			return p.add(8);
 		}
 		Mem.setI64(p, 0, header);
-		LibC.memset(p.add(8), 0, bytes - 8);
+		if (!raw) LibC.memset(p.add(8), 0, bytes - 8);
 		#if hxmc.census
 		if (census != 0) Census.countAlloc(header, bytes);
 		#end

@@ -1634,7 +1634,9 @@ class MirBuild extends MirWriter {
 		var args = [], sizes = [], groups = [], structs = false;
 		for (k in first...xs.length) {
 			var v = xs[k];
-			var ct = sig.args[k];
+			// (a variadic argument past the declaration in SIGS, another one's:
+			// a scalar, CInterop.sameSig)
+			var ct = k < sig.args.length ? sig.args[k] : CI64;
 			var k = k - first;
 			switch ct {
 				case CStruct(c):
@@ -2072,6 +2074,8 @@ class MirBuild extends MirWriter {
 			// (a struct value's memory: FnLower.newSlot)
 			case "structSlot": stackAddr(f.slot((intLiteral(args[0], "a struct slot") + 7) & ~7, intLiteral(args[1], "a struct slot")));
 			case "ult": cmp(CULt, ex(args[0]), ex(args[1]));
+			// (a span's element check: Opt.condProp drops it where a loop proves it)
+			case "spanUlt": marked(cmp(CULt, ex(args[0]), ex(args[1])), MIns.SPAN_CHECK);
 			case "udiv": op2(UDiv, I64, ex(args[0]), ex(args[1]));
 			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));

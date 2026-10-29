@@ -1,0 +1,7 @@
+exit 0
+LinuxEntropy.hx:24: 0, 0
+LinuxEntropy.hx:25: true, true
+LinuxEntropy.hx:26: 0
+LinuxEntropy.hx:27: -1, true
+LinuxEntropy.hx:30: 64, 64, true
+LinuxEntropy.hx:41: true

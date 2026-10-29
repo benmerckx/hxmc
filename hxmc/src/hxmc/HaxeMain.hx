@@ -11,13 +11,15 @@ import haxe.io.Path;
 //   haxe/upstream/std                the std (HAXE_STD_PATH unless set)
 //   hxmc/bootstrap/hxmc-std          hxmc's std (hxmc/std merged by MkStd.hx),
 //                                    added last when the arguments (or the hxml
-//                                    files they name) select --custom-target hxmc
+//                                    files they name) select --custom-target hxmc;
+//                                    its hxmc-portable for another target
 // The launcher (hxmc/bootstrap/launcher.mjs) runs it with HXMC_STD and
-// HXMC_RT_DIR, the directories of the runtime objects (the platform
-// packages, @hxmc/<os>-<cpu>: Options.rtSearch, which HXMC_RT_DIR adds to).
-// Run without the launcher in its place (hxmc/bootstrap/haxe, dist/haxe), a
-// build for the hxmc target goes through the launcher, which finds them, and
-// a compilation server asks the launcher for them. Run from the platform
+// HXMC_RT_DIR, the directories of the runtime objects (yours, then the
+// platform packages, @hxmc/<os>-<cpu>: Options.rtSearch, which HXMC_RT_DIR
+// adds to), and HXMC_LAUNCHED=1. Run without the launcher in its place
+// (hxmc/bootstrap/haxe, dist/haxe; HXMC_LAUNCHED unset, whatever
+// HXMC_RT_DIR says), a build for the hxmc target goes through the launcher,
+// which finds them, and a compilation server asks the launcher for them. Run from the platform
 // package (@hxmc/<os>-<cpu>/haxe, no launcher beside it), the search finds
 // them beside the binary. The WebAssembly build learns the host from HXMC_HOST.
 class HaxeMain {
@@ -33,15 +35,17 @@ class HaxeMain {
 		if (!sys.FileSystem.exists(boot + "/launcher.mjs") && sys.FileSystem.exists(boot + "/../hxmc/bootstrap/launcher.mjs"))
 			boot = Path.directory(boot) + "/hxmc/bootstrap";
 		if (sys.FileSystem.exists(boot + "/launcher.mjs")) {
-			// (not run by the launcher, which always sets HXMC_RT_DIR: a build
-			// for hxmc needs the runtime objects it finds)
-			if (Sys.getEnv("HXMC_RT_DIR") == null && selectsHxmc(args, 0)) {
+			// (not run by the launcher: a build for hxmc needs the runtime
+			// objects it finds, after those of HXMC_RT_DIR if set, which add to
+			// them; beside this copy are none)
+			var launched = Sys.getEnv("HXMC_LAUNCHED") == "1";
+			if (!launched && selectsHxmc(args, 0)) {
 				var node = Sys.getEnv("HXMC_NODE");
 				return Sys.command(node == null || node == "" ? "node" : node, [boot + "/haxe.mjs"].concat(args));
 			}
 			// (a compilation server: the builds its clients send may be for hxmc,
 			// and it stays in this process; the launcher's directories, once)
-			if (Sys.getEnv("HXMC_RT_DIR") == null && isServer(args)) {
+			if (!launched && isServer(args)) {
 				var dirs = launcherRtDirs(boot);
 				if (dirs != null) Sys.putEnv("HXMC_RT_DIR", dirs);
 			}
@@ -81,7 +85,13 @@ class HaxeMain {
 		var failed = null;
 		// hxmc's std, given last (a custom target gets no std of its own)
 		var hxmcStd = Sys.getEnv("HXMC_STD");
-		if (hxmcStd != null && selectsHxmc(args, 0)) args = args.concat(["-cp", hxmcStd]);
+		if (hxmcStd != null) {
+			if (selectsHxmc(args, 0)) args = args.concat(["-cp", hxmcStd]);
+			// (another target: hxmc's spans over Bytes, MkStd's hxmc-portable,
+			// docs/interop.md, "Spans on other targets"; first: after --run come
+			// the program's arguments)
+			else if (!isServer(args) && sys.FileSystem.exists(hxmcStd + "/hxmc-portable")) args = ["-cp", hxmcStd + "/hxmc-portable"].concat(args);
+		}
 		var host = hostTarget();
 		// (the port calls the hook with --no-output too: e.g. writing HXB only)
 		var noOutput = args.contains("--no-output");
@@ -111,7 +121,7 @@ class HaxeMain {
 					return;
 				}
 				#end
-				@:privateAccess Main.generate(com, com.file);
+				Main.generate(com, com.file);
 			} catch (e:Dynamic) {
 				// (a compilation server's client gets it as an error: hxmc dev)
 				if (Driver.resident) com.error("hxmc: " + Std.string(e), core.Globals.nullPos) else failed = Std.string(e);
@@ -208,8 +218,8 @@ class HaxeMain {
 		return false;
 	}
 
-	// HXMC_RT_DIR as the launcher passes it (launcher.mjs, toolEnv: the
-	// installed platform packages, then the cache's), from node; null when
+	// HXMC_RT_DIR as the launcher passes it (launcher.mjs, toolEnv: those of
+	// HXMC_RT_DIR, the installed platform packages, then the cache's), from node; null when
 	// node or the launcher fails (a build for hxmc then says which runtime
 	// object is missing)
 	static function launcherRtDirs(boot:String):Null<String> {

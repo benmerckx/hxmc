@@ -15,9 +15,13 @@ using StringTools;
 // - readelf: a shared object at address 0, no interpreter or text
 //   relocations, its SONAME, the exports defined and nothing else, the
 //   generated main hidden;
-// - the same library for android-arm64 and android-x86_64 (not run here:
-//   ApkCheck and CI's emulator): 16 KB segments, Bionic's imports, the TLS
-//   models Bionic implements for a dlopen'ed library.
+// - the same library for android-arm64 and android-x86_64 (not run
+//   here): 16 KB segments, Bionic's imports, the TLS models Bionic
+//   implements for a dlopen'ed library;
+// - hxmc/test/android/AndroidHello.hx as libmain.so for both, as a
+//   packager builds the library its APK holds (docs/using.md, "Native output
+//   for a packager"): the SONAME the output's file name, libmain.so, and
+//   ANativeActivity_onCreate exported.
 class SharedCheck {
 	static final OUT = "bin/hxmc-shared";
 	static var failures:Array<String> = [];
@@ -32,8 +36,8 @@ class SharedCheck {
 
 	static function main() {
 		var tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
-		function build(out:String, main:String, args:Array<String>):Bool {
-			var r = exec([tool, out, "-cp", "hxmc/test/shared", "-cp", "bin/hxmc/std", "-main", main, "--custom-target", "hxmc", "-D", "disable-parallelism"].concat(args),
+		function build(out:String, main:String, args:Array<String>, cp = "hxmc/test/shared"):Bool {
+			var r = exec([tool, out, "-cp", cp, "-cp", "bin/hxmc/std", "-main", main, "--custom-target", "hxmc", "-D", "disable-parallelism"].concat(args),
 				{merge: true});
 			if (r.code != 0) Sys.println(tail(r.out, 600));
 			return r.code == 0;
@@ -66,6 +70,10 @@ class SharedCheck {
 			var ok = build(lib, "Lib", ["-D", "hxmc.exports=lib_run,lib_result", "-D", 'hxmc.target=$t']);
 			check('$t: the library builds', ok);
 			if (ok) elf(lib, t, ["lib_run", "lib_result"]);
+			var lib = '$dir/libmain.so';
+			var ok = build(lib, "AndroidHello", ['-D', 'hxmc.target=$t'], "hxmc/test/android");
+			check('$t: AndroidHello as libmain.so builds', ok);
+			if (ok) elf(lib, t, ["ANativeActivity_onCreate"]);
 		}
 		if (failures.length > 0) {
 			Sys.println("SharedCheck: " + failures.length + " failed");
@@ -82,7 +90,8 @@ class SharedCheck {
 		var h = readelf(["-h"], lib), l = readelf(["-l"], lib), d = readelf(["-d"], lib), syms = readelf(["--dyn-syms"], lib), r = readelf(["-r"], lib);
 		check('$t: ET_DYN at address 0, no interpreter', h.contains("DYN (Shared object file)") && !l.contains("INTERP") && ~/LOAD\s+0x0+ 0x0+ /.match(l));
 		check('$t: no text relocations, BIND_NOW', !d.contains("TEXTREL") && d.contains("BIND_NOW"));
-		check('$t: SONAME', d.contains("Library soname: [libhxlib.so]"));
+		var soname = haxe.io.Path.withoutDirectory(lib);
+		check('$t: SONAME $soname', d.contains('Library soname: [$soname]'));
 		var defined = [for (line in syms.split("\n")) if (~/GLOBAL\s+DEFAULT\s+\d+\s+/.match(line)) line.trim().split(" ").pop()];
 		defined.sort(compare);
 		var want = exports.copy();

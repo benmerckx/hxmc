@@ -49,11 +49,13 @@ class Corpus {
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
 	static final WASM_EXCLUDED = ["ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
-		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "GcFreeFunctions" => "no threads on wasm32-wasi", "GcFreeSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)"];
+		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
-	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)"];
+	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
+	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
+	public static final MUSL_ONLY = ["LinuxEntropy" => "getentropy and getrandom: musl's, the static mode on Linux only"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
 	// the cases known to fail under --mir-run (as --known: still run, their
@@ -169,6 +171,7 @@ class Corpus {
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
 		if (!t.startsWith("linux") && LINUX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: LINUX_ONLY[c.name]};
+		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
@@ -219,6 +222,11 @@ class Corpus {
 		if (notLive != null) {
 			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
 			if (live != null) return {name: c.name, status: "live", detail: live};
+		}
+		var checks = caseLine(src, "span-checks");
+		if (checks != null && target == null && libc == null) {
+			var bad = spanChecks(d, cmd.concat(defines), checks);
+			if (bad != null) return {name: c.name, status: "span-checks", detail: bad};
 		}
 		var re = ~/hxmc: ([0-9]+) functions/;
 		var nf = re.match(r.out) ? re.matched(1) + " functions" : "";
@@ -272,6 +280,39 @@ class Corpus {
 		if (FileSystem.exists(exe)) FileSystem.deleteFile(exe);
 		if (r.out.split("\n").indexOf("hxmc: reach: why " + name) >= 0) return '$name is live:\n' + tail(r.out, 1500);
 		return null;
+	}
+
+	// A `// span-checks: <Class.function>=<n> ...` line: the span element
+	// checks left in each function's code once optimized (Opt.condProp drops
+	// those its loop proves), counted in the Mir HXMC_DUMP prints (the calls
+	// of SpanSupport.outOfRange), from a build that compiles every function
+	// (a cache of its own): null when each count is the one named, else why
+	// not. (cmd: the case's build)
+	static function spanChecks(d:String, cmd:Array<String>, spec:String):Null<String> {
+		var want = new Map<String, Int>();
+		for (w in spec.split(" "))
+			if (w != "") {
+				var kv = w.split("=");
+				want.set("F_" + kv[0].replace(".", "_"), Std.parseInt(kv[1]));
+			}
+		var cache = d + "/span-checks-cache", out = d + "/span-checks";
+		rmrf(cache);
+		var args = cmd.copy();
+		args[1] = out;
+		var r = exec(args, {env: ["HXMC_DUMP" => [for (k in want.keys()) k].join(","), "HXMC_CACHE" => cache]});
+		rmrf(cache);
+		if (FileSystem.exists(out)) FileSystem.deleteFile(out);
+		if (r.code != 0) return "the build with HXMC_DUMP failed: " + tail(r.out + r.err, 1500);
+		var got = new Map<String, Int>(), fn = null;
+		for (l in r.out.split("\n")) {
+			if (l.startsWith("func ")) {
+				fn = l.substr(5, l.indexOf("(") - 5);
+				got.set(fn, 0);
+			} else if (fn != null && l.indexOf("call F_hxmc_SpanSupport_outOfRange") >= 0) got.set(fn, got.get(fn) + 1);
+		}
+		var bad = [for (k => n in want) if (got.get(k) != n) '$k: $n checks expected, ${got.exists(k) ? Std.string(got.get(k)) : "no code"} found'];
+		bad.sort(compare);
+		return bad.length == 0 ? null : bad.join("\n");
 	}
 
 	// a case run inside the compiler (--mir-run): typed, compiled for the Mir

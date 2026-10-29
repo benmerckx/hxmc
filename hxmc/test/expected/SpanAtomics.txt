@@ -1,0 +1,5 @@
+exit 2
+SpanAtomics.hx:74: flag, 0, 0
+SpanAtomics.hx:110: cancelled, true
+SpanAtomics.hx:111: count, 300000, 300000
+SpanAtomics.hx:112: wide, 8589935617

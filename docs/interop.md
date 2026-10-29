@@ -31,8 +31,8 @@ same for that function.
 | `@:hxmc.lib("name")` | the library: `lib<name>.so` (or a full name such as `libGL.so.1`), a DLL, a dylib; a wasm import module |
 | `@:hxmc.link("path")` | an object or archive linked with the program (also `-D hxmc.link=`) |
 | `@:hxmc.fast` | the call stays in the running state: no collection runs during it, so it may take addresses of GC objects. It must be short and must not block or call back |
-| `@:hxmc.blocking` | the call runs in a safe region entered at the call site ([Blocking calls](#blocking-calls)); on a field it overrides its class' `@:hxmc.fast`; on a Haxe function it is `@:hxmc.gcfree` too |
-| `@:hxmc.gcfree` | a Haxe function that never touches the GC heap, checked, whose calls enter no safe region ([GC-free code](#gc-free-code)) |
+| `@:hxmc.blocking` | the call runs in a safe region entered at the call site ([Blocking calls](#blocking-calls)); on a field it overrides its class' `@:hxmc.fast`; on a Haxe function it is `@:hxmc.kernel` too |
+| `@:hxmc.kernel` | a kernel: a Haxe function that never touches the GC heap, memory-safe unless also `@:hxmc.unsafe`, checked, whose calls enter no safe region ([Kernels](#kernels)) |
 | `@:hxmc.varargs(n)` | a variadic function with `n` fixed arguments |
 | `@:hxmc.indirect` | a call through a C function pointer, the first argument |
 | `@:hxmc.struct` | a class with C layout, used as a value ([Struct values](#struct-values)) |
@@ -64,7 +64,7 @@ threads' collections wait for it.
 - **`@:hxmc.blocking` on a static Haxe function**: its
   calls run in a safe region, for GC-free jobs (a loop over native memory)
   that would otherwise stall other threads' collections until their next
-  GC point. It is [`@:hxmc.gcfree`](#gc-free-code), checked as such, plus
+  GC point. It is [`@:hxmc.kernel`](#kernels), checked as such, plus
   the region: calls from GC code enter one, calls between such functions
   enter no new region. A call through a closure, or of an `inline` one
   (Haxe inlines the call away), runs outside a region: still correct, only
@@ -106,17 +106,19 @@ Blocking.leave(region);
 pipes while the main thread collects. `NestedRegions` checks the nesting,
 `BlockingFunctions` the Haxe functions, `reject/Blocking*` the rule.
 
-### GC-free code
+### Kernels
 
-`@:hxmc.gcfree` on a static Haxe function (or on a class: each of its
-functions) says it never touches the GC heap, and the compiler checks it
-by construction, on the lowered body:
+`@:hxmc.kernel` on a static Haxe function (or on a class: each of its
+functions) marks a kernel: a function that is GC-free, and memory-safe
+unless also `@:hxmc.unsafe` (the safe subset, below).
+GC-free means it never touches the GC heap, which the compiler checks by
+construction, on the lowered body:
 
 - no allocation and no GC point (as `@:hxmc.unsafe`, the chain of calls to
   the first one named);
 - no value of a GC type anywhere: parameters, result, locals, every
   expression (string literals are static data, allowed);
-- calls only of `@:hxmc.gcfree` or `@:hxmc.blocking` functions and of C or
+- calls only of `@:hxmc.kernel` or `@:hxmc.blocking` functions and of C or
   runtime functions that are no GC point (`@:hxmc.fast` or
   `@:hxmc.blocking` externs, `Mem`, `Atomic`); no call through a closure,
   a method or a structural field.
@@ -125,12 +127,12 @@ Unlike `@:hxmc.blocking`, a call of it enters no safe region. So one
 kernel serves both paths: called on the main thread like any function, and
 called inside a region its caller entered (a job pool's worker, between
 `Blocking.enter` and `leave`), where other threads collect meanwhile.
-`@:hxmc.blocking` on a Haxe function is `@:hxmc.gcfree` plus a region
-entered by calls from GC code; a GC-free function may call a blocking one
+`@:hxmc.blocking` on a Haxe function is `@:hxmc.kernel` plus a region
+entered by calls from GC code; a kernel may call a blocking one
 (the region nests).
 
 ```haxe
-@:hxmc.unsafe @:hxmc.gcfree static function checksum(p:Ptr<UInt8>, n:Int):Int { // raw memory: also unsafe
+@:hxmc.unsafe @:hxmc.kernel static function checksum(p:Ptr<UInt8>, n:Int):Int { // raw memory: also unsafe
   var s = 0;
   for (i in 0...n) s = (s * 31 + p[i]) & 0xFFFFFF;
   return s;
@@ -142,7 +144,7 @@ checksum(buf.ptr, buf.length);
 Blocking.leave(region);
 ```
 
-**The safe subset.** Without `@:hxmc.unsafe`, a GC-free function is
+**The safe subset.** Without `@:hxmc.unsafe`, a kernel is
 memory-safe too, checked on its typed body before it is lowered (so
 whatever Haxe inlined into it counts as its own code, at the call's
 position):
@@ -150,7 +152,7 @@ position):
 | | Allowed | Rejected |
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values | GC types; raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
-| calls | static `@:hxmc.gcfree` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast |
 | statics | reads | writes, also of a struct static's fields |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
@@ -164,19 +166,19 @@ function does not carry into the copies Haxe inlines: an inline helper
 over raw memory is rejected in safe code. Each error names the rule:
 
 ```
-Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (gcfree: raw memory needs @:hxmc.unsafe)
-Kernel.hx:14: Kernel.sum: a write of the static total (gcfree: statics are read-only in GC-free code)
+Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (kernel: raw memory needs @:hxmc.unsafe)
+Kernel.hx:14: Kernel.sum: a write of the static total (kernel: statics are read-only in kernels)
 ```
 
-`@:hxmc.gcfree` plus `@:hxmc.unsafe` keeps the freedom of raw memory, as
-above: the escape hatch for trusted code. `GcFreeFunctions` (unsafe) and
-`GcFreeSafe` check both paths, `reject/GcFree*` the rules. The design:
-[plans/io.md](plans/io.md#gc-free-kernels).
+`@:hxmc.kernel` plus `@:hxmc.unsafe` keeps the freedom of raw memory, as
+above: the escape hatch for trusted code. `KernelFunctions` (unsafe) and
+`KernelSafe` check both paths, `reject/Kernel*` the rules. The design:
+[plans/io.md](plans/io.md#kernels).
 
 ### Spans
 
 `hxmc.Span<T>` and `hxmc.ReadOnlySpan<T>` are checked views of memory for
-GC-free code: an address and a number of elements, a value of two words.
+kernels: an address and a number of elements, a value of two words.
 `T` is a C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`, `UInt32`,
 `Int64`, `Float32`, `Float`, `Bool`) or a `@:hxmc.struct`. A `Span`
 converts to a `ReadOnlySpan`, never back.
@@ -190,8 +192,9 @@ converts to a `ReadOnlySpan`, never back.
 | `s.reinterpret()` | the same bytes as elements of another type: `var f:Span<Float> = bytes.reinterpret()`, length * size(T) / size(U) of them |
 | `dst.blit(pos, src, srcpos, len)` | a copy between spans, overlapping too, checked |
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1, checked |
+| `s.load(i)`, `s.store(i, v)`, `s.compareExchange(i, expected, replacement)` | atomic accesses of element i, checked as `s[i]`: of `Int`, `UInt` (`Int32`, `UInt32`) and `Int64` elements; sequentially consistent, so a load acquires and a store releases. `compareExchange` writes replacement if the element holds expected and returns what it held. A `ReadOnlySpan` has `load` only |
 
-A failed check cannot throw in GC-free code (a throw allocates): the
+A failed check cannot throw in kernels (a throw allocates): the
 program ends with exit code 2 and a message on stderr:
 
 ```
@@ -206,15 +209,32 @@ a loop. Measured ([plans/io.md](plans/io.md#bounds-checks)): one to one and a ha
 instructions per access, 1.15 to 1.45 times a raw loop's time natively,
 1.1 to 1.2 on wasm32; without the checks, as fast as raw access.
 
-**Where spans exist: only in GC-free code**, as parameters, locals and
-results of `@:hxmc.gcfree` and `@:hxmc.blocking` functions. Never a field,
+**Checks a loop proves are dropped**, and the loop is then as fast as raw
+access ([plans/io.md](plans/io.md#checks-a-loop-proves)). The compiler
+recognizes these patterns:
+
+- `s[i]` in `for (i in 0...s.length)` or in `while (i < s.length) { ...; i++; }`
+  with i starting at 0;
+- `s[i]` in `for (i in 0...n)` after the length was tested against n
+  (`if (n > s.length) return ...`), or through another span of a length
+  tested equal (`if (b.length != a.length) return ...`);
+- a sub-span's own loop (`var m = s.sub(p, k); for (i in 0...m.length) m[i]`);
+- a table's index masked below a length tested first
+  (`if (t.length < 256) return ...; t[x & 0xFF]`).
+
+Other accesses keep their check, as do counters that may start below 0 or
+step by more than 1. `SpanLoops` names the checks left in each of its
+kernels (the corpus's `// span-checks:` line).
+
+**Where spans exist: only in kernels**, as parameters, locals and
+results of `@:hxmc.kernel` and `@:hxmc.blocking` functions. Never a field,
 a static, a struct's field, an element, a capture, a type parameter's
-value. GC code makes one only as a direct argument of a call of a GC-free
-function, which lends the memory for that call, and such a call's result
+value. GC code makes one only as a direct argument of a call of a
+kernel, which lends the memory for that call, and such a call's result
 is not a span:
 
 ```haxe
-@:hxmc.gcfree static function adler(s:ReadOnlySpan<UInt8>):Int { ... }
+@:hxmc.kernel static function adler(s:ReadOnlySpan<UInt8>):Int { ... }
 
 var sum = adler(ReadOnlySpan.ofBytes(bytes));                       // no copy
 var e = Png.decode(ReadOnlySpan.ofIoBuffer(file), Span.ofIoBuffer(rgba), Span.ofIoBuffer(scratch));
@@ -222,14 +242,14 @@ var e = Png.decode(ReadOnlySpan.ofIoBuffer(file), Span.ofIoBuffer(rgba), Span.of
 
 | Made by | The callee |
 | --- | --- |
-| `ofBytes(b, ?pos, ?len)` | a GC-free function that never enters a safe region (not blocking, calls nothing that does): a collection would move the `Bytes` |
-| `ofIoBuffer(buf, ?pos, ?len)` | any GC-free function, `@:hxmc.blocking` too |
+| `ofBytes(b, ?pos, ?len)` | a kernel that never enters a safe region (not blocking, calls nothing that does): a collection would move the `Bytes` |
+| `ofIoBuffer(buf, ?pos, ?len)` | any kernel, `@:hxmc.blocking` too |
 | `unsafeOf(ptr, length)` | its maker vouches for the memory: `@:hxmc.unsafe` code (a pool's glue), or an argument in GC code |
 
 `ofBytes` and `ofIoBuffer` check their range in the caller
 (`haxe.io.Error.OutsideBounds`). The call's other arguments are evaluated
 first and the spans' addresses taken last, so nothing collects in between.
-During the call only GC-free code runs on the thread: it reaches no GC
+During the call only kernel code runs on the thread: it reaches no GC
 point (a `Bytes` stays where it is) and frees nothing (no C, no raw memory
 without `@:hxmc.unsafe`), so the memory outlives every span of it. An
 `IoBuffer` keeps one owner: freeing it on another thread while a call uses
@@ -240,19 +260,68 @@ may be passed to one call; safe code cannot hand a span to another thread.
 Each error names the rule:
 
 ```
-Main.hx:8: Main.main: the local s has a span type (gcfree: spans exist only in GC-free code: only a @:hxmc.gcfree function holds one)
-Main.hx:3: the field last has a span type (gcfree: spans live in parameters and locals only)
+Main.hx:8: Main.main: the local s has a span type (kernel: spans exist only in kernels: only a @:hxmc.kernel function holds one)
+Main.hx:3: the field last has a span type (kernel: spans live in parameters and locals only)
 ```
 
 Haxe's typer applies no `@:from` in a compound assignment of an element
 (as for `Ptr`): `s[i] = s[i] + 1` for a `UInt8` element, `s[i] += 1` for
-an `Int` one. A struct parameter is a copy: GC-free state that functions
+an `Int` one. A struct parameter is a copy: kernel state that functions
 update in place is a struct element of a span (`st[0].pos += n`).
 
 `Spans` (every target) and `SpanOutOfRange` check the API and the failure,
 `SpanInflate` a zlib inflate written on spans, over `Bytes` on the main
 thread and over IoBuffers on a worker inside its region while the main
-thread collects; `reject/Span*` the rules.
+thread collects; `SpanAtomics` a worker polling a cancel flag inside its
+region while the main thread sets it, and workers counting with
+`compareExchange` (on wasm32, without threads, the same calls on one
+thread); `reject/Span*` the rules.
+
+### Spans on other targets
+
+The same kernel source compiles for Eval, JavaScript and the other Haxe
+targets and behaves the same there. On those targets `hxmc.Span<T>` and
+`hxmc.ReadOnlySpan<T>` are views of a `haxe.io.Bytes` (an offset and a
+length), and the C scalars, `hxmc.I64` and `Struct.sizeOf` and `alignOf`
+are plain Haxe (`hxmc/portable`, which MkStd copies into hxmc's std as
+`hxmc-portable`). `@:hxmc.kernel` is ordinary metadata there and nothing
+checks it, so check a kernel by building it for hxmc. The `haxe` of
+`@hxmc/cli` adds that class path to every build for another target; with
+another compiler, pass `-cp <hxmc's std>/hxmc-portable`.
+
+| | On other targets |
+| --- | --- |
+| `ofBytes(b, ?pos, ?len)` | a view of `b`, no copy; a bad range throws `haxe.io.Error.OutsideBounds`, as on hxmc |
+| `ofIoBuffer`, `unsafeOf` | a compile error: `IoBuffer` and `Ptr` exist only on hxmc (`hxmc.unsafe`), so lend a `Bytes` instead |
+| a failed check | throws `hxmc.Span.SpanError` with hxmc's message (`span index 3 out of range [0, 3)`) |
+| elements | little-endian, as on every hxmc target; stores wrap as C's conversions do |
+| `load`, `store`, `compareExchange` | plain accesses: safe code cannot share a span between threads |
+| `reinterpret()` | needs the result's span type (`var w:Span<Int> = s.reinterpret()`), which a macro reads |
+
+Element types: every C scalar (`UInt8`, `Int8`, `UInt16`, `Int16`, `Int`,
+`UInt`, `Int64`, `Float32`, `Float`, `Bool`) and `@:hxmc.struct` classes
+whose fields are scalars. The gaps:
+
+- **Struct elements are objects of their own**, made zeroed when a span is
+  reinterpreted as structs. Writes through them stay out of the `Bytes`, and
+  a reinterpretation of the same memory as another type does not see them
+  (`SpanInflate`'s state and tables do not overlap, so it runs unchanged).
+  `s[i]` is the element itself, not a copy, as `@:hxmc.struct` values are
+  references on these targets: `s[i].x = v` writes in place, but
+  `var e = s[i]; e.x = v` changes the element too. Storing a struct
+  (`s[i] = v`, `fill`, `blit`) copies its fields. A struct field that is
+  itself a struct is hxmc's only.
+- `UInt64` elements and `I64`'s increment operators are hxmc's only.
+- `compareExchange` on a `Float` element throws at run time instead of
+  failing to compile.
+
+`PortableCheck` (`make portable-check`, CI's `fuzz-exec` job) builds
+`SpanInflate` (its paths over `Bytes`; the worker over IoBuffers is
+hxmc's) and `SpanPortable` (every element type, the views, struct elements,
+the atomic accesses) with the reference compiler, runs them on Eval and as
+JavaScript under node, and compares their output with the corpus's golden
+files. `hxmc/test/portable` holds the failed checks, the compile errors
+and spans of private structs.
 
 ### System calls
 
@@ -262,6 +331,12 @@ thread collects; `reject/Span*` the rules.
 `io_uring_setup` (`Linux.SYS_io_uring_setup`). It returns -1 on failure
 and `Linux.errno()` the error. It is `@:hxmc.blocking`. Other targets
 reject the module at compile time. `LinuxSyscall` checks it on Linux.
+
+The system's random bytes, `getentropy(3)` and `getrandom(2)`, are C
+library functions for an `@:hxmc.c` extern (or the C a program links): in
+the static mode musl's, on Android Bionic's, on macOS libSystem's
+`getentropy`. glibc 2.17, the floor of `-D hxmc.libc=glibc`, has neither:
+use `syscall` there. `LinuxEntropy` checks them in the static mode.
 
 ### Calls and linking
 
@@ -359,7 +434,12 @@ module or with `env`. The module exports `memory`, `_start` and
 Natively it is the name alone: a program's C symbols share one namespace
 when linked (static linking, and ELF's search of every library loaded), so
 the same name in two libraries is one function with one signature, and
-signatures that differ are a compile error.
+signatures that differ are a compile error. Declarations of a variadic
+function (`@:hxmc.varargs(n)`) may differ in their variadic arguments,
+which each call passes its own, as C allows (`syscall` with three
+arguments and with six), when they agree on `n`, the fixed arguments and
+the result, and no variadic argument is a struct; on WebAssembly, one
+import, they agree on all of it.
 
 A `@:hxmc.callback`'s address is its index in that table, so JavaScript
 calls it with `table.get(addr)(...)`, during an import call or after
@@ -393,6 +473,8 @@ s[3].y = 2;                                  // in place
   of other structs, statics, behind a `Ptr`, in a `Slice`.
 - **Fields**: C scalars, `Int`, `Float`, `Bool`, `Ptr` and other structs.
   GC references are rejected.
+- **Layout**: C's, the variables in declaration order. DCE keeps every
+  variable of a struct it keeps (`-dce full` too), named in code or not.
 - **Semantics**: assignment, arguments and results copy. A field accessed
   through a pointer, a struct field or an object's field is read and
   written in place. `new S(...)` zeroes the memory and runs the

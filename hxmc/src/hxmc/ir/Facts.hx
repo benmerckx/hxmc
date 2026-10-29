@@ -553,14 +553,14 @@ class Facts {
 		}
 		// @:hxmc.unsafe: a promise the runtime's Haxe code relies on (raw
 		// addresses kept across calls), checked: every violation, with the
-		// chain of calls to the first GC point; @:hxmc.gcfree and
-		// @:hxmc.blocking make the same promise, and more (gcFreeCulprit)
+		// chain of calls to the first GC point; @:hxmc.kernel and
+		// @:hxmc.blocking make the same promise, and more (kernelCulprit)
 		var errors = [];
 		for (f in p.funcs)
 			if (f.declNoGc && !f.noGc) errors.push(where(f) + '${displayName(f)} is declared ${declared(f)} but reaches a GC point: ${noGcCulprit(f, cand, 0, [])}');
 		for (f in p.funcs)
-			if (f.declGcFree) {
-				var why = gcFreeCulprit(f);
+			if (f.declKernel) {
+				var why = kernelCulprit(f);
 				if (why != null) errors.push(where(f) + '${displayName(f)} is declared ${declared(f)} but $why');
 			}
 		if (errors.length > 0) {
@@ -571,19 +571,19 @@ class Facts {
 
 	// the attribute that made f's promise, as written (errors)
 	static function declared(f:FuncInfo):String
-		return f.declBlocking ? "@:hxmc.blocking" : f.declGcFree ? "@:hxmc.gcfree" : "@:hxmc.unsafe";
+		return f.declBlocking ? "@:hxmc.blocking" : f.declKernel ? "@:hxmc.kernel" : "@:hxmc.unsafe";
 
-	// @:hxmc.gcfree on a Haxe function (and @:hxmc.blocking, which is
-	// @:hxmc.gcfree whose calls run in a safe region): it never reaches the
+	// @:hxmc.kernel on a Haxe function (and @:hxmc.blocking, which is
+	// @:hxmc.kernel whose calls run in a safe region): it never reaches the
 	// GC heap at all, so it may run while other threads collect. The rule,
 	// checked on the lowered body: no allocation, no GC point (findNoGc); no
 	// value of a GC type anywhere (parameters, result, locals, every
 	// expression but string literals, which are static: no heap object, no
-	// static holding one, no Mem.addr); calls only of @:hxmc.gcfree (or
+	// static holding one, no Mem.addr); calls only of @:hxmc.kernel (or
 	// @:hxmc.blocking) functions and of C or runtime functions that are no GC
 	// point (@:hxmc.fast or @:hxmc.blocking externs, Mem's intrinsics). Null
 	// when it holds, else the first violation.
-	function gcFreeCulprit(f:FuncInfo):Null<String> {
+	function kernelCulprit(f:FuncInfo):Null<String> {
 		if (Ir.isRef(f.ret)) return "returns a value of a GC type";
 		for (a in f.args)
 			if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type';
@@ -597,10 +597,10 @@ class Facts {
 				// strlen and malloc, counts as the C function: @:hxmc.fast)
 				// (a struct's constructor: when its own body is GC-free)
 				case ECall(g, _) if (g.structCtor && g != f):
-					var w = g.noGc ? gcFreeCulprit(g) : "reaches a GC point";
+					var w = g.noGc ? kernelCulprit(g) : "reaches a GC point";
 					if (w != null) why = "it calls " + displayName(g) + ", which " + StringTools.replace(w, "it ", "");
-				case ECall(g, _) if (!g.declGcFree && !(g.cSymbol != null && FnLower.C_EXTERNS.exists(g.cSymbol))): why = "it calls " + displayName(g) + ", which is not @:hxmc.gcfree (nor @:hxmc.blocking)";
-				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a method, a closure or a structural field (only static @:hxmc.gcfree functions)";
+				case ECall(g, _) if (!g.declKernel && !(g.cSymbol != null && FnLower.C_EXTERNS.exists(g.cSymbol))): why = "it calls " + displayName(g) + ", which is not @:hxmc.kernel (nor @:hxmc.blocking)";
+				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a method, a closure or a structural field (only static @:hxmc.kernel functions)";
 				case ECallHost(n, _, _) if (!FnLower.noGcHost(n) && n != "rt_blocking_enter" && n != "rt_blocking_restore"): why = "it calls " + n + ", which may collect";
 				// (a string literal is static data, never moved: Mem.cstr's and Mem.sym's names)
 				case EStr(_):
@@ -739,7 +739,7 @@ class Facts {
 	}
 
 	// A span over a Bytes (hxmc.Span.ofBytes, an argument of a call of a
-	// GC-free function: FnLower.spanCall) holds the address of a heap
+	// kernel: FnLower.spanCall) holds the address of a heap
 	// object, taken last, right before the call (SpanSupport.bytesAddr): the
 	// call itself must never let another thread collect, so its callee must
 	// enter no safe region (not @:hxmc.blocking, no call of one or of a C
@@ -764,7 +764,7 @@ class Facts {
 						// (a blocking callee's region is entered by its caller)
 						if (g.blocks || g.declBlocking) {
 							var m = where(f) + displayName(f) + ": a span over a Bytes is passed to " + displayName(g)
-								+ ", which lets other threads collect (a safe region) while the Bytes may move (gcfree: a Bytes is lent only to a GC-free function that enters no region; lend an IoBuffer's instead)";
+								+ ", which lets other threads collect (a safe region) while the Bytes may move (kernel: a Bytes is lent only to a kernel that enters no region; lend an IoBuffer's instead)";
 							if (errors.indexOf(m) < 0) errors.push(m);
 						}
 					case _:

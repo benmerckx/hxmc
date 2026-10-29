@@ -270,15 +270,21 @@ class MirWriter {
 		var x = f.vals[a], z = f.vals[b];
 		if ((c == CEq || c == CNe) && x.op == Cmp && z.op == Const && z.imm == 0) {
 			var inner:Cond = x.imm;
-			if (c == CNe) return cmp(inner, x.a, x.b);
+			// (a span's element check stays marked: MIns.SPAN_CHECK)
+			if (c == CNe) return marked(cmp(inner, x.a, x.b), x.imm2);
 			var inv = invert(inner);
-			if (inv >= 0) return cmp(inv, x.a, x.b);
+			if (inv >= 0) return marked(cmp(inv, x.a, x.b), x.imm2);
 		}
 		var i = mk(Cmp, I32);
 		i.imm = c;
 		i.a = a;
 		i.b = b;
 		return add(i);
+	}
+
+	function marked(c:Int, mark:Int):Int {
+		f.vals[c].imm2 = mark;
+		return c;
 	}
 
 	// the comparison true exactly when c is false, or -1 (ordered double

@@ -1,0 +1,15 @@
+exit 0
+-- ternary of tail calls, true
+result a 1 android, error null
+-- ternary of tail calls, false
+result none, error null
+-- the local in the else call
+result b 2 ios, error null
+-- the local unused
+result a 2 -, error null
+-- if/else of returns, tail call
+result a 3 label true, error null
+-- if/else of returns, the local
+result label false, error null
+-- a call that never suspends
+result 4, error null

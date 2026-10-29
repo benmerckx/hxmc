@@ -71,8 +71,8 @@
 					<tr><td>Linux, x86-64 and ARM64</td><td>a static executable (musl), or linked against glibc 2.17+ (<code>-D hxmc.libc=glibc</code>); shared libraries</td></tr>
 					<tr><td>macOS, x86-64 and ARM64</td><td>an executable; dylibs</td></tr>
 					<tr><td>Windows, x86-64 and ARM64</td><td>an executable</td></tr>
-					<tr><td>Android, ARM64 and x86-64</td><td>an APK, written without the SDK, or the shared library alone</td></tr>
-					<tr><td>iOS and its simulator</td><td>an app bundle or <code>.ipa</code>, written without Xcode</td></tr>
+					<tr><td>Android, ARM64 and x86-64</td><td>the shared library an APK loads</td></tr>
+					<tr><td>iOS and its simulator</td><td>an executable or dylib, signed without Xcode</td></tr>
 					<tr><td>wasm32-wasi</td><td>a WebAssembly module (exception handling, or the legacy instructions)</td></tr>
 				</tbody>
 			</table></div>
@@ -144,7 +144,7 @@ lix download                    # after a clone: what the scope needs</code></pr
 			<a href="https://github.com/benmerckx/hxmc/blob/main/ROADMAP.md">Roadmap</a>
 			<a href="https://www.npmjs.com/package/@hxmc/cli">npm</a>
 		</nav>
-		<p class="legal">The compiler is GPL-2.0-or-later, as Haxe; hxmc's runtime and std are MIT.</p>
+		<p class="legal">The Haxe compiler port is GPL-2.0-or-later, as Haxe; hxmc, its runtime and std are MIT.</p>
 	</div>
 </footer>
 </body>

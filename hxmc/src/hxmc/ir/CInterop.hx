@@ -37,7 +37,9 @@ typedef CSig = {args:Array<CTy>, ret:CTy};
 
 class CInterop {
 	// C functions by symbol: their signature (one per symbol: every
-	// declaration must agree), and the ones called in a safe region (the
+	// declaration must agree, but for the variadic arguments of a
+	// @:hxmc.varargs function, which each call passes its own: the first
+	// declaration's, sameSig), and the ones called in a safe region (the
 	// externs not declared @:hxmc.fast: MirBuild wraps their calls in
 	// rt_blocking_enter/rt_blocking_leave)
 	public static var SIGS = new Map<String, CSig>();
@@ -101,11 +103,44 @@ class CInterop {
 			com.callbacks.addAfterTyping(types -> {
 				for (t in types)
 					switch t {
-						case TClassDecl(c) if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)) && isStruct(c)):
-							c.clConstructor.cfKind = Method(MethNormal);
+						case TClassDecl(c) if (isStruct(c)):
+							if (c.clConstructor != null && c.clConstructor.cfKind.match(Method(MethInline)))
+								c.clConstructor.cfKind = Method(MethNormal);
+							keepFields(c);
 						case _:
 					}
 			});
+		}
+	}
+
+	// A struct's variables are its C layout (layout): every one is kept with
+	// the class, used or not. Under `-dce full`, DCE kept only those the
+	// typed code reads or writes: a struct the lowering reaches itself
+	// (hxmc.Span's SpanData, whose ptr only FnLower.spanCall uses), or one
+	// whose fields C alone reads, lost fields, and so its layout. Each
+	// variable gets @:ifFeature("<the class>.*"), the feature DCE checks when
+	// it marks the class (optimization/Dce.hx, markClass).
+	static function keepFields(c:TClass) {
+		var feature = core.Globals.sTypePath(c.clPath) + ".*";
+		for (cf in c.clOrderedFields) {
+			if (!cf.cfKind.match(Var(_))) continue;
+			var exprs = [new core.Ast.Expr(EConst(String(feature, SDoubleQuotes)), cf.cfPos)];
+			var meta:core.Ast.Metadata = [];
+			var done = false;
+			for (m in cf.cfMeta)
+				if (m.meta == core.MetaList.StrictMeta.IfFeature) {
+					// (the field's own features too: DCE reads the first entry)
+					for (e in m.exprs)
+						switch e.expr {
+							case EConst(String(s, _)) if (s == feature): done = true;
+							case _: exprs.push(e);
+						}
+				} else
+					meta.push(m);
+			if (done) continue;
+			meta.push(new core.Ast.MetadataEntry(core.MetaList.StrictMeta.IfFeature, core.ds.VectorTools.ofArray(exprs), cf.cfPos));
+			// (metadata is replaced, never changed in place: Dce.hx)
+			cf.cfMeta = meta;
 		}
 	}
 
@@ -270,8 +305,8 @@ class CInterop {
 				case Var(_):
 				case Method(_): throw new LowerError('@:hxmc.struct $where: ${cf.cfName}: a struct has no methods (yet)', posOf(cf.cfPos));
 			}
-			if (GcFreeCheck.spanOf(cf.cfType) != null)
-				throw new LowerError(GcFreeCheck.spanError(posOf(cf.cfPos), "", "the field " + cf.cfName + " of the struct " + where + " has a span type", GcFreeCheck.SPANS_LOCAL), "");
+			if (KernelCheck.spanOf(cf.cfType) != null)
+				throw new LowerError(KernelCheck.spanError(posOf(cf.cfPos), "", "the field " + cf.cfName + " of the struct " + where + " has a span type", KernelCheck.SPANS_LOCAL), "");
 			var ct = ctype(cf.cfType);
 			switch ct {
 				case COpaque(o): throw new LowerError('@:hxmc.struct $where: ${cf.cfName}: an opaque type (${o.clPath.name}) only stands behind a Ptr', posOf(cf.cfPos));
@@ -400,10 +435,30 @@ class CInterop {
 		if (ret != CVoid && !isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('C function $shown: the result has no C type a call can return (${describe(ret)}; scalars, Ptr, CString, a struct or Void)', where);
 		var sig = {args: args, ret: ret};
+		// @:hxmc.varargs(k): the first variadic argument (the function's
+		// address of @:hxmc.indirect not counted)
+		var va:Null<Int> = null;
+		var vm = core.Meta.getOpt(Custom(":hxmc.varargs"), cf.cfMeta);
+		if (vm != null && vm.exprs.length == 1)
+			switch vm.exprs[0].expr {
+				case EConst(core.Ast.Constant.Int(k, _)): va = Std.parseInt(k);
+				case _:
+			}
+		var first = StringTools.startsWith(sym, INDIRECT) ? 1 : 0;
+		if (va != null && (va < 0 || va + first > args.length))
+			throw new LowerError('C function $shown: @:hxmc.varargs($va) names more fixed arguments than it has', where);
 		var prev = SIGS.get(sym);
 		if (prev != null) {
-			if (!sameSig(prev, sig)) throw new LowerError('C function $shown is declared twice with different signatures', where);
-		} else SIGS.set(sym, sig);
+			var pva = FnLower.C_VARIADIC.get(sym);
+			// (a variadic one: its variadic arguments may differ, natively, where
+			// each call passes its own; a WebAssembly import has one signature)
+			var same = (pva == null) == (va == null) && (va == null || (pva : Int) == (va : Int))
+				&& sameSig(prev, sig, va == null || Lower.targetOs == 3 ? -1 : va + first);
+			if (!same) throw new LowerError('C function $shown is declared twice with different signatures', where);
+		} else {
+			SIGS.set(sym, sig);
+			if (va != null) FnLower.C_VARIADIC.set(sym, va);
+		}
 		if (blocking) {
 			if (BLOCKING.exists(sym)) throw new LowerError('C function $shown is declared both @:hxmc.blocking and without it nor @:hxmc.fast: declare its calls the same way', where);
 			FnLower.C_EXTERNS.set(sym, true);
@@ -437,12 +492,37 @@ class CInterop {
 	// whether two declarations of a symbol lower the same (the conversions
 	// MirBuild.cCall makes: narrow integers, bool, float; the rest is passed as
 	// its value: a 32-bit int and a 64-bit one are told apart by the call's
-	// own operands, so POSIX's int sockets and Winsock's SOCKET may share a name)
-	static function sameSig(a:CSig, b:CSig):Bool {
-		if (a.args.length != b.args.length || abiKey(a.ret) != abiKey(b.ret)) return false;
+	// own operands, so POSIX's int sockets and Winsock's SOCKET may share a name).
+	// fixed >= 0: a variadic function's, its arguments from fixed on variadic:
+	// those may differ (syscall(2) of the runtime's three and six arguments)
+	// unless one is a struct, which MirBuild.cCall passes by the declaration
+	static function sameSig(a:CSig, b:CSig, fixed:Int):Bool {
+		if (abiKey(a.ret) != abiKey(b.ret)) return false;
+		if (fixed >= 0 && scalarTail(a, fixed) && scalarTail(b, fixed)) {
+			for (i in 0...fixed)
+				if (abiKey(a.args[i]) != abiKey(b.args[i])) return false;
+			return true;
+		}
+		if (a.args.length != b.args.length) return false;
 		for (i in 0...a.args.length)
 			if (abiKey(a.args[i]) != abiKey(b.args[i])) return false;
 		return true;
+	}
+
+	static function scalarTail(s:CSig, fixed:Int):Bool {
+		for (i in fixed...s.args.length)
+			if (s.args[i].match(CStruct(_))) return false;
+		return true;
+	}
+
+	// the arguments of a call of sym (signature sig, SIGS) whose C types every
+	// declaration agrees on: all but the variadic ones that are scalars, which
+	// the call's operands describe (Fingerprint)
+	public static function fixedArgs(sym:String, sig:CSig):Int {
+		var va = FnLower.C_VARIADIC.get(sym);
+		if (va == null) return sig.args.length;
+		var fixed = va + (StringTools.startsWith(sym, INDIRECT) ? 1 : 0);
+		return scalarTail(sig, fixed) ? fixed : sig.args.length;
 	}
 
 	static function abiKey(t:CTy):String

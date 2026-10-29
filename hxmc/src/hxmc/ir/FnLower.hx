@@ -103,8 +103,8 @@ class FnLower {
 
 	// a function body; `fi.args` already holds the caller-visible signature
 	public function run(tf:TFunc, isCtor = false) {
-		// (GC-free and not @:hxmc.unsafe: the safe subset, docs/interop.md)
-		if (fi.declGcFree && !fi.declUnsafe) GcFreeCheck.check(l, fi, tf);
+		// (a kernel not @:hxmc.unsafe: the safe subset, docs/interop.md)
+		if (fi.declKernel && !fi.declUnsafe) KernelCheck.check(l, fi, tf);
 		spanSignature(tf);
 		if (boxed == null) boxed = Boxing.analyze(tf.tfExpr, tf.tfArgs.mapToArray(a -> a.variable));
 		var off = 0;
@@ -149,7 +149,7 @@ class FnLower {
 			// (a span: its two words copied into a slot of this frame, which no call
 			// takes, so that they stay in registers, Sroa: the caller's memory
 			// would be read again after every store, which may alias it)
-			var sc = GcFreeCheck.spanOf(v.vType) != null ? structOf(v.vType) : null;
+			var sc = KernelCheck.spanOf(v.vType) != null ? structOf(v.vType) : null;
 			if (sc != null && !boxed.exists(v.vId)) {
 				var own = newSlot(t, false);
 				copyStruct(ELocal(own), x, sc);
@@ -458,7 +458,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -949,6 +949,153 @@ class FnLower {
 		}
 	}
 
+	// ---- appends to a string in a loop
+
+	// `s += x` in a loop (or `s = s + x + ...`) where nothing else reads or
+	// writes the local s: s's units go to a StringBuf, made at the second
+	// append (one append concatenates as before), and s becomes the buffer's
+	// string after the loop, so the loop copies each unit about twice rather
+	// than s's whole length at every append. Not inside a try of this
+	// function (a catch could read s after an exception left the loop), nor
+	// for a local a closure captures (it is boxed); every way out of the loop
+	// but an exception (its break, the end) reaches the code after it, and an
+	// exception leaves s dead. A read or write of s that the lowering meets
+	// anyway takes the buffer's string first (flushAppend).
+	var tryDepth = 0;
+	var appends = new Map<Int, {buf:Local, first:Local, s:Local}>();
+
+	static final SBUF = TRef(RNative("StringBuf"));
+
+	// the locals of the loop (condition c, body) whose units go to a buffer,
+	// their buffers declared (null: none)
+	function appendLoop(c:TExpr, body:TExpr):Null<Array<Int>> {
+		if (tryDepth > 0 || fi.declNoGc) return null;
+		var cands:Array<TVar> = [];
+		function find(e:TExpr) {
+			switch e.eexpr {
+				case TBinop(OpAssignOp(OpAdd), {eexpr: TLocal(v)}, _) | TBinop(OpAssign, {eexpr: TLocal(v)}, {eexpr: TBinop(OpAdd, _, _)})
+					if (!isBoxed(v) && !appends.exists(v.vId) && locals.exists(v.vId) && locals.get(v.vId).ty.match(TRef(RStr))
+						&& ty(v.vType).match(TRef(RStr)) && cands.indexOf(v) < 0):
+					cands.push(v);
+				case _:
+			}
+			core.Texpr.iter(find, e);
+		}
+		find(body);
+		var r = null;
+		for (v in cands)
+			if (onlyAppends(c, v, false) && onlyAppends(body, v, true)) {
+				var buf = newLocal(v.vName + "_buf", SBUF), first = newLocal(v.vName + "_first", TBool);
+				out.push(SSet(buf, ENull(SBUF)));
+				out.push(SSet(first, EInt(1)));
+				appends.set(v.vId, {buf: buf, first: first, s: locals.get(v.vId)});
+				if (r == null) r = [];
+				r.push(v.vId);
+			}
+		return r;
+	}
+
+	// after the loop: s from its buffer
+	function appendLoopEnd(ids:Null<Array<Int>>) {
+		if (ids == null) return;
+		for (id in ids) {
+			var a = appends.get(id);
+			appends.remove(id);
+			out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), vector(SSet(a.s, ECallHost(l.native("StringBuf_toString"), vector(ELocal(a.buf)), TRef(RStr)))), vector()));
+		}
+	}
+
+	// whether every use of v in e is an append as a statement (stmt: e is one)
+	function onlyAppends(e:TExpr, v:TVar, stmt:Bool):Bool {
+		inline function no(x:TExpr):Bool
+			return onlyAppends(x, v, false);
+		return switch e.eexpr {
+			case TBinop(OpAssignOp(OpAdd), {eexpr: TLocal(w)}, r) if (w == v):
+				stmt && no(r);
+			case TBinop(OpAssign, {eexpr: TLocal(w)}, r) if (w == v):
+				var xs = stmt ? appendedTo(r, v) : null;
+				if (xs == null) return false;
+				for (x in xs)
+					if (!no(x)) return false;
+				true;
+			case TLocal(w) | TVar(w, _) if (w == v): false;
+			case TParenthesis(x) | TMeta(_, x): onlyAppends(x, v, stmt);
+			case TBlock(es):
+				for (x in es)
+					if (!onlyAppends(x, v, stmt)) return false;
+				true;
+			case TIf(c, a, b): no(c) && onlyAppends(a, v, stmt) && (b == null || onlyAppends(b, v, stmt));
+			case TWhile(c, b, _): no(c) && onlyAppends(b, v, true);
+			case TSwitch(sw):
+				if (!no(sw.switchSubject)) return false;
+				for (c in sw.switchCases) {
+					for (x in c.casePatterns)
+						if (!no(x)) return false;
+					if (!onlyAppends(c.caseExpr, v, stmt)) return false;
+				}
+				sw.switchDefault == null || onlyAppends(sw.switchDefault, v, stmt);
+			case TTry(b, cs):
+				if (!onlyAppends(b, v, stmt)) return false;
+				for (c in cs)
+					if (!onlyAppends(c.expr, v, stmt)) return false;
+				true;
+			case _:
+				var ok = true;
+				core.Texpr.iter(x -> if (ok && !no(x)) ok = false, e);
+				ok;
+		}
+	}
+
+	// the operands r appends to v (r: v + x + ..., a chain of string +), or null
+	function appendedTo(r:TExpr, v:TVar):Null<Array<TExpr>> {
+		var xs = [];
+		var x = r;
+		while (isConcat(x))
+			switch x.eexpr {
+				case TBinop(_, a, b):
+					xs.push(b);
+					x = a;
+				case _:
+			}
+		return switch strip(x).eexpr {
+			case TLocal(w) if (w == v && xs.length > 0 && x.eexpr.match(TLocal(_))):
+				xs.reverse();
+				xs;
+			case _: null;
+		}
+	}
+
+	// the statement appending xs to s (appends has it): each operand
+	// evaluated and converted in turn, as + would, then all of them into the
+	// buffer (an exception meanwhile appends none: a try in the loop may catch
+	// it), or concatenated by the first append
+	function appendStmt(v:TVar, xs:Array<TExpr>) {
+		var a = appends.get(v.vId);
+		var sxs = [];
+		for (x in xs) {
+			var t = tyOf(x);
+			var sx = value(x);
+			sx = t.match(TRef(RStr)) ? (isConst(sx) ? sx : ELocal(asLocal(sx, t))) : toStr(sx, t);
+			sxs.push(sx);
+		}
+		var adds = [for (sx in sxs) SExpr(ECallHost(l.native("StringBuf_add"), vector(ELocal(a.buf), coerce(sx, TRef(RStr), TRef(RAny))), TVoid))];
+		var start = [
+			SSet(a.buf, ECallHost(l.native("StringBuf_new"), vector(), SBUF)),
+			SExpr(ECallHost(l.native("StringBuf_add"), vector(ELocal(a.buf), coerce(ELocal(a.s), TRef(RStr), TRef(RAny))), TVoid))
+		].concat(adds);
+		var concat = [for (sx in sxs) SSet(a.s, ECallHost(l.native("hx_str_concat"), vector(ELocal(a.s), sx), TRef(RStr)))].concat([SSet(a.first, EInt(0))]);
+		out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), Vector.fromArrayCopy(adds),
+			vector(SIf(ELocal(a.first), Vector.fromArrayCopy(concat), Vector.fromArrayCopy(start)))));
+	}
+
+	// s (appends has it) as the buffer holds it, for a read or write the
+	// lowering did not expect (the next append starts a new buffer)
+	function flushAppend(v:TVar) {
+		var a = appends.get(v.vId);
+		out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)),
+			vector(SSet(a.s, ECallHost(l.native("StringBuf_toString"), vector(ELocal(a.buf)), TRef(RStr))), SSet(a.buf, ENull(SBUF))), vector()));
+	}
+
 	// ---- statements
 
 	function stmt(e:TExpr) {
@@ -1048,12 +1195,15 @@ class FnLower {
 					if (k != 0) stmt(a) else if (b != null) stmt(b);
 				} else out.push(SIf(cx, block(() -> stmt(a)), b != null ? block(() -> stmt(b)) : vector()));
 			case TWhile(c, body, NormalWhile):
+				var ap = appendLoop(c, body);
 				out.push(SLoop(block(() -> {
 					var cx = cond(c);
 					out.push(SIf(ENot(cx), vector(SBreak), vector()));
 					stmt(body);
 				})));
+				appendLoopEnd(ap);
 			case TWhile(c, body, DoWhile):
+				var ap = appendLoop(c, body);
 				// first iteration skips the test, so `continue` reaches it
 				var first = newLocal("first", TBool);
 				out.push(SSet(first, EInt(1)));
@@ -1065,6 +1215,11 @@ class FnLower {
 					out.push(SSet(first, EInt(0)));
 					stmt(body);
 				})));
+				appendLoopEnd(ap);
+			case TBinop(OpAssignOp(OpAdd), {eexpr: TLocal(v)}, r) if (appends.exists(v.vId)):
+				appendStmt(v, [r]);
+			case TBinop(OpAssign, {eexpr: TLocal(v)}, r) if (appends.exists(v.vId) && appendedTo(r, v) != null):
+				appendStmt(v, appendedTo(r, v));
 			case TSwitch(sw):
 				switchStmt(sw, null);
 			case TTry(body, catches):
@@ -1350,7 +1505,9 @@ class FnLower {
 
 	function tryStmt(body:TExpr, catches:Vector<{variable:TVar, expr:TExpr}>, target:Null<Local>) {
 		fi.hasTry = true;
+		tryDepth++;
 		var b = branch(body, target);
+		tryDepth--;
 		var cs = new Vector<IrCatch>(catches.length);
 		for (ci in 0...catches.length) {
 			var c = catches[ci];
@@ -1483,6 +1640,7 @@ class FnLower {
 				if (thisLocal == null) fail("super outside a method", e);
 				ELocal(thisLocal);
 			case TLocal(v):
+				if (appends.exists(v.vId)) flushAppend(v);
 				var lo = local(v, e);
 				var x:Ex = isBoxed(v) ? EBoxGet(ty(v.vType), ELocal(lo)) : ELocal(lo);
 				coerce(x, ty(v.vType), tyOf(e));
@@ -1491,6 +1649,15 @@ class FnLower {
 			case TCast(e1, mt):
 				// checked cast: throws when the value doesn't have the type
 				var x = coerce(value(e1), tyOf(e1), TRef(RAny));
+				var ci = castClass(mt);
+				if (ci != null) {
+					// of a class: the instance test, hx_cast (which throws) only when it fails
+					var lo = asLocal(x, TRef(RAny));
+					var r = newLocal("cast", TRef(RAny));
+					out.push(SSet(r, ELocal(lo)));
+					out.push(SIf(ENot(EInstOf(ci, ELocal(lo))), vector(SSet(r, ECallHost(l.native("hx_cast"), vector(ELocal(lo), EType(TRClass(ci))), TRef(RAny)))), vector()));
+					return coerce(ELocal(r), TRef(RAny), tyOf(e));
+				}
 				var c = temp(TRef(RAny), ECallHost(l.native("hx_cast"), vector(x, EType(typeRef(mt))), TRef(RAny)));
 				coerce(c, TRef(RAny), tyOf(e));
 			case TTypeExpr(mt):
@@ -2200,6 +2367,7 @@ class FnLower {
 		var et = tyOf(e);
 		switch strip(lhs).eexpr {
 			case TLocal(v):
+				if (appends.exists(v.vId)) flushAppend(v);
 				var lo = local(v, e);
 				var t = ty(v.vType);
 				if (isBoxed(v)) {
@@ -2411,10 +2579,10 @@ class FnLower {
 				return EInt(0);
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
-				// (spans made as arguments of a GC-free function: filled once
+				// (spans made as arguments of a kernel: filled once
 				// every argument is evaluated, spanCall)
 				var outer = boundary;
-				var made = fn.declGcFree ? [for (a in cargs) if (spanMaker(a)) strip(a)] : [];
+				var made = fn.declKernel ? [for (a in cargs) if (spanMaker(a)) strip(a)] : [];
 				boundary = made.length > 0 ? {direct: made, fills: []} : null;
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 0, fn);
 				var fills = boundary != null ? boundary.fills : null;
@@ -2592,11 +2760,43 @@ class FnLower {
 					case _:
 				}
 				coerce(EConv(F2I, x), TI32, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && instClass(cargs[1]) != null):
+				// Std.isOfType(v, C) of a class literal: the instance test, a range of
+				// type indices (MemLower.instOf; null is no instance), not hx_is's walk
+				var ci = instClass(cargs[1]);
+				coerce(EInstOf(ci, coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny))), TBool, tyOf(e));
+			case "Std_downcast" if (cargs.length == 2 && instClass(cargs[1]) != null):
+				var ci = instClass(cargs[1]);
+				var x = ELocal(asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), TRef(RAny)));
+				var r = newLocal("down", TRef(RAny));
+				out.push(SSet(r, ENull(TRef(RAny))));
+				out.push(SIf(EInstOf(ci, x), vector(SSet(r, x)), vector()));
+				coerce(ELocal(r), TRef(RAny), tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && typeObjectKind(cargs[1]) >= 0):
 				// Std.isOfType(v, Class), (v, Enum): whether v is a type object of a
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
 				var k = typeObjectKind(cargs[1]);
 				coerce(ECallHost(l.native("hx_is_typeobj"), vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
+			case _: null;
+		}
+	}
+
+	// the class whose instance test (EInstOf) Std.isOfType, Std.downcast and
+	// cast give for the type expression x, or null where hx_is must decide:
+	// an interface, an extern class (String, Array, Date, the boxes: the
+	// runtime's own type indices), a type parameter; any class while Mir macros
+	// lower their bundles (Lower.classSpans)
+	function instClass(x:TExpr):Null<ClassInfo> {
+		return switch strip(x).eexpr {
+			case TTypeExpr(mt): castClass(mt);
+			case _: null;
+		}
+	}
+
+	function castClass(mt:ModuleType):Null<ClassInfo> {
+		if (!Lower.classSpans) return null;
+		return switch mt {
+			case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_))): classOrBox(c);
 			case _: null;
 		}
 	}
@@ -2714,7 +2914,7 @@ class FnLower {
 	// constants; null for any other call
 	function cInteropCall(c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Null<Ex> {
 		switch c.clKind {
-			case KAbstractImpl(a) if (GcFreeCheck.isSpanAbstract(a)):
+			case KAbstractImpl(a) if (KernelCheck.isSpanAbstract(a)):
 				return spanCall(a, cf, cargs, e);
 			case KAbstractImpl(a) if (a.aPath.name == "Ptr" && a.aPath.pack.join(".") == "hxmc.unsafe"):
 				var n = cf.cfName;
@@ -2786,7 +2986,7 @@ class FnLower {
 	// access checked (Lower.spanChecks), a range always
 
 	// the direct arguments, making spans (Span.ofBytes & co.), of the call of
-	// a GC-free function being lowered, and what fills those spans once every
+	// a kernel being lowered, and what fills those spans once every
 	// argument is evaluated: their addresses are taken last, after any GC
 	// point (Facts.checkHeapSpans: the callee of a Bytes' enters no region)
 	var boundary:Null<{direct:Array<TExpr>, fills:Array<() -> Void>}> = null;
@@ -2796,7 +2996,7 @@ class FnLower {
 		switch strip(e).eexpr {
 			case TCall({eexpr: TField(_, FStatic(c, cf))}, _):
 				switch c.clKind {
-					case KAbstractImpl(a) if (GcFreeCheck.isSpanAbstract(a)):
+					case KAbstractImpl(a) if (KernelCheck.isSpanAbstract(a)):
 						return cf.cfName == "ofBytes" || cf.cfName == "ofIoBuffer" || cf.cfName == "unsafeOf";
 					case _:
 				}
@@ -2810,17 +3010,17 @@ class FnLower {
 		return where(e) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
 
 	function spanFail(e:TExpr, what:String, rule:String):Dynamic
-		throw new LowerError(GcFreeCheck.spanError(where(e), fi.display != null ? fi.display : fi.name, what, rule), "");
+		throw new LowerError(KernelCheck.spanError(where(e), fi.display != null ? fi.display : fi.name, what, rule), "");
 
 	// a span type where GC code would hold it: an error
 	function spanInGcCode(t:T, e:TExpr, what:String) {
-		if (!fi.declGcFree && GcFreeCheck.spanOf(t) != null)
-			spanFail(e, what + " has a span type", GcFreeCheck.SPANS_GCFREE + ": only a @:hxmc.gcfree function holds one");
+		if (!fi.declKernel && KernelCheck.spanOf(t) != null)
+			spanFail(e, what + " has a span type", KernelCheck.SPANS_KERNEL + ": only a @:hxmc.kernel function holds one");
 	}
 
 	// a function's parameters and result: no span in GC code
 	function spanSignature(tf:TFunc) {
-		if (fi.declGcFree) return;
+		if (fi.declKernel) return;
 		var at:TExpr = {eexpr: TConst(TNull), etype: tf.tfType, epos: tf.tfExpr.epos};
 		for (a in tf.tfArgs)
 			spanInGcCode(a.variable.vType, ({eexpr: TConst(TNull), etype: a.variable.vType, epos: a.variable.vPos} : TExpr), "the parameter " + a.variable.vName);
@@ -2875,9 +3075,9 @@ class FnLower {
 			return isConst(x) ? x : ELocal(asLocal(x, t));
 		if (name == "ofBytes" || name == "ofIoBuffer" || name == "unsafeOf") {
 			var direct = boundary != null && boundary.direct.indexOf(e) >= 0;
-			if (!direct && !fi.declGcFree)
+			if (!direct && !fi.declKernel)
 				spanFail(e, "a span made outside a call's arguments",
-					GcFreeCheck.SPANS_GCFREE + "; pass " + a.aPath.name + "." + name + "(...) as an argument of a @:hxmc.gcfree function");
+					KernelCheck.SPANS_KERNEL + "; pass " + a.aPath.name + "." + name + "(...) as an argument of a @:hxmc.kernel function");
 			var xs = operands(cargs);
 			function arg(k:Int, d:Int):Ex
 				return k < xs.length && !strip(cargs[k]).eexpr.match(TConst(TNull)) ? loc(coerce(xs[k], tyOf(cargs[k]), TI32), TI32) : EInt(d);
@@ -2895,8 +3095,8 @@ class FnLower {
 					fill = () -> make(s, loc(ECall(spanSupport(sd, "bytesAddr"), vector(b, pos)), TI64), n);
 				case _:
 					var buf = loc(coerce(xs[0], tyOf(cargs[0]), TI64), TI64), pos = arg(1, 0), len = arg(2, -1);
-					// (GC code throws OutsideBounds; GC-free code cannot: it ends the program)
-					var n = fi.declGcFree ? loc(ECall(spanSupport(sd, "ioRangeFatal"), vector(buf, pos, len, at)),
+					// (GC code throws OutsideBounds; a kernel cannot: it ends the program)
+					var n = fi.declKernel ? loc(ECall(spanSupport(sd, "ioRangeFatal"), vector(buf, pos, len, at)),
 						TI32) : loc(ECall(spanSupport(sd, "ioRange"), vector(buf, pos, len)), TI32);
 					fill = () -> make(s, loc(ECall(spanSupport(sd, "ioAddr"), vector(buf, pos)), TI64), n);
 			}
@@ -2906,7 +3106,7 @@ class FnLower {
 		// (the element type: elem and setElem are called by the inline get and
 		// set, whose `this` is SpanData: their own type is the element's)
 		var elemT = if (name == "elem" || name == "setElem") e.etype else {
-			var sp = GcFreeCheck.spanOf(cargs[0].etype);
+			var sp = KernelCheck.spanOf(cargs[0].etype);
 			if (sp == null) cfail("hxmc." + a.aPath.name + "." + name + ": not called on a span", e);
 			sp.elem;
 		}
@@ -2926,7 +3126,8 @@ class FnLower {
 			}
 		// 0 <= i < n
 		function check(i:Ex, n:Ex)
-			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
+			// (Mem.ult, marked: Opt.condProp drops the checks a loop proves)
+			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
 		// [pos, pos + cnt) inside n (64-bit: no overflow; negative ones fail unsigned)
 		function range(pos:Ex, cnt:Ex, n:Ex) {
 			var n64 = EConv(I2L, n), p64 = EConv(I2L, pos);
@@ -2958,7 +3159,7 @@ class FnLower {
 				make(s, elem(ptr, pos), cnt);
 				coerce(ELocal(s), sdt, tyOf(e));
 			case "reinterpret":
-				var to = GcFreeCheck.spanOf(e.etype);
+				var to = KernelCheck.spanOf(e.etype);
 				var sizeU = CInterop.sizeOf(ptrElemCt(to.elem, e));
 				var n = loc(EConv(L2I, ECallHost("hxmc_unsafe_Mem_udiv", vector(EBin(LMul, EConv(I2L, len), EConv(I2L, EInt(size))), EConv(I2L, EInt(sizeU))), TI64)), TI32);
 				var s = newSlot(sdt, true);
@@ -2990,6 +3191,28 @@ class FnLower {
 					out.push(SSet(k, EBin(Add, ELocal(k), EInt(1))));
 				})));
 				EInt(0);
+			case "load" | "store" | "compareExchange":
+				// (Atomic's 32- and 64-bit operations: integer elements only)
+				var w = switch ct {
+					case CI32: 32;
+					case CI64: 64;
+					case _: cfail("hxmc." + a.aPath.name + "." + name + ": atomic accesses are of Int, UInt and Int64 elements, not "
+						+ core.TPrinting.sTypes(vector(elemT)), e);
+				}
+				var t = w == 32 ? TI32 : TI64;
+				var i = int(0);
+				check(i, len);
+				var p = elem(ptr, i);
+				switch name {
+					case "load":
+						coerce(temp(t, ECallHost("hxmc_unsafe_Atomic_load" + w, vector(p), t)), t, tyOf(e));
+					case "store":
+						out.push(SExpr(ECallHost("hxmc_unsafe_Atomic_store" + w, vector(p, coerce(rest[1], restTy(1), t)), TVoid)));
+						EInt(0);
+					case _:
+						var expected = loc(coerce(rest[1], restTy(1), t), t), replacement = loc(coerce(rest[2], restTy(2), t), t);
+						coerce(temp(t, ECallHost("hxmc_unsafe_Atomic_cas" + w, vector(p, expected, replacement), t)), t, tyOf(e));
+				}
 			case _:
 				cfail("hxmc." + a.aPath.name + "." + name + " is not a span accessor", e);
 		}

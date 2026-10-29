@@ -303,7 +303,7 @@ class Os {
 
 	// (Android: _exit, as PosixSys.exit; a moment first for what was
 	// written to stderr to reach logcat, through hxmc.os's pipe)
-	@:hxmc.unsafe @:hxmc.gcfree public static function exit(code:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int) {
 		if (Mem.target() >= 9) {
 			C.fflush(Ptr.nil());
 			var ts = Mem.stack(16);
@@ -317,7 +317,7 @@ class Os {
 	// ---- the runtime's own reports on stderr (bytes as they are, after
 	// whatever the C library's stdout buffers)
 
-	@:hxmc.unsafe @:hxmc.gcfree public static function write(p:Ptr, n:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public static function write(p:Ptr, n:Int) {
 		C.fflush(Ptr.nil());
 		if (windows()) C._write(2, p, n) else C.write(2, p, (n : I64));
 	}
@@ -325,8 +325,8 @@ class Os {
 
 // a line of the runtime's reports, written into a frame area of
 // Report.BYTES (no-GC: the collector reports while objects move), then to
-// stderr: the length at 0, the text from 8 (@:hxmc.gcfree: a failed check
-// of GC-free code reports with it, hxmc.SpanSupport)
+// stderr: the length at 0, the text from 8 (@:hxmc.kernel: a failed check
+// of a kernel reports with it, hxmc.SpanSupport)
 abstract Report(Ptr) {
 	public static inline var BYTES = 8 + 512;
 	static inline var CAP = 512;
@@ -336,7 +336,7 @@ abstract Report(Ptr) {
 		Mem.setI32(p, 0, 0);
 	}
 
-	@:hxmc.unsafe @:hxmc.gcfree public function ch(c:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public function ch(c:Int) {
 		var n = Mem.getI32(this, 0);
 		if (n < CAP) Mem.setI8(this, 8 + n, c);
 		Mem.setI32(this, 0, n + 1);
@@ -347,7 +347,7 @@ abstract Report(Ptr) {
 		cstr(Mem.cstr(s), 0, -1);
 
 	// a C string, at least `width` wide (padded on the right, %-Ns), at most `max` (%.Ns)
-	@:hxmc.unsafe @:hxmc.gcfree public function cstr(p:Ptr, width:Int, max:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public function cstr(p:Ptr, width:Int, max:Int) {
 		var k = 0;
 		while (!p.isNull() && Mem.getU8(p, k) != 0 && (max < 0 || k < max)) {
 			ch(Mem.getU8(p, k));
@@ -360,7 +360,7 @@ abstract Report(Ptr) {
 	}
 
 	// v in decimal, right-aligned in `width` (%Nld)
-	@:hxmc.unsafe @:hxmc.gcfree public function int(v:I64, width:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public function int(v:I64, width:Int) {
 		var tmp = Mem.stack(32);
 		var k = 0, neg = v < 0;
 		if (neg) v = -v;
@@ -392,7 +392,7 @@ abstract Report(Ptr) {
 	}
 
 	// the line so far, to stderr
-	@:hxmc.unsafe @:hxmc.gcfree public function flush() {
+	@:hxmc.unsafe @:hxmc.kernel public function flush() {
 		var n = Mem.getI32(this, 0);
 		Os.write(this.add(8), n < CAP ? n : CAP);
 		Mem.setI32(this, 0, 0);

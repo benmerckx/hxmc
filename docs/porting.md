@@ -94,6 +94,16 @@ divergence goes. The divergences:
   without a request, or sends nothing: upstream's `wait_loop` (5.0) ends
   there, 4.3's went on (`compiler.server.Server.waitLoop`; the Server
   harness's `misc:empty-connection`).
+- A coroutine's catch that handles an error clears the continuation's
+  error slot; upstream's leaves it, and a call after the catch that returns
+  without suspending throws the caught error again
+  (`coro.CoroToTexpr.blockToTexprCoroutine`; the corpus's `CoroCatch`).
+- A coroutine's local read in a later state only by a tail call's
+  arguments, a returned value or a call that never suspends is hoisted
+  (`return c ? f(x) : g(x)`); upstream's walk skips those expressions,
+  built after it, and the later state reads the local undeclared
+  ("Unbound variable"; `coro.CoroToTexpr.handleLocals`; the corpus's
+  `CoroTailLocal`).
 
 ## The one exception to byte identity
 

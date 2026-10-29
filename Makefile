@@ -33,10 +33,6 @@ RT_TARGETS := $(TARGETS) linux-x86_64-glibc linux-arm64-glibc android-arm64 andr
 RT_TARGET ?= $(HOST)
 # `make corpus-stage`: the six targets, wasm32-wasi, wasm32-wasi-legacy, linux-x86_64-glibc, linux-arm64-glibc
 CORPUS_TARGETS ?= $(TARGETS) wasm32-wasi wasm32-wasi-legacy linux-x86_64-glibc linux-arm64-glibc
-# `make android-check`, `android-device-check`: android-x86_64 or android-arm64
-ANDROID_TARGET ?= android-x86_64
-# `make ios-check`: ios-sim-arm64 or ios-arm64 (`ios-sim-check`: always the simulator's, on a Mac)
-IOS_TARGET ?= ios-sim-arm64
 # extra arguments of the port's build (e.g. HXFLAGS="-D retain")
 HXFLAGS ?=
 # the port the tests check
@@ -86,7 +82,7 @@ CROSSHOST_ARGS ?= --tool
 PORT_SRC := $(shell find haxe/src -name '*.hx' 2>/dev/null)
 HXMC_SRC := $(shell find hxmc/src -name '*.hx' 2>/dev/null)
 # (the directories too: a file deleted changes only its directory's time)
-STD_SRC := $(shell find hxmc/std 2>/dev/null)
+STD_SRC := $(shell find hxmc/std hxmc/portable 2>/dev/null)
 RT_SRC := $(wildcard hxmc/deps/*)
 LIX_SRC := $(shell find tools/lix/src -name '*.hx' 2>/dev/null)
 FUZZ_SRC := $(wildcard haxe/test/fuzz/*.hx haxe/test/fuzz/fuzz/*.hx) haxe/test/HlcNames.hx
@@ -130,9 +126,9 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
-.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost port release npm site site-check \
+.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
-	android-check android-device-check shared-check ios-check ios-sim-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
+	shared-check macho-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro measure quick check full clean distclean
 
 help:
@@ -156,8 +152,8 @@ help:
 ##               corpus under node, the module cache's store, the lowering's queries (CASES restricts
 ##               the corpus)
 ##   check       before a commit: quick + arm64 (qemu), wine, a 16 KB nursery, legacy exception handling,
-##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, Android's APKs,
-##               iOS's apps, shared libraries; PORT=1 adds the native port's self-compile
+##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared
+##               libraries, iOS's Mach-O; PORT=1 adds the native port's self-compile
 ##   full        before a push: every nursery, RT_VERIFY, wasmtime, ThreadNatives x300, the port's
 ##               self-compile natively and as a module, crosshost, the fixpoint (hxmc/test/Tiers.hx)
 ##   test        the port against the reference, the lanes of LANES (default hxb; CI's conformance jobs):
@@ -170,6 +166,8 @@ help:
 ##   fixpoint    the tool rebuilds itself byte-identical (the module cache cold, warm and off)
 ##   crosshost   the tool as a WebAssembly module builds the corpus and itself byte-identical to the
 ##               native tool (hxmc/test/Crosshost.hx; CROSSHOST_ARGS)
+##   portable-check  hxmc's spans on Eval and JavaScript, built by the reference (make reference),
+##               print what hxmc's builds print (hxmc/test/PortableCheck.hx)
 ##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
 ##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
 ##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
@@ -187,9 +185,10 @@ help:
 ##               invalidates them, each build against Eval's macros (hxmc/test/MirCacheCheck.hx)
 ##   mir-server-check  Mir macros' statics in the compilation server through edits, against the
 ##               reference's server (hxmc/test/MirServerCheck.hx)
-##   android-check, android-device-check, ios-check, ios-sim-check, shared-check  the targets' apps:
-##               the APKs (ANDROID_TARGET) checked and run by adb, the iOS apps (IOS_TARGET) checked and
-##               run on a simulator (a Mac), shared libraries of the glibc mode
+##   shared-check, macho-check, native-check  the native output a packager builds on
+##               (docs/using.md): shared libraries of the glibc mode and Android's .so
+##               (hxmc/test/SharedCheck.hx), iOS's plain Mach-O executables and dylibs, minimum and code
+##               signature (hxmc/test/MachOCheck.hx); native-check: both
 ##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
 ##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
 ##
@@ -213,7 +212,7 @@ help:
 ##   clean       remove the build outputs (keeps the tool, the runtime objects and the reference)
 ##   distclean   also remove bin/ entirely
 ##
-## Variables: JOBS, NODE, ZIG, HOST, TARGET, RT_TARGET, ANDROID_TARGET, IOS_TARGET, HXFLAGS, PORT_BIN, REFERENCE,
+## Variables: JOBS, NODE, ZIG, HOST, TARGET, RT_TARGET, HXFLAGS, PORT_BIN, REFERENCE,
 ## LANES, SHARD, LANE, N, EVAL, FUZZ, SUMMARY, CASES, PORT, LIX_DIR, BENCH_DATA, BENCH_ARGS, COMPILE_BENCH_ARGS,
 ## WHICH, ARRAY_BENCH_ARGS, MAP_BENCH_ARGS, CROSSHOST_ARGS, CORPUS_TARGETS (defaults and meaning: the top of the Makefile).
 
@@ -306,6 +305,12 @@ stage0: $(TOOL)
 
 crosshost: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Crosshost $(CROSSHOST_ARGS) $(CASES)
+
+# hxmc's spans on Eval and JavaScript (MkStd's hxmc-portable) against hxmc's
+# golden files, with the reference compiler (hxmc/test/PortableCheck.hx;
+# make reference first)
+portable-check: $(TOOL) $(STD)
+	export HAXE_REFERENCE=$(abspath $(REFERENCE)); $(SCRIPT) PortableCheck
 
 # --- The port ---
 
@@ -521,39 +526,17 @@ corpus-stage: $(TOOL) $(STD) $(HOST_RT)
 			*) $(SCRIPT) DebugCheck --target $$t --stage bin/corpus/$$t/_debug || exit 1 ;; esac; \
 	done
 
-# Android: APKs written by hxmc (hxmc/src/hxmc/android/Apk.hx): AndroidHello
-# (hxmc/test/android/AndroidHello.hx: the NativeActivity entry in no-GC
-# Haxe, the program on a thread of its own, a line to logcat) and
-# AndroidViews (the same with the functions that make the APK carry
-# classes.dex and org.hxmc.Activity; not run)
-android-programs: $(TOOL) $(STD) $(HOST_RT)
-	$(call hxmc,bin/android/$(ANDROID_TARGET)/AndroidHello.apk,-cp hxmc/test/android -main AndroidHello $(HXMC_ARGS) -D hxmc.target=$(ANDROID_TARGET) -D hxmc.android-package=org.hxmc.hello)
-	$(call hxmc,bin/android/$(ANDROID_TARGET)/AndroidViews.apk,-cp hxmc/test/android -main AndroidViews $(HXMC_ARGS) -D hxmc.target=$(ANDROID_TARGET) -D hxmc.android-package=org.hxmc.views)
-# their structure without a device (hxmc/test/ApkCheck.hx: zip, manifest, ELF, signature, classes.dex; zipalign, aapt, apksigner, dexdump when there)
-android-check: android-programs
-	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run ApkCheck $(foreach a,AndroidHello AndroidViews,bin/android/$(ANDROID_TARGET)/$(a).apk)
 # shared libraries of the glibc mode loaded by an hxmc program (hxmc/test/SharedCheck.hx), Android's built
 shared-check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) SharedCheck
-# AndroidHello on the device or emulator adb reaches (hxmc/test/android/android.sh: its line in logcat)
-android-device-check: android-programs
-	sh hxmc/test/android/android.sh bin/android/$(ANDROID_TARGET)/AndroidHello.apk bin/android/$(ANDROID_TARGET)
-
-# iOS: app bundles written by hxmc (hxmc/src/hxmc/ios/Bundle.hx): IosHello
-# (hxmc/test/ios/IosHello.hx: no UIKit, a line printed), also as an .ipa
-ios-programs: $(TOOL) $(STD) $(HOST_RT)
-	$(call hxmc,bin/ios/$(IOS_TARGET)/IosHello.app,-cp hxmc/test/ios -main IosHello $(HXMC_ARGS) -D hxmc.target=$(IOS_TARGET) -D hxmc.ios-bundle-id=org.hxmc.hello)
-	$(call hxmc,bin/ios/$(IOS_TARGET)/IosHello.ipa,-cp hxmc/test/ios -main IosHello $(HXMC_ARGS) -D hxmc.target=$(IOS_TARGET) -D hxmc.ios-bundle-id=org.hxmc.hello)
-# their structure without a Mac (hxmc/test/IosCheck.hx: bundle, Info.plist, Mach-O, code signature; llvm-objdump when there)
-ios-check: ios-programs
-	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run IosCheck $(foreach a,IosHello.app IosHello.ipa,bin/ios/$(IOS_TARGET)/$(a))
-# IosHello on an iPhone simulator (hxmc/test/ios/ios.sh: a Mac with Xcode;
-# CI's ios-simulator job: `make -o ios-programs ios-sim-check` on the bundle
-# the ios job built)
-ios-sim-check: override IOS_TARGET := ios-sim-arm64
-ios-sim-check: ios-programs
-	sh hxmc/test/ios/ios.sh bin/ios/ios-sim-arm64/IosHello.app bin/ios/ios-sim-arm64
-
+# iOS's native output without a bundle (hxmc/test/MachOCheck.hx: IosHello as an
+# executable and a dylib, -D hxmc.ios-min-version, the code signature,
+# linker-signed or with -D hxmc.codesign-*'s files)
+macho-check: $(TOOL) $(STD) $(HOST_RT)
+	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
+# the native-output contract a packager builds on (docs/using.md, "Native
+# output for a packager"; CI's native-output job): Android's .so, iOS's Mach-O
+native-check: shared-check macho-check
 # the dev loop (docs/dev.md): `hxmc dev` on a console program through edits
 # and a compile error (dev-console.mjs), then the compilation server's builds
 # through edits against fresh ones (server-verify.mjs)
@@ -618,7 +601,7 @@ full: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers full $(CASES)
 
 clean:
-	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/android bin/ios bin/dev bin/corpus \
+	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/dev bin/corpus \
 		bin/hxmc/boot bin/hxmc/fix bin/hxmc-t bin/hxmc-fuzz $(CLI_BOOT)/hxmc-std
 
 distclean: clean

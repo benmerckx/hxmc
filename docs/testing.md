@@ -19,7 +19,7 @@ The fixpoint and crosshost must stay byte-identical.
 | Tier | What it runs |
 | --- | --- |
 | `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1`, the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, Android's APKs, iOS's apps, shared libraries (`PORT=1`: the port's self-compile) |
+| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference
@@ -88,18 +88,17 @@ each lane on the kept cases and 400 random programs.
 | --- | --- | --- |
 | `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
+| `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
 | `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, modules macros define built into two programs of one class path one after the other (`--late`); for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
 | `LowerQueriesCheck` | `quick` | each lowering query is covered by the server's reuse of bodies |
 | `RtSearchCheck` | `quick` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
+| `FrontendCheck` | `quick` | a compiler built from hxmc's sources with its own main (`hxmc/test/frontend`) adds a function to the lowered program through `hxmc.Main.beforeCodegen` ([hxmc.md](hxmc.md#frontends)); the program it builds calls it |
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
-| `ApkCheck` | `android-check` | APKs: the zip and alignment, the manifest, `classes.dex`, the ELF, the v2 signature verified by openssl; `zipalign`, `aapt`, `apksigner`, `dexdump` where installed |
-| `android.sh` | `android-device-check` | AndroidHello on a device or emulator: its line in logcat |
-| `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program |
-| `IosCheck` | `ios-check` | the app bundle and `.ipa`: `Info.plist`, the Mach-O, the code signature's hashes recomputed |
-| `ios.sh` | `ios-sim-check` | on a Mac with Xcode: IosHello on a new simulator |
+| `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
+| `MachOCheck` | `macho-check` | IosHello as a plain iOS executable and dylib: `LC_BUILD_VERSION`'s minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files) |
 | `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones |
 | `Corpus --mir-run` | `mir-run-check` | the corpus run inside the compiler on the Mir interpreter |
 | `Conformance --target-only` | `mir-macros-check` | the macro cases with Mir macros against the reference (66 of 67: Issue11631 uses Eval's `mbedtls`) |
@@ -113,7 +112,10 @@ case's build time. A `// not-live: <function>` line names a function
 reachability must drop when the case is also built from its source, as
 programs are (`HXMC_REACH_WHY`): the archive's build loads only the modules
 its program reaches, so what typing loads and DCE keeps shows only there
-(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). Writing a
+(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). A
+`// span-checks: <Class.function>=<n> ...` line names the span element
+checks left in each function's optimized code, which a build with
+`HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped). Writing a
 case's archive must not warn of an unbound type parameter (`hxb-warning`:
 an expression of the case or of hxmc's std whose type left its type
 parameter's scope, as `Arena.makeArray`'s did when inlined into `slice`).
@@ -162,7 +164,7 @@ a release is published only when all of them pass.
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the module cache checks, `make dev-check`, the release binaries and lix for the six targets |
 | `corpus` | yes | the corpus for every target (three jobs), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
 | `crosshost` | yes | `make crosshost` (two jobs) |
-| `fuzz-exec` | yes | the fuzzer's exec lanes |
+| `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
 | `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
 | `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
@@ -170,8 +172,7 @@ a release is published only when all of them pass.
 | `npm-pack` | yes | the npm packages, built with the module cache off |
 | `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
 | `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
-| `android` | no (experimental) | `make android-check`, `make shared-check`, AndroidHello on an x86-64 emulator |
-| `ios`, `ios-simulator` | no (experimental) | `make ios-check` on Linux; IosHello on an iPhone simulator on macOS |
+| `native-output` | no | `make native-check` on Linux: `SharedCheck` and `MachOCheck` ([the contract](using.md#native-output-for-a-packager)) |
 | `upstream-tests` | no | upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
 | `publish-npm` | | after every gate: the seven packages at one version (the six platform packages, then `@hxmc/cli`), names, versions and optional dependencies checked, with provenance through npm's trusted publishing; on `v*` tags as `latest`, from main as `<version>-nightly.<date>.<commit>` tagged `next` |
 | `release`, `pages` | | the nightly release or a tagged release; the website from main |

@@ -14,10 +14,11 @@ the bootstrap works, and the everyday edit-test loop. Tests and CI are in
 | `haxe/test/` | the port's tests: conformance against the reference, the fuzzer (`fuzz/`), unit tests of port modules (`unit/`), `Measure.hx` |
 | `hxmc/src/hxmc/` | hxmc's compiler (class path `hxmc/src`): IR and lowering (`ir/`), code generators (`x64/`, `a64/`, `wasm/`), linkers, the driver; `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
 | `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime (`hxmc.rt`), merged with the Eval originals by `MkStd.hx` |
+| `hxmc/portable/` | hxmc's spans on the other targets (over `Bytes`), which `MkStd.hx` copies into the std as `hxmc-portable` with the C scalars ([interop.md](interop.md#spans-on-other-targets)) |
 | `hxmc/deps/` | the third-party C: `deps.sh` (mbedtls, libuv), `mkrt.sh` (the runtime objects), `Layouts.hx` (struct layouts per target, checked against the C headers), `probe.c`, `zig-version` |
-| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the Android and iOS apps, the dev loop's tests, the benchmarks |
+| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the native-output checks (SharedCheck, MachOCheck, with the smallest Android and iOS programs), the dev loop's tests, the benchmarks |
 | `hxmc/bootstrap/` | the committed stage0 (`stage0.wasm.br`), node's WASI runner (`wasi.mjs`), the runtime objects by hash (`rt.mjs`) |
-| `packages/` | the npm packages, one folder each, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`: the launcher, `dist/` for lix, upstream's and hxmc's std), `platform` (template of the six `@hxmc/<os>-<cpu>`: the native compiler and that machine's runtime objects); `source` (`hxmc-rebuild`) is not published |
+| `packages/` | the npm packages, one folder each, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`: the launcher, `dist/` for lix, upstream's and hxmc's std), `platform` (template of the six `@hxmc/<os>-<cpu>`: the native compiler and that machine's runtime objects), `source` (`@hxmc/source`: the compiler's sources, `hxmc-rebuild`) |
 | `site/` | the website: plain HTML pages, their scripts (`client/`: the playground, the benchmark tables), measured data (`data/`), browser tests (`tools/`) |
 | `tools/lix/` | lix (client and haxeshim), built with hxmc |
 

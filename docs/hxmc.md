@@ -37,7 +37,6 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `MkStd.hx` | merges hxmc's std with the Eval originals into `bin/hxmc/std` |
 | `StdDce.hx` | DCE of hxmc's std overrides as of the std ([Reachability](#reachability)) |
 | `macro/`, `interp/` | the Mir interpreter's encoding and its uses: Mir macros and `--run` ([below](#macros-on-the-mir-interpreter)) |
-| `android/`, `ios/` | the APK and app bundle writers |
 
 Conventions:
 
@@ -56,6 +55,39 @@ Conventions:
 - A change of the runtime's interface or the IR's conventions needs a tool
   that knows it: build once against the previous runtime first, or
   bootstrap again.
+
+## Frontends
+
+A frontend for another language can reuse hxmc's code generator: it is a
+compiler built from hxmc's sources (`haxe/src` and `hxmc/src`, or the npm
+package `@hxmc/source` at `@hxmc/cli`'s version, [using.md](using.md#building-on-the-compiler))
+with its own main, which adds its functions to the IR program before code
+generation. The seam is in `hxmc/src/hxmc/Main.hx`:
+
+```haxe
+// called by every build for hxmc with the lowered program, before Driver.run
+public static var beforeCodegen:Null<(com:CommonContext, prog:hxmc.ir.Ir.Program) -> Void>;
+// the typed program to machine code at out (the tool's and HaxeMain's generate hook);
+// beforeCodegen: this build's, instead of Main.beforeCodegen
+public static function generate(com:CommonContext, out:String, ?beforeCodegen:(com, prog) -> Void):Void;
+```
+
+`generate` reads the options, sets the lowering's statics, checks the
+runtime symbols, lowers the program (`hxmc.ir.Lower`), calls the hook, then
+compiles and links (`Driver.run`, which computes reachability from
+`prog.main`, `prog.inits` and `prog.roots`). The simplest frontend sets
+the hook and runs `hxmc.HaxeMain.run(Sys.args())`: `haxe`'s whole
+command line, `-lib` and the module cache included. One with its own
+generate hook (`compiler.Compiler.generateHook`) calls `generate`.
+
+The hook may push functions on `prog.funcs` (a `FuncInfo` with a
+`module`: hxmc compiles each module's functions into one object), and
+reach them from code it changes or from `prog.roots`. Under a compilation
+server the lowered bodies are reused between builds (`LowerCache`): give a
+function a new `body` vector rather than writing into the one it has.
+`hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
+hxmc's internal format: it can change in any version, so a frontend builds
+against the sources of the `@hxmc/cli` it runs with.
 
 ## Runtime in Haxe
 
@@ -125,6 +157,16 @@ A `haxe.io.Bytes` is an object holding a `NativeArray<Byte>` (`b`); its
 `length` is `b`'s (`@:hxmc.lengthOf`). A small Bytes is allocated together
 with its data. Arrays have no identity hash.
 
+The program's classes take their type indices in preorder (`Lower.finish`),
+so an instance of a class or of a subclass is one unsigned comparison of
+its type index against the class's span (`MemLower.instOf`; null is no
+instance). Catch clauses test so, and `Std.isOfType`, `Std.downcast` and
+`cast` of a class literal (`FnLower.instClass`); interfaces, extern
+classes (String, Array, Date, the boxes), the runtime's types and the
+code of Mir macros' bundles (`Lower.classSpans`: a later bundle's class
+may extend an earlier one's, outside its span) go through `hx_is`, which
+walks the superclasses.
+
 ### The collector
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
@@ -140,6 +182,13 @@ space by copying into a new region.
   allocation folding makes objects of up to 4 KB, so these must be young.
 - **TLABs**: each thread takes at most 64 KB at a time (`RT_TLAB_KB`), in
   fresh pages up to a 2 MB boundary.
+- **Zeroing** is in bulk: a TLAB is zeroed as it is taken (`hxmc_zero` in
+  a profile), so no allocation stores its own zeros. An allocation that
+  writes every slot before reading one (`Mem.allocRaw`, `allocArrayRaw`:
+  strings, numbers' storage) of an object without references takes its
+  memory unzeroed on the slow path (`hxmc_alloc_slow_raw`): the rest of
+  the TLAB it starts is zeroed, the object not, nor a large one in the old
+  space.
 - **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
   ones in percent of what a major collection left live (300 natively, 200
   on wasm32). The tool sets 768 MB for a build; the compilation server
@@ -178,11 +227,34 @@ U+DC80 to U+DCFF and encodes back to that byte, so bytes read and written
 again are unchanged (the corpus' `Utf8Bytes`; the port keeps OCaml's byte
 strings this way).
 
+A string holds its units: `a + b` copies both. `s += x` in a loop where
+nothing else reads or writes the local `s` (`s = s + x + y` too; not in
+a `try` of the function, not captured by a closure) appends to a
+StringBuf instead, made at the second append, and `s` is its string after
+the loop (`FnLower.appendLoop`): the loop is linear in the length, not
+quadratic (`StrAppendLoop`; `hxmc/test/micro/StrConcatBench`).
+
 A Date is a runtime type of its own (`T_DATE`) holding milliseconds since
 the epoch. `Std.string` reaches `Date.toString` only through
 `Date.printer`, which every date's creation sets, so a program that makes
 no date has no calendar code. `DateValues` checks dates against the
 reference's `--interp`.
+
+### Random numbers
+
+`Math.random` and `Std.random` draw from xoshiro256** (`Random.hx`), one
+state per thread (`@:hxmc.threadLocal`, no lock), seeded on the thread's
+first draw from the system: the `getrandom` system call on Linux and
+Android (by its number: glibc 2.17 has no wrapper), else `/dev/urandom`;
+`arc4random_buf` on macOS and iOS; `BCryptGenRandom` on Windows;
+`random_get` on WASI. Without any of them, the time and the thread's stack
+address mixed by splitmix64. So each run and each thread draws its own
+sequence; there is no way to seed it. `Math.random` has 53 random bits;
+`Std.random(n)` is unbiased (Lemire's multiply and reject), 0 for n <= 1
+as upstream specifies. The compiler's output never depends on them
+(`make fixpoint`); the identity hashes (`Dyn.objHash`) keep their fixed
+per-thread seeds. `RandomRanges` checks the ranges, `RandomSeed` that runs
+and threads differ.
 
 ### The symbols generated code calls
 
@@ -899,7 +971,7 @@ formatter 0.19 s (Eval 0.17 s); plans/compiler.md, "Mir macros".
 | Linux | static ELF with musl's members. With `-D hxmc.libc=glibc` (`LinkDyn.hx`): dynamically linked, `PT_INTERP`, `DT_NEEDED`, imports with glibc 2.17's symbol versions bound at load time, a generated `_start` calling `__libc_start_main`, its own runtime objects (`<target>-glibc`) |
 | Windows | PE over the UCRT, imports written directly from the import libraries |
 | macOS | Mach-O against libSystem, ad hoc signed (`CodeSign.hx`) |
-| Android | a shared library against Bionic in an APK hxmc writes ([below](#android)) |
+| Android | a shared library against Bionic, which a packager puts in an APK ([below](#android)) |
 | iOS | macOS's Mach-O and runtime objects with the iOS platform ([below](#ios)) |
 | wasm32-wasi | the whole runtime in Haxe; exceptions with `exnref` or, with `-D hxmc.wasm-eh=legacy`, `try`/`catch_all`/`rethrow` |
 
@@ -917,6 +989,28 @@ which defines `static`, `sys`, `utf16`, `target.unicode` and their
 once the target is initialized and before init macros run. They are
 defines only. wasm32-wasi is not `target.threaded`: creating a thread
 throws there (`rt/wasm/Threads.hx`).
+
+The macro context's defines leave out `hxmc.target` and `hxmc.libc`, as
+Haxe leaves the platforms' names out (`Common.macroDefinesHook`): the
+macro context's target is Eval, or the compiler's own with
+`-D hxmc.macros=mir`. A module typed there for a macro sees what it would
+in a native build that names no target, so code behind
+`#if (hxmc.target == "wasm32-wasi")` (hxmc's runtime, which Eval cannot
+type or run) stays out of it. Macro code reads the program's target with
+`Context.definedValue("hxmc.target")` (`test/cases/MacroTarget.hx`).
+
+Such a module may still mention `hxmc.unsafe` (an import, a field's type,
+a signature, a body no macro runs). Eval compiles every function of the
+modules that loads, and hxmc's externs (`hxmc.unsafe.Mem`, `LibC`,
+`Callback`, Ptr's extern methods, a program's `@:hxmc.c` classes) have no
+fields there, which upstream's Eval rejects ("Field index for ult not found
+on prototype hxmc.unsafe.Mem"). A port hook, `EvalJit.missingExternHook`,
+lets `TargetFlags` give each such use a function that throws when a macro
+calls it, naming it ("hxmc.unsafe.LibC.malloc is implemented by hxmc's code
+generator or runtime: a macro on Eval cannot use it"). `Arena` and
+`CString` keep hxmc's runtime out of Eval (`#if eval`). With
+`-D hxmc.macros=mir` they run as in the program
+(`test/cases/MacroUnsafe.hx`).
 
 ### Android
 
@@ -943,14 +1037,9 @@ for mbedtls, libuv and `Layouts.hx`. `Mem.target()` 9 and 10 are Android;
 (it runs on the UI thread, which the runtime does not know); it starts the
 program's thread, where the runtime starts.
 
-**The APK** (`android/Apk.hx`): a binary-XML manifest (`Axml.hx`), the
-library stored and aligned to 16 KB, then an APK Signature Scheme v2 block,
-ECDSA P-256 in plain Haxe (`P256.hx`, RFC 6979 nonces, so signing is
-deterministic) with a debug key kept in the cache. A program that uses the
-Java glue gets a `classes.dex` (`Dex.hx`: a minimal DEX writer; `Glue.hx`:
-`org.hxmc.Glue`, one listener class whose methods call a registered
-native, and `org.hxmc.Activity`, a `NativeActivity` whose window draws
-views).
+**The APK**: a packager writes and signs it around the library
+(`--custom-target hxmc=<dir>/libmain.so`), with any Java glue
+([using.md](using.md#native-output-for-a-packager)).
 
 ### iOS
 
@@ -960,12 +1049,13 @@ tells iOS from the simulator). The Mach-O carries the platform in
 `LC_BUILD_VERSION` (minimum 15.0, SDK 18.0). iOS 15 is the floor because
 `UILaunchScreen` is iOS 14's and current Xcodes start at 15.
 
-**The bundle** (`ios/Bundle.hx`): the executable, an XML `Info.plist`
-(`Plist.hx`), and `_CodeSignature/CodeResources`. The linker writes the ad
-hoc signature (`CodeSign.hx`), identified by the bundle id, whose special
+**The bundle**: a packager writes it (`Info.plist`,
+`_CodeSignature/CodeResources`, the `.ipa`) around a plain executable.
+It writes `Info.plist` and `CodeResources` first and passes them to the
+link (`-D hxmc.codesign-*`): the linker writes the ad hoc
+signature (`CodeSign.hx`), identified by the bundle id, whose special
 slots bind the `Info.plist`, an empty requirement set, `CodeResources` and
-the entitlements, as `codesign -s -` does. An `.ipa` is the bundle under
-`Payload/`.
+the entitlements, as `codesign -s -` does.
 
 **The app**: a program that defines `hxmc_ui_main` (`DataGen.UI_MAIN`) has
 the generated `main` run that on the big main stack instead of the body,

@@ -12,11 +12,15 @@ package hxmc;
 //   -D hxmc.target=linux-x86_64     the target (Target.hx, Abi.hx: six of them)
 //   -D hxmc.wasm-eh=legacy          wasm32-wasi: legacy exception handling (default: exnref)
 //   -D hxmc.libc=glibc              Linux: dynamically linked against the system's glibc (default: musl, static)
-//   -D hxmc.shared                  a shared library (Linux in the glibc mode; Android's is always one: an
-//                                   output ending in .apk is an APK holding it, hxmc.android.Apk)
-//   -D hxmc.exports=<names>         the names a shared library exports
-//   -D hxmc.output=<path>           the output, instead of --custom-target's (hxmc dev: the iOS
-//                                   simulator's builds as dylibs, where the build names its app)
+//   -D hxmc.shared                  a shared library (Linux in the glibc mode; Android's is always one,
+//                                   which a packager puts in an APK)
+//   -D hxmc.exports=<names>         the names a shared library exports (its soname: the output's file name)
+//   -D hxmc.ios-min-version=<x.y>   iOS: the oldest version an output runs on (15.0, the floor)
+//   -D hxmc.codesign-id=<id>, -D hxmc.codesign-info-plist=<file>, -D hxmc.codesign-resources=<file>,
+//   -D hxmc.codesign-entitlements=<file>
+//                                   a Mach-O output signed ad hoc as `codesign -s -` signs, binding a
+//                                   bundle's files a packager wrote (default: linker-signed; CodeSign)
+//   -D hxmc.output=<path>           the output, instead of --custom-target's
 //   -D hxmc.no-frame-pointers       x86-64: no frame record in functions (the default keeps one, for
 //                                   perf -g and debuggers; HXMC_FRAME_POINTERS=0 off; arm64 always)
 //   -debug                          source lines for debuggers (DWARF on ELF and Mach-O), symbols
@@ -138,7 +142,16 @@ class Main {
 		Sys.exit(code);
 	}
 
-	static function generate(com:context.Common.CommonContext, out:String) {
+	// A frontend's seam (docs/hxmc.md, "Frontends"): a compiler built from
+	// hxmc's sources with its own main sets it (then runs HaxeMain.run, or its
+	// own generate hook calling generate); generate calls it with the lowered
+	// program before Driver.run, to add functions to it
+	public static var beforeCodegen:Null<(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void> = null;
+
+	// the program typed (com) to machine code at out: lowered (hxmc.ir.Lower),
+	// given to beforeCodegen (this argument, else Main.beforeCodegen), compiled
+	public static function generate(com:context.Common.CommonContext, out:String, ?beforeCodegen:(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void) {
+		if (beforeCodegen == null) beforeCodegen = Main.beforeCodegen;
 		// the class whose static main the program runs, as the other targets
 		// find it (Common.getEntryPoint): the -main module's statics when they
 		// hold main (a module-level `function main()`), else its class of that name
@@ -188,12 +201,14 @@ class Main {
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
 		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
+		if (beforeCodegen != null) beforeCodegen(com, prog);
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
 		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {
 			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+			if (beforeCodegen != null) beforeCodegen(com, fresh);
 			Driver.run(fresh, out + ".check", opts);
 			var same = sys.io.File.getBytes(out).compare(sys.io.File.getBytes(out + ".check")) == 0;
 			Sys.println("hxmc: lowering check: " + (same ? "same executable" : "DIFFERENT executable"));

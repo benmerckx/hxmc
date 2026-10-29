@@ -317,13 +317,13 @@ class NativeZip {
 	}
 
 	// the CRC-32 (ISO-HDLC, as zlib's crc32) of b[pos, pos + len): the
-	// range checked here (OutsideBounds), the bytes lent to the GC-free
-	// loop for its call, and the table, which lives for good
+	// range checked here (OutsideBounds), the bytes lent to the kernel
+	// for its call, and the table, which lives for good
 	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return crcOf(ReadOnlySpan.ofBytes(b, pos, len), ReadOnlySpan.unsafeOf((table() : Ptr<Int>), 256));
 
-	// (in the safe subset of GC-free code: docs/interop.md, "Spans")
-	@:hxmc.gcfree static function crcOf(s:ReadOnlySpan<UInt8>, t:ReadOnlySpan<Int>):Int {
+	// (in the safe subset of kernels: docs/interop.md, "Spans")
+	@:hxmc.kernel static function crcOf(s:ReadOnlySpan<UInt8>, t:ReadOnlySpan<Int>):Int {
 		var c = 0xFFFFFFFF;
 		for (i in 0...s.length)
 			c = t[(c ^ s[i]) & 0xFF] ^ (c >>> 8);

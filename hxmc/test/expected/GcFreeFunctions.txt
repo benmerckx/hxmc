@@ -1,4 +1,0 @@
-exit 0
-GcFreeFunctions.hx:27: main thread, 2984369
-GcFreeFunctions.hx:39: in a worker's region, 2984369
-GcFreeFunctions.hx:40: 42, 255

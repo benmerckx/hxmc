@@ -1,4 +1,4 @@
-// `hxmc-rebuild` (packages/source, @hxmc/source: not published for now):
+// `hxmc-rebuild` (packages/source, @hxmc/source):
 // builds the compiler again from the package's (possibly edited) haxe/src,
 // hxmc/src and hxmc/std, with @hxmc/cli's std and the platform package's
 // runtime objects, into the cache (<cache>/npm/<version>/rebuild/<target>/:

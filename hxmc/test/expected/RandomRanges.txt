@@ -1,0 +1,15 @@
+exit 0
+Math.random in [0, 1): true
+mean near 0.5: true
+spans the range: true
+bits below 2^-32: true
+53rd bit set about half the time: true
+Std.random(2): in range true, every value true, flat true
+Std.random(3): in range true, every value true, flat true
+Std.random(7): in range true, every value true, flat true
+Std.random(10): in range true, every value true, flat true
+Std.random(100): in range true, every value true, flat true
+Std.random(1000): in range true, every value true, flat true
+Std.random(0x7FFFFFFF): in range true, both halves true
+Std.random(n <= 1) is 0: true
+not constant: true

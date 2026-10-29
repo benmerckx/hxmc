@@ -1,12 +1,12 @@
 import haxe.io.Bytes;
-import hxmc.NativeGc;
+#if (target.name == "hxmc") import hxmc.NativeGc; #end
 import hxmc.ReadOnlySpan;
 import hxmc.Span;
-import hxmc.unsafe.Blocking;
-import hxmc.unsafe.IoBuffer;
+#if (target.name == "hxmc") import hxmc.unsafe.Blocking; #end
+#if (target.name == "hxmc") import hxmc.unsafe.IoBuffer; #end
 import hxmc.unsafe.UInt8;
-import sys.thread.Lock;
-import sys.thread.Thread;
+#if (target.name == "hxmc") import sys.thread.Lock; #end
+#if (target.name == "hxmc") import sys.thread.Thread; #end
 
 // A realistic kernel on checked spans (docs/interop.md, "Spans"): zlib's
 // inflate and Adler-32, as helder's off-heap PNG decoder does them
@@ -27,7 +27,7 @@ import sys.thread.Thread;
 	function new() {}
 }
 
-@:hxmc.gcfree class Inflate {
+@:hxmc.kernel class Inflate {
 	public static inline var ERR = -1;
 	static inline var FAST = 10;
 	// (a code's Ints: the counts per length, the symbols, the table)
@@ -304,7 +304,7 @@ class SpanInflate {
 		bad.set(40, bad.get(40) ^ 0x55);
 		trace("corrupt", viaBytes(bad, want.length));
 		trace("short output", viaBytes(Bytes.ofHex(DYNAMIC), 100));
-
+		#if (target.name == "hxmc") // (elsewhere, PortableCheck: the paths over Bytes only)
 		// IoBuffers, on a worker in a region it entered, while this thread collects
 		var z = IoBuffer.ofBytes(Bytes.ofHex(DYNAMIC)), out = IoBuffer.alloc(want.length), scratch = IoBuffer.alloc(Inflate.SCRATCH);
 		var done = new Lock(), r = 0;
@@ -327,5 +327,6 @@ class SpanInflate {
 		z.free();
 		out.free();
 		scratch.free();
+		#end
 	}
 }

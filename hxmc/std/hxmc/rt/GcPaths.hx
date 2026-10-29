@@ -16,6 +16,14 @@ class GcPaths {
 	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlow(len:Int, w0:Int, bytes:Int):Ptr
 		return Gc.allocSlow(Types.isRecord(w0 & 0xFFFF) ? Types.recordHdr(w0 & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(w0, len), bytes);
 
+	// allocSlow of an allocation that writes every slot before it reads one
+	// (MemLower.allocDyn: Mem.allocRaw, Mem.allocArrayRaw): an object without
+	// references (Types.K_RAW) is not zeroed (Gc.allocSlowRaw)
+	@:hxmc.export("hxmc_alloc_slow_raw") @:hxmc.collects static function allocSlowRaw(len:Int, w0:Int, bytes:Int):Ptr {
+		var header = Types.isRecord(w0 & 0xFFFF) ? Types.recordHdr(w0 & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(w0, len);
+		return Types.kindOfWord(w0) == Types.K_RAW ? Gc.allocSlowRaw(header, bytes) : Gc.allocSlow(header, bytes);
+	}
+
 	// the rest of the barrier once obj is known not to be young: the slot
 	// now holds a young pointer, and held none (a slot of an old object that
 	// holds a young pointer is remembered already: every such store comes

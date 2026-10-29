@@ -25,12 +25,12 @@ playground: <https://haxe-in-haxe.ben.mk>.
 | Coroutines | upstream's `TestCoroutines` passes natively and on wasm32-wasi |
 | Rebuilds | the module cache on disk, the compilation server, `haxe --dev` |
 | **Experimental** | |
-| Android, iOS | APKs and app bundles written by hxmc, no SDK; not yet for store release |
+| Android, iOS | the shared library and the executable a packager puts in an app ([docs](docs/using.md#native-output-for-a-packager)) |
 | Mir macros | `-D hxmc.macros=mir`: macros on hxmc's own interpreter |
 | **Not yet** | |
 | | WebAssembly threads, sockets and processes; call stacks on WebAssembly |
 | | debugger variables (lines and backtraces work), Windows PDB |
-| | iOS device signing, Android release signing |
+| | iOS device signing |
 
 ## Install
 
@@ -103,5 +103,6 @@ runtime objects, which are normally downloaded. See
 
 ## License
 
-GPL-2.0-or-later, like the Haxe compiler it is ported from. hxmc's runtime
-and std, which end up in compiled programs, are MIT. See [LICENSE](LICENSE).
+The compiler port (`haxe/src`) is GPL-2.0-or-later, like the Haxe compiler it
+is translated from, and so is a built compiler as a whole. Everything else,
+including the hxmc target, its runtime and std, is MIT. See [LICENSE](LICENSE).

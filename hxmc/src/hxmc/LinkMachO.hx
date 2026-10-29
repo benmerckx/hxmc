@@ -36,7 +36,8 @@ class LinkMachO extends LinkCore {
 	var PAGE:Int;
 
 	public var symbols = false; // a symbol table of the code (profilers, debuggers)
-	// the code signature (linker-signed by default; an app bundle's: hxmc.ios.Bundle)
+	// the code signature (linker-signed by default; ad hoc with a bundle's
+	// inputs: -D hxmc.codesign-*, CodeSign.adhoc)
 	public var sign = new CodeSign();
 	// iOS: the oldest version the output runs on (15.0: UILaunchScreen is
 	// 14's, and 15 is the floor of current Xcodes and the App Store's
@@ -44,7 +45,7 @@ class LinkMachO extends LinkCore {
 	// App Store's minimum since 2025; a later one would ask for UIScene)
 	public static inline var IOS_MIN = 0x000F0000;
 	public static inline var IOS_SDK = 0x00120000;
-	public var minos = IOS_MIN; // (iOS: -D hxmc.ios-min-version, hxmc.ios.Bundle)
+	public var minos = IOS_MIN; // (iOS: -D hxmc.ios-min-version, Options.iosMinos)
 	// imports from other dylibs than libSystem (@:hxmc.lib): symbol -> install name
 	public var dylibs = new Map<String, String>();
 
@@ -59,10 +60,8 @@ class LinkMachO extends LinkCore {
 		this.abi = abi;
 		PAGE = abi.segAlign;
 		dylib = abi.output == SharedLibrary;
-		if (dylib) {
-			baseHi = 0;
-			sign.mainBinary = false;
-		} else if (abi.output != Executable) throw "hxmc: " + abi.output + " output is not supported yet on macOS";
+		if (dylib) baseHi = 0;
+		else if (abi.output != Executable) throw "hxmc: " + abi.output + " output is not supported yet on macOS";
 	}
 
 	static function isBranch(k:RelKind):Bool
@@ -72,6 +71,8 @@ class LinkMachO extends LinkCore {
 		return StringTools.endsWith(s.name, "__thread_vars");
 
 	public function link(entry:String):Bytes {
+		// (whichever signature the driver set: a dylib's is not a main binary's)
+		sign.mainBinary = !dylib;
 		// __dso_handle (as ld64 defines it): the image's Mach-O header, the
 		// start of __TEXT; libuv and mbedtls refer to it (atexit handlers).
 		// Its section is not laid out: it is placed at 0 below.

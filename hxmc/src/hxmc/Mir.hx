@@ -46,7 +46,7 @@ enum abstract Op(Int) to Int {
 	var FNeg;
 	var FSqrt;
 	var FAbs;
-	var Cmp; // imm: Cond; a, b; the result is an I32 0/1
+	var Cmp; // imm: Cond; a, b; the result is an I32 0/1; imm2: MIns.SPAN_CHECK on a span's element check
 	var SExt; // I32 -> I64
 	var ZExt; // I32 -> I64
 	var Trunc; // I64 -> I32
@@ -222,6 +222,10 @@ enum abstract Cond(Int) to Int from Int {
 }
 
 class MIns {
+	// Cmp's imm2 on a span's element check (FnLower.spanCall: Mem.spanUlt),
+	// which Opt.condProp drops where a loop proves the index in range
+	public static inline var SPAN_CHECK = 1;
+
 	public var op:Op;
 	public var ty:MTy;
 	// the Haxe-level type of the value, carried from the IR (MirBuild: a

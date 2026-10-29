@@ -21,31 +21,35 @@ import hxmc.unsafe.UInt8;
 // passes: `bin/spanbench <bytes> <kernel> <passes>` (kernel: sumRaw,
 // sumSpan, axpyRaw, axpySpan). Results: docs/plans/io.md, "Bounds checks".
 class SpanBench {
-	@:hxmc.unsafe @:hxmc.gcfree static function sumRaw(p:Ptr<UInt8>, n:Int):Int {
+	@:hxmc.unsafe @:hxmc.kernel static function sumRaw(p:Ptr<UInt8>, n:Int):Int {
 		var s = 0;
 		for (i in 0...n)
 			s += Mem.getU8At(p, 0, i);
 		return s;
 	}
 
-	@:hxmc.gcfree static function sumSpan(b:ReadOnlySpan<UInt8>):Int {
+	@:hxmc.kernel static function sumSpan(b:ReadOnlySpan<UInt8>):Int {
 		var s = 0;
 		for (i in 0...b.length)
 			s += b[i];
 		return s;
 	}
 
-	@:hxmc.unsafe @:hxmc.gcfree static function axpyRaw(a:Float, x:Ptr<Float>, y:Ptr<Float>, n:Int) {
+	@:hxmc.unsafe @:hxmc.kernel static function axpyRaw(a:Float, x:Ptr<Float>, y:Ptr<Float>, n:Int) {
 		for (i in 0...n)
 			Mem.setF64At(y, 0, i, a * Mem.getF64At(x, 0, i) + Mem.getF64At(y, 0, i));
 	}
 
-	@:hxmc.gcfree static function axpySpan(a:Float, x:ReadOnlySpan<Float>, y:Span<Float>) {
-		for (i in 0...y.length)
+	// (the lengths compared once: the loop then proves every access, and the
+	// compiler drops their checks, Opt.condProp)
+	@:hxmc.kernel static function axpySpan(a:Float, x:ReadOnlySpan<Float>, y:Span<Float>) {
+		var n = y.length;
+		if (x.length < n) return;
+		for (i in 0...n)
 			y[i] = a * x[i] + y[i];
 	}
 
-	@:hxmc.gcfree static function axpy(a:Float, xb:ReadOnlySpan<UInt8>, yb:Span<UInt8>) {
+	@:hxmc.kernel static function axpy(a:Float, xb:ReadOnlySpan<UInt8>, yb:Span<UInt8>) {
 		var x:ReadOnlySpan<Float> = xb.reinterpret(), y:Span<Float> = yb.reinterpret();
 		axpySpan(a, x, y);
 	}
