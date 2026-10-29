@@ -83,6 +83,7 @@ class Crosshost {
 			var glibc = target.endsWith("-glibc");
 			if (!glibc && Corpus.GLIBC_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.GLIBC_ONLY[name]};
 			if (!target.startsWith("linux") && Corpus.LINUX_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.LINUX_ONLY[name]};
+			if (!target.startsWith("macos") && Corpus.MACOS_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.MACOS_ONLY[name]};
 			if ((!target.startsWith("linux") || glibc) && Corpus.MUSL_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.MUSL_ONLY[name]};
 			var native = Corpus.nativeInputs({name: name, cps: ["hxmc/test/cases"], main: name}, glibc ? target.substr(0, target.length - 6) : target, d, glibc ? "glibc" : null);
 			if (native.skip != null) return {ok: true, detail: "skipped: " + native.skip};
