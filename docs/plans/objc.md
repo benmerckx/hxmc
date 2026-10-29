@@ -86,12 +86,17 @@ answer them.
    comments (Apple's SDK terms); clang is needed when generating only.
 2. **Blocks** from closures: a block whose invoke function finds the
    closure, copy and dispose helpers that keep it alive while Objective-C
-   holds the block, and `id`s a closure captures holding references.
-3. **Release on death for every object with `TId` slots**: today a
-   constructor registers its class's own `id` fields (`rt_objc_own`);
-   closures and anonymous objects need the same. A layout flag (Facts)
-   and a list of such objects walked after each collection would replace
-   the registration.
+   holds the block (the `id`s a closure captures hold references already).
+3. **Release on death by layout**: a constructor registers its class's own
+   `id` fields, a closure its captured `id`s, a captured variable's box its
+   own (`rt_objc_own`: an entry per slot, appended under a lock; every
+   collection walks them all). Anonymous objects, enum arguments and
+   elements hold boxes, so no other object has an `id` slot. A layout flag
+   (Facts) and a list of such objects, their slots read from a table per
+   type, would make it an entry per object, but needs a type of box of
+   its own for `id`s (`T_REFBOX_F` holds floats and `Int64`s too) and the
+   tables in the data: worth it when a program makes many objects with
+   several `id`s each.
 4. **x86-64 on hardware**: messages with struct results go to
    `objc_msgSend_stret`, which no test has run yet (no Rosetta where it was
    written); `_fpret` is `long double`'s only, which Haxe has not.

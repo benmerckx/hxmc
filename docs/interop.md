@@ -636,7 +636,7 @@ counted. Where references cross:
 | | |
 | --- | --- |
 | a local, an argument, a result | borrowed, as an autoreleased object in Objective-C: valid until its autorelease pool is drained (the run loop drains one per event) |
-| a field, a static | holds a reference, as ARC's strong variables: a store retains the new value and releases the old one, the holder's death releases it |
+| a field, a static, a closure's capture, a captured variable a closure assigns | holds a reference, as ARC's strong variables: a store retains the new value and releases the old one, the holder's death (the object, the closure, the variable's box) releases it |
 | a reference position: `Array<NSView>`, `Map<K, NSView>`, a type parameter, `Dynamic` | the `id`'s one box, holding a reference, released when the box dies (one per `id`, so `==`, `indexOf` and map keys see one object); an instance of a Haxe class extending an Objective-C one is its Haxe object |
 | an instance of a Haxe class extending an Objective-C one | as Xamarin's toggle references: while Objective-C retains its object (beyond the Haxe object's own reference), the Haxe object is a root; otherwise it is collected like any other, and its Objective-C object released |
 
@@ -663,8 +663,7 @@ counted. Where references cross:
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: blocks, overriding `dealloc`, `id`s captured by
-closures (borrowed), protocols,
+Not yet: blocks, overriding `dealloc`, protocols,
 declarations generated from the SDK's headers.
 
 ## Processes and files beyond the std

@@ -310,10 +310,11 @@ class Gc {
 			Ind.call1(peerRelease, Mem.getPtr(deadPeers, 8 * k));
 	}
 
-	// ---- ids in fields of Haxe objects (hxmc.ir.ObjC): each such field
-	// holds a reference to its id (its stores retain and release, FnLower),
-	// which the object's death gives back: (object, offset of the field)
-	// pairs, registered by the constructor, swept as the native handles are
+	// ---- ids in fields of Haxe objects (hxmc.ir.ObjC): each such field (a
+	// closure's capture, a captured variable's box) holds a reference to its id
+	// (its stores retain and release, FnLower), which the object's death gives
+	// back: (object, offset of the field) pairs, registered by the constructor
+	// (where the closure or the box is made), swept as the native handles are
 	// (the dead object's memory is still there: its field is read then)
 	static var owned:Ptr;
 	static var nowned:Int;

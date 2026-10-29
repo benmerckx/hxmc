@@ -165,7 +165,7 @@ class FnLower {
 			}
 			if (boxed.exists(v.vId)) {
 				var b = newLocal(v.vName + "_box", TRef(RBox(t)));
-				out.push(SSet(b, ENewBox(t, x)));
+				out.push(SSet(b, newBox(t, x)));
 				locals.set(v.vId, b);
 			} else switch x {
 				case ELocal(lo): locals.set(v.vId, lo);
@@ -1224,7 +1224,7 @@ class FnLower {
 				if (isBoxed(v)) {
 					var x = init != null ? coerce(value(init), tyOf(init), t) : nullOf(t);
 					var b = declare(v, init);
-					out.push(SSet(b, ENewBox(t, x)));
+					out.push(SSet(b, newBox(t, x)));
 				} else {
 					var x = init != null ? rhs(init) : null;
 					var lo = declare(v, init);
@@ -1580,7 +1580,7 @@ class FnLower {
 					src = ELocal(caught);
 				}
 				var x = coerce(src, caught != null ? caught.ty : TRef(RAny), t);
-				if (isBoxed(c.variable)) out.push(SSet(lo, ENewBox(t, x))) else out.push(SSet(lo, x));
+				if (isBoxed(c.variable)) out.push(SSet(lo, newBox(t, x))) else out.push(SSet(lo, x));
 			}).concat(branch(c.expr, target));
 			cs[ci] = {test: test, l: exn, body: handler};
 		}
@@ -2013,7 +2013,7 @@ class FnLower {
 			};
 			var sig = l.sig([for (a in s.args) ty(a.type)], ty(s.ret));
 			var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig, tyOf(obj));
-			var x = temp(TRef(RClos(sig)), ENewClos(li, vector(value(obj))));
+			var x = temp(TRef(RClos(sig)), newClosure(li, vector(value(obj))));
 			return coerce(x, TRef(RClos(sig)), rt);
 		}
 		var li:LambdaInfo;
@@ -2425,6 +2425,14 @@ class FnLower {
 				var t = ty(v.vType);
 				if (isBoxed(v)) {
 					var x = pure(compute(() -> EBoxGet(t, ELocal(lo)), t, t), t);
+					if (t == TId) {
+						// (an id: the box holds a reference, newBox)
+						var old = asLocal(EBoxGet(t, ELocal(lo)), t);
+						objcRetain(x);
+						out.push(SBoxSet(t, ELocal(lo), x));
+						objcRelease(ELocal(old));
+						return coerce(x, t, et);
+					}
 					out.push(SBoxSet(t, ELocal(lo), x));
 					return coerce(x, t, et);
 				}
@@ -3403,6 +3411,38 @@ class FnLower {
 		}
 	}
 
+	// a new closure: the ids it captures held by it as fields hold theirs,
+	// retained here and released once it dies (hxmc.rt.Gc.own; capture i is
+	// slot i + 1, MirBuild)
+	function newClosure(li:LambdaInfo, caps:Vector<Ex>):Ex {
+		if (!li.captures.exists(c -> c.ty == TId)) return ENewClos(li, caps);
+		var xs = [for (i in 0...caps.length) (ELocal(asLocal(caps[i], li.captures[i].ty)) : Ex)];
+		var c = temp(TRef(RClos(li.sig)), ENewClos(li, Vector.fromArrayCopy(xs)));
+		for (i in 0...xs.length)
+			if (li.captures[i].ty == TId) {
+				objcRetain(xs[i]);
+				objcOwn(c, 8 * (i + 1));
+			}
+		return c;
+	}
+
+	// a new box of a captured variable that is assigned: an id in it held as
+	// a field's (its stores: assign), released once the box dies
+	function newBox(t:Ty, x:Ex):Ex {
+		if (t != TId) return ENewBox(t, x);
+		var v = ELocal(asLocal(x, TId));
+		var b = temp(TRef(RBox(TId)), ENewBox(TId, v));
+		objcRetain(v);
+		objcOwn(b, 0);
+		return b;
+	}
+
+	// the id at offset off in the object o (a local) released once o dies
+	function objcOwn(o:Ex, off:Int) {
+		var release = ObjC.symbol(l, "objc_release");
+		out.push(SExpr(ECallHost("rt_objc_own", vector(ECast(TRef(RAny), o), EInt(off), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TVoid)));
+	}
+
 	// `super.f(args)` in a method of a class extending an Objective-C one
 	// (sup): objc_msgSendSuper, its receiver a struct objc_super in this
 	// frame (the object's id and the class the method is looked up from:
@@ -3962,7 +4002,7 @@ class FnLower {
 		};
 		var outerBoxed = boxed;
 		var li = l.newLambda(sig, Vector.fromArrayCopy(captureLocals), fl -> fl.runLambda(tf, copyMap(outerBoxed), caps), Lower.lambdaName(fi), fi.module);
-		return ENewClos(li, Vector.fromArrayCopy(capVals));
+		return newClosure(li, Vector.fromArrayCopy(capVals));
 	}
 
 	static function copyMap(m:Map<Int, Bool>):Map<Int, Bool> {
