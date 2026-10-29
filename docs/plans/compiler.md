@@ -81,7 +81,9 @@ server's reuse of lowered bodies, Mir's compiled functions.
    (`ObjectStore` removed), and the trim reads only index headers (it
    parsed whole module indexes before). The layout's number is in the tool
    directory's name, so an earlier layout is never read and goes as
-   another tool's directory. Outputs, hits and misses unchanged.
+   another tool's directory. Outputs, hits and misses unchanged; the
+   self-build's cold, warm, off and server times within noise of
+   before, the store 1.5 KB larger (the headers).
 2. **One validation pass.** Today three checks decide reuse separately:
    the server's per-module check (`ModuleCacheState.check`, `Closure`),
    `LowerCache`'s replay keyed by `m_processed`, and the objects' content
