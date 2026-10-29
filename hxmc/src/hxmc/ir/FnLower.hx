@@ -1906,6 +1906,8 @@ class FnLower {
 						coerce(EField(ci, idx, value(obj)), ci.fields[idx].ty, tyOf(e));
 				}
 			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isObjC(c)): objcGet(null, c, cf, e);
+			case FStatic(c, cf) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c)):
+				fail("Objective-C class method " + cf.cfName + " as a value: wrap the message in a function", e);
 			case FStatic(c, cf):
 				var cf = overloadImpl(c, cf);
 				switch cf.cfKind {
@@ -1940,6 +1942,9 @@ class FnLower {
 				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
 				var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_get"), vector(o, EStr(name)), TRef(RAny)));
 				coerce(r, TRef(RAny), tyOf(e));
+			// (an Objective-C method as a value: no closure sends it yet)
+			case FClosure(cl, cf) if (cl != null && ObjC.isObjC(cl.cls)):
+				fail("Objective-C method " + cf.cfName + " as a value: wrap the message in a function (`x -> o." + cf.cfName + "(x)`)", e);
 			case FClosure(cl, cf):
 				if (cl == null) {
 					// a closure of a structural field: just the field's value

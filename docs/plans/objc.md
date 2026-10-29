@@ -100,7 +100,9 @@ answer them.
 4. **x86-64 on hardware**: messages with struct results go to
    `objc_msgSend_stret`, which no test has run yet (no Rosetta where it was
    written); `_fpret` is `long double`'s only, which Haxe has not.
-5. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); a pool
+5. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); an
+   Objective-C method as a value (`o.description` without a call: rejected,
+   a closure sending the message would do); a pool
    around `main` (nothing gained: it drains at exit); reading retain
    counts while another thread is stopped inside libobjc holding its
    lock.
