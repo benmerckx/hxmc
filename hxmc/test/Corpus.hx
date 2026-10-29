@@ -57,7 +57,7 @@ class Corpus {
 	public static final IOS_EXCLUDED = [for (n in ["FileTimes", "NetPollFds", "SysNatives"]) n => "starts other programs: iOS runs none"];
 	// the cases of Apple's systems only (Objective-C: libobjc and Foundation, on
 	// macOS and the iOS simulator), and of macOS only (AppKit)
-	public static final APPLE_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCWeak", "ObjCIdentity", "ObjCCaptures", "ObjCBlocks", "ObjCThreads"]) n => "Objective-C: Apple's systems only"];
+	public static final APPLE_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCWeak", "ObjCIdentity", "ObjCCaptures", "ObjCBlocks", "ObjCThreads", "ObjCStrings"]) n => "Objective-C: Apple's systems only"];
 	public static final MACOS_ONLY = [for (n in ["ObjCInit", "ObjCProperties", "ObjCSuper", "ObjCHierarchy"]) n => "AppKit: macOS only"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];

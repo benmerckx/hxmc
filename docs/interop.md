@@ -689,6 +689,11 @@ counted. Where references cross:
   many messages or on a thread hxmc started (also when `f` throws). Code
   outside any (`main` before `run`) autoreleases into the thread's pool,
   which nothing drains.
+- **Strings**: `hxmc.objc.Strings.toNSString(s)` and `ofNSString(ns)` copy
+  unit for unit (both are UTF-16, one byte per unit where every unit
+  fits), not through UTF-8: a lone surrogate survives, and a long string
+  converts many times faster. Ids are `Ptr` there; `cast` makes one an
+  `NSString` of the declarations.
 - **Weak fields**: `@:hxmc.weak var owner:Null<NSView>` holds no reference;
   reading it gives nil once the object is gone, so its type must be
   `Null<...>` (as Swift's weak variables are optional). Its variable is a cell
