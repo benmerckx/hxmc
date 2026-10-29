@@ -78,7 +78,11 @@ class ClassInfo {
 	public var maker:Null<{fn:Null<FuncInfo>}> = null;
 	// a class extending an Objective-C one (ObjC): the name it is registered
 	// as, and its methods Objective-C can call (ObjC.imps)
-	public var objc:Null<{name:String, methods:Array<{sel:String, sym:String, types:String}>}> = null;
+	// (and of its Haxe subclasses): the name it is registered as, the name of
+	// the first such class (whose instance variable and its offset's cell
+	// every subclass shares), its methods Objective-C can call (ObjC.imps),
+	// the function registering it (ObjC.REGISTER)
+	public var objc:Null<{name:String, root:String, methods:Array<{sel:String, sym:String, types:String}>, register:FuncInfo}> = null;
 	// its own fields holding ids (ObjC: their stores retain, its death releases them)
 	public var idFields:Array<String> = [];
 

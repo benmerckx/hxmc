@@ -123,7 +123,7 @@ class FnLower {
 		if (isCtor) objcOwnFields();
 		if (isCtor) {
 			inCtor = true;
-			objcDefaultInit(tf);
+			objcConstructor(tf);
 		}
 		stmt(tf.tfExpr);
 	}
@@ -846,7 +846,7 @@ class FnLower {
 			case [TId | TI64, TRef(RObj(ci))] if (ci.objc != null):
 				var id = asLocal(x, from);
 				var r = newLocal("peer", to);
-				var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + ci.objc.name)), TI64), EInt(0)), TI64);
+				var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + ci.objc.root)), TI64), EInt(0)), TI64);
 				var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(id), off), EInt(0)), TI32);
 				out.push(SIf(EBin(LEq, ELocal(id), EConv(I2L, EInt(0))), vector(SSet(r, ENull(to))),
 					vector(SSet(r, ECast(to, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))))));
@@ -3382,7 +3382,10 @@ class FnLower {
 		var id = ELocal(asLocal(coerce(ELocal(thisLocal), TRef(RObj(self)), TId), TId));
 		var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), id), TVoid)));
-		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), objcClass(sup)), TVoid)));
+		// (a Haxe superclass: its registered class, from its cell)
+		var superClass = ObjC.isObjC(sup) ? objcClass(sup)
+			: objcCellClass(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.classInfo(sup).objc.name)), TI64));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), superClass), TVoid)));
 		var types = [for (a in s.args) a.type];
 		if (xs.length == 1 && ObjC.isSetter(c, cf)) {
 			var v = ELocal(asLocal(xs[0], ats[0]));
@@ -3422,23 +3425,20 @@ class FnLower {
 	}
 
 	// `super.initX(args)` in the constructor of a class extending an
-	// Objective-C one (sup), as `self = [super initX:args]`: its Objective-C
-	// object made, [[C alloc] initX:args] of this class (registered by the
-	// first construction: objcRegister), kept in the hidden field (the +1
-	// alloc and init give it), and entered in the runtime's peers, its
-	// instance variable the entry's index; init (the declaration of
-	// NSObject's, or plain) where the constructor calls none
-	// (objcDefaultInit). Its value is the id.
+	// Objective-C one (sup), as `self = [super initX:args]`: the Objective-C
+	// object, [[C alloc] initX:args] of the instance's own class C (the
+	// most derived: its cell, CELL_FIELD; registered on first use), kept in
+	// the hidden field (the +1 alloc and init give it), and entered in the
+	// runtime's peers, the instance variable the entry's index; init (the
+	// declaration of NSObject's, or plain) where the constructor calls none
+	// (objcConstructor). Its value is the id.
 	function objcSuperInit(sup:TClass, init:Null<TClassField>, cargs:Vector<TExpr>, e:TExpr):Ex {
-		var name = self.objc.name;
 		var s = init != null ? objcSig(init, e) : null;
 		var xs = s != null ? args(cargs, Vector.fromArrayCopy([for (a in s.args) ty(a.type)]), null) : vector();
-		var cell = (n:String) -> temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(n + name)), TI64));
-		var cls = newLocal("cls", TI64);
-		out.push(SSet(cls, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell(ObjC.CLASS_CELL), EInt(0)), TI64)));
-		out.push(SIf(EBin(LEq, ELocal(cls), EConv(I2L, EInt(0))), block(() -> objcRegister(sup, name, cls, e)), vector()));
+		var cell = temp(TI64, EField(self, self.fieldIndex(ObjC.CELL_FIELD), ELocal(thisLocal)));
+		var cls = objcCellClass(cell);
 		var idType = TInst(sup, vector());
-		var alloc = ELocal(asLocal(objcMsg(ELocal(cls), "alloc", [], [], idType, init, e, TI64), TI64));
+		var alloc = ELocal(asLocal(objcMsg(cls, "alloc", [], [], idType, init, e, TI64), TI64));
 		var sel = init != null ? ObjC.selector(init, s) : "init";
 		var id = asLocal(objcMsg(alloc, sel, s != null ? [for (a in s.args) a.type] : [], xs.toArray(), idType, init, e, TId, true), TId);
 		out.push(SSetField(self, self.fieldIndex(ObjC.ID_FIELD), ELocal(thisLocal), ELocal(id)));
@@ -3446,14 +3446,34 @@ class FnLower {
 		var release = ObjC.symbol("objc_release");
 		var index = asLocal(ECallHost("rt_objc_peer_add", vector(ECast(TRef(RAny), ELocal(thisLocal)), ELocal(id),
 			ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(retainCount)), TI64), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TI32), TI32);
-		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(cell(ObjC.IVAR_CELL), EInt(0)), TI64);
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + self.objc.root)), TI64), EInt(0)), TI64);
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(EBin(LAdd, ELocal(id), off), EInt(0), ELocal(index)), TVoid)));
 		return ELocal(id);
 	}
 
-	// a constructor of such a class that calls no super.init...: plain init first
-	function objcDefaultInit(tf:TFunc) {
+	// the class of a class cell (at the address cell), registered first when
+	// it is not yet (by the function the cell's second word holds)
+	function objcCellClass(cell:Ex):Ex {
+		var cls = newLocal("cls", TI64);
+		out.push(SSet(cls, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64)));
+		out.push(SIf(EBin(LEq, ELocal(cls), EConv(I2L, EInt(0))), vector(
+			SExpr(ECallHost("hxmc_unsafe_Mem_call0", vector(ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(8)), TI64)), TVoid)),
+			SSet(cls, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64))
+		), vector()));
+		return ELocal(cls);
+	}
+
+	// a constructor of such a class: the instance's own class noted (the first
+	// constructor to run is the most derived class's); and in the first such
+	// class's, plain init first when it calls no super.init...
+	function objcConstructor(tf:TFunc) {
 		if (self == null || self.objc == null) return;
+		var cellField = self.fieldIndex(ObjC.CELL_FIELD);
+		var own = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + self.objc.name)), TI64);
+		out.push(SIf(EBin(LEq, EField(self, cellField, ELocal(thisLocal)), EConv(I2L, EInt(0))),
+			vector(SSetField(self, cellField, ELocal(thisLocal), own)), vector()));
+		var sup = l.superOf(self);
+		if (!ObjC.isObjC(sup)) return;
 		var called = false;
 		function scan(e:TExpr)
 			switch e.eexpr {
@@ -3463,34 +3483,46 @@ class FnLower {
 					core.Texpr.iter(scan, e);
 			}
 		scan(tf.tfExpr);
-		if (!called) objcSuperInit(l.superOf(self), null, vector(), tf.tfExpr);
+		if (!called) objcSuperInit(sup, null, vector(), tf.tfExpr);
 	}
 
-	// the statements registering this class (extending sup) as `name`: its
-	// instance variable, its methods (their entries, ObjC.imps), its
-	// class and the variable's offset in its cells
-	function objcRegister(sup:TClass, name:String, cls:Local, e:TExpr) {
+	// the body of this class's registering function (ObjC.REGISTER, its cell's
+	// second word): unless registered, its superclass (parent: the Objective-C
+	// class, or the Haxe class registered first), the instance variable (the
+	// first such class's only: the others inherit it), its methods (their
+	// entries, ObjC.imps), and its class and the variable's offset in their cells
+	public function objcRegisterBody(parent:TClass) {
 		inline function cstr(s:String):Ex
 			return ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(s)), TI64);
 		inline function sym(s:String):Ex
 			return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
+		var name = self.objc.name;
 		var allocate = ObjC.runtime("objc_allocateClassPair", [CPtr, CPtr, CI64], CPtr);
 		var addIvar = ObjC.runtime("class_addIvar", [CPtr, CPtr, CI64, CU8, CPtr], CBool);
 		var addMethod = ObjC.runtime("class_addMethod", [CPtr, CPtr, CPtr, CPtr], CBool);
 		var register = ObjC.runtime("objc_registerClassPair", [CPtr], CVoid);
 		var getIvar = ObjC.runtime("class_getInstanceVariable", [CPtr, CPtr], CPtr);
 		var ivarOffset = ObjC.runtime("ivar_getOffset", [CPtr], CI64);
-		out.push(SSet(cls, ECallHost(allocate, vector(objcClass(sup), cstr(name), EConv(I2L, EInt(0))), TI64)));
-		out.push(SExpr(ECallHost(addIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR), EConv(I2L, EInt(4)), EInt(2), cstr("i")), TBool)));
-		for (m in self.objc.methods) {
-			var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
-			var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
-			out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(m.sym), cstr(m.types)), TBool)));
-		}
-		out.push(SExpr(ECallHost(register, vector(ELocal(cls)), TVoid)));
-		var off = temp(TI64, ECallHost(ivarOffset, vector(ECallHost(getIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR)), TI64)), TI64));
-		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.IVAR_CELL + name), EInt(0), off), TVoid)));
-		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0), ELocal(cls)), TVoid)));
+		var done = block(() -> {
+			var root = name == self.objc.root;
+			var superClass = root ? objcClass(parent) : objcCellClass(sym(ObjC.CLASS_CELL + l.classInfo(parent).objc.name));
+			var cls = asLocal(ECallHost(allocate, vector(superClass, cstr(name), EConv(I2L, EInt(0))), TI64), TI64);
+			if (root) out.push(SExpr(ECallHost(addIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR), EConv(I2L, EInt(4)), EInt(2), cstr("i")), TBool)));
+			for (m in self.objc.methods) {
+				var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
+				var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+				out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(m.sym), cstr(m.types)), TBool)));
+			}
+			out.push(SExpr(ECallHost(register, vector(ELocal(cls)), TVoid)));
+			if (root) {
+				var off = temp(TI64, ECallHost(ivarOffset, vector(ECallHost(getIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR)), TI64)), TI64));
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.IVAR_CELL + name), EInt(0), off), TVoid)));
+			}
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0), ELocal(cls)), TVoid)));
+		});
+		var current = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0)), TI64);
+		out.push(SIf(EBin(LEq, current, EConv(I2L, EInt(0))), done, vector()));
+		out.push(SReturn(null));
 	}
 
 	function objcSig(cf:TClassField, e:TExpr):core.TType.TSignature

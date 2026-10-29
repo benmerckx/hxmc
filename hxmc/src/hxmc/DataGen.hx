@@ -585,8 +585,13 @@ class DataGen {
 				var sec = obj.section("__DATA,__objc_classrefs", Data, 8);
 				obj.define(n, sec, sec.buf.len, 8, true);
 				ptr(sec, hxmc.ir.ObjC.CLASS_SYM + n.substr(hxmc.ir.ObjC.CLASSREF.length));
-			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(n, hxmc.ir.ObjC.IVAR_CELL)) {
-				// (a peer class's: zero until it is registered)
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASS_CELL)) {
+				// (a peer class's: its class, zero until registered; its registering function)
+				data.buf.align(8);
+				obj.define(n, data, data.buf.len, 16, true);
+				data.buf.u64(0, 0);
+				ptr(data, hxmc.ir.ObjC.REGISTER + n.substr(hxmc.ir.ObjC.CLASS_CELL.length));
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.IVAR_CELL)) {
 				data.buf.align(8);
 				obj.define(n, data, data.buf.len, 8, true);
 				data.buf.u64(0, 0);

@@ -27,6 +27,12 @@ class ObjC {
 	public static inline var LIB = "/usr/lib/libobjc.A.dylib";
 	public static inline var ID_FIELD = Lower.HIDDEN_FIELD + "objc";
 	public static inline var PEER_IVAR = "hxmc_peer";
+	// the hidden field holding the address of the class cell (CLASS_CELL) of
+	// the instance's own class: set by the first constructor that runs (the
+	// most derived class's), read by the initializer, which allocates that class
+	public static inline var CELL_FIELD = Lower.HIDDEN_FIELD + "objccell";
+	// the prefix of the functions registering the classes (Lower.classInfo)
+	public static inline var REGISTER = "hxmc_objc_reg_";
 
 	// an extern Objective-C class (or a class extending one, extern too)
 	public static function isObjC(c:TClass):Bool {
@@ -74,8 +80,9 @@ class ObjC {
 		return c.hasClassFlag(CExtern) ? c.clPath.name : c.clPath.pack.concat([c.clPath.name]).join("_");
 	}
 
-	// a peer class's words in the program's data (DataGen.objcRefs, zero at
-	// first): its class once registered, the offset of its PEER_IVAR
+	// a peer class's words in the program's data (DataGen.objcRefs): its class
+	// cell (its class once registered, zero before; the address of its
+	// registering function), the offset of the first such class's PEER_IVAR
 	public static inline var CLASS_CELL = "hxmc$objccls$";
 	public static inline var IVAR_CELL = "hxmc$objcivar$";
 
@@ -248,7 +255,7 @@ class ObjC {
 	// (a message is sent in one), finds the Haxe object (the index in the
 	// instance variable, rt_objc_peer_get), calls the method and enters the
 	// region again
-	public static function imps(l:Lower, c:TClass, name:String):Array<{sel:String, sym:String, types:String}> {
+	public static function imps(l:Lower, c:TClass, name:String, root:String):Array<{sel:String, sym:String, types:String}> {
 		var r = [];
 		for (cf in c.clOrderedFields) {
 			if (!cf.cfKind.match(Method(MethNormal | MethDynamic))) continue;
@@ -292,7 +299,7 @@ class ObjC {
 			var peer = new Local(w.args.length, "peer", TRef(RAny));
 			w.locals.push(peer);
 			var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
-			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + name), EInt(0)), TI64);
+			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + root), EInt(0)), TI64);
 			var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(self), off), EInt(0)), TI32);
 			var body:Array<Stmt> = [
 				SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)),

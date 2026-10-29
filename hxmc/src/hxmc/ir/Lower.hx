@@ -944,7 +944,10 @@ class Lower implements LowerQueries {
 			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
 			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
 		}
-		if (objc) ci.fields.push({name: ObjC.ID_FIELD, ty: TId});
+		if (objc) {
+			ci.fields.push({name: ObjC.ID_FIELD, ty: TId});
+			ci.fields.push({name: ObjC.CELL_FIELD, ty: TI64});
+		}
 		var own = [];
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
@@ -971,7 +974,23 @@ class Lower implements LowerQueries {
 		// field types may refer back to this class
 		outsideUnfolding(() -> for (o in own)
 			o.slot.ty = ty(o.f.cfType));
-		if (objc) ci.objc = {name: ci.ident, methods: ObjC.imps(this, c, ci.ident)};
+		// (a class extending an Objective-C one, or such a class: its Objective-C
+		// class, registered by a function of its own when first needed)
+		if (objc || (sup.objc != null)) {
+			var root = objc ? ci.ident : sup.objc.root;
+			var reg = new FuncInfo(ObjC.REGISTER + ci.ident, moduleOf(c));
+			reg.cSymbol = reg.name;
+			reg.display = core.Globals.sTypePath(c.clPath) + " (its Objective-C class)";
+			reg.ret = TVoid;
+			ci.objc = {name: ci.ident, root: root, methods: ObjC.imps(this, c, ci.ident, root), register: reg};
+			prog.funcs.push(reg);
+			var parent = c.clSuper.cls;
+			pending.push(guarded(reg, () -> {
+				var fl = new FnLower(this, reg, ci, null);
+				fl.objcRegisterBody(parent);
+				fl.finish();
+			}));
+		}
 		return ci;
 	}
 
