@@ -648,7 +648,8 @@ counted. Where references cross:
   outside any (`main` before `run`) autoreleases into the thread's pool,
   which nothing drains.
 - **Weak fields**: `@:hxmc.weak var owner:Null<NSView>` holds no reference;
-  reading it gives nil once the object is gone. Its variable is a cell
+  reading it gives nil once the object is gone, so its type must be
+  `Null<...>` (as Swift's weak variables are optional). Its variable is a cell
   outside the heap (`objc_storeWeak` keeps the variable's address, and a
   field moves with its object), destroyed with the object.
 - **Cycles** through both heaps (a Haxe object's field holds a view, the

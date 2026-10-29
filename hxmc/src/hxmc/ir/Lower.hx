@@ -957,7 +957,13 @@ class Lower implements LowerQueries {
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
-					if (ObjC.isIdType(f.cfType)) (hasMeta(":hxmc.weak", f.cfMeta) ? ci.weakFields : ci.idFields).push(f.cfName);
+					var weak = hasMeta(":hxmc.weak", f.cfMeta);
+					if (weak && !ObjC.isIdType(f.cfType))
+						throw new LowerError('@:hxmc.weak ${f.cfName}: only a field holding an Objective-C object can be weak', CInterop.posOf(f.cfPos));
+					// (as Swift's weak variables are optional: it becomes nil once its object is gone)
+					if (weak && !TFunctions.isExplicitNull(f.cfType))
+						throw new LowerError('@:hxmc.weak ${f.cfName}: a weak field becomes nil once its object is gone: declare it Null<...>', CInterop.posOf(f.cfPos));
+					if (ObjC.isIdType(f.cfType)) (weak ? ci.weakFields : ci.idFields).push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
