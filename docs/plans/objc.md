@@ -92,11 +92,11 @@ answer them.
    closures and anonymous objects need the same. A layout flag (Facts)
    and a list of such objects walked after each collection would replace
    the registration.
-4. **x86-64**: `objc_msgSend_stret` for struct results over 16 bytes and
-   `objc_msgSend_fpret` (targets.md lists them for Metal and the x86-64 iOS
-   simulator).
-5. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); registration from two
-   threads at once; a pool around `main` (nothing gained: it drains at exit); `hx_dyn_eq` on two boxes of one `id`; reading retain
+4. **x86-64 on hardware**: messages with struct results go to
+   `objc_msgSend_stret`, which no test has run yet (no Rosetta where it was
+   written); `_fpret` is `long double`'s only, which Haxe has not.
+5. **Smaller gaps**: `dealloc` (its peer entry is gone when it runs); a pool
+   around `main` (nothing gained: it drains at exit); reading retain
    counts while another thread is stopped inside libobjc holding its
    lock.
 

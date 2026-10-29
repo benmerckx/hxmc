@@ -852,10 +852,12 @@ class FnLower {
 					vector(SSet(r, ECast(to, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))))));
 				return ELocal(r);
 			// an id where a reference goes (Dynamic, an element, a type
-			// parameter): a box that holds a reference to it (nil: null)
+			// parameter): its one box, which holds a reference to it, or the Haxe
+			// object of a Haxe class's instance (nil: null; hxmc.rt.Gc.idBox)
 			case [TId, TRef(_)]:
-				var box = temp(TRef(RAny), ECallHost("rt_objc_box", vector(x, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_retain"))), TI64),
-					ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_release"))), TI64)), TRef(RAny)));
+				var fn = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, s))), TI64);
+				var box = temp(TRef(RAny), ECallHost("rt_objc_box", vector(x, fn("objc_retain"), fn("objc_release"), fn("object_getClass"),
+					fn("class_getInstanceVariable"), fn("ivar_getOffset")), TRef(RAny)));
 				return coerce(box, TRef(RAny), to);
 			// a box's id (or a Haxe object's whose class extends an Objective-C one)
 			case [TRef(_), TId]:
@@ -3551,8 +3553,18 @@ class FnLower {
 			}
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0), ELocal(cls)), TVoid)));
 		});
+		// (under libobjc's recursive lock on the Objective-C class the hierarchy
+		// extends, as @synchronized: two threads registering at once; a subclass
+		// registers its superclass inside it)
+		var enter = ObjC.runtime(l, "objc_sync_enter", [CPtr], CI32);
+		var exit = ObjC.runtime(l, "objc_sync_exit", [CPtr], CI32);
+		var lock = asLocal(objcClass(ObjC.isObjC(parent) ? parent : ObjC.peerBase(parent)), TI64);
 		var current = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0)), TI64);
-		out.push(SIf(EBin(LEq, current, EConv(I2L, EInt(0))), done, vector()));
+		out.push(SIf(EBin(LEq, current, EConv(I2L, EInt(0))), vector(
+			SExpr(ECallHost(enter, vector(ELocal(lock)), TI32)),
+			SIf(EBin(LEq, current, EConv(I2L, EInt(0))), done, vector()),
+			SExpr(ECallHost(exit, vector(ELocal(lock)), TI32))
+		), vector()));
 		out.push(SReturn(null));
 	}
 
@@ -3590,6 +3602,13 @@ class FnLower {
 		var t = ret == null ? TVoid : ty(ret);
 		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
 		var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+		// (x86-64: a struct result over 16 bytes comes back through memory, from
+		// the _stret variant; arm64 has one objc_msgSend for every result)
+		switch t {
+			case TStruct(_, size) if (Lower.targetArm == 0 && size > 16):
+				send += "_stret";
+			case _:
+		}
 		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, send))), TI64));
 		var cx = ECallHost(key, Vector.fromArrayCopy([fn, self, selector].concat(xs)), t);
 		if (t == TId && !keep && ObjC.returnsRetained(sel))

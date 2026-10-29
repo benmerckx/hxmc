@@ -336,11 +336,94 @@ class Gc {
 	}
 
 	// an id where a reference goes (Dynamic, an element, a type parameter):
-	// a native handle holding it (retained here, released once the box dies)
-	@:hxmc.export("rt_objc_box") static function idBox(id:Ptr, retain:Ptr, release:Ptr):Dynamic {
+	// the Haxe object of an instance of a Haxe class extending an Objective-C
+	// one (its class has the instance variable hxmc_peer), else the id's one
+	// box, a native handle holding a reference to it (released once the box
+	// dies), so that == and maps see one object per id. libobjc's functions
+	// come as addresses (the runtime does not link libobjc).
+	@:hxmc.export("rt_objc_box") static function idBox(id:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr, ivarOffset:Ptr):Dynamic {
 		if (id.isNull()) return null;
+		var ivar = Ind.call2(getIvar, Ind.call1(getClass, id), Mem.cstr("hxmc_peer"));
+		if (!ivar.isNull()) return peerGet(Mem.getI32(id.addL(Ind.call1(ivarOffset, ivar).toI64()), 0));
+		lockLeaf(peersLock);
+		var found = boxFind(id);
+		unlockLeaf(peersLock);
+		if (!found.isNull()) return Mem.obj(found);
 		Ind.call1(retain, id);
-		return nativeNew(id, release, 0);
+		var o = nativeNew(id, release, 0);
+		lockLeaf(peersLock);
+		// (another thread's box made meanwhile: that one; this one dies, released)
+		found = boxFind(id);
+		if (found.isNull()) boxAdd(id, Mem.addr(o));
+		unlockLeaf(peersLock);
+		return found.isNull() ? o : Mem.obj(found);
+	}
+
+	// ---- the boxes by id: an open-addressing table of (id, box) pairs, its
+	// capacity a power of two; rebuilt after a collection (sweepBoxes: the
+	// dead boxes' entries dropped, the moved ones' addresses updated)
+	static var boxes:Ptr;
+	static var boxesCap:Int;
+	static var nboxes:Int;
+
+	@:hxmc.unsafe static inline function boxSlot(id:Ptr, cap:Int):Int
+		return ((id.toI64() >>> 4).toInt() * 0x9E3779B1) & (cap - 1);
+
+	@:hxmc.unsafe static function boxFind(id:Ptr):Ptr {
+		if (nboxes == 0) return Ptr.nil();
+		var i = boxSlot(id, boxesCap);
+		while (true) {
+			var k = Mem.getPtr(boxes, 16 * i);
+			if (k.isNull()) return Ptr.nil();
+			if (k == id) return Mem.getPtr(boxes, 16 * i + 8);
+			i = (i + 1) & (boxesCap - 1);
+		}
+	}
+
+	@:hxmc.unsafe static function boxAdd(id:Ptr, box:Ptr) {
+		if (2 * (nboxes + 1) > boxesCap) boxRehash(boxesCap == 0 ? 64 : boxesCap * 2);
+		boxPut(id, box);
+		nboxes++;
+	}
+
+	@:hxmc.unsafe static function boxPut(id:Ptr, box:Ptr) {
+		var i = boxSlot(id, boxesCap);
+		while (!Mem.getPtr(boxes, 16 * i).isNull())
+			i = (i + 1) & (boxesCap - 1);
+		Mem.setPtr(boxes, 16 * i, id);
+		Mem.setPtr(boxes, 16 * i + 8, box);
+	}
+
+	@:hxmc.unsafe static function boxRehash(cap:Int) {
+		var old = boxes, oldCap = boxesCap;
+		boxes = LibC.malloc((cap : I64) * 16);
+		LibC.memset(boxes, 0, (cap : I64) * 16);
+		boxesCap = cap;
+		for (i in 0...oldCap) {
+			var k = Mem.getPtr(old, 16 * i);
+			if (!k.isNull()) boxPut(k, Mem.getPtr(old, 16 * i + 8));
+		}
+		if (!old.isNull()) LibC.free(old);
+	}
+
+	// after a collection of the nursery (and of [lo, hi) for a major one)
+	@:hxmc.unsafe static function sweepBoxes(lo:Ptr, hi:Ptr) {
+		var live = 0;
+		for (i in 0...boxesCap) {
+			var e = boxes.add(16 * i);
+			var o = Mem.getPtr(e, 8);
+			if (Mem.getPtr(e, 0).isNull()) continue;
+			if (inYoung(o) || (!o.ult(lo) && o.ult(hi))) {
+				if (!isFwd(hdrW0(o))) {
+					Mem.setPtr(e, 0, Ptr.nil());
+					continue;
+				}
+				Mem.setPtr(e, 8, fwdAddr(o));
+			}
+			live++;
+		}
+		nboxes = live;
+		boxRehash(boxesCap);
 	}
 
 	// the id of a box, or of an instance of a Haxe class extending an
@@ -971,6 +1054,7 @@ class Gc {
 			sweepNatives(Ptr.nil(), Ptr.nil());
 			if (npeers > 0) sweepPeers(Ptr.nil(), Ptr.nil());
 			if (nowned > 0) sweepOwned(Ptr.nil(), Ptr.nil());
+			if (nboxes > 0) sweepBoxes(Ptr.nil(), Ptr.nil());
 		}
 		if (stats && majors == m0) minorSecs += Os.now() - t0;
 	}
@@ -1058,6 +1142,7 @@ class Gc {
 		sweepNatives(fromStart, fromEnd);
 		if (npeers > 0) sweepPeers(fromStart, fromEnd);
 		if (nowned > 0) sweepOwned(fromStart, fromEnd);
+		if (nboxes > 0) sweepBoxes(fromStart, fromEnd);
 		// the from-space goes back to the system (RT_RELEASE=0 keeps it
 		// resident, so the next major collection copies into faulted-in pages:
 		// a little less system time for as much more memory as the old space held)
@@ -2030,4 +2115,5 @@ class Gc {
 // calls through C function pointers (the native handles' free functions)
 @:hxmc.c @:hxmc.fast private extern class Ind {
 	@:hxmc.indirect static function call1(f:Ptr, a:Ptr):Ptr;
+	@:hxmc.indirect static function call2(f:Ptr, a:Ptr, b:Ptr):Ptr;
 }

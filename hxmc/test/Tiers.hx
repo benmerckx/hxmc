@@ -188,6 +188,8 @@ class Tiers {
 			lane("glibc readelf", script(["ElfCheck", "bin/hxmc-t"]));
 			lane("shared libraries", script(["SharedCheck"]));
 			lane("iOS Mach-O", make(["macho-check"]));
+			// (macOS with Xcode's iOS simulator: the corpus run in an iPhone simulator)
+			if (Corpus.iosDevice() != null) lane("iOS simulator", corpus("ios-sim-arm64", null, cases));
 			lane("wasm node legacy EH", corpus("wasm32-wasi", null, cases, LEGACY));
 			lane("ThreadNatives x30", threads(30, 16));
 			lane("ThreadNatives x30 adaptive", threads(30, 0));

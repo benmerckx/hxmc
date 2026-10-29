@@ -19,7 +19,7 @@ The fixpoint and crosshost must stay byte-identical.
 | Tier | What it runs |
 | --- | --- |
 | `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1`, the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O (`PORT=1`: the port's self-compile) |
+| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference

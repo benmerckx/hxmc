@@ -594,12 +594,15 @@ Haxe from inside messages). Nothing is looked up by name at run time: the
 program has clang's `__objc_classrefs` (bound by the loader, which loads
 the framework) and `__objc_selrefs` (made unique by libobjc when it maps
 the image, which `__objc_imageinfo` asks for), so `otool -ov` reads a
-program as it reads clang's.
+program as it reads clang's. On x86-64, a message whose result is a struct over 16
+bytes is sent with `objc_msgSend_stret` (`objc_msgSendSuper_stret`), as
+the ABI has it.
 
 ### Haxe classes extending Objective-C classes
 
 A Haxe class whose superclass is an Objective-C class is an Objective-C
-class too, registered at its first construction. Its constructor makes
+class too, registered at its first construction (under libobjc's lock,
+as `@synchronized`, for threads registering at once). Its constructor makes
 its Objective-C object by calling one of the superclass's initializers,
 `super.initWithFrame(frame)` (`[[C alloc] initWithFrame:frame]` of the
 new class), or `init` before its body when it calls none. Each instance is two objects: the Haxe object, which holds
@@ -634,7 +637,7 @@ counted. Where references cross:
 | --- | --- |
 | a local, an argument, a result | borrowed, as an autoreleased object in Objective-C: valid until its autorelease pool is drained (the run loop drains one per event) |
 | a field, a static | holds a reference, as ARC's strong variables: a store retains the new value and releases the old one, the holder's death releases it |
-| a reference position: `Array<NSView>`, `Map<K, NSView>`, a type parameter, `Dynamic` | a box holding a reference, released when the box dies |
+| a reference position: `Array<NSView>`, `Map<K, NSView>`, a type parameter, `Dynamic` | the `id`'s one box, holding a reference, released when the box dies (one per `id`, so `==`, `indexOf` and map keys see one object); an instance of a Haxe class extending an Objective-C one is its Haxe object |
 | an instance of a Haxe class extending an Objective-C one | as Xamarin's toggle references: while Objective-C retains its object (beyond the Haxe object's own reference), the Haxe object is a root; otherwise it is collected like any other, and its Objective-C object released |
 
 - **Method families**, as ARC names them: `alloc`'s result is kept for the
@@ -661,7 +664,7 @@ In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
 Not yet: blocks, overriding `dealloc`, `id`s captured by
-closures (borrowed), x86-64's `objc_msgSend_stret` and `_fpret`, protocols,
+closures (borrowed), protocols,
 declarations generated from the SDK's headers.
 
 ## Processes and files beyond the std
