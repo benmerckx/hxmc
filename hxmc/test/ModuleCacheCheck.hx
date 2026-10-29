@@ -31,7 +31,9 @@ using StringTools;
 // one of the cycle is read (and a field that one reads removed: the same
 // errors; full DCE), and a build macro whose state another module's build
 // macro forces (that module edited: typed again with it; then an error in
-// it: the same errors as without the cache, then fixed). The warm runs must restore
+// it: the same errors as without the cache, then fixed). One whose module of
+// abstracts with overloaded call operators (@:op(a())) is restored while the
+// modules calling them are typed again. The warm runs must restore
 // every module (none typed again), an edit undone restores the earlier
 // variant. Copies of the std (hxmc's and upstream's) are edited, never the
 // repository's. In bin/hxmc-t/module-cache (removed when every check passes):
@@ -170,6 +172,37 @@ class ModuleCacheCheck {
 			"src/Main.hx" => "class Main {\n\tstatic function count<T>(it:Iterable<T>):Int {\n\t\tvar n = 0;\n\t\tfor (_ in it) n++;\n\t\treturn n;\n\t}\n\n\tstatic function main() {\n\t\tvar b = new Bag();\n\t\ttrace(b.size());\n\t\ttrace(count(b));\n\t}\n}\n",
 			"src/Bag.hx" => "class Bag {\n\tpublic var items:Array<Int>;\n\n\tpublic function new() items = [1, 2];\n\n\tpublic function iterator():Iterator<Int> return items.iterator();\n\n\tpublic function size():Int return items.length;\n}\n"
 		];
+		// (abstracts of another module with overloaded call operators, inline
+		// and not, one taking a function, the other a typedef of one declared
+		// first, called by a module-level function and a class: the overloads
+		// are the impl class's statics of the other operator functions, which
+		// a restored module's HXB once could not be read back with; Main
+		// edited, p.Sig restored)
+		var callop = [
+			"src/Main.hx" => "import p.Api.*;\n\nclass Main {\n\tstatic function main() {\n\t\tUse.run();\n\t\tvar s = sig(10);\n\t\ts(20);\n\t\ts(c -> c + 1);\n\t\ttrace(s());\n\t\tvar t = sig2(\"a\");\n\t\tt(c -> c + \"b\");\n\t\ttrace(t());\n\t}\n}\n",
+			"src/Use.hx" => "import p.Api.*;\n\nfunction run() {\n\tvar s = sig(1);\n\ts(2);\n\ts(c -> c + 1);\n\ts(5);\n\ttrace(s());\n\tvar t = sig2(1);\n\tt(c -> c * 3);\n\tt(t() + 1);\n\ttrace(t());\n}\n",
+			"src/p/Api.hx" => "package p;\n\nimport p.Sig;\n\nclass Api {\n\tpublic static function sig<T>(v:T):Sig<T> return new Sig(v);\n\n\tpublic static function sig2<T>(v:T):Sig2<T> return new Sig2(v);\n}\n",
+			"src/p/Sig.hx" => [
+				"package p;",
+				"class Cell<T> {",
+				"\tpublic var v:T;",
+				"\tpublic function new(v) this.v = v;",
+				"}",
+				"typedef Up<T> = T->T;",
+				"abstract Sig<T>(Cell<T>) {",
+				"\tpublic inline function new(v:T) this = new Cell(v);",
+				"\t@:op(a()) inline function read():T return this.v;",
+				"\t@:op(a()) inline function write(v:T):Void this.v = v;",
+				"\t@:op(a()) inline function update(f:T->T):Void this.v = f(this.v);",
+				"}",
+				"abstract Sig2<T>(Cell<T>) {",
+				"\tpublic function new(v:T) this = new Cell(v);",
+				"\t@:op(a()) function read():T return this.v;",
+				"\t@:op(a()) function update(f:Up<T>):Void this.v = f(this.v);",
+				"\t@:op(a()) function write(v:T):Void this.v = v;",
+				"}"
+			].join("\n") + "\n"
+		];
 		// (an interface's property read through its accessor by a restored
 		// module, the interface typed again: the accessor Haxe makes for it,
 		// in a later pass, read before that pass)
@@ -221,6 +254,7 @@ class ModuleCacheCheck {
 			].join("\n") + "\n"
 		];
 		return [
+			{name: "callop", files: callop, args: ["-cp", "src", "-main", "Main"], edit: "src/Main.hx", run: "callop"},
 			{name: "accessor", files: accessor, args: ["-cp", "src", "-main", "Main"], edit: "src/Shape.hx", run: "accessor"},
 			{name: "building", files: building, args: ["-cp", "src", "-main", "Main"], edit: "src/Ui.hx", run: "building"},
 			{name: "state", files: state, args: ["-cp", "src", "-main", "Main"], edit: "src/Copy.hx", run: "state"},
@@ -591,6 +625,7 @@ class ModuleCacheCheck {
 					case "hello": orig.replace("hello ", "hello again ");
 					case "multi": orig.replace("\"v\" + 1", "\"v\" + 2");
 					case "lossy": orig.replace("3", "4");
+					case "callop": orig.replace("s(20);", "s(30);");
 					case _: "data two";
 				});
 				var e = gate('$name, ${p.edit} edited', target, pdir, p.args);

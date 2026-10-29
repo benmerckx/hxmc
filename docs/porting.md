@@ -104,6 +104,17 @@ divergence goes. The divergences:
   built after it, and the later state reads the local undeclared
   ("Unbound variable"; `coro.CoroToTexpr.handleLocals`; the corpus's
   `CoroTailLocal`).
+- An abstract's overloaded call operators (`@:op(a())`) read back from HXB
+  are the impl class's statics of the other operator functions, as when
+  typed. Upstream's reader makes them separate fields, while the writer
+  refers to them as the statics and writes their expressions twice, so the
+  second read of each static finds its `HxbId` taken: `Not_found`, or "Cannot
+  resolve type" in a module that refers to the abstract's module (every
+  `--hxb-lib`, the compilation server's second build, hxmc's module cache).
+  The archives are written as upstream's
+  (`compiler.hxb.HxbReader.readClassFields`; the corpus's `CallOpOverloads`,
+  ModuleCacheCheck's `callop`, the Conformance cases `callop-overloads` and
+  `hxblib-callop`).
 
 ## The one exception to byte identity
 

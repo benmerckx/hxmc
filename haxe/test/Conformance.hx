@@ -39,6 +39,8 @@ using StringTools;
 //   hxblib <name> <dir> "<library arguments>" "<arguments>"
 //   volatile <case> <member> <reason ...>   (the member depends on the time of compilation)
 //   noeval <case> <reason ...>   (--eval does not apply: Eval as the host cannot run the case)
+//   diverges <case> <reason ...>   (a divergence from the reference, docs/porting.md: the
+//       reference cannot read the case's archive back, and must still not; the port must)
 class Conformance {
 	static final GENERATED = "bin/test/conformance";
 	static final STACK = ["-D", "eval-call-stack-depth=10000"];
@@ -116,6 +118,8 @@ class Conformance {
 					cases.push({kind: kind, name: name, cwd: root + "/" + p[2], lib: shellSplit(p[3]), args: shellSplit(p[4]), hxml: true});
 				case "noeval":
 					Lambda.find(cases, c -> c.name == name).noEval = p.slice(2).join(" ");
+				case "diverges":
+					Lambda.find(cases, c -> c.name == name).diverges = p.slice(2).join(" ");
 				case "volatile":
 					var c = Lambda.find(cases, c -> c.name == name);
 					if (c.volatile == null) c.volatile = [];
@@ -189,6 +193,13 @@ class Conformance {
 			result.detail = detail;
 			return result;
 		}
+		if (c.diverges != null && c.lib != null) {
+			// (a library the reference writes and cannot read back: the reference
+			// rejects the case, the port compiles it)
+			if (rr.code == 0) return done("FAIL", "the reference reads the library now: the divergence (" + c.diverges + ") is out of date");
+			if (pr.code != 0) return done("FAIL", 'port failed (${codeText(pr)}): ' + firstError(out + "/port.log"));
+			return done("PASS", "diverges from the reference (" + c.diverges + "): the reference rejects it (" + firstError(out + "/reference.log") + "), the port reads the library");
+		}
 		if (rr.code != 0) {
 			if (pr.code == 0) return done("FAIL", 'reference rejects (${firstError(out + "/reference.log")}) but port accepts');
 			return done("EXPECTED-FAILURE", "both reject: " + firstError(out + "/reference.log"));
@@ -202,6 +213,15 @@ class Conformance {
 		var t = rootsOf(names);
 		var note = "";
 		var cr = run([reference, "--hxb-lib", portHxb].concat(t.target).concat(t.roots), root, out + "/consume.log");
+		if (c.diverges != null) {
+			// (the reference cannot read either archive back; the port reads its own)
+			var rc = run([reference, "--hxb-lib", refHxb].concat(t.target).concat(t.roots), root, out + "/consume-reference.log");
+			if (cr.code == 0 || rc.code == 0) return done("FAIL", "the reference reads the archive now: the divergence (" + c.diverges + ") is out of date");
+			var pc = run(port.concat(["--hxb-lib", portHxb]).concat(t.target).concat(t.roots), root, out + "/consume-port.log");
+			if (pc.code != 0) return done("FAIL", "port cannot consume its archive: " + firstError(out + "/consume-port.log"));
+			var members = readZip(refHxb).names.filter(compared).length;
+			return done("PASS", '$members members identical; diverges from the reference (${c.diverges}): the reference cannot read it back (${firstError(out + "/consume.log")}), the port reads it');
+		}
 		if (cr.code != 0) {
 			// Modules built by macros need the macro's source to load; that
 			// only counts against the port if the reference's own archive loads.
@@ -343,5 +363,5 @@ class Conformance {
 	}
 }
 
-typedef ConfCase = {kind:String, name:String, cwd:String, args:Array<String>, hxml:Bool, ?lib:Array<String>, ?volatile:Array<String>, ?noEval:String}
+typedef ConfCase = {kind:String, name:String, cwd:String, args:Array<String>, hxml:Bool, ?lib:Array<String>, ?volatile:Array<String>, ?noEval:String, ?diverges:String}
 typedef ConfResult = {name:String, seconds:Float, status:String, detail:String}

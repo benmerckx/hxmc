@@ -15,3 +15,8 @@ hxblib hxblib-std-dce-full haxe/test/hxblib/std "-cp lib --main StdMain --interp
 hxblib hxblib-lib-only haxe/test/hxblib/generics "-cp lib --main GenMain --interp" "--main GenMain --interp"
 # haxe/tests/misc/hl/projects/Issue12357 (compile-hxb.hxml, compile-with-hxblib.hxml), typed for HashLink without generation
 hxblib hl-Issue12357 haxe/upstream/tests/misc/hl/projects/Issue12357 "-cp src -main Main -hl bin/dummy.hl" "-cp src -main Main MyException -hl bin/dummy.hl"
+# Overloaded call operators (@:op(a())) of the library's abstracts, called by
+# the application: the reference cannot read its own library back (a
+# divergence, docs/porting.md); the port reads it.
+hxblib hxblib-callop haxe/test/hxblib/callop "-cp lib --main LibMain --interp" "-cp app --main Main --interp"
+diverges hxblib-callop the reader of the call operator overloads of an abstract (compiler.hxb.HxbReader.readClassFields)
