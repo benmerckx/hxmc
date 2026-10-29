@@ -18,7 +18,7 @@ using core.TFunctions;
 //
 // A Haxe class extending one (a peer class) is a Haxe class whose instances
 // each have an Objective-C object too, of a class registered at run time
-// (its first construction: FnLower.objcSuperNew) with the Haxe class's
+// (its first construction: FnLower.objcSuperInit) with the Haxe class's
 // methods (their entries: imp), the id in the hidden field ID_FIELD, and
 // the Haxe object found from the id through the runtime's peers
 // (hxmc.rt.Gc: the index in the instance variable PEER_IVAR).
@@ -163,39 +163,24 @@ class ObjC {
 		return n != null ? n : "set" + cf.cfName.charAt(0).toUpperCase() + cf.cfName.substr(1) + ":";
 	}
 
-	// the selector of a constructor: @:selector, or "init" without
-	// parameters, else "initWith" and the first parameter's name capitalized,
-	// then the others' as in selector (`new(frame)`: "initWithFrame:";
-	// `new(contentRect, styleMask)`: "initWithContentRect:styleMask:")
-	public static function initSelector(cf:TClassField, s:TSignature):String {
-		var n = Lower.metaArg(core.Meta.getOpt(Custom(":selector"), cf.cfMeta));
-		if (n != null) return n;
-		if (s.args.length == 0) return "init";
-		var first = s.args[0].name;
-		var b = new StringBuf();
-		b.add("initWith" + first.charAt(0).toUpperCase() + first.substr(1) + ":");
-		for (i in 1...s.args.length)
-			b.add(s.args[i].name + ":");
-		return b.toString();
-	}
-
 	// declares the indirect C function a message of signature s is sent
 	// through: (objc_msgSend's address, receiver, selector, arguments...),
 	// named by its C types so that every message of the same types shares
 	// it; called in a safe region (Cocoa calls back into Haxe from inside
 	// many messages)
-	public static function declare(cf:TClassField, types:Array<T>, result:Null<T>):String {
-		var where = CInterop.posOf(cf.cfPos);
+	public static function declare(cf:Null<TClassField>, types:Array<T>, result:Null<T>):String {
+		var where = cf != null ? CInterop.posOf(cf.cfPos) : "";
+		var name = cf != null ? cf.cfName : "init";
 		var args = [CPtr, CPtr, CPtr];
 		for (i in 0...types.length) {
 			var ct = CInterop.ctype(types[i]);
 			if (!CInterop.isScalar(ct) && !ct.match(CStruct(_)))
-				throw new LowerError('Objective-C method ${cf.cfName}: parameter ${i + 1} has no C type a message can pass', where);
+				throw new LowerError('Objective-C method $name: parameter ${i + 1} has no C type a message can pass', where);
 			args.push(ct);
 		}
 		var ret = result == null ? CVoid : CInterop.ctype(result);
 		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
-			throw new LowerError('Objective-C method ${cf.cfName}: the result has no C type a message can return', where);
+			throw new LowerError('Objective-C method $name: the result has no C type a message can return', where);
 		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in args) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
 		if (!CInterop.SIGS.exists(key)) {
 			CInterop.SIGS.set(key, {args: args, ret: ret});
@@ -298,19 +283,35 @@ class ObjC {
 		return r;
 	}
 
-	// a selector of a family whose methods return their result retained (+1),
-	// as ARC names them: new, copy, mutableCopy (then the end or a character
-	// that is no lowercase letter: newObject, copy, not newline); alloc and
-	// init are paired by `new`'s lowering (FnLower.objcNew)
-	public static function returnsRetained(sel:String):Bool {
+	// a selector's method family, as ARC names them: the first word
+	// (leading underscores skipped) when it is alloc, copy, init,
+	// mutableCopy or new, followed by the end or a character that is no
+	// lowercase letter (initWithFrame:, copy; not newline, initialize)
+	public static function family(sel:String):Null<String> {
 		var s = sel;
 		while (StringTools.startsWith(s, "_"))
 			s = s.substr(1);
-		for (f in ["new", "copy", "mutableCopy"])
+		for (f in ["alloc", "copy", "init", "mutableCopy", "new"])
 			if (StringTools.startsWith(s, f)) {
 				var c = s.charCodeAt(f.length);
-				if (c == null || c < "a".code || c > "z".code) return true;
+				if (c == null || c < "a".code || c > "z".code) return f;
 			}
-		return false;
+		return null;
 	}
+
+	// whose result comes retained (+1): alloc, copy, init, mutableCopy and
+	// new (init consumes its receiver, alloc's result: the lowering keeps
+	// alloc's for the init that follows, and autoreleases the others')
+	public static function returnsRetained(sel:String):Bool
+		return switch family(sel) {
+			case "copy" | "init" | "mutableCopy" | "new": true;
+			case _: false;
+		}
+
+	// an initializer: an instance method of the init family
+	public static function isInit(cf:TClassField):Bool
+		return cf.cfKind.match(Method(_)) && switch TFunctions.follow(cf.cfType) {
+			case TFun(s): family(selector(cf, s)) == "init";
+			case _: false;
+		}
 }

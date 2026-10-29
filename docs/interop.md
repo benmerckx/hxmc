@@ -507,7 +507,7 @@ The corpus cases `StructValues`, `StructInline`, `StructInlineOpt` and
 ## Objective-C
 
 On macOS and iOS, Objective-C classes are declared as extern classes and
-used as Haxe classes: messages, properties and constructors are typed, and
+used as Haxe classes: messages, properties and initializers are typed, and
 Haxe classes can extend them. Open work and the reasons behind the design:
 [plans/objc.md](plans/objc.md).
 
@@ -515,11 +515,13 @@ Haxe classes can extend them. Open work and the reasons behind the design:
 import hxmc.objc.Selector;
 
 @:hxmc.lib("/usr/lib/libobjc.A.dylib") @:hxmc.objc extern class NSObject {
-  function new();                                   // init
+  static function alloc():NSObject;
+  function init():NSObject;
   var description(default, null):NSString;         // a read-only property
 }
 @:hxmc.framework("AppKit") @:hxmc.objc extern class NSView extends NSObject {
-  function new(frame:Rect);                         // initWithFrame:
+  static function alloc():NSView;                   // statics are not inherited
+  function initWithFrame(frame:Rect):NSView;
   var frame:Rect;                                   // frame, setFrame:
   @:getter("isHidden") var hidden:Bool;
   function addSubview(view:NSView):Void;            // addSubview:
@@ -529,12 +531,15 @@ import hxmc.objc.Selector;
 
 class RowView extends NSView {                      // a Haxe class AppKit calls
   final onClick:() -> Void;
-  public function new(frame:Rect, onClick) { super(frame); this.onClick = onClick; }
+  public function new(frame:Rect, onClick) {
+    super.initWithFrame(frame);                     // self = [super initWithFrame:frame]
+    this.onClick = onClick;
+  }
   override function hitTest(point:Point):Null<NSView>
     return inside(frame, point) ? this : null;
 }
 
-var v = new NSView(new Rect(0, 0, 100, 20));
+var v = NSView.alloc().initWithFrame(new Rect(0, 0, 100, 20));
 v.hidden = true;
 row.addSubview(v);
 if (command == Selector.of("moveDown:")) ...
@@ -546,16 +551,21 @@ if (command == Selector.of("moveDown:")) ...
 | --- | --- |
 | `@:hxmc.objc` | an extern class (its extern subclasses too) is an Objective-C class: its values are `id`s; `@:hxmc.objc("Name")` or `@:native` names it at run time |
 | `@:hxmc.framework("AppKit")` | the class is the system framework's (`/System/Library/Frameworks/AppKit.framework/AppKit`); `@:hxmc.lib("path")` names another library. Per class, not inherited (a subclass is often another framework's) |
-| `@:selector("a:b:")` | a method's or a constructor's selector, instead of the derived one |
+| `@:selector("a:b:")` | a method's selector, instead of the derived one |
 | `@:getter("isX")`, `@:setter("setX:")` | a property's accessors, instead of `x` and `setX:` (Haxe's own metadata, read as Flash reads it) |
 
 - **Selectors** follow from the names: a method's name, then each
   parameter's name after the first, each with a colon:
   `setObject(o, forKey)` is `setObject:forKey:`, `count()` is `count`.
-  A constructor is `init`, or `initWith` and its first parameter's name
-  capitalized: `new(frame)` is `initWithFrame:`, `new(contentRect,
-  styleMask)` `initWithContentRect:styleMask:`. Constructors may be
-  `overload`ed; the arguments select one, as on the JVM.
+- **Initializers** are what they are in Objective-C: `C.alloc()`, then an
+  instance method of the init family on its result:
+  `NSString.alloc().initWithContentsOfFile(path, enc, null)`. No `new`
+  (an error says so): initializers taking the same types
+  (`initWithString:`, `initWithContentsOfFile:`) keep their own names, a
+  failable one returns `Null<C>`, and they are inherited as methods are.
+  `alloc` is declared by each class, and a subclass redeclares the
+  initializers it inherits for their result's type (`override function
+  initWithFrame(frame:Rect):NSTextField`), as `instancetype` has it.
 - **Properties** are `var`s: reading sends the getter, writing the setter;
   `(default, null)` makes one read-only. A `static var` is a class property
   (`NSScreen.mainScreen`), a static method a message to the class.
@@ -578,9 +588,10 @@ program as it reads clang's.
 ### Haxe classes extending Objective-C classes
 
 A Haxe class whose superclass is an Objective-C class is an Objective-C
-class too, registered at its first construction (`super(...)` makes its
-Objective-C object: `[[C alloc] init...]` of the superclass's
-initializer). Each instance is two objects: the Haxe object, which holds
+class too, registered at its first construction. Its constructor makes
+its Objective-C object by calling one of the superclass's initializers,
+`super.initWithFrame(frame)` (`[[C alloc] initWithFrame:frame]` of the
+new class), or `init` before its body when it calls none. Each instance is two objects: the Haxe object, which holds
 the `id` in a hidden field, and the Objective-C object, whose instance
 variable leads back to it.
 
@@ -604,9 +615,10 @@ counted. Where references cross:
 | a reference position: `Array<NSView>`, `Map<K, NSView>`, a type parameter, `Dynamic` | a box holding a reference, released when the box dies |
 | an instance of a Haxe class extending an Objective-C one | as Xamarin's toggle references: while Objective-C retains its object (beyond the Haxe object's own reference), the Haxe object is a root; otherwise it is collected like any other, and its Objective-C object released |
 
-- **Results** that come retained (`new C(...)`, and the `new`, `copy` and
-  `mutableCopy` families of ARC's naming rules) are autoreleased at once,
-  so every value is borrowed alike.
+- **Method families**, as ARC names them: `alloc`'s result is kept for the
+  initializer that follows; an initializer consumes its receiver, and its
+  result, as `new`, `copy` and `mutableCopy` results, comes retained and
+  is autoreleased at once, so every value is borrowed alike.
 - **`==`** on `id`s compares the objects, without boxes.
 - **Pools**: code outside the run loop (`main` before `run`) autoreleases
   into the thread's pool, which nothing drains.
@@ -618,7 +630,8 @@ counted. Where references cross:
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: blocks, `super.f()` to an Objective-C method, Haxe classes
+Not yet: blocks, `super.f()` to an Objective-C method other than an
+initializer in the constructor, Haxe classes
 extending Haxe classes that extend Objective-C ones, struct results of Haxe
 methods Objective-C calls, overriding `dealloc`, `id`s captured by
 closures (borrowed), x86-64's `objc_msgSend_stret` and `_fpret`, protocols,

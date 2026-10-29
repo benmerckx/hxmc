@@ -51,6 +51,9 @@ class FnLower {
 		}
 	}
 
+	// lowering a constructor (ObjC: super.init...)
+	var inCtor = false;
+
 	// (Lower.callSites) this function's site: where it was called from
 	var site:Null<Local> = null;
 
@@ -118,6 +121,10 @@ class FnLower {
 		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
 		bindArgs(tf, off);
 		if (isCtor) objcOwnFields();
+		if (isCtor) {
+			inCtor = true;
+			objcDefaultInit(tf);
+		}
 		stmt(tf.tfExpr);
 	}
 
@@ -1762,8 +1769,8 @@ class FnLower {
 				ENewArr(elem, vector());
 			case TNew(c, _, cargs) if (CInterop.isStruct(c)):
 				coerce(ELocal(newStruct(c, cargs, null)), structTy(c), tyOf(e));
-			case TNew(c, params, cargs) if (ObjC.isObjC(c)):
-				objcNew(c, params, cargs, e);
+			case TNew(c, _, _) if (ObjC.isObjC(c)):
+				fail("Objective-C class " + c.clPath.name + ": made by " + c.clPath.name + ".alloc().init...(...), not new", e);
 			case TNew(c, _, cargs) if (c.hasClassFlag(CExtern)):
 				var s = ctorSig(c);
 				var x = temp(TRef(RNative(Lower.nativeName(c))), ECallHost(l.native(Lower.nativeName(c) + "_new"), args(cargs, s, null), TRef(RNative(Lower.nativeName(c)))));
@@ -2563,7 +2570,7 @@ class FnLower {
 				var ref = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(name))), TI64));
 				return coerce(ECallHost("hxmc_unsafe_Mem_getI64", vector(ref, EInt(0)), TI64), TI64, rt);
 			// a message (ObjC)
-			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c)):
+			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !strip(obj).eexpr.match(TConst(TSuper))):
 				return objcSend(obj, c, cf, cargs, e);
 			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c)):
 				return objcSend(null, c, cf, cargs, e);
@@ -2672,6 +2679,11 @@ class FnLower {
 				if (fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3)
 					return inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt);
 				return callFn(fn, xs, rt);
+			// `self = [super initX:...]` (ObjC); other messages to super: not yet (objc_msgSendSuper)
+			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c)):
+				if (!inCtor || self == null || self.objc == null || !ObjC.isInit(cf))
+					return fail("super." + cf.cfName + "(...): to an Objective-C method only an initializer, in the constructor (other messages to super: not yet)", e);
+				return coerce(objcSuperInit(l.superOf(self), cf, cargs, e), TId, rt);
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)):
 				var impl = l.lookupMethod(c, cf.cfName);
 				if (impl == null) fail("super." + cf.cfName + " without implementation", e);
@@ -2679,8 +2691,7 @@ class FnLower {
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 1, fn, () -> ELocal(thisLocal));
 				return callFn(fn, VectorTools.cons(ELocal(thisLocal), xs), rt);
 			case TConst(TSuper) if (self != null && l.superOf(self) != null && ObjC.isObjC(l.superOf(self))):
-				objcSuperNew(l.superOf(self), cargs, e);
-				return EInt(0);
+				return fail("super(...) of an Objective-C class: call super.init...(...) instead", e);
 			case TConst(TSuper):
 				var sup = l.superOf(self);
 				while (sup != null && sup.clConstructor == null && sup.clSuper != null)
@@ -3377,41 +3388,26 @@ class FnLower {
 		out.push(SExpr(objcMsg(self, ObjC.setter(cf), [cf.cfType], [v], null, cf, e, TVoid)));
 	}
 
-	// `super(args)` in the constructor of a class extending an Objective-C
-	// one (sup): its Objective-C object made, [[C alloc] init...:args] of
-	// its class (registered by the first construction: objcRegister), kept in
-	// the hidden field, and entered in the runtime's peers, its instance
-	// variable the entry's index
-	// the type parameters of the superclass `super` stands for
-	static function superParams(e:TExpr):core.TType.TParams
-		return switch TFunctions.follow(e.etype) {
-			case TInst(_, params): params;
-			case _: vector();
-		}
-
-	function objcSuperNew(sup:TClass, cargs:Vector<TExpr>, e:TExpr) {
+	// `super.initX(args)` in the constructor of a class extending an
+	// Objective-C one (sup), as `self = [super initX:args]`: its Objective-C
+	// object made, [[C alloc] initX:args] of this class (registered by the
+	// first construction: objcRegister), kept in the hidden field (the +1
+	// alloc and init give it), and entered in the runtime's peers, its
+	// instance variable the entry's index; init (the declaration of
+	// NSObject's, or plain) where the constructor calls none
+	// (objcDefaultInit). Its value is the id.
+	function objcSuperInit(sup:TClass, init:Null<TClassField>, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var name = self.objc.name;
-		var ctor = sup.clConstructor;
-		var k = sup;
-		while (ctor == null && k.clSuper != null) {
-			k = k.clSuper.cls;
-			ctor = k.clConstructor;
-		}
-		if (ctor == null) fail("Objective-C class " + sup.clPath.name + " has no constructor", e);
-		if (ctor.cfOverloads.length > 0) {
-			var r = typing.OverloadResolution.maybeResolveConstructorOverload(sup, superParams(e), cargs);
-			if (r == null) fail("no overload of " + sup.clPath.name + "'s constructor takes these arguments", e);
-			ctor = r.field;
-		}
-		var s = objcSig(ctor, e);
-		var xs = args(cargs, Vector.fromArrayCopy([for (a in s.args) ty(a.type)]), null);
+		var s = init != null ? objcSig(init, e) : null;
+		var xs = s != null ? args(cargs, Vector.fromArrayCopy([for (a in s.args) ty(a.type)]), null) : vector();
 		var cell = (n:String) -> temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(n + name)), TI64));
 		var cls = newLocal("cls", TI64);
 		out.push(SSet(cls, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell(ObjC.CLASS_CELL), EInt(0)), TI64)));
 		out.push(SIf(EBin(LEq, ELocal(cls), EConv(I2L, EInt(0))), block(() -> objcRegister(sup, name, cls, e)), vector()));
 		var idType = TInst(sup, vector());
-		var alloc = ELocal(asLocal(objcMsg(ELocal(cls), "alloc", [], [], idType, ctor, e, TI64), TI64));
-		var id = asLocal(objcMsg(alloc, ObjC.initSelector(ctor, s), [for (a in s.args) a.type], xs.toArray(), idType, ctor, e, TI64), TI64);
+		var alloc = ELocal(asLocal(objcMsg(ELocal(cls), "alloc", [], [], idType, init, e, TI64), TI64));
+		var sel = init != null ? ObjC.selector(init, s) : "init";
+		var id = asLocal(objcMsg(alloc, sel, s != null ? [for (a in s.args) a.type] : [], xs.toArray(), idType, init, e, TId, true), TId);
 		out.push(SSetField(self, self.fieldIndex(ObjC.ID_FIELD), ELocal(thisLocal), ELocal(id)));
 		var retainCount = ObjC.symbol("_objc_rootRetainCount");
 		var release = ObjC.symbol("objc_release");
@@ -3419,6 +3415,22 @@ class FnLower {
 			ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(retainCount)), TI64), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TI32), TI32);
 		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(cell(ObjC.IVAR_CELL), EInt(0)), TI64);
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(EBin(LAdd, ELocal(id), off), EInt(0), ELocal(index)), TVoid)));
+		return ELocal(id);
+	}
+
+	// a constructor of such a class that calls no super.init...: plain init first
+	function objcDefaultInit(tf:TFunc) {
+		if (self == null || self.objc == null) return;
+		var called = false;
+		function scan(e:TExpr)
+			switch e.eexpr {
+				case TCall({eexpr: TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf))}, _) if (ObjC.isObjC(c) && ObjC.isInit(cf)):
+					called = true;
+				case _:
+					core.Texpr.iter(scan, e);
+			}
+		scan(tf.tfExpr);
+		if (!called) objcSuperInit(l.superOf(self), null, vector(), tf.tfExpr);
 	}
 
 	// the statements registering this class (extending sup) as `name`: its
@@ -3448,30 +3460,6 @@ class FnLower {
 		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0), ELocal(cls)), TVoid)));
 	}
 
-	// `new C(args)`: [[C alloc] init...:args], the initializer the
-	// constructor's overload that the arguments select (ObjC.initSelector)
-	function objcNew(c:TClass, params:core.TType.TParams, cargs:Vector<TExpr>, e:TExpr):Ex {
-		var ctor = c.clConstructor;
-		var k = c;
-		while (ctor == null && k.clSuper != null) {
-			k = k.clSuper.cls;
-			ctor = k.clConstructor;
-		}
-		if (ctor == null) return fail("Objective-C class " + c.clPath.name + " has no constructor", e);
-		if (ctor.cfOverloads.length > 0) {
-			var r = typing.OverloadResolution.maybeResolveConstructorOverload(c, params, cargs);
-			if (r == null) return fail("no overload of " + c.clPath.name + "'s constructor takes these arguments", e);
-			ctor = r.field;
-		}
-		var s = objcSig(ctor, e);
-		var xs = args(cargs, s.args.map(a -> ty(a.type)), null);
-		var alloc = objcMsg(objcClass(c), "alloc", [], [], e.etype, ctor, e);
-		var obj = ELocal(asLocal(alloc, TI64));
-		// (owned by no one: autoreleased, as every id a Haxe value holds)
-		var r = objcMsg(obj, ObjC.initSelector(ctor, s), [for (a in s.args) a.type], xs.toArray(), e.etype, ctor, e, TId);
-		return coerce(objcAutorelease(r), TId, tyOf(e));
-	}
-
 	function objcSig(cf:TClassField, e:TExpr):core.TType.TSignature
 		return switch TFunctions.follow(cf.cfType) {
 			case TFun(s): s;
@@ -3492,7 +3480,7 @@ class FnLower {
 	// objc_msgSend(self, sel, xs...) called through its address in the C
 	// types of the arguments (types) and the result (ret) (ObjC.declare); the
 	// selector from its selref (DataGen.objcRefs)
-	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:TClassField, e:TExpr, ?to:Ty):Ex {
+	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:Null<TClassField>, e:TExpr, ?to:Ty, keep = false):Ex {
 		if (to == null) to = tyOf(e);
 		var key = try ObjC.declare(cf, types, ret) catch (err:LowerError) {
 			if (err.where == "") err.where = where(e);
@@ -3504,7 +3492,7 @@ class FnLower {
 		ObjC.symbol("objc_msgSend");
 		var send = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr("objc_msgSend")), TI64));
 		var cx = ECallHost(key, Vector.fromArrayCopy([send, self, selector].concat(xs)), t);
-		if (t == TId && ObjC.returnsRetained(sel))
+		if (t == TId && !keep && ObjC.returnsRetained(sel))
 			cx = objcAutorelease(cx);
 		if (t.match(TStruct(_))) {
 			// (the result's slot in this frame, MirBuild.cStructRet)

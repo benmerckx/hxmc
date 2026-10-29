@@ -46,6 +46,20 @@ answer them.
   the first construction, as helder's view controller does; static class
   metadata (`__objc_classlist`, `class_ro_t`) can replace it without
   changing the language.
+- **Initializers stay `alloc().initX(...)`, not `new`.** `new` with
+  overloads by type could not tell `initWithString:` from
+  `initWithContentsOfFile:` (both an `NSString`), could not express a
+  failable initializer (`new` cannot be null), and would make a generator
+  redeclare every inherited initializer as a constructor (Haxe inherits a
+  constructor only into a class that declares none). Swift has the same
+  problem and solves it by argument labels (`init(string:)`,
+  `init(contentsOfFile:)`), which Haxe lacks; as methods, initializers keep
+  their names, return `Null<C>` when failable and are inherited. The cost:
+  `C.alloc().initWithFrame(r)` is longer, and a subclass redeclares
+  inherited initializers for `instancetype`'s result type. Ownership
+  follows ARC's families: `alloc`'s +1 is consumed by the initializer, whose
+  +1 is autoreleased. A Haxe class extending an Objective-C one has a Haxe
+  constructor, which calls `super.initX(...)` as `self = [super initX:...]`.
 - **Selectors derived from parameter names**, so declarations read like
   Objective-C's and a generator can emit them without metadata in the
   common case; `@:selector` for the rest. Swift's renaming (omit needless
@@ -66,10 +80,16 @@ answer them.
    AppKit with what it imports) read by a tool in Haxe, emitting
    declarations in the syntax above: categories merged per class,
    `NS_ENUM` and `NS_OPTIONS` as enum abstracts, nullability, availability
-   (`@:deprecated`), `instancetype` as each class's own type. Open: names
-   of class and instance methods that collide (`+description`,
-   `-description`), initializers with the same parameter types, protocols
-   as types, lightweight generics. Only declarations, never the headers'
+   (`@:deprecated`), `instancetype` as each class's own type (`alloc` per
+   class, inherited initializers and other `instancetype` methods
+   redeclared with `override`), `NS_UNAVAILABLE` left out. Properties as
+   `var x(get, set)` with extern accessors carrying their selectors, so a
+   Haxe subclass can override them (`isFlipped` is a property). A member a
+   category of another framework declares (Foundation's `-description` on
+   NSObject) loads that framework: a classref loads only the class's own,
+   so the member needs one too. Open: protocols as types, lightweight
+   generics. A class method and an instance method of one name are fine
+   (Haxe allows both on an extern). Only declarations, never the headers'
    comments (Apple's SDK terms); clang is needed when generating only.
 4. **Blocks** from closures: a block whose invoke function finds the
    closure, copy and dispose helpers that keep it alive while Objective-C
