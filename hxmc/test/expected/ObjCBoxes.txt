@@ -1,0 +1,5 @@
+exit 0
+ObjCBoxes.hx:68: kept by map, array, Dynamic: [true,true,true]
+ObjCBoxes.hx:69: equal through the map: true, null: true, not null: true
+ObjCBoxes.hx:71: Dynamic back: true, retainCount 1
+ObjCBoxes.hx:77: removed: [false,false,false]
