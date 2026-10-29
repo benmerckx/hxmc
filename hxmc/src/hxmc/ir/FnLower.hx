@@ -863,12 +863,15 @@ class FnLower {
 			case [TId, TI64] | [TI64, TId]:
 				return x;
 			// an instance of a class extending an Objective-C one where an id
-			// goes: its id (ObjC.ID_FIELD; null: nil)
+			// goes: its id (ObjC.ID_FIELD; null: nil), retained and autoreleased
+			// as every value, so that its toggle reference keeps the Haxe object
+			// a root while a local holds the id (until the pool drains)
 			case [TRef(RObj(ci)), TId | TI64] if (Lambda.exists(ci.fields, f -> f.name == ObjC.ID_FIELD)):
 				var o = asLocal(x, from);
 				var r = newLocal("id", TId);
+				var retainAutorelease = ObjC.runtime(l, "objc_retainAutorelease", [CPtr], CPtr);
 				out.push(SIf(EBin(RefEq, ELocal(o), ENull(from)), vector(SSet(r, EConv(I2L, EInt(0)))),
-					vector(SSet(r, EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(o))))));
+					vector(SSet(r, ECallHost(retainAutorelease, vector(EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(o))), TId)))));
 				return ELocal(r);
 			// an id as an instance of such a class (an unchecked cast): its Haxe
 			// object, by the index in its instance variable (nil: null)

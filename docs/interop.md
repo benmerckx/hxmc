@@ -677,6 +677,9 @@ counted. Where references cross:
   initializer that follows; an initializer consumes its receiver, and its
   result, as `new`, `copy` and `mutableCopy` results, comes retained and
   is autoreleased at once, so every value is borrowed alike.
+  A Haxe object whose class extends an Objective-C one, becoming an `id`, is retained and
+  autoreleased too, so its toggle reference keeps it while a local holds
+  the `id`.
 - **`==`** on `id`s compares the objects, without boxes.
 - **Pools**: the run loop drains one per event;
   `hxmc.objc.AutoreleasePool.run(() -> ...)` drains one around a loop of

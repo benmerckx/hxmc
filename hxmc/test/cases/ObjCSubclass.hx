@@ -76,6 +76,7 @@ class ObjCSubclass {
 		arr.removeAllObjects();
 		churn();
 		toggles();
+		heldByLocal();
 		trace("done");
 	}
 
@@ -88,16 +89,17 @@ class ObjCSubclass {
 		trace("churned " + keep.length);
 	}
 
-	// kept alive by Objective-C alone, then released by it: collected
+	// kept alive by Objective-C alone (the pool: the ids made are autoreleased),
+	// then released by it: collected
 	static function toggles() {
 		var arr = NSMutableArray.alloc().init();
 		var slots = LibC.malloc(8 * 3);
-		for (i in 0...3) {
+		hxmc.objc.AutoreleasePool.run(() -> for (i in 0...3) {
 			var g = new Greeter("W" + i);
 			arr.addObject(g);
 			Mem.setPtr(slots, 8 * i, Ptr.nil());
 			Rt.objc_storeWeak(slots.add(8 * i), g);
-		}
+		});
 		churn();
 		trace("held by the array: " + [for (i in 0...3) alive(slots.add(8 * i))]);
 		arr.removeAllObjects();
@@ -110,6 +112,15 @@ class ObjCSubclass {
 		if (o == null) return false;
 		Rt.objc_release(o);
 		return true;
+	}
+
+	// held only by a local's id (borrowed: autoreleased), through collections:
+	// its toggle reference keeps the Haxe object until the pool drains
+	static function heldByLocal() {
+		var id:Performer = cast (new Greeter("Local") : NSObject);
+		churn();
+		hxmc.rt.Gc.collect(true);
+		id.perform(F.NSSelectorFromString(ns("greet:")), ns("the local"));
 	}
 }
 
