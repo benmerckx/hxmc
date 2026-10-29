@@ -56,14 +56,15 @@ macro-defined cases), the fixpoint cold, warm and off, the variants per
 define, nondeterministic macros, the cap and trim, the off switch, the
 server's reuse of lowered bodies, Mir's compiled functions.
 
-**Current state** (after stage 1 and 2a; lines of `hxmc/src/hxmc`):
+**Current state** (after stages 1, 2a and 2b; lines of `hxmc/src/hxmc`):
 
 | Part | Stores | Key | On disk | Invalidation | Read and written by | Tests |
 | --- | --- | --- | --- | --- | --- | --- |
 | typed modules: `ModuleCache` (1,694), `ModuleCacheState` (663), `WatchedCallbacks` (125), `CheckingHxbWriter` (69), `Skeletons` (207) | per module, up to four variants: HXB chunks, monomorphs' modifiers, skeletons, `ModuleDefExtra`, defines read, file record, dependencies with the hash each had, what its dependents expected of it (`shape`), macro state, marks | the index: `CacheKey` `ModuleIndex` of working directory, std, class paths; a variant: its reads match the build's defines; a module: `CacheKey` `TypedModule` (file content, reads, dependencies' `expect`) | `i/m<hash>` (header + `ModuleStore` index), `p/<nonce>.pk` | lazy, per module the build loads (`ServerCache.checkModuleHook`): file by content hash, path resolution, defines, each dependency's interface or whole-content hash (`Closure`), macro state (retype and rerun), volatile, file and environment reads; early cutoff; definer rule for macro-defined modules; one verdict per module (`ModuleCacheState.verdicts`), final at the capture | the port's server hooks (`ServerCache`, `TFunctions.dependencyHook`, `MacroContext.definedHook`, `EvalStdLib` hooks), `finish` writes | `ModuleCacheCheck` (the gate), fixpoint, `CacheCheck` |
 | encoding: `ModuleStore` (589) | the index and blob formats | | inside the index and packs | `MAGIC` | `ModuleCache`, `ModuleCacheState` | as above |
 | interfaces: `ModuleInterface` (577) | nothing: hashes of a module's declarations without the bodies of functions with written types | | | | `ModuleCache` (as files are parsed) | as above |
-| lowered bodies: `LowerCache` (1,253) | in memory, server only: per field, the lowered body and the queries it asked with their answers | the field object, or module/class/field while the module's `m_processed` is the same | none | a query answered differently, or an object the binding does not know: the whole lowering again; target, flags and resources change: all | `Main.generate` under `Driver.resident` | `LowerQueriesCheck`, `make dev-check` (server-verify) |
+| lowered bodies: `LowerCache` (1,375) | in memory, server only: per field, the lowered body and the queries it asked with their answers | the field object, or module/class/field while the module's `m_processed` is the same | none | a query answered differently, or an object the binding does not know: the whole lowering again; target, flags and resources change: all | `Main.generate` under `Driver.resident` | `LowerQueriesCheck`, `make dev-check` (server-verify) |
+| lowered bodies in the store: `LoweredBodies` (2,282), opt-in (`HXMC_LOWER_STORE=1`) | per module, `LowerCache`'s entries of its fields, each a unit read on its own (its calls, the objects its bodies name, the bodies; a closure's a unit of its own) | `CacheKey` `LoweredBodies` of the module's `TypedModule` key and the build's part (index, the lowering's switches, resources' names, the runtime's Haxe functions, every define, the features, the exceptions' std modules) | `i/b<hash>` | read only for a module whose verdict is `Valid`; replayed as the server's (a different answer: the whole lowering again); an entry naming what the build lacks: that field lowered | `Main.generate` (one-shot builds), `LoweredBodies.save` after the lowering | `ModuleCacheCheck` (`bodies`, `--bodies`), `LowerQueriesCheck` (the codec's constructors), `HXMC_LOWER_CHECK` |
 | module objects: `Driver` (was `ObjectStore`, 83) | per module, its object (ELF); in a server also in memory (`memObjs`) | `CacheKey` `ModuleObject` of the `Fingerprint` (tool key, IR, what `MirBuild` reads, inlined callees' digests) | `o/o<hash>-<module>.o`; per output `i/l<hash>` naming them; `<out>.hxmc/` without a store | content-addressed: a new key misses | `Driver.build` | fixpoint, corpus, `CacheCheck` |
 | Mir macro functions: `interp/BundleCache` (123) | per function, its object, its key and symbol, which calls are interpreted | `CacheKey` `MacroFunction` of the `Fingerprint` with the tool key and Mir options | `o/f<hash>-mir.o`; per command line `i/l<hash>` | content-addressed, plus its dependencies checked when read | `interp/MirMacros` | `MirCacheCheck` |
 | up to date: `UpToDate` (131) | per output, the build's key and the stamps of linked files | archive's ZIP directory, arguments, tool, runtime objects | `i/u<hash>` (else `<out>.hxmc/build.key`) | any change of the key or a stamp | `Main` (`--hxb-lib` builds only) | corpus (archive builds) |
@@ -126,35 +127,97 @@ server's reuse of lowered bodies, Mir's compiled functions.
        (restoring, filters, DCE), 1.3 s lowering, 0.2 s preparing, 0.24 s
        the objects' keys and reading them (`Fingerprint`), 0.7 s data and
        linking. 2b is the large win; 2c saves at most the keys.
-   - **2b, bodies**: a `CacheKind` `LoweredBodies` entry per module
-     (`i/b<hash>`, keyed by `TypedModule` and the lowering's switches
-     `LowerCache.lower` compares: target, platform, Mir host, lines,
-     bounds, null and span checks, resources), holding its fields' lowered
-     bodies and recorded calls. A one-shot build replays it for a module
-     whose final verdict is `Valid` through the `byKey` path (`translating`:
-     each class and field the current build's of the same path), which
-     exists already. What it needs: a codec for `Stmt`/`Ex` and for
-     `LCall`'s arguments and results, whose objects (`T`, `TClass`,
-     `FuncInfo`, `ClassInfo`, `Ty`) are written by path and name (types
-     structurally: anonymous structures, functions, monomorphs bound or
-     not) and read back through the binding; `Entry.gen`'s numbers bound
-     anew, as a replay does. Keep the in-memory replay for the server. A
-     mismatch still abandons the whole lowering, so the gate and
-     `LowerQueriesCheck` must cover a stale entry. Risks: `@:logged`
-     queries that return objects by identity (each needs a name), entries
-     of DCE-removed fields (written only for what the build lowered),
-     store size (bodies are larger than HXB: measure on the self-build).
+   - **2b, bodies** (done, opt-in: `HXMC_LOWER_STORE=1`): a `CacheKind`
+     `LoweredBodies` entry per module (`i/b<hash>`, `LoweredBodies.hx`)
+     holding `LowerCache`'s entries of its fields, keyed by its
+     `TypedModule` key and the build's part: the index, the lowering's
+     switches (target, platform, OS, arm, Mir host, lines, bounds, null and
+     span checks, class spans, interp), the resources' names, the runtime's
+     functions written in Haxe (`Lower.hostImpls`: `bindHosts` reads
+     them, and they differ between programs), and what the filters read
+     beyond a module's dependencies (every define: the capture's reads miss
+     those the filters and the generator read; the features, which
+     `insert_save_stacks` reads; the exceptions' std modules). A module
+     with `@:analyzer` metadata is not kept (the analyzer would read other
+     modules' bodies). A one-shot build replays the entries of a module whose
+     verdict is `Valid`, as the server does; a different answer lowers the
+     whole program again, and that build writes every module again.
+     The codec: each field's entry a unit read on its own when asked (its
+     calls, the objects its bodies name, then each body, read straight into
+     the build's objects through the binding; a closure's entry a unit of its
+     own); IR objects written once with what the binding reads (a class's,
+     constructor's or shape's field types name classes and enums: bound to
+     the entry's object of that name, else compared by name); the typed
+     program's objects by module and path, read back as the build's (an
+     entry naming one the build lacks is not replayed, its field lowered);
+     types structurally (named types by path with their parameters;
+     monomorphs, type parameters and anonymous structures by identity, as
+     `Lower.ty` and `fastEq` read them; a class's statics typedef by its
+     expansion). Calls the replay would skip are not written (a type whose
+     answer has only objects bound already, a repeated call with the same
+     arguments and answer). `LowerQueriesCheck` checks that the codec writes
+     every `LCall` and IR constructor; the gate has a `bodies` program
+     (an inline function of another module, a body of it, a field DCE removes
+     and brings back, null, bounds and span checks, another define, a
+     resource's content and names, each against the build without the cache
+     and `HXMC_LOWER_CHECK`), and `--bodies` runs the whole gate with them.
+     Results (the self-build): outputs byte-identical cold, warm, after a
+     body edit and off, and on the 142 corpus cases built from source (52,502
+     bodies replayed); 481 modules written (9,130 entries; 2 corpus modules
+     not kept: `@:analyzer`), 19.8 MB, the store 67.1 MB to 86.6 MB; cold
+     13.9 to 14.7 s against 13.4 to 14.7 s (writing: 0.8 to 0.9 s); a warm build's lowering 950 to
+     1,160 ms against 1,105 to 1,445 ms (reading 330 to 440 ms, replaying
+     440 to 600 ms of which the bodies 80 to 110 ms), whole builds within
+     noise of main (warm 3.0 to 3.9 s against 3.4 to 3.8 s). So it is off
+     by default.
+     Learned:
+     - **a replay costs about what lowering costs.** It asks every query
+       again (about 400 ms of the self-build's 1.1 s: they are a third of
+       lowering, the walk of the typed AST most of the rest), binds, and
+       builds the IR again; what it saves, `FnLower`'s walk, reading pays
+       back (allocating the entries' objects). The server's in-memory replay
+       is 940 to 1,000 ms against 1,100 to 1,500 for its first lowering. The
+       win the plan expected from 2b is not in replaying; it is in not
+       lowering a module at all (below);
+     - an entry must not live past its replay: entries kept until the end of
+       the lowering were promoted, and the extra 100 MB promoted made a
+       major collection (1 s) in every warm build. Hence a binding per entry,
+       closures as units of their own read when replayed, and the
+       lowering's maps let go after it (`LowerCache.release`: the program's
+       catch tests are closures of the lowering and keep it as long as the
+       program);
+     - a lowering reads more than `LowerQueries` lists: `bindHosts`
+       (`hostImpls`), `Lower.lambdaName`'s names of closures in stacks (a
+       static map a process that did not lower the body lacks: the replay
+       now names them through it), `tt` (which expanded recursive types
+       endlessly for an entry not translated). The corpus from source found
+       the last two; `HXMC_LOWER_CHECK` did not (the object cache's key
+       does not have a function's name in stacks, so the check reused the
+       first build's objects).
    - **2c, objects**: a module's object depends on more than its bodies:
      the digests of the callees it may inline from other modules
      (`Fingerprint.Inlined`), the field layouts and signatures `MirBuild`
-     reads, no-GC flags. So keeping the previous object key needs the
-     module `Valid` with its bodies replayed **and** each inline candidate
-     it calls from another module `Valid` too (its digest unchanged), and
-     the layouts of the classes it touches unchanged (DCE can remove a
-     field of an unchanged class). Store per module, with its object key,
-     the inputs that are not its own (the callees' digests, a hash of the
-     layouts read), and reuse the key when they match; else `Fingerprint`
-     as today. The payoff is bounded by the keys' time (0.24 s above).
+     reads, no-GC flags. Keeping the previous object key needs the module
+     `Valid` **and** each inline candidate it calls from another module
+     `Valid` too (its digest unchanged), and the layouts of the classes it
+     touches unchanged (DCE can remove a field of an unchanged class): store
+     per module, with its object key, the inputs that are not its own (the
+     callees' digests, a hash of the layouts read), and reuse the key when
+     they match. After 2b this is where the time is: the lowering (1.1 s),
+     preparing (0.2 s) and the keys (0.24 s) of a module that is `Valid`
+     are all only there to find its object again. So 2c should not need
+     its bodies at all: per module, its object key, its contribution to the
+     program-wide facts (`Facts`: names, layouts, type indices, field ids,
+     no-GC, GC points; `Reach`: what its live functions call) and the
+     queries the lowering of its bodies asked (`LowerCache`'s logs without
+     the bodies: they are what makes the program's numbering and
+     reachability the same), replayed without lowering or reading bodies.
+     The logs' replay is about 400 ms, so this needs either symbolic
+     program-wide numbering throughout (already true of the objects:
+     `Program` numbers are linker symbols) so that a module's queries
+     need not be asked again in order, or link-time DCE ("Faster rebuilds")
+     so that reachability is the linker's. A smaller step first: skip
+     `Fingerprint` (0.24 s) for modules whose object key's inputs match.
    Risks for both: the gate's typing-order cases (restoring changes it);
    server memory (the server keeps both forms meanwhile).
 3. **Macro-defined entries** with the key below (definer, macro code,
@@ -165,12 +228,16 @@ server's reuse of lowered bodies, Mir's compiled functions.
    callback reads them (`WatchedCallbacks` records the reads). Risks:
    helder's late classes (`ModuleCacheCheck --late`), Mir macros' statics
    (`MirServerCheck`), values that do not serialize (closures in statics:
-   then not kept).
+   then not kept). Lowered bodies need nothing more: a macro-defined
+   module restored with its definer has a verdict and a key like any other,
+   and 2b keeps its bodies so (the gate's `state` program).
 4. **Removal**: `ModuleStore`'s index format folds into the entries
    (`CacheStore` holds per-module entries, not one index per class path),
    `UpToDate` becomes an entry over the module entries (no ZIP directory),
    `ObjectList` indexes go once objects belong to module entries,
-   `LowerCache`'s in-memory replay goes behind the stored bodies.
+   `LowerCache`'s in-memory replay goes behind the stored bodies, or both
+   go if 2c no longer replays bodies (the server then reuses objects by the
+   same per-module keys as one-shot builds).
    Expected size: 3,500 to 4,500 lines in place of the 6,500, over three
    to five more PRs.
 

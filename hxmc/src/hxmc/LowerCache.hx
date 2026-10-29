@@ -37,6 +37,13 @@ import core.TType;
 // tt...: the same objects when they are current), and one gone abandons
 // the lowering as any mismatch does.
 //
+// A one-shot build with the module cache (HXMC_LOWER_STORE=1) keeps the
+// entries in the store instead (LoweredBodies.hx): read back for a module
+// restored as it is, their objects of the typed program the current build's
+// (by path), their own IR objects bound by their own calls (each entry has a
+// binding of its own, which goes with it), their bodies read straight into
+// the current build's objects.
+//
 // Closures written in a body are cached with it (their bodies are lowered
 // later, by their own entries, found through the closure's old function).
 // Static initializers and the closures the lowering makes itself
@@ -52,6 +59,7 @@ class LowerCache {
 	public var restarts = 0;
 	public var build = 0; // builds lowered (Entry.gen)
 	public var why:Null<String> = null; // the last restart's reason
+	public var stored = 0; // of the hits, from the store (LoweredBodies)
 
 	public function new() {}
 
@@ -73,8 +81,12 @@ class LowerCache {
 	var nullChecks = false; // and of references against null (Lower.nullChecks)
 	var spanChecks = true; // and of spans' elements (Lower.spanChecks)
 
-	public function lower(main:TClass, types:Array<ModuleType>, basic:BasicTypes):Program {
-		hits = misses = keyed = 0;
+	// (store: the bodies kept in the store, for a one-shot build: the lowering
+	// last done, l, is what LoweredBodies.save writes)
+	public var last:Null<CachedLower> = null;
+
+	public function lower(main:TClass, types:Array<ModuleType>, basic:BasicTypes, ?store:LoweredBodies):Program {
+		hits = misses = keyed = stored = 0;
 		why = null;
 		build++;
 		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.lines != lines
@@ -91,20 +103,35 @@ class LowerCache {
 			nullChecks = Lower.nullChecks;
 			spanChecks = Lower.spanChecks;
 		}
-		var l = new CachedLower(this, true, types);
+		var l = new CachedLower(this, true, types, store);
 		var prog = try Lower.program(main, types, basic, l) catch (m:Mismatch) {
 			restarts++;
 			why = m.why;
-			l = new CachedLower(this, false, types);
+			l = new CachedLower(this, false, types, store);
 			Lower.program(main, types, basic, l);
 		}
+		// (the program no longer asks through the lowering: let it go)
+		(cast prog : CachedProgram).l = null;
+		last = l;
 		hits = l.hits;
-		keyed = l.keyed;
+		keyed = l.keyedHits;
 		misses = l.misses;
+		stored = l.stored;
 		entries = l.newEntries;
 		lambdas = l.newLambdas;
 		byKey = l.newByKey;
 		return prog;
+	}
+
+	// a one-shot build's lowering done (its entries written): what it kept let
+	// go (the program's catch tests are closures of the lowering, which keep
+	// it, and its binding, as long as the program)
+	public function release() {
+		if (last != null) last.release();
+		last = null;
+		entries = new haxe.ds.ObjectMap();
+		lambdas = new haxe.ds.ObjectMap();
+		byKey = new Map();
 	}
 
 	@:allow(hxmc.CachedLower) function entry(cf:TClassField):Null<Entry>
@@ -137,6 +164,9 @@ class Entry {
 	public var gen = 0; // the build that recorded it: its global and selector numbers are that build's
 	public var processed = 0; // its module's compilation step then (0: unknown)
 	public var bound = false; // its body as bindHosts made it (its calls of the runtime's Haxe functions in the log)
+	public var fromStore = false; // read from the store (LoweredBodies: tf null, its field's expression the one it was lowered from)
+	public var src:Null<{r:hxmc.LoweredBodies.EntryReader, pos:Int}> = null; // (from the store: its body, read when replayed)
+	public var lazy:Null<{sm:hxmc.LoweredBodies.StoredModule, pos:Int}> = null; // (a closure's from the store: all of it, read when replayed)
 
 	public function new(tf, fi) {
 		this.tf = tf;
@@ -183,7 +213,7 @@ enum LCall {
 
 // The program's signatures and shapes asked by a body: logged
 class CachedProgram extends Program {
-	var l:CachedLower;
+	public var l:Null<CachedLower>;
 
 	public function new(l) {
 		super();
@@ -191,6 +221,7 @@ class CachedProgram extends Program {
 	}
 
 	override public function sig(args:Array<Ty>, ret:Ty):SigInfo {
+		if (l == null) return super.sig(args, ret);
 		l.depth++;
 		var r = super.sig(args, ret);
 		l.depth--;
@@ -199,6 +230,7 @@ class CachedProgram extends Program {
 	}
 
 	override public function shape(fields:Array<{name:String, ty:Ty}>):ShapeInfo {
+		if (l == null) return super.shape(fields);
 		l.depth++;
 		var r = super.shape(fields);
 		l.depth--;
@@ -216,8 +248,16 @@ class CachedLower extends Lower {
 	public var newLambdas = new haxe.ds.ObjectMap<FuncInfo, Entry>();
 	public var newByKey = new Map<String, Entry>();
 	public var hits = 0;
-	public var keyed = 0;
+	public var keyedHits = 0;
 	public var misses = 0;
+	public var stored = 0;
+
+	// the bodies kept in the store (one-shot builds: null in the server), and
+	// per field lowered with a key, its module and entry, and whether it was
+	// lowered from its typed expression in this build (LoweredBodies.save)
+	var store:Null<LoweredBodies>;
+
+	public var keyed:Array<{skey:String, m:ModuleDef, e:Entry, fresh:Bool}> = [];
 
 	// the calls of the body being lowered are logged here (the ones a call
 	// makes inside the lowering are not: replaying it makes them)
@@ -241,7 +281,7 @@ class CachedLower extends Lower {
 	static var skipTy = Sys.getEnv("HXMC_LOWER_NOSKIP") != "1";
 	var ident = false; // copying with no binding (the program's copy of a body)
 
-	static var MARK = new Local(-0x7fff, "mark", TRef(RAny));
+	public static var MARK = new Local(-0x7fff, "mark", TRef(RAny));
 
 	// the class of each field lowered (stableKey), and the program's types by
 	// path, for the calls of a body recorded by another build (tc, te, ta)
@@ -255,10 +295,11 @@ class CachedLower extends Lower {
 	var enumsByPath = new Map<String, TEnum>();
 	var abstractsByPath = new Map<String, TAbstract>();
 
-	public function new(cache, reuse, types:Array<ModuleType>) {
+	public function new(cache, reuse, types:Array<ModuleType>, ?store:LoweredBodies) {
 		super();
 		this.cache = cache;
 		this.reuse = reuse;
+		this.store = store;
 		for (t in types)
 			switch t {
 				case TClassDecl(c):
@@ -303,31 +344,55 @@ class CachedLower extends Lower {
 					byKey = true;
 				}
 			}
-			if (old != null && tf != null && (byKey || old.tf == tf)) {
+			// (one-shot builds: the module's entry in the store, Valid; its
+			// objects of the typed program are this build's, read by path)
+			var fromStore = false;
+			var m = skey == null ? null : owners.get(key).clModule;
+			if (reuse && store != null && tf != null && old == null && m != null) {
+				old = store.find(this, m, skey);
+				fromStore = old != null;
+			}
+			if (old != null && tf != null && (byKey || fromStore || old.tf == tf)) {
 				translating = byKey;
-				replay(fi, old);
+				if (fromStore) {
+					var t0 = haxe.Timer.stamp();
+					try replay(fi, old) catch (x:Mismatch) throw x catch (x:Dynamic) throw new Mismatch("a stored body: " + Std.string(x));
+					store.replayTime += haxe.Timer.stamp() - t0;
+					store.replayed++;
+					stored++;
+				} else replay(fi, old);
 				if (old.bound) replayed.set(fi, true);
 				translating = false;
-				newEntries.set(key, old);
-				if (skey != null) newByKey.set(skey, old);
+				// (one-shot: none kept for a next build)
+				if (store == null) {
+					newEntries.set(key, old);
+					if (skey != null) newByKey.set(skey, old);
+				}
 				hits++;
-				if (byKey) keyed++;
+				if (byKey) keyedHits++;
 			} else {
 				var e = recordBody(fi, tf, run);
 				e.processed = processed;
 				newEntries.set(key, e);
 				if (skey != null) newByKey.set(skey, e);
+				if (m != null && store != null) keyed.push({skey: skey, m: m, e: e, fresh: true});
 				misses++;
 			}
 			return;
 		}
 		var old = replayLambdas.get(fi);
+		if (old != null && old.lazy != null) old = store.lambdaAt(old);
 		if (old != null) {
 			translating = staleLambdas.exists(fi);
-			replay(fi, old);
+			replayLambdas.remove(fi);
+			if (old.fromStore) {
+				var t0 = haxe.Timer.stamp();
+				try replay(fi, old) catch (x:Mismatch) throw x catch (x:Dynamic) throw new Mismatch("a stored body: " + Std.string(x));
+				store.replayTime += haxe.Timer.stamp() - t0;
+			} else replay(fi, old);
 			if (old.bound) replayed.set(fi, true);
 			translating = false;
-			newLambdas.set(old.fi, old);
+			if (!old.fromStore) newLambdas.set(old.fi, old);
 			hits++;
 		} else if (bodyLambdas.exists(fi)) {
 			newLambdas.set(fi, recordBody(fi, null, run));
@@ -352,11 +417,14 @@ class CachedLower extends Lower {
 				if (e.tests == null) e.tests = new haxe.ds.ObjectMap();
 				e.tests.set(c, c.test(ELocal(MARK)));
 			});
-		// the program's copy (Facts' preparation rewrites statement lists)
-		ident = true;
-		tests = e.tests;
-		fi.body = stmts(e.body);
-		ident = false;
+		// the program's copy (Facts' preparation rewrites statement lists;
+		// a one-shot build writes its entries before, LoweredBodies.save)
+		if (store == null) {
+			ident = true;
+			tests = e.tests;
+			fi.body = stmts(e.body);
+			ident = false;
+		}
 		fi.locals = e.locals.copy();
 		return e;
 	}
@@ -394,13 +462,51 @@ class CachedLower extends Lower {
 				if (e.tests == null) e.tests = new haxe.ds.ObjectMap();
 				e.tests.set(c, c.test(ELocal(MARK)));
 			});
-		ident = true;
-		tests = e.tests;
-		fi.body = stmts(e.body);
-		ident = false;
+		if (store == null) {
+			ident = true;
+			tests = e.tests;
+			fi.body = stmts(e.body);
+			ident = false;
+		}
 	}
 
+	public function release() {
+		newEntries = new haxe.ds.ObjectMap();
+		newLambdas = new haxe.ds.ObjectMap();
+		newByKey = new Map();
+		keyed = [];
+		store = null;
+		bodyLambdas = new haxe.ds.ObjectMap();
+		replayLambdas = new haxe.ds.ObjectMap();
+		map = new haxe.ds.ObjectMap();
+		gmaps = new Map();
+		smaps = new Map();
+		gmap = null;
+		smap = null;
+		owners = new haxe.ds.ObjectMap();
+		staleLambdas = new haxe.ds.ObjectMap();
+		current = new haxe.ds.ObjectMap();
+		classesByPath = new Map();
+		enumsByPath = new Map();
+		abstractsByPath = new Map();
+		replayed = new haxe.ds.ObjectMap();
+		recorded = new haxe.ds.ObjectMap();
+		keys = new haxe.ds.ObjectMap();
+		lOld = [];
+		lNew = [];
+		lStamp = [];
+		tests = null;
+	}
+
+	// the entry of a closure's body (by its function as recorded)
+	public function lambdaOf(fi:FuncInfo):Null<Entry>
+		return newLambdas.get(fi);
+
 	function replay(fi:FuncInfo, old:Entry) {
+		// (an entry from the store: its objects are its own, bound by its own
+		// calls and its closures', in a binding of its own that goes with it)
+		var savedMap = map;
+		if (old.src != null) map = old.src.r.map;
 		gmap = gmaps.get(old.gen);
 		if (gmap == null) gmaps.set(old.gen, gmap = new Map());
 		smap = smaps.get(old.gen);
@@ -419,7 +525,9 @@ class CachedLower extends Lower {
 		fi.hasTry = old.hasTry;
 		fi.nlambdas = old.nlambdas;
 		tests = old.tests;
-		fi.body = stmts(old.body);
+		fi.body = old.src != null ? old.src.r.body(old.src.pos, this) : stmts(old.body);
+		map = savedMap;
+		if (old.src != null) old.src.r.replayed(this);
 	}
 
 	// ---- the calls, logged
@@ -718,7 +826,9 @@ class CachedLower extends Lower {
 		switch c {
 			case CTy(t, r):
 				// (made of what is bound already: no effect, the same type)
-				if (!skipTy || !boundTy(r)) bindTy(r, ty(tt(t)));
+				// (tt: the current types for another build's; a type read from the store
+				// already is, and tt would expand a recursive one endlessly)
+				if (!skipTy || !boundTy(r)) bindTy(r, ty(translating ? tt(t) : t));
 			case CClass(k, r):
 				bindClass(r, classInfo(tc(k)));
 			case CEnum(e, r):
@@ -759,13 +869,20 @@ class CachedLower extends Lower {
 				bindLambda(r, dynAdapter(obj(to)));
 			case CLambda(s, caps, name, module, r):
 				var body = cache.lambdaEntry(r.fn);
+				if (body == null && store != null) {
+					body = store.lambdas.get(r.fn);
+					store.lambdas.remove(r.fn);
+				}
 				if (body == null) mismatch("closure " + name + " without its body");
+				// (named as lowering the body named it, Lower.lambdaName: its
+				// number, which a bound closure made later numbers after it, and
+				// its Haxe name in stacks, which a process that did not lower the
+				// body has not seen)
+				if (replaying != null && Lower.lambdaName(replaying) != name) mismatch("closure " + name + " renamed");
 				var n = newLambda(obj(s), caps.map(local), _ -> throw "hxmc: a replayed closure lowered", name, module);
 				bindLambda(r, n);
 				bodyLambdas.remove(n.fn);
 				replayLambdas.set(n.fn, body);
-				// (as lowering the body named it: Lower.lambdaName, which a bound closure made later numbers after it)
-				if (replaying != null) replaying.nlambdas++;
 				if (translating) staleLambdas.set(n.fn, true);
 			case CSelector(name, s, r):
 				bindSel(r, selector(name, obj(s)));
@@ -813,7 +930,7 @@ class CachedLower extends Lower {
 
 	// ---- the current build's objects for those a body recorded by another build calls with
 
-	static function typeKey(m:ModuleDef, p:core.Globals.GlobalTypePath):String
+	public static function typeKey(m:ModuleDef, p:core.Globals.GlobalTypePath):String
 		return core.Globals.sTypePath(m.mPath) + ":" + core.Globals.sTypePath(p);
 
 	// a field's key across builds: its module, class and name (null: an overload, not found by name)
@@ -904,6 +1021,14 @@ class CachedLower extends Lower {
 			if (o != n) mismatch("class against none");
 			return;
 		}
+		// (a stored entry's class named in a field type: its own of that name, else by name)
+		if (store != null && Std.isOfType(o, hxmc.LoweredBodies.WeakClass)) {
+			var w:hxmc.LoweredBodies.WeakClass = cast o;
+			if (w.target != null) o = w.target else {
+				if (o.name != n.name) mismatch("class " + o.name + " changed");
+				return;
+			}
+		}
 		if (!bind(o, n)) return;
 		if (o.name != n.name || o.isInterface != n.isInterface || o.fields.length != n.fields.length) mismatch("class " + o.name + " changed");
 		bindClass(o.sup, n.sup);
@@ -917,6 +1042,13 @@ class CachedLower extends Lower {
 		if (o == null || n == null) {
 			if (o != n) mismatch("enum against none");
 			return;
+		}
+		if (store != null && Std.isOfType(o, hxmc.LoweredBodies.WeakEnum)) {
+			var w:hxmc.LoweredBodies.WeakEnum = cast o;
+			if (w.target != null) o = w.target else {
+				if (o.name != n.name) mismatch("enum " + o.name + " changed");
+				return;
+			}
 		}
 		if (!bind(o, n)) return;
 		if (o.name != n.name || o.ctors.length != n.ctors.length) mismatch("enum " + o.name + " changed");

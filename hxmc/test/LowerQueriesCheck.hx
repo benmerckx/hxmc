@@ -7,6 +7,9 @@ using StringTools;
 // every query is tagged with how (@:logged, @:derived, @:declared, @:pure),
 // each @:logged one is overridden in LowerCache.hx (it records the query and
 // replays it), and no other is (the tag would not say what the cache does).
+// Each recorded call (LowerCache's LCall) and each construct of the IR (Ir's
+// Stmt, Ex, Ty, RefTy, TypeRef) is written by the store's codec
+// (LoweredBodies.hx), which reads them back by their order.
 // A query added without a thought for the cache fails here (`make quick`).
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run LowerQueriesCheck
 class LowerQueriesCheck {
@@ -34,9 +37,28 @@ class LowerQueriesCheck {
 			if (tag != "logged" && overridden) failures.push('$name: @:$tag, but overridden in LowerCache.hx (@:logged?)');
 		}
 		if (n == 0) failures.push("no queries found");
+		// (the codec: each constructor written, by name; read back by its index)
+		var codec = File.getContent("hxmc/src/hxmc/LoweredBodies.hx");
+		var ir = File.getContent("hxmc/src/hxmc/ir/Ir.hx");
+		function ctors(src:String, name:String):Array<String> {
+			var s = src.indexOf("enum " + name + " {");
+			if (s < 0) {
+				failures.push('no enum $name');
+				return [];
+			}
+			var e = src.indexOf("\n}", s);
+			var re = ~/^\t([A-Z]\w*)\b/;
+			return [for (l in src.substring(s, e).split("\n")) if (re.match(l)) re.matched(1)];
+		}
+		var nc = 0;
+		for (en in [{src: cache, name: "LCall"}, {src: ir, name: "Stmt"}, {src: ir, name: "Ex"}, {src: ir, name: "Ty"}, {src: ir, name: "RefTy"}, {src: ir, name: "TypeRef"}])
+			for (c in ctors(en.src, en.name)) {
+				nc++;
+				if (!new EReg("case [^:]*\\b" + c + "\\b", "").match(codec)) failures.push('${en.name}.$c: not written by LoweredBodies.hx');
+			}
 		for (f in failures)
 			Sys.println("FAIL  " + f);
-		Sys.println(failures.length == 0 ? 'lower queries: $n, each covered' : 'lower queries: ${failures.length} not covered');
+		Sys.println(failures.length == 0 ? 'lower queries: $n, each covered; $nc constructors written by the store' : 'lower queries: ${failures.length} not covered');
 		Sys.exit(failures.length == 0 ? 0 : 1);
 	}
 

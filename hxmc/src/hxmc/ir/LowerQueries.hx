@@ -27,7 +27,10 @@ import haxe.ds.Vector;
 //              body is replayed only when its module was not typed again,
 //              and the server types a module again when any module it
 //              depends on changed (no early cutoff there: the module cache
-//              is not open in the server, ModuleCache.hx), so the
+//              is not open in the server, ModuleCache.hx); a body kept in
+//              the store (LoweredBodies.hx) only when its module was
+//              restored as it is, whose key holds the interfaces of what it
+//              depends on with theirs (or their whole contents): so the
 //              declarations a body reaches by its own types and calls are
 //              those it was lowered with. Never for what is found below a
 //              class (its subclasses, an interface's implementations): no
@@ -39,7 +42,9 @@ import haxe.ds.Vector;
 // Outside this interface, FnLower reads only Lower's static settings,
 // which are the build's: the target, platform and Mir host (Lower.targetConst),
 // lines, bounds, nullChecks and the resources' names are compared by
-// LowerCache.lower, which drops every body when one changes; survey comes
+// LowerCache.lower, which drops every body when one changes (the store's
+// entries have them in their key, with the runtime's functions written in
+// Haxe that Lower.bindHosts calls, LoweredBodies.prefixOf); survey comes
 // from the environment, fixed for a process. The fields of the IR objects
 // the queries give (a ClassInfo's fields, a FuncInfo's arguments and result,
 // a CtorInfo's parameters) are bound to the old ones field by field

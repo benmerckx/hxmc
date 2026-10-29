@@ -648,6 +648,17 @@ class Lower implements LowerQueries {
 		return r;
 	}
 
+	// t forgotten by ty (a type no body asks again: LowerCache's types read
+	// from the store, which would otherwise stay as long as the lowering)
+	public function forgetTy(t:T) {
+		tyMemo.remove(cast t);
+		var i = hxmc.Native.objHash(t) >>> 20;
+		if (tyLastK[i] == (cast t : {})) {
+			tyLastK[i] = null;
+			tyLastV[i] = null;
+		}
+	}
+
 	function lowerTy(t:T):Ty {
 		// (a typedef, expanded below: unfolding)
 		if (t.match(TType(_))) return unfolding(t, () -> ty(TFunctions.followWithoutNull(t)));

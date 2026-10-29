@@ -192,13 +192,28 @@ class Main {
 		// modules hxmc.rt.Runtime imports for the target, whatever this program calls
 		hxmc.ir.RuntimeSymbols.check(com, abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE, abi.name);
 		var t0 = haxe.Timer.stamp();
-		// resident: bodies of the fields the server kept are reused (LowerCache)
-		var useCache = Driver.resident && Sys.getEnv("HXMC_LOWER_CACHE") != "0";
-		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+		// resident: bodies of the fields the server kept are reused (LowerCache);
+		// one-shot with the module cache: those of the modules restored as they
+		// are, from the store (LoweredBodies), written for the next builds
+		var store = Driver.resident || Sys.getEnv("HXMC_LOWER_CACHE") == "0" ? null : LoweredBodies.open(com);
+		var useCache = Driver.resident && Sys.getEnv("HXMC_LOWER_CACHE") != "0" || store != null;
+		var lc = store != null ? new LowerCache() : lowerCache;
+		var prog = useCache ? lc.lower(mainClass, com.types, com.basic, store) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+		var t1 = haxe.Timer.stamp();
+		// (before Facts' preparation rewrites the bodies, which the entries share)
+		if (store != null) store.save(lc.last);
 		if (opts.stats) {
-			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
+			Sys.println('hxmc: lowering ${Std.int((t1 - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
 			if (useCache)
-				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
+				Sys.println('hxmc: bodies ${lc.hits} reused (${lc.keyed} by key, ${lc.stored} from the store), ${lc.misses} lowered, ${lc.restarts} lowerings again' + (lc.why != null ? ' (lowered again: ${lc.why})' : ''));
+			if (store != null) Sys.println('hxmc: lowered bodies: ' + store.summary());
+		}
+		var replayedAny = store == null || lc.stored > 0;
+		if (store != null) {
+			// (what the lowering kept, let go before the code generation)
+			lc.release();
+			lc = null;
+			store = null;
 		}
 		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
 		if (beforeCodegen != null) beforeCodegen(com, prog);
@@ -206,7 +221,7 @@ class Main {
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
-		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {
+		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1" && replayedAny) {
 			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 			if (beforeCodegen != null) beforeCodegen(com, fresh);
 			Driver.run(fresh, out + ".check", opts);

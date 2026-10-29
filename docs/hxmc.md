@@ -25,7 +25,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `ir/Reach.hx` | the functions the program can run ([Reachability](#reachability)) |
 | `ir/RuntimeSymbols.hx` | the runtime symbols generated code calls by name ([below](#the-symbols-generated-code-calls)) |
 | `ir/Facts.hx`, `Prep.hx` | program-wide facts: names, layouts, type indices, field ids, no-GC functions, GC points |
-| `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint, lowered bodies reused by the server |
+| `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx`, `LoweredBodies.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint, lowered bodies reused by the server (and, `HXMC_LOWER_STORE=1`, kept in the module cache's store) |
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
 | `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM, dead code, barriers and frame slots nothing needs |
 | `Fold.hx`, `DivConst.hx` | allocation folding; division by constants |
@@ -565,6 +565,23 @@ the macro API's current module, whichever module's typing made the macros'
 context, and restored with that module it would come back into other
 programs, or into a build whose callback defines it again ("Cannot
 redefine module"). The callback runs every build and makes it again.
+
+**Lowered bodies** (`LoweredBodies.hx`, `HXMC_LOWER_STORE=1`; off by
+default: replaying is about as costly as lowering, so builds are not faster
+yet, [plans/compiler.md](plans/compiler.md#one-cache)): per module, its
+fields' lowered bodies with the calls each made into the lowering and their
+answers (`LowerCache`'s entries, which the compilation server keeps in
+memory), an entry `i/b<key>` named by the module's key and by what the
+lowering and the filters read beyond its dependencies (the target and the
+lowering's switches, the resources' names, the runtime's functions written
+in Haxe, every define, the features, the exceptions' std modules). A one-shot
+build replays them for the modules restored as they are: the calls asked
+again in their order, their answers bound to the stored ones or compared, the
+bodies read into the build's objects; a different answer lowers the whole
+program again. An entry naming what the build does not have (a field DCE
+removed) is not replayed, its field lowered; a module whose entries cannot be
+written soundly (an overloaded field, a type of no module) is not kept
+(`HXMC_STATS=1` counts both).
 
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
@@ -1198,6 +1215,7 @@ For the tool and the compiler (build time):
 | `HXMC_JOBS=<n>` | parallel module compilations |
 | `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories searched first, before the compiler's own directory (npm's platform package), its `rt/` (a checkout's `bin/hxmc/rt`) and the target's platform package beside it ([using.md](using.md#cross-builds); the npm launcher adds the installed platform packages), or one object |
 | `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
+| `HXMC_LOWER_STORE=1` | lowered bodies kept in the module cache's store, replayed for the modules restored ([Module cache](#module-cache)); `HXMC_LOWER_CHECK=1`: a build that replayed bodies also lowers from scratch and compares the executables; `HXMC_LOWER_WHY=1`: why a body was not replayed or kept |
 | `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
 
 For compiled programs (run time):

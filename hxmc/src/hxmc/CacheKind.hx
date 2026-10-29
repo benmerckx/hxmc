@@ -19,6 +19,9 @@ enum abstract CacheKind(String) to String {
 	// the hashes its dependencies had (Variant.typedKey); a variant of a
 	// module index today, the name of its later stages' entries
 	var TypedModule = "t";
+	// a module's lowered bodies (LoweredBodies): its TypedModule key and what
+	// the lowering and the filters read beyond the module's dependencies
+	var LoweredBodies = "b";
 	// not entries: what a module's dependents check it by (ModuleCache's
 	// Closure), the hash of its interface with its dependencies', or of its
 	// whole content with theirs

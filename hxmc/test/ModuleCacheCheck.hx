@@ -33,14 +33,23 @@ using StringTools;
 // macro forces (that module edited: typed again with it; then an error in
 // it: the same errors as without the cache, then fixed). One whose module of
 // abstracts with overloaded call operators (@:op(a())) is restored while the
-// modules calling them are typed again. The warm runs must restore
+// modules calling them are typed again. Lowered bodies kept in the store
+// (HXMC_LOWER_STORE=1, hxmc/src/hxmc/LoweredBodies.hx) for the hxmc target:
+// replayed for the modules restored, and after the edits that must not
+// replay a body as stored (an inline function of another module, a field
+// DCE removes and brings back, defines that change the lowering: null,
+// bounds and span checks, any other define, a resource's content and
+// names), the output as without the cache, and as the same build lowered
+// from scratch (HXMC_LOWER_CHECK); --bodies keeps them in the store in every
+// build of the gate. The warm runs must restore
 // every module (none typed again), an edit undone restores the earlier
 // variant. Copies of the std (hxmc's and upstream's) are edited, never the
 // repository's. In bin/hxmc-t/module-cache (removed when every check passes):
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run ModuleCacheCheck [--port] [--haxe <haxe>]
 // --port adds the port itself (haxe/src: a large program) for the hxmc target;
 // --nondet runs only the cases of macros whose results change from run to run,
-// --late those of modules macros define outside the typing of a module;
+// --late those of modules macros define outside the typing of a module,
+// --bodies keeps lowered bodies in the store (HXMC_LOWER_STORE=1) in every build;
 // --haxe names `haxe` with hxmc built in (default: bin/npm/native/<host>/haxe).
 class ModuleCacheCheck {
 	static var dir:String;
@@ -49,6 +58,8 @@ class ModuleCacheCheck {
 	static var haxeBin:String;
 	static var failures = 0;
 	static var builds = 0;
+	// lowered bodies kept in the store for the builds with the cache (LoweredBodies)
+	static var storeBodies = false;
 
 	static function check(what:String, ok:Bool) {
 		Sys.println((ok ? "ok    " : "FAIL  ") + what);
@@ -279,6 +290,7 @@ class ModuleCacheCheck {
 			"HXMC_MODULE_CACHE" => cache ? "1" : "0",
 			"HXMC_MODULE_CACHE_LOG" => null,
 			"HXMC_STATS" => "1",
+			"HXMC_LOWER_STORE" => cache && storeBodies ? "1" : null,
 			"HXMC_RT_DIR" => FileSystem.fullPath("bin/hxmc/rt"),
 			"HAXE_STD_PATH" => dir + "/upstream-std"
 		];
@@ -567,8 +579,132 @@ class ModuleCacheCheck {
 			gate('a module defined in the typing of another, $m', target, pdir, ["-cp", "src", "-main", m]);
 	}
 
+	// lowered bodies in the store (LoweredBodies): replayed for the modules
+	// restored as they are, never after an edit that changes what a body
+	// would lower to; each build's output as without the cache, and the warm
+	// ones as the same build lowered from scratch (HXMC_LOWER_CHECK)
+	static function bodies() {
+		var files = [
+			"src/Main.hx" => [
+				"class Main {",
+				"\tstatic function main() {",
+				"\t\ttrace(Lib.twice(21) + Lib.add(1, 2));",
+				"\t\tvar b = new Bag();",
+				"\t\ttrace(b.size());",
+				"\t\ttrace(b.sum());",
+				"\t\ttrace(haxe.Resource.getString(\"greet\") + \" \" + haxe.Resource.listNames().length);",
+				"\t\tvar v = new haxe.ds.Vector<Int>(3);",
+				"\t\tv[1] = 5;",
+				"\t\ttrace(v[1]);",
+				"\t\tvar o:Null<Bag> = Lib.maybe();",
+				"\t\ttrace(o == null ? \"none\" : \"bag\");",
+				"\t\ttrace(Lib.fn()(4) + Lib.guard(() -> throw \"no\"));",
+				"\t\tswitch Lib.pick(2) {",
+				"\t\t\tcase Two(n): trace(\"two \" + n);",
+				"\t\t\tcase _: trace(\"other\");",
+				"\t\t}",
+				"\t}",
+				"}"
+			].join("\n") + "\n",
+			"src/Lib.hx" => [
+				"enum Pick {",
+				"\tOne;",
+				"\tTwo(n:Int);",
+				"}",
+				"",
+				"class Lib {",
+				"\tpublic static inline function twice(x:Int):Int return x * 2;",
+				"",
+				"\tpublic static function add(a:Int, b:Int):Int return a + b;",
+				"",
+				"\tpublic static function maybe():Null<Bag> return null;",
+				"",
+				"\tpublic static function fn():Int->Int return x -> x + add(x, 1);",
+				"",
+				"\tpublic static function guard(f:() -> Int):Int {",
+				"\t\ttry return f() catch (e:String) return e.length;",
+				"\t}",
+				"",
+				"\tpublic static function pick(n:Int):Pick return n == 2 ? Two(n) : One;",
+				"}"
+			].join("\n") + "\n",
+			"src/Bag.hx" => "class Bag {\n\tpublic var items:Array<Int>;\n\n\tpublic function new() items = [1, 2, 3];\n\n\tpublic function size():Int return items.length;\n\n\tpublic function sum():Int {\n\t\tvar s = 0;\n\t\tfor (i in items) s += i;\n\t\treturn s;\n\t}\n}\n",
+			"greet.txt" => "hello",
+			"other.txt" => "other"
+		];
+		var pdir = dir + "/hxmc-bodies";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		var args = ["-cp", "src", "-main", "Main", "-dce", "full", "--resource", "greet.txt@greet"];
+		var saved = storeBodies;
+		storeBodies = true;
+		extraEnv = ["HXMC_LOWER_CHECK" => "1"];
+		inline function count(log:String, re:EReg, what:Int):Int
+			return re.match(log) ? Std.parseInt(re.matched(what)) : -1;
+		var replayed = ~/lowered bodies: (\d+) replayed/;
+		var written = ~/modules written/;
+		var writtenN = ~/(\d+) modules written/;
+		function step(what:String, a:Array<String>, ?replays:Bool) {
+			var r = gate('bodies, ' + what, "hxmc", pdir, a);
+			var n = count(r.log, replayed, 1);
+			check('hxmc: bodies, $what: the lowered bodies counted (' + n + ' replayed, ' + count(r.log, writtenN, 1) + ' modules written)', n >= 0 && written.match(r.log));
+			if (replays == true) check('hxmc: bodies, $what: bodies replayed', n > 0);
+			if (replays == false) check('hxmc: bodies, $what: none replayed', n == 0);
+			check('hxmc: bodies, $what: as lowered from scratch', r.log.indexOf("DIFFERENT executable") < 0);
+			return r;
+		}
+		rmrf(dir + "/cache");
+		var c = step("cold", args, false);
+		check('hxmc: bodies, cold: written', count(c.log, writtenN, 1) > 0);
+		step("warm", args, true);
+		// an inline function of Lib edited: Main typed again (Lib's interface),
+		// its bodies lowered; back
+		var lib = pdir + "/src/Lib.hx";
+		var l0 = File.getContent(lib);
+		File.saveContent(lib, l0.replace("x * 2", "x * 3"));
+		step("an inline function of Lib edited", args);
+		step("an inline function of Lib edited, warm", args, true);
+		// a body of Lib edited (its interface the same): Main restored, its
+		// bodies replayed with Lib's new answers
+		File.saveContent(lib, l0.replace("return a + b;", "return a + b + 1;"));
+		step("a body of Lib edited", args, true);
+		File.saveContent(lib, l0);
+		step("Lib back", args, true);
+		// Bag.sum unused: DCE removes it (Bag restored, its entry has it); used
+		// again: replayed from Bag's entry
+		var main = pdir + "/src/Main.hx";
+		var m0 = File.getContent(main);
+		File.saveContent(main, m0.replace("trace(b.sum());", "trace(0);"));
+		step("Bag.sum removed by DCE", args, true);
+		File.saveContent(main, m0);
+		step("Bag.sum used again", args, true);
+		// defines: what the lowering reads (null checks, bounds, span checks),
+		// any other (a filter may read it): not replayed from the build without
+		for (d in ["hxmc.null-checks=1", "hxmc.native-array-outofbounds=throws", "hxmc.span-checks=0", "unrelated"]) {
+			var da = args.concat(["-D", d]);
+			step('-D $d', da, false);
+			step('-D $d, warm', da, true);
+		}
+		// (the variants a define typed again may be restored without it: their
+		// bodies are written then, replayed from the next build)
+		step("without the defines again", args);
+		step("without the defines again, warm", args, true);
+		// a resource's content (the lowering does not read it), its names (it does)
+		var greet = pdir + "/greet.txt";
+		File.saveContent(greet, "bonjour");
+		step("a resource edited", args, true);
+		var ra = args.concat(["--resource", "other.txt@other"]);
+		step("a resource added", ra, false);
+		step("a resource added, warm", ra, true);
+		File.saveContent(greet, "hello");
+		step("the resources back", args, true);
+		extraEnv = new Map();
+		storeBodies = saved;
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
+		storeBodies = Sys.args().contains("--bodies");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
 		tool = FileSystem.fullPath("bin/hxmc/hxmc");
 		var a = parseArgs(Sys.args(), ["--haxe"]);
@@ -725,6 +861,7 @@ class ModuleCacheCheck {
 				}
 			}
 		}
+		if (!only) bodies();
 		for (target in ["hxmc", "js", "interp"])
 			if (!late) nondeterministic(target);
 		for (target in ["hxmc", "js", "interp"])
