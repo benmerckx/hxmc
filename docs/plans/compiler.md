@@ -103,7 +103,8 @@ server's reuse of lowered bodies, Mir's compiled functions.
      unchanged (the self-build: 677 encoded cold, 676 checked and 0 typed
      warm; a body edit of `Options.hx`: 675 valid, 1 typed again with the
      same interface; a new class in it: 659 valid, 18 with a new interface);
-     outputs byte-identical.
+     outputs byte-identical; cold, warm, off and server times within noise
+     of before, the store 22 KB larger (the shapes).
      Learned:
      - a verdict read before the capture is provisional: the server's
        own checks after the hook (shadowing, the file's date, a dependency
