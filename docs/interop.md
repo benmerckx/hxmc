@@ -614,6 +614,9 @@ variable leads back to it.
   types; a new method's selector is derived from its names (a delegate's
   `control(control, textView, doCommandBySelector)` is
   `control:textView:doCommandBySelector:`). Calls from Haxe are Haxe calls.
+  Objective-C may call them on any thread: one the runtime did not start
+  (an `NSThread`, GCD's workers) is attached at its first call, as a
+  block's.
 - **`super.f(...)`** to an Objective-C method sends `objc_msgSendSuper`,
   looked up from the Objective-C superclass (`super.set_frame(v)` in an
   override of `set_frame`); struct results come back both ways.

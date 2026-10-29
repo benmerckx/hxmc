@@ -263,10 +263,9 @@ class ObjC {
 	// can call: its own instance methods whose types C has, each by the
 	// selector and types of the Objective-C method it overrides, else by
 	// its own (selector), and their entries (Lower.classInfo makes them): a C function
-	// (self, _cmd, arguments...) that leaves the safe region the caller is in
-	// (a message is sent in one), finds the Haxe object (the index in the
-	// instance variable, rt_objc_peer_get), calls the method and enters the
-	// region again
+	// (self, _cmd, arguments...; entry: on any thread, out of the safe region
+	// the caller is in) whose work finds the Haxe object (the index in the
+	// instance variable, rt_objc_peer_get) and calls the method
 	public static function imps(l:Lower, c:TClass, name:String, root:String):Array<{sel:String, sym:String, types:String}> {
 		var r = [];
 		for (cf in c.clOrderedFields) {
@@ -305,19 +304,25 @@ class ObjC {
 				continue;
 			}
 			var fi = l.method(c, cf);
-			var w = new FuncInfo(fi.name + "__imp", fi.module);
-			w.cSymbol = "hxmc_imp_" + fi.name;
+			// (w: the entry's work, called by the entry imp makes below)
+			var w = new FuncInfo(fi.name + "__imp_call", fi.module);
 			w.display = fi.display;
 			w.pos = fi.pos;
-			w.cAbi = {args: [CPtr, CPtr].concat(cts), ret: ret};
 			var self = new Local(0, "self", TI64);
 			w.args = [self, new Local(1, "_cmd", TI64)];
-			// (a struct result: the method's sret, a slot of this frame; MirBuild.cEntry
-			// returns it by the C ABI's rules)
 			var n = fi.sret ? fi.args.length - 1 : fi.args.length;
 			for (i in 1...n)
 				w.args.push(new Local(i + 1, fi.args[i].name, blocks[i - 1] != null ? TId : fi.args[i].ty));
 			w.ret = setter ? TVoid : blockRet != null ? TId : fi.ret;
+			// (a struct result: the method's sret, the entry's slot; a setter's,
+			// which Objective-C does not see, a slot of w's frame)
+			var nargs = w.args.length;
+			var sretArg = null;
+			if (fi.sret && !setter) {
+				sretArg = new Local(nargs, "sret", TI64);
+				w.args.push(sretArg);
+				w.sret = true;
+			}
 			var peer = new Local(w.args.length, "peer", TRef(RAny));
 			w.locals.push(peer);
 			var next = w.args.length + 3;
@@ -329,12 +334,9 @@ class ObjC {
 			var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
 			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + root), EInt(0)), TI64);
 			var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(self), off), EInt(0)), TI32);
-			var body:Array<Stmt> = [
-				SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)),
-				SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))
-			];
+			var body:Array<Stmt> = [SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))];
 			var xs = [ECast(fi.args[0].ty, ELocal(peer))];
-			for (i in 2...w.args.length) {
+			for (i in 2...nargs) {
 				var b = blocks[i - 2];
 				if (b == null) {
 					xs.push(ELocal(w.args[i]));
@@ -350,14 +352,12 @@ class ObjC {
 			var call:Array<Stmt> = [];
 			var res:Null<Local> = null;
 			if (fi.sret) {
-				// (a struct result: the method's sret, a slot of this frame)
 				res = new Local(w.args.length + 1, "r", fi.ret);
 				w.locals.push(res);
-				var size = switch fi.ret {
+				body.push(SSet(res, sretArg != null ? ELocal(sretArg) : ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(switch fi.ret {
 					case TStruct(_, size): size;
 					case _: 8;
-				};
-				body.push(SSet(res, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(size), EInt(8)), TI64)));
+				}), EInt(8)), TI64)));
 				call.push(SExpr(ECall(fi, Vector.fromArrayCopy(xs.concat([ELocal(res)])))));
 			} else if (w.ret == TVoid) {
 				call.push(SExpr(ECall(fi, Vector.fromArrayCopy(xs))));
@@ -380,13 +380,15 @@ class ObjC {
 				body.push(SIf(EBin(RefEq, ELocal(res), ENull(res.ty)), vector(SSet(id, EConv(I2L, EInt(0)))), vector(SSet(id, blockNew(l, ELocal(res), blockRet)))));
 				res = id;
 			}
-			body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
 			body.push(SReturn(res == null ? null : ELocal(res)));
 			w.body = Vector.fromArrayCopy(body);
 			l.prog.funcs.push(w);
+			var e = entry(fi.name + "__imp", "hxmc_imp_" + fi.name, fi.module, w, nargs, {args: [CPtr, CPtr].concat(cts), ret: ret});
+			e.pos = fi.pos;
+			l.prog.funcs.push(e);
 			r.push({
 				sel: decl != cf ? selector(decl, s) : selector(cf, s),
-				sym: w.cSymbol,
+				sym: e.cSymbol,
 				types: (blockRet != null ? "@?" : encoding(ret)) + "@:" + [for (i in 0...cts.length) blocks[i] != null ? "@?" : encoding(cts[i])].join("")
 			});
 		}
@@ -493,35 +495,47 @@ class ObjC {
 			})), SReturn(sret ? ELocal(sretLocal) : res == null ? null : ELocal(res)));
 		fi.hasTry = true;
 		l.prog.funcs.push(fi);
-		var w = new FuncInfo(sym, "_closures");
-		w.cSymbol = sym;
+		var w = entry(sym, sym, "_closures", fi, sig.args.length + 1, {args: [CPtr].concat(args), ret: ret});
 		w.display = fi.display;
-		w.cAbi = {args: [CPtr].concat(args), ret: ret};
-		w.args = [for (i in 0...sig.args.length + 1) new Local(i, fi.args[i].name, fi.args[i].ty)];
-		w.ret = sig.ret;
+		l.prog.funcs.push(w);
+	}
+
+	// the C function symbol (C types abi) Objective-C calls, a method's entry
+	// (imps) or a block's invoke, on any thread: it attaches the thread when
+	// the runtime did not start it (GCD's workers), leaves the safe region
+	// the caller is in, calls f (its first nargs arguments; a struct result:
+	// a slot of this frame, returned by the C ABI's rules) and enters the
+	// region again. No frame of its own, which a thread not yet attached
+	// could not push: f has one (its try keeps it from being inlined)
+	static function entry(name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
+		var w = new FuncInfo(name, module);
+		w.cSymbol = symbol;
+		w.display = f.display;
+		w.cAbi = abi;
+		w.args = [for (i in 0...nargs) new Local(i, f.args[i].name, f.args[i].ty)];
+		w.ret = f.ret;
 		var ys = [for (a in w.args) (ELocal(a) : Ex)];
 		var body:Array<Stmt> = [
 			SExpr(ECallHost("rt_objc_attach", vector(), TVoid)),
 			SExpr(ECallHost("rt_blocking_leave", vector(), TVoid))
 		];
-		var r = new Local(w.args.length, "r", sig.ret == TVoid ? TI32 : sig.ret);
-		if (sret) {
-			// (a struct result: in a slot of this frame, returned by the C ABI's rules)
+		var r = new Local(w.args.length, "r", f.ret == TVoid ? TI32 : f.ret);
+		if (f.sret) {
 			w.locals.push(r);
-			var size = switch sig.ret {
+			var size = switch f.ret {
 				case TStruct(_, size): size;
 				case _: 8;
 			};
 			body.push(SSet(r, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(size), EInt(8)), TI64)));
-			body.push(SExpr(ECall(fi, Vector.fromArrayCopy(ys.concat([ELocal(r)])))));
-		} else if (sig.ret != TVoid) {
+			body.push(SExpr(ECall(f, Vector.fromArrayCopy(ys.concat([ELocal(r)])))));
+		} else if (f.ret != TVoid) {
 			w.locals.push(r);
-			body.push(SSet(r, ECall(fi, Vector.fromArrayCopy(ys))));
-		} else body.push(SExpr(ECall(fi, Vector.fromArrayCopy(ys))));
+			body.push(SSet(r, ECall(f, Vector.fromArrayCopy(ys))));
+		} else body.push(SExpr(ECall(f, Vector.fromArrayCopy(ys))));
 		body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
-		body.push(SReturn(sig.ret == TVoid ? null : ELocal(r)));
+		body.push(SReturn(f.ret == TVoid ? null : ELocal(r)));
 		w.body = Vector.fromArrayCopy(body);
-		l.prog.funcs.push(w);
+		return w;
 	}
 
 	// a heap block calling closure c (not null) of the block's signature b:

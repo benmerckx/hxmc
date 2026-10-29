@@ -117,8 +117,10 @@ answer them.
    a closure sending the message would do); a pool
    around `main` (nothing gained: it drains at exit); reading retain
    counts while another thread is stopped inside libobjc holding its
-   lock; methods of Haxe classes Objective-C calls (`ObjC.imps`) on a
-   thread the runtime did not start (blocks attach it, imps do not yet).
+   lock. Outside Objective-C: a `@:hxmc.callback` on a thread the
+   runtime did not start needs `ThreadApi.attach()` first, which methods'
+   entries and blocks' invokes do themselves (`rt_objc_attach`); callbacks
+   could too.
 
 ## Considered, not decided
 
