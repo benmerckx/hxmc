@@ -1,6 +1,7 @@
 package hxmc;
 
 import hxmc.I64;
+import hxmc.ReadOnlySpan;
 import hxmc.rt.Bytes;
 import hxmc.rt.C;
 import hxmc.rt.Repr;
@@ -8,6 +9,7 @@ import hxmc.unsafe.BytesPtr;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
 
 // DEFLATE (RFC 1951) decompression and CRC-32 over raw memory, for programs
 // that inflate whole buffers (the compiler's ZIP reader): haxe.zip.InflateImpl
@@ -314,14 +316,20 @@ class NativeZip {
 		return t;
 	}
 
-	// the CRC-32 (ISO-HDLC, as zlib's crc32) of b[pos, pos + len)
-	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > b.length) outside();
-		var t = table();
-		var p = Bytes.bytes(b.getData()).add(pos);
+	// the CRC-32 (ISO-HDLC, as zlib's crc32) of b[pos, pos + len): the
+	// range checked here (OutsideBounds), the bytes lent to the kernel
+	// for its call, and the table, which lives for good
+	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int
+		return crcOf(ReadOnlySpan.ofBytes(b, pos, len), ReadOnlySpan.unsafeOf((table() : Ptr<Int>), 256));
+
+	// (in the safe subset of kernels: docs/interop.md, "Spans"; the loop
+	// proves both element checks away, the table's index by the test of
+	// its length, which never fails)
+	@:hxmc.kernel static function crcOf(s:ReadOnlySpan<UInt8>, t:ReadOnlySpan<Int>):Int {
+		if (t.length < 256) return 0;
 		var c = 0xFFFFFFFF;
-		for (i in 0...len)
-			c = Mem.getI32At(t, 0, (c ^ Mem.getU8At(p, 0, i)) & 0xFF) ^ (c >>> 8);
+		for (i in 0...s.length)
+			c = t[(c ^ s[i]) & 0xFF] ^ (c >>> 8);
 		return c ^ 0xFFFFFFFF;
 	}
 

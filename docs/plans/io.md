@@ -165,7 +165,7 @@ The design, built in steps (a PR each):
 3. spans, checked views of buffers, and where they may
    exist (built);
 4. the bounds checks' define and their measured cost (built);
-5. a leaf routine of the std moved onto the subset.
+5. a leaf routine of the std moved onto the subset (built).
 
 ### The attribute
 
@@ -424,6 +424,20 @@ the minimum and the median of 10 runs, in ns per element.
 The checked loops are now the raw loops' code: their Mir differs only in
 the span's two words loaded at entry. The checked sum is faster than raw
 (the raw kernel's bound is a parameter).
+
+### A leaf of the std on spans
+
+**Built**: `hxmc.NativeZip.crc32` (the compiler's ZIP reader checks every
+entry with it) is a safe kernel over two spans: the bytes, lent by
+`ReadOnlySpan.ofBytes` (its range checked there, `OutsideBounds` as
+before), and the table, malloc'ed once and kept, lent by `unsafeOf`. No
+raw access is left in it, and the loop proves both element checks away:
+the byte's by its test, the table's index (`& 0xFF`) by a test of the
+table's length against 256 before the loop (which never fails). Its cost,
+x86-64 (`crc32` of 1 MB, callgrind, 2026-10-29): 15 instructions a byte
+raw, 17 on spans with the byte's check proved away, 14 with the table's
+too; in time all three are within the machine's noise (3.3 to 3.55 ns a
+byte, the loop waits on the table's load).
 
 ### Inlining, generics, closures
 
