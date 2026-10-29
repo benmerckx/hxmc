@@ -577,12 +577,36 @@ class DataGen {
 			for (s in o.symbols)
 				if (s.section == null && !s.abs && (StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASSREF) || StringTools.startsWith(s.name, hxmc.ir.ObjC.SELREF)
 					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(s.name, hxmc.ir.ObjC.IVAR_CELL)
-					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.BLOCK_DESC)))
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.BLOCK_DESC) || StringTools.startsWith(s.name, hxmc.ir.ObjC.GLOBAL_BLOCK)))
 					names.set(s.name, true);
 		var list = [for (n in names.keys()) n];
 		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		var descs = new Map<String, Bool>();
 		for (n in list) {
-			if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASSREF)) {
+			if (StringTools.startsWith(n, hxmc.ir.ObjC.GLOBAL_BLOCK)) {
+				// (a global block: isa, flags, reserved, invoke, descriptor, the
+				// closure; its descriptor: reserved, size, signature, layout)
+				var f = n.substr(hxmc.ir.ObjC.GLOBAL_BLOCK.length).split("_");
+				var unhex = (s:String) -> haxe.io.Bytes.ofHex(s).toString();
+				var desc = hxmc.ir.ObjC.GLOBAL_DESC + f[0];
+				if (!descs.exists(desc)) {
+					descs.set(desc, true);
+					data.buf.align(8);
+					obj.define(desc, data, data.buf.len, 32, true);
+					data.buf.u64(0, 0);
+					data.buf.u64(40, 0);
+					ptrSym(data, cstr(unhex(f[0])));
+					data.buf.u64(0, 0);
+				}
+				data.buf.align(8);
+				obj.define(n, data, data.buf.len, 40, true);
+				ptr(data, "_NSConcreteGlobalBlock");
+				data.buf.u32(Std.parseInt(f[1]) | hxmc.ir.ObjC.BLOCK_IS_GLOBAL);
+				data.buf.u32(0);
+				ptr(data, unhex(f[2]));
+				ptr(data, desc);
+				ptr(data, unhex(f[3]));
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASSREF)) {
 				var sec = obj.section("__DATA,__objc_classrefs", Data, 8);
 				obj.define(n, sec, sec.buf.len, 8, true);
 				ptr(sec, hxmc.ir.ObjC.CLASS_SYM + n.substr(hxmc.ir.ObjC.CLASSREF.length));

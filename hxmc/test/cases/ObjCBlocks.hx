@@ -184,5 +184,32 @@ class ObjCBlocks {
 			if (i % 5000 == 0) hxmc.rt.Gc.collect(i % 10000 == 0);
 		}
 		trace("many: " + total);
+
+		// closures capturing nothing: global blocks (one per function and
+		// signature, never freed), the function again when called back
+		var g1:Block<(o:NSObject, idx:Int64, stop:Ptr) -> Void> = visit;
+		var g2:Block<(o:NSObject, idx:Int64, stop:Ptr) -> Void> = visit;
+		trace("global: " + (g1 == g2) + " " + (Mem.getI32(cast g1, 8) & (1 << 28) != 0) + " " + Reflect.compareMethods((g1 : (o:NSObject, idx:Int64, stop:Ptr) -> Void), visit));
+		arr.enumerateObjectsUsingBlock(visit);
+		arr.enumerateObjectsUsingBlock((o, idx, stop) -> visited += 100);
+		hxmc.rt.Gc.collect(true);
+		arr.enumerateObjectsUsingBlock(g1);
+		var sema = Dispatch.dispatch_semaphore_create(0);
+		workerSema = sema;
+		Dispatch.dispatch_async(Dispatch.dispatch_get_global_queue(0, 0), signalWorker);
+		Dispatch.dispatch_semaphore_wait(sema, -1);
+		trace("global calls: " + visited);
 	});
+
+	static var visited = 0;
+	static var workerSema:Ptr;
+
+	static function visit(o:NSObject, idx:Int64, stop:Ptr):Void
+		visited++;
+
+	static function signalWorker():Void {
+		var keep = [for (i in 0...10000) "g" + i];
+		visited += keep.length;
+		Dispatch.dispatch_semaphore_signal(workerSema);
+	}
 }

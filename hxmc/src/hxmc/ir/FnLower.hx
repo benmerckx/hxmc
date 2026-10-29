@@ -1965,8 +1965,8 @@ class FnLower {
 					case Method(_):
 						var f = l.staticFunc(c, cf);
 						var li = l.staticClosure(f);
-						var x = temp(TRef(RClos(li.sig)), ENewClos(li, vector()));
-						coerce(x, TRef(RClos(li.sig)), tyOf(e));
+						// (capturing nothing: no temporary, so that a block of it sees the closure: blockOf)
+						coerce(ENewClos(li, vector()), TRef(RClos(li.sig)), tyOf(e));
 				}
 			case FAnon(cf):
 				anonGet(cf.cfName, obj, e);
@@ -3412,10 +3412,33 @@ class FnLower {
 	function blockOf(x:Ex, from:Ty, ft:core.TType.T, e:TExpr):Ex {
 		var b = ObjC.blockSig(l, ft, where(e));
 		var ct = TRef(RClos(b.sig));
-		var c = asLocal(coerce(x, from, ct), ct);
+		var cx = coerce(x, from, ct);
+		// (a closure capturing nothing: never null, a global block with static closures, MirBuild)
+		var sc = capturesNothing(cx);
+		if (sc != null) return temp(TId, ObjC.blockNew(l, sc, b));
+		var c = asLocal(cx, ct);
 		var r = newLocal("block", TId);
 		out.push(SIf(EBin(RefEq, ELocal(c), ENull(ct)), vector(SSet(r, EConv(I2L, EInt(0)))), vector(SSet(r, ObjC.blockNew(l, ELocal(c), b)))));
 		return ELocal(r);
+	}
+
+	// x, a closure capturing nothing (pure: made again where it is used), or
+	// the local the statement just before set to one; else null
+	function capturesNothing(x:Ex):Null<Ex> {
+		switch x {
+			case ENewClos(_, []):
+				return x;
+			case ELocal(lo):
+				var k = out.length - 1;
+				while (k >= 0 && out[k].match(SPos(_)))
+					k--;
+				return k >= 0 ? switch out[k] {
+					case SSet(d, c = ENewClos(_, [])) if (d == lo): c;
+					case _: null;
+				} : null;
+			case _:
+				return null;
+		}
 	}
 
 	function blockFunction(x:Ex, ft:core.TType.T, to:Ty, e:TExpr):Ex {

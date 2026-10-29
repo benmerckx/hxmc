@@ -410,6 +410,18 @@ class ObjC {
 	// the prefix of the invokes' symbols
 	public static inline var BLOCK_DESC = "hxmc$objcblk$";
 	public static inline var INVOKE = "hxmc_block_";
+	// a closure capturing nothing made a block (static closures: MirBuild
+	// makes rt_objc_block_new of one this symbol): a global block in the data
+	// (DataGen.objcRefs: isa _NSConcreteGlobalBlock, never copied nor freed),
+	// its capture the closure's address; named by its types, flags, invoke
+	// and closure (hex: GLOBAL_BLOCK + types _ flags _ invoke _ closure), and
+	// its descriptor's (GLOBAL_DESC + types: no copy and dispose helpers)
+	public static inline var GLOBAL_BLOCK = "hxmc$objcgblk$";
+	public static inline var GLOBAL_DESC = "hxmc$objcgdesc$";
+	public static inline var BLOCK_IS_GLOBAL = 1 << 28;
+	// (the global block's address, which MirBuild makes: the closure, the
+	// invoke's address, the types as a C string, the flags)
+	public static inline var GLOBAL_BLOCK_HOST = "hxmc_objc_global_block";
 	static inline var BLOCK_HAS_SIGNATURE = 1 << 30;
 	static inline var BLOCK_USE_STRET = 1 << 29;
 
@@ -545,6 +557,11 @@ class ObjC {
 		var flags = BLOCK_HAS_SIGNATURE;
 		// (x86-64: a struct result over 16 bytes comes back through memory)
 		if (Lower.targetArm == 0 && CInterop.sizeOf(b.ret) > 16) flags |= BLOCK_USE_STRET;
+		// (a closure capturing nothing, an object in the data with static
+		// closures, which a Mir host has not: a global block, GLOBAL_BLOCK)
+		if (Lower.mirHost == 0 && c.match(ENewClos(_, [])))
+			return ECallHost(GLOBAL_BLOCK_HOST, vector(c, sym(l.blockInvoke(b.sig, b.args, b.ret)), ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(b.types)), TI64),
+				EInt(flags)), TId);
 		return ECallHost("rt_objc_block_new", vector(ECast(TRef(RAny), c), sym(l.blockInvoke(b.sig, b.args, b.ret)),
 			sym(BLOCK_DESC + haxe.io.Bytes.ofString(b.types).toHex()), ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(b.types)), TI64), EInt(flags),
 			sym("_NSConcreteStackBlock"), sym("_Block_copy"), sym(symbol(l, "objc_autorelease"))), TId);

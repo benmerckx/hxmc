@@ -96,9 +96,9 @@ answer them.
    (Haxe allows both on an extern). Only declarations, never the headers'
    comments (Apple's SDK terms); clang is needed when generating only.
 2. **Blocks**: built (a closure's entry in the runtime's table, counted
-   by the block's helpers; [interop.md](../interop.md#blocks)). Open: a
-   closure without captures as a global block (no entry, no copy), blocks
-   taking or returning blocks.
+   by the block's helpers; a closure capturing nothing: a global block in
+   the data; [interop.md](../interop.md#blocks)). Open: blocks taking or
+   returning blocks.
 3. **Release on death by layout**: a constructor registers its class's own
    `id` fields, a closure its captured `id`s, a captured variable's box its
    own (`rt_objc_own`: an entry per slot, appended under a lock; every

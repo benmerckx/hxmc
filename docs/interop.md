@@ -655,6 +655,10 @@ Dispatch.dispatch_async(Mem.sym("_dispatch_main_q"), () -> done = true);
   index of the closure's entry in the runtime's table of blocks, a root
   while a block refers to it (the block's copy and dispose helpers count
   them); its invoke, one per signature, finds the closure by it. Null is nil.
+  A function capturing nothing (a static function, a lambda reading only
+  statics) is a global block instead, in the program's data: one per
+  function and signature, never copied nor freed, so making it costs
+  nothing (not on a Mir host, which has no static closures).
 - **A block made a function** calls the block, holding a reference to it;
   a block made of a Haxe function is that function again.
 - **Calls** run the closure as a method's entry does: out of the caller's

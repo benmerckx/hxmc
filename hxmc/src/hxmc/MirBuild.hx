@@ -1488,7 +1488,30 @@ class MirBuild extends MirWriter {
 		return readVar(r, cur);
 	}
 
+	// the global block of a closure capturing nothing (hxmc.ir.ObjC.GLOBAL_BLOCK),
+	// from GLOBAL_BLOCK_HOST's arguments: the closure, the invoke's symbol, the types, the flags
+	function globalBlockSym(l:LambdaInfo, args:Vector<Ex>):String {
+		inline function str(x:Ex)
+			return switch x {
+				case ECallHost(_, a, _) if (a.length == 1 && a[0].match(EStr(_))): switch a[0] {
+						case EStr(s): s;
+						case _: throw "hxmc: global block";
+					}
+				case _: throw "hxmc: global block";
+			};
+		var hex = (s:String) -> haxe.io.Bytes.ofString(s).toHex();
+		return hxmc.ir.ObjC.GLOBAL_BLOCK + hex(str(args[2])) + "_" + intLiteral(args[3], "block flags") + "_" + hex(str(args[1])) + "_"
+			+ hex(p.closureSym(l));
+	}
+
 	function host(name:String, args:Vector<Ex>, ret:Ty):Int {
+		if (name == hxmc.ir.ObjC.GLOBAL_BLOCK_HOST)
+			switch args[0] {
+				case ENewClos(l, []) if (p.staticClosures):
+					return symAddr(globalBlockSym(l, args));
+				case _:
+					throw "hxmc: a global block without static closures";
+			}
 		if (name == "hxmc_narray_lit") {
 			// (FnLower: NativeArray.literal) the storage of the elements args[1...] of
 			// kind args[0], as newArr makes an Array literal's: none, the empty array

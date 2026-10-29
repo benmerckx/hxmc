@@ -332,6 +332,7 @@ class Gc {
 	static inline var BLOCK_CHUNKS = 4096;
 	static inline var BLOCK_SIZE = 40; // Block_layout's 32 bytes, the index
 	static inline var BLOCK_HAS_COPY_DISPOSE = 1 << 25;
+	static inline var BLOCK_IS_GLOBAL = 1 << 28;
 	static var blockChunks:Ptr; // BLOCK_CHUNKS chunks' addresses (null: none yet)
 	static var nblocks:Int;
 	static var blockFree:Int = -1;
@@ -420,15 +421,21 @@ class Gc {
 		Os.unlock(blocksLock);
 	}
 
-	// the closure of block b (made by blockNew), for its invoke
-	@:hxmc.export("rt_objc_block_get") static function blockGet(b:Ptr):Dynamic
-		return Mem.obj(Mem.getPtr(blockEntry(Mem.getI64(b, BLOCK_SIZE - 8).toInt()), 0));
+	// the closure of block b (made by blockNew; a global block of a closure
+	// capturing nothing, in the data: its address, hxmc.ir.ObjC.GLOBAL_BLOCK),
+	// for its invoke
+	@:hxmc.export("rt_objc_block_get") static function blockGet(b:Ptr):Dynamic {
+		var c = Mem.getPtr(b, BLOCK_SIZE - 8);
+		return Mem.obj(Mem.getI32(b, 8) & BLOCK_IS_GLOBAL != 0 ? c : Mem.getPtr(blockEntry(c.toI64().toInt()), 0));
+	}
 
 	// the closure of block b when blockNew made it with this invoke (of the
 	// closure's signature), else null: a block becoming a function again is
 	// that function (hxmc.ir.ObjC.blockFunction)
 	@:hxmc.export("rt_objc_block_fn") static function blockFn(b:Ptr, invoke:Ptr):Dynamic {
-		if (Mem.getI32(b, 8) & BLOCK_HAS_COPY_DISPOSE == 0 || Mem.getPtr(b, 16) != invoke) return null;
+		if (Mem.getPtr(b, 16) != invoke) return null;
+		if (Mem.getI32(b, 8) & BLOCK_IS_GLOBAL != 0) return blockGet(b);
+		if (Mem.getI32(b, 8) & BLOCK_HAS_COPY_DISPOSE == 0) return null;
 		var d = Mem.getPtr(b, 24);
 		if (Mem.getPtr(d, 16) != Callback.addr(blockCopy) || Mem.getI64(d, 8) != (BLOCK_SIZE : I64)) return null;
 		return blockGet(b);

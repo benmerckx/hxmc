@@ -13,3 +13,5 @@ ObjCBlocks.hx:161: field: 12
 ObjCBlocks.hx:163: null: true
 ObjCBlocks.hx:178: released and collected: true
 ObjCBlocks.hx:186: many: 200000
+ObjCBlocks.hx:192: global: true true true
+ObjCBlocks.hx:201: global calls: 10510
