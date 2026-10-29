@@ -181,7 +181,7 @@ class ModuleCacheCheck {
 		var callop = [
 			"src/Main.hx" => "import p.Api.*;\n\nclass Main {\n\tstatic function main() {\n\t\tUse.run();\n\t\tvar s = sig(10);\n\t\ts(20);\n\t\ts(c -> c + 1);\n\t\ttrace(s());\n\t\tvar t = sig2(\"a\");\n\t\tt(c -> c + \"b\");\n\t\ttrace(t());\n\t}\n}\n",
 			"src/Use.hx" => "import p.Api.*;\n\nfunction run() {\n\tvar s = sig(1);\n\ts(2);\n\ts(c -> c + 1);\n\ts(5);\n\ttrace(s());\n\tvar t = sig2(1);\n\tt(c -> c * 3);\n\tt(t() + 1);\n\ttrace(t());\n}\n",
-			"src/p/Api.hx" => "package p;\n\nclass Api {\n\tpublic static function sig<T>(v:T):Sig<T> return new Sig(v);\n\n\tpublic static function sig2<T>(v:T):Sig2<T> return new Sig2(v);\n}\n",
+			"src/p/Api.hx" => "package p;\n\nimport p.Sig;\n\nclass Api {\n\tpublic static function sig<T>(v:T):Sig<T> return new Sig(v);\n\n\tpublic static function sig2<T>(v:T):Sig2<T> return new Sig2(v);\n}\n",
 			"src/p/Sig.hx" => [
 				"package p;",
 				"class Cell<T> {",
