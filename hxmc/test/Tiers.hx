@@ -12,8 +12,8 @@ using StringTools;
 //          corpus under node, the module cache's store (CacheCheck), the
 //          lowering's queries (LowerQueriesCheck), where the tool finds the
 //          runtime objects in npm's layout (RtSearchCheck), a frontend's
-//          compiler adding a function after the lowering (FrontendCheck):
-//          after every edit
+//          compiler adding a function after the lowering and typing markup
+//          literals (FrontendCheck): after every edit
 //   check  quick + linux-arm64 (qemu) and windows-x86_64 (wine), x64 with a
 //          16 KB nursery, the wasm corpus with legacy exception handling
 //          (-D hxmc.wasm-eh=legacy) under node, the corpus in the dynamic glibc

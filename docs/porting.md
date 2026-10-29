@@ -81,6 +81,24 @@ runtime writes back as those bytes
   `x :: l` and shared tails: there use `core.ds.MlList` (`Nil`/`Cons`).
   The matcher's rows use it. Convert another site only when it measures.
 
+## Port-only hooks
+
+Where hxmc, or a compiler built from these sources, needs a say in the
+compiler, the port has a hook upstream does not: a static `Null<...>`
+variable, null by default, whose `// port:` note says what it is for. Null,
+or a hook that declines, keeps upstream's behaviour exactly, so the
+conformance lanes (which never set one) are unchanged. hxmc's own hooks
+(the module cache, Mir macros, struct values, its externs) are found with
+`grep -rn "static var .*Hook" haxe/src`. Those for a frontend
+([hxmc.md](hxmc.md#frontends)):
+
+- `compiler.Compiler.generateHook`: the filtered program, for a code
+  generator of another target.
+- `compiler.Compiler.beforeTypingHook`: before the typing starts.
+- `typing.Typer.markupHook`: a markup literal (`@:markup "<...>"`) as the
+  expression typed in its place, where upstream raises "Markup literals
+  must be processed by a macro" (`typeMeta`).
+
 ## Divergences from the reference
 
 A bug of the reference that breaks the compiler for its users, and that

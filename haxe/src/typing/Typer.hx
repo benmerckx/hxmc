@@ -1557,6 +1557,15 @@ class Typer {
 		return makeIfThenElse(ctx, condition, thenExpr, elseExpr, withType, p);
 	}
 
+	// port: hook (not upstream): a markup literal (`@:markup "<...>"`, e1 its
+	// ... string, p its position) as the expression typed in its place, with the
+	// ... literal's expected type; null, or a hook giving null: upstream's error.
+	// ... Display requests come here too, e1 an EDisplay(string, DKMarked) when the
+	// ... display position is in the literal (ExprPreprocessing). For a frontend's
+	// ... compiler built from these sources (docs/hxmc.md, "Frontends"); always
+	// ... null in the compiler itself.
+	public static var markupHook:Null<(ctx:TyperContext, e1:Expr, withType:WithTypeValue, p:Pos) -> Null<Expr>> = null;
+
 	public static function typeMeta(ctx:TyperContext, m:MetadataEntry, e1:Expr, withType:WithTypeValue, p:Pos, ?mode:AccessMode):TExpr {
 		if (mode == null) mode = MGet;
 		if (ctx.m.isDisplayFile) checkDisplayMetadata(ctx, [m]);
@@ -1574,7 +1583,11 @@ class Typer {
 					case TAbstract(a, _) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): callToString(ctx, e);
 					case _: e;
 				}
-			case MetaTag.Markup: raiseTypingError("Markup literals must be processed by a macro", p);
+			case MetaTag.Markup:
+				// port: markupHook's expression, typed in the literal's place (not upstream)
+				var r = markupHook != null ? markupHook(ctx, e1, withType, p) : null;
+				if (r == null) raiseTypingError("Markup literals must be processed by a macro", p);
+				typeExpr(ctx, r, withType, mode);
 			case MetaTag.Analyzer: preserve();
 			case MetaTag.MergeBlock: switch e1.expr {
 					case EBlock(el):

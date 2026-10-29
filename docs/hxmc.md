@@ -89,6 +89,31 @@ function a new `body` vector rather than writing into the one it has.
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.
 
+A frontend that embeds markup in Haxe code (`<p>{name}</p>`, which the
+parser reads as `@:markup "<p>{name}</p>"`) can type each literal where the
+typer meets it, in any function, instead of with a global `@:build` macro
+(which runs on every type, and makes warm builds with the module cache
+slower). The seam is in `haxe/src/typing/Typer.hx`, a port hook
+([porting.md](porting.md#port-only-hooks)):
+
+```haxe
+// a markup literal (e1 its string, p its position) as the expression typed in its place;
+// null: not handled (upstream's "Markup literals must be processed by a macro")
+public static var markupHook:Null<(ctx:TyperContext, e1:Expr, withType:WithTypeValue, p:Pos) -> Null<Expr>>;
+```
+
+The expression it returns is typed with the literal's expected type
+(`withType`) in the literal's context: it can name the locals in scope, and
+the hook can type parts of it itself with `Typer.typeExpr(ctx, e, ...)`.
+Display requests type literals the same way. One whose position holds the
+display position comes as `EDisplay(string, DKMarked)` (upstream's
+preprocessing marks the string): the hook returns its expression wrapped in
+an `EDisplay` of that kind, or of a part of it the display position is in,
+for hover and completion there. The module cache keeps each build of a
+compiler in its own store (`CacheDir.toolStamp`: the binary's path, size and
+time), so a frontend's typed modules are never mixed with `haxe`'s.
+`Frontend.hx` sets it too (`hxmc/test/frontend/markup`).
+
 ## Runtime in Haxe
 
 The runtime is Haxe compiled with the program (`hxmc/std/hxmc/rt`):

@@ -259,7 +259,8 @@ jobs:
       - name: Module cache store
         run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
       # a frontend's compiler built from hxmc's sources adds a function after
-      # the lowering (hxmc.Main.beforeCodegen, docs/hxmc.md "Frontends")
+      # the lowering (hxmc.Main.beforeCodegen) and types markup literals
+      # (typing.Typer.markupHook; docs/hxmc.md "Frontends")
       - name: The frontends' seam
         run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run FrontendCheck
       # the persistent module cache: the same outputs with and without it
@@ -1328,8 +1329,8 @@ jobs:
       # @hxmc/source at @hxmc/cli's version (a fresh project: app has another
       # machine's platform package, --force): @hxmc/cli's haxe builds a
       # compiler from its sources with a main of its own, natively
-      # (hxmc/test/frontend: a function added after the lowering,
-      # docs/hxmc.md "Frontends"), which builds a program that calls it
+      # (hxmc/test/frontend: a function added after the lowering, markup
+      # literals typed, docs/hxmc.md "Frontends"), which builds programs using them
       - name: A frontend built from @hxmc/source
         if: matrix.plat == 'linux-x64'
         run: |
@@ -1344,9 +1345,13 @@ jobs:
           src=node_modules/@hxmc/source
           time npx haxe -cp $src/haxe/src -cp $src/hxmc/src -cp "$GITHUB_WORKSPACE/dl/frontend" -main Frontend -D disable-parallelism --custom-target hxmc=bin/frontend
           (export HAXE_STD_PATH="$PWD/node_modules/@hxmc/cli/haxe/upstream/std" HXMC_STD="$PWD/node_modules/@hxmc/cli/hxmc/bootstrap/hxmc-std" HXMC_RT_DIR="$PWD/node_modules/@hxmc/linux-x64"
-            bin/frontend -cp "$GITHUB_WORKSPACE/dl/frontend/app" -main Main --custom-target hxmc=bin/answer)
+            bin/frontend -cp "$GITHUB_WORKSPACE/dl/frontend/app" -main Main --custom-target hxmc=bin/answer
+            bin/frontend -cp "$GITHUB_WORKSPACE/dl/frontend/markup" -main Main --custom-target hxmc=bin/markup)
           ./bin/answer | tee answer.out
           test "$(cat answer.out)" = "$(printf 'answer 42\nanswer 1')"
+          # (markup literals typed by the frontend: typing.Typer.markupHook)
+          ./bin/markup | tee markup.out
+          test "$(cat markup.out)" = "$(printf 'markup <p>hello</p>\n<p>world</p> (String)\n11')"
           # (installed, it changes nothing for haxe while no hxmc-rebuild ran)
           npx haxe -cp "$GITHUB_WORKSPACE/dl/frontend/app" -main Main --custom-target hxmc=bin/plain && ./bin/plain | tee plain.out
           test "$(cat plain.out)" = "answer 1"
