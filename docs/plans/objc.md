@@ -83,7 +83,8 @@ answer them.
    (`@:deprecated`), `instancetype` as each class's own type (`alloc` per
    class, inherited initializers and other `instancetype` methods
    redeclared with `override`), `NS_UNAVAILABLE` left out. Properties as
-   `var x(get, set)` with extern accessors carrying their selectors, so a
+   `var x(get, set)` with extern accessors (selectors derived: `get_x` is
+   `x`, `set_x` `setX:`; `@:selector` for `getter=` and `setter=`), so a
    Haxe subclass can override them (`isFlipped` is a property). A member a
    category of another framework declares (Foundation's `-description` on
    NSObject) loads that framework: a classref loads only the class's own,

@@ -517,13 +517,17 @@ import hxmc.objc.Selector;
 @:hxmc.lib("/usr/lib/libobjc.A.dylib") @:hxmc.objc extern class NSObject {
   static function alloc():NSObject;
   function init():NSObject;
-  var description(default, null):NSString;         // a read-only property
+  @:hxmc.framework("Foundation")                    // a category of another framework's
+  function description():NSString;
 }
 @:hxmc.framework("AppKit") @:hxmc.objc extern class NSView extends NSObject {
   static function alloc():NSView;                   // statics are not inherited
   function initWithFrame(frame:Rect):NSView;
-  var frame:Rect;                                   // frame, setFrame:
-  @:getter("isHidden") var hidden:Bool;
+  var frame(get, set):Rect;                         // a property
+  function get_frame():Rect;                        // frame
+  function set_frame(v:Rect):Rect;                  // setFrame:
+  var flipped(get, never):Bool;                     // read-only
+  @:selector("isFlipped") function get_flipped():Bool;
   function addSubview(view:NSView):Void;            // addSubview:
   function convertPoint(point:Point, fromView:Null<NSView>):Point;  // convertPoint:fromView:
   function hitTest(point:Point):Null<NSView>;
@@ -535,12 +539,13 @@ class RowView extends NSView {                      // a Haxe class AppKit calls
     super.initWithFrame(frame);                     // self = [super initWithFrame:frame]
     this.onClick = onClick;
   }
+  override function get_flipped() return true;     // AppKit sees it
   override function hitTest(point:Point):Null<NSView>
     return inside(frame, point) ? this : null;
 }
 
 var v = NSView.alloc().initWithFrame(new Rect(0, 0, 100, 20));
-v.hidden = true;
+v.frame = new Rect(0, 0, 50, 20);
 row.addSubview(v);
 if (command == Selector.of("moveDown:")) ...
 ```
@@ -552,7 +557,8 @@ if (command == Selector.of("moveDown:")) ...
 | `@:hxmc.objc` | an extern class (its extern subclasses too) is an Objective-C class: its values are `id`s; `@:hxmc.objc("Name")` or `@:native` names it at run time |
 | `@:hxmc.framework("AppKit")` | the class is the system framework's (`/System/Library/Frameworks/AppKit.framework/AppKit`); `@:hxmc.lib("path")` names another library. Per class, not inherited (a subclass is often another framework's) |
 | `@:selector("a:b:")` | a method's selector, instead of the derived one |
-| `@:getter("isX")`, `@:setter("setX:")` | a property's accessors, instead of `x` and `setX:` (Haxe's own metadata, read as Flash reads it) |
+| `@:hxmc.framework("Foundation")` on a member | declared by a category of another framework: that framework is loaded when the member is sent (a class's reference loads only its own) |
+| `@:getter("isX")`, `@:setter("setX:")` | the accessors of a property written as a plain `var`, instead of `x` and `setX:` (Haxe's own metadata, read as Flash reads it) |
 
 - **Selectors** follow from the names: a method's name, then each
   parameter's name after the first, each with a colon:
@@ -566,8 +572,13 @@ if (command == Selector.of("moveDown:")) ...
   `alloc` is declared by each class, and a subclass redeclares the
   initializers it inherits for their result's type (`override function
   initWithFrame(frame:Rect):NSTextField`), as `instancetype` has it.
-- **Properties** are `var`s: reading sends the getter, writing the setter;
-  `(default, null)` makes one read-only. A `static var` is a class property
+- **Properties** are `var x(get, set)` with extern accessors: `get_x()` sends
+  `x`, `set_x(v)` sends `setX:` and returns `v` (the setter returns nothing),
+  `@:selector` on an accessor names another (`getter=isFlipped`).
+  `(get, never)` makes one read-only. A Haxe class extending the class
+  overrides `get_x` or `set_x`, and Objective-C calls the override. A plain
+  `var x` works too (reading sends the getter, writing the setter; `@:getter`,
+  `@:setter`), but cannot be overridden. A `static var` is a class property
   (`NSScreen.mainScreen`), a static method a message to the class.
 - **Types** in messages are those of C calls: scalars, `Ptr`, `@:hxmc.struct`
   values (by value, both ways), Objective-C classes (`id`), Haxe classes

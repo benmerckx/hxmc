@@ -3373,6 +3373,12 @@ class FnLower {
 		var xs = obj != null ? args(VectorTools.cons(obj, cargs), VectorTools.cons(tyOf(obj), ats), null) : args(cargs, ats, null);
 		var self = obj != null ? coerce(xs[0], tyOf(obj), TId) : objcClass(c);
 		var rest = [for (i in (obj != null ? 1 : 0)...xs.length) xs[i]];
+		if (rest.length == 1 && ObjC.isSetter(c, cf)) {
+			// (a property's set_x: the message returns nothing, the call the value)
+			var v = ELocal(asLocal(rest[0], ats[0]));
+			out.push(SExpr(objcMsg(self, ObjC.selector(cf, s), [for (a in s.args) a.type], [v], null, cf, e, TVoid)));
+			return coerce(v, ats[0], tyOf(e));
+		}
 		return objcMsg(self, ObjC.selector(cf, s), [for (a in s.args) a.type], rest, s.ret, cf, e);
 	}
 
@@ -3482,6 +3488,10 @@ class FnLower {
 	// selector from its selref (DataGen.objcRefs)
 	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:Null<TClassField>, e:TExpr, ?to:Ty, keep = false):Ex {
 		if (to == null) to = tyOf(e);
+		if (cf != null) {
+			var lib = ObjC.memberLibrary(cf);
+			if (lib != null) CInterop.LOADS.set(lib, true);
+		}
 		var key = try ObjC.declare(cf, types, ret) catch (err:LowerError) {
 			if (err.where == "") err.where = where(e);
 			throw err;

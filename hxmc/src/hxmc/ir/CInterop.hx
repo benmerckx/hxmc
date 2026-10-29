@@ -47,6 +47,9 @@ class CInterop {
 	// @:hxmc.lib: the library a symbol comes from (a DLL, a dylib, a
 	// WebAssembly import module)
 	public static var LIBS = new Map<String, String>();
+	// libraries loaded though the program imports nothing of them: the
+	// frameworks of the Objective-C category members it sends (ObjC.memberLibrary)
+	public static var LOADS = new Map<String, Bool>();
 	// WebAssembly: the import's name of a symbol that importKey made (a C
 	// function of an @:hxmc.lib module other than "env")
 	public static var IMPORT_NAMES = new Map<String, String>();
@@ -66,6 +69,7 @@ class CInterop {
 		SIGS = new Map();
 		BLOCKING = new Map();
 		LIBS = new Map();
+		LOADS = new Map();
 		IMPORT_NAMES = new Map();
 		USER = new Map();
 		FnLower.C_EXTERNS = new Map();

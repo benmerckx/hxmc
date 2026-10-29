@@ -704,6 +704,8 @@ class Driver {
 			l.collect = collect;
 			if (abi.output == SharedLibrary) l.installName = "@rpath/" + haxe.io.Path.withoutDirectory(out);
 			l.dylibs = dylibs;
+			l.loads = [for (lib in hxmc.ir.CInterop.LOADS.keys()) LinkInputs.libFile(lib, abi)];
+			l.loads.sort(Reflect.compare);
 			if (abi.ios()) l.minos = o.iosMinos;
 			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;

@@ -114,6 +114,36 @@ class ObjC {
 	public static inline var CLASS_SYM = "OBJC_CLASS_$_";
 	public static inline var CLASSREF = "hxmc$classref$";
 
+	// the library of a member that a category of another library declares
+	// (Foundation's -description on libobjc's NSObject): @:hxmc.framework or
+	// @:hxmc.lib on the field, loaded whenever the member is sent
+	// (CInterop.LOADS: the class's classref loads only its own)
+	public static function memberLibrary(cf:TClassField):Null<String> {
+		var fw = Lower.metaArg(core.Meta.getOpt(Custom(":hxmc.framework"), cf.cfMeta));
+		if (fw != null) return '/System/Library/Frameworks/$fw.framework/$fw';
+		return Lower.metaArg(core.Meta.getOpt(Custom(":hxmc.lib"), cf.cfMeta));
+	}
+
+	// a property's set accessor (`set_x` of a property `var x(get, set)` of c
+	// or a superclass): Haxe's returns the value it sets, Objective-C's setter
+	// nothing, so its message returns nothing and its call the argument, and a
+	// Haxe override's entry (imps) nothing
+	public static function isSetter(c:TClass, cf:TClassField):Bool {
+		if (!StringTools.startsWith(cf.cfName, "set_")) return false;
+		var name = cf.cfName.substr(4), k = c;
+		while (k != null) {
+			var f = k.clFields.get(name);
+			if (f == null) f = k.clStatics.get(name);
+			if (f != null)
+				return switch f.cfKind {
+					case Var(v): v.vWrite == AccCall;
+					case _: false;
+				}
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		return false;
+	}
+
 	// a selector's word (DataGen.objcRefs): its name in hexadecimal after SELREF
 	public static inline var SELREF = "hxmc$selref$";
 
@@ -133,12 +163,16 @@ class ObjC {
 	// the selector of a method: @:selector("a:b:"), or the method's name
 	// followed by its parameters' names after the first one, each with a
 	// colon (`initWithFrame(frame)`: "initWithFrame:"; `setObject(o, forKey)`:
-	// "setObject:forKey:")
+	// "setObject:forKey:"); a property's accessors, as Objective-C's are named:
+	// `get_frame()` "frame", `set_frame(v)` "setFrame:"
 	public static function selector(cf:TClassField, s:TSignature):String {
 		var n = Lower.metaArg(core.Meta.getOpt(Custom(":selector"), cf.cfMeta));
 		if (n != null) return n;
 		n = Lower.metaArg(core.Meta.getOpt(Native, cf.cfMeta));
 		var name = n != null ? n : cf.cfName;
+		if (StringTools.startsWith(name, "get_") && s.args.length == 0) return name.substr(4);
+		if (StringTools.startsWith(name, "set_") && s.args.length == 1 && name.length > 4)
+			return "set" + name.charAt(4).toUpperCase() + name.substr(5) + ":";
 		if (s.args.length == 0) return name;
 		var b = new StringBuf();
 		b.add(name);
@@ -232,7 +266,9 @@ class ObjC {
 				case _: continue;
 			};
 			var cts = [for (a in s.args) CInterop.ctype(a.type)];
-			var ret = CInterop.ctype(s.ret);
+			// (an override of a property's set_x: Objective-C's setter returns nothing)
+			var setter = decl != cf && isSetter(c, cf);
+			var ret = setter ? CVoid : CInterop.ctype(s.ret);
 			function ok(ct:CTy)
 				return CInterop.isScalar(ct) || ct.match(CStruct(_));
 			if (!Lambda.foreach(cts, ok) || !(ret == CVoid || CInterop.isScalar(ret))) {
@@ -249,7 +285,7 @@ class ObjC {
 			w.args = [self, new Local(1, "_cmd", TI64)];
 			for (i in 1...fi.args.length)
 				w.args.push(new Local(i + 1, fi.args[i].name, fi.args[i].ty));
-			w.ret = fi.ret;
+			w.ret = setter ? TVoid : fi.ret;
 			var peer = new Local(w.args.length, "peer", TRef(RAny));
 			w.locals.push(peer);
 			var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
@@ -261,7 +297,7 @@ class ObjC {
 			];
 			var xs = [ECast(fi.args[0].ty, ELocal(peer))].concat([for (i in 2...w.args.length) (ELocal(w.args[i]) : Ex)]);
 			var call = ECall(fi, Vector.fromArrayCopy(xs));
-			if (fi.ret == TVoid) {
+			if (w.ret == TVoid) {
 				body.push(SExpr(call));
 				body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
 				body.push(SReturn(null));

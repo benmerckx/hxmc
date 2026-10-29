@@ -48,6 +48,9 @@ class LinkMachO extends LinkCore {
 	public var minos = IOS_MIN; // (iOS: -D hxmc.ios-min-version, Options.iosMinos)
 	// imports from other dylibs than libSystem (@:hxmc.lib): symbol -> install name
 	public var dylibs = new Map<String, String>();
+	// dylibs loaded whatever the program imports from them (an Objective-C
+	// category's framework: hxmc.ir.CInterop.LOADS), after those it imports from
+	public var loads:Array<String> = [];
 
 	// a dylib (-D hxmc.shared): its install name
 	public var installName = "";
@@ -328,6 +331,8 @@ class LinkMachO extends LinkCore {
 			}
 			ordinal.set(name, k + 1);
 		}
+		for (d in loads)
+			if (libs.indexOf(d) < 0) libs.push(d);
 		if (binds.length > 0) {
 			var curOrd = 1;
 			le.u8(0x11); // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM 1
