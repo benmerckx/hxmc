@@ -319,3 +319,10 @@ module optimization-Issue9388 haxe/upstream/tests/optimization/src issues.Issue9
 module optimization-Issue9617 haxe/upstream/tests/optimization/src issues.Issue9617
 module optimization-Issue9778 haxe/upstream/tests/optimization/src issues.Issue9778
 module optimization-Issue9943 haxe/upstream/tests/optimization/src issues.Issue9943
+# Overloaded call operators (@:op(a())) of abstracts in another module, inline
+# and not, one taking a function called with a lambda, from a module-level
+# function and a class (hxblib/callop). The overloads are the impl classes'
+# statics of the other operator functions; the reference writes the archive
+# but cannot read it back (docs/porting.md, divergences).
+hxml callop-overloads haxe/test/hxblib/callop -cp lib -cp app --main Main --interp
+diverges callop-overloads the reader of an abstract's call operator overloads (compiler.hxb.HxbReader.readClassFields)

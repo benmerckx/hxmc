@@ -1725,6 +1725,30 @@ class HxbReader {
 			if (!(num == 0)) throw "assert false";
 		}
 		loop(CfrMember, uleb(), c.clOrderedFields);
+		// port: diverges from upstream: an abstract's @:op(a()) overloads are the impl class's statics of
+		// ... the other operator functions, the same fields (typeloadFields.ml: `cf'.cf_overloads <- cf ::
+		// ... cf'.cf_overloads`). The writer refers to them by name, as those statics, and writes their
+		// ... data and expressions twice (as overloads, then as statics); upstream's reader makes the
+		// ... overloads separate fields from the forward declarations, so the second EXD entry of each
+		// ... static finds its HxbId taken and the module cannot be read (Not_found, reported by a
+		// ... reader of a module that refers to it as "Cannot resolve type"). The overloads become the
+		// ... statics again before their data is read: each such static then holds the HxbId of both
+		// ... writes, as EXD reads it twice. The archives stay upstream's (docs/porting.md; the corpus's
+		// ... CallOpOverloads, ModuleCacheCheck's callop, Conformance's callop-overloads, hxblib-callop).
+		switch c.clKind {
+			case KAbstractImpl(_):
+				for (cf in c.clOrderedStatics) {
+					var overloads = cf.cfOverloads;
+					for (i in 0...overloads.length) {
+						var cf2 = overloads[i];
+						if (cf2.cfName != cf.cfName) {
+							var cfStatic = c.clStatics.get(cf2.cfName);
+							if (cfStatic != null) overloads[i] = cfStatic;
+						}
+					}
+				}
+			case _:
+		}
 		loop(CfrStatic, uleb(), c.clOrderedStatics);
 	}
 
