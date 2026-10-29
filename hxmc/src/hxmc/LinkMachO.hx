@@ -20,7 +20,11 @@ import hxmc.Abi;
 // __TEXT and __DATA); absolute pointers get BASE added and a rebase entry.
 // Whatever the objects leave undefined is bound from libSystem (two-level
 // namespace, ordinal 1) with its Mach-O name (`_` + the C name): calls go
-// through a stub per function, address loads through slots in __got.
+// through a stub per function, address loads through slots in __got. An
+// address taken in code (Mem.sym: adrp and add, lea) is loaded from the
+// symbol's slot instead (the instruction made a load, as LinkDyn does for a
+// shared library's variable): an import may be a variable
+// (_NSConcreteStackBlock, _dispatch_main_q), whose stub would be no address of it.
 // arm64 executables must be signed: an ad-hoc, linker-signed code signature
 // (a CodeDirectory of SHA-256 page hashes) ends __LINKEDIT.
 // Thread-local variables: the runtime's descriptors (__thread_vars: thunk
@@ -75,6 +79,26 @@ class LinkMachO extends LinkCore {
 
 	static function isObjcSection(s:Section):Bool
 		return s.name == "__DATA,__objc_classrefs" || s.name == "__DATA,__objc_selrefs";
+
+	// an address of an import taken in code (adrp and add, lea): loaded from its
+	// slot (false: another relocation, a call's)
+	static function relaxToGot(s:Section, r:Reloc):Bool {
+		switch r.kind {
+			case RA64AdrPage21:
+				r.kind = RA64GotPage21;
+			case RA64AddLo12:
+				var w = s.buf.get32(r.offset);
+				if ((w & 0xffc00000) != 0x91000000) throw "hxmc: link: the address of " + r.sym.name + ", an import, in an instruction other than add";
+				s.buf.set32(r.offset, 0xf9400000 | (w & 0x3ff)); // ldr xd, [xn, :got_lo12:]
+				r.kind = RA64GotLo12;
+			case RPc32 if (r.offset >= 2 && s.kind == Text && s.buf.get8(r.offset - 2) == 0x8D):
+				s.buf.set8(r.offset - 2, 0x8B); // lea -> mov from the slot
+				r.kind = RGotPcRel32;
+			case _:
+				return false;
+		}
+		return true;
+	}
 
 	public function link(entry:String):Bytes {
 		// (whichever signature the driver set: a dylib's is not a main binary's)
@@ -180,6 +204,7 @@ class LinkMachO extends LinkCore {
 					for (r in s.relocs) {
 						var imp = imported(r.sym);
 						if (LinkCore.isGotRel(r.kind)) slot(r.sym);
+						else if (imp && relaxToGot(s, r)) slot(r.sym);
 						else if (imp && r.kind != RAbs64) {
 							// code (a call, or an address taken pc-relatively): the stub
 							stub(r.sym.name);

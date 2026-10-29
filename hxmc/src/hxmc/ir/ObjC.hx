@@ -68,11 +68,11 @@ class ObjC {
 			case _: false;
 		}
 
-	// a type whose values are ids
+	// a type whose values are ids (a block too: hxmc.objc.Block<F>)
 	public static function isIdType(t:T):Bool
 		return switch TFunctions.follow(t) {
 			case TInst(c, _): isObjC(c);
-			case _: false;
+			case _: blockOfType(t) != null;
 		}
 
 	// the runtime's name of the class: @:hxmc.objc("Name"), @:native, or the
@@ -218,12 +218,12 @@ class ObjC {
 		var name = cf != null ? cf.cfName : "init";
 		var args = [CPtr, CPtr, CPtr];
 		for (i in 0...types.length) {
-			var ct = CInterop.ctype(types[i]);
+			var ct = ctype(types[i]);
 			if (!CInterop.isScalar(ct) && !ct.match(CStruct(_)))
 				throw new LowerError('Objective-C method $name: parameter ${i + 1} has no C type a message can pass', where);
 			args.push(ct);
 		}
-		var ret = result == null ? CVoid : CInterop.ctype(result);
+		var ret = result == null ? CVoid : ctype(result);
 		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('Objective-C method $name: the result has no C type a message can return', where);
 		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in args) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
@@ -284,14 +284,24 @@ class ObjC {
 				case TFun(s): s;
 				case _: continue;
 			};
-			var cts = [for (a in s.args) CInterop.ctype(a.type)];
+			var cts = [for (a in s.args) ctype(a.type)];
 			// (an override of a property's set_x: Objective-C's setter returns nothing)
 			var setter = decl != cf && isSetter(c, cf);
-			var ret = setter ? CVoid : CInterop.ctype(s.ret);
+			var ret = setter ? CVoid : ctype(s.ret);
 			function ok(ct:CTy)
 				return CInterop.isScalar(ct) || ct.match(CStruct(_));
 			if (!Lambda.foreach(cts, ok) || !(ret == CVoid || ok(ret))) {
 				if (decl != cf) throw new LowerError('${cf.cfName} overrides an Objective-C method, which has types C has not', CInterop.posOf(cf.cfPos));
+				continue;
+			}
+			// (a block: an id in the entry, the function it is (blockFunction) for
+			// the method; one of types a block has not: a method Objective-C does not see)
+			var blocks, blockRet;
+			try {
+				blocks = [for (a in s.args) isBlockType(a.type) ? blockSig(l, a.type, CInterop.posOf(cf.cfPos)) : null];
+				blockRet = !setter && isBlockType(s.ret) ? blockSig(l, s.ret, CInterop.posOf(cf.cfPos)) : null;
+			} catch (e:LowerError) {
+				if (decl != cf) throw e;
 				continue;
 			}
 			var fi = l.method(c, cf);
@@ -306,10 +316,16 @@ class ObjC {
 			// returns it by the C ABI's rules)
 			var n = fi.sret ? fi.args.length - 1 : fi.args.length;
 			for (i in 1...n)
-				w.args.push(new Local(i + 1, fi.args[i].name, fi.args[i].ty));
-			w.ret = setter ? TVoid : fi.ret;
+				w.args.push(new Local(i + 1, fi.args[i].name, blocks[i - 1] != null ? TId : fi.args[i].ty));
+			w.ret = setter ? TVoid : blockRet != null ? TId : fi.ret;
 			var peer = new Local(w.args.length, "peer", TRef(RAny));
 			w.locals.push(peer);
+			var next = w.args.length + 3;
+			function local(name:String, t:Ty) {
+				var lo = new Local(next++, name, t);
+				w.locals.push(lo);
+				return lo;
+			}
 			var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
 			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + root), EInt(0)), TI64);
 			var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(self), off), EInt(0)), TI32);
@@ -317,7 +333,17 @@ class ObjC {
 				SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)),
 				SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))
 			];
-			var xs = [ECast(fi.args[0].ty, ELocal(peer))].concat([for (i in 2...w.args.length) (ELocal(w.args[i]) : Ex)]);
+			var xs = [ECast(fi.args[0].ty, ELocal(peer))];
+			for (i in 2...w.args.length) {
+				var b = blocks[i - 2];
+				if (b == null) {
+					xs.push(ELocal(w.args[i]));
+					continue;
+				}
+				var fn = local("fn", fi.args[i - 1].ty);
+				body.push(blockFunction(l, ELocal(w.args[i]), b, local("same", TRef(RAny)), local("box", TRef(RAny)), fn));
+				xs.push(ELocal(fn));
+			}
 			// the call, in a try: an exception leaving it would unwind through
 			// Objective-C's frames, which skips their cleanup (rt_objc_uncaught
 			// reports it and ends the program, as an uncaught one)
@@ -348,6 +374,12 @@ class ObjC {
 				body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
 			})));
 			w.hasTry = true;
+			if (blockRet != null) {
+				// (a function result: a block)
+				var id = local("block", TId);
+				body.push(SIf(EBin(RefEq, ELocal(res), ENull(res.ty)), vector(SSet(id, EConv(I2L, EInt(0)))), vector(SSet(id, blockNew(l, ELocal(res), blockRet)))));
+				res = id;
+			}
 			body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
 			body.push(SReturn(res == null ? null : ELocal(res)));
 			w.body = Vector.fromArrayCopy(body);
@@ -355,10 +387,180 @@ class ObjC {
 			r.push({
 				sel: decl != cf ? selector(decl, s) : selector(cf, s),
 				sym: w.cSymbol,
-				types: encoding(ret) + "@:" + [for (ct in cts) encoding(ct)].join("")
+				types: (blockRet != null ? "@?" : encoding(ret)) + "@:" + [for (i in 0...cts.length) blocks[i] != null ? "@?" : encoding(cts[i])].join("")
 			});
 		}
 		return r;
+	}
+
+	// ---- blocks: a function type in a message's signature (or of a Haxe
+	// method Objective-C calls) is a block, as hxmc.objc.Block<F> is
+	// anywhere else. A Haxe function becomes a heap block (rt_objc_block_new:
+	// _Block_copy of one built in the runtime's frame, autoreleased) whose
+	// capture is the index of the closure's entry in the runtime's table
+	// (hxmc.rt.Gc: a root while a heap block refers to it, counted by the
+	// block's copy and dispose helpers), and whose invoke (one per signature)
+	// finds the closure by it. A block becomes a closure holding the block's
+	// box (a reference: FnLower.blockCall), or the function it was made of.
+
+	// the program's word holding the descriptor of the blocks of a signature
+	// (made by the first block: hxmc.rt.Gc.blockNew; DataGen.objcRefs), and
+	// the prefix of the invokes' symbols
+	public static inline var BLOCK_DESC = "hxmc$objcblk$";
+	public static inline var INVOKE = "hxmc_block_";
+	static inline var BLOCK_HAS_SIGNATURE = 1 << 30;
+	static inline var BLOCK_USE_STRET = 1 << 29;
+
+	// a function type, where it is a block (a message's parameter or result)
+	public static function isBlockType(t:T):Bool
+		return TFunctions.follow(t).match(TFun(_));
+
+	// hxmc.objc.Block<F>: its F, else null
+	public static function blockOfType(t:T):Null<T>
+		return switch TFunctions.follow(t) {
+			case TAbstract(a, [f]) if (a.aPath.name == "Block" && a.aPath.pack.join(".") == "hxmc.objc"): f;
+			case _: null;
+		}
+
+	// the C type of a message's (or a method's entry's) parameter or result:
+	// a function's is a block's
+	public static function ctype(t:T):CTy
+		return isBlockType(t) ? CPtr : CInterop.ctype(t);
+
+	// a block of function type ft: the closures' signature, the C types of
+	// its invoke's parameters (after the block) and result, its type encoding
+	// (the descriptor's signature: @? the block itself)
+	public static function blockSig(l:LowerQueries, ft:T, where:String):BlockSig {
+		var s = switch TFunctions.follow(ft) {
+			case TFun(s): s;
+			case _: throw new LowerError("a block of a type that is no function", where);
+		};
+		var sig = switch l.ty(ft) {
+			case TRef(RClos(sig)): sig;
+			case _: throw new LowerError("a block of a type that is no function", where);
+		};
+		function ok(ct:CTy)
+			return CInterop.isScalar(ct) || ct.match(CStruct(_));
+		var args = [for (a in s.args) CInterop.ctype(a.type)];
+		for (i in 0...args.length)
+			if (!ok(args[i])) throw new LowerError('a block\'s parameter ${i + 1} has no C type a block can take', where);
+		var ret = CInterop.ctype(s.ret);
+		if (ret != CVoid && !ok(ret)) throw new LowerError("a block's result has no C type a block can return", where);
+		return {sig: sig, args: args, ret: ret, types: encoding(ret) + "@?" + [for (a in args) encoding(a)].join("")};
+	}
+
+	// the key of a block's invoke (and of its caller, Lower.blockCaller): the
+	// closures' signature and the C types
+	public static function blockKey(sig:SigInfo, args:Array<CTy>, ret:CTy):String
+		return sig.key + "|" + [for (a in args) CInterop.shape(a)].join(",") + ">" + CInterop.shape(ret);
+
+	// the invoke of the blocks of closures of signature sig (Lower.blockInvoke,
+	// once per signature): sym, a C function (block, arguments...) that
+	// attaches the thread when the runtime did not start it (GCD's workers),
+	// leaves the safe region the caller is in, calls sym__call, and enters
+	// it again; sym__call finds the closure (rt_objc_block_get: the index in
+	// the block) and calls it, in a try as a method's entry (imps). Two
+	// functions: the first has no frame, which a thread not yet attached
+	// could not push
+	public static function invoke(l:Lower, sym:String, sig:SigInfo, args:Array<CTy>, ret:CTy) {
+		var sret = sig.ret.match(TStruct(_));
+		var fi = new FuncInfo(sym + "__call", "_closures");
+		fi.display = "(a block's invoke)";
+		var block = new Local(0, "block", TI64);
+		fi.args = [block];
+		for (i in 0...sig.args.length)
+			fi.args.push(new Local(i + 1, "a" + i, sig.args[i]));
+		fi.ret = sig.ret;
+		var sretLocal = null;
+		if (sret) {
+			sretLocal = new Local(fi.args.length, "sret", TI64);
+			fi.args.push(sretLocal);
+			fi.sret = true;
+		}
+		var n = fi.args.length;
+		var clos = new Local(n, "clos", TRef(RClos(sig)));
+		var exn = new Local(n + 1, "e", TRef(RAny));
+		fi.locals = [clos, exn];
+		var res = sig.ret == TVoid || sret ? null : new Local(n + 2, "r", sig.ret);
+		if (res != null) fi.locals.push(res);
+		var xs = [for (i in 1...n) (ELocal(fi.args[i]) : Ex)];
+		var call = ECallClos(sig, ELocal(clos), Vector.fromArrayCopy(xs));
+		fi.body = vector(SSet(clos, ECast(TRef(RClos(sig)), ECallHost("rt_objc_block_get", vector(ELocal(block)), TRef(RAny)))),
+			STry(vector(res == null ? SExpr(call) : SSet(res, call)), vector({
+				test: null,
+				l: exn,
+				body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
+			})), SReturn(sret ? ELocal(sretLocal) : res == null ? null : ELocal(res)));
+		fi.hasTry = true;
+		l.prog.funcs.push(fi);
+		var w = new FuncInfo(sym, "_closures");
+		w.cSymbol = sym;
+		w.display = fi.display;
+		w.cAbi = {args: [CPtr].concat(args), ret: ret};
+		w.args = [for (i in 0...sig.args.length + 1) new Local(i, fi.args[i].name, fi.args[i].ty)];
+		w.ret = sig.ret;
+		var ys = [for (a in w.args) (ELocal(a) : Ex)];
+		var body:Array<Stmt> = [
+			SExpr(ECallHost("rt_objc_attach", vector(), TVoid)),
+			SExpr(ECallHost("rt_blocking_leave", vector(), TVoid))
+		];
+		var r = new Local(w.args.length, "r", sig.ret == TVoid ? TI32 : sig.ret);
+		if (sret) {
+			// (a struct result: in a slot of this frame, returned by the C ABI's rules)
+			w.locals.push(r);
+			var size = switch sig.ret {
+				case TStruct(_, size): size;
+				case _: 8;
+			};
+			body.push(SSet(r, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(size), EInt(8)), TI64)));
+			body.push(SExpr(ECall(fi, Vector.fromArrayCopy(ys.concat([ELocal(r)])))));
+		} else if (sig.ret != TVoid) {
+			w.locals.push(r);
+			body.push(SSet(r, ECall(fi, Vector.fromArrayCopy(ys))));
+		} else body.push(SExpr(ECall(fi, Vector.fromArrayCopy(ys))));
+		body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
+		body.push(SReturn(sig.ret == TVoid ? null : ELocal(r)));
+		w.body = Vector.fromArrayCopy(body);
+		l.prog.funcs.push(w);
+	}
+
+	// a heap block calling closure c (not null) of the block's signature b:
+	// autoreleased, as every id a value is
+	public static function blockNew(l:LowerQueries, c:Ex, b:BlockSig):Ex {
+		var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
+		var flags = BLOCK_HAS_SIGNATURE;
+		// (x86-64: a struct result over 16 bytes comes back through memory)
+		if (Lower.targetArm == 0 && CInterop.sizeOf(b.ret) > 16) flags |= BLOCK_USE_STRET;
+		return ECallHost("rt_objc_block_new", vector(ECast(TRef(RAny), c), sym(l.blockInvoke(b.sig, b.args, b.ret)),
+			sym(BLOCK_DESC + haxe.io.Bytes.ofString(b.types).toHex()), ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(b.types)), TI64), EInt(flags),
+			sym("_NSConcreteStackBlock"), sym("_Block_copy"), sym(symbol(l, "objc_autorelease"))), TId);
+	}
+
+	// block id (a local) as a closure of b's signature, into r: null for nil,
+	// the function a block made of one is (same: rt_objc_block_fn, when its
+	// invoke is this signature's), else a closure calling it (Lower.blockCaller)
+	// holding its box (box: a reference to the block, released once the
+	// closure dies)
+	public static function blockFunction(l:LowerQueries, id:Ex, b:BlockSig, same:Local, box:Local, r:Local):Stmt {
+		var fn = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(symbol(l, s))), TI64);
+		return SIf(EBin(LEq, id, EConv(I2L, EInt(0))), vector(SSet(r, ENull(r.ty))), vector(
+			SSet(same, ECallHost("rt_objc_block_fn", vector(id, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(l.blockInvoke(b.sig, b.args, b.ret))), TI64)), TRef(RAny))),
+			SIf(EBin(RefEq, ELocal(same), ENull(TRef(RAny))), vector(
+				SSet(box, ECallHost("rt_objc_box", vector(id, fn("objc_retain"), fn("objc_release"), fn("object_getClass"), fn("class_getInstanceVariable"),
+					fn("ivar_getOffset")), TRef(RAny))),
+				SSet(r, ENewClos(l.blockCaller(b.sig, b.args, b.ret), vector(ELocal(box))))
+			), vector(SSet(r, ECast(r.ty, ELocal(same)))))
+		));
+	}
+
+	// the indirect C function a block of C types (args, ret) is called
+	// through (FnLower.blockCall): (its invoke's address, the block, arguments...),
+	// in a safe region as a message
+	public static function declareBlockCall(l:LowerQueries, args:Array<CTy>, ret:CTy):String {
+		var cargs = [CPtr, CPtr].concat(args);
+		var key = CInterop.INDIRECT + "block(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
+		l.objcDeclare(Func(key, {args: cargs, ret: ret}));
+		return key;
 	}
 
 	// a selector's method family, as ARC names them: the first word
@@ -393,6 +595,9 @@ class ObjC {
 			case _: false;
 		}
 }
+
+// a block's types (ObjC.blockSig)
+typedef BlockSig = {sig:SigInfo, args:Array<CTy>, ret:CTy, types:String};
 
 // what a body declares for the program's link (LowerQueries.objcDeclare)
 enum Decl {

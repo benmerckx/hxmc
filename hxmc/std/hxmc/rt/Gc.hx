@@ -17,7 +17,8 @@ import hxmc.unsafe.*;
 // which is collected by copying too. Roots: the threads' shadow stacks
 // (reference locals live across a GC point), the globals table (rt_globals),
 // the remembered sets (the write barrier), the threads' entry closures,
-// Tls values and current exceptions, and the finalisers.
+// Tls values and current exceptions, the finalisers, and the closures
+// Objective-C blocks call (blockNew).
 //
 // Threads (Threads): each thread allocates in its own chunk of the nursery
 // (a TLAB: rt_young_ptr/rt_young_limit, taken from youngNext) and records
@@ -308,6 +309,142 @@ class Gc {
 		}
 		for (k in 0...ndead)
 			Ind.call1(peerRelease, Mem.getPtr(deadPeers, 8 * k));
+	}
+
+	// ---- Objective-C blocks (hxmc.ir.ObjC.blockOf): a Haxe function made a
+	// block is a heap block (_Block_copy of one built in blockNew's frame)
+	// whose capture is the index of an entry here: (closure, count) pairs,
+	// the count the heap blocks referring to the entry. The block's copy
+	// helper (blockCopy: _Block_copy calls it) adds one, its dispose helper
+	// (blockDispose: libclosure calls it as it frees the block) takes one;
+	// at zero the entry is free (a null closure, the next free index in the
+	// count's word). An entry with a closure is a root (scanBlocks), from
+	// blockNew on: the copy that counts it follows without a GC point. A
+	// minor collection scans only the entries made since the last collection
+	// (blockRecent): the others' closures are old, which only a major one moves.
+	// The table is chunks of BLOCK_CHUNK entries that never move, so that an
+	// invoke reads its closure without the lock (blockGet: it runs out of
+	// any safe region, so no collection moves the closure meanwhile, and the
+	// block it was called with keeps the entry). The helpers run on any
+	// thread, in any state (in a safe region while the collector runs: it
+	// takes the lock to scan), so the lock is taken with one thread too.
+	static inline var BLOCK_CHUNK = 1024;
+	static inline var BLOCK_CHUNKS = 4096;
+	static inline var BLOCK_SIZE = 40; // Block_layout's 32 bytes, the index
+	static inline var BLOCK_HAS_COPY_DISPOSE = 1 << 25;
+	static var blockChunks:Ptr; // BLOCK_CHUNKS chunks' addresses (null: none yet)
+	static var nblocks:Int;
+	static var blockFree:Int = -1;
+	static var blocksLock:Ptr;
+	static var blockRecent:Ptr; // the indices of the entries made since the last collection
+	static var nrecent:Int;
+	static var recentCap:Int;
+
+	@:hxmc.unsafe static inline function blockEntry(i:Int):Ptr
+		return Mem.getPtr(blockChunks, 8 * (i >> 10)).add(16 * (i & (BLOCK_CHUNK - 1)));
+
+	// a heap block calling f through invoke (an entry of hxmc.ir.ObjC.invoke),
+	// autoreleased: the descriptor of its signature (the C string sig) made
+	// at the first block of it, in the program's word `cell`; flags as libclosure
+	// has them (BLOCK_HAS_SIGNATURE, x86-64's BLOCK_USE_STRET); libclosure's
+	// and libobjc's functions and the stack blocks' class come as addresses
+	// (the runtime does not link either)
+	@:hxmc.export("rt_objc_block_new") @:hxmc.unsafe static function blockNew(f:Dynamic, invoke:Ptr, cell:Ptr, sig:Ptr, flags:Int, stackIsa:Ptr, blockCopyFn:Ptr,
+			autorelease:Ptr):Ptr {
+		var p = Mem.addr(f);
+		Os.lock(blocksLock);
+		var d = Mem.getPtr(cell, 0);
+		if (d.isNull()) {
+			// (Block_descriptor: reserved, size, copy, dispose, signature, layout)
+			d = LibC.malloc(48);
+			Mem.setI64(d, 0, 0);
+			Mem.setI64(d, 8, BLOCK_SIZE);
+			Mem.setPtr(d, 16, Callback.addr(blockCopy));
+			Mem.setPtr(d, 24, Callback.addr(blockDispose));
+			Mem.setPtr(d, 32, sig);
+			Mem.setI64(d, 40, 0);
+			Mem.setPtr(cell, 0, d);
+		}
+		var i = blockFree;
+		if (i >= 0) {
+			blockFree = Mem.getI64(blockEntry(i), 8).toInt();
+		} else {
+			if (blockChunks.isNull()) {
+				blockChunks = LibC.malloc(8 * BLOCK_CHUNKS);
+				LibC.memset(blockChunks, 0, 8 * BLOCK_CHUNKS);
+			}
+			if (nblocks == BLOCK_CHUNK * BLOCK_CHUNKS) dieC(Mem.cstr("too many blocks made of Haxe functions alive\n"));
+			if (nblocks & (BLOCK_CHUNK - 1) == 0) Mem.setPtr(blockChunks, 8 * (nblocks >> 10), LibC.malloc(16 * BLOCK_CHUNK));
+			i = nblocks++;
+		}
+		var e = blockEntry(i);
+		Mem.setPtr(e, 0, p);
+		Mem.setI64(e, 8, 0);
+		if (nrecent == recentCap) {
+			recentCap = recentCap == 0 ? 64 : recentCap * 2;
+			blockRecent = LibC.realloc(blockRecent, (recentCap : I64) * 4);
+		}
+		Mem.setI32(blockRecent, 4 * nrecent++, i);
+		Os.unlock(blocksLock);
+		// (the stack block: Block_layout, then the index)
+		var b = Mem.stack(BLOCK_SIZE);
+		Mem.setPtr(b, 0, stackIsa);
+		Mem.setI32(b, 8, flags | BLOCK_HAS_COPY_DISPOSE);
+		Mem.setI32(b, 12, 0);
+		Mem.setPtr(b, 16, invoke);
+		Mem.setPtr(b, 24, d);
+		Mem.setI64(b, 32, (i : I64));
+		return Ind.call1(autorelease, Ind.call1(blockCopyFn, b));
+	}
+
+	// a heap block made of block src (dst, its copy): one more referring to the
+	// entry. Without the lock: only blockNew's stack block is ever copied
+	// (_Block_copy of a heap block retains it), in blockNew, and nothing
+	// else writes the entry before the block exists
+	@:hxmc.callback @:hxmc.unsafe static function blockCopy(dst:Ptr, src:Ptr):Void {
+		var e = blockEntry(Mem.getI64(src, BLOCK_SIZE - 8).toInt());
+		Mem.setI64(e, 8, Mem.getI64(e, 8) + 1);
+	}
+
+	// heap block b freed: one less; none, the entry is free (its closure no root)
+	@:hxmc.callback @:hxmc.unsafe static function blockDispose(b:Ptr):Void {
+		var i = Mem.getI64(b, BLOCK_SIZE - 8).toInt();
+		var e = blockEntry(i);
+		Os.lock(blocksLock);
+		var n = Mem.getI64(e, 8) - 1;
+		if (n == 0) {
+			Mem.setPtr(e, 0, Ptr.nil());
+			Mem.setI64(e, 8, (blockFree : I64));
+			blockFree = i;
+		} else Mem.setI64(e, 8, n);
+		Os.unlock(blocksLock);
+	}
+
+	// the closure of block b (made by blockNew), for its invoke
+	@:hxmc.export("rt_objc_block_get") static function blockGet(b:Ptr):Dynamic
+		return Mem.obj(Mem.getPtr(blockEntry(Mem.getI64(b, BLOCK_SIZE - 8).toInt()), 0));
+
+	// the closure of block b when blockNew made it with this invoke (of the
+	// closure's signature), else null: a block becoming a function again is
+	// that function (hxmc.ir.ObjC.blockFunction)
+	@:hxmc.export("rt_objc_block_fn") static function blockFn(b:Ptr, invoke:Ptr):Dynamic {
+		if (Mem.getI32(b, 8) & BLOCK_HAS_COPY_DISPOSE == 0 || Mem.getPtr(b, 16) != invoke) return null;
+		var d = Mem.getPtr(b, 24);
+		if (Mem.getPtr(d, 16) != Callback.addr(blockCopy) || Mem.getI64(d, 8) != (BLOCK_SIZE : I64)) return null;
+		return blockGet(b);
+	}
+
+	// the entries' closures: roots (scanRoots); a minor collection's, the recent ones'
+	@:hxmc.unsafe static function scanBlocks(root:Bool) {
+		Os.lock(blocksLock);
+		var n = major ? nblocks : nrecent;
+		for (k in 0...n) {
+			var e = blockEntry(major ? k : Mem.getI32(blockRecent, 4 * k));
+			var o = Mem.getPtr(e, 0);
+			if (!o.isNull()) Mem.setPtr(e, 0, fwdAs(o, root));
+		}
+		nrecent = 0;
+		Os.unlock(blocksLock);
 	}
 
 	// ---- ids in fields of Haxe objects (hxmc.ir.ObjC): each such field (a
@@ -938,6 +1075,7 @@ class Gc {
 			Mem.setPtr(finalQueue, 16 * i + 8, fwdAs(Mem.getPtr(finalQueue, 16 * i + 8), root));
 		}
 		if (npeers > 0) scanPeers(root);
+		if (nblocks > 0 && (major || nrecent > 0)) scanBlocks(root);
 	}
 
 	// ---- remembered sets: every started thread's, and the ended threads'
@@ -1786,6 +1924,8 @@ class Gc {
 		Os.mutexInit(nativesLock);
 		peersLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(peersLock);
+		blocksLock = LibC.malloc(Os.MUTEX_BYTES);
+		Os.mutexInit(blocksLock);
 		fdLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(fdLock);
 		return sstack;

@@ -180,6 +180,8 @@ enum LCall {
 	CFieldDefaults(c:TClass, cf:TClassField, key:String);
 	CExtern(sym:String, c:TClass, cf:TClassField);
 	CObjC(d:hxmc.ir.ObjC.Decl);
+	CBlockInvoke(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy, r:String);
+	CBlockCaller(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy, r:LambdaInfo);
 }
 
 // The program's signatures and shapes asked by a body: logged
@@ -678,6 +680,22 @@ class CachedLower extends Lower {
 		log(CObjC(d));
 	}
 
+	override public function blockInvoke(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy):String {
+		depth++;
+		var r = super.blockInvoke(sig, args, ret);
+		depth--;
+		log(CBlockInvoke(sig, args, ret, r));
+		return r;
+	}
+
+	override public function blockCaller(sig:SigInfo, args:Array<hxmc.ir.CInterop.CTy>, ret:hxmc.ir.CInterop.CTy):LambdaInfo {
+		depth++;
+		var r = super.blockCaller(sig, args, ret);
+		depth--;
+		log(CBlockCaller(sig, args, ret, r));
+		return r;
+	}
+
 	// the default values of a function's arguments as text (their typed
 	// expressions printed, with the position of one not a constant, and the
 	// names of the arguments), per ArgDefaults (argDefaults gives the same
@@ -820,6 +838,10 @@ class CachedLower extends Lower {
 					case Func(sym, s): Func(sym, {args: s.args.map(cty), ret: cty(s.ret)});
 					case _: d;
 				});
+			case CBlockInvoke(s, args, ret, r):
+				if (blockInvoke(obj(s), args.map(cty), cty(ret)) != r) mismatch("the invoke " + r + " changed");
+			case CBlockCaller(s, args, ret, r):
+				bindLambda(r, blockCaller(obj(s), args.map(cty), cty(ret)));
 		}
 	}
 

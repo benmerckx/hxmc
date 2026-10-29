@@ -120,6 +120,11 @@ interface LowerQueries {
 	@:derived function idFields(ci:ClassInfo):Array<String>;
 	// (its own fields holding weak ids, @:hxmc.weak: ClassInfo.weakFields, compared as idFields)
 	@:derived function weakFields(ci:ClassInfo):Array<String>;
+	// an Objective-C block's invoke for closures of signature sig, its C
+	// types (args, ret): its symbol (made once per program: ObjC.invoke); and
+	// the closure calling such a block (as adapter: once per program)
+	@:logged function blockInvoke(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):String;
+	@:logged function blockCaller(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):LambdaInfo;
 	// the symbol of a @:hxmc.callback function: of its name (staticFunc)
 	@:derived function callbackSym(f:FuncInfo):String;
 	// the @:hxmc.struct class of a struct type's name (ty's TStruct)

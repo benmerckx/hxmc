@@ -673,6 +673,8 @@ class Lower implements LowerQueries {
 					case "EnumValue" if (isStd): TRef(REnum(null));
 					case "UInt" if (isStd): TI32;
 					case "I64" if (a.aPath.pack.join(".") == "hxmc"): TI64;
+					// an Objective-C block (ObjC): an id
+					case "Block" if (a.aPath.pack.join(".") == "hxmc.objc"): TId;
 					// in macro mode (Mir macros, hxmc.interp.MirMacros): the compiler's position, opaque
 					case "Position" if (a.aPath.pack.join(".") == "haxe.macro"): TRef(RAny);
 					// a coroutine is a function taking the continuation, as on HashLink
@@ -1636,6 +1638,33 @@ class Lower implements LowerQueries {
 		li = newLambda(sig, vector(self), fl -> fl.forward(f, dispatch), dispatch == null ? f.name + "__bound" : lambdaName(owner), dispatch == null ? f.module : owner.module);
 		if (f != null) li.fn.display = f.display;
 		if (dispatch == null) boundClosures.set(f, li);
+		return li;
+	}
+
+	// Objective-C blocks (ObjC.blockSig): the invoke of the blocks of a
+	// signature (its symbol), and the closure calling such a block, once per
+	// signature and C types
+	var blockInvokes = new Map<String, String>();
+
+	public function blockInvoke(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):String {
+		var key = ObjC.blockKey(sig, args, ret);
+		var sym = blockInvokes.get(key);
+		if (sym != null) return sym;
+		sym = ObjC.INVOKE + haxe.io.Bytes.ofString(key).toHex();
+		blockInvokes.set(key, sym);
+		ObjC.invoke(this, sym, sig, args, ret);
+		return sym;
+	}
+
+	var blockCallers = new Map<String, LambdaInfo>();
+
+	public function blockCaller(sig:SigInfo, args:Array<CInterop.CTy>, ret:CInterop.CTy):LambdaInfo {
+		var key = ObjC.blockKey(sig, args, ret);
+		var li = blockCallers.get(key);
+		if (li != null) return li;
+		var box = new Local(-1, "block", TRef(RAny));
+		li = newLambda(sig, vector(box), fl -> fl.blockCall(args, ret), "blockcall__" + key, "_closures");
+		blockCallers.set(key, li);
 		return li;
 	}
 

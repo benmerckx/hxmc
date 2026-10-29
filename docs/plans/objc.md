@@ -64,6 +64,17 @@ answer them.
   Objective-C's and a generator can emit them without metadata in the
   common case; `@:selector` for the rest. Swift's renaming (omit needless
   words) was not followed: it is a rule set of its own.
+- **A block holds an index into the runtime's table of closures, not the
+  closure.** The other design built (the closure in the heap block, its
+  slot registered by the copy helper as a root, unregistered by dispose)
+  made and called blocks as fast (1M made and freed: ~80 ms both; 10M
+  calls: ~150 ms both, arm64), but every minor collection walked every
+  live block (2.6 ms at 1M), and the collector wrote into libclosure's
+  memory. With the table, a minor collection scans only the entries made
+  since the last one (0.3 µs at 1M live blocks), and an invoke reads its
+  closure with no lock, as entries never move. The cost: a table that
+  never shrinks and a ceiling of 4M live blocks; both take a lock as a
+  block is made and as it is freed.
 
 ## Open, in order
 
@@ -84,9 +95,10 @@ answer them.
    generics. A class method and an instance method of one name are fine
    (Haxe allows both on an extern). Only declarations, never the headers'
    comments (Apple's SDK terms); clang is needed when generating only.
-2. **Blocks** from closures: a block whose invoke function finds the
-   closure, copy and dispose helpers that keep it alive while Objective-C
-   holds the block (the `id`s a closure captures hold references already).
+2. **Blocks**: built (a closure's entry in the runtime's table, counted
+   by the block's helpers; [interop.md](../interop.md#blocks)). Open: a
+   closure without captures as a global block (no entry, no copy), blocks
+   taking or returning blocks.
 3. **Release on death by layout**: a constructor registers its class's own
    `id` fields, a closure its captured `id`s, a captured variable's box its
    own (`rt_objc_own`: an entry per slot, appended under a lock; every
@@ -105,7 +117,8 @@ answer them.
    a closure sending the message would do); a pool
    around `main` (nothing gained: it drains at exit); reading retain
    counts while another thread is stopped inside libobjc holding its
-   lock.
+   lock; methods of Haxe classes Objective-C calls (`ObjC.imps`) on a
+   thread the runtime did not start (blocks attach it, imps do not yet).
 
 ## Considered, not decided
 

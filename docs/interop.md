@@ -628,6 +628,39 @@ variable leads back to it.
 - **Passing** an instance where an `id` goes passes its `id`; `cast` turns
   an `id` of such a class back into its Haxe object (unchecked).
 
+### Blocks
+
+A function type in a message's signature is a block: a parameter, a
+result, a property; in a Haxe method Objective-C calls too. Elsewhere (a C
+function's parameter, a field, a value) `hxmc.objc.Block<F>` is one: an
+`id`, held as ids are, converted from and to a function `F`.
+
+```haxe
+@:hxmc.objc extern class NSArray extends NSObject {
+  function enumerateObjectsUsingBlock(block:(obj:NSObject, idx:Int64, stop:Ptr) -> Void):Void;
+}
+@:hxmc.c extern class Dispatch {
+  static function dispatch_async(queue:Ptr, block:Block<() -> Void>):Void;
+}
+arr.enumerateObjectsUsingBlock((o, i, stop) -> sum += i);
+Dispatch.dispatch_async(Mem.sym("_dispatch_main_q"), () -> done = true);
+```
+
+- **A function made a block** is a heap block, autoreleased as every
+  value. Its closure stays alive while the block does (whoever holds it),
+  and becomes collectable once Objective-C frees it. The block holds the
+  index of the closure's entry in the runtime's table of blocks, a root
+  while a block refers to it (the block's copy and dispose helpers count
+  them); its invoke, one per signature, finds the closure by it. Null is nil.
+- **A block made a function** calls the block, holding a reference to it;
+  a block made of a Haxe function is that function again.
+- **Calls** run the closure as a method's entry does: out of the caller's
+  safe region, an exception reported as an uncaught one. A thread the
+  runtime did not start (GCD's workers) is attached at its first call.
+- **Types**: those of messages; a block's parameter or result that is a
+  block is not supported yet. On x86-64, a struct result over 16 bytes
+  is returned through memory (`BLOCK_USE_STRET`).
+
 ### Memory
 
 Haxe objects stay collected by the GC; Objective-C objects are reference
@@ -663,7 +696,7 @@ counted. Where references cross:
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: blocks, overriding `dealloc`, protocols,
+Not yet: blocks taking or returning blocks, overriding `dealloc`, protocols,
 declarations generated from the SDK's headers.
 
 ## Processes and files beyond the std

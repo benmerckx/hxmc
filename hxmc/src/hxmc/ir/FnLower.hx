@@ -382,6 +382,35 @@ class FnLower {
 		}
 	}
 
+	// closure body calling an Objective-C block (its capture: the block's box,
+	// which holds a reference to it) through its invoke, the block first
+	// (ObjC.blockFunction), in a safe region as a message
+	public function blockCall(cargs:Array<CInterop.CTy>, cret:CInterop.CTy) {
+		boxed = new Map();
+		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
+		var box = newLocal("box", TRef(RAny));
+		out.push(SSet(box, ECapture(lambda, 0, ELocal(fi.args[0]))));
+		var id = temp(TI64, ECallHost("rt_objc_unbox", vector(ELocal(box)), TI64));
+		var invoke = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(id, EInt(16)), TI64));
+		var key = ObjC.declareBlockCall(l, cargs, cret);
+		var n = fi.sret ? fi.args.length - 1 : fi.args.length;
+		var xs = [invoke, id].concat([for (i in 1...n) (ELocal(fi.args[i]) : Ex)]);
+		var t = lambda.sig.ret;
+		var cx = ECallHost(key, Vector.fromArrayCopy(xs), t);
+		var r = t == TVoid ? null : newLocal("r", t);
+		out.push(r == null ? SExpr(cx) : SSet(r, cx));
+		if (r != null && t.match(TStruct(_))) freshSlots.set(r, true);
+		// (the box read again after the call: kept alive through it, as the block)
+		out.push(SExpr(ECallHost("rt_objc_unbox", vector(ELocal(box)), TI64)));
+		switch t {
+			case TStruct(n, _):
+				copyStruct(ELocal(sretLocal), ELocal(r), l.structClass(n));
+				out.push(SReturn(ELocal(sretLocal)));
+			case _:
+				out.push(SReturn(r == null ? null : ELocal(r)));
+		}
+	}
+
 	// closure body calling a Dynamic value (its capture) with the arguments
 	// boxed (hx_dyn_call), its result converted to this signature's
 	public function adaptDynamic() {
@@ -2599,6 +2628,12 @@ class FnLower {
 				};
 				var ref = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(name))), TI64));
 				return coerce(ECallHost("hxmc_unsafe_Mem_getI64", vector(ref, EInt(0)), TI64), TI64, rt);
+			// a function made a block and back (hxmc.objc.Block<F>)
+			case TField(_, FStatic({clKind: KAbstractImpl(a)}, cf)) if (a.aPath.name == "Block" && a.aPath.pack.join(".") == "hxmc.objc"):
+				var ft = ObjC.blockOfType(cf.cfName == "ofFunction" ? e.etype : cargs[0].etype);
+				if (ft == null) return fail("Block<F> of no function type F", e);
+				var x = value(cargs[0]);
+				return cf.cfName == "ofFunction" ? coerce(blockOf(x, tyOf(cargs[0]), ft, e), TId, rt) : blockFunction(x, ft, rt, e);
 			// a message (ObjC)
 			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !strip(obj).eexpr.match(TConst(TSuper))):
 				return objcSend(obj, c, cf, cargs, e);
@@ -3368,6 +3403,27 @@ class FnLower {
 		return coerceRhs(ECallHost(sym, xs, t), t, tyOf(e));
 	}
 
+	// ---- blocks (ObjC): a function where a block goes (a block of function
+	// type ft: nil for null), a block where a function goes
+
+	function blockOf(x:Ex, from:Ty, ft:core.TType.T, e:TExpr):Ex {
+		var b = ObjC.blockSig(l, ft, where(e));
+		var ct = TRef(RClos(b.sig));
+		var c = asLocal(coerce(x, from, ct), ct);
+		var r = newLocal("block", TId);
+		out.push(SIf(EBin(RefEq, ELocal(c), ENull(ct)), vector(SSet(r, EConv(I2L, EInt(0)))), vector(SSet(r, ObjC.blockNew(l, ELocal(c), b)))));
+		return ELocal(r);
+	}
+
+	function blockFunction(x:Ex, ft:core.TType.T, to:Ty, e:TExpr):Ex {
+		var b = ObjC.blockSig(l, ft, where(e));
+		var ct = TRef(RClos(b.sig));
+		var id = asLocal(x, TId);
+		var r = newLocal("fn", ct);
+		out.push(ObjC.blockFunction(l, ELocal(id), b, newLocal("same", TRef(RAny)), newLocal("box", TRef(RAny)), r));
+		return coerce(ELocal(r), ct, to);
+	}
+
 	// ---- ids held by Haxe storage (ObjC): a field or a static holds a
 	// reference to its id (nil: none), as an ARC strong variable
 
@@ -3644,7 +3700,10 @@ class FnLower {
 			if (err.where == "") err.where = where(e);
 			throw err;
 		};
-		var t = ret == null ? TVoid : ty(ret);
+		// (a function where the method has a block: made one)
+		xs = [for (i in 0...xs.length) ObjC.isBlockType(types[i]) ? blockOf(xs[i], ty(types[i]), types[i], e) : xs[i]];
+		var block = ret != null && ObjC.isBlockType(ret);
+		var t = ret == null ? TVoid : block ? TId : ty(ret);
 		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
 		var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
 		// (x86-64: a struct result over 16 bytes comes back through memory, from
@@ -3658,6 +3717,7 @@ class FnLower {
 		var cx = ECallHost(key, Vector.fromArrayCopy([fn, self, selector].concat(xs)), t);
 		if (t == TId && !keep && ObjC.returnsRetained(sel))
 			cx = objcAutorelease(cx);
+		if (block) return blockFunction(cx, ret, to, e);
 		if (t.match(TStruct(_))) {
 			// (the result's slot in this frame, MirBuild.cStructRet)
 			var lo = newLocal("cr", t);

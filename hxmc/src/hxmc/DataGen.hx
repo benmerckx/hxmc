@@ -576,7 +576,8 @@ class DataGen {
 		for (o in objs.concat([obj]))
 			for (s in o.symbols)
 				if (s.section == null && !s.abs && (StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASSREF) || StringTools.startsWith(s.name, hxmc.ir.ObjC.SELREF)
-					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(s.name, hxmc.ir.ObjC.IVAR_CELL)))
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(s.name, hxmc.ir.ObjC.IVAR_CELL)
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.BLOCK_DESC)))
 					names.set(s.name, true);
 		var list = [for (n in names.keys()) n];
 		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
@@ -591,7 +592,8 @@ class DataGen {
 				obj.define(n, data, data.buf.len, 16, true);
 				data.buf.u64(0, 0);
 				ptr(data, hxmc.ir.ObjC.REGISTER + n.substr(hxmc.ir.ObjC.CLASS_CELL.length));
-			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.IVAR_CELL)) {
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.IVAR_CELL) || StringTools.startsWith(n, hxmc.ir.ObjC.BLOCK_DESC)) {
+				// (an instance variable's offset; a block signature's descriptor: zero until made)
 				data.buf.align(8);
 				obj.define(n, data, data.buf.len, 8, true);
 				data.buf.u64(0, 0);
