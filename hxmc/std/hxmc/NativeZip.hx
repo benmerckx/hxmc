@@ -322,8 +322,11 @@ class NativeZip {
 	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return crcOf(ReadOnlySpan.ofBytes(b, pos, len), ReadOnlySpan.unsafeOf((table() : Ptr<Int>), 256));
 
-	// (in the safe subset of kernels: docs/interop.md, "Spans")
+	// (in the safe subset of kernels: docs/interop.md, "Spans"; the loop
+	// proves both element checks away, the table's index by the test of
+	// its length, which never fails)
 	@:hxmc.kernel static function crcOf(s:ReadOnlySpan<UInt8>, t:ReadOnlySpan<Int>):Int {
+		if (t.length < 256) return 0;
 		var c = 0xFFFFFFFF;
 		for (i in 0...s.length)
 			c = t[(c ^ s[i]) & 0xFF] ^ (c >>> 8);

@@ -431,11 +431,13 @@ the span's two words loaded at entry. The checked sum is faster than raw
 entry with it) is a safe kernel over two spans: the bytes, lent by
 `ReadOnlySpan.ofBytes` (its range checked there, `OutsideBounds` as
 before), and the table, malloc'ed once and kept, lent by `unsafeOf`. No
-raw access is left in it. Its cost, x86-64 (`crc32` of 1 MB, callgrind):
-15 instructions a byte before, 19 after (the byte's check and the table
-index's); 0.68 to 0.75 s against 0.73 to 0.83 s for 200 MB. Removing checks
-a loop proves would take back the byte's; the table's (`& 0xFF` against a
-length of 256) needs a range of values.
+raw access is left in it, and the loop proves both element checks away:
+the byte's by its test, the table's index (`& 0xFF`) by a test of the
+table's length against 256 before the loop (which never fails). Its cost,
+x86-64 (`crc32` of 1 MB, callgrind, 2026-10-29): 15 instructions a byte
+raw, 17 on spans with the byte's check proved away, 14 with the table's
+too; in time all three are within the machine's noise (3.3 to 3.55 ns a
+byte, the loop waits on the table's load).
 
 ### Inlining, generics, closures
 
