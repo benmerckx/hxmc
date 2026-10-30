@@ -410,10 +410,15 @@ class CInterop {
 			|| Lower.hasMeta(":hxmc.blocking", c.clMeta) && !Lower.hasMeta(":hxmc.fast", cf.cfMeta);
 
 	// the library of a C symbol: @:hxmc.framework("Name") (a system framework)
-	// or @:hxmc.lib, on the field or its class
+	// or @:hxmc.lib, the field's before its class's (a sub-framework's
+	// function in its framework's class)
 	static function library(c:TClass, cf:TClassField):Null<String> {
-		var fw = metaStr(":hxmc.framework", c, cf);
-		return fw != null ? '/System/Library/Frameworks/$fw.framework/$fw' : metaStr(":hxmc.lib", c, cf);
+		function of(m:core.Ast.Metadata):Null<String> {
+			var fw = Lower.metaString(":hxmc.framework", m);
+			return fw != null ? '/System/Library/Frameworks/$fw.framework/$fw' : Lower.metaString(":hxmc.lib", m);
+		}
+		var l = of(cf.cfMeta);
+		return l != null ? l : of(c.clMeta);
 	}
 
 	static function metaStr(name:String, c:TClass, cf:TClassField):Null<String> {
