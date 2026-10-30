@@ -6,7 +6,8 @@ import hxmc.Obj;
 // hxmc's linker for Windows: objects (the program's, the runtime object of
 // MkRt) -> a PE32+ executable at a fixed base (no base relocations), with
 // its import directory written directly from the runtime's import list
-// (.hxmc.imports: which DLL exports what), call thunks for imported code,
+// (.hxmc.imports: which DLL exports what), call thunks for imported code
+// (data: the IAT slot itself, `__imp_` names and C variables' words),
 // the TLS directory of the C runtime (_tls_used) and the exception
 // directory (.pdata: the runtime object's, and the generated functions'
 // with their unwind information in .xdata, from Unwind; sorted by address,
@@ -114,7 +115,7 @@ class LinkPE extends LinkCore {
 		var thunks = new Section(".text$hxmc_thunks", Text, 16);
 		var thunkOf = new Map<String, Int>();
 		for (k in keys)
-			if (!StringTools.startsWith(k, "__imp_")) {
+			if (imports.get(k).code) {
 				thunkOf.set(k, thunks.buf.len);
 				if (arm) {
 					// adrp x16, slot; ldr x16, [x16, :lo12:slot]; br x16
@@ -270,7 +271,7 @@ class LinkPE extends LinkCore {
 			var t = target(s);
 			if (t == null) {
 				var n = s.name;
-				if (imports.exists(n)) return StringTools.startsWith(n, "__imp_") ? iatAddr(n) : addr.get(thunks) + thunkOf.get(n);
+				if (imports.exists(n)) return imports.get(n).code ? addr.get(thunks) + thunkOf.get(n) : iatAddr(n);
 				var d = defined.get(n);
 				if (d != null) return d;
 				if (s.weak) return 0;

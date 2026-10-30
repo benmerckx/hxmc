@@ -27,7 +27,7 @@ same for that function.
 
 | Metadata | |
 | --- | --- |
-| `@:hxmc.c`, `@:hxmc.c("name")` | a C function, called directly in the target's C convention |
+| `@:hxmc.c`, `@:hxmc.c("name")` | a C function, called directly in the target's C convention; on a static `var`, a C variable ([C variables](#c-variables)) |
 | `@:hxmc.lib("name")` | the library: `lib<name>.so` (or a full name such as `libGL.so.1`), a DLL, a dylib; a wasm import module |
 | `@:hxmc.link("path")` | an object or archive linked with the program (also `-D hxmc.link=`) |
 | `@:hxmc.fast` | the call stays in the running state: no collection runs during it, so it may take addresses of GC objects. It must be short and must not block or call back |
@@ -47,6 +47,28 @@ Types (`hxmc.unsafe`): `Int8` .. `Int64`, `UInt8` .. `UInt64`, `Float32`,
 
 A call that is not `@:hxmc.fast` enters a safe region, so other threads may
 collect meanwhile. Pass it native memory, not GC objects.
+
+### C variables
+
+```haxe
+@:hxmc.c @:hxmc.lib("shapes") extern class Shapes {
+  @:native("shapes_count") static var count:Int;  // read and written
+  static final shapes_name:CString;               // read only (a `const`)
+  static var shapes_origin:Point;                 // a @:hxmc.struct
+}
+```
+
+A static `var` of a `@:hxmc.c` class (or with `@:hxmc.c` on the field) is
+the C variable of its name, its `@:native` name or `@:hxmc.c("name")`, in the
+program, a linked object or the `@:hxmc.lib` library. A read loads it, an
+assignment stores it, both at its address, so C and Haxe see each other's
+writes. Its type is a scalar, `Ptr`, `CString` or a struct: a struct read is
+a copy, `v.x = 1` writes its field in place and `v = s` all of it. Declare a
+`const` one `final`: the store would fault.
+
+The address is a word of the program's data that the loader fills, as C's
+GOT entries: a bind on macOS, an `R_*_64` relocation on Linux, the import's
+slot on Windows (a DLL's variable). WebAssembly imports no variables.
 
 ### Blocking calls
 

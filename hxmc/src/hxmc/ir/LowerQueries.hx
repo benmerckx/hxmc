@@ -104,7 +104,8 @@ interface LowerQueries {
 
 	// declares C function sym, the extern field cf of class c, for this
 	// build (CInterop.declare: its signature, @:hxmc.fast, its library; and
-	// @:hxmc.varargs): a replayed body declares its C functions again
+	// @:hxmc.varargs), or C variable sym (CInterop.declareVar: its type the
+	// result): a replayed body declares its C functions again
 	@:logged function cExtern(sym:String, c:TClass, cf:TClassField):CInterop.CSig;
 	// the symbol of a @:hxmc.callback function: of its name (staticFunc)
 	@:derived function callbackSym(f:FuncInfo):String;
