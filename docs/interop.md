@@ -656,8 +656,9 @@ parser.delegate = new Collector();
   one of the protocol's takes its selector and types, as an override does
   (an own `@:selector` that differs is an error). The protocol objects are
   the runtime's (`objc_getProtocol`); one no image declares is made, empty.
-- **Optional methods** are `@:optional` (the typer's semantics of a Java
-  interface's `default` methods): a class may leave them out, and then
+- **Optional methods** (and properties) are `@:optional` (the typer's
+  semantics of a Java interface's `default` methods): a class may leave
+  them out, and then
   Objective-C sees no such method (`respondsToSelector:` says no, which is
   what Cocoa asks of a delegate). Calling one from Haxe sends the message,
   which a subclass may answer, else is Objective-C's "unrecognized

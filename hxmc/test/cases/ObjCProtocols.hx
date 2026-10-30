@@ -109,6 +109,9 @@ class Key extends NSObject implements NSCopying {
 	var count(get, never):Int64;
 	function get_count():Int64;
 	function bump(by:Int64):Int64;
+	// (an optional property: its accessors too)
+	@:optional var label(get, never):NSString;
+	@:optional function get_label():NSString;
 }
 
 class Counter extends NSObject implements Counting {
@@ -199,7 +202,8 @@ class ObjCProtocols {
 		var counting:Counting = counter;
 		counting.bump(2);
 		counting.bump(3);
-		trace("own protocol: " + counting.count + " " + Std.isOfType((counter : NSObject), Counting) + " " + Std.isOfType(NSObject.alloc().init(), Counting));
+		trace("own protocol: " + counting.count + " " + Std.isOfType((counter : NSObject), Counting) + " " + Std.isOfType(NSObject.alloc().init(), Counting)
+			+ " " + (counter : NSObject).respondsToSelector(Selector.of("label")));
 
 		// Foundation copying Haxe objects (copyItems: copyWithZone:, a subtype's
 		// result, which the array owns: released when it goes, then collected)

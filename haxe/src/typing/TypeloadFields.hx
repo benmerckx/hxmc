@@ -1273,6 +1273,9 @@ class TypeloadFields {
 		else if (t == null) ret = mkMono();
 		else ret = Typeload.loadTypeHint(ctx, p, LoadNormal, t);
 		cf.cfType = ret;
+		// port: (hxmc) an Objective-C protocol's optional property, which a class
+		// may leave out as it may its accessors (a property has no storage there)
+		if (fctx.defaultPos != null && objcProtocol(c)) addClassFieldFlag(cf, CfDefault);
 		var tget:T, tset:T;
 		if (cctx.abstractType != null && fctx.isAbstractMember) {
 			var a = cctx.abstractType;
