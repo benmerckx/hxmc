@@ -667,6 +667,34 @@ parser.delegate = new Collector();
   object are `conformsToProtocol:` for a protocol, `isKindOfClass:` for a
   class: messages, as Objective-C asks them (a proxy forwards them).
 
+### Lightweight generics
+
+A type parameter bound to an Objective-C type (`hxmc.objc.Id`, any object,
+or a class or protocol) holds `id`s: in a message, in Haxe code generic
+over it (`class Box<T:Id>`), in an `Array<T>`. An extern class takes them as
+Objective-C's lightweight generics, with Haxe's defaults where none is
+given:
+
+```haxe
+@:hxmc.objc extern class NSArray<ObjectType:Id = Id> extends NSObject {
+  static function arrayWithObject<ObjectType:Id>(o:ObjectType):NSArray<ObjectType>;
+  function objectAtIndex(i:I64):ObjectType;
+  static inline function upcast<T:U, U:Id>(a:NSArray<T>):NSArray<U> return cast a;
+}
+var strings = NSArray.arrayWithObject(ns("x")); // NSArray<NSString>
+var any:NSArray = NSArray.upcast(strings);      // NSArray<Id>
+```
+
+- **Id** is any Objective-C object: the root classes and protocols extend
+  it. It is no protocol of the runtime's (no class is said to conform to
+  it); `Std.isOfType(x, Id)` is true of any object.
+- **Variance**: Haxe's type parameters are invariant, as Objective-C's
+  mutable collections' (`NSMutableArray<NSString *>` takes no other
+  object). An immutable collection, covariant in Objective-C, is widened
+  explicitly (`upcast` above): to the immutable class only.
+- A static method has none of its class's parameters: it declares its own
+  (`alloc<ObjectType:Id>()`, the expected type giving them).
+
 ### Blocks
 
 A function type in a message's signature is a block: a parameter, a

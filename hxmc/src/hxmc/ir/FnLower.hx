@@ -2992,6 +2992,11 @@ class FnLower {
 		var r = newLocal("is", TBool);
 		out.push(SSet(r, coerce(EInt(0), TI32, TBool)));
 		out.push(SIf(EBin(LEq, ELocal(id), EConv(I2L, EInt(0))), vector(), block(() -> {
+			// (hxmc.objc.Id: any object)
+			if (ObjC.isId(c)) {
+				out.push(SSet(r, coerce(EInt(1), TI32, TBool)));
+				return;
+			}
 			var protocol = ObjC.isProtocol(c);
 			var arg = protocol ? objcProtocol(ObjC.className(c)) : objcClass(c);
 			var sel = protocol ? "conformsToProtocol:" : "isKindOfClass:";

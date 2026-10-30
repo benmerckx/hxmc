@@ -50,6 +50,18 @@ class ObjC {
 		return false;
 	}
 
+	// a type parameter bound to Objective-C objects (`ObjectType:NSObject`, a
+	// lightweight generic's): its values are ids, as the bound's
+	public static function isObjCParam(c:TClass):Bool
+		return switch c.clKind {
+			case KTypeParameter(ttp):
+				core.ds.ArrayTools.exists(TFunctions.getConstraints(ttp), t -> switch TFunctions.follow(t) {
+					case TInst(k, _): isObjC(k) || isObjCParam(k);
+					case _: false;
+				});
+			case _: false;
+		}
+
 	// a Haxe class extending an Objective-C class: its superclass, else null
 	public static function peerBase(c:TClass):Null<TClass> {
 		if (c.hasClassFlag(CExtern)) return null;
@@ -65,7 +77,11 @@ class ObjC {
 	// methods @:optional: a class implementing it may leave them out, as a
 	// Java interface's default ones, TypeloadFields)
 	public static function isProtocol(c:TClass):Bool
-		return c.hasClassFlag(CInterface) && isObjC(c);
+		return c.hasClassFlag(CInterface) && isObjC(c) && !isId(c);
+
+	// hxmc.objc.Id, any Objective-C object: no protocol of the runtime's
+	public static function isId(c:TClass):Bool
+		return c.clPath.name == "Id" && c.clPath.pack.join(".") == "hxmc.objc";
 
 	// the protocols c conforms to by its own declaration: those it implements
 	// and those they extend (its superclasses' not included)
@@ -110,14 +126,14 @@ class ObjC {
 	// an Objective-C object in C: an id (a peer class's instance passed as its id)
 	public static function isObjCType(t:T):Bool
 		return switch TFunctions.follow(t) {
-			case TInst(c, _): isObjC(c) || peerBase(c) != null;
+			case TInst(c, _): isObjC(c) || isObjCParam(c) || peerBase(c) != null;
 			case _: false;
 		}
 
 	// a type whose values are ids (a block too: hxmc.objc.Block<F>)
 	public static function isIdType(t:T):Bool
 		return switch TFunctions.follow(t) {
-			case TInst(c, _): isObjC(c);
+			case TInst(c, _): isObjC(c) || isObjCParam(c);
 			case _: blockOfType(t) != null;
 		}
 

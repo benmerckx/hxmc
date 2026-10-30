@@ -689,7 +689,8 @@ class Lower implements LowerQueries {
 				}
 			case TInst(c, params):
 				switch c.clKind {
-					case KTypeParameter(_): TRef(RAny);
+					// (one bound to Objective-C objects: an id, ObjC.isObjCParam)
+					case KTypeParameter(_): ObjC.isObjCParam(c) ? TId : TRef(RAny);
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
@@ -937,7 +938,7 @@ class Lower implements LowerQueries {
 		ci.ifaces = sup.ifaces.copy();
 		for (i in c.clImplements) {
 			// (a protocol: Objective-C's objects conform to them, a Haxe class's when it extends an Objective-C one)
-			if (ObjC.isProtocol(i.cls) && ObjC.peerBase(c) == null)
+			if ((ObjC.isProtocol(i.cls) || ObjC.isId(i.cls)) && ObjC.peerBase(c) == null)
 				throw new LowerError('${c.clPath.name} implements the Objective-C protocol ${i.cls.clPath.name}: only a class extending an Objective-C class can',
 					CInterop.posOf(c.clPos));
 			addIface(ci, i.cls);
@@ -1017,8 +1018,8 @@ class Lower implements LowerQueries {
 	}
 
 	function addIface(ci:ClassInfo, i:TClass) {
-		// (an Objective-C protocol: the Objective-C class's, ObjC.protocols)
-		if (ObjC.isProtocol(i)) return;
+		// (an Objective-C protocol: the Objective-C class's, ObjC.protocols; Id too)
+		if (ObjC.isProtocol(i) || ObjC.isId(i)) return;
 		var ii = classInfo(i);
 		if (ci.ifaces.indexOf(ii) < 0) ci.ifaces.push(ii);
 		for (j in i.clImplements)
