@@ -23,8 +23,9 @@ import core.Message.WarningMode;
 // compiler read in the build that typed it, Read), its ModuleDefExtra as
 // written (with the signatures of that build, rewritten when restored), its
 // file (date, size, content hash), the hash of its interface
-// (ModuleInterface; null: its whole content counts) and its dependencies
-// with the hash each had when it was typed (StoredDep).
+// (ModuleInterface; null: its whole content counts), the hash its
+// dependents expected of it (shape) and its dependencies with the hash each
+// had when it was typed (StoredDep).
 
 // a define read, in a role (0: the program's context, 1: the macros'); its
 // value then (null: not defined); the name "*" stands for every define
@@ -79,6 +80,9 @@ class Variant {
 	public var buildReads:Array<Read>;
 	// ModuleInterface.hash of its file (null: its whole content counts)
 	public var iface:Null<String>;
+	// what its dependents expected of it when it was written: the hash of its
+	// interface with its dependencies' (Closure.di; "": not known)
+	public var shape:String = "";
 	public var blob:String;
 	public var blobSize:Int;
 	// (blob: the pack of the build that wrote it, b/<blob>.pk, at blobOff)
@@ -114,6 +118,21 @@ class Variant {
 
 	public function roleKey():String
 		return role + "|" + key;
+
+	// the module's key as typed (CacheKey TypedModule): its file's content,
+	// the reads it was typed with, and the hashes its dependencies had then
+	// (expect). A build that finds the same key now (typedKeyWith, its
+	// dependencies' hashes now) restores it as it is
+	public function typedKey():CacheKey
+		return typedKeyWith([for (d in deps) d.expect]);
+
+	// (with these hashes of its dependencies, in the order of deps)
+	public function typedKeyWith(hashes:Array<String>):CacheKey {
+		var parts = [fileRec == null ? "-" : fileRec.hash, ModuleStore.readsKey(reads), ModuleStore.readsKey(buildReads)];
+		for (i in 0...deps.length)
+			parts.push(deps[i].role + "|" + deps[i].key + "=" + hashes[i]);
+		return CacheKey.of(TypedModule, roleKey(), parts);
+	}
 }
 
 class StoreIndex {
@@ -125,7 +144,7 @@ class StoreIndex {
 }
 
 class ModuleStore {
-	public static inline var MAGIC = "hxmc-modules 14";
+	public static inline var MAGIC = "hxmc-modules 15";
 
 	public static final chunkKinds:Array<ChunkKind> = [
 		STR, DOC, MDF, MTF, IMP, CLR, ENR, ABR, TDR, OFR, OFD, OBD, CLD, END, ABD, TDD, EOT, EFR, CFR, CFD, EFD, AFD, EOF, EXD, EOM
@@ -418,7 +437,7 @@ class ModuleStore {
 			str(o, v.blob);
 			o.writeInt32(v.blobOff);
 			o.writeInt32(v.blobSize);
-			o.writeByte(0);
+			str(o, v.shape);
 			o.writeInt32(v.macroState.length);
 			for (c in v.macroState)
 				str(o, c);
@@ -465,7 +484,7 @@ class ModuleStore {
 			v.blob = rstr(i);
 			v.blobOff = i.readInt32();
 			v.blobSize = i.readInt32();
-			i.readByte();
+			v.shape = rstr(i);
 			v.macroState = [for (_ in 0...i.readInt32()) rstr(i)];
 			v.marks = [for (_ in 0...i.readInt32()) rstr(i)];
 			var ndeps = i.readInt32();
