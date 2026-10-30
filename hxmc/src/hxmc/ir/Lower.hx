@@ -1809,9 +1809,11 @@ class Lower implements LowerQueries {
 	public function selectorName(s:Int):String
 		return prog.selectors[s].name;
 
-	// C function sym, the extern field cf of c, declared for this program
+	// C function (or variable) sym, the extern field cf of c, declared for this program
 	// (called by the bodies calling it: CInterop.reset forgets the previous program's)
 	public function cExtern(sym:String, c:TClass, cf:TClassField):CInterop.CSig {
+		// (a C variable: no arguments, its type the result)
+		if (CInterop.isVar(c, cf)) return CInterop.declareVar(sym, c, cf);
 		var s = switch TFunctions.follow(cf.cfType) {
 			case TFun(s): s;
 			case _: fail("extern static " + cf.cfName + " is not a function");

@@ -1955,6 +1955,16 @@ class FnLower {
 			case FStatic(c, cf):
 				var cf = overloadImpl(c, cf);
 				switch cf.cfKind {
+					case Var(_) if (CInterop.isVar(c, cf)):
+						var v = cVar(c, cf, e);
+						switch v.ct {
+							case CStruct(sc):
+								// (a struct: a copy, as any struct value read)
+								var s = newSlot(structTy(sc), true);
+								copyStruct(ELocal(s), v.addr, sc);
+								coerce(ELocal(s), structTy(sc), tyOf(e));
+							case ct: cLoad(v.addr, 0, ct, e);
+						}
 					case Var(_) if (c.hasClassFlag(CExtern)):
 						var t = ty(cf.cfType);
 						coerce(temp(t, ECallHost(l.native(Lower.nativeName(c) + "_" + cf.cfName), vector(), t)), t, tyOf(e));
@@ -2495,6 +2505,12 @@ class FnLower {
 				var t = ty(cf.cfType);
 				var x = pure(compute(() -> objcMsg(self, ObjC.getter(cf), [], [], cf.cfType, cf, lhs, t), t, t), t);
 				objcSet(self, c, cf, x, t, e);
+				return coerce(x, t, et);
+			case TField(_, FStatic(c, cf)) if (CInterop.isVar(c, cf)):
+				var v = cVar(c, cf, lhs);
+				var t = tyOf(lhs);
+				var x = pure(compute(() -> cLoad(v.addr, 0, v.ct, lhs), t, t), t);
+				cStore(v.addr, 0, v.ct, x, t, e);
 				return coerce(x, t, et);
 			case TField(obj, FInstance(c, _, cf)) if (CInterop.isStruct(c)):
 				// (the address after the value: an object may move meanwhile)
@@ -3090,6 +3106,19 @@ class FnLower {
 	function cfail(msg:String, e:TExpr):Dynamic
 		throw new LowerError(msg, where(e));
 
+
+	// C variable cf of c (CInterop.declareVar), declared for this program: its
+	// address, from the word in the program's data that the loader fills
+	// (CInterop.CVAR), and its C type
+	function cVar(c:TClass, cf:TClassField, e:TExpr):{addr:Ex, ct:CTy} {
+		var sym = CInterop.cSymbol(c, cf);
+		var ct = try l.cExtern(sym, c, cf).ret catch (err:LowerError) {
+			if (err.where == "") err.where = where(e);
+			throw err;
+		};
+		var word = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(CInterop.CVAR + sym)), TI64);
+		return {addr: temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(word, EInt(0)), TI64)), ct: ct};
+	}
 
 	// the load of C type ct at addr + off, with the representation of ty(t)
 	function cLoad(addr:Ex, off:Int, ct:CTy, e:TExpr):Ex {
@@ -3992,6 +4021,10 @@ class FnLower {
 				var idx = ci.fieldIndex(cf.cfName);
 				var o = asLocal(value(obj), tyOf(obj));
 				return {addr: () -> EFieldAddr(ci, idx, ELocal(o)), heap: true};
+			case TField(_, FStatic(c, cf)) if (CInterop.isVar(c, cf)):
+				// (a struct in C's memory: its fields read and written in place)
+				var a = cVar(c, cf, e).addr;
+				return {addr: () -> a, heap: false};
 			case TCall({eexpr: TField(_, FStatic(c, cf))}, _) if (write && cf.cfName == "elem" && c.clKind.match(KAbstractImpl({aPath: {pack: ["hxmc"], name: "ReadOnlySpan"}}))):
 				return spanFail(e, "a write through a read-only span", "a ReadOnlySpan cannot be written through");
 			case _:
@@ -4016,6 +4049,12 @@ class FnLower {
 				if (!src.match(ELocal(_) | EGlobal(_, _))) src = ELocal(asLocal(src, tyOf(r)));
 				if (!isLocal(src, lo)) copyStruct(ELocal(lo), src, c);
 				return coerce(ELocal(lo), structTy(c), tyOf(e));
+			case TField(_, FStatic(k, cf)) if (CInterop.isVar(k, cf)):
+				var v = cVar(k, cf, lhs);
+				var src = structRhs(r).x;
+				if (!src.match(ELocal(_) | EGlobal(_, _))) src = ELocal(asLocal(src, tyOf(r)));
+				copyStruct(v.addr, src, c);
+				return coerce(src, structTy(c), tyOf(e));
 			case TField(_, FStatic(k, cf)) if (!k.hasClassFlag(CExtern)):
 				var g = l.staticVar(k, cf);
 				var t = l.globalTy(g);

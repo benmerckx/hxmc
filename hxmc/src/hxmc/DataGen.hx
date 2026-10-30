@@ -632,6 +632,26 @@ class DataGen {
 		}
 	}
 
+	// the words holding the addresses of the C variables the program reads and
+	// writes (hxmc.ir.CInterop.CVAR), in .data, each filled by the loader (an
+	// absolute address: a bind, R_*_64); on Windows a DLL's variable's word is
+	// its import's slot (LinkInputs.peImports), not made here
+	public function cVars(objs:Array<Obj>) {
+		var names = new Map<String, Bool>();
+		for (o in objs.concat([obj]))
+			for (s in o.symbols)
+				if (s.section == null && !s.abs && StringTools.startsWith(s.name, hxmc.ir.CInterop.CVAR)) names.set(s.name, true);
+		var list = [for (n in names.keys()) n];
+		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		for (n in list) {
+			var sym = n.substr(hxmc.ir.CInterop.CVAR.length);
+			if (abi.os == "windows" && hxmc.ir.CInterop.LIBS.exists(sym)) continue;
+			data.buf.align(8);
+			obj.define(n, data, data.buf.len, 8, true);
+			ptr(data, sym);
+		}
+	}
+
 	// the empty NativeArrays the program refers to (MirBuild.EMPTY_ARRAY), in
 	// .rodata as string literals are: the header (Types: length 0, the type of
 	// the kind), a zero slot

@@ -569,6 +569,7 @@ class Driver {
 		dg.allocStubs(objs, demit);
 		dg.stubs(objs, demit);
 		dg.cstrLiterals(objs);
+		dg.cVars(objs);
 		dg.emptyArrays(objs);
 		dg.objcRefs(objs);
 		dg.resources(objs);

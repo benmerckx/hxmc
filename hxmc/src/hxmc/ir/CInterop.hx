@@ -58,6 +58,11 @@ class CInterop {
 	public static var USER = new Map<String, Bool>();
 	// @:hxmc.link: objects and archives the program names (absolute paths)
 	public static var LINKS:Array<String> = [];
+	// C variables (@:hxmc.c statics): their C types, one per symbol
+	public static var VARS = new Map<String, CTy>();
+	// the word in the program's data holding a C variable's address, which
+	// the loader fills (DataGen.cVars; on Windows, a DLL's: its import's slot)
+	public static inline var CVAR = "hxmc$cvar$";
 	// the prefix of the keys of @:hxmc.indirect externs (calls through a function
 	// pointer, their first argument): not a symbol
 	public static inline var INDIRECT = "@indirect:";
@@ -72,6 +77,7 @@ class CInterop {
 		LOADS = new Map();
 		IMPORT_NAMES = new Map();
 		USER = new Map();
+		VARS = new Map();
 		FnLower.C_EXTERNS = new Map();
 		FnLower.C_VARIADIC = new Map();
 	}
@@ -482,6 +488,28 @@ class CInterop {
 		// library, as packages/os and packages/gfx declare theirs)
 		if (lib != null || c.clPath.pack.length == 0 || c.clPath.pack[0] != "hxmc") USER.set(sym, true);
 		return sig;
+	}
+
+	// a C variable: a static var of an extern class that @:hxmc.c names (on
+	// the field or the class), read and written at its address
+	public static function isVar(c:TClass, cf:TClassField):Bool
+		return c.hasClassFlag(CExtern) && cf.cfKind.match(Var(_)) && cName(c, cf) != null;
+
+	// records the C variable `sym` (the static cf of c): its C type, its library
+	public static function declareVar(sym:String, c:TClass, cf:TClassField):CSig {
+		var where = posOf(cf.cfPos);
+		if (Lower.targetOs == 3) throw new LowerError('C variable $sym: WebAssembly imports functions, not variables', where);
+		var ct = ctype(cf.cfType);
+		if (!isScalar(ct) && !ct.match(CStruct(_)))
+			throw new LowerError('C variable $sym has no C type a load can read (${describe(ct)}; scalars, Ptr, CString and structs)', where);
+		if (SIGS.exists(sym)) throw new LowerError('C variable $sym is declared as a function too', where);
+		var prev = VARS.get(sym);
+		if (prev != null && !Type.enumEq(prev, ct)) throw new LowerError('C variable $sym is declared twice with different types', where);
+		VARS.set(sym, ct);
+		var lib = metaStr(":hxmc.lib", c, cf);
+		if (lib != null) LIBS.set(sym, lib);
+		if (lib != null || c.clPath.pack.length == 0 || c.clPath.pack[0] != "hxmc") USER.set(sym, true);
+		return {args: [], ret: ct};
 	}
 
 	static function describe(ct:CTy):String

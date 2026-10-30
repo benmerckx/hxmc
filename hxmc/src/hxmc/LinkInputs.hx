@@ -104,6 +104,14 @@ class LinkInputs {
 	public static function peImports(undefined:Array<String>, abi:Abi):Null<Obj> {
 		var lines = [];
 		for (n in undefined) {
+			// (a C variable of a DLL: its word, hxmc.ir.CInterop.CVAR, is the slot
+			// of its import, which the loader fills with its address)
+			if (StringTools.startsWith(n, hxmc.ir.CInterop.CVAR)) {
+				var v = n.substr(hxmc.ir.CInterop.CVAR.length);
+				var lib = hxmc.ir.CInterop.LIBS.get(v);
+				if (lib != null) lines.push(libFile(lib, abi) + "\t" + n + "\t" + v + "\tdata");
+				continue;
+			}
 			var lib = hxmc.ir.CInterop.LIBS.get(n);
 			if (lib == null) continue;
 			var dll = libFile(lib, abi);
