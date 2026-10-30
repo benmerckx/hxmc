@@ -643,6 +643,16 @@ variable leads back to it.
   Objective-C may call them on any thread: one the runtime did not start
   (an `NSThread`, GCD's workers) is attached at its first call, as a
   block's.
+- **Class methods** (`+`): a static implementing one an Objective-C
+  superclass declares (`+cellClass`, `+description`) or one of a protocol
+  the class adopts (a static of the extern interface, which Haxe allows
+  there: `+supportsSecureCoding`, `+readableTypesForPasteboard:`) is its
+  class's, on the metaclass, with the declaration's selector and types; a
+  subclass's static of the name overrides it, and subclasses inherit it.
+  Other statics are Haxe's only. A protocol's class method has no receiver:
+  sending it to the protocol is an error. `hxmc.objc.ObjCClass.of(C)` is the
+  class object of C (an `Id`), for APIs that take classes and send them
+  class methods (`readObjectsForClasses:options:`, `restorationClass`).
 - **`super.f(...)`** to an Objective-C method sends `objc_msgSendSuper`,
   looked up from the Objective-C superclass (`super.set_frame(v)` in an
   override of `set_frame`); struct results come back both ways.

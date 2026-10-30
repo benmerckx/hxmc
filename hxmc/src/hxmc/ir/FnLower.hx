@@ -1949,6 +1949,8 @@ class FnLower {
 						var idx = ci.fieldIndex(cf.cfName);
 						coerce(EField(ci, idx, value(obj)), ci.fields[idx].ty, tyOf(e));
 				}
+			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isProtocol(c)):
+				fail(cf.cfName + " is a class property of the protocol " + c.clPath.name + ": read it of a class conforming to it", e);
 			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isObjC(c)): objcGet(null, c, cf, e);
 			case FStatic(c, cf) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c)):
 				fail("Objective-C class method " + cf.cfName + " as a value: wrap the message in a function", e);
@@ -2670,6 +2672,18 @@ class FnLower {
 			// a message (ObjC)
 			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !strip(obj).eexpr.match(TConst(TSuper))):
 				return objcSend(obj, c, cf, cargs, e);
+			// a class object: ObjCClass.of(C), the Objective-C class of C (a
+			// Haxe class's, registered first)
+			case TField(_, FStatic(c, cf)) if (cf.cfName == "of" && c.clPath.name == "ObjCClass" && c.clPath.pack.join(".") == "hxmc.objc"):
+				var k = switch strip(cargs[0]).eexpr {
+					case TTypeExpr(TClassDecl(k)) if (!k.hasClassFlag(CInterface) && (ObjC.isObjC(k) || ObjC.peerBase(k) != null)): k;
+					case _: return cfail("ObjCClass.of takes an Objective-C class or a Haxe class extending one, named", e);
+				};
+				var cls = ObjC.isObjC(k) ? objcClass(k)
+					: objcCellClass(temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(k)).name)), TI64)));
+				return coerce(cls, TId, rt);
+			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isProtocol(c)):
+				return cfail('${cf.cfName} is a class method of the protocol ${c.clPath.name}: send it to a class conforming to it', e);
 			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c)):
 				return objcSend(null, c, cf, cargs, e);
 			// (a protocol's optional method a class extending an Objective-C one
@@ -3780,6 +3794,15 @@ class FnLower {
 				var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
 				var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
 				out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(m.sym), cstr(m.types)), TBool)));
+			}
+			// (class methods: on its metaclass)
+			if (l.objcPeer(self).classMethods.length > 0) {
+				var meta = asLocal(ECallHost(ObjC.runtime(l, "object_getClass", [CPtr], CPtr), vector(ELocal(cls)), TI64), TI64);
+				for (m in l.objcPeer(self).classMethods) {
+					var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
+					var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+					out.push(SExpr(ECallHost(addMethod, vector(ELocal(meta), sel, sym(m.sym), cstr(m.types)), TBool)));
+				}
 			}
 			if (l.objcPeer(self).protocols.length > 0) {
 				var addProtocol = ObjC.runtime(l, "class_addProtocol", [CPtr, CPtr], CBool);

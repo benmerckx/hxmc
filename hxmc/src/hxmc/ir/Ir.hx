@@ -121,6 +121,7 @@ typedef ObjCClass = {
 	name:String,
 	root:String,
 	methods:Array<{sel:String, sym:String, types:String}>,
+	classMethods:Array<{sel:String, sym:String, types:String}>, // on its metaclass (ObjC.imps of its statics)
 	protocols:Array<String>,
 	register:FuncInfo
 };

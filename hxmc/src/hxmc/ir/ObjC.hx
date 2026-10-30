@@ -115,6 +115,31 @@ class ObjC {
 		return r;
 	}
 
+	// the declaration of the class method a peer class's static cf implements
+	// (Objective-C's `+`): one of an Objective-C superclass (+cellClass,
+	// +automaticallyNotifiesObserversForKey:), else of a protocol the class or
+	// a superclass conforms to (a static of its extern interface:
+	// +supportsSecureCoding, +readableTypesForPasteboard:), else the one a
+	// Haxe superclass's static of the name implements; null: a static of
+	// Haxe's only, which Objective-C does not see
+	public static function classDeclOf(c:TClass, cf:TClassField):Null<TClassField> {
+		var k = c.clSuper != null ? c.clSuper.cls : null;
+		while (k != null) {
+			var f = k.clStatics.get(cf.cfName);
+			if (f != null) return isObjC(k) ? f : classDeclOf(k, f);
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		k = c;
+		while (k != null) {
+			for (p in protocols(k)) {
+				var f = p.clStatics.get(cf.cfName);
+				if (f != null) return f;
+			}
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		return null;
+	}
+
 	// the declaration of the method a peer class's method cf implements: the
 	// Objective-C method of a superclass it overrides, else that of a
 	// protocol the class (or a superclass) conforms to, else null
@@ -350,15 +375,20 @@ class ObjC {
 	// its own (selector), and their entries (Lower.classInfo makes them): a C function
 	// (self, _cmd, arguments...; entry: on any thread, out of the safe region
 	// the caller is in) whose work finds the Haxe object (the index in the
-	// instance variable, rt_objc_peer_get) and calls the method
-	public static function imps(l:Lower, c:TClass, name:String, root:String):Array<{sel:String, sym:String, types:String}> {
+	// instance variable, rt_objc_peer_get) and calls the method. `statics`:
+	// its class methods instead (on its metaclass), the statics that
+	// implement a declared one (classDeclOf), their entries calling them
+	public static function imps(l:Lower, c:TClass, name:String, root:String, statics = false):Array<{sel:String, sym:String, types:String}> {
 		var r = [];
-		for (cf in c.clOrderedFields) {
+		// (the receiver: the method's first argument, a static has none)
+		var first = statics ? 0 : 1;
+		for (cf in (statics ? c.clOrderedStatics : c.clOrderedFields)) {
 			if (!cf.cfKind.match(Method(MethNormal | MethDynamic))) continue;
 			// (a protocol's optional method the class leaves out: none, TypeloadCheck's
 			// stand-in, extern and without a body)
 			if (cf.hasClassFieldFlag(CfExtern)) continue;
-			var decl = declOf(c, cf);
+			var decl = statics ? classDeclOf(c, cf) : declOf(c, cf);
+			if (decl == null && statics) continue;
 			if (decl == null) decl = cf;
 			else if (decl != cf && core.Meta.has(Custom(":selector"), cf.cfMeta)) {
 				var own = Lower.metaArg(core.Meta.getOpt(Custom(":selector"), cf.cfMeta)), theirs = switch TFunctions.follow(decl.cfType) {
@@ -392,7 +422,7 @@ class ObjC {
 				if (decl != cf) throw e;
 				continue;
 			}
-			var fi = l.method(c, cf);
+			var fi = statics ? l.staticFunc(c, cf) : l.method(c, cf);
 			// (w: the entry's work, called by the entry imp makes below)
 			var w = new FuncInfo(fi.name + "__imp_call", fi.module);
 			w.display = fi.display;
@@ -400,8 +430,8 @@ class ObjC {
 			var self = new Local(0, "self", TI64);
 			w.args = [self, new Local(1, "_cmd", TI64)];
 			var n = fi.sret ? fi.args.length - 1 : fi.args.length;
-			for (i in 1...n)
-				w.args.push(new Local(i + 1, fi.args[i].name, blocks[i - 1] != null ? TId : fi.args[i].ty));
+			for (i in first...n)
+				w.args.push(new Local(i + 2 - first, fi.args[i].name, blocks[i - first] != null ? TId : fi.args[i].ty));
 			w.ret = setter ? TVoid : blockRet != null ? TId : fi.ret;
 			// (a struct result: the method's sret, the entry's slot; a setter's,
 			// which Objective-C does not see, a slot of w's frame)
@@ -423,15 +453,15 @@ class ObjC {
 			var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
 			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + root), EInt(0)), TI64);
 			var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(self), off), EInt(0)), TI32);
-			var body:Array<Stmt> = [SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))];
-			var xs = [ECast(fi.args[0].ty, ELocal(peer))];
+			var body:Array<Stmt> = statics ? [] : [SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))];
+			var xs = statics ? [] : [ECast(fi.args[0].ty, ELocal(peer))];
 			for (i in 2...nargs) {
 				var b = blocks[i - 2];
 				if (b == null) {
 					xs.push(ELocal(w.args[i]));
 					continue;
 				}
-				var fn = local("fn", fi.args[i - 1].ty);
+				var fn = local("fn", fi.args[i - 2 + first].ty);
 				body.push(blockFunction(l, ELocal(w.args[i]), b, local("heap", TId), local("same", TRef(RAny)), local("box", TRef(RAny)), fn));
 				xs.push(ELocal(fn));
 			}

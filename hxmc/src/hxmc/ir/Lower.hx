@@ -1007,6 +1007,7 @@ class Lower implements LowerQueries {
 				name: ci.ident,
 				root: root,
 				methods: ObjC.imps(this, c, ci.ident, root),
+				classMethods: ObjC.imps(this, c, ci.ident, root, true),
 				protocols: [for (p in ObjC.protocols(c)) ObjC.className(p)],
 				register: reg
 			};
