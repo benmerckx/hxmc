@@ -2996,6 +2996,8 @@ class FnLower {
 	function objcTestable(x:TExpr, t:TExpr):Null<TClass> {
 		if (!ObjC.isObjCType(x.etype)) return null;
 		return switch strip(t).eexpr {
+			case TTypeExpr(TClassDecl(c)) if (ObjC.isCF(c)):
+				cfail('${c.clPath.name} is an object of C without an Objective-C class: no type test tells it apart (every one is an __NSCFType)', t);
 			case TTypeExpr(TClassDecl(c)) if (c.hasClassFlag(CExtern) && ObjC.isObjC(c)): c;
 			case _: null;
 		}
@@ -3488,6 +3490,13 @@ class FnLower {
 		var t = ty(s.ret);
 		var ats = s.args.map(a -> ty(a.type));
 		var xs = args(cargs, ats, null);
+		// @:hxmc.retained: an object the caller owns (Core Foundation's Create
+		// rule), autoreleased at once, so it is borrowed as every result is
+		if (Lower.hasMeta(":hxmc.retained", cf.cfMeta)) {
+			if (t != TId) cfail('C function ${cf.cfName} is @:hxmc.retained but returns no object', e);
+			var r = CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3 ? inRegion(xs, ats, xs -> ECallHost(sym, xs, t), t, t) : ECallHost(sym, xs, t);
+			return coerce(objcAutorelease(r), TId, tyOf(e));
+		}
 		// @:hxmc.blocking: the call in a safe region entered here
 		if (CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3)
 			return inRegion(xs, ats, xs -> ECallHost(sym, xs, t), t, tyOf(e));

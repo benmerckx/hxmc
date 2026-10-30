@@ -701,7 +701,7 @@ class Lower implements LowerQueries {
 							TStruct(n, CInterop.layout(c).size);
 						}
 						else if (CInterop.isOpaque(c)) TI64; // the address of C memory (CInterop: through a Ptr only)
-						else if (ObjC.isObjC(c)) TId; // an Objective-C object: its id
+						else if (ObjC.isObjC(c) || ObjC.isCF(c)) TId; // an Objective-C object (or C's, CGColorRef): its id
 						else if (c.hasClassFlag(CInterface)) TRef(RObj(classInfo(c)));
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
@@ -920,6 +920,10 @@ class Lower implements LowerQueries {
 		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
 		// (a class extending an Objective-C one: a Haxe object with its id, ObjC)
 		var objc = c.clSuper != null && ObjC.isObjC(c.clSuper.cls);
+		// (C's objects have no class to subclass: only @:hxmc.objc classes do)
+		if (!c.hasClassFlag(CExtern) && c.clSuper != null && ObjC.isCF(c.clSuper.cls))
+			throw new LowerError('${c.clPath.name} extends ${c.clSuper.cls.clPath.name}, an object of C without an Objective-C class: only a class declared @:hxmc.objc can be subclassed',
+				CInterop.posOf(c.clPos));
 		var sup = c.clSuper != null && !sbuf && !objc ? classInfo(c.clSuper.cls) : root;
 		// (the superclass's field types may name this class, which has its
 		// ClassInfo then: `class Node extends Base<Node>`, upstream's unit test TestGeneric)

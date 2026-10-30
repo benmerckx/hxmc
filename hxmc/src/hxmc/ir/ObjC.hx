@@ -50,13 +50,30 @@ class ObjC {
 		return false;
 	}
 
+	// an object of C without an Objective-C class (Core Foundation's types,
+	// CGColorRef: Objective-C objects at run time, of the class __NSCFType): an
+	// extern class implementing hxmc.objc.Id with @:hxmc.objc nowhere in its
+	// chain. Its values are ids; it has no class object, so no messages to
+	// it, no type tests and no Haxe subclasses (Lower.classInfo)
+	public static function isCF(c:TClass):Bool {
+		if (!c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || isObjC(c)) return false;
+		function extendsId(i:TClass):Bool
+			return isId(i) || Lambda.exists(i.clImplements, j -> extendsId(j.cls));
+		var k = c;
+		while (k != null) {
+			if (Lambda.exists(k.clImplements, i -> extendsId(i.cls))) return true;
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		return false;
+	}
+
 	// a type parameter bound to Objective-C objects (`ObjectType:NSObject`, a
 	// lightweight generic's): its values are ids, as the bound's
 	public static function isObjCParam(c:TClass):Bool
 		return switch c.clKind {
 			case KTypeParameter(ttp):
 				core.ds.ArrayTools.exists(TFunctions.getConstraints(ttp), t -> switch TFunctions.follow(t) {
-					case TInst(k, _): isObjC(k) || isObjCParam(k);
+					case TInst(k, _): isObjC(k) || isCF(k) || isObjCParam(k);
 					case _: false;
 				});
 			case _: false;
@@ -126,14 +143,14 @@ class ObjC {
 	// an Objective-C object in C: an id (a peer class's instance passed as its id)
 	public static function isObjCType(t:T):Bool
 		return switch TFunctions.follow(t) {
-			case TInst(c, _): isObjC(c) || isObjCParam(c) || peerBase(c) != null;
+			case TInst(c, _): isObjC(c) || isCF(c) || isObjCParam(c) || peerBase(c) != null;
 			case _: false;
 		}
 
 	// a type whose values are ids (a block too: hxmc.objc.Block<F>)
 	public static function isIdType(t:T):Bool
 		return switch TFunctions.follow(t) {
-			case TInst(c, _): isObjC(c) || isObjCParam(c);
+			case TInst(c, _): isObjC(c) || isCF(c) || isObjCParam(c);
 			case _: blockOfType(t) != null;
 		}
 

@@ -761,6 +761,36 @@ Dispatch.dispatch_async(Mem.sym("_dispatch_main_q"), () -> done = true);
   `performAsynchronousFileAccessUsingBlock:`). On x86-64, a struct result
   over 16 bytes is returned through memory (`BLOCK_USE_STRET`).
 
+### Objects of C
+
+```haxe
+extern class CGColor implements hxmc.objc.Id {}
+extern class CGPath implements hxmc.objc.Id {}
+extern class CGMutablePath extends CGPath {}   // a CGMutablePathRef goes where a CGPathRef does
+
+@:hxmc.c @:hxmc.framework("CoreGraphics") extern class CG {
+  @:hxmc.retained static function CGColorCreateSRGB(r:Float, g:Float, b:Float, a:Float):CGColor;
+  static function CGColorGetAlpha(c:CGColor):Float;
+}
+```
+
+Core Foundation's types and those built like them (Core Graphics', Core
+Text's: `CGColorRef`, `CTFontRef`) are opaque pointers to objects that are
+Objective-C objects at run time, of the class `__NSCFType`. An extern class
+implementing `hxmc.objc.Id` without `@:hxmc.objc` anywhere in its chain is
+such a type: its values are ids, held by Haxe's storage as any (see
+[Memory](#memory)), passed to and returned from C functions. It has no class
+object: no messages to the class, no `Std.isOfType` (every one is an
+`__NSCFType`), and no Haxe subclasses (only a `@:hxmc.objc` class can be
+subclassed); extern classes may extend it.
+
+- **Ownership**: a C function's object result is borrowed, as the Get
+  rule's (`CGColorGetComponents`); `@:hxmc.retained` marks one the caller
+  owns, as the Create rule's (`CGColorCreate`, `CTFontCopyFullName`),
+  autoreleased at once as `new`'s and `copy`'s are. Releasing them by hand
+  (`CFRelease`, `CGColorRelease`) unbalances the count: hxmc releases what
+  it holds.
+
 ### Memory
 
 Haxe objects stay collected by the GC; Objective-C objects are reference
