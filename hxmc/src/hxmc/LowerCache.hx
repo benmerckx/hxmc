@@ -970,6 +970,7 @@ class CachedLower extends Lower {
 		if (o.weakFields.join(",") != n.weakFields.join(",")) return false;
 		if (o.objc == null || n.objc == null) return o.objc == n.objc;
 		if (o.objc.name != n.objc.name || o.objc.root != n.objc.root || o.objc.methods.length != n.objc.methods.length) return false;
+		if (o.objc.protocols.join(",") != n.objc.protocols.join(",")) return false;
 		for (i in 0...o.objc.methods.length) {
 			var a = o.objc.methods[i], b = n.objc.methods[i];
 			if (a.sel != b.sel || a.sym != b.sym || a.types != b.types) return false;

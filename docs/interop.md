@@ -630,6 +630,41 @@ variable leads back to it.
   initializer.
 - **Passing** an instance where an `id` goes passes its `id`; `cast` turns
   an `id` of such a class back into its Haxe object (unchecked).
+- **Ownership** of results is ARC's: a method of the `copy`, `mutableCopy`
+  or `new` family (`copyWithZone:`) returns its result retained, the
+  caller's to release.
+
+### Protocols
+
+A protocol is an extern interface declared `@:hxmc.objc` (`("Name")` for
+its name at run time). Its values are `id`s, its methods messages, as a
+class's; an interface it extends is a protocol it adopts.
+
+```haxe
+@:hxmc.objc extern interface NSXMLParserDelegate extends NSObjectProtocol {
+  @:selector("parser:foundCharacters:") @:optional function foundCharacters(parser:NSXMLParser, s:NSString):Void;
+}
+class Collector extends NSObject implements NSXMLParserDelegate {
+  public function foundCharacters(parser:NSXMLParser, s:NSString) ...
+}
+parser.delegate = new Collector();
+```
+
+- **Implementing** one: a Haxe class extending an Objective-C class (any
+  other is an error) adopts it: its Objective-C class conforms to it
+  (`class_addProtocol`) and to those it extends, and a method implementing
+  one of the protocol's takes its selector and types, as an override does
+  (an own `@:selector` that differs is an error). The protocol objects are
+  the runtime's (`objc_getProtocol`); one no image declares is made, empty.
+- **Optional methods** are `@:optional` (the typer's semantics of a Java
+  interface's `default` methods): a class may leave them out, and then
+  Objective-C sees no such method (`respondsToSelector:` says no, which is
+  what Cocoa asks of a delegate). Calling one from Haxe sends the message,
+  which a subclass may answer, else is Objective-C's "unrecognized
+  selector".
+- **Tests**: `Std.isOfType(x, P)` and `Std.downcast` of an Objective-C
+  object are `conformsToProtocol:` for a protocol, `isKindOfClass:` for a
+  class: messages, as Objective-C asks them (a proxy forwards them).
 
 ### Blocks
 
@@ -714,8 +749,8 @@ counted. Where references cross:
 In the compiler an `id` is its own IR type (`TId`): an `i64` at run time,
 kept apart from `TI64` so that stores, boxing and equality know it.
 
-Not yet: overriding `dealloc`, protocols,
-declarations generated from the SDK's headers.
+Not yet: overriding `dealloc`, declarations generated from the SDK's
+headers.
 
 ## Processes and files beyond the std
 

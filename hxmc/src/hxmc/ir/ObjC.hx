@@ -61,6 +61,52 @@ class ObjC {
 		return null;
 	}
 
+	// a protocol: an extern interface declared @:hxmc.objc (its optional
+	// methods @:optional: a class implementing it may leave them out, as a
+	// Java interface's default ones, TypeloadFields)
+	public static function isProtocol(c:TClass):Bool
+		return c.hasClassFlag(CInterface) && isObjC(c);
+
+	// the protocols c conforms to by its own declaration: those it implements
+	// and those they extend (its superclasses' not included)
+	public static function protocols(c:TClass):Array<TClass> {
+		var r = [];
+		function add(i:TClass) {
+			if (!isProtocol(i) || r.contains(i)) return;
+			r.push(i);
+			for (j in i.clImplements)
+				add(j.cls);
+		}
+		for (i in c.clImplements)
+			add(i.cls);
+		return r;
+	}
+
+	// the declaration of the method a peer class's method cf implements: the
+	// Objective-C method of a superclass it overrides, else that of a
+	// protocol the class (or a superclass) conforms to, else null
+	public static function declOf(c:TClass, cf:TClassField):Null<TClassField> {
+		var k = c.clSuper != null ? c.clSuper.cls : null;
+		while (k != null) {
+			var f = k.clFields.get(cf.cfName);
+			if (f != null && isObjC(k)) return f;
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		k = c;
+		while (k != null) {
+			for (p in protocols(k)) {
+				var f = p.clFields.get(cf.cfName);
+				if (f != null) return f;
+			}
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		return null;
+	}
+
+	// a protocol's word in the program's data (DataGen.objcRefs): its Protocol
+	// object once looked up (FnLower.objcProtocol), zero before
+	public static inline var PROTOREF = "hxmc$protoref$";
+
 	// an Objective-C object in C: an id (a peer class's instance passed as its id)
 	public static function isObjCType(t:T):Bool
 		return switch TFunctions.follow(t) {
@@ -226,8 +272,14 @@ class ObjC {
 		var ret = result == null ? CVoid : ctype(result);
 		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('Objective-C method $name: the result has no C type a message can return', where);
-		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in args) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
-		l.objcDeclare(Func(key, {args: args, ret: ret}));
+		return declareC(l, args.slice(3), ret);
+	}
+
+	// the same of a message of C types (args after the receiver and selector)
+	public static function declareC(l:LowerQueries, args:Array<CTy>, ret:CTy):String {
+		var cargs = [CPtr, CPtr, CPtr].concat(args);
+		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
+		l.objcDeclare(Func(key, {args: cargs, ret: ret}));
 		return key;
 	}
 
@@ -270,14 +322,18 @@ class ObjC {
 		var r = [];
 		for (cf in c.clOrderedFields) {
 			if (!cf.cfKind.match(Method(MethNormal | MethDynamic))) continue;
-			var decl = cf, k = c.clSuper != null ? c.clSuper.cls : null;
-			while (k != null) {
-				var f = k.clFields.get(cf.cfName);
-				if (f != null && isObjC(k)) {
-					decl = f;
-					break;
-				}
-				k = k.clSuper != null ? k.clSuper.cls : null;
+			// (a protocol's optional method the class leaves out: none, TypeloadCheck's
+			// stand-in, extern and without a body)
+			if (cf.hasClassFieldFlag(CfExtern)) continue;
+			var decl = declOf(c, cf);
+			if (decl == null) decl = cf;
+			else if (decl != cf && core.Meta.has(Custom(":selector"), cf.cfMeta)) {
+				var own = Lower.metaArg(core.Meta.getOpt(Custom(":selector"), cf.cfMeta)), theirs = switch TFunctions.follow(decl.cfType) {
+					case TFun(ds): selector(decl, ds);
+					case _: null;
+				};
+				if (own != theirs)
+					throw new LowerError('${cf.cfName} implements the Objective-C method $theirs, but its @:selector says $own', CInterop.posOf(cf.cfPos));
 			}
 			var s = switch TFunctions.follow(decl.cfType) {
 				case TFun(s): s;
@@ -380,6 +436,11 @@ class ObjC {
 				body.push(SIf(EBin(RefEq, ELocal(res), ENull(res.ty)), vector(SSet(id, EConv(I2L, EInt(0)))), vector(SSet(id, blockNew(l, ELocal(res), blockRet)))));
 				res = id;
 			}
+			// (a method of the copy, mutableCopy or new family: its result the
+			// caller's, retained, as ARC returns it; init is the constructor's)
+			var sel = decl != cf ? selector(decl, s) : selector(cf, s);
+			if (res != null && w.ret == TId && returnsRetained(sel) && family(sel) != "init")
+				body.push(SSet(res, ECallHost(runtime(l, "objc_retain", [CPtr], CPtr), vector(ELocal(res)), TId)));
 			body.push(SReturn(res == null ? null : ELocal(res)));
 			w.body = Vector.fromArrayCopy(body);
 			l.prog.funcs.push(w);
@@ -387,7 +448,7 @@ class ObjC {
 			e.pos = fi.pos;
 			l.prog.funcs.push(e);
 			r.push({
-				sel: decl != cf ? selector(decl, s) : selector(cf, s),
+				sel: sel,
 				sym: e.cSymbol,
 				types: (blockRet != null ? "@?" : encoding(ret)) + "@:" + [for (i in 0...cts.length) blocks[i] != null ? "@?" : encoding(cts[i])].join("")
 			});

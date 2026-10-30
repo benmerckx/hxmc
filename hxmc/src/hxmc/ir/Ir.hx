@@ -116,7 +116,14 @@ class ClassInfo {
 typedef StaticEntry = {name:String, clos:Null<LambdaInfo>, fn:Null<FuncInfo>, global:Int};
 
 // a class registered as an Objective-C one (ClassInfo.objc)
-typedef ObjCClass = {name:String, root:String, methods:Array<{sel:String, sym:String, types:String}>, register:FuncInfo};
+// (protocols: the runtime's names of those the class adopts, ObjC.protocols)
+typedef ObjCClass = {
+	name:String,
+	root:String,
+	methods:Array<{sel:String, sym:String, types:String}>,
+	protocols:Array<String>,
+	register:FuncInfo
+};
 
 class EnumInfo {
 	public var name:String;

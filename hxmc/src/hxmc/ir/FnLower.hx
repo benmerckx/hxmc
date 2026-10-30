@@ -1987,7 +1987,7 @@ class FnLower {
 				var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_get"), vector(o, EStr(name)), TRef(RAny)));
 				coerce(r, TRef(RAny), tyOf(e));
 			// (an Objective-C method as a value: no closure sends it yet)
-			case FClosure(cl, cf) if (cl != null && ObjC.isObjC(cl.cls)):
+			case FClosure(cl, cf) if (cl != null && (ObjC.isObjC(cl.cls) || (cf.hasClassFieldFlag(CfExtern) && ObjC.peerBase(cl.cls) != null))):
 				fail("Objective-C method " + cf.cfName + " as a value: wrap the message in a function (`x -> o." + cf.cfName + "(x)`)", e);
 			case FClosure(cl, cf):
 				if (cl == null) {
@@ -2654,6 +2654,12 @@ class FnLower {
 				return objcSend(obj, c, cf, cargs, e);
 			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c)):
 				return objcSend(null, c, cf, cargs, e);
+			// (a protocol's optional method a class extending an Objective-C one
+			// leaves out: the message, which only a subclass may answer, as in
+			// Objective-C; TypeloadCheck's stand-in has no body)
+			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && cf.hasClassFieldFlag(CfExtern) && ObjC.peerBase(c) != null
+				&& ObjC.declOf(c, cf) != null && !strip(obj).eexpr.match(TConst(TSuper))):
+				return objcSend(obj, c, ObjC.declOf(c, cf), cargs, e);
 			// (the std's own loops, over indices they keep in bounds: not
 			// tested, whatever -D hxmc.native-array-outofbounds says)
 			case TField(obj, FInstance(c, _, cf)) if (Lower.isNativeArray(c) && (cf.cfName == "unsafeGet" || cf.cfName == "unsafeSet")):
@@ -2936,6 +2942,15 @@ class FnLower {
 					case _:
 				}
 				coerce(EConv(F2I, x), TI32, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && objcTestable(cargs[0], cargs[1]) != null):
+				// Std.isOfType(id, C) of an Objective-C class or protocol: Objective-C's test
+				coerce(objcIs(value(cargs[0]), tyOf(cargs[0]), objcTestable(cargs[0], cargs[1])), TBool, tyOf(e));
+			case "Std_downcast" if (cargs.length == 2 && objcTestable(cargs[0], cargs[1]) != null):
+				var x = ELocal(asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TId), TId));
+				var r = newLocal("down", TId);
+				out.push(SSet(r, EConv(I2L, EInt(0))));
+				out.push(SIf(objcIs(x, TId, objcTestable(cargs[0], cargs[1])), vector(SSet(r, x)), vector()));
+				coerce(ELocal(r), TId, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && instClass(cargs[1]) != null):
 				// Std.isOfType(v, C) of a class literal: the instance test, a range of
 				// type indices (MemLower.instOf; null is no instance), not hx_is's walk
@@ -2955,6 +2970,38 @@ class FnLower {
 				coerce(ECallHost(l.native("hx_is_typeobj"), vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
 			case _: null;
 		}
+	}
+
+	// the extern Objective-C class or protocol the type expression t names,
+	// when x is an Objective-C object (its static type): their tests are
+	// Objective-C's (objcIs); else null
+	function objcTestable(x:TExpr, t:TExpr):Null<TClass> {
+		if (!ObjC.isObjCType(x.etype)) return null;
+		return switch strip(t).eexpr {
+			case TTypeExpr(TClassDecl(c)) if (c.hasClassFlag(CExtern) && ObjC.isObjC(c)): c;
+			case _: null;
+		}
+	}
+
+	// whether x (of type from, an Objective-C object) is an instance of the
+	// Objective-C class c (isKindOfClass:) or conforms to the protocol c
+	// (conformsToProtocol:): messages, as Objective-C asks (a proxy forwards
+	// them); nil is neither
+	function objcIs(x:Ex, from:Ty, c:TClass):Ex {
+		var id = asLocal(coerce(x, from, TId), TId);
+		var r = newLocal("is", TBool);
+		out.push(SSet(r, coerce(EInt(0), TI32, TBool)));
+		out.push(SIf(EBin(LEq, ELocal(id), EConv(I2L, EInt(0))), vector(), block(() -> {
+			var protocol = ObjC.isProtocol(c);
+			var arg = protocol ? objcProtocol(ObjC.className(c)) : objcClass(c);
+			var sel = protocol ? "conformsToProtocol:" : "isKindOfClass:";
+			var key = ObjC.declareC(l, [CPtr], CBool);
+			var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
+			var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+			var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_msgSend"))), TI64));
+			out.push(SSet(r, ECallHost(key, vector(fn, ELocal(id), selector, arg), TBool)));
+		})));
+		return ELocal(r);
 	}
 
 	// the class whose instance test (EInstOf) Std.isOfType, Std.downcast and
@@ -3689,6 +3736,11 @@ class FnLower {
 				var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
 				out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(m.sym), cstr(m.types)), TBool)));
 			}
+			if (l.objcPeer(self).protocols.length > 0) {
+				var addProtocol = ObjC.runtime(l, "class_addProtocol", [CPtr, CPtr], CBool);
+				for (p in l.objcPeer(self).protocols)
+					out.push(SExpr(ECallHost(addProtocol, vector(ELocal(cls), objcProtocol(p)), TBool)));
+			}
 			out.push(SExpr(ECallHost(register, vector(ELocal(cls)), TVoid)));
 			if (root) {
 				var off = temp(TI64, ECallHost(ivarOffset, vector(ECallHost(getIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR)), TI64)), TI64));
@@ -3726,6 +3778,33 @@ class FnLower {
 		}
 		var getClass = ObjC.runtime(l, "objc_getClass", [CPtr], CPtr);
 		return temp(TI64, ECallHost(getClass, vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(ObjC.className(c))), TI64)), TI64));
+	}
+
+	// the Protocol object of the protocol of that name: its word in the data
+	// (ObjC.PROTOREF), looked up once (objc_getProtocol; a protocol no image
+	// declares, made: an empty one of that name, which classes adopting it
+	// then conform to)
+	function objcProtocol(name:String):Ex {
+		var cell = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.PROTOREF + name)), TI64));
+		var p = newLocal("proto", TI64);
+		var cname = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(name)), TI64);
+		var get = ObjC.runtime(l, "objc_getProtocol", [CPtr], CPtr);
+		var allocate = ObjC.runtime(l, "objc_allocateProtocol", [CPtr], CPtr);
+		var register = ObjC.runtime(l, "objc_registerProtocol", [CPtr], CVoid);
+		var made = newLocal("made", TI64);
+		var zero = EConv(I2L, EInt(0));
+		out.push(SSet(p, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64)));
+		out.push(SIf(EBin(LEq, ELocal(p), zero), vector(
+			SSet(p, ECallHost(get, vector(cname), TI64)),
+			SIf(EBin(LEq, ELocal(p), zero), vector(
+				// (nil: another thread made it meanwhile)
+				SSet(made, ECallHost(allocate, vector(cname), TI64)),
+				SIf(EBin(LEq, ELocal(made), zero), vector(), vector(SExpr(ECallHost(register, vector(ELocal(made)), TVoid)))),
+				SSet(p, ECallHost(get, vector(cname), TI64))
+			), vector()),
+			SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(cell, EInt(0), ELocal(p)), TVoid))
+		), vector()));
+		return ELocal(p);
 	}
 
 	// objc_msgSend(self, sel, xs...) called through its address in the C

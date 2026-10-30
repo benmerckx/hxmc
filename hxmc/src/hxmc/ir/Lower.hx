@@ -935,8 +935,13 @@ class Lower implements LowerQueries {
 			k = k.cls.clSuper;
 		}
 		ci.ifaces = sup.ifaces.copy();
-		for (i in c.clImplements)
+		for (i in c.clImplements) {
+			// (a protocol: Objective-C's objects conform to them, a Haxe class's when it extends an Objective-C one)
+			if (ObjC.isProtocol(i.cls) && ObjC.peerBase(c) == null)
+				throw new LowerError('${c.clPath.name} implements the Objective-C protocol ${i.cls.clPath.name}: only a class extending an Objective-C class can',
+					CInterop.posOf(c.clPos));
 			addIface(ci, i.cls);
+		}
 		prog.classes.push(ci);
 		for (f in sup.fields)
 			ci.fields.push(f);
@@ -993,7 +998,13 @@ class Lower implements LowerQueries {
 			reg.cSymbol = reg.name;
 			reg.display = core.Globals.sTypePath(c.clPath) + " (its Objective-C class)";
 			reg.ret = TVoid;
-			ci.objc = {name: ci.ident, root: root, methods: ObjC.imps(this, c, ci.ident, root), register: reg};
+			ci.objc = {
+				name: ci.ident,
+				root: root,
+				methods: ObjC.imps(this, c, ci.ident, root),
+				protocols: [for (p in ObjC.protocols(c)) ObjC.className(p)],
+				register: reg
+			};
 			prog.funcs.push(reg);
 			var parent = c.clSuper.cls;
 			pending.push(guarded(reg, () -> {
@@ -1006,6 +1017,8 @@ class Lower implements LowerQueries {
 	}
 
 	function addIface(ci:ClassInfo, i:TClass) {
+		// (an Objective-C protocol: the Objective-C class's, ObjC.protocols)
+		if (ObjC.isProtocol(i)) return;
 		var ii = classInfo(i);
 		if (ci.ifaces.indexOf(ii) < 0) ci.ifaces.push(ii);
 		for (j in i.clImplements)

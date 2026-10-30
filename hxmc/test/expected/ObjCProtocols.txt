@@ -1,0 +1,14 @@
+exit 0
+ObjCProtocols.hx:158: responds: true true false false
+ObjCProtocols.hx:166: parse: true [start,<a>,one,<b>,two]
+ObjCProtocols.hx:174: subclass: [start,<a>,one,<b>,two,end,end] true
+ObjCProtocols.hx:178: delegate: true true
+ObjCProtocols.hx:180: through the protocol: 6
+ObjCProtocols.hx:183: conforms: true true false false
+ObjCProtocols.hx:186: downcast: true true
+ObjCProtocols.hx:192: copies: 1
+ObjCProtocols.hx:195: lookup: value
+ObjCProtocols.hx:202: own protocol: 5 true false
+ObjCProtocols.hx:219: twins: t0+ t99+, collected 100
+ObjCProtocols.hx:228: kept: k+ true
+ObjCProtocols.hx:232: kind: true false true true true

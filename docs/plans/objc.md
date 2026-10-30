@@ -91,14 +91,17 @@ answer them.
    Haxe subclass can override them (`isFlipped` is a property). A member a
    category of another framework declares (Foundation's `-description` on
    NSObject) loads that framework: a classref loads only the class's own,
-   so the member needs one too. Open: protocols as types, lightweight
-   generics. A class method and an instance method of one name are fine
+   so the member needs one too. Open: the generator emitting protocols
+   (as extern interfaces), lightweight generics. A class method and an instance method of one name are fine
    (Haxe allows both on an extern). Only declarations, never the headers'
    comments (Apple's SDK terms); clang is needed when generating only.
 2. **Blocks**: built (a closure's entry in the runtime's table, counted
    by the block's helpers; a closure capturing nothing: a global block in
    the data; blocks taking and returning blocks, converted at each level;
    [interop.md](../interop.md#blocks)).
+   **Protocols**: built (extern interfaces; `@:optional` methods with the
+   typer's semantics of a Java interface's `default` ones; conformance
+   registered, tests as messages; [interop.md](../interop.md#protocols)).
 3. **Release on death by layout**: a constructor registers its class's own
    `id` fields, a closure its captured `id`s, a captured variable's box its
    own (`rt_objc_own`: an entry per slot, appended under a lock; every
