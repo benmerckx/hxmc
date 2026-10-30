@@ -2509,6 +2509,8 @@ class FnLower {
 			case TField(_, FStatic(c, cf)) if (CInterop.isVar(c, cf)):
 				var v = cVar(c, cf, lhs);
 				var t = tyOf(lhs);
+				// (a strong reference C holds: a store would retain and release, as ARC's)
+				if (t == TId) cfail('C variable ${cf.cfName} holds an Objective-C object: hxmc reads such variables, it does not store them', e);
 				var x = pure(compute(() -> cLoad(v.addr, 0, v.ct, lhs), t, t), t);
 				cStore(v.addr, 0, v.ct, x, t, e);
 				return coerce(x, t, et);

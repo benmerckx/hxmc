@@ -60,11 +60,15 @@ collect meanwhile. Pass it native memory, not GC objects.
 
 A static `var` of a `@:hxmc.c` class (or with `@:hxmc.c` on the field) is
 the C variable of its name, its `@:native` name or `@:hxmc.c("name")`, in the
-program, a linked object or the `@:hxmc.lib` library. A read loads it, an
+program, a linked object, the `@:hxmc.lib` library or the
+`@:hxmc.framework` (a framework's constants: `NSFontAttributeName`, whose
+value only AppKit knows). A read loads it, an
 assignment stores it, both at its address, so C and Haxe see each other's
 writes. Its type is a scalar, `Ptr`, `CString` or a struct: a struct read is
 a copy, `v.x = 1` writes its field in place and `v = s` all of it. Declare a
-`const` one `final`: the store would fault.
+`const` one `final`: the store would fault. One of an Objective-C type
+(`NSString *`) is read as a borrowed id; hxmc does not store one (C
+would hold it strongly: ARC retains and releases such stores).
 
 The address is a word of the program's data that the loader fills, as C's
 GOT entries: a bind on macOS, an `R_*_64` relocation on Linux, the import's
