@@ -1832,6 +1832,7 @@ class FnLower {
 					var xs = args(cargs, tys(ctor), defaultValues(ctor), 1, ctor, () -> obj);
 					out.push(SExpr(ECall(ctor, VectorTools.cons(obj, xs))));
 				}
+				objcDeallocWatch(c, obj);
 				coerce(obj, TRef(RObj(ci)), tyOf(e));
 			case TArrayDecl(vs):
 				var elem = switch tyOf(e) {
@@ -2802,6 +2803,8 @@ class FnLower {
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c)):
 				if (self == null || l.objcPeer(self) == null)
 					return fail("super." + cf.cfName + ": a message to super in a class that does not extend an Objective-C class", e);
+				// (Objective-C's dealloc runs after the Haxe one, as ARC's: ObjC.deallocOf)
+				if (cf.cfName == "dealloc") return fail("super.dealloc(): Objective-C's dealloc runs by itself after this one, as under ARC", e);
 				if (ObjC.isInit(cf)) {
 					if (!inCtor) return fail("super." + cf.cfName + "(...): an initializer, called in the constructor only", e);
 					return coerce(objcSuperInit(l.superOf(self), cf, cargs, e), TId, rt);
@@ -3751,6 +3754,12 @@ class FnLower {
 		return ELocal(id);
 	}
 
+	// an object of class c (made, by Haxe or by Objective-C) whose class
+	// overrides dealloc (ObjC.deallocOf): its dealloc a finaliser's
+	function objcDeallocWatch(c:TClass, obj:Ex)
+		if (ObjC.peerBase(c) != null && ObjC.deallocOf(c) != null)
+			out.push(SExpr(ECallHost("rt_objc_dealloc_watch", vector(ECast(TRef(RAny), obj)), TVoid)));
+
 	// the initializer of class c (its constructor's: the selector `sel` of the
 	// Objective-C initializer init it calls on super, `init` when none) as
 	// Objective-C sends it (this function's arguments: self, _cmd, the
@@ -3777,6 +3786,7 @@ class FnLower {
 			out.push(SSetField(ci, ci.fieldIndex(ObjC.CELL_FIELD), ELocal(obj), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(ci).name)), TI64)));
 			var ctor = l.ctor(k);
 			out.push(SExpr(ECall(ctor, Vector.fromArrayCopy([(ELocal(obj) : Ex)].concat([for (i in 2...fi.args.length) (ELocal(fi.args[i]) : Ex)])))));
+			objcDeallocWatch(c, ELocal(obj));
 			// (the Haxe object holds one reference, the caller one more)
 			var id = EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(obj));
 			out.push(SSet(r, ECallHost(ObjC.runtime(l, "objc_retain", [CPtr], CPtr), vector(id), TI64)));

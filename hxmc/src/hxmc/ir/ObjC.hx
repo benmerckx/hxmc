@@ -369,6 +369,20 @@ class ObjC {
 				CInterop.LOADS.set(lib, true);
 		}
 
+	// the dealloc a Haxe class extending an Objective-C one declares or
+	// inherits from a Haxe superclass (null: none). It is no Objective-C
+	// method (imps): Objective-C's dealloc runs after the Haxe object is
+	// gone; it runs as a finaliser instead (FnLower.objcDeallocWatch)
+	public static function deallocOf(c:TClass):Null<TClassField> {
+		var k = c;
+		while (k != null && !isObjC(k)) {
+			var f = k.clFields.get("dealloc");
+			if (f != null && f.cfKind.match(Method(_)) && !f.hasClassFieldFlag(CfExtern)) return f;
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		}
+		return null;
+	}
+
 	// the Objective-C initializer the objects of a peer class c are made
 	// with: the first one its constructor (its own, else a superclass's)
 	// calls on super, following super(...) up to the Objective-C class, `init`
@@ -441,6 +455,8 @@ class ObjC {
 			// (a protocol's optional method the class leaves out: none, TypeloadCheck's
 			// stand-in, extern and without a body)
 			if (cf.hasClassFieldFlag(CfExtern)) continue;
+			// (dealloc: a finaliser's, deallocOf)
+			if (!statics && cf.cfName == "dealloc") continue;
 			var decl = statics ? classDeclOf(c, cf) : declOf(c, cf);
 			if (decl == null && statics) continue;
 			if (decl == null) decl = cf;

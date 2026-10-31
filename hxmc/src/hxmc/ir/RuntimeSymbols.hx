@@ -99,6 +99,7 @@ class RuntimeSymbols {
 		{sym: "rt_objc_attach", kind: FUNC, families: NATIVE, by: "ObjC.invoke: a block called on a thread the runtime did not start"},
 		{sym: "rt_objc_uncaught", kind: FUNC, families: NATIVE, by: "ObjC.imps: an exception leaving a Haxe method Objective-C called"},
 		{sym: "rt_objc_unpaired", kind: FUNC, families: NATIVE, by: "ObjC.imps: a method sent to an object Objective-C made without its Haxe object"},
+		{sym: "rt_objc_dealloc_watch", kind: FUNC, families: NATIVE, by: "FnLower.objcDeallocWatch: an object whose class overrides dealloc"},
 		{sym: "rt_objc_adopt", kind: FUNC, families: NATIVE, by: "FnLower.objcAdopt: the object an initializer Objective-C sent makes the Haxe object of"},
 		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MemLower.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
 		{sym: "hxmc_alloc_slow_raw", kind: FUNC, families: LINEAR, by: "MemLower.allocDyn (Mem.allocRaw, Mem.allocArrayRaw)"},

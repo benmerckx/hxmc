@@ -143,6 +143,17 @@ class Start {
 		return prev;
 	}
 
+	// an object of a Haxe class extending an Objective-C one whose class
+	// overrides dealloc (FnLower.objcDeallocWatch): its dealloc called once,
+	// as a finaliser's, when the pair is unreachable from both sides (the
+	// Haxe object resurrected meanwhile, its Objective-C object not released
+	// yet: a later collection releases it, and Objective-C's dealloc runs)
+	@:hxmc.export("rt_objc_dealloc_watch") static function objcDeallocWatch(o:Dynamic):Void
+		Gc.finalise(objcDealloc, o);
+
+	static function objcDealloc(o:Dynamic):Void
+		Reflect.callMethod(o, Reflect.field(o, "dealloc"), []);
+
 	@:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
 		Gc.uncaught("", Str.ofUtf8(what, LibC.strlen(what).toInt()));
 		Stacks.report();
