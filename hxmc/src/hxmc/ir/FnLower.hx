@@ -3684,6 +3684,7 @@ class FnLower {
 	// class (a static one, obj null)
 	function objcSend(obj:Null<TExpr>, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var s = objcSig(cf, e);
+		if (ObjC.restOf(s) != null) return objcSendVariadic(obj, c, cf, s, cargs, e);
 		var ats = s.args.map(a -> ty(a.type));
 		var xs = obj != null ? args(VectorTools.cons(obj, cargs), VectorTools.cons(tyOf(obj), ats), null) : args(cargs, ats, null);
 		var self = obj != null ? coerce(xs[0], tyOf(obj), TId) : objcClass(c);
@@ -3695,6 +3696,41 @@ class FnLower {
 			return coerce(v, ats[0], tyOf(e));
 		}
 		return objcMsg(self, ObjC.selector(cf, s), [for (a in s.args) a.type], rest, s.ret, cf, e);
+	}
+
+	// a message of a variadic method (`...rest:T`, its last parameter): its
+	// fixed arguments, then each one listed (the array literal Haxe makes of
+	// them: a spread array's length is not the call's), objects only, then
+	// nil when it is @:hxmc.nilTerminated (NS_REQUIRES_NIL_TERMINATION:
+	// arrayWithObjects:), passed as a variadic function's
+	function objcSendVariadic(obj:Null<TExpr>, c:TClass, cf:TClassField, s:core.TType.TSignature, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var restT = ObjC.restOf(s);
+		var nfixed = s.args.length - 1;
+		if (ObjC.ctype(restT) != CPtr || ObjC.isBlockType(restT))
+			return cfail(cf.cfName + ": a variadic Objective-C method's arguments are objects (yet)", e);
+		var listed = cargs.length > nfixed ? switch strip(cargs[nfixed]).eexpr {
+			case TArrayDecl(el): el;
+			case TCast(x, _) | TMeta(_, x): switch strip(x).eexpr {
+					case TArrayDecl(el): el;
+					case _: null;
+				}
+			case _: null;
+		} : vector();
+		if (listed == null) return cfail(cf.cfName + ": a variadic Objective-C method takes its arguments listed, not spread (`...array`)", e);
+		var fixedTypes = [for (i in 0...nfixed) s.args[i].type];
+		var self = obj != null ? coerce(value(obj), tyOf(obj), TId) : objcClass(c);
+		var selfLocal = ELocal(asLocal(self, TId));
+		var xs = args(Vector.fromArrayCopy([for (i in 0...nfixed) cargs[i]]), Vector.fromArrayCopy([for (t in fixedTypes) ty(t)]), null).toArray();
+		var types = fixedTypes.copy();
+		for (x in listed) {
+			xs.push(ELocal(asLocal(coerce(value(x), tyOf(x), TId), TId)));
+			types.push(restT);
+		}
+		if (Lower.hasMeta(":hxmc.nilTerminated", cf.cfMeta)) {
+			xs.push(EConv(I2L, EInt(0)));
+			types.push(restT);
+		}
+		return objcMsg(selfLocal, ObjC.selector(cf, s), types, xs, s.ret, cf, e, null, false, "objc_msgSend", nfixed);
 	}
 
 	// a property of an Objective-C object (obj) or class (null) read: its getter
@@ -3956,13 +3992,13 @@ class FnLower {
 	// types of the arguments (types) and the result (ret) (ObjC.declare); the
 	// selector from its selref (DataGen.objcRefs)
 	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:Null<TClassField>, e:TExpr, ?to:Ty, keep = false,
-			send = "objc_msgSend"):Ex {
+			send = "objc_msgSend", ?variadic:Int):Ex {
 		if (to == null) to = tyOf(e);
 		if (cf != null) {
 			var lib = ObjC.memberLibrary(cf);
 			if (lib != null) l.objcDeclare(ObjC.Decl.Load(lib));
 		}
-		var key = try ObjC.declare(l, cf, types, ret) catch (err:LowerError) {
+		var key = try ObjC.declare(l, cf, types, ret, variadic) catch (err:LowerError) {
 			if (err.where == "") err.where = where(e);
 			throw err;
 		};

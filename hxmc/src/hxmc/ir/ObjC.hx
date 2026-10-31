@@ -288,11 +288,13 @@ class ObjC {
 		if (StringTools.startsWith(name, "get_") && s.args.length == 0) return name.substr(4);
 		if (StringTools.startsWith(name, "set_") && s.args.length == 1 && name.length > 4)
 			return "set" + name.charAt(4).toUpperCase() + name.substr(5) + ":";
-		if (s.args.length == 0) return name;
+		// (a variadic method's `...rest`: no piece of the selector, `firstObj, ...`)
+		var nargs = restOf(s) != null ? s.args.length - 1 : s.args.length;
+		if (nargs == 0) return name;
 		var b = new StringBuf();
 		b.add(name);
 		b.add(":");
-		for (i in 1...s.args.length) {
+		for (i in 1...nargs) {
 			b.add(s.args[i].name);
 			b.add(":");
 		}
@@ -317,7 +319,7 @@ class ObjC {
 	// named by its C types so that every message of the same types shares
 	// it; called in a safe region (Cocoa calls back into Haxe from inside
 	// many messages)
-	public static function declare(l:LowerQueries, cf:Null<TClassField>, types:Array<T>, result:Null<T>):String {
+	public static function declare(l:LowerQueries, cf:Null<TClassField>, types:Array<T>, result:Null<T>, ?variadic:Int):String {
 		var where = cf != null ? CInterop.posOf(cf.cfPos) : "";
 		var name = cf != null ? cf.cfName : "init";
 		var args = [CPtr, CPtr, CPtr];
@@ -330,15 +332,29 @@ class ObjC {
 		var ret = result == null ? CVoid : ctype(result);
 		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('Objective-C method $name: the result has no C type a message can return', where);
-		return declareC(l, args.slice(3), ret);
+		return declareC(l, args.slice(3), ret, variadic);
 	}
 
-	// the same of a message of C types (args after the receiver and selector)
-	public static function declareC(l:LowerQueries, args:Array<CTy>, ret:CTy):String {
+	// the same of a message of C types (args after the receiver and selector);
+	// variadic: the number of its fixed ones (the others passed as a variadic
+	// function's: on Apple's arm64, on the stack)
+	public static function declareC(l:LowerQueries, args:Array<CTy>, ret:CTy, ?variadic:Int):String {
 		var cargs = [CPtr, CPtr, CPtr].concat(args);
-		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
+		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret)
+			+ (variadic != null ? "..." + variadic : "");
 		l.objcDeclare(Func(key, {args: cargs, ret: ret}));
+		// (self and _cmd first)
+		if (variadic != null) l.objcDeclare(Variadic(key, 2 + variadic));
 		return key;
+	}
+
+	// a method's variadic parameter (`...rest:T`, its last): T, else null
+	public static function restOf(s:core.TType.TSignature):Null<T> {
+		if (s.args.length == 0) return null;
+		return switch TFunctions.follow(s.args[s.args.length - 1].type) {
+			case TAbstract(a, [t]) if (a.aPath.name == "Rest" && a.aPath.pack.join(".") == "haxe"): t;
+			case _: null;
+		}
 	}
 
 	// libobjc's functions the lowering calls, declared once per program as an
@@ -367,6 +383,8 @@ class ObjC {
 				CInterop.USER.set(sym, true);
 			case Load(lib):
 				CInterop.LOADS.set(lib, true);
+			case Variadic(sym, first):
+				FnLower.C_VARIADIC.set(sym, first);
 		}
 
 	// the dealloc a Haxe class extending an Objective-C one declares or
@@ -895,4 +913,7 @@ enum Decl {
 	Symbol(sym:String, lib:String);
 	// library lib, loaded though nothing is imported of it (a category's: memberLibrary)
 	Load(lib:String);
+	// C function sym (a variadic message's, declare) variadic from its argument
+	// `first` (its address not counted: FnLower.C_VARIADIC)
+	Variadic(sym:String, first:Int);
 }

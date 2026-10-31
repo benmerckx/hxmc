@@ -624,6 +624,14 @@ program as it reads clang's. On x86-64, a message whose result is a struct over 
 bytes is sent with `objc_msgSend_stret` (`objc_msgSendSuper_stret`), as
 the ABI has it.
 
+A variadic method is declared with its named parameters, then `...rest`
+(`arrayWithObjects(firstObj:Null<NSObject>, ...rest:NSObject)`: `rest` is
+no piece of the selector); a message passes the arguments listed for it as
+a variadic function's (on Apple's arm64, on the stack), objects only for
+now, and `nil` after them when the method is `@:hxmc.nilTerminated`
+(`NS_REQUIRES_NIL_TERMINATION`). A spread array (`...xs`) is an error: its
+length is not the call's.
+
 ### Haxe classes extending Objective-C classes
 
 A Haxe class whose superclass is an Objective-C class is an Objective-C
