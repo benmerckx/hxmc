@@ -643,6 +643,19 @@ variable leads back to it.
   Objective-C may call them on any thread: one the runtime did not start
   (an `NSThread`, GCD's workers) is attached at its first call, as a
   block's.
+- **Made by Objective-C** (`[[C alloc] initWithCoder:coder]` of a nib, a
+  document controller, a factory such as `+errorWithDomain:code:userInfo:`):
+  the initializer the constructor calls on super (`init` when it calls none)
+  is the class's own, which, sent to an object Objective-C allocated, runs
+  the constructor with the initializer's arguments, making the Haxe object
+  of that object (its field initializers too); its constructor's
+  parameters must be the initializer's (their C types). A subclass without
+  a constructor of its own has its superclass's. The object is paired with
+  its Haxe object before the initializer runs, so methods the superclass's
+  initializer sends find it. A method sent to an object made with another
+  initializer, which runs no Haxe constructor, ends the program with a
+  message. An initializer returning another object than its receiver
+  (class clusters) is not supported in a Haxe constructor.
 - **Class methods** (`+`): a static implementing one an Objective-C
   superclass declares (`+cellClass`, `+description`) or one of a protocol
   the class adopts (a static of the extern interface, which Haxe allows

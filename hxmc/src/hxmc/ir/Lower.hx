@@ -1012,6 +1012,27 @@ class Lower implements LowerQueries {
 				register: reg
 			};
 			prog.funcs.push(reg);
+			// (the initializer Objective-C makes the class's objects with: the
+			// constructor's, which then makes the Haxe object, FnLower.objcAdoptBody)
+			var adopt = ObjC.adoptInit(c);
+			if (adopt != null) {
+				var ctorFi = this.ctor(adopt.ctor);
+				var w = new FuncInfo("hxmc_objc_init_" + ci.ident, moduleOf(c));
+				w.display = core.Globals.sTypePath(c.clPath) + " (the initializer " + adopt.sel + " Objective-C sends)";
+				w.args = [new Local(0, "self", TI64), new Local(1, "_cmd", TI64)];
+				for (i in 1...ctorFi.args.length)
+					w.args.push(new Local(i + 1, ctorFi.args[i].name, ctorFi.args[i].ty));
+				w.ret = TI64;
+				prog.funcs.push(w);
+				pending.push(guarded(w, () -> {
+					var fl = new FnLower(this, w, ci, null);
+					fl.objcAdoptBody(c, adopt.init, adopt.sel, adopt.ctor.clConstructor.cfExpr);
+					fl.finish();
+				}));
+				var e = ObjC.entry(w.name + "__imp", "hxmc_imp_" + w.name, w.module, w, w.args.length, {args: [CInterop.CTy.CPtr, CInterop.CTy.CPtr].concat(adopt.cts), ret: CInterop.CTy.CPtr});
+				prog.funcs.push(e);
+				ci.objc.methods.unshift({sel: adopt.sel, sym: e.cSymbol, types: "@@:" + [for (ct in adopt.cts) ObjC.encoding(ct)].join("")});
+			}
 			var parent = c.clSuper.cls;
 			pending.push(guarded(reg, () -> {
 				var fl = new FnLower(this, reg, ci, null);

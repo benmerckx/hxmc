@@ -3718,19 +3718,86 @@ class FnLower {
 		var s = init != null ? objcSig(init, e) : null;
 		var xs = s != null ? args(cargs, Vector.fromArrayCopy([for (a in s.args) ty(a.type)]), null) : vector();
 		var cell = temp(TI64, EField(self, self.fieldIndex(ObjC.CELL_FIELD), ELocal(thisLocal)));
-		var cls = objcCellClass(cell);
+		var cls = asLocal(objcCellClass(cell), TI64);
 		var idType = TInst(sup, vector());
-		var alloc = ELocal(asLocal(objcMsg(cls, "alloc", [], [], idType, init, e, TI64), TI64));
-		var sel = init != null ? ObjC.selector(init, s) : "init";
-		var id = asLocal(objcMsg(alloc, sel, s != null ? [for (a in s.args) a.type] : [], xs.toArray(), idType, init, e, TId, true), TId);
-		out.push(SSetField(self, self.fieldIndex(ObjC.ID_FIELD), ELocal(thisLocal), ELocal(id)));
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
+		// the object: the one an initializer Objective-C sent is making this
+		// Haxe object of (objcAdoptBody: allocated by Objective-C, of this
+		// class), else allocated here
+		var alloc = newLocal("alloc", TI64);
+		var adopted = asLocal(ECallHost("rt_objc_adopt", vector(EConv(I2L, EInt(0))), TI64), TI64);
+		var getClass = ObjC.runtime(l, "object_getClass", [CPtr], CPtr);
+		var allocate = block(() -> out.push(SSet(alloc, objcMsg(ELocal(cls), "alloc", [], [], idType, init, e, TI64))));
+		out.push(SIf(EBin(LNe, ELocal(adopted), EConv(I2L, EInt(0))), vector(SIf(EBin(LEq, ECallHost(getClass, vector(ELocal(adopted)), TI64), ELocal(cls)),
+			vector(SSet(alloc, ELocal(adopted))),
+			// (another class's: an object a constructor before the initializer makes)
+			Vector.fromArrayCopy([SExpr(ECallHost("rt_objc_adopt", vector(ELocal(adopted)), TI64))].concat(allocate.toArray())))), allocate));
+		// the two paired before the initializer runs: methods the superclass's
+		// initializer sends (overridden setters) find the Haxe object, and an
+		// initializer of the class's (objcAdoptBody) forwards to its superclass's
+		out.push(SSetField(self, self.fieldIndex(ObjC.ID_FIELD), ELocal(thisLocal), ECast(TId, ELocal(alloc))));
 		var retainCount = ObjC.symbol(l, "_objc_rootRetainCount");
 		var release = ObjC.symbol(l, "objc_release");
-		var index = asLocal(ECallHost("rt_objc_peer_add", vector(ECast(TRef(RAny), ELocal(thisLocal)), ELocal(id),
+		var index = asLocal(ECallHost("rt_objc_peer_add", vector(ECast(TRef(RAny), ELocal(thisLocal)), ELocal(alloc),
 			ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(retainCount)), TI64), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TI32), TI32);
-		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
-		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(EBin(LAdd, ELocal(id), off), EInt(0), ELocal(index)), TVoid)));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(EBin(LAdd, ELocal(alloc), off), EInt(0), ELocal(index)), TVoid)));
+		var sel = init != null ? ObjC.selector(init, s) : "init";
+		var id = asLocal(objcMsg(ELocal(alloc), sel, s != null ? [for (a in s.args) a.type] : [], xs.toArray(), idType, init, e, TId, true), TId);
+		// (an initializer returning another object than its receiver: not supported)
+		out.push(SIf(EBin(LNe, ECast(TI64, ELocal(id)), ELocal(alloc)), vector(SExpr(ECallHost("rt_objc_unpaired",
+			vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr("hxmc: " + sel + " of " + core.Globals.sTypePath(l.superOf(self).clPath)
+				+ ", in a Haxe constructor, returned another object than its receiver (or nil): not supported")), TI64)), TVoid))),
+			vector()));
 		return ELocal(id);
+	}
+
+	// the initializer of class c (its constructor's: the selector `sel` of the
+	// Objective-C initializer init it calls on super, `init` when none) as
+	// Objective-C sends it (this function's arguments: self, _cmd, the
+	// constructor's): to an object Objective-C allocated, without its Haxe
+	// object (its instance variable 0), the constructor runs, making the
+	// Haxe object of that object (rt_objc_adopt, which objcSuperInit takes);
+	// to one paired (being made by Haxe: the constructor's own super.init...
+	// call, or an initializer the superclass's calls; or made), the
+	// superclass's initializer. Its result is the caller's (+1), as an
+	// initializer's
+	public function objcAdoptBody(c:TClass, init:Null<TClassField>, sel:String, e:TExpr) {
+		var selfId = fi.args[0];
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
+		var state = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(selfId), off), EInt(0)), TI32), TI32);
+		var r = newLocal("made", TI64);
+		var adopt = block(() -> {
+			out.push(SExpr(ECallHost("rt_objc_adopt", vector(ELocal(selfId)), TI64)));
+			var ci = l.classInfo(c);
+			var k = c;
+			while (k.clConstructor == null && k.clSuper != null)
+				k = k.clSuper.cls;
+			var obj = asLocal(ENewObj(ci), TRef(RObj(ci)));
+			// (this class's object, whichever constructor runs: objcConstructor)
+			out.push(SSetField(ci, ci.fieldIndex(ObjC.CELL_FIELD), ELocal(obj), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(ci).name)), TI64)));
+			var ctor = l.ctor(k);
+			out.push(SExpr(ECall(ctor, Vector.fromArrayCopy([(ELocal(obj) : Ex)].concat([for (i in 2...fi.args.length) (ELocal(fi.args[i]) : Ex)])))));
+			// (the Haxe object holds one reference, the caller one more)
+			var id = EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(obj));
+			out.push(SSet(r, ECallHost(ObjC.runtime(l, "objc_retain", [CPtr], CPtr), vector(id), TI64)));
+		});
+		var forward = block(() -> {
+			var s = init != null ? objcSig(init, e) : null;
+			var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), ELocal(selfId)), TVoid)));
+			var sup = l.superOf(self);
+			var superClass = ObjC.isObjC(sup) ? objcClass(sup)
+				: objcCellClass(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(sup)).name)), TI64));
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), superClass), TVoid)));
+			var types = s != null ? [for (a in s.args) a.type] : [];
+			var xs = [for (i in 2...fi.args.length) (ELocal(fi.args[i]) : Ex)];
+			// (its result an id: of the Objective-C class the hierarchy extends, a
+			// Haxe superclass's type would be its Haxe object's)
+			var base = ObjC.isObjC(sup) ? sup : ObjC.peerBase(sup);
+			out.push(SSet(r, objcMsg(receiver, sel, types, xs, TInst(base, vector()), init, e, TI64, true, "objc_msgSendSuper")));
+		});
+		out.push(SIf(EBin(Eq, ELocal(state), EInt(0)), adopt, forward));
+		out.push(SReturn(ELocal(r)));
 	}
 
 	// the class of a class cell (at the address cell), registered first when

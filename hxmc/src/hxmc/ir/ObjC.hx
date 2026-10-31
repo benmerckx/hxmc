@@ -369,6 +369,60 @@ class ObjC {
 				CInterop.LOADS.set(lib, true);
 		}
 
+	// the Objective-C initializer the objects of a peer class c are made
+	// with: the first one its constructor (its own, else a superclass's)
+	// calls on super, following super(...) up to the Objective-C class, `init`
+	// when none does; ctor the class whose constructor runs. Objective-C's
+	// arguments are the constructor's (FnLower.objcAdoptBody), so null when
+	// the constructor's parameters are not the initializer's (their number or
+	// C types): Objective-C cannot make an object of c then
+	public static function adoptInit(c:TClass):Null<{init:Null<TClassField>, sel:String, ctor:TClass, cts:Array<CTy>}> {
+		function ctorOf(k:TClass):Null<TClass> {
+			while (k != null && k.clConstructor == null)
+				k = k.clSuper != null ? k.clSuper.cls : null;
+			return k == null || isObjC(k) || k.clConstructor.cfExpr == null ? null : k;
+		}
+		var k = ctorOf(c);
+		if (k == null) return null;
+		var init:Null<TClassField> = null;
+		var j = k;
+		while (j != null && init == null) {
+			var up = false;
+			function scan(e:TExpr)
+				switch e.eexpr {
+					case TCall({eexpr: TField({eexpr: TConst(TSuper)}, FInstance(o, _, cf))}, _) if (isObjC(o) && isInit(cf)):
+						if (init == null) init = cf;
+					case TCall({eexpr: TConst(TSuper)}, _):
+						up = true;
+						core.Texpr.iter(scan, e);
+					case _:
+						core.Texpr.iter(scan, e);
+				}
+			scan(j.clConstructor.cfExpr);
+			j = init == null && up && j.clSuper != null ? ctorOf(j.clSuper.cls) : null;
+		}
+		var ctorSig = switch TFunctions.follow(k.clConstructor.cfType) {
+			case TFun(s): s;
+			case _: return null;
+		}
+		var initArgs = init == null ? [] : switch TFunctions.follow(init.cfType) {
+			case TFun(s): s.args.toArray();
+			case _: return null;
+		}
+		if (ctorSig.args.length != initArgs.length) return null;
+		var cts = [];
+		for (i in 0...initArgs.length) {
+			var a = ctype(ctorSig.args[i].type), b = ctype(initArgs[i].type);
+			if (isBlockType(ctorSig.args[i].type) || !Type.enumEq(a, b) || !(CInterop.isScalar(a) || a.match(CStruct(_)))) return null;
+			cts.push(a);
+		}
+		var sel = init == null ? "init" : switch TFunctions.follow(init.cfType) {
+			case TFun(s): selector(init, s);
+			case _: return null;
+		}
+		return {init: init, sel: sel, ctor: k, cts: cts};
+	}
+
 	// the methods of a peer class c (registered as `name`) that Objective-C
 	// can call: its own instance methods whose types C has, each by the
 	// selector and types of the Objective-C method it overrides, else by
@@ -454,6 +508,14 @@ class ObjC {
 			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + root), EInt(0)), TI64);
 			var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(self), off), EInt(0)), TI32);
 			var body:Array<Stmt> = statics ? [] : [SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))];
+			// (none: an object Objective-C made with an initializer the class's
+			// constructor does not call, FnLower.objcAdoptBody)
+			if (!statics) {
+				var sel = decl != cf ? selector(decl, s) : selector(cf, s);
+				var what = 'hxmc: -[$name $sel] sent to an object Objective-C made with an initializer that runs no Haxe constructor (the one the constructor\'s super.init... call names does): it has no Haxe object';
+				body.push(SIf(EBin(RefEq, ELocal(peer), ENull(TRef(RAny))),
+					vector(SExpr(ECallHost("rt_objc_unpaired", vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(what)), TI64)), TVoid))), vector()));
+			}
 			var xs = statics ? [] : [ECast(fi.args[0].ty, ELocal(peer))];
 			for (i in 2...nargs) {
 				var b = blocks[i - 2];
@@ -683,7 +745,7 @@ class ObjC {
 	// a slot of this frame, returned by the C ABI's rules) and enters the
 	// region again. No frame of its own, which a thread not yet attached
 	// could not push: f has one (its try keeps it from being inlined)
-	static function entry(name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
+	public static function entry(name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
 		var w = new FuncInfo(name, module);
 		w.cSymbol = symbol;
 		w.display = f.display;

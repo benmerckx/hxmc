@@ -260,6 +260,13 @@ class Gc {
 				peersCap = peersCap == 0 ? 64 : peersCap * 2;
 				peers = LibC.realloc(peers, (peersCap : I64) * 16);
 			}
+			// (entry 0 stays free: an instance variable of 0 is an object
+			// Objective-C made, its Haxe object not made yet; FnLower.objcAdopt)
+			if (npeers == 0) {
+				Mem.setPtr(peers, 0, Ptr.nil());
+				Mem.setPtr(peers, 8, Ptr.nil());
+				npeers = 1;
+			}
 			i = npeers++;
 		}
 		Mem.setPtr(peers, 16 * i, p);

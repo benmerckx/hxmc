@@ -128,6 +128,27 @@ class Start {
 	// an exception that would leave a Haxe method Objective-C called (an
 	// entry of hxmc.ir.ObjC.imps): reported as an uncaught one, and the end of
 	// the program (unwinding Objective-C's frames would skip their cleanup)
+	// an object of a Haxe class extending an Objective-C one without its Haxe
+	// object (one Objective-C made with an initializer the class's constructor
+	// does not call, FnLower.objcAdoptBody; one an initializer replaced): what
+	// happened, then the end of the program
+	// the object an initializer Objective-C sent is making the Haxe object of
+	// (FnLower.objcAdoptBody), for the constructor's super.init... to take
+	// (objcSuperInit): sets it, the previous value the result
+	@:hxmc.threadLocal static var adopting:Ptr;
+
+	@:hxmc.export("rt_objc_adopt") static function objcAdopt(id:Ptr):Ptr {
+		var prev = adopting;
+		adopting = id;
+		return prev;
+	}
+
+	@:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
+		Gc.uncaught("", Str.ofUtf8(what, LibC.strlen(what).toInt()));
+		Stacks.report();
+		Os.exit(1);
+	}
+
 	@:hxmc.export("rt_objc_uncaught") static function objcUncaught(v:Dynamic):Void {
 		Gc.uncaught("Uncaught exception in a method Objective-C called: ", v);
 		Stacks.report();
