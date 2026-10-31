@@ -24,4 +24,5 @@ Ffi.hx:127: 12
 Ffi.hx:128: 42, 25, ffidyn
 Ffi.hx:129: 42, 41, 9
 Ffi.hx:131: 5001, x4999, kept across
-Ffi.hx:135: 10012
+Ffi.hx:135: 3000, after1999, x2999
+Ffi.hx:139: 16012
