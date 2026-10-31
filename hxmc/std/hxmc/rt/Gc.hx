@@ -247,11 +247,27 @@ class Gc {
 	static var deadPeers:Ptr;
 	static var deadPeersCap:Int;
 
-	@:hxmc.export("rt_objc_peer_add") static function peerAdd(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr):Int {
+	// a bit per type index: the types of the objects paired (idOf)
+	static var peerTypes:Ptr;
+
+	@:hxmc.export("rt_objc_peer_add") static function peerAdd(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr):Int
+		return pair(o, id, retainCount, release, true);
+
+	// o paired with id; typed: o's type is a class's whose objects are
+	// paired (not a value an Objective-C exception carries: ObjCExceptions)
+	static function pair(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr, typed:Bool):Int {
 		var p = Mem.addr(o);
+		var t = Types.tindex(o);
 		lockLeaf(peersLock);
 		peerRetainCount = retainCount;
 		peerRelease = release;
+		if (typed) {
+			if (peerTypes.isNull()) {
+				peerTypes = LibC.malloc(8192);
+				LibC.memset(peerTypes, 0, 8192);
+			}
+			Mem.setI8(peerTypes, t >>> 3, Mem.getU8(peerTypes, t >>> 3) | (1 << (t & 7)));
+		}
 		var i = peerFree;
 		if (i >= 0) {
 			peerFree = Mem.getPtr(peers, 16 * i + 8).toI64().toInt();
@@ -583,6 +599,35 @@ class Gc {
 	// first: hxmc.ir.Lower.classInfo)
 	@:hxmc.export("rt_objc_unbox") static function idUnbox(o:Dynamic):Ptr
 		return o == null ? Ptr.nil() : Mem.getPtr(Mem.addr(o), 0);
+
+	// the id of v when it is an Objective-C object (a box of an id; an object
+	// of a type whose objects are paired: peerAdd), else nil: v of any type
+	static function idOf(v:Dynamic):Ptr {
+		if (v == null) return Ptr.nil();
+		var p = Mem.addr(v);
+		var t = Types.tindex(v);
+		if (t == T_NATIVE) {
+			var id = Mem.getPtr(p, 0);
+			lockLeaf(peersLock);
+			var found = boxFind(id);
+			unlockLeaf(peersLock);
+			return found == p ? id : Ptr.nil();
+		}
+		lockLeaf(peersLock);
+		var paired = !peerTypes.isNull() && Mem.getU8(peerTypes, t >>> 3) & (1 << (t & 7)) != 0;
+		unlockLeaf(peersLock);
+		return paired ? Mem.getPtr(p, 0) : Ptr.nil();
+	}
+
+	// whether v (of any type: a caught value, a Dynamic) is an Objective-C
+	// object that is a kind of the class cls, or conforms to the protocol
+	// cls: sel (isKindOfClass:, conformsToProtocol:) sent with msgSend
+	// (libobjc's, as an address)
+	@:hxmc.export("rt_objc_is") static function objcIs(v:Dynamic, cls:Ptr, sel:Ptr, msgSend:Ptr):Bool {
+		var id = idOf(v);
+		// (BOOL: the result's low byte)
+		return !id.isNull() && Ind.call3(msgSend, id, sel, cls).toI64().toInt() & 0xff != 0;
+	}
 
 	// a weak id field (@:hxmc.weak): it holds a cell outside the heap, the
 	// variable objc_storeWeak knows (a field moves with its object), which
@@ -2271,4 +2316,5 @@ class Gc {
 @:hxmc.c @:hxmc.fast private extern class Ind {
 	@:hxmc.indirect static function call1(f:Ptr, a:Ptr):Ptr;
 	@:hxmc.indirect static function call2(f:Ptr, a:Ptr, b:Ptr):Ptr;
+	@:hxmc.indirect static function call3(f:Ptr, a:Ptr, b:Ptr, c:Ptr):Ptr;
 }

@@ -1031,7 +1031,7 @@ class Lower implements LowerQueries {
 					fl.objcAdoptBody(c, adopt.init, adopt.sel, adopt.ctor.clConstructor.cfExpr);
 					fl.finish();
 				}));
-				var e = ObjC.entry(w.name + "__imp", "hxmc_imp_" + w.name, w.module, w, w.args.length, {args: [CInterop.CTy.CPtr, CInterop.CTy.CPtr].concat(adopt.cts), ret: CInterop.CTy.CPtr});
+				var e = ObjC.entry(this, w.name + "__imp", "hxmc_imp_" + w.name, w.module, w, w.args.length, {args: [CInterop.CTy.CPtr, CInterop.CTy.CPtr].concat(adopt.cts), ret: CInterop.CTy.CPtr});
 				prog.funcs.push(e);
 				ci.objc.methods.unshift({sel: adopt.sel, sym: e.cSymbol, types: "@@:" + [for (ct in adopt.cts) ObjC.encoding(ct)].join("")});
 			}

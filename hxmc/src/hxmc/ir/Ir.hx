@@ -245,6 +245,9 @@ class FuncInfo {
 	// those arguments nullable and filled in when null (Lower.defaultsEntry)
 	public var dfltEntry:Null<FuncInfo>;
 	public var hasTry:Bool = false;
+	// a foreign exception passes its frame (Unwind.PASS: no personality): an
+	// entry Objective-C calls, which raises one (ObjC.entry)
+	public var foreignPasses:Bool = false;
 	public var noGc:Bool = false; // never reaches a GC point (Facts.findNoGc): calls to it are not GC points
 	// it calls rt_blocking_enter (blocksHere), or a function that does
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)

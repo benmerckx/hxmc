@@ -566,6 +566,29 @@ class DataGen {
 		}
 	}
 
+	// the program refers to Objective-C (objcRefs)
+	var objc = false;
+
+	// a program with Objective-C: where an Objective-C exception reaching a
+	// Haxe frame continues (hxmc.rt.ObjCExceptions): the stub
+	// hxmc_objc_landing, which the personality has the unwinder resume in
+	// (LinkMachO: the Haxe functions' language-specific data, when it is
+	// there), then hxmc_objc_caught(ue), without a frame of its own (it
+	// leaves the safe region the message was sent in, as a callback's
+	// wrapper does), which calls rt_objc_caught with libobjc's functions
+	public function objcCaught(emit:Target.Emitter) {
+		if (!objc || abi.os != "macos") return;
+		var fns = ["objc_begin_catch", "objc_end_catch", "objc_retain", "objc_release", "object_getClass", "class_getInstanceVariable", "ivar_getOffset"];
+		for (f in fns)
+			hxmc.ir.CInterop.LIBS.set(f, hxmc.ir.ObjC.LIB);
+		compile(MirBuild.synthetic(prep, abi, MirBuild.OBJC_CAUGHT, vector(I64), Void, (b, ps) -> {
+			b.call("rt_callback_begin", vector(), I32);
+			b.call("rt_objc_caught", Vector.fromArrayCopy([ps[0]].concat([for (f in fns) b.symAddr(f)])), Void);
+			b.ret(-1);
+		}));
+		emit.stub(MirBuild.STUB_LANDING);
+	}
+
 	// the Objective-C classes and selectors the program sends messages to and
 	// with (ObjC.CLASSREF, ObjC.SELREF): a word each, as clang's, in
 	// __objc_classrefs (the class object, bound by the loader) and
@@ -582,6 +605,7 @@ class DataGen {
 					names.set(s.name, true);
 		var list = [for (n in names.keys()) n];
 		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		objc = list.length > 0;
 		var descs = new Map<String, Bool>();
 		for (n in list) {
 			if (StringTools.startsWith(n, hxmc.ir.ObjC.GLOBAL_BLOCK)) {

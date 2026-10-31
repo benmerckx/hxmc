@@ -113,6 +113,12 @@ class LinkMachO extends LinkCore {
 		resolve();
 		// (the sections nothing reaches left out: LinkCore.gc; a dylib's exports are roots)
 		if (dylib) roots = [for (n in abi.exports) if (globals.exists(n)) n];
+		// (Objective-C: the personality of the Haxe functions, whose
+		// language-specific data is the stub it resumes a frame in,
+		// DataGen.objcCaught)
+		var landing = globals.get(MirBuild.STUB_LANDING);
+		var personality = landing != null ? globals.get("rt_objc_personality") : null;
+		if (personality != null) roots.push(personality.name);
 		gc(entry);
 		// imports: what stays undefined (by name), and whether each is weak
 		var importWeak = new Map<String, Bool>();
@@ -244,7 +250,7 @@ class LinkMachO extends LinkCore {
 		text.push(stubs);
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
 		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section)) r];
-		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame").sec : null;
+		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing).sec : null;
 		addr.set(header, 0);
 		var pos = HEADER_RESERVE;
 		function group(list:Array<Section>):{start:Int, end:Int} {

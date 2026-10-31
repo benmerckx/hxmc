@@ -694,9 +694,7 @@ variable leads back to it.
   looked up from the Objective-C superclass (`super.set_frame(v)` in an
   override of `set_frame`); struct results come back both ways.
 - **Exceptions**: a Haxe exception leaving a method Objective-C called is
-  reported as an uncaught one and ends the program: unwinding through
-  Objective-C's frames would skip their cleanup. An Objective-C exception
-  (`NSException`) ends it too.
+  raised as an Objective-C exception ([Exceptions](#exceptions)).
 - **Hierarchies**: a Haxe class extending such a class is an Objective-C
   class of its own, registered after its superclass's; the class
   allocated is the instance's own, whichever constructor calls the
@@ -801,12 +799,55 @@ Dispatch.dispatch_async(Mem.sym("_dispatch_main_q"), () -> done = true);
   caller's stack (an argument: Foundation passes completion handlers so)
   is copied first, so the function may be kept after the call.
 - **Calls** run the closure as a method's entry does: out of the caller's
-  safe region, an exception reported as an uncaught one. A thread the
-  runtime did not start (GCD's workers) is attached at its first call.
+  safe region, a Haxe exception leaving it raised as an Objective-C one
+  ([Exceptions](#exceptions)). A thread the runtime did not start (GCD's
+  workers) is attached at its first call.
 - **Types**: those of messages, a block's parameter or result of function
   type a block too (a handler given a completion handler, as NSDocument's
   `performAsynchronousFileAccessUsingBlock:`). On x86-64, a struct result
   over 16 bytes is returned through memory (`BLOCK_USE_STRET`).
+
+### Exceptions
+
+```haxe
+try {
+  NSArray.array().objectAtIndex(5);
+} catch (e:NSException) {
+  trace(e.name());                          // NSRangeException
+}
+try {
+  view.perform(Selector.of("layoutHaxe")); // a Haxe method throwing MyError
+} catch (e:MyError) {}                      // the same MyError, past performSelector:
+```
+
+- **An Objective-C exception** reaching a Haxe frame (an `NSException` a
+  message raised, `@throw` of any object) is a Haxe throw of the object
+  there, as though the message had thrown it: `catch (e:NSException)` tests
+  its class (`isKindOfClass:`), `catch (e:Dynamic)` gets it, and
+  `haxe.Exception`'s message and `Std.string` are its `description` (an
+  `NSException`'s reason). The message's caller is the frame it reaches:
+  the unwinder runs Objective-C's cleanups (`@finally`, ARC's releases) up
+  to it, and Haxe's handlers take it from there.
+- **A Haxe exception leaving a method or block** Objective-C called is
+  raised as an Objective-C exception once the method's entry took the
+  caller's state back: an Objective-C object is raised itself, another
+  value as an `NSException` named `HaxeException` whose reason is
+  `Std.string` of the value. It unwinds Objective-C's frames as their own
+  exceptions do (an `@catch` there sees it), and is the Haxe value again in
+  the next Haxe frame. Without Foundation (no `NSException`), it is
+  reported as an uncaught one and ends the program.
+- **Type tests** of an Objective-C class or protocol on a value of another
+  type (a caught one, a `Dynamic`) test that it is an Objective-C object
+  first: a `String` is no `NSException`.
+- **A C callback** (`@:hxmc.callback`) is no method: an Objective-C
+  exception reaching a Haxe frame under it is a Haxe throw there too, and
+  goes on as Haxe throws do (an `@catch` of the C code calling the callback
+  does not see it).
+- **Natively**: the program's Haxe functions name a personality routine in
+  their unwind tables (`__eh_frame`, with the program's first Objective-C
+  reference), which claims an Objective-C exception for the first Haxe
+  frame the C++ ABI's search reaches and resumes that frame in the
+  runtime's catch. Exceptions of C++ pass through Haxe frames as before.
 
 ### Objects of C
 

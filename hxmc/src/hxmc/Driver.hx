@@ -266,6 +266,7 @@ class Driver {
 			var isel = Target.selector(abi);
 			var lf = isel.select(mf, layout);
 			if (hxmc.ir.Lower.lines) lf.display = fn.display != null ? fn.display : name;
+		lf.foreignPasses = fn.foreignPasses;
 			var s2 = haxe.Timer.stamp();
 			var ra = new Regalloc(lf, isel, ras);
 			ra.run();
@@ -572,6 +573,7 @@ class Driver {
 		dg.cVars(objs);
 		dg.emptyArrays(objs);
 		dg.objcRefs(objs);
+		dg.objcCaught(demit);
 		dg.resources(objs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);

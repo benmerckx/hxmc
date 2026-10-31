@@ -178,6 +178,7 @@ class Fingerprint {
 			local(a);
 		ty(f.ret);
 		word(f.hasTry ? 1 : 0);
+		word(f.foreignPasses ? 1 : 0);
 		word(f.locals.length);
 		for (l in f.locals)
 			local(l);

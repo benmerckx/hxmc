@@ -89,6 +89,9 @@ class MirBuild extends MirWriter {
 	public static inline var STUB_CALL_ON_STACK = "hxmc_call_on_stack";
 	public static inline var STUB_ZERO = "hxmc_zero";
 	public static inline var STUB_FRAME = "hxmc_frame";
+	// (Mach-O with Objective-C: DataGen.objcCaught, for hxmc.rt.ObjCExceptions)
+	public static inline var STUB_LANDING = "hxmc_objc_landing";
+	public static inline var OBJC_CAUGHT = "hxmc_objc_caught";
 
 	// a new block reached only from where control is now
 	function split():MBlock {

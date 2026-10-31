@@ -1,6 +1,6 @@
-// A Haxe exception leaving a method Objective-C called ends the program, as
-// an uncaught one (unwinding Objective-C's frames would skip their cleanup):
-// the try around the message never sees it.
+// A Haxe exception leaving a method Objective-C called, in a program without
+// Foundation (no NSException to raise it as, ObjCExceptions), ends the
+// program as an uncaught one: the try around the message never sees it.
 @:hxmc.lib("/usr/lib/libobjc.A.dylib") @:hxmc.objc extern class NSObject {
 	static function alloc():NSObject;
 	function init():NSObject;

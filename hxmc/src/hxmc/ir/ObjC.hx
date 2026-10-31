@@ -577,9 +577,9 @@ class ObjC {
 				body.push(blockFunction(l, ELocal(w.args[i]), b, local("heap", TId), local("same", TRef(RAny)), local("box", TRef(RAny)), fn));
 				xs.push(ELocal(fn));
 			}
-			// the call, in a try: an exception leaving it would unwind through
-			// Objective-C's frames, which skips their cleanup (rt_objc_uncaught
-			// reports it and ends the program, as an uncaught one)
+			// the call, in a try: a Haxe throw leaving it would skip
+			// Objective-C's frames (a longjmp) and their cleanup; the entry
+			// raises it as an Objective-C exception instead (rt_objc_raise)
 			var call:Array<Stmt> = [];
 			var res:Null<Local> = null;
 			if (fi.sret) {
@@ -602,7 +602,7 @@ class ObjC {
 			body.push(STry(Vector.fromArrayCopy(call), vector({
 				test: null,
 				l: exn,
-				body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
+				body: vector(SExpr(ECallHost("rt_objc_raise", vector(ELocal(exn)), TVoid)))
 			})));
 			w.hasTry = true;
 			if (blockRet != null) {
@@ -619,7 +619,7 @@ class ObjC {
 			body.push(SReturn(res == null ? null : ELocal(res)));
 			w.body = Vector.fromArrayCopy(body);
 			l.prog.funcs.push(w);
-			var e = entry(fi.name + "__imp", "hxmc_imp_" + fi.name, fi.module, w, nargs, {args: [CPtr, CPtr].concat(cts), ret: ret});
+			var e = entry(l, fi.name + "__imp", "hxmc_imp_" + fi.name, fi.module, w, nargs, {args: [CPtr, CPtr].concat(cts), ret: ret});
 			e.pos = fi.pos;
 			l.prog.funcs.push(e);
 			r.push({
@@ -771,7 +771,7 @@ class ObjC {
 		body.push(STry(vector(res == null ? SExpr(call) : SSet(res, call)), vector({
 			test: null,
 			l: exn,
-			body: vector(SExpr(ECallHost("rt_objc_uncaught", vector(ELocal(exn)), TVoid)))
+			body: vector(SExpr(ECallHost("rt_objc_raise", vector(ELocal(exn)), TVoid)))
 		})));
 		if (b.retBlock != null) {
 			// (a function result: a block)
@@ -783,7 +783,7 @@ class ObjC {
 		fi.body = Vector.fromArrayCopy(body);
 		fi.hasTry = true;
 		l.prog.funcs.push(fi);
-		var w = entry(sym, sym, "_closures", fi, sig.args.length + 1, {args: [CPtr].concat(b.args), ret: b.ret});
+		var w = entry(l, sym, sym, "_closures", fi, sig.args.length + 1, {args: [CPtr].concat(b.args), ret: b.ret});
 		w.display = fi.display;
 		l.prog.funcs.push(w);
 	}
@@ -794,8 +794,12 @@ class ObjC {
 	// the caller is in (none when a @:hxmc.fast message's), calls f (its
 	// first nargs arguments; a struct result: a slot of this frame, returned
 	// by the C ABI's rules) and takes the caller's state back. No frame of its own, which a thread not yet attached
-	// could not push: f has one (its try keeps it from being inlined)
-	public static function entry(name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
+	// could not push: f has one (its try keeps it from being inlined). A
+	// Haxe exception f's try caught (rt_objc_raise) is raised then as an
+	// Objective-C exception (rt_objc_raising, objc_exception_throw: no safe
+	// region, the caller's state is back), from this frame, which has no
+	// personality (foreignPasses): it goes on to Objective-C's frames
+	public static function entry(l:LowerQueries, name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
 		var w = new FuncInfo(name, module);
 		w.cSymbol = symbol;
 		w.display = f.display;
@@ -825,8 +829,15 @@ class ObjC {
 			body.push(SSet(r, ECall(f, Vector.fromArrayCopy(ys))));
 		} else body.push(SExpr(ECall(f, Vector.fromArrayCopy(ys))));
 		body.push(SExpr(ECallHost("rt_callback_end", vector(ELocal(prev)), TVoid)));
+		var raised = new Local(w.args.length + 2, "raised", TI64);
+		w.locals.push(raised);
+		body.push(SSet(raised, ECallHost("rt_objc_raising", vector(), TI64)));
+		l.objcDeclare(FastFunc("objc_exception_throw", {args: [CPtr], ret: CVoid}));
+		body.push(SIf(EBin(LEq, ELocal(raised), EConv(I2L, EInt(0))), vector(),
+			vector(SExpr(ECallHost(ObjC.symbol(l, "objc_exception_throw"), vector(ELocal(raised)), TVoid)))));
 		body.push(SReturn(f.ret == TVoid ? null : ELocal(r)));
 		w.body = Vector.fromArrayCopy(body);
+		w.foreignPasses = true;
 		return w;
 	}
 

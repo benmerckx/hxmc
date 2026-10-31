@@ -1652,6 +1652,8 @@ class FnLower {
 			case TInst(c, _) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_))):
 				var ci = classOrBox(c);
 				x -> EInstOf(ci, x);
+			case TInst(c, _) if (c.hasClassFlag(CExtern) && ObjC.isObjC(c) && !ObjC.isCF(c)):
+				objcTestDyn(c);
 			case _:
 				var tr = typeRefOfType(t);
 				tr == null ? null : x -> ECallHost(l.native("hx_is"), vector(x, EType(tr)), TBool);
@@ -2986,6 +2988,16 @@ class FnLower {
 				out.push(SSet(r, EConv(I2L, EInt(0))));
 				out.push(SIf(objcIs(x, TId, objcTestable(cargs[0], cargs[1])), vector(SSet(r, x)), vector()));
 				coerce(ELocal(r), TId, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && objcTestableDyn(cargs[0], cargs[1]) != null):
+				// Std.isOfType(v, C) of another value: whether it is an Objective-C object first
+				var x = coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny));
+				coerce(objcTestDyn(objcTestableDyn(cargs[0], cargs[1]))(x), TBool, tyOf(e));
+			case "Std_downcast" if (cargs.length == 2 && objcTestableDyn(cargs[0], cargs[1]) != null):
+				var x = ELocal(asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), TRef(RAny)));
+				var r = newLocal("down", TId);
+				out.push(SSet(r, EConv(I2L, EInt(0))));
+				out.push(SIf(objcTestDyn(objcTestableDyn(cargs[0], cargs[1]))(x), vector(SSet(r, coerce(x, TRef(RAny), TId))), vector()));
+				coerce(ELocal(r), TId, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && instClass(cargs[1]) != null):
 				// Std.isOfType(v, C) of a class literal: the instance test, a range of
 				// type indices (MemLower.instOf; null is no instance), not hx_is's walk
@@ -3044,6 +3056,33 @@ class FnLower {
 			out.push(SSet(r, ECallHost(key, vector(fn, ELocal(id), selector, arg), TBool)));
 		})));
 		return ELocal(r);
+	}
+
+	// the test that a value of any type (a caught one, a Dynamic) is an
+	// Objective-C object of the class or protocol c (rt_objc_is: a box of an
+	// id, or an object of a Haxe class extending an Objective-C one, then
+	// objcIs's message; hxmc.objc.Id: any such object). Its operands are
+	// computed here, before the test
+	function objcTestDyn(c:TClass):Ex->Ex {
+		var zero = EConv(I2L, EInt(0));
+		if (ObjC.isId(c)) return x -> ECallHost("rt_objc_is", vector(x, zero, zero, zero), TBool);
+		var protocol = ObjC.isProtocol(c);
+		var arg = protocol ? objcProtocol(ObjC.className(c)) : objcClass(c);
+		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(protocol ? "conformsToProtocol:" : "isKindOfClass:"))), TI64));
+		var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_msgSend"))), TI64));
+		return x -> ECallHost("rt_objc_is", vector(x, arg, sel, fn), TBool);
+	}
+
+	// the extern Objective-C class or protocol (not a type of C) the type
+	// expression t names, for a value that is not an Objective-C object
+	// (objcTestable's are): objcTestDyn's test
+	function objcTestableDyn(x:TExpr, t:TExpr):Null<TClass> {
+		if (ObjC.isObjCType(x.etype)) return null;
+		return switch strip(t).eexpr {
+			case TTypeExpr(TClassDecl(c)) if (c.hasClassFlag(CExtern) && ObjC.isObjC(c) && !ObjC.isCF(c)): c;
+			case _: null;
+		}
 	}
 
 	// the class whose instance test (EInstOf) Std.isOfType, Std.downcast and
