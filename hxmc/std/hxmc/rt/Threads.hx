@@ -155,8 +155,18 @@ class Threads {
 	@:hxmc.unsafe static inline function stateOf(m:Ptr<Mutator>):Int
 		return Atomic.load32(m.add(Struct.offsetOf(Mutator, "state")));
 
-	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int
-		return Atomic.exchange32(m.add(Struct.offsetOf(Mutator, "state")), s);
+	// the running thread's own state, set (only it writes it once it runs:
+	// the previous value a plain read): a seq_cst store, which the handshake's
+	// seq_cst load of rt_gc_requested after it needs (store then load, as the
+	// collector's store of rt_gc_requested then load of the states; arm64's
+	// STLR then LDAR are ordered, x86-64's store is an XCHG). No exchange:
+	// a read-modify-write costs twice a region's barriers on arm64
+	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int {
+		var p = m.add(Struct.offsetOf(Mutator, "state"));
+		var prev = Mem.getI32(p, 0);
+		Atomic.store32(p, s);
+		return prev;
+	}
 
 	// the running thread is in a safe region (RT_VERIFY's check of allocations: Gc.allocSlow)
 	@:hxmc.unsafe static inline function inRegion():Bool {
@@ -293,6 +303,20 @@ class Threads {
 		}
 		reload(m);
 	}
+
+	// A callback's wrapper (Lower.callback: Haxe code called from C): the
+	// state it found, leaving the caller's safe region if it was in one
+	// (SAFE) and waiting out a collection; a callback called by a fast C
+	// call finds it RUNNING and changes nothing. rt_callback_end takes the
+	// state back on return, so a fast caller continues RUNNING.
+	@:hxmc.export("rt_callback_begin") @:hxmc.unsafe static function callbackBegin():Int {
+		if (self.value.state != SAFE) return RUNNING;
+		blockingLeave();
+		return SAFE;
+	}
+
+	@:hxmc.export("rt_callback_end") @:hxmc.unsafe static function callbackEnd(prev:Int):Void
+		if (prev == SAFE) blockingEnter();
 
 	// Takes a mutex that a thread may hold while it leaves a safe region (and
 	// so waits for a collection): a thread blocked on it must be in a safe region.

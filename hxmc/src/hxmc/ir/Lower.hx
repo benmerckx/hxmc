@@ -402,7 +402,7 @@ class Lower implements LowerQueries {
 				var xs = exs(args);
 				// (the safe region's markers stay calls by symbol: Facts tells
 				// the functions that enter one by them)
-				var impl = hostImpls.exists(n) && fi.cSymbol != n && n != "rt_blocking_enter" && n != "rt_blocking_leave" && n != "rt_blocking_restore" ? hostImpl(n) : null;
+				var impl = hostImpls.exists(n) && fi.cSymbol != n && n != "rt_blocking_enter" && n != "rt_blocking_leave" && n != "rt_blocking_restore" && n != "rt_callback_begin" && n != "rt_callback_end" ? hostImpl(n) : null;
 				if (impl == null) xs == args ? e : ECallHost(n, xs, ret) else {
 					if (impl.args.length != xs.length || Ir.repr(impl.ret) != Ir.repr(ret))
 						fail('the Haxe implementation ${impl.name} of the runtime\'s $n does not have its signature');
@@ -1158,7 +1158,13 @@ class Lower implements LowerQueries {
 			var xs = w.args.mapToVector(a -> (ELocal(a) : Ex));
 			var body:Array<Stmt> = [];
 			var gc = !fi.declNoGc && targetOs != 3;
-			if (gc) body.push(SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)));
+			// (the caller's state: a safe region left and entered again, a fast
+			// caller's RUNNING kept)
+			var prev = new Local(w.args.length + 1, "prev", TI32);
+			if (gc) {
+				w.locals.push(prev);
+				body.push(SSet(prev, ECallHost("rt_callback_begin", vector(), TI32)));
+			}
 			var r = new Local(w.args.length, "r", fi.ret == TVoid ? TI32 : fi.ret);
 			if (fi.sret) {
 				w.locals.push(r);
@@ -1168,7 +1174,7 @@ class Lower implements LowerQueries {
 				w.locals.push(r);
 				body.push(SSet(r, ECall(fi, xs)));
 			} else body.push(SExpr(ECall(fi, xs)));
-			if (gc) body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
+			if (gc) body.push(SExpr(ECallHost("rt_callback_end", vector(ELocal(prev)), TVoid)));
 			body.push(SReturn(fi.ret == TVoid ? null : ELocal(r)));
 			w.body = Vector.fromArrayCopy(body);
 			prog.funcs.push(w);
@@ -1187,12 +1193,18 @@ class Lower implements LowerQueries {
 		w.args = [for (a in fi.args) new Local(a.id, a.name, a.ty)];
 		w.ret = fi.ret;
 		var call = ECall(fi, w.args.mapToVector(a -> (ELocal(a) : Ex)));
+		// (the caller's state: a safe region left and entered again, a fast
+		// caller's RUNNING kept: rt_callback_begin)
+		var prev = new Local(w.args.length + 1, "prev", TI32);
+		w.locals.push(prev);
+		var begin = SSet(prev, ECallHost("rt_callback_begin", vector(), TI32));
+		var end = SExpr(ECallHost("rt_callback_end", vector(ELocal(prev)), TVoid));
 		if (fi.ret == TVoid)
-			w.body = vector(SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)), SExpr(call), SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)), SReturn(null));
+			w.body = vector(begin, SExpr(call), end, SReturn(null));
 		else {
 			var r = new Local(w.args.length, "r", fi.ret);
 			w.locals.push(r);
-			w.body = vector(SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)), SSet(r, call), SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)), SReturn(ELocal(r)));
+			w.body = vector(begin, SSet(r, call), end, SReturn(ELocal(r)));
 		}
 		prog.funcs.push(w);
 	}

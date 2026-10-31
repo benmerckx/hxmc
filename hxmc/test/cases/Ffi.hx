@@ -129,6 +129,10 @@ class Ffi {
 		trace(Fast.callAdd(Fast.t_fnptr(), 30, 12), Fast.applyFast(Callback.addr(twice), 20), Slow.apply(Callback.addr(twice), 4));
 		var keep = "kept across";
 		trace(Slow.apply(Callback.addr(makeStrings), 5000), made[4999], keep);
+		// an allocating callback called by a fast C call: the caller is out of
+		// a safe region after it as before (rt_callback_begin, rt_callback_end)
+		var before = made.length;
+		trace(Fast.applyFast(Callback.addr(makeStrings), 3000) - 1 - before, [for (i in 0...2000) "after" + i][1999], made[before + 2999]);
 		Arena.scoped(a -> {
 			var k:Ptr<Float> = a.alloc(8);
 			k.value = 1.5;

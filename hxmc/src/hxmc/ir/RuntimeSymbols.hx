@@ -85,6 +85,8 @@ class RuntimeSymbols {
 		{sym: "rt_cstack_overflow", kind: FUNC, families: WASM32, by: "WasmGen: a frame's prologue"},
 		{sym: "rt_blocking_enter", kind: FUNC, families: NATIVE, by: "MirBuild.cCall: a C call's safe region"},
 		{sym: "rt_blocking_leave", kind: FUNC, families: NATIVE, by: "Lower.callback: a callback's wrapper leaves the caller's safe region"},
+		{sym: "rt_callback_begin", kind: FUNC, families: NATIVE, by: "Lower.callback: a callback's wrapper leaves the caller's safe region, if it was in one"},
+		{sym: "rt_callback_end", kind: FUNC, families: NATIVE, by: "Lower.callback: a callback's wrapper takes the caller's state back"},
 		{sym: "rt_blocking_restore", kind: FUNC, families: NATIVE, by: "MirBuild.cCall, FnLower.cCall: the end of a C call's safe region"},
 		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MemLower.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
 		{sym: "hxmc_alloc_slow_raw", kind: FUNC, families: LINEAR, by: "MemLower.allocDyn (Mem.allocRaw, Mem.allocArrayRaw)"},
