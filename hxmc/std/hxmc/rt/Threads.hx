@@ -155,8 +155,18 @@ class Threads {
 	@:hxmc.unsafe static inline function stateOf(m:Ptr<Mutator>):Int
 		return Atomic.load32(m.add(Struct.offsetOf(Mutator, "state")));
 
-	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int
-		return Atomic.exchange32(m.add(Struct.offsetOf(Mutator, "state")), s);
+	// the running thread's own state, set (only it writes it once it runs:
+	// the previous value a plain read): a seq_cst store, which the handshake's
+	// seq_cst load of rt_gc_requested after it needs (store then load, as the
+	// collector's store of rt_gc_requested then load of the states; arm64's
+	// STLR then LDAR are ordered, x86-64's store is an XCHG). No exchange:
+	// a read-modify-write costs twice a region's barriers on arm64
+	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int {
+		var p = m.add(Struct.offsetOf(Mutator, "state"));
+		var prev = Mem.getI32(p, 0);
+		Atomic.store32(p, s);
+		return prev;
+	}
 
 	// the running thread is in a safe region (RT_VERIFY's check of allocations: Gc.allocSlow)
 	@:hxmc.unsafe static inline function inRegion():Bool {
