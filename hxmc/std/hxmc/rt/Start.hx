@@ -159,7 +159,9 @@ class Start {
 	static function LocalFree(p:Ptr):Ptr;
 	static function ConvertThreadToFiber(p:Ptr):Ptr;
 	static function CreateFiberEx(commit:I64, reserve:I64, flags:Int, entry:Ptr, arg:Ptr):Ptr;
-	static function SwitchToFiber(f:Ptr):Void;
+	// (in a safe region: fiberMain's wrapper leaves it, and the switch back
+	// lands in runMain's, which takes the state back)
+	@:hxmc.blocking static function SwitchToFiber(f:Ptr):Void;
 }
 
 @:hxmc.c @:hxmc.fast @:hxmc.lib("shell32") private extern class Sh {

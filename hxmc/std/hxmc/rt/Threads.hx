@@ -305,12 +305,17 @@ class Threads {
 	}
 
 	// A callback's wrapper (Lower.callback: Haxe code called from C): the
-	// state it found, leaving the caller's safe region if it was in one
-	// (SAFE) and waiting out a collection; a callback called by a fast C
-	// call finds it RUNNING and changes nothing. rt_callback_end takes the
-	// state back on return, so a fast caller continues RUNNING.
+	// state it found, leaving the caller's safe region and waiting out a
+	// collection; rt_callback_end enters it again on return. A callback
+	// called by a fast C call finds the thread RUNNING: the end of the
+	// program, with a message. Its caller keeps references across the call
+	// where a collection does not update them (a fast call is no GC point),
+	// and the callback may collect (it allocates, or stops for another
+	// thread's collection); only a callback that never does (@:hxmc.unsafe:
+	// no wrapper) may be called so.
 	@:hxmc.export("rt_callback_begin") @:hxmc.unsafe static function callbackBegin():Int {
-		if (self.value.state != SAFE) return RUNNING;
+		if (self.value.state != SAFE)
+			Gc.dieC(Mem.cstr("hxmc: a callback that may collect was called from a @:hxmc.fast call (a C function's or an Objective-C method's), whose caller's references a collection would not update: declare the call without @:hxmc.fast, or the callback @:hxmc.unsafe\n"));
 		blockingLeave();
 		return SAFE;
 	}
