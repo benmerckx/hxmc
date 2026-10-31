@@ -165,16 +165,24 @@ class ObjC {
 	// object once looked up (FnLower.objcProtocol), zero before
 	public static inline var PROTOREF = "hxmc$protoref$";
 
-	// an Objective-C object in C: an id (a peer class's instance passed as its id)
-	public static function isObjCType(t:T):Bool
+	// a type with abstracts (not core types) replaced by what they wrap
+	static function unwrapped(t:T):T
 		return switch TFunctions.follow(t) {
+			case TAbstract(a, params) if (!core.Meta.has(CoreType, a.aMeta)): unwrapped(core.Abstract.getUnderlyingType(a, params));
+			case t: t;
+		}
+
+	// an Objective-C object in C: an id (a peer class's instance passed as its
+	// id), also through an abstract over one (NSStringArg)
+	public static function isObjCType(t:T):Bool
+		return switch unwrapped(t) {
 			case TInst(c, _): isObjC(c) || isCF(c) || isObjCParam(c) || peerBase(c) != null;
 			case _: false;
 		}
 
 	// a type whose values are ids (a block too: hxmc.objc.Block<F>)
 	public static function isIdType(t:T):Bool
-		return switch TFunctions.follow(t) {
+		return switch unwrapped(t) {
 			case TInst(c, _): isObjC(c) || isCF(c) || isObjCParam(c);
 			case _: blockOfType(t) != null;
 		}

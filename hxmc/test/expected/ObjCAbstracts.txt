@@ -1,0 +1,7 @@
+exit 0
+ObjCAbstracts.hx:51: abcd
+ObjCAbstracts.hx:52: 5, 2
+ObjCAbstracts.hx:54: true, false
+ObjCAbstracts.hx:56: 2.5
+ObjCAbstracts.hx:59: 7
+ObjCAbstracts.hx:63: 1, 4

@@ -667,6 +667,8 @@ class Lower implements LowerQueries {
 						// (an Objective-C object: nil is its null)
 						if (ObjC.isIdType(params[0])) return TId;
 						var inner = ty(params[0]);
+						// (an abstract over an Objective-C object: an id too)
+						if (inner.match(TId)) return TId;
 						Ir.isScalar(inner) ? TRef(RNull(inner)) : boxed(inner);
 					case "Any" if (isStd): TRef(RAny);
 					case "Class" | "Enum" if (isStd): TRef(RType);
