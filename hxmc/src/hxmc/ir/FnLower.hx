@@ -3850,7 +3850,7 @@ class FnLower {
 		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
 		var state = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(selfId), off), EInt(0)), TI32), TI32);
 		var r = newLocal("made", TI64);
-		var adopt = block(() -> {
+		var making = block(() -> {
 			out.push(SExpr(ECallHost("rt_objc_adopt", vector(ELocal(selfId)), TI64)));
 			var ci = l.classInfo(c);
 			var k = c;
@@ -3866,6 +3866,17 @@ class FnLower {
 			var id = EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(obj));
 			out.push(SSet(r, ECallHost(ObjC.runtime(l, "objc_retain", [CPtr], CPtr), vector(id), TI64)));
 		});
+		// (in a try, as a method's entry: an exception the constructor throws
+		// is raised by the entry as an Objective-C one, the result nil, the
+		// object it was making no longer one an initializer is making)
+		var exn = newLocal("e", TRef(RAny));
+		var adopt = vector(STry(making, vector({
+			test: null,
+			l: exn,
+			body: vector(SExpr(ECallHost("rt_objc_adopt", vector(EConv(I2L, EInt(0))), TI64)),
+				SExpr(ECallHost("rt_objc_raise", vector(ELocal(exn)), TVoid)), SSet(r, EConv(I2L, EInt(0))))
+		})));
+		fi.hasTry = true;
 		var forward = block(() -> {
 			var s = init != null ? objcSig(init, e) : null;
 			var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));

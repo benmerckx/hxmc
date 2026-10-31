@@ -100,7 +100,7 @@ class RuntimeSymbols {
 		{sym: "rt_objc_block_get", kind: FUNC, families: NATIVE, by: "ObjC.invoke: a block's invoke finds its closure"},
 		{sym: "rt_objc_block_fn", kind: FUNC, families: NATIVE, by: "ObjC.blockFunction: a block made of a function is that function again"},
 		{sym: "rt_objc_attach", kind: FUNC, families: NATIVE, by: "ObjC.invoke: a block called on a thread the runtime did not start"},
-		{sym: "rt_objc_raise", kind: FUNC, families: NATIVE, by: "ObjC.imps, ObjC.invoke: an exception leaving a Haxe method or block Objective-C called"},
+		{sym: "rt_objc_raise", kind: FUNC, families: NATIVE, by: "ObjC.imps, ObjC.invoke, FnLower.objcAdoptBody: an exception leaving a Haxe method, block or constructor Objective-C called"},
 		{sym: "rt_objc_raising", kind: FUNC, families: NATIVE, by: "ObjC.entry: the exception it raises"},
 		{sym: "rt_objc_unpaired", kind: FUNC, families: NATIVE, by: "ObjC.imps: a method sent to an object Objective-C made without its Haxe object"},
 		{sym: "rt_objc_caught", kind: FUNC, families: NATIVE, by: "DataGen.objcCaught: an Objective-C exception reaching a Haxe frame"},

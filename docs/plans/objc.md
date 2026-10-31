@@ -100,39 +100,38 @@ answer them.
   own: `implements Id` says what the values are, `@:hxmc.objc` that a class
   object exists.
 
+- **Exceptions cross by the unwind tables.** The Haxe functions' CIE names
+  a personality (with the program's first Objective-C reference), which
+  turns an Objective-C exception into a Haxe throw at the first Haxe frame
+  it reaches: no cost per message (a `try` around every message would be
+  ~2.5 ns, setjmp's). A Haxe exception leaving a method, block or
+  constructor Objective-C runs is raised by the entry as an Objective-C
+  one, an `NSException` paired with the value as a Haxe object is with
+  its id, which comes back as the value. Apple's frameworks are not
+  exception-safe: for reporting and the few APIs that raise for expected
+  conditions.
+
 ## Open, in order
 
-1. **Objective-C exceptions.** They unwind through hxmc's frames, which
-   have unwind tables but no personality routine, so one ends the
-   program. Planned: a personality routine of the runtime's in the CIE,
-   which claims an Objective-C exception at the first hxmc frame when a
-   Haxe `try` is active and turns it into a Haxe exception (the runtime's
-   throw, a longjmp to the handler): no cost per message (a `try` around
-   every message would be ~2.5 ns, setjmp's). Apple's frameworks are not
-   exception-safe: for reporting and the few APIs that raise for
-   expected conditions.
-2. **Cheaper messages.** A message is ~8.5 ns on Apple Silicon, ~6 of them
+1. **Cheaper messages.** A message is ~8.5 ns on Apple Silicon, ~6 of them
    the safe region (two runtime calls, the thread's record, publishing it);
    `@:hxmc.fast` ones ~2.3. Next: the region's fast path inlined into
    generated code; asymmetric barriers (membarrier, FlushProcessWriteBuffers,
    thread_get_register_pointer_values) for x86-64, whose seq_cst store is
    an XCHG; a list of selectors the extern generator marks `@:hxmc.fast`.
-3. **More than one initializer per Haxe class** for Objective-C to make
+2. **More than one initializer per Haxe class** for Objective-C to make
    objects with (a view in a nib and made with a frame).
-4. **Key-value coding for Haxe properties** (Cocoa Bindings, sort
+3. **Key-value coding for Haxe properties** (Cocoa Bindings, sort
    descriptors, KVO of Haxe objects): registered as Objective-C
    properties, stores notifying.
-5. **Release on death by layout**: a constructor registers its class's own
+4. **Release on death by layout**: a constructor registers its class's own
    `id` fields, a closure its captured `id`s, a captured variable's box its
    own (`rt_objc_own`: an entry per slot, appended under a lock; every
    collection walks them all). A layout flag (Facts) and a list of such
    objects, their slots read from a table per type, would make it an
    entry per object: worth it when a program makes many objects with
    several `id`s each.
-6. **x86-64 on hardware**: messages with struct results go to
-   `objc_msgSend_stret`; CI's Intel Mac runs the corpus once this branch
-   is pushed.
-7. **Smaller gaps**: an Objective-C method as a value (`o.description`
+5. **Smaller gaps**: an Objective-C method as a value (`o.description`
    without a call: rejected); `Std.isOfType` against a C object's type
    (its `...GetTypeID`); variadic messages of other than objects; reading
    retain counts while another thread is stopped inside libobjc holding

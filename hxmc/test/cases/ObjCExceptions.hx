@@ -6,7 +6,7 @@
 import hxmc.objc.Selector;
 import hxmc.unsafe.*;
 
-@:hxmc.framework("Foundation") @:hxmc.objc extern class NSObject {
+@:hxmc.framework("Foundation") @:hxmc.objc extern class NSObject implements hxmc.objc.Id {
 	static function alloc():NSObject;
 	function init():NSObject;
 	@:selector("performSelector:") function perform(sel:Selector):Null<NSObject>;
@@ -38,6 +38,16 @@ class MyError {
 
 	public function toString()
 		return "MyError(" + what + ")";
+}
+
+// a constructor that throws when Objective-C makes the object (+new: alloc,
+// then the initializer the constructor calls, init)
+class Failing extends NSObject {
+	public static var fail = false;
+
+	public function new() {
+		if (fail) throw new MyError("from a constructor");
+	}
 }
 
 class Thrower extends NSObject {
@@ -137,6 +147,17 @@ class ObjCExceptions {
 		} catch (e:MyError) {
 			trace("block: " + e);
 		}
+		// from a constructor Objective-C runs
+		Failing.fail = true;
+		try {
+			(cast hxmc.objc.ObjCClass.of(Failing) : NSObject).perform(Selector.of("new"));
+		} catch (e:MyError) {
+			trace("constructor: " + e);
+		}
+		Failing.fail = false;
+		// (nothing left of it: the next one made by Objective-C is its own)
+		var ok = (cast hxmc.objc.ObjCClass.of(Failing) : NSObject).perform(Selector.of("new"));
+		trace("then: " + Std.isOfType(ok, Failing));
 		// many, with collections between (the pairs, the boxes, the handlers)
 		var n = 0;
 		for (i in 0...2000) {

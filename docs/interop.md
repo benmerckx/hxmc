@@ -832,9 +832,9 @@ try {
   `NSException`'s reason). The message's caller is the frame it reaches:
   the unwinder runs Objective-C's cleanups (`@finally`, ARC's releases) up
   to it, and Haxe's handlers take it from there.
-- **A Haxe exception leaving a method or block** Objective-C called is
-  raised as an Objective-C exception once the method's entry took the
-  caller's state back: an Objective-C object is raised itself, another
+- **A Haxe exception leaving a method or block** Objective-C called (or a
+  constructor an initializer it sends runs) is raised as an Objective-C
+  exception once the method's entry took the caller's state back: an Objective-C object is raised itself, another
   value as an `NSException` named `HaxeException` whose reason is
   `Std.string` of the value. It unwinds Objective-C's frames as their own
   exceptions do (an `@catch` there sees it), and is the Haxe value again in
