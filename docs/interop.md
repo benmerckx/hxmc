@@ -625,6 +625,13 @@ program as it reads clang's. On x86-64, a message whose result is a struct over 
 bytes is sent with `objc_msgSend_stret` (`objc_msgSendSuper_stret`), as
 the ABI has it.
 
+A method (or property) declared `@:hxmc.fast` is sent without a safe region,
+as a fast C function is called: about 2 ns instead of 8 on Apple Silicon. It
+must be short and must not block (other threads' collections wait for
+it); it may call back into Haxe (the method's entry takes the caller's
+state back), so `containsObject:` sending a Haxe object's `isEqual:` is
+fine.
+
 A variadic method is declared with its named parameters, then `...rest`
 (`arrayWithObjects(firstObj:Null<NSObject>, ...rest:NSObject)`: `rest` is
 no piece of the selector); a message passes the arguments listed for it as

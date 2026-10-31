@@ -332,17 +332,20 @@ class ObjC {
 		var ret = result == null ? CVoid : ctype(result);
 		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('Objective-C method $name: the result has no C type a message can return', where);
-		return declareC(l, args.slice(3), ret, variadic);
+		// (@:hxmc.fast: no safe region around the message, as a C function's:
+		// short, not blocking; it may call back into Haxe)
+		var fast = cf != null && Lower.hasMeta(":hxmc.fast", cf.cfMeta);
+		return declareC(l, args.slice(3), ret, variadic, fast);
 	}
 
 	// the same of a message of C types (args after the receiver and selector);
 	// variadic: the number of its fixed ones (the others passed as a variadic
 	// function's: on Apple's arm64, on the stack)
-	public static function declareC(l:LowerQueries, args:Array<CTy>, ret:CTy, ?variadic:Int):String {
+	public static function declareC(l:LowerQueries, args:Array<CTy>, ret:CTy, ?variadic:Int, fast = false):String {
 		var cargs = [CPtr, CPtr, CPtr].concat(args);
 		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret)
-			+ (variadic != null ? "..." + variadic : "");
-		l.objcDeclare(Func(key, {args: cargs, ret: ret}));
+			+ (variadic != null ? "..." + variadic : "") + (fast ? "!fast" : "");
+		l.objcDeclare(fast ? FastFunc(key, {args: cargs, ret: ret}) : Func(key, {args: cargs, ret: ret}));
 		// (self and _cmd first)
 		if (variadic != null) l.objcDeclare(Variadic(key, 2 + variadic));
 		return key;
@@ -377,6 +380,11 @@ class ObjC {
 				if (!CInterop.SIGS.exists(sym)) {
 					CInterop.SIGS.set(sym, sig);
 					CInterop.BLOCKING.set(sym, true);
+				}
+			case FastFunc(sym, sig):
+				if (!CInterop.SIGS.exists(sym)) {
+					CInterop.SIGS.set(sym, sig);
+					FnLower.C_EXTERNS.set(sym, true);
 				}
 			case Symbol(sym, lib):
 				CInterop.LIBS.set(sym, lib);
@@ -775,9 +783,9 @@ class ObjC {
 	// the C function symbol (C types abi) Objective-C calls, a method's entry
 	// (imps) or a block's invoke, on any thread: it attaches the thread when
 	// the runtime did not start it (GCD's workers), leaves the safe region
-	// the caller is in, calls f (its first nargs arguments; a struct result:
-	// a slot of this frame, returned by the C ABI's rules) and enters the
-	// region again. No frame of its own, which a thread not yet attached
+	// the caller is in (none when a @:hxmc.fast message's), calls f (its
+	// first nargs arguments; a struct result: a slot of this frame, returned
+	// by the C ABI's rules) and takes the caller's state back. No frame of its own, which a thread not yet attached
 	// could not push: f has one (its try keeps it from being inlined)
 	public static function entry(name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
 		var w = new FuncInfo(name, module);
@@ -787,9 +795,13 @@ class ObjC {
 		w.args = [for (i in 0...nargs) new Local(i, f.args[i].name, f.args[i].ty)];
 		w.ret = f.ret;
 		var ys = [for (a in w.args) (ELocal(a) : Ex)];
+		// (the caller's state: its safe region left and entered again on
+		// return; a @:hxmc.fast message's caller's RUNNING kept: rt_callback_begin)
+		var prev = new Local(w.args.length + 1, "prev", TI32);
+		w.locals.push(prev);
 		var body:Array<Stmt> = [
 			SExpr(ECallHost("rt_objc_attach", vector(), TVoid)),
-			SExpr(ECallHost("rt_blocking_leave", vector(), TVoid))
+			SSet(prev, ECallHost("rt_callback_begin", vector(), TI32))
 		];
 		var r = new Local(w.args.length, "r", f.ret == TVoid ? TI32 : f.ret);
 		if (f.sret) {
@@ -804,7 +816,7 @@ class ObjC {
 			w.locals.push(r);
 			body.push(SSet(r, ECall(f, Vector.fromArrayCopy(ys))));
 		} else body.push(SExpr(ECall(f, Vector.fromArrayCopy(ys))));
-		body.push(SExpr(ECallHost("rt_blocking_enter", vector(), TVoid)));
+		body.push(SExpr(ECallHost("rt_callback_end", vector(ELocal(prev)), TVoid)));
 		body.push(SReturn(f.ret == TVoid ? null : ELocal(r)));
 		w.body = Vector.fromArrayCopy(body);
 		return w;
@@ -909,6 +921,8 @@ typedef BlockSig = {
 enum Decl {
 	// C function sym (a message's, ObjC.declare; libobjc's, runtime), called in a safe region
 	Func(sym:String, sig:CSig);
+	// C function sym of a @:hxmc.fast message: called without one
+	FastFunc(sym:String, sig:CSig);
 	// symbol sym, of library lib (libobjc's; a class object, classRef)
 	Symbol(sym:String, lib:String);
 	// library lib, loaded though nothing is imported of it (a category's: memberLibrary)
