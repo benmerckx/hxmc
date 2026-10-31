@@ -5,26 +5,21 @@
 import hxmc.unsafe.*;
 
 @:hxmc.c @:hxmc.fast extern class C {
-	static function qsort(base:Ptr, n:Int64, size:Int64, cmp:Ptr):Void;
+	@:hxmc.indirect static function call2(f:Ptr, a:Int, b:Int):Int;
 }
 
 class FastCallbackDies {
-	@:hxmc.callback @:hxmc.unsafe static function byValue(x:Ptr, y:Ptr):Int
-		return Mem.getI32(x, 0) - Mem.getI32(y, 0);
+	@:hxmc.callback @:hxmc.unsafe static function sum(a:Int, b:Int):Int
+		return a + b;
 
-	@:hxmc.callback static function allocating(x:Ptr, y:Ptr):Int {
+	@:hxmc.callback static function allocating(a:Int, b:Int):Int {
 		var s = [for (i in 0...10) "junk" + i];
-		return Mem.getI32(x, 0) - Mem.getI32(y, 0) + s.length - 10;
+		return a + b + s.length;
 	}
 
 	static function main() {
-		var buf = LibC.malloc(4 * 8);
-		for (i in 0...8)
-			Mem.setI32(buf, 4 * i, (i * 5) % 8);
-		C.qsort(buf, 8, 4, Callback.addr(byValue));
-		Sys.println("unsafe: " + [for (i in 0...8) Mem.getI32(buf, 4 * i)].join(","));
+		Sys.println("unsafe: " + C.call2(Callback.addr(sum), 30, 12));
 		Sys.stdout().flush();
-		C.qsort(buf, 8, 4, Callback.addr(allocating));
-		Sys.println("not reached");
+		Sys.println("not reached: " + C.call2(Callback.addr(allocating), 1, 2));
 	}
 }
