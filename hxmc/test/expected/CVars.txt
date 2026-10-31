@@ -1,0 +1,8 @@
+exit 0
+CVars.hx:35: 41, 1.5, -3, 65000, true, 2.25, 1234567890123, label
+CVars.hx:42: 102, 102, 3, false, -4
+CVars.hx:46: 7, 0, 8.5
+CVars.hx:48: 7, 3.25, 3.25
+CVars.hx:51: 1, 0
+CVars.hx:53: 5, dynamic
+CVars.hx:55: 15, 15

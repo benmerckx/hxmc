@@ -13,8 +13,9 @@ using StringTools;
 // <dir>: the corpus's outputs (bin/hxmc-t: <case>/m*-glibc) or a staged
 // corpus (<case>/m), as Corpus --libc glibc writes them.
 class ElfCheck {
-	// the libraries an executable may need (libffidyn.so: Ffi's own, next to it)
-	static final NEEDED = ["libc.so.6", "libpthread.so.0", "libdl.so.2", "libm.so.6", "libffidyn.so"];
+	// the libraries an executable may need (libffidyn.so, libcvarsdyn.so: Ffi's and
+	// CVars' own, next to them)
+	static final NEEDED = ["libc.so.6", "libpthread.so.0", "libdl.so.2", "libm.so.6", "libffidyn.so", "libcvarsdyn.so"];
 	static final INTERP = ["X86-64" => "/lib64/ld-linux-x86-64.so.2", "AArch64" => "/lib/ld-linux-aarch64.so.1"];
 
 	static function readelf(args:Array<String>, file:String):String {

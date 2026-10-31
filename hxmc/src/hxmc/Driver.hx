@@ -569,6 +569,7 @@ class Driver {
 		dg.allocStubs(objs, demit);
 		dg.stubs(objs, demit);
 		dg.cstrLiterals(objs);
+		dg.cVars(objs);
 		dg.emptyArrays(objs);
 		dg.resources(objs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
