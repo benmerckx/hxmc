@@ -294,6 +294,20 @@ class Threads {
 		reload(m);
 	}
 
+	// A callback's wrapper (Lower.callback: Haxe code called from C): the
+	// state it found, leaving the caller's safe region if it was in one
+	// (SAFE) and waiting out a collection; a callback called by a fast C
+	// call finds it RUNNING and changes nothing. rt_callback_end takes the
+	// state back on return, so a fast caller continues RUNNING.
+	@:hxmc.export("rt_callback_begin") @:hxmc.unsafe static function callbackBegin():Int {
+		if (self.value.state != SAFE) return RUNNING;
+		blockingLeave();
+		return SAFE;
+	}
+
+	@:hxmc.export("rt_callback_end") @:hxmc.unsafe static function callbackEnd(prev:Int):Void
+		if (prev == SAFE) blockingEnter();
+
 	// Takes a mutex that a thread may hold while it leaves a safe region (and
 	// so waits for a collection): a thread blocked on it must be in a safe region.
 	@:hxmc.unsafe static function lockSafe(m:Ptr) {

@@ -30,7 +30,7 @@ same for that function.
 | `@:hxmc.c`, `@:hxmc.c("name")` | a C function, called directly in the target's C convention; on a static `var`, a C variable ([C variables](#c-variables)) |
 | `@:hxmc.lib("name")` | the library: `lib<name>.so` (or a full name such as `libGL.so.1`), a DLL, a dylib; a wasm import module |
 | `@:hxmc.link("path")` | an object or archive linked with the program (also `-D hxmc.link=`) |
-| `@:hxmc.fast` | the call stays in the running state: no collection runs during it, so it may take addresses of GC objects. It must be short and must not block or call back |
+| `@:hxmc.fast` | the call stays in the running state: no collection runs during it, so it may take addresses of GC objects. It must be short and must not block. It may call back ([Callbacks](#callbacks)): a callback that allocates may collect, so such a call takes no addresses of GC objects then |
 | `@:hxmc.blocking` | the call runs in a safe region entered at the call site ([Blocking calls](#blocking-calls)); on a field it overrides its class' `@:hxmc.fast`; on a Haxe function it is `@:hxmc.kernel` too |
 | `@:hxmc.kernel` | a kernel: a Haxe function that never touches the GC heap, memory-safe unless also `@:hxmc.unsafe`, checked, whose calls enter no safe region ([Kernels](#kernels)) |
 | `@:hxmc.varargs(n)` | a variadic function with `n` fixed arguments |
@@ -426,9 +426,10 @@ through forced collections.
 ### Callbacks
 
 A `@:hxmc.callback` static function can be called from C. Its address is
-`Callback.addr(f)`. hxmc writes the wrapper: it leaves the safe region,
-sets up the thread's runtime state, and catches exceptions so they never
-unwind through C. An `@:hxmc.unsafe` callback may run on any thread,
+`Callback.addr(f)`. hxmc writes the wrapper: it leaves the caller's safe
+region (if it was in one: a `@:hxmc.fast` call's is not) and enters it again
+on return, sets up the thread's runtime state, and catches exceptions so
+they never unwind through C. An `@:hxmc.unsafe` callback may run on any thread,
 including threads the runtime does not know.
 
 ### Unsafe code
