@@ -2,10 +2,10 @@ import hxmc.objc.AutoreleasePool;
 import hxmc.unsafe.*;
 
 // @:hxmc.fast messages (docs/interop.md, "Calls"): sent without a safe
-// region, as a fast C function is called; one Objective-C answers by
-// calling back into Haxe (containsObject: sends isEqual: to Haxe objects,
-// which allocate) leaves its caller running as before, so what the caller
-// allocates next is safe.
+// region, as a fast C function is called, leaving their caller running, so
+// what it allocates next is safe. One Objective-C answers by calling back
+// into Haxe (containsObject: sends isEqual: to Haxe objects, which
+// allocate) is no fast message: it is sent in a safe region.
 @:hxmc.lib("/usr/lib/libobjc.A.dylib") @:hxmc.objc extern class NSObject implements hxmc.objc.Id {
 	function isEqual(o:NSObject):Bool;
 	@:hxmc.fast function hash():Int64;
@@ -14,7 +14,7 @@ import hxmc.unsafe.*;
 @:hxmc.framework("Foundation") @:hxmc.objc extern class NSMutableArray extends NSObject {
 	static function array():NSMutableArray;
 	function addObject(o:NSObject):Void;
-	@:hxmc.fast function containsObject(o:NSObject):Bool;
+	function containsObject(o:NSObject):Bool;
 	@:hxmc.fast function count():Int64;
 }
 
@@ -29,7 +29,7 @@ class Item extends NSObject {
 	override function isEqual(o:NSObject):Bool {
 		compared++;
 		var other = Std.downcast((cast o : Item), Item);
-		// (allocating: a collection may run inside the fast message)
+		// (allocating: a collection may run inside the message)
 		var tag = [for (i in 0...20) name + i].join("");
 		return other != null && other.name == name && tag.length > 0;
 	}

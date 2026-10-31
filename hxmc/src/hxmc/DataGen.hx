@@ -574,15 +574,16 @@ class DataGen {
 	// hxmc_objc_landing, which the personality has the unwinder resume in
 	// (LinkMachO: the Haxe functions' language-specific data, when it is
 	// there), then hxmc_objc_caught(ue), without a frame of its own (it
-	// leaves the safe region the message was sent in, as a callback's
-	// wrapper does), which calls rt_objc_caught with libobjc's functions
+	// leaves the safe region the message was sent in, if it was: a fast
+	// message's caller is running), which calls rt_objc_caught with libobjc's functions
 	public function objcCaught(emit:Target.Emitter) {
 		if (!objc || abi.os != "macos") return;
 		var fns = ["objc_begin_catch", "objc_end_catch", "objc_retain", "objc_release", "object_getClass", "class_getInstanceVariable", "ivar_getOffset"];
 		for (f in fns)
 			hxmc.ir.CInterop.LIBS.set(f, hxmc.ir.ObjC.LIB);
 		compile(MirBuild.synthetic(prep, abi, MirBuild.OBJC_CAUGHT, vector(I64), Void, (b, ps) -> {
-			b.call("rt_callback_begin", vector(), I32);
+			// (a fast message's caller is running: nothing to leave)
+			b.call("rt_blocking_leave", vector(), Void);
 			b.call("rt_objc_caught", Vector.fromArrayCopy([ps[0]].concat([for (f in fns) b.symAddr(f)])), Void);
 			b.ret(-1);
 		}));
