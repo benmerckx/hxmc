@@ -76,54 +76,74 @@ answer them.
   never shrinks and a ceiling of 4M live blocks; both take a lock as a
   block is made and as it is freed.
 
+- **Objects of Haxe classes Objective-C makes are made by the
+  constructor's initializer.** A nib, a document controller or a factory
+  sends `[[C alloc] initX:...]`: the initializer the constructor calls on
+  super is the class's own, which runs the constructor on the object
+  Objective-C allocated (pairing it before the superclass's initializer
+  runs, so methods it sends find the Haxe object). Weighed: making
+  `+alloc` create the Haxe object with initializers as plain methods (no
+  constructors), closer to Objective-C, but every Haxe subclass would
+  change and `new` is how Haxe makes objects; and one object instead of
+  two (Swift's), which needs the collector to scan Objective-C objects and
+  toggle references per object anyway (a view's closure capturing the
+  view). The cost: one initializer per class.
+- **`dealloc` is a finaliser.** Objective-C's `dealloc` runs after the Haxe
+  object is gone (its peer entry freed), so an override runs as
+  `Gc.finalise` does, when the pair is unreachable from both sides, and
+  Objective-C's own runs afterwards, as ARC's.
+- **C's objects (Core Foundation's types) are extern classes implementing
+  `Id` without `@:hxmc.objc`**: ids, retained by Haxe's storage as any
+  (every CF object is an Objective-C object, `__NSCFType`), without a class
+  object (no messages, type tests or Haxe subclasses); `@:hxmc.retained`
+  marks a C function's owned result (the Create rule). No marker of its
+  own: `implements Id` says what the values are, `@:hxmc.objc` that a class
+  object exists.
+
 ## Open, in order
 
-1. **Declarations from the SDK's headers.** clang's AST
-   (`clang -fsyntax-only -Xclang -ast-dump=json`, 4.5 s and 400 MB for
-   AppKit with what it imports) read by a tool in Haxe, emitting
-   declarations in the syntax above: categories merged per class,
-   `NS_ENUM` and `NS_OPTIONS` as enum abstracts, nullability, availability
-   (`@:deprecated`), `instancetype` as each class's own type (`alloc` per
-   class, inherited initializers and other `instancetype` methods
-   redeclared with `override`), `NS_UNAVAILABLE` left out. Properties as
-   `var x(get, set)` with extern accessors (selectors derived: `get_x` is
-   `x`, `set_x` `setX:`; `@:selector` for `getter=` and `setter=`), so a
-   Haxe subclass can override them (`isFlipped` is a property). A member a
-   category of another framework declares (Foundation's `-description` on
-   NSObject) loads that framework: a classref loads only the class's own,
-   so the member needs one too. Open: the generator emitting protocols
-   (as extern interfaces), lightweight generics. A class method and an instance method of one name are fine
-   (Haxe allows both on an extern). Only declarations, never the headers'
-   comments (Apple's SDK terms); clang is needed when generating only.
-2. **Blocks**: built (a closure's entry in the runtime's table, counted
-   by the block's helpers; a closure capturing nothing: a global block in
-   the data; blocks taking and returning blocks, converted at each level;
-   [interop.md](../interop.md#blocks)).
-   **Protocols**: built (extern interfaces; `@:optional` methods with the
-   typer's semantics of a Java interface's `default` ones; conformance
-   registered, tests as messages; [interop.md](../interop.md#protocols)).
-3. **Release on death by layout**: a constructor registers its class's own
+1. **Objective-C exceptions.** They unwind through hxmc's frames, which
+   have unwind tables but no personality routine, so one ends the
+   program. Planned: a personality routine of the runtime's in the CIE,
+   which claims an Objective-C exception at the first hxmc frame when a
+   Haxe `try` is active and turns it into a Haxe exception (the runtime's
+   throw, a longjmp to the handler): no cost per message (a `try` around
+   every message would be ~2.5 ns, setjmp's). Apple's frameworks are not
+   exception-safe: for reporting and the few APIs that raise for
+   expected conditions.
+2. **Cheaper messages.** A message is ~8.5 ns on Apple Silicon, ~6 of them
+   the safe region (two runtime calls, the thread's record, publishing it);
+   `@:hxmc.fast` ones ~2.3. Next: the region's fast path inlined into
+   generated code; asymmetric barriers (membarrier, FlushProcessWriteBuffers,
+   thread_get_register_pointer_values) for x86-64, whose seq_cst store is
+   an XCHG; a list of selectors the extern generator marks `@:hxmc.fast`.
+3. **More than one initializer per Haxe class** for Objective-C to make
+   objects with (a view in a nib and made with a frame).
+4. **Key-value coding for Haxe properties** (Cocoa Bindings, sort
+   descriptors, KVO of Haxe objects): registered as Objective-C
+   properties, stores notifying.
+5. **Release on death by layout**: a constructor registers its class's own
    `id` fields, a closure its captured `id`s, a captured variable's box its
    own (`rt_objc_own`: an entry per slot, appended under a lock; every
-   collection walks them all). Anonymous objects, enum arguments and
-   elements hold boxes, so no other object has an `id` slot. A layout flag
-   (Facts) and a list of such objects, their slots read from a table per
-   type, would make it an entry per object, but needs a type of box of
-   its own for `id`s (`T_REFBOX_F` holds floats and `Int64`s too) and the
-   tables in the data: worth it when a program makes many objects with
+   collection walks them all). A layout flag (Facts) and a list of such
+   objects, their slots read from a table per type, would make it an
+   entry per object: worth it when a program makes many objects with
    several `id`s each.
-4. **x86-64 on hardware**: messages with struct results go to
-   `objc_msgSend_stret`, which no test has run yet (no Rosetta where it was
-   written); `_fpret` is `long double`'s only, which Haxe has not.
-5. **Smaller gaps**: an
-   Objective-C method as a value (`o.description` without a call: rejected,
-   a closure sending the message would do); a pool
-   around `main` (nothing gained: it drains at exit); reading retain
-   counts while another thread is stopped inside libobjc holding its
-   lock. Outside Objective-C: a `@:hxmc.callback` on a thread the
-   runtime did not start needs `ThreadApi.attach()` first, which methods'
-   entries and blocks' invokes do themselves (`rt_objc_attach`); callbacks
-   could too.
+6. **x86-64 on hardware**: messages with struct results go to
+   `objc_msgSend_stret`; CI's Intel Mac runs the corpus once this branch
+   is pushed.
+7. **Smaller gaps**: an Objective-C method as a value (`o.description`
+   without a call: rejected); `Std.isOfType` against a C object's type
+   (its `...GetTypeID`); variadic messages of other than objects; reading
+   retain counts while another thread is stopped inside libobjc holding
+   its lock.
+
+Declarations from the SDK's headers are generated by
+[hxmc-objc-extern-gen](https://github.com/back2dos/hxmc-objc-extern-gen)
+(Foundation, AppKit, Core Graphics, Core Text, Core Animation, Uniform
+Type Identifiers: classes, protocols, lightweight generics, enums, structs,
+C functions, constants and objects; what it leaves out, with why, in its
+`skipped.txt`).
 
 ## Considered, not decided
 
