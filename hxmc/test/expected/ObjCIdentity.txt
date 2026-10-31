@@ -1,0 +1,6 @@
+exit 0
+ObjCIdentity.hx:25: indexOf: 1
+ObjCIdentity.hx:29: map: b, 1 key
+ObjCIdentity.hx:31: Dynamic ==: true
+ObjCIdentity.hx:39: peer through Objective-C: indexOf 0, same object true
+ObjCIdentity.hx:47: after collections: 10000 of 10000

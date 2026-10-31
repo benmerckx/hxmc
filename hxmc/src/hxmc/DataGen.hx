@@ -119,7 +119,7 @@ class DataGen {
 			case TI32: "i".code;
 			case TBool: "b".code;
 			case TF64: "f".code;
-			case TI64: "l".code;
+			case TI64 | TId: "l".code;
 			case _: "p".code;
 		};
 
@@ -563,6 +563,96 @@ class DataGen {
 				rodata.buf.u8(b.get(i));
 			if (!words) rodata.buf.u8(0);
 			obj.define(n, rodata, off, b.length + (words ? 0 : 1), true);
+		}
+	}
+
+	// the program refers to Objective-C (objcRefs)
+	var objc = false;
+
+	// a program with Objective-C: where an Objective-C exception reaching a
+	// Haxe frame continues (hxmc.rt.ObjCExceptions): the stub
+	// hxmc_objc_landing, which the personality has the unwinder resume in
+	// (LinkMachO: the Haxe functions' language-specific data, when it is
+	// there), then hxmc_objc_caught(ue), without a frame of its own (it
+	// leaves the safe region the message was sent in, as a callback's
+	// wrapper does), which calls rt_objc_caught with libobjc's functions
+	public function objcCaught(emit:Target.Emitter) {
+		if (!objc || abi.os != "macos") return;
+		var fns = ["objc_begin_catch", "objc_end_catch", "objc_retain", "objc_release", "object_getClass", "class_getInstanceVariable", "ivar_getOffset"];
+		for (f in fns)
+			hxmc.ir.CInterop.LIBS.set(f, hxmc.ir.ObjC.LIB);
+		compile(MirBuild.synthetic(prep, abi, MirBuild.OBJC_CAUGHT, vector(I64), Void, (b, ps) -> {
+			b.call("rt_callback_begin", vector(), I32);
+			b.call("rt_objc_caught", Vector.fromArrayCopy([ps[0]].concat([for (f in fns) b.symAddr(f)])), Void);
+			b.ret(-1);
+		}));
+		emit.stub(MirBuild.STUB_LANDING);
+	}
+
+	// the Objective-C classes and selectors the program sends messages to and
+	// with (ObjC.CLASSREF, ObjC.SELREF): a word each, as clang's, in
+	// __objc_classrefs (the class object, bound by the loader) and
+	// __objc_selrefs (the selector's name, replaced by its selector when
+	// libobjc maps the image: LinkMachO adds the __objc_imageinfo it looks for)
+	public function objcRefs(objs:Array<Obj>) {
+		var names = new Map<String, Bool>();
+		for (o in objs.concat([obj]))
+			for (s in o.symbols)
+				if (s.section == null && !s.abs && (StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASSREF) || StringTools.startsWith(s.name, hxmc.ir.ObjC.SELREF)
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.CLASS_CELL) || StringTools.startsWith(s.name, hxmc.ir.ObjC.IVAR_CELL)
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.BLOCK_DESC) || StringTools.startsWith(s.name, hxmc.ir.ObjC.GLOBAL_BLOCK)
+					|| StringTools.startsWith(s.name, hxmc.ir.ObjC.PROTOREF)))
+					names.set(s.name, true);
+		var list = [for (n in names.keys()) n];
+		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		objc = list.length > 0;
+		var descs = new Map<String, Bool>();
+		for (n in list) {
+			if (StringTools.startsWith(n, hxmc.ir.ObjC.GLOBAL_BLOCK)) {
+				// (a global block: isa, flags, reserved, invoke, descriptor, the
+				// closure; its descriptor: reserved, size, signature, layout)
+				var f = n.substr(hxmc.ir.ObjC.GLOBAL_BLOCK.length).split("_");
+				var unhex = (s:String) -> haxe.io.Bytes.ofHex(s).toString();
+				var desc = hxmc.ir.ObjC.GLOBAL_DESC + f[0];
+				if (!descs.exists(desc)) {
+					descs.set(desc, true);
+					data.buf.align(8);
+					obj.define(desc, data, data.buf.len, 32, true);
+					data.buf.u64(0, 0);
+					data.buf.u64(40, 0);
+					ptrSym(data, cstr(unhex(f[0])));
+					data.buf.u64(0, 0);
+				}
+				data.buf.align(8);
+				obj.define(n, data, data.buf.len, 40, true);
+				ptr(data, "_NSConcreteGlobalBlock");
+				data.buf.u32(Std.parseInt(f[1]) | hxmc.ir.ObjC.BLOCK_IS_GLOBAL);
+				data.buf.u32(0);
+				ptr(data, unhex(f[2]));
+				ptr(data, desc);
+				ptr(data, unhex(f[3]));
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASSREF)) {
+				var sec = obj.section("__DATA,__objc_classrefs", Data, 8);
+				obj.define(n, sec, sec.buf.len, 8, true);
+				ptr(sec, hxmc.ir.ObjC.CLASS_SYM + n.substr(hxmc.ir.ObjC.CLASSREF.length));
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.CLASS_CELL)) {
+				// (a peer class's: its class, zero until registered; its registering function)
+				data.buf.align(8);
+				obj.define(n, data, data.buf.len, 16, true);
+				data.buf.u64(0, 0);
+				ptr(data, hxmc.ir.ObjC.REGISTER + n.substr(hxmc.ir.ObjC.CLASS_CELL.length));
+			} else if (StringTools.startsWith(n, hxmc.ir.ObjC.IVAR_CELL) || StringTools.startsWith(n, hxmc.ir.ObjC.BLOCK_DESC)
+				|| StringTools.startsWith(n, hxmc.ir.ObjC.PROTOREF)) {
+				// (an instance variable's offset; a block signature's descriptor; a
+				// protocol's Protocol object: zero until made)
+				data.buf.align(8);
+				obj.define(n, data, data.buf.len, 8, true);
+				data.buf.u64(0, 0);
+			} else {
+				var sec = obj.section("__DATA,__objc_selrefs", Data, 8);
+				obj.define(n, sec, sec.buf.len, 8, true);
+				ptrSym(sec, cstr(haxe.io.Bytes.ofHex(n.substr(hxmc.ir.ObjC.SELREF.length)).toString()));
+			}
 		}
 	}
 

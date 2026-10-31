@@ -17,7 +17,8 @@ import hxmc.unsafe.*;
 // which is collected by copying too. Roots: the threads' shadow stacks
 // (reference locals live across a GC point), the globals table (rt_globals),
 // the remembered sets (the write barrier), the threads' entry closures,
-// Tls values and current exceptions, and the finalisers.
+// Tls values and current exceptions, the finalisers, and the closures
+// Objective-C blocks call (blockNew).
 //
 // Threads (Threads): each thread allocates in its own chunk of the nursery
 // (a TLAB: rt_young_ptr/rt_young_limit, taken from youngNext) and records
@@ -223,6 +224,474 @@ class Gc {
 	public static var fdLock:Ptr;
 	static var deadNatives:Ptr;
 	static var deadCap:Int;
+
+	// ---- Objective-C peers (hxmc.ir.ObjC): an instance of a Haxe class
+	// extending an Objective-C one is two objects, the Haxe one and its
+	// Objective-C object, whose instance variable holds the index of their
+	// entry here: (object, id) pairs. The Haxe object holds one reference to
+	// the id (the one alloc made). As Xamarin's toggle references: an entry
+	// whose id something else retains too (its retain count above 1: a
+	// window holding its view) is a root, and otherwise weak, swept as the
+	// native handles are; its Haxe object found dead, the id is released
+	// (and freed: its count was 1) and the entry reused (a free entry: a null
+	// object, the next free index in the id word). retainCount and release
+	// are libobjc's, given by the first peerAdd (the runtime does not link
+	// libobjc).
+	static var peers:Ptr;
+	static var npeers:Int;
+	static var peersCap:Int;
+	static var peerFree:Int = -1;
+	static var peersLock:Ptr;
+	static var peerRetainCount:Ptr;
+	static var peerRelease:Ptr;
+	static var deadPeers:Ptr;
+	static var deadPeersCap:Int;
+
+	// a bit per type index: the types of the objects paired (idOf)
+	static var peerTypes:Ptr;
+
+	@:hxmc.export("rt_objc_peer_add") static function peerAdd(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr):Int
+		return pair(o, id, retainCount, release, true);
+
+	// o paired with id; typed: o's type is a class's whose objects are
+	// paired (not a value an Objective-C exception carries: ObjCExceptions)
+	static function pair(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr, typed:Bool):Int {
+		var p = Mem.addr(o);
+		var t = Types.tindex(o);
+		lockLeaf(peersLock);
+		peerRetainCount = retainCount;
+		peerRelease = release;
+		if (typed) {
+			if (peerTypes.isNull()) {
+				peerTypes = LibC.malloc(8192);
+				LibC.memset(peerTypes, 0, 8192);
+			}
+			Mem.setI8(peerTypes, t >>> 3, Mem.getU8(peerTypes, t >>> 3) | (1 << (t & 7)));
+		}
+		var i = peerFree;
+		if (i >= 0) {
+			peerFree = Mem.getPtr(peers, 16 * i + 8).toI64().toInt();
+		} else {
+			if (npeers == peersCap) {
+				peersCap = peersCap == 0 ? 64 : peersCap * 2;
+				peers = LibC.realloc(peers, (peersCap : I64) * 16);
+			}
+			// (entry 0 stays free: an instance variable of 0 is an object
+			// Objective-C made, its Haxe object not made yet; FnLower.objcAdopt)
+			if (npeers == 0) {
+				Mem.setPtr(peers, 0, Ptr.nil());
+				Mem.setPtr(peers, 8, Ptr.nil());
+				npeers = 1;
+			}
+			i = npeers++;
+		}
+		Mem.setPtr(peers, 16 * i, p);
+		Mem.setPtr(peers, 16 * i + 8, id);
+		unlockLeaf(peersLock);
+		return i;
+	}
+
+	// the Haxe object of entry i (null: a free entry)
+	@:hxmc.export("rt_objc_peer_get") static function peerGet(i:Int):Dynamic {
+		lockLeaf(peersLock);
+		var p = i >= 0 && i < npeers ? Mem.getPtr(peers, 16 * i) : Ptr.nil();
+		unlockLeaf(peersLock);
+		return Mem.obj(p);
+	}
+
+	// the entries whose id something else retains: roots (scanRoots)
+	@:hxmc.unsafe static function scanPeers(root:Bool) {
+		for (i in 0...npeers) {
+			var o = Mem.getPtr(peers, 16 * i);
+			if (o.isNull()) continue;
+			if (Ind.call1(peerRetainCount, Mem.getPtr(peers, 16 * i + 8)).toI64() > 1)
+				Mem.setPtr(peers, 16 * i, fwdAs(o, root));
+		}
+	}
+
+	// after a collection of the nursery (and of [lo, hi) for a major one):
+	// the weak entries' objects moved, or dead and their ids released
+	@:hxmc.unsafe static function sweepPeers(lo:Ptr, hi:Ptr) {
+		var ndead = 0;
+		for (i in 0...npeers) {
+			var e = peers.add(16 * i);
+			var o = Mem.getPtr(e, 0);
+			if (o.isNull() || !(inYoung(o) || (!o.ult(lo) && o.ult(hi)))) continue;
+			if (isFwd(hdrW0(o))) {
+				Mem.setPtr(e, 0, fwdAddr(o));
+				continue;
+			}
+			if (ndead == deadPeersCap) {
+				deadPeersCap = deadPeersCap == 0 ? 64 : deadPeersCap * 2;
+				deadPeers = LibC.realloc(deadPeers, (deadPeersCap : I64) * 8);
+			}
+			Mem.setPtr(deadPeers, 8 * ndead++, Mem.getPtr(e, 8));
+			Mem.setPtr(e, 0, Ptr.nil());
+			Mem.setPtr(e, 8, Ptr.ofI64((peerFree : I64)));
+			peerFree = i;
+		}
+		for (k in 0...ndead)
+			Ind.call1(peerRelease, Mem.getPtr(deadPeers, 8 * k));
+	}
+
+	// ---- Objective-C blocks (hxmc.ir.ObjC.blockOf): a Haxe function made a
+	// block is a heap block (_Block_copy of one built in blockNew's frame)
+	// whose capture is the index of an entry here: (closure, count) pairs,
+	// the count the heap blocks referring to the entry. The block's copy
+	// helper (blockCopy: _Block_copy calls it) adds one, its dispose helper
+	// (blockDispose: libclosure calls it as it frees the block) takes one;
+	// at zero the entry is free (a null closure, the next free index in the
+	// count's word). An entry with a closure is a root (scanBlocks), from
+	// blockNew on: the copy that counts it follows without a GC point. A
+	// minor collection scans only the entries made since the last collection
+	// (blockRecent): the others' closures are old, which only a major one moves.
+	// The table is chunks of BLOCK_CHUNK entries that never move, so that an
+	// invoke reads its closure without the lock (blockGet: it runs out of
+	// any safe region, so no collection moves the closure meanwhile, and the
+	// block it was called with keeps the entry). The helpers run on any
+	// thread, in any state (in a safe region while the collector runs: it
+	// takes the lock to scan), so the lock is taken with one thread too.
+	static inline var BLOCK_CHUNK = 1024;
+	static inline var BLOCK_CHUNKS = 4096;
+	static inline var BLOCK_SIZE = 40; // Block_layout's 32 bytes, the index
+	static inline var BLOCK_HAS_COPY_DISPOSE = 1 << 25;
+	static inline var BLOCK_IS_GLOBAL = 1 << 28;
+	static var blockChunks:Ptr; // BLOCK_CHUNKS chunks' addresses (null: none yet)
+	static var nblocks:Int;
+	static var blockFree:Int = -1;
+	static var blocksLock:Ptr;
+	static var blockRecent:Ptr; // the indices of the entries made since the last collection
+	static var nrecent:Int;
+	static var recentCap:Int;
+
+	@:hxmc.unsafe static inline function blockEntry(i:Int):Ptr
+		return Mem.getPtr(blockChunks, 8 * (i >> 10)).add(16 * (i & (BLOCK_CHUNK - 1)));
+
+	// a heap block calling f through invoke (an entry of hxmc.ir.ObjC.invoke),
+	// autoreleased: the descriptor of its signature (the C string sig) made
+	// at the first block of it, in the program's word `cell`; flags as libclosure
+	// has them (BLOCK_HAS_SIGNATURE, x86-64's BLOCK_USE_STRET); libclosure's
+	// and libobjc's functions and the stack blocks' class come as addresses
+	// (the runtime does not link either)
+	@:hxmc.export("rt_objc_block_new") @:hxmc.unsafe static function blockNew(f:Dynamic, invoke:Ptr, cell:Ptr, sig:Ptr, flags:Int, stackIsa:Ptr, blockCopyFn:Ptr,
+			autorelease:Ptr):Ptr {
+		var p = Mem.addr(f);
+		Os.lock(blocksLock);
+		var d = Mem.getPtr(cell, 0);
+		if (d.isNull()) {
+			// (Block_descriptor: reserved, size, copy, dispose, signature, layout)
+			d = LibC.malloc(48);
+			Mem.setI64(d, 0, 0);
+			Mem.setI64(d, 8, BLOCK_SIZE);
+			Mem.setPtr(d, 16, Callback.addr(blockCopy));
+			Mem.setPtr(d, 24, Callback.addr(blockDispose));
+			Mem.setPtr(d, 32, sig);
+			Mem.setI64(d, 40, 0);
+			Mem.setPtr(cell, 0, d);
+		}
+		var i = blockFree;
+		if (i >= 0) {
+			blockFree = Mem.getI64(blockEntry(i), 8).toInt();
+		} else {
+			if (blockChunks.isNull()) {
+				blockChunks = LibC.malloc(8 * BLOCK_CHUNKS);
+				LibC.memset(blockChunks, 0, 8 * BLOCK_CHUNKS);
+			}
+			if (nblocks == BLOCK_CHUNK * BLOCK_CHUNKS) dieC(Mem.cstr("too many blocks made of Haxe functions alive\n"));
+			if (nblocks & (BLOCK_CHUNK - 1) == 0) Mem.setPtr(blockChunks, 8 * (nblocks >> 10), LibC.malloc(16 * BLOCK_CHUNK));
+			i = nblocks++;
+		}
+		var e = blockEntry(i);
+		Mem.setPtr(e, 0, p);
+		Mem.setI64(e, 8, 0);
+		if (nrecent == recentCap) {
+			recentCap = recentCap == 0 ? 64 : recentCap * 2;
+			blockRecent = LibC.realloc(blockRecent, (recentCap : I64) * 4);
+		}
+		Mem.setI32(blockRecent, 4 * nrecent++, i);
+		Os.unlock(blocksLock);
+		// (the stack block: Block_layout, then the index)
+		var b = Mem.stack(BLOCK_SIZE);
+		Mem.setPtr(b, 0, stackIsa);
+		Mem.setI32(b, 8, flags | BLOCK_HAS_COPY_DISPOSE);
+		Mem.setI32(b, 12, 0);
+		Mem.setPtr(b, 16, invoke);
+		Mem.setPtr(b, 24, d);
+		Mem.setI64(b, 32, (i : I64));
+		return Ind.call1(autorelease, Ind.call1(blockCopyFn, b));
+	}
+
+	// a heap block made of block src (dst, its copy): one more referring to the
+	// entry. Without the lock: only blockNew's stack block is ever copied
+	// (_Block_copy of a heap block retains it), in blockNew, and nothing
+	// else writes the entry before the block exists
+	@:hxmc.callback @:hxmc.unsafe static function blockCopy(dst:Ptr, src:Ptr):Void {
+		var e = blockEntry(Mem.getI64(src, BLOCK_SIZE - 8).toInt());
+		Mem.setI64(e, 8, Mem.getI64(e, 8) + 1);
+	}
+
+	// heap block b freed: one less; none, the entry is free (its closure no root)
+	@:hxmc.callback @:hxmc.unsafe static function blockDispose(b:Ptr):Void {
+		var i = Mem.getI64(b, BLOCK_SIZE - 8).toInt();
+		var e = blockEntry(i);
+		Os.lock(blocksLock);
+		var n = Mem.getI64(e, 8) - 1;
+		if (n == 0) {
+			Mem.setPtr(e, 0, Ptr.nil());
+			Mem.setI64(e, 8, (blockFree : I64));
+			blockFree = i;
+		} else Mem.setI64(e, 8, n);
+		Os.unlock(blocksLock);
+	}
+
+	// the closure of block b (made by blockNew; a global block of a closure
+	// capturing nothing, in the data: its address, hxmc.ir.ObjC.GLOBAL_BLOCK),
+	// for its invoke
+	@:hxmc.export("rt_objc_block_get") static function blockGet(b:Ptr):Dynamic {
+		var c = Mem.getPtr(b, BLOCK_SIZE - 8);
+		return Mem.obj(Mem.getI32(b, 8) & BLOCK_IS_GLOBAL != 0 ? c : Mem.getPtr(blockEntry(c.toI64().toInt()), 0));
+	}
+
+	// the closure of block b when blockNew made it with this invoke (of the
+	// closure's signature), else null: a block becoming a function again is
+	// that function (hxmc.ir.ObjC.blockFunction)
+	@:hxmc.export("rt_objc_block_fn") static function blockFn(b:Ptr, invoke:Ptr):Dynamic {
+		if (Mem.getPtr(b, 16) != invoke) return null;
+		if (Mem.getI32(b, 8) & BLOCK_IS_GLOBAL != 0) return blockGet(b);
+		if (Mem.getI32(b, 8) & BLOCK_HAS_COPY_DISPOSE == 0) return null;
+		var d = Mem.getPtr(b, 24);
+		if (Mem.getPtr(d, 16) != Callback.addr(blockCopy) || Mem.getI64(d, 8) != (BLOCK_SIZE : I64)) return null;
+		return blockGet(b);
+	}
+
+	// the entries' closures: roots (scanRoots); a minor collection's, the recent ones'
+	@:hxmc.unsafe static function scanBlocks(root:Bool) {
+		Os.lock(blocksLock);
+		var n = major ? nblocks : nrecent;
+		for (k in 0...n) {
+			var e = blockEntry(major ? k : Mem.getI32(blockRecent, 4 * k));
+			var o = Mem.getPtr(e, 0);
+			if (!o.isNull()) Mem.setPtr(e, 0, fwdAs(o, root));
+		}
+		nrecent = 0;
+		Os.unlock(blocksLock);
+	}
+
+	// ---- ids in fields of Haxe objects (hxmc.ir.ObjC): each such field (a
+	// closure's capture, a captured variable's box) holds a reference to its id
+	// (its stores retain and release, FnLower), which the object's death gives
+	// back: (object, offset of the field) pairs, registered by the constructor
+	// (where the closure or the box is made), swept as the native handles are
+	// (the dead object's memory is still there: its field is read then)
+	static var owned:Ptr;
+	static var nowned:Int;
+	static var ownedCap:Int;
+	static var deadOwned:Ptr;
+	static var deadOwnedCap:Int;
+
+	@:hxmc.export("rt_objc_own") static function own(o:Dynamic, offset:Int, release:Ptr):Void {
+		var p = Mem.addr(o);
+		lockLeaf(peersLock);
+		peerRelease = release;
+		if (nowned == ownedCap) {
+			ownedCap = ownedCap == 0 ? 64 : ownedCap * 2;
+			owned = LibC.realloc(owned, (ownedCap : I64) * 16);
+		}
+		Mem.setPtr(owned, 16 * nowned, p);
+		Mem.setI64(owned, 16 * nowned + 8, (offset : I64));
+		nowned++;
+		unlockLeaf(peersLock);
+	}
+
+	// an id where a reference goes (Dynamic, an element, a type parameter):
+	// the Haxe object of an instance of a Haxe class extending an Objective-C
+	// one (its class has the instance variable hxmc_peer), else the id's one
+	// box, a native handle holding a reference to it (released once the box
+	// dies), so that == and maps see one object per id. libobjc's functions
+	// come as addresses (the runtime does not link libobjc).
+	@:hxmc.export("rt_objc_box") static function idBox(id:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr, ivarOffset:Ptr):Dynamic {
+		if (id.isNull()) return null;
+		var ivar = Ind.call2(getIvar, Ind.call1(getClass, id), Mem.cstr("hxmc_peer"));
+		if (!ivar.isNull()) return peerGet(Mem.getI32(id.addL(Ind.call1(ivarOffset, ivar).toI64()), 0));
+		lockLeaf(peersLock);
+		var found = boxFind(id);
+		unlockLeaf(peersLock);
+		if (!found.isNull()) return Mem.obj(found);
+		Ind.call1(retain, id);
+		var o = nativeNew(id, release, 0);
+		lockLeaf(peersLock);
+		// (another thread's box made meanwhile: that one; this one dies, released)
+		found = boxFind(id);
+		if (found.isNull()) boxAdd(id, Mem.addr(o));
+		unlockLeaf(peersLock);
+		return found.isNull() ? o : Mem.obj(found);
+	}
+
+	// ---- the boxes by id: an open-addressing table of (id, box) pairs, its
+	// capacity a power of two; rebuilt after a collection (sweepBoxes: the
+	// dead boxes' entries dropped, the moved ones' addresses updated)
+	static var boxes:Ptr;
+	static var boxesCap:Int;
+	static var nboxes:Int;
+
+	@:hxmc.unsafe static inline function boxSlot(id:Ptr, cap:Int):Int
+		return ((id.toI64() >>> 4).toInt() * 0x9E3779B1) & (cap - 1);
+
+	@:hxmc.unsafe static function boxFind(id:Ptr):Ptr {
+		if (nboxes == 0) return Ptr.nil();
+		var i = boxSlot(id, boxesCap);
+		while (true) {
+			var k = Mem.getPtr(boxes, 16 * i);
+			if (k.isNull()) return Ptr.nil();
+			if (k == id) return Mem.getPtr(boxes, 16 * i + 8);
+			i = (i + 1) & (boxesCap - 1);
+		}
+	}
+
+	@:hxmc.unsafe static function boxAdd(id:Ptr, box:Ptr) {
+		if (2 * (nboxes + 1) > boxesCap) boxRehash(boxesCap == 0 ? 64 : boxesCap * 2);
+		boxPut(id, box);
+		nboxes++;
+	}
+
+	@:hxmc.unsafe static function boxPut(id:Ptr, box:Ptr) {
+		var i = boxSlot(id, boxesCap);
+		while (!Mem.getPtr(boxes, 16 * i).isNull())
+			i = (i + 1) & (boxesCap - 1);
+		Mem.setPtr(boxes, 16 * i, id);
+		Mem.setPtr(boxes, 16 * i + 8, box);
+	}
+
+	@:hxmc.unsafe static function boxRehash(cap:Int) {
+		var old = boxes, oldCap = boxesCap;
+		boxes = LibC.malloc((cap : I64) * 16);
+		LibC.memset(boxes, 0, (cap : I64) * 16);
+		boxesCap = cap;
+		for (i in 0...oldCap) {
+			var k = Mem.getPtr(old, 16 * i);
+			if (!k.isNull()) boxPut(k, Mem.getPtr(old, 16 * i + 8));
+		}
+		if (!old.isNull()) LibC.free(old);
+	}
+
+	// after a collection of the nursery (and of [lo, hi) for a major one)
+	@:hxmc.unsafe static function sweepBoxes(lo:Ptr, hi:Ptr) {
+		var live = 0;
+		for (i in 0...boxesCap) {
+			var e = boxes.add(16 * i);
+			var o = Mem.getPtr(e, 8);
+			if (Mem.getPtr(e, 0).isNull()) continue;
+			if (inYoung(o) || (!o.ult(lo) && o.ult(hi))) {
+				if (!isFwd(hdrW0(o))) {
+					Mem.setPtr(e, 0, Ptr.nil());
+					continue;
+				}
+				Mem.setPtr(e, 8, fwdAddr(o));
+			}
+			live++;
+		}
+		nboxes = live;
+		boxRehash(boxesCap);
+	}
+
+	// the id of a box, or of an instance of a Haxe class extending an
+	// Objective-C one (null: nil): slot 0 both (the class's hidden field is its
+	// first: hxmc.ir.Lower.classInfo)
+	@:hxmc.export("rt_objc_unbox") static function idUnbox(o:Dynamic):Ptr
+		return o == null ? Ptr.nil() : Mem.getPtr(Mem.addr(o), 0);
+
+	// the id of v when it is an Objective-C object (a box of an id; an object
+	// of a type whose objects are paired: peerAdd), else nil: v of any type
+	static function idOf(v:Dynamic):Ptr {
+		if (v == null) return Ptr.nil();
+		var p = Mem.addr(v);
+		var t = Types.tindex(v);
+		if (t == T_NATIVE) {
+			var id = Mem.getPtr(p, 0);
+			lockLeaf(peersLock);
+			var found = boxFind(id);
+			unlockLeaf(peersLock);
+			return found == p ? id : Ptr.nil();
+		}
+		lockLeaf(peersLock);
+		var paired = !peerTypes.isNull() && Mem.getU8(peerTypes, t >>> 3) & (1 << (t & 7)) != 0;
+		unlockLeaf(peersLock);
+		return paired ? Mem.getPtr(p, 0) : Ptr.nil();
+	}
+
+	// whether v (of any type: a caught value, a Dynamic) is an Objective-C
+	// object that is a kind of the class cls, or conforms to the protocol
+	// cls: sel (isKindOfClass:, conformsToProtocol:) sent with msgSend
+	// (libobjc's, as an address)
+	@:hxmc.export("rt_objc_is") static function objcIs(v:Dynamic, cls:Ptr, sel:Ptr, msgSend:Ptr):Bool {
+		var id = idOf(v);
+		// (BOOL: the result's low byte)
+		return !id.isNull() && Ind.call3(msgSend, id, sel, cls).toI64().toInt() & 0xff != 0;
+	}
+
+	// a weak id field (@:hxmc.weak): it holds a cell outside the heap, the
+	// variable objc_storeWeak knows (a field moves with its object), which
+	// the object's death destroys (objc_destroyWeak) and frees; its entry's
+	// offset is -(offset + 1)
+	static var weakDestroy:Ptr;
+
+	// a new weak variable for such a field: nil
+	@:hxmc.export("rt_objc_weak_cell") static function weakCell():Ptr {
+		var cell = LibC.malloc(8);
+		Mem.setPtr(cell, 0, Ptr.nil());
+		return cell;
+	}
+
+	@:hxmc.export("rt_objc_own_weak") static function ownWeak(o:Dynamic, offset:Int, destroyWeak:Ptr):Void {
+		var p = Mem.addr(o);
+		lockLeaf(peersLock);
+		weakDestroy = destroyWeak;
+		if (nowned == ownedCap) {
+			ownedCap = ownedCap == 0 ? 64 : ownedCap * 2;
+			owned = LibC.realloc(owned, (ownedCap : I64) * 16);
+		}
+		Mem.setPtr(owned, 16 * nowned, p);
+		Mem.setI64(owned, 16 * nowned + 8, -((offset : I64) + 1));
+		nowned++;
+		unlockLeaf(peersLock);
+	}
+
+	@:hxmc.unsafe static function sweepOwned(lo:Ptr, hi:Ptr) {
+		var live = 0, ndead = 0;
+		for (i in 0...nowned) {
+			var e = owned.add(16 * i);
+			var o = Mem.getPtr(e, 0);
+			var off = Mem.getI64(e, 8);
+			if (inYoung(o) || (!o.ult(lo) && o.ult(hi))) {
+				if (!isFwd(hdrW0(o))) {
+					var weak = off < 0;
+					var v = Mem.getPtr(o.addL(weak ? -off - 1 : off), 0);
+					if (!v.isNull()) {
+						if (ndead == deadOwnedCap) {
+							deadOwnedCap = deadOwnedCap == 0 ? 64 : deadOwnedCap * 2;
+							deadOwned = LibC.realloc(deadOwned, (deadOwnedCap : I64) * 16);
+						}
+						Mem.setPtr(deadOwned, 16 * ndead, v);
+						Mem.setI64(deadOwned, 16 * ndead + 8, weak ? 1 : 0);
+						ndead++;
+					}
+					continue;
+				}
+				o = fwdAddr(o);
+			}
+			var d = owned.add(16 * live++);
+			Mem.setPtr(d, 0, o);
+			Mem.setI64(d, 8, off);
+		}
+		nowned = live;
+		for (k in 0...ndead) {
+			var v = Mem.getPtr(deadOwned, 16 * k);
+			if (Mem.getI64(deadOwned, 16 * k + 8) == 0) Ind.call1(peerRelease, v) else {
+				Ind.call1(weakDestroy, v);
+				LibC.free(v);
+			}
+		}
+	}
 
 	// ---- the copy: depth-first, an object's descendants are copied right
 	// after it, close to the order in which the compiler then walks its
@@ -664,6 +1133,8 @@ class Gc {
 			Mem.setPtr(finalQueue, 16 * i, fwdAs(Mem.getPtr(finalQueue, 16 * i), root));
 			Mem.setPtr(finalQueue, 16 * i + 8, fwdAs(Mem.getPtr(finalQueue, 16 * i + 8), root));
 		}
+		if (npeers > 0) scanPeers(root);
+		if (nblocks > 0 && (major || nrecent > 0)) scanBlocks(root);
 	}
 
 	// ---- remembered sets: every started thread's, and the ended threads'
@@ -777,7 +1248,12 @@ class Gc {
 		var t0 = stats ? Os.now() : 0.0;
 		var m0 = majors;
 		minorCollect();
-		if (majors == m0) sweepNatives(Ptr.nil(), Ptr.nil());
+		if (majors == m0) {
+			sweepNatives(Ptr.nil(), Ptr.nil());
+			if (npeers > 0) sweepPeers(Ptr.nil(), Ptr.nil());
+			if (nowned > 0) sweepOwned(Ptr.nil(), Ptr.nil());
+			if (nboxes > 0) sweepBoxes(Ptr.nil(), Ptr.nil());
+		}
 		if (stats && majors == m0) minorSecs += Os.now() - t0;
 	}
 
@@ -862,6 +1338,9 @@ class Gc {
 		}
 		major = false;
 		sweepNatives(fromStart, fromEnd);
+		if (npeers > 0) sweepPeers(fromStart, fromEnd);
+		if (nowned > 0) sweepOwned(fromStart, fromEnd);
+		if (nboxes > 0) sweepBoxes(fromStart, fromEnd);
 		// the from-space goes back to the system (RT_RELEASE=0 keeps it
 		// resident, so the next major collection copies into faulted-in pages:
 		// a little less system time for as much more memory as the old space held)
@@ -1502,6 +1981,10 @@ class Gc {
 		Os.mutexInit(finalsLock);
 		nativesLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(nativesLock);
+		peersLock = LibC.malloc(Os.MUTEX_BYTES);
+		Os.mutexInit(peersLock);
+		blocksLock = LibC.malloc(Os.MUTEX_BYTES);
+		Os.mutexInit(blocksLock);
 		fdLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(fdLock);
 		return sstack;
@@ -1832,4 +2315,6 @@ class Gc {
 // calls through C function pointers (the native handles' free functions)
 @:hxmc.c @:hxmc.fast private extern class Ind {
 	@:hxmc.indirect static function call1(f:Ptr, a:Ptr):Ptr;
+	@:hxmc.indirect static function call2(f:Ptr, a:Ptr, b:Ptr):Ptr;
+	@:hxmc.indirect static function call3(f:Ptr, a:Ptr, b:Ptr, c:Ptr):Ptr;
 }

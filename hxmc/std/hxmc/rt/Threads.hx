@@ -460,6 +460,12 @@ class Threads {
 		return true;
 	}
 
+	// the calling thread attached unless it is one of the runtime's: a block's
+	// invoke (hxmc.ir.ObjC.invoke) runs on threads Objective-C chose (GCD's
+	// workers), before it leaves the safe region
+	@:hxmc.export("rt_objc_attach") @:hxmc.unsafe static function objcAttach():Void
+		if (self.isNull()) attach();
+
 	// (no safepoint from the call to the insertion: job is a root from then on)
 	@:hxmc.unsafe static function insert(m:Ptr<Mutator>, job:Dynamic):Int {
 		Os.lock(wl);

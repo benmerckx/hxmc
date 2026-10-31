@@ -112,7 +112,7 @@ class Inline {
 			case FieldAddr: 1;
 			case EnumTag: 2;
 			case TypeTest: 8;
-			case Box | Unbox: o.t.match(TI32 | TBool | TF64 | TI64) ? 1 : 0;
+			case Box | Unbox: o.t.match(TI32 | TBool | TF64 | TI64 | TId) ? 1 : 0;
 			case VirtualCall: 4;
 			case ClosureCall: 2;
 			case AnonGet: o.shape != null && o.shape.tindex >= 0 ? 6 : 16;
@@ -121,10 +121,10 @@ class Inline {
 			case AnonCall: 40;
 			case ArrayGet: o.flag ? 11 : 9;
 			// (a reference stored: rooted in a pushed slot on the slow path)
-			case ArraySet: o.t.match(TI32 | TBool | TF64 | TI64) ? 10 : 11 + barrier + (o.fr ? 0 : 4);
-			case ArrayPush: o.t.match(TI32 | TBool | TF64 | TI64) ? 13 : 14 + barrier + (o.fr ? 0 : 4);
+			case ArraySet: o.t.match(TI32 | TBool | TF64 | TI64 | TId) ? 10 : 11 + barrier + (o.fr ? 0 : 4);
+			case ArrayPush: o.t.match(TI32 | TBool | TF64 | TI64 | TId) ? 13 : 14 + barrier + (o.fr ? 0 : 4);
 			case NewArray: 2;
-			case ArrayInit: o.t.match(TI32 | TBool | TF64 | TI64) ? 2 : 3 + barrier;
+			case ArrayInit: o.t.match(TI32 | TBool | TF64 | TI64 | TId) ? 2 : 3 + barrier;
 			case NewNArray: 25;
 			case NArrayInit: o.kind == Abi.AK_PTR ? 1 + barrier : 1;
 			case NArrayGet: 2;

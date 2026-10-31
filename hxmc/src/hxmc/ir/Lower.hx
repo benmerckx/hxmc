@@ -664,13 +664,19 @@ class Lower implements LowerQueries {
 					case "Float" if (isStd): TF64;
 					case "Void" if (isStd): TVoid;
 					case "Null" if (isStd):
+						// (an Objective-C object: nil is its null)
+						if (ObjC.isIdType(params[0])) return TId;
 						var inner = ty(params[0]);
+						// (an abstract over an Objective-C object: an id too)
+						if (inner.match(TId)) return TId;
 						Ir.isScalar(inner) ? TRef(RNull(inner)) : boxed(inner);
 					case "Any" if (isStd): TRef(RAny);
 					case "Class" | "Enum" if (isStd): TRef(RType);
 					case "EnumValue" if (isStd): TRef(REnum(null));
 					case "UInt" if (isStd): TI32;
 					case "I64" if (a.aPath.pack.join(".") == "hxmc"): TI64;
+					// an Objective-C block (ObjC): an id
+					case "Block" if (a.aPath.pack.join(".") == "hxmc.objc"): TId;
 					// in macro mode (Mir macros, hxmc.interp.MirMacros): the compiler's position, opaque
 					case "Position" if (a.aPath.pack.join(".") == "haxe.macro"): TRef(RAny);
 					// a coroutine is a function taking the continuation, as on HashLink
@@ -685,7 +691,8 @@ class Lower implements LowerQueries {
 				}
 			case TInst(c, params):
 				switch c.clKind {
-					case KTypeParameter(_): TRef(RAny);
+					// (one bound to Objective-C objects: an id, ObjC.isObjCParam)
+					case KTypeParameter(_): ObjC.isObjCParam(c) ? TId : TRef(RAny);
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
@@ -696,6 +703,7 @@ class Lower implements LowerQueries {
 							TStruct(n, CInterop.layout(c).size);
 						}
 						else if (CInterop.isOpaque(c)) TI64; // the address of C memory (CInterop: through a Ptr only)
+						else if (ObjC.isObjC(c) || ObjC.isCF(c)) TId; // an Objective-C object (or C's, CGColorRef): its id
 						else if (c.hasClassFlag(CInterface)) TRef(RObj(classInfo(c)));
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
@@ -832,6 +840,7 @@ class Lower implements LowerQueries {
 	public function boxed(t:Ty):Ty
 		return switch t {
 			case TStruct(n, _): TRef(RObj(structBox(n)));
+			case TId: TRef(RAny); // (an id box: FnLower.coerce)
 			case _: t;
 		}
 
@@ -911,7 +920,13 @@ class Lower implements LowerQueries {
 		// (stringBufCtor). Its class is not a subclass of StringBuf to
 		// reflection (Std.isOfType, Type.getSuperClass).
 		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
-		var sup = c.clSuper != null && !sbuf ? classInfo(c.clSuper.cls) : root;
+		// (a class extending an Objective-C one: a Haxe object with its id, ObjC)
+		var objc = c.clSuper != null && ObjC.isObjC(c.clSuper.cls);
+		// (C's objects have no class to subclass: only @:hxmc.objc classes do)
+		if (!c.hasClassFlag(CExtern) && c.clSuper != null && ObjC.isCF(c.clSuper.cls))
+			throw new LowerError('${c.clPath.name} extends ${c.clSuper.cls.clPath.name}, an object of C without an Objective-C class: only a class declared @:hxmc.objc can be subclassed',
+				CInterop.posOf(c.clPos));
+		var sup = c.clSuper != null && !sbuf && !objc ? classInfo(c.clSuper.cls) : root;
 		// (the superclass's field types may name this class, which has its
 		// ClassInfo then: `class Node extends Base<Node>`, upstream's unit test TestGeneric)
 		ci = classes.get(c);
@@ -927,8 +942,13 @@ class Lower implements LowerQueries {
 			k = k.cls.clSuper;
 		}
 		ci.ifaces = sup.ifaces.copy();
-		for (i in c.clImplements)
+		for (i in c.clImplements) {
+			// (a protocol: Objective-C's objects conform to them, a Haxe class's when it extends an Objective-C one)
+			if ((ObjC.isProtocol(i.cls) || ObjC.isId(i.cls)) && ObjC.peerBase(c) == null)
+				throw new LowerError('${c.clPath.name} implements the Objective-C protocol ${i.cls.clPath.name}: only a class extending an Objective-C class can',
+					CInterop.posOf(c.clPos));
 			addIface(ci, i.cls);
+		}
 		prog.classes.push(ci);
 		for (f in sup.fields)
 			ci.fields.push(f);
@@ -937,6 +957,10 @@ class Lower implements LowerQueries {
 		if (sbuf) {
 			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
 			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
+		}
+		if (objc) {
+			ci.fields.push({name: ObjC.ID_FIELD, ty: TId});
+			ci.fields.push({name: ObjC.CELL_FIELD, ty: TI64});
 		}
 		var own = [];
 		for (f in c.clOrderedFields)
@@ -947,6 +971,13 @@ class Lower implements LowerQueries {
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
+					var weak = hasMeta(":hxmc.weak", f.cfMeta);
+					if (weak && !ObjC.isIdType(f.cfType))
+						throw new LowerError('@:hxmc.weak ${f.cfName}: only a field holding an Objective-C object can be weak', CInterop.posOf(f.cfPos));
+					// (as Swift's weak variables are optional: it becomes nil once its object is gone)
+					if (weak && !TFunctions.isExplicitNull(f.cfType))
+						throw new LowerError('@:hxmc.weak ${f.cfName}: a weak field becomes nil once its object is gone: declare it Null<...>', CInterop.posOf(f.cfPos));
+					if (ObjC.isIdType(f.cfType)) (weak ? ci.weakFields : ci.idFields).push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
@@ -963,10 +994,60 @@ class Lower implements LowerQueries {
 		// field types may refer back to this class
 		outsideUnfolding(() -> for (o in own)
 			o.slot.ty = ty(o.f.cfType));
+		// (a weak id field: the address of its cell, ObjC)
+		for (o in own)
+			if (ci.weakFields.indexOf(o.f.cfName) >= 0) o.slot.ty = TI64;
+		// (a class extending an Objective-C one, or such a class: its Objective-C
+		// class, registered by a function of its own when first needed)
+		if (objc || (sup.objc != null)) {
+			var root = objc ? ci.ident : sup.objc.root;
+			var reg = new FuncInfo(ObjC.REGISTER + ci.ident, moduleOf(c));
+			reg.cSymbol = reg.name;
+			reg.display = core.Globals.sTypePath(c.clPath) + " (its Objective-C class)";
+			reg.ret = TVoid;
+			ci.objc = {
+				name: ci.ident,
+				root: root,
+				methods: ObjC.imps(this, c, ci.ident, root),
+				classMethods: ObjC.imps(this, c, ci.ident, root, true),
+				protocols: [for (p in ObjC.protocols(c)) ObjC.className(p)],
+				register: reg
+			};
+			prog.funcs.push(reg);
+			// (the initializer Objective-C makes the class's objects with: the
+			// constructor's, which then makes the Haxe object, FnLower.objcAdoptBody)
+			var adopt = ObjC.adoptInit(c);
+			if (adopt != null) {
+				var ctorFi = this.ctor(adopt.ctor);
+				var w = new FuncInfo("hxmc_objc_init_" + ci.ident, moduleOf(c));
+				w.display = core.Globals.sTypePath(c.clPath) + " (the initializer " + adopt.sel + " Objective-C sends)";
+				w.args = [new Local(0, "self", TI64), new Local(1, "_cmd", TI64)];
+				for (i in 1...ctorFi.args.length)
+					w.args.push(new Local(i + 1, ctorFi.args[i].name, ctorFi.args[i].ty));
+				w.ret = TI64;
+				prog.funcs.push(w);
+				pending.push(guarded(w, () -> {
+					var fl = new FnLower(this, w, ci, null);
+					fl.objcAdoptBody(c, adopt.init, adopt.sel, adopt.ctor.clConstructor.cfExpr);
+					fl.finish();
+				}));
+				var e = ObjC.entry(this, w.name + "__imp", "hxmc_imp_" + w.name, w.module, w, w.args.length, {args: [CInterop.CTy.CPtr, CInterop.CTy.CPtr].concat(adopt.cts), ret: CInterop.CTy.CPtr});
+				prog.funcs.push(e);
+				ci.objc.methods.unshift({sel: adopt.sel, sym: e.cSymbol, types: "@@:" + [for (ct in adopt.cts) ObjC.encoding(ct)].join("")});
+			}
+			var parent = c.clSuper.cls;
+			pending.push(guarded(reg, () -> {
+				var fl = new FnLower(this, reg, ci, null);
+				fl.objcRegisterBody(parent);
+				fl.finish();
+			}));
+		}
 		return ci;
 	}
 
 	function addIface(ci:ClassInfo, i:TClass) {
+		// (an Objective-C protocol: the Objective-C class's, ObjC.protocols; Id too)
+		if (ObjC.isProtocol(i) || ObjC.isId(i)) return;
 		var ii = classInfo(i);
 		if (ci.ifaces.indexOf(ii) < 0) ci.ifaces.push(ii);
 		for (j in i.clImplements)
@@ -1614,6 +1695,33 @@ class Lower implements LowerQueries {
 		return li;
 	}
 
+	// Objective-C blocks (ObjC.blockSig): the invoke of the blocks of a
+	// signature (its symbol), and the closure calling such a block, once per
+	// signature and C types
+	var blockInvokes = new Map<String, String>();
+
+	public function blockInvoke(b:ObjC.BlockSig):String {
+		var key = ObjC.blockKey(b);
+		var sym = blockInvokes.get(key);
+		if (sym != null) return sym;
+		sym = ObjC.INVOKE + haxe.io.Bytes.ofString(key).toHex();
+		blockInvokes.set(key, sym);
+		ObjC.invoke(this, sym, b);
+		return sym;
+	}
+
+	var blockCallers = new Map<String, LambdaInfo>();
+
+	public function blockCaller(b:ObjC.BlockSig):LambdaInfo {
+		var key = ObjC.blockKey(b);
+		var li = blockCallers.get(key);
+		if (li != null) return li;
+		var box = new Local(-1, "block", TRef(RAny));
+		li = newLambda(b.sig, vector(box), fl -> fl.blockCall(b), "blockcall__" + key, "_closures");
+		blockCallers.set(key, li);
+		return li;
+	}
+
 	// a closure converting between two closure representations
 	var adapters = new Map<String, LambdaInfo>();
 
@@ -1753,6 +1861,19 @@ class Lower implements LowerQueries {
 		return CInterop.declare(sym, c, cf, s);
 	}
 
+	// Objective-C's declaration d, for this program (as cExtern)
+	public function objcDeclare(d:ObjC.Decl):Void
+		ObjC.define(d);
+
+	public function objcPeer(ci:ClassInfo):Null<ObjCClass>
+		return ci.objc;
+
+	public function idFields(ci:ClassInfo):Array<String>
+		return ci.idFields;
+
+	public function weakFields(ci:ClassInfo):Array<String>
+		return ci.weakFields;
+
 	public function lookupMethod(c:TClass, name:String):Null<{cls:TClass, field:TClassField}> {
 		var k = c;
 		while (k != null) {
@@ -1832,6 +1953,12 @@ class Lower implements LowerQueries {
 		prog.selectors.push({name: name, sig: sig});
 		usedSelectors.set(name, s);
 		return s;
+	}
+
+	public function classOf(ci:ClassInfo):Null<TClass> {
+		for (tc => c in classes)
+			if (c == ci) return tc;
+		return null;
 	}
 
 	public function superOf(ci:ClassInfo):TClass {

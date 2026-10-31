@@ -37,6 +37,8 @@ import hxmc.rt.GcPaths;
 import hxmc.rt.Threads;
 import hxmc.rt.Start;
 import hxmc.rt.WinRt;
+// Objective-C exceptions reaching Haxe frames (Apple's systems: LinkMachO, DataGen.objcCaught)
+import hxmc.rt.ObjCExceptions;
 #if hxmc.census
 import hxmc.rt.Census;
 #end

@@ -893,6 +893,12 @@ class Dyn {
 				}
 				b.addChar("]".code);
 				return b.toString();
+			#if (hxmc.target != "wasm32-wasi")
+			case T_NATIVE:
+				// (an id's box: its description)
+				var d = ObjCExceptions.description(v);
+				if (d != null) return d;
+			#end
 			case _:
 		}
 		var ty = ty(t);

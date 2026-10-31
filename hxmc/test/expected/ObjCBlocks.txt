@@ -1,0 +1,21 @@
+exit 0
+ObjCBlocks.hx:120: enumerate: 110
+ObjCBlocks.hx:122: sorted: [40,30,20,10,0]
+ObjCBlocks.hx:133: later: [op0,op1,op2]
+ObjCBlocks.hx:140: main queue: true
+ObjCBlocks.hx:151: worker: [ran]
+ObjCBlocks.hx:155: round trip: 100
+ObjCBlocks.hx:157: block result: 6
+ObjCBlocks.hx:161: identity: true
+ObjCBlocks.hx:168: foreign block: 2
+ObjCBlocks.hx:175: struct: 101 3 6
+ObjCBlocks.hx:181: field: 12
+ObjCBlocks.hx:183: null: true
+ObjCBlocks.hx:198: released and collected: true
+ObjCBlocks.hx:206: many: 200000
+ObjCBlocks.hx:212: global: true true true
+ObjCBlocks.hx:221: global calls: 10510
+ObjCBlocks.hx:226: block of a block: 27
+ObjCBlocks.hx:230: curried: 123 145
+ObjCBlocks.hx:235: through the invokes: 35 true
+ObjCBlocks.hx:251: completion handler: [accessor,later]

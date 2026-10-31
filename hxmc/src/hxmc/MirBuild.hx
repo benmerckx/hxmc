@@ -71,7 +71,7 @@ class MirBuild extends MirWriter {
 		return switch t {
 			case TI32 | TBool | TU8: I32;
 			case TF64: F64;
-			case TI64: I64;
+			case TI64 | TId: I64;
 			case TVoid: Void;
 			case TRef(_) | TStruct(_): I64;
 		};
@@ -89,6 +89,9 @@ class MirBuild extends MirWriter {
 	public static inline var STUB_CALL_ON_STACK = "hxmc_call_on_stack";
 	public static inline var STUB_ZERO = "hxmc_zero";
 	public static inline var STUB_FRAME = "hxmc_frame";
+	// (Mach-O with Objective-C: DataGen.objcCaught, for hxmc.rt.ObjCExceptions)
+	public static inline var STUB_LANDING = "hxmc_objc_landing";
+	public static inline var OBJC_CAUGHT = "hxmc_objc_caught";
 
 	// a new block reached only from where control is now
 	function split():MBlock {
@@ -618,7 +621,7 @@ class MirBuild extends MirWriter {
 			case SSetGlobal(g, v) if (tlsGlobal(g) != null):
 				var x = ex(v);
 				var t = p.p.globals[g].ty;
-				tlsStore(tlsGlobal(g), t == TF64 ? op1(FToBits, I64, x) : t == TI64 ? x : op1(SExt, I64, x));
+				tlsStore(tlsGlobal(g), t == TF64 ? op1(FToBits, I64, x) : (t == TI64 || t == TId) ? x : op1(SExt, I64, x));
 			case SSetGlobal(g, v):
 				var x = ex(v);
 				var t = p.p.globals[g].ty;
@@ -1099,7 +1102,7 @@ class MirBuild extends MirWriter {
 				symAddr(p.p.globals[g].sym);
 			case EGlobal(g, t) if (tlsGlobal(g) != null):
 				var v = tlsLoad(tlsGlobal(g));
-				t == TF64 ? op1(BitsToF, F64, v) : t == TI64 ? v : op1(Trunc, I32, v);
+				t == TF64 ? op1(BitsToF, F64, v) : (t == TI64 || t == TId) ? v : op1(Trunc, I32, v);
 			case EGlobal(g, t):
 				if (Ir.isRef(t)) loadM(Opt.MGlobal, I64, 8, globalAddr(g), 0) else {
 					var mt = mty(t);
@@ -1207,7 +1210,7 @@ class MirBuild extends MirWriter {
 				o;
 			case ENewBox(t, v):
 				var tt = switch t {
-					case TF64 | TI64: Abi.T_REFBOX_F;
+					case TF64 | TI64 | TId: Abi.T_REFBOX_F;
 					case TI32 | TBool: Abi.T_REFBOX_I;
 					case _: Abi.T_REFBOX_P;
 				};
@@ -1488,7 +1491,30 @@ class MirBuild extends MirWriter {
 		return readVar(r, cur);
 	}
 
+	// the global block of a closure capturing nothing (hxmc.ir.ObjC.GLOBAL_BLOCK),
+	// from GLOBAL_BLOCK_HOST's arguments: the closure, the invoke's symbol, the types, the flags
+	function globalBlockSym(l:LambdaInfo, args:Vector<Ex>):String {
+		inline function str(x:Ex)
+			return switch x {
+				case ECallHost(_, a, _) if (a.length == 1 && a[0].match(EStr(_))): switch a[0] {
+						case EStr(s): s;
+						case _: throw "hxmc: global block";
+					}
+				case _: throw "hxmc: global block";
+			};
+		var hex = (s:String) -> haxe.io.Bytes.ofString(s).toHex();
+		return hxmc.ir.ObjC.GLOBAL_BLOCK + hex(str(args[2])) + "_" + intLiteral(args[3], "block flags") + "_" + hex(str(args[1])) + "_"
+			+ hex(p.closureSym(l));
+	}
+
 	function host(name:String, args:Vector<Ex>, ret:Ty):Int {
+		if (name == hxmc.ir.ObjC.GLOBAL_BLOCK_HOST)
+			switch args[0] {
+				case ENewClos(l, []) if (p.staticClosures):
+					return symAddr(globalBlockSym(l, args));
+				case _:
+					throw "hxmc: a global block without static closures";
+			}
 		if (name == "hxmc_narray_lit") {
 			// (FnLower: NativeArray.literal) the storage of the elements args[1...] of
 			// kind args[0], as newArr makes an Array literal's: none, the empty array

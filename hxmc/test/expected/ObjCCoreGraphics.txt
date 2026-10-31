@@ -1,0 +1,8 @@
+exit 0
+ObjCCoreGraphics.hx:74: path, 1, 1, 2, 2
+ObjCCoreGraphics.hx:78: pixels, 0,0,0,0, 255,0,0,255, 255,0,0,255, 0,0,0,0
+ObjCCoreGraphics.hx:82: image, 4, true
+ObjCCoreGraphics.hx:85: kept before the drain, 2
+ObjCCoreGraphics.hx:87: kept after the drain, 1, 0.25
+ObjCCoreGraphics.hx:99: held, 10, 1, 1, 1, 4
+ObjCCoreGraphics.hx:106: done

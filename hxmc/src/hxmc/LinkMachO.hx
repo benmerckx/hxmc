@@ -20,7 +20,11 @@ import hxmc.Abi;
 // __TEXT and __DATA); absolute pointers get BASE added and a rebase entry.
 // Whatever the objects leave undefined is bound from libSystem (two-level
 // namespace, ordinal 1) with its Mach-O name (`_` + the C name): calls go
-// through a stub per function, address loads through slots in __got.
+// through a stub per function, address loads through slots in __got. An
+// address taken in code (Mem.sym: adrp and add, lea) is loaded from the
+// symbol's slot instead (the instruction made a load, as LinkDyn does for a
+// shared library's variable): an import may be a variable
+// (_NSConcreteStackBlock, _dispatch_main_q), whose stub would be no address of it.
 // arm64 executables must be signed: an ad-hoc, linker-signed code signature
 // (a CodeDirectory of SHA-256 page hashes) ends __LINKEDIT.
 // Thread-local variables: the runtime's descriptors (__thread_vars: thunk
@@ -48,6 +52,9 @@ class LinkMachO extends LinkCore {
 	public var minos = IOS_MIN; // (iOS: -D hxmc.ios-min-version, Options.iosMinos)
 	// imports from other dylibs than libSystem (@:hxmc.lib): symbol -> install name
 	public var dylibs = new Map<String, String>();
+	// dylibs loaded whatever the program imports from them (an Objective-C
+	// category's framework: hxmc.ir.CInterop.LOADS), after those it imports from
+	public var loads:Array<String> = [];
 
 	// a dylib (-D hxmc.shared): its install name
 	public var installName = "";
@@ -70,6 +77,29 @@ class LinkMachO extends LinkCore {
 	static function isTlvSection(s:Section):Bool
 		return StringTools.endsWith(s.name, "__thread_vars");
 
+	static function isObjcSection(s:Section):Bool
+		return s.name == "__DATA,__objc_classrefs" || s.name == "__DATA,__objc_selrefs";
+
+	// an address of an import taken in code (adrp and add, lea): loaded from its
+	// slot (false: another relocation, a call's)
+	static function relaxToGot(s:Section, r:Reloc):Bool {
+		switch r.kind {
+			case RA64AdrPage21:
+				r.kind = RA64GotPage21;
+			case RA64AddLo12:
+				var w = s.buf.get32(r.offset);
+				if ((w & 0xffc00000) != 0x91000000) throw "hxmc: link: the address of " + r.sym.name + ", an import, in an instruction other than add";
+				s.buf.set32(r.offset, 0xf9400000 | (w & 0x3ff)); // ldr xd, [xn, :got_lo12:]
+				r.kind = RA64GotLo12;
+			case RPc32 if (r.offset >= 2 && s.kind == Text && s.buf.get8(r.offset - 2) == 0x8D):
+				s.buf.set8(r.offset - 2, 0x8B); // lea -> mov from the slot
+				r.kind = RGotPcRel32;
+			case _:
+				return false;
+		}
+		return true;
+	}
+
 	public function link(entry:String):Bytes {
 		// (whichever signature the driver set: a dylib's is not a main binary's)
 		sign.mainBinary = !dylib;
@@ -83,6 +113,12 @@ class LinkMachO extends LinkCore {
 		resolve();
 		// (the sections nothing reaches left out: LinkCore.gc; a dylib's exports are roots)
 		if (dylib) roots = [for (n in abi.exports) if (globals.exists(n)) n];
+		// (Objective-C: the personality of the Haxe functions, whose
+		// language-specific data is the stub it resumes a frame in,
+		// DataGen.objcCaught)
+		var landing = globals.get(MirBuild.STUB_LANDING);
+		var personality = landing != null ? globals.get("rt_objc_personality") : null;
+		if (personality != null) roots.push(personality.name);
 		gc(entry);
 		// imports: what stays undefined (by name), and whether each is weak
 		var importWeak = new Map<String, Bool>();
@@ -134,6 +170,15 @@ class LinkMachO extends LinkCore {
 		got = new Section("__DATA,__got", Data, 8);
 		extra.sections.push(stubs);
 		extra.sections.push(got);
+		// Objective-C (DataGen.objcRefs): with selector or class references,
+		// the image info (version 0, flags 0x40 as clang's) that has the loader
+		// hand the image to libobjc, which then fixes up its selectors
+		if (Lambda.exists(objs, o -> Lambda.exists(o.sections, s -> isLive(s) && isObjcSection(s)))) {
+			var info = new Section("__DATA,__objc_imageinfo", Data, 4);
+			info.buf.u32(0);
+			info.buf.u32(0x40);
+			extra.sections.push(info);
+		}
 		keep(extra);
 		if (tls.length > 0) {
 			globals.set("hxmc_tls_start", extra.sym("hxmc_tls_start"));
@@ -165,6 +210,7 @@ class LinkMachO extends LinkCore {
 					for (r in s.relocs) {
 						var imp = imported(r.sym);
 						if (LinkCore.isGotRel(r.kind)) slot(r.sym);
+						else if (imp && relaxToGot(s, r)) slot(r.sym);
 						else if (imp && r.kind != RAbs64) {
 							// code (a call, or an address taken pc-relatively): the stub
 							stub(r.sym.name);
@@ -173,6 +219,7 @@ class LinkMachO extends LinkCore {
 					}
 		// ---- layout
 		var text = [], ro = [], roData = [], data = [], init = [], fini = [], tlv = [], tdata = [], tbss = [], bss = [];
+		var classrefs = [], selrefs = [], imageinfo = [];
 		for (o in objs)
 			for (s in o.sections) {
 				if (!isLive(s)) continue;
@@ -187,7 +234,12 @@ class LinkMachO extends LinkCore {
 								if (t == null || !t.abs) abs = true;
 							}
 						if (abs) roData.push(s) else ro.push(s);
-					case Data: if (isTlvSection(s)) tlv.push(s) else if (s != got) data.push(s);
+					case Data:
+						if (isTlvSection(s)) tlv.push(s);
+						else if (s.name == "__DATA,__objc_classrefs") classrefs.push(s);
+						else if (s.name == "__DATA,__objc_selrefs") selrefs.push(s);
+						else if (s.name == "__DATA,__objc_imageinfo") imageinfo.push(s);
+						else if (s != got) data.push(s);
 					case InitArray: init.push(s);
 					case FiniArray: fini.push(s);
 					case Tdata: tdata.push(s);
@@ -198,7 +250,7 @@ class LinkMachO extends LinkCore {
 		text.push(stubs);
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
 		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section)) r];
-		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame").sec : null;
+		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing).sec : null;
 		addr.set(header, 0);
 		var pos = HEADER_RESERVE;
 		function group(list:Array<Section>):{start:Int, end:Int} {
@@ -219,6 +271,9 @@ class LinkMachO extends LinkCore {
 		var oGot = group([got]);
 		var oDConst = group(roData);
 		var oData = group(data);
+		var oClassrefs = group(classrefs);
+		var oSelrefs = group(selrefs);
+		var oImageinfo = group(imageinfo);
 		var oInit = group(init);
 		var oFini = group(fini);
 		var oTlv = group(tlv);
@@ -263,7 +318,7 @@ class LinkMachO extends LinkCore {
 				rebases.push(gotAddr + at);
 			}
 		}
-		var all = text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(init).concat(fini).concat(tlv).concat(tdata);
+		var all = text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(classrefs).concat(selrefs).concat(imageinfo).concat(init).concat(fini).concat(tlv).concat(tdata);
 		for (s in all)
 			applyRelocs(s);
 		// ---- __LINKEDIT
@@ -307,6 +362,8 @@ class LinkMachO extends LinkCore {
 			}
 			ordinal.set(name, k + 1);
 		}
+		for (d in loads)
+			if (libs.indexOf(d) < 0) libs.push(d);
 		if (binds.length > 0) {
 			var curOrd = 1;
 			le.u8(0x11); // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM 1
@@ -410,7 +467,7 @@ class LinkMachO extends LinkCore {
 		var fileSize = leFileOff + sigOffInLe + sigLen;
 		var out = new Buf(fileSize + 16);
 		out.zeros(fileSize);
-		for (s in text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(init).concat(fini).concat(tlv).concat(tdata).concat([got]))
+		for (s in all.concat([got]))
 			out.b.blit(addr.get(s), s.buf.b, 0, s.buf.len);
 		var dsects = [], dwarfAddr = [];
 		var at = dwarfOff;
@@ -478,6 +535,10 @@ class LinkMachO extends LinkCore {
 			sec("__got", oGot, 0, false, 8),
 			sec("__const", oDConst, 0),
 			sec("__data", oData, 0),
+			// (S_ATTR_NO_DEAD_STRIP; the selectors' S_LITERAL_POINTERS)
+			sec("__objc_classrefs", oClassrefs, 0x10000000, false, 8),
+			sec("__objc_selrefs", oSelrefs, 0x10000005, false, 8),
+			sec("__objc_imageinfo", oImageinfo, 0, false, 4),
 			sec("__mod_init_func", oInit, 9, false, 8),
 			sec("__mod_term_func", oFini, 0xa, false, 8),
 			sec("__thread_vars", oTlv, 0x13, false, 8),

@@ -1,0 +1,5 @@
+exit 0
+ObjCCBlocks.hx:66: path, [0,1,1,1,4]
+ObjCCBlocks.hx:80: async, [job 0 100,job 1 100,job 2 100]
+ObjCCBlocks.hx:92: apply, 2646700
+ObjCCBlocks.hx:99: block result, 2

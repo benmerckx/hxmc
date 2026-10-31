@@ -19,7 +19,7 @@ The fixpoint and crosshost must stay byte-identical.
 | Tier | What it runs |
 | --- | --- |
 | `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1`, the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O (`PORT=1`: the port's self-compile) |
+| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference
@@ -99,7 +99,7 @@ each lane on the kept cases and 400 random programs.
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
 | `MachOCheck` | `macho-check` | IosHello as a plain iOS executable and dylib: `LC_BUILD_VERSION`'s minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files) |
-| `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones |
+| `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run) |
 | `Corpus --mir-run` | `mir-run-check` | the corpus run inside the compiler on the Mir interpreter |
 | `Conformance --target-only` | `mir-macros-check` | the macro cases with Mir macros against the reference (66 of 67: Issue11631 uses Eval's `mbedtls`) |
 | `MirCacheCheck` | `mir-cache-check` | Mir macros' compiled functions kept across builds |

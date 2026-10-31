@@ -266,6 +266,7 @@ class Driver {
 			var isel = Target.selector(abi);
 			var lf = isel.select(mf, layout);
 			if (hxmc.ir.Lower.lines) lf.display = fn.display != null ? fn.display : name;
+		lf.foreignPasses = fn.foreignPasses;
 			var s2 = haxe.Timer.stamp();
 			var ra = new Regalloc(lf, isel, ras);
 			ra.run();
@@ -571,6 +572,8 @@ class Driver {
 		dg.cstrLiterals(objs);
 		dg.cVars(objs);
 		dg.emptyArrays(objs);
+		dg.objcRefs(objs);
+		dg.objcCaught(demit);
 		dg.resources(objs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
@@ -704,6 +707,8 @@ class Driver {
 			l.collect = collect;
 			if (abi.output == SharedLibrary) l.installName = "@rpath/" + haxe.io.Path.withoutDirectory(out);
 			l.dylibs = dylibs;
+			l.loads = [for (lib in hxmc.ir.CInterop.LOADS.keys()) LinkInputs.libFile(lib, abi)];
+			l.loads.sort(Reflect.compare);
 			if (abi.ios()) l.minos = o.iosMinos;
 			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;

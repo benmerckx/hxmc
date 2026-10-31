@@ -215,6 +215,10 @@ class FieldError {
 }
 
 class TypeloadFields {
+	// port: (hxmc) an Objective-C protocol: an extern interface declared @:hxmc.objc
+	static function objcProtocol(c:TClass):Bool
+		return hasClassFlag(c, CExtern) && hasClassFlag(c, CInterface) && MetadataTools.has(Custom(":hxmc.objc"), c.clMeta);
+
 	public static function hasAccess(a:Access, access:Array<PlacedAccess>):Bool {
 		for (v in access) if (v.access == a) return true;
 		return false;
@@ -639,6 +643,14 @@ class TypeloadFields {
 		} catch (_:NotFound) {
 			null;
 		}, c = cctx.tclass;
+		// port: (hxmc) an Objective-C protocol's optional method (@:optional on
+		// a method of an extern interface declared @:hxmc.objc) is one an
+		// implementing class may leave out, as a Java interface's default one
+		if (defaultPos == null && objcProtocol(c)) defaultPos = try {
+			MetadataTools.get(Optional, cff.cffMeta).pos;
+		} catch (_:NotFound) {
+			null;
+		};
 		var fc:FieldInitCtx = {
 			isInline: isInline,
 			isStatic: isStatic,
@@ -1203,7 +1215,7 @@ class TypeloadFields {
 		if (fctx.isAbstractConstructor) addClassFieldFlag(cf, CfAbstractConstructor);
 		if (fctx.isGeneric) addClassFieldFlag(cf, CfGeneric);
 		if (fctx.defaultPos != null) {
-			if (ctx.com.platform == Jvm) {
+			if (ctx.com.platform == Jvm || objcProtocol(c)) {
 				if (!hasClassFlag(ctx.c.curclass, CExtern)
 					|| !hasClassFlag(c, CInterface)) invalidModifierOnly(ctx.com, fctx, "default", "on extern interfaces", fctx.defaultPos);
 				addClassFieldFlag(cf, CfDefault);
@@ -1261,6 +1273,9 @@ class TypeloadFields {
 		else if (t == null) ret = mkMono();
 		else ret = Typeload.loadTypeHint(ctx, p, LoadNormal, t);
 		cf.cfType = ret;
+		// port: (hxmc) an Objective-C protocol's optional property, which a class
+		// may leave out as it may its accessors (a property has no storage there)
+		if (fctx.defaultPos != null && objcProtocol(c)) addClassFieldFlag(cf, CfDefault);
 		var tget:T, tset:T;
 		if (cctx.abstractType != null && fctx.isAbstractMember) {
 			var a = cctx.abstractType;

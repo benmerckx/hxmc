@@ -43,7 +43,10 @@ Conventions:
 - References live across a GC point are shadow-stack slots. Cold sites
   spill only on their slow path.
 - `try` is a handler record and the C library's `_setjmp`; `throw` calls
-  `rt_throw`, which `longjmp`s.
+  `rt_throw`, which `longjmp`s. With Objective-C, the Haxe functions'
+  unwind tables name a personality (`rt.ObjCExceptions`) that turns an
+  Objective-C exception into such a throw at the first Haxe frame it
+  reaches ([interop.md](interop.md#exceptions)).
 - Calls follow the target's C ABI.
 - A `@:hxmc.struct` value is the address of its memory, copied on
   assignment; a result goes where a hidden last argument points.

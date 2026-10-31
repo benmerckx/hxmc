@@ -1,0 +1,14 @@
+exit 0
+ObjCExceptions.hx:81: NSRangeException: *** -[__NSArray0 objectAtIndex:]: index 5 beyond bounds for empty array
+ObjCExceptions.hx:86: Dynamic: true *** -[__NSArray0 objectAtIndex:]: index 6 beyond bounds for empty array
+ObjCExceptions.hx:91: haxe.Exception: *** -[__NSArray0 objectAtIndex:]: index 7 beyond bounds for empty array
+ObjCExceptions.hx:99: String: a string
+ObjCExceptions.hx:102: isOfType: false false true
+ObjCExceptions.hx:111: round trip: MyError(from a method)
+ObjCExceptions.hx:118: not the same object: true
+ObjCExceptions.hx:124: through a method: NSRangeException
+ObjCExceptions.hx:131: raised: Custom: raised by Haxe
+ObjCExceptions.hx:63: contained: NSRangeException
+ObjCExceptions.hx:138: block: MyError(from a block)
+ObjCExceptions.hx:155: many: 3000
+ObjCExceptions.hx:156: done

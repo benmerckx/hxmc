@@ -178,6 +178,7 @@ class Fingerprint {
 			local(a);
 		ty(f.ret);
 		word(f.hasTry ? 1 : 0);
+		word(f.foreignPasses ? 1 : 0);
 		word(f.locals.length);
 		for (l in f.locals)
 			local(l);
@@ -200,6 +201,7 @@ class Fingerprint {
 			case TRef(_): 6;
 			case TStruct(_): 7;
 			case TU8: 8;
+			case TId: 9;
 		});
 
 	function tyName(tindex:Int) {

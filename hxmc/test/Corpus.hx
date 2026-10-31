@@ -52,6 +52,13 @@ class Corpus {
 		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
+	// the cases iOS cannot run: they start other programs (the simulator's are
+	// macOS's, and an iPhone starts none)
+	public static final IOS_EXCLUDED = [for (n in ["FileTimes", "NetPollFds", "SysNatives"]) n => "starts other programs: iOS runs none"];
+	// the cases of Apple's systems only (Objective-C: libobjc and Foundation, on
+	// macOS and the iOS simulator), and of macOS only (AppKit)
+	public static final APPLE_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCWeak", "ObjCIdentity", "ObjCCaptures", "ObjCBlocks", "ObjCThreads", "ObjCStrings", "ObjCStress", "ObjCProtocols", "ObjCGenerics", "ObjCConstants", "ObjCCoreGraphics", "ObjCCBlocks", "ObjCClassMethods", "ObjCAdopt", "ObjCDealloc", "ObjCVariadic", "ObjCFast", "ObjCAbstracts", "ObjCExceptions"]) n => "Objective-C: Apple's systems only"];
+	public static final MACOS_ONLY = [for (n in ["ObjCInit", "ObjCProperties", "ObjCSuper", "ObjCHierarchy"]) n => "AppKit: macOS only"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
@@ -171,6 +178,9 @@ class Corpus {
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
 		if (!t.startsWith("linux") && LINUX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: LINUX_ONLY[c.name]};
+		if (t.startsWith("ios") && IOS_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: IOS_EXCLUDED[c.name]};
+		if (!t.startsWith("macos") && MACOS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MACOS_ONLY[c.name]};
+		if (!t.startsWith("macos") && !t.startsWith("ios") && APPLE_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: APPLE_ONLY[c.name]};
 		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
@@ -244,13 +254,16 @@ class Corpus {
 			case "linux-arm64" if (libc == "glibc"): ["qemu-aarch64-static", "-L", Sys.getEnv("QEMU_LD_PREFIX") ?? "/usr/aarch64-linux-gnu"];
 			case "linux-arm64": ["qemu-aarch64-static"];
 			case "windows-x86_64": ["/usr/lib/wine/wine64"];
+			case "ios-sim-arm64": ["xcrun", "simctl", "spawn", iosDevice()];
 			case _ if (wasm): wasmRunner();
 			case _: [];
 		}
 		// a small nursery: frequent collections, so a missing or stale root shows
 		var r = exec(runner.concat([FileSystem.fullPath(exe)]), {cwd: d, timeout: 120, env: ["RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64", "WINEDEBUG" => "-all", "HXMC_WASM_IMPORTS" => native.host,
 			// (legacy exception handling: node without exnref, hxmc/bootstrap/wasi.mjs)
-			"HXMC_WASM_EXNREF" => wasmEh == "legacy" ? "0" : Sys.getEnv("HXMC_WASM_EXNREF")]});
+			"HXMC_WASM_EXNREF" => wasmEh == "legacy" ? "0" : Sys.getEnv("HXMC_WASM_EXNREF"),
+			// (the iOS simulator passes its child the variables with this prefix)
+			"SIMCTL_CHILD_RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64", "SIMCTL_CHILD_RT_VERIFY" => Sys.getEnv("RT_VERIFY")]});
 		if (r.timedOut) return {name: c.name, status: "timeout", detail: ""};
 		var got = 'exit ${r.code}\n' + r.out;
 		if (bless && !FileSystem.exists(expected)) {
@@ -319,6 +332,8 @@ class Corpus {
 	// interpreter and run in the native compiler's process, its output against the golden file
 	static function mirRunCase(c:CorpusCase, d:String, links:Bool):CorpusResult {
 		if (links) return {name: c.name, status: "excluded", detail: "C objects: not linked into the running compiler"};
+		if (APPLE_ONLY.exists(c.name) || MACOS_ONLY.exists(c.name))
+			return {name: c.name, status: "excluded", detail: "Objective-C: its class and selector references are the linker's"};
 		var expected = EXPECTED + "/" + c.name + ".txt";
 		if (!FileSystem.exists(expected)) return {name: c.name, status: "no-golden", detail: expected + " is missing"};
 		var haxe = FileSystem.fullPath(Sys.getEnv("HXMC_HAXE") ?? "bin/npm/native/" + hostTarget() + "/haxe");
@@ -501,6 +516,27 @@ class Corpus {
 			}
 		}
 		return r;
+	}
+
+	// ios-sim-arm64: an iPhone simulator (the first available one of an iOS
+	// runtime, Xcode's), booted if it is not (headless), whose executables
+	// `xcrun simctl spawn` runs; null: none (no Xcode, no iOS runtime)
+	static var iosUdid:Null<String>;
+
+	public static function iosDevice():Null<String> {
+		if (iosUdid != null) return iosUdid;
+		var r = try exec(["xcrun", "simctl", "list", "devices", "available", "--json"]) catch (_:Dynamic) null;
+		if (r == null || r.code != 0) return null;
+		var devices:haxe.DynamicAccess<Array<{udid:String, name:String, state:String}>> = haxe.Json.parse(r.out).devices;
+		var runtimes = [for (k in devices.keys()) if (k.indexOf("SimRuntime.iOS") >= 0) k];
+		runtimes.sort(Reflect.compare);
+		for (k in runtimes)
+			for (d in devices[k])
+				if (d.name.startsWith("iPhone")) {
+					if (d.state != "Booted") exec(["xcrun", "simctl", "boot", d.udid]);
+					return iosUdid = d.udid;
+				}
+		return null;
 	}
 
 	// wasm32-wasi: node (hxmc/bootstrap/wasi.mjs) or, with HXMC_WASM_RUNNER=wasmtime, wasmtime

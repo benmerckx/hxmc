@@ -1,0 +1,8 @@
+exit 0
+ObjCDeclarations.hx:49: /usr/bin, 8, true, false
+ObjCDeclarations.hx:50: 42, 2.5
+ObjCDeclarations.hx:52: 
+ObjCDeclarations.hx:57: https://haxe.org:8443/manual
+ObjCDeclarations.hx:59: https://haxe.org/manual, haxe.org
+ObjCDeclarations.hx:61: true, true
+ObjCDeclarations.hx:62: <NSObject:

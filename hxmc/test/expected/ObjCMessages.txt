@@ -1,0 +1,9 @@
+exit 0
+ObjCMessages.hx:57: Hello, Objective-C, 18
+ObjCMessages.hx:59: 7, 9
+ObjCMessages.hx:62: 1, value
+ObjCMessages.hx:63: true
+ObjCMessages.hx:66: 1, 2, 3, 4
+ObjCMessages.hx:67: {
+    key = value;
+}

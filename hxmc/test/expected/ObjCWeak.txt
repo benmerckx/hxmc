@@ -1,0 +1,9 @@
+exit 0
+ObjCWeak.hx:35: never stored: true
+ObjCWeak.hx:41: weak while kept: true, retainCount 2
+ObjCWeak.hx:43: weak after release: true
+ObjCWeak.hx:50: only weak: alive false, field true
+ObjCWeak.hx:61: 10000 holders: retainCount 1863
+ObjCWeak.hx:63: collected: retainCount 1
+ObjCWeak.hx:65: caught inside
+ObjCWeak.hx:66: done

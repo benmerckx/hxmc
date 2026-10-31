@@ -47,6 +47,9 @@ class CInterop {
 	// @:hxmc.lib: the library a symbol comes from (a DLL, a dylib, a
 	// WebAssembly import module)
 	public static var LIBS = new Map<String, String>();
+	// libraries loaded though the program imports nothing of them: the
+	// frameworks of the Objective-C category members it sends (ObjC.memberLibrary)
+	public static var LOADS = new Map<String, Bool>();
 	// WebAssembly: the import's name of a symbol that importKey made (a C
 	// function of an @:hxmc.lib module other than "env")
 	public static var IMPORT_NAMES = new Map<String, String>();
@@ -71,6 +74,7 @@ class CInterop {
 		SIGS = new Map();
 		BLOCKING = new Map();
 		LIBS = new Map();
+		LOADS = new Map();
 		IMPORT_NAMES = new Map();
 		USER = new Map();
 		VARS = new Map();
@@ -239,7 +243,7 @@ class CInterop {
 						if (core.Meta.has(CoreType, a.aMeta)) CNone else ctype(core.Abstract.getUnderlyingType(a, params));
 				}
 			case TInst(c, _):
-				if (isStruct(c)) CStruct(c) else if (isOpaque(c)) COpaque(c) else CNone;
+				if (isStruct(c)) CStruct(c) else if (isOpaque(c)) COpaque(c) else if (ObjC.isObjC(c) || ObjC.isCF(c) || ObjC.isObjCParam(c) || ObjC.peerBase(c) != null) CPtr else CNone;
 			case _: CNone;
 		}
 	}
@@ -405,6 +409,18 @@ class CInterop {
 		return Lower.hasMeta(":hxmc.blocking", cf.cfMeta)
 			|| Lower.hasMeta(":hxmc.blocking", c.clMeta) && !Lower.hasMeta(":hxmc.fast", cf.cfMeta);
 
+	// the library of a C symbol: @:hxmc.framework("Name") (a system framework)
+	// or @:hxmc.lib, the field's before its class's (a sub-framework's
+	// function in its framework's class)
+	static function library(c:TClass, cf:TClassField):Null<String> {
+		function of(m:core.Ast.Metadata):Null<String> {
+			var fw = Lower.metaString(":hxmc.framework", m);
+			return fw != null ? '/System/Library/Frameworks/$fw.framework/$fw' : Lower.metaString(":hxmc.lib", m);
+		}
+		var l = of(cf.cfMeta);
+		return l != null ? l : of(c.clMeta);
+	}
+
 	static function metaStr(name:String, c:TClass, cf:TClassField):Null<String> {
 		var s = Lower.metaString(name, cf.cfMeta);
 		return s != null ? s : Lower.metaString(name, c.clMeta);
@@ -414,7 +430,7 @@ class CInterop {
 	// whether its calls stay in the running state (@:hxmc.fast), its library
 	public static function declare(sym:String, c:TClass, cf:TClassField, s:TSignature):CSig {
 		var where = posOf(cf.cfPos);
-		var lib = metaStr(":hxmc.lib", c, cf);
+		var lib = library(c, cf);
 		// (an import of WebAssembly, cSymbol: named by the module and the name)
 		var imported = !StringTools.startsWith(sym, INDIRECT) && lib != null && sym == importKey(lib, cName(c, cf));
 		if (imported) IMPORT_NAMES.set(sym, cName(c, cf));
@@ -502,7 +518,7 @@ class CInterop {
 		var prev = VARS.get(sym);
 		if (prev != null && !Type.enumEq(prev, ct)) throw new LowerError('C variable $sym is declared twice with different types', where);
 		VARS.set(sym, ct);
-		var lib = metaStr(":hxmc.lib", c, cf);
+		var lib = library(c, cf);
 		if (lib != null) LIBS.set(sym, lib);
 		if (lib != null || c.clPath.pack.length == 0 || c.clPath.pack[0] != "hxmc") USER.set(sym, true);
 		return {args: [], ret: ct};

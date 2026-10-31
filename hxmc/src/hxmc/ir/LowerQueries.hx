@@ -107,6 +107,25 @@ interface LowerQueries {
 	// @:hxmc.varargs), or C variable sym (CInterop.declareVar: its type the
 	// result): a replayed body declares its C functions again
 	@:logged function cExtern(sym:String, c:TClass, cf:TClassField):CInterop.CSig;
+	// declares what Objective-C's lowering of the body needs of the link
+	// (ObjC.Decl: a message's C function, libobjc's functions and symbols, a
+	// class object's library, a category's library loaded): a replayed body
+	// declares them again
+	@:logged function objcDeclare(d:ObjC.Decl):Void;
+	// a peer class's registration (ClassInfo.objc: its name, the methods
+	// Objective-C can call; null: no peer class) and a class's own fields
+	// holding ids (ClassInfo.idFields), of a class a logged query gave
+	// (classInfo, ty; the body's own, by its function): its binding compares
+	// both (bindClass)
+	@:derived function objcPeer(ci:ClassInfo):Null<ObjCClass>;
+	@:derived function idFields(ci:ClassInfo):Array<String>;
+	// (its own fields holding weak ids, @:hxmc.weak: ClassInfo.weakFields, compared as idFields)
+	@:derived function weakFields(ci:ClassInfo):Array<String>;
+	// an Objective-C block's invoke for closures of signature sig, its C
+	// types (args, ret): its symbol (made once per program: ObjC.invoke); and
+	// the closure calling such a block (as adapter: once per program)
+	@:logged function blockInvoke(b:ObjC.BlockSig):String;
+	@:logged function blockCaller(b:ObjC.BlockSig):LambdaInfo;
 	// the symbol of a @:hxmc.callback function: of its name (staticFunc)
 	@:derived function callbackSym(f:FuncInfo):String;
 	// the @:hxmc.struct class of a struct type's name (ty's TStruct)

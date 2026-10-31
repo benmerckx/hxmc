@@ -1,0 +1,7 @@
+exit 0
+ObjCProperties.hx:47: category: <NSObject:
+ObjCProperties.hx:51: frame 5 6 7 8, assignment value 9, flipped false
+ObjCProperties.hx:53: override getter, seen by Objective-C: true
+ObjCProperties.hx:58: converted into the flipped view: y 1
+ObjCProperties.hx:60: override setter, sent by Objective-C: 1
+ObjCProperties.hx:61: class property: true

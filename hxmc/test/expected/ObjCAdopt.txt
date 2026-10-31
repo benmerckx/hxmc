@@ -1,0 +1,8 @@
+exit 0
+ObjCAdopt.hx:72: made by Objective-C, 2, 1, 2
+ObjCAdopt.hx:74: seen from Haxe, 2, [field initializer], true, true
+ObjCAdopt.hx:78: subclass, 3, true, 3
+ObjCAdopt.hx:83: initializer with arguments, made with 42 in org.example, 1
+ObjCAdopt.hx:86: factory, made with 7 in org.example.factory, 7, 2
+ObjCAdopt.hx:89: made by Haxe, made with 1 in org.example.haxe, 3
+ObjCAdopt.hx:96: after, 1, 3
