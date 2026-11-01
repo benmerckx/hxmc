@@ -37,7 +37,8 @@ extern class Std {
 		If `t` is a class or interface with `@:generic` meta, the result is `false`.
 	**/
 	@:deprecated('Std.is is deprecated. Use Std.isOfType instead.')
-	static function is(v:Dynamic, t:Dynamic):Bool;
+	static inline function is(v:Dynamic, t:Dynamic):Bool
+		return isOfType(v, t);
 
 	/**
 		Tells if a value `v` is of the type `t`. Returns `false` if `v` or `t` are null.
@@ -65,7 +66,8 @@ extern class Std {
 	static function downcast<T:{}, S:T>(value:T, c:Class<S>):Null<S>;
 
 	@:deprecated('Std.instance() is deprecated. Use Std.downcast() instead.')
-	static function instance<T:{}, S:T>(value:T, c:Class<S>):Null<S>;
+	static inline function instance<T:{}, S:T>(value:T, c:Class<S>):Null<S>
+		return downcast(value, c);
 
 	/**
 		Converts any value to a String.

@@ -240,7 +240,7 @@ class Gc {
 	static var peers:Ptr;
 	static var npeers:Int;
 	static var peersCap:Int;
-	static var peerFree:Int = -1;
+	static var peerFree:Int; // (-1 from init: a program's statics may pair objects before the runtime's initializers run)
 	static var peersLock:Ptr;
 	static var peerRetainCount:Ptr;
 	static var peerRelease:Ptr;
@@ -358,7 +358,7 @@ class Gc {
 	static inline var BLOCK_IS_GLOBAL = 1 << 28;
 	static var blockChunks:Ptr; // BLOCK_CHUNKS chunks' addresses (null: none yet)
 	static var nblocks:Int;
-	static var blockFree:Int = -1;
+	static var blockFree:Int; // (-1 from init, as peerFree)
 	static var blocksLock:Ptr;
 	static var blockRecent:Ptr; // the indices of the entries made since the last collection
 	static var nrecent:Int;
@@ -1983,8 +1983,10 @@ class Gc {
 		Os.mutexInit(nativesLock);
 		peersLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(peersLock);
+		peerFree = -1;
 		blocksLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(blocksLock);
+		blockFree = -1;
 		fdLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(fdLock);
 		return sstack;

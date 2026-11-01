@@ -1,0 +1,4 @@
+exit 0
+counter 41 42
+hits 4
+fresh 41
