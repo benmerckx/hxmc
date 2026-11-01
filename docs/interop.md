@@ -906,8 +906,11 @@ counted. Where references cross:
 - **Pools**: the run loop drains one per event;
   `hxmc.objc.AutoreleasePool.run(() -> ...)` drains one around a loop of
   many messages or on a thread hxmc started (also when `f` throws). Code
-  outside any (`main` before `run`) autoreleases into the thread's pool,
-  which nothing drains.
+  outside any (`main` before `run`) autoreleases into the program's
+  outermost pool, which the runtime pushes around `main` as clang's
+  `@autoreleasepool` does, and which drains only when `main` returns. A
+  collection releases the ids of dead Haxe objects in a pool of its own, so
+  what their deallocs autorelease (a view its subviews) goes with them.
 - **Strings**: `hxmc.objc.Strings.toNSString(s)` and `ofNSString(ns)` copy
   unit for unit (both are UTF-16, one byte per unit where every unit
   fits), not through UTF-8: a lone surrogate survives, and a long string
