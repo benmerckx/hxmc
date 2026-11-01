@@ -1,0 +1,127 @@
+import Harness.*;
+import sys.FileSystem;
+import sys.io.File;
+
+using StringTools;
+
+// A UIKit app in its bundle, run (make uikit-check; a Mac with Xcode):
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run UIKitCheck
+// (CI: a release's compiler, HXMC_TOOL=<it>, on macOS arm64 and x86-64)
+// hxmc/test/ios/UIKitHello.hx (its own hxmc_ui_main: UIApplicationMain, a
+// Haxe delegate, the program's body once launched) bundled as a packager
+// would, signed binding the Info.plist (-D hxmc.codesign-*), then:
+// - Mac Catalyst (the host's architecture): the .app's executable run; an
+//   agent app (LSUIElement), as a managed Mac may end a regular one that
+//   is not its administrator's;
+// - the iOS simulator, an iPhone and an iPad (the newest iOS runtime's
+//   first of each): installed, launched (simctl launch --console-pty),
+//   uninstalled; a device booted here is shut down after.
+// Each prints what the app saw: the delegate called, the body run after it,
+// the window key and sized, the label's text. Exits non-zero on a failure;
+// no Xcode (or not macOS): skipped.
+class UIKitCheck {
+	static final OUT = "bin/hxmc-uikit";
+	static final ID = "org.hxmc.uikithello";
+	static final EXPECTED = ["launched", "main", "window key true, bounds true, label hello from hxmc"];
+	static var failures:Array<String> = [];
+	static var tool:String;
+
+	static function check(what:String, ok:Bool, detail = "") {
+		Sys.println(pad(what, 48) + " " + (ok ? "ok" : "FAIL") + (detail != "" ? "  " + detail : ""));
+		if (!ok) failures.push(what);
+	}
+
+	static function plist(entries:String):String
+		return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+			+ '<plist version="1.0"><dict>\n<key>CFBundleIdentifier</key><string>$ID</string>\n<key>CFBundleExecutable</key><string>UIKitHello</string>\n'
+			+ '<key>CFBundleName</key><string>UIKitHello</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n'
+			+ '<key>CFBundleVersion</key><string>1</string>\n<key>CFBundleShortVersionString</key><string>1.0</string>\n$entries</dict></plist>\n';
+
+	// the executable linked into dir (the Info.plist written there first: the signature binds it)
+	static function build(target:String, info:String, exe:String):Bool {
+		// (a release's compiler: its own std, HAXE_STD_PATH)
+		var std = FileSystem.exists("bin/hxmc/std") ? ["-cp", "bin/hxmc/std"] : [];
+		var r = exec([tool, "-cp", "hxmc/test/ios"].concat(std).concat(["-main", "UIKitHello", "-D", 'hxmc.target=$target', "-D", "disable-parallelism",
+			"-D", 'hxmc.codesign-id=$ID', "-D", 'hxmc.codesign-info-plist=$info', "--custom-target", 'hxmc=$exe']), {merge: true});
+		check('$target: build', r.code == 0, r.code == 0 ? "" : tail(r.out, 400));
+		return r.code == 0;
+	}
+
+	static function output(what:String, code:Int, out:String) {
+		var missing = [for (l in EXPECTED) if (out.indexOf(l) < 0) l];
+		check(what, code == 0 && missing.length == 0, code == 0 && missing.length == 0 ? EXPECTED[2] : 'exit $code, missing ${missing}: ' + tail(out, 400));
+	}
+
+	static function dir(target:String):String {
+		mkdirs('$OUT/$target');
+		return FileSystem.fullPath('$OUT/$target');
+	}
+
+	static function catalyst(target:String) {
+		var app = dir(target) + '/UIKitHello.app';
+		rmrf(app);
+		mkdirs('$app/Contents/MacOS');
+		File.saveContent('$app/Contents/Info.plist', plist('<key>LSUIElement</key><true/>\n'));
+		if (!build(target, '$app/Contents/Info.plist', '$app/Contents/MacOS/UIKitHello')) return;
+		var r = exec(['$app/Contents/MacOS/UIKitHello'], {merge: true, timeout: 60});
+		output('$target: the app', r.code, r.out);
+	}
+
+	// the newest iOS runtime's first available device whose name starts so
+	static function device(family:String):Null<{udid:String, name:String, state:String}> {
+		var r = exec(["xcrun", "simctl", "list", "devices", "available", "--json"]);
+		if (r.code != 0) return null;
+		var devices:haxe.DynamicAccess<Array<{udid:String, name:String, state:String}>> = haxe.Json.parse(r.out).devices;
+		var runtimes = [for (k in devices.keys()) if (k.indexOf("SimRuntime.iOS") >= 0) k];
+		runtimes.sort(Reflect.compare);
+		runtimes.reverse();
+		for (k in runtimes)
+			for (d in devices[k])
+				if (d.name.startsWith(family)) return d;
+		return null;
+	}
+
+	static function simulator() {
+		var app = dir("ios-sim-arm64") + '/UIKitHello.app';
+		rmrf(app);
+		mkdirs(app);
+		File.saveContent('$app/Info.plist', plist('<key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>\n'
+			+ '<key>MinimumOSVersion</key><string>15.0</string>\n<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>\n'
+			+ '<key>UILaunchScreen</key><dict/>\n'));
+		if (!build("ios-sim-arm64", '$app/Info.plist', '$app/UIKitHello')) return;
+		for (family in ["iPhone", "iPad"]) {
+			var d = device(family);
+			if (d == null) {
+				Sys.println(pad('ios-sim-arm64 $family', 48) + " skipped (no such simulator)");
+				continue;
+			}
+			var booted = d.state != "Booted";
+			if (booted) exec(["xcrun", "simctl", "boot", d.udid]);
+			exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
+			var i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
+			if (i.code != 0) check('ios-sim-arm64: ${d.name}: install', false, tail(i.out, 400));
+			else {
+				var r = exec(["xcrun", "simctl", "launch", "--console-pty", "--terminate-running-process", d.udid, ID], {merge: true, timeout: 120});
+				output('ios-sim-arm64: ${d.name}', r.code, r.out);
+				exec(["xcrun", "simctl", "uninstall", d.udid, ID]);
+			}
+			if (booted) exec(["xcrun", "simctl", "shutdown", d.udid]);
+		}
+	}
+
+	static function main() {
+		if (Sys.systemName() != "Mac" || exec(["xcrun", "--find", "simctl"]).code != 0) {
+			Sys.println("uikit-check: skipped (not a Mac with Xcode)");
+			return;
+		}
+		tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
+		var arm = exec(["uname", "-m"]).out.trim() == "arm64";
+		catalyst(arm ? "macos-catalyst-arm64" : "macos-catalyst-x86_64");
+		if (arm) simulator();
+		if (failures.length > 0) {
+			Sys.println('uikit-check: ${failures.length} failed: ${failures.join(", ")}');
+			Sys.exit(1);
+		}
+		Sys.println("uikit-check: ok");
+	}
+}

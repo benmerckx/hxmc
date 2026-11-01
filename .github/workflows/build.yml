@@ -900,6 +900,14 @@ jobs:
         run: |
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           RT_VERIFY=1 "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run Check corpus --summary "$GITHUB_STEP_SUMMARY"
+      # a UIKit app in its bundle (UIKitCheck): Mac Catalyst (the runner's
+      # architecture) and, on arm64, the iOS simulator's iPhone and iPad
+      - name: UIKit app
+        if: always() && runner.os == 'macOS'
+        timeout-minutes: 20
+        run: |
+          export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
+          HXMC_TOOL="${{ steps.unpack.outputs.bin }}" "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run UIKitCheck
       # a debugger on a -debug build (DebugCheck --run: a breakpoint at a Haxe
       # line, the backtrace's Haxe functions and lines): gdb on Linux, lldb on
       # macOS; Windows: the unwind tables through the corpus (UnwindTables)

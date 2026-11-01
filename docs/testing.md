@@ -99,6 +99,7 @@ each lane on the kept cases and 400 random programs.
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
 | `MachOCheck` | `macho-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform and minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit) |
+| `UIKitCheck` | `uikit-check` | UIKitHello, a UIKit app with its own `hxmc_ui_main`, in its bundle: run as a Mac Catalyst agent app and in the iOS simulator's iPhone and iPad (the delegate, the body after launch, the window key and sized); a Mac with Xcode |
 | `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run) |
 | `Corpus --mir-run` | `mir-run-check` | the corpus run inside the compiler on the Mir interpreter |
 | `Conformance --target-only` | `mir-macros-check` | the macro cases with Mir macros against the reference (66 of 67: Issue11631 uses Eval's `mbedtls`) |

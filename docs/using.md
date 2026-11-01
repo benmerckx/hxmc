@@ -110,7 +110,8 @@ AppKit) from their usual place. UIKit's views work without an app;
 parameter not satisfying: bundleIdentifier", and one with only an
 embedded `__info_plist` gets no scene from the system. `hxmc_ui_main`
 works as on iOS. A packager writes the `.app` as for macOS
-(`Contents/MacOS/<name>`, `Contents/Info.plist`).
+(`Contents/MacOS/<name>`, `Contents/Info.plist`). `hxmc/test/ios/UIKitHello.hx` is such
+an app, with its own `hxmc_ui_main` (`make uikit-check`).
 
 ### Native output for a packager
 
