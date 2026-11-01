@@ -39,9 +39,10 @@ class ObjC {
 	// the prefix of the functions registering the classes (Lower.classInfo)
 	public static inline var REGISTER = "hxmc_objc_reg_";
 
-	// an extern Objective-C class (or a class extending one, extern too)
+	// an extern Objective-C class (or a class extending one, extern too), or
+	// an Objective-C mode class (isMode)
 	public static function isObjC(c:TClass):Bool {
-		if (!c.hasClassFlag(CExtern)) return false;
+		if (!c.hasClassFlag(CExtern)) return isMode(c);
 		var k = c;
 		while (k != null) {
 			if (Lower.hasMeta(":hxmc.objc", k.clMeta)) return true;
@@ -79,9 +80,26 @@ class ObjC {
 			case _: false;
 		}
 
+	// an Objective-C mode class: a Haxe class declared @:hxmc.objc (its own
+	// metadata, not inherited) extending an Objective-C class (an extern one or
+	// another such class). Its instances are Objective-C objects only, ids as
+	// an extern class's: no Haxe object, no peer. Its methods are its
+	// Objective-C class's (registered at run time: Lower.objcMode, imps), its
+	// fields instance variables (ivars), its calls messages; its statics with
+	// bodies Haxe's (isModeStatic)
+	public static function isMode(c:TClass):Bool
+		return !c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && c.clSuper != null && Lower.hasMeta(":hxmc.objc", c.clMeta)
+			&& isObjC(c.clSuper.cls);
+
+	// a static of an Objective-C mode class c with a body: a Haxe static, not
+	// a message to the class (an extern one, `extern static function
+	// alloc():C`, is)
+	public static function isModeStatic(c:TClass, cf:TClassField):Bool
+		return isMode(c) && !cf.hasClassFieldFlag(CfExtern) && c.clStatics.get(cf.cfName) == cf;
+
 	// a Haxe class extending an Objective-C class: its superclass, else null
 	public static function peerBase(c:TClass):Null<TClass> {
-		if (c.hasClassFlag(CExtern)) return null;
+		if (c.hasClassFlag(CExtern) || isMode(c)) return null;
 		var k = c.clSuper != null ? c.clSuper.cls : null;
 		while (k != null) {
 			if (isObjC(k)) return k;
@@ -126,7 +144,7 @@ class ObjC {
 		var k = c.clSuper != null ? c.clSuper.cls : null;
 		while (k != null) {
 			var f = k.clStatics.get(cf.cfName);
-			if (f != null) return isObjC(k) ? f : classDeclOf(k, f);
+			if (f != null) return isObjC(k) && !isMode(k) ? f : classDeclOf(k, f);
 			k = k.clSuper != null ? k.clSuper.cls : null;
 		}
 		k = c;
@@ -142,11 +160,17 @@ class ObjC {
 
 	// the declaration of the method a peer class's method cf implements: the
 	// Objective-C method of a superclass it overrides, else that of a
-	// protocol the class (or a superclass) conforms to, else null
+	// protocol the class (or a superclass) conforms to, else null. A method of
+	// an Objective-C mode superclass: the one that method implements, else
+	// that method
 	public static function declOf(c:TClass, cf:TClassField):Null<TClassField> {
 		var k = c.clSuper != null ? c.clSuper.cls : null;
 		while (k != null) {
 			var f = k.clFields.get(cf.cfName);
+			if (f != null && isMode(k)) {
+				var d = declOf(k, f);
+				return d != null ? d : f;
+			}
 			if (f != null && isObjC(k)) return f;
 			k = k.clSuper != null ? k.clSuper.cls : null;
 		}
@@ -179,6 +203,106 @@ class ObjC {
 			case TInst(c, _): isObjC(c) || isCF(c) || isObjCParam(c) || peerBase(c) != null;
 			case _: false;
 		}
+
+	// the declaration a message to method cf of an Objective-C class c (or a
+	// superclass) takes its selector and C types from: cf when an extern class
+	// or a protocol declares it; an Objective-C mode class's own method, the
+	// Objective-C method it implements (declOf), else itself
+	public static function messageDecl(c:TClass, cf:TClassField):TClassField {
+		var k = modeOwner(c, cf);
+		if (k == null) return cf;
+		var d = declOf(k, cf);
+		return d != null ? d : cf;
+	}
+
+	// the Objective-C mode class declaring instance member cf of c (c or a
+	// superclass), else null
+	public static function modeOwner(c:TClass, cf:TClassField):Null<TClass> {
+		var k = c;
+		while (k != null && k.clFields.get(cf.cfName) != cf)
+			k = k.clSuper != null ? k.clSuper.cls : null;
+		return k != null && isMode(k) ? k : null;
+	}
+
+	// ---- the instance variables of an Objective-C mode class: its own
+	// physical fields, in order, with their kind, C type and layout as
+	// class_addIvar takes them; their offsets in the program's data
+	// (ivarCell), written by the registering function
+
+	// a raw value (a scalar, a Ptr, a @:hxmc.struct value), stored as C stores it
+	public static inline var IVAR_RAW = 0;
+	// an id held strongly: a store retains the new value and releases the old
+	// one (objc_storeStrong), dealloc releases it
+	public static inline var IVAR_STRONG = 1;
+	// an id held weakly (@:hxmc.weak), Objective-C's __weak: objc_storeWeak on
+	// the instance variable itself (an Objective-C object does not move),
+	// objc_destroyWeak at dealloc
+	public static inline var IVAR_WEAK_ID = 2;
+	// a Haxe value held weakly (@:hxmc.weak): the index of a slot of the
+	// collector's weak table (hxmc.rt.Gc, rt_weak_*; 0: none yet), freed at dealloc
+	public static inline var IVAR_WEAK_GC = 3;
+
+	// the instance variables of mode class c (its own fields only); a field
+	// none can be is an error
+	public static function ivars(c:TClass):Array<Ivar> {
+		var r:Array<Ivar> = [];
+		var name = c.clPath.name;
+		for (cf in c.clOrderedFields) {
+			switch cf.cfKind {
+				// (a property without storage: its accessors are methods)
+				case Var(v) if (Lower.isPhysical(c, cf, v)):
+				case _: continue;
+			}
+			var where = CInterop.posOf(cf.cfPos);
+			if (cf.cfExpr != null)
+				throw new LowerError('Objective-C class $name: the field ${cf.cfName} has an initializer, which nothing runs (no Haxe constructor: Objective-C zeroes an object\'s instance variables; set it in an initializer)',
+					where);
+			if (KernelCheck.spanOf(cf.cfType) != null)
+				throw new LowerError('Objective-C class $name: the field ${cf.cfName} has a span type', where);
+			var weak = Lower.hasMeta(":hxmc.weak", cf.cfMeta);
+			if (weak && !TFunctions.isExplicitNull(cf.cfType))
+				throw new LowerError('@:hxmc.weak ${cf.cfName}: a weak field becomes null once its object is gone: declare it Null<...>', where);
+			if (isIdType(cf.cfType)) {
+				r.push({name: cf.cfName, field: cf, kind: weak ? IVAR_WEAK_ID : IVAR_STRONG, ct: CPtr, size: 8, align: 8, enc: "@"});
+				continue;
+			}
+			var ct = ctype(cf.cfType);
+			if (weak) {
+				if (!ct.match(CNone) && !isBlockType(cf.cfType))
+					throw new LowerError('@:hxmc.weak ${cf.cfName}: only a field holding an object (an Objective-C object or a Haxe one) can be weak', where);
+				r.push({name: cf.cfName, field: cf, kind: IVAR_WEAK_GC, ct: CI64, size: 8, align: 8, enc: "q"});
+				continue;
+			}
+			if (CInterop.isScalar(ct) || ct.match(CStruct(_))) {
+				r.push({name: cf.cfName, field: cf, kind: IVAR_RAW, ct: ct, size: CInterop.sizeOf(ct), align: CInterop.alignOf(ct), enc: encoding(ct)});
+				continue;
+			}
+			throw new LowerError('Objective-C class $name: the field ${cf.cfName} holds a Haxe value, which an Objective-C object cannot own yet: declare it @:hxmc.weak (Null<...>) and keep the value alive elsewhere',
+				where);
+		}
+		return r;
+	}
+
+	// field cf of an Objective-C mode class (c or a superclass) as an instance
+	// variable, or null
+	public static function ivarOf(c:TClass, cf:TClassField):Null<{owner:TClass, ivar:Ivar}> {
+		if (!cf.cfKind.match(Var(_))) return null;
+		var k = modeOwner(c, cf);
+		if (k == null) return null;
+		for (iv in ivars(k))
+			if (iv.field == cf) return {owner: k, ivar: iv};
+		return null;
+	}
+
+	// the word in the program's data (DataGen.objcRefs: an IVAR_CELL) holding
+	// the offset of instance variable `name` of the mode class of key `key`
+	public static function ivarCell(key:String, name:String):String
+		return IVAR_CELL + key + "$" + name;
+
+	// a mode class's key: the suffix of its class cell (CLASS_CELL) and of its
+	// registering function (REGISTER)
+	public static function modeKey(c:TClass):String
+		return Lower.nativeName(c);
 
 	// a type whose values are ids (a block too: hxmc.objc.Block<F>)
 	public static function isIdType(t:T):Bool
@@ -509,8 +633,12 @@ class ObjC {
 	// the caller is in) whose work finds the Haxe object (the index in the
 	// instance variable, rt_objc_peer_get) and calls the method. `statics`:
 	// its class methods instead (on its metaclass), the statics that
-	// implement a declared one (classDeclOf), their entries calling them
-	public static function imps(l:Lower, c:TClass, name:String, root:String, statics = false):Array<{sel:String, sym:String, types:String}> {
+	// implement a declared one (classDeclOf), their entries calling them.
+	// `mode`: c is an Objective-C mode class (isMode): its methods' receiver
+	// is the object itself (Lower.modeMethod), every one is Objective-C's (one
+	// of types C has not is an error), and an initializer's result is the
+	// caller's (+1), as ARC's init family returns it
+	public static function imps(l:Lower, c:TClass, name:String, root:String, statics = false, mode = false):Array<{sel:String, sym:String, types:String}> {
 		var r = [];
 		// (the receiver: the method's first argument, a static has none)
 		var first = statics ? 0 : 1;
@@ -544,6 +672,9 @@ class ObjC {
 				return CInterop.isScalar(ct) || ct.match(CStruct(_));
 			if (!Lambda.foreach(cts, ok) || !(ret == CVoid || ok(ret))) {
 				if (decl != cf) throw new LowerError('${cf.cfName} overrides an Objective-C method, which has types C has not', CInterop.posOf(cf.cfPos));
+				if (mode && !statics)
+					throw new LowerError('${cf.cfName}: a method of an Objective-C class takes and returns what C has (numbers, Ptr, structs, Objective-C objects, Selector, blocks)',
+						CInterop.posOf(cf.cfPos));
 				continue;
 			}
 			// (a block: an id in the entry, the function it is (blockFunction) for
@@ -553,10 +684,10 @@ class ObjC {
 				blocks = [for (a in s.args) isBlockType(a.type) ? blockSig(l, a.type, CInterop.posOf(cf.cfPos)) : null];
 				blockRet = !setter && isBlockType(s.ret) ? blockSig(l, s.ret, CInterop.posOf(cf.cfPos)) : null;
 			} catch (e:LowerError) {
-				if (decl != cf) throw e;
+				if (decl != cf || (mode && !statics)) throw e;
 				continue;
 			}
-			var fi = statics ? l.staticFunc(c, cf) : l.method(c, cf);
+			var fi = statics ? l.staticFunc(c, cf) : mode ? l.modeMethod(c, cf) : l.method(c, cf);
 			// (w: the entry's work, called by the entry imp makes below)
 			var w = new FuncInfo(fi.name + "__imp_call", fi.module);
 			w.display = fi.display;
@@ -587,16 +718,16 @@ class ObjC {
 			var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
 			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(IVAR_CELL + root), EInt(0)), TI64);
 			var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(self), off), EInt(0)), TI32);
-			var body:Array<Stmt> = statics ? [] : [SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))];
+			var body:Array<Stmt> = statics || mode ? [] : [SSet(peer, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))];
 			// (none: an object Objective-C made with an initializer the class's
 			// constructor does not call, FnLower.objcAdoptBody)
-			if (!statics) {
+			if (!statics && !mode) {
 				var sel = decl != cf ? selector(decl, s) : selector(cf, s);
 				var what = 'hxmc: -[$name $sel] sent to an object Objective-C made with an initializer that runs no Haxe constructor (the one the constructor\'s super.init... call names does): it has no Haxe object';
 				body.push(SIf(EBin(RefEq, ELocal(peer), ENull(TRef(RAny))),
 					vector(SExpr(ECallHost("rt_objc_unpaired", vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(what)), TI64)), TVoid))), vector()));
 			}
-			var xs = statics ? [] : [ECast(fi.args[0].ty, ELocal(peer))];
+			var xs = statics ? [] : mode ? [ECast(TId, ELocal(self))] : [ECast(fi.args[0].ty, ELocal(peer))];
 			for (i in 2...nargs) {
 				var b = blocks[i - 2];
 				if (b == null) {
@@ -642,9 +773,11 @@ class ObjC {
 				res = id;
 			}
 			// (a method of the copy, mutableCopy or new family: its result the
-			// caller's, retained, as ARC returns it; init is the constructor's)
+			// caller's, retained, as ARC returns it; a peer class's init is the
+			// constructor's, a mode class's an initializer's: it consumed its
+			// receiver, sending super's, and returns its result retained)
 			var sel = decl != cf ? selector(decl, s) : selector(cf, s);
-			if (res != null && w.ret == TId && returnsRetained(sel) && family(sel) != "init")
+			if (res != null && w.ret == TId && returnsRetained(sel) && (mode || family(sel) != "init"))
 				body.push(SSet(res, ECallHost(runtime(l, "objc_retain", [CPtr], CPtr), vector(ELocal(res)), TId)));
 			body.push(SReturn(res == null ? null : ELocal(res)));
 			w.body = Vector.fromArrayCopy(body);
@@ -829,7 +962,13 @@ class ObjC {
 	// Objective-C exception (rt_objc_raising, objc_exception_throw: no safe
 	// region, the caller's state is back), from this frame, which has no
 	// personality (foreignPasses): it goes on to Objective-C's frames
-	public static function entry(l:LowerQueries, name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig):FuncInfo {
+	//
+	// `dealloc`: an Objective-C mode class's dealloc (Lower.objcMode), which
+	// the collector's own releases may send (an id a dead Haxe object held,
+	// released in the collection, hxmc.rt.Gc.sweeping): Haxe code cannot run
+	// there, so it is put off first (rt_objc_dealloc_defer: called again
+	// after the collection, when the thread allocates)
+	public static function entry(l:LowerQueries, name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig, dealloc = false):FuncInfo {
 		var w = new FuncInfo(name, module);
 		w.cSymbol = symbol;
 		w.display = f.display;
@@ -841,10 +980,12 @@ class ObjC {
 		// return; a @:hxmc.fast message's caller's RUNNING kept: rt_callback_begin)
 		var prev = new Local(w.args.length + 1, "prev", TI32);
 		w.locals.push(prev);
-		var body:Array<Stmt> = [
-			SExpr(ECallHost("rt_objc_attach", vector(), TVoid)),
-			SSet(prev, ECallHost("rt_callback_begin", vector(), TI32))
-		];
+		var body:Array<Stmt> = [];
+		if (dealloc)
+			body.push(SIf(EBin(Ne, ECallHost("rt_objc_dealloc_defer", vector(ECast(TI64, ELocal(w.args[0])), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(symbol)), TI64)), TI32),
+				EInt(0)), vector(SReturn(null)), vector()));
+		body.push(SExpr(ECallHost("rt_objc_attach", vector(), TVoid)));
+		body.push(SSet(prev, ECallHost("rt_callback_begin", vector(), TI32)));
 		var r = new Local(w.args.length, "r", f.ret == TVoid ? TI32 : f.ret);
 		if (f.sret) {
 			w.locals.push(r);
@@ -964,6 +1105,32 @@ typedef BlockSig = {
 	types:String,
 	blocks:Array<Null<BlockSig>>,
 	retBlock:Null<BlockSig>
+};
+
+// an instance variable of an Objective-C mode class (ObjC.ivars): its kind
+// (ObjC.IVAR_*), C type, size, alignment and type encoding (class_addIvar)
+typedef Ivar = {
+	name:String,
+	field:TClassField,
+	kind:Int,
+	ct:CTy,
+	size:Int,
+	align:Int,
+	enc:String
+};
+
+// an Objective-C mode class's registration (Lower.objcMode): its key
+// (ObjC.modeKey), its name at run time, its instance variables, the methods
+// and class methods Objective-C calls (ObjC.imps, its dealloc's first), the
+// protocols it adopts, the function registering it
+typedef ObjCMode = {
+	key:String,
+	name:String,
+	ivars:Array<Ivar>,
+	methods:Array<{sel:String, sym:String, types:String}>,
+	classMethods:Array<{sel:String, sym:String, types:String}>,
+	protocols:Array<String>,
+	register:FuncInfo
 };
 
 // what a body declares for the program's link (LowerQueries.objcDeclare)

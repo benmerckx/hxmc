@@ -157,6 +157,7 @@ enum LCall {
 	CStructBox(name:String, r:ClassInfo);
 	CStaticVar(c:TClass, cf:TClassField, r:Int);
 	CReflect(c:TClass);
+	CObjCMode(c:TClass, r:String);
 	CReflectEnum(e:TEnum);
 	CStaticClos(f:FuncInfo, r:LambdaInfo);
 	CHostClos(name:String, sig:SigInfo, self:Null<Ty>, r:LambdaInfo);
@@ -518,6 +519,14 @@ class CachedLower extends Lower {
 		log(CReflect(c));
 	}
 
+	override public function objcMode(c:TClass):String {
+		depth++;
+		var r = super.objcMode(c);
+		depth--;
+		log(CObjCMode(c, r));
+		return r;
+	}
+
 	override public function reflectEnum(e:TEnum) {
 		depth++;
 		super.reflectEnum(e);
@@ -769,6 +778,8 @@ class CachedLower extends Lower {
 				reflectEnum(te(k));
 			case CReflect(k):
 				reflectStatics(tc(k));
+			case CObjCMode(k, r):
+				if (objcMode(tc(k)) != r) mismatch("the Objective-C class " + r + " changed");
 			case CStaticClos(f, r):
 				bindLambda(r, staticClosure(obj(f)));
 			case CHostClos(name, s, self, r):
