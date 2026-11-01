@@ -45,8 +45,9 @@ extern class Mem {
 	// docs/hxmc.md, "Macros on the Mir interpreter"), else 0; a constant, as
 	// target() (one comparison folds)
 	static function mirHost():Int;
-	// the Apple platform where os() is 1: 0 macOS, 1 iOS, 2 the iOS simulator
-	// (target() 3 for both: macos-arm64's libSystem and layouts; packages
+	// the Apple platform where os() is 1: 0 macOS, 1 iOS, 2 the iOS simulator, 3 Mac Catalyst
+	// (target() macOS's: macos-arm64's libSystem and layouts, 3, or 2 for
+	// macos-catalyst-x86_64; packages
 	// only, not the runtime: the committed stage0 does not know it)
 	static function platform():Int;
 	// a frame area of `bytes` (a constant), 16-byte aligned, valid while the function runs

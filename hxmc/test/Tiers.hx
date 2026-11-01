@@ -190,6 +190,8 @@ class Tiers {
 			lane("iOS Mach-O", make(["macho-check"]));
 			// (macOS with Xcode's iOS simulator: the corpus run in an iPhone simulator)
 			if (Corpus.iosDevice() != null) lane("iOS simulator", corpus("ios-sim-arm64", null, cases));
+			// (an arm64 Mac: the corpus as Mac Catalyst processes, UIKit's views among them)
+			if (Corpus.hostTarget() == "macos-arm64") lane("Mac Catalyst", corpus("macos-catalyst-arm64", null, cases));
 			lane("wasm node legacy EH", corpus("wasm32-wasi", null, cases, LEGACY));
 			lane("ThreadNatives x30", threads(30, 16));
 			lane("ThreadNatives x30 adaptive", threads(30, 0));

@@ -49,7 +49,7 @@ class LinkMachO extends LinkCore {
 	// App Store's minimum since 2025; a later one would ask for UIScene)
 	public static inline var IOS_MIN = 0x000F0000;
 	public static inline var IOS_SDK = 0x00120000;
-	public var minos = IOS_MIN; // (iOS: -D hxmc.ios-min-version, Options.iosMinos)
+	public var minos = IOS_MIN; // (iOS, Mac Catalyst: -D hxmc.ios-min-version, Options.iosMinos)
 	// imports from other dylibs than libSystem (@:hxmc.lib): symbol -> install name
 	public var dylibs = new Map<String, String>();
 	// dylibs loaded whatever the program imports from them (an Objective-C
@@ -608,16 +608,19 @@ class LinkMachO extends LinkCore {
 		h.u32(24);
 		var uuidAt = h.len;
 		h.zeros(16);
-		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64); iOS
-		// and its simulator (abi.platform), minimum IOS_MIN, built against
-		// IOS_SDK (what UIKit's linked-on-or-after behaviours go by)
+		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64); iOS,
+		// its simulator and Mac Catalyst (abi.platform), minimum IOS_MIN,
+		// built against IOS_SDK (what UIKit's linked-on-or-after behaviours
+		// go by; Catalyst's versions are iOS's, as clang's -target
+		// <arch>-apple-ios<v>-macabi writes them)
 		ncmds++;
-		var minos = abi.ios() ? this.minos : arm ? 0x000B0000 : 0x000A0F00;
+		var minos = abi.uikit() ? this.minos : arm ? 0x000B0000 : 0x000A0F00;
 		h.u32(0x32);
 		h.u32(32);
-		h.u32(abi.platform == "ios" ? 2 : abi.platform == "ios-simulator" ? 7 : 1); // PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACOS
+		// PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACCATALYST, PLATFORM_MACOS
+		h.u32(abi.platform == "ios" ? 2 : abi.platform == "ios-simulator" ? 7 : abi.platform == "maccatalyst" ? 6 : 1);
 		h.u32(minos);
-		h.u32(abi.ios() ? IOS_SDK : minos); // sdk
+		h.u32(abi.uikit() ? IOS_SDK : minos); // sdk
 		h.u32(1);
 		h.u32(3); // TOOL_LD
 		h.u32(0x00010000);

@@ -200,7 +200,7 @@ class Lower implements LowerQueries {
 	public static function ofTarget(c:TClass):Bool {
 		// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
 		if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) return false;
-		// @:hxmc.ios: the iOS targets' only (Mem.platform() 1 and 2)
+		// @:hxmc.ios: UIKit's targets only (Mem.platform() 1 to 3: iOS, its simulator, Mac Catalyst)
 		if (hasMeta(":hxmc.ios", c.clMeta) && targetPlatform >= 0 && targetPlatform < 1) return false;
 		// @:hxmc.wasm: the runtime of WebAssembly only (what C provides elsewhere)
 		if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) return false;

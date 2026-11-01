@@ -415,7 +415,7 @@ class CInterop {
 	static function library(c:TClass, cf:TClassField):Null<String> {
 		function of(m:core.Ast.Metadata):Null<String> {
 			var fw = Lower.metaString(":hxmc.framework", m);
-			return fw != null ? '/System/Library/Frameworks/$fw.framework/$fw' : Lower.metaString(":hxmc.lib", m);
+			return fw != null ? ObjC.frameworkPath(fw) : Lower.metaString(":hxmc.lib", m);
 		}
 		var l = of(cf.cfMeta);
 		return l != null ? l : of(c.clMeta);

@@ -1,0 +1,7 @@
+exit 0
+ObjCUIKit.hx:76: label, hello from UIKit, 2, 10 20 300 40
+ObjCUIKit.hx:77: box, 0 0 320 200, 1, true, true
+ObjCUIKit.hx:80: alpha, 0.5, hidden, true
+ObjCUIKit.hx:83: layouts, 1
+ObjCUIKit.hx:85: frame, 1 2 3 4
+ObjCUIKit.hx:87: done

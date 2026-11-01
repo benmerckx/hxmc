@@ -766,11 +766,11 @@ class DataGen {
 			}));
 			return;
 		}
-		// iOS with an app (packages/os: hxmc.os.uikit.UIKitApp exports
+		// iOS or Mac Catalyst with an app (packages/os: hxmc.os.uikit.UIKitApp exports
 		// UI_MAIN): UIApplicationMain runs on the big stack, and the program's
 		// body from its delegate once the app has launched
 		// (iOS: UIKit's start, unless a dylib's: a build hxmc dev's host loads into the running app)
-		var body = abi.ios() && abi.output != SharedLibrary && Lambda.exists(p.funcs, f -> f.cSymbol == UI_MAIN) ? UI_MAIN : "hx_main_body";
+		var body = abi.uikit() && abi.output != SharedLibrary && Lambda.exists(p.funcs, f -> f.cSymbol == UI_MAIN) ? UI_MAIN : "hx_main_body";
 		compile(MirBuild.synthetic(prep, abi, "main", vector(I32, I64), I32, (b, ps) -> {
 			b.call("rt_init", vector(b.iconst(p.globals.length), ps[0], ps[1]), Void);
 			b.call("rt_run_main", vector(b.symAddr(body)), Void);

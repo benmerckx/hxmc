@@ -1079,6 +1079,29 @@ and runs the body once the app has launched.
 Device signing goes into `CodeSign.Identity`:
 [plans/targets.md](plans/targets.md#ios).
 
+### Mac Catalyst
+
+`macos-catalyst-arm64` and `macos-catalyst-x86_64` are macOS's ABI,
+libSystem and runtime objects (`Mem.target()` 3 or 2, `Mem.platform()`
+3); only the platform differs (`Abi.uikit()`). `LC_BUILD_VERSION` says
+`PLATFORM_MACCATALYST` (6) with iOS's versions, as clang's
+`-target arm64-apple-ios<v>-macabi` writes them (minimum 15.0, SDK 18.0).
+`hxmc_ui_main` applies as on iOS.
+
+**Frameworks**: the frameworks of iOS that macOS has a twin of, or none,
+are under `/System/iOSSupport`, and their Catalyst binary is there (UIKit
+is `/System/iOSSupport/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit`);
+the shared ("zippered") ones keep macOS's install name (Foundation,
+Core Graphics, AppKit). `ObjC.frameworkPath` maps `@:hxmc.framework`
+names through a table written from the macOS SDK's `System/iOSSupport`
+(the frameworks whose `.tbd` install name is there): hxmc does not need
+the SDK to build.
+
+**Running**: dyld runs the executable as it is; UIKit's views work
+without an app (`ObjCUIKit`, the corpus's "Mac Catalyst" lane).
+`UIApplicationMain` needs a bundle identifier, and the system gives an app
+its scene only from a bundle; a packager writes it.
+
 ### WebAssembly
 
 The playground runs the port as a wasm32-wasi module, and `make crosshost` checks that the tool built as one writes the same bytes as the native tool.

@@ -584,7 +584,7 @@ if (command == Selector.of("moveDown:")) ...
 | | |
 | --- | --- |
 | `@:hxmc.objc` | an extern class (its extern subclasses too) is an Objective-C class: its values are `id`s; `@:hxmc.objc("Name")` or `@:native` names it at run time |
-| `@:hxmc.framework("AppKit")` | the class is the system framework's (`/System/Library/Frameworks/AppKit.framework/AppKit`); `@:hxmc.lib("path")` names another library. Per class, not inherited (a subclass is often another framework's) |
+| `@:hxmc.framework("AppKit")` | the class is the system framework's (`/System/Library/Frameworks/AppKit.framework/AppKit`; on Mac Catalyst, iOS's frameworks are `/System/iOSSupport`'s: [hxmc.md](hxmc.md#mac-catalyst)); `@:hxmc.lib("path")` names another library. Per class, not inherited (a subclass is often another framework's) |
 | `@:selector("a:b:")` | a method's selector, instead of the derived one |
 | `@:hxmc.framework("Foundation")` on a member | declared by a category of another framework: that framework is loaded when the member is sent (a class's reference loads only its own) |
 | `@:getter("isX")`, `@:setter("setX:")` | the accessors of a property written as a plain `var`, instead of `x` and `setX:` (Haxe's own metadata, read as Flash reads it) |

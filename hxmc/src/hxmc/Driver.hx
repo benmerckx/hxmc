@@ -386,7 +386,7 @@ class Driver {
 	function toolKey():String {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
-		return "hxmc|" + abi.rtName + (abi.ios() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
+		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0")
 			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
@@ -709,7 +709,7 @@ class Driver {
 			l.dylibs = dylibs;
 			l.loads = [for (lib in hxmc.ir.CInterop.LOADS.keys()) LinkInputs.libFile(lib, abi)];
 			l.loads.sort(Reflect.compare);
-			if (abi.ios()) l.minos = o.iosMinos;
+			if (abi.uikit()) l.minos = o.iosMinos;
 			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;
 				l.sign = CodeSign.adhoc(o.codesignId ?? haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(out)), file(o.codesignInfoPlist),

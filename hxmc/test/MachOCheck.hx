@@ -9,11 +9,12 @@ using StringTools;
 // iOS's native output without a bundle (docs/using.md, "Native output for
 // a packager"; make macho-check), checked without a Mac:
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
-// hxmc/test/ios/IosHello.hx for ios-arm64 and ios-sim-arm64 as a plain
-// executable and as a dylib (-D hxmc.shared), each:
-// - the Mach-O (MachOReader.commands): 64-bit arm64, MH_EXECUTE (PIE,
+// hxmc/test/ios/IosHello.hx for ios-arm64, ios-sim-arm64 and Mac Catalyst
+// (macos-catalyst-arm64, -x86_64) as a plain executable and as a dylib
+// (-D hxmc.shared), each:
+// - the Mach-O (MachOReader.commands): 64-bit arm64 (x86-64), MH_EXECUTE (PIE,
 //   LC_MAIN, /usr/lib/dyld) or MH_DYLIB (LC_ID_DYLIB @rpath/<name>), the
-//   build version's platform (iOS or the simulator), minimum (15.0, or -D
+//   build version's platform (iOS, the simulator, Mac Catalyst), minimum (15.0, or -D
 //   hxmc.ios-min-version's) and SDK, only the system's dylibs,
 //   LC_CODE_SIGNATURE at the end of the file and of __LINKEDIT;
 // - the code signature: the SuperBlob, the CodeDirectory (the page hashes
@@ -23,6 +24,9 @@ using StringTools;
 //   hxmc.codesign-id, -info-plist, -resources and -entitlements, ad hoc as
 //   `codesign -s -` signs, the special slots 1, 3 and 5 the hashes of the
 //   files given, 2 the empty requirement set's;
+// - UIKit's install name (hxmc/test/cases/ObjCUIKit.hx): iOS's
+//   /System/Library/Frameworks, Mac Catalyst's /System/iOSSupport, a
+//   framework both share macOS's there;
 // - the defines' errors: a minimum below 15.0, codesign-* on an ELF output;
 // - llvm-objdump's view of the load commands, when there.
 // Exits non-zero on a failure; a missing tool is skipped.
@@ -48,7 +52,7 @@ class MachOCheck {
 
 	static function main() {
 		tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
-		for (t in ["ios-arm64", "ios-sim-arm64"]) {
+		for (t in ["ios-arm64", "ios-sim-arm64", "macos-catalyst-arm64", "macos-catalyst-x86_64"]) {
 			var dir = '$OUT/$t';
 			mkdirs(dir);
 			// the signature's inputs, as a packager writes them before the link
@@ -79,8 +83,22 @@ class MachOCheck {
 				var r = build(out, c.args.concat(["-D", 'hxmc.target=$t']));
 				check('$t ${c.name}: builds', r.ok, r.ok ? "" : tail(r.out, 600));
 				if (!r.ok) continue;
-				macho('$t ${c.name}', File.getBytes(out), out, t == "ios-sim-arm64", c.dylib, c.minos, c.sign);
+				macho('$t ${c.name}', File.getBytes(out), out, t, c.dylib, c.minos, c.sign);
 			}
+		}
+		// UIKit's install name, and Foundation's beside it
+		for (t in ["ios-arm64", "macos-catalyst-arm64"]) {
+			var out = '$OUT/$t/ObjCUIKit';
+			var r = exec([tool, out, "-cp", "hxmc/test/cases", "-cp", "bin/hxmc/std", "-main", "ObjCUIKit", "--custom-target", "hxmc", "-D", "disable-parallelism",
+				"-D", 'hxmc.target=$t'], {merge: true});
+			check('$t ObjCUIKit: builds', r.code == 0, r.code == 0 ? "" : tail(r.out, 600));
+			if (r.code != 0) continue;
+			var b = File.getBytes(out), libs = [];
+			for (c in MachOReader.commands(b))
+				if (c.cmd == 0xc) libs.push(cstr(b, c.at + b.getInt32(c.at + 8), c.size));
+			var uikit = t == "ios-arm64" ? "/System/Library/Frameworks/UIKit.framework/UIKit" : "/System/iOSSupport/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit";
+			check('$t ObjCUIKit: UIKit is $uikit', libs.indexOf(uikit) >= 0, libs.join(" "));
+			check('$t ObjCUIKit: CoreFoundation is /System/Library/Frameworks\'s', libs.indexOf("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation") >= 0, libs.join(" "));
 		}
 		// the defines' errors
 		var r = build('$OUT/bad', ["-D", "hxmc.target=ios-arm64", "-D", "hxmc.ios-min-version=14.0"]);
@@ -104,9 +122,13 @@ class MachOCheck {
 		return b.getString(at, e - at);
 	}
 
-	static function macho(what:String, b:Bytes, path:String, sim:Bool, dylib:Bool, wantMinos:Int, want:Expect) {
-		check('$what: 64-bit arm64 ' + (dylib ? "MH_DYLIB" : "MH_EXECUTE"), b.getInt32(0) == 0xfeedfacf && b.getInt32(4) == 0x0100000c
-			&& b.getInt32(12) == (dylib ? 6 : 2));
+	static function macho(what:String, b:Bytes, path:String, target:String, dylib:Bool, wantMinos:Int, want:Expect) {
+		// (PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACCATALYST; llvm-objdump's names)
+		var plat = target == "ios-arm64" ? {n: 2, name: "iOS", objdump: "ios"} : target == "ios-sim-arm64" ? {n: 7, name: "iOS simulator", objdump: "iossimulator"} : {
+			n: 6, name: "Mac Catalyst", objdump: "macCatalyst"};
+		var arm = target.endsWith("arm64");
+		check('$what: 64-bit ' + (arm ? "arm64 " : "x86-64 ") + (dylib ? "MH_DYLIB" : "MH_EXECUTE"),
+			b.getInt32(0) == 0xfeedfacf && b.getInt32(4) == (arm ? 0x0100000c : 0x01000007) && b.getInt32(12) == (dylib ? 6 : 2));
 		var flags = b.getInt32(24);
 		check('$what: two-level, dyld' + (dylib ? "" : ", PIE"), flags & 0x84 == 0x84 && (dylib || flags & 0x200000 != 0));
 		var platform = -1, minos = -1, sdk = -1, main = false, dyld = "", id = "", libs = [], sigOff = -1, sigSize = 0;
@@ -133,7 +155,7 @@ class MachOCheck {
 				case _:
 			}
 		}
-		check('$what: the build version: ' + (sim ? "iOS simulator (7)" : "iOS (2)") + ", SDK 18.0", platform == (sim ? 7 : 2) && sdk == 0x00120000,
+		check('$what: the build version: ${plat.name} (${plat.n}), SDK 18.0', platform == plat.n && sdk == 0x00120000,
 			platform + " " + StringTools.hex(sdk));
 		check('$what: the build version\'s minimum ' + (wantMinos >> 16) + "." + ((wantMinos >> 8) & 0xff), minos == wantMinos, StringTools.hex(minos));
 		if (dylib) check('$what: LC_ID_DYLIB @rpath/<name>, no LC_MAIN', !main && id == "@rpath/" + haxe.io.Path.withoutDirectory(path), id);
@@ -145,7 +167,7 @@ class MachOCheck {
 		if (sigOff > 0) signature(what, b, sigOff, textFileSize, !dylib, want);
 		if (has("llvm-objdump")) {
 			var r = exec(["llvm-objdump", "--macho", "--private-headers", path], {merge: true});
-			check('$what: llvm-objdump reads the load commands', r.code == 0 && r.out.indexOf("platform " + (sim ? "iossimulator" : "ios")) >= 0,
+			check('$what: llvm-objdump reads the load commands', r.code == 0 && r.out.indexOf("platform " + plat.objdump + "\n") >= 0,
 				r.code == 0 ? "" : tail(r.out, 200));
 		}
 	}

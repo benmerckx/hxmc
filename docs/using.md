@@ -17,6 +17,7 @@ build on. Any host builds for any target.
 | `windows-x86_64`, `windows-arm64` | PE executable over the UCRT |
 | `android-arm64`, `android-x86_64` | a shared library ([Android](#android)) |
 | `ios-arm64`, `ios-sim-arm64` | Mach-O executable ([iOS](#ios)) |
+| `macos-catalyst-arm64`, `macos-catalyst-x86_64` | Mach-O executable ([Mac Catalyst](#mac-catalyst)) |
 | `wasm32-wasi` | WebAssembly module ([WebAssembly](#webassembly)) |
 
 Code can test the target with `target.name == "hxmc"` (there is no `hxmc`
@@ -37,7 +38,7 @@ lists the ones marked with *.
 | --- | --- |
 | `-D hxmc.target=<target>` | the target (above) |
 | `-D hxmc.libc=glibc` | Linux: link dynamically against glibc, so the program can import shared libraries (`@:hxmc.lib("libGL.so.1")`) and `dlopen` them |
-| `-D hxmc.shared` | a shared library: Linux in the glibc mode, a dylib on macOS and iOS, a DLL on Windows; Android's output always is one |
+| `-D hxmc.shared` | a shared library: Linux in the glibc mode, a dylib on macOS, iOS and Mac Catalyst, a DLL on Windows; Android's output always is one |
 | `-D hxmc.exports=<names>` | the `@:hxmc.export` functions a shared library exports |
 | `-D hxmc.dll-base=<hex>` | Windows: a DLL's preferred base address |
 | `-D hxmc.output=<path>` | the output path, instead of `--custom-target`'s |
@@ -96,6 +97,21 @@ A UI library that defines `hxmc_ui_main` gets `UIApplicationMain` on the
 main thread, and the program's body runs once the app has launched. A
 packager writes the app bundle around it ([below](#native-output-for-a-packager)).
 
+### Mac Catalyst
+
+`macos-catalyst-arm64` and `macos-catalyst-x86_64`: UIKit on macOS, a
+macOS process whose Mach-O names Mac Catalyst as its platform, with iOS's
+versions (`-D hxmc.ios-min-version`, 15.0 and later). `@:hxmc.framework`
+imports the frameworks macOS has for iOS apps from `/System/iOSSupport`
+(UIKit, MapKit, ...) and the shared ones (Foundation, Core Graphics,
+AppKit) from their usual place. UIKit's views work without an app;
+`UIApplicationMain` needs an app bundle (`Info.plist` with a
+`CFBundleIdentifier`): an executable outside one stops with "Invalid
+parameter not satisfying: bundleIdentifier", and one with only an
+embedded `__info_plist` gets no scene from the system. `hxmc_ui_main`
+works as on iOS. A packager writes the `.app` as for macOS
+(`Contents/MacOS/<name>`, `Contents/Info.plist`).
+
 ### Native output for a packager
 
 hxmc writes no APKs or app bundles: a packager writes them around hxmc's
@@ -120,7 +136,7 @@ builds on two outputs, checked by `make native-check`:
 | `-D hxmc.codesign-resources=<file>` | special slot 3, `_CodeSignature/CodeResources` |
 | `-D hxmc.codesign-entitlements=<file>` | special slot 5, the entitlements (an XML plist) |
 
-They apply to Mach-O outputs only (macOS and iOS).
+They apply to Mach-O outputs only (macOS, iOS, Mac Catalyst).
 
 ### WebAssembly
 

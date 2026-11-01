@@ -227,9 +227,39 @@ class ObjC {
 	// time, or of a library already loaded)
 	public static function library(c:TClass):Null<String> {
 		var fw = Lower.metaArg(core.Meta.getOpt(Custom(":hxmc.framework"), c.clMeta));
-		if (fw != null) return '/System/Library/Frameworks/$fw.framework/$fw';
+		if (fw != null) return frameworkPath(fw);
 		return Lower.metaArg(core.Meta.getOpt(Custom(":hxmc.lib"), c.clMeta));
 	}
+
+	// the install name of system framework `fw` (@:hxmc.framework): macOS's
+	// and iOS's /System/Library/Frameworks/<fw>.framework/<fw>; on Mac
+	// Catalyst (Lower.targetPlatform 3) the frameworks of iOS that macOS has
+	// a twin of, or none, are under /System/iOSSupport instead (UIKit,
+	// MapKit), and the ones both share are macOS's (Foundation, CoreGraphics,
+	// AppKit: "zippered", one binary for both)
+	public static function frameworkPath(fw:String):String {
+		if (Lower.targetPlatform == 3 && IOS_SUPPORT.indexOf(" " + fw + " ") >= 0)
+			return '/System/iOSSupport/System/Library/Frameworks/$fw.framework/Versions/A/$fw';
+		return '/System/Library/Frameworks/$fw.framework/$fw';
+	}
+
+	// Mac Catalyst's frameworks under /System/iOSSupport: those of the
+	// macOS SDK's System/iOSSupport/System/Library/Frameworks whose .tbd's
+	// install name is there (macOS SDK 27.0; the SDK is not needed to build,
+	// so the list is written here; the others there name macOS's binary, or
+	// are Swift's only)
+	static final IOS_SUPPORT = " " + [
+		"AccessoryLiveActivities", "AccessoryNotifications", "AccessorySetupKit", "AccessoryTransportExtension", "AdAttributionKit", "AddressBook",
+		"AddressBookUI", "AlarmKit", "AppClip", "ARKit", "AssetsLibrary", "Assignables", "AuthenticationServices", "AVKit", "BrowserKit", "BusinessChat",
+		"CarPlay", "Charts", "Cinematic", "ClockKit", "ContactsUI", "CoreAudioKit", "CoreLocationUI", "CoreNFC", "DeclaredAgeRange", "EnergyKit",
+		"EventKitUI", "ExtensionKit", "FamilyControls", "FinanceKitUI", "GameController", "GameKit", "GameplayKit", "GameSave", "HealthKitUI", "HomeKit",
+		"iAd", "IdentityDocumentServicesUI", "IdentityLookupUI", "ImagePlayground", "IntentsUI", "JavaScriptCore", "LinkPresentation",
+		"LockedCameraCapture", "ManagedSettingsUI", "MapKit", "MarketplaceKit", "MediaPlayer", "MediaSetup", "Messages", "MessageUI", "MetalKit",
+		"MobileCoreServices", "MultipeerConnectivity", "OpenAL", "PaperKit", "PassKit", "PDFKit", "PencilKit", "PhotosUI", "ProximityReader", "QuickLook",
+		"RealityKit", "ReplayKit", "RoomPlan", "SafariServices", "SceneKit", "ScreenCaptureKit", "ScreenTime", "SecureElementCredential", "SharedWithYou",
+		"Social", "SpriteKit", "StoreKit", "SuggestedActions", "SwiftUI", "TipKit", "TouchController", "TrustInsights", "Twitter", "UIKit",
+		"UserNotificationsUI", "VisionKit", "WatchConnectivity", "WebKit", "WidgetKit"
+	].join(" ") + " ";
 
 	// a class object's symbol (its library's), and the word in the program's
 	// data that holds its address, bound by the loader (DataGen.objcRefs): a
@@ -244,7 +274,7 @@ class ObjC {
 	// (CInterop.LOADS: the class's classref loads only its own)
 	public static function memberLibrary(cf:TClassField):Null<String> {
 		var fw = Lower.metaArg(core.Meta.getOpt(Custom(":hxmc.framework"), cf.cfMeta));
-		if (fw != null) return '/System/Library/Frameworks/$fw.framework/$fw';
+		if (fw != null) return frameworkPath(fw);
 		return Lower.metaArg(core.Meta.getOpt(Custom(":hxmc.lib"), cf.cfMeta));
 	}
 

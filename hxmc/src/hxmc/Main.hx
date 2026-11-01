@@ -15,7 +15,7 @@ package hxmc;
 //   -D hxmc.shared                  a shared library (Linux in the glibc mode; Android's is always one,
 //                                   which a packager puts in an APK)
 //   -D hxmc.exports=<names>         the names a shared library exports (its soname: the output's file name)
-//   -D hxmc.ios-min-version=<x.y>   iOS: the oldest version an output runs on (15.0, the floor)
+//   -D hxmc.ios-min-version=<x.y>   iOS, Mac Catalyst: the oldest iOS version an output runs on (15.0, the floor)
 //   -D hxmc.codesign-id=<id>, -D hxmc.codesign-info-plist=<file>, -D hxmc.codesign-resources=<file>,
 //   -D hxmc.codesign-entitlements=<file>
 //                                   a Mach-O output signed ad hoc as `codesign -s -` signs, binding a

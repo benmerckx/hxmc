@@ -14,7 +14,7 @@ class Options {
 	public var output:Null<String> = null; // -D hxmc.output=<path>: the output, instead of --custom-target's (a build that names one output and writes another)
 	// -D hxmc.exports=<name>[,<name>...]: what a shared library exports (Android: ANativeActivity_onCreate too)
 	public var exports:Array<String> = [];
-	// -D hxmc.ios-min-version=<major.minor>: the oldest iOS an iOS output runs
+	// -D hxmc.ios-min-version=<major.minor>: the oldest iOS an iOS or Mac Catalyst output runs
 	// on (LC_BUILD_VERSION's minimum, LinkMachO.minos; the packager writes
 	// the same in the bundle's MinimumOSVersion), 15.0 and the floor; as
 	// LinkMachO writes it

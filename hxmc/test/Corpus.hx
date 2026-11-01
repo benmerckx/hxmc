@@ -59,6 +59,12 @@ class Corpus {
 	// macOS and the iOS simulator), and of macOS only (AppKit)
 	public static final APPLE_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCWeak", "ObjCIdentity", "ObjCCaptures", "ObjCBlocks", "ObjCThreads", "ObjCStrings", "ObjCStress", "ObjCProtocols", "ObjCGenerics", "ObjCConstants", "ObjCCoreGraphics", "ObjCCBlocks", "ObjCClassMethods", "ObjCAdopt", "ObjCDealloc", "ObjCVariadic", "ObjCFast", "ObjCAbstracts", "ObjCExceptions"]) n => "Objective-C: Apple's systems only"];
 	public static final MACOS_ONLY = [for (n in ["ObjCInit", "ObjCProperties", "ObjCSuper", "ObjCHierarchy"]) n => "AppKit: macOS only"];
+	// the cases of UIKit's targets only (the iOS simulator, Mac Catalyst)
+	public static final UIKIT_ONLY = ["ObjCUIKit" => "UIKit: iOS and Mac Catalyst only"];
+
+	// UIKit's targets: iOS, its simulator, Mac Catalyst (a macOS process, which runs macOS's cases too)
+	public static function uikit(t:String):Bool
+		return t.startsWith("ios") || t.startsWith("macos-catalyst");
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
@@ -181,6 +187,7 @@ class Corpus {
 		if (t.startsWith("ios") && IOS_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: IOS_EXCLUDED[c.name]};
 		if (!t.startsWith("macos") && MACOS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MACOS_ONLY[c.name]};
 		if (!t.startsWith("macos") && !t.startsWith("ios") && APPLE_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: APPLE_ONLY[c.name]};
+		if (!uikit(t) && UIKIT_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: UIKIT_ONLY[c.name]};
 		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
@@ -478,7 +485,7 @@ class Corpus {
 			case "linux-arm64": "aarch64-linux-musl";
 			case "windows-x86_64": "x86_64-windows-gnu";
 			case "windows-arm64": "aarch64-windows-gnu";
-			case "macos-x86_64": "x86_64-macos";
+			case "macos-x86_64" | "macos-catalyst-x86_64": "x86_64-macos";
 			case _: "aarch64-macos";
 		}
 		var flags = ["-O2", "-g0", "-fno-stack-protector"].concat(glibc ? ["-fPIE"] : target.startsWith("linux") ? ["-fno-pic", "-fno-pie"] : []);
