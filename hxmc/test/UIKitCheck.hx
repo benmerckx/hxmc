@@ -99,6 +99,11 @@ class UIKitCheck {
 			if (booted) exec(["xcrun", "simctl", "boot", d.udid]);
 			exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
 			var i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
+			// (a device just shut down and booted again may refuse the first install: once more)
+			if (i.code != 0) {
+				exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
+				i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
+			}
 			if (i.code != 0) check('ios-sim-arm64: ${d.name}: install', false, tail(i.out, 400));
 			else {
 				var r = exec(["xcrun", "simctl", "launch", "--console-pty", "--terminate-running-process", d.udid, ID], {merge: true, timeout: 120});
