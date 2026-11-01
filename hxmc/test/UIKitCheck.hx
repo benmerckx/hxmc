@@ -106,7 +106,14 @@ class UIKitCheck {
 			}
 			if (i.code != 0) check('ios-sim-arm64: ${d.name}: install', false, tail(i.out, 400));
 			else {
-				var r = exec(["xcrun", "simctl", "launch", "--console-pty", "--terminate-running-process", d.udid, ID], {merge: true, timeout: 120});
+				var launch = ["xcrun", "simctl", "launch", "--console-pty", "--terminate-running-process", d.udid, ID];
+				var r = exec(launch, {merge: true, timeout: 120});
+				// (a hosted runner's simulator may time out before the app prints anything: once more)
+				if (r.code != 0 && r.out.indexOf("launched") < 0) {
+					Sys.println(pad('ios-sim-arm64: ${d.name}', 48) + ' retrying the launch (exit ${r.code}, nothing printed)');
+					exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
+					r = exec(launch, {merge: true, timeout: 120});
+				}
 				output('ios-sim-arm64: ${d.name}', r.code, r.out);
 				exec(["xcrun", "simctl", "uninstall", d.udid, ID]);
 			}
