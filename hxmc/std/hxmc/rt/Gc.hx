@@ -309,6 +309,35 @@ class Gc {
 		}
 	}
 
+	// the sweeps' releases in an autorelease pool of their own: a dealloc they
+	// run autoreleases (a view its subviews, AppKit its caches' entries), and a
+	// collection outside the run loop's pools (code before NSApplication.run,
+	// a test, a thread hxmc started) would leak all that ("autoreleased with
+	// no pool in place"). libobjc's functions found once (the runtime does not
+	// link it); none without ids: nil
+	static var poolPush:Ptr;
+	static var poolPop:Ptr;
+
+	@:hxmc.unsafe static function idsPoolPush():Ptr {
+		if (Mem.os() != 1 || (npeers == 0 && nowned == 0 && nboxes == 0 && nnatives == 0)) return Ptr.nil();
+		return poolPushAny();
+	}
+
+	// a pool on Apple's systems whatever the heap holds (nil: no libobjc)
+	@:hxmc.unsafe public static function poolPushAny():Ptr {
+		if (Mem.os() != 1) return Ptr.nil();
+		if (poolPush.isNull()) {
+			poolPush = @:privateAccess ObjCExceptions.fn(Mem.cstr("objc_autoreleasePoolPush"));
+			poolPop = @:privateAccess ObjCExceptions.fn(Mem.cstr("objc_autoreleasePoolPop"));
+			if (poolPush.isNull() || poolPop.isNull()) return Ptr.nil();
+		}
+		return Ind.call0(poolPush);
+	}
+
+	@:hxmc.unsafe public static function idsPoolPop(pool:Ptr) {
+		if (!pool.isNull()) Ind.call1(poolPop, pool);
+	}
+
 	// after a collection of the nursery (and of [lo, hi) for a major one):
 	// the weak entries' objects moved, or dead and their ids released
 	@:hxmc.unsafe static function sweepPeers(lo:Ptr, hi:Ptr) {
@@ -1249,10 +1278,12 @@ class Gc {
 		var m0 = majors;
 		minorCollect();
 		if (majors == m0) {
+			var pool = idsPoolPush();
 			sweepNatives(Ptr.nil(), Ptr.nil());
 			if (npeers > 0) sweepPeers(Ptr.nil(), Ptr.nil());
 			if (nowned > 0) sweepOwned(Ptr.nil(), Ptr.nil());
 			if (nboxes > 0) sweepBoxes(Ptr.nil(), Ptr.nil());
+			idsPoolPop(pool);
 		}
 		if (stats && majors == m0) minorSecs += Os.now() - t0;
 	}
@@ -1337,10 +1368,12 @@ class Gc {
 			if (gcBfs) scanFrom(scan);
 		}
 		major = false;
+		var pool = idsPoolPush();
 		sweepNatives(fromStart, fromEnd);
 		if (npeers > 0) sweepPeers(fromStart, fromEnd);
 		if (nowned > 0) sweepOwned(fromStart, fromEnd);
 		if (nboxes > 0) sweepBoxes(fromStart, fromEnd);
+		idsPoolPop(pool);
 		// the from-space goes back to the system (RT_RELEASE=0 keeps it
 		// resident, so the next major collection copies into faulted-in pages:
 		// a little less system time for as much more memory as the old space held)
@@ -2316,6 +2349,7 @@ class Gc {
 
 // calls through C function pointers (the native handles' free functions)
 @:hxmc.c @:hxmc.fast private extern class Ind {
+	@:hxmc.indirect static function call0(f:Ptr):Ptr;
 	@:hxmc.indirect static function call1(f:Ptr, a:Ptr):Ptr;
 	@:hxmc.indirect static function call2(f:Ptr, a:Ptr, b:Ptr):Ptr;
 	@:hxmc.indirect static function call3(f:Ptr, a:Ptr, b:Ptr, c:Ptr):Ptr;
