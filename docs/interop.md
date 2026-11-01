@@ -583,7 +583,7 @@ if (command == Selector.of("moveDown:")) ...
 
 | | |
 | --- | --- |
-| `@:hxmc.objc` | an extern class (its extern subclasses too) is an Objective-C class: its values are `id`s; `@:hxmc.objc("Name")` or `@:native` names it at run time |
+| `@:hxmc.objc` | an extern class (its extern subclasses too) is an Objective-C class: its values are `id`s; `@:hxmc.objc("Name")` or `@:native` names it at run time. On a Haxe class extending one: an Objective-C class written in Haxe ([below](#objective-c-classes-in-haxe)) |
 | `@:hxmc.framework("AppKit")` | the class is the system framework's (`/System/Library/Frameworks/AppKit.framework/AppKit`; on Mac Catalyst, iOS's frameworks are `/System/iOSSupport`'s: [hxmc.md](hxmc.md#mac-catalyst)); `@:hxmc.lib("path")` names another library. Per class, not inherited (a subclass is often another framework's) |
 | `@:selector("a:b:")` | a method's selector, instead of the derived one |
 | `@:hxmc.framework("Foundation")` on a member | declared by a category of another framework: that framework is loaded when the member is sent (a class's reference loads only its own) |
@@ -708,6 +708,98 @@ variable leads back to it.
 - **Ownership** of results is ARC's: a method of the `copy`, `mutableCopy`
   or `new` family (`copyWithZone:`) returns its result retained, the
   caller's to release.
+
+### Objective-C classes in Haxe
+
+A Haxe class declared `@:hxmc.objc` and extending an Objective-C class is
+an Objective-C class and nothing else: its objects are Objective-C objects,
+`id`s as an extern class's are, without a Haxe object beside them (no
+peer, no toggle reference). It is what Objective-C would write, for code
+that makes many of them and wants no second heap's object per instance.
+
+```haxe
+@:hxmc.objc class Field extends NSTextField implements NSTextFieldDelegate {
+  public extern static function alloc():Field;   // a message to Field's class
+  @:hxmc.weak var props:Null<Attrs>;             // a Haxe object kept alive elsewhere
+  @:hxmc.weak var buddy:Null<NSView>;            // Objective-C's __weak
+  var count:Int;                                 // an instance variable
+  var label:Null<NSString>;                      // strong, as ARC's
+  override function initWithFrame(r:CGRect):Field {
+    super.initWithFrame(r);                      // self = [super initWithFrame:r]
+    delegate = this;
+    return this;
+  }
+  override function respondsToSelector(s:Selector):Bool
+    return s != Selector.of("controlTextDidEndEditing:") && super.respondsToSelector(s);
+  public function controlTextDidChange(n:NSNotification) {
+    count++;
+    if (props != null) props.changed(stringValue);
+  }
+  override function dealloc() trace('gone after $count edits');
+}
+
+var f = Field.alloc().initWithFrame(r);          // an id, as NSTextField's
+```
+
+- **The class** is registered at its first use (its class object: `alloc`,
+  a type test, `ObjCClass.of`), as a peer class's, under its name
+  (`@:hxmc.objc("Name")`, else its path with underscores), after its
+  superclass when that is one too. Apple's systems only.
+- **Making one** is Objective-C's: `C.alloc().init...(...)`. No Haxe
+  constructor (an error), and `alloc` declared as an extern's is (`public
+  extern static function alloc():C;`: statics are not inherited). An
+  initializer is a method of the init family, an override or the class's
+  own (`initWithCount(n)`), that calls `super.initX(...)` and returns
+  `this`. That call is `self = [super initX:...]`: `this` is its result
+  from then on, so a superclass's initializer returning another object (a
+  class cluster's) is followed. As ARC's, an initializer consumes its
+  receiver and returns its result retained.
+- **Methods**: each instance method is a method of the Objective-C class
+  (`class_addMethod`), `this` its receiver. An override, or a method a
+  protocol declares, takes that method's selector and types; a new one's
+  selector follows from its names ([Declarations](#declarations)). Their
+  types are messages' (an error otherwise). A call, from Haxe too, is a
+  message: a subclass's override answers it, Objective-C's own subclasses'
+  too; `super.f(...)` sends `objc_msgSendSuper`. A method as a value and a
+  dynamic method are errors.
+- **Statics** with a body are Haxe's, called as Haxe statics; one that
+  implements a class method a superclass or protocol declares is also the
+  class's (`+`), as a peer class's. An `extern` static is a message to the
+  class.
+- **Fields** are the object's instance variables (`class_addIvar`), read
+  and written in its memory (`this.count`, `other.count`). They start
+  zeroed, as Objective-C's: an initializer on a field is an error (nothing
+  would run it; set it in an initializer method).
+
+| Field | |
+| --- | --- |
+| a number, `Bool`, `Ptr`, `Selector`, a `@:hxmc.struct` value | stored as C stores it (a struct's fields written in place) |
+| an Objective-C object (`Null<NSString>`, a `Block<F>`) | strong, as ARC's: a store retains the new value and releases the old one (`objc_storeStrong`); dealloc releases it |
+| `@:hxmc.weak` of an Objective-C object | `__weak`: `objc_storeWeak` on the variable itself (the object does not move); a read is nil once the object is gone, borrowed (`objc_loadWeakRetained`, autoreleased: read it in a pool on a thread without a run loop); destroyed at dealloc |
+| `@:hxmc.weak` of a Haxe value (an object, a function) | a slot of the collector's weak table ([hxmc.md](hxmc.md#the-collector)): the object moved with it, null once it is collected; freed at dealloc |
+
+  A weak field is `Null<...>`. Any other Haxe value is an error: an
+  Objective-C object cannot own a Haxe value (yet); hold it weakly and keep
+  it alive elsewhere.
+- **`dealloc`** is the class's own, always: the `dealloc` the class
+  declares (if any) runs first, then its instance variables let go (strong
+  ones released, weak ones destroyed, slots freed, each left zero), then the
+  superclass's (`super.dealloc()` is an error). Not `.cxx_destruct`, which
+  ARC's instance variables use: the runtime calls it only for a class whose
+  image says it has one, never for a class made at run time. A dealloc that
+  the runtime's own releases send, where Haxe code cannot run (the
+  collector's, of an id a dead Haxe object held; `Peers.detach`'s), is put
+  off: the thread sends it again at its next allocation, or when
+  `hxmc.rt.Gc.collect` returns; the object stays, deallocating (weak
+  references to it nil), until then.
+- **Values**: as an extern class's. `Std.isOfType` and `Std.downcast` are
+  `isKindOfClass:` messages; an array, a closure, `Dynamic` or a type
+  parameter bound to `Id` hold its ids as any ([Memory](#memory)).
+  `Reflect` and `Type` see what they see of an extern class.
+- **Allowed**: protocols (adopted, with `@:optional` methods left out and
+  `respondsToSelector:` overrides), a peer class extending such a class
+  (its methods messages, its instance variables reached through the id),
+  one such class extending another. A Haxe interface is an error.
 
 ### Protocols
 

@@ -204,6 +204,20 @@ space by copying into a new region.
   also sees the object's initialisation, as OCaml guarantees the reference
   compiler. Upstream's parallel phases rely on it. Free on x86-64; arm64
   emits `dmb ishst` before such stores.
+- **Weak slots** (native): references to Haxe objects the collector does
+  not follow, outside the heap. A slot is an index (from 1; 0 is none)
+  into a table of words (`rt_weak_new`, `rt_weak_get`, `rt_weak_set`,
+  `rt_weak_free`, any thread, under a leaf lock). After every collection,
+  minor and major, `sweepWeak` visits each slot: one whose object was in
+  the space collected holds its copy's address if it was copied, null if it
+  died; others are left alone. A free slot holds the next free index,
+  shifted and tagged odd, so the table is reused without growing. The cost
+  is a pass over the table per collection, as the peers' (nothing when no
+  slot was ever made), and a lock per access. Nothing in them is
+  Objective-C's: an [Objective-C class's](interop.md#objective-c-classes-in-haxe)
+  `@:hxmc.weak` field of a Haxe value holds one; a weak field of a Haxe
+  class, a `WeakRef` or a weak map could too (a map's ephemerons would need
+  their values traced conditionally, which a slot's word leaves room for).
 
 `RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
 nursery with a pattern so missed roots show at once, and ends the program
