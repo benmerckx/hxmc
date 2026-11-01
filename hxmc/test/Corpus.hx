@@ -339,7 +339,7 @@ class Corpus {
 	// interpreter and run in the native compiler's process, its output against the golden file
 	static function mirRunCase(c:CorpusCase, d:String, links:Bool):CorpusResult {
 		if (links) return {name: c.name, status: "excluded", detail: "C objects: not linked into the running compiler"};
-		if (APPLE_ONLY.exists(c.name) || MACOS_ONLY.exists(c.name))
+		if (APPLE_ONLY.exists(c.name) || MACOS_ONLY.exists(c.name) || UIKIT_ONLY.exists(c.name))
 			return {name: c.name, status: "excluded", detail: "Objective-C: its class and selector references are the linker's"};
 		var expected = EXPECTED + "/" + c.name + ".txt";
 		if (!FileSystem.exists(expected)) return {name: c.name, status: "no-golden", detail: expected + " is missing"};
