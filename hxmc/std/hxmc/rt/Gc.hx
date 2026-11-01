@@ -466,6 +466,133 @@ class Gc {
 			Ind.call1(peerRelease, Mem.getPtr(deadPeers, 8 * k));
 	}
 
+	// ---- weak slots: references to Haxe objects that the collector does not
+	// follow. A slot (an index from 1: 0 is no slot) holds an object's
+	// address, or null; after every collection, minor and major, a slot whose
+	// object moved holds its new address, one whose object died null
+	// (sweepWeak: O(slots) per collection, as sweepPeers). A free slot holds
+	// the index of the next free one, shifted left and tagged odd (an
+	// object's address is even). Any thread takes, reads, writes and frees
+	// them (under weakLock); the collecting thread sweeps them with the world
+	// stopped. Nothing here is Objective-C's: its mode classes' @:hxmc.weak
+	// fields of Haxe values hold one each (hxmc.ir.ObjC.IVAR_WEAK_GC).
+	static var weakSlots:Ptr;
+	static var nweak:Int; // (slot 0 made with the first, never taken)
+	static var weakCap:Int;
+	static var weakFreeHead:Int; // 0: none free
+	static var weakLock:Ptr;
+
+	// a slot holding o (null too)
+	@:hxmc.export("rt_weak_new") static function weakNew(o:Dynamic):Int {
+		lockLeaf(weakLock);
+		var i = weakFreeHead;
+		if (i != 0) {
+			weakFreeHead = (Mem.getPtr(weakSlots, 8 * i).toI64() >> 1).toInt();
+		} else {
+			if (nweak == weakCap) {
+				weakCap = weakCap == 0 ? 64 : weakCap * 2;
+				weakSlots = LibC.realloc(weakSlots, (weakCap : I64) * 8);
+			}
+			if (nweak == 0) {
+				Mem.setPtr(weakSlots, 0, Ptr.ofI64(1));
+				nweak = 1;
+			}
+			i = nweak++;
+		}
+		Mem.setPtr(weakSlots, 8 * i, Mem.addr(o));
+		unlockLeaf(weakLock);
+		return i;
+	}
+
+	// the object slot i holds: null once it died (or a free slot's)
+	@:hxmc.export("rt_weak_get") static function weakGet(i:Int):Dynamic {
+		lockLeaf(weakLock);
+		var p = i > 0 && i < nweak && Mem.getI32(weakSlots, 8 * i) & 1 == 0 ? Mem.getPtr(weakSlots, 8 * i) : Ptr.nil();
+		unlockLeaf(weakLock);
+		return Mem.obj(p);
+	}
+
+	// slot i (taken) holds o from now on
+	@:hxmc.export("rt_weak_set") static function weakSet(i:Int, o:Dynamic):Void {
+		lockLeaf(weakLock);
+		if (i > 0 && i < nweak && Mem.getI32(weakSlots, 8 * i) & 1 == 0) Mem.setPtr(weakSlots, 8 * i, Mem.addr(o));
+		unlockLeaf(weakLock);
+	}
+
+	// slot i given back
+	@:hxmc.export("rt_weak_free") static function weakFree(i:Int):Void {
+		lockLeaf(weakLock);
+		if (i > 0 && i < nweak && Mem.getI32(weakSlots, 8 * i) & 1 == 0) {
+			Mem.setPtr(weakSlots, 8 * i, Ptr.ofI64(((weakFreeHead : I64) << 1) | 1));
+			weakFreeHead = i;
+		}
+		unlockLeaf(weakLock);
+	}
+
+	// after a collection of the nursery (and of [lo, hi) for a major one): the
+	// slots' objects moved, or dead and the slots null
+	@:hxmc.unsafe static function sweepWeak(lo:Ptr, hi:Ptr) {
+		for (i in 1...nweak) {
+			var o = Mem.getPtr(weakSlots, 8 * i);
+			if (o.isNull() || Mem.getI32(weakSlots, 8 * i) & 1 != 0 || !(inYoung(o) || (!o.ult(lo) && o.ult(hi)))) continue;
+			Mem.setPtr(weakSlots, 8 * i, isFwd(hdrW0(o)) ? fwdAddr(o) : Ptr.nil());
+		}
+	}
+
+	// ---- deallocs put off: an Objective-C mode class's dealloc (its entry,
+	// hxmc.ir.ObjC.entry) sent where Haxe code cannot run, by a release the
+	// runtime makes outside any safe region: the collector's sweeps (the ids
+	// of dead Haxe objects, with the world stopped), Peers.detach. Queued with
+	// the thread that sent it, which sends it again later, from a safe region:
+	// at its next allocation's slow path (as finalisers) or when Gc.collect
+	// returns. The object stays allocated meanwhile (deallocating: weak
+	// references to it already read nil).
+	static var deallocs:Ptr; // (id, its dealloc's entry, the thread)
+	static var ndeallocs:Int;
+	static var deallocsCap:Int;
+
+	// whether the dealloc imp of object self is put off (1) or runs now (0):
+	// put off unless the calling thread is one of the runtime's in a safe
+	// region (or none of the runtime's: Objective-C's own threads)
+	@:hxmc.export("rt_objc_dealloc_defer") @:hxmc.unsafe static function deallocDefer(self:Ptr, imp:Ptr):Int {
+		var m = Threads.self;
+		if (m.isNull() || m.value.state == @:privateAccess Threads.SAFE) return 0;
+		lockLeaf(weakLock);
+		if (ndeallocs == deallocsCap) {
+			deallocsCap = deallocsCap == 0 ? 16 : deallocsCap * 2;
+			deallocs = LibC.realloc(deallocs, (deallocsCap : I64) * 24);
+		}
+		Mem.setPtr(deallocs, 24 * ndeallocs, self);
+		Mem.setPtr(deallocs, 24 * ndeallocs + 8, imp);
+		Mem.setPtr(deallocs, 24 * ndeallocs + 16, m);
+		ndeallocs++;
+		unlockLeaf(weakLock);
+		return 1;
+	}
+
+	// the deallocs this thread put off, sent (each in a safe region, as a message)
+	@:hxmc.unsafe static function runDeallocs() {
+		var m:Ptr = Threads.self;
+		while (true) {
+			lockLeaf(weakLock);
+			var k = ndeallocs;
+			while (k-- > 0)
+				if (Mem.getPtr(deallocs, 24 * k + 16) == m) break;
+			if (k < 0) {
+				unlockLeaf(weakLock);
+				return;
+			}
+			var self = Mem.getPtr(deallocs, 24 * k);
+			var imp = Mem.getPtr(deallocs, 24 * k + 8);
+			ndeallocs--;
+			LibC.memmove(deallocs.add(24 * k), deallocs.add(24 * ndeallocs), 24);
+			unlockLeaf(weakLock);
+			var region = Leaf.rt_blocking_enter();
+			Ind.call2(imp, self, Ptr.nil());
+			Regions.end(region);
+		}
+	}
+
 	// ---- Objective-C blocks (hxmc.ir.ObjC.blockOf): a Haxe function made a
 	// block is a heap block (_Block_copy of one built in blockNew's frame)
 	// whose capture is the index of an entry here: (closure, count) pairs,
@@ -1381,6 +1508,7 @@ class Gc {
 		var m0 = majors;
 		minorCollect();
 		if (majors == m0) {
+			if (nweak > 0) sweepWeak(Ptr.nil(), Ptr.nil());
 			var pool = idsPoolPush();
 			sweepNatives(Ptr.nil(), Ptr.nil());
 			if (npeers > 0) sweepPeers(Ptr.nil(), Ptr.nil());
@@ -1473,6 +1601,7 @@ class Gc {
 			if (gcBfs) scanFrom(scan);
 		}
 		major = false;
+		if (nweak > 0) sweepWeak(fromStart, fromEnd);
 		var pool = idsPoolPush();
 		sweepNatives(fromStart, fromEnd);
 		if (npeers > 0) sweepPeers(fromStart, fromEnd);
@@ -1853,6 +1982,7 @@ class Gc {
 		Threads.safepoint();
 		// likewise for finaliser calls queued by an earlier major collection
 		if (finalQlen != 0 && finalsRunning == 0) callFinalisers(false);
+		if (ndeallocs != 0) runDeallocs();
 		return allocNow(header, bytes, false);
 	}
 
@@ -1865,6 +1995,7 @@ class Gc {
 			die("hxmc: allocation in a safe region (between Blocking.enter and leave, or in a blocking call): another thread may collect meanwhile (RT_VERIFY)\n");
 		Threads.safepoint();
 		if (finalQlen != 0 && finalsRunning == 0) callFinalisers(false);
+		if (ndeallocs != 0) runDeallocs();
 		return allocNow(header, bytes, true);
 	}
 
@@ -1978,8 +2109,10 @@ class Gc {
 	}
 
 	// a collection now: minor or major (full), as OCaml's Gc.minor/full_major
-	@:hxmc.collects public static function collect(full:Bool):Void
+	@:hxmc.collects public static function collect(full:Bool):Void {
 		collectFor(full, 0);
+		if (ndeallocs != 0) runDeallocs();
+	}
 
 	// the queued finalisers (an exception escapes, as from OCaml's Gc.full_major)
 	public static function runFinalisers():Void
@@ -2128,6 +2261,8 @@ class Gc {
 		peersLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(peersLock);
 		peerFree = -1;
+		weakLock = LibC.malloc(Os.MUTEX_BYTES);
+		Os.mutexInit(weakLock);
 		blocksLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(blocksLock);
 		blockFree = -1;
