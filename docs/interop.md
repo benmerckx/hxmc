@@ -903,6 +903,16 @@ counted. Where references cross:
   autoreleased too, so its toggle reference keeps it while a local holds
   the `id`.
 - **`==`** on `id`s compares the objects, without boxes.
+- **Letting go early**: a paired Haxe object holds its Objective-C object
+  until a collection finds the Haxe object dead; one in the old space,
+  until a major collection. `hxmc.objc.Peers.detach(o)` gives the object
+  up at once (the Haxe object or an `id` of it), for an owner that knows it
+  is done with it (a UI library's unmounted view): Objective-C frees it as
+  soon as it lets go. Messages through `o` then go to nil; calls Objective-C
+  still makes into its class reach `o` while the object lives. Without it,
+  `RT_PEER_BUDGET` (1000; 0: off) paired objects gone to the old space
+  start a major collection: the collector does not see the memory their
+  Objective-C objects hold.
 - **Pools**: the run loop drains one per event;
   `hxmc.objc.AutoreleasePool.run(() -> ...)` drains one around a loop of
   many messages or on a thread hxmc started (also when `f` throws). Code

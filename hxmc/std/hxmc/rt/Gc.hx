@@ -287,6 +287,9 @@ class Gc {
 		}
 		Mem.setPtr(peers, 16 * i, p);
 		Mem.setPtr(peers, 16 * i + 8, id);
+		// (made in the old space, as large or pretenured objects are: only a
+		// major collection frees it, as one promoted: sweepPeers counts those)
+		if (!inYoung(p)) peersPromoted++;
 		unlockLeaf(peersLock);
 		return i;
 	}
@@ -304,10 +307,107 @@ class Gc {
 		for (i in 0...npeers) {
 			var o = Mem.getPtr(peers, 16 * i);
 			if (o.isNull()) continue;
-			if (Ind.call1(peerRetainCount, Mem.getPtr(peers, 16 * i + 8)).toI64() > 1)
+			var cell = detachedCell(i);
+			if (!cell.isNull()) {
+				// (detached: a root while its object lives, whatever retains it; its
+				// id may be freed, so only the weak cell is read)
+				var live = Ind.call1(weakLoadRetained, cell);
+				if (!live.isNull()) {
+					Ind.call1(peerRelease, live);
+					Mem.setPtr(peers, 16 * i, fwdAs(o, root));
+				}
+				continue;
+			}
+			if (Ind.call1(peerRetainCount, Mem.getPtr(peers, 16 * i + 8)).toI64() > 1) {
+				// (a young one kept by Objective-C: promoted, as sweepPeers counts the others)
+				if (!major && inYoung(o) && !isFwd(hdrW0(o))) peersPromoted++;
 				Mem.setPtr(peers, 16 * i, fwdAs(o, root));
+			}
 		}
 	}
+
+	// ---- detaching (hxmc.objc.Peers.detach): the Haxe object gives up its
+	// retain at once (its id dealloced as soon as Objective-C lets go, not
+	// once a collection finds the Haxe object dead) and its id slot is nil
+	// (messages through it go to nil). The entry stays while the object
+	// lives, a root then (calls into the Haxe class still find their Haxe
+	// object), tracked by a weak cell (detachedCells, by entry index; nil:
+	// not detached); it is freed with its Haxe object, without a release.
+	static var detachedCells:Ptr;
+	static var detachedCap:Int;
+	static var weakInit:Ptr;
+	static var weakLoadRetained:Ptr;
+	static var weakDestroyFn:Ptr;
+	static var getClass:Ptr;
+	static var getIvar:Ptr;
+	static var ivarOffset:Ptr;
+
+	static inline function detachedCell(i:Int):Ptr
+		return i < detachedCap ? Mem.getPtr(detachedCells, 8 * i) : Ptr.nil();
+
+	@:hxmc.unsafe public static function detach(o:Dynamic):Void {
+		if (Mem.os() != 1 || o == null || peerRelease.isNull()) return;
+		// (o the Haxe object, or a box of its id: an id typed as its
+		// Objective-C class, a view a parent's subviews gave)
+		var id = idOf(o);
+		if (id.isNull()) return;
+		if (weakInit.isNull()) {
+			weakInit = @:privateAccess ObjCExceptions.fn(Mem.cstr("objc_initWeak"));
+			weakLoadRetained = @:privateAccess ObjCExceptions.fn(Mem.cstr("objc_loadWeakRetained"));
+			weakDestroyFn = @:privateAccess ObjCExceptions.fn(Mem.cstr("objc_destroyWeak"));
+			getClass = @:privateAccess ObjCExceptions.fn(Mem.cstr("object_getClass"));
+			getIvar = @:privateAccess ObjCExceptions.fn(Mem.cstr("class_getInstanceVariable"));
+			ivarOffset = @:privateAccess ObjCExceptions.fn(Mem.cstr("ivar_getOffset"));
+		}
+		// its entry: the index in its object's instance variable (ObjC.PEER_IVAR)
+		var ivar = Ind.call2(getIvar, Ind.call1(getClass, id), Mem.cstr("hxmc_peer"));
+		if (ivar.isNull()) return;
+		var i = Mem.getI32(id, Ind.call1(ivarOffset, ivar).toI64().toInt());
+		var cell = LibC.malloc(8);
+		Mem.setPtr(cell, 0, Ptr.nil());
+		Ind.call2(weakInit, cell, id);
+		lockLeaf(peersLock);
+		var ok = i > 0 && i < npeers && Mem.getPtr(peers, 16 * i + 8) == id && !Mem.getPtr(peers, 16 * i).isNull()
+			&& detachedCell(i).isNull();
+		var haxe = ok ? Mem.getPtr(peers, 16 * i) : Ptr.nil();
+		if (ok) {
+			if (i >= detachedCap) {
+				var cap = detachedCap == 0 ? 64 : detachedCap;
+				while (cap <= i) cap *= 2;
+				detachedCells = LibC.realloc(detachedCells, (cap : I64) * 8);
+				LibC.memset(detachedCells.addL((detachedCap : I64) * 8), 0, ((cap - detachedCap) : I64) * 8);
+				detachedCap = cap;
+			}
+			Mem.setPtr(detachedCells, 8 * i, cell);
+		}
+		unlockLeaf(peersLock);
+		if (!ok) {
+			Ind.call1(weakDestroyFn, cell);
+			LibC.free(cell);
+			return;
+		}
+		Mem.setPtr(haxe, 0, Ptr.nil());
+		var pool = poolPushAny();
+		Ind.call1(peerRelease, id);
+		idsPoolPop(pool);
+	}
+
+	// (an entry freed: its weak cell destroyed, if detached)
+	@:hxmc.unsafe static function undetach(i:Int) {
+		var cell = detachedCell(i);
+		if (cell.isNull()) return;
+		Mem.setPtr(detachedCells, 8 * i, Ptr.nil());
+		Ind.call1(weakDestroyFn, cell);
+		LibC.free(cell);
+	}
+
+	// ---- pressure: a paired Haxe object promoted to the old space keeps its
+	// Objective-C object (a view and all it holds: malloc's memory the heap
+	// does not see) until a major collection; RT_PEER_BUDGET of them (0:
+	// off; made there or promoted) since the last one start the next
+	static var peersPromoted:Int;
+	static var peersAtMajor:Int; // (RT_STATS: peersPromoted when the last major started)
+	static var peerBudget:Int;
 
 	// the sweeps' releases in an autorelease pool of their own: a dealloc they
 	// run autoreleases (a view its subviews, AppKit its caches' entries), and a
@@ -348,13 +448,16 @@ class Gc {
 			if (o.isNull() || !(inYoung(o) || (!o.ult(lo) && o.ult(hi)))) continue;
 			if (isFwd(hdrW0(o))) {
 				Mem.setPtr(e, 0, fwdAddr(o));
+				if (lo.isNull() && detachedCell(i).isNull()) peersPromoted++;
 				continue;
 			}
-			if (ndead == deadPeersCap) {
-				deadPeersCap = deadPeersCap == 0 ? 64 : deadPeersCap * 2;
-				deadPeers = LibC.realloc(deadPeers, (deadPeersCap : I64) * 8);
+			if (!detachedCell(i).isNull()) undetach(i) else {
+				if (ndead == deadPeersCap) {
+					deadPeersCap = deadPeersCap == 0 ? 64 : deadPeersCap * 2;
+					deadPeers = LibC.realloc(deadPeers, (deadPeersCap : I64) * 8);
+				}
+				Mem.setPtr(deadPeers, 8 * ndead++, Mem.getPtr(e, 8));
 			}
-			Mem.setPtr(deadPeers, 8 * ndead++, Mem.getPtr(e, 8));
 			Mem.setPtr(e, 0, Ptr.nil());
 			Mem.setPtr(e, 8, Ptr.ofI64((peerFree : I64)));
 			peerFree = i;
@@ -1290,7 +1393,7 @@ class Gc {
 
 	@:hxmc.unsafe static function minorCollect() {
 		var youngUsed = youngNext.diff(youngStart);
-		if (oldEnd.diff(oldPtr) < youngUsed + 64) {
+		if (oldEnd.diff(oldPtr) < youngUsed + 64 || (peerBudget > 0 && peersPromoted >= peerBudget)) {
 			majorAndTime(0);
 			return;
 		}
@@ -1321,6 +1424,8 @@ class Gc {
 	@:hxmc.unsafe static function majorCollect(need:I64) {
 		majors++;
 		collections++;
+		peersAtMajor = peersPromoted;
+		peersPromoted = 0;
 		#if hxmc.gc_prefault
 		if (pfState > 0) prefaultCancel();
 		#end
@@ -1402,7 +1507,12 @@ class Gc {
 			r.int(fromEnd.diff(fromStart) >> 20, 0);
 			r.str(" MB, limit ");
 			r.int(oldEnd.diff(oldStart) >> 20, 0);
-			r.str(" MB\n");
+			r.str(" MB");
+			if (npeers > 0) {
+				r.str("; pairs gone old since the previous ");
+				r.int(peersAtMajor, 0);
+			}
+			r.str("\n");
 			r.flush();
 		}
 		#if hxmc.census
@@ -1964,6 +2074,7 @@ class Gc {
 		poison = Os.has("RT_VERIFY");
 		if (poison) LibC.memset(youngStart, POISON, minorSize);
 		zchunk = (Os.envInt("RT_ZCHUNK_KB", 32) : I64) << 10;
+		peerBudget = Os.envInt("RT_PEER_BUDGET", 1000);
 		if (zchunk < 4096) zchunk = 4096;
 		var tk = Os.getenv("RT_TLAB_KB");
 		tlabSize = tk.isNull() ? (minorSize / 16 < (TLAB_MAX : I64) ? minorSize / 16 : TLAB_MAX) : (Os.atoi(tk) : I64) << 10;
@@ -2140,7 +2251,14 @@ class Gc {
 			r.int(promotedBytes >> 20, 0);
 			r.str(" of ");
 			r.int(youngBytes >> 20, 0);
-			r.str(" MB\n");
+			r.str(" MB");
+			if (npeers > 0) {
+				r.str("; pairs ");
+				r.int(npeers, 0);
+				r.str(", old since the last major ");
+				r.int(peersPromoted, 0);
+			}
+			r.str("\n");
 			r.flush();
 		}
 	}

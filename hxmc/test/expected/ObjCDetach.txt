@@ -1,0 +1,10 @@
+exit 0
+ObjCDetach.hx:58: detached, held by an array: alive true, hash through it 0
+ObjCDetach.hx:62: calls into it, across a collection: 2
+ObjCDetach.hx:64: let go: alive false
+ObjCDetach.hx:66: detached twice: fine
+ObjCDetach.hx:74: detached, held by nothing: alive false
+ObjCDetach.hx:83: detached as an id, held by nothing: alive false
+ObjCDetach.hx:87: not detached: alive true
+ObjCDetach.hx:89: not detached, after collections: alive false
+ObjCDetach.hx:91: done
