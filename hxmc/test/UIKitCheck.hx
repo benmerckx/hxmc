@@ -6,7 +6,7 @@ using StringTools;
 
 // A UIKit app in its bundle, run (make uikit-check; a Mac with Xcode):
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run UIKitCheck
-// (CI: a release's compiler, HXMC_TOOL=<it>, on macOS arm64 and x86-64)
+// (CI: @hxmc/cli's compiler, HXMC_TOOL=<it>, on macOS arm64 and x86-64)
 // hxmc/test/ios/UIKitHello.hx (its own hxmc_ui_main: UIApplicationMain, a
 // Haxe delegate, the program's body once launched) bundled as a packager
 // would, signed binding the Info.plist (-D hxmc.codesign-*), then:
@@ -39,7 +39,7 @@ class UIKitCheck {
 
 	// the executable linked into dir (the Info.plist written there first: the signature binds it)
 	static function build(target:String, info:String, exe:String):Bool {
-		// (a release's compiler: its own std, HAXE_STD_PATH)
+		// (an installed compiler: its own std)
 		var std = FileSystem.exists("bin/hxmc/std") ? ["-cp", "bin/hxmc/std"] : [];
 		var r = exec([tool, "-cp", "hxmc/test/ios"].concat(std).concat(["-main", "UIKitHello", "-D", 'hxmc.target=$target', "-D", "disable-parallelism",
 			"-D", 'hxmc.codesign-id=$ID', "-D", 'hxmc.codesign-info-plist=$info', "--custom-target", 'hxmc=$exe']), {merge: true});

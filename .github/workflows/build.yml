@@ -900,14 +900,6 @@ jobs:
         run: |
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           RT_VERIFY=1 "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run Check corpus --summary "$GITHUB_STEP_SUMMARY"
-      # a UIKit app in its bundle (UIKitCheck): Mac Catalyst (the runner's
-      # architecture) and, on arm64, the iOS simulator's iPhone and iPad
-      - name: UIKit app
-        if: always() && runner.os == 'macOS'
-        timeout-minutes: 20
-        run: |
-          export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
-          HXMC_TOOL="${{ steps.unpack.outputs.bin }}" "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run UIKitCheck
       # a debugger on a -debug build (DebugCheck --run: a breakpoint at a Haxe
       # line, the backtrace's Haxe functions and lines): gdb on Linux, lldb on
       # macOS; Windows: the unwind tables through the corpus (UnwindTables)
@@ -1223,6 +1215,22 @@ jobs:
           grep -q "hello from js" js.out
           # Windows: the native compiler run without node passes a build for hxmc to the launcher
           if [ "$RUNNER_OS" = Windows ]; then rm -rf bin && node_modules/@hxmc/cli/dist/haxe.exe build.hxml && ./bin/app.exe; fi
+      # a UIKit app in its bundle (hxmc/test/UIKitCheck.hx) built by the
+      # package's compiler: Mac Catalyst (the runner's architecture) and, on
+      # arm64, the iOS simulator's iPhone and iPad
+      - uses: actions/checkout@v7
+        if: runner.os == 'macOS'
+        with:
+          path: src
+          sparse-checkout: |
+            hxmc/test
+            haxe/test
+      - name: UIKit app
+        if: runner.os == 'macOS'
+        timeout-minutes: 20
+        run: |
+          cd src
+          HXMC_TOOL="$RUNNER_TEMP/app/node_modules/.bin/haxe" "$RUNNER_TEMP/app/node_modules/.bin/haxe" -cp hxmc/test -cp haxe/test --run UIKitCheck
       # HXMC_RT_DIR adds to the launcher's search (the native compiler in its
       # place too): a directory without the runtime objects, and empty (unset)
       - name: HXMC_RT_DIR through the launcher
