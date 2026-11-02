@@ -366,6 +366,12 @@ jobs:
           make hxmc
       - name: Cross-build hxmc's corpus
         run: make corpus-stage CORPUS_TARGETS="${{ matrix.targets }}"
+      # the type parameters' tagged words tested before every read as a
+      # reference (-D hxmc.verify-tags, RT_VERIFY=1: docs/hxmc.md), on the
+      # runner: x86-64 natively, WebAssembly under node
+      - name: Corpus, tagged words verified
+        if: matrix.group != 'windows'
+        run: make corpus-verify VERIFY_TARGET=${{ matrix.group == 'wasm' && 'wasm32-wasi' || 'linux-x86_64' }}
       # the native compiler (the npm package's: Mir macros and --run) for each
       # target of the group (the test jobs run its Mir lane on the targets' machines)
       - name: Cross-build the native compiler

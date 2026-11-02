@@ -127,7 +127,7 @@ endef
 
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
-	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage \
+	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
 	shared-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro measure quick check full clean distclean
 
@@ -148,8 +148,8 @@ help:
 ##               rt-target: RT_TARGET's alone, rt-layouts: the committed layouts checked (CI's rt jobs)
 ##
 ## Test (docs/testing.md)
-##   quick       after every edit of hxmc: the tool, the x64 corpus, again with RT_VERIFY=1, the wasm
-##               corpus under node, the module cache's store, the lowering's queries (CASES restricts
+##   quick       after every edit of hxmc: the tool, the x64 corpus, again with RT_VERIFY=1 and
+##               -D hxmc.verify-tags, the wasm corpus under node, the module cache's store, the lowering's queries (CASES restricts
 ##               the corpus)
 ##   check       before a commit: quick + arm64 (qemu), wine, a 16 KB nursery, legacy exception handling,
 ##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared
@@ -193,6 +193,8 @@ help:
 ##               simulator's iPhone and iPad; a Mac with Xcode
 ##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
 ##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
+##   corpus-verify  the corpus with -D hxmc.verify-tags and RT_VERIFY=1 for VERIFY_TARGET (the host's,
+##               or wasm32-wasi): a type parameter's tagged word read as a reference fails it
 ##
 ## Bench (docs/testing.md, "Benchmarks")
 ##   bench       the HaxeBenchmarks cases on hxmc, C++, JVM, JS, HL/C and HL (hxmc/test/Bench.hx; BENCH_ARGS)
@@ -527,6 +529,13 @@ corpus-stage: $(TOOL) $(STD) $(HOST_RT)
 			wasm*) ;; \
 			*) $(SCRIPT) DebugCheck --target $$t --stage bin/corpus/$$t/_debug || exit 1 ;; esac; \
 	done
+
+# the corpus built with -D hxmc.verify-tags and run with RT_VERIFY=1 (docs/hxmc.md,
+# "Values of type parameters": a type parameter's tagged word read as a
+# reference ends the program); VERIFY_TARGET: the host's, or wasm32-wasi
+VERIFY_TARGET ?= $(HOST)
+corpus-verify: $(TOOL) $(STD) $(HOST_RT)
+	export RT_VERIFY=1; $(SCRIPT) Corpus -v --target $(VERIFY_TARGET) --verify-tags $(CASES)
 
 # shared libraries of the glibc mode loaded by an hxmc program (hxmc/test/SharedCheck.hx), Android's built
 shared-check: $(TOOL) $(STD) $(HOST_RT)

@@ -46,6 +46,7 @@ class LinkWasm {
 	var heapBase = 0;
 	public var nameSection = false;
 	public var legacyEh = false; // legacy exception handling (WasmGen): no exnref global
+	public var maxPages = 0; // the memory's maximum in 64 KB pages (0: none; -D hxmc.wasm-memory-max)
 	var stackTop = 0;
 
 	// WASI preview 1 (the functions the runtime imports): signatures
@@ -274,11 +275,14 @@ class LinkWasm {
 		s.u8(0);
 		Enc.uleb(s, table.length + 1);
 		section(m, 4, s);
-		// memory
+		// memory (with a maximum: flags 1)
 		s = new Buf(16);
 		s.u8(1);
-		s.u8(0);
-		Enc.uleb(s, (heapBase >> 16) + 1);
+		var pages = (heapBase >> 16) + 1;
+		if (maxPages > 0 && maxPages < pages) throw "hxmc: wasm: -D hxmc.wasm-memory-max is less than the module's data (" + (pages >> 4) + " MB)";
+		s.u8(maxPages > 0 ? 1 : 0);
+		Enc.uleb(s, pages);
+		if (maxPages > 0) Enc.uleb(s, maxPages);
 		section(m, 5, s);
 		// tag
 		s = new Buf(16);

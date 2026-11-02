@@ -55,6 +55,19 @@ class TryCatch {
 	}
 }
 
+// port: an entry of the inline cache of `emitMethodCall`.
+class MethodCache {
+	public final proto:Vprototype;
+	public final owner:Vprototype;
+	public final slot:Int;
+
+	public inline function new(proto:Vprototype, owner:Vprototype, slot:Int) {
+		this.proto = proto;
+		this.owner = owner;
+		this.slot = slot;
+	}
+}
+
 // port: deviations:
 // - OCaml partial application (`emit_x a b env`) becomes a function of the
 //   compile-time arguments returning an `Emitter` closure. Emitters that upstream
@@ -566,14 +579,31 @@ class EvalEmitter {
 		}
 	}
 
+	// port: not at the pinned commit: upstream's inline cache of method calls (haxe6
+	// work, HaxeFoundation/haxe 7f7195da). The prototype a call site last saw, with
+	// the prototype declaring the method and its slot (a monomorphic inline cache).
+	// An entry is immutable: a thread reading the cache while another one changes it
+	// sees either entry.
+	static function findMethod(proto:Vprototype, name:Int, p:Pos):MethodCache {
+		var owner = proto;
+		while (true) {
+			var i = owner.pnames.findOpt(name);
+			if (i != null) return new MethodCache(proto, owner, i);
+			owner = owner.pparent;
+			if (owner == null)
+				EvalMisc.throwString('Field ${EvalHash.revHash(name)} not found on prototype ${EvalHash.revHash(proto.ppath)}', p);
+		}
+	}
+
 	public static function emitMethodCall(exec:Emitter, name:Int, execs:Array<Emitter>, p:Pos):Emitter {
+		var cache:Null<MethodCache> = null;
 		return function(env:Env):Value {
 			checkStackDepth(env);
 			var vthis = exec(env);
 			var proto = getPrototype(vthis, p);
-			var vf = try EvalField.protoFieldRaise(proto,
-				name) catch (_:NotFound)
-				EvalMisc.throwString('Field ${EvalHash.revHash(name)} not found on prototype ${EvalHash.revHash(proto.ppath)}', p);
+			var c = cache;
+			if (c == null || c.proto != proto) c = cache = findMethod(proto, name, p);
+			var vf = c.owner.pfields[c.slot];
 			var vl = applyAllOn(vthis, vf, execs, env);
 			env.envLeavePmin = p.pmin;
 			env.envLeavePmax = p.pmax;

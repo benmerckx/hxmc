@@ -1614,6 +1614,12 @@ class Gc {
 		#end
 		fromStart = oldStart;
 		fromEnd = oldPtr;
+		// (the to-space is the other region, reserved whole, so the copy
+		// never needs memory it does not have, but for what does not fit in
+		// it: an end here rather than a write past it. The limit keeps a
+		// nursery's room below the region's end, so only an old space that
+		// fills its region, and a larger nursery, comes here)
+		if (fromEnd.diff(fromStart) + youngNext.diff(youngStart) > regionBytes) die("out of memory: what a major collection may copy does not fit in the old space's region (RT_REGION_MB)\n");
 		curRegion ^= 1;
 		oldStart = region(curRegion);
 		oldPtr = oldStart;
@@ -1678,7 +1684,7 @@ class Gc {
 		// its allocation collected again and again)
 		var least = live + need + minorSize;
 		if (limit < least) limit = least;
-		if (limit > regionBytes) limit = regionBytes;
+		if (limit > regionBytes - minorSize) limit = regionBytes - minorSize;
 		oldEnd = oldStart.addL(limit);
 		dumpOld(oldEnd);
 		if (stats) {
@@ -2069,7 +2075,7 @@ class Gc {
 					p = Ptr.ofI64(Atomic.load64(cell));
 					// (the region cannot hold it even after a major collection:
 					// another would not help, and the loop would never end)
-					if (oldStart.addL(regionBytes).diff(p) < bytes) die("out of memory: an object does not fit in the old space's region (RT_REGION_MB)\n");
+					if (oldStart.addL(regionBytes - minorSize).diff(p) < bytes) die("out of memory: an object does not fit in the old space's region (RT_REGION_MB)\n");
 					continue;
 				}
 				var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), p.add(bytes).toI64()));
@@ -2289,7 +2295,7 @@ class Gc {
 		oldPtr = region0;
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
 		growth = Os.envInt("RT_OLD_GROWTH", 300);
-		if (oldStart.addL(regionBytes).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes);
+		if (oldStart.addL(regionBytes - minorSize).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes - minorSize);
 		dumpTop0 = region0;
 		dumpTop1 = region1;
 		dumpOld(oldEnd);
@@ -2515,6 +2521,13 @@ class Gc {
 
 	@:hxmc.unsafe public static function pause(which:Int):Float
 		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
+
+	// what the old space holds (large objects included) and the nursery up to
+	// what the threads took of it (hxmc.GcStats.liveBytes)
+	@:hxmc.unsafe public static function liveBytes():Float {
+		var b:Float = cast(Ptr.ofI64(Atomic.load64(Mem.sym("hxmc_old_ptr"))).diff(oldStart) + Ptr.ofI64(Atomic.load64(Mem.sym("hxmc_young_next"))).diff(youngStart));
+		return b;
+	}
 
 	// the bytes the heap spaces take
 	@:hxmc.unsafe public static function heapBytes():Float {

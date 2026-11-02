@@ -196,7 +196,7 @@ class Roots {
 			case ECall(g, _): "a call of " + hxmc.ir.Facts.displayName(g);
 			case ECallHost(n, _, _): (hxmc.ir.CInterop.BLOCKING.exists(n) ? "a call of the C function " : "a call of the runtime's ") + n;
 			case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): "a dynamic call";
-			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_) | EBox(_): "the allocation of " + hxmc.ir.Facts.allocName(e);
+			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_) | EBox(_) | EUntag(_): "the allocation of " + hxmc.ir.Facts.allocName(e);
 			case _: "a GC point (" + e.getName() + ")";
 		}
 

@@ -194,8 +194,14 @@ space by copying into a new region.
   space.
 - **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
   ones in percent of what a major collection left live (300 natively, 200
-  on wasm32). The tool sets 768 MB for a build; the compilation server
-  2048 MB and 150%.
+  on wasm32). Natively the next limit has room for four nurseries more.
+  On wasm32 it has room for a nursery promoted whole (what a minor
+  collection asks of the limit) and three more, but no more than what is
+  live: four nurseries whatever was live gave 43 MB live with a 32 MB
+  nursery a 214 MB limit, now 166 MB (#129). Once memory could not grow
+  for a collection's worst case, the growth is halved and the three
+  nurseries left out (101 MB). The tool sets 768 MB for a build; the
+  compilation server 2048 MB and 150%.
 - **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
   64 MB, a helper thread faults in its pages ahead of minor collections.
   The compilers are built with it. `RT_PREFAULT=0` turns it off.
@@ -225,7 +231,9 @@ at an allocation inside a safe region (every allocation takes the slow
 path then, which checks).
 
 Both collectors keep the counters of `hxmc.GcStats`
-([using.md](using.md#measuring-the-collector)): bytes allocated (the
+([using.md](using.md#measuring-the-collector)): what the heap holds
+(`liveBytes`: the old space's objects and the nursery up to its allocation
+pointer, summed when read), bytes allocated (the
 nursery up to the allocation pointer, what TLABs left unused taken off at
 each collection, and large objects), per thread too (each thread's record,
 `Mutator.allocated`, gains the bytes of a run of TLABs when the thread
@@ -336,6 +344,43 @@ match; a closure capturing nothing is static data.
   code can have keeps a constructor entry. A class without a constructor,
   or whose entry was dropped, fails as on Eval (`Instance constructor not
   found`).
+- **Classes by name** (`Type.resolveClass`, `haxe.Unserializer`): live code
+  can have the value of each class it can name, so `Type.createInstance`
+  and `createEmptyInstance` make those, which keeps their methods when a
+  name is computed. It can name the classes that Haxe's `-dce full` keeps,
+  marked on the code that can run (the target's constants folded):
+  - the classes live code makes, uses as a value, tests (`Std.isOfType`,
+    `catch`), casts to or reads a field of;
+  - those a type of live code names: an argument's, a result's, a local's,
+    a static's it uses, a field's of a class it can name, within an
+    `Array`, a function type or an enum's arguments;
+  - their superclasses;
+  - those `@:keep` keeps: on the class or one of its fields, or `@:keepSub`
+    on a superclass. Unlike the others, such a class is lowered when nothing
+    else names it;
+  - those a string literal of live code names (`Type.resolveClass("a.B")`).
+
+  `Type.resolveClass` finds no other class, and reflection keeps nothing of
+  theirs. A class only the types of dead code name (a method nothing can
+  call, a dropped static) is not found, nor one a branch of another target
+  names (`if (Mem.target() >= 9)`). Under `-dce std` Haxe also keeps the user
+  classes nothing names, which the program does not have: `@:keep` the
+  classes a program finds by name only (plugins listed in data, the classes
+  of saved data a program reads but never makes).
+
+  The lowering meets more types than the code that runs names: it lowers
+  every method of a class it has met, live or not, the statics of a class
+  used as a value, and a static variable's declared type with its class's
+  static initializer, none of which a test of the target removes. So a
+  class of another target can be among the program's classes (helder's
+  `AndroidWindow`, whose statics' types name it), and with keep-all
+  reflection its methods and their C functions were linked (`libandroid.so`
+  in a Linux program, #134). A class marked for another target
+  (`@:hxmc.android`, `@:hxmc.ios`, `@:hxmc.os("macos")`, `@:hxmc.wasm`,
+  `@:hxmc.native`, as the runtime's classes) is found only when live code
+  makes it or uses its class value, and its `__init__` runs on its target
+  only. A test of the target folds as the left side of `&&` and `||` too
+  (`Mem.target() >= 9 && x`), so what the right side calls is not reached.
 
 Before it, DCE: hxmc's std is a user class path (`-cp bin/hxmc/std`, last so
 that its modules win), and Haxe's default DCE keeps the classes of user
@@ -388,6 +433,114 @@ lowers to plain loads and stores; references keep the write barrier.
 - **Bounds**: `-D hxmc.native-array-outofbounds` decides at code
   generation (`Lower.bounds`). The test is IR, so the optimizer drops a test
   a dominating one decides. The std's own loops use `unsafeGet`/`unsafeSet`.
+
+## Values of type parameters
+
+A value of a type parameter is a tagged 64-bit word (issue #127,
+JavaScriptCore's encoding): either a reference, as Dynamic holds it, or an
+Int or Float in the word itself, so that storing a number in a `T` slot
+allocates nothing. `Lower.lowerTy` gives a type parameter the IR type
+`TRef(RTag)`. `Null<Int>` and `Null<Float>` (also optional arguments of
+those types) are words too: their IR type stays `RNull(TI32)`/`RNull(TF64)`,
+so arithmetic, ordering and defaults keep their null-aware rules, but the
+representation is the word's (`Ir.isWord`, repr `t`): null is 0, a number
+is encoded as its kind, a box from Dynamic is taken as it is, and
+`Null<Bool>`/`Null<Int64>` still box (a Bool's word is its box anyway).
+A `NativeArray<Null<Int>>` stays a view of its own (checked against
+`NativeArray<Int>`'s storage), its elements boxed.
+
+| Word | Value |
+| --- | --- |
+| `0x0000_xxxx_xxxx_xxxx` | a reference: null is 0, and every address (the heap, static data, the C heap) is below 2^48 |
+| `0x0002_0000_0000_0000` to `0xFFF2_0000_0000_0000` | a Float: its bits plus 2^49; NaN is made canonical first (word `0x7FFA_0000_0000_0000`), so -0, the infinities and subnormals keep their bits |
+| `0xFFFF_0000_xxxx_xxxx` | an Int: its 32 bits under the prefix 0xFFFF |
+
+A Bool is its static box and an Int64 a box: references. A reference may
+be a box too (a number that went through Dynamic), so decoding goes by the
+tag first, then through the box as Dynamic's conversions do.
+
+- **The collector** needs nothing: every scalar's word is at or above 2^49,
+  outside every heap range, and forwarding tests addresses against its
+  regions (`Gc.inYoung`, `inFrom`), as it skips the static boxes.
+  WebAssembly's granule table covers 4 GB: `wasm/Gc.hx` reads it only for
+  a word below that (`granOf`). With `RT_VERIFY=1` its heap walk accepts in
+  a reference slot only null, an address, or a word of the encoding (an
+  Int's, a canonical NaN's, not the nursery's pattern). The census counts
+  such words apart (`tagged scalars`).
+- **Code** encodes and decodes inline: the object-level operations `Tag` (an
+  Int or Float to its word, without a branch) and `Untag` (a word to an
+  Int, Float or Bool: the expected kind decoded inline, anything else by
+  `hx_tag_int`, `hx_tag_float`, `hx_tag_bool`, `hx_tag_i64`; or to Dynamic:
+  a reference as it is, a scalar boxed by `hx_tag_box`), lowered by
+  `MemLower.tagFrom` and `untagTo`. The runtime's `hxmc.unsafe.Mem` has them
+  as intrinsics (`tagInt`, `untagDynamic`, ...): the corpus's `TaggedWords`
+  checks both against `Tagged`'s and the expected bits.
+- **Where words live**: the locals, arguments and results of type `T`, the
+  fields of type `T` of classes and the arguments of type `T` of enum
+  constructors (Facts' field kind `t`: the runtime's `Dyn.boxSlot`,
+  `Type.enumParameters`, `Type.enumEq` and `Std.string` box such a word or
+  compare it as a number), closures' captures and arguments, and statics
+  of `Null<Int>`/`Null<Float>` (kind `t` in the statics' table:
+  `Dyn.staticGet`). Storage the
+  runtime reads as Dynamic holds Dynamic, never a word: an `Array<T>`'s or
+  `NativeArray<T>`'s elements (`Lower.stored`), a structure's fields (also
+  where the shape's first object had a class's type there: shapes are
+  shared by representation), and the arguments and results of what the
+  runtime implements (an extern's signature, Array's and String's methods:
+  `FnLower.hty`, also inside function types).
+- **Conversions** (`FnLower.coerce`): an Int or Float to a word inline
+  (`ETag`), a Bool or Int64 boxed (a Bool's box is static); a word to a
+  number inline (`EUntag`, the other kind and boxes by the runtime, which
+  allocates nothing); a word to Dynamic, `Null<T>`, a structure or an
+  extern's instance boxed where it is a scalar's (`EUntag` to a reference: a
+  test inline, `hx_tag_box` on the slow path only, which a cold site roots
+  around, `Facts.markCold`); a word to a class's, an enum's, an array's or a
+  function's type as it is (no scalar is one: an explicit `ECast`); any
+  reference to a word as it is. Reading an `Array<T>`'s element as a word
+  encodes an Int or Float element rather than boxing it (`hx_aget_t_slow`).
+  `Opt` folds a word decoded where it was just encoded (a scalar-replaced
+  field, an inlined generic function).
+- **`==` on `T`** (`FnLower.equality`, `MirBuild.tagEq`): equal words are
+  equal values but NaN's word; two different Ints' words are not; anything
+  else by `hx_tag_eq_slow`, which compares numbers of either kind and boxes
+  by value and references as `hx_dyn_eq`, without boxing. So NaN != NaN, -0
+  == 0, and a boxed 3 from Dynamic equals an encoded 3.
+- **Signatures**: a closure's signature key has `t` for a word (`Ir.repr`),
+  so a function of `T` and one of Dynamic or of a class differ and convert
+  through an adapter (`FnLower.coerce`), which boxes or decodes. Where a
+  closure of concrete reference types is passed to a generic function
+  (`Lambda.map` with a function of `String`, an iterator of the port's)
+  the words it gets are references of its types, so it is passed as it is
+  (`FnLower.sameClosure`), without an adapter. A Dynamic converted to a
+  function type (an `Array<Lexer->T>`'s element, Dynamic's) keeps a closure
+  whose signature differs only in that safe direction, a word taken where
+  a reference is given or a reference returned where a word is read
+  (`hx_clos_of_sig`), rather than calling it through a dynamic adapter. A method implementing a
+  declaration of `T` takes and returns words (`Lower.rootDecl`), so an
+  override of concrete types decodes without allocating. The runtime's
+  dynamic calls convert by the key (`DYN<s>` trampolines, `Dyn.anonCallSlow`).
+- **Structural calls**: a structure's method signature has words where the
+  structure is generic, a class's method may not (`Iterator<T>.next` on an
+  Array's iterator, which returns Dynamic; `Iterator<Int>.next` on a generic
+  class's). The inline cache takes a method of either signature and
+  converts the result or the arguments as it calls (`Ir.anonAlternatives`,
+  `MemLower.callAnon`); the slow path roots the references and words it
+  passes in pushed slots (`hx_anon_call_slow_r`), since the runtime
+  allocates before it has read them all.
+- **The build checks** every function's final IR for a word reaching
+  Dynamic, a number, a structure's field or the runtime's arguments without
+  a conversion (`hxmc.ir.TagCheck`): a missed boundary fails the build,
+  naming the function and the expression, instead of crashing the program.
+- **Verify mode** (`-D hxmc.verify-tags`): a word read as a reference ends
+  the program with a message (`rt_tagged_access`). Each operation on objects
+  tests the reference it dereferences (`MemLower.verifyRef`: fields, enum
+  tags, type tests, unboxing, virtual, closure and structural calls,
+  arrays, native arrays), and so does each `Mem.addr` of the runtime, the
+  conversion every runtime function reading a Dynamic goes through. A
+  missed conversion from a type parameter to Dynamic shows at the first such
+  read, not as a crash later. The corpus's verify lanes build with it
+  (`Corpus --verify-tags`, with `RT_VERIFY=1`: `make quick`, CI's corpus
+  job).
 
 ## Where struct values are boxed
 
@@ -1140,18 +1293,63 @@ Linear memory only grows, and browsers refuse it early, so the runtime
 - Only memory handed out before and freed is zeroed: fresh memory from
   `memory.grow` is zero already.
 
-When `memory.grow` fails the runtime prints "out of memory: linear memory
-is N MB, growing it by M MB failed" and exits. Objects over 128 KB get a
-region of their own in the old space; an Array grown by doubling reaches
-about 134M Floats (1 GB of storage) before its next growth no longer fits
-next to the old storage and the collector's copy.
+Objects over 128 KB get a region of their own in the old space (aligned to
+64 KB, the granule of the table that says which space an address is in).
+A major collection promotes a reached one in place: its region joins the
+to-space as it is, unmoved and uncopied, and the regions of those not
+reached go back to the heap. So a 48 MB `Bytes` costs 48 MB, not 96 MB at
+each major collection.
+
+A host may refuse `memory.grow` well below 4 GB (Chrome on Android), and a
+copying collection cannot stop halfway, so each collection takes the
+memory it may copy into before it starts (`Gc.reserveFor`):
+
+- For the worst case: everything the nursery holds and, for a major
+  collection, everything the old space's chunks hold (large objects stay
+  in place), an eighth more for the chunks' ends, less the free chunks;
+  the regions of the nursery's large objects. The to-space's list is sized
+  too. What it does not use goes back after it.
+- When memory cannot grow so far: a trace marks what the collection would
+  copy, without copying (a bit per 8 bytes of memory, taken for the
+  trace), and the reservation is for that. The nursery then shrinks to its
+  floor and stops growing, and the limits get tighter (above).
+- When a major collection cannot have even that, a minor one runs if it
+  can (the program goes on past the limit; the next collection tries a
+  major one again); when neither can, what is live does not fit, and the
+  program ends before collecting.
+
+The copy's stack (depth-first, an entry per level) needs no reservation:
+when it cannot grow, the object stays off it and the to-space is scanned
+again for what was left (`RT_VERIFY=1` keeps it at 16 entries, so that
+path runs). With a reservation, nothing in a collection grows memory.
+`-D hxmc.wasm-memory-max=<MB>` declares the module's maximum, which
+`GcMemoryCap` uses to test this under node and wasmtime. Peak memory is
+the old space, the nursery and the reservation; the reservation's unused
+part is never touched, so it is address space more than resident memory.
+
+When `memory.grow` fails outside a collection the runtime prints "out of
+memory: linear memory is N MB, growing it by M MB failed" and exits. An
+Array grown by doubling reaches about 134M Floats (1 GB of storage) before
+its next growth no longer fits next to the old storage.
+
+The collector does not recurse (its stacks are in linear memory), so a
+collection needs no more of node's stack than the program's deepest
+frame. node's `--stack-size` beyond the system's stack (`ulimit -s`)
+crashes node with a segmentation fault on deep recursion instead of a
+RangeError (`wasi.mjs` takes the shadow stack's size from it); the
+Makefile runs node after `ulimit -s unlimited`.
 
 On every target an Array's storage holds at most 268,435,453 elements
 (`Boxes.MAX_CAP`, 2 GB of 8-byte elements); growing past that throws "out
 of memory: an Array of N elements is longer than the longest". Natively, an
 object that does not fit in the old space's region even after a major
 collection exits with "out of memory: an object does not fit in the old
-space's region (RT_REGION_MB)".
+space's region (RT_REGION_MB)". The native to-space is the other region,
+reserved whole, so a native collection never needs memory it does not have;
+the limit keeps a nursery's room below the region's end, and a major
+collection whose copy could still pass it (a nursery grown since) exits
+before it starts ("what a major collection may copy does not fit in the old
+space's region"). Natively, large objects are copied like any other.
 
 ## Debugging
 

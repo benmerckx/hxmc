@@ -18,7 +18,7 @@ The fixpoint and crosshost must stay byte-identical.
 
 | Tier | What it runs |
 | --- | --- |
-| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1`, the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
+| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
 | `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
@@ -122,7 +122,10 @@ an expression of the case or of hxmc's std whose type left its type
 parameter's scope, as `Arena.makeArray`'s did when inlined into `slice`).
 `Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases a
 target cannot run. `RT_VERIFY=1` fills the free nursery with a pattern so
-uninitialized allocations and missed roots show at once. The corpus builds
+uninitialized allocations and missed roots show at once; `--verify-tags`
+builds with `-D hxmc.verify-tags`, which ends a program reading the tagged
+word of a type parameter's value as a reference
+([hxmc.md](hxmc.md#values-of-type-parameters)). The corpus builds
 from HXB archives, without the module cache; CI's npm-pack job builds with
 the cache off, so the uncached path stays tested.
 
@@ -163,7 +166,7 @@ a release is published only when all of them pass.
 | `changes` | yes | what the run needs (`.github/select.sh`); whether the runtime objects' release exists |
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the module cache checks, `make dev-check`, the release binaries and lix for the six targets |
-| `corpus` | yes | the corpus for every target (three jobs), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
+| `corpus` | yes | the corpus for every target (three jobs), on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
 | `crosshost` | yes | `make crosshost` (two jobs) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |

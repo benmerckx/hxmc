@@ -1131,7 +1131,7 @@ class InterpGen {
 				code.push(UNREACH);
 			case NullCheck | New | NewDyn | InitField | GetField | SetField | FieldAddr | EnumTag | TypeTest | Box | Unbox | VirtualCall | ClosureCall | AnonGet |
 				AnonTest | AnonStore | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush | NewArray | ArrayInit | NewNArray | NArrayInit | NArrayLength |
-				NArrayGet | NArraySet | NArrayDyn | RefStore:
+				NArrayGet | NArraySet | NArrayDyn | RefStore | Tag | Untag:
 				// (the interpreter runs lowered Mir, as the back ends)
 				throw "-D hxmc.interp: " + MFunc.opName(i.op) + " is object-level (MemLower lowers it first)";
 		}

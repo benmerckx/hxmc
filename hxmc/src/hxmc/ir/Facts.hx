@@ -257,7 +257,7 @@ class Facts {
 			c.nslots = slots.length;
 			// (a record's header counts 16 bits of slots, 0xFFFF an array's mark: Types)
 			if (slots.length >= 0xFFFF) throw "hxmc: class " + c.name + " has more than 65534 slots";
-			var t = entry(c.name, "TK_CLASS", slots, c.name);
+			var t = entry(c.unnamed ? "" : c.name, "TK_CLASS", slots, c.name);
 			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it)
 			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD)) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
 			// (a derived field: its NativeArray field's slot, kind L, the runtime's Dyn.boxSlot)
@@ -430,7 +430,7 @@ class Facts {
 			case EBin(_, a, b):
 				f(a);
 				f(b);
-			case ENot(a) | EConv(_, a) | EBox(_, a) | EUnbox(_, a) | EField(_, _, a) | EFieldAddr(_, _, a) | EAnonGet(_, _, a, _) | ECast(_, a) | EInstOf(_, a) | EEnumTag(a, _) | EEnumParam(_, _, a) | EArrLen(a) | EBoxGet(_, a) | ECapture(_, _, a) | ENewBox(_, a):
+			case ENot(a) | EConv(_, a) | EBox(_, a) | EUnbox(_, a) | ETag(_, a) | EUntag(_, a) | EField(_, _, a) | EFieldAddr(_, _, a) | EAnonGet(_, _, a, _) | ECast(_, a) | EInstOf(_, a) | EEnumTag(a, _) | EEnumParam(_, _, a) | EArrLen(a) | EBoxGet(_, a) | ECapture(_, _, a) | ENewBox(_, a):
 				f(a);
 			case EArrGet(_, a, i) | EArrGetU(_, a, i):
 				f(a);
@@ -692,6 +692,7 @@ class Facts {
 			case ENewBox(_): "a box (a captured variable)";
 			case ENewAnon(_): "an anonymous object";
 			case EBox(_): "a box (Dynamic or Null<T>)";
+			case EUntag(_): "a box (a type parameter's value as Dynamic)";
 			case _: e.getName();
 		}
 
@@ -716,6 +717,7 @@ class Facts {
 				case ECallHost(n, _, _) if (GcPoints.gcPoint(e) > 0): why = "it calls the runtime's " + n;
 				case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): why = "it allocates " + allocName(e);
 				case EBox(_): why = "it boxes a value (Dynamic or Null<T>)";
+				case EUntag(TRef(_), _): why = "it boxes a type parameter's value (as Dynamic)";
 				case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): why = "it calls through a " + (e.match(ECallDispatch(_)) ? "virtual or interface method" : "closure or structural field") + " (the callee is unknown)";
 				case _ if (GcPoints.gcPoint(e) > 0): why = "it reads Dynamic or structural data (" + e.getName() + ", which may box)";
 				case _:
@@ -813,6 +815,9 @@ class Facts {
 						ss[k] = SCold(next++, st);
 					case SSet(_, ECallHost("hxmc_narray_new", args, _)) if (args.filter(a -> !gcFree(a)).length == 0):
 						ss[k] = SCold(next++, st);
+					// (a type parameter's value as Dynamic: boxed on the slow path only)
+					case SSet(_, EUntag(TRef(_), a)) if (gcFree(a)):
+						ss[k] = SCold(next++, st);
 					// (a NativeArray seen as Dynamic: the runtime, on the slow path only)
 					case SSet(_, ECallHost("hxmc_narray_dget", args, _)) | SExpr(ECallHost("hxmc_narray_dset", args, _)) if (args.filter(a -> !gcFree(a)).length == 0):
 						ss[k] = SCold(next++, st);
@@ -869,7 +874,7 @@ class GcPoints {
 			// (a no-GC function that enters a safe region, f.blocks: another
 			// thread may collect meanwhile, as at rt_blocking_enter below)
 			case ECall(f, _) if (f.noGc && !f.blocks): 0;
-			case ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | EBox(_) | EAnonGet(_) | EArrGet(TRef(RAny), _, _) | EArrGetU(TRef(RAny), _, _): 1;
+			case ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | EBox(_) | EUntag(TRef(_), _) | EAnonGet(_) | EArrGet(TRef(RAny | RTag), _, _) | EArrGetU(TRef(RAny | RTag), _, _): 1;
 			// (a NativeArray literal: its elements stored after the allocation, MirBuild)
 			case ECallHost("hxmc_narray_lit", _, _): 2;
 			// (a safe region the runtime's code enters and leaves itself,

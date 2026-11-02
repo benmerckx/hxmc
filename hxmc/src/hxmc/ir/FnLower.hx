@@ -88,6 +88,33 @@ class FnLower {
 	inline function tyOf(e:TExpr):Ty
 		return l.ty(e.etype);
 
+	// the type t has in the signature of a function the runtime implements (an
+	// extern class's method, field or constructor; Array's, String's): a type
+	// parameter's value as Dynamic, also as a function type's argument or
+	// result (the runtime calls such a function with Dynamic arguments), so
+	// that no tagged word reaches it (coerce boxes the scalars' words)
+	function hty(t:T):Ty
+		return erase(ty(t));
+
+	function erase(t:Ty):Ty
+		return switch t {
+			case TRef(RTag): TRef(RAny);
+			case TRef(RClos(s)) if (s.key.indexOf("t") >= 0): TRef(RClos(l.sig([for (a in s.args) erase(a)], erase(s.ret))));
+			case _: t;
+		}
+
+	// the receiver of a method or field the runtime implements (String's,
+	// Array's, an extern's): a type parameter's value (T:String) as Dynamic
+	function recvValue(obj:TExpr):Ex {
+		var x = value(obj), t = tyOf(obj);
+		return Ir.isWord(t) ? coerce(x, t, TRef(RAny)) : x;
+	}
+
+	// t as the field of a structure (which the runtime reads as Dynamic): a
+	// struct boxed, a type parameter's value as Dynamic
+	function stored(t:Ty):Ty
+		return Ir.isWord(t) ? TRef(RAny) : l.boxed(t);
+
 	// the default values of a function's arguments, and their variables (LowerQueries.argDefaults)
 	function defaultValues(f:FuncInfo):Null<Array<Null<TExpr>>> {
 		var d = l.argDefaults(f);
@@ -213,6 +240,7 @@ class FnLower {
 	}
 
 	// static initializer: every static var with an expression, then __init__
+	// (on the class's target only: Lower.ofTarget)
 	public function runInit(c:TClass) {
 		boxed = new Map();
 		for (cf in c.clOrderedStatics)
@@ -229,7 +257,7 @@ class FnLower {
 					out.push(SSetGlobal(g, coerce(x, tyOf(cf.cfExpr), t)));
 				case _:
 			}
-		if (c.clInit != null && c.clInit.cfExpr != null) switch c.clInit.cfExpr.eexpr {
+		if (c.clInit != null && c.clInit.cfExpr != null && Lower.ofTarget(c)) switch c.clInit.cfExpr.eexpr {
 			case TFunction(tf):
 				boxed = Boxing.analyze(tf.tfExpr, []);
 				stmt(tf.tfExpr);
@@ -497,7 +525,7 @@ class FnLower {
 	public static var PURE = [
 		"hx_str_eq" => true, "hx_str_cmp" => true, "hx_dyn_eq" => true, "hx_dyn_cmp" => true, "hx_is" => true, "String_length" => true,
 		"String_charCodeAt_i" => true, "hx_str_hash" => true,
-		"hx_unbox_int" => true, "hx_unbox_float" => true, "hx_unbox_bool" => true
+		"hx_unbox_int" => true, "hx_unbox_float" => true, "hx_unbox_bool" => true, "hx_tag_eq" => true, "hx_tag_is" => true
 	];
 	// the Math natives: pure, expanded inline by MirBuild
 	public static var MATH = [
@@ -526,7 +554,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -536,7 +564,8 @@ class FnLower {
 	// a runtime function call that is not a GC point
 	public static function noGcHost(n:String):Bool
 		return isPure(n) || NOGC.exists(n) || C_EXTERNS.exists(n) || StringTools.startsWith(n, "hxmc_narray_set_")
-			|| (isIntrinsic(n) && !StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") && !StringTools.startsWith(n, "hxmc_unsafe_Mem_call"));
+			|| (isIntrinsic(n) && !StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") && !StringTools.startsWith(n, "hxmc_unsafe_Mem_call")
+				&& n != "hxmc_unsafe_Mem_untagDynamic");
 
 	// the layout an object literal of the structural type t gets, when the
 	// field `name` has the representation rt there
@@ -546,10 +575,10 @@ class FnLower {
 				// (in the order of the names: a map's order follows its insertions,
 				// which differ for a type read from HXB, and ty numbers the types it meets)
 				var names = l.anonNames(an);
-				var fs = [for (k in names) {name: k, ty: l.boxed(ty(an.aFields.get(k).cfType))}];
+				var fs = [for (k in names) {name: k, ty: stored(ty(an.aFields.get(k).cfType))}];
 				var sh = l.shape(fs);
 				var i = sh.slot(name);
-				return i > 0 && Ir.repr(sh.fields[i - 1].ty) == Ir.repr(rt) ? sh : null;
+				return i > 0 && Ir.repr(sh.fields[i - 1].ty) == Ir.repr(stored(rt)) ? sh : null;
 			case _:
 				return null;
 		}
@@ -569,10 +598,10 @@ class FnLower {
 
 	public static function isImpure(e:Ex):Bool
 		return switch e {
-			case ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_) | EBox(_):
+			case ECall(_) | ECallDispatch(_) | ECallClos(_) | ECallAnon(_) | ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_) | EBox(_) | EUntag(TRef(_), _):
 				true;
 			case ECallHost(n, _, _): !isPure(n);
-			case EArrGet(TRef(RAny), _, _) | EArrGetU(TRef(RAny), _, _): true; // reading an Int/Float array as Dynamic boxes
+			case EArrGet(TRef(RAny | RTag), _, _) | EArrGetU(TRef(RAny | RTag), _, _): true; // reading an Int/Float array as Dynamic boxes (an Int64 one as a word)
 			case EAnonGet(_): true; // the slow path may box
 			case _: false;
 		}
@@ -718,7 +747,7 @@ class FnLower {
 				rTys.push(t);
 				continue;
 			}
-			r.push(coerce(xs[i], from, t));
+			r.push(sameClosure(es[i], from, t) ? ECast(t, xs[i]) : coerce(xs[i], from, t));
 			rTys.push(t);
 		}
 		for (i in xs.length + offset...to.length) {
@@ -729,6 +758,57 @@ class FnLower {
 		}
 		return Vector.fromArrayCopy(r);
 	}
+
+	// whether a closure (e, its representation `from`) is a function of
+	// representation `to` as it is, without an adapter (coerce): where only
+	// type parameters' words take the place of references. A word passed for
+	// an argument the closure declares of a class, an enum, String, an
+	// array or a function type (concrete: Dynamic, Null<T>, a structure, an
+	// extern's instance may hold a number) is a reference: the type
+	// parameter is that type or a subtype (a function's arguments are
+	// contravariant), so the value is an object of it, never a number. A
+	// reference passed for a word, and a reference returned for one, are
+	// words as they are. The common case: a closure of the program's types
+	// given to a generic function (Lambda.map, List.iter, an ocaml port's
+	// iterators), which would otherwise allocate an adapter per call.
+	function sameClosure(e:TExpr, from:Ty, to:Ty):Bool {
+		var a:SigInfo, b:SigInfo;
+		switch [from, to] {
+			case [TRef(RClos(x)), TRef(RClos(y))] if (x != y && x.args.length == y.args.length):
+				a = x;
+				b = y;
+			case _:
+				return false;
+		}
+		var s = switch TFunctions.follow(e.etype) {
+			case TFun(s) if (s.args.length == a.args.length): s;
+			case _: return false;
+		}
+		for (i in 0...a.args.length) {
+			var x = Ir.repr(a.args[i]), y = Ir.repr(b.args[i]);
+			if (x == y || x == "t" && y == "p") continue;
+			if (x == "p" && y == "t" && concreteRef(ty(s.args[i].type))) continue;
+			return false;
+		}
+		var x = Ir.repr(a.ret), y = Ir.repr(b.ret);
+		return x == y || x == "p" && y == "t";
+	}
+
+	// obj.name(xs) through a structure: the other signatures a method found
+	// there may have made (Ir.anonAlternatives; MemLower.callAnon looks them up)
+	function anonCall(name:String, s:SigInfo, o:Ex, xs:Vector<Ex>):Ex {
+		for (alt in Ir.anonAlternatives(s))
+			l.sig(alt.args, alt.ret);
+		return ECallAnon(name, s, o, xs);
+	}
+
+	// a reference that is never a number: no Dynamic, Null<T>, structure, extern instance or word
+	static function concreteRef(t:Ty):Bool
+		return switch t {
+			case TRef(RAny | RNull(_) | RAnon | RNative(_) | RTag): false;
+			case TRef(_): true;
+			case _: false;
+		}
 
 	// A static function called or taken through one of its @:overload
 	// signatures: a copy of its field with that type and no body
@@ -929,6 +1009,8 @@ class FnLower {
 			// a typed view takes storage of its own kind (rt/NArray.view): from
 			// a Dynamic-typed view or a Dynamic, and between the kinds Haxe lets
 			// alias (Int and Null<Int>), checked; an open wrapper's storage, converted
+			case [TRef(_), TRef(RNativeArr(_))] if (Ir.isWord(from) && nativeConversion(from, to)):
+				return coerce(coerce(x, from, TRef(RAny)), TRef(RAny), to);
 			case [_, TRef(RNativeArr(b))] if (nativeConversion(from, to)):
 				return temp(to, ECallHost(l.native("hx_narray_view"), vector(x, EInt(nativeKind(b))), to));
 			case [TRef(RClos(a)), TRef(RClos(b))] if (a != b):
@@ -939,6 +1021,10 @@ class FnLower {
 				var r = newLocal("adapted", to);
 				out.push(SIf(EBin(RefEq, ELocal(c), ENull(from)), vector(SSet(r, ENull(to))), vector(SSet(r, ENewClos(li, vector(ELocal(c)))))));
 				return ELocal(r);
+			case [TRef(_), TRef(RClos(_))] if (Ir.isWord(from)):
+				// (a type parameter's value as Dynamic first: a reference, as a
+				// function is, the same word, without a box)
+				return coerce(coerce(x, from, TRef(RAny)), TRef(RAny), to);
 			case [TRef(RAny), TRef(RClos(b))]:
 				// a Dynamic as a function: kept when it is a closure of this
 				// signature, else called through an adapter (its signature may
@@ -955,6 +1041,27 @@ class FnLower {
 		}
 		var fr = Ir.repr(from), tr = Ir.repr(to);
 		if (fr == tr) return x;
+		// a type parameter's value (a tagged word, hxmc.rt.Tagged): an Int's
+		// or a Float's encoded inline, a Bool's and an Int64's boxed (a Bool's
+		// box is static), any reference as it is; back, a scalar decoded, a
+		// reference as it is where the type is a class's, an enum's, an
+		// array's..., which no scalar is, else (Dynamic, Null<T>, a structure,
+		// an extern's instance) boxed where it is a scalar's word
+		// (Null<Int> and Null<Float> are words too, Ir.isWord: a number
+		// encoded as their kind, null 0; Null<Bool> and Null<Int64> box)
+		var fw = Ir.isWord(from), tw = Ir.isWord(to);
+		if (fw && x.match(ENull(_))) return nullOf(to);
+		if (tw && Ir.isScalar(from)) {
+			switch to {
+				case TRef(RNull(s)): return ETag(s, coerce(x, from, s));
+				case _:
+			}
+			return from == TI32 || from == TF64 ? ETag(from, x) : temp(to, EBox(from, x));
+		}
+		if (fw && Ir.isScalar(to)) return EUntag(to, x);
+		if (fw && to.match(TRef(RAny | RNull(_) | RAnon | RNative(_)))) return temp(to, EUntag(TRef(RAny), x));
+		if (tw && Ir.isRef(from)) return x;
+		if (fw && Ir.isRef(to)) return ECast(to, x);
 		return switch [from, to] {
 			case [TI32, TF64]: EConv(I2F, x);
 			case [TF64, TI32]: EConv(F2I, x);
@@ -986,9 +1093,10 @@ class FnLower {
 			case _: 0;
 		};
 
-	// the type of the values of a NativeArray's elements: a byte's an Int
+	// the type of the values of a NativeArray's elements: a byte's an Int, a
+	// Null<Int>'s or Null<Float>'s a box (Dynamic: the storage holds references)
 	static function elemValue(elem:Ty):Ty
-		return elem == TU8 ? TI32 : elem;
+		return elem == TU8 ? TI32 : Ir.isWord(elem) ? TRef(RAny) : elem;
 
 	// the suffix of the typed accesses of a NativeArray (MirBuild), by nativeKind
 	static final NATIVE_SUFFIX = ["p", "i", "f", "l", "b", "u"];
@@ -1050,7 +1158,7 @@ class FnLower {
 			case TF64: temp(TRef(RStr), ECallHost(l.native("hx_str_of_float"), vector(x), TRef(RStr)));
 			case TI64: temp(TRef(RStr), ECallHost(l.native("hx_str_of_i64"), vector(x), TRef(RStr)));
 			case TBool: temp(TRef(RStr), ECallHost(l.native("hx_str_of_bool"), vector(x), TRef(RStr)));
-			case TStruct(_): toStr(coerce(x, t, TRef(RAny)), TRef(RAny));
+			case TStruct(_) | TRef(RTag | RNull(TI32 | TF64)): toStr(coerce(x, t, TRef(RAny)), TRef(RAny));
 			case _: temp(TRef(RStr), ECallHost(l.native("hx_std_string"), vector(x), TRef(RStr)));
 		}
 	}
@@ -1460,7 +1568,7 @@ class FnLower {
 	// a conversion to a closure type that may need an adapter: from another
 	// closure type, or from Dynamic (coerce)
 	static function closureConversion(from:Ty, to:Ty):Bool
-		return to.match(TRef(RClos(_))) && (from.match(TRef(RClos(_))) || from.match(TRef(RAny)));
+		return to.match(TRef(RClos(_))) && (from.match(TRef(RClos(_))) || from.match(TRef(RAny)) || Ir.isWord(from));
 
 	// a NativeArray taken by a typed view that may not have its kind (coerce)
 	static function nativeConversion(from:Ty, to:Ty):Bool
@@ -1798,6 +1906,9 @@ class FnLower {
 					case TRef(RArr(elem)):
 						var xs = operands(vector(a, i));
 						var ix = coerce(xs[1], tyOf(i), TI32);
+						// (an Array<T>'s element as a type parameter's word: an Int's
+						// or a Float's encoded rather than boxed, MemLower.arrGet)
+						if (elem.match(TRef(RAny)) && Ir.isWord(tyOf(e))) elem = TRef(RTag);
 						elemRead(isVectorData(a.etype) ? EArrGetU(elem, xs[0], ix) : EArrGet(elem, xs[0], ix), elem, tyOf(e));
 					case _:
 						var xs = operands(vector(a, i));
@@ -1864,18 +1975,20 @@ class FnLower {
 				ENewArr(elem, xs.mapi((i, x) -> coerce(x, tyOf(vs[i]), elem)));
 			case TObjectDecl(fs):
 				var xs = operands(fs.map(f -> f.expr));
-				var fields = [for (i in 0...fs.length) {name: fs[i].key.name, ty: l.boxed(tyOf(fs[i].expr))}];
+				var fields = [for (i in 0...fs.length) {name: fs[i].key.name, ty: stored(tyOf(fs[i].expr))}];
 				var sh = l.shape(fields);
 				var vals = [];
 				// (a shape is its fields' names and representations, its types
 				// those of the first object of that shape: a reference is stored
 				// as it is, a closure with its own signature, not converted to
-				// another object's (anonGet adapts it where it is read))
+				// another object's (anonGet adapts it where it is read); a type
+				// parameter's word as Dynamic, whatever type that first object's
+				// field has)
 				for (sf in sh.fields)
 					for (i in 0...fs.length)
 						if (fs[i].key.name == sf.name) {
 							var from = tyOf(fs[i].expr);
-							vals.push(Ir.isRef(from) && Ir.isRef(sf.ty) ? xs[i] : coerce(xs[i], from, sf.ty));
+							vals.push(Ir.isWord(from) ? coerce(xs[i], from, TRef(RAny)) : Ir.isRef(from) && Ir.isRef(sf.ty) ? xs[i] : coerce(xs[i], from, sf.ty));
 						}
 				ENewAnon(sh, Vector.fromArrayCopy(vals));
 			case TFunction(tf): closure(tf, e);
@@ -1926,7 +2039,7 @@ class FnLower {
 	function ctorSig(c:TClass):Vector<Ty> {
 		if (c.clConstructor == null) return vector();
 		return switch TFunctions.follow(c.clConstructor.cfType) {
-			case TFun(s): s.args.map(a -> ty(a.type));
+			case TFun(s): s.args.map(a -> hty(a.type));
 			case _: vector();
 		}
 	}
@@ -1950,16 +2063,16 @@ class FnLower {
 						var r = ivarLoad(a, iv.ivar, e);
 						coerce(r, ivarTy(iv.ivar), tyOf(e));
 					case Var(_) if (Lower.isCore(c, "Array") && cf.cfName == "length"):
-						EArrLen(value(obj));
+						EArrLen(recvValue(obj));
 					case Var(_) if (Lower.isNativeArray(c) && cf.cfName == "length"):
-						ECallHost("hxmc_narray_length", vector(value(obj)), TI32);
+						ECallHost("hxmc_narray_length", vector(recvValue(obj)), TI32);
 					case Var(_) if (Lower.isCore(c, "String") && cf.cfName == "length"):
-						ECallHost("String_length", vector(value(obj)), TI32);
+						ECallHost("String_length", vector(recvValue(obj)), TI32);
 					case Var(_) if (ObjC.isObjC(c)): objcGet(obj, c, cf, e);
 					case Var(_) if (CInterop.isStruct(c)): structGet(obj, c, cf, e);
 					case Var(_) if (c.hasClassFlag(CExtern)):
-						var t = ty(cf.cfType);
-						var x = temp(t, ECallHost(l.native(Lower.nativeName(c) + "_get_" + cf.cfName), vector(receiverCheck(value(obj), tyOf(obj))), t));
+						var t = hty(cf.cfType);
+						var x = temp(t, ECallHost(l.native(Lower.nativeName(c) + "_get_" + cf.cfName), vector(receiverCheck(recvValue(obj), erase(tyOf(obj)))), t));
 						coerce(x, t, tyOf(e));
 					case Var(_) if (c.hasClassFlag(CInterface)):
 						anonGet(cf.cfName, obj, e);
@@ -1998,7 +2111,7 @@ class FnLower {
 							case ct: cLoad(v.addr, 0, ct, e);
 						}
 					case Var(_) if (c.hasClassFlag(CExtern)):
-						var t = ty(cf.cfType);
+						var t = hty(cf.cfType);
 						coerce(temp(t, ECallHost(l.native(Lower.nativeName(c) + "_" + cf.cfName), vector(), t)), t, tyOf(e));
 					case Var(_):
 						var g = l.staticVar(c, cf);
@@ -2009,7 +2122,7 @@ class FnLower {
 							case TFun(s): s;
 							case _: fail("extern static " + cf.cfName + " is not a function", e);
 						};
-						var sig = l.sig([for (a in s.args) ty(a.type)], ty(s.ret));
+						var sig = l.sig([for (a in s.args) hty(a.type)], hty(s.ret));
 						var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig);
 						coerce(temp(TRef(RClos(sig)), ENewClos(li, vector())), TRef(RClos(sig)), tyOf(e));
 					case Method(MethDynamic):
@@ -2102,9 +2215,9 @@ class FnLower {
 				case TFun(s): s;
 				case _: fail("extern method " + cf.cfName + " is not a function", e);
 			};
-			var sig = l.sig([for (a in s.args) ty(a.type)], ty(s.ret));
-			var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig, tyOf(obj));
-			var x = temp(TRef(RClos(sig)), newClosure(li, vector(value(obj))));
+			var sig = l.sig([for (a in s.args) hty(a.type)], hty(s.ret));
+			var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig, erase(tyOf(obj)));
+			var x = temp(TRef(RClos(sig)), newClosure(li, vector(recvValue(obj))));
 			return coerce(x, TRef(RClos(sig)), rt);
 		}
 		var li:LambdaInfo;
@@ -2232,7 +2345,13 @@ class FnLower {
 				return assign(a, null, e, (cur, curTy) -> arith(op2, cur, curTy, () -> {x: value(b), t: tyOf(b)}, curTy, e));
 			case OpBoolAnd | OpBoolOr:
 				var lo = newLocal("c", TBool);
-				out.push(SSet(lo, cond(a)));
+				var ca = cond(a);
+				// (a test of the target first: the other side only where it is
+				// evaluated, a test of the target too where it decides alone,
+				// which an `if` folds as one, TIf; Lower.targetConst)
+				var k = Lower.targetConst(ca);
+				if (k != null) return (k != 0) == (op == OpBoolOr) ? EBin(Eq, EInt(k != 0 ? 1 : 0), EInt(1)) : cond(b);
+				out.push(SSet(lo, ca));
 				var rest = block(() -> out.push(SSet(lo, cond(b))));
 				out.push(op == OpBoolAnd ? SIf(ELocal(lo), rest, vector()) : SIf(ELocal(lo), vector(), rest));
 				return ELocal(lo);
@@ -2427,6 +2546,11 @@ class FnLower {
 			return EBin(Eq, xa, xb);
 		}
 		switch [ta, tb] {
+			// (a type parameter's value: equal words, a NaN's excepted, inline,
+			// else by the runtime, which compares numbers of either kind and
+			// boxes, and references as hx_dyn_eq; no box made: MirBuild)
+			case [TRef(_), _] | [_, TRef(_)] if (Ir.isWord(ta) || Ir.isWord(tb)):
+				return ECallHost("hx_tag_eq", vector(coerce(xa, ta, TRef(RTag)), coerce(xb, tb, TRef(RTag))), TBool);
 			case [TRef(RStr), TRef(RStr)]:
 				return ECallHost("hx_str_eq", vector(xa, xb), TBool);
 			// (a method closure: equal to another of the same method and object, made
@@ -2599,7 +2723,7 @@ class FnLower {
 				out.push(SExpr(ECallHost(l.native("Array_resize"), vector(o, x), TVoid)));
 				return coerce(x, TI32, et);
 			case TField(obj, FAnon(cf) | FInstance(_, _, cf)):
-				var t = l.boxed(tyOf(lhs));
+				var t = stored(tyOf(lhs));
 				var o = ELocal(asLocal(value(obj), tyOf(obj)));
 				var x = pure(compute(() -> EAnonGet(cf.cfName, t, o, null), t, t), t);
 				out.push(SAnonSet(cf.cfName, t, o, x));
@@ -2802,8 +2926,8 @@ class FnLower {
 				}
 				var intrinsic = intrinsicStatic(name, cargs, e);
 				if (intrinsic != null) return intrinsic;
-				var t = ty(s.ret);
-				var xs = args(cargs, s.args.map(a -> ty(a.type)), null);
+				var t = hty(s.ret);
+				var xs = args(cargs, s.args.map(a -> hty(a.type)), null);
 				return coerceRhs(ECallHost(l.native(name), xs, t), t, rt);
 			case TField(obj, FDynamic("cca")) if (tyOf(obj).match(TRef(RStr)) && cargs.length == 1):
 				// StringTools.fastCodeAt / unsafeCodeAt: `untyped s.cca(i)` (0 past the end, as on cpp/hl)
@@ -2890,7 +3014,7 @@ class FnLower {
 				if (hasStruct(s)) structFail('a struct value passed to or returned by a dynamic method of an interface: not supported');
 				var o = asLocal(value(obj), tyOf(obj));
 				var xs = args(cargs, s.args, null);
-				return coerceRhs(ECallAnon(cf.cfName, s, ELocal(o), xs), s.ret, rt);
+				return coerceRhs(anonCall(cf.cfName, s, ELocal(o), xs), s.ret, rt);
 			case TField(obj, FInstance(c, _, cf)) if (Lower.isCore(c, "Array") && cf.cfName == "sort" && sortElem(tyOf(obj), cargs[0]) != null):
 				// Array<Int> and Array<Float> sorted with a comparator of their
 				// type: Arr.sortInt, sortFloat, which call it with their
@@ -2907,14 +3031,14 @@ class FnLower {
 					case _: fail("extern method " + cf.cfName + " is not a function", e);
 				};
 				var name = Lower.nativeName(c) + "_" + cf.cfName;
-				var t = ty(s.ret);
+				var t = hty(s.ret);
 				var to = new Vector<Ty>(s.args.length + 1);
-				to[0] = tyOf(obj);
+				to[0] = erase(tyOf(obj));
 				for (k in 0...s.args.length)
-					to[k + 1] = ty(s.args[k].type);
+					to[k + 1] = hty(s.args[k].type);
 				var xs = args(VectorTools.cons(obj, cargs), to, null);
-				xs[0] = receiverCheck(xs[0], tyOf(obj));
-				var intrinsic = intrinsicMethod(name, xs, tyOf(obj));
+				xs[0] = receiverCheck(xs[0], to[0]);
+				var intrinsic = intrinsicMethod(name, xs, to[0]);
 				if (intrinsic != null) return coerce(intrinsic, t, rt);
 				return coerceRhs(ECallHost(l.native(name), xs, t), t, rt);
 			case TField(obj, FInstance(c, _, cf)):
@@ -2972,7 +3096,7 @@ class FnLower {
 				if (hasStruct(s)) structFail('a struct value passed to or returned by a function of a structural type: not supported (an interface or a class)');
 				var o = asLocal(value(obj), tyOf(obj));
 				var xs = args(cargs, s.args, null);
-				return coerceRhs(ECallAnon(cf.cfName, s, ELocal(o), xs), s.ret, rt);
+				return coerceRhs(anonCall(cf.cfName, s, ELocal(o), xs), s.ret, rt);
 			case TField(obj, FDynamic(name)):
 				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
 				var xs = args(cargs, new Vector<Ty>(cargs.length, TRef(RAny)), null);
@@ -3056,6 +3180,11 @@ class FnLower {
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
 				var k = typeObjectKind(cargs[1]);
 				coerce(ECallHost(l.native("hx_is_typeobj"), vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && Ir.isWord(tyOf(cargs[0]))):
+				// (a type parameter's word: a number's tested without a box,
+				// Tagged.isOf; the word's bits as they are, ECast)
+				var xs = operands(cargs);
+				coerce(ECallHost(l.native("hx_tag_is"), vector(ECast(TI64, xs[0]), coerce(xs[1], tyOf(cargs[1]), TRef(RAny))), TBool), TBool, tyOf(e));
 			case _: null;
 		}
 	}

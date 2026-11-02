@@ -40,6 +40,10 @@ class Options {
 	// -D hxmc.wasm-eh=legacy: wasm32-wasi with the legacy exception-handling instructions
 	// (try/catch_all/rethrow) for engines without exnref (default: exnref)
 	public var wasmLegacyEh = false;
+	// -D hxmc.wasm-memory-max=<MB>: wasm32-wasi, the module's memory at most
+	// so large (its maximum: memory.grow fails past it, as a host that
+	// refuses memory does; 0: no maximum, the default)
+	public var wasmMemoryMaxMb = 0;
 	// -D hxmc.native-array-outofbounds=throws|silent: NativeArray (Vector)
 	// accesses out of bounds throw, or read the default and write nothing
 	// (default: not tested; hxmc.ir.Lower.bounds)
@@ -53,6 +57,9 @@ class Options {
 	// range-checked (hxmc.ir.Lower.spanChecks; default 1, every build); ranges
 	// (sub, blit, fill, the spans GC code lends) stay checked
 	public var spanChecks = true;
+	// -D hxmc.verify-tags: references tested not to be tagged words before they
+	// are read as references (hxmc.ir.Lower.verifyTags)
+	public var verifyTags = false;
 	// -D hxmc.libc=glibc: Linux, a dynamically linked executable against the system's glibc (Abi.setLibc; default: musl, static)
 	public var libc:Null<String> = null;
 	// x86-64 functions keep a frame record (push rbp; mov rbp, rsp), so
@@ -230,6 +237,12 @@ class Options {
 			case "exnref":
 			case _: throw "hxmc: -D hxmc.wasm-eh=" + eh + ": exnref or legacy";
 		}
+		var mm = def("hxmc.wasm_memory_max"); // (-D turns the dashes into underscores)
+		if (mm != null) {
+			var v = Std.parseInt(mm);
+			if (v == null || v < 1 || v > 4096 || Std.string(v) != StringTools.trim(mm)) throw "hxmc: -D hxmc.wasm-memory-max=" + mm + ": megabytes, 1 to 4096";
+			o.wasmMemoryMaxMb = v;
+		}
 		o.libc = def("hxmc.libc");
 		// (the WasmGC back end is gone, issue #80: an error rather than a linear-memory module)
 		if (def("hxmc.wasm_gc") != null) throw "hxmc: -D hxmc.wasm-gc was removed (wasm32-wasi modules use linear memory and hxmc's collector)";
@@ -246,6 +259,7 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
+		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {
 			case null | "1": true;

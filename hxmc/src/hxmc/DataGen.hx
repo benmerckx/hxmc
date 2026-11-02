@@ -120,6 +120,8 @@ class DataGen {
 			case TBool: "b".code;
 			case TF64: "f".code;
 			case TI64 | TId: "l".code;
+			// a type parameter's value: a tagged word (Dyn.boxSlot boxes it)
+			case t if (Ir.isWord(t)): "t".code;
 			case _: "p".code;
 		};
 
@@ -330,7 +332,8 @@ class DataGen {
 					} else {
 						var gt = p.globals[x.global].ty;
 						if (Ir.isRef(gt)) {
-							data.buf.u32("p".code);
+							// (a Null<Int>'s or Null<Float>'s word: Dyn.staticGet boxes it)
+							data.buf.u32(Ir.isWord(gt) ? "t".code : "p".code);
 							data.buf.u32(x.global);
 							data.buf.u32(rank[x.name]);
 							data.buf.u64(0, 0);

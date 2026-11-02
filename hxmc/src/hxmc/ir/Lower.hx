@@ -18,10 +18,12 @@ using core.ds.VectorTools;
 // reachable from `main` to the IR (docs/hxmc.md).
 //
 // Representation (see Ir.hx): Int/Bool/Float and haxe.Int64 unboxed;
-// everything else is a pointer. Generics are erased: a type parameter is Dynamic (RAny), and values
-// are converted (boxed, unboxed, wrapped in adapter closures) where a declared
-// type and a use-site type differ: calls, returns, field and enum-argument
-// access (FnLower.coerce). A function body sees this class through
+// everything else is a pointer. Generics are erased: a type parameter's value
+// is a tagged word (RTag: a reference, or an Int or Float encoded; Dynamic
+// where the runtime holds it, `stored`, `erase`), and values are converted
+// (tagged, boxed, unboxed, wrapped in adapter closures) where a declared type
+// and a use-site type differ: calls, returns, field and enum-argument access
+// (FnLower.coerce). A function body sees this class through
 // LowerQueries alone (what the compilation server's reuse of bodies covers).
 class Lower implements LowerQueries {
 	var prog = new Program();
@@ -73,6 +75,11 @@ class Lower implements LowerQueries {
 				case _:
 			}
 		l.findHosts(types);
+		for (t in types)
+			switch t {
+				case TClassDecl(c) if (keptByName(c) && ofTarget(c)): l.keptClasses.push(c);
+				case _:
+			}
 		l.drain();
 		l.finish();
 		// static initializers run in the order of com.types, which
@@ -161,7 +168,9 @@ class Lower implements LowerQueries {
 			switch t {
 				case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !(c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc")):
 					// a class's __init__ runs at startup whether or not code uses the
-					// class (initClass, otherwise made when a static is used)
+					// class (initClass, otherwise made when a static is used); not
+					// that of a class of another target (@:hxmc.android, ofTarget)
+					if (!ofTarget(c)) continue;
 					if (c.clInit != null) initClass(c);
 					for (cf in c.clOrderedStatics)
 						if (cf.cfMeta.length > 0 && cf.cfKind.match(Method(_)) && hasMeta(":hxmc.export", cf.cfMeta)) {
@@ -196,7 +205,9 @@ class Lower implements LowerQueries {
 	public static function runtimeClass(c:TClass):Bool
 		return c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc" && !c.hasClassFlag(CExtern);
 
-	// whether such a class is of this target's runtime
+	// whether such a class is of this target's runtime; of any other class,
+	// whether it is of this target (its __init__ runs, findHosts, and
+	// reflection finds it by types and @:keep, ClassInfo.otherTarget)
 	public static function ofTarget(c:TClass):Bool {
 		// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
 		if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) return false;
@@ -242,6 +253,13 @@ class Lower implements LowerQueries {
 	// throws "Null Access"; without, the native targets fault and the runtime's
 	// handler throws (hxmc.rt.Faults)
 	public static var nullChecks = false;
+	// -D hxmc.verify-tags: every reference an operation on objects dereferences
+	// (MemLower.verifyRef) and every Dynamic the runtime takes the address of
+	// (Mem.addr: MirBuild.intrinsic) is tested not to be the tagged word of a
+	// scalar (hxmc.rt.Tagged; docs/hxmc.md, "Values of type parameters"): one
+	// that is ends the program (rt_tagged_access). The corpus's verify lanes build
+	// with it (Corpus --verify-tags)
+	public static var verifyTags = false;
 	// -D hxmc.span-checks: whether a span's element accesses are range-checked
 	// (FnLower.spanCall; default: yes); ranges always are
 	public static var spanChecks = true;
@@ -350,6 +368,12 @@ class Lower implements LowerQueries {
 			case EUnbox(t, a):
 				var x = ex(a);
 				x == a ? e : EUnbox(t, x);
+			case ETag(t, a):
+				var x = ex(a);
+				x == a ? e : ETag(t, x);
+			case EUntag(t, a):
+				var x = ex(a);
+				x == a ? e : EUntag(t, x);
 			case EField(c, i, a):
 				var x = ex(a);
 				x == a ? e : EField(c, i, x);
@@ -483,6 +507,8 @@ class Lower implements LowerQueries {
 		}
 		sts = ss -> ss.map(st);
 		fi.body = sts(fi.body);
+		// (no type parameter's word read unconverted: TagCheck)
+		TagCheck.func(fi, prog);
 	}
 
 	// Lowers the body of `fi` (`run`). The hook for a subclass that caches
@@ -561,11 +587,39 @@ class Lower implements LowerQueries {
 
 	var methodsDone = 0; // classes whose every method is lowered
 	var makersDone = 0; // classes given their Type.createInstance entry (makers)
+	var keptClasses:Array<TClass> = []; // the classes keptByName keeps, of the program's types
+	var keptDone = 0;
+
+	// Type.resolveClass can be called: the lowering met the runtime's
+	// function (staticFunc). The classes @:keep keeps are lowered then
+	// (drain), so that it finds them (docs/hxmc.md, "Reachability").
+	public var resolvable = false;
+
+	// c is kept for reflection by name: @:keep written on it or on one of its
+	// fields, or @:keepSub on a superclass or an interface (Haxe's DCE keeps
+	// it whatever the mode); not the runtime's (the hxmc package), nor, for a
+	// field's, hxmc's std (@:dce, hxmc.StdDce: haxe.Exception's for the
+	// lowering, not reflection)
+	static function keptByName(c:TClass):Bool {
+		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || runtimeClass(c) || !c.clKind.match(KNormal)) return false;
+		if (written(Keep, c.clMeta) || optimization.Dce.superForcesKeep(c)) return true;
+		if (core.Meta.has(Dce, c.clMeta)) return false;
+		for (cf in c.clOrderedFields)
+			if (written(Keep, cf.cfMeta)) return true;
+		for (cf in c.clOrderedStatics)
+			if (written(Keep, cf.cfMeta)) return true;
+		return false;
+	}
 
 	function drain() {
 		while (true) {
 			while (pending.length > 0)
 				pending.shift()();
+			// (Type.resolveClass finds a class @:keep keeps, which may be one
+			// nothing else names: lowered then, as DCE kept it; Reach)
+			if (resolvable)
+				while (keptDone < keptClasses.length)
+					classInfo(keptClasses[keptDone++]);
 			// all methods of every class seen: structural and dynamic access
 			// (Iterator.hasNext, Reflect) reach them through the method tables;
 			// DCE already removed the unused ones. A dynamic method is there
@@ -594,7 +648,7 @@ class Lower implements LowerQueries {
 						}
 					}
 				}
-			if (!more && pending.length == 0) break;
+			if (!more && pending.length == 0 && (!resolvable || keptDone == keptClasses.length)) break;
 		}
 	}
 
@@ -692,11 +746,13 @@ class Lower implements LowerQueries {
 			case TInst(c, params):
 				switch c.clKind {
 					// (one bound to Objective-C objects: an id, ObjC.isObjCParam)
-					case KTypeParameter(_): ObjC.isObjCParam(c) ? TId : TRef(RAny);
+					case KTypeParameter(_): ObjC.isObjCParam(c) ? TId : TRef(RTag);
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
-						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
-						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : boxed(ty(params[0]))));
+						else if (isCore(c, "Array")) TRef(RArr(stored(ty(params[0]))));
+						// (Null<Int>'s kept: a view of its own, checked against Int's, rt/NArray;
+						// its elements boxed, FnLower.elemValue)
+						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : (Ir.isWord(ty(params[0])) && !ty(params[0]).match(TRef(RTag)) ? ty(params[0]) : stored(ty(params[0])))));
 						else if (CInterop.isStruct(c)) {
 							var n = core.Globals.sTypePath(c.clPath);
 							structClasses.set(n, c);
@@ -844,6 +900,15 @@ class Lower implements LowerQueries {
 			case _: t;
 		}
 
+	// t as storage the runtime reads as Dynamic (an Array's or a NativeArray's
+	// element; FnLower.stored: a structure's field): a struct boxed, a type
+	// parameter's value as Dynamic (no such storage holds a tagged word)
+	function stored(t:Ty):Ty
+		return switch t {
+			case TRef(RTag | RNull(TI32 | TF64)): TRef(RAny);
+			case _: boxed(t);
+		}
+
 	// the prefix of a class's fields that no name reaches (no identifier starts with it)
 	public static inline var HIDDEN_FIELD = "#";
 
@@ -936,6 +1001,8 @@ class Lower implements LowerQueries {
 		ci = classes.get(c);
 		if (ci != null) return ci;
 		ci = new ClassInfo(core.Globals.sTypePath(c.clPath), nativeName(c), sup);
+		ci.keep = keptByName(c);
+		ci.otherTarget = !ofTarget(c);
 		classes.set(c, ci);
 		tclasses.push(c);
 		var k = c.clSuper;
@@ -1299,6 +1366,7 @@ class Lower implements LowerQueries {
 		prog.funcs.push(fi);
 		signature(fi, tf, null);
 		if (isCreateInstance(fi.name)) makers = true;
+		if (fi.name == RESOLVE_TYPE) resolvable = true;
 		if (cf.cfMeta.length > 0 && hasMeta(":hxmc.hostCode", cf.cfMeta)) {
 			// (its body stands for the compiler's native code: never lowered;
 			// Facts takes what that code does instead of scanning it)
@@ -1569,6 +1637,9 @@ class Lower implements LowerQueries {
 	// the runtime's Type.createInstance: Reach's too
 	public static function isCreateInstance(name:String):Bool
 		return name == "hxmc_rt_Dyn_createInstance";
+
+	// the runtime's Type.resolveClass (Reach.scan knows it too)
+	public static inline var RESOLVE_TYPE = "hxmc_rt_Dyn_resolveType";
 
 	// (a constructor's entry, shared by the subclasses calling it)
 	var ctorEntries = new Map<FuncInfo, FuncInfo>();
@@ -1966,7 +2037,7 @@ class Lower implements LowerQueries {
 		prog.inits.push(fi);
 		initOf.set(fi, c);
 		// (a class's __init__ runs whether or not live code reads its statics: Reach)
-		if (c.clInit != null) prog.roots.push(fi);
+		if (c.clInit != null && ofTarget(c)) prog.roots.push(fi);
 		pending.push(guarded(fi, () -> lowerBody(fi, null, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.runInit(c);

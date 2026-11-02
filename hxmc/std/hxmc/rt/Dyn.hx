@@ -109,7 +109,9 @@ class Dyn {
 
 	// ---- slots by kind ('i' Int, 'b' Bool, 'f' Float, 'l' Int64, 'L' the
 	// length of the NativeArray in the slot: a field without storage,
-	// @:hxmc.lengthOf; else a reference); Int/Bool slots are 4-byte indices
+	// @:hxmc.lengthOf; 't' a type parameter's value, a tagged word: Tagged;
+	// else a reference); Int/Bool slots are 4-byte indices. A Dynamic is a
+	// word of 't' as it is (stored by the reference case)
 
 	static function boxSlot(o:Dynamic, slot:Int, k:Int):Dynamic {
 		var p = Mem.addr(o);
@@ -121,6 +123,7 @@ class Dyn {
 			case "L".code:
 				var a:Dynamic = Mem.getRef(p, 8 * slot);
 				Str.isNull(a) ? null : (arrLength(a) : Dynamic);
+			case "t".code: Tagged.dyn(Mem.getI64(p, 8 * slot));
 			case _: Mem.getRef(p, 8 * slot);
 		}
 	}
@@ -227,6 +230,8 @@ class Dyn {
 				Mem.setPtr(Mem.addr(c), 0, ptr);
 				c;
 			case "p".code: Mem.getRef(globalSlot(Mem.getI32(s, 8)), 0);
+			// (a Null<Int>'s or Null<Float>'s word: boxed)
+			case "t".code: Tagged.dyn(Mem.getI64(globalSlot(Mem.getI32(s, 8)), 0));
 			case "i".code: (Mem.getI32(ptr, 0) : Dynamic);
 			case "b".code: (Mem.getI32(ptr, 0) != 0 : Dynamic);
 			case "f".code: (Mem.getF64(ptr, 0) : Dynamic);
@@ -240,7 +245,7 @@ class Dyn {
 		switch Mem.getU8(s, 4) {
 			case "c".code:
 				Rt.rt_throw("Cannot rebind this method");
-			case "p".code:
+			case "p".code | "t".code:
 				Mem.setRef(globalSlot(Mem.getI32(s, 8)), 0, v);
 			case "i".code:
 				var x:Int = v;
@@ -323,13 +328,22 @@ class Dyn {
 	// null: a Dynamic converted to a function type keeps such a closure and
 	// wraps any other value in an adapter that calls it dynamically
 	// (FnLower.coerce)
+	// (also a closure whose signature differs only where a type parameter's
+	// word, 't', meets a reference, 'p', in the direction that needs no
+	// conversion: an argument it takes as a word, given a reference; a
+	// result it returns as a reference, read as a word. A function of the
+	// program's types read where it is generic: Array<Lexer->T>'s elements)
 	@:hxmc.host("hx_clos_of_sig") static function closOfSig(c:Dynamic, key:String):Dynamic {
 		var s = closureSig(c);
 		if (s < 0) return null;
 		var k = Mem.getPtr(Mem.sym("rt_sig_keys"), 8 * s);
 		var n = key.length;
-		for (i in 0...n)
-			if (Mem.getU8At(k, 0, i) != StringTools.fastCodeAt(key, i)) return null;
+		var ret = false;
+		for (i in 0...n) {
+			var x = Mem.getU8At(k, 0, i), y = StringTools.fastCodeAt(key, i);
+			if (x == "_".code) ret = true;
+			if (x != y && !(ret ? x == "p".code && y == "t".code : x == "t".code && y == "p".code)) return null;
+		}
 		return Mem.getU8At(k, 0, n) == 0 ? c : null;
 	}
 
@@ -414,19 +428,22 @@ class Dyn {
 		return new haxe.iterators.ArrayKeyValueIterator<Dynamic>(a);
 
 	// obj.name(args) through a structural type, slow path: the arguments
-	// packed in 8-byte words (MemLower.callAnon), the result likewise
-	@:hxmc.export("hx_anon_call_slow") static function anonCallSlow(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64 {
+	// packed in 8-byte words (MemLower.callAnon), the numbers' in `args`,
+	// the references and type parameters' words in `refs` (slots the caller
+	// pushed: rooted, so what they point to is read where it is after a
+	// collection here), the result likewise
+	@:hxmc.export("hx_anon_call_slow_r") static function anonCallSlow(o:Dynamic, fid:Int, sig:Int, args:Ptr, refs:Ptr):I64 {
 		var n = sigArgs(sig);
 		var k = Mem.getPtr(Mem.sym("rt_sig_keys"), 8 * sig);
 		var rk = Mem.getU8At(k, 0, n + 1);
 		// the arguments boxed into an array: the references first (no GC
-		// point while they are read from the caller's words), then the
-		// scalars (boxing allocates)
+		// point while they are copied), then the scalars and words (boxing
+		// allocates)
 		var boxed:Array<Dynamic> = [];
 		boxed.resize(n);
 		for (i in 0...n) {
 			var c = Mem.getU8At(k, 0, i);
-			if (c != "i".code && c != "b".code && c != "f".code && c != "l".code) boxed[i] = Mem.obj(Mem.getPtr(args, 8 * i));
+			if (c != "i".code && c != "b".code && c != "f".code && c != "l".code && c != "t".code) boxed[i] = Mem.obj(Mem.getPtr(refs, 8 * i));
 		}
 		for (i in 0...n) {
 			var w = Mem.getI64At(args, 0, i);
@@ -441,6 +458,9 @@ class Dyn {
 					boxed[i] = Mem.getF64(p, 0);
 				case "l".code:
 					boxed[i] = w;
+				// (a type parameter's word: a scalar's boxed)
+				case "t".code:
+					boxed[i] = Tagged.dyn(Mem.getI64At(refs, 0, i));
 				case _:
 			}
 		}
@@ -448,6 +468,12 @@ class Dyn {
 		if (isNotBuiltin(r)) r = callBoxed(anonGetSlow(o, fid), boxed, n);
 		return fromBoxed(r, rk);
 	}
+
+	// (the slow path as compilers before the rooted slots call it, the
+	// references among the numbers: the committed stage0, a previous tool
+	// building this one; removable once neither does)
+	@:hxmc.export("hx_anon_call_slow") static function anonCallSlowOld(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64
+		return anonCallSlow(o, fid, sig, args, args);
 
 	// ---- Dynamic access
 
@@ -955,6 +981,7 @@ class Dyn {
 			case "i".code: (Mem.getI32(Mem.addr(v), 8 * i) : Dynamic);
 			case "b".code: (Mem.getI32(Mem.addr(v), 8 * i) != 0 : Dynamic);
 			case "f".code: (Mem.getF64(Mem.addr(v), 8 * i) : Dynamic);
+			case "t".code: Tagged.dyn(Mem.getI64(Mem.addr(v), 8 * i));
 			case _: Mem.getRef(Mem.addr(v), 8 * i);
 		}
 	}
@@ -1215,6 +1242,10 @@ class Dyn {
 					if (Mem.getF64(pa, 8 * s) != Mem.getF64(pb, 8 * s)) return false;
 				case "l".code:
 					if (Mem.getI64(pa, 8 * s) != Mem.getI64(pb, 8 * s)) return false;
+				// (a type parameter's words: a scalar's compared as a number,
+				// two references as below)
+				case "t".code if (Tagged.isScalar(Mem.getI64(pa, 8 * s)) || Tagged.isScalar(Mem.getI64(pb, 8 * s))):
+					if (!Tagged.eq(Mem.getI64(pa, 8 * s), Mem.getI64(pb, 8 * s))) return false;
 				case _:
 					var x = Mem.getRef(pa, 8 * s), y = Mem.getRef(pb, 8 * s);
 					if (Mem.addr(x) == Mem.addr(y)) continue;

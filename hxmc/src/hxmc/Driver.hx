@@ -387,7 +387,7 @@ class Driver {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
-			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0")
+			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
 			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
@@ -589,6 +589,7 @@ class Driver {
 			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 64 << 10);
 			lw.nameSection = !o.strip;
 			lw.legacyEh = o.wasmLegacyEh;
+			lw.maxPages = o.wasmMemoryMaxMb << 4;
 			var wasm = lw.link();
 			sys.io.File.saveBytes(out, wasm);
 			if (o.stats) Sys.println('hxmc: data ${ms(t3 - t2)}, link ${ms(haxe.Timer.stamp() - t3)}');
@@ -644,10 +645,11 @@ class Driver {
 		var still = links.length > 0 || hxmc.ir.CInterop.USER.keys().hasNext() || hxmc.ir.CInterop.LIBS.keys().hasNext() ? undefinedNames().undef : [];
 		var dylibs = new Map<String, String>();
 		// (a shared object named as such, libm.so.6: never from an object, which
-		// may define the name too, as compiler-rt's weak cos)
+		// may define the name too, as compiler-rt's weak cos; of the functions
+		// the program calls, not of those lowered and then dropped: Reach)
 		if (abi.os == "linux" && !abi.linksDynamically())
 			for (n => lib in hxmc.ir.CInterop.LIBS)
-				if (lib.indexOf(".so") >= 0)
+				if (lib.indexOf(".so") >= 0 && wanted.exists(n))
 					throw 'hxmc: link: the C function $n of the shared library $lib (@:hxmc.lib): Linux executables are static with musl (the default); shared libraries need the dynamic glibc mode (-D hxmc.libc=glibc)';
 		for (n in still) {
 			var lib = hxmc.ir.CInterop.LIBS.get(n);

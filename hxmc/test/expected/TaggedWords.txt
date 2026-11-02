@@ -1,0 +1,5 @@
+exit 0
+Int 5: ffff000000000005, -1: ffff0000ffffffff
+Float 1.5: 3ffa000000000000, -0: 8002000000000000, NaN: 7ffa000000000000, -Infinity: fff2000000000000
+verify-tags: checked where built with it
+all ok

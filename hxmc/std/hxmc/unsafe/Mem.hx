@@ -33,8 +33,9 @@ extern class Mem {
 	// the target: os() 0 Linux, 1 macOS, 2 Windows, 3 WASI (WebAssembly); arm() true on arm64
 	static function os():Int;
 	static function arm():Bool;
-	// the target as one number (one comparison folds: write platform tests
-	// as a single comparison of os(), arm() or target(), not a && b):
+	// the target as one number (a comparison folds, and && or || of one
+	// first: `target() >= 9 && x` is false elsewhere, x not even reached;
+	// write platform tests as comparisons of os(), arm() or target()):
 	// 0 linux-x86_64, 1 linux-arm64, 2 macos-x86_64, 3 macos-arm64,
 	// 4 windows-x86_64, 5 windows-arm64, 6 wasm32-wasi, 7 linux-x86_64 and
 	// 8 linux-arm64 with glibc (-D hxmc.libc=glibc), 9 android-x86_64, 10
@@ -60,6 +61,18 @@ extern class Mem {
 	// the bits of a double, and the double of bits (a register move)
 	static function f64Bits(v:Float):I64;
 	static function bitsF64(b:I64):Float;
+	// the tagged word of a value of a type parameter (hxmc.rt.Tagged; docs/hxmc.md,
+	// "Values of type parameters"), as MemLower encodes and decodes it inline:
+	// an Int or Float (pure), a Bool (its static box); back to an Int, Float or
+	// Bool (a word of the other kind converted, a reference unboxed as
+	// Dynamic is), or to Dynamic (a scalar boxed: a GC point)
+	static function tagInt(v:Int):I64;
+	static function tagFloat(v:Float):I64;
+	static function tagBool(v:Bool):I64;
+	static function untagInt(w:I64):Int;
+	static function untagFloat(w:I64):Float;
+	static function untagBool(w:I64):Bool;
+	static function untagDynamic(w:I64):Dynamic;
 	// calls code at fn with the C ABI (GC points: the callee may collect):
 	// fn(a) and fn(a, b) returning a reference
 	static function callRef1(fn:Ptr, a:Dynamic):Dynamic;

@@ -285,6 +285,19 @@ class Boxes {
 		}
 	}
 
+	// (an Array<T>'s element as a type parameter's word, Tagged: an Int's or
+	// a Float's encoded; a Bool's box static, an Int64's made)
+	@:hxmc.export("hx_aget_t_slow") static function agetT(a:Dynamic, i:Int):I64 {
+		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
+		return switch arrKind(a) {
+			case AK_I32: Tagged.ofInt(Mem.getI32At(arrData(a), 0, i));
+			case AK_F64: Tagged.ofFloat(Mem.getF64At(arrData(a), 0, i));
+			case AK_BOOL: Mem.addr(boxBool(Mem.getU8At(arrData(a), 0, i))).toI64();
+			case AK_I64: Mem.addr(boxI64(Mem.getI64At(arrData(a), 0, i))).toI64();
+			case _: Mem.getI64At(arrData(a), 0, i);
+		}
+	}
+
 	@:hxmc.export("hx_aget_p_slow") static function agetP(a:Dynamic, i:Int):Dynamic {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return null;
 		return switch arrKind(a) {

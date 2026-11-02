@@ -169,6 +169,8 @@ class Fingerprint {
 	static inline var E_NEWBOX = 71;
 	static inline var E_NEWANON = 72;
 	static inline var E_ARRGETU = 73;
+	static inline var E_TAG = 74;
+	static inline var E_UNTAG = 75;
 
 	public function func(f:FuncInfo) {
 		word(FUNC);
@@ -198,6 +200,7 @@ class Fingerprint {
 			case TF64: 3;
 			case TI64: 4;
 			case TVoid: 5;
+			case TRef(RTag | RNull(TI32 | TF64)): 9;
 			case TRef(_): 6;
 			case TStruct(_): 7;
 			case TU8: 8;
@@ -374,6 +377,14 @@ class Fingerprint {
 				ex(x);
 			case EUnbox(t, x):
 				word(E_UNBOX);
+				ty(t);
+				ex(x);
+			case ETag(t, x):
+				word(E_TAG);
+				ty(t);
+				ex(x);
+			case EUntag(t, x):
+				word(E_UNTAG);
 				ty(t);
 				ex(x);
 			case EFieldAddr(c, idx, o):

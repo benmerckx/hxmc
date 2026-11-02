@@ -53,6 +53,7 @@ lists the ones marked with *.
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
 | `-D hxmc.native-array-outofbounds=throws\|silent` * | `haxe.ds.Vector` and `hxmc.NativeArray` accesses out of bounds: `throws` an `ArgumentException`, or `silent` (reads give the default value, writes do nothing). Default: not tested, the result is unspecified |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling (Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |
+| `-D hxmc.wasm-memory-max=<MB>` | wasm: the module's memory at most so large (its declared maximum; memory cannot grow past it, as when a browser refuses). Default: none |
 | `-D hxmc.gc-prefault` * | Linux: a helper thread faults in the old space's pages ahead of the collector: less wall time, more CPU time |
 | `-D hxmc.census` | a heap census at exit, by type (`RT_CENSUS=1` at run time) |
 | `-D hxmc.no-module-cache` | no module cache for this build (also `HXMC_MODULE_CACHE=0`) |
@@ -160,8 +161,15 @@ Calling C from wasm: [interop.md](interop.md#webassembly).
 
 The module grows its memory only as it needs it. The shadow stack and the
 frame stack are 4 MB each (`RT_STACK_MB`); an overflow exits with a
-message. When memory cannot grow, the program prints "out of memory" and
-exits.
+message. A collection takes the memory it may copy into before it starts,
+so a host that refuses to grow memory (a phone's browser) never stops one
+halfway ([hxmc.md](hxmc.md#memory)). When memory cannot grow even for what
+is live, the program prints "out of memory" and exits.
+
+node's `--stack-size` (deep recursion, as the compiler's) must stay within
+the stack the system gives node (`ulimit -s`): past it node crashes with a
+segmentation fault instead of a stack overflow. `ulimit -s unlimited`
+first, as the Makefile does.
 
 ## The npm packages
 
@@ -484,6 +492,7 @@ wasm32-wasi, without `@:access` into the runtime:
 | Function | |
 | --- | --- |
 | `bytesAllocated():Float` | bytes allocated since the program started, by every thread, large objects included |
+| `liveBytes():Float` | bytes the heap holds now: the old space's objects (what the last major collection left live, and what was promoted since) and the nursery's (allocated since the last collection), so garbage no collection has found yet too; right after `NativeGc.collect(true)`, what is live |
 | `threadBytesAllocated():Float` | the same, by the calling thread |
 | `collections():Int`, `minorCollections()`, `majorCollections()` | collections so far |
 | `lastPause():Float`, `totalPause()`, `maxPause()` | pauses in seconds, from the collecting thread's request to resuming the program |
@@ -527,10 +536,11 @@ instead.
 
 - **WebAssembly**: no threads (creating one throws), sockets or processes;
   `haxe.CallStack` is empty.
-- **Reflection** sees only what the program can reach: a class it never
-  constructs or uses as a value is not found by `Type.resolveClass`, and
-  methods nothing calls are not in `Type.getInstanceFields`
-  ([hxmc.md](hxmc.md#reachability)).
+- **Reflection** sees only what the program can reach: `Type.resolveClass`
+  finds the classes `-dce full` would keep, marked on the code that runs on
+  the target, and those `@:keep` keeps; under `-dce std` too, so `@:keep` a
+  class the program finds by name only. Methods nothing calls are not in
+  `Type.getInstanceFields` ([hxmc.md](hxmc.md#reachability)).
 - **`Reflect.deleteField`** removes only fields added at run time, not a
   structure's own fields (as on cpp).
 - **A dynamic method set to null** is its own method again when read.

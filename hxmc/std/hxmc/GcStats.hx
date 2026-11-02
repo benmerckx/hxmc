@@ -20,6 +20,13 @@ class GcStats {
 	public static inline function threadBytesAllocated():Float
 		return NativeGc.threadBytesAllocated();
 
+	// bytes the heap holds now: the old space's objects (what the last major
+	// collection left live and what was promoted since) and the nursery's
+	// (what was allocated since the last collection), so live and garbage
+	// that no collection has seen yet
+	public static inline function liveBytes():Float
+		return NativeGc.liveBytes();
+
 	// collections, minor and major
 	public static inline function collections():Int
 		return NativeGc.counts(0);
