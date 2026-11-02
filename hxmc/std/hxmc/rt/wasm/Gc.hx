@@ -16,9 +16,11 @@ import hxmc.rt.Tagged;
 // major collection copies into chunks taken as it goes, then the from-space's
 // chunks are kept for reuse: no to-space sized for the worst case, no
 // semispaces that outgrow the holes their predecessors left, which a 4 GB
-// memory cannot afford), no thread handshake (one thread, thread-locals are
-// globals), no native handles (no C resources), and finalisers are
-// registered but never run. Every function here is
+// memory cannot afford), large objects (over LARGE) have a region each,
+// which a major collection keeps where it is when the object is reached
+// (promoted in place, not copied), no thread handshake (one thread,
+// thread-locals are globals), no native handles (no C resources), and
+// finalisers are registered but never run. Every function here is
 // @:hxmc.unsafe: it runs while objects move, with raw addresses.
 @:hxmc.wasm @:keep
 class Gc {
@@ -41,7 +43,9 @@ class Gc {
 	static var minorSize:Int;
 	static var minorFixed:Bool;
 	// the old space: chunks of CHUNK bytes and the regions of large objects,
-	// listed as (start, used end, size)
+	// listed as (start, used end, size), the size's low bit set for a large
+	// object's region (LARGE_FLAG: its object at its start, alone)
+	static inline var LARGE_FLAG = 1;
 	static var chunks:Ptr;
 	static var nchunks:Int;
 	static var chunksCap:Int;
@@ -56,9 +60,14 @@ class Gc {
 	static var growth:Int; // the next limit, in percent of what a major collection left live (RT_OLD_GROWTH)
 	static var pool:Ptr; // free chunks, linked through their first word
 	static var poolBytes:I64;
-	// a byte per 64 KB of memory: 1 in the old space (the from-space during a
-	// major collection), 2 in its to-space, 0 elsewhere
+	// a byte per 64 KB of memory: G_OLD in the old space's chunks (the
+	// from-space during a major collection), G_LARGE in its large objects'
+	// regions (the same), G_TO in a major collection's to-space, 0 elsewhere
 	static var gran:Ptr;
+	static inline var G_OLD = 1;
+	static inline var G_TO = 2;
+	static inline var G_LARGE = 3;
+	static var inPlace:I64; // RT_STATS: the bytes of the large objects the last major collection kept in place
 	static var newState:Int; // what chunks taken now are
 	static var copies:Int; // objects copied (a collection's forwarding copied one just now)
 	static var copiedBytes:I64;
@@ -107,17 +116,21 @@ class Gc {
 	static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
-	static inline function inFrom(p:Ptr):Bool
-		return granOf(p) == 1;
-
-	static inline function isOld(p:Ptr):Bool
-		return granOf(p) != 0;
-
 	// p's granule's state; 0 (none) for a word above the 4 GB the table
 	// covers: the tagged word of a scalar (hxmc.rt.Tagged), which a reference
 	// slot holds as the value of a type parameter
 	static inline function granOf(p:Ptr):Int
 		return (p.toI64() >>> 32) == (0 : I64) ? Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) : 0;
+
+	static inline function isOld(p:Ptr):Bool
+		return granOf(p) != 0;
+
+	// a list's entry: its size, and whether it is a large object's region
+	static inline function entrySize(l:Ptr, i:Int):Int
+		return Mem.getI64(l, 24 * i + 16).toInt() & ~LARGE_FLAG;
+
+	static inline function entryLarge(l:Ptr, i:Int):Bool
+		return (Mem.getI64(l, 24 * i + 16).toInt() & LARGE_FLAG) != 0;
 
 	// ---- startup
 
@@ -318,10 +331,11 @@ class Gc {
 
 	// ---- the old space
 
-	// `bytes` in the old space (null: memory cannot grow so far)
+	// `bytes` in the old space (null: memory cannot grow so far); an object
+	// over LARGE always in a region of its own
 	@:hxmc.unsafe static function oldAlloc(bytes:Int):Ptr {
 		var p = oldPtr;
-		if (oldEnd.diff(p) >= (bytes : I64)) {
+		if (bytes <= LARGE && oldEnd.diff(p) >= (bytes : I64)) {
 			oldPtr = p.add(bytes);
 			return p;
 		}
@@ -338,7 +352,7 @@ class Gc {
 			}
 			var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
 			var r = Heap.tryRegionAligned(size, GRAN);
-			if (!r.isNull()) addChunk(r, r.add(bytes), size);
+			if (!r.isNull()) addChunk(r, r.add(bytes), size, true);
 			return r;
 		}
 		var c = pool;
@@ -351,23 +365,23 @@ class Gc {
 		}
 		syncCur();
 		cur = nchunks;
-		addChunk(c, c, CHUNK);
+		addChunk(c, c, CHUNK, false);
 		oldPtr = c.add(bytes);
 		oldEnd = c.add(CHUNK);
 		return c;
 	}
 
-	@:hxmc.unsafe static function addChunk(start:Ptr, end:Ptr, size:Int) {
+	@:hxmc.unsafe static function addChunk(start:Ptr, end:Ptr, size:Int, large:Bool) {
 		if (nchunks == chunksCap) {
 			chunksCap *= 2;
 			chunks = Heap.realloc(chunks, 24 * chunksCap);
 		}
 		Mem.setPtr(chunks, 24 * nchunks, start);
 		Mem.setPtr(chunks, 24 * nchunks + 8, end);
-		Mem.setI64(chunks, 24 * nchunks + 16, size);
+		Mem.setI64(chunks, 24 * nchunks + 16, large ? size | LARGE_FLAG : size);
 		nchunks++;
 		oldBytes += size;
-		mark(start, size, newState);
+		mark(start, size, large && newState == G_OLD ? G_LARGE : newState);
 	}
 
 	@:hxmc.unsafe static function mark(start:Ptr, size:Int, state:Int) {
@@ -437,8 +451,17 @@ class Gc {
 	@:hxmc.unsafe static function forwardTo(p:Ptr, n:Ptr)
 		setFwd(p, n);
 
+	// (a major collection: an object of the from-space's chunks is copied, a
+	// large one stays where it is, its region joining the to-space)
 	@:hxmc.unsafe static function fwd(p:Ptr):Ptr {
-		if (!inYoung(p) && !(major && inFrom(p))) return p;
+		if (!inYoung(p)) {
+			if (!major) return p;
+			var g = granOf(p);
+			if (g != G_OLD) {
+				if (g == G_LARGE) promote(p);
+				return p;
+			}
+		}
 		if (isFwdAt(p)) return fwdAddr(p);
 		var bytes = objBytes(p);
 		var d = oldAlloc(bytes);
@@ -448,6 +471,18 @@ class Gc {
 		copiedBytes += bytes;
 		forwardTo(p, n);
 		return n;
+	}
+
+	// a large object of the from-space, reached: its region (the object at
+	// its start) joins the to-space as it is, G_TO from now on, so it is
+	// promoted once; scanned as a copy is (copies)
+	@:hxmc.unsafe static function promote(p:Ptr) {
+		var r = p.add(-8);
+		var bytes = objBytes(p);
+		var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
+		addChunk(r, r.add(bytes), size, true);
+		inPlace += size;
+		copies++;
 	}
 
 	@:hxmc.unsafe static function push(o:Ptr) {
@@ -580,19 +615,23 @@ class Gc {
 		oldPtr = Ptr.nil();
 		oldEnd = Ptr.nil();
 		oldBytes = 0;
-		newState = 2;
+		inPlace = 0;
+		newState = G_TO;
 		major = true;
 		scanRoots();
 		remLen = 0;
 		robjsLen = 0;
 		Wasm.memset(robjsRecent, 0, 8 * 256);
 		major = false;
-		newState = 1;
+		newState = G_OLD;
+		// the from-space's chunks to the pool, its large objects' regions back
+		// to Heap, but for those promoted in place (G_TO: in the list already)
 		for (i in 0...nfrom) {
 			var start = Mem.getPtr(fromChunks, 24 * i);
-			var size = Mem.getI64(fromChunks, 24 * i + 16).toInt();
+			var size = entrySize(fromChunks, i);
+			if (entryLarge(fromChunks, i) && granOf(start) == G_TO) continue;
 			mark(start, size, 0);
-			if (size == CHUNK) {
+			if (size == CHUNK && !entryLarge(fromChunks, i)) {
 				Mem.setPtr(start, 0, pool);
 				pool = start;
 				poolBytes += CHUNK;
@@ -600,7 +639,7 @@ class Gc {
 				Heap.release(start, size);
 		}
 		for (i in 0...nchunks)
-			mark(Mem.getPtr(chunks, 24 * i), Mem.getI64(chunks, 24 * i + 16).toInt(), 1);
+			mark(Mem.getPtr(chunks, 24 * i), entrySize(chunks, i), entryLarge(chunks, i) ? G_LARGE : G_OLD);
 		// the next limit: `growth` percent of what is live (twice) and room for
 		// the nursery, but at most half of what the rest of a wasm32 memory (4
 		// GB) leaves: the next collection's from-space and to-space must both fit
@@ -613,7 +652,16 @@ class Gc {
 		var least = live + need + (minorSize : I64) + 2 * CHUNK;
 		if (limit < least) limit = least;
 		oldLimit = limit;
-		if (stats) Wasi.statLine("gc: major ", majors, (live >> 20).toInt(), (limit >> 20).toInt(), (Heap.memoryBytes() >> 20).toInt());
+		if (stats) {
+			Wasi.statLine("gc: major ", majors, (live >> 20).toInt(), (limit >> 20).toInt(), (Heap.memoryBytes() >> 20).toInt());
+			if (inPlace >= (1 << 20)) {
+				Wasi.writeLit(2, "gc: major ");
+				Wasi.writeInt(2, majors);
+				Wasi.writeLit(2, ": ");
+				Wasi.writeInt(2, (inPlace >> 20).toInt());
+				Wasi.writeLit(2, " MB of large objects kept in place\n");
+			}
+		}
 	}
 
 	// after a minor collection that promoted `promoted` of the `used` bytes

@@ -1148,11 +1148,17 @@ Linear memory only grows, and browsers refuse it early, so the runtime
 - Only memory handed out before and freed is zeroed: fresh memory from
   `memory.grow` is zero already.
 
+Objects over 128 KB get a region of their own in the old space (aligned to
+64 KB, the granule of the table that says which space an address is in).
+A major collection promotes a reached one in place: its region joins the
+to-space as it is, unmoved and uncopied, and the regions of those not
+reached go back to the heap. So a 48 MB `Bytes` costs 48 MB, not 96 MB at
+each major collection.
+
 When `memory.grow` fails the runtime prints "out of memory: linear memory
-is N MB, growing it by M MB failed" and exits. Objects over 128 KB get a
-region of their own in the old space; an Array grown by doubling reaches
-about 134M Floats (1 GB of storage) before its next growth no longer fits
-next to the old storage and the collector's copy.
+is N MB, growing it by M MB failed" and exits. An Array grown by doubling
+reaches about 134M Floats (1 GB of storage) before its next growth no
+longer fits next to the old storage.
 
 On every target an Array's storage holds at most 268,435,453 elements
 (`Boxes.MAX_CAP`, 2 GB of 8-byte elements); growing past that throws "out
