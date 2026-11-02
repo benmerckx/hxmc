@@ -1,0 +1,12 @@
+exit 0
+ReflectTargets.hx:85: window main 0 true
+ReflectTargets.hx:88: not android
+ReflectTargets.hx:99: Window 5 true
+ReflectTargets.hx:102: window made
+ReflectTargets.hx:99: Tablet 2 true
+ReflectTargets.hx:102: tablet 10
+ReflectTargets.hx:99: Plugin 1 true
+ReflectTargets.hx:102: plugin
+ReflectTargets.hx:94: Phone not found
+ReflectTargets.hx:107: window main Window
+ReflectTargets.hx:111: Class not found Phone

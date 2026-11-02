@@ -519,10 +519,11 @@ instead.
 
 - **WebAssembly**: no threads (creating one throws), sockets or processes;
   `haxe.CallStack` is empty.
-- **Reflection** sees only what the program can reach: a class it never
-  constructs or uses as a value is not found by `Type.resolveClass`, and
-  methods nothing calls are not in `Type.getInstanceFields`
-  ([hxmc.md](hxmc.md#reachability)).
+- **Reflection** sees only what the program can reach: `Type.resolveClass`
+  finds the classes `-dce full` would keep, marked on the code that runs on
+  the target, and those `@:keep` keeps; under `-dce std` too, so `@:keep` a
+  class the program finds by name only. Methods nothing calls are not in
+  `Type.getInstanceFields` ([hxmc.md](hxmc.md#reachability)).
 - **`Reflect.deleteField`** removes only fields added at run time, not a
   structure's own fields (as on cpp).
 - **A dynamic method set to null** is its own method again when read.

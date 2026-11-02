@@ -33,8 +33,9 @@ extern class Mem {
 	// the target: os() 0 Linux, 1 macOS, 2 Windows, 3 WASI (WebAssembly); arm() true on arm64
 	static function os():Int;
 	static function arm():Bool;
-	// the target as one number (one comparison folds: write platform tests
-	// as a single comparison of os(), arm() or target(), not a && b):
+	// the target as one number (a comparison folds, and && or || of one
+	// first: `target() >= 9 && x` is false elsewhere, x not even reached;
+	// write platform tests as comparisons of os(), arm() or target()):
 	// 0 linux-x86_64, 1 linux-arm64, 2 macos-x86_64, 3 macos-arm64,
 	// 4 windows-x86_64, 5 windows-arm64, 6 wasm32-wasi, 7 linux-x86_64 and
 	// 8 linux-arm64 with glibc (-D hxmc.libc=glibc), 9 android-x86_64, 10
