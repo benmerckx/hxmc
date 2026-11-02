@@ -1,0 +1,7 @@
+exit 0
+ObjCModeClassMethods.hx:79: names, Triangle, Square, true
+ObjCModeClassMethods.hx:85: responds, true, true, true, false, false
+ObjCModeClassMethods.hx:87: sent, 3, 4, 3, 2
+ObjCModeClassMethods.hx:89: arguments, 3, a triangle
+ObjCModeClassMethods.hx:93: description, true, 1
+ObjCModeClassMethods.hx:95: after a collection, 4
