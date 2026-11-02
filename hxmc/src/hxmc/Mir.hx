@@ -478,6 +478,7 @@ class MFunc {
 					case RStr: "String";
 					case RAnon: "anon";
 					case RAny: "Dynamic";
+					case RTag: "T";
 					case RType: "type";
 					case RNative(p): p;
 				}

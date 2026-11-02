@@ -392,6 +392,9 @@ class MirBuild extends MirWriter {
 		// paths); one without one pushes them there
 		if (nslots > 0 && !noShadow && frameSpills) {
 			var most = hasArrayStore(fn.body) ? 1 : 0; // (an array store's value: one more)
+			// (a structural call's arguments, rooted on its slow path: MemLower.callAnon)
+			var n = anonArity(fn.body);
+			if (n > most) most = n;
 			for (list in roots.spills) {
 				var n = 1;
 				for (l in list)
@@ -932,6 +935,23 @@ class MirBuild extends MirWriter {
 		return gcPoint(NewDyn, I64, i, n, w0, w1).id;
 	}
 
+	// the most arguments a structural call of the statements passes (ECallAnon)
+	static function anonArity(ss:Vector<Stmt>):Int {
+		var r = 0;
+		function ex(e:Ex) {
+			switch e {
+				case ECallAnon(_, _, _, args) if (args.length > r): r = args.length;
+				case _:
+			}
+			hxmc.ir.Facts.iterEx(ex, e);
+		}
+		function st(s:Stmt)
+			hxmc.ir.Facts.iterStmt(st, ex, s);
+		for (s in ss)
+			st(s);
+		return r;
+	}
+
 	static function hasArrayStore(ss:Vector<Stmt>):Bool {
 		var r = false;
 		function st(s:Stmt) {
@@ -1021,6 +1041,8 @@ class MirBuild extends MirWriter {
 	}
 
 	function boxFrom(t:Ty, v:Int):Int {
+		// (a type parameter's word: a scalar's boxed, a reference as it is)
+		if (t.match(TRef(RTag))) return untagTo(TRef(RAny), v);
 		if (!Ir.isScalar(t)) return v;
 		if (t != TBool) f.allocs++;
 		var i = info();
@@ -1048,8 +1070,41 @@ class MirBuild extends MirWriter {
 	function untagTo(t:Ty, v:Int):Int {
 		var i = info();
 		i.t = t;
-		if (Ir.isRef(t)) f.allocs++;
-		return obj(Untag, Ir.isRef(t) ? I64 : mty(t), i, v).id;
+		// (as Dynamic: a GC point on the slow path only, which a cold site's
+		// references are rooted around, Facts.markCold)
+		if (Ir.isRef(t)) {
+			f.allocs++;
+			return gcPoint(Untag, I64, i, v).id;
+		}
+		return obj(Untag, mty(t), i, v).id;
+	}
+
+	// a == b of two type parameters' words (FnLower.equality): equal words
+	// are equal values, but a NaN's; two different Ints' words are not; the
+	// rest (the other kind, boxes, references) by the runtime, which
+	// allocates nothing (hxmc.rt.Tagged.eq)
+	function tagEq(a:Int, b:Int):Int {
+		var r = newVar(I32);
+		var same = newBlock(), diff = newBlock(), ints = newBlock(), other = newBlock(), join = newBlock();
+		br(cmp(CEq, a, b), same, diff);
+		seal(same);
+		seal(diff);
+		cur = same;
+		writeVar(r, cur, cmp(CNe, a, lconst(0, 0x7FFA0000)));
+		jmp(join);
+		cur = diff;
+		br(cmp(CUGe, op2(And, I64, a, b), lconst(0, 0xFFFF0000)), ints, other);
+		seal(ints);
+		seal(other);
+		cur = ints;
+		writeVar(r, cur, iconst(0));
+		jmp(join);
+		cur = other;
+		writeVar(r, cur, call("hx_tag_eq_slow", vector(a, b), I32));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(r, cur);
 	}
 
 	// -D hxmc.verify-tags: v, a Dynamic the runtime takes the address of
@@ -1149,6 +1204,8 @@ class MirBuild extends MirWriter {
 			case EConv(c, x): conv(c, ex(x));
 			case EBox(t, x): boxFrom(t, ex(x));
 			case EUnbox(t, x): unboxTo(t, ex(x));
+			case ETag(t, x): tagFrom(t, ex(x));
+			case EUntag(t, x): untagTo(t, ex(x));
 			case EField(c, idx, obj):
 				var i = info();
 				i.cls = c;
@@ -1608,6 +1665,7 @@ class MirBuild extends MirWriter {
 				cur = join;
 				readVar(r, cur);
 			case "hx_str_eq": strEq(xs[0], xs[1]);
+			case "hx_tag_eq": tagEq(xs[0], xs[1]);
 			case "Math_NaN": fconst(Math.NaN);
 			case "Math_POSITIVE_INFINITY": fconst(Math.POSITIVE_INFINITY);
 			case "Math_NEGATIVE_INFINITY": fconst(Math.NEGATIVE_INFINITY);

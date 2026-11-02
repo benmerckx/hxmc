@@ -635,7 +635,7 @@ class Reach {
 				case EAnonGet(n, t, _, hint):
 					// (a method only where the field's type is a function's or Dynamic:
 					// a class's method unifies with no other structural field)
-					if (t.match(TRef(RClos(_) | RAny))) names.set(n, true);
+					if (t.match(TRef(RClos(_) | RAny | RTag))) names.set(n, true);
 					if (hint != null) shapes.set(hint, true);
 				case ENewAnon(s, _):
 					shapes.set(s, true);

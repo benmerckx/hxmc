@@ -25,8 +25,12 @@ class BundleFacts {
 			case TBool: "b";
 			case TF64: "f";
 			case TI64: "l";
+			case TRef(RTag): "t"; // (a type parameter's word: a field's kind; a reference's slot, slotChar)
 			case _: "p";
 		};
+
+	static function slotChar(t:Null<Ty>):String
+		return t != null && t.match(TRef(RTag)) ? "p" : kindChar(t);
 
 	// what the loader needs to number, register and initialize the program's parts
 	// (types: the program's, com.types by default; the macro context's handed over so far for interp.MirMacros)
@@ -80,7 +84,7 @@ class BundleFacts {
 				share: share.get(i),
 				tk: t.tk,
 				sup: supIsSig ? e.sigNames[t.sup] : tyName(t.sup),
-				slots: [for (s in t.slots) kindChar(s)].join(""),
+				slots: [for (s in t.slots) slotChar(s)].join(""),
 				fields: [for (f in t.fields) {name: f.name, slot: f.slot, kind: f.kind != null ? String.fromCharCode(f.kind) : kindChar(f.ty)}],
 				// (a method with default values for numbers or Bools: its entry taking them nullable, as DataGen)
 				methods: [for (m in t.methods) {name: m.name, fn: m.dfn != null ? m.dfn : m.fn, sig: e.sigNames[m.dfn != null ? m.dsig : m.sig]}],

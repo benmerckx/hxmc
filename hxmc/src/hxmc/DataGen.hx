@@ -120,6 +120,8 @@ class DataGen {
 			case TBool: "b".code;
 			case TF64: "f".code;
 			case TI64: "l".code;
+			// a type parameter's value: a tagged word (Dyn.boxSlot boxes it)
+			case TRef(RTag): "t".code;
 			case _: "p".code;
 		};
 

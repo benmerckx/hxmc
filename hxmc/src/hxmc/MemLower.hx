@@ -574,10 +574,12 @@ class MemLower extends MirWriter {
 	// a word as t: an Int's or a Float's decoded inline, any other (the
 	// other kind, a reference: null, a box) by the runtime (Tagged); as
 	// Dynamic, a reference as it is and a scalar boxed (hx_tag_box)
-	function untagTo(t:Ty, w:Int):Int {
+	// (nested: within another operation's lowering, whose continuation is not
+	// this one's: callAnon's result)
+	function untagTo(t:Ty, w:Int, nested = false):Int {
 		var ty = Ir.isRef(t) ? I64 : MirBuild.mty(t);
 		var res = newVar(ty);
-		var join = joinBlock();
+		var join = nested ? newBlock() : joinBlock();
 		var fn = switch t {
 			case TI32: "hx_tag_int";
 			case TF64: "hx_tag_float";
@@ -608,7 +610,11 @@ class MemLower extends MirWriter {
 			});
 			jmp(join);
 			cur = slow;
-			writeVar(res, cur, call(fn, vector(w), ty));
+			// (boxing as Dynamic: a cold site's references rooted around it)
+			var sp = Ir.isRef(t) ? spillOpen(cold, 0) : -1;
+			var c = call(fn, vector(w), ty);
+			spillClose(sp);
+			writeVar(res, cur, c);
 			jmp(join);
 		}
 		seal(join);
@@ -937,6 +943,8 @@ class MemLower extends MirWriter {
 			case Abi.AK_I32 | Abi.AK_BOOL: "hx_aget_i_slow";
 			case Abi.AK_F64: "hx_aget_f_slow";
 			case Abi.AK_I64: "hx_aget_l_slow";
+			// (as a type parameter's word: a number's encoded, not boxed)
+			case _ if (elem.match(TRef(RTag))): "hx_aget_t_slow";
 			case _: "hx_aget_p_slow";
 		};
 		writeVar(res, cur, call(name, vector(av, iv), t));
@@ -1052,6 +1060,9 @@ class MemLower extends MirWriter {
 				readVar(r, cur);
 			case TF64: cmp(CEq, kind, iconst("f".code));
 			case TI64: cmp(CEq, kind, iconst("l".code));
+			// (a type parameter's word, read: a reference's slot or a word's;
+			// never stored through a structure, FnLower.stored)
+			case TRef(RTag): op2(Or, I32, cmp(CEq, kind, iconst("p".code)), cmp(CEq, kind, iconst("t".code)));
 			case _: cmp(CEq, kind, iconst("p".code));
 		}
 	}
@@ -1149,13 +1160,35 @@ class MemLower extends MirWriter {
 		br(cmp(CEq, slot, iconst(0)), m1, notMeth);
 		seal(m1);
 		cur = m1;
-		br(cmp(CEq, load(I32, 4, c, Abi.IC_SIG), sigConst(s)), meth, notMeth);
+		var msig = load(I32, 4, c, Abi.IC_SIG);
+		// (else a method of another signature the call converts to:
+		// Ir.anonAlternatives, those the program has)
+		var alts = [];
+		for (a in Ir.anonAlternatives(s)) {
+			var x = p.p.sigOf(Program.sigKey(a.args, a.ret));
+			if (x != null && x != s) alts.push(x);
+		}
+		var next = alts.length > 0 ? newBlock() : notMeth;
+		br(cmp(CEq, msig, sigConst(s)), meth, next);
 		seal(meth);
-		seal(notMeth);
 		cur = meth;
 		var r = callInd(load(I64, 8, c, Abi.IC_FN), VectorTools.cons(o, xs), rt, argTys);
 		if (res >= 0) writeVar(res, cur, r);
 		jmp(join);
+		for (k in 0...alts.length) {
+			var m = alts[k];
+			seal(next);
+			cur = next;
+			var hit = newBlock();
+			next = k + 1 < alts.length ? newBlock() : notMeth;
+			br(cmp(CEq, msig, sigConst(m)), hit, next);
+			seal(hit);
+			cur = hit;
+			var mr = altCall(load(I64, 8, c, Abi.IC_FN), o, s, m, xs);
+			if (res >= 0) writeVar(res, cur, mr);
+			jmp(join);
+		}
+		seal(notMeth);
 		// a closure in a field
 		cur = notMeth;
 		var c1 = newBlock(), c2 = newBlock(), clos = newBlock(), slow = newBlock();
@@ -1174,19 +1207,30 @@ class MemLower extends MirWriter {
 		var r2 = callInd(load(I64, 8, k, 0), VectorTools.cons(k, xs), rt, argTys);
 		if (res >= 0) writeVar(res, cur, r2);
 		jmp(join);
-		// the slow path: arguments packed in 8-byte words
+		// the slow path: arguments packed in 8-byte words, the numbers' in a
+		// frame area, the references and type parameters' words in slots
+		// pushed after the spilled references (rooted: the runtime allocates
+		// before it reads them all, and a collection moves what they point to)
 		cur = slow;
 		var n = xs.length == 0 ? 1 : xs.length;
 		var area = frameSlot(8 * n, 8);
 		var av = stackAddr(area);
+		var base = spills.length;
+		var sp = spillOpen(true, xs.length);
 		if (xs.length == 0) store(8, av, 0, lconst(0, 0));
-		for (i in 0...xs.length)
+		for (i in 0...xs.length) {
+			var ref = s.args[i].match(TRef(_));
 			store(8, av, 8 * i, switch s.args[i] {
 				case TF64: op1(FToBits, I64, xs[i]);
 				case TI32 | TBool: op1(ZExt, I64, xs[i]);
+				case _ if (ref): lconst(0, 0);
 				case _: xs[i];
 			});
-		var u = call("hx_anon_call_slow", vector(o, fid, sigConst(s), av), I64);
+			if (sp >= 0) store(8, sp, 8 * (base + i), ref ? xs[i] : lconst(0, 0));
+		}
+		var refs = sp >= 0 ? op2(Add, I64, sp, lconst32(8 * base)) : av;
+		var u = call("hx_anon_call_slow_r", vector(o, fid, sigConst(s), av, refs), I64);
+		spillClose(sp);
 		if (res >= 0) writeVar(res, cur, switch s.ret {
 			case TF64: op1(BitsToF, F64, u);
 			case TI32 | TBool: op1(Trunc, I32, u);
@@ -1196,6 +1240,25 @@ class MemLower extends MirWriter {
 		seal(join);
 		cur = join;
 		return res >= 0 ? readVar(res, cur) : -1;
+	}
+
+	// a structural call of signature s (arguments xs) to fn, a method's code
+	// of signature m, one of s's alternatives
+	// (Ir.anonAlternatives), with `self` first: a number's word where it takes
+	// one, a reference as it is; its result decoded, or boxed as Dynamic (a GC
+	// point after the call's), where it returns a word for a number or a
+	// reference
+	function altCall(fn:Int, self:Int, s:SigInfo, m:SigInfo, xs:Vector<Int>):Int {
+		var mTys = new Vector<MTy>(m.args.length + 1);
+		mTys[0] = I64;
+		var ys = new Vector<Int>(m.args.length);
+		for (i in 0...m.args.length) {
+			mTys[i + 1] = MirBuild.mty(m.args[i]);
+			ys[i] = Ir.repr(m.args[i]) == Ir.repr(s.args[i]) || !s.args[i].match(TI32 | TF64) ? xs[i] : tagFrom(s.args[i], xs[i]);
+		}
+		var mr = callInd(fn, VectorTools.cons(self, ys), MirBuild.mty(m.ret), mTys);
+		if (s.ret == TVoid) return mr;
+		return m.ret.match(TRef(RTag)) && !s.ret.match(TRef(RTag)) ? untagTo(s.ret.match(TRef(_)) ? TRef(RAny) : s.ret, mr, true) : mr;
 	}
 
 	// hx_is_sig(c, sig): a closure (TK_CLOSURE or TK_BOUND) of that signature
