@@ -319,6 +319,43 @@ match; a closure capturing nothing is static data.
   code can have keeps a constructor entry. A class without a constructor,
   or whose entry was dropped, fails as on Eval (`Instance constructor not
   found`).
+- **Classes by name** (`Type.resolveClass`, `haxe.Unserializer`): live code
+  can have the value of each class it can name, so `Type.createInstance`
+  and `createEmptyInstance` make those, which keeps their methods when a
+  name is computed. It can name the classes that Haxe's `-dce full` keeps,
+  marked on the code that can run (the target's constants folded):
+  - the classes live code makes, uses as a value, tests (`Std.isOfType`,
+    `catch`), casts to or reads a field of;
+  - those a type of live code names: an argument's, a result's, a local's,
+    a static's it uses, a field's of a class it can name, within an
+    `Array`, a function type or an enum's arguments;
+  - their superclasses;
+  - those `@:keep` keeps: on the class or one of its fields, or `@:keepSub`
+    on a superclass. Unlike the others, such a class is lowered when nothing
+    else names it;
+  - those a string literal of live code names (`Type.resolveClass("a.B")`).
+
+  `Type.resolveClass` finds no other class, and reflection keeps nothing of
+  theirs. A class only the types of dead code name (a method nothing can
+  call, a dropped static) is not found, nor one a branch of another target
+  names (`if (Mem.target() >= 9)`). Under `-dce std` Haxe also keeps the user
+  classes nothing names, which the program does not have: `@:keep` the
+  classes a program finds by name only (plugins listed in data, the classes
+  of saved data a program reads but never makes).
+
+  The lowering meets more types than the code that runs names: it lowers
+  every method of a class it has met, live or not, the statics of a class
+  used as a value, and a static variable's declared type with its class's
+  static initializer, none of which a test of the target removes. So a
+  class of another target can be among the program's classes (helder's
+  `AndroidWindow`, whose statics' types name it), and with keep-all
+  reflection its methods and their C functions were linked (`libandroid.so`
+  in a Linux program, #134). A class marked for another target
+  (`@:hxmc.android`, `@:hxmc.ios`, `@:hxmc.os("macos")`, `@:hxmc.wasm`,
+  `@:hxmc.native`, as the runtime's classes) is found only when live code
+  makes it or uses its class value, and its `__init__` runs on its target
+  only. A test of the target folds as the left side of `&&` and `||` too
+  (`Mem.target() >= 9 && x`), so what the right side calls is not reached.
 
 Before it, DCE: hxmc's std is a user class path (`-cp bin/hxmc/std`, last so
 that its modules win), and Haxe's default DCE keeps the classes of user

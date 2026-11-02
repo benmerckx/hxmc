@@ -17,10 +17,11 @@ import hxmc.ir.Ir;
 // function is reached by name through its class value likewise.
 //
 // The statics of a class value (ClassInfo.statics) live code can have (the
-// class's value in live code, any class's when it can get a value's class or
-// resolve a class by name, the superclasses' when it can get a class's
-// superclass): its variables, whose static initializers run then, and its
-// functions live otherwise or reached by name, as closures (so that
+// class's value in live code, an instantiated class's when it can get a
+// value's class, a class's it can name (`named`) when it can resolve a class
+// by name, the superclasses' when it can get a class's superclass): its
+// variables, whose static initializers run then, and its functions live
+// otherwise or reached by name, as closures (so that
 // Type.getClassFields lists the functions kept, as with -dce full, and a
 // variable read by name never misses its initializer); the others are left
 // out, as fields -dce full dropped.
@@ -32,13 +33,14 @@ import hxmc.ir.Ir;
 // name only what the tables have, so a dropped method is not among them). A
 // name computed any other way can be any name: every method of the
 // instantiated classes stays then. Type.createEmptyInstance instantiates the
-// classes whose class value live code has, every class when it can also
-// resolve a class by its name (Type.resolveClass).
+// classes whose class value live code has, and those it can name when it can
+// also resolve a class by its name (Type.resolveClass; the others it does not
+// find: ClassInfo.unnamed).
 //
 // Type.createInstance, live, instantiates the classes whose value live code
-// can have (named in live code, any class when it can resolve one by name,
-// the instantiated ones when it can get a value's class, their superclasses
-// when it can get a class's superclass) and keeps their entries
+// can have (named in live code, those it can name when it can resolve one by
+// name, the instantiated ones when it can get a value's class, their
+// superclasses when it can get a class's superclass) and keeps their entries
 // (ClassInfo.maker: the constructor called); the other classes' entries are
 // dropped (the call throws).
 //
@@ -74,6 +76,12 @@ class Reach {
 	var reflected = new Map<ClassInfo, Bool>(); // the classes whose statics live code can reach through their value
 	var createInstance = false; // Type.createInstance (Dyn.createInstance) is live
 	var made = new Map<ClassInfo, Bool>(); // the classes Type.createInstance can make (their entries kept)
+	// the classes live code can name (Type.resolveClass finds them, once live:
+	// named), and what makes them so
+	var named = new Map<ClassInfo, Bool>();
+	var byName = new Map<String, ClassInfo>();
+	var tySeen = new Map<SigInfo, Bool>();
+	var enumSeen = new Map<EnumInfo, Bool>();
 	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root)
 	var whyName = Sys.getEnv("HXMC_REACH_WHY");
 	var cur:Null<FuncInfo> = null; // the function being scanned
@@ -115,6 +123,12 @@ class Reach {
 		for (i in 0...p.classes.length)
 			if (p.classes[i].id != i) throw "hxmc: reach: classes out of order";
 		findSinks();
+		for (c in p.classes) {
+			c.unnamed = false;
+			if (c.name != "") byName.set(c.name, c);
+		}
+		for (c in p.classes)
+			if (c.keep && !c.otherTarget) name(c);
 		for (f in p.inits) {
 			var gs = globalsOf(f);
 			for (g in gs) {
@@ -139,9 +153,9 @@ class Reach {
 				scan(work.pop());
 			if (emptyInstance)
 				for (c in p.classes)
-					if (resolveType || valueClasses.exists(c)) instantiate(c);
+					if ((resolveType && named.exists(c)) || valueClasses.exists(c)) instantiate(c);
 			for (c in p.classes)
-				if (resolveType || typeOfValue || valueClasses.exists(c)) {
+				if ((resolveType && named.exists(c)) || (typeOfValue && inst[c.id]) || valueClasses.exists(c)) {
 					var k = c;
 					do {
 						statics(k);
@@ -159,7 +173,7 @@ class Reach {
 				}
 			if (createInstance)
 				for (c in p.classes)
-					if (resolveType || valueClasses.exists(c) || (typeOfValue && inst[c.id])) {
+					if ((resolveType && named.exists(c)) || valueClasses.exists(c) || (typeOfValue && inst[c.id])) {
 						var k = c;
 						do {
 							make(k);
@@ -215,9 +229,14 @@ class Reach {
 		// (the entries of the classes Type.createInstance can make)
 		for (c in p.classes)
 			if (c.maker != null && !made.exists(c)) c.maker = null;
+		// (the classes no live code can name: Type.resolveClass does not find them)
+		if (resolveType)
+			for (c in p.classes)
+				c.unnamed = c != p.classes[0] && !named.exists(c);
 		if (stats)
 			Sys.println('hxmc: reach: ${p.funcs.length} live functions'
-				+ (anyName != null ? ', every method name (a name computed in $anyName)' : ', ${Lambda.count(names)} method names'));
+				+ (anyName != null ? ', every method name (a name computed in $anyName)' : ', ${Lambda.count(names)} method names')
+				+ (resolveType ? ', ${Lambda.count(named)} of ${p.classes.length} classes found by name' : ''));
 	}
 
 	function explain() {
@@ -607,10 +626,12 @@ class Reach {
 						nameArg(f, args[s.j], true, s.pre);
 					for (k in at(arraySinks, g))
 						arrayArg(f, args[k]);
-				case ECallDispatch(sel, _, _):
+				case ECallDispatch(sel, sig, _):
 					selLive[sel] = true;
-				case ECallAnon(n, _, _, _):
+					markSig(sig);
+				case ECallAnon(n, sig, _, _):
 					names.set(n, true);
+					markSig(sig);
 				case EAnonGet(n, t, _, hint):
 					// (a method only where the field's type is a function's or Dynamic:
 					// a class's method unifies with no other structural field)
@@ -624,14 +645,29 @@ class Reach {
 					nameArg(f, args[1], false);
 				case ENewObj(c):
 					instantiate(c);
+					name(c);
 				case ENewClos(l, _):
 					mark(l.fn);
 				case EType(TRClass(c)):
 					valueClasses.set(c, true);
+					name(c);
+				case EStr(s):
+					// (a class named by a literal: Type.resolveClass("pack.C"))
+					var c = byName.get(s);
+					if (c != null && !c.otherTarget) name(c);
+				case EInstOf(c, _) | EField(c, _, _) | EFieldAddr(c, _, _):
+					nameTy(c);
+				case ECast(t, _) | ENull(t) | EBox(t, _) | EUnbox(t, _) | EArrGet(t, _, _) | EArrGetU(t, _, _) | ENewArr(t, _) | ENewBox(t, _) | EBoxGet(t, _):
+					markTy(t);
+				case ECallClos(sig, _, _):
+					markSig(sig);
+				case ENewEnum(c, _):
+					markEnum(c.en);
 				case EType(TREnum(e)):
 					valueEnums.set(e, true);
-				case EGlobal(g, _):
+				case EGlobal(g, t):
 					setBy(g, f);
+					markTy(t);
 				case _:
 			}
 			Facts.iterEx(ex, e);
@@ -640,11 +676,79 @@ class Reach {
 			switch s {
 				case SSetGlobal(g, _):
 					setBy(g, f);
+					markTy(p.globals[g].ty);
+				case SSetField(c, _, _, _):
+					nameTy(c);
 				case _:
 			}
 			Facts.iterStmt(st, ex, s);
 		}
 		for (s in f.body)
 			st(s);
+		// (the types of its arguments, result and locals)
+		for (l in f.args)
+			markTy(l.ty);
+		markTy(f.ret);
+		for (l in f.locals)
+			markTy(l.ty);
+	}
+
+	// ---- the classes live code can name (Type.resolveClass finds them)
+	//
+	// As Haxe's DCE keeps the classes for -dce full, on the code that can run
+	// (after the target's constants folded, FnLower): those live code makes,
+	// uses as a value, tests, casts to or reads fields of, whose type a live
+	// function's argument, result, local or a static it uses has, or a field
+	// of such a class (and the types within: an Array's elements, a
+	// function's, an enum's arguments), their superclasses, those @:keep
+	// keeps (Lower.keptByName) and those a literal of live code names. A
+	// class of another target (ClassInfo.otherTarget) only when live code
+	// makes it or uses its class value. Type.resolveClass finds no other
+	// (ClassInfo.unnamed), so reflection keeps nothing of theirs: no
+	// instance by Type.createEmptyInstance or createInstance, no statics.
+
+	// c can be named (a type: not when of another target)
+	function nameTy(c:ClassInfo) {
+		if (!c.otherTarget) name(c);
+	}
+
+	function name(c:Null<ClassInfo>) {
+		if (c == null || c.isInterface || named.exists(c)) return;
+		named.set(c, true);
+		name(c.sup);
+		for (x in c.fields)
+			markTy(x.ty);
+	}
+
+	function markTy(t:Ty) {
+		switch t {
+			case TRef(r):
+				switch r {
+					case RObj(c): nameTy(c);
+					case REnum(e) if (e != null): markEnum(e);
+					case RCtor(c): markEnum(c.en);
+					case RArr(t) | RNativeArr(t) | RBox(t) | RNull(t): markTy(t);
+					case RClos(s): markSig(s);
+					case _:
+				}
+			case _:
+		}
+	}
+
+	function markSig(s:SigInfo) {
+		if (tySeen.exists(s)) return;
+		tySeen.set(s, true);
+		for (t in s.args)
+			markTy(t);
+		markTy(s.ret);
+	}
+
+	function markEnum(e:EnumInfo) {
+		if (enumSeen.exists(e)) return;
+		enumSeen.set(e, true);
+		for (c in e.ctors)
+			if (c.params != null)
+				for (t in c.params)
+					markTy(t);
 	}
 }

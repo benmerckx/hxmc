@@ -72,6 +72,16 @@ class ClassInfo {
 	// can call Type.createInstance (Lower.makers); Reach keeps it where live
 	// code can have the class value (null: none)
 	public var maker:Null<{fn:Null<FuncInfo>}> = null;
+	// @:keep written on the class or one of its fields, or @:keepSub on a
+	// superclass or an interface (Lower): Type.resolveClass finds it (Reach)
+	public var keep = false;
+	// of another target (@:hxmc.android, @:hxmc.ios, @:hxmc.os, @:hxmc.wasm,
+	// @:hxmc.native: Lower.ofTarget): only live code making it or using its
+	// class value makes Type.resolveClass find it (Reach)
+	public var otherTarget = false;
+	// Type.resolveClass does not find it: live code can resolve classes by
+	// name, and this one is none it can name (Reach; Facts gives it no name)
+	public var unnamed = false;
 
 	public function new(name, ident, sup) {
 		this.name = name;

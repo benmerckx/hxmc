@@ -257,7 +257,7 @@ class Facts {
 			c.nslots = slots.length;
 			// (a record's header counts 16 bits of slots, 0xFFFF an array's mark: Types)
 			if (slots.length >= 0xFFFF) throw "hxmc: class " + c.name + " has more than 65534 slots";
-			var t = entry(c.name, "TK_CLASS", slots, c.name);
+			var t = entry(c.unnamed ? "" : c.name, "TK_CLASS", slots, c.name);
 			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it)
 			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD)) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
 			// (a derived field: its NativeArray field's slot, kind L, the runtime's Dyn.boxSlot)
