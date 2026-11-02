@@ -611,7 +611,9 @@ class Gc {
 		return 1;
 	}
 
-	// the deallocs this thread put off, sent (each in a safe region, as a message)
+	// the deallocs this thread put off, sent (each in a safe region, as a message,
+	// in a pool of its own: what a dealloc autoreleases, such as a view's
+	// subviews, goes with it rather than into whatever pool the thread has)
 	@:hxmc.unsafe static function runDeallocs() {
 		var m:Ptr = Threads.self;
 		while (true) {
@@ -629,7 +631,9 @@ class Gc {
 			LibC.memmove(deallocs.add(24 * k), deallocs.add(24 * ndeallocs), 24);
 			unlockLeaf(weakLock);
 			var region = Leaf.rt_blocking_enter();
+			var pool = poolPushAny();
 			Ind.call2(imp, self, Ptr.nil());
+			idsPoolPop(pool);
 			Regions.end(region);
 		}
 	}
