@@ -1,0 +1,6 @@
+exit 0
+ObjCHierarchy.hx:59: [Base,Sub,Leaf]
+ObjCHierarchy.hx:63: Base: flipped false, [Base.layout]
+ObjCHierarchy.hx:63: Sub: flipped true, [Sub.new s,Sub.layout,Base.layout]
+ObjCHierarchy.hx:63: Leaf: flipped true, [Sub.new l,Sub.layout,Base.layout]
+ObjCHierarchy.hx:66: hello through Objective-C: Sub.hello

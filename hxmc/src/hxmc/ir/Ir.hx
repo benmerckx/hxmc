@@ -17,6 +17,10 @@ enum Ty {
 	TU8;
 	TF64;
 	TI64; // haxe.Int64 (hxmc.I64): an int64_t, boxed in Dynamic
+	// an Objective-C object (ObjC): an i64 at run time, its id; kept apart so
+	// that storage holds a reference to it (fields, statics, elements,
+	// captures) and Dynamic boxes it in an object that does
+	TId;
 	TVoid;
 	TRef(r:RefTy);
 	// a @:hxmc.struct value (docs/interop.md, "Struct values"): the address
@@ -88,6 +92,19 @@ class ClassInfo {
 	// Type.resolveClass does not find it: live code can resolve classes by
 	// name, and this one is none it can name (Reach; Facts gives it no name)
 	public var unnamed = false;
+	// a class extending an Objective-C one (ObjC): the name it is registered
+	// as, and its methods Objective-C can call (ObjC.imps)
+	// (and of its Haxe subclasses): the name it is registered as, the name of
+	// the first such class (whose instance variable and its offset's cell
+	// every subclass shares), its methods Objective-C can call (ObjC.imps),
+	// the function registering it (ObjC.REGISTER)
+	public var objc:Null<ObjCClass> = null;
+	// its own fields holding ids (ObjC: their stores retain, its death releases them)
+	public var idFields:Array<String> = [];
+	// its own fields holding weak ids (@:hxmc.weak): a cell each, outside the heap
+	public var weakFields:Array<String> = [];
+	// its own fields holding unowned ids (@:hxmc.unowned): the id itself, no reference held
+	public var unownedFields:Array<String> = [];
 
 	public function new(name, ident, sup) {
 		this.name = name;
@@ -115,6 +132,17 @@ class ClassInfo {
 // a static reached through its class value (ClassInfo.statics): a function
 // (fn), as the closure calling it (clos), or a variable (its global)
 typedef StaticEntry = {name:String, clos:Null<LambdaInfo>, fn:Null<FuncInfo>, global:Int};
+
+// a class registered as an Objective-C one (ClassInfo.objc)
+// (protocols: the runtime's names of those the class adopts, ObjC.protocols)
+typedef ObjCClass = {
+	name:String,
+	root:String,
+	methods:Array<{sel:String, sym:String, types:String}>,
+	classMethods:Array<{sel:String, sym:String, types:String}>, // on its metaclass (ObjC.imps of its statics)
+	protocols:Array<String>,
+	register:FuncInfo
+};
 
 class EnumInfo {
 	public var name:String;
@@ -235,6 +263,9 @@ class FuncInfo {
 	// those arguments nullable and filled in when null (Lower.defaultsEntry)
 	public var dfltEntry:Null<FuncInfo>;
 	public var hasTry:Bool = false;
+	// a foreign exception passes its frame (Unwind.PASS: no personality): an
+	// entry Objective-C calls, which raises one (ObjC.entry)
+	public var foreignPasses:Bool = false;
 	public var noGc:Bool = false; // never reaches a GC point (Facts.findNoGc): calls to it are not GC points
 	// it calls rt_blocking_enter (blocksHere), or a function that does
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)
@@ -538,6 +569,7 @@ class Ir {
 			case TBool: "b";
 			case TF64: "f";
 			case TI64: "l";
+			case TId: "l"; // (an i64: the same signatures and kinds)
 			case TVoid: "v";
 			case TRef(RTag | RNull(TI32 | TF64)): "t";
 			case TRef(_): "p";
@@ -554,7 +586,7 @@ class Ir {
 		return t.match(TRef(RTag | RNull(TI32 | TF64)));
 
 	public static function isScalar(t:Ty):Bool
-		return t == TI32 || t == TBool || t == TF64 || t == TI64;
+		return t == TI32 || t == TBool || t == TF64 || t == TI64 || t == TId;
 
 	// A structural call's signature s (ECallAnon) is the structure's
 	// field's, of its type parameters' values (RTag) where it is generic; a

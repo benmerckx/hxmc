@@ -1,0 +1,4 @@
+exit 0
+ObjCConstants.hx:24: NSLocalizedDescription, kCFRunLoopDefaultMode
+ObjCConstants.hx:25: true
+ObjCConstants.hx:29: true, true

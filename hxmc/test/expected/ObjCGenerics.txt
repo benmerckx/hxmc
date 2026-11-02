@@ -1,0 +1,9 @@
+exit 0
+ObjCGenerics.hx:111: strings: y 2
+ObjCGenerics.hx:114: any: 2 true true
+ObjCGenerics.hx:118: mine: 7 7 true
+ObjCGenerics.hx:125: mutable: 3 4 0
+ObjCGenerics.hx:129: values: 2 2
+ObjCGenerics.hx:137: dictionary: 11 true
+ObjCGenerics.hx:147: box: 5 7 true 7
+ObjCGenerics.hx:151: protocol box: 2 true

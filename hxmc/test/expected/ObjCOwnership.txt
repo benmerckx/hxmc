@@ -1,0 +1,10 @@
+exit 0
+ObjCOwnership.hx:71: unkept new: false
+ObjCOwnership.hx:77: static: true, retainCount 1
+ObjCOwnership.hx:79: static replaced: old alive false
+ObjCOwnership.hx:86: field: true
+ObjCOwnership.hx:90: holder collected: field's id alive false
+ObjCOwnership.hx:95: unkept copy: false
+ObjCOwnership.hx:98: static cleared: false
+ObjCOwnership.hx:65: 10000 holders, before collecting: true
+ObjCOwnership.hx:102: 10000 holders collected: false

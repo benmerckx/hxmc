@@ -1,0 +1,8 @@
+exit 0
+ObjCUnowned.hx:86: unowned field: retainCount +0, same id true
+ObjCUnowned.hx:88: strong field beside it: retainCount +1
+ObjCUnowned.hx:93: 10000 holders collected: retainCount +0
+ObjCUnowned.hx:98: unowned ivar: retainCount +0, same id true
+ObjCUnowned.hx:100: its object gone: retainCount +0
+ObjCUnowned.hx:110: dealloc put off, autoreleasing: child deallocs 1
+ObjCUnowned.hx:111: done

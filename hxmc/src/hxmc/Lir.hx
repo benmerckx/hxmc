@@ -104,6 +104,7 @@ class LFunc {
 	public var outArgs = 0; // bytes of outgoing stack arguments
 	public var hasCalls = false;
 	public var display:Null<String>; // (-debug) the Haxe name of the function (FuncRec.name)
+	public var foreignPasses = false; // (FuncInfo.foreignPasses: Unwind.PASS)
 	var hints:Array<Int> = []; // vreg - NPHYS -> preferred register (physical or virtual), -1
 
 	// jump threading, before emission: a branch (or a jump table's entry)

@@ -211,7 +211,7 @@ class Lower implements LowerQueries {
 	public static function ofTarget(c:TClass):Bool {
 		// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
 		if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) return false;
-		// @:hxmc.ios: the iOS targets' only (Mem.platform() 1 and 2)
+		// @:hxmc.ios: UIKit's targets only (Mem.platform() 1 to 3: iOS, its simulator, Mac Catalyst)
 		if (hasMeta(":hxmc.ios", c.clMeta) && targetPlatform >= 0 && targetPlatform < 1) return false;
 		// @:hxmc.wasm: the runtime of WebAssembly only (what C provides elsewhere)
 		if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) return false;
@@ -718,13 +718,19 @@ class Lower implements LowerQueries {
 					case "Float" if (isStd): TF64;
 					case "Void" if (isStd): TVoid;
 					case "Null" if (isStd):
+						// (an Objective-C object: nil is its null)
+						if (ObjC.isIdType(params[0])) return TId;
 						var inner = ty(params[0]);
+						// (an abstract over an Objective-C object: an id too)
+						if (inner.match(TId)) return TId;
 						Ir.isScalar(inner) ? TRef(RNull(inner)) : boxed(inner);
 					case "Any" if (isStd): TRef(RAny);
 					case "Class" | "Enum" if (isStd): TRef(RType);
 					case "EnumValue" if (isStd): TRef(REnum(null));
 					case "UInt" if (isStd): TI32;
 					case "I64" if (a.aPath.pack.join(".") == "hxmc"): TI64;
+					// an Objective-C block (ObjC): an id
+					case "Block" if (a.aPath.pack.join(".") == "hxmc.objc"): TId;
 					// in macro mode (Mir macros, hxmc.interp.MirMacros): the compiler's position, opaque
 					case "Position" if (a.aPath.pack.join(".") == "haxe.macro"): TRef(RAny);
 					// a coroutine is a function taking the continuation, as on HashLink
@@ -739,7 +745,8 @@ class Lower implements LowerQueries {
 				}
 			case TInst(c, params):
 				switch c.clKind {
-					case KTypeParameter(_): TRef(RTag);
+					// (one bound to Objective-C objects: an id, ObjC.isObjCParam)
+					case KTypeParameter(_): ObjC.isObjCParam(c) ? TId : TRef(RTag);
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(stored(ty(params[0]))));
@@ -752,6 +759,7 @@ class Lower implements LowerQueries {
 							TStruct(n, CInterop.layout(c).size);
 						}
 						else if (CInterop.isOpaque(c)) TI64; // the address of C memory (CInterop: through a Ptr only)
+						else if (ObjC.isObjC(c) || ObjC.isCF(c)) TId; // an Objective-C object (or C's, CGColorRef): its id
 						else if (c.hasClassFlag(CInterface)) TRef(RObj(classInfo(c)));
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
@@ -888,6 +896,7 @@ class Lower implements LowerQueries {
 	public function boxed(t:Ty):Ty
 		return switch t {
 			case TStruct(n, _): TRef(RObj(structBox(n)));
+			case TId: TRef(RAny); // (an id box: FnLower.coerce)
 			case _: t;
 		}
 
@@ -959,6 +968,10 @@ class Lower implements LowerQueries {
 		var ci = classes.get(c);
 		if (ci != null) return ci;
 		if (c.hasClassFlag(CExtern)) fail("extern class " + c.clPath.name + " used as a class");
+		// (an Objective-C mode class has no Haxe class: its objects are ids, objcMode)
+		if (ObjC.isMode(c))
+			throw new LowerError('${c.clPath.name} is an Objective-C class (@:hxmc.objc): its objects are Objective-C objects, it has no Haxe class value',
+				CInterop.posOf(c.clPos));
 		if (CInterop.isNativeClass(c)) fail(c.clPath.name + " is a C type (@:hxmc.struct or @:hxmc.opaque): it has no class value (Struct.sizeOf takes it only as a literal argument)");
 		if (c.hasClassFlag(CInterface)) {
 			// interfaces have no layout: values are any object
@@ -976,7 +989,13 @@ class Lower implements LowerQueries {
 		// (stringBufCtor). Its class is not a subclass of StringBuf to
 		// reflection (Std.isOfType, Type.getSuperClass).
 		var sbuf = c.clSuper != null && isRuntimeStringBuf(c.clSuper.cls);
-		var sup = c.clSuper != null && !sbuf ? classInfo(c.clSuper.cls) : root;
+		// (a class extending an Objective-C one: a Haxe object with its id, ObjC)
+		var objc = c.clSuper != null && ObjC.isObjC(c.clSuper.cls);
+		// (C's objects have no class to subclass: only @:hxmc.objc classes do)
+		if (!c.hasClassFlag(CExtern) && c.clSuper != null && ObjC.isCF(c.clSuper.cls))
+			throw new LowerError('${c.clPath.name} extends ${c.clSuper.cls.clPath.name}, an object of C without an Objective-C class: only a class declared @:hxmc.objc can be subclassed',
+				CInterop.posOf(c.clPos));
+		var sup = c.clSuper != null && !sbuf && !objc ? classInfo(c.clSuper.cls) : root;
 		// (the superclass's field types may name this class, which has its
 		// ClassInfo then: `class Node extends Base<Node>`, upstream's unit test TestGeneric)
 		ci = classes.get(c);
@@ -994,8 +1013,13 @@ class Lower implements LowerQueries {
 			k = k.cls.clSuper;
 		}
 		ci.ifaces = sup.ifaces.copy();
-		for (i in c.clImplements)
+		for (i in c.clImplements) {
+			// (a protocol: Objective-C's objects conform to them, a Haxe class's when it extends an Objective-C one)
+			if ((ObjC.isProtocol(i.cls) || ObjC.isId(i.cls)) && ObjC.peerBase(c) == null)
+				throw new LowerError('${c.clPath.name} implements the Objective-C protocol ${i.cls.clPath.name}: only a class extending an Objective-C class can',
+					CInterop.posOf(c.clPos));
 			addIface(ci, i.cls);
+		}
 		prog.classes.push(ci);
 		for (f in sup.fields)
 			ci.fields.push(f);
@@ -1004,6 +1028,10 @@ class Lower implements LowerQueries {
 		if (sbuf) {
 			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
 			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
+		}
+		if (objc) {
+			ci.fields.push({name: ObjC.ID_FIELD, ty: TId});
+			ci.fields.push({name: ObjC.CELL_FIELD, ty: TI64});
 		}
 		var own = [];
 		for (f in c.clOrderedFields)
@@ -1014,6 +1042,20 @@ class Lower implements LowerQueries {
 					var slot = {name: f.cfName, ty: null};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
+					var weak = hasMeta(":hxmc.weak", f.cfMeta);
+					if (weak && !ObjC.isIdType(f.cfType))
+						throw new LowerError('@:hxmc.weak ${f.cfName}: only a field holding an Objective-C object can be weak', CInterop.posOf(f.cfPos));
+					// (as Swift's weak variables are optional: it becomes nil once its object is gone)
+					if (weak && !TFunctions.isExplicitNull(f.cfType))
+						throw new LowerError('@:hxmc.weak ${f.cfName}: a weak field becomes nil once its object is gone: declare it Null<...>', CInterop.posOf(f.cfPos));
+					var unowned = hasMeta(":hxmc.unowned", f.cfMeta);
+					if (unowned && !ObjC.isIdType(f.cfType))
+						throw new LowerError('@:hxmc.unowned ${f.cfName}: only a field holding an Objective-C object can be unowned', CInterop.posOf(f.cfPos));
+					if (unowned && weak)
+						throw new LowerError('@:hxmc.unowned ${f.cfName}: a field is weak or unowned, not both', CInterop.posOf(f.cfPos));
+					// (-debug: checked, as a weak field, FnLower.objcUnownedRead)
+					var checked = unowned && hasMeta(":hxmc.unownedCheck", f.cfMeta);
+					if (ObjC.isIdType(f.cfType)) (weak || checked ? ci.weakFields : unowned ? ci.unownedFields : ci.idFields).push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
@@ -1030,10 +1072,192 @@ class Lower implements LowerQueries {
 		// field types may refer back to this class
 		outsideUnfolding(() -> for (o in own)
 			o.slot.ty = ty(o.f.cfType));
+		// (a weak id field: the address of its cell, ObjC)
+		for (o in own)
+			if (ci.weakFields.indexOf(o.f.cfName) >= 0) o.slot.ty = TI64;
+		// (a class extending an Objective-C one, or such a class: its Objective-C
+		// class, registered by a function of its own when first needed)
+		if (objc || (sup.objc != null)) {
+			var root = objc ? ci.ident : sup.objc.root;
+			var reg = new FuncInfo(ObjC.REGISTER + ci.ident, moduleOf(c));
+			reg.cSymbol = reg.name;
+			reg.display = core.Globals.sTypePath(c.clPath) + " (its Objective-C class)";
+			reg.ret = TVoid;
+			claimObjCName(ci.ident, c);
+			ci.objc = {
+				name: ci.ident,
+				root: root,
+				methods: ObjC.imps(this, c, ci.ident, root),
+				classMethods: ObjC.imps(this, c, ci.ident, root, true),
+				protocols: [for (p in ObjC.protocols(c)) ObjC.className(p)],
+				register: reg
+			};
+			prog.funcs.push(reg);
+			// (the initializer Objective-C makes the class's objects with: the
+			// constructor's, which then makes the Haxe object, FnLower.objcAdoptBody)
+			var adopt = ObjC.adoptInit(c);
+			if (adopt != null) {
+				var ctorFi = this.ctor(adopt.ctor);
+				var w = new FuncInfo("hxmc_objc_init_" + ci.ident, moduleOf(c));
+				w.display = core.Globals.sTypePath(c.clPath) + " (the initializer " + adopt.sel + " Objective-C sends)";
+				w.args = [new Local(0, "self", TI64), new Local(1, "_cmd", TI64)];
+				for (i in 1...ctorFi.args.length)
+					w.args.push(new Local(i + 1, ctorFi.args[i].name, ctorFi.args[i].ty));
+				w.ret = TI64;
+				prog.funcs.push(w);
+				pending.push(guarded(w, () -> {
+					var fl = new FnLower(this, w, ci, null);
+					fl.objcAdoptBody(c, adopt.init, adopt.sel, adopt.ctor.clConstructor.cfExpr);
+					fl.finish();
+				}));
+				var e = ObjC.entry(this, w.name + "__imp", "hxmc_imp_" + w.name, w.module, w, w.args.length, {args: [CInterop.CTy.CPtr, CInterop.CTy.CPtr].concat(adopt.cts), ret: CInterop.CTy.CPtr});
+				prog.funcs.push(e);
+				ci.objc.methods.unshift({sel: adopt.sel, sym: e.cSymbol, types: "@@:" + [for (ct in adopt.cts) ObjC.encoding(ct)].join("")});
+			}
+			var parent = c.clSuper.cls;
+			pending.push(guarded(reg, () -> {
+				var fl = new FnLower(this, reg, ci, null);
+				fl.objcRegisterBody(parent);
+				fl.finish();
+			}));
+		}
 		return ci;
 	}
 
+	// ---- Objective-C mode classes (ObjC.isMode)
+
+	var modes = new Map<TClass, ObjC.ObjCMode>();
+	// the Objective-C class names this program registers (peer and mode
+	// classes), each with its class: two of one name would end the program at
+	// the second's registration (a name another image takes ends it there too)
+	var objcNames = new Map<String, TClass>();
+
+	function claimObjCName(name:String, c:TClass) {
+		var other = objcNames.get(name);
+		if (other != null && core.Globals.sTypePath(other.clPath) != core.Globals.sTypePath(c.clPath))
+			throw new LowerError('Objective-C class name $name: both ${core.Globals.sTypePath(c.clPath)} and ${core.Globals.sTypePath(other.clPath)} register it (@:hxmc.objc("OtherName") names one otherwise)',
+				CInterop.posOf(c.clPos));
+		objcNames.set(name, c);
+	}
+
+	// the registration of Objective-C mode class c, made once (its class
+	// cell, ObjC.CLASS_CELL, and its registering function ObjC.REGISTER, the
+	// key their suffix: ObjC.modeKey): its instance variables, its methods'
+	// entries (ObjC.imps), its dealloc (objcModeDealloc). Checks what such a
+	// class may not have
+	public function objcMode(c:TClass):String {
+		c = canonClass(c);
+		var m = modes.get(c);
+		if (m != null) return m.key;
+		var where = CInterop.posOf(c.clPos), cname = c.clPath.name;
+		// (its fields first: field initializers make a constructor, AddFieldInits,
+		// whose assignments are at the fields' positions)
+		var ivars = ObjC.ivars(c);
+		if (c.clConstructor != null && c.clConstructor.cfExpr != null) {
+			function scan(e:TExpr)
+				switch e.eexpr {
+					case TBinop(OpAssign, {eexpr: TField({eexpr: TConst(TThis), epos: p}, FInstance(_, _, f))}, _)
+						if (c.clFields.get(f.cfName) == f && p.pfile == f.cfPos.pfile && p.pmin == f.cfPos.pmin && p.pmax == f.cfPos.pmax):
+						throw new LowerError('Objective-C class $cname: the field ${f.cfName} has an initializer, which nothing runs (no Haxe constructor: Objective-C zeroes an object\'s instance variables; set it in an initializer)',
+							CInterop.posOf(f.cfPos));
+					case _:
+						core.Texpr.iter(scan, e);
+				}
+			scan(c.clConstructor.cfExpr);
+		}
+		if (c.clConstructor != null)
+			throw new LowerError('Objective-C class $cname (@:hxmc.objc) has no Haxe constructor: its objects are made as Objective-C makes them, $cname.alloc().init...(...) (an initializer it overrides or inherits)',
+				CInterop.posOf(c.clConstructor.cfPos));
+		for (i in c.clImplements)
+			if (!ObjC.isProtocol(i.cls) && !ObjC.isId(i.cls))
+				throw new LowerError('Objective-C class $cname (@:hxmc.objc) implements the Haxe interface ${i.cls.clPath.name}: it implements Objective-C protocols only',
+					where);
+		for (cf in c.clOrderedFields)
+			if (cf.cfKind.match(Method(MethDynamic)))
+				throw new LowerError('Objective-C class $cname (@:hxmc.objc): the dynamic method ${cf.cfName} has no slot to hold its function', CInterop.posOf(cf.cfPos));
+		claimObjCName(ObjC.className(c), c);
+		var key = ObjC.modeKey(c);
+		var reg = new FuncInfo(ObjC.REGISTER + key, moduleOf(c));
+		reg.cSymbol = reg.name;
+		reg.display = core.Globals.sTypePath(c.clPath) + " (its Objective-C class)";
+		reg.ret = TVoid;
+		m = {
+			key: key,
+			name: ObjC.className(c),
+			ivars: ivars,
+			methods: [],
+			classMethods: [],
+			protocols: [for (p in ObjC.protocols(c)) ObjC.className(p)],
+			register: reg
+		};
+		modes.set(c, m);
+		prog.funcs.push(reg);
+		m.methods = ObjC.imps(this, c, key, key, false, true);
+		m.classMethods = ObjC.imps(this, c, key, key, true, true);
+		m.methods.unshift(objcModeDealloc(c, m));
+		var mode = m;
+		pending.push(guarded(reg, () -> {
+			var fl = new FnLower(this, reg, null, null);
+			fl.objcModeRegisterBody(c, mode);
+			fl.finish();
+		}));
+		return key;
+	}
+
+	// the dealloc of mode class c, always its own: the class's dealloc method
+	// (if it declares one), then its instance variables let go (strong ids
+	// released, weak ones destroyed, weak slots freed), then the superclass's
+	// dealloc. (Not .cxx_destruct, which ARC's instance variables use: the
+	// runtime calls it only for a class whose image says it has one, and a
+	// class made at run time never does, whatever class_addMethod adds:
+	// checked with libobjc on macOS 26.) Its entry puts it off when the
+	// collector's releases send it (ObjC.entry)
+	function objcModeDealloc(c:TClass, m:ObjC.ObjCMode):{sel:String, sym:String, types:String} {
+		var w = new FuncInfo("hxmc_objc_dealloc_" + m.key, moduleOf(c));
+		w.display = core.Globals.sTypePath(c.clPath) + ".dealloc";
+		w.args = [new Local(0, "self", TI64), new Local(1, "_cmd", TI64)];
+		w.ret = TVoid;
+		w.pos = c.clPos;
+		var own = c.clFields.get("dealloc");
+		var user = own != null && own.cfKind.match(Method(_)) && !own.hasClassFieldFlag(CfExtern) ? modeMethod(c, own) : null;
+		prog.funcs.push(w);
+		pending.push(guarded(w, () -> {
+			var fl = new FnLower(this, w, null, null);
+			fl.objcModeDeallocBody(c, m, user);
+			fl.finish();
+		}));
+		var e = ObjC.entry(this, w.name + "__imp", "hxmc_imp_" + w.name, w.module, w, 2, {args: [CInterop.CTy.CPtr, CInterop.CTy.CPtr], ret: CInterop.CTy.CVoid}, true);
+		e.pos = w.pos;
+		prog.funcs.push(e);
+		return {sel: "dealloc", sym: e.cSymbol, types: "v@:"};
+	}
+
+	// a method of mode class c: its receiver the object itself (an id, the
+	// function's first argument), its body lowered as a method's
+	// (FnLower.runMode: `this` is self)
+	public function modeMethod(c:TClass, cf:TClassField):FuncInfo {
+		cf = canonField(c, cf);
+		c = canonClass(c);
+		var fi = funcs.get(cf);
+		if (fi != null) return fi;
+		var tf = funcOf(cf);
+		if (tf == null) fail("method " + cf.cfName + " is not a function");
+		fi = new FuncInfo(nativeName(c) + "_" + cf.cfName, moduleOf(c));
+		fieldAttrs(fi, cf, c);
+		funcs.set(cf, fi);
+		prog.funcs.push(fi);
+		signature(fi, tf, TId);
+		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
+			var fl = new FnLower(this, fi, null, null);
+			fl.runMode(funcOf(cf), c);
+			fl.finish();
+		})));
+		return fi;
+	}
+
 	function addIface(ci:ClassInfo, i:TClass) {
+		// (an Objective-C protocol: the Objective-C class's, ObjC.protocols; Id too)
+		if (ObjC.isProtocol(i) || ObjC.isId(i)) return;
 		var ii = classInfo(i);
 		if (ci.ifaces.indexOf(ii) < 0) ci.ifaces.push(ii);
 		for (j in i.clImplements)
@@ -1555,7 +1779,7 @@ class Lower implements LowerQueries {
 	// hashes (EvalStdLib's getClassFields folds an IntMap, Globals', whose
 	// keys go down, onto a list)
 	public function reflectStatics(c:TClass) {
-		if (c.hasClassFlag(CExtern) || CInterop.isNativeClass(c)) return;
+		if (c.hasClassFlag(CExtern) || CInterop.isNativeClass(c) || ObjC.isMode(c)) return;
 		var ci = classInfo(c);
 		if (ci.statics != null) return;
 		ci.statics = [];
@@ -1682,6 +1906,33 @@ class Lower implements LowerQueries {
 		li = newLambda(sig, vector(self), fl -> fl.forward(f, dispatch), dispatch == null ? f.name + "__bound" : lambdaName(owner), dispatch == null ? f.module : owner.module);
 		if (f != null) li.fn.display = f.display;
 		if (dispatch == null) boundClosures.set(f, li);
+		return li;
+	}
+
+	// Objective-C blocks (ObjC.blockSig): the invoke of the blocks of a
+	// signature (its symbol), and the closure calling such a block, once per
+	// signature and C types
+	var blockInvokes = new Map<String, String>();
+
+	public function blockInvoke(b:ObjC.BlockSig):String {
+		var key = ObjC.blockKey(b);
+		var sym = blockInvokes.get(key);
+		if (sym != null) return sym;
+		sym = ObjC.INVOKE + haxe.io.Bytes.ofString(key).toHex();
+		blockInvokes.set(key, sym);
+		ObjC.invoke(this, sym, b);
+		return sym;
+	}
+
+	var blockCallers = new Map<String, LambdaInfo>();
+
+	public function blockCaller(b:ObjC.BlockSig):LambdaInfo {
+		var key = ObjC.blockKey(b);
+		var li = blockCallers.get(key);
+		if (li != null) return li;
+		var box = new Local(-1, "block", TRef(RAny));
+		li = newLambda(b.sig, vector(box), fl -> fl.blockCall(b), "blockcall__" + key, "_closures");
+		blockCallers.set(key, li);
 		return li;
 	}
 
@@ -1824,6 +2075,22 @@ class Lower implements LowerQueries {
 		return CInterop.declare(sym, c, cf, s);
 	}
 
+	// Objective-C's declaration d, for this program (as cExtern)
+	public function objcDeclare(d:ObjC.Decl):Void
+		ObjC.define(d);
+
+	public function objcPeer(ci:ClassInfo):Null<ObjCClass>
+		return ci.objc;
+
+	public function idFields(ci:ClassInfo):Array<String>
+		return ci.idFields;
+
+	public function weakFields(ci:ClassInfo):Array<String>
+		return ci.weakFields;
+
+	public function unownedFields(ci:ClassInfo):Array<String>
+		return ci.unownedFields;
+
 	public function lookupMethod(c:TClass, name:String):Null<{cls:TClass, field:TClassField}> {
 		var k = c;
 		while (k != null) {
@@ -1903,6 +2170,12 @@ class Lower implements LowerQueries {
 		prog.selectors.push({name: name, sig: sig});
 		usedSelectors.set(name, s);
 		return s;
+	}
+
+	public function classOf(ci:ClassInfo):Null<TClass> {
+		for (tc => c in classes)
+			if (c == ci) return tc;
+		return null;
 	}
 
 	public function superOf(ci:ClassInfo):TClass {

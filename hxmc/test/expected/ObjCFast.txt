@@ -1,0 +1,2 @@
+exit 0
+ObjCFast.hx:61: found 230, corrupt 0, count 30, isEqual called true, hash true

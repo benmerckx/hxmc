@@ -1,0 +1,7 @@
+exit 0
+ObjCClassMethods.hx:78: names, Triangle, Square, true
+ObjCClassMethods.hx:84: responds, true, true, true, false, false
+ObjCClassMethods.hx:86: sent, 3, 4, 3, 2
+ObjCClassMethods.hx:88: arguments, 3, a triangle
+ObjCClassMethods.hx:92: description, true, true
+ObjCClassMethods.hx:94: after a collection, 4

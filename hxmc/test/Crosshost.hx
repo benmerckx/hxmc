@@ -63,7 +63,9 @@ class Crosshost {
 		rmrf(out + ".hxmc");
 		var env:Map<String, Null<String>> = [];
 		// the module's own path says nothing about where the runtime objects are
-		if (target != "wasm32-wasi") env["HXMC_RT_OBJ"] = FileSystem.fullPath('bin/hxmc/rt/$target/rt.o');
+		// (iOS's and Mac Catalyst's are macOS's: hxmc.Abi.rtName)
+		var rt = target.startsWith("macos-catalyst-") ? "macos-" + target.substr("macos-catalyst-".length) : target.startsWith("ios-") ? "macos-arm64" : target;
+		if (target != "wasm32-wasi") env["HXMC_RT_OBJ"] = FileSystem.fullPath('bin/hxmc/rt/$rt/rt.o');
 		var glibc = target.endsWith("-glibc");
 		var mode = glibc ? ["-D", "hxmc.target=" + target.substr(0, target.length - 6), "-D", "hxmc.libc=glibc"] : ["-D", 'hxmc.target=$target'];
 		var r = exec(tool.concat([out]).concat(args).concat(["-cp", "bin/hxmc/std", "--custom-target", "hxmc"]).concat(mode), {env: env, merge: true});
@@ -83,6 +85,9 @@ class Crosshost {
 			var glibc = target.endsWith("-glibc");
 			if (!glibc && Corpus.GLIBC_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.GLIBC_ONLY[name]};
 			if (!target.startsWith("linux") && Corpus.LINUX_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.LINUX_ONLY[name]};
+			if (!target.startsWith("macos") && Corpus.MACOS_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.MACOS_ONLY[name]};
+			if (!target.startsWith("macos") && !target.startsWith("ios") && Corpus.APPLE_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.APPLE_ONLY[name]};
+			if (!Corpus.uikit(target) && Corpus.UIKIT_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.UIKIT_ONLY[name]};
 			if ((!target.startsWith("linux") || glibc) && Corpus.MUSL_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.MUSL_ONLY[name]};
 			var native = Corpus.nativeInputs({name: name, cps: ["hxmc/test/cases"], main: name}, glibc ? target.substr(0, target.length - 6) : target, d, glibc ? "glibc" : null);
 			if (native.skip != null) return {ok: true, detail: "skipped: " + native.skip};

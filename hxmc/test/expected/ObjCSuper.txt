@@ -1,0 +1,5 @@
+exit 0
+ObjCSuper.hx:58: frame through both overrides: 1 2 4 40, setter calls 1
+ObjCSuper.hx:60: intrinsicContentSize: 123 45
+ObjCSuper.hx:64: BOOL arguments: [true,false,true], isHidden true
+ObjCSuper.hx:66: layout calls: 1

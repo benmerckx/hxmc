@@ -100,9 +100,16 @@ class Start {
 			K.SwitchToFiber(fiber);
 			return;
 		}
+		// Apple's systems: the outermost autorelease pool, as clang's main has
+		// one (@autoreleasepool): what is autoreleased outside the run loop's
+		// pools and AutoreleasePool.run (AppKit's work before NSApplication.run
+		// and between events, a program's own top level) stays until the
+		// program ends instead of leaking ("no pool in place")
+		var pool = Gc.poolPushAny();
 		var stack = bytes == 0 ? Ptr.nil() : Os.reserve(bytes);
 		if (stack.isNull()) {
 			Mem.call0(body);
+			Gc.idsPoolPop(pool);
 			return;
 		}
 		Os.guard(stack, Os.pageSize());
@@ -110,6 +117,7 @@ class Start {
 		Gc.cstackLo = stack;
 		Gc.cstackHi = stack.addL(bytes);
 		Mem.callOnStack(stack.addL(bytes), body);
+		Gc.idsPoolPop(pool);
 		#if hxmc.shared
 		// (a library's program ended: its stack given back, as the library may be closed: hxmc dev's host)
 		Os.release(stack, bytes);
@@ -124,6 +132,38 @@ class Start {
 	}
 
 	// ---- exceptions
+
+	// an object of a Haxe class extending an Objective-C one without its Haxe
+	// object (one Objective-C made with an initializer the class's constructor
+	// does not call, FnLower.objcAdoptBody; one an initializer replaced): what
+	// happened, then the end of the program
+	// the object an initializer Objective-C sent is making the Haxe object of
+	// (FnLower.objcAdoptBody), for the constructor's super.init... to take
+	// (objcSuperInit): sets it, the previous value the result
+	@:hxmc.threadLocal static var adopting:Ptr;
+
+	@:hxmc.export("rt_objc_adopt") static function objcAdopt(id:Ptr):Ptr {
+		var prev = adopting;
+		adopting = id;
+		return prev;
+	}
+
+	// an object of a Haxe class extending an Objective-C one whose class
+	// overrides dealloc (FnLower.objcDeallocWatch): its dealloc called once,
+	// as a finaliser's, when the pair is unreachable from both sides (the
+	// Haxe object resurrected meanwhile, its Objective-C object not released
+	// yet: a later collection releases it, and Objective-C's dealloc runs)
+	@:hxmc.export("rt_objc_dealloc_watch") static function objcDeallocWatch(o:Dynamic):Void
+		Gc.finalise(objcDealloc, o);
+
+	static function objcDealloc(o:Dynamic):Void
+		Reflect.callMethod(o, Reflect.field(o, "dealloc"), []);
+
+	@:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
+		Gc.uncaught("", Str.ofUtf8(what, LibC.strlen(what).toInt()));
+		Stacks.report();
+		Os.exit(1);
+	}
 
 	@:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
 		Gc.exn = Mem.addr(v);

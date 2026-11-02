@@ -14,6 +14,7 @@ what, why, and the approach decided. What comes next and in which order:
 | [targets.md](targets.md) | WebAssembly, Android, iOS, Windows, Linux, macOS |
 | [dev-loop.md](dev-loop.md) | the dev loop: faster reloads, snapshot hooks, Windows, iOS devices |
 | [lowlevel.md](lowlevel.md) | C interop and low-level Haxe: native memory, manual memory, value enums |
+| [objc.md](objc.md) | Objective-C: the decisions behind it, declarations from the headers, blocks, memory |
 | [packaging.md](packaging.md) | npm, haxelib, verified native builds |
 | [math.md](math.md) | correctly rounded math |
 | [haxe-versions.md](haxe-versions.md) | parked: any Haxe version per project |

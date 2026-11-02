@@ -51,6 +51,13 @@ class FnLower {
 		}
 	}
 
+	// lowering a constructor (ObjC: super.init...)
+	var inCtor = false;
+
+	// lowering a method of this Objective-C mode class (runMode): `this` is
+	// self, the receiver, an id; `super.f(...)` is a message to super
+	var mode:Null<TClass> = null;
+
 	// (Lower.callSites) this function's site: where it was called from
 	var site:Null<Local> = null;
 
@@ -144,6 +151,26 @@ class FnLower {
 		}
 		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
 		bindArgs(tf, off);
+		if (isCtor) objcOwnFields();
+		if (isCtor) {
+			inCtor = true;
+			objcConstructor(tf);
+		}
+		stmt(tf.tfExpr);
+	}
+
+	// a method of Objective-C mode class c (Lower.modeMethod): its receiver
+	// (the first argument, an id) is `this`, in a local of its own, which
+	// `super.initX(...)` sets to its result (`self = [super initX:...]`)
+	public function runMode(tf:TFunc, c:TClass) {
+		if (fi.declKernel && !fi.declUnsafe) KernelCheck.check(l, fi, tf);
+		spanSignature(tf);
+		if (boxed == null) boxed = Boxing.analyze(tf.tfExpr, tf.tfArgs.mapToArray(a -> a.variable));
+		mode = c;
+		thisLocal = newLocal("self", TId);
+		out.push(SSet(thisLocal, ELocal(fi.args[0])));
+		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
+		bindArgs(tf, 1);
 		stmt(tf.tfExpr);
 	}
 
@@ -184,7 +211,7 @@ class FnLower {
 			}
 			if (boxed.exists(v.vId)) {
 				var b = newLocal(v.vName + "_box", TRef(RBox(t)));
-				out.push(SSet(b, ENewBox(t, x)));
+				out.push(SSet(b, newBox(t, x)));
 				locals.set(v.vId, b);
 			} else switch x {
 				case ELocal(lo): locals.set(v.vId, lo);
@@ -399,6 +426,47 @@ class FnLower {
 			var r = newLocal("r", from.ret);
 			out.push(SSet(r, call));
 			out.push(SReturn(coerce(ELocal(r), from.ret, fi.ret)));
+		}
+	}
+
+	// closure body calling an Objective-C block (its capture: the block's box,
+	// which holds a reference to it) through its invoke, the block first
+	// (ObjC.blockFunction), in a safe region as a message; arguments that are
+	// functions made blocks, a block result a function
+	public function blockCall(b:ObjC.BlockSig) {
+		boxed = new Map();
+		if (fi.sret) sretLocal = fi.args[fi.args.length - 1];
+		var box = newLocal("box", TRef(RAny));
+		out.push(SSet(box, ECapture(lambda, 0, ELocal(fi.args[0]))));
+		var id = temp(TI64, ECallHost("rt_objc_unbox", vector(ELocal(box)), TI64));
+		var invoke = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(id, EInt(16)), TI64));
+		var key = ObjC.declareBlockCall(l, b.args, b.ret);
+		var n = fi.sret ? fi.args.length - 1 : fi.args.length;
+		var xs = [invoke, id];
+		for (i in 1...n) {
+			var nb = b.blocks[i - 1];
+			xs.push(nb == null ? ELocal(fi.args[i]) : blockNew(ELocal(fi.args[i]), nb));
+		}
+		var t = b.retBlock != null ? TId : lambda.sig.ret;
+		var cx = ECallHost(key, Vector.fromArrayCopy(xs), t);
+		var r = t == TVoid ? null : newLocal("r", t);
+		out.push(r == null ? SExpr(cx) : SSet(r, cx));
+		if (r != null && t.match(TStruct(_))) freshSlots.set(r, true);
+		// (the box read again after the call: kept alive through it, as the block)
+		out.push(SExpr(ECallHost("rt_objc_unbox", vector(ELocal(box)), TI64)));
+		if (b.retBlock != null) {
+			var ct = lambda.sig.ret;
+			var fn = newLocal("fn", ct);
+			out.push(ObjC.blockFunction(l, ELocal(r), b.retBlock, newLocal("heap", TId), newLocal("same", TRef(RAny)), newLocal("box", TRef(RAny)), fn));
+			out.push(SReturn(ELocal(fn)));
+			return;
+		}
+		switch t {
+			case TStruct(n, _):
+				copyStruct(ELocal(sretLocal), ELocal(r), l.structClass(n));
+				out.push(SReturn(ELocal(sretLocal)));
+			case _:
+				out.push(SReturn(r == null ? null : ELocal(r)));
 		}
 	}
 
@@ -869,6 +937,7 @@ class FnLower {
 			case TI32 | TBool | TU8: EInt(0);
 			case TF64: EF64(0);
 			case TI64: EConv(I2L, EInt(0));
+			case TId: EConv(I2L, EInt(0)); // (nil)
 			case TVoid: EInt(0);
 			case TRef(_): ENull(t);
 			case TStruct(n, _): structFail('the struct $n is never null (a value: zero its fields; Null<S> may be null)');
@@ -900,6 +969,43 @@ class FnLower {
 			case _:
 		}
 		switch [from, to] {
+			// Objective-C objects (ObjC): an id is an i64, so a Ptr's cast
+			// reinterprets it
+			case [TId, TI64] | [TI64, TId]:
+				return x;
+			// an instance of a class extending an Objective-C one where an id
+			// goes: its id (ObjC.ID_FIELD; null: nil), retained and autoreleased
+			// as every value, so that its toggle reference keeps the Haxe object
+			// a root while a local holds the id (until the pool drains)
+			case [TRef(RObj(ci)), TId | TI64] if (Lambda.exists(ci.fields, f -> f.name == ObjC.ID_FIELD)):
+				var o = asLocal(x, from);
+				var r = newLocal("id", TId);
+				var retainAutorelease = ObjC.runtime(l, "objc_retainAutorelease", [CPtr], CPtr);
+				out.push(SIf(EBin(RefEq, ELocal(o), ENull(from)), vector(SSet(r, EConv(I2L, EInt(0)))),
+					vector(SSet(r, ECallHost(retainAutorelease, vector(EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(o))), TId)))));
+				return ELocal(r);
+			// an id as an instance of such a class (an unchecked cast): its Haxe
+			// object, by the index in its instance variable (nil: null)
+			case [TId | TI64, TRef(RObj(ci))] if (l.objcPeer(ci) != null):
+				var id = asLocal(x, from);
+				var r = newLocal("peer", to);
+				var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(ci).root)), TI64), EInt(0)), TI64);
+				var index = ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(id), off), EInt(0)), TI32);
+				out.push(SIf(EBin(LEq, ELocal(id), EConv(I2L, EInt(0))), vector(SSet(r, ENull(to))),
+					vector(SSet(r, ECast(to, ECallHost("rt_objc_peer_get", vector(index), TRef(RAny)))))));
+				return ELocal(r);
+			// an id where a reference goes (Dynamic, an element, a type
+			// parameter): its one box, which holds a reference to it, or the Haxe
+			// object of a Haxe class's instance (nil: null; hxmc.rt.Gc.idBox)
+			case [TId, TRef(_)]:
+				var fn = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, s))), TI64);
+				var box = temp(TRef(RAny), ECallHost("rt_objc_box", vector(x, fn("objc_retain"), fn("objc_release"), fn("object_getClass"),
+					fn("class_getInstanceVariable"), fn("ivar_getOffset")), TRef(RAny)));
+				return coerce(box, TRef(RAny), to);
+			// a box's id (or a Haxe object's whose class extends an Objective-C one)
+			case [TRef(_), TId]:
+				var o = coerce(x, from, TRef(RAny));
+				return temp(TId, ECallHost("rt_objc_unbox", vector(o), TId));
 			// a typed view takes storage of its own kind (rt/NArray.view): from
 			// a Dynamic-typed view or a Dynamic, and between the kinds Haxe lets
 			// alias (Int and Null<Int>), checked; an open wrapper's storage, converted
@@ -1289,7 +1395,7 @@ class FnLower {
 				if (isBoxed(v)) {
 					var x = init != null ? coerce(value(init), tyOf(init), t) : nullOf(t);
 					var b = declare(v, init);
-					out.push(SSet(b, ENewBox(t, x)));
+					out.push(SSet(b, newBox(t, x)));
 				} else {
 					var x = init != null ? rhs(init) : null;
 					var lo = declare(v, init);
@@ -1645,7 +1751,7 @@ class FnLower {
 					src = ELocal(caught);
 				}
 				var x = coerce(src, caught != null ? caught.ty : TRef(RAny), t);
-				if (isBoxed(c.variable)) out.push(SSet(lo, ENewBox(t, x))) else out.push(SSet(lo, x));
+				if (isBoxed(c.variable)) out.push(SSet(lo, newBox(t, x))) else out.push(SSet(lo, x));
 			}).concat(branch(c.expr, target));
 			cs[ci] = {test: test, l: exn, body: handler};
 		}
@@ -1670,9 +1776,11 @@ class FnLower {
 		return switch TFunctions.follow(t) {
 			case TDynamic(_) | TMono(_): null;
 			case TAbstract(a, _) if (a.aPath.name == "Any"): null;
-			case TInst(c, _) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_))):
+			case TInst(c, _) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_)) && !ObjC.isMode(c)):
 				var ci = classOrBox(c);
 				x -> EInstOf(ci, x);
+			case TInst(c, _) if (ObjC.isObjC(c) && !ObjC.isCF(c)):
+				objcTestDyn(c);
 			case _:
 				var tr = typeRefOfType(t);
 				tr == null ? null : x -> ECallHost(l.native("hx_is"), vector(x, EType(tr)), TBool);
@@ -1682,7 +1790,7 @@ class FnLower {
 	function typeRefOfType(t:T):Null<TypeRef> {
 		return switch TFunctions.follow(t) {
 			case TInst(c, _):
-				if (c.hasClassFlag(CExtern) || c.clKind.match(KTypeParameter(_))) TRBuiltin(Lower.nativeName(c)) else TRClass(classOrBox(c));
+				if (c.hasClassFlag(CExtern) || c.clKind.match(KTypeParameter(_)) || ObjC.isMode(c)) TRBuiltin(Lower.nativeName(c)) else TRClass(classOrBox(c));
 			case TEnum(e, _): TREnum(l.enumInfo(e));
 			case TAbstract(a, _): TRBuiltin(Lower.ident(a.aPath.pack, a.aPath.name));
 			case _: null;
@@ -1700,7 +1808,7 @@ class FnLower {
 	function typeRef(mt:ModuleType):TypeRef {
 		return switch mt {
 			case TClassDecl(c):
-				if (c.hasClassFlag(CExtern)) TRBuiltin(Lower.nativeName(c)) else TRClass(classOrBox(c));
+				if (c.hasClassFlag(CExtern) || ObjC.isMode(c)) TRBuiltin(Lower.nativeName(c)) else TRClass(classOrBox(c));
 			case TEnumDecl(e): TREnum(l.enumInfo(e));
 			case TAbstractDecl(a): TRBuiltin(Lower.ident(a.aPath.pack, a.aPath.name));
 			case TTypeDecl(d): typeRefOfType(d.tType);
@@ -1839,6 +1947,8 @@ class FnLower {
 				ENewArr(elem, vector());
 			case TNew(c, _, cargs) if (CInterop.isStruct(c)):
 				coerce(ELocal(newStruct(c, cargs, null)), structTy(c), tyOf(e));
+			case TNew(c, _, _) if (ObjC.isObjC(c)):
+				fail("Objective-C class " + c.clPath.name + ": made by " + c.clPath.name + ".alloc().init...(...), not new", e);
 			case TNew(c, _, cargs) if (c.hasClassFlag(CExtern)):
 				var s = ctorSig(c);
 				var x = temp(TRef(RNative(Lower.nativeName(c))), ECallHost(l.native(Lower.nativeName(c) + "_new"), args(cargs, s, null), TRef(RNative(Lower.nativeName(c)))));
@@ -1854,6 +1964,7 @@ class FnLower {
 					var xs = args(cargs, tys(ctor), defaultValues(ctor), 1, ctor, () -> obj);
 					out.push(SExpr(ECall(ctor, VectorTools.cons(obj, xs))));
 				}
+				objcDeallocWatch(c, obj);
 				coerce(obj, TRef(RObj(ci)), tyOf(e));
 			case TArrayDecl(vs):
 				var elem = switch tyOf(e) {
@@ -1942,13 +2053,22 @@ class FnLower {
 					case Method(MethDynamic) if (isDynMethod(c, cf)): coerce(dynMethod(obj, c, cf, e), dynSlotTy(c, cf), tyOf(e));
 					// (an interface's dynamic method: the field, by name)
 					case Method(MethDynamic) if (c.hasClassFlag(CInterface)): anonGet(cf.cfName, obj, e);
+					case Method(_) if (ObjC.modeOwner(c, cf) != null):
+						fail("Objective-C method " + cf.cfName + " as a value: wrap the message in a function (`x -> o." + cf.cfName + "(x)`)", e);
 					case Method(_): methodClosure(obj, c, cf, e);
+					// (an instance variable of an Objective-C mode class: in the object's memory)
+					case Var(_) if (ObjC.ivarOf(c, cf) != null):
+						var iv = ObjC.ivarOf(c, cf);
+						var a = ivarAddr(coerce(value(obj), tyOf(obj), TId), iv.owner, iv.ivar);
+						var r = ivarLoad(a, iv.ivar, e);
+						coerce(r, ivarTy(iv.ivar), tyOf(e));
 					case Var(_) if (Lower.isCore(c, "Array") && cf.cfName == "length"):
 						EArrLen(recvValue(obj));
 					case Var(_) if (Lower.isNativeArray(c) && cf.cfName == "length"):
 						ECallHost("hxmc_narray_length", vector(recvValue(obj)), TI32);
 					case Var(_) if (Lower.isCore(c, "String") && cf.cfName == "length"):
 						ECallHost("String_length", vector(recvValue(obj)), TI32);
+					case Var(_) if (ObjC.isObjC(c)): objcGet(obj, c, cf, e);
 					case Var(_) if (CInterop.isStruct(c)): structGet(obj, c, cf, e);
 					case Var(_) if (c.hasClassFlag(CExtern)):
 						var t = hty(cf.cfType);
@@ -1964,11 +2084,19 @@ class FnLower {
 						var s = newSlot(structTy(sc), true);
 						copyStruct(ELocal(s), EFieldAddr(ci, ci.fieldIndex(cf.cfName), ELocal(o)), sc);
 						coerce(ELocal(s), structTy(sc), tyOf(e));
+					case Var(_) if (l.weakFields(l.classInfo(c)).indexOf(cf.cfName) >= 0):
+						var ci = l.classInfo(c);
+						coerce(objcUnownedRead(objcLoadWeak(EField(ci, ci.fieldIndex(cf.cfName), value(obj))), cf), TId, tyOf(e));
 					case Var(_):
 						var ci = l.classInfo(c);
 						var idx = ci.fieldIndex(cf.cfName);
 						coerce(EField(ci, idx, value(obj)), ci.fields[idx].ty, tyOf(e));
 				}
+			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isProtocol(c)):
+				fail(cf.cfName + " is a class property of the protocol " + c.clPath.name + ": read it of a class conforming to it", e);
+			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isObjC(c) && !ObjC.isModeStatic(c, cf)): objcGet(null, c, cf, e);
+			case FStatic(c, cf) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !ObjC.isModeStatic(c, cf)):
+				fail("Objective-C class method " + cf.cfName + " as a value: wrap the message in a function", e);
 			case FStatic(c, cf):
 				var cf = overloadImpl(c, cf);
 				switch cf.cfKind {
@@ -2004,8 +2132,8 @@ class FnLower {
 					case Method(_):
 						var f = l.staticFunc(c, cf);
 						var li = l.staticClosure(f);
-						var x = temp(TRef(RClos(li.sig)), ENewClos(li, vector()));
-						coerce(x, TRef(RClos(li.sig)), tyOf(e));
+						// (capturing nothing: no temporary, so that a block of it sees the closure: blockOf)
+						coerce(ENewClos(li, vector()), TRef(RClos(li.sig)), tyOf(e));
 				}
 			case FAnon(cf):
 				anonGet(cf.cfName, obj, e);
@@ -2013,6 +2141,9 @@ class FnLower {
 				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
 				var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_get"), vector(o, EStr(name)), TRef(RAny)));
 				coerce(r, TRef(RAny), tyOf(e));
+			// (an Objective-C method as a value: no closure sends it yet)
+			case FClosure(cl, cf) if (cl != null && (ObjC.isObjC(cl.cls) || (cf.hasClassFieldFlag(CfExtern) && ObjC.peerBase(cl.cls) != null))):
+				fail("Objective-C method " + cf.cfName + " as a value: wrap the message in a function (`x -> o." + cf.cfName + "(x)`)", e);
 			case FClosure(cl, cf):
 				if (cl == null) {
 					// a closure of a structural field: just the field's value
@@ -2086,7 +2217,7 @@ class FnLower {
 			};
 			var sig = l.sig([for (a in s.args) hty(a.type)], hty(s.ret));
 			var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig, erase(tyOf(obj)));
-			var x = temp(TRef(RClos(sig)), ENewClos(li, vector(recvValue(obj))));
+			var x = temp(TRef(RClos(sig)), newClosure(li, vector(recvValue(obj))));
 			return coerce(x, TRef(RClos(sig)), rt);
 		}
 		var li:LambdaInfo;
@@ -2403,8 +2534,11 @@ class FnLower {
 		if (xb.match(ENull(_)) || xa.match(ENull(_))) {
 			var x = xb.match(ENull(_)) ? xa : xb;
 			var t = xb.match(ENull(_)) ? ta : tb;
+			if (t == TId) return EBin(LEq, x, EConv(I2L, EInt(0))); // (nil)
 			return Ir.isRef(t) ? EBin(RefEq, x, ENull(t)) : EInt(0);
 		}
+		// ids: the same object (never boxed for it: a box holds a reference, ObjC)
+		if (ta == TId || tb == TId) return EBin(LEq, coerce(xa, ta, TId), coerce(xb, tb, TId));
 		var scalar = (t:Ty) -> t == TI32 || t == TBool || t == TF64 || t == TI64;
 		if (scalar(ta) && scalar(tb)) {
 			if (ta == TF64 || tb == TF64) return EBin(FEq, coerce(xa, ta, TF64), coerce(xb, tb, TF64));
@@ -2506,15 +2640,42 @@ class FnLower {
 				var t = ty(v.vType);
 				if (isBoxed(v)) {
 					var x = pure(compute(() -> EBoxGet(t, ELocal(lo)), t, t), t);
+					if (t == TId) {
+						// (an id: the box holds a reference, newBox)
+						var old = asLocal(EBoxGet(t, ELocal(lo)), t);
+						objcRetain(x);
+						out.push(SBoxSet(t, ELocal(lo), x));
+						objcRelease(ELocal(old));
+						return coerce(x, t, et);
+					}
 					out.push(SBoxSet(t, ELocal(lo), x));
 					return coerce(x, t, et);
 				}
 				var x = compute(() -> ELocal(lo), t, t);
 				out.push(SSet(lo, x));
 				return coerce(ELocal(lo), t, et);
+			case TField(obj, FInstance(c, _, cf)) if (ObjC.ivarOf(c, cf) != null):
+				// (an instance variable of an Objective-C mode class: its address after the value)
+				var iv = ObjC.ivarOf(c, cf);
+				var id = ELocal(asLocal(coerce(value(obj), tyOf(obj), TId), TId));
+				var t = ivarTy(iv.ivar);
+				var a = ivarAddr(id, iv.owner, iv.ivar);
+				var x = pure(compute(() -> ivarLoad(a, iv.ivar, lhs), t, t), t);
+				ivarStore(a, iv.ivar, x, t, e);
+				return coerce(x, t, et);
+			case TField(obj, FInstance(c, _, cf) | FStatic(c, cf)) if (cf.cfKind.match(Var(_)) && ObjC.isObjC(c) && !ObjC.isModeStatic(c, cf)):
+				// (a property: its setter, after the value, the getter first for an update)
+				var instance = strip(lhs).eexpr.match(TField(_, FInstance(_, _, _)));
+				var self = ELocal(asLocal(instance ? coerce(value(obj), tyOf(obj), TId) : objcClass(c), TI64));
+				var t = ty(cf.cfType);
+				var x = pure(compute(() -> objcMsg(self, ObjC.getter(cf), [], [], cf.cfType, cf, lhs, t), t, t), t);
+				objcSet(self, c, cf, x, t, e);
+				return coerce(x, t, et);
 			case TField(_, FStatic(c, cf)) if (CInterop.isVar(c, cf)):
 				var v = cVar(c, cf, lhs);
 				var t = tyOf(lhs);
+				// (a strong reference C holds: a store would retain and release, as ARC's)
+				if (t == TId) cfail('C variable ${cf.cfName} holds an Objective-C object: hxmc reads such variables, it does not store them', e);
 				var x = pure(compute(() -> cLoad(v.addr, 0, v.ct, lhs), t, t), t);
 				cStore(v.addr, 0, v.ct, x, t, e);
 				return coerce(x, t, et);
@@ -2531,7 +2692,27 @@ class FnLower {
 				var idx = ci.fieldIndex(cf.cfName);
 				var t = ci.fields[idx].ty;
 				var o = ELocal(asLocal(value(obj), tyOf(obj)));
+				if (l.weakFields(ci).indexOf(cf.cfName) >= 0) {
+					// (a weak id: stored in its cell, made by the first store; ObjC)
+					var x = pure(compute(() -> objcLoadWeak(EField(ci, idx, o)), TId, TId), TId);
+					var cell = asLocal(EField(ci, idx, o), TI64);
+					out.push(SIf(EBin(LEq, ELocal(cell), EConv(I2L, EInt(0))), vector(
+						SSet(cell, ECallHost("rt_objc_weak_cell", vector(), TI64)),
+						SSetField(ci, idx, o, ELocal(cell))
+					), vector()));
+					var storeWeak = ObjC.runtime(l, "objc_storeWeak", [CPtr, CPtr], CPtr);
+					out.push(SExpr(ECallHost(storeWeak, vector(ELocal(cell), x), TI64)));
+					return coerce(x, TId, et);
+				}
 				var x = pure(compute(() -> EField(ci, idx, o), t, t), t);
+				if (t == TId && l.unownedFields(ci).indexOf(cf.cfName) < 0) {
+					// (an id: the field holds a reference, ObjC; an unowned one only the id)
+					var old = asLocal(EField(ci, idx, o), t);
+					objcRetain(x);
+					out.push(SSetField(ci, idx, o, x));
+					objcRelease(ELocal(old));
+					return coerce(x, t, et);
+				}
 				out.push(SSetField(ci, idx, o, x));
 				return coerce(x, t, et);
 			case TField(obj, FInstance(c, _, cf)) if (Lower.isCore(c, "Array") && cf.cfName == "length"):
@@ -2551,6 +2732,13 @@ class FnLower {
 				var g = l.staticVar(c, cf);
 				var t = l.globalTy(g);
 				var x = pure(compute(() -> EGlobal(g, t), t, t), t);
+				if (t == TId) {
+					var old = asLocal(EGlobal(g, t), t);
+					objcRetain(x);
+					out.push(SSetGlobal(g, x));
+					objcRelease(ELocal(old));
+					return coerce(x, t, et);
+				}
 				out.push(SSetGlobal(g, x));
 				return coerce(x, t, et);
 			case TField(obj, FDynamic(name)):
@@ -2630,6 +2818,46 @@ class FnLower {
 			case _:
 		}
 		switch strip(f).eexpr {
+			// a selector literal (hxmc.objc.Selector.of)
+			case TField(_, FStatic({clKind: KAbstractImpl(a)}, cf)) if (cf.cfName == "of" && a.aPath.name == "Selector" && a.aPath.pack.join(".") == "hxmc.objc"):
+				var name = switch strip(cargs[0]).eexpr {
+					case TConst(TString(s)): s;
+					case _: fail("Selector.of: the name must be a string literal", e);
+				};
+				var ref = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(name))), TI64));
+				return coerce(ECallHost("hxmc_unsafe_Mem_getI64", vector(ref, EInt(0)), TI64), TI64, rt);
+			// a function made a block and back (hxmc.objc.Block<F>)
+			case TField(_, FStatic({clKind: KAbstractImpl(a)}, cf)) if (a.aPath.name == "Block" && a.aPath.pack.join(".") == "hxmc.objc"):
+				var ft = ObjC.blockOfType(cf.cfName == "ofFunction" ? e.etype : cargs[0].etype);
+				if (ft == null) return fail("Block<F> of no function type F", e);
+				var x = value(cargs[0]);
+				return cf.cfName == "ofFunction" ? coerce(blockOf(x, tyOf(cargs[0]), ft, e), TId, rt) : blockFunction(x, ft, rt, e);
+			// a message (ObjC)
+			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !strip(obj).eexpr.match(TConst(TSuper))):
+				return objcSend(obj, c, ObjC.messageDecl(c, cf), cargs, e);
+			// (a method of an Objective-C mode class called on a Haxe subclass's object: a message too)
+			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.modeOwner(c, cf) != null && !strip(obj).eexpr.match(TConst(TSuper))):
+				return objcSend(obj, c, ObjC.messageDecl(c, cf), cargs, e);
+			// a class object: ObjCClass.of(C), the Objective-C class of C (a
+			// Haxe class's, registered first)
+			case TField(_, FStatic(c, cf)) if (cf.cfName == "of" && c.clPath.name == "ObjCClass" && c.clPath.pack.join(".") == "hxmc.objc"):
+				var k = switch strip(cargs[0]).eexpr {
+					case TTypeExpr(TClassDecl(k)) if (!k.hasClassFlag(CInterface) && (ObjC.isObjC(k) || ObjC.peerBase(k) != null)): k;
+					case _: return cfail("ObjCClass.of takes an Objective-C class or a Haxe class extending one, named", e);
+				};
+				var cls = ObjC.isObjC(k) ? objcClass(k)
+					: objcCellClass(temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(k)).name)), TI64)));
+				return coerce(cls, TId, rt);
+			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isProtocol(c)):
+				return cfail('${cf.cfName} is a class method of the protocol ${c.clPath.name}: send it to a class conforming to it', e);
+			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !ObjC.isModeStatic(c, cf)):
+				return objcSend(null, c, cf, cargs, e);
+			// (a protocol's optional method a class extending an Objective-C one
+			// leaves out: the message, which only a subclass may answer, as in
+			// Objective-C; TypeloadCheck's stand-in has no body)
+			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && cf.hasClassFieldFlag(CfExtern) && ObjC.peerBase(c) != null
+				&& ObjC.declOf(c, cf) != null && !strip(obj).eexpr.match(TConst(TSuper))):
+				return objcSend(obj, c, ObjC.declOf(c, cf), cargs, e);
 			// (the std's own loops, over indices they keep in bounds: not
 			// tested, whatever -D hxmc.native-array-outofbounds says)
 			case TField(obj, FInstance(c, _, cf)) if (Lower.isNativeArray(c) && (cf.cfName == "unsafeGet" || cf.cfName == "unsafeSet")):
@@ -2735,12 +2963,28 @@ class FnLower {
 				if (fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3)
 					return inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt);
 				return callFn(fn, xs, rt);
+			// a message to super (ObjC): in a constructor, an initializer
+			// (`self = [super initX:...]`); elsewhere, objc_msgSendSuper
+			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c) && mode != null):
+				return modeSendSuper(c, cf, cargs, e);
+			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c)):
+				if (self == null || l.objcPeer(self) == null)
+					return fail("super." + cf.cfName + ": a message to super in a class that does not extend an Objective-C class", e);
+				// (Objective-C's dealloc runs after the Haxe one, as ARC's: ObjC.deallocOf)
+				if (cf.cfName == "dealloc") return fail("super.dealloc(): Objective-C's dealloc runs by itself after this one, as under ARC", e);
+				if (ObjC.isInit(cf)) {
+					if (!inCtor) return fail("super." + cf.cfName + "(...): an initializer, called in the constructor only", e);
+					return coerce(objcSuperInit(l.superOf(self), cf, cargs, e), TId, rt);
+				}
+				return objcSendSuper(l.superOf(self), c, cf, cargs, e);
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)):
 				var impl = l.lookupMethod(c, cf.cfName);
 				if (impl == null) fail("super." + cf.cfName + " without implementation", e);
 				var fn = l.method(impl.cls, impl.field);
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 1, fn, () -> ELocal(thisLocal));
 				return callFn(fn, VectorTools.cons(ELocal(thisLocal), xs), rt);
+			case TConst(TSuper) if (self != null && l.superOf(self) != null && ObjC.isObjC(l.superOf(self))):
+				return fail("super(...) of an Objective-C class: call super.init...(...) instead", e);
 			case TConst(TSuper):
 				var sup = l.superOf(self);
 				while (sup != null && sup.clConstructor == null && sup.clSuper != null)
@@ -2900,6 +3144,25 @@ class FnLower {
 					case _:
 				}
 				coerce(EConv(F2I, x), TI32, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && objcTestable(cargs[0], cargs[1]) != null):
+				// Std.isOfType(id, C) of an Objective-C class or protocol: Objective-C's test
+				coerce(objcIs(value(cargs[0]), tyOf(cargs[0]), objcTestable(cargs[0], cargs[1])), TBool, tyOf(e));
+			case "Std_downcast" if (cargs.length == 2 && objcTestable(cargs[0], cargs[1]) != null):
+				var x = ELocal(asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TId), TId));
+				var r = newLocal("down", TId);
+				out.push(SSet(r, EConv(I2L, EInt(0))));
+				out.push(SIf(objcIs(x, TId, objcTestable(cargs[0], cargs[1])), vector(SSet(r, x)), vector()));
+				coerce(ELocal(r), TId, tyOf(e));
+			case "Std_isOfType" if (cargs.length == 2 && objcTestableDyn(cargs[0], cargs[1]) != null):
+				// Std.isOfType(v, C) of another value: whether it is an Objective-C object first
+				var x = coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny));
+				coerce(objcTestDyn(objcTestableDyn(cargs[0], cargs[1]))(x), TBool, tyOf(e));
+			case "Std_downcast" if (cargs.length == 2 && objcTestableDyn(cargs[0], cargs[1]) != null):
+				var x = ELocal(asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), TRef(RAny)));
+				var r = newLocal("down", TId);
+				out.push(SSet(r, EConv(I2L, EInt(0))));
+				out.push(SIf(objcTestDyn(objcTestableDyn(cargs[0], cargs[1]))(x), vector(SSet(r, coerce(x, TRef(RAny), TId))), vector()));
+				coerce(ELocal(r), TId, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && instClass(cargs[1]) != null):
 				// Std.isOfType(v, C) of a class literal: the instance test, a range of
 				// type indices (MemLower.instOf; null is no instance), not hx_is's walk
@@ -2926,6 +3189,72 @@ class FnLower {
 		}
 	}
 
+	// the extern Objective-C class or protocol the type expression t names,
+	// when x is an Objective-C object (its static type): their tests are
+	// Objective-C's (objcIs); else null
+	function objcTestable(x:TExpr, t:TExpr):Null<TClass> {
+		if (!ObjC.isObjCType(x.etype)) return null;
+		return switch strip(t).eexpr {
+			case TTypeExpr(TClassDecl(c)) if (ObjC.isCF(c)):
+				cfail('${c.clPath.name} is an object of C without an Objective-C class: no type test tells it apart (every one is an __NSCFType)', t);
+			case TTypeExpr(TClassDecl(c)) if (ObjC.isObjC(c)): c;
+			case _: null;
+		}
+	}
+
+	// whether x (of type from, an Objective-C object) is an instance of the
+	// Objective-C class c (isKindOfClass:) or conforms to the protocol c
+	// (conformsToProtocol:): messages, as Objective-C asks (a proxy forwards
+	// them); nil is neither
+	function objcIs(x:Ex, from:Ty, c:TClass):Ex {
+		var id = asLocal(coerce(x, from, TId), TId);
+		var r = newLocal("is", TBool);
+		out.push(SSet(r, coerce(EInt(0), TI32, TBool)));
+		out.push(SIf(EBin(LEq, ELocal(id), EConv(I2L, EInt(0))), vector(), block(() -> {
+			// (hxmc.objc.Id: any object)
+			if (ObjC.isId(c)) {
+				out.push(SSet(r, coerce(EInt(1), TI32, TBool)));
+				return;
+			}
+			var protocol = ObjC.isProtocol(c);
+			var arg = protocol ? objcProtocol(ObjC.className(c)) : objcClass(c);
+			var sel = protocol ? "conformsToProtocol:" : "isKindOfClass:";
+			var key = ObjC.declareC(l, [CPtr], CBool);
+			var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
+			var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+			var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_msgSend"))), TI64));
+			out.push(SSet(r, ECallHost(key, vector(fn, ELocal(id), selector, arg), TBool)));
+		})));
+		return ELocal(r);
+	}
+
+	// the test that a value of any type (a caught one, a Dynamic) is an
+	// Objective-C object of the class or protocol c (rt_objc_is: a box of an
+	// id, or an object of a Haxe class extending an Objective-C one, then
+	// objcIs's message; hxmc.objc.Id: any such object). Its operands are
+	// computed here, before the test
+	function objcTestDyn(c:TClass):Ex->Ex {
+		var zero = EConv(I2L, EInt(0));
+		if (ObjC.isId(c)) return x -> ECallHost("rt_objc_is", vector(x, zero, zero, zero), TBool);
+		var protocol = ObjC.isProtocol(c);
+		var arg = protocol ? objcProtocol(ObjC.className(c)) : objcClass(c);
+		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(protocol ? "conformsToProtocol:" : "isKindOfClass:"))), TI64));
+		var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, "objc_msgSend"))), TI64));
+		return x -> ECallHost("rt_objc_is", vector(x, arg, sel, fn), TBool);
+	}
+
+	// the extern Objective-C class or protocol (not a type of C) the type
+	// expression t names, for a value that is not an Objective-C object
+	// (objcTestable's are): objcTestDyn's test
+	function objcTestableDyn(x:TExpr, t:TExpr):Null<TClass> {
+		if (ObjC.isObjCType(x.etype)) return null;
+		return switch strip(t).eexpr {
+			case TTypeExpr(TClassDecl(c)) if (ObjC.isObjC(c) && !ObjC.isCF(c)): c;
+			case _: null;
+		}
+	}
+
 	// the class whose instance test (EInstOf) Std.isOfType, Std.downcast and
 	// cast give for the type expression x, or null where hx_is must decide:
 	// an interface, an extern class (String, Array, Date, the boxes: the
@@ -2941,7 +3270,7 @@ class FnLower {
 	function castClass(mt:ModuleType):Null<ClassInfo> {
 		if (!Lower.classSpans) return null;
 		return switch mt {
-			case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_))): classOrBox(c);
+			case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && !c.clKind.match(KTypeParameter(_)) && !ObjC.isMode(c)): classOrBox(c);
 			case _: null;
 		}
 	}
@@ -3387,6 +3716,13 @@ class FnLower {
 		var t = ty(s.ret);
 		var ats = s.args.map(a -> ty(a.type));
 		var xs = args(cargs, ats, null);
+		// @:hxmc.retained: an object the caller owns (Core Foundation's Create
+		// rule), autoreleased at once, so it is borrowed as every result is
+		if (Lower.hasMeta(":hxmc.retained", cf.cfMeta)) {
+			if (t != TId) cfail('C function ${cf.cfName} is @:hxmc.retained but returns no object', e);
+			var r = CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3 ? inRegion(xs, ats, xs -> ECallHost(sym, xs, t), t, t) : ECallHost(sym, xs, t);
+			return coerce(objcAutorelease(r), TId, tyOf(e));
+		}
 		// @:hxmc.blocking: the call in a safe region entered here
 		if (CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3)
 			return inRegion(xs, ats, xs -> ECallHost(sym, xs, t), t, tyOf(e));
@@ -3398,6 +3734,743 @@ class FnLower {
 			return coerce(ELocal(lo), t, tyOf(e));
 		}
 		return coerceRhs(ECallHost(sym, xs, t), t, tyOf(e));
+	}
+
+	// ---- blocks (ObjC): a function where a block goes (a block of function
+	// type ft: nil for null), a block where a function goes
+
+	function blockOf(x:Ex, from:Ty, ft:core.TType.T, e:TExpr):Ex {
+		var b = ObjC.blockSig(l, ft, where(e));
+		return blockNew(coerce(x, from, TRef(RClos(b.sig))), b);
+	}
+
+	// closure c (of b's signature) as a block, nil for null
+	function blockNew(c:Ex, b:ObjC.BlockSig):Ex {
+		var ct = TRef(RClos(b.sig));
+		// (a closure capturing nothing: never null, a global block with static closures, MirBuild)
+		var sc = capturesNothing(c);
+		if (sc != null) return temp(TId, ObjC.blockNew(l, sc, b));
+		var cl = asLocal(c, ct);
+		var r = newLocal("block", TId);
+		out.push(SIf(EBin(RefEq, ELocal(cl), ENull(ct)), vector(SSet(r, EConv(I2L, EInt(0)))), vector(SSet(r, ObjC.blockNew(l, ELocal(cl), b)))));
+		return ELocal(r);
+	}
+
+	// x, a closure capturing nothing (pure: made again where it is used), or
+	// the local the statement just before set to one; else null
+	function capturesNothing(x:Ex):Null<Ex> {
+		switch x {
+			case ENewClos(_, []):
+				return x;
+			case ELocal(lo):
+				var k = out.length - 1;
+				while (k >= 0 && out[k].match(SPos(_)))
+					k--;
+				return k >= 0 ? switch out[k] {
+					case SSet(d, c = ENewClos(_, [])) if (d == lo): c;
+					case _: null;
+				} : null;
+			case _:
+				return null;
+		}
+	}
+
+	function blockFunction(x:Ex, ft:core.TType.T, to:Ty, e:TExpr):Ex {
+		var b = ObjC.blockSig(l, ft, where(e));
+		var ct = TRef(RClos(b.sig));
+		var id = asLocal(x, TId);
+		var r = newLocal("fn", ct);
+		out.push(ObjC.blockFunction(l, ELocal(id), b, newLocal("heap", TId), newLocal("same", TRef(RAny)), newLocal("box", TRef(RAny)), r));
+		return coerce(ELocal(r), ct, to);
+	}
+
+	// ---- ids held by Haxe storage (ObjC): a field or a static holds a
+	// reference to its id (nil: none), as an ARC strong variable
+
+	function objcRetain(x:Ex) {
+		var retain = ObjC.runtime(l, "objc_retain", [CPtr], CPtr);
+		out.push(SExpr(ECallHost(retain, vector(x), TI64)));
+	}
+
+	// the id a weak field's cell (an address; 0: never stored) holds, nil once
+	// the object is gone (borrowed: autoreleased, as every value)
+	function objcLoadWeak(cell:Ex):Ex {
+		var c = asLocal(cell, TI64);
+		var r = newLocal("weak", TId);
+		var load = ObjC.runtime(l, "objc_loadWeakRetained", [CPtr], CPtr);
+		out.push(SIf(EBin(LEq, ELocal(c), EConv(I2L, EInt(0))), vector(SSet(r, EConv(I2L, EInt(0)))),
+			block(() -> out.push(SSet(r, objcAutorelease(ECallHost(load, vector(ELocal(c)), TId)))))));
+		return ELocal(r);
+	}
+
+	// a weak read x of field cf: as it is, unless cf is an unowned field a
+	// -debug build checks (@:hxmc.unownedCheck, TypeloadFields.objcUnownedCheck),
+	// not null: nil then ends the program (its object is gone)
+	function objcUnownedRead(x:Ex, cf:core.TType.TClassField):Ex {
+		if (!Lower.hasMeta(":hxmc.unownedCheck", cf.cfMeta) || TFunctions.isExplicitNull(cf.cfType)) return x;
+		var r = asLocal(x, TId);
+		var file = haxe.io.Path.withoutDirectory(cf.cfPos.pfile);
+		var msg = "hxmc: the unowned field " + cf.cfName + " (" + file + ") was read after its object was deallocated";
+		out.push(SIf(EBin(LEq, ELocal(r), EConv(I2L, EInt(0))),
+			vector(SExpr(ECallHost("rt_objc_unpaired", vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(msg)), TI64)), TVoid))), vector()));
+		return ELocal(r);
+	}
+
+	// x (a +1 id) given to the autorelease pool
+	function objcAutorelease(x:Ex):Ex {
+		var autorelease = ObjC.runtime(l, "objc_autorelease", [CPtr], CPtr);
+		return temp(TId, ECallHost(autorelease, vector(x), TId));
+	}
+
+	function objcRelease(x:Ex) {
+		var release = ObjC.runtime(l, "objc_release", [CPtr], CVoid);
+		out.push(SExpr(ECallHost(release, vector(x), TVoid)));
+	}
+
+	// a constructor: its own id fields entered in the runtime's table, which
+	// releases what they hold once the object dies (hxmc.rt.Gc.own)
+	function objcOwnFields() {
+		if (self == null || l.idFields(self).length + l.weakFields(self).length == 0) return;
+		var release = ObjC.symbol(l, "objc_release");
+		var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ECast(TRef(RAny), ELocal(thisLocal))), TI64));
+		for (n in l.idFields(self)) {
+			var at = EFieldAddr(self, self.fieldIndex(n), ELocal(thisLocal));
+			var off = EConv(L2I, EBin(LSub, at, base));
+			out.push(SExpr(ECallHost("rt_objc_own", vector(ECast(TRef(RAny), ELocal(thisLocal)), off, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TVoid)));
+		}
+		var destroyWeak = ObjC.symbol(l, "objc_destroyWeak");
+		for (n in l.weakFields(self)) {
+			var off = EConv(L2I, EBin(LSub, EFieldAddr(self, self.fieldIndex(n), ELocal(thisLocal)), base));
+			out.push(SExpr(ECallHost("rt_objc_own_weak", vector(ECast(TRef(RAny), ELocal(thisLocal)), off, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(destroyWeak)), TI64)), TVoid)));
+		}
+	}
+
+	// a new closure: the ids it captures held by it as fields hold theirs,
+	// retained here and released once it dies (hxmc.rt.Gc.own; capture i is
+	// slot i + 1, MirBuild)
+	function newClosure(li:LambdaInfo, caps:Vector<Ex>):Ex {
+		if (!li.captures.exists(c -> c.ty == TId)) return ENewClos(li, caps);
+		var xs = [for (i in 0...caps.length) (ELocal(asLocal(caps[i], li.captures[i].ty)) : Ex)];
+		var c = temp(TRef(RClos(li.sig)), ENewClos(li, Vector.fromArrayCopy(xs)));
+		for (i in 0...xs.length)
+			if (li.captures[i].ty == TId) {
+				objcRetain(xs[i]);
+				objcOwn(c, 8 * (i + 1));
+			}
+		return c;
+	}
+
+	// a new box of a captured variable that is assigned: an id in it held as
+	// a field's (its stores: assign), released once the box dies
+	function newBox(t:Ty, x:Ex):Ex {
+		if (t != TId) return ENewBox(t, x);
+		var v = ELocal(asLocal(x, TId));
+		var b = temp(TRef(RBox(TId)), ENewBox(TId, v));
+		objcRetain(v);
+		objcOwn(b, 0);
+		return b;
+	}
+
+	// the id at offset off in the object o (a local) released once o dies
+	function objcOwn(o:Ex, off:Int) {
+		var release = ObjC.symbol(l, "objc_release");
+		out.push(SExpr(ECallHost("rt_objc_own", vector(ECast(TRef(RAny), o), EInt(off), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TVoid)));
+	}
+
+	// `super.f(args)` in a method of a class extending an Objective-C one
+	// (sup): objc_msgSendSuper, its receiver a struct objc_super in this
+	// frame (the object's id and the class the method is looked up from:
+	// sup, the registered class's superclass); a property's set_x as
+	// objcSend has it
+	function objcSendSuper(sup:TClass, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var s = objcSig(cf, e);
+		var ats = s.args.map(a -> ty(a.type));
+		var xs = args(cargs, ats, null);
+		var id = mode != null ? ELocal(thisLocal) : ELocal(asLocal(coerce(ELocal(thisLocal), TRef(RObj(self)), TId), TId));
+		var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), id), TVoid)));
+		// (a Haxe superclass: its registered class, from its cell)
+		var superClass = ObjC.isObjC(sup) ? objcClass(sup)
+			: objcCellClass(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(sup)).name)), TI64));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), superClass), TVoid)));
+		var types = [for (a in s.args) a.type];
+		if (xs.length == 1 && ObjC.isSetter(c, cf)) {
+			var v = ELocal(asLocal(xs[0], ats[0]));
+			out.push(SExpr(objcMsg(receiver, ObjC.selector(cf, s), types, [v], null, cf, e, TVoid, false, "objc_msgSendSuper")));
+			return coerce(v, ats[0], tyOf(e));
+		}
+		return objcMsg(receiver, ObjC.selector(cf, s), types, xs.toArray(), s.ret, cf, e, null, false, "objc_msgSendSuper");
+	}
+
+	// a message to obj (an instance method of an Objective-C class) or to the
+	// class (a static one, obj null)
+	function objcSend(obj:Null<TExpr>, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var s = objcSig(cf, e);
+		if (ObjC.restOf(s) != null) return objcSendVariadic(obj, c, cf, s, cargs, e);
+		var ats = s.args.map(a -> ty(a.type));
+		var xs = obj != null ? args(VectorTools.cons(obj, cargs), VectorTools.cons(tyOf(obj), ats), null) : args(cargs, ats, null);
+		var self = obj != null ? coerce(xs[0], tyOf(obj), TId) : objcClass(c);
+		var rest = [for (i in (obj != null ? 1 : 0)...xs.length) xs[i]];
+		if (rest.length == 1 && ObjC.isSetter(c, cf)) {
+			// (a property's set_x: the message returns nothing, the call the value)
+			var v = ELocal(asLocal(rest[0], ats[0]));
+			out.push(SExpr(objcMsg(self, ObjC.selector(cf, s), [for (a in s.args) a.type], [v], null, cf, e, TVoid)));
+			return coerce(v, ats[0], tyOf(e));
+		}
+		return objcMsg(self, ObjC.selector(cf, s), [for (a in s.args) a.type], rest, s.ret, cf, e);
+	}
+
+	// a message of a variadic method (`...rest:T`, its last parameter): its
+	// fixed arguments, then each one listed (the array literal Haxe makes of
+	// them: a spread array's length is not the call's), objects only, then
+	// nil when it is @:hxmc.nilTerminated (NS_REQUIRES_NIL_TERMINATION:
+	// arrayWithObjects:), passed as a variadic function's
+	function objcSendVariadic(obj:Null<TExpr>, c:TClass, cf:TClassField, s:core.TType.TSignature, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var restT = ObjC.restOf(s);
+		var nfixed = s.args.length - 1;
+		if (ObjC.ctype(restT) != CPtr || ObjC.isBlockType(restT))
+			return cfail(cf.cfName + ": a variadic Objective-C method's arguments are objects (yet)", e);
+		var listed = cargs.length > nfixed ? switch strip(cargs[nfixed]).eexpr {
+			case TArrayDecl(el): el;
+			case TCast(x, _) | TMeta(_, x): switch strip(x).eexpr {
+					case TArrayDecl(el): el;
+					case _: null;
+				}
+			case _: null;
+		} : vector();
+		if (listed == null) return cfail(cf.cfName + ": a variadic Objective-C method takes its arguments listed, not spread (`...array`)", e);
+		var fixedTypes = [for (i in 0...nfixed) s.args[i].type];
+		var self = obj != null ? coerce(value(obj), tyOf(obj), TId) : objcClass(c);
+		var selfLocal = ELocal(asLocal(self, TId));
+		var xs = args(Vector.fromArrayCopy([for (i in 0...nfixed) cargs[i]]), Vector.fromArrayCopy([for (t in fixedTypes) ty(t)]), null).toArray();
+		var types = fixedTypes.copy();
+		for (x in listed) {
+			xs.push(ELocal(asLocal(coerce(value(x), tyOf(x), TId), TId)));
+			types.push(restT);
+		}
+		if (Lower.hasMeta(":hxmc.nilTerminated", cf.cfMeta)) {
+			xs.push(EConv(I2L, EInt(0)));
+			types.push(restT);
+		}
+		return objcMsg(selfLocal, ObjC.selector(cf, s), types, xs, s.ret, cf, e, null, false, "objc_msgSend", nfixed);
+	}
+
+	// a property of an Objective-C object (obj) or class (null) read: its getter
+	function objcGet(obj:Null<TExpr>, c:TClass, cf:TClassField, e:TExpr):Ex {
+		var self = obj != null ? coerce(value(obj), tyOf(obj), TId) : objcClass(c);
+		return objcMsg(self, ObjC.getter(cf), [], [], cf.cfType, cf, e);
+	}
+
+	// the property's setter sent the value x (of type t)
+	function objcSet(self:Ex, c:TClass, cf:TClassField, x:Ex, t:Ty, e:TExpr) {
+		var v = coerce(x, t, ty(cf.cfType));
+		out.push(SExpr(objcMsg(self, ObjC.setter(cf), [cf.cfType], [v], null, cf, e, TVoid)));
+	}
+
+	// `super.initX(args)` in the constructor of a class extending an
+	// Objective-C one (sup), as `self = [super initX:args]`: the Objective-C
+	// object, [[C alloc] initX:args] of the instance's own class C (the
+	// most derived: its cell, CELL_FIELD; registered on first use), kept in
+	// the hidden field (the +1 alloc and init give it), and entered in the
+	// runtime's peers, the instance variable the entry's index; init (the
+	// declaration of NSObject's, or plain) where the constructor calls none
+	// (objcConstructor). Its value is the id.
+	function objcSuperInit(sup:TClass, init:Null<TClassField>, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var s = init != null ? objcSig(init, e) : null;
+		var xs = s != null ? args(cargs, Vector.fromArrayCopy([for (a in s.args) ty(a.type)]), null) : vector();
+		var cell = temp(TI64, EField(self, self.fieldIndex(ObjC.CELL_FIELD), ELocal(thisLocal)));
+		var cls = asLocal(objcCellClass(cell), TI64);
+		var idType = TInst(sup, vector());
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
+		// the object: the one an initializer Objective-C sent is making this
+		// Haxe object of (objcAdoptBody: allocated by Objective-C, of this
+		// class), else allocated here
+		var alloc = newLocal("alloc", TI64);
+		var adopted = asLocal(ECallHost("rt_objc_adopt", vector(EConv(I2L, EInt(0))), TI64), TI64);
+		var getClass = ObjC.runtime(l, "object_getClass", [CPtr], CPtr);
+		var allocate = block(() -> out.push(SSet(alloc, objcMsg(ELocal(cls), "alloc", [], [], idType, init, e, TI64))));
+		out.push(SIf(EBin(LNe, ELocal(adopted), EConv(I2L, EInt(0))), vector(SIf(EBin(LEq, ECallHost(getClass, vector(ELocal(adopted)), TI64), ELocal(cls)),
+			vector(SSet(alloc, ELocal(adopted))),
+			// (another class's: an object a constructor before the initializer makes)
+			Vector.fromArrayCopy([SExpr(ECallHost("rt_objc_adopt", vector(ELocal(adopted)), TI64))].concat(allocate.toArray())))), allocate));
+		// the two paired before the initializer runs: methods the superclass's
+		// initializer sends (overridden setters) find the Haxe object, and an
+		// initializer of the class's (objcAdoptBody) forwards to its superclass's
+		out.push(SSetField(self, self.fieldIndex(ObjC.ID_FIELD), ELocal(thisLocal), ECast(TId, ELocal(alloc))));
+		var retainCount = ObjC.symbol(l, "_objc_rootRetainCount");
+		var release = ObjC.symbol(l, "objc_release");
+		var index = asLocal(ECallHost("rt_objc_peer_add", vector(ECast(TRef(RAny), ELocal(thisLocal)), ELocal(alloc),
+			ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(retainCount)), TI64), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(release)), TI64)), TI32), TI32);
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(EBin(LAdd, ELocal(alloc), off), EInt(0), ELocal(index)), TVoid)));
+		var sel = init != null ? ObjC.selector(init, s) : "init";
+		var id = asLocal(objcMsg(ELocal(alloc), sel, s != null ? [for (a in s.args) a.type] : [], xs.toArray(), idType, init, e, TId, true), TId);
+		// (an initializer returning another object than its receiver: not supported)
+		out.push(SIf(EBin(LNe, ECast(TI64, ELocal(id)), ELocal(alloc)), vector(SExpr(ECallHost("rt_objc_unpaired",
+			vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr("hxmc: " + sel + " of " + core.Globals.sTypePath(l.superOf(self).clPath)
+				+ ", in a Haxe constructor, returned another object than its receiver (or nil): not supported")), TI64)), TVoid))),
+			vector()));
+		return ELocal(id);
+	}
+
+	// an object of class c (made, by Haxe or by Objective-C) whose class
+	// overrides dealloc (ObjC.deallocOf): its dealloc a finaliser's
+	function objcDeallocWatch(c:TClass, obj:Ex)
+		if (ObjC.peerBase(c) != null && ObjC.deallocOf(c) != null)
+			out.push(SExpr(ECallHost("rt_objc_dealloc_watch", vector(ECast(TRef(RAny), obj)), TVoid)));
+
+	// the initializer of class c (its constructor's: the selector `sel` of the
+	// Objective-C initializer init it calls on super, `init` when none) as
+	// Objective-C sends it (this function's arguments: self, _cmd, the
+	// constructor's): to an object Objective-C allocated, without its Haxe
+	// object (its instance variable 0), the constructor runs, making the
+	// Haxe object of that object (rt_objc_adopt, which objcSuperInit takes);
+	// to one paired (being made by Haxe: the constructor's own super.init...
+	// call, or an initializer the superclass's calls; or made), the
+	// superclass's initializer. Its result is the caller's (+1), as an
+	// initializer's
+	public function objcAdoptBody(c:TClass, init:Null<TClassField>, sel:String, e:TExpr) {
+		var selfId = fi.args[0];
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.IVAR_CELL + l.objcPeer(self).root)), TI64), EInt(0)), TI64);
+		var state = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(EBin(LAdd, ELocal(selfId), off), EInt(0)), TI32), TI32);
+		var r = newLocal("made", TI64);
+		var making = block(() -> {
+			out.push(SExpr(ECallHost("rt_objc_adopt", vector(ELocal(selfId)), TI64)));
+			var ci = l.classInfo(c);
+			var k = c;
+			while (k.clConstructor == null && k.clSuper != null)
+				k = k.clSuper.cls;
+			var obj = asLocal(ENewObj(ci), TRef(RObj(ci)));
+			// (this class's object, whichever constructor runs: objcConstructor)
+			out.push(SSetField(ci, ci.fieldIndex(ObjC.CELL_FIELD), ELocal(obj), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(ci).name)), TI64)));
+			var ctor = l.ctor(k);
+			out.push(SExpr(ECall(ctor, Vector.fromArrayCopy([(ELocal(obj) : Ex)].concat([for (i in 2...fi.args.length) (ELocal(fi.args[i]) : Ex)])))));
+			objcDeallocWatch(c, ELocal(obj));
+			// (the Haxe object holds one reference, the caller one more)
+			var id = EField(ci, ci.fieldIndex(ObjC.ID_FIELD), ELocal(obj));
+			out.push(SSet(r, ECallHost(ObjC.runtime(l, "objc_retain", [CPtr], CPtr), vector(id), TI64)));
+		});
+		// (in a try, as a method's entry: an exception the constructor throws
+		// is raised by the entry as an Objective-C one, the result nil, the
+		// object it was making no longer one an initializer is making)
+		var exn = newLocal("e", TRef(RAny));
+		var adopt = vector(STry(making, vector({
+			test: null,
+			l: exn,
+			body: vector(SExpr(ECallHost("rt_objc_adopt", vector(EConv(I2L, EInt(0))), TI64)),
+				SExpr(ECallHost("rt_objc_raise", vector(ELocal(exn)), TVoid)), SSet(r, EConv(I2L, EInt(0))))
+		})));
+		fi.hasTry = true;
+		var forward = block(() -> {
+			var s = init != null ? objcSig(init, e) : null;
+			var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), ELocal(selfId)), TVoid)));
+			var sup = l.superOf(self);
+			var superClass = ObjC.isObjC(sup) ? objcClass(sup)
+				: objcCellClass(ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(sup)).name)), TI64));
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), superClass), TVoid)));
+			var types = s != null ? [for (a in s.args) a.type] : [];
+			var xs = [for (i in 2...fi.args.length) (ELocal(fi.args[i]) : Ex)];
+			// (its result an id: of the Objective-C class the hierarchy extends, a
+			// Haxe superclass's type would be its Haxe object's)
+			var base = ObjC.isObjC(sup) ? sup : ObjC.peerBase(sup);
+			out.push(SSet(r, objcMsg(receiver, sel, types, xs, TInst(base, vector()), init, e, TI64, true, "objc_msgSendSuper")));
+		});
+		out.push(SIf(EBin(Eq, ELocal(state), EInt(0)), adopt, forward));
+		out.push(SReturn(ELocal(r)));
+	}
+
+	// the class of a class cell (at the address cell), registered first when
+	// it is not yet (by the function the cell's second word holds)
+	function objcCellClass(cell:Ex):Ex {
+		var cls = newLocal("cls", TI64);
+		out.push(SSet(cls, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64)));
+		out.push(SIf(EBin(LEq, ELocal(cls), EConv(I2L, EInt(0))), vector(
+			SExpr(ECallHost("hxmc_unsafe_Mem_call0", vector(ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(8)), TI64)), TVoid)),
+			SSet(cls, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64))
+		), vector()));
+		return ELocal(cls);
+	}
+
+	// a constructor of such a class: the instance's own class noted (the first
+	// constructor to run is the most derived class's); and in the first such
+	// class's, plain init first when it calls no super.init...
+	function objcConstructor(tf:TFunc) {
+		if (self == null || l.objcPeer(self) == null) return;
+		var cellField = self.fieldIndex(ObjC.CELL_FIELD);
+		var own = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcPeer(self).name)), TI64);
+		out.push(SIf(EBin(LEq, EField(self, cellField, ELocal(thisLocal)), EConv(I2L, EInt(0))),
+			vector(SSetField(self, cellField, ELocal(thisLocal), own)), vector()));
+		var sup = l.superOf(self);
+		if (!ObjC.isObjC(sup)) return;
+		var called = false;
+		function scan(e:TExpr)
+			switch e.eexpr {
+				case TCall({eexpr: TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf))}, _) if (ObjC.isObjC(c) && ObjC.isInit(cf)):
+					called = true;
+				case _:
+					core.Texpr.iter(scan, e);
+			}
+		scan(tf.tfExpr);
+		if (!called) objcSuperInit(sup, null, vector(), tf.tfExpr);
+	}
+
+	// the body of this class's registering function (ObjC.REGISTER, its cell's
+	// second word): unless registered, its superclass (parent: the Objective-C
+	// class, or the Haxe class registered first), the instance variable (the
+	// first such class's only: the others inherit it), its methods (their
+	// entries, ObjC.imps), and its class and the variable's offset in their cells
+	public function objcRegisterBody(parent:TClass) {
+		inline function cstr(s:String):Ex
+			return ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(s)), TI64);
+		inline function sym(s:String):Ex
+			return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
+		var name = l.objcPeer(self).name;
+		var allocate = ObjC.runtime(l, "objc_allocateClassPair", [CPtr, CPtr, CI64], CPtr);
+		var addIvar = ObjC.runtime(l, "class_addIvar", [CPtr, CPtr, CI64, CU8, CPtr], CBool);
+		var addMethod = ObjC.runtime(l, "class_addMethod", [CPtr, CPtr, CPtr, CPtr], CBool);
+		var register = ObjC.runtime(l, "objc_registerClassPair", [CPtr], CVoid);
+		var getIvar = ObjC.runtime(l, "class_getInstanceVariable", [CPtr, CPtr], CPtr);
+		var ivarOffset = ObjC.runtime(l, "ivar_getOffset", [CPtr], CI64);
+		var done = block(() -> {
+			var root = name == l.objcPeer(self).root;
+			var superClass = root ? objcClass(parent) : objcCellClass(sym(ObjC.CLASS_CELL + l.objcPeer(l.classInfo(parent)).name));
+			var cls = asLocal(ECallHost(allocate, vector(superClass, cstr(name), EConv(I2L, EInt(0))), TI64), TI64);
+			if (root) out.push(SExpr(ECallHost(addIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR), EConv(I2L, EInt(4)), EInt(2), cstr("i")), TBool)));
+			for (m in l.objcPeer(self).methods) {
+				var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
+				var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+				out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(m.sym), cstr(m.types)), TBool)));
+			}
+			// (class methods: on its metaclass)
+			if (l.objcPeer(self).classMethods.length > 0) {
+				var meta = asLocal(ECallHost(ObjC.runtime(l, "object_getClass", [CPtr], CPtr), vector(ELocal(cls)), TI64), TI64);
+				for (m in l.objcPeer(self).classMethods) {
+					var selRef = temp(TI64, sym(ObjC.selRef(m.sel)));
+					var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+					out.push(SExpr(ECallHost(addMethod, vector(ELocal(meta), sel, sym(m.sym), cstr(m.types)), TBool)));
+				}
+			}
+			if (l.objcPeer(self).protocols.length > 0) {
+				var addProtocol = ObjC.runtime(l, "class_addProtocol", [CPtr, CPtr], CBool);
+				for (p in l.objcPeer(self).protocols)
+					out.push(SExpr(ECallHost(addProtocol, vector(ELocal(cls), objcProtocol(p)), TBool)));
+			}
+			out.push(SExpr(ECallHost(register, vector(ELocal(cls)), TVoid)));
+			if (root) {
+				var off = temp(TI64, ECallHost(ivarOffset, vector(ECallHost(getIvar, vector(ELocal(cls), cstr(ObjC.PEER_IVAR)), TI64)), TI64));
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.IVAR_CELL + name), EInt(0), off), TVoid)));
+			}
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0), ELocal(cls)), TVoid)));
+		});
+		// (under libobjc's recursive lock on the Objective-C class the hierarchy
+		// extends, as @synchronized: two threads registering at once; a subclass
+		// registers its superclass inside it)
+		var enter = ObjC.runtime(l, "objc_sync_enter", [CPtr], CI32);
+		var exit = ObjC.runtime(l, "objc_sync_exit", [CPtr], CI32);
+		var lock = asLocal(objcClass(ObjC.isObjC(parent) ? parent : ObjC.peerBase(parent)), TI64);
+		var current = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(ObjC.CLASS_CELL + name), EInt(0)), TI64);
+		out.push(SIf(EBin(LEq, current, EConv(I2L, EInt(0))), vector(
+			SExpr(ECallHost(enter, vector(ELocal(lock)), TI32)),
+			SIf(EBin(LEq, current, EConv(I2L, EInt(0))), done, vector()),
+			SExpr(ECallHost(exit, vector(ELocal(lock)), TI32))
+		), vector()));
+		out.push(SReturn(null));
+	}
+
+	// ---- Objective-C mode classes (ObjC.isMode)
+
+	// `super.f(...)` in a method of the mode class `mode`: objc_msgSendSuper
+	// from its superclass, the receiver self; an initializer's result becomes
+	// self (`self = [super initX:...]`: `this` after it is that object)
+	function modeSendSuper(c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		if (cf.cfName == "dealloc")
+			return fail("super.dealloc(): an Objective-C class's dealloc sends it itself, after its own body and the release of its instance variables", e);
+		var d = ObjC.messageDecl(c, cf);
+		var r = objcSendSuper(mode.clSuper.cls, c, d, cargs, e);
+		if (!ObjC.isInit(d)) return r;
+		var t = tyOf(e);
+		var lo = asLocal(r, t);
+		out.push(SSet(thisLocal, coerce(ELocal(lo), t, TId)));
+		return ELocal(lo);
+	}
+
+	// the representation of instance variable iv's values
+	function ivarTy(iv:ObjC.Ivar):Ty {
+		if (iv.kind == ObjC.IVAR_STRONG || iv.kind == ObjC.IVAR_WEAK_ID || iv.kind == ObjC.IVAR_UNOWNED) return TId;
+		return switch iv.ct {
+			case CStruct(sc) if (iv.kind == ObjC.IVAR_RAW): structTy(sc);
+			case _: ty(iv.field.cfType);
+		}
+	}
+
+	// the address of instance variable iv (of the mode class owner) of the
+	// object id: id plus its offset, from its cell (written when the class
+	// was registered, before any of its objects was made)
+	function ivarAddr(id:Ex, owner:TClass, iv:ObjC.Ivar):Local {
+		var cell = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.ivarCell(l.objcMode(owner), iv.name))), TI64);
+		var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64);
+		return asLocal(EBin(LAdd, coerce(id, TId, TI64), off), TI64);
+	}
+
+	// the value of instance variable iv at address a (its representation:
+	// ivarTy): a struct copied out; an id borrowed (a weak one nil once its
+	// object is gone, autoreleased as every weak read: objcLoadWeak); a weak
+	// Haxe value, its slot's (null: gone, or never stored)
+	function ivarLoad(a:Local, iv:ObjC.Ivar, e:TExpr):Ex {
+		var t = ivarTy(iv);
+		if (iv.kind == ObjC.IVAR_RAW) {
+			switch iv.ct {
+				case CStruct(sc):
+					var s = newSlot(t, true);
+					copyStruct(ELocal(s), ELocal(a), sc);
+					return ELocal(s);
+				case _:
+					return cLoad(ELocal(a), 0, iv.ct, {eexpr: e.eexpr, etype: iv.field.cfType, epos: e.epos});
+			}
+		}
+		if (iv.kind == ObjC.IVAR_STRONG || iv.kind == ObjC.IVAR_UNOWNED)
+			return temp(TId, coerce(ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(a), EInt(0)), TI64), TI64, TId));
+		if (iv.kind == ObjC.IVAR_WEAK_ID) return objcUnownedRead(objcLoadWeak(ELocal(a)), iv.field);
+		var slot = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(a), EInt(0)), TI32), TI32);
+		var r = newLocal("weak", TRef(RAny));
+		out.push(SIf(EBin(Eq, ELocal(slot), EInt(0)), vector(SSet(r, ENull(TRef(RAny)))),
+			vector(SSet(r, ECallHost("rt_weak_get", vector(ELocal(slot)), TRef(RAny))))));
+		return coerce(ELocal(r), TRef(RAny), t);
+	}
+
+	// x (of representation t) stored in instance variable iv at address a:
+	// raw; a strong id retained and the old one released (objc_storeStrong);
+	// a weak id by objc_storeWeak; a weak Haxe value in its slot (taken by
+	// the first store of a value)
+	function ivarStore(a:Local, iv:ObjC.Ivar, x:Ex, t:Ty, e:TExpr) {
+		if (iv.kind == ObjC.IVAR_RAW) {
+			cStore(ELocal(a), 0, iv.ct, x, t, e);
+			return;
+		}
+		if (iv.kind == ObjC.IVAR_UNOWNED) {
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(a), EInt(0), coerce(x, t, TI64)), TVoid)));
+			return;
+		}
+		if (iv.kind == ObjC.IVAR_STRONG) {
+			out.push(SExpr(ECallHost(ObjC.runtime(l, "objc_storeStrong", [CPtr, CPtr], CVoid), vector(ELocal(a), x), TVoid)));
+			return;
+		}
+		if (iv.kind == ObjC.IVAR_WEAK_ID) {
+			out.push(SExpr(ECallHost(ObjC.runtime(l, "objc_storeWeak", [CPtr, CPtr], CPtr), vector(ELocal(a), x), TI64)));
+			return;
+		}
+		var v = ELocal(asLocal(coerce(x, t, TRef(RAny)), TRef(RAny)));
+		var slot = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(a), EInt(0)), TI32), TI32);
+		out.push(SIf(EBin(Eq, ELocal(slot), EInt(0)),
+			vector(SIf(EBin(RefEq, v, ENull(TRef(RAny))), vector(),
+				vector(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(a), EInt(0), ECallHost("rt_weak_new", vector(v), TI32)), TVoid))))),
+			vector(SExpr(ECallHost("rt_weak_set", vector(ELocal(slot), v), TVoid)))));
+	}
+
+	// the body of mode class c's registering function (ObjC.REGISTER, its
+	// cell's second word): unless registered, its superclass (registered
+	// first when it is a mode class too), its instance variables, its
+	// methods (their entries, ObjC.imps) and class methods, its protocols,
+	// then the offsets of its instance variables and its class in their cells
+	public function objcModeRegisterBody(c:TClass, m:ObjC.ObjCMode) {
+		inline function cstr(s:String):Ex
+			return ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(s)), TI64);
+		inline function sym(s:String):Ex
+			return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
+		var parent = c.clSuper.cls;
+		var allocate = ObjC.runtime(l, "objc_allocateClassPair", [CPtr, CPtr, CI64], CPtr);
+		var addIvar = ObjC.runtime(l, "class_addIvar", [CPtr, CPtr, CI64, CU8, CPtr], CBool);
+		var addMethod = ObjC.runtime(l, "class_addMethod", [CPtr, CPtr, CPtr, CPtr], CBool);
+		var register = ObjC.runtime(l, "objc_registerClassPair", [CPtr], CVoid);
+		var getIvar = ObjC.runtime(l, "class_getInstanceVariable", [CPtr, CPtr], CPtr);
+		var ivarOffset = ObjC.runtime(l, "ivar_getOffset", [CPtr], CI64);
+		var done = block(() -> {
+			var cls = asLocal(ECallHost(allocate, vector(objcClass(parent), cstr(m.name), EConv(I2L, EInt(0))), TI64), TI64);
+			// (a name taken: another image's class, or this program's under the same name)
+			out.push(SIf(EBin(LEq, ELocal(cls), EConv(I2L, EInt(0))), vector(SExpr(ECallHost("rt_objc_unpaired",
+				vector(cstr("hxmc: the Objective-C class " + m.name + " (" + core.Globals.sTypePath(c.clPath) + ") cannot be registered: a class of that name exists")),
+				TVoid))), vector()));
+			for (iv in m.ivars) {
+				var log2 = 0;
+				while ((1 << log2) < iv.align)
+					log2++;
+				out.push(SExpr(ECallHost(addIvar, vector(ELocal(cls), cstr(iv.name), EConv(I2L, EInt(iv.size)), EInt(log2), cstr(iv.enc)), TBool)));
+			}
+			for (mm in m.methods) {
+				var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(temp(TI64, sym(ObjC.selRef(mm.sel))), EInt(0)), TI64));
+				out.push(SExpr(ECallHost(addMethod, vector(ELocal(cls), sel, sym(mm.sym), cstr(mm.types)), TBool)));
+			}
+			if (m.classMethods.length > 0) {
+				var meta = asLocal(ECallHost(ObjC.runtime(l, "object_getClass", [CPtr], CPtr), vector(ELocal(cls)), TI64), TI64);
+				for (mm in m.classMethods) {
+					var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(temp(TI64, sym(ObjC.selRef(mm.sel))), EInt(0)), TI64));
+					out.push(SExpr(ECallHost(addMethod, vector(ELocal(meta), sel, sym(mm.sym), cstr(mm.types)), TBool)));
+				}
+			}
+			if (m.protocols.length > 0) {
+				var addProtocol = ObjC.runtime(l, "class_addProtocol", [CPtr, CPtr], CBool);
+				for (p in m.protocols)
+					out.push(SExpr(ECallHost(addProtocol, vector(ELocal(cls), objcProtocol(p)), TBool)));
+			}
+			out.push(SExpr(ECallHost(register, vector(ELocal(cls)), TVoid)));
+			for (iv in m.ivars) {
+				var off = temp(TI64, ECallHost(ivarOffset, vector(ECallHost(getIvar, vector(ELocal(cls), cstr(iv.name)), TI64)), TI64));
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.ivarCell(m.key, iv.name)), EInt(0), off), TVoid)));
+			}
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(sym(ObjC.CLASS_CELL + m.key), EInt(0), ELocal(cls)), TVoid)));
+		});
+		// (under libobjc's lock on the extern class the hierarchy extends, as a
+		// peer class's: objcRegisterBody)
+		var base = parent;
+		while (ObjC.isMode(base))
+			base = base.clSuper.cls;
+		var enter = ObjC.runtime(l, "objc_sync_enter", [CPtr], CI32);
+		var exit = ObjC.runtime(l, "objc_sync_exit", [CPtr], CI32);
+		var lock = asLocal(objcClass(base), TI64);
+		var current = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(ObjC.CLASS_CELL + m.key), EInt(0)), TI64);
+		out.push(SIf(EBin(LEq, current, EConv(I2L, EInt(0))), vector(
+			SExpr(ECallHost(enter, vector(ELocal(lock)), TI32)),
+			SIf(EBin(LEq, current, EConv(I2L, EInt(0))), done, vector()),
+			SExpr(ECallHost(exit, vector(ELocal(lock)), TI32))
+		), vector()));
+		out.push(SReturn(null));
+	}
+
+	// the work of mode class c's dealloc (Lower.objcModeDealloc; this
+	// function's arguments: self, _cmd): the class's own dealloc method
+	// (user; a Haxe exception leaving it raised as an Objective-C one by the
+	// entry, after the rest), its instance variables let go (strong ids
+	// released, weak ones destroyed, weak slots freed; each left zero, so
+	// that the superclass's dealloc, which may send methods of the class,
+	// finds them empty), then the superclass's dealloc (objc_msgSendSuper)
+	public function objcModeDeallocBody(c:TClass, m:ObjC.ObjCMode, user:Null<FuncInfo>) {
+		var self = fi.args[0];
+		inline function sym(s:String):Ex
+			return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
+		if (user != null) {
+			var exn = newLocal("e", TRef(RAny));
+			out.push(STry(vector(SExpr(ECall(user, vector(ECast(TId, ELocal(self)))))), vector({
+				test: null,
+				l: exn,
+				body: vector(SExpr(ECallHost("rt_objc_raise", vector(ELocal(exn)), TVoid)))
+			})));
+			fi.hasTry = true;
+		}
+		for (iv in m.ivars) {
+			if (iv.kind == ObjC.IVAR_RAW || iv.kind == ObjC.IVAR_UNOWNED) continue;
+			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(ObjC.ivarCell(m.key, iv.name)), EInt(0)), TI64);
+			var a = asLocal(EBin(LAdd, ELocal(self), off), TI64);
+			if (iv.kind == ObjC.IVAR_STRONG) {
+				var old = asLocal(ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(a), EInt(0)), TI64), TI64);
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(a), EInt(0), EConv(I2L, EInt(0))), TVoid)));
+				objcRelease(ECast(TId, ELocal(old)));
+			} else if (iv.kind == ObjC.IVAR_WEAK_ID) {
+				out.push(SExpr(ECallHost(ObjC.runtime(l, "objc_destroyWeak", [CPtr], CVoid), vector(ELocal(a)), TVoid)));
+			} else {
+				var slot = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(a), EInt(0)), TI32), TI32);
+				out.push(SIf(EBin(Eq, ELocal(slot), EInt(0)), vector(), vector(
+					SExpr(ECallHost("rt_weak_free", vector(ELocal(slot)), TVoid)),
+					SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(a), EInt(0), EInt(0)), TVoid))
+				)));
+			}
+		}
+		var receiver = temp(TI64, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(16), EInt(8)), TI64));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(0), ELocal(self)), TVoid)));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(receiver, EInt(8), objcClass(c.clSuper.cls)), TVoid)));
+		var key = ObjC.declareC(l, [], CVoid);
+		var sel = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(temp(TI64, sym(ObjC.selRef("dealloc"))), EInt(0)), TI64));
+		var send = temp(TI64, sym(ObjC.symbol(l, "objc_msgSendSuper")));
+		out.push(SExpr(ECallHost(key, vector(send, receiver, sel), TVoid)));
+		out.push(SReturn(null));
+	}
+
+	function objcSig(cf:TClassField, e:TExpr):core.TType.TSignature
+		return switch TFunctions.follow(cf.cfType) {
+			case TFun(s): s;
+			case _: fail("Objective-C method " + cf.cfName + " is not a function", e);
+		};
+
+	// the class object: its classref (ObjC.classRef), or looked up by name;
+	// an Objective-C mode class's, from its cell (registered first when not yet)
+	function objcClass(c:TClass):Ex {
+		if (ObjC.isMode(c))
+			return objcCellClass(temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.CLASS_CELL + l.objcMode(c))), TI64)));
+		var classRef = ObjC.classRef(l, c);
+		if (classRef != null) {
+			var ref = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(classRef)), TI64));
+			return temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(ref, EInt(0)), TI64));
+		}
+		var getClass = ObjC.runtime(l, "objc_getClass", [CPtr], CPtr);
+		return temp(TI64, ECallHost(getClass, vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(ObjC.className(c))), TI64)), TI64));
+	}
+
+	// the Protocol object of the protocol of that name: its word in the data
+	// (ObjC.PROTOREF), looked up once (objc_getProtocol; a protocol no image
+	// declares, made: an empty one of that name, which classes adopting it
+	// then conform to)
+	function objcProtocol(name:String):Ex {
+		var cell = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.PROTOREF + name)), TI64));
+		var p = newLocal("proto", TI64);
+		var cname = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(name)), TI64);
+		var get = ObjC.runtime(l, "objc_getProtocol", [CPtr], CPtr);
+		var allocate = ObjC.runtime(l, "objc_allocateProtocol", [CPtr], CPtr);
+		var register = ObjC.runtime(l, "objc_registerProtocol", [CPtr], CVoid);
+		var made = newLocal("made", TI64);
+		var zero = EConv(I2L, EInt(0));
+		out.push(SSet(p, ECallHost("hxmc_unsafe_Mem_getI64", vector(cell, EInt(0)), TI64)));
+		out.push(SIf(EBin(LEq, ELocal(p), zero), vector(
+			SSet(p, ECallHost(get, vector(cname), TI64)),
+			SIf(EBin(LEq, ELocal(p), zero), vector(
+				// (nil: another thread made it meanwhile)
+				SSet(made, ECallHost(allocate, vector(cname), TI64)),
+				SIf(EBin(LEq, ELocal(made), zero), vector(), vector(SExpr(ECallHost(register, vector(ELocal(made)), TVoid)))),
+				SSet(p, ECallHost(get, vector(cname), TI64))
+			), vector()),
+			SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(cell, EInt(0), ELocal(p)), TVoid))
+		), vector()));
+		return ELocal(p);
+	}
+
+	// objc_msgSend(self, sel, xs...) called through its address in the C
+	// types of the arguments (types) and the result (ret) (ObjC.declare); the
+	// selector from its selref (DataGen.objcRefs)
+	function objcMsg(self:Ex, sel:String, types:Array<core.TType.T>, xs:Array<Ex>, ret:Null<core.TType.T>, cf:Null<TClassField>, e:TExpr, ?to:Ty, keep = false,
+			send = "objc_msgSend", ?variadic:Int):Ex {
+		if (to == null) to = tyOf(e);
+		if (cf != null) {
+			var lib = ObjC.memberLibrary(cf);
+			if (lib != null) l.objcDeclare(ObjC.Decl.Load(lib));
+		}
+		var key = try ObjC.declare(l, cf, types, ret, variadic) catch (err:LowerError) {
+			if (err.where == "") err.where = where(e);
+			throw err;
+		};
+		// (a function where the method has a block: made one)
+		xs = [for (i in 0...xs.length) ObjC.isBlockType(types[i]) ? blockOf(xs[i], ty(types[i]), types[i], e) : xs[i]];
+		var block = ret != null && ObjC.isBlockType(ret);
+		var t = ret == null ? TVoid : block ? TId : ty(ret);
+		var selRef = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.selRef(sel))), TI64));
+		var selector = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(selRef, EInt(0)), TI64));
+		// (x86-64: a struct result over 16 bytes comes back through memory, from
+		// the _stret variant; arm64 has one objc_msgSend for every result)
+		switch t {
+			case TStruct(_, size) if (Lower.targetArm == 0 && size > 16):
+				send += "_stret";
+			case _:
+		}
+		var fn = temp(TI64, ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, send))), TI64));
+		var cx = ECallHost(key, Vector.fromArrayCopy([fn, self, selector].concat(xs)), t);
+		if (t == TId && !keep && ObjC.returnsRetained(sel))
+			cx = objcAutorelease(cx);
+		if (block) return blockFunction(cx, ret, to, e);
+		if (t.match(TStruct(_))) {
+			// (the result's slot in this frame, MirBuild.cStructRet)
+			var lo = newLocal("cr", t);
+			out.push(SSet(lo, cx));
+			freshSlots.set(lo, true);
+			return coerce(ELocal(lo), t, to);
+		}
+		return coerceRhs(cx, t, to);
 	}
 
 	// a call made by `call` of the operands xs (of types ats) in a safe
@@ -3533,6 +4606,11 @@ class FnLower {
 				var base = placeOf(obj, write);
 				var off = CInterop.field(c, cf.cfName).off;
 				return {addr: () -> off == 0 ? base.addr() : EBin(LAdd, base.addr(), EConv(I2L, EInt(off))), heap: base.heap};
+			// (an Objective-C mode class's instance variable: in its object, which does not move)
+			case TField(obj, FInstance(c, _, cf)) if (ObjC.ivarOf(c, cf) != null):
+				var iv = ObjC.ivarOf(c, cf);
+				var a = ivarAddr(coerce(value(obj), tyOf(obj), TId), iv.owner, iv.ivar);
+				return {addr: () -> ELocal(a), heap: false};
 			case TField(obj, FInstance(c, _, cf)) if (!c.hasClassFlag(CExtern) && !c.hasClassFlag(CInterface) && cf.cfKind.match(Var(_)) && structOf(cf.cfType) != null):
 				var ci = l.classInfo(c);
 				var idx = ci.fieldIndex(cf.cfName);
@@ -3749,7 +4827,7 @@ class FnLower {
 		};
 		var outerBoxed = boxed;
 		var li = l.newLambda(sig, Vector.fromArrayCopy(captureLocals), fl -> fl.runLambda(tf, copyMap(outerBoxed), caps), Lower.lambdaName(fi), fi.module);
-		return ENewClos(li, Vector.fromArrayCopy(capVals));
+		return newClosure(li, Vector.fromArrayCopy(capVals));
 	}
 
 	static function copyMap(m:Map<Int, Bool>):Map<Int, Bool> {

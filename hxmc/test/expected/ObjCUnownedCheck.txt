@@ -1,0 +1,4 @@
+exit 1
+ObjCUnownedCheck.hx:33: while kept: same true, retainCount 2
+ObjCUnownedCheck.hx:37: ivar while kept: same true
+ObjCUnownedCheck.hx:41: nullable after: true

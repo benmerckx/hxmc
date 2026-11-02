@@ -1,0 +1,29 @@
+exit 0
+ObjCSubclass.hx:56: start
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:58: made
+ObjCSubclass.hx:61: added
+ObjCSubclass.hx:62: (
+    Greeter
+)
+ObjCSubclass.hx:43: Ada greets Bob (1)
+ObjCSubclass.hx:65: 1
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:89: churned 2000
+ObjCSubclass.hx:43: Ada greets you (2)
+ObjCSubclass.hx:43: G0 greets you (1)
+ObjCSubclass.hx:43: G1 greets you (1)
+ObjCSubclass.hx:43: G2 greets you (1)
+ObjCSubclass.hx:89: churned 2000
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:89: churned 2000
+ObjCSubclass.hx:104: held by the array: [true,true,true]
+ObjCSubclass.hx:107: after removal: [false,false,false]
+ObjCSubclass.hx:34: ctor
+ObjCSubclass.hx:89: churned 2000
+ObjCSubclass.hx:43: Local greets the local (1)
+ObjCSubclass.hx:80: done

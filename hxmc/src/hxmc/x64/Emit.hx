@@ -142,6 +142,7 @@ class Emit implements hxmc.Target.Emitter {
 		if (!f.hasCalls && f.slots.length == 0 && f.outArgs == 0 && savedX.length == 0) x = 0;
 		frameSize = x;
 		ops.resize(0);
+		if (f.foreignPasses) op(Unwind.PASS);
 		lines = f.display != null ? [] : null;
 		lastPos = 0;
 		if (fp) {
@@ -343,6 +344,13 @@ class Emit implements hxmc.Target.Emitter {
 				// the caller's rbp (this stub keeps no record of its own)
 				a.movRR(8, Asm.RAX, Asm.RBP);
 				a.ret();
+			case hxmc.MirBuild.STUB_LANDING:
+				// hxmc_objc_caught(the first argument) as though the call
+				// returning to the second had called it (where an unwinder
+				// resumes a frame)
+				op(Unwind.PASS);
+				a.push(arg1);
+				a.jmpSym(obj.sym(hxmc.MirBuild.OBJC_CAUGHT));
 			case _:
 				throw "hxmc: unknown runtime stub " + name;
 		}

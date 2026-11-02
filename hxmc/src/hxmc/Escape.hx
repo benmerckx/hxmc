@@ -619,7 +619,7 @@ class Escape {
 		var ok = switch t {
 			case TI32 | TBool: ft.match(TI32 | TBool);
 			case TF64: ft == TF64;
-			case TI64: ft == TI64;
+			case TI64 | TId: ft.match(TI64 | TId);
 			case _: ft.match(TRef(_));
 		};
 		return ok ? k : -1;

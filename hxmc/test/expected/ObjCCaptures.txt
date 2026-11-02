@@ -1,0 +1,14 @@
+exit 0
+ObjCCaptures.hx:53: captured, past its pool: true, get true
+ObjCCaptures.hx:56: closure collected: false
+ObjCCaptures.hx:64: nested, outer collected: true
+ObjCCaptures.hx:67: nested collected: false
+ObjCCaptures.hx:76: assigned, past its pool: true
+ObjCCaptures.hx:82: overwritten: false, new true
+ObjCCaptures.hx:84: set to null: false, get true
+ObjCCaptures.hx:91: argument, past its pool: true
+ObjCCaptures.hx:95: argument's closures collected: false
+ObjCCaptures.hx:102: 10000 closures, retainCount 10001
+ObjCCaptures.hx:105: collected, retainCount 1
+ObjCCaptures.hx:114: 10000 objects, before collecting: true
+ObjCCaptures.hx:117: collected: false

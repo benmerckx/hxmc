@@ -1,0 +1,5 @@
+exit 0
+ObjCInit.hx:28: W 0
+ObjCInit.hx:16: before
+ObjCInit.hx:18: after
+ObjCInit.hx:30: V 3

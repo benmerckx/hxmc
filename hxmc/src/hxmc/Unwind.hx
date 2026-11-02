@@ -28,6 +28,8 @@ import hxmc.Obj;
 //   SPFP            sp = the frame pointer
 //   RESTOREFPLR n   arm64 ldp x29, x30, [sp], #n
 //   RET             the epilogue's return (the code after it has the body's frame)
+//   PASS            no personality: a foreign exception passes the frame
+//                   (an entry Objective-C calls, ObjC.entry; the stub hxmc_objc_landing)
 // Within a function the frame is the same at every instruction of the body
 // (outgoing arguments are part of the frame: no pushes around calls); the
 // stack switch of hxmc_call_on_stack runs on the frame pointer.
@@ -47,6 +49,7 @@ class Unwind {
 	public static inline var SPFP = 12;
 	public static inline var RESTOREFPLR = 13;
 	public static inline var RET = 14;
+	public static inline var PASS = 15;
 
 	// ---- DWARF call frame information
 
@@ -63,17 +66,26 @@ class Unwind {
 	// the CIE every FDE shares: x86-64 CFA = rsp + 8, the return address at
 	// CFA - 8; arm64 CFA = sp, the return address in x30. FDEs give their
 	// addresses pc-relative in 4 bytes (augmentation "zR", DW_EH_PE_pcrel | sdata4).
-	static function cie(b:Buf, arm:Bool) {
+	// With a personality ("zPLR"): its address, and the FDEs' language-specific
+	// data's, pc-relative in 4 bytes too (an RPc32 relocation of s)
+	static function cie(s:Section, arm:Bool, personality:Null<Symbol>) {
+		var b = s.buf;
 		var at = b.len;
 		b.u32(0);
 		b.u32(0); // CIE id
 		b.u8(1); // version
-		b.str("zR");
+		b.str(personality != null ? "zPLR" : "zR");
 		b.u8(0);
 		b.uleb(arm ? 4 : 1); // code alignment
 		b.sleb(-8); // data alignment
 		b.u8(arm ? 30 : 16); // return address register
-		b.uleb(1);
+		if (personality != null) {
+			b.uleb(7);
+			b.u8(0x1b);
+			s.relocs.push(new Reloc(b.len, RPc32, personality, 0));
+			b.u32(0);
+			b.u8(0x1b);
+		} else b.uleb(1);
 		b.u8(0x1b);
 		if (arm) {
 			b.u8(0x0c); // DW_CFA_def_cfa sp, 0
@@ -186,7 +198,7 @@ class Unwind {
 						advance(at);
 						defCfaOffset(spOff);
 					}
-				case NOP:
+				case NOP | PASS:
 				case ENDPROLOGUE:
 					if (pending.length > 0) {
 						advance(at);
@@ -250,11 +262,16 @@ class Unwind {
 
 	// .eh_frame of these functions (one CIE, an FDE each, a terminator),
 	// whose FDEs give the functions' addresses through RPc32 relocations;
-	// fdes: the offset of each FDE (for .eh_frame_hdr)
-	public static function ehFrame(recs:Array<FuncRec>, arm:Bool, name:String):{sec:Section, fdes:haxe.ds.Vector<Int>} {
+	// fdes: the offset of each FDE (for .eh_frame_hdr). With a personality,
+	// a second CIE names it, the CIE of the functions without PASS, whose
+	// language-specific data is lsda (each FDE's: the same for all)
+	public static function ehFrame(recs:Array<FuncRec>, arm:Bool, name:String, ?personality:Symbol, ?lsda:Symbol):{sec:Section,
+		fdes:haxe.ds.Vector<Int>} {
 		var s = new Section(name, RoData, 8);
 		var b = s.buf;
-		cie(b, arm);
+		cie(s, arm, null);
+		var withP = b.len;
+		if (personality != null) cie(s, arm, personality);
 		var fdes = new haxe.ds.Vector<Int>(recs.length);
 		var insns = new Buf(256);
 		for (k in 0...recs.length) {
@@ -262,11 +279,17 @@ class Unwind {
 			var at = b.len;
 			fdes[k] = at;
 			b.u32(0);
-			b.u32(at + 4); // the distance back to the CIE (at 0)
+			var p = personality != null && !passes(r.ops);
+			b.u32(p ? at + 4 - withP : at + 4); // the distance back to its CIE
 			s.relocs.push(new Reloc(b.len, RPc32, r.sym, 0));
 			b.u32(0);
 			b.u32(r.sym.size);
-			b.uleb(0); // augmentation data
+			// augmentation data
+			if (p) {
+				b.uleb(4);
+				s.relocs.push(new Reloc(b.len, RPc32, lsda, 0));
+				b.u32(0);
+			} else b.uleb(0);
 			insns.len = 0;
 			cfi(r.ops, r.sym.size, arm, insns);
 			b.buf(insns);
@@ -275,6 +298,15 @@ class Unwind {
 		}
 		b.u32(0);
 		return {sec: s, fdes: fdes};
+	}
+
+	static function passes(ops:haxe.ds.Vector<Int>):Bool {
+		var k = 0;
+		while (k < ops.length) {
+			if (ops[k] == PASS) return true;
+			k += 4;
+		}
+		return false;
 	}
 
 	// .eh_frame_hdr (the binary search table the C library's unwinder looks
@@ -401,7 +433,7 @@ class Unwind {
 					if (inEpi && !epiDone) epi.u8(0xe4);
 					inEpi = false;
 					epiDone = true;
-				case ENDPROLOGUE | ENTRY | PUSH | POP:
+				case ENDPROLOGUE | ENTRY | PUSH | POP | PASS:
 				case _:
 					if (inEpi) {
 						if (!epiDone) epi.buf(code(kind, a, o));

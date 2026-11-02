@@ -142,19 +142,21 @@ class CacheCheck {
 		check("the trim stamp renewed", Std.parseFloat(File.getContent(cache + "/modules/trim.txt")) > 1e9);
 		check("the other tool writes its store again", build(b, std, cache) && tools(cache).length == 2);
 
-		// a cap of 4 MB (HXMC_CACHE_SIZE; a hello program's store is about 2.5 MB)
-		// held as builds write past it: the other tool's directory goes first,
-		// then the least recently used indexes with their packs; the builds
-		// still work, and a warm one finds its store
-		var capped = dir + "/capped", cap = 4 * 1024 * 1024;
+		// a cap of 1.6 hello programs' stores (HXMC_CACHE_SIZE; a trim leaves
+		// 0.8 of it: one program's store and not two, whatever the runtime's
+		// size) held as builds write past it: the other tool's directory goes
+		// first, then the least recently used indexes with their packs; the
+		// builds still work, and a warm one finds its store
+		var capped = dir + "/capped";
 		for (i in 0...4) {
 			mkdirs(dir + "/p" + i);
 			File.saveContent(dir + "/p" + i + "/Main.hx", 'class Main { static function main() { var a = [$i]; Sys.println("hi"); } }\n');
 		}
-		check("capped: a build by another tool", build(b, std, capped, "hello", "4M"));
+		check("capped: a build by another tool", build(b, std, capped, "hello", "1G"));
+		var cap = Math.round(du(capped + "/modules") * 1.6), size = Std.string(cap);
 		var ok = true, under = true;
 		for (i in 0...4) {
-			ok = ok && build(a, std, capped, "p" + i, "4M");
+			ok = ok && build(a, std, capped, "p" + i, size);
 			under = under && du(capped + "/modules") <= cap;
 		}
 		check("capped: four programs build past the cap", ok);
@@ -168,9 +170,9 @@ class CacheCheck {
 				if (l != "") n += Std.parseFloat(l);
 			Math.abs(n - du(capped + "/modules")) < 4096;
 		});
-		check("capped: a warm build works and keeps its index", build(a, std, capped, "p3", "4M") && packs(left[0]).length > 0
+		check("capped: a warm build works and keeps its index", build(a, std, capped, "p3", size) && packs(left[0]).length > 0
 			&& du(capped + "/modules") <= cap);
-		check("capped: a removed program builds again", build(a, std, capped, "p0", "4M") && du(capped + "/modules") <= cap);
+		check("capped: a removed program builds again", build(a, std, capped, "p0", size) && du(capped + "/modules") <= cap);
 
 		// a cache that cannot be written: the build types everything
 		File.saveContent(dir + "/file", "");

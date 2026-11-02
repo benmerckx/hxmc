@@ -1,0 +1,12 @@
+exit 0
+ObjCVariadic.hx:37: three, 3, a,b,c
+ObjCVariadic.hx:39: one, 1, only
+ObjCVariadic.hx:41: none, 0
+ObjCVariadic.hx:44: many, 12, 1 2 3 4 5 6 7 8 9 10 11 12
+ObjCVariadic.hx:46: dictionary, 2, two
+ObjCVariadic.hx:47: format, x and y, then (
+    a,
+    b,
+    c
+)
+ObjCVariadic.hx:48: format alone, plain

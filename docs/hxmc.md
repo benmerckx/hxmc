@@ -43,7 +43,10 @@ Conventions:
 - References live across a GC point are shadow-stack slots. Cold sites
   spill only on their slow path.
 - `try` is a handler record and the C library's `_setjmp`; `throw` calls
-  `rt_throw`, which `longjmp`s.
+  `rt_throw`, which `longjmp`s. With Objective-C, the Haxe functions'
+  unwind tables name a personality (`rt.ObjCExceptions`) that turns an
+  Objective-C exception into such a throw at the first Haxe frame it
+  reaches ([interop.md](interop.md#exceptions)).
 - Calls follow the target's C ABI.
 - A `@:hxmc.struct` value is the address of its memory, copied on
   assignment; a result goes where a hidden last argument points.
@@ -207,6 +210,20 @@ space by copying into a new region.
   also sees the object's initialisation, as OCaml guarantees the reference
   compiler. Upstream's parallel phases rely on it. Free on x86-64; arm64
   emits `dmb ishst` before such stores.
+- **Weak slots** (native): references to Haxe objects the collector does
+  not follow, outside the heap. A slot is an index (from 1; 0 is none)
+  into a table of words (`rt_weak_new`, `rt_weak_get`, `rt_weak_set`,
+  `rt_weak_free`, any thread, under a leaf lock). After every collection,
+  minor and major, `sweepWeak` visits each slot: one whose object was in
+  the space collected holds its copy's address if it was copied, null if it
+  died; others are left alone. A free slot holds the next free index,
+  shifted and tagged odd, so the table is reused without growing. The cost
+  is a pass over the table per collection, as the peers' (nothing when no
+  slot was ever made), and a lock per access. Nothing in them is
+  Objective-C's: an [Objective-C class's](interop.md#objective-c-classes-in-haxe)
+  `@:hxmc.weak` field of a Haxe value holds one; a weak field of a Haxe
+  class, a `WeakRef` or a weak map could too (a map's ephemerons would need
+  their values traced conditionally, which a slot's word leaves room for).
 
 `RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
 nursery with a pattern so missed roots show at once, and ends the program
@@ -1229,6 +1246,29 @@ and runs the body once the app has launched.
 Device signing goes into `CodeSign.Identity`:
 [plans/targets.md](plans/targets.md#ios).
 
+### Mac Catalyst
+
+`macos-catalyst-arm64` and `macos-catalyst-x86_64` are macOS's ABI,
+libSystem and runtime objects (`Mem.target()` 3 or 2, `Mem.platform()`
+3); only the platform differs (`Abi.uikit()`). `LC_BUILD_VERSION` says
+`PLATFORM_MACCATALYST` (6) with iOS's versions, as clang's
+`-target arm64-apple-ios<v>-macabi` writes them (minimum 15.0, SDK 18.0).
+`hxmc_ui_main` applies as on iOS.
+
+**Frameworks**: the frameworks of iOS that macOS has a twin of, or none,
+are under `/System/iOSSupport`, and their Catalyst binary is there (UIKit
+is `/System/iOSSupport/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit`);
+the shared ("zippered") ones keep macOS's install name (Foundation,
+Core Graphics, AppKit). `ObjC.frameworkPath` maps `@:hxmc.framework`
+names through a table written from the macOS SDK's `System/iOSSupport`
+(the frameworks whose `.tbd` install name is there): hxmc does not need
+the SDK to build.
+
+**Running**: dyld runs the executable as it is; UIKit's views work
+without an app (`ObjCUIKit`, the corpus's "Mac Catalyst" lane).
+`UIApplicationMain` needs a bundle identifier, and the system gives an app
+its scene only from a bundle; a packager writes it.
+
 ### WebAssembly
 
 The playground runs the port as a wasm32-wasi module, and `make crosshost` checks that the tool built as one writes the same bytes as the native tool.
@@ -1411,5 +1451,6 @@ For compiled programs (run time):
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |
+| `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
 | `RT_CENSUS_WHY=<type>` | also a path from a global to the first `RT_CENSUS_WHY_MAX` (8) objects of that type; global `i` is the symbol of value `8 * i` in `<exe>.syms` |

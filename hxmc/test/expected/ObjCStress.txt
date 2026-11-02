@@ -1,0 +1,4 @@
+exit 0
+ObjCStress.hx:202: blocks true, peers 200 true, global calls true
+ObjCStress.hx:208: finalised true (2000)
+ObjCStress.hx:209: failures 0

@@ -70,7 +70,7 @@ class Abi {
 	public var segAlign:Int;
 	// the C library the runtime objects were built against (musl, glibc,
 	// bionic, ucrt, libsystem) and, for Apple, the platform (macos, ios,
-	// ios-simulator: the Mach-O build version)
+	// ios-simulator, maccatalyst: the Mach-O build version)
 	public var libc:String;
 	public var platform:String;
 	// the directory of the runtime objects (<rt dir>/<rtName>/rt.o): the
@@ -182,13 +182,27 @@ class Abi {
 	public function ios():Bool
 		return platform == "ios" || platform == "ios-simulator";
 
+	// Mac Catalyst (macos-catalyst-arm64, macos-catalyst-x86_64): UIKit's
+	// apps on macOS, a macOS process in everything but the platform of its
+	// build version (LinkMachO): macOS's layouts and runtime objects, iOS's
+	// versions, the frameworks of iOS that macOS has under /System/iOSSupport
+	// (ObjC.frameworkPath); Mem.platform() 3
+	function setCatalyst() {
+		platform = "maccatalyst";
+	}
+
+	// UIKit's platforms: iOS, its simulator and Mac Catalyst (an iOS version
+	// in the build version, UIApplicationMain: DataGen.UI_MAIN)
+	public function uikit():Bool
+		return ios() || platform == "maccatalyst";
+
 	// Mem.os(): 0 Linux, 1 macOS, 2 Windows, 3 WASI
 	public function osCode():Int
 		return os == "linux" ? 0 : os == "macos" ? 1 : os == "windows" ? 2 : 3;
 
-	// Mem.platform(): 0 the system's own (macOS where Mem.os() is 1), 1 iOS, 2 the iOS simulator
+	// Mem.platform(): 0 the system's own (macOS where Mem.os() is 1), 1 iOS, 2 the iOS simulator, 3 Mac Catalyst
 	public function platformCode():Int
-		return platform == "ios" ? 1 : platform == "ios-simulator" ? 2 : 0;
+		return platform == "ios" ? 1 : platform == "ios-simulator" ? 2 : platform == "maccatalyst" ? 3 : 0;
 
 	public static function get(target:String):Abi
 		return switch target {
@@ -211,7 +225,17 @@ class Abi {
 				var a = new Abi(target, true, "macos", 208, 192, 200, 8, "_setjmp", "_");
 				a.setIos(target == "ios-sim-arm64");
 				a;
-			case _: throw "hxmc: unknown target " + target + " (linux-x86_64, linux-arm64, macos-arm64, macos-x86_64, windows-x86_64, windows-arm64, wasm32-wasi, android-arm64, android-x86_64, ios-arm64, ios-sim-arm64)";
+			case "macos-catalyst-arm64":
+				var a = get("macos-arm64");
+				a.name = target;
+				a.setCatalyst();
+				a;
+			case "macos-catalyst-x86_64":
+				var a = get("macos-x86_64");
+				a.name = target;
+				a.setCatalyst();
+				a;
+			case _: throw "hxmc: unknown target " + target + " (linux-x86_64, linux-arm64, macos-arm64, macos-x86_64, windows-x86_64, windows-arm64, wasm32-wasi, android-arm64, android-x86_64, ios-arm64, ios-sim-arm64, macos-catalyst-arm64, macos-catalyst-x86_64)";
 		}
 }
 

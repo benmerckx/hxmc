@@ -3,9 +3,10 @@
 // server of its own builds, then builds again after each edit, its typed
 // modules kept in memory (as `hxmc dev` asks) and then read back from HXB
 // (the default); each build's output must be the bytes a one-shot build of
-// the same sources makes. What it checks is an edit that makes the program
-// use code it did not use before while hxmc's LowerCache replays the bodies
-// of the modules not typed again.
+// the same sources makes (and on macOS, an Objective-C program built for the
+// machine runs as the fresh one does). What it checks is an edit that makes
+// the program use code it did not use before while hxmc's LowerCache replays
+// the bodies of the modules not typed again.
 //   node hxmc/test/dev/server-verify.mjs <compiler> [native|web]
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -69,9 +70,64 @@ const cases = {
 	],
 };
 
+// the cases built for this machine and run (their arguments), the server's
+// output as the fresh one
+const runs = new Map();
+// Objective-C (macOS only): what Lib's bodies declare for the link (a
+// message's C function, libobjc's functions, a class's framework, a
+// category's: LowerQueries.objcDeclare) and read of a Haxe class extending
+// an Objective-C one (its registration, its id fields: LowerQueries.objcPeer
+// and idFields), replayed after an edit of Main alone
+if (process.platform === 'darwin' && !web) {
+	const name = 'Objective-C messages and a Haxe subclass, in replayed bodies';
+	runs.set(name, ['-D', 'hxmc.target=macos-' + (process.arch === 'arm64' ? 'arm64' : 'x86_64')]);
+	cases[name] = [
+		{
+			'Lib.hx': `import hxmc.unsafe.CString;
+
+@:hxmc.struct class Rect {
+	public var x:Float; public var y:Float; public var w:Float; public var h:Float;
+	public inline function new(x, y, w, h) { this.x = x; this.y = y; this.w = w; this.h = h; }
+}
+@:hxmc.lib("/usr/lib/libobjc.A.dylib") @:hxmc.objc extern class NSObject {
+	static function alloc():NSObject;
+	function init():NSObject;
+	@:hxmc.framework("Foundation") function description():NSString;
+}
+@:hxmc.framework("Foundation") @:hxmc.objc extern class NSString extends NSObject {
+	var UTF8String(get, never):CString;
+	function get_UTF8String():CString;
+}
+@:hxmc.framework("AppKit") @:hxmc.objc extern class NSView extends NSObject {
+	static function alloc():NSView;
+	function initWithFrame(frame:Rect):NSView;
+	var flipped(get, never):Bool;
+	@:selector("isFlipped") function get_flipped():Bool;
+	function addSubview(v:NSView):Void;
+}
+class Flipped extends NSView {
+	public var child:Null<NSView>;
+	public function new(r:Rect) super.initWithFrame(r);
+	override function get_flipped() return true;
+}
+class Lib {
+	public static function run():String {
+		var f = new Flipped(new Rect(0, 0, 10, 10));
+		f.child = NSView.alloc().initWithFrame(new Rect(0, 1, 2, 2));
+		f.addSubview(f.child);
+		return NSObject.alloc().init().description().UTF8String.toString().substr(0, 10) + " " + (f : NSView).flipped;
+	}
+}
+`,
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.run());\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace("again " + Lib.run());\n\t}\n}\n' },
+	];
+}
+
 const out = web ? 'out/app.wasm' : process.platform === 'win32' ? 'out/app.exe' : 'out/app';
 const ref = 'ref/' + path.basename(out);
-const args = (o) => ['-cp', 'src', '-main', 'Main', ...(web ? ['-D', 'hxmc.target=wasm32-wasi'] : process.platform === 'linux' ? ['-D', 'hxmc.libc=glibc'] : []),
+const args = (o, more = []) => [...more, '-cp', 'src', '-main', 'Main', ...(web ? ['-D', 'hxmc.target=wasm32-wasi'] : process.platform === 'linux' ? ['-D', 'hxmc.libc=glibc'] : []),
 	'--custom-target', 'hxmc=' + o, ...(fs.existsSync(path.join(path.dirname(compiler), 'std')) ? ['-cp', path.join(path.dirname(compiler), 'std')] : [])];
 const env = { ...process.env, HXMC_MODULE_CACHE: '0', HAXE_STD_PATH: process.env.HAXE_STD_PATH ?? path.join(repo, 'haxe/upstream/std') };
 
@@ -117,14 +173,17 @@ for (const hxb of [false, true])
 					fs.writeFileSync(path.join(work, 'src', f), text);
 					await request(work, ['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file: path.join(work, 'src', f) } })]);
 				}
-				const answer = await request(work, [...args(out), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
-				const fresh = spawnSync(compiler, args(ref), { cwd: work, env, encoding: 'utf8' });
-				const same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(work, out)), fs.readFileSync(path.join(work, ref))) === 0;
+				const answer = await request(work, [...args(out, runs.get(name)), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
+				const fresh = spawnSync(compiler, args(ref, runs.get(name)), { cwd: work, env, encoding: 'utf8' });
+				let same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(work, out)), fs.readFileSync(path.join(work, ref))) === 0;
+				// (and the server's output runs as the fresh one does)
+				const ran = same && runs.has(name) ? [out, ref].map((o) => spawnSync(path.join(work, o), { cwd: work, encoding: 'utf8' })) : null;
+				if (ran) same = ran[0].status === 0 && ran[0].stdout === ran[1].stdout;
 				const what = `${name} (${mode}${hxb ? ', HXB' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`);
 				console.log((same ? 'ok   ' : 'FAIL ') + what);
 				if (!same) {
 					failures++;
-					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : 'the outputs differ');
+					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}` : 'the outputs differ');
 				}
 			}
 		});

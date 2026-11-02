@@ -1,0 +1,10 @@
+exit 0
+ObjCStrings.hx:25: 0 0 true 0
+ObjCStrings.hx:25: 5 5 true 5
+ObjCStrings.hx:25: 4 4 true 4
+ObjCStrings.hx:25: 4 4 true 4
+ObjCStrings.hx:25: 8 8 true 8
+ObjCStrings.hx:25: 16 16 true 16
+ObjCStrings.hx:25: 300 300 true 300
+ObjCStrings.hx:28: ab€ true
+ObjCStrings.hx:29: true, true

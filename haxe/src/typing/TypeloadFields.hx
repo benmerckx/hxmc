@@ -215,6 +215,45 @@ class FieldError {
 }
 
 class TypeloadFields {
+	// port: (hxmc) an Objective-C protocol: an extern interface declared @:hxmc.objc
+	static function objcProtocol(c:TClass):Bool
+		return hasClassFlag(c, CExtern) && hasClassFlag(c, CInterface) && MetadataTools.has(Custom(":hxmc.objc"), c.clMeta);
+
+	// port: (hxmc) an Objective-C class written in Haxe (@:hxmc.objc on a
+	// class that is not extern) answers `alloc` as its superclasses do, typed
+	// as itself: `public extern static function alloc():C;`, unless it declares
+	// one (statics are not inherited)
+	static function objcModeAlloc(c:TClass, fields:Array<ClassField>):Array<ClassField> {
+		if (hasClassFlag(c, CExtern) || hasClassFlag(c, CInterface) || c.clParams.length > 0 || !MetadataTools.has(Custom(":hxmc.objc"), c.clMeta)) return fields;
+		for (f in fields)
+			if (f.cffName.name == "alloc") return fields;
+		var m = c.clModule.mPath, p = c.clNamePos;
+		var self = mkTypePath(m.pack, m.name, null, c.clPath.name == m.name ? null : c.clPath.name);
+		var f:ClassField = {
+			cffName: {name: "alloc", pos: p},
+			cffDoc: null,
+			cffPos: p,
+			cffMeta: [],
+			cffAccess: [{access: APublic, pos: p}, {access: AExtern, pos: p}, {access: AStatic, pos: p}],
+			cffKind: FFun({fParams: vector(), fArgs: vector(), fType: makePtpTh(self, p), fExpr: null})
+		};
+		return fields.concat([f]);
+	}
+
+	// port: (hxmc) a -debug build checks unowned fields (@:hxmc.unowned):
+	// each is marked @:hxmc.unownedCheck, which hxmc compiles as a weak field
+	// whose nil read ends the program (a non-null one's: its object is gone)
+	static function objcUnownedCheck(fields:Array<ClassField>):Array<ClassField> {
+		return [
+			for (f in fields)
+				if (MetadataTools.has(Custom(":hxmc.unowned"), f.cffMeta) && !MetadataTools.has(Custom(":hxmc.unownedCheck"), f.cffMeta)) {
+					var g = f.clone();
+					g.cffMeta = f.cffMeta.concat([{meta: StrictMeta.Custom(":hxmc.unownedCheck"), exprs: vector(), pos: f.cffPos}]);
+					g;
+				} else f
+		];
+	}
+
 	public static function hasAccess(a:Access, access:Array<PlacedAccess>):Bool {
 		for (v in access) if (v.access == a) return true;
 		return false;
@@ -639,6 +678,14 @@ class TypeloadFields {
 		} catch (_:NotFound) {
 			null;
 		}, c = cctx.tclass;
+		// port: (hxmc) an Objective-C protocol's optional method (@:optional on
+		// a method of an extern interface declared @:hxmc.objc) is one an
+		// implementing class may leave out, as a Java interface's default one
+		if (defaultPos == null && objcProtocol(c)) defaultPos = try {
+			MetadataTools.get(Optional, cff.cffMeta).pos;
+		} catch (_:NotFound) {
+			null;
+		};
 		var fc:FieldInitCtx = {
 			isInline: isInline,
 			isStatic: isStatic,
@@ -1203,7 +1250,7 @@ class TypeloadFields {
 		if (fctx.isAbstractConstructor) addClassFieldFlag(cf, CfAbstractConstructor);
 		if (fctx.isGeneric) addClassFieldFlag(cf, CfGeneric);
 		if (fctx.defaultPos != null) {
-			if (ctx.com.platform == Jvm) {
+			if (ctx.com.platform == Jvm || objcProtocol(c)) {
 				if (!hasClassFlag(ctx.c.curclass, CExtern)
 					|| !hasClassFlag(c, CInterface)) invalidModifierOnly(ctx.com, fctx, "default", "on extern interfaces", fctx.defaultPos);
 				addClassFieldFlag(cf, CfDefault);
@@ -1261,6 +1308,9 @@ class TypeloadFields {
 		else if (t == null) ret = mkMono();
 		else ret = Typeload.loadTypeHint(ctx, p, LoadNormal, t);
 		cf.cfType = ret;
+		// port: (hxmc) an Objective-C protocol's optional property, which a class
+		// may leave out as it may its accessors (a property has no storage there)
+		if (fctx.defaultPos != null && objcProtocol(c)) addClassFieldFlag(cf, CfDefault);
 		var tget:T, tset:T;
 		if (cctx.abstractType != null && fctx.isAbstractMember) {
 			var a = cctx.abstractType;
@@ -1523,6 +1573,10 @@ class TypeloadFields {
 		var com:CommonContext = ctxC.com;
 		if (cctx.isClassDebug) Sys.println("Created class context: " + dumpClassContext(cctx));
 		fields = buildFields(ctxC, cctx, c, fields);
+		// port: (hxmc)
+		fields = objcModeAlloc(c, fields);
+		// port: (hxmc)
+		if (core.Define.rawDefined(com.defines, "debug")) fields = objcUnownedCheck(fields);
 		switch cctx.coreApiCheck {
 			case CoreApiCheck.On:
 				if (com.display.dmsCheckCoreApi) delay(ctxC.g, PForce, () -> Typeload.initCoreApi(ctxC, c));

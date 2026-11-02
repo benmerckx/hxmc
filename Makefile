@@ -128,7 +128,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
-	shared-check macho-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
+	shared-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro measure quick check full clean distclean
 
 help:
@@ -189,6 +189,8 @@ help:
 ##               (docs/using.md): shared libraries of the glibc mode and Android's .so
 ##               (hxmc/test/SharedCheck.hx), iOS's plain Mach-O executables and dylibs, minimum and code
 ##               signature (hxmc/test/MachOCheck.hx); native-check: both
+##   uikit-check  a UIKit app in its bundle (hxmc/test/UIKitCheck.hx): Mac Catalyst, the iOS
+##               simulator's iPhone and iPad; a Mac with Xcode
 ##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
 ##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
 ##   corpus-verify  the corpus with -D hxmc.verify-tags and RT_VERIFY=1 for VERIFY_TARGET (the host's,
@@ -543,6 +545,11 @@ shared-check: $(TOOL) $(STD) $(HOST_RT)
 # linker-signed or with -D hxmc.codesign-*'s files)
 macho-check: $(TOOL) $(STD) $(HOST_RT)
 	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
+# a UIKit app in its bundle (hxmc/test/UIKitCheck.hx: UIKitHello, its own
+# hxmc_ui_main): Mac Catalyst, and the iOS simulator's iPhone and iPad; a
+# Mac with Xcode, else skipped
+uikit-check: $(TOOL) $(STD) $(HOST_RT)
+	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test --run UIKitCheck
 # the native-output contract a packager builds on (docs/using.md, "Native
 # output for a packager"; CI's native-output job): Android's .so, iOS's Mach-O
 native-check: shared-check macho-check

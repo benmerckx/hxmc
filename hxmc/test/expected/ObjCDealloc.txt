@@ -1,0 +1,8 @@
+exit 0
+ObjCDealloc.hx:84: dropped, [dealloc r0(2),dealloc r1(2),dealloc r2(2),dealloc r3(2)]
+ObjCDealloc.hx:90: held, []
+ObjCDealloc.hx:93: let go, [dealloc kept(4)]
+ObjCDealloc.hx:98: subclass, [dealloc s(1),sub s]
+ObjCDealloc.hx:107: made by Objective-C, [quiet]
+ObjCDealloc.hx:112: weak before, true
+ObjCDealloc.hx:114: weak after, [dealloc weak(4)], true

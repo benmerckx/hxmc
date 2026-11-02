@@ -1,0 +1,16 @@
+exit 0
+ObjCModeWeak.hx:63: never stored: null
+ObjCModeWeak.hx:63: stored: kept 1 true
+ObjCModeWeak.hx:63: after a minor collection: kept 1 true
+ObjCModeWeak.hx:63: after a major collection: kept 1 true
+ObjCModeWeak.hx:63: changed through the static: kept 2 true
+ObjCModeWeak.hx:63: only weak, after a minor collection: null
+ObjCModeWeak.hx:89: closure: captured
+ObjCModeWeak.hx:92: closure after: null
+ObjCModeWeak.hx:63: stored null: null
+ObjCModeWeak.hx:63: old, after a minor collection: old 4 false
+ObjCModeWeak.hx:63: old, after a major collection: null
+ObjCModeWeak.hx:109: buddy while kept: true
+ObjCModeWeak.hx:111: buddy after release: true
+ObjCModeWeak.hx:120: deallocs: 5000, slots made: true
+ObjCModeWeak.hx:63: at the end: null

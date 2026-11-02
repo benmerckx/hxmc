@@ -1,0 +1,4 @@
+exit 0
+ObjCThreads.hx:88: background thread: [w99999]
+ObjCThreads.hx:94: operations: 16, 60000
+ObjCThreads.hx:99: pair: 2 4 6

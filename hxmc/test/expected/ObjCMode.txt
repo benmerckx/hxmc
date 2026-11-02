@@ -1,0 +1,44 @@
+exit 0
+ObjCMode.hx:177: 10, 0, false
+ObjCMode.hx:182: 10, 1.5, true, 30, 4
+ObjCMode.hx:183: 15
+ObjCMode.hx:186: 18
+ObjCMode.hx:188: first
+ObjCMode.hx:189: Counter(18)
+ObjCMode.hx:190: hello Ada from 18
+ObjCMode.hx:193: true
+ObjCMode.hx:194: respondsToSelector bump: true, wave: false, greet: true
+ObjCMode.hx:196: true, false, true, false
+ObjCMode.hx:199: true, true
+ObjCMode.hx:201: true
+ObjCMode.hx:170: init
+ObjCMode.hx:170: poke 18 nil
+ObjCMode.hx:206: 7, 1, 7
+ObjCMode.hx:208: 9, 2
+ObjCMode.hx:209: true
+ObjCMode.hx:215: [1,2,5,9]
+ObjCMode.hx:219: 42
+ObjCMode.hx:170: initWithCount 1 true
+ObjCMode.hx:170: initWithCount 5 true
+ObjCMode.hx:170: initWithCount 2 true
+ObjCMode.hx:170: initWithCount 9 true
+ObjCMode.hx:170: initWithCount 1 true
+ObjCMode.hx:170: initWithCount 42 true
+ObjCMode.hx:170: dealloc 5
+ObjCMode.hx:170: dealloc 2
+ObjCMode.hx:170: dealloc 9
+ObjCMode.hx:170: dealloc 1
+ObjCMode.hx:170: Doubler dealloc 2
+ObjCMode.hx:170: dealloc 9
+ObjCMode.hx:225: true, 77
+ObjCMode.hx:170: initWithCount 77 true
+ObjCMode.hx:170: dealloc 0
+ObjCMode.hx:170: SwapUser: this is the result true, count 0 -> 77
+ObjCMode.hx:170: dealloc 77
+ObjCMode.hx:231: 3, 104, peer
+ObjCMode.hx:170: initWithCount 3 true
+ObjCMode.hx:236: collected
+ObjCMode.hx:170: dealloc 18 first
+ObjCMode.hx:170: dealloc 104
+ObjCMode.hx:170: dealloc 42
+ObjCMode.hx:238: done
