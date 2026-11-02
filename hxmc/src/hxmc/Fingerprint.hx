@@ -199,7 +199,7 @@ class Fingerprint {
 			case TF64: 3;
 			case TI64: 4;
 			case TVoid: 5;
-			case TRef(RTag): 9;
+			case TRef(RTag | RNull(TI32 | TF64)): 9;
 			case TRef(_): 6;
 			case TStruct(_): 7;
 			case TU8: 8;

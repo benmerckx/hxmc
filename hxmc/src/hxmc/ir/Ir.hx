@@ -489,7 +489,7 @@ class Program {
 		var key = sigKey(args, ret);
 		var s = sigKeys.get(key);
 		if (s != null) return s;
-		var norm = (t:Ty) -> Ir.isRef(t) && !t.match(TRef(RTag)) ? TRef(RAny) : t;
+		var norm = (t:Ty) -> Ir.isWord(t) ? TRef(RTag) : Ir.isRef(t) ? TRef(RAny) : t;
 		var nargs = new Vector<Ty>(args.length);
 		for (k in 0...args.length)
 			nargs[k] = norm(args[k]);
@@ -539,13 +539,19 @@ class Ir {
 			case TF64: "f";
 			case TI64: "l";
 			case TVoid: "v";
-			case TRef(RTag): "t";
+			case TRef(RTag | RNull(TI32 | TF64)): "t";
 			case TRef(_): "p";
 			case TStruct(_): "s";
 		}
 
 	public static function isRef(t:Ty):Bool
 		return t.match(TRef(_));
+
+	// a tagged word (hxmc.rt.Tagged): a type parameter's value (RTag), or a
+	// Null<Int>'s or Null<Float>'s, which share the representation (null is
+	// 0, a number encoded) while their type keeps the number's semantics
+	public static function isWord(t:Ty):Bool
+		return t.match(TRef(RTag | RNull(TI32 | TF64)));
 
 	public static function isScalar(t:Ty):Bool
 		return t == TI32 || t == TBool || t == TF64 || t == TI64;
@@ -567,7 +573,7 @@ class Ir {
 		var args = [for (a in s.args) a];
 		var wordable = (t:Ty) -> t == TI32 || t == TF64 || t.match(TRef(_));
 		var r = [];
-		if (wordable(s.ret)) r.push({args: args, ret: s.ret.match(TRef(RTag)) ? TRef(RAny) : TRef(RTag)});
+		if (wordable(s.ret)) r.push({args: args, ret: Ir.isWord(s.ret) ? TRef(RAny) : TRef(RTag)});
 		var gen = [for (a in args) wordable(a) ? TRef(RTag) : a];
 		var changed = false;
 		for (i in 0...args.length)
