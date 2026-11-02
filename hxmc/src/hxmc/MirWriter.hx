@@ -322,7 +322,7 @@ class MirWriter {
 	function keepsFrameOf(sym:String, g:Null<FuncInfo>):Bool {
 		if (p == null || fn == null || f.blocksHere) return false;
 		if (g != null) return g.noGc && !g.blocks;
-		if (sym == "rt_blocking_enter" || sym == "rt_blocking_leave" || sym == "rt_blocking_restore") return false;
+		if (sym == "rt_blocking_enter" || sym == "rt_blocking_leave" || sym == "rt_blocking_restore" || sym == "rt_callback_begin" || sym == "rt_callback_end") return false;
 		return hxmc.ir.FnLower.noGcHost(sym) || QUIET.exists(sym) || StringTools.startsWith(sym, "hxmc$");
 	}
 

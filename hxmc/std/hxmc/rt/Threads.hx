@@ -155,8 +155,18 @@ class Threads {
 	@:hxmc.unsafe static inline function stateOf(m:Ptr<Mutator>):Int
 		return Atomic.load32(m.add(Struct.offsetOf(Mutator, "state")));
 
-	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int
-		return Atomic.exchange32(m.add(Struct.offsetOf(Mutator, "state")), s);
+	// the running thread's own state, set (only it writes it once it runs:
+	// the previous value a plain read): a seq_cst store, which the handshake's
+	// seq_cst load of rt_gc_requested after it needs (store then load, as the
+	// collector's store of rt_gc_requested then load of the states; arm64's
+	// STLR then LDAR are ordered, x86-64's store is an XCHG). No exchange:
+	// a read-modify-write costs twice a region's barriers on arm64
+	@:hxmc.unsafe static inline function setState(m:Ptr<Mutator>, s:Int):Int {
+		var p = m.add(Struct.offsetOf(Mutator, "state"));
+		var prev = Mem.getI32(p, 0);
+		Atomic.store32(p, s);
+		return prev;
+	}
 
 	// the running thread is in a safe region (RT_VERIFY's check of allocations: Gc.allocSlow)
 	@:hxmc.unsafe static inline function inRegion():Bool {
@@ -293,6 +303,25 @@ class Threads {
 		}
 		reload(m);
 	}
+
+	// A callback's wrapper (Lower.callback: Haxe code called from C): the
+	// state it found, leaving the caller's safe region and waiting out a
+	// collection; rt_callback_end enters it again on return. A callback
+	// called by a fast C call finds the thread RUNNING: the end of the
+	// program, with a message. Its caller keeps references across the call
+	// where a collection does not update them (a fast call is no GC point),
+	// and the callback may collect (it allocates, or stops for another
+	// thread's collection); only a callback that never does (@:hxmc.unsafe:
+	// no wrapper) may be called so.
+	@:hxmc.export("rt_callback_begin") @:hxmc.unsafe static function callbackBegin():Int {
+		if (self.value.state != SAFE)
+			Gc.dieC(Mem.cstr("hxmc: a callback that may collect was called from a @:hxmc.fast call (a C function's or an Objective-C method's), whose caller's references a collection would not update: declare the call without @:hxmc.fast, or the callback @:hxmc.unsafe\n"));
+		blockingLeave();
+		return SAFE;
+	}
+
+	@:hxmc.export("rt_callback_end") @:hxmc.unsafe static function callbackEnd(prev:Int):Void
+		if (prev == SAFE) blockingEnter();
 
 	// Takes a mutex that a thread may hold while it leaves a safe region (and
 	// so waits for a collection): a thread blocked on it must be in a safe region.
