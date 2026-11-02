@@ -5,6 +5,7 @@ import hxmc.rt.Types.*;
 import hxmc.rt.GcCore.*;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.rt.Tagged;
 
 // The collector and allocator of WebAssembly programs: the native Gc.hx's
 // generational copying collector with one thread, in Haxe over linear
@@ -107,10 +108,16 @@ class Gc {
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
 	static inline function inFrom(p:Ptr):Bool
-		return Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) == 1;
+		return granOf(p) == 1;
 
 	static inline function isOld(p:Ptr):Bool
-		return Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) != 0;
+		return granOf(p) != 0;
+
+	// p's granule's state; 0 (none) for a word above the 4 GB the table
+	// covers: the tagged word of a scalar (hxmc.rt.Tagged), which a reference
+	// slot holds as the value of a type parameter
+	static inline function granOf(p:Ptr):Int
+		return (p.toI64() >>> 32) == (0 : I64) ? Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) : 0;
 
 	// ---- startup
 
@@ -712,6 +719,9 @@ class Gc {
 	static var verifying:Bool;
 	static inline var POISON = 0xA5;
 
+	static inline function poisonWord():I64
+		return ((0xA5A5A5A5 : I64) << 32) | (((0xA5A5A5A5 : I64) << 32) >>> 32);
+
 	@:hxmc.unsafe static function verify(after:Bool) {
 		syncCur();
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);
@@ -729,6 +739,14 @@ class Gc {
 						if (k == K_OBJ && ((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) == 0) continue;
 						var v = Mem.getPtr(o, 8 * i);
 						if (v.isNull()) continue;
+						// (above the memory: the tagged word of a scalar, of the
+						// encoding and not the nursery's pattern, an uninitialized
+						// slot's; a double of those bits is reported too)
+						if ((v.toI64() >>> 32) != (0 : I64)) {
+							var w = v.toI64();
+							if (!Tagged.isScalar(w) || !Tagged.valid(w) || w == poisonWord()) bad("gc: verify: a word neither a reference nor a scalar's (object, slot, type) ", count, i, t);
+							continue;
+						}
 						if (after && inYoung(v)) bad("gc: verify: young reference after a collection (object, slot, type) ", count, i, t);
 						if (isOld(v) && isFwdAt(v)) bad("gc: verify: reference to a bad header (object, slot, type) ", count, i, t);
 					}

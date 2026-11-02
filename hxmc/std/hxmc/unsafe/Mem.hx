@@ -59,6 +59,18 @@ extern class Mem {
 	// the bits of a double, and the double of bits (a register move)
 	static function f64Bits(v:Float):I64;
 	static function bitsF64(b:I64):Float;
+	// the tagged word of a value of a type parameter (hxmc.rt.Tagged; docs/hxmc.md,
+	// "Values of type parameters"), as MemLower encodes and decodes it inline:
+	// an Int or Float (pure), a Bool (its static box); back to an Int, Float or
+	// Bool (a word of the other kind converted, a reference unboxed as
+	// Dynamic is), or to Dynamic (a scalar boxed: a GC point)
+	static function tagInt(v:Int):I64;
+	static function tagFloat(v:Float):I64;
+	static function tagBool(v:Bool):I64;
+	static function untagInt(w:I64):Int;
+	static function untagFloat(w:I64):Float;
+	static function untagBool(w:I64):Bool;
+	static function untagDynamic(w:I64):Dynamic;
 	// calls code at fn with the C ABI (GC points: the callee may collect):
 	// fn(a) and fn(a, b) returning a reference
 	static function callRef1(fn:Ptr, a:Dynamic):Dynamic;

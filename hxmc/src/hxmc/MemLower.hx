@@ -71,7 +71,7 @@ class MemLower extends MirWriter {
 	// gives it a continuation (OInfo.cont), its last block here
 	public static function branches(op:Op, o:OInfo):Bool {
 		return switch op {
-			case New | NewDyn | TypeTest | AnonGet | AnonCall | ArrayGet | ArraySet | ArrayPush | NewNArray | NArrayDyn | RefStore: true;
+			case New | NewDyn | TypeTest | AnonGet | AnonCall | ArrayGet | ArraySet | ArrayPush | NewNArray | NArrayDyn | RefStore | Untag: true;
 			case SetField: o.t.match(TRef(_)) && !o.flag && !o.fresh;
 			case AnonStore: o.t.match(TRef(_));
 			case ArrayInit: !o.t.match(TF64 | TI64 | TI32 | TBool);
@@ -213,6 +213,10 @@ class MemLower extends MirWriter {
 					op = o = o.copy(c);
 				}
 			}
+			if (hxmc.ir.Lower.verifyTags) {
+				var d = derefOperand(x);
+				if (d >= 0) verifyRef(r(d));
+			}
 			var v = lower(x, o);
 			if (v >= 0 && v != x.id) {
 				replace(x.id, v);
@@ -302,6 +306,10 @@ class MemLower extends MirWriter {
 				boxFrom(o.t, r(x.a));
 			case Unbox:
 				unboxTo(o.t, r(x.a));
+			case Tag:
+				tagFrom(o.t, r(x.a));
+			case Untag:
+				untagTo(o.t, r(x.a));
 			case VirtualCall:
 				var xs = x.args.map(r);
 				var row = symAddr(p.selectorSym(o.sel));
@@ -546,6 +554,91 @@ class MemLower extends MirWriter {
 			case TF64: call("hx_box_float", vector(v), I64);
 			case TI64: call("hx_box_i64", vector(v), I64);
 			case _: v;
+		};
+
+	// ---- the tagged words of type parameters' values (hxmc.rt.Tagged; docs/hxmc.md,
+	// "Values of type parameters"): a reference below 2^48, a Float's bits
+	// plus 2^49 (NaN canonical), an Int under the prefix 0xFFFF
+
+	// the word of an Int or Float (no branch: a NaN's word chosen by a mask)
+	function tagFrom(t:Ty, v:Int):Int
+		return switch t {
+			case TI32: op2(Or, I64, op1(ZExt, I64, v), lconst(0, 0xFFFF0000));
+			case TF64:
+				var w = op2(Add, I64, op1(FToBits, I64, v), lconst(0, 0x20000));
+				var nan = op1(Neg, I64, op1(ZExt, I64, cmp(FNe, v, v)));
+				op2(Xor, I64, w, op2(And, I64, op2(Xor, I64, w, lconst(0, 0x7FFA0000)), nan));
+			case _: v;
+		};
+
+	// a word as t: an Int's or a Float's decoded inline, any other (the
+	// other kind, a reference: null, a box) by the runtime (Tagged); as
+	// Dynamic, a reference as it is and a scalar boxed (hx_tag_box)
+	function untagTo(t:Ty, w:Int):Int {
+		var ty = Ir.isRef(t) ? I64 : MirBuild.mty(t);
+		var res = newVar(ty);
+		var join = joinBlock();
+		var fn = switch t {
+			case TI32: "hx_tag_int";
+			case TF64: "hx_tag_float";
+			case TBool: "hx_tag_bool";
+			case TI64: "hx_tag_i64";
+			case _: "hx_tag_box";
+		};
+		var test = switch t {
+			case TI32: cmp(CUGe, w, lconst(0, 0xFFFF0000));
+			case TF64: cmp(CULt, op2(Sub, I64, w, lconst(0, 0x20000)), lconst(0, 0xFFFD0000));
+			case TBool | TI64: -1;
+			case _: cmp(CULt, w, lconst(0, 0x20000));
+		};
+		if (test < 0) {
+			writeVar(res, cur, call(fn, vector(w), ty));
+			jmp(join);
+		} else {
+			var fast = newBlock(), slow = newBlock();
+			slow.cold = true;
+			br(test, fast, slow);
+			seal(fast);
+			seal(slow);
+			cur = fast;
+			writeVar(res, cur, switch t {
+				case TI32: op1(Trunc, I32, w);
+				case TF64: op1(BitsToF, F64, op2(Sub, I64, w, lconst(0, 0x20000)));
+				case _: w;
+			});
+			jmp(join);
+			cur = slow;
+			writeVar(res, cur, call(fn, vector(w), ty));
+			jmp(join);
+		}
+		seal(join);
+		cur = join;
+		return readVar(res, cur);
+	}
+
+	// -D hxmc.verify-tags: v, a reference the operation reads as one, is not
+	// a scalar's tagged word (every address is below 2^48); one that is ends
+	// the program (rt_tagged_access, in a block of each test's: a block
+	// shared across tries would be outside them on WebAssembly)
+	function verifyRef(v:Int) {
+		var bad = newBlock(), ok = newBlock();
+		bad.cold = true;
+		br(cmp(CUGe, v, lconst(0, 0x10000)), bad, ok);
+		seal(bad);
+		seal(ok);
+		cur = bad;
+		call("rt_tagged_access", vector(), Void, true);
+		add(mk(Unreachable, Void));
+		cur = ok;
+	}
+
+	// the reference an operation on objects reads as one (verifyRef; -1: none)
+	static function derefOperand(x:MIns):Int
+		return switch x.op {
+			case NullCheck | GetField | SetField | FieldAddr | EnumTag | TypeTest | Unbox | AnonGet | AnonTest | AnonCall | ArrayLength | ArrayGet | ArraySet | ArrayPush |
+				NArrayLength | NArrayGet | NArraySet | NArrayDyn | RefStore: x.a;
+			case VirtualCall | ClosureCall: x.args[0];
+			case _: -1;
 		};
 
 	// ---- null access (docs/hxmc.md, "Null access")

@@ -102,6 +102,13 @@ enum abstract Op(Int) to Int {
 	var NArraySet; // a: storage, b: the index, c: the value (info.n; info.flag: a reference)
 	var NArrayDyn; // a: storage, b: the index, c: the value (-1: a read) of a NativeArray seen as Dynamic; args as New
 	var RefStore; // a: an object, b: the offset of a reference in it, c: the value (Mem.setRefBarrier)
+	// the tagged word of a type parameter's value (hxmc.rt.Tagged): a: a scalar
+	// (info.t: TI32 or TF64), its word
+	var Tag;
+	// a: a tagged word, as a scalar of info.t (the word of the other kind
+	// converted, a reference unboxed) or as Dynamic (info.t a reference: a
+	// scalar boxed)
+	var Untag;
 }
 
 // the static part of an object-level operation (MIns.info): what it is about
@@ -488,7 +495,7 @@ class MFunc {
 		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr", "udiv", "urem", "nullcheck", "new",
 		"newdyn", "initfield", "getfield", "setfield", "fieldaddr", "enumtag", "typetest", "box", "unbox", "virtualcall", "closurecall", "anonget", "anontest",
 		"anonstore", "anoncall", "arraylength", "arrayget", "arrayset", "arraypush", "newarray", "arrayinit", "newnarray", "narrayinit", "narraylength",
-		"narrayget", "narrayset", "narraydyn", "refstore", "irnode", "varget", "varset", "try", "catch");
+		"narrayget", "narrayset", "narraydyn", "refstore", "tag", "untag", "irnode", "varget", "varset", "try", "catch");
 
 	public static function opName(o:Op):String
 		return OPS[(o : Int)];

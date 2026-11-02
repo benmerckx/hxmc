@@ -1028,6 +1028,45 @@ class MirBuild extends MirWriter {
 		return obj(Box, I64, i, v).id;
 	}
 
+	// ---- the tagged words of type parameters' values (hxmc.rt.Tagged)
+
+	// the word of a scalar of type t: an Int or Float encoded (Tag, inline), a
+	// Bool its static box, an Int64 boxed
+	function tagFrom(t:Ty, v:Int):Int {
+		return switch t {
+			case TI32 | TF64:
+				var i = info();
+				i.t = t;
+				obj(Tag, I64, i, v).id;
+			case TBool | TI64: boxFrom(t, v);
+			case _: v;
+		}
+	}
+
+	// a word as a scalar of type t (Untag: the word of that kind decoded
+	// inline, the rest by the runtime), or as Dynamic (a scalar boxed)
+	function untagTo(t:Ty, v:Int):Int {
+		var i = info();
+		i.t = t;
+		if (Ir.isRef(t)) f.allocs++;
+		return obj(Untag, Ir.isRef(t) ? I64 : mty(t), i, v).id;
+	}
+
+	// -D hxmc.verify-tags: v, a Dynamic the runtime takes the address of
+	// (Mem.addr), is not a scalar's tagged word (MemLower.verifyRef)
+	function verifyAddr(v:Int):Int {
+		var bad = newBlock(), ok = newBlock();
+		bad.cold = true;
+		br(cmp(CUGe, v, lconst(0, 0x10000)), bad, ok);
+		seal(bad);
+		cur = bad;
+		call("rt_tagged_access", vector(), Void, true);
+		add(mk(Unreachable, Void));
+		seal(ok);
+		cur = ok;
+		return v;
+	}
+
 	function anonGet(name:String, t:Ty, obj:Ex, hint:Null<ShapeInfo>):Int {
 		var o = nullCheck(ex(obj));
 		var i = info();
@@ -1975,6 +2014,7 @@ class MirBuild extends MirWriter {
 			case "IC_SIG": Abi.IC_SIG;
 			case "HDR_TINDEX": Abi.HDR_TINDEX;
 			case "T_FIRST": Abi.T_FIRST;
+			case "VERIFY_TAGS": hxmc.ir.Lower.verifyTags ? 1 : 0;
 			case _: throw new Unsupported("Mem.abi: unknown constant " + n);
 		}
 
@@ -2052,6 +2092,7 @@ class MirBuild extends MirWriter {
 			return iconst(0);
 		}
 		return switch short {
+			case "addr" if (hxmc.ir.Lower.verifyTags): verifyAddr(ex(args[0]));
 			case "addr" | "obj": ex(args[0]);
 			case "sym": symAddr(literal(args[0], "Mem.sym"));
 			case "cstr": symAddr(cstrSym(literal(args[0], "Mem.cstr")));
@@ -2080,6 +2121,13 @@ class MirBuild extends MirWriter {
 			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));
 			case "bitsF64": op1(BitsToF, F64, ex(args[0]));
+			case "tagInt": tagFrom(TI32, ex(args[0]));
+			case "tagFloat": tagFrom(TF64, ex(args[0]));
+			case "tagBool": tagFrom(TBool, ex(args[0]));
+			case "untagInt": untagTo(TI32, ex(args[0]));
+			case "untagFloat": untagTo(TF64, ex(args[0]));
+			case "untagBool": untagTo(TBool, ex(args[0]));
+			case "untagDynamic": untagTo(TRef(RAny), ex(args[0]));
 			case "getI8": ld(I32, 1, true);
 			case "getU8": ld(I32, 1, false);
 			case "getI16": ld(I32, 2, true);

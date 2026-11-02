@@ -17,6 +17,8 @@ import hxmc.rt.Date;
 import hxmc.rt.Names;
 import hxmc.rt.FloatText;
 import hxmc.rt.Boxes;
+// the values of type parameters (MemLower.tagFrom, untagTo)
+import hxmc.rt.Tagged;
 import hxmc.rt.LibM;
 // what a null access calls
 import hxmc.rt.NullAccess;
