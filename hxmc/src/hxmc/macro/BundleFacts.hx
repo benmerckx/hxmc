@@ -25,12 +25,12 @@ class BundleFacts {
 			case TBool: "b";
 			case TF64: "f";
 			case TI64: "l";
-			case TRef(RTag): "t"; // (a type parameter's word: a field's kind; a reference's slot, slotChar)
+			case TRef(RTag | RNull(TI32 | TF64)): "t"; // (a tagged word, Ir.isWord: a field's kind; a reference's slot, slotChar)
 			case _: "p";
 		};
 
 	static function slotChar(t:Null<Ty>):String
-		return t != null && t.match(TRef(RTag)) ? "p" : kindChar(t);
+		return t != null && Ir.isWord(t) ? "p" : kindChar(t);
 
 	// what the loader needs to number, register and initialize the program's parts
 	// (types: the program's, com.types by default; the macro context's handed over so far for interp.MirMacros)
@@ -102,7 +102,7 @@ class BundleFacts {
 			return [
 				for (x in ss)
 					if (x.clos != null && !p.isLive(x.clos.fn)) continue else if (x.clos != null) {name: x.name, kind: "c", ty: tn[x.clos.tindex], fn: e.symbol(x.clos.fn)}
-					else if (Ir.isRef(p.globals[x.global].ty)) {name: x.name, kind: "p", global: e.globalNames[x.global]}
+					else if (Ir.isRef(p.globals[x.global].ty)) {name: x.name, kind: Ir.isWord(p.globals[x.global].ty) ? "t" : "p", global: e.globalNames[x.global]}
 					else {name: x.name, kind: kindChar(p.globals[x.global].ty), sym: e.scalarGlobal(x.global)}
 			];
 		}

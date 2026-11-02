@@ -230,6 +230,8 @@ class Dyn {
 				Mem.setPtr(Mem.addr(c), 0, ptr);
 				c;
 			case "p".code: Mem.getRef(globalSlot(Mem.getI32(s, 8)), 0);
+			// (a Null<Int>'s or Null<Float>'s word: boxed)
+			case "t".code: Tagged.dyn(Mem.getI64(globalSlot(Mem.getI32(s, 8)), 0));
 			case "i".code: (Mem.getI32(ptr, 0) : Dynamic);
 			case "b".code: (Mem.getI32(ptr, 0) != 0 : Dynamic);
 			case "f".code: (Mem.getF64(ptr, 0) : Dynamic);
@@ -243,7 +245,7 @@ class Dyn {
 		switch Mem.getU8(s, 4) {
 			case "c".code:
 				Rt.rt_throw("Cannot rebind this method");
-			case "p".code:
+			case "p".code | "t".code:
 				Mem.setRef(globalSlot(Mem.getI32(s, 8)), 0, v);
 			case "i".code:
 				var x:Int = v;

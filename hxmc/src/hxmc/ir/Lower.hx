@@ -743,7 +743,9 @@ class Lower implements LowerQueries {
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
 						else if (isCore(c, "Array")) TRef(RArr(stored(ty(params[0]))));
-						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : stored(ty(params[0]))));
+						// (Null<Int>'s kept: a view of its own, checked against Int's, rt/NArray;
+						// its elements boxed, FnLower.elemValue)
+						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : (Ir.isWord(ty(params[0])) && !ty(params[0]).match(TRef(RTag)) ? ty(params[0]) : stored(ty(params[0])))));
 						else if (CInterop.isStruct(c)) {
 							var n = core.Globals.sTypePath(c.clPath);
 							structClasses.set(n, c);
@@ -894,7 +896,7 @@ class Lower implements LowerQueries {
 	// parameter's value as Dynamic (no such storage holds a tagged word)
 	function stored(t:Ty):Ty
 		return switch t {
-			case TRef(RTag): TRef(RAny);
+			case TRef(RTag | RNull(TI32 | TF64)): TRef(RAny);
 			case _: boxed(t);
 		}
 

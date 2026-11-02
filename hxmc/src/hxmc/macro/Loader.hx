@@ -702,7 +702,7 @@ class Loader {
 					case "c":
 						Mem.setI32(p, 24 * i + 8, num.get(s.ty));
 						Mem.setPtr(p, 24 * i + 16, ptr(symAddr(s.fn)));
-					case "p":
+					case "p" | "t":
 						Mem.setI32(p, 24 * i + 8, gindex.get(s.global));
 					case _:
 						Mem.setI32(p, 24 * i + 8, -1);

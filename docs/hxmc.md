@@ -423,7 +423,14 @@ A value of a type parameter is a tagged 64-bit word (issue #127,
 JavaScriptCore's encoding): either a reference, as Dynamic holds it, or an
 Int or Float in the word itself, so that storing a number in a `T` slot
 allocates nothing. `Lower.lowerTy` gives a type parameter the IR type
-`TRef(RTag)`; `Null<Int>`, `Null<Float>` and optional arguments still box.
+`TRef(RTag)`. `Null<Int>` and `Null<Float>` (also optional arguments of
+those types) are words too: their IR type stays `RNull(TI32)`/`RNull(TF64)`,
+so arithmetic, ordering and defaults keep their null-aware rules, but the
+representation is the word's (`Ir.isWord`, repr `t`): null is 0, a number
+is encoded as its kind, a box from Dynamic is taken as it is, and
+`Null<Bool>`/`Null<Int64>` still box (a Bool's word is its box anyway).
+A `NativeArray<Null<Int>>` stays a view of its own (checked against
+`NativeArray<Int>`'s storage), its elements boxed.
 
 | Word | Value |
 | --- | --- |
@@ -455,7 +462,9 @@ tag first, then through the box as Dynamic's conversions do.
   fields of type `T` of classes and the arguments of type `T` of enum
   constructors (Facts' field kind `t`: the runtime's `Dyn.boxSlot`,
   `Type.enumParameters`, `Type.enumEq` and `Std.string` box such a word or
-  compare it as a number), closures' captures and arguments. Storage the
+  compare it as a number), closures' captures and arguments, and statics
+  of `Null<Int>`/`Null<Float>` (kind `t` in the statics' table:
+  `Dyn.staticGet`). Storage the
   runtime reads as Dynamic holds Dynamic, never a word: an `Array<T>`'s or
   `NativeArray<T>`'s elements (`Lower.stored`), a structure's fields (also
   where the shape's first object had a class's type there: shapes are

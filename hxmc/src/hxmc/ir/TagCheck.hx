@@ -30,13 +30,13 @@ class TagCheck {
 	}
 
 	static inline function isTag(t:Ty):Bool
-		return t.match(TRef(RTag));
+		return Ir.isWord(t);
 
 	// a slot of type `to` that must not take a word as it is
 	static function readsDynamic(to:Ty):Bool
 		return switch to {
 			case TI32 | TBool | TF64 | TI64 | TU8: true;
-			case TRef(RAny | RNull(_) | RAnon | RNative(_)): true;
+			case TRef(RAny | RNull(TBool | TI64) | RAnon | RNative(_)): true;
 			case _: false;
 		}
 

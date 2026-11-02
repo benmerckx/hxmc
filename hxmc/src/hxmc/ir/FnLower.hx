@@ -100,13 +100,13 @@ class FnLower {
 	// Array's, an extern's): a type parameter's value (T:String) as Dynamic
 	function recvValue(obj:TExpr):Ex {
 		var x = value(obj), t = tyOf(obj);
-		return t.match(TRef(RTag)) ? coerce(x, t, TRef(RAny)) : x;
+		return Ir.isWord(t) ? coerce(x, t, TRef(RAny)) : x;
 	}
 
 	// t as the field of a structure (which the runtime reads as Dynamic): a
 	// struct boxed, a type parameter's value as Dynamic
 	function stored(t:Ty):Ty
-		return t.match(TRef(RTag)) ? TRef(RAny) : l.boxed(t);
+		return Ir.isWord(t) ? TRef(RAny) : l.boxed(t);
 
 	// the default values of a function's arguments, and their variables (LowerQueries.argDefaults)
 	function defaultValues(f:FuncInfo):Null<Array<Null<TExpr>>> {
@@ -903,7 +903,7 @@ class FnLower {
 			// a typed view takes storage of its own kind (rt/NArray.view): from
 			// a Dynamic-typed view or a Dynamic, and between the kinds Haxe lets
 			// alias (Int and Null<Int>), checked; an open wrapper's storage, converted
-			case [TRef(RTag), TRef(RNativeArr(_))] if (nativeConversion(from, to)):
+			case [TRef(_), TRef(RNativeArr(_))] if (Ir.isWord(from) && nativeConversion(from, to)):
 				return coerce(coerce(x, from, TRef(RAny)), TRef(RAny), to);
 			case [_, TRef(RNativeArr(b))] if (nativeConversion(from, to)):
 				return temp(to, ECallHost(l.native("hx_narray_view"), vector(x, EInt(nativeKind(b))), to));
@@ -915,7 +915,7 @@ class FnLower {
 				var r = newLocal("adapted", to);
 				out.push(SIf(EBin(RefEq, ELocal(c), ENull(from)), vector(SSet(r, ENull(to))), vector(SSet(r, ENewClos(li, vector(ELocal(c)))))));
 				return ELocal(r);
-			case [TRef(RTag), TRef(RClos(_))]:
+			case [TRef(_), TRef(RClos(_))] if (Ir.isWord(from)):
 				// (a type parameter's value as Dynamic first: a reference, as a
 				// function is, the same word, without a box)
 				return coerce(coerce(x, from, TRef(RAny)), TRef(RAny), to);
@@ -941,23 +941,21 @@ class FnLower {
 		// reference as it is where the type is a class's, an enum's, an
 		// array's..., which no scalar is, else (Dynamic, Null<T>, a structure,
 		// an extern's instance) boxed where it is a scalar's word
-		switch [from, to] {
-			case [TRef(RTag), _] if (x.match(ENull(_))):
-				return nullOf(to);
-			case [TI32 | TF64, TRef(RTag)]:
-				return ETag(from, x);
-			case [TBool | TI64, TRef(RTag)]:
-				return temp(to, EBox(from, x));
-			case [TRef(RTag), TI32 | TF64 | TBool | TI64]:
-				return EUntag(to, x);
-			case [TRef(RTag), TRef(RAny | RNull(_) | RAnon | RNative(_))]:
-				return temp(to, EUntag(to, x));
-			case [TRef(_), TRef(RTag)]:
-				return x;
-			case [TRef(RTag), TRef(_)]:
-				return ECast(to, x);
-			case _:
+		// (Null<Int> and Null<Float> are words too, Ir.isWord: a number
+		// encoded as their kind, null 0; Null<Bool> and Null<Int64> box)
+		var fw = Ir.isWord(from), tw = Ir.isWord(to);
+		if (fw && x.match(ENull(_))) return nullOf(to);
+		if (tw && Ir.isScalar(from)) {
+			switch to {
+				case TRef(RNull(s)): return ETag(s, coerce(x, from, s));
+				case _:
+			}
+			return from == TI32 || from == TF64 ? ETag(from, x) : temp(to, EBox(from, x));
 		}
+		if (fw && Ir.isScalar(to)) return EUntag(to, x);
+		if (fw && to.match(TRef(RAny | RNull(_) | RAnon | RNative(_)))) return temp(to, EUntag(TRef(RAny), x));
+		if (tw && Ir.isRef(from)) return x;
+		if (fw && Ir.isRef(to)) return ECast(to, x);
 		return switch [from, to] {
 			case [TI32, TF64]: EConv(I2F, x);
 			case [TF64, TI32]: EConv(F2I, x);
@@ -989,9 +987,10 @@ class FnLower {
 			case _: 0;
 		};
 
-	// the type of the values of a NativeArray's elements: a byte's an Int
+	// the type of the values of a NativeArray's elements: a byte's an Int, a
+	// Null<Int>'s or Null<Float>'s a box (Dynamic: the storage holds references)
 	static function elemValue(elem:Ty):Ty
-		return elem == TU8 ? TI32 : elem;
+		return elem == TU8 ? TI32 : Ir.isWord(elem) ? TRef(RAny) : elem;
 
 	// the suffix of the typed accesses of a NativeArray (MirBuild), by nativeKind
 	static final NATIVE_SUFFIX = ["p", "i", "f", "l", "b", "u"];
@@ -1053,7 +1052,7 @@ class FnLower {
 			case TF64: temp(TRef(RStr), ECallHost(l.native("hx_str_of_float"), vector(x), TRef(RStr)));
 			case TI64: temp(TRef(RStr), ECallHost(l.native("hx_str_of_i64"), vector(x), TRef(RStr)));
 			case TBool: temp(TRef(RStr), ECallHost(l.native("hx_str_of_bool"), vector(x), TRef(RStr)));
-			case TStruct(_) | TRef(RTag): toStr(coerce(x, t, TRef(RAny)), TRef(RAny));
+			case TStruct(_) | TRef(RTag | RNull(TI32 | TF64)): toStr(coerce(x, t, TRef(RAny)), TRef(RAny));
 			case _: temp(TRef(RStr), ECallHost(l.native("hx_std_string"), vector(x), TRef(RStr)));
 		}
 	}
@@ -1463,7 +1462,7 @@ class FnLower {
 	// a conversion to a closure type that may need an adapter: from another
 	// closure type, or from Dynamic (coerce)
 	static function closureConversion(from:Ty, to:Ty):Bool
-		return to.match(TRef(RClos(_))) && (from.match(TRef(RClos(_))) || from.match(TRef(RAny | RTag)));
+		return to.match(TRef(RClos(_))) && (from.match(TRef(RClos(_))) || from.match(TRef(RAny)) || Ir.isWord(from));
 
 	// a NativeArray taken by a typed view that may not have its kind (coerce)
 	static function nativeConversion(from:Ty, to:Ty):Bool
@@ -1801,7 +1800,7 @@ class FnLower {
 						var ix = coerce(xs[1], tyOf(i), TI32);
 						// (an Array<T>'s element as a type parameter's word: an Int's
 						// or a Float's encoded rather than boxed, MemLower.arrGet)
-						if (elem.match(TRef(RAny)) && tyOf(e).match(TRef(RTag))) elem = TRef(RTag);
+						if (elem.match(TRef(RAny)) && Ir.isWord(tyOf(e))) elem = TRef(RTag);
 						elemRead(isVectorData(a.etype) ? EArrGetU(elem, xs[0], ix) : EArrGet(elem, xs[0], ix), elem, tyOf(e));
 					case _:
 						var xs = operands(vector(a, i));
@@ -1878,7 +1877,7 @@ class FnLower {
 					for (i in 0...fs.length)
 						if (fs[i].key.name == sf.name) {
 							var from = tyOf(fs[i].expr);
-							vals.push(from.match(TRef(RTag)) ? coerce(xs[i], from, TRef(RAny)) : Ir.isRef(from) && Ir.isRef(sf.ty) ? xs[i] : coerce(xs[i], from, sf.ty));
+							vals.push(Ir.isWord(from) ? coerce(xs[i], from, TRef(RAny)) : Ir.isRef(from) && Ir.isRef(sf.ty) ? xs[i] : coerce(xs[i], from, sf.ty));
 						}
 				ENewAnon(sh, Vector.fromArrayCopy(vals));
 			case TFunction(tf): closure(tf, e);
@@ -2416,7 +2415,7 @@ class FnLower {
 			// (a type parameter's value: equal words, a NaN's excepted, inline,
 			// else by the runtime, which compares numbers of either kind and
 			// boxes, and references as hx_dyn_eq; no box made: MirBuild)
-			case [TRef(RTag), _] | [_, TRef(RTag)]:
+			case [TRef(_), _] | [_, TRef(_)] if (Ir.isWord(ta) || Ir.isWord(tb)):
 				return ECallHost("hx_tag_eq", vector(coerce(xa, ta, TRef(RTag)), coerce(xb, tb, TRef(RTag))), TBool);
 			case [TRef(RStr), TRef(RStr)]:
 				return ECallHost("hx_str_eq", vector(xa, xb), TBool);
@@ -2918,7 +2917,7 @@ class FnLower {
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
 				var k = typeObjectKind(cargs[1]);
 				coerce(ECallHost(l.native("hx_is_typeobj"), vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
-			case "Std_isOfType" if (cargs.length == 2 && tyOf(cargs[0]).match(TRef(RTag))):
+			case "Std_isOfType" if (cargs.length == 2 && Ir.isWord(tyOf(cargs[0]))):
 				// (a type parameter's word: a number's tested without a box,
 				// Tagged.isOf; the word's bits as they are, ECast)
 				var xs = operands(cargs);

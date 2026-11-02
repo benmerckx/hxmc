@@ -1042,7 +1042,7 @@ class MirBuild extends MirWriter {
 
 	function boxFrom(t:Ty, v:Int):Int {
 		// (a type parameter's word: a scalar's boxed, a reference as it is)
-		if (t.match(TRef(RTag))) return untagTo(TRef(RAny), v);
+		if (Ir.isWord(t)) return untagTo(TRef(RAny), v);
 		if (!Ir.isScalar(t)) return v;
 		if (t != TBool) f.allocs++;
 		var i = info();

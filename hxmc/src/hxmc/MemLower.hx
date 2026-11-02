@@ -944,7 +944,7 @@ class MemLower extends MirWriter {
 			case Abi.AK_F64: "hx_aget_f_slow";
 			case Abi.AK_I64: "hx_aget_l_slow";
 			// (as a type parameter's word: a number's encoded, not boxed)
-			case _ if (elem.match(TRef(RTag))): "hx_aget_t_slow";
+			case _ if (Ir.isWord(elem)): "hx_aget_t_slow";
 			case _: "hx_aget_p_slow";
 		};
 		writeVar(res, cur, call(name, vector(av, iv), t));
@@ -1062,7 +1062,7 @@ class MemLower extends MirWriter {
 			case TI64: cmp(CEq, kind, iconst("l".code));
 			// (a type parameter's word, read: a reference's slot or a word's;
 			// never stored through a structure, FnLower.stored)
-			case TRef(RTag): op2(Or, I32, cmp(CEq, kind, iconst("p".code)), cmp(CEq, kind, iconst("t".code)));
+			case t if (Ir.isWord(t)): op2(Or, I32, cmp(CEq, kind, iconst("p".code)), cmp(CEq, kind, iconst("t".code)));
 			case _: cmp(CEq, kind, iconst("p".code));
 		}
 	}
@@ -1258,7 +1258,7 @@ class MemLower extends MirWriter {
 		}
 		var mr = callInd(fn, VectorTools.cons(self, ys), MirBuild.mty(m.ret), mTys);
 		if (s.ret == TVoid) return mr;
-		return m.ret.match(TRef(RTag)) && !s.ret.match(TRef(RTag)) ? untagTo(s.ret.match(TRef(_)) ? TRef(RAny) : s.ret, mr, true) : mr;
+		return Ir.isWord(m.ret) && !Ir.isWord(s.ret) ? untagTo(s.ret.match(TRef(_)) ? TRef(RAny) : s.ret, mr, true) : mr;
 	}
 
 	// hx_is_sig(c, sig): a closure (TK_CLOSURE or TK_BOUND) of that signature
