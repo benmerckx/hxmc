@@ -251,6 +251,13 @@ class Lower implements LowerQueries {
 	// throws "Null Access"; without, the native targets fault and the runtime's
 	// handler throws (hxmc.rt.Faults)
 	public static var nullChecks = false;
+	// -D hxmc.verify-tags: every reference an operation on objects dereferences
+	// (MemLower.verifyRef) and every Dynamic the runtime takes the address of
+	// (Mem.addr: MirBuild.intrinsic) is tested not to be the tagged word of a
+	// scalar (hxmc.rt.Tagged; docs/hxmc.md, "Values of type parameters"): one
+	// that is ends the program (rt_tagged_access). The corpus's verify lanes build
+	// with it (Corpus --verify-tags)
+	public static var verifyTags = false;
 	// -D hxmc.span-checks: whether a span's element accesses are range-checked
 	// (FnLower.spanCall; default: yes); ranges always are
 	public static var spanChecks = true;

@@ -8,9 +8,10 @@ using StringTools;
 // first): one line per lane with its result and time, a summary at the end,
 // exit 1 if any lane failed.
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Tiers quick|check|full [--port] [case ...]
-//   quick  the x64 corpus (64 KB nursery), again with RT_VERIFY=1, and the wasm
-//          corpus under node, the module cache's store (CacheCheck), the
-//          lowering's queries (LowerQueriesCheck), where the tool finds the
+//   quick  the x64 corpus (64 KB nursery), again with RT_VERIFY=1 and
+//          -D hxmc.verify-tags (Corpus --verify-tags), and the wasm corpus
+//          under node, the module cache's store (CacheCheck), the lowering's
+//          queries (LowerQueriesCheck), where the tool finds the
 //          runtime objects in npm's layout (RtSearchCheck), a frontend's
 //          compiler adding a function after the lowering (FrontendCheck):
 //          after every edit
@@ -26,10 +27,11 @@ using StringTools;
 //          shared libraries (SharedCheck) and iOS's plain Mach-O outputs
 //          (MachOCheck);
 //          --port adds the native port's self-compile: before commits
-//   full   x64, arm64 and wine at 64, 16 and 256 KB, each with RT_VERIFY=1 too;
+//   full   x64, arm64 and wine at 64, 16 and 256 KB, each with RT_VERIFY=1 too
+//          (at 64 KB with -D hxmc.verify-tags);
 //          x64 and arm64 in the glibc mode, also at 16 KB with RT_VERIFY=1;
 //          wasm under node and wasmtime at 16, 64 and 256 KB, under node with
-//          RT_VERIFY=1 at 64 and 256 KB and with legacy exception handling at
+//          RT_VERIFY=1 at 64 (and -D hxmc.verify-tags) and 256 KB and with legacy exception handling at
 //          16 and 64 KB; ThreadNatives x300 (16 KB) and x100 (64 KB); the heap
 //          census of a debug build; the
 //          port's self-compile natively (64 KB, 256 KB, 256 KB with
@@ -46,6 +48,8 @@ class Tiers {
 	static final SCRIPT = ["bin/hxmc/hxmc", "-cp", "hxmc/test", "-cp", "haxe/test", "--run"];
 	static final LEGACY = ["--wasm-eh", "legacy"];
 	static final GLIBC = ["--libc", "glibc"];
+	// (the tagged words of type parameters' values tested before every read as a reference)
+	static final VERIFY_TAGS = ["--verify-tags"];
 
 	static function lane(name:String, f:Void->{ok:Bool, detail:String}) {
 		var t = now();
@@ -171,7 +175,7 @@ class Tiers {
 		var t0 = now();
 		if (tier != "full") {
 			lane("x64", corpus(cases));
-			lane("x64 RT_VERIFY", corpus(null, ["RT_VERIFY" => "1"], cases));
+			lane("x64 RT_VERIFY verify-tags", corpus(null, ["RT_VERIFY" => "1"], cases, VERIFY_TAGS));
 			lane("wasm node", corpus("wasm32-wasi", null, cases));
 			lane("module cache store", script(["CacheCheck"]));
 			lane("lower queries", script(["LowerQueriesCheck"]));
@@ -199,7 +203,7 @@ class Tiers {
 			for (t in ["linux-x86_64", "linux-arm64", "windows-x86_64"])
 				for (kb in ["64", "16", "256"]) {
 					lane('$t ${kb}K', corpus(t, ["RT_MINOR_KB" => kb], cases));
-					lane('$t ${kb}K RT_VERIFY', corpus(t, ["RT_MINOR_KB" => kb, "RT_VERIFY" => "1"], cases));
+					lane('$t ${kb}K RT_VERIFY', corpus(t, ["RT_MINOR_KB" => kb, "RT_VERIFY" => "1"], cases, kb == "64" ? VERIFY_TAGS : null));
 				}
 			for (t in ["linux-x86_64", "linux-arm64"]) {
 				lane('$t glibc', corpus(t, null, cases, GLIBC));
@@ -211,7 +215,7 @@ class Tiers {
 				lane('wasm node ${kb}K', corpus("wasm32-wasi", ["RT_MINOR_KB" => kb], cases));
 				lane('wasm wasmtime ${kb}K', corpus("wasm32-wasi", ["RT_MINOR_KB" => kb, "HXMC_WASM_RUNNER" => "wasmtime"], cases));
 			}
-			for (kb in ["64", "256"]) lane('wasm node ${kb}K RT_VERIFY', corpus("wasm32-wasi", ["RT_MINOR_KB" => kb, "RT_VERIFY" => "1"], cases));
+			for (kb in ["64", "256"]) lane('wasm node ${kb}K RT_VERIFY', corpus("wasm32-wasi", ["RT_MINOR_KB" => kb, "RT_VERIFY" => "1"], cases, kb == "64" ? VERIFY_TAGS : null));
 			for (kb in ["16", "64"]) lane('wasm node legacy EH ${kb}K', corpus("wasm32-wasi", ["RT_MINOR_KB" => kb], cases, LEGACY));
 			lane("ThreadNatives x300 16K", threads(300, 16));
 			lane("ThreadNatives x100 64K", threads(100, 64));

@@ -53,6 +53,9 @@ class Options {
 	// range-checked (hxmc.ir.Lower.spanChecks; default 1, every build); ranges
 	// (sub, blit, fill, the spans GC code lends) stay checked
 	public var spanChecks = true;
+	// -D hxmc.verify-tags: references tested not to be tagged words before they
+	// are read as references (hxmc.ir.Lower.verifyTags)
+	public var verifyTags = false;
 	// -D hxmc.libc=glibc: Linux, a dynamically linked executable against the system's glibc (Abi.setLibc; default: musl, static)
 	public var libc:Null<String> = null;
 	// x86-64 functions keep a frame record (push rbp; mov rbp, rsp), so
@@ -246,6 +249,7 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
+		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {
 			case null | "1": true;

@@ -6,7 +6,7 @@ using StringTools;
 
 // The hxmc test corpus (docs/testing.md): every program compiled by
 // hxmc, run, and its output compared with its golden file.
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus [-j N] [-v] [--target T] [--wasm-eh legacy] [--libc glibc] [--interp] [--mir-run] [--known <case,...>] [--stage DIR] [--bless] [case ...]
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus [-j N] [-v] [--target T] [--wasm-eh legacy] [--libc glibc] [--interp] [--mir-run] [--verify-tags] [--known <case,...>] [--stage DIR] [--bless] [case ...]
 // The cases are the programs of hxmc/test/cases (<Name>.hx with class <Name>)
 // and the fuzzer programs frozen in hxmc/test/fuzz-1000.zip (extracted to
 // bin/hxmc-fuzz, cases fuzz-<seed>). Each case's HXB archive is written once
@@ -36,6 +36,9 @@ using StringTools;
 // mir-run-check) with -D hxmc.run=mir --run
 // (hxmc.interp.MirRun: no executable), in bin/hxmc-t-mir; the cases known to
 // fail there are MIR_RUN_KNOWN's.
+// --verify-tags builds every case with -D hxmc.verify-tags (references tested
+// not to be the tagged word of a scalar before they are read as references:
+// docs/hxmc.md, "Values of type parameters"; the verify lanes, with RT_VERIFY=1).
 // --known <case,...>: cases known to fail in this mode (its documented
 // differences): each still runs; its failure is `known`, which does not fail
 // the run, and its passing does (the list is out of date).
@@ -76,6 +79,7 @@ class Corpus {
 	static var bless = false;
 	static var interp = false; // --interp: -D hxmc.interp
 	static var mirRun = false; // --mir-run: in the native compiler (HXMC_HAXE), -D hxmc.run=mir
+	static var verifyTags = false; // --verify-tags: -D hxmc.verify-tags
 
 	static function main() {
 		var a = parseArgs(Sys.args(), ["-j", "--target", "--stage", "--wasm-eh", "--libc", "--known"]);
@@ -95,6 +99,7 @@ class Corpus {
 		interp = a.has("--interp");
 		if (interp) OUT = "bin/hxmc-t-interp";
 		mirRun = a.has("--mir-run");
+		verifyTags = a.has("--verify-tags");
 		if (mirRun) OUT = "bin/hxmc-t-mir";
 		var verbose = a.has("-v");
 		if (!FileSystem.exists(STD + "/.stamp")) fail("Corpus: bin/hxmc/std is missing (make std)");
@@ -206,6 +211,7 @@ class Corpus {
 		if (libc != null) cmd = cmd.concat(["-D", "hxmc.libc=" + libc]);
 		if (native.links.length > 0) cmd = cmd.concat(["-D", "hxmc.link=" + native.links.join(",")]);
 		if (wasm && wasmEh != null) cmd = cmd.concat(["-D", "hxmc.wasm-eh=" + wasmEh]);
+		if (verifyTags) cmd = cmd.concat(["-D", "hxmc.verify-tags"]);
 		// (its resources: caseResources; the defines: caseDefines, as when typing)
 		var src = c.cps[0] + "/" + c.main + ".hx";
 		cmd = cmd.concat(caseResources(src));

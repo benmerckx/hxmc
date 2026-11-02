@@ -181,7 +181,7 @@ class Census {
 		var aHist = Mem.stack(64); // length buckets: 0, 1, 2, 3-4, 5-8, 9-16, 17-64, 65+
 		LibC.memset(aHist, 0, 64);
 		// enum values, anonymous objects, classes
-		var cN:I64 = 0, cBytes:I64 = 0, anN:I64 = 0, anOvf:I64 = 0, clN:I64 = 0, clBytes:I64 = 0, kIb:I64 = 0, kObj:I64 = 0, kNullp:I64 = 0, kPtrs:I64 = 0;
+		var cN:I64 = 0, cBytes:I64 = 0, anN:I64 = 0, anOvf:I64 = 0, clN:I64 = 0, clBytes:I64 = 0, kIb:I64 = 0, kObj:I64 = 0, kNullp:I64 = 0, kTagged:I64 = 0, kPtrs:I64 = 0;
 		var boxes0:I64 = 0, boxes1:I64 = 0;
 		// a string census by content, for duplicates
 		var hcap = 1 << 20;
@@ -286,7 +286,9 @@ class Census {
 					var fk = Types.fKind(f);
 					if (fk == "i".code || fk == "b".code) kIb++ else if (fk == "p".code) {
 						kPtrs++;
-						if (Mem.getPtr(o, 8 * Types.fSlot(f)).isNull()) kNullp++;
+						var v = Mem.getPtr(o, 8 * Types.fSlot(f));
+						// (the tagged word of a scalar, a type parameter's value: no object, Tagged)
+						if (v.isNull()) kNullp++ else if (Tagged.isScalar(v.toI64())) kTagged++;
 					}
 				}
 			}
@@ -456,7 +458,9 @@ class Census {
 		r.int(kPtrs, 0);
 		r.str(" pointers (");
 		r.int(kNullp, 0);
-		r.str(" null); boxes: ");
+		r.str(" null, ");
+		r.int(kTagged, 0);
+		r.str(" tagged scalars); boxes: ");
 		r.int(boxes0, 0);
 		r.str(" Int/Bool, ");
 		r.int(boxes1, 0);

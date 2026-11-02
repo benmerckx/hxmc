@@ -113,6 +113,8 @@ class Inline {
 			case EnumTag: 2;
 			case TypeTest: 8;
 			case Box | Unbox: o.t.match(TI32 | TBool | TF64 | TI64) ? 1 : 0;
+			case Tag: o.t == TF64 ? 6 : 2;
+			case Untag: 4;
 			case VirtualCall: 4;
 			case ClosureCall: 2;
 			case AnonGet: o.shape != null && o.shape.tindex >= 0 ? 6 : 16;

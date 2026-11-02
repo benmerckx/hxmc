@@ -409,6 +409,52 @@ lowers to plain loads and stores; references keep the write barrier.
   generation (`Lower.bounds`). The test is IR, so the optimizer drops a test
   a dominating one decides. The std's own loops use `unsafeGet`/`unsafeSet`.
 
+## Values of type parameters
+
+A value of a type parameter is to be a tagged 64-bit word (issue #127,
+JavaScriptCore's encoding): either a reference, as Dynamic holds it, or an
+Int or Float in the word itself, so that storing a number in a `T` slot
+allocates nothing. The encoding (`rt/Tagged.hx`) and its checks are in
+place; the lowering still gives type parameters Dynamic's representation
+(`Lower.lowerTy`), so no program makes such a word yet.
+
+| Word | Value |
+| --- | --- |
+| `0x0000_xxxx_xxxx_xxxx` | a reference: null is 0, and every address (the heap, static data, the C heap) is below 2^48 |
+| `0x0002_0000_0000_0000` to `0xFFF2_0000_0000_0000` | a Float: its bits plus 2^49; NaN is made canonical first (word `0x7FFA_0000_0000_0000`), so -0, the infinities and subnormals keep their bits |
+| `0xFFFF_0000_xxxx_xxxx` | an Int: its 32 bits under the prefix 0xFFFF |
+
+A Bool is its static box and an Int64 a box: references. A reference may
+be a box too (a number that went through Dynamic), so decoding goes by the
+tag first, then through the box as Dynamic's conversions do.
+
+- **The collector** needs nothing: every scalar's word is at or above 2^49,
+  outside every heap range, and forwarding tests addresses against its
+  regions (`Gc.inYoung`, `inFrom`), as it skips the static boxes.
+  WebAssembly's granule table covers 4 GB: `wasm/Gc.hx` reads it only for
+  a word below that (`granOf`). With `RT_VERIFY=1` its heap walk accepts in
+  a reference slot only null, an address, or a word of the encoding (an
+  Int's, a canonical NaN's, not the nursery's pattern). The census counts
+  such words apart (`tagged scalars`).
+- **Code** encodes and decodes inline: the object-level operations `Tag` (an
+  Int or Float to its word, without a branch) and `Untag` (a word to an
+  Int, Float or Bool: the expected kind decoded inline, anything else by
+  `hx_tag_int`, `hx_tag_float`, `hx_tag_bool`, `hx_tag_i64`; or to Dynamic:
+  a reference as it is, a scalar boxed by `hx_tag_box`), lowered by
+  `MemLower.tagFrom` and `untagTo`. The runtime's `hxmc.unsafe.Mem` has them
+  as intrinsics (`tagInt`, `untagDynamic`, ...): the corpus's `TaggedWords`
+  checks both against `Tagged`'s and the expected bits.
+- **Verify mode** (`-D hxmc.verify-tags`): a word read as a reference ends
+  the program with a message (`rt_tagged_access`). Each operation on objects
+  tests the reference it dereferences (`MemLower.verifyRef`: fields, enum
+  tags, type tests, unboxing, virtual, closure and structural calls,
+  arrays, native arrays), and so does each `Mem.addr` of the runtime, the
+  conversion every runtime function reading a Dynamic goes through. A
+  missed conversion from a type parameter to Dynamic shows at the first such
+  read, not as a crash later. The corpus's verify lanes build with it
+  (`Corpus --verify-tags`, with `RT_VERIFY=1`: `make quick`, CI's corpus
+  job).
+
 ## Where struct values are boxed
 
 A `@:hxmc.struct` value is the address of its memory in a frame, an
