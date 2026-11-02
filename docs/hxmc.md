@@ -191,8 +191,14 @@ space by copying into a new region.
   space.
 - **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
   ones in percent of what a major collection left live (300 natively, 200
-  on wasm32). The tool sets 768 MB for a build; the compilation server
-  2048 MB and 150%.
+  on wasm32). Natively the next limit has room for four nurseries more.
+  On wasm32 it has room for a nursery promoted whole (what a minor
+  collection asks of the limit) and three more, but no more than what is
+  live: four nurseries whatever was live gave 43 MB live with a 32 MB
+  nursery a 214 MB limit, now 166 MB (#129). Once memory could not grow
+  for a collection's worst case, the growth is halved and the three
+  nurseries left out (101 MB). The tool sets 768 MB for a build; the
+  compilation server 2048 MB and 150%.
 - **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
   64 MB, a helper thread faults in its pages ahead of minor collections.
   The compilers are built with it. `RT_PREFAULT=0` turns it off.
@@ -1167,7 +1173,7 @@ memory it may copy into before it starts (`Gc.reserveFor`):
 - When memory cannot grow so far: a trace marks what the collection would
   copy, without copying (a bit per 8 bytes of memory, taken for the
   trace), and the reservation is for that. The nursery then shrinks to its
-  floor and stops growing.
+  floor and stops growing, and the limits get tighter (above).
 - When a major collection cannot have even that, a minor one runs if it
   can (the program goes on past the limit; the next collection tries a
   major one again); when neither can, what is live does not fit, and the

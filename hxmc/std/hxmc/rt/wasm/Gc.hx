@@ -29,6 +29,8 @@ class Gc {
 	static inline var MINOR_MIN = 4 << 20;
 	static inline var LOW_PROMOTION_AFTER = 8;
 	static inline var MIN_OLD = 16 << 20;
+	static inline var MIN_ROOM = 8 << 20; // the least room a major collection leaves for promotions
+	static var tight:Bool; // memory could not grow for a collection's worst case: smaller limits from then on
 	static inline var STACK_MB = 4; // the shadow stack's default (RT_STACK_MB)
 	static inline var CHUNK = 1 << 20;
 	static inline var LARGE = 128 << 10; // larger objects get a region of their own
@@ -892,11 +894,24 @@ class Gc {
 		}
 		for (i in 0...nchunks)
 			mark(Mem.getPtr(chunks, 24 * i), entrySize(chunks, i), entryLarge(chunks, i) ? G_LARGE : G_OLD);
-		// the next limit: `growth` percent of what is live (twice) and room for
-		// the nursery, but at most half of what the rest of a wasm32 memory (4
-		// GB) leaves: the next collection's from-space and to-space must both fit
+		// the next limit: `growth` percent of what is live (twice: room for as
+		// much again; half as much once memory could not grow for a
+		// collection's worst case, tight), room for what collectFor's test
+		// asks of a minor collection (a nursery promoted whole) and for three
+		// nurseries' promotions, but no more than what is live, and at most
+		// half of what the rest of a wasm32 memory (4 GB) leaves: the next
+		// collection's from-space and to-space must both fit. (The growth
+		// bounds a major collection's cost per byte promoted; the nurseries'
+		// room spares a small old space major collections at nearly every
+		// minor one. Four nurseries more whatever was live, as it was, gave 43
+		// MB live with a 32 MB nursery a limit of 214 MB, issue #129: now 166
+		// MB, and 101 MB once tight)
 		var live = oldBytes;
-		var limit = live * growth / 100 + (minorSize : I64) * 4 + need;
+		var room = tight ? live >> 1 : live * (growth - 100) / 100;
+		if (room < (MIN_ROOM : I64)) room = MIN_ROOM;
+		var more = (minorSize : I64) * 3;
+		if (more > live || tight) more = tight ? 0 : live;
+		var limit = live + room + more + (minorSize : I64) + (minorSize >> 3) + CHUNK + need;
 		if (limit < (MIN_OLD : I64)) limit = MIN_OLD;
 		var other = Heap.memoryBytes() - oldBytes - poolBytes;
 		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
@@ -982,14 +997,16 @@ class Gc {
 		// the memory to copy into first, for the worst case (reserveFor), else
 		// for what the collection copies, measured (reserveExact; from then on
 		// the nursery shrinks to its floor and stops growing, what it holds
-		// being much of a collection's worst case). When a major collection
-		// cannot have it, a minor one runs if it can (the program goes on past
-		// the limit, and the next collection tries a major one again: the
-		// memory freed meanwhile may hold it); when neither can, what is live
-		// does not fit: the program ends here, outside a collection
+		// being much of a collection's worst case, and the limits tighter:
+		// majorGc). When a major collection cannot have it, a minor one runs
+		// if it can (the program goes on past the limit, and the next
+		// collection tries a major one again: the memory freed meanwhile may
+		// hold it); when neither can, what is live does not fit: the program
+		// ends here, outside a collection
 		var reserved = reserveFor(full);
 		var pressed = !reserved;
 		if (!reserved) {
+			tight = true;
 			reserved = reserveExact(full);
 			if (reserved && stats) Wasi.writeLit(2, "gc: memory cannot grow for a collection's worst case: reserved what it copies\n");
 		}
