@@ -981,7 +981,12 @@ class Lower implements LowerQueries {
 					// (as Swift's weak variables are optional: it becomes nil once its object is gone)
 					if (weak && !TFunctions.isExplicitNull(f.cfType))
 						throw new LowerError('@:hxmc.weak ${f.cfName}: a weak field becomes nil once its object is gone: declare it Null<...>', CInterop.posOf(f.cfPos));
-					if (ObjC.isIdType(f.cfType)) (weak ? ci.weakFields : ci.idFields).push(f.cfName);
+					var unowned = hasMeta(":hxmc.unowned", f.cfMeta);
+					if (unowned && !ObjC.isIdType(f.cfType))
+						throw new LowerError('@:hxmc.unowned ${f.cfName}: only a field holding an Objective-C object can be unowned', CInterop.posOf(f.cfPos));
+					if (unowned && weak)
+						throw new LowerError('@:hxmc.unowned ${f.cfName}: a field is weak or unowned, not both', CInterop.posOf(f.cfPos));
+					if (ObjC.isIdType(f.cfType)) (weak ? ci.weakFields : unowned ? ci.unownedFields : ci.idFields).push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
@@ -1995,6 +2000,9 @@ class Lower implements LowerQueries {
 
 	public function weakFields(ci:ClassInfo):Array<String>
 		return ci.weakFields;
+
+	public function unownedFields(ci:ClassInfo):Array<String>
+		return ci.unownedFields;
 
 	public function lookupMethod(c:TClass, name:String):Null<{cls:TClass, field:TClassField}> {
 		var k = c;

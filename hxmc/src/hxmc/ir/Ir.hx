@@ -87,6 +87,8 @@ class ClassInfo {
 	public var idFields:Array<String> = [];
 	// its own fields holding weak ids (@:hxmc.weak): a cell each, outside the heap
 	public var weakFields:Array<String> = [];
+	// its own fields holding unowned ids (@:hxmc.unowned): the id itself, no reference held
+	public var unownedFields:Array<String> = [];
 
 	public function new(name, ident, sup) {
 		this.name = name;

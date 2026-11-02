@@ -1,3 +1,4 @@
+| `@:hxmc.unowned` of an Objective-C object | `__unsafe_unretained`: the id itself, stored and read as it is, nothing at dealloc ([Unowned fields](#memory)) |
 # C interop and low-level Haxe
 
 How hxmc programs call C, pass memory to it, use struct values, and reach
@@ -790,8 +791,10 @@ var f = Field.alloc().initWithFrame(r);          // an id, as NSTextField's
   the runtime's own releases send, where Haxe code cannot run (the
   collector's, of an id a dead Haxe object held; `Peers.detach`'s), is put
   off: the thread sends it again at its next allocation, or when
-  `hxmc.rt.Gc.collect` returns; the object stays, deallocating (weak
-  references to it nil), until then.
+  `hxmc.rt.Gc.collect` returns, in an autorelease pool of its own (what it
+  autoreleases, such as a view's subviews, goes then, not with whatever
+  pool the thread has); the object stays, deallocating (weak references to
+  it nil), until then.
 - **Values**: as an extern class's. `Std.isOfType` and `Std.downcast` are
   `isKindOfClass:` messages; an array, a closure, `Dynamic` or a type
   parameter bound to `Id` hold its ids as any ([Memory](#memory)).
@@ -1027,6 +1030,15 @@ counted. Where references cross:
   `Null<...>` (as Swift's weak variables are optional). Its variable is a cell
   outside the heap (`objc_storeWeak` keeps the variable's address, and a
   field moves with its object), destroyed with the object.
+- **Unowned fields**: `@:hxmc.unowned var parent:NSView` holds the id
+  only, as Objective-C's `__unsafe_unretained` and Swift's
+  `unowned(unsafe)`: no reference, no cell, nothing when its holder dies.
+  For an object the program keeps alive otherwise for as long as the field
+  is read, such as a view its window holds; read after the object is gone,
+  it is a dangling pointer (a crash, or another object at the same
+  address). A short-lived Haxe object (a cursor over a view's subviews)
+  holding a strong id keeps the object until a collection finds the holder
+  dead; an unowned field does not, at no cost.
 - **Cycles** through both heaps (a Haxe object's field holds a view, the
   view holds a Haxe subclass's instance whose field holds the Haxe object)
   are not collected: neither side sees them. Cocoa's delegates are weak,

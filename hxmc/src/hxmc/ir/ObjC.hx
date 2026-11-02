@@ -241,6 +241,9 @@ class ObjC {
 	// a Haxe value held weakly (@:hxmc.weak): the index of a slot of the
 	// collector's weak table (hxmc.rt.Gc, rt_weak_*; 0: none yet), freed at dealloc
 	public static inline var IVAR_WEAK_GC = 3;
+	// an id held unowned (@:hxmc.unowned), Objective-C's __unsafe_unretained:
+	// the id itself, stored and read as it is, nothing at dealloc
+	public static inline var IVAR_UNOWNED = 4;
 
 	// the instance variables of mode class c (its own fields only); a field
 	// none can be is an error
@@ -260,10 +263,15 @@ class ObjC {
 			if (KernelCheck.spanOf(cf.cfType) != null)
 				throw new LowerError('Objective-C class $name: the field ${cf.cfName} has a span type', where);
 			var weak = Lower.hasMeta(":hxmc.weak", cf.cfMeta);
+			var unowned = Lower.hasMeta(":hxmc.unowned", cf.cfMeta);
+			if (unowned && !isIdType(cf.cfType))
+				throw new LowerError('@:hxmc.unowned ${cf.cfName}: only a field holding an Objective-C object can be unowned', where);
+			if (unowned && weak)
+				throw new LowerError('@:hxmc.unowned ${cf.cfName}: a field is weak or unowned, not both', where);
 			if (weak && !TFunctions.isExplicitNull(cf.cfType))
 				throw new LowerError('@:hxmc.weak ${cf.cfName}: a weak field becomes null once its object is gone: declare it Null<...>', where);
 			if (isIdType(cf.cfType)) {
-				r.push({name: cf.cfName, field: cf, kind: weak ? IVAR_WEAK_ID : IVAR_STRONG, ct: CPtr, size: 8, align: 8, enc: "@"});
+				r.push({name: cf.cfName, field: cf, kind: weak ? IVAR_WEAK_ID : unowned ? IVAR_UNOWNED : IVAR_STRONG, ct: CPtr, size: 8, align: 8, enc: "@"});
 				continue;
 			}
 			var ct = ctype(cf.cfType);

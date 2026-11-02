@@ -121,6 +121,8 @@ interface LowerQueries {
 	@:derived function idFields(ci:ClassInfo):Array<String>;
 	// (its own fields holding weak ids, @:hxmc.weak: ClassInfo.weakFields, compared as idFields)
 	@:derived function weakFields(ci:ClassInfo):Array<String>;
+	// (its own fields holding unowned ids, @:hxmc.unowned: ClassInfo.unownedFields, compared as idFields)
+	@:derived function unownedFields(ci:ClassInfo):Array<String>;
 	// an Objective-C mode class's registration (ObjC.isMode: its class cell,
 	// registering function, instance variables' cells), made once: its key
 	// (ObjC.modeKey), compared on replay

@@ -975,10 +975,11 @@ class CachedLower extends Lower {
 		}
 	}
 
-	// (Objective-C: a class's registration and its id fields, LowerQueries.objcPeer, idFields and weakFields)
+	// (Objective-C: a class's registration and its id fields, LowerQueries.objcPeer, idFields, weakFields and unownedFields)
 	static function sameObjC(o:ClassInfo, n:ClassInfo):Bool {
 		if (o.idFields.join(",") != n.idFields.join(",")) return false;
 		if (o.weakFields.join(",") != n.weakFields.join(",")) return false;
+		if (o.unownedFields.join(",") != n.unownedFields.join(",")) return false;
 		if (o.objc == null || n.objc == null) return o.objc == n.objc;
 		if (o.objc.name != n.objc.name || o.objc.root != n.objc.root || o.objc.methods.length != n.objc.methods.length) return false;
 		if (o.objc.protocols.join(",") != n.objc.protocols.join(",")) return false;

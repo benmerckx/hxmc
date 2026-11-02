@@ -2581,8 +2581,8 @@ class FnLower {
 					return coerce(x, TId, et);
 				}
 				var x = pure(compute(() -> EField(ci, idx, o), t, t), t);
-				if (t == TId) {
-					// (an id: the field holds a reference, ObjC)
+				if (t == TId && l.unownedFields(ci).indexOf(cf.cfName) < 0) {
+					// (an id: the field holds a reference, ObjC; an unowned one only the id)
 					var old = asLocal(EField(ci, idx, o), t);
 					objcRetain(x);
 					out.push(SSetField(ci, idx, o, x));
@@ -4054,7 +4054,7 @@ class FnLower {
 
 	// the representation of instance variable iv's values
 	function ivarTy(iv:ObjC.Ivar):Ty {
-		if (iv.kind == ObjC.IVAR_STRONG || iv.kind == ObjC.IVAR_WEAK_ID) return TId;
+		if (iv.kind == ObjC.IVAR_STRONG || iv.kind == ObjC.IVAR_WEAK_ID || iv.kind == ObjC.IVAR_UNOWNED) return TId;
 		return switch iv.ct {
 			case CStruct(sc) if (iv.kind == ObjC.IVAR_RAW): structTy(sc);
 			case _: ty(iv.field.cfType);
@@ -4086,7 +4086,7 @@ class FnLower {
 					return cLoad(ELocal(a), 0, iv.ct, {eexpr: e.eexpr, etype: iv.field.cfType, epos: e.epos});
 			}
 		}
-		if (iv.kind == ObjC.IVAR_STRONG)
+		if (iv.kind == ObjC.IVAR_STRONG || iv.kind == ObjC.IVAR_UNOWNED)
 			return temp(TId, coerce(ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(a), EInt(0)), TI64), TI64, TId));
 		if (iv.kind == ObjC.IVAR_WEAK_ID) return objcLoadWeak(ELocal(a));
 		var slot = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(a), EInt(0)), TI32), TI32);
@@ -4103,6 +4103,10 @@ class FnLower {
 	function ivarStore(a:Local, iv:ObjC.Ivar, x:Ex, t:Ty, e:TExpr) {
 		if (iv.kind == ObjC.IVAR_RAW) {
 			cStore(ELocal(a), 0, iv.ct, x, t, e);
+			return;
+		}
+		if (iv.kind == ObjC.IVAR_UNOWNED) {
+			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(a), EInt(0), coerce(x, t, TI64)), TVoid)));
 			return;
 		}
 		if (iv.kind == ObjC.IVAR_STRONG) {
@@ -4211,7 +4215,7 @@ class FnLower {
 			fi.hasTry = true;
 		}
 		for (iv in m.ivars) {
-			if (iv.kind == ObjC.IVAR_RAW) continue;
+			if (iv.kind == ObjC.IVAR_RAW || iv.kind == ObjC.IVAR_UNOWNED) continue;
 			var off = ECallHost("hxmc_unsafe_Mem_getI64", vector(sym(ObjC.ivarCell(m.key, iv.name)), EInt(0)), TI64);
 			var a = asLocal(EBin(LAdd, ELocal(self), off), TI64);
 			if (iv.kind == ObjC.IVAR_STRONG) {
