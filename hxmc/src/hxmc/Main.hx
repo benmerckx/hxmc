@@ -11,6 +11,7 @@ package hxmc;
 // Options (defines, or the environment for development):
 //   -D hxmc.target=linux-x86_64     the target (Target.hx, Abi.hx: six of them)
 //   -D hxmc.wasm-eh=legacy          wasm32-wasi: legacy exception handling (default: exnref)
+//   -D hxmc.wasm-memory-max=<MB>    wasm32-wasi: the memory's maximum (memory.grow fails past it)
 //   -D hxmc.libc=glibc              Linux: dynamically linked against the system's glibc (default: musl, static)
 //   -D hxmc.shared                  a shared library (Linux in the glibc mode; Android's is always one,
 //                                   which a packager puts in an APK)

@@ -1,0 +1,6 @@
+exit 0
+bytes intact: true
+references: true 104001 item41
+held by a large array: true item529999
+live bytes: true
+dropped: true

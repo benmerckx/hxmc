@@ -141,6 +141,22 @@ class Heap {
 	// a region of `bytes` starting at a multiple of `align` (a power of two),
 	// or null when memory cannot grow so far; what alignment skips stays free
 	@:hxmc.unsafe public static function tryRegionAligned(bytes:Int, align:Int):Ptr {
+		var a = freeAligned(bytes, align);
+		if (!a.isNull()) return a;
+		bytes = (bytes + 15) & ~15;
+		var mask:I64 = align - 1;
+		a = new Ptr((top.toI64() + mask) & ~mask);
+		if (!tryEnsure(a.add(bytes))) return Ptr.nil();
+		var gap = a.diff(top);
+		var q = top;
+		top = a.add(bytes);
+		if (fresh.ult(top)) fresh = top;
+		if (gap > 0) addFree(q, gap);
+		return a;
+	}
+
+	// the same from the freed regions only (memory does not grow), or null
+	@:hxmc.unsafe public static function freeAligned(bytes:Int, align:Int):Ptr {
 		init();
 		bytes = (bytes + 15) & ~15;
 		var mask:I64 = align - 1;
@@ -156,14 +172,7 @@ class Heap {
 				return a;
 			}
 		}
-		var a = new Ptr((top.toI64() + mask) & ~mask);
-		if (!tryEnsure(a.add(bytes))) return Ptr.nil();
-		var gap = a.diff(top);
-		var q = top;
-		top = a.add(bytes);
-		if (fresh.ult(top)) fresh = top;
-		if (gap > 0) addFree(q, gap);
-		return a;
+		return Ptr.nil();
 	}
 
 	@:hxmc.unsafe static function addFree(p:Ptr, bytes:I64) {
@@ -246,12 +255,23 @@ class Heap {
 
 	// the block's header (8 bytes before it): twice its class (even), or for a region
 	// (larger than the largest class) its size + 1
-	@:hxmc.export("malloc") @:hxmc.unsafe public static function malloc(n:I64):Ptr {
+	@:hxmc.export("malloc") @:hxmc.unsafe public static function malloc(n:I64):Ptr
+		return block(n, true);
+
+	// malloc, but null when memory cannot grow so far (rather than the exit)
+	@:hxmc.unsafe public static function tryMalloc(n:I64):Ptr
+		return block(n, false);
+
+	@:hxmc.unsafe static function block(n:I64, fatal:Bool):Ptr {
 		init();
 		var size = n.toInt();
 		if (size < 0 || n > (0x7fff0000 : I64)) return Ptr.nil();
 		if (size + 8 > (1 << MAX_CLASS)) {
-			var r = region(size + 16);
+			var r = tryRegion(size + 16);
+			if (r.isNull()) {
+				if (fatal) outOfMemory();
+				return r;
+			}
 			Mem.setI64(r, 8, ((size + 16 + 15) & ~15) + 1);
 			return r.add(16);
 		}
@@ -264,7 +284,12 @@ class Heap {
 		}
 		var bs = 1 << c;
 		if (arenaEnd.diff(arena) < (bs : I64)) {
-			arena = region(ARENA);
+			var a = tryRegion(ARENA);
+			if (a.isNull()) {
+				if (fatal) outOfMemory();
+				return a;
+			}
+			arena = a;
 			arenaEnd = arena.add(ARENA);
 		}
 		var blk = arena;
@@ -290,11 +315,18 @@ class Heap {
 		return (hdr & 1) != 0 ? hdr - 1 - 16 : (1 << (hdr >> 1)) - 8;
 	}
 
-	@:hxmc.export("realloc") @:hxmc.unsafe public static function realloc(p:Ptr, n:I64):Ptr {
-		if (p.isNull()) return malloc(n);
+	@:hxmc.export("realloc") @:hxmc.unsafe public static function realloc(p:Ptr, n:I64):Ptr
+		return reblock(p, n, true);
+
+	// realloc, but null when memory cannot grow so far (the block then stays as it was)
+	@:hxmc.unsafe public static function tryRealloc(p:Ptr, n:I64):Ptr
+		return reblock(p, n, false);
+
+	@:hxmc.unsafe static function reblock(p:Ptr, n:I64, fatal:Bool):Ptr {
+		if (p.isNull()) return block(n, fatal);
 		var have = usable(p);
 		if (n <= (have : I64)) return p;
-		var q = malloc(n);
+		var q = block(n, fatal);
 		if (q.isNull()) return q;
 		Wasm.memcpy(q, p, have);
 		free(p);

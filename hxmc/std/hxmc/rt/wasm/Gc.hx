@@ -14,18 +14,23 @@ import hxmc.rt.Tagged;
 // differences: memory comes from Heap (it grows, it is never given back),
 // the old space is a list of chunks rather than a contiguous semispace (a
 // major collection copies into chunks taken as it goes, then the from-space's
-// chunks are kept for reuse: no to-space sized for the worst case, no
-// semispaces that outgrow the holes their predecessors left, which a 4 GB
-// memory cannot afford), no thread handshake (one thread, thread-locals are
-// globals), no native handles (no C resources), and finalisers are
-// registered but never run. Every function here is
-// @:hxmc.unsafe: it runs while objects move, with raw addresses.
+// chunks are kept for reuse: no semispaces that outgrow the holes their
+// predecessors left, which a 4 GB memory cannot afford), large objects
+// (over LARGE) have a region each, which a major collection keeps where it
+// is when the object is reached (promoted in place, not copied), memory a
+// collection copies into is taken before it starts (reserveFor: a host may
+// refuse memory.grow, and a collection cannot stop halfway), no thread
+// handshake (one thread, thread-locals are globals), no native handles (no C
+// resources), and finalisers are registered but never run. Every function
+// here is @:hxmc.unsafe: it runs while objects move, with raw addresses.
 @:hxmc.wasm @:keep
 class Gc {
 	static inline var MINOR_MAX = 32 << 20;
 	static inline var MINOR_MIN = 4 << 20;
 	static inline var LOW_PROMOTION_AFTER = 8;
 	static inline var MIN_OLD = 16 << 20;
+	static inline var MIN_ROOM = 8 << 20; // the least room a major collection leaves for promotions
+	static var tight:Bool; // memory could not grow for a collection's worst case: smaller limits from then on
 	static inline var STACK_MB = 4; // the shadow stack's default (RT_STACK_MB)
 	static inline var CHUNK = 1 << 20;
 	static inline var LARGE = 128 << 10; // larger objects get a region of their own
@@ -41,7 +46,9 @@ class Gc {
 	static var minorSize:Int;
 	static var minorFixed:Bool;
 	// the old space: chunks of CHUNK bytes and the regions of large objects,
-	// listed as (start, used end, size)
+	// listed as (start, used end, size), the size's low bit set for a large
+	// object's region (LARGE_FLAG: its object at its start, alone)
+	static inline var LARGE_FLAG = 1;
 	static var chunks:Ptr;
 	static var nchunks:Int;
 	static var chunksCap:Int;
@@ -56,9 +63,23 @@ class Gc {
 	static var growth:Int; // the next limit, in percent of what a major collection left live (RT_OLD_GROWTH)
 	static var pool:Ptr; // free chunks, linked through their first word
 	static var poolBytes:I64;
-	// a byte per 64 KB of memory: 1 in the old space (the from-space during a
-	// major collection), 2 in its to-space, 0 elsewhere
+	// a byte per 64 KB of memory: G_OLD in the old space's chunks (the
+	// from-space during a major collection), G_LARGE in its large objects'
+	// regions (the same), G_TO in a major collection's to-space, 0 elsewhere
 	static var gran:Ptr;
+	static inline var G_OLD = 1;
+	static inline var G_TO = 2;
+	static inline var G_LARGE = 3;
+	// the memory the running collection copies into, taken before it started
+	// (reserveFor), and what it has left of it
+	static var resPtr:Ptr;
+	static var resEnd:Ptr;
+	// the nursery's chunks larger than LARGE taken since the last collection
+	// (where an object that gets a region of its own when promoted may be):
+	// the most their objects' regions take (reserveFor)
+	static var bigRegions:I64;
+	static var gcOverflow:Bool; // the copy's stack could not grow: an object copied is not on it (rescan)
+	static var inPlace:I64; // RT_STATS: the bytes of the large objects the last major collection kept in place
 	static var newState:Int; // what chunks taken now are
 	static var copies:Int; // objects copied (a collection's forwarding copied one just now)
 	static var copiedBytes:I64;
@@ -107,17 +128,21 @@ class Gc {
 	static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
-	static inline function inFrom(p:Ptr):Bool
-		return granOf(p) == 1;
-
-	static inline function isOld(p:Ptr):Bool
-		return granOf(p) != 0;
-
 	// p's granule's state; 0 (none) for a word above the 4 GB the table
 	// covers: the tagged word of a scalar (hxmc.rt.Tagged), which a reference
 	// slot holds as the value of a type parameter
 	static inline function granOf(p:Ptr):Int
 		return (p.toI64() >>> 32) == (0 : I64) ? Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) : 0;
+
+	static inline function isOld(p:Ptr):Bool
+		return granOf(p) != 0;
+
+	// a list's entry: its size, and whether it is a large object's region
+	static inline function entrySize(l:Ptr, i:Int):Int
+		return Mem.getI64(l, 24 * i + 16).toInt() & ~LARGE_FLAG;
+
+	static inline function entryLarge(l:Ptr, i:Int):Bool
+		return (Mem.getI64(l, 24 * i + 16).toInt() & LARGE_FLAG) != 0;
 
 	// ---- startup
 
@@ -175,7 +200,8 @@ class Gc {
 		robjsCap = 256;
 		robjs = Heap.malloc(8 * robjsCap);
 		robjsRecent = Heap.calloc(256, 8);
-		gcCap = 4096;
+		// (RT_VERIFY: a stack that never grows, so the rescan of an overflow runs)
+		gcCap = verifying ? 16 : 4096;
 		gcStack = Heap.malloc(16 * gcCap);
 		hxmc.rt.Boxes.init();
 		// the type objects (rt_type_objs: two words each, DataGen)
@@ -258,6 +284,11 @@ class Gc {
 		var take:I64 = verifying ? avail : (bytes > zchunk ? bytes : zchunk);
 		if (take > avail) take = avail;
 		var e = p.add(take.toInt());
+		if (take > (LARGE : I64)) {
+			// (objects over LARGE in it: a region each when promoted, rounded
+			// up to GRAN, less than GRAN more than each one's bytes)
+			bigRegions += take + (take / LARGE) * GRAN;
+		}
 		if (!verifying) {
 			// (up to the old chunk's end the nursery is zeroed already)
 			var z = Mem.tlsGet("rt_young_rlimit");
@@ -318,10 +349,11 @@ class Gc {
 
 	// ---- the old space
 
-	// `bytes` in the old space (null: memory cannot grow so far)
+	// `bytes` in the old space (null: memory cannot grow so far); an object
+	// over LARGE always in a region of its own
 	@:hxmc.unsafe static function oldAlloc(bytes:Int):Ptr {
 		var p = oldPtr;
-		if (oldEnd.diff(p) >= (bytes : I64)) {
+		if (bytes <= LARGE && oldEnd.diff(p) >= (bytes : I64)) {
 			oldPtr = p.add(bytes);
 			return p;
 		}
@@ -337,8 +369,8 @@ class Gc {
 				return Ptr.nil();
 			}
 			var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
-			var r = Heap.tryRegionAligned(size, GRAN);
-			if (!r.isNull()) addChunk(r, r.add(bytes), size);
+			var r = take(size);
+			if (!r.isNull()) addChunk(r, r.add(bytes), size, true);
 			return r;
 		}
 		var c = pool;
@@ -346,28 +378,43 @@ class Gc {
 			pool = Mem.getPtr(c, 0);
 			poolBytes -= CHUNK;
 		} else {
-			c = Heap.tryRegionAligned(CHUNK, GRAN);
+			c = take(CHUNK);
 			if (c.isNull()) return c;
 		}
 		syncCur();
 		cur = nchunks;
-		addChunk(c, c, CHUNK);
+		addChunk(c, c, CHUNK, false);
 		oldPtr = c.add(bytes);
 		oldEnd = c.add(CHUNK);
 		return c;
 	}
 
-	@:hxmc.unsafe static function addChunk(start:Ptr, end:Ptr, size:Int) {
+	// size bytes (a multiple of GRAN) for the old space: from the regions
+	// freed, else from what the running collection reserved, else from
+	// memory grown (null: it cannot grow so far)
+	@:hxmc.unsafe static function take(size:Int):Ptr {
+		var f = Heap.freeAligned(size, GRAN);
+		if (!f.isNull()) return f;
+		if (resEnd.diff(resPtr) >= (size : I64)) {
+			var r = resPtr;
+			resPtr = r.add(size);
+			return r;
+		}
+		return Heap.tryRegionAligned(size, GRAN);
+	}
+
+	// (a collection's list has room for every entry it adds: reserveFor)
+	@:hxmc.unsafe static function addChunk(start:Ptr, end:Ptr, size:Int, large:Bool) {
 		if (nchunks == chunksCap) {
 			chunksCap *= 2;
 			chunks = Heap.realloc(chunks, 24 * chunksCap);
 		}
 		Mem.setPtr(chunks, 24 * nchunks, start);
 		Mem.setPtr(chunks, 24 * nchunks + 8, end);
-		Mem.setI64(chunks, 24 * nchunks + 16, size);
+		Mem.setI64(chunks, 24 * nchunks + 16, large ? size | LARGE_FLAG : size);
 		nchunks++;
 		oldBytes += size;
-		mark(start, size, newState);
+		mark(start, size, large && newState == G_OLD ? G_LARGE : newState);
 	}
 
 	@:hxmc.unsafe static function mark(start:Ptr, size:Int, state:Int) {
@@ -437,8 +484,17 @@ class Gc {
 	@:hxmc.unsafe static function forwardTo(p:Ptr, n:Ptr)
 		setFwd(p, n);
 
+	// (a major collection: an object of the from-space's chunks is copied, a
+	// large one stays where it is, its region joining the to-space)
 	@:hxmc.unsafe static function fwd(p:Ptr):Ptr {
-		if (!inYoung(p) && !(major && inFrom(p))) return p;
+		if (!inYoung(p)) {
+			if (!major) return p;
+			var g = granOf(p);
+			if (g != G_OLD) {
+				if (g == G_LARGE) promote(p);
+				return p;
+			}
+		}
 		if (isFwdAt(p)) return fwdAddr(p);
 		var bytes = objBytes(p);
 		var d = oldAlloc(bytes);
@@ -450,14 +506,58 @@ class Gc {
 		return n;
 	}
 
-	@:hxmc.unsafe static function push(o:Ptr) {
+	// a large object of the from-space, reached: its region (the object at
+	// its start) joins the to-space as it is, G_TO from now on, so it is
+	// promoted once; scanned as a copy is (copies)
+	@:hxmc.unsafe static function promote(p:Ptr) {
+		var r = p.add(-8);
+		var bytes = objBytes(p);
+		var size = (bytes + (GRAN - 1)) & ~(GRAN - 1);
+		addChunk(r, r.add(bytes), size, true);
+		inPlace += size;
+		copies++;
+	}
+
+	// false: the stack cannot grow (memory cannot grow so far; RT_VERIFY: it
+	// never does): the object is left off, and the copy rescans (gcOverflow)
+	@:hxmc.unsafe static function push(o:Ptr):Bool {
 		if (gcTop == gcCap) {
+			var s = verifying ? Ptr.nil() : Heap.tryRealloc(gcStack, 32 * gcCap);
+			if (s.isNull()) {
+				gcOverflow = true;
+				return false;
+			}
+			gcStack = s;
 			gcCap *= 2;
-			gcStack = Heap.realloc(gcStack, 16 * gcCap);
 		}
 		Mem.setPtr(gcStack, 16 * gcTop, o);
 		Mem.setI64(gcStack, 16 * gcTop + 8, 0);
 		gcTop++;
+		return true;
+	}
+
+	// after an overflow (gcOverflow): the objects copied since list entry c0
+	// (from p0 on; null: its start), each scanned again (harmless for those
+	// scanned already: what they reference is copied), until a pass leaves
+	// none off. (Objects copied meanwhile go after the pass's position, but
+	// for those in the current chunk when it is not the last entry: passes
+	// until one does not overflow)
+	@:hxmc.unsafe static function rescan(c0:Int, p0:Ptr) {
+		while (gcOverflow) {
+			gcOverflow = false;
+			var c = c0;
+			while (c < nchunks) {
+				var p = c == c0 && !p0.isNull() ? p0 : Mem.getPtr(chunks, 24 * c);
+				while (true) {
+					var end = c == cur ? oldPtr : Mem.getPtr(chunks, 24 * c + 8);
+					if (!p.ult(end)) break;
+					var o = p.add(8);
+					p = p.add(objBytes(o));
+					scanObject(o);
+				}
+				c++;
+			}
+		}
 	}
 
 	@:hxmc.unsafe static function drain() {
@@ -487,11 +587,12 @@ class Gc {
 				Mem.setPtr(o, 8 * i, nv);
 				i++;
 				if (copies != before) {
-					// copied just now: its subtree next
+					// copied just now: its subtree next (push may move the stack)
 					Mem.setI64(f, 8, i);
-					push(nv);
-					pushed = true;
-					break;
+					if (push(nv)) {
+						pushed = true;
+						break;
+					}
 				}
 			}
 			if (!pushed) gcTop--;
@@ -501,10 +602,7 @@ class Gc {
 	@:hxmc.unsafe static function fwdRoot(p:Ptr):Ptr {
 		var before = copies;
 		var n = fwd(p);
-		if (copies != before) {
-			push(n);
-			drain();
-		}
+		if (copies != before && push(n)) drain();
 		return n;
 	}
 
@@ -543,15 +641,12 @@ class Gc {
 	}
 
 	@:hxmc.unsafe static function minorGc() {
-		var used = Mem.tlsGet("rt_young_ptr").diff(youngStart);
-		// (what survives fills chunks to within LARGE of their end: an eighth more)
-		if (oldBytes + used + (used >> 3) + CHUNK > oldLimit) {
-			majorGc(0);
-			return;
-		}
 		minors++;
 		collections++;
 		major = false;
+		// (where the copies start: rescan's)
+		var c0 = cur >= 0 ? cur : nchunks;
+		var p0 = cur >= 0 ? oldPtr : Ptr.nil();
 		scanRoots();
 		for (i in 0...remLen)
 			rootAt(Mem.getPtr(rem, 8 * i));
@@ -560,6 +655,199 @@ class Gc {
 			scanObject(Mem.getPtr(robjs, 8 * i));
 		robjsLen = 0;
 		Wasm.memset(robjsRecent, 0, 8 * 256);
+		rescan(c0, p0);
+	}
+
+	// Memory for the collection about to run to copy into (major or minor),
+	// taken before it starts: a host may refuse memory.grow (browsers,
+	// Android's Chrome early), and a collection cannot stop halfway, so one
+	// that has its reservation never needs fresh memory. For the worst case:
+	// it copies at most what the nursery holds and, a major one, what the old
+	// space's chunks hold (its large objects stay in place: promote); the
+	// nursery's objects over LARGE get a region each, rounded up to GRAN
+	// (bigRegions). False: memory cannot grow so far (nothing taken)
+	@:hxmc.unsafe static function reserveFor(maj:Bool):Bool {
+		syncCur();
+		var copied:I64 = Mem.tlsGet("rt_young_ptr").diff(youngStart);
+		var large = 0;
+		if (maj)
+			for (i in 0...nchunks)
+				if (entryLarge(chunks, i)) large++ else copied += Mem.getPtr(chunks, 24 * i + 8).diff(Mem.getPtr(chunks, 24 * i));
+		return reserve(maj, copied, bigRegions, large);
+	}
+
+	// A reservation for `copied` bytes of objects up to LARGE, `regions` of
+	// the regions of larger ones (each more than LARGE) and `large` large
+	// objects kept in place: the former fill chunks to within LARGE of their
+	// end (an object that does not fit starts the next one: an eighth more,
+	// and a chunk), free chunks first (the pool). The to-space's list gets
+	// room for its entries too. What the collection does not use goes back
+	// after it (unreserve). The copy's stack needs none: when it cannot grow,
+	// the copy rescans (push)
+	@:hxmc.unsafe static function reserve(maj:Bool, copied:I64, regions:I64, large:Int):Bool {
+		var nch = (copied + copied / 7 + 2 * CHUNK - 1) >> 20;
+		var chunkBytes = nch << 20;
+		var bytes = regions + (chunkBytes > poolBytes ? chunkBytes - poolBytes : 0);
+		var entries = 1 + large + nch.toInt() + (regions >> 17).toInt();
+		// (the to-space's list: a major collection's starts empty, in the list
+		// that was the from-space's; a minor one's continues the old space's)
+		var want = maj ? entries : nchunks + entries;
+		if (maj && fromCap < want) {
+			var l = Heap.tryRealloc(fromChunks, 24 * want);
+			if (l.isNull()) return false;
+			fromChunks = l;
+			fromCap = want;
+		} else if (!maj && chunksCap < want) {
+			var l = Heap.tryRealloc(chunks, 24 * want);
+			if (l.isNull()) return false;
+			chunks = l;
+			chunksCap = want;
+		}
+		if (bytes == 0) return true;
+		if (bytes > (MAX_LARGE : I64)) {
+			Heap.refuse(MAX_LARGE);
+			return false;
+		}
+		var r = Heap.tryRegionAligned(bytes.toInt(), GRAN);
+		if (r.isNull()) return false;
+		resPtr = r;
+		resEnd = r.add(bytes.toInt());
+		return true;
+	}
+
+	// what the collection left of its reservation, back to Heap
+	@:hxmc.unsafe static function unreserve() {
+		if (resPtr.ult(resEnd)) Heap.release(resPtr, resEnd.diff(resPtr).toInt());
+		resPtr = Ptr.nil();
+		resEnd = Ptr.nil();
+	}
+
+	// ---- the exact measure: when memory cannot grow for the worst case, a
+	// trace marks what the collection would copy, without copying (the same
+	// roots, the same objects: nothing runs between), and the reservation is
+	// for that. A bit per 8 bytes of memory (memory's size / 64, taken for the
+	// trace and given back); the copy's stack holds the objects to scan
+	// (when it cannot grow, the marked objects are scanned again: markRescan)
+
+	static var marks:Ptr;
+	static var marksBytes:Int;
+	static var markedBytes:I64; // of the objects up to LARGE the collection copies
+	static var markedRegions:I64; // the regions of the larger ones it copies
+	static var markMajor:Bool;
+
+	// what the collection about to run copies, measured, reserved (false:
+	// memory cannot grow so far, for the marks or for the reservation)
+	@:hxmc.unsafe static function reserveExact(maj:Bool):Bool {
+		var n = ((Heap.memoryBytes() >> 6) + 16).toInt();
+		var before = Heap.freshFrom();
+		marks = Heap.tryRegion(n);
+		if (marks.isNull()) return false;
+		marksBytes = n;
+		Heap.zeroBelow(marks, (n + 15) & ~15, before);
+		markMajor = maj;
+		markedBytes = 0;
+		markedRegions = 0;
+		var sp = Mem.tlsGet("rt_sp");
+		var s = stackBase;
+		while (s.ult(sp)) {
+			markRef(Mem.getPtr(s, 0));
+			s = s.add(8);
+		}
+		var g = Mem.getPtr(Mem.sym("rt_globals"), 0);
+		for (i in 0...nglobals)
+			markRef(Mem.getPtr(g, 8 * i));
+		markRef(Mem.tlsGet("rt_exn"));
+		if (!maj) {
+			for (i in 0...remLen)
+				markRef(Mem.getPtr(Mem.getPtr(rem, 8 * i), 0));
+			for (i in 0...robjsLen)
+				markSlots(Mem.getPtr(robjs, 8 * i));
+		}
+		markDrain();
+		while (gcOverflow) {
+			gcOverflow = false;
+			markRescan();
+		}
+		Heap.release(marks, marksBytes);
+		marks = Ptr.nil();
+		var large = 0;
+		if (maj)
+			for (i in 0...nchunks)
+				if (entryLarge(chunks, i)) large++;
+		return reserve(maj, markedBytes, markedRegions, large);
+	}
+
+	// v marked when the collection copies it (young; a major one: in the old
+	// space's chunks) or, a major one, keeps it in place (a large object),
+	// counted, and pushed to be scanned
+	@:hxmc.unsafe static function markRef(v:Ptr) {
+		if (v.isNull()) return;
+		var young = inYoung(v);
+		var g = young ? 0 : granOf(v);
+		if (!young && (!markMajor || (g != G_OLD && g != G_LARGE))) return;
+		var b = v.toI64() >>> 3;
+		var at = (b >>> 3).toInt(), bit = 1 << (b & 7).toInt();
+		var m = Mem.getU8(marks, at);
+		if ((m & bit) != 0) return;
+		Mem.setI8(marks, at, m | bit);
+		var bytes = objBytes(v);
+		if (g == G_OLD || (young && bytes <= LARGE)) markedBytes += bytes else if (young) markedRegions += (bytes + (GRAN - 1)) & ~(GRAN - 1);
+		push(v);
+	}
+
+	@:hxmc.unsafe static inline function marked(o:Ptr):Bool {
+		var b = o.toI64() >>> 3;
+		return (Mem.getU8(marks, (b >>> 3).toInt()) & (1 << (b & 7).toInt())) != 0;
+	}
+
+	// the references o holds, marked
+	@:hxmc.unsafe static function markSlots(o:Ptr) {
+		var n = nslotsOf(o);
+		switch kindOf(o) {
+			case K_OBJ:
+				var pm = ptrmapAt(tindexOf(o));
+				if (pm.isNull()) return;
+				for (i in 0...n)
+					if (((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) != 0) markRef(Mem.getPtr(o, 8 * i));
+			case K_PARR:
+				for (i in 0...n)
+					markRef(Mem.getPtr(o, 8 * i));
+			case _:
+		}
+	}
+
+	@:hxmc.unsafe static function markDrain() {
+		while (gcTop > 0) {
+			gcTop--;
+			markSlots(Mem.getPtr(gcStack, 16 * gcTop));
+		}
+	}
+
+	// after an overflow: every marked object (of the nursery, and a major
+	// collection's old space) scanned again
+	@:hxmc.unsafe static function markRescan() {
+		var p = youngStart, end = Mem.tlsGet("rt_young_ptr");
+		while (p.ult(end)) {
+			var o = p.add(8);
+			p = p.add(objBytes(o));
+			if (marked(o)) {
+				markSlots(o);
+				markDrain();
+			}
+		}
+		if (!markMajor) return;
+		syncCur();
+		for (c in 0...nchunks) {
+			var q = Mem.getPtr(chunks, 24 * c), e = Mem.getPtr(chunks, 24 * c + 8);
+			while (q.ult(e)) {
+				var o = q.add(8);
+				q = q.add(objBytes(o));
+				if (marked(o)) {
+					markSlots(o);
+					markDrain();
+				}
+			}
+		}
 	}
 
 	@:hxmc.unsafe static function majorGc(need:Int) {
@@ -580,19 +868,24 @@ class Gc {
 		oldPtr = Ptr.nil();
 		oldEnd = Ptr.nil();
 		oldBytes = 0;
-		newState = 2;
+		inPlace = 0;
+		newState = G_TO;
 		major = true;
 		scanRoots();
 		remLen = 0;
 		robjsLen = 0;
 		Wasm.memset(robjsRecent, 0, 8 * 256);
+		rescan(0, Ptr.nil());
 		major = false;
-		newState = 1;
+		newState = G_OLD;
+		// the from-space's chunks to the pool, its large objects' regions back
+		// to Heap, but for those promoted in place (G_TO: in the list already)
 		for (i in 0...nfrom) {
 			var start = Mem.getPtr(fromChunks, 24 * i);
-			var size = Mem.getI64(fromChunks, 24 * i + 16).toInt();
+			var size = entrySize(fromChunks, i);
+			if (entryLarge(fromChunks, i) && granOf(start) == G_TO) continue;
 			mark(start, size, 0);
-			if (size == CHUNK) {
+			if (size == CHUNK && !entryLarge(fromChunks, i)) {
 				Mem.setPtr(start, 0, pool);
 				pool = start;
 				poolBytes += CHUNK;
@@ -600,12 +893,25 @@ class Gc {
 				Heap.release(start, size);
 		}
 		for (i in 0...nchunks)
-			mark(Mem.getPtr(chunks, 24 * i), Mem.getI64(chunks, 24 * i + 16).toInt(), 1);
-		// the next limit: `growth` percent of what is live (twice) and room for
-		// the nursery, but at most half of what the rest of a wasm32 memory (4
-		// GB) leaves: the next collection's from-space and to-space must both fit
+			mark(Mem.getPtr(chunks, 24 * i), entrySize(chunks, i), entryLarge(chunks, i) ? G_LARGE : G_OLD);
+		// the next limit: `growth` percent of what is live (twice: room for as
+		// much again; half as much once memory could not grow for a
+		// collection's worst case, tight), room for what collectFor's test
+		// asks of a minor collection (a nursery promoted whole) and for three
+		// nurseries' promotions, but no more than what is live, and at most
+		// half of what the rest of a wasm32 memory (4 GB) leaves: the next
+		// collection's from-space and to-space must both fit. (The growth
+		// bounds a major collection's cost per byte promoted; the nurseries'
+		// room spares a small old space major collections at nearly every
+		// minor one. Four nurseries more whatever was live, as it was, gave 43
+		// MB live with a 32 MB nursery a limit of 214 MB, issue #129: now 166
+		// MB, and 101 MB once tight)
 		var live = oldBytes;
-		var limit = live * growth / 100 + (minorSize : I64) * 4 + need;
+		var room = tight ? live >> 1 : live * (growth - 100) / 100;
+		if (room < (MIN_ROOM : I64)) room = MIN_ROOM;
+		var more = (minorSize : I64) * 3;
+		if (more > live || tight) more = tight ? 0 : live;
+		var limit = live + room + more + (minorSize : I64) + (minorSize >> 3) + CHUNK + need;
 		if (limit < (MIN_OLD : I64)) limit = MIN_OLD;
 		var other = Heap.memoryBytes() - oldBytes - poolBytes;
 		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
@@ -613,7 +919,16 @@ class Gc {
 		var least = live + need + (minorSize : I64) + 2 * CHUNK;
 		if (limit < least) limit = least;
 		oldLimit = limit;
-		if (stats) Wasi.statLine("gc: major ", majors, (live >> 20).toInt(), (limit >> 20).toInt(), (Heap.memoryBytes() >> 20).toInt());
+		if (stats) {
+			Wasi.statLine("gc: major ", majors, (live >> 20).toInt(), (limit >> 20).toInt(), (Heap.memoryBytes() >> 20).toInt());
+			if (inPlace >= (1 << 20)) {
+				Wasi.writeLit(2, "gc: major ");
+				Wasi.writeInt(2, majors);
+				Wasi.writeLit(2, ": ");
+				Wasi.writeInt(2, (inPlace >> 20).toInt());
+				Wasi.writeLit(2, " MB of large objects kept in place\n");
+			}
+		}
 	}
 
 	// after a minor collection that promoted `promoted` of the `used` bytes
@@ -677,14 +992,42 @@ class Gc {
 		if (youngDirty.ult(hi)) youngDirty = hi;
 		if (verifying) verify(false);
 		if (verifying) checkRemembered();
-		if (full) majorGc(need) else {
-			var before = copiedBytes;
-			minorGc();
-			if (majors == m0) {
-				youngBytes += used;
-				promotedBytes += copiedBytes - before;
-				if (!minorFixed) adaptNursery((copiedBytes - before).toInt(), used.toInt());
-			}
+		// (what survives fills chunks to within LARGE of their end: an eighth more)
+		if (!full && oldBytes + used + (used >> 3) + CHUNK > oldLimit) full = true;
+		// the memory to copy into first, for the worst case (reserveFor), else
+		// for what the collection copies, measured (reserveExact; from then on
+		// the nursery shrinks to its floor and stops growing, what it holds
+		// being much of a collection's worst case, and the limits tighter:
+		// majorGc). When a major collection cannot have it, a minor one runs
+		// if it can (the program goes on past the limit, and the next
+		// collection tries a major one again: the memory freed meanwhile may
+		// hold it); when neither can, what is live does not fit: the program
+		// ends here, outside a collection
+		var reserved = reserveFor(full);
+		var pressed = !reserved;
+		if (!reserved) {
+			tight = true;
+			reserved = reserveExact(full);
+			if (reserved && stats) Wasi.writeLit(2, "gc: memory cannot grow for a collection's worst case: reserved what it copies\n");
+		}
+		if (!reserved && full && (reserveFor(false) || reserveExact(false))) {
+			if (stats) Wasi.writeLit(2, "gc: a minor collection rather than a major one (memory cannot grow for what it copies)\n");
+			full = false;
+			reserved = true;
+		}
+		if (!reserved) Heap.outOfMemory();
+		var before = copiedBytes;
+		if (full) majorGc(need) else minorGc();
+		unreserve();
+		bigRegions = 0;
+		if (!full) {
+			youngBytes += used;
+			promotedBytes += copiedBytes - before;
+			if (!minorFixed && !pressed) adaptNursery((copiedBytes - before).toInt(), used.toInt());
+		}
+		if (pressed && !minorFixed) {
+			growthOff = true;
+			if (minorSize > MINOR_MIN) resizeNursery(MINOR_MIN);
 		}
 		emptyChunk();
 		if (verifying) Wasm.memset(youngStart, POISON, minorSize);
@@ -886,6 +1229,17 @@ class Gc {
 		Wasi.writeInt(2, Std.int(c / 100));
 		if (c % 100 < 10) Wasi.writeLit(2, ".0") else Wasi.writeLit(2, ".");
 		Wasi.writeInt(2, c % 100);
+	}
+
+	// what the old space's chunks and regions hold, and the nursery up to its
+	// allocation pointer (hxmc.GcStats.liveBytes)
+	@:hxmc.unsafe public static function liveBytes():Float {
+		syncCur();
+		var b:I64 = Mem.tlsGet("rt_young_ptr").diff(youngStart);
+		for (i in 0...nchunks)
+			b += Mem.getPtr(chunks, 24 * i + 8).diff(Mem.getPtr(chunks, 24 * i));
+		var f:Float = cast b;
+		return f;
 	}
 
 	@:hxmc.unsafe public static function heapBytes():Float {

@@ -40,6 +40,10 @@ class Options {
 	// -D hxmc.wasm-eh=legacy: wasm32-wasi with the legacy exception-handling instructions
 	// (try/catch_all/rethrow) for engines without exnref (default: exnref)
 	public var wasmLegacyEh = false;
+	// -D hxmc.wasm-memory-max=<MB>: wasm32-wasi, the module's memory at most
+	// so large (its maximum: memory.grow fails past it, as a host that
+	// refuses memory does; 0: no maximum, the default)
+	public var wasmMemoryMaxMb = 0;
 	// -D hxmc.native-array-outofbounds=throws|silent: NativeArray (Vector)
 	// accesses out of bounds throw, or read the default and write nothing
 	// (default: not tested; hxmc.ir.Lower.bounds)
@@ -232,6 +236,12 @@ class Options {
 			case "legacy": o.wasmLegacyEh = true;
 			case "exnref":
 			case _: throw "hxmc: -D hxmc.wasm-eh=" + eh + ": exnref or legacy";
+		}
+		var mm = def("hxmc.wasm_memory_max"); // (-D turns the dashes into underscores)
+		if (mm != null) {
+			var v = Std.parseInt(mm);
+			if (v == null || v < 1 || v > 4096 || Std.string(v) != StringTools.trim(mm)) throw "hxmc: -D hxmc.wasm-memory-max=" + mm + ": megabytes, 1 to 4096";
+			o.wasmMemoryMaxMb = v;
 		}
 		o.libc = def("hxmc.libc");
 		// (the WasmGC back end is gone, issue #80: an error rather than a linear-memory module)
