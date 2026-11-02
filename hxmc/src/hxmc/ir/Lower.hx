@@ -1014,6 +1014,7 @@ class Lower implements LowerQueries {
 			reg.cSymbol = reg.name;
 			reg.display = core.Globals.sTypePath(c.clPath) + " (its Objective-C class)";
 			reg.ret = TVoid;
+			claimObjCName(ci.ident, c);
 			ci.objc = {
 				name: ci.ident,
 				root: root,
@@ -1057,6 +1058,18 @@ class Lower implements LowerQueries {
 	// ---- Objective-C mode classes (ObjC.isMode)
 
 	var modes = new Map<TClass, ObjC.ObjCMode>();
+	// the Objective-C class names this program registers (peer and mode
+	// classes), each with its class: two of one name would end the program at
+	// the second's registration (a name another image takes ends it there too)
+	var objcNames = new Map<String, TClass>();
+
+	function claimObjCName(name:String, c:TClass) {
+		var other = objcNames.get(name);
+		if (other != null && core.Globals.sTypePath(other.clPath) != core.Globals.sTypePath(c.clPath))
+			throw new LowerError('Objective-C class name $name: both ${core.Globals.sTypePath(c.clPath)} and ${core.Globals.sTypePath(other.clPath)} register it (@:hxmc.objc("OtherName") names one otherwise)',
+				CInterop.posOf(c.clPos));
+		objcNames.set(name, c);
+	}
 
 	// the registration of Objective-C mode class c, made once (its class
 	// cell, ObjC.CLASS_CELL, and its registering function ObjC.REGISTER, the
@@ -1093,6 +1106,7 @@ class Lower implements LowerQueries {
 		for (cf in c.clOrderedFields)
 			if (cf.cfKind.match(Method(MethDynamic)))
 				throw new LowerError('Objective-C class $cname (@:hxmc.objc): the dynamic method ${cf.cfName} has no slot to hold its function', CInterop.posOf(cf.cfPos));
+		claimObjCName(ObjC.className(c), c);
 		var key = ObjC.modeKey(c);
 		var reg = new FuncInfo(ObjC.REGISTER + key, moduleOf(c));
 		reg.cSymbol = reg.name;
