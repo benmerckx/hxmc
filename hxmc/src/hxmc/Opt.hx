@@ -1638,6 +1638,17 @@ class Opt {
 						log.push(bk);
 						continue;
 					}
+					// (a type parameter's word decoded as the number it encodes: that
+					// number, as a field a Sroa'd object or an inlined generic
+					// function stored and read back)
+					if (op == Untag) {
+						var w = vals[res(i.a)];
+						if (w.op == Tag && !w.dead && w.info.t == i.info.t) {
+							repl[i.id] = res(w.a);
+							i.dead = true;
+							continue;
+						}
+					}
 					// (comparisons are recomputed: they fuse with their branch)
 					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0) || op == Cmp) continue;
 					if (fold(i)) continue;

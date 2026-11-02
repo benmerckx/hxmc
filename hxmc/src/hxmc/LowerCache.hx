@@ -996,7 +996,7 @@ class CachedLower extends Lower {
 					case RArr(t) | RNativeArr(t) | RBox(t) | RNull(t): boundTy(t);
 					// (a function type lowers its argument types too, normalized away in the signature)
 					case RClos(_): false;
-					case RStr | RAnon | RAny | RType | RNative(_): true;
+					case RStr | RAnon | RAny | RTag | RType | RNative(_): true;
 				}
 			case _: true;
 		}
@@ -1023,7 +1023,7 @@ class CachedLower extends Lower {
 			case [RClos(x), RClos(y)]: bindSig(x, y);
 			case [RBox(x), RBox(y)]: bindTy(x, y);
 			case [RNull(x), RNull(y)]: bindTy(x, y);
-			case [RStr, RStr] | [RAnon, RAnon] | [RAny, RAny] | [RType, RType]:
+			case [RStr, RStr] | [RAnon, RAnon] | [RAny, RAny] | [RTag, RTag] | [RType, RType]:
 			case [RNative(x), RNative(y)] if (x == y):
 			case _: mismatch("type changed");
 		}
@@ -1098,7 +1098,7 @@ class CachedLower extends Lower {
 			case RClos(s): RClos(obj(s));
 			case RBox(t): RBox(mapTy(t));
 			case RNull(t): RNull(mapTy(t));
-			case RStr | RAnon | RAny | RType | RNative(_): r;
+			case RStr | RAnon | RAny | RTag | RType | RNative(_): r;
 		}
 	}
 
@@ -1160,6 +1160,8 @@ class CachedLower extends Lower {
 			case EConv(op, a): EConv(op, s(a));
 			case EBox(t, a): EBox(t, s(a));
 			case EUnbox(t, a): EUnbox(t, s(a));
+			case ETag(t, a): ETag(t, s(a));
+			case EUntag(t, a): EUntag(t, s(a));
 			case EField(c, idx, o): EField(c, idx, s(o));
 			case EFieldAddr(c, idx, o): EFieldAddr(c, idx, s(o));
 			case EAnonGet(name, t, o, hint): EAnonGet(name, t, s(o), hint);
@@ -1196,6 +1198,8 @@ class CachedLower extends Lower {
 			case EConv(op, a): EConv(op, ex(a));
 			case EBox(t, a): EBox(mapTy(t), ex(a));
 			case EUnbox(t, a): EUnbox(mapTy(t), ex(a));
+			case ETag(t, a): ETag(t, ex(a));
+			case EUntag(t, a): EUntag(mapTy(t), ex(a));
 			case EField(c, idx, o): EField(obj(c), idx, ex(o));
 			case EFieldAddr(c, idx, o): EFieldAddr(obj(c), idx, ex(o));
 			case EAnonGet(name, t, o, hint): EAnonGet(name, mapTy(t), ex(o), obj(hint));

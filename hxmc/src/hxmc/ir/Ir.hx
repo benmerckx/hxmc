@@ -36,7 +36,13 @@ enum RefTy {
 	RNull(t:Ty); // Null<Int>, Null<Float>, Null<Bool>: a Dynamic box or null
 	RStr;
 	RAnon; // anonymous structure, any shape: fields found through the type's field table
-	RAny; // Dynamic, type parameters, Any
+	RAny; // Dynamic, Any
+	// a type parameter's value: a tagged 64-bit word (hxmc.rt.Tagged; docs/hxmc.md,
+	// "Values of type parameters"): a reference below 2^48 (any Dynamic: null,
+	// an object, a box) or an Int or a Float encoded; converted to and from
+	// other types by FnLower.coerce (ETag, EUntag), never read as a reference
+	// as it is (hxmc.ir.TagCheck)
+	RTag;
 	RType; // Class<T> / Enum<T>: a runtime type descriptor
 	RNative(path:String); // instance of an extern class, implemented by the runtime
 }
@@ -290,6 +296,12 @@ enum Ex {
 	EConv(op:ConvOp, a:Ex);
 	EBox(t:Ty, a:Ex); // scalar -> Dynamic box (cached for small ints)
 	EUnbox(t:Ty, a:Ex); // Dynamic or Null<T> -> scalar (null gives 0)
+	ETag(t:Ty, a:Ex); // an Int or a Float (t) -> a type parameter's word (RTag), inline
+	// a type parameter's word -> the scalar t (a word of its kind decoded
+	// inline; the other kind, a box: by the runtime, which allocates
+	// nothing), or -> Dynamic (t a reference: a scalar's word boxed, impure
+	// as EBox is)
+	EUntag(t:Ty, a:Ex);
 	EField(c:ClassInfo, idx:Int, obj:Ex);
 	// the address of a struct field's memory in an object (a raw heap
 	// address: valid until the next GC point, Facts.checkRawAddresses)
@@ -459,16 +471,25 @@ class Program {
 
 	var sigKeys = new Map<String, SigInfo>();
 
-	public function sig(args:Array<Ty>, ret:Ty):SigInfo {
+	public static function sigKey(args:Array<Ty>, ret:Ty):String {
 		var b = new StringBuf();
 		for (a in args)
 			b.add(Ir.repr(a));
 		b.add("_");
 		b.add(Ir.repr(ret));
-		var key = b.toString();
+		return b.toString();
+	}
+
+	// the signature of this key, if the program has one (no new one made:
+	// MemLower's threads read it, Ir.anonAlternatives)
+	public function sigOf(key:String):Null<SigInfo>
+		return sigKeys.get(key);
+
+	public function sig(args:Array<Ty>, ret:Ty):SigInfo {
+		var key = sigKey(args, ret);
 		var s = sigKeys.get(key);
 		if (s != null) return s;
-		var norm = (t:Ty) -> Ir.isRef(t) ? TRef(RAny) : t;
+		var norm = (t:Ty) -> Ir.isRef(t) && !t.match(TRef(RTag)) ? TRef(RAny) : t;
 		var nargs = new Vector<Ty>(args.length);
 		for (k in 0...args.length)
 			nargs[k] = norm(args[k]);
@@ -518,6 +539,7 @@ class Ir {
 			case TF64: "f";
 			case TI64: "l";
 			case TVoid: "v";
+			case TRef(RTag): "t";
 			case TRef(_): "p";
 			case TStruct(_): "s";
 		}
@@ -528,6 +550,32 @@ class Ir {
 	public static function isScalar(t:Ty):Bool
 		return t == TI32 || t == TBool || t == TF64 || t == TI64;
 
+	// A structural call's signature s (ECallAnon) is the structure's
+	// field's, of its type parameters' values (RTag) where it is generic; a
+	// class's method found by name (the inline cache, MemLower.callAnon)
+	// may have another where only those differ: a generic class's method
+	// called where the structure is of concrete types (Iterator<Int>'s next
+	// on a haxe.ds.List iterator), a concrete method where the structure is
+	// generic (Iterator<T>'s next on an Array's iterator, whose next returns
+	// Dynamic). The other signatures the call takes a method of, converting
+	// as it passes and returns (MemLower.callAnon): the result's kind
+	// switched (a word for a reference, an Int, a Float; a reference for a
+	// word), then every argument and the result a word where it may be (a
+	// generic method's). A word is never passed for a method's reference,
+	// nor boxed for it (no allocation among the arguments).
+	public static function anonAlternatives(s:SigInfo):Array<{args:Array<Ty>, ret:Ty}> {
+		var args = [for (a in s.args) a];
+		var wordable = (t:Ty) -> t == TI32 || t == TF64 || t.match(TRef(_));
+		var r = [];
+		if (wordable(s.ret)) r.push({args: args, ret: s.ret.match(TRef(RTag)) ? TRef(RAny) : TRef(RTag)});
+		var gen = [for (a in args) wordable(a) ? TRef(RTag) : a];
+		var changed = false;
+		for (i in 0...args.length)
+			if (Ir.repr(gen[i]) != Ir.repr(args[i])) changed = true;
+		if (changed) r.push({args: gen, ret: wordable(s.ret) ? TRef(RTag) : s.ret});
+		return r;
+	}
+
 	// the type of an expression's value (what MirBuild gives the Mir value
 	// it makes: MIns.vty)
 	public static function typeOf(e:Ex):Ty
@@ -535,7 +583,7 @@ class Ir {
 			case EInt(_): TI32;
 			case EF64(_): TF64;
 			case EStr(_): TRef(RStr);
-			case ENull(t) | EGlobal(_, t) | EUnbox(t, _) | EAnonGet(_, t, _, _) | ECast(t, _) | EBoxGet(t, _) | ECallHost(_, _, t): t;
+			case ENull(t) | EGlobal(_, t) | EUnbox(t, _) | EUntag(t, _) | EAnonGet(_, t, _, _) | ECast(t, _) | EBoxGet(t, _) | ECallHost(_, _, t): t;
 			case ELocal(l): l.ty;
 			case EBin(op, _, _):
 				switch op {
@@ -552,6 +600,7 @@ class Ir {
 					case I2L | F2L | LNeg: TI64;
 				}
 			case EBox(_): TRef(RAny);
+			case ETag(_): TRef(RTag);
 			case EField(c, idx, _) | EFieldAddr(c, idx, _): c.fields[idx].ty;
 			case EEnumTag(_): TI32;
 			case EEnumParam(c, idx, _): c.params[idx];

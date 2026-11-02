@@ -18,10 +18,12 @@ using core.ds.VectorTools;
 // reachable from `main` to the IR (docs/hxmc.md).
 //
 // Representation (see Ir.hx): Int/Bool/Float and haxe.Int64 unboxed;
-// everything else is a pointer. Generics are erased: a type parameter is Dynamic (RAny), and values
-// are converted (boxed, unboxed, wrapped in adapter closures) where a declared
-// type and a use-site type differ: calls, returns, field and enum-argument
-// access (FnLower.coerce). A function body sees this class through
+// everything else is a pointer. Generics are erased: a type parameter's value
+// is a tagged word (RTag: a reference, or an Int or Float encoded; Dynamic
+// where the runtime holds it, `stored`, `erase`), and values are converted
+// (tagged, boxed, unboxed, wrapped in adapter closures) where a declared type
+// and a use-site type differ: calls, returns, field and enum-argument access
+// (FnLower.coerce). A function body sees this class through
 // LowerQueries alone (what the compilation server's reuse of bodies covers).
 class Lower implements LowerQueries {
 	var prog = new Program();
@@ -366,6 +368,12 @@ class Lower implements LowerQueries {
 			case EUnbox(t, a):
 				var x = ex(a);
 				x == a ? e : EUnbox(t, x);
+			case ETag(t, a):
+				var x = ex(a);
+				x == a ? e : ETag(t, x);
+			case EUntag(t, a):
+				var x = ex(a);
+				x == a ? e : EUntag(t, x);
 			case EField(c, i, a):
 				var x = ex(a);
 				x == a ? e : EField(c, i, x);
@@ -499,6 +507,8 @@ class Lower implements LowerQueries {
 		}
 		sts = ss -> ss.map(st);
 		fi.body = sts(fi.body);
+		// (no type parameter's word read unconverted: TagCheck)
+		TagCheck.func(fi, prog);
 	}
 
 	// Lowers the body of `fi` (`run`). The hook for a subclass that caches
@@ -729,11 +739,11 @@ class Lower implements LowerQueries {
 				}
 			case TInst(c, params):
 				switch c.clKind {
-					case KTypeParameter(_): TRef(RAny);
+					case KTypeParameter(_): TRef(RTag);
 					case _:
 						if (isCore(c, "String")) TRef(RStr);
-						else if (isCore(c, "Array")) TRef(RArr(boxed(ty(params[0]))));
-						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : boxed(ty(params[0]))));
+						else if (isCore(c, "Array")) TRef(RArr(stored(ty(params[0]))));
+						else if (isNativeArray(c)) TRef(RNativeArr(isByte(params[0]) ? TU8 : stored(ty(params[0]))));
 						else if (CInterop.isStruct(c)) {
 							var n = core.Globals.sTypePath(c.clPath);
 							structClasses.set(n, c);
@@ -877,6 +887,15 @@ class Lower implements LowerQueries {
 		return switch t {
 			case TStruct(n, _): TRef(RObj(structBox(n)));
 			case _: t;
+		}
+
+	// t as storage the runtime reads as Dynamic (an Array's or a NativeArray's
+	// element; FnLower.stored: a structure's field): a struct boxed, a type
+	// parameter's value as Dynamic (no such storage holds a tagged word)
+	function stored(t:Ty):Ty
+		return switch t {
+			case TRef(RTag): TRef(RAny);
+			case _: boxed(t);
 		}
 
 	// the prefix of a class's fields that no name reaches (no identifier starts with it)

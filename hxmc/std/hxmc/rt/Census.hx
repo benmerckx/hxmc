@@ -284,7 +284,7 @@ class Census {
 				for (i in 0...Types.nfields(ty)) {
 					var f = Types.field(ty, i);
 					var fk = Types.fKind(f);
-					if (fk == "i".code || fk == "b".code) kIb++ else if (fk == "p".code) {
+					if (fk == "i".code || fk == "b".code) kIb++ else if (fk == "p".code || fk == "t".code) {
 						kPtrs++;
 						var v = Mem.getPtr(o, 8 * Types.fSlot(f));
 						// (the tagged word of a scalar, a type parameter's value: no object, Tagged)

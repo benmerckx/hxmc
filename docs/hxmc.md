@@ -419,12 +419,11 @@ lowers to plain loads and stores; references keep the write barrier.
 
 ## Values of type parameters
 
-A value of a type parameter is to be a tagged 64-bit word (issue #127,
+A value of a type parameter is a tagged 64-bit word (issue #127,
 JavaScriptCore's encoding): either a reference, as Dynamic holds it, or an
 Int or Float in the word itself, so that storing a number in a `T` slot
-allocates nothing. The encoding (`rt/Tagged.hx`) and its checks are in
-place; the lowering still gives type parameters Dynamic's representation
-(`Lower.lowerTy`), so no program makes such a word yet.
+allocates nothing. `Lower.lowerTy` gives a type parameter the IR type
+`TRef(RTag)`; `Null<Int>`, `Null<Float>` and optional arguments still box.
 
 | Word | Value |
 | --- | --- |
@@ -452,6 +451,60 @@ tag first, then through the box as Dynamic's conversions do.
   `MemLower.tagFrom` and `untagTo`. The runtime's `hxmc.unsafe.Mem` has them
   as intrinsics (`tagInt`, `untagDynamic`, ...): the corpus's `TaggedWords`
   checks both against `Tagged`'s and the expected bits.
+- **Where words live**: the locals, arguments and results of type `T`, the
+  fields of type `T` of classes and the arguments of type `T` of enum
+  constructors (Facts' field kind `t`: the runtime's `Dyn.boxSlot`,
+  `Type.enumParameters`, `Type.enumEq` and `Std.string` box such a word or
+  compare it as a number), closures' captures and arguments. Storage the
+  runtime reads as Dynamic holds Dynamic, never a word: an `Array<T>`'s or
+  `NativeArray<T>`'s elements (`Lower.stored`), a structure's fields (also
+  where the shape's first object had a class's type there: shapes are
+  shared by representation), and the arguments and results of what the
+  runtime implements (an extern's signature, Array's and String's methods:
+  `FnLower.hty`, also inside function types).
+- **Conversions** (`FnLower.coerce`): an Int or Float to a word inline
+  (`ETag`), a Bool or Int64 boxed (a Bool's box is static); a word to a
+  number inline (`EUntag`, the other kind and boxes by the runtime, which
+  allocates nothing); a word to Dynamic, `Null<T>`, a structure or an
+  extern's instance boxed where it is a scalar's (`EUntag` to a reference: a
+  test inline, `hx_tag_box` on the slow path only, which a cold site roots
+  around, `Facts.markCold`); a word to a class's, an enum's, an array's or a
+  function's type as it is (no scalar is one: an explicit `ECast`); any
+  reference to a word as it is. Reading an `Array<T>`'s element as a word
+  encodes an Int or Float element rather than boxing it (`hx_aget_t_slow`).
+  `Opt` folds a word decoded where it was just encoded (a scalar-replaced
+  field, an inlined generic function).
+- **`==` on `T`** (`FnLower.equality`, `MirBuild.tagEq`): equal words are
+  equal values but NaN's word; two different Ints' words are not; anything
+  else by `hx_tag_eq_slow`, which compares numbers of either kind and boxes
+  by value and references as `hx_dyn_eq`, without boxing. So NaN != NaN, -0
+  == 0, and a boxed 3 from Dynamic equals an encoded 3.
+- **Signatures**: a closure's signature key has `t` for a word (`Ir.repr`),
+  so a function of `T` and one of Dynamic or of a class differ and convert
+  through an adapter (`FnLower.coerce`), which boxes or decodes. Where a
+  closure of concrete reference types is passed to a generic function
+  (`Lambda.map` with a function of `String`, an iterator of the port's)
+  the words it gets are references of its types, so it is passed as it is
+  (`FnLower.sameClosure`), without an adapter. A Dynamic converted to a
+  function type (an `Array<Lexer->T>`'s element, Dynamic's) keeps a closure
+  whose signature differs only in that safe direction, a word taken where
+  a reference is given or a reference returned where a word is read
+  (`hx_clos_of_sig`), rather than calling it through a dynamic adapter. A method implementing a
+  declaration of `T` takes and returns words (`Lower.rootDecl`), so an
+  override of concrete types decodes without allocating. The runtime's
+  dynamic calls convert by the key (`DYN<s>` trampolines, `Dyn.anonCallSlow`).
+- **Structural calls**: a structure's method signature has words where the
+  structure is generic, a class's method may not (`Iterator<T>.next` on an
+  Array's iterator, which returns Dynamic; `Iterator<Int>.next` on a generic
+  class's). The inline cache takes a method of either signature and
+  converts the result or the arguments as it calls (`Ir.anonAlternatives`,
+  `MemLower.callAnon`); the slow path roots the references and words it
+  passes in pushed slots (`hx_anon_call_slow_r`), since the runtime
+  allocates before it has read them all.
+- **The build checks** every function's final IR for a word reaching
+  Dynamic, a number, a structure's field or the runtime's arguments without
+  a conversion (`hxmc.ir.TagCheck`): a missed boundary fails the build,
+  naming the function and the expression, instead of crashing the program.
 - **Verify mode** (`-D hxmc.verify-tags`): a word read as a reference ends
   the program with a message (`rt_tagged_access`). Each operation on objects
   tests the reference it dereferences (`MemLower.verifyRef`: fields, enum
