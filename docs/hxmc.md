@@ -1155,17 +1155,56 @@ to-space as it is, unmoved and uncopied, and the regions of those not
 reached go back to the heap. So a 48 MB `Bytes` costs 48 MB, not 96 MB at
 each major collection.
 
-When `memory.grow` fails the runtime prints "out of memory: linear memory
-is N MB, growing it by M MB failed" and exits. An Array grown by doubling
-reaches about 134M Floats (1 GB of storage) before its next growth no
-longer fits next to the old storage.
+A host may refuse `memory.grow` well below 4 GB (Chrome on Android), and a
+copying collection cannot stop halfway, so each collection takes the
+memory it may copy into before it starts (`Gc.reserveFor`):
+
+- For the worst case: everything the nursery holds and, for a major
+  collection, everything the old space's chunks hold (large objects stay
+  in place), an eighth more for the chunks' ends, less the free chunks;
+  the regions of the nursery's large objects. The to-space's list is sized
+  too. What it does not use goes back after it.
+- When memory cannot grow so far: a trace marks what the collection would
+  copy, without copying (a bit per 8 bytes of memory, taken for the
+  trace), and the reservation is for that. The nursery then shrinks to its
+  floor and stops growing.
+- When a major collection cannot have even that, a minor one runs if it
+  can (the program goes on past the limit; the next collection tries a
+  major one again); when neither can, what is live does not fit, and the
+  program ends before collecting.
+
+The copy's stack (depth-first, an entry per level) needs no reservation:
+when it cannot grow, the object stays off it and the to-space is scanned
+again for what was left (`RT_VERIFY=1` keeps it at 16 entries, so that
+path runs). With a reservation, nothing in a collection grows memory.
+`-D hxmc.wasm-memory-max=<MB>` declares the module's maximum, which
+`GcMemoryCap` uses to test this under node and wasmtime. Peak memory is
+the old space, the nursery and the reservation; the reservation's unused
+part is never touched, so it is address space more than resident memory.
+
+When `memory.grow` fails outside a collection the runtime prints "out of
+memory: linear memory is N MB, growing it by M MB failed" and exits. An
+Array grown by doubling reaches about 134M Floats (1 GB of storage) before
+its next growth no longer fits next to the old storage.
+
+The collector does not recurse (its stacks are in linear memory), so a
+collection needs no more of node's stack than the program's deepest
+frame. node's `--stack-size` beyond the system's stack (`ulimit -s`)
+crashes node with a segmentation fault on deep recursion instead of a
+RangeError (`wasi.mjs` takes the shadow stack's size from it); the
+Makefile runs node after `ulimit -s unlimited`.
 
 On every target an Array's storage holds at most 268,435,453 elements
 (`Boxes.MAX_CAP`, 2 GB of 8-byte elements); growing past that throws "out
 of memory: an Array of N elements is longer than the longest". Natively, an
 object that does not fit in the old space's region even after a major
 collection exits with "out of memory: an object does not fit in the old
-space's region (RT_REGION_MB)".
+space's region (RT_REGION_MB)". The native to-space is the other region,
+reserved whole, so a native collection never needs memory it does not have;
+the limit keeps a nursery's room below the region's end, and a major
+collection whose copy could still pass it (a nursery grown since) exits
+before it starts ("what a major collection may copy does not fit in the old
+space's region"). Natively, large objects are copied like any other.
 
 ## Debugging
 

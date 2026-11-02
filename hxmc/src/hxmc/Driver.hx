@@ -586,6 +586,7 @@ class Driver {
 			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 64 << 10);
 			lw.nameSection = !o.strip;
 			lw.legacyEh = o.wasmLegacyEh;
+			lw.maxPages = o.wasmMemoryMaxMb << 4;
 			var wasm = lw.link();
 			sys.io.File.saveBytes(out, wasm);
 			if (o.stats) Sys.println('hxmc: data ${ms(t3 - t2)}, link ${ms(haxe.Timer.stamp() - t3)}');
