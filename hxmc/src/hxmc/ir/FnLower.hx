@@ -186,6 +186,7 @@ class FnLower {
 	}
 
 	// static initializer: every static var with an expression, then __init__
+	// (on the class's target only: Lower.ofTarget)
 	public function runInit(c:TClass) {
 		boxed = new Map();
 		for (cf in c.clOrderedStatics)
@@ -202,7 +203,7 @@ class FnLower {
 					out.push(SSetGlobal(g, coerce(x, tyOf(cf.cfExpr), t)));
 				case _:
 			}
-		if (c.clInit != null && c.clInit.cfExpr != null) switch c.clInit.cfExpr.eexpr {
+		if (c.clInit != null && c.clInit.cfExpr != null && Lower.ofTarget(c)) switch c.clInit.cfExpr.eexpr {
 			case TFunction(tf):
 				boxed = Boxing.analyze(tf.tfExpr, []);
 				stmt(tf.tfExpr);
@@ -2101,7 +2102,13 @@ class FnLower {
 				return assign(a, null, e, (cur, curTy) -> arith(op2, cur, curTy, () -> {x: value(b), t: tyOf(b)}, curTy, e));
 			case OpBoolAnd | OpBoolOr:
 				var lo = newLocal("c", TBool);
-				out.push(SSet(lo, cond(a)));
+				var ca = cond(a);
+				// (a test of the target first: the other side only where it is
+				// evaluated, a test of the target too where it decides alone,
+				// which an `if` folds as one, TIf; Lower.targetConst)
+				var k = Lower.targetConst(ca);
+				if (k != null) return (k != 0) == (op == OpBoolOr) ? EBin(Eq, EInt(k != 0 ? 1 : 0), EInt(1)) : cond(b);
+				out.push(SSet(lo, ca));
 				var rest = block(() -> out.push(SSet(lo, cond(b))));
 				out.push(op == OpBoolAnd ? SIf(ELocal(lo), rest, vector()) : SIf(ELocal(lo), vector(), rest));
 				return ELocal(lo);

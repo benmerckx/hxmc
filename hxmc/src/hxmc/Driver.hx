@@ -641,10 +641,11 @@ class Driver {
 		var still = links.length > 0 || hxmc.ir.CInterop.USER.keys().hasNext() || hxmc.ir.CInterop.LIBS.keys().hasNext() ? undefinedNames().undef : [];
 		var dylibs = new Map<String, String>();
 		// (a shared object named as such, libm.so.6: never from an object, which
-		// may define the name too, as compiler-rt's weak cos)
+		// may define the name too, as compiler-rt's weak cos; of the functions
+		// the program calls, not of those lowered and then dropped: Reach)
 		if (abi.os == "linux" && !abi.linksDynamically())
 			for (n => lib in hxmc.ir.CInterop.LIBS)
-				if (lib.indexOf(".so") >= 0)
+				if (lib.indexOf(".so") >= 0 && wanted.exists(n))
 					throw 'hxmc: link: the C function $n of the shared library $lib (@:hxmc.lib): Linux executables are static with musl (the default); shared libraries need the dynamic glibc mode (-D hxmc.libc=glibc)';
 		for (n in still) {
 			var lib = hxmc.ir.CInterop.LIBS.get(n);
