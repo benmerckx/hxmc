@@ -63,7 +63,9 @@ class Crosshost {
 		rmrf(out + ".hxmc");
 		var env:Map<String, Null<String>> = [];
 		// the module's own path says nothing about where the runtime objects are
-		if (target != "wasm32-wasi") env["HXMC_RT_OBJ"] = FileSystem.fullPath('bin/hxmc/rt/$target/rt.o');
+		// (iOS's and Mac Catalyst's are macOS's: hxmc.Abi.rtName)
+		var rt = target.startsWith("macos-catalyst-") ? "macos-" + target.substr("macos-catalyst-".length) : target.startsWith("ios-") ? "macos-arm64" : target;
+		if (target != "wasm32-wasi") env["HXMC_RT_OBJ"] = FileSystem.fullPath('bin/hxmc/rt/$rt/rt.o');
 		var glibc = target.endsWith("-glibc");
 		var mode = glibc ? ["-D", "hxmc.target=" + target.substr(0, target.length - 6), "-D", "hxmc.libc=glibc"] : ["-D", 'hxmc.target=$target'];
 		var r = exec(tool.concat([out]).concat(args).concat(["-cp", "bin/hxmc/std", "--custom-target", "hxmc"]).concat(mode), {env: env, merge: true});
