@@ -60,6 +60,9 @@ class RuntimeSymbols {
 	static function nullChecks():Bool
 		return Lower.nullChecks;
 
+	static function verifyTags():Bool
+		return Lower.verifyTags;
+
 	static function boundsThrow():Bool
 		return Lower.bounds == Lower.BOUNDS_THROWS;
 
@@ -98,6 +101,12 @@ class RuntimeSymbols {
 		{sym: "hx_unbox_bool", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
 		{sym: "hx_unbox_float", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
 		{sym: "hx_unbox_i64", kind: FUNC, families: LINEAR, by: "MemLower.unboxTo"},
+		{sym: "hx_tag_int", kind: FUNC, families: LINEAR, by: "MemLower.untagTo"},
+		{sym: "hx_tag_float", kind: FUNC, families: LINEAR, by: "MemLower.untagTo"},
+		{sym: "hx_tag_bool", kind: FUNC, families: LINEAR, by: "MemLower.untagTo"},
+		{sym: "hx_tag_i64", kind: FUNC, families: LINEAR, by: "MemLower.untagTo"},
+		{sym: "hx_tag_box", kind: FUNC, families: LINEAR, by: "MemLower.untagTo"},
+		{sym: "rt_tagged_access", kind: FUNC, families: LINEAR, by: "MemLower.verifyRef, MirBuild (Mem.addr) with -D hxmc.verify-tags", when: verifyTags},
 		{sym: "hx_aget_i_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array read's slow path"},
 		{sym: "hx_aget_f_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array read's slow path"},
 		{sym: "hx_aget_l_slow", kind: FUNC, families: LINEAR, by: "MirBuild: an Array read's slow path"},

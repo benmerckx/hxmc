@@ -1170,7 +1170,7 @@ class Opt {
 
 	// object-level operations whose value depends on their operands alone
 	static inline function objPure(op:Op):Bool
-		return op == EnumTag || op == TypeTest || op == FieldAddr;
+		return op == EnumTag || op == TypeTest || op == FieldAddr || op == Tag;
 
 	// object-level operations whose lowering calls on the fast path (LICM: a call)
 	static inline function objCall(op:Op):Bool
@@ -1197,7 +1197,8 @@ class Opt {
 	// the classes an object-level operation writes
 	function objKill(i:MIns):Int
 		return switch i.op {
-			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | InitField: 0;
+			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | InitField | Tag: 0;
+			case Untag if (!i.info.t.match(TRef(_))): 0;
 			case ArrayGet: ptrElem(i.info.t) ? ALL : 0;
 			case SetField: i.info.t.match(TVoid) ? 0 : (1 << fieldCls(i.info)) | (1 << MField) | (1 << MOther);
 			case AnonStore: FIELD_BITS | (1 << MField) | (1 << MOther);
