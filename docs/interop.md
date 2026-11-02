@@ -1001,10 +1001,14 @@ counted. Where references cross:
   up at once (the Haxe object or an `id` of it), for an owner that knows it
   is done with it (a UI library's unmounted view): Objective-C frees it as
   soon as it lets go. Messages through `o` then go to nil; calls Objective-C
-  still makes into its class reach `o` while the object lives. Without it,
-  `RT_PEER_BUDGET` (1000; 0: off) paired objects gone to the old space
-  start a major collection: the collector does not see the memory their
-  Objective-C objects hold.
+  still makes into its class reach `o` while the object lives. An object
+  no Haxe object is paired with (an extern class's, an Objective-C mode
+  class's) is held by its box, which every Haxe holder of it shares:
+  `detach` releases it at once and the box holds nil from then on (the id
+  boxed again later gets a box of its own). Without it,
+  `RT_PEER_BUDGET` (1000; 0: off) paired objects and boxes gone to the old
+  space start a major collection: the collector does not see the memory
+  their Objective-C objects hold.
 - **Pools**: the run loop drains one per event;
   `hxmc.objc.AutoreleasePool.run(() -> ...)` drains one around a loop of
   many messages or on a thread hxmc started (also when `f` throws). Code

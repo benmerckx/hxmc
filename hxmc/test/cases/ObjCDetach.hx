@@ -16,6 +16,7 @@ import hxmc.unsafe.*;
 	static function array():NSMutableArray;
 	function addObject(o:NSObject):Void;
 	function removeAllObjects():Void;
+	function firstObject():Null<NSObject>;
 	function makeObjectsPerformSelector(sel:hxmc.objc.Selector):Void;
 }
 
@@ -87,6 +88,35 @@ class ObjCDetach {
 		trace("not detached: alive " + alive(wv));
 		for (_ in 0...2) AutoreleasePool.run(() -> hxmc.rt.Gc.collect(true));
 		trace("not detached, after collections: alive " + alive(wv));
+		// an object no Haxe object is paired with (an extern class's, as an
+		// Objective-C mode class's): detached through its box, which every
+		// Haxe holder shares, it is released at once; the box holds nil from
+		// then on, and the id boxed again gets a box of its own
+		var held:Array<NSObject> = null;
+		var wb:Watch = null;
+		AutoreleasePool.run(() -> {
+			var a = NSMutableArray.array();
+			held = [a];
+			wb = new Watch(a);
+		});
+		trace("boxed: alive " + alive(wb));
+		Peers.detach(held[0]);
+		trace("boxed, detached: alive " + alive(wb) + ", the box holds " + (held[0] == null ? "nil" : "it"));
+		var outer:NSMutableArray = null;
+		AutoreleasePool.run(() -> {
+			outer = NSMutableArray.array();
+			var a = NSMutableArray.array();
+			outer.addObject(a);
+			held = [a];
+		});
+		Peers.detach(held[0]);
+		var again:Array<NSObject> = [];
+		AutoreleasePool.run(() -> again.push(outer.firstObject()));
+		trace("held by an array, detached: the box holds " + (held[0] == null ? "nil" : "it") + ", boxed again " + (again[0] == null ? "nil" : "it"));
+		for (_ in 0...2) AutoreleasePool.run(() -> hxmc.rt.Gc.collect(true));
+		var same = false;
+		AutoreleasePool.run(() -> same = outer.firstObject() == again[0]);
+		trace("after collections: boxed again " + (again[0] == null ? "nil" : "it") + ", the array's " + same);
 		Peers.detach(null);
 		trace("done");
 	}

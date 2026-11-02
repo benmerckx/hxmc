@@ -1253,6 +1253,6 @@ For compiled programs (run time):
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |
-| `RT_PEER_BUDGET` | objects paired with Objective-C ones gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
+| `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
 | `RT_CENSUS_WHY=<type>` | also a path from a global to the first `RT_CENSUS_WHY_MAX` (8) objects of that type; global `i` is the symbol of value `8 * i` in `<exe>.syms` |

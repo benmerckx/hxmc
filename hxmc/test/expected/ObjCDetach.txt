@@ -1,10 +1,14 @@
 exit 0
-ObjCDetach.hx:58: detached, held by an array: alive true, hash through it 0
-ObjCDetach.hx:62: calls into it, across a collection: 2
-ObjCDetach.hx:64: let go: alive false
-ObjCDetach.hx:66: detached twice: fine
-ObjCDetach.hx:74: detached, held by nothing: alive false
-ObjCDetach.hx:83: detached as an id, held by nothing: alive false
-ObjCDetach.hx:87: not detached: alive true
-ObjCDetach.hx:89: not detached, after collections: alive false
-ObjCDetach.hx:91: done
+ObjCDetach.hx:59: detached, held by an array: alive true, hash through it 0
+ObjCDetach.hx:63: calls into it, across a collection: 2
+ObjCDetach.hx:65: let go: alive false
+ObjCDetach.hx:67: detached twice: fine
+ObjCDetach.hx:75: detached, held by nothing: alive false
+ObjCDetach.hx:84: detached as an id, held by nothing: alive false
+ObjCDetach.hx:88: not detached: alive true
+ObjCDetach.hx:90: not detached, after collections: alive false
+ObjCDetach.hx:102: boxed: alive true
+ObjCDetach.hx:104: boxed, detached: alive false, the box holds nil
+ObjCDetach.hx:115: held by an array, detached: the box holds nil, boxed again it
+ObjCDetach.hx:119: after collections: boxed again it, the array's true
+ObjCDetach.hx:121: done

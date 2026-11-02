@@ -361,7 +361,10 @@ class Gc {
 		}
 		// its entry: the index in its object's instance variable (ObjC.PEER_IVAR)
 		var ivar = Ind.call2(getIvar, Ind.call1(getClass, id), Mem.cstr("hxmc_peer"));
-		if (ivar.isNull()) return;
+		if (ivar.isNull()) {
+			detachBox(Mem.addr(o), id);
+			return;
+		}
 		var i = Mem.getI32(id, Ind.call1(ivarOffset, ivar).toI64().toInt());
 		var cell = LibC.malloc(8);
 		Mem.setPtr(cell, 0, Ptr.nil());
@@ -392,6 +395,43 @@ class Gc {
 		idsPoolPop(pool);
 	}
 
+	// an Objective-C object no Haxe object is paired with (an Objective-C
+	// mode class's, any extern class's): o its box, which every Haxe holder
+	// shares (boxFind). Released now, not when the box dies: the box holds nil
+	// from here on (messages through it go to nil, as a detached peer's), its
+	// native entry nothing to release, and its place in the boxes a tombstone
+	// (boxGone), so that the id boxed again later gets a box of its own
+	@:hxmc.unsafe static function detachBox(box:Ptr, id:Ptr) {
+		lockLeaf(nativesLock);
+		var found = false;
+		for (i in 0...nnatives) {
+			var e = natives.add(24 * i);
+			if (Mem.getPtr(e, 0) == box) {
+				Mem.setPtr(e, 8, Ptr.nil());
+				found = true;
+				break;
+			}
+		}
+		unlockLeaf(nativesLock);
+		if (!found) return;
+		lockLeaf(peersLock);
+		var i = boxSlot(id, boxesCap);
+		while (true) {
+			var k = Mem.getPtr(boxes, 16 * i);
+			if (k.isNull()) break;
+			if (k == id) {
+				Mem.setPtr(boxes, 16 * i, boxGone());
+				break;
+			}
+			i = (i + 1) & (boxesCap - 1);
+		}
+		unlockLeaf(peersLock);
+		Mem.setPtr(box, 0, Ptr.nil());
+		var pool = poolPushAny();
+		Ind.call1(peerRelease, id);
+		idsPoolPop(pool);
+	}
+
 	// (an entry freed: its weak cell destroyed, if detached)
 	@:hxmc.unsafe static function undetach(i:Int) {
 		var cell = detachedCell(i);
@@ -401,10 +441,11 @@ class Gc {
 		LibC.free(cell);
 	}
 
-	// ---- pressure: a paired Haxe object promoted to the old space keeps its
-	// Objective-C object (a view and all it holds: malloc's memory the heap
-	// does not see) until a major collection; RT_PEER_BUDGET of them (0:
-	// off; made there or promoted) since the last one start the next
+	// ---- pressure: a paired Haxe object (or a box of an id: sweepBoxes)
+	// promoted to the old space keeps its Objective-C object (a view and all
+	// it holds: malloc's memory the heap does not see) until a major
+	// collection; RT_PEER_BUDGET of them (0: off; made there or promoted)
+	// since the last one start the next
 	static var peersPromoted:Int;
 	static var peersAtMajor:Int; // (RT_STATS: peersPromoted when the last major started)
 	static var peerBudget:Int;
@@ -791,6 +832,9 @@ class Gc {
 	// dead boxes' entries dropped, the moved ones' addresses updated)
 	static var boxes:Ptr;
 	static var boxesCap:Int;
+	// a detached box's key (detachBox): probed past, dropped by the next sweep
+	@:hxmc.unsafe static inline function boxGone():Ptr
+		return Ptr.nil().add(1);
 	static var nboxes:Int;
 
 	@:hxmc.unsafe static inline function boxSlot(id:Ptr, cap:Int):Int
@@ -840,11 +884,18 @@ class Gc {
 			var e = boxes.add(16 * i);
 			var o = Mem.getPtr(e, 8);
 			if (Mem.getPtr(e, 0).isNull()) continue;
+			if (Mem.getPtr(e, 0) == boxGone()) {
+				Mem.setPtr(e, 0, Ptr.nil());
+				continue;
+			}
 			if (inYoung(o) || (!o.ult(lo) && o.ult(hi))) {
 				if (!isFwd(hdrW0(o))) {
 					Mem.setPtr(e, 0, Ptr.nil());
 					continue;
 				}
+				// (promoted by a minor collection: its id kept alive until a
+				// major one, as a paired object's: RT_PEER_BUDGET counts both)
+				if (lo.isNull() && inYoung(o)) peersPromoted++;
 				Mem.setPtr(e, 8, fwdAddr(o));
 			}
 			live++;
