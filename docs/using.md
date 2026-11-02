@@ -467,6 +467,7 @@ wasm32-wasi, without `@:access` into the runtime:
 | Function | |
 | --- | --- |
 | `bytesAllocated():Float` | bytes allocated since the program started, by every thread, large objects included |
+| `liveBytes():Float` | bytes the heap holds now: the old space's objects (what the last major collection left live, and what was promoted since) and the nursery's (allocated since the last collection), so garbage no collection has found yet too; right after `NativeGc.collect(true)`, what is live |
 | `threadBytesAllocated():Float` | the same, by the calling thread |
 | `collections():Int`, `minorCollections()`, `majorCollections()` | collections so far |
 | `lastPause():Float`, `totalPause()`, `maxPause()` | pauses in seconds, from the collecting thread's request to resuming the program |

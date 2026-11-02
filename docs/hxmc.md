@@ -208,7 +208,9 @@ at an allocation inside a safe region (every allocation takes the slow
 path then, which checks).
 
 Both collectors keep the counters of `hxmc.GcStats`
-([using.md](using.md#measuring-the-collector)): bytes allocated (the
+([using.md](using.md#measuring-the-collector)): what the heap holds
+(`liveBytes`: the old space's objects and the nursery up to its allocation
+pointer, summed when read), bytes allocated (the
 nursery up to the allocation pointer, what TLABs left unused taken off at
 each collection, and large objects), per thread too (each thread's record,
 `Mutator.allocated`, gains the bytes of a run of TLABs when the thread

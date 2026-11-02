@@ -1690,6 +1690,13 @@ class Gc {
 	@:hxmc.unsafe public static function pause(which:Int):Float
 		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
 
+	// what the old space holds (large objects included) and the nursery up to
+	// what the threads took of it (hxmc.GcStats.liveBytes)
+	@:hxmc.unsafe public static function liveBytes():Float {
+		var b:Float = cast(Ptr.ofI64(Atomic.load64(Mem.sym("hxmc_old_ptr"))).diff(oldStart) + Ptr.ofI64(Atomic.load64(Mem.sym("hxmc_young_next"))).diff(youngStart));
+		return b;
+	}
+
 	// the bytes the heap spaces take
 	@:hxmc.unsafe public static function heapBytes():Float {
 		var o:Float = cast oldEnd.diff(oldStart);

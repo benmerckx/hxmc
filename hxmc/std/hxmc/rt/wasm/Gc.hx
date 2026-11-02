@@ -888,6 +888,17 @@ class Gc {
 		Wasi.writeInt(2, c % 100);
 	}
 
+	// what the old space's chunks and regions hold, and the nursery up to its
+	// allocation pointer (hxmc.GcStats.liveBytes)
+	@:hxmc.unsafe public static function liveBytes():Float {
+		syncCur();
+		var b:I64 = Mem.tlsGet("rt_young_ptr").diff(youngStart);
+		for (i in 0...nchunks)
+			b += Mem.getPtr(chunks, 24 * i + 8).diff(Mem.getPtr(chunks, 24 * i));
+		var f:Float = cast b;
+		return f;
+	}
+
 	@:hxmc.unsafe public static function heapBytes():Float {
 		var b:Float = cast oldLimit;
 		return b + minorSize;
