@@ -1973,7 +1973,7 @@ class FnLower {
 						coerce(ELocal(s), structTy(sc), tyOf(e));
 					case Var(_) if (l.weakFields(l.classInfo(c)).indexOf(cf.cfName) >= 0):
 						var ci = l.classInfo(c);
-						coerce(objcLoadWeak(EField(ci, ci.fieldIndex(cf.cfName), value(obj))), TId, tyOf(e));
+						coerce(objcUnownedRead(objcLoadWeak(EField(ci, ci.fieldIndex(cf.cfName), value(obj))), cf), TId, tyOf(e));
 					case Var(_):
 						var ci = l.classInfo(c);
 						var idx = ci.fieldIndex(cf.cfName);
@@ -3674,6 +3674,19 @@ class FnLower {
 		return ELocal(r);
 	}
 
+	// a weak read x of field cf: as it is, unless cf is an unowned field a
+	// -debug build checks (@:hxmc.unownedCheck, TypeloadFields.objcUnownedCheck),
+	// not null: nil then ends the program (its object is gone)
+	function objcUnownedRead(x:Ex, cf:core.TType.TClassField):Ex {
+		if (!Lower.hasMeta(":hxmc.unownedCheck", cf.cfMeta) || TFunctions.isExplicitNull(cf.cfType)) return x;
+		var r = asLocal(x, TId);
+		var file = haxe.io.Path.withoutDirectory(cf.cfPos.pfile);
+		var msg = "hxmc: the unowned field " + cf.cfName + " (" + file + ") was read after its object was deallocated";
+		out.push(SIf(EBin(LEq, ELocal(r), EConv(I2L, EInt(0))),
+			vector(SExpr(ECallHost("rt_objc_unpaired", vector(ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(msg)), TI64)), TVoid))), vector()));
+		return ELocal(r);
+	}
+
 	// x (a +1 id) given to the autorelease pool
 	function objcAutorelease(x:Ex):Ex {
 		var autorelease = ObjC.runtime(l, "objc_autorelease", [CPtr], CPtr);
@@ -4088,7 +4101,7 @@ class FnLower {
 		}
 		if (iv.kind == ObjC.IVAR_STRONG || iv.kind == ObjC.IVAR_UNOWNED)
 			return temp(TId, coerce(ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(a), EInt(0)), TI64), TI64, TId));
-		if (iv.kind == ObjC.IVAR_WEAK_ID) return objcLoadWeak(ELocal(a));
+		if (iv.kind == ObjC.IVAR_WEAK_ID) return objcUnownedRead(objcLoadWeak(ELocal(a)), iv.field);
 		var slot = asLocal(ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(a), EInt(0)), TI32), TI32);
 		var r = newLocal("weak", TRef(RAny));
 		out.push(SIf(EBin(Eq, ELocal(slot), EInt(0)), vector(SSet(r, ENull(TRef(RAny)))),

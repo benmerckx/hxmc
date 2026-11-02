@@ -629,7 +629,53 @@ class CallDispatcher {
 				displayError(ctx.com, "abstract method " + fcc.fcField.cfName + " cannot be accessed directly", p);
 			case _:
 		}
-		return fcc.fcData();
+		var e = fcc.fcData();
+		// port: (hxmc) Objective-C's related result type
+		var related = objcRelatedResult(fa, fcc.fcField, e.etype);
+		return related == null ? e : mk(TCast(e, null), related, e.epos);
+	}
+
+	// port: (hxmc) Objective-C's related result type: a message of the init
+	// family (its selector `init`, then anything but a lowercase letter) sent
+	// to an object of an Objective-C class gives an object of the receiver's
+	// class, not the class declaring the initializer, as clang types it
+	// (`[[C alloc] initWithFrame:r]` is a C). Null when the rule does not
+	// apply: the result is not of a superclass of the receiver's class.
+	function objcRelatedResult(fa:context.Typecore.FieldAccess, cf:TClassField, t:T):Null<T> {
+		if (!cf.cfKind.match(Method(_))) return null;
+		var c = switch fa.faHost {
+			case FHInstance(c, _): c;
+			case _: return null;
+		}
+		var objc = false, k = c;
+		while (k != null && !objc) {
+			objc = Meta.has(MetaTag.Custom(":hxmc.objc"), k.clMeta);
+			k = k.clSuper == null ? null : k.clSuper.cls;
+		}
+		if (!objc) return null;
+		var sel = cf.cfName;
+		var m = Meta.getOpt(MetaTag.Custom(":selector"), cf.cfMeta);
+		if (m != null && m.exprs.length == 1) switch m.exprs[0].expr {
+			case EConst(String(s, _)): sel = s;
+			case _:
+		}
+		if (!StringTools.startsWith(sel, "init") || (sel.length > 4 && sel.charCodeAt(4) >= "a".code && sel.charCodeAt(4) <= "z".code)) return null;
+		var nullable = isNull(t);
+		var rc = switch follow(t) {
+			case TInst(rc, _): rc;
+			case _: return null;
+		}
+		var recv = follow(fa.faOn.etype);
+		var oc = switch recv {
+			case TInst(oc, _): oc;
+			case _: return null;
+		}
+		if (oc == rc) return null;
+		k = oc.clSuper == null ? null : oc.clSuper.cls;
+		while (k != null && k != rc)
+			k = k.clSuper == null ? null : k.clSuper.cls;
+		if (k == null) return null;
+		return nullable ? ctx.t.tnull(recv) : recv;
 	}
 
 	function macroCall(ethis:TExpr, cf:TClassField, el:Vector<Expr>):TExpr {

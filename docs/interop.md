@@ -599,9 +599,11 @@ if (command == Selector.of("moveDown:")) ...
   (an error says so): initializers taking the same types
   (`initWithString:`, `initWithContentsOfFile:`) keep their own names, a
   failable one returns `Null<C>`, and they are inherited as methods are.
-  `alloc` is declared by each class, and a subclass redeclares the
-  initializers it inherits for their result's type (`override function
-  initWithFrame(frame:Rect):NSTextField`), as `instancetype` has it.
+  `alloc` is declared by each class (statics are not inherited). An
+  inherited initializer needs no redeclaring for its result's type: a
+  message of the init family gives an object of the receiver's class, as
+  clang's related result type has it (`NSTextField.alloc().initWithFrame(r)`
+  is an `NSTextField`).
 - **Properties** are `var x(get, set)` with extern accessors: `get_x()` sends
   `x`, `set_x(v)` sends `setX:` and returns `v` (the setter returns nothing),
   `@:selector` on an accessor names another (`getter=isFlipped`).
@@ -720,7 +722,6 @@ that makes many of them and wants no second heap's object per instance.
 
 ```haxe
 @:hxmc.objc class Field extends NSTextField implements NSTextFieldDelegate {
-  public extern static function alloc():Field;   // a message to Field's class
   @:hxmc.weak var props:Null<Attrs>;             // a Haxe object kept alive elsewhere
   @:hxmc.weak var buddy:Null<NSView>;            // Objective-C's __weak
   var count:Int;                                 // an instance variable
@@ -746,9 +747,15 @@ var f = Field.alloc().initWithFrame(r);          // an id, as NSTextField's
   a type test, `ObjCClass.of`), as a peer class's, under its name
   (`@:hxmc.objc("Name")`, else its path with underscores), after its
   superclass when that is one too. Apple's systems only.
-- **Making one** is Objective-C's: `C.alloc().init...(...)`. No Haxe
-  constructor (an error), and `alloc` declared as an extern's is (`public
-  extern static function alloc():C;`: statics are not inherited). An
+- **Making one** is Objective-C's: `C.alloc().init...(...)`, a `C`
+  without a cast. No Haxe constructor (an error). The compiler declares
+  the class's `alloc` (`public extern static function alloc():C;`, as an
+  extern class declares its own: statics are not inherited) unless the
+  class does, and types a message of the init family to an object of an
+  Objective-C class as clang does: its result is of the receiver's class
+  (Objective-C's related result type: `init`, then anything but a
+  lowercase letter), so `C.alloc().initWithFrame(r)` is a `C`, not the
+  `NSView` `initWithFrame:` is declared to return. An
   initializer is a method of the init family, an override or the class's
   own (`initWithCount(n)`), that calls `super.initX(...)` and returns
   `this`. That call is `self = [super initX:...]`: `this` is its result
@@ -1039,6 +1046,9 @@ counted. Where references cross:
   address). A short-lived Haxe object (a cursor over a view's subviews)
   holding a strong id keeps the object until a collection finds the holder
   dead; an unowned field does not, at no cost.
+  A `-debug` build checks them: each is held weakly instead, and reading
+  one that is not `Null<...>` after its object is gone ends the program
+  with a message naming the field (`ObjCUnownedCheck`).
 - **Cycles** through both heaps (a Haxe object's field holds a view, the
   view holds a Haxe subclass's instance whose field holds the Haxe object)
   are not collected: neither side sees them. Cocoa's delegates are weak,

@@ -986,7 +986,9 @@ class Lower implements LowerQueries {
 						throw new LowerError('@:hxmc.unowned ${f.cfName}: only a field holding an Objective-C object can be unowned', CInterop.posOf(f.cfPos));
 					if (unowned && weak)
 						throw new LowerError('@:hxmc.unowned ${f.cfName}: a field is weak or unowned, not both', CInterop.posOf(f.cfPos));
-					if (ObjC.isIdType(f.cfType)) (weak ? ci.weakFields : unowned ? ci.unownedFields : ci.idFields).push(f.cfName);
+					// (-debug: checked, as a weak field, FnLower.objcUnownedRead)
+					var checked = unowned && hasMeta(":hxmc.unownedCheck", f.cfMeta);
+					if (ObjC.isIdType(f.cfType)) (weak || checked ? ci.weakFields : unowned ? ci.unownedFields : ci.idFields).push(f.cfName);
 				// a dynamic method's current function (null until first use or assignment, see FnLower.dynMethod)
 				case Method(MethDynamic) if (!Lambda.exists(ci.fields, x -> x.name == f.cfName)):
 					var slot = {name: f.cfName, ty: null};
@@ -1097,7 +1099,7 @@ class Lower implements LowerQueries {
 			scan(c.clConstructor.cfExpr);
 		}
 		if (c.clConstructor != null)
-			throw new LowerError('Objective-C class $cname (@:hxmc.objc) has no Haxe constructor: its objects are made as Objective-C makes them, $cname.alloc().init...(...) (an initializer it overrides, and `public extern static function alloc():$cname;`)',
+			throw new LowerError('Objective-C class $cname (@:hxmc.objc) has no Haxe constructor: its objects are made as Objective-C makes them, $cname.alloc().init...(...) (an initializer it overrides or inherits)',
 				CInterop.posOf(c.clConstructor.cfPos));
 		for (i in c.clImplements)
 			if (!ObjC.isProtocol(i.cls) && !ObjC.isId(i.cls))

@@ -271,7 +271,7 @@ class ObjC {
 			if (weak && !TFunctions.isExplicitNull(cf.cfType))
 				throw new LowerError('@:hxmc.weak ${cf.cfName}: a weak field becomes null once its object is gone: declare it Null<...>', where);
 			if (isIdType(cf.cfType)) {
-				r.push({name: cf.cfName, field: cf, kind: weak ? IVAR_WEAK_ID : unowned ? IVAR_UNOWNED : IVAR_STRONG, ct: CPtr, size: 8, align: 8, enc: "@"});
+				r.push({name: cf.cfName, field: cf, kind: weak || (unowned && Lower.hasMeta(":hxmc.unownedCheck", cf.cfMeta)) ? IVAR_WEAK_ID : unowned ? IVAR_UNOWNED : IVAR_STRONG, ct: CPtr, size: 8, align: 8, enc: "@"});
 				continue;
 			}
 			var ct = ctype(cf.cfType);

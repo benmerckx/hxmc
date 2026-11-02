@@ -1,0 +1,5 @@
+exit 0
+ObjCModeSelf.hx:47: counter, 11, 12
+ObjCModeSelf.hx:49: doubler, 22, 11
+ObjCModeSelf.hx:52: declared, 7
+ObjCModeSelf.hx:55: plain, true
