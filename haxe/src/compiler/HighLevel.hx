@@ -13,6 +13,9 @@ class HighLevel {
 	// port: hxmc.HaxeMain resolves -lib itself (hxmc/src/hxmc/libs/Libraries.hx: lix's scopes, node_modules, then haxelib); a resolver per part, given each group of libraries in turn (its arguments take the group's place, followed by haxelib's for the libraries it leaves to haxelib) and asked at the part's end for the arguments after the part's; always null in the compiler itself.
 	public static var libraryResolver:Null<() -> LibraryResolver> = null;
 
+	// port: hxmc.HaxeMain's, as a compilation server: each part's arguments once its libraries are in, to which it adds hxmc's std (a request for --custom-target hxmc from a client that is no hxmc, an editor's); always null in the compiler itself.
+	public static var partArgsHook:Null<Array<ParsedArg>->Array<ParsedArg>> = null;
+
 	public static function addLibs(timerCtx:core.Timer.TimerContext, libsCwd:{libs:Array<String>, cwd:String}, args:Array<String>,
 			cs:Cache, hasDisplay:Bool):Array<String> {
 		var libs = libsCwd.libs, cwd = libsCwd.cwd;
@@ -147,6 +150,8 @@ class HighLevel {
 		}
 		var hasGlobal = part.args.indexOf(HaxelibGlobal) >= 0;
 		var expandedArgs = expandPartLibs(hasGlobal, part.args);
+		// port: partArgsHook's
+		if (partArgsHook != null) expandedArgs = partArgsHook(expandedArgs);
 		com.parsedArgs = expandedArgs;
 		return com;
 	}
