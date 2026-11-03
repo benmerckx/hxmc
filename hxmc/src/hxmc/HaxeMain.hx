@@ -99,6 +99,11 @@ class HaxeMain {
 		// --server`): the lowered bodies of the fields it kept (LowerCache) and
 		// the compiled modules in memory
 		if (isServer(args)) Driver.resident = true;
+		// (and gives a request for hxmc its std as the command line above does:
+		// an editor's client, VS Code's Haxe extension through --server-connect,
+		// sends the build's arguments as they are; an hxmc client, --connect, has
+		// added it already)
+		if (isServer(args) && hxmcStd != null) compiler.HighLevel.partArgsHook = parts -> withStd(parts, hxmcStd);
 		compiler.Compiler.generateHook = function(com) {
 			if (noOutput) return;
 			switch com.platform {
@@ -258,6 +263,19 @@ class HaxeMain {
 			}
 		}
 		return false;
+	}
+
+	// a request's arguments with hxmc's std last when they select
+	// --custom-target hxmc and do not have it
+	static function withStd(parts:Array<compiler.ParsedArg>, std:String):Array<compiler.ParsedArg> {
+		var hxmc = false;
+		for (p in parts)
+			switch p {
+				case SetCustomTarget("hxmc", _): hxmc = true;
+				case AddClassPath(cp) if (Path.removeTrailingSlashes(cp) == Path.removeTrailingSlashes(std)): return parts;
+				case _:
+			}
+		return hxmc ? parts.concat([compiler.ParsedArg.AddClassPath(std)]) : parts;
 	}
 
 	// the target this binary runs on
