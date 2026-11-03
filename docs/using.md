@@ -105,7 +105,8 @@ macOS process whose Mach-O names Mac Catalyst as its platform, with iOS's
 versions (`-D hxmc.ios-min-version`, 15.0 and later). `@:hxmc.framework`
 imports the frameworks macOS has for iOS apps from `/System/iOSSupport`
 (UIKit, MapKit, ...) and the shared ones (Foundation, Core Graphics,
-AppKit) from their usual place. UIKit's views work without an app;
+AppKit) from their usual place. Its declarations are
+[apple-catalyst](https://github.com/hx-objc/apple-catalyst)'s (docs/interop.md). UIKit's views work without an app;
 `UIApplicationMain` needs an app bundle (`Info.plist` with a
 `CFBundleIdentifier`): an executable outside one stops with "Invalid
 parameter not satisfying: bundleIdentifier", and one with only an
