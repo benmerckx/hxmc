@@ -525,6 +525,17 @@ class Opt {
 			if (lt) break;
 		}
 		if (lt && nonNeg(i, cfg, 0)) return true;
+		// (a small block's index: x * s + k with constants s, k >= 0, x never
+		// negative and below a constant, against a length of a constant or
+		// tested against one: `if (s.length < 64) return; for (c in 0...8)
+		// s[c + 56]`)
+		{
+			var lo = lowerBound(n, lx, ly, strict);
+			if (lo > 0) {
+				var hi = upperOf(i, cfg, lx, ly, strict, 0);
+				if (hi >= 0 && hi < lo) return true;
+			}
+		}
 		// (a table's index: x & m, 0 <= m, against a length of at least m + 1,
 		// a constant or tested against one)
 		var x = f.vals[i];
@@ -534,6 +545,57 @@ class Opt {
 		for (k in 0...lx.length)
 			if (ly[k] == n && constOf(lx[k]) >= 0 && (strict[k] ? constOf(lx[k]) >= m : constOf(lx[k]) > m)) return true;
 		return false;
+	}
+
+	// the least value n (an I32) has where the facts hold: a constant, or a
+	// constant c with c <= n (c < n: c + 1); -1: none known
+	function lowerBound(n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>):Float {
+		var best:Float = constOf(n);
+		for (k in 0...lx.length)
+			if (ly[k] == n) {
+				var c = constOf(lx[k]);
+				if (c >= 0 && c + (strict[k] ? 1 : 0) > best) best = c + (strict[k] ? 1 : 0);
+			}
+		return best;
+	}
+
+	// the greatest value v (an I32) can have where the facts hold, when it
+	// is never negative: a constant; x below a constant (x never negative);
+	// x + k, x * k, x << k for a constant k >= 0 (computed without wrapping:
+	// above 2^31 - 1 counts as unknown); -1: unknown
+	function upperOf(v:Int, cfg:Cfg<MBlock>, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>, depth:Int):Float {
+		var x = f.vals[v];
+		if (x.ty != I32 || depth > 3) return -1;
+		var c = constOf(v);
+		if (c >= 0) return c;
+		var r:Float = -1;
+		switch x.op {
+			case Add | Mul | Shl:
+				var k = constOf(x.b), y = x.a;
+				if (k < 0 && x.op != Shl) {
+					k = constOf(x.a);
+					y = x.b;
+				}
+				if (k < 0 || x.op == Shl && k > 30) return -1;
+				var u = upperOf(y, cfg, lx, ly, strict, depth + 1);
+				if (u < 0) return -1;
+				r = switch x.op {
+					case Add: u + k;
+					case Mul: u * k;
+					case _: u * Math.pow(2, k);
+				}
+			case _:
+				if (!nonNeg(v, cfg, 0)) return -1;
+				for (k in 0...lx.length)
+					if (lx[k] == v) {
+						var b = constOf(ly[k]);
+						if (b >= 0) {
+							var u:Float = strict[k] ? b - 1 : b;
+							if (r < 0 || u < r) r = u;
+						}
+					}
+		}
+		return r > 2147483647.0 ? -1 : r;
 	}
 
 	// an I32 constant's value when it is not negative, else -1
