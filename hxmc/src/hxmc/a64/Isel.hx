@@ -1131,13 +1131,13 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	override function loadPart(r:Int, addr:Int, p:CPart) {
 		var l = emit(LOAD);
 		l.d = p.float && p.size == 4 ? f.newReg(false) : r;
-		l.size = p.float && p.size == 4 ? 4 : 8;
+		l.size = p.float && p.size == 4 ? 4 : p.size == 16 ? 16 : 8;
 		memOf(l, addr, -1, 1, p.off, l.size);
 		if (p.float && p.size == 4) f32FromBits(r, l.d);
 	}
 
 	override function takePart(r:Int, p:CPart):Int {
-		var t = f.newReg(p.float && p.size == 8);
+		var t = p.size == 16 ? f.newVecReg() : f.newReg(p.float && p.size == 8);
 		if (p.float && p.size == 4) {
 			var fm = emit(FMOVWS);
 			fm.d = t;
@@ -1148,7 +1148,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	override function storePart(r:Int, addr:Int, p:CPart) {
 		var s = emit(STORE);
-		s.size = p.float && p.size == 4 ? 4 : 8;
+		s.size = p.float && p.size == 4 ? 4 : p.size == 16 ? 16 : 8;
 		s.s1 = r;
 		memOf(s, addr, -1, 1, p.off, s.size);
 	}

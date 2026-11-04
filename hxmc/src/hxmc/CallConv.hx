@@ -144,10 +144,11 @@ class SysV extends CallConv {
 			var cnt = g < 0 ? -g : g > 0 ? g : 1;
 			var ni = 0, nf = 0;
 			for (j in k...k + cnt)
-				if (tys[j] == F64) nf++ else ni++;
+				if (tys[j] == F64 || tys[j] == V128) nf++ else ni++;
 			var regs = g > 0 && gi + ni <= argGprs.length && fi + nf <= argFprs;
+			// (a vector, C's __m128, only in a register: MirBuild.cVectorRegs)
 			for (j in k...k + cnt)
-				p.locs[j] = !regs ? ArgLoc.stack(8 * si++, 8) : new ArgLoc(tys[j] == F64 ? argFpr0 + fi++ : argGprs[gi++]);
+				p.locs[j] = !regs ? ArgLoc.stack(8 * si++, 8) : new ArgLoc(tys[j] == F64 || tys[j] == V128 ? argFpr0 + fi++ : argGprs[gi++]);
 			k += cnt;
 		}
 		p.stack = 8 * si;
@@ -238,7 +239,9 @@ class Aapcs64 extends CallConv {
 		// the parts of a struct argument left to place on the stack (none in registers)
 		var spill = 0;
 		for (k in 0...n) {
-			var t = tys[k];
+			// (a vector, C's float32x4_t, is in a float register as a double is:
+			// only there, MirBuild.cVectorRegs)
+			var t = tys[k] == V128 ? F64 : tys[k];
 			var parts = groups.length > 0 ? groups[k] : 1;
 			if (parts > 1 && (t == F64 ? fi : gi) + parts > 8) {
 				if (t == F64) fi = 8 else gi = 8;

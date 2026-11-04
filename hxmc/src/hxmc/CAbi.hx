@@ -55,7 +55,20 @@ enum CRet {
 // - wasm32 (clang's C ABI): a struct of one scalar as that scalar, another
 //   as the address of a copy (an argument) or through a hidden first
 //   argument (a result).
+// - hxmc.simd's vectors (V128: docs/plans/simd.md, "ABIs") are C's native
+//   128-bit vectors (__m128, float32x4_t, a vector_size(16) type): System
+//   V and AAPCS64 pass one in the next vector register and return it in
+//   xmm0/q0; Win64 passes the address of a 16-byte aligned copy and
+//   returns it in xmm0; wasm32 as a struct (the address of a copy, a
+//   result through a first argument: a JavaScript host takes no v128).
 class CAbi {
+	// whether c is hxmc.simd's vector (C's native 128-bit vector type)
+	public static inline function isVector(c:TClass):Bool
+		return hxmc.ir.FnLower.isV128(c);
+
+	// a vector in one vector register
+	static final VECTOR:Vector<CPart> = vector({off: 0, size: 16, float: true});
+
 	// 8 or 4: the struct is a homogeneous aggregate of doubles or floats; 0: not one
 	public static function hfa(c:TClass):Int {
 		var fs = CInterop.scalars(c, 0);
@@ -114,6 +127,7 @@ class CAbi {
 			var s = single(c);
 			return s != null ? PScalar(s.off, s.ty) : PCopy;
 		}
+		if (isVector(c)) return abi.os == "windows" && !abi.arm ? PCopy : PRegs(VECTOR);
 		if (abi.arm) {
 			var ps = a64Parts(c);
 			return ps != null ? PRegs(ps) : PCopy;
@@ -129,6 +143,7 @@ class CAbi {
 			var s = single(c);
 			return s != null ? RScalar(s.off, s.ty) : RSret;
 		}
+		if (isVector(c)) return RRegs(VECTOR);
 		var ps = if (abi.arm) a64Parts(c) else if (abi.os == "windows") {
 			var size = CInterop.layout(c).size;
 			size == 1 || size == 2 || size == 4 || size == 8 ? vector({off: 0, size: size, float: false}) : null;

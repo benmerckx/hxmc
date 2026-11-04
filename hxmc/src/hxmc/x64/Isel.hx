@@ -1615,19 +1615,19 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	override function loadPart(r:Int, addr:Int, p:CPart) {
 		var l = emit(LOAD);
 		l.d = r;
-		l.size = 8;
+		l.size = p.size == 16 ? 16 : 8;
 		memOf(l, addr, -1, 1, p.off);
 	}
 
 	override function takePart(r:Int, p:CPart):Int {
-		var t = f.newReg(p.float);
+		var t = p.size == 16 ? f.newVecReg() : f.newReg(p.float);
 		mov(t, r, 8);
 		return t;
 	}
 
 	override function storePart(r:Int, addr:Int, p:CPart) {
 		var s = emit(STORE);
-		s.size = 8;
+		s.size = p.size == 16 ? 16 : 8;
 		s.s1 = r;
 		memOf(s, addr, -1, 1, p.off);
 	}

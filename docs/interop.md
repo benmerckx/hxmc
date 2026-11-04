@@ -566,13 +566,17 @@ import hxmc.simd.*;
   16 bytes or the low 8 or 4.
 - **As values**: the struct rules. Boxed in an `Array`, a `Map`, a type
   parameter's slot, `Null` and `Dynamic`; passed to Haxe functions by
-  address, to C functions as a struct of four `uint32_t`.
+  address.
+- **In C signatures**: C's native vector type (`__m128`, `float32x4_t`,
+  `vector_size(16)`), in a vector register (System V, AAPCS64; by address
+  on Win64, result in xmm0); on wasm32 by address. At most eight, none
+  variadic.
 - **Requirements**: an x86-64-v2 machine (SSE4.1) for a program that uses
   them; a WebAssembly engine with simd128.
 
 The design, every semantic decision, the ABIs and the benchmarks:
 [plans/simd.md](plans/simd.md). The corpus cases `SimdOps`, `SimdValues`,
-`SimdExamples` and `reject/Simd*`.
+`SimdExamples`, `SimdFfi` and `reject/Simd*`.
 
 ## Objective-C
 

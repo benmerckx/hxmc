@@ -74,6 +74,9 @@ class Corpus {
 	public static final MUSL_ONLY = ["LinuxEntropy" => "getentropy and getrandom: musl's, the static mode on Linux only"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
+	// the cases the interpreter cannot build (--interp, --mir-run): a C call
+	// it has no call-out stub for
+	static final INTERP_EXCLUDED = ["SimdFfi" => "C's native vectors by value: the interpreter's calls of C pass no vector registers (docs/plans/simd.md, \"ABIs\")"];
 	// the cases known to fail under --mir-run (as --known: still run, their
 	// failure does not fail the run, their passing does)
 	static final MIR_RUN_KNOWN = [
@@ -195,6 +198,7 @@ class Corpus {
 		if (!uikit(t) && UIKIT_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: UIKIT_ONLY[c.name]};
 		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
+		if ((interp || mirRun) && INTERP_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: INTERP_EXCLUDED[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
 		var defines = caseDefines(c.cps[0] + "/" + c.main + ".hx");

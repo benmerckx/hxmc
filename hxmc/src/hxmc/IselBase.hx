@@ -478,7 +478,7 @@ class IselBase {
 	function structRet(i:MIns) {
 		var rs = new Vector<Int>(m.cRet.length), nr = 0;
 		for (p in m.cRet) {
-			var r = f.newReg(p.float);
+			var r = p.size == 16 ? f.newVecReg() : f.newReg(p.float);
 			loadPart(r, i.a, p);
 			rs[nr++] = r;
 		}

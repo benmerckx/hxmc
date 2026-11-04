@@ -271,14 +271,26 @@ validate on an engine without it, even if the code never runs).
   small functions), it stays in a register. The address costs a store and
   a load per non-inlined call: hot vector code is written with inline
   functions, as `SimdBench`'s kernels are.
-- **C functions** see a vector as `V128`, a C struct of four `uint32_t`
-  (`hxmc_v128` in spirit: `struct { uint32_t w[4]; }`), passed by the C
-  ABI's struct rules (`CAbi`): System V as two integer eightbytes, AAPCS64
-  as two integer registers, Win64 and wasm32 as the address of a copy, a
-  result through the C ABI's struct return. A C library taking `__m128`,
-  `float32x4_t` or `v128_t` by value needs a wrapper taking the struct or a
-  pointer; passing native vector types in vector registers is in
-  [Later](#later).
+- **C functions** take and return a vector as C's native 128-bit vector
+  type (`__m128`, `__m128i`, `float32x4_t`, a `vector_size(16)` type),
+  by each ABI's rule for it (`CAbi.isVector`):
+
+  | | argument | result |
+  | --- | --- | --- |
+  | System V x86-64 | the next of xmm0-7 | xmm0 |
+  | Win64 | the address of a 16-byte aligned copy (as MSVC passes `__m128`) | xmm0 |
+  | AAPCS64 (Linux, Apple, Windows) | the next of q0-q7 | q0 |
+  | wasm32 | the address of a copy (the struct rule) | stored at an address passed first |
+
+  On System V and AAPCS64 a vector past the eighth float or vector argument
+  register (where C puts it in a 16-byte stack slot) and a vector in a
+  variadic call are compile errors (`reject/SimdFfiRegs`): pass a `Ptr`
+  there. WebAssembly keeps the struct rule because a C function there is an
+  import its JavaScript host implements, and JavaScript takes no `v128`.
+  `@:hxmc.callback` functions receive and return vectors by the same rules
+  (`SimdFfi`: C calling back into Haxe with vectors). The interpreter's
+  calls of C pass no vector registers: a build with `-D hxmc.interp` or
+  Mir macros rejects such a call.
 - **Registers across calls.** On x86-64 every xmm register is
   caller-saved in hxmc's code; a function entered from C on Win64 saves
   xmm6-15 whole (all 128 bits) when it uses them. On arm64 vectors never
@@ -292,12 +304,16 @@ validate on an engine without it, even if the code never runs).
 | `SimdOps` | every operation on edge values (NaN, -0, infinities, saturation bounds, out-of-range conversions, shifts past the width, every shuffle form), as words |
 | `SimdValues` | vectors in fields of structs and classes, statics, call arguments and results, boxed (Array, type parameter, Dynamic, Null), closures, twenty live at once (spills), live across calls, kernels over spans with every access width |
 | `SimdExamples` | this page's worked examples against their scalar versions |
-| `reject/SimdLane`, `SimdLaneRange`, `SimdShuffle`, `SimdPtrKernel` | a lane at run time, a lane out of range, a shuffle index of 32, raw memory in a safe kernel |
+| `SimdFfi` | C functions (`SimdFfi.c`, `vector_size(16)` types) taking and returning vectors, eight vector arguments, a vector live across a C call, a callback C calls with vectors (x86-64 Linux and Windows, arm64; not wasm: no C objects) |
+| `reject/SimdLane`, `SimdLaneRange`, `SimdShuffle`, `SimdPtrKernel`, `SimdFfiRegs` | a lane at run time, a lane out of range, a shuffle index of 32, raw memory in a safe kernel, a ninth vector argument of a C function |
 
-Each runs bit-exact on x86-64 Linux, arm64 Linux (qemu), x86-64 Windows
-(wine), wasm32-wasi (node), the interpreter build (`--interp`), and, by
-`make portable-check`, on Eval and JavaScript against the same golden
-files; also with `-D hxmc.verify-tags` and `RT_VERIFY=1`.
+`SimdOps`, `SimdValues` and `SimdExamples` run bit-exact on x86-64 Linux,
+arm64 Linux (qemu), x86-64 Windows (wine), wasm32-wasi (node), the
+interpreter build (`--interp`), and, by `make portable-check`, on Eval and
+JavaScript against the same golden files; also with `-D hxmc.verify-tags`
+and `RT_VERIFY=1`. `SimdFfi` runs where there are C objects (x86-64 Linux
+and Windows, arm64). CI runs the corpus on each of the six targets' own
+machines too (Linux, Windows and macOS on x86-64 and arm64).
 
 ## Benchmarks
 
@@ -470,8 +486,8 @@ A report from a WebAssembly sprite renderer: four consecutive stores
   `relaxed_min`, ... and their native counterparts (`minps`, `fmla`), with
   results that may differ by target, under their own names.
 - **Vectors in registers across Haxe calls** (a vector argument in xmm or
-  v registers rather than by address), and C's native vector types
-  (`__m128`, `float32x4_t`, `v128_t`) in C signatures.
+  v registers rather than by address); C vectors past the argument
+  registers (16-byte stack slots) and in variadic calls.
 - **Auto-vectorization**: superword packing of struct arithmetic (four
   `Float32` fields of a struct, `acc = acc + d * k`), then loops over spans
   whose checks a loop proves (`SpanLoops`): the scalar kernels of the

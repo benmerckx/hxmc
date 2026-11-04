@@ -169,5 +169,5 @@ boxes.
 - Distinct pointer abstracts: `ConstPtr<T>`.
 - `@:hxmc.union` structs with overlapping fields, for C unions.
 - SIMD: built as `hxmc.simd`, portable 128-bit vectors; its design
-  record and what is left (256-bit vectors, relaxed operations, C's vector
-  types in signatures, auto-vectorization): [simd.md](simd.md).
+  record and what is left (256-bit vectors, relaxed operations,
+  auto-vectorization): [simd.md](simd.md).

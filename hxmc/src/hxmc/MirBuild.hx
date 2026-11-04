@@ -1807,6 +1807,7 @@ class MirBuild extends MirWriter {
 			}
 		var blocking = hxmc.ir.CInterop.BLOCKING.exists(name) && !abi.wasm;
 		var region = blocking ? call("rt_blocking_enter", vector(), I32) : -1;
+		cVectorRegs(cName(name), [for (a in args) f.vals[a].ty], va != null);
 		var r = indirect ? callInd(xs[0], Vector.fromArrayCopy(args), rt) : call(name, Vector.fromArrayCopy(args), rt);
 		var ci = f.vals[r];
 		ci.cCall = true;
@@ -1850,10 +1851,25 @@ class MirBuild extends MirWriter {
 	static function cName(name:String):String
 		return StringTools.startsWith(name, hxmc.ir.CInterop.INDIRECT) ? name.substr(hxmc.ir.CInterop.INDIRECT.length) : name;
 
-	// a part of the struct at v as an argument: a double or a float's bits in
-	// a float register, or the bytes as the low bytes of a word
+	// a part of the struct at v as an argument: a vector, a double or a
+	// float's bits in a float register, or the bytes as the low bytes of a word
 	function cPart(v:Int, p:CAbi.CPart):Int
-		return !p.float ? cWord(v, p.off, p.size) : p.size == 8 ? load(F64, 8, v, p.off) : special("f32bits_to_freg", vector(load(I32, 4, v, p.off)), F64);
+		return !p.float ? cWord(v, p.off, p.size) : p.size == 16 ? load(V128, 16, v, p.off) : p.size == 8 ? load(F64, 8, v, p.off) : special("f32bits_to_freg",
+			vector(load(I32, 4, v, p.off)), F64);
+
+	// C's native vectors by value (CAbi.isVector) travel in vector registers
+	// only: none past the eight float argument registers of System V and
+	// AAPCS64 (which would be 16-byte stack slots), none in a variadic call
+	// (docs/plans/simd.md, "ABIs"); tys: the arguments' types in order
+	function cVectorRegs(name:String, tys:Array<MTy>, variadic:Bool) {
+		var floats = 0;
+		for (t in tys) {
+			if (t == F64 || t == V128) floats++;
+			if (t != V128) continue;
+			if (variadic) throw new Unsupported('the C function $name: a vector by value in a variadic call');
+			if (floats > 8) throw new Unsupported('the C function $name: a vector by value past the eight vector argument registers (pass it by Ptr)');
+		}
+	}
 
 	// a scalar of C type ct at v + off, as the value cCall passes for it
 	function cScalar(v:Int, off:Int, ct:CTy):Int
@@ -1880,7 +1896,9 @@ class MirBuild extends MirWriter {
 				groups.push(1);
 			case PCopy:
 				var l = hxmc.ir.CInterop.layout(c);
-				var copy = stackAddr(f.slot((l.size + 7) & ~7, l.align > 8 ? l.align : 8));
+				// (Win64's __m128: a 16-byte aligned copy)
+				var al = CAbi.isVector(c) ? 16 : l.align > 8 ? l.align : 8;
+				var copy = stackAddr(f.slot((l.size + 7) & ~7, al));
 				copyBytes(copy, v, l.size);
 				args.push(copy);
 				sizes.push(8);
@@ -1922,7 +1940,7 @@ class MirBuild extends MirWriter {
 					switch p {
 						case PRegs(ps) | PStack(ps):
 							for (k in 0...ps.length) {
-								tys.push(ps[k].float ? F64 : I64);
+								tys.push(ps[k].float ? (ps[k].size == 16 ? V128 : F64) : I64);
 								sizes.push(ps[k].float ? ps[k].size : 8);
 								groups.push(k > 0 ? 0 : p.match(PStack(_)) ? -ps.length : ps.length);
 							}
@@ -1939,6 +1957,7 @@ class MirBuild extends MirWriter {
 					plan.push({at: at, pass: null});
 			}
 		}
+		cVectorRegs(fn.display != null ? fn.display : "callback", tys, false);
 		f.params = Vector.fromArrayCopy(tys);
 		f.cParams = Vector.fromArrayCopy(groups);
 		f.cParamSizes = Vector.fromArrayCopy(sizes);
@@ -1976,7 +1995,7 @@ class MirBuild extends MirWriter {
 					for (j in 0...parts.length) {
 						var v = ps[p.at + j];
 						if (parts[j].float && parts[j].size == 4) store(4, s, parts[j].off, special("freg_to_f32bits", vector(v), I32))
-						else store(8, s, parts[j].off, v);
+						else store(parts[j].size == 16 ? 16 : 8, s, parts[j].off, v);
 					}
 					vals.push(s);
 				case _: vals.push(ps[p.at]);
