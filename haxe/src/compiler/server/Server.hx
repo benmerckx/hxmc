@@ -331,7 +331,7 @@ class Server {
 		return Std.string(e);
 	}
 
-	static function runRequest(sctx:ServerCompilationContext, io:CompilerIoData, request:Request):RequestOutcome {
+	public static function runRequest(sctx:ServerCompilationContext, io:CompilerIoData, request:Request):RequestOutcome {
 		sctx.currentStdin = request.stdin;
 		try {
 			var requestArgs = Args.expandArgs(request.args);
