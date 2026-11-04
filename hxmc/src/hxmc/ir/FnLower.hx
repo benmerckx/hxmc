@@ -560,12 +560,12 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "zext", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
 	public static inline function isIntrinsic(n:String):Bool
-		return StringTools.startsWith(n, "hxmc_unsafe_Mem_") || StringTools.startsWith(n, "hxmc_unsafe_Atomic_");
+		return StringTools.startsWith(n, "hxmc_unsafe_Mem_") || StringTools.startsWith(n, "hxmc_unsafe_Atomic_") || StringTools.startsWith(n, SIMD_PREFIX);
 
 	// a runtime function call that is not a GC point
 	public static function noGcHost(n:String):Bool
@@ -1870,7 +1870,7 @@ class FnLower {
 			case TCast(e1, null): coerceRhs(rhs(e1), tyOf(e1), tyOf(e));
 			case TCast(e1, TClassDecl(c)) if (Com.isCom(c)):
 				// cast(x, IFoo) of a COM interface: QueryInterface, E_NOINTERFACE thrown
-				return comQuery(e1, c, true, e);
+				return comQuery(e1, c, true, e, tyOf(e));
 			case TCast(e1, mt):
 				// checked cast: throws when the value doesn't have the type
 				var x = coerce(value(e1), tyOf(e1), TRef(RAny));
@@ -2879,7 +2879,9 @@ class FnLower {
 					case _: return cfail("Com.iidOf takes a COM interface (@:hxmc.com), named", e);
 				};
 				if (Lower.targetOs != 2) return comUnavailable(e);
-				return coerce(temp(TI64, ECallHost("rt_com_iid", Vector.fromArrayCopy(comIid(k, e)), TI64)), TI64, rt);
+				// (16 bytes of the program's data: one address per IID)
+				comIid(k, e); // (a missing or malformed IID reported at e)
+				return coerce(temp(TI64, ECallHost("hxmc_unsafe_Mem_words", vector(EStr(Com.iidHex(Com.iid(k))), EInt(16)), TI64)), TI64, rt);
 			// a message (ObjC)
 			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !strip(obj).eexpr.match(TConst(TSuper))):
 				return objcSend(obj, c, ObjC.messageDecl(c, cf), cargs, e);
@@ -2972,6 +2974,7 @@ class FnLower {
 					var n = Lower.metaArg(core.Meta.getOpt(Native, cf.cfMeta));
 					name = n != null ? n : cf.cfName;
 				}
+				if (StringTools.startsWith(name, SIMD_PREFIX)) return simdCall(name, s, cargs, e);
 				var intrinsic = intrinsicStatic(name, cargs, e);
 				if (intrinsic != null) return intrinsic;
 				var t = hty(s.ret);
@@ -3175,6 +3178,106 @@ class FnLower {
 	}
 
 	// static externs lowered to IR operations instead of runtime calls
+	// ---- SIMD (hxmc.simd, docs/plans/simd.md): a vector is a 16-byte
+	// @:hxmc.struct (hxmc.simd.V128), the address of its memory as every
+	// struct value; the intrinsics of hxmc.simd.Simd take the addresses of
+	// their operands' copies and of a fresh slot for their result, which
+	// MirBuild.simd expands into 16-byte loads, the operation and a store, so
+	// that Sroa keeps the vectors in registers
+
+	public static inline var SIMD_PREFIX = "hxmc_simd_Simd_";
+
+	// whether c is the vector struct
+	public static function isV128(c:TClass):Bool
+		return c.clPath.name == "V128" && c.clPath.pack.join(".") == "hxmc.simd";
+
+	// an Int known at compile time: a literal, or arithmetic on literals (a
+	// lane an inline function computes from its literal arguments)
+	static function simdConst(e:TExpr):Null<Int> {
+		return switch e.eexpr {
+			case TConst(TInt(v)): v;
+			case TParenthesis(x) | TMeta(_, x) | TCast(x, null): simdConst(x);
+			case TUnop(Neg, _, x):
+				var v = simdConst(x);
+				v == null ? null : -v;
+			case TBinop(op, x, y):
+				var a = simdConst(x), b = simdConst(y);
+				if (a == null || b == null) return null;
+				switch op {
+					case OpAdd: a + b;
+					case OpSub: a - b;
+					case OpMult: a * b;
+					case OpShl: a << b;
+					case OpShr: a >> b;
+					case OpUShr: a >>> b;
+					case OpAnd: a & b;
+					case OpOr: a | b;
+					case OpXor: a ^ b;
+					case _: null;
+				}
+			case _: null;
+		}
+	}
+
+	function simdCall(name:String, s:core.TType.TSignature, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var rt = tyOf(e);
+		var xs = new Array<Ex>();
+		// (the vectors' copies and the scalars, left to right)
+		var vals = operands(cargs);
+		for (k in 0...cargs.length) {
+			var a = s.args[k];
+			var c = strip(cargs[k]);
+			// an operation's name, a lane, a constant's word: literals
+			if (a.name == "op") {
+				switch c.eexpr {
+					case TConst(TString(v)): xs.push(EStr(v));
+					case _: return cfail("hxmc.simd: the operation must be a literal", e);
+				}
+				continue;
+			}
+			if (a.name == "lane" || a.name == "word" || ~/^l[0-9]+$/.match(a.name) || ~/^w[0-9]$/.match(a.name)) {
+				switch simdConst(c) {
+					case null: return cfail("hxmc.simd: " + (a.name == "lane" || a.name.charAt(0) == "l" ? "a lane index" : "a constant's word") + " must be a constant (an inline function's argument a literal)", e);
+					case v:
+						// (a lane of the operation's lanes; a shuffle's of 32 bytes)
+						var code = xs.length > 0 ? switch xs[0] {
+							case EStr(op): hxmc.SimdOps.code(op);
+							case _: -1;
+						} : -1;
+						if (a.name == "lane" && code >= 0 && (v < 0 || v >= hxmc.SimdOps.lanes(code)))
+							return cfail('hxmc.simd: lane $v of ${hxmc.SimdOps.name(code)} (${hxmc.SimdOps.lanes(code)} lanes)', e);
+						if (a.name.charAt(0) == "l" && a.name != "lane" && (v < 0 || v >= 32))
+							return cfail("hxmc.simd: shuffle lane " + v + " (0 to 31: the first vector's, then the second's)", e);
+						xs.push(EInt(v));
+				}
+				continue;
+			}
+			var sc = structOf(cargs[k].etype);
+			if (sc != null) {
+				if (!isV128(sc)) return cfail("hxmc.simd: " + sc.clPath.name + " is no vector", e);
+				xs.push(vals[k]);
+				continue;
+			}
+			var t = hty(a.type);
+			xs.push(ELocal(asLocal(coerce(vals[k], tyOf(cargs[k]), t), t)));
+		}
+		var sr = structOf(s.ret);
+		if (sr != null) {
+			var dst = newSlot(structTy(sr), true);
+			// (the result's address follows the operation's name, if any)
+			var at = xs.length > 0 && xs[0].match(EStr(_)) ? 1 : 0;
+			xs.insert(at, ELocal(dst));
+			out.push(SExpr(ECallHost(name, Vector.fromArrayCopy(xs), TVoid)));
+			return coerce(ELocal(dst), structTy(sr), rt);
+		}
+		var t = hty(s.ret);
+		if (t == TVoid) {
+			out.push(SExpr(ECallHost(name, Vector.fromArrayCopy(xs), TVoid)));
+			return EInt(0);
+		}
+		return coerce(temp(t, ECallHost(name, Vector.fromArrayCopy(xs), t)), t, rt);
+	}
+
 	function intrinsicStatic(name:String, cargs:Vector<TExpr>, e:TExpr):Null<Ex> {
 		return switch name {
 			case "Std_int" if (cargs.length == 1):
@@ -3194,9 +3297,10 @@ class FnLower {
 				coerce(EConv(F2I, x), TI32, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && comTestable(cargs[1]) != null):
 				// Std.isOfType(x, IFoo) of a COM interface: whether QueryInterface finds it
-				coerce(EBin(RefNe, comQuery(cargs[0], comTestable(cargs[1]), false, e), ENull(TRef(RAny))), TBool, tyOf(e));
+				// (the value tested as a reference: its first word is no Bool)
+				coerce(EBin(RefNe, comQuery(cargs[0], comTestable(cargs[1]), false, e, TRef(RAny)), ENull(TRef(RAny))), TBool, tyOf(e));
 			case "Std_downcast" if (cargs.length == 2 && comTestable(cargs[1]) != null):
-				coerce(comQuery(cargs[0], comTestable(cargs[1]), false, e), TRef(RAny), tyOf(e));
+				comQuery(cargs[0], comTestable(cargs[1]), false, e, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && objcTestable(cargs[0], cargs[1]) != null):
 				// Std.isOfType(id, C) of an Objective-C class or protocol: Objective-C's test
 				coerce(objcIs(value(cargs[0]), tyOf(cargs[0]), objcTestable(cargs[0], cargs[1])), TBool, tyOf(e));
@@ -3668,16 +3772,37 @@ class FnLower {
 		function check(i:Ex, n:Ex)
 			// (Mem.ult, marked: Opt.condProp drops the checks a loop proves)
 			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
-		// [pos, pos + cnt) inside n (64-bit: no overflow; negative ones fail unsigned)
+		// [pos, pos + cnt) inside n: one comparison of n with pos + cnt, both
+		// zero-extended to 64 bits (no overflow; a negative one is 2^31 or more, past any n)
 		function range(pos:Ex, cnt:Ex, n:Ex) {
-			var n64 = EConv(I2L, n), p64 = EConv(I2L, pos);
-			var bad = vector(fatal("badRange", [pos, cnt, n]));
-			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(n64, p64), TBool), bad,
-				vector(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EBin(LSub, n64, p64), EConv(I2L, cnt)), TBool), bad, vector()))));
+			var end = EBin(LAdd, ECallHost("hxmc_unsafe_Mem_zext", vector(pos), TI64), ECallHost("hxmc_unsafe_Mem_zext", vector(cnt), TI64));
+			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, n), end), TBool), vector(fatal("badRange", [pos, cnt, n])), vector()));
 		}
 		function int(k:Int):Ex
 			return loc(coerce(rest[k], restTy(k), TI32), TI32);
 		return switch name {
+			case "vload" | "vstore":
+				// (hxmc.simd: a vector's bytes at element pos, the whole range checked)
+				var op = switch strip(cargs[1]).eexpr {
+					case TConst(TString(s)): s;
+					case _: cfail("hxmc.simd: the operation must be a literal", e);
+				};
+				var code = hxmc.SimdOps.code(op);
+				if (code < 0 || hxmc.SimdOps.kind(code) != (name == "vload" ? hxmc.SimdOps.LOAD : hxmc.SimdOps.STORE)) cfail("hxmc.simd: no " + name + " " + op, e);
+				var bytes = hxmc.SimdOps.memBytes(code);
+				if (bytes % size != 0) cfail("hxmc.simd: " + bytes + " bytes are not whole elements of " + size + " bytes", e);
+				var pos = int(1);
+				range(pos, EInt(Std.int(bytes / size)), len);
+				var p = loc(elem(ptr, pos), TI64);
+				if (name == "vload") {
+					var dst = newSlot(structTy(structOf(e.etype)), true);
+					out.push(SExpr(ECallHost(SIMD_PREFIX + "load", vector(EStr(op), ELocal(dst), p, EInt(0)), TVoid)));
+					coerce(ELocal(dst), structTy(structOf(e.etype)), tyOf(e));
+				} else {
+					var v = ELocal(asLocal(rest[2], restTy(2)));
+					out.push(SExpr(ECallHost(SIMD_PREFIX + "store", vector(EStr(op), p, EInt(0), v), TVoid)));
+					EInt(0);
+				}
 			case "elem":
 				var i = int(0);
 				check(i, len);
@@ -3814,10 +3939,14 @@ class FnLower {
 			case _: null;
 		}
 
-	// QueryInterface of x for c (rt_com_query): the value, null when the
-	// object has no such interface, or (`cast(x, IFoo)`, orThrow) a ComException
-	function comQuery(x:TExpr, c:TClass, orThrow:Bool, e:TExpr):Ex {
-		if (Lower.targetOs != 2) return comUnavailable(e);
+	// QueryInterface of x for c (rt_com_query): the value (as type to), null
+	// when the object has no such interface or is no COM object, or
+	// (`cast(x, IFoo)`, orThrow) a ComException
+	function comQuery(x:TExpr, c:TClass, orThrow:Bool, e:TExpr, to:Ty):Ex {
+		if (Lower.targetOs != 2) {
+			out.push(SExpr(ECallHost("rt_com_unavailable", vector(), TVoid)));
+			return nullOf(to);
+		}
 		var v = asLocal(coerce(value(x), tyOf(x), TRef(RAny)), TRef(RAny));
 		var r = asLocal(ECallHost("rt_com_query", Vector.fromArrayCopy([(ELocal(v) : Ex)].concat(comIid(c, e))), TRef(RAny)), TRef(RAny));
 		if (orThrow) {
@@ -3826,14 +3955,15 @@ class FnLower {
 			out.push(SIf(none, vector(SIf(EBin(RefNe, ELocal(v), ENull(TRef(RAny))),
 				vector(SExpr(ECallHost("rt_com_fail", vector(EInt(0x80004002)), TVoid))), vector())), vector()));
 		}
-		return coerce(ELocal(r), TRef(RAny), tyOf(e));
+		return coerce(ELocal(r), TRef(RAny), to);
 	}
 
 	// a call of method cf of COM interface c on obj: the interface pointer
 	// (rt_com_ptr), its vtable's slot called in the C convention with the
 	// pointer first (Com.csig), the arguments made C values (a COM value
 	// its pointer; a String an LPCWSTR, a BStr a BSTR, each freed after the
-	// call), the HRESULT tested, the [out, retval] read back
+	// call, or when a later argument's conversion or the call throws), the
+	// HRESULT tested, the [out, retval] read back (a Bool: a BOOL, Com.value)
 	function comCall(obj:TExpr, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var rt = tyOf(e);
 		if (Lower.targetOs != 2) return comUnavailable(e);
@@ -3871,47 +4001,71 @@ class FnLower {
 			ret = newSlot(retT, true);
 			cxs.push(ELocal(ret));
 		}
-		for (i in 0...s.args.length) {
-			var x = held[i + 1];
-			switch Com.value(s.args[i].type) {
-				case VIface(ic):
-					cxs.push(temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(x, ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)));
-				case VWStr:
-					var p = asLocal(ECallHost("rt_com_wstr", vector(coerce(x, ats[i], TRef(RStr))), TI64), TI64);
-					frees.push(SExpr(ECallHost("rt_com_wstr_free", vector(ELocal(p)), TVoid)));
-					cxs.push(ELocal(p));
-				case VBStr:
-					var p = asLocal(ECallHost("rt_com_bstr", vector(coerce(x, ats[i], TRef(RStr))), TI64), TI64);
-					frees.push(SExpr(ECallHost("rt_com_bstr_free", vector(ELocal(p)), TVoid)));
-					cxs.push(ELocal(p));
-				case _:
-					cxs.push(x);
-			}
-		}
+		var retval:Null<Local> = null;
 		if (sig.retval != null && !sig.sretFirst) {
 			// ([out, retval]: a slot of this frame, zeroed)
 			var size = switch sig.retval {
 				case VC(CStruct(sc)): CInterop.layout(sc).size;
 				case _: 8;
 			};
-			ret = newLocal("retval", TI64);
-			out.push(SSet(ret, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt((size + 7) & ~7), EInt(8)), TI64)));
+			retval = newLocal("retval", TI64);
+			out.push(SSet(retval, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt((size + 7) & ~7), EInt(8)), TI64)));
 			for (k in 0...((size + 7) >> 3))
-				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(ret), EInt(8 * k), EConv(I2L, EInt(0))), TVoid)));
-			cxs.push(ELocal(ret));
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(retval), EInt(8 * k), EConv(I2L, EInt(0))), TVoid)));
+			ret = retval;
 		}
+		// (the strings' buffers: null until made)
+		var bufs = [
+			for (i in 0...s.args.length)
+				switch Com.value(s.args[i].type) {
+					case VWStr | VBStr:
+						var p = newLocal("buf", TI64);
+						out.push(SSet(p, EConv(I2L, EInt(0))));
+						p;
+					case _: null;
+				}
+		];
 		var key = Com.declare(l, sig.args, sig.ret, Lower.hasMeta(":hxmc.fast", cf.cfMeta));
-		var ct:Ty = mode == Com.DIRECT ? (sig.sretFirst ? TI64 : sig.ret == CVoid ? TVoid : retT) : TI32;
+		// (a direct BOOL: any int but zero is true)
+		var bool = retT == TBool;
+		var ct:Ty = mode == Com.DIRECT ? (sig.sretFirst ? TI64 : sig.ret == CVoid ? TVoid : bool ? TI32 : retT) : TI32;
 		var r = ct == TVoid ? null : newLocal("cr", ct);
-		var call = ECallHost(key, Vector.fromArrayCopy(cxs), ct);
-		out.push(r == null ? SExpr(call) : SSet(r, call));
+		var conv = block(() -> {
+			for (i in 0...s.args.length) {
+				var x = held[i + 1];
+				switch Com.value(s.args[i].type) {
+					case VIface(ic):
+						cxs.push(temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(x, ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)));
+					case VWStr:
+						out.push(SSet(bufs[i], ECallHost("rt_com_wstr", vector(coerce(x, ats[i], TRef(RStr))), TI64)));
+						frees.push(SExpr(ECallHost("rt_com_wstr_free", vector(ELocal(bufs[i])), TVoid)));
+						cxs.push(ELocal(bufs[i]));
+					case VBStr:
+						out.push(SSet(bufs[i], ECallHost("rt_com_bstr", vector(coerce(x, ats[i], TRef(RStr))), TI64)));
+						frees.push(SExpr(ECallHost("rt_com_bstr_free", vector(ELocal(bufs[i])), TVoid)));
+						cxs.push(ELocal(bufs[i]));
+					case _:
+						cxs.push(x);
+				}
+			}
+			if (retval != null) cxs.push(ELocal(retval));
+			var call = ECallHost(key, Vector.fromArrayCopy(cxs), ct);
+			out.push(r == null ? SExpr(call) : SSet(r, call));
+		});
+		if (frees.length > 0) {
+			// (a throw after a buffer was made: the buffers freed, the exception thrown on)
+			var exn = newLocal("e", TRef(RAny));
+			out.push(STry(conv, vector({test: null, l: exn, body: Vector.fromArrayCopy(frees.concat([SThrow(ELocal(exn))]))})));
+			fi.hasTry = true;
+		} else for (st in conv)
+			out.push(st);
 		for (f in frees)
 			out.push(f);
 		if (mode == Com.CHECKED)
 			out.push(SIf(EBin(Lt, ELocal(r), EInt(0)), vector(SExpr(ECallHost("rt_com_fail", vector(ELocal(r)), TVoid))), vector()));
 		if (mode == Com.RAW) return coerce(ELocal(r), TI32, rt);
 		if (sig.sretFirst) return coerce(ELocal(ret), retT, rt);
-		if (mode == Com.DIRECT) return r == null ? EInt(0) : coerce(ELocal(r), ct, rt);
+		if (mode == Com.DIRECT) return r == null ? EInt(0) : bool ? coerce(EBin(Ne, ELocal(r), EInt(0)), TBool, rt) : coerce(ELocal(r), ct, rt);
 		if (sig.retval == null) return EInt(0);
 		inline function word():Ex
 			return temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(ret), EInt(0)), TI64));
@@ -3925,6 +4079,8 @@ class FnLower {
 				out.push(SSet(lo, ELocal(ret)));
 				freshSlots.set(lo, true);
 				coerce(ELocal(lo), structTy(sc), rt);
+			case VC(CI32) if (bool):
+				coerce(EBin(Ne, temp(TI32, ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(ret), EInt(0)), TI32)), EInt(0)), TBool, rt);
 			case VC(cty): cLoad(ELocal(ret), 0, cty, e);
 			case _: fail("COM method " + cf.cfName + ": no [out, retval] of this type", e);
 		}
@@ -4005,14 +4161,18 @@ class FnLower {
 				case VIface(_): out.push(SSet(lo, coerce(ECallHost("rt_com_wrap", vector(ELocal(a)), TRef(RAny)), TRef(RAny), lo.ty)));
 				case VWStr: out.push(SSet(lo, coerce(ECallHost("rt_com_wstr_string", vector(ELocal(a)), TRef(RStr)), TRef(RStr), lo.ty)));
 				case VBStr: out.push(SSet(lo, coerce(ECallHost("rt_com_bstr_string", vector(ELocal(a)), TRef(RStr)), TRef(RStr), lo.ty)));
+				// (a BOOL: any int but zero is true)
+				case VC(CI32) if (lo.ty == TBool): out.push(SSet(lo, EBin(Ne, coerce(ELocal(a), TBool, TI32), EInt(0))));
 				case _: out.push(SSet(lo, ELocal(a)));
 			}
 			locals.set(v.vId, lo);
 			targs.push(mk(TLocal(v), t));
 		}
 		var retp = sig.sretFirst ? fi.args[1] : sig.retval != null ? fi.args[fi.args.length - 1] : null;
+		// (no result pointer: E_POINTER, or for a direct struct result, whose
+		// return is that pointer, the pointer: null)
 		if (retp != null)
-			out.push(SIf(EBin(LEq, ELocal(retp), EConv(I2L, EInt(0))), vector(SReturn(EInt(Com.E_POINTER))), vector()));
+			out.push(SIf(EBin(LEq, ELocal(retp), EConv(I2L, EInt(0))), vector(SReturn(sig.sretFirst ? ELocal(retp) : EInt(Com.E_POINTER))), vector()));
 		var call = mk(TCall(mk(TField(mk(TLocal(vo), ct), FInstance(c, vector(), impl)), impl.cfType), Vector.fromArrayCopy(targs)), s.ret);
 		var hr = newLocal("hr", fi.ret == TVoid ? TI32 : fi.ret);
 		var exn = newLocal("e", TRef(RAny));
@@ -5139,9 +5299,20 @@ class FnLower {
 			case _: {get: "getI64", set: "setI64", t: TI64};
 		}
 
+	// what copyStruct and zeroStruct move: the scalar fields, nested structs
+	// flattened, but vectors (hxmc.simd.V128) whole (CStruct; the
+	// interpreter's are four words, hxmc.simd.Ref)
+	static inline function structParts(c:TClass):Array<{off:Int, ty:CTy}>
+		return CInterop.scalars(c, 0, !Lower.simdScalar);
+
 	// the struct at src copied to dst, scalar by scalar (dst and src: pure)
 	function copyStruct(dst:Ex, src:Ex, c:TClass) {
-		for (f in CInterop.scalars(c, 0)) {
+		for (f in structParts(c)) {
+			// (a vector: one 16-byte access, which Sroa keeps a register)
+			if (f.ty.match(CStruct(_))) {
+				out.push(SExpr(ECallHost(SIMD_PREFIX + "copy", vector(dst, EInt(f.off), src, EInt(f.off)), TVoid)));
+				continue;
+			}
 			var a = rawAccess(f.ty);
 			var v = ECallHost("hxmc_unsafe_Mem_" + a.get, vector(src, EInt(f.off)), a.t);
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + a.set, vector(dst, EInt(f.off), v), TVoid)));
@@ -5149,7 +5320,11 @@ class FnLower {
 	}
 
 	function zeroStruct(dst:Ex, c:TClass) {
-		for (f in CInterop.scalars(c, 0)) {
+		for (f in structParts(c)) {
+			if (f.ty.match(CStruct(_))) {
+				out.push(SExpr(ECallHost(SIMD_PREFIX + "zero", vector(dst, EInt(f.off)), TVoid)));
+				continue;
+			}
 			var a = rawAccess(f.ty);
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + a.set, vector(dst, EInt(f.off), nullOf(a.t)), TVoid)));
 		}

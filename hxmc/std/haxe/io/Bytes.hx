@@ -34,9 +34,12 @@ class Bytes {
 		b.unsafeSet(pos, v);
 	}
 
-	// [pos, pos + n) inside (n a constant: for one byte one unsigned comparison)
+	// [pos, pos + n) inside (n a constant): one unsigned comparison of pos;
+	// for more than one byte also length >= n, the same test for every access
+	// of that size (the accesses at o, o + 4, o + 8 of one function: one
+	// test, then one comparison each; length - (n - 1) cannot wrap then)
 	inline function inRange(pos:Int, n:Int):Bool
-		return n == 1 ? hxmc.unsafe.Mem.ult(pos, length) : pos >= 0 && pos <= length - n;
+		return n == 1 ? hxmc.unsafe.Mem.ult(pos, length) : length >= n && hxmc.unsafe.Mem.ult(pos, length - (n - 1));
 
 	public inline function blit(pos:Int, src:Bytes, srcpos:Int, len:Int):Void
 		NativeBytes.blit(b, pos, src.b, srcpos, len);

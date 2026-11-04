@@ -968,6 +968,9 @@ class InterpGen {
 
 	function ins(i:MIns, b:MBlock, slotOff:Array<Int>) {
 		switch i.op {
+			case VOp | VConst:
+				// (programs built for the interpreter use hxmc.simd's scalar implementation)
+				throw new hxmc.MirBuild.Unsupported("a vector operation (hxmc.simd: the interpreter runs their scalar implementation)");
 			case Param | Const | ConstF | SymAddr | Phi:
 			case Cmp if (fused[i.id] != 0):
 			case TlsLoad:
@@ -1046,6 +1049,13 @@ class InterpGen {
 				op1(i.ty == I32 ? F2I32 : F2I64, i);
 			case Select:
 				emit([SELECT, r(i.id), r(i.a), r(i.b), r(i.c)]);
+			case Load if (i.ty == V128):
+				// (a C call's vector argument, MirBuild.cPart: its register holds
+				// the base address, from which the call's stub loads the vector)
+				if (i.b >= 0 || !cVectorArg(i)) throw new MirBuild.Unsupported('-D hxmc.interp: ${mf.name}: a vector value (hxmc.simd: the interpreter runs their scalar implementation)');
+				emit([MOV, r(i.id), r(i.a)]);
+			case Store if (ty(i.c) == V128):
+				throw new MirBuild.Unsupported('-D hxmc.interp: ${mf.name}: a vector value (hxmc.simd: the interpreter runs their scalar implementation)');
 			case Load:
 				var k = if (i.ty == F64) i.size == 4 ? 7 : 6 else switch i.size {
 					case 1: i.signed ? 0 : 1;
@@ -1140,6 +1150,21 @@ class InterpGen {
 	inline function op1(op:IOp, i:MIns)
 		emit([op, r(i.id), r(i.a)]);
 
+	// whether every use of a vector load is an argument of a C call (the
+	// interpreter's only vectors: C's native vectors by value, in a build
+	// that runs hxmc.simd's scalar implementation)
+	function cVectorArg(l:MIns):Bool {
+		for (b in mf.blocks)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				if (i.a == l.id || i.b == l.id || i.c == l.id) return false;
+				if (i.args != null && (i.op != Call || !i.cCall))
+					for (a in i.args)
+						if (a == l.id) return false;
+			}
+		return true;
+	}
+
 	inline function op2(op:IOp, i:MIns)
 		emit([op, r(i.id), r(i.a), r(i.b)]);
 
@@ -1165,6 +1190,14 @@ class InterpGen {
 		n = regs.length;
 		var groups = c != null ? c.cGroups : vector();
 		var sizes = c != null ? c.cSizes : vector();
+		// (no vector registers in the register image: InterpAbi)
+		var vectors = false;
+		for (t in tys)
+			if (t == V128) vectors = true;
+		if (c != null && c.structRet)
+			for (p in c.cRet)
+				if (p.size == 16) vectors = true;
+		if (vectors) throw new MirBuild.Unsupported('Mir macros and --run: ${mf.name}: the C function ${c != null && c.sym != null ? c.sym : "(indirect)"} takes or returns vectors by value (hxmc.simd), which the interpreter\'s calls of native code cannot pass (no vector registers)');
 		var pl = cc.place(tys, n, groups, sizes, variadic);
 		var start = code.length;
 		emit([op, target, res, 0]);
@@ -1238,6 +1271,7 @@ class InterpGen {
 			case I64: "l";
 			case F64: "f";
 			case Void: "v";
+			case V128: "q";
 		}
 
 	// the call-out stub of a call: (unused, buf) -> 0: the function at buf[0]
@@ -1249,13 +1283,19 @@ class InterpGen {
 		k.add("|" + tyKey(c.ty) + "|" + [for (a in c.args) tyKey(ty(a))].join(""));
 		k.add("|" + [for (t in c.argTys) tyKey(t)].join(""));
 		k.add("|" + c.cSizes + "|" + c.cGroups + "|" + (c.cRet == null ? "" : [for (p in c.cRet) p.off + ":" + p.size + ":" + p.float].join(",")));
-		k.add("|" + c.variadic + "|" + c.noReturn + "|" + c.cCall);
+		// (a vector argument: its word the address of its load, the stub loads
+		// it at the load's offset from there)
+		var argTys = [for (a in c.args) ty(a)];
+		var vecOff = [for (a in c.args) ty(a) == V128 ? mf.vals[a].imm : 0];
+		k.add("|" + c.variadic + "|" + c.noReturn + "|" + c.cCall + "|" + c.structRet + "|" + vecOff);
 		var name = STUB + haxe.crypto.Md5.encode(k.toString()).substr(0, 16);
 		if (defined(name)) return name;
-		var argTys = [for (a in c.args) ty(a)];
 		compile(MirBuild.synthetic(prep, abi, name, vector(I64, I64), I64, (b, ps) -> {
 			var buf = ps[1];
-			var xs = [for (n in 0...argTys.length) b.load(argTys[n], argTys[n] == I32 ? 4 : 8, buf, 8 + 8 * n)];
+			var xs = [
+				for (n in 0...argTys.length)
+					argTys[n] == V128 ? b.load(V128, 16, b.load(I64, 8, buf, 8 + 8 * n), vecOff[n]) : b.load(argTys[n], argTys[n] == I32 ? 4 : 8, buf, 8 + 8 * n)
+			];
 			var x = b.mk(Call, c.ty);
 			if (c.sym != null) x.sym = c.sym else x.a = b.load(I64, 8, buf, 0);
 			x.args = haxe.ds.Vector.fromArrayCopy(xs);
@@ -1264,6 +1304,7 @@ class InterpGen {
 			x.cSizes = c.cSizes;
 			x.cGroups = c.cGroups;
 			x.cRet = c.cRet;
+			x.structRet = c.structRet;
 			x.variadic = c.variadic;
 			x.noReturn = c.noReturn;
 			var r = b.add(x);

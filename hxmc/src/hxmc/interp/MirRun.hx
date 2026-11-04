@@ -57,6 +57,7 @@ class MirRun {
 
 	public static function run(com:context.Common.CommonContext) {
 		if (com.main.mainPath == null) throw "a program needs an entry point: -main <module>";
+		hxmc.ir.Lower.simdScalar = true;
 		var mainClass = context.Common.getEntryPoint(com).cls;
 		var o = Options.read(com);
 		var abi = Abi.get(o.target);

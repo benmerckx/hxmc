@@ -83,6 +83,9 @@ class Corpus {
 	// <Name>.java and the glue JniGlue writes from the program's manifest;
 	// JAVA_HOME's JVM runs them: jdk()); not staged (JniCheck runs them on CI)
 	public static final JNI = [for (n in ["JniCalls", "JniArrays", "JniRefs", "JniPeers", "JniThreads"]) n => true];
+	// the cases the interpreter cannot build when its code is loaded at run
+	// time (--mir-run: no call-out stubs, only the register image)
+	static final MIR_RUN_EXCLUDED = ["SimdFfi" => "C's native vectors by value: the register image of the interpreter's calls of native code has no vector registers (docs/plans/simd.md, \"ABIs\")"];
 	// the cases known to fail under --mir-run (as --known: still run, their
 	// failure does not fail the run, their passing does)
 	static final MIR_RUN_KNOWN = [
@@ -212,6 +215,7 @@ class Corpus {
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
 		if (t == "windows-x86_64" && stage == null && Sys.systemName() != "Windows" && Sys.getEnv("DISPLAY") == null && WINE_DISPLAY.exists(c.name))
 			return {name: c.name, status: "excluded", detail: WINE_DISPLAY[c.name]};
+		if (mirRun && MIR_RUN_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: MIR_RUN_EXCLUDED[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
 		var defines = caseDefines(c.cps[0] + "/" + c.main + ".hx");

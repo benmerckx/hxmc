@@ -534,6 +534,50 @@ references in structs.
 The corpus cases `StructValues`, `StructInline`, `StructInlineOpt` and
 `reject/Struct*` cover this on all seven targets.
 
+## SIMD vectors
+
+`hxmc.simd`'s nine 128-bit types (`F32x4`, `F64x2`, `I8x16`, `U8x16`,
+`I16x8`, `U16x8`, `I32x4`, `U32x4`, `I64x2`) are struct values of 16 bytes
+kept in vector registers (SSE4.1 on x86-64, NEON on arm64, simd128 on
+wasm32), with WebAssembly simd128's operations and results on every
+target, and a scalar implementation with the same results on the Mir
+interpreter, Eval, JavaScript and other Haxe targets:
+
+```haxe
+import hxmc.simd.*;
+
+@:hxmc.kernel static function gain(s:Span<UInt8>, n:Int, g:Float) {
+  var k = F32x4.splat(g), lo = F32x4.splat(-1), hi = F32x4.splat(1);
+  var i = 0;
+  while (i + 4 <= n) {
+    (F32x4.loadSpan(s, i * 4) * k).clamp(lo, hi).storeSpan(s, i * 4);
+    i += 4;
+  }
+}
+```
+
+- **Operations**: arithmetic (wrapping; `addSat`/`subSat` saturating),
+  `min`/`max` (NaN-propagating) and `pmin`/`pmax`, `mulAdd` (not fused),
+  comparisons to masks, `select`, constant-index shuffles and swizzles,
+  widening and saturating narrowing, conversions (truncating,
+  saturating), `sum`, `any`, `all`, `bitmask`.
+- **Memory**: `load`/`store` on `Bytes` (checked), `loadSpan`/`storeSpan`
+  on spans in kernels, `loadPtr`/`storePtr` (`@:hxmc.unsafe`); unaligned,
+  16 bytes or the low 8 or 4.
+- **As values**: the struct rules. Boxed in an `Array`, a `Map`, a type
+  parameter's slot, `Null` and `Dynamic`; passed to Haxe functions by
+  address.
+- **In C signatures**: C's native vector type (`__m128`, `float32x4_t`,
+  `vector_size(16)`), in a vector register (System V, AAPCS64; by address
+  on Win64, result in xmm0); on wasm32 by address. At most eight, none
+  variadic.
+- **Requirements**: an x86-64-v2 machine (SSE4.1) for a program that uses
+  them; a WebAssembly engine with simd128.
+
+The design, every semantic decision, the ABIs and the benchmarks:
+[plans/simd.md](plans/simd.md). The corpus cases `SimdOps`, `SimdValues`,
+`SimdExamples`, `SimdFfi` and `reject/Simd*`.
+
 ## Objective-C
 
 On macOS and iOS, Objective-C classes are declared as extern classes and
@@ -1136,7 +1180,8 @@ and arm64; `ComElsewhere` the other targets.
 
 | Type | In C |
 | --- | --- |
-| numbers, `Bool`, `Ptr`, `@:hxmc.struct` values | as C functions take and return them; a struct by value as the ABI passes it |
+| numbers, `Ptr`, `@:hxmc.struct` values | as C functions take and return them; a struct by value as the ABI passes it |
+| `Bool` | `BOOL`, a 32-bit int (any but zero true), not C's one-byte `bool` (a struct's field stays C's) |
 | a COM interface (`Null<IFoo>` too) | `IFoo *`: an argument borrowed (the value's pointer, null for null); a result (`[out, retval]`) owned, the value taking the reference over |
 | `String` | `LPCWSTR`: UTF-16 made for the call and freed after it; a result `LPWSTR`, CoTaskMemAlloc's, freed once copied |
 | `hxmc.com.BStr` (a `String`) | `BSTR`: SysAllocStringLen's for the call, freed after it; a result's freed once copied (an embedded NUL kept; a null BSTR reads `""`) |
@@ -1165,6 +1210,10 @@ function, as each Objective-C message's is. A null receiver throws (`E_POINTER`)
 - **`Com.query(x, IFoo)`** is `QueryInterface`: the value as `IFoo`, or null
   (E_NOINTERFACE). `Com.as(x, IFoo)` and `cast(x, IFoo)` throw a
   ComException instead; `Std.isOfType(x, IFoo)` and `Std.downcast` ask it too.
+  A value that is no COM object (a Haxe object implementing no COM
+  interface, a string, another native handle) is false, null and null for
+  `Std.isOfType`, `Std.downcast` and `Com.query`; `Com.as`, `cast` and
+  `Com.ptr` throw (E_NOINTERFACE).
 - **Values are per interface pointer**: `==` compares them (one value per
   pointer while it lives, so a map sees one key); two interfaces of one
   object are two values. `Com.same(a, b)` compares the objects (their
@@ -1174,7 +1223,8 @@ function, as each Objective-C message's is. A null receiver throws (`E_POINTER`)
   `SHCreateItemFromParsingName`); `Com.wrap(p, IFoo)` makes a borrowed
   pointer a value (which holds a reference of its own); `Com.ptr(x, IFoo)`
   is a value's pointer, borrowed, to pass to C; `Com.iidOf(IFoo)` an IID's
-  address. `Com.create(clsid, IFoo)` is `CoCreateInstance`.
+  address (16 bytes of the program's data, one per IID); `Com.guid(text)`
+  a GUID's, interned (every character checked). `Com.create(clsid, IFoo)` is `CoCreateInstance`.
 
 ### Haxe classes implementing COM interfaces
 

@@ -67,16 +67,23 @@ class ComKind {
 	static inline var IFACE_BYTES = 24; // vtable, niids, iids
 	static inline var MAX_IIDS = 16;
 
-	static var kind:Int; // (0: not registered yet)
+	// (0: not registered yet; published with a release store once registered,
+	// read with an acquire load: known)
+	@:hxmc.export("rt_com_kind") static var kind:Int;
 	// (blockOf: a Haxe object's block made and paired at most once)
 	static var blockLock:Ptr;
-	// a descriptor per type index (the Haxe classes implementing COM interfaces)
-	static var types:Ptr;
-	// the IIDs interned (iid): 16 bytes each, never freed
+	// a descriptor per type index (the Haxe classes implementing COM
+	// interfaces): the table published once filled, each entry once its
+	// descriptor is (release stores; read lock-free with acquire loads)
+	@:hxmc.export("rt_com_types") static var types:Ptr;
+	// the GUIDs of strings interned (guid): chunks of IIDS_PER_CHUNK, 16 bytes
+	// each after a word linking the previous chunk, never freed (an
+	// interface's IID is the program's data: hxmc.ir.Com)
+	static inline var IIDS_PER_CHUNK = 64;
 	static var iids:Ptr;
 	static var niids:Int;
-	static var iidsCap:Int;
-	// a thread's Win32 id per runtime thread id (Com.init), for wake
+	// a thread's Win32 id per runtime thread id (Com.init), for wake: read
+	// under Foreign.lock, which noteThread's realloc takes
 	static var tids:Ptr;
 	static var tidsCap:Int;
 	// the system's functions, found at their first use
@@ -90,9 +97,14 @@ class ComKind {
 	static var fSysFreeString:Ptr;
 	static var fPostThreadMessageW:Ptr;
 
+	// the kind once registered (0: not yet)
+	@:hxmc.unsafe static inline function known():Int
+		return Atomic.load32(Mem.sym("rt_com_kind"));
+
 	// the kind, registered at the first call
 	@:hxmc.unsafe static function k():Int {
-		if (kind != 0) return kind;
+		var k = known();
+		if (k != 0) return k;
 		Os.lock(Foreign.lock);
 		if (kind == 0) {
 			var d = Mem.stack(120);
@@ -108,7 +120,7 @@ class ComKind {
 			Mem.setPtr(d, Foreign.K_WAKE, Callback.addr(wake));
 			blockLock = LibC.malloc(Os.MUTEX_BYTES);
 			Os.mutexInit(blockLock);
-			kind = Foreign.registerLocked(d);
+			Atomic.store32(Mem.sym("rt_com_kind"), Foreign.registerLocked(d));
 		}
 		Os.unlock(Foreign.lock);
 		return kind;
@@ -129,8 +141,9 @@ class ComKind {
 	@:hxmc.unsafe static inline function queryOf(p:Ptr, riid:Ptr, ppv:Ptr):Int
 		return Ind.call3(slot(p, 0), p, riid, ppv).toI64().toInt();
 
-	// ---- the kind's hooks: C functions (any thread; the toggle's retain and
-	// release with the world stopped, on the runtime's own blocks)
+	// ---- the kind's hooks: C functions (any thread, out of a collection's
+	// stop: the toggle's retain and release, on the runtime's own blocks,
+	// before it, Foreign.beforeStop)
 
 	@:hxmc.callback @:hxmc.unsafe static function retain(ref:Ptr):Ptr {
 		addRefOf(ref);
@@ -141,8 +154,8 @@ class ComKind {
 	// safe region (a proxy's last one is a call to its apartment; a
 	// destructor may call back into Haxe): this hook runs on a thread of the
 	// runtime's (detach's, a put-off call's: in a region already), never in
-	// a collection's stop, where only the toggle's releases of the runtime's
-	// own blocks are made
+	// a collection's stop; the toggle's releases of the runtime's own blocks
+	// are made before it, under Foreign's lock, without a region
 	@:hxmc.callback @:hxmc.unsafe static function release(ref:Ptr):Ptr {
 		if (Mem.getPtr(Mem.getPtr(ref, 0), 16) == Callback.addr(releaseSelf)) return Ptr.ofI64((releaseOf(ref) : I64) & 0xFFFFFFFF);
 		var region = Leaf.rt_blocking_enter();
@@ -181,11 +194,14 @@ class ComKind {
 	// (PostThreadMessageW; none when t never called Com.init)
 	@:hxmc.callback @:hxmc.unsafe static function wake(t:Ptr):Void {
 		var i = t.toI64().toInt();
-		if (i <= 0 || i >= tidsCap) return;
-		var tid = Mem.getI32(tids, 4 * i);
-		if (tid == 0) return;
-		if (fPostThreadMessageW.isNull()) return;
-		Ind.call4(fPostThreadMessageW, Ptr.ofI64((tid : I64) & 0xFFFFFFFF), Ptr.ofI64(WM_DEFERRED), Ptr.nil(), Ptr.nil());
+		// (noteThread reallocs the table under the lock; PostThreadMessageW,
+		// which does not block, after it)
+		Os.lock(Foreign.lock);
+		var tid = i > 0 && i < tidsCap ? Mem.getI32(tids, 4 * i) : 0;
+		var post = fPostThreadMessageW;
+		Os.unlock(Foreign.lock);
+		if (tid == 0 || post.isNull()) return;
+		Ind.call4(post, Ptr.ofI64((tid : I64) & 0xFFFFFFFF), Ptr.ofI64(WM_DEFERRED), Ptr.nil(), Ptr.nil());
 	}
 
 	// ---- the runtime's own COM objects (a Haxe object's block)
@@ -236,10 +252,8 @@ class ComKind {
 	// that runs: rt_com_known)
 
 	// whether o's type has its descriptor
-	@:hxmc.host("rt_com_known") static function known(o:Dynamic):Int {
-		if (types.isNull()) return 0;
-		return Mem.getPtr(types, 8 * Types.tindex(o)).isNull() ? 0 : 1;
-	}
+	@:hxmc.host("rt_com_known") static function typeKnown(o:Dynamic):Int
+		return descOf(o).isNull() ? 0 : 1;
 
 	// a descriptor of n interfaces
 	@:hxmc.host("rt_com_desc") @:hxmc.unsafe static function desc(n:Int):Ptr {
@@ -285,11 +299,14 @@ class ComKind {
 		Mem.setI64(d, D_FIELD, off);
 		var t = Types.tindex(o);
 		Os.lock(Foreign.lock);
-		if (types.isNull()) {
-			types = LibC.malloc(8 * 65536);
-			LibC.memset(types, 0, 8 * 65536);
+		var ts = types;
+		if (ts.isNull()) {
+			// (filled before it is published: known and descOf read it without the lock)
+			ts = LibC.malloc(8 * 65536);
+			LibC.memset(ts, 0, 8 * 65536);
+			Atomic.store64(Mem.sym("rt_com_types"), ts.toI64());
 		}
-		if (Mem.getPtr(types, 8 * t).isNull()) Mem.setPtr(types, 8 * t, d);
+		if (Mem.getPtr(ts, 8 * t).isNull()) Atomic.store64(ts.add(8 * t), d.toI64());
 		Os.unlock(Foreign.lock);
 	}
 
@@ -319,8 +336,10 @@ class ComKind {
 	}
 
 	// the descriptor of Haxe object o's type, or null
-	@:hxmc.unsafe static inline function descOf(o:Dynamic):Ptr
-		return types.isNull() ? Ptr.nil() : Mem.getPtr(types, 8 * Types.tindex(o));
+	@:hxmc.unsafe static inline function descOf(o:Dynamic):Ptr {
+		var ts = Ptr.ofI64(Atomic.load64(Mem.sym("rt_com_types")));
+		return ts.isNull() ? Ptr.nil() : Ptr.ofI64(Atomic.load64(ts.add(8 * Types.tindex(o))));
+	}
 
 	// ---- values
 
@@ -329,12 +348,13 @@ class ComKind {
 	// block of a Haxe object implementing it; null for null
 	@:hxmc.host("rt_com_ptr") static function ptr(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
 		if (v == null) return Ptr.nil();
-		if (Types.tindex(v) == Types.T_NATIVE) {
+		// (a box of this kind's, not any native handle: Foreign.isBox)
+		if (isBox(v)) {
 			var r = Mem.getPtr(Mem.addr(v), 0);
 			if (r.isNull()) throw new hxmc.com.ComException(E_POINTER, "a COM object used after Com.detach");
 			return r;
 		}
-		var d = descOf(v);
+		var d = Types.tindex(v) == Types.T_NATIVE ? Ptr.nil() : descOf(v);
 		if (d.isNull()) throw new hxmc.com.ComException(E_NOINTERFACE, Std.string(v) + " is no COM object");
 		var b = blockOf(v, d);
 		var n = Mem.getI64(d, D_N).toInt();
@@ -373,14 +393,30 @@ class ComKind {
 		return b;
 	}
 
+	// whether v is a box of this kind (detached or not)
+	static function isBox(v:Dynamic):Bool {
+		var k = known();
+		return k != 0 && Foreign.isBox(k, Mem.addr(v));
+	}
+
 	// any interface pointer of v (a box's, a Haxe object's first), borrowed
 	static function anyPtr(v:Dynamic):Ptr
 		return ptr(v, 0, 0, 0xC0, 0x46000000);
 
-	// QueryInterface of v (IID w0..w3): the value, or null (E_NOINTERFACE)
+	// the same, or null when v is no COM value (another value, a detached box)
+	static function anyPtrOrNull(v:Dynamic):Ptr {
+		if (v == null) return Ptr.nil();
+		if (isBox(v)) return Mem.getPtr(Mem.addr(v), 0);
+		var d = Types.tindex(v) == Types.T_NATIVE ? Ptr.nil() : descOf(v);
+		return d.isNull() ? Ptr.nil() : blockOf(v, d).add(B_IFACES);
+	}
+
+	// QueryInterface of v (IID w0..w3): the value, or null (E_NOINTERFACE,
+	// and a value that is no COM object: Std.isOfType's false,
+	// Std.downcast's null; Com.as and cast throw)
 	@:hxmc.host("rt_com_query") static function query(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Dynamic {
-		if (v == null) return null;
-		var p = anyPtr(v);
+		var p = anyPtrOrNull(v);
+		if (p.isNull()) return null;
 		var g = Mem.stack(16);
 		Mem.setI32(g, 0, w0);
 		Mem.setI32(g, 4, w1);
@@ -451,23 +487,30 @@ class ComKind {
 		return releaseOf(p);
 	}
 
-	// the interned IID w0..w3 (16 bytes, never freed)
-	@:hxmc.host("rt_com_iid") static function iid(w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
+	// the interned GUID w0..w3 (16 bytes, never freed: one per GUID, in every chunk)
+	static function iid(w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
 		Os.lock(Foreign.lock);
-		for (i in 0...niids) {
-			var g = iids.add(16 * i);
-			if (Mem.getI32(g, 0) == w0 && Mem.getI32(g, 4) == w1 && Mem.getI32(g, 8) == w2 && Mem.getI32(g, 12) == w3) {
-				Os.unlock(Foreign.lock);
-				return g;
+		var c = iids, n = niids;
+		while (!c.isNull()) {
+			for (i in 0...n) {
+				var g = c.add(8 + 16 * i);
+				if (Mem.getI32(g, 0) == w0 && Mem.getI32(g, 4) == w1 && Mem.getI32(g, 8) == w2 && Mem.getI32(g, 12) == w3) {
+					Os.unlock(Foreign.lock);
+					return g;
+				}
 			}
+			// (the previous chunks are full)
+			c = Mem.getPtr(c, 0);
+			n = IIDS_PER_CHUNK;
 		}
-		if (niids == iidsCap) {
-			// (a new chunk: interned IIDs never move)
-			iidsCap = 64;
-			iids = LibC.malloc(16 * 64);
+		if (iids.isNull() || niids == IIDS_PER_CHUNK) {
+			// (a new chunk: interned GUIDs never move)
+			var chunk = LibC.malloc(8 + 16 * IIDS_PER_CHUNK);
+			Mem.setPtr(chunk, 0, iids);
+			iids = chunk;
 			niids = 0;
 		}
-		var g = iids.add(16 * niids++);
+		var g = iids.add(8 + 16 * niids++);
 		Mem.setI32(g, 0, w0);
 		Mem.setI32(g, 4, w1);
 		Mem.setI32(g, 8, w2);
@@ -653,8 +696,10 @@ class ComKind {
 	}
 
 	// v (a box) gives up its reference now (Foreign.detach)
-	static function detach(v:Dynamic):Void
-		if (kind != 0 && v != null) Foreign.detach(kind, v);
+	static function detach(v:Dynamic):Void {
+		var k = known();
+		if (k != 0 && v != null) Foreign.detach(k, v);
+	}
 }
 
 // calls through C function pointers (vtables' slots, the system's functions)

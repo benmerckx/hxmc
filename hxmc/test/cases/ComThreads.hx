@@ -9,18 +9,40 @@ import sys.thread.Thread;
 // single-threaded apartment's thread blocked in its message loop, which
 // never allocates, is woken by a thread message (Com.WM_DEFERRED) once
 // another thread's collection found its values dead, and runs their
-// releases (Com.runDeferred). An ended thread's go to any thread.
-// ComThreads_dyn.c is ComCalls_dyn.c: the same DLL.
+// releases (Com.runDeferred). An ended thread's go to any thread. A thread
+// of C's own that the runtime attached (a thunk's call) runs its own as it
+// leaves Haxe. ComThreads_dyn.c is ComCalls_dyn.c: the same DLL.
 @:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A01}")
 extern interface ICounter extends IUnknown {
 	function Add(n:Int):Void;
 	function Get():Int;
 }
 
+@:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A08}")
+extern interface ITake extends IUnknown {
+	function Take(c:ICounter):Void;
+	function Ping():Void;
+}
+
+class Taker implements ITake {
+	public var taken:Null<ICounter>;
+	public var pings = 0;
+
+	public function new() {}
+
+	public function Take(c:ICounter):Void
+		taken = c;
+
+	public function Ping():Void
+		pings++;
+}
+
 @:hxmc.lib("comthreadsdyn") @:hxmc.c extern class Native {
 	static function counter_new(out:Ptr):Int;
 	static function counter_live():Int;
 	static function counter_released_on():Int;
+	static function taker_start(t:Ptr):Int;
+	static function taker_finish():Void;
 }
 
 @:hxmc.c @:hxmc.lib("user32") extern class User32 {
@@ -103,6 +125,18 @@ class ComThreads {
 			Sys.sleep(0.01);
 		}
 		trace("released once its maker ended", left);
+
+		// a thread of C's own: its value of the counter dropped by this
+		// thread, released on it as it next leaves Haxe
+		var taker = new Taker();
+		var takerId = Native.taker_start(Com.ptr(taker, ITake));
+		trace("taken on C's thread", taker.taken != null, Native.counter_live() - base);
+		taker.taken = null;
+		hxmc.NativeGc.collect(true);
+		Com.runDeferred();
+		var heldThen = Native.counter_live() - base;
+		Native.taker_finish();
+		trace("released on it as it left", heldThen, Native.counter_live() - base, Native.counter_released_on() == takerId, taker.pings);
 		Com.uninit();
 	}
 

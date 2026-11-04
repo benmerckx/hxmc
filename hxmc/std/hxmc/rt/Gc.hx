@@ -944,11 +944,13 @@ class Gc {
 		return o;
 	}
 
-	// a T_NATIVE object holding the foreign reference p (Foreign.box): freeFn
-	// a function, or a kind (below Foreign.MAX_KINDS) whose releases are put
-	// off, aux the thread that made it (Foreign.nativeFree)
-	static function nativeNewAux(p:Ptr, freeFn:Ptr, aux:Int):Dynamic {
-		var o:Dynamic = Mem.alloc(1, T_NATIVE, K_RAW);
+	// a T_NATIVE object holding the foreign reference p (Foreign.box), and
+	// tag in a second slot (the only native handles of two: Foreign.isBox):
+	// freeFn a function, or a kind (below Foreign.MAX_KINDS) whose releases
+	// are put off, aux the thread that made it (Foreign.nativeFree)
+	static function nativeNewBox(p:Ptr, freeFn:Ptr, aux:Int, tag:I64):Dynamic {
+		var o:Dynamic = Mem.alloc(2, T_NATIVE, K_RAW);
+		Mem.setI64(Mem.addr(o), 8, tag);
 		nativeRegister(o, p, freeFn, aux);
 		return o;
 	}
@@ -1363,6 +1365,8 @@ class Gc {
 	// collected meanwhile: the caller then retries its allocation)
 	@:hxmc.unsafe static function collectFor(full:Bool, need:I64) {
 		var s0 = Os.now();
+		// (what the scan needs of the foreign kinds that may not be called in the stop)
+		if (Foreign.preStop && Foreign.npeers > 0) Foreign.beforeStop();
 		if (!Threads.worldStop()) return;
 		var p0 = Os.now();
 		var m0 = majors;

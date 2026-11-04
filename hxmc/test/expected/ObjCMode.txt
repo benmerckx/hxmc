@@ -38,7 +38,7 @@ ObjCMode.hx:170: dealloc 77
 ObjCMode.hx:231: 3, 104, peer
 ObjCMode.hx:170: initWithCount 3 true
 ObjCMode.hx:236: collected
-ObjCMode.hx:170: dealloc 18 first
-ObjCMode.hx:170: dealloc 104
 ObjCMode.hx:170: dealloc 42
+ObjCMode.hx:170: dealloc 104
+ObjCMode.hx:170: dealloc 18 first
 ObjCMode.hx:238: done

@@ -130,6 +130,7 @@ class RuntimeSymbols {
 		{sym: "rt_weak_set", kind: FUNC, families: NATIVE, by: "FnLower.ivarStore: a weak Haxe value stored"},
 		{sym: "rt_com_unavailable", kind: IMPL, families: LINEAR, by: "FnLower.comUnavailable: a COM operation on another system than Windows", when: notWindows},
 		{sym: "rt_foreign_attach", kind: FUNC, families: NATIVE, by: "Com.entry: a COM thunk called on a thread the runtime did not start"},
+		{sym: "rt_foreign_leave", kind: FUNC, families: NATIVE, by: "Com.entry: a COM thunk returns (the thread's calls put off run)"},
 		// COM (hxmc.rt.ComKind, Windows only)
 		{sym: "rt_com_ptr", kind: IMPL, families: NATIVE, by: "FnLower.comCall: the interface pointer of a COM value", when: windows},
 		{sym: "rt_com_fail", kind: IMPL, families: NATIVE, by: "FnLower.comCall: a failed HRESULT thrown", when: windows},
@@ -140,7 +141,6 @@ class RuntimeSymbols {
 		{sym: "rt_com_bstr", kind: IMPL, families: NATIVE, by: "FnLower.comCall, comThunkBody: a BStr argument's or result's BSTR", when: windows},
 		{sym: "rt_com_bstr_free", kind: IMPL, families: NATIVE, by: "FnLower.comCall: a BStr argument's BSTR freed", when: windows},
 		{sym: "rt_com_bstr_take", kind: IMPL, families: NATIVE, by: "FnLower.comCall: an [out, retval] BSTR made a String", when: windows},
-		{sym: "rt_com_iid", kind: IMPL, families: NATIVE, by: "FnLower.call: Com.iidOf", when: windows},
 		{sym: "rt_com_query", kind: IMPL, families: NATIVE, by: "FnLower.comQuery: cast(x, IFoo), Std.isOfType, Std.downcast", when: windows},
 		{sym: "rt_com_known", kind: IMPL, families: NATIVE, by: "FnLower.comConstructor: whether the type has its COM descriptor", when: windows},
 		{sym: "rt_com_desc", kind: IMPL, families: NATIVE, by: "FnLower.comDescBody: a class's COM descriptor", when: windows},

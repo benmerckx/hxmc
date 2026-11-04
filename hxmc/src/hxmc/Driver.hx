@@ -205,6 +205,16 @@ class Driver {
 			if (o.opt) {
 				var op = new Opt(mf);
 				op.run();
+				// (slots whose address the optimizer made one again, as a phi of
+				// the slots of a branch it decided: promoted, and optimized again)
+				if (sroa) {
+					var s2 = new Sroa(mf);
+					s2.run();
+					if (s2.promoted > 0) {
+						op = new Opt(mf);
+						op.run();
+					}
+				}
 				// (the rooted locals' slots nothing reads any more)
 				var fs = new Frames(mf);
 				fs.run();

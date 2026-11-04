@@ -22,16 +22,23 @@ import hxmc.unsafe.*;
 // kind is registered (at the first object that needs it).
 @:hxmc.native @:keep @:allow(hxmc.rt)
 class ObjCKind {
-	static var kind:Int; // (0: not registered yet)
+	// (0: not registered yet; published with a release store once its record
+	// and the functions below are written, read with an acquire load: known)
+	@:hxmc.export("rt_objc_kind") static var kind:Int;
 	static var getClass:Ptr;
 	static var getIvar:Ptr;
 	static var ivarOffset:Ptr;
 	static var poolPush:Ptr;
 	static var poolPop:Ptr;
 
+	// the kind once registered (0: not yet)
+	@:hxmc.unsafe static inline function known():Int
+		return Atomic.load32(Mem.sym("rt_objc_kind"));
+
 	// the kind, registered at the first call
 	@:hxmc.unsafe static function k():Int {
-		if (kind != 0) return kind;
+		var k = known();
+		if (k != 0) return k;
 		Os.lock(Foreign.lock);
 		if (kind == 0) {
 			getClass = sym(Mem.cstr("object_getClass"));
@@ -51,7 +58,7 @@ class ObjCKind {
 			Mem.setPtr(d, Foreign.K_WEAK_DESTROY, sym(Mem.cstr("objc_destroyWeak")));
 			Mem.setPtr(d, Foreign.K_BATCH_BEGIN, Callback.addr(batchBegin));
 			Mem.setPtr(d, Foreign.K_BATCH_END, Callback.addr(batchEnd));
-			kind = Foreign.registerLocked(d);
+			Atomic.store32(Mem.sym("rt_objc_kind"), Foreign.registerLocked(d));
 		}
 		Os.unlock(Foreign.lock);
 		return kind;
@@ -98,8 +105,9 @@ class ObjCKind {
 	// typed as its Objective-C class, a view a parent's subviews gave) gives
 	// up its id now (Foreign.detach)
 	@:hxmc.unsafe public static function detach(o:Dynamic):Void {
-		if (Mem.os() != 1 || o == null || kind == 0) return;
-		Foreign.detach(kind, o);
+		if (Mem.os() != 1 || o == null) return;
+		var k = known();
+		if (k != 0) Foreign.detach(k, o);
 	}
 
 	// ---- pools: one on Apple's systems whatever the heap holds (nil: no libobjc)
@@ -176,8 +184,10 @@ class ObjCKind {
 
 	// the id of v when it is an Objective-C object (a box of an id; an object
 	// of a type whose objects are paired), else nil: v of any type
-	static function idOf(v:Dynamic):Ptr
-		return kind == 0 ? Ptr.nil() : Foreign.refOf(kind, v);
+	static function idOf(v:Dynamic):Ptr {
+		var k = known();
+		return k == 0 ? Ptr.nil() : Foreign.refOf(k, v);
+	}
 
 	// whether v (of any type: a caught value, a Dynamic) is an Objective-C
 	// object that is a kind of the class cls, or conforms to the protocol

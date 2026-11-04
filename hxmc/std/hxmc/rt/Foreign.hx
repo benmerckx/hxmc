@@ -52,9 +52,11 @@ import hxmc.unsafe.*;
 //   foreign object (memory the heap does not see) until a major collection;
 //   RT_PEER_BUDGET of them (1000; 0: off) since the last one start the next.
 //
-// The tables are malloc'd and guarded by `lock` (the collector reads them
-// with the world stopped, without it); the kind table never moves, so its
-// hooks are read without the lock.
+// The tables are malloc'd and guarded by `lock`, taken whatever the
+// number of threads (a TOGGLE_NOTIFY kind's notification, a COM or Java
+// thread the runtime attached, comes from a thread the runtime may not have
+// counted yet); the collector reads them with the world stopped, without
+// it. The kind table never moves, so its hooks are read without the lock.
 @:hxmc.native @:keep @:allow(hxmc.rt)
 class Foreign {
 	// ---- a kind's descriptor: a C struct of words (rt_foreign_kind copies it)
@@ -95,11 +97,15 @@ class Foreign {
 
 	static var kinds:Ptr; // MAX_KINDS records (index 0 none), never moved
 	static var nkinds:Int;
+	// a kind registered whose toggle or weak cells are read before the stop
+	// (no RELEASE_IN_STOP: beforeStop)
+	static var preStop:Bool;
 	static var lock:Ptr; // the tables (and kinds' registration)
 
 	// ---- peers: (object, reference, weak cell, kind | STRONG, maker) entries
 	static inline var PEER_BYTES = 32;
-	static inline var STRONG = 0x100; // TOGGLE_NOTIFY: the foreign side holds more than our reference
+	static inline var STRONG = 0x100; // the foreign side holds more than our reference (TOGGLE_NOTIFY's notification; beforeStop's toggle)
+	static inline var ALIVE = 0x200; // detached, of a kind without RELEASE_IN_STOP: its object lived at beforeStop
 	static var peers:Ptr;
 	static var npeers:Int;
 	static var peersCap:Int;
@@ -133,6 +139,11 @@ class Foreign {
 	static var ndeferred:Int;
 	static var deferredCap:Int;
 	static var deferLock:Ptr;
+	// the calls queued per thread, read without deferLock (runDeferred's
+	// check): a 32-bit count for any thread (0), then PENDING_SLOTS for thread
+	// ids modulo PENDING_SLOTS (threads sharing one only look in vain)
+	static inline var PENDING_SLOTS = 256;
+	static var pending:Ptr;
 	static var ended:Ptr;
 	static var endedCap:Int;
 	// (kind, thread) pairs to wake once the world resumes (wakeQueued)
@@ -149,6 +160,8 @@ class Foreign {
 		Os.mutexInit(lock);
 		deferLock = LibC.malloc(Os.MUTEX_BYTES);
 		Os.mutexInit(deferLock);
+		pending = LibC.malloc(4 * (PENDING_SLOTS + 1));
+		LibC.memset(pending, 0, 4 * (PENDING_SLOTS + 1));
 		peerFree = -1;
 		budget = Os.envInt("RT_PEER_BUDGET", 1000);
 	}
@@ -188,6 +201,7 @@ class Foreign {
 		if (nkinds == MAX_KINDS) Gc.dieC(Mem.cstr("hxmc: too many kinds of foreign objects\n"));
 		var k = nkinds++;
 		LibC.memcpy(rec(k), d, KIND_BYTES);
+		if (!inStop(k) && (flags(k) & (TOGGLE_COUNT | TOGGLE_RELEASE) != 0 || !hook(k, K_WEAK_LOAD).isNull())) preStop = true;
 		return k;
 	}
 
@@ -217,12 +231,6 @@ class Foreign {
 			if (inStop(k)) batchEnd(k, Mem.getPtr(rec(k), K_TOKEN));
 	}
 
-	@:hxmc.unsafe static inline function lockLeaf()
-		if (Threads.mt != 0) Os.lock(lock);
-
-	@:hxmc.unsafe static inline function unlockLeaf()
-		if (Threads.mt != 0) Os.unlock(lock);
-
 	@:hxmc.unsafe static inline function me():Int {
 		var m = Threads.self;
 		return m.isNull() ? 0 : m.value.id;
@@ -237,7 +245,7 @@ class Foreign {
 		var p = Mem.addr(o);
 		var t = Types.tindex(o);
 		var maker = me();
-		lockLeaf();
+		Os.lock(lock);
 		if (typed) {
 			if (typeKinds.isNull()) {
 				typeKinds = LibC.malloc(65536);
@@ -263,20 +271,22 @@ class Foreign {
 		Mem.setPtr(e, 0, p);
 		Mem.setPtr(e, 8, ref);
 		Mem.setPtr(e, 16, Ptr.nil());
-		Mem.setI32(e, 24, k);
+		// (a toggle read before the stop: kept until the first read, beforeStop,
+		// as one made after it and before the stop must be)
+		Mem.setI32(e, 24, countedBefore(k) ? k | STRONG : k);
 		Mem.setI32(e, 28, maker);
 		// (made in the old space, as large or pretenured objects are: only a
 		// major collection frees it, as one promoted: sweepPeers counts those)
 		if (!Gc.inYoung(p)) promoted++;
-		unlockLeaf();
+		Os.unlock(lock);
 		return i;
 	}
 
 	// the Haxe object of entry i (null: a free entry)
 	static function peerGet(i:Int):Dynamic {
-		lockLeaf();
+		Os.lock(lock);
 		var p = i >= 0 && i < npeers ? Mem.getPtr(peers, PEER_BYTES * i) : Ptr.nil();
-		unlockLeaf();
+		Os.unlock(lock);
 		return Mem.obj(p);
 	}
 
@@ -294,14 +304,70 @@ class Foreign {
 		Os.unlock(lock);
 	}
 
-	// whether the foreign side keeps entry e's object (k its kind)
-	@:hxmc.unsafe static inline function kept(k:Int, e:Ptr):Bool {
+	// kind k's toggle is a count read by its hooks, which may not be called
+	// with the world stopped (no RELEASE_IN_STOP): read before it, beforeStop
+	@:hxmc.unsafe static inline function countedBefore(k:Int):Bool
+		return flags(k) & (TOGGLE_COUNT | TOGGLE_RELEASE) != 0 && !inStop(k);
+
+	// whether the foreign side keeps entry e's object (k its kind), by its
+	// hooks: count, or retain then release
+	@:hxmc.unsafe static inline function counted(k:Int, e:Ptr):Bool {
 		var f = flags(k);
 		var ref = Mem.getPtr(e, 8);
-		return if (f & TOGGLE_NOTIFY != 0) Mem.getI32(e, 24) & STRONG != 0;
-		else if (f & TOGGLE_COUNT != 0) Ind.call1(hook(k, K_COUNT), ref).toI64() > Mem.getI64(rec(k), K_THRESHOLD);
+		return if (f & TOGGLE_COUNT != 0) Ind.call1(hook(k, K_COUNT), ref).toI64() > Mem.getI64(rec(k), K_THRESHOLD);
 		else if (f & TOGGLE_RELEASE != 0) Ind.call1(hook(k, K_RELEASE), Ind.call1(hook(k, K_RETAIN), ref)).toI64() > Mem.getI64(rec(k), K_THRESHOLD);
 		else false;
+	}
+
+	// with the world stopped: whether the foreign side keeps entry e's object
+	// (k its kind): its hooks for a kind that may be called in the stop, else
+	// what was recorded before it (TOGGLE_NOTIFY's notification, beforeStop)
+	@:hxmc.unsafe static inline function kept(k:Int, e:Ptr):Bool
+		return inStop(k) ? counted(k, e) : Mem.getI32(e, 24) & STRONG != 0;
+
+	// before a collection stops the world, out of the stop, on the thread
+	// about to collect (Gc.collectFor): what scan needs to know of the kinds
+	// whose hooks may not run in the stop (no RELEASE_IN_STOP: a JVM's may
+	// block on its own safepoint, a COM proxy's calls its apartment): the
+	// toggle of each of their entries (STRONG) and whether a detached one's
+	// object lives (ALIVE, the weak cell loaded, the reference released after
+	// the lock, by the kind's thread rule). A change between this and the stop
+	// counts from the next collection: an entry paired meanwhile is kept
+	// (pair), one detached meanwhile lives (detach), one let go stays one more
+	// collection; a retain racing the stop is seen at the next one, as a
+	// retain racing the scan of a RELEASE_IN_STOP kind is.
+	@:hxmc.unsafe static function beforeStop() {
+		var loaded = Ptr.nil();
+		var nloaded = 0;
+		Os.lock(lock);
+		for (i in 1...npeers) {
+			var e = peers.add(PEER_BYTES * i);
+			if (Mem.getPtr(e, 0).isNull()) continue;
+			var w = Mem.getI32(e, 24);
+			var k = w & 0xFF;
+			if (inStop(k)) continue;
+			var cell = Mem.getPtr(e, 16);
+			if (!cell.isNull()) {
+				// (a detached entry's reference may be gone: only its cell is read)
+				var live = Ind.call1(hook(k, K_WEAK_LOAD), cell);
+				Mem.setI32(e, 24, live.isNull() ? w & ~ALIVE : w | ALIVE);
+				if (!live.isNull()) {
+					if (nloaded & (nloaded - 1) == 0) loaded = LibC.realloc(loaded, ((nloaded == 0 ? 1 : 2 * nloaded) : I64) * 16);
+					Mem.setPtr(loaded, 16 * nloaded, live);
+					Mem.setI32(loaded, 16 * nloaded + 8, k);
+					Mem.setI32(loaded, 16 * nloaded + 12, Mem.getI32(e, 28));
+					nloaded++;
+				}
+			} else if (countedBefore(k)) {
+				// (a reference the entry holds: a detach takes the lock before it lets go)
+				Mem.setI32(e, 24, counted(k, e) ? w | STRONG : w & ~STRONG);
+			}
+		}
+		Os.unlock(lock);
+		// (a last release may run a destructor that comes back to the tables)
+		for (j in 0...nloaded)
+			releaseNow(Mem.getI32(loaded, 16 * j + 8), Mem.getPtr(loaded, 16 * j), Mem.getI32(loaded, 16 * j + 12));
+		if (!loaded.isNull()) LibC.free(loaded);
 	}
 
 	// the entries the foreign side keeps, and the detached ones whose object
@@ -315,12 +381,14 @@ class Foreign {
 			var cell = Mem.getPtr(e, 16);
 			if (!cell.isNull()) {
 				// (detached: a root while its object lives, whatever retains it; its
-				// reference may be gone, so only the weak cell is read)
-				var live = Ind.call1(hook(k, K_WEAK_LOAD), cell);
-				if (!live.isNull()) {
-					releaseOrDefer(k, live, Mem.getI32(e, 28));
-					Mem.setPtr(e, 0, Gc.fwdAs(o, root));
-				}
+				// reference may be gone, so only the weak cell is read, here for a
+				// kind that may be called in the stop, else before it: beforeStop)
+				if (inStop(k)) {
+					var live = Ind.call1(hook(k, K_WEAK_LOAD), cell);
+					if (live.isNull()) continue;
+					Ind.call1(hook(k, K_RELEASE), live);
+				} else if (Mem.getI32(e, 24) & ALIVE == 0) continue;
+				Mem.setPtr(e, 0, Gc.fwdAs(o, root));
 				continue;
 			}
 			if (kept(k, e)) {
@@ -337,22 +405,27 @@ class Foreign {
 		if (o == null) return;
 		var ref = refOf(k, o);
 		if (ref.isNull()) return;
-		var i = peerIndex(k, ref);
-		if (i < 0) {
+		if (isBox(k, Mem.addr(o))) {
 			detachBox(k, Mem.addr(o), ref);
 			return;
 		}
+		var i = peerIndex(k, ref);
+		if (i < 0) return;
 		if (hook(k, K_WEAK_INIT).isNull()) return;
 		var cell = LibC.malloc(8);
 		Mem.setPtr(cell, 0, Ptr.nil());
 		Ind.call2(hook(k, K_WEAK_INIT), cell, ref);
-		lockLeaf();
+		Os.lock(lock);
 		var e = peers.add(PEER_BYTES * i);
 		var ok = i > 0 && i < npeers && Mem.getPtr(e, 8) == ref && !Mem.getPtr(e, 0).isNull() && Mem.getPtr(e, 16).isNull();
 		var haxe = ok ? Mem.getPtr(e, 0) : Ptr.nil();
 		var maker = ok ? Mem.getI32(e, 28) : 0;
-		if (ok) Mem.setPtr(e, 16, cell);
-		unlockLeaf();
+		if (ok) {
+			Mem.setPtr(e, 16, cell);
+			// (its object lives: a root until beforeStop finds it gone)
+			Mem.setI32(e, 24, Mem.getI32(e, 24) | ALIVE);
+		}
+		Os.unlock(lock);
 		if (!ok) {
 			Ind.call1(hook(k, K_WEAK_DESTROY), cell);
 			LibC.free(cell);
@@ -383,7 +456,7 @@ class Foreign {
 		Gc.unlockLeaf(Gc.nativesLock);
 		if (!found) return;
 		var maker = 0;
-		lockLeaf();
+		Os.lock(lock);
 		var i = boxSlot(key(k, ref), boxesCap);
 		while (true) {
 			var e = boxes.add(BOX_BYTES * i);
@@ -396,7 +469,7 @@ class Foreign {
 			}
 			i = (i + 1) & (boxesCap - 1);
 		}
-		unlockLeaf();
+		Os.unlock(lock);
 		Mem.setPtr(box, 0, Ptr.nil());
 		releaseNow(k, ref, maker);
 	}
@@ -424,11 +497,14 @@ class Foreign {
 		return f & RELEASE_ON_MAKER != 0 ? maker : f & RELEASE_ON_MAIN != 0 ? 1 : 0;
 	}
 
-	// out of a stop: on this thread unless the kind wants another one
+	// out of a stop: on this thread unless the kind wants another one (then
+	// put off for it, and that thread woken: detach's, beforeStop's)
 	@:hxmc.unsafe static function releaseNow(k:Int, ref:Ptr, maker:Int) {
 		var t = target(k, maker);
 		if (t != 0 && t != me()) {
-			defer(k, hook(k, K_RELEASE), ref, Ptr.nil(), t);
+			t = defer(k, hook(k, K_RELEASE), ref, Ptr.nil(), t);
+			var wake = hook(k, K_WAKE);
+			if (t != 0 && t != me() && !wake.isNull()) Ind.call1(wake, Ptr.ofI64((t : I64)));
 			return;
 		}
 		var token = batchBegin(k);
@@ -436,7 +512,7 @@ class Foreign {
 		batchEnd(k, token);
 	}
 
-	// with the world stopped (scan, the sweeps' end)
+	// with the world stopped (the sweeps' end)
 	@:hxmc.unsafe static function releaseOrDefer(k:Int, ref:Ptr, maker:Int) {
 		if (inStop(k)) Ind.call1(hook(k, K_RELEASE), ref) else stopDefer(k, hook(k, K_RELEASE), ref, Ptr.nil(), target(k, maker));
 	}
@@ -449,8 +525,13 @@ class Foreign {
 
 	// ---- calls put off
 
-	// f(a, b) put off for thread t (0: any), of kind k (its batch)
-	@:hxmc.unsafe static function defer(k:Int, f:Ptr, a:Ptr, b:Ptr, t:Int) {
+	// (the slot of pending counting thread t's calls)
+	@:hxmc.unsafe static inline function pendingAt(t:Int):Ptr
+		return pending.add(t == 0 ? 0 : 4 + 4 * (t & (PENDING_SLOTS - 1)));
+
+	// f(a, b) put off for thread t (0: any), of kind k (its batch): the thread
+	// it is for (any, once t ended)
+	@:hxmc.unsafe static function defer(k:Int, f:Ptr, a:Ptr, b:Ptr, t:Int):Int {
 		Os.lock(deferLock);
 		if (t > 0 && t < endedCap && Mem.getU8(ended, t >> 3) & (1 << (t & 7)) != 0) t = 0;
 		if (ndeferred == deferredCap) {
@@ -464,7 +545,9 @@ class Foreign {
 		Mem.setI32(e, 24, k);
 		Mem.setI32(e, 28, t);
 		ndeferred++;
+		Atomic.add32(pendingAt(t), 1);
 		Os.unlock(deferLock);
+		return t;
 	}
 
 	// f(a, b) put off for this thread when it cannot run Haxe code now: it is
@@ -478,10 +561,11 @@ class Foreign {
 		return true;
 	}
 
-	// defer, from the collecting thread with the world stopped: a thread other
-	// than this one woken once the world resumes (the kind's wake hook)
+	// defer, from the collecting thread with the world stopped: the thread it
+	// is for (t, or any once t ended), when not this one, woken once the world
+	// resumes (the kind's wake hook)
 	@:hxmc.unsafe static function stopDefer(k:Int, f:Ptr, a:Ptr, b:Ptr, t:Int) {
-		defer(k, f, a, b, t);
+		t = defer(k, f, a, b, t);
 		if (t == 0 || t == me() || hook(k, K_WAKE).isNull()) return;
 		for (j in 0...nwakes)
 			if (Mem.getI32(wakes, 8 * j) == k && Mem.getI32(wakes, 8 * j + 4) == t) return;
@@ -501,31 +585,44 @@ class Foreign {
 
 	// the calls put off for this thread (or any), newest first, each in a safe
 	// region inside its kind's batch (an Objective-C pool: what a dealloc
-	// autoreleases goes with it rather than into the thread's pool)
+	// autoreleases goes with it rather than into the thread's pool). Nothing
+	// to do costs two loads (pending); each round takes all of this thread's
+	// calls in one pass, the others' keeping their order, and runs them out of
+	// the lock (what they put off runs in the next round)
 	@:hxmc.unsafe static function runDeferred() {
 		var m = me();
 		while (true) {
+			if (Atomic.load32(pending) == 0 && (m == 0 || Atomic.load32(pendingAt(m)) == 0)) return;
 			Os.lock(deferLock);
-			var j = ndeferred;
-			while (j-- > 0) {
-				var t = Mem.getI32(deferred, DEFER_BYTES * j + 28);
-				if (t == m || t == 0) break;
+			var n = 0, mine = 0, any = 0, keep = 0;
+			var batch = LibC.malloc((ndeferred : I64) * DEFER_BYTES);
+			for (j in 0...ndeferred) {
+				var e = deferred.add(DEFER_BYTES * j);
+				var t = Mem.getI32(e, 28);
+				if (t == 0 || t == m) {
+					LibC.memcpy(batch.add(DEFER_BYTES * n++), e, DEFER_BYTES);
+					if (t == 0) any++ else mine++;
+				} else {
+					if (keep != j) LibC.memcpy(deferred.add(DEFER_BYTES * keep), e, DEFER_BYTES);
+					keep++;
+				}
 			}
-			if (j < 0) {
-				Os.unlock(deferLock);
-				return;
-			}
-			var e = deferred.add(DEFER_BYTES * j);
-			var f = Mem.getPtr(e, 0), a = Mem.getPtr(e, 8), b = Mem.getPtr(e, 16);
-			var k = Mem.getI32(e, 24);
-			ndeferred--;
-			LibC.memmove(e, deferred.add(DEFER_BYTES * ndeferred), DEFER_BYTES);
+			ndeferred = keep;
+			Atomic.add32(pending, -any);
+			if (mine > 0) Atomic.add32(pendingAt(m), -mine);
 			Os.unlock(deferLock);
-			var region = Leaf.rt_blocking_enter();
-			var token = batchBegin(k);
-			Ind.call2(f, a, b);
-			batchEnd(k, token);
-			Regions.end(region);
+			var j = n;
+			while (j-- > 0) {
+				var e = batch.add(DEFER_BYTES * j);
+				var k = Mem.getI32(e, 24);
+				var region = Leaf.rt_blocking_enter();
+				var token = batchBegin(k);
+				Ind.call2(Mem.getPtr(e, 0), Mem.getPtr(e, 8), Mem.getPtr(e, 16));
+				batchEnd(k, token);
+				Regions.end(region);
+			}
+			LibC.free(batch);
+			if (n == 0) return;
 		}
 	}
 
@@ -543,8 +640,16 @@ class Foreign {
 			endedCap = cap;
 		}
 		Mem.setI8(ended, t >> 3, Mem.getU8(ended, t >> 3) | (1 << (t & 7)));
+		var moved = 0;
 		for (j in 0...ndeferred)
-			if (Mem.getI32(deferred, DEFER_BYTES * j + 28) == t) Mem.setI32(deferred, DEFER_BYTES * j + 28, 0);
+			if (Mem.getI32(deferred, DEFER_BYTES * j + 28) == t) {
+				Mem.setI32(deferred, DEFER_BYTES * j + 28, 0);
+				moved++;
+			}
+		if (moved > 0) {
+			Atomic.add32(pendingAt(t), -moved);
+			Atomic.add32(pending, moved);
+		}
 		Os.unlock(deferLock);
 	}
 
@@ -558,18 +663,18 @@ class Foreign {
 		var i = peerIndex(k, ref);
 		if (i >= 0) return peerGet(i);
 		var key = key(k, ref);
-		lockLeaf();
+		Os.lock(lock);
 		var found = boxFind(k, key, ref);
-		unlockLeaf();
+		Os.unlock(lock);
 		if (!found.isNull()) return Mem.obj(found);
 		var held = Ind.call1(hook(k, K_RETAIN), ref);
 		var maker = me();
-		var o = Gc.nativeNewAux(held, inStop(k) ? hook(k, K_RELEASE) : Ptr.ofI64((k : I64)), maker);
-		lockLeaf();
+		var o = Gc.nativeNewBox(held, inStop(k) ? hook(k, K_RELEASE) : Ptr.ofI64((k : I64)), maker, boxTag(k));
+		Os.lock(lock);
 		// (another thread's box made meanwhile: that one; this one dies, released)
 		found = boxFind(k, key, ref);
 		if (found.isNull()) boxAdd(k, key, Mem.addr(o), maker);
-		unlockLeaf();
+		Os.unlock(lock);
 		return found.isNull() ? o : Mem.obj(found);
 	}
 
@@ -577,6 +682,19 @@ class Foreign {
 		var f = hook(k, K_IDENTITY);
 		return f.isNull() ? ref : Ind.call1(f, ref);
 	}
+
+	// a box's second slot: its kind, tagged. Boxes are the only native handles
+	// of two slots (Gc.nativeNewBox), so that a native handle of another kind,
+	// or not a foreign object at all (a mutex, an Ssl context, an AtomicInt's
+	// cell), is told apart without calling a hook on what it holds (refOf)
+	static inline var BOX_TAG = 0x464F0000;
+
+	@:hxmc.unsafe static inline function boxTag(k:Int):I64
+		return ((BOX_TAG | k) : I64);
+
+	// whether the object at p is a box of kind k (detached or not)
+	@:hxmc.unsafe static inline function isBox(k:Int, p:Ptr):Bool
+		return tindexOf(p) == Types.T_NATIVE && nslotsOf(p) == 2 && Mem.getI64(p, 8) == boxTag(k);
 
 	// a detached box's key (detachBox): probed past, dropped by the next sweep
 	@:hxmc.unsafe static inline function boxGone():Ptr
@@ -637,23 +755,16 @@ class Foreign {
 
 	// the reference of v when it is a foreign object of kind k (its box; an
 	// object of a type whose objects are paired with k's: pair), else null:
-	// v of any type
+	// v of any type. No hook is called: a native handle is a box of k's by its
+	// tag (isBox), not by what its slot holds, which only k's hooks could read
 	static function refOf(k:Int, v:Dynamic):Ptr {
 		if (v == null) return Ptr.nil();
 		var p = Mem.addr(v);
 		var t = Types.tindex(v);
-		if (t == Types.T_NATIVE) {
-			var ref = Mem.getPtr(p, 0);
-			if (ref.isNull()) return Ptr.nil();
-			var key = key(k, ref);
-			lockLeaf();
-			var found = boxFind(k, key, ref);
-			unlockLeaf();
-			return found == p ? ref : Ptr.nil();
-		}
-		lockLeaf();
+		if (t == Types.T_NATIVE) return isBox(k, p) ? Mem.getPtr(p, 0) : Ptr.nil();
+		Os.lock(lock);
 		var paired = !typeKinds.isNull() && Mem.getU8(typeKinds, t) == k;
-		unlockLeaf();
+		Os.unlock(lock);
 		return paired ? Mem.getPtr(p, 0) : Ptr.nil();
 	}
 
@@ -670,7 +781,7 @@ class Foreign {
 
 	@:hxmc.unsafe static function addOwned(k:Int, p:Ptr, off:I64) {
 		var maker = me();
-		lockLeaf();
+		Os.lock(lock);
 		if (nowned == ownedCap) {
 			ownedCap = ownedCap == 0 ? 64 : ownedCap * 2;
 			owned = LibC.realloc(owned, (ownedCap : I64) * OWNED_BYTES);
@@ -681,7 +792,7 @@ class Foreign {
 		Mem.setI32(e, 16, k);
 		Mem.setI32(e, 20, maker);
 		nowned++;
-		unlockLeaf();
+		Os.unlock(lock);
 	}
 
 	// a new weak cell: null
@@ -749,7 +860,12 @@ class Foreign {
 				continue;
 			}
 			var k = Mem.getI32(e, 24) & 0xFF;
-			if (!Mem.getPtr(e, 16).isNull()) undetach(k, e) else addDead(Mem.getPtr(e, 8), k, Mem.getI32(e, 28), false);
+			// (a detached one: its weak cell destroyed, now or put off as a release is)
+			var cell = Mem.getPtr(e, 16);
+			if (cell.isNull()) addDead(Mem.getPtr(e, 8), k, Mem.getI32(e, 28), false);
+			else if (inStop(k)) undetach(k, e);
+			else addDead(cell, k, Mem.getI32(e, 28), true);
+			Mem.setPtr(e, 16, Ptr.nil());
 			Mem.setPtr(e, 0, Ptr.nil());
 			Mem.setPtr(e, 8, Ptr.ofI64((peerFree : I64)));
 			Mem.setI32(e, 24, 0);
