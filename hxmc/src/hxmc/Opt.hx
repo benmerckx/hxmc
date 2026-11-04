@@ -435,8 +435,8 @@ class Opt {
 								if (fc[k] == -1 && fa[k] == t.a) known = fv[k] ? 1 : 2;
 								continue;
 							}
-							var same = fa[k] == c.a && fb[k] == c.b;
-							var swapped = fa[k] == c.b && fb[k] == c.a;
+							var same = sameVal(fa[k], c.a) && sameVal(fb[k], c.b);
+							var swapped = sameVal(fa[k], c.b) && sameVal(fb[k], c.a);
 							if (same && fc[k] == c.imm) known = fv[k] ? 1 : 2;
 							else if ((same || swapped) && isEqNe(fc[k]) && isEqNe(c.imm)) {
 								// x == y against y != x, x != y, ...
@@ -601,6 +601,15 @@ class Opt {
 	}
 
 	// an I32 constant's value when it is not negative, else -1
+	// whether a and b are one value: the same, or equal integer constants
+	// (each access of Bytes tests length >= n with a constant of its own)
+	function sameVal(a:Int, b:Int):Bool {
+		if (a == b) return true;
+		if (a < 0 || b < 0) return false;
+		var x = f.vals[a], y = f.vals[b];
+		return x.op == Const && y.op == Const && x.ty == y.ty && x.sym == null && y.sym == null && x.imm == y.imm && x.imm2 == y.imm2;
+	}
+
 	function constOf(v:Int):Int {
 		var c = f.vals[v];
 		return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0 ? c.imm : -1;
