@@ -1428,6 +1428,7 @@ class Opt {
 	public static function lowered(f:MFunc) {
 		var o = new Opt(f);
 		o.simplifyCfg();
+		if (ifConvertOn && o.ifConvert()) o.mergeBlocks();
 		o.repl = MFunc.iota(f.vals.length);
 		var any = false;
 		for (b in f.blocks)
@@ -1439,6 +1440,108 @@ class Opt {
 				}
 		if (any) o.rewrite();
 		o.dce();
+	}
+
+	static var ifConvertOn = Sys.getEnv("HXMC_IFCONV") != "0";
+
+	// ---- if-conversion
+
+	// whether i may run whether or not its branch is taken: it cannot fault,
+	// has no effect and is cheap (integer operations; no division, load or
+	// call)
+	static function speculable(i:MIns):Bool
+		return switch i.op {
+			case Const | Copy | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | Cmp | SExt | ZExt | Trunc | Select:
+				i.ty != F64 && i.ty != Void;
+			case _: false;
+		}
+
+	// A branch to two short arms (or one arm and the join) that meet in a
+	// join of only those two edges, whose phis are integers, becomes the arms'
+	// code and a Select per phi (cmov, csel, wasm's select): `v < 0 ? 0 : v >
+	// 255 ? 255 : v` costs no misprediction on data the branch predictor cannot
+	// learn (pixels). An arm holds at most 5 instructions besides its jump;
+	// joins are converted innermost first (rounds), and the head then jumps
+	// to the join, which mergeBlocks absorbs. Returns whether anything changed.
+	function ifConvert():Bool {
+		var changed = false, round = true, rounds = 0;
+		function arm(x:MBlock, h:MBlock, j:MBlock):Bool {
+			if (x == j) return true;
+			if (x.preds.length != 1 || x.preds[0] != h || x.handler || x.cold != h.cold || x.ins.length > 6) return false;
+			var t = x.term();
+			if (t == null || t.op != Jmp || t.targets[0] != j) return false;
+			for (k in 0...x.ins.length - 1)
+				if (!speculable(x.ins[k])) return false;
+			return true;
+		}
+		while (round && rounds++ < 8) {
+			round = false;
+			for (h in f.blocks) {
+				var br = h.term();
+				if (br == null || br.op != Br || h.handler || contOf(h) != null || f.vals[br.a].ty != I32) continue;
+				var t = br.targets[0], e = br.targets[1];
+				if (t == e) continue;
+				// the join: where both arms (or one arm and the branch) go
+				var j:Null<MBlock> = null;
+				function after(x:MBlock):Null<MBlock> {
+					var xt = x.term();
+					return xt != null && xt.op == Jmp && x.preds.length == 1 ? xt.targets[0] : null;
+				}
+				if (after(t) != null && after(t) == after(e)) j = after(t);
+				else if (after(t) == e) j = e;
+				else if (after(e) == t) j = t;
+				if (j == null || j == h || j.preds.length != 2 || j.handler || !arm(t, h, j) || !arm(e, h, j)) continue;
+				// the phis' operands by edge: from the then side and the else side
+				var kt = j.preds.indexOf(t == j ? h : t), ke = j.preds.indexOf(e == j ? h : e);
+				if (kt < 0 || ke < 0 || kt == ke) continue;
+				var phis = [], ok = true;
+				for (i in j.ins)
+					if (i.op == Phi) {
+						if (i.ty == F64 || i.ty == Void) ok = false;
+						phis.push(i);
+					}
+				if (!ok || phis.length == 0 || phis.length > 4) continue;
+				// the arms' code moves before the branch, the phis after it as selects
+				br.op = Jmp;
+				var cond = br.a;
+				br.a = -1;
+				br.targets = vector(j);
+				h.ins.pop();
+				for (x in [t, e])
+					if (x != j) {
+						for (k in 0...x.ins.length - 1) {
+							var i = x.ins[k];
+							i.block = h;
+							h.ins.push(i);
+						}
+						x.ins = [];
+						x.preds = [];
+						x.succs = [];
+					}
+				for (p in phis) {
+					var vt = p.args[kt], ve = p.args[ke];
+					j.ins.remove(p);
+					p.op = Select;
+					p.a = cond;
+					p.b = vt;
+					p.c = ve;
+					p.args = vector();
+					p.block = h;
+					h.ins.push(p);
+				}
+				h.ins.push(br);
+				h.succs = [j];
+				j.preds = [h];
+				changed = round = true;
+			}
+			if (round) {
+				var live = [for (b in f.blocks) if (b == f.entry || b.preds.length > 0) b];
+				f.blocks = live;
+				f.edited();
+				mergeBlocks();
+			}
+		}
+		return changed;
 	}
 
 	var next = 1; // the next fresh version

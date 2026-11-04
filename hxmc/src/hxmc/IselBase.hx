@@ -40,6 +40,12 @@ class IselBase {
 	var f:LFunc;
 	var vreg:Vector<Int>; // Mir value -> register
 	var useCount:Vector<Int>;
+	// the comparisons a Select folds (compared where it is)
+	var selCond:Vector<Bool>;
+
+	// whether a Select on this comparison compares itself (else the comparison is a value)
+	function selectFolds(c:MIns):Bool
+		return true;
 	var lb:Vector<LBlock>; // Mir block id -> LBlock
 	var cur:LBlock;
 	var folded:Vector<Bool>; // Mir values computed inside their user (no code of their own)
@@ -212,6 +218,14 @@ class IselBase {
 				for (x in i.args)
 					useCount[x]++;
 			}
+		// (a comparison a Select alone uses, in its block: compared again at the select)
+		selCond = new Vector(mf.vals.length);
+		for (b in mf.blocks)
+			for (i in b.ins)
+				if (i.op == Select) {
+					var c = mf.vals[i.a];
+					if (c.op == Cmp && useCount[c.id] == 1 && c.block == b && selectFolds(c)) selCond[c.id] = true;
+				}
 		prepare();
 		var maxId = 0;
 		for (b in mf.blocks)
@@ -356,6 +370,10 @@ class IselBase {
 	// them changes the flags); marks it folded
 	function fusable(i:MIns, b:MBlock):Bool {
 		if (useCount[i.id] != 1) return false;
+		if (selCond[i.id]) {
+			folded[i.id] = true;
+			return true;
+		}
 		var t = b.term();
 		if (t == null || t.op != Br || t.a != i.id) return false;
 		if (b.ins.length < 2 || b.ins[b.ins.length - 2] != i) return false;

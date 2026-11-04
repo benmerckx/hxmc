@@ -473,7 +473,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case Select:
 				var cv = m.vals[i.a];
 				var cc:Int;
-				if (cv.op == Cmp && useCount[cv.id] == 1 && cv.block == b) {
+				if (selCond[cv.id]) {
 					cc = compare(cv.imm, cv.a, cv.b);
 				} else {
 					var x = emit(CMPI);

@@ -750,7 +750,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				var d = reg(i.id);
 				var cond = m.vals[i.a];
 				var cc:Int;
-				if (cond.op == Cmp && useCount[cond.id] == 1 && cond.block == b && m.vals[cond.a].ty != F64) {
+				if (selCond[cond.id]) {
 					mov(d, use(i.c), 8);
 					cc = compare(cond.imm, cond.a, cond.b);
 					folded[cond.id] = true;
@@ -991,6 +991,10 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		x.d = d;
 		x.s1 = use(v);
 	}
+
+	// (a float comparison is a value: cmov reads its flags as a parity test too)
+	override function selectFolds(c:MIns):Bool
+		return m.vals[c.a].ty != F64;
 
 	override function f32FromBits(d:Int, s:Int) {
 		var x = emit(MOVDXR);
