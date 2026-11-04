@@ -58,6 +58,11 @@ enum abstract AOp(Int) to Int from Int {
 	var FMOVWS; // d (32 bits) <- s1 (fpr, single)
 	var FCVTSD; // d (double) <- s1 (single)
 	var FCVTDS; // d (single) <- s1 (double)
+	// vectors (hxmc.simd, docs/plans/simd.md): one NEON instruction, imm its
+	// encoding with zero register fields; Rd d, Rn s1, Rm s2 (any class);
+	// flag: Rd is read too (bsl, ins, sqxtn2)
+	var NV;
+	var VCONST; // d <- the constant of uses (four 32-bit words), through x16
 }
 
 // Mir -> LIR for AArch64 (AAPCS64 and its Apple and Windows variants:
@@ -71,6 +76,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	static final GPRS:Vector<Int> = vector(9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28);
 	static final FPRS:Vector<Int> = vector(32, 33, 34, 35, 36, 37, 38, 39, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 40, 41, 42, 43,
 		44, 45, 46, 47);
+	// (vectors: not v8-v15, whose upper halves a call does not keep, AAPCS64)
+	static final VPRS:Vector<Int> = vector(32, 33, 34, 35, 36, 37, 38, 39, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63);
 
 	var apple:Bool;
 
@@ -79,6 +86,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		apple = abi.os == "macos";
 		gprs = GPRS;
 		fprs = FPRS;
+		vprs = VPRS;
 		fprBase = 32;
 		opMov = MOV;
 		opLoad = LOAD;
@@ -99,6 +107,13 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			if (i.index >= 0) u(i.index);
 		}
 		switch (i.op : AOp) {
+			case NV:
+				defs.push(i.d);
+				if (i.flag) uses.push(i.d);
+				if (i.s1 >= 0) uses.push(i.s1);
+				if (i.s2 >= 0) uses.push(i.s2);
+			case VCONST:
+				defs.push(i.d);
 			case MOV | NEG | MVN | SXTW | FOP1 | SCVTF | FCVTZS | FMOVTOG | FMOVFROMG | SHIFTI | ALUI | FMOVSW | FMOVWS | FCVTSD | FCVTDS | LDAR:
 				defs.push(i.d);
 				u(i.s1);
@@ -317,6 +332,10 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	override function ins(i:MIns, b:MBlock, next:Null<MBlock>) {
 		switch i.op {
+			case VOp:
+				vop(i);
+			case VConst:
+				vconst(reg(i.id), [for (w in i.cases) w]);
 			case Phi | Const | SymAddr | StackAddr:
 			case Param:
 				param(i);
@@ -705,6 +724,375 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		var fm = emit(FMOVTOG);
 		fm.d = d;
 		fm.s1 = use(v);
+	}
+
+	// ---- vectors (hxmc.simd, docs/plans/simd.md): NEON, each operation
+	// WebAssembly's (SimdOps) with its exact results (NEON's own saturating
+	// conversions and NaN-propagating min and max are wasm's)
+
+	inline function vtmp():Int
+		return f.newVecReg();
+
+	// one instruction: enc with Rd d, Rn n, Rm m (-1: none); rd: Rd is read too
+	function nv(enc:Int, d:Int, n:Int, m:Int = -1, rd = false) {
+		var x = emit(NV);
+		x.imm = enc;
+		x.d = d;
+		x.s1 = n;
+		x.s2 = m;
+		x.flag = rd;
+	}
+
+	function vconst(d:Int, words:Array<Int>) {
+		var x = emit(VCONST);
+		x.d = d;
+		x.uses = Vector.fromArrayCopy(words);
+	}
+
+	inline function vcopy(d:Int, s:Int)
+		mov(d, s, 16);
+
+	// the size field of a lane width (bytes)
+	static inline function sizeOf(w:Int):Int
+		return w == 1 ? 0 : w == 2 ? 1 : w == 4 ? 2 : 3;
+
+	// three registers, the same arrangement (Q = 1): integer
+	static inline function same3(u:Int, w:Int, opcode:Int):Int
+		return 0x4E200400 | (u << 29) | (sizeOf(w) << 22) | (opcode << 11);
+
+	// float: a the size field's top bit, sz 0 single, 1 double
+	static inline function fsame3(u:Int, a:Int, d:Bool, opcode:Int):Int
+		return 0x4E200400 | (u << 29) | (a << 23) | ((d ? 1 : 0) << 22) | (opcode << 11);
+
+	// two registers (Q = 1)
+	static inline function misc2(u:Int, size:Int, opcode:Int):Int
+		return 0x4E200800 | (u << 29) | (size << 22) | (opcode << 12);
+
+	// a logical operation (and 0, bic 1, orr 2, orn 3; eor 4, bsl 5, bit 6, bif 7)
+	static inline function logic(k:Int):Int
+		return same3(k >> 2, 1 << (k & 3), 0x03) & ~(3 << 22) | ((k & 3) << 22);
+
+	static function width(n:String):Int
+		return StringTools.startsWith(n, "i8x16") ? 1 : StringTools.startsWith(n, "i16x8") ? 2 : StringTools.startsWith(n, "i64x2") || StringTools.startsWith(n, "f64x2") ? 8 : 4;
+
+	// imm5 of a lane (dup, ins, umov, smov)
+	static inline function imm5(w:Int, lane:Int):Int
+		return w == 1 ? (lane << 1) | 1 : w == 2 ? (lane << 2) | 2 : w == 4 ? (lane << 3) | 4 : (lane << 4) | 8;
+
+	// an I32 value into a fresh general register, masked to a shift's lane width
+	function shiftCount(v:Int, w:Int):Int {
+		var g = f.newReg(false);
+		var x = emit(ALUI);
+		x.d = g;
+		x.s1 = use(v);
+		x.cond = 2; // and
+		x.imm = w * 8 - 1;
+		x.size = 4;
+		return g;
+	}
+
+	function vop(i:MIns) {
+		var n = SimdOps.name(i.imm);
+		var w = width(n);
+		var fl = StringTools.startsWith(n, "f32x4") || StringTools.startsWith(n, "f64x2"), dbl = StringTools.startsWith(n, "f64x2");
+		var op = n.substr(n.indexOf(".") + 1);
+		inline function A():Int
+			return use(i.a);
+		inline function B():Int
+			return use(i.b);
+		inline function D():Int
+			return reg(i.id);
+		inline function bin(enc:Int)
+			nv(enc, D(), A(), B());
+		inline function rbin(enc:Int)
+			nv(enc, D(), B(), A());
+		inline function un(enc:Int)
+			nv(enc, D(), A());
+		function not(d:Int)
+			nv(misc2(1, 0, 0x05), d, d);
+		switch op {
+			case "and": bin(logic(0));
+			case "andnot": bin(logic(1));
+			case "or": bin(logic(2));
+			case "xor": bin(logic(4));
+			case "not": un(misc2(1, 0, 0x05));
+			case "bitselect":
+				// bsl: Rd (the mask) selects Rn where set, else Rm
+				var d = D();
+				vcopy(d, use(i.c));
+				nv(logic(5), d, A(), B(), true);
+			case "any_true":
+				var t = vtmp(), g = f.newReg(false);
+				nv(0x6EB0A800, t, A()); // umaxv s, v.4s
+				nv(0x0E043C00, g, t); // umov w, v.s[0]
+				cmpZero(g);
+				cset(D(), Asm.NE);
+			case "all_true":
+				var t = vtmp(), g = f.newReg(false);
+				if (w == 8) {
+					nv(misc2(0, 3, 0x09), t, A()); // cmeq v.2d, #0
+					nv(0x6EB0A800, t, t); // umaxv: any lane zero
+					nv(0x0E043C00, g, t);
+					cmpZero(g);
+					cset(D(), Asm.EQ);
+				} else {
+					nv(0x6E31A800 | (sizeOf(w) << 22), t, A()); // uminv
+					nv(0x0E003C00 | (imm5(w, 0) << 16), g, t); // umov w, v.T[0]
+					cmpZero(g);
+					cset(D(), Asm.NE);
+				}
+			case "bitmask":
+				bitmask(i, w);
+			// integer lanes
+			case "add" if (!fl): bin(same3(0, w, 0x10));
+			case "sub" if (!fl): bin(same3(1, w, 0x10));
+			case "mul" if (!fl): bin(same3(0, w, 0x13));
+			case "add_sat_s": bin(same3(0, w, 0x01));
+			case "add_sat_u": bin(same3(1, w, 0x01));
+			case "sub_sat_s": bin(same3(0, w, 0x05));
+			case "sub_sat_u": bin(same3(1, w, 0x05));
+			case "max_s": bin(same3(0, w, 0x0c));
+			case "max_u": bin(same3(1, w, 0x0c));
+			case "min_s": bin(same3(0, w, 0x0d));
+			case "min_u": bin(same3(1, w, 0x0d));
+			case "avgr_u": bin(same3(1, w, 0x02));
+			case "q15mulr_sat_s": bin(same3(1, 2, 0x16));
+			case "dot_i16x8_s":
+				var t1 = vtmp(), t2 = vtmp(), a = A(), b = B();
+				nv(0x0E60C000, t1, a, b); // smull v.4s, a.4h, b.4h
+				nv(0x4E60C000, t2, a, b); // smull2
+				nv(same3(0, 4, 0x17), D(), t1, t2); // addp v.4s
+			case "abs" if (!fl): un(misc2(0, sizeOf(w), 0x0b));
+			case "neg" if (!fl): un(misc2(1, sizeOf(w), 0x0b));
+			case "eq" if (!fl): bin(same3(1, w, 0x11));
+			case "ne" if (!fl):
+				var d = D();
+				nv(same3(1, w, 0x11), d, A(), B());
+				not(d);
+			case "gt_s": bin(same3(0, w, 0x06));
+			case "lt_s": rbin(same3(0, w, 0x06));
+			case "ge_s": bin(same3(0, w, 0x07));
+			case "le_s": rbin(same3(0, w, 0x07));
+			case "gt_u": bin(same3(1, w, 0x06));
+			case "lt_u": rbin(same3(1, w, 0x06));
+			case "ge_u": bin(same3(1, w, 0x07));
+			case "le_u": rbin(same3(1, w, 0x07));
+			case "narrow_i16x8_s" | "narrow_i16x8_u" | "narrow_i32x4_s" | "narrow_i32x4_u":
+				// sqxtn (sqxtun) of a into the low half, sqxtn2 of b into the high one
+				var u = StringTools.endsWith(op, "_u");
+				var size = StringTools.startsWith(op, "narrow_i16") ? 0 : 1;
+				var enc = u ? misc2(1, size, 0x12) : misc2(0, size, 0x14);
+				var d = D(), b = B();
+				nv(enc & ~(1 << 30), d, A());
+				nv(enc, d, b, -1, true);
+			case "extend_low_i8x16_s" | "extend_high_i8x16_s" | "extend_low_i16x8_s" | "extend_high_i16x8_s" | "extend_low_i32x4_s" | "extend_high_i32x4_s"
+				| "extend_low_i8x16_u" | "extend_high_i8x16_u" | "extend_low_i16x8_u" | "extend_high_i16x8_u" | "extend_low_i32x4_u" | "extend_high_i32x4_u":
+				// sshll / ushll #0, the high half with Q
+				var src = op.indexOf("i8x16") > 0 ? 8 : op.indexOf("i16x8") > 0 ? 16 : 32;
+				var u = StringTools.endsWith(op, "_u") ? 1 : 0;
+				var q = StringTools.startsWith(op, "extend_high") ? 1 : 0;
+				un(0x0F00A400 | (q << 30) | (u << 29) | (src << 16));
+			case "swizzle":
+				bin(0x4E000000); // tbl: from 16 on, 0
+			case "shuffle":
+				shuffle(i);
+			case "shl" | "shr_s" | "shr_u":
+				vshift(i, op, w);
+			// float lanes
+			case "add": bin(fsame3(0, 0, dbl, 0x1a));
+			case "sub": bin(fsame3(0, 1, dbl, 0x1a));
+			case "mul": bin(fsame3(1, 0, dbl, 0x1b));
+			case "div": bin(fsame3(1, 0, dbl, 0x1f));
+			case "max": bin(fsame3(0, 0, dbl, 0x1e));
+			case "min": bin(fsame3(0, 1, dbl, 0x1e));
+			case "pmin" | "pmax":
+				// pmin: b < a ? b : a (fcmgt a, b); pmax: a < b ? b : a (fcmgt b, a)
+				var d = D(), a = A(), b = B();
+				if (op == "pmin") nv(fsame3(1, 1, dbl, 0x1c), d, a, b) else nv(fsame3(1, 1, dbl, 0x1c), d, b, a);
+				nv(logic(5), d, b, a, true);
+			case "eq": bin(fsame3(0, 0, dbl, 0x1c));
+			case "ne":
+				var d = D();
+				nv(fsame3(0, 0, dbl, 0x1c), d, A(), B());
+				not(d);
+			case "gt": bin(fsame3(1, 1, dbl, 0x1c));
+			case "lt": rbin(fsame3(1, 1, dbl, 0x1c));
+			case "ge": bin(fsame3(1, 0, dbl, 0x1c));
+			case "le": rbin(fsame3(1, 0, dbl, 0x1c));
+			case "abs": un(misc2(0, dbl ? 3 : 2, 0x0f));
+			case "neg": un(misc2(1, dbl ? 3 : 2, 0x0f));
+			case "sqrt": un(misc2(1, dbl ? 3 : 2, 0x1f));
+			case "nearest": un(misc2(0, dbl ? 1 : 0, 0x18));
+			case "floor": un(misc2(0, dbl ? 1 : 0, 0x19));
+			case "ceil": un(misc2(0, dbl ? 3 : 2, 0x18));
+			case "trunc": un(misc2(0, dbl ? 3 : 2, 0x19));
+			case "trunc_sat_f32x4_s": un(misc2(0, 2, 0x1b)); // fcvtzs: saturating, NaN to 0
+			case "convert_i32x4_s": un(misc2(0, 0, 0x1d)); // scvtf
+			case "convert_i32x4_u": un(misc2(1, 0, 0x1d)); // ucvtf
+			case "trunc_sat_f64x2_s_zero":
+				var d = D();
+				nv(misc2(0, 3, 0x1b), d, A()); // fcvtzs v.2d
+				nv(misc2(0, 2, 0x14) & ~(1 << 30), d, d); // sqxtn v.2s (the high half zero)
+			case "convert_low_i32x4_s":
+				var d = D();
+				nv(0x0F20A400, d, A()); // sxtl v.2d, v.2s
+				nv(misc2(0, 1, 0x1d), d, d); // scvtf v.2d
+			case "promote_low_f32x4": un(0x0E617800); // fcvtl v.2d, v.2s
+			case "demote_f64x2_zero": un(0x0E616800); // fcvtn v.2s, v.2d (the high half zero)
+			case "splat":
+				var d = D();
+				if (fl && !dbl) {
+					var s = f.newReg(true);
+					var x = emit(FCVTDS);
+					x.d = s;
+					x.s1 = A();
+					nv(0x4E040400, d, s); // dup v.4s, v.s[0]
+				} else if (dbl) nv(0x4E080400, d, A()) // dup v.2d, v.d[0]
+				else nv(0x4E000C00 | (imm5(w, 0) << 16), d, A()); // dup v.T, w/x
+			case "extract_lane" | "extract_lane_s" | "extract_lane_u":
+				var l = i.imm2;
+				if (fl && !dbl) {
+					var s = f.newReg(true);
+					nv(0x5E000400 | (imm5(4, l) << 16), s, A()); // dup s, v.s[l]
+					var x = emit(FCVTSD);
+					x.d = D();
+					x.s1 = s;
+				} else if (dbl) nv(0x5E000400 | (imm5(8, l) << 16), D(), A()) // dup d, v.d[l]
+				else if (w == 8) nv(0x4E003C00 | (imm5(8, l) << 16), D(), A()) // umov x, v.d[l]
+				else if (op == "extract_lane_s") nv(0x0E002C00 | (imm5(w, l) << 16), D(), A()) // smov w, v.T[l]
+				else nv(0x0E003C00 | (imm5(w, l) << 16), D(), A()); // umov w, v.T[l]
+			case "replace_lane":
+				var d = D(), l = i.imm2;
+				if (fl && !dbl) {
+					var s = f.newReg(true);
+					var x = emit(FCVTDS);
+					x.d = s;
+					x.s1 = B();
+					vcopy(d, A());
+					nv(0x6E000400 | (imm5(4, l) << 16), d, s, -1, true); // ins v.s[l], v.s[0]
+				} else if (dbl) {
+					var b = B();
+					vcopy(d, A());
+					nv(0x6E000400 | (imm5(8, l) << 16), d, b, -1, true); // ins v.d[l], v.d[0]
+				} else {
+					var b = B();
+					vcopy(d, A());
+					nv(0x4E001C00 | (imm5(w, l) << 16), d, b, -1, true); // ins v.T[l], w/x
+				}
+			case _:
+				throw new hxmc.MirBuild.Unsupported("arm64: " + n);
+		}
+	}
+
+	function cmpZero(g:Int) {
+		var x = emit(CMPI);
+		x.s1 = g;
+		x.imm = 0;
+		x.size = 4;
+	}
+
+	function cset(d:Int, cond:Int) {
+		var x = emit(CSET);
+		x.d = d;
+		x.cond = cond;
+	}
+
+	function vshift(i:MIns, op:String, w:Int) {
+		var d = reg(i.id), a = use(i.a);
+		var bits = w * 8;
+		var k = m.vals[i.b].op == Const ? m.vals[i.b].imm & (bits - 1) : -1;
+		if (k == 0) {
+			vcopy(d, a);
+			return;
+		}
+		if (k > 0) {
+			if (op == "shl") nv(0x4F005400 | ((bits + k) << 16), d, a) // shl
+			else nv(0x4F000400 | ((op == "shr_u" ? 1 : 0) << 29) | ((2 * bits - k) << 16), d, a); // sshr / ushr
+			return;
+		}
+		// by a register: the count in every lane (negated for a right shift), sshl / ushl
+		var g = shiftCount(i.b, w);
+		var c = vtmp();
+		nv(0x4E000C00 | (imm5(w, 0) << 16), c, g); // dup v.T, w
+		if (op != "shl") nv(misc2(1, sizeOf(w), 0x0b), c, c); // neg
+		nv(same3(op == "shr_u" ? 1 : 0, w, 0x08), d, a, c);
+	}
+
+	function bitmask(i:MIns, w:Int) {
+		var d = reg(i.id), a = use(i.a);
+		var t = vtmp(), k = vtmp();
+		var bits = w * 8;
+		// each lane's top bit as 0 or 1 (ushr), moved to its place (ushl by its index within 8 lanes), added
+		nv(0x6F000400 | ((2 * bits - (bits - 1)) << 16), t, a); // ushr #bits-1
+		if (w == 8) {
+			var g = f.newReg(false), h = f.newReg(false);
+			nv(0x4E083C00, g, t); // umov x, v.d[0]
+			nv(0x4E183C00, h, t); // umov x, v.d[1]
+			var x = emit(ADDSH);
+			x.d = d;
+			x.s1 = g;
+			x.s2 = h;
+			x.imm = 1;
+			x.size = 4;
+			return;
+		}
+		var idx = switch w {
+			case 1: [0x03020100, 0x07060504, 0x03020100, 0x07060504];
+			case 2: [0x00010000, 0x00030002, 0x00050004, 0x00070006];
+			case _: [0, 1, 2, 3];
+		};
+		vconst(k, idx);
+		nv(same3(1, w, 0x08), t, t, k); // ushl
+		if (w == 1) {
+			// the two halves: addv 8b each, the high one shifted by 8
+			var hi = vtmp(), g = f.newReg(false), h = f.newReg(false);
+			nv(0x6E004000 | (8 << 11), hi, t, t); // ext v.16b, t, t, #8
+			nv(0x0E31B800, t, t); // addv b, v.8b
+			nv(0x0E31B800, hi, hi);
+			nv(0x0E013C00, g, t); // umov w, v.b[0]
+			nv(0x0E013C00, h, hi);
+			var x = emit(ADDSH);
+			x.d = d;
+			x.s1 = g;
+			x.s2 = h;
+			x.imm = 8;
+			x.size = 4;
+			return;
+		}
+		nv(0x4E31B800 | (sizeOf(w) << 22), t, t); // addv
+		nv(0x0E003C00 | (imm5(w, 0) << 16), d, t); // umov w, v.T[0]
+	}
+
+	// tbl from a (lanes below 16) and b (16 and up), or'ed (tbl gives 0 from 16 on)
+	function shuffle(i:MIns) {
+		var d = reg(i.id);
+		var ls = i.cases;
+		function mask(fromB:Bool):Array<Int> {
+			var w = [0, 0, 0, 0];
+			for (k in 0...16) {
+				var l = ls[k];
+				var byte = (l >= 16) == fromB ? l & 15 : 0xff;
+				w[k >> 2] |= byte << (8 * (k & 3));
+			}
+			return w;
+		}
+		var anyA = false, anyB = false;
+		for (l in ls)
+			if (l < 16) anyA = true else anyB = true;
+		var ta = -1;
+		if (anyA) {
+			var ka = vtmp();
+			vconst(ka, mask(false));
+			ta = anyB ? vtmp() : d;
+			nv(0x4E000000, ta, use(i.a), ka);
+		}
+		if (anyB) {
+			var kb = vtmp();
+			vconst(kb, mask(true));
+			var tb = anyA ? vtmp() : d;
+			nv(0x4E000000, tb, use(i.b), kb);
+			if (anyA) nv(logic(2), d, ta, tb);
+		}
 	}
 
 	override function f32FromBits(d:Int, s:Int) {

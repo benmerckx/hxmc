@@ -380,6 +380,9 @@ class Asm {
 	// size: 1, 2, 4, 8 bytes; float: d register (size 8)
 
 	static function ldstBase(size:Int, load:Bool, signed:Bool, x:Bool, float:Bool):Int {
+		// (a float register: d, or a vector's q, or its low s)
+		if (float && size == 16) return load ? 0x3DC00000 : 0x3D800000;
+		if (float && size == 4) return load ? 0x3D400000 | (2 << 30) : 0x3D000000 | (2 << 30);
 		if (float) return load ? 0x3D400000 | (3 << 30) : 0x3D000000 | (3 << 30);
 		var sz = size == 8 ? 3 : size == 4 ? 2 : size == 2 ? 1 : 0;
 		var opc = !load ? 0 : (signed ? (x ? 2 : 3) : 1);
@@ -387,7 +390,7 @@ class Asm {
 	}
 
 	static inline function scaleOf(size:Int):Int
-		return size == 8 ? 3 : size == 4 ? 2 : size == 2 ? 1 : 0;
+		return size == 16 ? 4 : size == 8 ? 3 : size == 4 ? 2 : size == 2 ? 1 : 0;
 
 	// [n + off]: scaled unsigned offset when aligned and in range, else unscaled 9-bit; false: neither
 	public function ldst(load:Bool, size:Int, signed:Bool, x:Bool, t:Int, n:Int, off:Int):Bool {
@@ -438,6 +441,15 @@ class Asm {
 	// 0 fmov, 1 fabs, 2 fneg, 3 fsqrt, 4 frintm (floor), 5 frintp (ceil)
 	public function fop1(op:Int, d:Int, n:Int)
 		w(FOP1[op] | ((n & 31) << 5) | (d & 31));
+
+	// a NEON instruction: its encoding and the register fields
+	public function neon(enc:Int, d:Int, n:Int, m:Int)
+		w(enc | ((m < 0 ? 0 : m & 31) << 16) | ((n < 0 ? 0 : n & 31) << 5) | (d & 31));
+
+	// mov vd.16b, vn.16b (orr)
+	public function movV(d:Int, n:Int) {
+		if (d != n) neon(0x4EA01C00, d, n, n);
+	}
 
 	public function fmovR(d:Int, n:Int) {
 		if (d != n) fop1(0, d, n);

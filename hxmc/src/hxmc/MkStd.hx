@@ -24,7 +24,9 @@ class MkStd {
 	static var made:Map<String, Bool>;
 
 	// hxmc/std's modules hxmc-portable copies as they are
-	static final PORTABLE = ["UInt8", "Int8", "UInt16", "Int16", "Int32", "UInt32", "Int64", "Float32"].map(n -> 'hxmc/unsafe/$n.hx');
+	static final PORTABLE = ["UInt8", "Int8", "UInt16", "Int16", "Int32", "UInt32", "Int64", "Float32"].map(n -> 'hxmc/unsafe/$n.hx')
+		// (the vector types: their scalar implementation there, hxmc.simd.Ref)
+		.concat(["V128", "Ops", "Ref", "Bits", "Mem128", "Simd", "RefMem", "F32x4", "F64x2", "I8x16", "U8x16", "I16x8", "U16x8", "I32x4", "U32x4", "I64x2"].map(n -> 'hxmc/simd/$n.hx'));
 
 	static function main() {
 		var a = Sys.args();

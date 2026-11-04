@@ -1122,7 +1122,7 @@ class Opt {
 
 	static inline function pure(op:Op):Bool
 		return switch op {
-			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select:
+			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | VOp | VConst:
 				true;
 			case _: false;
 		};
@@ -1516,7 +1516,7 @@ class Opt {
 	static function speculable(i:MIns):Bool
 		return switch i.op {
 			case Const | Copy | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | Cmp | SExt | ZExt | Trunc | Select:
-				i.ty != F64 && i.ty != Void;
+				i.ty == I32 || i.ty == I64;
 			case _: false;
 		}
 
@@ -1561,7 +1561,7 @@ class Opt {
 				var phis = [], ok = true;
 				for (i in j.ins)
 					if (i.op == Phi) {
-						if (i.ty == F64 || i.ty == Void) ok = false;
+						if (i.ty != I32 && i.ty != I64) ok = false;
 						phis.push(i);
 					}
 				if (!ok || phis.length == 0 || phis.length > 4) continue;
@@ -1729,7 +1729,16 @@ class Opt {
 		return x.isObj() ? x.op == y.op && x.ty == y.ty && cres(x.a) == cres(y.a) && cres(x.b) == cres(y.b) && cres(x.c) == cres(y.c) && okey(x) == okey(y)
 			&& (x.op != TypeTest || x.info.cls == y.info.cls)
 			&& ver[x.id] == ver[y.id] : x.op == y.op && x.ty == y.ty && cres(x.a) == cres(y.a) && cres(x.b) == cres(y.b) && cres(x.c) == cres(y.c) && x.imm == y.imm && x.imm2 == y.imm2
-			&& x.size == y.size && x.signed == y.signed && x.sym == y.sym && x.mem == y.mem && ver[x.id] == ver[y.id];
+			&& x.size == y.size && x.signed == y.signed && x.sym == y.sym && x.mem == y.mem && ver[x.id] == ver[y.id] && sameCases(x, y);
+
+	// (a vector constant's words, a shuffle's lanes)
+	static function sameCases(x:MIns, y:MIns):Bool {
+		if (x.op != VOp && x.op != VConst) return true;
+		if (x.cases.length != y.cases.length) return false;
+		for (k in 0...x.cases.length)
+			if (x.cases[k] != y.cases[k]) return false;
+		return true;
+	}
 
 	inline function hash(i:MIns):Int
 		return i.isObj() ? hashOf(i.op, i.a, i.b, i.c, okey(i), 0, ver[i.id]) : hashOf(i.op, i.a, i.b, i.c, i.imm, i.imm2, ver[i.id]);

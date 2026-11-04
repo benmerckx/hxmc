@@ -968,6 +968,9 @@ class InterpGen {
 
 	function ins(i:MIns, b:MBlock, slotOff:Array<Int>) {
 		switch i.op {
+			case VOp | VConst:
+				// (programs built for the interpreter use hxmc.simd's scalar implementation)
+				throw new hxmc.MirBuild.Unsupported("a vector operation (hxmc.simd: the interpreter runs their scalar implementation)");
 			case Param | Const | ConstF | SymAddr | Phi:
 			case Cmp if (fused[i.id] != 0):
 			case TlsLoad:
@@ -1238,6 +1241,7 @@ class InterpGen {
 			case I64: "l";
 			case F64: "f";
 			case Void: "v";
+			case V128: throw new hxmc.MirBuild.Unsupported("a vector (hxmc.simd: the interpreter runs their scalar implementation)");
 		}
 
 	// the call-out stub of a call: (unused, buf) -> 0: the function at buf[0]

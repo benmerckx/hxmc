@@ -65,7 +65,7 @@ class PortableCheck {
 		if (!FileSystem.exists(haxe)) fail("PortableCheck: no reference compiler at " + haxe + " (make reference)");
 		if (!FileSystem.exists("bin/hxmc/std/hxmc-portable")) fail("PortableCheck: bin/hxmc/std/hxmc-portable is missing (make hxmc)");
 		mkdirs(OUT);
-		for (name in ["SpanInflate", "SpanPortable"]) {
+		for (name in ["SpanInflate", "SpanPortable", "SimdOps"]) {
 			var skip = HXMC_ONLY[name];
 			var want = [for (l in File.getContent("hxmc/test/expected/" + name + ".txt").replace("\r", "").split("\n"))
 				if (l != "" && !l.startsWith("exit ") && (skip == null || l.indexOf(skip) < 0)) l.replace(", ", ",")];

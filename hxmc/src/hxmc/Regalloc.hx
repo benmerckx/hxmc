@@ -13,6 +13,9 @@ interface RegTarget {
 	// allocatable registers in order of preference (caller-saved first)
 	var gprs(default, null):haxe.ds.Vector<Int>;
 	var fprs(default, null):haxe.ds.Vector<Int>;
+	// the float registers a vector may take (arm64: not v8-v15, whose upper
+	// halves calls do not keep)
+	var vprs(default, null):haxe.ds.Vector<Int>;
 	function spillLoad(r:Int, slot:Int, float:Bool):LIns;
 	function spillStore(slot:Int, r:Int, float:Bool):LIns;
 	// calls: the registers that hold their results (the other registers a
@@ -106,6 +109,7 @@ class Scratch {
 	// the allocatable float registers, 2 for the integer ones
 	public var isResult = new haxe.ds.Vector<Bool>(LFunc.NPHYS);
 	public var isFpr:haxe.ds.Vector<Int> = Arrays.filled(LFunc.NPHYS, 0);
+	public var isVpr = new haxe.ds.Vector<Bool>(LFunc.NPHYS);
 
 	// an empty list per physical register
 	static function perReg():haxe.ds.Vector<Array<Int>> {
@@ -120,6 +124,8 @@ class Scratch {
 			isResult[r] = true;
 		for (c in t.fprs)
 			isFpr[c] = 1;
+		for (c in t.vprs)
+			isVpr[c] = true;
 		for (c in t.gprs)
 			isFpr[c] = 2;
 	}
@@ -539,8 +545,8 @@ class Regalloc {
 		var seen = Scratch.fill(s.seen, n, -1); // conflicts found (stamped by query)
 		var conflicts = s.conflicts;
 		for (r in order) {
-			var float = f.floatReg(r);
-			var regs = float ? t.fprs : t.gprs;
+			var float = f.floatReg(r), vec = f.vecReg(r);
+			var regs = vec ? t.vprs : float ? t.fprs : t.gprs;
 			var choice = -1;
 			// registers r cannot take: fixed in the slow paths it passes
 			// through, held by values passing through the slow paths it is in
@@ -551,7 +557,7 @@ class Regalloc {
 			var h = f.hint(r);
 			if (h >= 0) {
 				var hr = h < NPHYS ? h : assigned[h];
-				if (hr >= 0 && isFpr[hr] == (float ? 1 : 2) && !masked(hr) && free(hr, r)) choice = hr;
+				if (hr >= 0 && isFpr[hr] == (float ? 1 : 2) && (!vec || s.isVpr[hr]) && !masked(hr) && free(hr, r)) choice = hr;
 			}
 			if (choice < 0)
 				for (c in regs)
@@ -934,7 +940,7 @@ class Regalloc {
 			}
 			var out = [];
 			for (a in whole) {
-				if (slotOf[a] < 0) slotOf[a] = f.slot(8, 8);
+				if (slotOf[a] < 0) slotOf[a] = f.slot(f.spillBytes(a), f.spillBytes(a));
 				out.push(t.spillStore(slotOf[a], a, a >= f.fprBase));
 			}
 			// around each call: the values with ranges across it
@@ -953,7 +959,7 @@ class Regalloc {
 					for (q in at[k]...at[k + 1]) {
 						var a = saved[q];
 						if (clobbered[a] != k || whole.indexOf(a) >= 0) continue;
-						if (slotOf[a] < 0) slotOf[a] = f.slot(8, 8);
+						if (slotOf[a] < 0) slotOf[a] = f.slot(f.spillBytes(a), f.spillBytes(a));
 						out.push(t.spillStore(slotOf[a], a, a >= f.fprBase));
 						after.push(t.spillLoad(a, slotOf[a], a >= f.fprBase));
 					}
@@ -1022,7 +1028,7 @@ class Regalloc {
 	function insertSpills(spilled:Array<Int>) {
 		var slotOf = hxmc.Lir.Arrays.filled(f.nregs, -1);
 		for (r in spilled)
-			slotOf[r] = f.slot(8, 8);
+			slotOf[r] = f.slot(f.spillBytes(r), f.spillBytes(r));
 		var defs = new RegList(), uses = new RegList();
 		// per instruction: spilled register -> its temporary (stamped by instruction)
 		var tmp = hxmc.Lir.Arrays.filled(f.nregs, -1);
@@ -1042,7 +1048,7 @@ class Regalloc {
 				for (k in 0...uses.n) {
 					var r = uses.a[k];
 					if (r < nOld && slotOf[r] >= 0 && tmpStamp[r] != stamp) {
-						var nr = f.newReg(f.floatReg(r));
+						var nr = f.newRegLike(r);
 						tmp[r] = nr;
 						tmpStamp[r] = stamp;
 						mapped = true;
@@ -1054,7 +1060,7 @@ class Regalloc {
 					var r = defs.a[k];
 					if (r < nOld && slotOf[r] >= 0) {
 						if (tmpStamp[r] != stamp) {
-							var nr = f.newReg(f.floatReg(r));
+							var nr = f.newRegLike(r);
 								tmp[r] = nr;
 							tmpStamp[r] = stamp;
 							mapped = true;

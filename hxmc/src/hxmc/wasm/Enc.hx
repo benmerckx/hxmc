@@ -11,6 +11,7 @@ class Enc {
 	public static inline var I64 = 0x7E;
 	public static inline var F32 = 0x7D;
 	public static inline var F64 = 0x7C;
+	public static inline var V128 = 0x7B;
 	public static inline var VOID = 0x40; // the empty block type
 	public static inline var EXNREF = 0x69; // exnref: a caught exception (value type and heap type)
 

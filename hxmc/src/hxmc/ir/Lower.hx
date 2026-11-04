@@ -271,6 +271,9 @@ class Lower implements LowerQueries {
 	public static var classSpans = true;
 	// -D hxmc.interp: functions of the program are interpreted (hxmc.interp.InterpGen: their entry stubs call hxmc_interp_enter)
 	public static var interp = false;
+	// -D hxmc.interp (Main, the Mir interpreter's --run): hxmc.simd's vectors are four
+	// words worked on lane by lane (hxmc.simd.Ref), no vector operation
+	public static var simdScalar = false;
 
 	// a condition on the target (Mem.os, Mem.arm, Mem.target compared with
 	// constants) as a constant (EInt), when it is one: FnLower lowers only

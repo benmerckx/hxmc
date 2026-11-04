@@ -587,6 +587,26 @@ class Asm {
 	public function movupsRM(dst:Int, m:Mem)
 		sse(0, false, 0x0f10, dst, 0, m);
 
+	public function movssRM(dst:Int, m:Mem)
+		sse(0xf3, false, 0x0f10, dst, 0, m);
+
+	public function movssMR(m:Mem, src:Int)
+		sse(0xf3, false, 0x0f11, src, 0, m);
+
+	// a vector instruction (hxmc.simd): prefix (0, 0x66, 0xf2, 0xf3), REX.W,
+	// opcode (0x0fxx, 0x0f38xx, 0x0f3axx), the reg and r/m fields
+	// (registers: xmm or general), then an immediate byte (-1: none)
+	public function vx(prefix:Int, w:Bool, opcode:Int, reg:Int, rm:Int, imm8:Int) {
+		op(prefix, w, opcode, opcode > 0xffff ? 3 : 2, reg & 15, rm & 15, null);
+		if (imm8 >= 0) b.u8(imm8);
+	}
+
+	// the same with a memory operand (a constant: rip-relative)
+	public function vxM(prefix:Int, w:Bool, opcode:Int, reg:Int, m:Mem, imm8:Int) {
+		op(prefix, w, opcode, opcode > 0xffff ? 3 : 2, reg & 15, 0, m, 0, imm8 >= 0 ? 1 : 0);
+		if (imm8 >= 0) b.u8(imm8);
+	}
+
 	public function movsdRR(dst:Int, src:Int) {
 		if (dst != src) sse(0x66, false, 0x0f28, dst, src, null); // movapd
 	}

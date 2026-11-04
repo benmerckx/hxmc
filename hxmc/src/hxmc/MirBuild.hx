@@ -2150,7 +2150,114 @@ class MirBuild extends MirWriter {
 			"hxmc.rt.Bytes." + n => true
 	];
 
+	// hxmc.simd's intrinsics (FnLower.simdCall): vectors at the addresses of
+	// struct values, loaded, operated on (VOp) and stored, which Sroa turns
+	// into registers
+	function simd(short:String, args:Vector<Ex>):Int {
+		function opcode(k:Int, kind:Int):Int {
+			var n = literal(args[k], "hxmc.simd");
+			var c = SimdOps.code(n);
+			if (c < 0) throw new Unsupported("hxmc.simd: no operation " + n);
+			var ok = SimdOps.kind(c);
+			if (ok != kind && !(kind == SimdOps.LOAD && ok == SimdOps.LOAD)) throw new Unsupported("hxmc.simd: " + n + " is not an operation of this shape (" + short + ")");
+			return c;
+		}
+		inline function vload(a:Ex):Int
+			return load(V128, 16, ex(a), 0);
+		function vop(c:Int, ty:MTy, a:Int, b:Int = -1, d:Int = -1, lane:Int = 0):Int {
+			var i = mk(VOp, ty);
+			i.imm = c;
+			i.a = a;
+			i.b = b;
+			i.c = d;
+			i.imm2 = lane;
+			return add(i);
+		}
+		function vconst(w0:Int, w1:Int, w2:Int, w3:Int):Int {
+			var i = mk(VConst, V128);
+			i.cases = vector(w0, w1, w2, w3);
+			return add(i);
+		}
+		function lane(k:Int, c:Int):Int {
+			var l = intLiteral(args[k], "hxmc.simd: a lane");
+			if (l < 0 || l >= SimdOps.lanes(c)) throw new Unsupported("hxmc.simd: lane " + l + " of " + SimdOps.name(c) + " (" + SimdOps.lanes(c) + " lanes)");
+			return l;
+		}
+		inline function done(dst:Ex, v:Int):Int {
+			store(16, ex(dst), 0, v);
+			return iconst(0);
+		}
+		return switch short {
+			case "copy":
+				// (dst, its offset, src, its offset: a struct's vector field too)
+				var v = load(V128, 16, ex(args[2]), intLiteral(args[3], "hxmc.simd: an offset"));
+				store(16, ex(args[0]), intLiteral(args[1], "hxmc.simd: an offset"), v);
+				iconst(0);
+			case "zero":
+				var z = vconst(0, 0, 0, 0);
+				store(16, ex(args[0]), intLiteral(args[1], "hxmc.simd: an offset"), z);
+				iconst(0);
+			case "const":
+				var w = [for (k in 1...5) intLiteral(args[k], "hxmc.simd: a constant's word")];
+				done(args[0], vconst(w[0], w[1], w[2], w[3]));
+			case "op1":
+				var c = opcode(0, SimdOps.UN);
+				done(args[1], vop(c, V128, vload(args[2])));
+			case "op2":
+				var c = opcode(0, SimdOps.BIN);
+				var a = vload(args[2]);
+				done(args[1], vop(c, V128, a, vload(args[3])));
+			case "op3":
+				var c = opcode(0, SimdOps.TER);
+				var a = vload(args[2]), b = vload(args[3]);
+				done(args[1], vop(c, V128, a, b, vload(args[4])));
+			case "shift":
+				var c = opcode(0, SimdOps.SHIFT);
+				var a = vload(args[2]);
+				done(args[1], vop(c, V128, a, ex(args[3])));
+			case "splatInt" | "splatI64" | "splatFloat":
+				var c = opcode(0, short == "splatInt" ? SimdOps.SPLAT_I : short == "splatI64" ? SimdOps.SPLAT_L : SimdOps.SPLAT_F);
+				done(args[1], vop(c, V128, ex(args[2])));
+			case "extractInt" | "extractI64" | "extractFloat":
+				var c = opcode(0, short == "extractInt" ? SimdOps.EXTRACT_I : short == "extractI64" ? SimdOps.EXTRACT_L : SimdOps.EXTRACT_F);
+				var a = vload(args[1]);
+				vop(c, short == "extractInt" ? I32 : short == "extractI64" ? I64 : F64, a, -1, -1, lane(2, c));
+			case "replaceInt" | "replaceI64" | "replaceFloat":
+				var c = opcode(0, short == "replaceInt" ? SimdOps.REPLACE_I : short == "replaceI64" ? SimdOps.REPLACE_L : SimdOps.REPLACE_F);
+				var a = vload(args[2]);
+				var l = lane(3, c);
+				done(args[1], vop(c, V128, a, ex(args[4]), -1, l));
+			case "test":
+				var c = opcode(0, SimdOps.TEST);
+				vop(c, I32, vload(args[1]));
+			case "shuffle":
+				var a = vload(args[1]), b = vload(args[2]);
+				var ls = [for (k in 3...19) intLiteral(args[k], "hxmc.simd: a lane")];
+				for (l in ls)
+					if (l < 0 || l >= 32) throw new Unsupported("hxmc.simd: shuffle lane " + l + " (0 to 31: the first vector's, then the second's)");
+				var i = mk(VOp, V128);
+				i.imm = SimdOps.code("i8x16.shuffle");
+				i.a = a;
+				i.b = b;
+				i.cases = Vector.fromArrayCopy(ls);
+				done(args[0], add(i));
+			case "load":
+				var c = opcode(0, SimdOps.LOAD);
+				var m = memAt(args[3]);
+				done(args[1], load(V128, SimdOps.memBytes(c), ex(args[2]), m.disp, false, m.index, 1));
+			case "store":
+				var c = opcode(0, SimdOps.STORE);
+				var p = ex(args[1]);
+				var m = memAt(args[2]);
+				var v = vload(args[3]);
+				store(SimdOps.memBytes(c), p, m.disp, v, m.index, 1);
+				iconst(0);
+			case _: throw new Unsupported("unknown intrinsic hxmc.simd.Simd." + short);
+		}
+	}
+
 	function intrinsic(name:String, args:Vector<Ex>):Int {
+		if (StringTools.startsWith(name, hxmc.ir.FnLower.SIMD_PREFIX)) return simd(name.substr(hxmc.ir.FnLower.SIMD_PREFIX.length), args);
 		var short = name.substr(name.lastIndexOf("_") + 1);
 		var atomic = StringTools.startsWith(name, "hxmc_unsafe_Atomic_");
 		if (atomic) {

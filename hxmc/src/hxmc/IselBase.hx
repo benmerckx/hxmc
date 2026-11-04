@@ -20,6 +20,7 @@ import core.ds.VectorTools.vector;
 class IselBase {
 	public var gprs(default, null):Vector<Int>;
 	public var fprs(default, null):Vector<Int>;
+	public var vprs(default, null):Vector<Int>;
 	public var callResults(default, null):Vector<Int>;
 
 	var abi:Abi;
@@ -73,7 +74,7 @@ class IselBase {
 		i.d = r;
 		i.base = LIns.FRAME;
 		i.slot = slot;
-		i.size = 8;
+		i.size = f.spillBytes(r);
 		return i;
 	}
 
@@ -82,7 +83,7 @@ class IselBase {
 		i.s1 = r;
 		i.base = LIns.FRAME;
 		i.slot = slot;
-		i.size = 8;
+		i.size = f.spillBytes(r);
 		return i;
 	}
 
@@ -118,10 +119,14 @@ class IselBase {
 	inline function sz(t:MTy):Int
 		return t == I32 ? 4 : 8;
 
+	// a new virtual register for a value of type t
+	function newVReg(t:MTy):Int
+		return t == V128 ? f.newVecReg() : f.newReg(t == F64);
+
 	function reg(v:Int):Int {
 		var r = vreg[v];
 		if (r < 0) {
-			r = f.newReg(m.vals[v].ty == F64);
+			r = newVReg(m.vals[v].ty);
 			vreg[v] = r;
 		}
 		return r;
@@ -131,7 +136,7 @@ class IselBase {
 	function use(v:Int):Int {
 		if (folded[v]) {
 			var i = m.vals[v];
-			var r = f.newReg(i.ty == F64);
+			var r = newVReg(i.ty);
 			materialize(i, r);
 			return r;
 		}
@@ -143,7 +148,7 @@ class IselBase {
 		var i = emit(opMov);
 		i.d = d;
 		i.s1 = s;
-		i.size = size;
+		i.size = f.vecReg(d) || f.vecReg(s) ? 16 : size;
 		if (d >= LFunc.NPHYS) f.setHint(d, s);
 		if (s >= LFunc.NPHYS) f.setHint(s, d);
 	}
@@ -333,7 +338,7 @@ class IselBase {
 		}
 		var temps = new Vector<Int>(phis.length), nt = 0;
 		for (p in phis) {
-			var t = f.newReg(p.ty == F64);
+			var t = newVReg(p.ty);
 			copyTo(t, p.args[k]);
 			temps[nt++] = t;
 		}

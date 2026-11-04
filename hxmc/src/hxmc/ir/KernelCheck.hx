@@ -158,7 +158,9 @@ class KernelCheck {
 			case _:
 		}
 		var path = core.Globals.sTypePath(c.clPath);
-		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct";
+		// (hxmc.simd's intrinsics: values; their raw memory accesses need hxmc.unsafe)
+		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct"
+			|| path == "hxmc.simd.Simd" && cf.cfName != "load" && cf.cfName != "store";
 	}
 
 	// the static an assignment or increment writes, through struct fields, or null

@@ -93,7 +93,7 @@ class Sroa {
 	}
 
 	static inline function shapeOk(t:MTy, size:Int):Bool
-		return size == 8 && (t == I64 || t == F64) || size <= 4 && t == I32;
+		return size == 8 && (t == I64 || t == F64) || size <= 4 && t == I32 || size == 16 && t == V128;
 
 	function promote(s:Int, roots:Array<MIns>, uses:Vector<Null<Array<MIns>>>) {
 		var acc = accesses(roots, uses);
@@ -153,7 +153,8 @@ class Sroa {
 					break;
 				}
 			var t = vars[v].ty;
-			var z = newIns(t == F64 ? ConstF : Const, t, e, at);
+			var z = newIns(t == F64 ? ConstF : t == V128 ? VConst : Const, t, e, at);
+			if (t == V128) z.cases = haxe.ds.Vector.fromArrayCopy([0, 0, 0, 0]);
 			zeros[v] = z.id;
 			return z.id;
 		}

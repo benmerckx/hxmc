@@ -65,6 +65,16 @@ enum abstract XOp(Int) to Int from Int {
 	var MOVDXR; // d (xmm) <- s1 (32 bits)
 	var MOVDRX; // d (32 bits) <- s1 (xmm)
 	var FOPK; // d <- d (cond: as FOP) f (constant pool)
+	// vectors (hxmc.simd: SSE4.1, docs/plans/simd.md): imm the opcode
+	// (0x0fxx, 0x0f38xx, 0x0f3axx), cond the prefix | 0x100 REX.W | 0x200
+	// the operands swapped (reg is s1) | the /digit << 12, imm2 an immediate
+	// byte (-1: none)
+	var VX; // d <- d op s1
+	var VXU; // d <- op s1 (xmm or general registers)
+	var VXI; // d <- d op imm2 (a /digit form: shifts by an immediate)
+	var VXK; // d <- d op [the constant of uses: four 32-bit words]
+	var VCONST; // d <- the constant of uses
+	var PTEST; // flags <- s1 & s1 (ptest)
 }
 
 // Mir -> LIR for x86-64 (System V and Win64: CallConv); the walk, the
@@ -100,6 +110,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		win = abi.os == "windows";
 		if (win) gprs = abi.framePointers ? WIN_GPRS_FP : WIN_GPRS else gprs = abi.framePointers ? GPRS_FP : GPRS;
 		fprs = FPRS;
+		vprs = FPRS;
 		fprBase = 16;
 		opMov = MOV;
 		opLoad = LOAD;
@@ -144,6 +155,20 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case ALU | IMUL | FOP | CMOV:
 				defs.push(i.d);
 				uses.push(i.d);
+				uses.push(i.s1);
+			case VX:
+				defs.push(i.d);
+				uses.push(i.d);
+				uses.push(i.s1);
+			case VXU:
+				defs.push(i.d);
+				uses.push(i.s1);
+			case VXI | VXK:
+				defs.push(i.d);
+				uses.push(i.d);
+			case VCONST:
+				defs.push(i.d);
+			case PTEST:
 				uses.push(i.s1);
 			case ALUI | SHIFTI | NEG | NOT | FMASK | FOPK:
 				defs.push(i.d);
@@ -505,6 +530,10 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	override function ins(i:MIns, b:MBlock, next:Null<MBlock>) {
 		switch i.op {
+			case VOp:
+				vop(i);
+			case VConst:
+				vconst(reg(i.id), [for (w in i.cases) w]);
 			case Phi:
 			case Param:
 				param(i);
@@ -990,6 +1019,557 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		var x = emit(MOVQRX);
 		x.d = d;
 		x.s1 = use(v);
+	}
+
+	// ---- vectors (hxmc.simd, docs/plans/simd.md): SSE2 to SSE4.1 (with
+	// SSSE3's pshufb, pabs and pmulhrsw), each operation WebAssembly's
+	// (SimdOps), with its exact results: emulated where SSE's differ (float
+	// min and max, conversions out of range, unsigned comparisons, byte
+	// shifts)
+
+	static final ONES = [-1, -1, -1, -1];
+
+	inline function vtmp():Int
+		return f.newVecReg();
+
+	// d <- d op s (prefix 0x66 by default)
+	function vx(opc:Int, d:Int, s:Int, p = 0x66, imm8 = -1, w = false) {
+		var x = emit(VX);
+		x.d = d;
+		x.s1 = s;
+		x.imm = opc;
+		x.cond = p | (w ? 0x100 : 0);
+		x.imm2 = imm8;
+	}
+
+	// d <- op s (rev: the reg field is s, as pextr and movd r32, xmm)
+	function vxu(opc:Int, d:Int, s:Int, p = 0x66, imm8 = -1, w = false, rev = false) {
+		var x = emit(VXU);
+		x.d = d;
+		x.s1 = s;
+		x.imm = opc;
+		x.cond = p | (w ? 0x100 : 0) | (rev ? 0x200 : 0);
+		x.imm2 = imm8;
+	}
+
+	// d <- d shifted by an immediate (opc 0x0f71/72/73, /digit)
+	function vxi(opc:Int, digit:Int, d:Int, n:Int) {
+		var x = emit(VXI);
+		x.d = d;
+		x.imm = opc;
+		x.cond = 0x66 | (digit << 12);
+		x.imm2 = n;
+	}
+
+	// d <- d op a constant (four 32-bit words, the first lowest)
+	function vxk(opc:Int, d:Int, words:Array<Int>, p = 0x66, imm8 = -1) {
+		var x = emit(VXK);
+		x.d = d;
+		x.imm = opc;
+		x.cond = p;
+		x.imm2 = imm8;
+		x.uses = Vector.fromArrayCopy(words);
+	}
+
+	function vconst(d:Int, words:Array<Int>) {
+		var x = emit(VCONST);
+		x.d = d;
+		x.uses = Vector.fromArrayCopy(words);
+	}
+
+	function vcopy(d:Int, s:Int)
+		mov(d, s, 16);
+
+	// a byte splatted to four words
+	static inline function bytes4(b:Int):Int {
+		b &= 0xff;
+		return b | (b << 8) | (b << 16) | (b << 24);
+	}
+
+	static inline function halves(h:Int):Int {
+		h &= 0xffff;
+		return h | (h << 16);
+	}
+
+	// d <- copy of a, then op b
+	function vbin(d:Int, a:Int, b:Int, opc:Int, p = 0x66, imm8 = -1) {
+		vcopy(d, a);
+		vx(opc, d, b, p, imm8);
+	}
+
+	// d <- ~d
+	inline function vnot(d:Int)
+		vxk(0x0fef, d, ONES);
+
+	// lane width (bytes) of an operation's name
+	static function width(n:String):Int
+		return StringTools.startsWith(n, "i8x16") ? 1 : StringTools.startsWith(n, "i16x8") ? 2 : StringTools.startsWith(n, "i64x2") || StringTools.startsWith(n, "f64x2") ? 8 : 4;
+
+	// pcmpeq, pcmpgt, pminu, pmaxu of a width
+	static function eqOp(w:Int):Int
+		return w == 1 ? 0x0f74 : w == 2 ? 0x0f75 : w == 4 ? 0x0f76 : 0x0f3829;
+
+	static function gtOp(w:Int):Int
+		return w == 1 ? 0x0f64 : w == 2 ? 0x0f65 : 0x0f66;
+
+	static function minuOp(w:Int):Int
+		return w == 1 ? 0x0fda : w == 2 ? 0x0f383a : 0x0f383b;
+
+	static function maxuOp(w:Int):Int
+		return w == 1 ? 0x0fde : w == 2 ? 0x0f383e : 0x0f383f;
+
+	// an I32 value into a fresh general register (a copy: it is changed)
+	function gcopy(v:Int):Int {
+		var r = f.newReg(false);
+		mov(r, use(v), 4);
+		return r;
+	}
+
+	function vop(i:MIns) {
+		var n = SimdOps.name(i.imm);
+		var w = width(n);
+		var f32 = StringTools.startsWith(n, "f32x4"), f64 = StringTools.startsWith(n, "f64x2");
+		var fp = f32 ? 0 : 0x66; // packed single: no prefix; double: 0x66
+		inline function A():Int
+			return use(i.a);
+		inline function B():Int
+			return use(i.b);
+		inline function D():Int
+			return reg(i.id);
+		var op = n.substr(n.indexOf(".") + 1);
+		switch op {
+			// bitwise
+			case "and": vbin(D(), A(), B(), 0x0fdb);
+			case "or": vbin(D(), A(), B(), 0x0feb);
+			case "xor": vbin(D(), A(), B(), 0x0fef);
+			case "andnot":
+				// (pandn: ~d & s)
+				vbin(D(), B(), A(), 0x0fdf);
+			case "not":
+				var d = D();
+				vcopy(d, A());
+				vnot(d);
+			case "bitselect":
+				// ((a ^ b) & c) ^ b
+				var d = D(), b = B();
+				vbin(d, A(), b, 0x0fef);
+				vx(0x0fdb, d, use(i.c));
+				vx(0x0fef, d, b);
+			case "any_true":
+				var x = emit(PTEST);
+				x.s1 = A();
+				setcc(D(), CC.NE);
+			// lane-wise integer operations of one instruction
+			case "add" if (!f32 && !f64): vbin(D(), A(), B(), w == 1 ? 0x0ffc : w == 2 ? 0x0ffd : w == 4 ? 0x0ffe : 0x0fd4);
+			case "sub" if (!f32 && !f64): vbin(D(), A(), B(), w == 1 ? 0x0ff8 : w == 2 ? 0x0ff9 : w == 4 ? 0x0ffa : 0x0ffb);
+			case "mul" if (!f32 && !f64): vbin(D(), A(), B(), w == 2 ? 0x0fd5 : 0x0f3840);
+			case "add_sat_s": vbin(D(), A(), B(), w == 1 ? 0x0fec : 0x0fed);
+			case "add_sat_u": vbin(D(), A(), B(), w == 1 ? 0x0fdc : 0x0fdd);
+			case "sub_sat_s": vbin(D(), A(), B(), w == 1 ? 0x0fe8 : 0x0fe9);
+			case "sub_sat_u": vbin(D(), A(), B(), w == 1 ? 0x0fd8 : 0x0fd9);
+			case "min_s": vbin(D(), A(), B(), w == 1 ? 0x0f3838 : w == 2 ? 0x0fea : 0x0f3839);
+			case "max_s": vbin(D(), A(), B(), w == 1 ? 0x0f383c : w == 2 ? 0x0fee : 0x0f383d);
+			case "min_u": vbin(D(), A(), B(), minuOp(w));
+			case "max_u": vbin(D(), A(), B(), maxuOp(w));
+			case "avgr_u": vbin(D(), A(), B(), w == 1 ? 0x0fe0 : 0x0fe3);
+			case "dot_i16x8_s": vbin(D(), A(), B(), 0x0ff5);
+			case "q15mulr_sat_s":
+				// pmulhrsw, but 0x8000 * 0x8000 saturates: 0x8000 there becomes 0x7fff
+				var d = D(), t = vtmp();
+				vbin(d, A(), B(), 0x0f380b);
+				vconst(t, [halves(0x8000), halves(0x8000), halves(0x8000), halves(0x8000)]);
+				vx(0x0f75, t, d);
+				vx(0x0fef, d, t);
+			case "narrow_i16x8_s": vbin(D(), A(), B(), 0x0f63);
+			case "narrow_i16x8_u": vbin(D(), A(), B(), 0x0f67);
+			case "narrow_i32x4_s": vbin(D(), A(), B(), 0x0f6b);
+			case "narrow_i32x4_u": vbin(D(), A(), B(), 0x0f382b);
+			case "swizzle":
+				// (an index from 16 on: zero; pshufb zeroes where the top bit is set)
+				var t = vtmp(), d = D();
+				vcopy(t, B());
+				vxk(0x0fdc, t, [bytes4(0x70), bytes4(0x70), bytes4(0x70), bytes4(0x70)]);
+				vbin(d, A(), t, 0x0f3800);
+			case "shuffle":
+				shuffle(i);
+			// comparisons
+			case "eq" if (!f32 && !f64): vbin(D(), A(), B(), eqOp(w));
+			case "ne" if (!f32 && !f64):
+				var d = D();
+				vbin(d, A(), B(), eqOp(w));
+				vnot(d);
+			case "gt_s": vbin(D(), A(), B(), gtOp(w));
+			case "lt_s": vbin(D(), B(), A(), gtOp(w));
+			case "le_s":
+				var d = D();
+				vbin(d, A(), B(), gtOp(w));
+				vnot(d);
+			case "ge_s":
+				var d = D();
+				vbin(d, B(), A(), gtOp(w));
+				vnot(d);
+			case "le_u" | "gt_u":
+				// a <= b: min(a, b) == a
+				var d = D(), a = A();
+				vbin(d, a, B(), minuOp(w));
+				vx(eqOp(w), d, a);
+				if (op == "gt_u") vnot(d);
+			case "ge_u" | "lt_u":
+				var d = D(), a = A();
+				vbin(d, a, B(), maxuOp(w));
+				vx(eqOp(w), d, a);
+				if (op == "lt_u") vnot(d);
+			case "eq": vbin(D(), A(), B(), 0x0fc2, fp, 0);
+			case "ne": vbin(D(), A(), B(), 0x0fc2, fp, 4);
+			case "lt": vbin(D(), A(), B(), 0x0fc2, fp, 1);
+			case "le": vbin(D(), A(), B(), 0x0fc2, fp, 2);
+			case "gt": vbin(D(), B(), A(), 0x0fc2, fp, 1);
+			case "ge": vbin(D(), B(), A(), 0x0fc2, fp, 2);
+			// float arithmetic
+			case "add": vbin(D(), A(), B(), 0x0f58, fp);
+			case "sub": vbin(D(), A(), B(), 0x0f5c, fp);
+			case "mul": vbin(D(), A(), B(), 0x0f59, fp);
+			case "div": vbin(D(), A(), B(), 0x0f5e, fp);
+			case "sqrt": vxu(0x0f51, D(), A(), fp);
+			// (pmin: b < a ? b : a, minps(b, a)'s own rule)
+			case "pmin": vbin(D(), B(), A(), 0x0f5d, fp);
+			case "pmax": vbin(D(), B(), A(), 0x0f5f, fp);
+			case "min" | "max":
+				fminmax(op == "min", f64, D(), A(), B());
+			case "abs" if (f32 || f64):
+				var d = D();
+				vcopy(d, A());
+				vxk(0x0f54, d, f32 ? [0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff] : [-1, 0x7fffffff, -1, 0x7fffffff], fp);
+			case "neg" if (f32 || f64):
+				var d = D();
+				vcopy(d, A());
+				vxk(0x0f57, d, f32 ? [0x80000000, 0x80000000, 0x80000000, 0x80000000] : [0, 0x80000000, 0, 0x80000000], fp);
+			case "ceil" | "floor" | "trunc" | "nearest":
+				vxu(f32 ? 0x0f3a08 : 0x0f3a09, D(), A(), 0x66, op == "ceil" ? 2 : op == "floor" ? 1 : op == "trunc" ? 3 : 0);
+			case "abs":
+				if (w == 8) throw new hxmc.MirBuild.Unsupported("x86-64: " + n);
+				vxu(w == 1 ? 0x0f381c : w == 2 ? 0x0f381d : 0x0f381e, D(), A());
+			case "neg":
+				var d = D();
+				vconst(d, [0, 0, 0, 0]);
+				vx(w == 1 ? 0x0ff8 : w == 2 ? 0x0ff9 : w == 4 ? 0x0ffa : 0x0ffb, d, A());
+			// conversions
+			case "convert_i32x4_s": vxu(0x0f5b, D(), A(), 0);
+			case "convert_i32x4_u":
+				// the low 16 bits exactly, the high ones halved (exact), doubled, added
+				var d = D(), lo = vtmp(), a = A();
+				vconst(lo, [0, 0, 0, 0]);
+				vx(0x0f3a0e, lo, a, 0x66, 0x55); // pblendw: the low halves
+				vbin(d, a, lo, 0x0ffa); // psubd: the high halves
+				vxu(0x0f5b, lo, lo, 0); // cvtdq2ps
+				vxi(0x0f72, 2, d, 1); // psrld 1
+				vxu(0x0f5b, d, d, 0);
+				vx(0x0f58, d, d, 0); // addps
+				vx(0x0f58, d, lo, 0);
+			case "trunc_sat_f32x4_s":
+				// NaN -> 0, too large -> 0x7fffffff (cvttps2dq gives 0x80000000)
+				var d = D(), t = vtmp(), a = A();
+				vbin(t, a, a, 0x0fc2, 0, 0); // cmpeqps: not NaN
+				vbin(d, a, t, 0x0f54, 0); // andps: NaN -> 0
+				vx(0x0fef, t, d); // pxor: the top bit where d >= 0
+				vxu(0x0f5b, d, d, 0xf3); // cvttps2dq
+				vx(0x0fdb, t, d); // pand: >= 0 but negative now: overflow
+				vxi(0x0f72, 4, t, 31); // psrad 31
+				vx(0x0fef, d, t);
+			case "trunc_sat_f64x2_s_zero":
+				var d = D(), t = vtmp(), a = A();
+				vbin(t, a, a, 0x0fc2, 0x66, 0); // cmpeqpd: not NaN
+				vxk(0x0f54, t, [0xffc00000, 0x41dfffff, 0xffc00000, 0x41dfffff], 0); // andps 2147483647.0
+				vbin(d, a, t, 0x0f5d, 0x66); // minpd (NaN: the second operand, 0)
+				vxu(0x0fe6, d, d, 0x66); // cvttpd2dq
+			case "convert_low_i32x4_s": vxu(0x0fe6, D(), A(), 0xf3); // cvtdq2pd
+			case "promote_low_f32x4": vxu(0x0f5a, D(), A(), 0); // cvtps2pd
+			case "demote_f64x2_zero": vxu(0x0f5a, D(), A(), 0x66); // cvtpd2ps
+			case "extend_low_i8x16_s": vxu(0x0f3820, D(), A());
+			case "extend_low_i8x16_u": vxu(0x0f3830, D(), A());
+			case "extend_low_i16x8_s": vxu(0x0f3823, D(), A());
+			case "extend_low_i16x8_u": vxu(0x0f3833, D(), A());
+			case "extend_low_i32x4_s": vxu(0x0f3825, D(), A());
+			case "extend_low_i32x4_u": vxu(0x0f3835, D(), A());
+			case "extend_high_i8x16_s" | "extend_high_i8x16_u" | "extend_high_i16x8_s" | "extend_high_i16x8_u" | "extend_high_i32x4_s" | "extend_high_i32x4_u":
+				var t = vtmp();
+				vxu(0x0f70, t, A(), 0x66, 0xee); // pshufd: the high half low
+				var s = StringTools.endsWith(op, "_s");
+				vxu(switch op.substr(12, 5) {
+					case "i8x16": s ? 0x0f3820 : 0x0f3830;
+					case "i16x8": s ? 0x0f3823 : 0x0f3833;
+					case _: s ? 0x0f3825 : 0x0f3835;
+				}, D(), t);
+			// shifts
+			case "shl" | "shr_s" | "shr_u":
+				vshift(i, op, w);
+			// lanes
+			case "splat":
+				vsplat(i, w, f32, f64);
+			case "extract_lane" | "extract_lane_s" | "extract_lane_u":
+				vextract(i, w, f32, f64, op == "extract_lane_s");
+			case "replace_lane":
+				vreplace(i, w, f32, f64);
+			case "bitmask":
+				var d = D();
+				switch w {
+					case 1: vxu(0x0fd7, d, A());
+					case 2:
+						var t = vtmp();
+						vbin(t, A(), A(), 0x0f63); // packsswb t, t
+						vxu(0x0fd7, d, t);
+						var x = emit(ALUI);
+						x.d = d;
+						x.cond = Asm.AND;
+						x.imm = 0xff;
+						x.size = 4;
+					case 4: vxu(0x0f50, d, A(), 0);
+					case _: vxu(0x0f50, d, A(), 0x66);
+				}
+			case "all_true":
+				// no lane zero: pcmpeq with zero has no bit set
+				var t = vtmp(), g = f.newReg(false);
+				vconst(t, [0, 0, 0, 0]);
+				vx(eqOp(w), t, A());
+				vxu(0x0fd7, g, t);
+				var x = emit(CMPI);
+				x.s1 = g;
+				x.imm = 0;
+				x.size = 4;
+				setcc(D(), CC.E);
+			case _:
+				throw new hxmc.MirBuild.Unsupported("x86-64: " + n);
+		}
+	}
+
+	// wasm's min and max: NaN if either is, -0 below +0 (minps and maxps
+	// return the second operand when either is NaN or both are zeros):
+	// computed both ways and merged, NaN made a quiet NaN (V8's sequences)
+	function fminmax(min:Bool, f64:Bool, d:Int, a:Int, b:Int) {
+		var p = f64 ? 0x66 : 0, t = vtmp();
+		var o = min ? 0x0f5d : 0x0f5f;
+		vbin(t, b, a, o, p); // t = op(b, a)
+		vbin(d, a, b, o, p); // d = op(a, b)
+		if (min) {
+			vx(0x0f56, t, d, p); // orps: -0 and NaN of either
+			vcopy(d, t);
+			vx(0x0fc2, d, t, p, 3); // cmpunord: NaN lanes
+			vx(0x0f56, t, d, p); // orps
+			vxi(f64 ? 0x0f73 : 0x0f72, 2, d, f64 ? 13 : 10); // psrl: clear the payload's top
+			vx(0x0f55, d, t, p); // andnps: d = ~d & t
+		} else {
+			vx(0x0f57, d, t, p); // xorps: where they differ
+			vx(0x0f56, t, d, p); // orps: NaN
+			vx(0x0f5c, t, d, p); // subps: the sign of a zero
+			vcopy(d, t);
+			vx(0x0fc2, d, t, p, 3); // cmpunord
+			vxi(f64 ? 0x0f73 : 0x0f72, 2, d, f64 ? 13 : 10);
+			vx(0x0f55, d, t, p); // andnps
+		}
+	}
+
+	function vshift(i:MIns, op:String, w:Int) {
+		var d = reg(i.id), a = use(i.a);
+		var k = m.vals[i.b].op == Const ? m.vals[i.b].imm & (w * 8 - 1) : -1;
+		// (the count masked to the lane's width, in an xmm register)
+		function count():Int {
+			var g = gcopy(i.b);
+			var x = emit(ALUI);
+			x.d = g;
+			x.cond = Asm.AND;
+			x.imm = w * 8 - 1;
+			x.size = 4;
+			var c = vtmp();
+			vxu(0x0f6e, c, g); // movd
+			return c;
+		}
+		// shift of words, doublewords or quadwords: by register (opc) or immediate (row, digit)
+		function sh(opc:Int, row:Int, digit:Int, d:Int, k:Int, c:Int)
+			if (k >= 0) vxi(row, digit, d, k) else vx(opc, d, c);
+		switch w {
+			case 2 | 4 | 8 if (!(w == 8 && op == "shr_s")):
+				vcopy(d, a);
+				var c = k >= 0 ? -1 : count();
+				var row = w == 2 ? 0x0f71 : w == 4 ? 0x0f72 : 0x0f73;
+				switch op {
+					case "shl": sh(w == 2 ? 0x0ff1 : w == 4 ? 0x0ff2 : 0x0ff3, row, 6, d, k, c);
+					case "shr_u": sh(w == 2 ? 0x0fd1 : w == 4 ? 0x0fd2 : 0x0fd3, row, 2, d, k, c);
+					case _: sh(w == 2 ? 0x0fe1 : 0x0fe2, row, 4, d, k, c);
+				}
+			case 8:
+				// arithmetic: the sign of each quadword, then (a ^ s) >> n ^ s
+				var s = vtmp();
+				vxu(0x0f70, s, a, 0x66, 0xf5); // pshufd: each lane's high word twice
+				vxi(0x0f72, 4, s, 31); // psrad 31
+				vbin(d, a, s, 0x0fef);
+				if (k >= 0) vxi(0x0f73, 2, d, k) else vx(0x0fd3, d, count());
+				vx(0x0fef, d, s);
+			case _:
+				// bytes: as words, then masked (shl, shr_u) or from both halves (shr_s)
+				if (op == "shr_s") {
+					var hi = vtmp();
+					vbin(d, a, a, 0x0f60); // punpcklbw a, a: each byte in a word's high byte
+					vbin(hi, a, a, 0x0f68); // punpckhbw
+					var c = -1;
+					if (k >= 0) {
+						vxi(0x0f71, 4, d, k + 8);
+						vxi(0x0f71, 4, hi, k + 8);
+					} else {
+						var g = gcopy(i.b);
+						var x = emit(ALUI);
+						x.d = g;
+						x.cond = Asm.AND;
+						x.imm = 7;
+						x.size = 4;
+						var y = emit(ALUI);
+						y.d = g;
+						y.cond = Asm.ADD;
+						y.imm = 8;
+						y.size = 4;
+						c = vtmp();
+						vxu(0x0f6e, c, g);
+						vx(0x0fe1, d, c);
+						vx(0x0fe1, hi, c);
+					}
+					vx(0x0f63, d, hi); // packsswb
+					return;
+				}
+				vcopy(d, a);
+				var shl = op == "shl";
+				if (k >= 0) {
+					vxi(0x0f71, shl ? 6 : 2, d, k);
+					var mb = shl ? (0xff << k) & 0xff : 0xff >> k;
+					vxk(0x0fdb, d, [bytes4(mb), bytes4(mb), bytes4(mb), bytes4(mb)]);
+				} else {
+					// each half widened to words, shifted, masked to bytes, packed
+					var c = count(), z = vtmp(), hi = vtmp();
+					vconst(z, [0, 0, 0, 0]);
+					vcopy(hi, a);
+					vx(0x0f60, d, z); // punpcklbw: the low bytes, zero-extended
+					vx(0x0f68, hi, z); // punpckhbw
+					vx(shl ? 0x0ff1 : 0x0fd1, d, c);
+					vx(shl ? 0x0ff1 : 0x0fd1, hi, c);
+					if (shl) {
+						var k8 = [halves(0xff), halves(0xff), halves(0xff), halves(0xff)];
+						vxk(0x0fdb, d, k8);
+						vxk(0x0fdb, hi, k8);
+					}
+					vx(0x0f67, d, hi); // packuswb
+				}
+		}
+	}
+
+	function vsplat(i:MIns, w:Int, f32:Bool, f64:Bool) {
+		var d = reg(i.id);
+		if (f32) {
+			vxu(0x0f5a, d, use(i.a), 0xf2); // cvtsd2ss
+			vx(0x0fc6, d, d, 0, 0); // shufps 0
+			return;
+		}
+		if (f64) {
+			vcopy(d, use(i.a));
+			vx(0x0f14, d, d, 0x66); // unpcklpd
+			return;
+		}
+		vxu(0x0f6e, d, use(i.a), 0x66, -1, w == 8); // movd / movq
+		switch w {
+			case 1:
+				var z = vtmp();
+				vconst(z, [0, 0, 0, 0]);
+				vx(0x0f3800, d, z); // pshufb with zeros: byte 0 everywhere
+			case 2:
+				vxu(0x0f70, d, d, 0xf2, 0); // pshuflw 0
+				vxu(0x0f70, d, d, 0x66, 0); // pshufd 0
+			case 4: vxu(0x0f70, d, d, 0x66, 0);
+			case _: vx(0x0f6c, d, d); // punpcklqdq
+		}
+	}
+
+	function vextract(i:MIns, w:Int, f32:Bool, f64:Bool, signed:Bool) {
+		var d = reg(i.id), a = use(i.a), l = i.imm2;
+		if (f32) {
+			if (l == 0) vxu(0x0f5a, d, a, 0xf3) else {
+				var t = vtmp();
+				vxu(0x0f70, t, a, 0x66, l); // pshufd: lane l low
+				vxu(0x0f5a, d, t, 0xf3); // cvtss2sd
+			}
+			return;
+		}
+		if (f64) {
+			if (l == 0) mov(d, a, 16) else vxu(0x0f70, d, a, 0x66, 0xee);
+			return;
+		}
+		switch w {
+			case 1: vxu(0x0f3a14, d, a, 0x66, l, false, true); // pextrb
+			case 2: vxu(0x0fc5, d, a, 0x66, l); // pextrw
+			case 4: if (l == 0) vxu(0x0f7e, d, a, 0x66, -1, false, true) else vxu(0x0f3a16, d, a, 0x66, l, false, true);
+			case _: if (l == 0) vxu(0x0f7e, d, a, 0x66, -1, true, true) else vxu(0x0f3a16, d, a, 0x66, l, true, true);
+		}
+		if (signed && w < 4) {
+			var x = emit(SHIFTI);
+			x.d = d;
+			x.cond = Asm.SHL;
+			x.imm = 32 - 8 * w;
+			x.size = 4;
+			var y = emit(SHIFTI);
+			y.d = d;
+			y.cond = Asm.SAR;
+			y.imm = 32 - 8 * w;
+			y.size = 4;
+		}
+	}
+
+	function vreplace(i:MIns, w:Int, f32:Bool, f64:Bool) {
+		var d = reg(i.id), l = i.imm2;
+		if (f32) {
+			var t = vtmp();
+			vxu(0x0f5a, t, use(i.b), 0xf2); // cvtsd2ss
+			vcopy(d, use(i.a));
+			vx(0x0f3a21, d, t, 0x66, l << 4); // insertps
+			return;
+		}
+		if (f64) {
+			var x = use(i.b);
+			vcopy(d, use(i.a));
+			if (l == 0) vx(0x0f10, d, x, 0xf2) else vx(0x0f14, d, x, 0x66); // movsd (the low half) / unpcklpd
+			return;
+		}
+		vcopy(d, use(i.a));
+		var s = use(i.b);
+		switch w {
+			case 1: vx(0x0f3a20, d, s, 0x66, l); // pinsrb
+			case 2: vx(0x0fc4, d, s, 0x66, l); // pinsrw
+			case 4: vx(0x0f3a22, d, s, 0x66, l); // pinsrd
+			case _: vx(0x0f3a22, d, s, 0x66, l, true); // pinsrq
+		}
+	}
+
+	// pshufb from a (lanes below 16) and b (16 and up), or'ed
+	function shuffle(i:MIns) {
+		var d = reg(i.id);
+		var ls = i.cases;
+		function mask(fromB:Bool):Array<Int> {
+			var w = [0, 0, 0, 0];
+			for (k in 0...16) {
+				var l = ls[k];
+				var byte = (l >= 16) == fromB ? l & 15 : 0x80;
+				w[k >> 2] |= byte << (8 * (k & 3));
+			}
+			return w;
+		}
+		var anyA = false, anyB = false;
+		for (l in ls)
+			if (l < 16) anyA = true else anyB = true;
+		if (anyA) {
+			vcopy(d, use(i.a));
+			vxk(0x0f3800, d, mask(false));
+		}
+		if (anyB) {
+			var t = anyA ? vtmp() : d;
+			vcopy(t, use(i.b));
+			vxk(0x0f3800, t, mask(true));
+			if (anyA) vx(0x0feb, d, t);
+		}
 	}
 
 	// (a float comparison is a value: cmov reads its flags as a parity test too)
