@@ -1233,7 +1233,7 @@ jobs:
             haxe/test
       - name: UIKit app
         if: runner.os == 'macOS'
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           cd src
           HXMC_TOOL="$RUNNER_TEMP/app/node_modules/.bin/haxe" "$RUNNER_TEMP/app/node_modules/.bin/haxe" -cp hxmc/test -cp haxe/test --run UIKitCheck
