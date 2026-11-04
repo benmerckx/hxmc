@@ -35,7 +35,7 @@ class PlaygroundCompiler {
 	@:hxmc.callback static function request():Int {
 		var outcome = try {
 			var request:{args:Array<String>, ?stdin:String} = haxe.Json.parse(sys.io.File.getContent("/request"));
-			instance.request(request.args, CompilerIo.createStdioIo(), request.stdin);
+			instance.request({args: compiler.Args.parseArgs(request.args), stdin: request.stdin, conn: null}, CompilerIo.createStdioIo());
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString(Std.string(e) + "\n");
 			Errored;

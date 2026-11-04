@@ -3,6 +3,7 @@ package compiler.server;
 import haxe.io.Bytes;
 import haxe.io.Input;
 import compiler.Args;
+import compiler.CompilerInstance;
 import compiler.ParsedArg;
 import compiler.PipeThings;
 import compiler.io.CompilerIo;
@@ -314,7 +315,8 @@ class Server {
 		}
 	}
 
-	static function createRequestIo(request:Request):CompilerIoData {
+	// port: public: a CompilerInstance's host with another transport encodes its output so too
+	public static function createRequestIo(request:Request):CompilerIoData {
 		var conn = request.conn;
 		function writeOut(s:String) conn.write("\x01" + s.split("\n").join("\x01") + "\n");
 		function writeErr(s:String) conn.write(s);
@@ -367,10 +369,12 @@ class Server {
 		}
 	}
 
-	static function createWorker(sctx:ServerCompilationContext, rq:RequestQueue):sys.thread.Lock {
+	// port: the request's lifecycle (stdin, process, the IO closed, the cache cleaned,
+	// ... the exploration task) is CompilerInstance.request's, shared with hosts that
+	// ... hand it requests themselves; here are the queue, the thread and the connection
+	static function createWorker(instance:CompilerInstance, rq:RequestQueue):sys.thread.Lock {
 		var finished = new sys.thread.Lock();
 		sys.thread.Thread.create(function() {
-			var cs = sctx.cs;
 			function loop() {
 				while (true) {
 					// port: Eval threads left by a request (--interp) run while the worker waits
@@ -388,30 +392,22 @@ class Server {
 						switch rq.requests {
 							case []:
 								rq.mutex.release();
-								if (cs.hasTask()) {
-									cs.getTask().run();
+								if (instance.hasTask()) {
+									instance.runTask();
 									RequestQueue.wakeUp(rq);
 								}
 							case requests:
 								// port: rq.requests is a list consed at the head: take its first element
 								var request = requests.shift();
 								rq.mutex.release();
-								sctx.currentStdin = request.stdin;
 								rq.cancelToken = false;
 								var io = createRequestIo(request);
-								var outcome = runRequest(sctx, io, request);
-								CompilerIo.close(io);
-								request.conn.close();
+								var outcome = instance.request(request, io, request.conn.close);
 								switch outcome {
 									case Oom:
 										Sys.exit(-1);
 									case _:
 								}
-
-								sctx.currentStdin = null;
-								ServerCache.cleanup(sctx);
-								if (sctx.wasCompilation)
-									cs.addTask(new compiler.Tasks.ServerExplorationTask(cs));
 								RequestQueue.wakeUp(rq);
 						}
 					}
@@ -435,9 +431,9 @@ class Server {
 	/* The server main loop. Waits for the [accept] call to then process the sent compilation
 		parameters through [process_params]. */
 	public static function waitLoop(verbose:Bool, accept:ServerAccept):Int {
-		var sctx = setupServerContext(verbose, true);
+		var instance = new CompilerInstance(verbose);
 		var rq = RequestQueue.create();
-		var worker = createWorker(sctx, rq);
+		var worker = createWorker(instance, rq);
 		/* Main loop: accept connections and enqueue requests for the worker.
 			The loop exits if the accept function raises an exception (e.g. socket closed). */
 		try {
@@ -453,18 +449,8 @@ class Server {
 						conn.close();
 						continue;
 					}
-					var idx = s.indexOf("\x01");
-					var stdin:Null<String>, hxml:String;
-					if (idx >= 0) {
-						stdin = s.substr(idx + 1);
-						hxml = s.substr(0, idx);
-					} else {
-						stdin = null;
-						hxml = s;
-					}
-					var data = Helper.parseHxmlData(hxml);
-					var parsedArgs = Args.parseArgs(data);
-					RequestQueue.add(rq, parsedArgs, stdin, conn);
+					var request = parseRequest(s, conn);
+					RequestQueue.add(rq, request.args, request.stdin, conn);
 				} catch (e:Dynamic) {
 					if (!isUnixError(e)) throw e;
 					ServerMessage.socketMessage("Connection Aborted");
@@ -474,8 +460,25 @@ class Server {
 		} catch (_:Dynamic) {}
 		RequestQueue.shutdown(rq);
 		worker.wait();
-		ServerCompilationContext.dispose(sctx);
+		instance.dispose();
 		return 0;
+	}
+
+	// port: not upstream: wait_loop's reading of a request (the hxml, then the stdin
+	// ... after \x01), shared with hosts of a CompilerInstance with another transport
+	public static function parseRequest(s:String, conn:ServerConnection):Request {
+		var idx = s.indexOf("\x01");
+		var stdin:Null<String>, hxml:String;
+		if (idx >= 0) {
+			stdin = s.substr(idx + 1);
+			hxml = s.substr(0, idx);
+		} else {
+			stdin = null;
+			hxml = s;
+		}
+		var data = Helper.parseHxmlData(hxml);
+		var parsedArgs = Args.parseArgs(data);
+		return {args: parsedArgs, stdin: stdin, conn: conn};
 	}
 
 	// port: Unix.Unix_error: socket failures other than end of file
