@@ -45,6 +45,7 @@ of each file.
 | `EvalDebugger` | `debugger` | scripted Eval debugger sessions (`SHARD=i/n`) | 6/6 |
 | `unit.hxml` | `unit` | unit tests of port modules, in-process | pass |
 | `fuzz/` | `make test-fuzz LANE=...` | random programs per target (`diff:<target>`) or by output (`exec:<a>,<b>`), reduced on failure; `--cases haxe/test/fuzz/cases` reruns the kept ones | CI: diff lanes of ten targets, two exec lanes |
+| `node-server.mjs` | `make test-node-server` | `haxe --wait` on Node.js (`haxe/nodejs`, built by the reference with hxnodejs) against the reference's server, the reference as the client: outputs, a JavaScript build, UTF-8 across chunks, fragmented requests, display with unsaved source, unsupported stdin and threads, simultaneous and vanishing clients (not in CI) | 8/8 |
 | `IpcStress` | (upstream-tests.yml) | multi-byte strings through Eval's `sys.io.Process`, with concurrent file reads | 86 checks per round |
 | `EncCheck` | | the x86-64 and AArch64 encoders against `llvm-mc` (not in CI) | |
 
