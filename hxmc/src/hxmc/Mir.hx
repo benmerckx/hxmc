@@ -13,6 +13,11 @@ enum abstract MTy(Int) to Int {
 	var I64;
 	var F64;
 	var Void;
+	// a 128-bit vector (hxmc.simd: docs/plans/simd.md): in the floating-point
+	// registers (xmm, v), WebAssembly's v128; never a parameter or a result
+	// (vectors pass as struct values, by address), only values, phis, 16-byte
+	// loads and stores (8 or 4 bytes: the low lanes, the rest zero on a load)
+	var V128;
 }
 
 enum abstract Op(Int) to Int {
@@ -68,6 +73,12 @@ enum abstract Op(Int) to Int {
 	var Rotr; // a rotated right by the constant b (I32/I64)
 	var UDiv; // unsigned, machine semantics (b != 0: Mem.udiv)
 	var URem;
+	// a vector operation (SimdOps): imm its WebAssembly SIMD opcode; a, b, c
+	// the operands (vectors, a scalar of a splat, a replace or a shift
+	// count); imm2 a lane; cases a shuffle's 16 lane indices
+	var VOp;
+	// a vector constant: cases its four 32-bit words, the first lowest
+	var VConst;
 	// object-level operations (docs/hxmc.md, "Pipeline"):
 	// MirBuild makes them, MemLower lowers them to the instructions above
 	// (layouts, loads and stores, allocation, barriers, the shadow stack);
@@ -433,6 +444,7 @@ class MFunc {
 		var parts = [];
 		if (i.op == Const) parts.push(Std.string(i.imm) + (i.ty == I64 && i.imm2 != (i.imm < 0 ? -1 : 0) ? ' hi ${i.imm2}' : ""));
 		if (i.op == ConstF) parts.push(Std.string(i.f));
+		if (i.op == VOp) parts.push(SimdOps.name(i.imm) + (SimdOps.hasLane(i.imm) ? " lane " + i.imm2 : ""));
 		if (i.op == Cmp) parts.push(condName(i.imm));
 		if (i.sym != null) parts.push(i.sym + (i.imm != 0 && i.op == SymAddr ? '+${i.imm}' : ""));
 		for (x in [i.a, i.b, i.c])
@@ -460,6 +472,7 @@ class MFunc {
 			case I64: "i64";
 			case F64: "f64";
 			case Void: "void";
+			case V128: "v128";
 		};
 
 	// a Haxe-level type, short (dumps)
@@ -493,7 +506,7 @@ class MFunc {
 
 	static final OPS:Vector<String> = vector("param", "const", "constf", "symaddr", "tlsload", "tlsstore", "stackaddr", "copy", "phi", "add", "sub", "mul", "and",
 		"or", "xor", "shl", "sar", "shr", "neg", "not", "div", "rem", "fadd", "fsub", "fmul", "fdiv", "fneg", "fsqrt", "fabs", "cmp", "sext", "zext", "trunc",
-		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr", "udiv", "urem", "nullcheck", "new",
+		"i2f", "f2i", "bitstof", "ftobits", "select", "load", "store", "call", "jmp", "br", "switch", "ret", "unreachable", "rotr", "udiv", "urem", "vop", "vconst", "nullcheck", "new",
 		"newdyn", "initfield", "getfield", "setfield", "fieldaddr", "enumtag", "typetest", "box", "unbox", "virtualcall", "closurecall", "anonget", "anontest",
 		"anonstore", "anoncall", "arraylength", "arrayget", "arrayset", "arraypush", "newarray", "arrayinit", "newnarray", "narrayinit", "narraylength",
 		"narrayget", "narrayset", "narraydyn", "refstore", "tag", "untag", "irnode", "varget", "varset", "try", "catch");

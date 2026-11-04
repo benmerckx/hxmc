@@ -129,7 +129,7 @@ endef
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
 	shared-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
-	bench bench-compile bench-micro measure quick check full clean distclean
+	bench bench-compile bench-micro bench-simd measure quick check full clean distclean
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -202,6 +202,7 @@ help:
 ##               (hxmc/test/CompileBench.hx; COMPILE_BENCH_ARGS)
 ##   bench-micro WHICH=arrays|maps (default both): Array vs NativeArray vs Vector (ARRAY_BENCH_ARGS),
 ##               ObjectMap and StringMap (MAP_BENCH_ARGS)
+##   bench-simd  image kernels, scalar and with hxmc.simd, natively, as wasm and in C (SIMD_BENCH_ARGS)
 ##   measure     peak memory and time of the self-compile (ours, the reference) and of the tool's
 ##               builds (haxe/test/Measure.hx)
 ##
@@ -602,6 +603,42 @@ bin/vector-bench/m: $(TOOL) $(STD) $(HOST_RT) hxmc/test/bench/VectorBench.hx hxm
 
 bin/map-bench/m: $(TOOL) $(STD) $(HOST_RT) hxmc/test/bench/MapBench.hx
 	$(call hxmc,$@,-cp hxmc/test/bench -main MapBench $(HXMC_ARGS))
+
+# the image kernels, scalar and with hxmc.simd (hxmc/test/bench/simd,
+# docs/plans/simd.md, "Benchmarks"): hxmc natively and as a wasm32-wasi
+# module under node, then the C version at -O2, at -O3 without the
+# vectorizers and at -O3, and with SSE4.1 intrinsics at -O2 (CC;
+# SIMD_BENCH_ARGS: the scale)
+CC ?= cc
+SIMD_BENCH_ARGS ?=
+SIMD_BENCH := hxmc/test/bench/simd
+bench-simd: bin/simd-bench/m bin/simd-bench/m.wasm bin/simd-bench/c-O2 bin/simd-bench/c-O3-novec bin/simd-bench/c-O3 bin/simd-bench/c-sse41
+	@echo "== hxmc"; bin/simd-bench/m $(SIMD_BENCH_ARGS)
+	@echo "== hxmc, wasm32-wasi under node"; $(WASI) bin/simd-bench/m.wasm $(SIMD_BENCH_ARGS)
+	@for v in O2 O3-novec O3; do echo "== C -$$v"; bin/simd-bench/c-$$v $(SIMD_BENCH_ARGS); done
+	@echo "== C, SSE4.1 intrinsics, -O2"; bin/simd-bench/c-sse41 $(SIMD_BENCH_ARGS)
+
+bin/simd-bench/m: $(TOOL) $(STD) $(HOST_RT) $(SIMD_BENCH)/SimdBench.hx
+	$(call hxmc,$@,-cp $(SIMD_BENCH) -main SimdBench $(HXMC_ARGS))
+
+bin/simd-bench/m.wasm: $(TOOL) $(STD) $(SIMD_BENCH)/SimdBench.hx
+	$(call hxmc,$@,-cp $(SIMD_BENCH) -main SimdBench $(HXMC_ARGS) -D hxmc.target=wasm32-wasi)
+
+bin/simd-bench/c-O2: $(SIMD_BENCH)/simd_bench.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -o $@ $<
+
+bin/simd-bench/c-O3-novec: $(SIMD_BENCH)/simd_bench.c
+	@mkdir -p $(dir $@)
+	$(CC) -O3 -fno-tree-vectorize -fno-tree-slp-vectorize -o $@ $<
+
+bin/simd-bench/c-O3: $(SIMD_BENCH)/simd_bench.c
+	@mkdir -p $(dir $@)
+	$(CC) -O3 -o $@ $<
+
+bin/simd-bench/c-sse41: $(SIMD_BENCH)/simd_bench.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -msse4.1 -DSSE41 -o $@ $<
 
 # (the self-compile of PORT_BIN; the npm package's WebAssembly compiler)
 measure: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(PORT_BIN) bin/npm/native/wasm32-wasi/haxe.wasm

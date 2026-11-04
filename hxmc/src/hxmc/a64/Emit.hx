@@ -315,7 +315,7 @@ class Emit implements hxmc.Target.Emitter {
 		var x = i.size == 8;
 		switch (i.op : AOp) {
 			case MOV:
-				if (i.d >= 32 && i.s1 >= 32) a.fmovR(i.d, i.s1) else if (i.d >= 32) a.fmovFromGpr(i.d, i.s1) else if (i.s1 >= 32) a.fmovToGpr(i.d, i.s1)
+				if (i.d >= 32 && i.s1 >= 32 && i.size == 16) a.movV(i.d, i.s1) else if (i.d >= 32 && i.s1 >= 32) a.fmovR(i.d, i.s1) else if (i.d >= 32) a.fmovFromGpr(i.d, i.s1) else if (i.s1 >= 32) a.fmovToGpr(i.d, i.s1)
 				else if (i.d != i.s1 || i.size == 4) a.movR(i.size == 4 ? false : true, i.d, i.s1);
 			case MOVI:
 				if (i.isym != null) a.movSym(x, i.d, obj.sym(i.isym), i.imm) else a.movI(x, i.d, i.imm, x ? i.imm2 : 0);
@@ -478,6 +478,28 @@ class Emit implements hxmc.Target.Emitter {
 				a.fcvtSToD(i.d, i.s1);
 			case FCVTDS:
 				a.fcvtDToS(i.d, i.s1);
+			case NV:
+				a.neon(i.imm, i.d, i.s1, i.s2);
+			case VCONST:
+				var u = i.uses;
+				if (u[0] == 0 && u[1] == 0 && u[2] == 0 && u[3] == 0) a.neon(0x6F00E400, i.d, -1, -1) // movi v.2d, #0
+				else if (u[0] == -1 && u[1] == -1 && u[2] == -1 && u[3] == -1) a.neon(0x6F07E7E0, i.d, -1, -1) // movi v.2d, #-1
+				else if (u[0] == u[1] && u[1] == u[2] && u[2] == u[3]) {
+					// a word in every lane (a splat): through w16, dup v.4s
+					a.movI(false, X16, u[0], 0);
+					a.neon(0x4E040C00, i.d, X16, -1);
+				} else if (u[0] == u[2] && u[1] == u[3]) {
+					a.movI(true, X16, u[0], u[1]);
+					a.neon(0x4E080C00, i.d, X16, -1); // dup v.2d, x16
+				} else {
+					// the low half through x16 (fmov d, x16: the high half zero), the high one if any
+					a.movI(true, X16, u[0], u[1]);
+					a.fmovFromGpr(i.d, X16);
+					if (u[2] != 0 || u[3] != 0) {
+						a.movI(true, X16, u[2], u[3]);
+						a.neon(0x4E181C00, i.d, X16, -1); // ins v.d[1], x16
+					}
+				}
 		}
 	}
 

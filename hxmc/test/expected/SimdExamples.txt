@@ -1,0 +1,4 @@
+exit 0
+matmul: -10.75 1 2.75 -1 5 3.5 2 6 4 6 5.5 12.5 5 2 -6 3 (= scalar)
+lanczos: ae8ec1b6 (= scalar)
+audio mix: 5f4b215c (= scalar)
