@@ -156,6 +156,15 @@ textarea {
 #out .err { color: #d0473b; }
 #members { padding: 0 14px 14px; overflow: auto; max-height: 340px; }
 #members table { font-size: 13px; }
+.toolbar .maximize { margin-left: auto; }
+.link-note.error { color: #d0473b; }
+/* maximized (the button, or the browser's fullscreen, F11: Playground.setupMaximize): the
+   toolbar and the editor fill the tab, the output a third of its width */
+html.no-scroll { overflow: hidden; }
+.workspace.full { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; padding: 12px 16px; background: var(--bg); }
+.workspace.full .play { flex: 1; min-height: 0; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.workspace.full #editor, .workspace.full textarea { height: 100%; min-height: 0; }
+.workspace.full .output { min-height: 0; max-height: none; }
 
 /* ---- Benchmarks (Tables.hx, BenchCharts.hx) ---- */
 table.bench { font-size: 14px; margin-top: 4px; }

@@ -81,6 +81,19 @@ class Playground {
 		exampleSelect = cast document.getElementById("example");
 
 		saved = try window.localStorage.getItem("hih-code") catch (_:Dynamic) null;
+		// code in the address (#code=...: shared links) comes before the saved code and the examples
+		linkNote = document.getElementById("link-note");
+		final fromHash:Promise<Null<String>> = if (!StringTools.startsWith(window.location.hash, HASH)) Promise.resolve(null) else
+			decode(window.location.hash.substr(HASH.length)).then((code) -> {
+				saved = code;
+				setCode(code);
+				code;
+			}, (e) -> {
+				// (a link cut off on the way: a chat's or a mail's limit; the saved code or an example instead)
+				js.Browser.console.warn("The code in the address could not be read:", e);
+				print("The code in this link could not be read: the link is damaged or cut off.", "err");
+				null;
+			});
 		window.fetch(Version.url("playground/index.json")).then((r) -> r.json()).then((list:Array<Example>) -> {
 			examples = list;
 			final groups = new Map<String, Element>();
@@ -94,7 +107,7 @@ class Playground {
 				}
 				groups[label].append(new js.html.Option(ex.title, Std.string(i)));
 			}
-			if (saved == null) loadExample(0);
+			fromHash.then((code) -> if (code == null && saved == null) loadExample(0));
 		});
 		exampleSelect.addEventListener("change", () -> loadExample(Std.parseInt(exampleSelect.value)));
 
@@ -133,6 +146,8 @@ class Playground {
 
 		// build facts (sizes, date, commit) from build-info.json, written by `make site` (Makefile)
 		Info.fill();
+
+		setupMaximize();
 	}
 
 	// ---- the program: Main.hx / Test.hx, main class detected from the source
@@ -171,6 +186,89 @@ class Playground {
 
 	static function save() {
 		try window.localStorage.setItem("hih-code", getCode()) catch (_:Dynamic) {}
+		window.clearTimeout(hashTimer);
+		hashTimer = window.setTimeout(updateHash, 300);
+	}
+
+	// ---- the code in the address: #code= and the code deflated (deflate-raw, the
+	// browser's CompressionStream), base64url; replaced as it changes, without history entries
+
+	static inline final HASH = "#code=";
+	static var hashTimer = 0;
+
+	/** Chrome's longest URL (2 MiB): a longer one is not opened, so the address drops the code */
+	static inline final URL_MAX = 2 * 1024 * 1024;
+
+	/** a chat message's limit (Discord: 2000 characters; Slack, Teams and mail clients cut or
+		mangle long links too): a longer link is noted, as it may not arrive whole */
+	static inline final URL_SHARE = 2000;
+
+	static var linkNote:Element;
+
+	static function updateHash() {
+		final code = getCode();
+		encode(code).then((s) -> {
+			if (getCode() != code) return;
+			final base = window.location.href.split("#")[0];
+			final length = base.length + HASH.length + s.length;
+			if (length > URL_MAX) {
+				window.history.replaceState(null, "", base);
+				showLinkNote('Too large for a link (${Math.ceil(length / 1024)} KB, browsers open up to 2 MB): the address has no code.', true);
+				return;
+			}
+			window.history.replaceState(null, "", HASH + s);
+			showLinkNote(length > URL_SHARE ? 'Long link (${length} characters): chats such as Discord (2000) may cut it off.' : null);
+		});
+	}
+
+	static function showLinkNote(text:Null<String>, error = false) {
+		linkNote.hidden = text == null;
+		linkNote.textContent = text != null ? text : "";
+		linkNote.classList.toggle("error", error);
+	}
+
+	static function encode(code:String):Promise<String> {
+		return Syntax.code("new Response(new Blob([{0}]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()", code)
+			.then((buf:js.lib.ArrayBuffer) -> {
+				final bytes = new js.lib.Uint8Array(buf);
+				final chunks = [];
+				var i = 0;
+				while (i < bytes.length) {
+					chunks.push(Syntax.code("String.fromCharCode.apply(null, {0})", bytes.subarray(i, i + 0x8000)));
+					i += 0x8000;
+				}
+				return (window.btoa(chunks.join("")) : String).split("+").join("-").split("/").join("_").split("=").join("");
+			});
+	}
+
+	static function decode(s:String):Promise<String> {
+		final binary = try window.atob(s.split("-").join("+").split("_").join("/")) catch (e:Dynamic) return Promise.reject(e);
+		final bytes = new js.lib.Uint8Array(binary.length);
+		for (i in 0...binary.length) bytes[i] = StringTools.fastCodeAt(binary, i);
+		return Syntax.code("new Response(new Blob([{0}]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text()", bytes);
+	}
+
+	// ---- maximized: the toolbar and the editor fill the tab (the button), or the screen
+	// when the browser is fullscreen (F11)
+
+	static function setupMaximize() {
+		final workspace = document.getElementById("workspace");
+		final button:ButtonElement = cast document.getElementById("maximize");
+		final browserFull = window.matchMedia("(display-mode: fullscreen)");
+		var maximized = false;
+		function update() {
+			final full = maximized || browserFull.matches;
+			workspace.classList.toggle("full", full);
+			document.documentElement.classList.toggle("no-scroll", full);
+			button.textContent = maximized ? "Restore" : "Maximize";
+		}
+		button.hidden = false;
+		button.onclick = () -> {
+			maximized = !maximized;
+			update();
+		}
+		browserFull.addEventListener("change", update);
+		update();
 	}
 
 	static function loadExample(i:Int) {
@@ -396,13 +494,13 @@ class Playground {
 		lsp.postMessage(q.request);
 	}
 
-	static final encoder = new js.html.TextEncoder();
-
 	/** a JSON-RPC display request at the editor position; the result, or null */
 	static function display(method:String, model:Dynamic, position:Dynamic, ?extra:{wasAutoTriggered:Bool}):Promise<Dynamic> {
 		final p = program(model.getValue());
 		final code:String = model.getValue();
-		final params:Dynamic = {file: "/work/" + p.file, offset: encoder.encode(code.substring(0, model.getOffsetAt(position))).length};
+		// (the offset in characters, code points: Monaco's are UTF-16 units)
+		final offset:Int = Syntax.code("[...{0}].length", code.substring(0, model.getOffsetAt(position)));
+		final params:Dynamic = {file: "/work/" + p.file, offset: offset};
 		if (extra != null) params.wasAutoTriggered = extra.wasAutoTriggered;
 		final r:Request = {type: "display", main: p.main, file: p.file, code: p.code, request: {jsonrpc: "2.0", id: 1, method: method, params: params}};
 		return request(r).then((m) -> {
