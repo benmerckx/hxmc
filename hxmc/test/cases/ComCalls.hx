@@ -7,8 +7,10 @@ import hxmc.unsafe.*;
 // a struct through a pointer after `this`), structs by value, out
 // parameters, BSTR, LPCWSTR and LPWSTR strings, VARIANTs, QueryInterface
 // (Com.query, Com.as, cast, Std.isOfType), identity, and the reference
-// counts of the values that hold the object (released once collected).
-// ComCalls_dyn.c is the C side.
+// counts of the values that hold the object (released once collected),
+// BOOLs (32-bit: any int but zero true), IIDs and GUIDs (one address each,
+// a GUID's text checked), and the tests of values that are no COM objects
+// (false and null; cast and Com.as throw). ComCalls_dyn.c is the C side.
 @:hxmc.struct class Pt {
 	public var x:Int;
 	public var y:Int;
@@ -64,6 +66,9 @@ extern interface ICounter extends IUnknown {
 @:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A05}")
 extern interface ICounter2 extends ICounter {
 	function More(x:Int):Int;
+	function Flag(b:Bool):Int;
+	@:hxmc.com.direct function Truthy(x:Int):Bool;
+	function IsBig(x:Int):Bool;
 }
 
 @:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A02}")
@@ -142,6 +147,7 @@ class ComCalls {
 		}
 		var c2 = cast(s, ICounter2);
 		trace("more", c2.More(4), c2.Get());
+		trace("bools", c2.Flag(true), c2.Flag(false), c2.Truthy(256), c2.Truthy(0), c2.IsBig(500), c2.IsBig(5));
 		try {
 			var n:INone = cast(c, INone);
 			trace("cast", n);
@@ -177,6 +183,42 @@ class ComCalls {
 			trace("detached", ComException.hex(e.hresult));
 		}
 		trace("ptr", Native.com_count(Com.ptr(k, ICounter)));
+
+		// values that are no COM objects: false and null; cast, Com.as and Com.ptr throw
+		var plain:Dynamic = new haxe.ds.StringMap<Int>();
+		var mutex:Dynamic = new sys.thread.Mutex();
+		trace("not COM", Std.isOfType(plain, ICounter), Std.isOfType(mutex, ICounter), Std.isOfType("s", ICounter), Std.downcast(plain, ICounter) == null,
+			Com.query(plain, ICounter) == null, Com.query(mutex, ICounter) == null);
+		for (v in [plain, mutex]) {
+			try {
+				var n:ICounter = cast(v, ICounter);
+				trace("cast", n);
+			} catch (e:ComException) {
+				trace("cast not COM", ComException.hex(e.hresult));
+			}
+			try {
+				Com.ptr(v, ICounter);
+				trace("ptr of no COM object");
+			} catch (e:ComException) {
+				trace("ptr not COM", ComException.hex(e.hresult));
+			}
+		}
+
+		// IIDs: the program's data, one address each; GUIDs of text interned (past a chunk's 64)
+		var i1 = Com.iidOf(ICounter), i2 = Com.iidOf(ICounter);
+		var g = Com.guid("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A01}");
+		trace("iids", i1 == i2, [for (j in 0...4) Mem.getI32(i1, 4 * j) == Mem.getI32(g, 4 * j)].indexOf(false) < 0, Com.guid("6a1b0c2d-0001-4e5f-8a9b-0c1d2e3f4a01") == g);
+		var gs = [for (j in 0...150) Com.guid("{00000000-0000-0000-0000-" + StringTools.hex(j, 12) + "}")];
+		trace("guids", [for (j in 0...150) Com.guid("{00000000-0000-0000-0000-" + StringTools.hex(j, 12) + "}") == gs[j]].indexOf(false) < 0, gs[0] != gs[149],
+			Mem.getU8(gs[149], 15) == 149);
+		for (bad in ["{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4AZ1}", "{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A0}", "{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A0 }"]) {
+			try {
+				Com.guid(bad);
+				trace("guid accepted", bad);
+			} catch (e:ComException) {
+				trace("guid", ComException.hex(e.hresult));
+			}
+		}
 		trace("still", c.Get(), k.Get());
 		Com.uninit();
 	}

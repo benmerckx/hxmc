@@ -8,7 +8,9 @@ import hxmc.unsafe.*;
 // runtime's; a method's exception is an HRESULT for C and a ComException
 // back in Haxe; overrides of a subclass answer; and the Haxe object lives
 // while COM holds it (the toggle on its count), through collections, and
-// is collected once COM lets go.
+// is collected once COM lets go. BOOL arguments and results (32-bit); a
+// direct struct result called without its pointer; Std.isOfType of an object
+// whose first field is zero (the test is of the reference).
 @:hxmc.struct class Pt {
 	public var x:Int;
 	public var y:Int;
@@ -25,6 +27,23 @@ extern interface ICallback extends IUnknown {
 	function Name():BStr;
 	function Mix(s:String, p:Pt, f:Float):Int;
 	@:hxmc.com.direct function Where(k:Int):Pt;
+	function Flag(b:Bool):Int;
+	@:hxmc.com.direct function Even(x:Int):Bool;
+}
+
+@:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A07}")
+extern interface IZero extends IUnknown {
+	function Value():Int;
+}
+
+// (its first field zero)
+class Zero implements IZero {
+	public var first = 0;
+
+	public function new() {}
+
+	public function Value():Int
+		return first;
 }
 
 @:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A01}")
@@ -56,6 +75,9 @@ extern interface ICounter extends IUnknown {
 	static function callback_keep(cb:Ptr):Void;
 	static function callback_kept_run(x:Int):Int;
 	static function callback_threads(cb:Ptr, n:Int, x:Int):Int;
+	static function callback_where_null(cb:Ptr):Int;
+	static function callback_flag(cb:Ptr, v:Int):Int;
+	static function callback_even(cb:Ptr, x:Int):Int;
 	static function com_count(p:Ptr):Int;
 }
 
@@ -87,6 +109,12 @@ class Doubler implements ICallback {
 
 	public function Where(k:Int):Pt
 		return new Pt(k, calls);
+
+	public function Flag(b:Bool):Int
+		return b ? 1 : 0;
+
+	public function Even(x:Int):Bool
+		return x % 2 == 0;
 }
 
 // (an override answers COM's calls too: the thunk's call is dispatched)
@@ -118,6 +146,12 @@ class Both implements ICallback2 {
 	public function Where(k:Int):Pt
 		return new Pt(0, 0);
 
+	public function Flag(b:Bool):Int
+		return 0;
+
+	public function Even(x:Int):Bool
+		return false;
+
 	public function Extra():Int
 		return 77;
 }
@@ -147,6 +181,10 @@ class ComObjects {
 		trace("qi", Native.callback_qi(p));
 		trace("where", Native.callback_where(p, 12), (Com.wrap(p, ICallback).Where(3) : Pt).x);
 		trace("thrown", ComException.hex(Native.callback_run(p, -1)), ComException.hex(Native.callback_run(p, 13)));
+		trace("where without its pointer", Native.callback_where_null(p));
+		trace("bools", Native.callback_flag(p, 256), Native.callback_flag(p, 0), Native.callback_even(p, 4), Native.callback_even(p, 3));
+		var z = new Zero(), zd:Dynamic = z;
+		trace("zero", Std.isOfType(z, IZero), Std.isOfType(zd, IZero), Std.downcast(zd, IZero) == z, Std.isOfType(zd, ICallback));
 		// (one block per object: the same pointer every time)
 		trace("same pointer", Com.ptr(d, ICallback) == p, Com.ptr(d, IUnknown) == p);
 		// a Haxe object's interface value back from COM is the object itself

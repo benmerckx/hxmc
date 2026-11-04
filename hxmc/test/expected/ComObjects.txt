@@ -1,22 +1,25 @@
 exit 0
-ComObjects.hx:144: run, 42, 1
-ComObjects.hx:145: name, 9
-ComObjects.hx:146: mix, 4345
-ComObjects.hx:147: qi, 15
-ComObjects.hx:148: where, 1201, 3
-ComObjects.hx:149: thrown, 0x80070057, 0x80004005
-ComObjects.hx:151: same pointer, true, true
-ComObjects.hx:154: call, 10, 4
-ComObjects.hx:158: call thrown, 0x80070057
-ComObjects.hx:162: through the interface, 8, doubler a
-ComObjects.hx:163: query, true, true, false
-ComObjects.hx:167: override, 21, 6
-ComObjects.hx:170: both, 2, true, 77
-ComObjects.hx:173: count, 1
-ComObjects.hx:175: held, 2
-ComObjects.hx:177: dropped, 1
-ComObjects.hx:183: kept alive, 0, 20
-ComObjects.hx:186: collected once released, 1
-ComObjects.hx:195: one held of 300, true, 2
-ComObjects.hx:201: threads, 119600, true
-ComObjects.hx:202: still, true, 2, 77, w
+ComObjects.hx:178: run, 42, 1
+ComObjects.hx:179: name, 9
+ComObjects.hx:180: mix, 4345
+ComObjects.hx:181: qi, 15
+ComObjects.hx:182: where, 1201, 3
+ComObjects.hx:183: thrown, 0x80070057, 0x80004005
+ComObjects.hx:184: where without its pointer, 1
+ComObjects.hx:185: bools, 1, 0, 1, 0
+ComObjects.hx:187: zero, true, true, true, false
+ComObjects.hx:189: same pointer, true, true
+ComObjects.hx:192: call, 10, 4
+ComObjects.hx:196: call thrown, 0x80070057
+ComObjects.hx:200: through the interface, 8, doubler a
+ComObjects.hx:201: query, true, true, false
+ComObjects.hx:205: override, 21, 6
+ComObjects.hx:208: both, 2, true, 77
+ComObjects.hx:211: count, 1
+ComObjects.hx:213: held, 2
+ComObjects.hx:215: dropped, 1
+ComObjects.hx:221: kept alive, 0, 20
+ComObjects.hx:224: collected once released, 1
+ComObjects.hx:233: one held of 300, true, 2
+ComObjects.hx:239: threads, 119600, true
+ComObjects.hx:240: still, true, 2, 77, w

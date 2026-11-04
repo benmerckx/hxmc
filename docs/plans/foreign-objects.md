@@ -178,8 +178,10 @@ entry order, then owned fields in registration order).
   calls); an STA object's `Release` runs on its apartment's thread
   (`RELEASE_ON_MAKER`, woken by `PostThreadMessageW`); an ended
   apartment's queued calls run on any thread (its proxies were
-  disconnected by `CoUninitialize`, their `Release` is local). Generated
-  code reaches it through `rt_com_*` and `rt_foreign_attach`. No weak
+  disconnected by `CoUninitialize`, their `Release` is local); a thread
+  COM chose, which the runtime attached, runs its own as each thunk returns
+  (`rt_foreign_leave`: it never ends through the runtime). Generated code
+  reaches it through `rt_com_*`, `rt_foreign_attach` and `rt_foreign_leave`. No weak
   hooks: classic COM has no weak references (WinRT's: com.md).
 - **GObject**: a peer's reference is a toggle reference, released with
   `g_object_remove_toggle_ref` (notify and data), not `g_object_unref`: a

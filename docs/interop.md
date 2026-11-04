@@ -1180,7 +1180,8 @@ and arm64; `ComElsewhere` the other targets.
 
 | Type | In C |
 | --- | --- |
-| numbers, `Bool`, `Ptr`, `@:hxmc.struct` values | as C functions take and return them; a struct by value as the ABI passes it |
+| numbers, `Ptr`, `@:hxmc.struct` values | as C functions take and return them; a struct by value as the ABI passes it |
+| `Bool` | `BOOL`, a 32-bit int (any but zero true), not C's one-byte `bool` (a struct's field stays C's) |
 | a COM interface (`Null<IFoo>` too) | `IFoo *`: an argument borrowed (the value's pointer, null for null); a result (`[out, retval]`) owned, the value taking the reference over |
 | `String` | `LPCWSTR`: UTF-16 made for the call and freed after it; a result `LPWSTR`, CoTaskMemAlloc's, freed once copied |
 | `hxmc.com.BStr` (a `String`) | `BSTR`: SysAllocStringLen's for the call, freed after it; a result's freed once copied (an embedded NUL kept; a null BSTR reads `""`) |
@@ -1209,6 +1210,10 @@ function, as each Objective-C message's is. A null receiver throws (`E_POINTER`)
 - **`Com.query(x, IFoo)`** is `QueryInterface`: the value as `IFoo`, or null
   (E_NOINTERFACE). `Com.as(x, IFoo)` and `cast(x, IFoo)` throw a
   ComException instead; `Std.isOfType(x, IFoo)` and `Std.downcast` ask it too.
+  A value that is no COM object (a Haxe object implementing no COM
+  interface, a string, another native handle) is false, null and null for
+  `Std.isOfType`, `Std.downcast` and `Com.query`; `Com.as`, `cast` and
+  `Com.ptr` throw (E_NOINTERFACE).
 - **Values are per interface pointer**: `==` compares them (one value per
   pointer while it lives, so a map sees one key); two interfaces of one
   object are two values. `Com.same(a, b)` compares the objects (their
@@ -1218,7 +1223,8 @@ function, as each Objective-C message's is. A null receiver throws (`E_POINTER`)
   `SHCreateItemFromParsingName`); `Com.wrap(p, IFoo)` makes a borrowed
   pointer a value (which holds a reference of its own); `Com.ptr(x, IFoo)`
   is a value's pointer, borrowed, to pass to C; `Com.iidOf(IFoo)` an IID's
-  address. `Com.create(clsid, IFoo)` is `CoCreateInstance`.
+  address (16 bytes of the program's data, one per IID); `Com.guid(text)`
+  a GUID's, interned (every character checked). `Com.create(clsid, IFoo)` is `CoCreateInstance`.
 
 ### Haxe classes implementing COM interfaces
 

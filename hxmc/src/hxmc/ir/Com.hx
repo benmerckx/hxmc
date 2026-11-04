@@ -149,6 +149,14 @@ class Com {
 	public static function iidArgs(c:TClass):Array<Ex>
 		return [for (w in iid(c)) EInt(w)];
 
+	// an IID's four words as Mem.words' literal of two 64-bit words (the GUID
+	// struct's 16 bytes, little-endian): the program's data, one address per IID
+	public static function iidHex(w:Array<Int>):String {
+		inline function h(v:Int):String
+			return StringTools.hex(v, 8).toLowerCase().substr(-8);
+		return h(w[1]) + h(w[0]) + h(w[3]) + h(w[2]);
+	}
+
 	// ---- what a method passes and returns
 
 	// how a call's C function returns
@@ -176,6 +184,8 @@ class Com {
 			case _:
 		}
 		var ct = CInterop.ctype(t);
+		// (a Bool is Win32's BOOL, a 32-bit int: C's one-byte bool is no COM type)
+		if (ct.match(CBool)) return VC(CI32);
 		return CInterop.isScalar(ct) || ct.match(CStruct(_)) || ct == CVoid ? VC(ct) : VNone;
 	}
 
@@ -281,8 +291,10 @@ class Com {
 
 	// the thunk's C entry (C types abi) of work function f: attaches a
 	// thread the runtime did not start, leaves the caller's safe region,
-	// calls f (which catches every exception: an HRESULT goes back) and takes
-	// the caller's state back, as an Objective-C method's entry (ObjC.entry)
+	// calls f (which catches every exception: an HRESULT goes back), runs
+	// what was put off for the thread (rt_foreign_leave: an attached thread
+	// may never come back) and takes the caller's state back, as an
+	// Objective-C method's entry (ObjC.entry)
 	public static function entry(name:String, symbol:String, module:String, f:FuncInfo, abi:CSig):FuncInfo {
 		var w = new FuncInfo(name, module);
 		w.cSymbol = symbol;
@@ -301,6 +313,7 @@ class Com {
 			w.locals.push(r);
 			body.push(SSet(r, ECall(f, Vector.fromArrayCopy(ys))));
 		} else body.push(SExpr(ECall(f, Vector.fromArrayCopy(ys))));
+		body.push(SExpr(ECallHost("rt_foreign_leave", vector(), TVoid)));
 		body.push(SExpr(ECallHost("rt_callback_end", vector(ELocal(prev)), TVoid)));
 		body.push(SReturn(f.ret == TVoid ? null : ELocal(r)));
 		w.body = Vector.fromArrayCopy(body);

@@ -1867,7 +1867,7 @@ class FnLower {
 			case TCast(e1, null): coerceRhs(rhs(e1), tyOf(e1), tyOf(e));
 			case TCast(e1, TClassDecl(c)) if (Com.isCom(c)):
 				// cast(x, IFoo) of a COM interface: QueryInterface, E_NOINTERFACE thrown
-				return comQuery(e1, c, true, e);
+				return comQuery(e1, c, true, e, tyOf(e));
 			case TCast(e1, mt):
 				// checked cast: throws when the value doesn't have the type
 				var x = coerce(value(e1), tyOf(e1), TRef(RAny));
@@ -2851,7 +2851,9 @@ class FnLower {
 					case _: return cfail("Com.iidOf takes a COM interface (@:hxmc.com), named", e);
 				};
 				if (Lower.targetOs != 2) return comUnavailable(e);
-				return coerce(temp(TI64, ECallHost("rt_com_iid", Vector.fromArrayCopy(comIid(k, e)), TI64)), TI64, rt);
+				// (16 bytes of the program's data: one address per IID)
+				comIid(k, e); // (a missing or malformed IID reported at e)
+				return coerce(temp(TI64, ECallHost("hxmc_unsafe_Mem_words", vector(EStr(Com.iidHex(Com.iid(k))), EInt(16)), TI64)), TI64, rt);
 			// a message (ObjC)
 			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && ObjC.isObjC(c) && !strip(obj).eexpr.match(TConst(TSuper))):
 				return objcSend(obj, c, ObjC.messageDecl(c, cf), cargs, e);
@@ -3267,9 +3269,10 @@ class FnLower {
 				coerce(EConv(F2I, x), TI32, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && comTestable(cargs[1]) != null):
 				// Std.isOfType(x, IFoo) of a COM interface: whether QueryInterface finds it
-				coerce(EBin(RefNe, comQuery(cargs[0], comTestable(cargs[1]), false, e), ENull(TRef(RAny))), TBool, tyOf(e));
+				// (the value tested as a reference: its first word is no Bool)
+				coerce(EBin(RefNe, comQuery(cargs[0], comTestable(cargs[1]), false, e, TRef(RAny)), ENull(TRef(RAny))), TBool, tyOf(e));
 			case "Std_downcast" if (cargs.length == 2 && comTestable(cargs[1]) != null):
-				coerce(comQuery(cargs[0], comTestable(cargs[1]), false, e), TRef(RAny), tyOf(e));
+				comQuery(cargs[0], comTestable(cargs[1]), false, e, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && objcTestable(cargs[0], cargs[1]) != null):
 				// Std.isOfType(id, C) of an Objective-C class or protocol: Objective-C's test
 				coerce(objcIs(value(cargs[0]), tyOf(cargs[0]), objcTestable(cargs[0], cargs[1])), TBool, tyOf(e));
@@ -3908,10 +3911,14 @@ class FnLower {
 			case _: null;
 		}
 
-	// QueryInterface of x for c (rt_com_query): the value, null when the
-	// object has no such interface, or (`cast(x, IFoo)`, orThrow) a ComException
-	function comQuery(x:TExpr, c:TClass, orThrow:Bool, e:TExpr):Ex {
-		if (Lower.targetOs != 2) return comUnavailable(e);
+	// QueryInterface of x for c (rt_com_query): the value (as type to), null
+	// when the object has no such interface or is no COM object, or
+	// (`cast(x, IFoo)`, orThrow) a ComException
+	function comQuery(x:TExpr, c:TClass, orThrow:Bool, e:TExpr, to:Ty):Ex {
+		if (Lower.targetOs != 2) {
+			out.push(SExpr(ECallHost("rt_com_unavailable", vector(), TVoid)));
+			return nullOf(to);
+		}
 		var v = asLocal(coerce(value(x), tyOf(x), TRef(RAny)), TRef(RAny));
 		var r = asLocal(ECallHost("rt_com_query", Vector.fromArrayCopy([(ELocal(v) : Ex)].concat(comIid(c, e))), TRef(RAny)), TRef(RAny));
 		if (orThrow) {
@@ -3920,14 +3927,15 @@ class FnLower {
 			out.push(SIf(none, vector(SIf(EBin(RefNe, ELocal(v), ENull(TRef(RAny))),
 				vector(SExpr(ECallHost("rt_com_fail", vector(EInt(0x80004002)), TVoid))), vector())), vector()));
 		}
-		return coerce(ELocal(r), TRef(RAny), tyOf(e));
+		return coerce(ELocal(r), TRef(RAny), to);
 	}
 
 	// a call of method cf of COM interface c on obj: the interface pointer
 	// (rt_com_ptr), its vtable's slot called in the C convention with the
 	// pointer first (Com.csig), the arguments made C values (a COM value
 	// its pointer; a String an LPCWSTR, a BStr a BSTR, each freed after the
-	// call), the HRESULT tested, the [out, retval] read back
+	// call, or when a later argument's conversion or the call throws), the
+	// HRESULT tested, the [out, retval] read back (a Bool: a BOOL, Com.value)
 	function comCall(obj:TExpr, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var rt = tyOf(e);
 		if (Lower.targetOs != 2) return comUnavailable(e);
@@ -3965,47 +3973,71 @@ class FnLower {
 			ret = newSlot(retT, true);
 			cxs.push(ELocal(ret));
 		}
-		for (i in 0...s.args.length) {
-			var x = held[i + 1];
-			switch Com.value(s.args[i].type) {
-				case VIface(ic):
-					cxs.push(temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(x, ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)));
-				case VWStr:
-					var p = asLocal(ECallHost("rt_com_wstr", vector(coerce(x, ats[i], TRef(RStr))), TI64), TI64);
-					frees.push(SExpr(ECallHost("rt_com_wstr_free", vector(ELocal(p)), TVoid)));
-					cxs.push(ELocal(p));
-				case VBStr:
-					var p = asLocal(ECallHost("rt_com_bstr", vector(coerce(x, ats[i], TRef(RStr))), TI64), TI64);
-					frees.push(SExpr(ECallHost("rt_com_bstr_free", vector(ELocal(p)), TVoid)));
-					cxs.push(ELocal(p));
-				case _:
-					cxs.push(x);
-			}
-		}
+		var retval:Null<Local> = null;
 		if (sig.retval != null && !sig.sretFirst) {
 			// ([out, retval]: a slot of this frame, zeroed)
 			var size = switch sig.retval {
 				case VC(CStruct(sc)): CInterop.layout(sc).size;
 				case _: 8;
 			};
-			ret = newLocal("retval", TI64);
-			out.push(SSet(ret, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt((size + 7) & ~7), EInt(8)), TI64)));
+			retval = newLocal("retval", TI64);
+			out.push(SSet(retval, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt((size + 7) & ~7), EInt(8)), TI64)));
 			for (k in 0...((size + 7) >> 3))
-				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(ret), EInt(8 * k), EConv(I2L, EInt(0))), TVoid)));
-			cxs.push(ELocal(ret));
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(retval), EInt(8 * k), EConv(I2L, EInt(0))), TVoid)));
+			ret = retval;
 		}
+		// (the strings' buffers: null until made)
+		var bufs = [
+			for (i in 0...s.args.length)
+				switch Com.value(s.args[i].type) {
+					case VWStr | VBStr:
+						var p = newLocal("buf", TI64);
+						out.push(SSet(p, EConv(I2L, EInt(0))));
+						p;
+					case _: null;
+				}
+		];
 		var key = Com.declare(l, sig.args, sig.ret, Lower.hasMeta(":hxmc.fast", cf.cfMeta));
-		var ct:Ty = mode == Com.DIRECT ? (sig.sretFirst ? TI64 : sig.ret == CVoid ? TVoid : retT) : TI32;
+		// (a direct BOOL: any int but zero is true)
+		var bool = retT == TBool;
+		var ct:Ty = mode == Com.DIRECT ? (sig.sretFirst ? TI64 : sig.ret == CVoid ? TVoid : bool ? TI32 : retT) : TI32;
 		var r = ct == TVoid ? null : newLocal("cr", ct);
-		var call = ECallHost(key, Vector.fromArrayCopy(cxs), ct);
-		out.push(r == null ? SExpr(call) : SSet(r, call));
+		var conv = block(() -> {
+			for (i in 0...s.args.length) {
+				var x = held[i + 1];
+				switch Com.value(s.args[i].type) {
+					case VIface(ic):
+						cxs.push(temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(x, ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)));
+					case VWStr:
+						out.push(SSet(bufs[i], ECallHost("rt_com_wstr", vector(coerce(x, ats[i], TRef(RStr))), TI64)));
+						frees.push(SExpr(ECallHost("rt_com_wstr_free", vector(ELocal(bufs[i])), TVoid)));
+						cxs.push(ELocal(bufs[i]));
+					case VBStr:
+						out.push(SSet(bufs[i], ECallHost("rt_com_bstr", vector(coerce(x, ats[i], TRef(RStr))), TI64)));
+						frees.push(SExpr(ECallHost("rt_com_bstr_free", vector(ELocal(bufs[i])), TVoid)));
+						cxs.push(ELocal(bufs[i]));
+					case _:
+						cxs.push(x);
+				}
+			}
+			if (retval != null) cxs.push(ELocal(retval));
+			var call = ECallHost(key, Vector.fromArrayCopy(cxs), ct);
+			out.push(r == null ? SExpr(call) : SSet(r, call));
+		});
+		if (frees.length > 0) {
+			// (a throw after a buffer was made: the buffers freed, the exception thrown on)
+			var exn = newLocal("e", TRef(RAny));
+			out.push(STry(conv, vector({test: null, l: exn, body: Vector.fromArrayCopy(frees.concat([SThrow(ELocal(exn))]))})));
+			fi.hasTry = true;
+		} else for (st in conv)
+			out.push(st);
 		for (f in frees)
 			out.push(f);
 		if (mode == Com.CHECKED)
 			out.push(SIf(EBin(Lt, ELocal(r), EInt(0)), vector(SExpr(ECallHost("rt_com_fail", vector(ELocal(r)), TVoid))), vector()));
 		if (mode == Com.RAW) return coerce(ELocal(r), TI32, rt);
 		if (sig.sretFirst) return coerce(ELocal(ret), retT, rt);
-		if (mode == Com.DIRECT) return r == null ? EInt(0) : coerce(ELocal(r), ct, rt);
+		if (mode == Com.DIRECT) return r == null ? EInt(0) : bool ? coerce(EBin(Ne, ELocal(r), EInt(0)), TBool, rt) : coerce(ELocal(r), ct, rt);
 		if (sig.retval == null) return EInt(0);
 		inline function word():Ex
 			return temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(ret), EInt(0)), TI64));
@@ -4019,6 +4051,8 @@ class FnLower {
 				out.push(SSet(lo, ELocal(ret)));
 				freshSlots.set(lo, true);
 				coerce(ELocal(lo), structTy(sc), rt);
+			case VC(CI32) if (bool):
+				coerce(EBin(Ne, temp(TI32, ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(ret), EInt(0)), TI32)), EInt(0)), TBool, rt);
 			case VC(cty): cLoad(ELocal(ret), 0, cty, e);
 			case _: fail("COM method " + cf.cfName + ": no [out, retval] of this type", e);
 		}
@@ -4099,14 +4133,18 @@ class FnLower {
 				case VIface(_): out.push(SSet(lo, coerce(ECallHost("rt_com_wrap", vector(ELocal(a)), TRef(RAny)), TRef(RAny), lo.ty)));
 				case VWStr: out.push(SSet(lo, coerce(ECallHost("rt_com_wstr_string", vector(ELocal(a)), TRef(RStr)), TRef(RStr), lo.ty)));
 				case VBStr: out.push(SSet(lo, coerce(ECallHost("rt_com_bstr_string", vector(ELocal(a)), TRef(RStr)), TRef(RStr), lo.ty)));
+				// (a BOOL: any int but zero is true)
+				case VC(CI32) if (lo.ty == TBool): out.push(SSet(lo, EBin(Ne, coerce(ELocal(a), TBool, TI32), EInt(0))));
 				case _: out.push(SSet(lo, ELocal(a)));
 			}
 			locals.set(v.vId, lo);
 			targs.push(mk(TLocal(v), t));
 		}
 		var retp = sig.sretFirst ? fi.args[1] : sig.retval != null ? fi.args[fi.args.length - 1] : null;
+		// (no result pointer: E_POINTER, or for a direct struct result, whose
+		// return is that pointer, the pointer: null)
 		if (retp != null)
-			out.push(SIf(EBin(LEq, ELocal(retp), EConv(I2L, EInt(0))), vector(SReturn(EInt(Com.E_POINTER))), vector()));
+			out.push(SIf(EBin(LEq, ELocal(retp), EConv(I2L, EInt(0))), vector(SReturn(sig.sretFirst ? ELocal(retp) : EInt(Com.E_POINTER))), vector()));
 		var call = mk(TCall(mk(TField(mk(TLocal(vo), ct), FInstance(c, vector(), impl)), impl.cfType), Vector.fromArrayCopy(targs)), s.ret);
 		var hr = newLocal("hr", fi.ret == TVoid ? TI32 : fi.ret);
 		var exn = newLocal("e", TRef(RAny));

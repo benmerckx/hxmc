@@ -1,5 +1,7 @@
 exit 0
-ComThreads.hx:78: made, 45, 10
-ComThreads.hx:83: released by its apartment's thread, true, 0, true, true
-ComThreads.hx:95: held after its maker ended, 5
-ComThreads.hx:105: released once its maker ended, 0
+ComThreads.hx:100: made, 45, 10
+ComThreads.hx:105: released by its apartment's thread, true, 0, true, true
+ComThreads.hx:117: held after its maker ended, 5
+ComThreads.hx:127: released once its maker ended, 0
+ComThreads.hx:133: taken on C's thread, true, 1
+ComThreads.hx:139: released on it as it left, 1, 0, true, 1

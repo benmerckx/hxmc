@@ -32,6 +32,8 @@ typedef struct {
 	HRESULT(STDMETHODCALLTYPE *Name)(ICallback *, BSTR *);
 	HRESULT(STDMETHODCALLTYPE *Mix)(ICallback *, LPCWSTR, Pt, double, int32_t *);
 	Pt *(STDMETHODCALLTYPE *Where)(ICallback *, Pt *, int32_t);
+	HRESULT(STDMETHODCALLTYPE *Flag)(ICallback *, BOOL, int32_t *);
+	BOOL(STDMETHODCALLTYPE *Even)(ICallback *, int32_t);
 } ICallbackVtbl;
 struct ICallback { const ICallbackVtbl *lpVtbl; };
 
@@ -59,6 +61,9 @@ typedef struct {
 	HRESULT(STDMETHODCALLTYPE *Child)(Counter *, Counter **);
 	HRESULT(STDMETHODCALLTYPE *Outs)(Counter *, int32_t *, double *);
 	HRESULT(STDMETHODCALLTYPE *More)(Counter *, int32_t, int32_t *);
+	HRESULT(STDMETHODCALLTYPE *Flag)(Counter *, BOOL, int32_t *);
+	BOOL(STDMETHODCALLTYPE *Truthy)(Counter *, int32_t);
+	HRESULT(STDMETHODCALLTYPE *IsBig)(Counter *, int32_t, BOOL *);
 } CounterVtbl;
 // ISecond: the same object's second interface: Value([out, retval])
 typedef struct {
@@ -188,6 +193,10 @@ static HRESULT STDMETHODCALLTYPE c_outs(Counter *c, int32_t *a, double *b) {
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE c_more(Counter *c, int32_t x, int32_t *out) { *out = x * 10 + c->n; return S_OK; }
+// BOOLs: 32-bit ints, any but zero true (256's low byte is zero)
+static HRESULT STDMETHODCALLTYPE c_flag(Counter *c, BOOL b, int32_t *out) { *out = b; return S_OK; }
+static BOOL STDMETHODCALLTYPE c_truthy(Counter *c, int32_t x) { return x; }
+static HRESULT STDMETHODCALLTYPE c_isbig(Counter *c, int32_t x, BOOL *out) { *out = x > 100 ? 256 : 0; return S_OK; }
 
 static HRESULT STDMETHODCALLTYPE s_qi(void *s, REFIID riid, void **ppv) { return c_qi(from_second(s), riid, ppv); }
 static ULONG STDMETHODCALLTYPE s_addref(void *s) { return c_addref(from_second(s)); }
@@ -195,7 +204,7 @@ static ULONG STDMETHODCALLTYPE s_release(void *s) { return c_release(from_second
 static HRESULT STDMETHODCALLTYPE s_value(void *s, int32_t *out) { *out = 1000 + from_second(s)->n; return S_OK; }
 
 static const CounterVtbl counter_vtbl = {c_qi, c_addref, c_release, c_add, c_get, c_fail, c_fail, c_twice, c_corner, c_sumpt, c_sumbig,
-	c_getpt, c_echo, c_greet, c_echovariant, c_call, c_hold, c_drop, c_self, c_child, c_outs, c_more};
+	c_getpt, c_echo, c_greet, c_echovariant, c_call, c_hold, c_drop, c_self, c_child, c_outs, c_more, c_flag, c_truthy, c_isbig};
 static const SecondVtbl second_vtbl = {s_qi, s_addref, s_release, s_value};
 
 EXPORT HRESULT counter_new(Counter **out) {
@@ -242,6 +251,17 @@ EXPORT int32_t callback_where(ICallback *cb, int32_t k) {
 	Pt *r = cb->lpVtbl->Where(cb, &p, k);
 	return r == &p ? p.x * 100 + p.y : -1;
 }
+
+// a direct struct result's call without its pointer: the result null (not an HRESULT)
+EXPORT int32_t callback_where_null(ICallback *cb) { return cb->lpVtbl->Where(cb, NULL, 1) == NULL; }
+
+// BOOLs of a Haxe method: an argument of 256 (true, its low byte zero), and a result's int
+EXPORT int32_t callback_flag(ICallback *cb, int32_t v) {
+	int32_t r = -1;
+	HRESULT hr = cb->lpVtbl->Flag(cb, v, &r);
+	return SUCCEEDED(hr) ? r : hr;
+}
+EXPORT int32_t callback_even(ICallback *cb, int32_t x) { return cb->lpVtbl->Even(cb, x); }
 
 // the HRESULT of QueryInterface for ICallback, ICounter (no) and IUnknown;
 // whether IUnknown's pointer is the same for two interfaces (identity)
@@ -303,5 +323,50 @@ EXPORT int32_t callback_threads(ICallback *cb, int32_t n, int32_t x) {
 		sum += jobs[i].r;
 	}
 	return sum;
+}
+
+// ITake (implemented in Haxe): Take(counter), Ping(), called by a thread of
+// C's own (the runtime attaches it): the counter's value made there is
+// released there, once the Haxe side dropped it, as the thread leaves Haxe
+typedef struct ITake ITake;
+typedef struct {
+	HRESULT(STDMETHODCALLTYPE *QueryInterface)(ITake *, REFIID, void **);
+	ULONG(STDMETHODCALLTYPE *AddRef)(ITake *);
+	ULONG(STDMETHODCALLTYPE *Release)(ITake *);
+	HRESULT(STDMETHODCALLTYPE *Take)(ITake *, Counter *);
+	HRESULT(STDMETHODCALLTYPE *Ping)(ITake *);
+} ITakeVtbl;
+struct ITake { const ITakeVtbl *lpVtbl; };
+
+static HANDLE took, go, taker;
+static DWORD taker_id;
+static DWORD WINAPI taker_main(void *p) {
+	ITake *t = p;
+	Counter *c;
+	counter_new(&c);
+	t->lpVtbl->Take(t, c);
+	c_release(c);
+	SetEvent(took);
+	WaitForSingleObject(go, INFINITE);
+	t->lpVtbl->Ping(t);
+	return 0;
+}
+
+// the thread started, once Take returned: its Win32 id
+EXPORT int32_t taker_start(ITake *t) {
+	took = CreateEventA(NULL, FALSE, FALSE, NULL);
+	go = CreateEventA(NULL, FALSE, FALSE, NULL);
+	taker = CreateThread(NULL, 0, taker_main, t, 0, &taker_id);
+	WaitForSingleObject(took, INFINITE);
+	return taker_id;
+}
+
+// the thread's Ping, then its end
+EXPORT void taker_finish(void) {
+	SetEvent(go);
+	WaitForSingleObject(taker, INFINITE);
+	CloseHandle(taker);
+	CloseHandle(took);
+	CloseHandle(go);
 }
 #endif
