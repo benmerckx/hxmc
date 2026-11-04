@@ -651,7 +651,8 @@ class Playground {
 		request({type: "check", main: p.main, file: p.file, code: p.code}).then((m) -> {
 			if (m == null || model.getValue() != p.code) return;
 			final markers = [];
-			// classic message format: File.hx:LINE: characters A-B : message (or lines A-B)
+			// classic message format: File.hx:LINE: characters A-B : message (or lines A-B); A and B
+			// are columns as Monaco's: 1-based, B past the end
 			final re = ~/^(?:\/work\/)?([\w.]+\.hx):(\d+): (characters|lines) (\d+)-(\d+) : (.*)$/;
 			for (l in m.output.split("\n")) {
 				if (!re.match(l) || re.matched(1) != p.file) continue;
@@ -659,7 +660,7 @@ class Playground {
 				final message = re.matched(6);
 				final severity = ~/^Warning ?:/.match(message) ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error;
 				markers.push(re.matched(3) == "characters"
-					? {startLineNumber: line, startColumn: a + 1, endLineNumber: line, endColumn: Std.int(Math.max(b + 1, a + 2)), message: message, severity: severity}
+					? {startLineNumber: line, startColumn: a, endLineNumber: line, endColumn: Std.int(Math.max(b, a + 1)), message: message, severity: severity}
 					: {startLineNumber: a, startColumn: 1, endLineNumber: b, endColumn: 1000, message: message, severity: monaco.MarkerSeverity.Error});
 			}
 			monaco.editor.setModelMarkers(model, "haxe", markers);
