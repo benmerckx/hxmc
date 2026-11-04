@@ -128,7 +128,10 @@ private class PipeOutput extends Output {
 	}
 
 	// port: like an OCaml out_channel, writes are buffered (65536 bytes) until flushed;
-	// the pipe then delivers them in chunks of at most 1024 bytes.
+	// the pipe then delivers them in chunks of at most 1024 bytes. [write_fn] takes a
+	// string, which on some hosts (JavaScript) cannot hold part of a UTF-8 sequence: a
+	// chunk ends between sequences, and an incomplete one at the end waits for the next
+	// flush (upstream's reader cuts the bytes wherever a read ends: the client joins them).
 	var buffer = new haxe.io.BytesBuffer();
 
 	static inline var CHANNEL_BUFFER_SIZE = 65536;
@@ -148,21 +151,43 @@ private class PipeOutput extends Output {
 	}
 
 	override public function flush():Void {
+		deliver(false);
+	}
+
+	function deliver(all:Bool):Void {
 		if (buffer.length == 0) return;
 		var bytes = buffer.getBytes();
 		buffer = new haxe.io.BytesBuffer();
-		var pos = 0, left = bytes.length;
-		while (left > 0) {
-			var n = Std.int(Math.min(left, 1024));
+		var end = all ? bytes.length : bytes.length - incompleteTail(bytes);
+		var pos = 0;
+		while (pos < end) {
+			var n = Std.int(Math.min(end - pos, 1024));
+			if (pos + n < end) {
+				var cut = n;
+				while (cut > n - 3 && bytes.get(pos + cut) & 0xC0 == 0x80) cut--;
+				if (cut > 0) n = cut;
+			}
 			writeFn(bytes.sub(pos, n).toString());
 			pos += n;
-			left -= n;
 		}
+		if (end < bytes.length) buffer.addBytes(bytes, end, bytes.length - end);
+	}
+
+	// port: the length of a UTF-8 sequence cut off at the end of [bytes] (0 if none)
+	static function incompleteTail(bytes:haxe.io.Bytes):Int {
+		var i = bytes.length;
+		while (i > 0 && bytes.length - i < 3) {
+			var b = bytes.get(--i);
+			if (b & 0xC0 == 0x80) continue;
+			var len = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
+			return i + len > bytes.length ? bytes.length - i : 0;
+		}
+		return 0;
 	}
 
 	override public function close():Void {
 		if (!closed) {
-			flush();
+			deliver(true);
 			closed = true;
 		}
 	}
