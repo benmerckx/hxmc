@@ -1025,6 +1025,12 @@ class Regalloc {
 
 	// ---- spill code
 
+	// Each use of a spilled register loads it into a temporary and each
+	// definition stores it, except that the temporary of the instruction
+	// just before in the block, unless a call, still holds the value: it is
+	// used again instead of loading (an operation's result spilled is read
+	// by the next one), and a store it made is dropped when this
+	// instruction, one that can neither branch nor fault, stores it again.
 	function insertSpills(spilled:Array<Int>) {
 		var slotOf = hxmc.Lir.Arrays.filled(f.nregs, -1);
 		for (r in spilled)
@@ -1033,40 +1039,54 @@ class Regalloc {
 		// per instruction: spilled register -> its temporary (stamped by instruction)
 		var tmp = hxmc.Lir.Arrays.filled(f.nregs, -1);
 		var tmpStamp = hxmc.Lir.Arrays.filled(f.nregs, -1);
+		// per spilled register: the temporary of the previous instruction
+		// (stamped by it), and the index in out of the store after it (-1: none)
+		var prevTmp = hxmc.Lir.Arrays.filled(f.nregs, -1);
+		var prevStamp = hxmc.Lir.Arrays.filled(f.nregs, -1);
+		var prevStore = hxmc.Lir.Arrays.filled(f.nregs, -1);
 		var stamp = 0;
 		var nOld = f.nregs;
 		if (noSpillFrom > nOld) noSpillFrom = nOld;
 		for (b in f.blocks) {
-			var out = [];
+			var out:Array<LIns> = [];
 			var any = false;
+			// (no instruction before the first of a block)
+			stamp++;
 			for (i in b.ins) {
 				defs.n = 0;
 				uses.n = 0;
 				t.defsUses(i, defs, uses);
+				var before = stamp; // the previous instruction's stamp
 				stamp++;
 				var mapped = false;
 				for (k in 0...uses.n) {
 					var r = uses.a[k];
 					if (r < nOld && slotOf[r] >= 0 && tmpStamp[r] != stamp) {
-						var nr = f.newRegLike(r);
-						tmp[r] = nr;
 						tmpStamp[r] = stamp;
 						mapped = true;
+						if (prevStamp[r] == before) {
+							tmp[r] = prevTmp[r];
+							continue;
+						}
+						var nr = f.newRegLike(r);
+						tmp[r] = nr;
 						out.push(t.spillLoad(nr, slotOf[r], f.floatReg(r)));
 					}
 				}
+				var plain = !t.isCall(i) && !t.isBranch(i) && i.base == -1 && i.index == -1 && i.sym == null;
 				var stores = null;
 				for (k in 0...defs.n) {
 					var r = defs.a[k];
 					if (r < nOld && slotOf[r] >= 0) {
 						if (tmpStamp[r] != stamp) {
 							var nr = f.newRegLike(r);
-								tmp[r] = nr;
+							tmp[r] = nr;
 							tmpStamp[r] = stamp;
 							mapped = true;
 						}
+						if (plain && prevStamp[r] == before && prevStore[r] >= 0) out[prevStore[r]] = null;
 						if (stores == null) stores = [];
-						stores.push(t.spillStore(slotOf[r], tmp[r], f.floatReg(r)));
+						stores.push(r);
 					}
 				}
 				if (mapped) {
@@ -1075,11 +1095,34 @@ class Regalloc {
 					any = true;
 				}
 				out.push(i);
+				// what this instruction leaves in temporaries (not across a call)
+				if (mapped && !t.isCall(i)) {
+					for (k in 0...uses.n) {
+						var r = uses.a[k];
+						if (r < nOld && slotOf[r] >= 0) {
+							prevTmp[r] = tmp[r];
+							prevStamp[r] = stamp;
+							prevStore[r] = -1;
+						}
+					}
+				}
 				if (stores != null)
-					for (s in stores)
-						out.push(s);
+					for (r in stores) {
+						out.push(t.spillStore(slotOf[r], tmp[r], f.floatReg(r)));
+						if (!t.isCall(i)) {
+							prevTmp[r] = tmp[r];
+							prevStamp[r] = stamp;
+							prevStore[r] = out.length - 1;
+						}
+					}
 			}
-			if (any || out.length != b.ins.length) b.ins = out;
+			if (any || out.length != b.ins.length) {
+				var k = 0;
+				for (x in out)
+					if (x != null) out[k++] = x;
+				out.resize(k);
+				b.ins = out;
+			}
 		}
 		// the hints of spilled registers no longer apply
 		for (r in spilled)

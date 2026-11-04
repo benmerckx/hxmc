@@ -22,6 +22,8 @@ class Sroa {
 	public function new(f:MFunc)
 		this.f = f;
 
+	public var promoted = 0; // slots replaced
+
 	public function run() {
 		if (f.slots.length == 0) return;
 		for (b in f.blocks)
@@ -61,13 +63,19 @@ class Sroa {
 
 	var phis:Array<MIns> = [];
 
-	var copies:Array<MIns> = []; // (of the addresses of the slot being promoted)
+	var copies:Array<MIns> = []; // (of the addresses of the slot being promoted, and those plus a constant)
+	// per access: its offset in the slot (its displacement plus that of its address)
+	var offOf = new Map<Int, Int>();
 
 	// the accesses of slot s, or null when it cannot be promoted
 	function accesses(roots:Array<MIns>, uses:Vector<Null<Array<MIns>>>):Null<Array<MIns>> {
 		var r = [];
 		copies = [];
+		offOf = new Map();
 		var work = roots.copy();
+		var base = new Map<Int, Int>(); // address -> its offset in the slot
+		for (a in roots)
+			base.set(a.id, 0);
 		var seen = new Map<Int, Bool>();
 		while (work.length > 0) {
 			var a = work.pop();
@@ -75,21 +83,37 @@ class Sroa {
 			seen.set(a.id, true);
 			var us = uses[a.id];
 			if (us == null) continue;
+			var at = base.get(a.id);
 			for (u in us)
 				switch u.op {
 					case Copy:
+						base.set(u.id, at);
+						work.push(u);
+						copies.push(u);
+					// (a field's address: the slot's plus a constant)
+					case Add if (u.a == a.id && u.ty == I64 && plainConst(u.b)):
+						var k = f.vals[u.b];
+						if (k.imm2 != (k.imm < 0 ? -1 : 0)) return null;
+						base.set(u.id, at + k.imm);
 						work.push(u);
 						copies.push(u);
 					case Load if (u.a == a.id && u.b < 0):
 						if (!shapeOk(u.ty, u.size)) return null;
+						offOf.set(u.id, at + u.imm);
 						r.push(u);
 					case Store if (u.a == a.id && u.b < 0 && u.c != a.id):
 						if (!shapeOk(f.vals[u.c].ty, u.size)) return null;
+						offOf.set(u.id, at + u.imm);
 						r.push(u);
 					case _: return null;
 				}
 		}
 		return r;
+	}
+
+	inline function plainConst(v:Int):Bool {
+		var k = f.vals[v];
+		return k.op == Const && k.sym == null;
 	}
 
 	static inline function shapeOk(t:MTy, size:Int):Bool
@@ -103,14 +127,15 @@ class Sroa {
 		var varOf = new Map<Int, Int>(); // access -> variable
 		for (i in acc) {
 			var v = -1;
+			var off = offOf.get(i.id);
 			for (k in 0...vars.length) {
 				var x = vars[k];
-				if (x.off == i.imm && x.size == i.size) v = k else if (i.imm < x.off + x.size && x.off < i.imm + i.size) return;
+				if (x.off == off && x.size == i.size) v = k else if (off < x.off + x.size && x.off < off + i.size) return;
 			}
 			var t = i.op == Load ? i.ty : f.vals[i.c].ty;
 			if (v < 0) {
 				v = vars.length;
-				vars.push({off: i.imm, size: i.size, ty: t});
+				vars.push({off: off, size: i.size, ty: t});
 			} else if (vars[v].ty != t) vars[v].ty = I64; // (doubles and words: words)
 			varOf.set(i.id, v);
 		}
@@ -279,5 +304,6 @@ class Sroa {
 			if (k < ins.length) ins.resize(k);
 		}
 		f.slots[s] = {size: 0, align: 1};
+		promoted++;
 	}
 }

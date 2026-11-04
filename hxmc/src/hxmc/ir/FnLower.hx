@@ -554,7 +554,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "zext", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -3716,12 +3716,11 @@ class FnLower {
 		function check(i:Ex, n:Ex)
 			// (Mem.ult, marked: Opt.condProp drops the checks a loop proves)
 			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
-		// [pos, pos + cnt) inside n (64-bit: no overflow; negative ones fail unsigned)
+		// [pos, pos + cnt) inside n: one comparison of n with pos + cnt, both
+		// zero-extended to 64 bits (no overflow; a negative one is 2^31 or more, past any n)
 		function range(pos:Ex, cnt:Ex, n:Ex) {
-			var n64 = EConv(I2L, n), p64 = EConv(I2L, pos);
-			var bad = vector(fatal("badRange", [pos, cnt, n]));
-			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(n64, p64), TBool), bad,
-				vector(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EBin(LSub, n64, p64), EConv(I2L, cnt)), TBool), bad, vector()))));
+			var end = EBin(LAdd, ECallHost("hxmc_unsafe_Mem_zext", vector(pos), TI64), ECallHost("hxmc_unsafe_Mem_zext", vector(cnt), TI64));
+			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, n), end), TBool), vector(fatal("badRange", [pos, cnt, n])), vector()));
 		}
 		function int(k:Int):Ex
 			return loc(coerce(rest[k], restTy(k), TI32), TI32);

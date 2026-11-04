@@ -99,6 +99,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
 	var testFolds = new Map<Int, Bool>(); // x & constant used only by a comparison with 0 (TESTI)
+	var indexFolds = new Map<Int, Bool>(); // x + y used only as the base of accesses: their base and index
 
 	// whether load v is a memory operand of its user (marks it folded)
 	function memFold(v:Int):Bool {
@@ -251,9 +252,13 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	override function prepare() {
 		var mf = m;
 		var addrUses = hxmc.Lir.Arrays.filled(mf.vals.length, 0); // uses as the base of a load or store
+		var baseUses = hxmc.Lir.Arrays.filled(mf.vals.length, 0); // (of those without an index)
 		for (b in mf.blocks)
 			for (i in b.ins)
-				if ((i.op == Load || i.op == Store) && i.imm > -0x40000000 && i.imm < 0x40000000) addrUses[i.a]++;
+				if ((i.op == Load || i.op == Store) && i.imm > -0x40000000 && i.imm < 0x40000000) {
+					addrUses[i.a]++;
+					if (i.b < 0 && (i.op == Load || i.c != i.a)) baseUses[i.a]++;
+				}
 		// loads used once by an integer comparison or operation later in their
 		// block, with no store or call between: memory operands of the
 		// comparison or operation (a sign extension: movsxd from memory)
@@ -310,6 +315,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		// (also when value numbering left one x & constant for several such
 		// comparisons: each tests x, the and is not computed nor kept live)
 		testFolds = new Map();
+		indexFolds = new Map();
 		var testUses = new Map<Int, Int>();
 		for (b in mf.blocks)
 			for (c in b.ins) {
@@ -332,13 +338,27 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			for (i in b.ins) {
 				if (i.op != Add || i.ty != I64 || addrUses[i.id] == 0 || addrUses[i.id] != useCount[i.id]) continue;
 				var c = immOf(i.b);
-				if (c == null || c <= -0x40000000 || c >= 0x40000000 || folded[i.a] && mf.vals[i.a].op == Const) continue;
+				if (c == null) {
+					// x + y used only as the base of accesses without an index: (x,y)
+					if (baseUses[i.id] == useCount[i.id] && i.a != i.b && !folded[i.a] && !folded[i.b] && mf.vals[i.a].op != Const && mf.vals[i.b].op != Const) {
+						folded[i.id] = true;
+						indexFolds[i.id] = true;
+					}
+					continue;
+				}
+				if (c <= -0x40000000 || c >= 0x40000000 || folded[i.a] && mf.vals[i.a].op == Const) continue;
 				folded[i.id] = true;
 			}
 		// constants and symbol addresses used once by a foldable user are not computed on their own
 		for (b in mf.blocks)
 			for (i in b.ins)
 				if ((i.op == Const && immOf(i.id) != null) || i.op == SymAddr || i.op == StackAddr || i.op == ConstF) folded[i.id] = true;
+		// vector constants: made where used (pxor, pcmpeqd, a load from
+		// .rodata), or the memory operand of their user (vbk), never a
+		// register of their own across the code
+		for (b in mf.blocks)
+			for (i in b.ins)
+				if (i.op == VConst) folded[i.id] = true;
 	}
 
 	override function materialize(i:MIns, r:Int) {
@@ -371,6 +391,11 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				push(x);
 				x.d = r;
 				x.f = i.f;
+			case VConst:
+				var x = new LIns(VCONST);
+				push(x);
+				x.d = r;
+				x.uses = Vector.fromArrayCopy([for (w in i.cases) w]);
 			case _:
 				throw "hxmc: cannot materialize " + MFunc.opName(i.op);
 		}
@@ -382,7 +407,11 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		var bi = m.vals[base];
 		x.disp = disp;
 		x.scale = scale;
-		if (folded[base] && bi.op == Add) {
+		if (folded[base] && bi.op == Add && indexFolds[base]) {
+			x.base = use(bi.a);
+			x.index = use(bi.b);
+			x.scale = 1;
+		} else if (folded[base] && bi.op == Add) {
 			var c = m.vals[bi.b];
 			x.disp += c.imm;
 			x.dsym = c.sym;
@@ -533,7 +562,6 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case VOp:
 				vop(i);
 			case VConst:
-				vconst(reg(i.id), [for (w in i.cases) w]);
 			case Phi:
 			case Param:
 				param(i);
@@ -1061,6 +1089,36 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		x.imm2 = n;
 	}
 
+	// a vector constant other than zeros and ones (those take no load: pxor, pcmpeqd)
+	function vconstOf(v:Int):Null<Array<Int>> {
+		var i = m.vals[v];
+		if (i.op != VConst || !folded[v]) return null;
+		var w = [for (x in i.cases) x];
+		if (w[0] == w[1] && w[1] == w[2] && w[2] == w[3] && (w[0] == 0 || w[0] == -1)) return null;
+		return w;
+	}
+
+	// d <- a op b, the values a and b: b a constant is the memory operand;
+	// so is a, when the operation is commutative
+	function vbk(d:Int, a:Int, b:Int, opc:Int, comm:Bool, p = 0x66, imm8 = -1) {
+		var k = vconstOf(b);
+		if (k == null && comm && vconstOf(a) != null) {
+			k = vconstOf(a);
+			a = b;
+		}
+		if (k != null) {
+			copyTo(d, a);
+			vxk(opc, d, k, p, imm8);
+		} else if (a == b) {
+			// (a op a: on the copy alone, so that a may end at the copy and share d's register)
+			copyTo(d, a);
+			vx(opc, d, d, p, imm8);
+		} else {
+			var ra = use(a), rb = use(b);
+			vbin(d, ra, rb, opc, p, imm8);
+		}
+	}
+
 	// d <- d op a constant (four 32-bit words, the first lowest)
 	function vxk(opc:Int, d:Int, words:Array<Int>, p = 0x66, imm8 = -1) {
 		var x = emit(VXK);
@@ -1139,9 +1197,9 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		var op = n.substr(n.indexOf(".") + 1);
 		switch op {
 			// bitwise
-			case "and": vbin(D(), A(), B(), 0x0fdb);
-			case "or": vbin(D(), A(), B(), 0x0feb);
-			case "xor": vbin(D(), A(), B(), 0x0fef);
+			case "and": vbk(D(), i.a, i.b, 0x0fdb, true);
+			case "or": vbk(D(), i.a, i.b, 0x0feb, true);
+			case "xor": vbk(D(), i.a, i.b, 0x0fef, true);
 			case "andnot":
 				// (pandn: ~d & s)
 				vbin(D(), B(), A(), 0x0fdf);
@@ -1160,19 +1218,19 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.s1 = A();
 				setcc(D(), CC.NE);
 			// lane-wise integer operations of one instruction
-			case "add" if (!f32 && !f64): vbin(D(), A(), B(), w == 1 ? 0x0ffc : w == 2 ? 0x0ffd : w == 4 ? 0x0ffe : 0x0fd4);
-			case "sub" if (!f32 && !f64): vbin(D(), A(), B(), w == 1 ? 0x0ff8 : w == 2 ? 0x0ff9 : w == 4 ? 0x0ffa : 0x0ffb);
-			case "mul" if (!f32 && !f64): vbin(D(), A(), B(), w == 2 ? 0x0fd5 : 0x0f3840);
-			case "add_sat_s": vbin(D(), A(), B(), w == 1 ? 0x0fec : 0x0fed);
-			case "add_sat_u": vbin(D(), A(), B(), w == 1 ? 0x0fdc : 0x0fdd);
-			case "sub_sat_s": vbin(D(), A(), B(), w == 1 ? 0x0fe8 : 0x0fe9);
-			case "sub_sat_u": vbin(D(), A(), B(), w == 1 ? 0x0fd8 : 0x0fd9);
-			case "min_s": vbin(D(), A(), B(), w == 1 ? 0x0f3838 : w == 2 ? 0x0fea : 0x0f3839);
-			case "max_s": vbin(D(), A(), B(), w == 1 ? 0x0f383c : w == 2 ? 0x0fee : 0x0f383d);
-			case "min_u": vbin(D(), A(), B(), minuOp(w));
-			case "max_u": vbin(D(), A(), B(), maxuOp(w));
-			case "avgr_u": vbin(D(), A(), B(), w == 1 ? 0x0fe0 : 0x0fe3);
-			case "dot_i16x8_s": vbin(D(), A(), B(), 0x0ff5);
+			case "add" if (!f32 && !f64): vbk(D(), i.a, i.b, w == 1 ? 0x0ffc : w == 2 ? 0x0ffd : w == 4 ? 0x0ffe : 0x0fd4, true);
+			case "sub" if (!f32 && !f64): vbk(D(), i.a, i.b, w == 1 ? 0x0ff8 : w == 2 ? 0x0ff9 : w == 4 ? 0x0ffa : 0x0ffb, false);
+			case "mul" if (!f32 && !f64): vbk(D(), i.a, i.b, w == 2 ? 0x0fd5 : 0x0f3840, true);
+			case "add_sat_s": vbk(D(), i.a, i.b, w == 1 ? 0x0fec : 0x0fed, true);
+			case "add_sat_u": vbk(D(), i.a, i.b, w == 1 ? 0x0fdc : 0x0fdd, true);
+			case "sub_sat_s": vbk(D(), i.a, i.b, w == 1 ? 0x0fe8 : 0x0fe9, false);
+			case "sub_sat_u": vbk(D(), i.a, i.b, w == 1 ? 0x0fd8 : 0x0fd9, false);
+			case "min_s": vbk(D(), i.a, i.b, w == 1 ? 0x0f3838 : w == 2 ? 0x0fea : 0x0f3839, true);
+			case "max_s": vbk(D(), i.a, i.b, w == 1 ? 0x0f383c : w == 2 ? 0x0fee : 0x0f383d, true);
+			case "min_u": vbk(D(), i.a, i.b, minuOp(w), true);
+			case "max_u": vbk(D(), i.a, i.b, maxuOp(w), true);
+			case "avgr_u": vbk(D(), i.a, i.b, w == 1 ? 0x0fe0 : 0x0fe3, true);
+			case "dot_i16x8_s": vbk(D(), i.a, i.b, 0x0ff5, true);
 			case "q15mulr_sat_s":
 				// pmulhrsw, but 0x8000 * 0x8000 saturates: 0x8000 there becomes 0x7fff
 				var d = D(), t = vtmp();
@@ -1180,10 +1238,10 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				vconst(t, [halves(0x8000), halves(0x8000), halves(0x8000), halves(0x8000)]);
 				vx(0x0f75, t, d);
 				vx(0x0fef, d, t);
-			case "narrow_i16x8_s": vbin(D(), A(), B(), 0x0f63);
-			case "narrow_i16x8_u": vbin(D(), A(), B(), 0x0f67);
-			case "narrow_i32x4_s": vbin(D(), A(), B(), 0x0f6b);
-			case "narrow_i32x4_u": vbin(D(), A(), B(), 0x0f382b);
+			case "narrow_i16x8_s": vbk(D(), i.a, i.b, 0x0f63, false);
+			case "narrow_i16x8_u": vbk(D(), i.a, i.b, 0x0f67, false);
+			case "narrow_i32x4_s": vbk(D(), i.a, i.b, 0x0f6b, false);
+			case "narrow_i32x4_u": vbk(D(), i.a, i.b, 0x0f382b, false);
 			case "swizzle":
 				// (an index from 16 on: zero; pshufb zeroes where the top bit is set)
 				var t = vtmp(), d = D();
@@ -1193,12 +1251,12 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case "shuffle":
 				shuffle(i);
 			// comparisons
-			case "eq" if (!f32 && !f64): vbin(D(), A(), B(), eqOp(w));
+			case "eq" if (!f32 && !f64): vbk(D(), i.a, i.b, eqOp(w), true);
 			case "ne" if (!f32 && !f64):
 				var d = D();
 				vbin(d, A(), B(), eqOp(w));
 				vnot(d);
-			case "gt_s": vbin(D(), A(), B(), gtOp(w));
+			case "gt_s": vbk(D(), i.a, i.b, gtOp(w), false);
 			case "lt_s": vbin(D(), B(), A(), gtOp(w));
 			case "le_s":
 				var d = D();
@@ -1219,17 +1277,17 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				vbin(d, a, B(), maxuOp(w));
 				vx(eqOp(w), d, a);
 				if (op == "lt_u") vnot(d);
-			case "eq": vbin(D(), A(), B(), 0x0fc2, fp, 0);
-			case "ne": vbin(D(), A(), B(), 0x0fc2, fp, 4);
-			case "lt": vbin(D(), A(), B(), 0x0fc2, fp, 1);
-			case "le": vbin(D(), A(), B(), 0x0fc2, fp, 2);
+			case "eq": vbk(D(), i.a, i.b, 0x0fc2, false, fp, 0);
+			case "ne": vbk(D(), i.a, i.b, 0x0fc2, false, fp, 4);
+			case "lt": vbk(D(), i.a, i.b, 0x0fc2, false, fp, 1);
+			case "le": vbk(D(), i.a, i.b, 0x0fc2, false, fp, 2);
 			case "gt": vbin(D(), B(), A(), 0x0fc2, fp, 1);
 			case "ge": vbin(D(), B(), A(), 0x0fc2, fp, 2);
 			// float arithmetic
-			case "add": vbin(D(), A(), B(), 0x0f58, fp);
-			case "sub": vbin(D(), A(), B(), 0x0f5c, fp);
-			case "mul": vbin(D(), A(), B(), 0x0f59, fp);
-			case "div": vbin(D(), A(), B(), 0x0f5e, fp);
+			case "add": vbk(D(), i.a, i.b, 0x0f58, false, fp);
+			case "sub": vbk(D(), i.a, i.b, 0x0f5c, false, fp);
+			case "mul": vbk(D(), i.a, i.b, 0x0f59, false, fp);
+			case "div": vbk(D(), i.a, i.b, 0x0f5e, false, fp);
 			case "sqrt": vxu(0x0f51, D(), A(), fp);
 			// (pmin: b < a ? b : a, minps(b, a)'s own rule)
 			case "pmin": vbin(D(), B(), A(), 0x0f5d, fp);
@@ -1544,9 +1602,84 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		}
 	}
 
+	// the shuffle's lanes as elements of g bytes (lane k*g + j is lane
+	// k*g's + j, at a multiple of g), else null
+	static function elements(ls:Vector<Int>, g:Int):Null<Array<Int>> {
+		var e = [];
+		for (k in 0...Std.int(16 / g)) {
+			var l = ls[k * g];
+			if (l % g != 0) return null;
+			for (j in 1...g)
+				if (ls[k * g + j] != l + j) return null;
+			e.push(Std.int(l / g));
+		}
+		return e;
+	}
+
+	// whether elements e (n of them; n and up: the second vector's) are the
+	// low (hi false) or high halves of x and y interleaved, x the first
+	// vector or the second (swap)
+	static function isUnpack(e:Array<Int>, hi:Bool, swap:Bool):Bool {
+		var n = e.length, h = n >> 1;
+		for (k in 0...h) {
+			var x = (hi ? h : 0) + k;
+			if (e[2 * k] != (swap ? x + n : x) || e[2 * k + 1] != (swap ? x : x + n)) return false;
+		}
+		return true;
+	}
+
+	// a shuffle that is one instruction: an unpack (punpckl/h of bytes,
+	// words, doublewords or quadwords; the second operand a memory one when
+	// it is a constant), a pshufd of one vector, or a pshufb of one vector
+	// and zeros (index 0x80: a zero byte)
+	function shuffle1(i:MIns, d:Int):Bool {
+		var ls = i.cases;
+		for (g in [1, 2, 4, 8]) {
+			var e = elements(ls, g);
+			if (e == null) continue;
+			var row = g == 1 ? 0 : g == 2 ? 1 : g == 4 ? 2 : 3;
+			for (hi in [false, true])
+				for (swap in [false, true])
+					if (isUnpack(e, hi, swap)) {
+						var opc = g == 8 ? (hi ? 0x0f6d : 0x0f6c) : (hi ? 0x0f68 : 0x0f60) + row;
+						vbk(d, swap ? i.b : i.a, swap ? i.a : i.b, opc, false);
+						return true;
+					}
+			if (g == 4) {
+				// one vector's doublewords
+				var fromB = e[0] >= 4, ok = true, imm = 0;
+				for (k in 0...4) {
+					if ((e[k] >= 4) != fromB) ok = false;
+					imm |= (e[k] & 3) << (2 * k);
+				}
+				if (ok) {
+					var r = use(fromB ? i.b : i.a);
+					vxu(0x0f70, d, r, 0x66, imm);
+					return true;
+				}
+			}
+		}
+		// a's bytes and zeros of a zero vector b (or the reverse)
+		for (zb in [true, false]) {
+			var z = m.vals[zb ? i.b : i.a];
+			if (z.op != VConst || z.cases[0] != 0 || z.cases[1] != 0 || z.cases[2] != 0 || z.cases[3] != 0) continue;
+			var w = [0, 0, 0, 0];
+			for (k in 0...16) {
+				var l = ls[k];
+				var fromZero = (l >= 16) == zb;
+				w[k >> 2] |= (fromZero ? 0x80 : l & 15) << (8 * (k & 3));
+			}
+			copyTo(d, zb ? i.a : i.b);
+			vxk(0x0f3800, d, w);
+			return true;
+		}
+		return false;
+	}
+
 	// pshufb from a (lanes below 16) and b (16 and up), or'ed
 	function shuffle(i:MIns) {
 		var d = reg(i.id);
+		if (shuffle1(i, d)) return;
 		var ls = i.cases;
 		function mask(fromB:Bool):Array<Int> {
 			var w = [0, 0, 0, 0];

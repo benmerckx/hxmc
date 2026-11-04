@@ -124,6 +124,14 @@ class Opt {
 		}
 		rewrite();
 		dce();
+		// (branches on comparisons of constants: inlined arguments)
+		if (cmpFolded) {
+			simplifyCfg();
+			pruneBlocks();
+			mergeBlocks();
+			simplifyCfg();
+			dce();
+		}
 		var rounds = 0;
 		while (rounds++ < 3 && condProp()) {
 			pruneBlocks();
@@ -484,6 +492,7 @@ class Opt {
 	}
 
 	var nullsDropped = false;
+	var cmpFolded = false; // (gvn: a comparison of constants)
 
 	// ---- a span's element checks a loop proves (condProp)
 
@@ -1834,9 +1843,15 @@ class Opt {
 							continue;
 						}
 					}
-					// (comparisons are recomputed: they fuse with their branch)
-					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0) || op == Cmp) continue;
-					if (fold(i)) continue;
+					// (comparisons are recomputed: they fuse with their branch;
+					// those of constants are folded)
+					if (op == Cmp) {
+						if (fold(i)) cmpFolded = true;
+						continue;
+					}
+					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0)) continue;
+					// (a vector constant folded is still numbered: one for its copies)
+					if (fold(i) && i.op != VConst) continue;
 					var h = hash(i);
 					h = (h ^ (h >>> 15)) * 0x2c1b3c6d;
 					var bk = (h ^ (h >>> 12)) & mask;
@@ -1934,6 +1949,45 @@ class Opt {
 					case _: a >>> n;
 				};
 				return set(r.low, r.high);
+			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
+				// (signed and unsigned order of two words, 32 or 64 bits)
+				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);
+				var b = x.ty == I64 ? haxe.Int64.make(y.imm2, y.imm) : haxe.Int64.ofInt(y.imm);
+				var s = haxe.Int64.compare(a, b);
+				var u = x.ty == I64 ? haxe.Int64.ucompare(a, b) : haxe.Int64.ucompare(haxe.Int64.make(0, x.imm), haxe.Int64.make(0, y.imm));
+				var t = switch (i.imm : Cond) {
+					case CEq: s == 0;
+					case CNe: s != 0;
+					case CLt: s < 0;
+					case CLe: s <= 0;
+					case CGt: s > 0;
+					case CGe: s >= 0;
+					case CULt: u < 0;
+					case CULe: u <= 0;
+					case CUGt: u > 0;
+					case _: u >= 0;
+				};
+				return set(t ? 1 : 0, 0);
+			// (a splat of a constant: a vector constant, which the back ends
+			// load or fold into its users instead of keeping it in a register)
+			case VOp if (plain(x) && i.imm >= 0x0f && i.imm <= 0x12):
+				var lo = x.imm, hi = i.imm == 0x12 ? x.imm2 : x.imm;
+				switch i.imm {
+					case 0x0f:
+						lo &= 0xff;
+						lo |= lo << 8;
+						lo |= lo << 16;
+						hi = lo;
+					case 0x10:
+						lo = (lo & 0xffff) | (lo << 16);
+						hi = lo;
+					case _:
+				}
+				i.op = VConst;
+				i.cases = haxe.ds.Vector.fromArrayCopy([lo, hi, lo, hi]);
+				i.imm = i.imm2 = 0;
+				i.a = i.b = i.c = -1;
+				return true;
 			case SExt if (plain(x) && x.ty == I32 && i.ty == I64):
 				return set(x.imm, x.imm < 0 ? -1 : 0);
 			case ZExt if (plain(x) && x.ty == I32 && i.ty == I64):

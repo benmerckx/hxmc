@@ -484,7 +484,14 @@ class Emit implements hxmc.Target.Emitter {
 				var u = i.uses;
 				if (u[0] == 0 && u[1] == 0 && u[2] == 0 && u[3] == 0) a.neon(0x6F00E400, i.d, -1, -1) // movi v.2d, #0
 				else if (u[0] == -1 && u[1] == -1 && u[2] == -1 && u[3] == -1) a.neon(0x6F07E7E0, i.d, -1, -1) // movi v.2d, #-1
-				else {
+				else if (u[0] == u[1] && u[1] == u[2] && u[2] == u[3]) {
+					// a word in every lane (a splat): through w16, dup v.4s
+					a.movI(false, X16, u[0], 0);
+					a.neon(0x4E040C00, i.d, X16, -1);
+				} else if (u[0] == u[2] && u[1] == u[3]) {
+					a.movI(true, X16, u[0], u[1]);
+					a.neon(0x4E080C00, i.d, X16, -1); // dup v.2d, x16
+				} else {
 					// the low half through x16 (fmov d, x16: the high half zero), the high one if any
 					a.movI(true, X16, u[0], u[1]);
 					a.fmovFromGpr(i.d, X16);

@@ -1063,9 +1063,65 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		nv(0x0E003C00 | (imm5(w, 0) << 16), d, t); // umov w, v.T[0]
 	}
 
+	// a shuffle that is one zip1/zip2 (the low or high halves of two vectors
+	// interleaved) or uzp1/uzp2 (their even or odd elements) of bytes,
+	// halves, words or doublewords: the operands (either order) and the
+	// instruction
+	function zipUzp(i:MIns):Null<{x:Int, y:Int, enc:Int}> {
+		var ls = i.cases;
+		for (size in 0...4) {
+			var g = 1 << size, n = 16 >> size, h = n >> 1;
+			// the elements (n and up: the second vector's)
+			var e = [];
+			for (k in 0...n) {
+				var l = ls[k * g];
+				var ok = l % g == 0;
+				for (j in 1...g)
+					if (ls[k * g + j] != l + j) ok = false;
+				if (!ok) {
+					e = null;
+					break;
+				}
+				e.push(Std.int(l / g));
+			}
+			if (e == null) continue;
+			for (swap in [false, true]) {
+				inline function src(k:Int, fromY:Bool):Int
+					return (fromY != swap) ? k + n : k;
+				for (op in 0...4) {
+					// zip1, zip2, uzp1, uzp2
+					var ok = true;
+					for (k in 0...n) {
+						var want = switch op {
+							case 0: src(k >> 1, k & 1 == 1);
+							case 1: src(h + (k >> 1), k & 1 == 1);
+							case 2: k < h ? src(2 * k, false) : src(2 * (k - h), true);
+							case _: k < h ? src(2 * k + 1, false) : src(2 * (k - h) + 1, true);
+						};
+						if (e[k] != want) {
+							ok = false;
+							break;
+						}
+					}
+					if (ok) {
+						var enc = [0x4E003800, 0x4E007800, 0x4E001800, 0x4E005800][op] | (size << 22);
+						return {x: swap ? i.b : i.a, y: swap ? i.a : i.b, enc: enc};
+					}
+				}
+			}
+		}
+		return null;
+	}
+
 	// tbl from a (lanes below 16) and b (16 and up), or'ed (tbl gives 0 from 16 on)
 	function shuffle(i:MIns) {
 		var d = reg(i.id);
+		var z = zipUzp(i);
+		if (z != null) {
+			var x = use(z.x), y = use(z.y);
+			nv(z.enc, d, x, y);
+			return;
+		}
 		var ls = i.cases;
 		function mask(fromB:Bool):Array<Int> {
 			var w = [0, 0, 0, 0];

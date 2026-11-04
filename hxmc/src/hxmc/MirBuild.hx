@@ -2340,6 +2340,7 @@ class MirBuild extends MirWriter {
 			case "ult": cmp(CULt, ex(args[0]), ex(args[1]));
 			// (a span's element check: Opt.condProp drops it where a loop proves it)
 			case "spanUlt": marked(cmp(CULt, ex(args[0]), ex(args[1])), MIns.SPAN_CHECK);
+			case "zext": op1(ZExt, I64, ex(args[0]));
 			case "udiv": op2(UDiv, I64, ex(args[0]), ex(args[1]));
 			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));

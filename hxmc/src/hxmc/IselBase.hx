@@ -210,8 +210,16 @@ class IselBase {
 	public function select(mf:MFunc, layout:Vector<MBlock>):LFunc {
 		m = mf;
 		f = new LFunc(mf.name, fprBase);
-		for (s in mf.slots)
-			f.slot(s.size, s.align);
+		// (a slot no address is taken of any more, as a struct temporary of a
+		// branch the optimizer removed, takes no room)
+		var taken = new Vector<Bool>(mf.slots.length);
+		for (b in mf.blocks)
+			for (i in b.ins)
+				if (i.op == StackAddr && !i.dead) taken[i.imm] = true;
+		for (k in 0...mf.slots.length) {
+			var s = mf.slots[k];
+			f.slot(taken[k] ? s.size : 0, taken[k] ? s.align : 1);
+		}
 		vreg = hxmc.Lir.Arrays.filled(mf.vals.length, -1);
 		useCount = hxmc.Lir.Arrays.filled(mf.vals.length, 0);
 		folded = new Vector(mf.vals.length);
