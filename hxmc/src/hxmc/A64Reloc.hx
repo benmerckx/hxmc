@@ -22,6 +22,13 @@ class A64Reloc {
 		return size;
 	}
 
+	// a :lo12: offset in units of the access's size (2^sc bytes): an address
+	// it does not divide has no such offset (the access would land elsewhere)
+	static function scaled(v:Int, sc:Int, name:String):Int {
+		if (v & ((1 << sc) - 1) != 0) throw "hxmc: link: a " + (1 << sc) + "-byte access to " + name + " at an address not a multiple of " + (1 << sc);
+		return (v & 0xfff) >> sc;
+	}
+
 	// patches the field of a relocation of an arm64 kind; false: not one
 	public static function apply(buf:Buf, at:Int, kind:RelKind, v:Int, p:Int, name:String):Bool {
 		switch kind {
@@ -32,13 +39,13 @@ class A64Reloc {
 			case RA64AddLo12 | RA64Ldst8Lo12:
 				imm12(buf, at, v & 0xfff);
 			case RA64Ldst16Lo12:
-				imm12(buf, at, (v & 0xfff) >> 1);
+				imm12(buf, at, scaled(v, 1, name));
 			case RA64Ldst32Lo12:
-				imm12(buf, at, (v & 0xfff) >> 2);
+				imm12(buf, at, scaled(v, 2, name));
 			case RA64Ldst64Lo12:
-				imm12(buf, at, (v & 0xfff) >> 3);
+				imm12(buf, at, scaled(v, 3, name));
 			case RA64Ldst128Lo12:
-				imm12(buf, at, (v & 0xfff) >> 4);
+				imm12(buf, at, scaled(v, 4, name));
 			case RA64Call26 | RA64Jump26:
 				var d = v - p;
 				if (d >= (1 << 27) || d < -(1 << 27)) throw "hxmc: link: branch out of range to " + name;
@@ -61,8 +68,7 @@ class A64Reloc {
 			case RA64SecRelLo12A:
 				imm12(buf, at, v & 0xfff);
 			case RA64SecRelLo12L:
-				var sc = ldstScale(buf.get32(at));
-				imm12(buf, at, (v & 0xfff) >> sc);
+				imm12(buf, at, scaled(v, ldstScale(buf.get32(at)), name));
 			case RA64MovwG0Nc:
 				buf.set32(at, (buf.get32(at) & ~(0xffff << 5)) | ((v & 0xffff) << 5));
 			case RA64MovwG1Nc:

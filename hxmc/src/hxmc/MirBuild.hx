@@ -1857,6 +1857,12 @@ class MirBuild extends MirWriter {
 		return !p.float ? cWord(v, p.off, p.size) : p.size == 16 ? load(V128, 16, v, p.off) : p.size == 8 ? load(F64, 8, v, p.off) : special("f32bits_to_freg",
 			vector(load(I32, 4, v, p.off)), F64);
 
+	// the C size (MIns.cSizes) of a part of a struct argument: its bytes in a
+	// float register, else a word's 8; 16 for the first word of a struct on
+	// the stack at a 16-byte boundary (CAbi.stackAlign16, SysV.place)
+	static inline function partSize(p:CAbi.CPart, align16:Bool):Int
+		return p.float ? p.size : align16 ? 16 : 8;
+
 	// C's native vectors by value (CAbi.isVector) travel in vector registers
 	// only: none past the eight float argument registers of System V and
 	// AAPCS64 (which would be 16-byte stack slots), none in a variadic call
@@ -1887,7 +1893,7 @@ class MirBuild extends MirWriter {
 				var stack = CAbi.arg(abi, c).match(PStack(_));
 				for (k in 0...ps.length) {
 					args.push(cPart(v, ps[k]));
-					sizes.push(ps[k].float ? ps[k].size : 8);
+					sizes.push(partSize(ps[k], k == 0 && stack && CAbi.stackAlign16(c)));
 					groups.push(k > 0 ? 0 : stack ? -ps.length : ps.length);
 				}
 			case PScalar(off, ct):
@@ -1896,8 +1902,9 @@ class MirBuild extends MirWriter {
 				groups.push(1);
 			case PCopy:
 				var l = hxmc.ir.CInterop.layout(c);
-				// (Win64's __m128: a 16-byte aligned copy)
-				var al = CAbi.isVector(c) ? 16 : l.align > 8 ? l.align : 8;
+				// (at its C alignment: Win64 passes __m128 and a struct with one in it
+				// as the address of a 16-byte aligned copy)
+				var al = l.align > 8 ? l.align : 8;
 				var copy = stackAddr(f.slot((l.size + 7) & ~7, al));
 				copyBytes(copy, v, l.size);
 				args.push(copy);
@@ -1941,7 +1948,7 @@ class MirBuild extends MirWriter {
 						case PRegs(ps) | PStack(ps):
 							for (k in 0...ps.length) {
 								tys.push(ps[k].float ? (ps[k].size == 16 ? V128 : F64) : I64);
-								sizes.push(ps[k].float ? ps[k].size : 8);
+								sizes.push(partSize(ps[k], k == 0 && p.match(PStack(_)) && CAbi.stackAlign16(c)));
 								groups.push(k > 0 ? 0 : p.match(PStack(_)) ? -ps.length : ps.length);
 							}
 						case PCopy | PScalar(_):
@@ -2164,6 +2171,9 @@ class MirBuild extends MirWriter {
 	function rawCls():Int
 		return fn != null && BYTES_ACCESSORS.exists(fn.display) ? Opt.MElem : Opt.MOther;
 
+	// (keyed by the functions' display names: renaming or moving one of
+	// hxmc.rt.Bytes' accessors, or adding one, must be done here too, or its
+	// accesses fall back to MOther: correct, but aliasing every other memory)
 	static final BYTES_ACCESSORS = [
 		for (n in ["getUInt16", "setUInt16", "getInt32", "setInt32", "getFloat", "setFloat", "getDouble", "setDouble"])
 			"hxmc.rt.Bytes." + n => true
@@ -2178,7 +2188,7 @@ class MirBuild extends MirWriter {
 			var c = SimdOps.code(n);
 			if (c < 0) throw new Unsupported("hxmc.simd: no operation " + n);
 			var ok = SimdOps.kind(c);
-			if (ok != kind && !(kind == SimdOps.LOAD && ok == SimdOps.LOAD)) throw new Unsupported("hxmc.simd: " + n + " is not an operation of this shape (" + short + ")");
+			if (ok != kind) throw new Unsupported("hxmc.simd: " + n + " is not an operation of this shape (" + short + ")");
 			return c;
 		}
 		inline function vload(a:Ex):Int

@@ -36,6 +36,12 @@ class Holder {
 
 class SimdValues {
 	static var counter:I32x4 = I32x4.make(1, 2, 3, 4);
+	// statics read and written both whole (16-byte accesses at the symbol)
+	// and by word (4-byte ones): the same bytes (arm64's :lo12: offsets of
+	// each access size)
+	static var raw0:V128 = new V128(10, 20, 30, 40);
+	static var raw1:V128 = new V128(50, 60, 70, 80);
+	static var pair:Particle = new Particle(F32x4.make(1, 2, 3, 4), F32x4.make(5, 6, 7, 8), 9);
 
 	static function println(s:String) {
 		#if js
@@ -128,6 +134,29 @@ class SimdValues {
 		return t;
 	}
 
+	// a narrow store then a narrow load of the same bytes: the load reads
+	// memory (its upper lanes zero), not the stored vector (Opt.forwards);
+	// a whole store then a whole load takes the stored vector
+	@:hxmc.kernel static function narrowRoundTrip(s:Span<UInt8>, v:I32x4):I32x4 {
+		v.storeSpan64(s, 0);
+		var a = I32x4.loadSpan64(s, 0);
+		v.storeSpan32(s, 16);
+		var b = I32x4.loadSpan32(s, 16);
+		v.storeSpan(s, 32);
+		var c = I32x4.loadSpan(s, 32);
+		return a + b * I32x4.splat(16) + c * I32x4.splat(256);
+	}
+
+	@:hxmc.kernel static function narrowStore64Load64(s:Span<UInt8>, v:I32x4):I32x4 {
+		v.storeSpan64(s, 0);
+		return I32x4.loadSpan64(s, 0);
+	}
+
+	@:hxmc.kernel static function narrowStore32Load32(s:Span<UInt8>, v:I32x4):I32x4 {
+		v.storeSpan32(s, 0);
+		return I32x4.loadSpan32(s, 0);
+	}
+
 	// 8 bytes of each row interleaved: a store of the low half
 	@:hxmc.kernel static function interleave(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt8>, out:Span<UInt8>):Void {
 		var x = U8x16.loadSpan64(a, 0), y = U8x16.loadSpan64(b, 0);
@@ -151,6 +180,14 @@ class SimdValues {
 		counter = twice(counter) + I32x4.splat(1);
 		counter = twice(counter);
 		show("static", counter);
+		var r0:I32x4 = cast raw0, r1:I32x4 = cast raw1;
+		show("statics by word", r0 + r1 * I32x4.splat(1000));
+		raw0 = r1 * I32x4.splat(2);
+		raw1 = r0 * I32x4.splat(3);
+		println("statics whole: " + [raw0.w0, raw0.w1, raw0.w2, raw0.w3, raw1.w0, raw1.w1, raw1.w2, raw1.w3].join(" "));
+		pair.vel = pair.vel + pair.pos;
+		var pv:V128 = pair.vel;
+		println("static struct: " + [pv.w0, pv.w1, pv.w2, pv.w3].map(hex).join(" ") + " " + pair.id);
 
 		// boxed: an array's elements, a type parameter, Dynamic, Null
 		var arr:Array<I32x4> = [];
@@ -197,5 +234,9 @@ class SimdValues {
 		var il = Bytes.alloc(24);
 		interleave(ReadOnlySpan.ofBytes(bytes, 0, 8), ReadOnlySpan.ofBytes(bytes, 8, 8), Span.ofBytes(il));
 		println("interleave: " + il.toHex());
+		var nb = Bytes.alloc(48);
+		show("store64 load64", narrowStore64Load64(Span.ofBytes(nb), I32x4.make(1, 2, 3, 4)));
+		show("store32 load32", narrowStore32Load32(Span.ofBytes(nb), I32x4.make(5, 6, 7, 8)));
+		show("narrow round trip", narrowRoundTrip(Span.ofBytes(nb), I32x4.make(1, 2, 3, 4)));
 	}
 }

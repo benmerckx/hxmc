@@ -417,10 +417,11 @@ class Asm {
 		w(base | 0x00200800 | (m << 16) | (3 << 13) | ((shift ? 1 : 0) << 12) | (n << 5) | (t & 31));
 	}
 
-	// a load or store at a symbol's :lo12: offset (after adrp)
+	// a load or store at a symbol's :lo12: offset (after adrp), scaled by
+	// the access's size (a q register's 16, an s register's 4)
 	public function ldstSymLo(load:Bool, size:Int, signed:Bool, x:Bool, t:Int, n:Int, s:Symbol, addend:Int) {
 		var float = t >= 32;
-		reloc(float || size == 8 ? RA64Ldst64Lo12 : size == 4 ? RA64Ldst32Lo12 : size == 2 ? RA64Ldst16Lo12 : RA64Ldst8Lo12, s, addend);
+		reloc(size == 16 ? RA64Ldst128Lo12 : size == 8 ? RA64Ldst64Lo12 : size == 4 ? RA64Ldst32Lo12 : size == 2 ? RA64Ldst16Lo12 : RA64Ldst8Lo12, s, addend);
 		w(ldstBase(size, load, signed, x, float) | (n << 5) | (t & 31));
 	}
 

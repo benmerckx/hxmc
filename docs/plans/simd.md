@@ -260,7 +260,9 @@ SSE `0x0f38`/`0x0f3a` maps with their prefixes (`x64/Asm.hx`: `vx`),
 NEON's instructions as their encoding and three registers (`a64/Asm.hx`:
 `neon`, `movV`), and wasm's `0xfd` prefix (`wasm/Enc.hx`). Opt treats `VOp` and `VConst` as pure (value
 numbering, dead code), never speculates them nor joins them in
-if-conversion; `Sroa` promotes `V128` slots.
+if-conversion, and forwards a 16-byte store to a 16-byte load of its
+address (never a narrow one: `v128.load64_zero` after `v128.store64_lane`
+reads zeros above the stored bytes); `Sroa` promotes `V128` slots.
 
 **x86-64's level: SSE4.1 is required, not detected.** A program that uses
 `hxmc.simd` needs an x86-64-v2 machine (SSE4.1, which every x86-64 CPU
@@ -314,9 +316,27 @@ validate on an engine without it, even if the code never runs).
   there. WebAssembly keeps the struct rule because a C function there is an
   import its JavaScript host implements, and JavaScript takes no `v128`.
   `@:hxmc.callback` functions receive and return vectors by the same rules
-  (`SimdFfi`: C calling back into Haxe with vectors). The interpreter's
-  calls of C pass no vector registers: a build with `-D hxmc.interp` or
-  Mir macros rejects such a call.
+  (`SimdFfi`: C calling back into Haxe with vectors).
+- **Structs with vectors in them** are C's structs with `__m128` (or
+  `float32x4_t`) fields: a vector field is 16-byte aligned in a
+  `@:hxmc.struct` (`CInterop.layout`), and the struct travels by each ABI's
+  rule for it (`CAbi`):
+
+  | | one vector, nothing else | two to four vectors, nothing else | vectors and scalars |
+  | --- | --- | --- | --- |
+  | System V x86-64 | SSE and SSEUP: the next of xmm0-7, a result in xmm0 | MEMORY: on the stack at a 16-byte boundary, a result through a first argument | MEMORY |
+  | Win64 | the address of a 16-byte aligned copy, a result through a first argument | the same | the same |
+  | AAPCS64 | a homogeneous short-vector aggregate: one q register a vector, q0-q3 for a result | the same | larger than 16 bytes: the address of a copy, a result through x8 |
+  | wasm32 | the struct rule | the struct rule | the struct rule |
+
+- **The interpreter.** A build with `-D hxmc.interp` runs hxmc.simd's
+  scalar implementation, but its calls of C go through stubs compiled to
+  native code (`InterpGen.callStub`), which load a vector argument from
+  its struct's memory into its register and store a vector result back:
+  C functions and callbacks with vectors by value work there as natively.
+  Code loaded at run time (Mir macros, `-D hxmc.run=mir`) calls native code
+  through a register image with no vector registers: a C call with a
+  vector by value is a compile error there that names the C function.
 - **Registers across calls.** On x86-64 every xmm register is
   caller-saved in hxmc's code; a function entered from C on Win64 saves
   xmm6-15 whole (all 128 bits) when it uses them. On arm64 vectors never
@@ -328,10 +348,10 @@ validate on an engine without it, even if the code never runs).
 | Case | What |
 | --- | --- |
 | `SimdOps` | every operation on edge values (NaN, -0, infinities, saturation bounds, out-of-range conversions, shifts past the width, every shuffle form), as words |
-| `SimdValues` | vectors in fields of structs and classes, statics, call arguments and results, boxed (Array, type parameter, Dynamic, Null), closures, twenty live at once (spills), live across calls, kernels over spans with every access width |
+| `SimdValues` | vectors in fields of structs and classes, statics, call arguments and results, boxed (Array, type parameter, Dynamic, Null), closures, twenty live at once (spills), live across calls, kernels over spans with every access width, statics read and written whole and by word, a narrow store then a narrow load of the same bytes |
 | `SimdExamples` | this page's worked examples against their scalar versions |
 | `SimdPatterns` | the operands code generation treats apart: shuffles that are unpacks of each width in both orders (a constant on either side), permutations of one vector, even and odd lanes, shuffles with zeros; splats of constants as either operand; an operation of a vector with itself; a choice between shuffles on an inlined constant; twenty-four vectors live |
-| `SimdFfi` | C functions (`SimdFfi.c`, `vector_size(16)` types) taking and returning vectors, eight vector arguments, a vector live across a C call, a callback C calls with vectors (x86-64 Linux and Windows, arm64; not wasm: no C objects) |
+| `SimdFfi` | C functions (`SimdFfi.c`, `vector_size(16)` types) taking and returning vectors, eight vector arguments, a vector live across a C call, a callback C calls with vectors; structs of one, three and four vectors and of a vector among scalars, both ways and in callbacks, one on the stack after seven words; a C global's vectors through its symbol, whole and by their low 8 and 4 bytes (x86-64 Linux and Windows, arm64, `--interp`; not wasm: no C objects; not `--mir-run`: no vector registers) |
 | `reject/SimdLane`, `SimdLaneRange`, `SimdShuffle`, `SimdPtrKernel`, `SimdFfiRegs` | a lane at run time, a lane out of range, a shuffle index of 32, raw memory in a safe kernel, a ninth vector argument of a C function |
 
 `SimdOps`, `SimdValues`, `SimdExamples` and `SimdPatterns` run bit-exact on x86-64 Linux,

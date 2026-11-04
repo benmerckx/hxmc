@@ -1159,10 +1159,6 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	inline function vnot(d:Int)
 		vxk(0x0fef, d, ONES);
 
-	// lane width (bytes) of an operation's name
-	static function width(n:String):Int
-		return StringTools.startsWith(n, "i8x16") ? 1 : StringTools.startsWith(n, "i16x8") ? 2 : StringTools.startsWith(n, "i64x2") || StringTools.startsWith(n, "f64x2") ? 8 : 4;
-
 	// pcmpeq, pcmpgt, pminu, pmaxu of a width
 	static function eqOp(w:Int):Int
 		return w == 1 ? 0x0f74 : w == 2 ? 0x0f75 : w == 4 ? 0x0f76 : 0x0f3829;
@@ -1185,7 +1181,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	function vop(i:MIns) {
 		var n = SimdOps.name(i.imm);
-		var w = width(n);
+		var w = SimdOps.width(i.imm);
 		var f32 = StringTools.startsWith(n, "f32x4"), f64 = StringTools.startsWith(n, "f64x2");
 		var fp = f32 ? 0 : 0x66; // packed single: no prefix; double: 0x66
 		inline function A():Int

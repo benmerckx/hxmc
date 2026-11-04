@@ -772,9 +772,6 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	static inline function logic(k:Int):Int
 		return same3(k >> 2, 1 << (k & 3), 0x03) & ~(3 << 22) | ((k & 3) << 22);
 
-	static function width(n:String):Int
-		return StringTools.startsWith(n, "i8x16") ? 1 : StringTools.startsWith(n, "i16x8") ? 2 : StringTools.startsWith(n, "i64x2") || StringTools.startsWith(n, "f64x2") ? 8 : 4;
-
 	// imm5 of a lane (dup, ins, umov, smov)
 	static inline function imm5(w:Int, lane:Int):Int
 		return w == 1 ? (lane << 1) | 1 : w == 2 ? (lane << 2) | 2 : w == 4 ? (lane << 3) | 4 : (lane << 4) | 8;
@@ -793,7 +790,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	function vop(i:MIns) {
 		var n = SimdOps.name(i.imm);
-		var w = width(n);
+		var w = SimdOps.width(i.imm);
 		var fl = StringTools.startsWith(n, "f32x4") || StringTools.startsWith(n, "f64x2"), dbl = StringTools.startsWith(n, "f64x2");
 		var op = n.substr(n.indexOf(".") + 1);
 		inline function A():Int

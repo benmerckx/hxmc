@@ -8,7 +8,7 @@ import hxmc.unsafe.Ptr;
 // or 4 (v128.load64_zero, v128.store32_lane, ...)
 @:hxmc.unsafe @:hxmc.kernel @:noCompletion class RefMem {
 	static inline function bytes(op:Int):Int
-		return op == 0x5a || op == 0x5c ? 4 : op == 0x5b || op == 0x5d ? 8 : 16;
+		return OpList.memBytes(op);
 
 	public static function load(op:Int, p:Ptr, off:Int):V128 {
 		var n = bytes(op);

@@ -146,6 +146,9 @@ class SysV extends CallConv {
 			for (j in k...k + cnt)
 				if (tys[j] == F64 || tys[j] == V128) nf++ else ni++;
 			var regs = g > 0 && gi + ni <= argGprs.length && fi + nf <= argFprs;
+			// (a MEMORY struct with vectors in it at a 16-byte boundary: its
+			// first word's C size 16, MirBuild.partSize)
+			if (!regs && g < 0 && k < sizes.length && sizes[k] == 16) si = (si + 1) & ~1;
 			// (a vector, C's __m128, only in a register: MirBuild.cVectorRegs)
 			for (j in k...k + cnt)
 				p.locs[j] = !regs ? ArgLoc.stack(8 * si++, 8) : new ArgLoc(tys[j] == F64 || tys[j] == V128 ? argFpr0 + fi++ : argGprs[gi++]);

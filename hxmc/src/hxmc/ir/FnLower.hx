@@ -4673,24 +4673,16 @@ class FnLower {
 		}
 
 	// what copyStruct and zeroStruct move: the scalar fields, nested structs
-	// flattened, but vectors (hxmc.simd.V128) whole (ty null; the
+	// flattened, but vectors (hxmc.simd.V128) whole (CStruct; the
 	// interpreter's are four words, hxmc.simd.Ref)
-	static function structParts(c:TClass, at = 0):Array<{off:Int, ty:Null<CTy>}> {
-		if (isV128(c) && !Lower.simdScalar) return [{off: at, ty: null}];
-		var r = [];
-		for (f in CInterop.layout(c).fields)
-			switch f.ty {
-				case CStruct(s): r = r.concat(structParts(s, at + f.off));
-				case t: r.push({off: at + f.off, ty: t});
-			}
-		return r;
-	}
+	static inline function structParts(c:TClass):Array<{off:Int, ty:CTy}>
+		return CInterop.scalars(c, 0, !Lower.simdScalar);
 
 	// the struct at src copied to dst, scalar by scalar (dst and src: pure)
 	function copyStruct(dst:Ex, src:Ex, c:TClass) {
 		for (f in structParts(c)) {
 			// (a vector: one 16-byte access, which Sroa keeps a register)
-			if (f.ty == null) {
+			if (f.ty.match(CStruct(_))) {
 				out.push(SExpr(ECallHost(SIMD_PREFIX + "copy", vector(dst, EInt(f.off), src, EInt(f.off)), TVoid)));
 				continue;
 			}
@@ -4702,7 +4694,7 @@ class FnLower {
 
 	function zeroStruct(dst:Ex, c:TClass) {
 		for (f in structParts(c)) {
-			if (f.ty == null) {
+			if (f.ty.match(CStruct(_))) {
 				out.push(SExpr(ECallHost(SIMD_PREFIX + "zero", vector(dst, EInt(f.off)), TVoid)));
 				continue;
 			}

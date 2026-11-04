@@ -1510,7 +1510,8 @@ class Opt {
 	public static function lowered(f:MFunc) {
 		var o = new Opt(f);
 		o.simplifyCfg();
-		if (ifConvertOn && o.ifConvert()) o.mergeBlocks();
+		// (blocks it empties are merged as it goes)
+		o.ifConvert();
 		o.repl = MFunc.iota(f.vals.length);
 		var any = false;
 		for (b in f.blocks)
@@ -1523,8 +1524,6 @@ class Opt {
 		if (any) o.rewrite();
 		o.dce();
 	}
-
-	static var ifConvertOn = Sys.getEnv("HXMC_IFCONV") != "0";
 
 	// ---- if-conversion
 
@@ -1771,11 +1770,13 @@ class Opt {
 	}
 
 	// A store whose value a later load of its address can take: it writes
-	// the whole value (no truncation), and not the initialization of a new
-	// object (whose stores leave the versions as they are: forwardStores)
+	// the whole value (no truncation: a vector's 16 bytes, not the low 8 or
+	// 4 of v128.store64_lane, whose v128.load64_zero reads zeros above
+	// them), and not the initialization of a new object (whose stores leave
+	// the versions as they are: forwardStores)
 	inline function forwards(st:MIns):Bool {
 		var t = f.vals[res(st.c)].ty;
-		return st.mem != MInit && st.size == (t == I32 ? 4 : 8) && t != Void;
+		return st.mem != MInit && st.size == (t == I32 ? 4 : t == V128 ? 16 : 8) && t != Void;
 	}
 
 	// load l reads what store st wrote: the same address and size, the
