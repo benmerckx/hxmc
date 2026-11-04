@@ -2,7 +2,7 @@ package sys.net;
 
 // Stand-in for the Node.js compiler build (see Host.hx): hxnodejs' Socket lacks most
 // of the sys.net.Socket API the compilation server uses, and Node sockets are
-// asynchronous. Compiler server modes use compiler.server.NodeTransport directly.
+// asynchronous. The server is haxe/nodejs/NodeServer.hx, on Node's net.
 class Socket {
 	public var input(default, null):haxe.io.Input;
 	public var output(default, null):haxe.io.Output;

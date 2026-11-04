@@ -1,0 +1,13 @@
+# `haxe --wait` on Node.js: make node-server, then
+#   HAXE_STD_PATH=haxe/upstream/std node --stack-size=65500 bin/node/haxe-server.cjs [host:]port
+# Built by the reference compiler, with hxnodejs at /opt/hxnodejs.
+-cp haxe/src
+-main NodeServer
+-D disable-parallelism
+-cp /opt/hxnodejs/src
+-D hxnodejs
+/opt/hxnodejs/extraParams.hxml
+# single-threaded sys.thread and sys.net stand-ins, and the server: after hxnodejs,
+# so the stand-ins take precedence
+-cp haxe/nodejs
+-js bin/node/haxe-server.cjs

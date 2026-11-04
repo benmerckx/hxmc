@@ -126,8 +126,8 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
-.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
-	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
+.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check node-server \
+	lix lix-dist reference test test-fuzz test-node-server test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
 	shared-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro measure quick check full clean distclean
 
@@ -163,6 +163,8 @@ help:
 ##               debugger (the Eval debugger; SHARD=i/n), targets (upstream's unit suite compiled for
 ##               each target by both, compared), unit (unit tests of port modules, in-process)
 ##   test-fuzz   the fuzzer on PORT_BIN: LANE (default diff:hxb), the kept programs, then N programs
+##   test-node-server  node-server against the reference's server, with the reference as the client
+##               (haxe/test/node-server.mjs)
 ##   fixpoint    the tool rebuilds itself byte-identical (the module cache cold, warm and off)
 ##   crosshost   the tool as a WebAssembly module builds the corpus and itself byte-identical to the
 ##               native tool (hxmc/test/Crosshost.hx; CROSSHOST_ARGS)
@@ -211,6 +213,8 @@ help:
 ##   release     bin/release/TARGET/haxe[.exe]: the port cross-built by hxmc, with mbedtls and libuv
 ##   lix-dist    bin/lix-dist/lix-<target>[.exe]: lix for the six targets (the release, the site's tools/)
 ##   npm         bin/npm/*.tgz: the npm packages of packages/ (packages/pack.mjs; NPM_VERSION)
+##   node-server bin/node/haxe-server.cjs: `haxe --wait` on Node.js (haxe/nodejs; built by the
+##               reference, with hxnodejs at /opt/hxnodejs)
 ##
 ## Dev
 ##   clean       remove the build outputs (keeps the tool, the runtime objects and the reference)
@@ -499,6 +503,14 @@ test-fuzz: $(firstword $(FUZZ)) $(PORT_BIN) $(REFERENCE)
 	echo '$(FUZZ) -j $(JOBS) -n $(N) --port $(abspath $(PORT_BIN)) --lane $(LANE)'; \
 	$(FUZZ) -j $(JOBS) -n $(N) --port $(abspath $(PORT_BIN)) --lane $(LANE) || failed="$$failed random"; \
 	if [ -n "$$failed" ]; then echo "test-fuzz $(LANE): failed:$$failed"; exit 1; fi
+
+node-server: bin/node/haxe-server.cjs
+bin/node/haxe-server.cjs: $(PORT_SRC) $(shell find haxe/nodejs -type f) $(REFERENCE)
+	@mkdir -p $(dir $@)
+	$(REFERENCE) haxe/nodejs/server.hxml
+
+test-node-server: bin/node/haxe-server.cjs $(REFERENCE)
+	HAXE_REFERENCE=$(abspath $(REFERENCE)) $(NODE) --test --test-timeout=120000 haxe/test/node-server.mjs
 
 test-libraries: bin/npm/native/$(HOST)/haxe
 	$(SCRIPT) Libraries
