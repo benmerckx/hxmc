@@ -105,11 +105,11 @@ class Start {
 		// pools and AutoreleasePool.run (AppKit's work before NSApplication.run
 		// and between events, a program's own top level) stays until the
 		// program ends instead of leaking ("no pool in place")
-		var pool = Gc.poolPushAny();
+		var pool = ObjCKind.poolPushAny();
 		var stack = bytes == 0 ? Ptr.nil() : Os.reserve(bytes);
 		if (stack.isNull()) {
 			Mem.call0(body);
-			Gc.idsPoolPop(pool);
+			ObjCKind.poolEnd(pool);
 			return;
 		}
 		Os.guard(stack, Os.pageSize());
@@ -117,7 +117,7 @@ class Start {
 		Gc.cstackLo = stack;
 		Gc.cstackHi = stack.addL(bytes);
 		Mem.callOnStack(stack.addL(bytes), body);
-		Gc.idsPoolPop(pool);
+		ObjCKind.poolEnd(pool);
 		#if hxmc.shared
 		// (a library's program ended: its stack given back, as the library may be closed: hxmc dev's host)
 		Os.release(stack, bytes);

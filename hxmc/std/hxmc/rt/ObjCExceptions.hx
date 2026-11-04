@@ -86,12 +86,12 @@ class ObjCExceptions {
 
 	// the exception ue as a Haxe throw (hxmc_objc_caught, out of the safe
 	// region): libobjc's functions come as addresses (the runtime does not
-	// link libobjc), those of a box's too (Gc.idBox)
+	// link libobjc), those of a box's too (ObjCKind.idBox)
 	@:hxmc.export("rt_objc_caught") static function caught(ue:Ptr, beginCatch:Ptr, endCatch:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr,
 			ivarOffset:Ptr):Void {
 		Ind.call1(beginCatch, ue);
 		var id = Mem.getPtr(ue, 32);
-		var v = Gc.idBox(id, retain, release, getClass, getIvar, ivarOffset);
+		var v = ObjCKind.idBox(id, retain, release, getClass, getIvar, ivarOffset);
 		Ind.call0(endCatch);
 		Rt.rt_throw(v);
 	}
@@ -104,9 +104,9 @@ class ObjCExceptions {
 	// an Objective-C one) is raised itself; another value as an NSException
 	// of the class HXMCException (registered here at the first), named
 	// "HaxeException", Std.string of the value its reason, and paired with
-	// the value as a Haxe class's object is with its id (Gc.pair): an
+	// the value as a Haxe class's object is with its id (ObjCKind.pair): an
 	// exception that comes back to a Haxe frame is the value again
-	// (Gc.idBox). libobjc's functions are found by name (dlsym: the runtime
+	// (ObjCKind.idBox). libobjc's functions are found by name (dlsym: the runtime
 	// does not link libobjc).
 
 	// the id the entry raises (retained, autoreleased), else nil
@@ -116,7 +116,7 @@ class ObjCExceptions {
 	// NSException class: Foundation not loaded) reported as an uncaught one,
 	// the end of the program
 	@:hxmc.export("rt_objc_raise") static function raise(v:Dynamic):Void {
-		var id = Gc.idOf(v);
+		var id = ObjCKind.idOf(v);
 		if (id.isNull()) id = wrap(v);
 		if (id.isNull()) {
 			Gc.uncaught("Uncaught exception in a method Objective-C called: ", v);
@@ -155,7 +155,7 @@ class ObjCExceptions {
 	}
 
 	static function describe(v:Dynamic):Null<String> {
-		var id = Gc.idOf(v);
+		var id = ObjCKind.idOf(v);
 		if (id.isNull()) return null;
 		var send = fn(Mem.cstr("objc_msgSend"));
 		var d = Ind.call2(send, id, sel(Mem.cstr("description")));
@@ -187,7 +187,7 @@ class ObjCExceptions {
 		var ivar = Ind.call2(fn(Mem.cstr("class_getInstanceVariable")), cls, Mem.cstr("hxmc_peer"));
 		var at = Ind.call1(fn(Mem.cstr("ivar_getOffset")), ivar);
 		// (null: thrown as nothing to pair, an NSException without a value)
-		if (v != null) Mem.setI32(obj.addL(at.toI64()), 0, Gc.pair(v, obj, fn(Mem.cstr("_objc_rootRetainCount")), fn(Mem.cstr("objc_release")), false));
+		if (v != null) Mem.setI32(obj.addL(at.toI64()), 0, ObjCKind.pair(v, obj, fn(Mem.cstr("_objc_rootRetainCount")), fn(Mem.cstr("objc_release")), false));
 		return obj;
 	}
 }

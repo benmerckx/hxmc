@@ -1,0 +1,36 @@
+exit 0
+ForeignKinds.hx:147: toggle: count 2, the box of the object is its peer: true
+ForeignKinds.hx:149: held natively, after collections: peer p1, live 2
+ForeignKinds.hx:152: let go natively: peer null, freed 1@1, live 1
+ForeignKinds.hx:157: B held: peer p2
+ForeignKinds.hx:160: B let go: peer null, freed 2@1
+ForeignKinds.hx:165: C notified strong: peer p3, live 2
+ForeignKinds.hx:168: C notified weak: peer null, freed 3@1
+ForeignKinds.hx:176: boxes: same true, other false, indexOf 1, unboxed true, count 2, another kind's true
+ForeignKinds.hx:181: a map: 2, one key 1
+ForeignKinds.hx:399: boxes gone: freed 11@1 10@1
+ForeignKinds.hx:203: weak: alive true, count 2
+ForeignKinds.hx:206: weak after the release: alive false, freed 20@1
+ForeignKinds.hx:212: unowned: count 1, id 21
+ForeignKinds.hx:215: unowned holder gone: count 1, freed 
+ForeignKinds.hx:217: released: freed 21@1
+ForeignKinds.hx:232: owned: count 2
+ForeignKinds.hx:234: owner gone: count 1
+ForeignKinds.hx:236: freed 30@1
+ForeignKinds.hx:246: detached: count 1, its reference true
+ForeignKinds.hx:248: held natively: peer p40
+ForeignKinds.hx:250: let go natively: freed at once 40@1
+ForeignKinds.hx:252: peer then null
+ForeignKinds.hx:257: box detached: count 1, a new box true, unboxed true
+ForeignKinds.hx:260: freed 41@1
+ForeignKinds.hx:278: finalised [p703,p702,p701], live 4
+ForeignKinds.hx:281: released with the world stopped: 3, freed 701@1 702@1 703@1, deallocs put off 3, run [701 on 1,702 on 1,703 on 1]
+ForeignKinds.hx:286: released by Haxe code: deallocs [701 on 1,702 on 1,703 on 1,704 on 1], freed 704@1
+ForeignKinds.hx:309: B put off: in the stop 0, freed after it 50@1 51@1, batches true
+ForeignKinds.hx:324: made on a thread: after the main thread's collections, live 21, freed , woken true
+ForeignKinds.hx:327: the thread ran them: 600@2 601@2 602@2 603@2 604@2 605@2 606@2 607@2 608@2 609@2 610@2 611@2 612@2 613@2 614@2 615@2 616@2 617@2 618@2 619@2
+ForeignKinds.hx:339: made on a thread that ended: freed 650@1 651@1 652@1 653@1 654@1
+ForeignKinds.hx:367: 5000 boxes: live 0, freed 5000
+ForeignKinds.hx:371: 300 cycles: live 600, freed 0
+ForeignKinds.hx:379: broken: live 0, freed 600, in 2 collections
+ForeignKinds.hx:406: in the stop true, balanced batches true, live 0 of 5642

@@ -369,6 +369,8 @@ class Threads {
 			// the hxmc sys.thread.Thread catches everything: only a raw spawn gets here
 			Gc.uncaught("Uncaught exception in thread " + m.value.id + ": ", e);
 		}
+		// (what it put off and has not run yet: now, before it ends, Foreign.runDeferred)
+		if (Foreign.ndeferred != 0) Foreign.runDeferred();
 	}
 
 	// a thread's end, in a safe region: it touches no heap object
@@ -397,6 +399,7 @@ class Threads {
 		}
 		Atomic.add32(Mem.sym("rt_nthreads"), -1);
 		Os.unlock(wl);
+		Foreign.threadExit(m.value.id);
 		LibC.free(m.value.rem);
 		LibC.free(m.value.robjs);
 		LibC.free(m.value.recent);

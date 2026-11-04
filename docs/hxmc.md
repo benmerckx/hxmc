@@ -224,6 +224,14 @@ space by copying into a new region.
   `@:hxmc.weak` field of a Haxe value holds one; a weak field of a Haxe
   class, a `WeakRef` or a weak map could too (a map's ephemerons would need
   their values traced conditionally, which a slot's word leaves room for).
+- **Foreign objects** (native): reference-counted objects of other object
+  systems held by Haxe objects (`hxmc.rt.Foreign`): toggle references for
+  peers, one box per object, owned and weak fields, detach, and releases put
+  off past a stop of the world, per kind of a table of hooks the collector
+  reads (Objective-C's is the first, `hxmc.rt.ObjCKind`;
+  [plans/foreign-objects.md](plans/foreign-objects.md)). A pass over the
+  peers per collection (their toggles), and over the owned fields and boxes
+  in the space collected; nothing without them.
 
 `RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
 nursery with a pattern so missed roots show at once, and ends the program

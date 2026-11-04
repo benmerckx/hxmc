@@ -13,5 +13,5 @@ class Peers {
 	// Id: an id argument is borrowed, autoreleased, which would keep the
 	// object until the current pool drains)
 	public static function detach(o:Dynamic):Void
-		@:privateAccess hxmc.rt.Gc.detach(o);
+		@:privateAccess hxmc.rt.ObjCKind.detach(o);
 }
