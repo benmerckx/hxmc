@@ -118,8 +118,12 @@ class AllocBounds {
 		b0 = bytes();
 		for (k in 0...4096) a.resize(10 + (k & 1023));
 		check("resize within capacity", b0, bytes(), 4096, 0);
-		// (a resize from empty: the exact length, once)
+		// (a resize from empty: the exact length, once; from an empty nursery,
+		// so that the end of a part the array does not fit in is not counted)
 		var e:Array<Int> = [];
+		#if !(hxmc.target == "wasm32-wasi" || hxmc.interp || hxmc.run)
+		hxmc.rt.Gc.collect(false);
+		#end
 		b0 = bytes();
 		e.resize(1000);
 		check("resize from empty", b0, bytes(), 1000, 4.1);
