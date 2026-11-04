@@ -3,6 +3,7 @@ package hxmc.ir;
 import hxmc.ir.Ir;
 import hxmc.ir.LowerQueries;
 import hxmc.ir.Com.ComValue;
+import hxmc.ir.Jni.JniValue;
 import core.Ast.Binop;
 import core.Ast.Unop;
 import core.TType;
@@ -762,6 +763,7 @@ class Lower implements LowerQueries {
 						else if (CInterop.isOpaque(c)) TI64; // the address of C memory (CInterop: through a Ptr only)
 						else if (ObjC.isObjC(c) || ObjC.isCF(c)) TId; // an Objective-C object (or C's, CGColorRef): its id
 						else if (Com.isCom(c)) TRef(RAny); // a COM value: a foreign object's box, or a Haxe object (Com)
+						else if (Jni.isJava(c)) TRef(RAny); // a Java value: a Java object's box, or a Haxe object (Jni)
 						else if (c.hasClassFlag(CInterface)) TRef(RObj(classInfo(c)));
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
@@ -1041,6 +1043,9 @@ class Lower implements LowerQueries {
 		// (a class implementing COM interfaces: its block's field, its
 		// descriptor and thunks, Com; Windows only, elsewhere a Haxe class)
 		if (targetOs == 2) comSide(c, ci, sup);
+		// (a class implementing Java interfaces: its record's field, its natives
+		// and descriptor, Jni; where there is JNI, elsewhere a Haxe class)
+		if (Jni.available()) jniSide(c, ci, sup);
 		var own = [];
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
@@ -1208,6 +1213,87 @@ class Lower implements LowerQueries {
 		ci.com = d.name;
 	}
 
+	// ---- Haxe classes implementing Java interfaces (Jni)
+
+	// c's Java side, when it implements interfaces its superclasses do not:
+	// the field holding its peer record (in the first such class), a native
+	// per method of its interfaces (a C entry, Com.entry, over a work
+	// function, FnLower.jniThunkBody), its descriptor function
+	// (FnLower.jniDescBody), which its constructors call once per type
+	// (FnLower.jniConstructor); a subclass adding none has its superclass's
+	function jniSide(c:TClass, ci:ClassInfo, sup:ClassInfo) {
+		if (!Jni.addsInterfaces(c)) {
+			ci.jni = sup != null ? sup.jni : null;
+			return;
+		}
+		var where = CInterop.posOf(c.clPos);
+		var path = core.Globals.sTypePath(c.clPath);
+		if (c.clParams.length > 0) throw new LowerError('$path implements a Java interface: a generic class cannot (its proxy is one class\'s)', where);
+		if (c.clConstructor == null)
+			throw new LowerError('$path implements a Java interface its superclass does not: it needs a constructor of its own (which registers its natives)', where);
+		if (sup == null || sup.jni == null) ci.fields.push({name: Jni.FIELD, ty: TI64});
+		var is = Jni.implemented(c);
+		var ms = try Jni.methods(is) catch (err:LowerError) {
+			if (err.where == "") err.where = where;
+			throw err;
+		};
+		var module = moduleOf(c);
+		var natives = [];
+		for (k in 0...ms.length) {
+			var m = ms[k];
+			var impl = Com.implOf(c, m.cf);
+			if (impl == null) throw new LowerError('$path implements ${m.iface.clPath.name} but not its method ${m.cf.cfName}', where);
+			var name = Jni.THUNK + ci.ident + "_" + k;
+			var w = new FuncInfo(name + "__work", module);
+			w.display = path + "." + impl.cfName + " (" + m.iface.clPath.name + "." + m.cf.cfName + ", called by Java)";
+			w.pos = impl.cfPos;
+			w.args = [new Local(0, "env", TI64), new Local(1, "cls", TI64), new Local(2, "handle", TI64)];
+			var cts = [CInterop.CTy.CPtr, CInterop.CTy.CPtr, CInterop.CTy.CI64];
+			for (a in m.s.args) {
+				var v = Jni.value(a.type);
+				w.args.push(new Local(w.args.length, a.name, v.match(JPrim(_, _)) ? ty(a.type) : TI64));
+				cts.push(Jni.ctypeOf(v));
+			}
+			var rv = Jni.value(m.s.ret);
+			w.ret = switch rv {
+				case JPrim(_, _): ty(m.s.ret);
+				case JVoid: TVoid;
+				case _: TI64;
+			};
+			prog.funcs.push(w);
+			var decl = m.cf, s = m.s;
+			pending.push(guarded(w, () -> {
+				var fl = new FnLower(this, w, null, null);
+				fl.jniThunkBody(c, decl, impl, s);
+				fl.finish();
+			}));
+			var e = Com.entry(name, name, module, w, {args: cts, ret: Jni.ctypeOf(rv)});
+			e.pos = impl.cfPos;
+			prog.funcs.push(e);
+			natives.push({name: m.name, sig: m.sig, native: "hxmc" + k, sym: name});
+		}
+		var proxy = Jni.proxyName(c);
+		var d = new FuncInfo(Jni.DESC + ci.ident, module);
+		d.cSymbol = d.name;
+		d.display = path + " (its Java natives)";
+		d.args = [new Local(0, "o", TRef(RAny))];
+		d.ret = TRef(RAny);
+		prog.funcs.push(d);
+		pending.push(guarded(d, () -> {
+			var fl = new FnLower(this, d, ci, null);
+			fl.jniDescBody(proxy, natives);
+			fl.finish();
+		}));
+		ci.jni = d.name;
+		ci.jniProxy = {
+			proxy: proxy,
+			haxe: path,
+			interfaces: [for (i in is) StringTools.replace(Jni.className(i), "/", ".")],
+			methods: [for (n in natives) {name: n.name, sig: n.sig, native: n.native}],
+			desc: d
+		};
+	}
+
 	// ---- Objective-C mode classes (ObjC.isMode)
 
 	var modes = new Map<TClass, ObjC.ObjCMode>();
@@ -1344,6 +1430,8 @@ class Lower implements LowerQueries {
 		if (ObjC.isProtocol(i) || ObjC.isId(i)) return;
 		// (a COM interface: its calls go through vtables, Com; a Haxe class's are its thunks')
 		if (Com.isCom(i)) return;
+		// (a Java interface: its calls go through JNI, Jni; a Haxe class's reach it through its proxy)
+		if (Jni.isJava(i)) return;
 		var ii = classInfo(i);
 		if (ci.ifaces.indexOf(ii) < 0) ci.ifaces.push(ii);
 		for (j in i.clImplements)
@@ -2170,6 +2258,9 @@ class Lower implements LowerQueries {
 
 	public function comClass(ci:ClassInfo):Null<String>
 		return ci.com;
+
+	public function jniClass(ci:ClassInfo):Null<String>
+		return ci.jni;
 
 	public function idFields(ci:ClassInfo):Array<String>
 		return ci.idFields;

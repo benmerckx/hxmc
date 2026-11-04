@@ -1,0 +1,14 @@
+exit 0
+JniRefs.hx:63: true, -1, false
+JniRefs.hx:68: held, 1000, 499500
+JniRefs.hx:71: dropped, 0
+JniRefs.hx:87: kept, 5, 10, 5000, 7, 8, 53
+JniRefs.hx:93: all dropped, 0
+JniRefs.hx:52: weak, true, 3, 1
+JniRefs.hx:99: weak after, 0, null
+JniRefs.hx:103: weak of none, null
+JniRefs.hx:108: kept by Java, 1, 11
+JniRefs.hx:114: detached, 0
+JniRefs.hx:115: java.lang.IllegalStateException, a Java object used after hxmc.java.Java.detach
+JniRefs.hx:116: 13
+JniRefs.hx:125: many, 2495000, 0

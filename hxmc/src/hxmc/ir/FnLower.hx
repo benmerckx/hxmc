@@ -6,6 +6,8 @@ import hxmc.ir.LowerQueries;
 import hxmc.ir.CInterop;
 import hxmc.ir.Com;
 import hxmc.ir.Com.ComValue;
+import hxmc.ir.Jni;
+import hxmc.ir.Jni.JniValue;
 import core.Ast.Binop;
 import core.Ast.Unop;
 import core.Ast.UnopFlag;
@@ -155,6 +157,7 @@ class FnLower {
 		bindArgs(tf, off);
 		if (isCtor) objcOwnFields();
 		if (isCtor) comConstructor();
+		if (isCtor) jniConstructor();
 		if (isCtor) {
 			inCtor = true;
 			objcConstructor(tf);
@@ -1953,6 +1956,8 @@ class FnLower {
 				ENewArr(elem, vector());
 			case TNew(c, _, cargs) if (CInterop.isStruct(c)):
 				coerce(ELocal(newStruct(c, cargs, null)), structTy(c), tyOf(e));
+			case TNew(c, _, cargs) if (Jni.isJava(c)):
+				jniNew(c, cargs, e);
 			case TNew(c, _, _) if (ObjC.isObjC(c)):
 				fail("Objective-C class " + c.clPath.name + ": made by " + c.clPath.name + ".alloc().init...(...), not new", e);
 			case TNew(c, _, cargs) if (c.hasClassFlag(CExtern)):
@@ -2061,7 +2066,11 @@ class FnLower {
 					case Method(MethDynamic) if (c.hasClassFlag(CInterface)): anonGet(cf.cfName, obj, e);
 					case Method(_) if (ObjC.modeOwner(c, cf) != null):
 						fail("Objective-C method " + cf.cfName + " as a value: wrap the message in a function (`x -> o." + cf.cfName + "(x)`)", e);
+					case Method(_) if (Jni.isJava(c)):
+						fail("Java method " + cf.cfName + " as a value: wrap the call in a function (`x -> o." + cf.cfName + "(x)`)", e);
 					case Method(_): methodClosure(obj, c, cf, e);
+					// (a Java field: Get<Type>Field)
+					case Var(_) if (Jni.isJava(c)): jniField(obj, c, cf, null, e);
 					// (an instance variable of an Objective-C mode class: in the object's memory)
 					case Var(_) if (ObjC.ivarOf(c, cf) != null):
 						var iv = ObjC.ivarOf(c, cf);
@@ -2098,6 +2107,9 @@ class FnLower {
 						var idx = ci.fieldIndex(cf.cfName);
 						coerce(EField(ci, idx, value(obj)), ci.fields[idx].ty, tyOf(e));
 				}
+			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && Jni.isJava(c)): jniField(null, c, cf, null, e);
+			case FStatic(c, cf) if (cf.cfKind.match(Method(_)) && Jni.isJava(c)):
+				fail("Java method " + cf.cfName + " as a value: wrap the call in a function", e);
 			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isProtocol(c)):
 				fail(cf.cfName + " is a class property of the protocol " + c.clPath.name + ": read it of a class conforming to it", e);
 			case FStatic(c, cf) if (cf.cfKind.match(Var(_)) && ObjC.isObjC(c) && !ObjC.isModeStatic(c, cf)): objcGet(null, c, cf, e);
@@ -2147,6 +2159,9 @@ class FnLower {
 				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
 				var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_get"), vector(o, EStr(name)), TRef(RAny)));
 				coerce(r, TRef(RAny), tyOf(e));
+			// (a Java method as a value: none)
+			case FClosure(cl, cf) if (cl != null && Jni.isJava(cl.cls)):
+				fail("Java method " + cf.cfName + " as a value: wrap the call in a function (`x -> o." + cf.cfName + "(x)`)", e);
 			// (a COM method as a value: none)
 			case FClosure(cl, cf) if (cl != null && Com.isCom(cl.cls)):
 				fail("COM method " + cf.cfName + " as a value: wrap the call in a function (`x -> o." + cf.cfName + "(x)`)", e);
@@ -2680,6 +2695,14 @@ class FnLower {
 				var x = pure(compute(() -> objcMsg(self, ObjC.getter(cf), [], [], cf.cfType, cf, lhs, t), t, t), t);
 				objcSet(self, c, cf, x, t, e);
 				return coerce(x, t, et);
+			case TField(obj, FInstance(c, _, cf) | FStatic(c, cf)) if (cf.cfKind.match(Var(_)) && Jni.isJava(c)):
+				// (a Java field: Set<Type>Field after the value, the field read first for an update)
+				var instance = strip(lhs).eexpr.match(TField(_, FInstance(_, _, _)));
+				var t = ty(cf.cfType);
+				var o = instance ? ELocal(asLocal(value(obj), tyOf(obj))) : null;
+				var x = pure(compute(() -> jniField(null, c, cf, o == null ? null : {x: o, t: tyOf(obj)}, lhs), t, t), t);
+				jniSetField(o == null ? null : {x: o, t: tyOf(obj)}, c, cf, x, t, e);
+				return coerce(x, t, et);
 			case TField(_, FStatic(c, cf)) if (CInterop.isVar(c, cf)):
 				var v = cVar(c, cf, lhs);
 				var t = tyOf(lhs);
@@ -2841,6 +2864,11 @@ class FnLower {
 				if (ft == null) return fail("Block<F> of no function type F", e);
 				var x = value(cargs[0]);
 				return cf.cfName == "ofFunction" ? coerce(blockOf(x, tyOf(cargs[0]), ft, e), TId, rt) : blockFunction(x, ft, rt, e);
+			// a Java method (Jni): Call<Type>MethodA
+			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && Jni.isJava(c)):
+				return jniCall(obj, c, cf, cargs, e);
+			case TField(_, FStatic(c, cf)) if (cf.cfKind.match(Method(_)) && Jni.isJava(c)):
+				return jniCall(null, c, cf, cargs, e);
 			// a COM interface's method (Com): a call through its vtable
 			case TField(obj, FInstance(c, _, cf)) if (cf.cfKind.match(Method(_)) && Com.isCom(c)):
 				return comCall(obj, c, cf, cargs, e);
@@ -4020,6 +4048,281 @@ class FnLower {
 		out.push(STry(body, vector({test: null, l: exn, body: vector(SSet(hr, onError))})));
 		fi.hasTry = true;
 		out.push(SReturn(fi.ret == TVoid ? null : ELocal(hr)));
+	}
+
+	// ---- Java (docs/interop.md, "Java (JNI)"; Jni): calls through JNI, a
+	// Haxe class's natives and descriptor
+
+	// a Java operation where there is no JNI (Windows, WebAssembly): a throw
+	// (code using Java compiles for every target, and runs behind a test)
+	function jniUnavailable(e:TExpr):Ex {
+		out.push(SExpr(ECallHost("rt_jni_unavailable", vector(), TVoid)));
+		return tyOf(e) == TVoid ? EInt(0) : nullOf(tyOf(e));
+	}
+
+	inline function jniCell(sym:String):Ex
+		return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(sym)), TI64);
+
+	function jniCheck(v:JniValue, what:String, e:TExpr):JniValue
+		return try Jni.check(v, what, where(e)) catch (err:LowerError) {
+			if (err.where == "") err.where = where(e);
+			throw err;
+		};
+
+	function jniName(c:TClass, e:TExpr):String
+		return try Jni.className(c) catch (err:LowerError) {
+			if (err.where == "") err.where = where(e);
+			throw err;
+		};
+
+	// a Haxe value (x, of representation t) as a Java reference: a local
+	// reference of the call's frame (rt_jni_arg)
+	function jniRef(env:Ex, x:Ex, t:Ty, how:Int, cls:Null<String>):Ex
+		return temp(TI64, ECallHost("rt_jni_arg", vector(env, coerce(x, t, TRef(RAny)), EInt(how), cls == null ? nullOf(TRef(RStr)) : EStr(cls)), TI64));
+
+	// a Java result r (an I64; a TF64 for float and double) as a Haxe value of
+	// representation `to`, in a local (before the frame is popped)
+	function jniResult(env:Ex, r:Ex, v:JniValue, to:Ty):Ex {
+		var x:Ex = switch v {
+			case JVoid: return EInt(0);
+			case JPrim(Jni.T_BOOLEAN, _): coerce(EBin(Ne, EConv(L2I, r), EInt(0)), TBool, to);
+			case JPrim(Jni.T_LONG, _): coerce(r, TI64, to);
+			case JPrim(Jni.T_FLOAT | Jni.T_DOUBLE, _): coerce(r, TF64, to);
+			case JPrim(_, _): coerce(EConv(L2I, r), TI32, to);
+			case JRef(how, cls, _):
+				coerce(ECallHost("rt_jni_result", vector(env, r, EInt(how), cls == null ? nullOf(TRef(RStr)) : EStr(cls)), TRef(RAny)), TRef(RAny), to);
+			case JNone(_): EInt(0);
+		}
+		return to == TVoid ? x : ELocal(asLocal(x, to));
+	}
+
+	// the arguments as a jvalue array in this frame (8 bytes each: a
+	// primitive as its C type, a reference a local reference)
+	function jniValues(env:Ex, xs:Array<Ex>, ts:Array<Ty>, vs:Array<JniValue>, e:TExpr):Ex {
+		if (xs.length == 0) return EConv(I2L, EInt(0));
+		var jv = asLocal(ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(8 * xs.length), EInt(8)), TI64), TI64);
+		for (i in 0...xs.length)
+			switch vs[i] {
+				case JPrim(_, ct): cStore(ELocal(jv), 8 * i, ct, xs[i], ts[i], e);
+				case JRef(how, cls, _):
+					out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(jv), EInt(8 * i), jniRef(env, xs[i], ts[i], how, cls)), TVoid)));
+				case _:
+			}
+		return ELocal(jv);
+	}
+
+	// a call of Java method cf of class c (obj null: a static method)
+	function jniCall(obj:Null<TExpr>, c:TClass, cf:TClassField, cargs:Vector<TExpr>, e:TExpr):Ex {
+		if (!Jni.available()) return jniUnavailable(e);
+		var s = switch TFunctions.follow(cf.cfType) {
+			case TFun(s): s;
+			case _: fail("Java method " + cf.cfName + " is not a function", e);
+		};
+		var ats = [for (a in s.args) ty(a.type)];
+		var held = [];
+		var recv = null;
+		if (obj != null) recv = {x: (ELocal(asLocal(value(obj), tyOf(obj))) : Ex), t: tyOf(obj)};
+		var xs = args(cargs, Vector.fromArrayCopy(ats), null);
+		for (i in 0...xs.length)
+			held.push(ELocal(asLocal(xs[i], ats[i])));
+		return jniInvoke(c, cf, s, recv, held, ats, false, e);
+	}
+
+	// `new C(...)` of a Java class: NewObjectA of the constructor the
+	// arguments' types choose (Jni.ctorFor)
+	function jniNew(c:TClass, cargs:Vector<TExpr>, e:TExpr):Ex {
+		if (!Jni.available()) return jniUnavailable(e);
+		var cf = Jni.ctorFor(c, cargs);
+		if (cf == null) return cfail("no constructor of the Java class " + c.clPath.name + " takes these arguments", e);
+		var s = switch TFunctions.follow(cf.cfType) {
+			case TFun(s): s;
+			case _: fail("Java constructor of " + c.clPath.name + " is not a function", e);
+		};
+		var ats = [for (a in s.args) ty(a.type)];
+		var xs = args(cargs, Vector.fromArrayCopy(ats), null);
+		var held = [for (i in 0...xs.length) (ELocal(asLocal(xs[i], ats[i])) : Ex)];
+		return jniInvoke(c, cf, s, null, held, ats, true, e);
+	}
+
+	// the call itself: the frame entered, the class and method resolved
+	// (their cells), the receiver and arguments made Java values, the call,
+	// the result made a Haxe value, the frame left (an exception thrown)
+	function jniInvoke(c:TClass, cf:TClassField, s:core.TType.TSignature, recv:Null<{x:Ex, t:Ty}>, xs:Array<Ex>, ts:Array<Ty>, ctor:Bool, e:TExpr):Ex {
+		var cname = jniName(c, e);
+		var sig = try Jni.signature(cf, s, ctor) catch (err:LowerError) {
+			if (err.where == "") err.where = where(e);
+			throw err;
+		};
+		var mname = ctor ? "<init>" : Jni.memberName(cf);
+		var vs = [for (a in s.args) jniCheck(Jni.value(a.type), "Java method " + cf.cfName + ": the parameter " + a.name, e)];
+		var rv = ctor ? JRef(Jni.R_OBJECT, null, "L" + cname + ";") : jniCheck(Jni.value(s.ret), "Java method " + cf.cfName + ": the result", e);
+		var env = ELocal(asLocal(ECallHost("rt_jni_enter", vector(), TI64), TI64));
+		var cls = ELocal(asLocal(ECallHost("rt_jni_class", vector(env, jniCell(Jni.classCell(cname)), EStr(cname)), TI64), TI64));
+		var what = recv == null && !ctor ? Jni.M_STATIC_METHOD : Jni.M_METHOD;
+		var mid = ELocal(asLocal(ECallHost("rt_jni_member", vector(env, jniCell(Jni.memberCell(cname, mname, sig, what)), cls, EStr(mname), EStr(sig), EInt(what)), TI64),
+			TI64));
+		var target = recv == null ? EConv(I2L, EInt(0)) : jniRef(env, recv.x, recv.t, Jni.R_OBJECT, null);
+		var jv = jniValues(env, xs, ts, vs, e);
+		var code = switch rv {
+			case JPrim(code, _): code;
+			case JVoid: Jni.T_VOID;
+			case _: Jni.T_OBJECT;
+		};
+		var how = code | (ctor ? Jni.NEW : recv == null ? Jni.STATIC : 0);
+		var isF = code == Jni.T_FLOAT || code == Jni.T_DOUBLE;
+		var rt = isF ? TF64 : TI64;
+		var r = temp(rt, ECallHost(isF ? "rt_jni_call_f" : "rt_jni_call", vector(env, EInt(how), target, cls, mid, jv), rt));
+		var res = jniResult(env, r, rv, tyOf(e));
+		out.push(SExpr(ECallHost("rt_jni_leave", vector(env), TVoid)));
+		return res;
+	}
+
+	// a Java field's value (Get<Type>Field): of obj's object, of recv's
+	// (an assignment's update), or of the class (both null: a static)
+	function jniField(obj:Null<TExpr>, c:TClass, cf:TClassField, recv:Null<{x:Ex, t:Ty}>, e:TExpr):Ex {
+		if (!Jni.available()) return jniUnavailable(e);
+		var isStatic = obj == null && recv == null;
+		if (obj != null) recv = {x: (ELocal(asLocal(value(obj), tyOf(obj))) : Ex), t: tyOf(obj)};
+		var f = jniFieldOf(c, cf, isStatic, e);
+		var target = isStatic ? f.cls : jniRef(f.env, recv.x, recv.t, Jni.R_OBJECT, null);
+		var code = switch f.v {
+			case JPrim(code, _): code;
+			case _: Jni.T_OBJECT;
+		};
+		var isF = code == Jni.T_FLOAT || code == Jni.T_DOUBLE;
+		var rt = isF ? TF64 : TI64;
+		var r = temp(rt, ECallHost(isF ? "rt_jni_get_f" : "rt_jni_get", vector(f.env, EInt(code | (isStatic ? Jni.STATIC : 0)), target, f.fid), rt));
+		var res = jniResult(f.env, r, f.v, tyOf(e));
+		out.push(SExpr(ECallHost("rt_jni_leave", vector(f.env), TVoid)));
+		return res;
+	}
+
+	// (the frame entered, the class and the field resolved)
+	function jniFieldOf(c:TClass, cf:TClassField, isStatic:Bool, e:TExpr):{env:Ex, cls:Ex, fid:Ex, v:JniValue} {
+		var cname = jniName(c, e);
+		var v = jniCheck(Jni.value(cf.cfType), "Java field " + cf.cfName, e);
+		var sig = Lower.metaString(":hxmc.java.signature", cf.cfMeta);
+		if (sig == null) sig = Jni.descriptor(v);
+		var fname = Jni.memberName(cf);
+		var env = ELocal(asLocal(ECallHost("rt_jni_enter", vector(), TI64), TI64));
+		var cls = ELocal(asLocal(ECallHost("rt_jni_class", vector(env, jniCell(Jni.classCell(cname)), EStr(cname)), TI64), TI64));
+		var what = isStatic ? Jni.M_STATIC_FIELD : Jni.M_FIELD;
+		var fid = ELocal(asLocal(ECallHost("rt_jni_member", vector(env, jniCell(Jni.memberCell(cname, fname, sig, what)), cls, EStr(fname), EStr(sig), EInt(what)), TI64),
+			TI64));
+		return {env: env, cls: cls, fid: fid, v: v};
+	}
+
+	// a Java field set (Set<Type>Field) to x (of representation t)
+	function jniSetField(recv:Null<{x:Ex, t:Ty}>, c:TClass, cf:TClassField, x:Ex, t:Ty, e:TExpr) {
+		if (!Jni.available()) {
+			jniUnavailable(e);
+			return;
+		}
+		var isStatic = recv == null;
+		var f = jniFieldOf(c, cf, isStatic, e);
+		var target = isStatic ? f.cls : jniRef(f.env, recv.x, recv.t, Jni.R_OBJECT, null);
+		var st = isStatic ? Jni.STATIC : 0;
+		switch f.v {
+			case JPrim(code, _) if (code == Jni.T_FLOAT || code == Jni.T_DOUBLE):
+				out.push(SExpr(ECallHost("rt_jni_set_f", vector(f.env, EInt(code | st), target, f.fid, coerce(x, t, TF64)), TVoid)));
+			case JPrim(Jni.T_LONG, _):
+				out.push(SExpr(ECallHost("rt_jni_set", vector(f.env, EInt(Jni.T_LONG | st), target, f.fid, coerce(x, t, TI64)), TVoid)));
+			case JPrim(code, _):
+				var i = t == TBool ? coerce(x, t, TI32) : coerce(x, t, TI32);
+				out.push(SExpr(ECallHost("rt_jni_set", vector(f.env, EInt(code | st), target, f.fid, EConv(I2L, i)), TVoid)));
+			case JRef(how, cls, _):
+				out.push(SExpr(ECallHost("rt_jni_set", vector(f.env, EInt(Jni.T_OBJECT | st), target, f.fid, jniRef(f.env, x, t, how, cls)), TVoid)));
+			case _:
+		}
+		out.push(SExpr(ECallHost("rt_jni_leave", vector(f.env), TVoid)));
+	}
+
+	// a constructor of a class implementing Java interfaces (Jni): the
+	// descriptor of the instance's type made, by the first constructor to
+	// run (the most derived class's), once per type
+	function jniConstructor() {
+		if (self == null || !Jni.available()) return;
+		var desc = l.jniClass(self);
+		if (desc == null) return;
+		var o = ECast(TRef(RAny), ELocal(thisLocal));
+		var fn = ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(desc)), TI64);
+		out.push(SIf(EBin(Eq, ECallHost("rt_jni_known", vector(o), TI32), EInt(0)),
+			vector(SExpr(ECallHost("hxmc_unsafe_Mem_callRef1", vector(fn, o), TRef(RAny)))), vector()));
+	}
+
+	// the descriptor function of a class implementing Java interfaces
+	// (Lower.jniSide): its argument an instance (args[0]), whose type gets
+	// the descriptor (rt_jni_register): the proxy class's name, each native
+	// (its name, JNI signature, C entry), the record field's offset
+	public function jniDescBody(proxy:String, natives:Array<{name:String, sig:String, native:String, sym:String}>) {
+		var o = fi.args[0];
+		var d = newLocal("d", TI64);
+		out.push(SSet(d, ECallHost("rt_jni_desc", vector(EStr(proxy), EInt(natives.length)), TI64)));
+		for (i in 0...natives.length) {
+			var n = natives[i];
+			out.push(SExpr(ECallHost("rt_jni_native", vector(ELocal(d), EInt(i), EStr(n.native), EStr(Jni.nativeSig(n.sig)), ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(n.sym)), TI64)), TVoid)));
+		}
+		var obj = ECast(TRef(RObj(self)), ELocal(o));
+		var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ELocal(o)), TI64));
+		var off = EConv(L2I, EBin(LSub, EFieldAddr(self, self.fieldIndex(Jni.FIELD), obj), base));
+		out.push(SExpr(ECallHost("rt_jni_register", vector(ELocal(o), ELocal(d), off), TVoid)));
+		out.push(SReturn(ENull(TRef(RAny))));
+	}
+
+	// the work of a native (Lower.jniSide): the Haxe object of the proxy's
+	// handle (args[2]: rt_jni_self), the Java arguments made Haxe values,
+	// method impl of class c called (dispatched: a subclass's override
+	// answers), its result made a Java value (a local reference of the
+	// native's frame); an exception made a pending Java one (rt_jni_throw)
+	public function jniThunkBody(c:TClass, decl:TClassField, impl:TClassField, s:core.TType.TSignature) {
+		var pos = impl.cfPos;
+		if (boxed == null) boxed = new Map();
+		inline function mk(d:TExprDef, t:core.TType.T):TExpr
+			return TFunctions.mk(d, t, pos);
+		var env = ELocal(fi.args[0]);
+		var zero:Null<Ex> = fi.ret == TVoid ? null : fi.ret == TI64 ? EConv(I2L, EInt(0)) : nullOf(fi.ret);
+		var o = newLocal("o", TRef(RAny));
+		out.push(SSet(o, ECallHost("rt_jni_self", vector(ELocal(fi.args[2])), TRef(RAny))));
+		out.push(SIf(EBin(RefEq, ELocal(o), ENull(TRef(RAny))), vector(SReturn(zero)), vector()));
+		var ct = TInst(c, vector());
+		var vo = TFunctions.allocVar(VGenerated, "self", ct, pos);
+		var oc = newLocal("self", ty(ct));
+		out.push(SSet(oc, ECast(ty(ct), ELocal(o))));
+		locals.set(vo.vId, oc);
+		var targs = [];
+		for (i in 0...s.args.length) {
+			var a = fi.args[i + 3];
+			var t = s.args[i].type;
+			var v = TFunctions.allocVar(VGenerated, s.args[i].name, t, pos);
+			var lo = newLocal(s.args[i].name, ty(t));
+			switch Jni.value(t) {
+				case JRef(how, cls, _):
+					out.push(SSet(lo, coerce(ECallHost("rt_jni_result", vector(env, ELocal(a), EInt(how), cls == null ? nullOf(TRef(RStr)) : EStr(cls)), TRef(RAny)), TRef(RAny), lo.ty)));
+				case _: out.push(SSet(lo, ELocal(a)));
+			}
+			locals.set(v.vId, lo);
+			targs.push(mk(TLocal(v), t));
+		}
+		var call = mk(TCall(mk(TField(mk(TLocal(vo), ct), FInstance(c, vector(), impl)), impl.cfType), Vector.fromArrayCopy(targs)), s.ret);
+		var r = newLocal("r", fi.ret == TVoid ? TI32 : fi.ret);
+		var exn = newLocal("e", TRef(RAny));
+		var rv = Jni.value(s.ret);
+		var body = block(() -> {
+			switch rv {
+				case JVoid:
+					stmt(call);
+				case JRef(how, cls, _):
+					var x = value(call);
+					out.push(SSet(r, ECallHost("rt_jni_arg", vector(env, coerce(x, tyOf(call), TRef(RAny)), EInt(how), cls == null ? nullOf(TRef(RStr)) : EStr(cls)), TI64)));
+				case _:
+					out.push(SSet(r, coerce(value(call), tyOf(call), fi.ret)));
+			}
+		});
+		var onError = [SExpr(ECallHost("rt_jni_throw", vector(env, ELocal(exn)), TVoid))];
+		if (zero != null) onError.push(SSet(r, zero));
+		out.push(STry(body, vector({test: null, l: exn, body: Vector.fromArrayCopy(onError)})));
+		fi.hasTry = true;
+		out.push(SReturn(fi.ret == TVoid ? null : ELocal(r)));
 	}
 
 	// ---- blocks (ObjC): a function where a block goes (a block of function

@@ -122,6 +122,9 @@ interface LowerQueries {
 	// (ClassInfo.com; null: none), of a class a logged query gave, compared
 	// by its binding (bindClass)
 	@:derived function comClass(ci:ClassInfo):Null<String>;
+	// a class implementing Java interfaces: its descriptor function's symbol
+	// (ClassInfo.jni; null: none), compared by its binding (bindClass)
+	@:derived function jniClass(ci:ClassInfo):Null<String>;
 	@:derived function idFields(ci:ClassInfo):Array<String>;
 	// (its own fields holding weak ids, @:hxmc.weak: ClassInfo.weakFields, compared as idFields)
 	@:derived function weakFields(ci:ClassInfo):Array<String>;

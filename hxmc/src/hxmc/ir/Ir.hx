@@ -103,6 +103,12 @@ class ClassInfo {
 	// its descriptor function (its own, or the nearest superclass's that
 	// implements interfaces), which its constructors call
 	public var com:Null<String> = null;
+	// a class implementing Java interfaces (Jni; Linux, Android and macOS):
+	// the symbol of its descriptor function (its own, or the nearest
+	// superclass's that implements interfaces), which its constructors call,
+	// and its own proxy (what the manifest lists: Jni.manifest)
+	public var jni:Null<String> = null;
+	public var jniProxy:Null<JniProxy> = null;
 	// its own fields holding ids (ObjC: their stores retain, its death releases them)
 	public var idFields:Array<String> = [];
 	// its own fields holding weak ids (@:hxmc.weak): a cell each, outside the heap
@@ -472,6 +478,12 @@ typedef IrCase = {values:Vector<Int>, body:Vector<Stmt>};
 // a catch of STry: its test of the exception (null: any), the local it is
 // bound to, its body
 typedef IrCatch = {test:Null<Ex->Ex>, l:Local, body:Vector<Stmt>};
+
+// the Java proxy of a Haxe class implementing Java interfaces (Jni.manifest):
+// its class, the Haxe class, the interfaces it implements, its methods (each
+// one's Java name and signature, and the native method its Java body calls),
+// the descriptor function (live: the class is)
+typedef JniProxy = {proxy:String, haxe:String, interfaces:Array<String>, methods:Array<{name:String, sig:String, native:String}>, desc:FuncInfo};
 
 class Program {
 	public var classes:Array<ClassInfo> = [];

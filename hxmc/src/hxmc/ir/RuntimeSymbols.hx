@@ -76,6 +76,13 @@ class RuntimeSymbols {
 	static function notWindows():Bool
 		return Lower.targetOs != 2;
 
+	// (JNI: Linux, Android and macOS, hxmc.rt.JniKind)
+	static function jni():Bool
+		return Jni.available();
+
+	static function notJni():Bool
+		return !Jni.available();
+
 	public static final SYMBOLS:Array<RuntimeSymbol> = [
 		// MirBuild (and DataGen through its builders)
 		{sym: "rt_init", kind: FUNC, families: LINEAR, by: "DataGen.mainBody: main, _start"},
@@ -147,6 +154,26 @@ class RuntimeSymbols {
 		{sym: "rt_com_wstr_out", kind: IMPL, families: NATIVE, by: "FnLower.comThunkBody: a String result given to COM (CoTaskMemAlloc)", when: windows},
 		{sym: "rt_com_bstr_string", kind: IMPL, families: NATIVE, by: "FnLower.comThunkBody: a BSTR argument made a String", when: windows},
 		{sym: "rt_com_hresult", kind: IMPL, families: NATIVE, by: "FnLower.comThunkBody: the HRESULT of an exception a Haxe method threw to COM", when: windows},
+		{sym: "rt_jni_unavailable", kind: IMPL, families: LINEAR, by: "FnLower.jniUnavailable: a Java operation where there is no JNI", when: notJni},
+		// JNI (hxmc.rt.JniKind: Linux, Android, macOS)
+		{sym: "rt_jni_enter", kind: IMPL, families: NATIVE, by: "FnLower.jniInvoke, jniFieldOf: the thread's JNIEnv, a local frame pushed", when: jni},
+		{sym: "rt_jni_leave", kind: IMPL, families: NATIVE, by: "FnLower.jniInvoke, jniField, jniSetField: the frame popped, a Java exception thrown", when: jni},
+		{sym: "rt_jni_class", kind: IMPL, families: NATIVE, by: "FnLower.jniInvoke, jniFieldOf: a Java class resolved into its cell", when: jni},
+		{sym: "rt_jni_member", kind: IMPL, families: NATIVE, by: "FnLower.jniInvoke, jniFieldOf: a method or field ID resolved into its cell", when: jni},
+		{sym: "rt_jni_arg", kind: IMPL, families: NATIVE, by: "FnLower.jniRef, jniThunkBody: a Haxe value as a Java reference", when: jni},
+		{sym: "rt_jni_result", kind: IMPL, families: NATIVE, by: "FnLower.jniResult, jniThunkBody: a Java reference as a Haxe value", when: jni},
+		{sym: "rt_jni_call", kind: IMPL, families: NATIVE, by: "FnLower.jniInvoke: Call<Type>MethodA, NewObjectA", when: jni},
+		{sym: "rt_jni_call_f", kind: IMPL, families: NATIVE, by: "FnLower.jniInvoke: Call<Float|Double>MethodA", when: jni},
+		{sym: "rt_jni_get", kind: IMPL, families: NATIVE, by: "FnLower.jniField: Get<Type>Field", when: jni},
+		{sym: "rt_jni_get_f", kind: IMPL, families: NATIVE, by: "FnLower.jniField: Get<Float|Double>Field", when: jni},
+		{sym: "rt_jni_set", kind: IMPL, families: NATIVE, by: "FnLower.jniSetField: Set<Type>Field", when: jni},
+		{sym: "rt_jni_set_f", kind: IMPL, families: NATIVE, by: "FnLower.jniSetField: Set<Float|Double>Field", when: jni},
+		{sym: "rt_jni_known", kind: IMPL, families: NATIVE, by: "FnLower.jniConstructor: whether the type has its natives' descriptor", when: jni},
+		{sym: "rt_jni_desc", kind: IMPL, families: NATIVE, by: "FnLower.jniDescBody: a class's proxy descriptor", when: jni},
+		{sym: "rt_jni_native", kind: IMPL, families: NATIVE, by: "FnLower.jniDescBody: a native method of the proxy", when: jni},
+		{sym: "rt_jni_register", kind: IMPL, families: NATIVE, by: "FnLower.jniDescBody: the descriptor of a type", when: jni},
+		{sym: "rt_jni_self", kind: IMPL, families: NATIVE, by: "FnLower.jniThunkBody: a native finds its Haxe object", when: jni},
+		{sym: "rt_jni_throw", kind: IMPL, families: NATIVE, by: "FnLower.jniThunkBody: a Haxe exception reaching Java made a Java one", when: jni},
 		{sym: "rt_weak_free", kind: FUNC, families: NATIVE, by: "FnLower.objcModeDeallocBody: a weak slot given back at dealloc"},
 		{sym: "hxmc_alloc_slow", kind: FUNC, families: LINEAR, by: "MemLower.alloc, DataGen's allocators, x64.Emit, WasmEmitter"},
 		{sym: "hxmc_alloc_slow_raw", kind: FUNC, families: LINEAR, by: "MemLower.allocDyn (Mem.allocRaw, Mem.allocArrayRaw)"},

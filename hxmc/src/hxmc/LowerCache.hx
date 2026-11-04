@@ -970,6 +970,8 @@ class CachedLower extends Lower {
 		if (!sameObjC(o, n)) mismatch("class " + o.name + " changed");
 		// (COM: its descriptor function, LowerQueries.comClass)
 		if (o.com != n.com) mismatch("class " + o.name + " changed");
+		// (Java: its descriptor function, LowerQueries.jniClass)
+		if (o.jni != n.jni) mismatch("class " + o.name + " changed");
 		bindClass(o.sup, n.sup);
 		for (i in 0...o.fields.length) {
 			if (o.fields[i].name != n.fields[i].name) mismatch("class " + o.name + " changed");

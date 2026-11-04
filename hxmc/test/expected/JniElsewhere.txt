@@ -1,0 +1,12 @@
+exit 0
+JniElsewhere.hx:41: false
+JniElsewhere.hx:37: a static call: a JavaException, true
+JniElsewhere.hx:37: a static field: a JavaException, true
+JniElsewhere.hx:37: a static field set: a JavaException, true
+JniElsewhere.hx:37: a constructor: a JavaException, true
+JniElsewhere.hx:37: an instance call: a JavaException, true
+JniElsewhere.hx:37: an instance field: a JavaException, true
+JniElsewhere.hx:37: a Haxe object to Java: a JavaException, true
+JniElsewhere.hx:37: Java.same: a JavaException, true
+JniElsewhere.hx:37: a JavaArray: a JavaException, true
+JniElsewhere.hx:54: 1, 0
