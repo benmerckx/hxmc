@@ -7,7 +7,7 @@ import hxmc.unsafe.Int16;
 import hxmc.unsafe.UInt8;
 import hxmc.simd.*;
 
-// Image kernels for SIMD (docs/plans/simd.md, "Baseline"): an 8x8 integer
+// Image kernels for SIMD (docs/plans/simd.md, "Benchmarks"): an 8x8 integer
 // inverse DCT over many blocks, YCbCr to RGBA over a large image, a
 // bilinear resize, each as plain Haxe over Bytes and Vector (`bytes`) and as
 // a kernel over spans (`span`), and the same in C (simd_bench.c, the same

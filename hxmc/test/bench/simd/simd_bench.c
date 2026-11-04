@@ -1,4 +1,4 @@
-// The scalar C side of SimdBench.hx (docs/plans/simd.md, "Baseline"): the
+// The scalar C side of SimdBench.hx (docs/plans/simd.md, "Benchmarks"): the
 // same three kernels, the same data and the same checksums, so that hxmc's
 // code can be compared with the system compiler's at -O2, at -O3 without the
 // vectorizers and at -O3 with them. `make bench-simd` builds and runs every
