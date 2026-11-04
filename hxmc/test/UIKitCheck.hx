@@ -17,7 +17,7 @@ using StringTools;
 //   first of each): booted (simctl bootstatus -b), installed, launched
 //   (the app's stdout and stderr in files), uninstalled; a launch the app
 //   did not start in (a cold device on a hosted runner) is retried after a
-//   reboot, twice; a device booted here is shut down after.
+//   reboot (and an erase, for a device booted here), twice; a device booted here is shut down after.
 // Each prints what the app saw: the delegate called, the body run after it,
 // the window key and sized, the label's text. Exits non-zero on a failure;
 // no Xcode (or not macOS): skipped.
@@ -84,9 +84,10 @@ class UIKitCheck {
 	}
 
 	static inline final SIM = "ios-sim-arm64";
-	// launches on a device: the first and two more, each after a reboot (the
-	// second retry erases a device this check booted), while the device's
-	// time is under BUDGET seconds
+	// launches on a device: the first and two more, each after a reboot (and
+	// an erase, for a device this check booted: a reboot alone has left
+	// simctl's launch stuck again), while the device's time is under BUDGET
+	// seconds
 	static inline final ATTEMPTS = 3;
 	static inline final BUDGET = 720;
 
@@ -131,7 +132,7 @@ class UIKitCheck {
 		note('${d.name}', 'bootstatus: exit ${b.code}: ' + tail((b.out + b.err).trim(), 300));
 		var minutes = Std.int((now() - since) / 60) + 2;
 		var log = exec(["xcrun", "simctl", "spawn", d.udid, "log", "show", "--style", "compact", "--last", '${minutes}m', "--predicate",
-			'process == "UIKitHello" OR eventMessage CONTAINS "$ID"'], {timeout: 120});
+			'process == "UIKitHello" OR eventMessage CONTAINS[c] "uikithello"'], {timeout: 120});
 		note('${d.name}', 'log (exit ${log.code}):\n' + tail(log.out + log.err, 3000));
 		var reports = '${Sys.getEnv("HOME")}/Library/Logs/DiagnosticReports';
 		var crashes = try [for (f in FileSystem.readDirectory(reports)) if (f.startsWith("UIKitHello")) f] catch (_:Dynamic) [];
@@ -192,7 +193,7 @@ class UIKitCheck {
 			for (attempt in 0...ATTEMPTS) {
 				if (attempt > 0) {
 					if (now() - t0 > BUDGET) break;
-					var erase = booted && attempt == ATTEMPTS - 1;
+					var erase = booted;
 					note('${d.name}', 'retrying after ${erase ? "erasing and " : ""}rebooting the device ($why)');
 					diagnose(d, t0);
 					reset(d, erase);
