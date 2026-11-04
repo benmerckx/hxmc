@@ -228,7 +228,8 @@ space by copying into a new region.
   systems held by Haxe objects (`hxmc.rt.Foreign`): toggle references for
   peers, one box per object, owned and weak fields, detach, and releases put
   off past a stop of the world, per kind of a table of hooks the collector
-  reads (Objective-C's is the first, `hxmc.rt.ObjCKind`;
+  reads (Objective-C's is the first, `hxmc.rt.ObjCKind`; COM's,
+  `hxmc.rt.ComKind`, on Windows: [interop.md](interop.md#com);
   [plans/foreign-objects.md](plans/foreign-objects.md)). A pass over the
   peers per collection (their toggles), and over the owned fields and boxes
   in the space collected; nothing without them.

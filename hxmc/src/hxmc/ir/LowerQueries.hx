@@ -118,6 +118,10 @@ interface LowerQueries {
 	// (classInfo, ty; the body's own, by its function): its binding compares
 	// both (bindClass)
 	@:derived function objcPeer(ci:ClassInfo):Null<ObjCClass>;
+	// a class implementing COM interfaces: its descriptor function's symbol
+	// (ClassInfo.com; null: none), of a class a logged query gave, compared
+	// by its binding (bindClass)
+	@:derived function comClass(ci:ClassInfo):Null<String>;
 	@:derived function idFields(ci:ClassInfo):Array<String>;
 	// (its own fields holding weak ids, @:hxmc.weak: ClassInfo.weakFields, compared as idFields)
 	@:derived function weakFields(ci:ClassInfo):Array<String>;

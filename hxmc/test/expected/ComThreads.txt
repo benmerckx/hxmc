@@ -1,0 +1,5 @@
+exit 0
+ComThreads.hx:78: made, 45, 10
+ComThreads.hx:83: released by its apartment's thread, true, 0, true, true
+ComThreads.hx:94: held after its maker ended, 5
+ComThreads.hx:98: released by another thread, 0, true

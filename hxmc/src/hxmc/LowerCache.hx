@@ -968,6 +968,8 @@ class CachedLower extends Lower {
 		if (!bind(o, n)) return;
 		if (o.name != n.name || o.isInterface != n.isInterface || o.fields.length != n.fields.length) mismatch("class " + o.name + " changed");
 		if (!sameObjC(o, n)) mismatch("class " + o.name + " changed");
+		// (COM: its descriptor function, LowerQueries.comClass)
+		if (o.com != n.com) mismatch("class " + o.name + " changed");
 		bindClass(o.sup, n.sup);
 		for (i in 0...o.fields.length) {
 			if (o.fields[i].name != n.fields[i].name) mismatch("class " + o.name + " changed");

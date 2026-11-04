@@ -2,6 +2,7 @@ package hxmc.ir;
 
 import hxmc.ir.Ir;
 import hxmc.ir.LowerQueries;
+import hxmc.ir.Com.ComValue;
 import core.Ast.Binop;
 import core.Ast.Unop;
 import core.TType;
@@ -760,6 +761,7 @@ class Lower implements LowerQueries {
 						}
 						else if (CInterop.isOpaque(c)) TI64; // the address of C memory (CInterop: through a Ptr only)
 						else if (ObjC.isObjC(c) || ObjC.isCF(c)) TId; // an Objective-C object (or C's, CGColorRef): its id
+						else if (Com.isCom(c)) TRef(RAny); // a COM value: a foreign object's box, or a Haxe object (Com)
 						else if (c.hasClassFlag(CInterface)) TRef(RObj(classInfo(c)));
 						else if (c.hasClassFlag(CExtern)) TRef(RNative(nativeName(c)));
 						else TRef(RObj(classInfo(c)));
@@ -974,6 +976,9 @@ class Lower implements LowerQueries {
 				CInterop.posOf(c.clPos));
 		if (CInterop.isNativeClass(c)) fail(c.clPath.name + " is a C type (@:hxmc.struct or @:hxmc.opaque): it has no class value (Struct.sizeOf takes it only as a literal argument)");
 		if (c.hasClassFlag(CInterface)) {
+			// (a COM interface is extern: its methods are slots of a vtable, Com)
+			if (hasMeta(":hxmc.com", c.clMeta))
+				throw new LowerError('${c.clPath.name} is declared @:hxmc.com but not extern: a COM interface is an extern interface', CInterop.posOf(c.clPos));
 			// interfaces have no layout: values are any object
 			ci = new ClassInfo(core.Globals.sTypePath(c.clPath), nativeName(c), null);
 			ci.isInterface = true;
@@ -1033,6 +1038,9 @@ class Lower implements LowerQueries {
 			ci.fields.push({name: ObjC.ID_FIELD, ty: TId});
 			ci.fields.push({name: ObjC.CELL_FIELD, ty: TI64});
 		}
+		// (a class implementing COM interfaces: its block's field, its
+		// descriptor and thunks, Com; Windows only, elsewhere a Haxe class)
+		if (targetOs == 2) comSide(c, ci, sup);
 		var own = [];
 		for (f in c.clOrderedFields)
 			switch f.cfKind {
@@ -1122,6 +1130,82 @@ class Lower implements LowerQueries {
 			}));
 		}
 		return ci;
+	}
+
+	// ---- Haxe classes implementing COM interfaces (Com)
+
+	// c's COM side, when it implements interfaces its superclasses do not:
+	// the field holding its block (in the first such class), a thunk per
+	// method slot of each interface's vtable (a C entry, Com.entry, over a
+	// work function, FnLower.comThunkBody), its descriptor function
+	// (FnLower.comDescBody), which its constructors call once per type
+	// (FnLower.comConstructor); a subclass adding none has its superclass's
+	function comSide(c:TClass, ci:ClassInfo, sup:ClassInfo) {
+		if (!Com.addsInterfaces(c)) {
+			ci.com = sup.com;
+			return;
+		}
+		var where = CInterop.posOf(c.clPos);
+		var path = core.Globals.sTypePath(c.clPath);
+		if (c.clParams.length > 0) throw new LowerError('$path implements a COM interface: a generic class cannot (its vtables are one class\'s)', where);
+		if (c.clConstructor == null)
+			throw new LowerError('$path implements a COM interface its superclass does not: it needs a constructor of its own (which registers its vtables)', where);
+		if (sup.com == null) ci.fields.push({name: Com.FIELD, ty: TI64});
+		var leaves = Com.implemented(c);
+		var module = moduleOf(c);
+		var syms = [];
+		for (i in 0...leaves.length) {
+			var leaf = leaves[i];
+			var list = [];
+			for (sl in Com.slots(leaf)) {
+				var decl = sl.cf, slot = sl.slot;
+				var impl = Com.implOf(c, decl);
+				if (impl == null) throw new LowerError('$path implements ${leaf.clPath.name} but not its method ${decl.cfName}', where);
+				var s = switch TFunctions.follow(decl.cfType) {
+					case TFun(s): s;
+					case _: throw new LowerError('COM method ${decl.cfName} is not a function', CInterop.posOf(decl.cfPos));
+				};
+				var cs = Com.csig(decl, s);
+				var mode = Com.mode(decl);
+				if (mode == Com.DIRECT && cs.sretFirst)
+					throw new LowerError('$path.${impl.cfName}: a Haxe method returning a struct to COM (@:hxmc.com.direct) is not supported yet', CInterop.posOf(impl.cfPos));
+				var name = Com.THUNK + ci.ident + "_" + i + "_" + slot;
+				var w = new FuncInfo(name + "__work", module);
+				w.display = path + "." + impl.cfName + " (" + leaf.clPath.name + "." + decl.cfName + ", called by COM)";
+				w.pos = impl.cfPos;
+				w.args = [new Local(0, "this", TI64)];
+				for (k in 0...s.args.length)
+					w.args.push(new Local(k + 1, s.args[k].name, switch Com.value(s.args[k].type) {
+						case VC(_): ty(s.args[k].type);
+						case _: TI64;
+					}));
+				if (cs.retval != null) w.args.push(new Local(w.args.length, "retval", TI64));
+				w.ret = mode != Com.DIRECT ? TI32 : cs.ret == CInterop.CTy.CVoid ? TVoid : ty(s.ret);
+				prog.funcs.push(w);
+				pending.push(guarded(w, () -> {
+					var fl = new FnLower(this, w, null, null);
+					fl.comThunkBody(c, decl, impl, s, cs);
+					fl.finish();
+				}));
+				var e = Com.entry(name, name, module, w, {args: [CInterop.CTy.CPtr].concat(cs.args), ret: cs.ret});
+				e.pos = impl.cfPos;
+				prog.funcs.push(e);
+				list.push({slot: slot, sym: name});
+			}
+			syms.push(list);
+		}
+		var d = new FuncInfo(Com.DESC + ci.ident, module);
+		d.cSymbol = d.name;
+		d.display = path + " (its COM vtables)";
+		d.args = [new Local(0, "o", TRef(RAny))];
+		d.ret = TRef(RAny);
+		prog.funcs.push(d);
+		pending.push(guarded(d, () -> {
+			var fl = new FnLower(this, d, ci, null);
+			fl.comDescBody(leaves, syms);
+			fl.finish();
+		}));
+		ci.com = d.name;
 	}
 
 	// ---- Objective-C mode classes (ObjC.isMode)
@@ -1258,6 +1342,8 @@ class Lower implements LowerQueries {
 	function addIface(ci:ClassInfo, i:TClass) {
 		// (an Objective-C protocol: the Objective-C class's, ObjC.protocols; Id too)
 		if (ObjC.isProtocol(i) || ObjC.isId(i)) return;
+		// (a COM interface: its calls go through vtables, Com; a Haxe class's are its thunks')
+		if (Com.isCom(i)) return;
 		var ii = classInfo(i);
 		if (ci.ifaces.indexOf(ii) < 0) ci.ifaces.push(ii);
 		for (j in i.clImplements)
@@ -2081,6 +2167,9 @@ class Lower implements LowerQueries {
 
 	public function objcPeer(ci:ClassInfo):Null<ObjCClass>
 		return ci.objc;
+
+	public function comClass(ci:ClassInfo):Null<String>
+		return ci.com;
 
 	public function idFields(ci:ClassInfo):Array<String>
 		return ci.idFields;

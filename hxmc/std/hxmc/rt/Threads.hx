@@ -474,6 +474,11 @@ class Threads {
 	@:hxmc.export("rt_objc_attach") @:hxmc.unsafe static function objcAttach():Void
 		if (self.isNull()) attach();
 
+	// the same for another kind of foreign objects' callbacks: a COM thunk
+	// (hxmc.ir.Com.entry), called on any thread (an apartment's, a worker COM chose)
+	@:hxmc.export("rt_foreign_attach") @:hxmc.unsafe static function foreignAttach():Void
+		if (self.isNull()) attach();
+
 	// (no safepoint from the call to the insertion: job is a root from then on)
 	@:hxmc.unsafe static function insert(m:Ptr<Mutator>, job:Dynamic):Int {
 		Os.lock(wl);

@@ -2,7 +2,8 @@
 
 Reference-counted objects of other object systems held by Haxe objects:
 Objective-C's (built: [interop.md](../interop.md#memory),
-[objc.md](objc.md)), COM's, JNI's and GObject's (next). What does not depend
+[objc.md](objc.md)), COM's (built: [interop.md](../interop.md#com),
+[com.md](com.md)), JNI's and GObject's (next). What does not depend
 on the system is the runtime's `hxmc.rt.Foreign`; a system is a **kind**, a
 row of the kind table: its hooks (C functions) and its flags. The collector
 names no kind: it calls `Foreign.scan` (roots) and `Foreign.sweep` (after a
@@ -133,13 +134,13 @@ lowering gets `rt_foreign_*` exports with its first caller (each in
 
 ## The systems
 
-| | Objective-C (built) | COM | GObject | JNI |
+| | Objective-C (built) | COM (built) | GObject | JNI |
 | --- | --- | --- | --- | --- |
-| retain | `objc_retain` | `AddRef` (vtable slot 1) through a thunk returning `ref` | `g_object_ref` | `NewGlobalRef` (a new handle) |
-| release | `objc_release` | `Release` (slot 2; returns the count) | `g_object_unref`; a peer's: `g_object_remove_toggle_ref` | `DeleteGlobalRef` |
-| toggle | `TOGGLE_COUNT`, `_objc_rootRetainCount > 1` | `TOGGLE_RELEASE` (IUnknown has no count query); a Haxe object implementing a COM interface keeps its own count, read as `TOGGLE_COUNT` | `TOGGLE_NOTIFY`: `g_object_add_toggle_ref`'s notify calls `toggle(entry, !is_last_ref)` | none: the JVM has no counts (below) |
+| retain | `objc_retain` | `AddRef` (vtable slot 1) through a hook returning `ref` (`ComKind.retain`) | `g_object_ref` | `NewGlobalRef` (a new handle) |
+| release | `objc_release` | `Release` (slot 2; returns the count): a foreign object's in a safe region | `g_object_unref`; a peer's: `g_object_remove_toggle_ref` | `DeleteGlobalRef` |
+| toggle | `TOGGLE_COUNT`, `_objc_rootRetainCount > 1` | `TOGGLE_RELEASE` (IUnknown has no count query), threshold 1: a peer is a Haxe object implementing COM interfaces, whose COM object (the runtime's block) keeps its count in the runtime's memory, so the toggle's AddRef and Release are the runtime's own functions | `TOGGLE_NOTIFY`: `g_object_add_toggle_ref`'s notify calls `toggle(entry, !is_last_ref)` | none: the JVM has no counts (below) |
 | identity | the id | `QueryInterface(IID_IUnknown)`, then `Release`: the canonical `IUnknown*`, stable while held | the pointer | `System.identityHashCode` as the key, `same`: `IsSameObject` |
-| peer | the instance variable `hxmc_peer` | a field of the runtime's own COM object for a Haxe class implementing interfaces | a `GQuark`'s qdata | a `long` field of the Java peer class (`GetLongField`) |
+| peer | the instance variable `hxmc_peer` | a word of the runtime's own COM object (its block: a vtable whose QueryInterface is the runtime's) | a `GQuark`'s qdata | a `long` field of the Java peer class (`GetLongField`) |
 | weak | `objc_initWeak`, `objc_loadWeakRetained`, `objc_destroyWeak` | WinRT's `IWeakReferenceSource::GetWeakReference`, `IWeakReference::Resolve`, `Release`; classic COM: none (no detach of peers, no weak fields) | `g_weak_ref_init`, `g_weak_ref_get`, `g_weak_ref_clear` | `NewWeakGlobalRef`, `NewGlobalRef` of it (null once collected), `DeleteWeakGlobalRef` |
 | batch | an autorelease pool | none | none | `GetEnv` or `AttachCurrentThread`, then `PushLocalFrame`/`PopLocalFrame` |
 | releases | `RELEASE_IN_STOP` (libobjc's release runs no Haxe code; mode classes' deallocs put themselves off) | put off; `RELEASE_ON_MAKER` for apartment-threaded objects | put off; `RELEASE_ON_MAIN` for GTK's | put off, any thread |
@@ -152,15 +153,18 @@ entry order, then owned fields in registration order).
 
 **What each still needs**:
 
-- **COM** (PR 2): the lowering (interface calls through vtables, `HRESULT`s,
-  `QueryInterface` casts), thunks for `AddRef`/`Release` as hooks (vtable
-  calls, not C functions), the runtime's own COM objects for Haxe classes
-  implementing interfaces (their count kept by the runtime, so their toggle
-  reads no foreign memory in the stop). Threads: `CoInitializeEx` on every
-  thread making calls (in the batch, or at thread start); an STA object's
-  `Release` runs on its apartment's thread (`RELEASE_ON_MAKER`); an ended
+- **COM** (built: `hxmc.rt.ComKind`, [com.md](com.md)): boxes are per
+  interface pointer (identity the canonical IUnknown, `same` the pointer);
+  peers are Haxe objects implementing interfaces, paired at their first
+  use as a pointer (`Foreign.pair`, untyped: the block is found from the
+  object by its class's descriptor, not by its first slot). Threads:
+  `CoInitializeEx` is the program's (`Com.init`, every thread making
+  calls); an STA object's `Release` runs on its apartment's thread
+  (`RELEASE_ON_MAKER`, woken by `PostThreadMessageW`); an ended
   apartment's queued calls run on any thread (its proxies were
-  disconnected by `CoUninitialize`, their `Release` is local).
+  disconnected by `CoUninitialize`, their `Release` is local). Generated
+  code reaches it through `rt_com_*` and `rt_foreign_attach`. No weak
+  hooks: classic COM has no weak references (WinRT's: com.md).
 - **GObject**: a peer's reference is a toggle reference, released with
   `g_object_remove_toggle_ref` (notify and data), not `g_object_unref`: a
   hook for a peer's release (`unpair`, null: `release`). Finalisers that

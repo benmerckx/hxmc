@@ -1,0 +1,21 @@
+exit 0
+ComObjects.hx:136: run, 42, 1
+ComObjects.hx:137: name, 9
+ComObjects.hx:138: mix, 4345
+ComObjects.hx:139: qi, 15
+ComObjects.hx:140: thrown, 0x80070057, 0x80004005
+ComObjects.hx:142: same pointer, true, true
+ComObjects.hx:145: call, 10, 4
+ComObjects.hx:149: call thrown, 0x80070057
+ComObjects.hx:153: through the interface, 8, doubler a
+ComObjects.hx:154: query, true, true, false
+ComObjects.hx:158: override, 21, 6
+ComObjects.hx:161: both, 2, true, 77
+ComObjects.hx:164: count, 1
+ComObjects.hx:166: held, 2
+ComObjects.hx:168: dropped, 1
+ComObjects.hx:174: kept alive, 0, 20
+ComObjects.hx:177: collected once released, 1
+ComObjects.hx:186: one held of 300, true, 2
+ComObjects.hx:192: threads, 119600, true
+ComObjects.hx:193: still, true, 2, 77, w

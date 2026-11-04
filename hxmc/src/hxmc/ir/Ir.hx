@@ -99,6 +99,10 @@ class ClassInfo {
 	// every subclass shares), its methods Objective-C can call (ObjC.imps),
 	// the function registering it (ObjC.REGISTER)
 	public var objc:Null<ObjCClass> = null;
+	// a class implementing COM interfaces (Com; Windows only): the symbol of
+	// its descriptor function (its own, or the nearest superclass's that
+	// implements interfaces), which its constructors call
+	public var com:Null<String> = null;
 	// its own fields holding ids (ObjC: their stores retain, its death releases them)
 	public var idFields:Array<String> = [];
 	// its own fields holding weak ids (@:hxmc.weak): a cell each, outside the heap

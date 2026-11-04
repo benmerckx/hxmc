@@ -1,0 +1,12 @@
+exit 0
+ComDemos.hx:217: options, true, true
+ComDemos.hx:220: file name, notes été.txt
+ComDemos.hx:228: file type, 2
+ComDemos.hx:239: folder, C:\
+ComDemos.hx:243: interfaces, true, true, true, false
+ComDemos.hx:250: advise, 1, true, true, []
+ComDemos.hx:259: format, 16, 400, 6, 5
+ComDemos.hx:265: layout, true, true, true, 120
+ComDemos.hx:268: one line, 1, true
+ComDemos.hx:269: a layout is a format, true, 16
+ComDemos.hx:279: done
