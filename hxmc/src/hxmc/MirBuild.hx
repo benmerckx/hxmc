@@ -2137,6 +2137,19 @@ class MirBuild extends MirWriter {
 	// instruction selection expands calls of these symbols inline
 	public static inline var SPECIAL = "hxmc$";
 
+	// the memory class of a raw access (Mem.getI32, setI32...) here: in the
+	// runtime's accessors of haxe.io.BytesData (hxmc.rt.Bytes: getInt32,
+	// setFloat...), the bytes of the array, which no object field or array
+	// header shares (Opt.MElem: a Bytes' storage and length are not read
+	// again after each store); elsewhere any memory
+	function rawCls():Int
+		return fn != null && BYTES_ACCESSORS.exists(fn.display) ? Opt.MElem : Opt.MOther;
+
+	static final BYTES_ACCESSORS = [
+		for (n in ["getUInt16", "setUInt16", "getInt32", "setInt32", "getFloat", "setFloat", "getDouble", "setDouble"])
+			"hxmc.rt.Bytes." + n => true
+	];
+
 	function intrinsic(name:String, args:Vector<Ex>):Int {
 		var short = name.substr(name.lastIndexOf("_") + 1);
 		var atomic = StringTools.startsWith(name, "hxmc_unsafe_Atomic_");
@@ -2160,10 +2173,10 @@ class MirBuild extends MirWriter {
 		inline function ld(ty:MTy, size:Int, signed:Bool):Int {
 			var p = ex(args[0]);
 			var m = memAt(args[1]);
-			return load(ty, size, p, m.disp, signed, m.index, 1);
+			return loadM(rawCls(), ty, size, p, m.disp, signed, m.index, 1);
 		}
 		inline function st(size:Int, v:Int, p:Int, m:{disp:Int, index:Int}):Int {
-			store(size, p, m.disp, v, m.index, 1);
+			storeM(rawCls(), size, p, m.disp, v, m.index, 1);
 			return iconst(0);
 		}
 		inline function ldAt(ty:MTy, size:Int):Int {

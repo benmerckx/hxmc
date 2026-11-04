@@ -85,7 +85,9 @@ class Opt {
 
 	// runtime functions that write no memory the code reads and do not collect
 	static var readOnly = [
-		"hx_aget_i_slow" => true, "hx_aget_f_slow" => true, "hx_aget_l_slow" => true, "rt_write_barrier" => true, "hxmc_barrier_slow" => true
+		"hx_aget_i_slow" => true, "hx_aget_f_slow" => true, "hx_aget_l_slow" => true, "rt_write_barrier" => true, "hxmc_barrier_slow" => true,
+		// (inline conversions: no memory at all)
+		"hxmc$f64_to_f32" => true, "hxmc$f32_to_f64" => true, "hxmc$f32bits_to_freg" => true, "hxmc$freg_to_f32bits" => true
 	];
 
 	var f:MFunc;
