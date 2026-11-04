@@ -208,7 +208,21 @@ where it is in a function:
   so a kernel's vectors are SSA values in vector registers, phis across
   loops, and spilled to 16-byte frame slots when there are more than the
   registers (`Lir.isVec`, `Regalloc`'s vector class). A struct of vectors
-  (`Mat4`, the IDCT's `Eight`) is scalar-replaced the same way.
+  (`Mat4`, the IDCT's `Eight`) is scalar-replaced the same way, through
+  its fields' addresses (the slot's plus a constant). A choice between
+  two results on an inlined constant (`r < 2 ? a.shuffle(...) : ...`)
+  is folded first (`Opt.fold` of comparisons of constants), and `Sroa`
+  runs again after `Opt` when that made a slot's address one value, so
+  no inlined helper leaves a struct temporary in the frame (and a slot
+  nothing takes the address of takes no room).
+- **Constants.** A splat of a constant is a vector constant (`Opt.fold`).
+  On x86-64 a constant never holds a register: it is the memory operand
+  of its user (`pmulld`, `paddd`, `punpcklbw` with a `.rodata` literal;
+  either operand of a commutative operation), else loaded, or made with
+  `pxor`/`pcmpeqd`, where it is used, as gcc does with `_mm_set1_epi32`.
+  On arm64 and wasm it is one value of the function (value numbering,
+  hoisted out of loops), made with `mov` and `dup` (a lane repeated),
+  `movi` or two moves through x16, and `v128.const`.
 - **Boxed where a reference is needed**, as any struct: an `Array<F32x4>`
   element, a `Map` value, a `Null<F32x4>`, `Dynamic`, `Std.string`, and a
   type parameter's slot. The box is 24 bytes (an 8-byte header, the 16
@@ -237,7 +251,8 @@ where it is in a function:
 | registers | xmm0-15 (`movups` moves and spills) | v0-v7, v16-v31 (not v8-v15: AAPCS64 keeps only their low 64 bits across calls) | `v128` locals |
 | instruction set | SSE2, SSSE3, SSE4.1 (x86-64-v2) | NEON (every arm64) | simd128 |
 | typical expansion | one instruction; a few where SSE differs (float `min`/`max`, conversions out of range, unsigned compares, byte shifts, 64-bit shifts right) | one instruction; a few for `bitmask` and `all_true` | one instruction |
-| constants | a 16-byte literal in `.rodata`, `pxor`/`pcmpeqd` for zeros and ones | `movi` for zeros and ones, else two moves through x16 | `v128.const` |
+| constants | a 16-byte literal in `.rodata`, its user's memory operand; `pxor`/`pcmpeqd` for zeros and ones | `movi` for zeros and ones, `mov` and `dup` for a repeated word or doubleword, else two moves through x16 | `v128.const` |
+| shuffles | an unpack (`punpckl`/`punpckh` of bytes to quadwords), `pshufd` of one vector, `pshufb` of one vector and zeros, else two `pshufb` and `por` | `zip1`/`zip2`/`uzp1`/`uzp2`, else two `tbl` and `orr` | `i8x16.shuffle` |
 
 Each instruction selection implements every opcode of `SimdOps.LIST`
 (`x64/Isel.hx`, `a64/Isel.hx`, `wasm/WasmGen.hx`); the encoders gained the
@@ -270,7 +285,18 @@ validate on an engine without it, even if the code never runs).
   function, and across inlined calls (`inline` methods, the inliner's
   small functions), it stays in a register. The address costs a store and
   a load per non-inlined call: hot vector code is written with inline
-  functions, as `SimdBench`'s kernels are.
+  functions, as `SimdBench`'s kernels are. Vectors in registers across
+  Haxe calls (xmm0-7, v0-v7, wasm's `v128` parameters) would remove that
+  store and load, but every way a Haxe function is called would have to
+  agree: direct and virtual calls, closures and interface calls (one
+  signature for every implementation), `Reflect.callMethod` and `Dynamic`
+  calls, the Mir interpreter's calls into and out of compiled code
+  (`InterpAbi`, the tiers) and Mir macros, and wasm's `call_indirect`
+  types. The registers themselves are no obstacle (hxmc's own code keeps
+  every xmm register caller-saved, Win64 included: only a function
+  entered from C saves xmm6-15; arm64 passes in v0-v7, never in v8-v15),
+  so it is left for when a non-inlined vector function shows in a
+  profile ([Later](#later)); none of the benchmark's does.
 - **C functions** take and return a vector as C's native 128-bit vector
   type (`__m128`, `__m128i`, `float32x4_t`, a `vector_size(16)` type),
   by each ABI's rule for it (`CAbi.isVector`):
@@ -304,10 +330,11 @@ validate on an engine without it, even if the code never runs).
 | `SimdOps` | every operation on edge values (NaN, -0, infinities, saturation bounds, out-of-range conversions, shifts past the width, every shuffle form), as words |
 | `SimdValues` | vectors in fields of structs and classes, statics, call arguments and results, boxed (Array, type parameter, Dynamic, Null), closures, twenty live at once (spills), live across calls, kernels over spans with every access width |
 | `SimdExamples` | this page's worked examples against their scalar versions |
+| `SimdPatterns` | the operands code generation treats apart: shuffles that are unpacks of each width in both orders (a constant on either side), permutations of one vector, even and odd lanes, shuffles with zeros; splats of constants as either operand; an operation of a vector with itself; a choice between shuffles on an inlined constant; twenty-four vectors live |
 | `SimdFfi` | C functions (`SimdFfi.c`, `vector_size(16)` types) taking and returning vectors, eight vector arguments, a vector live across a C call, a callback C calls with vectors (x86-64 Linux and Windows, arm64; not wasm: no C objects) |
 | `reject/SimdLane`, `SimdLaneRange`, `SimdShuffle`, `SimdPtrKernel`, `SimdFfiRegs` | a lane at run time, a lane out of range, a shuffle index of 32, raw memory in a safe kernel, a ninth vector argument of a C function |
 
-`SimdOps`, `SimdValues` and `SimdExamples` run bit-exact on x86-64 Linux,
+`SimdOps`, `SimdValues`, `SimdExamples` and `SimdPatterns` run bit-exact on x86-64 Linux,
 arm64 Linux (qemu), x86-64 Windows (wine), wasm32-wasi (node), the
 interpreter build (`--interp`), and, by `make portable-check`, on Eval and
 JavaScript against the same golden files; also with `-D hxmc.verify-tags`
@@ -328,44 +355,71 @@ best of 5 runs of the whole benchmark, on a shared virtual Intel Xeon at
 
 | Kernel | hxmc bytes | hxmc span | **hxmc simd** | wasm bytes | wasm span | **wasm simd** | C -O2 | C -O3, no vectorizer | C -O3 | **C SSE4.1 intrinsics, -O2** |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8x8 IDCT (ns a block) | 192.6 | 197.0 | **86.4** | 192.6 | 200.0 | **74.0** | 168.6 | 131.1 | 172.3 | **52.7** |
-| YCbCr to RGBA (ns a pixel) | 3.71 | 3.55 | **1.28** | 4.64 | 3.98 | **1.21** | 2.38 | 2.48 | 2.46 | **0.91** |
-| bilinear resize (ns a pixel) | 10.2 | 11.4 | **3.73** | 14.9 | 11.8 | **4.45** | 7.69 | 7.63 | 7.63 | **2.10** |
+| 8x8 IDCT (ns a block) | 188.7 | 185.8 | **55.4** | 201.6 | 208.4 | **74.8** | 182.0 | 129.6 | 176.4 | **48.9** |
+| YCbCr to RGBA (ns a pixel) | 3.66 | 3.53 | **1.08** | 4.78 | 4.05 | **1.16** | 2.55 | 2.48 | 2.65 | **0.94** |
+| bilinear resize (ns a pixel) | 9.06 | 11.5 | **2.71** | 14.6 | 12.2 | **4.29** | 7.72 | 7.71 | 7.72 | **2.17** |
 
-Against hxmc's best scalar version the vector kernels are 2.2x (IDCT),
-2.8x (colour) and 2.7x (resize) faster natively, and 2.6x, 3.3x and 2.7x
-on wasm; against gcc's -O3 2.0x, 1.9x and 2.0x (gcc vectorizes none of the
-three profitably: its -O3 IDCT is slower than without the vectorizer). On
-wasm the IDCT is faster than natively: V8 emits AVX's three-operand forms,
-where hxmc's SSE code copies registers before each destructive operation.
+Against hxmc's best scalar version the vector kernels are 3.4x (IDCT),
+3.3x (colour) and 3.3x (resize) faster natively, and 2.7x, 3.5x and 2.8x
+on wasm; against gcc's -O3 3.2x, 2.4x and 2.8x (gcc vectorizes none of the
+three profitably: its -O3 IDCT is slower than without the vectorizer).
 
 The intrinsics column is `SimdKernels` translated one to one into
 `<smmintrin.h>` (the same lanes and fixed-point math, each `shuffle` as the
-unpack it is), so it compares code generation alone: gcc is 1.6x (IDCT),
-1.4x (colour) and 1.8x (resize) faster than hxmc's native code. The
-instructions doing the work are the same (64 `pmulld` in both IDCTs, the
-same `pshufb`/`pmovzxbw`/`pmaddwd` chain in the resize); hxmc loses on what
-surrounds them. In the IDCT (about 1,600 instructions with its check failures, against gcc's 530;
-240 vector moves to or from the stack against 54) every vector temporary
-goes through memory by address: each `I32x4.splat` is `movd`, a store, a
-load, `pshufd`, a store and a load, inside the loop where gcc loads a
-constant from `.rodata` once or folds it into `pmulld`'s operand, and the
-`Eight` structs are zeroed and written to the frame instead of staying in
-registers. In all three, every span access is bounds-checked again (two
-compares a load, although `idct`'s callers checked the block), a span's
-base address is reloaded from the frame, and an address is `imul $0x1`,
-`add` and a load rather than one `(base,index)` operand; a byte `shuffle`
-of two vectors that is an unpack (the colour conversion's interleave) is
-two `pshufb` and a `por`, a `shuffle` with `U8x16.zero()` (the resize's
-`pairs`) the same, where one `punpcklbw`, or one `pshufb` with zeroing
-indices, does it. Follow-ups, none done here: splats of constants as
-constant-pool loads hoisted out of loops; vector temporaries and returned
-structs of vectors kept in registers (no address-taken copies); span checks
-of one access range hoisted or merged with an earlier check; addressing
-modes folded into loads and stores; unpack patterns recognized in
-`shuffle`, and a shuffle with a zero vector as one `pshufb`. libjpeg-turbo's
-own SIMD IDCT is not in the table: only TurboJPEG's whole-image API is
-installed here, which does not expose the IDCT alone.
+unpack it is), so it compares code generation alone: gcc is now 1.13x
+(IDCT), 1.15x (colour) and 1.25x (resize) faster than hxmc's native code,
+where it was 1.6x, 1.4x and 1.8x (86.4, 1.28 and 3.73 ns). The instructions
+doing the work were the same (64 `pmulld` in both IDCTs, the same
+`pshufb`/`pmovzxbw`/`pmaddwd` chain in the resize); what surrounded them
+was hxmc's, and is now mostly gone:
+
+| | before | now | gcc, intrinsics |
+| --- | --- | --- | --- |
+| IDCT: instructions (with the checks' slow paths) | 1,949 | 838 | 533 |
+| IDCT: vector moves to or from the frame | 239 | 38 | 46 |
+| IDCT: frame | 2,040 bytes | 280 | 584 |
+| colour: the loop's instructions; vector moves to or from the frame | 260; 52 | 189; 4 | 138; 0 |
+| resize: the loop's instructions | 71 | 49 | 24 |
+
+- **Vectors through memory** (the IDCT's `Eight` results and transpose
+  temporaries zeroed and written to the frame, each `I32x4.splat` a
+  `movd`, a store, a load, a `pshufd`, a store and a load inside the loop):
+  the transpose's `r < 2 ? ... : ...` on an inlined constant left a phi of
+  two slots' addresses, which `Sroa` cannot promote. Comparisons of
+  constants fold now and `Sroa` runs again when that made an address one
+  value; it also follows a field's address (the slot's plus a constant),
+  which the `Eight` stores were. No vector of the three kernels is in the
+  frame but the register allocator's spills. A splat of a constant is a
+  vector constant, a memory operand of its user on x86-64 (`pmulld
+  xmm, [rip+k]`, as gcc folds `_mm_set1_epi32`), so the fifteen IDCT
+  constants hold no register, which is what made the allocator spill
+  everything else. A spilled value's next use reuses the register its
+  definition just stored (no reload), and a store the next instruction
+  overwrites goes (`Regalloc.insertSpills`).
+- **Span checks**: a vector access's range check is one compare of
+  `zext(pos) + n` with the length (was two compares and a subtraction).
+  They are still made per access: the IDCT's 28 accesses are 28 compares
+  (gcc: none), the colour conversion's 3 loads and 4 stores 7 an
+  iteration, the resize's 3; see [Later](#later).
+- **Addresses**: `x * 1` and `x + 0` are `x` when written, and a
+  `base + index` used only as accesses' address is their `(base,index)`
+  operand on x86-64 (was `imul $0x1`, an add and the base reloaded).
+- **Shuffles**: an unpack is one `punpckl`/`punpckh` of bytes, words,
+  doublewords or quadwords (either operand order; a constant operand from
+  memory: the colour conversion's alpha interleave), a doubleword
+  permutation of one vector one `pshufd`, a shuffle with a zero vector one
+  `pshufb` (the resize's `pairs`); on arm64 `zip1`/`zip2`/`uzp1`/`uzp2`.
+  A shuffle of a vector with itself (`I16x8.narrow(r, r)`) works on one
+  register.
+
+What remains of the gap: the span checks above (the resize also spills
+three span bases for the registers its lengths take, which gcc does not
+need), 2-operand SSE's register copies before destructive operations
+(96 `movapd` in the IDCT, gcc 103: equal), and on wasm, where V8 does the
+register allocation, nothing of this applied but the constants (the IDCT
+74.0 to 74.8, the colour 1.21 to 1.16, the resize 4.45 to 4.29: noise).
+libjpeg-turbo's own SIMD IDCT is not in the table: only TurboJPEG's
+whole-image API is installed here, which does not expose the IDCT alone.
 
 The vector kernels compute exactly what the scalar ones do (the same
 checksums): the IDCT as libjpeg's `jpeg_idct_islow` four columns a vector
@@ -513,9 +567,11 @@ A report from a WebAssembly sprite renderer: four consecutive stores
 - **Relaxed operations, opted into**: wasm relaxed-simd's `relaxed_madd`,
   `relaxed_min`, ... and their native counterparts (`minps`, `fmla`), with
   results that may differ by target, under their own names.
-- **Vectors in registers across Haxe calls** (a vector argument in xmm or
-  v registers rather than by address); C vectors past the argument
-  registers (16-byte stack slots) and in variadic calls.
+- **Vectors in registers across Haxe calls** (a vector argument or
+  result in xmm0-7, v0-v7 or a wasm `v128` parameter rather than by
+  address: what every way of calling a function would have to agree on is
+  in [ABIs](#abis)); C vectors past the argument registers (16-byte stack
+  slots) and in variadic calls.
 - **Auto-vectorization**: superword packing of struct arithmetic (four
   `Float32` fields of a struct, `acc = acc + d * k`), then loops over spans
   whose checks a loop proves (`SpanLoops`): the scalar kernels of the
@@ -525,6 +581,11 @@ A report from a WebAssembly sprite renderer: four consecutive stores
   conversions), half floats, SVE and RISC-V's vector extension.
 - **Unboxed `Array<F32x4>`** comes with unboxed struct arrays
   ([lowlevel.md](lowlevel.md#struct-values-in-generic-storage)).
-- **Range checks of constant offsets from one base** (the sprite fill):
-  one test of the whole range guarding a copy of the block without checks,
-  the checked block as the fallback.
+- **Range checks of constant offsets from one base** (the sprite fill,
+  the IDCT's rows `at + 16 * k` and its constant table offsets): one test
+  of the whole range guarding a copy of the block without checks, the
+  checked block as the fallback; or, where only loads and pure operations
+  lie between the checks, one test of the extremes whose failure runs the
+  original checks in order (the first failing one throws, as before).
+  Checks of a callee whose caller tested the range (the IDCT's `idct` from
+  `idctAll`) need the callee inlined first.
