@@ -24,8 +24,9 @@ using StringTools;
 //          a module building three cases for x64, arm64 and wasm32-wasi
 //          byte-identical to the native tool, the debugging information and
 //          unwind tables (DebugCheck: gdb on the host, the tools elsewhere),
-//          shared libraries (SharedCheck) and iOS's plain Mach-O outputs
-//          (MachOCheck);
+//          shared libraries (SharedCheck), Java through JNI (JniCheck: an
+//          embedded JVM, a library Java loads, Android's builds) and iOS's
+//          plain Mach-O outputs (MachOCheck);
 //          --port adds the native port's self-compile: before commits
 //   full   x64, arm64 and wine at 64, 16 and 256 KB, each with RT_VERIFY=1 too
 //          (at 64 KB with -D hxmc.verify-tags);
@@ -191,6 +192,7 @@ class Tiers {
 			if (FileSystem.exists(Sys.getEnv("QEMU_LD_PREFIX") ?? "/usr/aarch64-linux-gnu")) lane("arm64 glibc (qemu)", corpus("linux-arm64", null, cases, GLIBC));
 			lane("glibc readelf", script(["ElfCheck", "bin/hxmc-t"]));
 			lane("shared libraries", script(["SharedCheck"]));
+			lane("Java (JNI)", script(["JniCheck"]));
 			lane("iOS Mach-O", make(["macho-check"]));
 			// (macOS with Xcode's iOS simulator: the corpus run in an iPhone simulator)
 			if (Corpus.iosDevice() != null) lane("iOS simulator", corpus("ios-sim-arm64", null, cases));

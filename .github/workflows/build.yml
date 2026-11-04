@@ -577,7 +577,9 @@ jobs:
   # the native-output contract (docs/using.md, "Native output for a
   # packager"): make native-check, Linux only, no device, simulator or Mac:
   # SharedCheck (the glibc mode's libraries, Android's .so, AndroidHello as
-  # libmain.so) and MachOCheck (IosHello as an iOS executable and dylib:
+  # libmain.so), JniCheck (Java through JNI: the corpus's JNI cases with an
+  # embedded JVM, a library java loads, Android's builds; the runner's JDK,
+  # JAVA_HOME) and MachOCheck (IosHello as an iOS executable and dylib:
   # LC_BUILD_VERSION, the code signature linker-signed or binding -D
   # hxmc.codesign-*'s files)
   native-output:
@@ -596,10 +598,13 @@ jobs:
       - uses: actions/download-artifact@v8
         if: needs.changes.outputs.rt_hit != 'true'
         with: {name: rt, path: bin/hxmc/rt}
-      - name: Android's .so and iOS's Mach-O
+      - name: Android's .so, Java through JNI and iOS's Mach-O
         run: |
           set -ex
           make rt && touch bin/hxmc/rt/*/*.o
+          # (the image's JDK 21: JniCheck's javac and JVM; without one its runs are skipped)
+          export JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}"
+          "$JAVA_HOME/bin/java" -version || true
           make native-check
 
   # the port against the reference compiler (docs/testing.md): make test

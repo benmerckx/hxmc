@@ -501,6 +501,9 @@ class JniKind {
 		Mem.setPtr(argv, 0, Mem.cstr("hxmc"));
 		Mem.setPtr(argv, 8, Ptr.nil());
 		P.main(1, argv);
+		// (its program ended, the thread ends: its record stays, in a safe
+		// region, so that the collections Java's calls make do not wait for it)
+		Leaf.rt_blocking_enter();
 		return Ptr.nil();
 	}
 

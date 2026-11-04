@@ -42,7 +42,8 @@ class Jvm {
 		if (cp != null && !Lambda.exists(opts, o -> StringTools.startsWith(o, "-Djava.class.path="))) opts.push("-Djava.class.path=" + cp);
 		var path = lib != null ? lib : libjvm();
 		if (path == null) throw new JavaException("java.lang.UnsatisfiedLinkError", "no libjvm: set JAVA_HOME (or HXMC_LIBJVM)", "", null);
-		var err = @:privateAccess hxmc.rt.JniKind.create(path, opts);
+		// (Linux's static mode loads no library: Mem.target() 0 and 1)
+		var err = Mem.target() <= 1 ? "Linux's static mode loads no library: build with -D hxmc.libc=glibc" : @:privateAccess hxmc.rt.JniKind.create(path, opts);
 		if (err != null) throw new JavaException("java.lang.UnsatisfiedLinkError", err, "", null);
 	}
 

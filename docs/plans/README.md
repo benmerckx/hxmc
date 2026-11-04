@@ -16,6 +16,7 @@ what, why, and the approach decided. What comes next and in which order:
 | [lowlevel.md](lowlevel.md) | C interop and low-level Haxe: native memory, manual memory, value enums |
 | [objc.md](objc.md) | Objective-C: the decisions behind it, declarations from the headers, blocks, memory |
 | [com.md](com.md) | COM: the decisions behind it, declarations from Windows' metadata, WinRT |
+| [jni.md](jni.md) | JNI: the decisions behind it, the glue a packager writes (the manifest, the proxies), the bridge |
 | [foreign-objects.md](foreign-objects.md) | foreign objects: the kind table Objective-C, COM, GObject and JNI plug into, its hooks and threading rules |
 | [packaging.md](packaging.md) | npm, haxelib, verified native builds |
 | [math.md](math.md) | correctly rounded math |
