@@ -136,6 +136,7 @@ class MirRun {
 		}
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
+		dg.jniCells([]);
 		dg.resources([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
@@ -389,6 +390,7 @@ class MirRun {
 				dg.stringsUsed();
 				dg.cstrLiterals([]);
 				dg.emptyArrays([]);
+				dg.jniCells([]);
 				dg.resources([]);
 				hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + d.prep.funcSym(f), gen));
 			}
