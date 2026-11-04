@@ -319,25 +319,53 @@ machines too (Linux, Windows and macOS on x86-64 and arm64).
 
 `make bench-simd` (`hxmc/test/bench/simd`): three image kernels, each as
 plain Haxe over `Bytes` and `Vector` (`bytes`), as a kernel over spans
-(`span`), with `hxmc.simd` (`simd`), and in C (`simd_bench.c`, scalar: the
-same data and checksums). Nanoseconds per unit (an 8x8 block, an output
-pixel): each run the median of 7, the table the best of 5 runs, on a
-shared virtual Intel Xeon at 2.1 GHz (x86-64 Linux, which varies by up to
-40% between runs); gcc 13.3 (its -O3 vectorizes with SSE2); node 22 for
-wasm32.
+(`span`), with `hxmc.simd` (`simd`), and in C (`simd_bench.c`: scalar, and
+with SSE4.1 intrinsics, the same data and checksums). Nanoseconds per unit
+(an 8x8 block, an output pixel): each run the median of 7, the table the
+best of 5 runs of the whole benchmark, on a shared virtual Intel Xeon at
+2.1 GHz (x86-64 Linux, which varies by up to 40% between runs); gcc 13.3
+(its -O3 vectorizes with SSE2); node 22 for wasm32.
 
-| Kernel | hxmc bytes | hxmc span | **hxmc simd** | wasm bytes | wasm span | **wasm simd** | C -O2 | C -O3, no vectorizer | C -O3 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8x8 IDCT (ns a block) | 197.0 | 202.8 | **90.2** | 228.5 | 210.6 | **75.7** | 178.5 | 135.4 | 175.8 |
-| YCbCr to RGBA (ns a pixel) | 3.80 | 3.72 | **1.35** | 4.98 | 4.10 | **1.24** | 2.52 | 2.61 | 2.60 |
-| bilinear resize (ns a pixel) | 10.1 | 12.2 | **3.81** | 16.4 | 12.0 | **4.84** | 7.70 | 7.83 | 8.02 |
+| Kernel | hxmc bytes | hxmc span | **hxmc simd** | wasm bytes | wasm span | **wasm simd** | C -O2 | C -O3, no vectorizer | C -O3 | **C SSE4.1 intrinsics, -O2** |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8x8 IDCT (ns a block) | 192.6 | 197.0 | **86.4** | 192.6 | 200.0 | **74.0** | 168.6 | 131.1 | 172.3 | **52.7** |
+| YCbCr to RGBA (ns a pixel) | 3.71 | 3.55 | **1.28** | 4.64 | 3.98 | **1.21** | 2.38 | 2.48 | 2.46 | **0.91** |
+| bilinear resize (ns a pixel) | 10.2 | 11.4 | **3.73** | 14.9 | 11.8 | **4.45** | 7.69 | 7.63 | 7.63 | **2.10** |
 
 Against hxmc's best scalar version the vector kernels are 2.2x (IDCT),
-2.8x (colour) and 2.7x (resize) faster natively, and 2.8x, 3.3x and 2.5x
-on wasm; against gcc's -O3 1.9x, 1.9x and 2.1x (gcc vectorizes none of the
+2.8x (colour) and 2.7x (resize) faster natively, and 2.6x, 3.3x and 2.7x
+on wasm; against gcc's -O3 2.0x, 1.9x and 2.0x (gcc vectorizes none of the
 three profitably: its -O3 IDCT is slower than without the vectorizer). On
 wasm the IDCT is faster than natively: V8 emits AVX's three-operand forms,
 where hxmc's SSE code copies registers before each destructive operation.
+
+The intrinsics column is `SimdKernels` translated one to one into
+`<smmintrin.h>` (the same lanes and fixed-point math, each `shuffle` as the
+unpack it is), so it compares code generation alone: gcc is 1.6x (IDCT),
+1.4x (colour) and 1.8x (resize) faster than hxmc's native code. The
+instructions doing the work are the same (64 `pmulld` in both IDCTs, the
+same `pshufb`/`pmovzxbw`/`pmaddwd` chain in the resize); hxmc loses on what
+surrounds them. In the IDCT (about 1,600 instructions with its check failures, against gcc's 530;
+240 vector moves to or from the stack against 54) every vector temporary
+goes through memory by address: each `I32x4.splat` is `movd`, a store, a
+load, `pshufd`, a store and a load, inside the loop where gcc loads a
+constant from `.rodata` once or folds it into `pmulld`'s operand, and the
+`Eight` structs are zeroed and written to the frame instead of staying in
+registers. In all three, every span access is bounds-checked again (two
+compares a load, although `idct`'s callers checked the block), a span's
+base address is reloaded from the frame, and an address is `imul $0x1`,
+`add` and a load rather than one `(base,index)` operand; a byte `shuffle`
+of two vectors that is an unpack (the colour conversion's interleave) is
+two `pshufb` and a `por`, a `shuffle` with `U8x16.zero()` (the resize's
+`pairs`) the same, where one `punpcklbw`, or one `pshufb` with zeroing
+indices, does it. Follow-ups, none done here: splats of constants as
+constant-pool loads hoisted out of loops; vector temporaries and returned
+structs of vectors kept in registers (no address-taken copies); span checks
+of one access range hoisted or merged with an earlier check; addressing
+modes folded into loads and stores; unpack patterns recognized in
+`shuffle`, and a shuffle with a zero vector as one `pshufb`. libjpeg-turbo's
+own SIMD IDCT is not in the table: only TurboJPEG's whole-image API is
+installed here, which does not expose the IDCT alone.
 
 The vector kernels compute exactly what the scalar ones do (the same
 checksums): the IDCT as libjpeg's `jpeg_idct_islow` four columns a vector
