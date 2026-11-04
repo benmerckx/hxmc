@@ -3603,6 +3603,24 @@ class FnLower {
 					cfail("Callback.addr: the argument must name a static function declared @:hxmc.callback", e);
 			}
 		}
+		if (c.clPath.name == "Struct" && c.clPath.pack.join(".") == "hxmc.unsafe" && cf.cfName == "fieldOffset") {
+			// (a field of a class instance: its address less the object's, which
+			// the layout makes a constant)
+			var fname = switch strip(cargs[1]).eexpr {
+				case TConst(TString(s)): s;
+				case _: cfail("Struct.fieldOffset: the field name must be a string literal", e);
+			};
+			var oc = switch TFunctions.follow(cargs[0].etype) {
+				case TInst(oc, _) if (!CInterop.isStruct(oc) && !oc.hasClassFlag(CExtern) && !oc.hasClassFlag(CInterface)): oc;
+				case _: cfail("Struct.fieldOffset: the object must be typed as a Haxe class's instance", e);
+			};
+			var ci = l.classInfo(oc);
+			var idx = Lambda.findIndex(ci.fields, f -> f.name == fname);
+			if (idx < 0) cfail("Struct.fieldOffset: " + oc.clPath.name + " has no field " + fname, e);
+			var o = asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RObj(ci))), TRef(RObj(ci)));
+			var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ELocal(o)), TI64));
+			return coerce(EConv(L2I, EBin(LSub, EFieldAddr(ci, idx, ELocal(o)), base)), TI32, tyOf(e));
+		}
 		if (c.clPath.name == "Struct" && c.clPath.pack.join(".") == "hxmc.unsafe") {
 			var sc = switch strip(cargs[0]).eexpr {
 				case TTypeExpr(TClassDecl(sc)) if (CInterop.isStruct(sc)): sc;
@@ -4306,7 +4324,12 @@ class FnLower {
 
 	// the call itself: the frame entered, the class and method resolved
 	// (their cells), the receiver and arguments made Java values, the call,
-	// the result made a Haxe value, the frame left (an exception thrown)
+	// the result made a Haxe value, the frame left (an exception thrown). No
+	// Haxe exception comes between enter and leave: the runtime's conversions
+	// make a misuse a pending Java exception and run none of the program's
+	// code (JniKind.describe), and the coercions here are unchecked, so the
+	// frame is popped on every exit without a try (whose body's references
+	// would stay rooted in their slots: a box result kept alive by the frame)
 	function jniInvoke(c:TClass, cf:TClassField, s:core.TType.TSignature, recv:Null<{x:Ex, t:Ty}>, xs:Array<Ex>, ts:Array<Ty>, ctor:Bool, e:TExpr):Ex {
 		var cname = jniName(c, e);
 		var sig = try Jni.signature(cf, s, ctor) catch (err:LowerError) {

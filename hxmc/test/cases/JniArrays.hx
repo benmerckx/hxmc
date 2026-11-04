@@ -7,7 +7,8 @@ import hxmc.unsafe.*;
 // <Int16> short[], <UInt16> char[], Bytes byte[], <String> String[], <C> C[],
 // <Dynamic> Object[]); a JavaArray is the Java array itself: its elements
 // read and written in place (critical: GetPrimitiveArrayCritical), Java's
-// changes and Haxe's seen by both.
+// changes and Haxe's seen by both; a critical callback may allocate (the
+// collections meanwhile make no JNI call: what they put off waits).
 @:hxmc.java("jnitest.JniArrays") extern class Arrays {
 	var id:Int;
 	static var held:JavaArray<Int>;
@@ -39,6 +40,9 @@ import hxmc.unsafe.*;
 }
 
 class JniArrays {
+	static function dropMany()
+		return Arrays.many(500).length;
+
 	static function main() {
 		Jvm.create(["-Djava.class.path=classes", "-Xcheck:jni"]);
 		// copied in and out
@@ -63,6 +67,17 @@ class JniArrays {
 				Mem.setI32(p, 4 * i, Mem.getI32(p, 4 * i) * 10);
 		});
 		trace(Arrays.heldText());
+		// (boxes dropped, then collections inside the region: their deletions wait for its end)
+		var junk = 0;
+		dropMany();
+		held.critical((p, n) -> {
+			for (i in 0...20000)
+				junk += ("x" + i).length;
+			hxmc.NativeGc.collect(true);
+			Mem.setI32(p, 0, Mem.getI32(p, 0) + 1);
+		});
+		hxmc.NativeGc.collect(true);
+		trace("allocated in a critical region", junk, Arrays.heldText());
 		var out = Mem.stack(16);
 		held.getRegion(5, 1, 2, out);
 		trace(Mem.getI32(out, 0), Mem.getI32(out, 4));

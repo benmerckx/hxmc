@@ -9,7 +9,9 @@ import hxmc.java.*;
 // longer holds lives until Java collects it, and get() before that gives
 // it a box again); Java.detach the global reference deleted at once.
 // Boxes in fields, closures, maps and Dynamic stay valid through
-// collections (RT_VERIFY's runs move them).
+// collections (RT_VERIFY's runs move them). Native handles that are no
+// Java objects (a mutex) are told apart without a JNI call; a conversion
+// runs none of the program's code (a toString that throws).
 @:hxmc.java("jnitest.JniRefs") extern class Refs {
 	function id():Int;
 	static function make(id:Int):Refs;
@@ -17,7 +19,16 @@ import hxmc.java.*;
 	static function forget():Void;
 	static function one():Refs;
 	static function keep(o:Dynamic):Void;
+	static function idOf(r:Refs):Int;
 	static var kept:Dynamic;
+}
+
+// (its text throws: a conversion that read it would throw)
+class Bad {
+	public function new() {}
+
+	public function toString():String
+		throw "no text";
 }
 
 class Holder {
@@ -123,5 +134,38 @@ class JniRefs {
 		}
 		collect();
 		trace("many", total, Refs.alive());
+		notJava();
+	}
+
+	// native handles that are no Java objects, a Haxe exception while the arguments are made
+	static function notJava() {
+		var mutex:Dynamic = new sys.thread.Mutex();
+		try {
+			new Weak(mutex);
+			trace("weak of a mutex");
+		} catch (e:JavaException)
+			trace("weak of a mutex", e.className);
+		Java.detach(mutex);
+		try {
+			Refs.keep(mutex);
+			trace("kept a mutex");
+		} catch (e:JavaException)
+			trace("a mutex as an Object", e.className);
+		try {
+			trace(Refs.idOf(mutex));
+		} catch (e:JavaException)
+			trace("a mutex as a Java object", e.className);
+		(mutex : sys.thread.Mutex).acquire();
+		(mutex : sys.thread.Mutex).release();
+		// a Haxe object Java cannot hold, whose text throws: no code of its runs
+		// while the arguments are made (the frame always popped)
+		for (i in 0...100)
+			try {
+				Refs.idOf(cast new Bad());
+			} catch (e:JavaException) {
+				if (i == 0) trace("a Haxe object as a Java object", e.className, e.javaMessage);
+			}
+		trace("after", Refs.idOf(Refs.make(14)), Refs.idOf(null));
+		Refs.forget();
 	}
 }

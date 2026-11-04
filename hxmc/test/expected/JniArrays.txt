@@ -1,17 +1,18 @@
 exit 0
-JniArrays.hx:45: 10, [0,1,4,9,16,25], [3,-4], [0.5,1.5], [false,true,true]
-JniArrays.hx:46: 4294967301, [0,-1000,-2000,-3000], [104,233,55348,56606], hé𝄞
-JniArrays.hx:48: ff00636261, 61626300ff
-JniArrays.hx:49: a+b+c, [x,y,,z], [s, null, t]
-JniArrays.hx:51: 4, [0,10,20,30], 60, 30, false
-JniArrays.hx:52: Integer String Double Boolean null JniArrays, 6, [1,two,3.5,false,null]
-JniArrays.hx:53: [], null, 0
-JniArrays.hx:57: 100000, 4999950000, 704982704
-JniArrays.hx:60: 4, [1, 2, 3, 4]
-JniArrays.hx:65: [10, 20, 30, 40]
-JniArrays.hx:68: 20, 30
-JniArrays.hx:71: [10, 20, 30, -7], true
-JniArrays.hx:74: [0, 0, 0], 3
-JniArrays.hx:76: 2, 2, b, c, [[a, b], [c]]
-JniArrays.hx:78: [[a, b], [changed]]
-JniArrays.hx:81: first, null, 2
+JniArrays.hx:49: 10, [0,1,4,9,16,25], [3,-4], [0.5,1.5], [false,true,true]
+JniArrays.hx:50: 4294967301, [0,-1000,-2000,-3000], [104,233,55348,56606], hé𝄞
+JniArrays.hx:52: ff00636261, 61626300ff
+JniArrays.hx:53: a+b+c, [x,y,,z], [s, null, t]
+JniArrays.hx:55: 4, [0,10,20,30], 60, 30, false
+JniArrays.hx:56: Integer String Double Boolean null JniArrays, 6, [1,two,3.5,false,null]
+JniArrays.hx:57: [], null, 0
+JniArrays.hx:61: 100000, 4999950000, 704982704
+JniArrays.hx:64: 4, [1, 2, 3, 4]
+JniArrays.hx:69: [10, 20, 30, 40]
+JniArrays.hx:80: allocated in a critical region, 108890, [11, 20, 30, 40]
+JniArrays.hx:83: 20, 30
+JniArrays.hx:86: [11, 20, 30, -7], true
+JniArrays.hx:89: [0, 0, 0], 3
+JniArrays.hx:91: 2, 2, b, c, [[a, b], [c]]
+JniArrays.hx:93: [[a, b], [changed]]
+JniArrays.hx:96: first, null, 2

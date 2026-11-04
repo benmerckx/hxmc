@@ -1396,7 +1396,10 @@ resolves the class (the program's class loader's `loadClass`, else
 word each, per class and per name and signature), makes the receiver and
 the arguments Java values in a `jvalue` array (references as local
 references of the frame), calls in a safe region (Java may call back into
-Haxe and block), makes the result a Haxe value and pops the frame. The
+Haxe and block; so are the runtime's own calls of Java code: `valueOf`,
+`intValue`, an exception's `getMessage`), makes the result a Haxe value and
+pops the frame. No Haxe exception comes between (the conversions run none
+of the program's code), so the frame is popped on every exit. The
 calls between see a pending exception and do nothing, so the first
 failure is the one thrown: a call on null throws a `NullPointerException`,
 a missing method or field `NoSuchMethodError` or `NoSuchFieldError`, at
@@ -1442,7 +1445,7 @@ whose type is `[` and its element's):
 | `a.length` | `GetArrayLength` |
 | `a.get(i)`, `a.set(i, v)` | an object array's element (`Dynamic`'s conversions) |
 | `a.getRegion(t, pos, n, p)`, `setRegion` | a primitive array's elements copied to or from native memory (`t`: 1 boolean ... 8 double) |
-| `a.critical((p, n) -> ...)` | the elements in place (`GetPrimitiveArrayCritical`): no Java call and no waiting on a Java thread inside (the JVM may hold its collector meanwhile); a JVM that gave a copy writes it back after |
+| `a.critical((p, n) -> ...)` | the elements in place (`GetPrimitiveArrayCritical`): no Java call and no waiting on a Java thread inside (the JVM may hold its collector meanwhile); allocating is fine (the runtime makes no JNI call of its own until it returns: the deletions a collection puts off wait); a JVM that gave a copy writes it back after |
 | `JavaArray.ofInts(n)`, `ofBytes`, `ofDoubles`, `ofObjects(n, "pkg.C")` | new arrays |
 
 ### Haxe classes implementing Java interfaces

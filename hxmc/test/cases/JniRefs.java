@@ -35,4 +35,6 @@ public class JniRefs {
 	public static JniRefs one() { return one; }
 
 	public static void keep(Object o) { kept = o; }
+
+	public static int idOf(JniRefs r) { return r == null ? -2 : r.id; }
 }

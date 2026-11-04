@@ -37,8 +37,9 @@ abstract JavaArray<T>(Dynamic) {
 
 	// f(address, length) with a primitive array's elements in place
 	// (GetPrimitiveArrayCritical): no Java call and no waiting for a Java
-	// thread until f returns (the JVM may hold its collector meanwhile); a
-	// JVM that copies writes f's changes back after it
+	// thread until f returns (the JVM may hold its collector meanwhile); f
+	// may allocate (the runtime makes no JNI call meanwhile); a JVM that
+	// copies writes f's changes back after it
 	public inline function critical(f:(address:Ptr, length:Int) -> Void):Void
 		Impl.critical(this, f);
 

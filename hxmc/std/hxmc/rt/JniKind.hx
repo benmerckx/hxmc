@@ -138,8 +138,9 @@ class JniKind {
 	// a key whose destructor detaches the threads attached here
 	static var key:Ptr;
 	static var lock:Ptr;
-	// the kinds (0: not registered yet)
-	static var kind:Int;
+	// the kinds (0: not registered yet; kind published with a release store
+	// once both are, read with an acquire load: known)
+	@:hxmc.export("rt_jni_kind") static var kind:Int;
 	static var peerKind:Int;
 
 	// classes and members the runtime itself uses (cells: a word each)
@@ -199,8 +200,12 @@ class JniKind {
 
 	// ---- the kinds' hooks (C functions: any thread the JVM knows or attaches)
 
+	@:hxmc.unsafe static inline function known():Int
+		return Atomic.load32(Mem.sym("rt_jni_kind"));
+
 	@:hxmc.unsafe static function k():Int {
-		if (kind != 0) return kind;
+		var k = known();
+		if (k != 0) return k;
 		Os.lock(Foreign.lock);
 		if (kind == 0) {
 			var d = Mem.stack(128);
@@ -216,13 +221,14 @@ class JniKind {
 			Mem.setPtr(d, Foreign.K_WEAK_LOAD, Callback.addr(weakLoad));
 			Mem.setPtr(d, Foreign.K_WEAK_DESTROY, Callback.addr(weakDestroy));
 			Mem.setPtr(d, Foreign.K_BATCH_BEGIN, Callback.addr(batchBegin));
-			kind = Foreign.registerLocked(d);
+			var jk = Foreign.registerLocked(d);
 			LibC.memset(d, 0, Foreign.KIND_BYTES);
 			Mem.setPtr(d, Foreign.K_NAME, Mem.cstr("jni-peer"));
 			Mem.setI64(d, Foreign.K_FLAGS, Foreign.TOGGLE_NOTIFY);
 			Mem.setPtr(d, Foreign.K_RELEASE, Callback.addr(releasePeer));
 			Mem.setPtr(d, Foreign.K_BATCH_BEGIN, Callback.addr(batchBegin));
 			peerKind = Foreign.registerLocked(d);
+			Atomic.store32(Mem.sym("rt_jni_kind"), jk);
 		}
 		Os.unlock(Foreign.lock);
 		return kind;
@@ -262,7 +268,7 @@ class JniKind {
 		if (sys.isNull() || m.isNull()) return Ptr.ofI64(8);
 		var a = Mem.stack(8);
 		Mem.setPtr(a, 0, ref);
-		var h = Ind.p4(fn(env, CallStaticMethodA + 3 * T_INT), env, sys, m, a).toI64() & 0xFFFFFFFF;
+		var h = callIn(env, CallStaticMethodA + 3 * T_INT, sys, m, a).toI64() & 0xFFFFFFFF;
 		pending(env);
 		return Ptr.ofI64((h << 4) | 8);
 	}
@@ -308,6 +314,24 @@ class JniKind {
 	@:hxmc.callback @:hxmc.unsafe static function batchBegin():Ptr {
 		envHere();
 		return Ptr.nil();
+	}
+
+	// a call into Java (the table's function i: Call...MethodA, NewObjectA)
+	// in a safe region, as every call that runs Java code is: a Java thread
+	// that calls a native of the program waits for a collection, which this
+	// thread, in Java, would otherwise hold up
+	@:hxmc.unsafe static function callIn(env:Ptr, i:Int, a:Ptr, b:Ptr, c:Ptr):Ptr {
+		var region = Leaf.rt_blocking_enter();
+		var r = Ind.p4(fn(env, i), env, a, b, c);
+		Regions.end(region);
+		return r;
+	}
+
+	@:hxmc.unsafe static function callInD(env:Ptr, i:Int, a:Ptr, b:Ptr, c:Ptr):Float {
+		var region = Leaf.rt_blocking_enter();
+		var r = Ind.d4(fn(env, i), env, a, b, c);
+		Regions.end(region);
+		return r;
 	}
 
 	// ---- threads
@@ -772,7 +796,7 @@ class JniKind {
 			case R_DOUBLE:
 				var a = Mem.stack(8);
 				Mem.setF64(a, 0, (v : Float));
-				return Ind.p4(fn(env, CallStaticMethodA + 3 * T_OBJECT), env, Mem.getPtr(cells, C_DOUBLE), Mem.getPtr(cells, C_DOUBLE_OF), a);
+				return callIn(env, CallStaticMethodA + 3 * T_OBJECT, Mem.getPtr(cells, C_DOUBLE), Mem.getPtr(cells, C_DOUBLE_OF), a);
 			case R_BOOLEAN:
 				return valueOf(env, C_BOOLEAN, C_BOOLEAN_OF, (v : Bool) ? 1 : 0);
 			case R_BYTES:
@@ -823,13 +847,18 @@ class JniKind {
 		var a = Mem.stack(8);
 		Mem.setI64(a, 0, 0);
 		Mem.setI32(a, 0, x);
-		return Ind.p4(fn(env, CallStaticMethodA + 3 * T_OBJECT), env, Mem.getPtr(cells, c), Mem.getPtr(cells, m), a);
+		return callIn(env, CallStaticMethodA + 3 * T_OBJECT, Mem.getPtr(cells, c), Mem.getPtr(cells, m), a);
 	}
 
 	// a Java object's local reference: a box's (its global reference), or a
 	// Haxe object's proxy (made at its first use)
 	static function objectRef(env:Ptr, v:Dynamic):Ptr {
 		if (Types.tindex(v) == Types.T_NATIVE) {
+			// (a box of this kind's, not any native handle: Foreign.isBox)
+			if (!Foreign.isBox(k(), Mem.addr(v))) {
+				throwNew(env, C_ILLEGAL_ARGUMENT, describe(v) + " is no Java object");
+				return Ptr.nil();
+			}
 			var r = Mem.getPtr(Mem.addr(v), 0);
 			if (r.isNull()) {
 				throwNew(env, C_ILLEGAL_STATE, "a Java object used after hxmc.java.Java.detach");
@@ -839,10 +868,24 @@ class JniKind {
 		}
 		var d = descOf(v);
 		if (d.isNull()) {
-			throwNew(env, C_ILLEGAL_ARGUMENT, Std.string(v) + " is no Java object");
+			throwNew(env, C_ILLEGAL_ARGUMENT, describe(v) + " is no Java object");
 			return Ptr.nil();
 		}
 		return proxyOf(env, v, d);
+	}
+
+	// v for a conversion's message: its class's name, or its type's (no code
+	// of the program's runs: its toString may throw, which would leave the
+	// call's frame pushed: FnLower.jniInvoke)
+	static function describe(v:Dynamic):String {
+		var c = Type.getClass(v);
+		if (c != null) return "an instance of " + Type.getClassName(c);
+		return switch Type.typeof(v) {
+			case TObject: "an object";
+			case TFunction: "a function";
+			case TEnum(e): "a value of " + Type.getEnumName(e);
+			case _: "a native handle";
+		}
 	}
 
 	// Dynamic as java.lang.Object: numbers and Bools boxed (Integer, Double,
@@ -854,7 +897,7 @@ class JniKind {
 			case TFloat:
 				var a = Mem.stack(8);
 				Mem.setF64(a, 0, (v : Float));
-				return Ind.p4(fn(env, CallStaticMethodA + 3 * T_OBJECT), env, Mem.getPtr(cells, C_DOUBLE), Mem.getPtr(cells, C_DOUBLE_OF), a);
+				return callIn(env, CallStaticMethodA + 3 * T_OBJECT, Mem.getPtr(cells, C_DOUBLE), Mem.getPtr(cells, C_DOUBLE_OF), a);
 			case TBool:
 				return valueOf(env, C_BOOLEAN, C_BOOLEAN_OF, (v : Bool) ? 1 : 0);
 			case TClass(c) if (c == String):
@@ -868,7 +911,7 @@ class JniKind {
 			var d = descOf(v);
 			if (!d.isNull()) return proxyOf(env, v, d);
 		}
-		throwNew(env, C_ILLEGAL_ARGUMENT, "a Haxe value Java cannot hold: " + Std.string(v));
+		throwNew(env, C_ILLEGAL_ARGUMENT, "a Haxe value Java cannot hold: " + describe(v));
 		return Ptr.nil();
 	}
 
@@ -939,11 +982,11 @@ class JniKind {
 			case R_DYNAMIC:
 				return unboxed(env, ref);
 			case R_INTEGER:
-				return int32(Ind.p4(fn(env, CallMethodA + 3 * T_INT), env, ref, Mem.getPtr(cells, C_INT_VALUE), Ptr.nil()));
+				return int32(callIn(env, CallMethodA + 3 * T_INT, ref, Mem.getPtr(cells, C_INT_VALUE), Ptr.nil()));
 			case R_DOUBLE:
-				return Ind.d4(fn(env, CallMethodA + 3 * T_DOUBLE), env, ref, Mem.getPtr(cells, C_NUMBER_DOUBLE), Ptr.nil());
+				return callInD(env, CallMethodA + 3 * T_DOUBLE, ref, Mem.getPtr(cells, C_NUMBER_DOUBLE), Ptr.nil());
 			case R_BOOLEAN:
-				return bool(Ind.p4(fn(env, CallMethodA + 3 * T_BOOLEAN), env, ref, Mem.getPtr(cells, C_BOOLEAN_VALUE), Ptr.nil()));
+				return bool(callIn(env, CallMethodA + 3 * T_BOOLEAN, ref, Mem.getPtr(cells, C_BOOLEAN_VALUE), Ptr.nil()));
 			case R_BYTES:
 				return bytesOf(env, ref);
 			case R_STRINGS | R_OBJECTS | R_DYNAMICS:
@@ -1015,11 +1058,11 @@ class JniKind {
 		inline function is(c:Int):Bool
 			return bool(Ind.p3(fn(env, IsInstanceOf), env, ref, Mem.getPtr(cells, c)));
 		if (is(C_STRING)) return stringOf(env, ref);
-		if (is(C_INTEGER)) return int32(Ind.p4(fn(env, CallMethodA + 3 * T_INT), env, ref, Mem.getPtr(cells, C_INT_VALUE), Ptr.nil()));
-		if (is(C_CHARACTER)) return int32(Ind.p4(fn(env, CallMethodA + 3 * T_CHAR), env, ref, Mem.getPtr(cells, C_CHAR_VALUE), Ptr.nil())) & 0xFFFF;
-		if (is(C_BOOLEAN)) return bool(Ind.p4(fn(env, CallMethodA + 3 * T_BOOLEAN), env, ref, Mem.getPtr(cells, C_BOOLEAN_VALUE), Ptr.nil()));
+		if (is(C_INTEGER)) return int32(callIn(env, CallMethodA + 3 * T_INT, ref, Mem.getPtr(cells, C_INT_VALUE), Ptr.nil()));
+		if (is(C_CHARACTER)) return int32(callIn(env, CallMethodA + 3 * T_CHAR, ref, Mem.getPtr(cells, C_CHAR_VALUE), Ptr.nil())) & 0xFFFF;
+		if (is(C_BOOLEAN)) return bool(callIn(env, CallMethodA + 3 * T_BOOLEAN, ref, Mem.getPtr(cells, C_BOOLEAN_VALUE), Ptr.nil()));
 		if (is(C_NUMBER)) {
-			var d:Float = Ind.d4(fn(env, CallMethodA + 3 * T_DOUBLE), env, ref, Mem.getPtr(cells, C_NUMBER_DOUBLE), Ptr.nil());
+			var d:Float = callInD(env, CallMethodA + 3 * T_DOUBLE, ref, Mem.getPtr(cells, C_NUMBER_DOUBLE), Ptr.nil());
 			if (pending(env)) return null;
 			if (!is(C_DOUBLE) && !is(C_LONG) && d == Std.int(d) && Math.abs(d) < 2147483648.0) return Std.int(d);
 			return d;
@@ -1035,12 +1078,12 @@ class JniKind {
 		var t = Ind.p1(fn(env, ExceptionOccurred), env);
 		Ind.p1(fn(env, ExceptionClear), env);
 		var cl = Ind.p2(fn(env, GetObjectClass), env, t);
-		var name = stringResult(env, Ind.p4(fn(env, CallMethodA + 3 * T_OBJECT), env, cl, Mem.getPtr(cells, C_GETNAME), Ptr.nil()));
-		var msg = stringResult(env, Ind.p4(fn(env, CallMethodA + 3 * T_OBJECT), env, t, Mem.getPtr(cells, C_GETMESSAGE), Ptr.nil()));
-		var text = stringResult(env, Ind.p4(fn(env, CallMethodA + 3 * T_OBJECT), env, t, Mem.getPtr(cells, C_TOSTRING), Ptr.nil()));
+		var name = stringResult(env, callIn(env, CallMethodA + 3 * T_OBJECT, cl, Mem.getPtr(cells, C_GETNAME), Ptr.nil()));
+		var msg = stringResult(env, callIn(env, CallMethodA + 3 * T_OBJECT, t, Mem.getPtr(cells, C_GETMESSAGE), Ptr.nil()));
+		var text = stringResult(env, callIn(env, CallMethodA + 3 * T_OBJECT, t, Mem.getPtr(cells, C_TOSTRING), Ptr.nil()));
 		var b = new StringBuf();
 		b.add(text != null ? text : name);
-		var st = Ind.p4(fn(env, CallMethodA + 3 * T_OBJECT), env, t, Mem.getPtr(cells, C_STACK), Ptr.nil());
+		var st = callIn(env, CallMethodA + 3 * T_OBJECT, t, Mem.getPtr(cells, C_STACK), Ptr.nil());
 		if (pending(env)) Ind.p1(fn(env, ExceptionClear), env) else if (!st.isNull()) {
 			var n = int32(Ind.p2(fn(env, GetArrayLength), env, st));
 			for (i in 0...n) {
@@ -1049,7 +1092,7 @@ class JniKind {
 					Ind.p1(fn(env, ExceptionClear), env);
 					break;
 				}
-				var s = stringResult(env, Ind.p4(fn(env, CallMethodA + 3 * T_OBJECT), env, e, Mem.getPtr(cells, C_STE_TOSTRING), Ptr.nil()));
+				var s = stringResult(env, callIn(env, CallMethodA + 3 * T_OBJECT, e, Mem.getPtr(cells, C_STE_TOSTRING), Ptr.nil()));
 				Ind.p2(fn(env, DeleteLocalRef), env, e);
 				if (s != null) {
 					b.add("\n\tat ");
@@ -1082,7 +1125,8 @@ class JniKind {
 				return;
 			}
 		}
-		var text = Std.isOfType(e, haxe.Exception) ? (e : haxe.Exception).message : Std.string(e);
+		// (its text: a throw from its toString would leave the native with a Haxe exception)
+		var text = try Std.isOfType(e, haxe.Exception) ? (e : haxe.Exception).message : Std.string(e) catch (_:Dynamic) "a Haxe exception";
 		var c = Mem.getPtr(cells, C_HAXE_EXCEPTION);
 		if (c.isNull()) {
 			c = classNamed(env, "org/hxmc/HaxeException");
@@ -1119,12 +1163,11 @@ class JniKind {
 	static inline var D_FIELD = 24;
 	static inline var D_N = 32;
 	static inline var D_NATIVES = 40;
-	static var types:Ptr;
+	// (published once filled, each entry once its descriptor is: read lock-free)
+	@:hxmc.export("rt_jni_types") static var types:Ptr;
 
-	@:hxmc.host("rt_jni_known") static function known(o:Dynamic):Int {
-		if (types.isNull()) return 0;
-		return Mem.getPtr(types, 8 * Types.tindex(o)).isNull() ? 0 : 1;
-	}
+	@:hxmc.host("rt_jni_known") static function typeKnown(o:Dynamic):Int
+		return descOf(o).isNull() ? 0 : 1;
 
 	@:hxmc.host("rt_jni_desc") static function desc(proxy:String, n:Int):Ptr {
 		var d = LibC.malloc((D_NATIVES + 24 * n : I64));
@@ -1145,16 +1188,20 @@ class JniKind {
 		Mem.setI64(d, D_FIELD, off);
 		var t = Types.tindex(o);
 		Os.lock(Foreign.lock);
-		if (types.isNull()) {
-			types = LibC.malloc(8 * 65536);
-			LibC.memset(types, 0, 8 * 65536);
+		var ts = types;
+		if (ts.isNull()) {
+			ts = LibC.malloc(8 * 65536);
+			LibC.memset(ts, 0, 8 * 65536);
+			Atomic.store64(Mem.sym("rt_jni_types"), ts.toI64());
 		}
-		if (Mem.getPtr(types, 8 * t).isNull()) Mem.setPtr(types, 8 * t, d);
+		if (Mem.getPtr(ts, 8 * t).isNull()) Atomic.store64(ts.add(8 * t), d.toI64());
 		Os.unlock(Foreign.lock);
 	}
 
-	@:hxmc.unsafe static inline function descOf(o:Dynamic):Ptr
-		return types.isNull() ? Ptr.nil() : Mem.getPtr(types, 8 * Types.tindex(o));
+	@:hxmc.unsafe static inline function descOf(o:Dynamic):Ptr {
+		var ts = Ptr.ofI64(Atomic.load64(Mem.sym("rt_jni_types")));
+		return ts.isNull() ? Ptr.nil() : Ptr.ofI64(Atomic.load64(ts.add(8 * Types.tindex(o))));
+	}
 
 	// the Haxe object of a proxy's handle (a native method's thunk)
 	@:hxmc.host("rt_jni_self") static function self(h:I64):Dynamic
@@ -1306,15 +1353,17 @@ class JniKind {
 		if (v == null) return "null";
 		var env = enter();
 		var x = arg(env, v, R_DYNAMIC, null);
-		var s = x.isNull() ? null : Ind.p4(fn(env, CallMethodA + 3 * T_OBJECT), env, x, Mem.getPtr(cells, C_OBJECT_TOSTRING), Ptr.nil());
+		var s = x.isNull() ? null : callIn(env, CallMethodA + 3 * T_OBJECT, x, Mem.getPtr(cells, C_OBJECT_TOSTRING), Ptr.nil());
 		var r = pending(env) || s.isNull() ? null : stringOf(env, s);
 		leave(env);
 		return r;
 	}
 
 	// v (a box) gives up its global reference now (Foreign.detach)
-	static function detach(v:Dynamic):Void
-		if (kind != 0 && v != null) Foreign.detach(kind, v);
+	static function detach(v:Dynamic):Void {
+		var k = known();
+		if (k != 0 && v != null) Foreign.detach(k, v);
+	}
 
 	// ---- weak references (hxmc.java.Weak)
 
@@ -1368,7 +1417,9 @@ class JniKind {
 
 	// f(address, length) with the array's elements pinned
 	// (GetPrimitiveArrayCritical: no JNI call and no blocking on Java until
-	// it returns; the JVM may give a copy, written back after)
+	// it returns; the JVM may give a copy, written back after). f may
+	// allocate: the runtime makes no JNI call of its own meanwhile (its calls
+	// put off wait, Foreign.holdDeferred); f must call no Java itself
 	static function arrayCritical(v:Dynamic, f:(Ptr, Int) -> Void):Void {
 		var env = enter();
 		var a = arg(env, v, R_OBJECT, null);
@@ -1383,10 +1434,12 @@ class JniKind {
 			return;
 		}
 		var err:Dynamic = null;
+		Foreign.holdDeferred++;
 		try
 			f(p, n)
 		catch (e:Dynamic)
 			err = e;
+		Foreign.holdDeferred--;
 		Ind.p4(fn(env, ReleasePrimitiveArrayCritical), env, a, p, Ptr.nil());
 		leave(env);
 		if (err != null) throw err;

@@ -144,6 +144,10 @@ class Foreign {
 	// ids modulo PENDING_SLOTS (threads sharing one only look in vain)
 	static inline var PENDING_SLOTS = 256;
 	static var pending:Ptr;
+	// above zero: this thread may make no call into a foreign system now
+	// (JNI's critical region: JniKind.arrayCritical), so it runs no calls put
+	// off, puts off its releases, and reads no hook before a stop
+	@:hxmc.threadLocal static var holdDeferred:Int;
 	static var ended:Ptr;
 	static var endedCap:Int;
 	// (kind, thread) pairs to wake once the world resumes (wakeQueued)
@@ -339,6 +343,8 @@ class Foreign {
 	@:hxmc.unsafe static function beforeStop() {
 		var loaded = Ptr.nil();
 		var nloaded = 0;
+		// (no hook may run on this thread now, holdDeferred: every entry kept)
+		var hold = holdDeferred > 0;
 		Os.lock(lock);
 		for (i in 1...npeers) {
 			var e = peers.add(PEER_BYTES * i);
@@ -347,7 +353,9 @@ class Foreign {
 			var k = w & 0xFF;
 			if (inStop(k)) continue;
 			var cell = Mem.getPtr(e, 16);
-			if (!cell.isNull()) {
+			if (hold) {
+				if (!cell.isNull()) Mem.setI32(e, 24, w | ALIVE) else if (countedBefore(k)) Mem.setI32(e, 24, w | STRONG);
+			} else if (!cell.isNull()) {
 				// (a detached entry's reference may be gone: only its cell is read)
 				var live = Ind.call1(hook(k, K_WEAK_LOAD), cell);
 				Mem.setI32(e, 24, live.isNull() ? w & ~ALIVE : w | ALIVE);
@@ -501,7 +509,8 @@ class Foreign {
 	// put off for it, and that thread woken: detach's, beforeStop's)
 	@:hxmc.unsafe static function releaseNow(k:Int, ref:Ptr, maker:Int) {
 		var t = target(k, maker);
-		if (t != 0 && t != me()) {
+		if (holdDeferred > 0 && t == 0) t = me();
+		if (t != 0 && (t != me() || holdDeferred > 0)) {
 			t = defer(k, hook(k, K_RELEASE), ref, Ptr.nil(), t);
 			var wake = hook(k, K_WAKE);
 			if (t != 0 && t != me() && !wake.isNull()) Ind.call1(wake, Ptr.ofI64((t : I64)));
@@ -591,6 +600,7 @@ class Foreign {
 	// the lock (what they put off runs in the next round)
 	@:hxmc.unsafe static function runDeferred() {
 		var m = me();
+		if (holdDeferred > 0) return;
 		while (true) {
 			if (Atomic.load32(pending) == 0 && (m == 0 || Atomic.load32(pendingAt(m)) == 0)) return;
 			Os.lock(deferLock);
