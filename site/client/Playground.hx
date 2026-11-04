@@ -650,18 +650,24 @@ class Playground {
 		final p = program(model.getValue());
 		request({type: "check", main: p.main, file: p.file, code: p.code}).then((m) -> {
 			if (m == null || model.getValue() != p.code) return;
+			// the reply of display/diagnostics: per file, LSP-like diagnostics (0-based
+			// lines and characters; severity 1 error, 2 warning, 3 information, 4 hint)
 			final markers = [];
-			// classic message format: File.hx:LINE: characters A-B : message (or lines A-B); A and B
-			// are columns as Monaco's: 1-based, B past the end
-			final re = ~/^(?:\/work\/)?([\w.]+\.hx):(\d+): (characters|lines) (\d+)-(\d+) : (.*)$/;
-			for (l in m.output.split("\n")) {
-				if (!re.match(l) || re.matched(1) != p.file) continue;
-				final line = Std.parseInt(re.matched(2)), a = Std.parseInt(re.matched(4)), b = Std.parseInt(re.matched(5));
-				final message = re.matched(6);
-				final severity = ~/^Warning ?:/.match(message) ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error;
-				markers.push(re.matched(3) == "characters"
-					? {startLineNumber: line, startColumn: a, endLineNumber: line, endColumn: Std.int(Math.max(b, a + 1)), message: message, severity: severity}
-					: {startLineNumber: a, startColumn: 1, endLineNumber: b, endColumn: 1000, message: message, severity: monaco.MarkerSeverity.Error});
+			for (line in m.output.split("\n")) if (StringTools.startsWith(line, '{"jsonrpc"')) {
+				final reply:Dynamic = try haxe.Json.parse(line) catch (_:Dynamic) null;
+				final files:Null<Array<Dynamic>> = reply != null && reply.result != null ? reply.result.result : null;
+				if (files != null) for (f in files) if (f.file == "/work/" + p.file) for (d in (f.diagnostics : Array<Dynamic>)) {
+					final args:Dynamic = d.args;
+					final S:Dynamic = monaco.MarkerSeverity;
+					markers.push({
+						startLineNumber: d.range.start.line + 1,
+						startColumn: d.range.start.character + 1,
+						endLineNumber: d.range.end.line + 1,
+						endColumn: Std.int(Math.max(d.range.end.character + 1, d.range.end.line > d.range.start.line ? 1 : d.range.start.character + 2)),
+						message: Std.isOfType(args, String) ? args : args != null && args.description != null ? args.description : "",
+						severity: switch (d.severity : Int) { case 1: S.Error; case 2: S.Warning; case 3: S.Info; case _: S.Hint; },
+					});
+				}
 			}
 			monaco.editor.setModelMarkers(model, "haxe", markers);
 		});

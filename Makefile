@@ -332,12 +332,14 @@ bin/release/%/haxe.exe: $(TOOL) $(PORT_SRC) $(STD) $(HOST_RT)
 # the playground's compiler: a wasm32-wasi module (its runtime is Haxe, no
 # runtime object), without the target generators; with exnref, and with the
 # legacy exception-handling instructions for browsers without exnref (the
-# playground fetches one of the two)
+# playground fetches one of the two); its main is site/compiler/PlaygroundCompiler.hx
+# (haxe.Main, or a compilation server the page calls)
+WASM_ARGS := -cp haxe/src -cp site/compiler -main PlaygroundCompiler -D disable-parallelism $(COMPILER_ARGS) $(HXFLAGS) $(HXMC_ARGS) -D hih_no_generators -D hxmc.target=wasm32-wasi
 wasm: bin/wasm/hih.wasm bin/wasm/hih-legacy.wasm
-bin/wasm/hih.wasm: $(TOOL) $(PORT_SRC) $(STD)
-	$(call hxmc,$@,$(PORT_ARGS) -D hih_no_generators -D hxmc.target=wasm32-wasi)
-bin/wasm/hih-legacy.wasm: $(TOOL) $(PORT_SRC) $(STD)
-	$(call hxmc,$@,$(PORT_ARGS) -D hih_no_generators -D hxmc.target=wasm32-wasi -D hxmc.wasm-eh=legacy)
+bin/wasm/hih.wasm: $(TOOL) $(PORT_SRC) $(STD) site/compiler/PlaygroundCompiler.hx
+	$(call hxmc,$@,$(WASM_ARGS))
+bin/wasm/hih-legacy.wasm: $(TOOL) $(PORT_SRC) $(STD) site/compiler/PlaygroundCompiler.hx
+	$(call hxmc,$@,$(WASM_ARGS) -D hxmc.wasm-eh=legacy)
 
 # --- The npm packages (packages/, packed by packages/pack.mjs) ---
 

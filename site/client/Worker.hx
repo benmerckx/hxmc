@@ -10,9 +10,11 @@ import js.lib.WebAssembly;
 // Runs the compiler: hih.wasm (or hih-legacy.wasm: Playground.MODULE), the
 // port built by hxmc as a wasm32-wasi module (`make wasm`), with WasiHost as
 // its system and the std of std.bundle (`make site`, site/tools/mkbundle.py)
-// in its file system. Each request gets a fresh instance, so the program's
-// static state starts clean; the compiled module (from the page) and the std
-// are reused between instances.
+// in its file system. Run and Compile to HXB get a fresh instance each, so
+// the program's static state starts clean; display requests and type checks
+// go to one instance kept as a compilation server (serve), which keeps the
+// typed std and the modules between them. The compiled module (from the page)
+// and the std are shared by all.
 
 class Worker {
 	static final scope:DedicatedWorkerGlobalScope = Syntax.code("self");
@@ -75,7 +77,9 @@ class Worker {
 					final host = new WasiHost(root, ["haxe"].concat(args), ["HAXE_STD_PATH" => "/lib/haxe/std/", "PWD" => "/work"],
 						(fd, b) -> (fd == 1 ? out : err).write(b));
 					host.writeFile("/work/" + file, new js.html.TextEncoder().encode(code));
-					final inst:Dynamic = Syntax.code("new WebAssembly.Instance({0}, {1})", ready[0], host.imports());
+					final imports:Dynamic = host.imports();
+					imports.playground = {serve: (_:Int) -> {}}; // (started as haxe: no server)
+					final inst:Dynamic = Syntax.code("new WebAssembly.Instance({0}, {1})", ready[0], imports);
 					host.memory = inst.exports.memory;
 					var status = 0, error:Dynamic = null;
 					try inst.exports._start() catch (e:Dynamic) error = e;
@@ -93,6 +97,69 @@ class Worker {
 	}
 
 	static var lastHost:Null<WasiHost>;
+
+	// ---- the compilation server: display requests and type checks
+
+	/** one instance kept between requests: the module started with PLAYGROUND_SERVER
+		(site/compiler/PlaygroundCompiler.hx), whose `request` the worker calls with each
+		request's arguments in /request and the code in /work */
+	static var server:Null<Promise<{host:WasiHost, request:Void->Int, code:String}>>;
+
+	static function startServer():Promise<{host:WasiHost, request:Void->Int, code:String}> {
+		return Promise.all([wasmModule, std]).then((ready:Array<Dynamic>) -> {
+			final root = new VNode(true);
+			root.dir.set("lib", ready[1]);
+			final host = new WasiHost(root, ["haxe"], ["HAXE_STD_PATH" => "/lib/haxe/std/", "PWD" => "/work", "PLAYGROUND_SERVER" => "1"], (_, _) -> {});
+			host.writeFile("/work/.keep", new Uint8Array(0));
+			final imports:Dynamic = host.imports();
+			var index:Null<Int> = null;
+			imports.playground = {serve: (i:Int) -> index = i};
+			final inst:Dynamic = Syntax.code("new WebAssembly.Instance({0}, {1})", ready[0], imports);
+			host.memory = inst.exports.memory;
+			try inst.exports._start() catch (e:ExitStatus) if (e.status != 0) throw 'the compilation server exited with ${e.status}';
+			if (index == null) throw "the compilation server did not start";
+			final request:Void->Int = inst.exports.__indirect_function_table.get(index);
+			return {host: host, request: request, code: ""};
+		});
+	}
+
+	/** a display request on the server for /work/`file`, whose text, `code`, goes with
+		the request (its stdin, as an editor sends a file it has not saved); the output as lines */
+	static function serve(file:String, code:String, args:Array<String>):Promise<{status:Int, lines:Array<String>}> {
+		if (server == null) server = startServer();
+		return server.then((s) -> {
+			// (the class path lookup finds the file; its text on disk is not read. Only this
+			// file in /work: the main class, and so the file, changes with the code)
+			if (s.host.readFile("/work/" + file) == null) {
+				s.host.root.dir.set("work", new VNode(true));
+				s.host.writeFile("/work/" + file, new Uint8Array(0));
+			}
+			function call(request:{args:Array<String>, ?stdin:String}):Int {
+				s.host.writeFile("/request", new js.html.TextEncoder().encode(haxe.Json.stringify(request)));
+				var status = 0;
+				try status = s.request() catch (e:Dynamic) {
+					// a trap or an exit leaves the instance unusable: the next request starts another
+					server = null;
+					Syntax.code("throw {0}", e);
+				}
+				return status;
+			}
+			// an edit: what the server keeps of the file (its module, typed by a check) is
+			// dropped, as an editor has it dropped on a change (server/invalidate)
+			if (code != s.code) {
+				s.code = code;
+				s.host.out = (_, _) -> {};
+				call({args: ["--display", haxe.Json.stringify({jsonrpc: "2.0", id: 0, method: "server/invalidate", params: {file: "/work/" + file}})]});
+			}
+			final lines = [];
+			final out = lineWriter(lines.push), err = lineWriter(lines.push);
+			s.host.out = (fd, b) -> (fd == 1 ? out : err).write(b);
+			final status = call({args: args, stdin: code});
+			out.flush();
+			err.flush();
+			return {status: status, lines: lines};
+		});
+	}
 
 	/** The WebKit of Safari 26.0 (JavaScriptCore) at times runs this module
 		wrong: a fault of its own where the program cannot fault, "access to a
@@ -155,13 +222,13 @@ class Worker {
 					post({type: "ready"});
 				});
 			case "display" | "check":
-				final lines = [];
-				final add = (line:String) -> lines.push(line);
 				var args = ["-cp", ".", "--main", m.main, "--no-output", "-D", "disable-parallelism", "-D", "message.reporting=classic"];
-				if (m.type == "display") args = args.concat(["--display", haxe.Json.stringify(m.request)]);
+				// (a check: the diagnostics of the file, a display request too)
+				final request = m.type == "display" ? m.request : {jsonrpc: "2.0", id: 1, method: "display/diagnostics", params: {file: "/work/" + m.file}};
+				args = args.concat(["--display", haxe.Json.stringify(request)]);
 				final t0 = scope.performance.now();
-				return runOnce(m.file, m.code, add, add, args).then((status) -> {
-					post({type: m.type, id: m.id, status: status, output: lines.join("\n"), ms: scope.performance.now() - t0});
+				return serve(m.file, m.code, args).then((r) -> {
+					post({type: m.type, id: m.id, status: r.status, output: r.lines.join("\n"), ms: scope.performance.now() - t0});
 				});
 			case _:
 				final args = ["-cp", ".", "--main", m.main, "-D", "disable-parallelism"]
