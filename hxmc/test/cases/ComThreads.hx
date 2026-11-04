@@ -82,7 +82,8 @@ class ComThreads {
 		Com.runDeferred();
 		trace("released by its apartment's thread", done.wait(30), Native.counter_live() - base, Native.counter_released_on() == tid, woken > 0);
 
-		// a thread that ends: what is put off for it afterwards runs on any thread
+		// a thread that ends: what is put off for it runs as it ends, or once it
+		// has ended on any thread (this one's collections: whichever comes first)
 		var ended = new Lock();
 		Thread.create(() -> {
 			Com.init(MultiThreaded);
@@ -93,9 +94,15 @@ class ComThreads {
 		ended.wait();
 		trace("held after its maker ended", Native.counter_live() - base);
 		keep = null;
-		hxmc.NativeGc.collect(true);
-		Com.runDeferred();
-		trace("released by another thread", Native.counter_live() - base, Native.counter_released_on() == Kernel32.GetCurrentThreadId());
+		var left = -1;
+		for (i in 0...500) {
+			hxmc.NativeGc.collect(true);
+			Com.runDeferred();
+			left = Native.counter_live() - base;
+			if (left == 0) break;
+			Sys.sleep(0.01);
+		}
+		trace("released once its maker ended", left);
 		Com.uninit();
 	}
 
