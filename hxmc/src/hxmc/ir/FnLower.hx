@@ -3768,7 +3768,8 @@ class FnLower {
 	// compiles for every target, and runs behind a test of the system)
 	function comUnavailable(e:TExpr):Ex {
 		out.push(SExpr(ECallHost("rt_com_unavailable", vector(), TVoid)));
-		return nullOf(tyOf(e));
+		// (a value of the type, never read: a struct's a slot of this frame)
+		return tyOf(e).match(TStruct(_)) ? ELocal(newSlot(tyOf(e), true)) : nullOf(tyOf(e));
 	}
 
 	// the IID of COM interface c as rt_com_*'s four word arguments
@@ -3954,7 +3955,10 @@ class FnLower {
 		if (boxed == null) boxed = new Map();
 		inline function mk(d:TExprDef, t:core.TType.T):TExpr
 			return TFunctions.mk(d, t, pos);
-		var fail:Ex = mode != Com.DIRECT ? EInt(Com.E_UNEXPECTED) : fi.ret == TVoid ? null : nullOf(fi.ret);
+		// (a struct result of a direct method: stored through the pointer after
+		// `this`, which is returned, MSVC's C++ methods')
+		var first = sig.sretFirst ? 2 : 1;
+		var fail:Ex = mode != Com.DIRECT ? EInt(Com.E_UNEXPECTED) : sig.sretFirst ? ELocal(fi.args[1]) : fi.ret == TVoid ? null : nullOf(fi.ret);
 		var o = newLocal("o", TRef(RAny));
 		out.push(SSet(o, ECallHost("rt_com_self", vector(ELocal(fi.args[0])), TRef(RAny))));
 		out.push(SIf(EBin(RefEq, ELocal(o), ENull(TRef(RAny))), vector(SReturn(fail)), vector()));
@@ -3965,7 +3969,7 @@ class FnLower {
 		locals.set(vo.vId, oc);
 		var targs = [];
 		for (i in 0...s.args.length) {
-			var a = fi.args[i + 1];
+			var a = fi.args[i + first];
 			var t = s.args[i].type;
 			var v = TFunctions.allocVar(VGenerated, s.args[i].name, t, pos);
 			var lo = newLocal(s.args[i].name, ty(t));
@@ -3978,7 +3982,7 @@ class FnLower {
 			locals.set(v.vId, lo);
 			targs.push(mk(TLocal(v), t));
 		}
-		var retp = sig.retval != null ? fi.args[fi.args.length - 1] : null;
+		var retp = sig.sretFirst ? fi.args[1] : sig.retval != null ? fi.args[fi.args.length - 1] : null;
 		if (retp != null)
 			out.push(SIf(EBin(LEq, ELocal(retp), EConv(I2L, EInt(0))), vector(SReturn(EInt(Com.E_POINTER))), vector()));
 		var call = mk(TCall(mk(TField(mk(TLocal(vo), ct), FInstance(c, vector(), impl)), impl.cfType), Vector.fromArrayCopy(targs)), s.ret);
@@ -4002,7 +4006,7 @@ class FnLower {
 						cStore(ELocal(retp), 0, cty, x, t, call);
 					case _:
 				}
-				out.push(SSet(hr, EInt(0)));
+				out.push(SSet(hr, sig.sretFirst ? ELocal(retp) : EInt(0)));
 			} else if (mode == Com.RAW) {
 				out.push(SSet(hr, coerce(value(call), tyOf(call), TI32)));
 			} else if (mode == Com.DIRECT && fi.ret != TVoid) {
@@ -4012,7 +4016,7 @@ class FnLower {
 				out.push(SSet(hr, EInt(0)));
 			}
 		});
-		var onError:Ex = mode == Com.DIRECT ? (fi.ret == TVoid ? EInt(0) : nullOf(fi.ret)) : ECallHost("rt_com_hresult", vector(ELocal(exn)), TI32);
+		var onError:Ex = mode == Com.DIRECT ? (sig.sretFirst ? ELocal(retp) : fi.ret == TVoid ? EInt(0) : nullOf(fi.ret)) : ECallHost("rt_com_hresult", vector(ELocal(exn)), TI32);
 		out.push(STry(body, vector({test: null, l: exn, body: vector(SSet(hr, onError))})));
 		fi.hasTry = true;
 		out.push(SReturn(fi.ret == TVoid ? null : ELocal(hr)));

@@ -8,6 +8,16 @@ import hxmc.com.*;
 @:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A03}")
 extern interface ICallback extends IUnknown {
 	function Run(x:Int):Int;
+	function Corner():Pt;
+	@:hxmc.com.direct function Size():Pt;
+	function Name():BStr;
+}
+
+@:hxmc.struct class Pt {
+	public var x:Int;
+	public var y:Int;
+
+	public function new() {}
 }
 
 class Impl implements ICallback {
@@ -15,6 +25,15 @@ class Impl implements ICallback {
 
 	public function Run(x:Int):Int
 		return x + 1;
+
+	public function Corner():Pt
+		return new Pt();
+
+	public function Size():Pt
+		return new Pt();
+
+	public function Name():BStr
+		return "impl";
 }
 
 class ComElsewhere {
@@ -32,6 +51,9 @@ class ComElsewhere {
 		trace("a Haxe class", i.Run(1));
 		var c:ICallback = i;
 		attempt("call", () -> c.Run(2));
+		attempt("struct", () -> c.Corner());
+		attempt("direct struct", () -> c.Size());
+		attempt("bstr", () -> c.Name());
 		attempt("query", () -> Com.query(c, ICallback));
 		attempt("cast", () -> cast(c, ICallback));
 		attempt("iid", () -> Com.iidOf(ICallback));

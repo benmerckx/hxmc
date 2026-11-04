@@ -1210,8 +1210,7 @@ answers `QueryInterface`, `AddRef` and `Release`.
   the pairing's).
 - **Restrictions**: a class adding COM interfaces declares a constructor
   (the first to run registers the instance's type's vtables); a generic
-  class cannot; a method returning a struct to COM directly
-  (`@:hxmc.com.direct`) is not supported yet.
+  class cannot implement one.
 
 ### Apartments and threads
 

@@ -24,6 +24,7 @@ extern interface ICallback extends IUnknown {
 	function Run(x:Int):Int;
 	function Name():BStr;
 	function Mix(s:String, p:Pt, f:Float):Int;
+	@:hxmc.com.direct function Where(k:Int):Pt;
 }
 
 @:hxmc.com("{6A1B0C2D-0001-4E5F-8A9B-0C1D2E3F4A01}")
@@ -51,6 +52,7 @@ extern interface ICounter extends IUnknown {
 	static function callback_name_length(cb:Ptr):Int;
 	static function callback_mix(cb:Ptr):Int;
 	static function callback_qi(cb:Ptr):Int;
+	static function callback_where(cb:Ptr, k:Int):Int;
 	static function callback_keep(cb:Ptr):Void;
 	static function callback_kept_run(x:Int):Int;
 	static function callback_threads(cb:Ptr, n:Int, x:Int):Int;
@@ -82,6 +84,9 @@ class Doubler implements ICallback {
 
 	public function Mix(s:String, p:Pt, f:Float):Int
 		return s.length * 1000 + (p.x * 10 + p.y) * 10 + Std.int(f * 10);
+
+	public function Where(k:Int):Pt
+		return new Pt(k, calls);
 }
 
 // (an override answers COM's calls too: the thunk's call is dispatched)
@@ -110,6 +115,9 @@ class Both implements ICallback2 {
 	public function Mix(s:String, p:Pt, f:Float):Int
 		return 0;
 
+	public function Where(k:Int):Pt
+		return new Pt(0, 0);
+
 	public function Extra():Int
 		return 77;
 }
@@ -137,6 +145,7 @@ class ComObjects {
 		trace("name", Native.callback_name_length(p));
 		trace("mix", Native.callback_mix(p));
 		trace("qi", Native.callback_qi(p));
+		trace("where", Native.callback_where(p, 12), (Com.wrap(p, ICallback).Where(3) : Pt).x);
 		trace("thrown", ComException.hex(Native.callback_run(p, -1)), ComException.hex(Native.callback_run(p, 13)));
 		// (one block per object: the same pointer every time)
 		trace("same pointer", Com.ptr(d, ICallback) == p, Com.ptr(d, IUnknown) == p);

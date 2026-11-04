@@ -80,10 +80,10 @@ what was weighed against them: a change to the design should answer them.
    COM's standard marshaler (a proxy: calls on the apartment's thread).
    Aggregating the free-threaded marshaler (`IMarshal`) would let it be
    called directly from every apartment, as an agile WinRT object is.
-4. **Smaller gaps**: a Haxe method returning a struct to COM directly; a
-   typed out parameter (`Out<T>`: a frame's slot, read back, an interface's
-   adopted) beside `Ptr`; `IDispatch` and automation (`Invoke` with
-   `DISPPARAMS`), `SAFEARRAY`, the other `VARIANT` types; connection points
+4. **Smaller gaps**: a typed out parameter (`Out<T>`: a frame's slot,
+   read back, an interface's adopted) beside `Ptr`; `IDispatch` and
+   automation (`Invoke` with `DISPPARAMS`), `SAFEARRAY`, the other
+   `VARIANT` types; connection points
    (`IConnectionPointContainer`) as Haxe events; a COM method as a value;
    aggregation (a Haxe object as an outer object); `RT_STATS` counts of COM
    objects.

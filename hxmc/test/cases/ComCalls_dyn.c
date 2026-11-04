@@ -31,6 +31,7 @@ typedef struct {
 	HRESULT(STDMETHODCALLTYPE *Run)(ICallback *, int32_t, int32_t *);
 	HRESULT(STDMETHODCALLTYPE *Name)(ICallback *, BSTR *);
 	HRESULT(STDMETHODCALLTYPE *Mix)(ICallback *, LPCWSTR, Pt, double, int32_t *);
+	Pt *(STDMETHODCALLTYPE *Where)(ICallback *, Pt *, int32_t);
 } ICallbackVtbl;
 struct ICallback { const ICallbackVtbl *lpVtbl; };
 
@@ -233,6 +234,13 @@ EXPORT int32_t callback_mix(ICallback *cb) {
 	Pt p = {3, 4};
 	HRESULT hr = cb->lpVtbl->Mix(cb, L"mixé", p, 0.5, &r);
 	return SUCCEEDED(hr) ? r : hr;
+}
+
+// a direct struct result of a Haxe method (through the pointer after this, returned)
+EXPORT int32_t callback_where(ICallback *cb, int32_t k) {
+	Pt p = {-1, -1};
+	Pt *r = cb->lpVtbl->Where(cb, &p, k);
+	return r == &p ? p.x * 100 + p.y : -1;
 }
 
 // the HRESULT of QueryInterface for ICallback, ICounter (no) and IUnknown;

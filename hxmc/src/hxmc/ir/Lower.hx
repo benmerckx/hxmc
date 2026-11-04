@@ -1167,20 +1167,20 @@ class Lower implements LowerQueries {
 				};
 				var cs = Com.csig(decl, s);
 				var mode = Com.mode(decl);
-				if (mode == Com.DIRECT && cs.sretFirst)
-					throw new LowerError('$path.${impl.cfName}: a Haxe method returning a struct to COM (@:hxmc.com.direct) is not supported yet', CInterop.posOf(impl.cfPos));
 				var name = Com.THUNK + ci.ident + "_" + i + "_" + slot;
 				var w = new FuncInfo(name + "__work", module);
 				w.display = path + "." + impl.cfName + " (" + leaf.clPath.name + "." + decl.cfName + ", called by COM)";
 				w.pos = impl.cfPos;
 				w.args = [new Local(0, "this", TI64)];
+				// (a direct struct result: through the pointer after `this`, returned)
+				if (cs.sretFirst) w.args.push(new Local(1, "sret", TI64));
 				for (k in 0...s.args.length)
-					w.args.push(new Local(k + 1, s.args[k].name, switch Com.value(s.args[k].type) {
+					w.args.push(new Local(w.args.length, s.args[k].name, switch Com.value(s.args[k].type) {
 						case VC(_): ty(s.args[k].type);
 						case _: TI64;
 					}));
-				if (cs.retval != null) w.args.push(new Local(w.args.length, "retval", TI64));
-				w.ret = mode != Com.DIRECT ? TI32 : cs.ret == CInterop.CTy.CVoid ? TVoid : ty(s.ret);
+				if (cs.retval != null && !cs.sretFirst) w.args.push(new Local(w.args.length, "retval", TI64));
+				w.ret = mode != Com.DIRECT ? TI32 : cs.sretFirst ? TI64 : cs.ret == CInterop.CTy.CVoid ? TVoid : ty(s.ret);
 				prog.funcs.push(w);
 				pending.push(guarded(w, () -> {
 					var fl = new FnLower(this, w, null, null);

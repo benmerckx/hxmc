@@ -1,8 +1,11 @@
 exit 0
-ComElsewhere.hx:26: init, 0x80004001, COM (hxmc.com) is Windows only
-ComElsewhere.hx:32: a Haxe class, 2
-ComElsewhere.hx:26: call, 0x80004001, COM (hxmc.com) is Windows only
-ComElsewhere.hx:26: query, 0x80004001, COM (hxmc.com) is Windows only
-ComElsewhere.hx:26: cast, 0x80004001, COM (hxmc.com) is Windows only
-ComElsewhere.hx:26: iid, 0x80004001, COM (hxmc.com) is Windows only
-ComElsewhere.hx:26: variant, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: init, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:51: a Haxe class, 2
+ComElsewhere.hx:45: call, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: struct, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: direct struct, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: bstr, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: query, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: cast, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: iid, 0x80004001, COM (hxmc.com) is Windows only
+ComElsewhere.hx:45: variant, 0x80004001, COM (hxmc.com) is Windows only
