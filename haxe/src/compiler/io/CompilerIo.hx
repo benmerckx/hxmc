@@ -26,8 +26,9 @@ typedef CompilerIoData = {
 class CompilerIo {
 	/* Create a Unix pipe with a background reader thread that forwards chunks
 		to [write_fn].  Returns [(out_channel, thread)]. */
-	// port: a PipeOutput (a deque drained by a reader thread) stands in for the Unix pipe and
-	// is both the channel and the thread to join.
+	// port: a PipeOutput stands in for the Unix pipe and is both the channel and the thread
+	// to join: it hands the reader's chunks (at most 1024 bytes, in order) to [write_fn] as
+	// they are flushed, on the writer's thread, without a reader thread (joined at once)
 	public static function makeOutputPipe(writeFn:String->Void):{output:Output, thread:PipeOutput} {
 		var output = new PipeOutput(writeFn);
 		return {output: output, thread: output};
@@ -119,24 +120,11 @@ class CompilerIo {
 }
 
 private class PipeOutput extends Output {
-	final queue = new sys.thread.Deque<Null<haxe.io.Bytes>>();
-	final done = new sys.thread.Lock();
+	final writeFn:String->Void;
 	var closed = false;
 
 	public function new(writeFn:String->Void) {
-		sys.thread.Thread.create(function() {
-			try {
-				while (true) {
-					var bytes = queue.pop(true);
-					if (bytes == null) break;
-					writeFn(bytes.toString());
-				}
-			} catch (_:haxe.io.Eof) {} catch (e:haxe.Exception) {
-				done.release();
-				throw e;
-			}
-			done.release();
-		});
+		this.writeFn = writeFn;
 	}
 
 	// port: like an OCaml out_channel, writes are buffered (65536 bytes) until flushed;
@@ -166,7 +154,7 @@ private class PipeOutput extends Output {
 		var pos = 0, left = bytes.length;
 		while (left > 0) {
 			var n = Std.int(Math.min(left, 1024));
-			queue.add(bytes.sub(pos, n));
+			writeFn(bytes.sub(pos, n).toString());
 			pos += n;
 			left -= n;
 		}
@@ -176,9 +164,8 @@ private class PipeOutput extends Output {
 		if (!closed) {
 			flush();
 			closed = true;
-			queue.add(null);
 		}
 	}
 
-	public function join():Void done.wait();
+	public function join():Void {}
 }
