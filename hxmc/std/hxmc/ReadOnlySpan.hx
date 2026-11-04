@@ -28,6 +28,10 @@ abstract ReadOnlySpan<T>(SpanData) {
 	// an atomic load of element i (Span.load)
 	extern public function load(i:Int):T;
 
+	// (hxmc.simd: 16, 8 or 4 bytes from byte pos * size(T), checked: op names
+	// the load, v128.load, v128.load64_zero or v128.load32_zero)
+	@:noCompletion extern public function vload(op:String, pos:Int):hxmc.simd.V128;
+
 	extern public static function ofBytes(b:Bytes, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
 
 	extern public static function ofIoBuffer(buf:IoBuffer, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;

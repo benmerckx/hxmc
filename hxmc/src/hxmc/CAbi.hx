@@ -55,7 +55,71 @@ enum CRet {
 // - wasm32 (clang's C ABI): a struct of one scalar as that scalar, another
 //   as the address of a copy (an argument) or through a hidden first
 //   argument (a result).
+// - hxmc.simd's vectors (V128: docs/plans/simd.md, "ABIs") are C's native
+//   128-bit vectors (__m128, float32x4_t, a vector_size(16) type): System
+//   V and AAPCS64 pass one in the next vector register and return it in
+//   xmm0/q0; Win64 passes the address of a 16-byte aligned copy and
+//   returns it in xmm0; wasm32 as a struct (the address of a copy, a
+//   result through a first argument: a JavaScript host takes no v128).
+//   A struct with vectors in it (16-byte aligned, as C's): System V's of
+//   one vector is SSE and SSEUP, in one vector register (xmm0), a larger
+//   one MEMORY; AAPCS64's of one to four vectors and nothing else is a
+//   homogeneous short-vector aggregate in q registers (one each), another
+//   one, larger than 16 bytes, by address; Win64's by address (a result
+//   through a first argument), as every struct that is not 1, 2, 4 or 8
+//   bytes.
 class CAbi {
+	// whether c is hxmc.simd's vector (C's native 128-bit vector type)
+	public static inline function isVector(c:TClass):Bool
+		return hxmc.ir.FnLower.isV128(c);
+
+	// a vector in one vector register
+	static final VECTOR:Vector<CPart> = vector({off: 0, size: 16, float: true});
+
+	// whether a struct has vectors in it (nested ones too)
+	static function hasVectors(c:TClass):Bool {
+		for (f in CInterop.scalars(c, 0, true))
+			if (f.ty.match(CStruct(_))) return true;
+		return false;
+	}
+
+	// AAPCS64: a homogeneous short-vector aggregate (one to four vectors and
+	// nothing else), one part per vector; null: not one
+	static function hva(c:TClass):Null<Vector<CPart>> {
+		var fs = CInterop.scalars(c, 0, true);
+		if (fs.length == 0 || fs.length > 4) return null;
+		for (f in fs)
+			if (!f.ty.match(CStruct(_))) return null;
+		return Vector.fromArrayCopy([for (f in fs) ({off: f.off, size: 16, float: true} : CPart)]);
+	}
+
+	// a struct with vectors in it (not wasm32: the struct rule there)
+	static function vectorArg(abi:Abi, c:TClass):CPass {
+		if (abi.arm) {
+			var h = hva(c);
+			return h != null ? PRegs(h) : PCopy;
+		}
+		if (abi.os == "windows") return PCopy;
+		// (System V: one vector and nothing else is its eightbytes SSE and
+		// SSEUP; any more is MEMORY)
+		var size = CInterop.layout(c).size;
+		return size == 16 ? PRegs(VECTOR) : PStack(words(size, _ -> false));
+	}
+
+	static function vectorRet(abi:Abi, c:TClass):CRet {
+		if (abi.arm) {
+			var h = hva(c);
+			return h != null ? RRegs(h) : RSret;
+		}
+		if (abi.os == "windows") return RSret;
+		return CInterop.layout(c).size == 16 ? RRegs(VECTOR) : RSret;
+	}
+
+	// whether a struct argument on the stack (PStack) starts at a 16-byte
+	// boundary (System V: a MEMORY struct of C's alignment, vectors in it)
+	public static function stackAlign16(c:TClass):Bool
+		return CInterop.layout(c).align >= 16;
+
 	// 8 or 4: the struct is a homogeneous aggregate of doubles or floats; 0: not one
 	public static function hfa(c:TClass):Int {
 		var fs = CInterop.scalars(c, 0);
@@ -114,6 +178,8 @@ class CAbi {
 			var s = single(c);
 			return s != null ? PScalar(s.off, s.ty) : PCopy;
 		}
+		if (isVector(c)) return abi.os == "windows" && !abi.arm ? PCopy : PRegs(VECTOR);
+		if (hasVectors(c)) return vectorArg(abi, c);
 		if (abi.arm) {
 			var ps = a64Parts(c);
 			return ps != null ? PRegs(ps) : PCopy;
@@ -129,6 +195,8 @@ class CAbi {
 			var s = single(c);
 			return s != null ? RScalar(s.off, s.ty) : RSret;
 		}
+		if (isVector(c)) return RRegs(VECTOR);
+		if (hasVectors(c)) return vectorRet(abi, c);
 		var ps = if (abi.arm) a64Parts(c) else if (abi.os == "windows") {
 			var size = CInterop.layout(c).size;
 			size == 1 || size == 2 || size == 4 || size == 8 ? vector({off: 0, size: size, float: false}) : null;

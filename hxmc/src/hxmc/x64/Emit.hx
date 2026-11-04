@@ -436,7 +436,10 @@ class Emit implements hxmc.Target.Emitter {
 				a.lea(8, i.d, mem(i));
 			case LOAD:
 				var m = mem(i);
-				if (isX(i.d)) a.movsdRM(i.d, m) else switch i.size {
+				// (an xmm register: a double, a vector, or a vector's low 8 or 4 bytes, the rest zeroed)
+				if (isX(i.d)) {
+					if (i.size == 16) a.movupsRM(i.d, m) else if (i.size == 4) a.movssRM(i.d, m) else a.movsdRM(i.d, m);
+				} else switch i.size {
 					case 1: if (i.flag) a.movsx8(4, i.d, m) else a.movzx8(i.d, m);
 					case 2: if (i.flag) a.movsx16(4, i.d, m) else a.movzx16(i.d, m);
 					case 4: if (i.imm2 == 1) a.movsxd(i.d, m) else a.load(4, i.d, m);
@@ -444,7 +447,9 @@ class Emit implements hxmc.Target.Emitter {
 				}
 			case STORE:
 				var m = mem(i);
-				if (isX(i.s1)) a.movsdMR(m, i.s1) else a.store(i.size, m, i.s1);
+				if (isX(i.s1)) {
+					if (i.size == 16) a.movupsMR(m, i.s1) else if (i.size == 4) a.movssMR(m, i.s1) else a.movsdMR(m, i.s1);
+				} else a.store(i.size, m, i.s1);
 			case STOREI:
 				a.storeI(i.size, mem(i), i.imm);
 			case ALU:
@@ -554,6 +559,20 @@ class Emit implements hxmc.Target.Emitter {
 				a.lockCmpxchgMR(i.size, mem(i), i.s1);
 			case MFENCE:
 				a.mfence();
+			case VX | VXU:
+				var p = i.cond & 0xff, w = i.cond & 0x100 != 0;
+				if (i.cond & 0x200 != 0) a.vx(p, w, i.imm, i.s1, i.d, i.imm2) else a.vx(p, w, i.imm, i.d, i.s1, i.imm2);
+			case VXI:
+				a.vx(i.cond & 0xff, i.cond & 0x100 != 0, i.imm, (i.cond >> 12) & 7, i.d, i.imm2);
+			case VXK:
+				a.vxM(i.cond & 0xff, i.cond & 0x100 != 0, i.imm, i.d, Mem.rip(constant(i.uses[0], i.uses[1], i.uses[2], i.uses[3])), i.imm2);
+			case VCONST:
+				var u = i.uses;
+				if (u[0] == 0 && u[1] == 0 && u[2] == 0 && u[3] == 0) a.vx(0x66, false, 0x0fef, i.d, i.d, -1) // pxor
+				else if (u[0] == -1 && u[1] == -1 && u[2] == -1 && u[3] == -1) a.vx(0x66, false, 0x0f76, i.d, i.d, -1) // pcmpeqd
+				else a.vxM(0, false, 0x0f28, i.d, Mem.rip(constant(u[0], u[1], u[2], u[3])), -1); // movaps
+			case PTEST:
+				a.vx(0x66, false, 0x0f3817, i.s1, i.s1, -1);
 			case CVTSS2SD:
 				a.cvtss2sd(i.d, i.s1);
 			case CVTSD2SS:

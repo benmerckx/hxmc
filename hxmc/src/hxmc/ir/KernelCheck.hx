@@ -129,6 +129,34 @@ class KernelCheck {
 			case _: false;
 		}
 
+	// a vector of hxmc.simd: the V128 struct, or an abstract over it (F32x4,
+	// I16x8, ...), whose unchecked casts reinterpret the same 128 bits
+	static function isVector(t:T):Bool {
+		var depth = 0;
+		while (depth++ < 16)
+			switch t.follow() {
+				case TAbstract(a, pl) if (!core.Meta.has(core.Meta.CoreType, a.aMeta)):
+					t = core.TFunctions.applyParams(a.aParams, pl, a.aThis);
+				case TInst(c, _):
+					return FnLower.isV128(c);
+				case _:
+					return false;
+			}
+		return false;
+	}
+
+	// a call whose string arguments are literals naming an operation (hxmc.simd's
+	// intrinsics, a span's vload and vstore): no string at run time
+	static function simdIntrinsic(f:TExpr):Bool
+		return switch f.eexpr {
+			case TField(_, FStatic(c, cf)):
+				core.Globals.sTypePath(c.clPath) == "hxmc.simd.Simd" || (cf.cfName == "vload" || cf.cfName == "vstore") && switch c.clKind {
+					case KAbstractImpl(a): isSpanAbstract(a);
+					case _: false;
+				};
+			case _: false;
+		}
+
 	// ---- expressions
 
 	// an abstract seen as its own underlying type (an inline method's `this`:
@@ -158,7 +186,9 @@ class KernelCheck {
 			case _:
 		}
 		var path = core.Globals.sTypePath(c.clPath);
-		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct";
+		// (hxmc.simd's intrinsics: values; their raw memory accesses need hxmc.unsafe)
+		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct"
+			|| path == "hxmc.simd.Simd" && cf.cfName != "load" && cf.cfName != "store";
 	}
 
 	// the static an assignment or increment writes, through struct fields, or null
@@ -240,8 +270,10 @@ class KernelCheck {
 				call(f, args, e);
 				if (!value(e.etype, e.epos, "the result of this call")) return;
 				// (the callee is no value: its arguments only)
+				var named = simdIntrinsic(f);
 				for (a in args)
-					expr(a);
+					if (!(named && a.eexpr.match(TConst(TString(_)))))
+						expr(a);
 				switch f.eexpr {
 					case TField(o, _): expr(o);
 					case _:
@@ -262,7 +294,8 @@ class KernelCheck {
 			case TArray(a, _):
 				if (!value(a.etype, a.epos, "this array")) return;
 			case TCast(x, null):
-				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow()) && !toUnderlying(x.etype, e.etype)) {
+				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow()) && !toUnderlying(x.etype, e.etype)
+					&& !(isVector(x.etype) && isVector(e.etype))) {
 					fail(e.epos, "an unchecked cast from " + typeName(x.etype) + " to " + typeName(e.etype), "unchecked casts only between scalars");
 					return;
 				}

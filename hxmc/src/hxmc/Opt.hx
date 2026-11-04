@@ -85,7 +85,9 @@ class Opt {
 
 	// runtime functions that write no memory the code reads and do not collect
 	static var readOnly = [
-		"hx_aget_i_slow" => true, "hx_aget_f_slow" => true, "hx_aget_l_slow" => true, "rt_write_barrier" => true, "hxmc_barrier_slow" => true
+		"hx_aget_i_slow" => true, "hx_aget_f_slow" => true, "hx_aget_l_slow" => true, "rt_write_barrier" => true, "hxmc_barrier_slow" => true,
+		// (inline conversions: no memory at all)
+		"hxmc$f64_to_f32" => true, "hxmc$f32_to_f64" => true, "hxmc$f32bits_to_freg" => true, "hxmc$freg_to_f32bits" => true
 	];
 
 	var f:MFunc;
@@ -122,6 +124,14 @@ class Opt {
 		}
 		rewrite();
 		dce();
+		// (branches on comparisons of constants: inlined arguments)
+		if (cmpFolded) {
+			simplifyCfg();
+			pruneBlocks();
+			mergeBlocks();
+			simplifyCfg();
+			dce();
+		}
 		var rounds = 0;
 		while (rounds++ < 3 && condProp()) {
 			pruneBlocks();
@@ -433,8 +443,8 @@ class Opt {
 								if (fc[k] == -1 && fa[k] == t.a) known = fv[k] ? 1 : 2;
 								continue;
 							}
-							var same = fa[k] == c.a && fb[k] == c.b;
-							var swapped = fa[k] == c.b && fb[k] == c.a;
+							var same = sameVal(fa[k], c.a) && sameVal(fb[k], c.b);
+							var swapped = sameVal(fa[k], c.b) && sameVal(fb[k], c.a);
 							if (same && fc[k] == c.imm) known = fv[k] ? 1 : 2;
 							else if ((same || swapped) && isEqNe(fc[k]) && isEqNe(c.imm)) {
 								// x == y against y != x, x != y, ...
@@ -482,6 +492,7 @@ class Opt {
 	}
 
 	var nullsDropped = false;
+	var cmpFolded = false; // (gvn: a comparison of constants)
 
 	// ---- a span's element checks a loop proves (condProp)
 
@@ -525,6 +536,17 @@ class Opt {
 			if (lt) break;
 		}
 		if (lt && nonNeg(i, cfg, 0)) return true;
+		// (a small block's index: x * s + k with constants s, k >= 0, x never
+		// negative and below a constant, against a length of a constant or
+		// tested against one: `if (s.length < 64) return; for (c in 0...8)
+		// s[c + 56]`)
+		{
+			var lo = lowerBound(n, lx, ly, strict);
+			if (lo > 0) {
+				var hi = upperOf(i, cfg, lx, ly, strict, 0);
+				if (hi >= 0 && hi < lo) return true;
+			}
+		}
 		// (a table's index: x & m, 0 <= m, against a length of at least m + 1,
 		// a constant or tested against one)
 		var x = f.vals[i];
@@ -536,7 +558,67 @@ class Opt {
 		return false;
 	}
 
+	// the least value n (an I32) has where the facts hold: a constant, or a
+	// constant c with c <= n (c < n: c + 1); -1: none known
+	function lowerBound(n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>):Float {
+		var best:Float = constOf(n);
+		for (k in 0...lx.length)
+			if (ly[k] == n) {
+				var c = constOf(lx[k]);
+				if (c >= 0 && c + (strict[k] ? 1 : 0) > best) best = c + (strict[k] ? 1 : 0);
+			}
+		return best;
+	}
+
+	// the greatest value v (an I32) can have where the facts hold, when it
+	// is never negative: a constant; x below a constant (x never negative);
+	// x + k, x * k, x << k for a constant k >= 0 (computed without wrapping:
+	// above 2^31 - 1 counts as unknown); -1: unknown
+	function upperOf(v:Int, cfg:Cfg<MBlock>, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>, depth:Int):Float {
+		var x = f.vals[v];
+		if (x.ty != I32 || depth > 3) return -1;
+		var c = constOf(v);
+		if (c >= 0) return c;
+		var r:Float = -1;
+		switch x.op {
+			case Add | Mul | Shl:
+				var k = constOf(x.b), y = x.a;
+				if (k < 0 && x.op != Shl) {
+					k = constOf(x.a);
+					y = x.b;
+				}
+				if (k < 0 || x.op == Shl && k > 30) return -1;
+				var u = upperOf(y, cfg, lx, ly, strict, depth + 1);
+				if (u < 0) return -1;
+				r = switch x.op {
+					case Add: u + k;
+					case Mul: u * k;
+					case _: u * Math.pow(2, k);
+				}
+			case _:
+				if (!nonNeg(v, cfg, 0)) return -1;
+				for (k in 0...lx.length)
+					if (lx[k] == v) {
+						var b = constOf(ly[k]);
+						if (b >= 0) {
+							var u:Float = strict[k] ? b - 1 : b;
+							if (r < 0 || u < r) r = u;
+						}
+					}
+		}
+		return r > 2147483647.0 ? -1 : r;
+	}
+
 	// an I32 constant's value when it is not negative, else -1
+	// whether a and b are one value: the same, or equal integer constants
+	// (each access of Bytes tests length >= n with a constant of its own)
+	function sameVal(a:Int, b:Int):Bool {
+		if (a == b) return true;
+		if (a < 0 || b < 0) return false;
+		var x = f.vals[a], y = f.vals[b];
+		return x.op == Const && y.op == Const && x.ty == y.ty && x.sym == null && y.sym == null && x.imm == y.imm && x.imm2 == y.imm2;
+	}
+
 	function constOf(v:Int):Int {
 		var c = f.vals[v];
 		return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0 ? c.imm : -1;
@@ -1058,7 +1140,7 @@ class Opt {
 
 	static inline function pure(op:Op):Bool
 		return switch op {
-			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select:
+			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | VOp | VConst:
 				true;
 			case _: false;
 		};
@@ -1428,6 +1510,8 @@ class Opt {
 	public static function lowered(f:MFunc) {
 		var o = new Opt(f);
 		o.simplifyCfg();
+		// (blocks it empties are merged as it goes)
+		o.ifConvert();
 		o.repl = MFunc.iota(f.vals.length);
 		var any = false;
 		for (b in f.blocks)
@@ -1439,6 +1523,106 @@ class Opt {
 				}
 		if (any) o.rewrite();
 		o.dce();
+	}
+
+	// ---- if-conversion
+
+	// whether i may run whether or not its branch is taken: it cannot fault,
+	// has no effect and is cheap (integer operations; no division, load or
+	// call)
+	static function speculable(i:MIns):Bool
+		return switch i.op {
+			case Const | Copy | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Rotr | Neg | Not | Cmp | SExt | ZExt | Trunc | Select:
+				i.ty == I32 || i.ty == I64;
+			case _: false;
+		}
+
+	// A branch to two short arms (or one arm and the join) that meet in a
+	// join of only those two edges, whose phis are integers, becomes the arms'
+	// code and a Select per phi (cmov, csel, wasm's select): `v < 0 ? 0 : v >
+	// 255 ? 255 : v` costs no misprediction on data the branch predictor cannot
+	// learn (pixels). An arm holds at most 5 instructions besides its jump;
+	// joins are converted innermost first (rounds), and the head then jumps
+	// to the join, which mergeBlocks absorbs. Returns whether anything changed.
+	function ifConvert():Bool {
+		var changed = false, round = true, rounds = 0;
+		function arm(x:MBlock, h:MBlock, j:MBlock):Bool {
+			if (x == j) return true;
+			if (x.preds.length != 1 || x.preds[0] != h || x.handler || x.cold != h.cold || x.ins.length > 6) return false;
+			var t = x.term();
+			if (t == null || t.op != Jmp || t.targets[0] != j) return false;
+			for (k in 0...x.ins.length - 1)
+				if (!speculable(x.ins[k])) return false;
+			return true;
+		}
+		while (round && rounds++ < 8) {
+			round = false;
+			for (h in f.blocks) {
+				var br = h.term();
+				if (br == null || br.op != Br || h.handler || contOf(h) != null || f.vals[br.a].ty != I32) continue;
+				var t = br.targets[0], e = br.targets[1];
+				if (t == e) continue;
+				// the join: where both arms (or one arm and the branch) go
+				var j:Null<MBlock> = null;
+				function after(x:MBlock):Null<MBlock> {
+					var xt = x.term();
+					return xt != null && xt.op == Jmp && x.preds.length == 1 ? xt.targets[0] : null;
+				}
+				if (after(t) != null && after(t) == after(e)) j = after(t);
+				else if (after(t) == e) j = e;
+				else if (after(e) == t) j = t;
+				if (j == null || j == h || j.preds.length != 2 || j.handler || !arm(t, h, j) || !arm(e, h, j)) continue;
+				// the phis' operands by edge: from the then side and the else side
+				var kt = j.preds.indexOf(t == j ? h : t), ke = j.preds.indexOf(e == j ? h : e);
+				if (kt < 0 || ke < 0 || kt == ke) continue;
+				var phis = [], ok = true;
+				for (i in j.ins)
+					if (i.op == Phi) {
+						if (i.ty != I32 && i.ty != I64) ok = false;
+						phis.push(i);
+					}
+				if (!ok || phis.length == 0 || phis.length > 4) continue;
+				// the arms' code moves before the branch, the phis after it as selects
+				br.op = Jmp;
+				var cond = br.a;
+				br.a = -1;
+				br.targets = vector(j);
+				h.ins.pop();
+				for (x in [t, e])
+					if (x != j) {
+						for (k in 0...x.ins.length - 1) {
+							var i = x.ins[k];
+							i.block = h;
+							h.ins.push(i);
+						}
+						x.ins = [];
+						x.preds = [];
+						x.succs = [];
+					}
+				for (p in phis) {
+					var vt = p.args[kt], ve = p.args[ke];
+					j.ins.remove(p);
+					p.op = Select;
+					p.a = cond;
+					p.b = vt;
+					p.c = ve;
+					p.args = vector();
+					p.block = h;
+					h.ins.push(p);
+				}
+				h.ins.push(br);
+				h.succs = [j];
+				j.preds = [h];
+				changed = round = true;
+			}
+			if (round) {
+				var live = [for (b in f.blocks) if (b == f.entry || b.preds.length > 0) b];
+				f.blocks = live;
+				f.edited();
+				mergeBlocks();
+			}
+		}
+		return changed;
 	}
 
 	var next = 1; // the next fresh version
@@ -1562,7 +1746,16 @@ class Opt {
 		return x.isObj() ? x.op == y.op && x.ty == y.ty && cres(x.a) == cres(y.a) && cres(x.b) == cres(y.b) && cres(x.c) == cres(y.c) && okey(x) == okey(y)
 			&& (x.op != TypeTest || x.info.cls == y.info.cls)
 			&& ver[x.id] == ver[y.id] : x.op == y.op && x.ty == y.ty && cres(x.a) == cres(y.a) && cres(x.b) == cres(y.b) && cres(x.c) == cres(y.c) && x.imm == y.imm && x.imm2 == y.imm2
-			&& x.size == y.size && x.signed == y.signed && x.sym == y.sym && x.mem == y.mem && ver[x.id] == ver[y.id];
+			&& x.size == y.size && x.signed == y.signed && x.sym == y.sym && x.mem == y.mem && ver[x.id] == ver[y.id] && sameCases(x, y);
+
+	// (a vector constant's words, a shuffle's lanes)
+	static function sameCases(x:MIns, y:MIns):Bool {
+		if (x.op != VOp && x.op != VConst) return true;
+		if (x.cases.length != y.cases.length) return false;
+		for (k in 0...x.cases.length)
+			if (x.cases[k] != y.cases[k]) return false;
+		return true;
+	}
 
 	inline function hash(i:MIns):Int
 		return i.isObj() ? hashOf(i.op, i.a, i.b, i.c, okey(i), 0, ver[i.id]) : hashOf(i.op, i.a, i.b, i.c, i.imm, i.imm2, ver[i.id]);
@@ -1577,11 +1770,13 @@ class Opt {
 	}
 
 	// A store whose value a later load of its address can take: it writes
-	// the whole value (no truncation), and not the initialization of a new
-	// object (whose stores leave the versions as they are: forwardStores)
+	// the whole value (no truncation: a vector's 16 bytes, not the low 8 or
+	// 4 of v128.store64_lane, whose v128.load64_zero reads zeros above
+	// them), and not the initialization of a new object (whose stores leave
+	// the versions as they are: forwardStores)
 	inline function forwards(st:MIns):Bool {
 		var t = f.vals[res(st.c)].ty;
-		return st.mem != MInit && st.size == (t == I32 ? 4 : 8) && t != Void;
+		return st.mem != MInit && st.size == (t == I32 ? 4 : t == V128 ? 16 : 8) && t != Void;
 	}
 
 	// load l reads what store st wrote: the same address and size, the
@@ -1649,9 +1844,15 @@ class Opt {
 							continue;
 						}
 					}
-					// (comparisons are recomputed: they fuse with their branch)
-					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0) || op == Cmp) continue;
-					if (fold(i)) continue;
+					// (comparisons are recomputed: they fuse with their branch;
+					// those of constants are folded)
+					if (op == Cmp) {
+						if (fold(i)) cmpFolded = true;
+						continue;
+					}
+					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0)) continue;
+					// (a vector constant folded is still numbered: one for its copies)
+					if (fold(i) && i.op != VConst) continue;
 					var h = hash(i);
 					h = (h ^ (h >>> 15)) * 0x2c1b3c6d;
 					var bk = (h ^ (h >>> 12)) & mask;
@@ -1749,6 +1950,45 @@ class Opt {
 					case _: a >>> n;
 				};
 				return set(r.low, r.high);
+			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
+				// (signed and unsigned order of two words, 32 or 64 bits)
+				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);
+				var b = x.ty == I64 ? haxe.Int64.make(y.imm2, y.imm) : haxe.Int64.ofInt(y.imm);
+				var s = haxe.Int64.compare(a, b);
+				var u = x.ty == I64 ? haxe.Int64.ucompare(a, b) : haxe.Int64.ucompare(haxe.Int64.make(0, x.imm), haxe.Int64.make(0, y.imm));
+				var t = switch (i.imm : Cond) {
+					case CEq: s == 0;
+					case CNe: s != 0;
+					case CLt: s < 0;
+					case CLe: s <= 0;
+					case CGt: s > 0;
+					case CGe: s >= 0;
+					case CULt: u < 0;
+					case CULe: u <= 0;
+					case CUGt: u > 0;
+					case _: u >= 0;
+				};
+				return set(t ? 1 : 0, 0);
+			// (a splat of a constant: a vector constant, which the back ends
+			// load or fold into its users instead of keeping it in a register)
+			case VOp if (plain(x) && i.imm >= 0x0f && i.imm <= 0x12):
+				var lo = x.imm, hi = i.imm == 0x12 ? x.imm2 : x.imm;
+				switch i.imm {
+					case 0x0f:
+						lo &= 0xff;
+						lo |= lo << 8;
+						lo |= lo << 16;
+						hi = lo;
+					case 0x10:
+						lo = (lo & 0xffff) | (lo << 16);
+						hi = lo;
+					case _:
+				}
+				i.op = VConst;
+				i.cases = haxe.ds.Vector.fromArrayCopy([lo, hi, lo, hi]);
+				i.imm = i.imm2 = 0;
+				i.a = i.b = i.c = -1;
+				return true;
 			case SExt if (plain(x) && x.ty == I32 && i.ty == I64):
 				return set(x.imm, x.imm < 0 ? -1 : 0);
 			case ZExt if (plain(x) && x.ty == I32 && i.ty == I64):
