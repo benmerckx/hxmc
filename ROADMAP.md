@@ -34,6 +34,7 @@ Where hxmc is going, in order. The designs behind each item are in
 - A collector that knows about frames ([runtime.md](docs/plans/runtime.md#frames-and-pauses)).
 - Debugging: PDB, `__unwind_info`, variables, DWARF for wasm ([codegen.md](docs/plans/codegen.md#debugging)).
 - Low-level Haxe: methods on structs, specialized generics, value enums ([lowlevel.md](docs/plans/lowlevel.md)).
+- SIMD beyond the portable 128-bit layer (built: [simd.md](docs/plans/simd.md)): 256-bit vectors with run-time dispatch, opted-in relaxed operations, vectors in registers across calls ([simd.md](docs/plans/simd.md#later)).
 - WebAssembly size and startup ([targets.md](docs/plans/targets.md#webassembly)).
 - Background work off the main thread ([runtime.md](docs/plans/runtime.md#background-work)).
 
@@ -45,5 +46,6 @@ Where hxmc is going, in order. The designs behind each item are in
 - A GUI subsystem on Windows, a dynamic musl mode on Linux ([targets.md](docs/plans/targets.md#windows)).
 - Direct system calls on Linux ([runtime.md](docs/plans/runtime.md#direct-system-calls-on-linux)).
 - Correctly rounded math ([math.md](docs/plans/math.md)).
+- Auto-vectorization of struct arithmetic and span loops ([simd.md](docs/plans/simd.md#later)).
 - The `hxmc` haxelib; verified native builds ([packaging.md](docs/plans/packaging.md)).
 - Any Haxe version per project: parked ([haxe-versions.md](docs/plans/haxe-versions.md)).

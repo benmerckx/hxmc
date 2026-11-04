@@ -95,9 +95,11 @@ class Start {
 			}
 			if (fiber.isNull()) {
 				Mem.call0(body);
+				mainEnded();
 				return;
 			}
 			K.SwitchToFiber(fiber);
+			mainEnded();
 			return;
 		}
 		// Apple's systems: the outermost autorelease pool, as clang's main has
@@ -109,6 +111,7 @@ class Start {
 		var stack = bytes == 0 ? Ptr.nil() : Os.reserve(bytes);
 		if (stack.isNull()) {
 			Mem.call0(body);
+			mainEnded();
 			ObjCKind.poolEnd(pool);
 			return;
 		}
@@ -117,10 +120,24 @@ class Start {
 		Gc.cstackLo = stack;
 		Gc.cstackHi = stack.addL(bytes);
 		Mem.callOnStack(stack.addL(bytes), body);
+		// (back on the thread's own stack: the heap's roots are the shadow stack's)
+		mainEnded();
 		ObjCKind.poolEnd(pool);
 		#if hxmc.shared
 		// (a library's program ended: its stack given back, as the library may be closed: hxmc dev's host)
 		Os.release(stack, bytes);
+		#end
+	}
+
+	// the program's main returned: what the main thread put off and has not
+	// run yet (Foreign.runDeferred), as a spawned thread runs its own as it
+	// ends (Threads.run). A program's main thread then ends (what is put off
+	// for it later goes to any thread); a library's (hxmc.shared) goes on
+	// calling into it, and runs what is put off for it then
+	static function mainEnded():Void {
+		if (Foreign.ndeferred != 0) Foreign.runDeferred();
+		#if !hxmc.shared
+		if (Foreign.me() > 0) Foreign.threadExit(Foreign.me());
 		#end
 	}
 

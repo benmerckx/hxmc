@@ -99,6 +99,11 @@ class LFunc {
 	public static inline var NPHYS = 64;
 
 	public var isFloat:Array<Bool> = []; // per virtual register (index - NPHYS)
+	// per virtual register: a vector (hxmc.simd: a float register, all 128 bits
+	// live: 16-byte spill slots and moves)
+	public var isVec:Array<Bool> = [];
+	// whether any register is a vector (the slow-path saves of float registers are whole)
+	public var hasVec = false;
 	public var fprBase:Int; // the first floating-point physical register
 	public var slots:Array<{size:Int, align:Int}> = []; // frame slots (MIR slots, then spills)
 	public var outArgs = 0; // bytes of outgoing stack arguments
@@ -219,11 +224,31 @@ class LFunc {
 
 	public function newReg(float:Bool):Int {
 		isFloat.push(float);
+		isVec.push(false);
 		return nregs++;
 	}
 
 	public inline function floatReg(r:Int):Bool
 		return r < NPHYS ? r >= fprBase : isFloat[r - NPHYS];
+
+	public function newVecReg():Int {
+		isFloat.push(true);
+		isVec.push(true);
+		hasVec = true;
+		return nregs++;
+	}
+
+	public inline function vecReg(r:Int):Bool
+		return r >= NPHYS && isVec[r - NPHYS];
+
+	// a new virtual register of r's class
+	public function newRegLike(r:Int):Int
+		return vecReg(r) ? newVecReg() : newReg(floatReg(r));
+
+	// the bytes a spill of r takes (a physical float register in a function
+	// with vectors: whole)
+	public inline function spillBytes(r:Int):Int
+		return vecReg(r) || r < NPHYS && r >= fprBase && hasVec ? 16 : 8;
 
 	public function slot(size:Int, align:Int):Int {
 		slots.push({size: size, align: align});

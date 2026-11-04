@@ -557,12 +557,12 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "zext", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
 	public static inline function isIntrinsic(n:String):Bool
-		return StringTools.startsWith(n, "hxmc_unsafe_Mem_") || StringTools.startsWith(n, "hxmc_unsafe_Atomic_");
+		return StringTools.startsWith(n, "hxmc_unsafe_Mem_") || StringTools.startsWith(n, "hxmc_unsafe_Atomic_") || StringTools.startsWith(n, SIMD_PREFIX);
 
 	// a runtime function call that is not a GC point
 	public static function noGcHost(n:String):Bool
@@ -2944,6 +2944,7 @@ class FnLower {
 					var n = Lower.metaArg(core.Meta.getOpt(Native, cf.cfMeta));
 					name = n != null ? n : cf.cfName;
 				}
+				if (StringTools.startsWith(name, SIMD_PREFIX)) return simdCall(name, s, cargs, e);
 				var intrinsic = intrinsicStatic(name, cargs, e);
 				if (intrinsic != null) return intrinsic;
 				var t = hty(s.ret);
@@ -3147,6 +3148,106 @@ class FnLower {
 	}
 
 	// static externs lowered to IR operations instead of runtime calls
+	// ---- SIMD (hxmc.simd, docs/plans/simd.md): a vector is a 16-byte
+	// @:hxmc.struct (hxmc.simd.V128), the address of its memory as every
+	// struct value; the intrinsics of hxmc.simd.Simd take the addresses of
+	// their operands' copies and of a fresh slot for their result, which
+	// MirBuild.simd expands into 16-byte loads, the operation and a store, so
+	// that Sroa keeps the vectors in registers
+
+	public static inline var SIMD_PREFIX = "hxmc_simd_Simd_";
+
+	// whether c is the vector struct
+	public static function isV128(c:TClass):Bool
+		return c.clPath.name == "V128" && c.clPath.pack.join(".") == "hxmc.simd";
+
+	// an Int known at compile time: a literal, or arithmetic on literals (a
+	// lane an inline function computes from its literal arguments)
+	static function simdConst(e:TExpr):Null<Int> {
+		return switch e.eexpr {
+			case TConst(TInt(v)): v;
+			case TParenthesis(x) | TMeta(_, x) | TCast(x, null): simdConst(x);
+			case TUnop(Neg, _, x):
+				var v = simdConst(x);
+				v == null ? null : -v;
+			case TBinop(op, x, y):
+				var a = simdConst(x), b = simdConst(y);
+				if (a == null || b == null) return null;
+				switch op {
+					case OpAdd: a + b;
+					case OpSub: a - b;
+					case OpMult: a * b;
+					case OpShl: a << b;
+					case OpShr: a >> b;
+					case OpUShr: a >>> b;
+					case OpAnd: a & b;
+					case OpOr: a | b;
+					case OpXor: a ^ b;
+					case _: null;
+				}
+			case _: null;
+		}
+	}
+
+	function simdCall(name:String, s:core.TType.TSignature, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var rt = tyOf(e);
+		var xs = new Array<Ex>();
+		// (the vectors' copies and the scalars, left to right)
+		var vals = operands(cargs);
+		for (k in 0...cargs.length) {
+			var a = s.args[k];
+			var c = strip(cargs[k]);
+			// an operation's name, a lane, a constant's word: literals
+			if (a.name == "op") {
+				switch c.eexpr {
+					case TConst(TString(v)): xs.push(EStr(v));
+					case _: return cfail("hxmc.simd: the operation must be a literal", e);
+				}
+				continue;
+			}
+			if (a.name == "lane" || a.name == "word" || ~/^l[0-9]+$/.match(a.name) || ~/^w[0-9]$/.match(a.name)) {
+				switch simdConst(c) {
+					case null: return cfail("hxmc.simd: " + (a.name == "lane" || a.name.charAt(0) == "l" ? "a lane index" : "a constant's word") + " must be a constant (an inline function's argument a literal)", e);
+					case v:
+						// (a lane of the operation's lanes; a shuffle's of 32 bytes)
+						var code = xs.length > 0 ? switch xs[0] {
+							case EStr(op): hxmc.SimdOps.code(op);
+							case _: -1;
+						} : -1;
+						if (a.name == "lane" && code >= 0 && (v < 0 || v >= hxmc.SimdOps.lanes(code)))
+							return cfail('hxmc.simd: lane $v of ${hxmc.SimdOps.name(code)} (${hxmc.SimdOps.lanes(code)} lanes)', e);
+						if (a.name.charAt(0) == "l" && a.name != "lane" && (v < 0 || v >= 32))
+							return cfail("hxmc.simd: shuffle lane " + v + " (0 to 31: the first vector's, then the second's)", e);
+						xs.push(EInt(v));
+				}
+				continue;
+			}
+			var sc = structOf(cargs[k].etype);
+			if (sc != null) {
+				if (!isV128(sc)) return cfail("hxmc.simd: " + sc.clPath.name + " is no vector", e);
+				xs.push(vals[k]);
+				continue;
+			}
+			var t = hty(a.type);
+			xs.push(ELocal(asLocal(coerce(vals[k], tyOf(cargs[k]), t), t)));
+		}
+		var sr = structOf(s.ret);
+		if (sr != null) {
+			var dst = newSlot(structTy(sr), true);
+			// (the result's address follows the operation's name, if any)
+			var at = xs.length > 0 && xs[0].match(EStr(_)) ? 1 : 0;
+			xs.insert(at, ELocal(dst));
+			out.push(SExpr(ECallHost(name, Vector.fromArrayCopy(xs), TVoid)));
+			return coerce(ELocal(dst), structTy(sr), rt);
+		}
+		var t = hty(s.ret);
+		if (t == TVoid) {
+			out.push(SExpr(ECallHost(name, Vector.fromArrayCopy(xs), TVoid)));
+			return EInt(0);
+		}
+		return coerce(temp(t, ECallHost(name, Vector.fromArrayCopy(xs), t)), t, rt);
+	}
+
 	function intrinsicStatic(name:String, cargs:Vector<TExpr>, e:TExpr):Null<Ex> {
 		return switch name {
 			case "Std_int" if (cargs.length == 1):
@@ -3640,16 +3741,37 @@ class FnLower {
 		function check(i:Ex, n:Ex)
 			// (Mem.ult, marked: Opt.condProp drops the checks a loop proves)
 			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
-		// [pos, pos + cnt) inside n (64-bit: no overflow; negative ones fail unsigned)
+		// [pos, pos + cnt) inside n: one comparison of n with pos + cnt, both
+		// zero-extended to 64 bits (no overflow; a negative one is 2^31 or more, past any n)
 		function range(pos:Ex, cnt:Ex, n:Ex) {
-			var n64 = EConv(I2L, n), p64 = EConv(I2L, pos);
-			var bad = vector(fatal("badRange", [pos, cnt, n]));
-			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(n64, p64), TBool), bad,
-				vector(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EBin(LSub, n64, p64), EConv(I2L, cnt)), TBool), bad, vector()))));
+			var end = EBin(LAdd, ECallHost("hxmc_unsafe_Mem_zext", vector(pos), TI64), ECallHost("hxmc_unsafe_Mem_zext", vector(cnt), TI64));
+			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, n), end), TBool), vector(fatal("badRange", [pos, cnt, n])), vector()));
 		}
 		function int(k:Int):Ex
 			return loc(coerce(rest[k], restTy(k), TI32), TI32);
 		return switch name {
+			case "vload" | "vstore":
+				// (hxmc.simd: a vector's bytes at element pos, the whole range checked)
+				var op = switch strip(cargs[1]).eexpr {
+					case TConst(TString(s)): s;
+					case _: cfail("hxmc.simd: the operation must be a literal", e);
+				};
+				var code = hxmc.SimdOps.code(op);
+				if (code < 0 || hxmc.SimdOps.kind(code) != (name == "vload" ? hxmc.SimdOps.LOAD : hxmc.SimdOps.STORE)) cfail("hxmc.simd: no " + name + " " + op, e);
+				var bytes = hxmc.SimdOps.memBytes(code);
+				if (bytes % size != 0) cfail("hxmc.simd: " + bytes + " bytes are not whole elements of " + size + " bytes", e);
+				var pos = int(1);
+				range(pos, EInt(Std.int(bytes / size)), len);
+				var p = loc(elem(ptr, pos), TI64);
+				if (name == "vload") {
+					var dst = newSlot(structTy(structOf(e.etype)), true);
+					out.push(SExpr(ECallHost(SIMD_PREFIX + "load", vector(EStr(op), ELocal(dst), p, EInt(0)), TVoid)));
+					coerce(ELocal(dst), structTy(structOf(e.etype)), tyOf(e));
+				} else {
+					var v = ELocal(asLocal(rest[2], restTy(2)));
+					out.push(SExpr(ECallHost(SIMD_PREFIX + "store", vector(EStr(op), p, EInt(0), v), TVoid)));
+					EInt(0);
+				}
 			case "elem":
 				var i = int(0);
 				check(i, len);
@@ -4836,9 +4958,20 @@ class FnLower {
 			case _: {get: "getI64", set: "setI64", t: TI64};
 		}
 
+	// what copyStruct and zeroStruct move: the scalar fields, nested structs
+	// flattened, but vectors (hxmc.simd.V128) whole (CStruct; the
+	// interpreter's are four words, hxmc.simd.Ref)
+	static inline function structParts(c:TClass):Array<{off:Int, ty:CTy}>
+		return CInterop.scalars(c, 0, !Lower.simdScalar);
+
 	// the struct at src copied to dst, scalar by scalar (dst and src: pure)
 	function copyStruct(dst:Ex, src:Ex, c:TClass) {
-		for (f in CInterop.scalars(c, 0)) {
+		for (f in structParts(c)) {
+			// (a vector: one 16-byte access, which Sroa keeps a register)
+			if (f.ty.match(CStruct(_))) {
+				out.push(SExpr(ECallHost(SIMD_PREFIX + "copy", vector(dst, EInt(f.off), src, EInt(f.off)), TVoid)));
+				continue;
+			}
 			var a = rawAccess(f.ty);
 			var v = ECallHost("hxmc_unsafe_Mem_" + a.get, vector(src, EInt(f.off)), a.t);
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + a.set, vector(dst, EInt(f.off), v), TVoid)));
@@ -4846,7 +4979,11 @@ class FnLower {
 	}
 
 	function zeroStruct(dst:Ex, c:TClass) {
-		for (f in CInterop.scalars(c, 0)) {
+		for (f in structParts(c)) {
+			if (f.ty.match(CStruct(_))) {
+				out.push(SExpr(ECallHost(SIMD_PREFIX + "zero", vector(dst, EInt(f.off)), TVoid)));
+				continue;
+			}
 			var a = rawAccess(f.ty);
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + a.set, vector(dst, EInt(f.off), nullOf(a.t)), TVoid)));
 		}

@@ -534,6 +534,50 @@ references in structs.
 The corpus cases `StructValues`, `StructInline`, `StructInlineOpt` and
 `reject/Struct*` cover this on all seven targets.
 
+## SIMD vectors
+
+`hxmc.simd`'s nine 128-bit types (`F32x4`, `F64x2`, `I8x16`, `U8x16`,
+`I16x8`, `U16x8`, `I32x4`, `U32x4`, `I64x2`) are struct values of 16 bytes
+kept in vector registers (SSE4.1 on x86-64, NEON on arm64, simd128 on
+wasm32), with WebAssembly simd128's operations and results on every
+target, and a scalar implementation with the same results on the Mir
+interpreter, Eval, JavaScript and other Haxe targets:
+
+```haxe
+import hxmc.simd.*;
+
+@:hxmc.kernel static function gain(s:Span<UInt8>, n:Int, g:Float) {
+  var k = F32x4.splat(g), lo = F32x4.splat(-1), hi = F32x4.splat(1);
+  var i = 0;
+  while (i + 4 <= n) {
+    (F32x4.loadSpan(s, i * 4) * k).clamp(lo, hi).storeSpan(s, i * 4);
+    i += 4;
+  }
+}
+```
+
+- **Operations**: arithmetic (wrapping; `addSat`/`subSat` saturating),
+  `min`/`max` (NaN-propagating) and `pmin`/`pmax`, `mulAdd` (not fused),
+  comparisons to masks, `select`, constant-index shuffles and swizzles,
+  widening and saturating narrowing, conversions (truncating,
+  saturating), `sum`, `any`, `all`, `bitmask`.
+- **Memory**: `load`/`store` on `Bytes` (checked), `loadSpan`/`storeSpan`
+  on spans in kernels, `loadPtr`/`storePtr` (`@:hxmc.unsafe`); unaligned,
+  16 bytes or the low 8 or 4.
+- **As values**: the struct rules. Boxed in an `Array`, a `Map`, a type
+  parameter's slot, `Null` and `Dynamic`; passed to Haxe functions by
+  address.
+- **In C signatures**: C's native vector type (`__m128`, `float32x4_t`,
+  `vector_size(16)`), in a vector register (System V, AAPCS64; by address
+  on Win64, result in xmm0); on wasm32 by address. At most eight, none
+  variadic.
+- **Requirements**: an x86-64-v2 machine (SSE4.1) for a program that uses
+  them; a WebAssembly engine with simd128.
+
+The design, every semantic decision, the ABIs and the benchmarks:
+[plans/simd.md](plans/simd.md). The corpus cases `SimdOps`, `SimdValues`,
+`SimdExamples`, `SimdFfi` and `reject/Simd*`.
+
 ## Objective-C
 
 On macOS and iOS, Objective-C classes are declared as extern classes and

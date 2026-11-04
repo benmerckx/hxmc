@@ -380,6 +380,9 @@ class Asm {
 	// size: 1, 2, 4, 8 bytes; float: d register (size 8)
 
 	static function ldstBase(size:Int, load:Bool, signed:Bool, x:Bool, float:Bool):Int {
+		// (a float register: d, or a vector's q, or its low s)
+		if (float && size == 16) return load ? 0x3DC00000 : 0x3D800000;
+		if (float && size == 4) return load ? 0x3D400000 | (2 << 30) : 0x3D000000 | (2 << 30);
 		if (float) return load ? 0x3D400000 | (3 << 30) : 0x3D000000 | (3 << 30);
 		var sz = size == 8 ? 3 : size == 4 ? 2 : size == 2 ? 1 : 0;
 		var opc = !load ? 0 : (signed ? (x ? 2 : 3) : 1);
@@ -387,7 +390,7 @@ class Asm {
 	}
 
 	static inline function scaleOf(size:Int):Int
-		return size == 8 ? 3 : size == 4 ? 2 : size == 2 ? 1 : 0;
+		return size == 16 ? 4 : size == 8 ? 3 : size == 4 ? 2 : size == 2 ? 1 : 0;
 
 	// [n + off]: scaled unsigned offset when aligned and in range, else unscaled 9-bit; false: neither
 	public function ldst(load:Bool, size:Int, signed:Bool, x:Bool, t:Int, n:Int, off:Int):Bool {
@@ -414,10 +417,11 @@ class Asm {
 		w(base | 0x00200800 | (m << 16) | (3 << 13) | ((shift ? 1 : 0) << 12) | (n << 5) | (t & 31));
 	}
 
-	// a load or store at a symbol's :lo12: offset (after adrp)
+	// a load or store at a symbol's :lo12: offset (after adrp), scaled by
+	// the access's size (a q register's 16, an s register's 4)
 	public function ldstSymLo(load:Bool, size:Int, signed:Bool, x:Bool, t:Int, n:Int, s:Symbol, addend:Int) {
 		var float = t >= 32;
-		reloc(float || size == 8 ? RA64Ldst64Lo12 : size == 4 ? RA64Ldst32Lo12 : size == 2 ? RA64Ldst16Lo12 : RA64Ldst8Lo12, s, addend);
+		reloc(size == 16 ? RA64Ldst128Lo12 : size == 8 ? RA64Ldst64Lo12 : size == 4 ? RA64Ldst32Lo12 : size == 2 ? RA64Ldst16Lo12 : RA64Ldst8Lo12, s, addend);
 		w(ldstBase(size, load, signed, x, float) | (n << 5) | (t & 31));
 	}
 
@@ -438,6 +442,15 @@ class Asm {
 	// 0 fmov, 1 fabs, 2 fneg, 3 fsqrt, 4 frintm (floor), 5 frintp (ceil)
 	public function fop1(op:Int, d:Int, n:Int)
 		w(FOP1[op] | ((n & 31) << 5) | (d & 31));
+
+	// a NEON instruction: its encoding and the register fields
+	public function neon(enc:Int, d:Int, n:Int, m:Int)
+		w(enc | ((m < 0 ? 0 : m & 31) << 16) | ((n < 0 ? 0 : n & 31) << 5) | (d & 31));
+
+	// mov vd.16b, vn.16b (orr)
+	public function movV(d:Int, n:Int) {
+		if (d != n) neon(0x4EA01C00, d, n, n);
+	}
 
 	public function fmovR(d:Int, n:Int) {
 		if (d != n) fop1(0, d, n);

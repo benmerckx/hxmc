@@ -33,7 +33,9 @@ reference-counted C object system).
   (`Dynamic`, an element, a type parameter) is its peer's Haxe object, else
   its one box: a native handle holding a reference, found by the kind's
   identity key (and `same` test), so `==` and maps see one object while it
-  lives.
+  lives. A box is told from other native handles (a mutex's, another
+  kind's box) by a tag in its second slot, not by a hook: `refOf`, `detach`
+  and the systems' tests call none on a value that is not one of the kind's.
 - **Owned, weak and unowned fields.** A field holding a reference (a
   class's, a closure's capture, a captured variable's box) is an entry
   (object, offset), released once its holder dies. A weak field holds a
@@ -53,7 +55,10 @@ reference-counted C object system).
   other kind's is queued: (function, a, b, kind, thread), run in a safe
   region inside the kind's batch, newest first, by the thread the kind
   chooses, at its next allocation slow path, when `Gc.collect` returns, from
-  `ForeignKind.runDeferred` (an event loop's), or as the thread ends. A
+  `ForeignKind.runDeferred` (an event loop's), or as the thread ends (the
+  main thread's as `main` returns). The queue keeps its order for the
+  threads that do not run it, and a thread with nothing queued for it does
+  not take its lock (a count per thread). A
   native destructor that runs Haxe code puts itself off the same way
   (`Foreign.deferHere`: Objective-C mode classes' `dealloc`s).
 - **Pressure.** A peer or a box promoted to the old space keeps its
@@ -106,19 +111,30 @@ lowering gets `rt_foreign_*` exports with its first caller (each in
 ## Threading rules
 
 - **With the world stopped** (the collecting thread, every other thread at
-  a safepoint or in a safe region, the world lock held): the toggle's hooks
-  (`count`; `retain` and `release` for `TOGGLE_RELEASE`), `weak_load` of
-  detached peers (and the `release` of what it returned, put off unless
-  `RELEASE_IN_STOP`), and for a `RELEASE_IN_STOP` kind `release`,
-  `weak_destroy`, `batch_begin` and `batch_end`. These must not call Haxe
-  code, allocate on the heap, start threads, or block on a lock a stopped
-  thread may hold. A retain racing the scan on another thread (one in a
-  safe region, inside the system) is seen at the next collection: a
-  toggle's inherent race, Xamarin's too.
-- **Out of the stop**: `identity`, `same` and `peer` (boxing, `refOf`,
-  `detach`, from Haxe code on any runtime thread), `weak_init`, and every
-  put-off call. `detach` releases on the calling thread unless the kind
-  wants another one (then it is put off for it).
+  a safepoint or in a safe region, the world lock held): only a
+  `RELEASE_IN_STOP` kind's hooks: the toggle's (`count`; `retain` and
+  `release` for `TOGGLE_RELEASE`), `weak_load` of detached peers and the
+  `release` of what it returned, `release`, `weak_destroy`, `batch_begin`
+  and `batch_end`. These must not call Haxe code, allocate on the heap,
+  start threads, or block on a lock a stopped thread may hold. A retain
+  racing the scan on another thread (one in a safe region, inside the
+  system) is seen at the next collection: a toggle's inherent race,
+  Xamarin's too.
+- **Before the stop**, for any other kind (a JVM's calls may wait for its
+  own safepoint, a COM proxy's for its apartment): the thread about to
+  collect reads the toggle of each entry and loads each detached entry's
+  weak cell (its release then made by the thread rule), out of the stop,
+  under the tables' lock, and the scan reads what it recorded. What changes
+  between the two counts from the next collection: an entry paired
+  meanwhile is kept, one detached meanwhile lives, one let go lives one
+  more collection.
+- **Out of the stop**: `identity`, `same` and `peer` (boxing, `detach`,
+  from Haxe code on any runtime thread), `weak_init`, and every put-off
+  call. `detach` releases on the calling thread unless the kind wants
+  another one (then it is put off for it, and that thread woken).
+- **The tables' lock** is taken whatever the number of threads: a
+  `TOGGLE_NOTIFY` notification, or a thread the runtime attached from
+  foreign code, may come before the runtime counts a second thread.
 - **Put-off calls** run in a safe region, inside the kind's batch, so they
   may call into the system and back into Haxe (a callback leaves the
   region). A thread runs the calls for itself and for any thread; a thread

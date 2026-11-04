@@ -88,7 +88,7 @@ each lane on the kept cases and 400 random programs.
 | --- | --- | --- |
 | `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
-| `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
+| `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
 | `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`); for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
@@ -195,6 +195,7 @@ branch cancels its run; runs on main, `hxmc` and tags always finish.
 | `bench` | the [HaxeBenchmarks](https://github.com/HaxeBenchmarks/benchmark-runner) cases built by hxmc (native and wasm) and by the port for C++, JVM, JS, HL/C and HashLink: median wall time of interleaved runs, CPU time, peak RSS, sizes, compile times; each case's output compared across targets (`hxmc/test/Bench.hx`) |
 | `bench-compile` | the port built by hxmc (native, wasm under node and wasmtime) against the reference, compiling `hello`, `stdlib` and itself to HXB; every archive compared before its times count (`hxmc/test/CompileBench.hx`) |
 | `bench-micro` | `WHICH=arrays`: Array, NativeArray and Vector ([notes](../hxmc/test/bench/README.md)); `WHICH=maps`: ObjectMap and StringMap |
+| `bench-simd` | image kernels (an 8x8 IDCT, YCbCr to RGBA, a bilinear resize) as plain Haxe, as span kernels and with `hxmc.simd`, natively and as wasm under node, against the same kernels in C at -O2, -O3 without the vectorizers and -O3; the same checksums everywhere (`hxmc/test/bench/simd`, [plans/simd.md](plans/simd.md#benchmarks)) |
 | `measure` | peak RSS, wall and CPU time of the self-compile (ours and the reference's) and of the tool's builds (`haxe/test/Measure.hx`) |
 
 `.github/workflows/bench.yml` runs them nightly on main (skipped when the

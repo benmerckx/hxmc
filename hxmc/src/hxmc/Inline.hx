@@ -84,6 +84,8 @@ class Inline {
 			if (!b.cold)
 				for (i in b.ins) {
 					if (i.op == Call && i.returnsTwice) return -1;
+					// (a float32 conversion: one instruction beside its load or store)
+					if (i.op == Call && (i.sym == MirBuild.SPECIAL + "f64_to_f32" || i.sym == MirBuild.SPECIAL + "f32_to_f64")) continue;
 					if (i.op != Const && i.op != ConstF && i.op != SymAddr && i.op != StackAddr && i.op != Param)
 						n += !i.isObj() ? 1 : opSize(i);
 				}
