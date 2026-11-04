@@ -1,5 +1,6 @@
-// A vector's raw memory access (loadPtr) in a safe kernel needs @:hxmc.unsafe.
-// expect: (kernel: Mem, Atomic and C functions need @:hxmc.unsafe)
+// A vector's raw memory access (loadPtr) in a safe kernel needs @:hxmc.unsafe:
+// the pointer itself is raw memory there.
+// expect: (kernel: raw memory needs @:hxmc.unsafe)
 import hxmc.simd.U8x16;
 import hxmc.unsafe.Ptr;
 
