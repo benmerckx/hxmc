@@ -253,33 +253,28 @@ class Main {
 			}
 		}
 
-		var sctx = Server.setupServerContext(false, false);
+		// port: a JSON-RPC request (--display) is answered by DisplayJson.dispatch, on a
+		// ... CompilerInstance without a cache
 		var io = CompilerIo.createStdioIo();
-		var requestScope = try Server.createRequestScope(false, io, requestArgs.displayArg) catch (e:core.ds.ArgumentError) {
-			ServerCompilationContext.dispose(sctx);
+		var request = requestArgs.displayArg;
+		var args = requestArgs.clone();
+		args.displayArg = null;
+		var instance = new compiler.CompilerInstance(args, new compiler.CompilerInstance.SkipCache());
+		var timerCtx = try context.display.DisplayJson.dispatch(instance, io, request) catch (e:core.ds.ArgumentError) {
 			return badArg(e.message);
 		} catch (e:core.ds.Exit) {
 			// port: handle_jsonrpc_error raised Exit after sending the error: an uncaught OCaml exception
-			ServerCompilationContext.dispose(sctx);
 			io.flush();
 			Sys.stderr().writeString("Fatal error: exception Stdlib.Exit\n");
 			return 2;
-		}
-		var code = try HighLevel.entry(sctx, requestScope, requestArgs) catch (e:core.ds.ArgumentError) {
-			ServerCompilationContext.dispose(sctx);
-			return badArg(e.message);
 		} catch (e:Dynamic) {
-			ServerCompilationContext.dispose(sctx);
 			reportInternalError(e);
 			return 1;
 		}
-		if (code == 0) {
-			var timerCtx = requestScope.timerCtx;
-			if (timerCtx.measureTimes == core.Timer.MeasureTimes.Yes)
-				CompilerOutput.sendTimerReport(io, timerCtx);
-		}
-		ServerCompilationContext.dispose(sctx);
-		return code;
+		// (the request's compilation ended answered: upstream's exit code 0)
+		if (timerCtx.measureTimes == core.Timer.MeasureTimes.Yes)
+			CompilerOutput.sendTimerReport(io, timerCtx);
+		return 0;
 	}
 
 	// port: upstream reports an uncaught OCaml exception with its backtrace.

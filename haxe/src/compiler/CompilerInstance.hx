@@ -21,6 +21,9 @@ class CompilerInstance {
 	/** the display/* methods of the protocol, typed */
 	public final display:DisplayServices;
 
+	/** the server/* methods of the protocol (and typer/compiledTypes), typed */
+	public final server:ServerServices;
+
 	public function new(args:RequestArgs, cache:CompilerCache) {
 		if (args.displayArg != null) throw new core.ds.ArgumentError("CompilerInstance: --display is a call of its own, not an argument");
 		if (args.connectArg != null) throw new core.ds.ArgumentError("CompilerInstance: --connect is a client's, not an argument");
@@ -32,6 +35,7 @@ class CompilerInstance {
 		this.args = args;
 		this.cache = cache;
 		this.display = new DisplayServices(this);
+		this.server = new ServerServices(this);
 	}
 
 	/** Parses and expands command-line arguments (as `haxe` does) into an instance. */
@@ -44,7 +48,7 @@ class CompilerInstance {
 		internal error), with the cache released. */
 	public function build(io:CompilerIoData):BuildResult {
 		var sctx = cache.begin();
-		var scope = Server.createRequestScope(sctx.isServer, io, null);
+		var scope = Server.createRequestScope(sctx.isServer, io);
 		var messages:Array<CompilerMessage> = [];
 		var flush = scope.resultHandler.flushMessages;
 		scope.resultHandler.flushMessages = function(hasError, com) {
@@ -67,16 +71,26 @@ class CompilerInstance {
 		return {code: code, messages: messages};
 	}
 
-	/** One display request: `configure` sets up the context as the method asks
-		(context.display.DisplayRequests), then the compilation finds the result. No output. */
-	public function displayRequest(configure:context.Common.CommonContext->Void):DisplayOutcome {
+	/** One request of the protocol (a JSON-RPC request's compilation, as `--display`
+		runs it): `start` sees the context once the arguments are processed and says how
+		the request is answered (RequestStep). A ServiceError thrown by `start` or by a
+		deferred answer ends the compilation and is rethrown. `env`: the request's io and
+		timers (default: no output). */
+	public function request<T>(start:context.Common.CommonContext->RequestStep<T>, ?env:RequestEnv):RequestOutcome<T> {
 		var sctx = cache.begin();
-		var io = CompilerIo.create(_ -> {}, _ -> {}, _ -> {}, () -> {}, null);
-		var scope = Server.createRequestScope(sctx.isServer, io, null);
+		var ownIo = env == null;
+		var io = ownIo ? CompilerIo.create(_ -> {}, _ -> {}, _ -> {}, () -> {}, null) : env.io;
+		var scope = Server.createRequestScope(sctx.isServer, io);
+		if (env != null) scope.timerCtx = env.timerCtx;
+		var answered = false;
+		var answer:Null<T> = null;
+		var failure:Null<ServiceError> = null;
 		var found:Null<context.display.DisplayResult> = null;
 		var errors:Null<Array<CompilerMessage>> = null;
 		function unexpected(what:String):Dynamic
-			throw new core.Globals.InternalCompilerError("CompilerInstance.displayRequest: " + what + " outside a JSON-RPC request", "");
+			throw new core.Globals.InternalCompilerError("CompilerInstance.request: " + what + " outside a JSON-RPC request", "");
+		function completed():Dynamic
+			throw new context.display.DisplayJson.JsonCompleted();
 		scope.resultHandler = {
 			sendResult: _ -> unexpected("send_result"),
 			sendResultRaise: _ -> unexpected("send_result_raise"),
@@ -84,10 +98,10 @@ class CompilerInstance {
 			sendErrorRaise: _ -> unexpected("send_error_raise"),
 			sendDisplayResultRaise: function(_, r):Dynamic {
 				found = r;
-				throw new context.display.DisplayJson.JsonCompleted();
+				return completed();
 			},
 			// (as the JSON-RPC handler: with errors, the compilation failed; otherwise there
-			// was nothing at the position)
+			// was nothing to answer)
 			flushMessages: function(hasError, com) {
 				if (hasError) {
 					errors = [];
@@ -95,23 +109,56 @@ class CompilerInstance {
 					while (i-- > 0) errors.push(com.partScope.messages[i]);
 				} else found = DRNone;
 			},
+			// port: DisplayJson.handler's responses: an answer now (Completed), typing for
+			// ... a display result, or an answer deferred to a stage of the compilation
 			setCom: function(com) {
-				configure(com);
-				return NeedsTyping;
+				return try switch start(com) {
+					case Answer(v):
+						answered = true;
+						answer = v;
+						Completed;
+					case Typing:
+						NeedsTyping;
+					case After(stage, f):
+						function answerLater():Void {
+							try {
+								answer = f();
+								answered = true;
+							} catch (e:ServiceError) failure = e;
+							completed();
+						}
+						switch stage {
+							case AfterInitMacros: com.callbacks.addAfterInitMacros(answerLater);
+							case AfterFilters: com.callbacks.addAfterFilters(answerLater);
+						}
+						NeedsTyping;
+				} catch (e:ServiceError) {
+					failure = e;
+					Completed;
+				}
 			}
 		};
 		// (HighLevel's hasDisplay: the arguments of a display request)
 		var displayArgs = args.clone();
 		displayArgs.displayArg = "";
 		try run(sctx, scope, displayArgs) catch (e:Dynamic) {
-			CompilerIo.close(io);
+			if (ownIo) CompilerIo.close(io);
 			cache.end(sctx);
 			throw e;
 		}
-		CompilerIo.close(io);
+		if (ownIo) CompilerIo.close(io);
 		cache.end(sctx);
-		return if (found != null) DOResult(found) else if (errors != null) DOErrors(errors) else DOResult(DRNone);
+		if (failure != null) throw failure;
+		return if (answered) Answered(answer) else if (found != null) Found(found) else if (errors != null) Failed(errors) else Found(DRNone);
 	}
+
+	/** A display request: `configure` sets up the context as the method asks
+		(context.display.DisplayRequests), then the compilation finds the result. */
+	public function displayRequest(configure:context.Common.CommonContext->Void, ?env:RequestEnv):RequestOutcome<Any>
+		return request(function(com) {
+			configure(com);
+			return Typing;
+		}, env);
 
 	function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int
 		return sctx.isServer ? process(sctx, scope, args) : HighLevel.entry(sctx, scope, args);
@@ -135,13 +182,44 @@ class CompilerInstance {
 	}
 }
 
-enum DisplayOutcome {
-	/** what the request found (DRNone: nothing at the position) */
-	DOResult(result:context.display.DisplayResult);
+/** How a request is answered, once the arguments are processed. */
+enum RequestStep<T> {
+	/** now, from the context: no typing */
+	Answer(v:T);
 
-	/** the compilation failed before finding anything: its errors, oldest first */
-	DOErrors(messages:Array<CompilerMessage>);
+	/** by typing: the display result it finds */
+	Typing;
+
+	/** by `f`, at a stage of the compilation */
+	After(stage:RequestStage, f:Void->T);
 }
+
+enum RequestStage {
+	AfterInitMacros;
+	AfterFilters;
+}
+
+enum RequestOutcome<T> {
+	/** the answer (Answer, After) */
+	Answered(v:T);
+
+	/** what typing found (DRNone: nothing) */
+	Found(result:context.display.DisplayResult);
+
+	/** the compilation failed before answering: its errors, oldest first */
+	Failed(messages:Array<CompilerMessage>);
+}
+
+/** Where a request's output goes: its io (the messages the compilation prints, traces)
+	and its timers (--times). */
+@:structInit class RequestEnv {
+	public final io:compiler.io.CompilerIo.CompilerIoData;
+	public final timerCtx:core.Timer.TimerContext;
+}
+
+/** A method's error that is not the compilation's (an invalid parameter, a module the
+	cache does not have): the protocol's error response with this message. */
+class ServiceError extends haxe.Exception {}
 
 @:structInit class BuildResult {
 	/** the exit code `haxe` gives (0: built) */

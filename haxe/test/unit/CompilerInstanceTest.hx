@@ -46,7 +46,7 @@ class CompilerInstanceTest {
 
 		var completion = instance.display.completion({file: path, offset: at("length"), wasAutoTriggered: false});
 		check("completion finds fields", completion != null, "null");
-		var names = completion.fitems.map(core.display.CompletionItem.getName);
+		var names = completion.fields.fitems.map(core.display.CompletionItem.getName);
 		check("completion has String's length", names.indexOf("length") >= 0, names.join(","));
 
 		var definition = instance.display.definition({file: path, offset: at("greeting.length", 2)});
@@ -65,7 +65,7 @@ class CompilerInstanceTest {
 		var failed = try {
 			instance.display.hover({file: path, offset: at("greeting.length", 2), contents: broken});
 			null;
-		} catch (e:DisplayError) e;
+		} catch (e:CompilationError) e;
 		var hoverOnBroken = failed == null ? "a result" : failed.message;
 		check("hover on a broken program still finds the local", failed == null, hoverOnBroken);
 
@@ -73,8 +73,20 @@ class CompilerInstanceTest {
 		var error = try {
 			outside.display.hover({file: path, offset: at("greeting.length", 2)});
 			null;
-		} catch (e:DisplayError) e;
-		check("a failing init macro fails as a DisplayError", error != null && error.messages.length > 0, "no error");
+		} catch (e:CompilationError) e;
+		check("a failing init macro fails as a CompilationError", error != null && error.messages.length > 0, "no error");
+
+		// (the methods answered without typing, or at a stage of the compilation)
+		var defines = instance.display.defines({compiler: true, user: false});
+		check("defines lists the compiler's", defines != null && defines.length > 0, defines == null ? "null" : '${defines.length}');
+		var contexts = instance.server.contexts();
+		check("the cache has a context", contexts.length > 0, '${contexts.length}');
+		var invalid = try {
+			instance.server.setCwd({dir: dir + "/missing"});
+			null;
+		} catch (e:ServiceError) e;
+		check("setCwd to a missing directory is the method's error", invalid != null && invalid.message.indexOf("Invalid directory") == 0,
+			invalid == null ? "no error" : invalid.message);
 		cache.dispose();
 		Sys.println("CompilerInstanceTest: ok");
 	}

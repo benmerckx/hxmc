@@ -254,7 +254,7 @@ class DisplayException extends haxe.Exception {
 	// port: not upstream: the JSON of a display result, as upstream encodes each where it is
 	// ... found (the send_*_raise functions above, DisplayOutput); DRNone's is null (for
 	// ... completion the handler sends an error instead)
-	public static function resultToJson(com:CommonContext, r:DisplayResult):JsonValue {
+	public static function resultToJson(r:DisplayResult):JsonValue {
 		return switch r {
 			case DRHover(hover):
 				toJson(Genjson.createFullConfig(), DisplayHover(hover));
@@ -283,9 +283,9 @@ class DisplayException extends haxe.Exception {
 			case DRPackage(sl):
 				jarray(sl.map(jstring));
 			case DRModuleSymbols(symbols, filter):
-				DocumentSymbols.DocumentSymbolsPrinter.jsonOfModuleSymbols(com, symbols, filter);
+				DocumentSymbols.DocumentSymbolsPrinter.jsonOfModuleSymbols(symbols, filter);
 			case DRDiagnostics(dctx):
-				DiagnosticsPrinter.jsonOfDiagnostics(com, dctx);
+				DiagnosticsPrinter.jsonOfDiagnostics(dctx);
 			case DRStatistics(stats):
 				Statistics.StatisticsPrinter.jsonOfStatistics(stats);
 			case DRNone:

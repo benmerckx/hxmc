@@ -255,20 +255,11 @@ class Server {
 		return data;
 	}
 
-	public static function createRequestScope(isServer:Bool, io:CompilerIoData, displayArg:Null<String>):RequestScope {
+	// port: a JSON-RPC request (--display) has no result handler of its own: it is answered
+	// ... by DisplayJson.dispatch, on a CompilerInstance
+	public static function createRequestScope(isServer:Bool, io:CompilerIoData):RequestScope {
 		var timerCtx = Timer.makeContext(Timer.make(["other"]));
-		var resultHandler = switch displayArg {
-			case null:
-				if (isServer) CompilerOutput.createServerResultHandler(io) else CompilerOutput.createCliResultHandler(io);
-			case arg:
-				core.json.JsonRpc.handleJsonrpcError(function() {
-					var input = core.json.JsonRpc.parseRequest(arg);
-					return context.display.DisplayJson.createJsonResultHandler(timerCtx, io, new core.json.JsonrpcHandler(input));
-				}, function(json) {
-					context.display.DisplayJson.sendJson(io, json);
-					throw core.ds.Exit.raise();
-				});
-		}
+		var resultHandler = if (isServer) CompilerOutput.createServerResultHandler(io) else CompilerOutput.createCliResultHandler(io);
 		return {
 			stats: Stats.create(),
 			timerCtx: timerCtx,
@@ -335,13 +326,25 @@ class Server {
 		sctx.currentStdin = request.stdin;
 		try {
 			var requestArgs = Args.expandArgs(request.args);
-			// port: a build (not a display request) runs on a CompilerInstance over the server's cache
-			// ... (a request with --connect or --wait, which process ignores, takes the old path)
-			if (requestArgs.displayArg == null && requestArgs.connectArg == null && requestArgs.serverMode == SMNone) {
+			// port: a request runs on a CompilerInstance over the server's cache: a JSON-RPC
+			// ... request (--display) as DisplayJson.dispatch answers it, a build as such (a build
+			// ... with --connect or --wait, which process ignores, takes the old path)
+			if (requestArgs.displayArg != null) {
+				var request = requestArgs.displayArg;
+				var args = requestArgs.clone();
+				args.displayArg = null;
+				// (which process ignores)
+				args.connectArg = null;
+				args.serverMode = SMNone;
+				var instance = new compiler.CompilerInstance(args, new compiler.CompilerInstance.InMemoryCache(sctx));
+				context.display.DisplayJson.dispatch(instance, io, request);
+				return Success;
+			}
+			if (requestArgs.connectArg == null && requestArgs.serverMode == SMNone) {
 				new compiler.CompilerInstance(requestArgs, new compiler.CompilerInstance.InMemoryCache(sctx)).build(io);
 				return Success;
 			}
-			var requestScope = createRequestScope(true, io, requestArgs.displayArg);
+			var requestScope = createRequestScope(true, io);
 			process(sctx, requestScope, requestArgs);
 			return Success;
 		} catch (e:Cancelled) {

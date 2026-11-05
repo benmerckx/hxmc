@@ -19,6 +19,8 @@ import compiler.io.CompilerIo;
 import compiler.io.CompilerIo.CompilerIoData;
 import compiler.server.ServerConfig;
 import context.Common;
+import context.display.DisplayResult;
+import compiler.CompilerInstance.RequestStep;
 import core.DisplayTypes;
 import core.TType;
 
@@ -27,21 +29,13 @@ class JsonCompleted extends haxe.Exception {
 	public function new() super("JsonCompleted");
 }
 
-class DisplayHandler {
+// port: DisplayHandler's reading of a request's parameters (and the handlers'), into the
+// ... std's types (haxe.display)
+class RequestParams {
 	final jsonrpc:JsonrpcHandler;
-	final com:CommonContext;
-	final cs:Cache;
 
-	public function new(jsonrpc:JsonrpcHandler, com:CommonContext, cs:Cache) {
+	public function new(jsonrpc:JsonrpcHandler)
 		this.jsonrpc = jsonrpc;
-		this.com = com;
-		this.cs = cs;
-	}
-
-	public function getCs():Cache return cs;
-
-	public function enableDisplay(?skipDefine:Bool = false, mode:DisplayModeValue):Void
-		DisplayRequests.enableDisplay(com, skipDefine, mode);
 
 	// port: set_display_file's reading of the request's file, contents, offset and file
 	// ... contents, in its order (so a bad request fails as upstream's does), as the
@@ -78,6 +72,21 @@ class DisplayHandler {
 			offset: pos,
 			fileContents: fileContents
 		};
+	}
+
+	public function position():haxe.display.Display.PositionParams & DisplayRequests.FileContentsParams {
+		var p = fileParams(true);
+		return {
+			file: p.file,
+			contents: p.contents,
+			offset: p.offset,
+			fileContents: p.fileContents
+		};
+	}
+
+	public function fileInput():DisplayRequests.FileInputParams {
+		var p = fileParams(false);
+		return {file: p.file, contents: p.contents, fileContents: p.fileContents};
 	}
 }
 
@@ -153,39 +162,6 @@ class HxbReaderApiCom implements compiler.hxb.HxbReaderApi {
 	}
 }
 
-@:structInit class HandlerContext {
-	public var com:CommonContext;
-	public var jsonrpc:JsonrpcHandler;
-	public var display:DisplayHandler;
-
-	public inline function new(com:CommonContext, jsonrpc:JsonrpcHandler, display:DisplayHandler) {
-		this.com = com;
-		this.jsonrpc = jsonrpc;
-		this.display = display;
-	}
-}
-
-enum ApiDeferrence {
-	AfterInitMacros;
-	AfterFilters;
-}
-
-enum ApiResponse {
-	NoResponse;
-	Result(json:JsonValue);
-	Error(json:JsonValue);
-	Deferred(deferrence:ApiDeferrence, f:Void->ApiResponse);
-}
-
-class ApiError extends haxe.Exception {
-	public final json:JsonValue;
-
-	public function new(json:JsonValue) {
-		super("Api_error");
-		this.json = json;
-	}
-}
-
 class DisplayJson {
 	// Generate the JSON of our times.
 	public static function jsonOfTimes(root:core.Timer.TimerNode):Null<JsonValue> {
@@ -240,621 +216,431 @@ class DisplayJson {
 		return new HxbReaderApiCom(typingMode, com, cc).findModule(path);
 	}
 
-	public static function apiError<R>(j:JsonValue):R throw new ApiError(j);
+	// port: DisplayJson.handler, as a dispatcher: each method reads its parameters (into the
+	// ... std's types), calls the typed method of the CompilerInstance (compiler.DisplayApi,
+	// ... compiler.ServerApi) and gives the JSON of its value
+	public static final handler:OcamlHashtbl<String, HandlerContext->JsonValue> = makeHandler();
 
-	public static final handler:OcamlHashtbl<String, HandlerContext->ApiResponse> = makeHandler();
-
-	static function makeHandler():OcamlHashtbl<String, HandlerContext->ApiResponse> {
-		var h = new OcamlHashtbl<String, HandlerContext->ApiResponse>(OcamlHash.hashString, (a, b) -> a == b, 0);
-		function defer(deferrence:ApiDeferrence, f:Void->ApiResponse):ApiResponse return Deferred(deferrence, function() return f());
-		var l:Array<{name:String, f:HandlerContext->ApiResponse}> = [
+	static function makeHandler():OcamlHashtbl<String, HandlerContext->JsonValue> {
+		var h = new OcamlHashtbl<String, HandlerContext->JsonValue>(OcamlHash.hashString, (a, b) -> a == b, 0);
+		function orNull<T>(v:Null<T>, f:T->JsonValue):JsonValue
+			return v == null ? jnull : f(v);
+		function positions(pl:Null<Array<Pos>>):JsonValue
+			return orNull(pl, pl -> DisplayException.resultToJson(DRPositions(pl)));
+		function symbols(s:Null<compiler.DisplayServices.ModuleSymbols>):JsonValue
+			return orNull(s, s -> DisplayException.resultToJson(DRModuleSymbols(s, null)));
+		function contexts(l:Array<ContextCache>):JsonValue
+			return jarray(l.map(cc -> cc.getJson()));
+		function success():JsonValue
+			return jobject([kv("success", jbool(true))]);
+		var l:Array<{name:String, f:HandlerContext->JsonValue}> = [
 			{
 				name: "initialize",
 				f: function(hctx) {
-					supportsResolve = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getBoolParam("supportsResolve"), false);
-					hctx.jsonrpc.getOptParam(function() {
-						ServerConfig.maxCompletionItems = hctx.jsonrpc.getIntParam("maxCompletionItems");
-						return null;
-					}, null);
-					hctx.jsonrpc.getOptParam(function() {
-						ServerConfig.staleContextMaxAgeSeconds = hctx.jsonrpc.getIntParam("staleContextMaxAge");
-						return null;
-					}, null);
-					var exclude = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getArrayParam("exclude"), []);
-					DisplayToplevel.exclude = exclude.map(e -> switch e {
-						case JString(s): s;
-						case _: throw new core.Globals.InternalCompilerError("displayJson.ml: exclude entry is not a string", "");
+					var jsonrpc = hctx.jsonrpc;
+					var p = hctx.params(function() {
+						var supportsResolve = jsonrpc.getOptParam(() -> jsonrpc.getBoolParam("supportsResolve"), false);
+						var maxCompletionItems:Null<Int> = jsonrpc.getOptParam(() -> (jsonrpc.getIntParam("maxCompletionItems") : Null<Int>), null);
+						var staleContextMaxAge:Null<Int> = jsonrpc.getOptParam(() -> (jsonrpc.getIntParam("staleContextMaxAge") : Null<Int>), null);
+						var exclude = jsonrpc.getOptParam(() -> jsonrpc.getArrayParam("exclude"), []).map(e -> switch e {
+							case JString(s): s;
+							case _: throw new core.Globals.InternalCompilerError("displayJson.ml: exclude entry is not a string", "");
+						});
+						return {
+							supportsResolve: supportsResolve,
+							maxCompletionItems: maxCompletionItems,
+							staleContextMaxAge: staleContextMaxAge,
+							exclude: exclude
+						};
 					});
-					var methods = handler.fold(function(k, _, acc:Array<JsonValue>) {
-						acc.unshift(jstring(k));
-						return acc;
-					}, []);
-					var version:core.Globals.CompilerVersion = hctx.com.sctx.version;
-					return Result(JObject([
-						kv("methods", jarray(methods)),
-						kv("haxeVersion", jobject([
-							kv("major", jint(version.major)),
-							kv("minor", jint(version.minor)),
-							kv("patch", jint(version.revision)),
-							kv("pre", version.pre == null ? jnull : jstring(version.pre)),
-							kv("build", version.extra == null ? jnull : jstring(version.extra.build))
-						])),
-						kv("protocolVersion", jobject([kv("major", jint(0)), kv("minor", jint(5)), kv("patch", jint(0))]))
-					]));
+					return compiler.DisplayServices.Services.answer(hctx.instance, hctx.env, "initialize", function(com) {
+						supportsResolve = p.supportsResolve;
+						if (p.maxCompletionItems != null) ServerConfig.maxCompletionItems = p.maxCompletionItems;
+						if (p.staleContextMaxAge != null) ServerConfig.staleContextMaxAgeSeconds = p.staleContextMaxAge;
+						DisplayToplevel.exclude = p.exclude;
+						var methods = handler.fold(function(k, _, acc:Array<JsonValue>) {
+							acc.unshift(jstring(k));
+							return acc;
+						}, []);
+						var version:core.Globals.CompilerVersion = com.sctx.version;
+						return Answer(JObject([
+							kv("methods", jarray(methods)),
+							kv("haxeVersion", jobject([
+								kv("major", jint(version.major)),
+								kv("minor", jint(version.minor)),
+								kv("patch", jint(version.revision)),
+								kv("pre", version.pre == null ? jnull : jstring(version.pre)),
+								kv("build", version.extra == null ? jnull : jstring(version.extra.build))
+							])),
+							kv("protocolVersion", jobject([kv("major", jint(0)), kv("minor", jint(5)), kv("patch", jint(0))]))
+						]));
+					});
 				}
 			},
 			{
+				// (the protocol's: an item of the last completion it sent)
 				name: "display/completionItem/resolve",
 				f: function(hctx) {
-					var i = hctx.jsonrpc.getIntParam("index");
-					if (i < 0 || i >= DisplayException.lastCompletionResult.length) return Error(jstring('Invalid index: $i'));
-					var item = DisplayException.lastCompletionResult[i];
-					var ctx = Genjson.createFullConfig();
-					return Result(jobject([kv("item", core.display.CompletionItem.toJson(ctx, null, item))]));
+					var i = hctx.params(() -> hctx.jsonrpc.getIntParam("index"));
+					return compiler.DisplayServices.Services.answer(hctx.instance, hctx.env, "display/completionItem/resolve", function(_) {
+						if (i < 0 || i >= DisplayException.lastCompletionResult.length) throw new compiler.CompilerInstance.ServiceError('Invalid index: $i');
+						var item = DisplayException.lastCompletionResult[i];
+						var ctx = Genjson.createFullConfig();
+						return Answer(jobject([kv("item", core.display.CompletionItem.toJson(ctx, null, item))]));
+					});
 				}
 			},
 			{
 				name: "display/completion",
 				f: function(hctx) {
-					var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
-					var p = hctx.display.fileParams(true);
-					DisplayRequests.completion(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents,
-						wasAutoTriggered: wasAutoTriggered
+					var p = hctx.params(function():haxe.display.Display.CompletionParams & DisplayRequests.FileContentsParams {
+						var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
+						var p = hctx.decode.fileParams(true);
+						return {
+							file: p.file,
+							contents: p.contents,
+							offset: p.offset,
+							fileContents: p.fileContents,
+							wasAutoTriggered: wasAutoTriggered
+						};
 					});
-					return NoResponse;
+					var c = hctx.display.completion(p);
+					if (c == null) throw new compiler.CompilerInstance.ServiceError("No completion point");
+					return DisplayException.resultToJson(DRFields(c.fields, c.resolvable));
 				}
 			},
 			{
 				name: "display/definition",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(true);
-					DisplayRequests.definition(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents
-					});
-					return NoResponse;
-				}
+				f: hctx -> positions(hctx.display.definition(hctx.params(hctx.decode.position)))
 			},
 			{
 				name: "display/diagnostics",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(false);
-					DisplayRequests.diagnostics(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
-					return NoResponse;
-				}
+				f: hctx -> orNull(hctx.display.diagnostics(hctx.params(hctx.decode.fileInput)), d -> DisplayException.resultToJson(DRDiagnostics(d)))
 			},
 			{
 				name: "display/statistics",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(false);
-					DisplayRequests.statistics(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
-					return NoResponse;
-				}
+				f: hctx -> orNull(hctx.display.statistics(hctx.params(hctx.decode.fileInput)), s -> DisplayException.resultToJson(DRStatistics(s)))
 			},
 			{
 				name: "display/implementation",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(true);
-					DisplayRequests.implementation(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents
-					});
-					return NoResponse;
-				}
+				f: hctx -> positions(hctx.display.implementation(hctx.params(hctx.decode.position)))
 			},
 			{
 				name: "display/typeDefinition",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(true);
-					DisplayRequests.typeDefinition(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents
-					});
-					return NoResponse;
-				}
+				f: hctx -> positions(hctx.display.typeDefinition(hctx.params(hctx.decode.position)))
 			},
 			{
 				name: "display/references",
 				f: function(hctx) {
-					var p = hctx.display.fileParams(true);
-					var kind = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getStringParam("kind"), "normal");
-					DisplayRequests.references(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents,
-						kind: cast kind
+					var p = hctx.params(function():haxe.display.Display.FindReferencesParams & DisplayRequests.FileContentsParams {
+						var p = hctx.decode.fileParams(true);
+						var kind = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getStringParam("kind"), "normal");
+						return {
+							file: p.file,
+							contents: p.contents,
+							offset: p.offset,
+							fileContents: p.fileContents,
+							kind: (cast kind : haxe.display.Display.FindReferencesKind)
+						};
 					});
-					return NoResponse;
+					return positions(hctx.display.references(p));
 				}
 			},
 			{
 				name: "display/hover",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(true);
-					DisplayRequests.hover(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents
-					});
-					return NoResponse;
-				}
+				f: hctx -> orNull(hctx.display.hover(hctx.params(hctx.decode.position)), h -> DisplayException.resultToJson(DRHover(h)))
 			},
 			{
 				name: "display/package",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(false);
-					DisplayRequests.determinePackage(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
-					return NoResponse;
-				}
+				f: hctx -> orNull(hctx.display.determinePackage(hctx.params(hctx.decode.fileInput)), p -> DisplayException.resultToJson(DRPackage(p)))
 			},
 			{
 				name: "display/documentSymbols",
-				f: function(hctx) {
-					var p = hctx.display.fileParams(false);
-					DisplayRequests.documentSymbols(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
-					return NoResponse;
-				}
+				f: hctx -> symbols(hctx.display.documentSymbols(hctx.params(hctx.decode.fileInput)))
 			},
 			{
 				name: "display/workspaceSymbols",
-				f: function(hctx) {
-					DisplayRequests.workspaceSymbols(hctx.com, {filter: hctx.jsonrpc.getStringParam("filter")});
-					return NoResponse;
-				}
+				f: hctx -> symbols(hctx.display.workspaceSymbols(hctx.params(function():haxe.display.Display.WorkspaceSymbolsParams return {filter: hctx.jsonrpc.getStringParam("filter")})))
 			},
 			{
 				name: "display/signatureHelp",
 				f: function(hctx) {
-					var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
-					var p = hctx.display.fileParams(true);
-					DisplayRequests.signatureHelp(hctx.com, {
-						file: p.file,
-						contents: p.contents,
-						offset: p.offset,
-						fileContents: p.fileContents,
-						wasAutoTriggered: wasAutoTriggered
+					var p = hctx.params(function():haxe.display.Display.SignatureHelpParams & DisplayRequests.FileContentsParams {
+						var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
+						var p = hctx.decode.fileParams(true);
+						return {
+							file: p.file,
+							contents: p.contents,
+							offset: p.offset,
+							fileContents: p.fileContents,
+							wasAutoTriggered: wasAutoTriggered
+						};
 					});
-					return NoResponse;
+					return orNull(hctx.display.signatureHelp(p),
+						s -> DisplayException.resultToJson(DRSignatures(s.signatures, s.activeSignature, s.activeParameter, s.kind)));
 				}
 			},
 			{
 				name: "display/metadata",
 				f: function(hctx) {
-					var includeCompilerMeta = hctx.jsonrpc.getBoolParam("compiler");
-					var includeUserMeta = hctx.jsonrpc.getBoolParam("user");
-					return defer(AfterInitMacros, function() {
-						var all = core.Meta.getMetaList(hctx.com.userMetas);
-						var all = all.filter(m -> switch m.info.mOrigin {
-							case Compiler if (includeCompilerMeta): true;
-							case UserDefined(_) if (includeUserMeta): true;
-							case _: false;
-						});
-						return Result(jarray(all.map(function(m) {
-							var data = m.info;
-							var fields = [
-								kv("name", jstring(m.name)),
-								kv("doc", jstring(data.mDoc)),
-								kv("parameters", jarray(data.mParams.map(jstring))),
-								kv("platforms", jarray(data.mPlatforms.map(p -> jstring(Globals.platformName(p))))),
-								kv("targets", jarray(data.mUsedOn.map(u -> jstring(core.MetaList.printMetaUsage(u))))),
-								kv("internal", jbool(data.mInternal)),
-								kv("origin", jstring(switch data.mOrigin {
-									case Compiler: "haxe compiler";
-									case UserDefined(null): "user-defined";
-									case UserDefined(o): o;
-								})),
-								kv("links", jarray(data.mLinks.map(jstring)))
-							];
-							return jobject(fields);
-						})));
-					});
+					var p = hctx.params(function():{compiler:Bool, user:Bool} return {compiler: hctx.jsonrpc.getBoolParam("compiler"), user: hctx.jsonrpc.getBoolParam("user")});
+					return orNull(hctx.display.metadata(p), all -> jarray(all.map(function(m) {
+						var data = m.info;
+						return jobject([
+							kv("name", jstring(m.name)),
+							kv("doc", jstring(data.mDoc)),
+							kv("parameters", jarray(data.mParams.map(jstring))),
+							kv("platforms", jarray(data.mPlatforms.map(p -> jstring(Globals.platformName(p))))),
+							kv("targets", jarray(data.mUsedOn.map(u -> jstring(core.MetaList.printMetaUsage(u))))),
+							kv("internal", jbool(data.mInternal)),
+							kv("origin", jstring(switch data.mOrigin {
+								case Compiler: "haxe compiler";
+								case UserDefined(null): "user-defined";
+								case UserDefined(o): o;
+							})),
+							kv("links", jarray(data.mLinks.map(jstring)))
+						]);
+					})));
 				}
 			},
 			{
 				name: "display/defines",
 				f: function(hctx) {
-					var includeCompilerDefines = hctx.jsonrpc.getBoolParam("compiler");
-					var includeUserDefines = hctx.jsonrpc.getBoolParam("user");
-					return defer(AfterInitMacros, function() {
-						var all = core.Define.getDefineList(hctx.com.userDefines);
-						var all = all.filter(d -> switch d.info.dOrigin {
-							case Compiler if (includeCompilerDefines): true;
-							case UserDefined(_) if (includeUserDefines): true;
-							case _: false;
-						});
-						return Result(jarray(all.map(function(d) {
-							var data = d.info;
-							var fields = [
-								kv("name", jstring(d.name)),
-								kv("doc", jstring(data.dDoc)),
-								kv("parameters", jarray(data.dParams.map(jstring))),
-								kv("platforms", jarray(data.dPlatforms.map(p -> jstring(Globals.platformName(p))))),
-								kv("origin",
-									jstring(switch data.dOrigin {
-										case Compiler: "haxe compiler";
-										case UserDefined(null): "user-defined";
-										case UserDefined(o): o;
-									})),
-								kv("deprecated", jopt(jstring, data.dDeprecated)),
-								kv("links", jarray(data.dLinks.map(jstring))),
-								kv("reserved", jopt(jbool, data.dReserved))
-							];
-							return jobject(fields);
-						})));
-					});
+					var p = hctx.params(function():{compiler:Bool, user:Bool} return {compiler: hctx.jsonrpc.getBoolParam("compiler"), user: hctx.jsonrpc.getBoolParam("user")});
+					return orNull(hctx.display.defines(p), all -> jarray(all.map(function(d) {
+						var data = d.info;
+						return jobject([
+							kv("name", jstring(d.name)),
+							kv("doc", jstring(data.dDoc)),
+							kv("parameters", jarray(data.dParams.map(jstring))),
+							kv("platforms", jarray(data.dPlatforms.map(p -> jstring(Globals.platformName(p))))),
+							kv("origin", jstring(switch data.dOrigin {
+								case Compiler: "haxe compiler";
+								case UserDefined(null): "user-defined";
+								case UserDefined(o): o;
+							})),
+							kv("deprecated", jopt(jstring, data.dDeprecated)),
+							kv("links", jarray(data.dLinks.map(jstring))),
+							kv("reserved", jopt(jbool, data.dReserved))
+						]);
+					})));
 				}
 			},
 			{
 				name: "server/resetCache",
 				f: function(hctx) {
-					(hctx.com.cs : Cache).clear();
-					supportsResolve = false;
-					DisplayException.reset();
-					ServerConfig.reset();
-					return Result(jobject([kv("success", jbool(true))]));
+					hctx.server.resetCache();
+					return success();
 				}
 			},
 			{
 				name: "server/resetState",
 				f: function(hctx) {
-					hctx.com.sctx.persistentCwd = null;
-					(hctx.com.cs : Cache).softClear();
-					supportsResolve = false;
-					DisplayException.reset();
-					ServerConfig.reset();
-					return Result(jobject([kv("success", jbool(true))]));
+					hctx.server.resetState();
+					return success();
 				}
 			},
 			{
 				name: "server/setCwd",
 				f: function(hctx) {
-					var dir = hctx.jsonrpc.getStringParam("dir");
-					var dir = core.Path.getFullPath(dir);
-					if (!(sys.FileSystem.exists(dir) && sys.FileSystem.isDirectory(dir))) throw new ApiError(jstring("Invalid directory: "
-						+ dir));
-					hctx.com.sctx.persistentCwd = dir;
-					return Result(jnull);
+					hctx.server.setCwd(hctx.params(function():haxe.display.Server.SetCwdParams return {dir: hctx.jsonrpc.getStringParam("dir")}));
+					return jnull;
 				}
 			},
 			{
 				name: "server/gcCompact",
 				f: function(hctx) {
-					var t0 = Sys.time();
-					#if hl
-					var before = hl.Gc.stats().currentMemory;
-					hl.Gc.major();
-					var after = hl.Gc.stats().currentMemory;
-					#else
-					var before = 0., after = 0.;
-					#end
-					return Result(jobject([
-						kv("time", jfloat(Sys.time() - t0)),
-						kv("before", jint(Std.int(before))),
-						kv("after", jint(Std.int(after)))
-					]));
+					var r = hctx.server.gcCompact();
+					return jobject([kv("time", jfloat(r.time)), kv("before", jint(r.before)), kv("after", jint(r.after))]);
 				}
 			},
 			{
 				name: "server/readClassPaths",
 				f: function(hctx) {
-					var wait = hctx.jsonrpc.hasParams() && hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getBoolParam("wait"), false);
-					return defer(AfterInitMacros, function() {
-						var cc = hctx.display.getCs().getContext(core.Define.getSignature(hctx.com.defines));
-						cc.setInitialized(true);
-						DisplayToplevel.readClassPaths(hctx.com, ["init"]);
-						if (wait) hctx.display.getCs().runTasks(true, task -> task.getId()[0] == "explore");
-						var files = hctx.display.getCs().getFiles();
-						return Result(jobject([kv("files", jint(files.length))]));
-					});
+					var wait = hctx.params(() -> hctx.jsonrpc.hasParams() && hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getBoolParam("wait"), false));
+					return orNull(hctx.server.readClassPaths({wait: wait}), n -> jobject([kv("files", jint(n))]));
 				}
 			},
 			{
 				name: "server/contexts",
-				f: function(hctx) {
-					var l = hctx.display.getCs().getContexts().map(cc -> cc.getJson());
-					var l = l.filter(json -> json != JNull);
-					return Result(jarray(l));
-				}
+				f: hctx -> contexts(hctx.server.contexts())
 			},
 			{
 				name: "server/modules",
-				f: function(hctx) {
-					var sign = hctx.jsonrpc.getStringParam("signature");
-					var cc = hctx.display.getCs().getContext(sign);
-					var l = cc.getHxb().fold(function(_, m:compiler.hxb.HxbData.ModuleCache, acc:Array<JsonValue>) {
-						if (m.mcExtra.mKind != MFake) acc.unshift(jstring(Globals.sTypePath(m.mcPath)));
-						return acc;
-					}, []);
-					return Result(jarray(l));
-				}
+				f: hctx -> jarray(hctx.server.modules(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")})).map(jstring))
 			},
 			{
 				name: "server/module",
-				f: function(hctx) {
-					var sign = hctx.jsonrpc.getStringParam("signature");
-					var path = core.Ast.Ast.parsePath(hctx.jsonrpc.getStringParam("path"));
-					var cs = hctx.display.getCs();
-					var cc = cs.getContext(sign);
-					var typingMode:compiler.hxb.HxbData.TypingMode = if (core.Define.defined(hctx.com.defines, core.Define.DisableHxbOptimizations)) FullTyping else AllowPartialTyping;
-					try {
-						var m = findModule(typingMode, hctx.com, cc, path);
-						return Result(Genjson.generateModule(cc.getHxb(), findModule.bind(typingMode, hctx.com, cc), m));
-					} catch (_:core.ds.NotFound) {
-						return Error(jstring("No such module"));
-					}
-				}
+				f: hctx -> hctx.server.module(hctx.params(function():haxe.display.Server.ModuleParams return {
+					signature: hctx.jsonrpc.getStringParam("signature"),
+					path: hctx.jsonrpc.getStringParam("path")
+				}))
 			},
 			{
 				name: "server/type",
-				f: function(hctx) {
-					var sign = hctx.jsonrpc.getStringParam("signature");
-					var path = core.Ast.Ast.parsePath(hctx.jsonrpc.getStringParam("modulePath"));
-					var typeName = hctx.jsonrpc.getStringParam("typeName");
-					var cc = hctx.display.getCs().getContext(sign);
-					try {
-						var m = findModule(FullTyping, hctx.com, cc, path);
-						for (mt in m.mTypes) {
-							switch mt {
-								case TClassDecl(c):
-									c.clRestore();
-								case _:
-							}
-							var infos = tInfos(mt);
-							if (infos.mtPath.name == typeName) {
-								var ctx = Genjson.createFullConfig();
-								return Result(Genjson.generateModuleType(ctx, mt));
-							}
-						}
-						return Error(jstring("No such type"));
-					} catch (_:core.ds.NotFound) {
-						return Error(jstring("No such module"));
-					}
-				}
+				f: hctx -> hctx.server.type(hctx.params(function():haxe.display.Server.TypeParams return {
+					signature: hctx.jsonrpc.getStringParam("signature"),
+					modulePath: hctx.jsonrpc.getStringParam("modulePath"),
+					typeName: hctx.jsonrpc.getStringParam("typeName")
+				}))
 			},
 			{
 				name: "server/typeContexts",
-				f: function(hctx) {
-					var path = core.Ast.Ast.parsePath(hctx.jsonrpc.getStringParam("modulePath"));
-					var typeName = hctx.jsonrpc.getStringParam("typeName");
-					var contexts = hctx.display.getCs().getContexts();
-					var acc:Array<JsonValue> = [];
-					for (cc in contexts) {
-						var m = cc.findModuleOpt(path);
-						if (m == null) continue;
-						for (mt in m.mTypes) {
-							switch mt {
-								case TClassDecl(c):
-									c.clRestore();
-								case _:
-							}
-							if (tInfos(mt).mtPath.name == typeName) {
-								acc.unshift(cc.getJson());
-								break;
-							}
-						}
-					}
-					return Result(jarray(acc));
-				}
+				f: hctx -> contexts(hctx.server.typeContexts(hctx.params(function():{modulePath:String, typeName:String} return {
+					modulePath: hctx.jsonrpc.getStringParam("modulePath"),
+					typeName: hctx.jsonrpc.getStringParam("typeName")
+				})))
 			},
 			{
 				name: "server/moduleCreated",
-				f: function(hctx) {
-					var file = hctx.jsonrpc.getStringParam("file");
-					var file = core.Path.getFullPath(file);
-					var key = hctx.com.partScope.fileKeys.get(file);
-					var cs = hctx.display.getCs();
-					for (cc in cs.getContexts()) cc.getRemovedFiles().replace(key, {file: file, classPath: hctx.com.emptyClassPath});
-					return Result(jstring(file));
-				}
+				f: hctx -> jstring(hctx.server.moduleCreated(hctx.params(() -> {file: new haxe.display.FsPath(hctx.jsonrpc.getStringParam("file"))})))
 			},
 			{
 				name: "server/files",
 				f: function(hctx) {
-					var sign = hctx.jsonrpc.getStringParam("signature");
-					var cc = hctx.display.getCs().getContext(sign);
-					var files = cc.getFiles().fold(function(file, cfile, acc:Array<{key:String, cfile:CachedFile}>) {
-						acc.unshift({key: file, cfile: cfile});
-						return acc;
-					}, []);
-					haxe.ds.ArraySort.sort(files, (a, b) -> Display.compareStrings(a.key, b.key));
-					var files = files.map(f -> jobject([
-						kv("file", jstring(f.cfile.cFilePath.file)),
-						kv("time", jfloat(f.cfile.cTime)),
-						kv("pack", jstring(f.cfile.cPackage.join("."))),
-						kv("moduleName", jopt(jstring, f.cfile.cModuleName))
-					]));
-					return Result(jarray(files));
+					var files = hctx.server.files(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")}));
+					return jarray(files.map(f -> jobject([
+						kv("file", jstring(f.cFilePath.file)),
+						kv("time", jfloat(f.cTime)),
+						kv("pack", jstring(f.cPackage.join("."))),
+						kv("moduleName", jopt(jstring, f.cModuleName))
+					])));
 				}
 			},
 			{
 				name: "server/invalidate",
 				f: function(hctx) {
-					var file = hctx.jsonrpc.getStringParam("file");
-					var fkey = hctx.com.partScope.fileKeys.get(file);
-					var cs = hctx.display.getCs();
-					cs.taintModules(fkey, ServerInvalidate);
-					cs.removeFiles(fkey);
-					return Result(jnull);
+					hctx.server.invalidate(hctx.params(() -> {file: new haxe.display.FsPath(hctx.jsonrpc.getStringParam("file"))}));
+					return jnull;
 				}
 			},
 			{
 				name: "server/configure",
 				f: function(hctx) {
-					var print = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getObjectParam("print"), []);
-					var l = print.map(function(f) {
-						var name = f.name;
-						var value = hctx.jsonrpc.getBool("value", f.value);
-						try {
-							compiler.server.ServerMessage.setByName(name, value);
-							return jstring('Printing $name ' + (value ? "enabled" : "disabled"));
-						} catch (_:core.ds.NotFound) {
-							return apiError(jstring("Invalid print parame name: " + name));
-						}
+					var jsonrpc = hctx.jsonrpc;
+					var p:compiler.ServerServices.ServerConfigureParams = hctx.params(function() {
+						var print = jsonrpc.getOptParam(() -> jsonrpc.getObjectParam("print"), []).map(f -> {
+							name: f.name,
+							value: jsonrpc.getBool("value", f.value)
+						});
+						var noModuleChecks:Null<Bool> = jsonrpc.getOptParam(() -> (jsonrpc.getBoolParam("noModuleChecks") : Null<Bool>), null);
+						return {print: print, noModuleChecks: noModuleChecks};
 					});
-					hctx.jsonrpc.getOptParam(function() {
-						var b = hctx.jsonrpc.getBoolParam("noModuleChecks");
-						ServerConfig.doNotCheckModules = b;
-						l.unshift(jstring("Module checks " + (b ? "disabled" : "enabled")));
-						return null;
-					}, null);
-					return Result(jarray(l));
+					return jarray(hctx.server.configure(p).map(jstring));
 				}
 			},
 			{
 				name: "server/memory",
-				f: function(hctx) {
-					var j = DisplayMemory.getMemoryJson(hctx.display.getCs(), MCache);
-					return Result(j);
-				}
+				f: hctx -> hctx.server.memory()
 			},
 			{
 				name: "server/memory/context",
-				f: function(hctx) {
-					var sign = hctx.jsonrpc.getStringParam("signature");
-					var j = DisplayMemory.getMemoryJson(hctx.display.getCs(), MContext(sign));
-					return Result(j);
-				}
+				f: hctx -> hctx.server.contextMemory(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")}))
 			},
 			{
 				name: "server/memory/module",
-				f: function(hctx) {
-					var sign = hctx.jsonrpc.getStringParam("signature");
-					var path = core.Ast.Ast.parsePath(hctx.jsonrpc.getStringParam("path"));
-					var j = DisplayMemory.getMemoryJson(hctx.display.getCs(), MModule(sign, path));
-					return Result(j);
-				}
+				f: hctx -> hctx.server.moduleMemory(hctx.params(function():haxe.display.Server.ModuleParams return {
+					signature: hctx.jsonrpc.getStringParam("signature"),
+					path: hctx.jsonrpc.getStringParam("path")
+				}))
 			},
 			{
 				name: "typer/compiledTypes",
-				f: function(hctx) {
-					return defer(AfterFilters, function() {
-						var ctx = Genjson.createFullConfig();
-						var l = hctx.com.types.map(Genjson.generateModuleType.bind(ctx));
-						return Result(jarray(l));
-					});
-				}
+				f: hctx -> orNull(hctx.server.compiledTypes(), jarray)
 			}
 		];
 		for (e in l) h.add(e.name, e.f);
 		return h;
 	}
 
-	public static function runOnCom(jsonrpc:JsonrpcHandler, f:HandlerContext->ApiResponse, com:CommonContext):ParseInputResult {
-		function catchApiError(f:Void->ApiResponse):ApiResponse {
-			try {
-				return f();
-			} catch (e:ApiError) {
-				return Error(e.json);
-			}
-		}
-		var resultHandler = com.requestScope.resultHandler;
-		var display = new DisplayHandler(jsonrpc, com, com.cs);
-		var hctx:HandlerContext = {com: com, jsonrpc: jsonrpc, display: display};
-		function maybeSendResponse(r:ApiResponse):ParseInputResult {
-			return switch r {
-				case NoResponse:
-					NeedsTyping;
-				case Result(json):
-					resultHandler.sendResult(json);
-					Completed;
-				case Error(json):
-					resultHandler.sendError([json]);
-					Completed;
-				case Deferred(deferrence, f):
-					function sendResponse(r:ApiResponse):Void {
-						switch r {
-							case NoResponse:
-							case Result(json):
-								resultHandler.sendResultRaise(json);
-							case Error(json):
-								resultHandler.sendErrorRaise([json]);
-							case Deferred(_):
-								throw new core.Globals.InternalCompilerError("displayJson.ml: nested deferred response", "");
-						}
-					}
-					function f_():Void sendResponse(catchApiError(f));
-					switch deferrence {
-						case AfterInitMacros: com.callbacks.addAfterInitMacros(f_);
-						case AfterFilters: com.callbacks.addAfterFilters(f_);
-					}
-					NeedsTyping;
-			};
-		}
-		return maybeSendResponse(catchApiError(() -> f(hctx)));
+	// port: the JSON-RPC result handler's send_result: the response to the request
+	public static function resultMessage(timerCtx:core.Timer.TimerContext, jsonrpc:JsonrpcHandler, json:JsonValue):JsonValue {
+		Sys.stdout().flush();
+		Sys.stderr().flush();
+		var fl = [kv("result", json), kv("timestamp", jfloat(Sys.time()))];
+		var fl = if (timerCtx.measureTimes == Yes) {
+			var root = Timer.buildTimesTree(timerCtx).root;
+			var jo = jsonOfTimes(root);
+			jo == null ? fl : [kv("timers", jo)].concat(fl);
+		} else fl;
+		return JsonRpc.result(jsonrpc.getId(), jobject(fl));
 	}
 
-	public static function createJsonResultHandler(timerCtx:core.Timer.TimerContext, io:CompilerIoData,
-			jsonrpc:JsonrpcHandler):ResultHandler {
-		function sendResult(send:JsonValue->Void, json:JsonValue):Void {
-			Sys.stdout().flush();
-			Sys.stderr().flush();
-			var fl = [kv("result", json), kv("timestamp", jfloat(Sys.time()))];
-			var fl = if (timerCtx.measureTimes == Yes) {
-				var root = Timer.buildTimesTree(timerCtx).root;
-				var jo = jsonOfTimes(root);
-				jo == null ? fl : [kv("timers", jo)].concat(fl);
-			} else fl;
-			var jo = jobject(fl);
-			send(JsonRpc.result(jsonrpc.getId(), jo));
+	// port: the JSON-RPC result handler's send_error
+	public static function errorMessage(jsonrpc:JsonrpcHandler, jl:Array<JsonValue>):JsonValue
+		return JsonRpc.error(jsonrpc.getId(), 0, JArray(jl), "Compiler error");
+
+	// port: the JSON-RPC result handler's flush_messages: a failed compilation's errors
+	public static function messagesToJson(messages:Array<core.Message.CompilerMessage>):Array<JsonValue>
+		return messages.map(cm -> JObject([
+			kv("severity", JInt(core.Message.Message.severityToInt(core.Message.Message.severity(cm)))),
+			kv("location", Genjson.generatePosAsLocation(cm.cmPos)),
+			kv("message", JString(cm.cmMessage))
+		]));
+
+	/** A JSON-RPC request (`--display`'s argument) on the instance: the response goes to
+		`io`. A request that is not one, or names no method, is answered with its error and
+		raises Exit. Returns the request's timers. */
+	public static function dispatch(instance:compiler.CompilerInstance, io:CompilerIoData, request:String):core.Timer.TimerContext {
+		// port: create_json_result_handler (Server.createRequestScope's): the request and its method
+		var jsonrpc = JsonRpc.handleJsonrpcError(function() {
+			var jsonrpc = new JsonrpcHandler(JsonRpc.parseRequest(request));
+			if (handler.findOpt(jsonrpc.getMethodName()) == null) JsonRpc.raiseMethodNotFound(jsonrpc.getId(), jsonrpc.getMethodName());
+			return jsonrpc;
+		}, function(json) {
+			sendJson(io, json);
+			throw core.ds.Exit.raise();
+		});
+		var f = handler.find(jsonrpc.getMethodName());
+		var env:compiler.CompilerInstance.RequestEnv = {io: io, timerCtx: Timer.makeContext(Timer.make(["other"]))};
+		var hctx:HandlerContext = {
+			jsonrpc: jsonrpc,
+			decode: new RequestParams(jsonrpc),
+			instance: instance,
+			env: env,
+			display: new compiler.DisplayServices(instance, env),
+			server: new compiler.ServerServices(instance, env)
+		};
+		var response = try {
+			resultMessage(env.timerCtx, jsonrpc, f(hctx));
+		} catch (e:compiler.CompilerInstance.ServiceError) {
+			errorMessage(jsonrpc, [jstring(e.message)]);
+		} catch (e:compiler.DisplayServices.CompilationError) {
+			errorMessage(jsonrpc, messagesToJson(e.messages));
+		} catch (e:ParamsFailed) {
+			// (upstream reads the parameters once the arguments are processed: the failure is
+			// the compilation's, after theirs)
+			var error = e.error;
+			switch instance.request(function(_):compiler.CompilerInstance.RequestStep<JsonValue> throw error, env) {
+				case Failed(messages): errorMessage(jsonrpc, messagesToJson(messages));
+				case Answered(json): resultMessage(env.timerCtx, jsonrpc, json);
+				case Found(r): resultMessage(env.timerCtx, jsonrpc, DisplayException.resultToJson(r));
+			}
 		}
-		function sendError(send:JsonValue->Void, jl:Array<JsonValue>):Void {
-			send(JsonRpc.error(jsonrpc.getId(), 0, JArray(jl), "Compiler error"));
-		}
-		var sendResultRaise = function(json:JsonValue):Dynamic {
-			sendResult(j -> sendJsonRaise(io, j), json);
-			return null;
-		};
-		var sendResultNoraise = function(json:JsonValue):Void sendResult(j -> sendJson(io, j), json);
-		var sendErrorRaise = function(errors:Array<JsonValue>):Dynamic {
-			sendError(j -> sendJsonRaise(io, j), errors);
-			return null;
-		};
-		var sendErrorNoraise = function(errors:Array<JsonValue>):Void sendError(j -> sendJson(io, j), errors);
-		var methodName = jsonrpc.getMethodName();
-		var f = handler.findOpt(methodName);
-		if (f == null) JsonRpc.raiseMethodNotFound(jsonrpc.getId(), methodName);
-		return {
-			sendResult: sendResultNoraise,
-			sendResultRaise: sendResultRaise,
-			sendError: sendErrorNoraise,
-			sendErrorRaise: sendErrorRaise,
-			// port: the encoding of each display result, which upstream does where it is found
-			sendDisplayResultRaise: function(com:CommonContext, r:DisplayResult):Dynamic {
-				if (compiler.io.CompilerOutput.isNoCompletion(com, r)) return sendErrorRaise([jstring("No completion point")]);
-				return sendResultRaise(DisplayException.resultToJson(com, r));
-			},
-			flushMessages: function(hasError:Bool, com:CommonContext) {
-				// flush_messages in the JSON-RPC handler is always an error state:
-				// a successful completion raises JsonCompleted before flush_context is
-				// called, so reaching here means no meaningful result was sent.
-				if (hasError) {
-					var messages = com.partScope.messages.copy();
-					messages.reverse();
-					var errors = messages.map(cm -> JObject([
-						kv("severity", JInt(core.Message.Message.severityToInt(core.Message.Message.severity(cm)))),
-						kv("location", Genjson.generatePosAsLocation(cm.cmPos)),
-						kv("message", JString(cm.cmMessage))
-					]));
-					sendErrorRaise(errors);
-				} else {
-					// No completion point was found — send an appropriate no-result
-					// response so the client is not left waiting.
-					DisplayException.sendNoResultRaise(com);
-				}
-			},
-			setCom: runOnCom.bind(jsonrpc, f)
-		};
+		sendJson(io, response);
+		return env.timerCtx;
+	}
+}
+
+// port: not upstream: what a method of the dispatcher (DisplayJson.handler) has
+@:structInit class HandlerContext {
+	public final jsonrpc:JsonrpcHandler;
+	public final decode:RequestParams;
+	public final instance:compiler.CompilerInstance;
+	public final env:compiler.CompilerInstance.RequestEnv;
+	public final display:compiler.DisplayServices;
+	public final server:compiler.ServerServices;
+
+	/** the parameters, as `f` reads them: its failure is replayed as the compilation's */
+	public function params<T>(f:Void->T):T
+		return try f() catch (e:Dynamic) throw new ParamsFailed(e);
+}
+
+class ParamsFailed extends haxe.Exception {
+	public final error:Dynamic;
+
+	public function new(error:Dynamic) {
+		super("ParamsFailed");
+		this.error = error;
 	}
 }

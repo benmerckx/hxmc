@@ -203,12 +203,17 @@ class Diagnostics {
 		if (macroCom != null) processModules(macroCom);
 		// We do this at the end because some of the prepare functions might add information to the common context.
 		dctx.messages = com.partScope.messages;
+		dctx.reportFiles = switch com.partScope.reportMode {
+			case RMDiagnostics(fileKeys): fileKeys;
+			case _: null;
+		};
+		dctx.deprecations = DiagnosticsPrinter.deprecations(com);
 		return dctx;
 	}
 
 	public static function print(com:CommonContext):String {
 		var dctx = prepare(com);
-		return core.Json.stringOfJson(DiagnosticsPrinter.jsonOfDiagnostics(com, dctx));
+		return core.Json.stringOfJson(DiagnosticsPrinter.jsonOfDiagnostics(dctx));
 	}
 
 	public static function run(com:CommonContext):DiagnosticsContext {

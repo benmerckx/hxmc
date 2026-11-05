@@ -389,6 +389,13 @@ enum MissingFieldCause {
 
 	public var messages:Array<core.Message.CompilerMessage>;
 
+	// port: not upstream: the report mode's files (RMDiagnostics; empty: every file; null: not
+	// ... diagnostics), so the result encodes without the context
+	public var reportFiles:Null<Array<String>> = null;
+
+	// port: not upstream: the deprecation warnings to report (DiagnosticsPrinter.deprecations)
+	public var deprecations:Array<{message:String, pos:Pos}> = [];
+
 	public inline function new(replaceableCode:Array<ReplaceableCode>, importPositions:Map<String, {pos:Pos, used:{value:Bool}}>,
 			deadBlocks:core.ds.OcamlHashtbl<String, Array<{pos:Pos, expr:Expr}>>, messages:Array<core.Message.CompilerMessage>) {
 		this.replaceableCode = replaceableCode;

@@ -63,6 +63,28 @@ class DiagnosticsPrinter {
 		};
 	}
 
+	// port: isDiagnosticsFile on the report mode's files (DiagnosticsContext.reportFiles)
+	// port: not upstream: jsonOfDiagnostics' deprecation warnings (the enabled ones of the
+	// ... warned positions), as the context has them when the result is found
+	public static function deprecations(com:CommonContext):Array<{message:String, pos:Pos}> {
+		var l = [];
+		switch core.Warning.getMode(WDeprecated, com.warningOptions) {
+			case WMEnable:
+				(com.partScope.warnedPositions : OcamlHashtbl<{file:String, offset:Int},
+					{message:String, pos:Pos, options:Array<Array<core.Message.WarningOption>>}>).iter(function(_, w) {
+						switch core.Warning.getMode(WDeprecated, com.warningOptions.concat(w.options)) {
+							case WMEnable: l.push({message: w.message, pos: w.pos});
+							case WMDisable:
+						}
+					});
+			case WMDisable:
+		}
+		return l;
+	}
+
+	public static function isReportedFile(reportFiles:Null<Array<String>>, fileKey:String):Bool
+		return reportFiles != null && (reportFiles.length == 0 || reportFiles.contains(fileKey));
+
 	static inline function posEq(a:Pos, b:Pos):Bool return a.pfile == b.pfile && a.pmin == b.pmin && a.pmax == b.pmax;
 
 	/**
@@ -161,7 +183,7 @@ class DiagnosticsPrinter {
 		return core.Message.Message.makeDiagnostic(false, DKUnresolvedIdentifier, JArray(out), p, 0, MKError);
 	}
 
-	public static function jsonOfDiagnostics(com:CommonContext, dctx:DiagnosticsContext):JsonValue {
+	public static function jsonOfDiagnostics(dctx:DiagnosticsContext):JsonValue {
 		var diagnostics = new OcamlHashtbl<String, Array<Diagnostic>>(OcamlHash.hashString, (a, b) -> a == b, 0);
 		var current:Null<Diagnostic> = null;
 		function add_(append:Bool, diag:Diagnostic):Void {
@@ -182,7 +204,7 @@ class DiagnosticsPrinter {
 				case DKUnusedImport | DKReplacableCode | DKDeprecationWarning | DKInactiveBlock: false;
 				case DKUnresolvedIdentifier | DKCompilerMessage | DKParserError | DKMissingFields: true;
 			};
-			if (posEq(p, Globals.nullPos) || isDiagnosticsFile(com, fileKeys.get(p.pfile))) {
+			if (posEq(p, Globals.nullPos) || isReportedFile(dctx.reportFiles, fileKeys.get(p.pfile))) {
 				var diag = makeDiagnostic(dk, p, sev, code, args);
 				current = diag;
 				add_(append, diag);
@@ -285,19 +307,7 @@ class DiagnosticsPrinter {
 			add(DKMissingFields, p, Error, null, j);
 		});
 		// non-append from here
-		switch core.Warning.getMode(WDeprecated, com.warningOptions) {
-			case WMEnable:
-				(com.partScope.warnedPositions : OcamlHashtbl<{file:String, offset:Int},
-					{message:String, pos:Pos, options:Array<Array<core.Message.WarningOption>>}>).iter(function(_, w) {
-						switch core.Warning.getMode(WDeprecated, com.warningOptions.concat(w.options)) {
-							case WMEnable:
-								var wobj = core.WarningList.warningObj(WDeprecated);
-								add(DKDeprecationWarning, w.pos, Warning, wobj.wName, JString(w.message));
-							case WMDisable:
-						}
-					});
-			case WMDisable:
-		}
+		for (w in dctx.deprecations) add(DKDeprecationWarning, w.pos, Warning, core.WarningList.warningObj(WDeprecated).wName, JString(w.message));
 		for (ip in ImportHandling.sortedImportPositions(dctx.importPositions)) {
 			if (!ip.used.value) add(DKUnusedImport, ip.pos, Warning, null, JArray([]));
 		}

@@ -131,7 +131,27 @@ class DocumentSymbols {
 class DocumentSymbolsPrinter {
 	static inline function kv(n:String, v:JsonValue):JsonField return {name: n, value: v};
 
-	public static function jsonOfModuleSymbols(com:CommonContext, symbols:Array<{file:String, symbols:Array<SymbolInformationData>}>,
+	// port: not upstream: the symbols jsonOfModuleSymbols reports (each position once, the
+	// ... name matching `filter`), in their order: its JSON with no filter is the same
+	public static function filterModuleSymbols(symbols:Array<{file:String, symbols:Array<SymbolInformationData>}>,
+			filter:Null<String>):Array<{file:String, symbols:Array<SymbolInformationData>}> {
+		var regex = filter == null ? null : StrRegexp.regexpCaseFold(filter);
+		var reported = new haxe.ds.StringMap<Bool>();
+		var result = [];
+		for (e in symbols) {
+			var kept = [];
+			for (si in e.symbols) {
+				var key = si.pos.pmin + ":" + si.pos.pmax + ":" + si.pos.pfile;
+				if (reported.exists(key)) continue;
+				reported.set(key, true);
+				if (regex == null || regex.match(si.name)) kept.push(si);
+			}
+			if (kept.length > 0) result.push({file: e.file, symbols: kept});
+		}
+		return result;
+	}
+
+	public static function jsonOfModuleSymbols(symbols:Array<{file:String, symbols:Array<SymbolInformationData>}>,
 			filter:Null<String>):JsonValue {
 		var regex = filter == null ? null : StrRegexp.regexpCaseFold(filter);
 		var reported = new haxe.ds.StringMap<Bool>();
