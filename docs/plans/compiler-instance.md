@@ -156,17 +156,17 @@ class CompilerInstance {
     typed method and encodes its value. Upstream reads the parameters once
     the arguments are processed, so a bad request's error is the
     compilation's: the dispatcher replays a decoding failure inside a
-    request. The server's requests and `haxe --display` both run through
+    request, after what upstream did with what it read before the failure
+    (`server/configure` applies its print settings as it reads them). The
+    response's timestamp and `--times`' timers are taken when the request is
+    answered, inside the compilation (`RequestEnv.onAnswer`), where upstream
+    writes its response. The server's requests and `haxe --display` both run through
     it, on an instance over the server's cache or none.
   - Protocol state stays the protocol's: `initialize`'s settings,
     `completionItem/resolve` and the completion it details
     (`lastCompletionResult`, recorded and filtered to `maxCompletionItems`
     as the completion is encoded). A typed completion call gets every
     item, and neither records nor filters them.
-  - Differences from upstream, none of which the tests reach: `--times`'
-    timers are taken when the response is written, after the compilation
-    (upstream: when the result is found); a malformed `server/configure`
-    print setting applies none of the earlier ones.
 - **Unsaved edits**: only the file of the display request comes from the
   request (as stdin does today); every other file is read from disk. Edits
   in other buffers are deliberately not seen.

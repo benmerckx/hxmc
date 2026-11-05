@@ -519,10 +519,16 @@ class DisplayJson {
 				f: function(hctx) {
 					var jsonrpc = hctx.jsonrpc;
 					var p:compiler.ServerServices.ServerConfigureParams = hctx.params(function() {
-						var print = jsonrpc.getOptParam(() -> jsonrpc.getObjectParam("print"), []).map(f -> {
-							name: f.name,
-							value: jsonrpc.getBool("value", f.value)
-						});
+						// (upstream applies each setting as it reads it: those before a bad value are
+						// applied when it fails)
+						var print = [];
+						for (f in jsonrpc.getOptParam(() -> jsonrpc.getObjectParam("print"), [])) {
+							var value = try jsonrpc.getBool("value", f.value) catch (e:Dynamic) {
+								var before = print.copy();
+								throw new ParamsFailed(e, () -> compiler.ServerServices.applyConfigure({print: before}));
+							}
+							print.push({name: f.name, value: value});
+						}
 						var noModuleChecks:Null<Bool> = jsonrpc.getOptParam(() -> (jsonrpc.getBoolParam("noModuleChecks") : Null<Bool>), null);
 						return {print: print, noModuleChecks: noModuleChecks};
 					});
@@ -554,16 +560,20 @@ class DisplayJson {
 	}
 
 	// port: the JSON-RPC result handler's send_result: the response to the request
-	public static function resultMessage(timerCtx:core.Timer.TimerContext, jsonrpc:JsonrpcHandler, json:JsonValue):JsonValue {
+	// ... (`at`: what it takes when the result is found, inside the compilation: answeredAt)
+	public static function resultMessage(at:AnsweredAt, jsonrpc:JsonrpcHandler, json:JsonValue):JsonValue {
+		var fl = [kv("result", json), kv("timestamp", jfloat(at.timestamp))];
+		var fl = if (at.timers != null) [kv("timers", at.timers)].concat(fl) else fl;
+		return JsonRpc.result(jsonrpc.getId(), jobject(fl));
+	}
+
+	// port: the start of send_result: the flush, the timestamp and the timers
+	public static function answeredAt(timerCtx:core.Timer.TimerContext):AnsweredAt {
 		Sys.stdout().flush();
 		Sys.stderr().flush();
-		var fl = [kv("result", json), kv("timestamp", jfloat(Sys.time()))];
-		var fl = if (timerCtx.measureTimes == Yes) {
-			var root = Timer.buildTimesTree(timerCtx).root;
-			var jo = jsonOfTimes(root);
-			jo == null ? fl : [kv("timers", jo)].concat(fl);
-		} else fl;
-		return JsonRpc.result(jsonrpc.getId(), jobject(fl));
+		var timestamp = Sys.time();
+		var timers = if (timerCtx.measureTimes == Yes) jsonOfTimes(Timer.buildTimesTree(timerCtx).root) else null;
+		return {timestamp: timestamp, timers: timers};
 	}
 
 	// port: the JSON-RPC result handler's send_error
@@ -592,7 +602,9 @@ class DisplayJson {
 			throw core.ds.Exit.raise();
 		});
 		var f = handler.find(jsonrpc.getMethodName());
-		var env:compiler.CompilerInstance.RequestEnv = {io: io, timerCtx: Timer.makeContext(Timer.make(["other"]))};
+		var timerCtx = Timer.makeContext(Timer.make(["other"]));
+		var at:Null<AnsweredAt> = null;
+		var env:compiler.CompilerInstance.RequestEnv = {io: io, timerCtx: timerCtx, onAnswer: () -> at = answeredAt(timerCtx)};
 		var hctx:HandlerContext = {
 			jsonrpc: jsonrpc,
 			decode: new RequestParams(jsonrpc),
@@ -601,26 +613,38 @@ class DisplayJson {
 			display: new compiler.DisplayServices(instance, env),
 			server: new compiler.ServerServices(instance, env)
 		};
+		function result(json:JsonValue):JsonValue
+			return resultMessage(at != null ? at : answeredAt(timerCtx), jsonrpc, json);
+		function respond(f:Void->JsonValue):JsonValue
+			return try {
+				result(f());
+			} catch (e:compiler.CompilerInstance.ServiceError) {
+				errorMessage(jsonrpc, [jstring(e.message)]);
+			} catch (e:compiler.DisplayServices.CompilationError) {
+				errorMessage(jsonrpc, messagesToJson(e.messages));
+			}
 		var response = try {
-			resultMessage(env.timerCtx, jsonrpc, f(hctx));
-		} catch (e:compiler.CompilerInstance.ServiceError) {
-			errorMessage(jsonrpc, [jstring(e.message)]);
-		} catch (e:compiler.DisplayServices.CompilationError) {
-			errorMessage(jsonrpc, messagesToJson(e.messages));
+			respond(() -> f(hctx));
 		} catch (e:ParamsFailed) {
 			// (upstream reads the parameters once the arguments are processed: the failure is
-			// the compilation's, after theirs)
-			var error = e.error;
-			switch instance.request(function(_):compiler.CompilerInstance.RequestStep<JsonValue> throw error, env) {
-				case Failed(messages): errorMessage(jsonrpc, messagesToJson(messages));
-				case Answered(json): resultMessage(env.timerCtx, jsonrpc, json);
-				case Found(r): resultMessage(env.timerCtx, jsonrpc, DisplayException.resultToJson(r));
-			}
+			// the compilation's, after theirs and after what was done with the parameters read
+			// before it)
+			var failed = e;
+			respond(() -> switch instance.request(function(_):compiler.CompilerInstance.RequestStep<JsonValue> {
+				if (failed.before != null) failed.before();
+				throw failed.error;
+			}, env) {
+				case Failed(messages): throw new compiler.DisplayServices.CompilationError(messages);
+				case Answered(json): json;
+				case Found(r): DisplayException.resultToJson(r);
+			});
 		}
 		sendJson(io, response);
-		return env.timerCtx;
+		return timerCtx;
 	}
 }
+
+typedef AnsweredAt = {timestamp:Float, timers:Null<JsonValue>};
 
 // port: not upstream: what a method of the dispatcher (DisplayJson.handler) has
 @:structInit class HandlerContext {
@@ -633,14 +657,18 @@ class DisplayJson {
 
 	/** the parameters, as `f` reads them: its failure is replayed as the compilation's */
 	public function params<T>(f:Void->T):T
-		return try f() catch (e:Dynamic) throw new ParamsFailed(e);
+		return try f() catch (e:ParamsFailed) throw e catch (e:Dynamic) throw new ParamsFailed(e);
 }
 
+/** Reading the parameters failed with `error`: replayed in the request's compilation, after
+	`before` (what upstream did with the parameters it read before the failure). */
 class ParamsFailed extends haxe.Exception {
 	public final error:Dynamic;
+	public final before:Null<Void->Void>;
 
-	public function new(error:Dynamic) {
+	public function new(error:Dynamic, ?before:Void->Void) {
 		super("ParamsFailed");
 		this.error = error;
+		this.before = before;
 	}
 }

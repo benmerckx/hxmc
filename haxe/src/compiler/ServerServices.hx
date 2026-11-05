@@ -219,21 +219,24 @@ class ServerServices implements ServerApi {
 		});
 
 	public function configure(p:ServerConfigureParams):Array<String>
-		return now("server/configure", function(_) {
-			var l = (p.print == null ? [] : p.print).map(function(f) {
-				try {
-					compiler.server.ServerMessage.setByName(f.name, f.value);
-				} catch (_:core.ds.NotFound) {
-					throw new ServiceError("Invalid print parame name: " + f.name);
-				}
-				return 'Printing ${f.name} ' + (f.value ? "enabled" : "disabled");
-			});
-			if (p.noModuleChecks != null) {
-				compiler.server.ServerConfig.doNotCheckModules = p.noModuleChecks;
-				l.unshift("Module checks " + (p.noModuleChecks ? "disabled" : "enabled"));
+		return now("server/configure", _ -> applyConfigure(p));
+
+	/** server/configure's effect (the settings are the process's): a line for each setting */
+	public static function applyConfigure(p:ServerConfigureParams):Array<String> {
+		var l = (p.print == null ? [] : p.print).map(function(f) {
+			try {
+				compiler.server.ServerMessage.setByName(f.name, f.value);
+			} catch (_:core.ds.NotFound) {
+				throw new ServiceError("Invalid print parame name: " + f.name);
 			}
-			return l;
+			return 'Printing ${f.name} ' + (f.value ? "enabled" : "disabled");
 		});
+		if (p.noModuleChecks != null) {
+			compiler.server.ServerConfig.doNotCheckModules = p.noModuleChecks;
+			l.unshift("Module checks " + (p.noModuleChecks ? "disabled" : "enabled"));
+		}
+		return l;
+	}
 
 	public function memory():JsonValue
 		return now("server/memory", com -> context.display.DisplayMemory.getMemoryJson(com.cs, MCache));

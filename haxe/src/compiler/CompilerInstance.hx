@@ -75,7 +75,7 @@ class CompilerInstance {
 		runs it): `start` sees the context once the arguments are processed and says how
 		the request is answered (RequestStep). A ServiceError thrown by `start` or by a
 		deferred answer ends the compilation and is rethrown. `env`: the request's io and
-		timers (default: no output). */
+		timers, and what is done when it is answered (default: no output). */
 	public function request<T>(start:context.Common.CommonContext->RequestStep<T>, ?env:RequestEnv):RequestOutcome<T> {
 		var sctx = cache.begin();
 		var ownIo = env == null;
@@ -91,6 +91,9 @@ class CompilerInstance {
 			throw new core.Globals.InternalCompilerError("CompilerInstance.request: " + what + " outside a JSON-RPC request", "");
 		function completed():Dynamic
 			throw new context.display.DisplayJson.JsonCompleted();
+		// (where upstream sends its response)
+		function now():Void
+			if (env != null && env.onAnswer != null) env.onAnswer();
 		scope.resultHandler = {
 			sendResult: _ -> unexpected("send_result"),
 			sendResultRaise: _ -> unexpected("send_result_raise"),
@@ -98,6 +101,7 @@ class CompilerInstance {
 			sendErrorRaise: _ -> unexpected("send_error_raise"),
 			sendDisplayResultRaise: function(_, r):Dynamic {
 				found = r;
+				now();
 				return completed();
 			},
 			// (as the JSON-RPC handler: with errors, the compilation failed; otherwise there
@@ -107,7 +111,10 @@ class CompilerInstance {
 					errors = [];
 					var i = com.partScope.messages.length;
 					while (i-- > 0) errors.push(com.partScope.messages[i]);
-				} else found = DRNone;
+				} else {
+					found = DRNone;
+					now();
+				}
 			},
 			// port: DisplayJson.handler's responses: an answer now (Completed), typing for
 			// ... a display result, or an answer deferred to a stage of the compilation
@@ -116,6 +123,7 @@ class CompilerInstance {
 					case Answer(v):
 						answered = true;
 						answer = v;
+						now();
 						Completed;
 					case Typing:
 						NeedsTyping;
@@ -124,6 +132,7 @@ class CompilerInstance {
 							try {
 								answer = f();
 								answered = true;
+								now();
 							} catch (e:ServiceError) failure = e;
 							completed();
 						}
@@ -215,6 +224,10 @@ enum RequestOutcome<T> {
 @:structInit class RequestEnv {
 	public final io:compiler.io.CompilerIo.CompilerIoData;
 	public final timerCtx:core.Timer.TimerContext;
+
+	/** called when the request is answered, inside the compilation (where upstream
+		writes its response: the timers it reports are taken there) */
+	public final onAnswer:Null<Void->Void> = null;
 }
 
 /** A method's error that is not the compilation's (an invalid parameter, a module the
