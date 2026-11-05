@@ -24,7 +24,7 @@ private class SocketOutput extends haxe.io.Output {
 	}
 
 	override public function writeBytes(buf:Bytes, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > buf.length) throw OutsideBounds;
+		if (pos < 0 || len < 0 || pos > buf.length - len) throw OutsideBounds;
 		var r = NativeNet.send(@:privateAccess socket.fd, buf, pos, len);
 		if (r < 0) {
 			if (NativeNet.blocked()) throw Blocked;
@@ -53,7 +53,7 @@ private class SocketInput extends haxe.io.Input {
 	}
 
 	override public function readBytes(buf:Bytes, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > buf.length) throw OutsideBounds;
+		if (pos < 0 || len < 0 || pos > buf.length - len) throw OutsideBounds;
 		var r = NativeNet.recv(@:privateAccess socket.fd, buf, pos, len);
 		if (r < 0) {
 			if (NativeNet.blocked()) throw Blocked;

@@ -117,7 +117,9 @@ its program reaches, so what typing loads and DCE keeps shows only there
 (`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). A
 `// span-checks: <Class.function>=<n> ...` line names the span element
 checks left in each function's optimized code, which a build with
-`HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped). Writing a
+`HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped); a
+`// bytes-checks:` line the same of `haxe.io.Bytes`' range tests
+(`BytesReadLoops`). Writing a
 case's archive must not warn of an unbound type parameter (`hxb-warning`:
 an expression of the case or of hxmc's std whose type left its type
 parameter's scope, as `Arena.makeArray`'s did when inlined into `slice`).

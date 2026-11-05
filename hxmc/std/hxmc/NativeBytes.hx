@@ -5,8 +5,8 @@ import haxe.io.Encoding;
 
 // The runtime's functions over haxe.io.BytesData (NativeArray storage of
 // bytes, hxmc.rt.Bytes), which haxe.io.Bytes wraps: out of bounds, the ones
-// taking a range throw "OutsideBounds"; the accessors of a position do not
-// test it (as haxe.io.Bytes.get).
+// taking a range throw haxe.io.Error.OutsideBounds; the accessors of a
+// position do not test it (haxe.io.Bytes does, before it calls them).
 extern class NativeBytes {
 	static function blit(b:BytesData, pos:Int, src:BytesData, srcpos:Int, len:Int):Void;
 	static function fill(b:BytesData, pos:Int, len:Int, value:Int):Void;

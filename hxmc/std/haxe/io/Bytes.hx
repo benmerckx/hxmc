@@ -7,9 +7,15 @@
 // Its length is its BytesData's, which Dynamic access and reflection read as
 // the field upstream declares (@:hxmc.lengthOf: the runtime's field table).
 // A small one is allocated with its BytesData (one allocation: shared).
-// What writes tests its range (OutsideBounds, as HashLink's): the bytes
-// before the data are its header, and those after it another object's; a
-// read out of range is unspecified (as upstream leaves it).
+// Every access tests its range and throws haxe.io.Error.OutsideBounds out of
+// it, reads as writes (as Eval's multi-byte reads, and HashLink's writes):
+// the bytes before the data are its header, and those after it another
+// object's, so a read out of range would leak them. The test is one unsigned
+// comparison (inRange), which the optimizer drops where a loop or an earlier
+// test proves it. Unchecked reads: fastGet (upstream's, unspecified out of
+// range: the BytesData's NativeArray indexing, -D
+// hxmc.native-array-outofbounds), or raw memory in @:hxmc.unsafe code
+// (hxmc.unsafe.BytesPtr), or a span in a kernel (ReadOnlySpan.ofBytes).
 
 package haxe.io;
 
@@ -26,8 +32,10 @@ class Bytes {
 	inline function get_length():Int
 		return b.length;
 
-	public inline function get(pos:Int):Int
+	public inline function get(pos:Int):Int {
+		if (!inRange(pos, 1)) throw Error.OutsideBounds;
 		return b.unsafeGet(pos);
+	}
 
 	public inline function set(pos:Int, v:Int):Void {
 		if (!inRange(pos, 1)) throw Error.OutsideBounds;
@@ -36,10 +44,14 @@ class Bytes {
 
 	// [pos, pos + n) inside (n a constant): one unsigned comparison of pos;
 	// for more than one byte also length >= n, the same test for every access
-	// of that size (the accesses at o, o + 4, o + 8 of one function: one
-	// test, then one comparison each; length - (n - 1) cannot wrap then)
+	// of that size, reads and writes (the accesses at o, o + 4, o + 8 of one
+	// function: one test, then one comparison each; length - (n - 1) cannot
+	// wrap then). The comparison is a span's (Mem.spanUlt): dropped where a
+	// loop proves it (Opt.condProp: `for (i in 0...b.length) b.get(i)`, a
+	// block at constant offsets after a test of the length, a masked table
+	// index)
 	inline function inRange(pos:Int, n:Int):Bool
-		return n == 1 ? hxmc.unsafe.Mem.ult(pos, length) : length >= n && hxmc.unsafe.Mem.ult(pos, length - (n - 1));
+		return n == 1 ? hxmc.unsafe.Mem.spanUlt(pos, length) : length >= n && hxmc.unsafe.Mem.spanUlt(pos, length - (n - 1));
 
 	public inline function blit(pos:Int, src:Bytes, srcpos:Int, len:Int):Void
 		NativeBytes.blit(b, pos, src.b, srcpos, len);
@@ -51,7 +63,7 @@ class Bytes {
 
 	public function sub(pos:Int, len:Int):Bytes {
 		var words = (len + 7) >> 3;
-		if (len > 0 && words <= SHARED_MAX && pos >= 0 && pos + len <= length) {
+		if (len > 0 && words <= SHARED_MAX && pos >= 0 && pos <= length - len) {
 			var r = shared(len, words);
 			// (into a new object: no overlap, the range tested; no GC point)
 			hxmc.unsafe.LibC.memcpy(hxmc.unsafe.Mem.addr(r.b), hxmc.unsafe.Mem.addr(b).add(pos), (len : hxmc.I64));
@@ -64,11 +76,15 @@ class Bytes {
 	public inline function compare(other:Bytes):Int
 		return NativeBytes.compare(b, other.b);
 
-	public inline function getDouble(pos:Int):Float
+	public inline function getDouble(pos:Int):Float {
+		if (!inRange(pos, 8)) throw Error.OutsideBounds;
 		return NativeBytes.getDouble(b, pos);
+	}
 
-	public inline function getFloat(pos:Int):Float
+	public inline function getFloat(pos:Int):Float {
+		if (!inRange(pos, 4)) throw Error.OutsideBounds;
 		return NativeBytes.getFloat(b, pos);
+	}
 
 	public inline function setDouble(pos:Int, v:Float):Void {
 		if (!inRange(pos, 8)) throw Error.OutsideBounds;
@@ -80,28 +96,36 @@ class Bytes {
 		NativeBytes.setFloat(b, pos, v);
 	}
 
-	public inline function getUInt16(pos:Int):Int
+	public inline function getUInt16(pos:Int):Int {
+		if (!inRange(pos, 2)) throw Error.OutsideBounds;
 		return NativeBytes.getUInt16(b, pos);
+	}
 
 	public inline function setUInt16(pos:Int, v:Int):Void {
 		if (!inRange(pos, 2)) throw Error.OutsideBounds;
 		NativeBytes.setUInt16(b, pos, v);
 	}
 
-	public inline function getInt32(pos:Int):Int
+	public inline function getInt32(pos:Int):Int {
+		if (!inRange(pos, 4)) throw Error.OutsideBounds;
 		return NativeBytes.getInt32(b, pos);
+	}
 
 	public inline function setInt32(pos:Int, v:Int):Void {
 		if (!inRange(pos, 4)) throw Error.OutsideBounds;
 		NativeBytes.setInt32(b, pos, v);
 	}
 
-	public inline function getInt64(pos:Int):haxe.Int64
-		return haxe.Int64.make(getInt32(pos + 4), getInt32(pos));
+	// (one test of the 8 bytes: setInt64 out of range writes none of them)
+	public inline function getInt64(pos:Int):haxe.Int64 {
+		if (!inRange(pos, 8)) throw Error.OutsideBounds;
+		return haxe.Int64.make(NativeBytes.getInt32(b, pos + 4), NativeBytes.getInt32(b, pos));
+	}
 
 	public inline function setInt64(pos:Int, v:haxe.Int64):Void {
-		setInt32(pos, v.low);
-		setInt32(pos + 4, v.high);
+		if (!inRange(pos, 8)) throw Error.OutsideBounds;
+		NativeBytes.setInt32(b, pos, v.low);
+		NativeBytes.setInt32(b, pos + 4, v.high);
 	}
 
 	public inline function getString(pos:Int, len:Int, ?encoding:Encoding):String
@@ -156,6 +180,8 @@ class Bytes {
 	public static function ofHex(s:String):Bytes
 		return new Bytes(NativeBytes.ofHex(s));
 
+	// (upstream's: unspecified out of range, so not tested unless -D
+	// hxmc.native-array-outofbounds says so, as BytesData's indexing)
 	public inline static function fastGet(b:BytesData, pos:Int):Int
 		return b[pos];
 }

@@ -37,7 +37,7 @@ class Bytes {
 		return NArray.alloc(AK_BYTE, n);
 
 	@:hxmc.host("hxmc_NativeBytes_blit") static function blit(b:Dynamic, pos:Int, src:Dynamic, srcpos:Int, n:Int):Void {
-		if (pos < 0 || srcpos < 0 || n < 0 || pos + n > len(b) || srcpos + n > len(src)) outside();
+		if (pos < 0 || srcpos < 0 || n < 0 || pos > len(b) - n || srcpos > len(src) - n) outside();
 		Repr.bytesMove(b, pos, src, srcpos, n);
 	}
 
@@ -45,7 +45,7 @@ class Bytes {
 		Repr.bytesFill(b, pos, n, v);
 
 	@:hxmc.host("hxmc_NativeBytes_sub") static function sub(b:Dynamic, pos:Int, n:Int):Dynamic {
-		if (pos < 0 || n < 0 || pos + n > len(b)) outside();
+		if (pos < 0 || n < 0 || pos > len(b) - n) outside();
 		var r = allocUninit(n);
 		Repr.bytesCopyFrom(r, b, pos, n);
 		return r;
@@ -86,7 +86,7 @@ class Bytes {
 		Mem.setF32(bytes(b), pos, v);
 
 	@:hxmc.host("hxmc_NativeBytes_getString") static function getString(b:Dynamic, pos:Int, n:Int, encoding:Dynamic):String {
-		if (pos < 0 || n < 0 || pos + n > len(b)) outside();
+		if (pos < 0 || n < 0 || pos > len(b) - n) outside();
 		// decoding allocates: the bytes copied out of the heap first
 		var small = Mem.stack(256);
 		var buf = n <= 256 ? small : LibC.malloc(n);
@@ -188,7 +188,7 @@ class Bytes {
 	}
 
 	@:hxmc.host("haxe_io_BytesBuffer_addData") static function addBytes(bb:Dynamic, b:Dynamic, pos:Int, n:Int):Void {
-		if (pos < 0 || n < 0 || pos + n > len(b)) outside();
+		if (pos < 0 || n < 0 || pos > len(b) - n) outside();
 		reserve(bb, n);
 		var l = bbLen(bb);
 		Repr.bytesCopyAt(bbData(bb), l, b, pos, n);

@@ -314,7 +314,7 @@ class PosixSys {
 		throw haxe.io.Error.OutsideBounds;
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (threads() > 1 && waitReady(fd, 0) < 0) return -1; // closed while waiting
 		while (true) {
 			// (ready: the read does not block, and nothing collects during it)
@@ -329,7 +329,7 @@ class PosixSys {
 	}
 
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (threads() > 1 && waitReady(fd, 1) < 0) return -1;
 		while (true) {
 			var r = Posix.write(fd, Bytes.bytes(b).add(pos), len).toInt();
