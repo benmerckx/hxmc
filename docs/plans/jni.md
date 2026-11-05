@@ -174,4 +174,4 @@ loads it and compares logcat's lines with the golden file.
    over `IoBuffer`; a Java method as a value; `Std.isOfType` and casts of
    Java classes (`IsInstanceOf`: `Java.isInstance` now); `RT_STATS` counts
    of boxes and proxies; declarations generated from class files (as
-   hxmc-objc-extern-gen is Objective-C's).
+   extern-generator is Objective-C's).
