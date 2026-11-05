@@ -16,6 +16,7 @@ what, why, and the approach decided. What comes next and in which order:
 | [lowlevel.md](lowlevel.md) | C interop and low-level Haxe: native memory, manual memory, value enums |
 | [simd.md](simd.md) | SIMD: the design record of `hxmc.simd` (prior art, semantics, ABIs, benchmarks), 256-bit vectors, auto-vectorization |
 | [objc.md](objc.md) | Objective-C: the decisions behind it, declarations from the headers, blocks, memory |
+| [foreign-objects.md](foreign-objects.md) | foreign objects: the kind table Objective-C, COM, GObject and JNI plug into, its hooks and threading rules |
 | [packaging.md](packaging.md) | npm, haxelib, verified native builds |
 | [math.md](math.md) | correctly rounded math |
 | [haxe-versions.md](haxe-versions.md) | parked: any Haxe version per project |

@@ -996,7 +996,7 @@ class FnLower {
 				return ELocal(r);
 			// an id where a reference goes (Dynamic, an element, a type
 			// parameter): its one box, which holds a reference to it, or the Haxe
-			// object of a Haxe class's instance (nil: null; hxmc.rt.Gc.idBox)
+			// object of a Haxe class's instance (nil: null; hxmc.rt.ObjCKind.idBox)
 			case [TId, TRef(_)]:
 				var fn = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(ObjC.symbol(l, s))), TI64);
 				var box = temp(TRef(RAny), ECallHost("rt_objc_box", vector(x, fn("objc_retain"), fn("objc_release"), fn("object_getClass"),
@@ -3950,7 +3950,7 @@ class FnLower {
 	}
 
 	// a constructor: its own id fields entered in the runtime's table, which
-	// releases what they hold once the object dies (hxmc.rt.Gc.own)
+	// releases what they hold once the object dies (hxmc.rt.ObjCKind.own)
 	function objcOwnFields() {
 		if (self == null || l.idFields(self).length + l.weakFields(self).length == 0) return;
 		var release = ObjC.symbol(l, "objc_release");
@@ -3968,7 +3968,7 @@ class FnLower {
 	}
 
 	// a new closure: the ids it captures held by it as fields hold theirs,
-	// retained here and released once it dies (hxmc.rt.Gc.own; capture i is
+	// retained here and released once it dies (hxmc.rt.ObjCKind.own; capture i is
 	// slot i + 1, MirBuild)
 	function newClosure(li:LambdaInfo, caps:Vector<Ex>):Ex {
 		if (!li.captures.exists(c -> c.ty == TId)) return ENewClos(li, caps);

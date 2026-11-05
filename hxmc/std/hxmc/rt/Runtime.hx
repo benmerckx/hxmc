@@ -41,6 +41,9 @@ import hxmc.rt.Start;
 import hxmc.rt.WinRt;
 // Objective-C exceptions reaching Haxe frames (Apple's systems: LinkMachO, DataGen.objcCaught)
 import hxmc.rt.ObjCExceptions;
+// foreign objects (reference-counted objects of other systems: Foreign), Objective-C's the first kind
+import hxmc.rt.Foreign;
+import hxmc.rt.ObjCKind;
 #if hxmc.census
 import hxmc.rt.Census;
 #end

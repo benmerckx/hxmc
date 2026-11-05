@@ -26,6 +26,9 @@ answer them.
   count during a collection. lowlevel.md's `Handle` is a stable token for
   C, which says nothing of who keeps whom alive; the peers' table holds
   what a handle would.
+  The mechanism (peers, toggles, boxes, owned and weak fields, detach,
+  releases put off) is the runtime's for any reference-counted system,
+  Objective-C its first kind ([foreign-objects.md](foreign-objects.md)).
 - **`id` is its own IR type (`TId`), not an abstract.** An abstract over
   `Int64` has no hook where ownership happens: a store to another class's
   field, a store inside generic code (`Map.set`, where the type is `T`),
