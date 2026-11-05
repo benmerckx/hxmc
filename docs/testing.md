@@ -19,7 +19,7 @@ The fixpoint and crosshost must stay byte-identical.
 | Tier | What it runs |
 | --- | --- |
 | `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
+| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, Java through JNI (JniCheck), iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference
@@ -88,7 +88,7 @@ each lane on the kept cases and 400 random programs.
 | --- | --- | --- |
 | `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
-| `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
+| `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
 | `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`); for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
@@ -98,6 +98,7 @@ each lane on the kept cases and 400 random programs.
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
+| `JniCheck` | `jni-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
 | `MachOCheck` | `macho-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform and minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit) |
 | `UIKitCheck` | `uikit-check` | UIKitHello, a UIKit app with its own `hxmc_ui_main`, in its bundle: run as a Mac Catalyst agent app and in the iOS simulator's iPhone and iPad (the delegate, the body after launch, the window key and sized); a Mac with Xcode |
 | `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run) |
@@ -120,8 +121,13 @@ checks left in each function's optimized code, which a build with
 case's archive must not warn of an unbound type parameter (`hxb-warning`:
 an expression of the case or of hxmc's std whose type left its type
 parameter's scope, as `Arena.makeArray`'s did when inlined into `slice`).
-`Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases a
-target cannot run. `RT_VERIFY=1` fills the free nursery with a pattern so
+`Corpus.WASM_EXCLUDED`, `POSIX_ONLY` and `WINDOWS_ONLY` (COM) name the
+cases a target cannot run; `WINE_DISPLAY` those wine runs only with a
+display and its fonts (`xvfb-run`, fonts-wine: the file dialog, DirectWrite);
+`JNI` the cases that embed a JVM (linux-x86_64 in the glibc mode, with a
+JDK: javac compiles `<Name>.java` and the glue of the program's manifest,
+`JniGlue`; excluded without one, and from staged runs: CI runs them in
+`JniCheck`). `RT_VERIFY=1` fills the free nursery with a pattern so
 uninitialized allocations and missed roots show at once; `--verify-tags`
 builds with `-D hxmc.verify-tags`, which ends a program reading the tagged
 word of a type parameter's value as a reference
@@ -176,7 +182,7 @@ a release is published only when all of them pass.
 | `npm-pack` | yes | the npm packages, built with the module cache off |
 | `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
 | `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
-| `native-output` | no | `make native-check` on Linux: `SharedCheck` and `MachOCheck` ([the contract](using.md#native-output-for-a-packager)) |
+| `native-output` | no | `make native-check` on Linux: `SharedCheck`, `JniCheck` (the image's JDK 21) and `MachOCheck` ([the contract](using.md#native-output-for-a-packager)) |
 | `upstream-tests` | no | upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
 | `publish-npm` | | after every gate: the seven packages at one version (the six platform packages, then `@hxmc/cli`), names, versions and optional dependencies checked, with provenance through npm's trusted publishing; on `v*` tags as `latest`, from main as `<version>-nightly.<date>.<commit>` tagged `next` |
 | `release`, `pages` | | the nightly release or a tagged release; the website from main |
@@ -194,6 +200,7 @@ branch cancels its run; runs on main, `hxmc` and tags always finish.
 | `bench` | the [HaxeBenchmarks](https://github.com/HaxeBenchmarks/benchmark-runner) cases built by hxmc (native and wasm) and by the port for C++, JVM, JS, HL/C and HashLink: median wall time of interleaved runs, CPU time, peak RSS, sizes, compile times; each case's output compared across targets (`hxmc/test/Bench.hx`) |
 | `bench-compile` | the port built by hxmc (native, wasm under node and wasmtime) against the reference, compiling `hello`, `stdlib` and itself to HXB; every archive compared before its times count (`hxmc/test/CompileBench.hx`) |
 | `bench-micro` | `WHICH=arrays`: Array, NativeArray and Vector ([notes](../hxmc/test/bench/README.md)); `WHICH=maps`: ObjectMap and StringMap |
+| `bench-simd` | image kernels (an 8x8 IDCT, YCbCr to RGBA, a bilinear resize) as plain Haxe, as span kernels and with `hxmc.simd`, natively and as wasm under node, against the same kernels in C at -O2, -O3 without the vectorizers and -O3; the same checksums everywhere (`hxmc/test/bench/simd`, [plans/simd.md](plans/simd.md#benchmarks)) |
 | `measure` | peak RSS, wall and CPU time of the self-compile (ours and the reference's) and of the tool's builds (`haxe/test/Measure.hx`) |
 
 `.github/workflows/bench.yml` runs them nightly on main (skipped when the

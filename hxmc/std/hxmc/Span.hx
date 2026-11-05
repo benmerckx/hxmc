@@ -58,7 +58,14 @@ abstract Span<T>(SpanData) {
 	// acquires, a store releases
 	extern public function load(i:Int):T;
 
+	// (hxmc.simd: 16, 8 or 4 bytes from byte pos * size(T), checked: op names
+	// the load, v128.load, v128.load64_zero or v128.load32_zero)
+	@:noCompletion extern public function vload(op:String, pos:Int):hxmc.simd.V128;
+
 	extern public function store(i:Int, v:T):Void;
+
+	// (hxmc.simd: v128.store, v128.store64_lane, v128.store32_lane)
+	@:noCompletion extern public function vstore(op:String, pos:Int, v:hxmc.simd.V128):Void;
 
 	// replacement into element i if it holds expected; the value it held
 	extern public function compareExchange(i:Int, expected:T, replacement:T):T;

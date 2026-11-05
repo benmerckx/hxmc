@@ -41,6 +41,13 @@ import hxmc.rt.Start;
 import hxmc.rt.WinRt;
 // Objective-C exceptions reaching Haxe frames (Apple's systems: LinkMachO, DataGen.objcCaught)
 import hxmc.rt.ObjCExceptions;
+// foreign objects (reference-counted objects of other systems: Foreign), Objective-C's the first kind
+import hxmc.rt.Foreign;
+import hxmc.rt.ObjCKind;
+// COM's kind (Windows only: hxmc.ir.Com's calls and thunks)
+import hxmc.rt.ComKind;
+// JNI's kinds (Linux, Android, macOS: hxmc.ir.Jni's calls and natives)
+import hxmc.rt.JniKind;
 #if hxmc.census
 import hxmc.rt.Census;
 #end
@@ -49,6 +56,10 @@ import hxmc.rt.Census;
 import hxmc.rt.Interp;
 #end
 #end
+// what COM's operations throw on other systems than Windows (hxmc.ir.Com)
+import hxmc.com.ComException;
+// what Java's operations throw where there is no JNI (hxmc.ir.Jni)
+import hxmc.java.JavaException;
 // the threads' API (ThreadApi), mbedtls's and libuv's glue (Ssl, Uv; on
 // WebAssembly NoSsl, NoUv) are typed with hxmc.NativeThread, NativeSsl and
 // NativeUv, for the programs that use them

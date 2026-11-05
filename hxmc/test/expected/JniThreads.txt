@@ -1,0 +1,5 @@
+exit 0
+JniThreads.hx:42: main, daemon false
+JniThreads.hx:69: 2400, 2400, an attached thread, daemon true, 8
+JniThreads.hx:74: threads back, true
+JniThreads.hx:85: 2400, 2400

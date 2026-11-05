@@ -117,6 +117,7 @@ class WasmGen {
 			case I64: Enc.I64;
 			case F64: Enc.F64;
 			case Void: Enc.VOID;
+			case V128: Enc.V128;
 		};
 
 	public static function tyChar(t:MTy):String
@@ -125,6 +126,7 @@ class WasmGen {
 			case I64: "l";
 			case F64: "d";
 			case Void: "v";
+			case V128: "x";
 		};
 
 	// the signature string of a type ($t:<params>><result>)
@@ -343,6 +345,11 @@ class WasmGen {
 			case Phi:
 				for (x in i.args)
 					fn(x);
+			case VConst:
+			case VOp:
+				if (i.a >= 0) fn(i.a);
+				if (i.b >= 0) fn(i.b);
+				if (i.c >= 0) fn(i.c);
 			case _:
 				fn(i.a);
 				fn(i.b);
@@ -1197,6 +1204,22 @@ class WasmGen {
 				valueAs(i.c, t);
 				cond(i.a);
 				op(Op.Select);
+			case Load if (i.ty == V128):
+				var off = addr(i.a, i.b, i.imm2, i.imm);
+				simdOp(i.size == 16 ? 0x00 : i.size == 8 ? 0x5d : 0x5c);
+				memarg(log2(i.size == 16 ? 8 : i.size), off);
+			case Store if (vals[i.c].ty == V128):
+				var off = addr(i.a, i.b, i.imm2, i.imm);
+				value(i.c);
+				simdOp(i.size == 16 ? 0x0b : i.size == 8 ? 0x5b : 0x5a);
+				memarg(log2(i.size == 16 ? 8 : i.size), off);
+				if (i.size != 16) b.u8(0); // (the lane)
+			case VConst:
+				simdOp(0x0c);
+				for (w in i.cases)
+					b.u32(w);
+			case VOp:
+				vop(i);
 			case Load:
 				var off = addr(i.a, i.b, i.imm2, i.imm);
 				var sz = i.size;
@@ -1229,6 +1252,71 @@ class WasmGen {
 				if (t == I32 && i.ty == I64) op(Op.I32WrapI64);
 			case _:
 				throw new Unsupported("wasm: " + MFunc.opName(i.op));
+		}
+	}
+
+	// a SIMD instruction: the prefix, its opcode
+	function simdOp(code:Int) {
+		b.u8(0xFD);
+		Enc.uleb(b, code);
+	}
+
+	// a vector operation (SimdOps: WebAssembly's own, one instruction)
+	function vop(i:MIns) {
+		var c = i.imm;
+		var f32 = StringTools.startsWith(SimdOps.name(c), "f32x4");
+		switch SimdOps.kind(c) {
+			case SimdOps.UN | SimdOps.TEST:
+				value(i.a);
+				simdOp(c);
+			case SimdOps.BIN:
+				value(i.a);
+				value(i.b);
+				simdOp(c);
+			case SimdOps.TER:
+				value(i.a);
+				value(i.b);
+				value(i.c);
+				simdOp(c);
+			case SimdOps.SHIFT:
+				value(i.a);
+				valueAs(i.b, I32);
+				simdOp(c);
+			case SimdOps.SPLAT_I:
+				valueAs(i.a, I32);
+				simdOp(c);
+			case SimdOps.SPLAT_L:
+				valueAs(i.a, I64);
+				simdOp(c);
+			case SimdOps.SPLAT_F:
+				value(i.a);
+				if (f32) op(Op.F32DemoteF64);
+				simdOp(c);
+			case SimdOps.EXTRACT_I | SimdOps.EXTRACT_L | SimdOps.EXTRACT_F:
+				value(i.a);
+				simdOp(c);
+				b.u8(i.imm2);
+				if (f32) op(Op.F64PromoteF32);
+				if (i.ty == I64) conv(I64, ety(i.id));
+			case SimdOps.REPLACE_I | SimdOps.REPLACE_L | SimdOps.REPLACE_F:
+				value(i.a);
+				switch SimdOps.kind(c) {
+					case SimdOps.REPLACE_I: valueAs(i.b, I32);
+					case SimdOps.REPLACE_L: valueAs(i.b, I64);
+					case _:
+						value(i.b);
+						if (f32) op(Op.F32DemoteF64);
+				}
+				simdOp(c);
+				b.u8(i.imm2);
+			case SimdOps.SHUFFLE:
+				value(i.a);
+				value(i.b);
+				simdOp(c);
+				for (l in i.cases)
+					b.u8(l);
+			case _:
+				throw new Unsupported("wasm: " + SimdOps.name(c));
 		}
 	}
 

@@ -51,10 +51,10 @@ class Corpus {
 	static final FUZZ_ZIP = "hxmc/test/fuzz-1000.zip";
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
-	static final WASM_EXCLUDED = ["FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
+	static final WASM_EXCLUDED = ["FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ForeignKinds" => "foreign objects: the native runtime only (docs/plans/foreign-objects.md)", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
 		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
-	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
+	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code", "ComElsewhere" => "COM's operations where there is no COM (they throw)"];
 	// the cases iOS cannot run: they start other programs (the simulator's are
 	// macOS's, and an iPhone starts none)
 	public static final IOS_EXCLUDED = [for (n in ["FileTimes", "NetPollFds", "SysNatives"]) n => "starts other programs: iOS runs none"];
@@ -68,12 +68,24 @@ class Corpus {
 	// UIKit's targets: iOS, its simulator, Mac Catalyst (a macOS process, which runs macOS's cases too)
 	public static function uikit(t:String):Bool
 		return t.startsWith("ios") || t.startsWith("macos-catalyst");
+	// the cases of Windows only (COM: ole32 and oleaut32, the system's COM objects)
+	public static final WINDOWS_ONLY = [for (n in ["ComCalls", "ComObjects", "ComDemos", "ComThreads"]) n => "COM: Windows only"];
+	// the cases wine runs only with a display (DISPLAY: xvfb-run), and wine's fonts (fonts-wine): the file dialog's controls, DirectWrite's layouts
+	static final WINE_DISPLAY = ["ComDemos" => "the file dialog and DirectWrite: wine needs a display (xvfb-run) and its fonts"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
 	public static final MUSL_ONLY = ["LinuxEntropy" => "getentropy and getrandom: musl's, the static mode on Linux only"];
 	// the cases of the dynamic glibc mode only (shared libraries of the system)
 	public static final GLIBC_ONLY = ["SharedLibs" => "shared libraries: the dynamic glibc mode only (--libc glibc)"];
+	// the cases that embed a JVM (JNI: hxmc.java): Linux x86-64 in the dynamic
+	// glibc mode (libjvm opened at run time), with a JDK (javac compiles
+	// <Name>.java and the glue JniGlue writes from the program's manifest;
+	// JAVA_HOME's JVM runs them: jdk()); not staged (JniCheck runs them on CI)
+	public static final JNI = [for (n in ["JniCalls", "JniArrays", "JniRefs", "JniPeers", "JniThreads"]) n => true];
+	// the cases the interpreter cannot build when its code is loaded at run
+	// time (--mir-run: no call-out stubs, only the register image)
+	static final MIR_RUN_EXCLUDED = ["SimdFfi" => "C's native vectors by value: the register image of the interpreter's calls of native code has no vector registers (docs/plans/simd.md, \"ABIs\")"];
 	// the cases known to fail under --mir-run (as --known: still run, their
 	// failure does not fail the run, their passing does)
 	static final MIR_RUN_KNOWN = [
@@ -184,10 +196,16 @@ class Corpus {
 		var wasm = target != null && target.startsWith("wasm");
 		if (c.name.startsWith("reject-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "a compile error"} : rejectCase(c);
 		var t = target != null ? target : hostTarget();
+		if (!t.startsWith("windows") && WINDOWS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: WINDOWS_ONLY[c.name]};
 		var native = nativeInputs(c, t, d);
 		if (native.skip != null) return {name: c.name, status: "excluded", detail: native.skip};
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
 		if (libc != "glibc" && GLIBC_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: GLIBC_ONLY[c.name]};
+		if (JNI.exists(c.name)) {
+			if (t != "linux-x86_64" || libc != "glibc" || stage != null || interp || mirRun)
+				return {name: c.name, status: "excluded", detail: "JNI: an embedded JVM, linux-x86_64 in the glibc mode (--libc glibc; CI: JniCheck)"};
+			if (jdk() == null) return {name: c.name, status: "excluded", detail: "JNI: needs a JDK (JAVA_HOME, or javac on PATH)"};
+		}
 		if (!t.startsWith("linux") && LINUX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: LINUX_ONLY[c.name]};
 		if (t.startsWith("ios") && IOS_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: IOS_EXCLUDED[c.name]};
 		if (!t.startsWith("macos") && MACOS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MACOS_ONLY[c.name]};
@@ -195,6 +213,9 @@ class Corpus {
 		if (!uikit(t) && UIKIT_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: UIKIT_ONLY[c.name]};
 		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
+		if (t == "windows-x86_64" && stage == null && Sys.systemName() != "Windows" && Sys.getEnv("DISPLAY") == null && WINE_DISPLAY.exists(c.name))
+			return {name: c.name, status: "excluded", detail: WINE_DISPLAY[c.name]};
+		if (mirRun && MIR_RUN_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: MIR_RUN_EXCLUDED[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
 		var defines = caseDefines(c.cps[0] + "/" + c.main + ".hx");
@@ -251,6 +272,11 @@ class Corpus {
 			var bad = spanChecks(d, cmd.concat(defines), checks);
 			if (bad != null) return {name: c.name, status: "span-checks", detail: bad};
 		}
+		// (a JNI case: its Java classes, and the glue of its manifest, compiled)
+		if (JNI.exists(c.name)) {
+			var err = javaClasses(c, exe, d);
+			if (err != null) return {name: c.name, status: "javac-fail", detail: err};
+		}
 		var re = ~/hxmc: ([0-9]+) functions/;
 		var nf = re.match(r.out) ? re.matched(1) + " functions" : "";
 		if (stage != null) {
@@ -276,7 +302,9 @@ class Corpus {
 			// (legacy exception handling: node without exnref, hxmc/bootstrap/wasi.mjs)
 			"HXMC_WASM_EXNREF" => wasmEh == "legacy" ? "0" : Sys.getEnv("HXMC_WASM_EXNREF"),
 			// (the iOS simulator passes its child the variables with this prefix)
-			"SIMCTL_CHILD_RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64", "SIMCTL_CHILD_RT_VERIFY" => Sys.getEnv("RT_VERIFY")]});
+			"SIMCTL_CHILD_RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64", "SIMCTL_CHILD_RT_VERIFY" => Sys.getEnv("RT_VERIFY"),
+			// (a JNI case: the JVM of the JDK that compiled its classes, Jvm.libjvm)
+			"JAVA_HOME" => JNI.exists(c.name) ? jdk() : Sys.getEnv("JAVA_HOME")]});
 		if (r.timedOut) return {name: c.name, status: "timeout", detail: ""};
 		var got = 'exit ${r.code}\n' + r.out;
 		if (bless && !FileSystem.exists(expected)) {
@@ -529,6 +557,40 @@ class Corpus {
 			}
 		}
 		return r;
+	}
+
+	// the JDK: JAVA_HOME (or CI's JAVA_HOME_21_X64, JAVA_HOME_17_X64), else
+	// the one javac on PATH is of; null: none
+	static var jdkHome:Null<String>;
+	static var jdkKnown = false;
+
+	public static function jdk():Null<String> {
+		if (jdkKnown) return jdkHome;
+		jdkKnown = true;
+		for (v in ["JAVA_HOME", "JAVA_HOME_21_X64", "JAVA_HOME_17_X64"]) {
+			var h = Sys.getEnv(v);
+			if (h != null && h != "" && FileSystem.exists(h + "/bin/javac")) return jdkHome = h;
+		}
+		var r = try exec(["sh", "-c", "readlink -f \"$(command -v javac)\""]) catch (_:Dynamic) null;
+		if (r != null && r.code == 0 && r.out.trim().endsWith("/bin/javac")) {
+			var h = r.out.trim();
+			return jdkHome = h.substr(0, h.length - "/bin/javac".length);
+		}
+		return null;
+	}
+
+	// a JNI case's Java classes in <d>/classes: <Name>.java and the glue of
+	// its manifest (<exe>.jni.json: JniGlue), compiled by the JDK's javac;
+	// null, or what javac said
+	public static function javaClasses(c:CorpusCase, exe:String, d:String):Null<String> {
+		var classes = d + "/classes";
+		rmrf(classes);
+		mkdirs(classes);
+		var sources = JniGlue.generate(exe + ".jni.json", d + "/glue");
+		var own = c.cps[0] + "/" + c.main + ".java";
+		if (FileSystem.exists(own)) sources.push(own);
+		var r = exec([jdk() + "/bin/javac", "-nowarn", "-d", classes].concat(sources), {env: ["JAVA_TOOL_OPTIONS" => null]});
+		return r.code == 0 ? null : tail(r.out + r.err, 1500);
 	}
 
 	// ios-sim-arm64: an iPhone simulator (the first available one of an iOS

@@ -330,6 +330,9 @@ class CInterop {
 			if (a > align) align = a;
 		}
 		inProgress.remove(c);
+		// (hxmc.simd's vector: C's __m128 and float32x4_t, 16-byte aligned, in
+		// a struct too)
+		if (FnLower.isV128(c)) align = 16;
 		l = {size: (off + align - 1) & ~(align - 1), align: align, fields: fields};
 		layouts.set(c, l);
 		return l;
@@ -580,16 +583,19 @@ class CInterop {
 	// at their offsets (Fingerprint: a changed struct compiles its calls again)
 	public static function shape(t:CTy):String
 		return switch t {
-			case CStruct(c): 'S${layout(c).size}{' + [for (f in scalars(c, 0)) f.off + ":" + f.ty.getName()].join(",") + "}";
+			case CStruct(c): 'S${layout(c).size}{' + [for (f in scalars(c, 0, true)) f.off + ":" + f.ty.getName()].join(",") + "}";
 			case _: t.getName();
 		}
 
-	// the scalar fields of a struct, nested structs flattened, at their offsets
-	public static function scalars(c:TClass, at:Int):Array<{off:Int, ty:CTy}> {
+	// the scalar fields of a struct, nested structs flattened, at their
+	// offsets; vectors: hxmc.simd's vectors whole (CStruct(V128), C's
+	// __m128), else their four words
+	public static function scalars(c:TClass, at:Int, vectors = false):Array<{off:Int, ty:CTy}> {
+		if (vectors && FnLower.isV128(c)) return [{off: at, ty: CStruct(c)}];
 		var r = [];
 		for (f in layout(c).fields)
 			switch f.ty {
-				case CStruct(s): r = r.concat(scalars(s, at + f.off));
+				case CStruct(s): r = r.concat(scalars(s, at + f.off, vectors));
 				case t: r.push({off: at + f.off, ty: t});
 			}
 		return r;

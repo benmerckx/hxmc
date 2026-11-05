@@ -1807,6 +1807,7 @@ class MirBuild extends MirWriter {
 			}
 		var blocking = hxmc.ir.CInterop.BLOCKING.exists(name) && !abi.wasm;
 		var region = blocking ? call("rt_blocking_enter", vector(), I32) : -1;
+		cVectorRegs(cName(name), [for (a in args) f.vals[a].ty], va != null);
 		var r = indirect ? callInd(xs[0], Vector.fromArrayCopy(args), rt) : call(name, Vector.fromArrayCopy(args), rt);
 		var ci = f.vals[r];
 		ci.cCall = true;
@@ -1850,10 +1851,31 @@ class MirBuild extends MirWriter {
 	static function cName(name:String):String
 		return StringTools.startsWith(name, hxmc.ir.CInterop.INDIRECT) ? name.substr(hxmc.ir.CInterop.INDIRECT.length) : name;
 
-	// a part of the struct at v as an argument: a double or a float's bits in
-	// a float register, or the bytes as the low bytes of a word
+	// a part of the struct at v as an argument: a vector, a double or a
+	// float's bits in a float register, or the bytes as the low bytes of a word
 	function cPart(v:Int, p:CAbi.CPart):Int
-		return !p.float ? cWord(v, p.off, p.size) : p.size == 8 ? load(F64, 8, v, p.off) : special("f32bits_to_freg", vector(load(I32, 4, v, p.off)), F64);
+		return !p.float ? cWord(v, p.off, p.size) : p.size == 16 ? load(V128, 16, v, p.off) : p.size == 8 ? load(F64, 8, v, p.off) : special("f32bits_to_freg",
+			vector(load(I32, 4, v, p.off)), F64);
+
+	// the C size (MIns.cSizes) of a part of a struct argument: its bytes in a
+	// float register, else a word's 8; 16 for the first word of a struct on
+	// the stack at a 16-byte boundary (CAbi.stackAlign16, SysV.place)
+	static inline function partSize(p:CAbi.CPart, align16:Bool):Int
+		return p.float ? p.size : align16 ? 16 : 8;
+
+	// C's native vectors by value (CAbi.isVector) travel in vector registers
+	// only: none past the eight float argument registers of System V and
+	// AAPCS64 (which would be 16-byte stack slots), none in a variadic call
+	// (docs/plans/simd.md, "ABIs"); tys: the arguments' types in order
+	function cVectorRegs(name:String, tys:Array<MTy>, variadic:Bool) {
+		var floats = 0;
+		for (t in tys) {
+			if (t == F64 || t == V128) floats++;
+			if (t != V128) continue;
+			if (variadic) throw new Unsupported('the C function $name: a vector by value in a variadic call');
+			if (floats > 8) throw new Unsupported('the C function $name: a vector by value past the eight vector argument registers (pass it by Ptr)');
+		}
+	}
 
 	// a scalar of C type ct at v + off, as the value cCall passes for it
 	function cScalar(v:Int, off:Int, ct:CTy):Int
@@ -1871,7 +1893,7 @@ class MirBuild extends MirWriter {
 				var stack = CAbi.arg(abi, c).match(PStack(_));
 				for (k in 0...ps.length) {
 					args.push(cPart(v, ps[k]));
-					sizes.push(ps[k].float ? ps[k].size : 8);
+					sizes.push(partSize(ps[k], k == 0 && stack && CAbi.stackAlign16(c)));
 					groups.push(k > 0 ? 0 : stack ? -ps.length : ps.length);
 				}
 			case PScalar(off, ct):
@@ -1880,7 +1902,10 @@ class MirBuild extends MirWriter {
 				groups.push(1);
 			case PCopy:
 				var l = hxmc.ir.CInterop.layout(c);
-				var copy = stackAddr(f.slot((l.size + 7) & ~7, l.align > 8 ? l.align : 8));
+				// (at its C alignment: Win64 passes __m128 and a struct with one in it
+				// as the address of a 16-byte aligned copy)
+				var al = l.align > 8 ? l.align : 8;
+				var copy = stackAddr(f.slot((l.size + 7) & ~7, al));
 				copyBytes(copy, v, l.size);
 				args.push(copy);
 				sizes.push(8);
@@ -1922,8 +1947,8 @@ class MirBuild extends MirWriter {
 					switch p {
 						case PRegs(ps) | PStack(ps):
 							for (k in 0...ps.length) {
-								tys.push(ps[k].float ? F64 : I64);
-								sizes.push(ps[k].float ? ps[k].size : 8);
+								tys.push(ps[k].float ? (ps[k].size == 16 ? V128 : F64) : I64);
+								sizes.push(partSize(ps[k], k == 0 && p.match(PStack(_)) && CAbi.stackAlign16(c)));
 								groups.push(k > 0 ? 0 : p.match(PStack(_)) ? -ps.length : ps.length);
 							}
 						case PCopy | PScalar(_):
@@ -1939,6 +1964,7 @@ class MirBuild extends MirWriter {
 					plan.push({at: at, pass: null});
 			}
 		}
+		cVectorRegs(fn.display != null ? fn.display : "callback", tys, false);
 		f.params = Vector.fromArrayCopy(tys);
 		f.cParams = Vector.fromArrayCopy(groups);
 		f.cParamSizes = Vector.fromArrayCopy(sizes);
@@ -1976,7 +2002,7 @@ class MirBuild extends MirWriter {
 					for (j in 0...parts.length) {
 						var v = ps[p.at + j];
 						if (parts[j].float && parts[j].size == 4) store(4, s, parts[j].off, special("freg_to_f32bits", vector(v), I32))
-						else store(8, s, parts[j].off, v);
+						else store(parts[j].size == 16 ? 16 : 8, s, parts[j].off, v);
 					}
 					vals.push(s);
 				case _: vals.push(ps[p.at]);
@@ -2137,7 +2163,130 @@ class MirBuild extends MirWriter {
 	// instruction selection expands calls of these symbols inline
 	public static inline var SPECIAL = "hxmc$";
 
+	// the memory class of a raw access (Mem.getI32, setI32...) here: in the
+	// runtime's accessors of haxe.io.BytesData (hxmc.rt.Bytes: getInt32,
+	// setFloat...), the bytes of the array, which no object field or array
+	// header shares (Opt.MElem: a Bytes' storage and length are not read
+	// again after each store); elsewhere any memory
+	function rawCls():Int
+		return fn != null && BYTES_ACCESSORS.exists(fn.display) ? Opt.MElem : Opt.MOther;
+
+	// (keyed by the functions' display names: renaming or moving one of
+	// hxmc.rt.Bytes' accessors, or adding one, must be done here too, or its
+	// accesses fall back to MOther: correct, but aliasing every other memory)
+	static final BYTES_ACCESSORS = [
+		for (n in ["getUInt16", "setUInt16", "getInt32", "setInt32", "getFloat", "setFloat", "getDouble", "setDouble"])
+			"hxmc.rt.Bytes." + n => true
+	];
+
+	// hxmc.simd's intrinsics (FnLower.simdCall): vectors at the addresses of
+	// struct values, loaded, operated on (VOp) and stored, which Sroa turns
+	// into registers
+	function simd(short:String, args:Vector<Ex>):Int {
+		function opcode(k:Int, kind:Int):Int {
+			var n = literal(args[k], "hxmc.simd");
+			var c = SimdOps.code(n);
+			if (c < 0) throw new Unsupported("hxmc.simd: no operation " + n);
+			var ok = SimdOps.kind(c);
+			if (ok != kind) throw new Unsupported("hxmc.simd: " + n + " is not an operation of this shape (" + short + ")");
+			return c;
+		}
+		inline function vload(a:Ex):Int
+			return load(V128, 16, ex(a), 0);
+		function vop(c:Int, ty:MTy, a:Int, b:Int = -1, d:Int = -1, lane:Int = 0):Int {
+			var i = mk(VOp, ty);
+			i.imm = c;
+			i.a = a;
+			i.b = b;
+			i.c = d;
+			i.imm2 = lane;
+			return add(i);
+		}
+		function vconst(w0:Int, w1:Int, w2:Int, w3:Int):Int {
+			var i = mk(VConst, V128);
+			i.cases = vector(w0, w1, w2, w3);
+			return add(i);
+		}
+		function lane(k:Int, c:Int):Int {
+			var l = intLiteral(args[k], "hxmc.simd: a lane");
+			if (l < 0 || l >= SimdOps.lanes(c)) throw new Unsupported("hxmc.simd: lane " + l + " of " + SimdOps.name(c) + " (" + SimdOps.lanes(c) + " lanes)");
+			return l;
+		}
+		inline function done(dst:Ex, v:Int):Int {
+			store(16, ex(dst), 0, v);
+			return iconst(0);
+		}
+		return switch short {
+			case "copy":
+				// (dst, its offset, src, its offset: a struct's vector field too)
+				var v = load(V128, 16, ex(args[2]), intLiteral(args[3], "hxmc.simd: an offset"));
+				store(16, ex(args[0]), intLiteral(args[1], "hxmc.simd: an offset"), v);
+				iconst(0);
+			case "zero":
+				var z = vconst(0, 0, 0, 0);
+				store(16, ex(args[0]), intLiteral(args[1], "hxmc.simd: an offset"), z);
+				iconst(0);
+			case "const":
+				var w = [for (k in 1...5) intLiteral(args[k], "hxmc.simd: a constant's word")];
+				done(args[0], vconst(w[0], w[1], w[2], w[3]));
+			case "op1":
+				var c = opcode(0, SimdOps.UN);
+				done(args[1], vop(c, V128, vload(args[2])));
+			case "op2":
+				var c = opcode(0, SimdOps.BIN);
+				var a = vload(args[2]);
+				done(args[1], vop(c, V128, a, vload(args[3])));
+			case "op3":
+				var c = opcode(0, SimdOps.TER);
+				var a = vload(args[2]), b = vload(args[3]);
+				done(args[1], vop(c, V128, a, b, vload(args[4])));
+			case "shift":
+				var c = opcode(0, SimdOps.SHIFT);
+				var a = vload(args[2]);
+				done(args[1], vop(c, V128, a, ex(args[3])));
+			case "splatInt" | "splatI64" | "splatFloat":
+				var c = opcode(0, short == "splatInt" ? SimdOps.SPLAT_I : short == "splatI64" ? SimdOps.SPLAT_L : SimdOps.SPLAT_F);
+				done(args[1], vop(c, V128, ex(args[2])));
+			case "extractInt" | "extractI64" | "extractFloat":
+				var c = opcode(0, short == "extractInt" ? SimdOps.EXTRACT_I : short == "extractI64" ? SimdOps.EXTRACT_L : SimdOps.EXTRACT_F);
+				var a = vload(args[1]);
+				vop(c, short == "extractInt" ? I32 : short == "extractI64" ? I64 : F64, a, -1, -1, lane(2, c));
+			case "replaceInt" | "replaceI64" | "replaceFloat":
+				var c = opcode(0, short == "replaceInt" ? SimdOps.REPLACE_I : short == "replaceI64" ? SimdOps.REPLACE_L : SimdOps.REPLACE_F);
+				var a = vload(args[2]);
+				var l = lane(3, c);
+				done(args[1], vop(c, V128, a, ex(args[4]), -1, l));
+			case "test":
+				var c = opcode(0, SimdOps.TEST);
+				vop(c, I32, vload(args[1]));
+			case "shuffle":
+				var a = vload(args[1]), b = vload(args[2]);
+				var ls = [for (k in 3...19) intLiteral(args[k], "hxmc.simd: a lane")];
+				for (l in ls)
+					if (l < 0 || l >= 32) throw new Unsupported("hxmc.simd: shuffle lane " + l + " (0 to 31: the first vector's, then the second's)");
+				var i = mk(VOp, V128);
+				i.imm = SimdOps.code("i8x16.shuffle");
+				i.a = a;
+				i.b = b;
+				i.cases = Vector.fromArrayCopy(ls);
+				done(args[0], add(i));
+			case "load":
+				var c = opcode(0, SimdOps.LOAD);
+				var m = memAt(args[3]);
+				done(args[1], load(V128, SimdOps.memBytes(c), ex(args[2]), m.disp, false, m.index, 1));
+			case "store":
+				var c = opcode(0, SimdOps.STORE);
+				var p = ex(args[1]);
+				var m = memAt(args[2]);
+				var v = vload(args[3]);
+				store(SimdOps.memBytes(c), p, m.disp, v, m.index, 1);
+				iconst(0);
+			case _: throw new Unsupported("unknown intrinsic hxmc.simd.Simd." + short);
+		}
+	}
+
 	function intrinsic(name:String, args:Vector<Ex>):Int {
+		if (StringTools.startsWith(name, hxmc.ir.FnLower.SIMD_PREFIX)) return simd(name.substr(hxmc.ir.FnLower.SIMD_PREFIX.length), args);
 		var short = name.substr(name.lastIndexOf("_") + 1);
 		var atomic = StringTools.startsWith(name, "hxmc_unsafe_Atomic_");
 		if (atomic) {
@@ -2160,10 +2309,10 @@ class MirBuild extends MirWriter {
 		inline function ld(ty:MTy, size:Int, signed:Bool):Int {
 			var p = ex(args[0]);
 			var m = memAt(args[1]);
-			return load(ty, size, p, m.disp, signed, m.index, 1);
+			return loadM(rawCls(), ty, size, p, m.disp, signed, m.index, 1);
 		}
 		inline function st(size:Int, v:Int, p:Int, m:{disp:Int, index:Int}):Int {
-			store(size, p, m.disp, v, m.index, 1);
+			storeM(rawCls(), size, p, m.disp, v, m.index, 1);
 			return iconst(0);
 		}
 		inline function ldAt(ty:MTy, size:Int):Int {
@@ -2201,6 +2350,7 @@ class MirBuild extends MirWriter {
 			case "ult": cmp(CULt, ex(args[0]), ex(args[1]));
 			// (a span's element check: Opt.condProp drops it where a loop proves it)
 			case "spanUlt": marked(cmp(CULt, ex(args[0]), ex(args[1])), MIns.SPAN_CHECK);
+			case "zext": op1(ZExt, I64, ex(args[0]));
 			case "udiv": op2(UDiv, I64, ex(args[0]), ex(args[1]));
 			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));

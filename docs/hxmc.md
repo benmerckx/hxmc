@@ -29,6 +29,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
 | `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM, dead code, barriers and frame slots nothing needs |
 | `Fold.hx`, `DivConst.hx` | allocation folding; division by constants |
+| `SimdOps.hx` | `hxmc.simd`'s vector operations by their WebAssembly opcodes: what Mir's `VOp` carries and every back end implements ([interop.md](interop.md#simd-vectors), [plans/simd.md](plans/simd.md)) |
 | `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection, linear-scan register allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
 | `Unwind.hx`, `Dwarf.hx`, `StackTable.hx` | unwind tables, DWARF lines, the call-stack table ([Debugging](#debugging)) |
 | `Obj.hx`, `ElfWriter.hx`, `*Reader.hx`, `Link*.hx`, `MkRt.hx`, `DataGen.hx` | objects, the linkers, the runtime-object builder, the program's data |
@@ -224,6 +225,16 @@ space by copying into a new region.
   `@:hxmc.weak` field of a Haxe value holds one; a weak field of a Haxe
   class, a `WeakRef` or a weak map could too (a map's ephemerons would need
   their values traced conditionally, which a slot's word leaves room for).
+- **Foreign objects** (native): reference-counted objects of other object
+  systems held by Haxe objects (`hxmc.rt.Foreign`): toggle references for
+  peers, one box per object, owned and weak fields, detach, and releases put
+  off past a stop of the world, per kind of a table of hooks the collector
+  reads (Objective-C's is the first, `hxmc.rt.ObjCKind`; COM's,
+  `hxmc.rt.ComKind`, on Windows: [interop.md](interop.md#com); JNI's,
+  `hxmc.rt.JniKind`: [interop.md](interop.md#java-jni);
+  [plans/foreign-objects.md](plans/foreign-objects.md)). A pass over the
+  peers per collection (their toggles), and over the owned fields and boxes
+  in the space collected; nothing without them.
 
 `RT_STATS=1` prints resizes and promotions; `RT_VERIFY=1` fills the free
 nursery with a pattern so missed roots show at once, and ends the program

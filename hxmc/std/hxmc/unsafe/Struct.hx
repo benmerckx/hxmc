@@ -9,4 +9,8 @@ extern class Struct {
 	static function alignOf(c:Class<Dynamic>):Int;
 	// the offset of the field named by the string literal
 	static function offsetOf(c:Class<Dynamic>, field:String):Int;
+	// the byte offset of the field named by the string literal in o, an
+	// instance of a Haxe class (typed as one): what the layout gave it, for
+	// the runtime's registrations of fields (hxmc.rt.Foreign.own, ownWeak)
+	static function fieldOffset(o:{}, field:String):Int;
 }

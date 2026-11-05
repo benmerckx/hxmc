@@ -57,6 +57,7 @@ class MirRun {
 
 	public static function run(com:context.Common.CommonContext) {
 		if (com.main.mainPath == null) throw "a program needs an entry point: -main <module>";
+		hxmc.ir.Lower.simdScalar = true;
 		var mainClass = context.Common.getEntryPoint(com).cls;
 		var o = Options.read(com);
 		var abi = Abi.get(o.target);
@@ -136,6 +137,7 @@ class MirRun {
 		}
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
+		dg.jniCells([]);
 		dg.resources([]);
 		var t1 = haxe.Timer.stamp();
 		setArgs();
@@ -389,6 +391,7 @@ class MirRun {
 				dg.stringsUsed();
 				dg.cstrLiterals([]);
 				dg.emptyArrays([]);
+				dg.jniCells([]);
 				dg.resources([]);
 				hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + d.prep.funcSym(f), gen));
 			}

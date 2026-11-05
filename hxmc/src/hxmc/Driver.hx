@@ -205,6 +205,16 @@ class Driver {
 			if (o.opt) {
 				var op = new Opt(mf);
 				op.run();
+				// (slots whose address the optimizer made one again, as a phi of
+				// the slots of a branch it decided: promoted, and optimized again)
+				if (sroa) {
+					var s2 = new Sroa(mf);
+					s2.run();
+					if (s2.promoted > 0) {
+						op = new Opt(mf);
+						op.run();
+					}
+				}
 				// (the rooted locals' slots nothing reads any more)
 				var fs = new Frames(mf);
 				fs.run();
@@ -572,6 +582,7 @@ class Driver {
 		dg.cstrLiterals(objs);
 		dg.cVars(objs);
 		dg.emptyArrays(objs);
+		var jni = dg.jniCells(objs);
 		dg.objcRefs(objs);
 		dg.objcCaught(demit);
 		dg.resources(objs);
@@ -580,7 +591,7 @@ class Driver {
 		// (the functions and their lines for the runtime's stacks: StackTable)
 		Dwarf.enabled = o.debugLines;
 		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
-		data.defineAbs(StackTable.FLAGS, prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0);
+		data.defineAbs(StackTable.FLAGS, (prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0) | (jni > 0 ? StackTable.JNI : 0));
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
@@ -741,6 +752,9 @@ class Driver {
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";
 		sys.io.File.saveBytes(out, exe);
 		markExecutable(out);
+		// (Java: the proxies the glue must have, next to the output: Jni.manifest)
+		var manifest = hxmc.ir.Jni.manifest([for (ci in prep.p.classes) if (ci.jniProxy != null && prep.p.isLive(ci.jniProxy.desc)) ci]);
+		if (manifest != null) sys.io.File.saveContent(out + ".jni.json", manifest);
 		if (o.stats && prep.p.stacks) Sys.println('hxmc: stack table: ' + StackTable.stats + ', flags ' + StackTable.flags(prep.p));
 		if (hxmc.x64.Emit.sizeStats) {
 			var ks = [for (k in hxmc.x64.Emit.statBytes.keys()) k];

@@ -59,6 +59,8 @@ class MirWriter {
 			a = b;
 			b = t;
 		}
+		// x * 1, x + 0 (an element of one byte's address, an inlined constant): x
+		if ((op == Mul && isConst(b, 1) || op == Add && isConst(b, 0)) && (ty == I32 || f.vals[b].imm2 == 0) && f.vals[a].ty == ty) return a;
 		// (x >>> n) | (x << (w - n)): a rotation
 		if (op == Or && (ty == I32 || ty == I64)) {
 			var r = rotation(a, b, ty);

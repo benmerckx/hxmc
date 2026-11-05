@@ -61,8 +61,10 @@ class StackTable {
 	// what the program reads of stacks (hxmc.rt.Stacks.flags), an absolute
 	// symbol: 1 exception stacks (haxe.NativeStackTrace.exceptionStack live:
 	// throws record their stack), 2 an exception's stack (haxe.Exception.get_stack
-	// live: an exception records its stack when made)
+	// live: an exception records its stack when made), 4 the program calls
+	// Java (DataGen.jniCells: hxmc.rt.Start keeps the main thread's own stack)
 	public static inline var FLAGS = "hxmc_stack_flags";
+	public static inline var JNI = 4;
 
 	public static function flags(p:hxmc.ir.Ir.Program):Int {
 		var r = 0;

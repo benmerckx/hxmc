@@ -74,7 +74,7 @@ npx haxe --dev build.hxml          # rebuild and rerun on every save
 | | |
 | --- | --- |
 | [docs/using.md](docs/using.md) | user guide: targets, options, outputs, libraries, the module cache, debugging, limitations |
-| [docs/interop.md](docs/interop.md) | calling C, struct values and the low-level API |
+| [docs/interop.md](docs/interop.md) | calling C, struct values, Objective-C, COM, Java (JNI) and the low-level API |
 | [docs/dev.md](docs/dev.md) | the dev loop's protocol, for libraries that keep state across reloads |
 | [docs/development.md](docs/development.md) | contributing: layout, building, bootstrap |
 | [docs/testing.md](docs/testing.md) | tests, CI and benchmarks |

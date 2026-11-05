@@ -369,6 +369,8 @@ class Threads {
 			// the hxmc sys.thread.Thread catches everything: only a raw spawn gets here
 			Gc.uncaught("Uncaught exception in thread " + m.value.id + ": ", e);
 		}
+		// (what it put off and has not run yet: now, before it ends, Foreign.runDeferred)
+		if (Foreign.ndeferred != 0) Foreign.runDeferred();
 	}
 
 	// a thread's end, in a safe region: it touches no heap object
@@ -397,6 +399,7 @@ class Threads {
 		}
 		Atomic.add32(Mem.sym("rt_nthreads"), -1);
 		Os.unlock(wl);
+		Foreign.threadExit(m.value.id);
 		LibC.free(m.value.rem);
 		LibC.free(m.value.robjs);
 		LibC.free(m.value.recent);
@@ -470,6 +473,20 @@ class Threads {
 	// workers), before it leaves the safe region
 	@:hxmc.export("rt_objc_attach") @:hxmc.unsafe static function objcAttach():Void
 		if (self.isNull()) attach();
+
+	// the same for another kind of foreign objects' callbacks: a COM thunk
+	// (hxmc.ir.Com.entry), called on any thread (an apartment's, a worker COM chose)
+	@:hxmc.export("rt_foreign_attach") @:hxmc.unsafe static function foreignAttach():Void
+		if (self.isNull()) attach();
+
+	// such a callback returns to its caller (Com.entry): what was put off for
+	// this thread (and any) runs now, on it. A thread the runtime attached
+	// never ends through exit, nor may come back: its own releases (a COM
+	// apartment's, RELEASE_ON_MAKER) run on it as it leaves Haxe, where its
+	// kind's rules hold; what is put off for it later waits for its next
+	// callback (or its kind's wake)
+	@:hxmc.export("rt_foreign_leave") static function foreignLeave():Void
+		if (Foreign.ndeferred != 0) Foreign.runDeferred();
 
 	// (no safepoint from the call to the insertion: job is a root from then on)
 	@:hxmc.unsafe static function insert(m:Ptr<Mutator>, job:Dynamic):Int {

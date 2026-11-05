@@ -80,12 +80,16 @@ class Start {
 	// the hxmc regular expression engine) needs more than the default 8 MB
 	// process stack. A stack switch (Mem.callOnStack); Windows: a fiber of
 	// the main thread, whose stack is reserved at that size (committed as it
-	// grows, with the system's guard page).
+	// grows, with the system's guard page). A program calling Java (JNI:
+	// hxmc_stack_flags' 4, DataGen.jniCells) keeps the thread's own stack by default: a
+	// JVM checks the stack pointer of every thread calling it against the
+	// stack the system gave the thread, and takes one elsewhere for an
+	// overflow.
 	static var mainFiber:Ptr;
 	static var mainBody:Ptr;
 
 	@:hxmc.export("rt_run_main") static function runMain(body:Ptr):Void {
-		var bytes:I64 = (Os.envInt("RT_STACK_MB", 1024) : I64) << 20;
+		var bytes:I64 = (Os.envInt("RT_STACK_MB", Mem.sym("hxmc_stack_flags").toI64().toInt() & 4 != 0 ? 0 : 1024) : I64) << 20;
 		if (Mem.os() == 2) {
 			var fiber = Ptr.nil();
 			if (!(bytes == 0)) {
@@ -95,9 +99,11 @@ class Start {
 			}
 			if (fiber.isNull()) {
 				Mem.call0(body);
+				mainEnded();
 				return;
 			}
 			K.SwitchToFiber(fiber);
+			mainEnded();
 			return;
 		}
 		// Apple's systems: the outermost autorelease pool, as clang's main has
@@ -105,11 +111,12 @@ class Start {
 		// pools and AutoreleasePool.run (AppKit's work before NSApplication.run
 		// and between events, a program's own top level) stays until the
 		// program ends instead of leaking ("no pool in place")
-		var pool = Gc.poolPushAny();
+		var pool = ObjCKind.poolPushAny();
 		var stack = bytes == 0 ? Ptr.nil() : Os.reserve(bytes);
 		if (stack.isNull()) {
 			Mem.call0(body);
-			Gc.idsPoolPop(pool);
+			mainEnded();
+			ObjCKind.poolEnd(pool);
 			return;
 		}
 		Os.guard(stack, Os.pageSize());
@@ -117,10 +124,24 @@ class Start {
 		Gc.cstackLo = stack;
 		Gc.cstackHi = stack.addL(bytes);
 		Mem.callOnStack(stack.addL(bytes), body);
-		Gc.idsPoolPop(pool);
+		// (back on the thread's own stack: the heap's roots are the shadow stack's)
+		mainEnded();
+		ObjCKind.poolEnd(pool);
 		#if hxmc.shared
 		// (a library's program ended: its stack given back, as the library may be closed: hxmc dev's host)
 		Os.release(stack, bytes);
+		#end
+	}
+
+	// the program's main returned: what the main thread put off and has not
+	// run yet (Foreign.runDeferred), as a spawned thread runs its own as it
+	// ends (Threads.run). A program's main thread then ends (what is put off
+	// for it later goes to any thread); a library's (hxmc.shared) goes on
+	// calling into it, and runs what is put off for it then
+	static function mainEnded():Void {
+		if (Foreign.ndeferred != 0) Foreign.runDeferred();
+		#if !hxmc.shared
+		if (Foreign.me() > 0) Foreign.threadExit(Foreign.me());
 		#end
 	}
 
