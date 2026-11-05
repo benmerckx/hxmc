@@ -40,47 +40,44 @@ class DisplayHandler {
 
 	public function getCs():Cache return cs;
 
-	public function enableDisplay(?skipDefine:Bool = false, mode:DisplayModeValue):Void {
-		com.display = DisplayMode.create(mode);
-		if (!skipDefine) Common.defineValue(com, core.Define.Display, "1");
-	}
+	public function enableDisplay(?skipDefine:Bool = false, mode:DisplayModeValue):Void
+		DisplayRequests.enableDisplay(com, skipDefine, mode);
 
-	public function setDisplayFile(wasAutoTriggered:Bool, requiresOffset:Bool):Void {
-		var file = jsonrpc.getOptParam(function() {
-			var file = jsonrpc.getStringParam("file");
-			return core.Path.getFullPath(file);
-		}, DisplayProcessingGlobals.fileInputMarker);
+	// port: set_display_file's reading of the request's file, contents, offset and file
+	// ... contents, in its order (so a bad request fails as upstream's does), as the
+	// ... parameters of DisplayRequests (which sets them as set_display_file does)
+	public function fileParams(requiresOffset:Bool):{
+		file:Null<haxe.display.FsPath>,
+		?contents:String,
+		offset:Int,
+		?fileContents:Array<{file:haxe.display.FsPath, ?contents:String}>
+	} {
+		var file:Null<String> = jsonrpc.getOptParam(() -> jsonrpc.getStringParam("file"), null);
 		var contents:Null<String> = jsonrpc.getOptParam(function():Null<String> {
 			var s = jsonrpc.getStringParam("contents");
 			return s;
 		}, null);
 		var pos = requiresOffset ? jsonrpc.getIntParam("offset") : -1;
-		com.partScope.parserState.wasAutoTriggered = wasAutoTriggered;
-		if (file != DisplayProcessingGlobals.fileInputMarker) {
-			var fileUnique = com.partScope.fileKeys.get(file);
-			core.display.DisplayPosition.displayPosition.set({pfile: file, pmin: pos, pmax: pos});
-			com.fileContents = [{fileKey: fileUnique, content: contents}];
-		} else {
+		var fileContents = if (file != null) null else {
 			var fileContents:Array<JsonValue> = jsonrpc.getOptParam(function() return jsonrpc.getOptParam(function() return
 				jsonrpc.getArrayParam("fileContents"), []), []);
-			var fileContents:Array<{fileKey:String, content:Null<String>}> = fileContents.map(function(fc):{fileKey:String, content:Null<String>}
-				return switch fc {
-					case JObject(fl):
-						var file = jsonrpc.getStringField("fileContents", "file", fl);
-						var file = core.Path.getFullPath(file);
-						var fileUnique = com.partScope.fileKeys.get(file);
-						var contents:Null<String> = jsonrpc.getOptParam(function():Null<String> {
-							var s = jsonrpc.getStringField("fileContents", "contents", fl);
-							return s;
-						}, null);
-						{fileKey: fileUnique, content: contents};
-					case _: throw new core.ds.InvalidArgument("fileContents");
-				});
-			var files = fileContents.map(fc -> fc.fileKey);
-			com.fileContents = fileContents;
-			if (files.length == 0) core.display.DisplayPosition.displayPosition.set({pfile: file, pmin: pos, pmax: pos})
-			else core.display.DisplayPosition.displayPosition.setFiles(files);
+			fileContents.map(function(fc):{file:haxe.display.FsPath, ?contents:String} return switch fc {
+				case JObject(fl):
+					var file = jsonrpc.getStringField("fileContents", "file", fl);
+					var contents:Null<String> = jsonrpc.getOptParam(function():Null<String> {
+						var s = jsonrpc.getStringField("fileContents", "contents", fl);
+						return s;
+					}, null);
+					{file: new haxe.display.FsPath(file), contents: contents};
+				case _: throw new core.ds.InvalidArgument("fileContents");
+			});
 		}
+		return {
+			file: file == null ? null : new haxe.display.FsPath(file),
+			contents: contents,
+			offset: pos,
+			fileContents: fileContents
+		};
 	}
 }
 
@@ -299,115 +296,136 @@ class DisplayJson {
 			{
 				name: "display/completion",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(hctx.jsonrpc.getBoolParam("wasAutoTriggered"), true);
-					hctx.display.enableDisplay(DMDefault);
+					var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
+					var p = hctx.display.fileParams(true);
+					DisplayRequests.completion(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents,
+						wasAutoTriggered: wasAutoTriggered
+					});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/definition",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, true);
-					hctx.display.enableDisplay(DMDefinition);
+					var p = hctx.display.fileParams(true);
+					DisplayRequests.definition(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents
+					});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/diagnostics",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, false);
-					hctx.display.enableDisplay(true, DMNone);
-					var d = DisplayMode.copy(hctx.com.display);
-					d.dmsDisplayFilePolicy = DFPAlso;
-					d.dmsPerFile = true;
-					d.dmsPopulateCache = true;
-					hctx.com.display = d;
-					hctx.com.partScope.reportMode = RMDiagnostics(hctx.com.fileContents.map(fc -> fc.fileKey));
+					var p = hctx.display.fileParams(false);
+					DisplayRequests.diagnostics(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/statistics",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, false);
-					hctx.display.enableDisplay(true, DMNone);
-					var d = DisplayMode.copy(hctx.com.display);
-					d.dmsDisplayFilePolicy = DFPAlso;
-					d.dmsPerFile = true;
-					d.dmsPopulateCache = true;
-					hctx.com.display = d;
-					hctx.com.partScope.reportMode = RMStatistics;
+					var p = hctx.display.fileParams(false);
+					DisplayRequests.statistics(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/implementation",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, true);
-					hctx.display.enableDisplay(DMImplementation);
+					var p = hctx.display.fileParams(true);
+					DisplayRequests.implementation(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents
+					});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/typeDefinition",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, true);
-					hctx.display.enableDisplay(DMTypeDefinition);
+					var p = hctx.display.fileParams(true);
+					DisplayRequests.typeDefinition(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents
+					});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/references",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, true);
-					switch hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getStringParam("kind"), "normal") {
-						case "withBaseAndDescendants":
-							hctx.display.enableDisplay(DMUsage(false, true, true));
-						case "withDescendants":
-							hctx.display.enableDisplay(DMUsage(false, true, false));
-						case _:
-							hctx.display.enableDisplay(DMUsage(false, false, false));
-					}
+					var p = hctx.display.fileParams(true);
+					var kind = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getStringParam("kind"), "normal");
+					DisplayRequests.references(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents,
+						kind: cast kind
+					});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/hover",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, true);
-					hctx.display.enableDisplay(DMHover);
+					var p = hctx.display.fileParams(true);
+					DisplayRequests.hover(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents
+					});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/package",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, false);
-					hctx.display.enableDisplay(DMPackage);
+					var p = hctx.display.fileParams(false);
+					DisplayRequests.determinePackage(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/documentSymbols",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(false, false);
-					hctx.display.enableDisplay(DMModuleSymbols(null));
+					var p = hctx.display.fileParams(false);
+					DisplayRequests.documentSymbols(hctx.com, {file: p.file, contents: p.contents, fileContents: p.fileContents});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/workspaceSymbols",
 				f: function(hctx) {
-					var filter = hctx.jsonrpc.getStringParam("filter");
-					hctx.display.enableDisplay(DMModuleSymbols(filter));
+					DisplayRequests.workspaceSymbols(hctx.com, {filter: hctx.jsonrpc.getStringParam("filter")});
 					return NoResponse;
 				}
 			},
 			{
 				name: "display/signatureHelp",
 				f: function(hctx) {
-					hctx.display.setDisplayFile(hctx.jsonrpc.getBoolParam("wasAutoTriggered"), true);
-					hctx.display.enableDisplay(DMSignature);
+					var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
+					var p = hctx.display.fileParams(true);
+					DisplayRequests.signatureHelp(hctx.com, {
+						file: p.file,
+						contents: p.contents,
+						offset: p.offset,
+						fileContents: p.fileContents,
+						wasAutoTriggered: wasAutoTriggered
+					});
 					return NoResponse;
 				}
 			},

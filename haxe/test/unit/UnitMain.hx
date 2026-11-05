@@ -35,5 +35,6 @@ class UnitMain {
 		TypeloadModuleTest.main();
 		BatchDriverTest.main();
 		MessageTest.main();
+		CompilerInstanceTest.main();
 	}
 }

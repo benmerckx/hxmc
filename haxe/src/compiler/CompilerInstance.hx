@@ -6,6 +6,7 @@ import compiler.io.CompilerOutput;
 import compiler.server.Server;
 import compiler.server.ServerCompilationContext;
 import core.Message.CompilerMessage;
+import context.display.DisplayResult;
 
 // port: not upstream: the compiler as an API. An instance is a set of arguments
 // ... (expanded: hxml read, parts split; without --display, --connect, --wait) and
@@ -17,6 +18,9 @@ class CompilerInstance {
 	public final args:RequestArgs;
 	public final cache:CompilerCache;
 
+	/** the display/* methods of the protocol, typed */
+	public final display:DisplayServices;
+
 	public function new(args:RequestArgs, cache:CompilerCache) {
 		if (args.displayArg != null) throw new core.ds.ArgumentError("CompilerInstance: --display is a call of its own, not an argument");
 		if (args.connectArg != null) throw new core.ds.ArgumentError("CompilerInstance: --connect is a client's, not an argument");
@@ -27,6 +31,7 @@ class CompilerInstance {
 		Init.initHooks();
 		this.args = args;
 		this.cache = cache;
+		this.display = new DisplayServices(this);
 	}
 
 	/** Parses and expands command-line arguments (as `haxe` does) into an instance. */
@@ -48,7 +53,7 @@ class CompilerInstance {
 			while (i-- > 0) messages.push(com.partScope.messages[i]);
 			flush(hasError, com);
 		}
-		var code = try (sctx.isServer ? process(sctx, scope) : HighLevel.entry(sctx, scope, args)) catch (e:Dynamic) {
+		var code = try run(sctx, scope, args) catch (e:Dynamic) {
 			cache.end(sctx);
 			throw e;
 		}
@@ -62,8 +67,57 @@ class CompilerInstance {
 		return {code: code, messages: messages};
 	}
 
+	/** One display request: `configure` sets up the context as the method asks
+		(context.display.DisplayRequests), then the compilation finds the result. No output. */
+	public function displayRequest(configure:context.Common.CommonContext->Void):DisplayOutcome {
+		var sctx = cache.begin();
+		var io = CompilerIo.create(_ -> {}, _ -> {}, _ -> {}, () -> {}, null);
+		var scope = Server.createRequestScope(sctx.isServer, io, null);
+		var found:Null<context.display.DisplayResult> = null;
+		var errors:Null<Array<CompilerMessage>> = null;
+		function unexpected(what:String):Dynamic
+			throw new core.Globals.InternalCompilerError("CompilerInstance.displayRequest: " + what + " outside a JSON-RPC request", "");
+		scope.resultHandler = {
+			sendResult: _ -> unexpected("send_result"),
+			sendResultRaise: _ -> unexpected("send_result_raise"),
+			sendError: _ -> unexpected("send_error"),
+			sendErrorRaise: _ -> unexpected("send_error_raise"),
+			sendDisplayResultRaise: function(_, r):Dynamic {
+				found = r;
+				throw new context.display.DisplayJson.JsonCompleted();
+			},
+			// (as the JSON-RPC handler: with errors, the compilation failed; otherwise there
+			// was nothing at the position)
+			flushMessages: function(hasError, com) {
+				if (hasError) {
+					errors = [];
+					var i = com.partScope.messages.length;
+					while (i-- > 0) errors.push(com.partScope.messages[i]);
+				} else found = DRNone;
+			},
+			setCom: function(com) {
+				configure(com);
+				return NeedsTyping;
+			}
+		};
+		// (HighLevel's hasDisplay: the arguments of a display request)
+		var displayArgs = args.clone();
+		displayArgs.displayArg = "";
+		try run(sctx, scope, displayArgs) catch (e:Dynamic) {
+			CompilerIo.close(io);
+			cache.end(sctx);
+			throw e;
+		}
+		CompilerIo.close(io);
+		cache.end(sctx);
+		return if (found != null) DOResult(found) else if (errors != null) DOErrors(errors) else DOResult(DRNone);
+	}
+
+	function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int
+		return sctx.isServer ? process(sctx, scope, args) : HighLevel.entry(sctx, scope, args);
+
 	// Server.process, keeping the exit code
-	function process(sctx:ServerCompilationContext, scope:context.Common.RequestScope):Int {
+	function process(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int {
 		var t0 = Sys.time();
 		var curdir = Sys.getCwd();
 		compiler.server.ServerMessage.arguments(Args.stringOfRequestArgs(args));
@@ -79,6 +133,14 @@ class CompilerInstance {
 		compiler.server.ServerMessage.stats(scope.stats, Sys.time() - t0);
 		return code;
 	}
+}
+
+enum DisplayOutcome {
+	/** what the request found (DRNone: nothing at the position) */
+	DOResult(result:context.display.DisplayResult);
+
+	/** the compilation failed before finding anything: its errors, oldest first */
+	DOErrors(messages:Array<CompilerMessage>);
 }
 
 @:structInit class BuildResult {

@@ -106,7 +106,8 @@ A function of the arguments and the cache:
 class CompilerInstance {
 	function new(args:RequestArgs, cache:CompilerCache); // later: a CompilerConfig
 	function build(io:CompilerIoData):BuildResult; // {code, messages}; later: ?options:{clean:Bool}
-	final display:DisplayServices; // step 4
+	final display:DisplayServices; // implements DisplayApi: completion, hover, definition, ...
+	function displayRequest(configure:CommonContext->Void):DisplayOutcome; // what the methods run
 	// server/* of the protocol: invalidate, contexts, memory, ...
 }
 ```
@@ -120,11 +121,32 @@ class CompilerInstance {
   Running them once and cloning the context after `CInitMacrosDone` is a
   later optimization, the same deep cloning as
   HaxeFoundation/haxe#11519.
-- **`DisplayServices`**: one typed method per `display/*` method of the
-  protocol, with `haxe.display`'s parameter and result types. Each runs one
-  compilation in display mode; the `DisplayException` is caught inside and
-  returned as the typed result. The JSON-RPC adapter decodes the request
-  into those types, calls the method, encodes the result.
+- **Display methods** (`compiler.DisplayApi`, `DisplayServices`): one
+  typed method per `display/*` method of the protocol. The parameters are
+  the std's (`haxe.display`), plus `fileContents`, which the compiler reads
+  for every request naming a file. The results are the compiler's own
+  values (`FieldsResult`, `HoverResult`, positions, `DiagnosticsContext`,
+  ...), of which the protocol's results are the JSON. Each call runs one
+  compilation in display mode; a failed one throws a `DisplayError` with
+  its messages. How the pieces fit:
+  - Upstream encodes each result where it is found and sends it
+    (`send_result_raise`), so a request's answer is bytes on the output
+    before the compilation unwinds (`JsonCompleted`, caught by the driver).
+    Here the request's result handler gets the value
+    (`ResultHandler.sendDisplayResultRaise`, `context.display
+    .DisplayResult`): the JSON-RPC handler encodes it as upstream does
+    (`DisplayException.resultToJson`), a typed call keeps it.
+  - Each method's setup of the context is a function of its typed
+    parameters (`context.display.DisplayRequests`). The JSON-RPC handlers
+    decode the request into those parameters, with the same getters in
+    the same order (a bad request fails as before), and call them.
+  - Not yet: the JSON-RPC requests themselves on an instance (the server
+    still runs them through `DisplayJson`'s handlers, which share the
+    functions above); `display/metadata`, `display/defines`,
+    `completionItem/resolve` and `server/*`, which answer without a
+    display compilation; completion's `lastCompletionResult` (incremental
+    completion, resolve) is still recorded while the JSON is encoded, so
+    typed completion calls do not record it.
 - **Unsaved edits**: only the file of the display request comes from the
   request (as stdin does today); every other file is read from disk. Edits
   in other buffers are deliberately not seen.
@@ -232,8 +254,13 @@ on another thread) comes later, one at a time.
    an instance per request over its cache. Keeping instances by config
    pays once an instance holds state of its own (step 4, init macros run
    once).
-4. `DisplayServices` typed; the JSON-RPC adapter over it, `DisplayJson`'s
-   handlers ported into it one by one.
+4. The display methods typed; the JSON-RPC adapter over them. Done: the
+   results as values (`DisplayResult`), each method's setup as a function
+   of the std's parameters (`DisplayRequests`), the JSON handlers decoding
+   into them, `CompilerInstance.display` (`haxe/test/unit
+   /CompilerInstanceTest.hx`). Next: the server's JSON-RPC requests on an
+   instance (decode, call `display`, encode); the methods without a
+   display compilation; completion's recorded state.
 5. `OnDiskCache` as HXB on disk, then Ben's check, then his other layers.
 
 ## Open
