@@ -335,6 +335,12 @@ class Server {
 		sctx.currentStdin = request.stdin;
 		try {
 			var requestArgs = Args.expandArgs(request.args);
+			// port: a build (not a display request) runs on a CompilerInstance over the server's cache
+			// ... (a request with --connect or --wait, which process ignores, takes the old path)
+			if (requestArgs.displayArg == null && requestArgs.connectArg == null && requestArgs.serverMode == SMNone) {
+				new compiler.CompilerInstance(requestArgs, new compiler.CompilerInstance.InMemoryCache(sctx)).build(io);
+				return Success;
+			}
 			var requestScope = createRequestScope(true, io, requestArgs.displayArg);
 			process(sctx, requestScope, requestArgs);
 			return Success;
@@ -453,18 +459,8 @@ class Server {
 						conn.close();
 						continue;
 					}
-					var idx = s.indexOf("\x01");
-					var stdin:Null<String>, hxml:String;
-					if (idx >= 0) {
-						stdin = s.substr(idx + 1);
-						hxml = s.substr(0, idx);
-					} else {
-						stdin = null;
-						hxml = s;
-					}
-					var data = Helper.parseHxmlData(hxml);
-					var parsedArgs = Args.parseArgs(data);
-					RequestQueue.add(rq, parsedArgs, stdin, conn);
+					var message = parseMessage(s);
+					RequestQueue.add(rq, message.args, message.stdin, conn);
 				} catch (e:Dynamic) {
 					if (!isUnixError(e)) throw e;
 					ServerMessage.socketMessage("Connection Aborted");
@@ -476,6 +472,23 @@ class Server {
 		worker.wait();
 		ServerCompilationContext.dispose(sctx);
 		return 0;
+	}
+
+	// port: not upstream: wait_loop's reading of a client's message (the hxml, then the
+	// ... stdin after \x01), for hosts that receive such messages by other means
+	public static function parseMessage(s:String):{args:Array<ParsedArg>, stdin:Null<String>} {
+		var idx = s.indexOf("\x01");
+		var stdin:Null<String>, hxml:String;
+		if (idx >= 0) {
+			stdin = s.substr(idx + 1);
+			hxml = s.substr(0, idx);
+		} else {
+			stdin = null;
+			hxml = s;
+		}
+		var data = Helper.parseHxmlData(hxml);
+		var parsedArgs = Args.parseArgs(data);
+		return {args: parsedArgs, stdin: stdin};
 	}
 
 	// port: Unix.Unix_error: socket failures other than end of file

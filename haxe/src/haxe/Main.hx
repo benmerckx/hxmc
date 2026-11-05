@@ -68,20 +68,6 @@ class Main {
 		Sys.exit(run(Sys.args()));
 	}
 
-	// port: upstream assigns these forward references during OCaml module
-	// initialization. Static initialization order differs between Haxe
-	// targets, so they are (re)assigned once all statics are initialized.
-	public static function initHooks():Void {
-		core.Type.initialize();
-		core.TUnification.initHooks();
-		context.AbstractCast.install(); // port: the JVM initializes classes lazily
-		typing.Typer.initialize();
-		typing.TyperEntry.initHooks();
-		typing.TypeloadFunction.initHooks();
-		typing.Generic.initHooks();
-		optimization.Analyzer.initHooks();
-	}
-
 	static function badArg(msg:String):Int {
 		Sys.stderr().writeString(msg + "\n");
 		return 1;
@@ -179,7 +165,7 @@ class Main {
 	}
 
 	public static function run(args:Array<String>):Int {
-		initHooks();
+		compiler.Init.initHooks();
 		// port: the port is executed by a host compiler, so the std location of the
 		// executable is not meaningful; HAXE_IN_HAXE_STD_PATH overrides the
 		// HAXE_STD_PATH the host may have rewritten for --run.
@@ -254,6 +240,18 @@ class Main {
 			space_overhead fewer major collections. */
 		// port: the OCaml Gc settings (HAXE_MAIN_MINOR_MB, HAXE_SPACE_OVERHEAD, DynamicGc tuning)
 		// ... have no host-runtime equivalent; the host garbage collector keeps its own settings.
+
+		// port: a build (not a display request) runs on a CompilerInstance without a cache
+		if (requestArgs.displayArg == null) {
+			var io = CompilerIo.createStdioIo();
+			var instance = new compiler.CompilerInstance(requestArgs, new compiler.CompilerInstance.SkipCache());
+			return try instance.build(io).code catch (e:core.ds.ArgumentError) {
+				badArg(e.message);
+			} catch (e:Dynamic) {
+				reportInternalError(e);
+				1;
+			}
+		}
 
 		var sctx = Server.setupServerContext(false, false);
 		var io = CompilerIo.createStdioIo();
