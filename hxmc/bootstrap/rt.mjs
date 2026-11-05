@@ -59,9 +59,9 @@ function assets() {
 // exit codes of fetch
 const MISSING = 2, NETWORK = 3;
 // per asset: attempts, the pause before each retry (ms: a 504 of GitHub's
-// release downloads can last tens of seconds); per attempt: the
+// release downloads can last minutes); per attempt: the
 // time to connect, to stall (below 1 KiB/s) and in all (s)
-const ATTEMPTS = 5, BACKOFF = [5000, 15000, 30000, 60000];
+const ATTEMPTS = 6, BACKOFF = [5000, 15000, 30000, 60000, 120000];
 const CONNECT_TIMEOUT = 30, STALL_TIME = 30, MAX_TIME = 300;
 
 // one attempt: {data} | {missing: true} (HTTP 404: no such release or asset)
