@@ -184,7 +184,14 @@ jobs:
         id: rt
         run: |
           echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
-          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+          # (a miss only when the release is missing, exit 2; a network failure fails the step)
+          status=0
+          node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt || status=$?
+          case $status in
+            0) echo "hit=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::rt.mjs fetch failed (exit $status), not a missing release: re-run the job"; exit 1 ;;
+          esac
       - uses: mlugg/setup-zig@v2
         if: steps.rt.outputs.hit != 'true'
         with:
@@ -268,7 +275,14 @@ jobs:
         id: rt
         run: |
           echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
-          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+          # (a miss only when the release is missing, exit 2; a network failure fails the step)
+          status=0
+          node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt || status=$?
+          case $status in
+            0) echo "hit=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::rt.mjs fetch failed (exit $status), not a missing release: re-run the job"; exit 1 ;;
+          esac
       - uses: mlugg/setup-zig@v2
         if: steps.rt.outputs.hit != 'true'
         with:
@@ -352,7 +366,14 @@ jobs:
         id: rt
         run: |
           echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
-          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+          # (a miss only when the release is missing, exit 2; a network failure fails the step)
+          status=0
+          node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt || status=$?
+          case $status in
+            0) echo "hit=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::rt.mjs fetch failed (exit $status), not a missing release: re-run the job"; exit 1 ;;
+          esac
       - uses: mlugg/setup-zig@v2
         if: steps.rt.outputs.hit != 'true'
         with:
@@ -425,7 +446,14 @@ jobs:
         id: rt
         run: |
           echo "zig=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
-          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+          # (a miss only when the release is missing, exit 2; a network failure fails the step)
+          status=0
+          node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt || status=$?
+          case $status in
+            0) echo "hit=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::rt.mjs fetch failed (exit $status), not a missing release: re-run the job"; exit 1 ;;
+          esac
       - uses: mlugg/setup-zig@v2
         if: steps.rt.outputs.hit != 'true'
         with:

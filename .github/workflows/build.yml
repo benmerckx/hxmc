@@ -128,12 +128,23 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # hit: rt-<hash> downloads; a miss only when it is missing (exit 2, an
+      # HTTP 404), which builds the objects (rt-build, rt). A network failure
+      # that outlasts rt.mjs's retries (exit 3) or any other error fails this
+      # step: the run fails visibly (re-run it) instead of rebuilding and
+      # republishing a release that exists.
       - name: The published runtime objects
         id: rt
         run: |
-          set -ex
+          set -x
           echo "hash=$(node hxmc/bootstrap/rt.mjs hash)" >> "$GITHUB_OUTPUT"
-          if node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
+          status=0
+          node hxmc/bootstrap/rt.mjs fetch bin/hxmc/rt || status=$?
+          case $status in
+            0) echo "hit=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::rt.mjs fetch failed (exit $status), not a missing release: re-run the job"; exit 1 ;;
+          esac
 
   # the runtime objects of one target (and linux-x86_64's, which the tool
   # that assembles the others links), when rt-<hash> is missing
@@ -216,14 +227,33 @@ jobs:
           touch bin/hxmc/deps/*/VERSIONS bin/hxmc/rt/*/*.o
           ls -l bin/hxmc/rt/*
           make rt-layouts
+      # idempotent: the hash names the content, so a release that exists
+      # (published by another run, or found missing by a fetch that failed)
+      # is kept as it is; only the assets it lacks (an interrupted upload)
+      # are added
       - name: Publish rt-${{ steps.rt.outputs.hash }}
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/hxmc')
+        env:
+          TAG: rt-${{ steps.rt.outputs.hash }}
         run: |
           set -ex
           node hxmc/bootstrap/rt.mjs pack bin/hxmc/rt dist/rt
-          gh release create "rt-${{ steps.rt.outputs.hash }}" --target "$GITHUB_SHA" --prerelease \
-            --title "hxmc runtime objects ${{ steps.rt.outputs.hash }}" \
-            --notes "hxmc's runtime objects (rt.o, ssl.o, uv.o) for the six targets, the glibc mode of Linux and Android, built by zig ${{ steps.rt.outputs.zig }} from hxmc/deps at $GITHUB_SHA; downloaded by hxmc/bootstrap/rt.mjs." dist/rt/*
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+              --title "hxmc runtime objects ${{ steps.rt.outputs.hash }}" \
+              --notes "hxmc's runtime objects (rt.o, ssl.o, uv.o) for the six targets, the glibc mode of Linux and Android, built by zig ${{ steps.rt.outputs.zig }} from hxmc/deps at $GITHUB_SHA; downloaded by hxmc/bootstrap/rt.mjs." dist/rt/* \
+              || gh release view "$TAG" > /dev/null
+          fi
+          have=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          missing=""
+          for f in dist/rt/*; do
+            echo "$have" | grep -qxF "$(basename "$f")" || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            gh release upload "$TAG" $missing
+          else
+            echo "::notice::$TAG holds every asset"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: rt

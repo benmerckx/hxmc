@@ -64,7 +64,9 @@ They are keyed by a hash of `hxmc/deps` (scripts, versions, flags, zig's
 version) and published as the GitHub release `rt-<hash>`
 (`node hxmc/bootstrap/rt.mjs hash|fetch|pack`). `make rt` downloads them
 and falls back to `make rt-build` (zig) when the release is missing. CI
-builds them only then.
+builds them only then: `fetch` retries a failed download and exits 2 only
+for a missing release (an HTTP 404), 3 for a network failure, which fails
+the run instead of rebuilding.
 
 ### The reference compiler
 
