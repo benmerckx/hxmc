@@ -377,23 +377,29 @@ enum ParseInputResult {
 	public var sendError:Array<JsonValue>->Void;
 	public var sendErrorRaise:Array<JsonValue>->Dynamic;
 
+	// port: not upstream: a display request's result as a value (send_result_raise of its
+	// ... JSON, upstream); never returns
+	public var sendDisplayResultRaise:CommonContext->context.display.DisplayResult->Dynamic;
+
 	/** Finalize message output at the end of compilation.
 		Handles error signaling, timer reports, log file writing, etc. */
 	public var flushMessages:Bool->CommonContext->Void;
 	public var setCom:CommonContext->ParseInputResult;
 
 	public inline function new(sendResult:JsonValue->Void, sendResultRaise:JsonValue->Dynamic, sendError:Array<JsonValue>->Void,
-			sendErrorRaise:Array<JsonValue>->Dynamic, flushMessages:Bool->CommonContext->Void, setCom:CommonContext->ParseInputResult) {
+			sendErrorRaise:Array<JsonValue>->Dynamic, sendDisplayResultRaise:CommonContext->context.display.DisplayResult->Dynamic,
+			flushMessages:Bool->CommonContext->Void, setCom:CommonContext->ParseInputResult) {
 		this.sendResult = sendResult;
 		this.sendResultRaise = sendResultRaise;
 		this.sendError = sendError;
 		this.sendErrorRaise = sendErrorRaise;
+		this.sendDisplayResultRaise = sendDisplayResultRaise;
 		this.flushMessages = flushMessages;
 		this.setCom = setCom;
 	}
 
 	public inline function clone():ResultHandler return new ResultHandler(sendResult, sendResultRaise, sendError, sendErrorRaise,
-		flushMessages, setCom);
+		sendDisplayResultRaise, flushMessages, setCom);
 }
 
 // port: (string * (path -> pos -> Ast.package option))

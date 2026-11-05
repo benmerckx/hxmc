@@ -17,6 +17,7 @@ import core.DisplayTypes;
 import core.TType;
 import core.display.CompletionItem;
 import core.ds.VectorTools.vector;
+import context.display.DisplayResult;
 
 // port: `((args,ret),ctf),doc` of a signature, as produced by TyperDisplay.convert_function_signature.
 typedef SignatureInfo = {sig:{args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T, ctf:CtFunction}, doc:Documentation};
@@ -213,57 +214,82 @@ class DisplayException extends haxe.Exception {
 		};
 	}
 
+	// port: the send_*_raise functions below hand their result to the request's result
+	// ... handler as a value (DisplayResult); its JSON is resultToJson's, below.
 	public static function sendJsonResultRaise<R>(com:CommonContext, json:JsonValue):R {
 		var rh = com.requestScope.resultHandler;
 		return CompilerOutput.sendResultRaise(rh, json);
 	}
 
-	public static function sendModuleSymbolsRaise<R>(com:CommonContext, s:JsonValue):R {
+	public static function sendModuleSymbolsRaise<R>(com:CommonContext, symbols:Array<{file:String, symbols:Array<SymbolInformationData>}>,
+			filter:Null<String>):R {
 		DisplayPosition.displayPosition.reset();
-		return sendJsonResultRaise(com, s);
+		return CompilerOutput.sendDisplayResultRaise(com, DRModuleSymbols(symbols, filter));
 	}
 
 	public static function sendHoverRaise<R>(com:CommonContext, item:CompletionItemData, expected:Null<WithTypeValue>, p:Pos):R {
 		DisplayPosition.displayPosition.reset();
-		var ctx = Genjson.createFullConfig();
-		return sendJsonResultRaise(com, toJson(ctx, DisplayHover({hitem: item, hpos: p, hexpected: expected})));
+		return CompilerOutput.sendDisplayResultRaise(com, DRHover({hitem: item, hpos: p, hexpected: expected}));
 	}
 
 	public static function sendSignaturesRaise<R>(com:CommonContext, sigs:Array<SignatureInfo>, isig:Int, iarg:Int, kind:SignatureKind):R {
 		DisplayPosition.displayPosition.reset();
-		var ctx = Genjson.createFullConfig();
-		function fsig(s:SignatureInfo):JsonValue {
-			var fl = CompletionType.generateFunction_(ctx, s.sig.ctf);
-			if (s.doc != null) fl.unshift(kv("documentation", jstring(core.Ast.Ast.genDocText(s.doc))));
-			return jobject(fl);
-		}
-		var sigkind = switch kind {
-			case SKCall: 0;
-			case SKArrayAccess: 1;
-		};
-		return sendJsonResultRaise(com, jobject([
-			kv("activeSignature", jint(isig)),
-			kv("activeParameter", jint(argIndex(sigs, isig, iarg))),
-			kv("signatures", jlist(fsig, sigs)),
-			kv("kind", jint(sigkind))
-		]));
+		return CompilerOutput.sendDisplayResultRaise(com, DRSignatures(sigs, isig, argIndex(sigs, isig, iarg), kind));
 	}
 
 	public static function sendPositionsRaise<R>(com:CommonContext, pl:Array<Pos>):R {
 		DisplayPosition.displayPosition.reset();
-		return sendJsonResultRaise(com, jarray(pl.map(generatePosAsLocation)));
+		return CompilerOutput.sendDisplayResultRaise(com, DRPositions(pl));
 	}
 
 	public static function sendPackageRaise<R>(com:CommonContext, sl:Array<String>):R {
 		DisplayPosition.displayPosition.reset();
-		return sendJsonResultRaise(com, jarray(sl.map(jstring)));
+		return CompilerOutput.sendDisplayResultRaise(com, DRPackage(sl));
 	}
 
 	public static function sendNoResultRaise<R>(com:CommonContext):R {
-		var rh = com.requestScope.resultHandler;
-		return switch com.display.dmsKind {
-			case DMDefault: CompilerOutput.sendErrorRaise(rh, [jstring("No completion point")]);
-			case _: CompilerOutput.sendResultRaise(rh, jnull);
-		};
+		return CompilerOutput.sendDisplayResultRaise(com, DRNone);
+	}
+
+	// port: not upstream: the JSON of a display result, as upstream encodes each where it is
+	// ... found (the send_*_raise functions above, DisplayOutput); DRNone's is null (for
+	// ... completion the handler sends an error instead)
+	public static function resultToJson(com:CommonContext, r:DisplayResult):JsonValue {
+		return switch r {
+			case DRHover(hover):
+				toJson(Genjson.createFullConfig(), DisplayHover(hover));
+			case DRFields(fields, resolvable):
+				var ctx = resolvable && DisplayJson.supportsResolve ? Genjson.createMinimalConfig() : Genjson.createFullConfig();
+				fieldsToJson(ctx, fields.fitems, fields.fkind, fields.fsubject);
+			case DRSignatures(sigs, isig, activeParameter, kind):
+				var ctx = Genjson.createFullConfig();
+				function fsig(s:SignatureInfo):JsonValue {
+					var fl = CompletionType.generateFunction_(ctx, s.sig.ctf);
+					if (s.doc != null) fl.unshift(kv("documentation", jstring(core.Ast.Ast.genDocText(s.doc))));
+					return jobject(fl);
+				}
+				var sigkind = switch kind {
+					case SKCall: 0;
+					case SKArrayAccess: 1;
+				};
+				jobject([
+					kv("activeSignature", jint(isig)),
+					kv("activeParameter", jint(activeParameter)),
+					kv("signatures", jlist(fsig, sigs)),
+					kv("kind", jint(sigkind))
+				]);
+			case DRPositions(pl):
+				jarray(pl.map(generatePosAsLocation));
+			case DRPackage(sl):
+				jarray(sl.map(jstring));
+			case DRModuleSymbols(symbols, filter):
+				DocumentSymbols.DocumentSymbolsPrinter.jsonOfModuleSymbols(com, symbols, filter);
+			case DRDiagnostics(dctx):
+				DiagnosticsPrinter.jsonOfDiagnostics(com, dctx);
+			case DRStatistics(stats):
+				Statistics.StatisticsPrinter.jsonOfStatistics(stats);
+			case DRNone:
+				jnull;
+		}
 	}
 }

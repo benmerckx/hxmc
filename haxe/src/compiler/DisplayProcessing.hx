@@ -284,8 +284,7 @@ class DisplayProcessing {
 					}
 					acc;
 				};
-				DisplayException.sendModuleSymbolsRaise(com,
-					context.display.DocumentSymbols.DocumentSymbolsPrinter.jsonOfModuleSymbols(com, symbols, filter));
+				DisplayException.sendModuleSymbolsRaise(com, symbols, filter);
 			case _:
 		}
 	}

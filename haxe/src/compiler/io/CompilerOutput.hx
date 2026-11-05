@@ -4,6 +4,8 @@ import core.Json;
 import core.Message;
 import core.Timer;
 import context.Common;
+import context.display.DisplayResult;
+import core.DisplayTypes.DisplayModeValue;
 import compiler.Helper;
 import compiler.io.CompilerIo.CompilerIoData;
 import compiler.MessageReporting;
@@ -71,6 +73,9 @@ class CompilerOutput {
 				for (je in errors) CompilerIo.writeErr(io, extractErrorMessage(je) + "\n");
 			},
 			sendErrorRaise: function(_):Dynamic throw new core.ds.Failure("send_error_raise called in non-JSON-RPC mode"),
+			// port: (a display result is sent with send_result_raise upstream)
+			sendDisplayResultRaise: function(com, r):Dynamic throw new core.ds.Failure((isNoCompletion(com, r) ? "send_error_raise" : "send_result_raise")
+				+ " called in non-JSON-RPC mode"),
 			flushMessages: function(hasError, com) {
 				var messages = com.partScope.messages.copy();
 				messages.reverse();
@@ -105,6 +110,9 @@ class CompilerOutput {
 				for (je in errors) CompilerIo.writeErr(io, extractErrorMessage(je) + "\n");
 			},
 			sendErrorRaise: function(_):Dynamic throw "send_error_raise called in non-JSON-RPC mode",
+			// port: (a display result is sent with send_result_raise upstream)
+			sendDisplayResultRaise: function(com, r):Dynamic throw (isNoCompletion(com, r) ? "send_error_raise" : "send_result_raise")
+				+ " called in non-JSON-RPC mode",
 			flushMessages: function(hasError, com) {
 				var messages = com.partScope.messages.copy();
 				messages.reverse();
@@ -121,6 +129,17 @@ class CompilerOutput {
 			setCom: function(_) return NoCompletionPointFound
 		};
 	}
+
+	// port: (DisplayException.send_no_result_raise sends an error for completion, a null result otherwise)
+	public static function isNoCompletion(com:CommonContext, r:context.display.DisplayResult):Bool
+		return switch [r, com.display.dmsKind] {
+			case [DRNone, DMDefault]: true;
+			case _: false;
+		}
+
+	/** Send a display result to the client and raise {!DisplayJson.JsonCompleted}. */
+	public static function sendDisplayResultRaise(com:CommonContext, r:context.display.DisplayResult):Dynamic
+		return com.requestScope.resultHandler.sendDisplayResultRaise(com, r);
 
 	/** Send a JSON result to the client (non-raising). */
 	public static function sendResult(rh:ResultHandler, json:JsonValue):Void rh.sendResult(json);

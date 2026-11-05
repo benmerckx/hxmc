@@ -812,6 +812,11 @@ class DisplayJson {
 			sendResultRaise: sendResultRaise,
 			sendError: sendErrorNoraise,
 			sendErrorRaise: sendErrorRaise,
+			// port: the encoding of each display result, which upstream does where it is found
+			sendDisplayResultRaise: function(com:CommonContext, r:DisplayResult):Dynamic {
+				if (compiler.io.CompilerOutput.isNoCompletion(com, r)) return sendErrorRaise([jstring("No completion point")]);
+				return sendResultRaise(DisplayException.resultToJson(com, r));
+			},
 			flushMessages: function(hasError:Bool, com:CommonContext) {
 				// flush_messages in the JSON-RPC handler is always an error state:
 				// a successful completion raises JsonCompleted before flush_context is

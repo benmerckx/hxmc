@@ -112,13 +112,12 @@ class TypeloadParse {
 				case [DMModuleSymbols(filter), ParseSuccess(data, _)]
 					if (filter == null && core.display.DisplayPosition.displayPosition.isInFile(com.partScope.fileKeys.get(file))):
 					var ds = context.display.DocumentSymbols.collectModuleSymbols(null, filter == null, data);
-					context.display.DisplayException.sendModuleSymbolsRaise(com,
-						context.display.DocumentSymbols.DocumentSymbolsPrinter.jsonOfModuleSymbols(com, [
-							{
-								file: file,
-								symbols: ds
-							}
-						], filter));
+					context.display.DisplayException.sendModuleSymbolsRaise(com, [
+						{
+							file: file,
+							symbols: ds
+						}
+					], filter);
 				case [_, ParseSuccess(_, pdi)] if (pdi.pdWasDisplayFile):
 					if (pdi.pdHadResume) com.partScope.parserState.hadParserResume = true;
 					com.partScope.parserState.delayedSyntaxCompletion.value = pdi.pdDelayedSyntaxCompletion;
