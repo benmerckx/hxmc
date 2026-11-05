@@ -1,0 +1,16 @@
+exit 0
+JniPeers.hx:150: 2, 2, 1
+JniPeers.hx:152: 22, <events a=5,aa=6>, [a=5,aa=6]
+JniPeers.hx:153: 42 3 0.0 8 x1 none
+JniPeers.hx:157: 10, org.hxmc.proxy.Counter, org.hxmc.proxy.Counter
+JniPeers.hx:159: true, true
+JniPeers.hx:161: true, 2
+JniPeers.hx:165: 3
+JniPeers.hx:168: org.hxmc.HaxeException: haxe boom
+JniPeers.hx:169: java.lang.UnsupportedOperationException: from java, through haxe
+JniPeers.hx:170: nothing thrown, 4
+JniPeers.hx:173: joined, java-caller 2000 org.hxmc.proxy.OnThread
+JniPeers.hx:180: stored, 0, 1
+JniPeers.hx:189: dropped, 1
+JniPeers.hx:193: 200, 4000
+JniPeers.hx:196: true

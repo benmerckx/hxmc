@@ -128,7 +128,7 @@ endef
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
-	shared-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
+	shared-check jni-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro bench-simd measure quick check full clean distclean
 
 help:
@@ -188,7 +188,10 @@ help:
 ##   shared-check, macho-check, native-check  the native output a packager builds on
 ##               (docs/using.md): shared libraries of the glibc mode and Android's .so
 ##               (hxmc/test/SharedCheck.hx), iOS's plain Mach-O executables and dylibs, minimum and code
-##               signature (hxmc/test/MachOCheck.hx); native-check: both
+##               signature (hxmc/test/MachOCheck.hx); native-check: these and jni-check
+##   jni-check   Java through JNI (hxmc/test/JniCheck.hx): the corpus's JNI cases (an embedded
+##               JVM, the glibc mode), a library java loads (JNI_OnLoad), Android's builds; a JDK
+##               (JAVA_HOME or javac), else the runs are skipped
 ##   uikit-check  a UIKit app in its bundle (hxmc/test/UIKitCheck.hx): Mac Catalyst, the iOS
 ##               simulator's iPhone and iPad; a Mac with Xcode
 ##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
@@ -541,6 +544,11 @@ corpus-verify: $(TOOL) $(STD) $(HOST_RT)
 # shared libraries of the glibc mode loaded by an hxmc program (hxmc/test/SharedCheck.hx), Android's built
 shared-check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) SharedCheck
+# Java through JNI (hxmc/test/JniCheck.hx): the corpus's JNI cases in the glibc
+# mode (an embedded JVM, also with RT_VERIFY=1), hxmc/test/jni/JniLib.hx as a
+# library java loads (JNI_OnLoad), it and the cases built for Android
+jni-check: $(TOOL) $(STD) $(HOST_RT)
+	$(SCRIPT) JniCheck
 # iOS's native output without a bundle (hxmc/test/MachOCheck.hx: IosHello as an
 # executable and a dylib, -D hxmc.ios-min-version, the code signature,
 # linker-signed or with -D hxmc.codesign-*'s files)
@@ -553,7 +561,7 @@ uikit-check: $(TOOL) $(STD) $(HOST_RT)
 	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test --run UIKitCheck
 # the native-output contract a packager builds on (docs/using.md, "Native
 # output for a packager"; CI's native-output job): Android's .so, iOS's Mach-O
-native-check: shared-check macho-check
+native-check: shared-check jni-check macho-check
 # the dev loop (docs/dev.md): `hxmc dev` on a console program through edits
 # and a compile error (dev-console.mjs), then the compilation server's builds
 # through edits against fresh ones (server-verify.mjs)

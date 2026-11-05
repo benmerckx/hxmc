@@ -680,6 +680,25 @@ class DataGen {
 		}
 	}
 
+	// the cells of the Java classes and members the program calls
+	// (hxmc.ir.Jni.CELL: a class's global reference, a method's or field's
+	// ID), in .data: a word each, zero until the runtime resolves it; their
+	// number (Driver: StackTable.JNI, the main thread's stack)
+	public function jniCells(objs:Array<Obj>):Int {
+		var names = new Map<String, Bool>();
+		for (o in objs.concat([obj]))
+			for (s in o.symbols)
+				if (s.section == null && !s.abs && StringTools.startsWith(s.name, hxmc.ir.Jni.CELL)) names.set(s.name, true);
+		var list = [for (n in names.keys()) n];
+		list.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		for (n in list) {
+			data.buf.align(8);
+			obj.define(n, data, data.buf.len, 8, true);
+			data.buf.u64(0, 0);
+		}
+		return list.length;
+	}
+
 	// the empty NativeArrays the program refers to (MirBuild.EMPTY_ARRAY), in
 	// .rodata as string literals are: the header (Types: length 0, the type of
 	// the kind), a zero slot

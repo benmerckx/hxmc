@@ -1,0 +1,30 @@
+exit 0
+JniCalls.hx:74: true
+JniCalls.hx:76: 5, 2.5, 0.5, true
+JniCalls.hx:77: 12884901888, -5, -128, 65, -600, -25536
+JniCalls.hx:78: 118
+JniCalls.hx:80: hello, wörld € (7), null, 7, 61 0 e9 d834 dd1e
+JniCalls.hx:82: 1000, cdefghijkl, 1014
+JniCalls.hx:83: static, 3.25
+JniCalls.hx:85: changed
+JniCalls.hx:87: int 1, string s, double 1.5, ints 3 4
+JniCalls.hx:89: 11, 12, calls:12 false x 1099511627776 0.5 -3 1234, 12, 1
+JniCalls.hx:99: renamed:105 true Q 77 0.25 9 -2, 105, true, Q, 0.25, 9, -2
+JniCalls.hx:102: named:0 false x 1099511627776 0.5 -3 1234, both:3 false x 1099511627776 0.5 -3 1234, 3, calls:0 false x 1099511627776 0.5 -3 1234, 4
+JniCalls.hx:104: true, false, calls:4 false x 1099511627776 0.5 -3 1234, true, false, true
+JniCalls.hx:106: java.lang.Integer, java.lang.Double, java.lang.Boolean, java.lang.String, jnitest.JniCalls, null
+JniCalls.hx:107: 1, 2.5, true, x
+JniCalls.hx:108: [42,2.5,true,str,7,99,null]
+JniCalls.hx:109: 43, 5
+JniCalls.hx:110: 2, null, 2.5, null, false, null
+JniCalls.hx:112: ff, -42, 2147483647, true
+JniCalls.hx:114: java.lang.IllegalStateException, no, java.lang.IllegalStateException: no, 	at jnitest.JniCalls.fail(JniCalls.java:72)
+JniCalls.hx:115: java.lang.ArithmeticException: at the bottom, true, 	at jnitest.JniCalls.deep(JniCalls.java:75)
+JniCalls.hx:116: java.lang.RuntimeException: outer
+JniCalls.hx:117: java.lang.NoSuchMethodError, missing
+JniCalls.hx:118: java.lang.NumberFormatException: For input string: "nope"
+JniCalls.hx:120: java.lang.NullPointerException, a Java method called on null
+JniCalls.hx:121: java.lang.NullPointerException, a Java field read of null
+JniCalls.hx:123: true, java.lang.IllegalStateException: dyn
+JniCalls.hx:124: 42
+JniCalls.hx:126: true, false, true, false, true

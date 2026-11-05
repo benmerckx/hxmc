@@ -823,6 +823,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		dg.stringsUsed();
 		dg.cstrLiterals([]);
 		dg.emptyArrays([]);
+		dg.jniCells([]);
 		dg.resources([]);
 		phase("data, trampolines");
 		st.gen = hxmc.macro.Loader.gen();
@@ -891,6 +892,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 				dg.stringsUsed();
 				dg.cstrLiterals([]);
 				dg.emptyArrays([]);
+				dg.jniCells([]);
 				dg.resources([]);
 				hxmc.rt.Interp.become(desc, hxmc.macro.Loader.loadLate(obj, InterpGen.DESC + sym, st.gen));
 				st.leave();

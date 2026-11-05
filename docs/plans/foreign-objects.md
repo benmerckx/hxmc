@@ -3,7 +3,8 @@
 Reference-counted objects of other object systems held by Haxe objects:
 Objective-C's (built: [interop.md](../interop.md#memory),
 [objc.md](objc.md)), COM's (built: [interop.md](../interop.md#com),
-[com.md](com.md)), JNI's and GObject's (next). What does not depend
+[com.md](com.md)), JNI's (built: [interop.md](../interop.md#java-jni),
+[jni.md](jni.md)) and GObject's (next). What does not depend
 on the system is the runtime's `hxmc.rt.Foreign`; a system is a **kind**, a
 row of the kind table: its hooks (C functions) and its flags. The collector
 names no kind: it calls `Foreign.scan` (roots) and `Foreign.sweep` (after a
@@ -150,15 +151,15 @@ lowering gets `rt_foreign_*` exports with its first caller (each in
 
 ## The systems
 
-| | Objective-C (built) | COM (built) | GObject | JNI |
+| | Objective-C (built) | COM (built) | GObject | JNI (built) |
 | --- | --- | --- | --- | --- |
 | retain | `objc_retain` | `AddRef` (vtable slot 1) through a hook returning `ref` (`ComKind.retain`) | `g_object_ref` | `NewGlobalRef` (a new handle) |
 | release | `objc_release` | `Release` (slot 2; returns the count): a foreign object's in a safe region | `g_object_unref`; a peer's: `g_object_remove_toggle_ref` | `DeleteGlobalRef` |
-| toggle | `TOGGLE_COUNT`, `_objc_rootRetainCount > 1` | `TOGGLE_RELEASE` (IUnknown has no count query), threshold 1: a peer is a Haxe object implementing COM interfaces, whose COM object (the runtime's block) keeps its count in the runtime's memory, so the toggle's AddRef and Release are the runtime's own functions | `TOGGLE_NOTIFY`: `g_object_add_toggle_ref`'s notify calls `toggle(entry, !is_last_ref)` | none: the JVM has no counts (below) |
+| toggle | `TOGGLE_COUNT`, `_objc_rootRetainCount > 1` | `TOGGLE_RELEASE` (IUnknown has no count query), threshold 1: a peer is a Haxe object implementing COM interfaces, whose COM object (the runtime's block) keeps its count in the runtime's memory, so the toggle's AddRef and Release are the runtime's own functions | `TOGGLE_NOTIFY`: `g_object_add_toggle_ref`'s notify calls `toggle(entry, !is_last_ref)` | `TOGGLE_NOTIFY`: the JVM has no counts; the runtime counts a peer's proxies (strong from the first, weak once Java collected the last: `org.hxmc.Peer`'s phantom references, below) |
 | identity | the id | `QueryInterface(IID_IUnknown)`, then `Release`: the canonical `IUnknown*`, stable while held | the pointer | `System.identityHashCode` as the key, `same`: `IsSameObject` |
-| peer | the instance variable `hxmc_peer` | a word of the runtime's own COM object (its block: a vtable whose QueryInterface is the runtime's) | a `GQuark`'s qdata | a `long` field of the Java peer class (`GetLongField`) |
+| peer | the instance variable `hxmc_peer` | a word of the runtime's own COM object (its block: a vtable whose QueryInterface is the runtime's) | a `GQuark`'s qdata | `org.hxmc.Peer.hxmcHandle` of a proxy (`IsInstanceOf`, `GetLongField`); a peer's reference is the runtime's record (a weak global reference to its latest proxy), of a kind of its own ("jni-peer") |
 | weak | `objc_initWeak`, `objc_loadWeakRetained`, `objc_destroyWeak` | WinRT's `IWeakReferenceSource::GetWeakReference`, `IWeakReference::Resolve`, `Release`; classic COM: none (no detach of peers, no weak fields) | `g_weak_ref_init`, `g_weak_ref_get`, `g_weak_ref_clear` | `NewWeakGlobalRef`, `NewGlobalRef` of it (null once collected), `DeleteWeakGlobalRef` |
-| batch | an autorelease pool | none | none | `GetEnv` or `AttachCurrentThread`, then `PushLocalFrame`/`PopLocalFrame` |
+| batch | an autorelease pool | none | none | `GetEnv`, or `AttachCurrentThreadAsDaemon` (a local frame per call, not per batch) |
 | releases | `RELEASE_IN_STOP` (libobjc's release runs no Haxe code; mode classes' deallocs put themselves off) | put off; `RELEASE_ON_MAKER` for apartment-threaded objects | put off; `RELEASE_ON_MAIN` for GTK's | put off, any thread |
 | wake | none | `PostThreadMessage` to the apartment's thread, whose message loop calls `runDeferred` | `g_main_context_invoke` on the default context | none |
 
@@ -187,17 +188,23 @@ entry order, then owned fields in registration order).
   `g_object_remove_toggle_ref` (notify and data), not `g_object_unref`: a
   hook for a peer's release (`unpair`, null: `release`). Finalisers that
   touch GTK run in the main context (`RELEASE_ON_MAIN`, `wake`).
-- **JNI** (PR 3): no counts, so no toggle. A peer is collected when Haxe
-  drops it, which breaks a Java object that still calls into its Haxe peer;
-  the fix is Xamarin.Android's bridge: before a collection, the peers
-  unreachable from Haxe's roots get weak global references in place of their
-  global ones, the JVM collects, and those still alive are made strong again
-  and kept as roots. That is a phase before the stop, on a thread attached
-  to the JVM (a `bridge` hook), not a hook in it. Local references are
-  borrowed values valid in their frame: Haxe code on a thread the runtime
-  started needs frames popped regularly (an autorelease pool's analogue
-  around loops); calls Java makes get the JVM's frame. A `JNIEnv` per
-  thread: every hook calls `GetEnv` (or attaches) first.
+- **JNI** (built: `hxmc.rt.JniKind`, [jni.md](jni.md)): no counts, so
+  the toggle is `TOGGLE_NOTIFY` on what the proxies say. A Haxe object
+  implementing Java interfaces is paired (untyped, as COM's) at its first
+  use as a Java value; each proxy Java gets (a glue class extending
+  `org.hxmc.Peer`) counts, the first making the entry strong, Java's
+  collection of the last (a phantom reference drained by the glue's
+  thread, a native calling `toggle`) weak again; Haxe holds a weak global
+  reference to its latest proxy. Cycles through both heaps leak; the fix is
+  Xamarin.Android's bridge: before a collection, the peers unreachable
+  from Haxe's roots get weak global references in place of their counts,
+  the JVM collects, and those still alive are made strong again and kept as
+  roots. That is a phase before the stop, on a thread attached to the JVM
+  (a `bridge` hook), not a hook in it (next: jni.md). Local references
+  live in a frame per call (`PushLocalFrame`), calls Java makes get the
+  JVM's frame. A `JNIEnv` per thread (a thread-local): every hook calls
+  `GetEnv` (or attaches, as a daemon, detached by a pthread key's
+  destructor) first.
 
 ## Not on WebAssembly
 

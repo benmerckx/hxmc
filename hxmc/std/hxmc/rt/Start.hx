@@ -80,12 +80,16 @@ class Start {
 	// the hxmc regular expression engine) needs more than the default 8 MB
 	// process stack. A stack switch (Mem.callOnStack); Windows: a fiber of
 	// the main thread, whose stack is reserved at that size (committed as it
-	// grows, with the system's guard page).
+	// grows, with the system's guard page). A program calling Java (JNI:
+	// hxmc_stack_flags' 4, DataGen.jniCells) keeps the thread's own stack by default: a
+	// JVM checks the stack pointer of every thread calling it against the
+	// stack the system gave the thread, and takes one elsewhere for an
+	// overflow.
 	static var mainFiber:Ptr;
 	static var mainBody:Ptr;
 
 	@:hxmc.export("rt_run_main") static function runMain(body:Ptr):Void {
-		var bytes:I64 = (Os.envInt("RT_STACK_MB", 1024) : I64) << 20;
+		var bytes:I64 = (Os.envInt("RT_STACK_MB", Mem.sym("hxmc_stack_flags").toI64().toInt() & 4 != 0 ? 0 : 1024) : I64) << 20;
 		if (Mem.os() == 2) {
 			var fiber = Ptr.nil();
 			if (!(bytes == 0)) {
