@@ -120,8 +120,9 @@ checks left in each function's optimized code, which a build with
 case's archive must not warn of an unbound type parameter (`hxb-warning`:
 an expression of the case or of hxmc's std whose type left its type
 parameter's scope, as `Arena.makeArray`'s did when inlined into `slice`).
-`Corpus.WASM_EXCLUDED` and `POSIX_ONLY` name the cases a
-target cannot run. `RT_VERIFY=1` fills the free nursery with a pattern so
+`Corpus.WASM_EXCLUDED`, `POSIX_ONLY` and `WINDOWS_ONLY` (COM) name the
+cases a target cannot run; `WINE_DISPLAY` those wine runs only with a
+display and its fonts (`xvfb-run`, fonts-wine: the file dialog, DirectWrite). `RT_VERIFY=1` fills the free nursery with a pattern so
 uninitialized allocations and missed roots show at once; `--verify-tags`
 builds with `-D hxmc.verify-tags`, which ends a program reading the tagged
 word of a type parameter's value as a reference

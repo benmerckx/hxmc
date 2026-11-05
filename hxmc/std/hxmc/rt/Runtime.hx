@@ -44,6 +44,8 @@ import hxmc.rt.ObjCExceptions;
 // foreign objects (reference-counted objects of other systems: Foreign), Objective-C's the first kind
 import hxmc.rt.Foreign;
 import hxmc.rt.ObjCKind;
+// COM's kind (Windows only: hxmc.ir.Com's calls and thunks)
+import hxmc.rt.ComKind;
 #if hxmc.census
 import hxmc.rt.Census;
 #end
@@ -52,6 +54,8 @@ import hxmc.rt.Census;
 import hxmc.rt.Interp;
 #end
 #end
+// what COM's operations throw on other systems than Windows (hxmc.ir.Com)
+import hxmc.com.ComException;
 // the threads' API (ThreadApi), mbedtls's and libuv's glue (Ssl, Uv; on
 // WebAssembly NoSsl, NoUv) are typed with hxmc.NativeThread, NativeSsl and
 // NativeUv, for the programs that use them

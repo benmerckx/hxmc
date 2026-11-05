@@ -54,7 +54,7 @@ class Corpus {
 	static final WASM_EXCLUDED = ["FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ForeignKinds" => "foreign objects: the native runtime only (docs/plans/foreign-objects.md)", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
 		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
-	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code"];
+	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code", "ComElsewhere" => "COM's operations where there is no COM (they throw)"];
 	// the cases iOS cannot run: they start other programs (the simulator's are
 	// macOS's, and an iPhone starts none)
 	public static final IOS_EXCLUDED = [for (n in ["FileTimes", "NetPollFds", "SysNatives"]) n => "starts other programs: iOS runs none"];
@@ -68,6 +68,10 @@ class Corpus {
 	// UIKit's targets: iOS, its simulator, Mac Catalyst (a macOS process, which runs macOS's cases too)
 	public static function uikit(t:String):Bool
 		return t.startsWith("ios") || t.startsWith("macos-catalyst");
+	// the cases of Windows only (COM: ole32 and oleaut32, the system's COM objects)
+	public static final WINDOWS_ONLY = [for (n in ["ComCalls", "ComObjects", "ComDemos", "ComThreads"]) n => "COM: Windows only"];
+	// the cases wine runs only with a display (DISPLAY: xvfb-run), and wine's fonts (fonts-wine): the file dialog's controls, DirectWrite's layouts
+	static final WINE_DISPLAY = ["ComDemos" => "the file dialog and DirectWrite: wine needs a display (xvfb-run) and its fonts"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
@@ -187,6 +191,7 @@ class Corpus {
 		var wasm = target != null && target.startsWith("wasm");
 		if (c.name.startsWith("reject-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "a compile error"} : rejectCase(c);
 		var t = target != null ? target : hostTarget();
+		if (!t.startsWith("windows") && WINDOWS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: WINDOWS_ONLY[c.name]};
 		var native = nativeInputs(c, t, d);
 		if (native.skip != null) return {name: c.name, status: "excluded", detail: native.skip};
 		if (wasm && WASM_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: WASM_EXCLUDED[c.name]};
@@ -198,6 +203,8 @@ class Corpus {
 		if (!uikit(t) && UIKIT_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: UIKIT_ONLY[c.name]};
 		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
+		if (t == "windows-x86_64" && stage == null && Sys.systemName() != "Windows" && Sys.getEnv("DISPLAY") == null && WINE_DISPLAY.exists(c.name))
+			return {name: c.name, status: "excluded", detail: WINE_DISPLAY[c.name]};
 		if (mirRun && MIR_RUN_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: MIR_RUN_EXCLUDED[c.name]};
 		if (mirRun) return mirRunCase(c, d, native.links.length > 0);
 		var hxb = d + "/" + (wasm ? 'prog-$target.hxb.zip' : "prog.hxb.zip");
