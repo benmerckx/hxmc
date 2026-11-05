@@ -267,7 +267,7 @@ class NativeZip {
 	// dst[dstPos, dstPos + dstLen): the number of bytes written, or -1 when the
 	// stream is invalid, truncated or does not fit
 	public static function inflateRaw(src:haxe.io.Bytes, srcPos:Int, srcLen:Int, dst:haxe.io.Bytes, dstPos:Int, dstLen:Int):Int {
-		if (srcPos < 0 || srcLen < 0 || srcPos + srcLen > src.length || dstPos < 0 || dstLen < 0 || dstPos + dstLen > dst.length)
+		if (srcPos < 0 || srcLen < 0 || srcPos > src.length - srcLen || dstPos < 0 || dstLen < 0 || dstPos > dst.length - dstLen)
 			outside();
 		// (no GC point from here: the buffers' addresses stay valid)
 		return inflate(Bytes.bytes(src.getData()).add(srcPos), srcLen, Bytes.bytes(dst.getData()).add(dstPos), dstLen);

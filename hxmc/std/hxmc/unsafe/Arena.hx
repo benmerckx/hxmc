@@ -135,7 +135,7 @@ abstract Arena(Ptr) {
 	// a copy of bytes [pos, pos + len) of b
 	public function copyBytes(b:haxe.io.Bytes, pos:Int = 0, len:Int = -1):Ptr<UInt8> {
 		if (len < 0) len = b.length - pos;
-		if (pos < 0 || len < 0 || pos + len > b.length) throw haxe.io.Error.OutsideBounds;
+		if (pos < 0 || len < 0 || pos > b.length - len) throw haxe.io.Error.OutsideBounds;
 		var p:Ptr<UInt8> = alloc(len, 1);
 		LibC.memcpy(p, Mem.addr(b.getData()).add(pos), (len : I64));
 		return p;

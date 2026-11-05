@@ -449,8 +449,9 @@ class Opt {
 							else if ((same || swapped) && isEqNe(fc[k]) && isEqNe(c.imm)) {
 								// x == y against y != x, x != y, ...
 								known = (fv[k] == (fc[k] == c.imm)) ? 1 : 2;
-							}
+							} else known = implied(fc[k], fa[k], fb[k], fv[k], c);
 						}
+						if (known == 0 && c.op == Cmp) known = impliedByShift(c, cfg, fc, fa, fb, fv);
 						// (a span's element check a loop proves: Mem.spanUlt)
 						if (known == 0 && c.op == Cmp && c.imm2 == MIns.SPAN_CHECK && inRange(c, cfg, fc, fa, fb, fv))
 							known = c.imm == (CULt : Int) ? 1 : 2;
@@ -494,6 +495,95 @@ class Opt {
 	var nullsDropped = false;
 	var cmpFolded = false; // (gvn: a comparison of constants)
 
+	// Whether a signed comparison of an I32 value with a constant, c, is
+	// decided by a fact on the same value and another constant (cond, a, b
+	// is v): the range the fact leaves the value against c's constant (1
+	// true, 2 false, 0 unknown). Haxe.io.Bytes' accesses test length >= n:
+	// after `if (b.length < 16) return`, every one of 2, 4 and 8 bytes is
+	// decided.
+	function implied(cond:Int, a:Int, b:Int, v:Bool, c:MIns):Int {
+		var fx = cmpConst(cond, a, b), cx = cmpConst(c.imm, c.a, c.b);
+		if (fx == null || cx == null || !sameVal(fx.x, cx.x)) return 0;
+		var lo = -2147483648.0, hi = 2147483647.0, k = fx.k;
+		switch [fx.cond, v] {
+			case [CLt, true] | [CGe, false]: hi = k - 1;
+			case [CLt, false] | [CGe, true]: lo = k;
+			case [CLe, true] | [CGt, false]: hi = k;
+			case [CLe, false] | [CGt, true]: lo = k + 1;
+			case [CEq, true] | [CNe, false]:
+				lo = k;
+				hi = k;
+			case _: return 0;
+		}
+		return decide(cx.cond, lo, hi, cx.k);
+	}
+
+	// x cond q for every x in lo .. hi: 1 true, 2 false, 0 either
+	static function decide(cond:Int, lo:Float, hi:Float, q:Float):Int
+		return switch cond {
+			case CLt: hi < q ? 1 : lo >= q ? 2 : 0;
+			case CLe: hi <= q ? 1 : lo > q ? 2 : 0;
+			case CGt: lo > q ? 1 : hi <= q ? 2 : 0;
+			case CGe: lo >= q ? 1 : hi < q ? 2 : 0;
+			case CEq: lo == q && hi == q ? 1 : q < lo || q > hi ? 2 : 0;
+			case CNe: q < lo || q > hi ? 1 : lo == q && hi == q ? 2 : 0;
+			case _: 0;
+		}
+
+	// Whether c, a comparison of m with a constant, is decided by m >= 2^j,
+	// which a fact x < m >> j for an x never negative gives (a loop to
+	// `b.length >> 2` from 0: inside it, b.length >= 4, so each 4-byte
+	// access's test of the length goes)
+	function impliedByShift(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Int {
+		var cx = cmpConst(c.imm, c.a, c.b);
+		if (cx == null) return 0;
+		for (k in 0...fc.length) {
+			var x = -1, y = -1;
+			switch [fc[k], fv[k]] {
+				case [CLt, true] | [CGe, false]:
+					x = fa[k];
+					y = fb[k];
+				case [CGt, true] | [CLe, false]:
+					x = fb[k];
+					y = fa[k];
+				case _:
+			}
+			if (y < 0 || x < 0) continue;
+			var sh = f.vals[y];
+			if (sh.op != Sar || sh.ty != I32 || !sameVal(sh.a, cx.x) || constOf(sh.b) < 1 || constOf(sh.b) > 30 || !nonNeg(x, cfg, 0)) continue;
+			var t = decide(cx.cond, Math.pow(2, constOf(sh.b)), 2147483647.0, cx.k);
+			if (t != 0) return t;
+		}
+		return 0;
+	}
+
+	// a signed comparison of an I32 value x with a constant k, as x cond k
+	// (the constant on the left: the condition swapped); null for any other
+	function cmpConst(cond:Int, a:Int, b:Int):Null<{cond:Int, x:Int, k:Float}> {
+		if (a < 0 || b < 0) return null;
+		switch cond {
+			case CLt | CLe | CGt | CGe | CEq | CNe:
+			case _: return null;
+		}
+		var ka = intConst(a), kb = intConst(b);
+		if (kb != null && ka == null && f.vals[a].ty == I32) return {cond: cond, x: a, k: kb};
+		if (ka != null && kb == null && f.vals[b].ty == I32)
+			return {cond: switch cond {
+				case CLt: CGt;
+				case CLe: CGe;
+				case CGt: CLt;
+				case CGe: CLe;
+				case c: c;
+			}, x: b, k: ka};
+		return null;
+	}
+
+	// an I32 constant's value (any sign), else null
+	function intConst(v:Int):Null<Float> {
+		var c = f.vals[v];
+		return c.op == Const && c.ty == I32 && c.sym == null ? (c.imm : Float) : null;
+	}
+
 	// ---- a span's element checks a loop proves (condProp)
 
 	// Whether a span's element check, ult(i, n) or uge(i, n) (MIns.SPAN_CHECK),
@@ -501,8 +591,8 @@ class Opt {
 	// (directly, or i < x and x <= n, or i <= x and x < n: a loop's bound
 	// tested against the span's length), and i is never negative (nonNeg),
 	// so i < n unsigned too; or i is x & m (a table's index, m >= 0) and n a
-	// constant above m or tested against one. Only spans' checks: code
-	// without spans compiles as before.
+	// constant above m or tested against one. Only the marked checks: spans'
+	// elements and haxe.io.Bytes' accesses (Mem.spanUlt).
 	function inRange(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Bool {
 		if (c.imm != (CULt : Int) && c.imm != (CUGe : Int)) return false;
 		var i = c.a, n = c.b;
@@ -536,6 +626,7 @@ class Opt {
 			if (lt) break;
 		}
 		if (lt && nonNeg(i, cfg, 0)) return true;
+		if (strided(i, n, lx, ly, strict, cfg)) return true;
 		// (a small block's index: x * s + k with constants s, k >= 0, x never
 		// negative and below a constant, against a length of a constant or
 		// tested against one: `if (s.length < 64) return; for (c in 0...8)
@@ -558,9 +649,54 @@ class Opt {
 		return false;
 	}
 
+	// (a record's index: x * s + k, or x << j + k, s = 2^j, against m - c,
+	// constants k, c >= 0 with k + c < s, x never negative and below m >> j:
+	// then m >= s, and x * s + k <= m - s + k < m - c; haxe.io.Bytes'
+	// `for (i in 0...b.length >> 2) b.getInt32(i * 4)`)
+	function strided(i:Int, n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>, cfg:Cfg<MBlock>):Bool {
+		var v = f.vals[i], k = 0;
+		if (v.op == Add && v.ty == I32) {
+			k = constOf(v.b);
+			if (k < 0) return false;
+			v = f.vals[v.a];
+		}
+		var x = -1, j = -1;
+		switch v.op {
+			case Shl if (v.ty == I32 && constOf(v.b) >= 1 && constOf(v.b) <= 30):
+				x = v.a;
+				j = constOf(v.b);
+			case Mul if (v.ty == I32):
+				var sc = constOf(v.b) > 0 ? constOf(v.b) : constOf(v.a);
+				x = constOf(v.b) > 0 ? v.a : v.b;
+				for (t in 1...31)
+					if (sc == 1 << t) j = t;
+			case _:
+		}
+		if (j < 0) return false;
+		var m = n, c = 0, nv = f.vals[n];
+		if (nv.op == Sub && nv.ty == I32 && constOf(nv.b) >= 0) {
+			m = nv.a;
+			c = constOf(nv.b);
+		}
+		if (k + c >= 1 << j || !nonNeg(x, cfg, 0)) return false;
+		for (q in 0...lx.length)
+			if (lx[q] == x && strict[q]) {
+				var y = f.vals[ly[q]];
+				if (y.op == Sar && y.ty == I32 && y.a == m && constOf(y.b) == j) return true;
+			}
+		return false;
+	}
+
 	// the least value n (an I32) has where the facts hold: a constant, or a
-	// constant c with c <= n (c < n: c + 1); -1: none known
-	function lowerBound(n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>):Float {
+	// constant c with c <= n (c < n: c + 1), or m - k for a constant k >= 0
+	// with m's least value at least k (no wrap: haxe.io.Bytes' length - 3 of a
+	// 4-byte access); -1: none known
+	function lowerBound(n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>, depth = 0):Float {
+		var x = f.vals[n];
+		if (x.op == Sub && x.ty == I32 && constOf(x.b) >= 0 && depth < 2) {
+			var m = lowerBound(x.a, lx, ly, strict, depth + 1);
+			if (m >= constOf(x.b)) return m - constOf(x.b);
+		}
 		var best:Float = constOf(n);
 		for (k in 0...lx.length)
 			if (ly[k] == n) {
@@ -595,6 +731,9 @@ class Opt {
 					case Mul: u * k;
 					case _: u * Math.pow(2, k);
 				}
+			// (x & m for a constant m >= 0: m at most, x of any sign)
+			case And if (constOf(x.b) >= 0 || constOf(x.a) >= 0):
+				r = constOf(x.b) >= 0 ? constOf(x.b) : constOf(x.a);
 			case _:
 				if (!nonNeg(v, cfg, 0)) return -1;
 				for (k in 0...lx.length)

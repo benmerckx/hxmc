@@ -301,7 +301,7 @@ class WinSys {
 	// Reads and writes of pipes and consoles block: with other threads they go
 	// through a malloc'ed buffer in a safe region (a collection may move the Bytes)
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
 			var region = Leaf.rt_blocking_enter();
@@ -315,7 +315,7 @@ class WinSys {
 	}
 
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
 			LibC.memcpy(tmp, Bytes.bytes(b).add(pos), len);

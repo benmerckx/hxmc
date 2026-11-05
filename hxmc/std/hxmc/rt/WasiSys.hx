@@ -251,13 +251,13 @@ class WasiSys {
 	}
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (fd == 0) Wasi.flush();
 		return rw(false, fd, Bytes.bytes(b).add(pos), len);
 	}
 
 	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos + len > Bytes.len(b)) outside();
+		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (fd == 1 || fd == 2) {
 			Wasi.write(fd, Bytes.bytes(b).add(pos), len);
 			return len;

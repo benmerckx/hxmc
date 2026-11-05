@@ -55,6 +55,11 @@ extern class Mem {
 	static function stack(bytes:Int):Ptr;
 	// unsigned comparison
 	static function ult(a:I64, b:I64):Bool;
+	// a range check of an index: i < n unsigned (32 bits), marked so that the
+	// optimizer drops it where the code around proves it (Opt.condProp's
+	// inRange: a loop's counter, a constant block x * s + k, a masked table
+	// index); a span's element check and haxe.io.Bytes' accesses
+	static function spanUlt(i:Int, n:Int):Bool;
 	// unsigned division and remainder (b not 0: as I64's, a division by 0 traps)
 	static function udiv(a:I64, b:I64):I64;
 	static function urem(a:I64, b:I64):I64;

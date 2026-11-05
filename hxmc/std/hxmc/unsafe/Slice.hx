@@ -25,7 +25,7 @@ abstract Slice<T>(SliceData) {
 
 	// the elements pos .. pos + len - 1, the same memory
 	public inline function sub(pos:Int, len:Int):Slice<T> {
-		if (pos < 0 || len < 0 || pos + len > this.length) throw "Slice.sub out of range";
+		if (pos < 0 || len < 0 || pos > this.length - len) throw "Slice.sub out of range";
 		return new Slice((this.ptr : Ptr<T>).offset(pos), len);
 	}
 

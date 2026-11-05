@@ -445,6 +445,52 @@ lowers to plain loads and stores; references keep the write barrier.
   generation (`Lower.bounds`). The test is IR, so the optimizer drops a test
   a dominating one decides. The std's own loops use `unsafeGet`/`unsafeSet`.
 
+## Bytes
+
+`haxe.io.Bytes` (`hxmc/std/haxe/io/Bytes.hx`) tests the range of every
+access, reads as writes, on every target and in the Mir interpreter: out of
+range, `get`, `getUInt16`, `getInt32`, `getInt64`, `getFloat`,
+`getDouble`, their setters, `sub`, `getString`, `blit` and `fill` throw
+`haxe.io.Error.OutsideBounds`. That is what Eval's multi-byte reads and
+HashLink's writes throw; upstream leaves reads out of range unspecified
+(HashLink's give 0, Eval's `get` null). A Bytes' data lies between its
+header and the next object, so an untested read would hand out either.
+`BytesInput`, `BytesBuffer`, `BytesOutput` and the typed arrays
+(`UInt8Array`, `Float32Array`, ...) read and write through these, and
+their ranges are tested without wrapping (`pos > length - len`: `pos +
+len` near 2^31 is negative).
+
+The test is one unsigned comparison: `pos` against `length` for one byte,
+against `length - (n - 1)` after `length >= n` for n bytes, the test of the
+length shared by every access of that size, read or write. Its comparison
+is marked as a span's element check is (`Mem.spanUlt`), and the optimizer
+drops it where the code around proves it (`Opt.condProp`): an index below
+the length in a loop counting from 0 (`for (i in 0...b.length) b.get(i)`,
+or below a bound tested against the length), accesses at constant offsets
+after a test of the length (`if (b.length < 16) return;` then any access of
+up to 8 bytes inside the first 16), and a table's masked index times the
+element size (`t.getDouble((x & 0xFF) * 8)` after `t.length < 2048`). A
+call between two accesses reloads the length, and the second one keeps its
+test. `BytesReadLoops` names the tests left (`// bytes-checks:`),
+`BytesBounds` the failures. A loop over 4-byte words
+(`for (i in 0...b.length >> 2) b.getInt32(i * 4)`) is proved too. Measured
+(`hxmc/test/micro/BytesReadBench.hx`, `make bench-simd`; the fastest of 5
+runs): a byte sum, the word loop and a table of Doubles cost nothing
+measurable, natively or on wasm32; where nothing proves the index (a
+cursor over records, a resize's gathers, a loop to an `n` not tested
+against the lengths) each access is one compare and branch more: the
+record parse +25% natively and +45% on wasm32, `resize-bytes` +19% and
++21%, `ycc-bytes` +3% and +13%; the `span` and `simd` columns do not
+change.
+
+Neither `-D hxmc.native-array-outofbounds` nor `-D hxmc.span-checks`
+changes these tests. Reads without a test, for code that proved its range
+itself: `Bytes.fastGet(b.getData(), i)` (upstream's, unspecified out of
+range: the BytesData's indexing, a NativeArray's, which
+`-D hxmc.native-array-outofbounds` decides), a span in a kernel
+(`ReadOnlySpan.ofBytes`, whose element checks `-D hxmc.span-checks=0`
+drops), or the address in `@:hxmc.unsafe` code (`hxmc.unsafe.BytesPtr`).
+
 ## Values of type parameters
 
 A value of a type parameter is a tagged 64-bit word (issue #127,

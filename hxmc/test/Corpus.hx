@@ -267,10 +267,14 @@ class Corpus {
 			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
 			if (live != null) return {name: c.name, status: "live", detail: live};
 		}
-		var checks = caseLine(src, "span-checks");
-		if (checks != null && target == null && libc == null) {
-			var bad = spanChecks(d, cmd.concat(defines), checks);
-			if (bad != null) return {name: c.name, status: "span-checks", detail: bad};
+		for (kind in ["span-checks", "bytes-checks"]) {
+			var checks = caseLine(src, kind);
+			// (Bytes' tests: of the default build; -D hxmc.verify-tags tests the
+			// references read between two accesses, which reloads the length)
+			if (checks != null && target == null && libc == null && (kind == "span-checks" || !verifyTags)) {
+				var bad = spanChecks(d, cmd.concat(defines), checks, kind);
+				if (bad != null) return {name: c.name, status: kind, detail: bad};
+			}
 		}
 		// (a JNI case: its Java classes, and the glue of its manifest, compiled)
 		if (JNI.exists(c.name)) {
@@ -341,15 +345,18 @@ class Corpus {
 	// those its loop proves), counted in the Mir HXMC_DUMP prints (the calls
 	// of SpanSupport.outOfRange), from a build that compiles every function
 	// (a cache of its own): null when each count is the one named, else why
-	// not. (cmd: the case's build)
-	static function spanChecks(d:String, cmd:Array<String>, spec:String):Null<String> {
+	// not. A `// bytes-checks:` line: the same of haxe.io.Bytes' accesses
+	// (the loads of haxe.io.Error.OutsideBounds they throw: one per access
+	// whose test is left). (cmd: the case's build)
+	static function spanChecks(d:String, cmd:Array<String>, spec:String, kind:String):Null<String> {
+		var mark = kind == "span-checks" ? "call F_hxmc_SpanSupport_outOfRange" : "<haxe.io.Error.OutsideBounds> = load";
 		var want = new Map<String, Int>();
 		for (w in spec.split(" "))
 			if (w != "") {
 				var kv = w.split("=");
 				want.set("F_" + kv[0].replace(".", "_"), Std.parseInt(kv[1]));
 			}
-		var cache = d + "/span-checks-cache", out = d + "/span-checks";
+		var cache = d + "/" + kind + "-cache", out = d + "/" + kind;
 		rmrf(cache);
 		var args = cmd.copy();
 		args[1] = out;
@@ -362,7 +369,7 @@ class Corpus {
 			if (l.startsWith("func ")) {
 				fn = l.substr(5, l.indexOf("(") - 5);
 				got.set(fn, 0);
-			} else if (fn != null && l.indexOf("call F_hxmc_SpanSupport_outOfRange") >= 0) got.set(fn, got.get(fn) + 1);
+			} else if (fn != null && l.indexOf(mark) >= 0) got.set(fn, got.get(fn) + 1);
 		}
 		var bad = [for (k => n in want) if (got.get(k) != n) '$k: $n checks expected, ${got.exists(k) ? Std.string(got.get(k)) : "no code"} found'];
 		bad.sort(compare);
