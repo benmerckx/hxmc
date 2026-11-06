@@ -841,6 +841,13 @@ class Fusion {
 			}
 			return b;
 		}
+		function canFuseVarInit(v:TVar, init:Null<TExpr>, eAssign:TExpr):Bool {
+			return init == null
+				|| config.localDce
+				&& !hasVarFlag(v, VCaptured)
+				&& !hasSideEffect(init)
+				&& !InterferenceReport.hasVarRead(InterferenceReport.fromTexpr(eAssign), v);
+		}
 		// port: upstream recurses over OCaml lists (`first :: rest`, `first :: acc`); slicing and
 		// prepending arrays at each step was quadratic. Same steps here as a loop: the
 		// accumulator is reversed (head at the end) and `rest` is arr[restOff..].
@@ -867,9 +874,9 @@ class Fusion {
 				}
 				var handled = false;
 				switch first.eexpr {
-					case TVar(v1, null) if (restLength > 0):
+					case TVar(v1, init) if (restLength > 0):
 						switch rest0().eexpr {
-							case TBinop(OpAssign, {eexpr: TLocal(v2)}, e2) if (v1 == v2):
+							case TBinop(OpAssign, {eexpr: TLocal(v2)}, e2) if (v1 == v2 && canFuseVarInit(v1, init, e2)):
 								state.markChanged();
 								state.decWrites(v1);
 								next(withExpr(first, TVar(v1, e2)), null, 1);
