@@ -392,7 +392,7 @@ class AbstractCast {
 							if (cf == null) e; else {
 								function call():TExpr return filters.exception.ExceptionFunctions.makeStaticCall(scom, c, cf, vector(e1),
 									scom.basic.tstring, e.epos);
-								if (!core.TFunctions.isNullable(e1.etype)) call();
+								if (core.TFunctions.isExplicitNull(a.aThis) || !core.TFunctions.isNullable(e1.etype)) call();
 								else {
 									var p = e.epos;
 									var chkNull = core.TFunctions.mk(TBinop(OpEq, e1, core.TFunctions.mk(TConst(TNull), e1.etype, p)),

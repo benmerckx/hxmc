@@ -1572,7 +1572,8 @@ class Typer {
 			case MetaTag.ToString:
 				var e = expression();
 				switch follow(e.etype) {
-					case TAbstract(a, _) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): callToString(ctx, e);
+					case TAbstract(a, _) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")):
+						callToString(ctx, e, false, core.TFunctions.isExplicitNull(a.aThis));
 					case _: e;
 				}
 			case MetaTag.Markup: raiseTypingError("Markup literals must be processed by a macro", p);
@@ -1704,7 +1705,8 @@ class Typer {
 						var information = typeExpr(ctx, infos, WithTypeTools.value);
 						switch follow(value.etype) {
 							case TAbstract(a,
-								_) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): value = callToString(ctx, value);
+								_) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): value = callToString(ctx, value, false,
+								core.TFunctions.isExplicitNull(a.aThis));
 							case _:
 						}
 						mk(TCall(mk(TIdent("`trace"), tDynamic, p), vector(value, information)), ctx.t.tvoid, p);
