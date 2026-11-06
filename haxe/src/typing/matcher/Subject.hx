@@ -61,10 +61,24 @@ class Subject {
 	public function isNullable():Bool return isExplicitNullOrAbstractOverThat(e.etype);
 
 	// How array patterns read this subject, looked up when they first do. They are only typed against values which
-	// can be accessed by index (see ExprToPattern), but an element of an abstract has the type of its @:arrayAccess
-	// getter here, which can differ from the `from` type the element's own patterns were typed against.
+	// can be accessed by index (see ExprToPattern), but the subject's own type can differ from the one its patterns
+	// were typed against:
+	// - an element of a Dynamic value, or an enum argument read through a cast, is a monomorph, which this unifies
+	//   with an array like the typer does for `e[i]` (Calls.array_access);
+	// - an element of an abstract has the type of its @:arrayAccess getter, which can differ from the `from` type.
 	public function getArrayAccess(ctx:Typer):ArrayAccessData {
 		if (arrayAccess == null) {
+			switch follow(e.etype) {
+				case TMono(_):
+					try context.Typecore.unifyRaise(e.etype, ctx.t.tarray(context.Typecore.spawnMonomorph(ctx, e.epos)), e.epos)
+					catch (err:Dynamic) {
+						switch err {
+							case(core.ds.ExceptionTools.typing(_) => Some({errMessage: Unify(_)})):
+							case _: throw err;
+						}
+					}
+				case _:
+			}
 			var aa = ExprToPattern.getArrayAccess(ctx, e.etype, e.epos);
 			arrayAccess = aa != null ? aa : ExprToPattern.noArrayAccess(e.etype, e.epos);
 		}
@@ -132,6 +146,9 @@ class Subject {
 				case TAbstract(a, pl) if (!core.Meta.has(MetaTag.CoreType, a.aMeta)): loop(deep, core.Abstract.getUnderlyingType(a, pl));
 				case TInst({clPath: {pack: [], name: "String"}},
 					_) | TInst({clKind: KTypeParameter(_)}, _): {kind: SKValue, finiteness: Infinite};
+				// Array patterns replace this with the subject's own access below, a switch without cases with SKValue, and
+				// other constructors don't match this kind (see TexprConverter.unmatched_ctors): the access of `t` is never
+				// read.
 				case t = TInst({clPath: {pack: [], name: "Array"}}, _): {kind: SKLength(typing.ArrayAccess.getArrayAccess(ctx, t, eSwitch.epos)), finiteness: Infinite};
 				// port: `constructors` is still empty here and the constructors are distinct, so they are pushed without add's linear search.
 				case TEnum(en, _):
