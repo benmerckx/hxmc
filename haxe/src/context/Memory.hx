@@ -16,11 +16,6 @@ import hxmc.NativeGc;
 // (Objsize below): the hxmc build walks its own heap (`hxmc.NativeGc.objsize`,
 // hxmc/std/hxmc/rt/Gc.hx: the bytes of the reachable heap objects, headers
 // included), other hosts report 0 and never "reach" an object.
-enum MemoryRequest {
-	MCache;
-	MContext(sign:String);
-	MModule(sign:String, path:GlobalTypePath);
-}
 
 // port: Objsize.info (data/headers/depth are reported as one byte count)
 class ObjsizeInfo {

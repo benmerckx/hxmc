@@ -666,12 +666,8 @@ class Genjson {
 
 	// module
 
-	public static function generateModule(modules:core.ds.OcamlHashtbl<GlobalTypePath, compiler.hxb.HxbData.ModuleCache>,
-			findModule:GlobalTypePath->ModuleDef, m:ModuleDef):JsonValue
-		return generateModuleSummary(summarizeModule(modules, findModule, m));
-
-	// port: not upstream: what generate_module reads of the cache (the dependencies'
-	// ... signatures, the dependents), in its order
+	// port: generate_module, as a summary (what it reads of the cache: the dependencies'
+	// ... signatures, the dependents) and the summary's JSON (generateModuleSummary)
 	public static function summarizeModule(modules:core.ds.OcamlHashtbl<GlobalTypePath, compiler.hxb.HxbData.ModuleCache>,
 			findModule:GlobalTypePath->ModuleDef, m:ModuleDef):ModuleSummary {
 		// port: PMap.fold visits m_deps in increasing key order and conses: decreasing key order
@@ -690,7 +686,6 @@ class Genjson {
 		return {module: m, dependencies: dependencies, dependents: dependents};
 	}
 
-	// port: generate_module's JSON, of the summary
 	public static function generateModuleSummary(s:ModuleSummary):JsonValue {
 		var m = s.module;
 		function ps(l:Array<{path:GlobalTypePath, sign:String}>):JsonValue

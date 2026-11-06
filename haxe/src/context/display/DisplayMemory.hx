@@ -16,16 +16,8 @@ import hxmc.NativeGc;
 
 // port: the sizes are those Memory.Objsize measures on the host (see Memory.hx).
 class DisplayMemory {
-	// port: get_memory_json, as the JSON of a report (memory), measured by cacheMemory,
-	// ... contextMemory and moduleMemory in its order
-	public static function getMemoryJson(cs:Cache, mreq:MemoryRequest):JsonValue {
-		return switch mreq {
-			case MCache: cacheMemoryJson(cacheMemory(cs));
-			case MContext(sign): contextMemoryJson(contextMemory(cs, sign));
-			case MModule(sign, path): moduleMemoryJson(moduleMemory(cs, sign, path));
-		}
-	}
-
+	// port: get_memory_json, as a report (cacheMemory, contextMemory, moduleMemory, measured in
+	// ... its order) and the report's JSON (cacheMemoryJson, ...)
 	public static function cacheMemory(cs:Cache):CacheMemory {
 		var size = Objsize.heapBytes();
 		var cacheMem = cs.getPointers();

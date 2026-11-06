@@ -106,8 +106,8 @@ A function of the arguments and the cache:
 class CompilerInstance {
 	function new(args:RequestArgs, cache:CompilerCache); // later: a CompilerConfig
 	function build(io:CompilerIoData):BuildResult; // {code, messages}; later: ?options:{clean:Bool}
-	final display:DisplayServices; // implements DisplayApi: completion, hover, definition, ...
-	final server:ServerServices; // implements ServerApi: server/*, typer/compiledTypes
+	final display:DisplayServices; // display/*: completion, hover, definition, ...
+	final server:ServerServices; // server/*, typer/compiledTypes
 	function request<T>(start:CommonContext->RequestStep<T>, ?env:RequestEnv):RequestOutcome<T>; // what the methods run
 }
 ```
@@ -121,8 +121,8 @@ class CompilerInstance {
   Running them once and cloning the context after `CInitMacrosDone` is a
   later optimization, the same deep cloning as
   HaxeFoundation/haxe#11519.
-- **The protocol's methods, typed** (`compiler.DisplayApi`/`DisplayServices`
-  for `display/*`, `compiler.ServerApi`/`ServerServices` for `server/*`
+- **The protocol's methods, typed** (`compiler.DisplayServices`
+  for `display/*`, `compiler.ServerServices` for `server/*`
   and `typer/compiledTypes`): one method per method of the protocol. The
   parameters are the std's (`haxe.display`), plus `fileContents`, which
   the compiler reads for every request naming a file. The results are the

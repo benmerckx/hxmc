@@ -211,11 +211,6 @@ class Diagnostics {
 		return dctx;
 	}
 
-	public static function print(com:CommonContext):String {
-		var dctx = prepare(com);
-		return core.Json.stringOfJson(DiagnosticsPrinter.jsonOfDiagnostics(dctx));
-	}
-
 	public static function run(com:CommonContext):DiagnosticsContext {
 		var dctx = prepare(com);
 		return dctx;

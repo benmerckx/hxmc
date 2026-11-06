@@ -13,6 +13,10 @@ import core.json.Genjson;
 import core.json.Genjson.*;
 import core.json.JsonRpc;
 import core.json.JsonrpcHandler;
+import haxe.display.Display.CompletionParams;
+import haxe.display.Display.FindReferencesKind;
+import haxe.display.Display.FindReferencesParams;
+import haxe.display.Display.PositionParams;
 import compiler.CompilationCache;
 import compiler.DisplayProcessingGlobals;
 import compiler.io.CompilerIo;
@@ -37,15 +41,9 @@ class RequestParams {
 	public function new(jsonrpc:JsonrpcHandler)
 		this.jsonrpc = jsonrpc;
 
-	// port: set_display_file's reading of the request's file, contents, offset and file
-	// ... contents, in its order (so a bad request fails as upstream's does), as the
-	// ... parameters of DisplayRequests (which sets them as set_display_file does)
-	public function fileParams(requiresOffset:Bool):{
-		file:Null<haxe.display.FsPath>,
-		?contents:String,
-		offset:Int,
-		?fileContents:Array<{file:haxe.display.FsPath, ?contents:String}>
-	} {
+	// port: set_display_file's reading of file, contents, offset and fileContents, in its
+	// ... order (a bad request fails as upstream's does)
+	public function fileParams(requiresOffset:Bool):PositionParams & DisplayRequests.FileContentsParams {
 		var file:Null<String> = jsonrpc.getOptParam(() -> jsonrpc.getStringParam("file"), null);
 		var contents:Null<String> = jsonrpc.getOptParam(function():Null<String> {
 			var s = jsonrpc.getStringParam("contents");
@@ -74,20 +72,54 @@ class RequestParams {
 		};
 	}
 
-	public function position():haxe.display.Display.PositionParams & DisplayRequests.FileContentsParams {
+	public function position():PositionParams & DisplayRequests.FileContentsParams
+		return fileParams(true);
+
+	public function fileInput():DisplayRequests.FileInputParams
+		return fileParams(false);
+
+	/** completion's and signature help's: wasAutoTriggered first */
+	public function triggered():CompletionParams & DisplayRequests.FileContentsParams {
+		var wasAutoTriggered = jsonrpc.getBoolParam("wasAutoTriggered");
 		var p = fileParams(true);
 		return {
 			file: p.file,
 			contents: p.contents,
 			offset: p.offset,
-			fileContents: p.fileContents
+			fileContents: p.fileContents,
+			wasAutoTriggered: wasAutoTriggered
 		};
 	}
 
-	public function fileInput():DisplayRequests.FileInputParams {
-		var p = fileParams(false);
-		return {file: p.file, contents: p.contents, fileContents: p.fileContents};
+	/** references': the kind after the file */
+	public function references():FindReferencesParams & DisplayRequests.FileContentsParams {
+		var p = fileParams(true);
+		var kind = jsonrpc.getOptParam(() -> jsonrpc.getStringParam("kind"), "normal");
+		return {
+			file: p.file,
+			contents: p.contents,
+			offset: p.offset,
+			fileContents: p.fileContents,
+			kind: (cast kind : FindReferencesKind)
+		};
 	}
+
+	public function string(name:String):String
+		return jsonrpc.getStringParam(name);
+
+	// (the server/* methods': their fields are final)
+	public function context():haxe.display.Server.ContextParams
+		return {signature: string("signature")};
+
+	public function module():haxe.display.Server.ModuleParams
+		return {signature: string("signature"), path: string("path")};
+
+	public function type():haxe.display.Server.TypeParams
+		return {signature: string("signature"), modulePath: string("modulePath"), typeName: string("typeName")};
+
+	/** display/metadata's and display/defines' */
+	public function origins():{compiler:Bool, user:Bool}
+		return {compiler: jsonrpc.getBoolParam("compiler"), user: jsonrpc.getBoolParam("user")};
 }
 
 class HxbReaderApiCom implements compiler.hxb.HxbReaderApi {
@@ -195,30 +227,14 @@ class DisplayJson {
 
 	public static function sendJson(io:CompilerIoData, json:JsonValue):Void sendString(io, Json.stringOfJson(json));
 
-	/*
-		send_string_raise writes the string to io and then raises JsonCompleted.
-		JsonCompleted is a control-flow exception signaling that a JSON-RPC response has been
-		sent and no further output should be produced. It is caught by catch_completion_and_exit
-		which calls finalize and exits cleanly.
-		Raising is necessary for call-sites that send their response from within compilation
-		(display output handlers, deferred callbacks, flush_context), where we need to abort
-		further processing once the response is sent.
-	*/
-	public static function sendStringRaise<R>(io:CompilerIoData, j:String):R {
-		sendString(io, j);
-		throw new JsonCompleted();
-	}
-
-	public static function sendJsonRaise<R>(io:CompilerIoData, json:JsonValue):R return sendStringRaise(io, Json.stringOfJson(json));
-
 	public static function findModule(typingMode:compiler.hxb.HxbData.TypingMode, com:CommonContext, cc:ContextCache,
 			path:GlobalTypePath):ModuleDef {
 		return new HxbReaderApiCom(typingMode, com, cc).findModule(path);
 	}
 
-	// port: DisplayJson.handler, as a dispatcher: each method reads its parameters (into the
-	// ... std's types), calls the typed method of the CompilerInstance (compiler.DisplayApi,
-	// ... compiler.ServerApi) and gives the JSON of its value
+	// port: DisplayJson.handler, as a dispatcher: each method decodes its parameters (the
+	// ... std's types), calls the instance's typed method (DisplayServices, ServerServices) and
+	// ... encodes its value
 	public static final handler:OcamlHashtbl<String, HandlerContext->JsonValue> = makeHandler();
 
 	static function makeHandler():OcamlHashtbl<String, HandlerContext->JsonValue> {
@@ -253,7 +269,7 @@ class DisplayJson {
 							exclude: exclude
 						};
 					});
-					return compiler.DisplayServices.Services.answer(hctx.instance, hctx.env, "initialize", function(com) {
+					return hctx.instance.answer(function(com) {
 						supportsResolve = p.supportsResolve;
 						if (p.maxCompletionItems != null) ServerConfig.maxCompletionItems = p.maxCompletionItems;
 						if (p.staleContextMaxAge != null) ServerConfig.staleContextMaxAgeSeconds = p.staleContextMaxAge;
@@ -274,7 +290,7 @@ class DisplayJson {
 							])),
 							kv("protocolVersion", jobject([kv("major", jint(0)), kv("minor", jint(5)), kv("patch", jint(0))]))
 						]));
-					});
+					}, hctx.env);
 				}
 			},
 			{
@@ -282,29 +298,18 @@ class DisplayJson {
 				name: "display/completionItem/resolve",
 				f: function(hctx) {
 					var i = hctx.params(() -> hctx.jsonrpc.getIntParam("index"));
-					return compiler.DisplayServices.Services.answer(hctx.instance, hctx.env, "display/completionItem/resolve", function(_) {
+					return hctx.instance.answer(function(_) {
 						if (i < 0 || i >= DisplayException.lastCompletionResult.length) throw new compiler.CompilerInstance.ServiceError('Invalid index: $i');
 						var item = DisplayException.lastCompletionResult[i];
 						var ctx = Genjson.createFullConfig();
 						return Answer(jobject([kv("item", core.display.CompletionItem.toJson(ctx, null, item))]));
-					});
+					}, hctx.env);
 				}
 			},
 			{
 				name: "display/completion",
 				f: function(hctx) {
-					var p = hctx.params(function():haxe.display.Display.CompletionParams & DisplayRequests.FileContentsParams {
-						var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
-						var p = hctx.decode.fileParams(true);
-						return {
-							file: p.file,
-							contents: p.contents,
-							offset: p.offset,
-							fileContents: p.fileContents,
-							wasAutoTriggered: wasAutoTriggered
-						};
-					});
-					var c = hctx.display.completion(p);
+					var c = hctx.display.completion(hctx.params(hctx.decode.triggered));
 					if (c == null) throw new compiler.CompilerInstance.ServiceError("No completion point");
 					return DisplayException.resultToJson(DRFields(c.fields, c.resolvable));
 				}
@@ -331,20 +336,7 @@ class DisplayJson {
 			},
 			{
 				name: "display/references",
-				f: function(hctx) {
-					var p = hctx.params(function():haxe.display.Display.FindReferencesParams & DisplayRequests.FileContentsParams {
-						var p = hctx.decode.fileParams(true);
-						var kind = hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getStringParam("kind"), "normal");
-						return {
-							file: p.file,
-							contents: p.contents,
-							offset: p.offset,
-							fileContents: p.fileContents,
-							kind: (cast kind : haxe.display.Display.FindReferencesKind)
-						};
-					});
-					return positions(hctx.display.references(p));
-				}
+				f: hctx -> positions(hctx.display.references(hctx.params(hctx.decode.references)))
 			},
 			{
 				name: "display/hover",
@@ -360,30 +352,17 @@ class DisplayJson {
 			},
 			{
 				name: "display/workspaceSymbols",
-				f: hctx -> symbols(hctx.display.workspaceSymbols(hctx.params(function():haxe.display.Display.WorkspaceSymbolsParams return {filter: hctx.jsonrpc.getStringParam("filter")})))
+				f: hctx -> symbols(hctx.display.workspaceSymbols(hctx.params(() -> {filter: hctx.decode.string("filter")})))
 			},
 			{
 				name: "display/signatureHelp",
-				f: function(hctx) {
-					var p = hctx.params(function():haxe.display.Display.SignatureHelpParams & DisplayRequests.FileContentsParams {
-						var wasAutoTriggered = hctx.jsonrpc.getBoolParam("wasAutoTriggered");
-						var p = hctx.decode.fileParams(true);
-						return {
-							file: p.file,
-							contents: p.contents,
-							offset: p.offset,
-							fileContents: p.fileContents,
-							wasAutoTriggered: wasAutoTriggered
-						};
-					});
-					return orNull(hctx.display.signatureHelp(p),
-						s -> DisplayException.resultToJson(DRSignatures(s.signatures, s.activeSignature, s.activeParameter, s.kind)));
-				}
+				f: hctx -> orNull(hctx.display.signatureHelp(hctx.params(hctx.decode.triggered)),
+					s -> DisplayException.resultToJson(DRSignatures(s.signatures, s.activeSignature, s.activeParameter, s.kind)))
 			},
 			{
 				name: "display/metadata",
 				f: function(hctx) {
-					var p = hctx.params(function():{compiler:Bool, user:Bool} return {compiler: hctx.jsonrpc.getBoolParam("compiler"), user: hctx.jsonrpc.getBoolParam("user")});
+					var p = hctx.params(hctx.decode.origins);
 					return orNull(hctx.display.metadata(p), all -> jarray(all.map(function(m) {
 						var data = m.info;
 						return jobject([
@@ -406,7 +385,7 @@ class DisplayJson {
 			{
 				name: "display/defines",
 				f: function(hctx) {
-					var p = hctx.params(function():{compiler:Bool, user:Bool} return {compiler: hctx.jsonrpc.getBoolParam("compiler"), user: hctx.jsonrpc.getBoolParam("user")});
+					var p = hctx.params(hctx.decode.origins);
 					return orNull(hctx.display.defines(p), all -> jarray(all.map(function(d) {
 						var data = d.info;
 						return jobject([
@@ -443,7 +422,7 @@ class DisplayJson {
 			{
 				name: "server/setCwd",
 				f: function(hctx) {
-					hctx.server.setCwd(hctx.params(function():haxe.display.Server.SetCwdParams return {dir: hctx.jsonrpc.getStringParam("dir")}));
+					hctx.server.setCwd(hctx.params(() -> {dir: hctx.decode.string("dir")}));
 					return jnull;
 				}
 			},
@@ -467,38 +446,28 @@ class DisplayJson {
 			},
 			{
 				name: "server/modules",
-				f: hctx -> jarray(hctx.server.modules(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")})).map(jstring))
+				f: hctx -> jarray(hctx.server.modules(hctx.params(hctx.decode.context)).map(jstring))
 			},
 			{
 				name: "server/module",
-				f: hctx -> Genjson.generateModuleSummary(hctx.server.module(hctx.params(function():haxe.display.Server.ModuleParams return {
-					signature: hctx.jsonrpc.getStringParam("signature"),
-					path: hctx.jsonrpc.getStringParam("path")
-				})))
+				f: hctx -> Genjson.generateModuleSummary(hctx.server.module(hctx.params(hctx.decode.module)))
 			},
 			{
 				name: "server/type",
-				f: hctx -> Genjson.generateModuleType(Genjson.createFullConfig(), hctx.server.type(hctx.params(function():haxe.display.Server.TypeParams return {
-					signature: hctx.jsonrpc.getStringParam("signature"),
-					modulePath: hctx.jsonrpc.getStringParam("modulePath"),
-					typeName: hctx.jsonrpc.getStringParam("typeName")
-				})))
+				f: hctx -> Genjson.generateModuleType(Genjson.createFullConfig(), hctx.server.type(hctx.params(hctx.decode.type)))
 			},
 			{
 				name: "server/typeContexts",
-				f: hctx -> contexts(hctx.server.typeContexts(hctx.params(function():{modulePath:String, typeName:String} return {
-					modulePath: hctx.jsonrpc.getStringParam("modulePath"),
-					typeName: hctx.jsonrpc.getStringParam("typeName")
-				})))
+				f: hctx -> contexts(hctx.server.typeContexts(hctx.params(() -> {modulePath: hctx.decode.string("modulePath"), typeName: hctx.decode.string("typeName")})))
 			},
 			{
 				name: "server/moduleCreated",
-				f: hctx -> jstring(hctx.server.moduleCreated(hctx.params(() -> {file: new haxe.display.FsPath(hctx.jsonrpc.getStringParam("file"))})))
+				f: hctx -> jstring(hctx.server.moduleCreated(hctx.params(() -> {file: new haxe.display.FsPath(hctx.decode.string("file"))})))
 			},
 			{
 				name: "server/files",
 				f: function(hctx) {
-					var files = hctx.server.files(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")}));
+					var files = hctx.server.files(hctx.params(hctx.decode.context));
 					return jarray(files.map(f -> jobject([
 						kv("file", jstring(f.cFilePath.file)),
 						kv("time", jfloat(f.cTime)),
@@ -510,7 +479,7 @@ class DisplayJson {
 			{
 				name: "server/invalidate",
 				f: function(hctx) {
-					hctx.server.invalidate(hctx.params(() -> {file: new haxe.display.FsPath(hctx.jsonrpc.getStringParam("file"))}));
+					hctx.server.invalidate(hctx.params(() -> {file: new haxe.display.FsPath(hctx.decode.string("file"))}));
 					return jnull;
 				}
 			},
@@ -519,8 +488,7 @@ class DisplayJson {
 				f: function(hctx) {
 					var jsonrpc = hctx.jsonrpc;
 					var p:compiler.ServerServices.ServerConfigureParams = hctx.params(function() {
-						// (upstream applies each setting as it reads it: those before a bad value are
-						// applied when it fails)
+						// (upstream applies the settings before a bad value)
 						var print = [];
 						for (f in jsonrpc.getOptParam(() -> jsonrpc.getObjectParam("print"), [])) {
 							var value = try jsonrpc.getBool("value", f.value) catch (e:Dynamic) {
@@ -541,14 +509,11 @@ class DisplayJson {
 			},
 			{
 				name: "server/memory/context",
-				f: hctx -> DisplayMemory.contextMemoryJson(hctx.server.contextMemory(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")})))
+				f: hctx -> DisplayMemory.contextMemoryJson(hctx.server.contextMemory(hctx.params(hctx.decode.context)))
 			},
 			{
 				name: "server/memory/module",
-				f: hctx -> DisplayMemory.moduleMemoryJson(hctx.server.moduleMemory(hctx.params(function():haxe.display.Server.ModuleParams return {
-					signature: hctx.jsonrpc.getStringParam("signature"),
-					path: hctx.jsonrpc.getStringParam("path")
-				})))
+				f: hctx -> DisplayMemory.moduleMemoryJson(hctx.server.moduleMemory(hctx.params(hctx.decode.module)))
 			},
 			{
 				name: "typer/compiledTypes",
@@ -560,7 +525,6 @@ class DisplayJson {
 	}
 
 	// port: the JSON-RPC result handler's send_result: the response to the request
-	// ... (`at`: what it takes when the result is found, inside the compilation: answeredAt)
 	public static function resultMessage(at:AnsweredAt, jsonrpc:JsonrpcHandler, json:JsonValue):JsonValue {
 		var fl = [kv("result", json), kv("timestamp", jfloat(at.timestamp))];
 		var fl = if (at.timers != null) [kv("timers", at.timers)].concat(fl) else fl;
@@ -620,25 +584,22 @@ class DisplayJson {
 				result(f());
 			} catch (e:compiler.CompilerInstance.ServiceError) {
 				errorMessage(jsonrpc, [jstring(e.message)]);
-			} catch (e:compiler.DisplayServices.CompilationError) {
+			} catch (e:compiler.CompilerInstance.CompilationError) {
 				errorMessage(jsonrpc, messagesToJson(e.messages));
 			}
 		var curdir = Sys.getCwd();
-		// (the requests leave their directory current (keepCwd): the result is encoded there,
-		// where upstream encodes it, and the response written)
+		// (encoded in the request's directory, as upstream does: keepCwd)
 		function restore() core.Path.restoreCwd(curdir);
 		var response = try try {
 			respond(() -> f(hctx));
 		} catch (e:ParamsFailed) {
-			// (upstream reads the parameters once the arguments are processed: the failure is
-			// the compilation's, after theirs and after what was done with the parameters read
-			// before it)
+			// (upstream reads the parameters after the arguments: the failure is the compilation's)
 			var failed = e;
 			respond(() -> switch instance.request(function(_):compiler.CompilerInstance.RequestStep<JsonValue> {
 				if (failed.before != null) failed.before();
 				throw failed.error;
 			}, env) {
-				case Failed(messages): throw new compiler.DisplayServices.CompilationError(messages);
+				case Failed(messages): throw new compiler.CompilerInstance.CompilationError(messages);
 				case Answered(json): json;
 				case Found(r): DisplayException.resultToJson(r);
 			});

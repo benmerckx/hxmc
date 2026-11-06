@@ -170,57 +170,48 @@ class DisplayException extends haxe.Exception {
 		}
 	}
 
-	public static function toJson(ctx:GenjsonContext, de:DisplayExceptionKind):JsonValue {
-		return switch de {
-			case DisplayHover(hover):
-				function namedSourceKind(kind:core.WithType.WithTypeSource):{i:Int, si:core.WithType.WithTypeSourceInformation}
-					return switch kind {
-						case FunctionArgument(name): {i: 0, si: name};
-						case StructureField(name): {i: 1, si: name};
-						case LocalVariable(name): {i: 2, si: name};
-						case ImplicitReturn: throw new core.Globals.InternalCompilerError("displayException.ml: ImplicitReturn has no name",
-								"");
-					};
-				var ctx = Genjson.createFullConfig();
-				function generateName(kind:core.WithType.WithTypeSource):JsonValue {
-					var r = namedSourceKind(kind);
-					return jobject([
-						kv("name", jstring(r.si.siName)),
-						kv("kind", jint(r.i)),
-						kv("doc", r.si.siDoc == null ? jnull : jstring(r.si.siDoc))
-					]);
+	// port: to_json's DisplayHover (DisplayFields' is resultToJson's DRFields)
+	public static function hoverToJson(ctx:GenjsonContext, hover:HoverResult):JsonValue {
+		function namedSourceKind(kind:core.WithType.WithTypeSource):{i:Int, si:core.WithType.WithTypeSourceInformation}
+			return switch kind {
+				case FunctionArgument(name): {i: 0, si: name};
+				case StructureField(name): {i: 1, si: name};
+				case LocalVariable(name): {i: 2, si: name};
+				case ImplicitReturn: throw new core.Globals.InternalCompilerError("displayException.ml: ImplicitReturn has no name",
+						"");
+			};
+		var ctx = Genjson.createFullConfig();
+		function generateName(kind:core.WithType.WithTypeSource):JsonValue {
+			var r = namedSourceKind(kind);
+			return jobject([
+				kv("name", jstring(r.si.siName)),
+				kv("kind", jint(r.i)),
+				kv("doc", r.si.siDoc == null ? jnull : jstring(r.si.siDoc))
+			]);
+		}
+		var expected = switch hover.hexpected {
+			case WithType(t, src):
+				var fl = [kv("type", generateType(ctx, t))];
+				switch src {
+					case null:
+					case ImplicitReturn:
+					case src: fl.push(kv("name", generateName(src)));
 				}
-				var expected = switch hover.hexpected {
-					case WithType(t, src):
-						var fl = [kv("type", generateType(ctx, t))];
-						switch src {
-							case null:
-							case ImplicitReturn:
-							case src: fl.push(kv("name", generateName(src)));
-						}
-						jobject(fl);
-					case Value(src = FunctionArgument(_) | StructureField(_)):
-						jobject([kv("name", generateName(src))]);
-					case _: jnull;
-				};
-				jobject([
-					kv("documentation", jopt(jstring, core.Ast.Ast.genDocTextOpt(CompletionItem.getDocumentation(hover.hitem)))),
-					kv("range", generatePosAsRange(hover.hpos)),
-					kv("item", CompletionItem.toJson(ctx, null, hover.hitem)),
-					kv("expected", expected)
-				]);
-			case DisplayFields(r):
-				fieldsToJson(ctx, r.fitems, r.fkind, r.fsubject);
+				jobject(fl);
+			case Value(src = FunctionArgument(_) | StructureField(_)):
+				jobject([kv("name", generateName(src))]);
+			case _: jnull;
 		};
+		return jobject([
+			kv("documentation", jopt(jstring, core.Ast.Ast.genDocTextOpt(CompletionItem.getDocumentation(hover.hitem)))),
+			kv("range", generatePosAsRange(hover.hpos)),
+			kv("item", CompletionItem.toJson(ctx, null, hover.hitem)),
+			kv("expected", expected)
+		]);
 	}
 
 	// port: the send_*_raise functions below hand their result to the request's result
 	// ... handler as a value (DisplayResult); its JSON is resultToJson's, below.
-	public static function sendJsonResultRaise<R>(com:CommonContext, json:JsonValue):R {
-		var rh = com.requestScope.resultHandler;
-		return CompilerOutput.sendResultRaise(rh, json);
-	}
-
 	public static function sendModuleSymbolsRaise<R>(com:CommonContext, symbols:Array<{file:String, symbols:Array<SymbolInformationData>}>,
 			filter:Null<String>):R {
 		DisplayPosition.displayPosition.reset();
@@ -257,7 +248,7 @@ class DisplayException extends haxe.Exception {
 	public static function resultToJson(r:DisplayResult):JsonValue {
 		return switch r {
 			case DRHover(hover):
-				toJson(Genjson.createFullConfig(), DisplayHover(hover));
+				hoverToJson(Genjson.createFullConfig(), hover);
 			case DRFields(fields, resolvable):
 				var ctx = resolvable && DisplayJson.supportsResolve ? Genjson.createMinimalConfig() : Genjson.createFullConfig();
 				fieldsToJson(ctx, fields.fitems, fields.fkind, fields.fsubject);

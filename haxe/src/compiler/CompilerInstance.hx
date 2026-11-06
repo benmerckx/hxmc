@@ -8,20 +8,15 @@ import compiler.server.ServerCompilationContext;
 import core.Message.CompilerMessage;
 import context.display.DisplayResult;
 
-// port: not upstream: the compiler as an API. An instance is a set of arguments
-// ... (expanded: hxml read, parts split; without --display, --connect, --wait) and
-// ... a cache, given once; each build runs the whole pipeline on them (the init
-// ... macros included), as a request to the server does. The compiler's hooks and
-// ... statics are the process's: one build at a time per process.
+// port: not upstream: the compiler as an API: expanded arguments (no --display,
+// ... --connect, --wait) and a cache. Each call runs the whole pipeline, init macros
+// ... included. The hooks and statics are the process's: one call at a time.
 // ... Design: docs/plans/compiler-instance.md.
 class CompilerInstance {
 	public final args:RequestArgs;
 	public final cache:CompilerCache;
 
-	/** the display/* methods of the protocol, typed */
 	public final display:DisplayServices;
-
-	/** the server/* methods of the protocol (and typer/compiledTypes), typed */
 	public final server:ServerServices;
 
 	public function new(args:RequestArgs, cache:CompilerCache) {
@@ -43,9 +38,7 @@ class CompilerInstance {
 		return new CompilerInstance(Args.expandArgs(Args.parseArgs(args)), cache);
 	}
 
-	/** Builds every part of the arguments; the messages go to `io` as `haxe` prints
-		them, and are returned. Throws what the compiler throws (an ArgumentError, an
-		internal error), with the cache released. */
+	/** Builds every part; the messages go to `io` as `haxe` prints them, and are returned. */
 	public function build(io:CompilerIoData):BuildResult {
 		var sctx = cache.begin();
 		var scope = Server.createRequestScope(sctx.isServer, io);
@@ -71,11 +64,9 @@ class CompilerInstance {
 		return {code: code, messages: messages};
 	}
 
-	/** One request of the protocol (a JSON-RPC request's compilation, as `--display`
-		runs it): `start` sees the context once the arguments are processed and says how
-		the request is answered (RequestStep). A ServiceError thrown by `start` or by a
-		deferred answer ends the compilation and is rethrown. `env`: the request's io and
-		timers, and what is done when it is answered (default: no output). */
+	/** One request, as `--display` runs it: once the arguments are processed, `start`
+		says how it is answered. A ServiceError it throws ends the compilation and is
+		rethrown. Without `env`, no output. */
 	public function request<T>(start:context.Common.CommonContext->RequestStep<T>, ?env:RequestEnv):RequestOutcome<T> {
 		var sctx = cache.begin();
 		var ownIo = env == null;
@@ -91,7 +82,7 @@ class CompilerInstance {
 			throw new core.Globals.InternalCompilerError("CompilerInstance.request: " + what + " outside a JSON-RPC request", "");
 		function completed():Dynamic
 			throw new context.display.DisplayJson.JsonCompleted();
-		// (where upstream sends its response)
+		// (where upstream writes its response)
 		var answerDir:Null<String> = null;
 		function now():Void
 			if (env != null) {
@@ -108,8 +99,7 @@ class CompilerInstance {
 				now();
 				return completed();
 			},
-			// (as the JSON-RPC handler: with errors, the compilation failed; otherwise there
-			// was nothing to answer)
+			// (errors: the compilation failed; otherwise there was nothing to answer)
 			flushMessages: function(hasError, com) {
 				if (hasError) {
 					errors = [];
@@ -120,8 +110,6 @@ class CompilerInstance {
 					now();
 				}
 			},
-			// port: DisplayJson.handler's responses: an answer now (Completed), typing for
-			// ... a display result, or an answer deferred to a stage of the compilation
 			setCom: function(com) {
 				return try switch start(com) {
 					case Answer(v):
@@ -166,13 +154,21 @@ class CompilerInstance {
 		return if (answered) Answered(answer) else if (found != null) Found(found) else if (errors != null) Failed(errors) else Found(DRNone);
 	}
 
-	/** A display request: `configure` sets up the context as the method asks
-		(context.display.DisplayRequests), then the compilation finds the result. */
+	/** A display request: `configure` sets it up (DisplayRequests), typing finds the result. */
 	public function displayRequest(configure:context.Common.CommonContext->Void, ?env:RequestEnv):RequestOutcome<Any>
 		return request(function(com) {
 			configure(com);
 			return Typing;
 		}, env);
+
+	/** A request `start` answers (Answer, After); null: none. Failure: a CompilationError. */
+	public function answer<T>(start:context.Common.CommonContext->RequestStep<T>, ?env:RequestEnv):Null<T>
+		return switch request(start, env) {
+			case Answered(v): v;
+			case Found(DRNone): null;
+			case Found(r): throw new core.Globals.InternalCompilerError('a request found ${Type.enumConstructor(r)}', "");
+			case Failed(messages): throw new CompilationError(messages);
+		}
 
 	function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int
 		return sctx.isServer ? process(sctx, scope, args) : HighLevel.entry(sctx, scope, args);
@@ -224,26 +220,31 @@ enum RequestOutcome<T> {
 	Failed(messages:Array<CompilerMessage>);
 }
 
-/** Where a request's output goes: its io (the messages the compilation prints, traces)
-	and its timers (--times). */
+/** A request's io and timers (--times). */
 @:structInit class RequestEnv {
 	public final io:compiler.io.CompilerIo.CompilerIoData;
 	public final timerCtx:core.Timer.TimerContext;
 
-	/** called when the request is answered, inside the compilation (where upstream
-		writes its response: the timers it reports are taken there) */
+	/** called when it is answered, inside the compilation (upstream writes its response there) */
 	public final onAnswer:Null<Void->Void> = null;
 
-	/** the request's directory when it is answered (its --cwd, server/setCwd's) is made
-		current again after it, for the caller to restore: the result's positions with a
-		relative file are relative to it (the protocol's adapter encodes them there, as
-		upstream does in the request) */
+	/** the directory current when it is answered (--cwd, server/setCwd) stays current
+		after it, for the caller to restore: relative positions resolve against it */
 	public final keepCwd:Bool = false;
 }
 
-/** A method's error that is not the compilation's (an invalid parameter, a module the
-	cache does not have): the protocol's error response with this message. */
+/** A method's own error (an invalid directory, an unknown module): the protocol's error response. */
 class ServiceError extends haxe.Exception {}
+
+/** A compilation that failed before answering: its errors, oldest first. */
+class CompilationError extends haxe.Exception {
+	public final messages:Array<CompilerMessage>;
+
+	public function new(messages:Array<CompilerMessage>) {
+		super(messages.length == 0 ? "Compilation failed" : messages[0].cmMessage);
+		this.messages = messages;
+	}
+}
 
 @:structInit class BuildResult {
 	/** the exit code `haxe` gives (0: built) */
@@ -255,8 +256,7 @@ class ServiceError extends haxe.Exception {}
 
 /** Where a CompilerInstance's builds keep what they typed. */
 interface CompilerCache {
-	/** the server context of a build: its module cache (`cs`), with the typing and
-		parsing hooks pointed at it */
+	/** the build's server context, with the hooks pointed at it */
 	function begin():ServerCompilationContext;
 
 	/** after the build, whether it succeeded or not */
@@ -274,9 +274,8 @@ class SkipCache implements CompilerCache {
 		ServerCompilationContext.dispose(sctx);
 }
 
-/** One module cache kept between builds, in memory (`haxe --wait`'s). Instances of
-	several argument sets can share one, as the server's requests do: their defines
-	partition it. */
+/** One module cache kept in memory (`haxe --wait`'s); instances of several argument sets
+	can share it (their defines partition it). */
 class InMemoryCache implements CompilerCache {
 	public final sctx:ServerCompilationContext;
 
@@ -290,7 +289,7 @@ class InMemoryCache implements CompilerCache {
 	var used = false;
 
 	public function begin():ServerCompilationContext {
-		// (a host that does not call idle: the cleanup between requests, now)
+		// (a host that did not call idle)
 		if (used) cleanup();
 		used = true;
 		// (the hooks are the process's: another cache may have pointed them elsewhere)
@@ -300,18 +299,16 @@ class InMemoryCache implements CompilerCache {
 
 	public function end(sctx:ServerCompilationContext):Void {}
 
-	/** What the server does between requests, after the client has its answer (Server's
-		worker): the cleanup, and after a compilation the exploration of the class paths,
-		as a task of the cache for a host that runs them while idle. */
+	/** The server's work between requests: the cleanup, and after a compilation the class
+		paths' exploration, as a task for a host that runs tasks while idle. */
 	public function idle():Void {
 		cleanup();
 		var cs:compiler.CompilationCache.Cache = sctx.cs;
 		if (sctx.wasCompilation) cs.addTask(new compiler.Tasks.ServerExplorationTask(cs));
 	}
 
-	/** ServerCache.cleanup: the temporary cache of the display requests (modules a later
-		request must not reuse), stale contexts. Needed between requests: the next build
-		does it first when the host did not. */
+	/** ServerCache.cleanup: drops the display requests' temporary cache, whose modules a
+		later request must not reuse. */
 	function cleanup():Void {
 		used = false;
 		compiler.server.ServerCache.cleanup(sctx);
