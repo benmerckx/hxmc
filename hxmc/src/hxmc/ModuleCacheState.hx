@@ -43,6 +43,8 @@ class ModuleCacheState {
 	public var indexKey:CacheKey;
 	public var com:CommonContext;
 	public var index:StoreIndex;
+	// -D hxmc.clean: no variant chosen (nothing restored), the index written as usual
+	public var clean = false;
 	// per role (0: the program's context, 1: the macros'), its signature and
 	// defines (the macros': predicted while that context does not exist)
 	public var signs = new haxe.ds.Vector<Null<String>>(2);

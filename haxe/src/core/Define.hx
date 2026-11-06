@@ -194,6 +194,8 @@ class Define {
 		"times.macro",
 		"macro_times",
 		"no_compilation",
+		// port: not upstream: a build from source whatever is cached (CompilerInstance.isClean)
+		"hxmc.clean",
 		"message.reporting",
 		"message.color",
 		"message.no_color",

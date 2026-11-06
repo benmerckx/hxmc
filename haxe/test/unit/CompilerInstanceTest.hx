@@ -106,7 +106,35 @@ class CompilerInstanceTest {
 		check("its fix is seen", errorsAfterEdit(source) == 0, "errors");
 		check("unchanged, it stays fixed", errors() == 0, "errors");
 		check("the same edit again is seen", errorsAfterEdit(edited) > 0, "no error");
+		// (restored within the same second: only the invalidation tells the cache)
 		sys.io.File.saveContent(file, source);
+		instance.server.invalidate({file: path});
+
+		// (a clean build: from source whatever is cached, the cache refreshed. A module typed
+		// again gets another id; one reused keeps its own)
+		var lastMessages = "";
+		function buildWith(?options:BuildOptions):Int {
+			var io = compiler.io.CompilerIo.create(_ -> {}, _ -> {}, _ -> {}, () -> {}, null);
+			var r = instance.build(io, options);
+			compiler.io.CompilerIo.close(io);
+			lastMessages = r.messages.map(m -> m.cmMessage).join("; ");
+			return r.code;
+		}
+		function mainId():Int {
+			for (cc in instance.server.contexts())
+				if (instance.server.modules({signature: cc.getSign()}).indexOf("Main") >= 0)
+					return instance.server.module({signature: cc.getSign(), path: "Main"}).module.mId;
+			return -1;
+		}
+		check("a build", buildWith() == 0, lastMessages);
+		var first = mainId();
+		check("a build again", buildWith() == 0, lastMessages);
+		check("a build again reuses Main", mainId() == first, '${mainId()} after $first');
+		check("a clean build", buildWith({clean: true}) == 0, lastMessages);
+		var cleaned = mainId();
+		check("a clean build types Main again", cleaned != first && cleaned != -1, '$cleaned after $first');
+		check("a build after it", buildWith() == 0, lastMessages);
+		check("a build after it reuses the clean build's Main", mainId() == cleaned, '${mainId()} after $cleaned');
 		cache.dispose();
 		Sys.println("CompilerInstanceTest: ok");
 	}

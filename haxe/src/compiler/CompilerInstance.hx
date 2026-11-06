@@ -55,14 +55,22 @@ class CompilerInstance {
 		return instances[0];
 	}
 
-	/** Builds; the messages go to `io` as `haxe` prints them, and are returned. */
-	public function build(io:CompilerIoData):BuildResult
-		return buildAll([this], io);
+	/** Builds; the messages go to `io` as `haxe` prints them, and are returned. `clean`: from
+		source, whatever is cached, the cache refreshed (as -D hxmc.clean). */
+	public function build(io:CompilerIoData, ?options:BuildOptions):BuildResult
+		return buildAll([this], io, options);
+
+	/** Whether a part builds from source whatever is cached, its cache refreshed:
+		-D hxmc.clean (signature-neutral; read without being recorded as a read, so what the
+		build caches does not depend on it). For caches, in beforeTyping. */
+	public static function isClean(com:context.Common.CommonContext):Bool
+		return com.defines.values.exists("hxmc.clean");
 
 	/** Builds a batch (ofRequest: the parts of a command line), one instance after the other
 		until one fails, over their cache; what spans them is the batch's (the server
 		context, the request's scope and timers, the server's work per request). */
-	public static function buildAll(instances:Array<CompilerInstance>, io:CompilerIoData):BuildResult {
+	public static function buildAll(instances:Array<CompilerInstance>, io:CompilerIoData, ?options:BuildOptions):BuildResult {
+		var clean = options != null && options.clean == true;
 		var cache = instances[0].cache;
 		for (instance in instances)
 			if (instance.cache != cache) throw new core.ds.ArgumentError("CompilerInstance.buildAll: the instances of a batch share their cache");
@@ -78,7 +86,7 @@ class CompilerInstance {
 			while (i-- > 0) messages.push(com.partScope.messages[i]);
 			flush(hasError, com);
 		}
-		var code = try run(sctx, scope, instances, false) catch (e:Dynamic) {
+		var code = try run(sctx, scope, instances, false, clean) catch (e:Dynamic) {
 			endBuild(cache, sctx, 1);
 			throw e;
 		}
@@ -205,12 +213,13 @@ class CompilerInstance {
 
 	// port: HighLevel.entry over instances (a display request: the first part only), in a
 	// ... server as Server.process runs it
-	static function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, instances:Array<CompilerInstance>, hasDisplay:Bool):Int {
+	static function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, instances:Array<CompilerInstance>, hasDisplay:Bool, clean = false):Int {
 		function parts():Int {
 			var curdir = Sys.getCwd();
 			var code = 0;
 			for (instance in instances) {
-				var com = HighLevel.createContextFromPart(sctx, scope, hasDisplay, instance.hasNext, instance.part);
+				var part = clean ? new PartArgs(instance.part.args.concat([Define("hxmc.clean", null)]), instance.part.runtimeArgs) : instance.part;
+				var com = HighLevel.createContextFromPart(sctx, scope, hasDisplay, instance.hasNext, part);
 				code = Compiler.compileCtx(sctx, com);
 				instance.cache.endPart(com, code);
 				core.Path.restoreCwd(curdir);
@@ -372,12 +381,16 @@ class InMemoryCache implements CompilerCache {
 		return sctx;
 	}
 
-	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
+	final cacheHooks = new InMemoryHooks();
+
+	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void
+		cacheHooks.clean = CompilerInstance.isClean(com);
 
 	public function hooks():core.CacheHooks
-		return core.CacheHooks.none;
+		return cacheHooks;
 
-	public function endPart(com:context.Common.CommonContext, code:Int):Void {}
+	public function endPart(com:context.Common.CommonContext, code:Int):Void
+		cacheHooks.clean = false;
 
 	public function end(sctx:ServerCompilationContext, code:Int):Void {}
 
@@ -398,4 +411,25 @@ class InMemoryCache implements CompilerCache {
 
 	public function dispose():Void
 		ServerCompilationContext.dispose(sctx);
+}
+
+@:structInit class BuildOptions {
+	/** from source, whatever is cached; the cache refreshed with the result (-D hxmc.clean) */
+	public final clean:Bool = false;
+}
+
+// port: not upstream: InMemoryCache's hooks: a clean part (CompilerInstance.isClean) types
+// ... every cached module it checks from source and parses its files again, so what the
+// ... server caches for it is the result
+private class InMemoryHooks extends core.CacheHooks {
+	public var clean = false;
+
+	override public function checkModule(com:context.Common.CommonContext, mPath:core.Globals.GlobalTypePath, mExtra:core.TType.ModuleDefExtra):Null<core.TType.ModuleSkipReason>
+		return clean ? FileChanged(core.Path.UniqueKey.lazyPath(mExtra.mFile) + " (-D hxmc.clean)") : null;
+
+	override public function parse(com:context.Common.CommonContext, rfile:core.ClassPaths.ResolvedFile, p:core.Globals.Pos,
+			inner:(context.Common.CommonContext, core.ClassPaths.ResolvedFile, core.Globals.Pos) -> syntax.Parser.ParseResult<core.Ast.Package>):syntax.Parser.ParseResult<core.Ast.Package> {
+		if (clean) context.CommonCache.getCache(com).removeFile(com.partScope.fileKeys.get(rfile.file));
+		return inner(com, rfile, p);
+	}
 }

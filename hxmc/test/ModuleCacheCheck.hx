@@ -762,6 +762,15 @@ class ModuleCacheCheck {
 			check('interp: --next, warm: both parts restored (${reads.join(", ")} read)', reads.length == 2 && reads[0] > 0 && reads[1] > 0);
 			edit(pdir + "/src/Shared.hx", s -> s.replace("\"shared\"", "\"edited\""));
 			gate("--next, Shared edited", "interp", pdir, args);
+			// -D hxmc.clean: from source whatever the store has, the store refreshed with it
+			var one = ["-cp", "src", "-main", "A"];
+			gate("one part", "interp", pdir, one);
+			var warm = gate("one part, warm", "interp", pdir, one, 0);
+			var clean = gate("one part, -D hxmc.clean", "interp", pdir, one.concat(["-D", "hxmc.clean"]));
+			check('interp: -D hxmc.clean: nothing read, everything encoded (${clean.read} read, ${clean.encoded} encoded)',
+				clean.read == 0 && clean.encoded > 0);
+			var after = gate("one part, after the clean build", "interp", pdir, one, 0);
+			check('interp: after the clean build: what it wrote read (${after.read} read)', after.read == warm.read);
 		}
 		if (withPort) {
 			var pdir = FileSystem.fullPath(".");

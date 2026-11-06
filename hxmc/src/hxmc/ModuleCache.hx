@@ -725,11 +725,13 @@ class ModuleCache {
 				}
 			}
 			var t0 = haxe.Timer.stamp();
-			s.register(0);
-			if (s.signs[1] != null) s.register(1);
-			s.reselect();
-			s.loaded = s.install(0);
-			if (s.signs[1] != null) s.loaded += s.install(1);
+			if (!s.clean) {
+				s.register(0);
+				if (s.signs[1] != null) s.register(1);
+				s.reselect();
+				s.loaded = s.install(0);
+				if (s.signs[1] != null) s.loaded += s.install(1);
+			}
 			if (stats())
 				Sys.println('hxmc: module cache: ${s.loaded} modules of ${s.index.variants.length} variants read (${Std.int((s.openTime + haxe.Timer.stamp() - t0) * 1000)} ms)');
 			return;
@@ -831,6 +833,9 @@ class ModuleCache {
 		var key = CacheKey.of(ModuleIndex, [Sys.getCwd(), Sys.getEnv("HAXE_STD_PATH"), com.classPaths.asStringList().join("\n")].join("\x00"));
 		var s = new ModuleCacheState(store, key, com);
 		s.signs[0] = context.CommonCache.getCacheSign(com);
+		// (-D hxmc.clean: nothing restored, everything typed from source; the index is read, so
+		// what this part does not supersede stays)
+		s.clean = compiler.CompilerInstance.isClean(com);
 		s.defs[0] = com.defines.values;
 		var mcom = com.getMacros();
 		// the defines read so far
