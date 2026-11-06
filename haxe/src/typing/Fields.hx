@@ -191,6 +191,12 @@ class Fields {
 						normal();
 					case _: normal();
 				};
+				function checkNoExpr(a:TAbstract):Void {
+					// TODO: CfNoExpr is also set on all expression-less fields of @:coreType abstracts, which is why we
+					// have to exclude those here. See https://github.com/HaxeFoundation/haxe/pull/13078#discussion_r4409517071
+					if (hasClassFieldFlag(f, CfNoExpr) && !core.Meta.has(MetaTag.CoreType, a.aMeta))
+						displayError(ctx.com, "Field " + f.cfName + " cannot be called directly because it has no expression", pfield);
+				}
 				switch fh {
 					case FHInstance(c, tl):
 						if (e.eexpr.match(TConst(TSuper))) switch mode {
@@ -204,10 +210,15 @@ class Fields {
 						}
 						defaultAccess();
 					case FHStatic(c):
+						switch c.clKind {
+							case KAbstractImpl(a): checkNoExpr(a);
+							case _:
+						}
 						visibility(c, true);
 						defaultAccess();
 					case FHAnon: defaultAccess();
 					case FHAbstract(a, tl, c):
+						checkNoExpr(a);
 						visibility(c, true);
 						AKUsingField(makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
 				}
@@ -627,14 +638,7 @@ class Fields {
 		}
 		if (cfg.doResume) throw NotFound.raise();
 		if (!ctx.f.isUntyped) {
-			inline function special(a:TAbstract):Bool return core.ds.ArrayTools.exists(a.aOps, pair -> pair.field.cfName == i)
-				|| core.ds.ArrayTools.exists(a.aUnops, pair -> pair.field.cfName == i)
-				|| core.ds.ArrayTools.exists(a.aArray, cf -> cf.cfName == i);
 			switch follow(t) {
-				case TAnon({aStatus: ClassStatics({clKind: KAbstractImpl(a)})}) | TInst({clKind: KAbstractImpl(a)}, _) | TAbstract(a, _)
-					if (special(a)):
-					// the abstract field is not part of the field list, which is only true when it has no expression (issue #2344)
-					displayError(ctx.com, "Field " + i + " cannot be called directly because it has no expression", pfield);
 				case TAnon({aStatus: ClassStatics(c)}) if (c.clFields.exists(i)):
 					displayError(ctx.com, "Static access to instance field " + i + " is not allowed", pfield);
 				case _:

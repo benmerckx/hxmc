@@ -947,6 +947,7 @@ enum FlagTClassField {
 	CfMaybeUsed; /* Marker for DCE */
 	CfNoLookup; /* Field cannot be accessed by-name. */
 	CfAbstractConstructor;
+	CfNoExpr; /* Marker for abstract fields which have no expression */
 }
 
 enum FlagTEnum {
@@ -996,7 +997,8 @@ class TType {
 		"CfUsed",
 		"CfMaybeUsed",
 		"CfNoLookup",
-		"CfAbstractConstructor"
+		"CfAbstractConstructor",
+		"CfNoExpr"
 	];
 	public static final flagTVarNames = [
 		"VCaptured",

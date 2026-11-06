@@ -135,7 +135,6 @@ enum StrictMeta {
 	NoClosure;
 	NoDebug;
 	NoDoc;
-	NoExpr;
 	NoImportGlobal;
 	NonVirtual;
 	NoPackageRestrict;
@@ -721,11 +720,6 @@ class MetaList {
 					flags: [Platforms([Flash, Cpp]), UsedOn([TClass, TClassField])]
 				};
 			case NoDoc: {name: ":noDoc", doc: "Prevents a type or field from being included in documentation generation.", flags: []};
-			case NoExpr: {
-					name: ":noExpr",
-					doc: "Internally used to mark abstract fields which have no expression by design.",
-					flags: [UsedInternally]
-				};
 			case NoImportGlobal: {
 					name: ":noImportGlobal",
 					doc: "Prevents a static field from being imported with `import Class.*`.",
@@ -1162,7 +1156,6 @@ class MetaList {
 		NoClosure,
 		NoDebug,
 		NoDoc,
-		NoExpr,
 		NoImportGlobal,
 		NonVirtual,
 		NoPackageRestrict,

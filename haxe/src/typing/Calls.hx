@@ -142,7 +142,7 @@ class Calls {
 	}, c:TClass, ebase:TExpr, p:Pos):TExpr {
 		var cf = access.field;
 		if (cf.cfExpr == null && !hasClassFieldFlag(cf, CfExtern)) {
-			if (!Meta.has(MetaTag.NoExpr, cf.cfMeta)) displayError(ctx.com, "Recursive array get method", p);
+			if (!hasClassFieldFlag(cf, CfNoExpr)) displayError(ctx.com, "Recursive array get method", p);
 			return mk(TArray(ebase, access.index), access.ret, p);
 		}
 		var et = TyperBase.typeModuleType(ctx, TClassDecl(c), p),
@@ -159,7 +159,7 @@ class Calls {
 	}, c:TClass, ebase:TExpr, p:Pos):TExpr {
 		var cf = access.field;
 		if (cf.cfExpr == null && !hasClassFieldFlag(cf, CfExtern)) {
-			if (!Meta.has(MetaTag.NoExpr, cf.cfMeta)) displayError(ctx.com, "Recursive array set method", p);
+			if (!hasClassFieldFlag(cf, CfNoExpr)) displayError(ctx.com, "Recursive array set method", p);
 			var ea = mk(TArray(ebase, access.index), access.ret, p);
 			return mk(TBinop(OpAssign, ea, access.value), access.ret, p);
 		}

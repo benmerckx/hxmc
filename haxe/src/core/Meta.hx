@@ -355,7 +355,6 @@ class Meta {
 	public static final NoClosure:StrictMeta = StrictMeta.NoClosure;
 	public static final NoDebug:StrictMeta = StrictMeta.NoDebug;
 	public static final NoDoc:StrictMeta = StrictMeta.NoDoc;
-	public static final NoExpr:StrictMeta = StrictMeta.NoExpr;
 	public static final NoImportGlobal:StrictMeta = StrictMeta.NoImportGlobal;
 	public static final NonVirtual:StrictMeta = StrictMeta.NonVirtual;
 	public static final NoPackageRestrict:StrictMeta = StrictMeta.NoPackageRestrict;

@@ -1044,7 +1044,7 @@ class TypeloadFields {
 			if (fctx.isInline) missingExpression(ctx.com, fctx, "Inline functions must have an expression", cf.cfPos);
 			if (fd.fType == null) raiseTypingError("Functions without expressions must have an explicit return type", cf.cfPos);
 			if (allowsNoExpr) {
-				cf.cfMeta.unshift(meta(NoExpr));
+				addClassFieldFlag(cf, CfNoExpr);
 				fctx.doBind = false;
 			}
 		}

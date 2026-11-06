@@ -3876,11 +3876,11 @@ class Genhl {
 									}
 									switch f.cfExpr {
 										case null:
-											if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+											if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 										case {eexpr: TFunction(fn)}:
 											makeFun(ctx, {fst: sTypePath(c.clPath), snd: f.cfName}, allocFid(ctx, c, f), fn, null, null, genContent);
 										case _:
-											if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+											if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 									}
 								} else
 									addNative("std", f.cfName);
@@ -3895,11 +3895,11 @@ class Genhl {
 				var genContent = if (isExcluded(c)) () -> op(ctx, OAssert(0)) else null;
 				switch f.cfExpr {
 					case null:
-						if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+						if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 					case {eexpr: TFunction(fn)}:
 						makeFun(ctx, {fst: sTypePath(c.clPath), snd: f.cfName}, allocFid(ctx, c, f), fn, null, null, genContent);
 					case _:
-						if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+						if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 				}
 		}
 	}
