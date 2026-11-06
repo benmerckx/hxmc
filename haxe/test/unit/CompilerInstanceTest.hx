@@ -87,6 +87,26 @@ class CompilerInstanceTest {
 		} catch (e:ServiceError) e;
 		check("setCwd to a missing directory is the method's error", invalid != null && invalid.message.indexOf("Invalid directory") == 0,
 			invalid == null ? "no error" : invalid.message);
+
+		// (edits, as an editor makes them: the file saved, server/invalidate, diagnostics; within
+		// a second, so only the invalidation tells the cache. The cleanup between requests
+		// drops what display requests typed: without it a module of an earlier request is reused)
+		var edited = source.split("greeting.length").join("greeting.nope");
+		function errors():Int
+			return instance.display.diagnostics({file: path}).messages.filter(m -> switch core.Message.Message.severity(m) {
+				case Error: true;
+				case _: false;
+			}).length;
+		function errorsAfterEdit(code:String):Int {
+			sys.io.File.saveContent(file, code);
+			instance.server.invalidate({file: path});
+			return errors();
+		}
+		check("an edit that breaks the program is seen", errorsAfterEdit(edited) > 0, "no error");
+		check("its fix is seen", errorsAfterEdit(source) == 0, "errors");
+		check("unchanged, it stays fixed", errors() == 0, "errors");
+		check("the same edit again is seen", errorsAfterEdit(edited) > 0, "no error");
+		sys.io.File.saveContent(file, source);
 		cache.dispose();
 		Sys.println("CompilerInstanceTest: ok");
 	}

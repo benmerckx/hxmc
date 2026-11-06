@@ -203,8 +203,13 @@ delays, the timers in the result handler).
   points the hooks at it again (another cache may have moved them). The
   server. Several instances can share one (upstream's server shares one
   between all argument sets), as long as one compilation runs at a time.
-  Cleanup and exploration between requests stay the host's (after the
-  client has its answer).
+  Between requests `ServerCache.cleanup` must run: it drops the temporary
+  cache of display requests, whose modules a later request must not reuse
+  (an edit then goes unseen). `idle()` is the server's between-request
+  work (the cleanup, and the exploration of the class paths as a task, for
+  a host that runs tasks while idle); a build whose host did not call it
+  does the cleanup first. The server keeps one for its context; the
+  playground keeps one in its wasm module.
 - **`OnDiskCache`**: an `InMemoryCache` with a store behind it: a partition
   missing a module asks the store, and `commit` writes the modules that
   changed. So an editor's instance with it starts warm from disk and stays
@@ -286,6 +291,10 @@ on another thread) comes later, one at a time.
    (`CompilerInstance.display`, `.server`; `haxe/test/unit
    /CompilerInstanceTest.hx`), and the JSON-RPC requests (the server's,
    `haxe --display`'s) dispatched onto them.
+   The playground (`site/compiler/PlaygroundCompiler.hx`) keeps an
+   `InMemoryCache` in its wasm module and answers the page's display
+   requests and checks with the dispatcher on an instance of the page's
+   arguments; runs and HXB builds stay on fresh module instances.
 5. `OnDiskCache` as HXB on disk, then Ben's check, then his other layers.
 
 ## Open

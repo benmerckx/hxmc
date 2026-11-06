@@ -286,15 +286,36 @@ class InMemoryCache implements CompilerCache {
 	public static function create(verbose = false):InMemoryCache
 		return new InMemoryCache(Server.setupServerContext(verbose, true));
 
+	/** a build ended since the last idle */
+	var used = false;
+
 	public function begin():ServerCompilationContext {
+		// (a host that does not call idle: the cleanup between requests, now)
+		if (used) cleanup();
+		used = true;
 		// (the hooks are the process's: another cache may have pointed them elsewhere)
 		compiler.server.ServerCache.enableCacheMode(sctx);
 		return sctx;
 	}
 
-	// (between requests the server cleans up and explores, after the client has its
-	// answer: the host's, as Server's worker does)
 	public function end(sctx:ServerCompilationContext):Void {}
+
+	/** What the server does between requests, after the client has its answer (Server's
+		worker): the cleanup, and after a compilation the exploration of the class paths,
+		as a task of the cache for a host that runs them while idle. */
+	public function idle():Void {
+		cleanup();
+		var cs:compiler.CompilationCache.Cache = sctx.cs;
+		if (sctx.wasCompilation) cs.addTask(new compiler.Tasks.ServerExplorationTask(cs));
+	}
+
+	/** ServerCache.cleanup: the temporary cache of the display requests (modules a later
+		request must not reuse), stale contexts. Needed between requests: the next build
+		does it first when the host did not. */
+	function cleanup():Void {
+		used = false;
+		compiler.server.ServerCache.cleanup(sctx);
+	}
 
 	public function dispose():Void
 		ServerCompilationContext.dispose(sctx);

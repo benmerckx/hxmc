@@ -74,7 +74,8 @@ class WasiHost {
 
 	final args:Array<String>;
 	final env:Array<String>;
-	final out:Int->Uint8Array->Void;
+	/** where stdout and stderr go (replaced between the calls of a module that stays) */
+	public var out:Int->Uint8Array->Void;
 	final fds = new Map<Int, Open>();
 	var nextFd = 4;
 	static final encoder = new js.html.TextEncoder();

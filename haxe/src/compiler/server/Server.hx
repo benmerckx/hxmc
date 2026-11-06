@@ -322,7 +322,8 @@ class Server {
 		return Std.string(e);
 	}
 
-	static function runRequest(sctx:ServerCompilationContext, io:CompilerIoData, request:Request):RequestOutcome {
+	static function runRequest(cache:compiler.CompilerInstance.InMemoryCache, io:CompilerIoData, request:Request):RequestOutcome {
+		var sctx = cache.sctx;
 		sctx.currentStdin = request.stdin;
 		try {
 			var requestArgs = Args.expandArgs(request.args);
@@ -336,12 +337,12 @@ class Server {
 				// (which process ignores)
 				args.connectArg = null;
 				args.serverMode = SMNone;
-				var instance = new compiler.CompilerInstance(args, new compiler.CompilerInstance.InMemoryCache(sctx));
+				var instance = new compiler.CompilerInstance(args, cache);
 				context.display.DisplayJson.dispatch(instance, io, request);
 				return Success;
 			}
 			if (requestArgs.connectArg == null && requestArgs.serverMode == SMNone) {
-				new compiler.CompilerInstance(requestArgs, new compiler.CompilerInstance.InMemoryCache(sctx)).build(io);
+				new compiler.CompilerInstance(requestArgs, cache).build(io);
 				return Success;
 			}
 			var requestScope = createRequestScope(true, io);
@@ -376,7 +377,8 @@ class Server {
 		}
 	}
 
-	static function createWorker(sctx:ServerCompilationContext, rq:RequestQueue):sys.thread.Lock {
+	static function createWorker(cache:compiler.CompilerInstance.InMemoryCache, rq:RequestQueue):sys.thread.Lock {
+		var sctx = cache.sctx;
 		var finished = new sys.thread.Lock();
 		sys.thread.Thread.create(function() {
 			var cs = sctx.cs;
@@ -408,7 +410,7 @@ class Server {
 								sctx.currentStdin = request.stdin;
 								rq.cancelToken = false;
 								var io = createRequestIo(request);
-								var outcome = runRequest(sctx, io, request);
+								var outcome = runRequest(cache, io, request);
 								CompilerIo.close(io);
 								request.conn.close();
 								switch outcome {
@@ -418,9 +420,8 @@ class Server {
 								}
 
 								sctx.currentStdin = null;
-								ServerCache.cleanup(sctx);
-								if (sctx.wasCompilation)
-									cs.addTask(new compiler.Tasks.ServerExplorationTask(cs));
+								// port: ServerCache.cleanup, and the exploration after a compilation
+								cache.idle();
 								RequestQueue.wakeUp(rq);
 						}
 					}
@@ -444,9 +445,10 @@ class Server {
 	/* The server main loop. Waits for the [accept] call to then process the sent compilation
 		parameters through [process_params]. */
 	public static function waitLoop(verbose:Bool, accept:ServerAccept):Int {
-		var sctx = setupServerContext(verbose, true);
+		// port: the server context, as the cache of the requests' CompilerInstances
+		var cache = compiler.CompilerInstance.InMemoryCache.create(verbose);
 		var rq = RequestQueue.create();
-		var worker = createWorker(sctx, rq);
+		var worker = createWorker(cache, rq);
 		/* Main loop: accept connections and enqueue requests for the worker.
 			The loop exits if the accept function raises an exception (e.g. socket closed). */
 		try {
@@ -473,7 +475,7 @@ class Server {
 		} catch (_:Dynamic) {}
 		RequestQueue.shutdown(rq);
 		worker.wait();
-		ServerCompilationContext.dispose(sctx);
+		cache.dispose();
 		return 0;
 	}
 

@@ -15,7 +15,7 @@ const replies = [];
 let wake = null;
 const self = {
 	fetch: async (url) => {
-		const b = await readFile(path.join(dir, url));
+		const b = await readFile(path.join(dir, url.split('?')[0]));
 		return { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
 	},
 	postMessage: (m) => { replies.push(m); if (wake) wake(); },
