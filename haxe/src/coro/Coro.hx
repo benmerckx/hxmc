@@ -241,7 +241,7 @@ class Coro {
 
 	public static function coroToStateMachine(ctx:CoroCtx, cc:CoroClass, root:CoroBlock, exprs:CoroToTexprExprs,
 			args:Vector<{variable:TVar, defaultValue:Null<TExpr>}>, vtmpResult:AtomicLazy<TVar>, vtmpError:TVar,
-			vtmpErrorUnwrapped:AtomicLazy<TVar>, vcompletion:TVar, vcontinuation:TVar, mode:CoroGenMode, stack:Pos->TExpr,
+			vtmpErrorUnwrapped:AtomicLazy<TVar>, vcompletion:TVar, vcontinuation:TVar, mode:CoroGenMode, stack:Pos->Array<TExpr>,
 			startException:TExpr->TExpr):TExpr {
 		var b = ctx.builder;
 		var cont = cc.continuationApi;
@@ -256,10 +256,13 @@ class Coro {
 			core.TOther.TClassTools.addField(cc.cls, cf);
 		}
 		var ret = cont.suspensionResult(cc.outside.resultType);
-		// In debug mode, insert an initial setStackItem call at the very start of
+		// With coro.stack-traces, insert an initial setStackItem call at the very start of
 		// invokeResume so that the continuation always has a valid stack item, even in
 		// single-state coroutines where no suspension call triggers setStackItem.
-		var eloop = b.voidBlock(vector(stack(cc.namePos), result.expr));
+		var eloop = switch stack(cc.namePos) {
+			case []: result.expr;
+			case el: b.voidBlock(Vector.fromArrayCopy(el.concat([result.expr])));
+		};
 		var invoke = switch mode {
 			case GenInline(_): ContinuationClassBuilder.mkInvokeResumeWithBody(ctx, cc, vcontinuation, vtmpResult, vtmpError,
 					vtmpErrorUnwrapped, exprs.eresult, eloop);
@@ -471,9 +474,9 @@ class Coro {
 			etmpError: etmpError,
 			etmpErrorUnwrapped: etmpErrorUnwrapped
 		};
-		function stack(pos:Pos):TExpr {
-			if (!ctx.typer.com.debug) return b.voidBlock(vector());
-			var field = PMap.find("setStackItem", cont.baseContinuationClass.clFields);
+		function stack(pos:Pos):Array<TExpr> {
+			if (!ctx.stackTraces) return [];
+			var field = CoroToTexpr.findStackTraceField(cont, "setStackItem", p);
 			// setStackItem(kind, cls, func, id, file, line, column, pmin, pmax)
 			// kind: 0 = ClassFunction, 1 = LocalFunction
 			var args = switch ctx.coroType {
@@ -493,7 +496,7 @@ class Coro {
 				b.int(pos.pmin, p),
 				b.int(pos.pmax, p)
 			]);
-			return mk(TCall(continuationField(field, field.cfType), Vector.fromArrayCopy(args)), basic.tvoid, p);
+			return [mk(TCall(continuationField(field, field.cfType), Vector.fromArrayCopy(args)), basic.tvoid, p)];
 		}
 		// 5. Fill in the deferred callback implementations now that the continuation API exists
 
@@ -513,11 +516,11 @@ class Coro {
 			},
 			makeInlineTailCall: function(call) {
 				var r = SuspensionCalls.makeSuspendingTailCall(ctx, cont, exprs, call);
-				return b.voidBlock(vector(stack(call.csPos), r.call, r.check));
+				return b.voidBlock(Vector.fromArrayCopy(stack(call.csPos).concat([r.call, r.check])));
 			},
 			makeSyncCall: function(call, e) {
 				var r = SuspensionCalls.makeSyncCallAndCheck(ctx, cont, exprs, call, e);
-				return b.voidBlock(vector(stack(call.csPos), r.call, r.check));
+				return b.voidBlock(Vector.fromArrayCopy(stack(call.csPos).concat([r.call, r.check])));
 			},
 			makeThis: function(e) {
 				var th = (egthis).force();
@@ -533,9 +536,9 @@ class Coro {
 		// 6. Transform blocks to state machine
 
 		var startException:TExpr->TExpr;
-		if (!ctx.typer.com.debug) startException = function(e) return e;
+		if (!ctx.stackTraces) startException = function(e) return e;
 		else {
-			var cf = PMap.find("startException", cont.baseContinuationClass.clFields);
+			var cf = CoroToTexpr.findStackTraceField(cont, "startException", p);
 			var ef = continuationField(cf, cf.cfType);
 			startException = function(e) return mk(TCall(ef, vector(e)), basic.texception, p);
 		}
@@ -574,6 +577,7 @@ class Coro {
 			classNamePos: p,
 			deferredExprs: [],
 			wildcardCatches: [typer.com.config.pfExceptions.ecWildcardCatch, {pack: ["haxe"], name: "Exception"}],
+			stackTraces: Common.defined(typer.com, core.Define.CoroStackTraces),
 			deferredInputs: [],
 			hasCaptureVars: false,
 			capturesThis: false,

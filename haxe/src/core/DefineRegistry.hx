@@ -29,6 +29,11 @@ class DefineRegistry {
 		{key: "annotate_source", doc: "Add additional comments to generated source code.", flags: [Platforms([Cpp])]},
 		{key: "check_xml_proxy", doc: "Check the used fields of the XML proxy.", flags: []},
 		{key: "core_api", doc: "Defined in the core API context.", flags: []},
+		{
+			key: "coro.stack_traces",
+			doc: "Generate the information required to build coroutine stack traces. Combine with `-debug` to also keep frames of coroutines that end in a tail call.",
+			flags: []
+		},
 		{key: "cppia", doc: "Generate cpp instruction assembly.", flags: []},
 		{key: "nocppiaast", doc: "Use legacy cppia generation.", flags: []},
 		{
