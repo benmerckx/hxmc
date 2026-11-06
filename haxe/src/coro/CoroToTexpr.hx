@@ -412,8 +412,12 @@ class CoroToTexpr {
 			case _:
 				throw "assert";
 		}
+		// Resume states are also entered from call sites whose callee returned synchronously, so the error
+		// field is cleared once the error of a resumption has been taken. Otherwise a resume state entered
+		// later would find it again, even if it has already been caught.
 		inline function ifError(cb:CoroBlock):TExpr {
-			var thenE = b.voidBlock(vector(b.assign(exprs.etmpError, exprs.eerror), b.makeBreak(p)));
+			var thenE = b.voidBlock(vector(b.assign(exprs.etmpError, exprs.eerror), b.assign(exprs.eerror, b.makeNull(exprs.eerror.etype, p)),
+				b.makeBreak(p)));
 			var cond = b.binop(OpNotEq, exprs.eerror, b.makeNull(exprs.eerror.etype, p), com.basic.tbool);
 			if (cb.cbStackValue == null) return b.ifThen(cond, thenE);
 			var e = cb.cbStackValue;
@@ -515,17 +519,9 @@ class CoroToTexpr {
 			)), com.basic.tvoid, p);
 		}
 		var cases = [];
-		// port: diverges from upstream (066bd83, and its development branch on
-		// ... 2026-10-27): a catch that handles the error clears the continuation's
-		// ... error slot. Upstream leaves it set, so a resumption state reached
-		// ... later in the same invokeResume (after a call that returns without
-		// ... suspending) reads it in its `error != null` check and throws the
-		// ... caught error again. Upstream issue draft: "[coro] A caught error is
-		// ... thrown again after a call that does not suspend"
-		// ... (hxmc/test/cases/CoroCatch.hx).
 		for (i in 0...excStateMap.length) if (excStateMap[i].length > 0) cases.push(({
 			casePatterns: excStateMap[i].mapToVector(function(i) return b.int(i, p)),
-			caseExpr: b.voidBlock(vector(b.assign(exprs.eerror, b.makeNull(exprs.eerror.etype, p)), setState(i)))
+			caseExpr: b.voidBlock(vector(setState(i)))
 		} : core.TType.TSwitchCase));
 		var def = b.voidBlock(Vector.fromArrayCopy([b.assign(exprs.eerror, exprs.etmpError)].concat(buildCallStack(ctx, cont, exprs.econtinuation, p)).concat([
 			setControl(CoroThrown),
