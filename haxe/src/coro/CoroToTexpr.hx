@@ -145,13 +145,13 @@ class SuspensionCalls {
 		if (call.csKind.noThrow) return {call: assigned.call, check: returned};
 		// Single-state: no while loop to break out of.
 		// Emit the error handler directly (equivalent to eexchandle).
-		var thrown = ctx.numStates == 1 ? b.voidBlock(vector(
+		var thrown = ctx.numStates == 1 ? b.voidBlock(Vector.fromArrayCopy([
 			b.assign(exprs.etmpError, fields.error),
 			b.assign(exprs.eerror, exprs.etmpError),
-			CoroToTexpr.buildCallStack(ctx, cont, exprs.econtinuation, p),
+		].concat(CoroToTexpr.buildCallStack(ctx, cont, exprs.econtinuation, p)).concat([
 			b.assign(exprs.estate, b.int(CoroThrown, p)),
 			b.makeReturn(exprs.econtinuation)
-		)) : b.voidBlock(vector(b.assign(exprs.etmpError, fields.error), b.makeBreak(p)));
+		]))) : b.voidBlock(vector(b.assign(exprs.etmpError, fields.error), b.makeBreak(p)));
 		return {
 			call: assigned.call,
 			check: makeCustomControlSwitch(b, fields.subject,
@@ -318,12 +318,21 @@ class CoroToTexpr {
 		return out;
 	}
 
-	public static function buildCallStack(ctx:CoroCtx, cont:ContinuationApi, econtinuation:TExpr, p:Pos):TExpr {
+	// These fields only exist when BaseContinuation is compiled with coro.stack-traces, which may
+	// not be the case if it was loaded from a cache built with different defines.
+	public static function findStackTraceField(cont:ContinuationApi, name:String, p:Pos):TClassField {
+		var cf = PMap.findOpt(name, cont.baseContinuationClass.clFields);
+		if (cf == null)
+			core.Error.raiseTypingError('haxe.coro.BaseContinuation has no field $name, was it compiled without -D coro.stack-traces?', p);
+		return cf;
+	}
+
+	public static function buildCallStack(ctx:CoroCtx, cont:ContinuationApi, econtinuation:TExpr, p:Pos):Array<TExpr> {
+		if (!ctx.stackTraces) return [];
 		var b = ctx.builder;
-		if (!ctx.typer.com.debug) return b.voidBlockAt(vector(), p);
-		var cf = PMap.find("buildCallStack", cont.baseContinuationClass.clFields);
-		return mk(TCall(b.instanceField(econtinuation, cont.baseContinuationClass, vector(ctx.typer.t.tany), cf, cf.cfType), vector()),
-			ctx.typer.t.tvoid, p);
+		var cf = findStackTraceField(cont, "buildCallStack", p);
+		return [mk(TCall(b.instanceField(econtinuation, cont.baseContinuationClass, vector(ctx.typer.t.tany), cf, cf.cfType), vector()),
+			ctx.typer.t.tvoid, p)];
 	}
 
 	public static function blockToTexprCoroutine(ctx:CoroCtx, root:CoroBlock, cont:ContinuationApi, cls:TClass, params:core.TType.TParams,
@@ -331,7 +340,7 @@ class CoroToTexpr {
 			variable:TVar,
 			defaultValue:Null<TExpr>
 		}>, exprs:CoroToTexprExprs, p:Pos,
-			stackItemInserter:Pos->TExpr, startException:TExpr->TExpr):{
+			stackItemInserter:Pos->Array<TExpr>, startException:TExpr->TExpr):{
 		expr:TExpr,
 		initialState:Int,
 		fields:Array<TClassField>,
@@ -396,10 +405,10 @@ class CoroToTexpr {
 			return switch cb.cbNext {
 				case NextSuspend(call, null):
 					var r = SuspensionCalls.makeSuspendingTailCall(ctx, cont, exprs, call);
-					addState(null, [stackItemInserter(call.csPos)], [r.call, r.check]);
+					addState(null, stackItemInserter(call.csPos), [r.call, r.check]);
 				case NextSuspend(call, n):
 					var r = SuspensionCalls.makeSuspendingCall(ctx, cont, exprs, call);
-					addState(n.cbId, [stackItemInserter(call.csPos)], [r.call, r.check]);
+					addState(n.cbId, stackItemInserter(call.csPos), [r.call, r.check]);
 				case NextUnknown: addState(-1, [setControl(CoroReturned), ereturn], null);
 				case NextFallThrough(n) | NextGoto(n) | NextBreak(n) | NextContinue(n): addState(n.cbId, [], null);
 				case NextReturnVoid: addState(-1, [setControl(CoroReturned), ereturn], null);
@@ -413,11 +422,7 @@ class CoroToTexpr {
 						recordCopy37.epos = e1.epos;
 						recordCopy37;
 					};
-					addState(null, [
-						b.assign(tmp, getCaught(e1)),
-						stackItemInserter(e1.epos),
-						b.assign(tmp, startException(tmp))
-					], single ? null : [b.makeBreak(p)]);
+					addState(null, [b.assign(tmp, getCaught(e1))].concat(stackItemInserter(e1.epos)).concat([b.assign(tmp, startException(tmp))]), single ? null : [b.makeBreak(p)]);
 				case NextIfThen(cond, a, n): addState(null, [b.ifThenElse(cond, setState(a.cbId), setState(n.cbId), com.basic.tint)], null);
 				case NextIfThenElse(cond, a, z,
 					_): addState(null, [b.ifThenElse(cond, setState(a.cbId), setState(z.cbId), com.basic.tint)], null);
@@ -489,12 +494,10 @@ class CoroToTexpr {
 			casePatterns: excStateMap[i].mapToVector(function(i) return b.int(i, p)),
 			caseExpr: b.voidBlock(vector(b.assign(exprs.eerror, b.makeNull(exprs.eerror.etype, p)), setState(i)))
 		} : core.TType.TSwitchCase));
-		var def = b.voidBlock(vector(
-			b.assign(exprs.eerror, exprs.etmpError),
-			buildCallStack(ctx, cont, exprs.econtinuation, p),
+		var def = b.voidBlock(Vector.fromArrayCopy([b.assign(exprs.eerror, exprs.etmpError)].concat(buildCallStack(ctx, cont, exprs.econtinuation, p)).concat([
 			setControl(CoroThrown),
 			ereturn
-		));
+		])));
 		var handler = cases.length == 0 ? def : mk(TSwitch({
 			switchSubject: exprs.egoto,
 			switchCases: Vector.fromArrayCopy(cases),
