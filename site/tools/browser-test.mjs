@@ -9,8 +9,8 @@
 //   program with --interp, compiles it to HXB, answers diagnostics and a
 //   completion, with each module (hih.wasm: exnref; hih-legacy.wasm: the
 //   legacy instructions), and in Chromium runs a request again after a
-//   fault of the engine (fault-worker.js: a Run, and a check, whose fault is the kept
-//   compiler's start); the playground page (Monaco
+//   fault of the engine (fault-worker.js: the kept compiler's first request after
+//   the warmup faults: a Run, and a check); the playground page (Monaco
 //   blocked: its plain editor) picks its module (?eh=legacy, and a Chromium
 //   without exnref) and runs its first example;
 // - the benchmarks page: the compiler's and the Programs' charts (each
@@ -232,8 +232,7 @@ async function faultTest(browser, wasm) {
 	check(r.type === 'done' && r.status === 0 && r.out?.[0]?.startsWith('Main.hx:4: Hello'), `the worker after a fault of the engine (${wasm}): ${JSON.stringify(r).slice(0, 300)}`);
 }
 
-// the same for a check: the fault in the start of the kept compiler (the second instance),
-// the check answered by a fresh one
+// the same for a check: its request faults, a fresh instance answers it
 async function faultCheckTest(browser, wasm) {
 	const page = await browser.newPage();
 	await page.goto(url(''));

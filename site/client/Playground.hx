@@ -39,9 +39,10 @@ class Playground {
 
 	// The compiler is a 10 MB wasm32-wasi module (MODULE). It is compiled
 	// once, only when the playground comes into view (or Run is pressed), and the
-	// compiled module is shared with the workers. Phones and low-memory devices
-	// skip the background type-checker (diagnostics, completion), the second
-	// compiler instance: two of them got mobile browsers' tabs killed.
+	// compiled module goes to the worker. Phones and low-memory devices skip the
+	// background type-checker (diagnostics, completion): it was a second compiler
+	// instance, and two of them got mobile browsers' tabs killed. (Its requests now
+	// go to the one instance Run uses: whether they fit there is not measured yet.)
 	static final LOW_MEMORY = {
 		final memory:Null<Float> = (cast window.navigator).deviceMemory;
 		(memory != null && memory <= 4) || window.matchMedia("(pointer: coarse)").matches;
@@ -141,7 +142,7 @@ class Playground {
 				startRunner();
 			}
 		}
-		runButton.onclick = () -> start("run");
+		runButton.onclick = () -> if (running) stopRun("Stopped.") else start("run");
 		hxbButton.onclick = () -> start("hxb");
 
 		// build facts (sizes, date, commit) from build-info.json, written by `make site` (Makefile)
@@ -341,11 +342,55 @@ class Playground {
 		return w;
 	}
 
+	// the one worker (Worker.hx): Run, Compile to HXB, display requests and checks, on
+	// one compiler instance it keeps. A reply with the id of a pending request answers
+	// that request; the others are a run's
 	static function startRunner() {
 		if (runner != null) return;
 		setBusy(true, "Loading compiler…");
-		runner = startWorker(onRunnerReply);
+		runner = startWorker((m) -> {
+			final resolve = m.id == null ? null : pending[m.id];
+			if (resolve == null) {
+				onRunnerReply(m);
+				return;
+			}
+			pending.remove(m.id);
+			// (a failed request: the worker drops its instance itself, the next starts another)
+			resolve(m.type == "failed" ? null : m);
+		});
 		runner.postMessage(({type: "warmup"} : Request));
+	}
+
+	/** the worker terminated and started again (a run that crashed, or was stopped):
+		requests it had are answered with nothing */
+	static function restartRunner() {
+		runner.terminate();
+		runner = null;
+		runnerReady = false;
+		// (the new worker first: an answered request sends the next one queued)
+		startRunner();
+		final waiting = [for (resolve in pending) resolve];
+		pending.clear();
+		for (resolve in waiting) resolve(null);
+	}
+
+	// a run still going after this long is stopped (Run, while running, stops it too)
+	static inline final RUN_LIMIT_MS = 20000;
+	static var running = false;
+	static var runTimer:Null<Int> = null;
+
+	static function stopRun(why:String) {
+		if (!running) return;
+		endRun();
+		print(why, "err");
+		restartRunner();
+	}
+
+	static function endRun() {
+		running = false;
+		if (runTimer != null) window.clearTimeout(runTimer);
+		runTimer = null;
+		runButton.textContent = "Run";
 	}
 
 	static function setBusy(b:Bool, text = "") {
@@ -368,6 +413,10 @@ class Playground {
 		members.textContent = "";
 		timing.textContent = "";
 		setBusy(true, mode == "run" ? "Compiling and running…" : "Compiling to HXB…");
+		running = true;
+		runButton.textContent = "Stop";
+		runButton.disabled = false;
+		runTimer = window.setTimeout(() -> stopRun('Stopped: still running after ${Std.int(RUN_LIMIT_MS / 1000)} s.'), RUN_LIMIT_MS);
 		final p = program(getCode());
 		runner.postMessage(({type: "compile", mode: mode, main: p.main, file: p.file, code: p.code} : Request));
 	}
@@ -383,15 +432,15 @@ class Playground {
 			case "err":
 				print(m.text, "err");
 			case "done":
+				endRun();
 				timing.textContent = 'exit ${m.status}, ${Ui.fixed(m.ms, 0)} ms';
 				if (m.zip != null) showZip(m.zip);
 				setBusy(false);
 			case "failed":
+				endRun();
 				print(m.message, "err");
 				// a crashed instance (stack or memory exhausted): start over
-				runner.terminate();
-				runner = null;
-				startRunner();
+				restartRunner();
 				setBusy(true, "Restarting compiler…");
 		}
 	}
@@ -439,26 +488,10 @@ class Playground {
 		members.hidden = false;
 	}
 
-	// ---- display requests (JSON-RPC, as an IDE sends them), on their own worker
+	// ---- display requests (JSON-RPC, as an IDE sends them), on the same worker
 
-	static var lsp:js.html.Worker;
-	static var lspSeq = 0;
+	static var requestSeq = 0;
 	static final pending = new Map<Int, Null<Reply>->Void>();
-
-	static function startLsp() {
-		lsp = startWorker((m) -> {
-			final resolve = pending[m.id];
-			if (resolve == null) return;
-			pending.remove(m.id);
-			if (m.type == "failed") {
-				lsp.terminate();
-				startLsp();
-				resolve(null);
-			} else {
-				resolve(m);
-			}
-		});
-	}
 
 	// one request at a time; a newer request of the same kind replaces a queued one
 	// (a js.lib.Map: its keys keep their insertion order)
@@ -468,7 +501,6 @@ class Playground {
 	static function request(r:Request):Promise<Null<Reply>> {
 		// the type-checker starts once the compiler has loaded, and not on small devices
 		if (LOW_MEMORY || MODULE == null || !runnerReady) return Promise.resolve(null);
-		if (lsp == null) startLsp();
 		final kind = r.type == "display" ? r.request.method : r.type;
 		return new Promise((resolve, _) -> {
 			final previous = queue.get(kind);
@@ -484,14 +516,14 @@ class Playground {
 		final q = queue.get(kind);
 		queue.delete(kind);
 		inflight = true;
-		final id = ++lspSeq;
+		final id = ++requestSeq;
 		pending[id] = (m) -> {
 			inflight = false;
 			q.resolve(m);
 			pump();
 		};
 		q.request.id = id;
-		lsp.postMessage(q.request);
+		runner.postMessage(q.request);
 	}
 
 	/** a JSON-RPC display request at the editor position; the result, or null */
