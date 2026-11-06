@@ -46,16 +46,6 @@ class ServerCache {
 	// port: and gives back there, once a reader has read them, what HXB does not keep of a module's
 	// ... monomorphs (their modifiers); always null in the compiler itself.
 	public static var readerCreatedHook:Null<(com:CommonContext, path:GlobalTypePath, reader:HxbReader) -> Void> = null;
-	// port: and decides there whether a module stays good although a dependency is dirty (the dependency is
-	// ... typed again, its interface unchanged: early cutoff), and types such a dependency from its source where
-	// ... the server expects it cached; always null in the compiler itself.
-	public static var dependencyDirtyHook:Null<(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra, dep:ModuleDep,
-		reason:ModuleSkipReason) -> Bool> = null;
-	public static var loadDirtyModuleHook:Null<(com:CommonContext, path:GlobalTypePath, p:Pos) -> Null<ModuleDef>> = null;
-	// port: and checks there a module a reader finds in the binary cache as a dependency of the module it reads,
-	// ... which the checks of that module do not reach when they leave out the dependencies (partial typing):
-	// ... a reason makes it typed from its source (loadDirtyModuleHook); always null in the compiler itself.
-	public static var readerFindModuleHook:Null<(com:CommonContext, mPath:GlobalTypePath) -> Null<ModuleSkipReason>> = null;
 
 	public static function parseFile(sctx:ServerCompilationContext, com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package> {
 		var cc = CommonCache.getCache(com);
@@ -351,7 +341,7 @@ class ServerCache {
 					}
 					switch check(mpath, m2Extra) {
 						case null:
-						case reason if (dependencyDirtyHook != null && dependencyDirtyHook(com, mPath, mExtra, mdep, reason)):
+						case reason if (core.CacheHooks.current != null && core.CacheHooks.current.dependencyDirty(com, mPath, mExtra, mdep, reason)):
 						case reason:
 							throw new Dirty(DependencyDirty(mpath, reason));
 					}
@@ -534,8 +524,8 @@ class ServerCache {
 												+ Globals.sTypePath(m0.mPath),
 												p);
 											null;
-										case BadBinaryModule(_, _) | BadModule(_) if (loadDirtyModuleHook != null
-											&& loadDirtyModuleHook(com, mpath, p) != null):
+										case BadBinaryModule(_, _) | BadModule(_) if (core.CacheHooks.current != null
+											&& core.CacheHooks.current.loadDirtyModule(com, mpath, p) != null):
 											null;
 										case BadBinaryModule(_, reason):
 											throw new Failure("Unexpected bad hxb module " + Globals.sTypePath(mpath) + " ("
@@ -808,8 +798,8 @@ class HxbReaderApiServer implements HxbReaderApi {
 				}
 				com.requestScope.stats.sModulesRestored++;
 				return m;
-			case BadModule(_) if (ServerCache.loadDirtyModuleHook != null):
-				var m = ServerCache.loadDirtyModuleHook(com, path, core.Globals.nullPos);
+			case BadModule(_) if (core.CacheHooks.current != null):
+				var m = core.CacheHooks.current.loadDirtyModule(com, path, core.Globals.nullPos);
 				if (m != null) return m;
 				return Globals.die("Unexpected BadModule " + Globals.sTypePath(path), "serverCache.ml");
 			case BadModule(reason):
@@ -824,7 +814,7 @@ class HxbReaderApiServer implements HxbReaderApi {
 		try {
 			return GoodModule(com.moduleLut.find(mPath));
 		} catch (_:NotFound) {
-			if (ServerCache.readerFindModuleHook != null) switch ServerCache.readerFindModuleHook(com, mPath) {
+			if (core.CacheHooks.current != null) switch core.CacheHooks.current.readerFindModule(com, mPath) {
 				case null:
 				case reason: return BadModule(reason);
 			}

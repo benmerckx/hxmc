@@ -566,17 +566,13 @@ class Common {
 
 	public static function failFast(com:CommonContext):Bool return defined(com, Define.FailFast);
 
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) records here the defines macros
-	// ... read (a null key: all of them) and write; always null in the compiler itself.
-	public static var externalDefinesHook:Null<(com:CommonContext, key:Null<String>, write:Bool) -> Void> = null;
-
 	public static function externalDefined(com:CommonContext, k:String):Bool {
-		if (externalDefinesHook != null) externalDefinesHook(com, convertDefine(k), false);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, convertDefine(k), false);
 		return Define.rawDefined(com.defines, convertDefine(k));
 	}
 
 	public static function externalDefinedValue(com:CommonContext, k:String):String {
-		if (externalDefinesHook != null) externalDefinesHook(com, convertDefine(k), false);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, convertDefine(k), false);
 		return Define.rawDefinedValue(com.defines, convertDefine(k));
 	}
 
@@ -598,22 +594,22 @@ class Common {
 	}
 
 	public static function externalDefineValue(com:CommonContext, k:String, v:String):Void {
-		if (externalDefinesHook != null) externalDefinesHook(com, k, true);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, k, true);
 		Define.rawDefineValue(com.defines, convertAndValidate(k), v);
 	}
 
 	public static function externalDefine(com:CommonContext, k:String):Void {
-		if (externalDefinesHook != null) externalDefinesHook(com, k, true);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, k, true);
 		Define.rawDefine(com.defines, convertAndValidate(k));
 	}
 
 	public static function externalUndefine(com:CommonContext, k:String):Void {
-		if (externalDefinesHook != null) externalDefinesHook(com, k, true);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, k, true);
 		Define.rawUndefine(com.defines, convertAndValidate(k));
 	}
 
 	public static function definesForExternal(com:CommonContext):haxe.ds.StringMap<String> {
-		if (externalDefinesHook != null) externalDefinesHook(com, null, false);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, null, false);
 		var result = new haxe.ds.StringMap<String>();
 		var names:Array<String> = [for (k in com.defines.values.keys()) k];
 		names.sort(core.ds.Key.compareStrings);
@@ -1231,16 +1227,12 @@ class Common {
 		return {args: args, ret: TInst(basic.tcoro.suspensionResultClass.force(), vector(ret))};
 	}
 
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) wraps the lazy typings here, to know
-	// ... which module's typing one continues; always null in the compiler itself.
-	public static var lazyHook:Null<(Void->T)->(Void->T)> = null;
-
 	// port: hxmc.HaxeMain answers `haxelib` itself (hxmc/src/hxmc/libs: as lix's haxelib shim within a lix scope, as haxelib outside),
 	// ... with the exit code and output the process would have, for add_libs and the cpp generator; always null in the compiler itself.
 	public static var haxelibHook:Null<(args:Array<String>) -> {code:Int, stdout:String, stderr:String}> = null;
 
 	public static function makeUnforcedLazy(tProc:T, f:Void->T, where:String):TLazy {
-		if (lazyHook != null) f = lazyHook(f);
+		if (core.CacheHooks.current != null) f = core.CacheHooks.current.lazy(f);
 		var r = new TLazy(lazyAvailable(tDynamic));
 		r.value = lazyWait(function() {
 			try {

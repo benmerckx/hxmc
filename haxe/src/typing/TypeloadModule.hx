@@ -340,17 +340,17 @@ class TypeloadModule {
 			var inheritance = TypeloadCheck.Inheritance.setHeritance(local, c, d.flags, p);
 			function perform():BuildState {
 				c.clBuild = function() return Building([c]);
-				if (buildClassHook != null) buildClassHook(c, true);
+				if (core.CacheHooks.current != null) core.CacheHooks.current.buildClass(c, true);
 				try {
 					for (f in inheritance) f();
 					TypeloadFields.initClass(local, cctx, c, p, d.flags, d.data.toArray());
-					if (buildClassHook != null) buildClassHook(c, false);
+					if (core.CacheHooks.current != null) core.CacheHooks.current.buildClass(c, false);
 					c.clBuild = function() return Built;
 					local.g.buildCount++;
 					for (tp in c.clParams) follow(tp.ttpType);
 					return Built;
 				} catch (e:BuildCanceled) {
-					if (buildClassHook != null) buildClassHook(c, false);
+					if (core.CacheHooks.current != null) core.CacheHooks.current.buildClass(c, false);
 					c.clBuild = makePass(local, perform);
 					function rebuild():Void delayLate(local.g, PBuildClass, function() {
 						c.clBuild();
@@ -372,7 +372,7 @@ class TypeloadModule {
 							state;
 					};
 				} catch (e:haxe.Exception) {
-					if (buildClassHook != null) buildClassHook(c, false);
+					if (core.CacheHooks.current != null) core.CacheHooks.current.buildClass(c, false);
 					c.clBuild = function() return Built;
 					throw e;
 				}
@@ -819,14 +819,6 @@ class TypeloadModule {
 		throw NotFound.raise();
 	}
 
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) learns here when a module is typed
-	// ... from its source (start, then end); always null in the compiler itself.
-	public static var typeFromSourceHook:Null<(com:CommonContext, path:GlobalTypePath, start:Bool) -> Void> = null;
-
-	// port: and when a class of such a module is built (its fields made: start, then end, also when the build
-	// ... fails or is canceled); always null in the compiler itself.
-	public static var buildClassHook:Null<(c:TClass, start:Bool) -> Void> = null;
-
 	public static function loadModulePrime(com:CommonContext, g:TyperGlobals, path:GlobalTypePath, p:Pos):ModuleDef {
 		Common.checkCancellation(com);
 		try {
@@ -873,12 +865,12 @@ class TypeloadModule {
 			decls = found.decls;
 			warnings = [];
 		}
-		if (typeFromSourceHook != null) typeFromSourceHook(com, path, true);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.typeFromSource(com, path, true);
 		var m = try typeModule(com, g, path, file, decls, p, false, isExtern) catch (e:Dynamic) {
-			if (typeFromSourceHook != null) typeFromSourceHook(com, path, false);
+			if (core.CacheHooks.current != null) core.CacheHooks.current.typeFromSource(com, path, false);
 			throw e;
 		}
-		if (typeFromSourceHook != null) typeFromSourceHook(com, path, false);
+		if (core.CacheHooks.current != null) core.CacheHooks.current.typeFromSource(com, path, false);
 		for (w in warnings) Common.moduleWarning(com, m, WIfDisplay, [], core.WarningList.warningObj(WIfDisplay).wDoc, w.pos);
 		return m;
 	}

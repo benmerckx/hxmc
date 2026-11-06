@@ -196,11 +196,6 @@ private function dumpBacktrace():Void {
 }
 
 class HxbReader {
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx): a field a module read refers to,
-	// ... not in its class: true when the pending passes that make it were run (look again); always null in
-	// ... the compiler itself.
-	public static var missingFieldHook:Null<(c:TClass) -> Bool> = null;
-
 	final mpath:GlobalTypePath;
 	final stats:HxbReaderStatsData;
 	final timerCtx:Null<TimerContext>;
@@ -2034,7 +2029,7 @@ class HxbReader {
 								try findMap(c.clStatics, name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
-									if (missingFieldHook == null || !missingFieldHook(c)) throw e;
+									if (core.CacheHooks.current == null || !core.CacheHooks.current.missingField(c)) throw e;
 									findMap(c.clStatics, name);
 								}
 							} catch (_:NotFound) {
@@ -2046,7 +2041,7 @@ class HxbReader {
 								try findMap(c.clFields, name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
-									if (missingFieldHook == null || !missingFieldHook(c)) throw e;
+									if (core.CacheHooks.current == null || !core.CacheHooks.current.missingField(c)) throw e;
 									findMap(c.clFields, name);
 								}
 							} catch (_:NotFound) {

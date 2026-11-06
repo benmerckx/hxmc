@@ -133,23 +133,20 @@ class EvalStdLib {
 
 	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) learns here what a macro's
 	// ... result depends on beyond the sources: a call whose result changes from run to run
-	// ... (volatileHook: the time, randomness, the network, processes; its name), a file read
-	// ... (fileHook: its kind, "c" the content, "d" a directory's listing, "e" whether it exists and
+	// ... (BuildObserver.volatileCall: the time, randomness, the network, processes; its name), a file read
+	// ... (fileRead: its kind, "c" the content, "d" a directory's listing, "e" whether it exists and
 	// ... what it is, "s" its status, "p" its full path; then the path as given), an environment
-	// ... variable read (envHook: its name, null for the whole environment). Called before the
-	// ... native runs (a file that does not exist is a dependency too); always null in the compiler
-	// ... itself, where the wrapped natives do what upstream's do.
-	public static var volatileHook:Null<String->Void> = null;
-	public static var fileHook:Null<(kind:String, path:String) -> Void> = null;
-	public static var envHook:Null<Null<String>->Void> = null;
+	// ... variable read (envRead: its name, null for the whole environment). Called before the
+	// ... native runs (a file that does not exist is a dependency too); without an observer (the compiler
+	// ... itself) the wrapped natives do what upstream's do.
 
-	// port: a native wrapped to tell volatileHook it ran (what: the call, as a user writes it)
+	// port: a native wrapped to tell the observer it ran (what: the call, as a user writes it)
 	static function volatile(what:String, v:Value):Value {
 		return switch v {
 			case VFunction(f, isStatic):
 				VFunction(vl -> {
-					var h = volatileHook;
-					if (h != null) h(what);
+					var o = core.CacheHooks.current;
+					if (o != null) o.volatileCall(what);
 					f(vl);
 				}, isStatic);
 			case _: v;
@@ -169,24 +166,24 @@ class EvalStdLib {
 		];
 	}
 
-	// port: a constructor wrapped to tell volatileHook it ran
+	// port: a constructor wrapped to tell the observer it ran
 	static function volatileConstructor(what:String, f:Array<Value>->Value):Array<Value>->Value {
 		return vl -> {
-			var h = volatileHook;
-			if (h != null) h(what);
+			var o = core.CacheHooks.current;
+			if (o != null) o.volatileCall(what);
 			f(vl);
 		}
 	}
 
-	// port: a native whose first argument is a path, wrapped to tell fileHook it is read
+	// port: a native whose first argument is a path, wrapped to tell the observer it is read
 	static function fileRead(kind:String, v:Value):Value {
 		return switch v {
 			case VFunction(f, isStatic):
 				VFunction(vl -> {
-					var h = fileHook;
-					if (h != null && vl.length > 0) {
+					var o = core.CacheHooks.current;
+					if (o != null && vl.length > 0) {
 						var path = try EvalDecode.decodeString(vl[0]) catch (_:Dynamic) null;
-						if (path != null) h(kind, path);
+						if (path != null) o.fileRead(kind, path);
 					}
 					f(vl);
 				}, isStatic);
@@ -194,16 +191,16 @@ class EvalStdLib {
 		}
 	}
 
-	// port: Sys.getEnv (whole: Sys.environment), wrapped to tell envHook
+	// port: Sys.getEnv (whole: Sys.environment), wrapped to tell the observer
 	static function envRead(whole:Bool, v:Value):Value {
 		return switch v {
 			case VFunction(f, isStatic):
 				VFunction(vl -> {
-					var h = envHook;
-					if (h != null) {
-						if (whole) h(null) else if (vl.length > 0) {
+					var o = core.CacheHooks.current;
+					if (o != null) {
+						if (whole) o.envRead(null) else if (vl.length > 0) {
 							var name = try EvalDecode.decodeString(vl[0]) catch (_:Dynamic) null;
-							if (name != null) h(name);
+							if (name != null) o.envRead(name);
 						}
 					}
 					f(vl);

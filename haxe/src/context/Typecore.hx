@@ -785,12 +785,9 @@ class Typecore {
 
 	// port: task lists are stacks with the top at the end of the array (upstream conses onto
 	// lists; unshift/shift at the front were quadratic). Same order.
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) wraps the tasks here, to know which
-	// ... module's typing a task continues; always null in the compiler itself.
-	public static var delayHook:Null<(Void->Void)->(Void->Void)> = null;
 
 	public static function delay(g:TyperGlobals, p:TyperPass, f:Void->Void):Void {
-		if (delayHook != null) f = delayHook(f);
+		if (core.CacheHooks.current != null) f = core.CacheHooks.current.delay(f);
 		var index = passIndex(p);
 		var tasks = g.delayed[index];
 		tasks.tasks.push(f);
@@ -798,7 +795,7 @@ class Typecore {
 	}
 
 	public static function delayLate(g:TyperGlobals, p:TyperPass, f:Void->Void):Void {
-		if (delayHook != null) f = delayHook(f);
+		if (core.CacheHooks.current != null) f = core.CacheHooks.current.delay(f);
 		var index = passIndex(p);
 		var tasks = g.delayed[index];
 		tasks.tasksLate.push(f);

@@ -42,6 +42,7 @@ class CompilerInstance {
 	public function build(io:CompilerIoData):BuildResult {
 		var sctx = cache.begin();
 		sctx.cache = cache;
+		core.CacheHooks.current = cache.hooks();
 		var scope = Server.createRequestScope(sctx.isServer, io);
 		var messages:Array<CompilerMessage> = [];
 		var flush = scope.resultHandler.flushMessages;
@@ -52,7 +53,7 @@ class CompilerInstance {
 			flush(hasError, com);
 		}
 		var code = try run(sctx, scope, args) catch (e:Dynamic) {
-			cache.end(sctx, 1);
+			endBuild(sctx, 1);
 			throw e;
 		}
 		// (a server's result handler reports the timers itself)
@@ -61,7 +62,7 @@ class CompilerInstance {
 			if (timerCtx.measureTimes == core.Timer.MeasureTimes.Yes)
 				CompilerOutput.sendTimerReport(io, timerCtx);
 		}
-		cache.end(sctx, code);
+		endBuild(sctx, code);
 		return {code: code, messages: messages};
 	}
 
@@ -71,6 +72,7 @@ class CompilerInstance {
 	public function request<T>(start:context.Common.CommonContext->RequestStep<T>, ?env:RequestEnv):RequestOutcome<T> {
 		var sctx = cache.begin();
 		sctx.cache = cache;
+		core.CacheHooks.current = cache.hooks();
 		var ownIo = env == null;
 		var io = ownIo ? CompilerIo.create(_ -> {}, _ -> {}, _ -> {}, () -> {}, null) : env.io;
 		var scope = Server.createRequestScope(sctx.isServer, io);
@@ -146,12 +148,12 @@ class CompilerInstance {
 		displayArgs.displayArg = "";
 		try run(sctx, scope, displayArgs) catch (e:Dynamic) {
 			if (ownIo) CompilerIo.close(io);
-			cache.end(sctx, 1);
+			endBuild(sctx, 1);
 			throw e;
 		}
 		if (answerDir != null) core.Path.restoreCwd(answerDir);
 		if (ownIo) CompilerIo.close(io);
-		cache.end(sctx, 0);
+		endBuild(sctx, 0);
 		if (failure != null) throw failure;
 		return if (answered) Answered(answer) else if (found != null) Found(found) else if (errors != null) Failed(errors) else Found(DRNone);
 	}
@@ -171,6 +173,12 @@ class CompilerInstance {
 			case Found(r): throw new core.Globals.InternalCompilerError('a request found ${Type.enumConstructor(r)}', "");
 			case Failed(messages): throw new CompilationError(messages);
 		}
+
+	// (the build's cache hooks no longer current)
+	function endBuild(sctx:ServerCompilationContext, code:Int):Void {
+		core.CacheHooks.current = null;
+		cache.end(sctx, code);
+	}
 
 	function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int
 		return sctx.isServer ? process(sctx, scope, args) : HighLevel.entry(sctx, scope, args);
@@ -265,6 +273,10 @@ interface CompilerCache {
 		for this build (Compiler.beforeTypingHook) */
 	function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void;
 
+	/** where it hooks into a build's typing (core.CacheHooks; null: nowhere), current
+		during each build */
+	function hooks():Null<core.CacheHooks>;
+
 	/** after the build, with its exit code (0: built) */
 	function end(sctx:ServerCompilationContext, code:Int):Void;
 }
@@ -277,6 +289,9 @@ class SkipCache implements CompilerCache {
 		return Server.setupServerContext(false, false);
 
 	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
+
+	public function hooks():Null<core.CacheHooks>
+		return null;
 
 	public function end(sctx:ServerCompilationContext, code:Int):Void
 		ServerCompilationContext.dispose(sctx);
@@ -306,6 +321,9 @@ class InMemoryCache implements CompilerCache {
 	}
 
 	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
+
+	public function hooks():Null<core.CacheHooks>
+		return null;
 
 	public function end(sctx:ServerCompilationContext, code:Int):Void {}
 

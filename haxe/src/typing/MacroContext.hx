@@ -86,17 +86,6 @@ enum MacroArgType {
 }
 
 class MacroContext {
-	// port: hook (not upstream): whether a type's module was processed in an
-	// earlier compilation and comes back so (the tool's module cache restores
-	// the macros' modules as processed): its constructors are not patched
-	// again (SaveStacks.patchConstructors adds a call each time)
-	public static var processedTypeHook:Null<ModuleType->Bool> = null;
-
-	// port: hook (not upstream): a module a macro defined (defineType,
-	// defineModule) and the module it was made a dependency of (the tool's
-	// module cache: whether the definition was part of that module's typing)
-	public static var definedHook:Null<(ModuleDef, ModuleDef) -> Void> = null;
-
 	public static var macroInterpCache:Null<macros.eval.EvalContext.Context> = null;
 
 	// port: hook (not upstream): the macro context's platform when its code is not
@@ -606,7 +595,7 @@ class MacroContext {
 					mnew.mExtra.mKind = isMacro ? MMacro : MFake;
 					addDependency(mnew, mdep, MDepFromMacro);
 					addDependency(mdep, mnew, MDepFromMacroDefine);
-					if (definedHook != null) definedHook(mnew, mdep); // port: hook (not upstream)
+					if (core.CacheHooks.current != null) core.CacheHooks.current.defined(mnew, mdep); // port: hook (not upstream)
 					ctx.com.moduleNonexistentLut.clear();
 				}
 			}
@@ -651,7 +640,7 @@ class MacroContext {
 				mnew.mExtra.mKind = MFake;
 				addDependency(mnew, ctx.m.curmod, MDepFromMacro);
 				addDependency(ctx.m.curmod, mnew, MDepFromMacroDefine);
-				if (definedHook != null) definedHook(mnew, ctx.m.curmod); // port: hook (not upstream)
+				if (core.CacheHooks.current != null) core.CacheHooks.current.defined(mnew, ctx.m.curmod); // port: hook (not upstream)
 				ctx.com.moduleNonexistentLut.clear();
 			}
 		};
@@ -834,7 +823,7 @@ class MacroContext {
 			];
 			var typeFilters:Array<context.SafeCom.SafeContext->ModuleType->Void> = [
 				function(_, mt) filters.FiltersCommon.removeGenericBase(mt),
-				function(scom, mt) if (processedTypeHook == null || !processedTypeHook(mt)) filters.exception.SaveStacks.patchConstructors(ectx, scom)(mt),
+				function(scom, mt) if (core.CacheHooks.current == null || !core.CacheHooks.current.processedType(mt)) filters.exception.SaveStacks.patchConstructors(ectx, scom)(mt),
 				function(_,
 						mt) filters.safe.AddFieldInits.addFieldInits(mctx.c.curclass.clPath,
 						filters.RenameVars.init(mctx.com.config, mctx.com.types), scom, mt),

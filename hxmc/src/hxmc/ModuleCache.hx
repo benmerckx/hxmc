@@ -28,7 +28,7 @@ using core.ds.VectorTools;
 //
 // Defines: a module is kept with the defines it read (its file's conditions,
 // its macros' Context.defined and getDefines) and those the compiler read
-// in the build that typed it (Define.readHook: the typer's and filters'
+// in the build that typed it (CacheHooks.defineRead: the typer's and filters'
 // options, the target's); a build restores the variant whose reads have its
 // values, so a define only some modules read leaves the others (the std)
 // good, in a store shared by every signature. The macros' context, when it
@@ -46,8 +46,8 @@ using core.ds.VectorTools;
 // its whole content (its source and everything it depends on) for a macro's
 // module and modules typed with macros. A dependency typed again whose
 // interface did not change leaves its dependents good (early cutoff:
-// ServerCache.dependencyDirtyHook; it is typed from its source where the
-// server expects it cached, loadDirtyModuleHook). Together these make the
+// CacheHooks.dependencyDirty; it is typed from its source where the
+// server expects it cached, loadDirtyModule). Together these make the
 // module's key (Variant.typedKey); what the build made of each module is
 // its verdict (ModuleCacheState.verdicts: restored, typed again with the
 // same interface or a new one), settled at the capture.
@@ -81,7 +81,7 @@ using core.ds.VectorTools;
 //
 // Macro state: the static variables of macro classes (not the std's) the
 // macros run in a module's typing use are kept with its variant
-// (EvalJit.staticVarHook: state such as a registry an @:autoBuild fills
+// (CacheHooks.staticVar: state such as a registry an @:autoBuild fills
 // for another macro, or a counter naming generated types). The module is
 // restored while no macro of the build uses that state; one that does
 // after the module was restored runs the build again, with the modules
@@ -89,7 +89,7 @@ using core.ds.VectorTools;
 // (HXMC_MODULE_CACHE_RETYPE); an edited module whose macros keep state has
 // the others that keep it there typed from the start.
 //
-// Nondeterministic macros (EvalStdLib.volatileHook, fileHook, envHook: the
+// Nondeterministic macros (CacheHooks.volatileCall, fileRead, envRead: the
 // macro std's natives, for the module being typed when the macro runs): a
 // call whose result changes from run to run (the time, randomness, the
 // network, processes) makes the module typed every build ("!" in its
@@ -130,69 +130,9 @@ class ModuleCache {
 	public static function current():Null<ModuleCacheState>
 		return state;
 
-	// the hooks the cache observes typing through (OnDiskCache, once): no-ops without a
-	// build's state
-	static var observing = false;
-
-	public static function observe() {
-		if (observing || Sys.systemName() == "Wasi") return;
-		observing = true;
-		mainThread = sys.thread.Thread.current();
-		core.Define.readHook = onRead;
-		Common.externalDefinesHook = onExternal;
-		typing.TyperEntry.createdHook = onTyper;
-		ServerCache.dependencyDirtyHook = onDependencyDirty;
-		ServerCache.loadDirtyModuleHook = loadDirty;
-		ServerCache.readerFindModuleHook = onReaderFind;
-		typing.TypeloadModule.typeFromSourceHook = onTypeFromSource;
-		typing.TypeloadModule.buildClassHook = onBuildClass;
-		compiler.hxb.HxbReader.missingFieldHook = onMissingField;
-		core.TUnification.maybeUsedHook = onMaybeUsed;
-		macros.eval.EvalJit.staticVarHook = onStaticVar;
-		typing.MacroContext.definedHook = onDefined;
-		core.TFunctions.dependencyHook = onDependency;
-		macros.eval.EvalStdLib.volatileHook = onVolatile;
-		macros.eval.EvalStdLib.fileHook = onFileRead;
-		macros.eval.EvalStdLib.envHook = onEnvRead;
-		// (a module of the macros' context restored as processed: -1, ModuleStore.readExtra)
-		typing.MacroContext.processedTypeHook = mt -> state != null && core.TFunctions.tModule(mt).mExtra.mProcessed < 0;
-		// (a lazy typing continues the typing of the module that made it)
-		Common.lazyHook = function(f:Void->T):Void->T {
-			var s = state;
-			if (s == null || s.typingStack.length == 0) return f;
-			var maker = s.typingStack[s.typingStack.length - 1];
-			return function() {
-				if (state != s) return f();
-				s.typingStack.push(maker);
-				var r = try f() catch (x:Dynamic) {
-					s.typingStack.pop();
-					throw x;
-				}
-				s.typingStack.pop();
-				return r;
-			};
-		};
-		// (a delayed task continues the typing of the module that delayed it)
-		context.Typecore.delayHook = function(f:Void->Void):Void->Void {
-			var s = state;
-			if (s == null || s.typingStack.length == 0) return f;
-			var maker = s.typingStack[s.typingStack.length - 1];
-			return function() {
-				var s2 = state;
-				if (s2 != s) {
-					f();
-					return;
-				}
-				s.typingStack.push(maker);
-				try f() catch (x:Dynamic) {
-					s.typingStack.pop();
-					throw x;
-				}
-				s.typingStack.pop();
-			};
-		};
-		wrapTypeExpr();
-	}
+	// where the cache hooks into a build's typing (OnDiskCache.hooks): no-ops without the
+	// build's state; none under WASI (no store)
+	public static final hooks:Null<core.CacheHooks> = Sys.systemName() == "Wasi" ? null : new ModuleCacheHooks();
 
 	// Typecore.typeExprRef, wrapped to know the module whose code is being
 	// typed (the maker of the structural marks); again after each typer's
@@ -223,7 +163,7 @@ class ModuleCache {
 		context.Typecore.typeExprRef = w;
 	}
 
-	// TUnification.maybeUsedHook: a class field marked as maybe used through
+	// CacheHooks.maybeUsed: a class field marked as maybe used through
 	// a structure (CfMaybeUsed, which DCE reads), and its accessors, by the
 	// module being typed
 	static function onMaybeUsed(cl:Null<TClass>, f1:TClassField, f2:Null<TClassField>) {
@@ -253,7 +193,7 @@ class ModuleCache {
 		mutex.release();
 	}
 
-	// EvalJit.staticVarHook: a macro used a static variable of a macro class
+	// CacheHooks.staticVar: a macro used a static variable of a macro class
 	// (state kept between macro calls), in the typing of a module or not; the
 	// std's classes left out (their variables are constant tables, caches of
 	// the platform: none a library's macros keep their state in)
@@ -281,7 +221,7 @@ class ModuleCache {
 		if (r != null && r.length > 0) again(s, name, r);
 	}
 
-	// MacroContext.definedHook: a macro defined a module (defineType,
+	// CacheHooks.defined: a macro defined a module (defineType,
 	// defineModule), made a dependency of mdep (the macro API's current
 	// module). Outside the typing of a module (an onAfterTyping or onGenerate
 	// callback) that module is only the one whose typing first made the
@@ -299,7 +239,7 @@ class ModuleCache {
 		if (s.log) Sys.println("hxmc: module cache: " + core.Globals.sTypePath(mnew.mPath) + " defined by a macro outside the typing of a module (not kept)");
 	}
 
-	// TFunctions.dependencyHook: a dependency about to be added. One a macro's
+	// CacheHooks.dependency: a dependency about to be added. One a macro's
 	// callback adds outside the typing of a module (the macro API's calls:
 	// Context.getType, defineType, ...) is added to the module the API names
 	// as current, whatever it is (see onDefined): restored, that module would
@@ -373,7 +313,7 @@ class ModuleCache {
 	static function stillTyping(s:ModuleCacheState):Bool
 		return s.com.stage.getIndex() < CTypingDone.getIndex();
 
-	// EvalStdLib.volatileHook: a macro called something whose result changes
+	// CacheHooks.volatileCall: a macro called something whose result changes
 	// from run to run (the time, randomness, the network, a process): the
 	// module being typed is typed every build. Its dependents see it through
 	// its interface as parsed, unless the call is in what they can copy (an
@@ -477,7 +417,7 @@ class ModuleCache {
 		return first == null ? "" : " at " + first;
 	}
 
-	// EvalStdLib.fileHook: a macro read a file (its content, a directory's
+	// CacheHooks.fileRead: a macro read a file (its content, a directory's
 	// listing, whether it exists, its status, its full path): a read of the
 	// module being typed, kept with its value (ModuleCacheState.value, role 3)
 	static function onFileRead(kind:String, path:String) {
@@ -487,7 +427,7 @@ class ModuleCache {
 		macroRead(s, 3, kind + ":" + abs, "a macro read " + path);
 	}
 
-	// EvalStdLib.envHook: a macro read an environment variable (null: the
+	// CacheHooks.envRead: a macro read an environment variable (null: the
 	// whole environment): a read of the module being typed (role 2)
 	static function onEnvRead(name:Null<String>) {
 		var s = state;
@@ -513,7 +453,7 @@ class ModuleCache {
 	// -D hxmc.no-cache=<entries> (comma-separated: a package or module path,
 	// or a directory named so in the path of the class path the module's
 	// file is in, such as a library's; without a value, every module):
-	// whether it names the module. Read without Define.readHook (not a read
+	// whether it names the module. Read without CacheHooks.defineRead (not a read
 	// of the build's)
 	static function noCache(s:ModuleCacheState, path:GlobalTypePath, file:Null<String>):Bool {
 		var l = s.noCacheList;
@@ -635,7 +575,7 @@ class ModuleCache {
 		if (unattributed > 0 && s.log) Sys.println("hxmc: module cache: " + unattributed + " structural marks made outside the typing of a module");
 	}
 
-	// TypeloadModule.typeFromSourceHook: while a module of the store is typed
+	// CacheHooks.typeFromSource: while a module of the store is typed
 	// from its source, the restored modules of its cycle it loads are typed
 	// from theirs too (decoded then, they would refer to its types before they
 	// are ready); the others of its cycle stay restored
@@ -659,7 +599,7 @@ class ModuleCache {
 			}
 	}
 
-	// TypeloadModule.buildClassHook: a class of a module typed from its
+	// CacheHooks.buildClass: a class of a module typed from its
 	// source built (its fields made), lazily, when something first asks for
 	// them: part of the typing of its module (what its build macros do is
 	// that module's, its macros' state among it, whichever module's typing
@@ -678,7 +618,7 @@ class ModuleCache {
 		}
 	}
 
-	// HxbReader.missingFieldHook: a restored module refers to a field its
+	// CacheHooks.missingField: a restored module refers to a field its
 	// class does not have (yet): of a module typed from its source in this
 	// build whose pending passes make it (an interface's accessors, made in
 	// PConnectField, which the typer runs before the code that reads them is
@@ -716,6 +656,8 @@ class ModuleCache {
 	// or why not
 	public static function beforeTyping(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
 		hookCalls++;
+		mainThread = sys.thread.Thread.current();
+		if (hooks != null) wrapTypeExpr();
 		state = null;
 		ServerCache.checkModuleHook = null;
 		typing.Finalization.sortExprHook = null;
@@ -809,8 +751,8 @@ class ModuleCache {
 	static function ms(t:Float):Int
 		return Std.int((haxe.Timer.stamp() - t) * 1000);
 
-	// Define.readHook: a define read (by the compiler, or by a macro through
-	// Common.externalDefinesHook first)
+	// CacheHooks.defineRead: a define read (by the compiler, or by a macro through
+	// CacheHooks.externalDefine first)
 	static function onRead(ctx:core.Define.DefineContext, key:String) {
 		var s = state;
 		if (s == null) {
@@ -827,7 +769,7 @@ class ModuleCache {
 		s.read(ctx, key);
 	}
 
-	// Common.externalDefinesHook: a macro reads (a null key: all) or writes a define
+	// CacheHooks.externalDefine: a macro reads (a null key: all) or writes a define
 	static function onExternal(com:CommonContext, name:Null<String>, write:Bool) {
 		var s = state;
 		if (s == null) return;
@@ -849,7 +791,7 @@ class ModuleCache {
 		mutex.release();
 	}
 
-	// TyperEntry.createdHook (before the typer loads anything): the
+	// CacheHooks.typerCreated (before the typer loads anything): the
 	// program's typer, then the macros' context's modules (the context its
 	// macros run in, or the one it will create, with the defines the program
 	// has now)
@@ -905,7 +847,7 @@ class ModuleCache {
 		return null;
 	}
 
-	// ServerCache.loadDirtyModuleHook: a module typed again under one restored
+	// CacheHooks.loadDirtyModule: a module typed again under one restored
 	static function loadDirty(com:CommonContext, path:GlobalTypePath, p:core.Globals.Pos):Null<ModuleDef> {
 		var s = state;
 		if (s == null) return null;
@@ -916,7 +858,7 @@ class ModuleCache {
 		return typing.TypeloadModule.loadModulePrime(com, g, path, p);
 	}
 
-	// ServerCache.readerFindModuleHook: a module of the store a reader reaches
+	// CacheHooks.readerFindModule: a module of the store a reader reaches
 	// from the one it reads (a type its declarations or expressions name),
 	// checked as one the typer loads (the checks of the module read leave its
 	// dependencies out: partial typing): not decoded as the variant chosen
@@ -932,7 +874,7 @@ class ModuleCache {
 		return ServerCache.checkModule(com.sctx, com, path, mc.mcExtra, core.Globals.nullPos);
 	}
 
-	// ServerCache.dependencyDirtyHook: a module checked good by its
+	// CacheHooks.dependencyDirty: a module checked good by its
 	// dependencies' hashes stays good
 	static function onDependencyDirty(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra, dep:ModuleDep, reason:ModuleSkipReason):Bool {
 		var s = state;
@@ -1699,5 +1641,97 @@ class Closure {
 		var n = sccs++;
 		for (m in members)
 			memo.set(m.roleKey(), {di: dih, df: dfh, scc: n});
+	}
+}
+
+// ModuleCache's hooks into a build's typing (core.CacheHooks)
+@:access(hxmc.ModuleCache)
+private class ModuleCacheHooks extends core.CacheHooks {
+	override public function defineRead(ctx:core.Define.DefineContext, key:String):Void
+		ModuleCache.onRead(ctx, key);
+
+	override public function externalDefine(com:CommonContext, key:Null<String>, write:Bool):Void
+		ModuleCache.onExternal(com, key, write);
+
+	override public function typerCreated(ctx:context.Typecore.Typer):Void
+		ModuleCache.onTyper(ctx);
+
+	override public function dependencyDirty(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra, dep:ModuleDep, reason:ModuleSkipReason):Bool
+		return ModuleCache.onDependencyDirty(com, mPath, mExtra, dep, reason);
+
+	override public function loadDirtyModule(com:CommonContext, path:GlobalTypePath, p:core.Globals.Pos):Null<ModuleDef>
+		return ModuleCache.loadDirty(com, path, p);
+
+	override public function readerFindModule(com:CommonContext, mPath:GlobalTypePath):Null<ModuleSkipReason>
+		return ModuleCache.onReaderFind(com, mPath);
+
+	override public function typeFromSource(com:CommonContext, path:GlobalTypePath, start:Bool):Void
+		ModuleCache.onTypeFromSource(com, path, start);
+
+	override public function buildClass(c:TClass, start:Bool):Void
+		ModuleCache.onBuildClass(c, start);
+
+	override public function missingField(c:TClass):Bool
+		return ModuleCache.onMissingField(c);
+
+	override public function maybeUsed(cl:Null<TClass>, f1:TClassField, f2:Null<TClassField>):Void
+		ModuleCache.onMaybeUsed(cl, f1, f2);
+
+	override public function staticVar(c:TClass, write:Bool):Void
+		ModuleCache.onStaticVar(c, write);
+
+	override public function defined(mnew:ModuleDef, mdep:ModuleDef):Void
+		ModuleCache.onDefined(mnew, mdep);
+
+	override public function dependency(m:ModuleDef, mdep:ModuleDef, origin:ModuleDepOrigin):Void
+		ModuleCache.onDependency(m, mdep, origin);
+
+	override public function volatileCall(what:String):Void
+		ModuleCache.onVolatile(what);
+
+	override public function fileRead(kind:String, path:String):Void
+		ModuleCache.onFileRead(kind, path);
+
+	override public function envRead(name:Null<String>):Void
+		ModuleCache.onEnvRead(name);
+
+	// (a module of the macros' context restored as processed: -1, ModuleStore.readExtra)
+	override public function processedType(mt:ModuleType):Bool
+		return ModuleCache.state != null && core.TFunctions.tModule(mt).mExtra.mProcessed < 0;
+
+	// (a lazy typing continues the typing of the module that made it)
+	override public function lazy(f:Void->T):Void->T {
+		var s = ModuleCache.state;
+		if (s == null || s.typingStack.length == 0) return f;
+		var maker = s.typingStack[s.typingStack.length - 1];
+		return function() {
+			if (ModuleCache.state != s) return f();
+			s.typingStack.push(maker);
+			var r = try f() catch (x:Dynamic) {
+				s.typingStack.pop();
+				throw x;
+			}
+			s.typingStack.pop();
+			return r;
+		};
+	}
+
+	// (a delayed task continues the typing of the module that delayed it)
+	override public function delay(f:Void->Void):Void->Void {
+		var s = ModuleCache.state;
+		if (s == null || s.typingStack.length == 0) return f;
+		var maker = s.typingStack[s.typingStack.length - 1];
+		return function() {
+			if (ModuleCache.state != s) {
+				f();
+				return;
+			}
+			s.typingStack.push(maker);
+			try f() catch (x:Dynamic) {
+				s.typingStack.pop();
+				throw x;
+			}
+			s.typingStack.pop();
+		};
 	}
 }

@@ -442,11 +442,6 @@ class Monomorph {
 }
 
 class TUnification {
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) learns here which class fields a
-	// ... structural unification marks as maybe used (with the field of the structure; null for a class's
-	// ... statics), to attribute the marks to the module being typed; always null in the compiler itself.
-	public static var maybeUsedHook:Null<(cl:Null<TClass>, f1:TClassField, f2:Null<TClassField>) -> Void> = null;
-
 	public static function error(l:Array<UnifyError>):Dynamic throw new Unify_error(l);
 
 	public static function checkConstraint(name:String, f:Void->Void):Void try {
@@ -1108,7 +1103,7 @@ class TUnification {
 						for (f2o in f2.cfOverloads) if (!core.ds.ArrayTools.exists([f1].concat(f1.cfOverloads),
 							function(f1o) return typeIseqCustom(c, f1o.cfType, f2o.cfType))) error([MissingOverload(f1, f2o.cfType)]);
 						// we mark the field as :?used because it might be used through the structure
-						if (maybeUsedHook != null) maybeUsedHook(cl, f1, f2);
+						if (core.CacheHooks.current != null) core.CacheHooks.current.maybeUsed(cl, f1, f2);
 						if (!hasClassFieldFlag(f1, CfMaybeUsed)) {
 							addClassFieldFlag(f1, CfMaybeUsed);
 							switch f2.cfKind {
@@ -1281,7 +1276,7 @@ class TUnification {
 				});
 			case [ClassStatics(c1), _]:
 				unifyFields(c1.clStatics, function(f1) {
-					if (maybeUsedHook != null) maybeUsedHook(null, f1, null);
+					if (core.CacheHooks.current != null) core.CacheHooks.current.maybeUsed(null, f1, null);
 					addClassFieldFlag(f1, CfMaybeUsed);
 				}, function(_) return false);
 			case _:

@@ -46,16 +46,11 @@ using core.ds.VectorTools;
 //   `{jit, f}` for upstream's `(jit, f)` pair.
 // - `ctx.overrides` is keyed by `"<dot path>.<field>"`.
 class EvalJit {
-	// port: hook (not upstream): called, when set, by the code of a static
-	// variable's read or write (its class) as the macro runs; for the tool's
-	// module cache, which finds the modules whose macros keep state
-	public static var staticVarHook:Null<(c:TClass, write:Bool) -> Void> = null;
-
 	static function hookStatic(c:TClass, cf:Null<TClassField>, write:Bool, exec:EvalEmitter.Emitter):EvalEmitter.Emitter {
-		var h = staticVarHook;
-		if (h == null || (cf != null && !cf.cfKind.match(Var(_)))) return exec;
+		if (core.CacheHooks.current == null || (cf != null && !cf.cfKind.match(Var(_)))) return exec;
 		return env -> {
-			h(c, write);
+			var o = core.CacheHooks.current;
+			if (o != null) o.staticVar(c, write);
 			exec(env);
 		}
 	}
@@ -546,7 +541,7 @@ class EvalJit {
 							return EvalEmitter.emitVectorLengthRead(jitExprRec(jit, false, e1), e1.epos);
 						case FInstance({clPath: {pack: ["haxe", "io"], name: "Bytes"}}, _, {cfName: "length"}):
 							return EvalEmitter.emitBytesLengthRead(jitExprRec(jit, false, e1), e1.epos);
-						case FStatic(c = {clPath: path}, cf) if (staticVarHook != null && cf.cfKind.match(Var(_))):
+						case FStatic(c = {clPath: path}, cf) if (core.CacheHooks.current != null && cf.cfKind.match(Var(_))):
 							var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), e1.epos);
 							return hookStatic(c, cf, false, EvalEmitter.emitProtoFieldRead(proto, EvalContext.getProtoFieldIndex(proto, name)));
 						case FStatic(c = {clPath: path}, cf) if (missingExternHook != null):
