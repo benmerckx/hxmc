@@ -871,10 +871,11 @@ class Lexer {
 			// port: integer, ('e'|'E'), Opt ('+'|'-'), Plus integer_digits, Opt float_suffix
 			var e = mExponent(ei);
 			if (e >= 0) cand(e, 1);
-			// port: integer, '.', Star digit, ('e'|'E'), ...
+			// port: integer, '.', Star integer_digits, ('e'|'E'), ...
 			if (codeAt(ei) == ".".code) {
+				// port: Star integer_digits is empty or one integer_digits, as a repetition cannot start with '_'
 				var j = ei + 1;
-				while (isDigitC(codeAt(j))) j++;
+				if (isDigitC(codeAt(j))) j = mPlusDigits(j, isDigitC);
 				var e = mExponent(j);
 				if (e >= 0) cand(e, 1);
 			}
