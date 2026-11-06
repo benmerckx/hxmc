@@ -330,6 +330,15 @@ class Operators {
 					if (!unificationError(ex)) throw ex;
 					e2 = context.AbstractCast.castOrUnify(ctx, e1.etype, e2, p);
 				}
+				function isEnumConstructorWithoutArgs(e:TExpr):Bool return switch (Texpr.skip(e)).eexpr {
+					case TField(_, FEnum(_, ef)):
+						switch follow(ef.efType) {
+							case TFun(_): false;
+							case _: true;
+						}
+					case _:
+						false;
+				}
 				switch [e1.eexpr, e2.eexpr] {
 					case [TConst(TNull), _] | [_, TConst(TNull)]:
 					case _: switch [follow(e1.etype), follow(e2.etype)] {
@@ -339,7 +348,7 @@ class Operators {
 							case [TEnum(en,
 								_), _] | [_, TEnum(en,
 									_)]: if (!core.Meta.has(MetaTag.FlatEnum,
-									en.eMeta)) warning(ctx, WUnsafeEnumEquality,
+									en.eMeta) && !(isEnumConstructorWithoutArgs(e1) || isEnumConstructorWithoutArgs(e2))) warning(ctx, WUnsafeEnumEquality,
 										"Equality operations on this enum might lead to unexpected results because some constructors have arguments",
 										p);
 							case _:
