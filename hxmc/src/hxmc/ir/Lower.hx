@@ -1240,6 +1240,9 @@ class Lower implements LowerQueries {
 			if (err.where == "") err.where = where;
 			throw err;
 		};
+		// (an interface's default method the class leaves out, which the typer
+		// declared extern in it: Java's own body answers, not a native)
+		ms = [for (m in ms) if (!(Com.implOf(c, m.cf)?.hasClassFieldFlag(CfExtern) ?? false)) m];
 		var module = moduleOf(c);
 		var natives = [];
 		for (k in 0...ms.length) {

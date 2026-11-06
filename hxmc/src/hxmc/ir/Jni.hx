@@ -156,6 +156,11 @@ class Jni {
 				return JRef(R_DYNAMIC, null, "Ljava/lang/CharSequence;");
 			case TAbstract(a, _) if (a.aPath.name == "Any" && a.aPath.pack.length == 0):
 				return JRef(R_DYNAMIC, null, "Ljava/lang/Object;");
+			// a type parameter (List<E>'s E, <T extends View> T): Java's erasure,
+			// its leftmost bound's class or Object; its values as Dynamic's (an
+			// Int an Integer, a String a String, a Java object itself)
+			case TInst(c, _) if (c.clKind.match(KTypeParameter(_))):
+				return JRef(R_DYNAMIC, null, erasure(c));
 			case _:
 		}
 		return switch CInterop.ctype(t) {
@@ -171,6 +176,22 @@ class Jni {
 			case CVoid: JVoid;
 			case _: JNone(core.TPrinting.sTypes(vector(t)) + " has no Java type (numbers, Bool, String, Bytes, Arrays, Java classes, Dynamic)");
 		}
+	}
+
+	// a type parameter's erasure, as a descriptor: its first bound's
+	static function erasure(c:TClass):String {
+		switch c.clKind {
+			case KTypeParameter(ttp):
+				var bounds = TFunctions.getConstraints(ttp);
+				if (bounds.length > 0) switch TFunctions.follow(bounds[0]) {
+					case TInst(b, _) if (isJava(b)): return "L" + className(b) + ";";
+					case TInst(b, _) if (b.clKind.match(KTypeParameter(_))): return erasure(b);
+					case TAbstract(a, []) if (a.aPath.name == "CharSequence" && a.aPath.pack.join(".") == "hxmc.java"): return "Ljava/lang/CharSequence;";
+					case _:
+				}
+			case _:
+		}
+		return "Ljava/lang/Object;";
 	}
 
 	public static function primDesc(code:Int):String

@@ -48,6 +48,8 @@ class Ui implements java.lang.Runnable {
 class Taps implements View_OnClickListener {
 	var label:TextView;
 	var count = 0;
+	// (a java.util generic: its elements as Dynamic's, Java's erasure)
+	var words = new java.util.ArrayList<String>();
 
 	public function new(label)
 		this.label = label;
@@ -55,7 +57,21 @@ class Taps implements View_OnClickListener {
 	public function onClick(v:View) {
 		count++;
 		var squares = [for (i in 0...count) i * i];
-		label.setText('tapped $count: ' + squares.join(","));
-		Log.i("hxmc", "tapped " + count);
+		words.add(["one", "three", "five", "eleven"][(count - 1) % 4]);
+		words.sort(new Longest());
+		label.setText('tapped $count: ' + squares.join(",") + "\n" + [for (i in 0...words.size()) words.get(i)].join(" "));
+		Log.i("hxmc", "tapped " + count + ", longest first: " + words.get(0));
 	}
+}
+
+// a generic Java interface implemented in Haxe: its proxy's compare is the
+// erased (Object, Object); reversed() and the other default methods stay Java's
+class Longest implements java.util.Comparator<String> {
+	public function new() {}
+
+	public function compare(a:String, b:String):Int
+		return b.length - a.length;
+
+	public function equals(o:Dynamic):Bool
+		return o == this;
 }
