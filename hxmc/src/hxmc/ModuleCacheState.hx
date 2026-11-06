@@ -588,7 +588,7 @@ class ModuleCacheState {
 		@:privateAccess ModuleCache.mutex.acquire();
 		var known = ifaces.exists(pk);
 		@:privateAccess ModuleCache.mutex.release();
-		if (!known) try typing.TypeloadParse.parseHook(c, r, core.Globals.nullPos) catch (_:Dynamic) {}
+		if (!known) try typing.TypeloadParse.parse(c, r, core.Globals.nullPos) catch (_:Dynamic) {}
 		var h = iface(pk);
 		return h == null ? unknown() : h;
 	}

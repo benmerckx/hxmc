@@ -646,7 +646,10 @@ class Typecore {
 	public static function makeCall(ctx:Typer, e:TExpr, el:Vector<TExpr>, t:T, p:Pos):TExpr return makeCallRef(ctx, e, el, t, p);
 
 	public static function typeExpr(ctx:Typer, e:Expr, withType:core.WithType.WithTypeValue,
-			?mode:AccessMode):TExpr return typeExprRef(ctx, e, withType, mode == null ? MGet : mode);
+			?mode:AccessMode):TExpr {
+		var h = core.CacheHooks.current;
+		return h == null ? typeExprRef(ctx, e, withType, mode == null ? MGet : mode) : h.typeExpr(ctx, e, withType, mode == null ? MGet : mode, typeExprRef);
+	}
 
 	public static function unifyMin(ctx:Typer, el:Vector<TExpr>):T return unifyMinRef(ctx, el);
 

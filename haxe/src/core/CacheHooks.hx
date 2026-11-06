@@ -76,4 +76,32 @@ class CacheHooks {
 	/** a delayed task, as it continues the typing that delayed it */
 	public function delay(f:Void->Void):Void->Void
 		return f;
+
+	// (around the compiler's own: `inner`)
+
+	/** an expression typed (Typecore.typeExpr) */
+	public function typeExpr(ctx:context.Typecore.Typer, e:Ast.Expr, withType:WithType.WithTypeValue, mode:context.Typecore.AccessMode,
+			inner:(context.Typecore.Typer, Ast.Expr, WithType.WithTypeValue, ?context.Typecore.AccessMode) -> TExpr):TExpr
+		return inner(ctx, e, withType, mode);
+
+	/** a module the typer looks for in the server's cache (TypeloadCacheHook.typeModule) */
+	public function typeModule(com:context.Common.CommonContext, delay:(context.TyperPass, Void->Void) -> Void, path:GlobalTypePath, p:Pos,
+			inner:(context.Common.CommonContext, (context.TyperPass, Void->Void) -> Void, GlobalTypePath, Pos) -> typing.TypeloadCacheHook.FindModuleResult):typing.TypeloadCacheHook.FindModuleResult
+		return inner(com, delay, path, p);
+
+	/** a file parsed (TypeloadParse.parse) */
+	public function parse(com:context.Common.CommonContext, rfile:ClassPaths.ResolvedFile, p:Pos,
+			inner:(context.Common.CommonContext, ClassPaths.ResolvedFile, Pos) -> syntax.Parser.ParseResult<Ast.Package>):syntax.Parser.ParseResult<Ast.Package>
+		return inner(com, rfile, p);
+
+	/** a cached module's check, before the server's: why it is not usable (null: the server's checks decide) */
+	public function checkModule(com:context.Common.CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra):Null<ModuleSkipReason>
+		return null;
+
+	/** an HXB reader made for a cached module */
+	public function readerCreated(com:context.Common.CommonContext, path:GlobalTypePath, reader:compiler.hxb.HxbReader):Void {}
+
+	/** a field's expression (cf null: the class's init) as the sort of the types walks it */
+	public function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr
+		return e;
 }

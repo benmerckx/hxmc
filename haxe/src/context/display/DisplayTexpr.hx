@@ -196,7 +196,7 @@ class DisplayTexpr {
 			// We have to go through type_module_hook because one of the module's dependencies could be
 			// invalid (issue #8991).
 			var m = try ctx.com.moduleLut.find(path) catch (_:core.ds.NotFound) {
-				switch typing.TypeloadCacheHook.typeModuleHook(ctx.com, function(pass, f) Typecore.delay(ctx.g, pass, f), path, Globals.nullPos) {
+				switch typing.TypeloadCacheHook.typeModule(ctx.com, function(pass, f) Typecore.delay(ctx.g, pass, f), path, Globals.nullPos) {
 					case NoModule | BadModule(_) | BadBinaryModule(_, _):
 						throw core.ds.NotFound.raise();
 					case BinaryModule(mc):

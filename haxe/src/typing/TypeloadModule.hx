@@ -826,7 +826,7 @@ class TypeloadModule {
 			return com.moduleLut.find(path);
 		} catch (_:NotFound) {}
 		// Check cache
-		switch TypeloadCacheHook.typeModuleHook(com, function(pass, f) delay(g, pass, f), path, p) {
+		switch TypeloadCacheHook.typeModule(com, function(pass, f) delay(g, pass, f), path, p) {
 			case GoodModule(m):
 				return m;
 			case BinaryModule(_):

@@ -117,7 +117,7 @@ class Skeletons {
 			work[i].map.set(work[i].name, recorded[i]);
 	}
 
-	// Finalization.sortExprHook
+	// CacheHooks.sortExpr
 	public static function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr {
 		var s = ModuleCache.current();
 		if (s == null) return e;

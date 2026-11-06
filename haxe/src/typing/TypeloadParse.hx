@@ -167,6 +167,12 @@ class TypeloadParse {
 
 	public static var parseHook:CommonContext->ResolvedFile->Pos->ParseResult<Package> = parseFile;
 
+	// port: not upstream: parseHook, with the build's cache hooks around it (core.CacheHooks)
+	public static function parse(com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package> {
+		var h = core.CacheHooks.current;
+		return h == null ? parseHook(com, rfile, p) : h.parse(com, rfile, p, parseHook);
+	}
+
 	public static function handleParserResult(com:CommonContext, p:Pos, result:ParseResult<Package>):SourceParseResult {
 		inline function handleError(error:ParseErrorInfo):Void {
 			var msg = Parser.errorMsg(error.message);
@@ -192,7 +198,7 @@ class TypeloadParse {
 	}
 
 	public static function parseModuleFile(com:CommonContext, rfile:ResolvedFile,
-			p:Pos):SourceParseResult return handleParserResult(com, p, parseHook(com, rfile, p));
+			p:Pos):SourceParseResult return handleParserResult(com, p, parse(com, rfile, p));
 
 	public static function resolveModuleFile(com:CommonContext, path:GlobalTypePath, remap:{value:Array<String>}, p:Pos):ResolvedFile {
 		try return com.moduleToFile.find(path)
@@ -225,7 +231,7 @@ class TypeloadParse {
 		}
 		if (forbidden) {
 			var meta:Metadata = [];
-			switch parseHook(com, rfile, p) {
+			switch parse(com, rfile, p) {
 				case ParseSuccess(data, _):
 					for (decl in data.declarations) {
 						var found:Null<Metadata> = switch decl.definition {

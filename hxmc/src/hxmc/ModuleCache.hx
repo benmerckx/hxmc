@@ -35,7 +35,7 @@ using core.ds.VectorTools;
 // does not exist yet, gets the defines it will have (predicted as
 // MacroContext does it, checked when it is created).
 //
-// Validity (ServerCache.checkModuleHook, check below): the module's file
+// Validity (CacheHooks.checkModule, check below): the module's file
 // (a content hash where the date or size differ: a fresh checkout changes
 // every date; a date within RACY seconds of the parse is not trusted), the
 // file its path resolves to now (a module shadowed by a new file earlier in
@@ -56,9 +56,9 @@ using core.ds.VectorTools;
 // (hxmc/test/ModuleCacheCheck.hx), which takes two things the server's HXB
 // cache does not keep: the modifiers of unbound monomorphs (Null<Unknown>:
 // CheckingHxbWriter, given back to the reader's monomorphs through
-// ServerCache.readerCreatedHook) and what the sort of the types walks of a
+// CacheHooks.readerCreated) and what the sort of the types walks of a
 // restored module, whose expressions are the filtered ones (Skeletons,
-// through Finalization.sortExprHook).
+// through CacheHooks.sortExpr).
 //
 // On by default; HXMC_MODULE_CACHE=0 or -D hxmc.no-module-cache turns it
 // off (HXMC_MODULE_CACHE=0 also when -D hxmc.module-cache is given).
@@ -118,7 +118,6 @@ class ModuleCache {
 
 	static var state:Null<ModuleCacheState> = null;
 	static var hookCalls = 0;
-	static var parseHookInstalled = false;
 	static var start = haxe.Timer.stamp();
 	static final mutex = new sys.thread.Mutex();
 	static var mainThread:Null<sys.thread.Thread> = null;
@@ -133,35 +132,6 @@ class ModuleCache {
 	// where the cache hooks into a build's typing (OnDiskCache.hooks): no-ops without the
 	// build's state; none under WASI (no store)
 	public static final hooks:Null<core.CacheHooks> = Sys.systemName() == "Wasi" ? null : new ModuleCacheHooks();
-
-	// Typecore.typeExprRef, wrapped to know the module whose code is being
-	// typed (the maker of the structural marks); again after each typer's
-	// creation, which sets the reference anew (Typer.initialize)
-	static var typeExprWrapper:Null<Dynamic> = null;
-
-	static function wrapTypeExpr() {
-		if (typeExprWrapper != null && Reflect.compareMethods(context.Typecore.typeExprRef, typeExprWrapper)) return;
-		var typeExpr = context.Typecore.typeExprRef;
-		var w = function(ctx:context.Typecore.Typer, e:core.Ast.Expr, withType:core.WithType.WithTypeValue, ?mode:context.Typecore.AccessMode):TExpr {
-			var s = state;
-			if (s == null) return typeExpr(ctx, e, withType, mode);
-			s.typingStack.push(ctx.m.curmod);
-			s.typerStack.push(ctx);
-			s.typerDepths.push(s.typingStack.length);
-			var r = try typeExpr(ctx, e, withType, mode) catch (x:Dynamic) {
-				s.typerStack.pop();
-				s.typerDepths.pop();
-				s.typingStack.pop();
-				throw x;
-			}
-			s.typerStack.pop();
-			s.typerDepths.pop();
-			s.typingStack.pop();
-			return r;
-		}
-		typeExprWrapper = w;
-		context.Typecore.typeExprRef = w;
-	}
 
 	// CacheHooks.maybeUsed: a class field marked as maybe used through
 	// a structure (CfMaybeUsed, which DCE reads), and its accessors, by the
@@ -657,10 +627,7 @@ class ModuleCache {
 	public static function beforeTyping(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
 		hookCalls++;
 		mainThread = sys.thread.Thread.current();
-		if (hooks != null) wrapTypeExpr();
 		state = null;
-		ServerCache.checkModuleHook = null;
-		typing.Finalization.sortExprHook = null;
 		var why = wanted(com) ? unusable(com, actx) : "off";
 		var s = why == null ? open(com) : null;
 		early = [];
@@ -672,65 +639,9 @@ class ModuleCache {
 			return;
 		}
 		state = s;
-		ServerCache.checkModuleHook = check;
-		typing.Finalization.sortExprHook = Skeletons.sortExpr;
 		// (what the sort of the types walks, of every class typed: before the
 		// filters change it)
 		com.callbacks.addAfterTyping(_ -> Skeletons.computeAll(com));
-		if (!parseHookInstalled) {
-			parseHookInstalled = true;
-			// (the blob of a restored module and the modifiers of its
-			// monomorphs, once the server has read it)
-			ServerCache.readerCreatedHook = function(com, path, reader) {
-				var s = state;
-				if (s == null) return;
-				var v = s.variantOf(context.CommonCache.getCacheSign(com), path);
-				if (v == null || !s.load(v)) return;
-				if (v.monos.length > 4) s.readers.push({com: com, reader: reader, monos: v.monos});
-			}
-			var typeModule = typing.TypeloadCacheHook.typeModuleHook;
-			typing.TypeloadCacheHook.typeModuleHook = function(com, delay, path, p) {
-				var s = state;
-				if (s != null && (s.creating.length > 0 || s.building.length > 0)) s.cycleGuard(com, path);
-				var r = typeModule(com, delay, path, p);
-				var s = state;
-				if (s != null) s.restoreMonos();
-				return r;
-			}
-			var inner = typing.TypeloadParse.parseHook;
-			typing.TypeloadParse.parseHook = function(com, rfile, p) {
-				var s = state;
-				if (s == null) return inner(com, rfile, p);
-				var file = core.Path.getFullPath(rfile.file);
-				s.note(file);
-				var pk = (com.isMacroContext ? 1 : 0) + "\x00" + file;
-				var main = sys.thread.Thread.current() == mainThread;
-				var prev = s.parsing;
-				if (main) s.parsing = pk;
-				var r = try inner(com, rfile, p) catch (e:Dynamic) {
-					if (main) s.parsing = prev;
-					throw e;
-				}
-				if (main) s.parsing = prev;
-				// (its interface hashed now: the declarations are not kept, a
-				// large part of the build's memory until the store is written)
-				mutex.acquire();
-				var known = s.ifaces.exists(pk);
-				mutex.release();
-				if (!known) {
-					var t0 = haxe.Timer.stamp();
-					var h = switch r {
-						case ParseSuccess(data, _): try ModuleInterface.hash(data.declarations) catch (_:Dynamic) null;
-						case _: null;
-					};
-					mutex.acquire();
-					s.ifaces.set(pk, h);
-					s.ifaceTime += haxe.Timer.stamp() - t0;
-					mutex.release();
-				}
-				return r;
-			}
-		}
 		// (before the compiler's own: registrations from now until typing is
 		// done are the macros')
 		com.callbacks.addAfterSave(() -> capture(com));
@@ -797,7 +708,6 @@ class ModuleCache {
 	// has now)
 	static function onTyper(ctx:context.Typecore.Typer) {
 		typers.push({com: ctx.com, g: ctx.g});
-		wrapTypeExpr();
 		var s = state;
 		if (s == null) return;
 		if (ctx.com == s.com && s.macroPending) {
@@ -974,7 +884,7 @@ class ModuleCache {
 	public static function size(file:String):Float
 		return try FileSystem.stat(file).size catch (_:Dynamic) -1;
 
-	// ServerCache.checkModuleHook: a module from the store, before the
+	// CacheHooks.checkModule: a module from the store, before the
 	// server's checks
 	static function check(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra):Null<ModuleSkipReason> {
 		var s = state;
@@ -1468,8 +1378,6 @@ class ModuleCache {
 	public static function finish(code:Int) {
 		var s = state;
 		state = null;
-		ServerCache.checkModuleHook = null;
-		typing.Finalization.sortExprHook = null;
 		if (s == null) {
 			CacheDir.settle();
 			return;
@@ -1734,4 +1642,85 @@ private class ModuleCacheHooks extends core.CacheHooks {
 			s.typingStack.pop();
 		};
 	}
+	// (the module whose code is being typed: the maker of the structural marks)
+	override public function typeExpr(ctx:context.Typecore.Typer, e:core.Ast.Expr, withType:core.WithType.WithTypeValue,
+			mode:context.Typecore.AccessMode, inner:(context.Typecore.Typer, core.Ast.Expr, core.WithType.WithTypeValue, ?context.Typecore.AccessMode) -> TExpr):TExpr {
+		var s = ModuleCache.state;
+		if (s == null) return inner(ctx, e, withType, mode);
+		s.typingStack.push(ctx.m.curmod);
+		s.typerStack.push(ctx);
+		s.typerDepths.push(s.typingStack.length);
+		var r = try inner(ctx, e, withType, mode) catch (x:Dynamic) {
+			s.typerStack.pop();
+			s.typerDepths.pop();
+			s.typingStack.pop();
+			throw x;
+		}
+		s.typerStack.pop();
+		s.typerDepths.pop();
+		s.typingStack.pop();
+		return r;
+	}
+
+	// (a module of a cycle being created or built: typed with its cycle; the modifiers
+	// of restored monomorphs given back once read)
+	override public function typeModule(com:CommonContext, delay:(context.TyperPass, Void->Void) -> Void, path:GlobalTypePath, p:core.Globals.Pos,
+			inner:(CommonContext, (context.TyperPass, Void->Void) -> Void, GlobalTypePath, core.Globals.Pos) -> typing.TypeloadCacheHook.FindModuleResult):typing.TypeloadCacheHook.FindModuleResult {
+		var s = ModuleCache.state;
+		if (s != null && (s.creating.length > 0 || s.building.length > 0)) s.cycleGuard(com, path);
+		var r = inner(com, delay, path, p);
+		var s = ModuleCache.state;
+		if (s != null) s.restoreMonos();
+		return r;
+	}
+
+	// (the file noted, its interface hashed now: the declarations are not kept, a
+	// large part of the build's memory until the store is written)
+	override public function parse(com:CommonContext, rfile:core.ClassPaths.ResolvedFile, p:core.Globals.Pos,
+			inner:(CommonContext, core.ClassPaths.ResolvedFile, core.Globals.Pos) -> syntax.Parser.ParseResult<core.Ast.Package>):syntax.Parser.ParseResult<core.Ast.Package> {
+		var s = ModuleCache.state;
+		if (s == null) return inner(com, rfile, p);
+		var file = core.Path.getFullPath(rfile.file);
+		s.note(file);
+		var pk = (com.isMacroContext ? 1 : 0) + "\x00" + file;
+		var main = sys.thread.Thread.current() == ModuleCache.mainThread;
+		var prev = s.parsing;
+		if (main) s.parsing = pk;
+		var r = try inner(com, rfile, p) catch (e:Dynamic) {
+			if (main) s.parsing = prev;
+			throw e;
+		}
+		if (main) s.parsing = prev;
+		ModuleCache.mutex.acquire();
+		var known = s.ifaces.exists(pk);
+		ModuleCache.mutex.release();
+		if (!known) {
+			var t0 = haxe.Timer.stamp();
+			var h = switch r {
+				case ParseSuccess(data, _): try ModuleInterface.hash(data.declarations) catch (_:Dynamic) null;
+				case _: null;
+			};
+			ModuleCache.mutex.acquire();
+			s.ifaces.set(pk, h);
+			s.ifaceTime += haxe.Timer.stamp() - t0;
+			ModuleCache.mutex.release();
+		}
+		return r;
+	}
+
+	override public function checkModule(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra):Null<ModuleSkipReason>
+		return ModuleCache.check(com, mPath, mExtra);
+
+	// (the blob of a restored module and the modifiers of its monomorphs, once the
+	// server has read it)
+	override public function readerCreated(com:CommonContext, path:GlobalTypePath, reader:compiler.hxb.HxbReader):Void {
+		var s = ModuleCache.state;
+		if (s == null) return;
+		var v = s.variantOf(context.CommonCache.getCacheSign(com), path);
+		if (v == null || !s.load(v)) return;
+		if (v.monos.length > 4) s.readers.push({com: com, reader: reader, monos: v.monos});
+	}
+
+	override public function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr
+		return Skeletons.sortExpr(c, cf, e);
 }

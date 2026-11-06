@@ -130,13 +130,8 @@ class Finalization {
 		}
 	}
 
-	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) gives here, for the fields of a
-	// ... module it restored (their expressions as the filters left them), what the walk below saw of them
-	// ... when the module was typed (cf null: the class's init); always null in the compiler itself.
-	public static var sortExprHook:Null<(c:TClass, cf:Null<TClassField>, e:TExpr) -> TExpr> = null;
-
 	public static function sortTypes(com:CommonContext, modules:ModuleLut):{types:Array<ModuleType>, modules:Array<ModuleDef>} {
-		inline function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr return sortExprHook == null ? e : sortExprHook(c, cf, e);
+		inline function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr return core.CacheHooks.current == null ? e : core.CacheHooks.current.sortExpr(c, cf, e);
 		var types:Array<ModuleType> = [];
 		var states:Map<String, FinalizationState> = [];
 		var statics:Map<String, Bool> = [];
