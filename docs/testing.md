@@ -155,10 +155,10 @@ needs).
 
 | Suite | Target | Passed | Skipped: BUG | TARGET | EXTERNAL | Failed |
 | --- | --- | --- | --- | --- | --- | --- |
-| unit | linux-x86_64 | 1519 | 0 | 12 | 0 | 0 |
-| sys | linux-x86_64 | 37 | 0 | 0 | 2 | 0 |
-| threads | linux-x86_64 | 38 | 0 | 0 | 0 | 0 |
-| unit | wasm32-wasi | 1516 | 0 | 15 | 0 | 0 |
+| unit | linux-x86_64 | 1586 | 1 | 12 | 0 | 0 |
+| sys | linux-x86_64 | 39 | 0 | 0 | 2 | 0 |
+| threads | linux-x86_64 | 43 | 0 | 0 | 0 | 0 |
+| unit | wasm32-wasi | 1582 | 1 | 16 | 0 | 0 |
 
 `unit` includes `TestCoroutines`. On wasm32-wasi the call-stack and socket
 tests are `TARGET` skips.
