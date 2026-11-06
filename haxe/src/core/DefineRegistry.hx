@@ -139,7 +139,7 @@ class DefineRegistry {
 			flags: [Platforms([Cpp]), HasParam("name")]
 		},
 		{key: "hlc", doc: "Defined by compiler when using hl/c target.", flags: [Platforms([Hl]), Reserved(true)]},
-		{key: "hl_ver", doc: "The HashLink version to target. (default: 1.15.0)", flags: [Platforms([Hl]), HasParam("version")]},
+		{key: "hl_ver", doc: "The HashLink version to target. (default: 1.16.0)", flags: [Platforms([Hl]), HasParam("version")]},
 		{key: "times.hxb", doc: "Display hxb timing when used with `--times`.", flags: []},
 		{key: "hxb.stats", doc: "Display some hxb related stats (only with compilation server).", flags: []},
 		{key: "hxcpp_api_level", doc: "Provided to allow compatibility between hxcpp versions.", flags: [Platforms([Cpp]), Reserved(true)]},
