@@ -14,10 +14,14 @@ using StringTools;
 //   agent app (LSUIElement), as a managed Mac may end a regular one that
 //   is not its administrator's;
 // - the iOS simulator, an iPhone and an iPad (the newest iOS runtime's
-//   first of each): installed, launched (simctl launch, its output to
-//   files: --console-pty, on a hosted runner, at times lost what the app
-//   printed last, or never connected), uninstalled; a device booted here is
-//   shut down after.
+//   first of each; on CI, CI set, the iPhone only: the same binary on the
+//   same runtime, the iPad one more boot, one more chance for a hosted
+//   runner's simulator to stall): installed, launched (simctl launch, its
+//   output to files: --console-pty, on a hosted runner, at times lost what
+//   the app printed last, or never connected), uninstalled; a device booted
+//   here is shut down after. A launch that printed nothing is tried once
+//   more on the device booted again, on CI erased first (a stalled launch
+//   recovered only so, #151); a failed one prints the app's log.
 // Each prints what the app saw: the delegate called, the body run after it,
 // the window key and sized, the label's text. Exits non-zero on a failure;
 // no Xcode (or not macOS): skipped.
@@ -109,7 +113,8 @@ class UIKitCheck {
 			+ '<key>MinimumOSVersion</key><string>15.0</string>\n<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>\n'
 			+ '<key>UILaunchScreen</key><dict/>\n'));
 		if (!build("ios-sim-arm64", '$app/Info.plist', '$app/UIKitHello')) return;
-		for (family in ["iPhone", "iPad"]) {
+		var ci = Sys.getEnv("CI") != null && Sys.getEnv("CI") != "";
+		for (family in (ci ? ["iPhone"] : ["iPhone", "iPad"])) {
 			var d = device(family);
 			if (d == null) {
 				Sys.println(pad('ios-sim-arm64 $family', 48) + " skipped (no such simulator)");
@@ -118,23 +123,36 @@ class UIKitCheck {
 			var booted = d.state != "Booted";
 			if (booted) exec(["xcrun", "simctl", "boot", d.udid]);
 			exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
-			var i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
-			// (a device just shut down and booted again may refuse the first install: once more)
-			if (i.code != 0) {
-				exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
-				i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
+			function install() {
+				var i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
+				// (a device just shut down and booted again may refuse the first install: once more)
+				if (i.code != 0) {
+					exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
+					i = exec(["xcrun", "simctl", "install", d.udid, app], {merge: true, timeout: 120});
+				}
+				return i;
 			}
+			var i = install();
 			if (i.code != 0) check('ios-sim-arm64: ${d.name}: install', false, tail(i.out, 400));
 			else {
 				var r = launch(d.udid, 120);
 				// (a hosted runner's simulator may not run the app at all: once more, the
 				// device booted again)
 				if (r.code != 0 && r.out.indexOf("launched") < 0) {
-					Sys.println(pad('ios-sim-arm64: ${d.name}', 48) + ' retrying the launch (exit ${r.code}, nothing printed)');
+					Sys.println(pad('ios-sim-arm64: ${d.name}', 48) + ' retrying the launch (exit ${r.code}, nothing printed)' + (ci ? ", the device erased" : ""));
 					exec(["xcrun", "simctl", "shutdown", d.udid], {timeout: 120});
+					// (not a local device: what a user keeps in it)
+					if (ci) exec(["xcrun", "simctl", "erase", d.udid], {timeout: 120});
 					exec(["xcrun", "simctl", "boot", d.udid], {timeout: 120});
 					exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
-					r = launch(d.udid, 120);
+					var i2 = install();
+					r = i2.code == 0 ? launch(d.udid, 120) : {code: i2.code, out: i2.out};
+				}
+				if (r.code != 0) {
+					// (what the device logged of the app: why it printed nothing)
+					var log = exec(["xcrun", "simctl", "spawn", d.udid, "log", "show", "--last", "5m", "--style", "compact", "--predicate",
+						'process == "UIKitHello" OR eventMessage CONTAINS "$ID"'], {merge: true, timeout: 120});
+					Sys.println('ios-sim-arm64: ${d.name}: the app\'s log (last lines):\n' + tail(log.out, 4000));
 				}
 				output('ios-sim-arm64: ${d.name}', r.code, r.out);
 				exec(["xcrun", "simctl", "uninstall", d.udid, ID]);
