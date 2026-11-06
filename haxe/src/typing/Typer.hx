@@ -193,6 +193,7 @@ class Typer {
 					ctx.m.enumWithType = old;
 					switch exc {
 						case(core.ds.ExceptionTools.typing(_) => Some({errMessage: UnknownIdent(n)})):
+							if (ctx.f.inDisplay && ctx.com.display.dmsKind == DMDefault) throw exc;
 							raiseOrDisplayMessage(ctx,
 								StringError.stringError(n, expected.fields,
 									"Identifier '" + n + "' is not part of " + Globals.sTypePath(expected.path)),
