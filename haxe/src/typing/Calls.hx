@@ -373,7 +373,7 @@ class Calls {
 		case _: true;
 	};
 
-	public static function callToString(ctx:TyperContext, e:TExpr, resume:Bool = false):TExpr {
+	public static function callToString(ctx:TyperContext, e:TExpr, resume:Bool = false, noNullCheck:Bool = false):TExpr {
 		if (!ctx.allowTransform) return mk(e.eexpr, ctx.t.tstring, e.epos);
 		inline function generate(e:TExpr):TExpr {
 			// Ignore visibility of the toString field.
@@ -383,7 +383,7 @@ class Calls {
 			ctx.f.meta.shift();
 			return buildCall(ctx, acc, vector(), WithTypeTools.withType(ctx.t.tstring), e.epos);
 		}
-		if (ctx.com.config.pfStatic && !isNullable(e.etype)) return generate(e);
+		if (noNullCheck || (ctx.com.config.pfStatic && !isNullable(e.etype))) return generate(e);
 		// generate `if(e == null) 'null' else e.toString()`
 		var stringNull = mk(TConst(TString("null")), ctx.t.tstring, e.epos);
 		if (needsTempVar(e)) {

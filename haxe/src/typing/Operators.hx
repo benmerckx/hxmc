@@ -230,7 +230,8 @@ class Operators {
 		var tint = ctx.t.tint, tfloat = ctx.t.tfloat, tstring = ctx.t.tstring;
 		function toString(e:TExpr):TExpr {
 			function loop(t:T):TExpr return switch classify(t) {
-				case KAbstract({aImpl: c}, _) if (c != null && c.clStatics.exists("toString")): Calls.callToString(ctx, e);
+				case KAbstract({aImpl: c, aThis: aThis}, _) if (c != null && c.clStatics.exists("toString")):
+					Calls.callToString(ctx, e, false, core.TFunctions.isExplicitNull(aThis));
 				case KInt | KFloat | KString: e;
 				case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther: Texpr.Builder.resolveAndMakeStaticCall(ctx.com.std, "string",
 						vector(e), e.epos);
