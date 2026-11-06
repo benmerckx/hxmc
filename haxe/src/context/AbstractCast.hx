@@ -377,7 +377,7 @@ class AbstractCast {
 						core.ds.VectorTools.cons(core.TFunctions.mk(TConst(TNull), TAbstract(a, found.params), e.epos), el), m, e.epos);
 					{eexpr: call.eexpr, etype: m, epos: call.epos};
 				}
-			case TCall({eexpr: TField(_, FStatic(c, cf))}, [e1])
+			case TCall(ef = {eexpr: TField(_, FStatic(c, cf))}, [e1])
 				if (c.clPath.pack.length == 0
 					&& c.clPath.name == "Std"
 					&& cf.cfName == "string"
@@ -388,19 +388,15 @@ class AbstractCast {
 					switch core.TFunctions.follow(e1.etype) {
 						case TAbstract(a, tl) if (a.aImpl != null):
 							var c = a.aImpl;
+							var e1_ = loop(e1);
 							var cf = c.clStatics.get("toString");
-							if (cf == null) e; else {
-								function call():TExpr return filters.exception.ExceptionFunctions.makeStaticCall(scom, c, cf, vector(e1),
+							if (cf == null) {eexpr: TCall(ef, vector(e1_)), etype: e.etype, epos: e.epos}; else {
+								// @:multiType rewrites change the argument to the underlying type; cast back so toString gets the abstract type
+								var e1 = if (core.TUnification.fastEq(e1_.etype, e1.etype)) e1_ else core.TFunctions.mkCast(e1_, e1.etype, e1_.epos);
+								function call(e1:TExpr):TExpr return filters.exception.ExceptionFunctions.makeStaticCall(scom, c, cf, vector(e1),
 									scom.basic.tstring, e.epos);
-								if (core.TFunctions.isExplicitNull(a.aThis) || !core.TFunctions.isNullable(e1.etype)) call();
-								else {
-									var p = e.epos;
-									var chkNull = core.TFunctions.mk(TBinop(OpEq, e1, core.TFunctions.mk(TConst(TNull), e1.etype, p)),
-										scom.basic.tbool, p);
-									core.TFunctions.mk(TIf(chkNull, core.TFunctions.mk(TConst(TString("null")), scom.basic.tstring, p),
-										call()),
-										scom.basic.tstring, p);
-								}
+								if (core.TFunctions.isExplicitNull(a.aThis) || !core.TFunctions.isNullable(e1.etype)) call(e1);
+								else core.Texpr.Builder.makeNullSafeToString(scom.basic, call, e1, e.epos);
 							}
 						case _: throw "abstractCast: invalid abstract string call";
 					}
