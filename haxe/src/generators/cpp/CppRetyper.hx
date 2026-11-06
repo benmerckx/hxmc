@@ -480,6 +480,53 @@ class CppRetyper {
 		return o;
 	}
 
+	/* Generate a no op tfunc for an abstract function. */
+	/* This allows it to go through the rest of the generators with no special cases. */
+	/* We can't implement abstract functions as pure virtual due to cppia needing to construct the class. */
+	public static function abstractTfunc(basic:BasicTypes, field:TClassField):TFunc {
+		var sig = switch followWithCoro(field.cfType) {
+			case Coro(sig): context.Common.expandCoroType(basic, sig.args, sig.ret);
+			case NotCoro(TFun(sig)): sig;
+			case _: CppError.cppAbort(InternalError, field.cfPos);
+		}
+		var args = sig.args, ret = sig.ret;
+
+		/* We need to fetch the default values for abstract functions from the @:Value meta */
+		function getDefaultValue(name:String):Null<TExpr> {
+			return try {
+				var m = Meta.get(Meta.Value, field.cfMeta);
+				switch m.exprs {
+					case [{expr: EObjectDecl(decls)}]:
+						var found:Null<ObjectField> = null;
+						for (d in decls) if (d.key.name == name) {
+							found = d;
+							break;
+						}
+						if (found == null) throw NotFound.raise();
+						core.Texpr.typeConstantValue(basic, found.expr);
+					case _: null;
+				}
+			} catch (_:NotFound) null;
+		}
+
+		function mapArg(a:{name:String, optional:Bool, type:T}) {
+			return {variable: allocVar(VGenerated, a.name, a.type, nullPos), defaultValue: getDefaultValue(a.name)};
+		}
+		var expr:TExpr = switch follow(ret) {
+			case TAbstract({aPath: {pack: [], name: "Void"}}, _):
+				{eexpr: TReturn(null), etype: ret, epos: nullPos};
+			case _:
+				var zeroVal:TExpr = {eexpr: TConst(TInt(0)), etype: ret, epos: nullPos};
+				{eexpr: TReturn(zeroVal), etype: ret, epos: nullPos};
+		}
+
+		return ({
+			tfArgs: args.map(mapArg),
+			tfType: ret,
+			tfExpr: expr
+		} : TFunc);
+	}
+
 	public static function tcppClassFromTclass(ctx:Context, ids:ObjectIds, slots:InterfaceSlots, classDef:TClass,
 			classParams:TParams):{slots:InterfaceSlots, ids:ObjectIds, cls:TcppClass} {
 		var scriptable = Gctx.defined(ctx.ctxCommon, Define.Scriptable);
@@ -542,54 +589,7 @@ class CppRetyper {
 					case [Method(MethNormal | MethInline), {eexpr: TFunction(func)}]:
 						createFunction(field, func);
 					case [Method(MethNormal), _] if (hasClassFieldFlag(field, CfAbstract)):
-						/* We need to fetch the default values for abstract functions from the @:Value meta */
-						var abstractTfunc = {
-							var sig = switch followWithCoro(field.cfType) {
-								case Coro(sig): context.Common.expandCoroType(basic, sig.args, sig.ret);
-								case NotCoro(TFun(sig)): sig;
-								case _: CppError.cppAbort(InternalError, field.cfPos);
-							}
-							var args = sig.args, ret = sig.ret;
-
-							function getDefaultValue(name:String):Null<TExpr> {
-								return try {
-									var m = Meta.get(Meta.Value, field.cfMeta);
-									switch m.exprs {
-										case [{expr: EObjectDecl(decls)}]:
-											var found:Null<ObjectField> = null;
-											for (d in decls) if (d.key.name == name) {
-												found = d;
-												break;
-											}
-											if (found == null) throw NotFound.raise();
-											core.Texpr.typeConstantValue(basic, found.expr);
-										case _: null;
-									}
-								} catch (_:NotFound) null;
-							}
-
-							/* Generate a no op tfunc for our abstract */
-							/* This allows it to go through the rest of the generator with no special cases */
-							/* We can't implement abstract functions as pure virtual due to cppia needing to construct the class */
-							function mapArg(a:{name:String, optional:Bool, type:T}) {
-								return {variable: allocVar(VGenerated, a.name, a.type, nullPos), defaultValue: getDefaultValue(a.name)};
-							}
-							var expr:TExpr = switch follow(ret) {
-								case TAbstract({aPath: {pack: [], name: "Void"}}, _):
-									{eexpr: TReturn(null), etype: ret, epos: nullPos};
-								case _:
-									var zeroVal:TExpr = {eexpr: TConst(TInt(0)), etype: ret, epos: nullPos};
-									{eexpr: TReturn(zeroVal), etype: ret, epos: nullPos};
-							}
-
-							({
-								tfArgs: args.map(mapArg),
-								tfType: ret,
-								tfExpr: expr
-							} : TFunc);
-						}
-
-						createFunction(field, abstractTfunc);
+						createFunction(field, abstractTfunc(basic, field));
 					case _:
 						null;
 				}

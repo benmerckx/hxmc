@@ -553,6 +553,15 @@ class CppCppia {
 			+ (if (core.TOther.TClassTools.getClInit(classDef) != null) 1 else 0))
 			+ "\n");
 
+		/* Methods without an expression (i.e. abstract ones) still need a real function, because hxcpp
+		   reads every class method as a ScriptCallable and the JIT accesses it as one */
+		function methodExpression(field:TClassField):Null<TExpr> {
+			return switch field.cfExpr {
+				case null if (!hasClassFlag(classDef, CInterface)):
+					mk(TFunction(CppRetyper.abstractTfunc(commonCtx.basic, field)), field.cfType, field.cfPos);
+				case e: e;
+			}
+		}
 		function generateField(isStatic:Bool, field:TClassField):Void {
 			switch [field.cfKind, follow(field.cfType)] {
 				case [Var({vRead: AccInline, vWrite: AccNever}), _]:
@@ -574,11 +583,11 @@ class CppCppia {
 					var isExtern = !isPhysicalField(field);
 					script.varField(modeCode(v.vRead), modeCode(v.vWrite), isExtern, isStatic, field.cfName, field.cfType, field.cfExpr);
 				case [Method(MethDynamic), TFun(sig)]:
-					script.func(isStatic, true, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), field.cfExpr, field.cfPos);
+					script.func(isStatic, true, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), methodExpression(field), field.cfPos);
 				case [Method(_), TFun(sig)] if (field.cfName == "new"):
 					script.func(true, false, "new", TInst(classDef, vector()), sig.args, false, field.cfExpr, field.cfPos);
 				case [Method(_), TFun(sig)]:
-					script.func(isStatic, false, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), field.cfExpr, field.cfPos);
+					script.func(isStatic, false, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), methodExpression(field), field.cfPos);
 				case [Method(_), _]:
 					printEndline("Unknown method type " + joinClassPath(classDef.clPath, ".") + "." + field.cfName);
 			}
