@@ -1834,12 +1834,36 @@ class TypeBinding {
 		}
 		if (!fctx.isStatic && !cctx.isLib) {
 			var declared = getDeclared(cf.cfName, c.clSuper);
-			if (declared != null) displayError(ctx.com,
-				"Redefinition of variable "
-				+ cf.cfName
-				+ " in subclass is not allowed. Previously declared at "
-				+ Globals.sTypePath(declared.cls.clPath),
-				cf.cfNamePos);
+			if (declared != null) {
+				var csup = declared.cls;
+				function errorRedefinition():Void
+					displayError(ctx.com,
+						"Redefinition of variable " + cf.cfName + " in subclass is not allowed. Previously declared at " + Globals.sTypePath(csup.clPath),
+						cf.cfNamePos);
+				var cfParent = csup.clFields.get(cf.cfName);
+				if (cfParent == null) errorRedefinition();
+				else if (hasClassFieldFlag(cfParent, CfPublic) && !hasClassFieldFlag(cf, CfPublic))
+					displayError(ctx.com, "Variable " + cf.cfName + " has less visibility (public/private) than superclass one", cf.cfNamePos);
+				else if (isPhysicalVarField(cfParent)) errorRedefinition();
+				else {
+					// Same rule as for structural unification: where the parent goes through an accessor, the
+					// child has to as well, or access through the two types would end up in different places.
+					var uctx = core.TUnification.defaultUnificationContext();
+					function check(isRead:Bool, parentAcc:VarAccess, childAcc:VarAccess):Bool {
+						if (core.TUnification.unifyVarAccess(uctx, childAcc, parentAcc)) return true;
+						displayError(ctx.com,
+							'Cannot redefine ${isRead ? "read" : "write"} access of ${cf.cfName} as ${core.TPrinting.sAccess(isRead, childAcc)} in subclass, superclass uses ${core.TPrinting.sAccess(isRead, parentAcc)}',
+							cf.cfNamePos);
+						return false;
+					}
+					switch [cf.cfKind, cfParent.cfKind] {
+						case [Var(childV), Var(parentV)]:
+							check(true, parentV.vRead, childV.vRead) && check(false, parentV.vWrite, childV.vWrite);
+						case _:
+							errorRedefinition();
+					}
+				}
+			}
 		}
 	}
 
