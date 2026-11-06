@@ -251,7 +251,8 @@ class Coro {
 		// because debug mode disables TCO which may add extra states.
 		if (!ctx.typer.com.debug) checkAssertions(ctx.config.assertConfig, result.numStates, result.fields.length, cc.namePos);
 		// update cf_type to use inside type parameters
-		for (cf in result.fields) {
+		for (f in result.fields) {
+			var cf = f.cf;
 			cf.cfType = substituteTypeParams(cc.typeParamSubst, cf.cfType);
 			core.TOther.TClassTools.addField(cc.cls, cf);
 		}
@@ -274,7 +275,11 @@ class Coro {
 		var hoisted = [];
 		for (a in args) {
 			var v:TVar = a.variable;
-			var field = cc.cls.clFields.get('_hx_hoisted${v.vId}');
+			var field = null;
+			for (f in result.fields) if (f.id == v.vId) {
+				field = f.cf;
+				break;
+			}
 			if (field != null) hoisted.push({name: v.vName, e: b.local(v, v.vPos), field: field});
 		}
 		createContinuationClass(ctx, cont, cc, result.initialState, invoke, mode, hoisted);

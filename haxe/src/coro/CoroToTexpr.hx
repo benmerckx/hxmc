@@ -175,7 +175,7 @@ class CoroToTexpr {
 	}
 
 	public static function handleLocals(ctx:CoroCtx, cls:TClass, params:core.TType.TParams, states:Array<CoroState>,
-			tfArgs:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>, econtinuation:TExpr):Array<TClassField> {
+			tfArgs:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>, econtinuation:TExpr):Array<{id:Int, cf:TClassField}> {
 		var b = ctx.builder;
 		var first = states[0];
 		var argStates = new CoroIntSet().add(first.csId);
@@ -220,21 +220,54 @@ class CoroToTexpr {
 			var set = usages.get(id);
 			return set != null && set.elements().length != 1;
 		}
+		// Hoisted fields are named after their variable so that debuggers show recognizable names.
+		// Generated variables get the same "_g" prefix that renameVars gives them, and a numeric suffix
+		// avoids clashes with other hoisted fields (e.g. from shadowed variables) and inherited fields.
+		var usedFieldNames:Map<String, Bool> = [];
+		var nextFieldSuffix:Map<String, Int> = [];
+		// Added to the class later, see Coro.create_continuation_class.
+		usedFieldNames.set("_hx_captured", true);
+		function isInheritedField(c:TClass, name:String):Bool
+			return c.clFields.exists(name) || c.clSuper != null && isInheritedField(c.clSuper.cls, name);
+		function fieldNameOfVar(v:TVar):String {
+			var base = if (v.vName.length > 0 && v.vName.charAt(0) == genLocalPrefix.charAt(0)) "_g" + v.vName.substr(1) else v.vName;
+			function isTaken(name:String):Bool return usedFieldNames.exists(name) || isInheritedField(cls, name);
+			// Continue counting where the previous clash on this base name stopped. Generated variables
+			// all share the base name _g, so starting at 1 every time would be quadratic.
+			function loop(count:Int):String {
+				var name = base + count;
+				if (isTaken(name)) return loop(count + 1);
+				nextFieldSuffix.set(base, count + 1);
+				return name;
+			}
+			var name = if (isTaken(base)) loop(nextFieldSuffix.exists(base) ? nextFieldSuffix.get(base) : 1) else base;
+			usedFieldNames.set(name, true);
+			return name;
+		}
+		function addField(v:TVar):Void {
+			if (!fields.mem(v.vId)) setField(v.vId, mkField(fieldNameOfVar(v), v.vType, v.vPos, v.vPos));
+		}
+		// The restored locals keep the name of their variable. With -debug they also keep its kind, which makes
+		// them show up in debuggers. Otherwise they stay generated, so the analyzer can still fuse them.
+		function allocRestoredVar(v:TVar):TVar {
+			var kind = ctx.typer.com.debug ? v.vKind : VGenerated;
+			return allocVar(kind, v.vName, v.vType, v.vPos);
+		}
 		var forced:Map<Int, Bool> = [];
 		for (a in tfArgs) {
 			var v:TVar = a.variable;
-			setField(v.vId, mkField('_hx_hoisted${v.vId}', v.vType, v.vPos, v.vPos));
+			addField(v);
 			// Create a fresh restored var rather than reusing the original argument variable.
 			// This prevents the same v_id appearing as both an outer function parameter and
 			// a TVar declaration inside the state machine body (which confuses renameVars).
-			first.csMappedLocal.set(v.vId, allocVar(VGenerated, '_hx_restored${v.vId}', v.vType, v.vPos));
+			first.csMappedLocal.set(v.vId, allocRestoredVar(v));
 			forced.set(v.vId, true);
 		}
 		for (state in states) {
 			inline function localMapping(v:TVar):TVar {
 				var n = state.csMappedLocal.get(v.vId);
 				if (n == null) {
-					n = allocVar(VGenerated, '_hx_restored${v.vId}', v.vType, v.vPos);
+					n = allocRestoredVar(v);
 					state.csMappedLocal.set(v.vId, n);
 				}
 				return n;
@@ -242,7 +275,7 @@ class CoroToTexpr {
 			function mapper(e:TExpr):TExpr return switch e.eexpr {
 				case TVar(v, eo) if (across(v.vId)):
 					if (eo != null) state.csWrites.add(v.vId);
-					setField(v.vId, mkField('_hx_hoisted${v.vId}', v.vType, v.vPos, v.vPos));
+					addField(v);
 					state.csMappedLocal.set(v.vId, v);
 					{
 						var recordCopy44 = core.ds.Record.copy(e);
@@ -314,7 +347,7 @@ class CoroToTexpr {
 			state.csEl = restoring.concat(state.csEl).concat(saving).concat(state.csElTail == null ? [] : state.csElTail);
 		}
 		var out = [];
-		fields.iter(function(_, f) out.push(f));
+		fields.iter(function(id, f) out.push({id: id, cf: f}));
 		return out;
 	}
 
@@ -343,7 +376,7 @@ class CoroToTexpr {
 			stackItemInserter:Pos->Array<TExpr>, startException:TExpr->TExpr):{
 		expr:TExpr,
 		initialState:Int,
-		fields:Array<TClassField>,
+		fields:Array<{id:Int, cf:TClassField}>,
 		numStates:Int
 	} {
 		var com = ctx.typer.com;
