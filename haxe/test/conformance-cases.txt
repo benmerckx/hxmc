@@ -326,3 +326,24 @@ module optimization-Issue9943 haxe/upstream/tests/optimization/src issues.Issue9
 # but cannot read it back (docs/porting.md, divergences).
 hxml callop-overloads haxe/test/hxblib/callop -cp lib -cp app --main Main --interp
 diverges callop-overloads the reader of the call operator overloads of an abstract (compiler.hxb.HxbReader.readClassFields)
+
+# The pin's move to 74c5b464e: Eval's threads, typing, coroutines and errors
+# that changed with it, and macros forcing a broken type (sync-recovery)
+direct sync-eval-threads haxe/test/conformance/sync EvalThreads
+direct sync-typing haxe/test/conformance/sync Typing
+direct sync-coro haxe/test/conformance/sync Coro
+hxml sync-coro-stack-traces haxe/test/conformance/sync coro-stack-traces.hxml
+hxml sync-errors-single-quotes haxe/test/conformance/sync errors.hxml -D probe=single-quotes
+hxml sync-errors-invalid-name haxe/test/conformance/sync errors.hxml -D probe=invalid-name
+hxml sync-errors-access-single-quotes haxe/test/conformance/sync errors.hxml -D probe=access-single-quotes
+hxml sync-errors-access-invalid-name haxe/test/conformance/sync errors.hxml -D probe=access-invalid-name
+hxml sync-errors-macro-class-optional haxe/test/conformance/sync errors.hxml -D probe=macro-class-optional
+hxml sync-errors-no-expr haxe/test/conformance/sync errors.hxml -D probe=no-expr
+hxml sync-errors-less-visible haxe/test/conformance/sync errors.hxml -D probe=less-visible
+hxml sync-errors-other-accessor haxe/test/conformance/sync errors.hxml -D probe=other-accessor
+hxml sync-errors-physical haxe/test/conformance/sync errors.hxml -D probe=physical
+hxml sync-errors-same-accessors haxe/test/conformance/sync errors.hxml -D probe=same-accessors
+hxml sync-errors-enum-eq haxe/test/conformance/sync errors.hxml -D probe=enum-eq -w +WUnsafeEnumEquality
+hxml sync-recovery-follow haxe/test/conformance/sync-recovery build.hxml -D probe=follow
+hxml sync-recovery-getType haxe/test/conformance/sync-recovery build.hxml -D probe=getType
+hxml sync-recovery-followWithAbstracts haxe/test/conformance/sync-recovery build.hxml -D probe=followWithAbstracts
