@@ -10,6 +10,8 @@ import core.Path;
 import core.Native;
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
+import core.ds.MlList;
+import core.ds.PersistentIntMap;
 import core.ds.VectorTools.vector;
 
 @:structInit class RenameInit {
@@ -119,12 +121,12 @@ class ReservedNames {
 		rcSwitchCasesNoBlocks, rcScope, rcReserved, rcVarOrigins);
 }
 
-// port: persistent map/list snapshots are explicitly copied where mutation would change sharing semantics.
-// ... ovVars is in push order (`v :: ov.ov_vars` as a push): read from the end.
+// Both fields are persistent, so copies share their contents with the original. Every variable
+// declared in a loop gets a copy of the loop's variables, which would otherwise be quadratic.
+// port: ovVars is a persistent list (`v :: ov.ov_vars`) and ovLut a persistent map.
 class Overlaps {
-	public var ovVars:Array<TVar> = [];
-	public var ovLut:IntMap<Bool> = new IntMap();
-	public var ovNameCache:Null<StringMap<Bool>> = null;
+	public var ovVars:MlList<TVar> = Nil;
+	public var ovLut:PersistentIntMap<Bool> = PersistentIntMap.empty();
 
 	public function new() {}
 
@@ -132,42 +134,64 @@ class Overlaps {
 
 	public function copy():Overlaps {
 		var ov = new Overlaps();
-		ov.ovVars = ovVars.copy();
-		ov.ovLut = ovLut.copy();
-		ov.ovNameCache = ovNameCache;
+		ov.ovVars = ovVars;
+		ov.ovLut = ovLut;
 		return ov;
 	}
 
 	public function add(v:TVar):Void {
-		ovVars.push(v);
-		ovLut.set(v.vId, true);
-		ovNameCache = null;
+		ovVars = Cons(v, ovVars);
+		ovLut = ovLut.add(v.vId, true);
 	}
-
-	public function getCache():StringMap<Bool> {
-		if (ovNameCache == null) {
-			ovNameCache = new StringMap();
-			for (v in ovVars) ovNameCache.set(v.vName, true);
-		}
-		return ovNameCache;
-	}
-
-	public function hasName(name:String):Bool return getCache().exists(name);
 
 	public function iter(f:TVar->Void):Void {
-		var i = ovVars.length;
-		while (i > 0) f(ovVars[--i]);
+		var l = ovVars;
+		while (true) switch l {
+			case Nil: return;
+			case Cons(v, tl):
+				f(v);
+				l = tl;
+		}
 	}
 
-	public function mem(id:Int):Bool return ovLut.exists(id);
+	public function mem(id:Int):Bool return ovLut.mem(id);
 
 	public function reset():Void {
-		ovVars = [];
-		ovLut.clear();
-		ovNameCache = null;
+		ovVars = Nil;
+		ovLut = PersistentIntMap.empty();
 	}
 
-	public function isEmpty():Bool return ovVars.length == 0;
+	public function isEmpty():Bool return switch ovVars {
+		case Nil: true;
+		case Cons(_, _): false;
+	};
+}
+
+/**
+	All variables by their current name. This allows checking whether a variable overlaps with a
+	variable of a given name without collecting the names of everything it overlaps with.
+**/
+// port: Hashtbl.t of persistent maps as a StringMap of PersistentIntMaps; it is never iterated.
+class VarsByName {
+	public static function find(vars:StringMap<PersistentIntMap<TVar>>, name:String):PersistentIntMap<TVar> {
+		var m = vars.get(name);
+		return m == null ? PersistentIntMap.empty() : m;
+	}
+
+	public static function add(vars:StringMap<PersistentIntMap<TVar>>, v:TVar):Void vars.set(v.vName, find(vars, v.vName).add(v.vId, v));
+
+	public static function remove(vars:StringMap<PersistentIntMap<TVar>>, v:TVar):Void vars.set(v.vName, find(vars, v.vName).remove(v.vId));
+
+	public static function hasOverlap(vars:StringMap<PersistentIntMap<TVar>>, name:String, overlaps:Overlaps):Bool
+		return find(vars, name).exists((id, _) -> overlaps.mem(id));
+
+	public static function addScope(vars:StringMap<PersistentIntMap<TVar>>, scope:RenameScope):Void {
+		// port: ownVars in push order, so read from the end; children likewise
+		var i = scope.ownVars.length;
+		while (i > 0) add(vars, scope.ownVars[--i].variable);
+		var i = scope.children.length;
+		while (i > 0) addScope(vars, scope.children[--i]);
+	}
 }
 
 class RenameVars {
@@ -415,7 +439,7 @@ class RenameVars {
 	/**
 		Rename `v` if needed
 	**/
-	public static function maybeRenameVar(rc:RenameContext, reserved:ReservedNames, entry:{variable:TVar, overlaps:Overlaps}):Void {
+	public static function maybeRenameVar(rc:RenameContext, vars:StringMap<PersistentIntMap<TVar>>, reserved:ReservedNames, entry:{variable:TVar, overlaps:Overlaps}):Void {
 		var v = entry.variable;
 		inline function commit(name:String):Void {
 			v.vMeta = ([
@@ -430,13 +454,17 @@ class RenameVars {
 					pos: Globals.nullPos
 				}
 			] : core.Ast.Metadata).concat(v.vMeta);
+			// removes v under its old name
+			VarsByName.remove(vars, v);
 			v.vName = name;
+			// adds v under its new name
+			VarsByName.add(vars, v);
 		}
 		// chop escape char for all local variables generated
 		if (v.vName.charAt(0) == core.Globals.genLocalPrefix.charAt(0)) commit("_g" + trailingNumbers().replace(v.vName.substr(1), ""));
 		var name = v.vName;
 		var count = 0;
-		while (reserved.exists(name) || entry.overlaps.hasName(name)) {
+		while (reserved.exists(name) || VarsByName.hasOverlap(vars, name, entry.overlaps)) {
 			++count;
 			name = v.vName + count;
 		}
@@ -447,13 +475,13 @@ class RenameVars {
 	/**
 		Rename variables found in `scope`
 	**/
-	public static function renameVars(rc:RenameContext, scope:RenameScope):Void {
+	public static function renameVars(rc:RenameContext, vars:StringMap<PersistentIntMap<TVar>>, scope:RenameScope):Void {
 		var reserved = new ReservedNames(rc.rcReserved, null);
 		if ((rc.rcHoisting || rc.rcNoShadowing) && !scope.foreignVars.isEmpty()) scope.foreignVars.iter(v -> reserve(reserved, v.vName));
 		// port: ownVars in push order is `List.rev scope.own_vars`
-		for (entry in scope.ownVars) maybeRenameVar(rc, reserved, entry);
+		for (entry in scope.ownVars) maybeRenameVar(rc, vars, reserved, entry);
 		var i = scope.children.length;
-		while (i > 0) renameVars(rc, scope.children[--i]);
+		while (i > 0) renameVars(rc, vars, scope.children[--i]);
 	}
 
 	/**
@@ -472,7 +500,9 @@ class RenameVars {
 		if (ri.riReserveCurrentTopLevelSymbol) reserveCtx(rc, clPath.pack.length == 0 ? clPath.name : clPath.pack[0]);
 		var scope = createScope(null);
 		collectVars(rc, scope, e);
-		renameVars(rc, scope);
+		var vars = new StringMap<PersistentIntMap<TVar>>();
+		VarsByName.addScope(vars, scope);
+		renameVars(rc, vars, scope);
 		return e;
 	}
 }
