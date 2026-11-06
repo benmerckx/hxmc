@@ -394,6 +394,7 @@ class Coro {
 		var vtmpResult = AtomicLazy.fromFun(function() return allocVar(VGenerated, "_hx_result", basic.tnull(basic.tany), p));
 		var etmpResult = AtomicLazy.fromFun(function() return b.local((vtmpResult).force(), p));
 		var vtmpError = allocVar(VGenerated, "_hx_error", basic.tnull(basic.texception), p);
+		var etmpError = b.local(vtmpError, p);
 		var vtmpErrorUnwrapped = AtomicLazy.fromFun(function() return allocVar(VGenerated, "_hx_error_unwrapped", basic.tnull(basic.tany),
 			p));
 		var etmpErrorUnwrapped = AtomicLazy.fromFun(function() return b.local((vtmpErrorUnwrapped).force(), p));
@@ -420,7 +421,7 @@ class Coro {
 
 		var deferred = makeDeferredApi(ctx, b);
 		CoroFromTexpr.checkCaptures(ctx, args, expr);
-		CoroFromTexpr.exprToCoro(ctx, etmpResult, etmpErrorUnwrapped, root, scope, deferred.deferred, expr);
+		CoroFromTexpr.exprToCoro(ctx, etmpResult, etmpError, etmpErrorUnwrapped, root, scope, deferred.deferred, expr);
 		// Count the number of reachable CFG blocks.
 		var count = 0;
 		coroWalk(function(_) count++, root);
@@ -459,7 +460,6 @@ class Coro {
 		inline function continuationField(cf:TClassField,
 				t:T):TExpr return b.instanceField(econtinuation, cont.baseContinuationClass, vector(basic.tany), cf, t);
 		var egoto = continuationField(cont.gotoLabel, basic.tint);
-		var etmpError = b.local(vtmpError, p);
 		var exprs:CoroToTexprExprs = {
 			econtinuation: econtinuation,
 			ecompletion: ecompletion,
@@ -573,6 +573,7 @@ class Coro {
 			coroType: type,
 			classNamePos: p,
 			deferredExprs: [],
+			wildcardCatches: [typer.com.config.pfExceptions.ecWildcardCatch, {pack: ["haxe"], name: "Exception"}],
 			deferredInputs: [],
 			hasCaptureVars: false,
 			capturesThis: false,
