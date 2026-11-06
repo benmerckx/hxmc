@@ -65,8 +65,6 @@ import hxmc.NativeNet;
 // - OCaml's Gc statistics/control and Dynlink plugins are not
 //   available: those natives fail with "... is not supported by haxe-in-haxe".
 //   Gc collection requests run the host collector when there is one.
-// - `StdLock` waits on the condition's own mutex (host `sys.thread.Condition`
-//   owns its mutex), so `Vlock.lmutex` is unused.
 // - `StdHost.int32Addr` returns the dotted address string (no `inet_addr`).
 class EvalStdLibA {
 	public static function outsideBounds():Dynamic {
@@ -2000,6 +1998,47 @@ class StdHost {
 // For Domain mode this is also safe — each domain has its own lock — and the
 // brief syscall is a reasonable price for correct cross-mode behaviour.
 // port: the port yields with `EvalLock.yieldNow`, which gives up the Eval lock.
+class CountingSemaphore {
+	public static function create(count:Int):Vlock return new Vlock(count);
+
+	// port: no mutex of our own: the host semaphore's operations are atomic.
+
+	// Windows converts the timeout of uv_cond_timedwait to a DWORD of
+	// milliseconds, so a single wait is limited to about 24 days. Longer
+	// waits are split up by the loop in try_acquire_timeout.
+	static final maxSingleWait = 2e6;
+
+	public static function release(lock:Vlock):Void lock.lsem.release();
+
+	public static function acquire(lock:Vlock):Void {
+		if (!lock.lsem.tryAcquire()) EvalLock.blocking(() -> {
+			lock.lsem.acquire();
+			true;
+		});
+	}
+
+	// Takes one unit if one is available right away, without waiting.
+	public static function tryAcquire(lock:Vlock):Bool return lock.lsem.tryAcquire();
+
+	// Waits at most [timeout] seconds for a unit. Spurious wakeups and early
+	// timeouts of the condition variable are handled by re-checking the count
+	// and the remaining time.
+	public static function tryAcquireTimeout(lock:Vlock, timeout:Float):Bool {
+		// about 31 years, so that the nanosecond count cannot overflow
+		var timeout = timeout > 1e9 ? 1e9 : timeout;
+		var deadline = Sys.time() + timeout;
+		while (true) {
+			if (lock.lsem.tryAcquire()) return true;
+			var remaining = deadline - Sys.time();
+			// also catches NaN
+			if (!(remaining > 0.)) return false;
+			var wait = Math.min(remaining, maxSingleWait);
+			// port: the host's timed acquire takes the unit itself when one comes
+			if (EvalLock.blocking(() -> lock.lsem.tryAcquire(wait))) return true;
+		}
+	}
+}
+
 class StdLock {
 	static function thisValue(vthis:Value):Vlock {
 		return switch vthis {
@@ -2009,11 +2048,7 @@ class StdLock {
 	}
 
 	public static final release = EvalEncode.vifun0(vthis -> {
-		var lock = thisValue(vthis);
-		lock.lcond.acquire();
-		lock.lcount = lock.lcount + 1;
-		lock.lcond.signal();
-		lock.lcond.release();
+		CountingSemaphore.release(thisValue(vthis));
 		return VNull;
 	});
 
@@ -2021,33 +2056,10 @@ class StdLock {
 		var lock = thisValue(vthis);
 		switch timeout {
 			case VNull:
-				EvalLock.blocking(() -> {
-					lock.lcond.acquire();
-					while (lock.lcount == 0)
-						lock.lcond.wait();
-					lock.lcount = lock.lcount - 1;
-					lock.lcond.release();
-					true;
-				});
+				CountingSemaphore.acquire(lock);
 				return VTrue;
 			case _:
-				var timeout = EvalDecode.num(timeout);
-				var deadline = Sys.time() + timeout;
-				function loop():Value {
-					while (true) {
-						lock.lcond.acquire();
-						if (lock.lcount > 0) {
-							lock.lcount = lock.lcount - 1;
-							lock.lcond.release();
-							return VTrue;
-						} else {
-							lock.lcond.release();
-							if (Sys.time() >= deadline) return VFalse;
-							else EvalLock.yieldNow();
-						}
-					}
-				}
-				return loop();
+				return EvalValueTools.vbool(CountingSemaphore.tryAcquireTimeout(lock, EvalDecode.num(timeout)));
 		}
 	});
 }
