@@ -644,6 +644,45 @@ class Playground {
 		checkTimer = window.setTimeout(check, delay);
 	}
 
+	/** A diagnostic's message (haxe.display.Diagnostic: its args by kind), with its related
+		information below; null: none to show (an inactive block). `text`: the source at its
+		range. */
+	static function diagnosticMessage(d:Dynamic, text:String):Null<String> {
+		final args:Dynamic = d.args;
+		function names(fields:Array<Dynamic>):String
+			return [for (f in fields) f.field.name].join(", ");
+		final message:Null<String> = switch (d.kind : Int) {
+			case 0: "Unused import";
+			case 1:
+				// (the identifier is the source at the range; args: suggestions)
+				final suggestions:Array<Dynamic> = args != null ? args : [];
+				final named = [for (s in suggestions) (s.kind : Int) == 0 ? "import " + s.name : s.name];
+				"Unknown identifier : " + text + (named.length > 0 ? " (did you mean " + named.join(", ") + "?)" : "");
+			case 2 | 4 | 5: Std.string(args);
+			case 3: args.description;
+			case 6: null;
+			case 7:
+				final type:String = args.moduleType != null ? args.moduleType.name : "";
+				final lines = [];
+				for (e in (args.entries : Array<Dynamic>)) {
+					final fields:Array<Dynamic> = e.fields;
+					lines.push(switch (e.cause.kind : String) {
+						case "FieldAccess": type + " has no field " + names(fields);
+						case "ImplementedInterface": "Missing fields of interface " + e.cause.args.parent.path.typeName + ": " + names(fields);
+						case "AbstractParent": "Missing fields of abstract class " + e.cause.args.parent.path.typeName + ": " + names(fields);
+						case "PropertyAccessor": "Missing " + (e.cause.args.isGetter ? "getter" : "setter") + " for property " + e.cause.args.property.name + ": " + names(fields);
+						case "FinalFields": "Final fields need initialization: " + names(fields);
+						case _: "Missing fields: " + names(fields);
+					});
+				}
+				lines.join("\n");
+			case _: Std.isOfType(args, String) ? args : null;
+		}
+		if (message == null) return null;
+		final related:Array<Dynamic> = d.relatedInformation != null ? d.relatedInformation : [];
+		return message + [for (r in related) "\n" + StringTools.lpad("", " ", 2 * (r.depth : Int)) + r.message].join("");
+	}
+
 	static function check() {
 		if (editor == null) return;
 		final model:Dynamic = editor.getModel();
@@ -657,14 +696,21 @@ class Playground {
 				final reply:Dynamic = try haxe.Json.parse(line) catch (_:Dynamic) null;
 				final files:Null<Array<Dynamic>> = reply != null && reply.result != null ? reply.result.result : null;
 				if (files != null) for (f in files) if (f.file == "/work/" + p.file) for (d in (f.diagnostics : Array<Dynamic>)) {
-					final args:Dynamic = d.args;
-					final S:Dynamic = monaco.MarkerSeverity;
-					markers.push({
+					final range = {
 						startLineNumber: d.range.start.line + 1,
 						startColumn: d.range.start.character + 1,
 						endLineNumber: d.range.end.line + 1,
 						endColumn: Std.int(Math.max(d.range.end.character + 1, d.range.end.line > d.range.start.line ? 1 : d.range.start.character + 2)),
-						message: Std.isOfType(args, String) ? args : args != null && args.description != null ? args.description : "",
+					};
+					final message = diagnosticMessage(d, model.getValueInRange(range));
+					if (message == null) continue;
+					final S:Dynamic = monaco.MarkerSeverity;
+					markers.push({
+						startLineNumber: range.startLineNumber,
+						startColumn: range.startColumn,
+						endLineNumber: range.endLineNumber,
+						endColumn: range.endColumn,
+						message: message,
 						severity: switch (d.severity : Int) { case 1: S.Error; case 2: S.Warning; case 3: S.Info; case _: S.Hint; },
 					});
 				}

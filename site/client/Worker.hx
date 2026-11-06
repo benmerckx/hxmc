@@ -110,7 +110,6 @@ class Worker {
 			final root = new VNode(true);
 			root.dir.set("lib", ready[1]);
 			final host = new WasiHost(root, ["haxe"], ["HAXE_STD_PATH" => "/lib/haxe/std/", "PWD" => "/work", "PLAYGROUND_SERVER" => "1"], (_, _) -> {});
-			host.writeFile("/work/.keep", new Uint8Array(0));
 			final imports:Dynamic = host.imports();
 			var index:Null<Int> = null;
 			imports.playground = {serve: (i:Int) -> index = i};
@@ -123,11 +122,35 @@ class Worker {
 		});
 	}
 
+	/** the kept compiler, started if there is none (a start that failed is not kept: the
+		next request starts it again) */
+	static function kept():Promise<{host:WasiHost, request:Void->Int, code:String}> {
+		if (server == null) {
+			final s = startServer();
+			server = s;
+			s.catchError((_) -> if (server == s) server = null);
+		}
+		return server;
+	}
+
 	/** a JSON-RPC request to the kept compiler, on the program `args` builds, with /work/`file`
-		holding `code`; the output as lines */
+		holding `code`; the output as lines. An engine fault (engineFault) before the compiler
+		printed anything: once more, on a fresh instance (as runOnce) */
 	static function serve(file:String, code:String, args:Array<String>, request:Dynamic):Promise<{status:Int, lines:Array<String>}> {
-		if (server == null) server = startServer();
-		return server.then((s) -> {
+		var printed = false;
+		function attempt(retry:Bool):Promise<{status:Int, lines:Array<String>}>
+			return serveOn(file, code, args, request, () -> printed = true).catchError((e) -> {
+				if (retry && !printed && engineFault(e)) {
+					js.Browser.console.warn("The engine faulted, running again:", e != null && e.stack != null ? e.stack : e);
+					return attempt(false);
+				}
+				return Promise.reject(e);
+			});
+		return attempt(true);
+	}
+
+	static function serveOn(file:String, code:String, args:Array<String>, request:Dynamic, onPrint:Void->Void):Promise<{status:Int, lines:Array<String>}> {
+		return kept().then((s) -> {
 			function call(request:Dynamic):Int {
 				s.host.writeFile("/request", new js.html.TextEncoder().encode(haxe.Json.stringify({args: args, request: request})));
 				var status = 0;
@@ -149,7 +172,11 @@ class Worker {
 				call({jsonrpc: "2.0", id: 0, method: "server/invalidate", params: {file: "/work/" + file}});
 			}
 			final lines = [];
-			final out = lineWriter(lines.push), err = lineWriter(lines.push);
+			function add(line:String) {
+				onPrint();
+				lines.push(line);
+			}
+			final out = lineWriter(add), err = lineWriter(add);
 			s.host.out = (fd, b) -> (fd == 1 ? out : err).write(b);
 			final status = call(request);
 			out.flush();

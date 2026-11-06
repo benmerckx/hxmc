@@ -9,7 +9,8 @@
 //   program with --interp, compiles it to HXB, answers diagnostics and a
 //   completion, with each module (hih.wasm: exnref; hih-legacy.wasm: the
 //   legacy instructions), and in Chromium runs a request again after a
-//   fault of the engine (fault-worker.js); the playground page (Monaco
+//   fault of the engine (fault-worker.js: a Run, and a check, whose fault is the kept
+//   compiler's start); the playground page (Monaco
 //   blocked: its plain editor) picks its module (?eh=legacy, and a Chromium
 //   without exnref) and runs its first example;
 // - the benchmarks page: the compiler's and the Programs' charts (each
@@ -231,6 +232,29 @@ async function faultTest(browser, wasm) {
 	check(r.type === 'done' && r.status === 0 && r.out?.[0]?.startsWith('Main.hx:4: Hello'), `the worker after a fault of the engine (${wasm}): ${JSON.stringify(r).slice(0, 300)}`);
 }
 
+// the same for a check: the fault in the start of the kept compiler (the second instance),
+// the check answered by a fresh one
+async function faultCheckTest(browser, wasm) {
+	const page = await browser.newPage();
+	await page.goto(url(''));
+	const r = await page.evaluate(async ([code, wasm]) => {
+		const w = new Worker('fault-worker.js');
+		const replies = [];
+		let wake = null;
+		w.onmessage = (e) => { replies.push(e.data); if (wake) wake(); };
+		const until = async (pred) => { for (;;) { const i = replies.findIndex(pred); if (i >= 0) return replies.splice(i, 1)[0]; await new Promise((r) => (wake = r)); } };
+		w.postMessage({ type: 'module', module: await WebAssembly.compileStreaming(fetch(wasm)) });
+		w.postMessage({ type: 'warmup' });
+		await until((r) => r.type === 'ready' || r.type === 'failed');
+		w.postMessage({ type: 'check', id: 1, main: 'Main', file: 'Main.hx', code: code.replace('trace(', 'trace(undefinedThing + ') });
+		const done = await until((r) => r.type === 'check' || r.type === 'failed');
+		w.terminate();
+		return { type: done.type, status: done.status, message: done.message, output: done.output };
+	}, [code, wasm]).catch((e) => ({ message: e.message.split('\n')[0] }));
+	await page.close();
+	check(r.type === 'check' && r.status === 0 && (r.output ?? '').includes('undefinedThing'), `a check after a fault of the engine (${wasm}): ${JSON.stringify(r).slice(0, 300)}`);
+}
+
 // the playground page: the module it fetches, then a Run of the example it loads
 async function pageTest(browser, query, expect) {
 	const page = await browser.newPage();
@@ -402,7 +426,10 @@ for (const { name, label, opts, noExnref } of launches) {
 			for (const l of log) console.log('    ' + l);
 			check(log.some((l) => l.startsWith('run 0')) && log.some((l) => l.startsWith('hxb 0')), `the worker with ${wasm}`);
 		}
-		if (name === 'chromium' && modules.length) await faultTest(browser, modules[0]);
+		if (name === 'chromium' && modules.length) {
+			await faultTest(browser, modules[0]);
+			await faultCheckTest(browser, modules[0]);
+		}
 		await pagesTest(browser, name);
 		if (!(await benchTest(browser, name))) failed++;
 		if (modules.length) {
