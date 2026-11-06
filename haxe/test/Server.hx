@@ -244,13 +244,23 @@ class Server {
 		{name: "version", args: ["--version"], input: ""},
 		{name: "next", args: ["-cp", "src", "--main", "Main", "--interp", "--no-output", "--next", "-cp", "src", "--main", "Broken", "--interp", "--no-output"], input: ""},
 		{name: "interp-run-again", args: ["-cp", "src", "--main", "Main", "--interp"], input: ""},
+		{name: "interp-utf8-stdout", args: ["-cp", "src", "--main", "Utf8", "--interp"], input: ""},
+		{name: "interp-utf8-stderr", args: ["-cp", "src", "--main", "Utf8Err", "--interp"], input: ""},
 	];
+	// 2-, 3- and 4-byte UTF-8 sequences written to Sys.stdout() and
+	// Sys.stderr(), which the server delivers in chunks of at most 1024 bytes
+	// (the leading "x" puts a sequence across each boundary); one channel per
+	// request, as the two channels' chunks interleave on the socket
+	static final MISC_UTF8 = "class Utf8 {\n\tpublic static function text() {\n\t\tvar b = new StringBuf();\n\t\tb.add(\"x\");\n\t\tfor (s in [\"é\", \"€\", \"😀\"]) for (_ in 0...700) b.add(s);\n\t\treturn b.toString() + \"\\n\";\n\t}\n\n\tstatic function main() {\n\t\tSys.stdout().writeString(text());\n\t}\n}\n";
+	static final MISC_UTF8_ERR = "class Utf8Err {\n\tstatic function main() {\n\t\tSys.stderr().writeString(Utf8.text());\n\t}\n}\n";
 
 	static function miscProject():String {
 		var proj = '$gen/misc-project';
 		mkdirs('$proj/src');
 		File.saveContent('$proj/src/Main.hx', MISC_MAIN);
 		File.saveContent('$proj/src/Broken.hx', MISC_BROKEN);
+		File.saveContent('$proj/src/Utf8.hx', MISC_UTF8);
+		File.saveContent('$proj/src/Utf8Err.hx', MISC_UTF8_ERR);
 		return proj;
 	}
 
