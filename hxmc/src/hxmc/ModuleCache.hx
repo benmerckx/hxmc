@@ -65,10 +65,10 @@ using core.ds.VectorTools;
 // Through `haxe` (HaxeMain) and the tool alike, for every target.
 // Each part of a build (--next, --each) is a compilation of its own (OnDiskCache):
 // its own index, written at its end. Not used
-// (the build types everything from source): display requests, the
-// compilation server and its clients (already in memory), init macros (--macro: their effects are not in the
+// (the build types everything from source): display requests, init macros (--macro: their effects are not in the
 // key yet), deprecated defines, HXB libraries or output, native libraries,
-// WASI. A callback a macro registers while a module is typed
+// WASI (a server's builds keep their modules in memory: an InMemoryCache, never
+// this). A callback a macro registers while a module is typed
 // (Context.onGenerate, onAfterTyping, onAfterGenerate) makes that module
 // typed every build; outside the typing of a module, the build writes
 // nothing (a module restored later would not do it again).
@@ -613,7 +613,6 @@ class ModuleCache {
 
 	// why a build that wants the cache cannot use it (null: it can)
 	static function unusable(com:CommonContext, actx:compiler.ParsedArg.ArgContext):Null<String> {
-		if (com.sctx.isServer || Driver.resident) return "compilation server";
 		if (actx.displayArg != null || com.display.dmsKind != DMNone) return "display request";
 		if (actx.configMacros.length > 0) return "init macros";
 		if (actx.hxbLibs.length > 0 || actx.nativeLibs.length > 0) return "libraries";
