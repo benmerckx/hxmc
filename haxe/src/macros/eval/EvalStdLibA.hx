@@ -2006,7 +2006,7 @@ class CountingSemaphore {
 	// Windows converts the timeout of uv_cond_timedwait to a DWORD of
 	// milliseconds, so a single wait is limited to about 24 days. Longer
 	// waits are split up by the loop in try_acquire_timeout.
-	static final maxSingleWait = 2e6;
+	public static final maxSingleWait = 2e6;
 
 	public static function release(lock:Vlock):Void lock.lsem.release();
 

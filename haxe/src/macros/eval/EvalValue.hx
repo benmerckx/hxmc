@@ -467,9 +467,17 @@ class Vlock {
 	}
 }
 
+// sys.thread.Condition, built on libuv like vlock for its timed wait. libuv's
+// mutexes are recursive on Windows and abort the process on misuse elsewhere,
+// so the owning eval thread is tracked to keep the mutex non-recursive and to
+// report misuse as a Haxe exception on every platform.
+// port: the host's condition, which owns its mutex (re-entrant on hxmc's runtime).
 class Vcondition {
 	public final cond:sys.thread.Condition = new sys.thread.Condition();
-	public final cmutex:sys.thread.Mutex = new sys.thread.Mutex();
+	// eval thread id of the owner, or -1 if unlocked
+	// port: a plain field: a thread only compares it with its own id, and it is
+	// ... written by the thread that holds the mutex
+	public var cowner:Int = -1;
 
 	public function new() {}
 }
