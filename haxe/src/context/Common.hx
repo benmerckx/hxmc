@@ -980,7 +980,11 @@ class Common {
 	}
 
 	// port: Extc.filetime returns zero when stat fails (including absent import.hx).
-	public static function fileTime(file:String):Float return try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.;
+	// port: Extc.filetime: st_mtime, whole seconds, on POSIX; GetFileTime's 100 ns units on Windows
+	public static function fileTime(file:String):Float {
+		var t = try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) return 0.;
+		return core.Globals.isWindows ? t : Math.ffloor(t);
+	}
 
 	public static final flashVersions = [
 		9., 10., 10.1, 10.2, 10.3, 11., 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 12., 13., 14., 15., 16., 17., 18., 19., 20.,
