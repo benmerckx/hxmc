@@ -1,4 +1,4 @@
-// abstracts over Objective-C classes (as hxmc-objc-extern-gen's NSStringArg):
+// abstracts over Objective-C classes (as the hx-objc libraries' NSStringArg):
 // an id as the abstract is, and as Null<> of it (not boxed), from Haxe values
 // by @:from, passed to messages and C functions, stored, read back
 import hxmc.objc.Strings;
