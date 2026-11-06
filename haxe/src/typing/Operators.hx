@@ -670,15 +670,7 @@ class Operators {
 				var r = api.typeRhs(read, e2);
 				var e = api.toTexpr(vr, r, function(e) return e);
 				unify(ctx, e.etype, get.ret, p);
-				var write = context.AbstractCast.findArrayWriteAccess(ctx, a, tl, key, e, p);
-				var et = TyperBase.typeModuleType(ctx, TClassDecl(c), p);
-				// | None,None ->
-				//	let ea = mk (TArray(ebase,ekey)) r_get p in
-				//	mk (TBinop(OpAssignOp op,ea,type_expr ctx e2 (WithType.with_type r_get))) r_set p
-				if (write.field.cfExpr == null || get.field.cfExpr == null)
-					Error.raiseTypingError("Invalid array access getter/setter combination", p);
-				var ef = mk(TField(et, FStatic(c, write.field)), write.type, p);
-				var call = makeCall(ctx, ef, vector(base, write.index, write.value), write.ret, p);
+				var call = mkArraySetCall(ctx, context.AbstractCast.findArrayWriteAccess(ctx, a, tl, key, e, p), c, base, p);
 				save();
 				api.generate(vr, read, call);
 			case AKResolve(sea, name):
