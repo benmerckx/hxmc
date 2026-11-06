@@ -402,8 +402,8 @@ Where that is not enough (a macro writes a file, or keeps state elsewhere):
 `Clock typed every build (macro called Date.now at src/Macros.hx:4)`.
 
 The cache is not used for display requests, the compilation server, builds
-with init macros (`--macro`), several compilations (`--next`), or HXB
-libraries and output, or by the WebAssembly compiler. The compilation
+with init macros (`--macro`), or HXB libraries and output, or by the
+WebAssembly compiler. Each part of a build (`--next`) uses it on its own. The compilation
 server keeps upstream's behaviour.
 
 ### Mir macros

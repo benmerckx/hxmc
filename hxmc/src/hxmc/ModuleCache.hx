@@ -62,10 +62,11 @@ using core.ds.VectorTools;
 //
 // On by default; HXMC_MODULE_CACHE=0 or -D hxmc.no-module-cache turns it
 // off (HXMC_MODULE_CACHE=0 also when -D hxmc.module-cache is given).
-// Through `haxe` (HaxeMain) and the tool alike, for every target. Not used
+// Through `haxe` (HaxeMain) and the tool alike, for every target.
+// Each part of a build (--next, --each) is a compilation of its own (OnDiskCache):
+// its own index, written at its end. Not used
 // (the build types everything from source): display requests, the
-// compilation server and its clients (already in memory), builds of several
-// parts (--next, --each), init macros (--macro: their effects are not in the
+// compilation server and its clients (already in memory), init macros (--macro: their effects are not in the
 // key yet), deprecated defines, HXB libraries or output, native libraries,
 // WASI. A callback a macro registers while a module is typed
 // (Context.onGenerate, onAfterTyping, onAfterGenerate) makes that module
@@ -117,7 +118,9 @@ class ModuleCache {
 	}
 
 	static var state:Null<ModuleCacheState> = null;
-	static var hookCalls = 0;
+	// the current part (a compilation of the build: --next separates them) has begun
+	// (beforeTyping), until its end (finish): define reads before it are the global ones
+	static var partOpen = false;
 	static var start = haxe.Timer.stamp();
 	static final mutex = new sys.thread.Mutex();
 	static var mainThread:Null<sys.thread.Thread> = null;
@@ -610,7 +613,6 @@ class ModuleCache {
 
 	// why a build that wants the cache cannot use it (null: it can)
 	static function unusable(com:CommonContext, actx:compiler.ParsedArg.ArgContext):Null<String> {
-		if (hookCalls > 1 || com.partScope.hasNext) return "several compilations";
 		if (com.sctx.isServer || Driver.resident) return "compilation server";
 		if (actx.displayArg != null || com.display.dmsKind != DMNone) return "display request";
 		if (actx.configMacros.length > 0) return "init macros";
@@ -625,7 +627,7 @@ class ModuleCache {
 	// a build, once its arguments are processed (OnDiskCache.beforeTyping): its state opened,
 	// or why not
 	public static function beforeTyping(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
-		hookCalls++;
+		partOpen = true;
 		mainThread = sys.thread.Thread.current();
 		state = null;
 		var why = wanted(com) ? unusable(com, actx) : "off";
@@ -667,7 +669,7 @@ class ModuleCache {
 	static function onRead(ctx:core.Define.DefineContext, key:String) {
 		var s = state;
 		if (s == null) {
-			if (hookCalls > 0) return;
+			if (partOpen) return;
 			mutex.acquire();
 			var e = null;
 			for (x in early)
@@ -1378,6 +1380,7 @@ class ModuleCache {
 	public static function finish(code:Int) {
 		var s = state;
 		state = null;
+		partOpen = false;
 		if (s == null) {
 			CacheDir.settle();
 			return;

@@ -793,11 +793,11 @@ context, and restored with that module it would come back into other
 programs, or into a build whose callback defines it again ("Cannot
 redefine module"). The callback runs every build and makes it again.
 
-**Not cached**: display requests, the server itself, several
-compilations, init macros, deprecated defines, HXB libraries and output,
+**Not cached**: display requests, the server itself, init macros, deprecated defines, HXB libraries and output,
 WASI. A callback registered outside a module's typing, or a macro setting
 a define, makes the build write nothing. A module whose types share a path
-(eval's `mbedtls.SslAuthmode`) is not kept.
+(eval's `mbedtls.SslAuthmode`) is not kept. Each part of a build (`--next`) is
+cached on its own: its own index, written when it ends.
 
 `make test-module-cache` checks that outputs are byte-identical with and
 without the cache; `make fixpoint` builds the tool cold, warm and off.

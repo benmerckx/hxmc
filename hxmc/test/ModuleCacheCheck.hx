@@ -744,6 +744,24 @@ class ModuleCacheCheck {
 			// a display request: no cache, an answer
 			var r = exec([tool, "-cp", "src", "--display", "src/Main.hx@0@diagnostics"], {cwd: pdir, env: env(true), merge: true});
 			check("a display request does not use it", r.out.indexOf("variants read") < 0);
+			// --next: each part is a compilation of its own, with its own index (OnDiskCache)
+			var pdir = dir + "/next";
+			write(pdir + "/src/A.hx", "class A {\n\tstatic function main() trace(Shared.name() + \" a\");\n}\n");
+			write(pdir + "/src/B.hx", "class B {\n\tstatic function main() trace(Shared.name() + \" b\");\n}\n");
+			write(pdir + "/src/Shared.hx", "class Shared {\n\tpublic static function name() return \"shared\";\n}\n");
+			var args = ["-cp", "src", "-main", "A", "--next", "-cp", "src", "-main", "B", "--interp"];
+			gate("--next, cold", "interp", pdir, args);
+			var warm = gate("--next, warm", "interp", pdir, args);
+			var re = ~/module cache: (\d+) modules of \d+ variants read/;
+			var reads = [];
+			var log = warm.log;
+			while (re.match(log)) {
+				reads.push(Std.parseInt(re.matched(1)));
+				log = re.matchedRight();
+			}
+			check('interp: --next, warm: both parts restored (${reads.join(", ")} read)', reads.length == 2 && reads[0] > 0 && reads[1] > 0);
+			edit(pdir + "/src/Shared.hx", s -> s.replace("\"shared\"", "\"edited\""));
+			gate("--next, Shared edited", "interp", pdir, args);
 		}
 		if (withPort) {
 			var pdir = FileSystem.fullPath(".");

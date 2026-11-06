@@ -212,6 +212,7 @@ class CompilerInstance {
 			for (instance in instances) {
 				var com = HighLevel.createContextFromPart(sctx, scope, hasDisplay, instance.hasNext, instance.part);
 				code = Compiler.compileCtx(sctx, com);
+				instance.cache.endPart(com, code);
 				core.Path.restoreCwd(curdir);
 				if (code != 0 || hasDisplay) break;
 			}
@@ -322,6 +323,10 @@ interface CompilerCache {
 		during each build */
 	function hooks():Null<core.CacheHooks>;
 
+	/** after each part of a build (an instance's compilation; --next separates them), with
+		its exit code */
+	function endPart(com:context.Common.CommonContext, code:Int):Void;
+
 	/** after the build, with its exit code (0: built) */
 	function end(sctx:ServerCompilationContext, code:Int):Void;
 }
@@ -337,6 +342,8 @@ class SkipCache implements CompilerCache {
 
 	public function hooks():Null<core.CacheHooks>
 		return null;
+
+	public function endPart(com:context.Common.CommonContext, code:Int):Void {}
 
 	public function end(sctx:ServerCompilationContext, code:Int):Void
 		ServerCompilationContext.dispose(sctx);
@@ -369,6 +376,8 @@ class InMemoryCache implements CompilerCache {
 
 	public function hooks():Null<core.CacheHooks>
 		return null;
+
+	public function endPart(com:context.Common.CommonContext, code:Int):Void {}
 
 	public function end(sctx:ServerCompilationContext, code:Int):Void {}
 
