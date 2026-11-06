@@ -674,6 +674,7 @@ class EvalStdLib {
 			{name: "tryAcquire", value: StdCondition.tryAcquire},
 			{name: "release", value: StdCondition.release},
 			{name: "wait", value: StdCondition.wait},
+			{name: "timedWait", value: StdCondition.timedWait},
 			{name: "signal", value: StdCondition.signal},
 			{name: "broadcast", value: StdCondition.broadcast},
 		]);
