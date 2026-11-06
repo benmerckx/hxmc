@@ -306,6 +306,7 @@ private class NullLocalWrapper implements LocalWrapperApi {
 	public var hasNext:Bool;
 	public var messages:Array<CompilerMessage>;
 	public var hasError:Bool;
+	public var runningMacros:Int;
 	public var reportMode:ReportMode;
 	public var messageCapture:Null<{value:Array<CompilerMessage>}>;
 	public var compilationStep:Int;
@@ -318,7 +319,7 @@ private class NullLocalWrapper implements LocalWrapperApi {
 
 	public inline function new(runtimeArgs:Array<String>,
 			warnedPositions:core.ds.OcamlHashtbl<{file:String, offset:Int}, {message:String, pos:Pos, options:Array<Array<WarningOption>>}>,
-			hasNext:Bool, messages:Array<CompilerMessage>, hasError:Bool, reportMode:ReportMode,
+			hasNext:Bool, messages:Array<CompilerMessage>, hasError:Bool, runningMacros:Int, reportMode:ReportMode,
 			messageCapture:Null<{value:Array<CompilerMessage>}>, compilationStep:Int, passDebugMessages:Array<String>,
 			dumpConfig:DumpConfig.DumpConfiguration, parserState:ParserState, fileKeys:FileKeys, storedTypedExprs:Lookup<Int, TExpr>,
 			cachedMacros:Lookup<{
@@ -330,6 +331,7 @@ private class NullLocalWrapper implements LocalWrapperApi {
 		this.hasNext = hasNext;
 		this.messages = messages;
 		this.hasError = hasError;
+		this.runningMacros = runningMacros;
 		this.reportMode = reportMode;
 		this.messageCapture = messageCapture;
 		this.compilationStep = compilationStep;
@@ -341,7 +343,7 @@ private class NullLocalWrapper implements LocalWrapperApi {
 		this.cachedMacros = cachedMacros;
 		}
 
-	public inline function clone():PartScope return new PartScope(runtimeArgs, warnedPositions, hasNext, messages, hasError, reportMode,
+	public inline function clone():PartScope return new PartScope(runtimeArgs, warnedPositions, hasNext, messages, hasError, runningMacros, reportMode,
 		messageCapture, compilationStep, passDebugMessages, dumpConfig, parserState, fileKeys, storedTypedExprs, cachedMacros);
 }
 
@@ -524,10 +526,6 @@ class Common {
 		var b = com.display.dmsErrorPolicy == EPIgnore;
 		if (b) com.partScope.hasError = true;
 		return b;
-	}
-
-	public static function canRecoverInDisplay(com:CommonContext):Bool {
-		return com.display.dmsErrorPolicy == EPIgnore && !com.display.dmsFullTyping;
 	}
 
 	public static function moduleWarning(com:CommonContext, m:ModuleDef, w:WarningCode, options:Array<Array<WarningOption>>, msg:String,
@@ -893,6 +891,13 @@ class Common {
 	};
 
 	public static function isCompilation(com:CommonContext):Bool return com.display.dmsKind == DMNone && !isDiagnostics(com);
+
+	// Whether typing errors (e.g. missing types) may be reported instead of aborting the request:
+	// in diagnostics, in display requests without full typing and in the macro context of display requests.
+	// While a macro is running (part_scope.running_macros > 0), callers should not recover from an error,
+	// e.g. by using Dynamic for a missing type, but let it reach the macro as in a compilation.
+	public static function displayRecoveryEnabled(com:CommonContext):Bool
+		return isDiagnostics(com) || (com.display.dmsErrorPolicy == EPIgnore && (!com.display.dmsFullTyping || com.isMacroContext));
 
 	public static function hasErrorToReport(com:CommonContext):Bool {
 		return com.partScope.hasError && (isCompilation(com) || com.partScope.messages.length != 0);

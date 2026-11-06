@@ -382,6 +382,8 @@ class MacroApiImpl {
 
 	static inline function getApiCallPos():Pos return nativeValues ? MacroNativeValues.apiCallPos() : macros.eval.EvalMain.getApiCallPos();
 
+	static inline function getCurrentCom():context.Common.CommonContext return nativeValues ? MacroNativeValues.currentCom() : macros.eval.EvalMain.getCurrentCom();
+
 	static inline function associateEnumValuePos(v:Value, p:Pos):Void if (nativeValues) MacroNativeValues.associateEnumValuePos(v, p) else macros.eval.EvalValue.EvalValueTools.associateEnumValuePos(v, p);
 
 	// port: Helpers
@@ -405,6 +407,21 @@ class MacroApiImpl {
 	// The whole encoding/decoding of compiler values from/to interpreter values based on interpreter api
 
 	static function vnullOr<A>(f:A->Value, v:Null<A>):Value return v == null ? vnull : f(v);
+
+	// Where display recovery is enabled, typing errors raised while building or forcing types lazily from a macro
+	// are reported and become exceptions the macro can catch, so that they don't abort the whole request.
+	// Otherwise, e.g. in compilation, they are raised as before so that a macro catching them cannot hide them.
+	static function protectTyping<R>(f:Void->R):R {
+		return try f() catch (exc:Dynamic) {
+			switch core.ds.ExceptionTools.typing(exc) {
+				case Some(err) if (context.Common.displayRecoveryEnabled(getCurrentCom())):
+					context.Common.displayErrorExt(getCurrentCom(), err);
+					compilerError(err);
+				case _:
+					throw exc;
+			}
+		}
+	}
 
 	static function encodeEnum(k:EnumType, tag:Int, vl:Vector<Value>,
 			?pos:Pos):Value return nativeValues ? MacroNativeValues.encodeEnum(k, pos, tag, vl.toArray()) : macros.eval.EvalEncode.encodeEnum(k, pos, tag, vl);
@@ -1589,7 +1606,7 @@ class MacroApiImpl {
 	}
 
 	public static function encodeTclass(c:TClass):Value {
-		c.clBuild();
+		protectTyping(() -> c.clBuild());
 		var overrides = encodeArray(c.clOrderedFields.filter(cf -> hasClassFieldFlag(cf, CfOverride)).map(encodeCfref));
 		var init = switch core.TOther.TClassTools.getClInit(c) {
 			case null: vnull;
@@ -1702,7 +1719,7 @@ class MacroApiImpl {
 				case TDynamic(tsub):
 					{tag: 6, pl: vector(encodeType(tsub))};
 				case TLazy(f):
-					loop(lazyType(f));
+					loop(protectTyping(() -> lazyType(f)));
 				case TAbstract(a, pl):
 					var params = encodeTparams(pl);
 					{tag: 8, pl: vector(encodeAbref(a), params)};
@@ -1728,7 +1745,7 @@ class MacroApiImpl {
 									case LAvailable(t):
 										encodeType(t);
 									case LWait(_):
-										encodeType(lazyType(f));
+										encodeType(protectTyping(() -> lazyType(f)));
 									case LProcessing(_):
 										// our type in on the processing stack, error instead of returning most likely an unbound mono
 										errorMessage("Accessing a type while it's being typed");
@@ -2993,14 +3010,14 @@ class MacroApiImpl {
 								lazyType(f);
 						}
 					}
-					encodeType(if (decodeOptBool(once)) followOnce(t) else core.Abstract.followWithAbstracts(t));
+					encodeType(protectTyping(() -> if (decodeOptBool(once)) followOnce(t) else core.Abstract.followWithAbstracts(t)));
 				})
 			},
 			{
 				name: "follow",
 				value: vfun2((v, once) -> {
 					var t = decodeType(v);
-					encodeType(if (decodeOptBool(once)) TFunctions.followOnce(t) else follow(t));
+					encodeType(protectTyping(() -> if (decodeOptBool(once)) TFunctions.followOnce(t) else follow(t)));
 				})
 			},
 			{
@@ -3446,6 +3463,8 @@ class MacroNativeValues {
 	public static var resolveClass:String->Null<Class<Dynamic>> = name -> Type.resolveClass(name);
 	// the position of the macro API call being made
 	public static var apiCallPos:Void->Pos = () -> Globals.nullPos;
+	// the compiler context of the macro API (EvalMain.get_current_com)
+	public static var currentCom:Void->context.Common.CommonContext = () -> throw "MacroNativeValues.currentCom: no macro engine";
 
 	static var enums = new Map<String, Enum<Dynamic>>();
 	static var enumPos = new haxe.ds.ObjectMap<Dynamic, Pos>();

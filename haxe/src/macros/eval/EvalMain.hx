@@ -737,4 +737,6 @@ class EvalMain {
 		}
 		return new Pos(EvalHash.revHash(env.envInfo.pfile), env.envLeavePmin, env.envLeavePmax);
 	}
+
+	public static function getCurrentCom():context.Common.CommonContext return EvalContext.getCtx().curapi.getCom();
 }
