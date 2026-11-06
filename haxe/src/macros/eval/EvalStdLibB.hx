@@ -1016,6 +1016,7 @@ class StdSocket {
 		var host = EvalDecode.decodeI32(host);
 		var port = EvalDecode.decodeInt(port);
 		#if (target.name == "hxmc" || hl)
+		if (!Globals.isWindows) check(SocketHost.setReuseAddr(self, true), "setsockopt");
 		check(SocketHost.bind(self, host, port), "bind");
 		VNull;
 		#else
