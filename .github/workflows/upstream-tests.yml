@@ -20,6 +20,15 @@ on:
 permissions:
   contents: read
 
+# The hxcoro that RunCi's party clones (tests/runci/targets/Macro.hx: git clone
+# -b Config.hxcoroVersion, which is master) follows upstream's development std,
+# not the pinned one: from HaxeFoundation/hxcoro#234 on it needs
+# haxe.coro.context.CallStackHandler (HaxeFoundation/haxe#13146, after the pin).
+# Each job serves it this revision instead, as master of a local repository the
+# clone's URL is redirected to. Move it with the submodule.
+env:
+  HXCORO_REV: 94b979fc94759b3fc56b46e76267a9dca6ae6a03
+
 jobs:
   linux-test:
     runs-on: ubuntu-22.04${{ matrix.arch == 'arm64' && '-arm' || '' }}
@@ -77,6 +86,15 @@ jobs:
           cat "$RUNNER_TEMP"/ipc?.log
           exit $fail
         timeout-minutes: 15
+      - name: Pin hxcoro
+        shell: bash
+        run: |
+          set -ex
+          # (Windows: a drive path, D:/a/_temp)
+          mirror="$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })/hxcoro.git"
+          git init -q --bare "$mirror"
+          git -C "$mirror" fetch -q --depth 1 https://github.com/HaxeFoundation/hxcoro.git "$HXCORO_REV:refs/heads/master"
+          git config --global url."$mirror".insteadOf https://github.com/HaxeFoundation/hxcoro
       - name: Test
         run: haxe --run RunCi macro
         working-directory: ${{github.workspace}}/haxe/upstream/tests
@@ -118,6 +136,15 @@ jobs:
           set -ex
           mkdir ~/haxelib
           haxelib setup ~/haxelib
+      - name: Pin hxcoro
+        shell: bash
+        run: |
+          set -ex
+          # (Windows: a drive path, D:/a/_temp)
+          mirror="$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })/hxcoro.git"
+          git init -q --bare "$mirror"
+          git -C "$mirror" fetch -q --depth 1 https://github.com/HaxeFoundation/hxcoro.git "$HXCORO_REV:refs/heads/master"
+          git config --global url."$mirror".insteadOf https://github.com/HaxeFoundation/hxcoro
       - name: Test
         run: |
           # disable invalid Unicode filenames on APFS (as upstream)
@@ -172,6 +199,15 @@ jobs:
         run: |
           mkdir "$env:HAXELIB_ROOT"
           haxelib setup "$env:HAXELIB_ROOT"
+      - name: Pin hxcoro
+        shell: bash
+        run: |
+          set -ex
+          # (Windows: a drive path, D:/a/_temp)
+          mirror="$(cd "$RUNNER_TEMP" && { pwd -W 2>/dev/null || pwd; })/hxcoro.git"
+          git init -q --bare "$mirror"
+          git -C "$mirror" fetch -q --depth 1 https://github.com/HaxeFoundation/hxcoro.git "$HXCORO_REV:refs/heads/master"
+          git config --global url."$mirror".insteadOf https://github.com/HaxeFoundation/hxcoro
       - name: Test
         shell: pwsh
         run: haxe RunCi.hxml
