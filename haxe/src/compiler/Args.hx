@@ -158,6 +158,31 @@ class Args {
 		{category: "Compilation", ok: ["-w"], dep: [], hint: "<warning list>", doc: "enable or disable specific warnings"},
 	];
 
+	/** Expand [%VAR%] environment variable references in compiler arguments.
+		The [--display] argument is left alone, and so is everything after
+		[--run <module>] because those are runtime arguments for the program. */
+	static function expandEnvArgs(args:Array<String>):Array<String> {
+		// port: the recursion over the list as a loop.
+		var acc = [];
+		var i = 0;
+		while (i < args.length) {
+			switch args[i] {
+				case "--display" if (i + 1 < args.length):
+					acc.push("--display");
+					acc.push(args[i + 1]);
+					i += 2;
+				case "--run" if (i + 1 < args.length):
+					acc.push("--run");
+					acc.push(Helper.expandEnv(args[i + 1]));
+					return acc.concat(args.slice(i + 2));
+				case arg:
+					acc.push(Helper.expandEnv(arg));
+					i++;
+			}
+		}
+		return acc;
+	}
+
 	// port: Path.parse_type_path raises its failwith message as a String; rethrown as Failure.
 	static function parseTypePath(cl:String):Array<String> {
 		var path = try core.Path.parseTypePath(cl) catch (msg:String) throw new Failure(msg);
@@ -175,16 +200,7 @@ class Args {
 	public static function parseArgs(args:Array<String>):Array<ParsedArg> {
 		var parsed:Array<ParsedArg> = [];
 		function add(a:ParsedArg) parsed.push(a);
-		// port: hack_loop; arguments from "--run" on are kept as they are.
-		function hackLoop(args:Array<String>):Array<String> {
-			var acc = [];
-			for (i in 0...args.length) {
-				if (args[i] == "--run") return acc.concat(args.slice(i));
-				acc.push(Helper.expandEnv(args[i]));
-			}
-			return acc;
-		}
-		var args = hackLoop(args); /* TODO: test this */
+		var args = expandEnvArgs(args);
 		// port: the list match `flag :: x :: rest` as a guard on the next token; a flag without its
 		// value falls through to the final `arg :: rest` case, as upstream.
 		var i = 0;
