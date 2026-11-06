@@ -39,14 +39,11 @@ class Playground {
 
 	// The compiler is a 10 MB wasm32-wasi module (MODULE). It is compiled
 	// once, only when the playground comes into view (or Run is pressed), and the
-	// compiled module goes to the worker. Phones and low-memory devices skip the
-	// background type-checker (diagnostics, completion): it was a second compiler
-	// instance, and two of them got mobile browsers' tabs killed. (Its requests now
-	// go to the one instance Run uses: whether they fit there is not measured yet.)
-	static final LOW_MEMORY = {
-		final memory:Null<Float> = (cast window.navigator).deviceMemory;
-		(memory != null && memory <= 4) || window.matchMedia("(pointer: coarse)").matches;
-	};
+	// compiled module goes to the worker. The type-checker
+	// (diagnostics, completion) and Run share one kept instance: over 100 edits with
+	// a check, completion, hover and a run each, its memory levels off at about 158 MB
+	// (about 152 MB with runs only). It used to be a second instance, and two of them
+	// got mobile browsers' tabs killed, so phones went without it.
 	// hih.wasm uses exception handling with exnref (Chrome and Edge 137+,
 	// Firefox 131+, Safari 18.4+); hih-legacy.wasm, the same compiler built with
 	// -D hxmc.wasm-eh=legacy, the legacy instructions (Chrome and Edge 95+,
@@ -499,8 +496,8 @@ class Playground {
 	static var inflight = false;
 
 	static function request(r:Request):Promise<Null<Reply>> {
-		// the type-checker starts once the compiler has loaded, and not on small devices
-		if (LOW_MEMORY || MODULE == null || !runnerReady) return Promise.resolve(null);
+		// the type-checker starts once the compiler has loaded
+		if (MODULE == null || !runnerReady) return Promise.resolve(null);
 		final kind = r.type == "display" ? r.request.method : r.type;
 		return new Promise((resolve, _) -> {
 			final previous = queue.get(kind);
