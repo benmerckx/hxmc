@@ -13,33 +13,59 @@ import context.display.DisplayResult;
 // ... included. The hooks and statics are the process's: one call at a time.
 // ... Design: docs/plans/compiler-instance.md.
 class CompilerInstance {
-	public final args:RequestArgs;
+	/** the arguments of one compilation (a part: --next separates them) */
+	public final part:PartArgs;
+
+	/** a part of the same batch follows (--next) */
+	public final hasNext:Bool;
+
 	public final cache:CompilerCache;
 
 	public final display:DisplayServices;
 	public final server:ServerServices;
 
-	public function new(args:RequestArgs, cache:CompilerCache) {
+	public function new(part:PartArgs, cache:CompilerCache, hasNext = false) {
+		Init.initHooks();
+		this.part = part;
+		this.hasNext = hasNext;
+		this.cache = cache;
+		this.display = new DisplayServices(this);
+		this.server = new ServerServices(this);
+	}
+
+	/** The instances of expanded arguments, one per part (--next), over one cache: a batch
+		(buildAll). Without --display, --connect, --wait. */
+	public static function ofRequest(args:RequestArgs, cache:CompilerCache):Array<CompilerInstance> {
 		if (args.displayArg != null) throw new core.ds.ArgumentError("CompilerInstance: --display is a call of its own, not an argument");
 		if (args.connectArg != null) throw new core.ds.ArgumentError("CompilerInstance: --connect is a client's, not an argument");
 		switch args.serverMode {
 			case SMNone:
 			case _: throw new core.ds.ArgumentError("CompilerInstance: --wait and --server-connect are a server's, not arguments");
 		}
-		Init.initHooks();
-		this.args = args;
-		this.cache = cache;
-		this.display = new DisplayServices(this);
-		this.server = new ServerServices(this);
+		// (expandArgs gives one at least)
+		var parts = args.parts;
+		return [for (i in 0...parts.length) new CompilerInstance(parts[i], cache, i + 1 < parts.length)];
 	}
 
-	/** Parses and expands command-line arguments (as `haxe` does) into an instance. */
+	/** Parses and expands command-line arguments of one compilation (as `haxe` does) into an
+		instance. */
 	public static function ofArgs(args:Array<String>, cache:CompilerCache):CompilerInstance {
-		return new CompilerInstance(Args.expandArgs(Args.parseArgs(args)), cache);
+		var instances = ofRequest(Args.expandArgs(Args.parseArgs(args)), cache);
+		if (instances.length > 1) throw new core.ds.ArgumentError("CompilerInstance.ofArgs: several compilations (--next): ofRequest");
+		return instances[0];
 	}
 
-	/** Builds every part; the messages go to `io` as `haxe` prints them, and are returned. */
-	public function build(io:CompilerIoData):BuildResult {
+	/** Builds; the messages go to `io` as `haxe` prints them, and are returned. */
+	public function build(io:CompilerIoData):BuildResult
+		return buildAll([this], io);
+
+	/** Builds a batch (ofRequest: the parts of a command line), one instance after the other
+		until one fails, over their cache; what spans them is the batch's (the server
+		context, the request's scope and timers, the server's work per request). */
+	public static function buildAll(instances:Array<CompilerInstance>, io:CompilerIoData):BuildResult {
+		var cache = instances[0].cache;
+		for (instance in instances)
+			if (instance.cache != cache) throw new core.ds.ArgumentError("CompilerInstance.buildAll: the instances of a batch share their cache");
 		var sctx = cache.begin();
 		sctx.cache = cache;
 		core.CacheHooks.current = cache.hooks();
@@ -52,8 +78,8 @@ class CompilerInstance {
 			while (i-- > 0) messages.push(com.partScope.messages[i]);
 			flush(hasError, com);
 		}
-		var code = try run(sctx, scope, args) catch (e:Dynamic) {
-			endBuild(sctx, 1);
+		var code = try run(sctx, scope, instances, false) catch (e:Dynamic) {
+			endBuild(cache, sctx, 1);
 			throw e;
 		}
 		// (a server's result handler reports the timers itself)
@@ -62,7 +88,7 @@ class CompilerInstance {
 			if (timerCtx.measureTimes == core.Timer.MeasureTimes.Yes)
 				CompilerOutput.sendTimerReport(io, timerCtx);
 		}
-		endBuild(sctx, code);
+		endBuild(cache, sctx, code);
 		return {code: code, messages: messages};
 	}
 
@@ -143,17 +169,14 @@ class CompilerInstance {
 				}
 			}
 		};
-		// (HighLevel's hasDisplay: the arguments of a display request)
-		var displayArgs = args.clone();
-		displayArgs.displayArg = "";
-		try run(sctx, scope, displayArgs) catch (e:Dynamic) {
+		try run(sctx, scope, [this], true) catch (e:Dynamic) {
 			if (ownIo) CompilerIo.close(io);
-			endBuild(sctx, 1);
+			endBuild(cache, sctx, 1);
 			throw e;
 		}
 		if (answerDir != null) core.Path.restoreCwd(answerDir);
 		if (ownIo) CompilerIo.close(io);
-		endBuild(sctx, 0);
+		endBuild(cache, sctx, 0);
 		if (failure != null) throw failure;
 		return if (answered) Answered(answer) else if (found != null) Found(found) else if (errors != null) Failed(errors) else Found(DRNone);
 	}
@@ -175,23 +198,45 @@ class CompilerInstance {
 		}
 
 	// (the build's cache hooks no longer current)
-	function endBuild(sctx:ServerCompilationContext, code:Int):Void {
+	static function endBuild(cache:CompilerCache, sctx:ServerCompilationContext, code:Int):Void {
 		core.CacheHooks.current = null;
 		cache.end(sctx, code);
 	}
 
-	function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int
-		return sctx.isServer ? process(sctx, scope, args) : HighLevel.entry(sctx, scope, args);
+	// port: HighLevel.entry over instances (a display request: the first part only), in a
+	// ... server as Server.process runs it
+	static function run(sctx:ServerCompilationContext, scope:context.Common.RequestScope, instances:Array<CompilerInstance>, hasDisplay:Bool):Int {
+		function parts():Int {
+			var curdir = Sys.getCwd();
+			var code = 0;
+			for (instance in instances) {
+				var com = HighLevel.createContextFromPart(sctx, scope, hasDisplay, instance.hasNext, instance.part);
+				code = Compiler.compileCtx(sctx, com);
+				core.Path.restoreCwd(curdir);
+				if (code != 0 || hasDisplay) break;
+			}
+			core.Path.restoreCwd(curdir);
+			return code;
+		}
+		if (!sctx.isServer) return parts();
+		var args:RequestArgs = {
+			parts: [for (instance in instances) instance.part],
+			serverMode: SMNone,
+			connectArg: null,
+			displayArg: hasDisplay ? "" : null
+		};
+		return process(sctx, scope, args, parts);
+	}
 
 	// Server.process, keeping the exit code
-	function process(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs):Int {
+	static function process(sctx:ServerCompilationContext, scope:context.Common.RequestScope, args:RequestArgs, parts:Void->Int):Int {
 		var t0 = Sys.time();
 		var curdir = Sys.getCwd();
 		compiler.server.ServerMessage.arguments(Args.stringOfRequestArgs(args));
 		ServerCompilationContext.reset(sctx);
 		if (sctx.persistentCwd != null) try Sys.setCwd(sctx.persistentCwd)
 		catch (_:Dynamic) {}
-		var code = try HighLevel.entry(sctx, scope, args) catch (e:Dynamic) {
+		var code = try parts() catch (e:Dynamic) {
 			core.Path.restoreCwd(curdir);
 			throw e;
 		}

@@ -245,8 +245,9 @@ class Main {
 		// port: a build (not a display request) runs on a CompilerInstance with `cache`
 		if (requestArgs.displayArg == null) {
 			var io = CompilerIo.createStdioIo();
-			var instance = new compiler.CompilerInstance(requestArgs, cache != null ? cache : new compiler.CompilerInstance.SkipCache());
-			return try instance.build(io).code catch (e:core.ds.ArgumentError) {
+			// (an instance per part: --next)
+			var cache = cache != null ? cache : new compiler.CompilerInstance.SkipCache();
+			return try compiler.CompilerInstance.buildAll(compiler.CompilerInstance.ofRequest(requestArgs, cache), io).code catch (e:core.ds.ArgumentError) {
 				badArg(e.message);
 			} catch (e:Dynamic) {
 				reportInternalError(e);
@@ -260,7 +261,8 @@ class Main {
 		var request = requestArgs.displayArg;
 		var args = requestArgs.clone();
 		args.displayArg = null;
-		var instance = new compiler.CompilerInstance(args, new compiler.CompilerInstance.SkipCache());
+		// (the first part: a display request's, as HighLevel.entry has it)
+		var instance = compiler.CompilerInstance.ofRequest(args, new compiler.CompilerInstance.SkipCache())[0];
 		var timerCtx = try context.display.DisplayJson.dispatch(instance, io, request) catch (e:core.ds.ArgumentError) {
 			return badArg(e.message);
 		} catch (e:core.ds.Exit) {

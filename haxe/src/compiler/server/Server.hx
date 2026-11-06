@@ -337,12 +337,13 @@ class Server {
 				// (which process ignores)
 				args.connectArg = null;
 				args.serverMode = SMNone;
-				var instance = new compiler.CompilerInstance(args, cache);
+				// (the first part: a display request's, as HighLevel.entry has it)
+				var instance = compiler.CompilerInstance.ofRequest(args, cache)[0];
 				context.display.DisplayJson.dispatch(instance, io, request);
 				return Success;
 			}
 			if (requestArgs.connectArg == null && requestArgs.serverMode == SMNone) {
-				new compiler.CompilerInstance(requestArgs, cache).build(io);
+				compiler.CompilerInstance.buildAll(compiler.CompilerInstance.ofRequest(requestArgs, cache), io);
 				return Success;
 			}
 			var requestScope = createRequestScope(true, io);
