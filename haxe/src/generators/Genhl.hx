@@ -4677,6 +4677,8 @@ class Genhl {
 			}
 		}
 		var hlVer = Gctx.definedValueSafe(com, Define.HlVer, "");
+		if (Gctx.rawDefined(com, "hl_legacy32") && hlVer != "" && compareVersion(hlVer, "2.0.0") >= 0)
+			com.warning(core.Message.WarningCode.WGenerator, [], "-D hl_legacy32 is for 32-bit compatibility, but 32-bit builds are no longer supported since HashLink 2.0 (hl_ver >= 2.0.0)", fakePos("-D hl_legacy32"));
 		var ctx = new HlContext();
 		ctx.com = com;
 		ctx.hlVer = hlVer;
