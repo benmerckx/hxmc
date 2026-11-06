@@ -164,7 +164,8 @@ class Main {
 		}
 	}
 
-	public static function run(args:Array<String>):Int {
+	// port: `cache`: the builds' (not upstream; hxmc's module cache), SkipCache by default
+	public static function run(args:Array<String>, ?cache:compiler.CompilerInstance.CompilerCache):Int {
 		compiler.Init.initHooks();
 		// port: the port is executed by a host compiler, so the std location of the
 		// executable is not meaningful; HAXE_IN_HAXE_STD_PATH overrides the
@@ -174,7 +175,7 @@ class Main {
 		else if (Sys.getEnv("HAXE_STD_PATH") == null && sys.FileSystem.exists("haxe/upstream/std")) Sys.putEnv("HAXE_STD_PATH",
 			sys.FileSystem.fullPath("haxe/upstream/std"));
 		try {
-			return runMain(args);
+			return runMain(args, cache);
 		} catch (e:BadArg) {
 			return badArg(e.message);
 		} catch (e:core.ds.Failure) {
@@ -192,7 +193,7 @@ class Main {
 		}
 	}
 
-	static function runMain(args:Array<String>):Int {
+	static function runMain(args:Array<String>, cache:Null<compiler.CompilerInstance.CompilerCache>):Int {
 		var parsedArgs = Args.parseArgs(args);
 		var requestArgs = try Args.expandArgs(parsedArgs) catch (e:core.ds.ArgumentError) return badArg(e.message);
 
@@ -241,10 +242,10 @@ class Main {
 		// port: the OCaml Gc settings (HAXE_MAIN_MINOR_MB, HAXE_SPACE_OVERHEAD, DynamicGc tuning)
 		// ... have no host-runtime equivalent; the host garbage collector keeps its own settings.
 
-		// port: a build (not a display request) runs on a CompilerInstance without a cache
+		// port: a build (not a display request) runs on a CompilerInstance with `cache`
 		if (requestArgs.displayArg == null) {
 			var io = CompilerIo.createStdioIo();
-			var instance = new compiler.CompilerInstance(requestArgs, new compiler.CompilerInstance.SkipCache());
+			var instance = new compiler.CompilerInstance(requestArgs, cache != null ? cache : new compiler.CompilerInstance.SkipCache());
 			return try instance.build(io).code catch (e:core.ds.ArgumentError) {
 				badArg(e.message);
 			} catch (e:Dynamic) {

@@ -130,9 +130,13 @@ class ModuleCache {
 	public static function current():Null<ModuleCacheState>
 		return state;
 
-	public static function install() {
-		compiler.Compiler.beforeTypingHook = hook;
-		if (Sys.systemName() == "Wasi") return;
+	// the hooks the cache observes typing through (OnDiskCache, once): no-ops without a
+	// build's state
+	static var observing = false;
+
+	public static function observe() {
+		if (observing || Sys.systemName() == "Wasi") return;
+		observing = true;
 		mainThread = sys.thread.Thread.current();
 		core.Define.readHook = onRead;
 		Common.externalDefinesHook = onExternal;
@@ -708,7 +712,9 @@ class ModuleCache {
 		return null;
 	}
 
-	static function hook(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
+	// a build, once its arguments are processed (OnDiskCache.beforeTyping): its state opened,
+	// or why not
+	public static function beforeTyping(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
 		hookCalls++;
 		state = null;
 		ServerCache.checkModuleHook = null;

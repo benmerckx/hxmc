@@ -31,6 +31,8 @@ import compiler.CompilationCache;
 	public var persistentCwd:Null<String>;
 	/* The server's domain pool. */
 	public var pool:ManagedPoolData;
+	// port: not upstream: the cache of the build running on this context (CompilerInstance)
+	public var cache:Null<compiler.CompilerInstance.CompilerCache> = null;
 
 	public inline function new(isServer:Bool, version:core.Globals.CompilerVersion, verbose:Bool,
 			changedDirectories:Hashtbl<String, Array<CachedDirectory>>, cs:Cache, classPaths:Hashtbl<String, Array<String>>,

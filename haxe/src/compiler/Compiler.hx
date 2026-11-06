@@ -201,8 +201,10 @@ class Compiler {
 	// port: code generators of other targets (hxmc/) receive the filtered program here; always null in the compiler itself.
 	public static var generateHook:Null<CommonContext->Void> = null;
 
-	// port: hxmc puts its persistent module cache in place here (hxmc/src/hxmc/ModuleCache.hx); always null in the compiler itself.
-	public static var beforeTypingHook:Null<(CommonContext, ArgContext) -> Void> = null;
+	// port: not upstream: once the arguments are processed, before the init macros: the
+	// ... build's cache (CompilerCache.beforeTyping), and what hxmc wraps around it (its
+	// ... target's flags before, its setup after)
+	public static var beforeTypingHook:Null<(CommonContext, ArgContext) -> Void> = (com, actx) -> if (com.sctx.cache != null) com.sctx.cache.beforeTyping(com, actx);
 
 	public static function compile(com:CommonContext, actx:ArgContext, sctx:ServerCompilationContext):Void {
 		// Set up display configuration

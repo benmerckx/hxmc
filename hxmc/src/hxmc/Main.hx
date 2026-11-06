@@ -129,12 +129,13 @@ class Main {
 				failed = Std.string(e) + "\n" + haxe.CallStack.toString(haxe.CallStack.exceptionStack());
 			}
 		}
-		ModuleCache.install();
+		// (the module cache: the builds' CompilerCache, haxe.Main.run's)
+		var cache = new OnDiskCache(() -> failed != null);
 		hxmc.ir.CInterop.install();
 		hxmc.TargetFlags.install();
 		hxmc.StdDce.install();
-		var code = haxe.Main.run(args.concat(["--no-output"]));
-		ModuleCache.finish(failed == null ? code : 1);
+		var code = haxe.Main.run(args.concat(["--no-output"]), cache);
+		cache.close();
 		if (failed != null) {
 			Sys.stderr().writeString("hxmc: " + failed + "\n");
 			Sys.exit(1);

@@ -134,7 +134,8 @@ class HaxeMain {
 		}
 		// -lib: lix's scopes, node_modules, haxelib without a process (libs/Libraries.hx)
 		hxmc.libs.Libraries.install(args[0] != "--cwd");
-		ModuleCache.install();
+		// (the module cache: the builds' CompilerCache, haxe.Main.run's)
+		var cache = new OnDiskCache(() -> failed != null);
 		hxmc.ir.CInterop.install();
 		hxmc.TargetFlags.install();
 		hxmc.StdDce.install();
@@ -146,12 +147,12 @@ class HaxeMain {
 		hxmc.macro.MirHost.runtime();
 		// (-D hxmc.macros=mir: macros on the Mir interpreter, the macro context typed for hxmc)
 		if (macroEngine == "mir") hxmc.interp.MirMacros.install(hxmcStd);
-		var code = haxe.Main.run(args);
+		var code = haxe.Main.run(args, cache);
 		if (macroEngine == "mir") @:privateAccess hxmc.interp.MirMacros.self.report();
 		#else
-		var code = haxe.Main.run(args);
+		var code = haxe.Main.run(args, cache);
 		#end
-		ModuleCache.finish(failed == null ? code : 1);
+		cache.close();
 		if (failed != null) {
 			Sys.stderr().writeString("hxmc: " + failed + "\n");
 			return 1;

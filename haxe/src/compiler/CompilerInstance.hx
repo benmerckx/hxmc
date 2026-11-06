@@ -41,6 +41,7 @@ class CompilerInstance {
 	/** Builds every part; the messages go to `io` as `haxe` prints them, and are returned. */
 	public function build(io:CompilerIoData):BuildResult {
 		var sctx = cache.begin();
+		sctx.cache = cache;
 		var scope = Server.createRequestScope(sctx.isServer, io);
 		var messages:Array<CompilerMessage> = [];
 		var flush = scope.resultHandler.flushMessages;
@@ -51,7 +52,7 @@ class CompilerInstance {
 			flush(hasError, com);
 		}
 		var code = try run(sctx, scope, args) catch (e:Dynamic) {
-			cache.end(sctx);
+			cache.end(sctx, 1);
 			throw e;
 		}
 		// (a server's result handler reports the timers itself)
@@ -60,7 +61,7 @@ class CompilerInstance {
 			if (timerCtx.measureTimes == core.Timer.MeasureTimes.Yes)
 				CompilerOutput.sendTimerReport(io, timerCtx);
 		}
-		cache.end(sctx);
+		cache.end(sctx, code);
 		return {code: code, messages: messages};
 	}
 
@@ -69,6 +70,7 @@ class CompilerInstance {
 		rethrown. Without `env`, no output. */
 	public function request<T>(start:context.Common.CommonContext->RequestStep<T>, ?env:RequestEnv):RequestOutcome<T> {
 		var sctx = cache.begin();
+		sctx.cache = cache;
 		var ownIo = env == null;
 		var io = ownIo ? CompilerIo.create(_ -> {}, _ -> {}, _ -> {}, () -> {}, null) : env.io;
 		var scope = Server.createRequestScope(sctx.isServer, io);
@@ -144,12 +146,12 @@ class CompilerInstance {
 		displayArgs.displayArg = "";
 		try run(sctx, scope, displayArgs) catch (e:Dynamic) {
 			if (ownIo) CompilerIo.close(io);
-			cache.end(sctx);
+			cache.end(sctx, 1);
 			throw e;
 		}
 		if (answerDir != null) core.Path.restoreCwd(answerDir);
 		if (ownIo) CompilerIo.close(io);
-		cache.end(sctx);
+		cache.end(sctx, 0);
 		if (failure != null) throw failure;
 		return if (answered) Answered(answer) else if (found != null) Found(found) else if (errors != null) Failed(errors) else Found(DRNone);
 	}
@@ -259,8 +261,12 @@ interface CompilerCache {
 	/** the build's server context, with the hooks pointed at it */
 	function begin():ServerCompilationContext;
 
-	/** after the build, whether it succeeded or not */
-	function end(sctx:ServerCompilationContext):Void;
+	/** once the arguments are processed, before the init macros: what the cache can do
+		for this build (Compiler.beforeTypingHook) */
+	function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void;
+
+	/** after the build, with its exit code (0: built) */
+	function end(sctx:ServerCompilationContext, code:Int):Void;
 }
 
 /** Nothing kept: every build types everything from source (a plain `haxe`). */
@@ -270,7 +276,9 @@ class SkipCache implements CompilerCache {
 	public function begin():ServerCompilationContext
 		return Server.setupServerContext(false, false);
 
-	public function end(sctx:ServerCompilationContext):Void
+	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
+
+	public function end(sctx:ServerCompilationContext, code:Int):Void
 		ServerCompilationContext.dispose(sctx);
 }
 
@@ -297,7 +305,9 @@ class InMemoryCache implements CompilerCache {
 		return sctx;
 	}
 
-	public function end(sctx:ServerCompilationContext):Void {}
+	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
+
+	public function end(sctx:ServerCompilationContext, code:Int):Void {}
 
 	/** The server's work between requests: the cleanup, and after a compilation the class
 		paths' exploration, as a task for a host that runs tasks while idle. */
