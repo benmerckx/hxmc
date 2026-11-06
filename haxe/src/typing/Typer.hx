@@ -1846,7 +1846,7 @@ class Typer {
 				};
 				var nullable = ctx.t.tnull(e1.etype),
 					name = WithTypeTools.getExpectedName(withType);
-				if (name == null || name == "") name = "tmp"; // TODO: why does this happen?
+				if (name == null || !Lexer.isValidIdentifier(name)) name = "tmp";
 				e1 = reference.asVar(name, mk(e1.eexpr, nullable, e1.epos));
 				var enull = Builder.makeNull(nullable, e1.epos),
 					condition = mk(TBinop(OpNotEq, e1, enull), ctx.t.tbool, e1.epos),
