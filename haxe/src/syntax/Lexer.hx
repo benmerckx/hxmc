@@ -256,6 +256,12 @@ class Lexer {
 			+ c.lineEnd;
 	}
 
+	// port: Hashtbl.mem keywords
+	public static function isKeyword(value:String):Bool return switch keyword(value) {
+		case Const(Ident(_)): false;
+		case _: true;
+	};
+
 	public static function isValidIdentifier(value:String):Bool {
 		if (value.length == 0) return false;
 		for (i in 0...value.length) {

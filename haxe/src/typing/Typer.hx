@@ -784,7 +784,7 @@ class Typer {
 					e = typeExpr(ctx, field.expr, WithTypeTools.value);
 					original = null;
 				}
-				if (valid) {
+				if (valid || original != null) {
 					if (StringTools.startsWith(n, "$")) raiseTypingError("Field names starting with a dollar are not allowed", p);
 					var cf = mkField(n, e.etype, Ast.punion(pn, e.epos), pn);
 					if (original != null) {

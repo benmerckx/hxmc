@@ -303,9 +303,27 @@ class Grammar {
 		}
 	}
 
-	static function questionableDollarIdent(ctx:ParserContext, s:S):{opt:Bool, name:PlacedName} {
+	static function checkQuotedFieldName(ctx:ParserContext, s:S, name:String, kind:StringLiteralKind, p:Pos):Void {
+		if (kind != SDoubleQuotes) Parser.syntaxError(ctx, Custom("Quoted field names must use double quotes"), s, null, p);
+		else if (!(Lexer.isValidIdentifier(name) || Lexer.isKeyword(name)))
+			Parser.syntaxError(ctx, Custom("Quoted field names must be identifiers or keywords"), s, null, p);
+	}
+
+	static function fieldDeclIdent(ctx:ParserContext, owner:FieldOwner, s:S):PlacedName {
+		var tk = peek(s);
+		switch tk.token {
+			case Const(String(name, kind)) if (owner == FOStructure):
+				s.junk();
+				checkQuotedFieldName(ctx, s, name, kind, tk.pos);
+				return pn(name, tk.pos);
+			case _:
+				return dollarIdent(s);
+		}
+	}
+
+	static function questionableDollarIdent(ctx:ParserContext, owner:FieldOwner, s:S):{opt:Bool, name:PlacedName} {
 		var po = acceptTok(s, Question);
-		var n = dollarIdent(s);
+		var n = fieldDeclIdent(ctx, owner, s);
 		if (po == null) return {opt: false, name: n};
 		if (n.pos.pmin != po.pmax) Parser.syntaxError(ctx, Custom('Invalid usage of ?, use ?${n.name} instead'), s, null, po);
 		return {opt: true, name: n};
@@ -1521,7 +1539,7 @@ class Grammar {
 
 	static function parseTypeAnonymous(ctx:ParserContext, s:S):{fields:Array<ClassField>, pos:Pos} {
 		var p0 = popt(questionMark, s);
-		var r = tryHead(function() return dollarIdent(s));
+		var r = tryHead(function() return fieldDeclIdent(ctx, FOStructure, s));
 		if (r == null) return p0 == null ? fail() : serror();
 		var name = r.v.name;
 		var p1 = r.v.pos;
@@ -1706,7 +1724,7 @@ class Grammar {
 			case Kwd(Var):
 				var p1 = tk.pos;
 				s.junk();
-				var q = tail(function() return questionableDollarIdent(ctx, s));
+				var q = tail(function() return questionableDollarIdent(ctx, owner, s));
 				var meta = checkOptional(q.opt, q.name);
 				if (isTok(s, POpen)) {
 					s.junk();
@@ -1738,7 +1756,7 @@ class Grammar {
 				var p1 = tk.pos;
 				s.junk();
 				checkRedundantVar(ctx, p1, s);
-				var q = tryHead(function() return questionableDollarIdent(ctx, s));
+				var q = tryHead(function() return questionableDollarIdent(ctx, owner, s));
 				if (q != null) {
 					var opt = q.v.opt, name = q.v.name;
 					if (isTok(s, POpen)) {
@@ -2954,6 +2972,10 @@ class Grammar {
 				case Dollar(v):
 					s.junk();
 					return exprNext(ctx, mk(EField(e1, "$" + v, efk), punion(e1.pos, p2)), s);
+				case Const(String(f, kind)) if (p.pmax == p2.pmin):
+					s.junk();
+					checkQuotedFieldName(ctx, s, f, kind, p2);
+					return exprNext(ctx, mk(EField(e1, f, efk), punion(e1.pos, p2)), s);
 				case _:
 					// turn an integer followed by a dot into a float
 					return switch e1.expr {
