@@ -92,8 +92,12 @@ class CompilerInstance {
 		function completed():Dynamic
 			throw new context.display.DisplayJson.JsonCompleted();
 		// (where upstream sends its response)
+		var answerDir:Null<String> = null;
 		function now():Void
-			if (env != null && env.onAnswer != null) env.onAnswer();
+			if (env != null) {
+				if (env.keepCwd) answerDir = Sys.getCwd();
+				if (env.onAnswer != null) env.onAnswer();
+			}
 		scope.resultHandler = {
 			sendResult: _ -> unexpected("send_result"),
 			sendResultRaise: _ -> unexpected("send_result_raise"),
@@ -155,6 +159,7 @@ class CompilerInstance {
 			cache.end(sctx);
 			throw e;
 		}
+		if (answerDir != null) core.Path.restoreCwd(answerDir);
 		if (ownIo) CompilerIo.close(io);
 		cache.end(sctx);
 		if (failure != null) throw failure;
@@ -228,6 +233,12 @@ enum RequestOutcome<T> {
 	/** called when the request is answered, inside the compilation (where upstream
 		writes its response: the timers it reports are taken there) */
 	public final onAnswer:Null<Void->Void> = null;
+
+	/** the request's directory when it is answered (its --cwd, server/setCwd's) is made
+		current again after it, for the caller to restore: the result's positions with a
+		relative file are relative to it (the protocol's adapter encodes them there, as
+		upstream does in the request) */
+	public final keepCwd:Bool = false;
 }
 
 /** A method's error that is not the compilation's (an invalid parameter, a module the

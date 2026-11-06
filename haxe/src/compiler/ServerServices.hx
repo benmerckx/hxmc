@@ -12,6 +12,7 @@ import compiler.DisplayServices;
 import context.Common.CommonContext;
 import core.Json.JsonValue;
 import core.TFunctions.tInfos;
+import core.TType.ModuleType;
 
 /** server/configure's parameters: the std's, with the print settings in their order (each
 	is answered with a line, and an unknown name is an error) */
@@ -25,8 +26,7 @@ typedef GcCompactResult = {time:Float, before:Int, after:Int};
 /** The server/* methods of the JSON-RPC protocol (and typer/compiledTypes), on the
 	instance's cache: the std's parameters (haxe.display), the compiler's values. A
 	ServiceError is the protocol's error response (an invalid directory, an unknown module);
-	a failed compilation (the arguments) throws a CompilationError. The modules' and the
-	memory's are Genjson's documents: they read the cache lazily as they are written. */
+	a failed compilation (the arguments) throws a CompilationError. */
 interface ServerApi {
 	function resetCache():Void;
 	function resetState():Void;
@@ -42,8 +42,11 @@ interface ServerApi {
 	/** the paths of the context's modules (s_type_path) */
 	function modules(p:ContextParams):Array<String>;
 
-	function module(p:ModuleParams):JsonValue;
-	function type(p:TypeParams):JsonValue;
+	/** the cached module, with its dependencies' and dependents' signatures */
+	function module(p:ModuleParams):core.json.Genjson.ModuleSummary;
+
+	/** the cached type (fully typed, read from the cache) */
+	function type(p:TypeParams):ModuleType;
 
 	/** the contexts that have a type of the name in the module */
 	function typeContexts(p:{modulePath:String, typeName:String}):Array<ContextCache>;
@@ -59,12 +62,12 @@ interface ServerApi {
 	/** a line for each setting */
 	function configure(p:ServerConfigureParams):Array<String>;
 
-	function memory():JsonValue;
-	function contextMemory(p:ContextParams):JsonValue;
-	function moduleMemory(p:ModuleParams):JsonValue;
+	function memory():context.display.DisplayMemory.CacheMemory;
+	function contextMemory(p:ContextParams):context.display.DisplayMemory.ContextMemory;
+	function moduleMemory(p:ModuleParams):context.display.DisplayMemory.ModuleMemoryReport;
 
-	/** after the filters: the compiled types (Genjson's) */
-	function compiledTypes():Null<Array<JsonValue>>;
+	/** after the filters: the compiled types */
+	function compiledTypes():Null<Array<ModuleType>>;
 }
 
 // port: not upstream: DisplayJson.handler's server/* methods, on a CompilerInstance's request
@@ -142,17 +145,17 @@ class ServerServices implements ServerApi {
 			}, []);
 		});
 
-	public function module(p:ModuleParams):JsonValue
+	public function module(p:ModuleParams):core.json.Genjson.ModuleSummary
 		return now("server/module", function(com) {
 			var path = core.Ast.Ast.parsePath(p.path);
 			var cc = (com.cs : Cache).getContext(p.signature);
 			var typingMode:compiler.hxb.HxbData.TypingMode = if (core.Define.defined(com.defines,
 				core.Define.DisableHxbOptimizations)) FullTyping else AllowPartialTyping;
 			var find = context.display.DisplayJson.findModule.bind(typingMode, com, cc);
-			return try core.json.Genjson.generateModule(cc.getHxb(), find, find(path)) catch (_:core.ds.NotFound) throw new ServiceError("No such module");
+			return try core.json.Genjson.summarizeModule(cc.getHxb(), find, find(path)) catch (_:core.ds.NotFound) throw new ServiceError("No such module");
 		});
 
-	public function type(p:TypeParams):JsonValue
+	public function type(p:TypeParams):ModuleType
 		return now("server/type", function(com) {
 			var path = core.Ast.Ast.parsePath(p.modulePath);
 			var cc = (com.cs : Cache).getContext(p.signature);
@@ -163,7 +166,7 @@ class ServerServices implements ServerApi {
 						case TClassDecl(c): c.clRestore();
 						case _:
 					}
-					if (tInfos(mt).mtPath.name == p.typeName) return core.json.Genjson.generateModuleType(core.json.Genjson.createFullConfig(), mt);
+					if (tInfos(mt).mtPath.name == p.typeName) return mt;
 				}
 			} catch (_:core.ds.NotFound) throw new ServiceError("No such module");
 			throw new ServiceError("No such type");
@@ -238,19 +241,16 @@ class ServerServices implements ServerApi {
 		return l;
 	}
 
-	public function memory():JsonValue
-		return now("server/memory", com -> context.display.DisplayMemory.getMemoryJson(com.cs, MCache));
+	public function memory():context.display.DisplayMemory.CacheMemory
+		return now("server/memory", com -> context.display.DisplayMemory.cacheMemory(com.cs));
 
-	public function contextMemory(p:ContextParams):JsonValue
-		return now("server/memory/context", com -> context.display.DisplayMemory.getMemoryJson(com.cs, MContext(p.signature)));
+	public function contextMemory(p:ContextParams):context.display.DisplayMemory.ContextMemory
+		return now("server/memory/context", com -> context.display.DisplayMemory.contextMemory(com.cs, p.signature));
 
-	public function moduleMemory(p:ModuleParams):JsonValue
+	public function moduleMemory(p:ModuleParams):context.display.DisplayMemory.ModuleMemoryReport
 		return now("server/memory/module",
-			com -> context.display.DisplayMemory.getMemoryJson(com.cs, MModule(p.signature, core.Ast.Ast.parsePath(p.path))));
+			com -> context.display.DisplayMemory.moduleMemory(com.cs, p.signature, core.Ast.Ast.parsePath(p.path)));
 
-	public function compiledTypes():Null<Array<JsonValue>>
-		return Services.answer(instance, env, "typer/compiledTypes", com -> After(AfterFilters, function() {
-			var ctx = core.json.Genjson.createFullConfig();
-			return com.types.map(core.json.Genjson.generateModuleType.bind(ctx));
-		}));
+	public function compiledTypes():Null<Array<ModuleType>>
+		return Services.answer(instance, env, "typer/compiledTypes", com -> After(AfterFilters, () -> com.types.copy()));
 }

@@ -471,18 +471,18 @@ class DisplayJson {
 			},
 			{
 				name: "server/module",
-				f: hctx -> hctx.server.module(hctx.params(function():haxe.display.Server.ModuleParams return {
+				f: hctx -> Genjson.generateModuleSummary(hctx.server.module(hctx.params(function():haxe.display.Server.ModuleParams return {
 					signature: hctx.jsonrpc.getStringParam("signature"),
 					path: hctx.jsonrpc.getStringParam("path")
-				}))
+				})))
 			},
 			{
 				name: "server/type",
-				f: hctx -> hctx.server.type(hctx.params(function():haxe.display.Server.TypeParams return {
+				f: hctx -> Genjson.generateModuleType(Genjson.createFullConfig(), hctx.server.type(hctx.params(function():haxe.display.Server.TypeParams return {
 					signature: hctx.jsonrpc.getStringParam("signature"),
 					modulePath: hctx.jsonrpc.getStringParam("modulePath"),
 					typeName: hctx.jsonrpc.getStringParam("typeName")
-				}))
+				})))
 			},
 			{
 				name: "server/typeContexts",
@@ -537,22 +537,22 @@ class DisplayJson {
 			},
 			{
 				name: "server/memory",
-				f: hctx -> hctx.server.memory()
+				f: hctx -> DisplayMemory.cacheMemoryJson(hctx.server.memory())
 			},
 			{
 				name: "server/memory/context",
-				f: hctx -> hctx.server.contextMemory(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")}))
+				f: hctx -> DisplayMemory.contextMemoryJson(hctx.server.contextMemory(hctx.params(function():haxe.display.Server.ContextParams return {signature: hctx.jsonrpc.getStringParam("signature")})))
 			},
 			{
 				name: "server/memory/module",
-				f: hctx -> hctx.server.moduleMemory(hctx.params(function():haxe.display.Server.ModuleParams return {
+				f: hctx -> DisplayMemory.moduleMemoryJson(hctx.server.moduleMemory(hctx.params(function():haxe.display.Server.ModuleParams return {
 					signature: hctx.jsonrpc.getStringParam("signature"),
 					path: hctx.jsonrpc.getStringParam("path")
-				}))
+				})))
 			},
 			{
 				name: "typer/compiledTypes",
-				f: hctx -> orNull(hctx.server.compiledTypes(), jarray)
+				f: hctx -> orNull(hctx.server.compiledTypes(), types -> jarray(types.map(Genjson.generateModuleType.bind(Genjson.createFullConfig()))))
 			}
 		];
 		for (e in l) h.add(e.name, e.f);
@@ -604,7 +604,7 @@ class DisplayJson {
 		var f = handler.find(jsonrpc.getMethodName());
 		var timerCtx = Timer.makeContext(Timer.make(["other"]));
 		var at:Null<AnsweredAt> = null;
-		var env:compiler.CompilerInstance.RequestEnv = {io: io, timerCtx: timerCtx, onAnswer: () -> at = answeredAt(timerCtx)};
+		var env:compiler.CompilerInstance.RequestEnv = {io: io, timerCtx: timerCtx, onAnswer: () -> at = answeredAt(timerCtx), keepCwd: true};
 		var hctx:HandlerContext = {
 			jsonrpc: jsonrpc,
 			decode: new RequestParams(jsonrpc),
@@ -623,7 +623,11 @@ class DisplayJson {
 			} catch (e:compiler.DisplayServices.CompilationError) {
 				errorMessage(jsonrpc, messagesToJson(e.messages));
 			}
-		var response = try {
+		var curdir = Sys.getCwd();
+		// (the requests leave their directory current (keepCwd): the result is encoded there,
+		// where upstream encodes it, and the response written)
+		function restore() core.Path.restoreCwd(curdir);
+		var response = try try {
 			respond(() -> f(hctx));
 		} catch (e:ParamsFailed) {
 			// (upstream reads the parameters once the arguments are processed: the failure is
@@ -638,8 +642,12 @@ class DisplayJson {
 				case Answered(json): json;
 				case Found(r): DisplayException.resultToJson(r);
 			});
+		} catch (e:Dynamic) {
+			restore();
+			throw e;
 		}
 		sendJson(io, response);
+		restore();
 		return timerCtx;
 	}
 }

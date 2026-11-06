@@ -129,9 +129,15 @@ class CompilerInstance {
   compiler's own values (`FieldsResult`, `HoverResult`, positions,
   `DiagnosticsContext`, metadata, cached files, ...), of which the
   protocol's results are the JSON; null where the protocol answers null.
-  The `server/module`, `server/type`, memory and compiled types results
-  are Genjson's documents (`JsonValue`): they read the cache lazily as
-  they are written. Each call runs one compilation, as a `--display`
+  `server/module` is a `Genjson.ModuleSummary`: the module with what its
+  JSON reads of the cache (its dependencies' signatures, its dependents),
+  looked up in the request; `server/type` and `typer/compiledTypes` are
+  `ModuleType`s; the memory methods are reports (`DisplayMemory
+  .CacheMemory`, ...), measured in the request. Positions are the compiler's: a relative file is
+  relative to the request's directory (its `--cwd`, `server/setCwd`'s),
+  which the adapter keeps current until the response is written
+  (`RequestEnv.keepCwd`), as upstream encodes inside the request. Each
+  call runs one compilation, as a `--display`
   request does (the arguments, then the method): a failed one throws a
   `CompilationError` with its messages, a method's own error (an invalid
   directory, an unknown module) a `ServiceError`. How the pieces fit:

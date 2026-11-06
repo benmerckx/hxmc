@@ -30,6 +30,14 @@ import core.TType;
 		generateExprs, generateOrigins);
 }
 
+/** A cached module, with what server/module reports of it from the cache: its
+	dependencies (each with the signature it is cached under) and its dependents. */
+typedef ModuleSummary = {
+	module:ModuleDef,
+	dependencies:Array<{path:Globals.GlobalTypePath, sign:String}>,
+	dependents:Array<{path:Globals.GlobalTypePath, sign:String}>
+}
+
 class Genjson {
 	public static final jnull:JsonValue = JNull;
 
@@ -659,10 +667,34 @@ class Genjson {
 	// module
 
 	public static function generateModule(modules:core.ds.OcamlHashtbl<GlobalTypePath, compiler.hxb.HxbData.ModuleCache>,
-			findModule:GlobalTypePath->ModuleDef, m:ModuleDef):JsonValue {
+			findModule:GlobalTypePath->ModuleDef, m:ModuleDef):JsonValue
+		return generateModuleSummary(summarizeModule(modules, findModule, m));
+
+	// port: not upstream: what generate_module reads of the cache (the dependencies'
+	// ... signatures, the dependents), in its order
+	public static function summarizeModule(modules:core.ds.OcamlHashtbl<GlobalTypePath, compiler.hxb.HxbData.ModuleCache>,
+			findModule:GlobalTypePath->ModuleDef, m:ModuleDef):ModuleSummary {
 		// port: PMap.fold visits m_deps in increasing key order and conses: decreasing key order
 		var depIds = [for (k in m.mExtra.mDeps.keys()) k];
 		depIds.sort((a, b) -> a < b ? 1 : (a > b ? -1 : 0));
+		var dependencies = [
+			for (id in depIds) {
+				var mdep = m.mExtra.mDeps.get(id);
+				{path: mdep.mdPath, sign: findModule(mdep.mdPath).mExtra.mSign};
+			}
+		];
+		var dependents = modules.fold(function(_, m_:compiler.hxb.HxbData.ModuleCache, acc:Array<{path:GlobalTypePath, sign:String}>) {
+			if (m_.mcExtra.mDeps.exists(m.mId)) acc.unshift({path: m_.mcPath, sign: m_.mcExtra.mSign});
+			return acc;
+		}, []);
+		return {module: m, dependencies: dependencies, dependents: dependents};
+	}
+
+	// port: generate_module's JSON, of the summary
+	public static function generateModuleSummary(s:ModuleSummary):JsonValue {
+		var m = s.module;
+		function ps(l:Array<{path:GlobalTypePath, sign:String}>):JsonValue
+			return jarray(l.map(ps -> jobject([kv("path", jstring(Globals.sTypePath(ps.path))), kv("sign", jstring(ps.sign))])));
 		return jobject([
 			kv("id", jint(m.mId)),
 			kv("path", generateModulePath(m.mPath)),
@@ -674,19 +706,8 @@ class Genjson {
 				case MSBad(reason): core.TPrinting.Printer.sModuleSkipReason(reason);
 				case MSUnknown: "Unknown";
 			})),
-			kv("dependencies", jarray([
-				for (id in depIds) {
-					var mdep = m.mExtra.mDeps.get(id);
-					jobject([
-						kv("path", jstring(Globals.sTypePath(mdep.mdPath))),
-						kv("sign", jstring(findModule(mdep.mdPath).mExtra.mSign))
-					]);
-				}
-			])),
-			kv("dependents", jarray(modules.fold(function(_, m_:compiler.hxb.HxbData.ModuleCache, acc:Array<{path:GlobalTypePath, sign:String}>) {
-				if (m_.mcExtra.mDeps.exists(m.mId)) acc.unshift({path: m_.mcPath, sign: m_.mcExtra.mSign});
-				return acc;
-			}, []).map(function(ps) return jobject([kv("path", jstring(Globals.sTypePath(ps.path))), kv("sign", jstring(ps.sign))]))))
+			kv("dependencies", ps(s.dependencies)),
+			kv("dependents", ps(s.dependents))
 		]);
 	}
 

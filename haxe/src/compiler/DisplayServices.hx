@@ -35,7 +35,8 @@ typedef DefineInfo = {name:String, info:core.Define.DefineInfos};
 
 /** The display/* methods of the JSON-RPC protocol: the parameters are the std's
 	(haxe.display), the results the compiler's own values, which the protocol's results
-	are the JSON of (context.display.DisplayJson). Null: nothing found (the protocol's null
+	are the JSON of (context.display.DisplayJson); a position's relative file is relative to
+	the request's directory (its --cwd, server/setCwd's). Null: nothing found (the protocol's null
 	result; for completion its "No completion point" error). A failed compilation throws a
 	CompilationError. (completionItem/resolve is the protocol's: it details an item of the
 	last completion it sent.) */
