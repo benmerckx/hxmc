@@ -361,7 +361,7 @@ enum VinstanceKind {
 	ISocket(s:Vsocket);
 	IThread(t:Vthread);
 	IMutex(m:DomainMutex);
-	ISemaphore(s:sys.thread.Semaphore);
+	ISemaphore(s:Vlock);
 	ICondition(c:Vcondition);
 	ILock(l:Vlock);
 	ITls(i:Int);
@@ -453,12 +453,18 @@ class Vdeque {
 	public function new() {}
 }
 
+// A counting semaphore, used for both sys.thread.Lock and sys.thread.Semaphore.
+// It is built on libuv's mutex and condition variable because those provide a
+// timed wait, and luv's bindings for the blocking calls release the OCaml
+// runtime lock while they block.
+// port: the host's counting semaphore (sys.thread.Semaphore), whose acquire with a
+// ... timeout blocks; its blocking calls release the eval lock (EvalLock.blocking).
 class Vlock {
-	public final lmutex:sys.thread.Mutex = new sys.thread.Mutex();
-	public final lcond:sys.thread.Condition = new sys.thread.Condition();
-	public var lcount:Int = 0;
+	public final lsem:sys.thread.Semaphore;
 
-	public function new() {}
+	public function new(count:Int) {
+		lsem = new sys.thread.Semaphore(count);
+	}
 }
 
 class Vcondition {

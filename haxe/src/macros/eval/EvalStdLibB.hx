@@ -28,6 +28,7 @@ import core.ds.GlobalsIntMap;
 import core.ds.OcamlHashtbl;
 import haxe.io.Bytes;
 import macros.eval.EvalStdLibA.Zresult;
+import macros.eval.EvalStdLibA.CountingSemaphore;
 import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalHash;
@@ -622,7 +623,7 @@ class StdMutex {
 }
 
 class StdSemaphore {
-	static function thisValue(vthis:Value):sys.thread.Semaphore {
+	static function thisValue(vthis:Value):Vlock {
 		return switch vthis {
 			case VInstance({ikind: ISemaphore(sem)}): sem;
 			case _: EvalExceptions.unexpectedValue(vthis, "Semaphore");
@@ -630,11 +631,7 @@ class StdSemaphore {
 	}
 
 	public static final acquire = EvalEncode.vifun0(vthis -> {
-		var sem = thisValue(vthis);
-		if (!sem.tryAcquire()) EvalLock.blocking(() -> {
-			sem.acquire();
-			true;
-		});
+		CountingSemaphore.acquire(thisValue(vthis));
 		VNull;
 	});
 
@@ -642,23 +639,14 @@ class StdSemaphore {
 		var sem = thisValue(vthis);
 		switch vtimeout {
 			case VNull:
-				sem.tryAcquire().vbool();
+				CountingSemaphore.tryAcquire(sem).vbool();
 			case _:
-				var timeout = EvalDecode.num(vtimeout);
-				var t = Sys.time() + timeout;
-				function loop():Value {
-					while (true) {
-						if (sem.tryAcquire()) return VTrue;
-						else if (Sys.time() >= t) return VFalse;
-						else EvalLock.yieldNow();
-					}
-				}
-				loop();
+				CountingSemaphore.tryAcquireTimeout(sem, EvalDecode.num(vtimeout)).vbool();
 		}
 	});
 
 	public static final release = EvalEncode.vifun0(vthis -> {
-		thisValue(vthis).release();
+		CountingSemaphore.release(thisValue(vthis));
 		VNull;
 	});
 }
