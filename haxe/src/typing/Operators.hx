@@ -395,7 +395,7 @@ class Operators {
 		inline function mapA(t:T):T return applyParams(a.aParams, tl, t);
 		inline function make(opCf:Binop, cf:TClassField, e1:TExpr, e2:TExpr, ret:T, needs:Bool, swapped:Bool):BinopResultData {
 			if (cf.cfExpr == null && !hasClassFieldFlag(cf, CfExtern)) {
-				if (!core.Meta.has(MetaTag.NoExpr, cf.cfMeta)) Common.displayError(ctx.com, "Recursive operator method", p);
+				if (!hasClassFieldFlag(cf, CfNoExpr)) Common.displayError(ctx.com, "Recursive operator method", p);
 				if (!core.Meta.has(MetaTag.CoreType, a.aMeta)) {
 					// for non core-types we require that the return type is compatible to the native result type
 					var result = makeBinop(ctx, op, core.ds.Record.withFields(e1, {etype: core.Abstract.followWithAbstracts(e1.etype)}),
