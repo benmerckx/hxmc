@@ -164,7 +164,10 @@ class ContinuationClassBuilder {
 			}
 			return n;
 		}
-		function mapLoop(e:TExpr):TExpr return Texpr.mapExprType(mapLoop, subst, mapVar, e);
+		function mapLoop(e:TExpr):TExpr {
+			var e = Texpr.mapExprType(mapLoop, subst, mapVar, e);
+			return typing.OverloadResolution.maybeReapplyOverloadCall(e);
+		}
 		var el = [b.varInit(vcontinuation, ethis)];
 		if ((vtmpResult).isVal()) el.push(b.varInit((vtmpResult).force(), eresult));
 		el.push(b.varInitNull(vtmpError));
