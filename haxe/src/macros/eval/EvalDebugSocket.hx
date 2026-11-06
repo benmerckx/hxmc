@@ -368,7 +368,8 @@ class EvalDebugSocket {
 					});
 				case VString(s):
 					var l = [];
-					var offsets = [for (r in [s.soffsets2, s.soffsets1]) if (r != null) r];
+					var offsets = s.soffsets == null ? [] : s.soffsets.copy();
+					offsets.reverse();
 					for (i => r in offsets) {
 						// port: the entries hold native indices: the offset is the bytes before one
 						var offset = haxe.io.Bytes.ofString(s.sstring.substring(0, r.bOffset)).length;

@@ -45,12 +45,11 @@ class Vstring {
 	// The length of the string.
 	// port: in code points
 	public final slength:Int;
-	// The current (character * byte) offsets.
-	// port: a list of at most two (character, native index) entries
-	// (VstringOffset: the pair of refs): its head and the second, null where
-	// there is none.
-	public var soffsets1:Null<VstringOffset>;
-	public var soffsets2:Null<VstringOffset>;
+	// The current (character * byte) offsets. Threads share this cache, so it is
+	// only ever replaced as a whole and its pairs are immutable.
+	// port: (character, native index) pairs, null for the empty list (strings are
+	// ... created during static initialisation too, before any shared empty array)
+	public var soffsets:Null<Array<VstringOffset>> = null;
 	// port: sstring has no surrogate pairs: code point indices are string indices
 	public final sbmp:Bool;
 
@@ -61,10 +60,10 @@ class Vstring {
 	}
 }
 
-// port: an `(int ref * int ref)` of `soffsets`: a character index and its native index.
+// port: an `(int * int)` of `soffsets`: a character index and its native index.
 class VstringOffset {
-	public var cIndex:Int;
-	public var bOffset:Int;
+	public final cIndex:Int;
+	public final bOffset:Int;
 
 	public function new(cIndex:Int, bOffset:Int) {
 		this.cIndex = cIndex;
