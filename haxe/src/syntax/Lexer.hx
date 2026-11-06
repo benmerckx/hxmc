@@ -38,6 +38,7 @@ enum LexerErrorMsg {
 	// port: upstream Invalid_option.
 	InvalidRegexpOption;
 	UnterminatedMarkup;
+	UnexpectedClosingMarkupTag;
 }
 
 // port: exception Error of error_msg * pos
@@ -328,6 +329,7 @@ class Lexer {
 	public static function lexXml(ctx:LexerContext, p:Int, code:Lexer):Int {
 		code.file = ctx.file.lfile;
 		code.lines = ctx.file;
+		if (!code.eof() && StringTools.fastCodeAt(code.source, code.index) == "/".code) error(ctx, UnexpectedClosingMarkupTag, p);
 		if (p + 1 != code.cp(code.index)) code.fail(InvalidCharacter(code.codePointAt(code.index)), code.index);
 		var name = code.xmlName();
 		ctx.buf.add("<" + name);
@@ -395,6 +397,7 @@ class Lexer {
 		case InvalidEscape(c, msg): "Invalid escape sequence \\" + charEscaped(c) + ". " + msg;
 		case InvalidRegexpOption: "Invalid regular expression option";
 		case UnterminatedMarkup: "Unterminated markup literal";
+		case UnexpectedClosingMarkupTag: "Unexpected closing markup tag";
 	};
 
 	// port: Char.escaped, for a one-byte string; other strings are returned unchanged.
