@@ -334,7 +334,7 @@ class ServerCache {
 					}
 					switch check(mpath, m2Extra) {
 						case null:
-						case reason if (core.CacheHooks.current != null && core.CacheHooks.current.dependencyDirty(com, mPath, mExtra, mdep, reason)):
+						case reason if (core.CacheHooks.current.dependencyDirty(com, mPath, mExtra, mdep, reason)):
 						case reason:
 							throw new Dirty(DependencyDirty(mpath, reason));
 					}
@@ -342,7 +342,7 @@ class ServerCache {
 			}
 			function check():Null<ModuleSkipReason> {
 				try {
-					if (core.CacheHooks.current != null) switch core.CacheHooks.current.checkModule(com, mPath, mExtra) {
+					switch core.CacheHooks.current.checkModule(com, mPath, mExtra) {
 						case null:
 						case reason: throw new Dirty(reason);
 					}
@@ -432,7 +432,7 @@ class ServerCache {
 	// port: `new HxbReader.hxb_reader path com.hxb_reader_stats (if Common.defined com Define.HxbTimes then Some com.timer_ctx else None)`
 	public static function createHxbReader(com:CommonContext, path:GlobalTypePath):HxbReader {
 		var reader = new HxbReader(path, com.hxbReaderStats, if (Common.defined(com, Define.HxbTimes)) com.timerCtx else null);
-		if (core.CacheHooks.current != null) core.CacheHooks.current.readerCreated(com, path, reader);
+		core.CacheHooks.current.readerCreated(com, path, reader);
 		return reader;
 	}
 
@@ -517,8 +517,7 @@ class ServerCache {
 												+ Globals.sTypePath(m0.mPath),
 												p);
 											null;
-										case BadBinaryModule(_, _) | BadModule(_) if (core.CacheHooks.current != null
-											&& core.CacheHooks.current.loadDirtyModule(com, mpath, p) != null):
+										case BadBinaryModule(_, _) | BadModule(_) if (core.CacheHooks.current.loadDirtyModule(com, mpath, p) != null):
 											null;
 										case BadBinaryModule(_, reason):
 											throw new Failure("Unexpected bad hxb module " + Globals.sTypePath(mpath) + " ("
@@ -791,11 +790,9 @@ class HxbReaderApiServer implements HxbReaderApi {
 				}
 				com.requestScope.stats.sModulesRestored++;
 				return m;
-			case BadModule(_) if (core.CacheHooks.current != null):
+			case BadModule(reason):
 				var m = core.CacheHooks.current.loadDirtyModule(com, path, core.Globals.nullPos);
 				if (m != null) return m;
-				return Globals.die("Unexpected BadModule " + Globals.sTypePath(path), "serverCache.ml");
-			case BadModule(reason):
 				return Globals.die("Unexpected BadModule " + Globals.sTypePath(path) + " (" + Printer.sModuleSkipReason(reason) + ")",
 					"serverCache.ml");
 			case NoModule:
@@ -807,7 +804,7 @@ class HxbReaderApiServer implements HxbReaderApi {
 		try {
 			return GoodModule(com.moduleLut.find(mPath));
 		} catch (_:NotFound) {
-			if (core.CacheHooks.current != null) switch core.CacheHooks.current.readerFindModule(com, mPath) {
+			switch core.CacheHooks.current.readerFindModule(com, mPath) {
 				case null:
 				case reason: return BadModule(reason);
 			}

@@ -18,7 +18,7 @@ class OnDiskCache implements compiler.CompilerInstance.CompilerCache {
 	public function new(generationFailed:Void->Bool)
 		this.generationFailed = generationFailed;
 
-	public function hooks():Null<core.CacheHooks>
+	public function hooks():core.CacheHooks
 		return ModuleCache.hooks;
 
 	public function begin():ServerCompilationContext

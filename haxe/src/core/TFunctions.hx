@@ -387,7 +387,7 @@ class TFunctions {
 			case _:
 		}
 		if (m != nullModule && mdep != nullModule && (m.mPath != mdep.mPath || m.mExtra.mSign != mdep.mExtra.mSign)) {
-			if (core.CacheHooks.current != null) core.CacheHooks.current.dependency(m, mdep, origin); // port: hook (not upstream)
+			core.CacheHooks.current.dependency(m, mdep, origin); // port: hook (not upstream)
 			addDependencyMutex.acquire();
 			try {
 				m.mExtra.mDeps.set(mdep.mId, createDependency(mdep, origin));

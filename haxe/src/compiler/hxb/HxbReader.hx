@@ -2029,7 +2029,7 @@ class HxbReader {
 								try findMap(c.clStatics, name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
-									if (core.CacheHooks.current == null || !core.CacheHooks.current.missingField(c)) throw e;
+									if (!core.CacheHooks.current.missingField(c)) throw e;
 									findMap(c.clStatics, name);
 								}
 							} catch (_:NotFound) {
@@ -2041,7 +2041,7 @@ class HxbReader {
 								try findMap(c.clFields, name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
-									if (core.CacheHooks.current == null || !core.CacheHooks.current.missingField(c)) throw e;
+									if (!core.CacheHooks.current.missingField(c)) throw e;
 									findMap(c.clFields, name);
 								}
 							} catch (_:NotFound) {

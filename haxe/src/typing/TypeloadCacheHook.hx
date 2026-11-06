@@ -24,8 +24,7 @@ class TypeloadCacheHook {
 
 	// port: not upstream: typeModuleHook, with the build's cache hooks around it (core.CacheHooks)
 	public static function typeModule(com:CommonContext, delay:(TyperPass, Void->Void) -> Void, path:GlobalTypePath, p:Pos):FindModuleResult {
-		var h = core.CacheHooks.current;
-		return h == null ? typeModuleHook(com, delay, path, p) : h.typeModule(com, delay, path, p, typeModuleHook);
+		return core.CacheHooks.current.typeModule(com, delay, path, p, typeModuleHook);
 	}
 
 	public static function createFakeModule(com:CommonContext, file:String):ModuleDef {

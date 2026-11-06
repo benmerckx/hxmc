@@ -145,8 +145,7 @@ class EvalStdLib {
 		return switch v {
 			case VFunction(f, isStatic):
 				VFunction(vl -> {
-					var o = core.CacheHooks.current;
-					if (o != null) o.volatileCall(what);
+					core.CacheHooks.current.volatileCall(what);
 					f(vl);
 				}, isStatic);
 			case _: v;
@@ -169,8 +168,7 @@ class EvalStdLib {
 	// port: a constructor wrapped to tell the observer it ran
 	static function volatileConstructor(what:String, f:Array<Value>->Value):Array<Value>->Value {
 		return vl -> {
-			var o = core.CacheHooks.current;
-			if (o != null) o.volatileCall(what);
+			core.CacheHooks.current.volatileCall(what);
 			f(vl);
 		}
 	}
@@ -180,10 +178,9 @@ class EvalStdLib {
 		return switch v {
 			case VFunction(f, isStatic):
 				VFunction(vl -> {
-					var o = core.CacheHooks.current;
-					if (o != null && vl.length > 0) {
+					if (vl.length > 0) {
 						var path = try EvalDecode.decodeString(vl[0]) catch (_:Dynamic) null;
-						if (path != null) o.fileRead(kind, path);
+						if (path != null) core.CacheHooks.current.fileRead(kind, path);
 					}
 					f(vl);
 				}, isStatic);
@@ -196,11 +193,10 @@ class EvalStdLib {
 		return switch v {
 			case VFunction(f, isStatic):
 				VFunction(vl -> {
-					var o = core.CacheHooks.current;
-					if (o != null) {
-						if (whole) o.envRead(null) else if (vl.length > 0) {
+					{
+						if (whole) core.CacheHooks.current.envRead(null) else if (vl.length > 0) {
 							var name = try EvalDecode.decodeString(vl[0]) catch (_:Dynamic) null;
-							if (name != null) o.envRead(name);
+							if (name != null) core.CacheHooks.current.envRead(name);
 						}
 					}
 					f(vl);

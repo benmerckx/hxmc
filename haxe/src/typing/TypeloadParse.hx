@@ -169,8 +169,7 @@ class TypeloadParse {
 
 	// port: not upstream: parseHook, with the build's cache hooks around it (core.CacheHooks)
 	public static function parse(com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package> {
-		var h = core.CacheHooks.current;
-		return h == null ? parseHook(com, rfile, p) : h.parse(com, rfile, p, parseHook);
+		return core.CacheHooks.current.parse(com, rfile, p, parseHook);
 	}
 
 	public static function handleParserResult(com:CommonContext, p:Pos, result:ParseResult<Package>):SourceParseResult {

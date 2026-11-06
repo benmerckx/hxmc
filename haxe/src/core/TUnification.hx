@@ -1103,7 +1103,7 @@ class TUnification {
 						for (f2o in f2.cfOverloads) if (!core.ds.ArrayTools.exists([f1].concat(f1.cfOverloads),
 							function(f1o) return typeIseqCustom(c, f1o.cfType, f2o.cfType))) error([MissingOverload(f1, f2o.cfType)]);
 						// we mark the field as :?used because it might be used through the structure
-						if (core.CacheHooks.current != null) core.CacheHooks.current.maybeUsed(cl, f1, f2);
+						core.CacheHooks.current.maybeUsed(cl, f1, f2);
 						if (!hasClassFieldFlag(f1, CfMaybeUsed)) {
 							addClassFieldFlag(f1, CfMaybeUsed);
 							switch f2.cfKind {
@@ -1276,7 +1276,7 @@ class TUnification {
 				});
 			case [ClassStatics(c1), _]:
 				unifyFields(c1.clStatics, function(f1) {
-					if (core.CacheHooks.current != null) core.CacheHooks.current.maybeUsed(null, f1, null);
+					core.CacheHooks.current.maybeUsed(null, f1, null);
 					addClassFieldFlag(f1, CfMaybeUsed);
 				}, function(_) return false);
 			case _:

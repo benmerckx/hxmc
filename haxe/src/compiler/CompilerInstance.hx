@@ -199,7 +199,7 @@ class CompilerInstance {
 
 	// (the build's cache hooks no longer current)
 	static function endBuild(cache:CompilerCache, sctx:ServerCompilationContext, code:Int):Void {
-		core.CacheHooks.current = null;
+		core.CacheHooks.current = core.CacheHooks.none;
 		cache.end(sctx, code);
 	}
 
@@ -319,9 +319,9 @@ interface CompilerCache {
 		for this build (Compiler.beforeTypingHook) */
 	function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void;
 
-	/** where it hooks into a build's typing (core.CacheHooks; null: nowhere), current
+	/** where it hooks into a build's typing (core.CacheHooks; CacheHooks.none: nowhere), current
 		during each build */
-	function hooks():Null<core.CacheHooks>;
+	function hooks():core.CacheHooks;
 
 	/** after each part of a build (an instance's compilation; --next separates them), with
 		its exit code */
@@ -340,8 +340,8 @@ class SkipCache implements CompilerCache {
 
 	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
 
-	public function hooks():Null<core.CacheHooks>
-		return null;
+	public function hooks():core.CacheHooks
+		return core.CacheHooks.none;
 
 	public function endPart(com:context.Common.CommonContext, code:Int):Void {}
 
@@ -374,8 +374,8 @@ class InMemoryCache implements CompilerCache {
 
 	public function beforeTyping(com:context.Common.CommonContext, actx:compiler.ParsedArg.ArgContext):Void {}
 
-	public function hooks():Null<core.CacheHooks>
-		return null;
+	public function hooks():core.CacheHooks
+		return core.CacheHooks.none;
 
 	public function endPart(com:context.Common.CommonContext, code:Int):Void {}
 

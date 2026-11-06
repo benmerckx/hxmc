@@ -133,8 +133,8 @@ class ModuleCache {
 		return state;
 
 	// where the cache hooks into a build's typing (OnDiskCache.hooks): no-ops without the
-	// build's state; none under WASI (no store)
-	public static final hooks:Null<core.CacheHooks> = Sys.systemName() == "Wasi" ? null : new ModuleCacheHooks();
+	// build's state; the compiler's own under WASI (no store)
+	public static final hooks:core.CacheHooks = Sys.systemName() == "Wasi" ? core.CacheHooks.none : new ModuleCacheHooks();
 
 	// CacheHooks.maybeUsed: a class field marked as maybe used through
 	// a structure (CfMaybeUsed, which DCE reads), and its accessors, by the
@@ -1557,6 +1557,9 @@ class Closure {
 // ModuleCache's hooks into a build's typing (core.CacheHooks)
 @:access(hxmc.ModuleCache)
 private class ModuleCacheHooks extends core.CacheHooks {
+	override public function watchesStatics():Bool
+		return true;
+
 	override public function defineRead(ctx:core.Define.DefineContext, key:String):Void
 		ModuleCache.onRead(ctx, key);
 

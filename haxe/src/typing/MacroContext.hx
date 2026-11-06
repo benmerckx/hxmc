@@ -595,7 +595,7 @@ class MacroContext {
 					mnew.mExtra.mKind = isMacro ? MMacro : MFake;
 					addDependency(mnew, mdep, MDepFromMacro);
 					addDependency(mdep, mnew, MDepFromMacroDefine);
-					if (core.CacheHooks.current != null) core.CacheHooks.current.defined(mnew, mdep); // port: hook (not upstream)
+					core.CacheHooks.current.defined(mnew, mdep); // port: hook (not upstream)
 					ctx.com.moduleNonexistentLut.clear();
 				}
 			}
@@ -640,7 +640,7 @@ class MacroContext {
 				mnew.mExtra.mKind = MFake;
 				addDependency(mnew, ctx.m.curmod, MDepFromMacro);
 				addDependency(ctx.m.curmod, mnew, MDepFromMacroDefine);
-				if (core.CacheHooks.current != null) core.CacheHooks.current.defined(mnew, ctx.m.curmod); // port: hook (not upstream)
+				core.CacheHooks.current.defined(mnew, ctx.m.curmod); // port: hook (not upstream)
 				ctx.com.moduleNonexistentLut.clear();
 			}
 		};
@@ -823,7 +823,7 @@ class MacroContext {
 			];
 			var typeFilters:Array<context.SafeCom.SafeContext->ModuleType->Void> = [
 				function(_, mt) filters.FiltersCommon.removeGenericBase(mt),
-				function(scom, mt) if (core.CacheHooks.current == null || !core.CacheHooks.current.processedType(mt)) filters.exception.SaveStacks.patchConstructors(ectx, scom)(mt),
+				function(scom, mt) if (!core.CacheHooks.current.processedType(mt)) filters.exception.SaveStacks.patchConstructors(ectx, scom)(mt),
 				function(_,
 						mt) filters.safe.AddFieldInits.addFieldInits(mctx.c.curclass.clPath,
 						filters.RenameVars.init(mctx.com.config, mctx.com.types), scom, mt),

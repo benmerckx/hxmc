@@ -131,7 +131,7 @@ class Finalization {
 	}
 
 	public static function sortTypes(com:CommonContext, modules:ModuleLut):{types:Array<ModuleType>, modules:Array<ModuleDef>} {
-		inline function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr return core.CacheHooks.current == null ? e : core.CacheHooks.current.sortExpr(c, cf, e);
+		inline function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr return core.CacheHooks.current.sortExpr(c, cf, e);
 		var types:Array<ModuleType> = [];
 		var states:Map<String, FinalizationState> = [];
 		var statics:Map<String, Bool> = [];

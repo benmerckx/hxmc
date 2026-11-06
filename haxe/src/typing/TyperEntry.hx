@@ -278,7 +278,7 @@ class TyperEntry {
 			callArgContext: null,
 			rootTyper: ctx
 		};
-		if (core.CacheHooks.current != null) core.CacheHooks.current.typerCreated(ctx);
+		core.CacheHooks.current.typerCreated(ctx);
 		loadStdTypes(ctx);
 		loadString(ctx);
 		loadStd(ctx);

@@ -369,13 +369,13 @@ class Define {
 	}
 
 	public static inline function rawDefined(ctx:DefineContext, key:String):Bool {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.defineRead(ctx, key);
+		core.CacheHooks.current.defineRead(ctx, key);
 		return ctx.values.exists(key);
 	}
 
 	// port: throws when the define is absent, like PMap.find in the OCaml source.
 	public static function rawDefinedValue(ctx:DefineContext, key:String):String {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.defineRead(ctx, key);
+		core.CacheHooks.current.defineRead(ctx, key);
 		var value = ctx.values.get(key);
 		if (value == null && !ctx.values.exists(key)) throw core.ds.NotFound.raise();
 		return value;

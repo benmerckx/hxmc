@@ -7,10 +7,13 @@ import core.TType;
 // ... hxmc/src/hxmc/ModuleCache.hx): what it watches (define reads, dependencies, macro
 // ... statics, ...), what it decides (dependencyDirty, ...) and the continuations it wraps
 // ... (lazy, delay). The build's CompilerInstance makes its cache's hooks current
-// ... (CompilerCache.hooks); none in the compiler itself. These defaults are the compiler's.
+// ... (CompilerCache.hooks); CacheHooks.none in the compiler itself, these defaults: the compiler's.
 class CacheHooks {
-	/** the hooks of the build running (one at a time per process) */
-	public static var current:Null<CacheHooks> = null;
+	/** the compiler's own: what a cache without hooks gives (CompilerCache.hooks) */
+	public static final none = new CacheHooks();
+
+	/** the hooks of the build running (one at a time per process); none between builds */
+	public static var current:CacheHooks = none;
 
 	public function new() {}
 
@@ -47,6 +50,11 @@ class CacheHooks {
 
 	/** a field unification may use */
 	public function maybeUsed(cl:Null<TClass>, f1:TClassField, f2:Null<TClassField>):Void {}
+
+	/** whether staticVar is wanted: Eval's code for a static variable reports it (a macro
+		compiled while it is) */
+	public function watchesStatics():Bool
+		return false;
 
 	/** a macro reads or writes a static variable of `c` */
 	public function staticVar(c:TClass, write:Bool):Void {}

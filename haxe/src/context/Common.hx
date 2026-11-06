@@ -567,12 +567,12 @@ class Common {
 	public static function failFast(com:CommonContext):Bool return defined(com, Define.FailFast);
 
 	public static function externalDefined(com:CommonContext, k:String):Bool {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, convertDefine(k), false);
+		core.CacheHooks.current.externalDefine(com, convertDefine(k), false);
 		return Define.rawDefined(com.defines, convertDefine(k));
 	}
 
 	public static function externalDefinedValue(com:CommonContext, k:String):String {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, convertDefine(k), false);
+		core.CacheHooks.current.externalDefine(com, convertDefine(k), false);
 		return Define.rawDefinedValue(com.defines, convertDefine(k));
 	}
 
@@ -594,22 +594,22 @@ class Common {
 	}
 
 	public static function externalDefineValue(com:CommonContext, k:String, v:String):Void {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, k, true);
+		core.CacheHooks.current.externalDefine(com, k, true);
 		Define.rawDefineValue(com.defines, convertAndValidate(k), v);
 	}
 
 	public static function externalDefine(com:CommonContext, k:String):Void {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, k, true);
+		core.CacheHooks.current.externalDefine(com, k, true);
 		Define.rawDefine(com.defines, convertAndValidate(k));
 	}
 
 	public static function externalUndefine(com:CommonContext, k:String):Void {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, k, true);
+		core.CacheHooks.current.externalDefine(com, k, true);
 		Define.rawUndefine(com.defines, convertAndValidate(k));
 	}
 
 	public static function definesForExternal(com:CommonContext):haxe.ds.StringMap<String> {
-		if (core.CacheHooks.current != null) core.CacheHooks.current.externalDefine(com, null, false);
+		core.CacheHooks.current.externalDefine(com, null, false);
 		var result = new haxe.ds.StringMap<String>();
 		var names:Array<String> = [for (k in com.defines.values.keys()) k];
 		names.sort(core.ds.Key.compareStrings);
@@ -1232,7 +1232,7 @@ class Common {
 	public static var haxelibHook:Null<(args:Array<String>) -> {code:Int, stdout:String, stderr:String}> = null;
 
 	public static function makeUnforcedLazy(tProc:T, f:Void->T, where:String):TLazy {
-		if (core.CacheHooks.current != null) f = core.CacheHooks.current.lazy(f);
+		f = core.CacheHooks.current.lazy(f);
 		var r = new TLazy(lazyAvailable(tDynamic));
 		r.value = lazyWait(function() {
 			try {

@@ -647,8 +647,7 @@ class Typecore {
 
 	public static function typeExpr(ctx:Typer, e:Expr, withType:core.WithType.WithTypeValue,
 			?mode:AccessMode):TExpr {
-		var h = core.CacheHooks.current;
-		return h == null ? typeExprRef(ctx, e, withType, mode == null ? MGet : mode) : h.typeExpr(ctx, e, withType, mode == null ? MGet : mode, typeExprRef);
+		return core.CacheHooks.current.typeExpr(ctx, e, withType, mode == null ? MGet : mode, typeExprRef);
 	}
 
 	public static function unifyMin(ctx:Typer, el:Vector<TExpr>):T return unifyMinRef(ctx, el);
@@ -790,7 +789,7 @@ class Typecore {
 	// lists; unshift/shift at the front were quadratic). Same order.
 
 	public static function delay(g:TyperGlobals, p:TyperPass, f:Void->Void):Void {
-		if (core.CacheHooks.current != null) f = core.CacheHooks.current.delay(f);
+		f = core.CacheHooks.current.delay(f);
 		var index = passIndex(p);
 		var tasks = g.delayed[index];
 		tasks.tasks.push(f);
@@ -798,7 +797,7 @@ class Typecore {
 	}
 
 	public static function delayLate(g:TyperGlobals, p:TyperPass, f:Void->Void):Void {
-		if (core.CacheHooks.current != null) f = core.CacheHooks.current.delay(f);
+		f = core.CacheHooks.current.delay(f);
 		var index = passIndex(p);
 		var tasks = g.delayed[index];
 		tasks.tasksLate.push(f);
