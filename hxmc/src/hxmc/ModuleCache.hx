@@ -90,7 +90,18 @@ using core.ds.VectorTools;
 // after the module was restored runs the build again, with the modules
 // whose macros keep state there typed from their source
 // (HXMC_MODULE_CACHE_RETYPE); an edited module whose macros keep state has
-// the others that keep it there typed from the start.
+// the others that keep it there typed from the start. What such a module's
+// macros make (its fields among it) may come from that state, as a
+// registry other modules' macros fill, not from its file: typed again for
+// it, it stands for nothing known in its dependents' hashes
+// (ModuleCacheState.stateRetyped: no early cutoff on it), and when its
+// fields changed (typedShape) while modules that depend on it were already
+// restored, the build runs again with them typed. It is restored only
+// beside the same modules whose macros keep state there as when it was
+// typed (statePartners), in the same program (the order its macros ran
+// in): else typed again, or, for a module not restored in this build, the
+// build again. A restored module that still refers to a field its class
+// no longer has runs the build again from nothing (onFieldFailure).
 //
 // Nondeterministic macros (EvalStdLib.volatileHook, fileHook, envHook: the
 // macro std's natives, for the module being typed when the macro runs): a
@@ -146,6 +157,7 @@ class ModuleCache {
 		typing.TypeloadModule.typeFromSourceHook = onTypeFromSource;
 		typing.TypeloadModule.buildClassHook = onBuildClass;
 		compiler.hxb.HxbReader.missingFieldHook = onMissingField;
+		compiler.hxb.HxbReader.fieldFailureHook = onFieldFailure;
 		core.TUnification.maybeUsedHook = onMaybeUsed;
 		macros.eval.EvalJit.staticVarHook = onStaticVar;
 		typing.MacroContext.definedHook = onDefined;
@@ -272,12 +284,21 @@ class ModuleCache {
 		}
 		var name = core.Globals.sTypePath(c.clPath);
 		if (maker != null) s.liveState.push({maker: maker, path: name});
+		var first = !s.touched.exists(name);
 		s.touched.set(name, true);
 		var r = s.restoredState.get(name);
 		mutex.release();
 		// (restored modules' macros kept state there, which they did not make
 		// again in this build: the build again, the modules typed)
 		if (r != null && r.length > 0) again(s, name, r);
+		// (the modules not checked yet that keep state there are typed again:
+		// their dependents' hashes anew, ModuleCacheState.stateRetyped; those
+		// restored already: capture, typedShape)
+		if (first && !s.retype.exists(name)) {
+			mutex.acquire();
+			s.depHashes = null;
+			mutex.release();
+		}
 	}
 
 	// MacroContext.definedHook: a macro defined a module (defineType,
@@ -386,7 +407,7 @@ class ModuleCache {
 	// the build run again, with the modules whose macros keep state in the
 	// class typed from their source (HXMC_MODULE_CACHE_RETYPE), as soon as
 	// a macro of this build uses it after such a module was restored
-	static function again(s:ModuleCacheState, name:String, restored:Array<String>) {
+	static function again(s:ModuleCacheState, name:String, restored:Array<String>, ?why:String) {
 		var prev = Sys.getEnv(RETYPE);
 		var l = prev == null || prev == "" ? [] : prev.split(",");
 		if (l.indexOf(name) >= 0 || l.length >= 64) Sys.putEnv("HXMC_MODULE_CACHE", "0") else {
@@ -394,7 +415,8 @@ class ModuleCache {
 			Sys.putEnv(RETYPE, l.join(","));
 		}
 		if (stats() || s.log)
-			Sys.println("hxmc: module cache: " + name + " keeps state of restored modules' macros (" + restored.join(", ") + "), which this build's macros use: the build again, those typed");
+			Sys.println("hxmc: module cache: " + name + (why == null ? " keeps state of restored modules' macros (" + restored.join(", ") + "), which this build's macros use" : why)
+				+ ": the build again, those typed");
 		try Sys.stdout().flush() catch (_:Dynamic) {}
 		try Sys.stderr().flush() catch (_:Dynamic) {}
 		Sys.exit(Sys.command(Sys.programPath(), Sys.args()));
@@ -740,6 +762,18 @@ class ModuleCache {
 		return true;
 	}
 
+	// HxbReader.fieldFailureHook: a restored module refers to a field its
+	// class does not have, after onMissingField: what the store kept does
+	// not hold together (a module restored beside another it was not typed
+	// with). Not an error of the program's: the build again from nothing,
+	// its index removed, as loadDirty does (on the main thread only: a
+	// module read beside the build's typing, by a worker, fails as it would)
+	static function onFieldFailure(c:TClass, name:String, m:ModuleDef) {
+		var s = state;
+		if (s == null || sys.thread.Thread.current() != mainThread) return;
+		fresh(s, core.Globals.sTypePath(m.mPath) + " refers to " + core.Globals.sTypePath(c.clPath) + "." + name + ", which it no longer has");
+	}
+
 	static function wanted(com:CommonContext):Bool {
 		var env = Sys.getEnv("HXMC_MODULE_CACHE");
 		return env != "0" && CacheDir.define(com, "hxmc.no-module-cache") == null;
@@ -775,6 +809,9 @@ class ModuleCache {
 			return;
 		}
 		state = s;
+		// (the program: the order its typing runs macros in, which state a
+		// registry's readers see, ModuleCacheState.stateConsistent)
+		s.program = Fingerprint.hash([for (c in actx.classes) core.Globals.sTypePath(c)].join(","));
 		ServerCache.checkModuleHook = check;
 		typing.Finalization.sortExprHook = Skeletons.sortExpr;
 		// (what the sort of the types walks, of every class typed: before the
@@ -1183,6 +1220,10 @@ class ModuleCache {
 		if (s.typedKeyNow(v) != v.typedKey())
 			for (d in v.deps)
 				if (s.depHash(d) != d.expect) return DependencyDirty(d.path, FileChanged(d.eligible ? "(interface)" : "(content)"));
+		// (its macros keep state beside other modules' macros: restored only
+		// beside the same modules, as they were)
+		var c = s.stateConsistent(v);
+		if (c != null) return FileChanged(file + " (" + c + ")");
 		if (mExtra.mKind != MImport && !s.load(v)) return LibraryChanged;
 		return null;
 	}
@@ -1210,6 +1251,12 @@ class ModuleCache {
 		s.captured = true;
 		var t0 = haxe.Timer.stamp();
 		keepMacroEdges(s);
+		// (restored modules whose macros keep state beside a module's that is
+		// not restored: typed with what that module's macros made, which this
+		// build does not have)
+		var m = s.stateMissing();
+		if (m != null)
+			again(s, m.name, m.restored, " keeps state of restored modules' macros (" + m.restored.join(", ") + "), typed beside modules' macros this build does not restore");
 		// (the files and environment the macros read, as they are now)
 		s.macroValues = new Map();
 		{
@@ -1432,6 +1479,7 @@ class ModuleCache {
 				v.marks = old != null ? old.marks : made == null ? [] : made;
 				var st = old != null ? null : stateful.get(m);
 				v.macroState = old != null ? old.macroState : st == null ? [] : st;
+				v.typedShape = old != null ? old.typedShape : Lambda.exists(v.macroState, ModuleCacheState.isClassState) ? typedShape(m) : "";
 				// (@:hxmc.noCache: typed every build, its dependents with it)
 				if (old == null && noCacheMeta(m) && !Lambda.exists(v.macroState, c -> StringTools.startsWith(c, "!"))) {
 					v.macroState = v.macroState.concat(["!!@:hxmc.noCache"]);
@@ -1532,6 +1580,43 @@ class ModuleCache {
 			}
 			v.shape = closure.di(v);
 		}
+		// (of each class macros keep state in, the modules kept whose macros
+		// do, with their keys: each one's partners, ModuleCacheState.stateConsistent)
+		{
+			var users = new Map<String, Array<Variant>>();
+			for (v in kept) {
+				v.statePartners = [];
+				for (c in v.macroState)
+					if (ModuleCacheState.isClassState(c)) {
+						var l = users.get(c);
+						if (l == null) users.set(c, l = []);
+						l.push(v);
+					}
+			}
+			for (c => l in users) {
+				var ids = [for (w in l) ModuleCacheState.partnerId(w)];
+				for (w in l)
+					for (id in ids)
+						if (id != ModuleCacheState.partnerId(w)) w.statePartners.push(c + "\x01" + id);
+			}
+			for (v in kept)
+				if (v.statePartners.length > 0 || Lambda.exists(v.macroState, ModuleCacheState.isClassState))
+					v.statePartners.push(ModuleCacheState.PROGRAM + "\x01" + s.program);
+			for (v in kept)
+				v.statePartners.sort(Reflect.compare);
+		}
+		// (a module typed again for its macros' state, its fields now other
+		// than they were: the restored modules that depend on it refer to
+		// what it was, the build again with them typed)
+		for (v in kept) {
+			if (!v.fresh || v.prev != null || !s.stateRetyped(v)) continue;
+			var was = s.chosen[v.role].get(v.key);
+			if (was == null || was.typedShape == "" || was.typedShape == v.typedShape) continue;
+			var d = s.restoredDependents([was]);
+			if (d.length == 0) continue;
+			var c = Lambda.find(v.macroState, c -> ModuleCacheState.isClassState(c) && (s.retype.exists(c) || s.touched.exists(c)));
+			again(s, c, d, " keeps state of " + core.Globals.sTypePath(v.path) + "'s macros, which typed it again with other fields, and restored modules (" + d.join(", ") + ") depend on it");
+		}
 		s.kept = kept;
 		// (typed again: the new variant kept, encoded or the same as the old)
 		s.settle(coms, (role, m) -> {
@@ -1557,6 +1642,109 @@ class ModuleCache {
 			});
 		}
 		s.captureTime = haxe.Timer.stamp() - t0;
+	}
+
+	// what a module's types declare as typed (their fields' names, kinds and
+	// types; a lazy type not forced yet as such): what its users refer to,
+	// which its macros may make from their state (Variant.typedShape)
+	static function typedShape(m:ModuleDef):String {
+		var b = new StringBuf();
+		var params:(TParams, Int) -> Void = null;
+		function ty(t:T, depth:Int) {
+			if (depth > 6) {
+				b.add("~");
+				return;
+			}
+			switch t {
+				case TMono(r):
+					if (r.tmType == null) b.add("?") else ty(r.tmType, depth);
+				case TLazy(l):
+					switch l.value {
+						case LAvailable(t) | LProcessing(t): ty(t, depth);
+						case LWait(_): b.add("lazy");
+					}
+				case TEnum(e, tl):
+					b.add(core.Globals.sTypePath(e.ePath));
+					params(tl, depth);
+				case TInst(c, tl):
+					b.add(core.Globals.sTypePath(c.clPath));
+					params(tl, depth);
+				case TType(t, tl):
+					b.add(core.Globals.sTypePath(t.tPath));
+					params(tl, depth);
+				case TAbstract(a, tl):
+					b.add(core.Globals.sTypePath(a.aPath));
+					params(tl, depth);
+				case TFun(f):
+					b.add("(");
+					for (a in f.args) {
+						b.add((a.optional ? "?" : "") + a.name + ":");
+						ty(a.type, depth + 1);
+						b.add(",");
+					}
+					b.add(")->");
+					ty(f.ret, depth + 1);
+				case TAnon(a):
+					var names = [for (n in a.aFields.keys()) n];
+					names.sort(Reflect.compare);
+					b.add("{");
+					for (n in names) {
+						b.add(n + ":");
+						ty(a.aFields.get(n).cfType, depth + 1);
+						b.add(",");
+					}
+					b.add("}");
+				case TDynamic(t):
+					b.add("Dynamic");
+					if (t != null) ty(t, depth + 1);
+			}
+		}
+		params = function(tl:TParams, depth:Int) {
+			if (tl.length == 0) return;
+			b.add("<");
+			for (t in tl) {
+				ty(t, depth + 1);
+				b.add(",");
+			}
+			b.add(">");
+		};
+		function field(kind:String, f:TClassField) {
+			b.add(kind + f.cfName + (switch f.cfKind {
+				case Var(v): "v" + core.TPrinting.sAccess(true, v.vRead) + core.TPrinting.sAccess(false, v.vWrite);
+				case Method(k): "m" + k.getIndex();
+			}) + ":");
+			ty(f.cfType, 0);
+			b.add(";");
+			for (o in f.cfOverloads)
+				field(kind + "+", o);
+		}
+		for (t in m.mTypes)
+			switch t {
+				case TClassDecl(c):
+					b.add("C" + core.Globals.sTypePath(c.clPath) + "\n");
+					if (c.clSuper != null) b.add("x" + core.Globals.sTypePath(c.clSuper.cls.clPath) + ";");
+					for (i in c.clImplements)
+						b.add("i" + core.Globals.sTypePath(i.cls.clPath) + ";");
+					if (c.clConstructor != null) field("n", c.clConstructor);
+					for (f in c.clOrderedFields)
+						field("f", f);
+					for (f in c.clOrderedStatics)
+						field("s", f);
+				case TEnumDecl(e):
+					b.add("E" + core.Globals.sTypePath(e.ePath) + "\n");
+					for (n in e.eNames) {
+						b.add(n + ":");
+						ty(e.eConstrs.get(n).efType, 0);
+						b.add(";");
+					}
+				case TTypeDecl(d):
+					b.add("T" + core.Globals.sTypePath(d.tPath) + "=");
+					ty(d.tType, 0);
+				case TAbstractDecl(a):
+					b.add("A" + core.Globals.sTypePath(a.aPath) + "=");
+					ty(a.aThis, 0);
+			}
+		return Fingerprint.hash(b.toString());
 	}
 
 	// whether a build macro made a type of the module (@:build, @:genericBuild,
@@ -1684,10 +1872,14 @@ class Closure {
 	// a check as when the hashes were written)
 	final missing:String;
 
-	public function new(s:ModuleCacheState, node:(Int, String) -> Null<Variant>, missing:String) {
+	// (the modules that stand for nothing known: ModuleCacheState.stateRetyped)
+	final retyped:Null<Variant->Bool>;
+
+	public function new(s:ModuleCacheState, node:(Int, String) -> Null<Variant>, missing:String, ?retyped:Variant->Bool) {
 		this.s = s;
 		this.node = node;
 		this.missing = missing;
+		this.retyped = retyped;
 	}
 
 	public function di(v:Null<Variant>):String
@@ -1743,7 +1935,8 @@ class Closure {
 		var fs:Array<String> = [], is:Array<String> = [];
 		var ineligibleInside = false;
 		for (m in members) {
-			var f:Array<String> = [s.sFull(m)], i:Array<String> = [s.sIface(m)];
+			var gone = retyped != null && retyped(m);
+			var f:Array<String> = [gone ? s.unknown() : s.sFull(m)], i:Array<String> = [gone ? s.unknown() : s.sIface(m)];
 			for (d in m.deps) {
 				var w = node(d.role, d.key);
 				if (w == null) {

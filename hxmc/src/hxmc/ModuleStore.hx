@@ -95,6 +95,13 @@ class Variant {
 	// used (state kept between macro calls, for other modules' macros too):
 	// typed every build then, so that the macros run again
 	public var macroState:Array<String> = [];
+	// of each such class (not the std's, nor "!" and "Context." entries), the
+	// other modules whose macros kept state there in the build that typed
+	// it, with their keys then: class, then "\x01", then role|key=typedKey
+	// (ModuleCacheState.stateConsistent)
+	public var statePartners:Array<String> = [];
+	// for such a module, what its types declare as typed (ModuleCache.typedShape)
+	public var typedShape:String = "";
 
 	// in a build: whether its reads match the build's defines, the server's
 	// copy, the blob once read
@@ -144,7 +151,7 @@ class StoreIndex {
 }
 
 class ModuleStore {
-	public static inline var MAGIC = "hxmc-modules 15";
+	public static inline var MAGIC = "hxmc-modules 16";
 
 	public static final chunkKinds:Array<ChunkKind> = [
 		STR, DOC, MDF, MTF, IMP, CLR, ENR, ABR, TDR, OFR, OFD, OBD, CLD, END, ABD, TDD, EOT, EFR, CFR, CFD, EFD, AFD, EOF, EXD, EOM
@@ -441,6 +448,10 @@ class ModuleStore {
 			o.writeInt32(v.macroState.length);
 			for (c in v.macroState)
 				str(o, c);
+			o.writeInt32(v.statePartners.length);
+			for (c in v.statePartners)
+				str(o, c);
+			str(o, v.typedShape);
 			o.writeInt32(v.marks.length);
 			for (m in v.marks)
 				str(o, m);
@@ -486,6 +497,8 @@ class ModuleStore {
 			v.blobSize = i.readInt32();
 			v.shape = rstr(i);
 			v.macroState = [for (_ in 0...i.readInt32()) rstr(i)];
+			v.statePartners = [for (_ in 0...i.readInt32()) rstr(i)];
+			v.typedShape = rstr(i);
 			v.marks = [for (_ in 0...i.readInt32()) rstr(i)];
 			var ndeps = i.readInt32();
 			v.deps = new haxe.ds.Vector(ndeps > 0 ? ndeps : 0);

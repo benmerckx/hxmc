@@ -770,7 +770,15 @@ counts them).
 **Macros.** Modules built by macros are restored. Static variables of
 macro classes used during a module's typing are kept with it; if a later
 macro uses that state, the build runs again with those modules typed
-(`HXMC_MODULE_CACHE_RETYPE`). A callback registered during a module's
+(`HXMC_MODULE_CACHE_RETYPE`). Such a module's fields may come from that
+state (a registry other modules' macros fill), not from its file, so a
+module typed again for it has no early cutoff: its dependents are typed
+too, and if its fields changed while modules depending on it were already
+restored, the build runs again with them typed. It is restored only
+beside the same modules keeping state there as when it was typed, and in
+the same program (the classes on the command line: the order its macros
+ran in). A restored module that refers to a field its class no longer has
+runs the build again from nothing. A callback registered during a module's
 typing (`onGenerate`, ...) types that module every build. What a macro's
 result depends on beyond the sources comes from hooks in the macro std
 (`EvalStdLib.volatileHook`, `fileHook`, `envHook`): volatile calls make the

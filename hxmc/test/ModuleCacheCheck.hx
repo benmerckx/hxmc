@@ -41,7 +41,8 @@ using StringTools;
 // --port adds the port itself (haxe/src: a large program) for the hxmc target;
 // --nondet runs only the cases of macros whose results change from run to run,
 // --late those of modules macros define outside the typing of a module,
-// --defined that of a module defined in its definer's typing, edited and back;
+// --defined that of a module defined in its definer's typing, edited and back,
+// --state that of a registry a macro class keeps, two programs filling it;
 // --haxe names `haxe` with hxmc built in (default: bin/npm/native/<host>/haxe).
 class ModuleCacheCheck {
 	static var dir:String;
@@ -641,6 +642,80 @@ class ModuleCacheCheck {
 		}
 	}
 
+	// a registry a macro class keeps (helder's definition handlers): the
+	// build macros of D and E (one per program, Main and Main2, of one class
+	// path) register a name in Reg's state, T's build macro makes a method
+	// of each name registered, U calls T's expr(), else a static extension
+	// of that name (Ext). T's fields come from the state, not from its file:
+	// typed again because a macro of the build uses that state, it is no
+	// longer what a restored U refers to ("Could not read instance field
+	// expr on T while hxbing U"), and restored beside other registrants
+	// than it was typed with, it is stale. Main3 names U2, whose body alone
+	// names T, before E registers. Main,
+	// Main2, Main, Main3, D edited (another name), Main2, Main3, D back, Reg
+	// edited (what the methods return), back, warm
+	static function macroState(target:String) {
+		var files = [
+			"src/Reg.hx" => [
+				"#if macro",
+				"import haxe.macro.Context;",
+				"import haxe.macro.Expr;",
+				"#end",
+				"",
+				"class Reg {",
+				"\t#if macro",
+				"\tpublic static var names:Array<String> = [];",
+				"",
+				"\tpublic static function def(n:String):Array<Field> {",
+				"\t\tnames.push(n);",
+				"\t\treturn null;",
+				"\t}",
+				"",
+				"\tpublic static function build():Array<Field> {",
+				"\t\tvar fields = Context.getBuildFields();",
+				"\t\tfor (n in names)",
+				"\t\t\tfields = fields.concat((macro class {",
+				"\t\t\t\tpublic function $n():String return $v{n};",
+				"\t\t\t}).fields);",
+				"\t\treturn fields;",
+				"\t}",
+				"\t#end",
+				"}"
+			].join("\n") + "\n",
+			"src/D.hx" => "@:build(Reg.def(\"expr\"))\nclass D {\n\tpublic static function init() {}\n}\n",
+			"src/E.hx" => "@:build(Reg.def(\"other\"))\nclass E {\n\tpublic static function init() {}\n}\n",
+			"src/T.hx" => "@:build(Reg.build())\nclass T {\n\tpublic function new() {}\n}\n",
+			"src/Ext.hx" => "class Ext {\n\tpublic static function expr(t:T):String return \"ext\";\n}\n",
+			"src/U.hx" => "using Ext;\n\nclass U {\n\tpublic static function g(t:T):String return t.expr();\n}\n",
+			"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\tD.init();\n\t\ttrace(U.g(new T()));\n\t}\n}\n",
+			"src/Main2.hx" => "class Main2 {\n\tstatic function main() {\n\t\tE.init();\n\t\ttrace(U.g(new T()));\n\t}\n}\n",
+			"src/U2.hx" => "using Ext;\n\nclass U2 {\n\tpublic static function h():String return new T().expr();\n}\n",
+			"src/Main3.hx" => "class Main3 {\n\tstatic function main() {\n\t\tvar f = U2.h;\n\t\tE.init();\n\t\ttrace(f());\n\t}\n}\n"
+		];
+		var pdir = dir + "/" + target + "-state";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		var main = ["-cp", "src", "-main", "Main"], main2 = ["-cp", "src", "-main", "Main2"], main3 = ["-cp", "src", "-main", "Main3"];
+		var d = pdir + "/src/D.hx", reg = pdir + "/src/Reg.hx";
+		var d0 = File.getContent(d), r0 = File.getContent(reg);
+		rmrf(dir + "/cache");
+		gate('macro state: Main cold', target, pdir, main);
+		gate('macro state: Main2', target, pdir, main2);
+		gate('macro state: Main', target, pdir, main);
+		gate('macro state: Main3', target, pdir, main3);
+		File.saveContent(d, d0.replace("\"expr\"", "\"value\""));
+		gate('macro state: D edited', target, pdir, main);
+		gate('macro state: D edited, Main2', target, pdir, main2);
+		gate('macro state: D edited, Main3', target, pdir, main3);
+		File.saveContent(d, d0);
+		gate('macro state: D back', target, pdir, main);
+		File.saveContent(reg, r0.replace("return $v{n};", "return $v{n + \"!\"};"));
+		gate('macro state: Reg edited', target, pdir, main);
+		File.saveContent(reg, r0);
+		gate('macro state: Reg back', target, pdir, main);
+		gate('macro state: warm', target, pdir, main, 0);
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
@@ -666,6 +741,9 @@ class ModuleCacheCheck {
 		// (--defined: only the case of a module defined by its definer, edited and back)
 		var defined = Sys.args().contains("--defined");
 		if (defined) only = true;
+		// (--state: only the case of a registry a macro class keeps)
+		var state = Sys.args().contains("--state");
+		if (state) only = true;
 		for (target in ["hxmc", "js", "interp", "haxe-hxmc"]) {
 			for (p in programs()) {
 				if (only) continue;
@@ -803,11 +881,13 @@ class ModuleCacheCheck {
 			}
 		}
 		for (target in ["hxmc", "js", "interp"])
-			if (!late && !defined) nondeterministic(target);
+			if (!late && !defined && !state) nondeterministic(target);
 		for (target in ["hxmc", "js", "interp"])
-			if (!defined) lateDefined(target);
+			if (!defined && !state) lateDefined(target);
 		for (target in ["hxmc", "js", "interp"])
-			if (!late && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
+			if (!late && !state && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
+		for (target in ["hxmc", "js", "interp"])
+			if (!late && !defined && !Sys.args().contains("--nondet")) macroState(target);
 		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";

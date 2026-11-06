@@ -52,7 +52,11 @@ class ModuleCacheState {
 	// per module of the store this build checked or ended with (role|key), its verdict
 	public var verdicts = new Map<String, Verdict>();
 	public var hashes = new Map<String, String>();
+	// the cycles of the store's modules (sccOf), and the hashes of the
+	// dependencies now (depHash: anew when a macro first uses a class's
+	// state, stateRetyped)
 	public var closure:Null<Closure> = null;
+	public var depHashes:Null<Closure> = null;
 	// the defines read: by the compiler (role and name), while parsing a file
 	// (role and file: names), by a module's macros (role|key: role and name)
 	public var global = new Map<String, Bool>();
@@ -304,6 +308,7 @@ class ModuleCacheState {
 					if (w == v || w.fileRec != null) continue;
 					c.set(k, w);
 					closure = null;
+					depHashes = null;
 					if (depsMatch(w)) {
 						v = w;
 						break;
@@ -311,6 +316,7 @@ class ModuleCacheState {
 				}
 				c.set(k, v);
 				closure = null;
+				depHashes = null;
 			}
 	}
 
@@ -569,7 +575,7 @@ class ModuleCacheState {
 	// (with a nonce: never the same as a hash an earlier build kept)
 	final nonce = CacheDir.nonce();
 
-	function unknown():String
+	public function unknown():String
 		return "?" + nonce + (unknowns++);
 
 	// the content hash of a variant's file now ("-": none, "?": missing)
@@ -628,9 +634,124 @@ class ModuleCacheState {
 
 	// a dependency's hash now (its interface or its content)
 	public function depHash(d:StoredDep):String {
-		if (closure == null) closure = new Closure(this, (role, k) -> chosen[role].get(k), "?");
+		if (depHashes == null) depHashes = new Closure(this, (role, k) -> chosen[role].get(k), "?", stateRetyped);
 		var w = chosen[d.role].get(d.key);
-		return d.eligible ? closure.di(w) : closure.df(w);
+		return d.eligible ? depHashes.di(w) : depHashes.df(w);
+	}
+
+	// a module typed again in this build because its macros keep state in
+	// a class this build's macros use or change (retype, touched; check):
+	// what its macros make, its fields among it, comes from that state, not
+	// from what its hashes hold (its file, its reads, its dependencies), so
+	// it stands for nothing known in its dependents' hashes (no early cutoff
+	// on it: a dependent restored would refer to fields it no longer has)
+	public function stateRetyped(v:Variant):Bool {
+		for (c in v.macroState)
+			if (isClassState(c) && (retype.exists(c) || touched.exists(c))) return true;
+		return false;
+	}
+
+	// the program this build types (its classes on the command line), and
+	// what stands for it among a variant's partners
+	public var program = "";
+	public static inline var PROGRAM = "*";
+
+	// a macroState entry that names a macro class (not "!": results that
+	// change from run to run, nor "Context.": a callback)
+	public static function isClassState(c:String):Bool
+		return !StringTools.startsWith(c, "!") && !StringTools.startsWith(c, "Context.");
+
+	// what stands for a variant among the partners of another
+	// (Variant.statePartners): its module and its key
+	public static function partnerId(v:Variant):String
+		return v.roleKey() + "=" + (v.typedKey() : String);
+
+	// the partners a variant was typed with, for the class named
+	public static function partnersIn(v:Variant, c:String):Array<String> {
+		var p = c + "\x01";
+		return [for (e in v.statePartners) if (StringTools.startsWith(e, p)) e.substr(p.length)];
+	}
+
+	// whether a variant about to be restored was typed with the modules
+	// restored so far whose macros keep state in the same classes, and they
+	// with it: a module's macros may read state other modules' macros
+	// made (a registry), so what it is restored as holds only beside those
+	// it was typed with (two programs sharing a store, each with other
+	// modules filling the registry), and in the program that typed it (the
+	// order its macros ran in). Why it is not: null when it is
+	public function stateConsistent(v:Variant):Null<String> {
+		// (typed in another program: its macros ran in another order, beside
+		// other modules' macros)
+		var p = partnersIn(v, PROGRAM);
+		if (p.length > 0 && p[0] != program) return "its macros keep state, typed in another program";
+		var me = partnerId(v);
+		for (c in v.macroState) {
+			if (!isClassState(c)) continue;
+			var l = restoredState.get(c);
+			if (l == null) continue;
+			var mine = partnersIn(v, c);
+			for (k in l) {
+				var i = k.indexOf("|");
+				var y = chosen[Std.parseInt(k.substr(0, i))].get(k.substr(i + 1));
+				if (y == null || y == v) continue;
+				if (mine.indexOf(partnerId(y)) < 0 || partnersIn(y, c).indexOf(me) < 0)
+					return "its macros keep state in " + c + " beside other modules than when it was typed";
+			}
+		}
+		return null;
+	}
+
+	// of the restored modules whose macros keep state in a class, one
+	// typed with a module that is not restored in this build (not part of
+	// it, or typed again): the class, and those restored
+	public function stateMissing():Null<{name:String, restored:Array<String>}> {
+		for (c => l in restoredState) {
+			if (l.length == 0) continue;
+			var ids = new Map<String, Bool>();
+			for (k in l) {
+				var i = k.indexOf("|");
+				var y = chosen[Std.parseInt(k.substr(0, i))].get(k.substr(i + 1));
+				if (y != null) ids.set(partnerId(y), true);
+			}
+			for (k in l) {
+				var i = k.indexOf("|");
+				var y = chosen[Std.parseInt(k.substr(0, i))].get(k.substr(i + 1));
+				if (y == null) continue;
+				for (p in partnersIn(y, c))
+					if (!ids.exists(p)) return {name: c, restored: l};
+			}
+		}
+		return null;
+	}
+
+	// the modules restored (checked good) that depend, directly or not, on
+	// one of these
+	public function restoredDependents(from:Array<Variant>):Array<String> {
+		var users = new Map<String, Array<Variant>>();
+		for (role in 0...2)
+			for (v in chosen[role])
+				for (d in v.deps) {
+					var k = d.role + "|" + d.key;
+					var l = users.get(k);
+					if (l == null) users.set(k, l = []);
+					l.push(v);
+				}
+		var seen = new Map<String, Bool>();
+		var out = [];
+		var todo = from.copy();
+		while (todo.length > 0) {
+			var v = todo.pop();
+			var l = users.get(v.roleKey());
+			if (l == null) continue;
+			for (u in l) {
+				var k = u.roleKey();
+				if (seen.exists(k)) continue;
+				seen.set(k, true);
+				if (verdicts.get(k) == Valid) out.push(k);
+				todo.push(u);
+			}
+		}
+		return out;
 	}
 
 	// a variant's blob read, its chunks given to the server's copy
