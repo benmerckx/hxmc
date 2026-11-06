@@ -200,6 +200,9 @@ class HxbReader {
 	// ... not in its class: true when the pending passes that make it were run (look again); always null in
 	// ... the compiler itself.
 	public static var missingFieldHook:Null<(c:TClass) -> Bool> = null;
+	// port: and still not there: told before the failure (the module cache's builds run again from nothing);
+	// ... always null in the compiler itself.
+	public static var fieldFailureHook:Null<(c:TClass, name:String, m:ModuleDef) -> Void> = null;
 
 	final mpath:GlobalTypePath;
 	final stats:HxbReaderStatsData;
@@ -2038,6 +2041,7 @@ class HxbReader {
 									findMap(c.clStatics, name);
 								}
 							} catch (_:NotFound) {
+								if (fieldFailureHook != null) fieldFailureHook(c, name, currentModule);
 								throw new HxbFailure('Could not read static field $name on ${Globals.sTypePath(c.clPath)} while hxbing ${Globals.sTypePath(currentModule.mPath)}');
 							}
 						case CfrMember:
@@ -2050,6 +2054,7 @@ class HxbReader {
 									findMap(c.clFields, name);
 								}
 							} catch (_:NotFound) {
+								if (fieldFailureHook != null) fieldFailureHook(c, name, currentModule);
 								throw new HxbFailure('Could not read instance field $name on ${Globals.sTypePath(c.clPath)} while hxbing ${Globals.sTypePath(currentModule.mPath)}');
 							}
 						case CfrConstructor:

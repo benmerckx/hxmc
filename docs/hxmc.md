@@ -770,7 +770,15 @@ counts them).
 **Macros.** Modules built by macros are restored. Static variables of
 macro classes used during a module's typing are kept with it; if a later
 macro uses that state, the build runs again with those modules typed
-(`HXMC_MODULE_CACHE_RETYPE`). A callback registered during a module's
+(`HXMC_MODULE_CACHE_RETYPE`). Such a module's fields may come from that
+state (a registry other modules' macros fill), not from its file, so a
+module typed again for it has no early cutoff: its dependents are typed
+too, and if its fields changed while modules depending on it were already
+restored, the build runs again with them typed. It is restored only
+beside the same modules keeping state there as when it was typed, and in
+the same program (the classes on the command line: the order its macros
+ran in). A restored module that refers to a field its class no longer has
+runs the build again from nothing. A callback registered during a module's
 typing (`onGenerate`, ...) types that module every build. What a macro's
 result depends on beyond the sources comes from hooks in the macro std
 (`EvalStdLib.volatileHook`, `fileHook`, `envHook`): volatile calls make the
@@ -785,7 +793,14 @@ defined module depends on it by content), never on their own (a later
 `Context.getType` would bring the old definer, and what it depends on, into
 a build that does not have it). A dependency on a defined module has no
 early cutoff: it has no source to be typed again from, so its dependents are
-typed again and their macros define it again. What a callback a macro
+typed again and their macros define it again. The store knows both edges by
+the macro's own: the compiler keeps one edge per pair of modules, the last
+one added, so a defined module whose code calls its definer, or a definer
+whose code names what it defined (helder's `Jobs.run`: the job's wrapper
+and its call site), ends with typing edges both ways; the store keeps the
+macro's. A build that still finds a module only a macro makes asked for
+from its source (restored modules refer to it, the macro that made it is
+not run again) runs again from nothing, its index removed. What a callback a macro
 registered (`onAfterTyping`, `onGenerate`) defines or adds as a dependency
 outside the typing of a module is not kept: the compiler attributes it to
 the macro API's current module, whichever module's typing made the macros'
