@@ -14,8 +14,10 @@ using StringTools;
 //   agent app (LSUIElement), as a managed Mac may end a regular one that
 //   is not its administrator's;
 // - the iOS simulator, an iPhone and an iPad (the newest iOS runtime's
-//   first of each): installed, launched (simctl launch --console-pty),
-//   uninstalled; a device booted here is shut down after.
+//   first of each): installed, launched (simctl launch, its output to
+//   files: --console-pty, on a hosted runner, at times lost what the app
+//   printed last, or never connected), uninstalled; a device booted here is
+//   shut down after.
 // Each prints what the app saw: the delegate called, the body run after it,
 // the window key and sized, the label's text. Exits non-zero on a failure;
 // no Xcode (or not macOS): skipped.
@@ -81,6 +83,24 @@ class UIKitCheck {
 		return null;
 	}
 
+	// the app launched on the device, its output (stdout and stderr) read until the
+	// last expected line or until `seconds` pass; the code: simctl launch's, or -1
+	// for a timeout
+	static function launch(udid:String, seconds:Float):{code:Int, out:String} {
+		var base = dir("ios-sim-arm64") + '/console-$udid';
+		for (f in ['$base.out', '$base.err']) if (FileSystem.exists(f)) FileSystem.deleteFile(f);
+		var l = exec(["xcrun", "simctl", "launch", "--terminate-running-process", '--stdout=$base.out', '--stderr=$base.err', udid, ID],
+			{merge: true, timeout: 120});
+		if (l.code != 0) return {code: l.code, out: l.out};
+		var deadline = now() + seconds;
+		while (true) {
+			var out = readText('$base.out') + readText('$base.err');
+			if (out.indexOf(EXPECTED[EXPECTED.length - 1]) >= 0) return {code: 0, out: out};
+			if (now() > deadline) return {code: -1, out: out};
+			Sys.sleep(0.25);
+		}
+	}
+
 	static function simulator() {
 		var app = dir("ios-sim-arm64") + '/UIKitHello.app';
 		rmrf(app);
@@ -106,13 +126,15 @@ class UIKitCheck {
 			}
 			if (i.code != 0) check('ios-sim-arm64: ${d.name}: install', false, tail(i.out, 400));
 			else {
-				var launch = ["xcrun", "simctl", "launch", "--console-pty", "--terminate-running-process", d.udid, ID];
-				var r = exec(launch, {merge: true, timeout: 120});
-				// (a hosted runner's simulator may time out before the app prints anything: once more)
+				var r = launch(d.udid, 120);
+				// (a hosted runner's simulator may not run the app at all: once more, the
+				// device booted again)
 				if (r.code != 0 && r.out.indexOf("launched") < 0) {
 					Sys.println(pad('ios-sim-arm64: ${d.name}', 48) + ' retrying the launch (exit ${r.code}, nothing printed)');
+					exec(["xcrun", "simctl", "shutdown", d.udid], {timeout: 120});
+					exec(["xcrun", "simctl", "boot", d.udid], {timeout: 120});
 					exec(["xcrun", "simctl", "bootstatus", d.udid, "-b"], {timeout: 300});
-					r = exec(launch, {merge: true, timeout: 120});
+					r = launch(d.udid, 120);
 				}
 				output('ios-sim-arm64: ${d.name}', r.code, r.out);
 				exec(["xcrun", "simctl", "uninstall", d.udid, ID]);
