@@ -221,7 +221,7 @@ class CoroToTexpr {
 			return set != null && set.elements().length != 1;
 		}
 		// Hoisted fields are named after their variable so that debuggers show recognizable names.
-		// Generated variables get the same "_g" prefix that renameVars gives them, and a numeric suffix
+		// Naming.field_name_of_var_name turns the variable name into a valid field name, and a numeric suffix
 		// avoids clashes with other hoisted fields (e.g. from shadowed variables) and inherited fields.
 		var usedFieldNames:Map<String, Bool> = [];
 		var nextFieldSuffix:Map<String, Int> = [];
@@ -230,7 +230,7 @@ class CoroToTexpr {
 		function isInheritedField(c:TClass, name:String):Bool
 			return c.clFields.exists(name) || c.clSuper != null && isInheritedField(c.clSuper.cls, name);
 		function fieldNameOfVar(v:TVar):String {
-			var base = if (v.vName.length > 0 && v.vName.charAt(0) == genLocalPrefix.charAt(0)) "_g" + v.vName.substr(1) else v.vName;
+			var base = core.Naming.fieldNameOfVarName(v.vName);
 			function isTaken(name:String):Bool return usedFieldNames.exists(name) || isInheritedField(cls, name);
 			// Continue counting where the previous clash on this base name stopped. Generated variables
 			// all share the base name _g, so starting at 1 every time would be quadratic.
