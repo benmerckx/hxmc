@@ -24,6 +24,24 @@ built: [hxmc.md](../hxmc.md#module-cache) and
   itself (its module's whole content). Today's store keys modules by
   their file and dependencies, so this belongs in the one per-module store
   ("One cache" below), not beside it.
+- **A definer checked after what it defined.** A macro-defined module is
+  restored only when its definer was checked before it in the build (what
+  stands for "part of the build"). When a restored module's dependency
+  reaches the defined module first, it is typed again, and with it the
+  definer and their dependents: correct, but an unrelated edit can type
+  them again (the gate's `--defined` case does after Other's edit; helder's
+  `ViewRuntime_NodeRenderer`). Knowing that the definer is in the build
+  without checking it eagerly (which would bring it into builds that do
+  not have it, `--late`) needs the typer's order, or the definer's entry
+  holding what it defined (stage 3 of "One cache").
+- **Store size.** Each index (working directory, `HAXE_STD_PATH`, class
+  paths) has its own copy of every module it typed, the std included: a
+  hello world's pack is 3.8 MB on hxmc, and a repository of many programs
+  (helder's examples and tests) fills the 1 GB cap with copies. A tool
+  directory is named by its binary's path, size and date, so reinstalling
+  the same version starts another (the old one goes after 14 days unused,
+  or by the cap). Share the std's variants across keys; name the tool by
+  its content.
 - **Undone interface edits.** Undoing an edit restores the module's earlier
   variant but not its dependents'. Choose among a module's variants by its
   dependencies' hashes.

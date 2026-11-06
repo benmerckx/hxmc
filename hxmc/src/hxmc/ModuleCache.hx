@@ -75,9 +75,12 @@ using core.ds.VectorTools;
 // Modules macros define (Context.defineType, defineModule): kept with the
 // module whose typing defined them and restored only with it, part of the
 // build (check: definedBy), its dependency by content; no early cutoff on
-// a dependency on one (no source to type it again from). What a callback
-// defines, or adds as a dependency, outside the typing of a module is not
-// kept (onDefined, onDependency).
+// a dependency on one (no source to type it again from). Both edges by
+// the macro's origin, which a later typing edge replaces in the compiler
+// (macroEdge, keepMacroEdges); one such module asked for from its source
+// all the same runs the build again from nothing (loadDirty, fresh). What
+// a callback defines, or adds as a dependency, outside the typing of a
+// module is not kept (onDefined, onDependency).
 //
 // Macro state: the static variables of macro classes (not the std's) the
 // macros run in a module's typing use are kept with its variant
@@ -304,6 +307,7 @@ class ModuleCache {
 	static function onDependency(m:ModuleDef, mdep:ModuleDef, origin:ModuleDepOrigin) {
 		var s = state;
 		if (s == null) return;
+		macroEdge(s, m, mdep, origin);
 		var outside = s.inCallback > 0 && s.typingStack.length == 0;
 		if (!outside && s.callbackDepCount == 0) return;
 		var k = mdep.mExtra.mSign + "|" + key(mdep.mPath);
@@ -322,6 +326,53 @@ class ModuleCache {
 		} else if (l != null && l.remove(k))
 			s.callbackDepCount--;
 		mutex.release();
+	}
+
+	// (a macro's edge outranks another origin, a definition a lookup)
+	static function macroRank(o:ModuleDepOrigin):Int
+		return switch o {
+			case MDepFromMacroDefine: 2;
+			case MDepFromMacro: 1;
+			case _: 0;
+		}
+
+	// a dependency about to be added (onDependency): where a macro made the
+	// edge (now, or before: the edge there replaced), its macro origin
+	// remembered. The compiler keeps one edge per module, the last one's
+	// (upstream's): a module a macro defined that calls its definer, or a
+	// definer whose code names what it defined (helder's Jobs.run: the
+	// generated job calls the job's function, the call site the job), ends
+	// with a typing edge both ways, and the store, reading only the
+	// origins, would see neither the definition (definedBy, the dependency
+	// on the definer by content, no early cutoff on it) nor the definer
+	// (kept whole). keepMacroEdges puts them back before the capture
+	static function macroEdge(s:ModuleCacheState, m:ModuleDef, mdep:ModuleDef, origin:ModuleDepOrigin) {
+		var r = macroRank(origin);
+		if (r == 0) {
+			var old = m.mExtra.mDeps.get(mdep.mId);
+			if (old == null) return;
+			origin = old.mdOrigin;
+			r = macroRank(origin);
+			if (r == 0) return;
+		}
+		mutex.acquire();
+		var l = s.macroEdges.get(m);
+		if (l == null) s.macroEdges.set(m, l = new Map());
+		var known = l.get(mdep.mId);
+		if (known == null || macroRank(known) < r) l.set(mdep.mId, origin);
+		mutex.release();
+	}
+
+	// the macros' edges a later addition replaced (macroEdge), back in the
+	// modules' dependencies (the build's typing is done: only the store
+	// reads the origins)
+	static function keepMacroEdges(s:ModuleCacheState) {
+		for (m => l in s.macroEdges)
+			for (id => o in l) {
+				var d = m.mExtra.mDeps.get(id);
+				if (d == null || macroRank(d.mdOrigin) >= macroRank(o)) continue;
+				m.mExtra.mDeps.set(id, new ModuleDep(d.mdSign, d.mdKind, d.mdPath, o));
+			}
 	}
 
 	// the dependencies of m not kept with it (onDefined, onDependency)
@@ -907,7 +958,29 @@ class ModuleCache {
 		if (g == null) return null;
 		s.typedUnder++;
 		if (s.log) Sys.println("hxmc: module cache: " + core.Globals.sTypePath(path) + " typed again under a restored module");
-		return typing.TypeloadModule.loadModulePrime(com, g, path, p);
+		return try typing.TypeloadModule.loadModulePrime(com, g, path, p) catch (e:Dynamic) {
+			// (a module of the store without a source, which only a macro
+			// makes: restored modules refer to it, the macro that made it is
+			// not run again. Not an error of the program's: the build again
+			// from nothing, its index removed, so neither this build nor the
+			// next fails on what the store kept)
+			if (resolve(com, path) == null) fresh(s, core.Globals.sTypePath(path) + ", which a macro made, has no source to be typed from");
+			throw e;
+		}
+	}
+
+	static inline var FRESH = "HXMC_MODULE_CACHE_FRESH";
+
+	// the build run again with its index removed (once: a build from nothing
+	// restores nothing)
+	static function fresh(s:ModuleCacheState, why:String) {
+		if (Sys.getEnv(FRESH) == "1") return;
+		s.store.removeIndex(s.indexKey);
+		Sys.putEnv(FRESH, "1");
+		Sys.println("hxmc: module cache: " + why + ": the build again, from nothing");
+		try Sys.stdout().flush() catch (_:Dynamic) {}
+		try Sys.stderr().flush() catch (_:Dynamic) {}
+		Sys.exit(Sys.command(Sys.programPath(), Sys.args()));
 	}
 
 	// ServerCache.readerFindModuleHook: a module of the store a reader reaches
@@ -1136,6 +1209,7 @@ class ModuleCache {
 		if (s == null) return;
 		s.captured = true;
 		var t0 = haxe.Timer.stamp();
+		keepMacroEdges(s);
 		// (the files and environment the macros read, as they are now)
 		s.macroValues = new Map();
 		{

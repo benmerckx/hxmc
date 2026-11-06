@@ -108,6 +108,14 @@ class ModuleCacheState {
 	// typing of a module (sign|key; ModuleCache.onDependency): not kept
 	public var callbackDeps = new haxe.ds.ObjectMap<ModuleDef, Map<String, Bool>>();
 	public var callbackDepCount = 0;
+	// per module, its dependencies (by the dependency's id) a macro made
+	// (MDepFromMacro: a module defined on its definer, a module on what its
+	// macros looked up; MDepFromMacroDefine: a definer on what it defined)
+	// that a later addition replaced with another origin (the module
+	// defined calling its definer, the definer naming what it defined): the
+	// compiler keeps one edge per module, the last one's (upstream's), the
+	// store the macro's (ModuleCache.onDependency, keepMacroEdges)
+	public var macroEdges = new haxe.ds.ObjectMap<ModuleDef, Map<Int, ModuleDepOrigin>>();
 
 	public function new(store:CacheStore, indexKey:CacheKey, com:CommonContext) {
 		this.store = store;

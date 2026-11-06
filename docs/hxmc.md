@@ -785,7 +785,14 @@ defined module depends on it by content), never on their own (a later
 `Context.getType` would bring the old definer, and what it depends on, into
 a build that does not have it). A dependency on a defined module has no
 early cutoff: it has no source to be typed again from, so its dependents are
-typed again and their macros define it again. What a callback a macro
+typed again and their macros define it again. The store knows both edges by
+the macro's own: the compiler keeps one edge per pair of modules, the last
+one added, so a defined module whose code calls its definer, or a definer
+whose code names what it defined (helder's `Jobs.run`: the job's wrapper
+and its call site), ends with typing edges both ways; the store keeps the
+macro's. A build that still finds a module only a macro makes asked for
+from its source (restored modules refer to it, the macro that made it is
+not run again) runs again from nothing, its index removed. What a callback a macro
 registered (`onAfterTyping`, `onGenerate`) defines or adds as a dependency
 outside the typing of a module is not kept: the compiler attributes it to
 the macro API's current module, whichever module's typing made the macros'

@@ -40,7 +40,8 @@ using StringTools;
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run ModuleCacheCheck [--port] [--haxe <haxe>]
 // --port adds the port itself (haxe/src: a large program) for the hxmc target;
 // --nondet runs only the cases of macros whose results change from run to run,
-// --late those of modules macros define outside the typing of a module;
+// --late those of modules macros define outside the typing of a module,
+// --defined that of a module defined in its definer's typing, edited and back;
 // --haxe names `haxe` with hxmc built in (default: bin/npm/native/<host>/haxe).
 class ModuleCacheCheck {
 	static var dir:String;
@@ -567,6 +568,79 @@ class ModuleCacheCheck {
 			gate('a module defined in the typing of another, $m', target, pdir, ["-cp", "src", "-main", m]);
 	}
 
+	// a module a macro defines in the typing of its definer that calls back
+	// into it, the definer's code naming it (helder's Jobs.run: a job's
+	// wrapper, gen.Job_Decode_file, made the first time a call site asks
+	// for it and found by Context.getType after; Decode's own call site
+	// first, Shell's too; its position the call's, as the wrapper's code
+	// carries it). Both typing edges replace the macro's (the compiler keeps
+	// one per module), which the store must keep: the wrapper restored only
+	// with its definer, by its content. Decode edited by a comment that moves
+	// the call (the wrapper made again: its position), then back to its
+	// bytes (the earlier variant, the wrapper with it), then another module
+	// edited, then warm; and the same with a comment at the end (the
+	// report's edit: helder's builds failed with "Type not found" from the
+	// build after the revert on). With full DCE
+	static function macroDefinedRevert(target:String) {
+		var files = [
+			"src/Wrap.hx" => [
+				"#if macro",
+				"import haxe.macro.Context;",
+				"#end",
+				"",
+				"class Wrap {",
+				"\tpublic static macro function run(f:haxe.macro.Expr, input:haxe.macro.Expr):haxe.macro.Expr {",
+				"\t\tvar c, cf;",
+				"\t\tswitch Context.typeExpr(f).expr {",
+				"\t\t\tcase TField(_, FStatic(cr, fr)):",
+				"\t\t\t\tc = cr.get();",
+				"\t\t\t\tcf = fr.get();",
+				"\t\t\tcase _:",
+				"\t\t\t\tContext.error(\"a static function\", f.pos);",
+				"\t\t\t\treturn null;",
+				"\t\t}",
+				"\t\tvar name = \"Job_\" + c.module.split(\".\").join(\"_\") + \"_\" + cf.name;",
+				"\t\tvar found = try Context.getType(\"gen.\" + name) != null catch (_:Dynamic) false;",
+				"\t\tif (!found) {",
+				"\t\t\tvar fpath = macro $p{c.pack.concat([c.name, cf.name])};",
+				"\t\t\tvar at = Context.getPosInfos(f.pos);",
+				"\t\t\tvar td = macro class $name {",
+				"\t\t\t\tpublic static function run(x:String) return $fpath(x);",
+				"\t\t\t\tpublic static function where():String return $v{haxe.io.Path.withoutDirectory(at.file) + \"@\" + at.min};",
+				"\t\t\t};",
+				"\t\t\ttd.pack = [\"gen\"];",
+				"\t\t\ttd.pos = f.pos;",
+				"\t\t\tContext.defineType(td);",
+				"\t\t}",
+				"\t\treturn macro $p{[\"gen\", name, \"run\"]}($input);",
+				"\t}",
+				"}"
+			].join("\n") + "\n",
+			"src/Decode.hx" => "typedef Decoded = {name:String, size:Int};\n\nclass Decode {\n\tpublic static function file(path:String):Decoded\n\t\treturn {name: path, size: path.length};\n\n\tpublic static function load(path:String):Decoded\n\t\treturn Wrap.run(Decode.file, path);\n}\n",
+			"src/Shell.hx" => "import Decode.Decoded;\n\nclass Shell {\n\tpublic static function open(path:String):String {\n\t\tvar d:Decoded = Decode.load(path);\n\t\tvar e:Decoded = Wrap.run(Decode.file, path + \"!\");\n\t\treturn d.name + \" \" + d.size + \" \" + e.name;\n\t}\n}\n",
+			"src/Other.hx" => "class Other {\n\tpublic static function g():Int return 2;\n}\n",
+			"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\ttrace(Shell.open(\"a.png\"));\n\t\ttrace(gen.Job_Decode_file.where());\n\t\ttrace(Other.g());\n\t}\n}\n"
+		];
+		var pdir = dir + "/" + target + "-defrevert";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		var args = ["-cp", "src", "-main", "Main", "-dce", "full"];
+		var decode = pdir + "/src/Decode.hx", other = pdir + "/src/Other.hx";
+		var d0 = File.getContent(decode), o0 = File.getContent(other);
+		for (how in ["a comment before the call", "a comment at the end"]) {
+			rmrf(dir + "/cache");
+			gate('defined by its definer ($how): cold', target, pdir, args);
+			File.saveContent(decode, how == "a comment at the end" ? d0 + "// x\n" : "// x\n" + d0);
+			gate('defined by its definer ($how): Decode edited', target, pdir, args);
+			File.saveContent(decode, d0);
+			gate('defined by its definer ($how): Decode back', target, pdir, args);
+			File.saveContent(other, o0 + "// y\n");
+			gate('defined by its definer ($how): Other edited', target, pdir, args);
+			gate('defined by its definer ($how): warm', target, pdir, args, 0);
+			File.saveContent(other, o0);
+		}
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
@@ -589,6 +663,9 @@ class ModuleCacheCheck {
 		// (--late: only the late-defined modules' cases)
 		var late = Sys.args().contains("--late");
 		if (late) only = true;
+		// (--defined: only the case of a module defined by its definer, edited and back)
+		var defined = Sys.args().contains("--defined");
+		if (defined) only = true;
 		for (target in ["hxmc", "js", "interp", "haxe-hxmc"]) {
 			for (p in programs()) {
 				if (only) continue;
@@ -726,9 +803,11 @@ class ModuleCacheCheck {
 			}
 		}
 		for (target in ["hxmc", "js", "interp"])
-			if (!late) nondeterministic(target);
+			if (!late && !defined) nondeterministic(target);
 		for (target in ["hxmc", "js", "interp"])
-			lateDefined(target);
+			if (!defined) lateDefined(target);
+		for (target in ["hxmc", "js", "interp"])
+			if (!late && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
 		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";
