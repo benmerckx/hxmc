@@ -911,7 +911,7 @@ class CppGenClassImplementation {
 				var ret = if (returnType == "Void" || returnType == "void") " " else "return ";
 				var vtable = '__scriptVTable[${idx + 1}]';
 
-				outputCpp('\t$returnType ${func.tcfName}($args) {\n');
+				outputCpp('\t$returnType ${func.tcfName}($args) override {\n');
 				outputCpp('\tif ($vtable) {\n');
 				outputCpp("\t\t::hx::CppiaCtx *__ctx = ::hx::CppiaCtx::getCurrent();\n");
 				outputCpp("\t\t::hx::AutoStack __as(__ctx);\n");
