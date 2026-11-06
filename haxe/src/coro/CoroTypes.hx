@@ -134,9 +134,6 @@ enum CoroNext {
 	public var deferredExprs:Map<Int, Void->TExpr>;
 	public var wildcardCatches:Array<core.Globals.GlobalTypePath>;
 	public var stackTraces:Bool;
-	// port: diverges from upstream: the expressions each deferred expression is built from, by the id of its
-	// ... placeholder (CoroToTexpr.handleLocals reads their locals; see the note there).
-	public var deferredInputs:Map<Int, Array<TExpr>>;
 	public var hasCaptureVars:Bool;
 	public var capturesThis:Bool;
 	public var nextBlockId:Int;
@@ -145,7 +142,7 @@ enum CoroNext {
 	public var numStates:Int;
 
 	public inline function new(builder:TexprBuilder, typer:context.Typecore.Typer, config:CoroConfigData, coroType:CoroFor,
-			classNamePos:Pos, deferredExprs:Map<Int, Void->TExpr>, wildcardCatches:Array<core.Globals.GlobalTypePath>, stackTraces:Bool, deferredInputs:Map<Int, Array<TExpr>>, hasCaptureVars:Bool, capturesThis:Bool, nextBlockId:Int,
+			classNamePos:Pos, deferredExprs:Map<Int, Void->TExpr>, wildcardCatches:Array<core.Globals.GlobalTypePath>, stackTraces:Bool, hasCaptureVars:Bool, capturesThis:Bool, nextBlockId:Int,
 			currentCatch:Null<CoroBlock>, hasCatch:Bool, numStates:Int) {
 		this.builder = builder;
 		this.typer = typer;
@@ -155,7 +152,6 @@ enum CoroNext {
 		this.deferredExprs = deferredExprs;
 		this.wildcardCatches = wildcardCatches;
 		this.stackTraces = stackTraces;
-		this.deferredInputs = deferredInputs;
 		this.hasCaptureVars = hasCaptureVars;
 		this.capturesThis = capturesThis;
 		this.nextBlockId = nextBlockId;
@@ -165,7 +161,7 @@ enum CoroNext {
 	}
 
 	public inline function clone():CoroCtx return new CoroCtx(builder, typer, config, coroType, classNamePos, deferredExprs,
-		wildcardCatches, stackTraces, deferredInputs, hasCaptureVars, capturesThis, nextBlockId, currentCatch, hasCatch, numStates);
+		wildcardCatches, stackTraces, hasCaptureVars, capturesThis, nextBlockId, currentCatch, hasCatch, numStates);
 }
 
 enum abstract CbFlag(Int) to Int {

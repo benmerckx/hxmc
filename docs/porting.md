@@ -94,12 +94,6 @@ divergence goes. The divergences:
   without a request, or sends nothing: upstream's `wait_loop` (5.0) ends
   there, 4.3's went on (`compiler.server.Server.waitLoop`; the Server
   harness's `misc:empty-connection`).
-- A coroutine's local read in a later state only by a tail call's
-  arguments, a returned value or a call that never suspends is hoisted
-  (`return c ? f(x) : g(x)`); upstream's walk skips those expressions,
-  built after it, and the later state reads the local undeclared
-  ("Unbound variable"; `coro.CoroToTexpr.handleLocals`; the corpus's
-  `CoroTailLocal`).
 - An abstract's overloaded call operators (`@:op(a())`) read back from HXB
   are the impl class's statics of the other operator functions, as when
   typed. Upstream's reader makes them separate fields, while the writer
