@@ -70,6 +70,7 @@ class WithType {
 		case ImplicitReturn: 'ImplicitReturn';
 	};
 
+	/** Can return empty or invalid identifier name when type source is `StructureField`. */
 	public static function getExpectedName(value:WithTypeValue):Null<String> return switch value {
 		case Value(source) | WithType(_, source): source == null ? null : getSourceInfoName(source);
 		case _: null;
