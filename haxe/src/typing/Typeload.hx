@@ -383,6 +383,9 @@ class Typeload {
 	public static function loadParams(ctx:Typer, info:BuildInfo, params:Vector<TypeParamOrConst>, p:Pos):TParams {
 		var rest = info.buildKind == BuildGenericBuild && info.buildParams.length == 1 && info.buildParams[0].ttpName == "Rest",
 			javaRest = ctx.com.platform == Jvm && info.buildExtern;
+		// port: (hxmc) with a jar (--java-lib), Java's raw types (a Map without its
+		// parameters) as on the JVM target: the missing parameters Dynamic
+		javaRest = javaRest || info.buildExtern && ctx.com.platform.match(CustomTarget("hxmc")) && ctx.com.nativeLibs.javaLibs.length > 0;
 		rest = rest || javaRest;
 		function loadParam(param:TypeParamOrConst, ttp:Null<TypedTypeParam>):{type:T, pos:Pos}
 			return switch param {

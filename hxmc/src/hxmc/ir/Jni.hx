@@ -151,6 +151,9 @@ class Jni {
 				}
 			case TDynamic(_):
 				return JRef(R_DYNAMIC, null, "Ljava/lang/Object;");
+			// a jar's CharSequence: a String or a Java object, as Dynamic's
+			case TAbstract(a, []) if (a.aPath.name == "CharSequence" && a.aPath.pack.join(".") == "hxmc.java"):
+				return JRef(R_DYNAMIC, null, "Ljava/lang/CharSequence;");
 			case TAbstract(a, _) if (a.aPath.name == "Any" && a.aPath.pack.length == 0):
 				return JRef(R_DYNAMIC, null, "Ljava/lang/Object;");
 			case _:

@@ -219,6 +219,11 @@ class TypeloadFields {
 	static function objcProtocol(c:TClass):Bool
 		return hasClassFlag(c, CExtern) && hasClassFlag(c, CInterface) && MetadataTools.has(Custom(":hxmc.objc"), c.clMeta);
 
+	// port: (hxmc) a Java interface: an extern interface declared @:hxmc.java,
+	// whose default methods (@:javaDefault, from a jar) are as on the JVM target
+	static function javaInterface(c:TClass):Bool
+		return hasClassFlag(c, CExtern) && hasClassFlag(c, CInterface) && MetadataTools.has(Custom(":hxmc.java"), c.clMeta);
+
 	// port: (hxmc) an Objective-C class written in Haxe (@:hxmc.objc on a
 	// class that is not extern) answers `alloc` as its superclasses do, typed
 	// as itself: `public extern static function alloc():C;`, unless it declares
@@ -1253,7 +1258,7 @@ class TypeloadFields {
 		if (fctx.isAbstractConstructor) addClassFieldFlag(cf, CfAbstractConstructor);
 		if (fctx.isGeneric) addClassFieldFlag(cf, CfGeneric);
 		if (fctx.defaultPos != null) {
-			if (ctx.com.platform == Jvm || objcProtocol(c)) {
+			if (ctx.com.platform == Jvm || objcProtocol(c) || javaInterface(c)) {
 				if (!hasClassFlag(ctx.c.curclass, CExtern)
 					|| !hasClassFlag(c, CInterface)) invalidModifierOnly(ctx.com, fctx, "default", "on extern interfaces", fctx.defaultPos);
 				addClassFieldFlag(cf, CfDefault);

@@ -726,7 +726,10 @@ class PathConverter {
 	}
 }
 
-typedef JavaLibCtx = {typeParams:haxe.ds.StringMap<ComplexType>};
+// port: (hxmc) hxmc: the externs are hxmc's Java classes (JNI): its own
+// types for Java's primitives and arrays, the jvm package being the JVM
+// target's
+typedef JavaLibCtx = {typeParams:haxe.ds.StringMap<ComplexType>, hxmc:Bool};
 
 class SignatureConverter {
 	public static function mkTypePath(path:GlobalTypePath, params:Array<TypeParamOrConst>, p:Pos):ComplexType {
@@ -782,6 +785,16 @@ class SignatureConverter {
 		&& path.pack[1] == "lang" && path.name == name;
 
 	public static function convertSignature(ctx:JavaLibCtx, p:Pos, jsig:JSignature):ComplexType {
+		// port: (hxmc) hxmc's own types where the JVM target's are in its jvm package
+		if (ctx.hxmc) switch jsig {
+			case JByte: return mkTypePath({pack: ["hxmc", "unsafe"], name: "Int8"}, [], p);
+			case JChar: return mkTypePath({pack: ["hxmc", "unsafe"], name: "UInt16"}, [], p);
+			case JFloat: return mkTypePath({pack: ["hxmc", "unsafe"], name: "Float32"}, [], p);
+			case JShort: return mkTypePath({pack: ["hxmc", "unsafe"], name: "Int16"}, [], p);
+			case JArray(jsig, _): return mkTypePath({pack: ["hxmc", "java"], name: "JavaArray"}, [TPType({type: convertSignature(ctx, p, jsig), pos: p})], p);
+			case JObject(path, []) if (isJavaLang(path, "CharSequence")): return mkTypePath({pack: ["hxmc", "java"], name: "CharSequence"}, [], p);
+			case _:
+		}
 		return switch jsig {
 			case JByte: mkTypePath({pack: ["jvm"], name: "Int8"}, [], p);
 			case JChar: mkTypePath({pack: ["jvm"], name: "Char16"}, [], p);
@@ -924,6 +937,7 @@ class Converter {
 	public static function convertField(ctx:JavaLibCtx, isMethod:Bool, jc:JClass, isInterface:Bool, jf:JField, p:Pos):ClassField {
 		var ctx:JavaLibCtx = {
 			typeParams: typeParamLut(ctx.typeParams, jf.jfTypes),
+			hxmc: ctx.hxmc,
 		};
 		var p:Pos = {pfile: p.pfile + "@" + jf.jfName, pmin: p.pmin, pmax: p.pmax};
 		var isStatic = AccessFlags.hasFlag(jf.jfFlags, MStatic);
@@ -1072,7 +1086,11 @@ class Converter {
 				addFlag(HExtends(getTypePath(SignatureConverter.convertSignature(ctx, p, jsig))));
 		}
 		for (jsig in jc.jcInterfaces) {
-			var path = getTypePath(SignatureConverter.convertSignature(ctx, p, jsig));
+			// port: (hxmc) the interface itself, not the type of CharSequence values
+			var path = getTypePath(switch jsig {
+				case JObject(path = {pack: ["java", "lang"], name: "CharSequence"}, []) if (ctx.hxmc): SignatureConverter.mkTypePath(path, [], p);
+				case _: SignatureConverter.convertSignature(ctx, p, jsig);
+			});
 			if (isInterface) addFlag(HExtends(path)) else addFlag(HImplements(path));
 		}
 		var fields:Array<ClassField> = [];
@@ -1110,6 +1128,9 @@ class Converter {
 		}
 		var className = PathConverter.jnameToHx(jc.jcPath.name).name;
 		addMeta(Converter.meta(MetaTag.Native, vector({expr: EConst(String(sJPath(jc.jcPath), SDoubleQuotes)), pos: p}), p));
+		// port: (hxmc) a Java class to hxmc (hxmc.ir.Jni): @:hxmc.java("pkg.Class")
+		if (ctx.hxmc)
+			addMeta(Converter.meta(MetaTag.Custom(":hxmc.java"), vector({expr: EConst(String(sJPath(jc.jcPath), SDoubleQuotes)), pos: p}), p));
 		if (isAnnotation) {
 			var args:Vector<Expr> = switch extractRetentionPolicy(jc.jcAttributes) {
 				case null:
@@ -1191,10 +1212,11 @@ class Converter {
 		return if (AccessFlags.hasFlag(jc.jcFlags, MEnum)) convertEnum(jc, file) else convertClass(ctx, jc, file);
 	}
 
-	public static function convertModule(pack:Array<String>, jcs:Array<{jc:JClass, file:String}>):Package {
+	public static function convertModule(pack:Array<String>, jcs:Array<{jc:JClass, file:String}>, hxmc:Bool):Package {
 		var types = jcs.map(function(e) {
 			var ctx:JavaLibCtx = {
 				typeParams: typeParamLut(new haxe.ds.StringMap(), e.jc.jcTypes),
+				hxmc: hxmc,
 			};
 			return convertType(ctx, e.jc, e.file);
 		});
@@ -1295,7 +1317,7 @@ class JavaLibraryModern extends NativeLibraryBase implements NativeLibrary<JavaL
 					if (entries == null || entries.length == 0) throw NotFound.raise();
 					var zip = zip.force();
 					var jcs = entries.map(function(e) return read(zip, e));
-					core.Timer.time(com.timerCtx, ["jar", "convert"], function(_:Null<Bool>) return Converter.convertModule(path.pack, jcs), null);
+					core.Timer.time(com.timerCtx, ["jar", "convert"], function(_:Null<Bool>) return Converter.convertModule(path.pack, jcs, com.platform.match(CustomTarget("hxmc"))), null);
 				} catch (_:NotFound) {
 					null;
 				}

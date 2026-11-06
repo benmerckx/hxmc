@@ -201,6 +201,11 @@ class TypeloadParse {
 		var classPaths:core.ClassPaths = com.classPaths;
 		var forbidden = false, pack = path.pack.copy();
 		if (pack.length > 0) switch com.packageRules.get(pack[0]) {
+			// port: (hxmc) the java package of hxmc with a jar (--java-lib) is
+			// the jar's (its classes declared by codegen.JavaModern), not std's
+			// java/lang, which is the JVM target's
+			case Forbidden if (pack[0] == "java" && com.platform.match(CustomTarget("hxmc")) && com.nativeLibs.javaLibs.length > 0):
+				throw NotFound.raise();
 			case Forbidden:
 				forbidden = true;
 			case Remap(name):
