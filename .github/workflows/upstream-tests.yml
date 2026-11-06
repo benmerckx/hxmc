@@ -22,12 +22,12 @@ permissions:
 
 # The hxcoro that RunCi's party clones (tests/runci/targets/Macro.hx: git clone
 # -b Config.hxcoroVersion, which is master) follows upstream's development std,
-# not the pinned one: from HaxeFoundation/hxcoro#234 on it needs
-# haxe.coro.context.CallStackHandler (HaxeFoundation/haxe#13146, after the pin).
-# Each job serves it this revision instead, as master of a local repository the
-# clone's URL is redirected to. Move it with the submodule.
+# not the pinned one. Each job serves it this revision instead, as master of a
+# local repository the clone's URL is redirected to: hxcoro's master when the
+# pinned commit landed (HaxeFoundation/hxcoro#242), which is also the
+# Makefile's HXCORO_REV. Move it with the submodule.
 env:
-  HXCORO_REV: 94b979fc94759b3fc56b46e76267a9dca6ae6a03
+  HXCORO_REV: e8e26f8d374919d508d777f73b2fe51daa347184
 
 jobs:
   linux-test:
