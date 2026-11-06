@@ -179,6 +179,17 @@ class CoroToTexpr {
 		var b = ctx.builder;
 		var first = states[0];
 		var argStates = new CoroIntSet().add(first.csId);
+		// Expand deferred expressions first so that the usage analysis below sees the locals they reference.
+		function expandDeferred(e:TExpr):TExpr return switch e.eexpr {
+			case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredExprs.exists(v.vId)):
+				expandDeferred(ctx.deferredExprs.get(v.vId)());
+			case _:
+				core.Texpr.mapExpr(expandDeferred, e);
+		};
+		for (state in states) {
+			state.csEl = state.csEl.map(expandDeferred);
+			if (state.csElTail != null) state.csElTail = state.csElTail.map(expandDeferred);
+		}
 		// Keep an extra table of all vars and what states they appear in, easier check if a var is used across states this way.
 		var usages:Map<Int, CoroIntSet> = [];
 		for (a in tfArgs) usages.set(a.variable.vId, argStates);
@@ -190,18 +201,6 @@ class CoroToTexpr {
 					if (eo != null) loop(eo);
 				case TLocal(v) if (usages.exists(v.vId)):
 					usages.get(v.vId).add(state.csId);
-				// port: diverges from upstream (066bd83, and its development branch on
-				// ... 2026-10-28): a deferred expression's placeholder is a call without
-				// ... arguments, so upstream's walk misses the locals of what it is built
-				// ... from: a tail call's arguments (`return c ? f(x) : g(x)`) or a
-				// ... returned value. A local declared in an earlier state and read in a
-				// ... later one only by such an expression is not hoisted, and that
-				// ... state has no declaration of it ("Unbound variable"). The walk reads the placeholder's
-				// ... inputs (ctx.deferredInputs). Upstream issue draft: "[coro] A local
-				// ... read only by a tail call in a later state is not hoisted"
-				// ... (hxmc/test/cases/CoroTailLocal.hx).
-				case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredInputs.exists(v.vId)):
-					for (e in ctx.deferredInputs.get(v.vId)) loop(e);
 				case _:
 					core.Texpr.iter(loop, e);
 			};
@@ -310,7 +309,6 @@ class CoroToTexpr {
 					// Here we generate and store those new variables and remap local access to them
 					state.csReads.add(v.vId);
 					{var recordCopy39 = core.ds.Record.copy(e); recordCopy39.eexpr = TLocal(localMapping(v)); recordCopy39;};
-				case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredExprs.exists(v.vId)): mapper(ctx.deferredExprs.get(v.vId)());
 				case _: core.Texpr.mapExpr(mapper, e);
 			};
 			state.csEl = state.csEl.map(mapper);
