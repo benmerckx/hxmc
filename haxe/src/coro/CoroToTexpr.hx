@@ -436,6 +436,7 @@ class CoroToTexpr {
 					catches.reverse();
 					for (ca in catches) cond = switch follow(ca.v.vType) {
 						case TDynamic(_): setState(ca.cb.cbId); // no next
+						case TInst({clPath: path}, _) if (Lambda.exists(ctx.wildcardCatches, p -> Common.samePath(p, path))): setState(ca.cb.cbId); // no next
 						case _: b.ifThenElse(stdIs((exprs.etmpErrorUnwrapped).force(), ca.v.vType), setState(ca.cb.cbId), cond,
 								com.basic.tvoid);
 					};
