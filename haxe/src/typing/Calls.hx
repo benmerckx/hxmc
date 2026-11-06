@@ -367,12 +367,6 @@ class Calls {
 	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Vector<Expr>, withType:WithTypeValue, p:Pos,
 			?mode:AccessMode):TExpr return accGet(ctx, buildCallAccess(ctx, acc, el, mode == null ? MGet : mode, withType, p));
 
-	public static function needsTempVar(e:TExpr):Bool return switch e.eexpr {
-		case TLocal(_) | TTypeExpr(_) | TConst(_): false;
-		case TField(e, _) | TParenthesis(e): needsTempVar(e);
-		case _: true;
-	};
-
 	public static function callToString(ctx:TyperContext, e:TExpr, resume:Bool = false, noNullCheck:Bool = false):TExpr {
 		if (!ctx.allowTransform) return mk(e.eexpr, ctx.t.tstring, e.epos);
 		inline function generate(e:TExpr):TExpr {
@@ -384,19 +378,7 @@ class Calls {
 			return buildCall(ctx, acc, vector(), WithTypeTools.withType(ctx.t.tstring), e.epos);
 		}
 		if (noNullCheck || (ctx.com.config.pfStatic && !isNullable(e.etype))) return generate(e);
-		// generate `if(e == null) 'null' else e.toString()`
-		var stringNull = mk(TConst(TString("null")), ctx.t.tstring, e.epos);
-		if (needsTempVar(e)) {
-			var tmp = allocVar(VGenerated, "tmp", e.etype, e.epos),
-				local = mk(TLocal(tmp), tmp.vType, tmp.vPos);
-			var check = mk(TBinop(OpEq, local, mk(TConst(TNull), tmp.vType, tmp.vPos)), ctx.t.tbool, e.epos);
-			return mk(TBlock(vector(
-				mk(TVar(tmp, e), tmp.vType, tmp.vPos),
-				mk(TIf(check, stringNull, generate(local)), ctx.t.tstring, tmp.vPos)
-			)), ctx.t.tstring, e.epos);
-		}
-		var check = mk(TBinop(OpEq, e, mk(TConst(TNull), e.etype, e.epos)), ctx.t.tbool, e.epos);
-		return mk(TIf(check, stringNull, generate(e)), ctx.t.tstring, e.epos);
+		return Texpr.Builder.makeNullSafeToString(ctx.t, e -> generate(e), e, e.epos);
 	}
 
 	public static function typeBind(ctx:TyperContext, e:TExpr, signature:TSignature, params:Vector<Expr>, safe:Bool, p:Pos):TExpr {

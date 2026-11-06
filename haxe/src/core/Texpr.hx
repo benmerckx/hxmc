@@ -1598,6 +1598,25 @@ class Builder {
 		};
 		return mk(TCall(ef, args), ret, p);
 	}
+
+	public static function makeNullSafeToString(basic:BasicTypes, toString:TExpr->TExpr, e:TExpr, p:Pos):TExpr {
+		function needsTempVar(e:TExpr):Bool return switch e.eexpr {
+			case TLocal(_) | TTypeExpr(_) | TConst(_): false;
+			case TField(e, _) | TParenthesis(e): needsTempVar(e);
+			case _: true;
+		};
+		function makeCheck(e:TExpr):TExpr {
+			var chkNull = binop(OpEq, e, makeNull(e.etype, p), basic.tbool, p);
+			return mk(TIf(chkNull, makeString(basic, "null", p), toString(e)), basic.tstring, p);
+		}
+		if (needsTempVar(e)) {
+			var v = allocVar(VGenerated, "tmp", e.etype, p);
+			// port: the block's list is built right to left: the check (and its toString call) first
+			var check = makeCheck(makeLocal(v, p));
+			return mk(TBlock(vector(mk(TVar(v, e), basic.tvoid, p), check)), basic.tstring, p);
+		} else
+			return makeCheck(e);
+	}
 }
 
 private class BreakOrContinue {
