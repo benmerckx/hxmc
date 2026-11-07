@@ -179,9 +179,10 @@ class MemRepr {
 		return Mem.getU8At(c, 0, i) == Mem.getU8(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(i + 1), (d : Ptr).add(1), ((m - 1) : I64)) == 0);
 
 	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 its units: a
-	// string, one-byte until a unit above 0xFF is added. Slot 0's upper
-	// half is the capacity, complemented once toString shares the storage.
-	// A shared string is immutable: reserve detaches before another write.
+	// string, one-byte until a unit above 0xFF is added. The length's sign
+	// bit marks shared storage. Older compilers' inline addChar compares the
+	// raw length unsigned against the storage length, so sharing also forces
+	// their writes through reserve's copy on write.
 
 	// (the first storage: 60 one-byte units, a 64-byte payload)
 	static inline var SB_WORDS = 8;
@@ -196,12 +197,21 @@ class MemRepr {
 	// T_STRINGBUF's (Lower.classInfo)
 	public static inline function sbInit(b:Dynamic) {
 		var d = withLength(Mem.allocArrayRaw(T_STRING1, 0, SB_WORDS), 8 * SB_WORDS - 4);
-		Mem.setI32(Mem.addr(b), 4, 8 * SB_WORDS - 4);
 		Mem.setRefBarrier(b, 8, d);
 	}
 
 	public static inline function sbLen(b:Dynamic):Int
-		return Mem.getI32(Mem.addr(b), 0);
+		return Mem.getI32(Mem.addr(b), 0) & 0x7FFFFFFF;
+
+	public static inline function sbShared(b:Dynamic):Bool
+		return Mem.getI32(Mem.addr(b), 0) < 0;
+
+	public static inline function sbClear(b:Dynamic) {
+		// An older compiler may write inline after clear. Empty storage
+		// forces that write through reserve too, without allocating here.
+		if (sbShared(b)) Mem.setRefBarrier(b, 8, "");
+		sbSetLen(b, 0);
+	}
 
 	public static inline function sbSetLen(b:Dynamic, n:Int)
 		Mem.setI32(Mem.addr(b), 0, n);
@@ -220,14 +230,14 @@ class MemRepr {
 		return chars2(sbData(b));
 
 	public static inline function sbCapacity(b:Dynamic):Int
-		return Mem.getI32(Mem.addr(b), 4);
+		return len(sbData(b));
 
 	// Freeze without copying. The allocation header still describes all
 	// its storage; only the string's logical length changes.
 	public static inline function sbSnapshot(b:Dynamic):String {
 		var d = sbData(b);
 		var cap = sbCapacity(b);
-		if (cap >= 0) {
+		if (!sbShared(b)) {
 			var n = sbLen(b);
 			// A tiny result after clear must not retain an arbitrarily large
 			// allocation. Keep the buffer's reusable capacity in this case.
@@ -238,7 +248,7 @@ class MemRepr {
 				d = s;
 			} else {
 				withLength(d, n);
-				Mem.setI32(Mem.addr(b), 4, ~cap);
+				Mem.setI32(Mem.addr(b), 0, n | (-0x7FFFFFFF - 1));
 			}
 		}
 		return d;
@@ -250,15 +260,14 @@ class MemRepr {
 		var one = isOne(d);
 		var nd = one ? make1(cap) : make2(cap);
 		LibC.memcpy(Mem.addr(nd).add(4), Mem.addr(d).add(4), one ? (n : I64) : (2 * n : I64));
-		Mem.setI32(Mem.addr(b), 4, cap);
 		Mem.setRefBarrier(b, 8, nd);
+		sbSetLen(b, n);
 	}
 
 	// new two-byte storage of `cap` units, the first n widened from the one-byte ones
 	public static inline function sbWiden(b:Dynamic, cap:Int, n:Int) {
 		var nd = make2(cap);
 		widen(chars2(nd), 0, sbChars1(b), 0, n);
-		Mem.setI32(Mem.addr(b), 4, cap);
 		Mem.setRefBarrier(b, 8, nd);
 	}
 

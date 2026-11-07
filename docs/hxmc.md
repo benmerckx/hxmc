@@ -275,9 +275,11 @@ is at most the result's length or 64 units. The string's logical length
 is fixed and the next buffer write copies its storage first; repeated
 snapshots of an unchanged buffer need no allocation. A tiny result from
 a large cleared buffer is copied so it does not retain the large storage.
-The buffer's first slot holds its length and signed capacity (complemented
-when shared), its second the storage. The inline `addChar` path tests the
-capacity before writing; subclasses reserve the full first slot.
+The buffer's existing length word uses its sign bit to mark shared storage;
+its second slot holds the storage. The inline `addChar` path compares that
+raw length unsigned against capacity, so a shared buffer takes the slow
+path even in the committed stage0 compiler. Clearing a shared buffer
+releases its storage before resetting the length.
 
 A Date is a runtime type of its own (`T_DATE`) holding milliseconds since
 the epoch. `Std.string` reaches `Date.toString` only through

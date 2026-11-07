@@ -993,7 +993,7 @@ class Lower implements LowerQueries {
 		}
 		// a class extending StringBuf (upstream's Issue6446): StringBuf is the
 		// runtime's (T_STRINGBUF), so the subclass starts with its layout, slot
-		// 0 the length and capacity and slot 1 the units (MemRepr.sbNew; fields that no name
+		// 0 the length and slot 1 the units (MemRepr.sbNew; fields that no name
 		// reaches, Facts.assignTypes), which the runtime's StringBuf functions
 		// and the inline addChar read; its constructor fills them
 		// (stringBufCtor). Its class is not a subclass of StringBuf to
@@ -1036,7 +1036,7 @@ class Lower implements LowerQueries {
 		for (d in sup.derived)
 			ci.derived.push(d);
 		if (sbuf) {
-			ci.fields.push({name: HIDDEN_FIELD + "state", ty: TI64});
+			ci.fields.push({name: HIDDEN_FIELD + "length", ty: TI32});
 			ci.fields.push({name: HIDDEN_FIELD + "units", ty: TRef(RAny)});
 		}
 		if (objc) {

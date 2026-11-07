@@ -10,6 +10,9 @@ class StringBufSnapshot {
 		equal(b.toString(), "");
 		b.add("before");
 		var first = b.toString();
+		if (b.length != 6) throw "shared length exposed its flag";
+		b.add("");
+		b.addSub(first, 0, 0);
 		var hashes = new Map<String, Int>();
 		hashes.set(first, 1);
 		for (_ in 0...10) equal(b.toString(), "before");

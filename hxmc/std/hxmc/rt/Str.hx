@@ -16,10 +16,10 @@ import hxmc.unsafe.Ptr;
 // either width (and a two-byte string whose units would fit in bytes: no
 // result depends on the width); what this makes is one-byte wherever every
 // unit fits, but for the concatenations of a two-byte string. StringBuf
-	// keeps the runtime's layout (T_STRINGBUF: slot 0 the length and capacity,
-	// slot 1 its units, one-byte until a unit above 0xFF comes). A negative
-	// capacity means toString shared the storage and the next write detaches,
-	// which generated code's inline addChar checks too
+	// keeps the runtime's layout (T_STRINGBUF: slot 0 the length, slot 1 its
+	// units, one-byte until a unit above 0xFF comes). The length's sign bit
+	// means toString shared the storage and the next write detaches, which
+	// generated code's inline addChar checks too
 // (MirBuild.stringBufAddChar).
 //
 // @:hxmc.export functions are called by the runtime's C code too (by that
@@ -712,8 +712,7 @@ class Str {
 		return arr;
 	}
 
-	// ---- StringBuf: slot 0 the length and capacity, slot 1 the units.
-	// A complemented capacity marks immutable, shared storage.
+	// ---- StringBuf: slot 0 the length (sign bit: shared), slot 1 the units.
 
 	static inline function sbLen(b:Dynamic):Int
 		return Repr.sbLen(b);
@@ -732,11 +731,11 @@ class Str {
 		var max = 0x3FFFFFE0;
 		if (extra < 0 || extra > max || n > max - extra) Repr.fail("StringBuf too large");
 		var cap = Repr.sbCapacity(b);
-		if (cap < 0) {
+		if (Repr.sbShared(b)) {
 			// toString published the old storage. Detach even if it had room;
 			// its logical length and any cached hash belong to that snapshot.
-			cap = ~cap;
-			var ncap = cap;
+			var ncap = cap * 2;
+			if (ncap > max) ncap = max;
 			if (ncap < n + extra) ncap = n + extra;
 			Repr.sbGrow(b, ncap, n);
 			return;
@@ -755,6 +754,7 @@ class Str {
 	// s's units [pos, pos + n) appended (the buffer widened first if one of
 	// them is above 0xFF)
 	static function sbAddRange(b:Dynamic, s:String, pos:Int, n:Int) {
+		if (n == 0) return;
 		reserve(b, n);
 		var at = sbLen(b);
 		if (Repr.sbIsOne(b) && !isOne(s) && !Repr.fitsOne(chars2(s), pos, n)) Repr.sbWiden(b, Repr.sbCapacity(b), at);
@@ -950,7 +950,7 @@ class Str {
 	}
 
 	@:hxmc.host("StringBuf_clear") @:hxmc.unsafe static function sbClear(b:Dynamic):Void
-		Repr.sbSetLen(b, 0);
+		Repr.sbClear(b);
 
 	@:hxmc.host("StringBuf_get_length") @:hxmc.unsafe static function sbGetLength(b:Dynamic):Int
 		return sbLen(b);
