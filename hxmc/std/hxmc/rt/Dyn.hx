@@ -645,7 +645,9 @@ class Dyn {
 		if (isNativeArray(tindex(a))) {
 			var n = arrLength(a);
 			if (!Mem.ult(i, n)) {
-				#if (hxmc.native_array_outofbounds == "silent")
+				#if hxmc.checked
+				throw NArray.outOfBounds(i, n, null, 0, null, null);
+				#elseif (hxmc.native_array_outofbounds == "silent")
 				return NArray.defaultOf(a);
 				#elseif (hxmc.native_array_outofbounds == "throws")
 				throw NArray.outOfBounds(i, n, null, 0, null, null);
@@ -664,7 +666,9 @@ class Dyn {
 		if (isNativeArray(tindex(a))) {
 			var n = arrLength(a);
 			if (!Mem.ult(i, n)) {
-				#if (hxmc.native_array_outofbounds == "silent")
+				#if hxmc.checked
+				throw NArray.outOfBounds(i, n, null, 0, null, null);
+				#elseif (hxmc.native_array_outofbounds == "silent")
 				return;
 				#elseif (hxmc.native_array_outofbounds == "throws")
 				throw NArray.outOfBounds(i, n, null, 0, null, null);
