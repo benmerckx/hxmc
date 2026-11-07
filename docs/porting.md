@@ -117,6 +117,22 @@ divergence goes. The divergences:
   restored no such definition). The defined module still depends on that
   module (`MDepFromMacro`) (`typing.MacroContext.defineType`; server-verify's
   `a class a callback defines, in the next compilations`, `make dev-check`).
+- A macro class's `@:persistent` statics are kept, per signature, when the
+  macro interpreter is handed the class from another module and drops its
+  prototype: the values go back when that same module (its id) is handed
+  over again. Upstream starts them again from their initializers there, so
+  a compilation server whose builds alternate between two signatures (a
+  check's `--no-output` and a build) resets them at each switch, while each
+  context keeps reusing the modules whose macros set them. 4.3 resets them
+  too, but 5.0's `define_type` taints a defined module in every context, so
+  the other context's macro now runs again on the reset state: a build
+  macro that kept its class's fields there for a later macro finds none,
+  and that build and every later one of the signature fails (a failed build
+  is not cached). 4.3.7's server builds the same sequence
+  (`macros.eval.EvalPrototype.addTypes`; server-verify's `a build macro's
+  persistent state, in builds of two signatures`, `make dev-check`). Mir
+  macros (`-D hxmc.macros=mir`) keep upstream's behaviour here
+  ([hxmc.md](hxmc.md#macros-on-the-mir-interpreter)).
 
 ## The one exception to byte identity
 
