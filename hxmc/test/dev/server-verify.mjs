@@ -6,8 +6,11 @@
 // the same sources makes (and on macOS, an Objective-C program built for the
 // machine runs as the fresh one does). What it checks is an edit that makes
 // the program use code it did not use before while hxmc's LowerCache replays
-// the bodies of the modules not typed again, and what a macro's callback
-// defines while modules are reused.
+// the bodies of the modules not typed again, what a macro's callback
+// defines while modules are reused, and a macro's persistent state while
+// the builds alternate between two signatures (a step's '-D': a define of
+// its build and the fresh one's, not a file), also after an error in a macro
+// (a step's '!': a build that fails, as the fresh one does).
 //   node hxmc/test/dev/server-verify.mjs <compiler> [native|web]
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -135,7 +138,91 @@ class Gen {
 		{ 'Other.hx': '@:build(Gen.other())\nclass Other {\n\tpublic static var y = 3;\n}\n' },
 		{},
 	],
+	// a build macro keeps its class's fields in a @:persistent static, from
+	// which a later macro makes a class (helder's HostMacro: its template of
+	// ViewRuntime, for ViewRuntime_<renderer>). The builds alternate between
+	// two signatures, as a check's --no-output and a build do: two contexts
+	// of the server, one macro interpreter. Upstream starts a macro class's
+	// statics again from their initializers whenever it is handed over from
+	// the other context's module: when -D one comes back, Rt is restored (its
+	// build macro does not run), Gen is not (the other context's definition
+	// tainted it), and the static is null: "Rt's fields are not known", in
+	// every build of that signature after it (a failed build is not cached).
+	// Each context gets back the values its own modules left
+	// (EvalPrototype.addTypes, persistentStash; a divergence from upstream,
+	// docs/porting.md)
+	"a build macro's persistent state, in builds of two signatures": [
+		{
+			'Tpl.hx': `#if macro
+import haxe.macro.Context;
+#end
+import haxe.macro.Expr;
+
+class Tpl {
+	#if macro
+	@:persistent static var template:Null<Array<Field>> = null;
+
+	public static function build():Array<Field> {
+		template = Context.getBuildFields();
+		return [];
+	}
+	#end
+
+	public static macro function use():Expr {
+		try {
+			Context.getType("Gen");
+		} catch (_:Dynamic) {
+			if (template == null)
+				switch Context.getType("Rt") {
+					case TInst(c, _): c.get().statics.get();
+					case _:
+				}
+			if (template == null) Context.fatalError("Rt's fields are not known", Context.currentPos());
+			Context.defineType({pack: [], name: "Gen", pos: Context.currentPos(), kind: TDClass(), fields: template.copy()});
+		}
+		return macro Gen.hello();
+	}
+}
+`,
+			'Rt.hx': '@:build(Tpl.build())\nclass Rt {\n\tpublic static function hello():String\n\t\treturn "hello";\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Tpl.use());\n\t}\n}\n',
+			'-D': 'one',
+		},
+		{ '-D': 'two' },
+		{ '-D': 'one' },
+		{ '-D': 'one' },
+		{ '-D': 'two' },
+	],
 };
+{
+	const persistent = cases["a build macro's persistent state, in builds of two signatures"];
+	// (the static without an initializer: given back all the same)
+	const noInit = structuredClone(persistent);
+	noInit[0]['Tpl.hx'] = noInit[0]['Tpl.hx'].replace('@:persistent static var template:Null<Array<Field>> = null;', '@:persistent static var template:Null<Array<Field>>;');
+	cases["a build macro's persistent state without an initializer, in builds of two signatures"] = noInit;
+	// an error in a macro (Bad.hx's, Other's build macro) discards the macro
+	// interpreter, persistent statics and all (upstream's
+	// MacroContext.create_macro_interp): Rt, restored, would never run its build
+	// macro again in the next one, and every build after the fix would fail. The
+	// modules whose macros ran in the discarded interpreter are typed again
+	// (CompilationCache.taintMacroModules; a divergence from upstream). The
+	// erroneous build fails as the fresh one does ('!')
+	const good = '#if macro\nclass Bad {\n\tpublic static function build():Array<haxe.macro.Expr.Field>\n\t\treturn null;\n}\n#end\n';
+	const bad = '#if macro\nclass Bad {\n\tpublic static function build():Array<haxe.macro.Expr.Field>\n\t\treturn 1 + "x" * 2;\n}\n#end\n';
+	cases["a build macro's persistent state, after an error in a macro"] = [
+		{
+			...persistent[0],
+			'Bad.hx': good,
+			'Other.hx': '@:build(Bad.build())\nclass Other {\n\tpublic static var y = 3;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Tpl.use() + Other.y);\n\t}\n}\n',
+		},
+		{ '-D': 'two' },
+		{ '-D': 'one', 'Bad.hx': bad, '!': true },
+		{ '-D': 'one', 'Bad.hx': good },
+		{ '-D': 'two' },
+		{ '-D': 'one' },
+	];
+}
 
 // the cases built for this machine and run (their arguments), the server's
 // output as the fresh one
@@ -240,17 +327,26 @@ for (const hxb of [false, true])
 		fs.mkdirSync(path.join(work, 'src'));
 		await serve(async (request, serverOutput) => {
 			for (let i = 0; i < steps.length; i++) {
-				for (const [f, text] of Object.entries(steps[i])) {
+				const { '-D': define, '!': fails, ...files } = steps[i];
+				const more = [...(runs.get(name) ?? []), ...(define ? ['-D', define] : [])];
+				for (const [f, text] of Object.entries(files)) {
 					fs.writeFileSync(path.join(work, 'src', f), text);
 					await request(work, ['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file: path.join(work, 'src', f) } })]);
 				}
-				const answer = await request(work, [...args(out, runs.get(name)), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
-				const fresh = spawnSync(compiler, args(ref, runs.get(name)), { cwd: work, env, encoding: 'utf8' });
+				const answer = await request(work, [...args(out, more), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
+				const fresh = spawnSync(compiler, args(ref, more), { cwd: work, env, encoding: 'utf8' });
+				// (a build that fails, as the fresh one does)
+				if (fails) {
+					const ok = answer.includes('\x02') && fresh.status !== 0;
+					console.log((ok ? 'ok   ' : 'FAIL ') + `${name} (${mode}${hxb ? ', HXB' : ''}): edit ${i} (-D ${define}), fails as the fresh build`);
+					if (!ok) failures++;
+					continue;
+				}
 				let same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(work, out)), fs.readFileSync(path.join(work, ref))) === 0;
 				// (and the server's output runs as the fresh one does)
 				const ran = same && runs.has(name) ? [out, ref].map((o) => spawnSync(path.join(work, o), { cwd: work, encoding: 'utf8' })) : null;
 				if (ran) same = ran[0].status === 0 && ran[0].stdout === ran[1].stdout;
-				const what = `${name} (${mode}${hxb ? ', HXB' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`);
+				const what = `${name} (${mode}${hxb ? ', HXB' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`) + (define ? ` (-D ${define})` : '');
 				console.log((same ? 'ok   ' : 'FAIL ') + what);
 				if (!same) {
 					failures++;
