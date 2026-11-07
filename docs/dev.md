@@ -98,5 +98,6 @@ back from HXB, and connected (`--server-connect`, as helder's tools run
 it): there each answer arrives whole (its length and text in one write: two
 writes wait for the client's delayed ACK, 40 ms an answer), and an edit
 compiles only the modules it names (a module's functions reached in another
-order: [hxmc.md](hxmc.md#pipeline)). The swaps with state are tested in
+order: [hxmc.md](hxmc.md#pipeline)); and a frontend's server whose hook
+rewrites bodies no edit changes (`hxmc/test/frontend/Hook.hx`). The swaps with state are tested in
 universe.

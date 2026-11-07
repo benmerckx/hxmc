@@ -92,7 +92,9 @@ The hook may push functions on `prog.funcs` (a `FuncInfo` with a
 `module`: hxmc compiles each module's functions into one object), and
 reach them from code it changes or from `prog.roots`. Under a compilation
 server the lowered bodies are reused between builds (`LowerCache`): give a
-function a new `body` vector rather than writing into the one it has.
+function a new `body` vector rather than writing into the one it has (a
+body the hook replaced is scanned anew by Facts: what LowerCache keeps of a
+scan is the lowering's body's).
 `hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.

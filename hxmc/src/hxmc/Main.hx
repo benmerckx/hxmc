@@ -204,7 +204,10 @@ class Main {
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
 		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
-		if (beforeCodegen != null) beforeCodegen(com, prog);
+		if (beforeCodegen != null) {
+			beforeCodegen(com, prog);
+			if (useCache) lowerCache.hooked(prog);
+		}
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);

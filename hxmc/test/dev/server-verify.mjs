@@ -8,7 +8,8 @@
 // the program use code it did not use before while hxmc's LowerCache replays
 // the bodies of the modules not typed again, and what a macro's callback
 // defines while modules are reused.
-//   node hxmc/test/dev/server-verify.mjs <compiler> [native|web]
+//   node hxmc/test/dev/server-verify.mjs <compiler> [native|web|frontend]
+// (frontend: the compiler is hxmc/test/frontend/Hook.hx's, its own cases)
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -21,6 +22,7 @@ const repo = path.resolve(here, '../../..');
 const [compilerArg, mode = 'native'] = process.argv.slice(2);
 const compiler = path.resolve(compilerArg ?? 'bin/hxmc/hxmc');
 const web = mode === 'web';
+const frontend = mode === 'frontend';
 
 // name: [the first sources, then each edit (the files it writes; '#compiled':
 // the modules whose objects that build compiles, all others' reused)]
@@ -175,6 +177,32 @@ class Gen {
 	],
 };
 
+// a frontend's hook (hxmc/test/frontend/Hook.hx) changes Lib's bodies, which
+// no edit changes, after the lowering: each build must be the fresh one's,
+// and Lib's bodies reused (a callee of the body the hook made in an earlier
+// build is not this one's: the whole lowering again)
+const frontendCases = {
+	// (the hook adds a call of a function it makes anew each build)
+	"a body a frontend's hook rewrites every build": [
+		{
+			'Lib.hx': 'class Lib {\n\tpublic static function f(x:Int):Int\n\t\treturn x * 3 + 1;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(2));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(3));\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(4) + 1);\n\t}\n}\n' },
+	],
+	// (Lib.g reaches no GC point but when the hook adds the call of Lib.alloc:
+	// then main keeps `keep`, live across its call alone, in its frame)
+	"a body a frontend's hook makes allocate": [
+		{
+			'Lib.hx': 'class Lib {\n\t// (too large to be inlined: its own no-GC flag is what main\'s call reads)\n\tpublic static function g(x:Int):Int {\n\t\tvar t = 0;\n\t\tfor (i in 0...x) {\n\t\t\tt += i * 3 + (t >> 1) - (i & 7);\n\t\t\tif (t > 1000) t -= 999;\n\t\t\tt ^= i << 2;\n\t\t}\n\t\treturn t + x * 3 + 1 + (x & 5) * 7 - (x >> 2);\n\t}\n\n\tstatic var made:Array<String> = [];\n\n\tpublic static function alloc():Int {\n\t\tmade.push("x" + made.length);\n\t\treturn made.length;\n\t}\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.g(2) + Lib.alloc());\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic var last:Array<Int>;\n\n\tstatic function extra():Int\n\t\treturn 5;\n\n\tstatic function main() {\n\t\tvar n = Lib.alloc();\n\t\tvar keep = [extra() + n];\n\t\tvar r = Lib.g(2);\n\t\tlast = keep;\n\t\ttrace(keep[0] + r);\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.g(3) + Lib.alloc());\n\t}\n}\n' },
+	],
+};
+
 // the cases built for this machine and run (their arguments), the server's
 // output as the fresh one
 const runs = new Map();
@@ -283,11 +311,12 @@ async function serveConnected(env, run) {
 	server.stderr.on('data', (d) => (output += d));
 	const sock = await new Promise((r) => listener.once('connection', r));
 	listener.close();
-	let buf = Buffer.alloc(0), waiting = null, first = 0;
+	let buf = Buffer.alloc(0), waiting = null, reads = 0;
 	const take = () => {
 		if (waiting && buf.length >= 4 && buf.length >= 4 + buf.readInt32LE(0)) {
-			// (from its first bytes to its last)
-			gaps.push(performance.now() - first);
+			// (a small answer in one write arrives in one read)
+			answers++;
+			if (reads > 1 && buf.readInt32LE(0) < 16384) split++;
 			const n = buf.readInt32LE(0), answer = buf.subarray(4, 4 + n).toString('utf8');
 			buf = buf.subarray(4 + n);
 			const w = waiting;
@@ -296,7 +325,7 @@ async function serveConnected(env, run) {
 		}
 	};
 	sock.on('data', (d) => {
-		if (buf.length === 0) first = performance.now();
+		reads = buf.length === 0 ? 1 : reads + 1;
 		buf = Buffer.concat([buf, d]);
 		take();
 	});
@@ -319,14 +348,15 @@ async function serveConnected(env, run) {
 }
 
 let failures = 0;
-// the connected server's answers, from their first bytes to their last: one
-// written as two writes (its length, then its text) waits for the client's
-// delayed ACK of the first (40 ms)
-const gaps = [];
+// the connected server's answers, and the small ones that took more than one
+// read: written as two writes (its length, then its text), an answer waits
+// for the client's delayed ACK of the first (40 ms), and its text comes in a
+// read of its own; one write comes in one
+let answers = 0, split = 0;
 // (the server's typed modules kept in memory, as `hxmc dev` asks, and read
 // back from HXB, its default; and the connected server, in memory, as helder's)
 for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
-	for (const [name, steps] of Object.entries(cases)) {
+	for (const [name, steps] of Object.entries(frontend ? frontendCases : cases)) {
 		const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hxmc-server-verify-'));
 		fs.mkdirSync(path.join(work, 'src'));
 		// (an object store of its own: what '#compiled' counts is what this
@@ -349,7 +379,13 @@ for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
 				// (the modules whose objects the build compiled: HXMC_STATS, the
 				// server's output, or the answer's, after the request)
 				const expect = steps[i]['#compiled'];
-				let compiled = null, counted = false;
+				let compiled = null, counted = false, restarted = null;
+				// (a frontend's: Lib's bodies reused, the lowering not done again)
+				if (frontend && same && i > 0) {
+					await new Promise((r) => setTimeout(r, 100));
+					restarted = /lowered again: ([^)\n]*)/.exec(since(from) + answer)?.[1] ?? null;
+					if (restarted != null) same = false;
+				}
 				if (expect && same) {
 					counted = true;
 					await new Promise((r) => setTimeout(r, 100));
@@ -363,16 +399,15 @@ for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
 				if (!same) {
 					failures++;
 					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}`
-						: counted ? `compiled ${compiled == null ? '(no stats)' : '[' + compiled.join(', ') + ']'}, expected [${expect.join(', ')}]` : 'the outputs differ');
+						: restarted != null ? `the lowering was done again (${restarted})` : counted ? `compiled ${compiled == null ? '(no stats)' : '[' + compiled.join(', ') + ']'}, expected [${expect.join(', ')}]` : 'the outputs differ');
 				}
 			}
 		});
 		fs.rmSync(work, { recursive: true, force: true });
 	}
 // (the connected server answers at once: its length and text in one write, Server.mkLengthPrefixedCommunication)
-const slowest = Math.max(...gaps);
-const prompt = slowest < 20;
-console.log((prompt ? 'ok   ' : 'FAIL ') + `the connected server's answers arrive whole: at most ${slowest.toFixed(1)} ms from the first byte to the last (${gaps.length} answers)`);
+const prompt = split === 0;
+console.log((prompt ? 'ok   ' : 'FAIL ') + `the connected server's answers come in one write: ${split} of ${answers} came in more than one read`);
 if (!prompt) failures++;
 console.log(failures === 0 ? 'server-verify: ok' : `server-verify: ${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);

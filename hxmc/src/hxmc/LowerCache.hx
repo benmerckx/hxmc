@@ -46,7 +46,8 @@ import core.TType;
 // names it uses) is kept with its entry after the build that recorded it,
 // and a replay hands it to the new function (FuncInfo.gcScanned, its callees
 // bound), which Facts takes instead of scanning the copy when the program
-// reads stacks as that build's did (Reach drops calls otherwise).
+// reads stacks as that build's did (Reach drops calls otherwise), and when
+// no frontend's hook replaced the body after the lowering (hooked).
 class LowerCache {
 	var entries = new haxe.ds.ObjectMap<TClassField, Entry>();
 	var byKey = new Map<String, Entry>(); // by module, class and field (CachedLower.stableKey)
@@ -83,6 +84,11 @@ class LowerCache {
 	// found in them (Entry.gcScan)
 	var recorded:Array<Entry> = [];
 	var last:Null<Program> = null;
+	// the bodies the lowering gave each function, and the functions whose
+	// body a frontend's hook replaced after it (Main.beforeCodegen: hooked):
+	// what Facts found in those is not that of the body an entry holds
+	var lowered = new haxe.ds.ObjectMap<FuncInfo, haxe.ds.Vector<Stmt>>();
+	var rewritten = new haxe.ds.ObjectMap<FuncInfo, Bool>();
 
 	public function lower(main:TClass, types:Array<ModuleType>, basic:BasicTypes):Program {
 		hits = misses = keyed = 0;
@@ -90,9 +96,11 @@ class LowerCache {
 		build++;
 		if (last != null)
 			for (e in recorded)
-				if (e.gcScan == null && e.fi.gcScan != null) e.gcScan = {stacks: last.stacks, scan: e.fi.gcScan};
+				if (e.gcScan == null && e.fi.gcScan != null && !rewritten.exists(e.fi)) e.gcScan = {stacks: last.stacks, scan: e.fi.gcScan};
 		recorded = [];
 		last = null;
+		lowered = new haxe.ds.ObjectMap();
+		rewritten = new haxe.ds.ObjectMap();
 		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.lines != lines
 			|| Lower.bounds != bounds || Lower.nullChecks != nullChecks || Lower.spanChecks != spanChecks || !sameNames(Lower.resources, resources)) {
 			entries = new haxe.ds.ObjectMap();
@@ -121,7 +129,21 @@ class LowerCache {
 		lambdas = l.newLambdas;
 		byKey = l.newByKey;
 		last = prog;
+		for (f in prog.funcs)
+			lowered.set(f, f.body);
 		return prog;
+	}
+
+	// a frontend's hook ran on the program lowered (Main.beforeCodegen): a
+	// function whose body it replaced is scanned anew, and its scan is not
+	// kept with the entry (the hook may make the body again each build, a
+	// function it adds a callee of it)
+	public function hooked(prog:Program) {
+		for (f in prog.funcs)
+			if (lowered.get(f) != f.body) {
+				f.gcScanned = null;
+				rewritten.set(f, true);
+			}
 	}
 
 	@:allow(hxmc.CachedLower) function entry(cf:TClassField):Null<Entry>
