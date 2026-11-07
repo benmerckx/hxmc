@@ -366,8 +366,8 @@ class MirBuild extends MirWriter {
 		var maxId = 0;
 		for (l in fn.args.concat(fn.locals)) {
 			if (l.id >= maxId) maxId = l.id + 1;
-			varTy.set(l.id, mty(l.ty) == Void ? I32 : mty(l.ty));
-			localTy.set(l.id, l.ty);
+			varTy[l.id] = mty(l.ty) == Void ? I32 : mty(l.ty);
+			localTy[l.id] = l.ty;
 		}
 		nextVar = maxId;
 		roots = Roots.analyze(fn);

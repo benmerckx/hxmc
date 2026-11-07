@@ -22,10 +22,10 @@ class MirWriter {
 	var cur:MBlock;
 	var defs:Array<BlockDefs> = []; // by block id
 	var incomplete:Array<Null<Map<Int, MIns>>> = []; // (made when a block gets one)
-	var varTy = new Map<Int, MTy>();
+	var varTy:Array<MTy> = [];
 	var nextVar = 0;
 	// the locals' types (MIns.vty of the phis and zeros made for them)
-	var localTy = new Map<Int, Ty>();
+	var localTy:Array<Ty> = [];
 
 	// (-debug) the source position of the code being written (SrcPos):
 	// the instructions it adds carry it
@@ -412,7 +412,7 @@ class MirWriter {
 
 	function newVar(t:MTy):Int {
 		var v = nextVar++;
-		varTy.set(v, t);
+		varTy[v] = t;
 		return v;
 	}
 
@@ -421,7 +421,7 @@ class MirWriter {
 
 	function readVar(v:Int, b:MBlock):Int {
 		var d = defs[b.id].get(v);
-		if (d != null) return d == VISITING ? cyclePhi(v, b) : d;
+		if (d != BlockDefs.MISSING) return d == VISITING ? cyclePhi(v, b) : d;
 		return readVarRec(v, b);
 	}
 
@@ -431,7 +431,7 @@ class MirWriter {
 	// a read that came back to a block whose predecessors are being read:
 	// the phi there (its operands are those reads)
 	function cyclePhi(v:Int, b:MBlock):Int {
-		var phi = newPhi(b, varTy.get(v));
+		var phi = newPhi(b, varTy[v]);
 		defs[b.id].set(v, phi.id);
 		return phi.id;
 	}
@@ -449,7 +449,7 @@ class MirWriter {
 	}
 
 	function readVarRec(v:Int, b:MBlock):Int {
-		var t = varTy.get(v);
+		var t = varTy[v];
 		var val:Int;
 		if (!b.sealed) {
 			var phi = newPhi(b, t);
@@ -494,7 +494,7 @@ class MirWriter {
 		}
 		writeVar(v, b, val);
 		var x = f.vals[val];
-		if (x.vty == null) x.vty = localTy.get(v);
+		if (x.vty == null) x.vty = localTy[v];
 		return val;
 	}
 
@@ -578,16 +578,19 @@ class MirWriter {
 // the values of SSA variables at the end of a block (Braun et al.'s
 // currentDef for one block): few entries, a linear list
 class BlockDefs {
+	// Value IDs are nonnegative; -2 is the builder's cycle marker. A
+	// missing entry needs no nullable Int box on this hot path.
+	public static inline var MISSING = -1;
 	var keys:Array<Int> = [];
 	var vals:Array<Int> = [];
 
 	public function new() {}
 
-	public function get(v:Int):Null<Int> {
+	public function get(v:Int):Int {
 		var k = keys.length;
 		while (k-- > 0)
 			if (keys[k] == v) return vals[k];
-		return null;
+		return MISSING;
 	}
 
 	public function set(v:Int, val:Int) {
