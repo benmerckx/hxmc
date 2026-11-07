@@ -56,6 +56,10 @@ Conventions:
 - Program-wide numbers (type indices, field ids, offsets) are absolute
   symbols the linker resolves, so a module's code does not change when the
   numbering does.
+- A module's object has its functions in the order of their symbols, not
+  in the order the lowering reached them (`Driver.build`): an edit elsewhere
+  that makes the program reach them in another order leaves its key and
+  object as they were.
 - A change of the runtime's interface or the IR's conventions needs a tool
   that knows it: build once against the previous runtime first, or
   bootstrap again.

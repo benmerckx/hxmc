@@ -445,6 +445,15 @@ class Driver {
 			}
 			fs.push(f);
 		}
+		// each module's functions by their symbols, not in the order the
+		// lowering reached them: an edit elsewhere that reaches them in
+		// another order (helder's markup using a style setter first) leaves
+		// the module's key, and its object, as they were
+		for (m in order)
+			byModule.get(m).sort((a, b) -> {
+				var x = prep.funcSym(a), y = prep.funcSym(b);
+				x < y ? -1 : x > y ? 1 : 0;
+			});
 		// the objects: in the store, else next to the output
 		var store = CacheStore.open();
 		var dir = out + ".hxmc";
@@ -472,6 +481,7 @@ class Driver {
 		var keys = new haxe.ds.Vector<String>(nm, "");
 		var lits = new haxe.ds.Vector<Array<String>>(nm);
 		var objs:Array<Obj> = [for (_ in 0...nm) null];
+		var compiled = new haxe.ds.Vector<Bool>(nm, false);
 		var s0 = haxe.Timer.stamp();
 		// (the functions that may be inlined: their digests first, Fingerprint.Inlined)
 		var inlined:Null<Fingerprint.Inlined> = null;
@@ -518,6 +528,7 @@ class Driver {
 				hits++;
 			} else {
 				todo.push(mi);
+				compiled[mi] = true;
 				misses++;
 			}
 		}
@@ -764,6 +775,11 @@ class Driver {
 		}
 		if (o.stats) {
 			Sys.println('hxmc: modules ${order.length}: ${hits} cached, ${misses} compiled (keys and reading ${ms(tKey)})');
+			// (which, the first ten in module order)
+			if (misses > 0) {
+				var names = [for (mi in 0...nm) if (compiled[mi]) order[mi]];
+				Sys.println('hxmc: compiled ' + names.slice(0, 10).join(", ") + (names.length > 10 ? ', ... (${names.length})' : ''));
+			}
 			Sys.println('hxmc: data ${ms(t3 - t2)}, runtime read ${ms(t4 - t3)}, link ${ms(haxe.Timer.stamp() - t4)}');
 		}
 	}
