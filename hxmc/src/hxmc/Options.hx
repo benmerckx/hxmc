@@ -304,6 +304,16 @@ class Options {
 		if (ls != null)
 			for (p in ls.split(","))
 				if (StringTools.trim(p) != "") o.links.push(sys.FileSystem.absolutePath(StringTools.trim(p)));
+		// A diagnostic reference for optimized code: keep the generated
+		// checks by disabling Mir optimization, including check elimination.
+		// Apply last so narrower switches cannot weaken the checked build.
+		if (def("hxmc.checked") != null) {
+			o.opt = false;
+			o.bounds = hxmc.ir.Lower.BOUNDS_THROWS;
+			o.nullChecks = true;
+			o.spanChecks = true;
+			o.verifyTags = true;
+		}
 		return o;
 	}
 }

@@ -23,7 +23,7 @@ Lanes (repeatable; default diff:hxb):
                               outputs (and with --run, program output) must be identical
   --lane exec:<a>,<b>         both run the program; program output must be identical
                               (a side is [ref:|port:]<target>; default compiler: ref)
-Targets: hxb interp js lua python neko hl hlc php cpp jvm swf hxmc hxmc-wasm, or --target-def.
+Targets: hxb interp js lua python neko hl hlc php cpp jvm swf hxmc hxmc-checked hxmc-wasm, or --target-def.
 
 Options:
   --ref CMD           reference compiler (default $HAXE_REFERENCE or bin/reference/haxe)
