@@ -175,7 +175,8 @@ walks the superclasses.
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
 wasm32). The nursery is collected by copying into the old space; the old
-space by copying into a new region.
+space by copying into a new region (on wasm32, compacted where it is
+unless free memory holds the copy: [WebAssembly](#memory)).
 
 - **Nursery size** adapts: it starts at 4 MB, doubles after a minor
   collection that promoted more than 1/16 of what was allocated, and halves
@@ -1378,6 +1379,33 @@ Linear memory only grows, and browsers refuse it early, so the runtime
   because node collects its own heap after each `memory.grow`.
 - Only memory handed out before and freed is zeroed: fresh memory from
   `memory.grow` is zero already.
+- `RT_MAX_MB` is a budget: memory grows ahead (the eighth) only up to it,
+  and a major collection's next limit leaves room in it for the memory
+  taken at startup, the nursery, a nursery's promotion and a collection's
+  tables (a 32nd of memory), so collections come sooner as what is live
+  nears it. It is soft: memory still grows past it when what is live
+  needs it.
+
+A major collection compacts the old space where it is (`compactOld`)
+unless the memory already free (free chunks and regions) holds a copy of
+the old space's chunks whatever they hold, when it copies as before. A
+copy needs memory for all that is live beside the old space, so a copying
+collection's peak is the old space and what is live (a resident compiler
+keeping 500 MB live reached 1.8 GB); a compaction's is the old space and
+a 64th of memory for the marks, and 4 bytes per live object (taken from
+free chunks first). It runs a minor collection (the nursery into the old
+space), marks what is live (the bits `reserveExact` uses), then, in the
+order of the chunks' list: the plan gives each live object of a chunk its
+new address, written over the upper half of its header (an identity
+hash, a string's hash, an array's length: a chunk's object's size is in
+the lower half; what was there kept aside, in the plan's order), each
+chunk filled up to where the next object does not fit; every reference
+of the roots and of the live objects is updated from those headers; the
+objects slide towards the list's start (a move never overwrites an object
+not moved yet), their headers restored; the chunks left empty go to the
+free chunks. Large objects stay where they are. It costs about 1.7 times
+a copying collection's time for as much live (two traces and three walks
+of the chunks, against one trace). `RT_COMPACT=0` copies always.
 
 Objects over 128 KB get a region of their own in the old space (aligned to
 64 KB, the granule of the table that says which space an address is in).
@@ -1385,6 +1413,10 @@ A major collection promotes a reached one in place: its region joins the
 to-space as it is, unmoved and uncopied, and the regions of those not
 reached go back to the heap. So a 48 MB `Bytes` costs 48 MB, not 96 MB at
 each major collection.
+
+A large object's region comes from the freed regions; when none is large
+enough, the free chunks are given back to them first (neighbours merge)
+rather than memory grown for it.
 
 A host may refuse `memory.grow` well below 4 GB (Chrome on Android), and a
 copying collection cannot stop halfway, so each collection takes the
@@ -1536,6 +1568,8 @@ For compiled programs (run time):
 | `RT_VERIFY=1` | fill the free nursery with a pattern; an allocation in a safe region is fatal |
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
+| `RT_MAX_MB` | wasm32: a budget for linear memory: collections come sooner as what is live nears it (soft: [WebAssembly](#memory)) |
+| `RT_COMPACT=0` | wasm32: a major collection copies what is live always, rather than compacting the old space when free memory does not hold the copy |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |
 | `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
