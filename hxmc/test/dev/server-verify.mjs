@@ -6,7 +6,8 @@
 // the same sources makes (and on macOS, an Objective-C program built for the
 // machine runs as the fresh one does). What it checks is an edit that makes
 // the program use code it did not use before while hxmc's LowerCache replays
-// the bodies of the modules not typed again.
+// the bodies of the modules not typed again, and what a macro's callback
+// defines while modules are reused.
 //   node hxmc/test/dev/server-verify.mjs <compiler> [native|web]
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -67,6 +68,72 @@ const cases = {
 		{ 'CLib.hx': 'extern class CLib {\n\t@:hxmc.c("getpid") @:hxmc.fast static function getpid():Int;\n}\n' },
 		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.pid() != 0);\n\t}\n}\n' },
 		{ 'CLib.hx': 'extern class CLib {\n\t@:hxmc.c("getpid") static function getpid():Int;\n}\n' },
+	],
+	// a class an onAfterTyping callback defines from the program's types
+	// (helder's Late_<hash>, named by its code), the callback registered by
+	// Tpl's build macro. Tpl edited: the class of the compilation before is
+	// not in the program (upstream makes it a dependency of the macro API's
+	// current module, Other, whose macro made the macros' context first, and
+	// its server restores it with Other beside the new one: [one,two]; a
+	// divergence from upstream, MacroContext.defineType, docs/porting.md).
+	// Other edited, Tpl reused: Tpl is typed again, so that its macro
+	// registers the callback again (hxmc.ServerCallbacks; else no class: null)
+	"a class a callback defines, in the next compilations": [
+		{
+			'Reg.hx': 'class Reg {\n\tpublic static var log:Array<String>;\n\n\tpublic static function add(s:String) {\n\t\tif (log == null) log = [];\n\t\tlog.push(s);\n\t}\n}\n',
+			'Gen.hx': `import haxe.macro.Context;
+
+class Gen {
+	static var hooked = false;
+
+	public static function build():Array<haxe.macro.Expr.Field> {
+		if (!hooked) {
+			hooked = true;
+			Context.onAfterTyping(late);
+		}
+		return null;
+	}
+
+	public static function other():Array<haxe.macro.Expr.Field>
+		return null;
+
+	// (defined already: the callbacks run again)
+	static function has(types:Array<haxe.macro.Type.ModuleType>, name:String):Bool {
+		for (t in types)
+			switch t {
+				case TClassDecl(c) if (c.get().name == name): return true;
+				case _:
+			}
+		return false;
+	}
+
+	static function late(types:Array<haxe.macro.Type.ModuleType>) {
+		for (t in types)
+			switch t {
+				case TClassDecl(c):
+					for (m in c.get().meta.extract(":tpl"))
+						switch m.params[0].expr {
+							case EConst(CString(s, _)):
+								var name = "Late_" + s;
+								if (!has(types, name))
+									Context.defineType({pack: [], name: name, pos: Context.currentPos(), meta: [{name: ":keep", pos: Context.currentPos()}], kind: TDClass(),
+										fields: (macro class {
+											static function __init__() Reg.add($v{s});
+										}).fields});
+							case _:
+						}
+				case _:
+			}
+	}
+}
+`,
+			'Tpl.hx': '@:build(Gen.build()) @:tpl("one")\nclass Tpl {\n\tpublic static var x = 1;\n}\n',
+			'Other.hx': '@:build(Gen.other())\nclass Other {\n\tpublic static var y = 2;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Other.y + Tpl.x + " " + Reg.log);\n\t}\n}\n',
+		},
+		{ 'Tpl.hx': '@:build(Gen.build()) @:tpl("two")\nclass Tpl {\n\tpublic static var x = 1;\n}\n' },
+		{ 'Other.hx': '@:build(Gen.other())\nclass Other {\n\tpublic static var y = 3;\n}\n' },
+		{},
 	],
 };
 

@@ -798,11 +798,15 @@ class ModuleCache {
 		state = null;
 		ServerCache.checkModuleHook = null;
 		typing.Finalization.sortExprHook = null;
+		ServerCallbacks.uninstall();
 		var why = wanted(com) ? unusable(com, actx) : "off";
 		var s = why == null ? open(com) : null;
 		early = [];
 		// (a server's earlier builds' typers: no longer used, and each keeps its build's modules)
 		typers = [];
+		// (the server's own: a module whose macros registered a callback that
+		// defined a module, typed again in the next compilation)
+		if (com.sctx.isServer || Driver.resident) ServerCallbacks.install();
 		if (s == null) {
 			if (why == null) why = "no cache directory";
 			if (why != "off" && stats()) Sys.println('hxmc: module cache not used ($why)');

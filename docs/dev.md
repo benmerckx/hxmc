@@ -92,5 +92,6 @@ value, key, ...
 (`hxmc/test/dev/dev-console.mjs`): the first build runs with `HXMC_DEV`
 set, an edit replaces it, a compile error leaves it running, the fix runs.
 `server-verify.mjs` checks that a compilation server's builds through edits
-are byte-identical to fresh builds. The swaps with state are tested in
+are byte-identical to fresh builds (also when a macro's callback defines a
+class: [hxmc.md](hxmc.md#module-cache)). The swaps with state are tested in
 universe.

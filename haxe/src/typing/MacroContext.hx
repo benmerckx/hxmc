@@ -97,6 +97,53 @@ class MacroContext {
 	// module cache: whether the definition was part of that module's typing)
 	public static var definedHook:Null<(ModuleDef, ModuleDef) -> Void> = null;
 
+	// port: diverges from upstream (defineType, defineModule): whether a
+	// callback of the macro API (afterInitMacros, onAfterTyping, onGenerate,
+	// onAfterGenerate) is running, outside a macro call (doCallMacro), that is
+	// outside the typing of any module
+	static var inCallback = false;
+
+	// port: (not upstream) the module whose typing registered the callback
+	// running (a macro called while it was typed: its call's API's current
+	// module); null when an init macro or another callback registered it
+	static var registrant:Null<ModuleDef> = null;
+
+	// port: hook (not upstream): a callback running outside a macro call
+	// defined a module (defineType, defineModule), given the module whose
+	// typing registered the callback (registrant). The definition is kept with
+	// no module (inCallback): the tool's compilation server types the
+	// registrant again in its next compilation, so that its macros register
+	// the callback again and it defines the module again (hxmc.ServerCallbacks)
+	public static var callbackDefinedHook:Null<ModuleDef->Void> = null;
+
+	// port: (not upstream) the API of the macro call running (doCallMacro), null outside one
+	static var callApi:Null<CompilerApi> = null;
+
+	// port: (not upstream) what runs a callback of the macro API registered
+	// now, as such (inCallback; its registrant if a module's typing registers it)
+	static function asCallback(com:CommonContext):(Void->Void)->Void {
+		var stage = Type.enumIndex(com.stage);
+		var by = inCallback || callApi == null || stage < Type.enumIndex(CInitMacrosDone)
+			|| stage >= Type.enumIndex(CTypingDone) ? null : callApi.currentModule();
+		return function(f:Void->Void) {
+			var old = inCallback, oldBy = registrant;
+			inCallback = true;
+			registrant = by;
+			try f() catch (e:Dynamic) {
+				inCallback = old;
+				registrant = oldBy;
+				throw e;
+			}
+			inCallback = old;
+			registrant = oldBy;
+		}
+	}
+
+	// port: (not upstream) a callback defined a module (callbackDefinedHook)
+	static function definedInCallback() {
+		if (registrant != null && callbackDefinedHook != null) callbackDefinedHook(registrant);
+	}
+
 	public static var macroInterpCache:Null<macros.eval.EvalContext.Context> = null;
 
 	// port: hook (not upstream): the macro context's platform when its code is not
@@ -226,33 +273,37 @@ class MacroContext {
 			getModule: function(s) return badStage(),
 			includeModule: function(s) badStage(),
 			afterInitMacros: function(f) {
+				var run = asCallback(com); // port: (not upstream)
 				com.callbacks.addAfterInitMacros(function() {
 					macroTimer(com.timerCtx, timerLevel, ["afterInitMacros"], null, function(_:Null<Bool>) {
-						f();
+						run(f); // port: run (not upstream)
 						return null;
 					}, null);
 				});
 			},
 			afterTyping: function(f) {
+				var run = asCallback(com); // port: (not upstream)
 				com.callbacks.addAfterTyping(function(tl) {
 					macroTimer(com.timerCtx, timerLevel, ["afterTyping"], null, function(tl) {
-						f(tl);
+						run(() -> f(tl)); // port: run (not upstream)
 						return null;
 					}, tl);
 				});
 			},
 			onGenerate: function(f, b) {
+				var run = asCallback(com); // port: (not upstream)
 				(b ? com.callbacks.addBeforeSave : com.callbacks.addAfterSave)(function() {
 					macroTimer(com.timerCtx, timerLevel, ["onGenerate"], null, function(tl) {
-						f(tl);
+						run(() -> f(tl)); // port: run (not upstream)
 						return null;
 					}, com.types.map(typeOfModuleType));
 				});
 			},
 			afterGenerate: function(f) {
+				var run = asCallback(com); // port: (not upstream)
 				com.callbacks.addAfterGeneration(function() {
 					macroTimer(com.timerCtx, timerLevel, ["afterGenerate"], null, function(_:Null<Bool>) {
-						f();
+						run(f); // port: run (not upstream)
 						return null;
 					}, null);
 				});
@@ -595,6 +646,7 @@ class MacroContext {
 					previouslyDefinedError(m, mpath, p);
 				} catch (_:NotFound) {
 					ctx.com.cs.taintModule(mpath, DefineType);
+					var unrelated = mdep == null && inCallback; // port: (not upstream) see below
 					var mdep = mdep == null ? ctx.m.curmod : TypeloadModule.loadModule(ctx, AstTools.parsePath(mdep), pos, MDepFromMacro);
 					var mnew = TypeloadModule.typeModule(ctx.com, ctx.g, mpath,
 						ctx.com.partScope.fileKeys.generateVirtual(mpath, ctx.com.partScope.compilationStep), vector(
@@ -605,7 +657,16 @@ class MacroContext {
 					), pos, hasNativeMeta);
 					mnew.mExtra.mKind = isMacro ? MMacro : MFake;
 					addDependency(mnew, mdep, MDepFromMacro);
-					addDependency(mdep, mnew, MDepFromMacroDefine);
+					// port: diverges from upstream: a callback's definition (inCallback), with
+					// no module named for it, is not made a dependency of the API's current
+					// module. That module is only the one whose typer first made the macros'
+					// context in this compilation, not what made the definition: a compilation
+					// server reusing it in a later compilation would restore the definition
+					// with it, beside what the callback, run again, defines (two generations
+					// of a generated class in one program; a fresh build has one). Upstream
+					// adds the edge (MDepFromMacroDefine); 4.3's server restored no such
+					// definition.
+					if (!unrelated) addDependency(mdep, mnew, MDepFromMacroDefine) else definedInCallback();
 					if (definedHook != null) definedHook(mnew, mdep); // port: hook (not upstream)
 					ctx.com.moduleNonexistentLut.clear();
 				}
@@ -650,7 +711,8 @@ class MacroContext {
 					ctx.com.partScope.fileKeys.generateVirtual(mpath, ctx.com.partScope.compilationStep), types, pos);
 				mnew.mExtra.mKind = MFake;
 				addDependency(mnew, ctx.m.curmod, MDepFromMacro);
-				addDependency(ctx.m.curmod, mnew, MDepFromMacroDefine);
+				// port: diverges from upstream: not from a callback (inCallback, as defineType's)
+				if (!inCallback) addDependency(ctx.m.curmod, mnew, MDepFromMacroDefine) else definedInCallback();
 				if (definedHook != null) definedHook(mnew, ctx.m.curmod); // port: hook (not upstream)
 				ctx.com.moduleNonexistentLut.clear();
 			}
@@ -1078,7 +1140,17 @@ class MacroContext {
 		var ictx = macros.eval.EvalContext.getCtx();
 		var path = cpath.pack.concat([cpath.name]);
 		var f = function(api:CompilerApi):haxe.ds.Option<Value> return macros.MacroEngine.engine.callPath(ictx, path, name, args, api);
-		var r = macroTimer(com.timerCtx, timerLevel, ["execution", Globals.sTypePath(cpath) + "." + name], null, f, api);
+		// port: (not upstream) a macro called from a callback types for its call site (inCallback, callApi)
+		var outer = inCallback, outerApi = callApi;
+		inCallback = false;
+		callApi = api;
+		var r = try macroTimer(com.timerCtx, timerLevel, ["execution", Globals.sTypePath(cpath) + "." + name], null, f, api) catch (e:Dynamic) {
+			inCallback = outer;
+			callApi = outerApi;
+			throw e;
+		}
+		inCallback = outer;
+		callApi = outerApi;
 		if (com.verbose)
 			Common.log(com, "Exiting macro " + Globals.sTypePath(cpath) + "." + name);
 		return r;
