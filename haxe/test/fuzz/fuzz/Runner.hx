@@ -147,6 +147,14 @@ class Runner {
 			run: "env RT_MINOR_KB=64 {out}/prog",
 			compiler: root + "/bin/hxmc/hxmc {out}/prog"
 		});
+		// Checks retained and no Mir optimizations: a differential safety lane.
+		add({
+			name: "hxmc-checked",
+			args: ["-cp", root + "/bin/hxmc/std", "--custom-target", "hxmc", "-D", "hxmc.checked"],
+			output: "none",
+			run: "env RT_MINOR_KB=64 RT_VERIFY=1 {out}/prog",
+			compiler: root + "/bin/hxmc/hxmc {out}/prog"
+		});
 		// the same as a wasm32-wasi module, run by node (hxmc/bootstrap/wasi.mjs)
 		add({
 			name: "hxmc-wasm",
