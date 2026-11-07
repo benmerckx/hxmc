@@ -73,7 +73,7 @@ package hxmc;
 		`-D hxmc.native-array-outofbounds` says.
 	**/
 	public static inline function blit<T>(src:NativeArray<T>, srcPos:Int, dest:NativeArray<T>, destPos:Int, length:Int):Void {
-		#if !hxmc.native_array_outofbounds
+		#if (!hxmc.native_array_outofbounds && !hxmc.checked)
 		// (accesses out of bounds not tested: a few elements copied here,
 		// typed, without the test of the range)
 		if (length <= 4) {

@@ -290,7 +290,9 @@ class Type {
 	// runtime reads the value untested: WebAssembly tests it here unless
 	// -D hxmc.null-checks=0, the native targets fault there, hxmc.rt.Faults)
 	static inline function nullAccess(e:EnumValue) {
-		#if (hxmc.null_checks != "0")
+		#if hxmc.checked
+		if (e == null) throw "Null Access";
+		#elseif (hxmc.null_checks != "0")
 		if (hxmc.unsafe.Mem.os() == 3) if (e == null) throw "Null Access";
 		#end
 	}
