@@ -31,17 +31,13 @@ class Buf {
 
 	public inline function u16(v:Int) {
 		need(2);
-		b.set(len, v);
-		b.set(len + 1, v >> 8);
+		b.setUInt16(len, v);
 		len += 2;
 	}
 
 	public inline function u32(v:Int) {
 		need(4);
-		b.set(len, v);
-		b.set(len + 1, v >> 8);
-		b.set(len + 2, v >> 16);
-		b.set(len + 3, v >>> 24);
+		b.setInt32(len, v);
 		len += 4;
 	}
 
@@ -115,18 +111,14 @@ class Buf {
 		b.set(at, v);
 
 	public inline function get32(at:Int):Int
-		return b.get(at) | (b.get(at + 1) << 8) | (b.get(at + 2) << 16) | (b.get(at + 3) << 24);
+		return b.getInt32(at);
 
 	public inline function set32(at:Int, v:Int) {
-		b.set(at, v);
-		b.set(at + 1, v >> 8);
-		b.set(at + 2, v >> 16);
-		b.set(at + 3, v >>> 24);
+		b.setInt32(at, v);
 	}
 
 	public inline function set16(at:Int, v:Int) {
-		b.set(at, v);
-		b.set(at + 1, v >> 8);
+		b.setUInt16(at, v);
 	}
 
 	public inline function set64(at:Int, lo:Int, hi:Int) {
