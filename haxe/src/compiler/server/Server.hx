@@ -118,10 +118,15 @@ class Server {
 			Sys.stdout().flush();
 			lock.acquire();
 			try {
+				// port: upstream's channel is buffered and flushed once, so the
+				// length and the answer leave in one write; two writes (the
+				// host's socket output is not buffered) wait for the client's
+				// delayed ACK of the first (Nagle): 40 ms on every answer
 				var data = Bytes.ofString(bout.toString());
-				chout.bigEndian = false;
-				chout.writeInt32(data.length);
-				chout.writeFullBytes(data, 0, data.length);
+				var framed = Bytes.alloc(4 + data.length);
+				framed.setInt32(0, data.length);
+				framed.blit(4, data, 0, data.length);
+				chout.writeFullBytes(framed, 0, framed.length);
 				chout.flush();
 				bout = new StringBuf();
 			} catch (e:Dynamic) {
