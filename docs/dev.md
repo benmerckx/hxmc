@@ -93,5 +93,10 @@ value, key, ...
 set, an edit replaces it, a compile error leaves it running, the fix runs.
 `server-verify.mjs` checks that a compilation server's builds through edits
 are byte-identical to fresh builds (also when a macro's callback defines a
-class: [hxmc.md](hxmc.md#module-cache)). The swaps with state are tested in
+class: [hxmc.md](hxmc.md#module-cache)), with its modules in memory, read
+back from HXB, and connected (`--server-connect`, as helder's tools run
+it): there each answer arrives whole (its length and text in one write: two
+writes wait for the client's delayed ACK, 40 ms an answer), and an edit
+compiles only the modules it names (a module's functions reached in another
+order: [hxmc.md](hxmc.md#pipeline)). The swaps with state are tested in
 universe.

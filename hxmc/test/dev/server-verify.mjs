@@ -22,8 +22,46 @@ const [compilerArg, mode = 'native'] = process.argv.slice(2);
 const compiler = path.resolve(compilerArg ?? 'bin/hxmc/hxmc');
 const web = mode === 'web';
 
-// name: [the first sources, then each edit (the files it writes)]
+// name: [the first sources, then each edit (the files it writes; '#compiled':
+// the modules whose objects that build compiles, all others' reused)]
 const cases = {
+	// a module's functions are compiled in the order of their symbols
+	// (Driver.build), not in the order the lowering reaches them: Main calling
+	// Lib's functions in another order leaves Lib's object as it was
+	"a module's functions reached in another order": [
+		{
+			'Lib.hx': 'class Lib {\n\tpublic static function a(x:Int):Int\n\t\treturn x + 1;\n\n\tpublic static function b(x:Int):Int\n\t\treturn x * 2;\n\n\tpublic static function c(s:String):String\n\t\treturn s + "!";\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.a(1) + Lib.b(2));\n\t\ttrace(Lib.c("x"));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.c("y"));\n\t\ttrace(Lib.b(2) + Lib.a(1));\n\t}\n}\n', '#compiled': ['Main'] },
+	],
+	// what Facts found in a body (FuncInfo.gcScan: its callees, its GC
+	// points) is kept with the body's LowerCache entry and handed to its
+	// replays, but only to a build that reads stacks as the one that
+	// scanned it did (Reach drops the calls recording a stack otherwise):
+	// haxe.Exception's body, replayed, as the program starts and stops
+	// reading stacks
+	"a replayed body's facts as the program starts reading stacks": [
+		{
+			'Lib.hx': 'class Lib {\n\tpublic static function check(x:Int):Int {\n\t\tif (x < 0) throw new haxe.Exception("negative " + x);\n\t\treturn [for (i in 0...x) i].length;\n\t}\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-1)) catch (e:haxe.Exception) trace(e.message);\n\t\ttrace(Lib.check(3));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-1)) catch (e:haxe.Exception) trace(e.message + " " + (e.stack.length > 0));\n\t\ttrace(Lib.check(3));\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-2)) catch (e:haxe.Exception) trace(e.message);\n\t\ttrace(Lib.check(4));\n\t}\n}\n' },
+	],
+	// a replayed body logs a type once (LowerCache: the types whose objects a
+	// type before them in its log bound are not logged): Lib's body names
+	// Point, arrays of it, nullable ints and a function type many times
+	// over; Main's edit makes the program use a class Lib's types name
+	// that it did not before
+	"a replayed body's many types": [
+		{
+			'Lib.hx': 'class Point {\n\tpublic var x:Int;\n\tpublic var y:Null<Int>;\n\n\tpublic function new(x, y) {\n\t\tthis.x = x;\n\t\tthis.y = y;\n\t}\n}\n\nclass Box {\n\tpublic var p:Point;\n\n\tpublic function new(p) this.p = p;\n}\n\nclass Lib {\n\tpublic static function sum(ps:Array<Point>, f:Point->Int):Int {\n\t\tvar t = 0;\n\t\tfor (p in ps) {\n\t\t\tvar q:Point = p;\n\t\t\tvar n:Null<Int> = q.y;\n\t\t\tt += f(q) + (n == null ? 0 : n);\n\t\t}\n\t\tvar more:Array<Point> = ps.copy();\n\t\tvar g:Point->Int = p -> p.x;\n\t\treturn t + more.length + g(ps[0]);\n\t}\n\n\tpublic static function boxed(b:Box):Int\n\t\treturn b.p.x;\n}\n',
+			'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(1, 2), new Point(3, null)], p -> p.x * 10));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(1, 2)], p -> p.x) + Lib.boxed(new Box(new Point(5, 6))));\n\t}\n}\n' },
+		{ 'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(7, null)], p -> p.x - 1));\n\t}\n}\n' },
+	],
 	// a Dynamic called as a function goes through an adapter per signature
 	// (Lower.dynAdapter): Lib's body, replayed, asks for the one of Int->Int,
 	// and Main's, lowered anew, for the same one, which the program has once
@@ -199,11 +237,15 @@ const args = (o, more = []) => [...more, '-cp', 'src', '-main', 'Main', ...(web 
 // (hxmc's std as an installation gives it, HXMC_STD: the server adds it to the
 // requests for hxmc, which name no std, as an editor's client sends them)
 const std = path.join(path.dirname(compiler), 'std');
-const env = { ...process.env, HXMC_MODULE_CACHE: '0', HAXE_STD_PATH: process.env.HAXE_STD_PATH ?? path.join(repo, 'haxe/upstream/std'),
+const env = { ...process.env, HXMC_MODULE_CACHE: '0', HXMC_STATS: '1', HAXE_STD_PATH: process.env.HAXE_STD_PATH ?? path.join(repo, 'haxe/upstream/std'),
 	...(fs.existsSync(std) ? { HXMC_STD: std } : {}) };
 
-// a compilation server per case (its modules by path: a case's Main is not another's)
-async function serve(run) {
+// a compilation server per case (its modules by path: a case's Main is not
+// another's): one waiting for connections (--wait, a request per connection),
+// or one connected to us (--server-connect, as helder's studio and helder dev
+// run it: requests and answers on one connection, each after its length)
+async function serve(connected, env, run) {
+	if (connected) return serveConnected(env, run);
 	const port = await new Promise((r) => {
 		const s = net.createServer().listen(0, '127.0.0.1', () => {
 			const p = s.address().port;
@@ -226,39 +268,111 @@ async function serve(run) {
 		go(100);
 	});
 	try {
-		await run(request, () => output.slice(-2000));
+		await run(request, () => output.slice(-2000), () => output.length, (from) => output.slice(from));
 	} finally {
 		server.kill();
 	}
 }
 
+async function serveConnected(env, run) {
+	const listener = net.createServer();
+	await new Promise((r) => listener.listen(0, '127.0.0.1', r));
+	const server = spawn(compiler, ['--server-connect', '127.0.0.1:' + listener.address().port], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+	let output = '';
+	server.stdout.on('data', (d) => (output += d));
+	server.stderr.on('data', (d) => (output += d));
+	const sock = await new Promise((r) => listener.once('connection', r));
+	listener.close();
+	let buf = Buffer.alloc(0), waiting = null, first = 0;
+	const take = () => {
+		if (waiting && buf.length >= 4 && buf.length >= 4 + buf.readInt32LE(0)) {
+			// (from its first bytes to its last)
+			gaps.push(performance.now() - first);
+			const n = buf.readInt32LE(0), answer = buf.subarray(4, 4 + n).toString('utf8');
+			buf = buf.subarray(4 + n);
+			const w = waiting;
+			waiting = null;
+			w(answer);
+		}
+	};
+	sock.on('data', (d) => {
+		if (buf.length === 0) first = performance.now();
+		buf = Buffer.concat([buf, d]);
+		take();
+	});
+	sock.on('close', () => waiting && waiting('\x02 the compilation server closed the connection'));
+	// (the length and the request in one write, as each answer comes)
+	const request = (cwd, words) => new Promise((resolve) => {
+		waiting = resolve;
+		const body = Buffer.from(['--cwd', cwd, ...words].join('\n'));
+		const head = Buffer.alloc(4);
+		head.writeInt32LE(body.length);
+		sock.write(Buffer.concat([head, body]));
+		take();
+	});
+	try {
+		await run(request, () => output.slice(-2000), () => output.length, (from) => output.slice(from));
+	} finally {
+		sock.destroy();
+		server.kill();
+	}
+}
+
 let failures = 0;
-// (the server's typed modules kept in memory, as `hxmc dev` asks, and read back from HXB, its default)
-for (const hxb of [false, true])
+// the connected server's answers, from their first bytes to their last: one
+// written as two writes (its length, then its text) waits for the client's
+// delayed ACK of the first (40 ms)
+const gaps = [];
+// (the server's typed modules kept in memory, as `hxmc dev` asks, and read
+// back from HXB, its default; and the connected server, in memory, as helder's)
+for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
 	for (const [name, steps] of Object.entries(cases)) {
 		const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hxmc-server-verify-'));
 		fs.mkdirSync(path.join(work, 'src'));
-		await serve(async (request, serverOutput) => {
+		// (an object store of its own: what '#compiled' counts is what this
+		// server, and the fresh builds after each of its builds, made)
+		const caseEnv = { ...env, HXMC_CACHE: path.join(work, 'cache') };
+		await serve(connected, caseEnv, async (request, serverOutput, mark = () => 0, since = () => '') => {
 			for (let i = 0; i < steps.length; i++) {
 				for (const [f, text] of Object.entries(steps[i])) {
+					if (f.startsWith('#')) continue;
 					fs.writeFileSync(path.join(work, 'src', f), text);
 					await request(work, ['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file: path.join(work, 'src', f) } })]);
 				}
+				const from = mark();
 				const answer = await request(work, [...args(out, runs.get(name)), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
-				const fresh = spawnSync(compiler, args(ref, runs.get(name)), { cwd: work, env, encoding: 'utf8' });
+				const fresh = spawnSync(compiler, args(ref, runs.get(name)), { cwd: work, env: caseEnv, encoding: 'utf8' });
 				let same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(work, out)), fs.readFileSync(path.join(work, ref))) === 0;
 				// (and the server's output runs as the fresh one does)
 				const ran = same && runs.has(name) ? [out, ref].map((o) => spawnSync(path.join(work, o), { cwd: work, encoding: 'utf8' })) : null;
 				if (ran) same = ran[0].status === 0 && ran[0].stdout === ran[1].stdout;
-				const what = `${name} (${mode}${hxb ? ', HXB' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`);
+				// (the modules whose objects the build compiled: HXMC_STATS, the
+				// server's output, or the answer's, after the request)
+				const expect = steps[i]['#compiled'];
+				let compiled = null, counted = false;
+				if (expect && same) {
+					counted = true;
+					await new Promise((r) => setTimeout(r, 100));
+					const text = since(from) + answer;
+					const m = /hxmc: compiled ([^\n\x01]*)/.exec(text);
+					compiled = /hxmc: modules \d+: \d+ cached, 0 compiled/.test(text) ? [] : m ? m[1].split(', ') : null;
+					same = compiled != null && compiled.join(',') === expect.join(',');
+				}
+				const what = `${name} (${mode}${hxb ? ', HXB' : ''}${connected ? ', connected' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`);
 				console.log((same ? 'ok   ' : 'FAIL ') + what);
 				if (!same) {
 					failures++;
-					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}` : 'the outputs differ');
+					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}`
+						: counted ? `compiled ${compiled == null ? '(no stats)' : '[' + compiled.join(', ') + ']'}, expected [${expect.join(', ')}]` : 'the outputs differ');
 				}
 			}
 		});
 		fs.rmSync(work, { recursive: true, force: true });
 	}
+// (the connected server answers at once: its length and text in one write, Server.mkLengthPrefixedCommunication)
+const slowest = Math.max(...gaps);
+const prompt = slowest < 20;
+console.log((prompt ? 'ok   ' : 'FAIL ') + `the connected server's answers arrive whole: at most ${slowest.toFixed(1)} ms from the first byte to the last (${gaps.length} answers)`);
+if (!prompt) failures++;
 console.log(failures === 0 ? 'server-verify: ok' : `server-verify: ${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);
