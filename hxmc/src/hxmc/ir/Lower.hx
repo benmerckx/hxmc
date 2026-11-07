@@ -185,9 +185,10 @@ class Lower implements LowerQueries {
 					if (!ofTarget(c)) continue;
 					for (cf in c.clOrderedStatics) {
 						if (cf.cfMeta.length == 0) continue;
-						// (an exported variable: data read by its symbol, always there)
+						// Data and TLS can be read by generated code's symbol alone,
+						// without any Haxe field access registering their storage.
 						if (!cf.cfKind.match(Method(_))) {
-							if (hasMeta(":hxmc.export", cf.cfMeta)) staticVar(c, cf);
+							if (hasMeta(":hxmc.export", cf.cfMeta) || hasMeta(":hxmc.threadLocal", cf.cfMeta)) staticVar(c, cf);
 							continue;
 						}
 						var n = metaString(":hxmc.export", cf.cfMeta);
