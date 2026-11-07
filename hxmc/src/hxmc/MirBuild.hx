@@ -2481,7 +2481,8 @@ class MirBuild extends MirWriter {
 
 	// StringBuf_addChar (Str.hx): the common case inline, a unit below 0x100
 	// into one-byte storage with room (hxmc.rt.MemRepr: slot 0 the length,
-	// slot 1 the storage, a string as long as the capacity)
+	// slot 0's upper half the capacity (negative when shared), slot 1 the
+	// storage. A shared snapshot must go through reserve's copy on write.
 	function stringBufAddChar(b:Int, c:Int):Int {
 		var len = load(I32, 4, b, 0);
 		var d = load(I64, 8, b, 8);
@@ -2492,7 +2493,7 @@ class MirBuild extends MirWriter {
 		br(cmp(CULt, op2(Or, I32, c, op2(Shl, I32, other, iconst(16))), iconst(0x100)), c2, slow);
 		seal(c2);
 		cur = c2;
-		br(cmp(CULt, len, strLen(d)), fast, slow);
+		br(cmp(CLt, len, load(I32, 4, b, 4)), fast, slow);
 		seal(fast);
 		seal(slow);
 		cur = fast;

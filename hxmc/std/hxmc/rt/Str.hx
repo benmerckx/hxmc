@@ -16,9 +16,10 @@ import hxmc.unsafe.Ptr;
 // either width (and a two-byte string whose units would fit in bytes: no
 // result depends on the width); what this makes is one-byte wherever every
 // unit fits, but for the concatenations of a two-byte string. StringBuf
-// keeps the runtime's layout (T_STRINGBUF: slot 0 the length, slot 1 its
-// units, a string as long as its capacity, one-byte until a unit above 0xFF
-// comes), which generated code's inline addChar reads too
+	// keeps the runtime's layout (T_STRINGBUF: slot 0 the length and capacity,
+	// slot 1 its units, one-byte until a unit above 0xFF comes). A negative
+	// capacity means toString shared the storage and the next write detaches,
+	// which generated code's inline addChar checks too
 // (MirBuild.stringBufAddChar).
 //
 // @:hxmc.export functions are called by the runtime's C code too (by that
@@ -711,9 +712,8 @@ class Str {
 		return arr;
 	}
 
-	// ---- StringBuf: in linear memory slot 0 the length, slot 1 the units
-	// (a string as long as the capacity, one-byte until a unit above 0xFF is
-	// added); its storage is Repr's
+	// ---- StringBuf: slot 0 the length and capacity, slot 1 the units.
+	// A complemented capacity marks immutable, shared storage.
 
 	static inline function sbLen(b:Dynamic):Int
 		return Repr.sbLen(b);
@@ -728,9 +728,22 @@ class Str {
 	// room for `extra` more units
 	static function reserve(b:Dynamic, extra:Int) {
 		var n = sbLen(b);
+		// Both widths' rounded allocation sizes must fit a positive Int.
+		var max = 0x3FFFFFE0;
+		if (extra < 0 || extra > max || n > max - extra) Repr.fail("StringBuf too large");
 		var cap = Repr.sbCapacity(b);
+		if (cap < 0) {
+			// toString published the old storage. Detach even if it had room;
+			// its logical length and any cached hash belong to that snapshot.
+			cap = ~cap;
+			var ncap = cap;
+			if (ncap < n + extra) ncap = n + extra;
+			Repr.sbGrow(b, ncap, n);
+			return;
+		}
 		if (n + extra > cap) {
 			var ncap = cap * 2;
+			if (ncap > max) ncap = max;
 			if (ncap < n + extra) ncap = n + extra;
 			Repr.sbGrow(b, ncap, n);
 		}
@@ -945,19 +958,14 @@ class Str {
 	// (one-byte where every unit fits: a buffer widened, then cleared, may hold none above 0xFF)
 	@:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
 		var n = sbLen(b);
-		if (Repr.sbIsOne(b)) {
-			var s = make1(n);
-			Repr.copy1(chars1(s), Repr.sbChars1(b), n);
-			return s;
-		}
+		if (n == 0) return "";
+		if (Repr.sbIsOne(b)) return Repr.sbSnapshot(b);
 		if (Repr.fitsOne(Repr.sbChars2(b), 0, n)) {
 			var s = make1(n);
 			Repr.narrow(chars1(s), 0, Repr.sbChars2(b), 0, n);
 			return s;
 		}
-		var s = make2(n);
-		Repr.copy(chars2(s), Repr.sbChars2(b), n);
-		return s;
+		return Repr.sbSnapshot(b);
 	}
 
 	// ---- Std

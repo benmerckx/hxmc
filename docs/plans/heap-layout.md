@@ -3,6 +3,10 @@
 Open work on the object header and the layout of arrays, strings and
 Bytes. The current layout: [hxmc.md](../hxmc.md#object-layout).
 
+Built: `StringBuf.toString()` shares its backing storage, and the next
+write copies it. Snapshots with excessive spare capacity are copied to
+avoid retaining large buffers after `clear` ([details](../hxmc.md#strings-and-dates)).
+
 - **Bytes' shared allocation by the compiler.** `Bytes.shared` allocates a
   small Bytes with its data by hand. Allocation folding after the length
   test's branches would make `new Bytes(new BytesData(n))` fold, and
@@ -10,9 +14,6 @@ Bytes. The current layout: [hxmc.md](../hxmc.md#object-layout).
 - **Bytes' multi-byte accessors inline** (`getInt32`, `getDouble`): loads
   of the storage instead of runtime calls. Their loops would then also lose
   `b`'s reload.
-- **StringBuf's storage as a NativeArray of units.** `toString` could hand
-  out the storage as the string (a string's size is its header's, not its
-  length's) and copy only if the buffer is added to again.
 - **Header-only objects**: short strings, Int boxes and empty arrays in 8
   bytes. They need the forwarding address in the header; measured once at
   278M more instructions in the self-compile than forwarding through slot

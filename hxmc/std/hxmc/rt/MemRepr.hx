@@ -179,8 +179,9 @@ class MemRepr {
 		return Mem.getU8At(c, 0, i) == Mem.getU8(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(i + 1), (d : Ptr).add(1), ((m - 1) : I64)) == 0);
 
 	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 its units: a
-	// string whose length is the capacity, one-byte until a unit above 0xFF
-	// is added (MirBuild.stringBufAddChar reads it too)
+	// string, one-byte until a unit above 0xFF is added. Slot 0's upper
+	// half is the capacity, complemented once toString shares the storage.
+	// A shared string is immutable: reserve detaches before another write.
 
 	// (the first storage: 60 one-byte units, a 64-byte payload)
 	static inline var SB_WORDS = 8;
@@ -195,6 +196,7 @@ class MemRepr {
 	// T_STRINGBUF's (Lower.classInfo)
 	public static inline function sbInit(b:Dynamic) {
 		var d = withLength(Mem.allocArrayRaw(T_STRING1, 0, SB_WORDS), 8 * SB_WORDS - 4);
+		Mem.setI32(Mem.addr(b), 4, 8 * SB_WORDS - 4);
 		Mem.setRefBarrier(b, 8, d);
 	}
 
@@ -218,7 +220,29 @@ class MemRepr {
 		return chars2(sbData(b));
 
 	public static inline function sbCapacity(b:Dynamic):Int
-		return len(sbData(b));
+		return Mem.getI32(Mem.addr(b), 4);
+
+	// Freeze without copying. The allocation header still describes all
+	// its storage; only the string's logical length changes.
+	public static inline function sbSnapshot(b:Dynamic):String {
+		var d = sbData(b);
+		var cap = sbCapacity(b);
+		if (cap >= 0) {
+			var n = sbLen(b);
+			// A tiny result after clear must not retain an arbitrarily large
+			// allocation. Keep the buffer's reusable capacity in this case.
+			if (cap - n > n && cap - n > 64) {
+				var one = isOne(d);
+				var s = one ? make1(n) : make2(n);
+				LibC.memcpy(Mem.addr(s).add(4), Mem.addr(d).add(4), one ? (n : I64) : (2 * n : I64));
+				d = s;
+			} else {
+				withLength(d, n);
+				Mem.setI32(Mem.addr(b), 4, ~cap);
+			}
+		}
+		return d;
+	}
 
 	// new storage of `cap` units, of the same width, the first n copied
 	public static inline function sbGrow(b:Dynamic, cap:Int, n:Int) {
@@ -226,6 +250,7 @@ class MemRepr {
 		var one = isOne(d);
 		var nd = one ? make1(cap) : make2(cap);
 		LibC.memcpy(Mem.addr(nd).add(4), Mem.addr(d).add(4), one ? (n : I64) : (2 * n : I64));
+		Mem.setI32(Mem.addr(b), 4, cap);
 		Mem.setRefBarrier(b, 8, nd);
 	}
 
@@ -233,6 +258,7 @@ class MemRepr {
 	public static inline function sbWiden(b:Dynamic, cap:Int, n:Int) {
 		var nd = make2(cap);
 		widen(chars2(nd), 0, sbChars1(b), 0, n);
+		Mem.setI32(Mem.addr(b), 4, cap);
 		Mem.setRefBarrier(b, 8, nd);
 	}
 
