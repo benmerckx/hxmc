@@ -7,13 +7,17 @@
 //   node hxmc/bootstrap/rt.mjs hash                  the hash
 //   node hxmc/bootstrap/rt.mjs fetch <dir>           <dir>/<target>/{rt,ssl,uv}.o and
 //                                                    <dir>/LICENSE.{mbedtls,libuv}
-//                                                    (exit 2: no such release)
+//                                                    (exit 2: no such release, an
+//                                                    HTTP 404; exit 3: the network
+//                                                    failed, after retries)
 //   node hxmc/bootstrap/rt.mjs pack <dir> <out dir>  the assets of <dir>, gzipped
 // <dir>/HASH records what <dir> holds. HXMC_RT_REPO names the repository
-// (default benmerckx/hxmc).
+// (default benmerckx/hxmc), HXMC_RT_URL the server (default
+// https://github.com: <url>/<repo>/releases/download/rt-<hash>/<asset>).
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import zlib from 'node:zlib';
@@ -52,14 +56,61 @@ function assets() {
 	return [...TARGETS.flatMap(t => OBJECTS.map(o => [`${t}/${o}`, `${t}-${o}.gz`])), ...LICENSES.map(l => [l, `${l}.gz`])];
 }
 
-function download(url) {
+// exit codes of fetch
+const MISSING = 2, NETWORK = 3;
+// per asset: attempts, the pause before each retry (ms: a 504 of GitHub's
+// release downloads can last minutes); per attempt: the
+// time to connect, to stall (below 1 KiB/s) and in all (s)
+const ATTEMPTS = 6, BACKOFF = [5000, 15000, 30000, 60000, 120000];
+const CONNECT_TIMEOUT = 30, STALL_TIME = 30, MAX_TIME = 300;
+
+// one attempt: {data} | {missing: true} (HTTP 404: no such release or asset)
+// | {error} (no response, a reset, a timeout, any other status)
+function attempt(url) {
 	// curl follows the environment's proxy settings, node's fetch does not
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hxmc-rt-'));
+	const out = path.join(tmp, 'asset');
 	try {
-		return execFileSync('curl', ['-sSfL', '--retry', '3', url], { maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'] });
-	} catch (e) {
-		if (e.code !== 'ENOENT') return null;
+		let code, err = '';
+		try {
+			code = execFileSync('curl', ['-sSL', '--connect-timeout', `${CONNECT_TIMEOUT}`, '--speed-limit', '1024', '--speed-time', `${STALL_TIME}`,
+				'--max-time', `${MAX_TIME}`, '-o', out, '-w', '%{http_code}', url], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+		} catch (e) {
+			if (e.code === 'ENOENT') return null;
+			code = (e.stdout || '').toString().trim();
+			err = (e.stderr || '').toString().trim() || `curl exited with ${e.status}`;
+		}
+		if (code === '404') return { missing: true };
+		if (!err && /^2\d\d$/.test(code)) return { data: fs.readFileSync(out) };
+		return { error: err || `HTTP ${code}` };
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
 	}
-	return fetch(url).then(r => r.ok ? r.arrayBuffer().then(b => Buffer.from(b)) : null);
+}
+
+async function attemptFetch(url) {
+	try {
+		const r = await fetch(url, { signal: AbortSignal.timeout(MAX_TIME * 1000) });
+		if (r.status === 404) return { missing: true };
+		if (!r.ok) return { error: `HTTP ${r.status}` };
+		return { data: Buffer.from(await r.arrayBuffer()) };
+	} catch (e) {
+		return { error: (e.cause && (e.cause.code || e.cause.message)) || e.name || e.message };
+	}
+}
+
+// with retries of what failed transiently; a 404 is final
+async function download(url, asset) {
+	let r;
+	for (let i = 0; i < ATTEMPTS; i++) {
+		if (i > 0) {
+			console.error(`rt: ${asset}: ${r.error}; retrying in ${BACKOFF[i - 1] / 1000}s (${i + 1}/${ATTEMPTS})`);
+			await new Promise(res => setTimeout(res, BACKOFF[i - 1]));
+		}
+		r = attempt(url) || await attemptFetch(url);
+		if (!r.error) return r;
+	}
+	return r;
 }
 
 async function fetchAll(dir) {
@@ -70,15 +121,20 @@ async function fetchAll(dir) {
 		return 0;
 	}
 	const repo = process.env.HXMC_RT_REPO || 'benmerckx/hxmc';
-	const base = `https://github.com/${repo}/releases/download/rt-${h}/`;
+	const server = (process.env.HXMC_RT_URL || 'https://github.com').replace(/\/+$/, '');
+	const base = `${server}/${repo}/releases/download/rt-${h}/`;
 	const got = [];
 	for (const [file, asset] of assets()) {
-		const data = await download(base + asset);
-		if (!data) {
-			console.error(`rt: no release rt-${h} in ${repo} (${asset}): build them with zig (make rt-build)`);
-			return 2;
+		const r = await download(base + asset, asset);
+		if (r.missing) {
+			console.error(`rt: no release rt-${h} in ${repo} (${asset}: HTTP 404): build them with zig (make rt-build)`);
+			return MISSING;
 		}
-		got.push([file, zlib.gunzipSync(data)]);
+		if (r.error) {
+			console.error(`rt: could not download rt-${h} from ${repo} (${asset}: ${r.error}, ${ATTEMPTS} attempts): a network failure, not a missing release; try again`);
+			return NETWORK;
+		}
+		got.push([file, zlib.gunzipSync(r.data)]);
 	}
 	for (const [file, data] of got) {
 		fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -103,5 +159,5 @@ else if (cmd === 'fetch' && args.length === 1) process.exitCode = await fetchAll
 else if (cmd === 'pack' && args.length === 2) process.exitCode = pack(args[0], args[1]);
 else {
 	console.error('usage: node hxmc/bootstrap/rt.mjs hash | fetch <dir> | pack <dir> <out dir>');
-	process.exitCode = 2;
+	process.exitCode = 1;
 }
