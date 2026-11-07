@@ -105,6 +105,18 @@ divergence goes. The divergences:
   (`compiler.hxb.HxbReader.readClassFields`; the corpus's `CallOpOverloads`,
   ModuleCacheCheck's `callop`, the Conformance cases `callop-overloads` and
   `hxblib-callop`).
+- A module a macro's callback defines (`Context.defineType` without a
+  module named for it, `defineModule`, in an `onAfterTyping`, `onGenerate`
+  or `onAfterGenerate` callback, outside a macro call) is not made a
+  dependency of the macro API's current module. Upstream adds that edge
+  (`MDepFromMacroDefine`), and there that module is only the one whose
+  typer first made the macros' context in the compilation: the compilation
+  server, reusing it in a later compilation, restores the definition with
+  it beside what the callback, run again, defines, so the program has two
+  generations of a generated class (a fresh build has one; 4.3's server
+  restored no such definition). The defined module still depends on that
+  module (`MDepFromMacro`) (`typing.MacroContext.defineType`; server-verify's
+  `a class a callback defines, in the next compilations`, `make dev-check`).
 
 ## The one exception to byte identity
 

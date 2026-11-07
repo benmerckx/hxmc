@@ -808,6 +808,20 @@ context, and restored with that module it would come back into other
 programs, or into a build whose callback defines it again ("Cannot
 redefine module"). The callback runs every build and makes it again.
 
+**The compilation server** (in memory) follows the same rule for what a
+callback defines: the port does not make it a dependency of the macro
+API's current module (`MacroContext.defineType`, `defineModule`; a
+divergence from upstream, [porting.md](porting.md#divergences-from-the-reference)),
+so a later compilation that reuses that module does not bring the
+definition back beside what the callback, run again, defines (helder's
+`Late_<hash>`: two generations of a class in one program, the old one's
+code reading the new one's data). A callback a macro registered while a
+module was typed is registered again only when that module is typed again,
+so the module whose typing registered a callback that defined a module is
+typed again in the server's next compilation (`ServerCallbacks.hx`,
+`ServerCache.checkModuleHook`), as the module cache types such a module
+every build.
+
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
 WASI. A callback registered outside a module's typing, or a macro setting
