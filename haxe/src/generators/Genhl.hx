@@ -269,6 +269,10 @@ class Genhl {
 		}) || hasClassFieldFlag(f, CfExtern);
 	}
 
+	static function checkExternField(c:TClass, f:TClassField, p:Pos):Void {
+		if (hasClassFlag(c, CExtern) && !Meta.has(Meta.HlNative, f.cfMeta)) Error.abort("Unsupported extern field " + sTypePath(c.clPath) + "." + f.cfName, p);
+	}
+
 	public static function isArrayClass(name:String):Bool {
 		return switch name {
 			case "hl.types.ArrayDyn" | "hl.types.ArrayBytes_Int" | "hl.types.ArrayBytes_Float" | "hl.types.ArrayObj" | "hl.types.ArrayBytes_hl_F32" |
@@ -1580,12 +1584,14 @@ class Genhl {
 				}
 				switch [a, ft] {
 					case [FStatic(c, f), _] if (f.cfKind.match(Var(_) | Method(MethDynamic))):
+						checkExternField(c, f, e.epos);
 						var gt = classGlobal(ctx, c);
 						return AStaticVar(gt.g, gt.t, switch gt.t {
 							case HObj(o): try getIndex(f.cfName, o).fid catch (_:NotFound) die("", "genhl.ml", e.epos);
 							case _: die("", "genhl.ml", e.epos);
 						});
 					case [FStatic(c, f), _]:
+						checkExternField(c, f, e.epos);
 						return AStaticFun(allocFid(ctx, c, f));
 					case [_, TInst(c, _)] if (inst != null && directMethodCall(ctx, c, inst.f, ethis)):
 						var cdef = inst.cdef, pl = inst.pl, f = inst.f;
@@ -1593,8 +1599,9 @@ class Genhl {
 						function loop(c:TClass):TClass {
 							return if (c.clFields.exists(f.cfName)) c else (if (c.clSuper == null) cdef else loop(c.clSuper.cls));
 						}
-						var lastDef = loop(c);
-						return AInstanceFun(ethis, allocFid(ctx, resolveClass(ctx, lastDef, pl, false), f));
+						var lastDef = resolveClass(ctx, loop(c), pl, false);
+						checkExternField(lastDef, f, e.epos);
+						return AInstanceFun(ethis, allocFid(ctx, lastDef, f));
 					case _ if (inst != null):
 						function loop(t:T):{c:TClass, pl:TParams} {
 							return switch follow(t) {
@@ -2037,6 +2044,7 @@ class Genhl {
 					case TInst(csup, _):
 						var f = csup.clConstructor;
 						if (f == null) return die("", "genhl.ml");
+						checkExternField(csup, f, e.epos);
 						var r = allocTmp(ctx, HVoid);
 						var el = evalArgs(ctx, el, toType(ctx, f.cfType), e.epos);
 						op(ctx, OCallN(r, allocFid(ctx, csup, f), [0].concat(el)));
@@ -3876,11 +3884,11 @@ class Genhl {
 									}
 									switch f.cfExpr {
 										case null:
-											if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+											if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 										case {eexpr: TFunction(fn)}:
 											makeFun(ctx, {fst: sTypePath(c.clPath), snd: f.cfName}, allocFid(ctx, c, f), fn, null, null, genContent);
 										case _:
-											if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+											if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 									}
 								} else
 									addNative("std", f.cfName);
@@ -3895,11 +3903,11 @@ class Genhl {
 				var genContent = if (isExcluded(c)) () -> op(ctx, OAssert(0)) else null;
 				switch f.cfExpr {
 					case null:
-						if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+						if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 					case {eexpr: TFunction(fn)}:
 						makeFun(ctx, {fst: sTypePath(c.clPath), snd: f.cfName}, allocFid(ctx, c, f), fn, null, null, genContent);
 					case _:
-						if (!Meta.has(Meta.NoExpr, f.cfMeta)) Error.abort("Missing function body", f.cfPos);
+						if (!hasClassFieldFlag(f, CfNoExpr)) Error.abort("Missing function body", f.cfPos);
 				}
 		}
 	}
@@ -4677,6 +4685,8 @@ class Genhl {
 			}
 		}
 		var hlVer = Gctx.definedValueSafe(com, Define.HlVer, "");
+		if (Gctx.rawDefined(com, "hl_legacy32") && hlVer != "" && compareVersion(hlVer, "2.0.0") >= 0)
+			com.warning(core.Message.WarningCode.WGenerator, [], "-D hl_legacy32 is for 32-bit compatibility, but 32-bit builds are no longer supported since HashLink 2.0 (hl_ver >= 2.0.0)", fakePos("-D hl_legacy32"));
 		var ctx = new HlContext();
 		ctx.com = com;
 		ctx.hlVer = hlVer;

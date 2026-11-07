@@ -1285,7 +1285,29 @@ class MacroContext {
 		var args = el2.length == 0 ? args : args.slice(0, args.length == 0 ? 0 : args.length - 1)
 			.concat([MacroApiImpl.encodeArrayV(el2.map(MacroApiImpl.encodeExpr))]);
 		function call():MacroResult {
-			var v = switch callMacro(args) {
+			var partScope = ctx.com.partScope;
+			partScope.runningMacros = partScope.runningMacros + 1;
+			var r = try {
+				// port: Std.finally
+				var r = try callMacro(args) catch (exc:Dynamic) {
+					partScope.runningMacros = partScope.runningMacros - 1;
+					throw exc;
+				}
+				partScope.runningMacros = partScope.runningMacros - 1;
+				r;
+			} catch (exc:Dynamic) {
+				switch core.ds.ExceptionTools.typing(exc) {
+					case Some(err) if (Common.displayRecoveryEnabled(ctx.com) && partScope.runningMacros == 0):
+						// A typing error escaped the outermost macro: report it and treat the macro as failed instead of aborting
+						// the request. For a nested macro, the error keeps propagating into the API call of the enclosing macro,
+						// which turns it into an exception that macro can catch.
+						Common.displayErrorExt(ctx.com, err);
+						haxe.ds.Option.None;
+					case _:
+						throw exc;
+				}
+			}
+			var v = switch r {
 				case None: return MError;
 				case Some(v): v;
 			};

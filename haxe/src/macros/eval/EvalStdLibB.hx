@@ -28,6 +28,7 @@ import core.ds.GlobalsIntMap;
 import core.ds.OcamlHashtbl;
 import haxe.io.Bytes;
 import macros.eval.EvalStdLibA.Zresult;
+import macros.eval.EvalStdLibA.CountingSemaphore;
 import macros.eval.EvalValue;
 import macros.eval.EvalContext;
 import macros.eval.EvalHash;
@@ -66,7 +67,7 @@ import hxmc.NativeNet;
 //   upstream's `Domain` branch (there is no `Thread.exit`), and `join` waits
 //   for the thread's `finished` lock.
 // - `sys.thread.Condition` keeps its own mutex on the host: acquire/release/wait
-//   use the condition's lock instead of `Vcondition.cmutex`.
+//   use the condition's lock (there is no `Vcondition.cmutex`).
 // - zlib streams (`Vzlib.z`) are libs.extc.Extc streams (see `StdCompress`).
 // - `haxe.Resource.listNames` follows the host map's key order (OCaml `Hashtbl`
 //   order cannot be reproduced).
@@ -622,7 +623,7 @@ class StdMutex {
 }
 
 class StdSemaphore {
-	static function thisValue(vthis:Value):sys.thread.Semaphore {
+	static function thisValue(vthis:Value):Vlock {
 		return switch vthis {
 			case VInstance({ikind: ISemaphore(sem)}): sem;
 			case _: EvalExceptions.unexpectedValue(vthis, "Semaphore");
@@ -630,11 +631,7 @@ class StdSemaphore {
 	}
 
 	public static final acquire = EvalEncode.vifun0(vthis -> {
-		var sem = thisValue(vthis);
-		if (!sem.tryAcquire()) EvalLock.blocking(() -> {
-			sem.acquire();
-			true;
-		});
+		CountingSemaphore.acquire(thisValue(vthis));
 		VNull;
 	});
 
@@ -642,23 +639,14 @@ class StdSemaphore {
 		var sem = thisValue(vthis);
 		switch vtimeout {
 			case VNull:
-				sem.tryAcquire().vbool();
+				CountingSemaphore.tryAcquire(sem).vbool();
 			case _:
-				var timeout = EvalDecode.num(vtimeout);
-				var t = Sys.time() + timeout;
-				function loop():Value {
-					while (true) {
-						if (sem.tryAcquire()) return VTrue;
-						else if (Sys.time() >= t) return VFalse;
-						else EvalLock.yieldNow();
-					}
-				}
-				loop();
+				CountingSemaphore.tryAcquireTimeout(sem, EvalDecode.num(vtimeout)).vbool();
 		}
 	});
 
 	public static final release = EvalEncode.vifun0(vthis -> {
-		thisValue(vthis).release();
+		CountingSemaphore.release(thisValue(vthis));
 		VNull;
 	});
 }
@@ -671,31 +659,68 @@ class StdCondition {
 		}
 	}
 
+	static function current():Int return EvalContext.currentThreadId(EvalContext.getCtx());
+
+	static function checkOwner(c:Vcondition, what:String):Void {
+		if (c.cowner != current()) EvalContext.excString('Condition.$what: the mutex is not held by the current thread');
+	}
+
 	// port: the host condition owns its mutex: Mutex.lock cond.cmutex
 	public static final acquire = EvalEncode.vifun0(vthis -> {
-		var cond = thisValue(vthis);
-		EvalLock.acquireCondition(cond.cond);
+		var c = thisValue(vthis);
+		var id = current();
+		if (c.cowner == id) EvalContext.excString("Condition.acquire: the mutex is already held by the current thread");
+		EvalLock.acquireCondition(c.cond);
+		c.cowner = id;
 		VNull;
 	});
 
 	public static final tryAcquire = EvalEncode.vifun0(vthis -> {
-		var cond = thisValue(vthis);
-		cond.cond.tryAcquire().vbool();
+		var c = thisValue(vthis);
+		var id = current();
+		// not recursive, also on Windows where the libuv mutex would be
+		if (c.cowner == id) VFalse; else if (c.cond.tryAcquire()) {
+			c.cowner = id;
+			VTrue;
+		} else VFalse;
 	});
 
 	public static final release = EvalEncode.vifun0(vthis -> {
-		var cond = thisValue(vthis);
-		cond.cond.release();
+		var c = thisValue(vthis);
+		checkOwner(c, "release");
+		c.cowner = -1;
+		c.cond.release();
 		VNull;
 	});
 
 	public static final wait = EvalEncode.vifun0(vthis -> {
 		var c = thisValue(vthis);
+		checkOwner(c, "wait");
+		var id = current();
+		c.cowner = -1;
 		EvalLock.blocking(() -> {
 			c.cond.wait();
 			true;
 		});
+		c.cowner = id;
 		VNull;
+	});
+
+	public static final timedWait = EvalEncode.vifun1((vthis, timeout) -> {
+		var c = thisValue(vthis);
+		checkOwner(c, "timedWait");
+		var id = current();
+		var timeout = EvalDecode.num(timeout);
+		// also catches NaN
+		if (!(timeout > 0.)) VFalse; else {
+			var capped = timeout > CountingSemaphore.maxSingleWait;
+			var timeout = capped ? CountingSemaphore.maxSingleWait : timeout;
+			c.cowner = -1;
+			var result = EvalLock.blocking(() -> c.cond.timedWait(timeout));
+			c.cowner = id;
+			// a capped wait did not reach the requested timeout, so it counts as a spurious wakeup
+			(result || capped).vbool();
+		}
 	});
 
 	public static final signal = EvalEncode.vifun0(vthis -> {
@@ -1028,6 +1053,7 @@ class StdSocket {
 		var host = EvalDecode.decodeI32(host);
 		var port = EvalDecode.decodeInt(port);
 		#if (target.name == "hxmc" || hl)
+		if (!Globals.isWindows) check(SocketHost.setReuseAddr(self, true), "setsockopt");
 		check(SocketHost.bind(self, host, port), "bind");
 		VNull;
 		#else

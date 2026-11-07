@@ -303,6 +303,7 @@ class TyperDisplay {
 				}
 				if (keep()) acc.unshift(x);
 			}
+			acc.reverse();
 			var overloads = acc.length == 0 ? tl : acc;
 			var overloads:Array<SignatureInfo> = overloads.map(x -> {
 				sig: convertFunctionSignature(ctx, x.values, x.args, x.ret),
@@ -314,10 +315,14 @@ class TyperDisplay {
 				t:T):Array<{t:T, doc:Documentation, values:haxe.ds.StringMap<Expr>}> {
 			var isWackyOverload = !hasClassFieldFlag(cf, CfOverload);
 			function canAccess(cf:TClassField):Bool return co == null ? true : Typecore.canAccess(ctx, co, cf, stat);
-			// port: List.rev_map
-			var rest = [];
-			for (cf in cf.cfOverloads) rest.unshift({t: map(cf.cfType), cf: cf});
-			var l = [{t: t, cf: cf}].concat(rest);
+			// Keep declaration order: @:overload metadata is stored in source order and precedes the main field,
+			// while proper overloads are prepended to the main field's cf_overloads in typeloadFields.
+			var l = if (isWackyOverload) [for (cf_ in cf.cfOverloads) {t: map(cf_.cfType), cf: cf_}].concat([{t: t, cf: cf}]) else {
+				// port: List.rev_map
+				var rest = [];
+				for (cf_ in cf.cfOverloads) rest.unshift({t: map(cf_.cfType), cf: cf_});
+				[{t: t, cf: cf}].concat(rest);
+			};
 			var l = l.filter(x -> canAccess(x.cf));
 			var l = l.map(function(x) {
 				// Ghetto overloads have their documentation on the main field.

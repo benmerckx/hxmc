@@ -125,11 +125,31 @@ private class PipeOutput extends Output {
 
 	public function new(writeFn:String->Void) {
 		sys.thread.Thread.create(function() {
+			// port: upstream forwards the chunks as bytes; here they become Strings, so a UTF-8
+			// sequence split by the chunking is carried into the next chunk (decoding its halves
+			// apart fails or yields U+FFFD on hosts other than hxmc). The end of the stream
+			// delivers what is left.
+			var pending:Null<haxe.io.Bytes> = null;
 			try {
 				while (true) {
 					var bytes = queue.pop(true);
-					if (bytes == null) break;
-					writeFn(bytes.toString());
+					if (bytes == null) {
+						if (pending != null) writeFn(pending.toString());
+						break;
+					}
+					if (pending != null) {
+						var joined = haxe.io.Bytes.alloc(pending.length + bytes.length);
+						joined.blit(0, pending, 0, pending.length);
+						joined.blit(pending.length, bytes, 0, bytes.length);
+						bytes = joined;
+						pending = null;
+					}
+					var n = completeLength(bytes);
+					if (n < bytes.length) {
+						pending = bytes.sub(n, bytes.length - n);
+						bytes = bytes.sub(0, n);
+					}
+					if (n > 0) writeFn(bytes.toString());
 				}
 			} catch (_:haxe.io.Eof) {} catch (e:haxe.Exception) {
 				done.release();
@@ -137,6 +157,16 @@ private class PipeOutput extends Output {
 			}
 			done.release();
 		});
+	}
+
+	// port: the length of [bytes] without an incomplete UTF-8 sequence at its end
+	static function completeLength(bytes:haxe.io.Bytes):Int {
+		var len = bytes.length, i = bytes.length;
+		while (i > 0 && len - i < 3 && (bytes.get(i - 1) & 0xC0) == 0x80) i--;
+		if (i == 0) return len;
+		var lead = bytes.get(i - 1);
+		var need = if (lead >= 0xF8) 1 else if (lead >= 0xF0) 4 else if (lead >= 0xE0) 3 else if (lead >= 0xC0) 2 else 1;
+		return len - (i - 1) < need ? i - 1 : len;
 	}
 
 	// port: like an OCaml out_channel, writes are buffered (65536 bytes) until flushed;

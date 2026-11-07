@@ -303,9 +303,27 @@ class Grammar {
 		}
 	}
 
-	static function questionableDollarIdent(ctx:ParserContext, s:S):{opt:Bool, name:PlacedName} {
+	static function checkQuotedFieldName(ctx:ParserContext, s:S, name:String, kind:StringLiteralKind, p:Pos):Void {
+		if (kind != SDoubleQuotes) Parser.syntaxError(ctx, Custom("Quoted field names must use double quotes"), s, null, p);
+		else if (!(Lexer.isValidIdentifier(name) || Lexer.isKeyword(name)))
+			Parser.syntaxError(ctx, Custom("Quoted field names must be identifiers or keywords"), s, null, p);
+	}
+
+	static function fieldDeclIdent(ctx:ParserContext, owner:FieldOwner, s:S):PlacedName {
+		var tk = peek(s);
+		switch tk.token {
+			case Const(String(name, kind)) if (owner == FOStructure):
+				s.junk();
+				checkQuotedFieldName(ctx, s, name, kind, tk.pos);
+				return pn(name, tk.pos);
+			case _:
+				return dollarIdent(s);
+		}
+	}
+
+	static function questionableDollarIdent(ctx:ParserContext, owner:FieldOwner, s:S):{opt:Bool, name:PlacedName} {
 		var po = acceptTok(s, Question);
-		var n = dollarIdent(s);
+		var n = fieldDeclIdent(ctx, owner, s);
 		if (po == null) return {opt: false, name: n};
 		if (n.pos.pmin != po.pmax) Parser.syntaxError(ctx, Custom('Invalid usage of ?, use ?${n.name} instead'), s, null, po);
 		return {opt: true, name: n};
@@ -407,7 +425,7 @@ class Grammar {
 					return acc;
 				case DError(msg):
 					Parser.handleStreamError(ctx, msg, s);
-					resume(ctx, false, false, s);
+					resume(ctx, null, s);
 					pmax = Parser.lastPos(ctx, s).pmax;
 			}
 		}
@@ -425,7 +443,7 @@ class Grammar {
 			// port: (hxmc) an abstract's bodies are not skipped (its fields are made over, TypeloadFields.transformAbstractField)
 			var skip = ctx.config.skipBodies;
 			ctx.config.skipBodies = null;
-			var r = try tail(function() return parseClassFields(ctx, false, p1, s)) catch (x:Dynamic) {
+			var r = try tail(function() return parseClassFields(ctx, FOClass, p1, s)) catch (x:Dynamic) {
 				ctx.config.skipBodies = skip;
 				throw x;
 			};
@@ -507,7 +525,7 @@ class Grammar {
 			}
 		}
 		var hl = loop(false, Parser.lastPos(ctx, s), []);
-		var r = parseClassFields(ctx, false, p1, s);
+		var r = parseClassFields(ctx, FOClass, p1, s);
 		var cflags:Array<ClassFlag> = [];
 		for (f in flags) {
 			var c = Parser.declFlagToClassFlag(ctx, f);
@@ -724,25 +742,24 @@ class Grammar {
 		}
 	}
 
-	static function parseClass(ctx:ParserContext, doc:Documentation, meta:Metadata, cflags:Array<{flag:ClassFlag, pos:Pos}>,
-			needName:Bool, s:S):TypeDecl {
-		var optName:S->PlacedName = needName ? function(s) return typeName(ctx, s) : function(s) {
+	static function parseMacroClass(ctx:ParserContext, s:S):TypeDecl {
+		function optName(s:S):PlacedName {
 			var n = popt(function(s) return typeName(ctx, s), s);
 			return n == null ? pn("", Globals.nullPos) : n;
-		};
+		}
 		var cf = parseClassFlags(s);
 		var name = tail(function() return optName(s));
 		var tl = tail(function() return parseConstraintParams(ctx, s));
 		var hl = tail(function() return plist(function(s) return parseClassHerit(ctx, s), s));
 		expectTok(s, BrOpen);
-		var r = tail(function() return parseClassFields(ctx, !needName, cf.pos, s));
+		var r = tail(function() return parseClassFields(ctx, FOReifiedClass, cf.pos, s));
 		return {
 			definition: EClass({
 				name: name,
-				doc: doc,
-				meta: meta,
+				doc: null,
+				meta: [],
 				params: Vector.fromArrayCopy(tl),
-				flags: Vector.fromArrayCopy([for (f in cflags) f.flag].concat(cf.flags).concat(hl)),
+				flags: Vector.fromArrayCopy(cf.flags.concat(hl)),
 				data: Vector.fromArrayCopy(r.fields)
 			}),
 			pos: punion(cf.pos, r.pos)
@@ -930,7 +947,7 @@ class Grammar {
 
 	static function parsePackage(s:S):Array<String> return psep(Dot, lowerIdentOrMacro, s);
 
-	static function resume(ctx:ParserContext, tdecl:Bool, fdecl:Bool, s:S):Bool {
+	static function resume(ctx:ParserContext, owner:Null<FieldOwner>, s:S):Bool {
 		// look for next variable/function or next type declaration
 		function junk(k:Int) {
 			while (k > 0) {
@@ -993,18 +1010,21 @@ class Grammar {
 				continue;
 			}
 			// field declaration
-			if (fdecl && l.length >= 2 && (l[0].match(Const(_)) || l[0].match(Kwd(New))) && l[1].match(Kwd(Function))) {
+			if (owner != null && l.length >= 2 && (l[0].match(Const(_)) || l[0].match(Kwd(New))) && l[1].match(Kwd(Function))) {
 				junkTokens(k - 2);
 				return true;
 			}
-			if (fdecl && switch l[0] {
+			if (owner != null && switch l[0] {
 					case Kwd(Macro | Public | Static | Var | Final | Override | Dynamic | Inline | Overload): true;
 					case _: false;
 				}) {
 				junkTokens(k - 1);
 				return true;
 				}
-			if (tdecl && l[0] == BrClose) {
+			if ((switch owner {
+				case FOReifiedClass | FOStructure: true;
+				case FOClass | null: false;
+			}) && l[0] == BrClose) {
 				junkTokens(k - 1);
 				return false;
 			}
@@ -1019,11 +1039,11 @@ class Grammar {
 		}
 	}
 
-	static function parseClassFieldResume(ctx:ParserContext, acc:Array<ClassField>, tdecl:Bool, s:S):{fields:Array<ClassField>, pos:Pos} {
+	static function parseClassFieldResume(ctx:ParserContext, acc:Array<ClassField>, owner:FieldOwner, s:S):{fields:Array<ClassField>, pos:Pos} {
 		while (true) {
 			var result:DeclResult<ClassField>;
 			try {
-				var r = tryHead(function() return parseClassField(ctx, tdecl, s));
+				var r = tryHead(function() return parseClassField(ctx, owner, s));
 				if (r != null) result = DSuccess(r.v)
 				else {
 					var tk = peek(s);
@@ -1042,7 +1062,7 @@ class Grammar {
 					return {fields: acc, pos: p};
 				case DError(msg):
 					Parser.handleStreamError(ctx, msg, s);
-					if (!resume(ctx, tdecl, true, s)) {
+					if (!resume(ctx, owner, s)) {
 						// port: upstream returns the (reversed) accumulator here
 						var l = acc.copy();
 						l.reverse();
@@ -1052,13 +1072,13 @@ class Grammar {
 		}
 	}
 
-	static function parseClassFields(ctx:ParserContext, tdecl:Bool, p1:Pos, s:S):{fields:Array<ClassField>, pos:Pos} {
+	static function parseClassFields(ctx:ParserContext, owner:FieldOwner, p1:Pos, s:S):{fields:Array<ClassField>, pos:Pos} {
 		if (!ctx.config.inDisplayFile) {
-			var acc = plist(function(s) return parseClassField(ctx, tdecl, s), s);
+			var acc = plist(function(s) return parseClassField(ctx, owner, s), s);
 			var p2 = acceptTok(s, BrClose);
 			if (p2 == null) p2 = Parser.error(Expected(["}"]), Parser.nextPos(ctx, s));
 			return {fields: acc, pos: p2};
-		} else return parseClassFieldResume(ctx, [], tdecl, s);
+		} else return parseClassFieldResume(ctx, [], owner, s);
 	}
 
 	static function parseCommonFlags(s:S):Array<{flag:DeclFlag, pos:Pos}> {
@@ -1271,11 +1291,11 @@ class Grammar {
 					var tl = [r.v].concat(plist(function(s) return parseStructuralExtension(ctx, s), s));
 					var r2 = tryHead(function() return parseTypeAnonymous(ctx, s));
 					if (r2 != null) return {type: CTExtend(Vector.fromArrayCopy(tl), Vector.fromArrayCopy(r2.v.fields)), pos: punion(p1, r2.v.pos)};
-					var r3 = tryHead(function() return parseClassFields(ctx, true, p1, s));
+					var r3 = tryHead(function() return parseClassFields(ctx, FOStructure, p1, s));
 					if (r3 != null) return {type: CTExtend(Vector.fromArrayCopy(tl), Vector.fromArrayCopy(r3.v.fields)), pos: punion(p1, r3.v.pos)};
 					return fail();
 				}
-				var r = tryHead(function() return parseClassFields(ctx, true, p1, s));
+				var r = tryHead(function() return parseClassFields(ctx, FOStructure, p1, s));
 				if (r != null) return {type: CTAnonymous(Vector.fromArrayCopy(r.v.fields)), pos: punion(p1, r.v.pos)};
 				return serror();
 			case Question:
@@ -1519,7 +1539,7 @@ class Grammar {
 
 	static function parseTypeAnonymous(ctx:ParserContext, s:S):{fields:Array<ClassField>, pos:Pos} {
 		var p0 = popt(questionMark, s);
-		var r = tryHead(function() return dollarIdent(s));
+		var r = tryHead(function() return fieldDeclIdent(ctx, FOStructure, s));
 		if (r == null) return p0 == null ? fail() : serror();
 		var name = r.v.name;
 		var p1 = r.v.pos;
@@ -1687,13 +1707,13 @@ class Grammar {
 		return serror();
 	}
 
-	static function parseClassField(ctx:ParserContext, tdecl:Bool, s:S):ClassField {
+	static function parseClassField(ctx:ParserContext, owner:FieldOwner, s:S):ClassField {
 		var doc = Parser.getDoc(ctx, s);
 		var meta = parseMeta(ctx, s);
 		var al = plist(parseCfRights, s);
 		inline function checkOptional(opt:Bool, name:PlacedName):Metadata {
 			if (opt) {
-				if (!tdecl) Parser.syntaxError(ctx, Custom("?var syntax is only allowed in structures"), s, null, name.pos);
+				if (owner != FOStructure) Parser.syntaxError(ctx, Custom("?var syntax is only allowed in structures"), s, null, name.pos);
 				return ([{meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos}] : Array<core.Ast.MetadataEntry>).concat(meta);
 			}
 			return meta;
@@ -1704,7 +1724,7 @@ class Grammar {
 			case Kwd(Var):
 				var p1 = tk.pos;
 				s.junk();
-				var q = tail(function() return questionableDollarIdent(ctx, s));
+				var q = tail(function() return questionableDollarIdent(ctx, owner, s));
 				var meta = checkOptional(q.opt, q.name);
 				if (isTok(s, POpen)) {
 					s.junk();
@@ -1736,7 +1756,7 @@ class Grammar {
 				var p1 = tk.pos;
 				s.junk();
 				checkRedundantVar(ctx, p1, s);
-				var q = tryHead(function() return questionableDollarIdent(ctx, s));
+				var q = tryHead(function() return questionableDollarIdent(ctx, owner, s));
 				if (q != null) {
 					var opt = q.v.opt, name = q.v.name;
 					if (isTok(s, POpen)) {
@@ -2317,7 +2337,7 @@ class Grammar {
 				return serror();
 			case _:
 		}
-		var r = tryHead(function() return parseClass(ctx, null, [], [], false, s));
+		var r = tryHead(function() return parseMacroClass(ctx, s));
 		if (r != null) {
 			var toType = Reification.reify(ctx.inMacro).toTypeDef;
 			var ct = makePtpCt(mkTypePath(["haxe", "macro"], "Expr", null, "TypeDefinition"), Globals.nullPos);
@@ -2952,6 +2972,10 @@ class Grammar {
 				case Dollar(v):
 					s.junk();
 					return exprNext(ctx, mk(EField(e1, "$" + v, efk), punion(e1.pos, p2)), s);
+				case Const(String(f, kind)) if (p.pmax == p2.pmin):
+					s.junk();
+					checkQuotedFieldName(ctx, s, f, kind, p2);
+					return exprNext(ctx, mk(EField(e1, f, efk), punion(e1.pos, p2)), s);
 				case _:
 					// turn an integer followed by a dot into a float
 					return switch e1.expr {

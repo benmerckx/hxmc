@@ -88,7 +88,7 @@ class CoroFromTexpr {
 		browse(expr);
 	}
 
-	public static function exprToCoro(ctx:CoroCtx, etmpResult:AtomicLazy<TExpr>, etmpErrorUnwrapped:AtomicLazy<TExpr>, cbRoot:CoroBlock,
+	public static function exprToCoro(ctx:CoroCtx, etmpResult:AtomicLazy<TExpr>, etmpError:TExpr, etmpErrorUnwrapped:AtomicLazy<TExpr>, cbRoot:CoroBlock,
 			scope:Null<CoroScope>, deferred:CoroDeferredApi, e:TExpr):Null<BlockValue> {
 		// TODO : Not have this be copy and pasted from capturedVars with slight modifications
 		var wrapper = ctx.typer.com.localWrapper;
@@ -341,7 +341,14 @@ class CoroFromTexpr {
 			var next = AtomicLazy.fromFun(function() return makeBlock(null));
 			var catches = catches.map(function(c) {
 				var b = blockFromE(c.expr);
-				addExpr(b, mk(TVar(c.variable, (etmpErrorUnwrapped).force()), ctx.typer.t.tvoid, c.variable.vPos));
+				var eExcValue = switch follow(c.variable.vType) {
+					case TInst({clPath: path}, _) if (Lambda.exists(ctx.wildcardCatches, p -> Common.samePath(p, path))):
+						// For wildcard catches like haxe.Exception we don't want to unwrap.
+						etmpError;
+					case _:
+						(etmpErrorUnwrapped).force();
+				};
+				addExpr(b, mk(TVar(c.variable, eExcValue), ctx.typer.t.tvoid, c.variable.vPos));
 				var n = loopBlock(b, ret, c.expr);
 				if (n != null) fallThrough(n.cb, (next).force());
 				return {v: c.variable, cb: b};

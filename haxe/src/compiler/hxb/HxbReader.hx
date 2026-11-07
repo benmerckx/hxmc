@@ -2033,6 +2033,7 @@ class HxbReader {
 									findMap(c.clStatics, name);
 								}
 							} catch (_:NotFound) {
+								core.CacheHooks.current.fieldFailure(c, name, currentModule);
 								throw new HxbFailure('Could not read static field $name on ${Globals.sTypePath(c.clPath)} while hxbing ${Globals.sTypePath(currentModule.mPath)}');
 							}
 						case CfrMember:
@@ -2045,6 +2046,7 @@ class HxbReader {
 									findMap(c.clFields, name);
 								}
 							} catch (_:NotFound) {
+								core.CacheHooks.current.fieldFailure(c, name, currentModule);
 								throw new HxbFailure('Could not read instance field $name on ${Globals.sTypePath(c.clPath)} while hxbing ${Globals.sTypePath(currentModule.mPath)}');
 							}
 						case CfrConstructor:

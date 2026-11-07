@@ -96,28 +96,16 @@ class ExprToPattern {
 			throw "assert";
 	};
 
-	// Array patterns apply to arrays, Dynamic and abstracts with a single `from` type leading to one of those. Other values
-	// can be matched by array patterns if they can be accessed by index like in `for` loops, and their length and elements
-	// are then read the same way (#8012). This returns how to access them, or None for values of the former types and for
-	// values which can't be accessed by index.
-	//
-	// TODO: this is looked up for each array pattern here, then again for the same subject when compile.ml reads its
-	// elements and twice in texprConverter.ml. The decision tree stores a switch subject as a plain texpr, so what the
-	// subject is and how it is accessed is lost after pattern typing (which can't keep it: patterns are typed against
-	// per-case types). A subject that carries this would avoid the repeated lookups; see the discussion in #13070.
-	public static function getArrayAccess(ctx:Typer, t:T, p:Pos):Null<typing.TyperBase.ArrayAccessData> {
-		function isArray(seen:Array<T>, t:T):Bool return switch follow(t) {
-			case TInst({clPath: {pack: [], name: "Array"}}, [_]) | TDynamic(_):
-				true;
-			case ty = TAbstract(a, tl) if (!core.ds.ArrayTools.exists(seen, function(t) return shallowEq(ty, t))):
-				var froms = TyperBase.getAbstractFroms(ctx, a, tl);
-				if (froms.length == 1) isArray([ty].concat(seen), froms[0].type); else false;
-			case _:
-				false;
-		};
-		if (isArray([], t)) return null;
-		return try TyperBase.getArrayAccess(ctx, t, p) catch (ex:NotFound) null;
+	// Array patterns apply to values which can be accessed by index (#8012). Abstracts with a single `from` type leading
+	// to an array or to Dynamic have their patterns typed against the `from` type, but are read by their own access too.
+	// This returns how to access values of type `t`, or None if they can't be accessed by index.
+	public static function getArrayAccess(ctx:Typer, t:T, p:Pos):Null<typing.ArrayAccess.ArrayAccessData> {
+		return try typing.ArrayAccess.getArrayAccess(ctx, t, p) catch (ex:NotFound) null;
 	}
+
+	// The error for array patterns on values of type `t`, which can't be accessed by index.
+	public static function noArrayAccess(t:T, p:Pos):Dynamic
+		return core.Error.raiseTypingError("Array patterns are not allowed on " + core.TPrinting.sType(core.TPrinting.printContext(), t), p);
 
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):PatternData {
 		var ctx = pctx.ctx;
@@ -361,15 +349,21 @@ class ExprToPattern {
 					var aa = getArrayAccess(ctx, t, p);
 					return aa != null ? arrayPattern(aa.aaType) : fail();
 				}
+				// Patterns on an array or Dynamic are typed against its element type `t2`, and so are patterns on an
+				// abstract whose single `from` types lead to one. The matched values are still read by the array access of
+				// their own type `t` (see compile.ml), which an abstract may lack, and so does Dynamic<T>.
+				function indexedPattern(t2:T):PatternKind {
+					return getArrayAccess(ctx, t, p) != null ? arrayPattern(t2) : noArrayAccess(t, p);
+				}
 				function pattern(seen:Array<T>, t:T):PatternKind return switch follow(t) {
 					case TFun(s) if (s.ret == fakeTupleType):
 						if (el.length < s.args.length) core.Error.raiseTypingError("Not enough arguments", p);
 						if (el.length > s.args.length) core.Error.raiseTypingError("Too many arguments", el[s.args.length].pos);
 						PatTuple([for (i in 0...el.length) make(pctx, false, s.args[i].type, el[i])]);
 					case TInst({clPath: {pack: [], name: "Array"}}, [t2]):
-						arrayPattern(t2);
+						indexedPattern(t2);
 					case t2 = TDynamic(_):
-						arrayPattern(t2);
+						indexedPattern(t2);
 					case ty = TAbstract(a, tl) if (!core.ds.ArrayTools.exists(seen, function(t) return shallowEq(ty, t))):
 						var froms = TyperBase.getAbstractFroms(ctx, a, tl);
 						if (froms.length == 1) pattern([ty].concat(seen), froms[0].type); else arrayAccessPattern();

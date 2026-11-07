@@ -7,8 +7,8 @@
 // and the later state read it undeclared: "Unbound variable: x<N>" on hxmc,
 // "Unbound variable" on Eval, and on JS the value undefined once a suspension
 // lies between (upstream's coroToTexpr.ml).
-// Built without the module cache: the hoisted fields are named after
-// variable ids (`_hx_hoisted<id>`, as upstream), see CoroCatch.
+// Built without the module cache: the hoisted fields are in the order of
+// their variables' ids (a Hashtbl by id, as upstream), see CoroCatch.
 // define: hxmc.no-module-cache
 import haxe.coro.*;
 import haxe.coro.continuations.FunctionContinuation;

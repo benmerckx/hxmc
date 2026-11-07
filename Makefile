@@ -418,7 +418,7 @@ bin/fuzz/fuzz: $(TOOL) $(FUZZ_SRC) $(STD) $(HOST_RT)
 # --- lix (tools/lix) ---
 
 HXCORO := bin/hxcoro
-HXCORO_REV := 4b1a4d49542c578dc184297b75d125093ca444d2
+HXCORO_REV := e8e26f8d374919d508d777f73b2fe51daa347184
 $(HXCORO)/.rev:
 	rm -rf $(HXCORO) && git init -q $(HXCORO)
 	git -C $(HXCORO) fetch -q --depth 1 https://github.com/HaxeFoundation/hxcoro.git $(HXCORO_REV)

@@ -868,6 +868,9 @@ class Inheritance {
 					if (ctx.com.display.dmsKind != DMNone):
 					if (context.display.Diagnostics.errorInDiagnosticsRun(ctx.com,
 						p)) context.display.DisplayToplevel.handleUnresolvedIdentifier(ctx, name, p, true);
+				case(core.ds.ExceptionTools.typing(_) => Some(err = {errMessage: ModuleNotFound(_) | TypeNotFound(_)}))
+					if (!Common.isDiagnostics(ctx.com) && Typeload.canRecoverFromMissingType(ctx, err)):
+					Common.displayErrorExt(ctx.com, err);
 				case _:
 					throw e;
 			}

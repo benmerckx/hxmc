@@ -169,6 +169,8 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 			self.apiTable.set(e.name, e.value);
 		// (the call site of the function calling the API: EvalMain.get_api_call_pos)
 		macros.MacroApi.MacroNativeValues.apiCallPos = () -> current > 0 && sites.exists(current) ? sites.get(current) : self.api == null ? core.Globals.nullPos : self.api.pos;
+		// (the compiler context of the API: EvalMain.get_current_com)
+		macros.MacroApi.MacroNativeValues.currentCom = () -> self.api.getCom();
 		// (the macro context's types by name: the loaded ones, the macro API's loaded on demand,
 		// as arguments are encoded before the first macro function is, and even before the
 		// macro context hands its types over: macroEnum)

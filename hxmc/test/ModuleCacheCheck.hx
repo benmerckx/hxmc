@@ -40,7 +40,9 @@ using StringTools;
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run ModuleCacheCheck [--port] [--haxe <haxe>]
 // --port adds the port itself (haxe/src: a large program) for the hxmc target;
 // --nondet runs only the cases of macros whose results change from run to run,
-// --late those of modules macros define outside the typing of a module;
+// --late those of modules macros define outside the typing of a module,
+// --defined that of a module defined in its definer's typing, edited and back,
+// --state that of a registry a macro class keeps, two programs filling it;
 // --haxe names `haxe` with hxmc built in (default: bin/npm/native/<host>/haxe).
 class ModuleCacheCheck {
 	static var dir:String;
@@ -567,6 +569,153 @@ class ModuleCacheCheck {
 			gate('a module defined in the typing of another, $m', target, pdir, ["-cp", "src", "-main", m]);
 	}
 
+	// a module a macro defines in the typing of its definer that calls back
+	// into it, the definer's code naming it (helder's Jobs.run: a job's
+	// wrapper, gen.Job_Decode_file, made the first time a call site asks
+	// for it and found by Context.getType after; Decode's own call site
+	// first, Shell's too; its position the call's, as the wrapper's code
+	// carries it). Both typing edges replace the macro's (the compiler keeps
+	// one per module), which the store must keep: the wrapper restored only
+	// with its definer, by its content. Decode edited by a comment that moves
+	// the call (the wrapper made again: its position), then back to its
+	// bytes (the earlier variant, the wrapper with it), then another module
+	// edited, then warm; and the same with a comment at the end (the
+	// report's edit: helder's builds failed with "Type not found" from the
+	// build after the revert on). With full DCE
+	static function macroDefinedRevert(target:String) {
+		var files = [
+			"src/Wrap.hx" => [
+				"#if macro",
+				"import haxe.macro.Context;",
+				"#end",
+				"",
+				"class Wrap {",
+				"\tpublic static macro function run(f:haxe.macro.Expr, input:haxe.macro.Expr):haxe.macro.Expr {",
+				"\t\tvar c, cf;",
+				"\t\tswitch Context.typeExpr(f).expr {",
+				"\t\t\tcase TField(_, FStatic(cr, fr)):",
+				"\t\t\t\tc = cr.get();",
+				"\t\t\t\tcf = fr.get();",
+				"\t\t\tcase _:",
+				"\t\t\t\tContext.error(\"a static function\", f.pos);",
+				"\t\t\t\treturn null;",
+				"\t\t}",
+				"\t\tvar name = \"Job_\" + c.module.split(\".\").join(\"_\") + \"_\" + cf.name;",
+				"\t\tvar found = try Context.getType(\"gen.\" + name) != null catch (_:Dynamic) false;",
+				"\t\tif (!found) {",
+				"\t\t\tvar fpath = macro $p{c.pack.concat([c.name, cf.name])};",
+				"\t\t\tvar at = Context.getPosInfos(f.pos);",
+				"\t\t\tvar td = macro class $name {",
+				"\t\t\t\tpublic static function run(x:String) return $fpath(x);",
+				"\t\t\t\tpublic static function where():String return $v{haxe.io.Path.withoutDirectory(at.file) + \"@\" + at.min};",
+				"\t\t\t};",
+				"\t\t\ttd.pack = [\"gen\"];",
+				"\t\t\ttd.pos = f.pos;",
+				"\t\t\tContext.defineType(td);",
+				"\t\t}",
+				"\t\treturn macro $p{[\"gen\", name, \"run\"]}($input);",
+				"\t}",
+				"}"
+			].join("\n") + "\n",
+			"src/Decode.hx" => "typedef Decoded = {name:String, size:Int};\n\nclass Decode {\n\tpublic static function file(path:String):Decoded\n\t\treturn {name: path, size: path.length};\n\n\tpublic static function load(path:String):Decoded\n\t\treturn Wrap.run(Decode.file, path);\n}\n",
+			"src/Shell.hx" => "import Decode.Decoded;\n\nclass Shell {\n\tpublic static function open(path:String):String {\n\t\tvar d:Decoded = Decode.load(path);\n\t\tvar e:Decoded = Wrap.run(Decode.file, path + \"!\");\n\t\treturn d.name + \" \" + d.size + \" \" + e.name;\n\t}\n}\n",
+			"src/Other.hx" => "class Other {\n\tpublic static function g():Int return 2;\n}\n",
+			"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\ttrace(Shell.open(\"a.png\"));\n\t\ttrace(gen.Job_Decode_file.where());\n\t\ttrace(Other.g());\n\t}\n}\n"
+		];
+		var pdir = dir + "/" + target + "-defrevert";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		var args = ["-cp", "src", "-main", "Main", "-dce", "full"];
+		var decode = pdir + "/src/Decode.hx", other = pdir + "/src/Other.hx";
+		var d0 = File.getContent(decode), o0 = File.getContent(other);
+		for (how in ["a comment before the call", "a comment at the end"]) {
+			rmrf(dir + "/cache");
+			gate('defined by its definer ($how): cold', target, pdir, args);
+			File.saveContent(decode, how == "a comment at the end" ? d0 + "// x\n" : "// x\n" + d0);
+			gate('defined by its definer ($how): Decode edited', target, pdir, args);
+			File.saveContent(decode, d0);
+			gate('defined by its definer ($how): Decode back', target, pdir, args);
+			File.saveContent(other, o0 + "// y\n");
+			gate('defined by its definer ($how): Other edited', target, pdir, args);
+			gate('defined by its definer ($how): warm', target, pdir, args, 0);
+			File.saveContent(other, o0);
+		}
+	}
+
+	// a registry a macro class keeps (helder's definition handlers): the
+	// build macros of D and E (one per program, Main and Main2, of one class
+	// path) register a name in Reg's state, T's build macro makes a method
+	// of each name registered, U calls T's expr(), else a static extension
+	// of that name (Ext). T's fields come from the state, not from its file:
+	// typed again because a macro of the build uses that state, it is no
+	// longer what a restored U refers to ("Could not read instance field
+	// expr on T while hxbing U"), and restored beside other registrants
+	// than it was typed with, it is stale. Main3 names U2, whose body alone
+	// names T, before E registers. Main,
+	// Main2, Main, Main3, D edited (another name), Main2, Main3, D back, Reg
+	// edited (what the methods return), back, warm
+	static function macroState(target:String) {
+		var files = [
+			"src/Reg.hx" => [
+				"#if macro",
+				"import haxe.macro.Context;",
+				"import haxe.macro.Expr;",
+				"#end",
+				"",
+				"class Reg {",
+				"\t#if macro",
+				"\tpublic static var names:Array<String> = [];",
+				"",
+				"\tpublic static function def(n:String):Array<Field> {",
+				"\t\tnames.push(n);",
+				"\t\treturn null;",
+				"\t}",
+				"",
+				"\tpublic static function build():Array<Field> {",
+				"\t\tvar fields = Context.getBuildFields();",
+				"\t\tfor (n in names)",
+				"\t\t\tfields = fields.concat((macro class {",
+				"\t\t\t\tpublic function $n():String return $v{n};",
+				"\t\t\t}).fields);",
+				"\t\treturn fields;",
+				"\t}",
+				"\t#end",
+				"}"
+			].join("\n") + "\n",
+			"src/D.hx" => "@:build(Reg.def(\"expr\"))\nclass D {\n\tpublic static function init() {}\n}\n",
+			"src/E.hx" => "@:build(Reg.def(\"other\"))\nclass E {\n\tpublic static function init() {}\n}\n",
+			"src/T.hx" => "@:build(Reg.build())\nclass T {\n\tpublic function new() {}\n}\n",
+			"src/Ext.hx" => "class Ext {\n\tpublic static function expr(t:T):String return \"ext\";\n}\n",
+			"src/U.hx" => "using Ext;\n\nclass U {\n\tpublic static function g(t:T):String return t.expr();\n}\n",
+			"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\tD.init();\n\t\ttrace(U.g(new T()));\n\t}\n}\n",
+			"src/Main2.hx" => "class Main2 {\n\tstatic function main() {\n\t\tE.init();\n\t\ttrace(U.g(new T()));\n\t}\n}\n",
+			"src/U2.hx" => "using Ext;\n\nclass U2 {\n\tpublic static function h():String return new T().expr();\n}\n",
+			"src/Main3.hx" => "class Main3 {\n\tstatic function main() {\n\t\tvar f = U2.h;\n\t\tE.init();\n\t\ttrace(f());\n\t}\n}\n"
+		];
+		var pdir = dir + "/" + target + "-state";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		var main = ["-cp", "src", "-main", "Main"], main2 = ["-cp", "src", "-main", "Main2"], main3 = ["-cp", "src", "-main", "Main3"];
+		var d = pdir + "/src/D.hx", reg = pdir + "/src/Reg.hx";
+		var d0 = File.getContent(d), r0 = File.getContent(reg);
+		rmrf(dir + "/cache");
+		gate('macro state: Main cold', target, pdir, main);
+		gate('macro state: Main2', target, pdir, main2);
+		gate('macro state: Main', target, pdir, main);
+		gate('macro state: Main3', target, pdir, main3);
+		File.saveContent(d, d0.replace("\"expr\"", "\"value\""));
+		gate('macro state: D edited', target, pdir, main);
+		gate('macro state: D edited, Main2', target, pdir, main2);
+		gate('macro state: D edited, Main3', target, pdir, main3);
+		File.saveContent(d, d0);
+		gate('macro state: D back', target, pdir, main);
+		File.saveContent(reg, r0.replace("return $v{n};", "return $v{n + \"!\"};"));
+		gate('macro state: Reg edited', target, pdir, main);
+		File.saveContent(reg, r0);
+		gate('macro state: Reg back', target, pdir, main);
+		gate('macro state: warm', target, pdir, main, 0);
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
@@ -589,6 +738,12 @@ class ModuleCacheCheck {
 		// (--late: only the late-defined modules' cases)
 		var late = Sys.args().contains("--late");
 		if (late) only = true;
+		// (--defined: only the case of a module defined by its definer, edited and back)
+		var defined = Sys.args().contains("--defined");
+		if (defined) only = true;
+		// (--state: only the case of a registry a macro class keeps)
+		var state = Sys.args().contains("--state");
+		if (state) only = true;
 		for (target in ["hxmc", "js", "interp", "haxe-hxmc"]) {
 			for (p in programs()) {
 				if (only) continue;
@@ -726,9 +881,13 @@ class ModuleCacheCheck {
 			}
 		}
 		for (target in ["hxmc", "js", "interp"])
-			if (!late) nondeterministic(target);
+			if (!late && !defined && !state) nondeterministic(target);
 		for (target in ["hxmc", "js", "interp"])
-			lateDefined(target);
+			if (!defined && !state) lateDefined(target);
+		for (target in ["hxmc", "js", "interp"])
+			if (!late && !state && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
+		for (target in ["hxmc", "js", "interp"])
+			if (!late && !defined && !Sys.args().contains("--nondet")) macroState(target);
 		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";

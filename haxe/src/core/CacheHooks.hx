@@ -48,6 +48,9 @@ class CacheHooks {
 	public function missingField(c:TClass):Bool
 		return false;
 
+	/** and still not there (after missingField): told before the reader fails */
+	public function fieldFailure(c:TClass, name:String, m:ModuleDef):Void {}
+
 	/** a field unification may use */
 	public function maybeUsed(cl:Null<TClass>, f1:TClassField, f2:Null<TClassField>):Void {}
 

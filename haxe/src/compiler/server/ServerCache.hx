@@ -612,10 +612,10 @@ class ServerCache {
 
 						/* We try to avoid reading expressions as much as possible, so we only do this for
 							our current display file if we're in display mode. */
-						switch typingMode {
-							case FullTyping: fNext(chunks, EOM);
-							case AllowPartialTyping: delay(PConnectField, function() fNext(chunks, EOF));
-						}
+						fNext(chunks, switch typingMode {
+							case FullTyping: EOM;
+							case AllowPartialTyping: EOF;
+						});
 						com.requestScope.stats.sModulesRestored++;
 						addModules2(true, m);
 					case reason:
@@ -757,11 +757,12 @@ class HxbReaderApiServer implements HxbReaderApi {
 				var m = r.m, chunks = r.remaining;
 
 				/* We try to avoid reading expressions as much as possible, so we only do this for
-					our current display file if we're in display mode. */
-				switch typingMode {
-					case FullTyping: fNext(chunks, EOM);
-					case AllowPartialTyping: delay(PConnectField, function() fNext(chunks, EOF));
-				}
+					our current display file if we're in display mode. Fields are read right away
+					because nothing flushes a delayed read when we get here from a lazy type. */
+				fNext(chunks, switch typingMode {
+					case FullTyping: EOM;
+					case AllowPartialTyping: EOF;
+				});
 				com.requestScope.stats.sModulesRestored++;
 				return m;
 			case BadBinaryModule(mc, reason):
@@ -783,11 +784,12 @@ class HxbReaderApiServer implements HxbReaderApi {
 				m.mExtra.mCacheState = MSBad(reason);
 
 				/* We try to avoid reading expressions as much as possible, so we only do this for
-					our current display file if we're in display mode. */
-				switch typingMode {
-					case FullTyping: fNext(chunks, EOM);
-					case AllowPartialTyping: delay(PConnectField, function() fNext(chunks, EOF));
-				}
+					our current display file if we're in display mode. Fields are read right away
+					because nothing flushes a delayed read when we get here from a lazy type. */
+				fNext(chunks, switch typingMode {
+					case FullTyping: EOM;
+					case AllowPartialTyping: EOF;
+				});
 				com.requestScope.stats.sModulesRestored++;
 				return m;
 			case BadModule(reason):

@@ -911,7 +911,7 @@ class CppGenClassImplementation {
 				var ret = if (returnType == "Void" || returnType == "void") " " else "return ";
 				var vtable = '__scriptVTable[${idx + 1}]';
 
-				outputCpp('\t$returnType ${func.tcfName}($args) {\n');
+				outputCpp('\t$returnType ${func.tcfName}($args) override {\n');
 				outputCpp('\tif ($vtable) {\n');
 				outputCpp("\t\t::hx::CppiaCtx *__ctx = ::hx::CppiaCtx::getCurrent();\n");
 				outputCpp("\t\t::hx::AutoStack __as(__ctx);\n");
@@ -948,9 +948,32 @@ class CppGenClassImplementation {
 			}
 
 			var scriptName = className + "__scriptable";
-			var hasFunkyToString = Lambda.exists(tcppClass.tclStaticFunctions, function(func) return func.tcfName == "toString")
-				|| Lambda.exists(tcppClass.tclFunctions, function(func) return func.tcfName == "toString" && func.tcfFunc.tfArgs.length != 0);
-			var superString = if (hasFunkyToString) className + "::super" else className;
+			function hasFunkyToString(cls:TcppClass):Bool {
+				return Lambda.exists(cls.tclStaticFunctions, function(func) return func.tcfName == "toString")
+					|| Lambda.exists(cls.tclFunctions, function(func) return func.tcfName == "toString" && func.tcfFunc.tfArgs.length != 0);
+			}
+			function hasToString(cls:TcppClass):Bool {
+				return Lambda.exists(cls.tclFunctions, function(func) return func.tcfName == "toString");
+			}
+			/* A funky toString hides hx::Object::toString(), also in the classes that inherit it,
+			   so look it up from above the nearest one */
+			function findSuperString(start:String, cls:TcppClass, path:String):String {
+				return if (hasFunkyToString(cls)) {
+					var above = path + "::super";
+					switch cls.tclSuper {
+						case null: above;
+						case sup: findSuperString(above, sup, above);
+					}
+				} else if (hasToString(cls)) {
+					start;
+				} else {
+					switch cls.tclSuper {
+						case null: start;
+						case sup: findSuperString(start, sup, path + "::super");
+					}
+				}
+			}
+			var superString = findSuperString(className, tcppClass, className);
 
 			outputCpp('class $scriptName : public $className {\n');
 			outputCpp('\ttypedef $scriptName __ME;\n');
