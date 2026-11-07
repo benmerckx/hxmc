@@ -197,6 +197,36 @@ branch cancels its run; runs on main, `hxmc` and tags always finish.
 
 ## Benchmarks
 
+`make lean-stats` records a cold self-build's wall time, CPU time and peak
+RSS, compiler and benchmark binary sizes, and compiler/runtime line counts
+in a fresh `bin/lean-stats-*/results.json`. It also runs the pinned
+HaxeBenchmarks json, alloc, nbody and mandelbrot cases and their output
+checks. Prepare their sources first:
+
+```sh
+bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Bench --setup -t hxmc
+make lean-stats
+```
+
+It needs GNU time (`LEAN_TIME` overrides `/usr/bin/time`). `LEAN_RUNS`
+defaults to 3. Set `LEAN_BASELINE` to a preserved compiler and
+`LEAN_BASELINE_STD` to that version's merged std for an interleaved
+comparison. Both sides compile the current sources. Every build uses a
+fresh cache and four backend workers; timing samples retain their logs.
+Run measurements without other builds or tests competing for CPU.
+
+The checked profile supplies a diagnostic counterpart to optimized native
+code. It enables bounds, null, span and tagged-reference checks and turns
+off Mir optimizations. Compare portable programs with:
+
+```sh
+make fuzz
+bin/fuzz/fuzz --lane exec:hxmc,hxmc-checked --seed 1000 -n 200 -j 4
+```
+
+This checks optimizer and runtime behavior; it does not make raw operations
+in unsafe code safe or replace the reference conformance lanes.
+
 | Make target | What |
 | --- | --- |
 | `bench` | the [HaxeBenchmarks](https://github.com/HaxeBenchmarks/benchmark-runner) cases built by hxmc (native and wasm) and by the port for C++, JVM, JS, HL/C and HashLink: median wall time of interleaved runs, CPU time, peak RSS, sizes, compile times; each case's output compared across targets (`hxmc/test/Bench.hx`) |

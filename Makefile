@@ -126,6 +126,10 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
+.PHONY: lean-stats
+lean-stats: $(TOOL)
+	ulimit -s unlimited 2>/dev/null || true; $(NODE) tools/lean-stats.mjs
+
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
 	shared-check jni-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
@@ -200,6 +204,7 @@ help:
 ##               or wasm32-wasi): a type parameter's tagged word read as a reference fails it
 ##
 ## Bench (docs/testing.md, "Benchmarks")
+##   lean-stats  cold self-build time, CPU, RSS, binary sizes, HaxeBenchmarks and line counts
 ##   bench       the HaxeBenchmarks cases on hxmc, C++, JVM, JS, HL/C and HL (hxmc/test/Bench.hx; BENCH_ARGS)
 ##   bench-compile  the port against the reference compiling hello, stdlib and itself to HXB
 ##               (hxmc/test/CompileBench.hx; COMPILE_BENCH_ARGS)
