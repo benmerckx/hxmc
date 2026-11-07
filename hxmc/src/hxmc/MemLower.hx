@@ -480,6 +480,12 @@ class MemLower extends MirWriter {
 		br(cmp(CULt, op2(Sub, I64, obj, ys), size), done, slow);
 		seal(slow);
 		cur = slow;
+		// (a slot that held a young pointer is remembered already: no call)
+		var call_ = newBlock();
+		call_.cold = true;
+		br(cmp(CULt, op2(Sub, I64, prev, ys), size), done, call_);
+		seal(call_);
+		cur = call_;
 		call("hxmc_barrier_slow", vector(obj, slot, val, prev), Void);
 		jmp(done);
 		seal(done);
