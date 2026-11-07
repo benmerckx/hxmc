@@ -61,7 +61,19 @@ class Driver {
 		var d = new Driver(prog, out, o);
 		d.prep.staticClosures = !o.mirHost;
 		var t1 = haxe.Timer.stamp();
-		d.build(t0, t1);
+		try d.build(t0, t1) catch (e:Dynamic) {
+			release();
+			throw e;
+		}
+		release();
+	}
+
+	// what a build set for its code generation and no later build reads (a
+	// resident compiler would keep the program's functions with it until the
+	// next build: MirBuild.inlineCands, 21 MB of helder's ts-todo)
+	static function release() {
+		MirBuild.inlineCands = null;
+		Escape.refSlots = null;
 	}
 
 	// ---- compiling
@@ -430,6 +442,13 @@ class Driver {
 	public static var resident = false;
 	static var memObjs = new Map<String, {key:String, obj:Obj}>();
 
+	// the objects kept of the output out (ServerMemory: its group dropped)
+	public static function forgetOutput(out:String) {
+		var dir = out + ".hxmc/";
+		for (k in [for (k in memObjs.keys()) k])
+			if (StringTools.startsWith(k, dir)) memObjs.remove(k);
+	}
+
 	function build(t0:Float, t1:Float) {
 		inlineCandidates();
 		var p = prep.p;
@@ -561,9 +580,11 @@ class Driver {
 		} else
 			sys.io.File.saveContent(indexPath, newIndex.toString());
 		// (LinkPE drops sections from the objects it links: not kept)
-		if (resident && abi.os != "windows")
+		if (resident && abi.os != "windows") {
 			for (mi in 0...nm)
 				memObjs.set(memPaths[mi], {key: keys[mi], obj: objs[mi]});
+			ServerMemory.output(out);
+		}
 		if (store == null)
 			for (f in sys.FileSystem.readDirectory(dir))
 				if (StringTools.endsWith(f, ".o") && !keep.exists(f)) sys.FileSystem.deleteFile(dir + "/" + f);

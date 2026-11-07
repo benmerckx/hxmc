@@ -18,7 +18,7 @@ The fixpoint and crosshost must stay byte-identical.
 
 | Tier | What it runs |
 | --- | --- |
-| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
+| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
 | `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, Java through JNI (JniCheck), iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
@@ -101,7 +101,7 @@ each lane on the kept cases and 400 random programs.
 | `JniCheck` | `jni-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
 | `MachOCheck` | `macho-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform and minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit) |
 | `UIKitCheck` | `uikit-check` | UIKitHello, a UIKit app with its own `hxmc_ui_main`, in its bundle: run as a Mac Catalyst agent app and in the iOS simulator's iPhone and iPad (the delegate, the body after launch, the window key and sized); a Mac with Xcode |
-| `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run), a class a macro's callback defines among them |
+| `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run), a class a macro's callback defines among them, and two programs in turn under a cap of 1 MB (`HXMC_SERVER_MB`: each build drops the other program's) |
 | `Corpus --mir-run` | `mir-run-check` | the corpus run inside the compiler on the Mir interpreter |
 | `Conformance --target-only` | `mir-macros-check` | the macro cases with Mir macros against the reference (66 of 67: Issue11631 uses Eval's `mbedtls`) |
 | `MirCacheCheck` | `mir-cache-check` | Mir macros' compiled functions kept across builds |

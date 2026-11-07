@@ -807,6 +807,11 @@ class ModuleCache {
 		// (the server's own: a module whose macros registered a callback that
 		// defined a module, typed again in the next compilation)
 		if (com.sctx.isServer || Driver.resident) ServerCallbacks.install();
+		// (and what it keeps, under a cap: HXMC_SERVER_MB)
+		if (com.sctx.isServer || Driver.resident) {
+			ServerCache.cleanupHook = ServerMemory.end;
+			ServerMemory.begin(com);
+		}
 		if (s == null) {
 			if (why == null) why = "no cache directory";
 			if (why != "off" && stats()) Sys.println('hxmc: module cache not used ($why)');
