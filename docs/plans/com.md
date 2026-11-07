@@ -64,7 +64,7 @@ what was weighed against them: a change to the design should answer them.
 ## Open, in order
 
 1. **Declarations from Windows' metadata**: a separate tool, as
-   [hxmc-objc-extern-gen](https://github.com/back2dos/hxmc-objc-extern-gen)
+   [extern-generator](https://github.com/hx-objc/extern-generator)
    is Objective-C's: Win32's interfaces, structs, enums and functions from
    win32metadata's `Windows.Win32.winmd` (the slots in order, `[out,
    retval]` and `PreserveSig` from its attributes, C++'s overloads renamed).

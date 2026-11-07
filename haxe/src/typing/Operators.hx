@@ -230,7 +230,8 @@ class Operators {
 		var tint = ctx.t.tint, tfloat = ctx.t.tfloat, tstring = ctx.t.tstring;
 		function toString(e:TExpr):TExpr {
 			function loop(t:T):TExpr return switch classify(t) {
-				case KAbstract({aImpl: c}, _) if (c != null && c.clStatics.exists("toString")): Calls.callToString(ctx, e);
+				case KAbstract({aImpl: c, aThis: aThis}, _) if (c != null && c.clStatics.exists("toString")):
+					Calls.callToString(ctx, e, false, core.TFunctions.isExplicitNull(aThis));
 				case KInt | KFloat | KString: e;
 				case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther: Texpr.Builder.resolveAndMakeStaticCall(ctx.com.std, "string",
 						vector(e), e.epos);
@@ -330,6 +331,15 @@ class Operators {
 					if (!unificationError(ex)) throw ex;
 					e2 = context.AbstractCast.castOrUnify(ctx, e1.etype, e2, p);
 				}
+				function isEnumConstructorWithoutArgs(e:TExpr):Bool return switch (Texpr.skip(e)).eexpr {
+					case TField(_, FEnum(_, ef)):
+						switch follow(ef.efType) {
+							case TFun(_): false;
+							case _: true;
+						}
+					case _:
+						false;
+				}
 				switch [e1.eexpr, e2.eexpr] {
 					case [TConst(TNull), _] | [_, TConst(TNull)]:
 					case _: switch [follow(e1.etype), follow(e2.etype)] {
@@ -339,7 +349,7 @@ class Operators {
 							case [TEnum(en,
 								_), _] | [_, TEnum(en,
 									_)]: if (!core.Meta.has(MetaTag.FlatEnum,
-									en.eMeta)) warning(ctx, WUnsafeEnumEquality,
+									en.eMeta) && !(isEnumConstructorWithoutArgs(e1) || isEnumConstructorWithoutArgs(e2))) warning(ctx, WUnsafeEnumEquality,
 										"Equality operations on this enum might lead to unexpected results because some constructors have arguments",
 										p);
 							case _:
@@ -386,7 +396,7 @@ class Operators {
 		inline function mapA(t:T):T return applyParams(a.aParams, tl, t);
 		inline function make(opCf:Binop, cf:TClassField, e1:TExpr, e2:TExpr, ret:T, needs:Bool, swapped:Bool):BinopResultData {
 			if (cf.cfExpr == null && !hasClassFieldFlag(cf, CfExtern)) {
-				if (!core.Meta.has(MetaTag.NoExpr, cf.cfMeta)) Common.displayError(ctx.com, "Recursive operator method", p);
+				if (!hasClassFieldFlag(cf, CfNoExpr)) Common.displayError(ctx.com, "Recursive operator method", p);
 				if (!core.Meta.has(MetaTag.CoreType, a.aMeta)) {
 					// for non core-types we require that the return type is compatible to the native result type
 					var result = makeBinop(ctx, op, core.ds.Record.withFields(e1, {etype: core.Abstract.followWithAbstracts(e1.etype)}),
@@ -661,15 +671,7 @@ class Operators {
 				var r = api.typeRhs(read, e2);
 				var e = api.toTexpr(vr, r, function(e) return e);
 				unify(ctx, e.etype, get.ret, p);
-				var write = context.AbstractCast.findArrayWriteAccess(ctx, a, tl, key, e, p);
-				var et = TyperBase.typeModuleType(ctx, TClassDecl(c), p);
-				// | None,None ->
-				//	let ea = mk (TArray(ebase,ekey)) r_get p in
-				//	mk (TBinop(OpAssignOp op,ea,type_expr ctx e2 (WithType.with_type r_get))) r_set p
-				if (write.field.cfExpr == null || get.field.cfExpr == null)
-					Error.raiseTypingError("Invalid array access getter/setter combination", p);
-				var ef = mk(TField(et, FStatic(c, write.field)), write.type, p);
-				var call = makeCall(ctx, ef, vector(base, write.index, write.value), write.ret, p);
+				var call = mkArraySetCall(ctx, context.AbstractCast.findArrayWriteAccess(ctx, a, tl, key, e, p), c, base, p);
 				save();
 				api.generate(vr, read, call);
 			case AKResolve(sea, name):

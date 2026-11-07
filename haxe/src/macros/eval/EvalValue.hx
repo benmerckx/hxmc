@@ -45,12 +45,11 @@ class Vstring {
 	// The length of the string.
 	// port: in code points
 	public final slength:Int;
-	// The current (character * byte) offsets.
-	// port: a list of at most two (character, native index) entries
-	// (VstringOffset: the pair of refs): its head and the second, null where
-	// there is none.
-	public var soffsets1:Null<VstringOffset>;
-	public var soffsets2:Null<VstringOffset>;
+	// The current (character * byte) offsets. Threads share this cache, so it is
+	// only ever replaced as a whole and its pairs are immutable.
+	// port: (character, native index) pairs, null for the empty list (strings are
+	// ... created during static initialisation too, before any shared empty array)
+	public var soffsets:Null<Array<VstringOffset>> = null;
 	// port: sstring has no surrogate pairs: code point indices are string indices
 	public final sbmp:Bool;
 
@@ -61,10 +60,10 @@ class Vstring {
 	}
 }
 
-// port: an `(int ref * int ref)` of `soffsets`: a character index and its native index.
+// port: an `(int * int)` of `soffsets`: a character index and its native index.
 class VstringOffset {
-	public var cIndex:Int;
-	public var bOffset:Int;
+	public final cIndex:Int;
+	public final bOffset:Int;
 
 	public function new(cIndex:Int, bOffset:Int) {
 		this.cIndex = cIndex;
@@ -361,7 +360,7 @@ enum VinstanceKind {
 	ISocket(s:Vsocket);
 	IThread(t:Vthread);
 	IMutex(m:DomainMutex);
-	ISemaphore(s:sys.thread.Semaphore);
+	ISemaphore(s:Vlock);
 	ICondition(c:Vcondition);
 	ILock(l:Vlock);
 	ITls(i:Int);
@@ -453,17 +452,31 @@ class Vdeque {
 	public function new() {}
 }
 
+// A counting semaphore, used for both sys.thread.Lock and sys.thread.Semaphore.
+// It is built on libuv's mutex and condition variable because those provide a
+// timed wait, and luv's bindings for the blocking calls release the OCaml
+// runtime lock while they block.
+// port: the host's counting semaphore (sys.thread.Semaphore), whose acquire with a
+// ... timeout blocks; its blocking calls release the eval lock (EvalLock.blocking).
 class Vlock {
-	public final lmutex:sys.thread.Mutex = new sys.thread.Mutex();
-	public final lcond:sys.thread.Condition = new sys.thread.Condition();
-	public var lcount:Int = 0;
+	public final lsem:sys.thread.Semaphore;
 
-	public function new() {}
+	public function new(count:Int) {
+		lsem = new sys.thread.Semaphore(count);
+	}
 }
 
+// sys.thread.Condition, built on libuv like vlock for its timed wait. libuv's
+// mutexes are recursive on Windows and abort the process on misuse elsewhere,
+// so the owning eval thread is tracked to keep the mutex non-recursive and to
+// report misuse as a Haxe exception on every platform.
+// port: the host's condition, which owns its mutex (re-entrant on hxmc's runtime).
 class Vcondition {
 	public final cond:sys.thread.Condition = new sys.thread.Condition();
-	public final cmutex:sys.thread.Mutex = new sys.thread.Mutex();
+	// eval thread id of the owner, or -1 if unlocked
+	// port: a plain field: a thread only compares it with its own id, and it is
+	// ... written by the thread that holds the mutex
+	public var cowner:Int = -1;
 
 	public function new() {}
 }

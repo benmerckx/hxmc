@@ -2,7 +2,7 @@
 
 **Parked** ([#10](https://github.com/benmerckx/hxmc/issues/10)). The port
 stays hand-written and follows upstream forward, one pinned commit at a
-time (now Haxe 5.0.0-preview.1 at `066bd83`, with about 1,960 `// port:`
+time (now Haxe 5.0.0-preview.1 at `74c5b46`, with about 1,960 `// port:`
 comments where it differs from upstream).
 
 The parked idea: generate the compiler from upstream's OCaml (ml2hx) for

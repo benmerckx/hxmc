@@ -9,7 +9,7 @@ import generators.cpp.CppTypeUtils.*;
 
 /*
 	Code for generating source files.
-	It manages creating diretories, indents, blocks and only modifying files
+	It manages creating directories, indents, blocks and only modifying files
 	when the content changes.
  */
 class SourceWriter {

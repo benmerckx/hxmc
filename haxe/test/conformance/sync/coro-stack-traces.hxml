@@ -1,0 +1,4 @@
+--main Coro
+--interp
+-D coro.stack-traces
+-debug

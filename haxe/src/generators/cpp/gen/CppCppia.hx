@@ -430,8 +430,8 @@ class CppCppia {
 	}
 
 	public static function isDynamicInCpp(ctx:Context, expr:TExpr):Bool {
-		var exprType = typeString(switch follow(expr.etype) {
-			case TFun(sig): sig.ret;
+		var exprType = typeString(switch followWithCoro(expr.etype) {
+			case Coro(sig) | NotCoro(TFun(sig)): sig.ret;
 			case _: expr.etype;
 		});
 		return if (exprType == "Dynamic" || exprType == "cpp::ArrayBase") true else {
@@ -459,8 +459,8 @@ class CppCppia {
 						case TField(_, FEnum(enumDef, field)): false;
 						case _: true;
 					}
-					if (isIaCall) true else switch follow(func.etype) {
-						case TFun(_): isDynamicInCpp(ctx, func);
+					if (isIaCall) true else switch followWithCoro(func.etype) {
+						case Coro(_) | NotCoro(TFun(_)): isDynamicInCpp(ctx, func);
 						case _: true;
 					}
 				case TParenthesis(expr) | TMeta(_, expr): isDynamicInCpp(ctx, expr);
@@ -553,11 +553,30 @@ class CppCppia {
 			+ (if (core.TOther.TClassTools.getClInit(classDef) != null) 1 else 0))
 			+ "\n");
 
+		/* Methods without an expression (i.e. abstract ones) still need a real function, because hxcpp
+		   reads every class method as a ScriptCallable and the JIT accesses it as one */
+		function methodExpression(field:TClassField):Null<TExpr> {
+			return switch field.cfExpr {
+				case null if (!hasClassFlag(classDef, CInterface)):
+					mk(TFunction(CppRetyper.abstractTfunc(commonCtx.basic, field)), field.cfType, field.cfPos);
+				case e: e;
+			}
+		}
 		function generateField(isStatic:Bool, field:TClassField):Void {
-			switch [field.cfKind, follow(field.cfType)] {
-				case [Var({vRead: AccInline, vWrite: AccNever}), _]:
+			function unknown():Void {
+				printEndline("Unknown method type " + joinClassPath(classDef.clPath, ".") + "." + field.cfName);
+			}
+			function mapArgsRet(f:(args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T) -> Void):Void {
+				switch followWithCoro(field.cfType) {
+					case Coro(sig): f(sig.args, sig.ret);
+					case NotCoro(TFun(sig)): f(sig.args, sig.ret);
+					case _: unknown();
+				}
+			}
+			switch field.cfKind {
+				case Var({vRead: AccInline, vWrite: AccNever}):
 					script.writeOpLine(IaInline);
-				case [Var(v), _]:
+				case Var(v):
 					function modeCode(mode:VarAccess):CppiaOp {
 						return switch mode {
 							case AccNormal | AccCtor: IaAccessNormal;
@@ -573,14 +592,18 @@ class CppCppia {
 					}
 					var isExtern = !isPhysicalField(field);
 					script.varField(modeCode(v.vRead), modeCode(v.vWrite), isExtern, isStatic, field.cfName, field.cfType, field.cfExpr);
-				case [Method(MethDynamic), TFun(sig)]:
-					script.func(isStatic, true, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), field.cfExpr, field.cfPos);
-				case [Method(_), TFun(sig)] if (field.cfName == "new"):
-					script.func(true, false, "new", TInst(classDef, vector()), sig.args, false, field.cfExpr, field.cfPos);
-				case [Method(_), TFun(sig)]:
-					script.func(isStatic, false, field.cfName, sig.ret, sig.args, hasClassFlag(classDef, CInterface), field.cfExpr, field.cfPos);
-				case [Method(_), _]:
-					printEndline("Unknown method type " + joinClassPath(classDef.clPath, ".") + "." + field.cfName);
+				case Method(MethDynamic):
+					mapArgsRet(function(args, ret) {
+						script.func(isStatic, true, field.cfName, ret, args, hasClassFlag(classDef, CInterface), methodExpression(field), field.cfPos);
+					});
+				case Method(_) if (field.cfName == "new"):
+					mapArgsRet(function(args, ret) {
+						script.func(true, false, "new", TInst(classDef, vector()), args, false, field.cfExpr, field.cfPos);
+					});
+				case Method(_):
+					mapArgsRet(function(args, ret) {
+						script.func(isStatic, false, field.cfName, ret, args, hasClassFlag(classDef, CInterface), methodExpression(field), field.cfPos);
+					});
 			}
 		}
 		switch classDef.clConstructor {
@@ -1211,8 +1234,8 @@ class ScriptWriter {
 							write(op(IaCall) + argN + "\n");
 							genExpression(func);
 					}
-					var matchedArgs = switch func.etype {
-						case TFun(sig):
+					var matchedArgs = switch followWithCoro(func.etype) {
+						case Coro(sig) | NotCoro(TFun(sig)):
 							// port: List.iter2 raises Invalid_argument (after the common prefix) on lists of different lengths.
 							var n = sig.args.length < argList.length ? sig.args.length : argList.length;
 							for (i in 0...n) checkCast(sig.args[i].type, argList[i], false, false);

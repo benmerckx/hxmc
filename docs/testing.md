@@ -34,12 +34,12 @@ of each file.
 
 | Script | Lane | Compares | Result |
 | --- | --- | --- | --- |
-| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 294 + 12 expected failures, 67/67, 8/8 |
+| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 67/67, 8/8 |
 | `Display` | `display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
-| `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, an empty connection ([a divergence](porting.md#divergences-from-the-reference)), `--server-connect` | 634/634 |
+| `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, an empty connection ([a divergence](porting.md#divergences-from-the-reference)), `--server-connect` | 674/674 |
 | `ServerJsonRpc` | `jsonrpc` | the `server/*` methods, both cache modes | 107/107 |
 | `UpstreamTargets` | `targets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, jvm and flash by both, every output file | 12/12 identical |
-| `Interp` | `interp` | `--interp` runs of the case lists (not in CI) | 294/295 (`eval-eventLoop-compile` depends on thread timing) |
+| `Interp` | `interp` | `--interp` runs of the case lists (not in CI) | 314/315 (`eval-eventLoop-compile` depends on thread timing) |
 | `Haxelib` | `haxelib` | `-L` through lix's haxelib shim, batch and `--server` | 14/14 |
 | `LibResolution` | `libs` | hxmc's own `-lib` resolution against haxelib and lix's shims: repositories, versions, dependencies, every `resolveLibs` mode, errors | 130/130 |
 | `EvalDebugger` | `debugger` | scripted Eval debugger sessions (`SHARD=i/n`) | 6/6 |
@@ -90,7 +90,7 @@ each lane on the kept cases and 400 random programs.
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
 | `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
-| `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`); for hxmc, JS and Eval (`PORT=1` adds the port) |
+| `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`), a module defined in its definer's typing that calls back into it, the definer edited and back (`--defined`), a registry a macro class keeps whose readers' fields come from it, two programs of one class path filling it (`--state`); for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
 | `LowerQueriesCheck` | `quick` | each lowering query is covered by the server's reuse of bodies |
 | `RtSearchCheck` | `quick` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
@@ -155,10 +155,10 @@ needs).
 
 | Suite | Target | Passed | Skipped: BUG | TARGET | EXTERNAL | Failed |
 | --- | --- | --- | --- | --- | --- | --- |
-| unit | linux-x86_64 | 1519 | 0 | 12 | 0 | 0 |
-| sys | linux-x86_64 | 37 | 0 | 0 | 2 | 0 |
-| threads | linux-x86_64 | 38 | 0 | 0 | 0 | 0 |
-| unit | wasm32-wasi | 1516 | 0 | 15 | 0 | 0 |
+| unit | linux-x86_64 | 1586 | 1 | 12 | 0 | 0 |
+| sys | linux-x86_64 | 39 | 0 | 0 | 2 | 0 |
+| threads | linux-x86_64 | 43 | 0 | 0 | 0 | 0 |
+| unit | wasm32-wasi | 1582 | 1 | 16 | 0 | 0 |
 
 `unit` includes `TestCoroutines`. On wasm32-wasi the call-stack and socket
 tests are `TARGET` skips.

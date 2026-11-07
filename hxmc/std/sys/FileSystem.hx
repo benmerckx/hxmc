@@ -35,12 +35,17 @@ class FileSystem {
 	public static function stat(path:String):FileStat {
 		var a = NativeSys.stat(path);
 		if (a == null) throw "Could not stat " + path;
+		// hxmc: the times to the millisecond and below where statTimes has them (as
+		// hl's, jvm's and Eval's: upstream's TestFileSystem.testStatSubSecond)
+		var t = NativeSys.statTimes(path);
+		inline function time(i:Int):Date
+			return Date.fromTime(t == null ? a[2 + i] * 1000 : t[2 * i] * 1000 + t[2 * i + 1] / 1e6);
 		return {
 			gid: Std.int(a[0]),
 			uid: Std.int(a[1]),
-			atime: Date.fromTime(a[2] * 1000),
-			mtime: Date.fromTime(a[3] * 1000),
-			ctime: Date.fromTime(a[4] * 1000),
+			atime: time(0),
+			mtime: time(1),
+			ctime: time(2),
 			dev: Std.int(a[5]),
 			ino: Std.int(a[6]),
 			nlink: Std.int(a[7]),

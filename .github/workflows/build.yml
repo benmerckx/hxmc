@@ -1258,7 +1258,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then rm -rf bin && node_modules/@hxmc/cli/dist/haxe.exe build.hxml && ./bin/app.exe; fi
       # a UIKit app in its bundle (hxmc/test/UIKitCheck.hx) built by the
       # package's compiler: Mac Catalyst (the runner's architecture) and, on
-      # arm64, the iOS simulator's iPhone and iPad
+      # arm64, the iOS simulator's iPhone (the iPad too outside CI)
       - uses: actions/checkout@v7
         if: runner.os == 'macOS'
         with:

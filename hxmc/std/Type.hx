@@ -259,7 +259,10 @@ class Type {
 		return switch Native.typeKind(v) {
 			case 0: TNull;
 			case 1: TInt;
-			case 2: TFloat;
+			// hxmc: a Float with an Int's value is TInt, as on hl and jvm (upstream's Issue8477)
+			case 2:
+				var f:Float = v;
+				Std.int(f) == f ? TInt : TFloat;
 			case 3: TBool;
 			case 4 | 10: TObject;
 			case 5: TFunction;

@@ -70,8 +70,8 @@ class Compile {
 
 	static function fail(m:MatcherContext, p:Pos):DecisionTreeData return hashcons(m, Fail, p);
 
-	static function switchTree(m:MatcherContext, e:TExpr, cases:Array<DecisionSwitchCase>,
-			def:DecisionTreeData):DecisionTreeData return hashcons(m, Switch(e, cases, def), e.epos);
+	static function switchTree(m:MatcherContext, scrutinee:Scrutinee, cases:Array<DecisionSwitchCase>,
+			def:DecisionTreeData):DecisionTreeData return hashcons(m, Switch(scrutinee, cases, def), scrutinee.scrExpr.epos);
 
 	static function bind(m:MatcherContext, bl:Array<Bind>, dt:DecisionTreeData):DecisionTreeData return hashcons(m, Bind(bl, dt), dt.dtPos);
 
@@ -81,8 +81,10 @@ class Compile {
 	static function guardNull(m:MatcherContext, e:TExpr, a:DecisionTreeData,
 			b:DecisionTreeData):DecisionTreeData return hashcons(m, GuardNull(e, a, b), punion(a.dtPos, b.dtPos));
 
-	static function getSubSubjects(m:MatcherContext, e:TExpr, con:ConstructorData,
-			positions:Array<Pos>):Array<{name:String, e:TExpr}> return switch con.kind {
+	static function getSubSubjects(m:MatcherContext, subject:Subject, con:ConstructorData,
+			positions:Array<Pos>):Array<{name:String, e:TExpr}> {
+		var e = subject.getExpr();
+		return switch con.kind {
 			case ConEnum(en, ef):
 				var tl = Monomorph.spawnConstrainedMonos(function(t) return t, en.eParams);
 				var ten = TEnum(en, tl);
@@ -104,17 +106,16 @@ class Compile {
 			case ConFields(sl): sl.map(function(s) return {name: s, e: ExprToPattern.typeFieldAccess(m.ctx, e, s)});
 			case ConArray(0): [];
 			case ConArray(i):
-				var aa = ExprToPattern.getArrayAccess(m.ctx, e.etype, e.epos);
-				function get(ei:TExpr):TExpr return aa != null ? aa.aaGet(e, ei, aa.aaType,
-					e.epos) : Calls.accGet(m.ctx, Calls.arrayAccess(m.ctx, e, ei, MGet, e.epos));
+				var aa = subject.getArrayAccess(m.ctx);
 				[
 					for (i in 0...i) {
 						var ei = Texpr.Builder.makeInt(m.ctx.com.basic, i, e.epos);
-						{name: 'a$i', e: get(ei)};
+						{name: 'a$i', e: typing.ArrayAccess.makeArrayGet(m.ctx, aa, e, ei, e.epos)};
 					}
 				];
 			case ConConst(_) | ConTypeExpr(_) | ConStatic(_, _): [];
 		};
+	}
 
 	static function specialize(subject:TExpr, con:ConstructorData, cases:Array<CaseRow>):Array<CaseRow> {
 		var arity = Constructor.arity(con);
@@ -289,14 +290,14 @@ class Compile {
 	}
 
 	static function compileSwitch(m:MatcherContext, subjects:MlList<Subject>, cases:Array<CaseRow>):DecisionTreeData {
-		var first = switch subjects {
+		var subject = switch subjects {
 			case Nil: throw new InternalMatchFailure();
 			case Cons(subject, rest):
 				subjects = rest;
 				subject;
 		};
-		var scoped = first.getScopedExpr();
-		var subject = first.getExpr();
+		var scoped = subject.getScopedExpr();
+		var eSubject = subject.getExpr();
 		var sigma:Array<{con:ConstructorData, unguarded:Bool, positions:Array<Pos>}> = [];
 		var nullRows:Array<CaseRow> = [];
 		for (row in cases) {
@@ -322,7 +323,7 @@ class Compile {
 					}
 				case PatBind(_, {kind: PatAny}):
 				case PatBind(v, p1):
-					loop(Cons(makeBind(v, p.pos, subject), bs), p1);
+					loop(Cons(makeBind(v, p.pos, eSubject), bs), p1);
 				case PatAny:
 				case PatExtractor(_):
 					throw core.ds.FastThrow.of(new ExtractorFound());
@@ -333,35 +334,37 @@ class Compile {
 		}
 		sigma.sort(function(a, b) return a.con.pos.pmin - b.con.pos.pmin);
 		if (m.matchDebug)
-			Sys.println('compile_switch:\n\tsubject: ${sExprPretty(subject)}\n\ttsubjects: ${sSubjects(subjects)}\n\tcases: ${sCases(cases)}');
+			Sys.println('compile_switch:\n\tsubject: ${sExprPretty(eSubject)}\n\ttsubjects: ${sSubjects(subjects)}\n\tcases: ${sCases(cases)}');
 		var switchCases = sigma.map(function(s) {
 			var sub = getSubSubjects(m, subject, s.con, s.positions);
-			var bs = [], ss = [];
+			var bs = [], subSubjects = [];
 			for (sub in sub) {
 				var v = addLocal(m.ctx, VGenerated, genLocalPrefix + sub.name, sub.e.etype, sub.e.epos);
 				var ev = mk(TLocal(v), v.vType, v.vPos);
 				var b = makeBindGen(v, v.vPos, sub.e, BindUnused);
 				bs.push(b);
-				ss.push(new Subject(ev, b));
+				var subSubject = new Subject(ev, b);
+				subSubjects.push(subSubject);
 			}
-			var dt = compileRows(m, ss.ofArray(subjects), specialize(subject, s.con, cases));
+			var dt = compileRows(m, subSubjects.ofArray(subjects), specialize(eSubject, s.con, cases));
 			return ({scCon: s.con, scUnguarded: s.unguarded, scDt: bind(m, bs, dt)} : typing.matcher.DecisionTree.DecisionSwitchCase);
 		});
 		// This is very awkward: We need to know the first occurrence of the subject expression in the
 		// decision tree before recursing. Ideally, this would be handled automatically during the recursion,
 		// but for this to work we would have to replace some texpr occurrences with subject.
-		var subjectNull = subject,
-			subjectSwitch = subject,
-			subjectDefault = subject;
-		if (nullRows.length > 0 || isExplicitNullOrAbstractOverThat(subject.etype)) subjectNull = scoped.expr;
-		else if (switchCases.length == 0) subjectDefault = scoped.expr;
-		else subjectSwitch = scoped.expr;
-		var defaults = defaultRows(subjectDefault, cases);
+		var eNull = eSubject,
+			eSwitch = eSubject,
+			eDefault = eSubject;
+		if (nullRows.length > 0 || subject.isNullable()) eNull = scoped.expr;
+		else if (switchCases.length == 0) eDefault = scoped.expr;
+		else eSwitch = scoped.expr;
+		var defaults = defaultRows(eDefault, cases);
 		var switchDefault = compileRows(m, subjects, defaults);
-		var dt = switchCases.length == 0 ? switchDefault : switchTree(m, subjectSwitch, switchCases, switchDefault);
+		var dt = switchCases.length == 0 ? switchDefault : switchTree(m,
+			Subject.makeScrutinee(m.ctx, subject, eSwitch, [for (sc in switchCases) sc.scCon]), switchCases, switchDefault);
 		if (nullRows.length == 0) {
-			if (isExplicitNullOrAbstractOverThat(subject.etype)) dt = guardNull(m, subjectNull, switchDefault, dt);
-		} else dt = guardNull(m, subjectNull, compileRows(m, subjects, nullRows.concat(defaults)), dt);
+			if (subject.isNullable()) dt = guardNull(m, eNull, switchDefault, dt);
+		} else dt = guardNull(m, eNull, compileRows(m, subjects, nullRows.concat(defaults)), dt);
 		scoped.reset();
 		return dt;
 	}
@@ -480,7 +483,7 @@ class Compile {
 		}
 		if (cases.length == 0 && subjects.length > 0) {
 			var dt = fail(m, subjects[0].getPos());
-			return switchTree(m, subjects[0].getExpr(), [], dt);
+			return switchTree(m, Subject.makeScrutinee(ctx, subjects[0], subjects[0].getExpr(), []), [], dt);
 		}
 		var dt = compileRows(m, subjects.ofArray(), cases);
 		Useless.check(ctx, cases);

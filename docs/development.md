@@ -10,7 +10,7 @@ the bootstrap works, and the everyday edit-test loop. Tests and CI are in
 | Path | |
 | --- | --- |
 | `haxe/src/` | the port, module by module after upstream's `haxe/upstream/src/` |
-| `haxe/upstream/` | upstream Haxe (submodule, commit `066bd8331`): the reference sources and std. Never edit it |
+| `haxe/upstream/` | upstream Haxe (submodule, commit `74c5b468e`): the reference sources and std. Never edit it |
 | `haxe/test/` | the port's tests: conformance against the reference, the fuzzer (`fuzz/`), unit tests of port modules (`unit/`), `Measure.hx` |
 | `hxmc/src/hxmc/` | hxmc's compiler (class path `hxmc/src`): IR and lowering (`ir/`), code generators (`x64/`, `a64/`, `wasm/`), linkers, the driver; `Main.hx` (the tool) and `HaxeMain.hx` (`haxe` with hxmc built in) |
 | `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime (`hxmc.rt`), merged with the Eval originals by `MkStd.hx` |

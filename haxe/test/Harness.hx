@@ -64,7 +64,9 @@ class Harness {
 			// (k: a process and its descendants, each stopped first, so it neither
 			// starts more nor ends before them)
 			script.add('k() { kill -STOP $$1; for c in $$(pgrep -P $$1); do k $$c; done; kill -9 $$1; }; ');
-			script.add('"$$@"$redir & p=$$!; (sleep $t; k $$p 2>/dev/null) >/dev/null 2>&1 & w=$$!; wait $$p; c=$$?; kill $$w 2>/dev/null; exit $$c');
+			// (the watchdog's sleep is killed with it: left running, every process run
+			// would leave one behind for `t` seconds, which fills the process table)
+			script.add('"$$@"$redir & p=$$!; (trap \'kill $$s 2>/dev/null; exit 0\' TERM; sleep $t & s=$$!; wait $$s && k $$p 2>/dev/null) >/dev/null 2>&1 & w=$$!; wait $$p; c=$$?; kill $$w 2>/dev/null; exit $$c');
 		} else
 			script.add('exec "$$@"$redir');
 		var p = new sys.io.Process("/bin/sh", ["-c", script.toString(), "sh", o.cwd == null ? "." : o.cwd].concat(cmd));

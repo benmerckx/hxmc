@@ -28,6 +28,13 @@ import macros.eval.EvalValue;
 // pairs (`sbmp`) need no walk: a character index is the native index. On a code point host
 // (core.StringHelper.codePointHost: Eval's own semantics, the host caching the
 // offsets) every string is such a string: native lengths are code points.
+// How to store a new offset pair, relative to the cached pairs that were read.
+enum OffsetUpdate {
+	Single;
+	Before(pair:VstringOffset);
+	After(pair:VstringOffset);
+}
+
 class EvalString {
 	public static inline function vstring(s:Vstring):Value return VString(s);
 
@@ -83,73 +90,68 @@ class EvalString {
 	}
 
 	// port: get_offset', which returns the native index of the character
-	// (code point) at `cIndex` with the `soffsets` entry its caller updates:
-	// here the entry, holding that index already (get_offset's update).
-	static function getOffsetEntry(s:Vstring, cIndex:Int):VstringOffset {
-		var r:VstringOffset, bOffset:Int;
-		var r1 = s.soffsets1;
-		if (r1 == null) {
-			bOffset = getBOffset(s, cIndex, 0);
-			r = new VstringOffset(cIndex, bOffset);
-			s.soffsets1 = r;
-		} else if (s.soffsets2 == null) {
-			var cIndex1 = r1.cIndex;
-			var bOffset1 = r1.bOffset;
-			var diff = cIndex - cIndex1;
-			bOffset = switch diff {
-				case 0: bOffset1;
-				case 1: next(s, bOffset1);
-				case -1: prev(s, bOffset1);
-				case _:
-					if (diff > 0) getBOffset(s, diff, bOffset1) else if (cIndex + diff < 0)
-						/* big step backwards, better to start over */
-						getBOffset(s, cIndex, 0) else rgetBOffset(s, diff, bOffset1);
-			}
-			/* If our jump is larger than the scientifically determined value 20, upgrade
-				to two offset pointers. */
-			r = if (diff > 20 || diff < -20) {
-				var r2 = new VstringOffset(cIndex, bOffset);
-				s.soffsets1 = r2;
-				s.soffsets2 = r1;
-				r2;
-			} else r1;
-		} else {
-			var r2 = s.soffsets2;
-			var cIndex1 = r1.cIndex, bOffset1 = r1.bOffset;
-			var cIndex2 = r2.cIndex, bOffset2 = r2.bOffset;
-			var diff1 = cIndex - cIndex1;
-			var diff2 = cIndex - cIndex2;
-			if (diff1 == 0) {
-				r = r1;
-				bOffset = bOffset1;
-			} else if (diff2 == 0) {
-				r = r2;
-				bOffset = bOffset2;
-			} else if (diff1 == 1) {
-				r = r1;
-				bOffset = next(s, bOffset1);
-			} else if (diff2 == 1) {
-				r = r2;
-				bOffset = next(s, bOffset2);
-			} else if (diff1 == -1) {
-				r = r1;
-				bOffset = prev(s, bOffset1);
-			} else if (diff2 == -1) {
-				r = r2;
-				bOffset = prev(s, bOffset2);
-			} else {
+	// (code point) at `cIndex` with how its caller stores the new pair.
+	static function getOffset_(s:Vstring, cIndex:Int):{bOffset:Int, update:OffsetUpdate} {
+		var offsets = s.soffsets;
+		switch offsets == null ? 0 : offsets.length {
+			case 0:
+				return {bOffset: getBOffset(s, cIndex, 0), update: Single};
+			case 1:
+				var r1 = offsets[0];
+				var cIndex1 = r1.cIndex;
+				var bOffset1 = r1.bOffset;
+				var diff = cIndex - cIndex1;
+				var bOffset = switch diff {
+					case 0: bOffset1;
+					case 1: next(s, bOffset1);
+					case -1: prev(s, bOffset1);
+					case _:
+						if (diff > 0) getBOffset(s, diff, bOffset1) else if (cIndex + diff < 0)
+							/* big step backwards, better to start over */
+							getBOffset(s, cIndex, 0) else rgetBOffset(s, diff, bOffset1);
+				}
+				/* If our jump is larger than the scientifically determined value 20, upgrade
+					to two offset pointers. */
+				var update = if (diff > 20 || diff < -20) Before(r1) else Single;
+				return {bOffset: bOffset, update: update};
+			case 2:
+				var r1 = offsets[0], r2 = offsets[1];
+				var cIndex1 = r1.cIndex, bOffset1 = r1.bOffset;
+				var cIndex2 = r2.cIndex, bOffset2 = r2.bOffset;
+				var diff1 = cIndex - cIndex1;
+				var diff2 = cIndex - cIndex2;
+				// Updating the first pair keeps the second one and vice versa.
+				var update1 = Before(r2);
+				var update2 = After(r1);
+				if (diff1 == 0) return {bOffset: bOffset1, update: update1};
+				if (diff2 == 0) return {bOffset: bOffset2, update: update2};
+				if (diff1 == 1) return {bOffset: next(s, bOffset1), update: update1};
+				if (diff2 == 1) return {bOffset: next(s, bOffset2), update: update2};
+				if (diff1 == -1) return {bOffset: prev(s, bOffset1), update: update1};
+				if (diff2 == -1) return {bOffset: prev(s, bOffset2), update: update2};
 				var far = (diff1 < 0 ? -diff1 : diff1) > (diff2 < 0 ? -diff2 : diff2);
-				r = far ? r2 : r1;
+				var update = far ? update2 : update1;
 				var diff = far ? diff2 : diff1;
 				var bOffset_ = far ? bOffset2 : bOffset1;
-				bOffset = if (diff > 0) getBOffset(s, diff, bOffset_) else if (cIndex + diff < 0)
+				var bOffset = if (diff > 0) getBOffset(s, diff, bOffset_) else if (cIndex + diff < 0)
 					/* big step backwards, better to start over */
 					getBOffset(s, cIndex, 0) else rgetBOffset(s, diff, bOffset_);
-			}
+				return {bOffset: bOffset, update: update};
+			case _:
+				// The cache never has more than two pairs, but start over if it does.
+				return {bOffset: getBOffset(s, cIndex, 0), update: Single};
 		}
-		r.cIndex = cIndex;
-		r.bOffset = bOffset;
-		return r;
+	}
+
+	// Other threads may read or replace the cache at any time, so this builds a new list
+	// instead of modifying the one that was read. A concurrent update may be lost, which
+	// only means that the offset is computed again later.
+	static function setOffsets(s:Vstring, update:OffsetUpdate, pair:VstringOffset):Void {
+		s.soffsets = switch update {
+			case Single: [pair];
+			case Before(pair_): [pair, pair_];
+			case After(pair_): [pair_, pair];
+		}
 	}
 
 	// port: get_b_offset; with a negative count it walks on until UTF8.next
@@ -168,7 +170,11 @@ class EvalString {
 	}
 
 	// port: native index of the character (code point) at `cIndex`.
-	public static function getOffset(s:Vstring, cIndex:Int):Int return getOffsetEntry(s, cIndex).bOffset;
+	public static function getOffset(s:Vstring, cIndex:Int):Int {
+		var r = getOffset_(s, cIndex);
+		setOffsets(s, r.update, new VstringOffset(cIndex, r.bOffset));
+		return r.bOffset;
+	}
 
 	// port: UTF8.next and UTF8.prev on native indices: a surrogate pair is one
 	// character. Both read the string where OCaml's s.[i] checks the index.
@@ -220,7 +226,7 @@ class EvalString {
 
 	// port: the code point at character index `cIndex`; the entry moves past it.
 	public static function charAt(s:Vstring, cIndex:Int):Int {
-		var r = getOffsetEntry(s, cIndex);
+		var r = getOffset_(s, cIndex);
 		var b = r.bOffset;
 		var str = s.sstring;
 		if (b < 0 || b >= str.length) outOfBounds();
@@ -230,8 +236,7 @@ class EvalString {
 			x = ((x - 0xD800) << 10) + (StringTools.fastCodeAt(str, b + 1) - 0xDC00) + 0x10000;
 			diff = 2;
 		}
-		r.cIndex = cIndex + 1;
-		r.bOffset = b + diff;
+		setOffsets(s, r.update, new VstringOffset(cIndex + 1, b + diff));
 		return x;
 	}
 

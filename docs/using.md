@@ -13,7 +13,7 @@ build on. Any host builds for any target.
 | Target | Output |
 | --- | --- |
 | `linux-x86_64`, `linux-arm64` | static ELF executable (musl); with `-D hxmc.libc=glibc`, linked against the system's glibc 2.17+ |
-| `macos-x86_64`, `macos-arm64` | Mach-O executable, ad hoc signed |
+| `macos-x86_64`, `macos-arm64` | Mach-O executable, ad hoc signed (the SDK's declarations: [apple-appkit](https://github.com/hx-objc/apple-appkit)) |
 | `windows-x86_64`, `windows-arm64` | PE executable over the UCRT |
 | `android-arm64`, `android-x86_64` | a shared library ([Android](#android)) |
 | `ios-arm64`, `ios-sim-arm64` | Mach-O executable ([iOS](#ios)) |
@@ -97,6 +97,9 @@ iOS 15 and later: a Mach-O executable, or a dylib with `-D hxmc.shared`.
 A UI library that defines `hxmc_ui_main` gets `UIApplicationMain` on the
 main thread, and the program's body runs once the app has launched. A
 packager writes the app bundle around it ([below](#native-output-for-a-packager)).
+The SDK's declarations are in
+[apple-uikit](https://github.com/hx-objc/apple-uikit)
+([interop.md](interop.md#the-sdks-declarations)).
 
 ### Mac Catalyst
 
@@ -105,7 +108,10 @@ macOS process whose Mach-O names Mac Catalyst as its platform, with iOS's
 versions (`-D hxmc.ios-min-version`, 15.0 and later). `@:hxmc.framework`
 imports the frameworks macOS has for iOS apps from `/System/iOSSupport`
 (UIKit, MapKit, ...) and the shared ones (Foundation, Core Graphics,
-AppKit) from their usual place. UIKit's views work without an app;
+AppKit) from their usual place. Its declarations are in
+[apple-catalyst](https://github.com/hx-objc/apple-catalyst)
+([interop.md](interop.md#the-sdks-declarations)). UIKit's views work
+without an app;
 `UIApplicationMain` needs an app bundle (`Info.plist` with a
 `CFBundleIdentifier`): an executable outside one stops with "Invalid
 parameter not satisfying: bundleIdentifier", and one with only an

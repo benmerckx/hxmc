@@ -422,6 +422,7 @@ class Compiler {
 					(a, b) -> a.file == b.file && a.offset == b.offset, 0),
 			hasNext: hasNext,
 			hasError: false,
+			runningMacros: 0,
 			messages: [],
 			reportMode: RMNone,
 			messageCapture: null,

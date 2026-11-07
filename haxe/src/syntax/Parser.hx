@@ -69,6 +69,12 @@ enum TypeDeclCompletionMode {
 	TCAfterType;
 }
 
+enum FieldOwner {
+	FOClass;
+	FOReifiedClass;
+	FOStructure;
+}
+
 enum SyntaxCompletion {
 	SCComment;
 	SCClassRelation;
