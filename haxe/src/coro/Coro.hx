@@ -164,7 +164,10 @@ class ContinuationClassBuilder {
 			}
 			return n;
 		}
-		function mapLoop(e:TExpr):TExpr return Texpr.mapExprType(mapLoop, subst, mapVar, e);
+		function mapLoop(e:TExpr):TExpr {
+			var e = Texpr.mapExprType(mapLoop, subst, mapVar, e);
+			return typing.OverloadResolution.maybeReapplyOverloadCall(e);
+		}
 		var el = [b.varInit(vcontinuation, ethis)];
 		if ((vtmpResult).isVal()) el.push(b.varInit((vtmpResult).force(), eresult));
 		el.push(b.varInitNull(vtmpError));
@@ -241,7 +244,7 @@ class Coro {
 
 	public static function coroToStateMachine(ctx:CoroCtx, cc:CoroClass, root:CoroBlock, exprs:CoroToTexprExprs,
 			args:Vector<{variable:TVar, defaultValue:Null<TExpr>}>, vtmpResult:AtomicLazy<TVar>, vtmpError:TVar,
-			vtmpErrorUnwrapped:AtomicLazy<TVar>, vcompletion:TVar, vcontinuation:TVar, mode:CoroGenMode, stack:Pos->TExpr,
+			vtmpErrorUnwrapped:AtomicLazy<TVar>, vcompletion:TVar, vcontinuation:TVar, mode:CoroGenMode, stack:Pos->Array<TExpr>,
 			startException:TExpr->TExpr):TExpr {
 		var b = ctx.builder;
 		var cont = cc.continuationApi;
@@ -251,15 +254,19 @@ class Coro {
 		// because debug mode disables TCO which may add extra states.
 		if (!ctx.typer.com.debug) checkAssertions(ctx.config.assertConfig, result.numStates, result.fields.length, cc.namePos);
 		// update cf_type to use inside type parameters
-		for (cf in result.fields) {
+		for (f in result.fields) {
+			var cf = f.cf;
 			cf.cfType = substituteTypeParams(cc.typeParamSubst, cf.cfType);
 			core.TOther.TClassTools.addField(cc.cls, cf);
 		}
 		var ret = cont.suspensionResult(cc.outside.resultType);
-		// In debug mode, insert an initial setStackItem call at the very start of
+		// With coro.stack-traces, insert an initial setStackItem call at the very start of
 		// invokeResume so that the continuation always has a valid stack item, even in
 		// single-state coroutines where no suspension call triggers setStackItem.
-		var eloop = b.voidBlock(vector(stack(cc.namePos), result.expr));
+		var eloop = switch stack(cc.namePos) {
+			case []: result.expr;
+			case el: b.voidBlock(Vector.fromArrayCopy(el.concat([result.expr])));
+		};
 		var invoke = switch mode {
 			case GenInline(_): ContinuationClassBuilder.mkInvokeResumeWithBody(ctx, cc, vcontinuation, vtmpResult, vtmpError,
 					vtmpErrorUnwrapped, exprs.eresult, eloop);
@@ -271,7 +278,11 @@ class Coro {
 		var hoisted = [];
 		for (a in args) {
 			var v:TVar = a.variable;
-			var field = cc.cls.clFields.get('_hx_hoisted${v.vId}');
+			var field = null;
+			for (f in result.fields) if (f.id == v.vId) {
+				field = f.cf;
+				break;
+			}
 			if (field != null) hoisted.push({name: v.vName, e: b.local(v, v.vPos), field: field});
 		}
 		createContinuationClass(ctx, cont, cc, result.initialState, invoke, mode, hoisted);
@@ -361,23 +372,19 @@ class Coro {
 	}
 
 	public static function makeDeferredApi(ctx:CoroCtx, b:TexprBuilder):{deferred:CoroDeferredApi, install:CoroDeferredApi->Void} {
-		// port: diverges from upstream: `inputs`, the expressions the deferred expression is built from
-		// ... (ctx.deferredInputs; see CoroToTexpr.handleLocals).
-		inline function makeDeferred(build:Void->TExpr, t:T, inputs:Array<TExpr>):TExpr {
+		inline function makeDeferred(build:Void->TExpr, t:T):TExpr {
 			var v = allocVar(VGenerated, "_hx_coro_deferred", tDynamic, nullPos);
 			ctx.deferredExprs.set(v.vId, build);
-			ctx.deferredInputs.set(v.vId, inputs);
 			return b.call(b.local(v, v.vPos), vector(), t);
 		}
-		inline function callInputs(c:CoroSuspend):Array<TExpr> return [c.csFun].concat(c.csArgs.toArray());
 		// These refs will be filled in after the continuation API is created (step 4).
 		var api:Null<CoroDeferredApi> = null;
 		var deferred:CoroDeferredApi = {
-			makeInlineReturn: function(e, p) return makeDeferred(function() return api.makeInlineReturn(e, p), tDynamic, e == null ? [] : [e]), // TODO: ?
-			makeInlineTailCall: function(c) return makeDeferred(function() return api.makeInlineTailCall(c), tDynamic, callInputs(c)), // TODO: ?
-			makeSyncCall: function(c, e) return makeDeferred(function() return api.makeSyncCall(c, e), tDynamic, callInputs(c)),
-			makeThis: function(e) return makeDeferred(function() return api.makeThis(e), e.etype, [e]),
-			makeSuperField: function(e) return makeDeferred(function() return api.makeSuperField(e), e.etype, [e])
+			makeInlineReturn: function(e, p) return makeDeferred(function() return api.makeInlineReturn(e, p), tDynamic), // TODO: ?
+			makeInlineTailCall: function(c) return makeDeferred(function() return api.makeInlineTailCall(c), tDynamic), // TODO: ?
+			makeSyncCall: function(c, e) return makeDeferred(function() return api.makeSyncCall(c, e), tDynamic),
+			makeThis: function(e) return makeDeferred(function() return api.makeThis(e), e.etype),
+			makeSuperField: function(e) return makeDeferred(function() return api.makeSuperField(e), e.etype)
 		};
 		return {deferred: deferred, install: function(a) api = a};
 	}
@@ -394,6 +401,7 @@ class Coro {
 		var vtmpResult = AtomicLazy.fromFun(function() return allocVar(VGenerated, "_hx_result", basic.tnull(basic.tany), p));
 		var etmpResult = AtomicLazy.fromFun(function() return b.local((vtmpResult).force(), p));
 		var vtmpError = allocVar(VGenerated, "_hx_error", basic.tnull(basic.texception), p);
+		var etmpError = b.local(vtmpError, p);
 		var vtmpErrorUnwrapped = AtomicLazy.fromFun(function() return allocVar(VGenerated, "_hx_error_unwrapped", basic.tnull(basic.tany),
 			p));
 		var etmpErrorUnwrapped = AtomicLazy.fromFun(function() return b.local((vtmpErrorUnwrapped).force(), p));
@@ -420,7 +428,7 @@ class Coro {
 
 		var deferred = makeDeferredApi(ctx, b);
 		CoroFromTexpr.checkCaptures(ctx, args, expr);
-		CoroFromTexpr.exprToCoro(ctx, etmpResult, etmpErrorUnwrapped, root, scope, deferred.deferred, expr);
+		CoroFromTexpr.exprToCoro(ctx, etmpResult, etmpError, etmpErrorUnwrapped, root, scope, deferred.deferred, expr);
 		// Count the number of reachable CFG blocks.
 		var count = 0;
 		coroWalk(function(_) count++, root);
@@ -459,7 +467,6 @@ class Coro {
 		inline function continuationField(cf:TClassField,
 				t:T):TExpr return b.instanceField(econtinuation, cont.baseContinuationClass, vector(basic.tany), cf, t);
 		var egoto = continuationField(cont.gotoLabel, basic.tint);
-		var etmpError = b.local(vtmpError, p);
 		var exprs:CoroToTexprExprs = {
 			econtinuation: econtinuation,
 			ecompletion: ecompletion,
@@ -471,9 +478,9 @@ class Coro {
 			etmpError: etmpError,
 			etmpErrorUnwrapped: etmpErrorUnwrapped
 		};
-		function stack(pos:Pos):TExpr {
-			if (!ctx.typer.com.debug) return b.voidBlock(vector());
-			var field = PMap.find("setStackItem", cont.baseContinuationClass.clFields);
+		function stack(pos:Pos):Array<TExpr> {
+			if (!ctx.stackTraces) return [];
+			var field = CoroToTexpr.findStackTraceField(cont, "setStackItem", p);
 			// setStackItem(kind, cls, func, id, file, line, column, pmin, pmax)
 			// kind: 0 = ClassFunction, 1 = LocalFunction
 			var args = switch ctx.coroType {
@@ -493,7 +500,7 @@ class Coro {
 				b.int(pos.pmin, p),
 				b.int(pos.pmax, p)
 			]);
-			return mk(TCall(continuationField(field, field.cfType), Vector.fromArrayCopy(args)), basic.tvoid, p);
+			return [mk(TCall(continuationField(field, field.cfType), Vector.fromArrayCopy(args)), basic.tvoid, p)];
 		}
 		// 5. Fill in the deferred callback implementations now that the continuation API exists
 
@@ -513,11 +520,11 @@ class Coro {
 			},
 			makeInlineTailCall: function(call) {
 				var r = SuspensionCalls.makeSuspendingTailCall(ctx, cont, exprs, call);
-				return b.voidBlock(vector(stack(call.csPos), r.call, r.check));
+				return b.voidBlock(Vector.fromArrayCopy(stack(call.csPos).concat([r.call, r.check])));
 			},
 			makeSyncCall: function(call, e) {
 				var r = SuspensionCalls.makeSyncCallAndCheck(ctx, cont, exprs, call, e);
-				return b.voidBlock(vector(stack(call.csPos), r.call, r.check));
+				return b.voidBlock(Vector.fromArrayCopy(stack(call.csPos).concat([r.call, r.check])));
 			},
 			makeThis: function(e) {
 				var th = (egthis).force();
@@ -533,9 +540,9 @@ class Coro {
 		// 6. Transform blocks to state machine
 
 		var startException:TExpr->TExpr;
-		if (!ctx.typer.com.debug) startException = function(e) return e;
+		if (!ctx.stackTraces) startException = function(e) return e;
 		else {
-			var cf = PMap.find("startException", cont.baseContinuationClass.clFields);
+			var cf = CoroToTexpr.findStackTraceField(cont, "startException", p);
 			var ef = continuationField(cf, cf.cfType);
 			startException = function(e) return mk(TCall(ef, vector(e)), basic.texception, p);
 		}
@@ -573,7 +580,8 @@ class Coro {
 			coroType: type,
 			classNamePos: p,
 			deferredExprs: [],
-			deferredInputs: [],
+			wildcardCatches: [typer.com.config.pfExceptions.ecWildcardCatch, {pack: ["haxe"], name: "Exception"}],
+			stackTraces: Common.defined(typer.com, core.Define.CoroStackTraces),
 			hasCaptureVars: false,
 			capturesThis: false,
 			nextBlockId: 0,

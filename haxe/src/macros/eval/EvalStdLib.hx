@@ -26,6 +26,7 @@ import core.ds.GlobalsIntMap;
 import core.ds.NotFound;
 import haxe.io.Bytes;
 import macros.eval.EvalValue;
+import macros.eval.EvalStdLibA.CountingSemaphore;
 import macros.eval.EvalContext;
 import macros.eval.EvalHash;
 import macros.eval.EvalString;
@@ -388,7 +389,7 @@ class EvalStdLib {
 			// port: List.hd
 			if (vl.length == 0) throw new Failure("hd");
 			var v = vl[0];
-			var sem = new sys.thread.Semaphore(EvalDecode.decodeInt(v));
+			var sem = CountingSemaphore.create(EvalDecode.decodeInt(v));
 			EvalEncode.encodeInstance(EvalHash.key_sys_net_Semaphore, ISemaphore(sem));
 		});
 		add(EvalHash.key_sys_net_Condition, _ -> {
@@ -396,7 +397,7 @@ class EvalStdLib {
 			EvalEncode.encodeInstance(EvalHash.key_sys_net_Condition, ICondition(cond));
 		});
 		add(EvalHash.key_sys_net_Lock, _ -> {
-			var lock = new Vlock();
+			var lock = CountingSemaphore.create(0);
 			EvalEncode.encodeInstance(EvalHash.key_sys_net_Lock, ILock(lock));
 		});
 		add(EvalHash.key_sys_net_Tls, _ -> {
@@ -673,6 +674,7 @@ class EvalStdLib {
 			{name: "tryAcquire", value: StdCondition.tryAcquire},
 			{name: "release", value: StdCondition.release},
 			{name: "wait", value: StdCondition.wait},
+			{name: "timedWait", value: StdCondition.timedWait},
 			{name: "signal", value: StdCondition.signal},
 			{name: "broadcast", value: StdCondition.broadcast},
 		]);

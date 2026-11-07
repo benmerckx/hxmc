@@ -193,6 +193,7 @@ class Typer {
 					ctx.m.enumWithType = old;
 					switch exc {
 						case(core.ds.ExceptionTools.typing(_) => Some({errMessage: UnknownIdent(n)})):
+							if (ctx.f.inDisplay && ctx.com.display.dmsKind == DMDefault) throw exc;
 							raiseOrDisplayMessage(ctx,
 								StringError.stringError(n, expected.fields,
 									"Identifier '" + n + "' is not part of " + Globals.sTypePath(expected.path)),
@@ -783,7 +784,7 @@ class Typer {
 					e = typeExpr(ctx, field.expr, WithTypeTools.value);
 					original = null;
 				}
-				if (valid) {
+				if (valid || original != null) {
 					if (StringTools.startsWith(n, "$")) raiseTypingError("Field names starting with a dollar are not allowed", p);
 					var cf = mkField(n, e.etype, Ast.punion(pn, e.epos), pn);
 					if (original != null) {
@@ -1571,7 +1572,8 @@ class Typer {
 			case MetaTag.ToString:
 				var e = expression();
 				switch follow(e.etype) {
-					case TAbstract(a, _) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): callToString(ctx, e);
+					case TAbstract(a, _) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")):
+						callToString(ctx, e, false, core.TFunctions.isExplicitNull(a.aThis));
 					case _: e;
 				}
 			case MetaTag.Markup: raiseTypingError("Markup literals must be processed by a macro", p);
@@ -1703,7 +1705,8 @@ class Typer {
 						var information = typeExpr(ctx, infos, WithTypeTools.value);
 						switch follow(value.etype) {
 							case TAbstract(a,
-								_) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): value = callToString(ctx, value);
+								_) if (a.aImpl != null && a.aImpl.clStatics.exists("toString")): value = callToString(ctx, value, false,
+								core.TFunctions.isExplicitNull(a.aThis));
 							case _:
 						}
 						mk(TCall(mk(TIdent("`trace"), tDynamic, p), vector(value, information)), ctx.t.tvoid, p);
@@ -1845,7 +1848,7 @@ class Typer {
 				};
 				var nullable = ctx.t.tnull(e1.etype),
 					name = WithTypeTools.getExpectedName(withType);
-				if (name == null || name == "") name = "tmp"; // TODO: why does this happen?
+				if (name == null || !Lexer.isValidIdentifier(name)) name = "tmp";
 				e1 = reference.asVar(name, mk(e1.eexpr, nullable, e1.epos));
 				var enull = Builder.makeNull(nullable, e1.epos),
 					condition = mk(TBinop(OpNotEq, e1, enull), ctx.t.tbool, e1.epos),

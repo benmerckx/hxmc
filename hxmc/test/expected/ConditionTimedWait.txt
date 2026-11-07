@@ -1,0 +1,7 @@
+exit 0
+timeout: false, waited true
+zero false, negative false, nan false
+signaled: true true
+still held once after the wait: true
+broadcast woke 4 of 4
+huge timeout returned

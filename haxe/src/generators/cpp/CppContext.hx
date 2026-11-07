@@ -119,7 +119,10 @@ class CppContext {
 	}
 
 	public static function isGcElement(ctx:Context, memberType:Tcpp):Bool
-		return Gctx.defined(ctx.ctxCommon, Define.HxcppGcGenerational) && isObjectElement(memberType);
+		return Gctx.defined(ctx.ctxCommon, Define.HxcppGcGenerational) && switch memberType {
+			case TCppFunction(_, _, _): false;
+			case _: isObjectElement(memberType);
+		};
 
 	public static function stripFile(ctx:Gctx, file:String):String {
 		return switch Gctx.defined(ctx, Define.AbsolutePath) {

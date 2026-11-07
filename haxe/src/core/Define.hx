@@ -208,6 +208,7 @@ class Define {
 	public static final AnnotateSource:String = "annotate_source";
 	public static final CheckXmlProxy:String = "check_xml_proxy";
 	public static final CoreApi:String = "core_api";
+	public static final CoroStackTraces:String = "coro.stack_traces";
 	public static final Cppia:String = "cppia";
 	public static final NoCppiaAst:String = "nocppiaast";
 	public static final Dce:String = "dce";

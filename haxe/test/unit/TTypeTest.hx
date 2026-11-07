@@ -19,7 +19,7 @@ class TTypeTest {
 		var signature:TSignature = {args: vector({name: "value", optional: false, type: type}), ret: mono.tmType};
 		var expression:TExpr = {eexpr: TConst(TInt(1)), etype: TFun(signature), epos: Globals.nullPos};
 		assert(switch (expression.etype) { case TFun(value): value.args[0].name == "value" && switch (value.ret) { case TDynamic(_): true; case _: false; }; case _: false; });
-		assert(TType.flagTClassFieldNames.length == 17);
+		assert(TType.flagTClassFieldNames.length == 18);
 	}
 
 	static function assert(value:Bool):Void if (!value) throw "Assertion failed";

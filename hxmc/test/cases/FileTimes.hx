@@ -1,5 +1,6 @@
 // hxmc.NativeSys.statTimes: a file's times to the nanosecond (sys.FileSystem
-// .stat's Dates hold whole seconds on hxmc): atime, mtime, ctime as seconds
+// .stat's Dates are made of them, whole seconds where the file system keeps
+// those): atime, mtime, ctime as seconds
 // (stat's) and nanoseconds, then the size (a watcher needs one call). Two
 // writes 50 ms apart get different times (unless the file system keeps
 // whole seconds); a time set to the nanosecond reads back to the nanosecond: set by touch on Linux and macOS,
@@ -26,8 +27,8 @@ class FileTimes {
 		var a = NativeSys.statTimes(F);
 		Sys.println("times and size: " + a.length + " " + a[6]);
 		var st = FileSystem.stat(F);
-		Sys.println("stat's seconds: " + (a[0] == st.atime.getTime() / 1000) + " " + (a[2] == st.mtime.getTime() / 1000) + " "
-			+ (a[4] == st.ctime.getTime() / 1000));
+		Sys.println("stat's seconds: " + (a[0] == Math.ffloor(st.atime.getTime() / 1000)) + " "
+			+ (a[2] == Math.ffloor(st.mtime.getTime() / 1000)) + " " + (a[4] == Math.ffloor(st.ctime.getTime() / 1000)));
 		Sys.println("nanoseconds: " + [for (i in 0...3) a[2 * i + 1] >= 0 && a[2 * i + 1] < 1e9 && a[2 * i + 1] == Math.ffloor(a[2 * i + 1])]);
 		Sys.sleep(0.05);
 		File.saveContent(F, "bcd");

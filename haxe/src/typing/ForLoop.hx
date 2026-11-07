@@ -11,7 +11,8 @@ import core.ds.NotFound;
 import core.ds.Exit;
 import context.Common;
 import typing.TyperBase;
-import typing.TyperBase.*;
+import typing.ArrayAccess;
+import typing.ArrayAccess.*;
 
 using Lambda;
 using core.ds.ArrayTools;
@@ -176,8 +177,13 @@ class IterationKind {
 	}
 
 	static function ofTexprByArrayAccess(ctx:Typer, e:TExpr, p:Pos):IteratorData {
-		var aa = TyperBase.getArrayAccess(ctx, e.etype, p);
-		return {itKind: IteratorCustom(aa.aaGet, aa.aaLength), itExpr: e, itType: aa.aaType};
+		var aa = getArrayAccess(ctx, e.etype, p);
+		return {
+			itKind: IteratorCustom(function(eBase:TExpr, eIndex:TExpr, _:T, p:Pos) return makeArrayGet(ctx, aa, eBase, eIndex, p),
+				makeArrayLength.bind(ctx, aa)),
+			itExpr: e,
+			itType: aa.aaType
+		};
 	}
 
 	static function mapUnrollParams(ctx:Typer, params:Null<UnrollParameters>, i:Int):Null<UnrollParameters> {
@@ -376,7 +382,7 @@ class IterationKind {
 			case IteratorArrayDecl(el): mk(TBlock(el.map(function(e) return Texpr.duplicateTvars(function(e) return e,
 					concat(mk(TVar(v, e), tv, e.epos), e2)))), tv,
 					p);
-			case IteratorArray: genIntIter(e1, pt, getNextArrayElement, getArrayLength.bind(ctx));
+			case IteratorArray: genIntIter(e1, pt, Builder.makeArrayAccess, getArrayLength.bind(ctx));
 			case IteratorCustom(get, len): genIntIter(e1, pt, get, len);
 			case IteratorIterator: try ForLoop.optimizeForLoopIterator(ctx, v, e1, e2,
 					p) catch (ex:Exit) Texpr.forRemap(ctx.t, v, ctx.t.titerator(pt), e1, e2, p);

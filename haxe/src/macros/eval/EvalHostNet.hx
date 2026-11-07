@@ -135,6 +135,15 @@ class EvalHostNet {
 		} catch (e:Dynamic) fail(e);
 	}
 
+	// port: HashLink's socket_bind sets SO_REUSEADDR itself (on every host but Windows, as upstream's
+	// `not Globals.is_windows`), and sys.net.Socket has no way to set it apart from bind.
+	public static function setReuseAddr(h:Int, b:Bool):Int {
+		return try {
+			get(h);
+			0;
+		} catch (e:Dynamic) fail(e);
+	}
+
 	public static function setBroadcast(h:Int, b:Bool):Int {
 		lastError = "Operation not supported";
 		return -1;

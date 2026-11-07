@@ -145,13 +145,13 @@ class SuspensionCalls {
 		if (call.csKind.noThrow) return {call: assigned.call, check: returned};
 		// Single-state: no while loop to break out of.
 		// Emit the error handler directly (equivalent to eexchandle).
-		var thrown = ctx.numStates == 1 ? b.voidBlock(vector(
+		var thrown = ctx.numStates == 1 ? b.voidBlock(Vector.fromArrayCopy([
 			b.assign(exprs.etmpError, fields.error),
 			b.assign(exprs.eerror, exprs.etmpError),
-			CoroToTexpr.buildCallStack(ctx, cont, exprs.econtinuation, p),
+		].concat(CoroToTexpr.buildCallStack(ctx, cont, exprs.econtinuation, p)).concat([
 			b.assign(exprs.estate, b.int(CoroThrown, p)),
 			b.makeReturn(exprs.econtinuation)
-		)) : b.voidBlock(vector(b.assign(exprs.etmpError, fields.error), b.makeBreak(p)));
+		]))) : b.voidBlock(vector(b.assign(exprs.etmpError, fields.error), b.makeBreak(p)));
 		return {
 			call: assigned.call,
 			check: makeCustomControlSwitch(b, fields.subject,
@@ -175,10 +175,21 @@ class CoroToTexpr {
 	}
 
 	public static function handleLocals(ctx:CoroCtx, cls:TClass, params:core.TType.TParams, states:Array<CoroState>,
-			tfArgs:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>, econtinuation:TExpr):Array<TClassField> {
+			tfArgs:haxe.ds.Vector<{variable:TVar, defaultValue:Null<TExpr>}>, econtinuation:TExpr):Array<{id:Int, cf:TClassField}> {
 		var b = ctx.builder;
 		var first = states[0];
 		var argStates = new CoroIntSet().add(first.csId);
+		// Expand deferred expressions first so that the usage analysis below sees the locals they reference.
+		function expandDeferred(e:TExpr):TExpr return switch e.eexpr {
+			case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredExprs.exists(v.vId)):
+				expandDeferred(ctx.deferredExprs.get(v.vId)());
+			case _:
+				core.Texpr.mapExpr(expandDeferred, e);
+		};
+		for (state in states) {
+			state.csEl = state.csEl.map(expandDeferred);
+			if (state.csElTail != null) state.csElTail = state.csElTail.map(expandDeferred);
+		}
 		// Keep an extra table of all vars and what states they appear in, easier check if a var is used across states this way.
 		var usages:Map<Int, CoroIntSet> = [];
 		for (a in tfArgs) usages.set(a.variable.vId, argStates);
@@ -190,18 +201,6 @@ class CoroToTexpr {
 					if (eo != null) loop(eo);
 				case TLocal(v) if (usages.exists(v.vId)):
 					usages.get(v.vId).add(state.csId);
-				// port: diverges from upstream (066bd83, and its development branch on
-				// ... 2026-10-28): a deferred expression's placeholder is a call without
-				// ... arguments, so upstream's walk misses the locals of what it is built
-				// ... from: a tail call's arguments (`return c ? f(x) : g(x)`) or a
-				// ... returned value. A local declared in an earlier state and read in a
-				// ... later one only by such an expression is not hoisted, and that
-				// ... state has no declaration of it ("Unbound variable"). The walk reads the placeholder's
-				// ... inputs (ctx.deferredInputs). Upstream issue draft: "[coro] A local
-				// ... read only by a tail call in a later state is not hoisted"
-				// ... (hxmc/test/cases/CoroTailLocal.hx).
-				case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredInputs.exists(v.vId)):
-					for (e in ctx.deferredInputs.get(v.vId)) loop(e);
 				case _:
 					core.Texpr.iter(loop, e);
 			};
@@ -220,21 +219,54 @@ class CoroToTexpr {
 			var set = usages.get(id);
 			return set != null && set.elements().length != 1;
 		}
+		// Hoisted fields are named after their variable so that debuggers show recognizable names.
+		// Naming.field_name_of_var_name turns the variable name into a valid field name, and a numeric suffix
+		// avoids clashes with other hoisted fields (e.g. from shadowed variables) and inherited fields.
+		var usedFieldNames:Map<String, Bool> = [];
+		var nextFieldSuffix:Map<String, Int> = [];
+		// Added to the class later, see Coro.create_continuation_class.
+		usedFieldNames.set("_hx_captured", true);
+		function isInheritedField(c:TClass, name:String):Bool
+			return c.clFields.exists(name) || c.clSuper != null && isInheritedField(c.clSuper.cls, name);
+		function fieldNameOfVar(v:TVar):String {
+			var base = core.Naming.fieldNameOfVarName(v.vName);
+			function isTaken(name:String):Bool return usedFieldNames.exists(name) || isInheritedField(cls, name);
+			// Continue counting where the previous clash on this base name stopped. Generated variables
+			// all share the base name _g, so starting at 1 every time would be quadratic.
+			function loop(count:Int):String {
+				var name = base + count;
+				if (isTaken(name)) return loop(count + 1);
+				nextFieldSuffix.set(base, count + 1);
+				return name;
+			}
+			var name = if (isTaken(base)) loop(nextFieldSuffix.exists(base) ? nextFieldSuffix.get(base) : 1) else base;
+			usedFieldNames.set(name, true);
+			return name;
+		}
+		function addField(v:TVar):Void {
+			if (!fields.mem(v.vId)) setField(v.vId, mkField(fieldNameOfVar(v), v.vType, v.vPos, v.vPos));
+		}
+		// The restored locals keep the name of their variable. With -debug they also keep its kind, which makes
+		// them show up in debuggers. Otherwise they stay generated, so the analyzer can still fuse them.
+		function allocRestoredVar(v:TVar):TVar {
+			var kind = ctx.typer.com.debug ? v.vKind : VGenerated;
+			return allocVar(kind, v.vName, v.vType, v.vPos);
+		}
 		var forced:Map<Int, Bool> = [];
 		for (a in tfArgs) {
 			var v:TVar = a.variable;
-			setField(v.vId, mkField('_hx_hoisted${v.vId}', v.vType, v.vPos, v.vPos));
+			addField(v);
 			// Create a fresh restored var rather than reusing the original argument variable.
 			// This prevents the same v_id appearing as both an outer function parameter and
 			// a TVar declaration inside the state machine body (which confuses renameVars).
-			first.csMappedLocal.set(v.vId, allocVar(VGenerated, '_hx_restored${v.vId}', v.vType, v.vPos));
+			first.csMappedLocal.set(v.vId, allocRestoredVar(v));
 			forced.set(v.vId, true);
 		}
 		for (state in states) {
 			inline function localMapping(v:TVar):TVar {
 				var n = state.csMappedLocal.get(v.vId);
 				if (n == null) {
-					n = allocVar(VGenerated, '_hx_restored${v.vId}', v.vType, v.vPos);
+					n = allocRestoredVar(v);
 					state.csMappedLocal.set(v.vId, n);
 				}
 				return n;
@@ -242,7 +274,7 @@ class CoroToTexpr {
 			function mapper(e:TExpr):TExpr return switch e.eexpr {
 				case TVar(v, eo) if (across(v.vId)):
 					if (eo != null) state.csWrites.add(v.vId);
-					setField(v.vId, mkField('_hx_hoisted${v.vId}', v.vType, v.vPos, v.vPos));
+					addField(v);
 					state.csMappedLocal.set(v.vId, v);
 					{
 						var recordCopy44 = core.ds.Record.copy(e);
@@ -277,7 +309,6 @@ class CoroToTexpr {
 					// Here we generate and store those new variables and remap local access to them
 					state.csReads.add(v.vId);
 					{var recordCopy39 = core.ds.Record.copy(e); recordCopy39.eexpr = TLocal(localMapping(v)); recordCopy39;};
-				case TCall({eexpr: TLocal(v)}, []) if (ctx.deferredExprs.exists(v.vId)): mapper(ctx.deferredExprs.get(v.vId)());
 				case _: core.Texpr.mapExpr(mapper, e);
 			};
 			state.csEl = state.csEl.map(mapper);
@@ -314,16 +345,25 @@ class CoroToTexpr {
 			state.csEl = restoring.concat(state.csEl).concat(saving).concat(state.csElTail == null ? [] : state.csElTail);
 		}
 		var out = [];
-		fields.iter(function(_, f) out.push(f));
+		fields.iter(function(id, f) out.push({id: id, cf: f}));
 		return out;
 	}
 
-	public static function buildCallStack(ctx:CoroCtx, cont:ContinuationApi, econtinuation:TExpr, p:Pos):TExpr {
+	// These fields only exist when BaseContinuation is compiled with coro.stack-traces, which may
+	// not be the case if it was loaded from a cache built with different defines.
+	public static function findStackTraceField(cont:ContinuationApi, name:String, p:Pos):TClassField {
+		var cf = PMap.findOpt(name, cont.baseContinuationClass.clFields);
+		if (cf == null)
+			core.Error.raiseTypingError('haxe.coro.BaseContinuation has no field $name, was it compiled without -D coro.stack-traces?', p);
+		return cf;
+	}
+
+	public static function buildCallStack(ctx:CoroCtx, cont:ContinuationApi, econtinuation:TExpr, p:Pos):Array<TExpr> {
+		if (!ctx.stackTraces) return [];
 		var b = ctx.builder;
-		if (!ctx.typer.com.debug) return b.voidBlockAt(vector(), p);
-		var cf = PMap.find("buildCallStack", cont.baseContinuationClass.clFields);
-		return mk(TCall(b.instanceField(econtinuation, cont.baseContinuationClass, vector(ctx.typer.t.tany), cf, cf.cfType), vector()),
-			ctx.typer.t.tvoid, p);
+		var cf = findStackTraceField(cont, "buildCallStack", p);
+		return [mk(TCall(b.instanceField(econtinuation, cont.baseContinuationClass, vector(ctx.typer.t.tany), cf, cf.cfType), vector()),
+			ctx.typer.t.tvoid, p)];
 	}
 
 	public static function blockToTexprCoroutine(ctx:CoroCtx, root:CoroBlock, cont:ContinuationApi, cls:TClass, params:core.TType.TParams,
@@ -331,10 +371,10 @@ class CoroToTexpr {
 			variable:TVar,
 			defaultValue:Null<TExpr>
 		}>, exprs:CoroToTexprExprs, p:Pos,
-			stackItemInserter:Pos->TExpr, startException:TExpr->TExpr):{
+			stackItemInserter:Pos->Array<TExpr>, startException:TExpr->TExpr):{
 		expr:TExpr,
 		initialState:Int,
-		fields:Array<TClassField>,
+		fields:Array<{id:Int, cf:TClassField}>,
 		numStates:Int
 	} {
 		var com = ctx.typer.com;
@@ -370,8 +410,12 @@ class CoroToTexpr {
 			case _:
 				throw "assert";
 		}
+		// Resume states are also entered from call sites whose callee returned synchronously, so the error
+		// field is cleared once the error of a resumption has been taken. Otherwise a resume state entered
+		// later would find it again, even if it has already been caught.
 		inline function ifError(cb:CoroBlock):TExpr {
-			var thenE = b.voidBlock(vector(b.assign(exprs.etmpError, exprs.eerror), b.makeBreak(p)));
+			var thenE = b.voidBlock(vector(b.assign(exprs.etmpError, exprs.eerror), b.assign(exprs.eerror, b.makeNull(exprs.eerror.etype, p)),
+				b.makeBreak(p)));
 			var cond = b.binop(OpNotEq, exprs.eerror, b.makeNull(exprs.eerror.etype, p), com.basic.tbool);
 			if (cb.cbStackValue == null) return b.ifThen(cond, thenE);
 			var e = cb.cbStackValue;
@@ -396,10 +440,10 @@ class CoroToTexpr {
 			return switch cb.cbNext {
 				case NextSuspend(call, null):
 					var r = SuspensionCalls.makeSuspendingTailCall(ctx, cont, exprs, call);
-					addState(null, [stackItemInserter(call.csPos)], [r.call, r.check]);
+					addState(null, stackItemInserter(call.csPos), [r.call, r.check]);
 				case NextSuspend(call, n):
 					var r = SuspensionCalls.makeSuspendingCall(ctx, cont, exprs, call);
-					addState(n.cbId, [stackItemInserter(call.csPos)], [r.call, r.check]);
+					addState(n.cbId, stackItemInserter(call.csPos), [r.call, r.check]);
 				case NextUnknown: addState(-1, [setControl(CoroReturned), ereturn], null);
 				case NextFallThrough(n) | NextGoto(n) | NextBreak(n) | NextContinue(n): addState(n.cbId, [], null);
 				case NextReturnVoid: addState(-1, [setControl(CoroReturned), ereturn], null);
@@ -413,11 +457,7 @@ class CoroToTexpr {
 						recordCopy37.epos = e1.epos;
 						recordCopy37;
 					};
-					addState(null, [
-						b.assign(tmp, getCaught(e1)),
-						stackItemInserter(e1.epos),
-						b.assign(tmp, startException(tmp))
-					], single ? null : [b.makeBreak(p)]);
+					addState(null, [b.assign(tmp, getCaught(e1))].concat(stackItemInserter(e1.epos)).concat([b.assign(tmp, startException(tmp))]), single ? null : [b.makeBreak(p)]);
 				case NextIfThen(cond, a, n): addState(null, [b.ifThenElse(cond, setState(a.cbId), setState(n.cbId), com.basic.tint)], null);
 				case NextIfThenElse(cond, a, z,
 					_): addState(null, [b.ifThenElse(cond, setState(a.cbId), setState(z.cbId), com.basic.tint)], null);
@@ -436,6 +476,7 @@ class CoroToTexpr {
 					catches.reverse();
 					for (ca in catches) cond = switch follow(ca.v.vType) {
 						case TDynamic(_): setState(ca.cb.cbId); // no next
+						case TInst({clPath: path}, _) if (Lambda.exists(ctx.wildcardCatches, p -> Common.samePath(p, path))): setState(ca.cb.cbId); // no next
 						case _: b.ifThenElse(stdIs((exprs.etmpErrorUnwrapped).force(), ca.v.vType), setState(ca.cb.cbId), cond,
 								com.basic.tvoid);
 					};
@@ -476,24 +517,14 @@ class CoroToTexpr {
 			)), com.basic.tvoid, p);
 		}
 		var cases = [];
-		// port: diverges from upstream (066bd83, and its development branch on
-		// ... 2026-10-27): a catch that handles the error clears the continuation's
-		// ... error slot. Upstream leaves it set, so a resumption state reached
-		// ... later in the same invokeResume (after a call that returns without
-		// ... suspending) reads it in its `error != null` check and throws the
-		// ... caught error again. Upstream issue draft: "[coro] A caught error is
-		// ... thrown again after a call that does not suspend"
-		// ... (hxmc/test/cases/CoroCatch.hx).
 		for (i in 0...excStateMap.length) if (excStateMap[i].length > 0) cases.push(({
 			casePatterns: excStateMap[i].mapToVector(function(i) return b.int(i, p)),
-			caseExpr: b.voidBlock(vector(b.assign(exprs.eerror, b.makeNull(exprs.eerror.etype, p)), setState(i)))
+			caseExpr: b.voidBlock(vector(setState(i)))
 		} : core.TType.TSwitchCase));
-		var def = b.voidBlock(vector(
-			b.assign(exprs.eerror, exprs.etmpError),
-			buildCallStack(ctx, cont, exprs.econtinuation, p),
+		var def = b.voidBlock(Vector.fromArrayCopy([b.assign(exprs.eerror, exprs.etmpError)].concat(buildCallStack(ctx, cont, exprs.econtinuation, p)).concat([
 			setControl(CoroThrown),
 			ereturn
-		));
+		])));
 		var handler = cases.length == 0 ? def : mk(TSwitch({
 			switchSubject: exprs.egoto,
 			switchCases: Vector.fromArrayCopy(cases),

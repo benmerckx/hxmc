@@ -22,6 +22,7 @@ unit * unit.TestDCE.testDceField TARGET reflection sees hxmc's reachability on t
 unit * unit.TestDCE.testIssue6500 TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): a kept class never constructed is not found by Type.resolveClass
 unit * unit.TestDCE.testKeepSubInterface TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): kept classes never constructed are not found by Type.resolveClass
 unit * unit.TestDCE.testFields TARGET reflection sees hxmc's reachability on top of the compiler's DCE (docs/hxmc.md, "Reachability"): fields and statics no live code reaches are not in the class's tables
+unit * unit.issues.Issue12838 BUG Reflect.field(String, "fromCharCode") is null: String's statics are the runtime's natives, in no class table (Type.getClassFields(String) is empty, Math's statics likewise)
 
 # --- sys ---
 
@@ -30,6 +31,7 @@ sys native io.TestProcess.testCommand EXTERNAL runs `haxe compile-each.hxml --ru
 
 # --- unit on wasm32-wasi ---
 
+unit wasm unit.issues.Issue13031 TARGET wasm32-wasi has no sockets (as TestSocket): the test's Socket subclass creates one, "Function not implemented"
 unit wasm unit.teststd.sys.net.TestSocket TARGET wasm32-wasi has no sockets (docs/hxmc.md, "Targets"): binding one fails with "Function not implemented"
 unit wasm unit.TestExceptions.testExceptionStack TARGET no call stacks on wasm32-wasi: a module cannot walk its own stack (no frame records, the engine's stack is not readable from WASI), so haxe.CallStack and exception stacks are empty (docs/hxmc.md, "Debugging")
 unit wasm unit.teststd.haxe.TestCallStack.test TARGET no call stacks on wasm32-wasi (as TestExceptions.testExceptionStack): haxe.CallStack.exceptionStack() is empty

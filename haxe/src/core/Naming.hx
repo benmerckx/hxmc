@@ -25,6 +25,25 @@ class Naming {
 		if (name != "new") checkIdentifierName(com, name, "field", p);
 	}
 
+	// Turns the name of a variable into a valid field name, for when the compiler stores a variable in a field.
+	// Generators expect field names to be valid identifiers, so they don't deal with names like the `this`
+	// of abstracts. Generated variables get the same "_g" prefix that renameVars gives them, and any other
+	// invalid name is prefixed with "_hx_", with invalid characters replaced. Target keywords are left
+	// to the generators, like they are for user fields.
+	public static function fieldNameOfVarName(name:String):String {
+		var name = if (core.Globals.startsWith(name, core.Globals.genLocalPrefix.charAt(0))) "_g" + name.substr(1) else name;
+		if (Lexer.isValidIdentifier(name)) return name;
+		// port: String.map over the bytes: a character beyond ASCII becomes one '_' per byte of its UTF-8.
+		var bytes = haxe.io.Bytes.ofString(name);
+		var buf = new StringBuf();
+		buf.add("_hx_");
+		for (i in 0...bytes.length) {
+			var c = bytes.get(i);
+			buf.addChar((c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || (c >= "0".code && c <= "9".code) || c == "_".code ? c : "_".code);
+		}
+		return buf.toString();
+	}
+
 	public static function checkUppercaseIdentifierName(com:CommonContext, name:String, kind:String, p:Pos, ?prependMsg:String):Void {
 		if (name.length == 0) displayIdentifierError(com, StringHelper.capitalize(kind) + " name must not be empty.", p, prependMsg);
 		else if (Ast.isLowerIdent(name)) displayIdentifierError(com,

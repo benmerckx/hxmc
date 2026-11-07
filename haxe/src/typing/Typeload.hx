@@ -140,6 +140,11 @@ class Typeload {
 		throw NotFound.raise();
 	}
 
+	public static function canRecoverFromMissingType(ctx:Typer, err:CompilerError):Bool
+		return Common.displayRecoveryEnabled(ctx.com)
+			&& ctx.com.partScope.runningMacros == 0
+			&& !(ctx.m.isDisplayFile && DisplayPosition.displayPosition.enclosedIn(err.errPos));
+
 	// raises Type_not_found
 	public static function findTypeInModuleRaise(ctx:Typer, m:ModuleDef, name:String, p:Pos):ModuleType {
 		for (mt in m.mTypes) {
@@ -750,8 +755,7 @@ class Typeload {
 										Common.displayErrorExt(ctx.com, err);
 								}
 								return tDynamic;
-							} else if (Common.canRecoverInDisplay(ctx.com)
-								&& !(ctx.m.isDisplayFile && DisplayPosition.displayPosition.enclosedIn(err.errPos))) {
+							} else if (canRecoverFromMissingType(ctx, err)) {
 								Common.displayErrorExt(ctx.com, err);
 								return tDynamic;
 							} else

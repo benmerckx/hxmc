@@ -29,6 +29,11 @@ class DefineRegistry {
 		{key: "annotate_source", doc: "Add additional comments to generated source code.", flags: [Platforms([Cpp])]},
 		{key: "check_xml_proxy", doc: "Check the used fields of the XML proxy.", flags: []},
 		{key: "core_api", doc: "Defined in the core API context.", flags: []},
+		{
+			key: "coro.stack_traces",
+			doc: "Generate the information required to build coroutine stack traces. Combine with `-debug` to also keep frames of coroutines that end in a tail call.",
+			flags: []
+		},
 		{key: "cppia", doc: "Generate cpp instruction assembly.", flags: []},
 		{key: "nocppiaast", doc: "Use legacy cppia generation.", flags: []},
 		{
@@ -134,7 +139,7 @@ class DefineRegistry {
 			flags: [Platforms([Cpp]), HasParam("name")]
 		},
 		{key: "hlc", doc: "Defined by compiler when using hl/c target.", flags: [Platforms([Hl]), Reserved(true)]},
-		{key: "hl_ver", doc: "The HashLink version to target. (default: 1.15.0)", flags: [Platforms([Hl]), HasParam("version")]},
+		{key: "hl_ver", doc: "The HashLink version to target. (default: 1.16.0)", flags: [Platforms([Hl]), HasParam("version")]},
 		{key: "times.hxb", doc: "Display hxb timing when used with `--times`.", flags: []},
 		{key: "hxb.stats", doc: "Display some hxb related stats (only with compilation server).", flags: []},
 		{key: "hxcpp_api_level", doc: "Provided to allow compatibility between hxcpp versions.", flags: [Platforms([Cpp]), Reserved(true)]},

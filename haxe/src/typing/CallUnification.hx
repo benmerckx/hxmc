@@ -498,6 +498,7 @@ class CallUnification {
 								}
 								ctx.e.monomorphs = current;
 								checkUnknown(err);
+								var delayedDisplay = extractDisplay();
 								var rest = attempts(list.slice(1));
 								return {
 									candidates: rest.candidates,
@@ -505,7 +506,7 @@ class CallUnification {
 										{
 											field: cf,
 											error: err,
-											display: extractDisplay()
+											display: delayedDisplay
 										}
 									].concat(rest.failures)
 								};

@@ -1050,9 +1050,9 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   order); `Map.toString` separates entries with `, ` (Eval: `,`).
 - Variable ids: the macro context types hxmc's std and takes other ids
   from the counter the program's typing shares (its bodies typed when
-  they are asked for, so when a macro needs them), so names made of ids
-  differ (coroutines' `_hx_hoisted<id>`, their stack items, genpy's order
-  by them).
+  they are asked for, so when a macro needs them), so what ids name or
+  order differs (the order of coroutines' hoisted fields, their stack
+  items, genpy's order by them).
 - An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
   `String.length` counts UTF-16 units (Eval: code points).
 - Not available: `Context.getMacroStack`, macro arguments that are
