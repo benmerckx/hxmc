@@ -609,17 +609,18 @@ class EvalPrototype {
 			var proto = s.init.proto;
 			s.init.init(proto);
 			var delays = s.delays;
+			// port: (not upstream) the persistent fields the stash has for this module, with or
+			// without an initializer: their values, their initializers not run
+			var values = restored.get(proto.ppath);
+			if (values != null) {
+				for (name => v in values)
+					switch proto.pnames.findOpt(name) {
+						case null:
+						case i: proto.pfields[i] = v;
+					}
+				delays = [for (d in delays) if (!(d.persistent && values.exists(d.name))) d];
+			}
 			if (delays.length > 0) {
-				// port: (not upstream) a persistent field the stash has for this module: its value, not its initializer's
-				var values = restored.get(proto.ppath);
-				if (values != null)
-					delays = [
-						for (d in delays)
-							if (d.persistent && values.exists(d.name)) {
-								var v = values.get(d.name);
-								({persistent: true, name: d.name, f: proto -> proto.pfields[proto.pnames.find(d.name)] = v} : StaticDelay);
-							} else d
-					];
 				flStaticInit.push({proto: proto, delays: delays});
 				var nonPersistentDelays = [for (d in delays) if (!d.persistent) d.f];
 				ctx.staticPrototypes.addInit(proto, nonPersistentDelays);
@@ -641,8 +642,8 @@ class EvalPrototype {
 	// keeps its class's fields in a persistent static, for a later macro to make a class
 	// from: the context that comes back finds the module restored, its build macro not
 	// run again, and the static at its initial value). The values a dropped prototype's
-	// persistent statics had are kept here by its module's signature and its path
-	// (persistentStash), and given back when the same module (its id) is handed over
+	// persistent statics had are kept here by its module's signature, then its path
+	// (persistentStash; a signature's dropped with its context, dropStash), and given back when the same module (its id) is handed over
 	// again: each context sees the values its own modules left, as it would with no
 	// other context in between. A module typed again (another id) starts from the
 	// initializers, as upstream's does.
@@ -659,16 +660,28 @@ class EvalPrototype {
 				var i = try proto.pnames.find(name) catch (_:NotFound) continue;
 				values.set(name, proto.pfields[i]);
 			}
-		if (values.keys().hasNext()) ctx.persistentStash.set(c.clModule.mExtra.mSign + ":" + key, {mId: c.clModule.mId, values: values});
+		if (!values.keys().hasNext()) return;
+		var sign = c.clModule.mExtra.mSign;
+		var bySign = ctx.persistentStash.get(sign);
+		if (bySign == null) ctx.persistentStash.set(sign, bySign = new Map());
+		bySign.set(key, {mId: c.clModule.mId, values: values});
 	}
 
 	// (what stashPersistent kept for this type's module, taken out of the stash; null: none, or another module's)
 	static function restorePersistent(ctx:Context, inf:core.TType.TInfos):Null<Map<Int, Value>> {
-		var k = inf.mtModule.mExtra.mSign + ":" + EvalHash.pathHash(inf.mtPath);
-		var e = ctx.persistentStash.get(k);
+		var bySign = ctx.persistentStash.get(inf.mtModule.mExtra.mSign);
+		if (bySign == null) return null;
+		var k = EvalHash.pathHash(inf.mtPath);
+		var e = bySign.get(k);
 		if (e == null) return null;
-		ctx.persistentStash.remove(k);
+		bySign.remove(k);
 		return e.mId == inf.mtModule.mId ? e.values : null;
+	}
+
+	// port: (not upstream) the server's context of signature sign (null: every context)
+	// removed: what the stash keeps for its modules, which will not be handed over again
+	public static function dropStash(ctx:Context, sign:Null<String>):Void {
+		if (sign == null) ctx.persistentStash.clear() else ctx.persistentStash.remove(sign);
 	}
 
 	public static function addTypes(ctx:Context, types:Array<ModuleType>, ready:ModuleType->Void):Void {

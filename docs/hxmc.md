@@ -835,7 +835,15 @@ divergence from upstream,
 [porting.md](porting.md#divergences-from-the-reference)): each context
 sees what its own modules left (helder's `HostMacro.template`, ViewRuntime's
 fields kept by its build macro: "the runtime's fields are not known" in
-every build once a check and a build had alternated).
+every build once a check and a build had alternated). A signature's values
+go when the server removes its context (stale, `clear`, `softClear`).
+An error in the macro context discards the interpreter, those values
+with it (as upstream); the server then taints every cached module whose
+typing ran macros or loaded the macro context's modules, in every context
+(`CompilationCache.Cache.taintMacroModules`, a divergence from upstream),
+so their macros run again in the next interpreter: else a module whose
+build macro kept state there stays restored without it, and every later
+build that reads the state fails.
 
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,

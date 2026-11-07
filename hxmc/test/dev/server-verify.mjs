@@ -9,7 +9,8 @@
 // the bodies of the modules not typed again, what a macro's callback
 // defines while modules are reused, and a macro's persistent state while
 // the builds alternate between two signatures (a step's '-D': a define of
-// its build and the fresh one's, not a file).
+// its build and the fresh one's, not a file), also after an error in a macro
+// (a step's '!': a build that fails, as the fresh one does).
 //   node hxmc/test/dev/server-verify.mjs <compiler> [native|web]
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -193,6 +194,35 @@ class Tpl {
 		{ '-D': 'two' },
 	],
 };
+{
+	const persistent = cases["a build macro's persistent state, in builds of two signatures"];
+	// (the static without an initializer: given back all the same)
+	const noInit = structuredClone(persistent);
+	noInit[0]['Tpl.hx'] = noInit[0]['Tpl.hx'].replace('@:persistent static var template:Null<Array<Field>> = null;', '@:persistent static var template:Null<Array<Field>>;');
+	cases["a build macro's persistent state without an initializer, in builds of two signatures"] = noInit;
+	// an error in a macro (Bad.hx's, Other's build macro) discards the macro
+	// interpreter, persistent statics and all (upstream's
+	// MacroContext.create_macro_interp): Rt, restored, would never run its build
+	// macro again in the next one, and every build after the fix would fail. The
+	// modules whose macros ran in the discarded interpreter are typed again
+	// (CompilationCache.taintMacroModules; a divergence from upstream). The
+	// erroneous build fails as the fresh one does ('!')
+	const good = '#if macro\nclass Bad {\n\tpublic static function build():Array<haxe.macro.Expr.Field>\n\t\treturn null;\n}\n#end\n';
+	const bad = '#if macro\nclass Bad {\n\tpublic static function build():Array<haxe.macro.Expr.Field>\n\t\treturn 1 + "x" * 2;\n}\n#end\n';
+	cases["a build macro's persistent state, after an error in a macro"] = [
+		{
+			...persistent[0],
+			'Bad.hx': good,
+			'Other.hx': '@:build(Bad.build())\nclass Other {\n\tpublic static var y = 3;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Tpl.use() + Other.y);\n\t}\n}\n',
+		},
+		{ '-D': 'two' },
+		{ '-D': 'one', 'Bad.hx': bad, '!': true },
+		{ '-D': 'one', 'Bad.hx': good },
+		{ '-D': 'two' },
+		{ '-D': 'one' },
+	];
+}
 
 // the cases built for this machine and run (their arguments), the server's
 // output as the fresh one
@@ -297,7 +327,7 @@ for (const hxb of [false, true])
 		fs.mkdirSync(path.join(work, 'src'));
 		await serve(async (request, serverOutput) => {
 			for (let i = 0; i < steps.length; i++) {
-				const { '-D': define, ...files } = steps[i];
+				const { '-D': define, '!': fails, ...files } = steps[i];
 				const more = [...(runs.get(name) ?? []), ...(define ? ['-D', define] : [])];
 				for (const [f, text] of Object.entries(files)) {
 					fs.writeFileSync(path.join(work, 'src', f), text);
@@ -305,6 +335,13 @@ for (const hxb of [false, true])
 				}
 				const answer = await request(work, [...args(out, more), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
 				const fresh = spawnSync(compiler, args(ref, more), { cwd: work, env, encoding: 'utf8' });
+				// (a build that fails, as the fresh one does)
+				if (fails) {
+					const ok = answer.includes('\x02') && fresh.status !== 0;
+					console.log((ok ? 'ok   ' : 'FAIL ') + `${name} (${mode}${hxb ? ', HXB' : ''}): edit ${i} (-D ${define}), fails as the fresh build`);
+					if (!ok) failures++;
+					continue;
+				}
 				let same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(work, out)), fs.readFileSync(path.join(work, ref))) === 0;
 				// (and the server's output runs as the fresh one does)
 				const ran = same && runs.has(name) ? [out, ref].map((o) => spawnSync(path.join(work, o), { cwd: work, encoding: 'utf8' })) : null;

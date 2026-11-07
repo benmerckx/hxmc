@@ -94,5 +94,5 @@ set, an edit replaces it, a compile error leaves it running, the fix runs.
 `server-verify.mjs` checks that a compilation server's builds through edits
 are byte-identical to fresh builds (also when a macro's callback defines a
 class, and when a build macro's persistent state serves builds of two
-signatures: [hxmc.md](hxmc.md#module-cache)). The swaps with state are tested in
+signatures, also after an error in a macro: [hxmc.md](hxmc.md#module-cache)). The swaps with state are tested in
 universe.
