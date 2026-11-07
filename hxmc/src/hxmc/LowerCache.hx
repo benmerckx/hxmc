@@ -41,6 +41,12 @@ import core.TType;
 // later, by their own entries, found through the closure's old function).
 // Static initializers and the closures the lowering makes itself
 // (forwarders, adapters) are lowered again each build: they are small.
+//
+// What Facts finds in a body (FuncInfo.gcScan: its callees, GC points, the
+// names it uses) is kept with its entry after the build that recorded it,
+// and a replay hands it to the new function (FuncInfo.gcScanned, its callees
+// bound), which Facts takes instead of scanning the copy when the program
+// reads stacks as that build's did (Reach drops calls otherwise).
 class LowerCache {
 	var entries = new haxe.ds.ObjectMap<TClassField, Entry>();
 	var byKey = new Map<String, Entry>(); // by module, class and field (CachedLower.stableKey)
@@ -73,10 +79,20 @@ class LowerCache {
 	var nullChecks = false; // and of references against null (Lower.nullChecks)
 	var spanChecks = true; // and of spans' elements (Lower.spanChecks)
 
+	// the bodies recorded by the last build, and its program: what Facts
+	// found in them (Entry.gcScan)
+	var recorded:Array<Entry> = [];
+	var last:Null<Program> = null;
+
 	public function lower(main:TClass, types:Array<ModuleType>, basic:BasicTypes):Program {
 		hits = misses = keyed = 0;
 		why = null;
 		build++;
+		if (last != null)
+			for (e in recorded)
+				if (e.gcScan == null && e.fi.gcScan != null) e.gcScan = {stacks: last.stacks, scan: e.fi.gcScan};
+		recorded = [];
+		last = null;
 		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.lines != lines
 			|| Lower.bounds != bounds || Lower.nullChecks != nullChecks || Lower.spanChecks != spanChecks || !sameNames(Lower.resources, resources)) {
 			entries = new haxe.ds.ObjectMap();
@@ -104,6 +120,7 @@ class LowerCache {
 		entries = l.newEntries;
 		lambdas = l.newLambdas;
 		byKey = l.newByKey;
+		last = prog;
 		return prog;
 	}
 
@@ -137,6 +154,10 @@ class Entry {
 	public var gen = 0; // the build that recorded it: its global and selector numbers are that build's
 	public var processed = 0; // its module's compilation step then (0: unknown)
 	public var bound = false; // its body as bindHosts made it (its calls of the runtime's Haxe functions in the log)
+	// what Facts.scanGc found in the body (in the objects of the build that
+	// recorded it), and whether that build's program read stacks (Reach drops
+	// some calls when it does not): a replay hands it over (FuncInfo.gcScanned)
+	public var gcScan:Null<{stacks:Bool, scan:hxmc.ir.Ir.GcScan}> = null;
 
 	public function new(tf, fi) {
 		this.tf = tf;
@@ -342,6 +363,7 @@ class CachedLower extends Lower {
 	function recordBody(fi:FuncInfo, tf:Null<TFunc>, run:() -> Void):Entry {
 		var e = new Entry(tf, fi);
 		e.gen = cache.build;
+		@:privateAccess cache.recorded.push(e);
 		recorded.set(fi, e);
 		cur = e;
 		run();
@@ -424,6 +446,13 @@ class CachedLower extends Lower {
 		fi.nlambdas = old.nlambdas;
 		tests = old.tests;
 		fi.body = stmts(old.body);
+		// (its callees are bound: the body's calls name them)
+		var g = old.gcScan;
+		if (g != null)
+			fi.gcScanned = {
+				stacks: g.stacks,
+				scan: {gc: g.scan.gc, here: g.scan.here, addr: g.scan.addr, callees: [for (c in g.scan.callees) obj(c)], names: g.scan.names}
+			};
 	}
 
 	// ---- the calls, logged
@@ -432,8 +461,58 @@ class CachedLower extends Lower {
 		depth++;
 		var r = super.ty(t);
 		depth--;
-		log(CTy(t, r));
+		if (depth == 0 && cur != null && (!skipTy || tyCounts(r))) cur.log.push(CTy(t, r));
 		return r;
+	}
+
+	// the objects of the types this body's log has (the entry being recorded:
+	// tyFor), and whether its replay can do anything for r: a replay skips a
+	// type whose objects are bound (call, boundTy), which they are once a type
+	// before it in the log had them (it found them bound, or bound them), and
+	// those without objects; a body asks for about 220 types, nearly all
+	// those, so they are not logged (a type with a function type in it is
+	// always replayed, boundTy)
+	var tySeen = new haxe.ds.ObjectMap<{}, Bool>();
+	var tyFor:Null<Entry> = null;
+
+	function tyCounts(r:Ty):Bool {
+		if (tyFor != cur) {
+			tyFor = cur;
+			tySeen = new haxe.ds.ObjectMap();
+		}
+		if (seenTy(r)) return false;
+		addTy(r);
+		return true;
+	}
+
+	// boundTy, with the objects of the types logged before for the binding
+	function seenTy(t:Ty):Bool {
+		return switch t {
+			case TRef(r):
+				switch r {
+					case RObj(c): tySeen.exists(c);
+					case REnum(e): e == null || tySeen.exists(e);
+					case RCtor(c): tySeen.exists(c);
+					case RArr(t) | RNativeArr(t) | RBox(t) | RNull(t): seenTy(t);
+					case RClos(_): false;
+					case RStr | RAnon | RAny | RTag | RType | RNative(_): true;
+				}
+			case _: true;
+		}
+	}
+
+	function addTy(t:Ty) {
+		switch t {
+			case TRef(r):
+				switch r {
+					case RObj(c): tySeen.set(c, true);
+					case REnum(e): if (e != null) tySeen.set(e, true);
+					case RCtor(c): tySeen.set(c, true);
+					case RArr(t) | RNativeArr(t) | RBox(t) | RNull(t): addTy(t);
+					case RClos(_) | RStr | RAnon | RAny | RTag | RType | RNative(_):
+				}
+			case _:
+		}
 	}
 
 	override public function classInfo(c:TClass):ClassInfo {
