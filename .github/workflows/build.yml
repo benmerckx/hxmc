@@ -1465,7 +1465,16 @@ jobs:
           # stopped halfway can be run again
           publish() {
             if npm view "$1@$v" version >/dev/null 2>&1; then echo "$1@$v is published already"; return; fi
-            npm publish --access public --provenance --tag $tag "$2"
+            # (a failed publish is tried again, three times in all, a minute
+            # apart: the provenance signing can fail on its own, e.g. a 409
+            # from Sigstore's transparency log; a version that went through
+            # on a failed attempt counts as published)
+            for i in 1 2 3; do
+              if npm publish --access public --provenance --tag $tag "$2"; then return; fi
+              sleep 60
+              if npm view "$1@$v" version >/dev/null 2>&1; then echo "$1@$v went through"; return; fi
+            done
+            return 1
           }
           # (the eight at this version, each one's dependencies first:
           # @hxmc/cli after the platform packages, its optional dependencies;
