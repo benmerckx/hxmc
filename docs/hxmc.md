@@ -833,6 +833,42 @@ a define, makes the build write nothing. A module whose types share a path
 without the cache; `make fixpoint` builds the tool cold, warm and off.
 Open items: [plans/compiler.md](plans/compiler.md#cached-modules).
 
+### What a compilation server keeps
+
+Between requests a compilation server keeps a context per signature (the
+typed modules of each program it built, and their macros' contexts),
+hxmc the objects of each output it wrote (`Driver.memObjs`: wasm32's are
+not kept on disk), the lowered bodies of the last program
+(`LowerCache`), and the macro interpreter. Measured with helder's
+compiler as wasm32 (helder's todo, then its ts-todo, each built and then
+edited): 285 MB live after todo, 494 MB after both; of those, the
+contexts 271 MB (both programs'), the lowered bodies 86 MB (ts-todo's),
+the objects 21 MB, the program the last build lowered 21 MB, the macro
+interpreter and the rest 75 MB.
+
+- What one build sets for its code generation is released after it
+  (`Driver.release`: the functions that may be inlined, the reference
+  slots of the types), and the lowered bodies are dropped when a program
+  of another signature is lowered (`Main.lowerSign`: a body is found by
+  its field object, or by its module read back from that signature's
+  context, so none of them would be reused).
+- `HXMC_SERVER_MB=<n>` caps what it keeps (`ServerMemory.hx`). A
+  compilation's group is its signature at the start of its typing and the
+  contexts it touched (and their children). When a compilation is of
+  another group than the last request's, a major collection runs first,
+  and if what is live, and as much again for its group when that is not
+  kept, is more than n MB, the least recently used other groups are
+  dropped, one by one, before it types anything. After a request, when the
+  heap holds more than n MB and other groups are kept, a major collection,
+  and the least recently used other groups are dropped while what is live
+  is more. A group dropped is its contexts (not those a kept group uses),
+  the objects of its outputs, its lowered bodies, the macro interpreter
+  (made again by the next compilation's first macro) and the filters of
+  the last macro context; its next build is a cold one. What one group
+  keeps is never dropped: the cap is no limit on one program. `HXMC_STATS=1`
+  prints what is dropped; `make dev-check` builds two programs in turn
+  under a cap of 1 MB, each build against a fresh one.
+
 ## Macros on the Mir interpreter
 
 `-D hxmc.macros=mir`, in the native compiler (`haxe` with hxmc built in,
@@ -1555,6 +1591,8 @@ For the tool and the compiler (build time):
 | `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories searched first, before the compiler's own directory (npm's platform package), its `rt/` (a checkout's `bin/hxmc/rt`) and the target's platform package beside it ([using.md](using.md#cross-builds); the npm launcher adds the installed platform packages), or one object |
 | `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
 | `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
+| `HXMC_SERVER_MB=<n>` | a compilation server keeps what it keeps between requests under n MB of live heap, dropping the least recently used other programs' ([below](#what-a-compilation-server-keeps)) |
+| `HXMC_LOWER_CACHE=0` | a compilation server lowers every body again each build (`LowerCache` off: less memory kept, slower warm builds) |
 
 For compiled programs (run time):
 
