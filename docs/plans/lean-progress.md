@@ -95,6 +95,31 @@ debug-info checks. The arm64 and Windows execution lanes failed with QEMU
 and Wine absent from the environment; they are not validated execution
 targets here. Crosshost still compared their generated arm64 code.
 
+## Reusing liveness masks
+
+Root liveness now owns one working mask per statement sequence. Nested
+sequences copy their borrowed input; ordinary statements update their
+owned mask. Loop targets and exception-handler requirements stay unchanged
+while a body is analyzed. This removes copies at most statements and
+reuses the bitset union's change flag for loop convergence.
+
+Three alternating self-build pairs against `8fc9525c` produced identical
+executables. Median wall was 11.91 -> 11.70 seconds, CPU 19.08 -> 18.93
+seconds and peak RSS 1,214,120 -> 1,213,992 KiB. These timing and peak
+differences are small. Median allocation reported by the runtime was
+10,962 -> 10,927 MB; there is no major whole-program memory win here.
+The compiler stays 21,055,040 bytes; the four benchmark executables remain
+byte-identical at the sizes listed above. Production Haxe source falls
+one further line to 103,168 total. Raw pairs are under
+`bin/lean/ir-migration/owned-{before,after}-{1,2,3}.log`.
+
+The root-facts regression now covers loops and handler requirements too.
+Validation: 8/8 quick lanes, the byte-identical fixpoint, 25/25 crosshost
+comparisons, 200 optimized/checked fuzz programs (seed 3000), and 100
+Eval/native fuzz programs (seed 5000). A focused `make check` on TryGc,
+DeepGc, NativeArrayLiteral, BigInit, Regress and ObjectMapGc passed 23/25
+lanes; QEMU and Wine are still absent. Direct AST-to-SSA remains unfinished.
+
 ## Rejected IR experiments
 
 Two experiments were measured and removed rather than retained behind
