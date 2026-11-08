@@ -104,6 +104,21 @@ class ElfReader {
 			return i >= 0 && i < shnum ? secs[i] : null;
 		var symtab = -1;
 		var funcs:Null<Section> = null;
+		// the members of COMDAT groups (LLVM's objects: a definition each
+		// module makes, as LLVM's profile's __llvm_profile_raw_version): their
+		// global symbols are taken as weak, the first definition wins
+		var comdat = new Map<Int, Bool>();
+		for (i in 0...shnum) {
+			var h = sh(i);
+			if (u32(h + 4) != 17) continue;
+			var off = i64(h + 24), size = i64(h + 32);
+			if (size < 4 || (u32(off) & 1) == 0) continue;
+			var k = 4;
+			while (k + 4 <= size) {
+				comdat.set(u32(off + k), true);
+				k += 4;
+			}
+		}
 		for (i in 0...shnum) {
 			var h = sh(i);
 			var name = cstr(strOff + u32(h));
@@ -162,7 +177,7 @@ class ElfReader {
 				nlocal++;
 			} else {
 				s = o.sym(name);
-				s.weak = bind == 2;
+				s.weak = bind == 2 || comdat.exists(shndx);
 			}
 			s.tls = type == 6;
 			s.func = type == 2;
