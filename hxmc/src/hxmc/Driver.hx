@@ -160,6 +160,8 @@ class Driver {
 		g.tbaa = o.llvmTbaa;
 		g.flags = o.llvmFlags;
 		g.pgo = o.llvmPgo;
+		g.lines = hxmc.ir.Lower.lines;
+		g.keepFrames = prep.p.stacks && !o.llvmInline;
 		return g;
 	}
 
@@ -314,7 +316,7 @@ class Driver {
 			if (llvm != null) {
 				var why = llvm.accepts(mf);
 				if (why == null) {
-					llvm.func(mf);
+					llvm.func(mf, hxmc.ir.Lower.lines ? (fn.display != null ? fn.display : name) : null);
 					if (mb.icaches > 0) {
 						var bss = obj.section(".bss", Bss, 16);
 						bss.bssSize = (bss.bssSize + 15) & ~15;
@@ -476,7 +478,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") + (o.llvmCpu != null ? "+cpu=" + o.llvmCpu : "") + (o.llvmWhole ? "+whole" : "") + (o.llvmConsts ? "+consts" : "") + (o.llvmTbaa != null ? "+tbaa=" + o.llvmTbaa : "") + (o.llvmFlags != null ? "+flags=" + o.llvmFlags : "") + (o.llvmPgo != null ? "+pgo=" + o.llvmPgo + (o.llvmPgo != "gen" ? "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") : "") + "+clang=" + o.llvmClang : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") + (o.llvmCpu != null ? "+cpu=" + o.llvmCpu : "") + (o.llvmWhole ? "+whole" : "") + (o.llvmConsts ? "+consts" : "") + (o.llvmTbaa != null ? "+tbaa=" + o.llvmTbaa : "") + (o.llvmFlags != null ? "+flags=" + o.llvmFlags : "") + (o.llvmInline ? "+inline" : "") + (o.llvmPgo != null ? "+pgo=" + o.llvmPgo + (o.llvmPgo != "gen" ? "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") : "") + "+clang=" + o.llvmClang : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -622,7 +624,10 @@ class Driver {
 				compileFunc(f, obj, emit, ras, llvm);
 			if (llvm != null && !llvmDeferred()) {
 				var lo = llvm.compile();
-				if (lo != null) obj.append(lo);
+				if (lo != null) {
+					obj.append(lo);
+					llvm.records(obj);
+				}
 			} else if (llvm != null && llvm.count > 0) {
 				lock.acquire();
 				if (llvmPending.indexOf(llvm) < 0) llvmPending.push(llvm);
@@ -680,7 +685,6 @@ class Driver {
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
 		// (the functions and their lines for the runtime's stacks: StackTable)
 		Dwarf.enabled = o.debugLines;
-		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
 		data.defineAbs(StackTable.FLAGS, (prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0) | (jni > 0 ? StackTable.JNI : 0));
 		// (LLVM, deferred: compiled now, the program-wide numbers known: -D hxmc.llvm-consts)
 		if (llvmPending.length > 0) {
@@ -693,10 +697,15 @@ class Driver {
 			var tl = haxe.Timer.stamp();
 			var los:Array<Obj> = [for (_ in llvmPending) null];
 			parallel(llvmPending.length, jobs, k -> los[k] = llvmPending[k].compile(abs));
-			for (lo in los)
-				if (lo != null) objs.push(lo);
+			for (k in 0...los.length)
+				if (los[k] != null) {
+					llvmPending[k].records(los[k]);
+					objs.push(los[k]);
+				}
 			if (o.stats) Sys.println('hxmc: llvm: ${llvmPending.length} deferred module(s) compiled ${ms(haxe.Timer.stamp() - tl)}');
 		}
+		// (after LLVM's deferred code: its functions are in the table too)
+		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {

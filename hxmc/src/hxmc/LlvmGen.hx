@@ -1,6 +1,7 @@
 package hxmc;
 
 import haxe.Int64;
+import haxe.io.Bytes;
 import hxmc.Mir;
 import hxmc.Obj;
 
@@ -142,15 +143,52 @@ class LlvmGen {
 	}
 
 	// the function as LLVM IR into this module
-	public function func(f:MFunc) {
+	// display: the function's Haxe name (FuncRec.name; null: none)
+	public function func(f:MFunc, ?display:String) {
 		if (shared) lock.acquire();
 		count++;
 		defined.set(f.name, true);
+		if (display != null) displays.set(f.name, display);
 		try new FnWriter(this, f).write(out) catch (e:haxe.Exception) {
 			if (shared) lock.release();
 			throw e;
 		}
 		if (shared) lock.release();
+	}
+
+	var displays = new Map<String, String>();
+
+	// ---- source lines (hxmc.ir.Lower.lines: the program reads its stacks, or
+	// -debug): LLVM's debug locations from MIns.pos, a line-tables-only
+	// compile unit; its line table read back from the object (lineTable) into
+	// the functions' records (records), as the native emitters write them
+	public var lines = false;
+	// the program reads its stacks (Program.stacks): the frames as the native code has them
+	public var keepFrames = false;
+
+	static function mdString(s:String):String {
+		var b = new StringBuf();
+		b.add("\"");
+		for (k in 0...s.length) {
+			var c = StringTools.fastCodeAt(s, k);
+			if (c == "\"".code || c == "\\".code || c < 32 || c > 126) b.add("\\" + StringTools.hex(c, 2)) else b.addChar(c);
+		}
+		b.add("\"");
+		return b.toString();
+	}
+
+	@:allow(hxmc.LlvmGen.FnWriter)
+	function diFile(file:String):String
+		return md('!DIFile(filename: ${mdString(file)}, directory: "")');
+
+	@:allow(hxmc.LlvmGen.FnWriter)
+	function diUnit():String
+		return md('distinct !DICompileUnit(language: DW_LANG_C99, file: ${diFile("hxmc")}, producer: "hxmc", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly)');
+
+	@:allow(hxmc.LlvmGen.FnWriter)
+	function diSubprogram(name:String, file:String, line:Int):String {
+		var f = diFile(file);
+		return md('distinct !DISubprogram(name: ${mdString(name)}, scope: $f, file: $f, line: $line, type: ${md("!DISubroutineType(types: !{})")}, scopeLine: $line, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: ${diUnit()})');
 	}
 
 	// written to by the modules' threads (the whole program's: Driver.llvmFor)
@@ -295,13 +333,485 @@ class LlvmGen {
 			b.add(k + "\n");
 		b.add("\n");
 		b.add(substAbs(out.toString(), abs));
-		b.add('\nattributes #0 = { nounwind "frame-pointer"="all" }\n');
+		// (a program that reads its stacks keeps the frames the native code has:
+		// LLVM inlines nothing more than hxmc did, nor turns calls into jumps)
+		b.add('\nattributes #0 = { nounwind uwtable "frame-pointer"="all"${keepFrames ? ' noinline "disable-tail-calls"="true"' : ""} }\n');
 		b.add('attributes #1 = { noreturn nounwind }\n');
 		b.add('attributes #2 = { returns_twice }\n');
 		b.add('attributes #3 = { nounwind willreturn memory(none) }\n');
+		if (lines && count > 0) {
+			var cu = diUnit();
+			var v = md("!{i32 7, !\"Dwarf Version\", i32 4}"), dv = md("!{i32 2, !\"Debug Info Version\", i32 3}");
+			b.add('!llvm.dbg.cu = !{$cu}\n!llvm.module.flags = !{$v, $dv}\n');
+		}
 		for (k in 0...mds.length)
 			b.add('!$k = ${mds[k]}\n');
 		return b.toString();
+	}
+
+	// ---- the functions' records (Driver: into the object LLVM's code is in)
+
+	// per function (LLVM's): its rows, three numbers each (offset, file in
+	// rowFiles, line), from the object's line table
+	var rows = new Map<String, Array<Int>>();
+	var rowFiles:Array<String> = [];
+
+	// the records of this module's functions, into obj (where their symbols
+	// are defined): no unwind operations, the Haxe name and lines when lines
+	public function records(obj:Obj) {
+		var fileAt = new Map<String, Int>();
+		for (k in 0...obj.files.length)
+			fileAt.set(obj.files[k], k);
+		function file(f:String):Int {
+			var k = fileAt.get(f);
+			if (k == null) {
+				k = obj.files.length;
+				obj.files.push(f);
+				fileAt.set(f, k);
+			}
+			return k;
+		}
+		var names = [for (n in defined.keys()) n];
+		names.sort(Reflect.compare);
+		for (n in names) {
+			if (!obj.exists(n)) continue;
+			var s = obj.sym(n);
+			if (s.section == null) continue;
+			// (an arm64 frame: CFI for the system's unwinders, Unwind.LLVMFRAME; else none)
+			var enc = encodings.get(n), dw = dwarfCfi.get(n);
+			var ops = if (dw != null) {
+				// (LLVMCFI, 0, the count, 0, then the bytes + 256, padded to fours)
+				var l = [Unwind.LLVMCFI, 0, dw.length, 0].concat([for (x in dw) x + 256]);
+				while (l.length % 4 != 0)
+					l.push(256);
+				haxe.ds.Vector.fromArrayCopy(l);
+			} else if (enc != null && (enc & 0x0F000000) == 0x04000000) core.ds.VectorTools.vector(Unwind.LLVMFRAME, 0, enc, 0) else core.ds.VectorTools.vector(Unwind.NONE, 0, 0, 0);
+			var r = new FuncRec(s, ops);
+			if (lines) {
+				r.name = displays.exists(n) ? displays.get(n) : n;
+				var rs = rows.get(n);
+				var v = new haxe.ds.Vector<Int>(rs == null ? 0 : rs.length);
+				if (rs != null) {
+					var k = 0;
+					while (k < rs.length) {
+						v[k] = rs[k];
+						v[k + 1] = file(rowFiles[rs[k + 1]]);
+						v[k + 2] = rs[k + 2];
+						k += 3;
+					}
+				}
+				r.lines = v;
+			}
+			obj.funcs.push(r);
+		}
+	}
+
+	// the compact unwind encodings of the module's functions (__LD,__compact_unwind:
+	// 32-byte entries, the function's address relocated, its encoding at 12),
+	// then the section dropped
+	var encodings = new Map<String, Int>();
+
+	function frames(obj:Obj) {
+		var cu = null;
+		for (s in obj.sections)
+			if (s.name == "__LD,__compact_unwind") cu = s;
+		if (cu == null) return;
+		var byOff = new Map<String, String>();
+		for (s in obj.symbols)
+			if (s.section != null && s.section.kind == Text && defined.exists(s.name)) byOff.set(s.section.name + "@" + s.offset, s.name);
+		for (r in cu.relocs) {
+			if (r.offset % 32 != 0) continue;
+			var t = r.sym;
+			if (t.section == null) continue;
+			var fn = byOff.get(t.section.name + "@" + (t.offset + r.addend));
+			if (fn != null) encodings.set(fn, cu.buf.get32(r.offset + 12));
+		}
+		obj.sections.remove(cu);
+		for (s in obj.symbols.copy())
+			if (s.section == cu) {
+				s.section = null;
+				s.global = false;
+			}
+	}
+
+	// the CFI of the module's functions LLVM describes in DWARF (compact
+	// unwind's DWARF mode: the object's __eh_frame), by function: the FDE's
+	// instructions, their advances rescaled to hxmc's CIE (Unwind.cie: code
+	// alignment 4 on arm64, data alignment -8, the CFA at sp on entry), as
+	// LLVMCFI operations (Unwind.cfi)
+	var dwarfCfi = new Map<String, Array<Int>>();
+
+	function ehFrame(b:Bytes, obj:Obj) {
+		var secs = machoSections(b);
+		var eh = -1, text = null;
+		for (k in 0...secs.length) {
+			if (secs[k].sect == "__eh_frame") eh = k;
+			if (secs[k].seg == "__TEXT" && secs[k].sect == "__text") text = secs[k];
+		}
+		if (eh < 0 || text == null) return;
+		var s = secs[eh];
+		// the section's relocations and the symbol table (raw: an FDE's start
+		// is a SUBTRACTOR pair, its UNSIGNED half names the function or a
+		// label before it, the field the distance from that)
+		var hdr = -1, k = 0, symoff = 0, nsyms = 0;
+		for (c in MachOReader.commands(b)) {
+			if (c.cmd == 0x19)
+				for (j in 0...b.getInt32(c.at + 64)) {
+					if (k == eh) hdr = c.at + 72 + 80 * j;
+					k++;
+				}
+			if (c.cmd == 0x2) {
+				symoff = b.getInt32(c.at + 8);
+				nsyms = b.getInt32(c.at + 12);
+			}
+		}
+		if (hdr < 0) return;
+		var reloff = b.getInt32(hdr + 56), nreloc = b.getInt32(hdr + 60);
+		var targetAt = new Map<Int, {sym:Int, ext:Bool, len:Int}>();
+		var minusAt = new Map<Int, Int>(); // (the SUBTRACTOR's symbol, M)
+		for (j in 0...nreloc) {
+			var at = b.getInt32(reloff + 8 * j), info = b.getInt32(reloff + 8 * j + 4);
+			var type = (info >>> 28) & 0xf;
+			if (type == 0) targetAt.set(at, {sym: info & 0xffffff, ext: (info >>> 27) & 1 == 1, len: (info >>> 25) & 3});
+			if (type == 1) minusAt.set(at, info & 0xffffff);
+		}
+		function symValue(n:Int):Int
+			return b.getInt32(symoff + 16 * n + 8);
+		// the functions by address
+		var fns = new Map<Int, String>();
+		for (sy in obj.symbols)
+			if (sy.section != null && sy.section.kind == Text && defined.exists(sy.name)) fns.set(text.addr + sy.offset, sy.name);
+		var p = s.off, end = s.off + s.size;
+		function uleb():Int {
+			var r = 0, sh = 0, c;
+			do {
+				c = b.get(p++);
+				r |= (c & 0x7f) << sh;
+				sh += 7;
+			} while (c & 0x80 != 0);
+			return r;
+		}
+		function sleb():Int {
+			var r = 0, sh = 0, c;
+			do {
+				c = b.get(p++);
+				r |= (c & 0x7f) << sh;
+				sh += 7;
+			} while (c & 0x80 != 0);
+			if (sh < 32 && (c & 0x40) != 0) r |= -1 << sh;
+			return r;
+		}
+		var cies = new Map<Int, {codeAlign:Int, dataAlign:Int, ptr:Int, aug:Bool}>();
+		while (p + 8 <= end) {
+			var at = p;
+			var len = b.getInt32(p);
+			if (len == 0) break;
+			var next = p + 4 + len;
+			var id = b.getInt32(p + 4);
+			p += 8;
+			if (id == 0) {
+				// a CIE: version, augmentation, alignments, the return register, its data
+				p++;
+				var e = p;
+				while (b.get(e) != 0)
+					e++;
+				var aug = b.getString(p, e - p);
+				p = e + 1;
+				var ca = uleb(), da = sleb();
+				p++; // (the return address register)
+				var ptr = 0;
+				if (StringTools.startsWith(aug, "z")) {
+					uleb();
+					for (ch in aug.substr(1).split(""))
+						switch ch {
+							case "R": ptr = b.get(p++);
+							case "P":
+								var enc = b.get(p++);
+								p += (enc & 0x0f) == 0x0b ? 4 : 8;
+							case "L": p++;
+							case _:
+						}
+				}
+				cies.set(at, {codeAlign: ca, dataAlign: da, ptr: ptr, aug: StringTools.startsWith(aug, "z")});
+				p = next;
+				continue;
+			}
+			var cie = cies.get(p - 4 - id);
+			var field = p;
+			var t = targetAt.get(field - s.off);
+			if (cie == null || t == null || !t.ext) {
+				p = next;
+				continue;
+			}
+			var wide = (cie.ptr & 0x0f) != 0x0b;
+			// (T - M + field, the start relative to the field: T + field + (P - M))
+			var m = minusAt.get(field - s.off);
+			var addend = b.getInt32(field) + (m == null ? 0 : s.addr + (field - s.off) - symValue(m));
+			var fn = fns.get(symValue(t.sym) + addend);
+			p += wide ? 16 : 8; // (start and range)
+			if (cie.aug) p += uleb();
+			if (fn == null || cie.dataAlign != -8) {
+				p = next;
+				continue;
+			}
+			// the instructions, advances rescaled (arm64: 4-byte instructions)
+			var out = [];
+			var scale = cie.codeAlign, unit = abi.arm ? 4 : 1;
+			function adv(d:Int) {
+				var n = Std.int(d * scale / unit);
+				if (n < 64) out.push(0x40 | n) else if (n < 256) {
+					out.push(0x02);
+					out.push(n);
+				} else if (n < 65536) {
+					out.push(0x03);
+					out.push(n & 0xff);
+					out.push(n >> 8);
+				} else {
+					out.push(0x04);
+					for (q in 0...4)
+						out.push((n >> (8 * q)) & 0xff);
+				}
+			}
+			var ok = true;
+			while (p < next && ok) {
+				var op = b.get(p++);
+				var from = p;
+				switch op >> 6 {
+					case 1:
+						adv(op & 0x3f);
+						continue;
+					case 2:
+						out.push(op);
+						uleb();
+					case 3:
+						out.push(op);
+					case _:
+						switch op {
+							case 0x00 | 0x0a | 0x0b | 0x2d:
+								out.push(op);
+							case 0x02:
+								adv(b.get(p++));
+								continue;
+							case 0x03:
+								adv(b.getUInt16(p));
+								p += 2;
+								continue;
+							case 0x04:
+								adv(b.getInt32(p));
+								p += 4;
+								continue;
+							case 0x0c | 0x05 | 0x09:
+								out.push(op);
+								uleb();
+								uleb();
+							case 0x0d | 0x0e | 0x06 | 0x07 | 0x08 | 0x2e:
+								out.push(op);
+								uleb();
+							case 0x11 | 0x12:
+								out.push(op);
+								uleb();
+								sleb();
+							case 0x13:
+								out.push(op);
+								sleb();
+							case _:
+								ok = false;
+						}
+				}
+				// (the operands as they were)
+				for (q in from...p)
+					out.push(b.get(q));
+			}
+			if (ok) dwarfCfi.set(fn, out);
+			p = next;
+		}
+	}
+
+	// a Mach-O object's sections: name, address, size, file offset
+	static function machoSections(b:Bytes):Array<{seg:String, sect:String, addr:Int, size:Int, off:Int}> {
+		var out = [];
+		inline function cstr(at:Int, max:Int):String {
+			var e = at;
+			while (e - at < max && b.get(e) != 0)
+				e++;
+			return b.getString(at, e - at);
+		}
+		for (c in MachOReader.commands(b))
+			if (c.cmd == 0x19) {
+				var n = b.getInt32(c.at + 64);
+				for (k in 0...n) {
+					var s = c.at + 72 + 80 * k;
+					out.push({sect: cstr(s, 16), seg: cstr(s + 16, 16), addr: b.getInt32(s + 32), size: b.getInt32(s + 40), off: b.getInt32(s + 48)});
+				}
+			}
+		return out;
+	}
+
+	// the sizes of the module's functions in the object (Mach-O symbols have
+	// none): to the next symbol of their section, or its end
+	function sizeFunctions(obj:Obj) {
+		var bySec = new haxe.ds.ObjectMap<Obj.Section, Array<Symbol>>();
+		for (s in obj.symbols)
+			if (s.section != null && s.section.kind == Text) {
+				var l = bySec.get(s.section);
+				if (l == null) bySec.set(s.section, l = []);
+				l.push(s);
+			}
+		for (sec => l in bySec) {
+			l.sort((a, b) -> a.offset - b.offset);
+			for (k in 0...l.length) {
+				var s = l[k];
+				if (!defined.exists(s.name) || s.size > 0) continue;
+				var end = sec.buf.len;
+				for (j in k + 1...l.length)
+					if (l[j].offset > s.offset) {
+						end = l[j].offset;
+						break;
+					}
+				s.size = end - s.offset;
+			}
+		}
+	}
+
+	// the object's line table (DWARF 4 __debug_line: LLVM's, a line-tables-only
+	// unit) as rows of this module's functions (rows, rowFiles)
+	function lineTable(b:Bytes, obj:Obj) {
+		var secs = machoSections(b);
+		var text = null, dl = null;
+		for (s in secs) {
+			if (s.seg == "__TEXT" && s.sect == "__text") text = s;
+			if (s.sect == "__debug_line") dl = s;
+		}
+		if (text == null || dl == null) return;
+		// the functions by their address in the object
+		var fns = [];
+		for (s in obj.symbols)
+			if (s.section != null && s.section.kind == Text && defined.exists(s.name)) fns.push({at: text.addr + s.offset, size: s.size, name: s.name});
+		fns.sort((x, y) -> x.at - y.at);
+		function fnAt(a:Int):Null<{at:Int, size:Int, name:String}> {
+			var lo = 0, hi = fns.length - 1, r = null;
+			while (lo <= hi) {
+				var m = (lo + hi) >> 1;
+				if (fns[m].at <= a) {
+					r = fns[m];
+					lo = m + 1;
+				} else hi = m - 1;
+			}
+			return r != null && a < r.at + r.size ? r : null;
+		}
+		var p = dl.off, end = dl.off + dl.size;
+		inline function u8():Int return b.get(p++);
+		function uleb():Int {
+			var r = 0, sh = 0, c;
+			do {
+				c = b.get(p++);
+				r |= (c & 0x7f) << sh;
+				sh += 7;
+			} while (c & 0x80 != 0);
+			return r;
+		}
+		function sleb():Int {
+			var r = 0, sh = 0, c;
+			do {
+				c = b.get(p++);
+				r |= (c & 0x7f) << sh;
+				sh += 7;
+			} while (c & 0x80 != 0);
+			if (sh < 32 && (c & 0x40) != 0) r |= -1 << sh;
+			return r;
+		}
+		function cstr():String {
+			var e = p;
+			while (b.get(e) != 0)
+				e++;
+			var s = b.getString(p, e - p);
+			p = e + 1;
+			return s;
+		}
+		while (p < end) {
+			var unitEnd = p + 4 + b.getInt32(p);
+			p += 4;
+			var version = b.getUInt16(p);
+			p += 2;
+			if (version != 4) throw "hxmc: llvm: DWARF line table version " + version;
+			var hdrLen = b.getInt32(p);
+			p += 4;
+			var progStart = p + hdrLen;
+			var minInst = u8();
+			u8(); // (maximum operations per instruction)
+			u8(); // (default is_stmt)
+			var lineBase = u8();
+			if (lineBase > 127) lineBase -= 256;
+			var lineRange = u8(), opBase = u8();
+			var opLens = [for (_ in 1...opBase) u8()];
+			while (b.get(p) != 0)
+				cstr(); // (include directories)
+			p++;
+			var files = [""];
+			while (b.get(p) != 0) {
+				files.push(cstr());
+				uleb();
+				uleb();
+				uleb();
+			}
+			p = progStart;
+			// the state machine
+			var addr = 0, fileK = 1, line = 1;
+			// (no row at line 0, code without a position: the row before holds, as
+			// the native emitters record none for it)
+			function row() {
+				var fn = fnAt(addr);
+				if (fn == null || line == 0) return;
+				var rs = rows.get(fn.name);
+				if (rs == null) rows.set(fn.name, rs = []);
+				var f = files[fileK];
+				var fk = rowFiles.indexOf(f);
+				if (fk < 0) {
+					fk = rowFiles.length;
+					rowFiles.push(f);
+				}
+				rs.push(addr - fn.at);
+				rs.push(fk);
+				rs.push(line);
+			}
+			while (p < unitEnd) {
+				var op = u8();
+				if (op >= opBase) {
+					var adj = op - opBase;
+					addr += Std.int(adj / lineRange) * minInst;
+					line += lineBase + adj % lineRange;
+					row();
+					continue;
+				}
+				switch op {
+					case 0:
+						var len = uleb(), next = p + len, sub = u8();
+						switch sub {
+							case 1:
+								addr = 0;
+								fileK = 1;
+								line = 1;
+							case 2: addr = b.getInt32(p);
+							case _:
+						}
+						p = next;
+					case 1: row();
+					case 2: addr += uleb() * minInst;
+					case 3: line += sleb();
+					case 4: fileK = uleb();
+					case 5: uleb();
+					case 8: addr += Std.int((255 - opBase) / lineRange) * minInst;
+					case 9:
+						addr += b.getUInt16(p);
+						p += 2;
+					case 6 | 7 | 10 | 11:
+					case _:
+						for (_ in 0...opLens[op - 1])
+							uleb();
+				}
+			}
+			p = unitEnd;
+		}
 	}
 
 	// the module compiled to an object (null: nothing to compile)
@@ -315,6 +825,10 @@ class LlvmGen {
 		// (arm64: no ldp/stp pairing of neighbouring loads and stores, whose
 		// partial overlaps defeat store-to-load forwarding: nbody 1.75x slower with it)
 		if (abi.arm) args = args.concat(["-mllvm", "-aarch64-enable-ldst-opt=0"]);
+		// (a trap after a call that does not return: the return address, which
+		// names the frame in a stack, stays in the caller rather than at the
+		// next function)
+		args = args.concat(["-mllvm", "-trap-unreachable"]);
 		// (profile-guided optimization: Driver links the profile runtime with gen)
 		if (pgo == "gen") args.push("-fprofile-generate") else if (pgo != null) args = args.concat(["-fprofile-use=" + pgo, "-Wno-backend-plugin", "-Wno-profile-instr-unprofiled"]);
 		// (-D hxmc.llvm-cpu: the oldest CPU the program runs on; clang's default is the target's baseline: apple-m1 on macOS arm64, x86-64 v1)
@@ -328,7 +842,13 @@ class LlvmGen {
 		if (code != 0) throw 'hxmc: llvm: clang failed on $ll ($code):\n$err';
 		var bytes = sys.io.File.getBytes(o);
 		var obj = switch abi.os {
-			case "macos": MachOReader.read(bytes).obj;
+			case "macos":
+				var mo = MachOReader.read(bytes, true).obj;
+				sizeFunctions(mo);
+				frames(mo);
+				ehFrame(bytes, mo);
+				if (lines) lineTable(bytes, mo);
+				mo;
 			case "windows": CoffReader.read(bytes).obj;
 			case _: ElfReader.read(bytes);
 		}
@@ -374,9 +894,18 @@ private class FnWriter {
 	inline function t():String
 		return "%t" + (tmp++);
 
+	// the debug location of the instructions written (g.lines; null: none)
+	var dbg:Null<String> = null;
+	var sp:Null<String> = null;
+	var spFile = "";
+
 	function line(s:String) {
 		b.add("  ");
 		b.add(s);
+		if (dbg != null && s.indexOf(" = phi ") < 0) {
+			b.add(", !dbg ");
+			b.add(dbg);
+		}
 		b.add("\n");
 	}
 
@@ -540,7 +1069,24 @@ private class FnWriter {
 		reachable();
 		handlerSlots();
 		var ps = [for (k in 0...f.params.length) LlvmGen.ty(f.params[k] == Void ? I64 : f.params[k]) + " %p" + k];
-		into.add('define ${LlvmGen.ty(f.ret)} ${LlvmGen.symName(f.name)}(${ps.join(", ")}) #0 {\n');
+		if (g.lines) {
+			// (the subprogram at the function's first position; instructions before any at line 0)
+			var file = "", ln = 0;
+			for (bl in f.blocks) {
+				for (i in bl.ins)
+					if (!i.dead && i.pos != 0) {
+						var p = SrcPos.get(i.pos);
+						file = p.file;
+						ln = p.line;
+						break;
+					}
+				if (file != "") break;
+			}
+			sp = g.diSubprogram(f.name, file, ln);
+			spFile = file;
+			dbg = g.md('!DILocation(line: 0, column: 0, scope: $sp)');
+		}
+		into.add('define ${LlvmGen.ty(f.ret)} ${LlvmGen.symName(f.name)}(${ps.join(", ")}) #0${sp != null ? " !dbg " + sp : ""} {\n');
 		// each block's body and terminator apart: a phi's argument read from a
 		// slot is loaded at the end of its pred (pending), before the terminator
 		var bodies = [], terms = [], order = [];
@@ -614,6 +1160,12 @@ private class FnWriter {
 		};
 
 	function ins(bl:MBlock, i:MIns) {
+		if (sp != null && i.pos != 0) {
+			// (code of another file, inlined: a scope of that file in the subprogram)
+			var p = SrcPos.get(i.pos);
+			var scope = p.file == spFile ? sp : g.md('!DILexicalBlockFile(scope: $sp, file: ${g.diFile(p.file)}, discriminator: 0)');
+			dbg = g.md('!DILocation(line: ${p.line}, column: 0, scope: $scope)');
+		}
 		var d = "%v" + i.id;
 		var T = LlvmGen.ty(i.ty);
 		// (an operand of another width: as the machine has it, an I32 zero-extended in its register)

@@ -16,6 +16,8 @@ class MachOReader {
 	var b:Bytes;
 	var arm = false;
 
+	var compactUnwind = false;
+
 	function new(b:Bytes)
 		this.b = b;
 
@@ -35,8 +37,10 @@ class MachOReader {
 		return b.getString(at, e - at);
 	}
 
-	public static function read(b:Bytes):{obj:Obj, arm:Bool} {
+	// compactUnwind: __LD,__compact_unwind kept as a section (LlvmGen reads its entries)
+	public static function read(b:Bytes, compactUnwind = false):{obj:Obj, arm:Bool} {
 		var r = new MachOReader(b);
+		r.compactUnwind = compactUnwind;
 		var o = r.run();
 		return {obj: o, arm: r.arm};
 	}
@@ -93,7 +97,9 @@ class MachOReader {
 					if ((type == 0x13 || type == 9 || type == 0xa || type == 0x14) && align < 8) align = 8;
 					secAddr.push(addr);
 					secHdr.push(h);
-					var skip = seg == "__DWARF" || (flags & 0x02000000) != 0 || sect == "__eh_frame" || sect == "__compact_unwind" || sect == "__llvm_addrsig";
+					// (__compact_unwind has the debug attribute too)
+					var skip = !(compactUnwind && sect == "__compact_unwind")
+						&& (seg == "__DWARF" || (flags & 0x02000000) != 0 || sect == "__eh_frame" || sect == "__compact_unwind" || sect == "__llvm_addrsig");
 					if (skip) {
 						secs.push(null);
 						secSym.push(null);

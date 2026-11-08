@@ -66,7 +66,7 @@ class Link extends LinkCore {
 		var unwound = [];
 		for (o in objs)
 			for (r in o.funcs)
-				if (r.sym.section != null && isLive(r.sym.section)) unwound.push(r);
+				if (r.sym.section != null && isLive(r.sym.section) && !Unwind.none(r.ops)) unwound.push(r);
 		if (unwound.length == 0) return;
 		var e = Unwind.ehFrame(unwound, arm, ".eh_frame");
 		ehFrame = e.sec;

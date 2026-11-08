@@ -289,7 +289,8 @@ class LinkMachO extends LinkCore {
 			data = rest;
 		}
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
-		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section)) r];
+		// (Unwind.NONE: an LLVM function without unwind information)
+		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section) && !Unwind.none(r.ops)) r];
 		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing).sec : null;
 		addr.set(header, 0);
 		var pos = HEADER_RESERVE;

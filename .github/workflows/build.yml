@@ -490,8 +490,8 @@ jobs:
   # (experimental) the LLVM back end (docs/plans/llvm.md): hxmc's corpus on
   # the runner's machine with every function LLVM takes, the runtime's too,
   # compiled by the runner's clang (-D hxmc.llvm, -D hxmc.llvm-rt; as
-  # variables, for every build the corpus makes). The cases it is known not
-  # to pass yet are --known. Its failures block nothing (continue-on-error)
+  # variables, for every build the corpus makes). Its failures block nothing
+  # (continue-on-error)
   llvm:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
@@ -531,7 +531,7 @@ jobs:
         env:
           HXMC_LLVM: 1
           HXMC_LLVM_RT: 1
-        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus --known CallStacks,CallStacksGc,ObjCExceptions,UnwindTables
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus
 
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool

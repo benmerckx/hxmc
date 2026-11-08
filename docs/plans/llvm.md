@@ -193,7 +193,20 @@ the same tools: cpu 0.47, 0.44, 0.43, 0.40 s.
 - Branches to slow paths (`MBlock.cold`, MemLower's) carry branch
   weights (`!prof`), for LLVM's block placement and register allocation:
   binarytrees 1.12x to 1.23x, sha256 1.01x to 1.12x.
-- Frame records always (`frame-pointer=all`); no unwind tables.
+- Frame records always (`frame-pointer=all`). Each function gets a
+  record (FuncRec, LlvmGen.records): its size (from the symbols' layout),
+  with lines its Haxe name and rows from LLVM's line table (debug locations
+  from `MIns.pos`, a line-tables-only unit; the object's `__debug_line`
+  read back, line 0 left out as the native emitters record none), and its
+  unwind information (`uwtable`): a compact unwind frame encoding
+  (Unwind.LLVMFRAME) or the CFI of the object's `__eh_frame` rescaled to
+  hxmc's CIE (Unwind.LLVMCFI); else Unwind.NONE, left out of the tables.
+- A program that reads its stacks (`Program.stacks`) keeps the native
+  code's frames: `noinline` and `disable-tail-calls` (LLVM inlines nothing
+  more than hxmc did), unless `-D hxmc.llvm-inline`. `-trap-unreachable`
+  keeps the return address after a call that does not return in its
+  caller. The compiler reads its stacks: its LLVM build then saves 5.6%
+  cpu on its self-compile instead of 8%.
 - arm64: no `ldp`/`stp` pairing (`-aarch64-enable-ldst-opt=0`). A pair load
   partly overlapping an earlier pair store defeats store-to-load
   forwarding on Apple's cores: nbody ran 1.75x slower with it.
@@ -205,15 +218,8 @@ arguments (packed by size).
 
 ## Status (macOS arm64, Apple clang 21, 2026-11-08)
 
-The corpus with the runtime through LLVM: 323/327, also with `RT_VERIFY=1`
-and a 16 KB nursery. The four that differ need what the native emitter
-records per function (`FuncRec`: unwind operations, lines), which an LLVM
-object does not have:
-
-- CallStacks, CallStacksGc: no names or lines for LLVM's functions in the
-  call stacks (`StackTable`);
-- UnwindTables, ObjCExceptions: no unwind tables (an Objective-C exception
-  through Haxe frames).
+The corpus with the runtime through LLVM: 327/327, also with `RT_VERIFY=1`
+and a 16 KB nursery and in release mode.
 
 Benchmarks (`hxmc/test/bench` Check programs, best of 5, runtime through
 LLVM at O2, native = this branch without LLVM):
@@ -246,9 +252,11 @@ Release mode changes the small benchmarks little (binarytrees 1.24x to
 For the program's speed, in order:
 
 
-- Function records for LLVM's functions: the symbols and sizes are in the
-  object; lines from LLVM's DWARF (`!dbg` from `MIns.pos`), unwind tables
-  from its `__compact_unwind`/`.eh_frame` instead of dropping them.
+- Inlined frames: with LLVM's inlining in a program that reads its stacks,
+  the inlined calls' positions as hxmc's inliner gives them (the call's),
+  from the line table's inlining information.
+- x86-64's compact unwind encodings (LLVMFRAME is arm64's); ELF and COFF
+  objects' lines and CFI.
 - Alias information, tried (2026-11-08): Mir's memory classes as TBAA
   (`-D hxmc.llvm-tbaa=1`, or a list of classes: tls, frame, const, hdr,
   elem, field, global, callonly; fields and shadow-stack slots one type per

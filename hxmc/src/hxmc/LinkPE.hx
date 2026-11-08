@@ -618,7 +618,7 @@ class LinkPE extends LinkCore {
 		var shared = new Map<String, Int>();
 		for (o in objs)
 			for (r in o.funcs) {
-				if (r.sym.section == null || !isLive(r.sym.section)) continue;
+				if (r.sym.section == null || !isLive(r.sym.section) || Unwind.none(r.ops)) continue;
 				var u = arm ? Unwind.winA64(r.ops, r.sym.size) : Unwind.winX64(r.ops);
 				if (u == null) continue;
 				var key = u.toBytes().toHex();
