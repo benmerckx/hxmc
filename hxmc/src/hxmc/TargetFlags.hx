@@ -62,9 +62,11 @@ class TargetFlags {
 	// the flags beyond the default configuration's for a target (null: the host, native)
 	public static function flags(target:Null<String>):Array<String> {
 		var wasm = target != null && StringTools.startsWith(target, "wasm");
-		// (hxmc.strhash: Str.hash is the word-at-a-time hash FnLower.strHash
-		// computes, not FNV-1a; an older tool, the stage0, defines no such
-		// flag and computes FNV-1a, so what it builds agrees with itself)
+		// (hxmc.strhash: the std's Str.hash is the word-at-a-time hash, not
+		// FNV-1a; an older tool, the stage0, defines no such flag and computes
+		// FNV-1a, so what it builds agrees with itself; this tool hashes
+		// literals as the Str it typed does, Lower.strWordHash. docs/hxmc.md,
+		// "String hashes")
 		return wasm ? ["target.atomics", "hxmc.strhash"] : ["target.threaded", "target.atomics", "hxmc.strhash"];
 	}
 }

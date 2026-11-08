@@ -411,7 +411,8 @@ class Str {
 		return x;
 	}
 	#else
-	@:hxmc.unsafe static function hashSlow(s:String):Int {
+	// (the mark the compiler reads: Lower.strWordHash)
+	@:hxmc.wordHash @:hxmc.unsafe static function hashSlow(s:String):Int {
 		var n = len(s);
 		var h = hashMix(k64(0x243F6A88, 0x85A308D3), (n : I64));
 		var p = unitsAddr(s);

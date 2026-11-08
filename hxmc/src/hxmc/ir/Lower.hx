@@ -62,9 +62,25 @@ class Lower implements LowerQueries {
 
 	// `l`: a subclass to lower with (hxmc's resident compiler passes one that
 	// reuses function bodies across builds, see `lowerBody`); otherwise none
+	// whether the program's Str.hash is the word-at-a-time hash (its hashSlow
+	// marked @:hxmc.wordHash), else FNV-1a: literals and string switches
+	// (FnLower.strHash) hash as the runtime the program links does, whichever
+	// std it was typed with (the std a tool of either kind builds: TargetFlags)
+	static function strWordHash(types:Array<core.TType.ModuleType>):Bool {
+		for (t in types)
+			switch t {
+				case TClassDecl(c) if (c.clPath.name == "Str" && c.clPath.pack.join(".") == "hxmc.rt"):
+					var f = c.clStatics.get("hashSlow");
+					return f != null && core.Meta.has(Custom(":hxmc.wordHash"), f.cfMeta);
+				case _:
+			}
+		return true;
+	}
+
 	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
 		Lower.basic = basic;
 		if (l == null) l = new Lower();
+		FnLower.wordHash = strWordHash(types);
 		var mainField = main.clStatics.get("main");
 		l.prog.main = l.staticFunc(main, mainField);
 		// (haxe.EntryPoint.run after main, as Finalization.maybeAddEntrypoint adds

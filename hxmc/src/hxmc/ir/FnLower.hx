@@ -1665,7 +1665,16 @@ class FnLower {
 	// run time: chunks of 8 units (the last one the last 8, overlapping, or
 	// all of a shorter string), each mixed in as its low bytes and, where one
 	// is not 0, its high bytes, the length first; avalanched, folded to 32 bits
+	// (or FNV-1a over the units, where the program's std computes that: Lower.strWordHash)
+	public static var wordHash = true;
+
 	public static function strHash(s:String):Int {
+		if (!wordHash) {
+			var x = 0x811C9DC5;
+			for (i in 0...s.length)
+				x = (x ^ StringTools.fastCodeAt(s, i)) * 16777619;
+			return x == 0 ? 1 : x;
+		}
 		inline function k64(hi:Int, lo:Int)
 			return haxe.Int64.make(hi, lo);
 		inline function mix(h:haxe.Int64, w:haxe.Int64) {

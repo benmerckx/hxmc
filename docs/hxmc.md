@@ -701,8 +701,24 @@ instructions.
 insertion-ordered tables, as in Python and JavaScript: entries appended to
 an array, found through an open-addressing index with linear probing, at
 most half full, no tombstones. Each index slot holds what is compared
-first (the key, a string's cached FNV-1a hash, or an address hash) and the
+first (the key, a string's cached content hash, or an address hash) and the
 entry number, so a miss reads only the index.
+
+### String hashes
+
+A string's content hash (`Str.hash`, cached in its header) takes 8 units
+at a time: a chunk's low bytes as one little-endian word, its high bytes as
+a second only where one is not 0 (a one-byte and a two-byte string of the
+same units hash alike), each mixed in by a 64-bit multiply, the length
+first, folded to 32 bits. The compiler computes the same for literals
+(`DataGen`) and string switches (`FnLower.strHash`). Older tools (the
+stage0 among them) used FNV-1a, so both sides choose: the std's `Str` keeps
+FNV-1a unless the tool defines `hxmc.strhash` (`TargetFlags`; an older tool
+does not), and the compiler hashes as the `Str` it typed does (its
+`hashSlow` marked `@:hxmc.wordHash`: `Lower.strWordHash`). Any tool with
+any std builds a program that agrees with itself; from an FNV-1a tool, the
+first `make hxmc` builds a tool with FNV-1a strings, the second one with
+the new hash (`make fixpoint` then holds).
 
 ### Identity maps
 
