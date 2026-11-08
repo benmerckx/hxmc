@@ -108,6 +108,8 @@ class Driver {
 	var rootStores = 0; // (Frames)
 	var freshStores = 0; // (Opt.freshTargets)
 	var framesRemoved = 0;
+	var mirBefore = 0;
+	var mirAfter = 0;
 	var devirtualized = 0; // (Inline.devirtualize)
 	var foldWhy = new Map<String, Int>(); // (Fold.whyOn)
 	var escTime = 0.0;
@@ -241,6 +243,14 @@ class Driver {
 			// divisions by constants multiplied (not interpreted: one instruction there)
 			if (o.opt && (interp == null || !interp.wants(fn))) DivConst.run(mf);
 			if (o.opt) Opt.lowered(mf);
+			var before = mf.vals.length;
+			mf.compact();
+			if (o.stats) {
+				lock.acquire();
+				mirBefore += before;
+				mirAfter += mf.vals.length;
+				lock.release();
+			}
 			if (dumpSet != null && dumpSet.exists(name)) Sys.println(mf.dump());
 			if (interp != null && interp.wants(fn)) {
 				var g = new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (m, global) -> compileStub(m, emit, global));
@@ -362,6 +372,7 @@ class Driver {
 		Sys.println('hxmc: ${prep.p.funcs.length} functions');
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
+		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');

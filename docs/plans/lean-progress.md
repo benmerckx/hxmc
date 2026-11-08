@@ -20,6 +20,8 @@ when reporting the focused runtime improvements.
   SSA builder (`ce394caf`).
 - Add reproducible cold-build measurements (`make lean-stats`).
 - Register runtime TLS declarations even when accessed only by symbol.
+- Keep root facts outside structured bodies and reuse liveness masks.
+- Compact obsolete MIR value-table entries before backend processing.
 
 The SSA change alone was compared over three alternating pairs, compiling
 the same current source with the compiler immediately before and after
@@ -53,6 +55,36 @@ StringBuf compatibility fix, with matching stdout in every pair:
 
 The snapshot result is below GNU time's resolution; do not quote a speed
 ratio. These are narrow workloads, not whole-program speed estimates.
+
+## Whole-branch refresh after MIR compaction
+
+Three alternating pairs against the original baseline, compiling the same
+current compiler sources with each variant's std, gave the following
+medians. Raw data: `bin/lean-stats-r3IrmP/results.json`.
+
+| Self-build | Original baseline | Current |
+| --- | ---: | ---: |
+| Wall | 11.42 s | 11.46 s |
+| CPU | 20.00 s | 20.17 s |
+| Peak RSS | 1,209,688 KiB | 1,221,164 KiB |
+| Running compiler binary | 21,177,912 bytes | 21,059,208 bytes |
+
+This still establishes no whole-compiler speed or peak-memory win. The JSON
+benchmark's median peak RSS fell from 126,360 to 105,240 KiB (16.7%); its
+CPU was 0.39 -> 0.37 seconds. Nbody was 0.75 -> 0.72 seconds CPU and
+mandelbrot 0.38 -> 0.39 seconds. Their timing differences are small.
+
+Alloc was noisy: three pairs gave 1.47 -> 1.77 seconds CPU. A follow-up
+used warmups, one CPU affinity, alternating order and nine pairs: median
+wall 1.49 -> 1.55 seconds, CPU 1.48 -> 1.55 seconds, and peak RSS
+786,244 -> 786,248 KiB. The longer run narrows the apparent slowdown to
+4.7%, but does not establish an allocation-speed improvement. Keep this
+result visible; raw pairs are `alloc-repeat.json` in the same directory.
+The isolated compaction comparison produced identical alloc executables.
+
+Relative to the original baseline, JSON and mandelbrot executables remain
+245,184 and 179,432 bytes; alloc grows 179,928 -> 184,024 bytes, and nbody
+183,432 -> 187,528 bytes. All four output checks passed.
 
 ## Non-mutating root facts
 
@@ -120,9 +152,53 @@ Eval/native fuzz programs (seed 5000). A focused `make check` on TryGc,
 DeepGc, NativeArrayLiteral, BigInit, Regress and ObjectMapGc passed 23/25
 lanes; QEMU and Wine are still absent. Direct AST-to-SSA remains unfinished.
 
+## Compacting MIR value tables
+
+After the last MIR pass, instructions removed from blocks used to remain in
+`MFunc.vals`. They retained their objects and left holes in the ids used to
+size backend scratch storage. Compaction preserves surviving id order,
+rewrites operands, and copies shared operand vectors before renaming them.
+It skips functions with fewer than 25% obsolete entries. The regression
+covers shared vectors, forward phi operands, negative operand sentinels,
+and repeatability.
+
+Three alternating pairs, using one compiler with compaction disabled and
+enabled, produced byte-identical self-built executables in every pair.
+Median wall was 11.39 -> 11.18 seconds, CPU 19.02 -> 18.87 seconds, and
+peak RSS 1,220,244 -> 1,220,224 KiB. These small timing differences do not
+establish a major compiler speedup or peak-memory reduction. The JSON,
+alloc, nbody and mandelbrot executables were also byte-identical. Raw
+measurements are under `bin/lean/ir-migration/compact-values/`.
+
+A self-build with counters reduced the value tables presented to the
+backends from 4,379,795 to 3,852,002 entries (527,793 fewer, 12.1%). This
+is an aggregate count across functions, not a peak-memory percentage.
+The compiler with the final counters is 21,059,208 bytes, 4,168 bytes larger
+than `91770d20`. The four benchmark
+executables remain at 245,184, 184,024, 187,528 and 179,432 bytes.
+Production sources are 59,436 compiler + 43,782 runtime = 103,218 lines:
+50 added by this change and 51 above the original baseline. The gain here
+is less obsolete MIR storage, not a net source reduction.
+
+Validation so far: all eight quick lanes (298 native cases, again under
+GC/tag verification, and 274 wasm cases), 200 optimized/checked fuzz programs
+(seed 6000), 100 Eval/native programs (seed 7000), the cold/warm/cache-off
+fixpoint, 25 crosshost comparisons including the compiler, and eight cases
+through the MIR interpreter. The focused `make check` passed 23/25 lanes,
+including 32 further crosshost comparisons; QEMU and Wine are absent.
+The focused full tier completed 29/53 lanes, including 73 crosshost
+comparisons, another byte-identical fixpoint and 400 threaded stress runs.
+Its other lanes require QEMU, Wine, wasmtime or the pinned reference compiler
+(and artifacts that reference self-check would create). Both wasm exception
+modes built the full port and wrote compiler HXB archives; their reference
+comparisons remain unverified. No test expectations or exclusions changed.
+A separate native-versus-Wasm comparison of every entry in the generated
+compiler HXB archives passed; upstream reference conformance remains
+unverified.
+
 ## Rejected IR experiments
 
-Two experiments were measured and removed rather than retained behind
+These experiments were measured and removed rather than retained behind
 switches. Three alternating pairs used four backend workers, fresh caches,
 module caching disabled, GNU time and runtime allocation statistics.
 
@@ -138,6 +214,16 @@ module caching disabled, GNU time and runtime allocation statistics.
    seconds, CPU 19.05 -> 19.77 seconds and peak RSS 1,206,104 -> 1,206,232
    KiB. Allocation fell less than 1%. The added accessors and indirection
    did not pay for themselves.
+3. Replace structured root placement with conservative reference cells and
+   MIR dead-cell elimination. Fix the resulting dead-reference retention
+   and changed call-stack inlining; the experiment then passed all eight
+   quick lanes, and large objects were reclaimed inside a try in both
+   optimized and checked builds. After dead-cell elimination, three pairs
+   gave 19.09 -> 19.14 seconds CPU with unchanged peak memory, while the
+   generated compiler grew from 21,067,464 to 22,394,568 bytes. Limiting
+   clears to paths with later collection reduced it to 22,292,128 bytes,
+   still 5.8% larger. The replacement failed to pay for that code growth.
+   It is not a production alternative or a completed SSA-root migration.
 
 ## Remaining architectural work
 
