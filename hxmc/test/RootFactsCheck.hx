@@ -36,6 +36,22 @@ class RootFactsCheck {
 		// A second analysis cannot depend on mutations made by the first.
 		var again = Roots.analyze(f);
 		check(again.coldAt(yes, 0)[0] == a && again.coldAt(no, 0)[0] == b, "analysis is not repeatable");
-		Sys.println("root facts: input preserved, shared occurrences independent, repeatable");
+		// A continue needs the next iteration's references; a break needs
+		// the references used after the loop. Neither target may be changed
+		// while walking backwards through the other path.
+		var loop = vector(shared, SIf(ELocal(cond), vector(SBreak), vector(SExpr(ECall(sink, vector(ELocal(b)))), SContinue)));
+		f.body = vector(SLoop(loop), SExpr(ECall(sink, vector(ELocal(a)))), SReturn(null));
+		var lr = Roots.analyze(f).coldAt(loop, 0);
+		check(lr != null && lr.length == 2 && lr[0] == a && lr[1] == b, "loop targets lost live references");
+		// What a handler and the continuation need stays live throughout
+		// the try body, even when a nested walk changes its working mask.
+		var caught = new Local(4, "caught", ref);
+		var handler:IrCatch = {l: caught, test: null, body: vector(SExpr(ECall(sink, vector(ELocal(a)))))};
+		f.locals = [tmp, caught];
+		f.hasTry = true;
+		f.body = vector(STry(vector(shared), vector(handler)), SExpr(ECall(sink, vector(ELocal(b)))), SReturn(null));
+		var tr = Roots.analyze(f);
+		check(tr.rooted.get(a.id) && tr.rooted.get(b.id) && tr.rooted.get(caught.id), "handler requirements lost live references");
+		Sys.println("root facts: shared sites, loops, handlers, repeatability and input preservation passed");
 	}
 }

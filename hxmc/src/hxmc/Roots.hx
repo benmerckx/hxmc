@@ -328,6 +328,9 @@ class Roots {
 		return ids == null || ids[k] == 0 ? null : spills[ids[k] - 1];
 	}
 
+	// Each sequence owns its working mask. Nested sequences borrow their
+	// output mask and return a fresh one; statements may mutate only that
+	// owned mask. Loop targets and handler requirements stay immutable.
 	function seq(ss:Vector<Stmt>, out:Bits):Bits {
 		var ids = siteIds.get(ss);
 		if (coldSites && ids == null)
@@ -337,7 +340,7 @@ class Roots {
 					ids[k] = spillSets.length + 1;
 					spillSets.push(new Bits(n));
 				}
-		var live = out;
+		var live = copy(out);
 		var i = ss.length;
 		while (i-- > 0)
 			live = stmt(ss[i], live, ids == null ? 0 : ids[i]);
@@ -351,7 +354,7 @@ class Roots {
 		return hxmc.ir.Facts.GcPoints.nestedGc(e);
 
 	function expr(e:Ex, after:Bits, def:Null<Local>):Bits {
-		var rest = copy(after);
+		var rest = after;
 		if (def != null) {
 			this.def(def.id, after);
 			rest.clear(def.id);
@@ -369,7 +372,7 @@ class Roots {
 	}
 
 	function cold(id:Int, s:Stmt, out:Bits):Bits {
-		var live = copy(out);
+		var live = out;
 		switch s {
 			case SSet(l, e):
 				def(l.id, out);
@@ -412,7 +415,7 @@ class Roots {
 	function stmt(s:Stmt, out:Bits, site:Int):Bits {
 		if (s.match(SPos(_))) return out;
 		var r = site > 0 ? cold(site - 1, s, out) : stmt0(s, out);
-		if (extras.length > 0) r = union(r, extras[extras.length - 1]);
+		if (extras.length > 0) r.union(extras[extras.length - 1]);
 		return r;
 	}
 
@@ -422,25 +425,25 @@ class Roots {
 			case SSet(l, e): expr(e, out, l);
 			case SExpr(e): expr(e, out, null);
 			case SSetGlobal(_, v):
-				var u = copy(out);
+				var u = out;
 				uses(v, u);
 				if (nestedGc(v) || gcPoint(v) > 0) across(u);
 				u;
 			case SSetField(_, _, o, v) | SBoxSet(_, o, v):
-				var u = copy(out);
+				var u = out;
 				uses(o, u);
 				uses(v, u);
 				if (nestedGc(o) || nestedGc(v) || gcPoint(v) > 0 || gcPoint(o) > 0) across(u);
 				u;
 			case SAnonSet(_, _, o, v):
-				var u = copy(out);
+				var u = out;
 				uses(o, u);
 				uses(v, u);
 				across(u);
 				u;
 			case SArrSet(_, a, i, v):
 				rooted.set(a.id);
-				var u = copy(out);
+				var u = out;
 				u.set(a.id);
 				uses(i, u);
 				uses(v, u);
@@ -448,13 +451,14 @@ class Roots {
 				u;
 			case SArrPush(_, a, v):
 				rooted.set(a.id);
-				var u = copy(out);
+				var u = out;
 				u.set(a.id);
 				uses(v, u);
 				across(u);
 				u;
 			case SIf(c, x, y):
-				var u = union(seq(x, out), seq(y, out));
+				var u = seq(x, out);
+				u.union(seq(y, out));
 				uses(c, u);
 				if (nestedGc(c) || gcPoint(c) > 0) across(u);
 				u;
@@ -466,26 +470,26 @@ class Roots {
 					var nb = seq(body, entry);
 					brk.pop();
 					cont.pop();
-					var u = union(entry, nb);
-					if (same(u, entry)) break;
-					entry = u;
+					if (!entry.union(nb)) break;
 				}
 				entry;
-			case SBreak: brk[brk.length - 1];
-			case SContinue: cont[cont.length - 1];
+			case SBreak: copy(brk[brk.length - 1]);
+			case SContinue: copy(cont[cont.length - 1]);
 			case SPos(_): out;
 			case SSwitch(e, cases, def):
 				var u = seq(def, out);
 				for (c in cases)
-					u = union(u, seq(c.body, out));
+					u.union(seq(c.body, out));
 				uses(e, u);
 				u;
 			case SReturn(e):
-				var u = new Bits(n);
+				var u = out;
+				u.w.fill(0);
 				if (e != null) uses(e, u);
 				u;
 			case SThrow(e):
-				var u = new Bits(n);
+				var u = out;
+				u.w.fill(0);
 				uses(e, u);
 				u;
 			case STry(body, catches):
@@ -502,13 +506,13 @@ class Roots {
 					var u = seq(c.body, out);
 					ins.union(u);
 					u.clear(c.l.id);
-					h = union(h, u);
+					h.union(u);
 				}
 				for (c in catches)
 					ins.set(c.l.id);
 				for (c in catches)
 					def(c.l.id, ins);
-				if (extras.length > 0) h = union(h, extras[extras.length - 1]);
+				if (extras.length > 0) h.union(extras[extras.length - 1]);
 				// what the handlers need is live across a GC point: their tests
 				// may collect (haxe.Exception.caught), and a handler is entered
 				// from any point of the body, not only from its GC points (a
@@ -518,14 +522,9 @@ class Roots {
 				extras.push(h);
 				var b = seq(body, union(out, h));
 				extras.pop();
-				union(b, h);
+				b.union(h);
+				b;
 		}
-	}
-
-	static function same(a:Bits, b:Bits):Bool {
-		for (k in 0...a.w.length)
-			if (a.w[k] != b.w[k]) return false;
-		return true;
 	}
 
 	// ---- locals that may be read before any assignment (the arguments are set)
