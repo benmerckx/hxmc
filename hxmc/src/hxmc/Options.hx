@@ -33,6 +33,16 @@ class Options {
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
+	// -D hxmc.loop-version=0: no loop versioning (LoopVersion); =why: why each loop is left alone
+	public var loopVersion = true;
+	public var loopVersionWhy = false;
+
+	// the variable a flag falls back to: HXMC_LOOP_VERSION for hxmc.loop-version
+	public static function flagVar(name:String):String
+		return name.toUpperCase().split(".").join("_").split("-").join("_");
+
+	// the flags read as a define, else their variable (UpToDate: the variables change the code)
+	public static final FLAGS = ["hxmc.loop-version"];
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -259,6 +269,16 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
+		// a flag: its define (-D turns the dashes into underscores), else its
+		// variable (flagVar); null: neither, or empty
+		function flag(name:String):Null<String> {
+			var d = def(name.split("-").join("_"));
+			if (d == null) d = env(flagVar(name));
+			return d == null || d == "" ? null : d;
+		}
+		var lv = flag("hxmc.loop-version");
+		o.loopVersion = lv != "0";
+		o.loopVersionWhy = lv == "why";
 		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {

@@ -181,6 +181,9 @@ class OInfo {
 	// ArrayGet, ArraySet, ArrayPush: where the array's header and the index
 	// widened start among the arguments (Opt.operands; -1: none)
 	public var ops = -1;
+	// ArrayGet in a loop LoopVersion copied: the array is known not null, of
+	// the kind, the index in range (no tests, no slow path: it writes nothing)
+	public var prechecked = false;
 
 	public function new() {}
 
@@ -215,6 +218,7 @@ class OInfo {
 		o.young = young;
 		o.fresh = fresh;
 		o.ops = ops;
+		o.prechecked = prechecked;
 		return o;
 	}
 }

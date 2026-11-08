@@ -1356,14 +1356,14 @@ class Opt {
 	static inline var ALL = EVERY & ~(1 << MConst);
 
 	// a field's byte offset (OInfo.loc: an Int's or Bool's is a 4-byte index; MemLower.access)
-	static inline function fieldOff(o:OInfo):Int
+	public static inline function fieldOff(o:OInfo):Int
 		return o.t.match(TRef(_) | TF64 | TI64 | TId) ? 8 * o.loc : 4 * o.loc;
 
 	static inline function fieldCls(o:OInfo):Int
 		return MFieldAt + ((fieldOff(o) >> 3) & 7);
 
 	// an array element of this type is a reference (its slow path may box: a call)
-	static inline function ptrElem(t:hxmc.ir.Ir.Ty):Bool
+	public static inline function ptrElem(t:hxmc.ir.Ir.Ty):Bool
 		return !t.match(TI32 | TBool | TF64 | TI64 | TId);
 
 	// the class an object-level read loads from (-1: not one)
@@ -1373,7 +1373,7 @@ class Opt {
 			case ArrayLength: MHdr;
 			case NArrayLength: MConst;
 			case NArrayGet: MElem;
-			case ArrayGet if (!ptrElem(i.info.t)): MElem;
+			case ArrayGet if (!ptrElem(i.info.t) || i.info.prechecked): MElem;
 			case _: -1;
 		};
 
@@ -1420,7 +1420,7 @@ class Opt {
 		return switch i.op {
 			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | InitField | Tag: 0;
 			case Untag if (!i.info.t.match(TRef(_))): 0;
-			case ArrayGet: ptrElem(i.info.t) ? ALL : 0;
+			case ArrayGet: ptrElem(i.info.t) && !i.info.prechecked ? ALL : 0;
 			case SetField: i.info.t.match(TVoid) ? 0 : (1 << fieldCls(i.info)) | (1 << MField) | (1 << MOther);
 			case AnonStore: FIELD_BITS | (1 << MField) | (1 << MOther);
 			case NArraySet | ArrayInit | NArrayInit: (1 << MElem) | (1 << MOther);
