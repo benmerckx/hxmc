@@ -620,22 +620,60 @@ class Str {
 		return find(s, sub, from);
 	}
 
-	// the first i >= from where sub (not empty) is in s; -1 if none
+	// the first i >= from where sub (not empty) is in s; -1 if none. Of the
+	// same widths, the candidates (where sub's first unit is) found a word at
+	// a time: 8 one-byte units or 4 two-byte ones, the units equal to it
+	// those that the word xor that unit in every lane leaves 0, the first one
+	// the lowest lane flagged by (v - 0x01...) & ~v & 0x80... (a lane above a
+	// 0 lane may be flagged too, never one below)
 	@:hxmc.unsafe static function find(s:String, sub:String, from:Int):Int {
 		var n = len(s), m = len(sub);
 		var i = from;
+		var last = n - m;
 		var one = isOne(s);
 		if (one == isOne(sub)) {
+			var p = unitsAddr(s), d = unitsAddr(sub);
 			if (one) {
-				var c = chars1(s), d = chars1(sub);
-				while (i + m <= n) {
-					if (Repr.matchAt1(c, d, i, m)) return i;
+				var first = Mem.getU8(d, 0);
+				var ones = k64(0x01010101, 0x01010101), highs = ones << 7;
+				var pat = (first : I64) * ones;
+				while (i <= last) {
+					if (i + 8 <= n) {
+						var v = Mem.getI64(p, i) ^ pat;
+						var t = (v - ones) & ~v & highs;
+						if (t == (0 : I64)) {
+							i += 8;
+							continue;
+						}
+						// (the lowest flagged lane: the 1 bytes below its bit, summed in the top byte)
+						i += (((((t & -t) >>> 7) - 1) & ones) * ones >>> 56).toInt();
+						if (i > last) return -1;
+					} else if (Mem.getU8(p, i) != first) {
+						i++;
+						continue;
+					}
+					if (m == 1 || MemOps.compare(p.add(i + 1), d.add(1), ((m - 1) : I64)) == 0) return i;
 					i++;
 				}
 			} else {
-				var c = chars2(s), d = chars2(sub);
-				while (i + m <= n) {
-					if (Repr.matchAt(c, d, i, m)) return i;
+				var first = Mem.getU16(d, 0);
+				var ones = k64(0x00010001, 0x00010001), highs = ones << 15;
+				var pat = (first : I64) * ones;
+				while (i <= last) {
+					if (i + 4 <= n) {
+						var v = Mem.getI64(p, 2 * i) ^ pat;
+						var t = (v - ones) & ~v & highs;
+						if (t == (0 : I64)) {
+							i += 4;
+							continue;
+						}
+						i += (((((t & -t) >>> 15) - 1) & ones) * ones >>> 48).toInt();
+						if (i > last) return -1;
+					} else if (Mem.getU16(p, 2 * i) != first) {
+						i++;
+						continue;
+					}
+					if (m == 1 || MemOps.compare(p.add(2 * i + 2), d.add(2), (2 * (m - 1) : I64)) == 0) return i;
 					i++;
 				}
 			}
