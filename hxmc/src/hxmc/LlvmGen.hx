@@ -1440,7 +1440,15 @@ private class FnWriter {
 				line('store atomic $n ${arg(1)}, ptr $p seq_cst, align $al');
 			case "atomic_add4" | "atomic_add8" | "atomic_xchg4" | "atomic_xchg8":
 				var p = addr();
-				line('$d = atomicrmw ${StringTools.startsWith(name, "atomic_add") ? "add" : "xchg"} ptr $p, $n ${arg(1)} seq_cst, align $al');
+				var x = arg(1), c = f.vals[res(i.args[1])];
+				// (an addition of 0 is a write to the word, as the native code's lock
+				// xadd: Gc's prefaulter touches pages with it. LLVM turns an idempotent
+				// atomicrmw into a fence, without the access: the 0 hidden from it)
+				if (StringTools.startsWith(name, "atomic_add") && c.op == Const && c.imm == 0 && (c.ty == I32 || c.imm2 == 0)) {
+					x = t();
+					line('$x = call $n asm sideeffect "", "=r,0"($n 0)');
+				}
+				line('$d = atomicrmw ${StringTools.startsWith(name, "atomic_add") ? "add" : "xchg"} ptr $p, $n $x seq_cst, align $al');
 			case "atomic_cas4" | "atomic_cas8":
 				var p = addr();
 				var r = t();
