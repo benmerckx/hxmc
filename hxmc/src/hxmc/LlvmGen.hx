@@ -131,9 +131,58 @@ class LlvmGen {
 
 	// the function as LLVM IR into this module
 	public function func(f:MFunc) {
+		if (shared) lock.acquire();
 		count++;
 		defined.set(f.name, true);
-		new FnWriter(this, f).write(out);
+		try new FnWriter(this, f).write(out) catch (e:haxe.Exception) {
+			if (shared) lock.release();
+			throw e;
+		}
+		if (shared) lock.release();
+	}
+
+	// written to by the modules' threads (the whole program's: Driver.llvmFor)
+	public var shared = false;
+	final lock = new sys.thread.Mutex();
+
+	// an object with the symbols the module's code refers to (undefined), for
+	// the data, which makes some of them, when this module is compiled after
+	// it (DataGen.allocStubs, cstrLiterals...)
+	public function refs():Obj {
+		var o = new Obj();
+		for (m in [called, addressed, absolute, tls])
+			for (k in m.keys())
+				if (!defined.exists(k)) o.sym(k);
+		return o;
+	}
+
+	// a program-wide number (Const of a symbol) in the text, replaced in
+	// text(): by its value when known (-D hxmc.llvm-consts), else the address
+	// of its extern_weak symbol
+	static inline var ABS_OPEN = "%%abs(";
+	static inline var ABS_CLOSE = ")%%";
+
+	@:allow(hxmc.LlvmGen.FnWriter)
+	function absRef(sym:String):String {
+		useSym(sym, 2);
+		return ABS_OPEN + sym + ABS_CLOSE;
+	}
+
+	function substAbs(text:String, abs:Null<Map<String, Int>>):String {
+		var b = new StringBuf();
+		var at = 0;
+		while (true) {
+			var k = text.indexOf(ABS_OPEN, at);
+			if (k < 0) break;
+			var e = text.indexOf(ABS_CLOSE, k);
+			b.addSub(text, at, k - at);
+			var sym = text.substring(k + ABS_OPEN.length, e);
+			var v = abs != null ? abs.get(sym) : null;
+			b.add(v != null ? Std.string(v) : 'ptrtoint (ptr ${name(sym)} to i64)');
+			at = e + ABS_CLOSE.length;
+		}
+		b.addSub(text, at);
+		return b.toString();
 	}
 
 	@:allow(hxmc.LlvmGen.FnWriter)
@@ -190,7 +239,7 @@ class LlvmGen {
 		return name(s);
 
 	// the module as text
-	public function text():String {
+	public function text(?abs:Map<String, Int>):String {
 		var b = new StringBuf();
 		b.add('; hxmc module $module\n');
 		b.add('target triple = "${triple(abi)}"\n\n');
@@ -230,7 +279,7 @@ class LlvmGen {
 		for (k in ints)
 			b.add(k + "\n");
 		b.add("\n");
-		b.add(out.toString());
+		b.add(substAbs(out.toString(), abs));
 		b.add('\nattributes #0 = { nounwind "frame-pointer"="all" }\n');
 		b.add('attributes #1 = { noreturn nounwind }\n');
 		b.add('attributes #2 = { returns_twice }\n');
@@ -241,11 +290,11 @@ class LlvmGen {
 	}
 
 	// the module compiled to an object (null: nothing to compile)
-	public function compile():Null<Obj> {
+	public function compile(?abs:Map<String, Int>):Null<Obj> {
 		if (count == 0) return null;
 		var safe = ~/[^A-Za-z0-9_.-]/g.replace(module, "_");
 		var ll = dir + "/" + safe + ".ll", o = dir + "/" + safe + ".o";
-		sys.io.File.saveContent(ll, text());
+		sys.io.File.saveContent(ll, text(abs));
 		var args = ["-target", triple(abi), "-" + optLevel, "-c", "-Wno-override-module", ll, "-o", o];
 		// (HXMC_LLVM_FLAGS: more of clang's arguments, separated by spaces)
 		// (arm64: no ldp/stp pairing of neighbouring loads and stores, whose
@@ -561,9 +610,8 @@ private class FnWriter {
 					line(i.ty == F64 ? '$d = fadd double %p${i.imm}, -0.0' : '$d = add $T %p${i.imm}, 0');
 			case Const:
 				if (i.sym != null) {
-					g.useSym(i.sym, 2);
 					var a = t();
-					line('$a = ptrtoint ptr ${LlvmGen.symName(i.sym)} to i64');
+					line('$a = add i64 ${g.absRef(i.sym)}, 0');
 					var s = a;
 					if (i.imm != 0) {
 						s = t();

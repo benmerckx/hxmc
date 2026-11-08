@@ -39,6 +39,11 @@ class Options {
 	public var llvmRt = false;
 	// -D hxmc.llvm-cpu=<cpu> (HXMC_LLVM_CPU): clang's -mcpu (arm64) or -march (x86-64), e.g. apple-m3, x86-64-v3
 	public var llvmCpu:Null<String> = null;
+	// -D hxmc.llvm-whole (HXMC_LLVM_WHOLE=1): the whole program one LLVM module; -D hxmc.llvm-consts
+	// (HXMC_LLVM_CONSTS=1): the program-wide numbers as constants; -D hxmc.llvm-release: both.
+	// Either compiles LLVM's code after the data, not cached
+	public var llvmWhole = false;
+	public var llvmConsts = false;
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -272,6 +277,9 @@ class Options {
 		o.llvmCpu = def("hxmc.llvm_cpu");
 		if (o.llvmCpu == null) o.llvmCpu = env("HXMC_LLVM_CPU");
 		if (o.llvmCpu == "") o.llvmCpu = null;
+		var rel = def("hxmc.llvm_release") != null || env("HXMC_LLVM_RELEASE") == "1";
+		o.llvmWhole = rel || def("hxmc.llvm_whole") != null || env("HXMC_LLVM_WHOLE") == "1";
+		o.llvmConsts = rel || def("hxmc.llvm_consts") != null || env("HXMC_LLVM_CONSTS") == "1";
 		// (LLVM drops a load whose value is not used, the fault of a null access with it: explicit tests, as on WebAssembly)
 		if (o.llvm != null && nc == null) o.nullChecks = true;
 		o.verifyTags = def("hxmc.verify_tags") != null;

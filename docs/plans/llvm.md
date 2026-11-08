@@ -29,6 +29,20 @@ passes (inlining, escape analysis, SROA, allocation folding) still run
 first; LLVM adds its scalar and loop optimizations, instruction
 scheduling and register allocation.
 
+## Release mode
+
+`-D hxmc.llvm-release` (`HXMC_LLVM_RELEASE=1`) is both of:
+
+- `-D hxmc.llvm-consts`: the program-wide numbers (type indices, field
+  ids, global offsets, class spans) as constants, from the data (DataGen)
+  instead of extern_weak symbols loaded through the GOT;
+- `-D hxmc.llvm-whole`: the whole program one LLVM module (cross-module
+  inlining, interprocedural analyses), one clang process.
+
+Either compiles LLVM's code after the data (Driver.llvmPending; the data
+gets the symbols the code refers to from `LlvmGen.refs`), so its objects
+are not cached, and a function's inline caches are global symbols.
+
 ## The mapping
 
 - Addresses are i64; each load and store turns one into a pointer
@@ -89,6 +103,20 @@ LLVM at O2, native = this branch without LLVM):
 
 Builds take longer: one clang process per module, in parallel.
 
+The compiler itself through LLVM (all 15834 functions; the Mir macros'
+and Mir interpreter's lanes pass as with the native build: the
+conformance macro cases 66/67, `Corpus --mir-run` 214/219) writes a
+byte-identical self-compile, faster, cold (median of 5):
+
+| the tool | built in | self-compile |
+| --- | --- | --- |
+| native | 6 s | 5.79 s |
+| LLVM, per module | 17 s | 5.32 s (-8%) |
+| LLVM, release mode | 91 s | 5.21 s (-10%) |
+
+Release mode changes the small benchmarks little (binarytrees 1.24x to
+1.29x, the others within noise).
+
 ## Next
 
 For the program's speed, in order:
@@ -112,10 +140,6 @@ For the program's speed, in order:
   once before the loop), or a GC contract LLVM knows (statepoints, below).
   Typed pointers (`ptr`, `noalias` allocations, `nonnull` after null
   tests) wait for that too.
-- Release builds: program-wide numbers as constants (type tests and
-  enum switches folded; the objects are no longer reusable across
-  builds), and the whole program as one LLVM module (the runtime's fast
-  paths inlined across modules, `fastcc` between Haxe functions).
 - Implicit null checks (LLVM's `make.implicit`, a fault map the runtime
   reads) instead of the explicit tests.
 - Larger: the shadow stack's stores and reloads (LLVM's statepoints and
