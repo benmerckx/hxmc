@@ -196,7 +196,7 @@ A separate native-versus-Wasm comparison of every entry in the generated
 compiler HXB archives passed; upstream reference conformance remains
 unverified.
 
-## Rejected IR experiments
+## Rejected experiments
 
 These experiments were measured and removed rather than retained behind
 switches. Three alternating pairs used four backend workers, fresh caches,
@@ -224,6 +224,16 @@ module caching disabled, GNU time and runtime allocation statistics.
    clears to paths with later collection reduced it to 22,292,128 bytes,
    still 5.8% larger. The replacement failed to pay for that code growth.
    It is not a production alternative or a completed SSA-root migration.
+4. Retire inactive GC worker cohorts after four minor collections instead
+   of sixteen. Three paired self-builds produced identical outputs. Median
+   wall was 11.67 -> 11.26 seconds and CPU 20.59 -> 18.68 seconds, meeting
+   the experiment's 5% CPU threshold. Peak RSS stayed 1,220,484 ->
+   1,220,476 KiB. However, median exit RSS rose 958 -> 1,127 MiB and the
+   runtime reported 1,188 -> 1,366 MB promoted. The increased resident old
+   data did not suit the memory-reduction goal, so the default policy stays
+   unchanged. These three local timing samples also overlap; no general
+   speed claim follows. Raw data: `bin/lean/gc-cohort-4/self.json` and its
+   collector logs. The alternative exists only among ignored measurements.
 
 ## Remaining architectural work
 
