@@ -124,7 +124,7 @@ class Driver {
 	var llvmWhy = new Map<String, Int>();
 
 	function llvmFor(module:String):Null<LlvmGen> {
-		if (o.llvm == null || abi.wasm || interp != null || o.mirHost) return null;
+		if (o.llvm == null || abi.wasm || interp != null) return null;
 		if (!o.llvmRt && StringTools.startsWith(module, "hxmc.rt.")) return null;
 		if (LlvmGen.triple(abi) == null) throw "hxmc: -D hxmc.llvm: no LLVM triple for " + abi.name;
 		var dir = out + ".hxmc/llvm";
