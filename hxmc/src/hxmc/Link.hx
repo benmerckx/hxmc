@@ -151,6 +151,68 @@ class Link extends LinkCore {
 				{name: "." + d.name, data: d.data}
 		];
 
+	// ---- __start_<name> and __stop_<name>, as a C toolchain's linker defines
+	// them for a section whose name is a C identifier (LLVM's profile runtime
+	// walks __llvm_prf_cnts, _data, _names, ... with them): the sections of a
+	// name some object refers to so are kept (roots, as nothing else reaches
+	// them) and laid out together; a name no section has stays undefined
+	// (the references are weak: 0)
+
+	var bounded = new Map<String, Bool>();
+
+	function findBounded() {
+		var ident = ~/^[A-Za-z_][A-Za-z0-9_]*$/;
+		for (o in objs)
+			for (s in o.symbols) {
+				if (s.section != null || s.abs) continue;
+				var n = StringTools.startsWith(s.name, "__start_") ? s.name.substr(8) : StringTools.startsWith(s.name, "__stop_") ? s.name.substr(7) : null;
+				if (n != null && ident.match(n)) bounded.set(n, true);
+			}
+	}
+
+	override function gcRoot(o:Obj, s:Section):Bool
+		return super.gcRoot(o, s) || bounded.exists(s.name);
+
+	// `list` with the sections of each bounded name together, where its first one is
+	function together(list:Array<Section>):Array<Section> {
+		if (!bounded.keys().hasNext()) return list;
+		var groups = new Map<String, Array<Section>>(), res = [];
+		for (s in list) {
+			if (!bounded.exists(s.name)) {
+				res.push(s);
+				continue;
+			}
+			var g = groups.get(s.name);
+			if (g == null) {
+				g = [];
+				groups.set(s.name, g);
+				res.push(s); // (the group's place: the rest follow it below)
+			} else g.push(s);
+		}
+		var out = [];
+		for (s in res) {
+			out.push(s);
+			var g = groups.get(s.name);
+			if (g != null) {
+				for (x in g)
+					out.push(x);
+				groups.remove(s.name);
+			}
+		}
+		return out;
+	}
+
+	// the bounds of the laid out sections of each bounded name
+	function defineBounds(all:Array<Section>, defined:Map<String, Int>) {
+		for (s in all)
+			if (bounded.exists(s.name)) {
+				var a = addr.get(s), e = a + s.size();
+				var st = defined.get("__start_" + s.name), sp = defined.get("__stop_" + s.name);
+				if (st == null || a < st) defined.set("__start_" + s.name, a);
+				if (sp == null || e > sp) defined.set("__stop_" + s.name, e);
+			}
+	}
+
 	public var symbols = true; // write a symbol table of the code (profilers, debuggers)
 	// a Mir host: every global symbol of the executable, "<name> <kind> <value>" per
 	// line (t code, d data, a absolute, l TLS: the thread-pointer offset), for
@@ -159,6 +221,7 @@ class Link extends LinkCore {
 
 	public function link(entry:String):Bytes {
 		resolve();
+		findBounded();
 		gc(entry);
 		makeGot();
 		unwindObj();
@@ -168,14 +231,14 @@ class Link extends LinkCore {
 		for (o in objs)
 			for (s in o.sections)
 				if (isLive(s)) all.push(s);
-		var ro = [for (s in all) if (s.kind == RoData) s];
+		var ro = together([for (s in all) if (s.kind == RoData) s]);
 		var text = [for (s in all) if (s.kind == Text) s];
 		var tdata = [for (s in all) if (s.kind == Tdata) s];
 		var tbss = [for (s in all) if (s.kind == Tbss) s];
 		var init = [for (s in all) if (s.kind == InitArray) s];
 		var fini = [for (s in all) if (s.kind == FiniArray) s];
-		var data = [for (s in all) if (s.kind == Data) s];
-		var bss = [for (s in all) if (s.kind == Bss) s];
+		var data = together([for (s in all) if (s.kind == Data) s]);
+		var bss = together([for (s in all) if (s.kind == Bss) s]);
 		var nph = ehFrame != null ? 6 : 5; // LOAD r, LOAD rx, LOAD rw, TLS, GNU_STACK, GNU_EH_FRAME
 		var headers = 64 + 56 * nph;
 		var pos = BASE + headers;
@@ -213,6 +276,7 @@ class Link extends LinkCore {
 		defined.set("end", dataEnd);
 		defined.set("_DYNAMIC", 0);
 		defined.set("__ehdr_start", BASE);
+		defineBounds(all, defined);
 		symAddr = function(s:Symbol):Int {
 			var t = target(s);
 			if (t == null) {
