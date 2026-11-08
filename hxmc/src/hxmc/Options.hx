@@ -47,7 +47,8 @@ class Options {
 	//   hxmc.llvm-flags=<args>    more of clang's arguments, separated by spaces
 	//   hxmc.llvm-clang=<path>    the clang (default: clang on the path)
 	//   hxmc.llvm-pgo=gen         profile-guided optimization: an instrumented program (LLVM's
-	//                             profile runtime linked; it writes default.profraw, or LLVM_PROFILE_FILE)
+	//                             profile runtime linked; it writes default.profraw, or LLVM_PROFILE_FILE;
+	//                             macOS, and Linux static with musl: hxmc.rt.Pgo writes it)
 	//   hxmc.llvm-pgo=<file>      ... compiled with the profile (llvm-profdata merge -o <file> *.profraw)
 	//   hxmc.llvm-inline          LLVM inlines in a program that reads its stacks too (they then lack
 	//                             the frames of what it inlined; default: the frames the native code has)

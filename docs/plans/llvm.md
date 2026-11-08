@@ -54,6 +54,24 @@ app.profdata *.profraw`, then `-D hxmc.llvm-pgo=app.profdata` compiles with
 the profile (its size and time in the cache key). Best with
 `-D hxmc.llvm-release`.
 
+Linux (static with musl): the clang's `libclang_rt.profile-<arch>.a` is C
+built against glibc, and its file part (stdio, `fileno`, `__strdup`) does
+not link with musl's members. Only its writer is linked (InstrProfiling,
+Buffer, Writer, Value, PlatformLinux: `memcpy`, `memset`, `calloc`), and
+the runtime writes the file (`hxmc/std/hxmc/rt/Pgo.hx`, registered with
+`atexit` under `-D hxmc.llvm-pgo=gen`): `lprofWriteData` with a writer
+of its own, value profiles (indirect call targets) included.
+`LLVM_PROFILE_FILE` takes `%p`, `%h`, `%t` and `%%` (not `%m`:
+no merging), default `default.profraw`. The counters are global, so every
+thread's count is in it; clang's default increments are not atomic, and
+threads that run the same code lose counts (`-D
+hxmc.llvm-flags=-fprofile-update=atomic` for exact ones). The linker gives
+the writer `__start_<section>`/`__stop_<section>` (Link: the sections of a
+name referred to so kept and laid out together), and the reader takes the
+global symbols of an ELF COMDAT group as weak (each module defines
+`__llvm_profile_raw_version`). `llvm-profdata` of the clang's version
+merges (on Linux, conda's `llvm-tools`).
+
 What hxmc's linker needed for the runtime: BSD archives' index
 (`__.SYMDEF`, Archive), universal files (LinkInputs: the target's slice),
 64-bit SUBTRACTOR relocations (MachOReader: RPc64, the profile records'

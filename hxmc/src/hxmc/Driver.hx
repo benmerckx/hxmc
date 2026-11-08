@@ -760,7 +760,8 @@ class Driver {
 			return {undef: undef, defined: defined};
 		}
 		var links = o.links.concat(hxmc.ir.CInterop.LINKS);
-		if (o.llvm != null && o.llvmPgo == "gen") links.push(LlvmGen.profileRuntime(abi, o.llvmClang));
+		// (Linux: also without LLVM, as the runtime's writer is typed in, hxmc.rt.Pgo)
+		if (o.llvmPgo == "gen" && (o.llvm != null || abi.os == "linux")) links.push(LlvmGen.profileRuntime(abi, o.llvmClang));
 		if (links.length > 0) {
 			var u = undefinedNames();
 			for (x in LinkInputs.load(links, abi, u.undef, u.defined)) {

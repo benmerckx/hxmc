@@ -61,14 +61,29 @@ class LlvmGen {
 		this.dir = dir;
 	}
 
-	// LLVM's profile runtime for the target (the clang's, Apple's: universal)
+	// LLVM's profile runtime for the target (the clang's, Apple's: universal).
+	// macOS: all of it (it writes the profile at exit). Linux, static with
+	// musl: its writer's parts only, which call no more of the C library than
+	// memcpy, memset and (value profiles) calloc; the runtime writes the file
+	// (hxmc.rt.Pgo), as a C library built for glibc does not link with musl's
 	public static function profileRuntime(abi:Abi, clang:String):String {
-		if (abi.os != "macos" || abi.ios()) throw "hxmc: -D hxmc.llvm-pgo=gen: macOS only (the clang's profile runtime)";
+		var linux = abi.os == "linux" && !abi.linksDynamically() && !abi.android;
+		if ((abi.os != "macos" || abi.ios()) && !linux)
+			throw "hxmc: -D hxmc.llvm-pgo=gen: macOS, and Linux static with musl (the clang's profile runtime)";
 		var p = new sys.io.Process(clang, ["-print-resource-dir"]);
 		var dir = StringTools.trim(p.stdout.readAll().toString());
 		p.exitCode();
 		p.close();
-		var a = dir + "/lib/darwin/libclang_rt.profile_osx.a";
+		var arch = abi.arm ? "aarch64" : "x86_64";
+		var a = linux ? dir + "/lib/linux/libclang_rt.profile-" + arch + ".a" : dir + "/lib/darwin/libclang_rt.profile_osx.a";
+		// (a clang with a runtime directory per target triple)
+		if (linux && !sys.FileSystem.exists(a)) for (t in ["-unknown-linux-gnu", "-unknown-linux-musl", "-linux-gnu"]) {
+			var b = dir + "/lib/" + arch + t + "/libclang_rt.profile.a";
+			if (sys.FileSystem.exists(b)) {
+				a = b;
+				break;
+			}
+		}
 		if (!sys.FileSystem.exists(a)) throw "hxmc: -D hxmc.llvm-pgo=gen: no profile runtime at " + a;
 		return a;
 	}

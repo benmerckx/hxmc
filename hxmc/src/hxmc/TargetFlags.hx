@@ -21,9 +21,14 @@ class TargetFlags {
 		var prev = compiler.Compiler.beforeTypingHook;
 		// (the flags first: the hooks before, the module cache's, read the defines)
 		compiler.Compiler.beforeTypingHook = function(com, actx) {
-			if (com.platform.match(CustomTarget("hxmc")))
+			if (com.platform.match(CustomTarget("hxmc"))) {
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))
 					context.Common.rawDefine(com, f);
+				// (-D hxmc.llvm-pgo=gen from its variable, Options: the runtime
+				// writes the profile on Linux, hxmc.rt.Pgo, so the typing needs it)
+				var pgo = Sys.getEnv("HXMC_LLVM_PGO");
+				if (pgo == "gen" && !core.Define.rawDefined(com.defines, "hxmc.llvm_pgo")) core.Define.rawDefineValue(com.defines, "hxmc.llvm_pgo", pgo);
+			}
 			if (prev != null) prev(com, actx);
 		}
 		context.Common.macroDefinesHook = macroDefines;
