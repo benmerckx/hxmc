@@ -72,6 +72,13 @@ global symbols of an ELF COMDAT group as weak (each module defines
 `__llvm_profile_raw_version`). `llvm-profdata` of the clang's version
 merges (on Linux, conda's `llvm-tools`).
 
+A profile is for the mode it was made in: release mode (`-D
+hxmc.llvm-release`: one module, the program-wide numbers as constants)
+gives many functions another control flow, so a per-module profile misses
+them (tsc-haxe: 2240 of 14728 functions, 32% of the counts, with another
+hash; clang's mismatch warnings are off, `-Wno-backend-plugin`).
+Release mode with the profile of an instrumented release build.
+
 What hxmc's linker needed for the runtime: BSD archives' index
 (`__.SYMDEF`, Archive), universal files (LinkInputs: the target's slice),
 64-bit SUBTRACTOR relocations (MachOReader: RPc64, the profile records'
