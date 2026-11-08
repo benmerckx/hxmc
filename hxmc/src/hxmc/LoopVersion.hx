@@ -2,6 +2,7 @@ package hxmc;
 
 import haxe.ds.Vector;
 import hxmc.Mir;
+import hxmc.Ssa;
 import hxmc.ir.Ir.Ty;
 import core.ds.VectorTools.vector;
 
@@ -31,6 +32,8 @@ using core.ds.VectorTools;
 //    or at a value from before the loop; of an array from before the loop
 //    or read from a field of an object from before the loop (the copy reads
 //    it in the test before the loop).
+typedef Arr = {key:String, a:Int, obj:Int, field:Null<MIns>};
+
 class LoopVersion {
 	// at most this many instructions in a loop copied
 	static inline var MAX_SIZE = 400;
@@ -101,7 +104,7 @@ class LoopVersion {
 			if (ks == null || done.exists(h.id)) continue;
 			done.set(h.id, true);
 			var members = [for (x in ks) order[x]];
-			if (try1(h, members)) {
+			if (try1(h, members, cfg)) {
 				f.edited();
 				versioned++;
 				return true;
@@ -110,7 +113,18 @@ class LoopVersion {
 		return false;
 	}
 
-	function try1(h:MBlock, members:Array<MBlock>):Bool {
+	// an array the copy reads (or whose length is the limit): a value from
+	// before the loop, or read from a field of an object from before the loop
+	// that the loop does not write (the copy reads it before the loop)
+	function arrayOf(id:Int, inLoop:Null<MBlock>->Bool, fieldsWritten:Map<Int, Bool>):Null<Arr> {
+		var a = v(id);
+		if (!inLoop(a.block)) return {key: "v" + id, a: id, obj: -1, field: null};
+		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && a.info.t.match(TRef(_)))
+			return {key: "f" + a.a + ":" + fieldKey(a.info), a: id, obj: a.a, field: a};
+		return null;
+	}
+
+	function try1(h:MBlock, members:Array<MBlock>, cfg:Cfg<MBlock>):Bool {
 		curHead = h.id;
 		var inL = new Map<Int, Bool>();
 		for (b in members) {
@@ -127,7 +141,7 @@ class LoopVersion {
 		for (k in 0...2)
 			if (inLoop(h.preds[k])) latch = k else pre = k;
 		if (pre < 0 || latch < 0) return no(2);
-		// the exit: the header's branch, the only edge out
+		// the header's branch, one of its edges out of the loop (others may leave too: breaks)
 		var t = h.term();
 		if (t == null || t.op != Br) return no(3);
 		var exitK = -1;
@@ -137,11 +151,30 @@ class LoopVersion {
 				exitK = k;
 			}
 		if (exitK < 0) return no(5);
-		for (b in members)
-			for (s in b.succs)
-				if (!inLoop(s) && !(b == h && s == t.targets[exitK])) return no(6);
 		var exitB = t.targets[exitK];
 		if (exitB == t.targets[1 - exitK]) return no(7);
+		// what the loop does
+		var size = 0;
+		var gets:Array<MIns> = [];
+		var fieldsWritten = new Map<Int, Bool>();
+		for (b in members)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				size++;
+				if (i.info != null && i.info.cold) return no(12);
+				switch i.op {
+					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
+					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet:
+					case SetField:
+						fieldsWritten.set(fieldKey(i.info), true);
+					case ArrayGet:
+						gets.push(i);
+					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
+					case _:
+						return no(13);
+				}
+			}
+		if (size > MAX_SIZE || gets.length == 0) return no(14);
 		// the test: counter < limit to stay (cmp lt), counter >= limit to leave (cmp ge)
 		var c = v(t.a);
 		if (c.op != Cmp || c.block != h) return no(8);
@@ -166,65 +199,44 @@ class LoopVersion {
 			}
 		}
 		var phi = v(iv);
-		if (phi.op != Phi || phi.block != h || phi.ty != I32 || phi.args.length != 2 || !outside(limit) || v(limit).ty != I32) return no(10);
+		if (phi.op != Phi || phi.block != h || phi.ty != I32 || phi.args.length != 2 || v(limit).ty != I32) return no(10);
+		// the limit: from before the loop, or an array's length the loop cannot change
+		var limitArr:Null<Arr> = null;
+		if (!outside(limit)) {
+			var l = v(limit);
+			if (l.op != ArrayLength) return no(18);
+			limitArr = arrayOf(l.a, inLoop, fieldsWritten);
+			if (limitArr == null) return no(19);
+		}
 		var start = phi.args[pre], next = v(phi.args[latch]);
 		var step = next.op == Add && next.a == iv && inLoop(next.block) ? constOf(next.b) : null;
 		if (step == null || step < 1 || step > MAX_STEP) return no(11);
-		// what the loop does
-		var size = 0;
-		var gets:Array<MIns> = [];
-		var fieldsWritten = new Map<Int, Bool>();
-		for (b in members)
-			for (i in b.ins) {
-				if (i.dead) continue;
-				size++;
-				if (i.info != null && i.info.cold) return no(12);
-				switch i.op {
-					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
-					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet:
-					case SetField:
-						fieldsWritten.set(fieldKey(i.info), true);
-					case ArrayGet:
-						gets.push(i);
-					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
-					case _:
-						return no(13);
-				}
-			}
-		if (size > MAX_SIZE || gets.length == 0) return no(14);
 		// the reads the copy takes: their arrays, and the indices they need
-		var arrays:Array<{a:Int, obj:Int, field:Null<MIns>, kind:Int, upto:Bool, idx:Array<Int>}> = [];
+		var arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}> = [];
 		var taken:Array<MIns> = [];
-		var anyPtr = false;
 		for (g in gets) {
 			var off = offsetOf(g.b, iv, ahead);
 			var idxOk = off != null && g.block != h || outside(g.b);
 			if (!idxOk) continue;
-			var a = v(g.a);
-			var obj = -1, field:Null<MIns> = null;
-			if (!inLoop(a.block)) {} else if (a.op == GetField && outside(a.a) && !fieldsWritten.exists(fieldKey(a.info)) && a.info.t.match(TRef(_))) {
-				obj = a.a;
-				field = a;
-			} else
-				continue;
+			var arr = arrayOf(g.a, inLoop, fieldsWritten);
+			if (arr == null) continue;
 			var kind = MemLower.arrKind(g.info.t);
 			var found = null;
 			for (e in arrays)
-				if (field == null ? e.field == null && e.a == g.a : e.field != null && e.obj == obj && fieldKey(e.field.info) == fieldKey(field.info)) found = e;
+				if (e.arr.key == arr.key) found = e;
 			if (found != null && found.kind != kind) continue;
 			if (found == null) {
-				found = {a: g.a, obj: obj, field: field, kind: kind, upto: false, idx: []};
+				found = {arr: arr, kind: kind, upto: false, idx: []};
 				arrays.push(found);
 			}
 			if (off != null) found.upto = true else if (found.idx.indexOf(g.b) < 0) found.idx.push(g.b);
 			taken.push(g);
-			if (Opt.ptrElem(g.info.t)) anyPtr = true;
 		}
 		if (taken.length == 0) return no(15);
 		// (a reference read left with its slow path writes everything: no gain then)
 		for (g in gets)
 			if (taken.indexOf(g) < 0 && Opt.ptrElem(g.info.t)) return no(16);
-		version(h, members, inLoop, pre, latch, exitB, start, limit, arrays, taken);
+		version(h, members, inLoop, cfg, pre, start, limit, limitArr, arrays, taken);
 		return true;
 	}
 
@@ -246,15 +258,14 @@ class LoopVersion {
 		return d != null && d >= 0 && d <= ahead ? d : null;
 	}
 
-	function isConst(id:Int, k:Int):Bool {
-		var x = v(id);
-		return x.op == Const && x.sym == null && x.imm == k;
-	}
-
-	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, pre:Int, latch:Int, exitB:MBlock, start:Int, limit:Int,
-			arrays:Array<{a:Int, obj:Int, field:Null<MIns>, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>) {
+	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitArr:Null<Arr>,
+			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>) {
 		var preB = h.preds[pre];
-		// ---- the test before the loop: blocks g0.. failing to slow, which enters the loop as it was
+		// (dominance in the loop, before the edits: the copy's is the same)
+		var oldIndex = new Map<Int, Int>();
+		for (b in members)
+			oldIndex.set(b.id, cfg.index(b));
+		// ---- the test before the loop: blocks failing to slow, which enters the loop as it was
 		var slow = newBlock();
 		var gb = newBlock();
 		var first = gb;
@@ -281,16 +292,14 @@ class LoopVersion {
 			x.imm = k;
 			return x.id;
 		}
-		function lzero():Int {
-			var x = add(gb, Const, I64);
-			return x.id;
-		}
-		// the start is not negative (the counter only grows from it)
-		test(cmp(CGe, start, iconst(0)));
-		var arrVal = new Map<Int, Int>(); // (arrays index -> the array before the loop)
-		for (ai in 0...arrays.length) {
-			var e = arrays[ai];
-			var a = e.a;
+		function lzero():Int
+			return add(gb, Const, I64).id;
+		// the arrays as before the loop (not null), by key
+		var before = new Map<String, Int>();
+		function arrayBefore(e:Arr):Int {
+			var a = before.get(e.key);
+			if (a != null) return a;
+			a = e.a;
 			if (e.field != null) {
 				test(cmp(CNe, e.obj, lzero()));
 				var gf = add(gb, GetField, I64);
@@ -300,8 +309,21 @@ class LoopVersion {
 				gf.pos = e.field.pos;
 				a = gf.id;
 			}
-			arrVal.set(ai, a);
 			test(cmp(CNe, a, lzero()));
+			before.set(e.key, a);
+			return a;
+		}
+		function lengthOf(a:Int):Int {
+			var len = add(gb, ArrayLength, I32);
+			len.a = a;
+			len.info = new OInfo();
+			return len.id;
+		}
+		// the start is not negative (the counter only grows from it)
+		test(cmp(CGe, start, iconst(0)));
+		var lim = limitArr == null ? limit : lengthOf(arrayBefore(limitArr));
+		for (e in arrays) {
+			var a = arrayBefore(e.arr);
 			var kind = add(gb, Load, I32);
 			kind.a = a;
 			kind.imm = 4;
@@ -309,12 +331,10 @@ class LoopVersion {
 			kind.size = 4;
 			kind.mem = Opt.MHdr;
 			test(cmp(CEq, kind.id, iconst(e.kind)));
-			var len = add(gb, ArrayLength, I32);
-			len.a = a;
-			len.info = new OInfo();
-			if (e.upto) test(cmp(CLe, limit, len.id));
+			var len = lengthOf(a);
+			if (e.upto) test(cmp(CLe, lim, len));
 			for (x in e.idx)
-				test(cmp(CULt, x, len.id));
+				test(cmp(CULt, x, len));
 		}
 		// gb: every test passed, into the copy
 		// ---- the loop's blocks copied
@@ -339,6 +359,11 @@ class LoopVersion {
 			var r = id < 0 ? null : vmap.get(id);
 			return r == null ? id : r;
 		}
+		// the edges out of the loop, before the edits (from, to)
+		var exits:Array<{from:MBlock, to:MBlock}> = [];
+		for (b in members)
+			for (s in b.succs)
+				if (!inLoop(s)) exits.push({from: b, to: s});
 		for (b in members) {
 			var nb = bmap.get(b.id);
 			for (i in b.ins) {
@@ -397,54 +422,122 @@ class LoopVersion {
 		gj.targets = vector(h2);
 		gb.succs = [h2];
 		h2.preds[pre] = gb;
-		// the exit: both loops leave to a new block, which merges what the
-		// header made that is used after the loop
-		var x = newBlock();
-		retargetTerm(h, exitB, x);
-		h.succs[h.succs.indexOf(exitB)] = x;
-		retargetTerm(h2, exitB, x);
-		h2.succs[h2.succs.indexOf(exitB)] = x;
-		x.preds = [h, h2];
-		var xj = new MIns(Jmp, Void);
-		xj.targets = vector(exitB);
-		var pi = exitB.preds.indexOf(h);
-		exitB.preds[pi] = x;
-		x.succs = [exitB];
-		// values made in the loop used after it (the header's: the only exit is from it)
-		var used = new Map<Int, Int>(); // value -> its merge
+		// ---- the edges out: the copy's too, with the copy's values in the phis there
+		var seen = new Map<String, Bool>();
+		for (e in exits) {
+			var k = e.from.id + ">" + e.to.id;
+			if (seen.exists(k)) continue;
+			seen.set(k, true);
+			var to = e.to, from2 = bmap.get(e.from.id);
+			var n = to.preds.length;
+			var preds = to.preds.copy();
+			var add = [];
+			for (q in 0...n)
+				if (preds[q] == e.from) {
+					preds.push(from2);
+					add.push(q);
+				}
+			for (i in to.ins)
+				if (!i.dead && i.op == Phi) {
+					var args = new Vector<Int>(preds.length);
+					Vector.blit(i.args, 0, args, 0, i.args.length);
+					for (j in 0...add.length)
+						args[n + j] = m(i.args[add[j]]);
+					i.args = args;
+				}
+			to.preds = preds;
+		}
+		// ---- the values the loop makes that are used after it: read again
+		// (SSA) where they are used, from the original or the copy, whichever
+		// the code came from. A value used after the loop dominates the use,
+		// so the blocks it leaves from are the ones it dominates
 		var copies = new Map<Int, Bool>();
 		for (nb in bmap)
 			copies.set(nb.id, true);
-		for (b in f.blocks) {
-			if (inLoop(b) || copies.exists(b.id) || b == x) continue;
-			for (i in b.ins) {
-				if (i.dead) continue;
-				inline function fix(id:Int):Int {
-					if (id < 0 || !inLoop(v(id).block)) return id;
-					var p = used.get(id);
-					if (p == null) {
-						var orig = v(id);
-						var ph = new MIns(Phi, orig.ty);
-						ph.id = f.vals.length;
-						f.vals.push(ph);
-						ph.vty = orig.vty;
-						ph.block = x;
-						ph.args = vector(id, m(id));
-						x.ins.push(ph);
-						used.set(id, p = ph.id);
-					}
-					return p;
-				}
-				i.a = fix(i.a);
-				i.b = fix(i.b);
-				i.c = fix(i.c);
-				if (i.args.length > 0) i.args = i.args.map(a -> fix(a));
+		inline function local(b:MBlock):Bool
+			return inLoop(b) || copies.exists(b.id);
+		var escaping:Array<Int> = [];
+		var esc = new Map<Int, Bool>();
+		function note(id:Int) {
+			if (id >= 0 && inLoop(v(id).block) && !esc.exists(id)) {
+				esc.set(id, true);
+				escaping.push(id);
 			}
 		}
-		xj.id = f.vals.length;
-		f.vals.push(xj);
-		xj.block = x;
-		x.ins.push(xj);
+		for (b in f.blocks) {
+			if (local(b)) continue;
+			for (i in b.ins) {
+				if (i.dead) continue;
+				if (i.op == Phi) {
+					for (q in 0...i.args.length)
+						if (!local(b.preds[q])) note(i.args[q]);
+					continue;
+				}
+				note(i.a);
+				note(i.b);
+				note(i.c);
+				for (x in i.args)
+					note(x);
+			}
+		}
+		if (escaping.length == 0) return;
+		var nb = 0;
+		for (b in f.blocks)
+			if (b.id >= nb) nb = b.id + 1;
+		var made:Array<MIns> = [];
+		for (x in escaping) {
+			var d = v(x);
+			var di = oldIndex.get(d.block.id);
+			var ends = MFunc.ints(nb, SsaReader.NONE);
+			for (b in members)
+				if (cfg.dominates(di, oldIndex.get(b.id))) {
+					ends[b.id] = x;
+					ends[bmap.get(b.id).id] = m(x);
+				}
+			var rd = new SsaReader(f.entry, SsaReader.LAZY, ends, MFunc.ints(nb, SsaReader.NOTSET), b -> {
+				var phi = new MIns(Phi, d.ty);
+				phi.id = f.vals.length;
+				f.vals.push(phi);
+				phi.vty = d.vty;
+				phi.block = b;
+				made.push(phi);
+				var k = 0;
+				while (k < b.ins.length && b.ins[k].op == Phi)
+					k++;
+				b.ins.insert(k, phi);
+				phi.id;
+			}, (p, args) -> f.vals[p].args = args);
+			rd.undefOf = () -> throw "hxmc: LoopVersion: " + f.name + ": v" + x + " read where it is not defined";
+			for (b in f.blocks.copy()) {
+				if (local(b)) continue;
+				var entry = -1;
+				for (i in b.ins) {
+					if (i.dead) continue;
+					if (i.op == Phi) {
+						if (made.indexOf(i) >= 0) continue;
+						for (q in 0...i.args.length)
+							if (i.args[q] == x && !local(b.preds[q])) {
+								var r = rd.readEnd(b.preds[q]);
+								if (r != x) {
+									var args = i.args.copy();
+									args[q] = r;
+									i.args = args;
+								}
+							}
+						continue;
+					}
+					if (i.a == x || i.b == x || i.c == x || i.args.indexOf(x) >= 0) {
+						if (entry < 0) entry = rd.readEntry(b);
+						if (i.a == x) i.a = entry;
+						if (i.b == x) i.b = entry;
+						if (i.c == x) i.c = entry;
+						if (i.args.indexOf(x) >= 0) i.args = i.args.map(a -> a == x ? entry : a);
+					}
+				}
+			}
+			rd.finish();
+		}
+		Ssa.trivialPhis(f.vals, made);
 	}
 
 	// a terminator's target from -> to
