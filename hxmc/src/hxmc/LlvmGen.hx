@@ -1322,9 +1322,17 @@ private class FnWriter {
 			case I2F:
 				line('$d = sitofp ${vt(i.a, bl)} to double');
 			case F2I:
-				// (machine semantics out of range: arm64's fcvtzs saturates, as this does)
-				line('$d = call $T @llvm.fptosi.sat.$T.f64(double ${v(i.a, bl)})');
-				intrinsic('declare $T @llvm.fptosi.sat.$T.f64(double)');
+				// (machine semantics out of range: arm64's fcvtzs saturates, as this does;
+				// x86-64's cvttsd2si gives the smallest integer, also for NaN, as the native code)
+				if (g.abi.arm) {
+					line('$d = call $T @llvm.fptosi.sat.$T.f64(double ${v(i.a, bl)})');
+					intrinsic('declare $T @llvm.fptosi.sat.$T.f64(double)');
+				} else {
+					var x = t(), cv = T == "i64" ? "cvttsd2si64" : "cvttsd2si";
+					line('$x = insertelement <2 x double> poison, double ${v(i.a, bl)}, i32 0');
+					line('$d = call $T @llvm.x86.sse2.$cv(<2 x double> $x)');
+					intrinsic('declare $T @llvm.x86.sse2.$cv(<2 x double>)');
+				}
 			case BitsToF:
 				line('$d = bitcast i64 ${v(i.a, bl)} to double');
 			case FToBits:
