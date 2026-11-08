@@ -111,6 +111,16 @@ class Pgo {
 
 	@:hxmc.unsafe static function fail(msg:Ptr):Void
 		Posix.write(2, msg, LibC.strlen(msg));
+
+	// A distribution's runtime (Debian's, Ubuntu's) is built with
+	// _FORTIFY_SOURCE: its writer prints its warnings with glibc's
+	// __fprintf_chk, which musl lacks. They are written unformatted.
+	#if (hxmc.llvm_pgo == "gen")
+	@:hxmc.export("__fprintf_chk") @:hxmc.unsafe static function fprintfChk(file:Ptr, flag:Int, fmt:Ptr):Int {
+		fail(fmt);
+		return 0;
+	}
+	#end
 }
 
 // LLVM's profile runtime (compiler-rt's InstrProfilingWriter.c and
