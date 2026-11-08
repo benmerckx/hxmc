@@ -37,6 +37,8 @@ class Options {
 	// -D hxmc.llvm-rt: the runtime's modules too (HXMC_LLVM, HXMC_LLVM_RT: the same)
 	public var llvm:Null<String> = null;
 	public var llvmRt = false;
+	// -D hxmc.llvm-cpu=<cpu> (HXMC_LLVM_CPU): clang's -mcpu (arm64) or -march (x86-64), e.g. apple-m3, x86-64-v3
+	public var llvmCpu:Null<String> = null;
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -267,6 +269,9 @@ class Options {
 		if (lv == null) lv = env("HXMC_LLVM");
 		if (lv != null && lv != "" && lv != "0") o.llvm = lv == "1" ? "O2" : lv;
 		o.llvmRt = def("hxmc.llvm_rt") != null || env("HXMC_LLVM_RT") == "1";
+		o.llvmCpu = def("hxmc.llvm_cpu");
+		if (o.llvmCpu == null) o.llvmCpu = env("HXMC_LLVM_CPU");
+		if (o.llvmCpu == "") o.llvmCpu = null;
 		// (LLVM drops a load whose value is not used, the fault of a null access with it: explicit tests, as on WebAssembly)
 		if (o.llvm != null && nc == null) o.nullChecks = true;
 		o.verifyTags = def("hxmc.verify_tags") != null;

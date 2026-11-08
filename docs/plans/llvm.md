@@ -12,7 +12,12 @@ in `<out>.hxmc/llvm/`.
 clang: `HXMC_CLANG`, else `clang` on the path. Apple's clang (Xcode's
 command-line tools) has every back end hxmc targets, so it writes Mach-O,
 ELF and COFF objects, cross-compiling from macOS. `HXMC_LLVM_FLAGS` adds
-arguments (for example `-mllvm ...`).
+arguments (for example `-mllvm ...`). `-D hxmc.llvm-cpu=<cpu>`
+(`HXMC_LLVM_CPU`) is the oldest CPU the program runs on, clang's `-mcpu`
+on arm64 and `-march` on x86-64 (`apple-m3`, `x86-64-v3`, `native`).
+clang's default is the baseline: `apple-m1` on macOS arm64, so tuning
+gains little there (an M4 Pro: within noise); x86-64's baseline has no
+AVX2.
 
 ## Why Mir after MemLower
 
@@ -47,6 +52,9 @@ scheduling and register allocation.
 - Null accesses: LLVM drops a load whose value is unused, so the fault
   that makes a null access throw would not happen. The explicit tests of
   `hxmc.null-checks` are on by default with LLVM.
+- Branches to slow paths (`MBlock.cold`, MemLower's) carry branch
+  weights (`!prof`), for LLVM's block placement and register allocation:
+  binarytrees 1.12x to 1.23x, sha256 1.01x to 1.12x.
 - Frame records always (`frame-pointer=all`); no unwind tables.
 - arm64: no `ldp`/`stp` pairing (`-aarch64-enable-ldst-opt=0`). A pair load
   partly overlapping an earlier pair store defeats store-to-load
@@ -74,22 +82,33 @@ LLVM at O2, native = this branch without LLVM):
 
 | | native | LLVM | |
 | --- | --- | --- | --- |
-| nbody | 0.373 s | 0.372 s | 1.00x |
-| mandelbrot | 0.263 s | 0.203 s | 1.30x |
-| binarytrees | 0.355 s | 0.317 s | 1.12x |
-| sha256 | 0.083 s | 0.082 s | 1.01x |
+| nbody | 0.365 s | 0.365 s | 1.00x |
+| mandelbrot | 0.265 s | 0.205 s | 1.29x |
+| binarytrees | 0.353 s | 0.287 s | 1.23x |
+| sha256 | 0.083 s | 0.074 s | 1.12x |
 
 Builds take longer: one clang process per module, in parallel.
 
 ## Next
+
+For the program's speed, in order:
+
 
 - Function records for LLVM's functions: the symbols and sizes are in the
   object; lines from LLVM's DWARF (`!dbg` from `MIns.pos`), unwind tables
   from its `__compact_unwind`/`.eh_frame` instead of dropping them.
 - Alias information: Mir's memory classes (`MIns.mem`) as TBAA, and
   pointers kept as `ptr` through `getelementptr` rather than `inttoptr` at
-  each access, so LLVM may keep fields in registers.
-- Program-wide numbers without the GOT load.
+  each access, so LLVM may keep fields in registers and hoist an array's
+  header out of loops (then the vectorizer). With pointers typed:
+  `noalias` results of allocations, `nonnull` after null tests. Then look
+  at ldp/stp pairing again.
+- Release builds: program-wide numbers as constants (type tests and
+  enum switches folded; the objects are no longer reusable across
+  builds), and the whole program as one LLVM module (the runtime's fast
+  paths inlined across modules, `fastcc` between Haxe functions).
+- Implicit null checks (LLVM's `make.implicit`, a fault map the runtime
+  reads) instead of the explicit tests.
+- Larger: the shadow stack's stores and reloads (LLVM's statepoints and
+  stack maps), profile-guided optimization.
 - The other targets: Linux and Windows objects are written but untested.
-- In-process LLVM (its C API through `@:hxmc.c`) instead of a clang
-  process per module.

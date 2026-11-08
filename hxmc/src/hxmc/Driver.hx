@@ -132,7 +132,7 @@ class Driver {
 		if (!sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
 		lock.release();
 		var clang = Sys.getEnv("HXMC_CLANG");
-		return new LlvmGen(abi, o.llvm, clang != null && clang != "" ? clang : "clang", module, dir);
+		return new LlvmGen(abi, o.llvm, clang != null && clang != "" ? clang : "clang", module, dir, o.llvmCpu);
 	}
 
 	function template(fn:FuncInfo):Null<Inline.Template> {
@@ -435,7 +435,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") + (o.llvmCpu != null ? "+cpu=" + o.llvmCpu : "") : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)

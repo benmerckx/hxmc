@@ -46,8 +46,14 @@ class LlvmGen {
 
 	public var count(default, null) = 0;
 
-	public function new(abi:Abi, optLevel:String, clang:String, module:String, dir:String) {
+	final cpu:Null<String>;
+	// the module's metadata nodes (md), numbered in order
+	var mds:Array<String> = [];
+	var mdIndex = new Map<String, Int>();
+
+	public function new(abi:Abi, optLevel:String, clang:String, module:String, dir:String, ?cpu:String) {
 		this.abi = abi;
+		this.cpu = cpu;
 		this.optLevel = optLevel;
 		this.clang = clang;
 		this.module = module;
@@ -141,6 +147,18 @@ class LlvmGen {
 		}
 	}
 
+	// a metadata node (by its text, once per module): its reference
+	@:allow(hxmc.LlvmGen.FnWriter)
+	function md(text:String):String {
+		var k = mdIndex.get(text);
+		if (k == null) {
+			k = mds.length;
+			mds.push(text);
+			mdIndex.set(text, k);
+		}
+		return "!" + k;
+	}
+
 	@:allow(hxmc.LlvmGen.FnWriter)
 	static function symName(s:String):String
 		return name(s);
@@ -191,6 +209,8 @@ class LlvmGen {
 		b.add('attributes #1 = { noreturn nounwind }\n');
 		b.add('attributes #2 = { returns_twice }\n');
 		b.add('attributes #3 = { nounwind willreturn memory(none) }\n');
+		for (k in 0...mds.length)
+			b.add('!$k = ${mds[k]}\n');
 		return b.toString();
 	}
 
@@ -205,6 +225,8 @@ class LlvmGen {
 		// (arm64: no ldp/stp pairing of neighbouring loads and stores, whose
 		// partial overlaps defeat store-to-load forwarding: nbody 1.75x slower with it)
 		if (abi.arm) args = args.concat(["-mllvm", "-aarch64-enable-ldst-opt=0"]);
+		// (-D hxmc.llvm-cpu: the oldest CPU the program runs on; clang's default is the target's baseline: apple-m1 on macOS arm64, x86-64 v1)
+		if (cpu != null) args.push((abi.arm ? "-mcpu=" : "-march=") + cpu);
 		var extra = Sys.getEnv("HXMC_LLVM_FLAGS");
 		if (extra != null) for (a in extra.split(" ")) if (a != "") args.push(a);
 		var p = new sys.io.Process(clang, args);
@@ -636,14 +658,14 @@ private class FnWriter {
 			case Br:
 				var c = t();
 				line('$c = icmp ne ${vt(i.a, bl)}, 0');
-				line('br i1 $c, label %b${i.targets[0].id}, label %b${i.targets[1].id}');
+				line('br i1 $c, label %b${i.targets[0].id}, label %b${i.targets[1].id}${weights(i)}');
 			case Switch:
 				var at = LlvmGen.ty(f.vals[res(i.a)].ty);
 				var cs = [
 					for (k in 0...i.cases.length)
 						'$at ${i.cases[k]}, label %b${i.targets[k].id}'
 				];
-				line('switch $at ${v(i.a, bl)}, label %b${i.targets[i.targets.length - 1].id} [ ${cs.join(" ")} ]');
+				line('switch $at ${v(i.a, bl)}, label %b${i.targets[i.targets.length - 1].id} [ ${cs.join(" ")} ]${weights(i)}');
 			case Ret:
 				line(i.a < 0 ? (f.ret == Void ? "ret void" : 'ret ${LlvmGen.ty(f.ret)} ${f.ret == F64 ? "0.0" : "0"}') : 'ret ${LlvmGen.ty(f.ret)} ${v(i.a, bl)}');
 			case Unreachable:
@@ -729,6 +751,19 @@ private class FnWriter {
 			case _:
 				throw "hxmc: llvm: unknown special " + i.sym;
 		}
+	}
+
+	// a branch's weights when some of its targets are slow paths (MBlock.cold:
+	// MemLower's), for LLVM's block placement and register allocation, as
+	// hxmc's own layout puts them last (Switch: the default first)
+	function weights(i:MIns):String {
+		var cold = 0;
+		for (b in i.targets)
+			if (b.cold) cold++;
+		if (cold == 0 || cold == i.targets.length) return "";
+		inline function w(b:MBlock) return b.cold ? 1 : 2000;
+		var ws = i.op == Switch ? [w(i.targets[i.targets.length - 1])].concat([for (k in 0...i.cases.length) w(i.targets[k])]) : [for (b in i.targets) w(b)];
+		return ", !prof " + g.md('!{!"branch_weights", ${[for (x in ws) "i32 " + x].join(", ")}}');
 	}
 
 	// a thread-local variable's address: through llvm.threadlocal.address,
