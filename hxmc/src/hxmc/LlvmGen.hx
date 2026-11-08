@@ -1266,11 +1266,19 @@ private class FnWriter {
 			case Copy:
 			// (an alias: res)
 			case Phi:
-				var parts = [];
+				// (an entry per edge: a switch with several cases to this block, or a
+				// branch with both targets here, is a pred once in Mir and as many
+				// times as it has edges here in LLVM)
+				var parts = [], seen = new Map<Int, Bool>();
 				for (k in 0...bl.preds.length) {
 					var p = bl.preds[k];
-					if (!reach.exists(p.id) || k >= i.args.length) continue;
-					parts.push('[ ${phiArg(i.args[k], p)}, %b${p.id} ]');
+					if (!reach.exists(p.id) || k >= i.args.length || seen.exists(p.id)) continue;
+					seen.set(p.id, true);
+					var tm = p.term(), edges = 0;
+					if (tm != null) for (t in tm.targets) if (t == bl) edges++;
+					var e = '[ ${phiArg(i.args[k], p)}, %b${p.id} ]';
+					for (_ in 0...(edges > 1 ? edges : 1))
+						parts.push(e);
 				}
 				line('$d = phi $T ${parts.join(", ")}');
 			case Add: bin("add");
