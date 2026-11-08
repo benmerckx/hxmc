@@ -49,6 +49,9 @@
 #   then the Mir lane: the compiler with Mir macros and --run running the
 #   corpus in itself, the macro cases against the reference, and a benchmark
 #   macro and the formatter's build timed against Eval.
+# - llvm (experimental, continue-on-error): hxmc's corpus with the LLVM back
+#   end (-D hxmc.llvm, the runner's clang) on linux-x86_64, linux-arm64 and
+#   macos-arm64 machines.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
 # - npm: the eight packages (@hxmc/cli and its six platform packages, each
@@ -483,6 +486,52 @@ jobs:
           ls -l dist/corpus
       - uses: actions/upload-artifact@v7
         with: {name: 'corpus-${{ matrix.group }}', path: dist/corpus/, retention-days: 3}
+
+  # (experimental) the LLVM back end (docs/plans/llvm.md): hxmc's corpus on
+  # the runner's machine with every function LLVM takes, the runtime's too,
+  # compiled by the runner's clang (-D hxmc.llvm, -D hxmc.llvm-rt; as
+  # variables, for every build the corpus makes). The cases it is known not
+  # to pass yet are --known. Its failures block nothing (continue-on-error)
+  llvm:
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: linux-x86_64, os: ubuntu-24.04}
+          - {target: linux-arm64, os: ubuntu-24.04-arm}
+          - {target: macos-arm64, os: macos-15}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # (zig: the C companions of corpus cases, Corpus.nativeInputs)
+      - id: zig
+        run: echo "version=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Runtime objects and the tool
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make hxmc std
+      - name: clang
+        run: clang --version
+      - name: Corpus with LLVM
+        env:
+          HXMC_LLVM: 1
+          HXMC_LLVM_RT: 1
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus --known CallStacks,CallStacksGc,ObjCExceptions,UnwindTables
 
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
