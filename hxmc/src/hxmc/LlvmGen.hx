@@ -6,7 +6,7 @@ import hxmc.Obj;
 
 // An experimental back end: memory-level Mir (after MemLower and
 // the passes on it) as LLVM IR, one module per hxmc module, compiled by an
-// external clang (-D hxmc.llvm: Options.llvm; HXMC_CLANG, else `clang`) to
+// external clang (-D hxmc.llvm: Options.llvm; -D hxmc.llvm-clang, else `clang`) to
 // an object of the target's format, read back (MachOReader, ElfReader,
 // CoffReader) and appended to the module's object; hxmc's own linker links
 // it. The functions it does not take (accepts: struct values in the C ABI,
@@ -196,11 +196,13 @@ class LlvmGen {
 		}
 	}
 
-	// the alias classes tagged (HXMC_LLVM_TBAA: a comma-separated list, or 1
+	// the alias classes tagged (hxmc.llvm-tbaa: a comma-separated list, or 1
 	// for all; default: none). Off: correct on the corpus, but no gain measured
 	// (docs/plans/llvm.md: the loops' slow-path calls reload everything anyway)
 	static final TBAA_ALL = ["tls", "frame", "const", "hdr", "elem", "field", "global", "callonly"];
-	static var tbaaOn:Null<Map<String, Bool>>;
+	var tbaaOn:Null<Map<String, Bool>>;
+	public var tbaa:Null<String>; // (Options.llvmTbaa)
+	public var flags:Null<String>; // (Options.llvmFlags)
 
 	// the TBAA tag of an access of class c (a type of its own under hxmc's
 	// root, one per thread-local variable: name), or "" when c is not tagged.
@@ -209,7 +211,7 @@ class LlvmGen {
 	@:allow(hxmc.LlvmGen.FnWriter)
 	function tbaaTag(c:String, name:String, ?parent:String):String {
 		if (tbaaOn == null) {
-			var e = Sys.getEnv("HXMC_LLVM_TBAA");
+			var e = tbaa;
 			var on = new Map<String, Bool>();
 			for (k in (e == null || e == "" || e == "0" ? [] : e == "1" ? TBAA_ALL : e.split(",")))
 				on.set(StringTools.trim(k), true);
@@ -296,13 +298,13 @@ class LlvmGen {
 		var ll = dir + "/" + safe + ".ll", o = dir + "/" + safe + ".o";
 		sys.io.File.saveContent(ll, text(abs));
 		var args = ["-target", triple(abi), "-" + optLevel, "-c", "-Wno-override-module", ll, "-o", o];
-		// (HXMC_LLVM_FLAGS: more of clang's arguments, separated by spaces)
+		// (hxmc.llvm-flags: more of clang's arguments, separated by spaces)
 		// (arm64: no ldp/stp pairing of neighbouring loads and stores, whose
 		// partial overlaps defeat store-to-load forwarding: nbody 1.75x slower with it)
 		if (abi.arm) args = args.concat(["-mllvm", "-aarch64-enable-ldst-opt=0"]);
 		// (-D hxmc.llvm-cpu: the oldest CPU the program runs on; clang's default is the target's baseline: apple-m1 on macOS arm64, x86-64 v1)
 		if (cpu != null) args.push((abi.arm ? "-mcpu=" : "-march=") + cpu);
-		var extra = Sys.getEnv("HXMC_LLVM_FLAGS");
+		var extra = flags;
 		if (extra != null) for (a in extra.split(" ")) if (a != "") args.push(a);
 		var p = new sys.io.Process(clang, args);
 		var err = p.stderr.readAll().toString();

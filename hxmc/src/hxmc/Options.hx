@@ -33,17 +33,32 @@ class Options {
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
-	// (experimental) -D hxmc.llvm[=O1|O2|O3|Os]: the functions LlvmGen takes compiled by clang (HXMC_CLANG, else clang);
-	// -D hxmc.llvm-rt: the runtime's modules too (HXMC_LLVM, HXMC_LLVM_RT: the same)
+	// (experimental) LLVM (docs/plans/llvm.md); flags (Options.flag: a define, else its variable):
+	//   hxmc.llvm[=O1|O2|O3|Os]   the functions LlvmGen takes compiled by clang
+	//   hxmc.llvm-rt              the runtime's modules too
+	//   hxmc.llvm-cpu=<cpu>       clang's -mcpu (arm64) or -march (x86-64): apple-m3, x86-64-v3, native
+	//   hxmc.llvm-whole           the whole program one LLVM module
+	//   hxmc.llvm-consts          the program-wide numbers as constants
+	//   hxmc.llvm-release         both (either compiles LLVM's code after the data, not cached)
+	//   hxmc.llvm-tbaa=1|<list>   Mir's memory classes as alias information (LlvmGen.tbaaTag)
+	//   hxmc.llvm-flags=<args>    more of clang's arguments, separated by spaces
+	//   hxmc.llvm-clang=<path>    the clang (default: clang on the path)
 	public var llvm:Null<String> = null;
 	public var llvmRt = false;
-	// -D hxmc.llvm-cpu=<cpu> (HXMC_LLVM_CPU): clang's -mcpu (arm64) or -march (x86-64), e.g. apple-m3, x86-64-v3
 	public var llvmCpu:Null<String> = null;
-	// -D hxmc.llvm-whole (HXMC_LLVM_WHOLE=1): the whole program one LLVM module; -D hxmc.llvm-consts
-	// (HXMC_LLVM_CONSTS=1): the program-wide numbers as constants; -D hxmc.llvm-release: both.
-	// Either compiles LLVM's code after the data, not cached
 	public var llvmWhole = false;
 	public var llvmConsts = false;
+	public var llvmTbaa:Null<String> = null;
+	public var llvmFlags:Null<String> = null;
+	public var llvmClang = "clang";
+
+	// the variable a flag falls back to: HXMC_LLVM_RT for hxmc.llvm-rt
+	public static function flagVar(name:String):String
+		return name.toUpperCase().split(".").join("_").split("-").join("_");
+
+	// the flags this build reads (UpToDate: their variables change the code)
+	public static final FLAGS = ["hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-tbaa",
+		"hxmc.llvm-flags", "hxmc.llvm-clang"];
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -270,16 +285,28 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
-		var lv = def("hxmc.llvm");
-		if (lv == null) lv = env("HXMC_LLVM");
-		if (lv != null && lv != "" && lv != "0") o.llvm = lv == "1" ? "O2" : lv;
-		o.llvmRt = def("hxmc.llvm_rt") != null || env("HXMC_LLVM_RT") == "1";
-		o.llvmCpu = def("hxmc.llvm_cpu");
-		if (o.llvmCpu == null) o.llvmCpu = env("HXMC_LLVM_CPU");
-		if (o.llvmCpu == "") o.llvmCpu = null;
-		var rel = def("hxmc.llvm_release") != null || env("HXMC_LLVM_RELEASE") == "1";
-		o.llvmWhole = rel || def("hxmc.llvm_whole") != null || env("HXMC_LLVM_WHOLE") == "1";
-		o.llvmConsts = rel || def("hxmc.llvm_consts") != null || env("HXMC_LLVM_CONSTS") == "1";
+		// a flag: its define (-D turns the dashes into underscores), else its
+		// variable (flagVar); null: neither, or empty
+		function flag(name:String):Null<String> {
+			var d = def(name.split("-").join("_"));
+			if (d == null) d = env(flagVar(name));
+			return d == null || d == "" ? null : d;
+		}
+		inline function on(name:String):Bool {
+			var v = flag(name);
+			return v != null && v != "0";
+		}
+		var lv = flag("hxmc.llvm");
+		if (lv != null && lv != "0") o.llvm = lv == "1" ? "O2" : lv;
+		o.llvmRt = on("hxmc.llvm-rt");
+		o.llvmCpu = flag("hxmc.llvm-cpu");
+		var rel = on("hxmc.llvm-release");
+		o.llvmWhole = rel || on("hxmc.llvm-whole");
+		o.llvmConsts = rel || on("hxmc.llvm-consts");
+		o.llvmTbaa = flag("hxmc.llvm-tbaa");
+		o.llvmFlags = flag("hxmc.llvm-flags");
+		var cl = flag("hxmc.llvm-clang");
+		if (cl != null) o.llvmClang = cl;
 		// (LLVM drops a load whose value is not used, the fault of a null access with it: explicit tests, as on WebAssembly)
 		if (o.llvm != null && nc == null) o.nullChecks = true;
 		o.verifyTags = def("hxmc.verify_tags") != null;

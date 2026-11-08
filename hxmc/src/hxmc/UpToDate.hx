@@ -24,7 +24,7 @@ class UpToDate {
 		var fp = Sys.getEnv("HXMC_FRAME_POINTERS");
 		if (fp != null) tool += "|fp=" + fp;
 		// (and the experimental LLVM back end's: Options.llvm, LlvmGen)
-		for (e in ["HXMC_LLVM", "HXMC_LLVM_RT", "HXMC_LLVM_FLAGS", "HXMC_CLANG", "HXMC_LLVM_CPU", "HXMC_LLVM_TBAA", "HXMC_LLVM_WHOLE", "HXMC_LLVM_CONSTS", "HXMC_LLVM_RELEASE"]) {
+		for (e in [for (n in Options.FLAGS) Options.flagVar(n)]) {
 			var v = Sys.getEnv(e);
 			if (v != null && v != "") tool += "|" + e + "=" + v;
 		}

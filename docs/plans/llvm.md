@@ -1,19 +1,20 @@
 # LLVM as an optional back end (experimental)
 
-`-D hxmc.llvm[=O1|O2|O3|Os]` (or `HXMC_LLVM=1`) compiles each module's
+`-D hxmc.llvm[=O1|O2|O3|Os]` compiles each module's
 functions through LLVM: memory-level Mir, after `MemLower` and the passes on
 it, is written as textual LLVM IR (`hxmc/src/hxmc/LlvmGen.hx`), an external
 clang compiles it for the target's triple, and the object it writes is read
 back (`MachOReader`, `ElfReader`, `CoffReader`) and appended to the module's
 object. hxmc's own linkers link as before. `-D hxmc.llvm-rt`
-(`HXMC_LLVM_RT=1`) takes the runtime's modules too. The `.ll` files are kept
+takes the runtime's modules too. The `.ll` files are kept
 in `<out>.hxmc/llvm/`.
 
-clang: `HXMC_CLANG`, else `clang` on the path. Apple's clang (Xcode's
+clang: `-D hxmc.llvm-clang=<path>`, else `clang` on the path. Every flag falls back to its environment variable, upper case with
+underscores (`hxmc.llvm-rt`: `HXMC_LLVM_RT`), so that a test harness can
+set it for every build it runs; a define wins. Apple's clang (Xcode's
 command-line tools) has every back end hxmc targets, so it writes Mach-O,
-ELF and COFF objects, cross-compiling from macOS. `HXMC_LLVM_FLAGS` adds
-arguments (for example `-mllvm ...`). `-D hxmc.llvm-cpu=<cpu>`
-(`HXMC_LLVM_CPU`) is the oldest CPU the program runs on, clang's `-mcpu`
+ELF and COFF objects, cross-compiling from macOS. `-D hxmc.llvm-flags=<args>` adds
+arguments (for example `-mllvm ...`). `-D hxmc.llvm-cpu=<cpu>` is the oldest CPU the program runs on, clang's `-mcpu`
 on arm64 and `-march` on x86-64 (`apple-m3`, `x86-64-v3`, `native`).
 clang's default is the baseline: `apple-m1` on macOS arm64, so tuning
 gains little there (an M4 Pro: within noise); x86-64's baseline has no
@@ -31,7 +32,7 @@ scheduling and register allocation.
 
 ## Release mode
 
-`-D hxmc.llvm-release` (`HXMC_LLVM_RELEASE=1`) is both of:
+`-D hxmc.llvm-release` is both of:
 
 - `-D hxmc.llvm-consts`: the program-wide numbers (type indices, field
   ids, global offsets, class spans) as constants, from the data (DataGen)
@@ -126,7 +127,7 @@ For the program's speed, in order:
   object; lines from LLVM's DWARF (`!dbg` from `MIns.pos`), unwind tables
   from its `__compact_unwind`/`.eh_frame` instead of dropping them.
 - Alias information, tried (2026-11-08): Mir's memory classes as TBAA
-  (`HXMC_LLVM_TBAA=1`, or a list of classes: tls, frame, const, hdr,
+  (`-D hxmc.llvm-tbaa=1`, or a list of classes: tls, frame, const, hdr,
   elem, field, global, callonly; fields and shadow-stack slots one type per
   8-byte slot at a constant offset, as Opt.fieldClass). The corpus passes
   with it, also under GC stress, but no benchmark changed, so it is off by
