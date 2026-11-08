@@ -687,6 +687,64 @@ class LlvmGen {
 		var fns = [];
 		for (s in obj.symbols)
 			if (s.section != null && s.section.kind == Text && defined.exists(s.name)) fns.push({at: text.addr + s.offset, size: s.size, name: s.name});
+		linePrograms(b, dl.off, dl.off + dl.size, fns, p -> b.getInt32(p));
+	}
+
+	// the same of an ELF object: DW_LNE_set_address's operand is 0 in the
+	// section, its address a relocation (RELA: a symbol plus the addend); each
+	// text section placed after the one before (the functions' addresses and
+	// the rows' only need to agree)
+	function elfLineTable(b:Bytes, obj:Obj) {
+		var shoff = b.getInt32(40), shnum = b.getUInt16(60), shstrndx = b.getUInt16(62);
+		inline function sh(i:Int)
+			return shoff + 64 * i;
+		var strOff = b.getInt32(sh(shstrndx) + 24);
+		function cstr(at:Int):String {
+			var e = at;
+			while (b.get(e) != 0)
+				e++;
+			return b.getString(at, e - at);
+		}
+		var dl = -1, rela = -1, symtab = -1;
+		for (i in 0...shnum) {
+			var h = sh(i), type = b.getInt32(h + 4);
+			if (type == 2) symtab = i;
+			if (type == 1 && cstr(strOff + b.getInt32(h)) == ".debug_line") dl = i;
+		}
+		if (dl < 0 || symtab < 0) return;
+		for (i in 0...shnum)
+			if (b.getInt32(sh(i) + 4) == 4 && b.getInt32(sh(i) + 44) == dl) rela = i;
+		// the text sections' places (by ELF index)
+		var base = new Map<Int, Int>(), at = 0;
+		for (s in obj.sections)
+			if (s.kind == Text) {
+				base.set(s.index, at);
+				at += (s.buf.len + 15) & ~15;
+			}
+		var fns = [];
+		for (s in obj.symbols)
+			if (s.section != null && s.section.kind == Text && defined.exists(s.name) && base.exists(s.section.index))
+				fns.push({at: base.get(s.section.index) + s.offset, size: s.size, name: s.name});
+		// each relocated operand's address (its offset in the section: symbol + addend)
+		var dlOff = b.getInt32(sh(dl) + 24), dlSize = b.getInt32(sh(dl) + 32);
+		var addrs = new Map<Int, Int>();
+		if (rela >= 0) {
+			var symOff = b.getInt32(sh(symtab) + 24);
+			var off = b.getInt32(sh(rela) + 24), n = Std.int(b.getInt32(sh(rela) + 32) / 24);
+			for (k in 0...n) {
+				var r = off + 24 * k;
+				var y = symOff + 24 * b.getInt32(r + 12);
+				var bs = base.get(b.getUInt16(y + 6));
+				if (bs != null) addrs.set(dlOff + b.getInt32(r), bs + b.getInt32(y + 8) + b.getInt32(r + 16));
+			}
+		}
+		linePrograms(b, dlOff, dlOff + dlSize, fns, p -> addrs.exists(p) ? addrs.get(p) : -1);
+	}
+
+	// the line programs of a DWARF 4 line table (bytes [p, end) of b) as rows of
+	// the functions fns (their addresses as setAddr's: the address of the operand
+	// of DW_LNE_set_address at an offset in b)
+	function linePrograms(b:Bytes, p:Int, end:Int, fns:Array<{at:Int, size:Int, name:String}>, setAddr:Int->Int) {
 		fns.sort((x, y) -> x.at - y.at);
 		function fnAt(a:Int):Null<{at:Int, size:Int, name:String}> {
 			var lo = 0, hi = fns.length - 1, r = null;
@@ -699,7 +757,6 @@ class LlvmGen {
 			}
 			return r != null && a < r.at + r.size ? r : null;
 		}
-		var p = dl.off, end = dl.off + dl.size;
 		inline function u8():Int return b.get(p++);
 		function uleb():Int {
 			var r = 0, sh = 0, c;
@@ -791,7 +848,7 @@ class LlvmGen {
 								addr = 0;
 								fileK = 1;
 								line = 1;
-							case 2: addr = b.getInt32(p);
+							case 2: addr = setAddr(p);
 							case _:
 						}
 						p = next;
@@ -850,7 +907,10 @@ class LlvmGen {
 				if (lines) lineTable(bytes, mo);
 				mo;
 			case "windows": CoffReader.read(bytes).obj;
-			case _: ElfReader.read(bytes);
+			case _:
+				var eo = ElfReader.read(bytes);
+				if (lines) elfLineTable(bytes, eo);
+				eo;
 		}
 		obj.ehFrame = null;
 		// (the offsets of the thread-local variables in the TLS template: tlsAddr)
