@@ -23,6 +23,11 @@ class UpToDate {
 		// (and the environment that changes the code: Options.framePointers)
 		var fp = Sys.getEnv("HXMC_FRAME_POINTERS");
 		if (fp != null) tool += "|fp=" + fp;
+		// (and the experimental LLVM back end's: Options.llvm, LlvmGen)
+		for (e in ["HXMC_LLVM", "HXMC_LLVM_RT", "HXMC_LLVM_FLAGS", "HXMC_CLANG"]) {
+			var v = Sys.getEnv(e);
+			if (v != null && v != "") tool += "|" + e + "=" + v;
+		}
 		if (rt == null) rt = Options.rtDir(target) + "rt.o";
 		// (and the objects of sys.ssl and libuv next to it)
 		for (p in [rt, haxe.io.Path.directory(rt) + "/ssl.o", haxe.io.Path.directory(rt) + "/uv.o"]) {

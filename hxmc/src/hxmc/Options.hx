@@ -33,6 +33,10 @@ class Options {
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
+	// (experimental) -D hxmc.llvm[=O1|O2|O3|Os]: the functions LlvmGen takes compiled by clang (HXMC_CLANG, else clang);
+	// -D hxmc.llvm-rt: the runtime's modules too (HXMC_LLVM, HXMC_LLVM_RT: the same)
+	public var llvm:Null<String> = null;
+	public var llvmRt = false;
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -259,6 +263,12 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
+		var lv = def("hxmc.llvm");
+		if (lv == null) lv = env("HXMC_LLVM");
+		if (lv != null && lv != "" && lv != "0") o.llvm = lv == "1" ? "O2" : lv;
+		o.llvmRt = def("hxmc.llvm_rt") != null || env("HXMC_LLVM_RT") == "1";
+		// (LLVM drops a load whose value is not used, the fault of a null access with it: explicit tests, as on WebAssembly)
+		if (o.llvm != null && nc == null) o.nullChecks = true;
 		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {

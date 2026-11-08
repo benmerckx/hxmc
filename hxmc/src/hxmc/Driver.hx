@@ -119,6 +119,22 @@ class Driver {
 	var templates = new haxe.ds.ObjectMap<FuncInfo, {t:Null<Inline.Template>}>();
 	var tlock = new sys.thread.Mutex();
 
+	// (experimental) LLVM: the module's functions LlvmGen takes, per module
+	var llvmFuncs = 0;
+	var llvmWhy = new Map<String, Int>();
+
+	function llvmFor(module:String):Null<LlvmGen> {
+		if (o.llvm == null || abi.wasm || interp != null || o.mirHost) return null;
+		if (!o.llvmRt && StringTools.startsWith(module, "hxmc.rt.")) return null;
+		if (LlvmGen.triple(abi) == null) throw "hxmc: -D hxmc.llvm: no LLVM triple for " + abi.name;
+		var dir = out + ".hxmc/llvm";
+		lock.acquire();
+		if (!sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+		lock.release();
+		var clang = Sys.getEnv("HXMC_CLANG");
+		return new LlvmGen(abi, o.llvm, clang != null && clang != "" ? clang : "clang", module, dir);
+	}
+
 	function template(fn:FuncInfo):Null<Inline.Template> {
 		tlock.acquire();
 		var e = templates.get(fn);
@@ -136,7 +152,7 @@ class Driver {
 	}
 
 	// one function into `obj` (with its emitter)
-	function compileFunc(fn:FuncInfo, obj:Obj, emit:Target.Emitter, ras:Regalloc.Scratch) {
+	function compileFunc(fn:FuncInfo, obj:Obj, emit:Target.Emitter, ras:Regalloc.Scratch, ?llvm:LlvmGen) {
 		var name = prep.funcSym(fn);
 		try {
 			var s0 = haxe.Timer.stamp();
@@ -254,6 +270,26 @@ class Driver {
 				}
 				return;
 			}
+			// (experimental) LLVM: the function as LLVM IR, compiled with the module (LlvmGen)
+			if (llvm != null) {
+				var why = llvm.accepts(mf);
+				if (why == null) {
+					llvm.func(mf);
+					if (mb.icaches > 0) {
+						var bss = obj.section(".bss", Bss, 16);
+						bss.bssSize = (bss.bssSize + 15) & ~15;
+						obj.define(mb.icSym, bss, bss.bssSize, Abi.IC_SIZE * mb.icaches, false);
+						bss.bssSize += Abi.IC_SIZE * mb.icaches;
+					}
+					lock.acquire();
+					llvmFuncs++;
+					lock.release();
+					return;
+				}
+				lock.acquire();
+				llvmWhy.set(why, (llvmWhy.exists(why) ? llvmWhy.get(why) : 0) + 1);
+				lock.release();
+			}
 			if (abi.wasm) {
 				// WebAssembly: structured code from the Mir, no instruction selection or registers
 				var s1 = haxe.Timer.stamp();
@@ -364,6 +400,7 @@ class Driver {
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
+		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
 		var ks = [for (k in foldWhy.keys()) k];
 		ks.sort((a, b) -> foldWhy.get(b) - foldWhy.get(a));
@@ -398,7 +435,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -538,8 +575,13 @@ class Driver {
 			var ras = scratches.pop();
 			lock.release();
 			if (ras == null) ras = new Regalloc.Scratch(Target.selector(abi));
+			var llvm = llvmFor(order[mi]);
 			for (f in byModule.get(order[mi]))
-				compileFunc(f, obj, emit, ras);
+				compileFunc(f, obj, emit, ras, llvm);
+			if (llvm != null) {
+				var lo = llvm.compile();
+				if (lo != null) obj.append(lo);
+			}
 			// (one grown by a giant function is dropped: kept, its arrays would
 			// hold hundreds of MB per thread until the end of the build)
 			if (!ras.oversized()) {
