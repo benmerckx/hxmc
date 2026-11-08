@@ -23,7 +23,7 @@ class UpToDate {
 		// (and the environment that changes the code: Options.framePointers)
 		var fp = Sys.getEnv("HXMC_FRAME_POINTERS");
 		if (fp != null) tool += "|fp=" + fp;
-		// (and the experimental LLVM back end's: Options.llvm, LlvmGen)
+		// (and the variables of flags: Options.flag)
 		for (e in [for (n in Options.FLAGS) Options.flagVar(n)]) {
 			var v = Sys.getEnv(e);
 			if (v != null && v != "") tool += "|" + e + "=" + v;

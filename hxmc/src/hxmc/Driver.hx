@@ -43,6 +43,8 @@ class Driver {
 		}
 		for (e in o.exports)
 			if (abi.exports.indexOf(e) < 0) abi.exports.push(e);
+		LoopVersion.on = o.loopVersion;
+		LoopVersion.why = o.loopVersionWhy;
 		dumpSet = o.dump == null ? null : [for (n in o.dump.split(",")) n => true];
 		if (o.interp != null) interp = new hxmc.interp.InterpGen.InterpSet(o.interp, prep);
 	}
@@ -104,6 +106,7 @@ class Driver {
 	var raRounds = 0;
 	var escRemoved = 0;
 	var escFolds = 0;
+	var loopsVersioned = 0; // (LoopVersion)
 	var allocsFolded = 0; // (Fold)
 	var rootStores = 0; // (Frames)
 	var freshStores = 0; // (Opt.freshTargets)
@@ -244,6 +247,16 @@ class Driver {
 			if (o.opt && sroa) new Sroa(mf).run();
 			// (HXMC_DUMP with HXMC_DUMP_OBJ=1: the object-level Mir before Opt too)
 			if (dumpSet != null && dumpSet.exists(name) && Sys.getEnv("HXMC_DUMP_OBJ") == "1") Sys.println("(object level)\n" + mf.dump());
+			// (Array reads in counted loops tested once before them)
+			if (o.opt && LoopVersion.on && (interp == null || !interp.wants(fn))) {
+				var lv = new LoopVersion(mf);
+				lv.run();
+				if (lv.versioned > 0) {
+					lock.acquire();
+					loopsVersioned += lv.versioned;
+					lock.release();
+				}
+			}
 			if (o.opt) {
 				var op = new Opt(mf);
 				op.run();
@@ -426,6 +439,7 @@ class Driver {
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
+		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
 		var ks = [for (k in foldWhy.keys()) k];
@@ -461,7 +475,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") + (o.llvmCpu != null ? "+cpu=" + o.llvmCpu : "") + (o.llvmWhole ? "+whole" : "") + (o.llvmConsts ? "+consts" : "") + (o.llvmTbaa != null ? "+tbaa=" + o.llvmTbaa : "") + (o.llvmFlags != null ? "+flags=" + o.llvmFlags : "") + "+clang=" + o.llvmClang : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") + (o.llvmCpu != null ? "+cpu=" + o.llvmCpu : "") + (o.llvmWhole ? "+whole" : "") + (o.llvmConsts ? "+consts" : "") + (o.llvmTbaa != null ? "+tbaa=" + o.llvmTbaa : "") + (o.llvmFlags != null ? "+flags=" + o.llvmFlags : "") + "+clang=" + o.llvmClang : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)

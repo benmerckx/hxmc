@@ -33,6 +33,9 @@ class Options {
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
+	// -D hxmc.loop-version=0: no loop versioning (LoopVersion); =why: why each loop is left alone
+	public var loopVersion = true;
+	public var loopVersionWhy = false;
 	// (experimental) LLVM (docs/plans/llvm.md); flags (Options.flag: a define, else its variable):
 	//   hxmc.llvm[=O1|O2|O3|Os]   the functions LlvmGen takes compiled by clang
 	//   hxmc.llvm-rt              the runtime's modules too
@@ -57,7 +60,7 @@ class Options {
 		return name.toUpperCase().split(".").join("_").split("-").join("_");
 
 	// the flags this build reads (UpToDate: their variables change the code)
-	public static final FLAGS = ["hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-tbaa",
+	public static final FLAGS = ["hxmc.loop-version", "hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-tbaa",
 		"hxmc.llvm-flags", "hxmc.llvm-clang"];
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
@@ -292,6 +295,9 @@ class Options {
 			if (d == null) d = env(flagVar(name));
 			return d == null || d == "" ? null : d;
 		}
+		var lvf = flag("hxmc.loop-version");
+		o.loopVersion = lvf != "0";
+		o.loopVersionWhy = lvf == "why";
 		inline function on(name:String):Bool {
 			var v = flag(name);
 			return v != null && v != "0";
