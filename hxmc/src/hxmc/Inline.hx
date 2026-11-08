@@ -82,7 +82,9 @@ class Inline {
 		}
 		function st(s:Stmt) {
 			if (s.match(SPos(_))) return; // (-debug: the same decisions)
-			if (++n > MAX_IR) return;
+			// A cold site's slow path has a cost even without an IR wrapper.
+			n += hxmc.ir.Facts.GcPoints.cold(s) ? 2 : 1;
+			if (n > MAX_IR) return;
 			hxmc.ir.Facts.iterStmt(st, ex, s);
 		}
 		for (s in f.body) {

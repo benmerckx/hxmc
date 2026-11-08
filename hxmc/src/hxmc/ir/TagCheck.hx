@@ -200,8 +200,6 @@ class TagCheck {
 				stmts(body);
 				for (c in catches)
 					stmts(c.body);
-			case SCold(_, s):
-				stmt(s);
 		}
 	}
 }

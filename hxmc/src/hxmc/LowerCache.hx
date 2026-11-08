@@ -1221,7 +1221,6 @@ class CachedLower extends Lower {
 					if (c.test != null && t == null) mismatch("a catch without its test");
 					({test: t == null ? null : testOf(ex(t)), l: local(c.l), body: stmts(c.body)} : IrCatch);
 				}));
-			case SCold(id, x): SCold(id, stmt(x));
 			case SPos(_): s;
 		}
 	}
@@ -1332,8 +1331,6 @@ class CachedLower extends Lower {
 					f(c);
 					walkTries(c.body, f);
 				}
-			case SCold(_, x):
-				walkTry(x, f);
 			case _:
 		}
 	}

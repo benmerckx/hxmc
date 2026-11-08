@@ -784,7 +784,7 @@ tag first, then through the box as Dynamic's conversions do.
   allocates nothing); a word to Dynamic, `Null<T>`, a structure or an
   extern's instance boxed where it is a scalar's (`EUntag` to a reference: a
   test inline, `hx_tag_box` on the slow path only, which a cold site roots
-  around, `Facts.markCold`); a word to a class's, an enum's, an array's or a
+  around, `Roots` and `GcPoints.cold`); a word to a class's, an enum's, an array's or a
   function's type as it is (no scalar is one: an explicit `ECast`); any
   reference to a word as it is. Reading an `Array<T>`'s element as a word
   encodes an Int or Float element rather than boxing it (`hx_aget_t_slow`).

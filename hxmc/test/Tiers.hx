@@ -83,6 +83,16 @@ class Tiers {
 		{ok: r.code == 0, detail: lastLine(r.out)};
 	}
 
+	static function rootFacts() {
+		var dir = "bin/hxmc-t/root-facts";
+		mkdirs(dir);
+		var out = dir + "/m" + (windows ? ".exe" : "");
+		var r = exec(["bin/hxmc/hxmc", out, "-cp", "haxe/src", "-cp", "hxmc/src", "-cp", "hxmc/test", "-D", "disable-parallelism",
+			"-D", "hih_no_generators", "-main", "RootFactsCheck", "-cp", "bin/hxmc/std", "--custom-target", "hxmc"], {merge: true});
+		if (r.code == 0) r = exec([FileSystem.fullPath(out)], {merge: true, env: ["RT_VERIFY" => "1", "RT_MINOR_KB" => "64"]});
+		return {ok: r.code == 0, detail: lastLine(r.out)};
+	}
+
 	// (kb 0: the adaptive nursery, RT_MINOR_KB unset; verify: RT_VERIFY=1)
 	static function threads(n:Int, kb:Int, name = "ThreadNatives", verify = false) return () -> {
 		exec(SCRIPT.concat(["Corpus", name]));
@@ -174,6 +184,7 @@ class Tiers {
 		var tier = args[0], port = args.contains("--port");
 		var cases = [for (a in args.slice(1)) if (a != "--port") a];
 		var t0 = now();
+		lane("root facts", rootFacts);
 		if (tier != "full") {
 			lane("x64", corpus(cases));
 			lane("x64 RT_VERIFY verify-tags", corpus(null, ["RT_VERIFY" => "1"], cases, VERIFY_TAGS));

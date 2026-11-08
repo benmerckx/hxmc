@@ -292,9 +292,6 @@ class Reach {
 				case SLoop(body): SLoop(dropStacks(body));
 				case SSwitch(e, cases, def): SSwitch(e, cases.map(c -> {values: c.values, body: dropStacks(c.body)}), dropStacks(def));
 				case STry(body, catches): STry(dropStacks(body), catches.map(c -> ({test: c.test, l: c.l, body: dropStacks(c.body)} : IrCatch)));
-				case SCold(id, x):
-					var y = dropStacks(haxe.ds.Vector.fromArrayCopy([x]));
-					y.length == 1 ? SCold(id, y[0]) : null;
 				case _: s;
 			}
 			if (t != s) changed = true;
