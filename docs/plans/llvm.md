@@ -141,6 +141,13 @@ For the program's speed, in order:
   once before the loop), or a GC contract LLVM knows (statepoints, below).
   Typed pointers (`ptr`, `noalias` allocations, `nonnull` after null
   tests) wait for that too.
+  With loop versioning (LoopVersion, merged here): the versioned loops
+  have no slow-path calls, and LLVM then hoists the array's field and
+  header by itself; the tags still change nothing measurable (VectorBench
+  read4 within noise). Loop versioning and LLVM together: read4 of
+  Array<Object> 0.51 ns per element (native, no versioning) to 0.185
+  (native with versioning 0.29, LLVM without it 0.42); LLVM alone halves
+  the plain sequential read (1.12 to 0.6).
 - Implicit null checks (LLVM's `make.implicit`, a fault map the runtime
   reads) instead of the explicit tests.
 - Larger: the shadow stack's stores and reloads (LLVM's statepoints and
