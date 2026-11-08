@@ -764,8 +764,7 @@ class Driver {
 			exe;
 		};
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";
-		sys.io.File.saveBytes(out, exe);
-		markExecutable(out);
+		writeExecutable(out, exe);
 		// (Java: the proxies the glue must have, next to the output: Jni.manifest)
 		var manifest = hxmc.ir.Jni.manifest([for (ci in prep.p.classes) if (ci.jniProxy != null && prep.p.isLive(ci.jniProxy.desc)) ci]);
 		if (manifest != null) sys.io.File.saveContent(out + ".jni.json", manifest);
@@ -789,6 +788,25 @@ class Driver {
 	// whoever runs the module marks the output executable (HXMC_EXE_LIST
 	// names a file the output's path is added to, one per line)
 	// (Windows hosts need no mode)
+	// an executable written anew, not over the old one's bytes: macOS caches
+	// a file's code signature, and kills the next launch of an executable
+	// that ran and was then rewritten in place (SIGKILL, "exit 137"); as
+	// ld64 does, the new file goes next to it and replaces it (a rename). On
+	// Windows (a running .exe cannot be replaced; rename does not overwrite)
+	// and WASI in place
+	public static function writeExecutable(path:String, bytes:haxe.io.Bytes) {
+		var host = Sys.systemName();
+		if (host == "Windows" || host == "Wasi" || !sys.FileSystem.exists(path)) {
+			sys.io.File.saveBytes(path, bytes);
+			markExecutable(path);
+			return;
+		}
+		var tmp = path + ".hxmc-new";
+		sys.io.File.saveBytes(tmp, bytes);
+		markExecutable(tmp);
+		sys.FileSystem.rename(tmp, path);
+	}
+
 	public static function markExecutable(path:String) {
 		if (Sys.systemName() == "Windows") {} else if (Sys.systemName() != "Wasi")
 			Sys.command("chmod", ["755", path]);
