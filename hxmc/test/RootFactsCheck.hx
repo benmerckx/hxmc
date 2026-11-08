@@ -11,6 +11,7 @@ class RootFactsCheck {
 	}
 
 	static function main() {
+		MirCompactCheck.run();
 		var ref = TRef(RAny);
 		var cond = new Local(0, "cond", TI32);
 		var a = new Local(1, "a", ref), b = new Local(2, "b", ref);
@@ -52,6 +53,6 @@ class RootFactsCheck {
 		f.body = vector(STry(vector(shared), vector(handler)), SExpr(ECall(sink, vector(ELocal(b)))), SReturn(null));
 		var tr = Roots.analyze(f);
 		check(tr.rooted.get(a.id) && tr.rooted.get(b.id) && tr.rooted.get(caught.id), "handler requirements lost live references");
-		Sys.println("root facts: shared sites, loops, handlers, repeatability and input preservation passed");
+		Sys.println("root facts: shared sites, loops, handlers, repeatability, input preservation and MIR compaction passed");
 	}
 }

@@ -414,6 +414,45 @@ class MFunc {
 		return a;
 	}
 
+	// Once all Mir passes have finished, remove value-table entries for
+	// instructions no longer in any block. Backends index scratch storage
+	// by value id; obsolete ids otherwise keep both the instructions and
+	// oversized arrays alive. Preserve the order of the surviving ids.
+	public function compact():Int {
+		var n = vals.length, live = 0;
+		for (b in blocks) live += b.ins.length;
+		// The rename table must save more backend storage than it allocates.
+		if (live >= n - (n >>> 2)) return 0;
+		var ids = ints(n, -1);
+		for (b in blocks)
+			for (i in b.ins) ids[i.id] = 0;
+		var next = 0;
+		for (old in 0...n)
+			if (ids[old] == 0) {
+				ids[old] = next;
+				vals[next++] = vals[old];
+			}
+		vals.resize(next);
+		inline function operand(v:Int):Int {
+			var k = ids[v];
+			if (k < 0) throw "Mir: a live instruction uses a removed value";
+			return k;
+		}
+		for (i in vals) {
+			i.id = ids[i.id];
+			if (i.a >= 0) i.a = operand(i.a);
+			if (i.b >= 0) i.b = operand(i.b);
+			if (i.c >= 0) i.c = operand(i.c);
+			// Operand vectors may be shared by several instructions.
+			var args = i.args;
+			if (args.length > 0) {
+				i.args = new Vector<Int>(args.length);
+				for (k in 0...args.length) i.args[k] = operand(args[k]);
+			}
+		}
+		return n - next;
+	}
+
 	// the control-flow analyses (Cfg), kept until the graph changes: a pass
 	// that changes edges (the blocks' succs or preds) calls edited
 	public function cfg():Cfg<MBlock> {
