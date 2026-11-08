@@ -353,15 +353,48 @@ class Str {
 		return na < nb ? -1 : na > nb ? 1 : 0;
 	}
 
-	// FNV-1a over the units, never 0, kept in the string's header where it
+	// A hash of the units, never 0, kept in the string's header where it
 	// has room (a benign race between threads: they store the same value).
 	// FnLower.strHash computes the same at compile time (DataGen stores it in
-	// the literals).
+	// the literals). The units go 8 at a time: a chunk's low bytes as a
+	// 64-bit word (little-endian), and its high bytes where one is not 0 (so
+	// a one-byte string and a two-byte one of the same units hash alike);
+	// the last chunk is the last 8 units (overlapping the one before it) or,
+	// of a shorter string, all of them. A chunk is mixed in by a multiply
+	// (hashMix), the length first, the 64 bits avalanched and folded to 32.
 	@:hxmc.host("hx_str_hash") @:hxmc.unsafe static function hash(s:String):Int {
 		var h = Repr.storedHash(s);
 		return h != 0 ? h : hashSlow(s);
 	}
 
+	// (0x9E3779B97F4A7C15, 0xFF51AFD7ED558CCD: an Int literal of 0x80000000 or more is negative)
+	static inline function k64(hi:Int, lo:Int):I64
+		return ((hi : I64) << 32) | ((lo : I64) & ((1 : I64) << 32) - 1);
+
+	static inline function hashMix(h:I64, w:I64):I64 {
+		h = (h ^ w) * k64(0x9E3779B9, 0x7F4A7C15);
+		return h ^ (h >>> 32);
+	}
+
+	// the low bytes (lo) or high bytes (lo, of w >>> 8) of 4 two-byte units, as 32 bits
+	static inline function packLow(w:I64):I64 {
+		var m = k64(0x00FF00FF, 0x00FF00FF);
+		w = w & m;
+		w = (w | (w >>> 8)) & k64(0x0000FFFF, 0x0000FFFF);
+		return (w | (w >>> 16)) & (((1 : I64) << 32) - 1);
+	}
+
+	// 8 two-byte units at p mixed in
+	@:hxmc.unsafe static inline function hashMix2(h:I64, p:Ptr):I64 {
+		var a = Mem.getI64(p, 0), b = Mem.getI64(p, 8);
+		h = hashMix(h, packLow(a) | (packLow(b) << 32));
+		var hi = packLow(a >>> 8) | (packLow(b >>> 8) << 32);
+		return hi != (0 : I64) ? hashMix(h, hi) : h;
+	}
+
+	#if !hxmc.strhash
+	// (FNV-1a over the units, as a tool without hxmc.strhash computes literals'
+	// hashes: TargetFlags)
 	@:hxmc.unsafe static function hashSlow(s:String):Int {
 		var x = 0x811C9DC5;
 		if (isOne(s)) {
@@ -377,6 +410,46 @@ class Str {
 		Repr.storeHash(s, x);
 		return x;
 	}
+	#else
+	@:hxmc.unsafe static function hashSlow(s:String):Int {
+		var n = len(s);
+		var h = hashMix(k64(0x243F6A88, 0x85A308D3), (n : I64));
+		var p = unitsAddr(s);
+		var i = 0;
+		if (isOne(s)) {
+			while (i + 8 < n) {
+				h = hashMix(h, Mem.getI64(p, i));
+				i += 8;
+			}
+			// (the last 8 bytes; of a shorter string, the bytes before its
+			// units too, its length and header's, shifted out)
+			if (n > 0) h = hashMix(h, n >= 8 ? Mem.getI64(p, n - 8) : Mem.getI64(p, n - 8) >>> (8 * (8 - n)));
+		} else {
+			while (i + 8 < n) {
+				h = hashMix2(h, p.add(2 * i));
+				i += 8;
+			}
+			if (n >= 8)
+				h = hashMix2(h, p.add(2 * (n - 8)));
+			else if (n > 0) {
+				var lo:I64 = 0, hi:I64 = 0;
+				for (k in 0...n) {
+					var u = Mem.getU16(p, 2 * k);
+					lo = lo | ((u & 0xFF : I64) << (8 * k));
+					hi = hi | ((u >> 8 : I64) << (8 * k));
+				}
+				h = hashMix(h, lo);
+				if (hi != (0 : I64)) h = hashMix(h, hi);
+			}
+		}
+		h = (h ^ (h >>> 33)) * k64(0xFF51AFD7, 0xED558CCD);
+		h = h ^ (h >>> 33);
+		var x = h.toInt();
+		if (x == 0) x = 1;
+		Repr.storeHash(s, x);
+		return x;
+	}
+	#end
 
 	// StringMap's hash: null is a key like any other (inline: the cached one
 	// read where the map looks it up)

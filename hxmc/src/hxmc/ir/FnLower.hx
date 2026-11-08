@@ -1661,12 +1661,38 @@ class FnLower {
 		}
 	}
 
-	// FNV-1a over the UTF-16 units, never 0, as Str.hash computes (and
-	// caches) it at run time
+	// The hash of the units, never 0, as Str.hash computes (and caches) it at
+	// run time: chunks of 8 units (the last one the last 8, overlapping, or
+	// all of a shorter string), each mixed in as its low bytes and, where one
+	// is not 0, its high bytes, the length first; avalanched, folded to 32 bits
 	public static function strHash(s:String):Int {
-		var x = 0x811C9DC5;
-		for (i in 0...s.length)
-			x = (x ^ StringTools.fastCodeAt(s, i)) * 16777619;
+		inline function k64(hi:Int, lo:Int)
+			return haxe.Int64.make(hi, lo);
+		inline function mix(h:haxe.Int64, w:haxe.Int64) {
+			h = (h ^ w) * k64(0x9E3779B9, 0x7F4A7C15);
+			return h ^ haxe.Int64.ushr(h, 32);
+		}
+		function chunk(h:haxe.Int64, at:Int, n:Int) {
+			var lo = haxe.Int64.ofInt(0), hi = haxe.Int64.ofInt(0);
+			for (k in 0...n) {
+				var u = StringTools.fastCodeAt(s, at + k);
+				lo = lo | haxe.Int64.shl(haxe.Int64.ofInt(u & 0xFF), 8 * k);
+				hi = hi | haxe.Int64.shl(haxe.Int64.ofInt(u >> 8), 8 * k);
+			}
+			h = mix(h, lo);
+			return hi != 0 ? mix(h, hi) : h;
+		}
+		var n = s.length;
+		var h = mix(k64(0x243F6A88, 0x85A308D3), haxe.Int64.ofInt(n));
+		var i = 0;
+		while (i + 8 < n) {
+			h = chunk(h, i, 8);
+			i += 8;
+		}
+		if (n > 0) h = n >= 8 ? chunk(h, n - 8, 8) : chunk(h, 0, n);
+		h = (h ^ haxe.Int64.ushr(h, 33)) * k64(0xFF51AFD7, 0xED558CCD);
+		h = h ^ haxe.Int64.ushr(h, 33);
+		var x = h.low;
 		return x == 0 ? 1 : x;
 	}
 
