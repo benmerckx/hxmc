@@ -192,20 +192,23 @@ class MachOReader {
 				if (sym == null) throw "hxmc: Mach-O relocation against a section left out, in " + s.name;
 				var buf = s.buf;
 				// SUBTRACTOR (arm64 1, x86-64 5) then UNSIGNED: T - M + field, 32
-				// bits (jump tables, offset tables of mbedtls and libuv), with M a
-				// symbol of this section: T + A - P with A = field + (addr - M)
+				// bits (jump tables, offset tables of mbedtls and libuv) or 64
+				// (LLVM's profile records), with M a symbol of this section:
+				// T + A - P with A = field + (addr - M)
 				if (type == (arm ? 1 : 5)) {
-					if (ext != 1 || sym.section != s || len != 2) throw "hxmc: Mach-O SUBTRACTOR relocation other than within " + s.name;
+					if (ext != 1 || sym.section != s || (len != 2 && len != 3)) throw "hxmc: Mach-O SUBTRACTOR relocation other than within " + s.name;
 					minus = sym;
 					continue;
 				}
 				if (minus != null) {
-					if (type != 0 || len != 2) throw "hxmc: Mach-O SUBTRACTOR followed by relocation type " + type + " in " + s.name;
+					if (type != 0 || (len != 2 && len != 3)) throw "hxmc: Mach-O SUBTRACTOR followed by relocation type " + type + " in " + s.name;
+					// (64 bits: the field's value fits 32, a distance within the object)
 					var field = buf.get32(addr);
 					buf.set32(addr, 0);
+					if (len == 3) buf.set32(addr + 4, 0);
 					// the field: the addend (an external minuend) or T - M in the object's addresses
 					var fa = ext == 1 ? field : field + secAddr[n] + minus.offset - secAddr[symnum];
-					s.relocs.push(new Reloc(addr, RPc32, sym, fa + addr - minus.offset));
+					s.relocs.push(new Reloc(addr, len == 3 ? RPc64 : RPc32, sym, fa + addr - minus.offset));
 					minus = null;
 					continue;
 				}

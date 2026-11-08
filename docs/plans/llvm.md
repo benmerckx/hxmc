@@ -44,6 +44,129 @@ Either compiles LLVM's code after the data (Driver.llvmPending; the data
 gets the symbols the code refers to from `LlvmGen.refs`), so its objects
 are not cached, and a function's inline caches are global symbols.
 
+## Profile-guided optimization
+
+`-D hxmc.llvm-pgo=gen` compiles LLVM's code instrumented (`-fprofile-generate`)
+and links the clang's profile runtime (`libclang_rt.profile_osx.a`, macOS
+only); the program writes `default.profraw` (or `LLVM_PROFILE_FILE`, `%p`
+for one per process) when it exits. `xcrun llvm-profdata merge -o
+app.profdata *.profraw`, then `-D hxmc.llvm-pgo=app.profdata` compiles with
+the profile (its size and time in the cache key). Best with
+`-D hxmc.llvm-release`.
+
+What hxmc's linker needed for the runtime: BSD archives' index
+(`__.SYMDEF`, Archive), universal files (LinkInputs: the target's slice),
+64-bit SUBTRACTOR relocations (MachOReader: RPc64, the profile records'
+distances to their counters), and ld64's `section$start# LLVM as an optional back end (experimental)
+
+`-D hxmc.llvm[=O1|O2|O3|Os]` compiles each module's
+functions through LLVM: memory-level Mir, after `MemLower` and the passes on
+it, is written as textual LLVM IR (`hxmc/src/hxmc/LlvmGen.hx`), an external
+clang compiles it for the target's triple, and the object it writes is read
+back (`MachOReader`, `ElfReader`, `CoffReader`) and appended to the module's
+object. hxmc's own linkers link as before. `-D hxmc.llvm-rt`
+takes the runtime's modules too. The `.ll` files are kept
+in `<out>.hxmc/llvm/`.
+
+clang: `-D hxmc.llvm-clang=<path>`, else `clang` on the path. Every flag falls back to its environment variable, upper case with
+underscores (`hxmc.llvm-rt`: `HXMC_LLVM_RT`), so that a test harness can
+set it for every build it runs; a define wins. Apple's clang (Xcode's
+command-line tools) has every back end hxmc targets, so it writes Mach-O,
+ELF and COFF objects, cross-compiling from macOS. `-D hxmc.llvm-flags=<args>` adds
+arguments (for example `-mllvm ...`). `-D hxmc.llvm-cpu=<cpu>` is the oldest CPU the program runs on, clang's `-mcpu`
+on arm64 and `-march` on x86-64 (`apple-m3`, `x86-64-v3`, `native`).
+clang's default is the baseline: `apple-m1` on macOS arm64, so tuning
+gains little there (an M4 Pro: within noise); x86-64's baseline has no
+AVX2.
+
+## Why Mir after MemLower
+
+It is SSA over i32, i64 and double, with explicit loads, stores, calls and
+the shadow stack: almost one LLVM instruction per Mir instruction, and the
+collector's roots are already in memory (frame slots linked from `rt_sp`),
+so LLVM's register allocation cannot hide a reference from it. hxmc's own
+passes (inlining, escape analysis, SROA, allocation folding) still run
+first; LLVM adds its scalar and loop optimizations, instruction
+scheduling and register allocation.
+
+## Release mode
+
+`-D hxmc.llvm-release` is both of:
+
+- `-D hxmc.llvm-consts`: the program-wide numbers (type indices, field
+  ids, global offsets, class spans) as constants, from the data (DataGen)
+  instead of extern_weak symbols loaded through the GOT;
+- `-D hxmc.llvm-whole`: the whole program one LLVM module (cross-module
+  inlining, interprocedural analyses), one clang process.
+
+Either compiles LLVM's code after the data (Driver.llvmPending; the data
+gets the symbols the code refers to from `LlvmGen.refs`), so its objects
+are not cached, and a function's inline caches are global symbols.
+
+/`section$end# LLVM as an optional back end (experimental)
+
+`-D hxmc.llvm[=O1|O2|O3|Os]` compiles each module's
+functions through LLVM: memory-level Mir, after `MemLower` and the passes on
+it, is written as textual LLVM IR (`hxmc/src/hxmc/LlvmGen.hx`), an external
+clang compiles it for the target's triple, and the object it writes is read
+back (`MachOReader`, `ElfReader`, `CoffReader`) and appended to the module's
+object. hxmc's own linkers link as before. `-D hxmc.llvm-rt`
+takes the runtime's modules too. The `.ll` files are kept
+in `<out>.hxmc/llvm/`.
+
+clang: `-D hxmc.llvm-clang=<path>`, else `clang` on the path. Every flag falls back to its environment variable, upper case with
+underscores (`hxmc.llvm-rt`: `HXMC_LLVM_RT`), so that a test harness can
+set it for every build it runs; a define wins. Apple's clang (Xcode's
+command-line tools) has every back end hxmc targets, so it writes Mach-O,
+ELF and COFF objects, cross-compiling from macOS. `-D hxmc.llvm-flags=<args>` adds
+arguments (for example `-mllvm ...`). `-D hxmc.llvm-cpu=<cpu>` is the oldest CPU the program runs on, clang's `-mcpu`
+on arm64 and `-march` on x86-64 (`apple-m3`, `x86-64-v3`, `native`).
+clang's default is the baseline: `apple-m1` on macOS arm64, so tuning
+gains little there (an M4 Pro: within noise); x86-64's baseline has no
+AVX2.
+
+## Why Mir after MemLower
+
+It is SSA over i32, i64 and double, with explicit loads, stores, calls and
+the shadow stack: almost one LLVM instruction per Mir instruction, and the
+collector's roots are already in memory (frame slots linked from `rt_sp`),
+so LLVM's register allocation cannot hide a reference from it. hxmc's own
+passes (inlining, escape analysis, SROA, allocation folding) still run
+first; LLVM adds its scalar and loop optimizations, instruction
+scheduling and register allocation.
+
+## Release mode
+
+`-D hxmc.llvm-release` is both of:
+
+- `-D hxmc.llvm-consts`: the program-wide numbers (type indices, field
+  ids, global offsets, class spans) as constants, from the data (DataGen)
+  instead of extern_weak symbols loaded through the GOT;
+- `-D hxmc.llvm-whole`: the whole program one LLVM module (cross-module
+  inlining, interprocedural analyses), one clang process.
+
+Either compiles LLVM's code after the data (Driver.llvmPending; the data
+gets the symbols the code refers to from `LlvmGen.refs`), so its objects
+are not cached, and a function's inline caches are global symbols.
+
+
+symbols (LinkMachO: the sections of the name laid out together between two
+empty ones). The runtime's static initializer (`__mod_init_func`) registers
+the write at exit.
+
+The compiler, trained on its own cold self-compile (median of 5, the
+self-compile byte-identical to the native-built tool's):
+
+| the tool built | self-compile | cpu |
+| --- | --- | --- |
+| native | 5.42 s | 7.70 s |
+| LLVM, per module | 5.16 s | 7.09 s |
+| LLVM, release mode | 5.01 s | 6.95 s |
+| LLVM, release mode with the profile | 4.60 s (-15%) | 6.48 s (-16%) |
+
+On another workload (VectorBench compiled, build macros on the interpreter)
+the same tools: cpu 0.47, 0.44, 0.43, 0.40 s.
+
 ## The mapping
 
 - Addresses are i64; each load and store turns one into a pointer

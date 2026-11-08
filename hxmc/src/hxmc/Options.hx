@@ -46,6 +46,9 @@ class Options {
 	//   hxmc.llvm-tbaa=1|<list>   Mir's memory classes as alias information (LlvmGen.tbaaTag)
 	//   hxmc.llvm-flags=<args>    more of clang's arguments, separated by spaces
 	//   hxmc.llvm-clang=<path>    the clang (default: clang on the path)
+	//   hxmc.llvm-pgo=gen         profile-guided optimization: an instrumented program (LLVM's
+	//                             profile runtime linked; it writes default.profraw, or LLVM_PROFILE_FILE)
+	//   hxmc.llvm-pgo=<file>      ... compiled with the profile (llvm-profdata merge -o <file> *.profraw)
 	public var llvm:Null<String> = null;
 	public var llvmRt = false;
 	public var llvmCpu:Null<String> = null;
@@ -54,6 +57,7 @@ class Options {
 	public var llvmTbaa:Null<String> = null;
 	public var llvmFlags:Null<String> = null;
 	public var llvmClang = "clang";
+	public var llvmPgo:Null<String> = null;
 
 	// the variable a flag falls back to: HXMC_LLVM_RT for hxmc.llvm-rt
 	public static function flagVar(name:String):String
@@ -61,7 +65,7 @@ class Options {
 
 	// the flags this build reads (UpToDate: their variables change the code)
 	public static final FLAGS = ["hxmc.loop-version", "hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-tbaa",
-		"hxmc.llvm-flags", "hxmc.llvm-clang"];
+		"hxmc.llvm-flags", "hxmc.llvm-clang", "hxmc.llvm-pgo"];
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -313,6 +317,11 @@ class Options {
 		o.llvmFlags = flag("hxmc.llvm-flags");
 		var cl = flag("hxmc.llvm-clang");
 		if (cl != null) o.llvmClang = cl;
+		o.llvmPgo = flag("hxmc.llvm-pgo");
+		if (o.llvmPgo != null && o.llvmPgo != "gen") {
+			if (!sys.FileSystem.exists(o.llvmPgo)) throw "hxmc: -D hxmc.llvm-pgo=" + o.llvmPgo + ": no such profile (gen, or a file of llvm-profdata merge)";
+			o.llvmPgo = sys.FileSystem.fullPath(o.llvmPgo);
+		}
 		// (LLVM drops a load whose value is not used, the fault of a null access with it: explicit tests, as on WebAssembly)
 		if (o.llvm != null && nc == null) o.nullChecks = true;
 		o.verifyTags = def("hxmc.verify_tags") != null;

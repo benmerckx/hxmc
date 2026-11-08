@@ -60,6 +60,18 @@ class LlvmGen {
 		this.dir = dir;
 	}
 
+	// LLVM's profile runtime for the target (the clang's, Apple's: universal)
+	public static function profileRuntime(abi:Abi, clang:String):String {
+		if (abi.os != "macos" || abi.ios()) throw "hxmc: -D hxmc.llvm-pgo=gen: macOS only (the clang's profile runtime)";
+		var p = new sys.io.Process(clang, ["-print-resource-dir"]);
+		var dir = StringTools.trim(p.stdout.readAll().toString());
+		p.exitCode();
+		p.close();
+		var a = dir + "/lib/darwin/libclang_rt.profile_osx.a";
+		if (!sys.FileSystem.exists(a)) throw "hxmc: -D hxmc.llvm-pgo=gen: no profile runtime at " + a;
+		return a;
+	}
+
 	public static function triple(abi:Abi):Null<String> {
 		return switch abi.name {
 			case "macos-arm64": abi.ios() ? (abi.platform == "ios-simulator" ? "arm64-apple-ios15.0-simulator" : "arm64-apple-ios15.0") : "arm64-apple-macos11.0";
@@ -203,6 +215,7 @@ class LlvmGen {
 	var tbaaOn:Null<Map<String, Bool>>;
 	public var tbaa:Null<String>; // (Options.llvmTbaa)
 	public var flags:Null<String>; // (Options.llvmFlags)
+	public var pgo:Null<String>; // (Options.llvmPgo: gen, or a profile)
 
 	// the TBAA tag of an access of class c (a type of its own under hxmc's
 	// root, one per thread-local variable: name), or "" when c is not tagged.
@@ -302,6 +315,8 @@ class LlvmGen {
 		// (arm64: no ldp/stp pairing of neighbouring loads and stores, whose
 		// partial overlaps defeat store-to-load forwarding: nbody 1.75x slower with it)
 		if (abi.arm) args = args.concat(["-mllvm", "-aarch64-enable-ldst-opt=0"]);
+		// (profile-guided optimization: Driver links the profile runtime with gen)
+		if (pgo == "gen") args.push("-fprofile-generate") else if (pgo != null) args = args.concat(["-fprofile-use=" + pgo, "-Wno-backend-plugin", "-Wno-profile-instr-unprofiled"]);
 		// (-D hxmc.llvm-cpu: the oldest CPU the program runs on; clang's default is the target's baseline: apple-m1 on macOS arm64, x86-64 v1)
 		if (cpu != null) args.push((abi.arm ? "-mcpu=" : "-march=") + cpu);
 		var extra = flags;

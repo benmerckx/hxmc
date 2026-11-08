@@ -46,6 +46,7 @@ class ElfReader {
 		if (!arm) return switch t {
 			case 1: RAbs64;
 			case 2: RPc32;
+			case 24: RPc64;
 			case 4: RCall32;
 			case 9 | 41 | 42: RGotPcRel32; // (GOTPCRELX, REX_GOTPCRELX: relaxable, the same here)
 			case 10: RAbs32;
@@ -59,6 +60,7 @@ class ElfReader {
 			case 257: RAbs64;
 			case 258: RAbs32;
 			case 261: RPc32;
+			case 260: RPc64;
 			case 275: RA64AdrPage21;
 			case 277: RA64AddLo12;
 			case 278: RA64Ldst8Lo12;
