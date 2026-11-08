@@ -35,7 +35,7 @@ compatibility, TLS, checked-library and SSA commits. It establishes no
 compiler-wide improvement. Repeat `make lean-stats` for the final revision;
 do not present focused buffer timings as compiler speedups.
 
-At this checkpoint the compiler binary is 21,067,440 bytes versus
+At checkpoint `68c4bee9` the compiler binary was 21,067,440 bytes versus
 21,177,912 at the original baseline (110,472 bytes smaller). Production
 Haxe source counts are 59,403 compiler + 43,782 runtime = 103,185 lines,
 18 more than the baseline's 103,167. Net source reduction has not been
@@ -53,6 +53,47 @@ StringBuf compatibility fix, with matching stdout in every pair:
 
 The snapshot result is below GNU time's resolution; do not quote a speed
 ratio. These are narrow workloads, not whole-program speed estimates.
+
+## Non-mutating root facts
+
+The next IR cleanup deletes `SCold`, its global site numbering and the
+preparation pass that rewrote every function body. Roots now records the
+references at each cold site outside the body, indexed by list and position.
+Two occurrences of the same statement object remain distinct. Fingerprints
+and the inlining cost model keep the previous cold-site cost, so this
+representation change preserves generated code.
+
+Three quiet alternating pairs against `68c4bee9`, compiling the same current
+source and std with fresh caches and four backend workers, gave:
+
+| Self-build | Before | After |
+| --- | ---: | ---: |
+| Median wall | 11.33 s | 10.67 s |
+| Median CPU | 18.61 s | 17.93 s |
+| Peak RSS | 1,215,360 KiB | 1,216,148 KiB |
+| Compiler binary | 21,067,440 bytes | 21,055,040 bytes |
+
+Wall time fell 5.8%, CPU 3.7%; peak memory is effectively unchanged. These
+are three local samples, not an established large compiler-wide improvement.
+All three pairs produced byte-identical self-built executables. JSON,
+alloc, nbody and mandelbrot executables also remained byte-identical at
+245,184, 184,024, 187,528 and 179,432 bytes respectively, including their
+output checks. Raw results: `bin/lean-stats-Er8el9/results.json` in the
+development workspace.
+
+Production sources fall by 16 lines to 59,387 compiler + 43,782 runtime =
+103,169 lines (still two above the original branch baseline). The quick
+tier now includes a root-facts regression: the input stays unchanged,
+shared statements have independent sites, and a repeated analysis agrees.
+It runs under `RT_VERIFY=1` with a 64 KB nursery. All eight quick lanes,
+the cold/warm/cache-off fixpoint, and 25 x64/arm64/wasm crosshost outputs
+passed. Direct AST-to-SSA construction remains unfinished.
+
+The broader `make check` completed 23/25 lanes successfully, including
+the 16 KB nursery, glibc, shared libraries, JNI, Mach-O, legacy wasm EH and
+debug-info checks. The arm64 and Windows execution lanes failed with QEMU
+and Wine absent from the environment; they are not validated execution
+targets here. Crosshost still compared their generated arm64 code.
 
 ## Rejected IR experiments
 

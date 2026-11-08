@@ -992,7 +992,7 @@ class MemLower extends MirWriter {
 	// reference storage directly, else through the runtime (rt/NArray's
 	// hx_narray_get_slow, hx_narray_set_slow: the other kinds, wrappers). A
 	// wrapper's kind changes, but never to AK_PTR, so the test may be shared
-	// as that of a constant. At a cold site (Facts.markCold), the live
+	// as that of a constant. At a cold site (Roots), the live
 	// references are spilled around that call only (v: the value set, -1:
 	// a read)
 	function narrayDyn(a:Int, i:Int, v:Int):Int {

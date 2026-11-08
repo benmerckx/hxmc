@@ -675,7 +675,6 @@ class FnLower {
 				for (c in cs)
 					if (!r && (c.l == l || any(c.body))) r = true;
 				r;
-			case SCold(_, s2): assigns(s2, l);
 			case _: false;
 		}
 	}

@@ -16,10 +16,12 @@ import core.ds.VectorTools.vector;
 // try body assigns included (their slots start as null). Also which locals those are.
 class Roots {
 	var n:Int;
+	var coldSites:Bool;
 	var refs:Bits; // locals of reference type
 	public var rooted:Bits;
-	public var spills = new Map<Int, Array<Local>>(); // SCold id -> references live across its slow path
-	var spillSets = new Map<Int, Bits>(); // (the same, as they are found)
+	public var spills:Array<Array<Local>> = []; // per cold site: live references
+	var spillSets:Array<Bits> = [];
+	var siteIds = new haxe.ds.ObjectMap<Dynamic, Vector<Int>>(); // list and position -> local site + 1
 	var byId:haxe.ds.Vector<Null<Local>>;
 	// interference of the reference locals (dense indices; null: none kept,
 	// a slot per rooted local)
@@ -37,6 +39,7 @@ class Roots {
 
 	public static function analyze(f:FuncInfo):Roots {
 		var r = new Roots();
+		r.coldSites = !f.hasTry;
 		var all = f.args.concat(f.locals);
 		var n = 0;
 		for (l in all)
@@ -94,7 +97,8 @@ class Roots {
 		if (many)
 			for (i in 0...n)
 				if (count[i] > MAX_COLD_SPILLS) rooted.set(i);
-		for (id => set in spillSets) {
+		for (id in 0...spillSets.length) {
+			var set = spillSets[id];
 			var list = [];
 			for (k in 0...set.w.length) {
 				var x = set.w[k];
@@ -105,7 +109,7 @@ class Roots {
 					if (byId[i] != null && count[i] <= MAX_COLD_SPILLS) list.push(byId[i]);
 				}
 			}
-			spills.set(id, list);
+			spills[id] = list;
 		}
 	}
 
@@ -118,6 +122,7 @@ class Roots {
 	// addresses (assigned from Mem.addr or arithmetic on one)
 	public static function rawViolations(f:FuncInfo):Array<String> {
 		var r = new Roots();
+		r.coldSites = !f.hasTry;
 		var all = f.args.concat(f.locals);
 		var n = 0;
 		for (l in all)
@@ -205,7 +210,6 @@ class Roots {
 			case SSet(_, e) | SExpr(e): pointName(e);
 			case SArrSet(_) | SArrPush(_): "an array store (its slow path grows the array)";
 			case SAnonSet(_): "a structural field store";
-			case SCold(_, x): stmtPoint(x);
 			case _: "a GC point (" + s.getName() + ")";
 		}
 
@@ -319,11 +323,24 @@ class Roots {
 		}
 	}
 
+	public function coldAt(ss:Vector<Stmt>, k:Int):Null<Array<Local>> {
+		var ids = siteIds.get(ss);
+		return ids == null || ids[k] == 0 ? null : spills[ids[k] - 1];
+	}
+
 	function seq(ss:Vector<Stmt>, out:Bits):Bits {
+		var ids = siteIds.get(ss);
+		if (coldSites && ids == null)
+			for (k in 0...ss.length)
+				if (hxmc.ir.Facts.GcPoints.cold(ss[k])) {
+					if (ids == null) siteIds.set(ss, ids = new Vector<Int>(ss.length));
+					ids[k] = spillSets.length + 1;
+					spillSets.push(new Bits(n));
+				}
 		var live = out;
 		var i = ss.length;
 		while (i-- > 0)
-			live = stmt(ss[i], live);
+			live = stmt(ss[i], live, ids == null ? 0 : ids[i]);
 		return live;
 	}
 
@@ -382,8 +399,7 @@ class Roots {
 				if (live.get(k) && raws.get(k)) rawError(k, "is live across " + point);
 		}
 		// (the analysis may come here again for the site, in a loop: the union)
-		var set = spillSets.get(id);
-		if (set == null) spillSets.set(id, set = new Bits(n));
+		var set = spillSets[id];
 		var sw = set.w, lw = live.w, rw = refs.w;
 		for (k in 0...sw.length)
 			sw[k] |= lw[k] & rw[k];
@@ -393,9 +409,9 @@ class Roots {
 	// per enclosing try body: what its handlers need (live wherever it may throw)
 	var extras:Array<Bits> = [];
 
-	function stmt(s:Stmt, out:Bits):Bits {
+	function stmt(s:Stmt, out:Bits, site:Int):Bits {
 		if (s.match(SPos(_))) return out;
-		var r = stmt0(s, out);
+		var r = site > 0 ? cold(site - 1, s, out) : stmt0(s, out);
 		if (extras.length > 0) r = union(r, extras[extras.length - 1]);
 		return r;
 	}
@@ -403,7 +419,6 @@ class Roots {
 	function stmt0(s:Stmt, out:Bits):Bits {
 		if (raws != null) point = stmtPoint(s);
 		return switch s {
-			case SCold(id, x): cold(id, x, out);
 			case SSet(l, e): expr(e, out, l);
 			case SExpr(e): expr(e, out, null);
 			case SSetGlobal(_, v):
@@ -572,8 +587,6 @@ class Roots {
 					for (c in cases)
 						r = inter(r, seq(c.body, set.copy()));
 					return r;
-				case SCold(_, x):
-					return step(x, set);
 				case SBreak | SContinue | SPos(_):
 				case STry(body, catches):
 					// a handler may run before any assignment of the body

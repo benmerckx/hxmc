@@ -156,7 +156,7 @@ class OInfo {
 	public var next = -1;
 	public var sel = -1; // VirtualCall: the selector
 	public var key = -1; // NullCheck: the frame slot of the enclosing handler (-1: none)
-	// a GC point at a cold site (SCold, hxmc.Roots): the references live
+	// a GC point at a cold site (hxmc.Roots): the references live
 	// across its slow path (MIns.args, nspill of them) are stored on the
 	// shadow stack there (spillBase: in the frame's slots from that one,
 	// else pushed) and read back after it: in its continuation, the phi of

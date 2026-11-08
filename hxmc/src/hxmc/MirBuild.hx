@@ -21,7 +21,7 @@ using core.ds.VectorTools;
 //   locals become SSA values (Braun et al., "Simple and Efficient
 //   Construction of Static Single Assignment Form", on the structured input:
 //   MirWriter);
-// - cold sites (SCold) give their GC points (an allocation, an array store)
+// - cold sites (Roots) give their GC points (an allocation, an array store)
 //   the references live across them, which the lowering roots on the slow
 //   path only, and read back after it (the phis of its continuation);
 // - exceptions (the handler record, setjmp), C calls and their structs by
@@ -585,7 +585,8 @@ class MirBuild extends MirWriter {
 		// (a nested list's positions end with it: the code after it, or another
 		// branch, has the position it had before)
 		var saved = curPos;
-		for (s in ss) {
+		for (k in 0...ss.length) {
+			var s = ss[k];
 			switch s {
 				case SPos(file, line):
 					curPos = SrcPos.id(file, line);
@@ -593,18 +594,19 @@ class MirBuild extends MirWriter {
 				case _:
 			}
 			if (terminated()) deadBlock();
-			stmt(s);
+			stmt(s, roots.coldAt(ss, k));
 		}
 		curPos = saved;
 	}
 
-	function stmt(s:Stmt) {
+	function stmt(s:Stmt, list:Null<Array<Local>>) {
+		if (list != null) {
+			coldList = [for (l in list) if (!refSlot.exists(l)) l];
+			coldStmt(s);
+			coldList = null;
+			return;
+		}
 		switch s {
-			case SCold(id, x):
-				var list = roots.spills.get(id);
-				coldList = list == null ? [] : [for (l in list) if (!refSlot.exists(l)) l];
-				coldStmt(x);
-				coldList = null;
 			case SSet(l, e):
 				writeLocal(l, ex(e));
 			case SExpr(e):
@@ -1074,7 +1076,7 @@ class MirBuild extends MirWriter {
 		var i = info();
 		i.t = t;
 		// (as Dynamic: a GC point on the slow path only, which a cold site's
-		// references are rooted around, Facts.markCold)
+		// references are rooted around, Roots)
 		if (Ir.isRef(t)) {
 			f.allocs++;
 			return gcPoint(Untag, I64, i, v).id;

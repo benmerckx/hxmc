@@ -315,8 +315,8 @@ class Lower implements LowerQueries {
 	// replaces the calls of runtime functions implemented in Haxe in fi's
 	// body, and folds the target's constants: `if (Mem.os() == 2) a else b`
 	// keeps one branch (its symbols stay out of the other targets' links).
-	// An expression nothing changes in is kept; the statement lists are new
-	// (Facts.markCold rewrites them in place).
+	// An expression nothing changes in is kept; statement lists are copied
+	// while binding the body's calls and folding target constants.
 	function bindHosts(fi:FuncInfo) {
 		function fold(e:Ex):Ex {
 			return switch e {
@@ -507,7 +507,6 @@ class Lower implements LowerQueries {
 						if (test != null) ex(test(ELocal(c.l)));
 						({test: test == null ? null : x -> ex(test(x)), l: c.l, body: sts(c.body)} : IrCatch);
 					}));
-				case SCold(id, x): SCold(id, st(x));
 				case SPos(_): s;
 			}
 		}

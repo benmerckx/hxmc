@@ -12,8 +12,7 @@ using core.ds.VectorTools;
 // functions (F_<name>), string literals (S_<hash>) and program-wide numbers
 // (TY_*, FID_*, SIG_*, GI_*, DSP_*: absolute symbols in hxmc's objects), lays
 // out objects, assigns type indices and field ids, finds the functions that
-// never reach a GC point and marks the statements whose only GC point is a
-// slow path (SCold). The runtime (hxmc.rt) agrees on every number this way.
+// never reach a GC point. The runtime (hxmc.rt) agrees on every number this way.
 class Facts {
 	public static inline var T_FIRST = 32;
 	// the tag of a closure type: a Dynamic converted to a function type (Lower.dynAdapter, hxmc.rt.Types)
@@ -60,7 +59,6 @@ class Facts {
 		}
 		findNoGc();
 		checkHeapSpans();
-		markCold();
 		checkRawAddresses();
 		assignTypes();
 		collectNames();
@@ -467,8 +465,6 @@ class Facts {
 			case SLoop(body):
 				for (x in body)
 					fs(x);
-			case SCold(_, x):
-				fs(x);
 			case SBreak | SContinue | SPos(_):
 			case SSwitch(e, cases, def):
 				fe(e);
@@ -797,50 +793,6 @@ class Facts {
 		if (errors.length > 0) throw errors.join("\n");
 	}
 
-	// Wraps the statements whose only GC point is an allocation or an array
-	// store's slow path in SCold (functions without try blocks)
-	function markCold() {
-		var next = 0;
-		function gcFree(e:Ex):Bool
-			return GcPoints.gcPoint(e) == 0 && !GcPoints.nestedGc(e);
-		function mark(ss:Vector<Stmt>) {
-			for (k in 0...ss.length) {
-				var st = ss[k];
-				switch st {
-					case SArrSet(_, _, ix, v) if (gcFree(ix) && gcFree(v)):
-						ss[k] = SCold(next++, st);
-					case SArrPush(_, _, v) if (gcFree(v)):
-						ss[k] = SCold(next++, st);
-					case SSet(_, e) if (e.match(ENewObj(_) | ENewEnum(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_)) && !GcPoints.nestedGc(e)):
-						ss[k] = SCold(next++, st);
-					case SSet(_, ECallHost("hxmc_narray_new", args, _)) if (args.filter(a -> !gcFree(a)).length == 0):
-						ss[k] = SCold(next++, st);
-					// (a type parameter's value as Dynamic: boxed on the slow path only)
-					case SSet(_, EUntag(TRef(_), a)) if (gcFree(a)):
-						ss[k] = SCold(next++, st);
-					// (a NativeArray seen as Dynamic: the runtime, on the slow path only)
-					case SSet(_, ECallHost("hxmc_narray_dget", args, _)) | SExpr(ECallHost("hxmc_narray_dset", args, _)) if (args.filter(a -> !gcFree(a)).length == 0):
-						ss[k] = SCold(next++, st);
-					case SIf(_, a, b):
-						mark(a);
-						mark(b);
-					case SLoop(body):
-						mark(body);
-					case SSwitch(_, cases, def):
-						for (c in cases)
-							mark(c.body);
-						mark(def);
-					case _:
-				}
-			}
-		}
-		for (f in p.funcs)
-			if (!f.hasTry && !f.coldMarked) {
-				f.coldMarked = true;
-				mark(f.body);
-			}
-	}
-
 	// (@:hxmc.export("symbol") on a scalar static: that symbol)
 	public function scalarGlobal(g:Int):String
 		return p.globals[g].exp != null ? p.globals[g].exp : "G_" + globalNames[g].substr(3);
@@ -890,6 +842,34 @@ class GcPoints {
 			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): 2;
 			case _: 0;
 		}
+
+	// A statement whose only collection point is a slow path. This is an
+	// analysis fact, not a wrapper in the frontend's expression/statement IR.
+	public static function cold(s:Stmt):Bool
+		return switch s {
+			case SArrSet(_, _, ix, v): free(ix) && free(v);
+			case SArrPush(_, _, v): free(v);
+			case SSet(_, e) if (e.match(ENewObj(_) | ENewEnum(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_))): !nestedGc(e);
+			case SSet(_, ECallHost("hxmc_narray_new", args, _)):
+				allFree(args);
+			case SSet(_, EUntag(TRef(_), a)): free(a);
+			case SSet(_, ECallHost("hxmc_narray_dget", args, _)) | SExpr(ECallHost("hxmc_narray_dset", args, _)):
+				allFree(args);
+			case _: false;
+		}
+
+	static function allFree(args:Vector<Ex>):Bool {
+		var ok = true;
+		for (a in args)
+			if (!free(a)) {
+				ok = false;
+				break;
+			}
+		return ok;
+	}
+
+	static inline function free(e:Ex):Bool
+		return gcPoint(e) == 0 && !nestedGc(e);
 
 	// a GC point nested inside an expression's operands
 	public static function nestedGc(e:Ex):Bool {

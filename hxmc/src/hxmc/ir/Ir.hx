@@ -289,7 +289,6 @@ class FuncInfo {
 	// compiled nor inlined; its gcScan says what that code does
 	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
-	public var coldMarked:Bool = false;
 	// declared @:hxmc.unsafe, @:hxmc.kernel or @:hxmc.blocking: Facts.findNoGc
 	// fails the build unless noGc
 	public var declNoGc:Bool = false;
@@ -462,10 +461,6 @@ enum Stmt {
 	SReturn(e:Null<Ex>);
 	SThrow(e:Ex);
 	STry(body:Vector<Stmt>, catches:Vector<IrCatch>);
-	// (Facts.markCold) a statement whose only GC point is the slow path of an
-	// allocation or array store: the references live across it are stored in
-	// the shadow stack only on that path (hxmc.Roots)
-	SCold(id:Int, s:Stmt);
 	// (Lower.lines) the code of the statements that follow comes from
 	// this line of the source (the typed AST's position); nothing else: every
 	// pass steps over it, so the code is the same as without it
