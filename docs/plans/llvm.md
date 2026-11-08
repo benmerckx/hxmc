@@ -97,12 +97,21 @@ For the program's speed, in order:
 - Function records for LLVM's functions: the symbols and sizes are in the
   object; lines from LLVM's DWARF (`!dbg` from `MIns.pos`), unwind tables
   from its `__compact_unwind`/`.eh_frame` instead of dropping them.
-- Alias information: Mir's memory classes (`MIns.mem`) as TBAA, and
-  pointers kept as `ptr` through `getelementptr` rather than `inttoptr` at
-  each access, so LLVM may keep fields in registers and hoist an array's
-  header out of loops (then the vectorizer). With pointers typed:
-  `noalias` results of allocations, `nonnull` after null tests. Then look
-  at ldp/stp pairing again.
+- Alias information, tried (2026-11-08): Mir's memory classes as TBAA
+  (`HXMC_LLVM_TBAA=1`, or a list of classes: tls, frame, const, hdr,
+  elem, field, global, callonly; fields and shadow-stack slots one type per
+  8-byte slot at a constant offset, as Opt.fieldClass). The corpus passes
+  with it, also under GC stress, but no benchmark changed, so it is off by
+  default. What keeps nbody's loop reloading `this.bodies` and the
+  array's header is not aliasing between accesses but the slow-path call
+  of each array access (`hx_aget_p_slow`: it boxes, so it may collect,
+  which writes the shadow stack and forwarding headers): LLVM must assume
+  it writes everything, and no annotation of it would be true. The native
+  code reloads there too. A gain needs the slow paths out of the loops'
+  memory state: Mir that versions such loops (bounds and kind checked
+  once before the loop), or a GC contract LLVM knows (statepoints, below).
+  Typed pointers (`ptr`, `noalias` allocations, `nonnull` after null
+  tests) wait for that too.
 - Release builds: program-wide numbers as constants (type tests and
   enum switches folded; the objects are no longer reusable across
   builds), and the whole program as one LLVM module (the runtime's fast

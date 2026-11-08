@@ -147,6 +147,32 @@ class LlvmGen {
 		}
 	}
 
+	// the alias classes tagged (HXMC_LLVM_TBAA: a comma-separated list, or 1
+	// for all; default: none). Off: correct on the corpus, but no gain measured
+	// (docs/plans/llvm.md: the loops' slow-path calls reload everything anyway)
+	static final TBAA_ALL = ["tls", "frame", "const", "hdr", "elem", "field", "global", "callonly"];
+	static var tbaaOn:Null<Map<String, Bool>>;
+
+	// the TBAA tag of an access of class c (a type of its own under hxmc's
+	// root, one per thread-local variable: name), or "" when c is not tagged.
+	// Accesses of two different types never alias for LLVM; untagged ones
+	// may alias anything
+	@:allow(hxmc.LlvmGen.FnWriter)
+	function tbaaTag(c:String, name:String, ?parent:String):String {
+		if (tbaaOn == null) {
+			var e = Sys.getEnv("HXMC_LLVM_TBAA");
+			var on = new Map<String, Bool>();
+			for (k in (e == null || e == "" || e == "0" ? [] : e == "1" ? TBAA_ALL : e.split(",")))
+				on.set(StringTools.trim(k), true);
+			tbaaOn = on;
+		}
+		if (!tbaaOn.exists(c)) return "";
+		var root = md('!{!"hxmc"}');
+		var up = parent == null ? root : md('!{!"$parent", $root, i64 0}');
+		var ty = md('!{!"$name", $up, i64 0}');
+		return ", !tbaa " + md('!{$ty, $ty, i64 0}');
+	}
+
 	// a metadata node (by its text, once per module): its reference
 	@:allow(hxmc.LlvmGen.FnWriter)
 	function md(text:String):String {
@@ -553,11 +579,11 @@ private class FnWriter {
 				line('$d = ptrtoint ptr getelementptr (i8, ptr ${LlvmGen.symName(i.sym)}, i64 ${i.imm}) to i64');
 			case TlsLoad:
 				g.useSym(i.sym, 3);
-				line('$d = load i64, ptr ${tlsAddr(i.sym)}, align 8');
+				line('$d = load i64, ptr ${tlsAddr(i.sym)}, align 8${g.tbaaTag("tls", "tls." + i.sym)}');
 			case TlsStore:
 				g.useSym(i.sym, 3);
 				var val = vt(i.a, bl);
-				line('store $val, ptr ${tlsAddr(i.sym)}, align 8');
+				line('store $val, ptr ${tlsAddr(i.sym)}, align 8${g.tbaaTag("tls", "tls." + i.sym)}');
 			case StackAddr:
 				line('$d = ptrtoint ptr %slot${i.imm} to i64');
 			case Copy:
@@ -634,10 +660,10 @@ private class FnWriter {
 				var p = ptr(i, bl);
 				var mt = memTy(i.ty, i.size);
 				if (mt == T) {
-					line('$d = load $T, ptr $p, align 1');
+					line('$d = load $T, ptr $p, align 1${tbaa(i)}');
 				} else {
 					var x = t();
-					line('$x = load $mt, ptr $p, align 1');
+					line('$x = load $mt, ptr $p, align 1${tbaa(i)}');
 					line(i.ty == F64 ? '$d = fpext float $x to double' : '$d = ${i.signed ? "sext" : "zext"} $mt $x to $T');
 				}
 			case Store:
@@ -650,7 +676,7 @@ private class FnWriter {
 					line(vi.ty == F64 ? '$x = fptrunc double $val to float' : '$x = trunc ${LlvmGen.ty(vi.ty)} $val to $mt');
 					val = x;
 				}
-				if (i.release && i.size == 8) line('store atomic $mt $val, ptr $p release, align 8') else line('store $mt $val, ptr $p, align 1');
+				if (i.release && i.size == 8) line('store atomic $mt $val, ptr $p release, align 8${tbaa(i)}') else line('store $mt $val, ptr $p, align 1${tbaa(i)}');
 			case Call:
 				call(bl, i, d);
 			case Jmp:
@@ -751,6 +777,39 @@ private class FnWriter {
 			case _:
 				throw "hxmc: llvm: unknown special " + i.sym;
 		}
+	}
+
+	// a load's or store's alias class (Opt's memory classes, MIns.mem): none
+	// for MOther (anything) and MInit (a fresh object's stores, which loads
+	// of another class read back)
+	function tbaa(i:MIns):String {
+		var c = switch i.mem {
+			case 1: "hdr"; // Opt.MHdr
+			case 2: "elem"; // Opt.MElem
+			case 3: "field"; // Opt.MField
+			case 4: "global"; // Opt.MGlobal
+			case 5: "callonly"; // Opt.MCallOnly
+			case 6: "frame"; // Opt.MFrame
+			case 7: "const"; // Opt.MConst
+			case _: null;
+		}
+		if (c == null) return "";
+		// (fields and shadow-stack slots at a constant offset from their base:
+		// one type per 8-byte slot under the class's, as Opt.fieldClass:
+		// objects do not overlap and a field is read at its own offset; at
+		// dynamic offsets the class's own type, which aliases them all)
+		if ((c == "field" || c == "frame") && i.b < 0) return g.tbaaTag(c, c + "." + ((i.imm + dispOf(i.a)) >> 3), c);
+		return g.tbaaTag(c, c);
+	}
+
+	// the constant added to an address (Opt.dispOf)
+	function dispOf(a:Int):Int {
+		var x = f.vals[res(a)];
+		if (x.op == Add && x.ty == I64) {
+			var c = f.vals[res(x.b)];
+			if (c.op == Const && c.sym == null && c.imm2 == (c.imm < 0 ? -1 : 0)) return c.imm;
+		}
+		return 0;
 	}
 
 	// a branch's weights when some of its targets are slow paths (MBlock.cold:
