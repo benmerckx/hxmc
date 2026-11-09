@@ -200,7 +200,7 @@ class MacroRuntime {
 			if (!nothing) return null;
 			context.Typecore.unify(ctx, ctx.t.tvoid, ret, p);
 		}
-		cf.cfMeta.push({meta: Custom(META), exprs: vector(), pos: p});
+		cf.cfMeta = core.ds.VectorTools.snoc(cf.cfMeta, ({meta: Custom(META), exprs: vector(), pos: p} : core.Ast.MetadataEntry));
 		var msg = core.Globals.sTypePath(c.clPath) + "." + cf.cfName + " is the compiler's native code (hxmc.interp.MacroRuntime): its body was not typed";
 		var b = ctx.t;
 		var tf:TFunc = {

@@ -114,7 +114,7 @@ class TypeloadModule {
 			types.push(t);
 		}
 		inline function checkName(name:String, meta:Metadata, alsoStatics:Bool, p:Pos):Void {
-			DeprecationCheck.checkIs(com, ctx.m.curmod, meta, [], name, meta, p);
+			DeprecationCheck.checkIs(com, ctx.m.curmod, meta, vector(), name, meta, p);
 			inline function duplicate(previous:Pos):Void Error.raiseTypingErrorExt(Error.makeError(Custom("Name " + name
 				+ " is already defined in this module"), p,
 				[Error.makeError(Custom(complMsg("Previous declaration here")), previous)]));
@@ -138,7 +138,7 @@ class TypeloadModule {
 				+ " is not ready to be accessed, separate your type declarations in several files", p);
 			c.clPrivate = priv;
 			c.clDoc = d.doc;
-			c.clMeta = d.meta.copy();
+			c.clMeta = d.meta;
 			for (flag in d.flags) switch flag {
 				case HAbstract:
 					addClassFlag(c, CAbstract);
@@ -174,7 +174,7 @@ class TypeloadModule {
 					var priv = d.flags.has(EPrivate),
 						en = mkEnum(m, makePath(d.name.name, priv, d.meta, p), p, d.name.pos);
 					en.eDoc = d.doc;
-					en.eMeta = d.meta.copy();
+					en.eMeta = d.meta;
 					en.ePrivate = priv;
 					if (d.flags.has(EExtern)) addEnumFlag(en, EnExtern);
 					else checkTypeName(d.name.name, d.meta, p);
@@ -186,7 +186,7 @@ class TypeloadModule {
 						td = mkTypedef(m, makePath(d.name.name, priv, d.meta, p), p, d.name.pos, mkMono());
 					td.tDoc = d.doc;
 					td.tPrivate = priv;
-					td.tMeta = d.meta.copy();
+					td.tMeta = d.meta;
 					// failsafe in case the typedef is not initialized (see #3933)
 					delay(ctx.g, PBuildModule, function() {
 						switch td.tType {
@@ -211,7 +211,7 @@ class TypeloadModule {
 						aParams: vector(),
 						aUsing: [],
 						aRestore: function() {},
-						aMeta: d.meta.copy(),
+						aMeta: d.meta,
 						aFrom: [],
 						aTo: [],
 						aFromField: [],
@@ -228,7 +228,7 @@ class TypeloadModule {
 						aExtern: d.flags.has(AbExtern),
 						aEnum: d.flags.has(AbEnum) || enumPos != null};
 					if (enumPos == null) {
-						if (a.aEnum) a.aMeta.unshift({meta: MetaTag.Enum, exprs: vector(), pos: nullPos}); // HAXE5: remove
+						if (a.aEnum) a.aMeta = VectorTools.cons(({meta: MetaTag.Enum, exprs: vector(), pos: nullPos} : MetadataEntry), a.aMeta); // HAXE5: remove
 					} else Common.moduleWarning(com, ctx.m.curmod, WDeprecatedEnumAbstract, Warning.fromMeta(d.meta),
 						"`@:enum abstract` is deprecated in favor of `enum abstract`", enumPos);
 					add(decl, TAbstractDecl(a));
@@ -242,8 +242,8 @@ class TypeloadModule {
 							case _:
 						}
 						var fields = d.data.map(function(f) return TypeloadFields.transformAbstractField(com, thisType, aType, a, f)),
-							meta:Metadata = [];
-						if (MetadataTools.has(MetaTag.Dce, a.aMeta)) meta.unshift({meta: MetaTag.Dce, exprs: vector(), pos: nullPos});
+							meta:Metadata = vector();
+						if (MetadataTools.has(MetaTag.Dce, a.aMeta)) meta = VectorTools.cons(({meta: MetaTag.Dce, exprs: vector(), pos: nullPos} : MetadataEntry), meta);
 						var cd:ClassDefinition = {
 							name: {name: d.name.name + "_Impl_", pos: d.name.pos},
 							flags: vector(HPrivate),
@@ -273,7 +273,7 @@ class TypeloadModule {
 					data: haxe.ds.Vector.fromArrayCopy(fields),
 					doc: null,
 					params: vector(),
-					meta: []
+					meta: vector()
 				},
 				c = makeClass(d, p);
 			if (m.mStatics != null) throw "Module statics already initialized";
@@ -328,7 +328,7 @@ class TypeloadModule {
 		switch c.clKind {
 			case KAbstractImpl(_):
 			case _:
-				TypeloadCheck.checkGlobalMetadata(ctx, c.clMeta, function(meta) c.clMeta = [meta].concat(c.clMeta), c.clModule.mPath,
+				TypeloadCheck.checkGlobalMetadata(ctx, c.clMeta, function(meta) c.clMeta = VectorTools.cons(meta, c.clMeta), c.clModule.mPath,
 					c.clPath, null);
 		}
 		for (meta in d.meta) if (Type.enumEq(meta.meta, MetaTag.Final)) addClassFlag(c, CFinal);
@@ -450,7 +450,7 @@ class TypeloadModule {
 			&& core.display.DisplayPosition.displayPosition.enclosedIn(d.name.pos)) context.display.DisplayEmitter.displayModuleType(ctx,
 				TEnumDecl(e), d.name.pos);
 		var local = TyperManager.cloneForEnum(ctx, e);
-		TypeloadCheck.checkGlobalMetadata(local, e.eMeta, function(meta) e.eMeta = [meta].concat(e.eMeta), e.eModule.mPath, e.ePath, null);
+		TypeloadCheck.checkGlobalMetadata(local, e.eMeta, function(meta) e.eMeta = VectorTools.cons(meta, e.eMeta), e.eModule.mPath, e.ePath, null);
 		var constructs = d.data;
 		function getConstructs():Array<ClassField> return [
 			for (c in constructs) {
@@ -461,7 +461,7 @@ class TypeloadModule {
 					fArgs: c.ecArgs.map(arg -> ({
 						name: {name: arg.name, pos: nullPos},
 						optional: arg.optional,
-						meta: [],
+						meta: vector(),
 						type: arg.type,
 						expr: null
 					} : FuncArg))
@@ -525,7 +525,7 @@ class TypeloadModule {
 		}
 		e.eNames = names;
 		Typecore.unify(local, TType(enumModuleType(e), vector()), e.eType, p);
-		if (flat.value) e.eMeta = [({meta: MetaTag.FlatEnum, exprs: vector(), pos: nullPos} : MetadataEntry)].concat(e.eMeta);
+		if (flat.value) e.eMeta = VectorTools.cons(({meta: MetaTag.FlatEnum, exprs: vector(), pos: nullPos} : MetadataEntry), e.eMeta);
 		if (MetadataTools.has(MetaTag.InheritDoc, e.eMeta)) delay(local.g, PConnectField, function() InheritDoc.buildEnumDoc(local, e));
 		if (local.com.platform == Jvm && !hasEnumFlag(e, EnExtern)) delay(local.g, PTypeField, function() {
 			e.eMeta = StrictMeta.checkStrictMeta(local, e.eMeta).concat(e.eMeta);
@@ -542,7 +542,7 @@ class TypeloadModule {
 		if (ctx.m.isDisplayFile
 			&& core.display.DisplayPosition.displayPosition.enclosedIn(d.name.pos)) context.display.DisplayEmitter.displayModuleType(ctx,
 				TTypeDecl(t), d.name.pos);
-		TypeloadCheck.checkGlobalMetadata(ctx, t.tMeta, function(meta) t.tMeta = [meta].concat(t.tMeta), t.tModule.mPath, t.tPath, null);
+		TypeloadCheck.checkGlobalMetadata(ctx, t.tMeta, function(meta) t.tMeta = VectorTools.cons(meta, t.tMeta), t.tModule.mPath, t.tPath, null);
 		var local = TyperManager.cloneForTypedef(ctx, t),
 			type = Typeload.loadComplexType(local, true, LoadNormal, d.data);
 		var result = switch d.data.type {
@@ -588,11 +588,11 @@ class TypeloadModule {
 		if (ctx.m.isDisplayFile
 			&& core.display.DisplayPosition.displayPosition.enclosedIn(d.name.pos)) context.display.DisplayEmitter.displayModuleType(ctx,
 				TAbstractDecl(a), d.name.pos);
-		TypeloadCheck.checkGlobalMetadata(ctx, a.aMeta, function(meta) a.aMeta = [meta].concat(a.aMeta), a.aModule.mPath, a.aPath, null);
+		TypeloadCheck.checkGlobalMetadata(ctx, a.aMeta, function(meta) a.aMeta = VectorTools.cons(meta, a.aMeta), a.aModule.mPath, a.aPath, null);
 		if (a.aImpl != null) for (meta in a.aMeta) switch (meta.meta : MetaTag) {
 			case Using | Build | CoreApi | Allow | Access | Enum | Dce | Native | HlNative | JsRequire | PythonImport | Expose |
 				Deprecated | PhpGlobal | PublicFields:
-				a.aImpl.clMeta.unshift(meta);
+				a.aImpl.clMeta = VectorTools.cons(meta, a.aImpl.clMeta);
 			case _:
 		}
 		var local = TyperManager.cloneForAbstract(ctx, a), isType = false;

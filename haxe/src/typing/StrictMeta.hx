@@ -200,11 +200,11 @@ class StrictMeta {
 	}
 
 	public static function checkStrictMeta(ctx:TyperContext, metas:Metadata):Metadata {
-		if (ctx.com.platform != Jvm) return [];
-		var ret = [];
+		if (ctx.com.platform != Jvm) return vector();
+		var ret:Array<MetadataEntry> = [];
 		for (m in metas) if (m.meta == MetaTag.Strict) try {
 			ret.unshift(getStrictMeta(ctx, MetaTag.Meta, m.exprs, m.pos));
 		} catch (_:core.ds.Exit) {}
-		return ret;
+		return Vector.fromArrayCopy(ret);
 	}
 }

@@ -757,7 +757,7 @@ class Grammar {
 			definition: EClass({
 				name: name,
 				doc: null,
-				meta: [],
+				meta: vector(),
 				params: Vector.fromArrayCopy(tl),
 				flags: Vector.fromArrayCopy(cf.flags.concat(hl)),
 				data: Vector.fromArrayCopy(r.fields)
@@ -1145,7 +1145,7 @@ class Grammar {
 		var acc = [];
 		while (true) {
 			var r = tryHead(function() return parseMetaEntry(ctx, s));
-			if (r == null) return acc;
+			if (r == null) return haxe.ds.Vector.fromArrayCopy(acc);
 			acc.push(r.v);
 		}
 	}
@@ -1551,7 +1551,7 @@ class Grammar {
 			return ([
 				{
 					cffName: pn(name, p1),
-					cffMeta: opt ? ([{meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos}] : Array<MetadataEntry>) : [],
+					cffMeta: opt ? (vector(({meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos} : MetadataEntry)) : Metadata) : vector(),
 					cffAccess: [],
 					cffDoc: null,
 					cffKind: FVar(t, null),
@@ -1714,7 +1714,7 @@ class Grammar {
 		inline function checkOptional(opt:Bool, name:PlacedName):Metadata {
 			if (opt) {
 				if (owner != FOStructure) Parser.syntaxError(ctx, Custom("?var syntax is only allowed in structures"), s, null, name.pos);
-				return ([{meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos}] : Array<core.Ast.MetadataEntry>).concat(meta);
+				return VectorTools.cons(({meta: StrictMeta.Optional, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry), meta);
 			}
 			return meta;
 		}
@@ -1815,13 +1815,11 @@ class Grammar {
 								pos: punion(po, c.pos),
 								kind: FFun(f),
 								access: al,
-								meta: ([
-									{
-										meta: StrictMeta.DisplayOverride,
-										exprs: vector(),
-										pos: Globals.nullPos
-									}
-								] : Array<core.Ast.MetadataEntry>).concat(meta)
+								meta: VectorTools.cons(({
+									meta: StrictMeta.DisplayOverride,
+									exprs: vector(),
+									pos: Globals.nullPos
+								} : core.Ast.MetadataEntry), meta)
 							};
 						case _:
 							return serror();
@@ -2417,7 +2415,7 @@ class Grammar {
 				Parser.syntaxError(ctx, Custom("Invalid argument name"), s, ({
 					name: pn("", Globals.nullPos),
 					optional: false,
-					meta: [],
+					meta: vector(),
 					type: null,
 					expr: null
 				} : core.Ast.FuncArg), e.pos);
@@ -2425,7 +2423,7 @@ class Grammar {
 				{
 					name: pn(n, e.pos),
 					optional: false,
-					meta: [],
+					meta: vector(),
 					type: null,
 					expr: null
 				};
@@ -2434,7 +2432,7 @@ class Grammar {
 				{
 					name: r.np,
 					optional: true,
-					meta: [],
+					meta: vector(),
 					type: r.t,
 					expr: e2
 				};
@@ -2443,7 +2441,7 @@ class Grammar {
 				{
 					name: r.np,
 					optional: false,
-					meta: [],
+					meta: vector(),
 					type: r.t,
 					expr: null
 				};
@@ -2738,7 +2736,7 @@ class Grammar {
 					({
 						name: a0.name,
 						optional: true,
-						meta: [],
+						meta: vector(),
 						type: a0.type,
 						expr: a0.expr
 					} : FuncArg)
@@ -2781,7 +2779,7 @@ class Grammar {
 						({
 							name: np,
 							optional: false,
-							meta: [],
+							meta: vector(),
 							type: t,
 							expr: null
 						} : FuncArg)
@@ -2796,7 +2794,7 @@ class Grammar {
 									({
 										name: pn(n, e.pos),
 										optional: true,
-										meta: [],
+										meta: vector(),
 										type: t,
 										expr: ea1
 									} : FuncArg)

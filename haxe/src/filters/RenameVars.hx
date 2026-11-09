@@ -442,18 +442,16 @@ class RenameVars {
 	public static function maybeRenameVar(rc:RenameContext, vars:StringMap<PersistentIntMap<TVar>>, reserved:ReservedNames, entry:{variable:TVar, overlaps:Overlaps}):Void {
 		var v = entry.variable;
 		inline function commit(name:String):Void {
-			v.vMeta = ([
-				{
-					meta: core.MetaList.StrictMeta.RealPath,
-					exprs: vector(
-						{
-							expr: EConst(String(v.vName, SDoubleQuotes)),
-							pos: Globals.nullPos
-						}
-					),
-					pos: Globals.nullPos
-				}
-			] : core.Ast.Metadata).concat(v.vMeta);
+			v.vMeta = core.ds.VectorTools.cons(({
+				meta: core.MetaList.StrictMeta.RealPath,
+				exprs: vector(
+					{
+						expr: EConst(String(v.vName, SDoubleQuotes)),
+						pos: Globals.nullPos
+					}
+				),
+				pos: Globals.nullPos
+			} : core.Ast.MetadataEntry), v.vMeta);
 			// removes v under its old name
 			VarsByName.remove(vars, v);
 			v.vName = name;

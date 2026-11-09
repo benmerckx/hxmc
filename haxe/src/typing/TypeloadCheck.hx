@@ -112,13 +112,13 @@ class TypeloadCheck {
 			PurityStateTools.getPurityFromMeta(f1.cfMeta)
 		] {
 			case [Pure, MaybePure]:
-				f1.cfMeta.unshift({
+				f1.cfMeta = core.ds.VectorTools.cons(({
 					meta: MetaTag.Pure,
 					exprs: vector({expr: EConst(Ident("expect")), pos: mkZeroRangePos(f2.cfPos)}),
 					pos: Globals.nullPos
-				});
+				} : MetadataEntry), f1.cfMeta);
 			case [ExpectPure(p), MaybePure]:
-				f1.cfMeta.unshift({meta: MetaTag.Pure, exprs: vector({expr: EConst(Ident("expect")), pos: p}), pos: Globals.nullPos});
+				f1.cfMeta = core.ds.VectorTools.cons(({meta: MetaTag.Pure, exprs: vector({expr: EConst(Ident("expect")), pos: p}), pos: Globals.nullPos} : MetadataEntry), f1.cfMeta);
 			case _:
 		}
 		switch [f1.cfKind, f2.cfKind] {
@@ -210,9 +210,10 @@ class TypeloadCheck {
 	}
 
 	public static function copyMeta(source:Metadata, target:Metadata, selected:Array<core.MetaList.StrictMeta>):Metadata {
-		var result = target.copy();
-		for (m in source) if (selected.contains(m.meta)) result.unshift(m);
-		return result;
+		// port: the entries taken, last first, then `target`
+		var added:Array<MetadataEntry> = [];
+		for (m in source) if (selected.contains(m.meta)) added.unshift(m);
+		return added.length == 0 ? target : core.ds.VectorTools.prependArray(target, added);
 	}
 
 	public static function checkNativeNameOverride(ctx:Typer, child:TClassField, base:TClassField):Void {
@@ -729,16 +730,20 @@ class Inheritance {
 			oldMeta = c.clMeta,
 			hasInterf = false;
 		inline function processMeta(csup:TClass):Void {
-			var list = csup.clMeta.copy();
-			list.reverse();
-			for (m in list) if (m.meta == MetaTag.AutoBuild) c.clMeta = ([
-				{
-					meta: MetaTag.Build,
-					exprs: m.exprs,
-					pos: mkZeroRangePos(c.clPos)
-				},
-				m
-			] : Array<core.Ast.MetadataEntry>).concat(c.clMeta);
+			var list = csup.clMeta;
+			// port: List.rev csup.cl_meta, walked by index
+			var i = list.length;
+			while (i-- > 0) {
+				var m = list[i];
+				if (m.meta == MetaTag.AutoBuild) c.clMeta = core.ds.VectorTools.prependArray(c.clMeta, [
+					({
+						meta: MetaTag.Build,
+						exprs: m.exprs,
+						pos: mkZeroRangePos(c.clPos)
+					} : MetadataEntry),
+					m
+				]);
+			}
 			var isParam = switch c.clKind {
 				case KTypeParameter(_): true;
 				case _: false;

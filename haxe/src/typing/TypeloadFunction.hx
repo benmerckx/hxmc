@@ -312,7 +312,7 @@ class TypeloadFunction {
 			var cf = mkField("new", constr.etype, p, Globals.nullPos);
 			cf.cfExpr = constr;
 			cf.cfType = constr.etype;
-			cf.cfMeta = [{meta: MetaTag.CompilerGenerated, exprs: vector(), pos: Globals.nullPos}];
+			cf.cfMeta = vector(({meta: MetaTag.CompilerGenerated, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry));
 			cf.cfKind = Method(MethNormal);
 			c.clConstructor = cf;
 		}

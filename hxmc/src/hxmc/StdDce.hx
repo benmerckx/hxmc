@@ -38,13 +38,13 @@ class StdDce {
 						if (StringTools.startsWith(file, r)) return true;
 					return false;
 				}
-				function mark(ml:core.Ast.Metadata) {
-					if (!core.Meta.has(Dce, ml)) ml.push(new core.Ast.MetadataEntry(core.MetaList.StrictMeta.Dce, core.ds.VectorTools.vector(), core.Globals.nullPos));
-				}
+				function mark(ml:core.Ast.Metadata):core.Ast.Metadata
+					return core.Meta.has(Dce, ml) ? ml : core.ds.VectorTools.snoc(ml,
+						new core.Ast.MetadataEntry(core.MetaList.StrictMeta.Dce, core.ds.VectorTools.vector(), core.Globals.nullPos));
 				for (t in types)
 					switch t {
-						case TClassDecl(c) if (isOverride(c.clModule)): mark(c.clMeta);
-						case TEnumDecl(e) if (isOverride(e.eModule)): mark(e.eMeta);
+						case TClassDecl(c) if (isOverride(c.clModule)): c.clMeta = mark(c.clMeta);
+						case TEnumDecl(e) if (isOverride(e.eModule)): e.eMeta = mark(e.eMeta);
 						case _:
 					}
 			});

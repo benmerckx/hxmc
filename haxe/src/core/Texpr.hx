@@ -1264,7 +1264,7 @@ class Texpr {
 		}
 		inline function filter(l:Array<{name:String, meta:Metadata}>):Array<{name:String, meta:Metadata}> return l.map(a -> {
 			name: a.name,
-			meta: a.meta.filter(m -> switch m.meta {
+			meta: VectorTools.filter(a.meta, m -> switch m.meta {
 				case core.MetaList.StrictMeta.Custom(s): s.length > 0 && s.charAt(0) != ":";
 				case _: false;
 			})
@@ -1276,7 +1276,7 @@ class Texpr {
 			return {name: n, pos: Globals.nullPos, quote: NoQuotes};
 		inline function makeMetaField(ml:Metadata):TExpr {
 			var seen = new haxe.ds.StringMap<Bool>();
-			return mk(TObjectDecl(VectorTools.mapToVector(ml, m -> {
+			return mk(TObjectDecl(ml.map(m -> {
 				var name = switch m.meta {
 					case core.MetaList.StrictMeta.Custom(s): s;
 					case _: throw "Texpr.buildMetadata";

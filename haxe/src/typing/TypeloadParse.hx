@@ -225,7 +225,7 @@ class TypeloadParse {
 			for (cp in classPaths.getStdPaths()) if (UniqueKey.startsWith(key, com.partScope.fileKeys.get(cp.path))) throw NotFound.raise();
 		}
 		if (forbidden) {
-			var meta:Metadata = [];
+			var meta:Metadata = vector();
 			switch parseHook(com, rfile, p) {
 				case ParseSuccess(data, _):
 					for (decl in data.declarations) {
@@ -304,7 +304,7 @@ class TypeloadParse {
 					definition: ETypedef({
 						name: name,
 						doc: null,
-						meta: [],
+						meta: vector(),
 						params: params,
 						flags: priv ? vector(TDPrivate) : vector(),
 						data: AstTools.makePtpTh(tp, name.pos)
@@ -375,7 +375,7 @@ Note: this syntax does not parse with Haxe versions earlier than 4.0.0-rc.3,
 so it should be avoided if backwards-compatibility with earlier versions is needed.
 
 @see https://semver.org/"),
-						cfMeta: [],
+						cfMeta: vector(),
 						cfKind: Method(MethNormal),
 						cfParams: vector(),
 						cfExpr: null,

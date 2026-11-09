@@ -71,5 +71,8 @@ hxml eval-customExt-compile2 haxe/upstream/tests/misc/eval/projects/customExt co
 hxml eval-recursive-callbacks-compile haxe/upstream/tests/misc/eval/projects/recursive-callbacks compile.hxml
 
 # The port's own (haxe/test/conformance): Type.createInstance in macro code, a
-# typing error caught as a haxe.macro.Error (Mir macros: make mir-macros-check).
+# typing error caught as a haxe.macro.Error (Mir macros: make mir-macros-check);
+# the metadata of an interface field and of its implicit copy after @:native
+# (the macro prints it after generation: the interp lane compares it).
 hxml macro-create-instance haxe/test/conformance/macro-create-instance build.hxml
+hxml shared-field-meta haxe/test/conformance/shared-field-meta build.hxml

@@ -56,7 +56,7 @@ class CoroFromTexpr {
 		var meta = switch Texpr.skip(e1).eexpr {
 			case TField(_, FStatic(_, cf)) | TField(_, FInstance(_, _, cf)) | TField(_, FClosure(_, cf)) | TField(_, FAnon(cf)): cf.cfMeta;
 			case TLocal(v): v.vMeta;
-			case _: [];
+			case _: vector();
 		};
 		return CoroConfig.ofMetaList(meta).outcome;
 	}

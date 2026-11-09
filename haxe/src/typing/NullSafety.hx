@@ -1,5 +1,7 @@
 package typing;
 
+import core.ds.VectorTools.vector;
+
 import core.Texpr;
 import core.Texpr.DeadEnd;
 import core.Error;
@@ -297,7 +299,7 @@ class NullSafety {
 		will return `[ [@:meta1], [], [@:meta2] ]`
 	*/
 	public static function getArgumentsMeta(callee:TExpr, count:Int):Array<Metadata> {
-		inline function empty():Array<Metadata> return [for (_ in 0...count) []];
+		inline function empty():Array<Metadata> return [for (_ in 0...count) vector()];
 		return switch callee.eexpr {
 			case TField(_, FAnon(cf) | FClosure(_, cf) | FStatic(_, cf) | FInstance(_, _, cf)): try {
 					var meta = getMeta(MetaTag.HaxeArguments, cf.cfMeta);
@@ -1179,7 +1181,7 @@ class ExprChecker {
 			case TConst(TNull): true;
 			case TConst(_): false;
 			case TParenthesis(e): isNullableExpr(e);
-			case TMeta(meta, _) if (NullSafety.containsUnsafeMeta([meta])): false;
+			case TMeta(meta, _) if (NullSafety.containsUnsafeMeta(vector(meta))): false;
 			case TMeta(_, e): isNullableExpr(e);
 			case TThrow(_) | TReturn(_) | TContinue | TBreak: false;
 			case TBinop(OpAssign | OpAssignOp(_), _, right): isNullableExpr(right);
@@ -1318,9 +1320,9 @@ class ExprChecker {
 			checkThrow(inner, e.epos);
 		case TCast(inner, _):
 			checkCast(inner, e.etype, e.epos);
-		case TMeta(meta, _) if (NullSafety.containsUnsafeMeta([meta])):
+		case TMeta(meta, _) if (NullSafety.containsUnsafeMeta(vector(meta))):
 		case TMeta(meta = {meta: MetaTag.NullSafety}, inner):
-			NullSafety.validateSafetyMeta(report, m, [meta]);
+			NullSafety.validateSafetyMeta(report, m, vector(meta));
 			checkExpr(inner);
 		case TMeta(_, inner):
 			checkExpr(inner);
@@ -1646,7 +1648,7 @@ class ClassChecker {
 		m = cls.clModule;
 		clsMeta = cls.clMeta.concat(switch cls.clKind {
 			case KAbstractImpl(a): a.aMeta;
-			case _: [];
+			case _: vector();
 		});
 		isSafeClass = NullSafety.safetyEnabled(clsMeta);
 		// TODO: field meta
@@ -1820,7 +1822,7 @@ class ClassChecker {
 					maybeError(mode, 'Cannot use "this" until all instance fields are initialized.', e.epos);
 				case TMeta(meta = {meta: MetaTag.NullSafety}, inner):
 					// Extract the safety mode from the metadata and apply it
-					var metaMode = NullSafety.getSafetyMode([meta]);
+					var metaMode = NullSafety.getSafetyMode(vector(meta));
 					Texpr.iter(function(e) loop(metaMode, e), inner);
 				case TMeta(_, inner):
 					Texpr.iter(function(e) loop(mode, e), inner);
@@ -1854,7 +1856,7 @@ class ClassChecker {
 				case TMeta(meta = {meta: MetaTag.NullSafety}, inner):
 					// When @:nullSafety(...) wraps an assignment, unwrap and process the assignment
 					// with the appropriate safety mode for the right-hand side
-					traverse(list, NullSafety.getSafetyMode([meta]), inner);
+					traverse(list, NullSafety.getSafetyMode(vector(meta)), inner);
 				case TMeta(_, inner):
 					// For other metadata, just unwrap and continue
 					traverse(list, mode, inner);

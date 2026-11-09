@@ -313,7 +313,8 @@ enum ImportMode {
 	public inline function clone():MetadataEntry return new MetadataEntry(meta, exprs, pos);
 }
 
-typedef Metadata = Array<MetadataEntry>;
+// port: a Vector, replaced (never extended) as upstream's immutable lists are, so a copy keeps its own
+typedef Metadata = Vector<MetadataEntry>;
 typedef Documentation = Null<DocBlock>;
 
 /**
@@ -908,7 +909,7 @@ class Ast {
 			evStatic: isStatic,
 			evType: type,
 			evExpr: expr,
-			evMeta: meta == null ? [] : meta
+			evMeta: meta == null ? vector() : meta
 		};
 
 	/* Type path related functions */
@@ -1027,7 +1028,7 @@ class Ast {
 	}
 
 	public static function getMetaString(meta:Metadata, key:core.MetaList.StrictMeta):Null<String> {
-		for (entry in meta) if (core.Meta.has(key, [entry]) && entry.exprs.length == 1) switch entry.exprs[0].expr {
+		for (entry in meta) if (core.Meta.metaEq(key, entry.meta) && entry.exprs.length == 1) switch entry.exprs[0].expr {
 			case EConst(String(name, _)):
 				return name;
 			case _:
@@ -1055,7 +1056,7 @@ class Ast {
 			evStatic: staticValue,
 			evType: type,
 			evExpr: expr,
-			evMeta: meta == null ? [] : meta
+			evMeta: meta == null ? vector() : meta
 		};
 
 	public static function makePtp(path:TypePath, posFull:Pos,

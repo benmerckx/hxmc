@@ -91,9 +91,7 @@ class ClassFieldInfos {
 		var index = infos.infos.length;
 		infos.infos.push(info);
 		var np = Globals.nullPos;
-		cf.cfMeta = [
-			({meta: meta, exprs: vector(), pos: new Pos(np.pfile, index, np.pmax)} : MetadataEntry)
-		].concat(cf.cfMeta);
+		cf.cfMeta = VectorTools.cons(({meta: meta, exprs: vector(), pos: new Pos(np.pfile, index, np.pmax)} : MetadataEntry), cf.cfMeta);
 	}
 }
 
@@ -371,7 +369,7 @@ class HxbReader {
 	}
 
 	public function readMetadata():Metadata {
-		return readList(readMetadataEntry);
+		return readVector(readMetadataEntry);
 	}
 
 	// References
@@ -2344,7 +2342,7 @@ class HxbReader {
 						ef.efIndex = index;
 						// port: fresh list values: Haxe arrays are mutable, OCaml lists are not.
 						ef.efParams = vector();
-						ef.efMeta = [];
+						ef.efMeta = vector();
 						return ef;
 					}
 					var acc = new haxe.ds.StringMap<TEnumField>();

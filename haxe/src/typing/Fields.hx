@@ -145,7 +145,7 @@ class Fields {
 				case Method(_):
 					var meta = switch fa {
 						case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): c.clMeta;
-						case _: [];
+						case _: vector();
 					};
 					if (Meta.has(MetaTag.NoClosure,
 						meta) || Meta.has(MetaTag.NoClosure,
@@ -708,7 +708,7 @@ class Fields {
 		var fields = new haxe.ds.StringMap<TClassField>();
 		if (args != null) for (arg in args) {
 			var cf = mkField(arg.name, arg.type, arg.pos, arg.pos);
-			if (arg.optional) cf.cfMeta = [{meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos}];
+			if (arg.optional) cf.cfMeta = vector(({meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry));
 			cf.cfDoc = docFromStringOpt(arg.doc);
 			fields.set(cf.cfName, cf);
 		}

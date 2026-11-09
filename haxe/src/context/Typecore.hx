@@ -513,7 +513,7 @@ class TyperManager {
 		curfield: cf,
 		vthis: null,
 		isUntyped: false,
-		meta: [],
+		meta: vector(),
 		inDisplay: false,
 		inCallArgs: false
 	};

@@ -696,7 +696,7 @@ class Typeload {
 					cf.cfKind = kind;
 					cf.cfParams = params;
 					cf.cfDoc = f.cffDoc;
-					cf.cfMeta = f.cffMeta.copy();
+					cf.cfMeta = f.cffMeta;
 					if (isFinal) addClassFieldFlag(cf, CfFinal);
 					initMetaOverloads(ctx, null, cf);
 					if (ctx.m.isDisplayFile) {
@@ -771,7 +771,7 @@ class Typeload {
 	public static function initMetaOverloads(ctx:Typer, co:Null<TClass>, cf:TClassField):Void {
 		var overloads:Array<TClassField> = [],
 			baseMeta = cf.cfMeta.filter(m -> m.meta != MetaTag.Overload && m.meta != MetaTag.Value),
-			kept:Metadata = [];
+			kept:Array<MetadataEntry> = [];
 		for (m in cf.cfMeta) switch m {
 			case {meta: MetaTag.Overload, exprs: [{expr: EFunction(kind, f), pos: p}]}:
 				switch kind {
@@ -802,8 +802,8 @@ class Typeload {
 				var overloadField = core.ds.Record.copy(cf);
 				overloadField.cfType = TFun({args: args, ret: optionalType(LoadReturn, f.fType)});
 				overloadField.cfParams = params;
-				overloadField.cfMeta = baseMeta.copy();
-				generateArgsMeta(ctx.com, co, m -> overloadField.cfMeta.unshift(m), f.fArgs);
+				overloadField.cfMeta = baseMeta;
+				generateArgsMeta(ctx.com, co, m -> overloadField.cfMeta = VectorTools.cons(m, overloadField.cfMeta), f.fArgs);
 				overloads.unshift(overloadField);
 				ctx.typeParams = old;
 			case {meta: MetaTag.Overload, exprs: []} if (ctx.com.config.pfOverload):
@@ -826,7 +826,7 @@ class Typeload {
 			case _:
 				kept.push(m);
 		}
-		cf.cfMeta = kept;
+		cf.cfMeta = haxe.ds.Vector.fromArrayCopy(kept);
 		overloads.reverse();
 		cf.cfOverloads = overloads;
 	}

@@ -134,7 +134,7 @@ class TFunctions {
 			vType: t,
 			vId: id,
 			vExtra: null,
-			vMeta: [],
+			vMeta: vector(),
 			vPos: p,
 			vFlags: switch kind {
 				case VUser(TVOLocalFunction): intOfVarFlag(VFinal);
@@ -182,7 +182,7 @@ class TFunctions {
 		tNamePos: namePos,
 		tPrivate: false,
 		tDoc: null,
-		tMeta: [],
+		tMeta: vector(),
 		tParams: vector(),
 		tUsing: [],
 		tType: t,
@@ -204,7 +204,7 @@ class TFunctions {
 			clPos: pos,
 			clNamePos: namePos,
 			clDoc: null,
-			clMeta: [],
+			clMeta: vector(),
 			clPrivate: false,
 			clKind: KNormal,
 			clFlags: 0,
@@ -264,7 +264,7 @@ class TFunctions {
 			cfPos: p,
 			cfNamePos: namePos,
 			cfDoc: null,
-			cfMeta: [],
+			cfMeta: vector(),
 			cfKind: Var({vRead: AccNormal, vWrite: AccNormal}),
 			cfExpr: null,
 			cfExprUnoptimized: null,
@@ -322,7 +322,7 @@ class TFunctions {
 		eNamePos: Globals.nullPos,
 		ePrivate: true,
 		eDoc: null,
-		eMeta: [],
+		eMeta: vector(),
 		eParams: vector(),
 		eUsing: [],
 		eRestore: function() {},
@@ -340,7 +340,7 @@ class TFunctions {
 		efDoc: null,
 		efIndex: 0,
 		efParams: vector(),
-		efMeta: []
+		efMeta: vector()
 	};
 	public static final nullAbstract:TAbstract = {
 		aPath: {pack: [], name: ""},
@@ -349,7 +349,7 @@ class TFunctions {
 		aNamePos: Globals.nullPos,
 		aPrivate: true,
 		aDoc: null,
-		aMeta: [],
+		aMeta: vector(),
 		aParams: vector(),
 		aUsing: [],
 		aRestore: function() {},

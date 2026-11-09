@@ -102,7 +102,7 @@ class Finalization {
 		if (!ExtType.isVoid(follow(r))) raiseTypingError("Return type of main function should be Void (found "
 			+ sType(printContext(), r)
 			+ ")", f.cfNamePos);
-		if (!Meta.has(MetaTag.Keep, f.cfMeta)) f.cfMeta.unshift(Dce.mkKeepMeta(f.cfPos));
+		if (!Meta.has(MetaTag.Keep, f.cfMeta)) f.cfMeta = core.ds.VectorTools.cons(Dce.mkKeepMeta(f.cfPos), f.cfMeta);
 		var emain = typeModuleType(ctx, TClassDecl(c), nullPos);
 		return {
 			expr: mk(TCall(mk(TField(emain, FStatic(c, f)), ft, nullPos), vector()), r, nullPos),

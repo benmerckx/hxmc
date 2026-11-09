@@ -73,6 +73,10 @@ runtime writes back as those bytes
   and the list functions on Vectors. `core.ds.List` and `core.ds.ArrayTools`
   take Arrays and Vectors alike. Array patterns (`case [a, b]:`) match
   Vectors too, so upstream's list patterns stay as they are.
+- A list that upstream replaces in a mutable field (`f <- x :: f`:
+  metadata, a monomorph's constraints) is a Vector replaced as upstream's
+  field is (`f = VectorTools.cons(x, f)`), never changed in place: a copy
+  of the record, or a list saved to restore later, keeps its own.
 - A list built by pushing stays an Array until stored, then becomes a
   Vector once (or is allocated at its final length when known). A
   recursion over a list's tail walks the Vector by index instead of
