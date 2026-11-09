@@ -196,6 +196,34 @@ A separate native-versus-Wasm comparison of every entry in the generated
 compiler HXB archives passed; upstream reference conformance remains
 unverified.
 
+## Root-slot initialization analysis
+
+Slot initialization now runs only when liveness found a rooted local.
+Within that pass, ordinary assignments update their sequence's owned mask;
+branches, loops and handlers retain their separate copies. This removes
+per-assignment copies without changing the public analysis API or the
+resulting slot layout. Tests cover interfering arguments, disjoint roots,
+one-sided and two-sided branch assignments, and handler initialization.
+A separate regression keeps safe-region returns visible to liveness even
+when the function's summary says it does not allocate.
+
+Three alternating four-worker self-build pairs against `bc7a9ee0` gave
+13.95 -> 12.03 seconds median wall and 22.69 -> 20.96 seconds CPU.
+These are local samples, not an established general compiler speedup.
+Peak RSS was 1,217,852 -> 1,220,824 KiB; reported allocation was
+10,939 -> 10,931 MB. There is no meaningful peak-memory or allocation win
+in those results. Every pair produced identical executables. JSON, alloc,
+nbody and mandelbrot also remained byte-identical at their previous sizes,
+with their output checks run under GC verification. Raw results are under
+`bin/lean/root-init/final/`.
+
+The compiler remains 21,059,208 bytes. Production source is 59,441 compiler
++ 43,782 runtime = 103,223 lines (five added). Validation: 8/8 quick lanes,
+200 optimized/checked fuzz programs (seed 8000), 100 Eval/native programs
+(seed 9000), the byte-identical fixpoint and 25 crosshost comparisons.
+The focused check tier passed 23/25 lanes, including 32 further crosshost
+comparisons; QEMU and Wine remain unavailable.
+
 ## Rejected experiments
 
 These experiments were measured and removed rather than retained behind
@@ -234,6 +262,13 @@ module caching disabled, GNU time and runtime allocation statistics.
    unchanged. These three local timing samples also overlap; no general
    speed claim follows. Raw data: `bin/lean/gc-cohort-4/self.json` and its
    collector logs. The alternative exists only among ignored measurements.
+5. Find rooted locals first, then repeat liveness to construct interference
+   only for those locals. Outputs stayed identical and focused tests passed,
+   but three pairs gave 24.74 -> 26.14 seconds median CPU and 10,933 ->
+   11,026 MB allocated. The second traversal outweighed the smaller graph.
+   Raw results and the discarded source are under `bin/lean/root-graph/`.
+   A separate no-GC-summary shortcut was also removed: safe-region returns
+   can observe moved objects even in a function that never allocates.
 
 ## Remaining architectural work
 

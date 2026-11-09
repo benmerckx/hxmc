@@ -558,9 +558,9 @@ class Roots {
 			switch st {
 				case SSet(l, e):
 					reads(e, set);
-					var r = set.copy();
-					r.set(l.id);
-					return r;
+					// A sequence owns this mask; forks already copy it.
+					set.set(l.id);
+					return set;
 				case SExpr(e) | SThrow(e) | SSetGlobal(_, e):
 					reads(e, set);
 				case SReturn(e):
