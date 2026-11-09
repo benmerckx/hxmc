@@ -414,7 +414,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (Inline.limits() != Inline.DEFAULTS ? "+inline=" + Inline.limits() : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)

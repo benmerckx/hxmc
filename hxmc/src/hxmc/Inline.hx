@@ -20,7 +20,7 @@ using core.ds.VectorTools;
 // of each operation, counted on the operation; a shadow-stack frame stays the
 // copy's own: it pushes and pops it).
 class Inline {
-	public static inline var MAX_IR = 40; // IR nodes of a candidate
+	public static var MAX_IR = limit(3, 40); // IR nodes of a candidate (HXMC_INLINE: the fourth)
 	// instructions outside slow paths: of a callee inlined anywhere, at a
 	// call in a loop, and of the runtime's Haxe functions (hxmc.rt) outside
 	// loops: 3, those no bigger than their call (Bytes.get, set and length, then:
@@ -42,13 +42,31 @@ class Inline {
 	public static function maxSize(wasm:Bool, inLoop:Bool, rt:Bool):Int
 		return inLoop ? (wasm ? WASM_LOOP : MAX_LOOP) : rt ? MAX_FLAT_RT : wasm ? WASM_FLAT : MAX_FLAT;
 
+	// the limits in effect (HXMC_INLINE or -D hxmc.inline), for the object cache's key
+	public static inline var DEFAULTS = "16,48,3,40,2";
+
+	public static function limits():String
+		return [MAX_FLAT, MAX_LOOP, MAX_FLAT_RT, MAX_IR, DEPTH].join(",");
+
+	// the limits of -D hxmc.inline (Options)
+	public static function configure(spec:String) {
+		var p = spec.split(",");
+		inline function at(k:Int, d:Int):Int
+			return k < p.length && p[k] != "" ? Std.parseInt(p[k]) : d;
+		MAX_FLAT = at(0, MAX_FLAT);
+		MAX_LOOP = at(1, MAX_LOOP);
+		MAX_FLAT_RT = at(2, MAX_FLAT_RT);
+		MAX_IR = at(3, MAX_IR);
+		DEPTH = at(4, DEPTH);
+	}
+
 	static function limit(k:Int, def:Int):Int {
 		var e = Sys.getEnv("HXMC_INLINE");
 		if (e == null) return def;
 		var p = e.split(",");
 		return k < p.length ? Std.parseInt(p[k]) : def;
 	}
-	public static inline var DEPTH = 2; // levels of inlining (Fingerprint keys callers to that depth)
+	public static var DEPTH = limit(4, 2); // levels of inlining (HXMC_INLINE: the fifth) (Fingerprint keys callers to that depth)
 
 	// whether f may be inlined (the IR test); not a function that runs the
 	// collector (@:hxmc.collects): the calls in its body are to the

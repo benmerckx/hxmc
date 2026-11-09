@@ -33,6 +33,9 @@ class Options {
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
+	// -D hxmc.inline=<flat>,<loop>,<runtime flat>,<IR nodes>,<depth>: the inlining limits (Inline; HXMC_INLINE
+	// wins; the limits in effect are in the cache's key; empty fields keep the defaults)
+	public var inlineLimits:Null<String> = null;
 	// -D hxmc.loop-version=0: no loop versioning (LoopVersion); =why: why each loop is left alone
 	public var loopVersion = true;
 	public var loopVersionWhy = false;
@@ -241,6 +244,8 @@ class Options {
 		o.codesignResources = def("hxmc.codesign_resources");
 		o.codesignEntitlements = def("hxmc.codesign_entitlements");
 		o.opt = env("HXMC_OPT") != "0";
+		o.inlineLimits = def("hxmc.inline");
+		if (o.inlineLimits != null && env("HXMC_INLINE") == null) Inline.configure(o.inlineLimits);
 		var eh = def("hxmc.wasm_eh"); // (-D turns the dash into an underscore)
 		if (eh != null) switch eh {
 			case "legacy": o.wasmLegacyEh = true;
