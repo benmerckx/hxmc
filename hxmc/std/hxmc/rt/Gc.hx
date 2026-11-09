@@ -1427,6 +1427,9 @@ class Gc {
 		if (bytes > PLAB_DIRECT) return Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (bytes : I64)));
 		parFill(pPlab, pPlabEnd);
 		var p = Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (PLAB_BYTES : I64)));
+		// (zeroed by rep stosb, which writes whole lines without reading them:
+		// the copies then write to the cache, not read each line from memory first)
+		Mem.zero(p, PLAB_BYTES);
 		pPlab = p.add(bytes);
 		pPlabEnd = p.add(PLAB_BYTES);
 		return p;
