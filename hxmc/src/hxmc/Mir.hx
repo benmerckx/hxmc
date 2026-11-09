@@ -262,22 +262,22 @@ class MIns {
 	public var imm2:Int = 0;
 	public var f:Float = 0;
 	public var size:Int = 0;
-	public var signed:Bool = false;
+	public var signed(get, set):Bool;
 	public var sym:Null<String>;
 	// (the lists below are empty where they do not apply: the shared empty vector)
 	public var args:Vector<Int> = vector(); // Call, Phi
 	public var targets:Vector<MBlock> = vector(); // terminators
 	public var cases:Vector<Int> = vector(); // Switch
 	public var block:MBlock;
-	public var noReturn = false; // Call
-	public var returnsTwice = false; // Call (setjmp)
-	public var keepsFrame = false; // Call: nothing collects meanwhile (Opt: the frame's shadow-stack slots keep their values)
+	public var noReturn(get, set):Bool; // Call
+	public var returnsTwice(get, set):Bool; // Call (setjmp)
+	public var keepsFrame(get, set):Bool; // Call: nothing collects meanwhile (Opt: the frame's shadow-stack slots keep their values)
 	public var variadic = -1; // Call: the first variadic argument of a C function (-1: none)
 	public var argTys:Vector<MTy> = vector(); // Call: the C types of the arguments (I32 stays 32-bit in the ABI)
 	// Call of a C function (MirBuild.cCall), not of the runtime or a Haxe function
 	// by its symbol: what cSizes being set said before it was a Vector, empty for
 	// a C function without arguments too
-	public var cCall = false;
+	public var cCall(get, set):Bool;
 	// Call of a C function: the size of each argument in C (1, 2, 4 or 8; float: 4),
 	// for Apple arm64's stack arguments, packed by size (empty: 4 for I32, else 8)
 	public var cSizes:Vector<Int> = vector();
@@ -292,16 +292,39 @@ class MIns {
 	// (except as x8 on arm64 when cRet is empty); cRet: the parts of the
 	// result in registers (integer ones in the integer result registers in
 	// order, float ones in the float result registers)
-	public var structRet = false;
+	public var structRet(get, set):Bool;
 	public var cRet:Vector<CAbi.CPart> = vector();
-	public var dead = false;
+	public var dead(get, set):Bool;
 	public var mem = 0; // Load/Store: the memory class (Opt.MOther...)
 	// Store of a reference into the heap or a static (MemLower.setPtr): it
 	// publishes what it stores, so the thread's stores before it (the
 	// initialising stores of the object) are seen first by a thread that
 	// reads the reference (arm64: dmb ishst before it; x86-64 orders stores)
-	public var release = false;
+	public var release(get, set):Bool;
 	public var pos = 0; // (-debug) the source position (SrcPos; 0: none)
+	// Every instruction has these flags, including instructions for which
+	// they are all false. Keep them in one word rather than separate fields.
+	var flags = 0;
+	inline function flag(mask:Int, value:Bool):Bool {
+		flags = value ? flags | mask : flags & ~mask;
+		return value;
+	}
+	inline function get_signed():Bool return flags & 1 != 0;
+	inline function set_signed(v:Bool):Bool return flag(1, v);
+	inline function get_noReturn():Bool return flags & 2 != 0;
+	inline function set_noReturn(v:Bool):Bool return flag(2, v);
+	inline function get_returnsTwice():Bool return flags & 4 != 0;
+	inline function set_returnsTwice(v:Bool):Bool return flag(4, v);
+	inline function get_keepsFrame():Bool return flags & 8 != 0;
+	inline function set_keepsFrame(v:Bool):Bool return flag(8, v);
+	inline function get_cCall():Bool return flags & 16 != 0;
+	inline function set_cCall(v:Bool):Bool return flag(16, v);
+	inline function get_structRet():Bool return flags & 32 != 0;
+	inline function set_structRet(v:Bool):Bool return flag(32, v);
+	inline function get_dead():Bool return flags & 64 != 0;
+	inline function set_dead(v:Bool):Bool return flag(64, v);
+	inline function get_release():Bool return flags & 128 != 0;
+	inline function set_release(v:Bool):Bool return flag(128, v);
 
 	public function new(op, ty) {
 		this.op = op;

@@ -22,6 +22,7 @@ when reporting the focused runtime improvements.
 - Register runtime TLS declarations even when accessed only by symbol.
 - Keep root facts outside structured bodies and reuse liveness masks.
 - Compact obsolete MIR value-table entries before backend processing.
+- Pack the MIR instruction's eight boolean flags into one word.
 
 The SSA change alone was compared over three alternating pairs, compiling
 the same current source with the compiler immediately before and after
@@ -254,6 +255,64 @@ The compiler remains 21,059,208 bytes. The timing samples above measure
 the root-initialization optimization independently; they do not establish
 a combined branch speedup or a peak-memory reduction. The single-IR
 migration described below remains unfinished.
+
+## Compact MIR instruction flags
+
+The eight independent boolean fields on every MIR instruction now share
+one word. Inline accessors preserve the existing reads and writes, including
+clearing individual flags without changing the others. There is no extra
+allocation or pointer indirection. An isolated native layout probe measured
+184 -> 160 bytes per instruction, including its header (13% smaller).
+
+Three alternating four-worker self-build pairs against `8916a55f`, using
+the same current source and std with fresh caches and module caching off,
+produced byte-identical executables. Medians were 13.39 -> 13.17 seconds
+wall, 23.01 -> 21.62 seconds CPU and 1,214,808 -> 1,217,908 KiB peak RSS.
+Runtime-reported cumulative allocation was 10,937 -> 10,839 MB. Thus the
+instruction representation is smaller and these local samples use 6.0%
+less CPU, but there is no peak-memory win or established general speedup.
+The resulting compiler grows 21,059,208 -> 21,064,144 bytes. Raw pairs and
+the layout probe are under `bin/lean/mir-flags/`.
+
+JSON, alloc, nbody and mandelbrot binaries are byte-identical to `8916a55f`
+at their previous sizes, with matching output checks under GC verification.
+Validation passed all eight quick lanes (301 native, 301 GC-verification
+and 277 Wasm cases), 100 optimized/checked fuzz programs (seed 12000),
+100 Eval/native programs (seed 13000), 52 focused crosshost comparisons
+in check, and 118 crosshost comparisons in full. The compiler rebuilt
+byte-identically with caches cold, warm and disabled. Check passed 23/25
+lanes and full 29/53; failures require the absent QEMU, Wine, wasmtime or
+pinned reference compiler and its derived artifacts. The native thread
+stress lanes passed all 60 check and 400 full runs. No exclusions changed.
+Production source grows by 23 lines to 59,467 compiler + 43,782 runtime =
+103,249 lines; net source reduction remains unmet.
+
+## Whole-branch refresh after packed flags
+
+A fresh three-pair comparison against the original `5b713c4f` baseline,
+after the validation jobs finished, still establishes no whole-compiler
+speed or peak-memory improvement. Raw data:
+`bin/lean-stats-41jiTy/results.json`.
+
+| Self-build | Original baseline | Current |
+| --- | ---: | ---: |
+| Median wall | 12.93 s | 13.27 s |
+| Median CPU | 21.76 s | 22.84 s |
+| Peak RSS | 1,211,228 KiB | 1,210,888 KiB |
+| Running compiler binary | 21,177,912 bytes | 21,064,144 bytes |
+
+The wall and CPU medians are 2.6% and 5.0% worse in this run. Current
+self-build CPU samples span 19.73 to 24.40 seconds; these noisy samples
+do not establish a consistent regression either. Keep the adverse medians
+visible, and do not add together improvements from isolated experiments.
+
+JSON again uses 126,360 -> 105,240 KiB peak RSS (16.7% less), with
+0.45 -> 0.42 seconds CPU. Alloc is 1.86 -> 1.90 seconds CPU with flat peak
+RSS; nbody is 0.85 -> 0.82 seconds and mandelbrot 0.44 -> 0.44 seconds.
+All four output checks passed. Their executable sizes match the earlier
+whole-branch refresh: JSON and mandelbrot unchanged, alloc and nbody each
+one 4 KiB page larger than the original baseline. The single-IR migration
+remains unfinished.
 
 ## Rejected experiments
 
