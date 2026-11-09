@@ -130,6 +130,22 @@ class Os {
 		return p.toI64() == -1 ? Ptr.nil() : p;
 	}
 
+	// reserve's at address `at` exactly, else null: taken (Linux:
+	// MAP_FIXED_NOREPLACE, a hint to kernels before 4.17, whose other address
+	// is given back; Windows: VirtualAlloc's address, a multiple of 64 KB)
+	@:hxmc.unsafe public static function reserveAt(at:Ptr, bytes:I64):Ptr {
+		if (windows()) return WinRt.reserveAt(at, bytes);
+		var p = C.mmap(at, bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+		if (p.toI64() == -1) return Ptr.nil();
+		if (p.toI64() != at.toI64()) {
+			C.munmap(p, bytes);
+			return Ptr.nil();
+		}
+		return p;
+	}
+
+	static inline var MAP_FIXED_NOREPLACE = 0x100000; // (Linux's, x86-64 and arm64 alike)
+
 	@:hxmc.unsafe public static function release(p:Ptr, bytes:I64)
 		if (windows()) WinRt.release(p, bytes) else C.munmap(p, bytes);
 

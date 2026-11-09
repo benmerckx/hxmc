@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.I64;
 import hxmc.unsafe.*;
 
 // The object model both collectors share (the native Gc.hx and wasm/Gc.hx):
@@ -65,4 +66,39 @@ extern class GcCore {
 
 	public static inline function isPtrSlot(pm:Ptr, i:Int):Bool
 		return ((Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1) != 0;
+
+	// ---- compressed references (@:hxmc.compact): 4-byte fields holding a
+	// reference's address shifted right by 3 (the heap and the image are
+	// below 32 GB natively: Gc.init); null is 0. A type with them
+	// (Types.hasCompact) has at most 32 slots, its compact map (a bit per
+	// 4-byte half, 64) the word after its pointer map's.
+
+	// whether type t's objects have compressed references
+	public static inline function compactAt(t:Int):Bool
+		return Mem.getI32(Mem.sym("rt_types"), 112 * t + 20) != 0;
+
+	// half h of the compact map pm (a type's pointer map) is a compressed reference
+	public static inline function isCompactHalf(pm:Ptr, h:Int):Bool
+		return ((Mem.getI32At(pm, 8, h >> 5) >>> (h & 31)) & 1) != 0;
+
+	// the compact map's halves 0 to 31 and 32 to 63
+	public static inline function cmapLo(pm:Ptr):Int
+		return Mem.getI32(pm, 8);
+
+	public static inline function cmapHi(pm:Ptr):Int
+		return Mem.getI32(pm, 12);
+
+	// the reference in 4-byte half h of p
+	public static inline function getC(p:Ptr, h:Int):Ptr
+		return Ptr.ofI64(((Mem.getI32At(p, 0, h) : I64) << 32) >>> 29);
+
+	public static inline function setC(p:Ptr, h:Int, v:Ptr)
+		Mem.setI32At(p, 0, h, (v.toI64() >>> 3).toInt());
+
+	// a reference field of p: 8-byte slot i, or compressed (c) 4-byte half i
+	public static inline function getRefAt(p:Ptr, i:Int, c:Bool):Ptr
+		return c ? getC(p, i) : Ptr.ofI64(Mem.getI64At(p, 0, i));
+
+	public static inline function setRefAt(p:Ptr, i:Int, c:Bool, v:Ptr)
+		if (c) setC(p, i, v) else Mem.setI64At(p, 0, i, v.toI64());
 }

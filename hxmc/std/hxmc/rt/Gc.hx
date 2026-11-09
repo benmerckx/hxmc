@@ -151,6 +151,13 @@ class Gc {
 	// 16 GB each; on Windows they are 2 GB by default (RT_REGION_MB), and a
 	// reservation that fails is retried at half the size down to 512 MB
 	static var regionBytes:I64;
+	// a program with compressed references (@:hxmc.compact: a type of
+	// Types.hasCompact) keeps its nursery and regions below 32 GB (GcCore.getC:
+	// an address shifted right by 3 fits 32 bits), reserved from 1 GB up at
+	// fixed addresses (compactNext), each region at most half of what is left
+	static var compactHeap:Bool;
+	static var compactNext:I64;
+	static inline var COMPACT_LIMIT:Int = 32;
 	static var region0:Ptr;
 	static var region1:Ptr;
 	static var curRegion:Int;
@@ -565,7 +572,7 @@ class Gc {
 	// small).
 	@:hxmc.unsafe static function drainMinor() {
 		while (gcTop > 0) {
-			if (gcTop + SMALL_SLOTS + 1 > gcCap) reserve(gcTop + SMALL_SLOTS + 1);
+			if (gcTop + 2 * SMALL_SLOTS + 1 > gcCap) reserve(gcTop + 2 * SMALL_SLOTS + 1);
 			var top = gcTop - 1;
 			var o = Mem.getPtr(gcStack, top << 4);
 			var w0 = hdrW0(o);
@@ -634,11 +641,12 @@ class Gc {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
-			if (w0 & 0xFFFF == Types.T_ARRAY)
+			var ti = w0 & 0xFFFF;
+			if (ti == Types.T_ARRAY)
 				t = minorSlotWith(o, 1, t, true); // (its storage: arrTrim)
 			else {
 				// (at most SMALL_SLOTS slots: one word of the map)
-				var pm = ptrmapOf(o);
+				var pm = ptrmapOfType(ti);
 				var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
 				var i = 0;
 				while (m != 0) {
@@ -646,6 +654,7 @@ class Gc {
 					m = m >>> 1;
 					i++;
 				}
+				if (compactAt(ti)) t = minorCompact(o, pm, t);
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
@@ -653,6 +662,26 @@ class Gc {
 				t = minorSlot(o, i, t);
 				i++;
 			}
+		}
+		return t;
+	}
+
+	// o's compressed references (pm: its type's pointer map, the compact map
+	// after it) forwarded, as scanYoung's slots: the new top (a call, out of
+	// the scan's loop: the copy inlined once more for the compact map's
+	// words would cost every program's collections)
+	@:hxmc.unsafe static function minorCompact(o:Ptr, pm:Ptr, top:Int):Int {
+		var t = minorHalves(o, cmapLo(pm), 0, top);
+		return minorHalves(o, cmapHi(pm), 32, t);
+	}
+
+	// the compressed references of o in the map word m (of halves from h)
+	static inline function minorHalves(o:Ptr, m:Int, h:Int, top:Int):Int {
+		var t = top, i = h;
+		while (m != 0) {
+			if (m & 1 != 0) t = minorSlotAny(o, i, t, false, true);
+			m = m >>> 1;
+			i++;
 		}
 		return t;
 	}
@@ -676,16 +705,20 @@ class Gc {
 	// pushed when it has references (at gcStack[top], which has room): the
 	// new top
 	static inline function minorSlot(o:Ptr, i:Int, top:Int):Int
-		return minorSlotWith(o, i, top, false);
+		return minorSlotAny(o, i, top, false, false);
 
 	// (arr: o is an Array, slot i its storage, copied as arrTrim says)
-	static inline function minorSlotWith(o:Ptr, i:Int, top:Int, arr:Bool):Int {
+	static inline function minorSlotWith(o:Ptr, i:Int, top:Int, arr:Bool):Int
+		return minorSlotAny(o, i, top, arr, false);
+
+	// (c: i is the 4-byte half of a compressed reference)
+	static inline function minorSlotAny(o:Ptr, i:Int, top:Int, arr:Bool, c:Bool):Int {
 		var t = top;
-		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
+		var v = getRefAt(o, i, c);
 		if (!v.ult(youngStart) && v.ult(youngEnd)) {
 			var vw0 = hdrW0(v);
 			if (isFwd(vw0))
-				Mem.setI64At(o, 0, i, fwdAddr(v).toI64());
+				setRefAt(o, i, c, fwdAddr(v));
 			else {
 				// (copyTo, without the call of memcpy)
 				var words = wordsOf(v, vw0) + 1;
@@ -724,7 +757,7 @@ class Gc {
 				oldPtr = dst.add(words << 3);
 				var nv = dst.add(8);
 				setFwd(v, nv);
-				Mem.setI64At(o, 0, i, nv.toI64());
+				setRefAt(o, i, c, nv);
 				if (!Types.isRawArray(vw0)) {
 					Mem.setPtr(gcStack, t << 4, nv);
 					Mem.setI32(gcStack, (t << 4) + 8, 0);
@@ -792,12 +825,17 @@ class Gc {
 			var n = wordsOf(o, w0);
 			var i = Mem.getI32(gcStack, ((gcTop - 1) << 4) + 8);
 			var pushed = false;
-			while (i < n) {
-				if (!pm.isNull() && (Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 == 0) {
+			// (compressed references: the halves of the compact map after the
+			// slots, entries n to 3n - 1)
+			var lim = !pm.isNull() && compactAt(w0 & 0xFFFF) ? 3 * n : n;
+			while (i < lim) {
+				var c = i >= n;
+				var j = c ? i - n : i;
+				if (c ? !isCompactHalf(pm, j) : !pm.isNull() && (Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 == 0) {
 					i++;
 					continue;
 				}
-				var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
+				var v = getRefAt(o, j, c);
 				i++;
 				if (v.isNull()) continue;
 				// (branches rather than inYoung(v) || inFrom(v): no booleans in registers)
@@ -807,14 +845,14 @@ class Gc {
 				}
 				var vw0 = hdrW0(v);
 				if (isFwd(vw0)) {
-					Mem.setI64At(o, 0, i - 1, fwdAddr(v).toI64());
+					setRefAt(o, j, c, fwdAddr(v));
 					continue;
 				}
 				// copied now: its subtree next (an Array's storage: arrTrim)
 				var th:I64 = w0 & 0xFFFF == Types.T_ARRAY ? arrTrim(o, v, vw0) : (0 : I64);
 				var nv = copyTo(v, th.toInt() != 0 ? trimWords(th) : wordsOf(v, vw0));
 				if (th.toInt() != 0) Mem.setI64(nv, -8, th);
-				Mem.setI64At(o, 0, i - 1, nv.toI64());
+				setRefAt(o, j, c, nv);
 				Mem.setI32(gcStack, ((gcTop - 1) << 4) + 8, i);
 				push(nv);
 				pushed = true;
@@ -867,6 +905,12 @@ class Gc {
 					}
 					w++;
 				}
+				if (compactAt(tindexOf(o)))
+					for (h in 0...2 * n)
+						if (isCompactHalf(pm, h)) {
+							var v = getC(o, h);
+							if (!v.isNull()) setC(o, h, fwdAs(v, root));
+						}
 			case K_PARR:
 				for (i in 0...n) {
 					var v = Mem.getPtr(o, 8 * i);
@@ -943,6 +987,12 @@ class Gc {
 		var rem = m.value.rem;
 		for (i in 0...m.value.remLen) {
 			var s = Mem.getPtr(rem, 8 * i);
+			if (s.toI64().toInt() & 1 != 0) { // (a compressed reference's 4 bytes, tagged: remember)
+				s = s.add(-1);
+				var v = getC(s, 0);
+				if (!v.isNull()) setC(s, 0, fwdAs(v, root));
+				continue;
+			}
 			var v = Mem.getPtr(s, 0);
 			if (!v.isNull()) Mem.setPtr(s, 0, fwdAs(v, root));
 		}
@@ -1326,7 +1376,9 @@ class Gc {
 		var t = pTop;
 		var j = 0;
 		while (j < n) {
-			t = parSlot(Mem.getPtr(a, 8 * j), 0, t, false);
+			var s = Mem.getPtr(a, 8 * j);
+			// (a compressed reference's 4 bytes, tagged: remember)
+			t = s.toI64().toInt() & 1 != 0 ? parSlotAny(s.add(-1), 0, t, false, false, true) : parSlot(s, 0, t, false);
 			j++;
 		}
 		pTop = t;
@@ -1555,7 +1607,7 @@ class Gc {
 	static inline function parDrainWith(maj:Bool) {
 		while (pTop > 0) {
 			if (pTop > SHARE_MIN && Atomic.load32(Mem.sym("hxmc_par_idle")) > 0) parShare();
-			if (pTop + SMALL_SLOTS + 1 > pCap) parReserve(pTop + SMALL_SLOTS + 1);
+			if (pTop + 2 * SMALL_SLOTS + 1 > pCap) parReserve(pTop + 2 * SMALL_SLOTS + 1);
 			var top = pTop - 1;
 			var o = Mem.getPtr(pStack, top << 4);
 			var w0 = hdrW0(o);
@@ -1616,10 +1668,11 @@ class Gc {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
-			if (w0 & 0xFFFF == Types.T_ARRAY)
+			var ti = w0 & 0xFFFF;
+			if (ti == Types.T_ARRAY)
 				t = parSlotWith(o, 1, t, maj, true); // (its storage: arrTrim)
 			else {
-				var pm = ptrmapOf(o);
+				var pm = ptrmapOfType(ti);
 				var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
 				var i = 0;
 				while (m != 0) {
@@ -1627,6 +1680,7 @@ class Gc {
 					m = m >>> 1;
 					i++;
 				}
+				if (compactAt(ti)) t = maj ? parCompactMajor(o, pm, t) : parCompactMinor(o, pm, t);
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
@@ -1634,6 +1688,28 @@ class Gc {
 				t = parSlot(o, i, t, maj);
 				i++;
 			}
+		}
+		return t;
+	}
+
+	// minorCompact's
+	@:hxmc.unsafe static function parCompactMinor(o:Ptr, pm:Ptr, top:Int):Int {
+		var t = parHalves(o, cmapLo(pm), 0, top, false);
+		return parHalves(o, cmapHi(pm), 32, t, false);
+	}
+
+	@:hxmc.unsafe static function parCompactMajor(o:Ptr, pm:Ptr, top:Int):Int {
+		var t = parHalves(o, cmapLo(pm), 0, top, true);
+		return parHalves(o, cmapHi(pm), 32, t, true);
+	}
+
+	// minorHalves'
+	static inline function parHalves(o:Ptr, m:Int, h:Int, top:Int, maj:Bool):Int {
+		var t = top, i = h;
+		while (m != 0) {
+			if (m & 1 != 0) t = parSlotAny(o, i, t, maj, false, true);
+			m = m >>> 1;
+			i++;
 		}
 		return t;
 	}
@@ -1657,23 +1733,28 @@ class Gc {
 		return parSlotWith(o, i, top, maj, false);
 
 	// (arr: o is an Array, slot i its storage, copied as arrTrim says)
-	static inline function parSlotWith(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool):Int {
+	static inline function parSlotWith(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool):Int
+		return parSlotAny(o, i, top, maj, arr, false);
+
+	// (c: i is the 4-byte half of a compressed reference)
+	static inline function parSlotAny(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool, c:Bool):Int {
 		var t = top;
-		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
+		var v = getRefAt(o, i, c);
 		if (!v.ult(youngStart) && v.ult(youngEnd))
-			t = parCopySlot(o, i, top, v, arr);
+			t = parCopySlot(o, i, top, v, arr, c);
 		else if (maj && !v.ult(fromStart) && v.ult(fromEnd))
-			t = parCopySlot(o, i, top, v, arr);
+			t = parCopySlot(o, i, top, v, arr, c);
 		return t;
 	}
 
 	// slot i of o, v (young, or in the from-space), forwarded: the new top
-	static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr, arr:Bool):Int {
+	// (c: the 4-byte half i, a compressed reference)
+	static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr, arr:Bool, c:Bool):Int {
 		var t = top;
 		{
 			var vw0 = Atomic.load32(v.add(-8));
 			if (isFwd(vw0))
-				Mem.setI64At(o, 0, i, fwdAddr(v).toI64());
+				setRefAt(o, i, c, fwdAddr(v));
 			else if (vw0 & 0xFFFF != T_BUSY && Atomic.cas32(v.add(-8), vw0, (vw0 & 0xFFFF0000) | T_BUSY) == vw0) {
 				var words = wordsOf(v, vw0) + 1;
 				var th:I64 = arr ? arrTrim(o, v, vw0) : (0 : I64);
@@ -1713,14 +1794,14 @@ class Gc {
 				var nv = dst.add(8);
 				Mem.setPtr(v, 0, nv);
 				Atomic.store32(v.add(-8), (vw0 & 0xFFFF0000) | Types.T_FWD);
-				Mem.setI64At(o, 0, i, nv.toI64());
+				setRefAt(o, i, c, nv);
 				if (!Types.isRawArray(vw0)) {
 					Mem.setPtr(pStack, t << 4, nv);
 					Mem.setI32(pStack, (t << 4) + 8, 0);
 					t++;
 				}
 			} else
-				Mem.setI64At(o, 0, i, parWaitFwd(v).toI64());
+				setRefAt(o, i, c, parWaitFwd(v));
 		}
 		return t;
 	}
@@ -1942,11 +2023,29 @@ class Gc {
 		youngDump = youngEnd;
 	}
 
+	// address space for the heap: anywhere, or with compressed references
+	// the first free range from compactNext on (2 MB aligned, past what is
+	// taken in 256 MB steps) that ends below 32 GB (null: none)
+	@:hxmc.unsafe static function heapReserve(bytes:I64):Ptr {
+		if (!compactHeap) return Os.reserve(bytes);
+		var at = (compactNext + ((2 << 20) - 1)) & ~(((2 : I64) << 20) - 1);
+		while (((COMPACT_LIMIT : I64) << 30) - at >= bytes) {
+			var p = Os.reserveAt(Ptr.ofI64(at), bytes);
+			if (!p.isNull()) {
+				compactNext = at + bytes;
+				return p;
+			}
+			at += (256 : I64) << 20;
+		}
+		return Ptr.nil();
+	}
+
 	// The nursery: a reserved range (pages committed as touched) that it grows
 	// and shrinks in, so resizing allocates nothing.
 	@:hxmc.unsafe static function nurseryAlloc(bytes:I64):Ptr {
 		var reserve:I64 = bytes > (MINOR_MAX : I64) ? bytes : MINOR_MAX;
-		var p = Os.reserve(reserve + (2 << 20));
+		var p = heapReserve(reserve + (2 << 20));
+		if (p.isNull() && compactHeap) die("cannot reserve the nursery below 32 GB (@:hxmc.compact)\n");
 		if (p.isNull()) die("cannot reserve the nursery\n");
 		Os.coreDump(p, reserve + (2 << 20), false);
 		#if (hxmc.shared || hxmc.dev_host)
@@ -2360,6 +2459,8 @@ class Gc {
 	@:hxmc.host("rt_write_barrier") @:hxmc.unsafe static function writeBarrier(obj:Ptr, slot:Ptr, v:Ptr):Void
 		remember(slot);
 
+	// (slot: an 8-byte slot's address, or a compressed reference's (4 bytes,
+	// @:hxmc.compact) plus 1: forwardRemembered, parRemembered)
 	@:hxmc.unsafe static inline function remember(slot:Ptr) {
 		var m = Threads.self;
 		var n = m.value.remLen;
@@ -2385,6 +2486,16 @@ class Gc {
 		}
 		Mem.setPtr(m.value.robjs, 8 * m.value.robjsLen, obj);
 		m.value.robjsLen = m.value.robjsLen + 1;
+	}
+
+	// a compressed reference (@:hxmc.compact) stored by the runtime (Dynamic
+	// access, reflection: Dyn.storeSlot) into 4-byte half h of o, with
+	// MemLower.setCompact's write barrier
+	@:hxmc.unsafe static function storeCompact(o:Dynamic, h:Int, v:Dynamic) {
+		var p = Mem.addr(o), x = Mem.addr(v);
+		var prev = getC(p, h);
+		setC(p, h, x);
+		if (inYoung(x) && !inYoung(p) && !inYoung(prev)) remember(p.add(4 * h + 1));
 	}
 
 	// after a bulk move or copy of references into obj (memmove in natives):
@@ -2485,6 +2596,14 @@ class Gc {
 	// main thread's shadow stack (its bottom)
 
 	@:hxmc.unsafe static function init(ng:Int):Ptr {
+		// (a type with compressed references: hxmc.DataGen's flag, Types.hasCompact)
+		compactHeap = false;
+		for (t in 0...Mem.getI32(Mem.sym("rt_ntypes"), 0))
+			if (Types.hasCompact(Types.ty(t))) compactHeap = true;
+		compactNext = (1 : I64) << 30;
+		// (the image's static objects, which compressed references reach too:
+		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
+		if (compactHeap && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
 		var m = Os.getenv("RT_MINOR_KB");
 		minorFixed = !m.isNull();
 		minorSize = minorFixed ? (Os.atoi(m) : I64) << 10 : (MINOR_MIN : I64);
@@ -2529,15 +2648,23 @@ class Gc {
 		regionBytes = (16 : I64) << 30;
 		var rm = Os.getenv("RT_REGION_MB");
 		if (!rm.isNull()) regionBytes = (Os.atoi(rm) : I64) << 20;
+		var regionsAt = compactNext;
+		if (compactHeap) {
+			// (two regions in what is left below 32 GB, in 1 GB steps: 15 GB each after a 256 MB nursery)
+			var room = ((((COMPACT_LIMIT : I64) << 30) - compactNext) / 2) & ~(((1 : I64) << 30) - 1);
+			if (regionBytes > room) regionBytes = room;
+		}
 		var i = 0;
 		while (i < 2) {
-			var r = Os.reserve(regionBytes);
+			var r = heapReserve(regionBytes);
 			if (r.isNull() && regionBytes > ((512 : I64) << 20)) {
 				if (i == 1) Os.release(region0, regionBytes);
 				regionBytes = regionBytes / 2;
+				compactNext = regionsAt;
 				i = 0;
 				continue;
 			}
+			if (r.isNull() && compactHeap) die("cannot reserve the heap below 32 GB (@:hxmc.compact)\n");
 			if (r.isNull()) die("cannot reserve heap\n");
 			if (hugePages) Os.hugePages(r, regionBytes);
 			Os.coreDump(r, regionBytes, false);
@@ -2931,12 +3058,15 @@ class Gc {
 			bytes += objBytes(o);
 			var n = nslotsOf(o), k = kindOf(o);
 			var pm = k == K_OBJ ? ptrmapOf(o) : Ptr.nil();
-			for (i in 0...n) {
-				if (k == K_OBJ) {
+			var lim = !pm.isNull() && compactAt(tindexOf(o)) ? 3 * n : n;
+			for (i in 0...lim) {
+				if (i >= n) {
+					if (!isCompactHalf(pm, i - n)) continue;
+				} else if (k == K_OBJ) {
 					if (pm.isNull() || !isPtrSlot(pm, i)) continue;
 				} else if (k != K_PARR)
 					break;
-				var c = Mem.getPtr(o, 8 * i);
+				var c = i >= n ? getC(o, i - n) : Mem.getPtr(o, 8 * i);
 				if (!inHeap(c)) continue;
 				if (sp == cap) {
 					cap *= 2;

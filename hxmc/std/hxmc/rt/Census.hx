@@ -284,9 +284,9 @@ class Census {
 				for (i in 0...Types.nfields(ty)) {
 					var f = Types.field(ty, i);
 					var fk = Types.fKind(f);
-					if (fk == "i".code || fk == "b".code) kIb++ else if (fk == "p".code || fk == "t".code) {
+					if (fk == "i".code || fk == "b".code) kIb++ else if (fk == "p".code || fk == "t".code || fk == "c".code) {
 						kPtrs++;
-						var v = Mem.getPtr(o, 8 * Types.fSlot(f));
+						var v = fk == "c".code ? GcCore.getC(o, Types.fSlot(f)) : Mem.getPtr(o, 8 * Types.fSlot(f));
 						// (the tagged word of a scalar, a type parameter's value: no object, Tagged)
 						if (v.isNull()) kNullp++ else if (Tagged.isScalar(v.toI64())) kTagged++;
 					}
@@ -318,8 +318,8 @@ class Census {
 			var ty = Types.ty(t);
 			for (i in 0...Types.nfields(ty)) {
 				var f = Types.field(ty, i);
-				if (Types.fKind(f) != "p".code) continue;
-				var v = Mem.getPtr(o, 8 * Types.fSlot(f));
+				if (Types.fKind(f) != "p".code && Types.fKind(f) != "c".code) continue;
+				var v = Types.fKind(f) == "c".code ? GcCore.getC(o, Types.fSlot(f)) : Mem.getPtr(o, 8 * Types.fSlot(f));
 				if (v.isNull() || v.ult(start) || !v.ult(end)) continue;
 				var bi = bit(v);
 				if ((Mem.getU8(seen, (bi >> 3).toInt()) >> (bi & 7).toInt()) & 1 != 0) continue;
@@ -574,9 +574,12 @@ class Census {
 			if (k != K_OBJ && k != 1) continue; // (K_RAW: no references)
 			var pm = k == K_OBJ ? Types.ptrmap(Types.ty(tindexOf(o))) : Ptr.nil();
 			if (k == K_OBJ && pm.isNull()) continue;
-			for (i in 0...n) {
-				if (k == K_OBJ && (Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1 == 0) continue;
-				var v = Mem.getPtr(o, 8 * i);
+			// (compressed references: entries n to 3n - 1, their 4-byte halves; slot: the half)
+			var lim = k == K_OBJ && Types.hasCompact(Types.ty(tindexOf(o))) ? 3 * n : n;
+			for (j in 0...lim) {
+				var i = j < n ? j : j - n;
+				if (j >= n ? !GcCore.isCompactHalf(pm, i) : k == K_OBJ && (Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1 == 0) continue;
+				var v = j >= n ? GcCore.getC(o, i) : Mem.getPtr(o, 8 * i);
 				if (!inHeap(v)) continue;
 				var vw = wordOf(v);
 				if (Mem.getI32(par, 8 * vw) != 0) continue;

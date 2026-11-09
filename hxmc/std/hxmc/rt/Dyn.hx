@@ -124,6 +124,8 @@ class Dyn {
 				var a:Dynamic = Mem.getRef(p, 8 * slot);
 				Str.isNull(a) ? null : (arrLength(a) : Dynamic);
 			case "t".code: Tagged.dyn(Mem.getI64(p, 8 * slot));
+			// (a compressed reference, @:hxmc.compact: slot is its 4-byte index)
+			case "c".code: Mem.obj(GcCore.getC(p, slot));
 			case _: Mem.getRef(p, 8 * slot);
 		}
 	}
@@ -147,6 +149,9 @@ class Dyn {
 				var a:Dynamic = Mem.getRef(Mem.addr(o), 8 * slot);
 				var n:Null<Int> = v;
 				if (Str.isNull(a) || n == null || n != arrLength(a)) Rt.rt_throw("a length without storage (@:hxmc.lengthOf) cannot be set");
+			case "c".code:
+				// (native only: WebAssembly's references are 4 bytes already, Lower.compact)
+				if (Mem.os() != 3) Gc.storeCompact(o, slot, v);
 			case _:
 				Mem.setRefBarrier(o, 8 * slot, v);
 		}
