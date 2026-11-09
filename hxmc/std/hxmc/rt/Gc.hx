@@ -137,10 +137,13 @@ class Gc {
 
 	// ---- the old space: it alternates between two large reserved regions;
 	// oldEnd is a soft limit, set after each major collection to `growth`
-	// percent of the live size (RT_OLD_GROWTH, 300: three times), times
-	// growthMult (majorLimit), but no more than half the memory (ramBytes)
+	// percent of the live size (RT_OLD_GROWTH, 300: three times), with room
+	// for the live set to grow on after collections that freed little
+	// (growthMult, majorLimit), but no more than half the memory (ramBytes)
+	// or the region (regionBytes)
 	static var growth:Int;
 	static var growthMult:Int;
+	static var prevLive:I64; // what the previous major collection left live
 	static var ramBytes:I64; // physical memory (Linux; 0: unknown)
 	static var oldStart:Ptr;
 	@:hxmc.export("hxmc_old_ptr") static var oldPtr:Ptr;
@@ -1857,31 +1860,57 @@ class Gc {
 	}
 
 	// the old space's next limit, after a major collection of `collected`
-	// bytes (the from-space and the nursery) for an allocation of `need`.
-	// Graded backoff: a collection that freed little (a quarter or less of
-	// what it collected) found data that lives on, as a compiler's trees,
-	// symbols and types; each copies the whole live set, and copying it
-	// again soon frees as little. The first such collection multiplies the
-	// growth by MULT_FIRST, each next one in a row doubles it (growthMult, up
-	// to MULT_MAX: 4, 8, 16 times RT_OLD_GROWTH); one that frees more than
-	// half starts it over, one in between keeps it. (tsc-haxe on
-	// t3code-server: 467 MB, then 1.8 GB, each over 90% live: 1.1 s of 9.9
-	// with the growth fixed; starting at 2, a second major collection of
-	// 3.1 GB live, 1.6 s, and 1.4 GB more peak RSS than at 4.) The limit
-	// stays below half the physical memory (ramBytes) unless what is live
-	// needs more: a program that grows its live set steadily otherwise
-	// reaches a limit of 16 times it.
+	// bytes (the from-space and the nursery) for an allocation of `need`:
+	// `growth` percent of what is live (the base), and after collections that
+	// freed little, room for the live set to grow on. Graded backoff: a
+	// collection that freed little (a quarter or less of what it collected)
+	// found data that lives on, as a compiler's trees, symbols and types;
+	// each copies the whole live set, and copying it again soon frees as
+	// little. The first such collection sets growthMult to MULT_FIRST, each
+	// next one in a row doubles it (up to MULT_MAX); one that frees more than
+	// half starts it over at 1, one in between keeps it (and gives no room:
+	// a synthetic cache growing to 1.6 GB, 1.1 GB live of 1.7 at its second
+	// major collection, a 5.4 GB limit and 22% more peak RSS with it). After
+	// one that freed little, the limit has room on top of the base for
+	// growthMult times what the live set grew by since the previous major
+	// collection (prevLive), but no more than what is live or a 32nd of the
+	// physical memory (ramBytes), whichever is more (a 16th, or twice what is
+	// live: 50% more peak RSS for that cache, 25% for one replaced whole each
+	// phase). The room is a bet that the program keeps growing as fast, and
+	// once it stops (a compilation server between builds, a cache
+	// that is full and churns) all of it fills with garbage before the next
+	// collection. (Multiplying the growth by 4, 8 and 16 instead gave limits
+	// of 12, 24 and 48 times what was live, capped only by half the memory or
+	// the 16 GB region: the Haxe compilation server, 200 MB live after its
+	// first build's first major collection, a limit of 2.5 GB and 1.5 GB more
+	// peak RSS than without the backoff; a synthetic cache growing to 3 GB,
+	// then churning, a 16 GB limit and 19 GB peak RSS against 10.7.) The front
+	// end on hxmc's sources: 201 MB live at its first major collection, the
+	// base 667 MB, 850 MB used at the end; without the room a second major
+	// collection of 400 MB live, 270 MB more peak RSS. tsc-haxe on
+	// t3code-server: 280 MB live, then 1.9 GB used at the end. The limit stays
+	// below half the physical memory unless what is live needs more, and
+	// within the region (regionBytes, 16 GB: on a large machine the cap that
+	// binds first).
 	static inline var MULT_FIRST = 4;
 	static inline var MULT_MAX = 16;
 
 	@:hxmc.unsafe static function majorLimit(collected:I64, need:I64) {
 		var live = oldPtr.diff(oldStart);
 		if (growthMult < 1) growthMult = 1;
-		if (live * 4 >= collected * 3) {
+		var little = live * 4 >= collected * 3;
+		if (little) {
 			growthMult = growthMult == 1 ? MULT_FIRST : growthMult < MULT_MAX ? growthMult * 2 : MULT_MAX;
 		} else if (live * 2 < collected)
 			growthMult = 1;
-		var limit = live * ((growth : I64) * growthMult) / 100 + minorSize * 4 + need;
+		var limit = live * (growth : I64) / 100 + minorSize * 4 + need;
+		if (little && live > prevLive) {
+			var room = (live - prevLive) * growthMult;
+			var most = live;
+			if (most < ramBytes / 32) most = ramBytes / 32;
+			limit += room < most ? room : most;
+		}
+		prevLive = live;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
 		if (ramBytes > 0 && limit > ramBytes / 2) limit = ramBytes / 2;
 		// (room for what is live and the allocation it collected for, whatever
@@ -2520,6 +2549,7 @@ class Gc {
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
 		growth = Os.envInt("RT_OLD_GROWTH", 300);
 		growthMult = 1;
+		prevLive = 0;
 		survival = 1024;
 		ramBytes = Os.physicalBytes();
 		if (oldStart.addL(regionBytes - minorSize).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes - minorSize);

@@ -197,10 +197,17 @@ space by copying into a new region.
 - **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
   ones in percent of what a major collection left live (300 natively, 200
   on wasm32). Natively the next limit has room for four nurseries more,
-  and a major collection that freed a quarter or less of what it collected
-  multiplies the growth by 4, each next one in a row doubles it (up to 16;
-  one that frees more than half starts over), within half the physical
-  memory unless what is live needs more.
+  and after a major collection that freed a quarter or less of what it
+  collected, room on top for the live set to grow on: 4 times what it grew
+  by since the previous major collection, each next such one in a row
+  doubles the factor (up to 16; one that frees more than half starts over),
+  but no more than what is live or a 32nd of the physical memory,
+  whichever is more. (A factor on the growth itself, 4 to 16 times
+  300%, is 12 to 48 times what is live, capped in practice by the 16 GB
+  region rather than half the memory: a compilation server between builds
+  or a full cache that churns filled all of it with garbage.) The limit
+  stays within half the physical memory unless what is live needs more,
+  and within the region.
   On wasm32 it has room for a nursery promoted whole (what a minor
   collection asks of the limit) and three more, but no more than what is
   live: four nurseries whatever was live gave 43 MB live with a 32 MB
