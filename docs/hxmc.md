@@ -262,7 +262,8 @@ compact field read through a structure type takes the slow path (a call).
 32 GB. The executable's image is at a fixed address, 0x400000 (`Link`,
 `LinkDyn`'s glibc mode, `LinkPE` on x86-64), and a program with a compact
 type reserves its nursery and the old space's two regions at fixed
-addresses from 1 GB up (`Gc.heapReserve`: `MAP_FIXED_NOREPLACE` on Linux,
+addresses from 1 GB up (a Mir host from 2 GB: below is the native tier's
+window, `macro.Loader`; `Gc.heapReserve`: `MAP_FIXED_NOREPLACE` on Linux,
 which a kernel before 4.17 takes as a hint, so the address is checked;
 `VirtualAlloc` at the address on Windows), past a taken range in 256 MB
 steps, the regions at most 15 GB each (`RT_REGION_MB` is capped there: the
@@ -287,7 +288,7 @@ other, `CacheCheck`'s "compact and back"); the compilation server's
 lowered bodies are dropped when it changes (`LowerCache`). A tool that
 knows `Mem.compact` defines `hxmc.memcompact` (`TargetFlags`); without it
 (the committed stage0) `compactTypes()` is true and each type is tested
-at run time. The tool itself (a Mir host) has none: 8 KB smaller.
+at run time.
 
 **Where.** `hxmc.Main.compactRefs`: executables for Linux (x86-64 and arm64,
 musl and the glibc mode) and Windows on x86-64. Elsewhere the annotation
@@ -296,11 +297,38 @@ macOS and iOS (position-independent executables, slid anywhere: they would
 need a heap base, a register or global added on every decompression),
 Windows on arm64 (relocatable, `DYNAMIC_BASE`), Android and shared
 libraries (`-D hxmc.shared`: loaded anywhere), WebAssembly (wasm32's
-references are 4 bytes already), `--interp`, `--run` and Mir macros, and a
-compiler that runs Mir macros (`Lower.mirHost`: their code reads the
-compiler's own objects with the layouts it was built with, `MirMacros`,
-`MirRun`). The errors below are the same
+references are 4 bytes already). The errors below are the same
 on every target, so a program that builds for one builds for all.
+
+**Mir hosts and the code they load.** The compiler (`hxmc.HaxeMain`, the
+tool) has the annotation on the trees it makes most of
+(`core.TType`'s `TExpr`, `TVar`, `TClassField`, `TMono` and the enums `T`,
+`TConstant`, `TExprDef`, `TFieldAccess`, `FieldKind`, `ModuleType`;
+`core.Ast`'s `Expr`, `MetadataEntry`, `TypePath`, `PlacedName`,
+`PlacedTypePath`, `TypeHint`, `FuncArg`, `ClassField` and the enums
+`Constant`, `ExprDef`, `ComplexType`, `TypeParamOrConst`, `Binop`, `Unop`;
+`hxmc.Obj`'s `Reloc` and `Symbol`, `hxmc.ir.Ir.Local`), so where the
+target has compressed references so does the compiler, a Mir host too.
+Code it loads (Mir macros, `--run` with `-D hxmc.run=mir`) runs on its heap
+and its collector and calls its runtime and std, so it is lowered with the
+compiler's decision, not its own target's (`macro.Loader.compactHost`,
+`hxmc.rt.Gc.compactRefs`: the compiler's heap below 32 GB; `Mem.compact`
+the compiler's, so that the std's and the runtime's functions have the
+compiler's fingerprints, `macro.HostTable`, and those interpreted read
+compressed fields as the compiler's do; `MirMacros`, `MirRun`). The
+loaded types' entries get their compact maps and constructors' argument
+positions as `DataGen` writes them (`macro.BundleFacts`, `Loader`), and a
+type the compiler shares is so only with the same maps (`Loader.sameLayout`).
+A bundle's data (its string literals, class values, closures without
+captures), which compressed fields may refer to, is below 32 GB: in the
+native tier's window from 1 GB to 2 GB (which is why a Mir host's heap
+starts at 2 GB), else in pages past the heap (`Gc.reserveLow`), not
+malloc's. The interpreter needs nothing of its own: it runs the lowered
+Mir (`MemLower`'s 4-byte loads, shifts and the barrier's calls), without
+x86-64's folding of the shift into an address. `-D hxmc.interp`'s
+interpreted functions take their program's layouts likewise. The corpus'
+`CompactRefs`, `CompactEnums` and `CompactMacros` (Mir macros typing,
+storing and reading typed expressions and types; `make mir-run-check`).
 
 **Errors.** A compact class (with its superclasses' fields) has at most 32
 slots: the collector scans it with one word of each map (`Gc.SMALL_SLOTS`;

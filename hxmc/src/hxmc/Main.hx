@@ -156,12 +156,12 @@ class Main {
 	// shifted right by 3 fits 32 bits with no base. Not a shared library
 	// (loaded anywhere: Android's, -D hxmc.shared), macOS and iOS (position-
 	// independent executables, slid), Windows on arm64 (relocatable), nor
-	// WebAssembly (references are 4 bytes there), nor Mir's code nor a
-	// compiler running it (Mir macros read the compiler's objects with the
-	// layouts the compiler was built with, MirMacros, MirRun): there the
-	// fields stay 8 bytes
+	// WebAssembly (references are 4 bytes there): there the fields stay 8
+	// bytes. A Mir host (opts.mirHost) has them as any executable; the code
+	// it loads takes its decision (macro.Loader.compactHost: MirMacros,
+	// MirRun), as -D hxmc.interp's interpreted functions take their program's
 	public static function compactRefs(abi:Abi, opts:Options):Bool
-		return !abi.wasm && !abi.android && !opts.shared && opts.interp == null && !opts.mirHost && abi.output != Abi.OutputKind.SharedLibrary
+		return !abi.wasm && !abi.android && !opts.shared && abi.output != Abi.OutputKind.SharedLibrary
 			&& (abi.os == "linux" || abi.os == "windows" && !abi.arm);
 
 	// the program typed (com) to machine code at out: lowered (hxmc.ir.Lower),

@@ -66,8 +66,10 @@ class MirRun {
 		if (o.target != Options.host() || (o.libc != null) != (t == 7 || t == 8)) throw "-D hxmc.run=mir: the program's target is the compiler's own (" + Options.host() + ")";
 		abi.framePointers = abi.arm || o.framePointers; // (as Driver)
 		hxmc.ir.Lower.targetOs = abi.osCode();
-		hxmc.ir.Lower.compact = false; // (the compiler's own heap: no window)
-		hxmc.ir.Lower.compactTypes = 0;
+		// (the compiler's compressed references: the code shares its heap, its
+		// runtime and the std's functions it has, macro.Loader.compactHost)
+		hxmc.ir.Lower.compact = hxmc.macro.Loader.compactHost();
+		hxmc.ir.Lower.compactTypes = hxmc.macro.Loader.compactTypes();
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();

@@ -2027,6 +2027,18 @@ class Gc {
 		youngDump = youngEnd;
 	}
 
+	// whether compressed references are on (a type has them: the heap and the
+	// image are below 32 GB); a Mir host lowers the code it loads with them
+	// then, which its data must be in reach of (hxmc.macro.Loader.compactHost)
+	public static function compactRefs():Bool
+		return compactWindow();
+
+	// bytes of zeroed pages below 32 GB, past the heap (compressed references
+	// on: the data of code a Mir host loads, hxmc.macro.Loader.alloc); null
+	// when none is left, or without compressed references. Never released.
+	@:hxmc.unsafe public static function reserveLow(bytes:I64):Ptr
+		return compactWindow() ? heapReserve(bytes) : Ptr.nil();
+
 	// address space for the heap: anywhere, or with compressed references
 	// the first free range from compactNext on (2 MB aligned, past what is
 	// taken in 256 MB steps) that ends below 32 GB (null: none)
@@ -2605,7 +2617,9 @@ class Gc {
 		if (compactTypes())
 			for (t in 0...Mem.getI32(Mem.sym("rt_ntypes"), 0))
 				if (Types.hasCompact(Types.ty(t))) compactHeap = true;
-		compactNext = (1 : I64) << 30;
+		// (a Mir host, Mem.mirHost: from 2 GB, above the native tier's window,
+		// where the code it loads goes: hxmc.macro.Loader.WINDOW_LO to WINDOW_HI)
+		compactNext = ((Mem.mirHost() == 1 ? 2 : 1) : I64) << 30;
 		// (the image's static objects, which compressed references reach too:
 		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
 		if (compactWindow() && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
