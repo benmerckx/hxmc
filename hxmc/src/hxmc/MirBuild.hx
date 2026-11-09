@@ -840,11 +840,12 @@ class MirBuild extends MirWriter {
 
 	// a field of a new object (into its young storage: no barrier); next:
 	// the slot cleared after it (OInfo.next)
-	function initField(o:Int, loc:Int, t:Ty, v:Int, next = -1) {
+	function initField(o:Int, loc:Int, t:Ty, v:Int, next = -1, compact = false) {
 		var i = info();
 		i.t = t;
 		i.loc = loc;
 		i.next = next;
+		i.compact = compact;
 		obj(InitField, Void, i, o, v);
 	}
 
@@ -1242,7 +1243,9 @@ class MirBuild extends MirWriter {
 			case EEnumParam(c, idx, x):
 				var i = info();
 				i.ctor = c;
-				getField(nullCheck(ex(x)), at(idx, c.params[idx]), c.params[idx], i);
+				// (its location, Facts: packed for @:hxmc.compact, CtorInfo.locs)
+				i.compact = c.locs[idx] & hxmc.ir.Facts.COMPACT != 0;
+				getField(nullCheck(ex(x)), c.locs[idx] & ~hxmc.ir.Facts.COMPACT, c.params[idx], i);
 			case EArrLen(a): obj(ArrayLength, I32, info(), nullCheck(ex(a))).id;
 			case EArrGet(elem, a, i): arrGet(elem, a, i, true);
 			case EArrGetU(elem, a, i): arrGet(elem, a, i, false);
@@ -1291,16 +1294,19 @@ class MirBuild extends MirWriter {
 				alloc(c.nslots < 1 ? 1 : c.nslots, c.tindex, Abi.K_OBJ, true, i, OInfo.NEW_OBJECT);
 			case ENewEnum(c, args):
 				// (the storage is not zeroed: an Int's or Bool's word is cleared
-				// before the parameter is evaluated, OInfo.next)
+				// before the parameter is evaluated, OInfo.next; packed, a slot of
+				// halves before the first of them, its low half, CtorInfo.locs)
+				inline function half(i:Int):Bool
+					return c.params[i].match(TI32 | TBool) || c.locs[i] & hxmc.ir.Facts.COMPACT != 0;
 				inline function next(i:Int):Int
-					return i < args.length && c.params[i].match(TI32 | TBool) ? i : -1;
-				var n = c.params.length == 0 ? 1 : c.params.length;
+					return i < args.length && half(i) && c.locs[i] & 1 == 0 ? (c.locs[i] & ~hxmc.ir.Facts.COMPACT) >> 1 : -1;
+				var n = c.nslots == 0 ? 1 : c.nslots;
 				var i = info();
 				i.ctor = c;
 				i.next = c.params.length == 0 ? 0 : next(0);
 				var o = alloc(n, c.tindex, Abi.K_OBJ, false, i, OInfo.NEW_ENUM);
 				for (i in 0...args.length)
-					initField(o, at(i, c.params[i]), c.params[i], ex(args[i]), next(i + 1));
+					initField(o, c.locs[i] & ~hxmc.ir.Facts.COMPACT, c.params[i], ex(args[i]), next(i + 1), c.locs[i] & hxmc.ir.Facts.COMPACT != 0);
 				o;
 			case ENewArr(elem, vs): newArr(elem, vs);
 			case ENewClos(l, []) if (p.staticClosures):

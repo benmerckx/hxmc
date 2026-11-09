@@ -207,6 +207,15 @@ class Fingerprint {
 			case TId: 9;
 		});
 
+	// a packed constructor's argument locations (@:hxmc.compact, CtorInfo.locs);
+	// a slot per argument is what its types give
+	function ctorLocs(c:CtorInfo) {
+		if (!c.packed) return;
+		word(c.locs.length);
+		for (l in c.locs)
+			word(l);
+	}
+
 	function tyName(tindex:Int) {
 		var s = prep.tySym(tindex);
 		if (s == null) {
@@ -426,6 +435,7 @@ class Fingerprint {
 				word(c.params.length);
 				for (t in c.params)
 					ty(t);
+				ctorLocs(c);
 				ex(x);
 			case EArrLen(a):
 				word(E_ARRLEN);
@@ -539,6 +549,7 @@ class Fingerprint {
 				word(c.params.length);
 				for (t in c.params)
 					ty(t);
+				ctorLocs(c);
 				args(xs);
 			case ENewArr(elem, xs):
 				word(E_NEWARR);

@@ -1528,6 +1528,9 @@ class Lower implements LowerQueries {
 		var ei = enums.get(e);
 		if (ei != null) return ei;
 		ei = new EnumInfo(core.Globals.sTypePath(e.ePath), ident(e.ePath.pack, e.ePath.name));
+		ei.compact = hasMeta(":hxmc.compact", e.eMeta);
+		if (ei.compact && TFunctions.hasEnumFlag(e, EnExtern))
+			throw new LowerError('${ei.name}: @:hxmc.compact is for Haxe enums, not an extern enum', CInterop.posOf(e.ePos));
 		enums.set(e, ei);
 		prog.enums.push(ei);
 		var ctors = [];
@@ -1544,6 +1547,14 @@ class Lower implements LowerQueries {
 				case TFun(s):
 					ci.params = s.args.map(a -> boxed(ty(a.type)));
 					ci.paramNames = s.args.map(a -> a.name);
+					// (on every target alike: also where the arguments stay a slot each, Lower.compact false)
+					if (ei.compact) {
+						var n = Facts.compactSlots([for (t in ci.params) {name: "", ty: t, compact: true}]);
+						if (n > Facts.COMPACT_MAX_SLOTS)
+							throw new LowerError('${ei.name}.${ci.name}: @:hxmc.compact and $n slots: at most ' + Facts.COMPACT_MAX_SLOTS
+								+ ' (8 bytes each; an Int, a Bool or a compressed reference takes half of one): pass an object holding some of the arguments',
+								CInterop.posOf(ef.efPos));
+					}
 				case _:
 					ci.global = prog.globals.length;
 					prog.globals.push({ty: TRef(RCtor(ci)), init: ci, name: ei.ident + "_" + ci.name});

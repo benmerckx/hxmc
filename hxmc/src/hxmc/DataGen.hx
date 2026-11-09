@@ -378,7 +378,9 @@ class DataGen {
 				for (f in fs) {
 					rodata.buf.u32(e.fid(f.name));
 					rodata.buf.u32(f.slot);
-					rodata.buf.u32(f.kind != null ? f.kind : kindChar(f.ty));
+					// (the kind's byte, and a packed constructor's argument position + 1
+					// in the next: hxmc.rt.Dyn.ctorArg)
+					rodata.buf.u32((f.kind != null ? f.kind : kindChar(f.ty)) | (f.arg != null ? (f.arg + 1) << 8 : 0));
 				}
 			}
 			var ms = t.methods.copy();

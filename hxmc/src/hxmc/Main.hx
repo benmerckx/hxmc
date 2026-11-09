@@ -205,6 +205,7 @@ class Main {
 		// Lower never reaches keeps the runtime's tests, which then find none)
 		hxmc.ir.Lower.compactTypes = hxmc.ir.Lower.compact && Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): hxmc.ir.Lower.hasMeta(":hxmc.compact", c.clMeta);
+			case TEnumDecl(e): hxmc.ir.Lower.hasMeta(":hxmc.compact", e.eMeta);
 			case _: false;
 		}) ? 1 : 0;
 		// (the positions of every statement, natively: a program that reads

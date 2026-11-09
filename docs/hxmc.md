@@ -206,6 +206,26 @@ may be encoded in them, [values of type parameters](#values-of-type-parameters))
 Float and Int64; a struct field; a dynamic method's slot; the fields of a
 superclass that is not compact (its code reads them where they are).
 
+**Enums.** `@:hxmc.compact` on an enum lays out each of its constructors'
+arguments as a compact class's fields (`Facts.assignTypes`,
+`CtorInfo.locs`): an Int, a Bool or a compressed reference in a 4-byte
+half, packed in order, where an enum without it has a slot per argument
+(the tag is the header's type index, so `Node(l, r, name)` goes from 32 to
+24 bytes, `Pair(t, n)` from 24 to 16). An enum value is never written
+after its construction, so the code is a load per argument read by a
+`switch` (`MirBuild`'s `EEnumParam`, `OInfo.compact`) and an initializing
+store per argument (no barrier: the object is new); the slot of a pair of
+halves is cleared before its first (`OInfo.next`, the storage not being
+zeroed). The constructor's type record has the compact map as a class's,
+so the collector needs nothing more. Its field entries carry each
+argument's position (the byte after the kind, `Dyn.ctorArg`), since the
+slot no longer gives it: `Type.enumParameters`, `Type.createEnum`,
+`Type.enumEq`, `Std.string` and `haxe.Serializer` read them through it.
+Where the target has no compressed references the arguments stay a slot
+each, as without the annotation. A constructor has at most 32 slots.
+The corpus' `CompactEnums` (`make check`'s lane `CompactEnums x10
+adaptive RT_VERIFY`) and `reject-CompactEnumSlots`.
+
 **The code.** A load zero-extends the 4 bytes and shifts them left by 3
 (x86-64 folds the shift into the accesses the reference is the base of,
 `[x*8 + disp]`: `x64.Isel` scaleFolds); a store shifts right

@@ -166,6 +166,10 @@ class EnumInfo {
 	// haxe.rtti.Meta's __meta__ through the enum's value, once the enum is used
 	// as a value and has metadata (Lower.reflectEnum), as a class's statics
 	public var statics:Null<Array<StaticEntry>> = null;
+	// @:hxmc.compact: its constructors' arguments are packed as a compact
+	// class's fields, Int/Bool and compressed references in 4-byte halves,
+	// where the target has compressed references (Facts.layout; CtorInfo.locs)
+	public var compact = false;
 
 	public function new(name, ident) {
 		this.name = name;
@@ -181,6 +185,12 @@ class CtorInfo {
 	public var paramNames:Vector<String> = vector();
 	public var global:Int = -1; // singleton for constructors without arguments
 	public var tindex:Int = -1;
+	// per argument its location (Facts.assignTypes): its slot, an Int's or Bool's
+	// 4-byte index; packed (EnumInfo.compact: as ClassInfo.locs, a compressed
+	// reference's with Facts.COMPACT) or one slot per argument
+	public var locs:Vector<Int>;
+	public var nslots:Int = 0;
+	public var packed = false; // (locs from Facts.layout: EnumInfo.compact and Lower.compact)
 
 	public function new(en, name, tag, params) {
 		this.en = en;

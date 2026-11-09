@@ -325,12 +325,45 @@ class Facts {
 			e.tindex = addType(et);
 			for (c in e.ctors) {
 				// no tag slot: the constructor is the type index (Gc.hx)
-				var slots:Array<Null<Ty>> = [for (pt in c.params) pt];
+				var slots:Array<Null<Ty>> = [];
+				var halves = [];
+				// (@:hxmc.compact: packed as a compact class's fields, Int/Bool and
+				// compressed references in halves; else a slot per argument)
+				c.packed = e.compact && Lower.compact;
+				if (c.packed) {
+					c.locs = layout(slots, [for (pt in c.params) pt], [for (pt in c.params) compressible(pt)], halves);
+					// (Lower.enumInfo reported it with the enum's position)
+					if (slots.length > COMPACT_MAX_SLOTS)
+						throw "hxmc: @:hxmc.compact enum " + e.name + "." + c.name + " has " + slots.length + " slots, more than " + COMPACT_MAX_SLOTS;
+					if (halves.length > 0 && Lower.compactTypes == 0) throw "hxmc: @:hxmc.compact enum " + e.name + " in a program lowered without compressed references (Mem.compact)";
+				} else {
+					for (pt in c.params)
+						slots.push(pt);
+					c.locs = Vector.fromArrayCopy([for (i in 0...c.params.length) at(i, c.params[i])]);
+				}
+				c.nslots = slots.length;
 				var t = entry(c.name, "TK_CTOR", slots, e.name + "." + c.name);
+				t.halves = halves;
 				t.sup = e.tindex;
 				t.tag = c.tag;
 				if (c.global >= 0) t.single = c.global;
-				t.fields = [for (i in 0...c.params.length) {name: c.paramNames[i], slot: at(i, c.params[i]), ty: c.params[i]}];
+				// (packed: the argument's position too, hxmc.rt.Dyn.ctorArg; else
+				// the slot gives it)
+				t.fields = [
+					for (i in 0...c.params.length)
+						!c.packed ? {name: c.paramNames[i], slot: c.locs[i], ty: c.params[i]} : c.locs[i] & COMPACT != 0 ? {
+							name: c.paramNames[i],
+							slot: c.locs[i] & ~COMPACT,
+							ty: c.params[i],
+							kind: "c".code,
+							arg: i
+						} : {
+							name: c.paramNames[i],
+							slot: c.locs[i],
+							ty: c.params[i],
+							arg: i
+						}
+				];
 				c.tindex = addType(t);
 			}
 			types[e.tindex].ctors = [for (c in e.ctors) c.tindex];
@@ -897,7 +930,8 @@ typedef TypeEntry = {
 	sup:Int,
 	slots:Array<Null<Ty>>,
 	// (kind: the runtime's field kind when not the type's: L, Dyn.boxSlot)
-	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int}>,
+	// (arg: a packed constructor's argument position, DataGen)
+	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int, ?arg:Int}>,
 	// the 4-byte indices of the compressed references (@:hxmc.compact, Facts.layout)
 	?halves:Array<Int>,
 	// (dfn, dsig: the entry for dynamic calls, FuncInfo.dfltEntry)
