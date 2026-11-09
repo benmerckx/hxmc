@@ -255,6 +255,12 @@ class Lower implements LowerQueries {
 	// Windows on x86-64, executables at a fixed address; hxmc.rt.Gc.init). Elsewhere
 	// the annotation changes nothing.
 	public static var compact = false;
+	// Mem.compact: 1 when compact and a class of the program is @:hxmc.compact
+	// (Main.generate, from the typed types: a constant of every body, so that
+	// the runtime's code for compressed references folds away without one;
+	// LowerCache drops its bodies when it changes, and the object cache
+	// sees it in their IR, Fingerprint)
+	public static var compactTypes = 0;
 	public static var targetArm = -1;
 	public static var targetCode = -1;
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
@@ -310,6 +316,7 @@ class Lower implements LowerQueries {
 				case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): targetCode;
 				case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): targetPlatform;
 				case ECallHost("hxmc_unsafe_Mem_mirHost", [], _): mirHost;
+				case ECallHost("hxmc_unsafe_Mem_compact", [], _): compactTypes;
 				case ENot(a):
 					var x = v(a);
 					x == null ? null : x == 0 ? 1 : 0;
@@ -376,6 +383,7 @@ class Lower implements LowerQueries {
 			case ECallHost("hxmc_unsafe_Mem_target", [], _) if (targetCode >= 0): EInt(targetCode);
 			case ECallHost("hxmc_unsafe_Mem_platform", [], _) if (targetPlatform >= 0): EInt(targetPlatform);
 			case ECallHost("hxmc_unsafe_Mem_mirHost", [], _): EInt(mirHost);
+			case ECallHost("hxmc_unsafe_Mem_compact", [], _): EInt(compactTypes);
 			case EInt(_) | EF64(_) | EStr(_) | ENull(_) | ELocal(_) | EGlobal(_, _) | EType(_) | ENewObj(_): e;
 			// (Float's %: hxmc.rt.LibM.fmod, as Math's natives)
 			case EBin(FMod, a, b) if (hostImpls.exists("fmod")): ECall(hostImpl("fmod"), vector(ex(a), ex(b)));

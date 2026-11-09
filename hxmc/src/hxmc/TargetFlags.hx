@@ -66,7 +66,8 @@ class TargetFlags {
 		// FNV-1a; an older tool, the stage0, defines no such flag and computes
 		// FNV-1a, so what it builds agrees with itself; this tool hashes
 		// literals as the Str it typed does, Lower.strWordHash. docs/hxmc.md,
-		// "String hashes")
-		return wasm ? ["target.atomics", "hxmc.strhash"] : ["target.threaded", "target.atomics", "hxmc.strhash"];
+		// "String hashes"). (hxmc.memcompact: this tool folds Mem.compact, which
+		// hxmc.rt.GcCore.compactTypes reads; the stage0 does not know it)
+		return wasm ? ["target.atomics", "hxmc.strhash", "hxmc.memcompact"] : ["target.threaded", "target.atomics", "hxmc.strhash", "hxmc.memcompact"];
 	}
 }

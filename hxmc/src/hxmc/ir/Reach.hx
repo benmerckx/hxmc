@@ -82,7 +82,8 @@ class Reach {
 	var byName = new Map<String, ClassInfo>();
 	var tySeen = new Map<SigInfo, Bool>();
 	var enumSeen = new Map<EnumInfo, Bool>();
-	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root)
+	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root;
+	// several names separated by commas: each)
 	var whyName = Sys.getEnv("HXMC_REACH_WHY");
 	var cur:Null<FuncInfo> = null; // the function being scanned
 	var why = new Map<FuncInfo, {from:Null<FuncInfo>, how:String}>();
@@ -240,8 +241,9 @@ class Reach {
 	}
 
 	function explain() {
+		var names = whyName.split(",");
 		for (f in p.funcs)
-			if (nameOf(f) == whyName || f.name == whyName) {
+			if (names.indexOf(nameOf(f)) >= 0 || names.indexOf(f.name) >= 0) {
 				var k = f, n = 0;
 				Sys.println("hxmc: reach: why " + nameOf(f) + (live.exists(f) ? "" : ": not live"));
 				while (k != null && n++ < 100) {

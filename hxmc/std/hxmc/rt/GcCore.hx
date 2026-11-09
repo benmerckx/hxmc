@@ -73,9 +73,18 @@ extern class GcCore {
 	// (Types.hasCompact) has at most 32 slots, its compact map (a bit per
 	// 4-byte half, 64) the word after its pointer map's.
 
+	// whether the program may have types with compressed references: a
+	// constant (Mem.compact: false without a @:hxmc.compact class, or where
+	// the target's fields stay 8 bytes, hxmc.Main.compactRefs), so that
+	// every test of them below, and the code they guard, folds away in the
+	// programs without. (true from a tool without Mem.compact, which defines
+	// no hxmc.memcompact: the committed stage0 tests each type)
+	public static inline function compactTypes():Bool
+		return #if hxmc.memcompact Mem.compact() == 1 #else true #end;
+
 	// whether type t's objects have compressed references
 	public static inline function compactAt(t:Int):Bool
-		return Mem.getI32(Mem.sym("rt_types"), 112 * t + 20) != 0;
+		return compactTypes() && Mem.getI32(Mem.sym("rt_types"), 112 * t + 20) != 0;
 
 	// half h of the compact map pm (a type's pointer map) is a compressed reference
 	public static inline function isCompactHalf(pm:Ptr, h:Int):Bool

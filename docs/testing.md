@@ -110,11 +110,13 @@ each lane on the kept cases and 400 random programs.
 **The corpus.** Golden files are frozen: a new case gets one with
 `--bless` (checked by hand); a changed output is an edit of its golden file
 with the reason in the commit. A `// build-seconds: <n>` line bounds a
-case's build time. A `// not-live: <function>` line names a function
+case's build time. A `// not-live: <function> ...` line names functions
 reachability must drop when the case is also built from its source, as
 programs are (`HXMC_REACH_WHY`): the archive's build loads only the modules
 its program reaches, so what typing loads and DCE keeps shows only there
-(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). A
+(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop; `CompactFree`: a
+program without `@:hxmc.compact` classes has none of the collector's code for
+compressed references). A
 `// span-checks: <Class.function>=<n> ...` line names the span element
 checks left in each function's optimized code, which a build with
 `HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped); a

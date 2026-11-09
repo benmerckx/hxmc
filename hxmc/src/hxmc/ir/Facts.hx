@@ -291,6 +291,8 @@ class Facts {
 			// (Lower.classInfo reported it with the class's position)
 			if (halves.length > 0 && slots.length > COMPACT_MAX_SLOTS)
 				throw "hxmc: @:hxmc.compact class " + c.name + " has " + slots.length + " slots, more than " + COMPACT_MAX_SLOTS;
+			// (the runtime's code for them was folded away without: Lower.compactTypes, Main.generate)
+			if (halves.length > 0 && Lower.compactTypes == 0) throw "hxmc: @:hxmc.compact class " + c.name + " in a program lowered without compressed references (Mem.compact)";
 			// (a record's header counts 16 bits of slots, 0xFFFF an array's mark: Types)
 			if (slots.length >= 0xFFFF) throw "hxmc: class " + c.name + " has more than 65534 slots";
 			var t = entry(c.unnamed ? "" : c.name, "TK_CLASS", slots, c.name);

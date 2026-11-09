@@ -18,7 +18,7 @@ using StringTools;
 // line of a case's source adds that -D to its build, a `// resource:
 // <file>@<name>` line that resource (the file next to the source), a `//
 // build-seconds: <n>` line a bound on hxmc's time to build it, a `//
-// not-live: <function>` line a function reachability must drop when the
+// not-live: <function> ...` line functions reachability must drop when the
 // case is built from its source (notLive). --target cross-builds
 // for another target (linux-arm64 runs under qemu-aarch64-static, windows-x86_64 under
 // wine64, wasm32-wasi under node or, with HXMC_WASM_RUNNER=wasmtime,
@@ -333,10 +333,13 @@ class Corpus {
 		var cmd = [tool, exe];
 		for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
 		cmd = cmd.concat(["-cp", FileSystem.fullPath(STD), "-main", c.main]).concat(args);
-		var r = exec(cmd, {env: ["HXMC_REACH_WHY" => name]});
+		var names = [for (n in name.split(" ")) if (n != "") n];
+		var r = exec(cmd, {env: ["HXMC_REACH_WHY" => names.join(",")]});
 		if (r.code != 0) return "the build from source failed: " + tail(r.out + r.err, 2000);
 		if (FileSystem.exists(exe)) FileSystem.deleteFile(exe);
-		if (r.out.split("\n").indexOf("hxmc: reach: why " + name) >= 0) return '$name is live:\n' + tail(r.out, 1500);
+		var lines = r.out.split("\n");
+		var live = [for (n in names) if (lines.indexOf("hxmc: reach: why " + n) >= 0) n];
+		if (live.length > 0) return live.join(", ") + (live.length == 1 ? " is" : " are") + " live:\n" + tail(r.out, 1500);
 		return null;
 	}
 

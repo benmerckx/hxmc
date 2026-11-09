@@ -150,8 +150,9 @@ class Dyn {
 				var n:Null<Int> = v;
 				if (Str.isNull(a) || n == null || n != arrLength(a)) Rt.rt_throw("a length without storage (@:hxmc.lengthOf) cannot be set");
 			case "c".code:
-				// (native only: WebAssembly's references are 4 bytes already, Lower.compact)
-				if (Mem.os() != 3) Gc.storeCompact(o, slot, v);
+				// (native only: WebAssembly's references are 4 bytes already, Lower.compact;
+				// a program without such a field has no storeCompact, GcCore.compactTypes)
+				if (Mem.os() != 3 && GcCore.compactTypes()) Gc.storeCompact(o, slot, v);
 			case _:
 				Mem.setRefBarrier(o, 8 * slot, v);
 		}

@@ -200,8 +200,9 @@ class Types {
 	// whether the type's records hold compressed references (@:hxmc.compact,
 	// hxmc.ir.Facts.layout): its pointer map (of at most 32 slots) is then
 	// followed by its compact map, a bit per 4-byte half (GcCore.isCompactHalf)
+	// (false where the program has none: GcCore.compactTypes, a constant)
 	public static inline function hasCompact(ty:Ptr):Bool
-		return Mem.getI32(ty, 20) != 0;
+		return GcCore.compactTypes() && Mem.getI32(ty, 20) != 0;
 
 	public static inline function nfields(ty:Ptr):Int
 		return Mem.getI32(ty, 32);

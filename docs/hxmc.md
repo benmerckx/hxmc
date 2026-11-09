@@ -250,6 +250,25 @@ old space holds at most 15 GB, 16 GB without compact types). Startup dies
 with a message when the image is above 32 GB or no such range is free. A
 program without compact types reserves its heap as before.
 
+**A program without compact types** pays nothing: none of the code above
+is in it. `Mem.compact()` is a constant of the lowering (`Lower.compactTypes`,
+set by `hxmc.Main.generate` after typing: 1 when compressed references are
+on for the target, `compactRefs`, and a class of the typed program is
+`@:hxmc.compact`), folded as `Mem.mirHost()` is; every test of the runtime
+goes through `GcCore.compactTypes()` (`compactAt`, `Types.hasCompact`, the
+remembered 4-byte fields' tag, `Gc.compactWindow`, `Dyn.storeSlot`'s store),
+so where it is 0 the scans of compressed references, the startup's search
+of the types, the heap's placement below 32 GB and `Gc.storeCompact` fold
+away and reachability drops them (the corpus' `CompactFree`, `not-live`).
+A `#if` cannot say it, the metadata being known only after typing. Being
+in the bodies' IR, the fact keys the object cache with them (`Fingerprint`:
+the collector's object compiled for one program is not linked into the
+other, `CacheCheck`'s "compact and back"); the compilation server's
+lowered bodies are dropped when it changes (`LowerCache`). A tool that
+knows `Mem.compact` defines `hxmc.memcompact` (`TargetFlags`); without it
+(the committed stage0) `compactTypes()` is true and each type is tested
+at run time. The tool itself (a Mir host) has none: 8 KB smaller.
+
 **Where.** `hxmc.Main.compactRefs`: executables for Linux (x86-64 and arm64,
 musl and the glibc mode) and Windows on x86-64. Elsewhere the annotation
 changes nothing, the fields stay 8 bytes and the program behaves the same:

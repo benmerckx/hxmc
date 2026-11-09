@@ -156,6 +156,10 @@ class Gc {
 	// an address shifted right by 3 fits 32 bits), reserved from 1 GB up at
 	// fixed addresses (compactNext), each region at most half of what is left
 	static var compactHeap:Bool;
+	// (false where the program has no such type: GcCore.compactTypes, a constant)
+	static inline function compactWindow():Bool
+		return compactTypes() && compactHeap;
+
 	static var compactNext:I64;
 	static inline var COMPACT_LIMIT:Int = 32;
 	static var region0:Ptr;
@@ -829,7 +833,7 @@ class Gc {
 			// slots, entries n to 3n - 1)
 			var lim = !pm.isNull() && compactAt(w0 & 0xFFFF) ? 3 * n : n;
 			while (i < lim) {
-				var c = i >= n;
+				var c = compactTypes() && i >= n;
 				var j = c ? i - n : i;
 				if (c ? !isCompactHalf(pm, j) : !pm.isNull() && (Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 == 0) {
 					i++;
@@ -987,7 +991,7 @@ class Gc {
 		var rem = m.value.rem;
 		for (i in 0...m.value.remLen) {
 			var s = Mem.getPtr(rem, 8 * i);
-			if (s.toI64().toInt() & 1 != 0) { // (a compressed reference's 4 bytes, tagged: remember)
+			if (compactTypes() && s.toI64().toInt() & 1 != 0) { // (a compressed reference's 4 bytes, tagged: remember)
 				s = s.add(-1);
 				var v = getC(s, 0);
 				if (!v.isNull()) setC(s, 0, fwdAs(v, root));
@@ -1378,7 +1382,7 @@ class Gc {
 		while (j < n) {
 			var s = Mem.getPtr(a, 8 * j);
 			// (a compressed reference's 4 bytes, tagged: remember)
-			t = s.toI64().toInt() & 1 != 0 ? parSlotAny(s.add(-1), 0, t, false, false, true) : parSlot(s, 0, t, false);
+			t = compactTypes() && s.toI64().toInt() & 1 != 0 ? parSlotAny(s.add(-1), 0, t, false, false, true) : parSlot(s, 0, t, false);
 			j++;
 		}
 		pTop = t;
@@ -2027,7 +2031,7 @@ class Gc {
 	// the first free range from compactNext on (2 MB aligned, past what is
 	// taken in 256 MB steps) that ends below 32 GB (null: none)
 	@:hxmc.unsafe static function heapReserve(bytes:I64):Ptr {
-		if (!compactHeap) return Os.reserve(bytes);
+		if (!compactWindow()) return Os.reserve(bytes);
 		var at = (compactNext + ((2 << 20) - 1)) & ~(((2 : I64) << 20) - 1);
 		while (((COMPACT_LIMIT : I64) << 30) - at >= bytes) {
 			var p = Os.reserveAt(Ptr.ofI64(at), bytes);
@@ -2045,7 +2049,7 @@ class Gc {
 	@:hxmc.unsafe static function nurseryAlloc(bytes:I64):Ptr {
 		var reserve:I64 = bytes > (MINOR_MAX : I64) ? bytes : MINOR_MAX;
 		var p = heapReserve(reserve + (2 << 20));
-		if (p.isNull() && compactHeap) die("cannot reserve the nursery below 32 GB (@:hxmc.compact)\n");
+		if (p.isNull() && compactWindow()) die("cannot reserve the nursery below 32 GB (@:hxmc.compact)\n");
 		if (p.isNull()) die("cannot reserve the nursery\n");
 		Os.coreDump(p, reserve + (2 << 20), false);
 		#if (hxmc.shared || hxmc.dev_host)
@@ -2598,12 +2602,13 @@ class Gc {
 	@:hxmc.unsafe static function init(ng:Int):Ptr {
 		// (a type with compressed references: hxmc.DataGen's flag, Types.hasCompact)
 		compactHeap = false;
-		for (t in 0...Mem.getI32(Mem.sym("rt_ntypes"), 0))
-			if (Types.hasCompact(Types.ty(t))) compactHeap = true;
+		if (compactTypes())
+			for (t in 0...Mem.getI32(Mem.sym("rt_ntypes"), 0))
+				if (Types.hasCompact(Types.ty(t))) compactHeap = true;
 		compactNext = (1 : I64) << 30;
 		// (the image's static objects, which compressed references reach too:
 		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
-		if (compactHeap && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
+		if (compactWindow() && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
 		var m = Os.getenv("RT_MINOR_KB");
 		minorFixed = !m.isNull();
 		minorSize = minorFixed ? (Os.atoi(m) : I64) << 10 : (MINOR_MIN : I64);
@@ -2649,7 +2654,7 @@ class Gc {
 		var rm = Os.getenv("RT_REGION_MB");
 		if (!rm.isNull()) regionBytes = (Os.atoi(rm) : I64) << 20;
 		var regionsAt = compactNext;
-		if (compactHeap) {
+		if (compactWindow()) {
 			// (two regions in what is left below 32 GB, in 1 GB steps: 15 GB each after a 256 MB nursery)
 			var room = ((((COMPACT_LIMIT : I64) << 30) - compactNext) / 2) & ~(((1 : I64) << 30) - 1);
 			if (regionBytes > room) regionBytes = room;
@@ -2664,7 +2669,7 @@ class Gc {
 				i = 0;
 				continue;
 			}
-			if (r.isNull() && compactHeap) die("cannot reserve the heap below 32 GB (@:hxmc.compact)\n");
+			if (r.isNull() && compactWindow()) die("cannot reserve the heap below 32 GB (@:hxmc.compact)\n");
 			if (r.isNull()) die("cannot reserve heap\n");
 			if (hugePages) Os.hugePages(r, regionBytes);
 			Os.coreDump(r, regionBytes, false);

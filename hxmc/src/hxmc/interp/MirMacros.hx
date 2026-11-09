@@ -666,6 +666,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		var abi = Abi.get(opts.target);
 		hxmc.ir.Lower.targetOs = abi.osCode();
 		hxmc.ir.Lower.compact = false; // (the compiler's own heap: no window)
+		hxmc.ir.Lower.compactTypes = 0;
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
