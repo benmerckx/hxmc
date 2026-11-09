@@ -100,6 +100,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
 	var testFolds = new Map<Int, Bool>(); // x & constant used only by a comparison with 0 (TESTI)
 	var indexFolds = new Map<Int, Bool>(); // x + y used only as the base of accesses: their base and index
+	var scaleFolds = new Map<Int, Bool>(); // x << 3 (a compressed reference's address) used only as the base of accesses: their index, scaled
 
 	// whether load v is a memory operand of its user (marks it folded)
 	function memFold(v:Int):Bool {
@@ -316,6 +317,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		// comparisons: each tests x, the and is not computed nor kept live)
 		testFolds = new Map();
 		indexFolds = new Map();
+		scaleFolds = new Map();
 		var testUses = new Map<Int, Int>();
 		for (b in mf.blocks)
 			for (c in b.ins) {
@@ -349,6 +351,16 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				if (c <= -0x40000000 || c >= 0x40000000 || folded[i.a] && mf.vals[i.a].op == Const) continue;
 				folded[i.id] = true;
 			}
+		// a compressed reference decompressed (hxmc.MemLower.decompress: the
+		// 4 bytes zero-extended, shifted left by 3) used only as the base of
+		// accesses without an index: [x*8 + displacement], no shift
+		for (b in mf.blocks)
+			for (i in b.ins)
+				if (i.op == Shl && i.ty == I64 && immOf(i.b) == 3 && isymOf(i.b) == null && mf.vals[i.a].op == ZExt && addrUses[i.id] > 0
+					&& baseUses[i.id] == useCount[i.id]) {
+					folded[i.id] = true;
+					scaleFolds[i.id] = true;
+				}
 		// constants and symbol addresses used once by a foldable user are not computed on their own
 		for (b in mf.blocks)
 			for (i in b.ins)
@@ -417,6 +429,9 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			x.dsym = c.sym;
 			x.base = use(bi.a);
 			if (index >= 0) x.index = use(index);
+		} else if (folded[base] && scaleFolds.exists(base)) {
+			x.index = use(bi.a);
+			x.scale = 8;
 		} else if (folded[base] && bi.op == SymAddr && index < 0) {
 			x.sym = bi.sym;
 			x.disp += bi.imm;
@@ -601,6 +616,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				mov(reg(i.id), use(i.a));
 			case And if (testFolds.exists(i.id)): // (TESTI of its comparison)
 			case Add if (folded[i.id]): // (the displacement of the loads and stores it is the address of)
+			case Shl if (folded[i.id]): // (the index of the loads and stores it is the address of: scaleFolds)
 			case Add | Sub | And | Or | Xor:
 				var d = reg(i.id);
 				var size = sz(i.ty);
