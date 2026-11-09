@@ -85,7 +85,7 @@ class Corpus {
 	public static final JNI = [for (n in ["JniCalls", "JniArrays", "JniRefs", "JniPeers", "JniThreads"]) n => true];
 	// the cases the interpreter cannot build when its code is loaded at run
 	// time (--mir-run: no call-out stubs, only the register image)
-	static final MIR_RUN_EXCLUDED = ["CompactRefs" => "an object's size: Mir's code has no compressed references (hxmc.ir.Lower.compact)", "CompactEnums" => "an enum value's size: Mir's code has no compressed references (hxmc.ir.Lower.compact)", "SimdFfi" => "C's native vectors by value: the register image of the interpreter's calls of native code has no vector registers (docs/plans/simd.md, \"ABIs\")"];
+	static final MIR_RUN_EXCLUDED = ["SimdFfi" => "C's native vectors by value: the register image of the interpreter's calls of native code has no vector registers (docs/plans/simd.md, \"ABIs\")"];
 	// the cases known to fail under --mir-run (as --known: still run, their
 	// failure does not fail the run, their passing does)
 	static final MIR_RUN_KNOWN = [

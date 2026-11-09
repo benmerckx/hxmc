@@ -76,3 +76,7 @@ hxml eval-recursive-callbacks-compile haxe/upstream/tests/misc/eval/projects/rec
 # (the macro prints it after generation: the interp lane compares it).
 hxml macro-create-instance haxe/test/conformance/macro-create-instance build.hxml
 hxml shared-field-meta haxe/test/conformance/shared-field-meta build.hxml
+# hxmc's corpus case CompactMacros: macros typing, storing and reading typed
+# expressions and types, and laying out @:hxmc.compact classes and enums of
+# their own (Mir macros: the compiler's compressed references, docs/hxmc.md)
+hxml macro-compact haxe/test/conformance/macro-compact build.hxml
