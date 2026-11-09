@@ -878,7 +878,7 @@ class Opt {
 			mergeBlocks();
 			return;
 		}
-		var uses = MFunc.ints(f.vals.length, 0);
+		var uses = [for (_ in 0...f.vals.length) 0]; // (grows: the comparisons made below)
 		for (b in f.blocks)
 			for (i in b.ins) {
 				if (i.a >= 0) uses[i.a]++;
@@ -943,11 +943,32 @@ class Opt {
 					addArgs(to);
 					retarget(p, b, to);
 				} else if (known < 0 && t != null && t.op == Jmp && p.succs.length == 1 && joins(onSet, p) && joins(onZero, p)) {
-					// branch on the value here
+					// branch on the value here (a branch tests 32 bits: a wider
+					// value compared with zero first, as a tagged Null<Int> whose
+					// low half is 0)
 					addArgs(onSet);
 					addArgs(onZero);
+					var cv = v;
+					if (x.ty != I32) {
+						var z = new MIns(Const, x.ty);
+						z.id = vals.length;
+						vals.push(z);
+						z.block = p;
+						var c = new MIns(Cmp, I32);
+						c.id = vals.length;
+						vals.push(c);
+						c.imm = CNe;
+						c.a = v;
+						c.b = z.id;
+						c.block = p;
+						p.ins.insert(p.ins.length - 1, z);
+						p.ins.insert(p.ins.length - 1, c);
+						uses.push(1);
+						uses.push(1);
+						cv = c.id;
+					}
 					t.op = Br;
-					t.a = v;
+					t.a = cv;
 					t.targets = vector(onSet, onZero);
 					p.succs = [onSet, onZero];
 					onSet.preds.push(p);
