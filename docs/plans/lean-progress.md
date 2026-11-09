@@ -224,6 +224,37 @@ The compiler remains 21,059,208 bytes. Production source is 59,441 compiler
 The focused check tier passed 23/25 lanes, including 32 further crosshost
 comparisons; QEMU and Wine remain unavailable.
 
+## Raw-address validation across safe regions
+
+The raw-address validator used to skip every function inferred to have no
+ordinary GC points. That inference still permits blocking safe regions,
+where another thread can collect and move objects. A raw heap pointer held
+across such a region can therefore become stale. The validator now checks
+these functions and preserves the opt-out for explicit low-level contracts.
+Comments distinguish the allocation summary from the movement guarantees.
+
+The previous compiler accepted both new rejection cases: a pointer held
+across manual region transitions, and one held across a call that enters a
+region. The fixed compiler rejects both. A positive case retains ordinary
+no-GC address helpers and verifies that an explicit unsafe contract remains
+available. This change does not claim to make explicitly unsafe code safe.
+
+Validation passed all eight quick lanes (301 native and GC-verification
+cases, 277 Wasm cases), 100 optimized/checked fuzz programs (seed 10000),
+100 Eval/native programs (seed 11000), and 28 focused crosshost comparisons.
+The focused check tier passed 23/25 lanes, including 36 further crosshost
+comparisons; QEMU and Wine are absent. The full tier passed 29/53 lanes,
+including 82 byte-identical crosshost comparisons, 400 native thread stress
+runs and the byte-identical cold/warm/cache-off fixpoint. Its remaining
+lanes require QEMU, Wine, wasmtime or the unavailable pinned reference
+compiler and artifacts derived from it. No exclusions were weakened.
+Logs are under `bin/lean/raw-region/final/`.
+
+The compiler remains 21,059,208 bytes. The timing samples above measure
+the root-initialization optimization independently; they do not establish
+a combined branch speedup or a peak-memory reduction. The single-IR
+migration described below remains unfinished.
+
 ## Rejected experiments
 
 These experiments were measured and removed rather than retained behind
