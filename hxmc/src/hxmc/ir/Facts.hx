@@ -593,8 +593,9 @@ class Facts {
 	// Functions that never reach a GC point: no allocation, no impure native,
 	// no throw, and direct calls only to such functions (the largest such set:
 	// candidates are dropped until none calls a dropped one, so recursion
-	// stays in). A call to one keeps the caller's references in registers. They also never stop at a safepoint (Threads.hx),
-	// so another thread's collection cannot move objects under them.
+	// stays in). This summary alone does not rule out movement by other
+	// threads: safe-region transitions are classified separately by GcPoints,
+	// with blocks marking functions that enter a safe region.
 	//
 	// One walk of the bodies finds what the other passes ask of them too: the
 	// functions taking raw addresses (checkRawAddresses) and the names of
@@ -889,7 +890,9 @@ class Facts {
 		var errors = [];
 		for (f in takesAddr) {
 			// (checked once: a program lowered in steps makes its facts again)
-			if (f.noGc || f.rawChecked) continue;
+			// Inferred noGc still permits concurrent movement in safe regions.
+			// Only declared low-level contracts opt out of this check.
+			if (f.declNoGc || f.rawChecked) continue;
 			f.rawChecked = true;
 			for (v in Roots.rawViolations(f))
 				errors.push(where(f) + '${displayName(f)}: a raw heap address (Mem.addr) $v; take the address after the GC point, or move the work into a @:hxmc.unsafe function');
