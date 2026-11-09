@@ -137,8 +137,11 @@ class Gc {
 
 	// ---- the old space: it alternates between two large reserved regions;
 	// oldEnd is a soft limit, set after each major collection to `growth`
-	// percent of the live size (RT_OLD_GROWTH, 300: three times)
+	// percent of the live size (RT_OLD_GROWTH, 300: three times), times
+	// growthMult (majorLimit), but no more than half the memory (ramBytes)
 	static var growth:Int;
+	static var growthMult:Int;
+	static var ramBytes:I64; // physical memory (Linux; 0: unknown)
 	static var oldStart:Ptr;
 	@:hxmc.export("hxmc_old_ptr") static var oldPtr:Ptr;
 	static var oldEnd:Ptr;
@@ -1819,24 +1822,8 @@ class Gc {
 		Os.coreDump(from, (curRegion == 0 ? dumpTop1 : dumpTop0).diff(from), false);
 		if (curRegion == 0) dumpTop1 = from else dumpTop0 = from;
 		var collected = fromEnd.diff(fromStart) + young;
-		var live = oldPtr.diff(oldStart);
-		// a collection that freed little (a quarter or less of the old space it
-		// collected) found data that lives on, as a compiler's trees, symbols
-		// and types: the next one waits for four times the growth. Each copies
-		// the whole live set with every thread stopped, and copying it again
-		// soon frees as little (tsc-haxe on t3code-server: 467 MB, then 1.8 GB,
-		// each over 90% live: 1.1 s of 9.9)
-		var g:I64 = live * 4 >= fromEnd.diff(fromStart) * 3 ? (growth : I64) * 4 : (growth : I64);
-		var limit = live * g / 100 + minorSize * 4 + need;
-		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
-		// (room for what is live and the allocation it collected for, whatever
-		// the growth: RT_OLD_GROWTH below 100 left a large object no room, and
-		// its allocation collected again and again)
-		var least = live + need + minorSize;
-		if (limit < least) limit = least;
-		if (limit > regionBytes - minorSize) limit = regionBytes - minorSize;
-		oldEnd = oldStart.addL(limit);
-		survival = collected > 0 ? (live * 1024 / collected).toInt() : 1024;
+		majorLimit(collected, need);
+		survival = collected > 0 ? (oldPtr.diff(oldStart) * 1024 / collected).toInt() : 1024;
 		// (pages faulted in past the limit: back to the system)
 		if (par && oldEnd.ult(popEnd)) {
 			var x = oldEnd.toI64() + ((2 << 20) - 1);
@@ -1854,7 +1841,9 @@ class Gc {
 			r.int(fromEnd.diff(fromStart) >> 20, 0);
 			r.str(" MB, limit ");
 			r.int(oldEnd.diff(oldStart) >> 20, 0);
-			r.str(" MB");
+			r.str(" MB (growth x");
+			r.int(growthMult, 0);
+			r.str(")");
 			if (Foreign.npeers > 0) {
 				r.str("; pairs gone old since the previous ");
 				r.int(Foreign.atMajor, 0);
@@ -1865,6 +1854,43 @@ class Gc {
 		#if hxmc.census
 		if (census == 2) censusNow(Mem.cstr("major collection"));
 		#end
+	}
+
+	// the old space's next limit, after a major collection of `collected`
+	// bytes (the from-space and the nursery) for an allocation of `need`.
+	// Graded backoff: a collection that freed little (a quarter or less of
+	// what it collected) found data that lives on, as a compiler's trees,
+	// symbols and types; each copies the whole live set, and copying it
+	// again soon frees as little. The first such collection multiplies the
+	// growth by MULT_FIRST, each next one in a row doubles it (growthMult, up
+	// to MULT_MAX: 4, 8, 16 times RT_OLD_GROWTH); one that frees more than
+	// half starts it over, one in between keeps it. (tsc-haxe on
+	// t3code-server: 467 MB, then 1.8 GB, each over 90% live: 1.1 s of 9.9
+	// with the growth fixed; starting at 2, a second major collection of
+	// 3.1 GB live, 1.6 s, and 1.4 GB more peak RSS than at 4.) The limit
+	// stays below half the physical memory (ramBytes) unless what is live
+	// needs more: a program that grows its live set steadily otherwise
+	// reaches a limit of 16 times it.
+	static inline var MULT_FIRST = 4;
+	static inline var MULT_MAX = 16;
+
+	@:hxmc.unsafe static function majorLimit(collected:I64, need:I64) {
+		var live = oldPtr.diff(oldStart);
+		if (growthMult < 1) growthMult = 1;
+		if (live * 4 >= collected * 3) {
+			growthMult = growthMult == 1 ? MULT_FIRST : growthMult < MULT_MAX ? growthMult * 2 : MULT_MAX;
+		} else if (live * 2 < collected)
+			growthMult = 1;
+		var limit = live * ((growth : I64) * growthMult) / 100 + minorSize * 4 + need;
+		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
+		if (ramBytes > 0 && limit > ramBytes / 2) limit = ramBytes / 2;
+		// (room for what is live and the allocation it collected for, whatever
+		// the growth: RT_OLD_GROWTH below 100 left a large object no room, and
+		// its allocation collected again and again)
+		var least = live + need + minorSize;
+		if (limit < least) limit = least;
+		if (limit > regionBytes - minorSize) limit = regionBytes - minorSize;
+		oldEnd = oldStart.addL(limit);
 	}
 
 	// [region, top) of the old space's region in a core dump (2 MB aligned:
@@ -2493,7 +2519,9 @@ class Gc {
 		oldPtr = region0;
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
 		growth = Os.envInt("RT_OLD_GROWTH", 300);
+		growthMult = 1;
 		survival = 1024;
+		ramBytes = Os.physicalBytes();
 		if (oldStart.addL(regionBytes - minorSize).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes - minorSize);
 		dumpTop0 = region0;
 		dumpTop1 = region1;

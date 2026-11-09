@@ -106,6 +106,13 @@ class Os {
 	@:hxmc.unsafe public static function cpus():Int
 		return Mem.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
 
+	// the physical memory in bytes, 0 when unknown (Linux but Android: _SC_PHYS_PAGES)
+	@:hxmc.unsafe public static function physicalBytes():I64 {
+		if (Mem.os() != 0 || Mem.target() >= 9) return 0;
+		var pages = C.sysconf(85); // _SC_PHYS_PAGES
+		return pages > 0 ? pages * (pageSize() : I64) : 0;
+	}
+
 	// ---- memory: reservations committed as touched (MAP_NORESERVE; Windows:
 	// WinRt commits the pages of its reservations on first touch)
 
