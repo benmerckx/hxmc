@@ -152,10 +152,26 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	// (a table that only grows doubles: at 1/2 full, to 1/4; a rebuild after
 	// removals moves at most one entry per removal)
 	function grow() {
-		var os = slots, okvs = kvs, od = dead, on = used, ocap = mask + 1;
 		var cap = 8;
 		while (cap < live * 4)
 			cap *= 2;
+		rebuild(cap);
+	}
+
+	/**
+		hxmc: room for `n` entries without growing (a capacity hint, as Go's
+		`make(map[K]V, n)`): the table is rebuilt once if it is smaller.
+	**/
+	public function reserve(n:Int) {
+		var cap = 8;
+		while ((cap >> 1) < n)
+			cap *= 2;
+		if (cap > mask + 1 && (cap >> 1) > used) rebuild(cap);
+	}
+
+	// the table with cap slots (room for cap / 2 entries), the live entries added again
+	function rebuild(cap:Int) {
+		var os = slots, okvs = kvs, od = dead, on = used, ocap = mask + 1;
 		var room = cap >> 1;
 		slots = new MapSlots<Int>(2 * cap + room);
 		kvs = new RefSlots(2 * room);
@@ -195,9 +211,13 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		See `Map.copy`
 	**/
 	public function copy():StringMap<T> {
+		// (sized once; the keys are unique and their hashes kept: appended, not looked up)
 		var m = new StringMap<T>();
+		if (live == 0) return m;
+		m.reserve(live);
+		var ocap = mask + 1;
 		for (j in 0...used)
-			if (dead == null || !dead[j]) m.set(kvs[2 * j], kvs[2 * j + 1]);
+			if (dead == null || !dead[j]) m.add(kvs[2 * j], kvs[2 * j + 1], slots[2 * ocap + j]);
 		return m;
 	}
 
