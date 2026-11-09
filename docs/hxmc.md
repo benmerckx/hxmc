@@ -205,8 +205,11 @@ space by copying into a new region.
   nurseries left out (101 MB). The tool sets 768 MB for a build; the
   compilation server 2048 MB and 150%.
 - **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
-  64 MB, a helper thread faults in its pages ahead of minor collections.
-  The compilers are built with it. `RT_PREFAULT=0` turns it off.
+  64 MB, a helper thread faults in its pages ahead of minor collections:
+  twice what the last one promoted (`RT_PF_AHEAD`: in quarters of it).
+  What a parallel minor collection copies past them, one copying thread at
+  a time faults in with `MADV_POPULATE_WRITE`. The compilers are built with
+  it. `RT_PREFAULT=0` turns it off.
 - **Publication**: a store of a reference into an object, array or static
   is a release store (`MIns.release`), so a thread that reads the reference
   also sees the object's initialisation, as OCaml guarantees the reference

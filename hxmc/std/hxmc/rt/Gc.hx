@@ -1049,6 +1049,14 @@ class Gc {
 			for (i in 0...nfinals)
 				Mem.setPtr(finals, 16 * i + 8, minorForward(Mem.getPtr(finals, 16 * i + 8)));
 			var r1 = stats ? Os.now() : 0.0;
+			#if hxmc.gc_prefault
+			if (pfState > 0) {
+				Os.lock(pfLock);
+				parPopTo = pfDoneTo.ult(oldPtr) ? oldPtr : pfDoneTo;
+				Os.unlock(pfLock);
+			} else if (pfState == 0)
+				parPopTo = oldEnd; // (not started: small heaps fault in as they go)
+			#end
 			parMinor(scan);
 			clearAllRemembered();
 			if (stats) {
@@ -1212,6 +1220,9 @@ class Gc {
 		parMajors++;
 		parMutsLen = 0;
 		parMajor = true;
+		#if hxmc.gc_prefault
+		parPopTo = Ptr.ofI64(-1); // (none: majorCollect faulted in what it expects, Os.populate; oldEnd is still the other region's)
+		#end
 		parRun(scan);
 		parMajor = false;
 	}
@@ -1424,9 +1435,18 @@ class Gc {
 	// room for an object of `bytes` (with its header) in the old space: a new
 	// PLAB (the rest of the last one filled), or for a large one its own
 	@:hxmc.unsafe static function parAlloc(bytes:Int):Ptr {
-		if (bytes > PLAB_DIRECT) return Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (bytes : I64)));
+		if (bytes > PLAB_DIRECT) {
+			var d = Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (bytes : I64)));
+			#if hxmc.gc_prefault
+			parPopulate(d.add(bytes));
+			#end
+			return d;
+		}
 		parFill(pPlab, pPlabEnd);
 		var p = Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (PLAB_BYTES : I64)));
+		#if hxmc.gc_prefault
+		parPopulate(p.add(PLAB_BYTES));
+		#end
 		// (zeroed by rep stosb, which writes whole lines without reading them:
 		// the copies then write to the cache, not read each line from memory first)
 		Mem.zero(p, PLAB_BYTES);
@@ -1434,6 +1454,40 @@ class Gc {
 		pPlabEnd = p.add(PLAB_BYTES);
 		return p;
 	}
+
+	#if hxmc.gc_prefault
+	// the old space up to `end` faulted in before a copying thread writes
+	// it: past what the prefaulter did (parPopTo), one thread at a time faults
+	// in the next PF_CATCHUP with Os.populate while the others wait (threads
+	// that fault in the same huge page together wait for each other in the
+	// kernel: t3code-server without the prefaulter, 2.7 GB promoted, 1.1 s
+	// more copying)
+	static inline var PF_CATCHUP = 4 << 20;
+	@:hxmc.export("hxmc_par_pop_to") static var parPopTo:Ptr;
+	@:hxmc.export("hxmc_par_pop_busy") static var parPopBusy:Int;
+	static var parPopBytes:I64; // RT_STATS: what the copying threads faulted in
+
+	@:hxmc.unsafe static function parPopulate(end:Ptr) {
+		if (pfState < 0) return;
+		while (Ptr.ofI64(Atomic.load64(Mem.sym("hxmc_par_pop_to"))).ult(end)) {
+			if (Atomic.cas32(Mem.sym("hxmc_par_pop_busy"), 0, 1) == 0) {
+				var a = parPopTo;
+				if (a.ult(end)) {
+					var x = end.toI64() + (PF_CATCHUP - 1);
+					var b = Ptr.ofI64(x - (x & ((HUGE_PAGE : I64) - 1)));
+					if (oldEnd.ult(b)) b = oldEnd;
+					if (b.ult(end)) b = end; // (never short of it: the loop ends)
+					var y = a.toI64();
+					var a4 = Ptr.ofI64(y - (y & 4095));
+					Os.populate(a4, b.diff(a4));
+					parPopBytes += b.diff(a);
+					Atomic.store64(Mem.sym("hxmc_par_pop_to"), b.toI64());
+				}
+				Atomic.store32(Mem.sym("hxmc_par_pop_busy"), 0);
+			}
+		}
+	}
+	#end
 
 	// the copy of v, a young object another thread is copying or copied
 	@:hxmc.unsafe static function parWaitFwd(v:Ptr):Ptr {
@@ -1871,8 +1925,14 @@ class Gc {
 	// costs it a fault and the kernel's zeroing of the page (the port's
 	// self-build: a tenth of the time of its main thread's minor
 	// collections), on the collection's critical path. After each minor
-	// collection the helper is asked for the pages up to as much past the
-	// end of the old space as the collection promoted (PF_MIN to PF_MAX); it
+	// collection the helper is asked for the pages up to twice as much past
+	// the end of the old space as the collection promoted (PF_MIN to PF_MAX;
+	// RT_PF_AHEAD: in quarters of it, 8 by default, 0: none). What the next
+	// one copies past what the helper did, a parallel copy faults in with
+	// Os.populate, a thread at a time (parPopulate): t3code-server with 4
+	// quarters, 10 MB less memory and 0.5% more time; with none, 20 MB to
+	// 57 MB less and 3% to 5% more time on large programs (without that, 25%
+	// more: the copying threads faulted in the same huge pages together). It
 	// touches each page with an atomic addition of zero, which leaves a word
 	// the collector or an allocation of a large object writes meanwhile as
 	// it is. It starts once the old space passes PF_START (small programs
@@ -1889,6 +1949,8 @@ class Gc {
 	static var pfFrom:Ptr; // the pages to touch: [pfFrom, pfTo) (under pfLock)
 	static var pfTo:Ptr;
 	@:hxmc.export("hxmc_pf_gen") static var pfGen:Int; // major collections (Atomic)
+	static var pfDoneTo:Ptr; // the pages below it are faulted in (under pfLock; null: none since a major collection)
+	static var pfAhead:Int; // RT_PF_AHEAD + 1 (0: not read yet): how far ahead, in quarters of the last promotion (default 8)
 
 	// after a minor collection that promoted `promoted` bytes
 	@:hxmc.unsafe static function prefaultAhead(promoted:I64) {
@@ -1910,7 +1972,10 @@ class Gc {
 			}
 			pfState = 1;
 		}
-		var ahead = promoted * 2 < (PF_MIN : I64) ? (PF_MIN : I64) : promoted * 2 > (PF_MAX : I64) ? (PF_MAX : I64) : promoted * 2;
+		if (pfAhead == 0) pfAhead = Os.envInt("RT_PF_AHEAD", 8) + 1;
+		var want = promoted * (pfAhead - 1) / 4;
+		var ahead = want < (PF_MIN : I64) ? (PF_MIN : I64) : want > (PF_MAX : I64) ? (PF_MAX : I64) : want;
+		if (pfAhead == 1) ahead = 0;
 		var to = oldPtr.addL(ahead);
 		if (oldEnd.ult(to)) to = oldEnd;
 		Os.lock(pfLock);
@@ -1928,6 +1993,7 @@ class Gc {
 		Atomic.add32(Mem.sym("hxmc_pf_gen"), 1);
 		pfFrom = Ptr.nil();
 		pfTo = Ptr.nil();
+		pfDoneTo = Ptr.nil();
 		Os.unlock(pfLock);
 	}
 
@@ -1951,6 +2017,7 @@ class Gc {
 				p = p.addL(page);
 			}
 			Os.lock(pfLock);
+			if (Atomic.load32(Mem.sym("hxmc_pf_gen")) == gen && pfDoneTo.ult(b)) pfDoneTo = b;
 		}
 		return Ptr.nil();
 	}
@@ -2521,7 +2588,13 @@ class Gc {
 				r.int(parRootBytes >> 20, 0);
 				r.str(" MB; copying ");
 				r.fixed(parCopySecs, 3, 0);
-				r.str("s)");
+				r.str("s");
+				#if hxmc.gc_prefault
+				r.str(", faulting in ");
+				r.int(parPopBytes >> 20, 0);
+				r.str(" MB");
+				#end
+				r.str(")");
 			}
 			r.str("\n");
 			r.flush();
