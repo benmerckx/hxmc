@@ -1820,7 +1820,14 @@ class Gc {
 		if (curRegion == 0) dumpTop1 = from else dumpTop0 = from;
 		var collected = fromEnd.diff(fromStart) + young;
 		var live = oldPtr.diff(oldStart);
-		var limit = live * growth / 100 + minorSize * 4 + need;
+		// a collection that freed little (a quarter or less of the old space it
+		// collected) found data that lives on, as a compiler's trees, symbols
+		// and types: the next one waits for four times the growth. Each copies
+		// the whole live set with every thread stopped, and copying it again
+		// soon frees as little (tsc-haxe on t3code-server: 467 MB, then 1.8 GB,
+		// each over 90% live: 1.1 s of 9.9)
+		var g:I64 = live * 4 >= fromEnd.diff(fromStart) * 3 ? (growth : I64) * 4 : (growth : I64);
+		var limit = live * g / 100 + minorSize * 4 + need;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
 		// (room for what is live and the allocation it collected for, whatever
 		// the growth: RT_OLD_GROWTH below 100 left a large object no room, and
