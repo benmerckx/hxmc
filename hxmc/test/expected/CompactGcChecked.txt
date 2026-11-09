@@ -1,0 +1,14 @@
+exit 0
+CompactGc.hx:72: round 0: bad=0
+CompactGc.hx:72: round 1: bad=0
+CompactGc.hx:72: round 2: bad=0
+CompactGc.hx:72: round 3: bad=0
+CompactGc.hx:72: round 4: bad=0
+CompactGc.hx:72: round 5: bad=0
+CompactGc.hx:72: round 6: bad=0
+CompactGc.hx:72: round 7: bad=0
+CompactGc.hx:72: after: bad=0
+CompactGc.hx:130: ring 0: 2001000 2000
+CompactGc.hx:130: ring 1: 2001000 2000
+CompactGc.hx:130: ring 2: 2001000 2000
+CompactGc.hx:130: ring 3: 2001000 2000
