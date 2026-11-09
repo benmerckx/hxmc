@@ -1378,7 +1378,7 @@ class Opt {
 
 	// a field's byte offset (OInfo.loc: an Int's or Bool's is a 4-byte index; MemLower.access)
 	public static inline function fieldOff(o:OInfo):Int
-		return o.t.match(TRef(_) | TF64 | TI64 | TId) ? 8 * o.loc : 4 * o.loc;
+		return o.t.match(TRef(_) | TF64 | TI64 | TId) && !o.compact ? 8 * o.loc : 4 * o.loc;
 
 	static inline function fieldCls(o:OInfo):Int
 		return MFieldAt + ((fieldOff(o) >> 3) & 7);

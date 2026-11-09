@@ -184,6 +184,10 @@ class OInfo {
 	// ArrayGet in a loop LoopVersion copied: the array is known not null, of
 	// the kind, the index in range (no tests, no slow path: it writes nothing)
 	public var prechecked = false;
+	// GetField, SetField, InitField: a compressed reference (@:hxmc.compact):
+	// 4 bytes at loc (a 4-byte index), the address shifted right by 3
+	// (MemLower.access); in registers a reference as any other
+	public var compact = false;
 
 	public function new() {}
 
@@ -219,6 +223,7 @@ class OInfo {
 		o.fresh = fresh;
 		o.ops = ops;
 		o.prechecked = prechecked;
+		o.compact = compact;
 		return o;
 	}
 }

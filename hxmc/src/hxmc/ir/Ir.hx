@@ -57,12 +57,16 @@ class ClassInfo {
 	public var name:String; // Haxe dot path
 	public var ident:String; // the prefix of its symbols
 	public var sup:Null<ClassInfo>;
-	public var fields:Array<{name:String, ty:Ty}> = []; // including inherited (the class is the header's type index)
+	public var fields:Array<{name:String, ty:Ty, ?compact:Bool}> = []; // including inherited (the class is the header's type index)
+	// @:hxmc.compact (on the class or a superclass): its own reference fields
+	// are 4-byte compressed references where the target has a 32 GB heap window
+	// (Facts.layout decides per field; compact: the field's class asked for it)
+	public var compact = false;
 	// properties without storage that Dynamic access and reflection read as
 	// fields (@:hxmc.lengthOf("f"): the length of the NativeArray field f;
 	// Facts gives them a field entry of kind L), including inherited ones
 	public var derived:Array<{name:String, of:String}> = [];
-	public var locs:Vector<Int>; // per field: its slot, or for Int/Bool its 4-byte index (packed two per slot; Facts.layout)
+	public var locs:Vector<Int>; // per field: its slot, or for Int/Bool and a compressed reference its 4-byte index (packed two per slot; Facts.layout; a compressed reference's has Facts.COMPACT set)
 	public var nslots:Int;
 	public var methods:Map<String, FuncInfo> = new Map(); // own implementations
 	public var ctor:Null<FuncInfo>;

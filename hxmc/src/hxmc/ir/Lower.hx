@@ -250,6 +250,11 @@ class Lower implements LowerQueries {
 	// the target (Mem.os, Mem.arm: constants here, so that the code of the
 	// other targets is dropped with the branch it is in; -1: unknown)
 	public static var targetOs = -1;
+	// @:hxmc.compact classes get 4-byte compressed reference fields (Facts.layout):
+	// the target keeps its heap below 32 GB (hxmc.Main.compactRefs: Linux, and
+	// Windows on x86-64, executables at a fixed address; hxmc.rt.Gc.init). Elsewhere
+	// the annotation changes nothing.
+	public static var compact = false;
 	public static var targetArm = -1;
 	public static var targetCode = -1;
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
@@ -1000,6 +1005,8 @@ class Lower implements LowerQueries {
 			// (a COM interface is extern: its methods are slots of a vtable, Com)
 			if (hasMeta(":hxmc.com", c.clMeta))
 				throw new LowerError('${c.clPath.name} is declared @:hxmc.com but not extern: a COM interface is an extern interface', CInterop.posOf(c.clPos));
+			if (hasMeta(":hxmc.compact", c.clMeta))
+				throw new LowerError('${c.clPath.name} is an interface: @:hxmc.compact is for classes (their objects\' fields)', CInterop.posOf(c.clPos));
 			// interfaces have no layout: values are any object
 			ci = new ClassInfo(core.Globals.sTypePath(c.clPath), nativeName(c), null);
 			ci.isInterface = true;
@@ -1029,6 +1036,10 @@ class Lower implements LowerQueries {
 		ci = new ClassInfo(core.Globals.sTypePath(c.clPath), nativeName(c), sup);
 		ci.keep = keptByName(c);
 		ci.otherTarget = !ofTarget(c);
+		ci.compact = sup.compact || hasMeta(":hxmc.compact", c.clMeta);
+		if (ci.compact && (c.hasClassFlag(CExtern) || objc || sbuf))
+			throw new LowerError('${c.clPath.name}: @:hxmc.compact is for Haxe classes, not ' + (objc ? "a subclass of an Objective-C class" : sbuf ? "a subclass of StringBuf" : "an extern class"),
+				CInterop.posOf(c.clPos));
 		classes.set(c, ci);
 		tclasses.push(c);
 		var k = c.clSuper;
@@ -1071,7 +1082,7 @@ class Lower implements LowerQueries {
 				case Var(v) if (isPhysical(c, f, v)):
 					if (KernelCheck.spanOf(f.cfType) != null)
 						throw new LowerError(KernelCheck.spanError(CInterop.posOf(f.cfPos), "", "the field " + f.cfName + " has a span type", KernelCheck.SPANS_LOCAL), "");
-					var slot = {name: f.cfName, ty: null};
+					var slot = {name: f.cfName, ty: null, compact: ci.compact};
 					ci.fields.push(slot);
 					own.push({slot: slot, f: f});
 					var weak = hasMeta(":hxmc.weak", f.cfMeta);
@@ -1107,6 +1118,8 @@ class Lower implements LowerQueries {
 		// (a weak id field: the address of its cell, ObjC)
 		for (o in own)
 			if (ci.weakFields.indexOf(o.f.cfName) >= 0) o.slot.ty = TI64;
+		if (ci.compact) compactPending.push({c: c, ci: ci});
+		compactChecks();
 		// (a class extending an Objective-C one, or such a class: its Objective-C
 		// class, registered by a function of its own when first needed)
 		if (objc || (sup.objc != null)) {
@@ -1154,6 +1167,41 @@ class Lower implements LowerQueries {
 			}));
 		}
 		return ci;
+	}
+
+	// @:hxmc.compact (docs/hxmc.md, "Compressed references"): what a class with
+	// compressed references cannot have, reported on every target alike (also
+	// where they are 8 bytes, Lower.compact false)
+	// (checked once every field has its type: a superclass's field types may
+	// name the subclass, whose ClassInfo is then made while the superclass's
+	// fields are still untyped, `class Node extends Base<Node>`)
+	var compactPending:Array<{c:TClass, ci:ClassInfo}> = [];
+
+	function compactChecks() {
+		var i = 0;
+		while (i < compactPending.length) {
+			var p = compactPending[i];
+			if (Lambda.exists(p.ci.fields, f -> f.ty == null))
+				i++;
+			else {
+				compactPending.splice(i, 1);
+				compactCheck(p.c, p.ci);
+			}
+		}
+	}
+
+	function compactCheck(c:TClass, ci:ClassInfo) {
+		var n = Facts.compactSlots(ci.fields);
+		if (n > Facts.COMPACT_MAX_SLOTS)
+			throw new LowerError('${c.clPath.name} is @:hxmc.compact' + (hasMeta(":hxmc.compact", c.clMeta) ? "" : " (as its superclass is)") + ' and has $n slots: at most '
+				+ Facts.COMPACT_MAX_SLOTS + ' (8 bytes each; an Int, a Bool or a compressed reference takes half of one): move fields to an object it refers to',
+				CInterop.posOf(c.clPos));
+		for (d in ci.derived) {
+			var i = ci.fieldIndex(d.of);
+			if (i >= 0 && ci.fields[i].compact == true && Facts.compressible(ci.fields[i].ty))
+				throw new LowerError('@:hxmc.lengthOf("${d.of}") on ${c.clPath.name}.${d.name}: ${d.of} is a compressed reference (@:hxmc.compact), whose array the runtime does not read',
+					CInterop.posOf(c.clPos));
+		}
 	}
 
 	// ---- Haxe classes implementing COM interfaces (Com)

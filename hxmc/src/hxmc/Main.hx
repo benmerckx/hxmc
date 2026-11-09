@@ -149,6 +149,21 @@ class Main {
 	// program before Driver.run, to add functions to it
 	public static var beforeCodegen:Null<(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void> = null;
 
+	// whether @:hxmc.compact fields are 4 bytes (docs/hxmc.md, "Compressed
+	// references"): an executable whose image is at a fixed address below
+	// 32 GB (Link, LinkDyn's glibc mode and LinkPE's x86-64: 0x400000), whose
+	// heap hxmc.rt.Gc.init reserves below 32 GB too, so that an address
+	// shifted right by 3 fits 32 bits with no base. Not a shared library
+	// (loaded anywhere: Android's, -D hxmc.shared), macOS and iOS (position-
+	// independent executables, slid), Windows on arm64 (relocatable), nor
+	// WebAssembly (references are 4 bytes there), nor Mir's code nor a
+	// compiler running it (Mir macros read the compiler's objects with the
+	// layouts the compiler was built with, MirMacros, MirRun): there the
+	// fields stay 8 bytes
+	public static function compactRefs(abi:Abi, opts:Options):Bool
+		return !abi.wasm && !abi.android && !opts.shared && opts.interp == null && !opts.mirHost && abi.output != Abi.OutputKind.SharedLibrary
+			&& (abi.os == "linux" || abi.os == "windows" && !abi.arm);
+
 	// the program typed (com) to machine code at out: lowered (hxmc.ir.Lower),
 	// given to beforeCodegen (this argument, else Main.beforeCodegen), compiled
 	public static function generate(com:context.Common.CommonContext, out:String, ?beforeCodegen:(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void) {
@@ -185,6 +200,7 @@ class Main {
 			case _: false;
 		}) ? 1 : 0;
 		opts.mirHost = hxmc.ir.Lower.mirHost == 1;
+		hxmc.ir.Lower.compact = compactRefs(abi, opts);
 		// (the positions of every statement, natively: a program that reads
 		// stacks gets the table of its functions and lines, which Reach finds
 		// out after the lowering, StackTable; -debug writes DWARF lines from

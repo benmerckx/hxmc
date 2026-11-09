@@ -3652,6 +3652,11 @@ class FnLower {
 			var ci = l.classInfo(oc);
 			var idx = Lambda.findIndex(ci.fields, f -> f.name == fname);
 			if (idx < 0) cfail("Struct.fieldOffset: " + oc.clPath.name + " has no field " + fname, e);
+			// (on every target alike: also where it would be 8 bytes, Lower.compact false)
+			if (ci.fields[idx].compact == true && Facts.compressible(ci.fields[idx].ty))
+				cfail("Struct.fieldOffset: " + oc.clPath.name + "." + fname
+					+ " is a compressed reference (@:hxmc.compact: 4 bytes holding the address shifted right by 3), which has no address to load, store or update atomically; declare the field in a class that is not @:hxmc.compact",
+					e);
 			var o = asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RObj(ci))), TRef(RObj(ci)));
 			var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ELocal(o)), TI64));
 			return coerce(EConv(L2I, EBin(LSub, EFieldAddr(ci, idx, ELocal(o)), base)), TI32, tyOf(e));

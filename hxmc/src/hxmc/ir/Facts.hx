@@ -201,11 +201,15 @@ class Facts {
 	// start with its superclass's, so the layout of a subclass extends the
 	// superclass's. Returns per field its location (see `at`); appends the
 	// physical slots (for the pointer map) to `slots`.
-	static function layout(slots:Array<Null<Ty>>, tys:Array<Ty>):Vector<Int> {
+	//
+	// A compressed reference (compact[k]: @:hxmc.compact) is a 4-byte field
+	// too, packed as Int/Bool are; its 4-byte index is appended to `halves`
+	// (the type's compact map, DataGen) and its location has COMPACT set.
+	static function layout(slots:Array<Null<Ty>>, tys:Array<Ty>, ?compact:Array<Bool>, ?halves:Array<Int>):Vector<Int> {
 		var locs = new Vector<Int>(tys.length), half = -1;
 		for (k in 0...tys.length)
 			switch tys[k] {
-				case TI32 | TBool:
+				case t if (t.match(TI32 | TBool) || (compact != null && compact[k])):
 					if (half >= 0) {
 						locs[k] = 2 * half + 1;
 						half = -1;
@@ -213,6 +217,10 @@ class Facts {
 						half = slots.length;
 						locs[k] = 2 * half;
 						slots.push(TI32);
+					}
+					if (!t.match(TI32 | TBool)) {
+						halves.push(locs[k]);
+						locs[k] |= COMPACT;
 					}
 				case TStruct(_, size):
 					// (a struct's memory: whole slots, none a reference)
@@ -230,6 +238,29 @@ class Facts {
 	// Int/Bool are addressed by 4-byte index (FH), the rest by slot
 	static function at(slot:Int, t:Ty):Int
 		return t.match(TI32 | TBool) ? 2 * slot : slot;
+
+	// a class field's location (ClassInfo.locs) is that of a compressed reference: its 4-byte index | COMPACT
+	public static inline var COMPACT = 1 << 29;
+
+	// whether a field of type t of a @:hxmc.compact class is a compressed
+	// reference where the target has them (Lower.compact): a reference, not
+	// a tagged word (an Int or Float may be encoded in it)
+	public static function compressible(t:Ty):Bool
+		return t.match(TRef(_)) && !Ir.isWord(t);
+
+	// the most slots of a class with compressed references (the collector
+	// scans such an object with one word of its pointer map and one of its
+	// compact map: hxmc.rt.Gc.SMALL_SLOTS)
+	public static inline var COMPACT_MAX_SLOTS = 32;
+
+	// the slots of a @:hxmc.compact class's layout with its compressed
+	// references (whatever the target: Lower checks COMPACT_MAX_SLOTS on every
+	// target alike)
+	public static function compactSlots(fields:Array<{name:String, ty:Ty, ?compact:Bool}>):Int {
+		var slots:Array<Null<Ty>> = [];
+		layout(slots, [for (f in fields) f.ty], [for (f in fields) f.compact == true && compressible(f.ty)], []);
+		return slots.length;
+	}
 
 	function assignTypes() {
 		// (hxmc.rt.Types: records below 16, with their slots; 16 to 31 arrays,
@@ -253,17 +284,28 @@ class Facts {
 			addType(entry(i < rtNames.length ? rtNames[i] : "Reserved", "TK_RUNTIME", i < rtSlots.length ? rtSlots[i] : [], "rt" + i));
 		for (c in p.classes) {
 			var slots:Array<Null<Ty>> = [];
-			c.locs = layout(slots, [for (f in c.fields) f.ty]);
+			var compact = [for (f in c.fields) Lower.compact && f.compact == true && compressible(f.ty)];
+			var halves = [];
+			c.locs = layout(slots, [for (f in c.fields) f.ty], compact, halves);
 			c.nslots = slots.length;
+			// (Lower.classInfo reported it with the class's position)
+			if (halves.length > 0 && slots.length > COMPACT_MAX_SLOTS)
+				throw "hxmc: @:hxmc.compact class " + c.name + " has " + slots.length + " slots, more than " + COMPACT_MAX_SLOTS;
 			// (a record's header counts 16 bits of slots, 0xFFFF an array's mark: Types)
 			if (slots.length >= 0xFFFF) throw "hxmc: class " + c.name + " has more than 65534 slots";
 			var t = entry(c.unnamed ? "" : c.name, "TK_CLASS", slots, c.name);
-			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it)
-			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD)) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
+			t.halves = halves;
+			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it;
+			// a compressed reference's kind is c, Dyn.boxSlot)
+			t.fields = [
+				for (i in 0...c.fields.length)
+					if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD))
+						c.locs[i] & COMPACT != 0 ? {name: c.fields[i].name, slot: c.locs[i] & ~COMPACT, ty: c.fields[i].ty, kind: "c".code} : {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}
+			];
 			// (a derived field: its NativeArray field's slot, kind L, the runtime's Dyn.boxSlot)
 			for (d in c.derived) {
 				var i = c.fieldIndex(d.of);
-				if (!c.fields[i].ty.match(TRef(RNativeArr(_))))
+				if (!c.fields[i].ty.match(TRef(RNativeArr(_))) || c.locs[i] & COMPACT != 0)
 					throw "hxmc: @:hxmc.lengthOf(\"" + d.of + "\") on " + c.name + "." + d.name + ": not a NativeArray field";
 				t.fields.push({name: d.name, slot: c.locs[i], ty: c.fields[i].ty, kind: "L".code});
 			}
@@ -854,6 +896,8 @@ typedef TypeEntry = {
 	slots:Array<Null<Ty>>,
 	// (kind: the runtime's field kind when not the type's: L, Dyn.boxSlot)
 	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int}>,
+	// the 4-byte indices of the compressed references (@:hxmc.compact, Facts.layout)
+	?halves:Array<Int>,
 	// (dfn, dsig: the entry for dynamic calls, FuncInfo.dfltEntry)
 	methods:Array<{name:String, fn:String, sig:Int, ?dfn:String, ?dsig:Int}>,
 	ifaces:Array<Int>,

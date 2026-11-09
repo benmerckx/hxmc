@@ -614,6 +614,7 @@ class MirBuild extends MirWriter {
 				var x = ex(v);
 				var i = info();
 				i.cls = c;
+				i.compact = isCompact(c, idx);
 				setField(o, fieldLoc(c, idx), c.fields[idx].ty, x, isNullConst(v), i);
 			case SBoxSet(t, bx, v):
 				var o = ex(bx);
@@ -813,7 +814,11 @@ class MirBuild extends MirWriter {
 
 	// a field's slot
 	inline function fieldLoc(c:ClassInfo, idx:Int):Int
-		return c.locs[idx];
+		return c.locs[idx] & ~hxmc.ir.Facts.COMPACT;
+
+	// a compressed reference (@:hxmc.compact: OInfo.compact)
+	inline function isCompact(c:ClassInfo, idx:Int):Bool
+		return c.locs[idx] & hxmc.ir.Facts.COMPACT != 0;
 
 	// ---- object slots
 
@@ -1212,8 +1217,12 @@ class MirBuild extends MirWriter {
 			case EField(c, idx, obj):
 				var i = info();
 				i.cls = c;
+				i.compact = isCompact(c, idx);
 				getField(nullCheck(ex(obj)), fieldLoc(c, idx), c.fields[idx].ty, i);
 			case EFieldAddr(c, idx, obj):
+				// (a compressed reference has no 8-byte slot to take the address of:
+				// FnLower reports Struct.fieldOffset's, the only way here)
+				if (isCompact(c, idx)) throw new Unsupported("the address of " + c.name + "." + c.fields[idx].name + ", a compressed reference (@:hxmc.compact)");
 				var i = info();
 				i.cls = c;
 				i.loc = c.locs[idx];

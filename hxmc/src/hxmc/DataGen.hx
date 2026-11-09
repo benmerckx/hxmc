@@ -348,6 +348,7 @@ class DataGen {
 			}
 			var n = t.slots.length;
 			var nwords = Std.int((n + 63) / 64);
+			var halves = t.halves != null && t.halves.length > 0 ? t.halves : null;
 			if (nwords > 0) {
 				pmSym = local(rodata, "pm", 8);
 				for (w in 0...nwords) {
@@ -359,6 +360,14 @@ class DataGen {
 							if (k < 32) lo |= 1 << k else hi |= 1 << (k - 32);
 						}
 					}
+					rodata.buf.u64(lo, hi);
+				}
+				// (the compact map after it: a bit per 4-byte half of the
+				// at most 32 slots, set for a compressed reference; hxmc.rt.GcCore.isCompactHalf)
+				if (halves != null) {
+					var lo = 0, hi = 0;
+					for (h in halves)
+						if (h < 32) lo |= 1 << h else hi |= 1 << (h - 32);
 					rodata.buf.u64(lo, hi);
 				}
 			}
@@ -419,7 +428,7 @@ class DataGen {
 			data.buf.u32(tk(t.tk)); // 8 tk (u8)
 			data.buf.u32(t.sup); // 12 super
 			data.buf.u32(t.slots.length); // 16 nslots
-			data.buf.u32(0);
+			data.buf.u32(t.halves != null && t.halves.length > 0 ? 1 : 0); // 20 compressed references (a compact map after the pointer map)
 			if (x.pmSym != null) ptrSym(data, x.pmSym) else data.buf.u64(0, 0); // 24 ptrmap
 			data.buf.u32(x.fs); // 32 nfields
 			data.buf.u32(0);
@@ -451,6 +460,7 @@ class DataGen {
 			data.buf.u32(types.length);
 		} else
 			int32Global("rt_ntypes", types.length);
+
 	}
 
 	// the closures capturing nothing (Prep.staticClosures), each an object
