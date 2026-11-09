@@ -102,6 +102,10 @@ class Os {
 	@:hxmc.unsafe public static function yield()
 		if (windows()) K.SwitchToThread() else C.sched_yield();
 
+	// the processors online (Linux; elsewhere 1)
+	@:hxmc.unsafe public static function cpus():Int
+		return Mem.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
+
 	// ---- memory: reservations committed as touched (MAP_NORESERVE; Windows:
 	// WinRt commits the pages of its reservations on first touch)
 

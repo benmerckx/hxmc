@@ -1032,7 +1032,10 @@ class Gc {
 
 	@:hxmc.unsafe static function minorCollect() {
 		var youngUsed = youngNext.diff(youngStart);
-		if (oldEnd.diff(oldPtr) < youngUsed + 64 || (Foreign.budget > 0 && Foreign.promoted >= Foreign.budget)) {
+		var par = parReady(youngUsed);
+		// (in parallel, the PLABs' rest: a 32nd of what they hold at most, and a PLAB per thread)
+		var room = par ? youngUsed + youngUsed / 32 + (parThreads : I64) * PLAB_BYTES : youngUsed;
+		if (oldEnd.diff(oldPtr) < room + 64 || (Foreign.budget > 0 && Foreign.promoted >= Foreign.budget)) {
 			majorAndTime(0);
 			return;
 		}
@@ -1040,6 +1043,21 @@ class Gc {
 		collections++;
 		var scan = oldPtr;
 		major = false;
+		if (par) {
+			var r0 = stats ? Os.now() : 0.0;
+			scanRoots(false);
+			for (i in 0...nfinals)
+				Mem.setPtr(finals, 16 * i + 8, minorForward(Mem.getPtr(finals, 16 * i + 8)));
+			var r1 = stats ? Os.now() : 0.0;
+			parMinor(scan);
+			clearAllRemembered();
+			if (stats) {
+				parRootSecs += r1 - r0;
+				parCopySecs += Os.now() - r1;
+				parRootBytes += parRootsEnd.diff(scan);
+			}
+			return;
+		}
 		if (!gcBfs) {
 			scanRoots(true);
 			for (i in 0...nfinals)
@@ -1052,6 +1070,489 @@ class Gc {
 			Mem.setPtr(finals, 16 * i + 8, minorForward(Mem.getPtr(finals, 16 * i + 8)));
 		forwardAllRemembered(false);
 		scanFrom(scan);
+	}
+
+	// ---- parallel minor collections (RT_GC_THREADS: the threads that copy,
+	// the collecting one included; by default as many as the processors, at
+	// most PAR_MAX; 1: none). Linux x86-64, with threads, and a nursery that
+	// held at least PAR_MIN_YOUNG. The collecting thread forwards the roots
+	// alone, without scanning what they reach (copied, they are [scan, oldPtr)
+	// after it); then every copying thread scans, depth-first on its own stack
+	// as drainMinor does: the roots' copies, ROOT_BATCH at a time, then what
+	// it copies itself, into its own chunk of the old space (a PLAB of
+	// PLAB_BYTES, taken from its end with an atomic addition; an object of
+	// more than PLAB_DIRECT bytes straight at the end). Two threads that reach
+	// the same young object race for it with a compare-and-swap of its
+	// header's first word: the winner sets T_BUSY, copies it, then T_FWD; the
+	// other waits for T_FWD. A thread with entries to spare gives half of its
+	// stack (its oldest entries: the largest subtrees) to a shared pool while
+	// another one is idle; the copying is over when all of them are idle with
+	// nothing left to take. What a PLAB has left is filled with a raw object
+	// (the old space stays parsable).
+	static inline var T_BUSY = 0xFFFE;
+	static inline var PAR_MAX = 8;
+	static inline var PAR_MIN_YOUNG = 1 << 20;
+	static inline var PLAB_BYTES = 32 << 10;
+	static inline var PLAB_DIRECT = 1 << 10;
+	static inline var ROOT_BATCH = 64;
+	static inline var SHARE_MIN = 16;
+	static var parThreads:Int; // RT_GC_THREADS (0: not read yet)
+	static var parHelpers:Int; // the helper threads started (they wait for parGen to change)
+	static var parLock:Ptr;
+	static var parCond:Ptr;
+	static var parDoneCond:Ptr;
+	static var parGen:Int;
+	static var parDone:Int; // the helpers through with this collection
+	static var parN:Int; // the threads copying in it
+	@:hxmc.export("hxmc_par_idle") static var parIdle:Int; // out of work (read without the lock)
+	@:hxmc.export("hxmc_par_end") static var parEnd:Int;
+	@:hxmc.export("hxmc_par_pool_len") static var parPoolLen:Int;
+	static var parPool:Ptr; // entries given away (as gcStack's: an object and a slot index)
+	static var parPoolCap:Int;
+	static var parCursor:Ptr; // the roots' copies not taken yet: [parCursor, parRootsEnd)
+	static var parRootsEnd:Ptr;
+	// the remembered sets, taken REM_BATCH slots or ROBJS_BATCH objects at a
+	// time: of parMuts[parMut] (the started threads', then the ended ones'),
+	// its slots from parOff (parInObjs false), then its objects
+	static var parMuts:Ptr;
+	static var parMutsLen:Int;
+	static var parMutsCap:Int;
+	static var parMut:Int;
+	static var parOff:Int;
+	static var parInObjs:Bool;
+	static inline var REM_BATCH = 1024;
+	static inline var ROBJS_BATCH = 64;
+	@:hxmc.threadLocal static var pRem:Ptr; // remembered slots taken (pRemLen of them), not forwarded yet
+	@:hxmc.threadLocal static var pRemLen:Int;
+	static var parCopies:Int; // RT_STATS: the parallel collections, their phases' seconds, the roots' copies' bytes
+	static var parRootSecs:Float;
+	static var parCopySecs:Float;
+	static var parRootBytes:I64;
+	@:hxmc.threadLocal static var pStack:Ptr;
+	@:hxmc.threadLocal static var pTop:Int;
+	@:hxmc.threadLocal static var pCap:Int;
+	@:hxmc.threadLocal static var pPlab:Ptr;
+	@:hxmc.threadLocal static var pPlabEnd:Ptr;
+
+	// whether this minor collection copies in parallel (the helpers started
+	// with the first one that does)
+	@:hxmc.unsafe static function parReady(youngUsed:I64):Bool {
+		#if (hxmc.shared || hxmc.dev_host || hxmc.census)
+		return false;
+		#else
+		if (parThreads == 0) {
+			var n = Os.envInt("RT_GC_THREADS", 0);
+			if (n <= 0) {
+				n = Os.cpus();
+				if (n > PAR_MAX) n = PAR_MAX;
+			}
+			parThreads = n < 1 || Mem.os() != 0 || Mem.arm() ? 1 : n;
+		}
+		if (parThreads < 2 || Threads.mt == 0 || gcBfs || youngUsed < (PAR_MIN_YOUNG : I64)) return false;
+		if (parHelpers == 0) {
+			parLock = LibC.malloc(Os.MUTEX_BYTES);
+			Os.mutexInit(parLock);
+			parCond = LibC.malloc(Os.COND_BYTES);
+			Os.condInit(parCond, false);
+			parDoneCond = LibC.malloc(Os.COND_BYTES);
+			Os.condInit(parDoneCond, false);
+			parPoolCap = 1024;
+			parPool = LibC.malloc((parPoolCap : I64) * 16);
+			var i = 1;
+			while (i < parThreads && Os.spawn(Callback.addr(parHelper), Ptr.nil(), 256 << 10)) {
+				parHelpers++;
+				i++;
+			}
+			if (parHelpers == 0) {
+				parThreads = 1;
+				return false;
+			}
+		}
+		return true;
+		#end
+	}
+
+	// the copying of a minor collection whose roots' copies start at scan
+	@:hxmc.unsafe static function parMinor(scan:Ptr) {
+		parCopies++;
+		parCursor = scan;
+		parRootsEnd = oldPtr;
+		parMutsLen = 0;
+		var t = Threads.allThreads;
+		while (!t.isNull()) {
+			if (t.value.started != 0) parAddMut(t);
+			t = t.value.next;
+		}
+		parAddMut(Threads.deadMut);
+		parMut = 0;
+		parOff = 0;
+		parInObjs = false;
+		parN = parHelpers + 1;
+		parIdle = 0;
+		parEnd = 0;
+		parPoolLen = 0;
+		Os.lock(parLock);
+		parDone = 0;
+		parGen++;
+		Os.broadcast(parCond);
+		Os.unlock(parLock);
+		parWork();
+		Os.lock(parLock);
+		while (parDone < parHelpers)
+			Os.condWait(parDoneCond, parLock);
+		Os.unlock(parLock);
+	}
+
+	@:hxmc.callback @:hxmc.unsafe static function parHelper(arg:Ptr):Ptr {
+		var gen = 0;
+		Os.lock(parLock);
+		while (true) {
+			while (parGen == gen)
+				Os.condWait(parCond, parLock);
+			gen = parGen;
+			Os.unlock(parLock);
+			parWork();
+			Os.lock(parLock);
+			parDone++;
+			if (parDone == parHelpers) Os.signal(parDoneCond);
+		}
+		return Ptr.nil();
+	}
+
+	@:hxmc.unsafe static function parAddMut(m:Ptr<Mutator>) {
+		if (parMutsLen == parMutsCap) {
+			parMutsCap = parMutsCap == 0 ? 16 : parMutsCap * 2;
+			parMuts = LibC.realloc(parMuts, (parMutsCap : I64) * 8);
+		}
+		Mem.setPtr(parMuts, 8 * parMutsLen, m);
+		parMutsLen++;
+	}
+
+	// remembered slots forwarded (their copies pushed)
+	@:hxmc.unsafe static function parRemembered(a:Ptr, n:Int) {
+		parReserve(pTop + n);
+		var t = pTop;
+		var j = 0;
+		while (j < n) {
+			t = parSlot(Mem.getPtr(a, 8 * j), 0, t);
+			j++;
+		}
+		pTop = t;
+	}
+
+	// one thread's part of the copying
+	@:hxmc.unsafe static function parWork() {
+		if (pStack.isNull()) {
+			pCap = 4096;
+			pStack = LibC.malloc((pCap : I64) * 16);
+		}
+		pTop = 0;
+		pPlab = Ptr.nil();
+		pPlabEnd = Ptr.nil();
+		pRemLen = 0;
+		do {
+			if (pRemLen > 0) {
+				parRemembered(pRem, pRemLen);
+				pRemLen = 0;
+			}
+			parDrain();
+		} while (parTake());
+		parFill(pPlab, pPlabEnd);
+		pPlab = Ptr.nil();
+		pPlabEnd = Ptr.nil();
+	}
+
+	// entries taken from the pool or the roots' copies onto the empty stack;
+	// false: the copying is over
+	@:hxmc.unsafe static function parTake():Bool {
+		Os.lock(parLock);
+		while (true) {
+			if (parPoolLen > 0) {
+				var k = (parPoolLen + 1) >> 1;
+				if (k > 256) k = 256;
+				parReserve(k);
+				parPoolLen -= k;
+				LibC.memcpy(pStack, parPool.add(parPoolLen << 4), (k : I64) * 16);
+				pTop = k;
+				Os.unlock(parLock);
+				return true;
+			}
+			if (parMut < parMutsLen) {
+				var m:Ptr<Mutator> = Mem.getPtr(parMuts, 8 * parMut);
+				if (!parInObjs) {
+					var n = m.value.remLen - parOff;
+					if (n > REM_BATCH) n = REM_BATCH;
+					if (n > 0) {
+						pRem = m.value.rem.add(8 * parOff);
+						pRemLen = n;
+						parOff += n;
+						Os.unlock(parLock);
+						return true;
+					}
+					parInObjs = true;
+					parOff = 0;
+				}
+				var n = m.value.robjsLen - parOff;
+				if (n > ROBJS_BATCH) n = ROBJS_BATCH;
+				if (n > 0) {
+					parReserve(n);
+					var t = 0;
+					var j = 0;
+					while (j < n) {
+						var o = Mem.getPtr(m.value.robjs, 8 * (parOff + j));
+						if (kindOf(o) != K_RAW) {
+							Mem.setPtr(pStack, t << 4, o);
+							Mem.setI32(pStack, (t << 4) + 8, 0);
+							t++;
+						}
+						j++;
+					}
+					parOff += n;
+					pTop = t;
+					Os.unlock(parLock);
+					return true;
+				}
+				parMut++;
+				parOff = 0;
+				parInObjs = false;
+				continue;
+			}
+			if (parCursor.ult(parRootsEnd)) {
+				parReserve(ROOT_BATCH);
+				var c = parCursor;
+				var t = 0;
+				var i = 0;
+				while (i < ROOT_BATCH && c.ult(parRootsEnd)) {
+					var o = c.add(8);
+					c = c.add(objBytes(o));
+					if (kindOf(o) != K_RAW) {
+						Mem.setPtr(pStack, t << 4, o);
+						Mem.setI32(pStack, (t << 4) + 8, 0);
+						t++;
+					}
+					i++;
+				}
+				parCursor = c;
+				pTop = t;
+				Os.unlock(parLock);
+				return true;
+			}
+			if (parEnd != 0) {
+				Os.unlock(parLock);
+				return false;
+			}
+			parIdle++;
+			if (parIdle == parN) {
+				Atomic.store32(Mem.sym("hxmc_par_end"), 1);
+				Os.unlock(parLock);
+				return false;
+			}
+			Os.unlock(parLock);
+			while (Atomic.load32(Mem.sym("hxmc_par_pool_len")) == 0 && Atomic.load32(Mem.sym("hxmc_par_end")) == 0) {}
+			Os.lock(parLock);
+			parIdle--;
+		}
+		return false;
+	}
+
+	// the oldest half of the stack given to the pool
+	@:hxmc.unsafe static function parShare() {
+		var k = pTop >> 1;
+		Os.lock(parLock);
+		if (parPoolLen + k > parPoolCap) {
+			while (parPoolLen + k > parPoolCap)
+				parPoolCap *= 2;
+			parPool = LibC.realloc(parPool, (parPoolCap : I64) * 16);
+		}
+		LibC.memcpy(parPool.add(parPoolLen << 4), pStack, (k : I64) * 16);
+		Atomic.store32(Mem.sym("hxmc_par_pool_len"), parPoolLen + k);
+		Os.unlock(parLock);
+		LibC.memmove(pStack, pStack.add(k << 4), ((pTop - k) : I64) * 16);
+		pTop -= k;
+	}
+
+	@:hxmc.unsafe static function parReserve(entries:Int) {
+		if (entries <= pCap) return;
+		while (pCap < entries)
+			pCap *= 2;
+		pStack = LibC.realloc(pStack, (pCap : I64) * 16);
+	}
+
+	// [a, b) as one raw object
+	@:hxmc.unsafe static function parFill(a:Ptr, b:Ptr) {
+		if (a.isNull() || !a.ult(b)) return;
+		var words = b.diff(a).toInt() >> 3;
+		Mem.setI32(a, 0, Types.T_BYTES | ((words - 1) << 16));
+		Mem.setI32(a, 4, 0);
+	}
+
+	// room for an object of `bytes` (with its header) in the old space: a new
+	// PLAB (the rest of the last one filled), or for a large one its own
+	@:hxmc.unsafe static function parAlloc(bytes:Int):Ptr {
+		if (bytes > PLAB_DIRECT) return Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (bytes : I64)));
+		parFill(pPlab, pPlabEnd);
+		var p = Ptr.ofI64(Atomic.add64(Mem.sym("hxmc_old_ptr"), (PLAB_BYTES : I64)));
+		pPlab = p.add(bytes);
+		pPlabEnd = p.add(PLAB_BYTES);
+		return p;
+	}
+
+	// the copy of v, a young object another thread is copying or copied
+	@:hxmc.unsafe static function parWaitFwd(v:Ptr):Ptr {
+		while (!isFwd(Atomic.load32(v.add(-8)))) {}
+		return fwdAddr(v);
+	}
+
+	// drainMinor's loop on this thread's stack
+	@:hxmc.unsafe static function parDrain() {
+		while (pTop > 0) {
+			if (pTop > SHARE_MIN && Atomic.load32(Mem.sym("hxmc_par_idle")) > 0) parShare();
+			if (pTop + SMALL_SLOTS + 1 > pCap) parReserve(pTop + SMALL_SLOTS + 1);
+			var top = pTop - 1;
+			var o = Mem.getPtr(pStack, top << 4);
+			var w0 = hdrW0(o);
+			var n = wordsOf(o, w0);
+			if (n > SMALL_SLOTS)
+				parScanLarge(o);
+			else {
+				pTop = top;
+				parPushed(parScanYoung(o, w0, n, top));
+			}
+		}
+	}
+
+	// scanLarge's
+	@:hxmc.unsafe static function parScanLarge(o:Ptr) {
+		parReserve(pTop + LARGE_SLICE);
+		var at = pTop - 1;
+		var e = pStack.add(at << 4);
+		var w0 = hdrW0(o);
+		var n = wordsOf(o, w0);
+		var k = Types.kindOfWord(w0);
+		var pm = Ptr.nil();
+		if (k == K_OBJ) {
+			pm = ptrmapOf(o);
+			if (pm.isNull()) {
+				pTop = at;
+				return;
+			}
+		} else if (k != K_PARR) {
+			pTop = at;
+			return;
+		}
+		var from = Mem.getI32(e, 8);
+		var to = from + LARGE_SLICE;
+		if (to < n) {
+			Mem.setI32(e, 8, to);
+		} else {
+			to = n;
+			pTop = at;
+		}
+		var top = pTop;
+		var i = from;
+		if (pm.isNull()) {
+			while (i < to) {
+				top = parSlot(o, i, top);
+				i++;
+			}
+		} else
+			while (i < to) {
+				if ((Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 != 0) top = parSlot(o, i, top);
+				i++;
+			}
+		parPushed(top);
+	}
+
+	static inline function parScanYoung(o:Ptr, w0:Int, n:Int, top:Int):Int {
+		var t = top;
+		var k = Types.kindOfWord(w0);
+		if (k == K_OBJ) {
+			var pm = ptrmapOf(o);
+			var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
+			var i = 0;
+			while (m != 0) {
+				if (m & 1 != 0) t = parSlot(o, i, t);
+				m = m >>> 1;
+				i++;
+			}
+		} else if (k == K_PARR) {
+			var i = 0;
+			while (i < n) {
+				t = parSlot(o, i, t);
+				i++;
+			}
+		}
+		return t;
+	}
+
+	static inline function parPushed(top:Int) {
+		var a = pTop, b = top - 1;
+		pTop = top;
+		var stack = pStack;
+		while (a < b) {
+			var x = Mem.getPtr(stack, a << 4);
+			Mem.setPtr(stack, a << 4, Mem.getPtr(stack, b << 4));
+			Mem.setPtr(stack, b << 4, x);
+			a++;
+			b--;
+		}
+	}
+
+	// minorSlot's, the copy raced for
+	static inline function parSlot(o:Ptr, i:Int, top:Int):Int {
+		var t = top;
+		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
+		if (!v.ult(youngStart) && v.ult(youngEnd)) {
+			var vw0 = Atomic.load32(v.add(-8));
+			if (isFwd(vw0))
+				Mem.setI64At(o, 0, i, fwdAddr(v).toI64());
+			else if (vw0 & 0xFFFF != T_BUSY && Atomic.cas32(v.add(-8), vw0, (vw0 & 0xFFFF0000) | T_BUSY) == vw0) {
+				var words = wordsOf(v, vw0) + 1;
+				var bytes = words << 3;
+				var dst = pPlab;
+				if (pPlabEnd.ult(dst.add(bytes)) || dst.isNull())
+					dst = parAlloc(bytes);
+				else
+					pPlab = dst.add(bytes);
+				if (words <= 8) {
+					do {
+						Mem.setI64(dst, 0, Mem.getI64(v, -8));
+						if (words == 1) break;
+						Mem.setI64(dst, 8, Mem.getI64(v, 0));
+						if (words == 2) break;
+						Mem.setI64(dst, 16, Mem.getI64(v, 8));
+						if (words == 3) break;
+						Mem.setI64(dst, 24, Mem.getI64(v, 16));
+						if (words == 4) break;
+						Mem.setI64(dst, 32, Mem.getI64(v, 24));
+						if (words == 5) break;
+						Mem.setI64(dst, 40, Mem.getI64(v, 32));
+						if (words == 6) break;
+						Mem.setI64(dst, 48, Mem.getI64(v, 40));
+						if (words == 7) break;
+						Mem.setI64(dst, 56, Mem.getI64(v, 48));
+					} while (false);
+				} else {
+					var j = 0;
+					while (j < words) {
+						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
+						j++;
+					}
+				}
+				Mem.setI32(dst, 0, vw0); // (the header as it was, not T_BUSY)
+				var nv = dst.add(8);
+				Mem.setPtr(v, 0, nv);
+				Atomic.store32(v.add(-8), (vw0 & 0xFFFF0000) | Types.T_FWD);
+				Mem.setI64At(o, 0, i, nv.toI64());
+				if (!Types.isRawArray(vw0)) {
+					Mem.setPtr(pStack, t << 4, nv);
+					Mem.setI32(pStack, (t << 4) + 8, 0);
+					t++;
+				}
+			} else
+				Mem.setI64At(o, 0, i, parWaitFwd(v).toI64());
+		}
+		return t;
 	}
 
 	@:hxmc.unsafe static function majorAndTime(need:I64) {
@@ -1284,9 +1785,9 @@ class Gc {
 	// never start it), and a major collection drops what is left of its
 	// requests (pfGen). It never runs Haxe code: it is no mutator,
 	// collections do not wait for it.
-	static inline var PF_START = 64 << 20;
+	static inline var PF_START = 16 << 20;
 	static inline var PF_MIN = 4 << 20;
-	static inline var PF_MAX = 16 << 20;
+	static inline var PF_MAX = 128 << 20;
 	static inline var PF_STEP = 256 << 10;
 	static var pfState:Int; // 0: not started, 1: started, -1: none
 	static var pfLock:Ptr;
@@ -1315,7 +1816,7 @@ class Gc {
 			}
 			pfState = 1;
 		}
-		var ahead = promoted < (PF_MIN : I64) ? (PF_MIN : I64) : promoted > (PF_MAX : I64) ? (PF_MAX : I64) : promoted;
+		var ahead = promoted * 2 < (PF_MIN : I64) ? (PF_MIN : I64) : promoted * 2 > (PF_MAX : I64) ? (PF_MAX : I64) : promoted * 2;
 		var to = oldPtr.addL(ahead);
 		if (oldEnd.ult(to)) to = oldEnd;
 		Os.lock(pfLock);
@@ -1905,6 +2406,19 @@ class Gc {
 				r.int(Foreign.npeers, 0);
 				r.str(", old since the last major ");
 				r.int(Foreign.promoted, 0);
+			}
+			if (parCopies > 0) {
+				r.str("; in parallel ");
+				r.int(parCopies, 0);
+				r.str(" (");
+				r.int(parThreads, 0);
+				r.str(" threads; roots ");
+				r.fixed(parRootSecs, 3, 0);
+				r.str("s, ");
+				r.int(parRootBytes >> 20, 0);
+				r.str(" MB; copying ");
+				r.fixed(parCopySecs, 3, 0);
+				r.str("s)");
 			}
 			r.str("\n");
 			r.flush();
