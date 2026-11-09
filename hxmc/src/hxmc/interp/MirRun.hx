@@ -147,31 +147,34 @@ class MirRun {
 		setArgs();
 		// (hot functions compiled to native code: interp.Tier)
 		Tier.install();
-		var gen = hxmc.macro.Loader.gen();
-		if (lazies.length > 0) hxmc.rt.Interp.lazyHook = (k, desc, regs) -> compileLazy(d, gen, lazies[k], desc, regs);
-		var b = hxmc.macro.Loader.loadObj(obj, facts);
-		if (Tier.on()) {
-			var site = new RunSite(d, gen);
-			for (f in funcs) {
-				var x = @:privateAccess hxmc.macro.Loader.xb.get(InterpGen.DESC + prep.funcSym(f));
-				if (x != null) Tier.add(Ptr.ofI64(x.v), f, site, o.opt);
+		// (apart from the macro context's bundles, Loader.apart)
+		hxmc.macro.Loader.apart(() -> {
+			var gen = hxmc.macro.Loader.gen();
+			if (lazies.length > 0) hxmc.rt.Interp.lazyHook = (k, desc, regs) -> compileLazy(d, gen, lazies[k], desc, regs);
+			var b = hxmc.macro.Loader.loadObj(obj, facts);
+			if (Tier.on()) {
+				var site = new RunSite(d, gen);
+				for (f in funcs) {
+					var x = @:privateAccess hxmc.macro.Loader.xb.get(InterpGen.DESC + prep.funcSym(f));
+					if (x != null) Tier.add(Ptr.ofI64(x.v), f, site, o.opt);
+				}
+				Tier.loaded();
 			}
-			Tier.loaded();
-		}
-		if (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")
-			Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
-		var main = b.entries.get("main");
-		var report = () -> if (Tier.on() && (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")) Sys.stderr().writeString('hxmc mir-run: ' + Tier.report() + '\n');
-		try {
-			hxmc.macro.Loader.run0(main);
-			if (b.entries.exists("entryRun")) hxmc.macro.Loader.run0(b.entries.get("entryRun"));
-			report();
-		} catch (e:Dynamic) {
-			report();
-			// (as the program would: hxmc.rt.Start's rt_throw without a handler)
-			hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
-			Sys.exit(1);
-		}
+			if (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")
+				Sys.stderr().writeString('hxmc mir-run: ${funcs.length} functions (${Lambda.count(native)} native), compiled ${Std.int((t1 - t0) * 1000)} ms, loaded ${Std.int((haxe.Timer.stamp() - t1) * 1000)} ms; ${b.codeBytes} bytes of code, ${b.dataBytes} bytes of data; ${hxmc.rt.Interp.entriesGiven} entries for native callers (${hxmc.rt.Interp.entriesByPool()}); host table ${hxmc.macro.HostTable.count()} symbols, ${hxmc.macro.HostTable.bytes()} bytes, ${hxmc.macro.HostTable.lookups} lookups in ${Std.int(hxmc.macro.HostTable.lookupTime * 1e6)} us\n');
+			var main = b.entries.get("main");
+			var report = () -> if (Tier.on() && (o.stats || Sys.getEnv("HXMC_MACRO_STATS") == "1")) Sys.stderr().writeString('hxmc mir-run: ' + Tier.report() + '\n');
+			try {
+				hxmc.macro.Loader.run0(main);
+				if (b.entries.exists("entryRun")) hxmc.macro.Loader.run0(b.entries.get("entryRun"));
+				report();
+			} catch (e:Dynamic) {
+				report();
+				// (as the program would: hxmc.rt.Start's rt_throw without a handler)
+				hxmc.rt.Gc.uncaught("Uncaught exception: ", e);
+				Sys.exit(1);
+			}
+		});
 	}
 
 	// the std's functions whose native code in the compiler is the program's:

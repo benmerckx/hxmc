@@ -1,0 +1,7 @@
+exit 0
+m7:p7 9
+p3
+Point
+p5
+no MacroOnly
+2

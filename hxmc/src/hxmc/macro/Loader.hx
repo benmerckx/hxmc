@@ -131,6 +131,56 @@ class Loader {
 		genGlobals = new Map();
 	}
 
+	// a program of its own (interp.MirRun: --run's program, while the macro
+	// context's bundles are loaded too), loaded and run by `f`: its bundles
+	// are not linked against this generation's, nor are later bundles of this
+	// generation against its (a type of the same name may differ, e.g. by
+	// `#if macro`), and this generation's types are not found by name while
+	// it runs; then its entries are an earlier generation's
+	public static function apart(f:() -> Void) {
+		hostSyms();
+		var names = [];
+		for (t in hostNtypes...nextType) {
+			var e = Mem.sym("rt_types").add(t * TS);
+			var n = Mem.getPtr(e, 0);
+			names.push(n);
+			if (t != emptyAnon && !n.isNull()) Mem.setPtr(e, 0, n.add(LibC.strlen(n)));
+		}
+		var saved = {
+			xb: xb,
+			entries: entries,
+			rows: rows,
+			types: genTypes,
+			sigs: genSigs,
+			globals: genGlobals,
+			scalars: genScalars
+		};
+		xb = new Map();
+		entries = new Map();
+		rows = new Map();
+		genTypes = new Map();
+		genSigs = new Map();
+		genGlobals = new Map();
+		genScalars = new Map();
+		function back() {
+			newGeneration();
+			for (i in 0...names.length)
+				Mem.setPtr(Mem.sym("rt_types").add((hostNtypes + i) * TS), 0, names[i]);
+			xb = saved.xb;
+			entries = saved.entries;
+			rows = saved.rows;
+			genTypes = saved.types;
+			genSigs = saved.sigs;
+			genGlobals = saved.globals;
+			genScalars = saved.scalars;
+		}
+		try f() catch (e:Dynamic) {
+			back();
+			throw e;
+		}
+		back();
+	}
+
 	// the facts of a type that decide whether an entry of an earlier generation
 	// is its (a class's: with the span of its descendants' type indices)
 	static function typeKey(t:Dynamic, spans:Map<String, Int>):String {

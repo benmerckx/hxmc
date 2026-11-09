@@ -228,7 +228,8 @@ class Corpus {
 			for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
 			cmd = cmd.concat(["-cp", FileSystem.fullPath(STD), "-main", c.main, "--custom-target", 'hxmc=$d/x', "--hxb", hxb, "-D", "disable-parallelism", "--no-output"]);
 			if (wasm) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
-			var r = exec(cmd.concat(defines));
+			// (a case with Mir macros, `// define: hxmc.macros=mir`: they need hxmc's std, MirMacros)
+			var r = exec(cmd.concat(defines), defines.contains("hxmc.macros=mir") ? {env: ["HXMC_STD" => FileSystem.fullPath(STD)]} : null);
 			if (r.code != 0) return {name: c.name, status: "hxb-fail", detail: tail(r.out + r.err, 1500)};
 			// (a type parameter the HXB writer finds unbound: an expression of hxmc's std
 			// or the case whose type left its scope, the archive keeping a type of nothing)
