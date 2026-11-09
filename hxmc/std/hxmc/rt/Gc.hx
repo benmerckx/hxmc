@@ -1072,7 +1072,7 @@ class Gc {
 		scanFrom(scan);
 	}
 
-	// ---- parallel minor collections (RT_GC_THREADS: the threads that copy,
+	// ---- parallel collections (RT_GC_THREADS: the threads that copy,
 	// the collecting one included; by default as many as the processors, at
 	// most PAR_MAX; 1: none). Linux x86-64, with threads, and a nursery that
 	// held at least PAR_MIN_YOUNG. The collecting thread forwards the roots
@@ -1089,6 +1089,18 @@ class Gc {
 	// another one is idle; the copying is over when all of them are idle with
 	// nothing left to take. What a PLAB has left is filled with a raw object
 	// (the old space stays parsable).
+	//
+	// Major collections copy the same way (parMajorCopy, parSlot's maj):
+	// the nursery's and the from-space's objects, into the other region,
+	// from the roots alone (no remembered sets); the finalisers' values,
+	// weak slots, native handles and foreign peers are then handled as by a
+	// serial one. Threads that fault in fresh pages together wait for each
+	// other in the kernel (8 threads: 2.6 GB in 0.93 s, one: 0.28 s), so the
+	// collecting thread first faults in what the copy is expected to fill
+	// (Os.populate: what was collected, times the last major collection's
+	// survival plus an eighth); the pages past the new limit go back after
+	// it. Serial when the copy, with what its PLABs may leave, might not fit
+	// in the region.
 	static inline var T_BUSY = 0xFFFE;
 	static inline var PAR_MAX = 8;
 	static inline var PAR_MIN_YOUNG = 1 << 20;
@@ -1124,6 +1136,14 @@ class Gc {
 	static inline var ROBJS_BATCH = 64;
 	@:hxmc.threadLocal static var pRem:Ptr; // remembered slots taken (pRemLen of them), not forwarded yet
 	@:hxmc.threadLocal static var pRemLen:Int;
+	static var parMajor:Bool; // the copying is a major collection's (parMajorCopy)
+	static var parMajors:Int; // RT_STATS: the major collections that copied in parallel
+	// the share of what the last major collection collected that it found
+	// live, in 1024ths (1024 before the first), and the end of the pages
+	// the last parallel one faulted in
+	static var survival:Int;
+	static var popEnd:Ptr;
+	static var parPopSecs:Float; // RT_STATS: their faulting in of the to-space
 	static var parCopies:Int; // RT_STATS: the parallel collections, their phases' seconds, the roots' copies' bytes
 	static var parRootSecs:Float;
 	static var parCopySecs:Float;
@@ -1175,8 +1195,6 @@ class Gc {
 	// the copying of a minor collection whose roots' copies start at scan
 	@:hxmc.unsafe static function parMinor(scan:Ptr) {
 		parCopies++;
-		parCursor = scan;
-		parRootsEnd = oldPtr;
 		parMutsLen = 0;
 		var t = Threads.allThreads;
 		while (!t.isNull()) {
@@ -1184,6 +1202,23 @@ class Gc {
 			t = t.value.next;
 		}
 		parAddMut(Threads.deadMut);
+		parMajor = false;
+		parRun(scan);
+	}
+
+	// the copying of a major collection whose roots' copies start at scan (no
+	// remembered sets: a major collection traces from the roots alone)
+	@:hxmc.unsafe static function parMajorCopy(scan:Ptr) {
+		parMajors++;
+		parMutsLen = 0;
+		parMajor = true;
+		parRun(scan);
+		parMajor = false;
+	}
+
+	@:hxmc.unsafe static function parRun(scan:Ptr) {
+		parCursor = scan;
+		parRootsEnd = oldPtr;
 		parMut = 0;
 		parOff = 0;
 		parInObjs = false;
@@ -1234,7 +1269,7 @@ class Gc {
 		var t = pTop;
 		var j = 0;
 		while (j < n) {
-			t = parSlot(Mem.getPtr(a, 8 * j), 0, t);
+			t = parSlot(Mem.getPtr(a, 8 * j), 0, t, false);
 			j++;
 		}
 		pTop = t;
@@ -1403,8 +1438,18 @@ class Gc {
 		return fwdAddr(v);
 	}
 
-	// drainMinor's loop on this thread's stack
-	@:hxmc.unsafe static function parDrain() {
+	// drainMinor's loop on this thread's stack (a major collection's: the
+	// from-space's objects copied too)
+	@:hxmc.unsafe static function parDrain()
+		if (parMajor) parDrainMajor() else parDrainMinor();
+
+	@:hxmc.unsafe static function parDrainMinor()
+		parDrainWith(false);
+
+	@:hxmc.unsafe static function parDrainMajor()
+		parDrainWith(true);
+
+	static inline function parDrainWith(maj:Bool) {
 		while (pTop > 0) {
 			if (pTop > SHARE_MIN && Atomic.load32(Mem.sym("hxmc_par_idle")) > 0) parShare();
 			if (pTop + SMALL_SLOTS + 1 > pCap) parReserve(pTop + SMALL_SLOTS + 1);
@@ -1412,17 +1457,23 @@ class Gc {
 			var o = Mem.getPtr(pStack, top << 4);
 			var w0 = hdrW0(o);
 			var n = wordsOf(o, w0);
-			if (n > SMALL_SLOTS)
-				parScanLarge(o);
-			else {
+			if (n > SMALL_SLOTS) {
+				if (maj) parScanLargeMajor(o) else parScanLarge(o);
+			} else {
 				pTop = top;
-				parPushed(parScanYoung(o, w0, n, top));
+				parPushed(parScanYoung(o, w0, n, top, maj));
 			}
 		}
 	}
 
 	// scanLarge's
-	@:hxmc.unsafe static function parScanLarge(o:Ptr) {
+	@:hxmc.unsafe static function parScanLarge(o:Ptr)
+		parScanLargeWith(o, false);
+
+	@:hxmc.unsafe static function parScanLargeMajor(o:Ptr)
+		parScanLargeWith(o, true);
+
+	static inline function parScanLargeWith(o:Ptr, maj:Bool) {
 		parReserve(pTop + LARGE_SLICE);
 		var at = pTop - 1;
 		var e = pStack.add(at << 4);
@@ -1430,40 +1481,35 @@ class Gc {
 		var n = wordsOf(o, w0);
 		var k = Types.kindOfWord(w0);
 		var pm = Ptr.nil();
-		if (k == K_OBJ) {
-			pm = ptrmapOf(o);
-			if (pm.isNull()) {
+		if (k == K_OBJ) pm = ptrmapOf(o);
+		if ((k == K_OBJ && pm.isNull()) || (k != K_OBJ && k != K_PARR))
+			pTop = at; // (no references)
+		else {
+			var from = Mem.getI32(e, 8);
+			var to = from + LARGE_SLICE;
+			if (to < n) {
+				Mem.setI32(e, 8, to);
+			} else {
+				to = n;
 				pTop = at;
-				return;
 			}
-		} else if (k != K_PARR) {
-			pTop = at;
-			return;
+			var top = pTop;
+			var i = from;
+			if (pm.isNull()) {
+				while (i < to) {
+					top = parSlot(o, i, top, maj);
+					i++;
+				}
+			} else
+				while (i < to) {
+					if ((Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 != 0) top = parSlot(o, i, top, maj);
+					i++;
+				}
+			parPushed(top);
 		}
-		var from = Mem.getI32(e, 8);
-		var to = from + LARGE_SLICE;
-		if (to < n) {
-			Mem.setI32(e, 8, to);
-		} else {
-			to = n;
-			pTop = at;
-		}
-		var top = pTop;
-		var i = from;
-		if (pm.isNull()) {
-			while (i < to) {
-				top = parSlot(o, i, top);
-				i++;
-			}
-		} else
-			while (i < to) {
-				if ((Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1 != 0) top = parSlot(o, i, top);
-				i++;
-			}
-		parPushed(top);
 	}
 
-	static inline function parScanYoung(o:Ptr, w0:Int, n:Int, top:Int):Int {
+	static inline function parScanYoung(o:Ptr, w0:Int, n:Int, top:Int, maj:Bool):Int {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
@@ -1471,14 +1517,14 @@ class Gc {
 			var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
 			var i = 0;
 			while (m != 0) {
-				if (m & 1 != 0) t = parSlot(o, i, t);
+				if (m & 1 != 0) t = parSlot(o, i, t, maj);
 				m = m >>> 1;
 				i++;
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
 			while (i < n) {
-				t = parSlot(o, i, t);
+				t = parSlot(o, i, t, maj);
 				i++;
 			}
 		}
@@ -1498,11 +1544,22 @@ class Gc {
 		}
 	}
 
-	// minorSlot's, the copy raced for
-	static inline function parSlot(o:Ptr, i:Int, top:Int):Int {
+	// minorSlot's, the copy raced for (maj: a major collection's, which
+	// copies the from-space's objects too)
+	static inline function parSlot(o:Ptr, i:Int, top:Int, maj:Bool):Int {
 		var t = top;
 		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
-		if (!v.ult(youngStart) && v.ult(youngEnd)) {
+		if (!v.ult(youngStart) && v.ult(youngEnd))
+			t = parCopySlot(o, i, top, v);
+		else if (maj && !v.ult(fromStart) && v.ult(fromEnd))
+			t = parCopySlot(o, i, top, v);
+		return t;
+	}
+
+	// slot i of o, v (young, or in the from-space), forwarded: the new top
+	static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr):Int {
+		var t = top;
+		{
 			var vw0 = Atomic.load32(v.add(-8));
 			if (isFwd(vw0))
 				Mem.setI64At(o, 0, i, fwdAddr(v).toI64());
@@ -1576,16 +1633,39 @@ class Gc {
 		// it: an end here rather than a write past it. The limit keeps a
 		// nursery's room below the region's end, so only an old space that
 		// fills its region, and a larger nursery, comes here)
-		if (fromEnd.diff(fromStart) + youngNext.diff(youngStart) > regionBytes) die("out of memory: what a major collection may copy does not fit in the old space's region (RT_REGION_MB)\n");
+		var fromPop = popEnd;
+		popEnd = Ptr.nil();
+		var young = youngNext.diff(youngStart);
+		var copied = fromEnd.diff(fromStart) + young;
+		// (in parallel, what the PLABs leave: a 32nd of what they hold at most,
+		// and a PLAB per thread; copied serially when that does not fit)
+		var par = parReady(copied) && copied + copied / 32 + (parThreads : I64) * PLAB_BYTES <= regionBytes;
+		if (par) copied += copied / 32 + (parThreads : I64) * PLAB_BYTES;
+		if (copied > regionBytes) die("out of memory: what a major collection may copy does not fit in the old space's region (RT_REGION_MB)\n");
 		curRegion ^= 1;
 		oldStart = region(curRegion);
 		oldPtr = oldStart;
-		dumpOld(oldStart.addL(fromEnd.diff(fromStart) + youngNext.diff(youngStart))); // (what it copies at most)
+		dumpOld(oldStart.addL(copied)); // (what it copies at most)
 		var scan = oldPtr;
 		major = true;
-		scanRoots(!gcBfs);
-		clearAllRemembered();
-		if (gcBfs) scanFrom(scan);
+		if (par) {
+			// (as a parallel minor collection: the roots forwarded alone, then
+			// what their copies reach copied by every copying thread, into
+			// pages faulted in first: Os.populate)
+			var p0 = stats ? Os.now() : 0.0;
+			var pop = copied;
+			if (survival < 1024 - 128) pop = copied / 1024 * (survival + 128);
+			popEnd = oldStart.addL(pop);
+			Os.populate(oldStart, pop);
+			if (stats) parPopSecs += Os.now() - p0;
+			scanRoots(false);
+			clearAllRemembered();
+			parMajorCopy(scan);
+		} else {
+			scanRoots(!gcBfs);
+			clearAllRemembered();
+			if (gcBfs) scanFrom(scan);
+		}
 		if (nfinals > 0) {
 			// values not copied yet are unreachable: queue their calls (newest
 			// first), then copy them and what they reach
@@ -1624,10 +1704,14 @@ class Gc {
 		// the from-space goes back to the system (RT_RELEASE=0 keeps it
 		// resident, so the next major collection copies into faulted-in pages:
 		// a little less system time for as much more memory as the old space held)
-		if (releasePages) Os.decommit(fromStart, fromEnd.diff(fromStart));
+		// (with what the last parallel one faulted in past its end there)
+		var relEnd = fromEnd;
+		if (!fromPop.ult(fromStart) && fromPop.ult(fromStart.addL(regionBytes)) && relEnd.ult(fromPop)) relEnd = fromPop;
+		if (releasePages) Os.decommit(fromStart, relEnd.diff(fromStart));
 		var from = region(curRegion ^ 1);
 		Os.coreDump(from, (curRegion == 0 ? dumpTop1 : dumpTop0).diff(from), false);
 		if (curRegion == 0) dumpTop1 = from else dumpTop0 = from;
+		var collected = fromEnd.diff(fromStart) + young;
 		var live = oldPtr.diff(oldStart);
 		var limit = live * growth / 100 + minorSize * 4 + need;
 		if (limit < ((64 << 20) : I64)) limit = 64 << 20;
@@ -1638,6 +1722,13 @@ class Gc {
 		if (limit < least) limit = least;
 		if (limit > regionBytes - minorSize) limit = regionBytes - minorSize;
 		oldEnd = oldStart.addL(limit);
+		survival = collected > 0 ? (live * 1024 / collected).toInt() : 1024;
+		// (pages faulted in past the limit: back to the system)
+		if (par && oldEnd.ult(popEnd)) {
+			var x = oldEnd.toI64() + ((2 << 20) - 1);
+			var e = Ptr.ofI64(x - (x & ((2 << 20) - 1)));
+			if (e.ult(popEnd)) Os.decommit(e, popEnd.diff(e));
+		}
 		dumpOld(oldEnd);
 		if (stats) {
 			var r = new Report(Mem.stack(Report.BYTES));
@@ -2250,6 +2341,7 @@ class Gc {
 		oldPtr = region0;
 		oldEnd = oldStart.addL((Os.envInt("RT_OLD_MB", 256) : I64) << 20); // fewer major collections early on
 		growth = Os.envInt("RT_OLD_GROWTH", 300);
+		survival = 1024;
 		if (oldStart.addL(regionBytes - minorSize).ult(oldEnd)) oldEnd = oldStart.addL(regionBytes - minorSize);
 		dumpTop0 = region0;
 		dumpTop1 = region1;
@@ -2407,9 +2499,17 @@ class Gc {
 				r.str(", old since the last major ");
 				r.int(Foreign.promoted, 0);
 			}
-			if (parCopies > 0) {
+			if (parCopies > 0 || parMajors > 0) {
 				r.str("; in parallel ");
 				r.int(parCopies, 0);
+				r.str(" minor, ");
+				r.int(parMajors, 0);
+				r.str(" major");
+				if (parMajors > 0) {
+					r.str(" (faulting in ");
+					r.fixed(parPopSecs, 3, 0);
+					r.str("s)");
+				}
 				r.str(" (");
 				r.int(parThreads, 0);
 				r.str(" threads; roots ");

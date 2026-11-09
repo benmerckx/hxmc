@@ -170,6 +170,13 @@ class Os {
 	}
 
 	// transparent huge pages (Linux only: RT_HUGE)
+	// [p, p + bytes) faulted in now, by this thread alone (Linux 5.14:
+	// MADV_POPULATE_WRITE; elsewhere nothing): threads that fault in fresh
+	// pages of one process together wait for each other in the kernel (8
+	// threads: 2.6 GB in 0.93 s, against 0.28 s for one)
+	@:hxmc.unsafe public static function populate(p:Ptr, bytes:I64)
+		if (Mem.os() == 0) C.madvise(p, bytes, 23);
+
 	@:hxmc.unsafe public static function hugePages(p:Ptr, bytes:I64)
 		if (Mem.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
 
