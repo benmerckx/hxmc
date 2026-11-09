@@ -628,14 +628,18 @@ class Gc {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
-			// (at most SMALL_SLOTS slots: one word of the map)
-			var pm = ptrmapOf(o);
-			var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
-			var i = 0;
-			while (m != 0) {
-				if (m & 1 != 0) t = minorSlot(o, i, t);
-				m = m >>> 1;
-				i++;
+			if (w0 & 0xFFFF == Types.T_ARRAY)
+				t = minorSlotWith(o, 1, t, true); // (its storage: arrTrim)
+			else {
+				// (at most SMALL_SLOTS slots: one word of the map)
+				var pm = ptrmapOf(o);
+				var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
+				var i = 0;
+				while (m != 0) {
+					if (m & 1 != 0) t = minorSlot(o, i, t);
+					m = m >>> 1;
+					i++;
+				}
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
@@ -665,7 +669,11 @@ class Gc {
 	// slot i of o (copied, or old) forwarded; a young object copied now is
 	// pushed when it has references (at gcStack[top], which has room): the
 	// new top
-	static inline function minorSlot(o:Ptr, i:Int, top:Int):Int {
+	static inline function minorSlot(o:Ptr, i:Int, top:Int):Int
+		return minorSlotWith(o, i, top, false);
+
+	// (arr: o is an Array, slot i its storage, copied as arrTrim says)
+	static inline function minorSlotWith(o:Ptr, i:Int, top:Int, arr:Bool):Int {
 		var t = top;
 		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
 		if (!v.ult(youngStart) && v.ult(youngEnd)) {
@@ -675,6 +683,8 @@ class Gc {
 			else {
 				// (copyTo, without the call of memcpy)
 				var words = wordsOf(v, vw0) + 1;
+				var th:I64 = arr ? arrTrim(o, v, vw0) : (0 : I64);
+				if (th.toInt() != 0) words = trimWords(th) + 1;
 				var dst = oldPtr;
 				#if hxmc.census
 				if (census != 0) Census.countPromoted(Mem.getI64(v, -8), (words : I64) << 3);
@@ -704,6 +714,7 @@ class Gc {
 						j++;
 					}
 				}
+				if (th.toInt() != 0) Mem.setI64(dst, 0, th);
 				oldPtr = dst.add(words << 3);
 				var nv = dst.add(8);
 				setFwd(v, nv);
@@ -717,6 +728,33 @@ class Gc {
 		}
 		return t;
 	}
+
+	// An Array's storage keeps room for the Array's length only once the
+	// Array is copied with it (promoted, or by a major collection): its
+	// growth by doubling leaves on average a quarter of it unused, which
+	// would stay so (most arrays are done growing when they survive). The
+	// storage's header as copied (its words and length, the capacity: the
+	// Array's length, Boxes.roomFor), or 0: copied as it is (an empty Array,
+	// one full already, storage of another kind (another thread's change of
+	// the kind between its storage and its kind) or a long one's header).
+	// Nothing else keeps an Array's storage across a GC point but the
+	// runtime's checks that the storage did not change at an allocation
+	// (Boxes.arrGrow): they find the copy; reading at most the length. The
+	// elements past the length are zero, so the copy's are too.
+	static inline function arrTrim(o:Ptr, v:Ptr, vw0:Int):I64 {
+		var kind = Mem.getI32(o, 4);
+		var len = Mem.getI32(o, 0);
+		var cap = Mem.getI32(v, -4);
+		var ncap = kind == Types.AK_BOOL ? (len + 7) & ~7 : kind == Types.AK_I32 ? (len + 1) & ~1 : len;
+		return if (vw0 & 0xFFFF != Types.naType(kind) || len <= 0 || !Mem.ult(ncap, cap) || vw0 >>> 16 == 0xFFFF) (0 : I64) else {
+			var nw = kind == Types.AK_BOOL ? ncap >> 3 : kind == Types.AK_I32 ? ncap >> 1 : ncap;
+			Types.arrayHdr((vw0 & 0xFFFF) | (nw << 16), ncap);
+		}
+	}
+
+	// the payload's words of arrTrim's header
+	static inline function trimWords(th:I64):Int
+		return (th.toInt() >>> 16) & 0xFFFF;
 
 	// room for this many entries on the collector's stack
 	@:hxmc.unsafe static function reserve(entries:Int) {
@@ -766,8 +804,10 @@ class Gc {
 					Mem.setI64At(o, 0, i - 1, fwdAddr(v).toI64());
 					continue;
 				}
-				// copied now: its subtree next
-				var nv = copyTo(v, wordsOf(v, vw0));
+				// copied now: its subtree next (an Array's storage: arrTrim)
+				var th:I64 = w0 & 0xFFFF == Types.T_ARRAY ? arrTrim(o, v, vw0) : (0 : I64);
+				var nv = copyTo(v, th.toInt() != 0 ? trimWords(th) : wordsOf(v, vw0));
+				if (th.toInt() != 0) Mem.setI64(nv, -8, th);
 				Mem.setI64At(o, 0, i - 1, nv.toI64());
 				Mem.setI32(gcStack, ((gcTop - 1) << 4) + 8, i);
 				push(nv);
@@ -1570,13 +1610,17 @@ class Gc {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
-			var pm = ptrmapOf(o);
-			var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
-			var i = 0;
-			while (m != 0) {
-				if (m & 1 != 0) t = parSlot(o, i, t, maj);
-				m = m >>> 1;
-				i++;
+			if (w0 & 0xFFFF == Types.T_ARRAY)
+				t = parSlotWith(o, 1, t, maj, true); // (its storage: arrTrim)
+			else {
+				var pm = ptrmapOf(o);
+				var m = pm.isNull() ? 0 : Mem.getI32(pm, 0);
+				var i = 0;
+				while (m != 0) {
+					if (m & 1 != 0) t = parSlot(o, i, t, maj);
+					m = m >>> 1;
+					i++;
+				}
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
@@ -1603,18 +1647,22 @@ class Gc {
 
 	// minorSlot's, the copy raced for (maj: a major collection's, which
 	// copies the from-space's objects too)
-	static inline function parSlot(o:Ptr, i:Int, top:Int, maj:Bool):Int {
+	static inline function parSlot(o:Ptr, i:Int, top:Int, maj:Bool):Int
+		return parSlotWith(o, i, top, maj, false);
+
+	// (arr: o is an Array, slot i its storage, copied as arrTrim says)
+	static inline function parSlotWith(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool):Int {
 		var t = top;
 		var v = Ptr.ofI64(Mem.getI64At(o, 0, i));
 		if (!v.ult(youngStart) && v.ult(youngEnd))
-			t = parCopySlot(o, i, top, v);
+			t = parCopySlot(o, i, top, v, arr);
 		else if (maj && !v.ult(fromStart) && v.ult(fromEnd))
-			t = parCopySlot(o, i, top, v);
+			t = parCopySlot(o, i, top, v, arr);
 		return t;
 	}
 
 	// slot i of o, v (young, or in the from-space), forwarded: the new top
-	static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr):Int {
+	static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr, arr:Bool):Int {
 		var t = top;
 		{
 			var vw0 = Atomic.load32(v.add(-8));
@@ -1622,6 +1670,8 @@ class Gc {
 				Mem.setI64At(o, 0, i, fwdAddr(v).toI64());
 			else if (vw0 & 0xFFFF != T_BUSY && Atomic.cas32(v.add(-8), vw0, (vw0 & 0xFFFF0000) | T_BUSY) == vw0) {
 				var words = wordsOf(v, vw0) + 1;
+				var th:I64 = arr ? arrTrim(o, v, vw0) : (0 : I64);
+				if (th.toInt() != 0) words = trimWords(th) + 1;
 				var bytes = words << 3;
 				var dst = pPlab;
 				if (pPlabEnd.ult(dst.add(bytes)) || dst.isNull())
@@ -1653,7 +1703,7 @@ class Gc {
 						j++;
 					}
 				}
-				Mem.setI32(dst, 0, vw0); // (the header as it was, not T_BUSY)
+				if (th.toInt() != 0) Mem.setI64(dst, 0, th) else Mem.setI32(dst, 0, vw0); // (the header as it was, not T_BUSY)
 				var nv = dst.add(8);
 				Mem.setPtr(v, 0, nv);
 				Atomic.store32(v.add(-8), (vw0 & 0xFFFF0000) | Types.T_FWD);
