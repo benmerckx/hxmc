@@ -666,7 +666,7 @@ class Typecore {
 		// port: `known` is built in the order of `current` and walked backwards
 		// (upstream's fold builds it reversed; unshift would make this quadratic)
 		var knownMonos:Array<TMono> = [];
-		var knownConstraints:Array<Array<TMonoConstraint>> = [];
+		var knownConstraints:Array<haxe.ds.Vector<TMonoConstraint>> = [];
 		for (i in 0...MonomorphList.size(current)) {
 			var mono = current.mono(i);
 			if (mono.tmType == null) {

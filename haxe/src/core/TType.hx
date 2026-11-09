@@ -123,12 +123,14 @@ enum T {
 		`A` is a down-constraint for `B`
 		`B` is an up-constraint for `A`
 	*/
-	public var tmDownConstraints:Array<TMonoConstraint>;
-	public var tmUpConstraints:Array<{var type:T; var name:Null<String>;}>;
-	public var tmModifiers:Array<TMonoModifier>;
+	// port: the lists are Vectors, replaced (never extended) as upstream's fields
+	// are, so a copy (clone) or a saved list (CallUnification, Typecore) keeps its own
+	public var tmDownConstraints:Vector<TMonoConstraint>;
+	public var tmUpConstraints:Vector<{var type:T; var name:Null<String>;}>;
+	public var tmModifiers:Vector<TMonoModifier>;
 
-	public inline function new(tmType:Null<T>, tmDownConstraints:Array<TMonoConstraint>,
-			tmUpConstraints:Array<{var type:T; var name:Null<String>;}>, tmModifiers:Array<TMonoModifier>) {
+	public inline function new(tmType:Null<T>, tmDownConstraints:Vector<TMonoConstraint>,
+			tmUpConstraints:Vector<{var type:T; var name:Null<String>;}>, tmModifiers:Vector<TMonoModifier>) {
 		this.tmType = tmType;
 		this.tmDownConstraints = tmDownConstraints;
 		this.tmUpConstraints = tmUpConstraints;
