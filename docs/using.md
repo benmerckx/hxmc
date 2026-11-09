@@ -526,6 +526,17 @@ threads, `bytesAllocated` counts other threads' current allocation
 buffers whole until the next collection. `RT_STATS=1` prints the totals at exit
 on both targets.
 
+### Smaller objects
+
+`@:hxmc.compact` on a class stores the references it and its subclasses
+declare in 4 bytes instead of 8, where the target allows it (executables
+for Linux, and Windows on x86-64; elsewhere it changes nothing). The
+program behaves the same; a heap of small linked objects (syntax trees,
+symbols) takes 10 to 16% less memory in the measured programs, at about
+the same speed. Such a class has at most 32 slots, and a compressed field
+has no address (`Struct.fieldOffset`). Details and numbers:
+[hxmc.md](hxmc.md#compressed-references).
+
 ### Null access
 
 Reading or writing through null throws the String `"Null Access"`, which

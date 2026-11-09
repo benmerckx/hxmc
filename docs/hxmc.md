@@ -172,6 +172,119 @@ code of Mir macros' bundles (`Lower.classSpans`: a later bundle's class
 may extend an earlier one's, outside its span) go through `hx_is`, which
 walks the superclasses.
 
+### Compressed references
+
+`@:hxmc.compact` on a class makes the reference fields it declares, and
+those its subclasses declare, 4 bytes instead of 8: the object's address
+shifted right by 3 (every object is 8-byte aligned), null 0, packed into
+half slots as Int and Bool fields are (`Facts.layout`; the field's location
+has `Facts.COMPACT`). Nothing else changes: in registers, locals,
+arguments, arrays, statics and every other field a reference is the whole
+address, and the program reads and writes the field, through its type,
+Dynamic access, a structure type or reflection (`Reflect`, `Type`,
+`haxe.Serializer`, `Std.string`), exactly as before. It is for programs
+whose memory is mostly small objects that refer to each other (syntax
+trees, symbol tables): a node of 3 references and a header goes from 32 to
+24 bytes (an object takes whole 8-byte slots).
+
+```haxe
+@:hxmc.compact
+class Node {
+	public var kind:Int;  // 4 bytes, as always
+	public var left:Node; // 4 bytes
+	public var right:Node; // 4 bytes
+	public var name:String; // 4 bytes
+	public var value:Null<Int>; // 8 bytes: a tagged word
+}
+```
+
+Compressed: a field of a reference type (a class instance, String, Array,
+an enum value, a function, a structure, Dynamic, NativeArray). Not
+compressed, 8 bytes as before: a type parameter's value (`T`) and a
+`Null<Int>`'s or `Null<Float>`'s, which are tagged words (an Int or Float
+may be encoded in them, [values of type parameters](#values-of-type-parameters));
+Float and Int64; a struct field; a dynamic method's slot; the fields of a
+superclass that is not compact (its code reads them where they are).
+
+**The code.** A load zero-extends the 4 bytes and shifts them left by 3
+(x86-64 folds the shift into the accesses the reference is the base of,
+`[x*8 + disp]`: `x64.Isel` scaleFolds); a store shifts right
+(`MemLower.compress`; a reference just loaded is stored back as its 4
+bytes). The write barrier is the usual one on the whole addresses
+(`MemLower.setCompact`): its slow path remembers the field's address plus 1
+(a 4-byte field's address is a multiple of 4: the tag tells the collector
+to read 4 bytes, `Gc.forwardRemembered`). Stores of a compact field are
+release stores like any reference's. Escape analysis replaces compact
+objects as others (`Escape`: 4-byte accesses holding a whole reference in
+their variable).
+
+**The collector and the runtime.** A type with compressed references has
+word 20 of its type record set (`Types.hasCompact`) and, after its pointer
+map, a compact map: a bit per 4-byte half of its at most 32 slots
+(`DataGen`, `GcCore.isCompactHalf`). Every scan reads it beside the pointer
+map: the serial minor collection's (`Gc.scanYoung`, both map words), the
+serial major's depth-first scan (`drainWith`: the halves as entries n to
+3n of the object's), the breadth-first one and the remembered objects'
+(`scanObject`), the parallel minor and major collections' (`parScanYoung`,
+`parHalves`; the remembered 4-byte fields, tagged, `parRemembered`; the
+race for an object and the wait for its copy, `parCopySlot`, store the
+4 bytes), `Gc.objsize` and the census (`RT_CENSUS` counts such a field as
+4 bytes). Its children take twice the stack entries (`2 * SMALL_SLOTS`
+reserved per object). Copying and forwarding are unchanged: compressed
+values are absolute addresses, which a copy (PLAB or not) keeps; the write
+barrier's skip of a field that held a young pointer (remembered already)
+compares the decompressed previous value. Dynamic access and reflection
+find the field's kind `c` (`Dyn.boxSlot`, `storeSlot`, which stores with
+the barrier, `Gc.storeCompact`); an inline cache never matches it, so a
+compact field read through a structure type takes the slow path (a call).
+
+**The address space.** No base is added: the image and the heap are below
+32 GB. The executable's image is at a fixed address, 0x400000 (`Link`,
+`LinkDyn`'s glibc mode, `LinkPE` on x86-64), and a program with a compact
+type reserves its nursery and the old space's two regions at fixed
+addresses from 1 GB up (`Gc.heapReserve`: `MAP_FIXED_NOREPLACE` on Linux,
+which a kernel before 4.17 takes as a hint, so the address is checked;
+`VirtualAlloc` at the address on Windows), past a taken range in 256 MB
+steps, the regions at most 15 GB each (`RT_REGION_MB` is capped there: the
+old space holds at most 15 GB, 16 GB without compact types). Startup dies
+with a message when the image is above 32 GB or no such range is free. A
+program without compact types reserves its heap as before.
+
+**Where.** `hxmc.Main.compactRefs`: executables for Linux (x86-64 and arm64,
+musl and the glibc mode) and Windows on x86-64. Elsewhere the annotation
+changes nothing, the fields stay 8 bytes and the program behaves the same:
+macOS and iOS (position-independent executables, slid anywhere: they would
+need a heap base, a register or global added on every decompression),
+Windows on arm64 (relocatable, `DYNAMIC_BASE`), Android and shared
+libraries (`-D hxmc.shared`: loaded anywhere), WebAssembly (wasm32's
+references are 4 bytes already), `--interp`, `--run` and Mir macros, and a
+compiler that runs Mir macros (`Lower.mirHost`: their code reads the
+compiler's own objects with the layouts it was built with, `MirMacros`,
+`MirRun`). The errors below are the same
+on every target, so a program that builds for one builds for all.
+
+**Errors.** A compact class (with its superclasses' fields) has at most 32
+slots: the collector scans it with one word of each map (`Gc.SMALL_SLOTS`;
+`Lower.compactCheck`). A compressed field has no address
+(`Struct.fieldOffset`, on which the runtime's atomic and foreign
+registrations are built: declare such a field in a class that is not
+compact). `@:hxmc.lengthOf` cannot name a compressed field. Interfaces,
+extern classes and subclasses of Objective-C classes or StringBuf cannot be
+compact. The corpus' `CompactRefs`, `CompactGc`, `CompactParGc` (four threads; in
+parallel with the adaptive nursery: `make check`'s lane `CompactParGc x10
+adaptive RT_VERIFY`) and `reject-Compact*`.
+
+**Costs.** Memory: the port typing its own source to HXB (`make bench-compile`'s `self`) with twelve of its syntax and typed-tree classes compact (`Expr`, `TExpr`, `TVar`, `TClassField`, `TFunc`, `TMono`, `TAnon`, ...): 256 MB live at exit, 232 MB (-9.4%); peak RSS 624 MB, 561 MB (-10.1%); the same HXB, in 3.71 s and 3.73 s. tsc-haxe (the TypeScript checker ported to
+Haxe, with its syntax nodes, symbols, types, signatures, flow nodes and link
+records compact) checking vscode: 3254 MB live at exit, 2723 MB compact
+(-16.3%), peak RSS 3654 MB, 3121 MB (-14.6%); t3code-server -16.0% live,
+-13.9% peak; outputs identical. Time: the same wall time (vscode 6.47 s,
+6.42 s): 4.7% more instructions (the shifts, the stores' encoding, the
+barrier) for 12% fewer last-level cache misses and 15% less promoted by
+minor collections. A class whose references are rarely followed gains
+little time and costs some; one whose objects dominate the heap gains
+most.
+
 ### The collector
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
@@ -1567,7 +1680,7 @@ For compiled programs (run time):
 | `RT_VERIFY=1` | fill the free nursery with a pattern; an allocation in a safe region is fatal |
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
-| `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |
+| `RT_REGION_MB` | Windows: the old space's regions (2 GB by default); with compact types at most 15 GB ([compressed references](#compressed-references)) |
 | `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
 | `RT_CENSUS_WHY=<type>` | also a path from a global to the first `RT_CENSUS_WHY_MAX` (8) objects of that type; global `i` is the symbol of value `8 * i` in `<exe>.syms` |
