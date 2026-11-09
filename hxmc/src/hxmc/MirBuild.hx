@@ -376,7 +376,12 @@ class MirBuild extends MirWriter {
 		// unassigned last (zeroed, unshared; in a try function, a handler may
 		// read what its body had not assigned yet when it threw)
 		var all = fn.args.concat(fn.locals);
-		var unset = Roots.maybeUnset(fn);
+		// Without root cells, definite-assignment facts cannot affect slots.
+		var unset = roots.rooted;
+		for (w in unset.w) if (w != 0) {
+			unset = Roots.maybeUnset(fn);
+			break;
+		}
 		var a = roots.assign(all, unset, unset);
 		for (l in all) {
 			var k = a.slotOf.get(l.id);

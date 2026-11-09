@@ -53,6 +53,65 @@ class RootFactsCheck {
 		f.body = vector(STry(vector(shared), vector(handler)), SExpr(ECall(sink, vector(ELocal(b)))), SReturn(null));
 		var tr = Roots.analyze(f);
 		check(tr.rooted.get(a.id) && tr.rooted.get(b.id) && tr.rooted.get(caught.id), "handler requirements lost live references");
-		Sys.println("root facts: shared sites, loops, handlers, repeatability, input preservation and MIR compaction passed");
+		// Arguments needed after the same collecting call must not share
+		// their cells, even when many other reference locals need no cells.
+		var gc = new FuncInfo("gc", "Test");
+		f.hasTry = false;
+		f.args = [a, b];
+		f.locals = [for (k in 4...68) new Local(k, "unused" + k, ref)];
+		f.body = vector(SExpr(ECall(gc, vector())), SExpr(ECall(sink, vector(ELocal(a)))), SExpr(ECall(sink, vector(ELocal(b)))), SReturn(null));
+		var all = f.args.concat(f.locals), graph = Roots.analyze(f), unset = Roots.maybeUnset(f);
+		var cells = graph.assign(all, unset, unset);
+		check(cells.nslots == 2 && cells.slotOf.get(a.id) != cells.slotOf.get(b.id), "live arguments shared a cell");
+		// Disjoint definitions can share a cell.
+		f.args = [];
+		f.locals = [a, b].concat(f.locals);
+		f.body = vector(SSet(a, ENewObj(cls)), SExpr(ECall(gc, vector())), SExpr(ECall(sink, vector(ELocal(a)))),
+			SSet(b, ENewObj(cls)), SExpr(ECall(gc, vector())), SExpr(ECall(sink, vector(ELocal(b)))), SReturn(null));
+		graph = Roots.analyze(f);
+		unset = Roots.maybeUnset(f);
+		cells = graph.assign(f.locals, unset, unset);
+		check(cells.nslots == 1 && cells.slotOf.get(a.id) == cells.slotOf.get(b.id), "disjoint roots lost slot sharing");
+		f.args = [a];
+		f.locals = [];
+		f.noGc = true;
+		f.body = vector(SExpr(ECall(sink, vector(ELocal(a)))), SReturn(null));
+		graph = Roots.analyze(f);
+		unset = Roots.maybeUnset(f);
+		check(graph.assign(f.args, unset, unset).nslots == 0, "GC-free function retained cells");
+		// Returning from a safe region can observe a concurrent collection,
+		// although the function's effect summary says it never allocates.
+		f.body = vector(SExpr(ECallHost("rt_blocking_leave", vector(), TVoid)),
+			SExpr(ECall(sink, vector(ELocal(a)))), SReturn(null));
+		graph = Roots.analyze(f);
+		check(graph.rooted.get(a.id), "no-allocation summary hid movement at a safe-region return");
+		// A blocking call is a collection point even without allocating:
+		// another thread can move references while this one is stopped.
+		var blocking = new FuncInfo("blocking", "Test");
+		blocking.noGc = blocking.blocks = true;
+		f.blocks = true;
+		f.body = vector(SExpr(ECall(blocking, vector())), SExpr(ECall(sink, vector(ELocal(a)))), SReturn(null));
+		graph = Roots.analyze(f);
+		check(graph.rooted.get(a.id), "GC-free summary hid a blocking collection point");
+		f.noGc = f.blocks = false;
+		f.args = [cond];
+		f.locals = [a];
+		var setA = SSet(a, ENewObj(cls));
+		f.body = vector(SIf(ELocal(cond), vector(setA), vector()), SExpr(ECall(gc, vector())),
+			SExpr(ECall(sink, vector(ELocal(a)))), SReturn(null));
+		graph = Roots.analyze(f);
+		check(Roots.maybeUnset(f).get(a.id), "one branch assigned the other branch's mask");
+		f.body = vector(SIf(ELocal(cond), vector(setA), vector(setA)), SExpr(ECall(gc, vector())),
+			SExpr(ECall(sink, vector(ELocal(a)))), SReturn(null));
+		graph = Roots.analyze(f);
+		check(!Roots.maybeUnset(f).get(a.id), "assignments in both branches were forgotten");
+		f.hasTry = true;
+		f.args = [];
+		f.locals = [a, caught];
+		var readsA:IrCatch = {l: caught, test: null, body: vector(SExpr(ECall(sink, vector(ELocal(a)))))};
+		f.body = vector(STry(vector(setA), vector(readsA)), SReturn(null));
+		graph = Roots.analyze(f);
+		check(Roots.maybeUnset(f).get(a.id), "a try body's assignment initialized its handler's mask");
+		Sys.println("root facts: sites, loops, handlers, coloring, initialization and input preservation; MIR compaction passed");
 	}
 }
