@@ -656,6 +656,9 @@ class Threads {
 	// the collector while it is stopped)
 	var allocated:I64;
 	var tlabStart:Ptr;
+	// the end of the thread's run of fresh nursery pages (Gc.tlabRefill: its
+	// TLABs are cut from it; null: none, reset by each collection)
+	var runEnd:Ptr;
 }
 
 @:hxmc.c @:hxmc.fast private extern class C {

@@ -2061,6 +2061,8 @@ class Gc {
 		while (!t.isNull()) {
 			if (t.value.started != 0) {
 				if (!t.value.yptr.isNull() && t.value.yptr.ult(t.value.yrlim)) handed -= t.value.yrlim.diff(t.value.yptr);
+				if (!t.value.runEnd.isNull() && t.value.yrlim.ult(t.value.runEnd)) handed -= t.value.runEnd.diff(t.value.yrlim);
+				t.value.runEnd = Ptr.nil();
 				if (!t.value.yptr.isNull() && !t.value.tlabStart.isNull()) t.value.allocated += t.value.yptr.diff(t.value.tlabStart);
 				t.value.tlabStart = Ptr.nil();
 				t.value.yptr = Ptr.nil();
@@ -2104,6 +2106,23 @@ class Gc {
 		var many = Atomic.load32(Mem.sym("rt_nthreads")) > 1;
 		var want:I64 = many ? tlabSize : poison ? ((1 : I64) << 62) : zchunk;
 		if (want < bytes) want = bytes;
+		var me = Threads.self;
+		// the next TLAB of the thread's run of fresh pages (see below): no
+		// atomic, and a safepoint every TLAB as in dirty pages
+		var re = me.value.runEnd;
+		if (!re.isNull()) {
+			if (!yptr.isNull() && yrlim.ult(re) && re.diff(yptr) >= (bytes : I64)) {
+				var e = yptr.addL(want);
+				if (re.ult(e)) e = re;
+				var z = raw && yrlim.ult(yptr.add(bytes)) ? yptr.add(bytes) : yrlim;
+				var ze = e.ult(youngDirty) ? e : youngDirty;
+				if (!poison && z.ult(ze)) Mem.zero(z, ze.diff(z));
+				yrlim = e;
+				ylim = poison ? Ptr.nil() : e;
+				return true;
+			}
+			me.value.runEnd = Ptr.nil();
+		}
 		var cell = Mem.sym("hxmc_young_next");
 		var p = Ptr.ofI64(Atomic.load64(cell));
 		while (true) {
@@ -2112,25 +2131,31 @@ class Gc {
 			if (avail < bytes) return false;
 			var e = s.addL(want < avail ? want : avail);
 			// with several threads, a TLAB that reaches untouched memory (above
-			// youngDirty: fresh pages, after a start or a growth) ends at a 2 MB
-			// boundary, so that threads do not fault in the same 2 MB together:
+			// youngDirty: fresh pages, after a start or a growth) takes the
+			// pages up to a 2 MB boundary as the thread's run (runEnd), its next
+			// TLABs cut from it, so that threads do not fault in the same 2 MB together:
 			// with transparent huge pages, each of them would get a huge page
 			// of its own, zeroed by the kernel, all but one thrown away (the
 			// tool's code generation, its nursery growing to 256 MB under 12
 			// threads: 1.5 s of kernel time). Fresh pages need no zeroing of
-			// ours, so the larger TLAB costs nothing but its share of the nursery
+			// ours, so the run costs nothing but its share of the nursery
+			var run = Ptr.nil();
 			if (many && youngDirty.ult(e)) {
 				var x = e.toI64() + (HUGE_PAGE - 1);
-				e = Ptr.ofI64(x - (x & (HUGE_PAGE - 1))); // (the nursery starts 2 MB aligned)
-				if (youngEnd.ult(e)) e = youngEnd;
+				run = Ptr.ofI64(x - (x & (HUGE_PAGE - 1))); // (the nursery starts 2 MB aligned)
+				if (youngEnd.ult(run)) run = youngEnd;
 			}
-			var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), e.toI64()));
+			var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), (run.isNull() ? e : run).toI64()));
 			if (seen == p) {
+				// (the run's pages are the thread's, handed out a TLAB at a
+				// time: a thread with 2 MB to allocate in before its next
+				// safepoint kept the others waiting at a stop of the world,
+				// webpack 3 to 11 ms a stop when the nursery grew in steps)
+				if (!run.isNull() && e.ult(run)) me.value.runEnd = run;
 				// (a new run of TLABs: the last one's bytes are the thread's)
 				if (s != yptr || yptr.isNull()) {
-					var m = Threads.self;
-					if (!yptr.isNull() && !m.value.tlabStart.isNull()) m.value.allocated += yptr.diff(m.value.tlabStart);
-					m.value.tlabStart = s;
+					if (!yptr.isNull() && !me.value.tlabStart.isNull()) me.value.allocated += yptr.diff(me.value.tlabStart);
+					me.value.tlabStart = s;
 				}
 				// (below p: the rest of the thread's TLAB, zeroed already; a raw
 				// object's bytes, at s, are its allocation's to write)
@@ -2624,6 +2649,8 @@ class Gc {
 	@:hxmc.unsafe public static function bytesAllocated():Float {
 		var b = allocBytes + Atomic.load64(Mem.sym("hxmc_gc_large_bytes")) + youngNext.diff(youngStart);
 		if (!yptr.isNull() && yptr.ult(yrlim)) b -= yrlim.diff(yptr);
+		var re = Threads.self.value.runEnd;
+		if (!re.isNull() && yrlim.ult(re)) b -= re.diff(yrlim);
 		var f:Float = cast b;
 		return f;
 	}
