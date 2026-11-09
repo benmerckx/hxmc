@@ -253,7 +253,8 @@ class LambdaInfo {
 	}
 }
 
-class Local {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class Local {
 	public var id:Int;
 	public var name:String;
 	public var ty:Ty;

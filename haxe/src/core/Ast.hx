@@ -76,7 +76,8 @@ enum Keyword {
 	Overload;
 }
 
-enum Binop {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Binop {
 	OpAdd;
 	OpMult;
 	OpDiv;
@@ -104,7 +105,8 @@ enum Binop {
 	OpNullCoal;
 }
 
-enum Unop {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Unop {
 	Increment;
 	Decrement;
 	Not;
@@ -119,7 +121,8 @@ enum StringLiteralKind {
 	/* | SMarkup */
 }
 
-enum Constant {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Constant {
 	Int(value:String, suffix:Null<String>);
 	Float(value:String, suffix:Null<String>);
 	String(value:String, kind:StringLiteralKind);
@@ -245,7 +248,8 @@ enum ImportMode {
 	IAll;
 }
 
-@:structInit class PlacedName {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class PlacedName {
 	public var name:String;
 	public var pos:Pos;
 
@@ -257,7 +261,8 @@ enum ImportMode {
 	public inline function clone():PlacedName return new PlacedName(name, pos);
 }
 
-@:structInit class TypePath {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class TypePath {
 	public var tpackage:Array<String>;
 	public var tname:String;
 	public var tparams:Vector<TypeParamOrConst>;
@@ -273,7 +278,8 @@ enum ImportMode {
 	public inline function clone():TypePath return new TypePath(tpackage, tname, tparams, tsub);
 }
 
-@:structInit class PlacedTypePath {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class PlacedTypePath {
 	public var path:TypePath;
 	public var posFull:Pos;
 	public var posPath:Pos;
@@ -287,7 +293,8 @@ enum ImportMode {
 	public inline function clone():PlacedTypePath return new PlacedTypePath(path, posFull, posPath);
 }
 
-@:structInit class TypeHint {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class TypeHint {
 	public var type:ComplexType;
 	public var pos:Pos;
 
@@ -299,7 +306,8 @@ enum ImportMode {
 	public inline function clone():TypeHint return new TypeHint(type, pos);
 }
 
-@:structInit class MetadataEntry {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class MetadataEntry {
 	public var meta:Dynamic;
 	public var exprs:Vector<Expr>;
 	public var pos:Pos;
@@ -380,7 +388,8 @@ typedef Documentation = Null<DocBlock>;
 	public inline function clone():Func return new Func(fParams, fArgs, fType, fExpr);
 }
 
-@:structInit class FuncArg {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class FuncArg {
 	public var name:PlacedName;
 	public var optional:Bool;
 	public var meta:Metadata;
@@ -417,7 +426,8 @@ typedef Documentation = Null<DocBlock>;
 	public inline function clone():TypeParam return new TypeParam(tpName, tpParams, tpConstraints, tpDefault, tpMeta);
 }
 
-@:structInit class ClassField {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class ClassField {
 	public var cffName:PlacedName;
 	public var cffDoc:Documentation;
 	public var cffPos:Pos;
@@ -543,7 +553,8 @@ typedef Documentation = Null<DocBlock>;
 	public inline function clone():Package return new Package(pack, declarations);
 }
 
-@:structInit class Expr {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class Expr {
 	public var expr:ExprDef;
 	public var pos:Pos;
 
@@ -555,12 +566,14 @@ typedef Documentation = Null<DocBlock>;
 	public inline function clone():Expr return new Expr(expr, pos);
 }
 
-enum TypeParamOrConst {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum TypeParamOrConst {
 	TPType(type:TypeHint);
 	TPExpr(expr:Expr);
 }
 
-enum ComplexType {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum ComplexType {
 	CTPath(path:PlacedTypePath);
 	CTFunction(args:Vector<TypeHint>, ret:TypeHint);
 	CTAnonymous(fields:Vector<ClassField>);
@@ -571,7 +584,8 @@ enum ComplexType {
 	CTIntersection(types:Vector<TypeHint>);
 }
 
-enum ExprDef {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum ExprDef {
 	EConst(constant:Constant);
 	EArray(array:Expr, index:Expr);
 	EBinop(op:Binop, left:Expr, right:Expr);

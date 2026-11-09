@@ -78,7 +78,8 @@ class Section {
 		return kind == Bss || kind == Tbss ? bssSize : buf.len;
 }
 
-class Symbol {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class Symbol {
 	public var name:String;
 	public var section:Null<Section>; // null: undefined (defined elsewhere)
 	public var offset = 0;
@@ -95,7 +96,8 @@ class Symbol {
 	}
 }
 
-class Reloc {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class Reloc {
 	public var offset:Int;
 	public var kind:RelKind;
 	public var sym:Symbol;

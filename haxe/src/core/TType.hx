@@ -22,7 +22,8 @@ import haxe.ds.Vector;
 // StringMaps; code that iterates them goes through core.ds.PMap (sorted keys).
 typedef TypeMap<T> = StringMap<T>;
 
-enum FieldKind {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum FieldKind {
 	Var(kind:VarKind);
 	Method(kind:MethodKind);
 }
@@ -102,7 +103,8 @@ enum CacheBoundObject {
 	Message(value:CompilerMessage);
 }
 
-enum T {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum T {
 	TMono(mono:TMono);
 	TEnum(en:TEnum, params:TParams);
 	TInst(cls:TClass, params:TParams);
@@ -114,7 +116,8 @@ enum T {
 	TAbstract(abs:TAbstract, params:TParams);
 }
 
-@:structInit class TMono {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class TMono {
 	public var tmType:Null<T>;
 	/*
 		```
@@ -219,7 +222,8 @@ typedef AbstractCastField = {var abs:TAbstract; var params:TParams; var field:Ca
 
 typedef TypeParams = Vector<TypedTypeParam>;
 
-enum TConstant {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum TConstant {
 	TInt(value:Int);
 	TFloat(value:String);
 	TString(value:String);
@@ -259,7 +263,8 @@ enum TVarKind {
 	VAbstractThis;
 }
 
-@:structInit class TVar {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class TVar {
 	public var vId:Int;
 	public var vName:String;
 	public var vType:T;
@@ -341,7 +346,8 @@ class AnonStatusRef {
 	public inline function clone():TAnon return withStatusRef(aFields, aStatusRef);
 }
 
-enum TExprDef {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum TExprDef {
 	TConst(value:TConstant);
 	TLocal(variable:TVar);
 	TArray(array:TExpr, index:TExpr);
@@ -400,7 +406,8 @@ enum TExprDef {
 	public inline function clone():TSwitchCase return new TSwitchCase(casePatterns, caseExpr);
 }
 
-enum TFieldAccess {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum TFieldAccess {
 	FInstance(cls:TClass, params:TParams, field:TClassField);
 	FStatic(cls:TClass, field:TClassField);
 	FAnon(field:TClassField);
@@ -411,7 +418,8 @@ enum TFieldAccess {
 
 // port: a class rather than a structure so static targets access fields directly;
 // @:structInit keeps `{eexpr:..., etype:..., epos:...}` literals working.
-@:structInit class TExpr {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class TExpr {
 	public var eexpr:TExprDef;
 	public var etype:T;
 	public var epos:Pos;
@@ -425,7 +433,8 @@ enum TFieldAccess {
 	public inline function clone():TExpr return new TExpr(eexpr, etype, epos);
 }
 
-@:structInit class TClassField {
+// port: (hxmc) its references 4 bytes in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact @:structInit class TClassField {
 	public var cfName:String;
 	public var cfType:T;
 	public var cfPos:Pos;
@@ -709,7 +718,8 @@ typedef TInfos = {
 	};
 }
 
-enum ModuleType {
+// port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum ModuleType {
 	TClassDecl(cls:TClass);
 	TEnumDecl(en:TEnum);
 	TTypeDecl(def:TDef);
