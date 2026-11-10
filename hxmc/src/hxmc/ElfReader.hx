@@ -96,6 +96,12 @@ class ElfReader {
 		var shstrndx = u16(62);
 		inline function sh(i:Int)
 			return shoff + 64 * i;
+		// (extended section numbering, 0xff00 sections or more: LLVM's
+		// instrumented whole program, a counter section per function; the
+		// count is section 0's size, the names' index its link, a symbol's
+		// index SHN_XINDEX with the index in SHT_SYMTAB_SHNDX)
+		if (shnum == 0 && shoff != 0) shnum = i64(sh(0) + 32);
+		if (shstrndx == 0xffff) shstrndx = u32(sh(0) + 40);
 		var strOff = i64(sh(shstrndx) + 24);
 		var o = new Obj();
 		var secs = new haxe.ds.Vector<Null<Section>>(shnum);
@@ -103,6 +109,7 @@ class ElfReader {
 		inline function secAt(i:Int):Null<Section>
 			return i >= 0 && i < shnum ? secs[i] : null;
 		var symtab = -1;
+		var xindex = -1;
 		var funcs:Null<Section> = null;
 		// the members of COMDAT groups (LLVM's objects: a definition each
 		// module makes, as LLVM's profile's __llvm_profile_raw_version): their
@@ -128,6 +135,7 @@ class ElfReader {
 			var size = i64(h + 32);
 			var align = i64(h + 48);
 			if (type == 2) symtab = i;
+			if (type == 18) xindex = i;
 			if (name == FuncRec.SECTION && type == 1) {
 				// the function records (hxmc's objects): read once the relocations are
 				funcs = new Section(name, RoData, 8);
@@ -165,6 +173,8 @@ class ElfReader {
 			var info = u8(at + 4);
 			var bind = info >> 4, type = info & 15;
 			var shndx = u16(at + 6);
+			var ext = shndx == 0xffff && xindex >= 0 && u32(sh(xindex) + 40) == symtab;
+			if (ext) shndx = u32(i64(sh(xindex) + 24) + 4 * k);
 			var name = cstr(strtab + u32(at));
 			var value = i64(at + 8);
 			if (k == 0) continue;
@@ -181,10 +191,10 @@ class ElfReader {
 			}
 			s.tls = type == 6;
 			s.func = type == 2;
-			if (shndx == 0xfff1) {
+			if (shndx == 0xfff1 && !ext) {
 				s.abs = true;
 				s.offset = value;
-			} else if (shndx != 0 && shndx < 0xff00) {
+			} else if (shndx != 0 && (shndx < 0xff00 || ext)) {
 				var sec = secAt(shndx);
 				if (sec == null || sec == funcs || sec == o.ehFrame) continue; // (a symbol of a dropped section)
 				s.section = sec;
