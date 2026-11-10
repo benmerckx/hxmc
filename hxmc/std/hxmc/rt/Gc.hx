@@ -2085,25 +2085,28 @@ class Gc {
 	// __TEXT's address there). The heap goes nowhere else: without it
 	// (an image another linker wrote), the program stops
 	@:hxmc.unsafe static function macWindow() {
-		var h = Mem.sym("__dso_handle");
-		var n = Mem.getI32(h, 16);
-		var c = h.add(32);
-		var text:I64 = -1, at:I64 = -1, size:I64 = 0;
-		for (k in 0...n) {
-			if (Mem.getI32(c, 0) == 0x19) { // LC_SEGMENT_64: its name at 8, 16 bytes
-				var a = Mem.getI32(c, 8), b = Mem.getI32(c, 12), z = Mem.getI32(c, 16);
-				if (a == 0x45545F5F && b == 0x5458 && z == 0) text = Mem.getI64(c, 24); // __TEXT
-				if (a == 0x58485F5F && b == 0x50414548 && z == 0) { // __HXHEAP
-					at = Mem.getI64(c, 24);
-					size = Mem.getI64(c, 32);
+		// (the test here too: an older tool keeps the function, and __dso_handle is Mach-O's)
+		if (Mem.os() == 1) {
+			var h = Mem.sym("__dso_handle");
+			var n = Mem.getI32(h, 16);
+			var c = h.add(32);
+			var text:I64 = -1, at:I64 = -1, size:I64 = 0;
+			for (k in 0...n) {
+				if (Mem.getI32(c, 0) == 0x19) { // LC_SEGMENT_64: its name at 8, 16 bytes
+					var a = Mem.getI32(c, 8), b = Mem.getI32(c, 12), z = Mem.getI32(c, 16);
+					if (a == 0x45545F5F && b == 0x5458 && z == 0) text = Mem.getI64(c, 24); // __TEXT
+					if (a == 0x58485F5F && b == 0x50414548 && z == 0) { // __HXHEAP
+						at = Mem.getI64(c, 24);
+						size = Mem.getI64(c, 32);
+					}
 				}
+				c = c.add(Mem.getI32(c, 4));
 			}
-			c = c.add(Mem.getI32(c, 4));
+			if (text < 0 || at < 0) die("no heap window (__HXHEAP) in the executable: its compressed references (@:hxmc.compact) need one\n");
+			compactNext = h.toI64() - text + at;
+			var end = compactNext + size;
+			if (end < compactLimit) compactLimit = end;
 		}
-		if (text < 0 || at < 0) die("no heap window (__HXHEAP) in the executable: its compressed references (@:hxmc.compact) need one\n");
-		compactNext = h.toI64() - text + at;
-		var end = compactNext + size;
-		if (end < compactLimit) compactLimit = end;
 	}
 
 	// address space for the heap: anywhere, or with compressed references
