@@ -326,7 +326,12 @@ class Cache {
 
 	public function new() {}
 
+	// port: hook (not upstream): the contexts of a signature (null: every context) removed:
+	// the macro interpreter drops the statics it keeps for their modules (EvalPrototype.dropStash)
+	public static var contextsRemovedHook:Null<Null<String>->Void> = null;
+
 	public function clear():Void {
+		if (contextsRemovedHook != null) contextsRemovedHook(null); // port: (not upstream)
 		contexts.clear();
 		contextList = [];
 		haxelib.clear();
@@ -337,6 +342,7 @@ class Cache {
 
 	// Like clear, but preserves the file parse cache and directory cache within each context.
 	public function softClear():Void {
+		if (contextsRemovedHook != null) contextsRemovedHook(null); // port: (not upstream)
 		contexts.iter((_, cc) -> cc.clearModules());
 		contextList = [];
 		haxelib.clear();
@@ -451,6 +457,33 @@ class Cache {
 						case [CheckDisplayFile, state = MSBad(_)]: state;
 						case _: MSBad(Tainted(reason));
 					}
+			});
+		});
+	}
+
+	// port: diverges from upstream: the macro interpreter discarded (after an error,
+	// MacroContext.createMacroInterp), every cached module whose typing ran macros or
+	// loaded the macro context's modules (a dependency of another signature, or a
+	// macro's), in every context, is tainted, so that its macros run again in the next
+	// interpreter. Upstream keeps them: a module whose build macro kept state in a macro
+	// class's statics (helder's HostMacro.template, ViewRuntime's fields) is restored
+	// while the new interpreter has none, and a later macro that reads it fails in
+	// every build until the module is typed again.
+	public function taintMacroModules():Void {
+		function usesMacros(e:ModuleDefExtra):Bool {
+			for (d in e.mDeps)
+				if (d.mdSign != e.mSign) return true else switch d.mdOrigin {
+					case MDepFromMacro | MDepFromMacroDefine: return true;
+					case _:
+				}
+			return false;
+		}
+		contexts.iter(function(_, cc) {
+			cc.getModules().iter(function(_, m) {
+				if (usesMacros(m.mExtra)) m.mExtra.mCacheState = MSBad(Tainted(MacroInterpreterReset));
+			});
+			cc.getHxb().iter(function(_, mc) {
+				if (usesMacros(mc.mcExtra)) mc.mcExtra.mCacheState = MSBad(Tainted(MacroInterpreterReset));
 			});
 		});
 	}
@@ -599,6 +632,7 @@ class Cache {
 				return acc;
 			}, []);
 			for (sign in toRemove) contexts.remove(sign);
+			if (contextsRemovedHook != null) for (sign in toRemove) contextsRemovedHook(sign); // port: (not upstream)
 			if (toRemove.length > 0) {
 				contextList = contextList.filter(cc -> toRemove.indexOf(cc.getSign()) < 0);
 			}

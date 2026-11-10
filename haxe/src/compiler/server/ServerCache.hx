@@ -660,6 +660,12 @@ class ServerCache {
 	}
 
 	public static function cleanup(sctx:ServerCompilationContext):Void {
+		// port: diverges from upstream: the macro interpreter discarded after an error, the
+		// modules its macros made are typed again (CompilationCache.taintMacroModules)
+		if (typing.MacroContext.interpDiscarded) {
+			typing.MacroContext.interpDiscarded = false;
+			sctx.cs.taintMacroModules();
+		}
 		switch typing.MacroContext.macroInterpCache {
 			case null:
 			case interp:
