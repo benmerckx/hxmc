@@ -130,14 +130,23 @@ record:   [ type:16 ][ slots:16                ][ identity hash:32        ]
 array:    [ type:16 ][ words:16 (0xFFFF: more) ][ length:32, in elements ]
 string:   [ type:16 ][ words:16 (0xFFFF: more) ][ content hash:32         ]
           then its length (u32 at +0) and its units from +4
-forwarded (while the collector copies): type 0xFFFF, the copy in slot 0
+header constructor's value: [ type:16 ][ slots:16 = 0 ][ its argument:32 ]
+forwarded (while the collector copies): type 0xFFFF, the copy in slot 0,
+          or compressed at -4 (a program with compressed references)
 ```
 
 - The size is the 16 bits at -6, in 8-byte words. An array or string of
   0xFFFF words or more computes it from its length.
 - Types 16 to 23 are arrays without references, 24 to 31 arrays of
   references; the rest are records, scanned by their type's pointer map.
-- Every heap object has at least one slot (for the forwarding address).
+- Every heap object has at least one slot (for the forwarding address),
+  but in a program with compressed references (`Mem.compact`), where
+  forwarding keeps the copy's address compressed in the header's last 4
+  bytes (`GcCore.fwdLow`; the copy has the identity hash) and a header
+  constructor's value (see [Compressed references](#compressed-references))
+  is 8 bytes. An object's address is then in (start, end] of its space:
+  the collector's tests of the old and from-spaces include the end, and the
+  nursery's allocations stop 8 bytes short of its end (`Gc.youngTop`).
   Empty arrays and `""` are static.
 
 | Type | |
@@ -226,6 +235,28 @@ each, as without the annotation. A constructor has at most 32 slots.
 The corpus' `CompactEnums` (`make check`'s lane `CompactEnums x10
 adaptive RT_VERIFY`) and `reject-CompactEnumSlots`.
 
+**Header constructors.** A constructor of a compact enum with one argument
+of 4 bytes (an Int, a Bool or a compressed reference: `EConst(c)`,
+`TLocal(v)`, `TMono(r)`) has no slot: its value is its header, the
+argument in its last 4 bytes, where a record's identity hash is otherwise
+(`CtorInfo.header`, `Facts.assignTypes`; the argument's location is
+4-byte index -1, `Facts.argLoc`). It goes from 16 to 8 bytes; the
+compiler's typed trees have most of their constructors so (6% of the front
+end's live data). The allocation's header has 0 in that half until the
+argument is stored (no slot to clear); a `switch` reads it at -4. The
+type record's word 20 has bit 1 (`Types.headerArg`; bit 0: compressed
+references); a reference argument's compact map is bit 0, which in an
+object of no slots is the header's half (`GcCore.cmapHalves`,
+`cmapHalf`; every scan of the compact map, serial and parallel, the census
+and `objsize`). The field entry's slot is -1, so reflection reads it
+through `Dyn.boxSlot`/`storeSlot` as any 4-byte field. `Dyn.objHash`
+(`hxmc.Native.objHash`) of such a value writes nothing: it is its type's
+and its argument's (a reference's own hash), which never change. Only
+where the program's runtime forwards in the header (`Lower.compactTypes`,
+`GcCore.fwdLow`); else such a constructor is packed in a slot. The
+corpus' `HeaderEnums` (`make check`'s lane `HeaderEnums x10 adaptive
+RT_VERIFY`).
+
 **The code.** A load zero-extends the 4 bytes and shifts them left by 3
 (x86-64 folds the shift into the accesses the reference is the base of,
 `[x*8 + disp]`: `x64.Isel` scaleFolds); a store shifts right
@@ -250,8 +281,10 @@ serial major's depth-first scan (`drainWith`: the halves as entries n to
 race for an object and the wait for its copy, `parCopySlot`, store the
 4 bytes), `Gc.objsize` and the census (`RT_CENSUS` counts such a field as
 4 bytes). Its children take twice the stack entries (`2 * SMALL_SLOTS`
-reserved per object). Copying and forwarding are unchanged: compressed
-values are absolute addresses, which a copy (PLAB or not) keeps; the write
+reserved per object). Copying is unchanged, and forwarding but for where
+the copy's address goes (compressed in the header, [Object
+layout](#object-layout)): compressed values are absolute addresses, which a
+copy (PLAB or not) keeps; the write
 barrier's skip of a field that held a young pointer (remembered already)
 compares the decompressed previous value. Dynamic access and reflection
 find the field's kind `c` (`Dyn.boxSlot`, `storeSlot`, which stores with

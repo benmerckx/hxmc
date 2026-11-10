@@ -89,6 +89,8 @@ class BundleFacts {
 				// compact map; a packed constructor's fields, their arguments'
 				// positions: DataGen, Loader)
 				halves: t.halves != null && t.halves.length > 0 ? t.halves : null,
+				// (a header constructor: word 20's flag, Facts.typeFlags)
+				flags: hxmc.ir.Facts.typeFlags(t),
 				fields: [for (f in t.fields) {name: f.name, slot: f.slot, kind: f.kind != null ? String.fromCharCode(f.kind) : kindChar(f.ty), arg: f.arg}],
 				// (a method with default values for numbers or Bools: its entry taking them nullable, as DataGen)
 				methods: [for (m in t.methods) {name: m.name, fn: m.dfn != null ? m.dfn : m.fn, sig: e.sigNames[m.dfn != null ? m.dsig : m.sig]}],

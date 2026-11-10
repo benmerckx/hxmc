@@ -211,6 +211,7 @@ class Fingerprint {
 	// a slot per argument is what its types give
 	function ctorLocs(c:CtorInfo) {
 		if (!c.packed) return;
+		word(c.header ? 1 : 0);
 		word(c.locs.length);
 		for (l in c.locs)
 			word(l);

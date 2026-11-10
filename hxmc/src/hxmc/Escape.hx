@@ -1531,7 +1531,8 @@ class Escape {
 			if (u.op == InitField && u.info.next >= 0) zeroStores.push({u: u, off: 8 * u.info.next, size: 8});
 			var off = accOff(u), size = accSize(u), t = accTy(u);
 			if (size == 0) continue;
-			if (off < 0 || off + size > 8 * nslots) return false;
+			// (a header constructor's argument: the header's upper half, CtorInfo.header)
+			if (off < (site.v.info.ctor != null && site.v.info.ctor.header ? -4 : 0) || off + size > 8 * nslots) return false;
 			var value = accValue(u);
 			if (value >= 0 && isConst(value, 0)) {
 				zeroStores.push({u: u, off: off, size: size});

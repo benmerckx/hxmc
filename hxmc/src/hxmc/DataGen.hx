@@ -347,8 +347,9 @@ class DataGen {
 				}
 			}
 			var n = t.slots.length;
-			var nwords = Std.int((n + 63) / 64);
 			var halves = t.halves != null && t.halves.length > 0 ? t.halves : null;
+			// (a header constructor's compressed reference: a map without slots)
+			var nwords = halves != null && n == 0 ? 1 : Std.int((n + 63) / 64);
 			if (nwords > 0) {
 				pmSym = local(rodata, "pm", 8);
 				for (w in 0...nwords) {
@@ -366,8 +367,10 @@ class DataGen {
 				// at most 32 slots, set for a compressed reference; hxmc.rt.GcCore.isCompactHalf)
 				if (halves != null) {
 					var lo = 0, hi = 0;
-					for (h in halves)
+					for (x in halves) {
+						var h = Facts.cmapBit(x);
 						if (h < 32) lo |= 1 << h else hi |= 1 << (h - 32);
+					}
 					rodata.buf.u64(lo, hi);
 				}
 			}
@@ -430,7 +433,7 @@ class DataGen {
 			data.buf.u32(tk(t.tk)); // 8 tk (u8)
 			data.buf.u32(t.sup); // 12 super
 			data.buf.u32(t.slots.length); // 16 nslots
-			data.buf.u32(t.halves != null && t.halves.length > 0 ? 1 : 0); // 20 compressed references (a compact map after the pointer map)
+			data.buf.u32(Facts.typeFlags(t)); // 20 flags: compressed references (a compact map after the pointer map), a header constructor
 			if (x.pmSym != null) ptrSym(data, x.pmSym) else data.buf.u64(0, 0); // 24 ptrmap
 			data.buf.u32(x.fs); // 32 nfields
 			data.buf.u32(0);

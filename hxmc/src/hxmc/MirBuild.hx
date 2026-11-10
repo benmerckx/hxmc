@@ -1243,9 +1243,10 @@ class MirBuild extends MirWriter {
 			case EEnumParam(c, idx, x):
 				var i = info();
 				i.ctor = c;
-				// (its location, Facts: packed for @:hxmc.compact, CtorInfo.locs)
-				i.compact = c.locs[idx] & hxmc.ir.Facts.COMPACT != 0;
-				getField(nullCheck(ex(x)), c.locs[idx] & ~hxmc.ir.Facts.COMPACT, c.params[idx], i);
+				// (its location, Facts: packed for @:hxmc.compact, CtorInfo.locs; a
+				// header constructor's in the header, -4)
+				i.compact = hxmc.ir.Facts.argCompact(c, idx);
+				getField(nullCheck(ex(x)), hxmc.ir.Facts.argLoc(c, idx), c.params[idx], i);
 			case EArrLen(a): obj(ArrayLength, I32, info(), nullCheck(ex(a))).id;
 			case EArrGet(elem, a, i): arrGet(elem, a, i, true);
 			case EArrGetU(elem, a, i): arrGet(elem, a, i, false);
@@ -1296,17 +1297,19 @@ class MirBuild extends MirWriter {
 				// (the storage is not zeroed: an Int's or Bool's word is cleared
 				// before the parameter is evaluated, OInfo.next; packed, a slot of
 				// halves before the first of them, its low half, CtorInfo.locs)
+				// (a header constructor: no slot; the allocation's header has the hash
+				// word 0, the argument's place, until the argument is stored: CtorInfo.header)
 				inline function half(i:Int):Bool
 					return c.params[i].match(TI32 | TBool) || c.locs[i] & hxmc.ir.Facts.COMPACT != 0;
 				inline function next(i:Int):Int
-					return i < args.length && half(i) && c.locs[i] & 1 == 0 ? (c.locs[i] & ~hxmc.ir.Facts.COMPACT) >> 1 : -1;
-				var n = c.nslots == 0 ? 1 : c.nslots;
+					return i < args.length && !c.header && half(i) && c.locs[i] & 1 == 0 ? (c.locs[i] & ~hxmc.ir.Facts.COMPACT) >> 1 : -1;
+				var n = c.header ? 0 : c.nslots == 0 ? 1 : c.nslots;
 				var i = info();
 				i.ctor = c;
 				i.next = c.params.length == 0 ? 0 : next(0);
 				var o = alloc(n, c.tindex, Abi.K_OBJ, false, i, OInfo.NEW_ENUM);
 				for (i in 0...args.length)
-					initField(o, c.locs[i] & ~hxmc.ir.Facts.COMPACT, c.params[i], ex(args[i]), next(i + 1), c.locs[i] & hxmc.ir.Facts.COMPACT != 0);
+					initField(o, hxmc.ir.Facts.argLoc(c, i), c.params[i], ex(args[i]), next(i + 1), hxmc.ir.Facts.argCompact(c, i));
 				o;
 			case ENewArr(elem, vs): newArr(elem, vs);
 			case ENewClos(l, []) if (p.staticClosures):

@@ -191,6 +191,11 @@ class CtorInfo {
 	public var locs:Vector<Int>;
 	public var nslots:Int = 0;
 	public var packed = false; // (locs from Facts.layout: EnumInfo.compact and Lower.compact)
+	// packed, of one argument of 4 bytes (an Int, a Bool, a compressed
+	// reference): its value is the header alone, the argument in its upper
+	// half (location -1, a 4-byte index; nslots 0), where an object's
+	// identity hash is otherwise (Facts.assignTypes, hxmc.rt.Types.headerArg)
+	public var header = false;
 
 	public function new(en, name, tag, params) {
 		this.en = en;

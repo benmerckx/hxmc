@@ -206,6 +206,7 @@ class Tiers {
 			// (a nursery of a megabyte or more: parallel minor collections of @:hxmc.compact objects)
 			lane("CompactParGc x10 adaptive RT_VERIFY", threads(10, 0, "CompactParGc", true));
 			lane("CompactEnums x10 adaptive RT_VERIFY", threads(10, 0, "CompactEnums", true));
+			lane("HeaderEnums x10 adaptive RT_VERIFY", threads(10, 0, "HeaderEnums", true));
 			lane("cross-host", crosshost(["--targets", "linux-x86_64,linux-arm64,wasm32-wasi,linux-x86_64-glibc"].concat(cases.length > 0 ? cases : ["Unsafe", "SwitchIndex", "Regress"])));
 			debugLanes();
 			if (port) lane("port self-compile", portNative);

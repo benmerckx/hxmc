@@ -679,16 +679,20 @@ class Loader {
 			Mem.setI32(e, 16, slots.length);
 			// (compressed references, @:hxmc.compact: the compact map after the
 			// pointer map, a bit per 4-byte half, as DataGen writes it; at most 32 slots)
+			// (word 20: its flags, a header constructor's too, hxmc.ir.Facts.typeFlags;
+			// a header constructor's compressed reference has a map without slots)
 			var halves:Null<Array<Int>> = t.halves;
-			Mem.setI32(e, 20, halves != null ? 1 : 0);
-			if (slots.length > 0) {
-				var nw = Std.int((slots.length + 63) / 64);
+			Mem.setI32(e, 20, t.flags);
+			if (slots.length > 0 || halves != null) {
+				var nw = slots.length == 0 ? 1 : Std.int((slots.length + 63) / 64);
 				var pm = zalloc(8 * nw + (halves != null ? 8 : 0));
 				for (j in 0...slots.length)
 					if (slots.charAt(j) == "p") Mem.setI32(pm, 4 * (j >> 5), Mem.getI32(pm, 4 * (j >> 5)) | (1 << (j & 31)));
 				if (halves != null)
-					for (h in halves)
+					for (x in halves) {
+						var h = hxmc.ir.Facts.cmapBit(x);
 						Mem.setI32(pm, 8 + 4 * (h >> 5), Mem.getI32(pm, 8 + 4 * (h >> 5)) | (1 << (h & 31)));
+					}
 				Mem.setPtr(e, 24, pm);
 			}
 			var fs:Array<Dynamic> = (t.fields : Array<Dynamic>).copy();
@@ -1213,11 +1217,13 @@ class Loader {
 		}
 		// (compressed references: the compact map, hxmc.rt.Types.hasCompact)
 		var halves:Null<Array<Int>> = t.halves;
-		if ((Mem.getI32(e, 20) != 0) != (halves != null)) return "compressed references " + Mem.getI32(e, 20) + " vs " + (halves != null);
+		if (Mem.getI32(e, 20) != t.flags) return "type flags (compressed references, a header constructor) " + Mem.getI32(e, 20) + " vs " + t.flags;
 		if (halves != null) {
 			var lo = 0, hi = 0;
-			for (h in halves)
+			for (x in halves) {
+				var h = hxmc.ir.Facts.cmapBit(x);
 				if (h < 32) lo |= 1 << h else hi |= 1 << (h - 32);
+			}
 			if (Mem.getI32(pm, 8) != lo || Mem.getI32(pm, 12) != hi) return "compact map";
 		}
 		var fs:Array<Dynamic> = t.fields;

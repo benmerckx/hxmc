@@ -105,9 +105,9 @@ class CompactEnums {
 	}
 
 	static function main() {
-		// (Node: 2 slots where there are compressed references, Linux and
-		// Windows on x86-64, hxmc.Main.compactRefs; Pair 1, Mixed 5, Link 2,
-		// Hold 3: else a slot per argument)
+		// (Leaf: none where there are compressed references, Linux and Windows
+		// on x86-64, hxmc.Main.compactRefs (its Int in the header: HeaderEnums);
+		// Node 2, Pair 1, Mixed 5, Link 2, Hold 3: else a slot per argument)
 		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm();
 		var sizes = [
 			slots(Leaf(1)),
@@ -117,7 +117,7 @@ class CompactEnums {
 			slots(Link(1, End)),
 			slots(Hold(null, null, null, null, null))
 		];
-		trace(sizes.join(",") == (compressed ? "1,2,1,5,2,3" : "1,3,2,7,2,5") ? "sizes ok" : "sizes " + sizes);
+		trace(sizes.join(",") == (compressed ? "0,2,1,5,2,3" : "1,3,2,7,2,5") ? "sizes ok" : "sizes " + sizes);
 		trace(local(3, 4));
 
 		var t = build(12, 1);

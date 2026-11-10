@@ -242,6 +242,26 @@ class Facts {
 	// a class field's location (ClassInfo.locs) is that of a compressed reference: its 4-byte index | COMPACT
 	public static inline var COMPACT = 1 << 29;
 
+	// a constructor's argument i: its location (a slot, or a 4-byte index:
+	// -1 a header constructor's, CtorInfo.header), and whether it is a
+	// compressed reference (OInfo.compact)
+	public static inline function argLoc(c:CtorInfo, i:Int):Int
+		return c.header ? -1 : c.locs[i] & ~COMPACT;
+
+	public static inline function argCompact(c:CtorInfo, i:Int):Bool
+		return c.header ? !c.params[i].match(TI32 | TBool) : c.locs[i] & COMPACT != 0;
+
+	// a type record's flags (word 20, hxmc.rt.Types): bit 0 compressed
+	// references (a compact map after the pointer map), bit 1 a header
+	// constructor (hxmc.rt.Types.headerArg)
+	public static function typeFlags(t:TypeEntry):Int
+		return (t.halves != null && t.halves.length > 0 ? 1 : 0) | (t.hdr == true ? 2 : 0);
+
+	// the compact map's bit of half h: a header constructor's half -1 (it has
+	// no slots) is bit 0 (hxmc.rt.GcCore.cmapHalf)
+	public static inline function cmapBit(h:Int):Int
+		return h < 0 ? 0 : h;
+
 	// whether a field of type t of a @:hxmc.compact class is a compressed
 	// reference where the target has them (Lower.compact): a reference, not
 	// a tagged word (an Int or Float may be encoded in it)
@@ -330,7 +350,13 @@ class Facts {
 				// (@:hxmc.compact: packed as a compact class's fields, Int/Bool and
 				// compressed references in halves; else a slot per argument)
 				c.packed = e.compact && Lower.compact;
-				if (c.packed) {
+				// (one argument of 4 bytes: the header's upper half, where the runtime
+				// forwards in the header, hxmc.rt.GcCore.fwdLow: Lower.compactTypes)
+				c.header = c.packed && Lower.compactTypes == 1 && c.params.length == 1 && (c.params[0].match(TI32 | TBool) || compressible(c.params[0]));
+				if (c.header) {
+					c.locs = Vector.fromArrayCopy([-1]);
+					if (compressible(c.params[0])) halves.push(-1);
+				} else if (c.packed) {
 					c.locs = layout(slots, [for (pt in c.params) pt], [for (pt in c.params) compressible(pt)], halves);
 					// (Lower.enumInfo reported it with the enum's position)
 					if (slots.length > COMPACT_MAX_SLOTS)
@@ -344,6 +370,7 @@ class Facts {
 				c.nslots = slots.length;
 				var t = entry(c.name, "TK_CTOR", slots, e.name + "." + c.name);
 				t.halves = halves;
+				t.hdr = c.header;
 				t.sup = e.tindex;
 				t.tag = c.tag;
 				if (c.global >= 0) t.single = c.global;
@@ -351,9 +378,9 @@ class Facts {
 				// the slot gives it)
 				t.fields = [
 					for (i in 0...c.params.length)
-						!c.packed ? {name: c.paramNames[i], slot: c.locs[i], ty: c.params[i]} : c.locs[i] & COMPACT != 0 ? {
+						!c.packed ? {name: c.paramNames[i], slot: c.locs[i], ty: c.params[i]} : argCompact(c, i) ? {
 							name: c.paramNames[i],
-							slot: c.locs[i] & ~COMPACT,
+							slot: argLoc(c, i),
 							ty: c.params[i],
 							kind: "c".code,
 							arg: i
@@ -932,8 +959,10 @@ typedef TypeEntry = {
 	// (kind: the runtime's field kind when not the type's: L, Dyn.boxSlot)
 	// (arg: a packed constructor's argument position, DataGen)
 	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int, ?arg:Int}>,
-	// the 4-byte indices of the compressed references (@:hxmc.compact, Facts.layout)
+	// the 4-byte indices of the compressed references (@:hxmc.compact, Facts.layout;
+	// -1 a header constructor's argument: Facts.cmapBit)
 	?halves:Array<Int>,
+	?hdr:Bool, // a header constructor (CtorInfo.header, Facts.typeFlags)
 	// (dfn, dsig: the entry for dynamic calls, FuncInfo.dfltEntry)
 	methods:Array<{name:String, fn:String, sig:Int, ?dfn:String, ?dsig:Int}>,
 	ifaces:Array<Int>,
