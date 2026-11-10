@@ -85,7 +85,7 @@ class ModuleCacheState {
 	public var captured = false;
 	public var kept:Null<Array<Variant>> = null;
 	// HXMC_MODULE_CACHE_LOG=1: each module checked, each not kept, each encoded again
-	public var log = Sys.getEnv("HXMC_MODULE_CACHE_LOG") == "1";
+	public var log:Bool;
 	public var loaded = 0;
 	public var checked = 0;
 	public var written = 0;
@@ -125,6 +125,7 @@ class ModuleCacheState {
 		this.store = store;
 		this.indexKey = indexKey;
 		this.com = com;
+		log = Options.on("hxmc.module-cache-log", false, com.defines);
 	}
 
 	public var macroPending = true;

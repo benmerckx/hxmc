@@ -27,7 +27,7 @@ using core.ds.VectorTools;
 // continuation (OInfo.cont: the phis there, a reference a cold site reloads
 // after its slow path, get the value each edge's path has).
 class MemLower extends MirWriter {
-	static var noShadow = Sys.getEnv("HXMC_NOSHADOW") == "1";
+	static var noShadow = false; // (the build's, Options.apply)
 
 	var icSym:String;
 

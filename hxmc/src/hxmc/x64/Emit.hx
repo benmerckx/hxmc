@@ -71,7 +71,7 @@ class Emit implements hxmc.Target.Emitter {
 
 	// HXMC_SIZE_STATS=1: bytes of code by instruction kind, hot and cold
 	// blocks, frame slots and other memory, prologue and epilogues (all functions, all threads)
-	public static var sizeStats = Sys.getEnv("HXMC_SIZE_STATS") == "1";
+	public static var sizeStats = false; // (the build's, Options.apply)
 	static var statLock = new sys.thread.Mutex();
 	public static var statBytes = new Map<String, Int>();
 
@@ -99,8 +99,8 @@ class Emit implements hxmc.Target.Emitter {
 	// (measurement: how much run time depends on code layout alone, the
 	// noise of A/B comparisons: HXMC_FALIGN aligns functions, HXMC_FSHIFT
 	// pads before each one)
-	static var FALIGN = Sys.getEnv("HXMC_FALIGN") != null ? Std.parseInt(Sys.getEnv("HXMC_FALIGN")) : 16;
-	static var FSHIFT = Sys.getEnv("HXMC_FSHIFT") != null ? Std.parseInt(Sys.getEnv("HXMC_FSHIFT")) : 0;
+	static var FALIGN = 16;
+	static var FSHIFT = 0;
 
 	public function useSection(name:Null<String>) {
 		text = obj.section(name != null ? name : ".text", Text, FALIGN);

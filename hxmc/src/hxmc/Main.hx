@@ -100,7 +100,8 @@ class Main {
 		var failed = null;
 		var key = UpToDate.key(args, out);
 		if (UpToDate.check(key, out)) {
-			if (Sys.getEnv("HXMC_STATS") == "1") Sys.println("hxmc: up to date (" + Std.int((haxe.Timer.stamp() - start) * 1000) + " ms)");
+			// (the variable: no defines read yet)
+			if (Options.on("hxmc.stats", false)) Sys.println("hxmc: up to date (" + Std.int((haxe.Timer.stamp() - start) * 1000) + " ms)");
 			Sys.exit(0);
 		}
 		if (key != null) UpToDate.forget(out);
@@ -196,20 +197,20 @@ class Main {
 		hxmc.ir.RuntimeSymbols.check(com, abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE, abi.name);
 		var t0 = haxe.Timer.stamp();
 		// resident: bodies of the fields the server kept are reused (LowerCache)
-		var useCache = Driver.resident && Sys.getEnv("HXMC_LOWER_CACHE") != "0";
+		var useCache = Driver.resident && Options.on("hxmc.lower-cache", true, com.defines);
 		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
 			if (useCache)
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
-		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
+		if (Options.on("hxmc.lower-only", false, com.defines)) return; // (profiling the lowering)
 		if (beforeCodegen != null) beforeCodegen(com, prog);
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
-		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {
+		if (useCache && Options.on("hxmc.lower-check", false, com.defines)) {
 			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 			if (beforeCodegen != null) beforeCodegen(com, fresh);
 			Driver.run(fresh, out + ".check", opts);

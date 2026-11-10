@@ -21,6 +21,8 @@ class TargetFlags {
 		var prev = compiler.Compiler.beforeTypingHook;
 		// (the flags first: the hooks before, the module cache's, read the defines)
 		compiler.Compiler.beforeTypingHook = function(com, actx) {
+			// (and the build's switches of the passes, before anything reads them)
+			Options.apply(com.defines);
 			if (com.platform.match(CustomTarget("hxmc")))
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))
 					context.Common.rawDefine(com, f);

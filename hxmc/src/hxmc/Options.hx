@@ -33,6 +33,8 @@ class Options {
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
 	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
+	// the flags of FLAGS this build sets, +name=value each (Driver.toolKey)
+	public var codeKey = "";
 	// -D hxmc.loop-version=0: no loop versioning (LoopVersion); =why: why each loop is left alone
 	public var loopVersion = true;
 	public var loopVersionWhy = false;
@@ -41,8 +43,82 @@ class Options {
 	public static function flagVar(name:String):String
 		return name.toUpperCase().split(".").join("_").split("-").join("_");
 
-	// the flags read as a define, else their variable (UpToDate: the variables change the code)
-	public static final FLAGS = ["hxmc.loop-version"];
+	// a flag: its define (-D turns the dashes into underscores), else its
+	// variable (flagVar); null: neither, or empty. Without defines (read before
+	// any build: the up-to-date check, the Mir interpreter's setup): the variable
+	public static function flag(name:String, ?defines:core.Define.DefineContext):Null<String> {
+		var u = name.split("-").join("_");
+		var v = defines != null && core.Define.rawDefined(defines, u) ? core.Define.rawDefinedValue(defines, u) : Sys.getEnv(flagVar(name));
+		return v == null || v == "" ? null : v;
+	}
+
+	// a switch flag: dflt when unset, else off for 0 and on for anything else
+	public static function on(name:String, dflt:Bool, ?defines:core.Define.DefineContext):Bool {
+		var v = flag(name, defines);
+		return v == null ? dflt : v != "0";
+	}
+
+	// the flags that change the code (UpToDate: their variables are in the
+	// key; Driver.toolKey: Options.codeKey)
+	public static final FLAGS = [
+		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
+		"hxmc.fold", "hxmc.frames-live", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
+		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc"
+	];
+	// the switches of the passes, read again for each build (a server's too)
+	// from its defines, before its typing (TargetFlags' hook): the passes
+	// keep them in statics. (HXMC_MIR_TIER, HXMC_MIR_TIER_WINDOW,
+	// HXMC_MIR_TYPE_RUNTIME, HXMC_MIR_LAZY_BODIES: the variable only, read
+	// once, before any build)
+	@:access(hxmc)
+	public static function apply(d:core.Define.DefineContext) {
+		Escape.on = on("hxmc.escape", true, d);
+		var h = flag("hxmc.escape-hash", d);
+		Escape.hashRange = h == null ? null : [for (x in h.split("-")) Std.parseInt(x)];
+		Escape.no = flag("hxmc.escape-no", d) ?? "";
+		Escape.log = on("hxmc.escape-log", false, d);
+		Escape.dumpName = flag("hxmc.escape-dump", d);
+		Fold.on = on("hxmc.fold", true, d);
+		Fold.whyOn = on("hxmc.fold-why", false, d);
+		Driver.sroa = on("hxmc.sroa", true, d);
+		Driver.nogc = on("hxmc.nogc", false, d);
+		Driver.wasmStackKb = flag("hxmc.wasm-stack-kb", d);
+		Frames.live = on("hxmc.frames-live", true, d);
+		var il = flag("hxmc.inline", d);
+		Inline.limits = il == null ? [] : [for (x in il.split(",")) Std.parseInt(x)];
+		Inline.devirtOn = on("hxmc.devirt", true, d);
+		Lir.LFunc.dupDispatch = on("hxmc.dup-dispatch", true, d);
+		Lir.LFunc.minTable = Std.parseInt(flag("hxmc.dup-min", d) ?? "64");
+		MirBuild.noShadow = MemLower.noShadow = on("hxmc.noshadow", false, d);
+		MirBuild.frameSpills = on("hxmc.framespill", true, d);
+		MirBuild.tryMemAll = flag("hxmc.trymem", d) == "all";
+		Opt.licmOn = on("hxmc.licm", true, d);
+		hxmc.ir.Reach.on = on("hxmc.reach", true, d);
+		hxmc.ir.Reach.whyName = flag("hxmc.reach-why", d);
+		hxmc.x64.Emit.sizeStats = on("hxmc.size-stats", false, d);
+		hxmc.x64.Emit.FALIGN = Std.parseInt(flag("hxmc.falign", d) ?? "16");
+		hxmc.x64.Emit.FSHIFT = Std.parseInt(flag("hxmc.fshift", d) ?? "0");
+		hxmc.wasm.WasmGen.coalesceOn = on("hxmc.wasm-coalesce", true, d);
+		hxmc.interp.InterpGen.coalesce = on("hxmc.interp-coalesce", true, d);
+		var pe = flag("hxmc.pe-diag", d);
+		LinkPE.diags = pe == null ? null : pe.split(",");
+		LinkPE.mapFile = flag("hxmc.map", d);
+		hxmc.ir.Lower.surveyFile = flag("hxmc.survey", d);
+		hxmc.ir.Lower.survey = hxmc.ir.Lower.surveyFile != null;
+		LowerCache.CachedLower.skipTy = !on("hxmc.lower-noskip", false, d);
+		LowerCache.CachedLower.whyOn = on("hxmc.lower-why", false, d);
+		ModuleCache.stats = on("hxmc.stats", false, d);
+		#if (hxmc.target != "wasm32-wasi")
+		var ms = on("hxmc.macro-stats", false, d);
+		hxmc.interp.MirMacros.stats = hxmc.macro.HostTable.timed = ms;
+		hxmc.interp.MirMacros.coldWords = Std.parseInt(flag("hxmc.mir-cold", d) ?? "") ?? hxmc.interp.MirMacros.COLD_WORDS;
+		hxmc.interp.MirMacros.lazyOn = on("hxmc.mir-lazy", true, d);
+		hxmc.interp.Tier.max = Std.parseInt(flag("hxmc.mir-tier-max", d) ?? "-1");
+		hxmc.interp.Tier.stats = ms || on("hxmc.mir-tier-log", false, d);
+		hxmc.macro.Loader.debug = on("hxmc.macro-debug", false, d);
+		#end
+	}
+
 	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
@@ -211,17 +287,16 @@ class Options {
 		var o = new Options();
 		inline function def(k:String):Null<String>
 			return core.Define.rawDefined(com.defines, k) ? core.Define.rawDefinedValue(com.defines, k) : null;
-		var env = Sys.getEnv;
 		var t = def("hxmc.target");
 		if (t != null && t != "1") o.target = t;
-		o.rtObj = env("HXMC_RT_OBJ");
-		o.stats = env("HXMC_STATS") == "1";
-		o.verbose = def("hxmc.verbose") != null || env("HXMC_VERBOSE") == "1";
-		o.dump = env("HXMC_DUMP");
+		o.rtObj = Sys.getEnv("HXMC_RT_OBJ");
+		o.stats = on("hxmc.stats", false, com.defines);
+		o.verbose = on("hxmc.verbose", false, com.defines);
+		o.dump = flag("hxmc.dump", com.defines);
 		var sa = def("hxmc.seg_align"); // (-D turns the dash into an underscore)
 		if (sa != null) o.segAlign = Std.parseInt(sa);
 		o.pic = def("hxmc.pic") != null;
-		o.strip = !(def("debug") != null || def("hxmc.symbols") != null || env("HXMC_SYMBOLS") == "1");
+		o.strip = !(def("debug") != null || on("hxmc.symbols", false, com.defines));
 		o.shared = def("hxmc.shared") != null;
 		o.output = def("hxmc.output");
 		o.dllBase = def("hxmc.dll_base"); // (-D turns the dash into an underscore)
@@ -240,7 +315,7 @@ class Options {
 		o.codesignInfoPlist = def("hxmc.codesign_info_plist");
 		o.codesignResources = def("hxmc.codesign_resources");
 		o.codesignEntitlements = def("hxmc.codesign_entitlements");
-		o.opt = env("HXMC_OPT") != "0";
+		o.opt = on("hxmc.opt", true, com.defines);
 		var eh = def("hxmc.wasm_eh"); // (-D turns the dash into an underscore)
 		if (eh != null) switch eh {
 			case "legacy": o.wasmLegacyEh = true;
@@ -269,14 +344,7 @@ class Options {
 			case "1": true;
 			case _: throw "hxmc: -D hxmc.null-checks=" + nc + ": 0 or 1";
 		}
-		// a flag: its define (-D turns the dashes into underscores), else its
-		// variable (flagVar); null: neither, or empty
-		function flag(name:String):Null<String> {
-			var d = def(name.split("-").join("_"));
-			if (d == null) d = env(flagVar(name));
-			return d == null || d == "" ? null : d;
-		}
-		var lv = flag("hxmc.loop-version");
+		var lv = flag("hxmc.loop-version", com.defines);
 		o.loopVersion = lv != "0";
 		o.loopVersionWhy = lv == "why";
 		o.verifyTags = def("hxmc.verify_tags") != null;
@@ -286,14 +354,17 @@ class Options {
 			case "0": false;
 			case _: throw "hxmc: -D hxmc.span-checks=" + sc + ": 0 or 1";
 		}
-		var fp = def("hxmc.frame_pointers"), fpEnv = env("HXMC_FRAME_POINTERS");
-		o.framePointers = fpEnv != null && fpEnv != "" ? fpEnv != "0" : def("hxmc.no_frame_pointers") != null ? false : fp == null || fp != "0";
+		var fp = flag("hxmc.frame-pointers", com.defines); // (else the old -D hxmc.no-frame-pointers)
+		o.framePointers = fp != null ? fp != "0" : def("hxmc.no_frame_pointers") == null;
 		o.debugLines = def("debug") != null || def("hxmc.lines") != null;
 		o.stacks = def("hxmc.no_stacks") == null;
 		o.stacksAlways = o.stacks && def("hxmc.stacks") != null;
 		o.interp = def("hxmc.interp");
-		var j = def("hxmc.jobs");
-		if (j == null) j = env("HXMC_JOBS");
+		for (n in FLAGS) {
+			var v = flag(n, com.defines);
+			if (v != null) o.codeKey += "+" + n.substr(5) + "=" + v;
+		}
+		var j = flag("hxmc.jobs", com.defines);
 		if (j != null) o.jobs = Std.parseInt(j);
 		var ls = def("hxmc.link");
 		if (ls != null)

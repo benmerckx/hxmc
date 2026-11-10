@@ -579,7 +579,7 @@ class InterpGen {
 	}
 
 	// (HXMC_INTERP_COALESCE=0: a register per value)
-	static var coalesce = Sys.getEnv("HXMC_INTERP_COALESCE") != "0";
+	static var coalesce = true; // (the build's, Options.apply)
 
 	// the registers of the values (after the constants): SSA coloring in
 	// dominator-tree preorder, a value taking a register no value live at its
