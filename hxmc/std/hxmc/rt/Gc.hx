@@ -1221,8 +1221,16 @@ class Gc {
 	// collecting thread first faults in what the copy is expected to fill
 	// (Os.populate: what was collected, times the last major collection's
 	// survival plus an eighth); the pages past the new limit go back after
-	// it. Serial when the copy, with what its PLABs may leave, might not fit
-	// in the region.
+	// it. With the prefaulter (-D hxmc.gc-prefault), past what it expects
+	// the copying threads fault in one at a time, as in a minor collection
+	// (parPopulate), so it expects no more than the last major collection's
+	// survival, and half before the first (SURVIVAL_FIRST), where it
+	// expected all of it: the first major collection of the native
+	// self-build found 348 MB live of 800 MB collected and faulted in 826 MB
+	// next to the from-space and the nursery, its peak (1.74 GB, 1.45 GB
+	// with half; 1.82 GB and 1.40 GB in one thread, where the end of the
+	// build is the peak then). Serial when the copy, with what its PLABs may
+	// leave, might not fit in the region.
 	static inline var T_BUSY = 0xFFFE;
 	static inline var PAR_MAX = 8;
 	static inline var PAR_MIN_YOUNG = 1 << 20;
@@ -1264,6 +1272,7 @@ class Gc {
 	// live, in 1024ths (1024 before the first), and the end of the pages
 	// the last parallel one faulted in
 	static var survival:Int;
+	static inline var SURVIVAL_FIRST = 512;
 	static var popEnd:Ptr;
 	static var parPopSecs:Float; // RT_STATS: their faulting in of the to-space
 	static var parCopies:Int; // RT_STATS: the parallel collections, their phases' seconds, the roots' copies' bytes
@@ -1334,9 +1343,6 @@ class Gc {
 		parMajors++;
 		parMutsLen = 0;
 		parMajor = true;
-		#if hxmc.gc_prefault
-		parPopTo = Ptr.ofI64(-1); // (none: majorCollect faulted in what it expects, Os.populate; oldEnd is still the other region's)
-		#end
 		parRun(scan);
 		parMajor = false;
 	}
@@ -1868,13 +1874,28 @@ class Gc {
 			// pages faulted in first: Os.populate)
 			var p0 = stats ? Os.now() : 0.0;
 			var pop = copied;
-			if (survival < 1024 - 128) pop = copied / 1024 * (survival + 128);
+			#if hxmc.gc_prefault
+			// (what it is expected to copy, the rest caught up: parPopulate,
+			// within what it copies at most, the limit meanwhile)
+			var catchUp = pfState >= 0;
+			var expect = catchUp ? (majors > 1 ? survival : SURVIVAL_FIRST) : survival + 128;
+			#else
+			var expect = survival + 128;
+			#end
+			if (expect < 1024) pop = copied / 1024 * expect;
 			popEnd = oldStart.addL(pop);
 			Os.populate(oldStart, pop);
 			if (stats) parPopSecs += Os.now() - p0;
+			#if hxmc.gc_prefault
+			oldEnd = oldStart.addL(copied);
+			parPopTo = catchUp ? popEnd : Ptr.ofI64(-1);
+			#end
 			scanRoots(false);
 			clearAllRemembered();
 			parMajorCopy(scan);
+			#if hxmc.gc_prefault
+			if (catchUp && popEnd.ult(parPopTo)) popEnd = parPopTo;
+			#end
 		} else {
 			scanRoots(!gcBfs);
 			clearAllRemembered();

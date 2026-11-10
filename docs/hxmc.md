@@ -432,8 +432,13 @@ space by copying into a new region.
   64 MB, a helper thread faults in its pages ahead of minor collections:
   twice what the last one promoted (`RT_PF_AHEAD`: in quarters of it).
   What a parallel minor collection copies past them, one copying thread at
-  a time faults in with `MADV_POPULATE_WRITE`. The compilers are built with
-  it. `RT_PREFAULT=0` turns it off.
+  a time faults in with `MADV_POPULATE_WRITE`, and so what a parallel
+  major collection copies past what it faulted in first: what the last one
+  found live of what it collected, half before the first (without the
+  prefaulter, that plus an eighth, and all before the first: the
+  self-build peaked at its first major collection, 826 MB faulted in for
+  348 MB live). The compilers are built with it. `RT_PREFAULT=0` turns it
+  off.
 - **Publication**: a store of a reference into an object, array or static
   is a release store (`MIns.release`), so a thread that reads the reference
   also sees the object's initialisation, as OCaml guarantees the reference
