@@ -9,7 +9,8 @@ import core.ds.VectorTools.vector;
 // structured (no gotos); expressions are pure except as the right-hand side
 // of SSet/SExpr, so evaluation order and GC points are explicit.
 
-enum Ty {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Ty {
 	TI32;
 	TBool; // an i32 at run time; kept apart so boxing and Std.string know it
 	// hxmc.Byte as the element of a NativeArray (RNativeArr's only): one
@@ -29,7 +30,8 @@ enum Ty {
 	TStruct(name:String, size:Int);
 }
 
-enum RefTy {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum RefTy {
 	RObj(c:ClassInfo); // class instance (interfaces use the root object type)
 	REnum(e:Null<EnumInfo>); // enum value; null: any enum (EnumValue)
 	RCtor(c:CtorInfo); // a specific enum constructor (after a tag test)
@@ -271,7 +273,8 @@ class LambdaInfo {
 	}
 }
 
-class FuncInfo {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class FuncInfo {
 	public var name:String;
 	public var args:Array<Local> = [];
 	public var ret:Ty = TVoid;
@@ -345,7 +348,8 @@ class FuncInfo {
 	}
 }
 
-enum Ex {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Ex {
 	EInt(v:Int);
 	EF64(v:Float);
 	EStr(s:String); // a literal, statically allocated
@@ -465,7 +469,8 @@ enum BinOp {
 	Div;
 }
 
-enum Stmt {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Stmt {
 	SSet(l:Local, e:Ex);
 	SExpr(e:Ex);
 	SSetField(c:ClassInfo, idx:Int, obj:Ex, v:Ex);

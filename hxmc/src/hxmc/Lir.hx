@@ -9,7 +9,8 @@ import core.ds.VectorTools.vector;
 // up virtual. Each target's
 // instruction selection produces an LFunc and tells the allocator what an
 // instruction defines, uses and clobbers (Target).
-class LIns {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class LIns {
 	public var op:Int;
 	public var size:Int = 8; // operation width in bytes
 	public var d:Int = -1; // destination register
@@ -74,7 +75,8 @@ class LIns {
 	}
 }
 
-class LBlock {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class LBlock {
 	public var id:Int;
 	public var ins:Array<LIns> = [];
 	public var succs:Array<LBlock> = [];

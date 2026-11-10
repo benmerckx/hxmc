@@ -123,7 +123,8 @@ enum abstract Op(Int) to Int {
 }
 
 // the static part of an object-level operation (MIns.info): what it is about
-class OInfo {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class OInfo {
 	public var t:hxmc.ir.Ir.Ty = hxmc.ir.Ir.Ty.TVoid; // the field's, element's or boxed value's type
 	public var loc = 0; // a field's slot (an Int or Bool its 4-byte index: ClassInfo.locs); an element's index
 	public var cls:Null<hxmc.ir.Ir.ClassInfo>;
@@ -248,7 +249,8 @@ enum abstract Cond(Int) to Int from Int {
 	var FGe;
 }
 
-class MIns {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class MIns {
 	// Cmp's imm2 on a span's element check (FnLower.spanCall: Mem.spanUlt),
 	// which Opt.condProp drops where a loop proves the index in range
 	public static inline var SPAN_CHECK = 1;
@@ -346,7 +348,8 @@ class MIns {
 	}
 }
 
-class MBlock {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class MBlock {
 	public var id:Int;
 	public var ins:Array<MIns> = []; // phis first, the terminator last
 	public var preds:Array<MBlock> = [];
