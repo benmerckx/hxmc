@@ -292,8 +292,9 @@ class CoffReader {
 			var h = 20 + optSize + 40 * i;
 			var off = u32(h + 24);
 			var n = u16(h + 32);
+			// (0xffff or more: the count in the first entry, which it counts too)
 			if ((secChars[i + 1] & 0x01000000) != 0 && n == 0xffff) {
-				n = u32(off);
+				n = u32(off) - 1;
 				off += 10;
 			}
 			for (j in 0...n) {
