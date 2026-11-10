@@ -6,6 +6,9 @@ import hxmc.rt.Repr;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
+import hxmc.unsafe.UInt16;
+import hxmc.ReadOnlySpan;
 
 // The runtime's strings (formerly rt_str.c): UTF-16 strings, number
 // formatting, the String, StringBuf and Std natives, written over
@@ -311,46 +314,65 @@ class Str {
 	// ---- comparison, hashing
 
 	// a and b of the same length (MirBuild.strEq)
-	@:hxmc.export("hx_str_eq_slow") @:hxmc.unsafe static function eqSlow(a:String, b:String):Bool {
-		var n = len(a);
-		var one = isOne(a);
-		if (one == isOne(b)) return MemOps.compare(unitsAddr(a), unitsAddr(b), one ? (n : I64) : (2 * n : I64)) == 0;
-		return one ? eqMixed(a, b, n) : eqMixed(b, a, n);
+	@:hxmc.export("hx_str_eq_slow") @:hxmc.kernel static function eqSlow(a:String, b:String):Bool {
+		var one = StrView.isOne(a);
+		if (one == StrView.isOne(b)) return StrView.sameUnits(a, b);
+		return one ? eqMixed(StrView.units1(a), StrView.units2(b)) : eqMixed(StrView.units1(b), StrView.units2(a));
 	}
 
-	// the n units of a one-byte string and of a two-byte one
-	@:hxmc.unsafe static function eqMixed(one:String, two:String, n:Int):Bool {
-		var c = chars1(one), d = chars2(two);
-		for (i in 0...n)
-			if (c.get(i) != d.get(i)) return false;
+	// the units of a one-byte string and of a two-byte one
+	@:hxmc.kernel static function eqMixed(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt16>):Bool {
+		if (c.length != d.length) return false;
+		for (i in 0...c.length)
+			if ((c[i] : Int) != (d[i] : Int)) return false;
 		return true;
 	}
 
-	@:hxmc.host("hx_str_cmp") @:hxmc.unsafe static function cmp(a:String, b:String):Int {
-		if (Repr.same(a, b)) return 0;
-		if (isNull(a)) return -1;
-		if (isNull(b)) return 1;
-		var na = len(a), nb = len(b);
-		var n = na < nb ? na : nb;
-		var oa = isOne(a), ob = isOne(b);
-		if (oa && ob) {
-			var ca = chars1(a), cb = chars1(b);
-			for (i in 0...n) {
-				var x = ca.get(i), y = cb.get(i);
-				if (x != y) return x < y ? -1 : 1;
-			}
-		} else if (!oa && !ob) {
-			var ca = chars2(a), cb = chars2(b);
-			for (i in 0...n) {
-				var x = ca.get(i), y = cb.get(i);
-				if (x != y) return x < y ? -1 : 1;
-			}
-		} else
-			for (i in 0...n) {
-				var x = unit(a, i), y = unit(b, i);
-				if (x != y) return x < y ? -1 : 1;
-			}
+	@:hxmc.host("hx_str_cmp") @:hxmc.kernel static function cmp(a:String, b:String):Int {
+		if (StrView.same(a, b)) return 0;
+		if (StrView.isNull(a)) return -1;
+		if (StrView.isNull(b)) return 1;
+		var oa = StrView.isOne(a), ob = StrView.isOne(b);
+		var c = if (oa && ob) cmp11(StrView.units1(a), StrView.units1(b)) else if (!oa && !ob) cmp22(StrView.units2(a), StrView.units2(b)) else if (oa)
+			cmp12(StrView.units1(a), StrView.units2(b)) else -cmp12(StrView.units1(b), StrView.units2(a));
+		if (c != 0) return c;
+		var na = StrView.length(a), nb = StrView.length(b);
 		return na < nb ? -1 : na > nb ? 1 : 0;
+	}
+
+	// the order of the first units that differ (-1 or 1), 0 when one holds
+	// the other's first units
+	@:hxmc.kernel static function cmp11(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt8>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		for (i in 0...n) {
+			var x:Int = a[i], y:Int = b[i];
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return 0;
+	}
+
+	@:hxmc.kernel static function cmp22(a:ReadOnlySpan<UInt16>, b:ReadOnlySpan<UInt16>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		for (i in 0...n) {
+			var x:Int = a[i], y:Int = b[i];
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return 0;
+	}
+
+	@:hxmc.kernel static function cmp12(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt16>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		for (i in 0...n) {
+			var x:Int = a[i], y:Int = b[i];
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return 0;
 	}
 
 	// A hash of the units, never 0, kept in the string's header where it
@@ -462,8 +484,8 @@ class Str {
 
 	// ---- concatenation and conversions
 
-	@:hxmc.host("hx_str_or_null") @:hxmc.unsafe static function orNull(s:String):String
-		return isNull(s) ? "null" : s;
+	@:hxmc.host("hx_str_or_null") @:hxmc.kernel static function orNull(s:String):String
+		return StrView.isNull(s) ? "null" : s;
 
 	@:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
 		if (isNull(a)) a = "null";
@@ -574,7 +596,7 @@ class Str {
 		return ofBytes(buf, LibC.strlen(buf).toInt());
 	}
 
-	@:hxmc.host("hx_str_of_bool") @:hxmc.unsafe static function ofBool(v:Bool):String
+	@:hxmc.host("hx_str_of_bool") @:hxmc.kernel static function ofBool(v:Bool):String
 		return v ? "true" : "false";
 
 	// ---- String
@@ -795,11 +817,11 @@ class Str {
 		return r;
 	}
 
-	@:hxmc.host("String_toString") @:hxmc.unsafe static function toString(s:String):String
+	@:hxmc.host("String_toString") @:hxmc.kernel static function toString(s:String):String
 		return s;
 
 	// new String(s): strings do not change, s itself
-	@:hxmc.host("String_new") @:hxmc.unsafe static function ofString(s:String):String
+	@:hxmc.host("String_new") @:hxmc.kernel static function ofString(s:String):String
 		return s;
 
 	@:hxmc.host("String_split") static function split(s:String, delim:String):Array<String> {
