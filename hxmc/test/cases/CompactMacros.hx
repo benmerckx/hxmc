@@ -7,11 +7,13 @@
 // classes', enums' and fields' types, and lay out and match compact classes
 // and enums of their own (with Mir macros the bundle's type records with
 // compact maps, macro.Loader), with garbage to collect many times. The
-// macros run on Eval here, on the Mir interpreter in the conformance case
-// macro-compact (make mir-macros-check, against the reference; under
-// RT_VERIFY with small nurseries by hand: --interp). The program's own
-// compact class and enum run interpreted under --mir-run (interp.MirRun:
-// the compiler's compressed references).
+// macros run on Mir here (and in the conformance case macro-compact, make
+// mir-macros-check, against the reference; under RT_VERIFY with small
+// nurseries by hand: --interp). The program's own compact class and enum
+// run interpreted under --mir-run (interp.MirRun: the compiler's
+// compressed references), apart from the macro context's bundles
+// (macro.Loader.apart).
+// define: hxmc.macros=mir
 import haxe.macro.Context;
 import haxe.macro.Expr;
 
