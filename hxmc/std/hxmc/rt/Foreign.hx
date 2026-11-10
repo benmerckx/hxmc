@@ -821,7 +821,7 @@ class Foreign {
 	// ---- after a collection of the nursery (and of [lo, hi) for a major one)
 
 	@:hxmc.unsafe static inline function collected(o:Ptr, lo:Ptr, hi:Ptr):Bool
-		return Gc.inYoung(o) || (!o.ult(lo) && o.ult(hi));
+		return Gc.inYoung(o) || (lo.ult(o) && !hi.ult(o)); // (an object's address: in (lo, hi], Gc.inFrom)
 
 	@:hxmc.unsafe static function sweep(lo:Ptr, hi:Ptr) {
 		if (npeers > 0) sweepPeers(lo, hi);

@@ -89,15 +89,17 @@ class Types {
 	// object, its type index first (a u16 at -8), which decides the rest:
 	//   record (a size its type fixes): its slots (a u16 at -6; 65534 at
 	//     most), its identity hash (a u32 at -4; the NativeArray wrapper: its
-	//     length there);
+	//     length there; a header constructor's value, headerArg: its argument);
 	//   array (isArray): its payload's 8-byte words (a u16 at -6; 0xFFFF:
 	//     that many or more: lenWords), its length in elements (a u32 at -4);
 	//     whether the elements are references, and their size, its type says;
 	//   string: its words as an array's, its content hash (a u32 at -4, 0
 	//     until computed); its length (a u32 at 0), then its units, two bytes
 	//     each (T_STRING) or one (T_STRING1: every unit below 0x100);
-	//   forwarded (by the collector): T_FWD, the copy's address in slot 0
-	// (every object on the heap has a slot: an empty array or string is static).
+	//   forwarded (by the collector): T_FWD, the copy's address in slot 0, or
+	//     compressed at -4 where the heap is below 32 GB (GcCore.fwdLow)
+	// (every object on the heap has a slot, but a header constructor's value
+	// where forwarding is in the header: an empty array or string is static).
 
 	public static inline function isArray(t:Int):Bool
 		return t & 0xFFF0 == 16;
@@ -202,7 +204,14 @@ class Types {
 	// followed by its compact map, a bit per 4-byte half (GcCore.isCompactHalf)
 	// (false where the program has none: GcCore.compactTypes, a constant)
 	public static inline function hasCompact(ty:Ptr):Bool
-		return GcCore.compactTypes() && Mem.getI32(ty, 20) != 0;
+		return GcCore.compactTypes() && Mem.getI32(ty, 20) & 1 != 0;
+
+	// a header constructor's (word 20's bit 1, hxmc.ir.Facts: an enum value
+	// whose one argument, an Int, a Bool or a compressed reference, is the
+	// header's upper half, where the identity hash is otherwise; no slots;
+	// its field's slot is -1, that half's 4-byte index)
+	public static inline function headerArg(ty:Ptr):Bool
+		return GcCore.fwdLow() && Mem.getI32(ty, 20) & 2 != 0;
 
 	public static inline function nfields(ty:Ptr):Int
 		return Mem.getI32(ty, 32);

@@ -560,7 +560,7 @@ class Census {
 		inline function wordOf(o:Ptr):Int
 			return (o.diff(start) >> 3).toInt();
 		inline function inHeap(v:Ptr):Bool
-			return !v.isNull() && !v.ult(start) && v.ult(end);
+			return !v.isNull() && start.ult(v) && !end.ult(v); // (in (start, end]: Gc.inOld)
 		for (g in 0...nglobals) {
 			var v = Mem.getPtr(globals, 8 * g);
 			if (!inHeap(v) || Mem.getI32(par, 8 * wordOf(v)) != 0) continue;
@@ -574,11 +574,12 @@ class Census {
 			if (k != K_OBJ && k != 1) continue; // (K_RAW: no references)
 			var pm = k == K_OBJ ? Types.ptrmap(Types.ty(tindexOf(o))) : Ptr.nil();
 			if (k == K_OBJ && pm.isNull()) continue;
-			// (compressed references: entries n to 3n - 1, their 4-byte halves; slot: the half)
-			var lim = k == K_OBJ && Types.hasCompact(Types.ty(tindexOf(o))) ? 3 * n : n;
+			// (compressed references: entries n on, their 4-byte halves, GcCore.cmapHalf; slot: the half)
+			var lim = k == K_OBJ && Types.hasCompact(Types.ty(tindexOf(o))) ? n + GcCore.cmapHalves(n) : n;
 			for (j in 0...lim) {
 				var i = j < n ? j : j - n;
 				if (j >= n ? !GcCore.isCompactHalf(pm, i) : k == K_OBJ && (Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1 == 0) continue;
+				if (j >= n) i = GcCore.cmapHalf(n, i);
 				var v = j >= n ? GcCore.getC(o, i) : Mem.getPtr(o, 8 * i);
 				if (!inHeap(v)) continue;
 				var vw = wordOf(v);

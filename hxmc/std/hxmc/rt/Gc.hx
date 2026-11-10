@@ -311,7 +311,7 @@ class Gc {
 	@:hxmc.unsafe static function sweepWeak(lo:Ptr, hi:Ptr) {
 		for (i in 1...nweak) {
 			var o = Mem.getPtr(weakSlots, 8 * i);
-			if (o.isNull() || Mem.getI32(weakSlots, 8 * i) & 1 != 0 || !(inYoung(o) || (!o.ult(lo) && o.ult(hi)))) continue;
+			if (o.isNull() || Mem.getI32(weakSlots, 8 * i) & 1 != 0 || !(inYoung(o) || (lo.ult(o) && !hi.ult(o)))) continue;
 			Mem.setPtr(weakSlots, 8 * i, isFwd(hdrW0(o)) ? fwdAddr(o) : Ptr.nil());
 		}
 	}
@@ -481,14 +481,24 @@ class Gc {
 	// fwdAddr, setFwd, wordsOf, nslotsOf, kindOf, objBytes, ptrmapOf,
 	// isPtrSlot), which wasm/Gc.hx shares.
 
+	// (an object's address is past its header: in (start, end] of the space it
+	// is in, end itself for an object of no slots (a header constructor's,
+	// GcCore.fwdLow) ending the space. The nursery's allocations end 8 bytes
+	// short of youngEnd (youngTop), so its test, generated code's too, is
+	// [start, end).)
 	static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
 	static inline function inFrom(p:Ptr):Bool
-		return !p.ult(fromStart) && p.ult(fromEnd);
+		return fromStart.ult(p) && !fromEnd.ult(p);
 
 	static inline function inOld(p:Ptr):Bool
-		return !p.ult(oldStart) && p.ult(oldPtr);
+		return oldStart.ult(p) && !oldPtr.ult(p);
+
+	// where the nursery's allocations end: 8 bytes short of youngEnd where an
+	// object may have no slots (its address its end: inYoung)
+	static inline function youngTop():Ptr
+		return fwdLow() ? youngEnd.add(-8) : youngEnd;
 
 	static inline function region(i:Int):Ptr
 		return i == 0 ? region0 : region1;
@@ -658,7 +668,7 @@ class Gc {
 					m = m >>> 1;
 					i++;
 				}
-				if (compactAt(ti)) t = minorCompact(o, pm, t);
+				if (compactAt(ti)) t = minorCompact(o, pm, n, t);
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
@@ -674,7 +684,9 @@ class Gc {
 	// after it) forwarded, as scanYoung's slots: the new top (a call, out of
 	// the scan's loop: the copy inlined once more for the compact map's
 	// words would cost every program's collections)
-	@:hxmc.unsafe static function minorCompact(o:Ptr, pm:Ptr, top:Int):Int {
+	@:hxmc.unsafe static function minorCompact(o:Ptr, pm:Ptr, n:Int, top:Int):Int {
+		// (no slots: a header constructor's, its argument in the header, cmapHalf)
+		if (n == 0) return minorSlotAny(o, -1, top, false, true);
 		var t = minorHalves(o, cmapLo(pm), 0, top);
 		return minorHalves(o, cmapHi(pm), 32, t);
 	}
@@ -829,9 +841,9 @@ class Gc {
 			var n = wordsOf(o, w0);
 			var i = Mem.getI32(gcStack, ((gcTop - 1) << 4) + 8);
 			var pushed = false;
-			// (compressed references: the halves of the compact map after the
-			// slots, entries n to 3n - 1)
-			var lim = !pm.isNull() && compactAt(w0 & 0xFFFF) ? 3 * n : n;
+			// (compressed references: the entries of the compact map after the
+			// slots, n to 3n - 1, or n alone: cmapHalves, cmapHalf)
+			var lim = !pm.isNull() && compactAt(w0 & 0xFFFF) ? n + cmapHalves(n) : n;
 			while (i < lim) {
 				var c = compactTypes() && i >= n;
 				var j = c ? i - n : i;
@@ -839,13 +851,14 @@ class Gc {
 					i++;
 					continue;
 				}
+				if (c) j = cmapHalf(n, j);
 				var v = getRefAt(o, j, c);
 				i++;
 				if (v.isNull()) continue;
 				// (branches rather than inYoung(v) || inFrom(v): no booleans in registers)
 				if (v.ult(youngStart) || !v.ult(youngEnd)) {
 					if (!maj) continue;
-					if (v.ult(fromStart) || !v.ult(fromEnd)) continue;
+					if (!fromStart.ult(v) || fromEnd.ult(v)) continue; // (inFrom)
 				}
 				var vw0 = hdrW0(v);
 				if (isFwd(vw0)) {
@@ -910,8 +923,9 @@ class Gc {
 					w++;
 				}
 				if (compactAt(tindexOf(o)))
-					for (h in 0...2 * n)
-						if (isCompactHalf(pm, h)) {
+					for (j in 0...cmapHalves(n))
+						if (isCompactHalf(pm, j)) {
+							var h = cmapHalf(n, j);
 							var v = getC(o, h);
 							if (!v.isNull()) setC(o, h, fwdAs(v, root));
 						}
@@ -1080,7 +1094,7 @@ class Gc {
 		for (i in 0...nnatives) {
 			var e = natives.add(NATIVE_BYTES * i);
 			var o = Mem.getPtr(e, 0);
-			if (inYoung(o) || (!o.ult(lo) && o.ult(hi))) {
+			if (inYoung(o) || (lo.ult(o) && !hi.ult(o))) {
 				if (!isFwd(hdrW0(o))) {
 					if (ndead == deadCap) {
 						deadCap = deadCap == 0 ? 64 : deadCap * 2;
@@ -1684,7 +1698,7 @@ class Gc {
 					m = m >>> 1;
 					i++;
 				}
-				if (compactAt(ti)) t = maj ? parCompactMajor(o, pm, t) : parCompactMinor(o, pm, t);
+				if (compactAt(ti)) t = maj ? parCompactMajor(o, pm, n, t) : parCompactMinor(o, pm, n, t);
 			}
 		} else if (k == K_PARR) {
 			var i = 0;
@@ -1697,12 +1711,14 @@ class Gc {
 	}
 
 	// minorCompact's
-	@:hxmc.unsafe static function parCompactMinor(o:Ptr, pm:Ptr, top:Int):Int {
+	@:hxmc.unsafe static function parCompactMinor(o:Ptr, pm:Ptr, n:Int, top:Int):Int {
+		if (n == 0) return parSlotAny(o, -1, top, false, false, true);
 		var t = parHalves(o, cmapLo(pm), 0, top, false);
 		return parHalves(o, cmapHi(pm), 32, t, false);
 	}
 
-	@:hxmc.unsafe static function parCompactMajor(o:Ptr, pm:Ptr, top:Int):Int {
+	@:hxmc.unsafe static function parCompactMajor(o:Ptr, pm:Ptr, n:Int, top:Int):Int {
+		if (n == 0) return parSlotAny(o, -1, top, true, false, true);
 		var t = parHalves(o, cmapLo(pm), 0, top, true);
 		return parHalves(o, cmapHi(pm), 32, t, true);
 	}
@@ -1746,7 +1762,7 @@ class Gc {
 		var v = getRefAt(o, i, c);
 		if (!v.ult(youngStart) && v.ult(youngEnd))
 			t = parCopySlot(o, i, top, v, arr, c);
-		else if (maj && !v.ult(fromStart) && v.ult(fromEnd))
+		else if (maj && fromStart.ult(v) && !fromEnd.ult(v)) // (inFrom)
 			t = parCopySlot(o, i, top, v, arr, c);
 		return t;
 	}
@@ -1796,7 +1812,7 @@ class Gc {
 				}
 				if (th.toInt() != 0) Mem.setI64(dst, 0, th) else Mem.setI32(dst, 0, vw0); // (the header as it was, not T_BUSY)
 				var nv = dst.add(8);
-				Mem.setPtr(v, 0, nv);
+				setFwdAddr(v, nv);
 				Atomic.store32(v.add(-8), (vw0 & 0xFFFF0000) | Types.T_FWD);
 				setRefAt(o, i, c, nv);
 				if (!Types.isRawArray(vw0)) {
@@ -2354,7 +2370,7 @@ class Gc {
 		var p = Ptr.ofI64(Atomic.load64(cell));
 		while (true) {
 			var s = !yptr.isNull() && p == yrlim ? yptr : p;
-			var avail = youngEnd.diff(s);
+			var avail = youngTop().diff(s);
 			if (avail < bytes) return false;
 			var e = s.addL(want < avail ? want : avail);
 			// with several threads, a TLAB that reaches untouched memory (above
@@ -2370,7 +2386,7 @@ class Gc {
 			if (many && youngDirty.ult(e)) {
 				var x = e.toI64() + (HUGE_PAGE - 1);
 				run = Ptr.ofI64(x - (x & (HUGE_PAGE - 1))); // (the nursery starts 2 MB aligned)
-				if (youngEnd.ult(run)) run = youngEnd;
+				if (youngTop().ult(run)) run = youngTop();
 			}
 			var seen = Ptr.ofI64(Atomic.cas64(cell, p.toI64(), (run.isNull() ? e : run).toI64()));
 			if (seen == p) {
@@ -2613,7 +2629,9 @@ class Gc {
 
 	@:hxmc.unsafe static function init(ng:Int):Ptr {
 		// (a type with compressed references: hxmc.DataGen's flag, Types.hasCompact)
-		compactHeap = false;
+		// (or forwarding in the header, GcCore.fwdLow: every program with
+		// Mem.compact, its objects may have no slot)
+		compactHeap = fwdLow();
 		if (compactTypes())
 			for (t in 0...Mem.getI32(Mem.sym("rt_ntypes"), 0))
 				if (Types.hasCompact(Types.ty(t))) compactHeap = true;
@@ -3077,7 +3095,7 @@ class Gc {
 			bytes += objBytes(o);
 			var n = nslotsOf(o), k = kindOf(o);
 			var pm = k == K_OBJ ? ptrmapOf(o) : Ptr.nil();
-			var lim = !pm.isNull() && compactAt(tindexOf(o)) ? 3 * n : n;
+			var lim = !pm.isNull() && compactAt(tindexOf(o)) ? n + cmapHalves(n) : n;
 			for (i in 0...lim) {
 				if (i >= n) {
 					if (!isCompactHalf(pm, i - n)) continue;
@@ -3085,7 +3103,7 @@ class Gc {
 					if (pm.isNull() || !isPtrSlot(pm, i)) continue;
 				} else if (k != K_PARR)
 					break;
-				var c = i >= n ? getC(o, i - n) : Mem.getPtr(o, 8 * i);
+				var c = i >= n ? getC(o, cmapHalf(n, i - n)) : Mem.getPtr(o, 8 * i);
 				if (!inHeap(c)) continue;
 				if (sp == cap) {
 					cap *= 2;

@@ -1045,6 +1045,20 @@ class Dyn {
 		var t = tindex(o);
 		if (isString(t)) return Str.hash(o) * (0x9E3779B1 : Int);
 		if (isArray(t)) return (arrLength(o) * 31 + t) * (0x9E3779B1 : Int);
+		// (a header constructor's value: its argument is where the hash would
+		// be; its type and its argument's value, or that reference's hash,
+		// which never change; a chain of them in a loop)
+		if (headerArg(ty(t))) {
+			var h = 0, x:Dynamic = o;
+			while (true) {
+				t = tindex(x);
+				h = h * 31 + t;
+				if (fKind(field(ty(t), 0)) != "c".code) return (h * 31 + Mem.getI32(Mem.addr(x), -4)) * (0x9E3779B1 : Int);
+				x = Mem.obj(GcCore.getC(Mem.addr(x), -1));
+				if (Str.isNull(x) || !headerArg(ty(tindex(x)))) break;
+			}
+			return (h * 31 + objHash(x)) * (0x9E3779B1 : Int);
+		}
 		var hp = Mem.addr(o).add(-8);
 		var h = Mem.getI32(hp, 4);
 		if (h == 0) {
@@ -1209,7 +1223,8 @@ class Dyn {
 		if ((Str.isNull(params) ? 0 : params.length) != (g >= 0 ? 0 : nfields(ty(ct)))) Rt.rt_throw("Invalid number of constructor arguments");
 		if (g >= 0) return Mem.getRef(globalSlot(g), 0);
 		var n = slotCount(ty(ct));
-		var o = Mem.alloc(n > 0 ? n : 1, ct, K_OBJ);
+		// (a header constructor's: no slot, Types.headerArg)
+		var o = Mem.alloc(n > 0 || headerArg(ty(ct)) ? n : 1, ct, K_OBJ);
 		for (i in 0...nfields(ty(ct))) {
 			var f = field(ty(ct), i);
 			var v:Dynamic = Str.isNull(params) ? null : params[ctorArg(f)];
@@ -1422,6 +1437,8 @@ class Dyn {
 		var n = nslots(o);
 		var c = Mem.alloc(n, tindex(o), K_OBJ); // (a generated type: a record)
 		LibC.memcpy(Mem.addr(c), Mem.addr(o), (8 * n : I64));
+		// (a header constructor's argument; new, c needs no barrier)
+		if (headerArg(ty(tindex(o)))) Mem.setI32(Mem.addr(c), -4, Mem.getI32(Mem.addr(o), -4));
 		// an anonymous object's dynamic fields (slot 0) are its own
 		if (tk(ty(tindex(o))) == TK_ANON && !Str.isNull(Mem.getRef(Mem.addr(o), 0))) {
 			var m = nslots(Mem.getRef(Mem.addr(o), 0));

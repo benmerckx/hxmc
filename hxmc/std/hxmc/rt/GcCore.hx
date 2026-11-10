@@ -18,7 +18,8 @@ extern class GcCore {
 		return Mem.getU16(p, -8);
 
 	// forwarded (the header's first word w0): the type index is T_FWD, the
-	// copy's address is in slot 0
+	// copy's address in slot 0, or compressed in the header's upper half
+	// where the heap is below 32 GB (fwdLow; the copy has the identity hash)
 	public static inline function isFwd(w0:Int):Bool
 		return w0 & 0xFFFF == Types.T_FWD;
 
@@ -28,12 +29,26 @@ extern class GcCore {
 
 	// a forwarded object's copy
 	public static inline function fwdAddr(p:Ptr):Ptr
-		return Mem.getPtr(p, 0);
+		return fwdLow() ? getC(p, -1) : Mem.getPtr(p, 0);
 
 	public static inline function setFwd(p:Ptr, n:Ptr) {
 		Mem.setI16(p, -8, Types.T_FWD);
-		Mem.setPtr(p, 0, n);
+		setFwdAddr(p, n);
 	}
+
+	// the copy's address alone (the type index set after it: the parallel
+	// collections' release store)
+	public static inline function setFwdAddr(p:Ptr, n:Ptr)
+		if (fwdLow()) setC(p, -1, n) else Mem.setPtr(p, 0, n);
+
+	// whether forwarding keeps the copy's address compressed in the header's
+	// upper half (a constant): the program may have compressed references
+	// (Mem.compact), its heap is then below 32 GB (Gc.init), and its objects
+	// may have no slot (a header constructor, hxmc.ir.Facts: an enum value of
+	// one 4-byte argument, in that half). (false without hxmc.memcompact:
+	// the committed stage0 makes none)
+	public static inline function fwdLow():Bool
+		return #if hxmc.memcompact Mem.compact() == 1 #else false #end;
 
 	// p's payload words, the header's first word w0 (Types.wordsAt: the
 	// length read only for a large array)
@@ -82,9 +97,20 @@ extern class GcCore {
 	public static inline function compactTypes():Bool
 		return #if hxmc.memcompact Mem.compact() == 1 #else true #end;
 
-	// whether type t's objects have compressed references
+	// whether type t's objects have compressed references (word 20's bit 0,
+	// Types.hasCompact)
 	public static inline function compactAt(t:Int):Bool
-		return compactTypes() && Mem.getI32(Mem.sym("rt_types"), 112 * t + 20) != 0;
+		return compactTypes() && Mem.getI32(Mem.sym("rt_types"), 112 * t + 20) & 1 != 0;
+
+	// the compact map's entries of an object of n slots: a bit per half; an
+	// object of no slots (a header constructor's value, Types.headerArg) has
+	// one, its header's upper half (half -1: cmapHalf)
+	public static inline function cmapHalves(n:Int):Int
+		return n == 0 ? 1 : 2 * n;
+
+	// the half of entry j of the compact map of an object of n slots
+	public static inline function cmapHalf(n:Int, j:Int):Int
+		return n == 0 ? -1 : j;
 
 	// half h of the compact map pm (a type's pointer map) is a compressed reference
 	public static inline function isCompactHalf(pm:Ptr, h:Int):Bool
