@@ -412,7 +412,7 @@ class HostTable {
 	}
 
 	// (HXMC_MACRO_STATS=1: the lookups and their time)
-	static final timed = Sys.getEnv("HXMC_MACRO_STATS") == "1";
+	static var timed = false; // (the build's, Options.apply)
 	public static var lookups = 0;
 	public static var lookupTime = 0.0;
 

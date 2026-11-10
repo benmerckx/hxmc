@@ -109,7 +109,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	var lastPrep:Null<Prep> = null;
 	// the macro functions called so far: their function and descriptor, by pack.Class.f
 	var entries = new Map<String, {fi:FuncInfo, desc:Ptr}>();
-	var stats = Sys.getEnv("HXMC_MACRO_STATS") == "1";
+	static var stats = false; // (the build's, Options.apply; and coldWords, lazyOn)
 	// the compiled functions kept across builds (null: off)
 	var cache:Null<BundleCache> = null;
 	var cacheOpened = false;
@@ -120,17 +120,14 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// them nothing measurable; the functions of compute-bound macros are far
 	// below (json's, mandelbrot's: under 3,000). HXMC_MIR_COLD=<words>, 0:
 	// every function optimized
-	static var coldWords:Int = {
-		var n = Std.parseInt(Sys.getEnv("HXMC_MIR_COLD") ?? "");
-		n == null ? COLD_WORDS : n;
-	}
+	static var coldWords = COLD_WORDS;
 	static inline var COLD_WORDS = 8000;
 	// a function is compiled the first time it is called (a bundle has a stub
 	// of it, InterpGen.stub, LAZY k: compileLazy), but for the static
 	// initializers, which its load runs; most functions a bundle reaches never
 	// run (the formatter's macros: 65 of 212). HXMC_MIR_LAZY=0: every
 	// function compiled with its bundle
-	static var lazyOn = Sys.getEnv("HXMC_MIR_LAZY") != "0";
+	static var lazyOn = true;
 	// the functions not compiled yet, by stub number, with their bundle's step
 	var lazies:Array<{f:FuncInfo, key:Null<CacheKey>, cold:Bool, step:StepState}> = [];
 	// (the native tier compiles with the same steps: one lock)
@@ -775,7 +772,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the std's functions the compiler has alike: its native code; HXMC_MIR_HOST=0: all interpreted)
 		phase("facts");
 		var ownRuntime = opts.bounds != 0 ? ["hxmc.rt.Dyn" => true, "hxmc.rt.NArray" => true] : new Map<String, Bool>();
-		var found = Sys.getEnv("HXMC_MIR_HOST") == "0" ? new Map() : MirRun.hostFunctions(funcs, facts, prep, e, com, ownRuntime, native);
+		var found = !Options.on("hxmc.mir-host", true, com.defines) ? new Map() : MirRun.hostFunctions(funcs, facts, prep, e, com, ownRuntime, native);
 		for (f => _ in found) {
 			native.set(f, true);
 			compiled.set(f, true);

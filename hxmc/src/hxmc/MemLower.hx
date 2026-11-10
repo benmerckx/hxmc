@@ -27,7 +27,7 @@ using core.ds.VectorTools;
 // continuation (OInfo.cont: the phis there, a reference a cold site reloads
 // after its slow path, get the value each edge's path has).
 class MemLower extends MirWriter {
-	static var noShadow = Sys.getEnv("HXMC_NOSHADOW") == "1";
+	static var noShadow = false; // (the build's, Options.apply)
 
 	var icSym:String;
 
@@ -71,6 +71,7 @@ class MemLower extends MirWriter {
 	// gives it a continuation (OInfo.cont), its last block here
 	public static function branches(op:Op, o:OInfo):Bool {
 		return switch op {
+			case ArrayGet if (o.prechecked): false; // (LoopVersion: a load alone)
 			case New | NewDyn | TypeTest | AnonGet | AnonCall | ArrayGet | ArraySet | ArrayPush | NewNArray | NArrayDyn | RefStore | Untag: true;
 			case SetField: o.t.match(TRef(_)) && !o.flag && !o.fresh;
 			case AnonStore: o.t.match(TRef(_));
@@ -798,7 +799,7 @@ class MemLower extends MirWriter {
 
 	// ---- arrays
 
-	static function arrKind(t:Ty):Int
+	public static function arrKind(t:Ty):Int
 		return switch t {
 			case TI32: Abi.AK_I32;
 			case TBool: Abi.AK_BOOL;
@@ -926,6 +927,9 @@ class MemLower extends MirWriter {
 		var kind = pre ? given(0) : loadM(Opt.MHdr, I32, 4, av, 4);
 		var len = checked ? (pre ? given(1) : loadM(Opt.MHdr, I32, 4, av, 0)) : -1;
 		var d = pre ? given(checked ? 2 : 1) : loadM(Opt.MHdr, I64, 8, av, 8);
+		// (LoopVersion: tested before the loop)
+		if (op.prechecked)
+			return loadM(Opt.MElem, t, elemSize(elem), d, 0, false, pre ? given(checked ? 3 : 2) : op1(SExt, I64, iv), elemSize(elem));
 		if (checked) {
 			var chk = newBlock();
 			br(cmp(CEq, kind, iconst(k)), chk, slow);

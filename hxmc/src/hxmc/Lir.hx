@@ -123,9 +123,9 @@ class LFunc {
 	// jumps to it, after the allocation: each copy's own indirect jump, no
 	// jump to it first (isJump: an unconditional jump, isTable: a jump
 	// table's jump; the copies of a table's address share its table)
-	public static var dupDispatch = Sys.getEnv("HXMC_DUP_DISPATCH") != "0";
+	public static var dupDispatch = true; // (the build's, Options.apply)
 
-	public static var minTable = Sys.getEnv("HXMC_DUP_MIN") != null ? Std.parseInt(Sys.getEnv("HXMC_DUP_MIN")) : 64;
+	public static var minTable = 64;
 
 	public function duplicateDispatch(isJump:LIns->Bool, isTable:LIns->Bool, maxIns:Int) {
 		if (!dupDispatch) return;

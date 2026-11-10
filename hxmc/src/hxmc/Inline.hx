@@ -28,25 +28,21 @@ class Inline {
 	// hx_str_or_null at every concatenation too: 0.5% faster still, the
 	// port 1.2% larger) (size against speed;
 	// HXMC_INLINE=<flat>,<loop>,<runtime flat>, for every target)
-	public static var MAX_FLAT = limit(0, 16);
-	public static var MAX_LOOP = limit(1, 48);
-	public static var MAX_FLAT_RT = limit(2, 3);
+	static inline var MAX_FLAT = 16;
+	static inline var MAX_LOOP = 48;
+	static inline var MAX_FLAT_RT = 3;
 	// WebAssembly (wasm32-wasi): an engine inlines again, and modules are
 	// downloaded: 4 and 16 take 6% off the playground's module (828 KB raw,
 	// 269 KB gzipped) with its self-compile under node and the benchmarks'
 	// run times unchanged (4, 8 makes mandelbrot 60% slower)
-	public static var WASM_FLAT = limit(0, 4);
-	public static var WASM_LOOP = limit(1, 16);
+	static inline var WASM_FLAT = 4;
+	static inline var WASM_LOOP = 16;
+	public static var limits:Array<Int> = []; // HXMC_INLINE's (the build's, Options.apply)
 
 	// the limits of a call site (in a loop, of a runtime function, else)
-	public static function maxSize(wasm:Bool, inLoop:Bool, rt:Bool):Int
-		return inLoop ? (wasm ? WASM_LOOP : MAX_LOOP) : rt ? MAX_FLAT_RT : wasm ? WASM_FLAT : MAX_FLAT;
-
-	static function limit(k:Int, def:Int):Int {
-		var e = Sys.getEnv("HXMC_INLINE");
-		if (e == null) return def;
-		var p = e.split(",");
-		return k < p.length ? Std.parseInt(p[k]) : def;
+	public static function maxSize(wasm:Bool, inLoop:Bool, rt:Bool):Int {
+		var k = inLoop ? 1 : rt ? 2 : 0;
+		return k < limits.length ? limits[k] : inLoop ? (wasm ? WASM_LOOP : MAX_LOOP) : rt ? MAX_FLAT_RT : wasm ? WASM_FLAT : MAX_FLAT;
 	}
 	public static inline var DEPTH = 2; // levels of inlining (Fingerprint keys callers to that depth)
 
@@ -144,7 +140,7 @@ class Inline {
 	// with a shadow-stack frame keeps it: its copy pushes and pops it)
 	public static function template(mb:MirBuild, mf:MFunc):Null<Template> {
 		var n = size(mf);
-		return n >= 0 && n <= MAX_LOOP ? {mf: mf, sites: mb.inlineSites, size: n} : null;
+		return n >= 0 && n <= maxSize(false, true, false) ? {mf: mf, sites: mb.inlineSites, size: n} : null;
 	}
 
 	// drops the blocks no longer reachable (after a callee that never returns)
@@ -175,7 +171,7 @@ class Inline {
 		if (!all) f.blocks = [for (b in f.blocks) if (b.mark == reach) b];
 	}
 
-	public static var devirtOn = Sys.getEnv("HXMC_DEVIRT") != "0";
+	public static var devirtOn = true; // (the build's, Options.apply)
 
 	// Devirtualization: a virtual call on an object made in f (New: its class
 	// exactly known) calls the class's implementation of the selector
