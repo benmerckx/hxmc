@@ -520,6 +520,7 @@ class Server {
 			var stdinRef = makeClosedStdin();
 			function read():String {
 				var data = socketRequestRead(overflow, sin, bufsize);
+				stdinRef.close();
 				stdinRef = setupClientStdinForward(overflow.value, sin);
 				return data;
 			}

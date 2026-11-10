@@ -240,7 +240,7 @@ class ContextCache {
 			switch cfile.cFilePath.classPath.scope {
 				case User:
 					acc.push(key);
-				case Std | StdTarget | Lib:
+				case Std | StdTarget | Lib(_):
 			}
 			return acc;
 		}, []);

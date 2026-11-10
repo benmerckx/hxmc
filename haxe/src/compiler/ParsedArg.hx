@@ -50,7 +50,7 @@ enum ParsedArg {
 	SetCppiaTarget(output:String);
 	// Compilation
 	AddClassPath(path:String);
-	AddLibClassPath(path:String);
+	AddLibClassPath(path:String, name:Null<String>);
 	AddHxbLib(file:String);
 	// port: the `path` (pack, name) as the flat list pack @ [name].
 	SetMain(path:Array<String>);
