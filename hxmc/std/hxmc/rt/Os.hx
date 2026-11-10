@@ -146,6 +146,15 @@ class Os {
 
 	static inline var MAP_FIXED_NOREPLACE = 0x100000; // (Linux's, x86-64 and arm64 alike)
 
+	// reserve's at address `at`, over what is mapped there (the program's
+	// own reservation: macOS's __HXHEAP segment, Gc.macWindow), else null
+	@:hxmc.unsafe public static function mapOver(at:Ptr, bytes:I64):Ptr {
+		var p = C.mmap(at, bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE | MAP_FIXED, -1, 0);
+		return p.toI64() != at.toI64() ? Ptr.nil() : p;
+	}
+
+	static inline var MAP_FIXED = 0x10; // (Linux's and macOS's)
+
 	@:hxmc.unsafe public static function release(p:Ptr, bytes:I64)
 		if (windows()) WinRt.release(p, bytes) else C.munmap(p, bytes);
 

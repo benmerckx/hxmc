@@ -108,7 +108,7 @@ class CompactEnums {
 		// (Leaf: none where there are compressed references, Linux and Windows
 		// on x86-64, hxmc.Main.compactRefs (its Int in the header: HeaderEnums);
 		// Node 2, Pair 1, Mixed 5, Link 2, Hold 3: else a slot per argument)
-		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm();
+		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm() || hxmc.unsafe.Mem.os() == 1 && hxmc.unsafe.Mem.platform() == 0;
 		var sizes = [
 			slots(Leaf(1)),
 			slots(Node(null, null, "a")),

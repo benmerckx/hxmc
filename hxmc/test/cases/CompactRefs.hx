@@ -173,9 +173,9 @@ class CompactRefs {
 
 	static function main() {
 		// (Node: 6 slots, its references compressed but `maybe`, where there
-		// are compressed references, Linux and Windows on x86-64 (hxmc.Main.compactRefs);
+		// are compressed references, Linux, Windows on x86-64 and macOS (hxmc.Main.compactRefs);
 		// elsewhere 10, the annotation changing nothing)
-		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm();
+		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm() || hxmc.unsafe.Mem.os() == 1 && hxmc.unsafe.Mem.platform() == 0;
 		var sizes = [slots(new Node(1, null)), slots(new Leaf(1, null, null)), slots(new Gen(1, null)), slots(new Derived(null))];
 		trace(sizes.join(",") == (compressed ? "6,7,2,3" : "10,12,2,4") ? "sizes ok" : "sizes " + sizes);
 		trace(local(3, 4));
