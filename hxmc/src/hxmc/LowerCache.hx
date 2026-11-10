@@ -242,7 +242,8 @@ class CachedLower extends Lower {
 	var smaps = new Map<Int, Map<Int, Int>>();
 	var gmap:Map<Int, Int>;
 	var smap:Map<Int, Int>;
-	static var skipTy = Sys.getEnv("HXMC_LOWER_NOSKIP") != "1";
+	static var skipTy = true; // (the build's, Options.apply; and whyOn)
+	static var whyOn = false;
 	var ident = false; // copying with no binding (the program's copy of a body)
 
 	static var MARK = new Local(-0x7fff, "mark", TRef(RAny));
@@ -415,7 +416,7 @@ class CachedLower extends Lower {
 		replaying = fi;
 		for (c in old.log)
 			try call(c) catch (m:Mismatch) {
-				if (Sys.getEnv("HXMC_LOWER_WHY") == "1") m.why += " (replaying " + old.fi.name + " into " + fi.name + ": " + Type.enumConstructor(c) + (translating ? ", translated" : "") + ")";
+				if (whyOn) m.why += " (replaying " + old.fi.name + " into " + fi.name + ": " + Type.enumConstructor(c) + (translating ? ", translated" : "") + ")";
 				throw m;
 			}
 		replaying = saved;
@@ -953,7 +954,7 @@ class CachedLower extends Lower {
 	function bind(o:{}, n:{}):Bool {
 		var m = map.get(o);
 		if (m != null) {
-			if (m != n) mismatch("an object bound twice" + (Sys.getEnv("HXMC_LOWER_WHY") == "1" ? " (" + Type.getClassName(Type.getClass(o)) + " " + Reflect.field(o, "name") + " " + Reflect.field(o, "key") + ": " + Reflect.field(m, "name") + Reflect.field(m, "key") + " then " + Reflect.field(n, "name") + Reflect.field(n, "key") + ")" : ""));
+			if (m != n) mismatch("an object bound twice" + (whyOn ? " (" + Type.getClassName(Type.getClass(o)) + " " + Reflect.field(o, "name") + " " + Reflect.field(o, "key") + ": " + Reflect.field(m, "name") + Reflect.field(m, "key") + " then " + Reflect.field(n, "name") + Reflect.field(n, "key") + ")" : ""));
 			return false;
 		}
 		map.set(o, n);
@@ -1017,7 +1018,7 @@ class CachedLower extends Lower {
 
 	function bindFunc(o:FuncInfo, n:FuncInfo) {
 		if (!bind(o, n)) return;
-		if (o.name != n.name || o.args.length != n.args.length) mismatch("function " + o.name + " changed" + (Sys.getEnv("HXMC_LOWER_WHY") == "1" ? " (now " + n.name + ", " + o.args.length + " to " + n.args.length + " arguments)" : ""));
+		if (o.name != n.name || o.args.length != n.args.length) mismatch("function " + o.name + " changed" + (whyOn ? " (now " + n.name + ", " + o.args.length + " to " + n.args.length + " arguments)" : ""));
 		for (i in 0...o.args.length)
 			bindLocal(o.args[i], n.args[i]);
 		bindTy(o.ret, n.ret);

@@ -20,10 +20,7 @@ class UpToDate {
 		for (a in args)
 			if (StringTools.startsWith(a, "hxmc.target=")) target = a.substr(12);
 		var rt = Sys.getEnv("HXMC_RT_OBJ");
-		// (and the environment that changes the code: Options.framePointers)
-		var fp = Sys.getEnv("HXMC_FRAME_POINTERS");
-		if (fp != null) tool += "|fp=" + fp;
-		// (and the variables of flags: Options.flag)
+		// (and the variables of the flags that change the code: Options.FLAGS)
 		for (e in [for (n in Options.FLAGS) Options.flagVar(n)]) {
 			var v = Sys.getEnv(e);
 			if (v != null && v != "") tool += "|" + e + "=" + v;
