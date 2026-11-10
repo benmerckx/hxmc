@@ -131,7 +131,7 @@ class HeaderEnums {
 	static function main() {
 		// (header constructors: no slot where there are compressed references,
 		// Linux and Windows on x86-64; else a slot, as a packed constructor)
-		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm();
+		var compressed = hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 2 && !hxmc.unsafe.Mem.arm() || hxmc.unsafe.Mem.os() == 1 && hxmc.unsafe.Mem.platform() == 0;
 		var sizes = [
 			slots(EConst(null)), slots(Local(null)), slots(Block(null)), slots(Return(null)), slots(Fn(null)), slots(EAny(null)), slots(Pt(null)),
 			slots(CInt(1)), slots(CBool(true)), slots(CString("")), slots(CFloat(1.5)), slots(CNull(null)), slots(Full(1)), slots(Pair(1, 2))

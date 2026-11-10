@@ -38,6 +38,8 @@ class Options {
 	// -D hxmc.loop-version=0: no loop versioning (LoopVersion); =why: why each loop is left alone
 	public var loopVersion = true;
 	public var loopVersionWhy = false;
+	// -D hxmc.compact=0: @:hxmc.compact changes nothing, its reference fields 8 bytes (Main.compactRefs)
+	public var compact = true;
 
 	// the variable a flag falls back to: HXMC_LOOP_VERSION for hxmc.loop-version
 	public static function flagVar(name:String):String
@@ -65,7 +67,7 @@ class Options {
 		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
 		"hxmc.fold", "hxmc.frames-live", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
 		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc",
-		"hxmc.checked"
+		"hxmc.checked", "hxmc.compact"
 	];
 	// the switches of the passes, read again for each build (a server's too)
 	// from its defines, before its typing (TargetFlags' hook): the passes
@@ -348,6 +350,7 @@ class Options {
 		var lv = flag("hxmc.loop-version", com.defines);
 		o.loopVersion = lv != "0";
 		o.loopVersionWhy = lv == "why";
+		o.compact = on("hxmc.compact", true, com.defines);
 		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {

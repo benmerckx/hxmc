@@ -162,6 +162,9 @@ class Gc {
 
 	static var compactNext:I64;
 	static inline var COMPACT_LIMIT:Int = 32;
+	// where the compressed references' heap ends: 32 GB, on macOS the end of
+	// the image's __HXHEAP segment (macWindow)
+	static var compactLimit:I64;
 	static var region0:Ptr;
 	static var region1:Ptr;
 	static var curRegion:Int;
@@ -2076,13 +2079,50 @@ class Gc {
 	@:hxmc.unsafe public static function reserveLow(bytes:I64):Ptr
 		return compactWindow() ? heapReserve(bytes) : Ptr.nil();
 
+	// macOS: the heap's window, the image's __HXHEAP segment (LinkMachO.heapWindow),
+	// found in the image's load commands: its address there plus the image's
+	// slide (where the image is, __dso_handle, its Mach-O header, less
+	// __TEXT's address there). The heap goes nowhere else: without it
+	// (an image another linker wrote), the program stops
+	@:hxmc.unsafe static function macWindow() {
+		// (the test here too: an older tool keeps the function, and __dso_handle is Mach-O's)
+		if (Mem.os() == 1) {
+			var h = Mem.sym("__dso_handle");
+			var n = Mem.getI32(h, 16);
+			var c = h.add(32);
+			var text:I64 = -1, at:I64 = -1, size:I64 = 0;
+			for (k in 0...n) {
+				if (Mem.getI32(c, 0) == 0x19) { // LC_SEGMENT_64: its name at 8, 16 bytes
+					var a = Mem.getI32(c, 8), b = Mem.getI32(c, 12), z = Mem.getI32(c, 16);
+					if (a == 0x45545F5F && b == 0x5458 && z == 0) text = Mem.getI64(c, 24); // __TEXT
+					if (a == 0x58485F5F && b == 0x50414548 && z == 0) { // __HXHEAP
+						at = Mem.getI64(c, 24);
+						size = Mem.getI64(c, 32);
+					}
+				}
+				c = c.add(Mem.getI32(c, 4));
+			}
+			if (text < 0 || at < 0) die("no heap window (__HXHEAP) in the executable: its compressed references (@:hxmc.compact) need one\n");
+			compactNext = h.toI64() - text + at;
+			var end = compactNext + size;
+			if (end < compactLimit) compactLimit = end;
+		}
+	}
+
 	// address space for the heap: anywhere, or with compressed references
 	// the first free range from compactNext on (2 MB aligned, past what is
 	// taken in 256 MB steps) that ends below 32 GB (null: none)
 	@:hxmc.unsafe static function heapReserve(bytes:I64):Ptr {
 		if (!compactWindow()) return Os.reserve(bytes);
 		var at = (compactNext + ((2 << 20) - 1)) & ~(((2 : I64) << 20) - 1);
-		while (((COMPACT_LIMIT : I64) << 30) - at >= bytes) {
+		if (Mem.os() == 1) {
+			// (macOS: the image's segment, the program's own: mapped over)
+			if (compactLimit - at < bytes) return Ptr.nil();
+			var p = Os.mapOver(Ptr.ofI64(at), bytes);
+			if (!p.isNull()) compactNext = at + bytes;
+			return p;
+		}
+		while (compactLimit - at >= bytes) {
 			var p = Os.reserveAt(Ptr.ofI64(at), bytes);
 			if (!p.isNull()) {
 				compactNext = at + bytes;
@@ -2659,6 +2699,9 @@ class Gc {
 		// (a Mir host, Mem.mirHost: from 2 GB, above the native tier's window,
 		// where the code it loads goes: hxmc.macro.Loader.WINDOW_LO to WINDOW_HI)
 		compactNext = ((Mem.mirHost() == 1 ? 2 : 1) : I64) << 30;
+		compactLimit = (COMPACT_LIMIT : I64) << 30;
+		// (macOS: in the image's __HXHEAP segment, LinkMachO.heapWindow)
+		if (Mem.os() == 1 && compactWindow()) macWindow();
 		// (the image's static objects, which compressed references reach too:
 		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
 		if (compactWindow() && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
@@ -2709,14 +2752,17 @@ class Gc {
 		var regionsAt = compactNext;
 		if (compactWindow()) {
 			// (two regions in what is left below 32 GB, in 1 GB steps: 15 GB each after a 256 MB nursery)
-			var room = ((((COMPACT_LIMIT : I64) << 30) - compactNext) / 2) & ~(((1 : I64) << 30) - 1);
+			var room = ((compactLimit - compactNext) / 2) & ~(((1 : I64) << 30) - 1);
 			if (regionBytes > room) regionBytes = room;
 		}
 		var i = 0;
 		while (i < 2) {
 			var r = heapReserve(regionBytes);
 			if (r.isNull() && regionBytes > ((512 : I64) << 20)) {
-				if (i == 1) Os.release(region0, regionBytes);
+				// (macOS's window stays reserved: no access again, not unmapped)
+				if (i == 1) {
+					if (Mem.os() == 1 && compactWindow()) Os.guard(region0, regionBytes) else Os.release(region0, regionBytes);
+				}
 				regionBytes = regionBytes / 2;
 				compactNext = regionsAt;
 				i = 0;

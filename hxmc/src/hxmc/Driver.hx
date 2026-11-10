@@ -746,6 +746,7 @@ class Driver {
 		} : abi.os == "macos" ? {
 			var l = new LinkMachO(all, abi);
 			l.symbols = !o.strip;
+			l.heapWindow = hxmc.ir.Lower.compactTypes == 1;
 			l.collect = collect;
 			if (abi.output == SharedLibrary) l.installName = "@rpath/" + haxe.io.Path.withoutDirectory(out);
 			l.dylibs = dylibs;

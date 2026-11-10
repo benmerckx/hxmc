@@ -304,6 +304,22 @@ old space holds at most 15 GB, 16 GB without compact types). Startup dies
 with a message when the image is above 32 GB or no such range is free. A
 program without compact types reserves its heap as before.
 
+**macOS.** The executable is position-independent and slid, but stays
+low: above `__PAGEZERO`'s 4 GB, at 4 GB and a few MB. Nothing below 4 GB
+can be mapped (arm64 kills an executable with a smaller `__PAGEZERO`),
+arm64's dyld shared cache is at 6 to 12 GB, and malloc reserves 24 GB at a
+random address from 12 GB up before the program runs, which left 4 to 20
+GB free below 32 GB, varying by launch. So a program with compact types
+brings its own: `LinkMachO.heapWindow` gives the executable a `__HXHEAP`
+segment of 19.75 GB at 12 GB (plus the slide), no file and no access, which
+the kernel maps with the image before anything else runs. `Gc.macWindow`
+finds it in the image's load commands (`__dso_handle` is the Mach-O
+header) and the heap is mapped over it (`Os.mapOver`): the nursery and the
+old space's regions share its 19.75 GB, where Linux has up to 15 GB per
+region. An image without the segment stops at startup with a message. No
+static object in the image holds a compressed reference (`DataGen` writes
+whole addresses), so the slide needs no fixup of them.
+
 **A program without compact types** pays nothing: none of the code above
 is in it. `Mem.compact()` is a constant of the lowering (`Lower.compactTypes`,
 set by `hxmc.Main.generate` after typing: 1 when compressed references are
@@ -324,10 +340,11 @@ knows `Mem.compact` defines `hxmc.memcompact` (`TargetFlags`); without it
 at run time.
 
 **Where.** `hxmc.Main.compactRefs`: executables for Linux (x86-64 and arm64,
-musl and the glibc mode) and Windows on x86-64. Elsewhere the annotation
-changes nothing, the fields stay 8 bytes and the program behaves the same:
-macOS and iOS (position-independent executables, slid anywhere: they would
-need a heap base, a register or global added on every decompression),
+musl and the glibc mode), Windows on x86-64 and macOS (arm64 and x86-64).
+`-D hxmc.compact=0` (or `HXMC_COMPACT=0`) turns them off for a build: the
+annotation then changes nothing anywhere. Elsewhere it changes nothing
+either, the fields stay 8 bytes and the program behaves the same: iOS and
+Mac Catalyst (their address space is not laid out for it),
 Windows on arm64 (relocatable, `DYNAMIC_BASE`), Android and shared
 libraries (`-D hxmc.shared`: loaded anywhere), WebAssembly (wasm32's
 references are 4 bytes already). The errors below are the same
@@ -1767,6 +1784,7 @@ their variables. Four are read before any build, so only as the variable:
 | --- | --- | --- | --- |
 | `hxmc.opt=0` | `HXMC_OPT` | yes | no Mir optimizations |
 | `hxmc.loop-version=0\|why` | `HXMC_LOOP_VERSION` | yes | no loop versioning, or why a loop is left alone |
+| `hxmc.compact=0` | `HXMC_COMPACT` | yes | no compressed references: `@:hxmc.compact` changes nothing |
 | `hxmc.inline=<flat>,<loop>,<runtime>,<IR nodes>,<depth>` | `HXMC_INLINE` | yes | inlining limits (16,48,3,40,2; wasm 4,16,3,40,2); an empty field keeps its default |
 | `hxmc.devirt=0` | `HXMC_DEVIRT` | yes | no devirtualization |
 | `hxmc.sroa=0` | `HXMC_SROA` | yes | no scalar replacement |
