@@ -1392,7 +1392,7 @@ private class FnWriter {
 					line(vi.ty == F64 ? '$x = fptrunc double $val to float' : '$x = trunc ${LlvmGen.ty(vi.ty)} $val to $mt');
 					val = x;
 				}
-				if (i.release && i.size == 8) line('store atomic $mt $val, ptr $p release, align 8${tbaa(i)}') else line('store $mt $val, ptr $p, align 1${tbaa(i)}');
+				if (i.release && (i.size == 8 || i.size == 4)) line('store atomic $mt $val, ptr $p release, align ${i.size}${tbaa(i)}') else line('store $mt $val, ptr $p, align 1${tbaa(i)}');
 			case Call:
 				call(bl, i, d);
 			case Jmp:
