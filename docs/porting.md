@@ -87,8 +87,8 @@ A bug of the reference that breaks the compiler for its users, and that
 upstream's last release did not have, may be fixed in the port. Where the
 port diverges, a `// port: diverges from upstream` note says what upstream
 does; a harness case checks the port's behaviour and names the divergence;
-an issue is filed upstream. When the pin moves past upstream's fix, the
-divergence goes. The divergences:
+it gets a row in hxmc's issue of upstream bugs (#124). No issue is filed
+upstream. When the pin moves past upstream's fix, the divergence goes. The divergences:
 
 - The compilation server goes on after a client that connects and closes
   without a request, or sends nothing: upstream's `wait_loop` (5.0) ends

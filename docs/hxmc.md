@@ -57,6 +57,10 @@ Conventions:
 - Program-wide numbers (type indices, field ids, offsets) are absolute
   symbols the linker resolves, so a module's code does not change when the
   numbering does.
+- A module's object has its functions in the order of their symbols, not
+  in the order the lowering reached them (`Driver.build`): an edit elsewhere
+  that makes the program reach them in another order leaves its key and
+  object as they were.
 - A change of the runtime's interface or the IR's conventions needs a tool
   that knows it: build once against the previous runtime first, or
   bootstrap again.
@@ -89,7 +93,9 @@ The hook may push functions on `prog.funcs` (a `FuncInfo` with a
 `module`: hxmc compiles each module's functions into one object), and
 reach them from code it changes or from `prog.roots`. Under a compilation
 server the lowered bodies are reused between builds (`LowerCache`): give a
-function a new `body` vector rather than writing into the one it has.
+function a new `body` vector rather than writing into the one it has (a
+body the hook replaced is scanned anew by Facts: what LowerCache keeps of a
+scan is the lowering's body's).
 `hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.

@@ -564,10 +564,14 @@ uikit-check: $(TOOL) $(STD) $(HOST_RT)
 native-check: shared-check jni-check macho-check
 # the dev loop (docs/dev.md): `hxmc dev` on a console program through edits
 # and a compile error (dev-console.mjs), then the compilation server's builds
-# through edits against fresh ones (server-verify.mjs)
+# through edits against fresh ones (server-verify.mjs), the tool's and a
+# frontend's whose hook rewrites bodies (hxmc/test/frontend/Hook.hx)
 dev-check: $(TOOL) $(STD) $(HOST_RT)
 	ulimit -s unlimited 2>/dev/null || true; $(NODE) hxmc/test/dev/dev-console.mjs $(TOOL) bin/dev/console
 	ulimit -s unlimited 2>/dev/null || true; $(NODE) hxmc/test/dev/server-verify.mjs $(TOOL)
+	ulimit -s unlimited 2>/dev/null || true; mkdir -p bin/dev && export HAXE_STD_PATH=$(abspath haxe/upstream/std) HXMC_RT_DIR=$(abspath bin/hxmc/rt) HXMC_STD=$(abspath bin/hxmc/std) \
+		&& $(TOOL) bin/dev/hook -cp haxe/src -cp hxmc/src -cp hxmc/test/frontend -main Hook -D disable-parallelism -D hih_no_generators -cp bin/hxmc/std --custom-target hxmc \
+		&& $(NODE) hxmc/test/dev/server-verify.mjs bin/dev/hook frontend
 
 # (each case typed, compiled for the Mir interpreter and run in the native compiler's process)
 mir-run-check: $(TOOL) $(STD) $(HOST_RT) $(HOST_HAXE)
