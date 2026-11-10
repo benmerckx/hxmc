@@ -63,6 +63,9 @@ lists the ones marked with *.
 | `-D hxmc.run=mir` | experimental: run `--interp`/`--run` on the Mir interpreter |
 | `-D hxmc.pic` | a position-independent executable: refused, not written yet |
 
+The switches of the passes and the diagnostics are flags too: a define or
+its variable, `-D hxmc.escape=0` or `HXMC_ESCAPE=0` ([the table](hxmc.md#flags-and-environment-variables)).
+
 ## Outputs
 
 ### Native executables
@@ -489,7 +492,7 @@ while (Poll.wait(fds, events, revents, 2, -1) > 0) ...   // no allocation per ca
   prints its frames (`Called from Main.f (src/Main.hx line 3)`).
 - **Runtime variables.** `RT_STATS=1` prints the collector's work,
   `RT_VERIFY=1` checks the heap, `RT_MINOR_KB=<n>` fixes the nursery size.
-  More in [hxmc.md](hxmc.md#environment-variables).
+  More in [hxmc.md](hxmc.md#flags-and-environment-variables).
 
 ### Measuring the collector
 

@@ -20,53 +20,51 @@ using core.ds.VectorTools;
 // of each operation, counted on the operation; a shadow-stack frame stays the
 // copy's own: it pushes and pops it).
 class Inline {
-	public static var MAX_IR = limit(3, 40); // IR nodes of a candidate (HXMC_INLINE: the fourth)
+	// the limits: -D hxmc.inline=<flat>,<loop>,<runtime flat>,<IR nodes>,<depth>
+	// (else HXMC_INLINE), for every target; an empty or missing field keeps its
+	// default (configure, the build's: Options.apply; the object cache's key has
+	// the flag: Options.codeKey)
+	static inline var IR_DEFAULT = 40;
+	public static var MAX_IR = IR_DEFAULT; // IR nodes of a candidate
 	// instructions outside slow paths: of a callee inlined anywhere, at a
 	// call in a loop, and of the runtime's Haxe functions (hxmc.rt) outside
 	// loops: 3, those no bigger than their call (Bytes.get, set and length, then:
 	// the tool 0.2% smaller, its self-compile 1% less CPU; 16 inlines
 	// hx_str_or_null at every concatenation too: 0.5% faster still, the
-	// port 1.2% larger) (size against speed;
-	// HXMC_INLINE=<flat>,<loop>,<runtime flat>, for every target)
-	public static var MAX_FLAT = limit(0, 16);
-	public static var MAX_LOOP = limit(1, 48);
-	public static var MAX_FLAT_RT = limit(2, 3);
+	// port 1.2% larger) (size against speed)
+	static inline var MAX_FLAT = 16;
+	static inline var MAX_LOOP = 48;
+	static inline var MAX_FLAT_RT = 3;
 	// WebAssembly (wasm32-wasi): an engine inlines again, and modules are
 	// downloaded: 4 and 16 take 6% off the playground's module (828 KB raw,
 	// 269 KB gzipped) with its self-compile under node and the benchmarks'
 	// run times unchanged (4, 8 makes mandelbrot 60% slower)
-	public static var WASM_FLAT = limit(0, 4);
-	public static var WASM_LOOP = limit(1, 16);
+	static inline var WASM_FLAT = 4;
+	static inline var WASM_LOOP = 16;
+	static inline var DEPTH_DEFAULT = 2;
+	// the first three fields of the flag (-1: the default)
+	static var flat = -1;
+	static var loop = -1;
+	static var flatRt = -1;
 
 	// the limits of a call site (in a loop, of a runtime function, else)
 	public static function maxSize(wasm:Bool, inLoop:Bool, rt:Bool):Int
-		return inLoop ? (wasm ? WASM_LOOP : MAX_LOOP) : rt ? MAX_FLAT_RT : wasm ? WASM_FLAT : MAX_FLAT;
+		return inLoop ? (loop >= 0 ? loop : wasm ? WASM_LOOP : MAX_LOOP) : rt ? (flatRt >= 0 ? flatRt : MAX_FLAT_RT) : flat >= 0 ? flat : wasm ? WASM_FLAT : MAX_FLAT;
 
-	// the limits in effect (HXMC_INLINE or -D hxmc.inline), for the object cache's key
-	public static inline var DEFAULTS = "16,48,3,40,2";
-
-	public static function limits():String
-		return [MAX_FLAT, MAX_LOOP, MAX_FLAT_RT, MAX_IR, DEPTH].join(",");
-
-	// the limits of -D hxmc.inline (Options)
-	public static function configure(spec:String) {
-		var p = spec.split(",");
-		inline function at(k:Int, d:Int):Int
-			return k < p.length && p[k] != "" ? Std.parseInt(p[k]) : d;
-		MAX_FLAT = at(0, MAX_FLAT);
-		MAX_LOOP = at(1, MAX_LOOP);
-		MAX_FLAT_RT = at(2, MAX_FLAT_RT);
-		MAX_IR = at(3, MAX_IR);
-		DEPTH = at(4, DEPTH);
+	// the limits of a build: hxmc.inline's (null: the defaults)
+	public static function configure(spec:Null<String>) {
+		var p = spec == null ? [] : spec.split(",");
+		function at(k:Int, d:Int):Int {
+			var v = k < p.length ? Std.parseInt(StringTools.trim(p[k])) : null;
+			return v == null ? d : v;
+		}
+		flat = at(0, -1);
+		loop = at(1, -1);
+		flatRt = at(2, -1);
+		MAX_IR = at(3, IR_DEFAULT);
+		DEPTH = at(4, DEPTH_DEFAULT);
 	}
-
-	static function limit(k:Int, def:Int):Int {
-		var e = Sys.getEnv("HXMC_INLINE");
-		if (e == null) return def;
-		var p = e.split(",");
-		return k < p.length ? Std.parseInt(p[k]) : def;
-	}
-	public static var DEPTH = limit(4, 2); // levels of inlining (HXMC_INLINE: the fifth) (Fingerprint keys callers to that depth)
+	public static var DEPTH = DEPTH_DEFAULT; // levels of inlining (Fingerprint keys callers to that depth)
 
 	// whether f may be inlined (the IR test); not a function that runs the
 	// collector (@:hxmc.collects): the calls in its body are to the
@@ -164,7 +162,7 @@ class Inline {
 	// with a shadow-stack frame keeps it: its copy pushes and pops it)
 	public static function template(mb:MirBuild, mf:MFunc):Null<Template> {
 		var n = size(mf);
-		return n >= 0 && n <= MAX_LOOP ? {mf: mf, sites: mb.inlineSites, size: n} : null;
+		return n >= 0 && n <= maxSize(false, true, false) ? {mf: mf, sites: mb.inlineSites, size: n} : null;
 	}
 
 	// drops the blocks no longer reachable (after a callee that never returns)
@@ -195,7 +193,7 @@ class Inline {
 		if (!all) f.blocks = [for (b in f.blocks) if (b.mark == reach) b];
 	}
 
-	public static var devirtOn = Sys.getEnv("HXMC_DEVIRT") != "0";
+	public static var devirtOn = true; // (the build's, Options.apply)
 
 	// Devirtualization: a virtual call on an object made in f (New: its class
 	// exactly known) calls the class's implementation of the selector

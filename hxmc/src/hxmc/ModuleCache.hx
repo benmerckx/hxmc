@@ -414,7 +414,7 @@ class ModuleCache {
 			l.push(name);
 			Sys.putEnv(RETYPE, l.join(","));
 		}
-		if (stats() || s.log)
+		if (stats || s.log)
 			Sys.println("hxmc: module cache: " + name + (why == null ? " keeps state of restored modules' macros (" + restored.join(", ") + "), which this build's macros use" : why)
 				+ ": the build again, those typed");
 		try Sys.stdout().flush() catch (_:Dynamic) {}
@@ -774,9 +774,10 @@ class ModuleCache {
 		fresh(s, core.Globals.sTypePath(m.mPath) + " refers to " + core.Globals.sTypePath(c.clPath) + "." + name + ", which it no longer has");
 	}
 
-	static function wanted(com:CommonContext):Bool {
-		var env = Sys.getEnv("HXMC_MODULE_CACHE");
-		return env != "0" && CacheDir.define(com, "hxmc.no-module-cache") == null;
+	// (HXMC_MODULE_CACHE=0 wins over the define: the tool sets it for its own
+	// run again, ModuleCache.again)
+	public static function wanted(com:CommonContext):Bool {
+		return Sys.getEnv("HXMC_MODULE_CACHE") != "0" && Options.on("hxmc.module-cache", true, com.defines) && CacheDir.define(com, "hxmc.no-module-cache") == null;
 	}
 
 	// why a build that wants the cache cannot use it (null: it can)
@@ -809,7 +810,7 @@ class ModuleCache {
 		if (com.sctx.isServer || Driver.resident) ServerCallbacks.install();
 		if (s == null) {
 			if (why == null) why = "no cache directory";
-			if (why != "off" && stats()) Sys.println('hxmc: module cache not used ($why)');
+			if (why != "off" && stats) Sys.println('hxmc: module cache not used ($why)');
 			return;
 		}
 		state = s;
@@ -889,8 +890,7 @@ class ModuleCache {
 		});
 	}
 
-	static function stats():Bool
-		return Sys.getEnv("HXMC_STATS") == "1";
+	static var stats = false; // (the build's, Options.apply)
 
 	static function ms(t:Float):Int
 		return Std.int((haxe.Timer.stamp() - t) * 1000);
@@ -963,7 +963,7 @@ class ModuleCache {
 			s.reselect();
 			s.loaded = s.install(0);
 			if (s.signs[1] != null) s.loaded += s.install(1);
-			if (stats())
+			if (stats)
 				Sys.println('hxmc: module cache: ${s.loaded} modules of ${s.index.variants.length} variants read (${Std.int((s.openTime + haxe.Timer.stamp() - t0) * 1000)} ms)');
 			return;
 		}
@@ -971,7 +971,7 @@ class ModuleCache {
 			var sign = context.CommonCache.getCacheSign(ctx.com);
 			if (sign != s.signs[1]) {
 				if (s.volatileReason == null) s.volatileReason = "the macros' context has other defines than predicted";
-				if (stats()) Sys.println("hxmc: module cache: the macros' context's signature " + sign + " is not the predicted " + s.signs[1]);
+				if (stats) Sys.println("hxmc: module cache: the macros' context's signature " + sign + " is not the predicted " + s.signs[1]);
 				if (s.log) {
 					var a = ctx.com.defines.values, p = s.defs[1];
 					for (k in a.keys())
@@ -1097,7 +1097,7 @@ class ModuleCache {
 		}
 		var stored = store.readIndex(key);
 		var ix = stored == null ? null : try ModuleStore.readIndex(stored.data) catch (e:Dynamic) {
-			if (stats()) Sys.println('hxmc: module cache: ${store.indexPath(key)} unreadable ($e)');
+			if (stats) Sys.println('hxmc: module cache: ${store.indexPath(key)} unreadable ($e)');
 			null;
 		}
 		if (ix != null) {
@@ -1842,7 +1842,7 @@ class ModuleCache {
 					wrote = try s.store.writeIndex(s.indexKey, ModuleStore.packsOf(ix), ModuleStore.writeIndex(ix)) catch (_:Dynamic) false;
 			}
 		}
-		if (stats()) {
+		if (stats) {
 			var n = s.verdictCounts();
 			Sys.println('hxmc: module cache: ${s.checked} checked (${Std.int(s.checkTime * 1000)} ms), ${s.written} modules encoded (${Std.int(s.captureTime * 1000)} ms), '
 				+ '${s.typedUnder} typed again under restored ones, ${s.cycleTyped} with their cycle, interfaces ${Std.int(s.ifaceTime * 1000)} ms, $blobs blobs, index ${wrote ? "written" : "unchanged"} (${ms(t0)} ms), '

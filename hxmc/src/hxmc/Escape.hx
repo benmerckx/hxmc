@@ -46,16 +46,13 @@ class Escape {
 	static inline var NONE = SsaReader.NONE; // no definition in the block
 	static inline var NOTSET = SsaReader.NOTSET;
 
-	public static var on = Sys.getEnv("HXMC_ESCAPE") != "0";
+	public static var on = true; // (the build's, Options.apply)
 
 	// (debugging: HXMC_ESCAPE_HASH=<lo>-<hi>, the functions whose names hash
 	// to lo...hi of 0...1024 only; HXMC_ESCAPE_NO=<parts>, parts off:
 	// closures, frames, again, boxes, replace, screen, anon)
-	static var hashRange:Null<Array<Int>> = {
-		var e = Sys.getEnv("HXMC_ESCAPE_HASH");
-		e == null ? null : [for (x in e.split("-")) Std.parseInt(x)];
-	};
-	static var no = Sys.getEnv("HXMC_ESCAPE_NO") ?? "";
+	static var hashRange:Null<Array<Int>> = null;
+	static var no = "";
 
 	public static function allowed(name:String):Bool {
 		if (hashRange == null) return true;
@@ -75,7 +72,7 @@ class Escape {
 	public static var refSlots:Null<Map<Int, Vector<Bool>>>;
 
 	// (HXMC_ESCAPE_LOG=1) what happens to each allocation that is analyzed
-	static var log = Sys.getEnv("HXMC_ESCAPE_LOG") == "1";
+	static var log = false;
 
 	var f:MFunc;
 
@@ -119,7 +116,7 @@ class Escape {
 		this.f = f;
 
 	// (HXMC_ESCAPE_DUMP=<function symbol>: its object-level Mir before and after)
-	static var dumpName = Sys.getEnv("HXMC_ESCAPE_DUMP");
+	static var dumpName:Null<String> = null;
 
 	public function run() {
 		if (f.name == dumpName) Sys.println("escape: before\n" + f.dump());

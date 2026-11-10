@@ -84,7 +84,7 @@ class Reach {
 	var enumSeen = new Map<EnumInfo, Bool>();
 	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root;
 	// several names separated by commas: each)
-	var whyName = Sys.getEnv("HXMC_REACH_WHY");
+	static var whyName:Null<String> = null; // (the build's, Options.apply)
 	var cur:Null<FuncInfo> = null; // the function being scanned
 	var why = new Map<FuncInfo, {from:Null<FuncInfo>, how:String}>();
 	var instBy = new Map<Int, Null<FuncInfo>>();
@@ -95,11 +95,13 @@ class Reach {
 	}
 
 	// (HXMC_REACH=0: every function stays, as the lowering made them)
+	static var on = true;
+
 	public static function run(p:Program, stats:Bool) {
 		var r = new Reach(p, stats);
 		r.analyze();
-		if (r.whyName != null) r.explain();
-		if (Sys.getEnv("HXMC_REACH") == "0") return;
+		if (whyName != null) r.explain();
+		if (!on) return;
 		r.apply();
 	}
 

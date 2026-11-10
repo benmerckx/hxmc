@@ -296,7 +296,7 @@ class Loader {
 		return host;
 	}
 
-	static var debug = Sys.getEnv("HXMC_MACRO_DEBUG") == "1";
+	static var debug = false; // (the build's, Options.apply)
 
 	static function dbg(s:String)
 		if (debug) Sys.stderr().writeString("hxmc.macros: load: " + s + "\n");
@@ -961,7 +961,7 @@ class Loader {
 	public static inline var WINDOW_HI = 0x7fff0000;
 	static inline var CHUNK = 4 << 20;
 	static var windowHi = {
-		var kb = Std.parseInt(Sys.getEnv("HXMC_MIR_TIER_WINDOW") ?? "");
+		var kb = Std.parseInt(Options.flag("hxmc.mir-tier-window") ?? "");
 		kb == null || kb <= 0 || kb >= ((WINDOW_HI - WINDOW_LO) >> 10) ? WINDOW_HI : WINDOW_LO + (kb << 10);
 	};
 	// (the window full: bundles in malloc's memory, the tier stopped, interp.Tier)

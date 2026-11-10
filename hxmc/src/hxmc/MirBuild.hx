@@ -46,8 +46,10 @@ class MirBuild extends MirWriter {
 	inline function get_frameSlots()
 		return nslots;
 
-	static var noShadow = Sys.getEnv("HXMC_NOSHADOW") == "1";
-	static var frameSpills = Sys.getEnv("HXMC_FRAMESPILL") != "0"; // (measurement: 0 pushes on every slow path)
+	// (the build's, Options.apply)
+	static var noShadow = false;
+	static var frameSpills = true; // (measurement: 0 pushes on every slow path)
+	static var tryMemAll = false;
 
 	// explicit null tests (Lower.nullChecks): the values known not to be null
 	var fresh = new Map<Int, Bool>();
@@ -437,7 +439,7 @@ class MirBuild extends MirWriter {
 		// others are SSA values, which are immutable (in a slot or a
 		// callee-saved register across setjmp, both as they were at the call)
 		if (fn.hasTry) {
-			var inMem = Sys.getEnv("HXMC_TRYMEM") == "all" ? assignedInTry(fn) : memLocals(fn);
+			var inMem = tryMemAll ? assignedInTry(fn) : memLocals(fn);
 			for (l in fn.args.concat(fn.locals))
 				if (!refSlot.exists(l) && inMem.exists(l.id)) memSlot.set(l, f.slot(8, 8));
 		}

@@ -120,7 +120,8 @@ class Lower implements LowerQueries {
 
 	// ---- survey mode (HXMC_SURVEY=file): record unsupported constructs, keep going
 
-	public static var survey = Sys.getEnv("HXMC_SURVEY") != null;
+	public static var survey = false; // (the build's, Options.apply)
+	static var surveyFile:Null<String> = null;
 	// statements carry their source lines (Stmt.SPos): native builds but with
 	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
@@ -156,7 +157,7 @@ class Lower implements LowerQueries {
 		for (k in ns)
 			out.add('${natives.get(k)}\t$k\n');
 		out.add('\n${prog.funcs.length} functions, ${prog.classes.length} classes, ${prog.enums.length} enums, ${prog.shapes.length} shapes, ${prog.lambdas.length} lambdas\n');
-		sys.io.File.saveContent(Sys.getEnv("HXMC_SURVEY"), out.toString());
+		sys.io.File.saveContent(surveyFile, out.toString());
 	}
 
 	public function guarded(fi:FuncInfo, f:() -> Void):() -> Void {

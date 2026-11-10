@@ -22,7 +22,7 @@ class Frames {
 		this.f = f;
 
 	static inline var NONE = 0x40000000; // (no offset: not the frame's address)
-	static var live = Sys.getEnv("HXMC_FRAMES_LIVE") != "0";
+	static var live = true; // (the build's, Options.apply)
 
 	public function run() {
 		var r:Null<MIns> = null;

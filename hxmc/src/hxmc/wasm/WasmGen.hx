@@ -67,7 +67,7 @@ class WasmGen {
 	public static inline var STACK_OVERFLOW = "rt_cstack_overflow";
 	// the last exception a pad caught (an exnref global; LinkWasm)
 	public static inline var EXNREF = "rt_exnref";
-	public static var coalesceOn = Sys.getEnv("HXMC_WASM_COALESCE") != "0";
+	public static var coalesceOn = true; // (the build's, Options.apply)
 
 	var obj:Obj;
 	var legacyEh:Bool; // legacy exception handling (try/catch_all/rethrow) instead of try_table and exnref

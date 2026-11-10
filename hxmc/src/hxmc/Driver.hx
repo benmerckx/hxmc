@@ -102,7 +102,9 @@ class Driver {
 		}
 		if (failure != null) throw failure;
 	}
-	static var sroa = Sys.getEnv("HXMC_SROA") != "0";
+	static var sroa = true; // (the build's, Options.apply)
+	static var nogc = false;
+	static var wasmStackKb:Null<String> = null;
 	var raRounds = 0;
 	var escRemoved = 0;
 	var escFolds = 0;
@@ -425,7 +427,7 @@ class Driver {
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (o.opt ? "" : "+no-opt") + (abi.output == SharedLibrary ? "+shared" : "") + (Inline.limits() != Inline.DEFAULTS ? "+inline=" + Inline.limits() : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -622,7 +624,7 @@ class Driver {
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
-			var stack = Sys.getEnv("HXMC_WASM_STACK_KB");
+			var stack = wasmStackKb;
 			// (the linker's stack runs rt_init only: the runtime's takes over, wasm/Gc.hx)
 			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 64 << 10);
 			lw.nameSection = !o.strip;
@@ -728,7 +730,7 @@ class Driver {
 		// the runtime objects' sections and the runtime's Haxe functions that
 		// nothing reaches are left out (LinkCore.gc; a Mir host: every runtime
 		// function stays, for the code it loads)
-		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.mirHost ? rts : null;
+		var collect = !nogc && !o.mirHost ? rts : null;
 		var exe = abi.os == "windows" ? {
 			var l = new LinkPE(all, abi.arm);
 			if (abi.output == SharedLibrary) {

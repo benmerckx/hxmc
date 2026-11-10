@@ -151,7 +151,7 @@ class Opt {
 		}
 	}
 
-	static var licmOn = Sys.getEnv("HXMC_LICM") != "0";
+	static var licmOn = true; // (the build's, Options.apply)
 
 	// ---- loop-invariant code motion
 

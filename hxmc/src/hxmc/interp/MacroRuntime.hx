@@ -31,8 +31,8 @@ class MacroRuntime {
 	public static inline var META = ":hxmc.hostCode";
 
 	public static function install() {
-		if (Sys.getEnv("HXMC_MIR_TYPE_RUNTIME") != "1") typing.TypeloadFields.TypeBinding.untypedBodyHook = body;
-		if (Sys.getEnv("HXMC_MIR_LAZY_BODIES") != "0") {
+		if (!Options.on("hxmc.mir-type-runtime", false)) typing.TypeloadFields.TypeBinding.untypedBodyHook = body;
+		if (Options.on("hxmc.mir-lazy-bodies", true)) {
 			typing.TypeloadFields.TypeBinding.lazyBodyHook = lazyBody;
 			typing.TypeloadFields.TypeBinding.typeLazyBodies = typeAll;
 			typing.TypeloadParse.skipBodiesHook = (com, file) -> com.isMacroContext && stdFile(com, file);
