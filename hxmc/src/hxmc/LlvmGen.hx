@@ -713,6 +713,9 @@ class LlvmGen {
 		var shoff = b.getInt32(40), shnum = b.getUInt16(60), shstrndx = b.getUInt16(62);
 		inline function sh(i:Int)
 			return shoff + 64 * i;
+		// (extended section numbering, as ElfReader: section 0's size and link)
+		if (shnum == 0 && shoff != 0) shnum = b.getInt32(sh(0) + 32);
+		if (shstrndx == 0xffff) shstrndx = b.getInt32(sh(0) + 40);
 		var strOff = b.getInt32(sh(shstrndx) + 24);
 		function cstr(at:Int):String {
 			var e = at;
@@ -720,10 +723,11 @@ class LlvmGen {
 				e++;
 			return b.getString(at, e - at);
 		}
-		var dl = -1, rela = -1, symtab = -1;
+		var dl = -1, rela = -1, symtab = -1, xindex = -1;
 		for (i in 0...shnum) {
 			var h = sh(i), type = b.getInt32(h + 4);
 			if (type == 2) symtab = i;
+			if (type == 18) xindex = i;
 			if (type == 1 && cstr(strOff + b.getInt32(h)) == ".debug_line") dl = i;
 		}
 		if (dl < 0 || symtab < 0) return;
@@ -748,8 +752,12 @@ class LlvmGen {
 			var off = b.getInt32(sh(rela) + 24), n = Std.int(b.getInt32(sh(rela) + 32) / 24);
 			for (k in 0...n) {
 				var r = off + 24 * k;
-				var y = symOff + 24 * b.getInt32(r + 12);
-				var bs = base.get(b.getUInt16(y + 6));
+				var si = b.getInt32(r + 12), y = symOff + 24 * si;
+				var shndx = b.getUInt16(y + 6);
+				// (SHN_XINDEX: the index in SHT_SYMTAB_SHNDX)
+				if (shndx == 0xffff && xindex >= 0 && b.getInt32(sh(xindex) + 40) == symtab)
+					shndx = b.getInt32(b.getInt32(sh(xindex) + 24) + 4 * si);
+				var bs = base.get(shndx);
 				if (bs != null) addrs.set(dlOff + b.getInt32(r), bs + b.getInt32(y + 8) + b.getInt32(r + 16));
 			}
 		}
