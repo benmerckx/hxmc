@@ -608,6 +608,7 @@ class Printer {
 		case ServerInvalidate: "server/invalidate";
 		case ServerInvalidateFiles: "server_invalidate_files";
 		case ServerInvalidateModule: "server_invalidate_module";
+		case MacroInterpreterReset: "macro_interpreter_reset"; // port: (not upstream)
 	};
 
 	public static function sModuleSkipReason(reason:ModuleSkipReason):String {

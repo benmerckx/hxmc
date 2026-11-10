@@ -117,6 +117,36 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   restored no such definition). The defined module still depends on that
   module (`MDepFromMacro`) (`typing.MacroContext.defineType`; server-verify's
   `a class a callback defines, in the next compilations`, `make dev-check`).
+- A macro class's `@:persistent` statics are kept, per signature, when the
+  macro interpreter is handed the class from another module and drops its
+  prototype: the values go back when that same module (its id) is handed
+  over again (with an initializer or without; a signature's values go with
+  its context: `CompilationCache.Cache.contextsRemovedHook`). Upstream starts them again from their initializers there, so
+  a compilation server whose builds alternate between two signatures (a
+  check's `--no-output` and a build) resets them at each switch, while each
+  context keeps reusing the modules whose macros set them. 4.3 resets them
+  too, but 5.0's `define_type` taints a defined module in every context, so
+  the other context's macro now runs again on the reset state: a build
+  macro that kept its class's fields there for a later macro finds none,
+  and that build and every later one of the signature fails (a failed build
+  is not cached). 4.3.7's server builds the same sequence
+  (`macros.eval.EvalPrototype.addTypes`; server-verify's `a build macro's
+  persistent state, in builds of two signatures` and its case without an
+  initializer, `make dev-check`). Mir macros (`-D hxmc.macros=mir`) keep
+  upstream's behaviour here ([hxmc.md](hxmc.md#macros-on-the-mir-interpreter)).
+- An error reported in the macro context discards the macro interpreter
+  (upstream's `create_macro_interp`), its statics with it; the server's
+  next request then taints every cached module, in every context, that
+  depends on the macro context's modules or on a macro (a dependency of
+  another signature, `MDepFromMacro`, `MDepFromMacroDefine`), so their
+  macros run again in the new interpreter. Upstream keeps them: a module
+  whose build macro kept state in a macro class's statics is restored while
+  the new interpreter has none, and every later build that reads it fails
+  (the same failure as above, after a build macro's type error)
+  (`compiler.CompilationCache.Cache.taintMacroModules`, called from
+  `ServerCache.cleanup`, taint reason `MacroInterpreterReset`;
+  server-verify's `a build macro's persistent state, after an error in a
+  macro`, `make dev-check`).
 
 ## The one exception to byte identity
 

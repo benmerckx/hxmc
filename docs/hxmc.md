@@ -829,6 +829,29 @@ typed again in the server's next compilation (`ServerCallbacks.hx`,
 `ServerCache.checkModuleHook`), as the module cache types such a module
 every build.
 
+A server has one macro interpreter for all its contexts (one per
+signature: a check's `--no-output` and a build, a display request, another
+program), each with its own modules. Upstream starts a macro class's
+statics again from their initializers whenever the interpreter is handed
+the class from another module than the last one, so builds that alternate
+between two signatures reset its `@:persistent` statics at each switch,
+while each context keeps reusing the modules whose macros set them. The
+port keeps those values by the dropped module's signature and gives them
+back when that same module comes back (`EvalPrototype.addTypes`, a
+divergence from upstream,
+[porting.md](porting.md#divergences-from-the-reference)): each context
+sees what its own modules left (helder's `HostMacro.template`, ViewRuntime's
+fields kept by its build macro: "the runtime's fields are not known" in
+every build once a check and a build had alternated). A signature's values
+go when the server removes its context (stale, `clear`, `softClear`).
+An error in the macro context discards the interpreter, those values
+with it (as upstream); the server then taints every cached module whose
+typing ran macros or loaded the macro context's modules, in every context
+(`CompilationCache.Cache.taintMacroModules`, a divergence from upstream),
+so their macros run again in the next interpreter: else a module whose
+build macro kept state there stays restored without it, and every later
+build that reads the state fails.
+
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
 WASI. A callback registered outside a module's typing, or a macro setting
@@ -1076,6 +1099,11 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   items, genpy's order by them).
 - An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
   `String.length` counts UTF-16 units (Eval: code points).
+- A class handed over from another context's module (a server's builds of
+  two signatures) starts its `@:persistent` statics again from their
+  initializers, as upstream's Eval does; the port's Eval gives each
+  context's values back ([module cache](#module-cache), the compilation
+  server).
 - Not available: `Context.getMacroStack`, macro arguments that are
   functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
   hxmc's.
