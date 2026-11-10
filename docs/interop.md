@@ -143,8 +143,9 @@ construction, on the lowered body:
 
 - no allocation and no GC point (as `@:hxmc.unsafe`, the chain of calls to
   the first one named);
-- no value of a GC type anywhere: parameters, result, locals, every
-  expression (string literals are static data, allowed);
+- GC values only as loans (below), and none at all in a kernel that
+  enters a safe region (`@:hxmc.blocking`, or one that calls one): other
+  threads collect meanwhile;
 - calls only of `@:hxmc.kernel` or `@:hxmc.blocking` functions and of C or
   runtime functions that are no GC point (`@:hxmc.fast` or
   `@:hxmc.blocking` externs, `Mem`, `Atomic`); no call through a closure,
@@ -178,11 +179,27 @@ position):
 
 | | Allowed | Rejected |
 | --- | --- | --- |
-| values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values | GC types; raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
+| values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
 | calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast |
 | statics | reads | writes, also of a struct static's fields |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
+
+**Loans.** A kernel that enters no safe region may be lent GC values:
+nothing collects while it runs, so nothing moves or frees what it was
+handed (`Span.ofBytes`' rule, for every GC type). It holds them in locals,
+passes them to kernels, returns them and compares them with `null`; it
+never stores one (it has no write barrier) and never reads inside one by
+a field, an index or an operator. What is inside is read through a view: a
+kernel that knows the layout and gives it out checked, as `hxmc.rt.StrView`
+does a string's (its length, its width, its units as a `ReadOnlySpan`).
+The views are the trusted part, `@:hxmc.unsafe`; what reads through them
+is checked.
+
+```haxe
+@:hxmc.kernel static function count(s:String, u:Int):Int
+  return StrView.isOne(s) ? count1(StrView.units1(s), u) : count2(StrView.units2(s), u);
+```
 
 A GC type is one the lowering represents as a reference: class instances,
 `String`, arrays, anonymous objects, `Dynamic`, closures, enum values (also

@@ -17,8 +17,12 @@ using core.TFunctions;
 // build: a body the compilation server reuses is not checked here again.
 //
 // The rules, each error naming the rule and the expression:
-//   - no value of a GC type (an object, String, Array, closure, enum value,
-//     anonymous object, Dynamic, Null<T>, an erased type parameter);
+//   - GC values (an object, String, Array, enum value, anonymous object,
+//     Dynamic, Null<T>, an erased type parameter) only as loans, and none
+//     in a @:hxmc.blocking kernel: held in locals, passed to kernels,
+//     returned, compared with null; read only through a kernel that knows
+//     the layout (a view: hxmc.rt.StrView), never by a field or an index;
+//     no allocation (string literals are static data);
 //   - no raw memory: no value of hxmc.unsafe's types but its C scalars
 //     (Ptr, IoBuffer, Arena, CString, Slice, ...) nor of an abstract over
 //     one, no call of Mem, Atomic, Callback or a C function;
@@ -31,10 +35,14 @@ class KernelCheck {
 	var fi:FuncInfo;
 	var errors:Array<String> = [];
 	var seen = new Map<String, Bool>();
+	// GC values as loans (not blocking; Facts.kernelCulprit checks the rest:
+	// no safe region entered, nothing stored)
+	var loans:Bool;
 
 	function new(l, fi) {
 		this.l = l;
 		this.fi = fi;
+		loans = !fi.declBlocking;
 	}
 
 	// the violations of fi's body tf (an error listing them all), or nothing
@@ -116,11 +124,26 @@ class KernelCheck {
 			return false;
 		}
 		if (Ir.isRef(l.ty(t))) {
-			fail(p, what + " has the GC type " + typeName(t), "no GC values");
+			if (loans) return true;
+			fail(p, what + " has the GC type " + typeName(t), "no GC values in a blocking kernel");
 			return false;
 		}
 		return true;
 	}
+
+	function isGc(e:TExpr):Bool
+		return !isRaw(e.etype) && !e.etype.follow().match(TFun(_)) && Ir.isRef(l.ty(e.etype));
+
+	static function isNullConst(e:TExpr):Bool
+		return switch e.eexpr {
+			case TConst(TNull): true;
+			case TParenthesis(x) | TMeta(_, x): isNullConst(x);
+			case _: false;
+		}
+
+	// a GC value read inside (a loan is opaque: its view reads it)
+	function opaque(e:TExpr, what:String)
+		fail(e.epos, what + " of the GC value " + typeName(e.etype), "a kernel reads a GC value through its view");
 
 	// a scalar: not a struct, not raw, not GC (an unchecked cast between two is a conversion)
 	function scalar(t:T):Bool
@@ -236,7 +259,7 @@ class KernelCheck {
 	function expr(e:TExpr) {
 		switch e.eexpr {
 			case TConst(TString(_)):
-				fail(e.epos, "a string", "no GC values");
+				if (!loans) fail(e.epos, "a string", "no GC values in a blocking kernel");
 				return;
 			case TConst(TNull) | TConst(TThis) | TConst(TSuper):
 				if (!value(e.etype, e.epos, "this value")) return;
@@ -291,8 +314,26 @@ class KernelCheck {
 					case FEnum(_):
 				}
 				if (!value(e.etype, e.epos, "this field")) return;
+				switch fa {
+					case FInstance(c, _, cf) if (!CInterop.isStruct(c) && isGc(o)):
+						opaque(o, "the field " + cf.cfName);
+						return;
+					case _:
+				}
 			case TArray(a, _):
 				if (!value(a.etype, a.epos, "this array")) return;
+				if (isGc(a)) {
+					opaque(a, "an element");
+					return;
+				}
+			case TBinop(op, a, b) if (loans && op != OpAssign && (isGc(a) || isGc(b))):
+				if (!(op.match(OpEq | OpNotEq) && (isNullConst(a) || isNullConst(b)))) {
+					opaque(isGc(a) ? a : b, "an operation on");
+					return;
+				}
+			case TUnop(_, _, x) if (loans && isGc(x)):
+				opaque(x, "an operation on");
+				return;
 			case TCast(x, null):
 				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow()) && !toUnderlying(x.etype, e.etype)
 					&& !(isVector(x.etype) && isVector(e.etype))) {

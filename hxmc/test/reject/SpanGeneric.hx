@@ -1,5 +1,5 @@
-// A type parameter's value is erased to a reference (boxed): no span through one, in kernels no type parameter at all.
-// expect: SpanGeneric.hx:7: SpanGeneric.id: the parameter x has the GC type id.T (kernel: no GC values)
+// A type parameter's value is erased to a reference (boxed): no span through one, as a kernel allocates no box.
+// expect: SpanGeneric.hx:10: SpanGeneric.first is declared @:hxmc.kernel but reaches a GC point: it allocates an object
 import hxmc.ReadOnlySpan;
 import hxmc.unsafe.UInt8;
 

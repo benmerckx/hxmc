@@ -173,7 +173,10 @@ class Driver {
 						var inLoop = Inline.loopBlocks(mf);
 						for (s in todo) {
 							var t = template(s.fn);
-							if (t != null && s.fn != fn && t.size <= Inline.maxSize(abi.wasm, s.call.block.mark == inLoop, StringTools.startsWith(s.fn.module, "hxmc.rt.")))
+							// (a kernel of the runtime, a view's accessor, as any function: what
+							// the runtime's code read inline before it reads through one)
+							var rt = StringTools.startsWith(s.fn.module, "hxmc.rt.") && !s.fn.declKernel;
+							if (t != null && s.fn != fn && t.size <= Inline.maxSize(abi.wasm, s.call.block.mark == inLoop, rt))
 								sites.push({call: s.call, callee: t});
 						}
 						todo = Inline.run(mf, sites);

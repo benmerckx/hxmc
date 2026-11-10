@@ -652,6 +652,20 @@ class Facts {
 						work.push(c);
 					}
 		}
+		// the functions that call a @:hxmc.blocking one, declared: on every
+		// target, wasm32 too where no call enters a region (kernelCulprit's loans)
+		var regionWork = [for (f in p.funcs) if (f.declBlocking) f];
+		regionCallers = new Map();
+		while (regionWork.length > 0) {
+			var g = regionWork.pop();
+			var cs = callers.get(g);
+			if (cs != null)
+				for (c in cs)
+					if (!regionCallers.exists(c)) {
+						regionCallers.set(c, true);
+						regionWork.push(c);
+					}
+		}
 		// @:hxmc.unsafe: a promise the runtime's Haxe code relies on (raw
 		// addresses kept across calls), checked: every violation, with the
 		// chain of calls to the first GC point; @:hxmc.kernel and
@@ -684,12 +698,24 @@ class Facts {
 	// @:hxmc.blocking) functions and of C or runtime functions that are no GC
 	// point (@:hxmc.fast or @:hxmc.blocking externs, Mem's intrinsics). Null
 	// when it holds, else the first violation.
+	//
+	// A kernel that enters no safe region may hold GC values all the same, as
+	// loans: nothing collects while it runs, so nothing moves or frees what
+	// it was handed (Span.ofBytes' rule, for every GC type). It stores none
+	// of them anywhere (it has no write barrier). One that enters a region
+	// holds none: other threads collect meanwhile.
+	var regionCallers = new Map<FuncInfo, Bool>();
+
 	function kernelCulprit(f:FuncInfo):Null<String> {
-		if (Ir.isRef(f.ret)) return "returns a value of a GC type";
-		for (a in f.args)
-			if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type';
-		for (lo in f.locals)
-			if (Ir.isRef(lo.ty)) return 'its local ${lo.name} has a GC type';
+		var loans = !f.declBlocking && !f.blocks && !regionCallers.exists(f);
+		var region = " (a kernel that enters a safe region holds no GC values)";
+		if (!loans) {
+			if (Ir.isRef(f.ret)) return "returns a value of a GC type" + region;
+			for (a in f.args)
+				if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type' + region;
+			for (lo in f.locals)
+				if (Ir.isRef(lo.ty)) return 'its local ${lo.name} has a GC type' + region;
+		}
 		var why:Null<String> = null;
 		function exWhy(e:Ex) {
 			if (why != null) return;
@@ -705,13 +731,19 @@ class Facts {
 				case ECallHost(n, _, _) if (!FnLower.noGcHost(n) && n != "rt_blocking_enter" && n != "rt_blocking_restore"): why = "it calls " + n + ", which may collect";
 				// (a string literal is static data, never moved: Mem.cstr's and Mem.sym's names)
 				case EStr(_):
-				case _ if (Ir.isRef(Ir.typeOf(e))): why = "it has a value of a GC type (" + e.getName() + ")";
+				case _ if (!loans && Ir.isRef(Ir.typeOf(e))): why = "it has a value of a GC type (" + e.getName() + ")" + region;
 				case _:
 			}
 			Facts.iterEx(exWhy, e);
 		}
+		function stored(v:Ex)
+			if (why == null && Ir.isRef(Ir.typeOf(v))) why = "it stores a GC value (a kernel's GC values are loans: kept in locals only)";
 		function stWhy(s:Stmt) {
 			if (why != null) return;
+			switch s {
+				case SSetField(_, _, _, v) | SAnonSet(_, _, _, v) | SArrSet(_, _, _, v) | SArrPush(_, _, v) | SBoxSet(_, _, v) | SSetGlobal(_, v): stored(v);
+				case _:
+			}
 			Facts.iterStmt(stWhy, exWhy, s);
 		}
 		for (s in f.body)
