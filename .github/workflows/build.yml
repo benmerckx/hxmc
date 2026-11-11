@@ -997,9 +997,24 @@ jobs:
         if: always() && runner.os != 'Windows'
         run: |
           set -ex
-          # (the package mirror fails to resolve now and then: tried again)
+          # gdb on Linux: a static build from GitHub's releases (guyush1/gdb-static,
+          # pinned, checked by its hash), not the runners' package mirror, which
+          # failed to resolve for hours; the mirror only when that fails
           retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
-          if [ "$RUNNER_OS" = Linux ] && ! command -v gdb > /dev/null; then retry sudo apt-get install -qqy gdb; fi
+          if [ "$RUNNER_OS" = Linux ] && ! command -v gdb > /dev/null; then
+            case "$(uname -m)" in
+              x86_64) a=x86_64 h=47f29d8697e2659dd1def3c78446dcfdf54c4cdc4f652dce5b14e50c9e6cb827 ;;
+              aarch64) a=aarch64 h=1a57632c82be4c6e1fa8a507d9c6e90de6b150d2d6f34acb4a99b0a5c375fd1b ;;
+            esac
+            t="$RUNNER_TEMP/gdb-static.tar.gz"
+            if retry curl -fsSL -o "$t" "https://github.com/guyush1/gdb-static/releases/download/v18.1-static/gdb-static-slim-$a.tar.gz" \
+              && echo "$h  $t" | sha256sum -c -; then
+              mkdir -p "$RUNNER_TEMP/gdb" && tar xzf "$t" -C "$RUNNER_TEMP/gdb" ./gdb && export PATH="$RUNNER_TEMP/gdb:$PATH"
+            else
+              retry sudo apt-get install -qqy gdb
+            fi
+            gdb --version | head -1
+          fi
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run DebugCheck --run corpus/_debug
       # Linux: the corpus in the dynamic glibc mode (-D hxmc.libc=glibc) against
