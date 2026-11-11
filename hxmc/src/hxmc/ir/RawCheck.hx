@@ -40,18 +40,30 @@ class RawCheck {
 	// hxmc.unsafe's classes of C functions, raw through their types only
 	static final C_CLASSES = ["LibC", "Posix", "Win32", "Winsock", "Linux"];
 
-	var name:String;
+	var c:TClass;
+	var cf:TClassField;
 	var first:Null<String> = null;
 	var firstPos:Null<core.Globals.Pos> = null;
 	var count = 0;
 
-	function new(name)
-		this.name = name;
+	function new(c, cf) {
+		this.c = c;
+		this.cf = cf;
+	}
 
 	// the violations of the typed program (TargetFlags: after typing, before
 	// the filters, whose analyzer drops a statement's metadata): errors in
 	// hxmc's std, warnings elsewhere, kept with the module (-D hxmc.strict: errors)
+	// the seconds spent checking (HXMC_STATS)
+	public static var seconds = 0.0;
+
 	public static function run(com:context.Common.CommonContext, types:Array<ModuleType>) {
+		var t0 = haxe.Timer.stamp();
+		check(com, types);
+		seconds += haxe.Timer.stamp() - t0;
+	}
+
+	static function check(com:context.Common.CommonContext, types:Array<ModuleType>) {
 		var roots = stdRoots([for (cp in com.classPaths.asList()) cp.path]);
 		var strict = core.Define.rawDefined(com.defines, "hxmc.strict");
 		// (HXMC_RAW_LIST=<file>: the violations listed there instead, to annotate them)
@@ -65,7 +77,7 @@ class RawCheck {
 					var std = inStd(c, roots);
 					function field(cf:TClassField) {
 						if (cf.cfExpr == null || trusted(c, cf)) return;
-						var r = new RawCheck(core.Globals.sTypePath(c.clPath) + "." + cf.cfName);
+						var r = new RawCheck(c, cf);
 						r.expr(cf.cfExpr);
 						if (r.count == 0) return;
 						if (listFile != null) {
@@ -90,8 +102,11 @@ class RawCheck {
 	static function rawApi(c:TClass):Bool
 		return c.clPath.pack.length >= 2 && c.clPath.pack[0] == "hxmc" && c.clPath.pack[1] == "unsafe";
 
+	static inline function unsafePack(p:Array<String>):Bool
+		return p.length == 2 && p[1] == "unsafe" && p[0] == "hxmc";
+
 	function what():String
-		return name + ": " + first + (count > 1 ? " and " + (count - 1) + " more" : "") + " (" + RULE + ")";
+		return core.Globals.sTypePath(c.clPath) + "." + cf.cfName + ": " + first + (count > 1 ? " and " + (count - 1) + " more" : "") + " (" + RULE + ")";
 
 	// the class paths of hxmc's std
 	public static function stdRoots(paths:Array<String>):Array<String>
@@ -104,12 +119,17 @@ class RawCheck {
 	static function normal(p:String):String
 		return StringTools.replace(sys.FileSystem.absolutePath(p), "\\", "/");
 
+	static var stdFiles = new Map<String, Bool>();
+
 	static function inStd(c:TClass, roots:Array<String>):Bool {
 		if (roots.length == 0) return false;
-		var f = normal(c.clPos.pfile);
-		for (r in roots)
-			if (StringTools.startsWith(f, haxe.io.Path.addTrailingSlash(r))) return true;
-		return false;
+		var known = stdFiles.get(c.clPos.pfile);
+		if (known != null) return known;
+		var f = normal(c.clPos.pfile), r = false;
+		for (root in roots)
+			if (StringTools.startsWith(f, haxe.io.Path.addTrailingSlash(root))) r = true;
+		stdFiles.set(c.clPos.pfile, r);
+		return r;
 	}
 
 	static function has(ml:core.Ast.Metadata, n:String):Bool
@@ -141,12 +161,11 @@ class RawCheck {
 	static function rawCall(f:TExpr):Null<String> {
 		switch f.eexpr {
 			case TField(_, FStatic(c, cf)):
-				var pack = c.clPath.pack.join(".");
 				var owner = switch c.clKind {
 					case KAbstractImpl(a): a.aPath;
 					case _: c.clPath;
 				};
-				if (owner.pack.join(".") != "hxmc.unsafe" && pack != "hxmc.unsafe") return null;
+				if (!unsafePack(owner.pack)) return null;
 				var n = owner.name;
 				var full = "hxmc.unsafe." + n + "." + cf.cfName;
 				if (n == "Mem") return KernelCheck.PURE_MEM.indexOf(cf.cfName) >= 0 || VALUES.indexOf(cf.cfName) >= 0 ? null : "a call of " + full;

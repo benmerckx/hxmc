@@ -29,6 +29,7 @@ class TargetFlags {
 			optimization.Inline.keepMetaHook = keep;
 			// raw memory only in @:hxmc.unsafe code, checked once typed: errors in
 			// hxmc's std, warnings in the program's (-D hxmc.strict: errors)
+			hxmc.ir.RawCheck.seconds = 0;
 			if (keep != null) com.callbacks.addAfterTyping(types -> hxmc.ir.RawCheck.run(com, types));
 			if (com.platform.match(CustomTarget("hxmc"))) {
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))
