@@ -8,8 +8,11 @@ import hxmc.unsafe.UInt8;
 // alignment, checked as sub(i, 8 / size) is. A loop stepping by the word
 // while i < n - 8 (Opt.fits: a counter stepping up by s, below n - c with c
 // >= s - 1, is never negative) and a last word at n - 8 after n >= 8 keep
-// no check; a word at any i keeps its one (`at`).
-// range-checks: W.sum=0 W.sum2=0 W.last=0 W.at=1
+// no check; a word at any i keeps its one (`at`). The bytes after a word
+// loop, its counter going on, keep none either (`tail`), nor does all of a
+// span (`whole`: s.sub(0, s.length)).
+// range-checks: W.sum=0 W.sum2=0 W.last=0 W.at=1 W.tail=0 W.whole=0
+// span-checks: W.tail=0
 class W {
 	@:hxmc.kernel public static function sum(s:ReadOnlySpan<UInt8>):Int {
 		var n = s.length, i = 0, x = 0;
@@ -42,6 +45,22 @@ class W {
 
 	@:hxmc.kernel public static function at(s:ReadOnlySpan<UInt8>, i:Int):Int
 		return s.getI32(i);
+
+	@:hxmc.kernel public static function tail(s:ReadOnlySpan<UInt8>):Int {
+		var n = s.length, i = 0, x = 0;
+		while (i < n - 7) {
+			x = x ^ s.getI64(i).toInt();
+			i += 8;
+		}
+		while (i < n) {
+			x += s[i];
+			i++;
+		}
+		return x;
+	}
+
+	@:hxmc.kernel public static function whole(s:ReadOnlySpan<UInt8>):Int
+		return W.tail(s.sub(0, s.length));
 }
 
 class SpanWords {
@@ -51,6 +70,7 @@ class SpanWords {
 			b.set(i, i * 7 + 1);
 		trace(StringTools.hex(W.sum(ReadOnlySpan.ofBytes(b))), StringTools.hex(W.last(ReadOnlySpan.ofBytes(b))), StringTools.hex(W.at(ReadOnlySpan.ofBytes(b), 3)));
 		trace(StringTools.hex(W.units(ReadOnlySpan.ofBytes(b, 1, 20))), W.last(ReadOnlySpan.ofBytes(b, 0, 7)));
+		trace(StringTools.hex(W.tail(ReadOnlySpan.ofBytes(b))), W.whole(ReadOnlySpan.ofBytes(b, 16)));
 		trace(W.at(ReadOnlySpan.ofBytes(b), 18));
 	}
 }

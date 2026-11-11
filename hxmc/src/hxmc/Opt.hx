@@ -460,7 +460,8 @@ class Opt {
 						}
 					}
 				var t = b.term();
-				if (t != null && t.op == Br && t.targets[0] != t.targets[1] && fc.length > 0) {
+				// (a range check of all of a span holds with no fact: fits)
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1] && (fc.length > 0 || vals[t.a].op == Cmp && vals[t.a].imm == (CULt : Int))) {
 					var c = vals[t.a];
 					{
 						var known = 0; // 1 true, 2 false
@@ -681,7 +682,7 @@ class Opt {
 				if (lx[j] == ly[k] && ly[j] == n && (strict[k] || strict[j])) lt = true;
 			if (lt) break;
 		}
-		if (lt && nonNeg(i, cfg, 0)) return true;
+		if (lt && (nonNeg(i, cfg, 0) || stepped(i, n, cfg))) return true;
 		if (strided(i, n, lx, ly, strict, cfg)) return true;
 		if (window(i, n, lx, ly, strict, cfg)) return true;
 		// (a small block's index: x * s + k with constants s, k >= 0, x never
@@ -736,13 +737,13 @@ class Opt {
 	// (haxe.io.Bytes' test of a k-byte access, then a view's sub(p, k)), or
 	// p < n - j (signed) with p never negative; for any q, p <= n - q with p
 	// and q never negative (`pos > length - len` tested); p + q a constant
-	// at most n's least value (`if (b.length < 16) return`); p = n - j for a
-	// constant q = k <= j, n at least j (`if (n >= 8) s.getI64(n - 8)`). p is
-	// never negative also as a loop's counter stepping up by s from such a
-	// value where p < n - c, c >= s - 1, held (`while (i < n - 8) { ... i += 8; }`:
-	// stepped); p = x + d for a constant d if x < n - j, j >= d + k - 1, holds
-	// (a step's second word). A negative n passes it too (sext(n) is at least
-	// 2^63), so n - j may wrap there.
+	// at most n's least value (`if (b.length < 16) return`), or 0 + n (all of
+	// it); p = n - j for a constant q = k <= j, n at least j (`if (n >= 8)
+	// s.getI64(n - 8)`). p is never negative also as a loop's counter stepping
+	// up by s where p < n - c, c >= s - 1, held (`while (i < n - 8) { ...; i +=
+	// 8; }`: stepped); p = x + d for a constant d if x < n - j, j >= d + k - 1,
+	// holds (a step's second word). A negative n passes it too (sext(n) is at
+	// least 2^63), so n - j may wrap there.
 	function fits(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Bool {
 		if (c.imm != (CULt : Int)) return false;
 		var sn = f.vals[c.a], e = f.vals[c.b];
@@ -751,6 +752,8 @@ class Opt {
 		var r = relations(fc, fa, fb, fv);
 		// (p + q a constant: n at least that)
 		if (e.op == Const && e.ty == I64 && e.sym == null) return e.imm2 == 0 && e.imm >= 0 && lowerBound(n, r.lx, r.ly, r.strict) >= e.imm;
+		// (0 + n, all of it: sext(n) < zext(n) never holds, `s.sub(0, s.length)`)
+		if (e.op == ZExt && sameVal(e.a, n)) return true;
 		if (e.op != Add || e.ty != I64) return false;
 		function zextOf(v:Int):Int {
 			var x = f.vals[v];
@@ -770,6 +773,7 @@ class Opt {
 		if (p < 0) return false;
 		var k = konst(qv), q = zextOf(qv);
 		if (k < 0 && q < 0) return false;
+		if (constOf(p) == 0 && q >= 0 && sameVal(q, n)) return true;
 		function atLeast0(v:Int):Bool
 			return nonNeg(v, cfg, 0) || lowerBound(v, r.lx, r.ly, r.strict) >= 0 || stepped(v, n, cfg);
 		if (k >= 0) {
@@ -813,24 +817,27 @@ class Opt {
 		return false;
 	}
 
-	// whether v (an I32 phi) is never negative as a loop's counter: its
-	// operands never negative, or v + s for a constant s > 0 computed where
-	// a dominating branch found v < n - c with c >= s - 1 (or v <= n - c, c >=
-	// s): v + s <= n then, no wrap (n a length, never negative)
-	function stepped(v:Int, n:Int, cfg:Cfg<MBlock>):Bool {
+	// whether v (an I32) is never negative as nonNeg finds it, or as a
+	// loop's counter stepping by a constant s > 0: v + s computed where a
+	// dominating branch found v < n - c with c >= s - 1 (or v <= n - c, c >=
+	// s), so v + s <= n, no wrap (n a span's length, never negative); a phi
+	// of such counters too (a word loop's end, a byte loop's start)
+	function stepped(v:Int, n:Int, cfg:Cfg<MBlock>, depth = 0):Bool {
 		var x = f.vals[v];
-		if (x.op != Phi || x.ty != I32) return false;
-		var any = false;
+		if (x.ty != I32 || depth > 4) return false;
+		if (x.op == Const) return x.sym == null && x.imm >= 0;
+		if (x.op != Phi) return false;
 		for (a in x.args) {
 			if (a == v) continue;
 			var y = f.vals[a];
 			var s = y.op == Add && y.ty == I32 ? (y.a == v ? constOf(y.b) : y.b == v ? constOf(y.a) : -1) : -1;
-			if (s > 0 && s <= 1 << 16) {
+			if (s == 1) {
+				if (!belowSome(v, y.block, cfg)) return false;
+			} else if (s > 1 && s <= 1 << 16) {
 				if (!belowLength(v, y.block, n, s, cfg)) return false;
-				any = true;
-			} else if (!nonNeg(a, cfg, 0)) return false;
+			} else if (!stepped(a, n, cfg, depth + 1)) return false;
 		}
-		return any;
+		return true;
 	}
 
 	// whether a branch dominating block b found v < n - c (c >= s - 1) or v <= n - c (c >= s)

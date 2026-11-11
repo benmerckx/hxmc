@@ -1,3 +1,4 @@
 exit 2
-SpanWords.hx:52: 3070, 8D867F78, 2B241D16
-SpanWords.hx:53: 30, -1
+SpanWords.hx:71: 3070, 8D867F78, 2B241D16
+SpanWords.hx:72: 30, -1
+SpanWords.hx:73: 58484AB3, 635
