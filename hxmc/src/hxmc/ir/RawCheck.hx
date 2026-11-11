@@ -52,12 +52,12 @@ class RawCheck {
 		this.cf = cf;
 	}
 
-	// the violations of the typed program (TargetFlags: after typing, before
-	// the filters, whose analyzer drops a statement's metadata): errors in
-	// hxmc's std, warnings elsewhere, kept with the module (-D hxmc.strict: errors)
 	// the seconds spent checking (HXMC_STATS)
 	public static var seconds = 0.0;
 
+	// the violations of the typed program (TargetFlags: after typing, before
+	// the filters, whose analyzer drops a statement's metadata): errors in
+	// hxmc's std, warnings elsewhere, kept with the module (-D hxmc.strict: errors)
 	public static function run(com:context.Common.CommonContext, types:Array<ModuleType>) {
 		var t0 = haxe.Timer.stamp();
 		check(com, types);
