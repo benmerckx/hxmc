@@ -3010,6 +3010,7 @@ class FnLower {
 					var n = Lower.metaArg(core.Meta.getOpt(Native, cf.cfMeta));
 					name = n != null ? n : cf.cfName;
 				}
+				if (name == "hxmc_Platform_available") return available(cargs, e, rt);
 				// (hxmc.Platform: the target's constants, Mem's intrinsics under their own names)
 				if (StringTools.startsWith(name, "hxmc_Platform_")) name = "hxmc_unsafe_Mem_" + (cf.cfName == "apple" ? "platform" : cf.cfName);
 				if (StringTools.startsWith(name, SIMD_PREFIX)) return simdCall(name, s, cargs, e);
@@ -4063,6 +4064,18 @@ class FnLower {
 	// a call of a C function declared by an extern (CInterop.declare): the
 	// arguments converted to their C types' representations; MirBuild applies
 	// the ABI (narrow and float32 values) and the safe region
+	// hxmc.Platform.available (Available): true where the target's platform
+	// is not listed or the deployment target has the version (a constant: the
+	// test folds), else the system's answer (hxmc.rt.OsVersion)
+	function available(cargs:Vector<TExpr>, e:TExpr, rt:Ty):Ex {
+		var p = Available.lowered();
+		var v = Available.test(cargs, p ?? "");
+		if (v < 0) fail('hxmc.Platform.available: string literals of a platform and a version ("macos 14.0")', e);
+		if (v <= Lower.targetMin) return coerceRhs(EInt(1), TBool, rt);
+		// (PLATFORM_MACOS, PLATFORM_IOS: Mac Catalyst's versions are iOS's)
+		return coerceRhs(ECallHost("rt_os_at_least", vector(EInt(p == "macos" ? 1 : 2), EInt(v)), TBool), TBool, rt);
+	}
+
 	function cCall(sym:String, c:TClass, cf:TClassField, s:core.TType.TSignature, cargs:Vector<TExpr>, e:TExpr):Ex {
 		var sig = try l.cExtern(sym, c, cf) catch (err:LowerError) {
 			if (err.where == "") err.where = where(e);

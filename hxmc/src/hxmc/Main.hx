@@ -17,6 +17,7 @@ package hxmc;
 //                                   which a packager puts in an APK)
 //   -D hxmc.exports=<names>         the names a shared library exports (its soname: the output's file name)
 //   -D hxmc.ios-min-version=<x.y>   iOS, Mac Catalyst: the oldest iOS version an output runs on (15.0, the floor)
+//   -D hxmc.macos-min-version=<x.y> macOS: the oldest version an output runs on (11.0 arm64, 10.15 x86-64: the floors)
 //   -D hxmc.codesign-id=<id>, -D hxmc.codesign-info-plist=<file>, -D hxmc.codesign-resources=<file>,
 //   -D hxmc.codesign-entitlements=<file>
 //                                   a Mach-O output signed ad hoc as `codesign -s -` signs, binding a
@@ -212,6 +213,7 @@ class Main {
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		hxmc.ir.Lower.targetMin = abi.os == "macos" ? opts.minos(abi) : 0;
 		// (a compiler with Mir macros and --run, for a native target: Mem.mirHost)
 		hxmc.ir.Lower.mirHost = !abi.wasm && Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): c.clPath.pack.join(".") == "hxmc.interp" && c.clPath.name == "MirMacros";
@@ -252,7 +254,7 @@ class Main {
 		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
-			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms');
+			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms, availability check ${Std.int(hxmc.ir.AvailCheck.seconds * 1000)} ms');
 			if (useCache)
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}

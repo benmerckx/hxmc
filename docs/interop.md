@@ -1550,6 +1550,63 @@ haxelib, used as `-lib <name>`:
 - haxelib: `haxelib git apple-appkit https://github.com/hx-objc/apple-appkit`
   (its `haxelib.json` names its dependencies by their Git URLs).
 
+### Availability
+
+The SDKs' declarations say which version introduced them, on the
+platforms where that is newer than hxmc's oldest:
+
+```haxe
+@:hxmc.available("macos 14.0", "ios 17.0", "maccatalyst 17.0")
+function setPreferredFrameRateRange(range:CAFrameRateRange):Void;
+```
+
+A platform it does not list has it in every version. A program runs on
+systems from its deployment target on: `-D hxmc.macos-min-version` (11.0
+on arm64, 10.15 on x86-64) or `-D hxmc.ios-min-version` (15.0, also Mac
+Catalyst's). Using something newer is a warning, an error with `-D
+hxmc.strict`:
+
+```
+NSView.setPreferredFrameRateRange: macOS 14.0 and later, the deployment target is 11.0 (guard it with Platform.available("macos 14.0"))
+```
+
+A test at run time guards it:
+
+```haxe
+import hxmc.Platform;
+
+if (Platform.available("macos 14.0", "ios 17.0", "maccatalyst 17.0"))
+  view.setPreferredFrameRateRange(range);
+
+function start(view:NSView) {
+  if (!Platform.available("macos 14.0")) return;
+  view.setPreferredFrameRateRange(range);      // after the early return
+}
+
+@:hxmc.available("macos 14.0")                // its callers are checked instead
+function animate(view:NSView)
+  view.setPreferredFrameRateRange(range);
+```
+
+- **The test** takes string literals. It is `true` where the deployment
+  target has the version or the list leaves the platform out (and on
+  other systems), a constant that drops the other branch. Else it asks
+  dyld once, as clang's `@available` does, and keeps the answer. On Mac
+  Catalyst a list without `maccatalyst` tests its `ios` entry, as
+  Swift's `#available` does.
+- **Uses** are calls, property reads and writes, a class as a value,
+  `new`, enum constants and a class extending a newer one. Each needs
+  its declaration's version and its class's (on an enum abstract, put it
+  on each constant: Haxe inlines them). A use is guarded in the
+  then-branch of `if (Platform.available(...))`, on the right of `&&`,
+  in the else-branch of `if (!Platform.available(...))`, and after `if
+  (!Platform.available(...)) return;` (or `throw`, `break`,
+  `continue`). Inlined code is checked where it lands.
+- **Weak imports**: a C function, C variable or Objective-C class newer
+  than the deployment target is imported weakly, so the program still
+  launches on an older system, where its address is null. Calling it
+  there crashes, which is what the check is for.
+
 ## COM
 
 On Windows, COM interfaces are declared as extern interfaces and called as

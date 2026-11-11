@@ -442,6 +442,7 @@ class ObjC {
 		if (lib == null) return null;
 		var name = className(c);
 		l.objcDeclare(Symbol(CLASS_SYM + name, lib));
+		if (Available.weak(c)) l.objcDeclare(Weak(CLASS_SYM + name));
 		return CLASSREF + name;
 	}
 
@@ -561,6 +562,8 @@ class ObjC {
 				CInterop.USER.set(sym, true);
 			case Load(lib):
 				CInterop.LOADS.set(lib, true);
+			case Weak(sym):
+				CInterop.WEAK.set(sym, true);
 			case Variadic(sym, first):
 				FnLower.C_VARIADIC.set(sym, first);
 		}
@@ -1149,6 +1152,8 @@ enum Decl {
 	FastFunc(sym:String, sig:CSig);
 	// symbol sym, of library lib (libobjc's; a class object, classRef)
 	Symbol(sym:String, lib:String);
+	// symbol sym, imported weakly (newer than the deployment target: Available.weak)
+	Weak(sym:String);
 	// library lib, loaded though nothing is imported of it (a category's: memberLibrary)
 	Load(lib:String);
 	// C function sym (a variadic message's, declare) variadic from its argument

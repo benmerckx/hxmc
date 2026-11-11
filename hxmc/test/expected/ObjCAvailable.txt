@@ -1,0 +1,9 @@
+exit 0
+ObjCAvailable.hx:48: false, true, true
+ObjCAvailable.hx:49: guarded: not yet
+ObjCAvailable.hx:50: early: not yet
+ObjCAvailable.hx:52: true
+ObjCAvailable.hx:53: true, true
+ObjCAvailable.hx:54: old, new
+ObjCAvailable.hx:56: false
+ObjCAvailable.hx:61: 1000

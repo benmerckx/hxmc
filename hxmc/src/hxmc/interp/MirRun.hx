@@ -74,6 +74,7 @@ class MirRun {
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		hxmc.ir.Lower.targetMin = abi.os == "macos" ? o.minos(abi) : 0;
 		hxmc.ir.Lower.mirHost = 0; // (a bundle: code loaded, not a loader)
 		hxmc.ir.Lower.bounds = o.bounds;
 		hxmc.ir.Lower.lines = o.debugLines || o.stacks; // (as Main: hxmc.rt.Stacks names an interpreted frame by its lines)

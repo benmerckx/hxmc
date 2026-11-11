@@ -19,6 +19,16 @@ class Options {
 	// the same in the bundle's MinimumOSVersion), 15.0 and the floor; as
 	// LinkMachO writes it
 	public var iosMinos = LinkMachO.IOS_MIN;
+	// -D hxmc.macos-min-version=<major.minor>: the oldest macOS a macOS output
+	// runs on (LC_BUILD_VERSION's minimum); 0: the floor, 11.0 on arm64 and
+	// 10.15 on x86-64 (LinkMachO.macosMin)
+	public var macosMinos = 0;
+
+	// the oldest version of its platform an Apple output runs on, as
+	// LC_BUILD_VERSION writes it (major << 16 | minor << 8): what
+	// hxmc.Platform.available and @:hxmc.available are checked against
+	public function minos(abi:Abi):Int
+		return abi.uikit() ? iosMinos : macosMinos != 0 ? macosMinos : LinkMachO.macosMin(abi.arm);
 	// a Mach-O output's code signature (CodeSign), for a packager that writes
 	// the bundle around it: -D hxmc.codesign-id=<identifier>, -D
 	// hxmc.codesign-info-plist=<file> (slot 1), -D
@@ -314,6 +324,19 @@ class Options {
 			: "make rt";
 	}
 
+	// -D hxmc.<platform>-min-version's value (null: unset) as LC_BUILD_VERSION
+	// writes it, at least floor
+	public static function minVersion(platform:String, v:Null<String>, floor:Int):Null<Int> {
+		if (v == null) return null;
+		var r = ~/^([0-9]+)\.([0-9]+)$/;
+		var n = r.match(v) && Std.parseInt(r.matched(2)) <= 255 ? (Std.parseInt(r.matched(1)) << 16) | (Std.parseInt(r.matched(2)) << 8) : -1;
+		if (n < floor) {
+			var name = platform == "ios" ? "iOS" : "macOS";
+			throw 'hxmc: $name: -D hxmc.$platform-min-version=$v: major.minor, ${floor >> 16}.${(floor >> 8) & 0xff} or later';
+		}
+		return n;
+	}
+
 	public static function read(com:context.Common.CommonContext):Options {
 		var o = new Options();
 		inline function def(k:String):Null<String>
@@ -335,13 +358,11 @@ class Options {
 		if (ex != null)
 			for (n in ex.split(","))
 				if (StringTools.trim(n) != "") o.exports.push(StringTools.trim(n));
-		var min = def("hxmc.ios_min_version");
-		if (min != null) {
-			var v = ~/^([0-9]+)\.([0-9]+)$/;
-			if (!v.match(min) || Std.parseInt(v.matched(1)) < 15 || Std.parseInt(v.matched(2)) > 255)
-				throw "hxmc: iOS: -D hxmc.ios-min-version=" + min + ": major.minor, 15.0 or later";
-			o.iosMinos = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
-		}
+		var min = minVersion("ios", def("hxmc.ios_min_version"), LinkMachO.IOS_MIN);
+		if (min != null) o.iosMinos = min;
+		var arm = Abi.get(o.target).arm;
+		var min = minVersion("macos", def("hxmc.macos_min_version"), LinkMachO.macosMin(arm));
+		if (min != null) o.macosMinos = min;
 		o.codesignId = def("hxmc.codesign_id");
 		o.codesignInfoPlist = def("hxmc.codesign_info_plist");
 		o.codesignResources = def("hxmc.codesign_resources");

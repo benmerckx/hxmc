@@ -27,4 +27,13 @@ extern class Platform {
 	// the Apple platform where os() is MACOS: 0 macOS, 1 iOS, 2 the iOS
 	// simulator, 3 Mac Catalyst (target() is macOS's)
 	static function apple():Int;
+
+	// whether the system has a version of the target's platform:
+	// `Platform.available("macos 14.0", "ios 17.0", "maccatalyst 17.0")`, string
+	// literals. True for a platform the list leaves out (and every system but
+	// Apple's) and for a version the deployment target has (a constant: the
+	// test folds); else asked of the system. In its then-branch, the
+	// declarations @:hxmc.available gives those versions may be used
+	// (docs/interop.md, "Availability")
+	static function available(...versions:String):Bool;
 }
