@@ -93,7 +93,7 @@ class Start {
 	static var mainFiber:Ptr;
 	static var mainBody:Ptr;
 
-	@:hxmc.export("rt_run_main") static function runMain(body:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_run_main") static function runMain(body:Ptr):Void {
 		var bytes:I64 = (Os.envInt("RT_STACK_MB", Mem.sym("hxmc_stack_flags").toI64().toInt() & 4 != 0 ? 0 : 1024) : I64) << 20;
 		if (Platform.os() == 2) {
 			var fiber = Ptr.nil();
@@ -152,7 +152,7 @@ class Start {
 
 	// the main fiber's entry (Windows): the body, then back to the thread's
 	// own fiber (the program's main returns)
-	@:hxmc.callback static function fiberMain(arg:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function fiberMain(arg:Ptr):Void {
 		Mem.call0(mainBody);
 		K.SwitchToFiber(mainFiber);
 	}
@@ -168,7 +168,7 @@ class Start {
 	// (objcSuperInit): sets it, the previous value the result
 	@:hxmc.threadLocal static var adopting:Ptr;
 
-	@:hxmc.export("rt_objc_adopt") static function objcAdopt(id:Ptr):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_adopt") static function objcAdopt(id:Ptr):Ptr {
 		var prev = adopting;
 		adopting = id;
 		return prev;
@@ -185,13 +185,13 @@ class Start {
 	static function objcDealloc(o:Dynamic):Void
 		Reflect.callMethod(o, Reflect.field(o, "dealloc"), []);
 
-	@:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
 		Gc.uncaught("", Str.ofUtf8(what, LibC.strlen(what).toInt()));
 		Stacks.report();
 		Os.exit(1);
 	}
 
-	@:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
 		Gc.exn = Mem.addr(v);
 		var h = Gc.hcur;
 		// (the thrower's stack up to the catch, when exception stacks are read: Stacks)

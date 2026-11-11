@@ -62,10 +62,10 @@ class Names {
 		if (Platform.os() != 3) Atomic.store32(spin.add(32), 0);
 	}
 
-	static inline function nstatic():Int
+	@:hxmc.unsafe(gc) static inline function nstatic():Int
 		return Mem.getI32(Mem.sym("rt_nfield_names"), 0);
 
-	static inline function staticName(i:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function staticName(i:Int):Ptr
 		return Mem.getPtr(Mem.sym("rt_field_names"), 8 * i);
 
 	@:hxmc.unsafe static inline function extraName(i:Int):Ptr
@@ -187,7 +187,7 @@ class Names {
 	}
 
 	// a field name as a String, made once
-	@:hxmc.host("hx_fid_str") static function fidStr(f:Int):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_fid_str") static function fidStr(f:Int):String {
 		var r = strOf(f);
 		if (!r.isNull()) return Mem.obj(r);
 		var n = fidName(f);

@@ -61,7 +61,7 @@ class Bytes {
 		NativeBytes.fill(b, pos, len, value);
 	}
 
-	public function sub(pos:Int, len:Int):Bytes {
+	@:hxmc.unsafe(gc) public function sub(pos:Int, len:Int):Bytes {
 		var words = (len + 7) >>> 3;
 		if (len > 0 && words <= SHARED_MAX && pos >= 0 && pos <= length - len) {
 			var r = shared(len, words);
@@ -160,7 +160,7 @@ class Bytes {
 	// Bytes' slots (hxmc.rt.Types; its one field, b, slot 0), as
 	// hxmc.rt.Boxes.arrNewN does for an Array: b refers to the next object,
 	// where the Bytes is (no barrier); zeroed
-	static inline function shared(length:Int, words:Int):Bytes {
+	@:hxmc.unsafe(gc) static inline function shared(length:Int, words:Int):Bytes {
 		var t = hxmc.unsafe.Mem.typeIndexOf(Bytes);
 		var n = hxmc.rt.Types.slotCount(hxmc.rt.Types.ty(t));
 		var o:Dynamic = hxmc.unsafe.Mem.alloc(n + 1 + words, t, 0); // (K_OBJ)

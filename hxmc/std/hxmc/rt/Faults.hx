@@ -166,7 +166,7 @@ class Faults {
 		return (!pc.ult(codeLo) && pc.ult(codeHi)) || (!pc.ult(jitLo) && pc.ult(jitHi));
 
 	// code made at run time in [lo, hi): its null accesses throw too (one range)
-	public static function addCode(lo:Ptr, hi:Ptr) {
+	@:hxmc.unsafe(gc) public static function addCode(lo:Ptr, hi:Ptr) {
 		jitLo = lo;
 		jitHi = hi;
 	}

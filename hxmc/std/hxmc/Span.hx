@@ -125,7 +125,7 @@ abstract Span<T>(SpanData) {
 		return r;
 	}
 
-	public static function ioRange(buf:IoBuffer, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function ioRange(buf:IoBuffer, pos:Int, len:Int):Int {
 		var r = range(ioLength(buf), pos, len);
 		if (r < 0) throw haxe.io.Error.OutsideBounds;
 		return r;
@@ -168,7 +168,7 @@ abstract Span<T>(SpanData) {
 		end(r, where);
 	}
 
-	static inline function report(what:String):hxmc.rt.Os.Report {
+	@:hxmc.unsafe(gc) static inline function report(what:String):hxmc.rt.Os.Report {
 		var r = new hxmc.rt.Os.Report(hxmc.unsafe.Mem.stack(hxmc.rt.Os.Report.BYTES));
 		r.str(what);
 		return r;

@@ -248,7 +248,7 @@ class Heap {
 
 	// ---- malloc
 
-	static inline function classHead(c:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function classHead(c:Int):Ptr
 		return freeTab.add(16 * MAX_FREE + 8 * c);
 
 	@:hxmc.kernel static function classOf(n:Int):Int {

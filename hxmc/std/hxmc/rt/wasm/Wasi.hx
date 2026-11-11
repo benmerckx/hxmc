@@ -21,10 +21,10 @@ class Wasi {
 	static var dot:Ptr; // "."
 	static var outLen:Int;
 
-	public static inline function a32(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function a32(p:Ptr):Int
 		return p.toI64().toInt();
 
-	public static inline function ofA32(x:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function ofA32(x:Int):Ptr
 		return new Ptr((x : I64) & ((((1 : I64) << 32) - 1)));
 
 	@:hxmc.unsafe public static function init() {

@@ -138,23 +138,23 @@ class Gc {
 	static var nrecords:Int;
 
 	// (the header: read through GcCore, as the native Gc.hx reads it)
-	static inline function inYoung(p:Ptr):Bool
+	@:hxmc.unsafe(gc) static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
 	// p's granule's state; 0 (none) for a word above the 4 GB the table
 	// covers: the tagged word of a scalar (hxmc.rt.Tagged), which a reference
 	// slot holds as the value of a type parameter
-	static inline function granOf(p:Ptr):Int
+	@:hxmc.unsafe(gc) static inline function granOf(p:Ptr):Int
 		return (p.toI64() >>> 32) == (0 : I64) ? Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) : 0;
 
 	static inline function isOld(p:Ptr):Bool
 		return granOf(p) != 0;
 
 	// a list's entry: its size, and whether it is a large object's region
-	static inline function entrySize(l:Ptr, i:Int):Int
+	@:hxmc.unsafe(gc) static inline function entrySize(l:Ptr, i:Int):Int
 		return Mem.getI64(l, 24 * i + 16).toInt() & ~LARGE_FLAG;
 
-	static inline function entryLarge(l:Ptr, i:Int):Bool
+	@:hxmc.unsafe(gc) static inline function entryLarge(l:Ptr, i:Int):Bool
 		return (Mem.getI64(l, 24 * i + 16).toInt() & LARGE_FLAG) != 0;
 
 	// ---- startup
@@ -322,21 +322,21 @@ class Gc {
 	}
 
 	// (as the native GcPaths.allocSlow: a record's slots from its bytes)
-	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlowParts(lo:Int, tindex:Int, bytes:Int):Ptr
+	@:hxmc.unsafe(gc) @:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlowParts(lo:Int, tindex:Int, bytes:Int):Ptr
 		return allocSlow(Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo), bytes);
 
 	// (raw: an allocation that writes every slot before it reads one, of an
 	// object without references, Types.K_RAW: not zeroed, as no scan reads
 	// its slots; MemLower.allocDyn, as the native GcPaths.allocSlowRaw)
-	@:hxmc.export("hxmc_alloc_slow_raw") @:hxmc.collects static function allocSlowRawParts(lo:Int, tindex:Int, bytes:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.export("hxmc_alloc_slow_raw") @:hxmc.collects static function allocSlowRawParts(lo:Int, tindex:Int, bytes:Int):Ptr {
 		var header = Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo);
 		return allocAny(header, bytes, Types.kindOfWord(tindex) == Types.K_RAW);
 	}
 
-	@:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr
 		return allocAny(header, bytes, false);
 
-	@:hxmc.collects static function allocAny(header:I64, bytes:Int, raw:Bool):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.collects static function allocAny(header:I64, bytes:Int, raw:Bool):Ptr {
 		var p:Ptr;
 		if (bytes > minorSize >> 2 && youngEnd.diff(Mem.tlsGet("rt_young_ptr")) < (bytes : I64)) {
 			// large objects go straight to the old space (unless the free nursery

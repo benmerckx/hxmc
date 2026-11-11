@@ -15,7 +15,7 @@ import hxmc.unsafe.Ptr;
 	Atomic object. Use with care, this does not magically make it thread-safe to mutate objects.
 **/
 abstract AtomicObject<T:{}>(Dynamic) {
-	static function cell(v:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) static function cell(v:Dynamic):Dynamic {
 		var a = Mem.alloc(1, hxmc.rt.Types.T_ADATA_P, 1); // K_PARR
 		Mem.setRef(Mem.addr(a), 0, v); // (a is young)
 		return a;

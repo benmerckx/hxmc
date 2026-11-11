@@ -369,7 +369,7 @@ class HostTable {
 
 	// ---- reading (the running compiler, a Mir host: Mem.mirHost)
 
-	static var base:Null<hxmc.unsafe.Ptr> = null;
+	@:hxmc.unsafe static var base:Null<hxmc.unsafe.Ptr> = null;
 	static var ns = 0;
 	static var nb = 0;
 	static var ms = 0;
@@ -383,7 +383,7 @@ class HostTable {
 	static var fkeys:hxmc.unsafe.Ptr;
 	static var fflags:hxmc.unsafe.Ptr;
 
-	static function init() {
+	@:hxmc.unsafe(gc) static function init() {
 		if (base != null) return;
 		var t = hxmc.unsafe.Mem.sym(SYM);
 		ns = hxmc.unsafe.Mem.getI32(t, 0);
@@ -417,7 +417,7 @@ class HostTable {
 	public static var lookupTime = 0.0;
 
 	// the slot of name in a set (its pilots and checks, nb buckets, `slots` slots), -1 when the set lacks it
-	static function find(pilots:hxmc.unsafe.Ptr, checks:hxmc.unsafe.Ptr, nb:Int, slots:Int, name:String):Int {
+	@:hxmc.unsafe(gc) static function find(pilots:hxmc.unsafe.Ptr, checks:hxmc.unsafe.Ptr, nb:Int, slots:Int, name:String):Int {
 		lookups++;
 		var t = timed ? haxe.Timer.stamp() : 0.0;
 		hash(name);
@@ -431,13 +431,13 @@ class HostTable {
 	}
 
 	// the symbol named name: its slot (kind, value), or -1
-	public static function symbol(name:String):Int {
+	@:hxmc.unsafe(gc) public static function symbol(name:String):Int {
 		init();
 		var s = find(pilots, checks, nb, ns, name);
 		return s >= 0 && kindOf(s) != K_NONE ? s : -1;
 	}
 
-	static inline function kindOf(s:Int):Int
+	@:hxmc.unsafe(gc) static inline function kindOf(s:Int):Int
 		return (hxmc.unsafe.Mem.getU8(kinds, s >> 1) >> ((s & 1) * 4)) & 15;
 
 	// the kind of a symbol: t code (an import too), d data, a an absolute number, l a thread-local variable
@@ -449,7 +449,7 @@ class HostTable {
 			case _: "t".code;
 		};
 
-	public static function value(s:Int):hxmc.I64 {
+	@:hxmc.unsafe(gc) public static function value(s:Int):hxmc.I64 {
 		var v = hxmc.unsafe.Mem.getI32(values, 4 * s);
 		var place = values.add(4 * s);
 		return switch kindOf(s) {
@@ -461,20 +461,20 @@ class HostTable {
 	}
 
 	// the fingerprint slot of a function's symbol, or -1
-	public static function fingerprint(name:String):Int {
+	@:hxmc.unsafe(gc) public static function fingerprint(name:String):Int {
 		init();
 		var s = find(fpilots, fchecks, mb, ms, name);
 		return s >= 0 && hxmc.unsafe.Mem.getU8(fflags, s) != 0xff ? s : -1;
 	}
 
-	public static function fpKey(s:Int):String
+	@:hxmc.unsafe(gc) public static function fpKey(s:Int):String
 		return StringTools.hex(hxmc.unsafe.Mem.getI32(fkeys, 8 * s), 8) + StringTools.hex(hxmc.unsafe.Mem.getI32(fkeys, 8 * s + 4), 8);
 
-	public static function fpFlags(s:Int):Int
+	@:hxmc.unsafe(gc) public static function fpFlags(s:Int):Int
 		return hxmc.unsafe.Mem.getU8(fflags, s);
 
 	// the table's bytes (HXMC_MACRO_STATS)
-	public static function bytes():Int {
+	@:hxmc.unsafe(gc) public static function bytes():Int {
 		init();
 		return hxmc.unsafe.Mem.getI32(base, 16);
 	}

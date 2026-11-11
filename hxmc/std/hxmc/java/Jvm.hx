@@ -81,7 +81,7 @@ class Jvm {
 	}
 
 	// an Android activity's JVM and class loader (its ANativeActivity)
-	public static function useActivity(activity:Ptr):Void {
+	@:hxmc.unsafe(gc) public static function useActivity(activity:Ptr):Void {
 		if (!@:privateAccess JavaException.available()) {
 			@:privateAccess JavaException.unavailable();
 			return;

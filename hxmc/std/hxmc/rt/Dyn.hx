@@ -115,7 +115,7 @@ class Dyn {
 	// else a reference); Int/Bool slots are 4-byte indices. A Dynamic is a
 	// word of 't' as it is (stored by the reference case)
 
-	static function boxSlot(o:Dynamic, slot:Int, k:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function boxSlot(o:Dynamic, slot:Int, k:Int):Dynamic {
 		var p = Mem.addr(o);
 		return switch k {
 			case "i".code: (Mem.getI32(p, 4 * slot) : Dynamic);
@@ -132,7 +132,7 @@ class Dyn {
 		}
 	}
 
-	static function storeSlot(o:Dynamic, slot:Int, k:Int, v:Dynamic):Void {
+	@:hxmc.unsafe(gc) static function storeSlot(o:Dynamic, slot:Int, k:Int, v:Dynamic):Void {
 		switch k {
 			case "i".code:
 				var x:Int = v;
@@ -161,13 +161,13 @@ class Dyn {
 	}
 
 	// a closure over `o` calling method m (TK_BOUND: code, this, fn)
-	static function boundMethod(o:Dynamic, m:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function boundMethod(o:Dynamic, m:Ptr):Dynamic {
 		var sig = mSig(m), fn = mFn(m);
 		return bound(o, fn, sig);
 	}
 
 	// a closure over `o` calling fn, which takes o and arguments of signature sig
-	static inline function bound(o:Dynamic, fn:Ptr, sig:Int):Dynamic {
+	@:hxmc.unsafe(gc) static inline function bound(o:Dynamic, fn:Ptr, sig:Int):Dynamic {
 		var c = Mem.alloc(3, Mem.getI32At(Mem.sym("rt_bound_types"), 0, sig), K_OBJ);
 		var p = Mem.addr(c);
 		Mem.setPtr(p, 0, Mem.getPtr(Mem.sym("rt_bound_tramps"), 8 * sig));
@@ -178,7 +178,7 @@ class Dyn {
 
 	// ---- dynamic fields of anonymous objects: slot 0 holds (fid box, value) pairs
 
-	static function overflowFind(o:Dynamic, fid:Int):Int {
+	@:hxmc.unsafe(gc) static function overflowFind(o:Dynamic, fid:Int):Int {
 		if (tk(ty(tindex(o))) != TK_ANON) return -1;
 		var ov = Mem.getRef(Mem.addr(o), 0);
 		if (Str.isNull(ov)) return -1;
@@ -195,7 +195,7 @@ class Dyn {
 		return -1;
 	}
 
-	static function overflowSet(o:Dynamic, fid:Int, v:Dynamic):Void {
+	@:hxmc.unsafe(gc) static function overflowSet(o:Dynamic, fid:Int, v:Dynamic):Void {
 		if (tk(ty(tindex(o))) != TK_ANON) Rt.rt_throw("Cannot add a field to this object");
 		var i = overflowFind(o, fid);
 		if (i >= 0) {
@@ -216,7 +216,7 @@ class Dyn {
 
 	// ---- statics reached through a class value
 
-	static function findStatic(o:Dynamic, fid:Int):Ptr {
+	@:hxmc.unsafe(gc) static function findStatic(o:Dynamic, fid:Int):Ptr {
 		if (tindex(o) != T_TYPEOBJ) return Ptr.nil();
 		var t = ty(described(o));
 		var lo = 0, hi = nstatics(t);
@@ -230,7 +230,7 @@ class Dyn {
 		return Ptr.nil();
 	}
 
-	static function staticGet(s:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function staticGet(s:Ptr):Dynamic {
 		var ptr = Mem.getPtr(s, 16);
 		return switch Mem.getU8(s, 4) {
 			case "c".code:
@@ -248,7 +248,7 @@ class Dyn {
 		}
 	}
 
-	static function staticSet(s:Ptr, v:Dynamic):Void {
+	@:hxmc.unsafe(gc) static function staticSet(s:Ptr, v:Dynamic):Void {
 		var ptr = Mem.getPtr(s, 16);
 		switch Mem.getU8(s, 4) {
 			case "c".code:
@@ -283,7 +283,7 @@ class Dyn {
 	// (null throws "Null Access", as a typed access of null does: Faults; a
 	// field read of a null Dynamic gives null on Eval, the targets that test
 	// for null throw: docs/hxmc.md, "Null access")
-	@:hxmc.export("hx_anon_get_slow") static function anonGetSlow(o:Dynamic, fid:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_get_slow") static function anonGetSlow(o:Dynamic, fid:Int):Dynamic {
 		if (Str.isNull(o)) Rt.rt_throw("Null Access");
 		var st = findStatic(o, fid);
 		if (!st.isNull()) return staticGet(st);
@@ -306,7 +306,7 @@ class Dyn {
 		return i >= 0 ? Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i + 1) : null;
 	}
 
-	@:hxmc.export("hx_anon_set_slow") static function anonSetSlow(o:Dynamic, fid:Int, v:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_set_slow") static function anonSetSlow(o:Dynamic, fid:Int, v:Dynamic):Void {
 		if (Str.isNull(o)) Rt.rt_throw("Null Access");
 		if (tindex(o) == T_ARRAY && isLength(fid)) {
 			// Array length assignment resizes the array.
@@ -325,7 +325,7 @@ class Dyn {
 	}
 
 	// the signature of a closure, or -1
-	static function closureSig(c:Dynamic):Int {
+	@:hxmc.unsafe(gc) static function closureSig(c:Dynamic):Int {
 		if (Str.isNull(c) || tindex(c) < T_FIRST) return -1;
 		var t = ty(tindex(c));
 		var k = tk(t);
@@ -341,7 +341,7 @@ class Dyn {
 	// conversion: an argument it takes as a word, given a reference; a
 	// result it returns as a reference, read as a word. A function of the
 	// program's types read where it is generic: Array<Lexer->T>'s elements)
-	@:hxmc.host("hx_clos_of_sig") static function closOfSig(c:Dynamic, key:String):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_clos_of_sig") static function closOfSig(c:Dynamic, key:String):Dynamic {
 		var s = closureSig(c);
 		if (s < 0) return null;
 		var k = Mem.getPtr(Mem.sym("rt_sig_keys"), 8 * s);
@@ -356,7 +356,7 @@ class Dyn {
 	}
 
 	// the argument count of signature s: the characters of its key before '_'
-	static function sigArgs(s:Int):Int {
+	@:hxmc.unsafe(gc) static function sigArgs(s:Int):Int {
 		var k = Mem.getPtr(Mem.sym("rt_sig_keys"), 8 * s);
 		var n = 0;
 		while (Mem.getU8At(k, 0, n) != "_".code)
@@ -364,13 +364,13 @@ class Dyn {
 		return n;
 	}
 
-	static inline function sigRet(s:Int):Int {
+	@:hxmc.unsafe(gc) static inline function sigRet(s:Int):Int {
 		var k = Mem.getPtr(Mem.sym("rt_sig_keys"), 8 * s);
 		return Mem.getU8At(k, 0, sigArgs(s) + 1);
 	}
 
 	// calls a closure with boxed arguments (args[0...n], missing ones null)
-	static function callBoxed(f:Dynamic, args:Array<Dynamic>, n:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function callBoxed(f:Dynamic, args:Array<Dynamic>, n:Int):Dynamic {
 		var s = closureSig(f);
 		if (s < 0) Rt.rt_throw(Str.isNull(f) ? "Cannot call null" : "Cannot call a non-function"); // (Eval's for null)
 		var want = sigArgs(s);
@@ -392,7 +392,7 @@ class Dyn {
 		return Mem.callRef2(Mem.getPtr(Mem.sym("rt_dyncalls"), 8 * s), f, buf);
 	}
 
-	static function fromBoxed(v:Dynamic, k:Int):I64 {
+	@:hxmc.unsafe(gc) static function fromBoxed(v:Dynamic, k:Int):I64 {
 		return switch k {
 			case "i".code:
 				var x:Int = v;
@@ -418,14 +418,14 @@ class Dyn {
 		return Mem.getI32(p, 8) < Mem.getI32(Mem.getPtr(p, 0), 0);
 	}
 
-	@:hxmc.export("hx_arrayiter_next") static function arrayIterNext(it:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_arrayiter_next") static function arrayIterNext(it:Dynamic):Dynamic {
 		var p = Mem.addr(it);
 		var i = Mem.getI32(p, 8);
 		Mem.setI32(p, 8, i + 1);
 		return (Mem.getRef(p, 0) : Array<Dynamic>)[i];
 	}
 
-	@:hxmc.export("hx_array_iterator") static function arrayIterator(a:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_array_iterator") static function arrayIterator(a:Dynamic):Dynamic {
 		var it = Mem.alloc(2, T_ARRAYITER, K_OBJ);
 		Mem.setRef(Mem.addr(it), 0, a); // it is young
 		return it;
@@ -440,7 +440,7 @@ class Dyn {
 	// the references and type parameters' words in `refs` (slots the caller
 	// pushed: rooted, so what they point to is read where it is after a
 	// collection here), the result likewise
-	@:hxmc.export("hx_anon_call_slow_r") static function anonCallSlow(o:Dynamic, fid:Int, sig:Int, args:Ptr, refs:Ptr):I64 {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_call_slow_r") static function anonCallSlow(o:Dynamic, fid:Int, sig:Int, args:Ptr, refs:Ptr):I64 {
 		var n = sigArgs(sig);
 		var k = Mem.getPtr(Mem.sym("rt_sig_keys"), 8 * sig);
 		var rk = Mem.getU8At(k, 0, n + 1);
@@ -480,12 +480,12 @@ class Dyn {
 	// (the slow path as compilers before the rooted slots call it, the
 	// references among the numbers: the committed stage0, a previous tool
 	// building this one; removable once neither does)
-	@:hxmc.export("hx_anon_call_slow") static function anonCallSlowOld(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_call_slow") static function anonCallSlowOld(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64
 		return anonCallSlow(o, fid, sig, args, args);
 
 	// ---- Dynamic access
 
-	@:hxmc.export("hx_dyn_get") static function dynGet(o:Dynamic, name:String):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_dyn_get") static function dynGet(o:Dynamic, name:String):Dynamic {
 		if (Str.isNull(o)) Rt.rt_throw("Null Access");
 		var t = tindex(o);
 		if (Str.len(name) == 6 && name == "length") {
@@ -552,7 +552,7 @@ class Dyn {
 	// string: its identity is unique)
 	static inline var NOT_BUILTIN = "\x00not a built-in method";
 
-	static inline function isNotBuiltin(r:Dynamic):Bool
+	@:hxmc.unsafe(gc) static inline function isNotBuiltin(r:Dynamic):Bool
 		return Mem.addr(r) == Mem.addr(NOT_BUILTIN);
 
 	// a method of the runtime's built-in values (Array, String) called
@@ -896,7 +896,7 @@ class Dyn {
 	// a structure that contains itself ends; a toString starts again at 0)
 	static inline var PRINT_DEPTH = 5;
 
-	static function str(v:Dynamic, depth:Int):String {
+	@:hxmc.unsafe(gc) static function str(v:Dynamic, depth:Int):String {
 		if (Str.isNull(v)) return "null";
 		var t = tindex(v);
 		var p = Mem.addr(v);
@@ -981,7 +981,7 @@ class Dyn {
 	}
 
 	// an enum constructor's argument i, boxed
-	static function ctorValue(v:Dynamic, ty:Ptr, i:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function ctorValue(v:Dynamic, ty:Ptr, i:Int):Dynamic {
 		var k = "p".code, s = i;
 		for (f in 0...nfields(ty))
 			if (ctorArg(field(ty, f)) == i) {
@@ -1002,7 +1002,7 @@ class Dyn {
 	// { a : 1, b : 2 }: the structure's own fields (its layout's, by name),
 	// then those added at run time (slot 0, in the order they were added):
 	// Reflect.fields' order
-	static function anonToString(o:Dynamic, depth:Int):String {
+	@:hxmc.unsafe(gc) static function anonToString(o:Dynamic, depth:Int):String {
 		var ty = ty(tindex(o));
 		var b = new StringBuf();
 		b.addChar("{".code);
@@ -1145,10 +1145,10 @@ class Dyn {
 		return s >= 0 && tk(t) == TK_CLASS && sup(ty(s)) >= 0 ? typeObj(s) : null;
 	}
 
-	public static function typeName(t:Dynamic):String
+	@:hxmc.unsafe(gc) public static function typeName(t:Dynamic):String
 		return Str.ofAscii(name(ty(described(t))));
 
-	public static function resolveType(n:String):Dynamic {
+	@:hxmc.unsafe(gc) public static function resolveType(n:String):Dynamic {
 		var c = Str.toUtf8(n);
 		var r:Dynamic = null;
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);
@@ -1167,7 +1167,7 @@ class Dyn {
 		return r;
 	}
 
-	public static function createEmpty(c:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) public static function createEmpty(c:Dynamic):Dynamic {
 		var t = described(c);
 		// (a date: of time 0, as Eval's, made as every date is: Date.printer)
 		if (t == T_DATE) return Date.of(0);
@@ -1180,7 +1180,7 @@ class Dyn {
 	// numbers and Bools with default values given them when null, as on
 	// Eval); a String's is the String it is given, an Array's an empty one,
 	// as on Eval
-	public static function createInstance(c:Dynamic, args:Array<Dynamic>):Dynamic {
+	@:hxmc.unsafe(gc) public static function createInstance(c:Dynamic, args:Array<Dynamic>):Dynamic {
 		if (Str.isNull(c)) Rt.rt_throw("Null Access");
 		if (tindex(c) != T_TYPEOBJ) Rt.rt_throw("Type.createInstance: not a class");
 		var t = described(c);
@@ -1198,7 +1198,7 @@ class Dyn {
 		return o;
 	}
 
-	public static function enumCtorNames(e:Dynamic):Array<String> {
+	@:hxmc.unsafe(gc) public static function enumCtorNames(e:Dynamic):Array<String> {
 		var t = described(e);
 		var ty = ty(t);
 		if (tk(ty) != TK_ENUM) return null;
@@ -1211,12 +1211,12 @@ class Dyn {
 	// the position of an enum constructor's argument: a packed constructor's
 	// (@:hxmc.compact, hxmc.ir.Facts) is in the byte after the kind, + 1;
 	// else its slot (no packing)
-	static inline function ctorArg(f:Ptr):Int {
+	@:hxmc.unsafe(gc) static inline function ctorArg(f:Ptr):Int {
 		var k = fKind(f), a = Mem.getU8(f, 9);
 		return a != 0 ? a - 1 : k == "i".code || k == "b".code ? fSlot(f) >> 1 : fSlot(f);
 	}
 
-	public static function enumCreate(e:Dynamic, index:Int, params:Array<Dynamic>):Dynamic {
+	@:hxmc.unsafe(gc) public static function enumCreate(e:Dynamic, index:Int, params:Array<Dynamic>):Dynamic {
 		var t = described(e);
 		if (tk(ty(t)) != TK_ENUM || index < 0 || index >= tag(ty(t))) Rt.rt_throw("Invalid enum constructor");
 		var ct = ctor(ty(t), index);
@@ -1240,10 +1240,10 @@ class Dyn {
 	@:hxmc.kernel public static function enumIndex(v:Dynamic):Int
 		return TypeView.enumIndex(v);
 
-	public static function enumCtorName(v:Dynamic):String
+	@:hxmc.unsafe(gc) public static function enumCtorName(v:Dynamic):String
 		return Str.ofAscii(name(ty(tindex(v))));
 
-	public static function enumParams(v:Dynamic):Array<Dynamic> {
+	@:hxmc.unsafe(gc) public static function enumParams(v:Dynamic):Array<Dynamic> {
 		var t = tindex(v);
 		var a:Array<Dynamic> = [];
 		a.resize(nfields(ty(t)));
@@ -1255,7 +1255,7 @@ class Dyn {
 		return a;
 	}
 
-	public static function enumEq(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.unsafe(gc) public static function enumEq(a:Dynamic, b:Dynamic):Bool {
 		if (Mem.addr(a) == Mem.addr(b)) return true;
 		if (Str.isNull(a) || Str.isNull(b) || tindex(a) != tindex(b)) return false;
 		var ty = ty(tindex(a));
@@ -1288,7 +1288,7 @@ class Dyn {
 		return true;
 	}
 
-	static function namesArray(t:Int, withMethods:Bool):Array<String> {
+	@:hxmc.unsafe(gc) static function namesArray(t:Int, withMethods:Bool):Array<String> {
 		var a:Array<String> = [];
 		for (i in 0...nfields(ty(t)))
 			a.push(Names.fidStr(fFid(field(ty(t), i))));
@@ -1303,7 +1303,7 @@ class Dyn {
 
 	// the statics a class value reaches (Type.getClassFields), in their order
 	// (each entry's rank: hxmc.ir.Lower.reflectStatics)
-	public static function classFields(c:Dynamic):Array<String> {
+	@:hxmc.unsafe(gc) public static function classFields(c:Dynamic):Array<String> {
 		var a:Array<String> = [];
 		if (Str.isNull(c) || tindex(c) != T_TYPEOBJ) return a;
 		var n = nstatics(ty(described(c)));
@@ -1315,7 +1315,7 @@ class Dyn {
 		return a;
 	}
 
-	public static function fields(o:Dynamic):Array<String> {
+	@:hxmc.unsafe(gc) public static function fields(o:Dynamic):Array<String> {
 		if (Str.isNull(o)) return [];
 		// (a class value's: its statics, as Eval has them)
 		if (tindex(o) == T_TYPEOBJ) return classFields(o);
@@ -1334,7 +1334,7 @@ class Dyn {
 		return a;
 	}
 
-	public static function hasField(o:Dynamic, name:String):Bool {
+	@:hxmc.unsafe(gc) public static function hasField(o:Dynamic, name:String):Bool {
 		if (Str.isNull(o)) return false;
 		// (a class value: its own statics, not its superclasses')
 		if (tindex(o) == T_TYPEOBJ) return !findStatic(o, fid(name)).isNull();
@@ -1358,7 +1358,7 @@ class Dyn {
 	// the others keep their order); not one of the structure's own: its
 	// layout is fixed, and its type index, which the generated code reads
 	// as a constant, cannot change (docs/hxmc.md, "Anonymous structures")
-	public static function deleteField(o:Dynamic, name:String):Bool {
+	@:hxmc.unsafe(gc) public static function deleteField(o:Dynamic, name:String):Bool {
 		if (Str.isNull(o) || tk(ty(tindex(o))) != TK_ANON || Str.isNull(Mem.getRef(Mem.addr(o), 0))) return false;
 		var i = overflowFind(o, fid(name));
 		if (i < 0) return false;
@@ -1432,7 +1432,7 @@ class Dyn {
 		return false;
 	}
 
-	public static function copyObject(o:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) public static function copyObject(o:Dynamic):Dynamic {
 		if (Str.isNull(o)) return o;
 		// (a date: a new one, as Eval's)
 		if (tindex(o) == T_DATE) return Repr.dateOf(Repr.dateMs(o));

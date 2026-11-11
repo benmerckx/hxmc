@@ -59,7 +59,7 @@ class Uv {
 	@:hxmc.unsafe static function unlock(p:Ptr)
 		Atomic.store32(p, 0);
 
-	static function objAdd(p:Ptr):Int {
+	@:hxmc.unsafe(gc) static function objAdd(p:Ptr):Int {
 		var t = state();
 		lock(t.add(T_LOCK));
 		var id = Mem.getI32(t, T_COUNT);
@@ -85,7 +85,7 @@ class Uv {
 		return Mem.getPtr(t, T_CHUNKS + 8 * (id >> 10)).add(8 * (id & 1023));
 	}
 
-	static function objGet(id:Int):Ptr {
+	@:hxmc.unsafe(gc) static function objGet(id:Int):Ptr {
 		var t = state();
 		var n = Atomic.load32(t);
 		var p = id > 0 && id < n ? Mem.getPtr(slotOf(id), 0) : Ptr.nil();
@@ -122,33 +122,33 @@ class Uv {
 
 	// ---- C data <-> Haxe values
 
-	static inline function data(b:Bytes):Ptr
+	@:hxmc.unsafe(gc) static inline function data(b:Bytes):Ptr
 		return Mem.addr(b.getData());
 
 	// a NUL-terminated copy of a Bytes in the arena (null for null)
-	static function bytesZ(a:Arena, b:Null<Bytes>):CString
+	@:hxmc.unsafe(gc) static function bytesZ(a:Arena, b:Null<Bytes>):CString
 		return b == null ? Ptr.nil() : a.copyBytesZ(b);
 
-	static function bytesOf(p:Ptr, n:Int):Bytes {
+	@:hxmc.unsafe(gc) static function bytesOf(p:Ptr, n:Int):Bytes {
 		var b = Bytes.alloc(n);
 		if (n > 0) LibC.memcpy(data(b), p, (n : I64));
 		return b;
 	}
 
-	static function bytesOfC(s:Ptr):Null<Bytes>
+	@:hxmc.unsafe(gc) static function bytesOfC(s:Ptr):Null<Bytes>
 		return s.isNull() ? null : bytesOf(s, LibC.strlen(s).toInt());
 
-	static function strOfC(s:Ptr):String
+	@:hxmc.unsafe(gc) static function strOfC(s:Ptr):String
 		return Str.ofUtf8(s, LibC.strlen(s).toInt());
 
 	// a struct sockaddr_storage as Bytes (len bytes of s, the rest zero)
-	static function sockaddrBytes(s:Ptr, len:Int):Bytes {
+	@:hxmc.unsafe(gc) static function sockaddrBytes(s:Ptr, len:Int):Bytes {
 		var b = Bytes.alloc(L.SOCKADDR_STORAGE_SIZE);
 		if (!s.isNull()) LibC.memcpy(data(b), s, (len : I64));
 		return b;
 	}
 
-	static inline function nullable(b:Null<Bytes>):Ptr
+	@:hxmc.unsafe(gc) static inline function nullable(b:Null<Bytes>):Ptr
 		return b == null ? Ptr.nil() : data(b);
 
 	// a C long (32 bits on Windows)
@@ -168,13 +168,13 @@ class Uv {
 		return index >= 0 && index < 82 ? L.uvError(index) : L.UV_UNKNOWN;
 
 	// Error.strerror / err_name: the _r variants into a 256-byte buffer
-	public static function strerror(code:Int):String {
+	@:hxmc.unsafe(gc) public static function strerror(code:Int):String {
 		var buf = Mem.stack(256);
 		U.uv_strerror_r(code, buf, 256);
 		return strOfC(buf);
 	}
 
-	public static function errName(code:Int):String {
+	@:hxmc.unsafe(gc) public static function errName(code:Int):String {
 		var buf = Mem.stack(256);
 		U.uv_err_name_r(code, buf, 256);
 		return strOfC(buf);
@@ -199,7 +199,7 @@ class Uv {
 		}
 	}
 
-	public static function versionString():String
+	@:hxmc.unsafe(gc) public static function versionString():String
 		return strOfC(U.uv_version_string());
 
 	public static function versionSuffix():String
@@ -228,10 +228,10 @@ class Uv {
 	static var defaultLoopId:Int;
 	static var loopLock:Ptr;
 
-	static inline function loop(id:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function loop(id:Int):Ptr
 		return Mem.getPtr(objGet(id), 0);
 
-	public static function loopDefault():Int {
+	@:hxmc.unsafe(gc) public static function loopDefault():Int {
 		if (loopLock.isNull()) {
 			var l = LibC.malloc(8);
 			Mem.setI64(l, 0, 0);
@@ -248,7 +248,7 @@ class Uv {
 		return id;
 	}
 
-	public static function loopInit():Int {
+	@:hxmc.unsafe(gc) public static function loopInit():Int {
 		var lp = LibC.malloc(U.uv_loop_size());
 		var r = U.uv_loop_init(lp);
 		if (r < 0) {
@@ -262,7 +262,7 @@ class Uv {
 
 	// uv_run in a safe region: other threads run and collect while it waits;
 	// its callbacks leave the safe region for their Haxe code
-	public static function loopRun(id:Int, mode:Int, dispatcher:(Int, Int, Int, Dynamic) -> Void):Bool {
+	@:hxmc.unsafe(gc) public static function loopRun(id:Int, mode:Int, dispatcher:(Int, Int, Int, Dynamic) -> Void):Bool {
 		var lp = loop(id);
 		var saved = NativeThread.tlsGet(dispatcherTls);
 		NativeThread.tlsSet(dispatcherTls, dispatcher);
@@ -271,27 +271,27 @@ class Uv {
 		return r != 0;
 	}
 
-	public static function loopStop(id:Int):Void
+	@:hxmc.unsafe(gc) public static function loopStop(id:Int):Void
 		U.uv_stop(loop(id));
 
-	public static function loopClose(id:Int):Int
+	@:hxmc.unsafe(gc) public static function loopClose(id:Int):Int
 		return U.uv_loop_close(loop(id));
 
-	public static function loopAlive(id:Int):Bool
+	@:hxmc.unsafe(gc) public static function loopAlive(id:Int):Bool
 		return U.uv_loop_alive(loop(id)) != 0;
 
 	// i64
-	public static function loopNow(id:Int):Void
+	@:hxmc.unsafe(gc) public static function loopNow(id:Int):Void
 		i64Out = U.uv_now(loop(id));
 
-	public static function loopUpdateTime(id:Int):Void
+	@:hxmc.unsafe(gc) public static function loopUpdateTime(id:Int):Void
 		U.uv_update_time(loop(id));
 
 	public static function libraryShutdown():Void
 		U.uv_library_shutdown();
 
 	// i64
-	public static function metricsIdleTime(id:Int):Void
+	@:hxmc.unsafe(gc) public static function metricsIdleTime(id:Int):Void
 		i64Out = U.uv_metrics_idle_time(loop(id));
 
 	// ---- handles: hx_h, the id, the kind, the memory of the last allocation
@@ -333,10 +333,10 @@ class Uv {
 	}
 
 	// the uv handle of a handle id, and the hx_h of a uv handle
-	static inline function H(id:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function H(id:Int):Ptr
 		return objGet(id);
 
-	static inline function uvh(id:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function uvh(id:Int):Ptr
 		return objGet(id).add(H_UV);
 
 	@:hxmc.unsafe static inline function hx(uh:Ptr):Ptr
@@ -345,7 +345,7 @@ class Uv {
 	@:hxmc.unsafe static inline function hid(uh:Ptr):Int
 		return Mem.getI32(uh, -H_UV + H_ID);
 
-	static function newHandle(kind:Int):Ptr {
+	@:hxmc.unsafe(gc) static function newHandle(kind:Int):Ptr {
 		var n = handleBytes();
 		var h = LibC.malloc((n : I64));
 		LibC.memset(h, 0, (n : I64));
@@ -362,7 +362,7 @@ class Uv {
 
 	// init: returns the handle id, or a negative error. arg: a domain (tcp, udp),
 	// ipc (pipe), fd (tty), udp flags
-	public static function handleInit(kind:Int, loopId:Int, arg:Int, arg2:Int):Int {
+	@:hxmc.unsafe(gc) public static function handleInit(kind:Int, loopId:Int, arg:Int, arg2:Int):Int {
 		var lp = loop(loopId);
 		var h = newHandle(kind);
 		var u = h.add(H_UV);
@@ -400,31 +400,31 @@ class Uv {
 
 	// Handle.close: nothing when already closing
 	// false: already closing
-	public static function handleClose(id:Int):Bool {
+	@:hxmc.unsafe(gc) public static function handleClose(id:Int):Bool {
 		var u = uvh(id);
 		if (U.uv_is_closing(u) != 0) return false;
 		U.uv_close(u, Callback.addr(closeCb));
 		return true;
 	}
 
-	public static function handleIsActive(id:Int):Bool
+	@:hxmc.unsafe(gc) public static function handleIsActive(id:Int):Bool
 		return U.uv_is_active(uvh(id)) != 0;
 
-	public static function handleIsClosing(id:Int):Bool
+	@:hxmc.unsafe(gc) public static function handleIsClosing(id:Int):Bool
 		return U.uv_is_closing(uvh(id)) != 0;
 
-	public static function handleRef(id:Int):Void
+	@:hxmc.unsafe(gc) public static function handleRef(id:Int):Void
 		U.uv_ref(uvh(id));
 
-	public static function handleUnref(id:Int):Void
+	@:hxmc.unsafe(gc) public static function handleUnref(id:Int):Void
 		U.uv_unref(uvh(id));
 
-	public static function handleHasRef(id:Int):Bool
+	@:hxmc.unsafe(gc) public static function handleHasRef(id:Int):Bool
 		return U.uv_has_ref(uvh(id)) != 0;
 
 	// send/recv buffer size: size 0 reads it
 	// size 0: get
-	public static function bufferSize(id:Int, send:Bool, size:Int):Int {
+	@:hxmc.unsafe(gc) public static function bufferSize(id:Int, send:Bool, size:Int):Int {
 		var v:Ptr<Int32> = Mem.stack(16);
 		v.value = size;
 		var r = send ? U.uv_send_buffer_size(uvh(id), v) : U.uv_recv_buffer_size(uvh(id), v);
@@ -442,7 +442,7 @@ class Uv {
 	@:hxmc.callback static function signalCb(w:Ptr, signum:Int):Void
 		dispatch(hid(w), EV_CB, signum, null);
 
-	public static function watcherStart(id:Int):Int {
+	@:hxmc.unsafe(gc) public static function watcherStart(id:Int):Int {
 		var h = H(id);
 		var u = h.add(H_UV);
 		return switch Mem.getI32(h, H_KIND) {
@@ -452,7 +452,7 @@ class Uv {
 		}
 	}
 
-	public static function watcherStop(id:Int):Int {
+	@:hxmc.unsafe(gc) public static function watcherStop(id:Int):Int {
 		var h = H(id);
 		var u = h.add(H_UV);
 		return switch Mem.getI32(h, H_KIND) {
@@ -465,36 +465,36 @@ class Uv {
 	static inline function u32(v:Int):I64
 		return ((v : I64) << 32) >>> 32; // (& 0xFFFFFFFF would keep the sign: the literal is the Int -1)
 
-	public static function timerStart(id:Int, timeout:Int, repeat:Int):Int
+	@:hxmc.unsafe(gc) public static function timerStart(id:Int, timeout:Int, repeat:Int):Int
 		return U.uv_timer_start(uvh(id), Callback.addr(watcherCb), u32(timeout), u32(repeat));
 
-	public static function timerStop(id:Int):Int
+	@:hxmc.unsafe(gc) public static function timerStop(id:Int):Int
 		return U.uv_timer_stop(uvh(id));
 
-	public static function timerAgain(id:Int):Int
+	@:hxmc.unsafe(gc) public static function timerAgain(id:Int):Int
 		return U.uv_timer_again(uvh(id));
 
-	public static function timerSetRepeat(id:Int, repeat:Int):Void
+	@:hxmc.unsafe(gc) public static function timerSetRepeat(id:Int, repeat:Int):Void
 		U.uv_timer_set_repeat(uvh(id), u32(repeat));
 
-	public static function timerGetRepeat(id:Int):Int
+	@:hxmc.unsafe(gc) public static function timerGetRepeat(id:Int):Int
 		return U.uv_timer_get_repeat(uvh(id)).toInt();
 
-	public static function timerGetDueIn(id:Int):Int
+	@:hxmc.unsafe(gc) public static function timerGetDueIn(id:Int):Int
 		return U.uv_timer_get_due_in(uvh(id)).toInt();
 
-	public static function asyncSend(id:Int):Int
+	@:hxmc.unsafe(gc) public static function asyncSend(id:Int):Int
 		return U.uv_async_send(uvh(id));
 
-	public static function signalStart(id:Int, signum:Int, oneshot:Bool):Int {
+	@:hxmc.unsafe(gc) public static function signalStart(id:Int, signum:Int, oneshot:Bool):Int {
 		var u = uvh(id);
 		return oneshot ? U.uv_signal_start_oneshot(u, Callback.addr(signalCb), signum) : U.uv_signal_start(u, Callback.addr(signalCb), signum);
 	}
 
-	public static function signalStop(id:Int):Int
+	@:hxmc.unsafe(gc) public static function signalStop(id:Int):Int
 		return U.uv_signal_stop(uvh(id));
 
-	public static function signalSignum(id:Int):Int
+	@:hxmc.unsafe(gc) public static function signalSignum(id:Int):Int
 		return Mem.getI32(uvh(id), L.SIGNAL_SIGNUM);
 
 	// ---- requests: hx_r, the id, copied data (writes) or data to copy out
@@ -524,16 +524,16 @@ class Uv {
 		return R_UV + reqSize;
 	}
 
-	static inline function R(id:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function R(id:Int):Ptr
 		return objGet(id);
 
-	static inline function uvr(id:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function uvr(id:Int):Ptr
 		return objGet(id).add(R_UV);
 
 	@:hxmc.unsafe static inline function rid(req:Ptr):Int
 		return Mem.getI32(req, -R_UV + R_ID);
 
-	public static function reqNew():Int {
+	@:hxmc.unsafe(gc) public static function reqNew():Int {
 		var n = reqBytes();
 		var r = LibC.malloc((n : I64));
 		LibC.memset(r, 0, (n : I64));
@@ -554,7 +554,7 @@ class Uv {
 		Mem.setPtr(r, R_AI, Ptr.nil());
 	}
 
-	public static function reqFree(id:Int):Void {
+	@:hxmc.unsafe(gc) public static function reqFree(id:Int):Void {
 		var r = R(id);
 		reqClear(r);
 		objClear(id);
@@ -562,7 +562,7 @@ class Uv {
 		LibC.free(r);
 	}
 
-	public static function reqCancel(id:Int):Int
+	@:hxmc.unsafe(gc) public static function reqCancel(id:Int):Int
 		return U.uv_cancel(uvr(id));
 
 	@:hxmc.callback static function statusCb(req:Ptr, status:Int):Void
@@ -579,7 +579,7 @@ class Uv {
 
 	// copies `data` into the request's scratch and splits it into `sizes`
 	// buffers (reads: data null, the sizes' total); the number of buffers
-	static function reqBufs(r:Ptr, d:Null<Bytes>, sizes:Null<Array<Int>>):Int {
+	@:hxmc.unsafe(gc) static function reqBufs(r:Ptr, d:Null<Bytes>, sizes:Null<Array<Int>>):Int {
 		var n = sizes != null ? sizes.length : 0;
 		var total = 0;
 		if (d != null) total = d.length else for (i in 0...n) total += sizes[i];
@@ -601,7 +601,7 @@ class Uv {
 	}
 
 	// copies len bytes at offset src of the request's scratch into b[pos]
-	public static function reqCopyOut(id:Int, b:Bytes, pos:Int, src:Int, len:Int):Void {
+	@:hxmc.unsafe(gc) public static function reqCopyOut(id:Int, b:Bytes, pos:Int, src:Int, len:Int):Void {
 		var r = R(id);
 		if (len > 0 && !Mem.ult(Mem.getI64(r, R_SCRATCH_LEN), (src : I64) + len))
 			LibC.memcpy(data(b).add(pos), Mem.getPtr(r, R_SCRATCH).add(src), (len : I64));
@@ -612,7 +612,7 @@ class Uv {
 	public static function sockaddrSize():Int
 		return L.SOCKADDR_STORAGE_SIZE;
 
-	public static function sockaddrIp(host:String, port:Int, v6:Bool, out:Bytes):Int {
+	@:hxmc.unsafe(gc) public static function sockaddrIp(host:String, port:Int, v6:Bool, out:Bytes):Int {
 		return Arena.scopedValue(a -> {
 			var h = a.cstring(host);
 			out.fill(0, L.SOCKADDR_STORAGE_SIZE, 0);
@@ -632,7 +632,7 @@ class Uv {
 
 	// Sockaddr.port: -1 for None
 	// -1: none
-	public static function sockaddrPort(sa:Bytes):Int {
+	@:hxmc.unsafe(gc) public static function sockaddrPort(sa:Bytes):Int {
 		var s = data(sa);
 		var f = family(s);
 		if (f == L.AF_INET) return port16(s, L.SIN_PORT);
@@ -641,7 +641,7 @@ class Uv {
 	}
 
 	// Sockaddr.to_string: null for None
-	public static function sockaddrToString(sa:Bytes):Null<String> {
+	@:hxmc.unsafe(gc) public static function sockaddrToString(sa:Bytes):Null<String> {
 		var buf = Mem.stack(64);
 		LibC.memset(buf, 0, 64);
 		var tmp = Mem.stack(128);
@@ -653,28 +653,28 @@ class Uv {
 
 	// ---- TCP
 
-	public static function tcpNoDelay(id:Int, b:Bool):Int
+	@:hxmc.unsafe(gc) public static function tcpNoDelay(id:Int, b:Bool):Int
 		return U.uv_tcp_nodelay(uvh(id), b ? 1 : 0);
 
-	public static function tcpKeepAlive(id:Int, enable:Bool, delay:Int):Int
+	@:hxmc.unsafe(gc) public static function tcpKeepAlive(id:Int, enable:Bool, delay:Int):Int
 		return U.uv_tcp_keepalive(uvh(id), enable ? 1 : 0, delay);
 
-	public static function tcpSimultaneousAccepts(id:Int, b:Bool):Int
+	@:hxmc.unsafe(gc) public static function tcpSimultaneousAccepts(id:Int, b:Bool):Int
 		return U.uv_tcp_simultaneous_accepts(uvh(id), b ? 1 : 0);
 
 	// (an address copied out of the heap for the call)
-	static function sockaddrC(a:Arena, sa:Null<Bytes>):Ptr {
+	@:hxmc.unsafe(gc) static function sockaddrC(a:Arena, sa:Null<Bytes>):Ptr {
 		if (sa == null) return Ptr.nil();
 		var p = a.alloc(L.SOCKADDR_STORAGE_SIZE);
 		LibC.memcpy(p, data(sa), (L.SOCKADDR_STORAGE_SIZE : I64));
 		return p;
 	}
 
-	public static function tcpBind(id:Int, sa:Bytes, ipv6only:Bool):Int
+	@:hxmc.unsafe(gc) public static function tcpBind(id:Int, sa:Bytes, ipv6only:Bool):Int
 		return Arena.scopedValue(a -> U.uv_tcp_bind(uvh(id), sockaddrC(a, sa), ipv6only ? L.UV_TCP_IPV6ONLY : 0));
 
 	// getsockname/getpeername (tcp, udp) into out
-	public static function sockName(id:Int, peer:Bool, out:Bytes):Int {
+	@:hxmc.unsafe(gc) public static function sockName(id:Int, peer:Bool, out:Bytes):Int {
 		var h = H(id);
 		var u = h.add(H_UV);
 		var len:Ptr<Int32> = Mem.stack(16);
@@ -687,11 +687,11 @@ class Uv {
 		return r;
 	}
 
-	public static function tcpConnect(id:Int, sa:Bytes, req:Int):Int
+	@:hxmc.unsafe(gc) public static function tcpConnect(id:Int, sa:Bytes, req:Int):Int
 		return Arena.scopedValue(a -> U.uv_tcp_connect(uvr(req), uvh(id), sockaddrC(a, sa), Callback.addr(statusCb)));
 
 	// TCP.close_reset: the request id stands for the callback (EV_REQ with status 0)
-	@:hxmc.callback static function closeResetCb(uh:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function closeResetCb(uh:Ptr):Void {
 		var h = hx(uh);
 		var req = Mem.getI64(h, H_RBUF).toInt();
 		Mem.setPtr(h, H_RBUF, Ptr.nil());
@@ -699,7 +699,7 @@ class Uv {
 		dispatch(req, EV_REQ, 0, null);
 	}
 
-	public static function tcpCloseReset(id:Int, req:Int):Int {
+	@:hxmc.unsafe(gc) public static function tcpCloseReset(id:Int, req:Int):Int {
 		var h = H(id);
 		LibC.free(Mem.getPtr(h, H_RBUF));
 		Mem.setI64(h, H_RBUF, req);
@@ -713,7 +713,7 @@ class Uv {
 	public static function allocSize(n:Int):Void
 		allocSizeV = n;
 
-	@:hxmc.callback static function allocCb(uh:Ptr, suggested:I64, buf:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function allocCb(uh:Ptr, suggested:I64, buf:Ptr):Void {
 		allocSizeV = 0;
 		dispatch(hid(uh), EV_ALLOC, suggested.toInt(), null);
 		var n = allocSizeV > 0 ? allocSizeV : 0;
@@ -728,7 +728,7 @@ class Uv {
 	@:hxmc.unsafe static function bufBase(buf:Ptr):Ptr
 		return Mem.getPtr(buf, L.UV_BUF_BASE);
 
-	@:hxmc.callback static function readCb(s:Ptr, nread:I64, buf:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function readCb(s:Ptr, nread:I64, buf:Ptr):Void {
 		var b = nread > 0 ? bytesOf(bufBase(buf), nread.toInt()) : null;
 		dispatch(hid(s), EV_READ, nread.toInt(), b);
 	}
@@ -736,22 +736,22 @@ class Uv {
 	@:hxmc.callback static function connectionCb(s:Ptr, status:Int):Void
 		dispatch(hid(s), EV_CONNECTION, status, null);
 
-	public static function streamShutdown(id:Int, req:Int):Int
+	@:hxmc.unsafe(gc) public static function streamShutdown(id:Int, req:Int):Int
 		return U.uv_shutdown(uvr(req), uvh(id), Callback.addr(statusCb));
 
-	public static function streamListen(id:Int, backlog:Int):Int
+	@:hxmc.unsafe(gc) public static function streamListen(id:Int, backlog:Int):Int
 		return U.uv_listen(uvh(id), backlog, Callback.addr(connectionCb));
 
-	public static function streamAccept(server:Int, client:Int):Int
+	@:hxmc.unsafe(gc) public static function streamAccept(server:Int, client:Int):Int
 		return U.uv_accept(uvh(server), uvh(client));
 
-	public static function readStart(id:Int):Int
+	@:hxmc.unsafe(gc) public static function readStart(id:Int):Int
 		return U.uv_read_start(uvh(id), Callback.addr(allocCb), Callback.addr(readCb));
 
-	public static function readStop(id:Int):Int
+	@:hxmc.unsafe(gc) public static function readStop(id:Int):Int
 		return U.uv_read_stop(uvh(id));
 
-	public static function streamWrite(id:Int, req:Int, d:Bytes, sizes:Array<Int>, sendHandle:Int):Int {
+	@:hxmc.unsafe(gc) public static function streamWrite(id:Int, req:Int, d:Bytes, sizes:Array<Int>, sendHandle:Int):Int {
 		var u = uvh(id);
 		var r = R(req);
 		var n = reqBufs(r, d, sizes);
@@ -759,7 +759,7 @@ class Uv {
 		return U.uv_write2(r.add(R_UV), u, Mem.getPtr(r, R_BUFS), n, send, Callback.addr(statusCb));
 	}
 
-	public static function streamTryWrite(id:Int, d:Bytes, sizes:Array<Int>):Int {
+	@:hxmc.unsafe(gc) public static function streamTryWrite(id:Int, d:Bytes, sizes:Array<Int>):Int {
 		var req = reqNew();
 		var r = R(req);
 		var n = reqBufs(r, d, sizes);
@@ -768,33 +768,33 @@ class Uv {
 		return res;
 	}
 
-	public static function streamWriteQueueSize(id:Int):Int
+	@:hxmc.unsafe(gc) public static function streamWriteQueueSize(id:Int):Int
 		return U.uv_stream_get_write_queue_size(uvh(id)).toInt();
 
-	public static function streamIsReadable(id:Int):Bool
+	@:hxmc.unsafe(gc) public static function streamIsReadable(id:Int):Bool
 		return U.uv_is_readable(uvh(id)) != 0;
 
-	public static function streamIsWritable(id:Int):Bool
+	@:hxmc.unsafe(gc) public static function streamIsWritable(id:Int):Bool
 		return U.uv_is_writable(uvh(id)) != 0;
 
-	public static function streamSetBlocking(id:Int, b:Bool):Int
+	@:hxmc.unsafe(gc) public static function streamSetBlocking(id:Int, b:Bool):Int
 		return U.uv_stream_set_blocking(uvh(id), b ? 1 : 0);
 
 	// ---- pipes, ttys
 
-	public static function pipeBind(id:Int, name:Bytes):Int
+	@:hxmc.unsafe(gc) public static function pipeBind(id:Int, name:Bytes):Int
 		return Arena.scopedValue(a -> U.uv_pipe_bind(uvh(id), bytesZ(a, name)));
 
-	public static function pipeConnect(id:Int, name:Bytes, req:Int):Void
+	@:hxmc.unsafe(gc) public static function pipeConnect(id:Int, name:Bytes, req:Int):Void
 		Arena.scoped(a -> U.uv_pipe_connect(uvr(req), uvh(id), bytesZ(a, name), Callback.addr(statusCb)));
 
 	// not in luv's Eval API: a pipe over an open descriptor (e.g. the process's stdin)
 	// uv_pipe_open (not in luv's Eval API)
-	public static function pipeOpen(id:Int, fd:Int):Int
+	@:hxmc.unsafe(gc) public static function pipeOpen(id:Int, fd:Int):Int
 		return U.uv_pipe_open(uvh(id), fd);
 
 	// getsockname/getpeername: Bytes, null on failure (lastError)
-	public static function pipeName(id:Int, peer:Bool):Null<Bytes> {
+	@:hxmc.unsafe(gc) public static function pipeName(id:Int, peer:Bool):Null<Bytes> {
 		return Arena.scopedValue(a -> {
 			var buf = a.alloc(4096, 1);
 			var len:Ptr<UInt64> = a.alloc(8);
@@ -808,28 +808,28 @@ class Uv {
 		});
 	}
 
-	public static function pipePendingInstances(id:Int, n:Int):Void
+	@:hxmc.unsafe(gc) public static function pipePendingInstances(id:Int, n:Int):Void
 		U.uv_pipe_pending_instances(uvh(id), n);
 
 	// 0 none, 1 tcp, 2 pipe
-	public static function pipePendingType(id:Int):Int {
+	@:hxmc.unsafe(gc) public static function pipePendingType(id:Int):Int {
 		var u = uvh(id);
 		if (U.uv_pipe_pending_count(u) <= 0) return 0;
 		var t = U.uv_pipe_pending_type(u);
 		return t == L.UV_TCP ? 1 : t == L.UV_NAMED_PIPE ? 2 : 0;
 	}
 
-	public static function pipeChmod(id:Int, mode:Int):Int
+	@:hxmc.unsafe(gc) public static function pipeChmod(id:Int, mode:Int):Int
 		return U.uv_pipe_chmod(uvh(id), mode == 0 ? L.UV_READABLE : mode == 1 ? L.UV_WRITABLE : (L.UV_READABLE | L.UV_WRITABLE));
 
-	public static function ttySetMode(id:Int, mode:Int):Int
+	@:hxmc.unsafe(gc) public static function ttySetMode(id:Int, mode:Int):Int
 		return U.uv_tty_set_mode(uvh(id), mode == 0 ? L.UV_TTY_MODE_NORMAL : mode == 1 ? L.UV_TTY_MODE_RAW : L.UV_TTY_MODE_IO);
 
 	public static function ttyResetMode():Int
 		return U.uv_tty_reset_mode();
 
 	// [width, height], null on failure
-	public static function ttyGetWinSize(id:Int):Null<Array<Int>> {
+	@:hxmc.unsafe(gc) public static function ttyGetWinSize(id:Int):Null<Array<Int>> {
 		var wh:Ptr<Int32> = Mem.stack(16);
 		var r = U.uv_tty_get_winsize(uvh(id), wh, wh.offset(1));
 		if (r < 0) {
@@ -842,7 +842,7 @@ class Uv {
 	public static function ttySetVTermState(s:Int):Void
 		U.uv_tty_set_vterm_state(s == 0 ? L.UV_TTY_SUPPORTED : L.UV_TTY_UNSUPPORTED);
 
-	public static function ttyGetVTermState():Int {
+	@:hxmc.unsafe(gc) public static function ttyGetVTermState():Int {
 		var s:Ptr<Int32> = Mem.stack(16);
 		var r = U.uv_tty_get_vterm_state(s);
 		return r < 0 ? r : (s.value == L.UV_TTY_SUPPORTED ? 0 : 1);
@@ -850,13 +850,13 @@ class Uv {
 
 	// ---- UDP
 
-	public static function udpBind(id:Int, sa:Bytes, flags:Int):Int
+	@:hxmc.unsafe(gc) public static function udpBind(id:Int, sa:Bytes, flags:Int):Int
 		return Arena.scopedValue(a -> U.uv_udp_bind(uvh(id), sockaddrC(a, sa), flags));
 
-	public static function udpConnect(id:Int, sa:Null<Bytes>):Int
+	@:hxmc.unsafe(gc) public static function udpConnect(id:Int, sa:Null<Bytes>):Int
 		return Arena.scopedValue(a -> U.uv_udp_connect(uvh(id), sockaddrC(a, sa)));
 
-	public static function udpSetMembership(id:Int, group:String, iface:String, source:Null<String>, join:Bool):Int {
+	@:hxmc.unsafe(gc) public static function udpSetMembership(id:Int, group:String, iface:String, source:Null<String>, join:Bool):Int {
 		return Arena.scopedValue(a -> {
 			var m = join ? L.UV_JOIN_GROUP : L.UV_LEAVE_GROUP;
 			source != null ? U.uv_udp_set_source_membership(uvh(id), a.cstring(group), a.cstring(iface), a.cstring(source), m) : U.uv_udp_set_membership(uvh(id),
@@ -865,7 +865,7 @@ class Uv {
 	}
 
 	// 0 multicast loop, 1 multicast ttl, 2 broadcast, 3 ttl
-	public static function udpSetOption(id:Int, opt:Int, v:Int):Int {
+	@:hxmc.unsafe(gc) public static function udpSetOption(id:Int, opt:Int, v:Int):Int {
 		var u = uvh(id);
 		return switch opt {
 			case 0: U.uv_udp_set_multicast_loop(u, v);
@@ -875,10 +875,10 @@ class Uv {
 		}
 	}
 
-	public static function udpSetMulticastInterface(id:Int, iface:String):Int
+	@:hxmc.unsafe(gc) public static function udpSetMulticastInterface(id:Int, iface:String):Int
 		return Arena.scopedValue(a -> U.uv_udp_set_multicast_interface(uvh(id), a.cstring(iface)));
 
-	public static function udpSend(id:Int, req:Int, d:Bytes, sizes:Array<Int>, sa:Null<Bytes>):Int {
+	@:hxmc.unsafe(gc) public static function udpSend(id:Int, req:Int, d:Bytes, sizes:Array<Int>, sa:Null<Bytes>):Int {
 		return Arena.scopedValue(a -> {
 			var r = R(req);
 			var n = reqBufs(r, d, sizes);
@@ -886,7 +886,7 @@ class Uv {
 		});
 	}
 
-	public static function udpTrySend(id:Int, d:Bytes, sizes:Array<Int>, sa:Null<Bytes>):Int {
+	@:hxmc.unsafe(gc) public static function udpTrySend(id:Int, d:Bytes, sizes:Array<Int>, sa:Null<Bytes>):Int {
 		return Arena.scopedValue(a -> {
 			var req = reqNew();
 			var r = R(req);
@@ -898,7 +898,7 @@ class Uv {
 	}
 
 	// [data or null, address or null, flags]
-	@:hxmc.callback static function udpRecvCb(u:Ptr, nread:I64, buf:Ptr, addr:Ptr, flags:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function udpRecvCb(u:Ptr, nread:I64, buf:Ptr, addr:Ptr, flags:Int):Void {
 		if (nread < 0) {
 			dispatch(hid(u), EV_UDP_RECV, nread.toInt(), null);
 			return;
@@ -910,13 +910,13 @@ class Uv {
 		dispatch(hid(u), EV_UDP_RECV, nread.toInt(), arr);
 	}
 
-	public static function udpRecvStart(id:Int):Int
+	@:hxmc.unsafe(gc) public static function udpRecvStart(id:Int):Int
 		return U.uv_udp_recv_start(uvh(id), Callback.addr(allocCb), Callback.addr(udpRecvCb));
 
-	public static function udpRecvStop(id:Int):Int
+	@:hxmc.unsafe(gc) public static function udpRecvStop(id:Int):Int
 		return U.uv_udp_recv_stop(uvh(id));
 
-	public static function udpSendQueue(id:Int, count:Bool):Int {
+	@:hxmc.unsafe(gc) public static function udpSendQueue(id:Int, count:Bool):Int {
 		var u = uvh(id);
 		return (count ? U.uv_udp_get_send_queue_count(u) : U.uv_udp_get_send_queue_size(u)).toInt();
 	}
@@ -932,7 +932,7 @@ class Uv {
 	// 3 inherit stream), pipe flags (1 readable, 2 writable, 4 overlapped), fd or stream
 	// handle id. flags: 1 setuid, 2 setgid, 4 windows_verbatim_arguments, 8 detached,
 	// 16 windows_hide, 32 windows_hide_console, 64 windows_hide_gui
-	public static function processSpawn(loopId:Int, cmd:Bytes, args:Array<Bytes>, env:Null<Array<Bytes>>, cwd:Null<Bytes>,
+	@:hxmc.unsafe(gc) public static function processSpawn(loopId:Int, cmd:Bytes, args:Array<Bytes>, env:Null<Array<Bytes>>, cwd:Null<Bytes>,
 			flags:Int, uid:Int, gid:Int, redirect:Array<Int>, onExit:Bool):Int {
 		var lp = loop(loopId);
 		return Arena.scopedValue(a -> {
@@ -1017,12 +1017,12 @@ class Uv {
 	public static function killPid(pid:Int, sig:Int):Int
 		return U.uv_kill(pid, sig);
 
-	public static function processPid(id:Int):Int
+	@:hxmc.unsafe(gc) public static function processPid(id:Int):Int
 		return U.uv_process_get_pid(uvh(id));
 
 	// ---- DNS
 
-	@:hxmc.callback static function gaiCb(req:Ptr, status:Int, res:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function gaiCb(req:Ptr, status:Int, res:Ptr):Void {
 		Mem.setPtr(req, -R_UV + R_AI, res);
 		dispatch(rid(req), EV_REQ, status, null);
 	}
@@ -1031,7 +1031,7 @@ class Uv {
 		dispatch(rid(req), EV_REQ, status, null);
 
 	// hints: family, socktype, protocol, flags; -1: not given (no hints at all when all are)
-	public static function getAddrInfo(loopId:Int, req:Int, node:Null<String>, service:Null<String>, family:Int,
+	@:hxmc.unsafe(gc) public static function getAddrInfo(loopId:Int, req:Int, node:Null<String>, service:Null<String>, family:Int,
 			socktype:Int, protocol:Int, flags:Int, hasHints:Bool):Int {
 		var lp = loop(loopId);
 		return Arena.scopedValue(a -> {
@@ -1047,7 +1047,7 @@ class Uv {
 	}
 
 	// per entry: family, socktype, protocol, address (Bytes), canonical name (String or null); frees the list
-	public static function addrInfoResult(req:Int):Array<Dynamic> {
+	@:hxmc.unsafe(gc) public static function addrInfoResult(req:Int):Array<Dynamic> {
 		var r = R(req);
 		var n = 0;
 		var ai = Mem.getPtr(r, R_AI);
@@ -1075,13 +1075,13 @@ class Uv {
 		return arr;
 	}
 
-	public static function getNameInfo(loopId:Int, req:Int, sa:Bytes, flags:Int):Int {
+	@:hxmc.unsafe(gc) public static function getNameInfo(loopId:Int, req:Int, sa:Bytes, flags:Int):Int {
 		var lp = loop(loopId);
 		return Arena.scopedValue(a -> U.uv_getnameinfo(lp, uvr(req), Callback.addr(gniCb), sockaddrC(a, sa), flags));
 	}
 
 	// [host, service]
-	public static function nameInfoResult(req:Int):Array<String> {
+	@:hxmc.unsafe(gc) public static function nameInfoResult(req:Int):Array<String> {
 		var q = uvr(req);
 		var host = strOfC(q.add(L.GNI_HOST));
 		var service = strOfC(uvr(req).add(L.GNI_SERVICE));
@@ -1127,7 +1127,7 @@ class Uv {
 	static inline var FS_LCHOWN = 34;
 	static inline var FS_FCHOWN = 35;
 
-	@:hxmc.callback static function fsCb(q:Ptr):Void
+	@:hxmc.unsafe(gc) @:hxmc.callback static function fsCb(q:Ptr):Void
 		dispatch(rid(q), EV_REQ, U.uv_fs_get_result(q).toInt(), null);
 
 	static inline function f2l(f:Float):I64
@@ -1138,7 +1138,7 @@ class Uv {
 	// i1..i3: ints (file, flags, mode, uid, gid, dir id, number of entries);
 	// f1, f2: floats (offsets, lengths, times); data/sizes: buffers. Every
 	// call is in a safe region (the synchronous ones block on the disk).
-	public static function fs(op:Int, loopId:Int, req:Int, p1:Null<Bytes>, p2:Null<Bytes>, i1:Int, i2:Int, i3:Int, f1:Float, f2:Float,
+	@:hxmc.unsafe(gc) public static function fs(op:Int, loopId:Int, req:Int, p1:Null<Bytes>, p2:Null<Bytes>, i1:Int, i2:Int, i3:Int, f1:Float, f2:Float,
 			d:Null<Bytes>, sizes:Null<Array<Int>>):Int {
 		var lp = loopId < 0 ? U.uv_default_loop() : loop(loopId);
 		var cb = loopId < 0 ? Ptr.nil() : Callback.addr(fsCb);
@@ -1199,16 +1199,16 @@ class Uv {
 		});
 	}
 
-	public static function fsResult(req:Int):Int
+	@:hxmc.unsafe(gc) public static function fsResult(req:Int):Int
 		return U.uv_fs_get_result(uvr(req)).toInt();
 
-	public static function fsCleanup(req:Int):Void
+	@:hxmc.unsafe(gc) public static function fsCleanup(req:Int):Void
 		U.uv_fs_req_cleanup(uvr(req));
 
-	public static function fsPath(req:Int):Null<Bytes>
+	@:hxmc.unsafe(gc) public static function fsPath(req:Int):Null<Bytes>
 		return bytesOfC(U.uv_fs_get_path(uvr(req)));
 
-	public static function fsPtrString(req:Int):Null<Bytes>
+	@:hxmc.unsafe(gc) public static function fsPtrString(req:Int):Null<Bytes>
 		return bytesOfC(U.uv_fs_get_ptr(uvr(req)));
 
 	// 20 int64: dev mode nlink uid gid rdev ino size blksize blocks flags gen, then sec/nsec of atim mtim ctim birthtim
@@ -1223,7 +1223,7 @@ class Uv {
 	}
 
 	// 160 bytes
-	public static function fsStat(req:Int, out:Bytes):Void {
+	@:hxmc.unsafe(gc) public static function fsStat(req:Int, out:Bytes):Void {
 		var s = U.uv_fs_get_statbuf(uvr(req));
 		var tmp = Mem.stack(160);
 		statInto(tmp, s);
@@ -1232,19 +1232,19 @@ class Uv {
 
 	// 11 int64: type bsize blocks bfree bavail files ffree f_spare[4]
 	// 88 bytes
-	public static function fsStatfs(req:Int, out:Bytes):Void {
+	@:hxmc.unsafe(gc) public static function fsStatfs(req:Int, out:Bytes):Void {
 		var s = U.uv_fs_get_ptr(uvr(req));
 		LibC.memcpy(data(out), s, 88);
 	}
 
-	public static function fsDir(req:Int):Int {
+	@:hxmc.unsafe(gc) public static function fsDir(req:Int):Int {
 		var d = LibC.malloc(8);
 		Mem.setPtr(d, 0, U.uv_fs_get_ptr(uvr(req)));
 		return objAdd(d);
 	}
 
 	// readdir: per entry, type then name (Bytes)
-	public static function fsDirents(req:Int):Array<Dynamic> {
+	@:hxmc.unsafe(gc) public static function fsDirents(req:Int):Array<Dynamic> {
 		var r = R(req);
 		var n = U.uv_fs_get_result(r.add(R_UV)).toInt();
 		if (n < 0) n = 0;
@@ -1259,7 +1259,7 @@ class Uv {
 	}
 
 	// scandir_next: [type, name] or null at the end
-	public static function fsScandirNext(req:Int):Null<Array<Dynamic>> {
+	@:hxmc.unsafe(gc) public static function fsScandirNext(req:Int):Null<Array<Dynamic>> {
 		var ent = Mem.stack(16);
 		if (U.uv_fs_scandir_next(uvr(req), ent) < 0) return null;
 		var t = constant(10, Mem.getI32(ent, L.DIRENT_TYPE));
@@ -1269,20 +1269,20 @@ class Uv {
 
 	// ---- fs events and polls
 
-	@:hxmc.callback static function fsEventCb(e:Ptr, filename:Ptr, events:Int, status:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function fsEventCb(e:Ptr, filename:Ptr, events:Int, status:Int):Void {
 		var arr:Array<Dynamic> = [null, null];
 		if (!filename.isNull()) arr[0] = bytesOfC(filename);
 		arr[1] = events;
 		dispatch(hid(e), EV_FS_EVENT, status, arr);
 	}
 
-	public static function fsEventStart(id:Int, path:Bytes, flags:Int):Int
+	@:hxmc.unsafe(gc) public static function fsEventStart(id:Int, path:Bytes, flags:Int):Int
 		return Arena.scopedValue(a -> U.uv_fs_event_start(uvh(id), Callback.addr(fsEventCb), bytesZ(a, path), flags));
 
-	public static function fsEventStop(id:Int):Int
+	@:hxmc.unsafe(gc) public static function fsEventStop(id:Int):Int
 		return U.uv_fs_event_stop(uvh(id));
 
-	static function statBytes(s:Ptr):Bytes {
+	@:hxmc.unsafe(gc) static function statBytes(s:Ptr):Bytes {
 		var b = Bytes.alloc(160);
 		var tmp = Mem.stack(160);
 		statInto(tmp, s);
@@ -1290,7 +1290,7 @@ class Uv {
 		return b;
 	}
 
-	@:hxmc.callback static function fsPollCb(p:Ptr, status:Int, prev:Ptr, curr:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function fsPollCb(p:Ptr, status:Int, prev:Ptr, curr:Ptr):Void {
 		if (status < 0) {
 			dispatch(hid(p), EV_FS_POLL, status, null);
 			return;
@@ -1299,16 +1299,16 @@ class Uv {
 		dispatch(hid(p), EV_FS_POLL, status, arr);
 	}
 
-	public static function fsPollStart(id:Int, path:Bytes, interval:Int):Int
+	@:hxmc.unsafe(gc) public static function fsPollStart(id:Int, path:Bytes, interval:Int):Int
 		return Arena.scopedValue(a -> U.uv_fs_poll_start(uvh(id), Callback.addr(fsPollCb), bytesZ(a, path), interval));
 
-	public static function fsPollStop(id:Int):Int
+	@:hxmc.unsafe(gc) public static function fsPollStop(id:Int):Int
 		return U.uv_fs_poll_stop(uvh(id));
 
 	// ---- random
 
 	// loop -1 runs synchronously; the bytes are copied out with reqCopyOut
-	public static function random(loopId:Int, req:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function random(loopId:Int, req:Int, len:Int):Int {
 		var r = R(req);
 		reqClear(r);
 		var n = len > 0 ? len : 0;
@@ -1321,7 +1321,7 @@ class Uv {
 
 	// ---- environment, time, paths, system
 
-	public static function getEnv(name:String):Null<Bytes> {
+	@:hxmc.unsafe(gc) public static function getEnv(name:String):Null<Bytes> {
 		return Arena.scopedValue(a -> {
 			var n = a.cstring(name);
 			var len:Ptr<UInt64> = a.alloc(8);
@@ -1341,11 +1341,11 @@ class Uv {
 	}
 
 	// null: unset
-	public static function setEnv(name:String, value:Null<Bytes>):Int
+	@:hxmc.unsafe(gc) public static function setEnv(name:String, value:Null<Bytes>):Int
 		return Arena.scopedValue(a -> value != null ? U.uv_os_setenv(a.cstring(name), bytesZ(a, value)) : U.uv_os_unsetenv(a.cstring(name)));
 
 	// name (String), value (Bytes), ...; null on failure
-	public static function environ():Null<Array<Dynamic>> {
+	@:hxmc.unsafe(gc) public static function environ():Null<Array<Dynamic>> {
 		var items:Ptr<Ptr> = Mem.stack(16);
 		var count:Ptr<Int32> = items.raw().add(8);
 		var r = U.uv_os_environ(items, count);
@@ -1366,7 +1366,7 @@ class Uv {
 
 	// sec into i64Out, usec returned; negative error
 	// usec; sec in i64
-	public static function getTimeOfDay():Int {
+	@:hxmc.unsafe(gc) public static function getTimeOfDay():Int {
 		var tv = Mem.stack(16);
 		var r = U.uv_gettimeofday(tv);
 		if (r < 0) return r;
@@ -1382,7 +1382,7 @@ class Uv {
 		UF.uv_sleep(ms);
 
 	// 0 exepath, 1 cwd, 2 homedir, 3 tmpdir: Bytes, null on failure
-	public static function path(which:Int):Null<Bytes> {
+	@:hxmc.unsafe(gc) public static function path(which:Int):Null<Bytes> {
 		return Arena.scopedValue(a -> {
 			var buf = a.alloc(4096, 1);
 			var len:Ptr<UInt64> = a.alloc(8);
@@ -1396,11 +1396,11 @@ class Uv {
 		});
 	}
 
-	public static function chdir(dir:Bytes):Int
+	@:hxmc.unsafe(gc) public static function chdir(dir:Bytes):Int
 		return Arena.scopedValue(a -> U.uv_chdir(bytesZ(a, dir)));
 
 	// name, is_internal, physical (Bytes), address, netmask per interface; null on failure
-	public static function interfaceAddresses():Null<Array<Dynamic>> {
+	@:hxmc.unsafe(gc) public static function interfaceAddresses():Null<Array<Dynamic>> {
 		var out:Ptr<Ptr> = Mem.stack(16);
 		var count:Ptr<Int32> = out.raw().add(8);
 		var r = U.uv_interface_addresses(out, count);
@@ -1424,7 +1424,7 @@ class Uv {
 	}
 
 	// 0 if_indextoname, 1 if_indextoiid, 2 gethostname: String, null on failure
-	public static function netName(which:Int, index:Int):Null<String> {
+	@:hxmc.unsafe(gc) public static function netName(which:Int, index:Int):Null<String> {
 		return Arena.scopedValue(a -> {
 			var buf = a.alloc(1024, 1);
 			var len:Ptr<UInt64> = a.alloc(8);
@@ -1439,14 +1439,14 @@ class Uv {
 	}
 
 	// lastError
-	public static function uptime():Float {
+	@:hxmc.unsafe(gc) public static function uptime():Float {
 		var t:Ptr<Float> = Mem.stack(16);
 		t.value = 0;
 		lastErr = U.uv_uptime(t);
 		return t.value;
 	}
 
-	public static function loadAvg():Array<Float> {
+	@:hxmc.unsafe(gc) public static function loadAvg():Array<Float> {
 		var avg:Ptr<Float> = Mem.stack(32);
 		U.uv_loadavg(avg);
 		return [avg[0], avg[1], avg[2]];
@@ -1454,7 +1454,7 @@ class Uv {
 
 	// 0 free, 1 total, 2 constrained, 3 resident set (lastError): into i64Out
 	// i64 (resident set: lastError)
-	public static function memory(which:Int):Void {
+	@:hxmc.unsafe(gc) public static function memory(which:Int):Void {
 		if (which == 3) {
 			var rss:Ptr<UInt64> = Mem.stack(16);
 			rss.value = (0 : I64);
@@ -1466,7 +1466,7 @@ class Uv {
 	}
 
 	// lastError
-	public static function getPriority(pid:Int):Int {
+	@:hxmc.unsafe(gc) public static function getPriority(pid:Int):Int {
 		var p:Ptr<Int32> = Mem.stack(16);
 		p.value = 0;
 		lastErr = U.uv_os_getpriority(pid, p);
@@ -1478,7 +1478,7 @@ class Uv {
 
 	// 18 int64: utime sec usec, stime sec usec, maxrss ixrss idrss isrss minflt majflt nswap inblock oublock msgsnd msgrcv nsignals nvcsw nivcsw
 	// 144 bytes
-	public static function getRUsage(out:Bytes):Int {
+	@:hxmc.unsafe(gc) public static function getRUsage(out:Bytes):Int {
 		var u = Mem.stack(256);
 		var r = U.uv_getrusage(u);
 		if (r < 0) return r;
@@ -1494,7 +1494,7 @@ class Uv {
 	}
 
 	// per cpu: model (String), speed, then times user nice sys idle irq in a Bytes (5 int64); null on failure
-	public static function cpuInfo():Null<Array<Dynamic>> {
+	@:hxmc.unsafe(gc) public static function cpuInfo():Null<Array<Dynamic>> {
 		var out:Ptr<Ptr> = Mem.stack(16);
 		var count:Ptr<Int32> = out.raw().add(8);
 		var r = U.uv_cpu_info(out, count);
@@ -1516,7 +1516,7 @@ class Uv {
 	}
 
 	// [sysname, release, version, machine]; null on failure
-	public static function uname():Null<Array<String>> {
+	@:hxmc.unsafe(gc) public static function uname():Null<Array<String>> {
 		return Arena.scopedValue(a -> {
 			var u = a.alloc(4 * 256, 1);
 			var r = U.uv_os_uname(u);
@@ -1535,7 +1535,7 @@ class Uv {
 		return U.uv_os_getppid();
 
 	// [username, uid, gid, shell or null, homedir (Bytes)]; null on failure
-	public static function getPasswd():Null<Array<Dynamic>> {
+	@:hxmc.unsafe(gc) public static function getPasswd():Null<Array<Dynamic>> {
 		return Arena.scopedValue(a -> {
 			var p = a.alloc(L.PASSWD_SIZE);
 			var r = U.uv_os_get_passwd(p);

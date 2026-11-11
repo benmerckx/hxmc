@@ -21,7 +21,7 @@ abstract ForeignKind(Int) {
 
 	// a kind of these hooks (KindHooks: each field the C function of the
 	// descriptor's word of its name, Foreign.K_*)
-	public static function register(h:KindHooks):ForeignKind {
+	@:hxmc.unsafe(gc) public static function register(h:KindHooks):ForeignKind {
 		var d = LibC.malloc(hxmc.rt.Foreign.KIND_BYTES);
 		LibC.memset(d, 0, hxmc.rt.Foreign.KIND_BYTES);
 		Mem.setPtr(d, hxmc.rt.Foreign.K_NAME, h.name);
@@ -48,7 +48,7 @@ abstract ForeignKind(Int) {
 	// reference the pairing gave o (ref +1, not retained here). o lives while
 	// the foreign side holds ref beyond it (the kind's toggle). Its entry's
 	// index, for the foreign side to keep (the kind's peer hook reads it back)
-	public inline function pair(o:{}, ref:Ptr):Int {
+	@:hxmc.unsafe(gc) public inline function pair(o:{}, ref:Ptr):Int {
 		Mem.setPtr(Mem.addr(o), 0, ref);
 		return @:privateAccess hxmc.rt.Foreign.pair(this, o, ref, true);
 	}
@@ -64,11 +64,11 @@ abstract ForeignKind(Int) {
 
 	// ref where a reference goes: its peer's Haxe object, else its one box
 	// (retained; released once the box dies)
-	public inline function box(ref:Ptr):Dynamic
+	@:hxmc.unsafe(gc) public inline function box(ref:Ptr):Dynamic
 		return @:privateAccess hxmc.rt.Foreign.box(this, ref);
 
 	// the reference of a box or a peer of this kind (null: v is neither)
-	public inline function refOf(v:Dynamic):Ptr
+	@:hxmc.unsafe(gc) public inline function refOf(v:Dynamic):Ptr
 		return @:privateAccess hxmc.rt.Foreign.refOf(this, v);
 
 	// the reference at byte offset `offset` of o (retained by whoever stored
@@ -78,21 +78,21 @@ abstract ForeignKind(Int) {
 
 	// a weak field's cell (null), for weakSet and weakGet; at byte offset
 	// `offset` of o once ownWeak registered it, destroyed with o
-	public static inline function weakCell():Ptr
+	@:hxmc.unsafe(gc) public static inline function weakCell():Ptr
 		return @:privateAccess hxmc.rt.Foreign.weakCell();
 
 	public inline function ownWeak(o:{}, offset:Int):Void
 		@:privateAccess hxmc.rt.Foreign.ownWeak(this, o, offset);
 
 	// the cell refers to ref (weakly: null once ref's object is gone)
-	public function weakSet(cell:Ptr, ref:Ptr):Void {
+	@:hxmc.unsafe(gc) public function weakSet(cell:Ptr, ref:Ptr):Void {
 		var f = Mem.getPtr(@:privateAccess hxmc.rt.Foreign.rec(this), hxmc.rt.Foreign.K_WEAK_DESTROY);
 		if (!Mem.getPtr(cell, 0).isNull()) Ind.call1(f, cell);
 		Ind.call2(Mem.getPtr(@:privateAccess hxmc.rt.Foreign.rec(this), hxmc.rt.Foreign.K_WEAK_INIT), cell, ref);
 	}
 
 	// the cell's object as a value (its box or peer), null once it is gone
-	public function weakGet(cell:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) public function weakGet(cell:Ptr):Dynamic {
 		var rec = @:privateAccess hxmc.rt.Foreign.rec(this);
 		var r = Ind.call1(Mem.getPtr(rec, hxmc.rt.Foreign.K_WEAK_LOAD), cell);
 		if (r.isNull()) return null;
@@ -109,7 +109,7 @@ abstract ForeignKind(Int) {
 	// f(a, b) put off for this thread when it cannot run Haxe code now (not in
 	// a safe region: a destructor the collector's release ran), as
 	// Objective-C's deallocs are: true when put off, false when f may run now
-	public inline function deferHere(f:Ptr, a:Ptr, b:Ptr):Bool
+	@:hxmc.unsafe(gc) public inline function deferHere(f:Ptr, a:Ptr, b:Ptr):Bool
 		return @:privateAccess hxmc.rt.Foreign.deferHere(this, f, a, b);
 
 	// the calls put off for this thread (or any thread): an event loop's
@@ -119,21 +119,21 @@ abstract ForeignKind(Int) {
 
 // A kind's hooks (Foreign.K_*): null for none
 @:publicFields class KindHooks {
-	var name:Ptr = Ptr.nil();
+	@:hxmc.unsafe var name:Ptr = Ptr.nil();
 	var flags:Int = 0;
 	var threshold:Int = 1;
-	var retain:Ptr = Ptr.nil();
-	var release:Ptr = Ptr.nil();
-	var count:Ptr = Ptr.nil();
-	var identity:Ptr = Ptr.nil();
-	var same:Ptr = Ptr.nil();
-	var peer:Ptr = Ptr.nil();
-	var weakInit:Ptr = Ptr.nil();
-	var weakLoad:Ptr = Ptr.nil();
-	var weakDestroy:Ptr = Ptr.nil();
-	var batchBegin:Ptr = Ptr.nil();
-	var batchEnd:Ptr = Ptr.nil();
-	var wake:Ptr = Ptr.nil();
+	@:hxmc.unsafe var retain:Ptr = Ptr.nil();
+	@:hxmc.unsafe var release:Ptr = Ptr.nil();
+	@:hxmc.unsafe var count:Ptr = Ptr.nil();
+	@:hxmc.unsafe var identity:Ptr = Ptr.nil();
+	@:hxmc.unsafe var same:Ptr = Ptr.nil();
+	@:hxmc.unsafe var peer:Ptr = Ptr.nil();
+	@:hxmc.unsafe var weakInit:Ptr = Ptr.nil();
+	@:hxmc.unsafe var weakLoad:Ptr = Ptr.nil();
+	@:hxmc.unsafe var weakDestroy:Ptr = Ptr.nil();
+	@:hxmc.unsafe var batchBegin:Ptr = Ptr.nil();
+	@:hxmc.unsafe var batchEnd:Ptr = Ptr.nil();
+	@:hxmc.unsafe var wake:Ptr = Ptr.nil();
 
 	function new() {}
 }

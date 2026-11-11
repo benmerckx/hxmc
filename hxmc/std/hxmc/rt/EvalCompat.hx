@@ -28,7 +28,7 @@ class EvalCompat {
 
 	static inline var MAX_DEPTH = 5;
 
-	public static function string(v:Dynamic, depth:Int):String {
+	@:hxmc.unsafe(gc) public static function string(v:Dynamic, depth:Int):String {
 		if (depth > MAX_DEPTH) return "<...>";
 		if (Str.isNull(v)) return "null";
 		var t = tindex(v);

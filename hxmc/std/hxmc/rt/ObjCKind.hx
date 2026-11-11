@@ -86,12 +86,12 @@ class ObjCKind {
 	// object, whose instance variable holds the index of their entry. The
 	// Haxe object holds one reference to the id (the one alloc made)
 
-	@:hxmc.export("rt_objc_peer_add") static function peerAdd(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr):Int
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_peer_add") static function peerAdd(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr):Int
 		return pair(o, id, retainCount, release, true);
 
 	// o paired with id; typed: o's type is a class's whose objects are
 	// paired (not a value an Objective-C exception carries: ObjCExceptions)
-	static function pair(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr, typed:Bool):Int {
+	@:hxmc.unsafe(gc) static function pair(o:Dynamic, id:Ptr, retainCount:Ptr, release:Ptr, typed:Bool):Int {
 		var k = k();
 		Foreign.setHook(k, Foreign.K_COUNT, retainCount);
 		Foreign.setHook(k, Foreign.K_RELEASE, release);
@@ -160,14 +160,14 @@ class ObjCKind {
 	}
 
 	// a new weak variable for such a field: nil
-	@:hxmc.export("rt_objc_weak_cell") static function weakCell():Ptr
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_weak_cell") static function weakCell():Ptr
 		return Foreign.weakCell();
 
 	// an id where a reference goes (Dynamic, an element, a type parameter):
 	// the Haxe object of an instance of a Haxe class extending an Objective-C
 	// one, else the id's one box (Foreign.box). libobjc's functions come as
 	// addresses (the runtime does not link libobjc).
-	@:hxmc.export("rt_objc_box") static function idBox(id:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr, ivarOffset:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_box") static function idBox(id:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr, ivarOffset:Ptr):Dynamic {
 		if (id.isNull()) return null;
 		var k = k();
 		ObjCKind.getClass = getClass;
@@ -180,12 +180,12 @@ class ObjCKind {
 
 	// the id of a box, or of an instance of a Haxe class extending an
 	// Objective-C one (null: nil): slot 0 both
-	@:hxmc.export("rt_objc_unbox") static function idUnbox(o:Dynamic):Ptr
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_unbox") static function idUnbox(o:Dynamic):Ptr
 		return Foreign.unbox(o);
 
 	// the id of v when it is an Objective-C object (a box of an id; an object
 	// of a type whose objects are paired), else nil: v of any type
-	static function idOf(v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function idOf(v:Dynamic):Ptr {
 		var k = known();
 		return k == 0 ? Ptr.nil() : Foreign.refOf(k, v);
 	}
@@ -194,7 +194,7 @@ class ObjCKind {
 	// object that is a kind of the class cls, or conforms to the protocol
 	// cls: sel (isKindOfClass:, conformsToProtocol:) sent with msgSend
 	// (libobjc's, as an address)
-	@:hxmc.export("rt_objc_is") static function objcIs(v:Dynamic, cls:Ptr, sel:Ptr, msgSend:Ptr):Bool {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_is") static function objcIs(v:Dynamic, cls:Ptr, sel:Ptr, msgSend:Ptr):Bool {
 		var id = idOf(v);
 		// (BOOL: the result's low byte)
 		return !id.isNull() && Ind.call3(msgSend, id, sel, cls).toI64().toInt() & 0xff != 0;

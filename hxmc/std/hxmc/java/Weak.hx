@@ -10,7 +10,7 @@ import hxmc.unsafe.*;
 class Weak<T> {
 	var cell:Ptr;
 
-	public function new(v:T) {
+	@:hxmc.unsafe(gc) public function new(v:T) {
 		if (!@:privateAccess JavaException.available()) {
 			@:privateAccess JavaException.unavailable();
 			return;
@@ -20,7 +20,7 @@ class Weak<T> {
 		@:privateAccess hxmc.rt.Foreign.ownWeak(@:privateAccess hxmc.rt.JniKind.k(), this, Struct.fieldOffset(this, "cell"));
 	}
 
-	public function get():Null<T> {
+	@:hxmc.unsafe(gc) public function get():Null<T> {
 		if (!@:privateAccess JavaException.available()) return null;
 		return @:privateAccess hxmc.rt.JniKind.weakGet(cell);
 	}

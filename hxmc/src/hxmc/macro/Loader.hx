@@ -108,7 +108,7 @@ class Loader {
 	// context was typed again): those loaded so far stay mapped, but the next
 	// ones are not linked against them, and their types are no longer found by
 	// name (Type.resolveClass: an empty name)
-	public static function newGeneration() {
+	@:hxmc.unsafe(gc) public static function newGeneration() {
 		for (t in hostNtypes...nextType) {
 			if (t == emptyAnon) continue;
 			var e = Mem.sym("rt_types").add(t * TS);
@@ -138,7 +138,7 @@ class Loader {
 	// generation against its (a type of the same name may differ, e.g. by
 	// `#if macro`), and this generation's types are not found by name while
 	// it runs; then its entries are an earlier generation's
-	public static function apart(f:() -> Void) {
+	@:hxmc.unsafe(gc) public static function apart(f:() -> Void) {
 		hostSyms();
 		var names = [];
 		for (t in hostNtypes...nextType) {
@@ -254,7 +254,7 @@ class Loader {
 	// the overriding one ("pack.C.name"): code loaded into the compiler is handed
 	// its objects (a compilation's streams), so its calls of those methods
 	// dispatch (Lower.hostOverrides), though no class it knows overrides them
-	public static function hostOverrides():Map<String, Bool> {
+	@:hxmc.unsafe(gc) public static function hostOverrides():Map<String, Bool> {
 		hostSyms();
 		var r = new Map<String, Bool>();
 		var types = Mem.sym("rt_types");
@@ -284,10 +284,10 @@ class Loader {
 		return {types: nextType - hostNtypes, sigs: nextSig - hostNsigs};
 
 	// whether o is an object of a type of a bundle
-	public static function isBundleObject(o:Dynamic):Bool
+	@:hxmc.unsafe(gc) public static function isBundleObject(o:Dynamic):Bool
 		return host != null && Mem.getU16(Mem.addr(o), hxmc.Abi.HDR_TINDEX) >= hostNtypes; // (the type index: hxmc.rt.Types)
 
-	static function hostSyms():HostTable.HostSyms {
+	@:hxmc.unsafe(gc) static function hostSyms():HostTable.HostSyms {
 		if (host != null) return host;
 		host = new HostTable.HostSyms();
 		hostNtypes = Mem.getI32(Mem.sym("rt_ntypes"), 0);
@@ -302,12 +302,12 @@ class Loader {
 	static function dbg(s:String)
 		if (debug) Sys.stderr().writeString("hxmc.macros: load: " + s + "\n");
 
-	static inline function ptr(v:I64):Ptr
+	@:hxmc.unsafe(gc) static inline function ptr(v:I64):Ptr
 		return Ptr.ofI64(v);
 
 	// a function of no arguments of a bundle run by the interpreter (its
 	// descriptor: the static initializers, MirRun's main)
-	public static function run0(p:Ptr) {
+	@:hxmc.unsafe(gc) public static function run0(p:Ptr) {
 		var buf = LibC.malloc(8);
 		try
 			hxmc.rt.Interp.enter(p, buf)
@@ -321,10 +321,10 @@ class Loader {
 	// the address native code calls the function of descriptor
 	// symbol d at, given out once (hxmc.rt.Interp.poolEntry; flags: the
 	// descriptor's, which may not be in memory yet)
-	static function entry(d:String, desc:Ptr, flags:Int):Ptr
+	@:hxmc.unsafe(gc) static function entry(d:String, desc:Ptr, flags:Int):Ptr
 		return entryOf(entries, d, desc, flags);
 
-	static function entryOf(entries:Map<String, Ptr>, d:String, desc:Ptr, flags:Int):Ptr {
+	@:hxmc.unsafe(gc) static function entryOf(entries:Map<String, Ptr>, d:String, desc:Ptr, flags:Int):Ptr {
 		var e = entries.get(d);
 		if (e == null) {
 			e = hxmc.rt.Interp.poolEntry(desc, flags);
@@ -343,7 +343,7 @@ class Loader {
 	// images loaded (dlsym, RTLD_DEFAULT); Windows: the DLL of its
 	// @:hxmc.lib, else the C library's and the system's DLLs the process has
 	// loaded. (Linux: the executable is static, there is nothing else.)
-	static function systemSymbol(n:String):Ptr {
+	@:hxmc.unsafe(gc) static function systemSymbol(n:String):Ptr {
 		if (Platform.os() == 1) return SysDl.dlsym(Ptr.ofI64(-2), cstr(n));
 		if (Platform.os() == 2) {
 			var lib = hxmc.ir.CInterop.LIBS.get(n);
@@ -363,7 +363,7 @@ class Loader {
 	}
 
 	// a C string outside the heap (never freed)
-	static function cstr(s:String):Ptr {
+	@:hxmc.unsafe(gc) static function cstr(s:String):Ptr {
 		var b = haxe.io.Bytes.ofString(s);
 		var p = LibC.malloc(((b.length + 1) : I64));
 		for (i in 0...b.length)
@@ -372,14 +372,14 @@ class Loader {
 		return p;
 	}
 
-	static function zalloc(n:Int):Ptr {
+	@:hxmc.unsafe(gc) static function zalloc(n:Int):Ptr {
 		var p = LibC.malloc(((n < 8 ? 8 : n) : I64));
 		LibC.memset(p, 0, ((n < 8 ? 8 : n) : I64));
 		return p;
 	}
 
 	// a bundle: its object (no code: InterpGen.InterpSet.loaded) and its facts (BundleFacts.facts)
-	public static function loadObj(obj:Obj, facts:Dynamic):Bundle {
+	@:hxmc.unsafe(gc) public static function loadObj(obj:Obj, facts:Dynamic):Bundle {
 		var h = hostSyms();
 		var b = new Bundle();
 		// ---- program-wide numbers
@@ -859,7 +859,7 @@ class Loader {
 	// then, which have every number it uses), then the compiler; its
 	// descriptor's address. Dispatch rows: the selector's latest, which has
 	// the types of every bundle loaded since.
-	public static function loadLate(obj:Obj, desc:String, gen:Gen, ?extra:Map<String, I64>):Ptr {
+	@:hxmc.unsafe(gc) public static function loadLate(obj:Obj, desc:String, gen:Gen, ?extra:Map<String, I64>):Ptr {
 		var h = hostSyms();
 		var defs = new Map<String, Symbol>();
 		for (s in obj.symbols)
@@ -920,7 +920,7 @@ class Loader {
 	// own, one of extra's, its generation's (a number, data, rows, an
 	// interpreted function's pool entry), the compiler's; tls: a thread-local
 	// variable of the compiler's (its offset from the thread pointer)
-	static function lateValue(s:Symbol, defs:Map<String, Symbol>, addr:Map<Section, I64>, gen:Gen, h:HostTable.HostSyms,
+	@:hxmc.unsafe(gc) static function lateValue(s:Symbol, defs:Map<String, Symbol>, addr:Map<Section, I64>, gen:Gen, h:HostTable.HostSyms,
 			extra:Null<Map<String, I64>>):{v:I64, tls:Bool} {
 		if (s.section != null) return {v: addr.get(s.section) + s.offset, tls: false};
 		if (s.abs) return {v: s.offset, tls: false};
@@ -971,7 +971,7 @@ class Loader {
 	// bundles' memory in the window (set by interp.Tier before the first bundle loads)
 	public static var low = false;
 	static var lowNext = WINDOW_LO;
-	static var chunk = Ptr.nil();
+	@:hxmc.unsafe static var chunk = Ptr.nil();
 	static var chunkLeft = 0;
 
 	// whether this compiler can have the native tier (linux-x86_64: the window, the host table's TLS offsets)
@@ -979,7 +979,7 @@ class Loader {
 		return Platform.os() == 0 && !Platform.arm() && Mem.mirHost() == 1;
 
 	// n bytes of pages in the window, read and write; null once it is full
-	static function lowMap(n:Int):Ptr {
+	@:hxmc.unsafe(gc) static function lowMap(n:Int):Ptr {
 		var size = (n + 4095) & ~4095;
 		if (full || lowNext + size > windowHi || lowNext + size < lowNext) {
 			full = true;
@@ -1013,7 +1013,7 @@ class Loader {
 	// n zeroed bytes for a bundle: in the window with the native tier, else
 	// malloc's (never freed); with compressed references (compactHost) pages
 	// below 32 GB past the heap when not in the window (Gc.reserveLow)
-	static function alloc(n:Int):Ptr {
+	@:hxmc.unsafe(gc) static function alloc(n:Int):Ptr {
 		if (n < 8) n = 8;
 		if (!low && !compactHost()) {
 			var p = LibC.malloc((n : I64));
@@ -1050,10 +1050,10 @@ class Loader {
 	// thread runs code loaded at run time while the tier loads, interp.Tier),
 	// executable again by codeDone
 	static inline var CODE_CHUNK = 256 << 10;
-	static var codeNext = Ptr.nil();
+	@:hxmc.unsafe static var codeNext = Ptr.nil();
 	static var codeLeft = 0;
 
-	static function codeAlloc(n:Int):Ptr {
+	@:hxmc.unsafe(gc) static function codeAlloc(n:Int):Ptr {
 		n = (n + 15) & ~15;
 		if (n > codeLeft) {
 			var size = n > CODE_CHUNK ? (n + 4095) & ~4095 : CODE_CHUNK;
@@ -1069,10 +1069,10 @@ class Loader {
 		return p;
 	}
 
-	static function codeDone(p:Ptr, n:Int)
+	@:hxmc.unsafe(gc) static function codeDone(p:Ptr, n:Int)
 		protect(p, n, PROT_READ | PROT_EXEC);
 
-	static function protect(p:Ptr, n:Int, prot:Int) {
+	@:hxmc.unsafe(gc) static function protect(p:Ptr, n:Int, prot:Int) {
 		var lo = p.toI64() & ~(4095 : I64);
 		var hi = (p.toI64() + n + 4095) & ~(4095 : I64);
 		if (Platform.os() != 0) throw "the native tier: Linux only";
@@ -1083,7 +1083,7 @@ class Loader {
 	// pages of its own in the window, made executable once relocated, its
 	// data (literals, inline caches) beside the bundles'; linked as loadLate
 	// links (extra first); the address of sym
-	public static function loadNative(obj:Obj, sym:String, gen:Gen, ?extra:Map<String, I64>):Ptr {
+	@:hxmc.unsafe(gc) public static function loadNative(obj:Obj, sym:String, gen:Gen, ?extra:Map<String, I64>):Ptr {
 		var h = hostSyms();
 		var defs = new Map<String, Symbol>();
 		for (s in obj.symbols)
@@ -1207,7 +1207,7 @@ class Loader {
 		return (f.kind : String).charCodeAt(0) | (arg != null ? (arg + 1) << 8 : 0);
 	}
 
-	static function sameLayout(idx:Int, t:Dynamic, fids:Map<String, Int>):Null<String> {
+	@:hxmc.unsafe(gc) static function sameLayout(idx:Int, t:Dynamic, fids:Map<String, Int>):Null<String> {
 		var e = Mem.sym("rt_types").add(idx * TS);
 		var slots:String = t.slots;
 		if (Mem.getI32(e, 16) != slots.length) return "slots " + Mem.getI32(e, 16) + " vs " + slots.length;

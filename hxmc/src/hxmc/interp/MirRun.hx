@@ -56,7 +56,7 @@ class MirRun {
 		return out.concat(["--custom-target", "hxmc", "-D", "hxmc.interp"]).concat(t == 7 || t == 8 ? ["-D", "hxmc.libc=glibc"] : []);
 	}
 
-	public static function run(com:context.Common.CommonContext) {
+	@:hxmc.unsafe(gc) public static function run(com:context.Common.CommonContext) {
 		if (com.main.mainPath == null) throw "a program needs an entry point: -main <module>";
 		hxmc.ir.Lower.simdScalar = true;
 		var mainClass = context.Common.getEntryPoint(com).cls;
@@ -385,7 +385,7 @@ class MirRun {
 	// code (Tier.compileStub), or for the interpreter when that fails (a
 	// static initializer's call: before the functions are registered) and
 	// loaded as MirMacros.compileLazy does
-	static function compileLazy(d:Driver, gen:hxmc.macro.Loader.Gen, f:FuncInfo, desc:Ptr, regs:Ptr) {
+	@:hxmc.unsafe(gc) static function compileLazy(d:Driver, gen:hxmc.macro.Loader.Gen, f:FuncInfo, desc:Ptr, regs:Ptr) {
 		var refs = Tier.root(f, regs);
 		Tier.lock.acquire();
 		var order = hxmc.rt.EvalCompat.on;
@@ -414,7 +414,7 @@ class MirRun {
 		Tier.unroot(f, regs, refs);
 	}
 
-	static function setArgs() {
+	@:hxmc.unsafe(gc) static function setArgs() {
 		var all = [Sys.programPath()].concat(args);
 		var a = LibC.malloc(((all.length + 1) * 8 : I64));
 		for (i in 0...all.length) {

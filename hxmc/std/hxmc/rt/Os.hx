@@ -25,10 +25,10 @@ class Os {
 	// ---- the environment
 
 	// getenv of a name (a string literal: a C string in the program's data; null: unset)
-	public static inline function getenv(name:String):Ptr
+	@:hxmc.unsafe(gc) public static inline function getenv(name:String):Ptr
 		return C.getenv(Mem.cstr(name));
 
-	public static inline function has(name:String):Bool
+	@:hxmc.unsafe(gc) public static inline function has(name:String):Bool
 		return !getenv(name).isNull();
 
 	// atoi of p: leading blanks, a sign, the digits
@@ -54,7 +54,7 @@ class Os {
 	}
 
 	// atoi of an environment variable (a string literal), or def when it is unset
-	public static inline function envInt(name:String, def:Int):Int
+	@:hxmc.unsafe(gc) public static inline function envInt(name:String, def:Int):Int
 		return envIntC(Mem.cstr(name), def);
 
 	@:hxmc.unsafe static function envIntC(name:Ptr, def:Int):Int {
@@ -390,7 +390,7 @@ abstract Report(Ptr) {
 	public static inline var BYTES = 8 + 512;
 	static inline var CAP = 512;
 
-	public inline function new(p:Ptr) {
+	@:hxmc.unsafe public inline function new(p:Ptr) {
 		this = p;
 		Mem.setI32(p, 0, 0);
 	}
@@ -402,7 +402,7 @@ abstract Report(Ptr) {
 	}
 
 	// a string literal (a C string in the program's data)
-	public inline function str(s:String)
+	@:hxmc.unsafe(gc) public inline function str(s:String)
 		cstr(Mem.cstr(s), 0, -1);
 
 	// a C string, at least `width` wide (padded on the right, %-Ns), at most `max` (%.Ns)

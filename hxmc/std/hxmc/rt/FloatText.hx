@@ -30,13 +30,13 @@ class FloatText {
 
 	// ---- big integers: int32 length at 0, limbs (little-endian) from 8
 
-	static inline function blen(b:Ptr):Int
+	@:hxmc.unsafe(gc) static inline function blen(b:Ptr):Int
 		return Mem.getI32(b, 0);
 
-	static inline function limb(b:Ptr, i:Int):I64
+	@:hxmc.unsafe(gc) static inline function limb(b:Ptr, i:Int):I64
 		return (Mem.getI32(b, 8 + 4 * i) : I64) & m32();
 
-	static inline function setLimb(b:Ptr, i:Int, v:I64)
+	@:hxmc.unsafe(gc) static inline function setLimb(b:Ptr, i:Int, v:I64)
 		Mem.setI32(b, 8 + 4 * i, v.toInt());
 
 	@:hxmc.unsafe static function bset(b:Ptr, v:I64) {

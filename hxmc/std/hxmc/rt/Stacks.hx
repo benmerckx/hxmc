@@ -343,7 +343,7 @@ class Stacks {
 
 	// the function, file and line of an interpreted frame, its code and the
 	// call it makes (null: none yet, its first line)
-	static function describeInterp(code:Ptr, call:Ptr):{name:Null<String>, file:Null<String>, line:Int} {
+	@:hxmc.unsafe(gc) static function describeInterp(code:Ptr, call:Ptr):{name:Null<String>, file:Null<String>, line:Int} {
 		var desc = code.add(-Interp.HEADER);
 		var off = Mem.getI32(desc, Interp.H_POSITIONS);
 		if (off == 0) return {name: null, file: null, line: 0};
@@ -354,7 +354,7 @@ class Stacks {
 	// format: the rows' count, each one's position, line and file's string,
 	// then the strings, the first the function's name; a row holds from its
 	// position to the next one's, the first from the start)
-	static function describeRows(t:Ptr, at:Int):{name:Null<String>, file:Null<String>, line:Int} {
+	@:hxmc.unsafe(gc) static function describeRows(t:Ptr, at:Int):{name:Null<String>, file:Null<String>, line:Int} {
 		var n = Mem.getI32(t, 0);
 		var strs = t.add(4 + 12 * n);
 		var name = interpStr(strs, 0);
@@ -381,7 +381,7 @@ class Stacks {
 	static var madeRoom = 0;
 
 	// (Loader) the function at [start, start + size), its lines (copied)
-	public static function addMade(start:Ptr, size:Int, lines:haxe.io.Bytes) {
+	@:hxmc.unsafe(gc) public static function addMade(start:Ptr, size:Int, lines:haxe.io.Bytes) {
 		var t = LibC.malloc(lines.length);
 		LibC.memcpy(t, Bytes.bytes(lines.getData()), (lines.length : I64));
 		if (madeCount == madeRoom) {
@@ -416,7 +416,7 @@ class Stacks {
 	}
 
 	// string k of a line table's strings (their count, then each one's byte length and bytes)
-	static function interpStr(strs:Ptr, k:Int):String {
+	@:hxmc.unsafe(gc) static function interpStr(strs:Ptr, k:Int):String {
 		var p = strs.add(4);
 		for (_ in 0...k)
 			p = p.add(4 + Mem.getI32(p, 0));
@@ -431,13 +431,13 @@ class Stacks {
 
 	// the stack here, from the caller of the function calling capture, as
 	// the bytes of its return addresses (8 each)
-	public static function capture():haxe.io.Bytes {
+	@:hxmc.unsafe(gc) public static function capture():haxe.io.Bytes {
 		var buf = Mem.stack(8 * MAX);
 		var n = walk(buf, MAX);
 		return ofAddresses(buf, n);
 	}
 
-	static function ofAddresses(p:Ptr, n:Int):haxe.io.Bytes {
+	@:hxmc.unsafe(gc) static function ofAddresses(p:Ptr, n:Int):haxe.io.Bytes {
 		var b = haxe.io.Bytes.alloc(8 * n);
 		copyInto(b.getData(), p, n);
 		return b;
@@ -507,7 +507,7 @@ class Stacks {
 	// block, or a function it calls: haxe.CallStack.exceptionStack,
 	// haxe.Exception.caught), its callers as they are now (the rest of the
 	// stack of the throw)
-	public static function lastThrow():haxe.io.Bytes {
+	@:hxmc.unsafe(gc) public static function lastThrow():haxe.io.Bytes {
 		if (thrown.isNull()) return haxe.io.Bytes.alloc(0);
 		var buf = Mem.stack(8 * MAX);
 		return ofAddresses(buf, lastThrowInto(buf));
@@ -557,7 +557,7 @@ class Stacks {
 		return table().add(Mem.getI32(table(), 16));
 
 	// the Haxe name of entry e's function (pack.Class.field), or null
-	public static function name(e:Ptr):Null<String> {
+	@:hxmc.unsafe(gc) public static function name(e:Ptr):Null<String> {
 		var owner = Mem.getI32(e, 8), rest = Mem.getI32(e, 12);
 		var field = 0;
 		if (rest != 0) {
@@ -569,7 +569,7 @@ class Stacks {
 		return field == 0 ? str(owner) : str(owner) + "." + str(field);
 	}
 
-	static function str(off:Int):String {
+	@:hxmc.unsafe(gc) static function str(off:Int):String {
 		var p = table().add(Mem.getI32(table(), 12) + off);
 		var n = LibC.strlen(p).toInt();
 		return Str.decode(Repr.octetsAt(p, n), 0, n);
@@ -604,7 +604,7 @@ class Stacks {
 
 	// the function, file and line of return address a (null: not a function
 	// of the table)
-	public static function describe(a:Ptr):Null<{name:Null<String>, file:Null<String>, line:Int}> {
+	@:hxmc.unsafe(gc) public static function describe(a:Ptr):Null<{name:Null<String>, file:Null<String>, line:Int}> {
 		var e = find(a.add(-1));
 		if (e.isNull()) {
 			var k = findMade(a.add(-1));
@@ -618,7 +618,7 @@ class Stacks {
 
 	// the frame of a stack's word w: a return address, or with w1, the word
 	// after it, an interpreted frame's two words (walkFrom)
-	static function describeWords(w:I64, w1:I64):Null<{name:Null<String>, file:Null<String>, line:Int}> {
+	@:hxmc.unsafe(gc) static function describeWords(w:I64, w1:I64):Null<{name:Null<String>, file:Null<String>, line:Int}> {
 		if (w >= (0 : I64)) return describe(Ptr.ofI64(w));
 		return describeInterp(Ptr.ofI64(w ^ interpTag()), Ptr.ofI64(w1));
 	}
@@ -657,7 +657,7 @@ class Stacks {
 	// the constructors of an object's class and its superclasses
 	// (pack.Class.new: the top frames of an exception's stack made in them,
 	// haxe.Exception.get_stack), from the runtime's types (no reflection)
-	public static function constructors(o:Dynamic):Array<String> {
+	@:hxmc.unsafe(gc) public static function constructors(o:Dynamic):Array<String> {
 		var r = [];
 		var t = Types.tindex(o);
 		while (t >= Types.T_FIRST) {
@@ -672,7 +672,7 @@ class Stacks {
 
 	// an uncaught exception's report (Start.throwValue): the frames of the
 	// throw, as haxe.CallStack.toString prints them, on stderr
-	@:hxmc.withStacks public static function report() {
+	@:hxmc.unsafe(gc) @:hxmc.withStacks public static function report() {
 		var buf = Mem.stack(8 * MAX);
 		var n = walk(buf, MAX);
 		var s = new StringBuf();

@@ -108,7 +108,7 @@ class Tagged {
 
 	// the word as Dynamic: a scalar boxed (Boxes: small Ints static), a
 	// reference as it is
-	@:hxmc.export("hx_tag_box") static function box(w:I64):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_tag_box") static function box(w:I64):Dynamic {
 		if (!isScalar(w)) return Mem.obj(new Ptr(w));
 		if (isInt(w)) return Boxes.boxInt(intOf(w));
 		return Boxes.boxFloat(floatOf(w));
@@ -116,7 +116,7 @@ class Tagged {
 
 	// the value of a word read from a field of kind 't' (a type parameter's:
 	// Dyn.boxSlot), as Dynamic
-	public static inline function dyn(w:I64):Dynamic
+	@:hxmc.unsafe(gc) public static inline function dyn(w:I64):Dynamic
 		return isScalar(w) ? box(w) : Mem.obj(new Ptr(w));
 
 	// a == b of two type parameters' words, as Dynamic's == has them

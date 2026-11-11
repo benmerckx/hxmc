@@ -21,7 +21,7 @@ class PosixNet {
 	static inline function mac():Bool
 		return Platform.os() == 1;
 
-	static inline function threads():Int
+	@:hxmc.unsafe(gc) static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
 	// the C library's constants: Linux / macOS
@@ -111,7 +111,7 @@ class PosixNet {
 		return false;
 	}
 
-	public static function strerror(err:Int):String {
+	@:hxmc.unsafe(gc) public static function strerror(err:Int):String {
 		var s = Posix.strerror(err);
 		return Str.ofUtf8(s, LibC.strlen(s).toInt());
 	}
@@ -139,7 +139,7 @@ class PosixNet {
 		return ret(Posix.close(fd));
 	}
 
-	public static function accept(fd:Int):Int {
+	@:hxmc.unsafe(gc) public static function accept(fd:Int):Int {
 		if (cooperative(fd) && !waitSock(fd, false)) return ret(-1);
 		var a = Mem.stack(128), n = Mem.stack(8);
 		Mem.setI32(n, 0, 128);
@@ -172,7 +172,7 @@ class PosixNet {
 		return ret(Posix.bind(fd, a, 16));
 	}
 
-	public static function connect(fd:Int, ip:Int, port:Int):Int {
+	@:hxmc.unsafe(gc) public static function connect(fd:Int, ip:Int, port:Int):Int {
 		if (cooperative(fd)) { // a non-blocking connect, then wait until it completes
 			var flags = Posix.fcntl(fd, F_GETFL, 0);
 			Posix.fcntl(fd, F_SETFL, flags | O_NONBLOCK());
@@ -205,7 +205,7 @@ class PosixNet {
 	@:hxmc.unsafe public static function listen(fd:Int, n:Int):Int
 		return ret(Posix.listen(fd, n));
 
-	public static function sockName(fd:Int, peer:Bool):Array<Int> {
+	@:hxmc.unsafe(gc) public static function sockName(fd:Int, peer:Bool):Array<Int> {
 		var s = Mem.stack(128), n = Mem.stack(8);
 		Mem.setI32(n, 0, 128);
 		var r = peer ? Posix.getpeername(fd, s, n) : Posix.getsockname(fd, s, n);
@@ -220,7 +220,7 @@ class PosixNet {
 	}
 
 	// OCaml's Unix.recv/send check the range (Invalid_argument "Unix.recv")
-	public static function recv(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function recv(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) Rt.rt_throw("Unix.recv");
 		if (cooperative(fd)) {
 			var r = 0;
@@ -236,7 +236,7 @@ class PosixNet {
 		return ret(Posix.recv(fd, Bytes.bytes(b).add(pos), len, 0).toInt());
 	}
 
-	public static function send(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function send(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) Rt.rt_throw("Unix.send");
 		if (cooperative(fd)) { // may send part of the buffer, as a signal-interrupted send does
 			var r = 0;
@@ -254,7 +254,7 @@ class PosixNet {
 
 	// an fd_set (1024 bits, the same bytes on Linux and macOS) of the
 	// descriptors of a; false when one is out of range
-	static function toFdset(a:Array<Int>, s:Ptr, maxfd:Ptr):Bool {
+	@:hxmc.unsafe(gc) static function toFdset(a:Array<Int>, s:Ptr, maxfd:Ptr):Bool {
 		LibC.memset(s, 0, 128);
 		if (Str.isNull(a)) return true;
 		for (i in 0...a.length) {
@@ -266,7 +266,7 @@ class PosixNet {
 		return true;
 	}
 
-	static function fromFdset(a:Array<Int>, s:Ptr) {
+	@:hxmc.unsafe(gc) static function fromFdset(a:Array<Int>, s:Ptr) {
 		if (Str.isNull(a)) return;
 		for (i in 0...a.length) {
 			var fd = a[i];
@@ -279,7 +279,7 @@ class PosixNet {
 	// Unix.select (otherlib/unix/select_unix.c): a negative timeout waits
 	// forever. A descriptor from FD_SETSIZE on fails with EINVAL, as OCaml's
 	// does; -2 then (sys.net.Socket.select says why).
-	public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
+	@:hxmc.unsafe(gc) public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
 		var rs = Mem.stack(128), ws = Mem.stack(128), os = Mem.stack(128), maxfd = Mem.stack(8);
 		Mem.setI32(maxfd, 0, -1);
 		if (!toFdset(r, rs, maxfd) || !toFdset(w, ws, maxfd) || !toFdset(o, os, maxfd)) {
@@ -319,7 +319,7 @@ class PosixNet {
 	}
 
 	// hxmc.net.Poll (NetCore.poll): -1 on failure (EBADF: a descriptor closed while waiting)
-	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
+	@:hxmc.unsafe(gc) public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int
 		return NetCore.poll(fds, events, revents, n, timeout);
 
 	// the thread's buffer for poll, at least bytes long (kept, not freed
@@ -392,7 +392,7 @@ class PosixNet {
 		return Mem.getI32(e, 0);
 	}
 
-	public static function gethostname():String {
+	@:hxmc.unsafe(gc) public static function gethostname():String {
 		var buf = Mem.stack(4096);
 		if (Posix.gethostname(buf, 4095) < 0) {
 			ret(-1);
@@ -411,7 +411,7 @@ class PosixNet {
 	@:hxmc.unsafe static function unlockResolver()
 		NetCore.unlockResolver();
 
-	public static function resolve(name:String):Array<Int> {
+	@:hxmc.unsafe(gc) public static function resolve(name:String):Array<Int> {
 		var n = Str.toUtf8(name);
 		var ip = lookup(n);
 		LibC.free(n);
@@ -424,7 +424,7 @@ class PosixNet {
 	@:hxmc.unsafe static function lookup(n:Ptr):I64
 		return NetCore.lookup(n);
 
-	public static function reverse(ip:Int):String {
+	@:hxmc.unsafe(gc) public static function reverse(ip:Int):String {
 		var name = reverseLookup(ip);
 		netErrno = 0;
 		if (name.isNull()) return null;

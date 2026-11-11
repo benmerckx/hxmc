@@ -295,7 +295,7 @@ class ComKind {
 
 	// o's type gets descriptor d (once: another thread's wins), the block in
 	// o's field at byte offset off
-	@:hxmc.host("rt_com_register") static function register(o:Dynamic, d:Ptr, off:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_register") static function register(o:Dynamic, d:Ptr, off:Int):Void {
 		Mem.setI64(d, D_FIELD, off);
 		var t = Types.tindex(o);
 		Os.lock(Foreign.lock);
@@ -311,7 +311,7 @@ class ComKind {
 	}
 
 	// the block of Haxe object o (descriptor d), made and paired at its first use
-	static function blockOf(o:Dynamic, d:Ptr):Ptr {
+	@:hxmc.unsafe(gc) static function blockOf(o:Dynamic, d:Ptr):Ptr {
 		var off = Mem.getI64(d, D_FIELD).toInt();
 		var b = Mem.getPtr(Mem.addr(o), off);
 		if (!b.isNull()) return b;
@@ -346,7 +346,7 @@ class ComKind {
 	// the interface pointer of v for the interface of IID w0..w3 (borrowed:
 	// valid while v lives): a box's reference, or the interface's in the
 	// block of a Haxe object implementing it; null for null
-	@:hxmc.host("rt_com_ptr") static function ptr(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_ptr") static function ptr(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
 		if (v == null) return Ptr.nil();
 		// (a box of this kind's, not any native handle: Foreign.isBox)
 		if (isBox(v)) {
@@ -373,7 +373,7 @@ class ComKind {
 	}
 
 	// the same, owned (+1): what a Haxe method returns to COM ([out, retval])
-	@:hxmc.host("rt_com_out") static function out(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_out") static function out(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
 		var p = ptr(v, w0, w1, w2, w3);
 		if (!p.isNull()) addRefOf(p);
 		return p;
@@ -381,12 +381,12 @@ class ComKind {
 
 	// a borrowed interface pointer as a value: the Haxe object it is the
 	// block of, else its box (which holds a reference of its own)
-	@:hxmc.host("rt_com_wrap") static function wrap(p:Ptr):Dynamic
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_wrap") static function wrap(p:Ptr):Dynamic
 		return p.isNull() ? null : Foreign.box(k(), p);
 
 	// an owned interface pointer (an [out] one) as a value: wrapped, and
 	// the caller's reference released
-	@:hxmc.host("rt_com_adopt") static function adopt(p:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_adopt") static function adopt(p:Ptr):Dynamic {
 		if (p.isNull()) return null;
 		var b = Foreign.box(k(), p);
 		releaseOf(p);
@@ -400,11 +400,11 @@ class ComKind {
 	}
 
 	// any interface pointer of v (a box's, a Haxe object's first), borrowed
-	static function anyPtr(v:Dynamic):Ptr
+	@:hxmc.unsafe(gc) static function anyPtr(v:Dynamic):Ptr
 		return ptr(v, 0, 0, 0xC0, 0x46000000);
 
 	// the same, or null when v is no COM value (another value, a detached box)
-	static function anyPtrOrNull(v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function anyPtrOrNull(v:Dynamic):Ptr {
 		if (v == null) return Ptr.nil();
 		if (isBox(v)) return Mem.getPtr(Mem.addr(v), 0);
 		var d = Types.tindex(v) == Types.T_NATIVE ? Ptr.nil() : descOf(v);
@@ -414,7 +414,7 @@ class ComKind {
 	// QueryInterface of v (IID w0..w3): the value, or null (E_NOINTERFACE,
 	// and a value that is no COM object: Std.isOfType's false,
 	// Std.downcast's null; Com.as and cast throw)
-	@:hxmc.host("rt_com_query") static function query(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_query") static function query(v:Dynamic, w0:Int, w1:Int, w2:Int, w3:Int):Dynamic {
 		var p = anyPtrOrNull(v);
 		if (p.isNull()) return null;
 		var g = Mem.stack(16);
@@ -431,11 +431,11 @@ class ComKind {
 	}
 
 	// the same of an IID's address (Com.query)
-	static function queryIid(v:Dynamic, g:Ptr):Dynamic
+	@:hxmc.unsafe(gc) static function queryIid(v:Dynamic, g:Ptr):Dynamic
 		return query(v, Mem.getI32(g, 0), Mem.getI32(g, 4), Mem.getI32(g, 8), Mem.getI32(g, 12));
 
 	// (Com.as: E_NOINTERFACE thrown)
-	static function asIid(v:Dynamic, g:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function asIid(v:Dynamic, g:Ptr):Dynamic {
 		if (v == null) return null;
 		var r = queryIid(v, g);
 		if (r == null) throw new hxmc.com.ComException(E_NOINTERFACE);
@@ -443,17 +443,17 @@ class ComKind {
 	}
 
 	// (Com.ptr)
-	static function ptrIid(v:Dynamic, g:Ptr):Ptr
+	@:hxmc.unsafe(gc) static function ptrIid(v:Dynamic, g:Ptr):Ptr
 		return ptr(v, Mem.getI32(g, 0), Mem.getI32(g, 4), Mem.getI32(g, 8), Mem.getI32(g, 12));
 
 	// (Com.guid)
-	static function guid(s:String):Ptr {
+	@:hxmc.unsafe(gc) static function guid(s:String):Ptr {
 		var w = hxmc.com.Guids.parse(s);
 		return iid(w[0], w[1], w[2], w[3]);
 	}
 
 	// an object of class clsid made, as the interface of IID riid (CoCreateInstance)
-	static function create(clsid:Ptr, context:Int, riid:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function create(clsid:Ptr, context:Int, riid:Ptr):Dynamic {
 		if (fCoCreateInstance.isNull()) fCoCreateInstance = sys(0, Mem.cstr("CoCreateInstance"));
 		var out = Mem.stack(16);
 		Mem.setPtr(out, 0, Ptr.nil());
@@ -474,21 +474,21 @@ class ComKind {
 	}
 
 	// whether a and b are one COM object (their canonical IUnknowns)
-	static function same2(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.unsafe(gc) static function same2(a:Dynamic, b:Dynamic):Bool {
 		if (a == null || b == null) return a == b;
 		return identity(anyPtr(a)) == identity(anyPtr(b));
 	}
 
 	// the count of v's object after an AddRef and a Release (a diagnostic:
 	// a Haxe object's includes its pairing's reference)
-	static function refCount(v:Dynamic):Int {
+	@:hxmc.unsafe(gc) static function refCount(v:Dynamic):Int {
 		var p = anyPtr(v);
 		addRefOf(p);
 		return releaseOf(p);
 	}
 
 	// the interned GUID w0..w3 (16 bytes, never freed: one per GUID, in every chunk)
-	static function iid(w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
+	@:hxmc.unsafe(gc) static function iid(w0:Int, w1:Int, w2:Int, w3:Int):Ptr {
 		Os.lock(Foreign.lock);
 		var c = iids, n = niids;
 		while (!c.isNull()) {
@@ -526,7 +526,7 @@ class ComKind {
 
 	// the Haxe object of a block's interface pointer (null: collected, which
 	// COM holding the pointer prevents; a call after its last Release)
-	@:hxmc.host("rt_com_self") static function self(p:Ptr):Dynamic
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_self") static function self(p:Ptr):Dynamic
 		return Foreign.peerGet(Mem.getI64(baseOf(p), B_ENTRY).toInt());
 
 	// the HRESULT a Haxe method's exception returns to COM: a
@@ -542,7 +542,7 @@ class ComKind {
 
 	// ---- strings: LPCWSTR (UTF-16, NUL-terminated), BSTR (length-prefixed)
 
-	static function sys(lib:Int, name:Ptr):Ptr {
+	@:hxmc.unsafe(gc) static function sys(lib:Int, name:Ptr):Ptr {
 		if (ole32.isNull()) {
 			ole32 = K.LoadLibraryA(Mem.cstr("ole32.dll"));
 			oleaut32 = K.LoadLibraryA(Mem.cstr("oleaut32.dll"));
@@ -552,19 +552,19 @@ class ComKind {
 		return f;
 	}
 
-	static function taskAlloc(n:I64):Ptr {
+	@:hxmc.unsafe(gc) static function taskAlloc(n:I64):Ptr {
 		if (fCoTaskMemAlloc.isNull()) fCoTaskMemAlloc = sys(0, Mem.cstr("CoTaskMemAlloc"));
 		return Ind.call1(fCoTaskMemAlloc, Ptr.ofI64(n));
 	}
 
-	@:hxmc.host("rt_com_task_free") static function taskFree(p:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_task_free") static function taskFree(p:Ptr):Void {
 		if (p.isNull()) return;
 		if (fCoTaskMemFree.isNull()) fCoTaskMemFree = sys(0, Mem.cstr("CoTaskMemFree"));
 		Ind.call1(fCoTaskMemFree, p);
 	}
 
 	// s's units at p (n of them), and a NUL
-	static function copyUnits(s:String, p:Ptr) {
+	@:hxmc.unsafe(gc) static function copyUnits(s:String, p:Ptr) {
 		var n = Str.len(s);
 		if (Str.isOne(s)) {
 			var c:Ptr = Str.chars1(s);
@@ -575,14 +575,14 @@ class ComKind {
 	}
 
 	// the string of n units at p
-	static function ofUnits(p:Ptr, n:Int):String {
+	@:hxmc.unsafe(gc) static function ofUnits(p:Ptr, n:Int):String {
 		var r = Str.make2(n);
 		if (n > 0) LibC.memcpy(Str.chars2(r), p, (2 * n : I64));
 		return Repr.fitsOne(Str.chars2(r), 0, n) ? Str.range(r, 0, n) : r;
 	}
 
 	// an LPCWSTR of s for the call (malloc'd: rt_com_wstr_free after it; null for null)
-	@:hxmc.host("rt_com_wstr") static function wstr(s:String):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_wstr") static function wstr(s:String):Ptr {
 		if (s == null) return Ptr.nil();
 		var p = LibC.malloc((2 * Str.len(s) + 2 : I64));
 		copyUnits(s, p);
@@ -593,7 +593,7 @@ class ComKind {
 		if (!p.isNull()) LibC.free(p);
 
 	// the string of a NUL-terminated UTF-16 string (borrowed; null: null)
-	@:hxmc.host("rt_com_wstr_string") static function wstrString(p:Ptr):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_wstr_string") static function wstrString(p:Ptr):String {
 		if (p.isNull()) return null;
 		var n = 0;
 		while (Mem.getU16(p, 2 * n) != 0)
@@ -602,14 +602,14 @@ class ComKind {
 	}
 
 	// an [out] LPWSTR (CoTaskMemAlloc's): its string, the memory freed
-	@:hxmc.host("rt_com_wstr_take") static function wstrTake(p:Ptr):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_wstr_take") static function wstrTake(p:Ptr):String {
 		var s = wstrString(p);
 		taskFree(p);
 		return s;
 	}
 
 	// an [out] LPWSTR a Haxe method returns: CoTaskMemAlloc's, the caller's to free
-	@:hxmc.host("rt_com_wstr_out") static function wstrOut(s:String):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_wstr_out") static function wstrOut(s:String):Ptr {
 		if (s == null) return Ptr.nil();
 		var p = taskAlloc((2 * Str.len(s) + 2 : I64));
 		copyUnits(s, p);
@@ -617,7 +617,7 @@ class ComKind {
 	}
 
 	// a BSTR of s (SysAllocStringLen; null: null), the caller's to free
-	@:hxmc.host("rt_com_bstr") static function bstr(s:String):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_bstr") static function bstr(s:String):Ptr {
 		if (s == null) return Ptr.nil();
 		if (fSysAllocStringLen.isNull()) fSysAllocStringLen = sys(1, Mem.cstr("SysAllocStringLen"));
 		var n = Str.len(s);
@@ -627,7 +627,7 @@ class ComKind {
 		return p;
 	}
 
-	@:hxmc.host("rt_com_bstr_free") static function bstrFree(p:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_bstr_free") static function bstrFree(p:Ptr):Void {
 		if (p.isNull()) return;
 		if (fSysFreeString.isNull()) fSysFreeString = sys(1, Mem.cstr("SysFreeString"));
 		Ind.call1(fSysFreeString, p);
@@ -635,13 +635,13 @@ class ComKind {
 
 	// the string of a BSTR (borrowed; its length the prefix's: embedded NULs
 	// kept; null: an empty string, as COM reads it)
-	@:hxmc.host("rt_com_bstr_string") static function bstrString(p:Ptr):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_bstr_string") static function bstrString(p:Ptr):String {
 		if (p.isNull()) return "";
 		return ofUnits(p, Mem.getI32(p, -4) >>> 1);
 	}
 
 	// an [out] BSTR: its string, the BSTR freed
-	@:hxmc.host("rt_com_bstr_take") static function bstrTake(p:Ptr):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_com_bstr_take") static function bstrTake(p:Ptr):String {
 		var s = bstrString(p);
 		bstrFree(p);
 		return s;
@@ -650,13 +650,13 @@ class ComKind {
 	// ---- VARIANTs (hxmc.com.Variants)
 
 	// v's IUnknown, +1 (a variant's punkVal)
-	static function ownedUnknown(v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function ownedUnknown(v:Dynamic):Ptr {
 		var p = anyPtr(v);
 		addRefOf(p);
 		return p;
 	}
 
-	static function variantClear(v:Ptr):Void {
+	@:hxmc.unsafe(gc) static function variantClear(v:Ptr):Void {
 		if (fVariantClear.isNull()) fVariantClear = sys(1, Mem.cstr("VariantClear"));
 		var region = Leaf.rt_blocking_enter();
 		Ind.call1(fVariantClear, v);
@@ -666,7 +666,7 @@ class ComKind {
 	// ---- apartments (hxmc.com.Com)
 
 	// the calling thread's Win32 id noted for wake (Com.init)
-	static function noteThread() {
+	@:hxmc.unsafe(gc) static function noteThread() {
 		var t = Foreign.me();
 		if (t <= 0) return;
 		k();
@@ -688,7 +688,7 @@ class ComKind {
 	}
 
 	// the calling thread no longer has an apartment (Com.uninit)
-	static function forgetThread() {
+	@:hxmc.unsafe(gc) static function forgetThread() {
 		var t = Foreign.me();
 		Os.lock(Foreign.lock);
 		if (t > 0 && t < tidsCap) Mem.setI32(tids, 4 * t, 0);

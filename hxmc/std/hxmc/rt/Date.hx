@@ -146,7 +146,7 @@ class Date {
 		return Repr.timezoneOffset(d);
 
 	// "%04d-%02d-%02d %02d:%02d:%02d" of the local time
-	@:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
 		var tm = Repr.dateFields(d);
 		var b = new StringBuf();
 		inline function pad(v:Int, w:Int) {
