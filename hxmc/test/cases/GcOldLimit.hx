@@ -1,13 +1,14 @@
 // hxmc.NativeGc.setOldLimit, natively and on wasm32: before the first major
 // collection it raises the old space's first limit (hxmc.NativeGc.heapBytes:
 // the limit and the nursery), unless RT_OLD_MB says otherwise; after a major
-// collection it changes nothing.
+// collection it changes nothing (under --mir-run the program runs in the
+// compiler, whose heap may have collected already).
 class GcOldLimit {
 	static var keep:Array<Array<Int>>;
 
 	static function main() {
 		var mb = 1024.0 * 1024.0;
-		var fixed = Sys.getEnv("RT_OLD_MB") != null;
+		var fixed = Sys.getEnv("RT_OLD_MB") != null || hxmc.GcStats.majorCollections() > 0;
 		hxmc.NativeGc.setOldLimit(300);
 		Sys.println("raised: " + (fixed || hxmc.NativeGc.heapBytes() >= 300 * mb));
 		// what is kept stays reachable through collections
