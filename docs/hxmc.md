@@ -451,6 +451,11 @@ space by copying into a new region.
   for a collection's worst case, the growth is halved and the three
   nurseries left out (101 MB). The tool sets 768 MB for a build; the
   compilation server 2048 MB and 150%.
+  A program raises the first limit itself with
+  `hxmc.NativeGc.setOldLimit(mb)` (`hxmc.rt.Gc`, or `hxmc.rt.wasm.Gc` on
+  wasm32): before the first major collection only, it only raises it, and
+  `RT_OLD_MB` wins. Natively it is capped by the region, on wasm32 at about
+  2 GB (a copying major collection of it must still fit in 4 GB).
 - **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
   64 MB, a helper thread faults in its pages ahead of minor collections:
   twice what the last one promoted (`RT_PF_AHEAD`: in quarters of it).
@@ -1667,7 +1672,11 @@ Linear memory only grows, and browsers refuse it early, so the runtime
 - The nursery's region is the nursery's size (4 MB, sized like the native
   one, up to 32 MB), grown in place or moved after a minor collection.
 - The old space is 1 MB chunks taken as objects are promoted; `RT_OLD_MB`
-  (32) is when the first major collection comes, not a reservation.
+  (32) is when the first major collection comes, not a reservation. A
+  program that keeps most of what it allocates raises it before then with
+  `Gc.setOldLimit` (`hxmc.NativeGc`, as natively; `RT_OLD_MB` wins), up to
+  half of what the rest of the 4 GB leaves, where a copying major
+  collection of the old space still fits.
 - The shadow stack is `RT_STACK_MB` (4 MB; `wasi.mjs` sets it from node's
   `--stack-size`). The first time a frame goes deeper than since the last
   collection, it is checked against the end; an overflow exits with a

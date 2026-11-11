@@ -1168,6 +1168,23 @@ class Gc {
 	@:hxmc.collects public static function collect(full:Bool):Void
 		collectFor(full, 0);
 
+	// The old space's limit while no major collection has run (RT_OLD_MB, 32
+	// MB by default, which wins over this), as the native Gc.setOldLimit
+	// (hxmc.NativeGc.setOldLimit works on both): a program that keeps most of
+	// what it allocates until it exits (a compiler's syntax trees and types)
+	// raises it, so that its first major collections do not copy what it is
+	// still building (tsc-haxe). It only raises it, and at most to what a
+	// copying major collection of it still fits in a 4 GB memory: as majorGc
+	// caps the limits it sets, half of what the rest leaves (about 2 GB)
+	@:hxmc.unsafe public static function setOldLimit(mb:Int):Void {
+		if (majors > 0 || mb <= 0 || Wasi.envInt("RT_OLD_MB", -1) >= 0) return;
+		var l:I64 = (mb : I64) << 20;
+		var other = Heap.memoryBytes() - oldBytes - poolBytes;
+		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
+		if (l > cap) l = cap;
+		if (oldLimit < l) oldLimit = l;
+	}
+
 	// (finalisers never run: WebAssembly programs have no resources to free behind values)
 	@:hxmc.unsafe public static function finalise(fn:Dynamic->Void, v:Dynamic):Void {}
 
