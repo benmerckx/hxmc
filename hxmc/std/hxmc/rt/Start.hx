@@ -141,11 +141,13 @@ class Start {
 	// run yet (Foreign.runDeferred), as a spawned thread runs its own as it
 	// ends (Threads.run). A program's main thread then ends (what is put off
 	// for it later goes to any thread); a library's (hxmc.shared) goes on
-	// calling into it, and runs what is put off for it then
+	// calling into it, and runs what is put off for it then. A program's
+	// end goes through Os.exitHook (a JVM it made: Java's System.exit)
 	static function mainEnded():Void {
 		if (Foreign.ndeferred != 0) Foreign.runDeferred();
 		#if !hxmc.shared
 		if (Foreign.me() > 0) Foreign.threadExit(Foreign.me());
+		Os.exiting(0);
 		#end
 	}
 
