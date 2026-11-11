@@ -590,10 +590,18 @@ class Lower implements LowerQueries {
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
 
-	// @:hxmc.unsafe, or its former name @:hxmc.noGc (still accepted): no GC
-	// point is reached (Facts.findNoGc checks it)
+	// @:hxmc.unsafe, or its former name @:hxmc.noGc (still accepted): trusted
+	// code, which reaches no GC point (Facts.findNoGc checks it) unless written
+	// @:hxmc.unsafe(gc)
 	public static function isUnsafe(ml:core.Ast.Metadata):Bool
 		return hasMeta(":hxmc.unsafe", ml) || hasMeta(":hxmc.noGc", ml);
+
+	// @:hxmc.unsafe promising no GC point (not @:hxmc.unsafe(gc))
+	public static function isNoGc(ml:core.Ast.Metadata):Bool {
+		if (hasMeta(":hxmc.noGc", ml)) return true;
+		var m = core.Meta.getOpt(Custom(":hxmc.unsafe"), ml);
+		return m != null && !(m.exprs.length == 1 && m.exprs[0].expr.match(EConst(Ident("gc"))));
+	}
 
 	// the string literal argument of hxmc's metadata `name`, or null
 	public static function metaString(name:String, ml:core.Ast.Metadata):Null<String>
@@ -1770,12 +1778,18 @@ class Lower implements LowerQueries {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
 		if (c.clMeta.length > 0) {
-			if (isUnsafe(c.clMeta)) fi.declNoGc = fi.declUnsafe = true;
+			if (isUnsafe(c.clMeta)) {
+				fi.declUnsafe = true;
+				if (isNoGc(c.clMeta)) fi.declNoGc = true;
+			}
 			if (hasMeta(":hxmc.kernel", c.clMeta)) fi.declNoGc = fi.declKernel = true;
 			fi.view = fi.declKernel && fi.declUnsafe;
 		}
 		if (cf.cfMeta.length == 0) return;
-		if (isUnsafe(cf.cfMeta)) fi.declNoGc = fi.declUnsafe = true;
+		if (isUnsafe(cf.cfMeta)) {
+			fi.declUnsafe = true;
+			if (isNoGc(cf.cfMeta)) fi.declNoGc = true;
+		}
 		if (hasMeta(":hxmc.kernel", cf.cfMeta)) fi.declNoGc = fi.declKernel = true;
 		fi.declBlocking = hasMeta(":hxmc.blocking", cf.cfMeta);
 		if (fi.declBlocking) fi.declNoGc = fi.declKernel = true;
