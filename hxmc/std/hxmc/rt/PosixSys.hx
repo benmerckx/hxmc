@@ -6,6 +6,10 @@ import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Posix;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
+import hxmc.ReadOnlySpan;
+import hxmc.Span;
+import hxmc.rt.PosixApi;
 
 // The operating-system primitives of hxmc.NativeSys on Linux and macOS
 // (formerly rt_sys.c; NativeSys calls them only there). Over the C library (hxmc.unsafe.Posix): its
@@ -24,8 +28,8 @@ class PosixSys {
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
-	@:hxmc.unsafe static function errno():Int
-		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+	@:hxmc.kernel static function errno():Int
+		return Os.errno();
 
 	static inline var EINTR = 4;
 
@@ -180,16 +184,16 @@ class PosixSys {
 		if (Mem.target() >= 9) Os.exit(code) else Posix.exit(code);
 	}
 
-	@:hxmc.unsafe public static function time():Float {
-		var tv = Mem.stack(16);
-		Posix.gettimeofday(tv, Ptr.nil());
-		var s:Float = cast Mem.getI64(tv, 0);
-		return s + Mem.getI32(tv, 8) / 1e6;
+	@:hxmc.kernel public static function time():Float {
+		var tv:Span<I64> = Span.stack(3);
+		PosixApi.gettimeofday(tv.sub(0, 2), tv.sub(2, 1));
+		var s:Float = cast tv[0];
+		return s + tv[1].toInt() / 1e6;
 	}
 
 	// clock() / CLOCKS_PER_SEC (1000000 on Linux and macOS)
-	@:hxmc.unsafe public static function cpuTime():Float {
-		var c:Float = cast Posix.clock();
+	@:hxmc.kernel public static function cpuTime():Float {
+		var c:Float = cast PosixApi.clock();
 		return c / 1e6;
 	}
 
@@ -274,16 +278,16 @@ class PosixSys {
 		return mac() ? 4 : 0x800;
 
 	// F_GETFL 3, F_SETFL 4 (Linux, macOS)
-	@:hxmc.unsafe static function nonBlocking(fd:Int):Bool {
-		var fl = Posix.fcntl(fd, 3, 0);
+	@:hxmc.kernel static function nonBlocking(fd:Int):Bool {
+		var fl = PosixCalls.getFl(fd);
 		return fl >= 0 && (fl & oNonblock()) != 0;
 	}
 
-	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
-		var fl = Posix.fcntl(fd, 3, 0);
+	@:hxmc.kernel public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var fl = PosixCalls.getFl(fd);
 		if (fl < 0) return false;
 		var nf = blocking ? fl & ~oNonblock() : fl | oNonblock();
-		return nf == fl || Posix.fcntl(fd, 4, nf) == 0;
+		return nf == fl || PosixCalls.setFl(fd, nf) == 0;
 	}
 
 	// With other threads, a read or write first waits for its descriptor in a
@@ -313,12 +317,12 @@ class PosixSys {
 	static inline function outside()
 		throw haxe.io.Error.OutsideBounds;
 
-	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
+	public static function fileRead(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int {
+		if (pos < 0 || len < 0 || pos > b.length - len) outside();
 		if (threads() > 1 && waitReady(fd, 0) < 0) return -1; // closed while waiting
 		while (true) {
 			// (ready: the read does not block, and nothing collects during it)
-			var r = Posix.read(fd, Bytes.bytes(b).add(pos), len).toInt();
+			var r = PosixApi.read(fd, Span.ofBytes(b, pos, len)).toInt();
 			if (r < 0) {
 				var e = errno();
 				if (e == EINTR) continue;
@@ -328,11 +332,11 @@ class PosixSys {
 		}
 	}
 
-	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
-		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
+	public static function fileWrite(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int {
+		if (pos < 0 || len < 0 || pos > b.length - len) outside();
 		if (threads() > 1 && waitReady(fd, 1) < 0) return -1;
 		while (true) {
-			var r = Posix.write(fd, Bytes.bytes(b).add(pos), len).toInt();
+			var r = PosixApi.write(fd, ReadOnlySpan.ofBytes(b, pos, len)).toInt();
 			if (r < 0) {
 				var e = errno();
 				if (e == EINTR) continue;
@@ -351,8 +355,8 @@ class PosixSys {
 		if (Posix.lseek(fd, p, whence < 0 || whence > 2 ? 0 : whence) < 0) Rt.rt_throw("seek failed");
 	}
 
-	@:hxmc.unsafe public static function fileTell(fd:Int):Int
-		return Posix.lseek(fd, 0, 1).toInt();
+	@:hxmc.kernel public static function fileTell(fd:Int):Int
+		return PosixApi.lseek(fd, 0, 1).toInt();
 
 	// struct stat: st_mode, st_size (and the rest for stat()) per target
 	static inline function statSize():Int
@@ -367,8 +371,8 @@ class PosixSys {
 	@:hxmc.unsafe static function doStat(p:Ptr, st:Ptr):Int
 		return inode64() ? Posix.statInode64(p, st) : Posix.stat(p, st);
 
-	@:hxmc.unsafe static function doFstat(fd:Int, st:Ptr):Int
-		return inode64() ? Posix.fstatInode64(fd, st) : Posix.fstat(fd, st);
+	@:hxmc.kernel static function doFstat(fd:Int, st:Span<UInt8>):Int
+		return inode64() ? PosixApi.fstatInode64(fd, st) : PosixApi.fstat(fd, st);
 
 	static inline function isReg(mode:Int):Bool
 		return (mode & 0xF000) == 0x8000;
@@ -384,7 +388,7 @@ class PosixSys {
 		// read into malloc'ed memory first: the size may not be known (pipes)
 		var cap = 65536, n = 0;
 		var st = Mem.stack(256);
-		if (doFstat(fd, st) == 0 && isReg(stMode(st))) cap = stSize(st).toInt() + 1;
+		if (doFstat(fd, Span.unsafeOf((st : Ptr<UInt8>), 256)) == 0 && isReg(stMode(st))) cap = stSize(st).toInt() + 1;
 		var buf = LibC.malloc(cap);
 		while (true) {
 			if (n == cap) {
@@ -601,7 +605,7 @@ class PosixSys {
 		if (!mac()) {
 			for (k in 0...3)
 				if (Posix.pipe2(p.add(8 * k), oCloexec()) != 0) {
-					closeFds(p, 2 * k);
+					closeFds(ReadOnlySpan.unsafeOf((p : Ptr<Int>), 6), 2 * k);
 					return false;
 				}
 			return true;
@@ -614,13 +618,13 @@ class PosixSys {
 			Posix.fcntl(Mem.getI32(p, 4 * i), 2, 1); // F_SETFD, FD_CLOEXEC
 		Os.unlock(Gc.fdLock);
 		if (k == 3) return true;
-		closeFds(p, 2 * k);
+		closeFds(ReadOnlySpan.unsafeOf((p : Ptr<Int>), 6), 2 * k);
 		return false;
 	}
 
-	@:hxmc.unsafe static function closeFds(p:Ptr, n:Int)
+	@:hxmc.kernel static function closeFds(fds:ReadOnlySpan<Int>, n:Int)
 		for (i in 0...n)
-			Posix.close(Mem.getI32(p, 4 * i));
+			PosixApi.close(fds[i]);
 
 	// macOS: fd, a descriptor just created, close-on-exec; the caller holds
 	// the descriptor lock (see pipes)
@@ -672,13 +676,14 @@ class PosixSys {
 		return exitCode(Mem.getI32(st, 0));
 	}
 
-	@:hxmc.unsafe public static function processKill(pid:Int):Void
-		Posix.kill(pid, 9);
+	@:hxmc.kernel public static function processKill(pid:Int):Void
+		PosixApi.kill(pid, 9);
 
 	// SYS_pidfd_open: 434 on x86-64 and arm64 (the C libraries have no wrapper before glibc 2.36)
 	@:hxmc.unsafe public static function processExitFd(pid:Int):Int
 		return mac() || pid <= 0 ? -1 : Posix.syscall(434, pid, 0).toInt();
 
-	@:hxmc.unsafe public static function processSignal(pid:Int, sig:Int):Bool
-		return pid > 0 && Posix.kill(pid, sig) == 0;
+	@:hxmc.kernel public static function processSignal(pid:Int, sig:Int):Bool
+		return pid > 0 && PosixApi.kill(pid, sig) == 0;
 }
+

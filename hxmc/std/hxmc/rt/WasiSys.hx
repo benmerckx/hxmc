@@ -135,16 +135,16 @@ class WasiSys {
 	public static function commandArgs(cmd:String, args:Array<String>):Int
 		return unsupported("Sys.command");
 
-	@:hxmc.unsafe public static function exit(code:Int):Void {
+	@:hxmc.kernel public static function exit(code:Int):Void {
 		Wasi.exit(code);
 	}
 
-	@:hxmc.unsafe public static function time():Float {
+	@:hxmc.kernel public static function time():Float {
 		var ns:Float = cast Wasi.clockNs(0);
 		return ns / 1e9;
 	}
 
-	@:hxmc.unsafe public static function cpuTime():Float {
+	@:hxmc.kernel public static function cpuTime():Float {
 		var ns:Float = cast Wasi.clockNs(2);
 		if (ns == 0) ns = cast Wasi.clockNs(1);
 		return ns / 1e9;
@@ -242,12 +242,12 @@ class WasiSys {
 	}
 
 	// fdstat.fs_flags (u16 at 2): NONBLOCK 4
-	@:hxmc.unsafe public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
-		var st = Mem.stack(24);
-		if (WasiApi.fd_fdstat_get(fd, a32(st)) != 0) return false;
-		var fl = Mem.getU16(st, 2);
+	@:hxmc.kernel public static function fileSetBlocking(fd:Int, blocking:Bool):Bool {
+		var st:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(24);
+		if (WasiCalls.fd_fdstat_get(fd, st) != 0) return false;
+		var fl = st[2] | (st[3] << 8);
 		var nf = blocking ? fl & ~4 : fl | 4;
-		return nf == fl || WasiApi.fd_fdstat_set_flags(fd, nf) == 0;
+		return nf == fl || WasiCalls.fd_fdstat_set_flags(fd, nf) == 0;
 	}
 
 	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
@@ -266,12 +266,12 @@ class WasiSys {
 	}
 
 	// (Sys.stdout().flush(): what a callback printed, after main returned)
-	@:hxmc.unsafe public static function fileFlush(fd:Int):Void
+	@:hxmc.kernel public static function fileFlush(fd:Int):Void
 		if (fd == 1) Wasi.flush();
 
-	@:hxmc.unsafe public static function fileClose(fd:Int):Void {
+	@:hxmc.kernel public static function fileClose(fd:Int):Void {
 		if (fd == 1) Wasi.flush();
-		WasiApi.fd_close(fd);
+		WasiCalls.fd_close(fd);
 	}
 
 	public static function fileSeek(fd:Int, p:Int, whence:Int):Void {
@@ -279,10 +279,10 @@ class WasiSys {
 		if (WasiApi.fd_seek(fd, p, whence < 0 || whence > 2 ? 0 : whence, a32(out)) != 0) Rt.rt_throw("seek failed");
 	}
 
-	@:hxmc.unsafe public static function fileTell(fd:Int):Int {
-		var out = Mem.stack(8);
-		if (WasiApi.fd_tell(fd, a32(out)) != 0) return -1;
-		return Mem.getI64(out, 0).toInt();
+	@:hxmc.kernel public static function fileTell(fd:Int):Int {
+		var out:hxmc.Span<I64> = hxmc.Span.stack(1);
+		if (WasiCalls.fd_tell(fd, out) != 0) return -1;
+		return out[0].toInt();
 	}
 
 	public static function fileContent(path:String):Dynamic {

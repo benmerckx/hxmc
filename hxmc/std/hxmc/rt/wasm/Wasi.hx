@@ -3,6 +3,7 @@ package hxmc.rt.wasm;
 import hxmc.I64;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.rt.wasm.WasiApi;
 
 // The runtime's view of WASI: the arguments and the environment (read once),
 // the preopened directories and path resolution, buffered standard output.
@@ -268,10 +269,10 @@ class Wasi {
 
 	// ---- clocks
 
-	@:hxmc.unsafe public static function clockNs(id:Int):I64 {
-		var t = Mem.stack(8);
-		if (WasiApi.clock_time_get(id, 1000, a32(t)) != 0) return 0;
-		return Mem.getI64(t, 0);
+	@:hxmc.kernel public static function clockNs(id:Int):I64 {
+		var t:hxmc.Span<I64> = hxmc.Span.stack(1);
+		if (WasiCalls.clock_time_get(id, 1000, t) != 0) return 0;
+		return t[0];
 	}
 
 	// ---- paths: (preopened fd, relative path) for a path; null when no preopen covers it

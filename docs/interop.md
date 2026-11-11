@@ -41,6 +41,10 @@ same for that function.
 | `@:hxmc.callback` | a static function C can call ([Callbacks](#callbacks)) |
 | `@:hxmc.export("name")` | a function exported under that name (shared libraries) |
 | `@:hxmc.unsafe` | a function that never touches the GC heap ([Unsafe code](#unsafe-code)) |
+| `@:hxmc.safe` | a C function memory-safe given its typed parameters: safe kernels call it ([Typed bindings](#typed-bindings)) |
+| `@:hxmc.len(p, n)`, `@:hxmc.len(n)` | a span parameter passed by its address alone, its length the parameter `n` or at least the constant `n`; a span result of `n` elements ([Typed bindings](#typed-bindings)) |
+| `@:hxmc.handle`, `@:hxmc.handle(v)` | an abstract only C results and `@:hxmc.unsafe` code make, `v` its invalid value; `@:hxmc.close(p)` on a C function clears the handle it closes ([Handles](#handles)) |
+| `@:hxmc.header("h")`, `@:hxmc.cname("struct s")`, `@:hxmc.cif("cond")`, `@:hxmc.pad` | what the header check compiles a declaration against ([Checking declarations against the headers](#checking-declarations-against-the-headers)) |
 
 Types (`hxmc.unsafe`): `Int8` .. `Int64`, `UInt8` .. `UInt64`, `Float32`,
 `Float`, `Bool` (one byte), `Ptr<T>` (a raw address; `Ptr` alone is
@@ -180,7 +184,7 @@ position):
 | | Allowed | Rejected |
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
-| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`; the target's constants `os`, `arm`, `target`, `platform`) | `Mem`'s other functions, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, `@:hxmc.safe` C functions ([Typed bindings](#typed-bindings)), struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`; the target's constants `os`, `arm`, `target`, `platform`) | `Mem`'s other functions, `Atomic`, `Callback`, other C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast, and one to a proof (below) |
 | statics | reads; writes of plain values (below), a `@:hxmc.threadLocal` static's too | writes of a static of a GC or raw type |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
@@ -421,6 +425,223 @@ the atomic accesses) with the reference compiler, runs them on Eval and as
 JavaScript under node, and compares their output with the corpus's golden
 files. `hxmc/test/portable` holds the failed checks, the compile errors
 and spans of private structs.
+
+### Typed bindings
+
+A `@:hxmc.c` function that takes `Ptr`s is trusted at every call: the
+caller vouches for the address and the length. A typed binding moves that
+trust to the declaration, as C#'s `LibraryImport` with spans, Swift's
+`__counted_by` overloads and Rust's `safe fn` in an `unsafe extern` block
+do. Its parameters are spans, handles, structs and scalars, the call
+passes them as C wants them, and the checks are the compiler's.
+
+```haxe
+// before: the caller computes the address and the length
+@:hxmc.c @:hxmc.fast static function write(fd:Int, p:Ptr, n:I64):I64;
+write(fd, BytesPtr.of(b, 0, b.length), b.length);
+
+// after: the span is the address and the length
+@:hxmc.c @:hxmc.fast @:hxmc.safe static function write(fd:Int, buf:ReadOnlySpan<UInt8>):I64;
+write(fd, ReadOnlySpan.ofBytes(b));             // GC code: the span lent for the call
+```
+
+| Declared | Passed to C |
+| --- | --- |
+| `buf:Span<T>`, `buf:ReadOnlySpan<T>` | its address, then its length as a `size_t` (two `i32`s on wasm32) |
+| `buf:Span<T>` with `@:hxmc.len(buf, n)` | its address alone; `n` is passed as declared, checked `0 <= n <= buf.length` at each call |
+| `buf:Span<T>` with `@:hxmc.len(buf, 4)` | its address alone, `buf.length >= 4` checked: an out-parameter (`Span.stack(1)` of a struct or a scalar) |
+| `h:H`, a `@:hxmc.handle(v)` abstract | its value, checked `!= v` ([Handles](#handles)) |
+| `f:Int->Int` | the address of the static `@:hxmc.callback` function named as the argument, of the same C types |
+| a span result with `@:hxmc.len(n)` | a pointer to `n` elements, which the declaration vouches for (null ends the program); kernels only |
+
+Lengths are elements: a C length in bytes takes a span of `UInt8`
+(`var b:Span<UInt8> = words.reinterpret()`). A failed check ends the
+program as a span's does (`hxmc: span range 0 + 9 out of range [0, 8)`,
+`CBindingsOutOfRange`).
+
+**`@:hxmc.safe`** on a function or its class says the function is
+memory-safe given its typed parameters: it reads and writes only the spans
+it is given, within their lengths, keeps none of them past the call, and
+frees nothing it did not make. The compiler checks that nothing raw crosses
+it (no `Ptr`, `CString`, `IoBuffer` or GC value, no `@:hxmc.indirect`), and
+safe kernels may call it; that the C function keeps its side is the
+declaration's claim, as Rust's `safe fn` is. A function whose arguments a
+declaration cannot constrain (`fcntl`, whose third argument is an int or a
+pointer by its command; `getsockopt`, whose length C writes back) stays
+behind a small `@:hxmc.unsafe` kernel that calls it checked
+(`hxmc.rt.PosixCalls`).
+
+**From kernels.** A safe kernel calls a C function when it is
+`@:hxmc.safe` and a kernel may call it at all: `@:hxmc.fast` (no GC point,
+no safe region; the usual case, and the only one a `Bytes` is lent to) or
+`@:hxmc.blocking` (the kernel then enters a region: it holds no GC values,
+and is lent no `Bytes`). Any other C function enters a safe region at each
+call, which no kernel does. So a view such as
+
+```haxe
+@:hxmc.c @:hxmc.fast @:hxmc.safe extern class Fds {
+  static function read(fd:Int, buf:Span<UInt8>):I64;
+  static function write(fd:Int, buf:ReadOnlySpan<UInt8>):I64;
+  @:hxmc.len(fds, 2) static function pipe(fds:Span<Int>):Int;
+}
+```
+
+is called from checked kernels and from GC code (`Fds.write(fd, ReadOnlySpan.ofBytes(b))`, where `BytesPtr` stood).
+
+**Where spans come from** is as for kernels ([Spans](#spans)): GC code
+makes one only as a direct argument of the call (`ofBytes`, `ofIoBuffer`,
+`unsafeOf`), whose addresses are taken after the other arguments are
+evaluated. A `Bytes` is lent only to a call that enters no safe region: a
+`@:hxmc.fast` function. A call in a safe region (any other) takes an
+IoBuffer's span, or a kernel's own, as `Span.stack`'s
+(`reject/CBindingBytesRegion`).
+
+```haxe
+@:hxmc.struct @:hxmc.cname("struct cb_qr") class QR { public var q:Int32; public var r:Int32; }
+
+@:hxmc.c @:hxmc.fast @:hxmc.safe @:hxmc.header("cb.h") extern class Lib {
+  @:hxmc.len(p, n) static function cb_fill(p:Span<UInt8>, v:Int, n:I64):Void;  // (uint8_t *, int, size_t)
+  @:hxmc.len(out, 1) static function cb_divmod(a:Int, b:Int, out:Span<QR>):Int;
+  static function cb_apply(f:Int->Int, v:Int):Int;                              // int (*)(int)
+  @:hxmc.len(1) static function cb_counter():Span<Int>;                         // int *
+}
+
+@:hxmc.kernel static function divide(a:Int, b:Int):Int {                       // checked: no @:hxmc.unsafe
+  var qr:Span<QR> = Span.stack(1);
+  return Lib.cb_divmod(a, b, qr) != 0 ? -1 : qr[0].q;
+}
+```
+
+On wasm32 an import takes a span as two `i32`s (its address in linear
+memory and its length), a span by its address alone as one (`WasmSpans`).
+Calls that keep no typed parameter compile as before.
+
+### Typed callbacks
+
+C calls Haxe through `@:hxmc.callback` functions. One that is also a
+`@:hxmc.kernel` may take spans, which its C entry makes from C's
+addresses as a typed binding passes them: a span alone is an address and
+a `size_t`, one with `@:hxmc.len(p, n)` an address whose length is the
+sibling parameter `n` or the constant `n`. An out-parameter (`UINT32
+*len`) is a span of one, a struct C passes by its address (`const
+DWRITE_SCRIPT_ANALYSIS *`) a `ReadOnlySpan` of one, an object's own memory
+(`self`) a span of its size. A null address is an empty span, so an
+access to an optional one fails its check instead of faulting. The
+declaration vouches for the lengths, as a binding's does; the body is
+checked.
+
+```haxe
+// IDWriteTextAnalysisSource::GetTextAtPosition(UINT32 pos, WCHAR const **text, UINT32 *len)
+@:hxmc.callback @:hxmc.kernel @:hxmc.len(self, 4) @:hxmc.len(text, 1) @:hxmc.len(len, 1)
+static function textAt(self:Span<Int>, pos:Int, text:Span<I64>, len:Span<Int>):Int {
+  var n = self[2];
+  len[0] = n - pos < 4 ? n - pos : 4;
+  text[0] = self.getI64(0) + 2 * pos;     // an address C reads: the source's own text
+  return 0;
+}
+
+// IDWriteTextAnalysisSink::SetScriptAnalysis(UINT32 pos, UINT32 len, DWRITE_SCRIPT_ANALYSIS const *a)
+@:hxmc.callback @:hxmc.kernel @:hxmc.len(self, 4) @:hxmc.len(a, 1)
+static function setScript(self:Span<Int>, pos:Int, len:Int, a:ReadOnlySpan<Analysis>):Int {
+  if (a[0].script == 25) self[1] += len;
+  return 0;
+}
+```
+
+A typed binding takes such a callback by name, its parameter of the
+callback's function type (`Lib.cb_analyze(source, textAt, sink,
+setScript)`); `Callback.addr(textAt)` is its address too, for a vtable a
+program fills itself. The kernel runs on C's thread in C's state, as an
+`@:hxmc.unsafe` callback does: C may call it from inside a safe region,
+so it holds no GC values (as a blocking kernel). What stays the
+declaration's: an address written for C (`text[0]` above) is a word to
+safe code, which C then reads; and the lengths. `CBindingsCallbacks`
+drives both from a C analyzer, as DirectWrite does.
+
+### Safepoints
+
+A collection waits until every other thread reaches a safepoint: an
+allocation's slow path, a safe region. A loop that allocates nothing (a
+decoder's) holds every other thread's collection until it ends.
+`hxmc.Safepoint.poll()` is one load while no collection waits, else the
+runtime's safepoint, a GC point where the caller's references are rooted
+as at an allocation (and other runnable threads may run). GC code only;
+nothing on WebAssembly.
+
+```haxe
+for (row in 0...height) {
+  decodeRow(row);                        // a kernel, or code that allocates nothing
+  hxmc.Safepoint.poll();
+}
+```
+
+### Handles
+
+A `@:hxmc.handle` abstract is a value only C makes, as .NET's `SafeHandle`
+wraps one: a C function's result of that type, or `@:hxmc.unsafe` code.
+Safe kernels hold, pass, store and compare one, and never cast to one nor
+take one from a `Dynamic` (`reject/CBindingForge*`). It is no raw memory,
+whatever it stands on (an abstract over a `Ptr` is one), and GC code
+keeps one in its fields, as it keeps any value.
+
+```haxe
+@:hxmc.handle(0) abstract Dir(Ptr) {}                  // NULL: invalid
+
+@:hxmc.c @:hxmc.fast @:hxmc.safe extern class Dirs {
+  static function opendir_at(fd:Int):Dir;
+  static function next(d:Dir):Int;
+  @:hxmc.close(d) static function closedir(d:Dir):Int;
+}
+
+var d = Dirs.opendir_at(fd);
+if (!Handle.valid(d)) return -1;                       // hxmc.Handle.valid: not the invalid value
+Dirs.closedir(d);                                      // d holds 0 from here on
+Dirs.next(d);                                          // ends the program: an invalid handle, not a use after free
+```
+
+- **The invalid value** (`@:hxmc.handle(v)`): a call passing a handle of
+  that value ends the program with "hxmc: invalid handle". `Handle.valid(h)`
+  tests one.
+- **`@:hxmc.close(d)`**: after the call, the place the argument came from
+  (a local, a static, a field of `this` or of a local) holds the invalid
+  value, so a closed handle is never used again by that place. Copies made
+  before are the program's to drop, as with any value: there is no count of
+  calls in flight, as `SafeHandle` keeps, and no finalizer.
+
+### Checking declarations against the headers
+
+A declaration that disagrees with C (a field at another offset, an `Int`
+where C has a `long`, a parameter too few) is undefined behaviour at run
+time. `-D hxmc.header-check=<file>` writes the program's declarations that
+name their headers as C++ assertions over them, and `make header-check`
+(`hxmc/test/HeaderCheck.hx`) compiles them with zig for each target
+against its own C library (musl, macOS's, MinGW-w64's, wasi-libc): a
+mismatch fails the build, naming the declaration.
+
+| Metadata | |
+| --- | --- |
+| `@:hxmc.header("unistd.h", ...)` | on a `@:hxmc.c` class or function: the headers declaring it; only these declarations are checked (`"#define X"` lines too) |
+| `@:hxmc.cname("struct timespec")` | on a `@:hxmc.struct`: its C type, whose size and fields' offsets and sizes are checked; on a field: its C name |
+| `@:hxmc.pad` | on a struct field: padding, no C field |
+| `@:hxmc.cif("defined(__APPLE__)")` | on a function: checked only where the condition holds |
+
+Each function is checked for its number of parameters (and `...` for
+`@:hxmc.varargs`), each parameter and the result for its kind and size: an
+integer of 4 bytes, a float, a pointer, a `size_t`, a struct by its name;
+a span's element against the pointee (a named struct, or any type of the
+element's size, `void` or a struct for scalars), and a minimum length
+against the pointee's size. The C++ is only for its type traits (clang's
+builtins, no C++ library): the declarations are C's.
+
+```
+HeaderCheck.hx:23: QR.q: q is an integer of 8 bytes
+cb_value: parameter 1 (o) is an integer of 4 bytes
+```
+
+`make header-check` covers the std's typed bindings (`hxmc.rt.PosixApi`,
+`Os`'s), `CBindings` against `CBindings.h`, and must fail on
+`hxmc/test/header/BadLayout.hx`. Without zig it is skipped. Android's and
+the glibc mode's headers are not among them yet (Layouts.hx reads those).
 
 ### System calls
 

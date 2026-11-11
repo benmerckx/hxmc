@@ -96,11 +96,11 @@ class NativeSys {
 
 	// 0 at end, -1 on error, WOULD_BLOCK
 	public static inline function fileRead(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiSys.fileRead(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileRead(fd, b.getData(), pos, len) : PosixSys.fileRead(fd, b.getData(), pos, len) #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.fileRead(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileRead(fd, b.getData(), pos, len) : PosixSys.fileRead(fd, b, pos, len) #end;
 
 	// -1 on error, WOULD_BLOCK (not on Windows: there a full PIPE_NOWAIT pipe takes what fits)
 	public static inline function fileWrite(fd:Int, b:haxe.io.Bytes, pos:Int, len:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiSys.fileWrite(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileWrite(fd, b.getData(), pos, len) : PosixSys.fileWrite(fd, b.getData(), pos, len) #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.fileWrite(fd, b.getData(), pos, len) #else Mem.os() == 2 ? WinSys.fileWrite(fd, b.getData(), pos, len) : PosixSys.fileWrite(fd, b, pos, len) #end;
 
 	// WebAssembly: the buffered standard output written out (elsewhere writes
 	// are not buffered)
