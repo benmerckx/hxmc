@@ -136,7 +136,7 @@ class Filters {
 					ncls.clOrderedStatics.unshift(cf);
 					ncls.clStatics.set(cf.cfName, cf);
 					com.types = (cast com.types : Array<ModuleType>).concat([TClassDecl(ncls)]);
-					c.clMeta = ([{meta: Custom(":hasMetadata"), exprs: vector(), pos: e.epos}] : Array<core.Ast.MetadataEntry>).concat(c.clMeta);
+					c.clMeta = core.ds.VectorTools.cons(({meta: Custom(":hasMetadata"), exprs: vector(), pos: e.epos} : core.Ast.MetadataEntry), c.clMeta);
 				} else {
 					c.clOrderedStatics.unshift(cf);
 					c.clStatics.set(cf.cfName, cf);
@@ -378,14 +378,14 @@ class Filters {
 				}
 				inline function mkOverloadRestore(f:TClassField):FieldRestoreState {
 					TypeOps.addClassFieldFlag(f, CfPostProcessed);
-					// port: cf_meta and cf_params are immutable lists upstream; the port's arrays are
-					// modified in place, so the saved state holds copies.
+					// port: cf_params is an immutable list upstream; the port's array is
+					// modified in place, so the saved state holds a copy (cf_meta is a Vector, replaced).
 					return {
 						name: f.cfName,
 						kind: f.cfKind,
 						expr: f.cfExpr,
 						type: f.cfType,
-						meta: f.cfMeta.copy(),
+						meta: f.cfMeta,
 						params: f.cfParams.copy()
 					};
 				}
@@ -405,7 +405,7 @@ class Filters {
 					f.cfKind = s.kind;
 					f.cfExpr = s.expr;
 					f.cfType = s.type;
-					f.cfMeta = s.meta.copy();
+					f.cfMeta = s.meta;
 					f.cfParams = s.params.copy();
 					return f;
 				}
@@ -419,7 +419,7 @@ class Filters {
 					for (f in lst) map.set(f.cfName, f);
 					return map;
 				}
-				var meta = c.clMeta.copy();
+				var meta = c.clMeta;
 				var path = c.clPath;
 				var ext = TypeOps.hasClassFlag(c, CExtern);
 				var sup = c.clSuper;
@@ -431,7 +431,7 @@ class Filters {
 				c.clRestore = function() {
 					c.clSuper = sup;
 					c.clImplements = impl.copy();
-					c.clMeta = meta.copy();
+					c.clMeta = meta;
 					if (ext) TypeOps.addClassFlag(c, CExtern);
 					else TypeOps.removeClassFlag(c, CExtern);
 					c.clPath = path;
@@ -450,7 +450,7 @@ class Filters {
 					for (i in 0...en.eMeta.length) switch en.eMeta[i] {
 						case {meta: core.MetaList.StrictMeta.RealPath, exprs: [{expr: EConst(String(path, _))}]}:
 							en.ePath = Ast.parsePath(path);
-							en.eMeta = en.eMeta.slice(0, i).concat(en.eMeta.slice(i + 1));
+							en.eMeta = core.ds.VectorTools.concat(core.ds.VectorTools.slice(en.eMeta, 0, i), core.ds.VectorTools.slice(en.eMeta, i + 1));
 							return;
 						case _:
 					}
@@ -465,7 +465,7 @@ class Filters {
 				var path = a.aPath;
 				a.aRestore = function() {
 					a.aPath = path;
-					a.aMeta = a.aMeta.filter(m -> m.meta != core.MetaList.StrictMeta.ValueUsed);
+					a.aMeta = core.ds.VectorTools.filter(a.aMeta, m -> m.meta != core.MetaList.StrictMeta.ValueUsed);
 				};
 		}
 	}

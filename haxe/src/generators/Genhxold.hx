@@ -19,6 +19,8 @@
 
 package generators;
 
+import core.ds.VectorTools.vector;
+
 import core.Ast;
 import core.Ast as AstOps;
 import core.AstPrinter;
@@ -114,7 +116,7 @@ class Genhxold {
 			case TMono(r):
 				r.tmType == null ? "Unknown" : stype(r.tmType);
 			case TInst(c = {clKind: KTypeParameter(_)}, tl):
-				path([], {pack: [], name: c.clPath.name}, tl);
+				path(vector(), {pack: [], name: c.clPath.name}, tl);
 			case TInst(c, tl):
 				path(c.clMeta, c.clPath, tl);
 			case TEnum(e, tl):
@@ -316,7 +318,7 @@ class Genhxold {
 				p("\n");
 			case TAbstractDecl(a):
 				printMeta(a.aMeta);
-				if (a.aImpl != null) try printMeta([Meta.get(Meta.Require, a.aImpl.clMeta)]) catch (_:MetaNotFound) {};
+				if (a.aImpl != null) try printMeta(vector(Meta.get(Meta.Require, a.aImpl.clMeta))) catch (_:MetaNotFound) {};
 				p("extern ");
 				var isEnum = a.aEnum;
 				if (isEnum) p("enum ");

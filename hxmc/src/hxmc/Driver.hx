@@ -63,7 +63,19 @@ class Driver {
 		var d = new Driver(prog, out, o);
 		d.prep.staticClosures = !o.mirHost;
 		var t1 = haxe.Timer.stamp();
-		d.build(t0, t1);
+		try d.build(t0, t1) catch (e:Dynamic) {
+			release();
+			throw e;
+		}
+		release();
+	}
+
+	// what a build set for its code generation and no later build reads (a
+	// resident compiler would keep the program's functions with it until the
+	// next build: MirBuild.inlineCands, 21 MB of helder's ts-todo)
+	static function release() {
+		MirBuild.inlineCands = null;
+		Escape.refSlots = null;
 	}
 
 	// ---- compiling
@@ -102,7 +114,9 @@ class Driver {
 		}
 		if (failure != null) throw failure;
 	}
-	static var sroa = Sys.getEnv("HXMC_SROA") != "0";
+	static var sroa = true; // (the build's, Options.apply)
+	static var nogc = false;
+	static var wasmStackKb:Null<String> = null;
 	var raRounds = 0;
 	var escRemoved = 0;
 	var escFolds = 0;
@@ -111,6 +125,8 @@ class Driver {
 	var rootStores = 0; // (Frames)
 	var freshStores = 0; // (Opt.freshTargets)
 	var framesRemoved = 0;
+	var mirBefore = 0;
+	var mirAfter = 0;
 	var devirtualized = 0; // (Inline.devirtualize)
 	var foldWhy = new Map<String, Int>(); // (Fold.whyOn)
 	var escTime = 0.0;
@@ -299,6 +315,14 @@ class Driver {
 			// divisions by constants multiplied (not interpreted: one instruction there)
 			if (o.opt && (interp == null || !interp.wants(fn))) DivConst.run(mf);
 			if (o.opt) Opt.lowered(mf);
+			var before = mf.vals.length;
+			mf.compact();
+			if (o.stats) {
+				lock.acquire();
+				mirBefore += before;
+				mirAfter += mf.vals.length;
+				lock.release();
+			}
 			if (dumpSet != null && dumpSet.exists(name)) Sys.println(mf.dump());
 			if (interp != null && interp.wants(fn)) {
 				var g = new hxmc.interp.InterpGen(prep, abi, obj, mf, interp, (m, global) -> compileStub(m, emit, global));
@@ -440,6 +464,7 @@ class Driver {
 		Sys.println('hxmc: ${prep.p.funcs.length} functions');
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
+		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
@@ -473,12 +498,16 @@ class Driver {
 	public static function outputKey(kind:CacheKind, out:String):CacheKey
 		return CacheKey.of(kind, "hxmc-out|" + (try sys.FileSystem.absolutePath(out) catch (_:Dynamic) out));
 
+	// (+strhash=fnv: the program's std hashes strings with FNV-1a, FnLower.wordHash;
+	// a string switch lowered for one hash is wrong with the other)
+	// (+pgo=: the LLVM profile's path, time and size: codeKey has only the flag)
 	function toolKey():String {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + (o.loopVersion ? "" : "+loop-version=0") + (o.llvm != null ? "+llvm=" + o.llvm + (o.llvmRt ? "+rt" : "") + (o.llvmCpu != null ? "+cpu=" + o.llvmCpu : "") + (o.llvmWhole ? "+whole" : "") + (o.llvmConsts ? "+consts" : "") + (o.llvmTbaa != null ? "+tbaa=" + o.llvmTbaa : "") + (o.llvmFlags != null ? "+flags=" + o.llvmFlags : "") + (o.llvmInline ? "+inline" : "") + (o.llvmPgo != null ? "+pgo=" + o.llvmPgo + (o.llvmPgo != "gen" ? "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") : "") + "+clang=" + o.llvmClang : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv")
+			+ (o.llvm != null && o.llvmPgo != null && o.llvmPgo != "gen" ? "+pgo=" + o.llvmPgo + "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -510,6 +539,13 @@ class Driver {
 	public static var resident = false;
 	static var memObjs = new Map<String, {key:String, obj:Obj}>();
 
+	// the objects kept of the output out (ServerMemory: its group dropped)
+	public static function forgetOutput(out:String) {
+		var dir = out + ".hxmc/";
+		for (k in [for (k in memObjs.keys()) k])
+			if (StringTools.startsWith(k, dir)) memObjs.remove(k);
+	}
+
 	function build(t0:Float, t1:Float) {
 		inlineCandidates();
 		var p = prep.p;
@@ -525,6 +561,15 @@ class Driver {
 			}
 			fs.push(f);
 		}
+		// each module's functions by their symbols, not in the order the
+		// lowering reached them: an edit elsewhere that reaches them in
+		// another order (helder's markup using a style setter first) leaves
+		// the module's key, and its object, as they were
+		for (m in order)
+			byModule.get(m).sort((a, b) -> {
+				var x = prep.funcSym(a), y = prep.funcSym(b);
+				x < y ? -1 : x > y ? 1 : 0;
+			});
 		// the objects: in the store, else next to the output
 		var store = CacheStore.open();
 		var dir = out + ".hxmc";
@@ -552,6 +597,7 @@ class Driver {
 		var keys = new haxe.ds.Vector<String>(nm, "");
 		var lits = new haxe.ds.Vector<Array<String>>(nm);
 		var objs:Array<Obj> = [for (_ in 0...nm) null];
+		var compiled = new haxe.ds.Vector<Bool>(nm, false);
 		var s0 = haxe.Timer.stamp();
 		// (the functions that may be inlined: their digests first, Fingerprint.Inlined)
 		var inlined:Null<Fingerprint.Inlined> = null;
@@ -599,6 +645,7 @@ class Driver {
 				hits++;
 			} else {
 				todo.push(mi);
+				compiled[mi] = true;
 				misses++;
 			}
 		}
@@ -654,9 +701,11 @@ class Driver {
 		} else
 			sys.io.File.saveContent(indexPath, newIndex.toString());
 		// (LinkPE drops sections from the objects it links: not kept)
-		if (resident && abi.os != "windows" && !llvmDeferred())
+		if (resident && abi.os != "windows" && !llvmDeferred()) {
 			for (mi in 0...nm)
 				memObjs.set(memPaths[mi], {key: keys[mi], obj: objs[mi]});
+			ServerMemory.output(out);
+		}
 		if (store == null)
 			for (f in sys.FileSystem.readDirectory(dir))
 				if (StringTools.endsWith(f, ".o") && !keep.exists(f)) sys.FileSystem.deleteFile(dir + "/" + f);
@@ -709,7 +758,7 @@ class Driver {
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
-			var stack = Sys.getEnv("HXMC_WASM_STACK_KB");
+			var stack = wasmStackKb;
 			// (the linker's stack runs rt_init only: the runtime's takes over, wasm/Gc.hx)
 			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 64 << 10);
 			lw.nameSection = !o.strip;
@@ -817,7 +866,7 @@ class Driver {
 		// the runtime objects' sections and the runtime's Haxe functions that
 		// nothing reaches are left out (LinkCore.gc; a Mir host: every runtime
 		// function stays, for the code it loads)
-		var collect = Sys.getEnv("HXMC_NOGC") != "1" && !o.mirHost ? rts : null;
+		var collect = !nogc && !o.mirHost ? rts : null;
 		var exe = abi.os == "windows" ? {
 			var l = new LinkPE(all, abi.arm);
 			if (abi.output == SharedLibrary) {
@@ -833,6 +882,7 @@ class Driver {
 		} : abi.os == "macos" ? {
 			var l = new LinkMachO(all, abi);
 			l.symbols = !o.strip;
+			l.heapWindow = hxmc.ir.Lower.compactTypes == 1;
 			l.collect = collect;
 			if (abi.output == SharedLibrary) l.installName = "@rpath/" + haxe.io.Path.withoutDirectory(out);
 			l.dylibs = dylibs;
@@ -866,8 +916,7 @@ class Driver {
 			exe;
 		};
 		if (abi.os == "windows" && abi.output != SharedLibrary && !StringTools.endsWith(out, ".exe")) out += ".exe";
-		sys.io.File.saveBytes(out, exe);
-		markExecutable(out);
+		writeExecutable(out, exe);
 		// (Java: the proxies the glue must have, next to the output: Jni.manifest)
 		var manifest = hxmc.ir.Jni.manifest([for (ci in prep.p.classes) if (ci.jniProxy != null && prep.p.isLive(ci.jniProxy.desc)) ci]);
 		if (manifest != null) sys.io.File.saveContent(out + ".jni.json", manifest);
@@ -880,6 +929,11 @@ class Driver {
 		}
 		if (o.stats) {
 			Sys.println('hxmc: modules ${order.length}: ${hits} cached, ${misses} compiled (keys and reading ${ms(tKey)})');
+			// (which, the first ten in module order)
+			if (misses > 0) {
+				var names = [for (mi in 0...nm) if (compiled[mi]) order[mi]];
+				Sys.println('hxmc: compiled ' + names.slice(0, 10).join(", ") + (names.length > 10 ? ', ... (${names.length})' : ''));
+			}
 			Sys.println('hxmc: data ${ms(t3 - t2)}, runtime read ${ms(t4 - t3)}, link ${ms(haxe.Timer.stamp() - t4)}');
 		}
 	}
@@ -891,6 +945,25 @@ class Driver {
 	// whoever runs the module marks the output executable (HXMC_EXE_LIST
 	// names a file the output's path is added to, one per line)
 	// (Windows hosts need no mode)
+	// an executable written anew, not over the old one's bytes: macOS caches
+	// a file's code signature, and kills the next launch of an executable
+	// that ran and was then rewritten in place (SIGKILL, "exit 137"); as
+	// ld64 does, the new file goes next to it and replaces it (a rename). On
+	// Windows (a running .exe cannot be replaced; rename does not overwrite)
+	// and WASI in place
+	public static function writeExecutable(path:String, bytes:haxe.io.Bytes) {
+		var host = Sys.systemName();
+		if (host == "Windows" || host == "Wasi" || !sys.FileSystem.exists(path)) {
+			sys.io.File.saveBytes(path, bytes);
+			markExecutable(path);
+			return;
+		}
+		var tmp = path + ".hxmc-new";
+		sys.io.File.saveBytes(tmp, bytes);
+		markExecutable(tmp);
+		sys.FileSystem.rename(tmp, path);
+	}
+
 	public static function markExecutable(path:String) {
 		if (Sys.systemName() == "Windows") {} else if (Sys.systemName() != "Wasi")
 			Sys.command("chmod", ["755", path]);

@@ -557,7 +557,7 @@ class MacroApiImpl {
 		]);
 	}
 
-	public static function encodeMetaContent(m:Metadata):Value return encodeArrayV(m.mapToVector(encodeMetaEntry));
+	public static function encodeMetaContent(m:Metadata):Value return encodeArrayV(m.map(encodeMetaEntry));
 
 	public static function encodeField(f:ClassField):Value {
 		var kind = switch f.cffKind {
@@ -1147,7 +1147,7 @@ class MacroApiImpl {
 		};
 	}
 
-	public static function decodeMetaContent(m:Value):Metadata return decodeOptArray(decodeMetaEntry, m);
+	public static function decodeMetaContent(m:Value):Metadata return decodeOptVector(decodeMetaEntry, m);
 
 	static function decodeDoc(v:Value):Documentation return opt(s -> ({docOwn: decodeString(s), docInherited: []} : DocBlock), v);
 
@@ -1173,7 +1173,7 @@ class MacroApiImpl {
 			cffPos: pos,
 			cffKind: fkind,
 			cffAccess: optList(decodeArray, field(v, "access")).map(decodeAccess),
-			cffMeta: optList(decodeMetaContent, field(v, "meta")),
+			cffMeta: isNull(field(v, "meta")) ? vector() : decodeMetaContent(field(v, "meta")),
 		};
 	}
 
@@ -1279,7 +1279,7 @@ class MacroApiImpl {
 					var vstatic = field(v, "isStatic");
 					var isStatic = if (isNull(vstatic)) false else decodeBool(vstatic);
 					var vmeta = field(v, "meta");
-					var meta = if (isNull(vmeta)) [] else decodeMetaContent(vmeta);
+					var meta = if (isNull(vmeta)) vector() else decodeMetaContent(vmeta);
 					var namePos = maybeDecodePos(field(v, "namePos"));
 					var namePos = if (posEq(namePos, Globals.nullPos)) p else namePos;
 					var name:PlacedName = {name: decodeString(field(v, "name")), pos: namePos};
@@ -1361,13 +1361,13 @@ class MacroApiImpl {
 			fld("add", vfun3((k, vl, p) -> {
 				var el = mapDecodedArray(vl, decodeExpr);
 				var entry:MetadataEntry = {meta: Meta.fromString(decodeString(k)), exprs: el, pos: decodePos(p)};
-				meta = [entry].concat(meta);
+				meta = VectorTools.cons(entry, meta);
 				set(meta);
 				vnull;
 			})),
 			fld("extract", vfun1(k -> {
 				var k = Meta.fromString(decodeString(k));
-				encodeAndMapArray(encodeMetaEntry, meta.filter(m -> Meta.metaEq(k, m.meta)));
+				encodeArrayV(meta.filter(m -> Meta.metaEq(k, m.meta)).map(encodeMetaEntry));
 			})),
 			fld("remove", vfun1(k -> {
 				var k = Meta.fromString(decodeString(k));
@@ -1377,7 +1377,7 @@ class MacroApiImpl {
 			})),
 			fld("has", vfun1(k -> {
 				var k = Meta.fromString(decodeString(k));
-				vbool(Lambda.exists(meta, m -> Meta.metaEq(k, m.meta)));
+				vbool(meta.exists(m -> Meta.metaEq(k, m.meta)));
 			})),
 		]);
 	}

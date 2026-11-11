@@ -233,7 +233,7 @@ class TypeloadFields {
 			cffName: {name: "alloc", pos: p},
 			cffDoc: null,
 			cffPos: p,
-			cffMeta: [],
+			cffMeta: vector(),
 			cffAccess: [{access: APublic, pos: p}, {access: AExtern, pos: p}, {access: AStatic, pos: p}],
 			cffKind: FFun({fParams: vector(), fArgs: vector(), fType: makePtpTh(self, p), fExpr: null})
 		};
@@ -248,7 +248,7 @@ class TypeloadFields {
 			for (f in fields)
 				if (MetadataTools.has(Custom(":hxmc.unowned"), f.cffMeta) && !MetadataTools.has(Custom(":hxmc.unownedCheck"), f.cffMeta)) {
 					var g = f.clone();
-					g.cffMeta = f.cffMeta.concat([{meta: StrictMeta.Custom(":hxmc.unownedCheck"), exprs: vector(), pos: f.cffPos}]);
+					g.cffMeta = f.cffMeta.snoc(({meta: StrictMeta.Custom(":hxmc.unownedCheck"), exprs: vector(), pos: f.cffPos} : MetadataEntry));
 					g;
 				} else f
 		];
@@ -386,7 +386,7 @@ class TypeloadFields {
 			var v = allocVar(VGenerated, cf.cfName, t, cf.cfNamePos),
 				ef = mk(TField(ethis, FInstance(c, params, cf)), cf.cfType, p),
 				ev = mk(TLocal(v), v.vType, p);
-			if (opt && !MetadataTools.has(Optional, v.vMeta)) v.vMeta.unshift(meta(Optional));
+			if (opt && !MetadataTools.has(Optional, v.vMeta)) v.vMeta = VectorTools.cons(meta(Optional), v.vMeta);
 			// this.field = <constructor_argument>
 			var assign = mk(TBinop(OpAssign, ef, ev), cf.cfType, p),
 				// <constructor_argument> != null
@@ -411,7 +411,7 @@ class TypeloadFields {
 		cf.cfDoc = docFromString(doc.toString());
 		cf.cfExpr = e;
 		cf.cfType = e.etype;
-		cf.cfMeta = [meta(CompilerGenerated), meta(InheritDoc)];
+		cf.cfMeta = vector(meta(CompilerGenerated), meta(InheritDoc));
 		cf.cfKind = Method(MethNormal);
 		c.clConstructor = cf;
 		delay(ctx.g, PTypeField, function() InheritDocTools.buildClassFieldDoc(ctx, c, cf));
@@ -425,9 +425,9 @@ class TypeloadFields {
 				_) if (!stat && !hasAccess(AEnum, f.cffAccess)): raiseTypingError("Member property accessors must be get/set or never", p);
 			case FFun(fu) if (f.cffName.name == "new" && !stat):
 				inline function init(p:Pos):Expr return ae(EVars(vector(mkEvar({name: "this", pos: Globals.nullPos}, thisT, null,
-					[meta(This)]))), p);
+					vector(meta(This))))), p);
 				inline function ret(p:Pos):Expr return ae(EReturn(ae(ECast(ae(EConst(Ident("this")), p), null), p)), p);
-				var metadata = [meta(NoCompletion)].concat(f.cffMeta);
+				var metadata = VectorTools.cons(meta(NoCompletion), f.cffMeta);
 				if (MetadataTools.has(MultiType, a.aMeta)) {
 					if (hasAccess(AInline, f.cffAccess)) raiseTypingError("inline on MultiType constructor", f.cffPos);
 					if (fu.fExpr != null) displayError(com, "MultiType constructors cannot have a body", f.cffPos);
@@ -494,7 +494,7 @@ class TypeloadFields {
 							{access: APublic, pos: Globals.nullPos};
 					}
 				];
-				f.cffMeta.unshift(meta(Enum));
+				f.cffMeta = VectorTools.cons(meta(Enum), f.cffMeta);
 				if (ct == null) ct = {type: TExprToExpr.convertType(TAbstract(a, extractParamTypes(a.aParams))), pos: Globals.nullPos};
 				if (eo == null) {
 					if (!hasClassFlag(c, CExtern)) switch mode {
@@ -861,7 +861,7 @@ class TypeloadFields {
 		}
 		if (fctx.isExtern) addClassFieldFlag(cf, CfExtern);
 		if (fctx.isAbstractMember) {
-			cf.cfMeta.unshift(meta(Custom(":impl")));
+			cf.cfMeta = VectorTools.cons(meta(Custom(":impl")), cf.cfMeta);
 			addClassFieldFlag(cf, CfImpl);
 		}
 		if (isEnum) addClassFieldFlag(cf, CfEnum);
@@ -934,7 +934,7 @@ class TypeloadFields {
 				};
 			}
 			var isMulti = MetadataTools.has(MultiType, a.aMeta) && !fctx.isAbstractMember;
-			if (isMulti && !MetadataTools.has(MultiType, cf.cfMeta)) cf.cfMeta.unshift(meta(MultiType));
+			if (isMulti && !MetadataTools.has(MultiType, cf.cfMeta)) cf.cfMeta = VectorTools.cons(meta(MultiType), cf.cfMeta);
 			var r = makeLazy(ctx.g, t, function() {
 				var args:core.TType.TParams;
 				if (isMulti) {
@@ -1028,8 +1028,7 @@ class TypeloadFields {
 			case _:
 				raiseTypingError("Invalid @:op expresssions, should be an operator or a call", e.pos);
 		}
-		// port: iterate a snapshot: handleTo may prepend @:multiType, and upstream iterates an immutable list.
-		for (entry in cf.cfMeta.copy()) switch entry.meta {
+		for (entry in cf.cfMeta) switch entry.meta {
 			case From:
 				handleFrom();
 			case To:
@@ -1272,9 +1271,9 @@ class TypeloadFields {
 		}
 		cf.cfMeta = cf.cfMeta.map(m -> m.meta == core.MetaList.StrictMeta.AstSource
 			&& m.exprs.length == 0 ? Record.withFields(m, {exprs: fd.fExpr == null ? vector() : vector(fd.fExpr)}) : m);
-		if (parent != null && !MetadataTools.has(Native, cf.cfMeta)) try cf.cfMeta.unshift(MetadataTools.get(Native, parent.cfMeta))
+		if (parent != null && !MetadataTools.has(Native, cf.cfMeta)) try cf.cfMeta = VectorTools.cons(MetadataTools.get(Native, parent.cfMeta), cf.cfMeta)
 		catch (_:NotFound) {}
-		Typeload.generateArgsMeta(ctx.com, c, m -> cf.cfMeta.unshift(m), fd.fArgs);
+		Typeload.generateArgsMeta(ctx.com, c, m -> cf.cfMeta = VectorTools.cons(m, cf.cfMeta), fd.fArgs);
 		var fmode:CurrentFun;
 		if (cctx.abstractType != null) {
 			checkAbstract(ctx, cctx, fctx, cctx.abstractType, c, cf, fd, t, ret, p);
@@ -1342,7 +1341,7 @@ class TypeloadFields {
 				}
 				if (found == null) throw NotFound.raise();
 				var t2 = found.type, f2 = found.field;
-				for (m in f.cffMeta) if (m.meta == core.MetaList.StrictMeta.Deprecated) f2.cfMeta.unshift(m);
+				for (m in f.cffMeta) if (m.meta == core.MetaList.StrictMeta.Deprecated) f2.cfMeta = VectorTools.cons(m, f2.cfMeta);
 				// Now that we know there is a field, we have to delay the actual unification even further. The reason is that unification could resolve
 				// TLazy, which would then cause field typing before we're done with our PConnectField pass. This could cause interface fields to not
 				// be generated in time.
@@ -1376,7 +1375,7 @@ class TypeloadFields {
 			} catch (_:NotFound) {
 				inline function generate():TClassField {
 					var cf = mkField(m, t, p, Globals.nullPos);
-					cf.cfMeta = [meta(CompilerGenerated), meta(NoCompletion)];
+					cf.cfMeta = vector(meta(CompilerGenerated), meta(NoCompletion));
 					cf.cfKind = Method(MethNormal);
 					return cf;
 				}
@@ -1490,7 +1489,7 @@ class TypeloadFields {
 
 	public static function initField(ctx:Typer, cctx:ClassInitCtx, fctx:FieldInitCtx, f:ClassField, cf:TClassField):Void {
 		var c = cctx.tclass, name = f.cffName.name, p = f.cffPos;
-		TypeloadCheck.checkGlobalMetadata(ctx, f.cffMeta, m -> cf.cfMeta.unshift(m), c.clModule.mPath, c.clPath, name);
+		TypeloadCheck.checkGlobalMetadata(ctx, f.cffMeta, m -> cf.cfMeta = VectorTools.cons(m, cf.cfMeta), c.clModule.mPath, c.clPath, name);
 		if (!hasClassFlag(c, CExtern) && !MetadataTools.has(Native, f.cffMeta)) Naming.checkFieldName(ctx.com, name, p);
 		for (acc in f.cffAccess) switch [acc.access, f.cffKind] {
 			case [AFinal, FProp(_)] if (!hasClassFlag(c, CExtern) && ctx.com.platform != Jvm):
@@ -1567,7 +1566,7 @@ class TypeloadFields {
 	public static function createClassField(cctx:ClassInitCtx, f:ClassField):TClassField {
 		var cf = mkField(f.cffName.name, tDynamic, f.cffPos, f.cffName.pos, isPublic(cctx, f.cffAccess, null));
 		cf.cfDoc = f.cffDoc;
-		cf.cfMeta = f.cffMeta.copy();
+		cf.cfMeta = f.cffMeta;
 		return cf;
 	}
 
@@ -1873,7 +1872,7 @@ class TypeBinding {
 		var p = cf.cfPos;
 		var ctx = TyperManager.cloneForExpr(ctxField, fctx.isStatic ? FunStatic : FunMember, FunNotFunction);
 		if (hasClassFlag(c, CInterface)) unexpectedExpression(ctx.com, fctx, "Initialization on field of interface", astExpr.pos);
-		cf.cfMeta.unshift({meta: StrictMeta.Value, exprs: vector(astExpr), pos: Globals.mkZeroRangePos(cf.cfPos)});
+		cf.cfMeta = VectorTools.cons(({meta: StrictMeta.Value, exprs: vector(astExpr), pos: Globals.mkZeroRangePos(cf.cfPos)} : MetadataEntry), cf.cfMeta);
 		inline function checkCast(e:TExpr):TExpr {
 			// insert cast to keep explicit field type (issue #1901)
 			if (typeIseq(e.etype, cf.cfType)) return e;

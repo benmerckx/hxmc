@@ -191,8 +191,8 @@ class FunctionArguments {
 		for (i in 0...withDefault.length) {
 			var typed = withDefault[i];
 			if (i == 0 && offset == 1) {
-				var v = makeLocal(typed.name, VAbstractThis, typed.type, [], Globals.nullPos);
-				v.vMeta.unshift({meta: MetaTag.This, exprs: vector(), pos: Globals.nullPos});
+				var v = makeLocal(typed.name, VAbstractThis, typed.type, vector(), Globals.nullPos);
+				v.vMeta = VectorTools.cons(({meta: MetaTag.This, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry), v.vMeta);
 				acc[i] = {variable: v, defaultValue: null};
 				continue;
 			}

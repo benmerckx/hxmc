@@ -15,7 +15,7 @@ import hxmc.unsafe.Ptr;
 @:hxmc.wasm @:keep
 class Heap {
 	static inline var PAGE = 65536;
-	static inline var MAX_FREE = 256;
+	static inline var MAX_FREE = 1024;
 	static inline var MIN_CLASS = 4; // 16 bytes
 	static inline var MAX_CLASS = 20; // 1 MB
 	static inline var ARENA = 1 << 20;
@@ -26,6 +26,9 @@ class Heap {
 	static var fresh:Ptr;
 	static var memEnd:Ptr; // the end of linear memory
 	static var refused:I64; // the size memory.grow last refused (pages * 64 KB)
+	// RT_MAX_MB (Gc.init): memory grows ahead of what it needs only up to it
+	// (no initializer: it is set before the statics' initializers run)
+	public static var budget:I64;
 	static var freeTab:Ptr; // MAX_FREE (start, size) pairs, then the size classes' free lists
 	static var nfree:Int;
 	static var arena:Ptr;
@@ -59,6 +62,8 @@ class Heap {
 		}
 		var pages = ((need + (PAGE - 1)) >>> 16).toInt();
 		var ahead = (memEnd.toI64() >>> 19).toInt();
+		// (RT_MAX_MB: not ahead past it)
+		if (budget > 0 && memEnd.toI64() + (ahead : I64) * PAGE > budget) ahead = budget > memEnd.toI64() ? ((budget - memEnd.toI64()) >>> 16).toInt() : 0;
 		if (ahead > pages && Wasm.wasm_memory_grow(ahead) >= 0) pages = ahead else if (Wasm.wasm_memory_grow(pages) < 0) {
 			refused = (pages : I64) * PAGE;
 			return false;

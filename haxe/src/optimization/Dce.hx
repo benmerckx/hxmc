@@ -286,7 +286,7 @@ class Dce {
 	public static function markEnum(dce:DceData, en:TEnum):Void if (!Meta.has(Used, en.eMeta)) {
 		dce.usedMutex.acquire();
 		if (!Meta.has(Used, en.eMeta)) {
-			en.eMeta = [mkUsedMeta(en.ePos)].concat(en.eMeta);
+			en.eMeta = core.ds.VectorTools.cons(mkUsedMeta(en.ePos), en.eMeta);
 			dce.usedMutex.release();
 			checkAndAddFeature(dce, "has_enum");
 			checkFeature(dce, Globals.sTypePath(en.ePath) + ".*");
@@ -300,7 +300,7 @@ class Dce {
 	public static function markAbstract(dce:DceData, a:TAbstract):Void if (!Meta.has(Used, a.aMeta)) {
 		dce.usedMutex.acquire();
 		if (!Meta.has(Used, a.aMeta)) {
-			a.aMeta = [mkUsedMeta(a.aPos)].concat(a.aMeta);
+			a.aMeta = core.ds.VectorTools.cons(mkUsedMeta(a.aPos), a.aMeta);
 			dce.usedMutex.release();
 			checkFeature(dce, Globals.sTypePath(a.aPath) + ".*");
 		} else dce.usedMutex.release();
@@ -354,9 +354,7 @@ class Dce {
 			markEnum(dce, en);
 		case TAbstractDecl(a):
 			// abstract 'feature' is defined as the abstract type beeing used as a value, not as a type
-			if (!Meta.has(ValueUsed, a.aMeta)) a.aMeta = [
-				({meta: core.MetaList.StrictMeta.ValueUsed, exprs: vector(), pos: Globals.mkZeroRangePos(a.aPos)} : core.Ast.MetadataEntry)
-			].concat(a.aMeta);
+			if (!Meta.has(ValueUsed, a.aMeta)) a.aMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.ValueUsed, exprs: vector(), pos: Globals.mkZeroRangePos(a.aPos)} : core.Ast.MetadataEntry), a.aMeta);
 			markAbstract(dce, a);
 		case TTypeDecl(_):
 	}
@@ -474,16 +472,12 @@ class Dce {
 	// don't add @:directlyUsed if it's used within the class itself. this can happen with extern inline methods
 	public static function markDirectlyUsedClass(dce:DceData,
 			c:TClass):Void if (c != dce.curclass && !Meta.has(DirectlyUsed, c.clMeta)) protect(dce.usedMutex, function() {
-			if (!Meta.has(DirectlyUsed, c.clMeta)) c.clMeta = [
-				({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: vector(), pos: Globals.mkZeroRangePos(c.clPos)} : core.Ast.MetadataEntry)
-			].concat(c.clMeta);
+			if (!Meta.has(DirectlyUsed, c.clMeta)) c.clMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: vector(), pos: Globals.mkZeroRangePos(c.clPos)} : core.Ast.MetadataEntry), c.clMeta);
 		});
 
 	public static function markDirectlyUsedEnum(dce:DceData,
 			en:TEnum):Void if (!Meta.has(DirectlyUsed, en.eMeta)) protect(dce.usedMutex, function() {
-			if (!Meta.has(DirectlyUsed, en.eMeta)) en.eMeta = [
-				({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: vector(), pos: Globals.mkZeroRangePos(en.ePos)} : core.Ast.MetadataEntry)
-			].concat(en.eMeta);
+			if (!Meta.has(DirectlyUsed, en.eMeta)) en.eMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.DirectlyUsed, exprs: vector(), pos: Globals.mkZeroRangePos(en.ePos)} : core.Ast.MetadataEntry), en.eMeta);
 		});
 
 	public static function markDirectlyUsedMt(dce:DceData, mt:ModuleType):Void switch mt {
@@ -907,11 +901,11 @@ class Dce {
 				inline function checkProperty(cf:TClassField, stat:Bool):Void {
 					inline function addAccessor(name:String):Void {
 						var cf = (stat ? c.clStatics : c.clFields).get(name);
-						if (cf != null && !Meta.has(Accessor, cf.cfMeta)) cf.cfMeta.unshift({
+						if (cf != null && !Meta.has(Accessor, cf.cfMeta)) cf.cfMeta = core.ds.VectorTools.cons(({
 							meta: core.MetaList.StrictMeta.Accessor,
 							exprs: vector(),
 							pos: Globals.mkZeroRangePos(c.clPos)
-						});
+						} : core.Ast.MetadataEntry), cf.cfMeta);
 					}
 					switch cf.cfKind {
 						case Var({vRead: AccCall | AccPrivateCall, vWrite: _}):
@@ -930,7 +924,7 @@ class Dce {
 				inline function keep(cf:TClassField,
 						kind:ClassFieldRefKind):Bool return classKept && !fieldForcesDce(cf) || keepField(dce, cf, c, kind);
 				// add :keep so subsequent filter calls do not process class fields again
-				c.clMeta.unshift(mkKeepMeta(c.clPos));
+				c.clMeta = core.ds.VectorTools.cons(mkKeepMeta(c.clPos), c.clMeta);
 				inline function filter(cf:TClassField, kind:ClassFieldRefKind):Bool {
 					var b = keep(cf, kind);
 					if (!b) {

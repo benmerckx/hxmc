@@ -253,7 +253,7 @@ class SwfLoader {
 					name: {name: path.tname, pos: nullPos},
 					doc: null,
 					params: vector(),
-					meta: [],
+					meta: vector(),
 					flags: vector(),
 					data: {type: ct_dyn, pos: nullPos},
 				};
@@ -327,16 +327,13 @@ class SwfLoader {
 			var flags = if (stat) [access(AStatic)].concat(flags) else flags;
 			var name = (make_tpath(f.hlf_name)).path.tname;
 			function mk_meta():Metadata {
-				return [
-					for (m in meta)
-						({meta: m.m, exprs: m.cl.mapToVector(c -> ({expr: EConst(c), pos: pos} : Expr)), pos: pos} : MetadataEntry)
-				];
+				return meta.mapToVector(m -> ({meta: m.m, exprs: m.cl.mapToVector(c -> ({expr: EConst(c), pos: pos} : Expr)), pos: pos} : MetadataEntry));
 			}
 			var cf:ClassField = {
 				cffName: {name: name, pos: nullPos},
 				cffDoc: null,
 				cffPos: pos,
-				cffMeta: [],
+				cffMeta: vector(),
 				cffAccess: flags,
 				cffKind: FVar(null, null),
 			};
@@ -415,7 +412,7 @@ class SwfLoader {
 									({
 										name: {name: aname, pos: nullPos},
 										optional: is_opt,
-										meta: [],
+										meta: vector(),
 										type: {type: t, pos: nullPos},
 										expr: def_val
 									} : FuncArg);
@@ -425,7 +422,7 @@ class SwfLoader {
 								{
 									name: {name: "restArgs", pos: nullPos},
 									optional: false,
-									meta: [],
+									meta: vector(),
 									type: {type: ct_rest, pos: nullPos},
 									expr: null
 								}
@@ -483,7 +480,7 @@ class SwfLoader {
 						get: true,
 						set: true,
 						t: (if (!hlNameOptEq(g.t, s.t)) null else g.t),
-						meta: g.meta.concat(s.meta.filter(m -> !Lambda.exists(g.meta, m1 -> metaEntryEq(m, m1))))
+						meta: g.meta.concat(s.meta.filter(m -> !g.meta.exists(m1 -> metaEntryEq(m, m1))))
 					};
 			});
 			var get = r.get, set = r.set, t = r.t, meta = r.meta;
@@ -501,7 +498,7 @@ class SwfLoader {
 					cffPos: pos,
 					cffDoc: null,
 					cffAccess: accessor_flags,
-					cffMeta: [],
+					cffMeta: vector(),
 					cffKind: FFun({
 						fParams: vector(),
 						fArgs: vector(),
@@ -518,14 +515,14 @@ class SwfLoader {
 					cffPos: pos,
 					cffDoc: null,
 					cffAccess: accessor_flags,
-					cffMeta: [],
+					cffMeta: vector(),
 					cffKind: FFun({
 						fParams: vector(),
 						fArgs: vector(
 							{
 								name: {name: "value", pos: nullPos},
 								optional: false,
-								meta: [],
+								meta: vector(),
 								type: property_typehint,
 								expr: null
 							}
@@ -542,7 +539,7 @@ class SwfLoader {
 				cffPos: pos,
 				cffDoc: null,
 				cffAccess: flags,
-				cffMeta: [({meta: MetaTag.FlashProperty, exprs: vector(), pos: pos} : MetadataEntry)].concat(meta),
+				cffMeta: VectorTools.cons(({meta: MetaTag.FlashProperty, exprs: vector(), pos: pos} : MetadataEntry), meta),
 				cffKind: FProp(read_access, write_access, property_typehint, null),
 			};
 			return [prop].concat(fields);
@@ -594,7 +591,7 @@ class SwfLoader {
 						cffName: f.cffName,
 						cffDoc: null,
 						cffPos: pos,
-						cffMeta: [],
+						cffMeta: vector(),
 						cffAccess: [],
 						cffKind: FVar({type: real_t, pos: nullPos}, null),
 					};
@@ -619,13 +616,11 @@ class SwfLoader {
 				name: {name: path.tname, pos: nullPos},
 				doc: null,
 				params: vector(),
-				meta: [
-					{
-						meta: MetaTag.Native,
-						exprs: vector({expr: EConst(String(native_path, SDoubleQuotes)), pos: nullPos}),
-						pos: nullPos
-					}
-				],
+				meta: vector(({
+					meta: MetaTag.Native,
+					exprs: vector({expr: EConst(String(native_path, SDoubleQuotes)), pos: nullPos}),
+					pos: nullPos
+				} : MetadataEntry)),
 				flags: vector(AbEnum, AbExtern, AbOver({type: real_type, pos: pos}), AbFrom({type: real_type, pos: pos})),
 				data: Vector.fromArrayCopy(constr),
 			};
@@ -637,15 +632,13 @@ class SwfLoader {
 				switch c.hlc_name {
 					case HMPath(pack, name) if (pack.length != 0 && pack.join("\x00") != path.tpackage.join("\x00")):
 						var native_path = pack.join(".") + "." + name;
-						[
-							{
-								meta: MetaTag.Native,
-								exprs: vector({expr: EConst(String(native_path, SDoubleQuotes)), pos: pos}),
-								pos: pos
-							}
-						];
+						vector(({
+							meta: MetaTag.Native,
+							exprs: vector({expr: EConst(String(native_path, SDoubleQuotes)), pos: pos}),
+							pos: pos
+						} : MetadataEntry));
 					case _:
-						[];
+						vector();
 				};
 			var class_data:ClassDefinition = {
 				name: {name: path.tname, pos: nullPos},

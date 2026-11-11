@@ -48,7 +48,9 @@ typedef ProtoField = {name:Int, value:AtomicLazy<Value>};
 // port: A finalized prototype and the function initializing its fields.
 typedef ProtoInit = {proto:Vprototype, init:Vprototype->Void};
 
-typedef StaticDelay = {persistent:Bool, f:Vprototype->Void};
+// port: name, the field's hashed name (persistent ones; 0 otherwise), not upstream: addTypes gives a
+// persistent field the value it had back (Context.persistentStash)
+typedef StaticDelay = {persistent:Bool, name:Int, f:Vprototype->Void};
 
 // port: PrototypeBuilder.prototype_context
 class PrototypeContext {
@@ -228,9 +230,9 @@ class PrototypeBuilder {
 
 class EvalPrototype {
 	/** JITs expression [e] and executes the result immediately. **/
-	public static function evalExpr(ctx:Context, kind:EnvKind, e:TExpr):Null<Value> {
+	public static function evalExpr(ctx:Context, kind:EnvKind, e:TExpr, ?initOf:TClass):Null<Value> {
 		return switch EvalExceptions.catchExceptions(ctx, () -> {
-			var r = EvalJit.jitExpr(ctx, e);
+			var r = EvalJit.jitExpr(ctx, e, initOf);
 			var jit = r.jit;
 			var f = r.f;
 			var numCaptures = jit.captures.length();
@@ -326,8 +328,9 @@ class EvalPrototype {
 								var persistent = isPersistent(cf);
 								delays.push({
 									persistent: persistent,
+									name: persistent ? name : 0,
 									f: proto -> {
-										proto.pfields[i] = switch evalExpr(ctx, EKMethod(key, name), e) {
+										proto.pfields[i] = switch evalExpr(ctx, EKMethod(key, name), e, c) {
 											case null: VNull;
 											case e: e;
 										}
@@ -343,8 +346,9 @@ class EvalPrototype {
 					case e:
 						delays.push({
 							persistent: false,
+							name: 0,
 							f: _ -> {
-								evalExpr(ctx, EKMethod(key, EvalHash.key___init__), e);
+								evalExpr(ctx, EKMethod(key, EvalHash.key___init__), e, c);
 							}
 						});
 				}
@@ -526,14 +530,22 @@ class EvalPrototype {
 	}
 
 	static function addTypesImpl(ctx:Context, types:Array<ModuleType>, ready:ModuleType->Void):Void {
+		// port: diverges from upstream: the persistent statics a type's module had when
+		// it was handed over last, by its path (stashPersistent, restorePersistent)
+		var restored = new Map<Int, Map<Int, Value>>();
 		var newTypes = types.filter(mt -> {
 			var inf = TFunctions.tInfos(mt);
 			var key = EvalHash.pathHash(inf.mtPath);
 			try {
 				var inf2 = TFunctions.tInfos(ctx.typeCache.find(key));
-				if (inf2.mtModule.mId != inf.mtModule.mId) throw NotFound.raise();
+				if (inf2.mtModule.mId != inf.mtModule.mId) {
+					stashPersistent(ctx, key, ctx.typeCache.find(key));
+					throw NotFound.raise();
+				}
 				false;
 			} catch (_:NotFound) {
+				var values = restorePersistent(ctx, inf);
+				if (values != null) restored.set(key, values);
 				ctx.instancePrototypes = ctx.instancePrototypes.remove(key);
 				ctx.staticPrototypes.remove(key);
 				ctx.constructors = ctx.constructors.remove(key);
@@ -597,6 +609,17 @@ class EvalPrototype {
 			var proto = s.init.proto;
 			s.init.init(proto);
 			var delays = s.delays;
+			// port: (not upstream) the persistent fields the stash has for this module, with or
+			// without an initializer: their values, their initializers not run
+			var values = restored.get(proto.ppath);
+			if (values != null) {
+				for (name => v in values)
+					switch proto.pnames.findOpt(name) {
+						case null:
+						case i: proto.pfields[i] = v;
+					}
+				delays = [for (d in delays) if (!(d.persistent && values.exists(d.name))) d];
+			}
 			if (delays.length > 0) {
 				flStaticInit.push({proto: proto, delays: delays});
 				var nonPersistentDelays = [for (d in delays) if (!d.persistent) d.f];
@@ -607,6 +630,58 @@ class EvalPrototype {
 		for (s in flStaticInit)
 			for (d in s.delays)
 				d.f(s.proto);
+	}
+
+	// port: diverges from upstream. Upstream drops the prototype of a type handed over
+	// from another module than the one it was made from (above), and the new one's
+	// @:persistent statics start from their initializers. A compilation server has one
+	// macro interpreter for its contexts (one per signature: a check's `--no-output`, a
+	// display request, another program), each with its own modules: alternating
+	// between two contexts reset the persistent statics at each switch, while each
+	// context kept reusing the modules whose macros had set them (a build macro that
+	// keeps its class's fields in a persistent static, for a later macro to make a class
+	// from: the context that comes back finds the module restored, its build macro not
+	// run again, and the static at its initial value). The values a dropped prototype's
+	// persistent statics had are kept here by its module's signature, then its path
+	// (persistentStash; a signature's dropped with its context, dropStash), and given back when the same module (its id) is handed over
+	// again: each context sees the values its own modules left, as it would with no
+	// other context in between. A module typed again (another id) starts from the
+	// initializers, as upstream's does.
+	static function stashPersistent(ctx:Context, key:Int, old:ModuleType):Void {
+		var c = switch old {
+			case TClassDecl(c): c;
+			case _: return;
+		}
+		var proto = try ctx.staticPrototypes.get(key) catch (_:NotFound) return;
+		var values = new Map<Int, Value>();
+		for (cf in c.clOrderedStatics)
+			if (isPersistent(cf)) {
+				var name = EvalHash.hash(cf.cfName);
+				var i = try proto.pnames.find(name) catch (_:NotFound) continue;
+				values.set(name, proto.pfields[i]);
+			}
+		if (!values.keys().hasNext()) return;
+		var sign = c.clModule.mExtra.mSign;
+		var bySign = ctx.persistentStash.get(sign);
+		if (bySign == null) ctx.persistentStash.set(sign, bySign = new Map());
+		bySign.set(key, {mId: c.clModule.mId, values: values});
+	}
+
+	// (what stashPersistent kept for this type's module, taken out of the stash; null: none, or another module's)
+	static function restorePersistent(ctx:Context, inf:core.TType.TInfos):Null<Map<Int, Value>> {
+		var bySign = ctx.persistentStash.get(inf.mtModule.mExtra.mSign);
+		if (bySign == null) return null;
+		var k = EvalHash.pathHash(inf.mtPath);
+		var e = bySign.get(k);
+		if (e == null) return null;
+		bySign.remove(k);
+		return e.mId == inf.mtModule.mId ? e.values : null;
+	}
+
+	// port: (not upstream) the server's context of signature sign (null: every context)
+	// removed: what the stash keeps for its modules, which will not be handed over again
+	public static function dropStash(ctx:Context, sign:Null<String>):Void {
+		if (sign == null) ctx.persistentStash.clear() else ctx.persistentStash.remove(sign);
 	}
 
 	public static function addTypes(ctx:Context, types:Array<ModuleType>, ready:ModuleType->Void):Void {

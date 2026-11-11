@@ -9,7 +9,8 @@ import core.ds.VectorTools.vector;
 // structured (no gotos); expressions are pure except as the right-hand side
 // of SSet/SExpr, so evaluation order and GC points are explicit.
 
-enum Ty {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Ty {
 	TI32;
 	TBool; // an i32 at run time; kept apart so boxing and Std.string know it
 	// hxmc.Byte as the element of a NativeArray (RNativeArr's only): one
@@ -29,7 +30,8 @@ enum Ty {
 	TStruct(name:String, size:Int);
 }
 
-enum RefTy {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum RefTy {
 	RObj(c:ClassInfo); // class instance (interfaces use the root object type)
 	REnum(e:Null<EnumInfo>); // enum value; null: any enum (EnumValue)
 	RCtor(c:CtorInfo); // a specific enum constructor (after a tag test)
@@ -57,12 +59,16 @@ class ClassInfo {
 	public var name:String; // Haxe dot path
 	public var ident:String; // the prefix of its symbols
 	public var sup:Null<ClassInfo>;
-	public var fields:Array<{name:String, ty:Ty}> = []; // including inherited (the class is the header's type index)
+	public var fields:Array<{name:String, ty:Ty, ?compact:Bool}> = []; // including inherited (the class is the header's type index)
+	// @:hxmc.compact (on the class or a superclass): its own reference fields
+	// are 4-byte compressed references where the target has a 32 GB heap window
+	// (Facts.layout decides per field; compact: the field's class asked for it)
+	public var compact = false;
 	// properties without storage that Dynamic access and reflection read as
 	// fields (@:hxmc.lengthOf("f"): the length of the NativeArray field f;
 	// Facts gives them a field entry of kind L), including inherited ones
 	public var derived:Array<{name:String, of:String}> = [];
-	public var locs:Vector<Int>; // per field: its slot, or for Int/Bool its 4-byte index (packed two per slot; Facts.layout)
+	public var locs:Vector<Int>; // per field: its slot, or for Int/Bool and a compressed reference its 4-byte index (packed two per slot; Facts.layout; a compressed reference's has Facts.COMPACT set)
 	public var nslots:Int;
 	public var methods:Map<String, FuncInfo> = new Map(); // own implementations
 	public var ctor:Null<FuncInfo>;
@@ -162,6 +168,10 @@ class EnumInfo {
 	// haxe.rtti.Meta's __meta__ through the enum's value, once the enum is used
 	// as a value and has metadata (Lower.reflectEnum), as a class's statics
 	public var statics:Null<Array<StaticEntry>> = null;
+	// @:hxmc.compact: its constructors' arguments are packed as a compact
+	// class's fields, Int/Bool and compressed references in 4-byte halves,
+	// where the target has compressed references (Facts.layout; CtorInfo.locs)
+	public var compact = false;
 
 	public function new(name, ident) {
 		this.name = name;
@@ -177,6 +187,17 @@ class CtorInfo {
 	public var paramNames:Vector<String> = vector();
 	public var global:Int = -1; // singleton for constructors without arguments
 	public var tindex:Int = -1;
+	// per argument its location (Facts.assignTypes): its slot, an Int's or Bool's
+	// 4-byte index; packed (EnumInfo.compact: as ClassInfo.locs, a compressed
+	// reference's with Facts.COMPACT) or one slot per argument
+	public var locs:Vector<Int>;
+	public var nslots:Int = 0;
+	public var packed = false; // (locs from Facts.layout: EnumInfo.compact and Lower.compact)
+	// packed, of one argument of 4 bytes (an Int, a Bool, a compressed
+	// reference): its value is the header alone, the argument in its upper
+	// half (location -1, a 4-byte index; nslots 0), where an object's
+	// identity hash is otherwise (Facts.assignTypes, hxmc.rt.Types.headerArg)
+	public var header = false;
 
 	public function new(en, name, tag, params) {
 		this.en = en;
@@ -239,7 +260,8 @@ class LambdaInfo {
 	}
 }
 
-class Local {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class Local {
 	public var id:Int;
 	public var name:String;
 	public var ty:Ty;
@@ -251,7 +273,8 @@ class Local {
 	}
 }
 
-class FuncInfo {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class FuncInfo {
 	public var name:String;
 	public var args:Array<Local> = [];
 	public var ret:Ty = TVoid;
@@ -276,20 +299,23 @@ class FuncInfo {
 	// a foreign exception passes its frame (Unwind.PASS: no personality): an
 	// entry Objective-C calls, which raises one (ObjC.entry)
 	public var foreignPasses:Bool = false;
-	public var noGc:Bool = false; // never reaches a GC point (Facts.findNoGc): calls to it are not GC points
+	public var noGc:Bool = false; // no ordinary GC points (Facts.findNoGc); safe regions still permit concurrent movement
 	// it calls rt_blocking_enter (blocksHere), or a function that does
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)
 	public var blocks:Bool = false;
 	public var blocksHere:Bool = false;
 	// (Facts: what a scan of its body found, made once: a program lowered in
 	// steps, interp.MirMacros, makes its facts again at each step)
-	public var gcScan:Null<{gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>}> = null;
+	public var gcScan:Null<GcScan> = null;
+	// (the scan of the same body in an earlier build of the compilation
+	// server, its callees this build's: LowerCache, taken by findNoGc when
+	// that build's p.stacks is this one's, Reach dropping the same calls)
+	public var gcScanned:Null<{stacks:Bool, scan:GcScan}> = null;
 	// the native code of the compiler lowering it runs it, and its body was
 	// not typed (@:hxmc.hostCode, Lower.hostCode): no body here, never
 	// compiled nor inlined; its gcScan says what that code does
 	public var hostCode:Bool = false;
 	public var rawChecked:Bool = false;
-	public var coldMarked:Bool = false;
 	// declared @:hxmc.unsafe, @:hxmc.kernel or @:hxmc.blocking: Facts.findNoGc
 	// fails the build unless noGc
 	public var declNoGc:Bool = false;
@@ -325,7 +351,8 @@ class FuncInfo {
 	}
 }
 
-enum Ex {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Ex {
 	EInt(v:Int);
 	EF64(v:Float);
 	EStr(s:String); // a literal, statically allocated
@@ -445,7 +472,8 @@ enum BinOp {
 	Div;
 }
 
-enum Stmt {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact enum Stmt {
 	SSet(l:Local, e:Ex);
 	SExpr(e:Ex);
 	SSetField(c:ClassInfo, idx:Int, obj:Ex, v:Ex);
@@ -462,10 +490,6 @@ enum Stmt {
 	SReturn(e:Null<Ex>);
 	SThrow(e:Ex);
 	STry(body:Vector<Stmt>, catches:Vector<IrCatch>);
-	// (Facts.markCold) a statement whose only GC point is the slow path of an
-	// allocation or array store: the references live across it are stored in
-	// the shadow stack only on that path (hxmc.Roots)
-	SCold(id:Int, s:Stmt);
 	// (Lower.lines) the code of the statements that follow comes from
 	// this line of the source (the typed AST's position); nothing else: every
 	// pass steps over it, so the code is the same as without it
@@ -672,3 +696,8 @@ class Ir {
 			case ENewAnon(_): TRef(RAnon);
 		}
 }
+
+// what Facts.scanGc finds in a function's body: whether it has GC points of
+// its own, enters a safe region or takes a raw address; the functions it
+// calls, in the order first called; the names it reads or writes by name
+typedef GcScan = {gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>};

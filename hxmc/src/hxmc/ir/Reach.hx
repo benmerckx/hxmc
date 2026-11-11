@@ -82,8 +82,9 @@ class Reach {
 	var byName = new Map<String, ClassInfo>();
 	var tySeen = new Map<SigInfo, Bool>();
 	var enumSeen = new Map<EnumInfo, Bool>();
-	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root)
-	var whyName = Sys.getEnv("HXMC_REACH_WHY");
+	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root;
+	// several names separated by commas: each)
+	static var whyName:Null<String> = null; // (the build's, Options.apply)
 	var cur:Null<FuncInfo> = null; // the function being scanned
 	var why = new Map<FuncInfo, {from:Null<FuncInfo>, how:String}>();
 	var instBy = new Map<Int, Null<FuncInfo>>();
@@ -94,11 +95,13 @@ class Reach {
 	}
 
 	// (HXMC_REACH=0: every function stays, as the lowering made them)
+	static var on = true;
+
 	public static function run(p:Program, stats:Bool) {
 		var r = new Reach(p, stats);
 		r.analyze();
-		if (r.whyName != null) r.explain();
-		if (Sys.getEnv("HXMC_REACH") == "0") return;
+		if (whyName != null) r.explain();
+		if (!on) return;
 		r.apply();
 	}
 
@@ -240,8 +243,9 @@ class Reach {
 	}
 
 	function explain() {
+		var names = whyName.split(",");
 		for (f in p.funcs)
-			if (nameOf(f) == whyName || f.name == whyName) {
+			if (names.indexOf(nameOf(f)) >= 0 || names.indexOf(f.name) >= 0) {
 				var k = f, n = 0;
 				Sys.println("hxmc: reach: why " + nameOf(f) + (live.exists(f) ? "" : ": not live"));
 				while (k != null && n++ < 100) {
@@ -290,9 +294,6 @@ class Reach {
 				case SLoop(body): SLoop(dropStacks(body));
 				case SSwitch(e, cases, def): SSwitch(e, cases.map(c -> {values: c.values, body: dropStacks(c.body)}), dropStacks(def));
 				case STry(body, catches): STry(dropStacks(body), catches.map(c -> ({test: c.test, l: c.l, body: dropStacks(c.body)} : IrCatch)));
-				case SCold(id, x):
-					var y = dropStacks(haxe.ds.Vector.fromArrayCopy([x]));
-					y.length == 1 ? SCold(id, y[0]) : null;
 				case _: s;
 			}
 			if (t != s) changed = true;

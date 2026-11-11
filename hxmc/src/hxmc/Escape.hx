@@ -46,16 +46,13 @@ class Escape {
 	static inline var NONE = SsaReader.NONE; // no definition in the block
 	static inline var NOTSET = SsaReader.NOTSET;
 
-	public static var on = Sys.getEnv("HXMC_ESCAPE") != "0";
+	public static var on = true; // (the build's, Options.apply)
 
 	// (debugging: HXMC_ESCAPE_HASH=<lo>-<hi>, the functions whose names hash
 	// to lo...hi of 0...1024 only; HXMC_ESCAPE_NO=<parts>, parts off:
 	// closures, frames, again, boxes, replace, screen, anon)
-	static var hashRange:Null<Array<Int>> = {
-		var e = Sys.getEnv("HXMC_ESCAPE_HASH");
-		e == null ? null : [for (x in e.split("-")) Std.parseInt(x)];
-	};
-	static var no = Sys.getEnv("HXMC_ESCAPE_NO") ?? "";
+	static var hashRange:Null<Array<Int>> = null;
+	static var no = "";
 
 	public static function allowed(name:String):Bool {
 		if (hashRange == null) return true;
@@ -75,7 +72,7 @@ class Escape {
 	public static var refSlots:Null<Map<Int, Vector<Bool>>>;
 
 	// (HXMC_ESCAPE_LOG=1) what happens to each allocation that is analyzed
-	static var log = Sys.getEnv("HXMC_ESCAPE_LOG") == "1";
+	static var log = false;
 
 	var f:MFunc;
 
@@ -119,7 +116,7 @@ class Escape {
 		this.f = f;
 
 	// (HXMC_ESCAPE_DUMP=<function symbol>: its object-level Mir before and after)
-	static var dumpName = Sys.getEnv("HXMC_ESCAPE_DUMP");
+	static var dumpName:Null<String> = null;
 
 	public function run() {
 		if (f.name == dumpName) Sys.println("escape: before\n" + f.dump());
@@ -1473,7 +1470,7 @@ class Escape {
 	// type, the value it stores (-1: a read)
 	function accOff(u:MIns):Int
 		return switch u.op {
-			case GetField | SetField | InitField: u.info.t.match(TI32 | TBool | TU8) ? 4 * u.info.loc : 8 * u.info.loc;
+			case GetField | SetField | InitField: u.info.t.match(TI32 | TBool | TU8) || u.info.compact ? 4 * u.info.loc : 8 * u.info.loc;
 			case RefStore: constOf(u.b).imm;
 			case Unbox: 0;
 			case _: u.imm;
@@ -1481,7 +1478,7 @@ class Escape {
 
 	function accSize(u:MIns):Int
 		return switch u.op {
-			case GetField | SetField | InitField: u.info.t.match(TI32 | TBool | TU8) ? 4 : u.info.t == TVoid ? 0 : 8;
+			case GetField | SetField | InitField: u.info.t.match(TI32 | TBool | TU8) || u.info.compact ? 4 : u.info.t == TVoid ? 0 : 8;
 			case RefStore | Unbox: 8;
 			case _: u.size;
 		};
@@ -1531,13 +1528,16 @@ class Escape {
 			if (u.op == InitField && u.info.next >= 0) zeroStores.push({u: u, off: 8 * u.info.next, size: 8});
 			var off = accOff(u), size = accSize(u), t = accTy(u);
 			if (size == 0) continue;
-			if (off < 0 || off + size > 8 * nslots) return false;
+			// (a header constructor's argument: the header's upper half, CtorInfo.header)
+			if (off < (site.v.info.ctor != null && site.v.info.ctor.header ? -4 : 0) || off + size > 8 * nslots) return false;
 			var value = accValue(u);
 			if (value >= 0 && isConst(value, 0)) {
 				zeroStores.push({u: u, off: off, size: size});
 				continue;
 			}
-			if (size != 1 && size != 2 && size != 4 && size != 8 || size == 8 && t == I32 || size < 8 && t != I32) return false;
+			// (a compressed reference: 4 bytes of the object, a whole reference in its variable)
+			var compact = u.info != null && u.info.compact && u.op != Load && u.op != Store;
+			if (size != 1 && size != 2 && size != 4 && size != 8 || size == 8 && t == I32 || size < 8 && t != I32 && !compact) return false;
 			// (a reference: its field's type, a barriered store, or the type's
 			// pointer map for Mem.alloc's object)
 			var ref = switch u.op {
@@ -1594,7 +1594,7 @@ class Escape {
 		if (nrooted > 0) {
 			for (u in g.accesses) {
 				var v = varOf.get(u.id);
-				if (v != null && slotOf[v] >= 0 && accSize(u) != 8) return false;
+				if (v != null && slotOf[v] >= 0 && accSize(u) != 8 && !(u.info != null && u.info.compact)) return false;
 			}
 			if (!frameReady()) return false;
 			for (j in 0...vars.length)

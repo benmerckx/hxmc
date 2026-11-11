@@ -371,10 +371,10 @@ class Calls {
 		if (!ctx.allowTransform) return mk(e.eexpr, ctx.t.tstring, e.epos);
 		inline function generate(e:TExpr):TExpr {
 			// Ignore visibility of the toString field.
-			ctx.f.meta.unshift({meta: MetaTag.PrivateAccess, exprs: vector(), pos: e.epos});
+			ctx.f.meta = VectorTools.cons(({meta: MetaTag.PrivateAccess, exprs: vector(), pos: e.epos} : core.Ast.MetadataEntry), ctx.f.meta);
 			var acc = Fields.typeField(TypeFieldConfig.create(resume), ctx, e, "toString", e.epos, MCall(vector()),
 				WithTypeTools.withType(ctx.t.tstring));
-			ctx.f.meta.shift();
+			ctx.f.meta = VectorTools.slice(ctx.f.meta, 1);
 			return buildCall(ctx, acc, vector(), WithTypeTools.withType(ctx.t.tstring), e.epos);
 		}
 		if (noNullCheck || (ctx.com.config.pfStatic && !isNullable(e.etype))) return generate(e);

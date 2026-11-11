@@ -9,7 +9,8 @@ import core.ds.VectorTools.vector;
 // up virtual. Each target's
 // instruction selection produces an LFunc and tells the allocator what an
 // instruction defines, uses and clobbers (Target).
-class LIns {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class LIns {
 	public var op:Int;
 	public var size:Int = 8; // operation width in bytes
 	public var d:Int = -1; // destination register
@@ -74,7 +75,8 @@ class LIns {
 	}
 }
 
-class LBlock {
+// (its references 4 bytes: docs/hxmc.md, "Compressed references")
+@:hxmc.compact class LBlock {
 	public var id:Int;
 	public var ins:Array<LIns> = [];
 	public var succs:Array<LBlock> = [];
@@ -123,9 +125,9 @@ class LFunc {
 	// jumps to it, after the allocation: each copy's own indirect jump, no
 	// jump to it first (isJump: an unconditional jump, isTable: a jump
 	// table's jump; the copies of a table's address share its table)
-	public static var dupDispatch = Sys.getEnv("HXMC_DUP_DISPATCH") != "0";
+	public static var dupDispatch = true; // (the build's, Options.apply)
 
-	public static var minTable = Sys.getEnv("HXMC_DUP_MIN") != null ? Std.parseInt(Sys.getEnv("HXMC_DUP_MIN")) : 64;
+	public static var minTable = 64;
 
 	public function duplicateDispatch(isJump:LIns->Bool, isTable:LIns->Bool, maxIns:Int) {
 		if (!dupDispatch) return;

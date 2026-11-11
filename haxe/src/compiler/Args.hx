@@ -277,8 +277,11 @@ class Args {
 					add(AddClassPath(value));
 					i += 2;
 				case "-libcp" if (hasValue):
-					add(AddLibClassPath(value));
+					add(AddLibClassPath(value, null));
 					i += 2;
+				case "-libcp-of" if (i + 2 < args.length):
+					add(AddLibClassPath(args[i + 2], value));
+					i += 3;
 				case "--hxb-lib" | "-hxb-lib" if (hasValue):
 					add(AddHxbLib(value));
 					i += 2;
@@ -481,8 +484,8 @@ class Args {
 				Common.setCustomTarget(com, name, path);
 			case AddClassPath(path):
 				com.classPaths.add(new core.ClassPath.DirectoryClassPath(core.Path.addTrailingSlash(path), User));
-			case AddLibClassPath(path):
-				com.classPaths.add(new core.ClassPath.DirectoryClassPath(core.Path.addTrailingSlash(path), Lib));
+			case AddLibClassPath(path, name):
+				com.classPaths.add(new core.ClassPath.DirectoryClassPath(core.Path.addTrailingSlash(path), Lib(name)));
 			case AddHxbLib(file):
 				actx.hxbLibs.unshift(createNativeLib(file, false, HxbLib));
 			case SetMain(cpath):
@@ -610,7 +613,7 @@ class Args {
 		for (arg in (com.parsedArgs : Array<ParsedArg>)) processOne(arg);
 		if (com.platform == Platform.Cpp
 			&& !Defines.defined(com.defines, Defines.DisableUnicodeStrings)
-			&& !Defines.defined(com.defines, Defines.HxcppSmartStings)) Defines.define(com.defines, Defines.HxcppSmartStings);
+			&& !Defines.defined(com.defines, Defines.HxcppSmartStrings)) Defines.define(com.defines, Defines.HxcppSmartStrings);
 		if (Defines.rawDefined(com.defines, "gen_hx_classes")) {
 			actx.forceTyping = true;
 			actx.preCompilation.unshift(function() {
@@ -655,7 +658,8 @@ class Args {
 			case SetCppiaTarget(file): ["--cppia", file];
 			case SetCustomTarget(name, path): ["--custom-target", if (path == "") name else name + "=" + path];
 			case AddClassPath(path): ["-cp", path];
-			case AddLibClassPath(path): ["-libcp", path];
+			case AddLibClassPath(path, null): ["-libcp", path];
+			case AddLibClassPath(path, name): ["-libcp-of", name, path];
 			case AddHxbLib(file): ["--hxb-lib", file];
 			case SetMain(p): ["--main", sPath(p)];
 			case AddLib(name): ["-lib", name];

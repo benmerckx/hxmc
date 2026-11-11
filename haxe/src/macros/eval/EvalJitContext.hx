@@ -46,6 +46,10 @@ class JitContext {
 	// Variables which are accessed but not declared in this scope.
 	// port: list order: newest first
 	public var capturesOutsideScope:Array<TVar>;
+	// port: not upstream: the class whose static initialisation (a static
+	// variable's expression, __init__) this context compiles, its own closures
+	// left out (EvalJit.hookStatic: no macro state)
+	public var initOf:Null<core.TType.TClass> = null;
 
 	public function new(ctx:Context) {
 		this.ctx = ctx;

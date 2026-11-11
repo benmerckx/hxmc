@@ -74,7 +74,7 @@ class TExprToExpr {
 									fArgs: s.args.map(arg -> ({
 											name: {name: arg.name, pos: Globals.nullPos},
 											optional: arg.optional,
-											meta: [],
+											meta: vector(),
 											type: convertTypeHint(arg.type),
 											expr: null
 										} : FuncArg)),
@@ -267,7 +267,7 @@ class ExtType {
 }
 
 class TOther {
-	public static final noMeta:Metadata = [];
+	public static final noMeta:Metadata = vector();
 
 	public static function mkEnum(m:ModuleDef, path:GlobalTypePath, pos:Pos, namePos:Pos):TEnum return {
 		ePath: path,
@@ -275,7 +275,7 @@ class TOther {
 		ePos: pos,
 		eNamePos: namePos,
 		eDoc: null,
-		eMeta: [],
+		eMeta: vector(),
 		eParams: vector(),
 		eUsing: [],
 		eRestore: function() {},
@@ -296,7 +296,7 @@ class TOther {
 		aParams: vector(),
 		aUsing: [],
 		aRestore: function() {},
-		aMeta: [],
+		aMeta: vector(),
 		aFrom: [],
 		aTo: [],
 		aFromField: [],

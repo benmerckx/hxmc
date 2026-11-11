@@ -135,7 +135,7 @@ class CInterop {
 		for (cf in c.clOrderedFields) {
 			if (!cf.cfKind.match(Var(_))) continue;
 			var exprs = [new core.Ast.Expr(EConst(String(feature, SDoubleQuotes)), cf.cfPos)];
-			var meta:core.Ast.Metadata = [];
+			var meta:Array<core.Ast.MetadataEntry> = [];
 			var done = false;
 			for (m in cf.cfMeta)
 				if (m.meta == core.MetaList.StrictMeta.IfFeature) {
@@ -150,7 +150,7 @@ class CInterop {
 			if (done) continue;
 			meta.push(new core.Ast.MetadataEntry(core.MetaList.StrictMeta.IfFeature, core.ds.VectorTools.ofArray(exprs), cf.cfPos));
 			// (metadata is replaced, never changed in place: Dce.hx)
-			cf.cfMeta = meta;
+			cf.cfMeta = haxe.ds.Vector.fromArrayCopy(meta);
 		}
 	}
 

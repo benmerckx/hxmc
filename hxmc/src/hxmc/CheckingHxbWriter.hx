@@ -61,7 +61,7 @@ class CheckingHxbWriter extends compiler.hxb.HxbWriter {
 			];
 			switch index < monos.length ? monos[index] : null {
 				case TMono(r):
-					r.tmModifiers = mods;
+					r.tmModifiers = haxe.ds.Vector.fromArrayCopy(mods);
 				case _:
 			}
 		}

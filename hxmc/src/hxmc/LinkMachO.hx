@@ -56,6 +56,19 @@ class LinkMachO extends LinkCore {
 	// category's framework: hxmc.ir.CInterop.LOADS), after those it imports from
 	public var loads:Array<String> = [];
 
+	// a program with compressed references (Mem.compact: Driver): an
+	// executable whose __HXHEAP segment reserves HEAP_WINDOW_SIZE bytes of
+	// address space at HEAP_WINDOW (plus the image's slide), mapped with no
+	// access and no file, where hxmc.rt.Gc.init places the heap. The kernel
+	// maps it with the image, before anything in the process can take that
+	// range (malloc reserves 24 GB at random addresses from 12 GB up), so the
+	// heap is below 32 GB on every launch: under __PAGEZERO's 4 GB nothing
+	// can be mapped, and arm64's dyld shared cache is at 6 to 12 GB
+	public var heapWindow = false;
+	public static inline var HEAP_WINDOW_HI = 3; // 0x300000000: 12 GB
+	public static inline var HEAP_WINDOW_SIZE_HI = 4; // + 0xF0000000: 19.75 GB, to 31.75 GB
+	public static inline var HEAP_WINDOW_SIZE_LO = 0xF0000000;
+
 	// a dylib (-D hxmc.shared): its install name
 	public var installName = "";
 	var dylib = false;
@@ -589,6 +602,22 @@ class LinkMachO extends LinkCore {
 		]);
 		if (dwarf.length > 0) seg("__DWARF", dwarfVm, leVm - dwarfVm, dwarfOff, dwarfSize, 1, dsects);
 		seg("__LINKEDIT", leVm, LinkCore.align(sigOffInLe + sigLen, PAGE), leFileOff, sigOffInLe + sigLen, 1, []);
+		if (heapWindow && !dylib) {
+			// __HXHEAP: address space only (no sections, no file), no access
+			// until the runtime maps the heap over it; maxprot read and write
+			ncmds++;
+			h.u32(0x19);
+			h.u32(72);
+			fixed(h, "__HXHEAP", 16);
+			h.u64(0, HEAP_WINDOW_HI);
+			h.u64(HEAP_WINDOW_SIZE_LO, HEAP_WINDOW_SIZE_HI);
+			h.u64(0, 0);
+			h.u64(0, 0);
+			h.u32(3);
+			h.u32(0);
+			h.u32(0);
+			h.u32(0);
+		}
 		// dyld info
 		ncmds++;
 		h.u32(0x80000022);

@@ -1,0 +1,8 @@
+exit 0
+CompactFree.hx:43: round 0: bad=0
+CompactFree.hx:43: round 1: bad=0
+CompactFree.hx:43: round 2: bad=0
+CompactFree.hx:43: round 3: bad=0
+CompactFree.hx:43: round 4: bad=0
+CompactFree.hx:43: round 5: bad=0
+CompactFree.hx:53: chain: 4999950000

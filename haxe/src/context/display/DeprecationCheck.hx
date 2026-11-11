@@ -1,5 +1,7 @@
 package context.display;
 
+import core.ds.VectorTools.vector;
+
 import core.Ast;
 import core.Globals.Pos;
 import core.TType;
@@ -29,15 +31,15 @@ class DeprecationCheck {
 	public static function createContext(com:CommonContext):DeprecationContext
 		return {
 			com: com,
-			classMeta: [],
-			fieldMeta: [],
+			classMeta: vector(),
+			fieldMeta: vector(),
 			curmod: core.TFunctions.nullModule
 		};
 
 	public static function warnDeprecation(ctx:DeprecationContext, s:String, p:Pos):Void {
 		var key = {file: p.pfile, offset: p.pmin};
 		if (!ctx.com.partScope.warnedPositions.mem(key)) {
-			var options = core.Warning.fromMeta(ctx.classMeta.concat(ctx.fieldMeta));
+			var options = core.Warning.fromMeta(core.ds.VectorTools.concat(ctx.classMeta, ctx.fieldMeta));
 			ctx.com.partScope.warnedPositions.add(key, {message: s, pos: p, options: options});
 			Common.moduleWarning(ctx.com, ctx.curmod, WDeprecated, options, s, p);
 		}
@@ -125,7 +127,7 @@ class DeprecationCheck {
 				var ctx:DeprecationContext = {
 					com: com,
 					classMeta: c.clMeta,
-					fieldMeta: [],
+					fieldMeta: vector(),
 					curmod: c.clModule
 				};
 				if (c.clConstructor != null) runOnField(ctx, c.clConstructor);

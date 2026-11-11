@@ -50,6 +50,7 @@ lists the ones marked with *.
 | `-D hxmc.no-stacks` | no call stacks: `haxe.CallStack` and exception stacks are empty |
 | `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
 | `-D hxmc.no-frame-pointers` | x86-64: no frame pointers (arm64 always keeps them; also `HXMC_FRAME_POINTERS=0`) |
+| `-D hxmc.checked` * | diagnostic build: enable NativeArray bounds, null, span and tagged-reference checks and disable Mir optimizations, including check elimination. Overrides the individual check switches. Raw operations in unsafe code remain unsafe. |
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
 | `-D hxmc.native-array-outofbounds=throws\|silent` * | `haxe.ds.Vector` and `hxmc.NativeArray` accesses out of bounds: `throws` an `ArgumentException`, or `silent` (reads give the default value, writes do nothing). Default: not tested, the result is unspecified. `haxe.io.Bytes` tests every access whatever it says (docs/hxmc.md, "Bytes") |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling (Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |
@@ -61,6 +62,9 @@ lists the ones marked with *.
 | `-D hxmc.macros=mir` | experimental: run macros on hxmc's Mir interpreter instead of Eval ([Mir macros](#mir-macros)) |
 | `-D hxmc.run=mir` | experimental: run `--interp`/`--run` on the Mir interpreter |
 | `-D hxmc.pic` | a position-independent executable: refused, not written yet |
+
+The switches of the passes and the diagnostics are flags too: a define or
+its variable, `-D hxmc.escape=0` or `HXMC_ESCAPE=0` ([the table](hxmc.md#flags-and-environment-variables)).
 
 ## Outputs
 
@@ -372,8 +376,22 @@ every target.
 Entries unused for 14 days are removed.
 
 **The compilation server** keeps typed modules, lowered bodies and compiled
-objects in memory: `haxe --wait 6000`, then `haxe --connect 6000
-build.hxml`.
+objects in memory. With the repository's tool, start it with `--server`
+and name each build's output with `-D hxmc.out` (not as the first
+argument: `hxmc --connect 6000 out ...` fails with `Package "out" was not
+found`):
+
+```sh
+hxmc --server --wait 6000 &
+hxmc --connect 6000 -D hxmc.out=bin/app -cp src -main Main -cp bin/hxmc/std --custom-target hxmc
+```
+
+The client passes the build's arguments as they are, hxmc's std
+(`-cp bin/hxmc/std`) among them. The build's messages go to the client;
+a failure of the server's own (no hxmc std, no `-D hxmc.out`) goes to
+the server's standard error. The server runs until it
+is stopped: Ctrl-C, or `kill` its process. `hxmc --server` sets
+`RT_OLD_MB=2048` and `RT_OLD_GROWTH=150` unless they are set.
 
 **The dev loop.** `haxe --dev build.hxml` (`hxmc dev build.hxml` with the
 repository's tool) builds the program, runs it, and on every save rebuilds
@@ -395,7 +413,9 @@ cache watches what macros depend on:
   `readDirectory`, `stat`) or an environment variable (`Sys.getEnv`) is
   recorded. The module is typed again when the content or value changes.
 - Static variables of macro classes are tracked, so an `@:autoBuild`
-  registry keeps working.
+  registry keeps working. Those of the std's classes (hxmc's std among
+  them) are not, nor what a class's static initialisation does with its
+  own.
 
 Where that is not enough (a macro writes a file, or keeps state elsewhere):
 
@@ -488,7 +508,7 @@ while (Poll.wait(fds, events, revents, 2, -1) > 0) ...   // no allocation per ca
   prints its frames (`Called from Main.f (src/Main.hx line 3)`).
 - **Runtime variables.** `RT_STATS=1` prints the collector's work,
   `RT_VERIFY=1` checks the heap, `RT_MINOR_KB=<n>` fixes the nursery size.
-  More in [hxmc.md](hxmc.md#environment-variables).
+  More in [hxmc.md](hxmc.md#flags-and-environment-variables).
 
 ### Measuring the collector
 
@@ -525,6 +545,18 @@ instructions when a thread takes a new allocation buffer. With several
 threads, `bytesAllocated` counts other threads' current allocation
 buffers whole until the next collection. `RT_STATS=1` prints the totals at exit
 on both targets.
+
+### Smaller objects
+
+`@:hxmc.compact` on a class stores the references it and its subclasses
+declare in 4 bytes instead of 8, where the target allows it (executables
+for Linux, and Windows on x86-64; elsewhere it changes nothing); on an
+enum, its constructors' arguments (references, Int and Bool in 4 bytes
+each). The program behaves the same; a heap of small linked objects (syntax trees,
+symbols) takes 10 to 16% less memory in the measured programs, at about
+the same speed. Such a class has at most 32 slots, and a compressed field
+has no address (`Struct.fieldOffset`). Details and numbers:
+[hxmc.md](hxmc.md#compressed-references).
 
 ### Null access
 

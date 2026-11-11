@@ -13,7 +13,7 @@ import core.ds.VectorTools.vector;
 
 class TTypeTest {
 	public static function main():Void {
-		var mono:TMono = {tmType: null, tmDownConstraints: [MEmptyStructure], tmUpConstraints: [], tmModifiers: [MOpenStructure]};
+		var mono:TMono = {tmType: null, tmDownConstraints: vector(MEmptyStructure), tmUpConstraints: vector(), tmModifiers: vector(MOpenStructure)};
 		var type:T = TMono(mono);
 		mono.tmType = TDynamic(null);
 		var signature:TSignature = {args: vector({name: "value", optional: false, type: type}), ret: mono.tmType};

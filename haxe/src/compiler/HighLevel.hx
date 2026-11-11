@@ -80,16 +80,26 @@ class HighLevel {
 
 	// port: add_libs's fold of haxelib's lines into arguments (also libraryResolver's for node_modules)
 	public static function libArgs(lines:Array<String>):Array<String> {
+		var lines = [for (l in lines) StringTools.trim(l)];
+		function libraryName(next:Null<String>):Null<String> {
+			if (next == null || !StringTools.startsWith(next, "-D ")) return null;
+			var define = StringTools.trim(next.substr(3));
+			var eq = define.indexOf("=");
+			return eq < 0 ? define : define.substr(0, eq);
+		}
+		var lines = lines.filter(l -> l != "");
 		var acc:Array<String> = [];
-		// port: List.fold_left over the reversed lines, consing onto acc
-		var rev = lines.copy();
-		rev.reverse();
-		for (l in rev) {
-			var l = StringTools.trim(l);
-			if (l == "") continue;
-			else if (l.charAt(0) != "-") {
+		// port: List.fold_left over the reversed lines (with_names: each with the name its next line gives), consing onto acc
+		var i = lines.length;
+		while (i-- > 0) {
+			var l = lines[i], name = libraryName(i + 1 < lines.length ? lines[i + 1] : null);
+			if (l.charAt(0) != "-") {
 				acc.unshift(l);
-				acc.unshift("-libcp");
+				if (name != null) {
+					acc.unshift(name);
+					acc.unshift("-libcp-of");
+				} else
+					acc.unshift("-libcp");
 			} else {
 				var space = l.indexOf(" ");
 				var param = space < 0 ? l : l.substr(0, space),

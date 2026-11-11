@@ -229,9 +229,11 @@ class Exceptions {
 	}
 
 	public static function setNeedsExceptionStack(v:TVar):Void {
-		if (!Meta.has(NeedsExceptionStack, v.vMeta)) v.vMeta = ([
-			{meta: core.MetaList.StrictMeta.NeedsExceptionStack, exprs: vector(), pos: Globals.nullPos}
-		] : Array<core.Ast.MetadataEntry>).concat(v.vMeta);
+		if (!Meta.has(NeedsExceptionStack, v.vMeta)) v.vMeta = VectorTools.cons(({
+			meta: core.MetaList.StrictMeta.NeedsExceptionStack,
+			exprs: vector(),
+			pos: Globals.nullPos
+		} : core.Ast.MetadataEntry), v.vMeta);
 	}
 
 	/**

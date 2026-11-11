@@ -1,0 +1,3 @@
+-cp ../../../../hxmc/test/cases
+--main CompactMacros
+--interp

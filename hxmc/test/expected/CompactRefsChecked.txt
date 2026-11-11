@@ -1,0 +1,25 @@
+exit 0
+CompactRefs.hx:180: sizes ok
+CompactRefs.hx:181: 10
+CompactRefs.hx:183: n=30000 sum=449985000 bad=0
+CompactRefs.hx:185: n=30000 sum=449985000 bad=0
+CompactRefs.hx:187: n=30000 sum=449985000 bad=0
+CompactRefs.hx:188: true
+CompactRefs.hx:189: n=30000 sum=449985000 bad=0
+CompactRefs.hx:192: n=30000 sum=449985000 bad=0
+CompactRefs.hx:211: 499500, 3891
+CompactRefs.hx:226: 499500
+CompactRefs.hx:232: dyn1, 29999, 42
+CompactRefs.hx:235: set2, 29998
+CompactRefs.hx:236: set2, null
+CompactRefs.hx:239: refl, refl
+CompactRefs.hx:242: anon,any,color,flag,fn,id,kids,maybe,name,next,plain
+CompactRefs.hx:244: set2, 42
+CompactRefs.hx:246: struct3
+CompactRefs.hx:252: young4
+CompactRefs.hx:269: n=20000 sum=199990000 bad=0
+CompactRefs.hx:269: n=20000 sum=199990000 bad=0
+CompactRefs.hx:269: n=20000 sum=199990000 bad=0
+CompactRefs.hx:269: n=20000 sum=199990000 bad=0
+CompactRefs.hx:271: n=30000 sum=449985000 bad=0
+CompactRefs.hx:278: true

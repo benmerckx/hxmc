@@ -57,6 +57,10 @@ Conventions:
 - Program-wide numbers (type indices, field ids, offsets) are absolute
   symbols the linker resolves, so a module's code does not change when the
   numbering does.
+- A module's object has its functions in the order of their symbols, not
+  in the order the lowering reached them (`Driver.build`): an edit elsewhere
+  that makes the program reach them in another order leaves its key and
+  object as they were.
 - A change of the runtime's interface or the IR's conventions needs a tool
   that knows it: build once against the previous runtime first, or
   bootstrap again.
@@ -89,7 +93,9 @@ The hook may push functions on `prog.funcs` (a `FuncInfo` with a
 `module`: hxmc compiles each module's functions into one object), and
 reach them from code it changes or from `prog.roots`. Under a compilation
 server the lowered bodies are reused between builds (`LowerCache`): give a
-function a new `body` vector rather than writing into the one it has.
+function a new `body` vector rather than writing into the one it has (a
+body the hook replaced is scanned anew by Facts: what LowerCache keeps of a
+scan is the lowering's body's).
 `hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.
@@ -130,14 +136,23 @@ record:   [ type:16 ][ slots:16                ][ identity hash:32        ]
 array:    [ type:16 ][ words:16 (0xFFFF: more) ][ length:32, in elements ]
 string:   [ type:16 ][ words:16 (0xFFFF: more) ][ content hash:32         ]
           then its length (u32 at +0) and its units from +4
-forwarded (while the collector copies): type 0xFFFF, the copy in slot 0
+header constructor's value: [ type:16 ][ slots:16 = 0 ][ its argument:32 ]
+forwarded (while the collector copies): type 0xFFFF, the copy in slot 0,
+          or compressed at -4 (a program with compressed references)
 ```
 
 - The size is the 16 bits at -6, in 8-byte words. An array or string of
   0xFFFF words or more computes it from its length.
 - Types 16 to 23 are arrays without references, 24 to 31 arrays of
   references; the rest are records, scanned by their type's pointer map.
-- Every heap object has at least one slot (for the forwarding address).
+- Every heap object has at least one slot (for the forwarding address),
+  but in a program with compressed references (`Mem.compact`), where
+  forwarding keeps the copy's address compressed in the header's last 4
+  bytes (`GcCore.fwdLow`; the copy has the identity hash) and a header
+  constructor's value (see [Compressed references](#compressed-references))
+  is 8 bytes. An object's address is then in (start, end] of its space:
+  the collector's tests of the old and from-spaces include the end, and the
+  nursery's allocations stop 8 bytes short of its end (`Gc.youngTop`).
   Empty arrays and `""` are static.
 
 | Type | |
@@ -172,11 +187,233 @@ code of Mir macros' bundles (`Lower.classSpans`: a later bundle's class
 may extend an earlier one's, outside its span) go through `hx_is`, which
 walks the superclasses.
 
+### Compressed references
+
+`@:hxmc.compact` on a class makes the reference fields it declares, and
+those its subclasses declare, 4 bytes instead of 8: the object's address
+shifted right by 3 (every object is 8-byte aligned), null 0, packed into
+half slots as Int and Bool fields are (`Facts.layout`; the field's location
+has `Facts.COMPACT`). Nothing else changes: in registers, locals,
+arguments, arrays, statics and every other field a reference is the whole
+address, and the program reads and writes the field, through its type,
+Dynamic access, a structure type or reflection (`Reflect`, `Type`,
+`haxe.Serializer`, `Std.string`), exactly as before. It is for programs
+whose memory is mostly small objects that refer to each other (syntax
+trees, symbol tables): a node of 3 references and a header goes from 32 to
+24 bytes (an object takes whole 8-byte slots).
+
+```haxe
+@:hxmc.compact
+class Node {
+	public var kind:Int;  // 4 bytes, as always
+	public var left:Node; // 4 bytes
+	public var right:Node; // 4 bytes
+	public var name:String; // 4 bytes
+	public var value:Null<Int>; // 8 bytes: a tagged word
+}
+```
+
+Compressed: a field of a reference type (a class instance, String, Array,
+an enum value, a function, a structure, Dynamic, NativeArray). Not
+compressed, 8 bytes as before: a type parameter's value (`T`) and a
+`Null<Int>`'s or `Null<Float>`'s, which are tagged words (an Int or Float
+may be encoded in them, [values of type parameters](#values-of-type-parameters));
+Float and Int64; a struct field; a dynamic method's slot; the fields of a
+superclass that is not compact (its code reads them where they are).
+
+**Enums.** `@:hxmc.compact` on an enum lays out each of its constructors'
+arguments as a compact class's fields (`Facts.assignTypes`,
+`CtorInfo.locs`): an Int, a Bool or a compressed reference in a 4-byte
+half, packed in order, where an enum without it has a slot per argument
+(the tag is the header's type index, so `Node(l, r, name)` goes from 32 to
+24 bytes, `Pair(t, n)` from 24 to 16). An enum value is never written
+after its construction, so the code is a load per argument read by a
+`switch` (`MirBuild`'s `EEnumParam`, `OInfo.compact`) and an initializing
+store per argument (no barrier: the object is new); the slot of a pair of
+halves is cleared before its first (`OInfo.next`, the storage not being
+zeroed). The constructor's type record has the compact map as a class's,
+so the collector needs nothing more. Its field entries carry each
+argument's position (the byte after the kind, `Dyn.ctorArg`), since the
+slot no longer gives it: `Type.enumParameters`, `Type.createEnum`,
+`Type.enumEq`, `Std.string` and `haxe.Serializer` read them through it.
+Where the target has no compressed references the arguments stay a slot
+each, as without the annotation. A constructor has at most 32 slots.
+The corpus' `CompactEnums` (`make check`'s lane `CompactEnums x10
+adaptive RT_VERIFY`) and `reject-CompactEnumSlots`.
+
+**Header constructors.** A constructor of a compact enum with one argument
+of 4 bytes (an Int, a Bool or a compressed reference: `EConst(c)`,
+`TLocal(v)`, `TMono(r)`) has no slot: its value is its header, the
+argument in its last 4 bytes, where a record's identity hash is otherwise
+(`CtorInfo.header`, `Facts.assignTypes`; the argument's location is
+4-byte index -1, `Facts.argLoc`). It goes from 16 to 8 bytes; the
+compiler's typed trees have most of their constructors so (6% of the front
+end's live data). The allocation's header has 0 in that half until the
+argument is stored (no slot to clear); a `switch` reads it at -4. The
+type record's word 20 has bit 1 (`Types.headerArg`; bit 0: compressed
+references); a reference argument's compact map is bit 0, which in an
+object of no slots is the header's half (`GcCore.cmapHalves`,
+`cmapHalf`; every scan of the compact map, serial and parallel, the census
+and `objsize`). The field entry's slot is -1, so reflection reads it
+through `Dyn.boxSlot`/`storeSlot` as any 4-byte field. `Dyn.objHash`
+(`hxmc.Native.objHash`) of such a value writes nothing: it is its type's
+and its argument's (a reference's own hash), which never change. Only
+where the program's runtime forwards in the header (`Lower.compactTypes`,
+`GcCore.fwdLow`); else such a constructor is packed in a slot. The
+corpus' `HeaderEnums` (`make check`'s lane `HeaderEnums x10 adaptive
+RT_VERIFY`).
+
+**The code.** A load zero-extends the 4 bytes and shifts them left by 3
+(x86-64 folds the shift into the accesses the reference is the base of,
+`[x*8 + disp]`: `x64.Isel` scaleFolds); a store shifts right
+(`MemLower.compress`; a reference just loaded is stored back as its 4
+bytes). The write barrier is the usual one on the whole addresses
+(`MemLower.setCompact`): its slow path remembers the field's address plus 1
+(a 4-byte field's address is a multiple of 4: the tag tells the collector
+to read 4 bytes, `Gc.forwardRemembered`). Stores of a compact field are
+release stores like any reference's. Escape analysis replaces compact
+objects as others (`Escape`: 4-byte accesses holding a whole reference in
+their variable).
+
+**The collector and the runtime.** A type with compressed references has
+word 20 of its type record set (`Types.hasCompact`) and, after its pointer
+map, a compact map: a bit per 4-byte half of its at most 32 slots
+(`DataGen`, `GcCore.isCompactHalf`). Every scan reads it beside the pointer
+map: the serial minor collection's (`Gc.scanYoung`, both map words), the
+serial major's depth-first scan (`drainWith`: the halves as entries n to
+3n of the object's), the breadth-first one and the remembered objects'
+(`scanObject`), the parallel minor and major collections' (`parScanYoung`,
+`parHalves`; the remembered 4-byte fields, tagged, `parRemembered`; the
+race for an object and the wait for its copy, `parCopySlot`, store the
+4 bytes), `Gc.objsize` and the census (`RT_CENSUS` counts such a field as
+4 bytes). Its children take twice the stack entries (`2 * SMALL_SLOTS`
+reserved per object). Copying is unchanged, and forwarding but for where
+the copy's address goes (compressed in the header, [Object
+layout](#object-layout)): compressed values are absolute addresses, which a
+copy (PLAB or not) keeps; the write
+barrier's skip of a field that held a young pointer (remembered already)
+compares the decompressed previous value. Dynamic access and reflection
+find the field's kind `c` (`Dyn.boxSlot`, `storeSlot`, which stores with
+the barrier, `Gc.storeCompact`); an inline cache never matches it, so a
+compact field read through a structure type takes the slow path (a call).
+
+**The address space.** No base is added: the image and the heap are below
+32 GB. The executable's image is at a fixed address, 0x400000 (`Link`,
+`LinkDyn`'s glibc mode, `LinkPE` on x86-64), and a program with a compact
+type reserves its nursery and the old space's two regions at fixed
+addresses from 1 GB up (a Mir host from 2 GB: below is the native tier's
+window, `macro.Loader`; `Gc.heapReserve`: `MAP_FIXED_NOREPLACE` on Linux,
+which a kernel before 4.17 takes as a hint, so the address is checked;
+`VirtualAlloc` at the address on Windows), past a taken range in 256 MB
+steps, the regions at most 15 GB each (`RT_REGION_MB` is capped there: the
+old space holds at most 15 GB, 16 GB without compact types). Startup dies
+with a message when the image is above 32 GB or no such range is free. A
+program without compact types reserves its heap as before.
+
+**macOS.** The executable is position-independent and slid, but stays
+low: above `__PAGEZERO`'s 4 GB, at 4 GB and a few MB. Nothing below 4 GB
+can be mapped (arm64 kills an executable with a smaller `__PAGEZERO`),
+arm64's dyld shared cache is at 6 to 12 GB, and malloc reserves 24 GB at a
+random address from 12 GB up before the program runs, which left 4 to 20
+GB free below 32 GB, varying by launch. So a program with compact types
+brings its own: `LinkMachO.heapWindow` gives the executable a `__HXHEAP`
+segment of 19.75 GB at 12 GB (plus the slide), no file and no access, which
+the kernel maps with the image before anything else runs. `Gc.macWindow`
+finds it in the image's load commands (`__dso_handle` is the Mach-O
+header) and the heap is mapped over it (`Os.mapOver`): the nursery and the
+old space's regions share its 19.75 GB, where Linux has up to 15 GB per
+region. An image without the segment stops at startup with a message. No
+static object in the image holds a compressed reference (`DataGen` writes
+whole addresses), so the slide needs no fixup of them.
+
+**A program without compact types** pays nothing: none of the code above
+is in it. `Mem.compact()` is a constant of the lowering (`Lower.compactTypes`,
+set by `hxmc.Main.generate` after typing: 1 when compressed references are
+on for the target, `compactRefs`, and a class of the typed program is
+`@:hxmc.compact`), folded as `Mem.mirHost()` is; every test of the runtime
+goes through `GcCore.compactTypes()` (`compactAt`, `Types.hasCompact`, the
+remembered 4-byte fields' tag, `Gc.compactWindow`, `Dyn.storeSlot`'s store),
+so where it is 0 the scans of compressed references, the startup's search
+of the types, the heap's placement below 32 GB and `Gc.storeCompact` fold
+away and reachability drops them (the corpus' `CompactFree`, `not-live`).
+A `#if` cannot say it, the metadata being known only after typing. Being
+in the bodies' IR, the fact keys the object cache with them (`Fingerprint`:
+the collector's object compiled for one program is not linked into the
+other, `CacheCheck`'s "compact and back"); the compilation server's
+lowered bodies are dropped when it changes (`LowerCache`). A tool that
+knows `Mem.compact` defines `hxmc.memcompact` (`TargetFlags`); without it
+(the committed stage0) `compactTypes()` is true and each type is tested
+at run time.
+
+**Where.** `hxmc.Main.compactRefs`: executables for Linux (x86-64 and arm64,
+musl and the glibc mode), Windows on x86-64 and macOS (arm64 and x86-64).
+`-D hxmc.compact=0` (or `HXMC_COMPACT=0`) turns them off for a build: the
+annotation then changes nothing anywhere. Elsewhere it changes nothing
+either, the fields stay 8 bytes and the program behaves the same: iOS and
+Mac Catalyst (their address space is not laid out for it),
+Windows on arm64 (relocatable, `DYNAMIC_BASE`), Android and shared
+libraries (`-D hxmc.shared`: loaded anywhere), WebAssembly (wasm32's
+references are 4 bytes already). The errors below are the same
+on every target, so a program that builds for one builds for all.
+
+**Mir hosts and the code they load.** The compiler (`hxmc.HaxeMain`, the
+tool) has the annotation on the trees it makes most of
+(`core.TType`'s `TExpr`, `TVar`, `TClassField`, `TMono` and the enums `T`,
+`TConstant`, `TExprDef`, `TFieldAccess`, `FieldKind`, `ModuleType`;
+`core.Ast`'s `Expr`, `MetadataEntry`, `TypePath`, `PlacedName`,
+`PlacedTypePath`, `TypeHint`, `FuncArg`, `ClassField` and the enums
+`Constant`, `ExprDef`, `ComplexType`, `TypeParamOrConst`, `Binop`, `Unop`;
+`hxmc.Obj`'s `Reloc` and `Symbol`, `hxmc.ir.Ir.Local`), so where the
+target has compressed references so does the compiler, a Mir host too.
+Code it loads (Mir macros, `--run` with `-D hxmc.run=mir`) runs on its heap
+and its collector and calls its runtime and std, so it is lowered with the
+compiler's decision, not its own target's (`macro.Loader.compactHost`,
+`hxmc.rt.Gc.compactRefs`: the compiler's heap below 32 GB; `Mem.compact`
+the compiler's, so that the std's and the runtime's functions have the
+compiler's fingerprints, `macro.HostTable`, and those interpreted read
+compressed fields as the compiler's do; `MirMacros`, `MirRun`). The
+loaded types' entries get their compact maps and constructors' argument
+positions as `DataGen` writes them (`macro.BundleFacts`, `Loader`), and a
+type the compiler shares is so only with the same maps (`Loader.sameLayout`).
+A bundle's data (its string literals, class values, closures without
+captures), which compressed fields may refer to, is below 32 GB: in the
+native tier's window from 1 GB to 2 GB (which is why a Mir host's heap
+starts at 2 GB), else in pages past the heap (`Gc.reserveLow`), not
+malloc's. The interpreter needs nothing of its own: it runs the lowered
+Mir (`MemLower`'s 4-byte loads, shifts and the barrier's calls), without
+x86-64's folding of the shift into an address. `-D hxmc.interp`'s
+interpreted functions take their program's layouts likewise. The corpus'
+`CompactRefs`, `CompactEnums` and `CompactMacros` (Mir macros typing,
+storing and reading typed expressions and types; `make mir-run-check`).
+
+**Errors.** A compact class (with its superclasses' fields) has at most 32
+slots: the collector scans it with one word of each map (`Gc.SMALL_SLOTS`;
+`Lower.compactCheck`). A compressed field has no address
+(`Struct.fieldOffset`, on which the runtime's atomic and foreign
+registrations are built: declare such a field in a class that is not
+compact). `@:hxmc.lengthOf` cannot name a compressed field. Interfaces,
+extern classes and subclasses of Objective-C classes or StringBuf cannot be
+compact. The corpus' `CompactRefs`, `CompactGc`, `CompactParGc` (four threads; in
+parallel with the adaptive nursery: `make check`'s lane `CompactParGc x10
+adaptive RT_VERIFY`) and `reject-Compact*`.
+
+**Costs.** Memory: the port typing its own source to HXB (`make bench-compile`'s `self`) with twelve of its syntax and typed-tree classes compact (`Expr`, `TExpr`, `TVar`, `TClassField`, `TFunc`, `TMono`, `TAnon`, ...): 256 MB live at exit, 232 MB (-9.4%); peak RSS 624 MB, 561 MB (-10.1%); the same HXB, in 3.71 s and 3.73 s. tsc-haxe (the TypeScript checker ported to
+Haxe, with its syntax nodes, symbols, types, signatures, flow nodes and link
+records compact) checking vscode: 3254 MB live at exit, 2723 MB compact
+(-16.3%), peak RSS 3654 MB, 3121 MB (-14.6%); t3code-server -16.0% live,
+-13.9% peak; outputs identical. Time: the same wall time (vscode 6.47 s,
+6.42 s): 4.7% more instructions (the shifts, the stores' encoding, the
+barrier) for 12% fewer last-level cache misses and 15% less promoted by
+minor collections. A class whose references are rarely followed gains
+little time and costs some; one whose objects dominate the heap gains
+most.
+
 ### The collector
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
 wasm32). The nursery is collected by copying into the old space; the old
-space by copying into a new region.
+space by copying into a new region (on wasm32, compacted where it is
+unless free memory holds the copy: [WebAssembly](#memory)).
 
 - **Nursery size** adapts: it starts at 4 MB, doubles after a minor
   collection that promoted more than 1/16 of what was allocated, and halves
@@ -196,7 +433,18 @@ space by copying into a new region.
   space.
 - **Old space**: `RT_OLD_MB` sets the first limit, `RT_OLD_GROWTH` the next
   ones in percent of what a major collection left live (300 natively, 200
-  on wasm32). Natively the next limit has room for four nurseries more.
+  on wasm32). Natively the next limit has room for four nurseries more,
+  and after a major collection that freed a quarter or less of what it
+  collected, room on top for the live set to grow on: 4 times what it grew
+  by since the previous major collection, each next such one in a row
+  doubles the factor (up to 16; one that frees more than half starts over),
+  but no more than what is live or a 32nd of the physical memory,
+  whichever is more. (A factor on the growth itself, 4 to 16 times
+  300%, is 12 to 48 times what is live, capped in practice by the 16 GB
+  region rather than half the memory: a compilation server between builds
+  or a full cache that churns filled all of it with garbage.) The limit
+  stays within half the physical memory unless what is live needs more,
+  and within the region.
   On wasm32 it has room for a nursery promoted whole (what a minor
   collection asks of the limit) and three more, but no more than what is
   live: four nurseries whatever was live gave 43 MB live with a 32 MB
@@ -204,9 +452,22 @@ space by copying into a new region.
   for a collection's worst case, the growth is halved and the three
   nurseries left out (101 MB). The tool sets 768 MB for a build; the
   compilation server 2048 MB and 150%.
+  A program raises the first limit itself with
+  `hxmc.NativeGc.setOldLimit(mb)` (`hxmc.rt.Gc`, or `hxmc.rt.wasm.Gc` on
+  wasm32): before the first major collection only, it only raises it, and
+  `RT_OLD_MB` wins. Natively it is capped by the region, on wasm32 at 3 GB
+  (a compaction of the old space must still fit in 4 GB; less under `RT_MAX_MB`).
 - **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
-  64 MB, a helper thread faults in its pages ahead of minor collections.
-  The compilers are built with it. `RT_PREFAULT=0` turns it off.
+  64 MB, a helper thread faults in its pages ahead of minor collections:
+  twice what the last one promoted (`RT_PF_AHEAD`: in quarters of it).
+  What a parallel minor collection copies past them, one copying thread at
+  a time faults in with `MADV_POPULATE_WRITE`, and so what a parallel
+  major collection copies past what it faulted in first: what the last one
+  found live of what it collected, half before the first (without the
+  prefaulter, that plus an eighth, and all before the first: the
+  self-build peaked at its first major collection, 826 MB faulted in for
+  348 MB live). The compilers are built with it. `RT_PREFAULT=0` turns it
+  off.
 - **Publication**: a store of a reference into an object, array or static
   is a release store (`MIns.release`), so a thread that reads the reference
   also sees the object's initialisation, as OCaml guarantees the reference
@@ -552,7 +813,7 @@ tag first, then through the box as Dynamic's conversions do.
   allocates nothing); a word to Dynamic, `Null<T>`, a structure or an
   extern's instance boxed where it is a scalar's (`EUntag` to a reference: a
   test inline, `hx_tag_box` on the slow path only, which a cold site roots
-  around, `Facts.markCold`); a word to a class's, an enum's, an array's or a
+  around, `Roots` and `GcPoints.cold`); a word to a class's, an enum's, an array's or a
   function's type as it is (no scalar is one: an explicit `ECast`); any
   reference to a word as it is. Reading an `Array<T>`'s element as a word
   encodes an Int or Float element rather than boxing it (`hx_aget_t_slow`).
@@ -681,7 +942,7 @@ The runtime reserves about 35 GB of address space natively (two 16 GB
 old-space regions, the nursery, 1 GB stacks for the main thread). On Linux
 and Android the reservations are marked `MADV_DONTDUMP`, except what the
 program uses: each old-space region up to its limit, the nursery up to its
-size, each stack's last 8 MB, and the faulting thread's stacks. Without
+size, each stack's last 8 MB (threads' C stacks too), and the faulting thread's stacks. Without
 this, a crash piped to systemd-coredump wrote tens of gigabytes. The corpus
 case `CoreDumpSize` checks it.
 
@@ -701,8 +962,24 @@ instructions.
 insertion-ordered tables, as in Python and JavaScript: entries appended to
 an array, found through an open-addressing index with linear probing, at
 most half full, no tombstones. Each index slot holds what is compared
-first (the key, a string's cached FNV-1a hash, or an address hash) and the
+first (the key, a string's cached content hash, or an address hash) and the
 entry number, so a miss reads only the index.
+
+### String hashes
+
+A string's content hash (`Str.hash`, cached in its header) takes 8 units
+at a time: a chunk's low bytes as one little-endian word, its high bytes as
+a second only where one is not 0 (a one-byte and a two-byte string of the
+same units hash alike), each mixed in by a 64-bit multiply, the length
+first, folded to 32 bits. The compiler computes the same for literals
+(`DataGen`) and string switches (`FnLower.strHash`). Older tools (the
+stage0 among them) used FNV-1a, so both sides choose: the std's `Str` keeps
+FNV-1a unless the tool defines `hxmc.strhash` (`TargetFlags`; an older tool
+does not), and the compiler hashes as the `Str` it typed does (its
+`hashSlow` marked `@:hxmc.wordHash`: `Lower.strWordHash`). Any tool with
+any std builds a program that agrees with itself; from an FNV-1a tool, the
+first `make hxmc` builds a tool with FNV-1a strings, the second one with
+the new hash (`make fixpoint` then holds).
 
 ### Identity maps
 
@@ -823,6 +1100,29 @@ typed again in the server's next compilation (`ServerCallbacks.hx`,
 `ServerCache.checkModuleHook`), as the module cache types such a module
 every build.
 
+A server has one macro interpreter for all its contexts (one per
+signature: a check's `--no-output` and a build, a display request, another
+program), each with its own modules. Upstream starts a macro class's
+statics again from their initializers whenever the interpreter is handed
+the class from another module than the last one, so builds that alternate
+between two signatures reset its `@:persistent` statics at each switch,
+while each context keeps reusing the modules whose macros set them. The
+port keeps those values by the dropped module's signature and gives them
+back when that same module comes back (`EvalPrototype.addTypes`, a
+divergence from upstream,
+[porting.md](porting.md#divergences-from-the-reference)): each context
+sees what its own modules left (helder's `HostMacro.template`, ViewRuntime's
+fields kept by its build macro: "the runtime's fields are not known" in
+every build once a check and a build had alternated). A signature's values
+go when the server removes its context (stale, `clear`, `softClear`).
+An error in the macro context discards the interpreter, those values
+with it (as upstream); the server then taints every cached module whose
+typing ran macros or loaded the macro context's modules, in every context
+(`CompilationCache.Cache.taintMacroModules`, a divergence from upstream),
+so their macros run again in the next interpreter: else a module whose
+build macro kept state there stays restored without it, and every later
+build that reads the state fails.
+
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
 WASI. A callback registered outside a module's typing, or a macro setting
@@ -832,6 +1132,42 @@ a define, makes the build write nothing. A module whose types share a path
 `make test-module-cache` checks that outputs are byte-identical with and
 without the cache; `make fixpoint` builds the tool cold, warm and off.
 Open items: [plans/compiler.md](plans/compiler.md#cached-modules).
+
+### What a compilation server keeps
+
+Between requests a compilation server keeps a context per signature (the
+typed modules of each program it built, and their macros' contexts),
+hxmc the objects of each output it wrote (`Driver.memObjs`: wasm32's are
+not kept on disk), the lowered bodies of the last program
+(`LowerCache`), and the macro interpreter. Measured with helder's
+compiler as wasm32 (helder's todo, then its ts-todo, each built and then
+edited): 285 MB live after todo, 494 MB after both; of those, the
+contexts 271 MB (both programs'), the lowered bodies 86 MB (ts-todo's),
+the objects 21 MB, the program the last build lowered 21 MB, the macro
+interpreter and the rest 75 MB.
+
+- What one build sets for its code generation is released after it
+  (`Driver.release`: the functions that may be inlined, the reference
+  slots of the types), and the lowered bodies are dropped when a program
+  of another signature is lowered (`Main.lowerSign`: a body is found by
+  its field object, or by its module read back from that signature's
+  context, so none of them would be reused).
+- `-D hxmc.server-mb=<n>` (else `HXMC_SERVER_MB`, each compilation's own)
+  caps what it keeps (`ServerMemory.hx`). A compilation's group is its signature at the start of its typing and the
+  contexts it touched (and their children). When a compilation is of
+  another group than the last request's, a major collection runs first,
+  and if what is live, and as much again for its group when that is not
+  kept, is more than n MB, the least recently used other groups are
+  dropped, one by one, before it types anything. After a request, when the
+  heap holds more than n MB and other groups are kept, a major collection,
+  and the least recently used other groups are dropped while what is live
+  is more. A group dropped is its contexts (not those a kept group uses),
+  the objects of its outputs, its lowered bodies, the macro interpreter
+  (made again by the next compilation's first macro) and the filters of
+  the last macro context; its next build is a cold one. What one group
+  keeps is never dropped: the cap is no limit on one program. `hxmc.stats`
+  prints what is dropped; `make dev-check` builds two programs in turn
+  under a cap of 1 MB, each build against a fresh one.
 
 ## Macros on the Mir interpreter
 
@@ -1070,6 +1406,11 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   items, genpy's order by them).
 - An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
   `String.length` counts UTF-16 units (Eval: code points).
+- A class handed over from another context's module (a server's builds of
+  two signatures) starts its `@:persistent` statics again from their
+  initializers, as upstream's Eval does; the port's Eval gives each
+  context's values back ([module cache](#module-cache), the compilation
+  server).
 - Not available: `Context.getMacroStack`, macro arguments that are
   functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
   hxmc's.
@@ -1368,7 +1709,12 @@ Linear memory only grows, and browsers refuse it early, so the runtime
 - The nursery's region is the nursery's size (4 MB, sized like the native
   one, up to 32 MB), grown in place or moved after a minor collection.
 - The old space is 1 MB chunks taken as objects are promoted; `RT_OLD_MB`
-  (32) is when the first major collection comes, not a reservation.
+  (32) is when the first major collection comes, not a reservation. A
+  program that keeps most of what it allocates raises it before then with
+  `Gc.setOldLimit` (`hxmc.NativeGc`, as natively; `RT_OLD_MB` wins), up to
+  3 GB, where a compaction of the old space still fits in 4 GB, and within
+  what `RT_MAX_MB` leaves (with `RT_COMPACT=0`, half of what the rest of
+  the 4 GB leaves, where a copying major collection still fits).
 - The shadow stack is `RT_STACK_MB` (4 MB; `wasi.mjs` sets it from node's
   `--stack-size`). The first time a frame goes deeper than since the last
   collection, it is checked against the end; an overflow exits with a
@@ -1379,6 +1725,33 @@ Linear memory only grows, and browsers refuse it early, so the runtime
   because node collects its own heap after each `memory.grow`.
 - Only memory handed out before and freed is zeroed: fresh memory from
   `memory.grow` is zero already.
+- `RT_MAX_MB` is a budget: memory grows ahead (the eighth) only up to it,
+  and a major collection's next limit leaves room in it for the memory
+  taken at startup, the nursery, a nursery's promotion and a collection's
+  tables (a 32nd of memory), so collections come sooner as what is live
+  nears it. It is soft: memory still grows past it when what is live
+  needs it.
+
+A major collection compacts the old space where it is (`compactOld`)
+unless the memory already free (free chunks and regions) holds a copy of
+the old space's chunks whatever they hold, when it copies as before. A
+copy needs memory for all that is live beside the old space, so a copying
+collection's peak is the old space and what is live (a resident compiler
+keeping 500 MB live reached 1.8 GB); a compaction's is the old space and
+a 64th of memory for the marks, and 4 bytes per live object (taken from
+free chunks first). It runs a minor collection (the nursery into the old
+space), marks what is live (the bits `reserveExact` uses), then, in the
+order of the chunks' list: the plan gives each live object of a chunk its
+new address, written over the upper half of its header (an identity
+hash, a string's hash, an array's length: a chunk's object's size is in
+the lower half; what was there kept aside, in the plan's order), each
+chunk filled up to where the next object does not fit; every reference
+of the roots and of the live objects is updated from those headers; the
+objects slide towards the list's start (a move never overwrites an object
+not moved yet), their headers restored; the chunks left empty go to the
+free chunks. Large objects stay where they are. It costs about 1.7 times
+a copying collection's time for as much live (two traces and three walks
+of the chunks, against one trace). `RT_COMPACT=0` copies always.
 
 Objects over 128 KB get a region of their own in the old space (aligned to
 64 KB, the granule of the table that says which space an address is in).
@@ -1386,6 +1759,10 @@ A major collection promotes a reached one in place: its region joins the
 to-space as it is, unmoved and uncopied, and the regions of those not
 reached go back to the heap. So a 48 MB `Bytes` costs 48 MB, not 96 MB at
 each major collection.
+
+A large object's region comes from the freed regions; when none is large
+enough, the free chunks are given back to them first (neighbours merge)
+rather than memory grown for it.
 
 A host may refuse `memory.grow` well below 4 GB (Chrome on Android), and a
 copying collection cannot stop halfway, so each collection takes the
@@ -1503,27 +1880,73 @@ natively; `CallStacks` checks against the reference on Linux, Windows
 stack), inlined frames, stacks without frame pointers, and the null-access
 report's innermost line, which may be the statement before.
 
-## Environment variables
+## Flags and environment variables
 
-For the tool and the compiler (build time):
+Each flag of the tool and the compiler is a define and a variable:
+`-D hxmc.x-y=v` first, else `HXMC_X_Y` (`Options.flag`); empty is unset, `0`
+turns a switch off. Each build reads them from its own defines, a server's
+too (`Options.apply`). Those that change the code (`Options.FLAGS`):
+the object cache's key has the ones a build sets, an up-to-date check's key
+their variables. Four are read before any build, so only as the variable:
+`HXMC_MIR_TIER`, `HXMC_MIR_TIER_WINDOW`, `HXMC_MIR_TYPE_RUNTIME`,
+`HXMC_MIR_LAZY_BODIES`; `HXMC_STATS` for an up-to-date build too; and
+`HXMC_MODULE_CACHE=0` wins over its define (the tool sets it to run a build again).
 
-| Variable | |
-| --- | --- |
-| `HXMC_STATS=1` | what the build did and how long it took; live functions |
-| `HXMC_OPT=0` | no Mir optimizations |
-| `HXMC_INLINE=<flat>,<loop>,<runtime>` | inlining limits |
-| `HXMC_ESCAPE=0`, `HXMC_ESCAPE_LOG=1`, `HXMC_ESCAPE_NO=<...>`, `HXMC_ESCAPE_HASH=<lo>-<hi>` | escape analysis off, logged, or bisected (not in the object cache's key) |
-| `HXMC_FOLD=0`, `HXMC_FOLD_WHY=1` | allocation folding off, or why an allocation did not fold |
-| `HXMC_REACH=0`, `HXMC_REACH_WHY=<fn>` | keep everything; why a function is kept |
-| `HXMC_SYMBOLS=1` | a symbol table |
-| `HXMC_SIZE_STATS=1` | sizes by part |
-| `HXMC_DUMP=<functions>` | print machine code |
-| `HXMC_MAP=<file>` | Windows: a link map |
-| `HXMC_FRAME_POINTERS=0` | no frame pointers on x86-64 |
-| `HXMC_JOBS=<n>` | parallel module compilations |
-| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories searched first, before the compiler's own directory (npm's platform package), its `rt/` (a checkout's `bin/hxmc/rt`) and the target's platform package beside it ([using.md](using.md#cross-builds); the npm launcher adds the installed platform packages), or one object |
-| `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
-| `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
+| Define | Variable | Code | |
+| --- | --- | --- | --- |
+| `hxmc.opt=0` | `HXMC_OPT` | yes | no Mir optimizations |
+| `hxmc.loop-version=0\|why` | `HXMC_LOOP_VERSION` | yes | no loop versioning, or why a loop is left alone |
+| `hxmc.compact=0` | `HXMC_COMPACT` | yes | no compressed references: `@:hxmc.compact` changes nothing |
+| `hxmc.inline=<flat>,<loop>,<runtime>,<IR nodes>,<depth>` | `HXMC_INLINE` | yes | inlining limits (16,48,3,40,2; wasm 4,16,3,40,2); an empty field keeps its default |
+| `hxmc.devirt=0` | `HXMC_DEVIRT` | yes | no devirtualization |
+| `hxmc.sroa=0` | `HXMC_SROA` | yes | no scalar replacement |
+| `hxmc.licm=0` | `HXMC_LICM` | yes | no loop-invariant code motion |
+| `hxmc.escape=0` | `HXMC_ESCAPE` | yes | no escape analysis |
+| `hxmc.escape-no=<parts>` | `HXMC_ESCAPE_NO` | yes | parts of it off (closures, frames, again, boxes, replace, screen, anon) |
+| `hxmc.escape-hash=<lo>-<hi>` | `HXMC_ESCAPE_HASH` | yes | it on the functions whose names hash to lo...hi of 1024 only (bisecting) |
+| `hxmc.fold=0` | `HXMC_FOLD` | yes | no allocation folding |
+| `hxmc.reach=0` | `HXMC_REACH` | yes | every function kept |
+| `hxmc.dup-dispatch=0` | `HXMC_DUP_DISPATCH` | yes | jump tables not copied into their predecessors |
+| `hxmc.dup-min=<n>` | `HXMC_DUP_MIN` | yes | the smallest jump table copied (64) |
+| `hxmc.frames-live=0` | `HXMC_FRAMES_LIVE` | yes | frame stores kept that no load sees |
+| `hxmc.framespill=0` | `HXMC_FRAMESPILL` | yes | a frame push on every slow path |
+| `hxmc.noshadow=1` | `HXMC_NOSHADOW` | yes | no shadow stack (measurements) |
+| `hxmc.trymem=all` | `HXMC_TRYMEM` | yes | every local assigned in a `try` in memory |
+| `hxmc.falign=<n>`, `hxmc.fshift=<n>` | `HXMC_FALIGN`, `HXMC_FSHIFT` | yes | x86-64: function alignment (16), padding before each (measuring layout noise) |
+| `hxmc.wasm-coalesce=0` | `HXMC_WASM_COALESCE` | yes | wasm: a local per value |
+| `hxmc.interp-coalesce=0` | `HXMC_INTERP_COALESCE` | yes | the interpreter's code: a register per value |
+| `hxmc.wasm-stack-kb=<n>` | `HXMC_WASM_STACK_KB` | yes | wasm: the linker's stack (64) |
+| `hxmc.nogc=1` | `HXMC_NOGC` | yes | unreached runtime sections kept |
+| `hxmc.frame-pointers=0` | `HXMC_FRAME_POINTERS` | yes | x86-64: no frame pointers (or `-D hxmc.no-frame-pointers`) |
+| `hxmc.symbols` | `HXMC_SYMBOLS` | yes | a symbol table |
+| `hxmc.checked` | | yes | a diagnostic build: checks on, no Mir optimizations ([using.md](using.md#options); the define only: the std reads it) |
+| `hxmc.jobs=<n>` | `HXMC_JOBS` | no | parallel module compilations |
+| `hxmc.stats` | `HXMC_STATS` | no | what the build did and how long it took |
+| `hxmc.verbose` | `HXMC_VERBOSE` | no | live functions |
+| `hxmc.dump=<functions>` | `HXMC_DUMP` | no | print their machine code |
+| `hxmc.size-stats` | `HXMC_SIZE_STATS` | no | code sizes by part |
+| `hxmc.escape-log`, `hxmc.escape-dump=<fn>` | `HXMC_ESCAPE_LOG`, `HXMC_ESCAPE_DUMP` | no | what escape analysis does to each allocation; a function's Mir before and after it |
+| `hxmc.fold-why` | `HXMC_FOLD_WHY` | no | why allocations did not fold, counted |
+| `hxmc.reach-why=<fn>` | `HXMC_REACH_WHY` | no | why a function is kept |
+| `hxmc.survey=<file>` | `HXMC_SURVEY` | no | the lowering records what it cannot do and goes on |
+| `hxmc.map=<file>`, `hxmc.pe-diag=<parts>` | `HXMC_MAP`, `HXMC_PE_DIAG` | no | Windows: a link map; variants for a loader's refusal |
+| `hxmc.module-cache=0` | `HXMC_MODULE_CACHE` | no | no module cache (or `-D hxmc.no-module-cache`; [using.md](using.md#fast-rebuilds)) |
+| `hxmc.module-cache-log` | `HXMC_MODULE_CACHE_LOG` | no | why each module was typed again |
+| `hxmc.lower-cache=0`, `hxmc.lower-check`, `hxmc.lower-only` | `HXMC_LOWER_CACHE`, `..._CHECK`, `..._ONLY` | no | a server: no reused lowering, or checked against a fresh one; stop after the lowering |
+| `hxmc.server-mb=<n>` | `HXMC_SERVER_MB` | no | a server keeps what it keeps between requests under n MB of live heap, dropping the least recently used other programs' ([above](#what-a-compilation-server-keeps)) |
+| `hxmc.lower-why`, `hxmc.lower-noskip` | `HXMC_LOWER_WHY`, `HXMC_LOWER_NOSKIP` | no | the lowering cache: why a body was lowered again; every type bound again |
+| `hxmc.macro-stats`, `hxmc.macro-debug` | `HXMC_MACRO_STATS`, `HXMC_MACRO_DEBUG` | no | Mir macros ([above](#macros-on-the-mir-interpreter)): counts and times; the loader's log |
+| `hxmc.mir-cache=0\|1`, `hxmc.mir-host=0` | `HXMC_MIR_CACHE`, `HXMC_MIR_HOST` | no | their compiled functions kept or not; all interpreted |
+| `hxmc.mir-lazy=0`, `hxmc.mir-cold=<words>` | `HXMC_MIR_LAZY`, `HXMC_MIR_COLD` | no | every function compiled with its bundle; above this size without the optimizer |
+| `hxmc.mir-tier-log`, `hxmc.mir-tier-max=<n>` | `HXMC_MIR_TIER_LOG`, `HXMC_MIR_TIER_MAX` | no | the native tier: what it compiles, at most n |
+| | `HXMC_MIR_TIER`, `HXMC_MIR_TIER_WINDOW`, `HXMC_MIR_TYPE_RUNTIME`, `HXMC_MIR_LAZY_BODIES` | no | the native tier (calls, window); the runtime's functions typed, bodies parsed lazily (variable only) |
+
+Plain variables of the tool: `HXMC_RT_DIR` (directories of runtime objects
+searched first, before the compiler's own directory, which is npm's platform
+package, its `rt/`, a checkout's `bin/hxmc/rt`, and the target's platform
+package beside it: [using.md](using.md#cross-builds); the npm launcher adds the
+installed platform packages), `HXMC_RT_OBJ` (one runtime object),
+`HXMC_CACHE`, `HXMC_CACHE_SIZE` (the cache: [using.md](using.md#fast-rebuilds)).
 
 For compiled programs (run time):
 
@@ -1537,7 +1960,9 @@ For compiled programs (run time):
 | `RT_VERIFY=1` | fill the free nursery with a pattern; an allocation in a safe region is fatal |
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
-| `RT_REGION_MB` | Windows: the old space's regions (2 GB by default) |
+| `RT_MAX_MB` | wasm32: a budget for linear memory: collections come sooner as what is live nears it (soft: [WebAssembly](#memory)) |
+| `RT_COMPACT=0` | wasm32: a major collection copies what is live always, rather than compacting the old space when free memory does not hold the copy |
+| `RT_REGION_MB` | Windows: the old space's regions (2 GB by default); with compact types at most 15 GB ([compressed references](#compressed-references)) |
 | `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
 | `RT_CENSUS_WHY=<type>` | also a path from a global to the first `RT_CENSUS_WHY_MAX` (8) objects of that type; global `i` is the symbol of value `8 * i` in `<exe>.syms` |

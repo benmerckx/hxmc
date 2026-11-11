@@ -145,6 +145,9 @@ class MacroContext {
 	}
 
 	public static var macroInterpCache:Null<macros.eval.EvalContext.Context> = null;
+	// port: (not upstream) the interpreter was discarded after an error since the last
+	// look (the server's ServerCache.cleanup: CompilationCache.taintMacroModules)
+	public static var interpDiscarded = false;
 
 	// port: hook (not upstream): the macro context's platform when its code is not
 	// Eval's (hxmc's -D hxmc.macros=mir): called instead of adding Eval's _std and
@@ -947,6 +950,7 @@ class MacroContext {
 		com2.errorExt = function(err) {
 			macros.MacroEngine.engine.setError(macros.eval.EvalContext.getCtx(), true);
 			macroInterpCache = null;
+			interpDiscarded = true; // port: (not upstream)
 			onError(err);
 		};
 		com2.warning = compiler.io.CompilerMessage.defaultWarningHandler(com2);
@@ -1540,5 +1544,11 @@ class MacroContext {
 
 	public static function setup():Void {
 		macros.eval.EvalMain.setup(MacroApiImpl.macroApi);
+		// port: (not upstream) the stash of Eval's persistent statics follows the server's contexts
+		compiler.CompilationCache.Cache.contextsRemovedHook = sign -> switch macroInterpCache {
+			case null:
+			case i if (Std.isOfType(i, macros.eval.EvalContext.Context)): macros.eval.EvalPrototype.dropStash(i, sign);
+			case _:
+		};
 	}
 }

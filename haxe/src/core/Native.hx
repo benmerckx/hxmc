@@ -45,7 +45,7 @@ class Native {
 					try {
 						var r = real(cf.cfMeta, cf.cfName);
 						cf.cfName = r.name;
-						cf.cfMeta.unshift(r.meta);
+						cf.cfMeta = core.ds.VectorTools.cons(r.meta, cf.cfMeta);
 						for (overloadField in cf.cfOverloads) overloadField.cfName = r.name;
 						changed = true;
 					} catch (_:NotFound) {}
@@ -61,7 +61,7 @@ class Native {
 				c.clFields = fields(c.clOrderedFields, c.clFields);
 				c.clStatics = fields(c.clOrderedStatics, c.clStatics);
 				var r = real(c.clMeta, Globals.sTypePath(c.clPath));
-				c.clMeta.unshift(r.meta);
+				c.clMeta = core.ds.VectorTools.cons(r.meta, c.clMeta);
 				c.clPath = Ast.parsePath(r.name);
 			case TEnumDecl(e):
 				var changed = false;
@@ -72,7 +72,7 @@ class Native {
 					try {
 						var r = real(ef.efMeta, ef.efName);
 						ef.efName = r.name;
-						ef.efMeta.unshift(r.meta);
+						ef.efMeta = core.ds.VectorTools.cons(r.meta, ef.efMeta);
 						changed = true;
 					} catch (_:NotFound) {}
 				}
@@ -88,7 +88,7 @@ class Native {
 					e.eNames = names;
 				}
 				var r = real(e.eMeta, Globals.sTypePath(e.ePath));
-				e.eMeta.unshift(r.meta);
+				e.eMeta = core.ds.VectorTools.cons(r.meta, e.eMeta);
 				e.ePath = Ast.parsePath(r.name);
 			case _:
 		} catch (_:NotFound) {}

@@ -169,7 +169,7 @@ class ExprToPattern {
 				throw new BadPattern("Only inline or read-only (default, never) fields can be used as a pattern");
 			case TTypeExpr(mt): PatConstructor({kind: ConTypeExpr(mt), pos: e.epos}, []);
 			case TMeta(meta = {meta: MetaTag.Deprecated}, e1):
-				DeprecationCheck.checkMeta(createDeprecationContext(ctx), [meta], "field", e1.epos);
+				DeprecationCheck.checkMeta(createDeprecationContext(ctx), vector(meta), "field", e1.epos);
 				checkExpr(e1);
 			case _: throw Exit.raise();
 		};

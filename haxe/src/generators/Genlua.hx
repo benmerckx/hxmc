@@ -372,7 +372,7 @@ class Genlua {
 			case _:
 				Globals.die("", "genlua.ml");
 		}
-		if (i == 0) return mkLuaCode(com, "{0}", vector(ecall), e.etype, e.epos) else {
+		if (i == 0) return mkLuaCode(com, "({0})", vector(ecall), e.etype, e.epos) else {
 			var code = '_G.select(${i + 1}, {0})';
 			return mkLuaCode(com, code, vector(ecall), e.etype, e.epos);
 		}
@@ -1132,7 +1132,7 @@ class Genlua {
 								/* multi-return var is generated as several vars for unpacking */
 								var id = temp(ctx);
 								var tempExpr:Expr = {expr: EConst(core.Ast.Constant.String(id, SDoubleQuotes)), pos: Globals.nullPos};
-								v.vMeta = [({meta: core.MetaList.StrictMeta.Custom(":lua_mr_id"), exprs: vector(tempExpr), pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
+								v.vMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.Custom(":lua_mr_id"), exprs: vector(tempExpr), pos: v.vPos} : MetadataEntry), v.vMeta);
 								var name = varName;
 								var names = switch follow(v.vType) {
 									case TInst(c, _):
@@ -2309,7 +2309,7 @@ class Genlua {
 							so it will later be generated as multiple locals unpacking the value
 						 */
 						case TVar(v, ecall = {eexpr: TCall(_)}) if (isMultireturn(v.vType)):
-							v.vMeta = [({meta: core.MetaList.StrictMeta.MultiReturn, exprs: vector(), pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
+							v.vMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.MultiReturn, exprs: vector(), pos: v.vPos} : MetadataEntry), v.vMeta);
 							var ecall = Texpr.mapExpr(loop, ecall);
 							{eexpr: TVar(v, ecall), etype: e.etype, epos: e.epos};
 
@@ -2344,7 +2344,7 @@ class Genlua {
 						 */
 						case TLocal(v) if (Meta.has(MultiReturn, v.vMeta)):
 							v.vMeta = v.vMeta.filter(m -> !Meta.metaEq(core.MetaList.StrictMeta.MultiReturn, m.meta));
-							v.vMeta = [({meta: core.MetaList.StrictMeta.Custom(":lua_mr_box"), exprs: vector(), pos: v.vPos} : MetadataEntry)].concat(v.vMeta);
+							v.vMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.Custom(":lua_mr_box"), exprs: vector(), pos: v.vPos} : MetadataEntry), v.vMeta);
 							e;
 
 						case _:

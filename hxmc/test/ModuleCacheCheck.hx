@@ -33,7 +33,9 @@ using StringTools;
 // macro forces (that module edited: typed again with it; then an error in
 // it: the same errors as without the cache, then fixed). One whose module of
 // abstracts with overloaded call operators (@:op(a())) is restored while the
-// modules calling them are typed again. The warm runs must restore
+// modules calling them are typed again. One whose macro reads state that
+// is no macro's (its class's static initialisation, a std override's
+// statics: noState). The warm runs must restore
 // every module (none typed again), an edit undone restores the earlier
 // variant. Copies of the std (hxmc's and upstream's) are edited, never the
 // repository's. In bin/hxmc-t/module-cache (removed when every check passes):
@@ -716,6 +718,51 @@ class ModuleCacheCheck {
 		gate('macro state: warm', target, pdir, main, 0);
 	}
 
+	// state a macro uses that is no macro's: a macro class's static
+	// initialisation reading its own variables (M.major from M.version, which
+	// the macro does not read), and
+	// a std override's statics (hxmc's sys.thread.Thread, its own std on the
+	// hxmc target, a user class path) are no macro state; A and B use M's
+	// macro, B's body edited: B alone typed again, A restored, not the build
+	// again (tsc-haxe's Core.OrElse: 241 modules typed for 80)
+	static function noState(target:String) {
+		var files = [
+			"src/M.hx" => [
+				"#if macro",
+				"import haxe.macro.Expr;",
+				"#end",
+				"",
+				"class M {",
+				"\t#if macro",
+				"\tstatic var version = \"3.4\";",
+				"\tstatic final major:String = version.split(\".\")[0];",
+				"\t#end",
+				"",
+				"\tpublic static macro function tag():Expr {",
+				"\t\tvar t = sys.thread.Thread.current();",
+				"\t\treturn macro $v{t != null ? \"!\" : \"?\"};",
+				"\t}",
+				"}"
+			].join("\n") + "\n",
+			"src/A.hx" => "class A {\n\tpublic static function a():String return M.tag();\n}\n",
+			"src/B.hx" => "class B {\n\tpublic static function b():String return M.tag() + 1;\n}\n",
+			"src/Main.hx" => "class Main {\n\tstatic function main() {\n\t\ttrace(A.a() + B.b());\n\t}\n}\n"
+		];
+		var pdir = dir + "/" + target + "-nostate";
+		for (f => c in files)
+			write(pdir + "/" + f, c);
+		var args = ["-cp", "src", "-main", "Main"];
+		var b = pdir + "/src/B.hx", b0 = File.getContent(b);
+		rmrf(dir + "/cache");
+		gate('no state: cold', target, pdir, args);
+		gate('no state: warm', target, pdir, args, 0);
+		File.saveContent(b, b0.replace("+ 1;", "+ 2;"));
+		var e = gate('no state: B edited (B alone typed again)', target, pdir, args, null, 1);
+		check('$target: no state: B edited: not the build again', e.log.indexOf("the build again") < 0);
+		File.saveContent(b, b0);
+		gate('no state: B back', target, pdir, args);
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
@@ -888,6 +935,8 @@ class ModuleCacheCheck {
 			if (!late && !state && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
 		for (target in ["hxmc", "js", "interp"])
 			if (!late && !defined && !Sys.args().contains("--nondet")) macroState(target);
+		for (target in ["hxmc", "js", "interp"])
+			if (!only) noState(target);
 		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";

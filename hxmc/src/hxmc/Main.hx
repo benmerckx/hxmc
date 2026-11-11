@@ -38,12 +38,27 @@ package hxmc;
 //                                   throws instead, hxmc.rt.Faults)
 //   -D hxmc.gc-prefault             Linux: the collector faults in the old space's pages on a helper
 //                                   thread: less wall time for more CPU time (the compilers' builds)
+//   -D hxmc.compact=0               @:hxmc.compact changes nothing: reference fields 8 bytes everywhere
+//                                   (HXMC_COMPACT=0 too; docs/hxmc.md, "Compressed references")
 //   HXMC_RT_OBJ                     the runtime object (default: <target>/rt.o where Options.rtSearch finds it)
 //   HXMC_RT_DIR                     directories of runtime objects, searched first (added to the search)
 //   HXMC_STATS=1                    print what the build did and how long it took
 class Main {
 	static var start = haxe.Timer.stamp();
 	static var lowerCache = new LowerCache();
+	// the signature of the program whose bodies lowerCache holds: a body is
+	// reused for the same field object, or for its module read back from that
+	// signature's context, so another signature's program finds none, and
+	// the bodies kept of the last one only add to the build's peak
+	static var lowerSign:Null<String> = null;
+
+	// the lowered bodies dropped when they are one of signs' (ServerMemory)
+	public static function forgetLowered(signs:Array<String>) {
+		if (lowerSign != null && signs.indexOf(lowerSign) >= 0) {
+			lowerCache = new LowerCache();
+			lowerSign = null;
+		}
+	}
 
 	static function main() {
 		Defines.install();
@@ -100,7 +115,8 @@ class Main {
 		var failed = null;
 		var key = UpToDate.key(args, out);
 		if (UpToDate.check(key, out)) {
-			if (Sys.getEnv("HXMC_STATS") == "1") Sys.println("hxmc: up to date (" + Std.int((haxe.Timer.stamp() - start) * 1000) + " ms)");
+			// (the variable: no defines read yet)
+			if (Options.on("hxmc.stats", false)) Sys.println("hxmc: up to date (" + Std.int((haxe.Timer.stamp() - start) * 1000) + " ms)");
 			Sys.exit(0);
 		}
 		if (key != null) UpToDate.forget(out);
@@ -149,6 +165,23 @@ class Main {
 	// program before Driver.run, to add functions to it
 	public static var beforeCodegen:Null<(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void> = null;
 
+	// whether @:hxmc.compact fields are 4 bytes (docs/hxmc.md, "Compressed
+	// references"): an executable whose image is below 32 GB (Link, LinkDyn's
+	// glibc mode and LinkPE's x86-64: at 0x400000; a macOS executable, slid,
+	// at 4 GB and a little), whose heap hxmc.rt.Gc.init reserves below 32 GB
+	// too (macOS: in the image's __HXHEAP segment, LinkMachO.heapWindow), so
+	// that an address shifted right by 3 fits 32 bits with no base. Not a
+	// shared library (loaded anywhere: Android's, -D hxmc.shared), iOS and
+	// Mac Catalyst, Windows on arm64 (relocatable), nor WebAssembly
+	// (references are 4 bytes there): there the fields stay 8 bytes, as
+	// everywhere with -D hxmc.compact=0. A Mir host (opts.mirHost) has them
+	// as any executable; the code it loads takes its decision
+	// (macro.Loader.compactHost: MirMacros, MirRun), as -D hxmc.interp's
+	// interpreted functions take their program's
+	public static function compactRefs(abi:Abi, opts:Options):Bool
+		return opts.compact && !abi.wasm && !abi.android && !opts.shared && abi.output != Abi.OutputKind.SharedLibrary
+			&& (abi.os == "linux" || abi.os == "windows" && !abi.arm || abi.os == "macos" && !abi.uikit());
+
 	// the program typed (com) to machine code at out: lowered (hxmc.ir.Lower),
 	// given to beforeCodegen (this argument, else Main.beforeCodegen), compiled
 	public static function generate(com:context.Common.CommonContext, out:String, ?beforeCodegen:(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void) {
@@ -185,6 +218,14 @@ class Main {
 			case _: false;
 		}) ? 1 : 0;
 		opts.mirHost = hxmc.ir.Lower.mirHost == 1;
+		hxmc.ir.Lower.compact = compactRefs(abi, opts);
+		// (Mem.compact: a class of the program asks for compressed references; one
+		// Lower never reaches keeps the runtime's tests, which then find none)
+		hxmc.ir.Lower.compactTypes = hxmc.ir.Lower.compact && Lambda.exists(com.types, t -> switch t {
+			case TClassDecl(c): hxmc.ir.Lower.hasMeta(":hxmc.compact", c.clMeta);
+			case TEnumDecl(e): hxmc.ir.Lower.hasMeta(":hxmc.compact", e.eMeta);
+			case _: false;
+		}) ? 1 : 0;
 		// (the positions of every statement, natively: a program that reads
 		// stacks gets the table of its functions and lines, which Reach finds
 		// out after the lowering, StackTable; -debug writes DWARF lines from
@@ -196,20 +237,30 @@ class Main {
 		hxmc.ir.RuntimeSymbols.check(com, abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE, abi.name);
 		var t0 = haxe.Timer.stamp();
 		// resident: bodies of the fields the server kept are reused (LowerCache)
-		var useCache = Driver.resident && Sys.getEnv("HXMC_LOWER_CACHE") != "0";
+		var useCache = Driver.resident && Options.on("hxmc.lower-cache", true, com.defines);
+		if (useCache) {
+			var sign = core.Define.getSignature(com.defines);
+			if (sign != lowerSign) {
+				if (lowerSign != null) lowerCache = new LowerCache();
+				lowerSign = sign;
+			}
+		}
 		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
 			if (useCache)
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
-		if (Sys.getEnv("HXMC_LOWER_ONLY") == "1") return; // (profiling the lowering)
-		if (beforeCodegen != null) beforeCodegen(com, prog);
+		if (Options.on("hxmc.lower-only", false, com.defines)) return; // (profiling the lowering)
+		if (beforeCodegen != null) {
+			beforeCodegen(com, prog);
+			if (useCache) lowerCache.hooked(prog);
+		}
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
 		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
-		if (useCache && Sys.getEnv("HXMC_LOWER_CHECK") == "1") {
+		if (useCache && Options.on("hxmc.lower-check", false, com.defines)) {
 			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 			if (beforeCodegen != null) beforeCodegen(com, fresh);
 			Driver.run(fresh, out + ".check", opts);

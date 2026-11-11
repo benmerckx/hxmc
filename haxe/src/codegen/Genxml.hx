@@ -97,7 +97,7 @@ class Genxml {
 		});
 		return filtered.length == 0 ? [] : [
 			node("meta", [],
-				filtered.map(m -> node("m", [attr("n", Meta.toString(m.meta))],
+				filtered.mapToArray(m -> node("m", [attr("n", Meta.toString(m.meta))],
 					m.exprs.mapToArray(e -> node("e", [], [genString(AstPrinter.sExpr(e))])))))
 		];
 	}

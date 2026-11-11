@@ -86,12 +86,6 @@ class Scratch {
 	public var ptVal:Array<Int> = [];
 	public var ptFill:Array<Int> = [];
 	public var ptBlocks:Array<Int> = [];
-	public var pB:Array<Int> = [];
-	public var pR:Array<Int> = [];
-	public var pA:Array<Int> = [];
-	public var pZ:Array<Int> = [];
-	public var bucket:Array<Int> = [];
-	public var sorted:Array<Int> = [];
 	public var oFrom:haxe.ds.Vector<Array<Int>> = perReg();
 	public var oTo:haxe.ds.Vector<Array<Int>> = perReg();
 	public var oOwn:haxe.ds.Vector<Array<Int>> = perReg();
@@ -183,13 +177,18 @@ class Regalloc {
 		var nb = f.blocks.length;
 		for (bi in 0...nb)
 			f.blocks[bi].id = bi;
-		for (b in f.blocks)
-			b.loopDepth = 0;
+		var depth = Scratch.fill(s.count, nb + 1, 0);
 		for (b in f.blocks)
 			for (pr in b.preds)
-				if (pr.id >= b.id && !pr.cold)
-					for (k in b.id...pr.id + 1)
-						f.blocks[k].loopDepth++;
+				if (pr.id >= b.id && !pr.cold) {
+					depth[b.id]++;
+					depth[pr.id + 1]--;
+				}
+		var d = 0;
+		for (bi in 0...nb) {
+			d += depth[bi];
+			f.blocks[bi].loopDepth = d;
+		}
 		for (round in 0...64) {
 			rounds++;
 			for (b in f.blocks)
@@ -377,11 +376,6 @@ class Regalloc {
 		ptB.resize(0);
 		ptR.resize(0);
 		var ptLo = Scratch.fill(s.ptLo, n, 0), ptHi = Scratch.fill(s.ptHi, n, 0);
-		var pB = s.pB, pR = s.pR, pA = s.pA, pZ = s.pZ;
-		pB.resize(0);
-		pR.resize(0);
-		pA.resize(0);
-		pZ.resize(0);
 		var blocks = f.blocks;
 		for (r in NPHYS...n) {
 			var k = occHead[r];
@@ -436,8 +430,20 @@ class Regalloc {
 					}
 				}
 			}
-			// its range in each of those blocks (put in order below)
-			var room = 0;
+			// Only this register's blocks need ordering. Build its ranges
+			// directly, without a second copy of every register/block pair.
+			bl.resize(bn);
+			if (bn <= 8) {
+				for (k in 1...bn) {
+					var v = bl[k], j = k;
+					while (j > 0 && bl[j - 1] > v) {
+						bl[j] = bl[j - 1];
+						j--;
+					}
+					bl[j] = v;
+				}
+			} else bl.sort((a, b) -> a - b);
+			segAt[r] = segFrom.length;
 			for (x in 0...bn) {
 				var bi = bl[x];
 				var b = blocks[bi];
@@ -453,25 +459,24 @@ class Regalloc {
 					ptHi[r] |= fixHi[bi];
 					continue;
 				}
-				room++;
-				pB.push(bi);
-				pR.push(r);
-				pA.push(liveInSeen[bi] == r || o < 0 ? b.from : occFirst[o]);
-				pZ.push(liveOutSeen[bi] == r || o < 0 ? b.to : occLast[o]);
+				var a = liveInSeen[bi] == r || o < 0 ? b.from : occFirst[o];
+				var z = liveOutSeen[bi] == r || o < 0 ? b.to : occLast[o];
+				var m = segFrom.length;
+				if (segN[r] > 0 && segTo[m - 1] + 2 >= a) {
+					len[r] += z - segTo[m - 1];
+					segTo[m - 1] = z;
+				} else {
+					segFrom.push(a);
+					segTo.push(z);
+					segN[r]++;
+					len[r] += z - a + 1;
+				}
 			}
-			segN[r] = room; // room for this many, for now
+			if (segN[r] > 0) {
+				start[r] = segFrom[segAt[r]];
+				end[r] = segTo[segFrom.length - 1];
+			}
 		}
-		// the ranges in block order (a counting sort), appended per register
-		// in that order, adjacent ones merged
-		var np = pB.length;
-		var bucket = Scratch.fill(s.bucket, nb + 1, 0);
-		for (k in 0...np)
-			bucket[pB[k] + 1]++;
-		for (k in 0...nb)
-			bucket[k + 1] += bucket[k];
-		var sorted = Scratch.fill(s.sorted, np, 0);
-		for (k in 0...np)
-			sorted[bucket[pB[k]]++] = k;
 		// the values passing through each slow-path block (ptVal[ptAt[b]...ptAt[b + 1]])
 		var ptAt = Scratch.fill(s.ptAt, nb + 1, 0);
 		for (bi in ptB)
@@ -488,34 +493,6 @@ class Regalloc {
 		ptBlocks.resize(0);
 		for (bi in 0...nb)
 			if (ptAt[bi + 1] > ptAt[bi]) ptBlocks.push(bi);
-		var room = 0;
-		for (r in NPHYS...n) {
-			segAt[r] = room;
-			room += segN[r];
-			segN[r] = 0;
-		}
-		Scratch.fill(segFrom, room, 0);
-		Scratch.fill(segTo, room, 0);
-		for (k in sorted) {
-			var r = pR[k], a = pA[k], z = pZ[k];
-			var m = segAt[r] + segN[r];
-			if (segN[r] > 0 && segTo[m - 1] + 2 >= a) {
-				len[r] += z - segTo[m - 1];
-				segTo[m - 1] = z;
-			} else {
-				segFrom[m] = a;
-				segTo[m] = z;
-				segN[r]++;
-				len[r] += z - a + 1;
-			}
-		}
-		for (r in NPHYS...n)
-			if (segN[r] > 0) {
-				start[r] = segFrom[segAt[r]];
-				end[r] = segTo[segAt[r] + segN[r] - 1];
-			}
-		for (r in 0...NPHYS)
-			sortFixed(r);
 		// linear scan: intervals by start (a counting sort on positions; ties by register)
 		var count = Scratch.fill(s.count, pos + 2, 0);
 		var live = 0;
@@ -984,7 +961,7 @@ class Regalloc {
 	function addFixed(r:Int, from:Int, to:Int) {
 		var fr = fixedFrom[r], tr = fixedTo[r];
 		var n = fr.length;
-		if (n > 0 && fr[n - 1] == from) {
+		if (n > 0 && from <= tr[n - 1] + 1) {
 			if (tr[n - 1] < to) tr[n - 1] = to;
 			return;
 		}
@@ -992,36 +969,13 @@ class Regalloc {
 		tr.push(to);
 	}
 
-	// the ranges are recorded in position order (blocks in layout order,
-	// instructions in order): no sorting needed
-	function sortFixed(r:Int) {
-		// a running maximum of the ends, so a binary search finds overlaps
-		var m = -1;
-		var ft = fixedTo[r];
-		for (i in 0...ft.length) {
-			if (ft[i] < m) ft[i] = m;
-			m = ft[i];
-		}
-	}
-
-	// whether physical register r has a fixed range overlapping [a, b]
+	// Fixed ranges arrive in position order and addFixed merges overlaps
+	// and adjacent positions. Their ends increase too: one binary search.
 	function fixedOverlap(r:Int, a:Int, b:Int):Bool {
 		var fr = fixedFrom[r], tr = fixedTo[r];
-		// first range whose (running max) end >= a
-		var lo = 0, hi = fr.length;
-		while (lo < hi) {
-			var mid = (lo + hi) >> 1;
-			if (tr[mid] < a) lo = mid + 1 else hi = mid;
-		}
-		while (lo < fr.length && fr[lo] <= b) {
-			if (fr[lo] <= b && fixedEnd(r, lo) >= a) return true;
-			lo++;
-		}
-		return false;
+		var k = firstEnding(tr, a);
+		return k < fr.length && fr[k] <= b;
 	}
-
-	inline function fixedEnd(r:Int, i:Int):Int
-		return fixedTo[r][i];
 
 	// ---- spill code
 
@@ -1129,7 +1083,7 @@ class Regalloc {
 			f.setHint(r, -1);
 	}
 
-	public static function rename(i:LIns, m:Int->Int) {
+	public static inline function rename(i:LIns, m:Int->Int) {
 		if (i.d >= NPHYS) i.d = m(i.d);
 		if (i.s1 >= NPHYS) i.s1 = m(i.s1);
 		if (i.s2 >= NPHYS) i.s2 = m(i.s2);
@@ -1138,16 +1092,25 @@ class Regalloc {
 		if (i.index >= NPHYS) i.index = m(i.index);
 	}
 
+	inline function physical(r:Int):Int {
+		if (r >= NPHYS) {
+			var a = assigned[r];
+			if (a < 0) throw "hxmc: unallocated register " + r + " in " + f.name;
+			r = a;
+		}
+		if (r >= 0 && r < NPHYS) usedRegs[r] = true;
+		return r;
+	}
+
 	function rewrite() {
 		for (b in f.blocks)
 			for (i in b.ins) {
-				rename(i, r -> {
-					var a = assigned[r];
-					if (a < 0) throw "hxmc: unallocated register " + r + " in " + f.name;
-					a;
-				});
-				for (r in [i.d, i.s1, i.s2, i.s3, i.base, i.index])
-					if (r >= 0 && r < NPHYS) usedRegs[r] = true;
+				i.d = physical(i.d);
+				i.s1 = physical(i.s1);
+				i.s2 = physical(i.s2);
+				i.s3 = physical(i.s3);
+				i.base = physical(i.base);
+				i.index = physical(i.index);
 			}
 	}
 }

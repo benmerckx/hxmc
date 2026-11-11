@@ -4799,7 +4799,7 @@ class Genhl {
 												exprs: vector({expr: EConst(String(lib, SDoubleQuotes)), pos: p}, {expr: EConst(String(name, SDoubleQuotes)), pos: p}),
 												pos: p
 											};
-											f.cfMeta = [entry].concat(f.cfMeta);
+											f.cfMeta = core.ds.VectorTools.cons(entry, f.cfMeta);
 										}
 									case _:
 								}

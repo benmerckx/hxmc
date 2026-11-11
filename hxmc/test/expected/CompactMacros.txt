@@ -1,0 +1,6 @@
+exit 0
+typed: 5400 1500 0 1500 1500 300 0 0 300 600 0 0 0 900 900 0 300 0 0 0 0 0 0 0 0 0 0 0 0 0 strings 31680
+types: Tree(left:Tree,right:Tree,name:String,n:Int) Shape(Dot:(name : String) -> Shape,Line:(a : Shape, b : Shape, len : Int) -> Shape,Box:(s : Shape, tag : String, flag : Bool) -> Shape) MacroNode(label:String,next:MacroNode,expr:haxe.macro.Expr,depth:Int) MacroShape(MLeaf:(s : String) -> MacroShape,MPair:(a : MacroShape, b : MacroShape, n : Int) -> MacroShape,MExpr:(e : haxe.macro.Expr, flag : Bool) -> MacroShape)
+own: 8107400
+roundTrip: printed
+program: 42235680

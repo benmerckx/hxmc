@@ -452,6 +452,11 @@ class Context {
 	public var vectorPrototype:Vprototype;
 	public var instancePrototypes:GlobalsIntMap<Vprototype> = GlobalsIntMap.empty();
 	public var staticPrototypes:StaticPrototypes = new StaticPrototypes();
+	// port: diverges from upstream (EvalPrototype.addTypes): the @:persistent statics of a
+	// class whose prototype was dropped for another module's (another context's, in a
+	// compilation server), by the dropped one's signature, then its path; given back when
+	// that same module (its id) is handed over again
+	public final persistentStash:Map<String, Map<Int, {mId:Int, values:Map<Int, Value>}>> = new Map();
 	public var constructors:GlobalsIntMap<AtomicLazy<Value>> = GlobalsIntMap.empty();
 	public final fakeProtoCache:Map<Int, Vprototype> = new Map();
 	public final fileKeys:context.Common.FileKeys;

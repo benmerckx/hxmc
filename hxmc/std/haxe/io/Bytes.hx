@@ -62,7 +62,7 @@ class Bytes {
 	}
 
 	public function sub(pos:Int, len:Int):Bytes {
-		var words = (len + 7) >> 3;
+		var words = (len + 7) >>> 3;
 		if (len > 0 && words <= SHARED_MAX && pos >= 0 && pos <= length - len) {
 			var r = shared(len, words);
 			// (into a new object: no overlap, the range tested; no GC point)
@@ -147,7 +147,7 @@ class Bytes {
 
 	// (zeroed, as the other targets leave them: hxmc.NativeArray's)
 	public static inline function alloc(length:Int):Bytes {
-		var words = (length + 7) >> 3;
+		var words = (length + 7) >>> 3;
 		if (length > 0 && words <= SHARED_MAX) return shared(length, words);
 		return new Bytes(new BytesData(length));
 	}

@@ -866,7 +866,7 @@ class Typer {
 				for (pair in argsWithPos) {
 					var arg = pair.arg,
 						f = mkField(arg.name, arg.type, pair.pos, pair.pos);
-					if (arg.optional) f.cfMeta = [{meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos}];
+					if (arg.optional) f.cfMeta = vector(({meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry));
 					if (c.clFields.exists(arg.name)) f.cfDoc = c.clFields.get(arg.name).cfDoc;
 					fields.set(arg.name, f);
 				}
@@ -1322,7 +1322,7 @@ class Typer {
 			e = CoroTools.funToCoro(CoroTools.createCoroContext(ctx, config, coro.CoroTypes.CoroFor.LocalFunc(tf, v)));
 		}
 		if (v == null) return e;
-		Typeload.generateArgsMeta(ctx.com, null, m -> v.vMeta.unshift(m), f.fArgs);
+		Typeload.generateArgsMeta(ctx.com, null, m -> v.vMeta = VectorTools.cons(m, v.vMeta), f.fArgs);
 		if (params.length > 0 || inlined) v.vExtra = varExtra(params, inlined ? e : null);
 		if (ctx.f.inDisplay
 			&& DisplayPosition.displayPosition.enclosedIn(v.vPos)) context.display.DisplayEmitter.displayVariable(ctx, v, v.vPos);
@@ -1560,9 +1560,9 @@ class Typer {
 
 	public static function typeMeta(ctx:TyperContext, m:MetadataEntry, e1:Expr, withType:WithTypeValue, p:Pos, ?mode:AccessMode):TExpr {
 		if (mode == null) mode = MGet;
-		if (ctx.m.isDisplayFile) checkDisplayMetadata(ctx, [m]);
+		if (ctx.m.isDisplayFile) checkDisplayMetadata(ctx, vector(m));
 		var old = ctx.f.meta;
-		ctx.f.meta = [m].concat(ctx.f.meta);
+		ctx.f.meta = VectorTools.cons(m, ctx.f.meta);
 		function expression():TExpr return typeExpr(ctx, e1, withType, mode);
 		inline function preserve():TExpr {
 			var e = expression();
@@ -1615,7 +1615,7 @@ class Typer {
 				var current = ctx.f.meta;
 				function loop(e:Expr):TExpr return switch e.expr {
 					case EMeta(m, e):
-						ctx.f.meta = [m].concat(ctx.f.meta);
+						ctx.f.meta = VectorTools.cons(m, ctx.f.meta);
 						loop(e);
 					case EFunction(kind, f): typeLocalFunction(ctx, kind, f, withType, true, p);
 					case _: expression();
@@ -1970,7 +1970,7 @@ class Typer {
 				var old = ctx.f.isUntyped;
 				ctx.f.isUntyped = true;
 				if (!Meta.has(MetaTag.HasUntyped,
-					ctx.f.curfield.cfMeta)) ctx.f.curfield.cfMeta.unshift({meta: MetaTag.HasUntyped, exprs: vector(), pos: mkZeroRangePos(p)});
+					ctx.f.curfield.cfMeta)) ctx.f.curfield.cfMeta = VectorTools.cons(({meta: MetaTag.HasUntyped, exprs: vector(), pos: mkZeroRangePos(p)} : MetadataEntry), ctx.f.curfield.cfMeta);
 				var value = typeExpr(ctx, inner, withType);
 				ctx.f.isUntyped = old;
 				mk(value.eexpr, mkMono(), value.epos);

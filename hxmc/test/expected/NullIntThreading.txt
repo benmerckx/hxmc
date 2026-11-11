@@ -1,0 +1,3 @@
+exit 0
+NullIntThreading.hx:28: 1:7 1:0 1:3 0:3
+NullIntThreading.hx:32: 2
