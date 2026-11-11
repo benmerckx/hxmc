@@ -85,13 +85,18 @@ class KernelCheck {
 	}
 
 	// the violations of fi's body tf (an error listing them all), or nothing
+	// the seconds spent checking (HXMC_STATS)
+	public static var seconds = 0.0;
+
 	public static function check(l:LowerQueries, fi:FuncInfo, tf:TFunc) {
+		var t0 = haxe.Timer.stamp();
 		var c = new KernelCheck(l, fi);
 		c.ret = tf.tfType;
 		for (a in tf.tfArgs)
 			c.value(a.variable.vType, a.variable.vPos, "the parameter " + a.variable.vName);
 		c.value(tf.tfType, fi.pos, "the result");
 		c.expr(tf.tfExpr);
+		seconds += haxe.Timer.stamp() - t0;
 		if (c.errors.length > 0) throw new LowerError(c.errors.join("\n"), "");
 	}
 
@@ -201,19 +206,22 @@ class KernelCheck {
 
 	// whether t is raw memory: hxmc.unsafe's types but its C scalars, or an
 	// abstract over one (a handle such as an IoBuffer or a Ptr wrapped)
+	static inline function inUnsafe(pack:Array<String>):Bool
+		return pack.length == 2 && pack[1] == "unsafe" && pack[0] == "hxmc";
+
 	public static function isRaw(t:T):Bool {
 		var depth = 0;
 		while (depth++ < 16)
 			switch t.follow() {
 				case TAbstract(a, pl):
-					if (a.aPath.pack.join(".") == "hxmc.unsafe" && SCALARS.indexOf(a.aPath.name) < 0) return true;
+					if (inUnsafe(a.aPath.pack) && SCALARS.indexOf(a.aPath.name) < 0) return true;
 					// (a handle: a value, also over a Ptr, that only a C result makes)
 					if (a.aMeta.length > 0 && Lower.hasMeta(":hxmc.handle", a.aMeta)) return false;
 					if (core.Meta.has(core.Meta.CoreType, a.aMeta)) return false;
 					// (one abstract at a time: getUnderlyingType goes past Ptr)
 					t = core.TFunctions.applyParams(a.aParams, pl, a.aThis);
 				case TInst(c, _):
-					return c.clPath.pack.join(".") == "hxmc.unsafe" && SCALARS.indexOf(c.clPath.name) < 0 && !CInterop.isStruct(c);
+					return inUnsafe(c.clPath.pack) && SCALARS.indexOf(c.clPath.name) < 0 && !CInterop.isStruct(c);
 				case _:
 					return false;
 			}
