@@ -300,6 +300,10 @@ class LambdaInfo {
 	// entry Objective-C calls, which raises one (ObjC.entry)
 	public var foreignPasses:Bool = false;
 	public var noGc:Bool = false; // no ordinary GC points (Facts.findNoGc); safe regions still permit concurrent movement
+	// it may write a static or a thread-local static (Facts.findWritesStatics:
+	// false only for a kernel that provably writes none; Opt keeps scalar
+	// statics across a call of one that writes none, MIns.keepsStatics)
+	public var writesStatics:Bool = true;
 	// it calls rt_blocking_enter (blocksHere), or a function that does
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)
 	public var blocks:Bool = false;

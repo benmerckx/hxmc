@@ -1737,8 +1737,11 @@ class Opt {
 				}
 			case TlsStore: 1 << tlsClass(i.sym);
 			// (one during which nothing collects leaves the shadow-stack slots as they are)
+			// (a kernel that writes no static: scalar and thread-local statics
+			// as they were, FuncInfo.writesStatics)
 			case Call if (i.returnsTwice || i.sym == null || !readOnly.exists(i.sym)):
-				EVERY & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1);
+				EVERY & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1)
+					& (i.keepsStatics && !i.returnsTwice ? ~((1 << MScalar) | (1 << MTls)) : -1);
 			case _: 0;
 		};
 	}

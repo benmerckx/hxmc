@@ -182,7 +182,7 @@ position):
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
 | calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`) | `Mem`'s other functions, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast, and one to a proof (below) |
-| statics | reads | writes, also of a struct static's fields |
+| statics | reads; writes of plain values (below), a `@:hxmc.threadLocal` static's too | writes of a static of a GC or raw type |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
 
 **Loans.** A kernel that enters no safe region may be lent GC values:
@@ -238,12 +238,24 @@ over raw memory is rejected in safe code. Each error names the rule:
 
 ```
 Kernel.hx:12: Kernel.sum: the parameter p has the raw type hxmc.unsafe.Ptr<hxmc.unsafe.UInt8> (kernel: raw memory needs @:hxmc.unsafe)
-Kernel.hx:14: Kernel.sum: a write of the static total (kernel: statics are read-only in kernels)
+Kernel.hx:14: Kernel.sum: a write of the static last of the type String (kernel: a kernel writes statics of plain values only)
 ```
+
+**Statics.** A safe kernel writes a static (and a `@:hxmc.threadLocal`
+one) whose type is a plain value: Int, Float, Bool, `I64`, hxmc.unsafe's
+C scalars, enum abstracts over these, and `@:hxmc.struct` values of
+these (a struct static's fields too). Two threads writing one race, as on
+any data, but the race is never memory unsafe. A static of a GC type
+(it would need a write barrier, and keep a loan) or of a raw type (`Ptr`,
+`IoBuffer`, ...) stays read-only. The optimizer knows which kernels may
+write statics (`Facts.writesStatics`: a kernel that writes none, nor calls
+one that may): a static read again after a call of one that writes is
+read again, and across a call of one that writes none it keeps its value
+(`KernelStatics`).
 
 `@:hxmc.kernel` plus `@:hxmc.unsafe` keeps the freedom of raw memory, as
 above: the escape hatch for trusted code. `KernelFunctions` (unsafe) and
-`KernelSafe` check both paths, `KernelProofs` proofs, `KernelBits` Mem's functions of values, `reject/Kernel*` the rules. The design:
+`KernelSafe` check both paths, `KernelProofs` proofs, `KernelBits` Mem's functions of values, `KernelStatics` statics, `reject/Kernel*` the rules. The design:
 [plans/io.md](plans/io.md#kernels).
 
 ### Spans

@@ -28,7 +28,11 @@ using core.TFunctions;
 //     one, no call of Mem (but its pure functions: unsigned comparisons
 //     and divisions, bit casts), Atomic, Callback or a C function;
 //   - no unchecked cast but between scalars;
-//   - no write of a static (reading one is fine);
+//   - writes of statics only of plain values (Int, Float, Bool, I64, the C
+//     scalars, enum abstracts over them, @:hxmc.struct values of them; a
+//     @:hxmc.threadLocal static too): no static of a GC or raw type (a race
+//     on a scalar is a data race, never memory unsafe; Facts.writesStatics
+//     tells the optimizer such a kernel writes them);
 //   - no closure, no call but of static @:hxmc.kernel functions, Math's
 //     and Std.int; no throw, no try, no untyped code;
 //   - a proof (a @:hxmc.proof abstract, or one over it: hxmc.rt.TypeView's
@@ -288,6 +292,22 @@ class KernelCheck {
 			|| path == "hxmc.simd.Simd" && cf.cfName != "load" && cf.cfName != "store";
 	}
 
+	public static inline var STATICS = "a kernel writes statics of plain values only";
+
+	// a plain value: a scalar, or a struct of plain values (a static a kernel may write)
+	function plain(t:T, depth = 0):Bool {
+		if (isRaw(t) || depth > 8) return false;
+		if (scalar(t)) return l.ty(t) != TId;
+		return switch t.follow() {
+			case TInst(c, _) if (CInterop.isStruct(c)):
+				var all = true;
+				for (cf in c.clOrderedFields)
+					if (cf.cfKind.match(Var(_)) && !plain(cf.cfType, depth + 1)) all = false;
+				all;
+			case _: false;
+		}
+	}
+
 	// the static an assignment or increment writes, through struct fields, or null
 	static function writtenStatic(e:TExpr):Null<TClassField>
 		return switch e.eexpr {
@@ -432,10 +452,10 @@ class KernelCheck {
 			case TBinop(OpAssign | OpAssignOp(_), lhs, rhs):
 				flow(lhs.etype, rhs);
 				var s = writtenStatic(lhs);
-				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in kernels");
+				if (s != null && !plain(s.cfType)) fail(e.epos, "a write of the static " + s.cfName + " of the type " + typeName(s.cfType), STATICS);
 			case TUnop(Increment | Decrement, _, x):
 				var s = writtenStatic(x);
-				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in kernels");
+				if (s != null && !plain(s.cfType)) fail(e.epos, "a write of the static " + s.cfName + " of the type " + typeName(s.cfType), STATICS);
 			case _:
 		}
 		core.Texpr.iter(expr, e);

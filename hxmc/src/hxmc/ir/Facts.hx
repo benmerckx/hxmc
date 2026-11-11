@@ -682,6 +682,57 @@ class Facts {
 			errors.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 			throw errors.join("\n");
 		}
+		findWritesStatics();
+	}
+
+	// Which kernels may write a static (FuncInfo.writesStatics): one whose
+	// body writes one (SSetGlobal: a thread-local's too), stores to raw
+	// memory or calls a C or runtime function that is not a pure intrinsic,
+	// or calls a function that may (any but a kernel; a failed span check's
+	// report ends the program, SpanSupport). Every other function may.
+	function findWritesStatics() {
+		var own = new Map<FuncInfo, Array<FuncInfo>>();
+		for (f in p.funcs) {
+			f.writesStatics = true;
+			if (!f.declKernel || f.declBlocking) continue;
+			var writes = false, callees = [];
+			function ex(e:Ex) {
+				if (writes) return;
+				switch e {
+					case ECall(g, _) if (g.module != "hxmc.Span" || g.cSymbol != null):
+						if (!g.declKernel || g.declBlocking) writes = true else callees.push(g);
+					case ECallHost(n, _, _) if (!FnLower.PURE_INTRINSICS.exists(n) && !StringTools.startsWith(n, "hxmc_unsafe_Mem_get") && n != "hxmc_unsafe_Mem_cstr"):
+						writes = true;
+					case ECallDispatch(_) | ECallClos(_) | ECallAnon(_):
+						writes = true;
+					case _:
+				}
+				Facts.iterEx(ex, e);
+			}
+			function st(s:Stmt) {
+				if (writes) return;
+				if (s.match(SSetGlobal(_, _))) writes = true;
+				Facts.iterStmt(st, ex, s);
+			}
+			for (s in f.body)
+				st(s);
+			if (!writes) own.set(f, callees);
+		}
+		// (a kernel writes none while its callees write none: to a fixed point)
+		for (f in own.keys())
+			f.writesStatics = false;
+		var changed = true;
+		while (changed) {
+			changed = false;
+			for (f => callees in own)
+				if (!f.writesStatics)
+					for (g in callees)
+						if (g.writesStatics) {
+							f.writesStatics = true;
+							changed = true;
+							break;
+						}
+		}
 	}
 
 	// the attribute that made f's promise, as written (errors)
