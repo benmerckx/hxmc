@@ -1,5 +1,6 @@
 package hxmc.interp;
 
+import hxmc.Platform;
 import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
@@ -153,7 +154,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	public function new() {}
 
-	public static function install(std:Null<String>) {
+	@:hxmc.unsafe(gc) public static function install(std:Null<String>) {
 		hxmcStd = std;
 		self = new MirMacros();
 		macros.MacroEngine.engine = self;
@@ -255,7 +256,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the compiler's own target: the macro code runs in it, with its layouts and convention)
 		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) {
 			core.Define.rawDefineValue(com2.defines, "hxmc.target", Options.host());
-			var t = Mem.target();
+			var t = Platform.target();
 			if ((t == 7 || t == 8) && !core.Define.rawDefined(com2.defines, "hxmc.libc")) core.Define.rawDefineValue(com2.defines, "hxmc.libc", "glibc");
 		}
 	}
@@ -374,7 +375,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	var nDelivered = 0;
 
-	public function doReuse(ctx:macros.eval.EvalContext.Context, api:CompilerApi, args:Array<String>):Void {
+	@:hxmc.unsafe(gc) public function doReuse(ctx:macros.eval.EvalContext.Context, api:CompilerApi, args:Array<String>):Void {
 		hadError = false;
 		this.api = api;
 		this.args = args;
@@ -431,7 +432,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	public function setApi(ctx:macros.eval.EvalContext.Context, api:CompilerApi):Void
 		this.api = api;
 
-	public function callPath(ctx:macros.eval.EvalContext.Context, path:Array<String>, f:String, vl:Array<macros.eval.EvalValue.Value>, api:CompilerApi):haxe.ds.Option<macros.eval.EvalValue.Value> {
+	@:hxmc.unsafe(gc) public function callPath(ctx:macros.eval.EvalContext.Context, path:Array<String>, f:String, vl:Array<macros.eval.EvalValue.Value>, api:CompilerApi):haxe.ds.Option<macros.eval.EvalValue.Value> {
 		if (hadError) return None;
 		var prev = this.api;
 		this.api = api;
@@ -533,7 +534,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		}
 	}
 
-	function entry(path:Array<String>, f:String):{fi:FuncInfo, desc:Ptr} {
+	@:hxmc.unsafe(gc) function entry(path:Array<String>, f:String):{fi:FuncInfo, desc:Ptr} {
 		var key = path.join(".") + "." + f;
 		var e = entries.get(key);
 		if (e != null) return e;
@@ -702,7 +703,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	}
 
 	// the functions lowered since the last step: a bundle, loaded
-	function step(main:Null<TClass>) {
+	@:hxmc.unsafe(gc) function step(main:Null<TClass>) {
 		steps++;
 		var prog = l.prog;
 		phase("step start");
@@ -867,7 +868,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 	// (with its generation's latest step: each step's Prep numbers the
 	// program's types again, in its objects), loaded (Loader.loadLate) and
 	// desc made its descriptor
-	function compileLazy(k:Int, desc:Ptr, regs:Ptr) {
+	@:hxmc.unsafe(gc) function compileLazy(k:Int, desc:Ptr, regs:Ptr) {
 		var t0 = haxe.Timer.stamp();
 		var p = lazies[k];
 		var f = p.f;
@@ -931,7 +932,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 
 	// a macro function called with the compiler's values: its arguments as
 	// the interpreter's words (hxmc.rt.Interp.enter), its result back
-	function call(fi:FuncInfo, desc:Ptr, args:Array<Dynamic>, api:CompilerApi):Dynamic {
+	@:hxmc.unsafe(gc) function call(fi:FuncInfo, desc:Ptr, args:Array<Dynamic>, api:CompilerApi):Dynamic {
 		var n = fi.args.length;
 		// (the macro function's site: the macro call's position, as
 		// EvalMain.callPath's frame has it; before the addresses are written,

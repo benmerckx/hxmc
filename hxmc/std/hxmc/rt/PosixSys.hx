@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.LibC;
@@ -19,13 +20,13 @@ import hxmc.rt.PosixApi;
 // runtime's scheduler (rt_wait_fd, safe regions: Threads.hx).
 class PosixSys {
 	static inline function mac():Bool
-		return Mem.os() == 1;
+		return Platform.os() == 1;
 
 	// macOS x86-64: the 64-bit-inode variants of stat and readdir (as its headers name them)
 	static inline function inode64():Bool
-		return Mem.target() == 2;
+		return Platform.target() == 2;
 
-	static inline function threads():Int
+	@:hxmc.unsafe(gc) static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
 	@:hxmc.kernel static function errno():Int
@@ -38,10 +39,10 @@ class PosixSys {
 		return mac() ? 35 : 11;
 
 	// a malloc'ed UTF-8 copy of s
-	static inline function cstr(s:String):Ptr
+	@:hxmc.unsafe(gc) static inline function cstr(s:String):Ptr
 		return Str.toUtf8(s);
 
-	static inline function ofC(p:Ptr):String
+	@:hxmc.unsafe(gc) static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
 
 	@:hxmc.unsafe static function writeAll(fd:Int, p:Ptr, n:Int) {
@@ -56,7 +57,7 @@ class PosixSys {
 		}
 	}
 
-	static function printTo(fd:Int, s:String)
+	@:hxmc.unsafe(gc) static function printTo(fd:Int, s:String)
 		SysCore.printTo(fd, s);
 
 	public static function print(s:String):Void
@@ -66,33 +67,33 @@ class PosixSys {
 		printTo(2, s);
 
 	// an Array<String> of n C strings
-	static function strArray(v:Ptr, n:Int):Array<String> {
+	@:hxmc.unsafe(gc) static function strArray(v:Ptr, n:Int):Array<String> {
 		var a:Array<String> = [];
 		for (i in 0...n)
 			a.push(ofC(Mem.getPtr(v, 8 * i)));
 		return a;
 	}
 
-	static inline function argc():Int
+	@:hxmc.unsafe(gc) static inline function argc():Int
 		return Mem.getI32(Mem.sym("rt_argc"), 0);
 
-	static inline function argv():Ptr
+	@:hxmc.unsafe(gc) static inline function argv():Ptr
 		return Mem.getPtr(Mem.sym("rt_argv"), 0);
 
-	public static function args():Array<String>
+	@:hxmc.unsafe(gc) public static function args():Array<String>
 		return strArray(argv().add(8), argc() > 0 ? argc() - 1 : 0);
 
-	public static function argv0():String
+	@:hxmc.unsafe(gc) public static function argv0():String
 		return argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : null;
 
-	public static function getEnv(s:String):String {
+	@:hxmc.unsafe(gc) public static function getEnv(s:String):String {
 		var n = cstr(s);
 		var v = Posix.getenv(n);
 		LibC.free(n);
 		return v.isNull() ? null : ofC(v);
 	}
 
-	public static function putEnv(s:String, v:String):Void {
+	@:hxmc.unsafe(gc) public static function putEnv(s:String, v:String):Void {
 		var n = cstr(s);
 		if (!Str.isNull(v)) {
 			var u = cstr(v);
@@ -104,9 +105,9 @@ class PosixSys {
 
 	// the address of the C library's environ
 	@:hxmc.unsafe static function environAddr():Ptr
-		return mac() ? Posix._NSGetEnviron() : Mem.target() >= 9 ? Start.environ : Mem.sym("environ");
+		return mac() ? Posix._NSGetEnviron() : Platform.target() >= 9 ? Start.environ : Mem.sym("environ");
 
-	public static function environ():Array<String> {
+	@:hxmc.unsafe(gc) public static function environ():Array<String> {
 		var env = Mem.getPtr(environAddr(), 0);
 		var n = 0;
 		while (!Mem.getPtr(env, 8 * n).isNull())
@@ -115,7 +116,7 @@ class PosixSys {
 	}
 
 	// with other threads, sleeping lets them run (rt_sleep)
-	public static function sleep(seconds:Float):Void {
+	@:hxmc.unsafe(gc) public static function sleep(seconds:Float):Void {
 		if (threads() > 1) {
 			Rt.rt_sleep(seconds); // 0: give way to the other runnable threads
 			return;
@@ -129,7 +130,7 @@ class PosixSys {
 		while (Posix.nanosleep(t, t) != 0 && errno() == EINTR) {}
 	}
 
-	public static function getCwd():String {
+	@:hxmc.unsafe(gc) public static function getCwd():String {
 		var buf = Mem.stack(4104);
 		if (Posix.getcwd(buf, 4096).isNull()) Rt.rt_throw("getCwd failed");
 		var n = LibC.strlen(buf).toInt();
@@ -140,7 +141,7 @@ class PosixSys {
 		return ofC(buf);
 	}
 
-	public static function setCwd(s:String):Bool {
+	@:hxmc.unsafe(gc) public static function setCwd(s:String):Bool {
 		var n = cstr(s);
 		var r = Posix.chdir(n);
 		LibC.free(n);
@@ -161,7 +162,7 @@ class PosixSys {
 		return -1;
 	}
 
-	public static function command(cmd:String):Int {
+	@:hxmc.unsafe(gc) public static function command(cmd:String):Int {
 		var c = cstr(cmd);
 		Posix.fflush(Ptr.nil());
 		var region = Leaf.rt_blocking_enter();
@@ -177,11 +178,11 @@ class PosixSys {
 	public static function commandArgs(cmd:String, args:Array<String>):Int
 		return -2;
 
-	public static function exit(code:Int):Void {
+	@:hxmc.unsafe(gc) public static function exit(code:Int):Void {
 		Posix.fflush(Ptr.nil());
 		// (Android: the process ends without the other libraries' destructors,
 		// which the system's threads, EGL's among them, may still need)
-		if (Mem.target() >= 9) Os.exit(code) else Posix.exit(code);
+		if (Platform.target() >= 9) Os.exit(code) else Posix.exit(code);
 	}
 
 	@:hxmc.kernel public static function time():Float {
@@ -197,7 +198,7 @@ class PosixSys {
 		return c / 1e6;
 	}
 
-	public static function programPath():String {
+	@:hxmc.unsafe(gc) public static function programPath():String {
 		var buf = Mem.stack(4104);
 		if (mac()) {
 			// the executable's path as dyld loaded it (argv[0] may be a bare
@@ -241,7 +242,7 @@ class PosixSys {
 
 	// struct termios: c_lflag at 12 (4 bytes) on Linux, at 24 (8) on macOS;
 	// ICANON 2 / 0x100, ECHO 8 on both; TCSANOW 0
-	public static function getChar(echo:Bool):Int {
+	@:hxmc.unsafe(gc) public static function getChar(echo:Bool):Int {
 		var old = Mem.stack(128), raw = Mem.stack(128);
 		var tty = Posix.isatty(0) != 0 && Posix.tcgetattr(0, old) == 0;
 		if (tty) {
@@ -300,7 +301,7 @@ class PosixSys {
 		return Rt.rt_wait_fd(fd, write, -1);
 	}
 
-	public static function fileOpen(path:String, mode:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileOpen(path:String, mode:Int):Int {
 		var flags = switch mode {
 			case 0: 0; // O_RDONLY
 			case 1: 1 | oCreat() | oTrunc(); // O_WRONLY
@@ -362,10 +363,10 @@ class PosixSys {
 	static inline function statSize():Int
 		return 144;
 
-	static inline function stMode(st:Ptr):Int
-		return mac() ? Mem.getU16(st, 4) : Mem.arm() ? Mem.getI32(st, 16) : Mem.getI32(st, 24);
+	@:hxmc.unsafe(gc) static inline function stMode(st:Ptr):Int
+		return mac() ? Mem.getU16(st, 4) : Platform.arm() ? Mem.getI32(st, 16) : Mem.getI32(st, 24);
 
-	static inline function stSize(st:Ptr):I64
+	@:hxmc.unsafe(gc) static inline function stSize(st:Ptr):I64
 		return mac() ? Mem.getI64(st, 96) : Mem.getI64(st, 48);
 
 	@:hxmc.unsafe static function doStat(p:Ptr, st:Ptr):Int
@@ -380,7 +381,7 @@ class PosixSys {
 	static inline function isDir(mode:Int):Bool
 		return (mode & 0xF000) == 0x4000;
 
-	public static function fileContent(path:String):Dynamic {
+	@:hxmc.unsafe(gc) public static function fileContent(path:String):Dynamic {
 		var p = cstr(path);
 		var fd = Posix.open(p, oCloexec(), 0);
 		LibC.free(p);
@@ -412,7 +413,7 @@ class PosixSys {
 		return b;
 	}
 
-	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
+	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = cstr(path);
 		var fd = Posix.open(p, 1 | oCreat() | oCloexec() | (append ? oAppend() : oTrunc()), 438);
 		LibC.free(p);
@@ -423,7 +424,7 @@ class PosixSys {
 	@:hxmc.unsafe static function saveAll(fd:Int, d:Ptr, n:Int):Bool
 		return SysCore.saveAll(fd, d, n);
 
-	public static function exists(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function exists(path:String):Bool {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st) == 0;
@@ -431,7 +432,7 @@ class PosixSys {
 		return r;
 	}
 
-	public static function isDirectory(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function isDirectory(path:String):Bool {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st) == 0 && isDir(stMode(st));
@@ -439,28 +440,28 @@ class PosixSys {
 		return r;
 	}
 
-	public static function createDirectory(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function createDirectory(path:String):Bool {
 		var p = cstr(path);
 		var r = Posix.mkdir(p, 511) == 0; // 0777
 		LibC.free(p);
 		return r;
 	}
 
-	public static function deleteFile(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function deleteFile(path:String):Bool {
 		var p = cstr(path);
 		var r = Posix.unlink(p) == 0;
 		LibC.free(p);
 		return r;
 	}
 
-	public static function deleteDirectory(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function deleteDirectory(path:String):Bool {
 		var p = cstr(path);
 		var r = Posix.rmdir(p) == 0;
 		LibC.free(p);
 		return r;
 	}
 
-	public static function rename(path:String, newPath:String):Bool {
+	@:hxmc.unsafe(gc) public static function rename(path:String, newPath:String):Bool {
 		var a = cstr(path), b = cstr(newPath);
 		var r = Posix.rename(a, b) == 0;
 		LibC.free(a);
@@ -469,7 +470,7 @@ class PosixSys {
 	}
 
 	// struct dirent: d_name at 19 (Linux), 21 (macOS, 64-bit inodes)
-	public static function readDirectory(path:String):Array<String> {
+	@:hxmc.unsafe(gc) public static function readDirectory(path:String):Array<String> {
 		var p = cstr(path);
 		var d = inode64() ? Posix.opendirInode64(p) : Posix.opendir(p);
 		LibC.free(p);
@@ -487,7 +488,7 @@ class PosixSys {
 		return names;
 	}
 
-	public static function fullPath(path:String):String {
+	@:hxmc.unsafe(gc) public static function fullPath(path:String):String {
 		var p = cstr(path);
 		var buf = Mem.stack(4104);
 		var r = mac() ? Posix.realpathExtsn(p, buf) : Posix.realpath(p, buf);
@@ -500,7 +501,7 @@ class PosixSys {
 		return fullPath(path);
 
 	// gid uid atime mtime ctime dev ino nlink rdev size mode
-	public static function stat(path:String):Array<Float> {
+	@:hxmc.unsafe(gc) public static function stat(path:String):Array<Float> {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st);
@@ -515,7 +516,7 @@ class PosixSys {
 				u(Mem.getI32(st, 20)), u(Mem.getI32(st, 16)), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 48)), f(Mem.getI64(st, 64)), u(Mem.getI32(st, 0)),
 				f(Mem.getI64(st, 8)), Mem.getU16(st, 6), u(Mem.getI32(st, 24)), f(Mem.getI64(st, 96)), Mem.getU16(st, 4)
 			];
-		if (Mem.arm())
+		if (Platform.arm())
 			return [
 				u(Mem.getI32(st, 28)), u(Mem.getI32(st, 24)), f(Mem.getI64(st, 72)), f(Mem.getI64(st, 88)), f(Mem.getI64(st, 104)), f(Mem.getI64(st, 0)),
 				f(Mem.getI64(st, 8)), u(Mem.getI32(st, 20)), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 48)), u(Mem.getI32(st, 16))
@@ -530,7 +531,7 @@ class PosixSys {
 	// each: at 72, 88, 104 on Linux (musl, glibc and Bionic; x86-64 and
 	// arm64), at 32, 48, 64 on macOS (its 64-bit-inode struct stat), as the
 	// headers give them
-	public static function statTimes(path:String):Array<Float> {
+	@:hxmc.unsafe(gc) public static function statTimes(path:String):Array<Float> {
 		var p = cstr(path);
 		var st = Mem.stack(256);
 		var r = doStat(p, st);
@@ -548,7 +549,7 @@ class PosixSys {
 
 	// ---- processes
 
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
+	@:hxmc.unsafe(gc) public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
 		if (!Str.isNull(cwd) && !isDirectory(cwd)) Rt.rt_throw("Process creation failure");
 		// argv, the directory and the environment in malloc'ed C strings before forking
 		var n = Str.isNull(args) ? 0 : args.length;
@@ -663,7 +664,7 @@ class PosixSys {
 	}
 
 	// OS threads: waits in a safe region; WNOHANG 1
-	public static function processWait(pid:Int, block:Bool):Int {
+	@:hxmc.unsafe(gc) public static function processWait(pid:Int, block:Bool):Int {
 		var st = Mem.stack(8);
 		while (true) {
 			var region = Leaf.rt_blocking_enter();

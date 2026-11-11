@@ -34,12 +34,12 @@ class NArray {
 	}
 
 	// (a wrapper's: in its header too)
-	static inline function lengthOf(a:Dynamic):Int
+	@:hxmc.unsafe(gc) static inline function lengthOf(a:Dynamic):Int
 		return Mem.getI32(Mem.addr(a), -4);
 
 	// the empty array of kind k (MirBuild.EMPTY_ARRAY, which DataGen defines
 	// where it is referred to)
-	public static inline function empty(k:Int):Dynamic
+	@:hxmc.unsafe(gc) public static inline function empty(k:Int):Dynamic
 		return Mem.obj((switch k {
 			case AK_I32: Mem.sym("hxmc$narray_empty$1");
 			case AK_F64: Mem.sym("hxmc$narray_empty$2");
@@ -50,7 +50,7 @@ class NArray {
 		}).add(8));
 
 	// the storage of a: a itself, unless a wrapper
-	static inline function storage(a:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) static inline function storage(a:Dynamic):Dynamic {
 		var k = kindOf(a);
 		return k == AK_OPEN || k == AK_WRAP ? Mem.getRef(Mem.addr(a), 0) : a;
 	}
@@ -61,10 +61,10 @@ class NArray {
 	@:hxmc.export("hx_narray_new_n") public static function alloc(k:Int, n:Int):Dynamic
 		return n == 0 ? empty(k) : make(k, n);
 
-	public static inline function make(k:Int, n:Int):Dynamic
+	@:hxmc.unsafe(gc) public static inline function make(k:Int, n:Int):Dynamic
 		return Mem.allocArray(naType(k), n, k >= AK_BOOL ? (n + 7) >> 3 : k == AK_I32 ? (n + 1) >> 1 : n);
 
-	@:hxmc.host("hx_narray_open") static function open(n:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_narray_open") static function open(n:Int):Dynamic {
 		if (n < 0 || n > 0x0FFFFFFD) badLength();
 		if (n == 0) return alloc(AK_PTR, 0);
 		var s = alloc(AK_PTR, n);
@@ -74,7 +74,7 @@ class NArray {
 		return w;
 	}
 
-	@:hxmc.host("hxmc_NativeArray_copy") static function copy(a:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("hxmc_NativeArray_copy") static function copy(a:Dynamic):Dynamic {
 		if (lengthOf(a) == 0) return a;
 		if (kindOf(a) != AK_OPEN) return copyStorage(storage(a));
 		// (an open wrapper's copy is open too)
@@ -85,7 +85,7 @@ class NArray {
 		return w;
 	}
 
-	static function copyStorage(a:Dynamic):Dynamic {
+	@:hxmc.unsafe(gc) static function copyStorage(a:Dynamic):Dynamic {
 		var words = nslots(a);
 		var result = Mem.allocArrayRaw(tindex(a), lengthOf(a), words);
 		LibC.memcpy(Mem.addr(result), Mem.addr(a), (words : I64) * 8);
@@ -95,7 +95,7 @@ class NArray {
 
 	// the storage of the Array a, which move takes as any NativeArray
 	// (hxmc.NativeArray.fromArray, toArray)
-	public static inline function ofArray(a:Dynamic):Dynamic
+	@:hxmc.unsafe(gc) public static inline function ofArray(a:Dynamic):Dynamic
 		return Mem.getRef(Mem.addr(a), 8);
 
 	// hxmc.NativeArray.blit (haxe.ds.Vector.blit; fromArray and toArray, with
@@ -143,7 +143,7 @@ class NArray {
 	}
 
 	// a (a NativeArray, or a Dynamic) taken by a typed view of kind k
-	@:hxmc.host("hx_narray_view") static function view(a:Dynamic, k:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_narray_view") static function view(a:Dynamic, k:Int):Dynamic {
 		if (a == null) return null;
 		// (most often storage of the kind already: one comparison)
 		var t = tindex(a);
@@ -179,7 +179,7 @@ class NArray {
 	@:hxmc.export("hx_narray_set_slow") static function setSlow(a:Dynamic, i:Int, value:Dynamic):Void
 		set(a, i, value);
 
-	@:hxmc.host("hx_narray_get") public static function get(a:Dynamic, i:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_narray_get") public static function get(a:Dynamic, i:Int):Dynamic {
 		var s = storage(a);
 		return switch kindOf(s) {
 			case AK_BOOL: (Mem.getU8At(Mem.addr(s), 0, i) != 0 : Dynamic);
@@ -191,7 +191,7 @@ class NArray {
 		}
 	}
 
-	@:hxmc.host("hx_narray_set") public static function set(a:Dynamic, i:Int, value:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_narray_set") public static function set(a:Dynamic, i:Int, value:Dynamic):Void {
 		var s = storage(a);
 		var kind = kindOf(s);
 		if (kind == AK_PTR) {

@@ -1,5 +1,6 @@
 package hxmc.java;
 
+import hxmc.Platform;
 import hxmc.unsafe.*;
 
 // The Java VM a program's Java calls go to (docs/interop.md, "Java (JNI)"):
@@ -42,8 +43,8 @@ class Jvm {
 		if (cp != null && !Lambda.exists(opts, o -> StringTools.startsWith(o, "-Djava.class.path="))) opts.push("-Djava.class.path=" + cp);
 		var path = lib != null ? lib : libjvm();
 		if (path == null) throw new JavaException("java.lang.UnsatisfiedLinkError", "no libjvm: set JAVA_HOME (or HXMC_LIBJVM)", "", null);
-		// (Linux's static mode loads no library: Mem.target() 0 and 1)
-		var err = Mem.target() <= 1 ? "Linux's static mode loads no library: build with -D hxmc.libc=glibc" : @:privateAccess hxmc.rt.JniKind.create(path, opts);
+		// (Linux's static mode loads no library: Platform.target() 0 and 1)
+		var err = Platform.target() <= 1 ? "Linux's static mode loads no library: build with -D hxmc.libc=glibc" : @:privateAccess hxmc.rt.JniKind.create(path, opts);
 		if (err != null) throw new JavaException("java.lang.UnsatisfiedLinkError", err, "", null);
 	}
 
@@ -54,20 +55,20 @@ class Jvm {
 	public static function libjvm():Null<String> {
 		var given = Sys.getEnv("HXMC_LIBJVM");
 		if (given != null && given != "") return given;
-		var ext = Mem.os() == 1 ? "dylib" : "so";
-		var arch = Mem.arm() ? "aarch64" : "amd64";
+		var ext = Platform.os() == 1 ? "dylib" : "so";
+		var arch = Platform.arm() ? "aarch64" : "amd64";
 		var homes = [];
 		for (v in ["JAVA_HOME", "JDK_HOME"]) {
 			var h = Sys.getEnv(v);
 			if (h != null && h != "") homes.push(h);
 		}
-		if (Mem.os() == 0) homes.push("/usr/lib/jvm/default-java");
+		if (Platform.os() == 0) homes.push("/usr/lib/jvm/default-java");
 		for (h in homes)
 			for (sub in ["lib/server", "jre/lib/server", 'jre/lib/$arch/server', "lib/client"]) {
 				var p = '$h/$sub/libjvm.$ext';
 				if (sys.FileSystem.exists(p)) return p;
 			}
-		return Mem.os() == 1 ? null : "libjvm.so";
+		return Platform.os() == 1 ? null : "libjvm.so";
 	}
 
 	// JNI_OnLoad's JVM (no Haxe code has run: the runtime starts here, its
@@ -80,7 +81,7 @@ class Jvm {
 	}
 
 	// an Android activity's JVM and class loader (its ANativeActivity)
-	public static function useActivity(activity:Ptr):Void {
+	@:hxmc.unsafe(gc) public static function useActivity(activity:Ptr):Void {
 		if (!@:privateAccess JavaException.available()) {
 			@:privateAccess JavaException.unavailable();
 			return;

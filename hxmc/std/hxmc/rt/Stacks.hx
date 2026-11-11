@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.ReadOnlySpan;
 import hxmc.Span;
@@ -36,6 +37,8 @@ class Stacks {
 	// neither walks no stack when it throws.
 	public static inline var EXCEPTION_STACKS = 1;
 	public static inline var STACKS = 2;
+	// functions compiled by LLVM on windows-x86_64 (StackTable.WIN64_LLVM: callerOf)
+	public static inline var WIN64_LLVM = 8;
 
 	@:hxmc.unsafe public static inline function flags():Int
 		return Mem.sym("hxmc_stack_flags").toI64().toInt();
@@ -136,6 +139,92 @@ class Stacks {
 		return true;
 	}
 
+	// the frame record of the caller of record f's function (ret: f's return
+	// address, into the caller): the rbp f's function saved, the caller's
+	// record where the caller keeps it there (the native code: push rbp, mov
+	// rbp, rsp). LLVM's Win64 prologue (windows-x86_64, -D hxmc.llvm) pushes
+	// rbp first too, but sets it below the other pushes and the frame, so its
+	// record is a constant of the function above its rbp: win64Delta, from the
+	// function's unwind information (0 for the native code's)
+	@:hxmc.unsafe static inline function callerOf(f:Ptr, ret:Ptr):Ptr {
+		var up = Mem.getPtr(f, 0);
+		return Platform.target() == 4 && (flags() & WIN64_LLVM) != 0 && !up.isNull() ? up.add(win64Delta(ret)) : up;
+	}
+
+	// the deltas by return address, one word each (the address shifted left 16
+	// bits, the delta below: a thread reads an entry whole), as `cache`
+	static var deltas:Ptr;
+
+	@:hxmc.unsafe static function win64Delta(ret:Ptr):Int {
+		if (deltas.isNull()) {
+			var c = LibC.malloc(8 * CACHE);
+			LibC.memset(c, 0, 8 * CACHE);
+			deltas = c;
+		}
+		var h = ((ret.toI64() >> 2).toInt() ^ (ret.toI64() >> 15).toInt()) & (CACHE - 1);
+		var e = Mem.getI64(deltas, 8 * h);
+		if ((e >>> 16) == ret.toI64()) return (e & 0xffff).toInt();
+		var d = unwindDelta(ret.add(-1));
+		if (d >= 0 && d < 0x10000) Mem.setI64(deltas, 8 * h, (ret.toI64() << 16) | d);
+		return d;
+	}
+
+	// UNWIND_INFO of the function at pc (RtlLookupFunctionEntry; chained
+	// information: its function's, whose prologue it is): its codes, the
+	// prologue's operations from the last, give each one's depth below the
+	// entry's stack pointer; the delta is from rbp (FrameOffset * 16 above the
+	// stack pointer where UWOP_SET_FPREG sets it) to the pushed rbp. 0 where
+	// rbp is no frame pointer or not pushed
+	@:hxmc.unsafe static function unwindDelta(pc:Ptr):Int {
+		if (Platform.target() != 4) return 0; // (RtlLookupFunctionEntry: windows-x86_64 only, linked nowhere else)
+		var imageBase = Mem.stack(8);
+		var rf = W.RtlLookupFunctionEntry(pc, imageBase, Ptr.nil());
+		if (rf.isNull()) return 0;
+		var b = Mem.getPtr(imageBase, 0);
+		var ui = b.add(Mem.getI32(rf, 8));
+		var guard = 0;
+		while ((Mem.getU8(ui, 0) >> 3) & 4 != 0 && guard++ < 8) // (UNW_FLAG_CHAININFO)
+			ui = b.add(Mem.getI32(ui, 4 + 2 * ((Mem.getU8(ui, 2) + 1) & ~1) + 8));
+		var n = Mem.getU8(ui, 2), fr = Mem.getU8(ui, 3);
+		if (fr & 15 != 5) return 0;
+		// (the slots of each code, its change of the depth: two passes, the total first)
+		var total = 0, before = 0, rbpAt = -1, fpAt = -1;
+		for (pass in 0...2) {
+			var k = 0;
+			while (k < n) {
+				var c = Mem.getU8(ui, 4 + 2 * k + 1);
+				var op = c & 15, info = c >> 4;
+				var slots = 1, change = 0;
+				switch op {
+					case 0: change = 8; // UWOP_PUSH_NONVOL
+					case 1: // UWOP_ALLOC_LARGE
+						if (info == 0) {
+							slots = 2;
+							change = Mem.getU16(ui, 4 + 2 * k + 2) * 8;
+						} else {
+							slots = 3;
+							change = Mem.getI32(ui, 4 + 2 * k + 2);
+						}
+					case 2: change = info * 8 + 8; // UWOP_ALLOC_SMALL
+					case 3: // UWOP_SET_FPREG
+					case 4 | 8: slots = 2; // UWOP_SAVE_NONVOL, UWOP_SAVE_XMM128
+					case 5 | 9: slots = 3; // (their _FAR forms)
+					case 6: // UWOP_EPILOG (version 2: not the prologue's)
+					case _: return 0; // (a machine frame, unknown codes)
+				}
+				if (pass == 1) {
+					var after = total - before;
+					if (op == 0 && info == 5) rbpAt = after;
+					if (op == 3) fpAt = after;
+				} else total += change;
+				if (pass == 1) before += change;
+				k += slots;
+			}
+		}
+		if (rbpAt < 0 || fpAt < 0) return 0;
+		return fpAt - rbpAt - 16 * (fr >> 4);
+	}
+
 	// the return addresses from frame record f up, at most max, into out,
 	// below `limit` (an address in a frame: the frames of the functions it
 	// calls are below it, the stack growing down; null: none); how many.
@@ -147,7 +236,7 @@ class Stacks {
 		var interp = !ic.isNull();
 		while (n < max && !f.isNull() && (f.toI64() & 7) == 0 && (limit.isNull() || f.ult(limit))) {
 			var ret = Mem.getPtr(f, 8);
-			var up = Mem.getPtr(f, 0);
+			var up = callerOf(f, ret);
 			if (limit.isNull()) {
 				// (the caller is a function of the table: its frame record is one)
 				if (!known(ret)) break;
@@ -254,7 +343,7 @@ class Stacks {
 
 	// the function, file and line of an interpreted frame, its code and the
 	// call it makes (null: none yet, its first line)
-	static function describeInterp(code:Ptr, call:Ptr):{name:Null<String>, file:Null<String>, line:Int} {
+	@:hxmc.unsafe(gc) static function describeInterp(code:Ptr, call:Ptr):{name:Null<String>, file:Null<String>, line:Int} {
 		var desc = code.add(-Interp.HEADER);
 		var off = Mem.getI32(desc, Interp.H_POSITIONS);
 		if (off == 0) return {name: null, file: null, line: 0};
@@ -265,7 +354,7 @@ class Stacks {
 	// format: the rows' count, each one's position, line and file's string,
 	// then the strings, the first the function's name; a row holds from its
 	// position to the next one's, the first from the start)
-	static function describeRows(t:Ptr, at:Int):{name:Null<String>, file:Null<String>, line:Int} {
+	@:hxmc.unsafe(gc) static function describeRows(t:Ptr, at:Int):{name:Null<String>, file:Null<String>, line:Int} {
 		var n = Mem.getI32(t, 0);
 		var strs = t.add(4 + 12 * n);
 		var name = interpStr(strs, 0);
@@ -292,7 +381,7 @@ class Stacks {
 	static var madeRoom = 0;
 
 	// (Loader) the function at [start, start + size), its lines (copied)
-	public static function addMade(start:Ptr, size:Int, lines:haxe.io.Bytes) {
+	@:hxmc.unsafe(gc) public static function addMade(start:Ptr, size:Int, lines:haxe.io.Bytes) {
 		var t = LibC.malloc(lines.length);
 		LibC.memcpy(t, Bytes.bytes(lines.getData()), (lines.length : I64));
 		if (madeCount == madeRoom) {
@@ -327,7 +416,7 @@ class Stacks {
 	}
 
 	// string k of a line table's strings (their count, then each one's byte length and bytes)
-	static function interpStr(strs:Ptr, k:Int):String {
+	@:hxmc.unsafe(gc) static function interpStr(strs:Ptr, k:Int):String {
 		var p = strs.add(4);
 		for (_ in 0...k)
 			p = p.add(4 + Mem.getI32(p, 0));
@@ -342,13 +431,13 @@ class Stacks {
 
 	// the stack here, from the caller of the function calling capture, as
 	// the bytes of its return addresses (8 each)
-	public static function capture():haxe.io.Bytes {
+	@:hxmc.unsafe(gc) public static function capture():haxe.io.Bytes {
 		var buf = Mem.stack(8 * MAX);
 		var n = walk(buf, MAX);
 		return ofAddresses(buf, n);
 	}
 
-	static function ofAddresses(p:Ptr, n:Int):haxe.io.Bytes {
+	@:hxmc.unsafe(gc) static function ofAddresses(p:Ptr, n:Int):haxe.io.Bytes {
 		var b = haxe.io.Bytes.alloc(8 * n);
 		copyInto(b.getData(), p, n);
 		return b;
@@ -418,7 +507,7 @@ class Stacks {
 	// block, or a function it calls: haxe.CallStack.exceptionStack,
 	// haxe.Exception.caught), its callers as they are now (the rest of the
 	// stack of the throw)
-	public static function lastThrow():haxe.io.Bytes {
+	@:hxmc.unsafe(gc) public static function lastThrow():haxe.io.Bytes {
 		if (thrown.isNull()) return haxe.io.Bytes.alloc(0);
 		var buf = Mem.stack(8 * MAX);
 		return ofAddresses(buf, lastThrowInto(buf));
@@ -432,7 +521,7 @@ class Stacks {
 		// (the catching function's record on the stack of this call: its frame is live)
 		var f = Mem.frame();
 		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(Mem.getPtr(f, 8)))
-			f = Mem.getPtr(f, 0);
+			f = callerOf(f, Mem.getPtr(f, 8));
 		if (f != top) return n;
 		return n + walkFrom(top, buf.add(8 * n), MAX - n, Ptr.nil(), thrownTopKind, thrownTopFrames);
 	}
@@ -468,7 +557,7 @@ class Stacks {
 		return table().add(Mem.getI32(table(), 16));
 
 	// the Haxe name of entry e's function (pack.Class.field), or null
-	public static function name(e:Ptr):Null<String> {
+	@:hxmc.unsafe(gc) public static function name(e:Ptr):Null<String> {
 		var owner = Mem.getI32(e, 8), rest = Mem.getI32(e, 12);
 		var field = 0;
 		if (rest != 0) {
@@ -480,7 +569,7 @@ class Stacks {
 		return field == 0 ? str(owner) : str(owner) + "." + str(field);
 	}
 
-	static function str(off:Int):String {
+	@:hxmc.unsafe(gc) static function str(off:Int):String {
 		var p = table().add(Mem.getI32(table(), 12) + off);
 		var n = LibC.strlen(p).toInt();
 		return Str.decode(Repr.octetsAt(p, n), 0, n);
@@ -515,7 +604,7 @@ class Stacks {
 
 	// the function, file and line of return address a (null: not a function
 	// of the table)
-	public static function describe(a:Ptr):Null<{name:Null<String>, file:Null<String>, line:Int}> {
+	@:hxmc.unsafe(gc) public static function describe(a:Ptr):Null<{name:Null<String>, file:Null<String>, line:Int}> {
 		var e = find(a.add(-1));
 		if (e.isNull()) {
 			var k = findMade(a.add(-1));
@@ -529,7 +618,7 @@ class Stacks {
 
 	// the frame of a stack's word w: a return address, or with w1, the word
 	// after it, an interpreted frame's two words (walkFrom)
-	static function describeWords(w:I64, w1:I64):Null<{name:Null<String>, file:Null<String>, line:Int}> {
+	@:hxmc.unsafe(gc) static function describeWords(w:I64, w1:I64):Null<{name:Null<String>, file:Null<String>, line:Int}> {
 		if (w >= (0 : I64)) return describe(Ptr.ofI64(w));
 		return describeInterp(Ptr.ofI64(w ^ interpTag()), Ptr.ofI64(w1));
 	}
@@ -568,7 +657,7 @@ class Stacks {
 	// the constructors of an object's class and its superclasses
 	// (pack.Class.new: the top frames of an exception's stack made in them,
 	// haxe.Exception.get_stack), from the runtime's types (no reflection)
-	public static function constructors(o:Dynamic):Array<String> {
+	@:hxmc.unsafe(gc) public static function constructors(o:Dynamic):Array<String> {
 		var r = [];
 		var t = Types.tindex(o);
 		while (t >= Types.T_FIRST) {
@@ -583,7 +672,7 @@ class Stacks {
 
 	// an uncaught exception's report (Start.throwValue): the frames of the
 	// throw, as haxe.CallStack.toString prints them, on stderr
-	@:hxmc.withStacks public static function report() {
+	@:hxmc.unsafe(gc) @:hxmc.withStacks public static function report() {
 		var buf = Mem.stack(8 * MAX);
 		var n = walk(buf, MAX);
 		var s = new StringBuf();
@@ -616,4 +705,8 @@ class Stacks {
 	var start:I64;
 	var end:I64;
 	var e:I64;
+}
+
+@:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class W {
+	static function RtlLookupFunctionEntry(pc:Ptr, imageBase:Ptr, history:Ptr):Ptr;
 }

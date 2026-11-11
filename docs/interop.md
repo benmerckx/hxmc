@@ -40,7 +40,7 @@ same for that function.
 | `@:hxmc.opaque` | a C type only ever behind a `Ptr` |
 | `@:hxmc.callback` | a static function C can call ([Callbacks](#callbacks)) |
 | `@:hxmc.export("name")` | a function exported under that name (shared libraries) |
-| `@:hxmc.unsafe` | a function that never touches the GC heap ([Unsafe code](#unsafe-code)) |
+| `@:hxmc.unsafe` | trusted code, where raw memory is allowed, that never touches the GC heap; `@:hxmc.unsafe(gc)`: trusted code that may ([Unsafe code](#unsafe-code)) |
 | `@:hxmc.safe` | a C function memory-safe given its typed parameters: safe kernels call it ([Typed bindings](#typed-bindings)) |
 | `@:hxmc.len(p, n)`, `@:hxmc.len(n)` | a span parameter passed by its address alone, its length the parameter `n` or at least the constant `n`; a span result of `n` elements ([Typed bindings](#typed-bindings)) |
 | `@:hxmc.handle`, `@:hxmc.handle(v)` | an abstract only C results and `@:hxmc.unsafe` code make, `v` its invalid value; `@:hxmc.close(p)` on a C function clears the handle it closes ([Handles](#handles)) |
@@ -184,7 +184,7 @@ position):
 | | Allowed | Rejected |
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
-| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, `@:hxmc.safe` C functions ([Typed bindings](#typed-bindings)), struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`; the target's constants `os`, `arm`, `target`, `platform`) | `Mem`'s other functions, `Atomic`, `Callback`, other C functions; methods, closures, structural fields |
+| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, `@:hxmc.safe` C functions ([Typed bindings](#typed-bindings)), struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`; the target's constants, `hxmc.Platform` and Mem's former names) | `Mem`'s other functions, `Atomic`, `Callback`, other C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast, and one to a proof (below) |
 | statics | reads; writes of plain values (below), a `@:hxmc.threadLocal` static's too | writes of a static of a GC or raw type |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
@@ -734,13 +734,60 @@ callback may run on any thread, including threads the runtime does not know.
 
 ### Unsafe code
 
-`@:hxmc.unsafe` marks a function that never touches the GC heap: no GC
-allocation, no call that may collect. The compiler checks this and names
-the culprit. Such functions get no shadow-stack frame or write barriers.
+Raw memory is only allowed in `@:hxmc.unsafe` code. Raw means:
+
+- a value of `hxmc.unsafe`'s types other than its C scalars: `Ptr`,
+  `BytesPtr`, `CString`, `Slice`, `Arena`, `IoBuffer`, and abstracts over
+  them (a local, an argument, a result, a field read);
+- a call of `Mem` (other than its functions of values: `ult`, `udiv`,
+  `urem`, the bit casts, the tag conversions of scalars), of `Atomic`,
+  `Blocking`, `Callback`, the raw types' own functions, and
+  `Linux.syscall`.
+
+A C function counts through its types: `Posix.close(fd)` or `LibC.rand()`
+is not raw, `LibC.malloc(n)` is (it returns a `Ptr`). Declaring C functions,
+struct fields or class fields of raw types is not a use; reading them is.
+`Span`, `ReadOnlySpan`, `@:hxmc.struct` values and `hxmc.Platform`'s
+constants are not raw.
+
+Two forms mark a function (or every function of a class) as trusted:
+
+| | |
+| --- | --- |
+| `@:hxmc.unsafe` | trusted and GC-free: no GC allocation, no call that may collect. The compiler checks this and names the culprit. Such functions get no shadow-stack frame, and may keep a heap address across calls |
+| `@:hxmc.unsafe(gc)` | trusted, and may collect: compiled as GC code (frames, write barriers), so a heap address (`Mem.addr`) must not be live across a GC point there either |
+
+An inline function's mark goes with the copies Haxe inlines, so a small
+trusted helper is trusted where it lands, and its callers stay checked.
+Each marked function is one place to audit; prefer small ones.
+
+```haxe
+@:hxmc.unsafe(gc) static function readAll(fd:Int):haxe.io.Bytes {
+  var buf = IoBuffer.alloc(4096);              // raw: needs the mark
+  var n = Posix.read(fd, buf.ptr, 4096);
+  var b = buf.getBytes(0, n.toInt());          // allocates: (gc)
+  buf.free();
+  return b;
+}
+```
+
+In hxmc's std a violation is an error. In a program's own code it is a
+warning, so existing code builds and the list is honest; `-D hxmc.strict`
+makes it an error:
+
+```
+Main.hx:9: Main.peek: a call of hxmc.unsafe.Mem.getI32 (raw memory needs @:hxmc.unsafe)
+```
+
+The check runs on the typed program before Haxe's filters (whatever was
+inlined counts at the call's position). A module the module cache or the
+compilation server reuses is not checked again: its warnings come back
+with it. `RawWarn`, `reject/RawStrict` and `reject/UnsafeGcAcross` check
+the rule.
 
 An address of a heap object (`Mem.addr`) is valid only until the next GC
 point. The compiler rejects one that is live across a GC point outside
-`@:hxmc.unsafe` code.
+GC-free `@:hxmc.unsafe` code.
 
 ### WebAssembly
 

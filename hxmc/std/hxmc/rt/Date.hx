@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.rt.Repr;
@@ -15,7 +16,7 @@ import hxmc.unsafe.Ptr;
 @:keep
 class Date {
 	static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	// toString, for Std.string of a value of any type (hxmc.rt.Dyn.stdString):
 	// set by `of`, which makes every date (a copy aside: Reflect.copy), so that
@@ -145,7 +146,7 @@ class Date {
 		return Repr.timezoneOffset(d);
 
 	// "%04d-%02d-%02d %02d:%02d:%02d" of the local time
-	@:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
 		var tm = Repr.dateFields(d);
 		var b = new StringBuf();
 		inline function pad(v:Int, w:Int) {

@@ -36,7 +36,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_box_int") static function boxInt(v:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_box_int") static function boxInt(v:Int):Dynamic {
 		if (v >= SMALL_MIN && v <= SMALL_MAX) return Mem.obj(smallInts.add(16 * (v - SMALL_MIN) + 8));
 		var b = Mem.allocRaw(1, T_BOXINT, K_OBJ);
 		Mem.setI64(Mem.addr(b), 0, 0);
@@ -44,13 +44,13 @@ class Boxes {
 		return b;
 	}
 
-	@:hxmc.export("hx_box_float") static function boxFloat(v:Float):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_box_float") static function boxFloat(v:Float):Dynamic {
 		var b = Mem.allocRaw(1, T_BOXFLOAT, K_OBJ);
 		Mem.setF64(Mem.addr(b), 0, v);
 		return b;
 	}
 
-	@:hxmc.export("hx_box_i64") static function boxI64(v:I64):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_box_i64") static function boxI64(v:I64):Dynamic {
 		if (v >= SMALL_MIN && v <= SMALL_MAX) return Mem.obj(smallI64s.add(16 * (v.toInt() - SMALL_MIN) + 8));
 		var b = Mem.allocRaw(1, T_BOXI64, K_OBJ);
 		Mem.setI64(Mem.addr(b), 0, v);
@@ -123,21 +123,21 @@ class Boxes {
 	// array's length zero; an array without room has the empty one of its
 	// kind (static data)
 
-	static inline function arrLen(a:Dynamic):Int
+	@:hxmc.unsafe(gc) static inline function arrLen(a:Dynamic):Int
 		return Mem.getI32(Mem.addr(a), 0);
 
-	static inline function arrKind(a:Dynamic):Int
+	@:hxmc.unsafe(gc) static inline function arrKind(a:Dynamic):Int
 		return Mem.getI32(Mem.addr(a), 4);
 
 	// the storage
-	static inline function arrStore(a:Dynamic):Ptr
+	@:hxmc.unsafe(gc) static inline function arrStore(a:Dynamic):Ptr
 		return Mem.getPtr(Mem.addr(a), 8);
 
 	// the first element
-	static inline function arrData(a:Dynamic):Ptr
+	@:hxmc.unsafe(gc) static inline function arrData(a:Dynamic):Ptr
 		return arrStore(a);
 
-	static inline function arrCap(a:Dynamic):Int
+	@:hxmc.unsafe(gc) static inline function arrCap(a:Dynamic):Int
 		return Mem.getI32(arrStore(a), -4);
 
 	// a capacity of at least n, filling the storage's last word
@@ -148,7 +148,7 @@ class Boxes {
 	static function dataAlloc(kind:Int, cap:Int):Dynamic
 		return cap < 1 ? NArray.empty(kind) : NArray.alloc(kind, cap);
 
-	@:hxmc.export("hx_arr_new_n") static function arrNewN(kind:Int, len:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_arr_new_n") static function arrNewN(kind:Int, len:Int):Dynamic {
 		var ws = kind == AK_BOOL ? (len + 7) >> 3 : kind == AK_I32 ? (len + 1) >> 1 : len;
 		if (len > 0 && ws <= 64) {
 			// small: the array and its storage in one allocation (one bump, no
@@ -186,7 +186,7 @@ class Boxes {
 	static function tooLong(need:Int):Void
 		throw "out of memory: an Array of " + (need < 0 ? "more than 2147483647" : Std.string(need)) + " elements is longer than the longest, " + MAX_CAP;
 
-	@:hxmc.host("hx_arr_grow") static function arrGrow(slot:Ptr, need:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_arr_grow") static function arrGrow(slot:Ptr, need:Int):Void {
 		var a:Dynamic = Mem.getRef(slot, 0);
 		var cap = arrCap(a);
 		if (need <= cap) return;
@@ -221,7 +221,7 @@ class Boxes {
 	@:hxmc.unsafe static function Gc_barrierRange(o:Dynamic, n:Int)
 		hxmc.rt.C.Leaf.rt_barrier_range(o, Mem.addr(o), n);
 
-	@:hxmc.host("hx_arr_to_ptr") static function arrToPtr(slot:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_arr_to_ptr") static function arrToPtr(slot:Ptr):Void {
 		var a:Dynamic = Mem.getRef(slot, 0);
 		if (arrKind(a) == AK_PTR) return;
 		var len = arrLen(a);
@@ -295,7 +295,7 @@ class Boxes {
 
 	// (an Array<T>'s element as a type parameter's word, Tagged: an Int's or
 	// a Float's encoded; a Bool's box static, an Int64's made)
-	@:hxmc.export("hx_aget_t_slow") static function agetT(a:Dynamic, i:Int):I64 {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_aget_t_slow") static function agetT(a:Dynamic, i:Int):I64 {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
 		return switch arrKind(a) {
 			case AK_I32: Tagged.ofInt(Mem.getI32At(arrData(a), 0, i));
@@ -306,7 +306,7 @@ class Boxes {
 		}
 	}
 
-	@:hxmc.export("hx_aget_p_slow") static function agetP(a:Dynamic, i:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_aget_p_slow") static function agetP(a:Dynamic, i:Int):Dynamic {
 		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return null;
 		return switch arrKind(a) {
 			case AK_I32: boxInt(Mem.getI32At(arrData(a), 0, i));
@@ -320,7 +320,7 @@ class Boxes {
 	// store v (of kind vk; AK_PTR: v is the address of a rooted slot) at i < length;
 	// a value the array's kind cannot hold (a Bool in an Int array, an Int in a
 	// Bool array) turns it into a reference array first
-	static function storeConv(slot:Ptr, i:Int, vk:Int, v:I64):Void {
+	@:hxmc.unsafe(gc) static function storeConv(slot:Ptr, i:Int, vk:Int, v:I64):Void {
 		var a:Dynamic = Mem.getRef(slot, 0);
 		var ak = arrKind(a);
 		if (ak == AK_PTR) {
@@ -366,7 +366,7 @@ class Boxes {
 			Mem.setI64At(d, 0, i, vk == AK_I32 ? (v.toInt() : I64) : v);
 	}
 
-	@:hxmc.export("hx_aset_slow") static function asetSlow(slot:Ptr, i:Int, vk:Int, v:I64):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_aset_slow") static function asetSlow(slot:Ptr, i:Int, vk:Int, v:I64):Void {
 		if (i < 0) return;
 		var a:Dynamic = Mem.getRef(slot, 0);
 		if (!Mem.ult(i, arrLen(a))) {
@@ -383,7 +383,7 @@ class Boxes {
 	// in one go (twice the capacity, at least 2, as arrGrow) and stores
 	// directly; the others, and an array changed at the allocation, take
 	// pushConv
-	@:hxmc.export("hx_apush_slow") static function apushSlow(slot:Ptr, vk:Int, v:I64):Int {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_apush_slow") static function apushSlow(slot:Ptr, vk:Int, v:I64):Int {
 		var a:Dynamic = Mem.getRef(slot, 0);
 		var k = arrKind(a);
 		if (k != vk) return pushConv(slot, vk, v);
@@ -411,16 +411,16 @@ class Boxes {
 		return n;
 	}
 
-	static inline function setLen(a:Dynamic, n:Int)
+	@:hxmc.unsafe(gc) static inline function setLen(a:Dynamic, n:Int)
 		Mem.setI32(Mem.addr(a), 0, n);
 
 	// v (of the array's kind k) stored at i in the storage s
-	static inline function storeKind(s:Ptr, i:Int, k:Int, v:I64) {
+	@:hxmc.unsafe(gc) static inline function storeKind(s:Ptr, i:Int, k:Int, v:I64) {
 		if (k == AK_PTR) Mem.setRefBarrier(Mem.obj(s), 8 * i, Mem.getRef(new Ptr(v), 0)) else if (k == AK_I32) Mem.setI32At(s, 0, i, v.toInt()) else if (k == AK_BOOL)
 			Mem.setU8At(s, 0, i, v.toInt()) else Mem.setI64At(s, 0, i, v);
 	}
 
-	static function pushConv(slot:Ptr, vk:Int, v:I64):Int {
+	@:hxmc.unsafe(gc) static function pushConv(slot:Ptr, vk:Int, v:I64):Int {
 		var a:Dynamic = Mem.getRef(slot, 0);
 		var n = arrLen(a);
 		while (n >= arrCap(a)) {

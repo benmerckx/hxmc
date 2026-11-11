@@ -23,10 +23,10 @@ class WasiSys {
 	static inline function a32(p:Ptr):Int
 		return Wasi.a32(p);
 
-	static inline function cstr(s:String):Ptr
+	@:hxmc.unsafe(gc) static inline function cstr(s:String):Ptr
 		return Str.toUtf8(s);
 
-	static inline function ofC(p:Ptr):String
+	@:hxmc.unsafe(gc) static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, Heap.strlen(p).toInt());
 
 	static function unsupported(what:String):Dynamic {
@@ -40,17 +40,17 @@ class WasiSys {
 	public static function printErr(s:String):Void
 		Wasi.writeStr(2, Str.orNull(s));
 
-	public static function args():Array<String> {
+	@:hxmc.unsafe(gc) public static function args():Array<String> {
 		var a:Array<String> = [];
 		for (i in 1...Wasi.argCount())
 			a.push(ofC(Wasi.arg(i)));
 		return a;
 	}
 
-	public static function argv0():String
+	@:hxmc.unsafe(gc) public static function argv0():String
 		return Wasi.argCount() > 0 ? ofC(Wasi.arg(0)) : null;
 
-	public static function getEnv(s:String):String {
+	@:hxmc.unsafe(gc) public static function getEnv(s:String):String {
 		var n = cstr(s);
 		var v = Wasi.getenv(n);
 		Heap.free(n);
@@ -58,7 +58,7 @@ class WasiSys {
 	}
 
 	// a new environment block without `s`, and with s=v
-	public static function putEnv(s:String, v:String):Void {
+	@:hxmc.unsafe(gc) public static function putEnv(s:String, v:String):Void {
 		var n = cstr(s);
 		var len = Heap.strlen(n).toInt();
 		var count = Wasi.envCount();
@@ -85,14 +85,14 @@ class WasiSys {
 		Wasi.setEnvBlock(e, k);
 	}
 
-	public static function environ():Array<String> {
+	@:hxmc.unsafe(gc) public static function environ():Array<String> {
 		var a:Array<String> = [];
 		for (i in 0...Wasi.envCount())
 			a.push(ofC(Wasi.envAt(i)));
 		return a;
 	}
 
-	public static function sleep(seconds:Float):Void {
+	@:hxmc.unsafe(gc) public static function sleep(seconds:Float):Void {
 		if (seconds <= 0) return;
 		// one clock subscription (monotonic, relative)
 		var sub = Mem.stack(48), ev = Mem.stack(32), n = Mem.stack(8);
@@ -103,14 +103,14 @@ class WasiSys {
 		WasiApi.poll_oneoff(a32(sub), a32(ev), 1, a32(n));
 	}
 
-	public static function getCwd():String {
+	@:hxmc.unsafe(gc) public static function getCwd():String {
 		var c = Wasi.getCwd();
 		if (c.isNull()) return "./";
 		var s = ofC(c);
 		return s.length > 0 && s.charCodeAt(s.length - 1) == "/".code ? s : s + "/";
 	}
 
-	public static function setCwd(s:String):Bool {
+	@:hxmc.unsafe(gc) public static function setCwd(s:String):Bool {
 		if (!isDirectory(s)) return false;
 		var p = cstr(s);
 		var a = Wasi.absolute(p);
@@ -153,7 +153,7 @@ class WasiSys {
 	public static function programPath():String
 		return argv0() == null ? "" : argv0();
 
-	public static function getChar(echo:Bool):Int {
+	@:hxmc.unsafe(gc) public static function getChar(echo:Bool):Int {
 		var c = Mem.stack(16);
 		Mem.setI32(c, 4, a32(c.add(12)));
 		Mem.setI32(c, 8, 1);
@@ -209,7 +209,7 @@ class WasiSys {
 
 	// ---- files
 
-	public static function fileOpen(path:String, mode:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileOpen(path:String, mode:Int):Int {
 		// oflags: CREAT 1, TRUNC 8; fdflags: APPEND 1
 		var oflags = 0, fdflags = 0;
 		switch mode {
@@ -250,13 +250,13 @@ class WasiSys {
 		return nf == fl || WasiCalls.fd_fdstat_set_flags(fd, nf) == 0;
 	}
 
-	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (fd == 0) Wasi.flush();
 		return rw(false, fd, Bytes.bytes(b).add(pos), len);
 	}
 
-	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (fd == 1 || fd == 2) {
 			Wasi.write(fd, Bytes.bytes(b).add(pos), len);
@@ -274,7 +274,7 @@ class WasiSys {
 		WasiCalls.fd_close(fd);
 	}
 
-	public static function fileSeek(fd:Int, p:Int, whence:Int):Void {
+	@:hxmc.unsafe(gc) public static function fileSeek(fd:Int, p:Int, whence:Int):Void {
 		var out = Mem.stack(8);
 		if (WasiApi.fd_seek(fd, p, whence < 0 || whence > 2 ? 0 : whence, a32(out)) != 0) Rt.rt_throw("seek failed");
 	}
@@ -285,7 +285,7 @@ class WasiSys {
 		return out[0].toInt();
 	}
 
-	public static function fileContent(path:String):Dynamic {
+	@:hxmc.unsafe(gc) public static function fileContent(path:String):Dynamic {
 		var p = cstr(path);
 		var fd = open(p, 0, 0, 1);
 		Heap.free(p);
@@ -315,7 +315,7 @@ class WasiSys {
 		return b;
 	}
 
-	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
+	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = cstr(path);
 		var fd = open(p, append ? 1 : 1 | 8, append ? 1 : 0, 2);
 		Heap.free(p);
@@ -327,7 +327,7 @@ class WasiSys {
 		return SysCore.saveAll(fd, d, n);
 
 	// the file type of a path (filestat.filetype: 3 directory, 4 regular file), -1: none
-	static function fileType(path:String):Int {
+	@:hxmc.unsafe(gc) static function fileType(path:String):Int {
 		var p = cstr(path);
 		var st = Mem.stack(64);
 		var r = pathOp(p, 0, st);
@@ -343,7 +343,7 @@ class WasiSys {
 	public static function isDirectory(path:String):Bool
 		return fileType(path) == 3;
 
-	static function simple(path:String, op:Int):Bool {
+	@:hxmc.unsafe(gc) static function simple(path:String, op:Int):Bool {
 		var p = cstr(path);
 		var r = pathOp(p, op, Ptr.nil());
 		Heap.free(p);
@@ -359,7 +359,7 @@ class WasiSys {
 	public static function deleteDirectory(path:String):Bool
 		return simple(path, 3);
 
-	public static function rename(path:String, newPath:String):Bool {
+	@:hxmc.unsafe(gc) public static function rename(path:String, newPath:String):Bool {
 		var p = cstr(path), q = cstr(newPath);
 		var a = Wasi.absolute(p), b = Wasi.absolute(q);
 		Heap.free(p);
@@ -376,7 +376,7 @@ class WasiSys {
 		return ok;
 	}
 
-	public static function readDirectory(path:String):Array<String> {
+	@:hxmc.unsafe(gc) public static function readDirectory(path:String):Array<String> {
 		var p = cstr(path);
 		var fd = open(p, 2, 0, 1); // O_DIRECTORY
 		Heap.free(p);
@@ -416,7 +416,7 @@ class WasiSys {
 	}
 
 	// the absolute normalized path (no symbolic links resolved)
-	public static function fullPath(path:String):String {
+	@:hxmc.unsafe(gc) public static function fullPath(path:String):String {
 		if (!exists(path)) return null;
 		var p = cstr(path);
 		var a = Wasi.absolute(p);
@@ -430,7 +430,7 @@ class WasiSys {
 		return fullPath(path);
 
 	// gid uid atime mtime ctime dev ino nlink rdev size mode
-	public static function stat(path:String):Array<Float> {
+	@:hxmc.unsafe(gc) public static function stat(path:String):Array<Float> {
 		var p = cstr(path);
 		var st = Mem.stack(64);
 		var r = pathOp(p, 0, st);
@@ -447,7 +447,7 @@ class WasiSys {
 	}
 
 	// filestat's atim, mtim, ctim: nanoseconds; size at 32
-	public static function statTimes(path:String):Array<Float> {
+	@:hxmc.unsafe(gc) public static function statTimes(path:String):Array<Float> {
 		var p = cstr(path);
 		var st = Mem.stack(64);
 		var r = pathOp(p, 0, st);

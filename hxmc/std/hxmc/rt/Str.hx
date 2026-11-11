@@ -39,7 +39,7 @@ class Str {
 
 	// ---- representation (hxmc.rt.Repr)
 
-	public static inline function isNull(o:Dynamic):Bool
+	@:hxmc.unsafe(gc) public static inline function isNull(o:Dynamic):Bool
 		return Repr.isNull(o);
 
 	public static inline function len(s:String):Int
@@ -54,14 +54,14 @@ class Str {
 
 	// the units of a one-byte string (chars1), a two-byte one (chars2) (in
 	// linear memory the address of unit 0: valid until the next GC point)
-	public static inline function chars1(s:String):Chars1
+	@:hxmc.unsafe(gc) public static inline function chars1(s:String):Chars1
 		return Repr.chars1(s);
 
-	public static inline function chars2(s:String):Chars
+	@:hxmc.unsafe(gc) public static inline function chars2(s:String):Chars
 		return Repr.chars2(s);
 
 	// linear memory's: the address of unit 0, after the length (valid until the next GC point)
-	public static inline function unitsAddr(s:String):Ptr
+	@:hxmc.unsafe(gc) public static inline function unitsAddr(s:String):Ptr
 		return Mem.addr(s).add(4);
 
 	// a string of `n` units, not yet written: one-byte (make1: each unit
@@ -73,7 +73,7 @@ class Str {
 		return Repr.make2(n);
 
 	// the units [pos, pos + n) of s as a new string (one-byte where they fit)
-	static function range(s:String, pos:Int, n:Int):String {
+	@:hxmc.unsafe(gc) static function range(s:String, pos:Int, n:Int):String {
 		if (isOne(s)) {
 			var r = make1(n);
 			Repr.copyFrom1(chars1(r), chars1(s), pos, n);
@@ -94,17 +94,17 @@ class Str {
 
 	// ---- C strings
 
-	@:hxmc.host("hx_str_of_ascii") static function ofAscii(c:Ptr):String
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_ascii") static function ofAscii(c:Ptr):String
 		return ofBytes(c, LibC.strlen(c).toInt());
 
 	// bytes [p, p + n) (outside the heap) as a string, a unit each
-	static function ofBytes(p:Ptr, n:Int):String {
+	@:hxmc.unsafe(gc) static function ofBytes(p:Ptr, n:Int):String {
 		var s = make1(n);
 		if (n > 0) LibC.memcpy(chars1(s), p, (n : I64));
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_utf8") public static function ofUtf8(c:Ptr, n:Int):String
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_utf8") public static function ofUtf8(c:Ptr, n:Int):String
 		return decode(Repr.octetsAt(c, n), 0, n);
 
 	// the UTF-8 bytes [from, end) of o as a string (not allocating
@@ -114,7 +114,7 @@ class Str {
 	// becomes one unit, U+DC80 to U+DCFF for 0x80 to 0xFF (as Python's
 	// surrogateescape), which utf8Into writes back as that byte: any bytes
 	// decoded and encoded again are the same bytes.
-	public static inline function decode(o:Octets, from:Int, end:Int):String {
+	@:hxmc.unsafe(gc) public static inline function decode(o:Octets, from:Int, end:Int):String {
 		// UTF-16 units first, and whether one is above 0xFF (a sequence led by
 		// 0xC4 or more, a byte of none)
 		var units = 0, i = from, wide = false;
@@ -186,7 +186,7 @@ class Str {
 
 	// decode's one-byte string: the bytes are ASCII and well-formed two-byte
 	// sequences of U+0080 to U+00FF, `units` of them
-	static function decodeOne(o:Octets, from:Int, end:Int, units:Int):String {
+	@:hxmc.unsafe(gc) static function decodeOne(o:Octets, from:Int, end:Int, units:Int):String {
 		var s = make1(units);
 		var d = chars1(s);
 		// (ASCII: the bytes themselves)
@@ -493,7 +493,7 @@ class Str {
 	@:hxmc.host("hx_str_or_null") @:hxmc.kernel static function orNull(s:String):String
 		return StrView.isNull(s) ? "null" : s;
 
-	@:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
 		if (isNull(a)) a = "null";
 		if (isNull(b)) b = "null";
 		var na = len(a), nb = len(b);
@@ -518,7 +518,7 @@ class Str {
 	@:hxmc.host("hx_str_concat3") static function concat3(a:String, b:String, c:String):String
 		return concat4(a, b, c, "");
 
-	@:hxmc.host("hx_str_concat4") static function concat4(a:String, b:String, c:String, d:String):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_concat4") static function concat4(a:String, b:String, c:String, d:String):String {
 		if (isNull(a)) a = "null";
 		if (isNull(b)) b = "null";
 		if (isNull(c)) c = "null";
@@ -543,12 +543,12 @@ class Str {
 	}
 
 	// s's n units into the two-byte units u from ui (widened if one-byte)
-	static inline function put2(u:Chars, ui:Int, s:String, n:Int) {
+	@:hxmc.unsafe(gc) static inline function put2(u:Chars, ui:Int, s:String, n:Int) {
 		if (n == 0) return;
 		if (isOne(s)) Repr.widen(u, ui, chars1(s), 0, n) else Repr.copyTo(u, ui, chars2(s), n);
 	}
 
-	@:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
 		// |v| <= 2^31 as an I64; u / 10 as (u * 0xCCCCCCCD) >>> 35
 		var m10 = ((0xCCCC : I64) << 16) | (0xCCCD : I64);
 		var neg = v < 0;
@@ -573,7 +573,7 @@ class Str {
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_i64") static function ofI64(v:I64):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_i64") static function ofI64(v:I64):String {
 		// digits of the negative value (no overflow at the minimum)
 		var neg = v < 0;
 		var m = neg ? v : -v;
@@ -596,7 +596,7 @@ class Str {
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
 		var buf = Mem.stack(48);
 		FloatText.format(v, buf);
 		return ofBytes(buf, LibC.strlen(buf).toInt());
@@ -854,7 +854,7 @@ class Str {
 
 	// s in upper or lower case: one-byte from a one-byte string, unless a
 	// unit's case is above 0xFF (the upper cases of U+00B5 and U+00FF)
-	static function mapCase(s:String, upper:Bool):String {
+	@:hxmc.unsafe(gc) static function mapCase(s:String, upper:Bool):String {
 		var n = len(s);
 		var t = CaseMap.table(upper);
 		if (isOne(s)) {
@@ -938,7 +938,7 @@ class Str {
 
 	// s's units [pos, pos + n) appended (the buffer widened first if one of
 	// them is above 0xFF)
-	static function sbAddRange(b:Dynamic, s:String, pos:Int, n:Int) {
+	@:hxmc.unsafe(gc) static function sbAddRange(b:Dynamic, s:String, pos:Int, n:Int) {
 		reserve(b, n);
 		var at = sbLen(b);
 		if (Repr.sbIsOne(b) && !isOne(s) && !Repr.fitsOne(chars2(s), pos, n)) Repr.sbWiden(b, Repr.sbCapacity(b), at);
@@ -948,7 +948,7 @@ class Str {
 
 	// s's units [pos, pos + n) written at `at` (room made; a two-byte
 	// buffer if any is above 0xFF; no GC point)
-	static inline function sbPut(b:Dynamic, at:Int, s:String, pos:Int, n:Int) {
+	@:hxmc.unsafe(gc) static inline function sbPut(b:Dynamic, at:Int, s:String, pos:Int, n:Int) {
 		if (Repr.sbIsOne(b)) {
 			if (isOne(s))
 				Repr.copyAt1(Repr.sbChars1(b), at, chars1(s), pos, n);
@@ -964,7 +964,7 @@ class Str {
 		sbAddStr(b, Repr.stdString(x));
 
 	// (the inline fast path's misses: a unit above 0xFF, a two-byte buffer, a full one)
-	@:hxmc.export("StringBuf_addChar_slow") static function sbAddCharSlow(b:Dynamic, c:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("StringBuf_addChar_slow") static function sbAddCharSlow(b:Dynamic, c:Int):Void {
 		reserve(b, 2);
 		var n = sbLen(b);
 		if (Repr.sbIsOne(b)) {
@@ -1009,7 +1009,7 @@ class Str {
 	}
 
 	// unit u (below 0x100) written at `at` (room made)
-	static inline function sbUnit(b:Dynamic, at:Int, u:Int)
+	@:hxmc.unsafe(gc) static inline function sbUnit(b:Dynamic, at:Int, u:Int)
 		if (Repr.sbIsOne(b)) Repr.sbChars1(b).set(at, u) else Repr.sbChars2(b).set(at, u);
 
 	// eight one-byte units (lanes1) or four two-byte ones (lanes2) of a 64-bit
@@ -1100,7 +1100,7 @@ class Str {
 	// s as haxe.format.JsonPrinter quotes a string (its seven escapes, the
 	// other units as they are), appended in one go: the runs without an
 	// escape copied whole (JsonPrinter.quote, hxmc's)
-	@:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
 		// (room for s and the quotes; an escape makes room for itself and
 		// the rest: it may collect)
 		var n = len(s);
@@ -1143,7 +1143,7 @@ class Str {
 		return StrBufView.length(b);
 
 	// (one-byte where every unit fits: a buffer widened, then cleared, may hold none above 0xFF)
-	@:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
 		var n = sbLen(b);
 		if (Repr.sbIsOne(b)) {
 			var s = make1(n);
@@ -1202,7 +1202,7 @@ class Str {
 		return (neg ? -v : v).toInt();
 	}
 
-	@:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
+	@:hxmc.unsafe(gc) @:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
 		if (isNull(s)) return Math.NaN;
 		// ASCII bytes for strtod (any other unit ends the number, as its UTF-8 would)
 		var n = len(s);

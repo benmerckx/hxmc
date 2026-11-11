@@ -10,6 +10,7 @@ class ElfWriter {
 		if (!arm) return switch k {
 			case RAbs64: 1;
 			case RPc32: 2;
+			case RPc64: 24;
 			case RCall32: 4;
 			case RGotPcRel32: 9;
 			case RAbs32: 10;
@@ -23,6 +24,7 @@ class ElfWriter {
 			case RAbs64: 257;
 			case RAbs32: 258;
 			case RPc32: 261;
+			case RPc64: 260;
 			case RA64AdrPage21: 275;
 			case RA64AddLo12: 277;
 			case RA64Ldst8Lo12: 278;

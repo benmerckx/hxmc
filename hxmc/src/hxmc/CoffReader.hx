@@ -292,8 +292,9 @@ class CoffReader {
 			var h = 20 + optSize + 40 * i;
 			var off = u32(h + 24);
 			var n = u16(h + 32);
+			// (0xffff or more: the count in the first entry, which it counts too)
 			if ((secChars[i + 1] & 0x01000000) != 0 && n == 0xffff) {
-				n = u32(off);
+				n = u32(off) - 1;
 				off += 10;
 			}
 			for (j in 0...n) {
@@ -331,11 +332,42 @@ class Archive {
 		if (b.getString(0, 8) != "!<arch>\n") throw "hxmc: not an archive: " + path;
 		var at = 8;
 		var first = true;
+		// (BSD archives, Mach-O's: a name of more than 16 bytes, or with
+		// spaces, follows the header as #1/<length> says, counted in the size;
+		// the index, __.SYMDEF, gives the members by the offset of their header)
+		var bsd:Null<Array<{sym:String, header:Int}>> = null;
+		var dataOf = new Map<Int, Int>();
 		while (at + 60 <= b.length) {
 			var name = StringTools.trim(b.getString(at, 16));
 			var size = Std.parseInt(StringTools.trim(b.getString(at + 48, 10)));
 			var data = at + 60;
-			if (name == "/" && first) {
+			if (StringTools.startsWith(name, "#1/")) {
+				var n = Std.parseInt(name.substr(3));
+				var e = data;
+				while (e < data + n && b.get(e) != 0)
+					e++;
+				name = b.getString(data, e - data);
+				data += n;
+				size -= n;
+			}
+			dataOf.set(at, data);
+			sizes.set(data, size);
+			if ((name == "__.SYMDEF" || name == "__.SYMDEF SORTED") && first) {
+				// ranlib entries (string index, header offset), then the strings, little-endian
+				var bytes = b.getInt32(data);
+				var strs = data + 4 + bytes + 4;
+				bsd = [];
+				var k = 0;
+				while (k < bytes) {
+					var sx = b.getInt32(data + 4 + k), off = b.getInt32(data + 4 + k + 4);
+					var e = strs + sx;
+					while (b.get(e) != 0)
+						e++;
+					bsd.push({sym: b.getString(strs + sx, e - strs - sx), header: off});
+					k += 8;
+				}
+				first = false;
+			} else if (name == "/" && first) {
 				// the first linker member: big-endian count, offsets, names
 				var n = be32(data);
 				var p = data + 4 + 4 * n;
@@ -353,11 +385,20 @@ class Archive {
 			at = data + size;
 			if (at & 1 != 0) at++;
 		}
+		if (bsd != null)
+			for (e in bsd) {
+				var d = dataOf.get(e.header);
+				if (d != null && !index.exists(e.sym)) index.set(e.sym, d);
+			}
 	}
 
+	var sizes = new Map<Int, Int>(); // a member's data offset -> its size
+
 	// a member's bytes, from the offset of its data (the index's)
-	public function member(at:Int):Bytes
-		return b.sub(at, Std.parseInt(StringTools.trim(b.getString(at - 60 + 48, 10))));
+	public function member(at:Int):Bytes {
+		var n = sizes.get(at);
+		return b.sub(at, n != null ? n : Std.parseInt(StringTools.trim(b.getString(at - 60 + 48, 10))));
+	}
 
 	function be32(at:Int):Int
 		return (b.get(at) << 24) | (b.get(at + 1) << 16) | (b.get(at + 2) << 8) | b.get(at + 3);

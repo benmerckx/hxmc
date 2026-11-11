@@ -196,6 +196,9 @@ class KernelCheck {
 		"Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32", "USize"
 	];
 
+	public static function isScalar(name:String):Bool
+		return SCALARS.indexOf(name) >= 0;
+
 	// whether t is raw memory: hxmc.unsafe's types but its C scalars, or an
 	// abstract over one (a handle such as an IoBuffer or a Ptr wrapped)
 	public static function isRaw(t:T):Bool {
@@ -311,10 +314,10 @@ class KernelCheck {
 	}
 
 	// Mem's functions of values alone: unsigned comparisons and divisions, bit casts; the target's constants
-	static final PURE_MEM = ["ult", "spanUlt", "udiv", "urem", "f64Bits", "bitsF64", "f32Bits", "bitsF32", "os", "arm", "target", "platform"];
+	public static final PURE_MEM = ["ult", "spanUlt", "udiv", "urem", "f64Bits", "bitsF64", "f32Bits", "bitsF32", "os", "arm", "target", "platform"];
 
 	// the extern functions a safe kernel may call: Math's, Std.int, Struct's
-	// layout constants, Mem's pure ones
+	// layout constants, the target's (hxmc.Platform), Mem's pure ones
 	static function allowedExtern(c:TClass, cf:TClassField):Bool {
 		switch c.clKind {
 			// (a span's accessors; making one from a Ptr needs @:hxmc.unsafe)
@@ -323,7 +326,7 @@ class KernelCheck {
 		}
 		var path = core.Globals.sTypePath(c.clPath);
 		// (hxmc.simd's intrinsics: values; their raw memory accesses need hxmc.unsafe)
-		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct" || path == "hxmc.Handle"
+		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct" || path == "hxmc.Handle" || path == "hxmc.Platform"
 			|| path == "hxmc.unsafe.Mem" && PURE_MEM.indexOf(cf.cfName) >= 0
 			|| path == "hxmc.simd.Simd" && cf.cfName != "load" && cf.cfName != "store";
 	}

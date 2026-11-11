@@ -112,7 +112,9 @@ and libuv, prebuilt per target by zig from `hxmc/deps`.
 
 It is written with an internal API, `hxmc.unsafe` (`Ptr`, `Mem` loads,
 stores and allocation, `Atomic`) and metadata: `@:hxmc.c` and `@:hxmc.rt`
-externs, `@:hxmc.unsafe` functions (no GC point, checked),
+externs, `@:hxmc.unsafe` functions (no GC point, checked) and
+`@:hxmc.unsafe(gc)` ones (trusted GC code): raw memory only there, an error
+in the std ([Unsafe code](interop.md#unsafe-code)),
 `@:hxmc.export`/`@:hxmc.host` implementations of runtime functions,
 `@:hxmc.callback`, `@:hxmc.threadLocal` statics. The user-facing part is in
 [interop.md](interop.md).
@@ -122,7 +124,7 @@ What is the same across targets is written once and inlined:
 - `GcCore.hx`: the object model both collectors read (header, size,
   forwarding, pointer maps).
 - `SysCore.hx` for PosixSys, WinSys and WasiSys; `NetCore.hx` for PosixNet
-  and WinNet. `Mem.os()` picks the system and folds at compile time.
+  and WinNet. `hxmc.Platform.os()` picks the system and folds at compile time.
 - `Str`, `Arr`, `Bytes`, `Date`: written over `hxmc.rt.Repr` (`MemRepr`).
 
 ### Object layout
@@ -1640,7 +1642,7 @@ linker reads `.dynamic` through them).
 table of what those export to API 29 apps, made by `mkrt.sh` from Bionic's
 version scripts. `deps.sh` fetches Bionic's headers at a pinned AOSP commit
 for mbedtls, libuv and `Layouts.hx`. `Mem.target()` 9 and 10 are Android;
-`Mem.os()` is Linux's. Other libraries (`libandroid.so`, `liblog.so`,
+`Platform.os()` is Linux's. Other libraries (`libandroid.so`, `liblog.so`,
 `libEGL.so`) are imported unversioned.
 
 **The app**: the program exports `ANativeActivity_onCreate` in no-GC Haxe
@@ -1654,7 +1656,7 @@ program's thread, where the runtime starts.
 ### iOS
 
 `ios-arm64` and `ios-sim-arm64` share macOS arm64's libSystem, layouts and
-runtime objects (`Mem.os()` 1, `Mem.target()` 3; `Mem.platform()` 1 or 2
+runtime objects (`Platform.os()` 1, `Platform.target()` 3; `Platform.apple()` 1 or 2
 tells iOS from the simulator). The Mach-O carries the platform in
 `LC_BUILD_VERSION` (minimum 15.0, SDK 18.0). iOS 15 is the floor because
 `UILaunchScreen` is iOS 14's and current Xcodes start at 15.
@@ -1920,6 +1922,14 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.frame-pointers=0` | `HXMC_FRAME_POINTERS` | yes | x86-64: no frame pointers (or `-D hxmc.no-frame-pointers`) |
 | `hxmc.symbols` | `HXMC_SYMBOLS` | yes | a symbol table |
 | `hxmc.checked` | | yes | a diagnostic build: checks on, no Mir optimizations ([using.md](using.md#options); the define only: the std reads it) |
+| `hxmc.llvm[=O1\|O2\|O3\|Os]` | `HXMC_LLVM` | yes | (experimental) the functions LLVM takes compiled by clang ([plans/llvm.md](plans/llvm.md)) |
+| `hxmc.llvm-rt` | `HXMC_LLVM_RT` | yes | the runtime's modules too |
+| `hxmc.llvm-cpu=<cpu>` | `HXMC_LLVM_CPU` | yes | clang's -mcpu (arm64) or -march (x86-64) |
+| `hxmc.llvm-whole`, `hxmc.llvm-consts`, `hxmc.llvm-release` | `HXMC_LLVM_WHOLE`, `..._CONSTS`, `..._RELEASE` | yes | the whole program one LLVM module; program-wide numbers as constants; both (not cached) |
+| `hxmc.llvm-tbaa=1\|<list>` | `HXMC_LLVM_TBAA` | yes | Mir's memory classes as LLVM alias information |
+| `hxmc.llvm-flags=<args>`, `hxmc.llvm-clang=<path>` | `HXMC_LLVM_FLAGS`, `HXMC_LLVM_CLANG` | yes | more of clang's arguments; the clang |
+| `hxmc.llvm-pgo=gen\|<profile>` | `HXMC_LLVM_PGO` | yes | an instrumented program, or one compiled with the profile (the object cache's key has the file's time and size) |
+| `hxmc.llvm-inline` | `HXMC_LLVM_INLINE` | yes | LLVM inlines in a program that reads its stacks too |
 | `hxmc.jobs=<n>` | `HXMC_JOBS` | no | parallel module compilations |
 | `hxmc.stats` | `HXMC_STATS` | no | what the build did and how long it took |
 | `hxmc.verbose` | `HXMC_VERBOSE` | no | live functions |

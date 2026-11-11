@@ -549,7 +549,7 @@ class JniKind {
 
 	// ---- embedding: libjvm opened, JNI_CreateJavaVM (hxmc.java.Jvm.create)
 
-	static function create(lib:String, options:Array<String>):Null<String> {
+	@:hxmc.unsafe(gc) static function create(lib:String, options:Array<String>):Null<String> {
 		if (!vm.isNull()) return null;
 		var path = Str.toUtf8(lib);
 		var h = Posix.dlopen(path, 2);
@@ -597,16 +597,16 @@ class JniKind {
 		return null;
 	}
 
-	static function hasVm():Bool
+	@:hxmc.unsafe(gc) static function hasVm():Bool
 		return !vm.isNull();
 
-	static function cstring(p:Ptr):String
+	@:hxmc.unsafe(gc) static function cstring(p:Ptr):String
 		return p.isNull() ? "" : Str.ofUtf8(p, LibC.strlen(p).toInt());
 
 	// ---- calls (FnLower.jniCall: enter, class, member, arguments, call, result, leave)
 
 	// the calling thread's JNIEnv, a local frame pushed for the call
-	@:hxmc.host("rt_jni_enter") static function enter():Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_enter") static function enter():Ptr {
 		var env = envHere();
 		if (env.isNull())
 			throw new hxmc.java.JavaException("java.lang.IllegalStateException",
@@ -616,7 +616,7 @@ class JniKind {
 	}
 
 	// the frame popped; a pending exception thrown as a JavaException
-	@:hxmc.host("rt_jni_leave") static function leave(env:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_leave") static function leave(env:Ptr):Void {
 		if (pending(env)) {
 			var x = caught(env);
 			Ind.p2(fn(env, PopLocalFrame), env, Ptr.nil());
@@ -627,7 +627,7 @@ class JniKind {
 
 	// the class `name` (java/lang/String) of a cell: resolved once, a global
 	// reference (the program's loader's, else FindClass's)
-	@:hxmc.host("rt_jni_class") static function cls(env:Ptr, cell:Ptr, name:String):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_class") static function cls(env:Ptr, cell:Ptr, name:String):Ptr {
 		var c = Mem.getPtr(cell, 0);
 		if (!c.isNull() || pending(env)) return c;
 		c = classNamed(env, name);
@@ -640,7 +640,7 @@ class JniKind {
 	}
 
 	// (a new global reference; null and an exception pending when there is none)
-	static function classNamed(env:Ptr, name:String):Ptr {
+	@:hxmc.unsafe(gc) static function classNamed(env:Ptr, name:String):Ptr {
 		var local = Ptr.nil();
 		// (loading a class may run its static initializer: Java code)
 		if (!loader.isNull() && Str.unit(name, 0) != "[".code) {
@@ -668,7 +668,7 @@ class JniKind {
 
 	// a method or field ID of a cell, resolved once (null and an exception
 	// pending: NoSuchMethodError, NoSuchFieldError)
-	@:hxmc.host("rt_jni_member") static function member(env:Ptr, cell:Ptr, cls:Ptr, name:String, sig:String, what:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_member") static function member(env:Ptr, cell:Ptr, cls:Ptr, name:String, sig:String, what:Int):Ptr {
 		var m = Mem.getPtr(cell, 0);
 		if (!m.isNull() || cls.isNull() || pending(env)) return m;
 		var n = Str.toUtf8(name), s = Str.toUtf8(sig);
@@ -686,7 +686,7 @@ class JniKind {
 	// a call: an instance method's (target the receiver), a static one's
 	// (STATIC: the class), a constructor's (NEW); how's low bits the result's
 	// type code (any but float and double: callF); the arguments a jvalue array
-	@:hxmc.host("rt_jni_call") static function call(env:Ptr, how:Int, target:Ptr, cls:Ptr, mid:Ptr, args:Ptr):I64 {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_call") static function call(env:Ptr, how:Int, target:Ptr, cls:Ptr, mid:Ptr, args:Ptr):I64 {
 		if (mid.isNull() || pending(env)) return 0;
 		if (how & (STATIC | NEW) == 0 && target.isNull()) {
 			throwNew(env, C_NPE, "a Java method called on null");
@@ -700,7 +700,7 @@ class JniKind {
 		return how & NEW != 0 ? r.toI64() : widen(r.toI64(), t);
 	}
 
-	@:hxmc.host("rt_jni_call_f") static function callF(env:Ptr, how:Int, target:Ptr, cls:Ptr, mid:Ptr, args:Ptr):Float {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_call_f") static function callF(env:Ptr, how:Int, target:Ptr, cls:Ptr, mid:Ptr, args:Ptr):Float {
 		if (mid.isNull() || pending(env)) return 0;
 		if (how & STATIC == 0 && target.isNull()) {
 			throwNew(env, C_NPE, "a Java method called on null");
@@ -728,7 +728,7 @@ class JniKind {
 		}
 
 	// a field read (STATIC: of the class)
-	@:hxmc.host("rt_jni_get") static function get(env:Ptr, how:Int, target:Ptr, fid:Ptr):I64 {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_get") static function get(env:Ptr, how:Int, target:Ptr, fid:Ptr):I64 {
 		if (fid.isNull() || pending(env)) return 0;
 		if (how & STATIC == 0 && target.isNull()) {
 			throwNew(env, C_NPE, "a Java field read of null");
@@ -738,7 +738,7 @@ class JniKind {
 		return widen(Ind.p3(fn(env, (how & STATIC != 0 ? GetStaticField : GetField) + t), env, target, fid).toI64(), t);
 	}
 
-	@:hxmc.host("rt_jni_get_f") static function getF(env:Ptr, how:Int, target:Ptr, fid:Ptr):Float {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_get_f") static function getF(env:Ptr, how:Int, target:Ptr, fid:Ptr):Float {
 		if (fid.isNull() || pending(env)) return 0;
 		if (how & STATIC == 0 && target.isNull()) {
 			throwNew(env, C_NPE, "a Java field read of null");
@@ -749,7 +749,7 @@ class JniKind {
 		return t == T_FLOAT ? (Ind.f3(fn(env, i), env, target, fid) : Float) : Ind.d3(fn(env, i), env, target, fid);
 	}
 
-	@:hxmc.host("rt_jni_set") static function set(env:Ptr, how:Int, target:Ptr, fid:Ptr, v:I64):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_set") static function set(env:Ptr, how:Int, target:Ptr, fid:Ptr, v:I64):Void {
 		if (fid.isNull() || pending(env)) return;
 		if (how & STATIC == 0 && target.isNull()) {
 			throwNew(env, C_NPE, "a Java field written of null");
@@ -758,7 +758,7 @@ class JniKind {
 		Ind.p4(fn(env, (how & STATIC != 0 ? SetStaticField : SetField) + (how & 15)), env, target, fid, Ptr.ofI64(v));
 	}
 
-	@:hxmc.host("rt_jni_set_f") static function setF(env:Ptr, how:Int, target:Ptr, fid:Ptr, v:Float):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_set_f") static function setF(env:Ptr, how:Int, target:Ptr, fid:Ptr, v:Float):Void {
 		if (fid.isNull() || pending(env)) return;
 		if (how & STATIC == 0 && target.isNull()) {
 			throwNew(env, C_NPE, "a Java field written of null");
@@ -770,7 +770,7 @@ class JniKind {
 	}
 
 	// an exception of the runtime's own classes (a cell) made pending
-	static function throwNew(env:Ptr, c:Int, msg:String):Void {
+	@:hxmc.unsafe(gc) static function throwNew(env:Ptr, c:Int, msg:String):Void {
 		var cl = Mem.getPtr(cells, c);
 		if (cl.isNull() || pending(env)) return;
 		var p = Str.toUtf8(msg);
@@ -782,7 +782,7 @@ class JniKind {
 
 	// ---- values: Haxe's as Java's (a local reference of the call's frame)
 
-	@:hxmc.host("rt_jni_arg") static function arg(env:Ptr, v:Dynamic, how:Int, cls:String):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_arg") static function arg(env:Ptr, v:Dynamic, how:Int, cls:String):Ptr {
 		if (pending(env) || v == null) return Ptr.nil();
 		switch how {
 			case R_OBJECT:
@@ -821,13 +821,13 @@ class JniKind {
 
 	// Bytes as a new byte[] (copied: SetByteArrayRegion, which runs no Java
 	// code, so the Bytes stays where it is)
-	static function bytesArray(env:Ptr, b:haxe.io.Bytes):Ptr {
+	@:hxmc.unsafe(gc) static function bytesArray(env:Ptr, b:haxe.io.Bytes):Ptr {
 		var a = Ind.p2(fn(env, NewArray + T_BYTE), env, Ptr.ofI64(b.length));
 		if (!a.isNull() && !pending(env) && b.length > 0) Ind.p5(fn(env, SetArrayRegion + T_BYTE), env, a, Ptr.nil(), Ptr.ofI64(b.length), hxmc.Span.SpanSupport.bytesAddr(b, 0));
 		return a;
 	}
 
-	static function bytesOf(env:Ptr, ref:Ptr):haxe.io.Bytes {
+	@:hxmc.unsafe(gc) static function bytesOf(env:Ptr, ref:Ptr):haxe.io.Bytes {
 		var n = int32(Ind.p2(fn(env, GetArrayLength), env, ref));
 		var b = haxe.io.Bytes.alloc(n);
 		if (n > 0) Ind.p5(fn(env, GetArrayRegion + T_BYTE), env, ref, Ptr.nil(), Ptr.ofI64(n), hxmc.Span.SpanSupport.bytesAddr(b, 0));
@@ -835,7 +835,7 @@ class JniKind {
 	}
 
 	// the element class of an object array (an element type's name)
-	static function elementClass(env:Ptr, name:String):Ptr {
+	@:hxmc.unsafe(gc) static function elementClass(env:Ptr, name:String):Ptr {
 		var c = classNamed(env, name);
 		if (c.isNull()) return c;
 		var l = Ind.p2(fn(env, NewLocalRef), env, c);
@@ -843,7 +843,7 @@ class JniKind {
 		return l;
 	}
 
-	static function valueOf(env:Ptr, c:Int, m:Int, x:Int):Ptr {
+	@:hxmc.unsafe(gc) static function valueOf(env:Ptr, c:Int, m:Int, x:Int):Ptr {
 		var a = Mem.stack(8);
 		Mem.setI64(a, 0, 0);
 		Mem.setI32(a, 0, x);
@@ -852,7 +852,7 @@ class JniKind {
 
 	// a Java object's local reference: a box's (its global reference), or a
 	// Haxe object's proxy (made at its first use)
-	static function objectRef(env:Ptr, v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function objectRef(env:Ptr, v:Dynamic):Ptr {
 		if (Types.tindex(v) == Types.T_NATIVE) {
 			// (a box of this kind's, not any native handle: Foreign.isBox)
 			if (!Foreign.isBox(k(), Mem.addr(v))) {
@@ -890,7 +890,7 @@ class JniKind {
 
 	// Dynamic as java.lang.Object: numbers and Bools boxed (Integer, Double,
 	// Boolean), a String a java.lang.String, a Java object or Haxe peer itself
-	static function boxed(env:Ptr, v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function boxed(env:Ptr, v:Dynamic):Ptr {
 		switch Type.typeof(v) {
 			case TInt:
 				return valueOf(env, C_INTEGER, C_INT_OF, (v : Int));
@@ -916,7 +916,7 @@ class JniKind {
 	}
 
 	// a java.lang.String of s's UTF-16 units
-	static function newString(env:Ptr, s:String):Ptr {
+	@:hxmc.unsafe(gc) static function newString(env:Ptr, s:String):Ptr {
 		var n = Str.len(s);
 		if (!Str.isOne(s)) return Ind.p3(fn(env, NewString), env, Str.chars2(s), Ptr.ofI64(n));
 		var buf = n <= 128 ? Mem.stack(256) : LibC.malloc((2 * n : I64));
@@ -929,7 +929,7 @@ class JniKind {
 	}
 
 	// an Array of numbers or Bools as a new Java array of type code t (copied)
-	static function primArray(env:Ptr, v:Dynamic, t:Int):Ptr {
+	@:hxmc.unsafe(gc) static function primArray(env:Ptr, v:Dynamic, t:Int):Ptr {
 		var n:Int = (v : Array<Dynamic>).length;
 		var a = Ind.p2(fn(env, NewArray + t), env, Ptr.ofI64(n));
 		if (a.isNull() || pending(env) || n == 0) return a;
@@ -972,7 +972,7 @@ class JniKind {
 
 	// ---- values: Java's as Haxe's
 
-	@:hxmc.host("rt_jni_result") static function result(env:Ptr, ref:Ptr, how:Int, cls:String):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_result") static function result(env:Ptr, ref:Ptr, how:Int, cls:String):Dynamic {
 		if (pending(env) || ref.isNull()) return null;
 		switch how {
 			case R_OBJECT:
@@ -1008,7 +1008,7 @@ class JniKind {
 		}
 	}
 
-	static function primsOf(env:Ptr, ref:Ptr, t:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function primsOf(env:Ptr, ref:Ptr, t:Int):Dynamic {
 		var n = int32(Ind.p2(fn(env, GetArrayLength), env, ref));
 		var w = width(t);
 		var buf = LibC.malloc((w * n + 8 : I64));
@@ -1044,7 +1044,7 @@ class JniKind {
 	}
 
 	// a java.lang.String's units (GetStringRegion: UTF-16, not modified UTF-8)
-	static function stringOf(env:Ptr, ref:Ptr):String {
+	@:hxmc.unsafe(gc) static function stringOf(env:Ptr, ref:Ptr):String {
 		var n = int32(Ind.p2(fn(env, GetStringLength), env, ref));
 		var r = Str.make2(n);
 		if (n > 0) Ind.p5(fn(env, GetStringRegion), env, ref, Ptr.nil(), Ptr.ofI64(n), Str.chars2(r));
@@ -1054,7 +1054,7 @@ class JniKind {
 	// java.lang.Object as Dynamic: a String, a number (Integer, Short, Byte
 	// as Int; Double, Float, Long as Float), a Boolean, a Character's code;
 	// a proxy its Haxe object; any other object its box
-	static function unboxed(env:Ptr, ref:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function unboxed(env:Ptr, ref:Ptr):Dynamic {
 		inline function is(c:Int):Bool
 			return bool(Ind.p3(fn(env, IsInstanceOf), env, ref, Mem.getPtr(cells, c)));
 		if (is(C_STRING)) return stringOf(env, ref);
@@ -1074,7 +1074,7 @@ class JniKind {
 
 	// the pending exception as a JavaException (cleared): its class's name,
 	// its message, its stack as Throwable.toString and getStackTrace print them
-	static function caught(env:Ptr):hxmc.java.JavaException {
+	@:hxmc.unsafe(gc) static function caught(env:Ptr):hxmc.java.JavaException {
 		var t = Ind.p1(fn(env, ExceptionOccurred), env);
 		Ind.p1(fn(env, ExceptionClear), env);
 		var cl = Ind.p2(fn(env, GetObjectClass), env, t);
@@ -1104,7 +1104,7 @@ class JniKind {
 	}
 
 	// (a String result of a call made while handling an exception: null when it threw)
-	static function stringResult(env:Ptr, r:Ptr):Null<String> {
+	@:hxmc.unsafe(gc) static function stringResult(env:Ptr, r:Ptr):Null<String> {
 		if (pending(env)) {
 			Ind.p1(fn(env, ExceptionClear), env);
 			return null;
@@ -1115,7 +1115,7 @@ class JniKind {
 	// a Haxe exception reaching Java (a native method's thunk): a
 	// JavaException's own Throwable thrown again, any other an
 	// org.hxmc.HaxeException (the glue's; else a RuntimeException) of its text
-	@:hxmc.host("rt_jni_throw") static function throwHaxe(env:Ptr, e:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_throw") static function throwHaxe(env:Ptr, e:Dynamic):Void {
 		if (pending(env)) return;
 		var j = Std.downcast(e, hxmc.java.JavaException);
 		if (j != null && j.throwable != null) {
@@ -1169,7 +1169,7 @@ class JniKind {
 	@:hxmc.host("rt_jni_known") static function typeKnown(o:Dynamic):Int
 		return descOf(o).isNull() ? 0 : 1;
 
-	@:hxmc.host("rt_jni_desc") static function desc(proxy:String, n:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_desc") static function desc(proxy:String, n:Int):Ptr {
 		var d = LibC.malloc((D_NATIVES + 24 * n : I64));
 		LibC.memset(d, 0, (D_NATIVES + 24 * n : I64));
 		Mem.setPtr(d, D_NAME, Str.toUtf8(StringTools.replace(proxy, ".", "/")));
@@ -1177,14 +1177,14 @@ class JniKind {
 		return d;
 	}
 
-	@:hxmc.host("rt_jni_native") static function native(d:Ptr, i:Int, name:String, sig:String, f:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_native") static function native(d:Ptr, i:Int, name:String, sig:String, f:Ptr):Void {
 		var e = d.add(D_NATIVES + 24 * i);
 		Mem.setPtr(e, 0, Str.toUtf8(name));
 		Mem.setPtr(e, 8, Str.toUtf8(sig));
 		Mem.setPtr(e, 16, f);
 	}
 
-	@:hxmc.host("rt_jni_register") static function register(o:Dynamic, d:Ptr, off:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_jni_register") static function register(o:Dynamic, d:Ptr, off:Int):Void {
 		Mem.setI64(d, D_FIELD, off);
 		var t = Types.tindex(o);
 		Os.lock(Foreign.lock);
@@ -1210,7 +1210,7 @@ class JniKind {
 	// v's proxy (a local reference): its latest while Java has it, else a new
 	// one of its class's proxy class (registered at its first use), which
 	// keeps v while Java has it (the toggle)
-	static function proxyOf(env:Ptr, v:Dynamic, d:Ptr):Ptr {
+	@:hxmc.unsafe(gc) static function proxyOf(env:Ptr, v:Dynamic, d:Ptr):Ptr {
 		var rec = recordOf(v, d);
 		if (rec.isNull()) return rec;
 		Os.lock(lock);
@@ -1240,7 +1240,7 @@ class JniKind {
 	}
 
 	// v's record, made and paired at its first use as a Java value
-	static function recordOf(v:Dynamic, d:Ptr):Ptr {
+	@:hxmc.unsafe(gc) static function recordOf(v:Dynamic, d:Ptr):Ptr {
 		var off = Mem.getI64(d, D_FIELD).toInt();
 		var rec = Mem.getPtr(Mem.addr(v), off);
 		if (!rec.isNull()) return rec;
@@ -1269,7 +1269,7 @@ class JniKind {
 
 	// a proxy class, registered once: found by the program's loader, its
 	// natives registered (RegisterNatives), and org.hxmc.Peer's
-	static function proxyClass(env:Ptr, d:Ptr):Ptr {
+	@:hxmc.unsafe(gc) static function proxyClass(env:Ptr, d:Ptr):Ptr {
 		var c = Mem.getPtr(d, D_CLASS);
 		if (!c.isNull()) return c;
 		if (Mem.getPtr(cells, C_PEER).isNull()) {
@@ -1317,7 +1317,7 @@ class JniKind {
 	}
 
 	// the number of v's proxies Java holds (a diagnostic: hxmc.java.Jvm.proxies)
-	static function proxies(v:Dynamic):Int {
+	@:hxmc.unsafe(gc) static function proxies(v:Dynamic):Int {
 		var d = descOf(v);
 		if (d.isNull()) return 0;
 		var rec = Mem.getPtr(Mem.addr(v), Mem.getI64(d, D_FIELD).toInt());
@@ -1327,7 +1327,7 @@ class JniKind {
 	// ---- for hxmc.java
 
 	// whether a and b are one Java object (null: both null)
-	static function same2(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.unsafe(gc) static function same2(a:Dynamic, b:Dynamic):Bool {
 		if (a == null || b == null) return a == b;
 		var env = enter();
 		var x = arg(env, a, R_DYNAMIC, null), y = arg(env, b, R_DYNAMIC, null);
@@ -1337,7 +1337,7 @@ class JniKind {
 	}
 
 	// whether v is an instance of the class `name` (java/lang/String)
-	static function instanceOf(v:Dynamic, name:String):Bool {
+	@:hxmc.unsafe(gc) static function instanceOf(v:Dynamic, name:String):Bool {
 		if (v == null) return false;
 		var env = enter();
 		var x = arg(env, v, R_DYNAMIC, null);
@@ -1349,7 +1349,7 @@ class JniKind {
 	}
 
 	// java.lang.Object.toString of v
-	static function toString(v:Dynamic):String {
+	@:hxmc.unsafe(gc) static function toString(v:Dynamic):String {
 		if (v == null) return "null";
 		var env = enter();
 		var x = arg(env, v, R_DYNAMIC, null);
@@ -1367,7 +1367,7 @@ class JniKind {
 
 	// ---- weak references (hxmc.java.Weak)
 
-	static function weakNew(v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function weakNew(v:Dynamic):Ptr {
 		if (v == null) return Ptr.nil();
 		var r = Types.tindex(v) == Types.T_NATIVE ? Foreign.refOf(k(), v) : Ptr.nil();
 		if (r.isNull()) throw new hxmc.java.JavaException("java.lang.IllegalArgumentException", "hxmc.java.Weak holds Java objects", "", null);
@@ -1376,7 +1376,7 @@ class JniKind {
 		return cell;
 	}
 
-	static function weakGet(cell:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function weakGet(cell:Ptr):Dynamic {
 		if (cell.isNull()) return null;
 		var g = weakLoad(cell);
 		if (g.isNull()) return null;
@@ -1387,7 +1387,7 @@ class JniKind {
 
 	// ---- arrays (hxmc.java.JavaArray)
 
-	static function arrayLength(v:Dynamic):Int {
+	@:hxmc.unsafe(gc) static function arrayLength(v:Dynamic):Int {
 		var env = enter();
 		var a = arg(env, v, R_OBJECT, null);
 		var n = a.isNull() || pending(env) ? 0 : int32(Ind.p2(fn(env, GetArrayLength), env, a));
@@ -1396,7 +1396,7 @@ class JniKind {
 	}
 
 	// a new Java array of type code t (null: of objects of the class `cls`)
-	static function arrayNew(t:Int, n:Int, cls:String):Dynamic {
+	@:hxmc.unsafe(gc) static function arrayNew(t:Int, n:Int, cls:String):Dynamic {
 		var env = enter();
 		var a = t == T_OBJECT ? {
 			var ec = elementClass(env, cls);
@@ -1408,7 +1408,7 @@ class JniKind {
 	}
 
 	// elements [pos, pos + n) of a primitive array (type code t) copied to or from p
-	static function arrayRegion(v:Dynamic, t:Int, pos:Int, n:Int, p:Ptr, write:Bool):Void {
+	@:hxmc.unsafe(gc) static function arrayRegion(v:Dynamic, t:Int, pos:Int, n:Int, p:Ptr, write:Bool):Void {
 		var env = enter();
 		var a = arg(env, v, R_OBJECT, null);
 		if (!a.isNull() && !pending(env)) Ind.p5(fn(env, (write ? SetArrayRegion : GetArrayRegion) + t), env, a, Ptr.ofI64(pos), Ptr.ofI64(n), p);
@@ -1420,7 +1420,7 @@ class JniKind {
 	// it returns; the JVM may give a copy, written back after). f may
 	// allocate: the runtime makes no JNI call of its own meanwhile (its calls
 	// put off wait, Foreign.holdDeferred); f must call no Java itself
-	static function arrayCritical(v:Dynamic, f:(Ptr, Int) -> Void):Void {
+	@:hxmc.unsafe(gc) static function arrayCritical(v:Dynamic, f:(Ptr, Int) -> Void):Void {
 		var env = enter();
 		var a = arg(env, v, R_OBJECT, null);
 		if (a.isNull() || pending(env)) {
@@ -1445,7 +1445,7 @@ class JniKind {
 		if (err != null) throw err;
 	}
 
-	static function arrayGet(v:Dynamic, i:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function arrayGet(v:Dynamic, i:Int):Dynamic {
 		var env = enter();
 		var a = arg(env, v, R_OBJECT, null);
 		var x = a.isNull() || pending(env) ? Ptr.nil() : Ind.p3(fn(env, GetObjectArrayElement), env, a, Ptr.ofI64(i));
@@ -1454,7 +1454,7 @@ class JniKind {
 		return r;
 	}
 
-	static function arraySet(v:Dynamic, i:Int, x:Dynamic):Void {
+	@:hxmc.unsafe(gc) static function arraySet(v:Dynamic, i:Int, x:Dynamic):Void {
 		var env = enter();
 		var a = arg(env, v, R_OBJECT, null);
 		var y = arg(env, x, R_DYNAMIC, null);

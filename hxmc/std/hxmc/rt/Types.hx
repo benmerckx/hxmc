@@ -139,7 +139,7 @@ class Types {
 	// the payload's 8-byte words of the object at p whose header's first
 	// word is w0 (not forwarded): the header's, but an array's of 0xFFFF
 	// words or more (lenWords: its length, a string's at p, the others' at p - 4)
-	public static inline function wordsAt(p:Ptr, w0:Int):Int {
+	@:hxmc.unsafe(gc) public static inline function wordsAt(p:Ptr, w0:Int):Int {
 		var n = w0 >>> 16;
 		return n == 0xFFFF ? lenWords(w0 & 0xFFFF, Mem.getI32(p, isString(w0 & 0xFFFF) ? 0 : -4)) : n;
 	}
@@ -163,131 +163,131 @@ class Types {
 	public static inline function isNativeArray(t:Int):Bool
 		return Mem.ult(naKind(t), AK_COUNT) || t == T_NATIVE_OPEN || t == T_NATIVE_WRAP;
 
-	public static inline function tindex(o:Dynamic):Int
+	@:hxmc.unsafe(gc) public static inline function tindex(o:Dynamic):Int
 		return Mem.getU16(Mem.addr(o), -8);
 
 	// the payload's 8-byte words
-	public static inline function nslots(o:Dynamic):Int
+	@:hxmc.unsafe(gc) public static inline function nslots(o:Dynamic):Int
 		return wordsAt(Mem.addr(o), Mem.getI32(Mem.addr(o), -8));
 
 	// an array's length (in elements)
-	public static inline function arrLength(o:Dynamic):Int
+	@:hxmc.unsafe(gc) public static inline function arrLength(o:Dynamic):Int
 		return Mem.getI32(Mem.addr(o), -4);
 
 	// how the collector scans o: by its pointer map (a record), every slot
 	// (references) or not at all
-	public static inline function kind(o:Dynamic):Int
+	@:hxmc.unsafe(gc) public static inline function kind(o:Dynamic):Int
 		return kindOfWord(Mem.getI32(Mem.addr(o), -8));
 
 	// ---- rt_type (112 bytes)
 
-	public static inline function ty(t:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function ty(t:Int):Ptr
 		return Mem.sym("rt_types").add(t * 112);
 
-	public static inline function name(ty:Ptr):Ptr
+	@:hxmc.unsafe(gc) public static inline function name(ty:Ptr):Ptr
 		return Mem.getPtr(ty, 0);
 
-	public static inline function tk(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function tk(ty:Ptr):Int
 		return Mem.getU8(ty, 8);
 
-	public static inline function sup(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function sup(ty:Ptr):Int
 		return Mem.getI32(ty, 12);
 
-	public static inline function slotCount(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function slotCount(ty:Ptr):Int
 		return Mem.getI32(ty, 16);
 
-	public static inline function ptrmap(ty:Ptr):Ptr
+	@:hxmc.unsafe(gc) public static inline function ptrmap(ty:Ptr):Ptr
 		return Mem.getPtr(ty, 24);
 
 	// whether the type's records hold compressed references (@:hxmc.compact,
 	// hxmc.ir.Facts.layout): its pointer map (of at most 32 slots) is then
 	// followed by its compact map, a bit per 4-byte half (GcCore.isCompactHalf)
 	// (false where the program has none: GcCore.compactTypes, a constant)
-	public static inline function hasCompact(ty:Ptr):Bool
+	@:hxmc.unsafe(gc) public static inline function hasCompact(ty:Ptr):Bool
 		return GcCore.compactTypes() && Mem.getI32(ty, 20) & 1 != 0;
 
 	// a header constructor's (word 20's bit 1, hxmc.ir.Facts: an enum value
 	// whose one argument, an Int, a Bool or a compressed reference, is the
 	// header's upper half, where the identity hash is otherwise; no slots;
 	// its field's slot is -1, that half's 4-byte index)
-	public static inline function headerArg(ty:Ptr):Bool
+	@:hxmc.unsafe(gc) public static inline function headerArg(ty:Ptr):Bool
 		return GcCore.fwdLow() && Mem.getI32(ty, 20) & 2 != 0;
 
-	public static inline function nfields(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function nfields(ty:Ptr):Int
 		return Mem.getI32(ty, 32);
 
 	// rt_field (12 bytes): int32 fid, int32 slot, char kind
-	public static inline function field(ty:Ptr, i:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function field(ty:Ptr, i:Int):Ptr
 		return Mem.getPtr(ty, 40).add(12 * i);
 
-	public static inline function nmethods(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function nmethods(ty:Ptr):Int
 		return Mem.getI32(ty, 48);
 
 	// rt_method (24 bytes): int32 fid, void *fn, int32 sig
-	public static inline function method(ty:Ptr, i:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function method(ty:Ptr, i:Int):Ptr
 		return Mem.getPtr(ty, 56).add(24 * i);
 
-	public static inline function nifaces(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function nifaces(ty:Ptr):Int
 		return Mem.getI32(ty, 64);
 
-	public static inline function iface(ty:Ptr, i:Int):Int
+	@:hxmc.unsafe(gc) public static inline function iface(ty:Ptr, i:Int):Int
 		return Mem.getI32At(Mem.getPtr(ty, 72), 0, i);
 
-	public static inline function tag(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function tag(ty:Ptr):Int
 		return Mem.getI32(ty, 80);
 
 	// a constructor without arguments: the rt_globals index of its value, else -1
-	public static inline function single(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function single(ty:Ptr):Int
 		return Mem.getI32(ty, 84) - 1;
 
-	public static inline function ctor(ty:Ptr, i:Int):Int
+	@:hxmc.unsafe(gc) public static inline function ctor(ty:Ptr, i:Int):Int
 		return Mem.getI32At(Mem.getPtr(ty, 88), 0, i);
 
 	// a class's entry for Type.createInstance (hxmc.ir.ClassInfo.maker, where
 	// a constructor's singleton is): 0 none (no live code can have the class
 	// value), 1 no constructor (the call fails), 2 + s: makerFn, called as a
 	// bound method of signature s on the new instance
-	public static inline function maker(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function maker(ty:Ptr):Int
 		return Mem.getI32(ty, 84);
 
-	public static inline function makerFn(ty:Ptr):Ptr
+	@:hxmc.unsafe(gc) public static inline function makerFn(ty:Ptr):Ptr
 		return Mem.getPtr(ty, 88);
 
-	public static inline function nstatics(ty:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function nstatics(ty:Ptr):Int
 		return Mem.getI32(ty, 96);
 
 	// rt_static (24 bytes): int32 fid, char kind, int32 idx, int32 rank (its
 	// place in Type.getClassFields), void *ptr; sorted by fid
-	public static inline function stat(ty:Ptr, i:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function stat(ty:Ptr, i:Int):Ptr
 		return Mem.getPtr(ty, 104).add(24 * i);
 
-	public static inline function fFid(f:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function fFid(f:Ptr):Int
 		return Mem.getI32(f, 0);
 
-	public static inline function fSlot(f:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function fSlot(f:Ptr):Int
 		return Mem.getI32(f, 4);
 
-	public static inline function fKind(f:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function fKind(f:Ptr):Int
 		return Mem.getU8(f, 8);
 
-	public static inline function mFid(m:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function mFid(m:Ptr):Int
 		return Mem.getI32(m, 0);
 
-	public static inline function mFn(m:Ptr):Ptr
+	@:hxmc.unsafe(gc) public static inline function mFn(m:Ptr):Ptr
 		return Mem.getPtr(m, 8);
 
-	public static inline function mSig(m:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function mSig(m:Ptr):Int
 		return Mem.getI32(m, 16);
 
 	// the type object (a Class<T>/Enum<T> value) of type index t
-	public static inline function typeObj(t:Int):Dynamic
+	@:hxmc.unsafe(gc) public static inline function typeObj(t:Int):Dynamic
 		return Mem.obj(Mem.sym("rt_type_objs").add(16 * t + 8));
 
 	// the type index a type object describes
-	public static inline function described(c:Dynamic):Int
+	@:hxmc.unsafe(gc) public static inline function described(c:Dynamic):Int
 		return Mem.getI32(Mem.addr(c), 0);
 
 	// rt_globals[i] (the reference globals: roots, no barrier)
-	public static inline function globalSlot(i:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function globalSlot(i:Int):Ptr
 		return Mem.getPtr(Mem.sym("rt_globals"), 0).add(8 * i);
 }

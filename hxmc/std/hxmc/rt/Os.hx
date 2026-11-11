@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.ReadOnlySpan;
 import hxmc.Span;
@@ -18,18 +19,18 @@ import hxmc.unsafe.*;
 @:hxmc.native
 class Os {
 	static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	static inline function mac():Bool
-		return Mem.os() == 1;
+		return Platform.os() == 1;
 
 	// ---- the environment
 
 	// getenv of a name (a string literal: a C string in the program's data; null: unset)
-	public static inline function getenv(name:String):Ptr
+	@:hxmc.unsafe(gc) public static inline function getenv(name:String):Ptr
 		return C.getenv(Mem.cstr(name));
 
-	public static inline function has(name:String):Bool
+	@:hxmc.unsafe(gc) public static inline function has(name:String):Bool
 		return !getenv(name).isNull();
 
 	// atoi of p: leading blanks, a sign, the digits
@@ -55,7 +56,7 @@ class Os {
 	}
 
 	// atoi of an environment variable (a string literal), or def when it is unset
-	public static inline function envInt(name:String, def:Int):Int
+	@:hxmc.unsafe(gc) public static inline function envInt(name:String, def:Int):Int
 		return envIntC(Mem.cstr(name), def);
 
 	@:hxmc.unsafe static function envIntC(name:Ptr, def:Int):Int {
@@ -67,7 +68,7 @@ class Os {
 
 	// (the thread's errno as a span of one: C's location, which the declarations vouch for)
 	@:hxmc.kernel static function errnoCell():Span<Int>
-		return windows() ? C.errnoWin() : mac() ? C.errnoMac() : Mem.target() >= 9 ? C.errnoBionic() : C.errnoLinux();
+		return windows() ? C.errnoWin() : mac() ? C.errnoMac() : Platform.target() >= 9 ? C.errnoBionic() : C.errnoLinux();
 
 	@:hxmc.kernel public static function errno():Int
 		return errnoCell()[0];
@@ -107,11 +108,11 @@ class Os {
 
 	// the processors online (Linux; elsewhere 1)
 	@:hxmc.kernel public static function cpus():Int
-		return Mem.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
+		return Platform.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
 
 	// the physical memory in bytes, 0 when unknown (Linux but Android: _SC_PHYS_PAGES)
 	@:hxmc.unsafe public static function physicalBytes():I64 {
-		if (Mem.os() != 0 || Mem.target() >= 9) return 0;
+		if (Platform.os() != 0 || Platform.target() >= 9) return 0;
 		var pages = C.sysconf(85); // _SC_PHYS_PAGES
 		return pages > 0 ? pages * (pageSize() : I64) : 0;
 	}
@@ -181,7 +182,7 @@ class Os {
 	// apport), so the runtime's reservations are left out but for what it
 	// uses of them (docs/hxmc.md, "Core dumps")
 	@:hxmc.unsafe public static function coreDump(p:Ptr, bytes:I64, on:Bool) {
-		if (Mem.os() == 0) {
+		if (Platform.os() == 0) {
 			var mask:I64 = (pageSize() : I64) - 1;
 			var lo = p.toI64(), hi = lo + bytes;
 			if (on) {
@@ -210,7 +211,7 @@ class Os {
 	// 1 MB, top) is the stack's (the C library's guard is below it, its
 	// thread record and TLS above); its bounds Faults.dumpStacks's
 	@:hxmc.unsafe public static function threadStackCoreDump(bytes:I64) {
-		if (Mem.os() == 0) {
+		if (Platform.os() == 0) {
 			var top = Mem.stack(16);
 			var lo = top.addL(((1 << 20) : I64) - bytes);
 			stackCoreDump(lo, top.diff(lo), true);
@@ -225,10 +226,10 @@ class Os {
 	// pages of one process together wait for each other in the kernel (8
 	// threads: 2.6 GB in 0.93 s, against 0.28 s for one)
 	@:hxmc.unsafe public static function populate(p:Ptr, bytes:I64)
-		if (Mem.os() == 0) C.madvise(p, bytes, 23);
+		if (Platform.os() == 0) C.madvise(p, bytes, 23);
 
 	@:hxmc.unsafe public static function hugePages(p:Ptr, bytes:I64)
-		if (Mem.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
+		if (Platform.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
 
 	// ---- mutexes and conditions, in memory that never moves (malloc'ed or
 	// static): MUTEX_BYTES and COND_BYTES each
@@ -365,7 +366,7 @@ class Os {
 	// (Android: _exit, as PosixSys.exit; a moment first for what was
 	// written to stderr to reach logcat, through hxmc.os's pipe)
 	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int) {
-		if (Mem.target() >= 9) {
+		if (Platform.target() >= 9) {
 			C.fflush(Ptr.nil());
 			var ts = Mem.stack(16);
 			Mem.setI64(ts, 0, 0);
@@ -392,7 +393,7 @@ abstract Report(Ptr) {
 	public static inline var BYTES = 8 + 512;
 	static inline var CAP = 512;
 
-	public inline function new(p:Ptr) {
+	@:hxmc.unsafe public inline function new(p:Ptr) {
 		this = p;
 		Mem.setI32(p, 0, 0);
 	}
@@ -404,7 +405,7 @@ abstract Report(Ptr) {
 	}
 
 	// a string literal (a C string in the program's data)
-	public inline function str(s:String)
+	@:hxmc.unsafe(gc) public inline function str(s:String)
 		cstr(Mem.cstr(s), 0, -1);
 
 	// a C string, at least `width` wide (padded on the right, %-Ns), at most `max` (%.Ns)

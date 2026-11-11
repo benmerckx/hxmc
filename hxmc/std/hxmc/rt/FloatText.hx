@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
@@ -29,13 +30,13 @@ class FloatText {
 
 	// ---- big integers: int32 length at 0, limbs (little-endian) from 8
 
-	static inline function blen(b:Ptr):Int
+	@:hxmc.unsafe(gc) static inline function blen(b:Ptr):Int
 		return Mem.getI32(b, 0);
 
-	static inline function limb(b:Ptr, i:Int):I64
+	@:hxmc.unsafe(gc) static inline function limb(b:Ptr, i:Int):I64
 		return (Mem.getI32(b, 8 + 4 * i) : I64) & m32();
 
-	static inline function setLimb(b:Ptr, i:Int, v:I64)
+	@:hxmc.unsafe(gc) static inline function setLimb(b:Ptr, i:Int, v:I64)
 		Mem.setI32(b, 8 + 4 * i, v.toInt());
 
 	@:hxmc.unsafe static function bset(b:Ptr, v:I64) {
@@ -78,7 +79,7 @@ class FloatText {
 		var p = Mem.stack(64);
 		for (i in 0...msg.length)
 			Mem.setI8(p, i, StringTools.fastCodeAt(msg, i));
-		if (Mem.os() == 2) {
+		if (Platform.os() == 2) {
 			hxmc.unsafe.Win32._write(2, p, msg.length);
 			hxmc.unsafe.Win32.exit(70);
 		} else {

@@ -1,5 +1,6 @@
 package hxmc.com;
 
+import hxmc.Platform;
 import hxmc.unsafe.*;
 import hxmc.com.Variant;
 
@@ -43,7 +44,7 @@ class Variants {
 	}
 
 	// a BSTR of s, which the variant owns
-	public static function ofString(s:String):Variant {
+	@:hxmc.unsafe(gc) public static function ofString(s:String):Variant {
 		var v = new Variant();
 		v.vt = (VT_BSTR : Int);
 		v.value = Com.bstr(s).toI64();
@@ -51,7 +52,7 @@ class Variants {
 	}
 
 	// x's IUnknown (VT_UNKNOWN), with a reference the variant owns; null: VT_EMPTY
-	public static function ofUnknown(x:Null<IUnknown>):Variant {
+	@:hxmc.unsafe(gc) public static function ofUnknown(x:Null<IUnknown>):Variant {
 		var v = new Variant();
 		if (x == null) return v;
 		v.vt = (VT_UNKNOWN : Int);
@@ -62,7 +63,7 @@ class Variants {
 	// the value: an Int (VT_I4), a Float (VT_R8), a Bool (VT_BOOL), a String
 	// (VT_BSTR, copied), an IUnknown (VT_UNKNOWN, VT_DISPATCH: a value of its
 	// own), null (VT_EMPTY, VT_NULL); a ComException (E_NOTIMPL) for another type
-	public static function toDynamic(v:Variant):Dynamic {
+	@:hxmc.unsafe(gc) public static function toDynamic(v:Variant):Dynamic {
 		var t:Int = v.vt;
 		if (t == VT_EMPTY || t == VT_NULL) return null;
 		if (t == VT_I4) return v.value.toInt();
@@ -75,13 +76,13 @@ class Variants {
 
 	// what v owns given back (VariantClear: a BSTR freed, an interface
 	// released): v and its copies must not be read after this
-	public static function clear(v:Variant):Void {
+	@:hxmc.unsafe(gc) public static function clear(v:Variant):Void {
 		var p:Ptr<Variant> = Mem.stack(24);
 		p.value = v;
 		clearAt(p);
 	}
 
 	// the same of a VARIANT in memory, left VT_EMPTY
-	public static function clearAt(p:Ptr<Variant>):Void
-		if (Mem.os() == 2) @:privateAccess hxmc.rt.ComKind.variantClear(p) else @:privateAccess ComException.unavailable();
+	@:hxmc.unsafe(gc) public static function clearAt(p:Ptr<Variant>):Void
+		if (Platform.os() == 2) @:privateAccess hxmc.rt.ComKind.variantClear(p) else @:privateAccess ComException.unavailable();
 }

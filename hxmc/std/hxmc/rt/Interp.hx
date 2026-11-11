@@ -249,7 +249,7 @@ class Interp {
 	// the thread-local variables of code loaded at run time (TLSXLD: 4096 words, made at the first use)
 	@:hxmc.threadLocal("rt_interp_tls") static var itls:Ptr;
 
-	static function tlsBlock():Ptr {
+	@:hxmc.unsafe(gc) static function tlsBlock():Ptr {
 		if (itls.isNull()) {
 			var n:I64 = 8 * 4096;
 			itls = LibC.malloc(n);
@@ -268,7 +268,7 @@ class Interp {
 	// the threads that ran interpreted code (interp.Tier compiles while there is one)
 	@:hxmc.export("rt_interp_threads") public static var threads:Int;
 
-	static function initStack() {
+	@:hxmc.unsafe(gc) static function initStack() {
 		hxmc.unsafe.Atomic.add32(Mem.sym("rt_interp_threads"), 1);
 		var n:I64 = STACK_BYTES;
 		var p = LibC.malloc(n);
@@ -282,7 +282,7 @@ class Interp {
 	static inline function hash(x:I64):Int
 		return ((x >>> 4).toInt() * 0x9E3779B1) >>> 8;
 
-	static function initTable() {
+	@:hxmc.unsafe(gc) static function initTable() {
 		var t = Mem.sym("hxmc_interp_fns");
 		var n = Mem.getI64(t, 0).toInt();
 		grow(2 * n);
@@ -291,7 +291,7 @@ class Interp {
 	}
 
 	// (the table with room for n entries, the ones it has moved over)
-	static function grow(n:Int) {
+	@:hxmc.unsafe(gc) static function grow(n:Int) {
 		var size = 16;
 		while (size < 2 * n)
 			size <<= 1;
@@ -309,7 +309,7 @@ class Interp {
 		if (!old.isNull()) LibC.free(old);
 	}
 
-	static function insert(key:I64, desc:I64) {
+	@:hxmc.unsafe(gc) static function insert(key:I64, desc:I64) {
 		var h = hash(key) & mask;
 		while (Mem.getI64(table, h << 4) != (0 : I64))
 			h = (h + 1) & mask;
@@ -319,14 +319,14 @@ class Interp {
 	}
 
 	// a function interpreted that code loaded at run time defines: its entry stub and descriptor
-	public static function register(stub:Ptr, desc:Ptr) {
+	@:hxmc.unsafe(gc) public static function register(stub:Ptr, desc:Ptr) {
 		if (table.isNull()) initTable();
 		if (2 * (count + 1) > mask + 1) grow(2 * (count + 1));
 		insert(stub.toI64(), desc.toI64());
 	}
 
 	// the entry of the function interpreted whose entry stub is at fn (its descriptor at +8), or null
-	static function lookup(fn:I64):Ptr {
+	@:hxmc.unsafe(gc) static function lookup(fn:I64):Ptr {
 		var h = hash(fn) & mask;
 		while (true) {
 			var k = Mem.getI64(table, h << 4);
@@ -338,7 +338,7 @@ class Interp {
 
 	// native code calling an interpreted function (its entry stub): the
 	// arguments are 8-byte words at args, the result is written at args
-	@:hxmc.export("hxmc_interp_enter") static function enter(desc:Ptr, args:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("hxmc_interp_enter") static function enter(desc:Ptr, args:Ptr):Void {
 		if (isp.isNull()) initStack();
 		var base = isp, cur = Stacks.interpCur;
 		try {
@@ -366,7 +366,7 @@ class Interp {
 
 	// (run's frame at isp, its arguments after desc's constants: those moved
 	// after the new constants when the hook changed desc)
-	static function tierCheck(desc:Ptr) {
+	@:hxmc.unsafe(gc) static function tierCheck(desc:Ptr) {
 		var id = Mem.getI32(desc, H_FLAGS) >>> 8;
 		if (id == 0 || tierHook == null) return;
 		var regs = isp.add(FRAME);
@@ -394,7 +394,7 @@ class Interp {
 
 	// the entries left in the pool of a function of these flags, less an
 	// eighth of it (interp.Tier leaves those to what must have an entry)
-	public static function poolRoom(flags:Int):Int {
+	@:hxmc.unsafe(gc) public static function poolRoom(flags:Int):Int {
 		var t = Mem.sym("hxmc_interp_pools");
 		var kind = (flags & D_STACK != 0 ? 2 : 0) + (flags & D_FLOAT != 0 ? 1 : 0);
 		var size = Mem.getI64(t, 8 * kind).toInt();
@@ -402,7 +402,7 @@ class Interp {
 	}
 
 	// a frame of the function at isp (its arguments written in its registers), run; its result written at res
-	static function run(desc:Ptr, res:Ptr) {
+	@:hxmc.unsafe(gc) static function run(desc:Ptr, res:Ptr) {
 		var calls = Mem.getI32(desc, H_CALLS) + 1;
 		Mem.setI32(desc, H_CALLS, calls);
 		if (calls & tierMask == 0) tierCheck(desc);
@@ -440,12 +440,12 @@ class Interp {
 	public static var lazyHook:Null<(k:Int, desc:Ptr, regs:Ptr) -> Void> = null;
 
 	// whether desc is a stub still (LAZY at its code's start, after its header)
-	public static function isStub(desc:Ptr):Bool
+	@:hxmc.unsafe(gc) public static function isStub(desc:Ptr):Bool
 		return Mem.getI64(desc, H_CODE) == (HEADER : I64) && Mem.getI32(desc, HEADER) == LAZY;
 
 	// stub's header made the one of desc, its function compiled (its parts'
 	// offsets from the stub): what calls the stub calls the function
-	public static function become(stub:Ptr, desc:Ptr) {
+	@:hxmc.unsafe(gc) public static function become(stub:Ptr, desc:Ptr) {
 		for (o in [H_NREGS, H_FRAME, 12, H_NCONSTS])
 			Mem.setI32(stub, o, Mem.getI32(desc, o));
 		for (o in [H_CODE, H_SYMS, H_CONSTS, H_SOURCES])
@@ -455,7 +455,7 @@ class Interp {
 	// a stub's frame (LAZY at its code's start, after its header): its
 	// function compiled, then run in this frame, its arguments moved after
 	// its constants
-	static function lazy(fr:Ptr, ip:Ptr):Int {
+	@:hxmc.unsafe(gc) static function lazy(fr:Ptr, ip:Ptr):Int {
 		var desc = ip.add(-HEADER);
 		var regs = Mem.getPtr(fr, F_REGS), res = Mem.getPtr(fr, F_RES);
 		var n = Mem.getI32(desc, H_NPARAMS);
@@ -481,7 +481,7 @@ class Interp {
 	// which links every try's handler before its enterTry)
 	static var hprevOff = 0;
 
-	static function enterTry(fr:Ptr, ip:Ptr, d:Int, h:Ptr):Int {
+	@:hxmc.unsafe(gc) static function enterTry(fr:Ptr, ip:Ptr, d:Int, h:Ptr):Int {
 		var level = Mem.getI32(fr, F_NTRIES);
 		if (level == MAX_TRIES) throw "hxmc interp: tries nested too deep";
 		Mem.setPtr(fr, F_TRIES + 8 * level, h);
@@ -520,25 +520,25 @@ class Interp {
 	}
 
 	// operand k of the operation at ip
-	static inline function o(ip:Ptr, k:Int):Int
+	@:hxmc.unsafe(gc) static inline function o(ip:Ptr, k:Int):Int
 		return Mem.getI32(ip, k << 2);
 
-	static inline function gl(regs:Ptr, r:Int):I64
+	@:hxmc.unsafe(gc) static inline function gl(regs:Ptr, r:Int):I64
 		return Mem.getI64At(regs, 0, r);
 
-	static inline function sl(regs:Ptr, r:Int, v:I64)
+	@:hxmc.unsafe(gc) static inline function sl(regs:Ptr, r:Int, v:I64)
 		Mem.setI64At(regs, 0, r, v);
 
-	static inline function gi(regs:Ptr, r:Int):Int
+	@:hxmc.unsafe(gc) static inline function gi(regs:Ptr, r:Int):Int
 		return Mem.getI64At(regs, 0, r).toInt();
 
-	static inline function si(regs:Ptr, r:Int, v:Int)
+	@:hxmc.unsafe(gc) static inline function si(regs:Ptr, r:Int, v:Int)
 		Mem.setI64At(regs, 0, r, v);
 
-	static inline function gf(regs:Ptr, r:Int):Float
+	@:hxmc.unsafe(gc) static inline function gf(regs:Ptr, r:Int):Float
 		return Mem.getF64At(regs, 0, r);
 
-	static inline function sf(regs:Ptr, r:Int, v:Float)
+	@:hxmc.unsafe(gc) static inline function sf(regs:Ptr, r:Int, v:Float)
 		Mem.setF64At(regs, 0, r, v);
 
 	static inline function zext(v:Int):I64
@@ -558,13 +558,13 @@ class Interp {
 		return b ? 1 : 0;
 
 	// the address of a load or store: register k, plus register k + 1 times k + 2
-	static inline function base(regs:Ptr, ip:Ptr, k:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function base(regs:Ptr, ip:Ptr, k:Int):Ptr
 		return Ptr.ofI64(gl(regs, o(ip, k)));
 
-	static inline function indexed(regs:Ptr, ip:Ptr, k:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function indexed(regs:Ptr, ip:Ptr, k:Int):Ptr
 		return Ptr.ofI64(gl(regs, o(ip, k)) + gl(regs, o(ip, k + 1)) * o(ip, k + 2));
 
-	static function tlsGet(t:Int):I64
+	@:hxmc.unsafe(gc) static function tlsGet(t:Int):I64
 		return switch t {
 			case T_SP: Gc.sp.toI64();
 			case T_SP_HW: Gc.hw.toI64();
@@ -576,7 +576,7 @@ class Interp {
 			case _: Threads.self.toI64();
 		}
 
-	static function tlsSet(t:Int, v:I64)
+	@:hxmc.unsafe(gc) static function tlsSet(t:Int, v:I64)
 		switch t {
 			case T_SP: Gc.sp = Ptr.ofI64(v);
 			case T_SP_HW: Gc.hw = Ptr.ofI64(v);
@@ -591,7 +591,7 @@ class Interp {
 	// a call of an interpreted function: its arguments from the operands at
 	// ip + 4 * first into its parameters' registers, its result into register d
 	// (none: a word of its frame)
-	static inline function callInterp(regs:Ptr, ip:Ptr, desc:Ptr, d:Int, n:Int, first:Int) {
+	@:hxmc.unsafe(gc) static inline function callInterp(regs:Ptr, ip:Ptr, desc:Ptr, d:Int, n:Int, first:Int) {
 		var callee = isp.add(FRAME);
 		var nc = Mem.getI32(desc, H_NCONSTS);
 		for (k in 0...n)
@@ -601,7 +601,7 @@ class Interp {
 
 	// a call through a call-out stub: buf[0] the function (indirect calls),
 	// the arguments after it, the result into buf[0]
-	static inline function callOut(regs:Ptr, ip:Ptr, stub:Ptr, fn:I64, d:Int, n:Int, first:Int) {
+	@:hxmc.unsafe(gc) static inline function callOut(regs:Ptr, ip:Ptr, stub:Ptr, fn:I64, d:Int, n:Int, first:Int) {
 		var buf = isp;
 		Mem.setI64(buf, 0, fn);
 		for (k in 0...n)
@@ -647,12 +647,12 @@ class Interp {
 	// at operand `first`, then the shape: the result's kind, the stack
 	// words, each argument's place; with R_PARTS the struct's address
 	// register, its parts and for each its result word, offset and bytes
-	static function callX(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
+	@:hxmc.unsafe(gc) static function callX(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
 		if (Mem.mirHost() == 1) callXHost(regs, ip, fn, d, n, first);
 		else throw "hxmc interp: CALLX outside a Mir host (a compiler with Mir macros)";
 	}
 
-	static function callXHost(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
+	@:hxmc.unsafe(gc) static function callXHost(regs:Ptr, ip:Ptr, fn:I64, d:Int, n:Int, first:Int) {
 		var img = isp;
 		var sh = first + n;
 		var rk = o(ip, sh), nst = o(ip, sh + 1);
@@ -681,7 +681,7 @@ class Interp {
 		}
 	}
 
-	static function special(regs:Ptr, ip:Ptr) {
+	@:hxmc.unsafe(gc) static function special(regs:Ptr, ip:Ptr) {
 		var d = o(ip, 2);
 		inline function p():Ptr
 			return Ptr.ofI64(gl(regs, o(ip, 3)));
@@ -739,7 +739,7 @@ class Interp {
 	// desc at: an entry of the pool of its kind (its result's, whether its
 	// arguments take stack words: its flags, D_*), given out once and never
 	// taken back (macro.Loader: the descriptor need not be written yet)
-	public static function poolEntry(desc:Ptr, flags:Int):Ptr {
+	@:hxmc.unsafe(gc) public static function poolEntry(desc:Ptr, flags:Int):Ptr {
 		if (flags & D_NOENTRY != 0) throw "hxmc interp: a function called from native code whose arguments take more stack words than the interpreter's entries (hxmc.interp.InterpAbi.STACK_WORDS)";
 		var t = Mem.sym("hxmc_interp_pools");
 		if (poolDescs.isNull()) {
@@ -769,14 +769,14 @@ class Interp {
 	}
 
 	// the entries given out of each pool (HXMC_MACRO_STATS): integer, double, integer with stack words, double with
-	public static function entriesByPool():String
+	@:hxmc.unsafe(gc) public static function entriesByPool():String
 		return poolUsed.isNull() ? "0/0/0/0" : [for (k in 0...4) Std.string(Mem.getI64(poolUsed, 8 * k))].join("/");
 
 	// native code calling entry k of the pools (its common function): the
 	// arguments from the register image img (the descriptor's parameter
 	// sources), the result as a word (the common function returns it as its
 	// kind's register)
-	@:hxmc.export("hxmc_interp_pool_enter") static function poolEnter(k:Int, img:Ptr):I64 {
+	@:hxmc.unsafe(gc) @:hxmc.export("hxmc_interp_pool_enter") static function poolEnter(k:Int, img:Ptr):I64 {
 		var desc = Mem.getPtr(poolDescs, 8 * k);
 		if (isp.isNull()) initStack();
 		var base = isp, cur = Stacks.interpCur;
@@ -797,7 +797,7 @@ class Interp {
 
 	// runs the frame from ip: RETURNED, or the level of the try its code
 	// ended (where it goes on saved)
-	static function exec(fr:Ptr, ip:Ptr):Int {
+	@:hxmc.unsafe(gc) static function exec(fr:Ptr, ip:Ptr):Int {
 		var syms = Mem.getPtr(fr, F_SYMS);
 		var regs = Mem.getPtr(fr, F_REGS);
 		while (true) {

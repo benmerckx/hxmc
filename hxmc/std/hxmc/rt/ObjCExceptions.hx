@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.*;
@@ -57,9 +58,9 @@ class ObjCExceptions {
 		return cls == cxxClass() && Mem.getPtr(ue, -80) == ue.add(40);
 
 	@:hxmc.export("rt_objc_personality") @:hxmc.unsafe static function personality(version:Int, actions:Int, cls:I64, ue:Ptr, ctx:Ptr):Int {
-		// (Apple's systems only: one branch is lowered, Lower folds Mem.os())
+		// (Apple's systems only: one branch is lowered, Lower folds Platform.os())
 		var r = CONTINUE_UNWIND;
-		if (Mem.os() == 1) r = claim(version, actions, cls, ue, ctx) else {}
+		if (Platform.os() == 1) r = claim(version, actions, cls, ue, ctx) else {}
 		return r;
 	}
 
@@ -69,7 +70,7 @@ class ObjCExceptions {
 		var landing = U._Unwind_GetLanguageSpecificData(ctx);
 		if (landing.isNull()) return CONTINUE_UNWIND;
 		// the frame's stack pointer (DWARF: arm64 sp 31, x86-64 rsp 7)
-		var sp = U._Unwind_GetGR(ctx, Mem.arm() ? 31 : 7);
+		var sp = U._Unwind_GetGR(ctx, Platform.arm() ? 31 : 7);
 		var m = Threads.self;
 		if (m.isNull() || Threads.collector == m) return CONTINUE_UNWIND;
 		var h = Gc.hcur;
@@ -78,8 +79,8 @@ class ObjCExceptions {
 		if (actions & HANDLER_FRAME == 0) return CONTINUE_UNWIND;
 		// the stub (ue, the return address): the first two arguments'
 		// registers (DWARF: arm64 x0, x1; x86-64 rdi 5, rsi 4)
-		U._Unwind_SetGR(ctx, Mem.arm() ? 0 : 5, ue);
-		U._Unwind_SetGR(ctx, Mem.arm() ? 1 : 4, U._Unwind_GetIP(ctx));
+		U._Unwind_SetGR(ctx, Platform.arm() ? 0 : 5, ue);
+		U._Unwind_SetGR(ctx, Platform.arm() ? 1 : 4, U._Unwind_GetIP(ctx));
 		U._Unwind_SetIP(ctx, landing);
 		return INSTALL_CONTEXT;
 	}
@@ -87,7 +88,7 @@ class ObjCExceptions {
 	// the exception ue as a Haxe throw (hxmc_objc_caught, out of the safe
 	// region): libobjc's functions come as addresses (the runtime does not
 	// link libobjc), those of a box's too (ObjCKind.idBox)
-	@:hxmc.export("rt_objc_caught") static function caught(ue:Ptr, beginCatch:Ptr, endCatch:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr,
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_caught") static function caught(ue:Ptr, beginCatch:Ptr, endCatch:Ptr, retain:Ptr, release:Ptr, getClass:Ptr, getIvar:Ptr,
 			ivarOffset:Ptr):Void {
 		Ind.call1(beginCatch, ue);
 		var id = Mem.getPtr(ue, 32);
@@ -115,7 +116,7 @@ class ObjCExceptions {
 	// the exception v leaving a method: raised by its entry, else (no
 	// NSException class: Foundation not loaded) reported as an uncaught one,
 	// the end of the program
-	@:hxmc.export("rt_objc_raise") static function raise(v:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_raise") static function raise(v:Dynamic):Void {
 		var id = ObjCKind.idOf(v);
 		if (id.isNull()) id = wrap(v);
 		if (id.isNull()) {
@@ -135,7 +136,7 @@ class ObjCExceptions {
 
 	@:hxmc.unsafe static function fn(name:Ptr):Ptr {
 		var r = Ptr.nil();
-		if (Mem.os() == 1) r = S.dlsym(Ptr.ofI64(-2), name) else {} // (RTLD_DEFAULT)
+		if (Platform.os() == 1) r = S.dlsym(Ptr.ofI64(-2), name) else {} // (RTLD_DEFAULT)
 		return r;
 	}
 
@@ -150,11 +151,11 @@ class ObjCExceptions {
 	// handle's null
 	static function description(v:Dynamic):Null<String> {
 		var r:Null<String> = null;
-		if (Mem.os() == 1) r = describe(v) else {}
+		if (Platform.os() == 1) r = describe(v) else {}
 		return r;
 	}
 
-	static function describe(v:Dynamic):Null<String> {
+	@:hxmc.unsafe(gc) static function describe(v:Dynamic):Null<String> {
 		var id = ObjCKind.idOf(v);
 		if (id.isNull()) return null;
 		var send = fn(Mem.cstr("objc_msgSend"));
@@ -164,7 +165,7 @@ class ObjCExceptions {
 	}
 
 	// a new NSException carrying v (nil: no NSException class)
-	static function wrap(v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function wrap(v:Dynamic):Ptr {
 		var getClass = fn(Mem.cstr("objc_getClass")), send = fn(Mem.cstr("objc_msgSend"));
 		var cls = Ind.call1(getClass, Mem.cstr("HXMCException"));
 		if (cls.isNull()) {

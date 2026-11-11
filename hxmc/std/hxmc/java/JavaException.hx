@@ -1,5 +1,7 @@
 package hxmc.java;
 
+import hxmc.Platform;
+
 // A Java exception (docs/interop.md, "Java (JNI)"): what a call of a Java
 // method, constructor or field throws when Java left one pending. Its
 // message is Throwable.toString's ("java.lang.IllegalStateException: no"),
@@ -31,5 +33,5 @@ class JavaException extends haxe.Exception {
 	// whether there is JNI on this target (Linux, Android, macOS); the
 	// std's Java operations throw elsewhere (a test Lower folds)
 	static inline function available():Bool
-		return hxmc.unsafe.Mem.os() == 0 || hxmc.unsafe.Mem.os() == 1;
+		return Platform.os() == 0 || Platform.os() == 1;
 }

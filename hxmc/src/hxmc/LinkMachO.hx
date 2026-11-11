@@ -113,6 +113,8 @@ class LinkMachO extends LinkCore {
 		return true;
 	}
 
+	var bounded = new Map<String, {start:Section, end:Section}>();
+
 	public function link(entry:String):Bytes {
 		// (whichever signature the driver set: a dylib's is not a main binary's)
 		sign.mainBinary = !dylib;
@@ -123,6 +125,30 @@ class LinkMachO extends LinkCore {
 		var dso = new Obj();
 		dso.define("__dso_handle", header, 0, 0);
 		objs.push(dso);
+		// section$start$<segment>$<section> and section$end$..., as ld64
+		// makes them (LLVM's profile runtime walks __llvm_prf_*): an empty
+		// section of that name before the others of the name and one after
+		// them, laid out together (bounded); a section no object has is empty
+		var bounds = new Obj();
+		for (o in objs.copy())
+			for (sy in o.symbols)
+				if (sy.section == null && !sy.abs && (StringTools.startsWith(sy.name, "section$start$") || StringTools.startsWith(sy.name, "section$end$"))) {
+					var parts = sy.name.split("$");
+					if (parts.length != 4) continue;
+					var name = parts[2] + "," + parts[3];
+					if (bounded.exists(name)) continue;
+					var al = 1;
+					for (o2 in objs)
+						for (s2 in o2.sections)
+							if (s2.name == name && s2.align > al) al = s2.align;
+					var a = new Section(name, Data, al), z = new Section(name, Data, 1);
+					bounds.sections.push(a);
+					bounds.sections.push(z);
+					bounds.define("section$start$" + parts[2] + "$" + parts[3], a, 0, 0);
+					bounds.define("section$end$" + parts[2] + "$" + parts[3], z, 0, 0);
+					bounded.set(name, {start: a, end: z});
+				}
+		if (bounds.sections.length > 0) objs.push(bounds);
 		resolve();
 		// (the sections nothing reaches left out: LinkCore.gc; a dylib's exports are roots)
 		if (dylib) roots = [for (n in abi.exports) if (globals.exists(n)) n];
@@ -261,8 +287,23 @@ class LinkMachO extends LinkCore {
 				}
 			}
 		text.push(stubs);
+		// (the sections of a bounded name together, between their bounds)
+		if (bounded.keys().hasNext()) {
+			var rest = [for (s in data) if (!bounded.exists(s.name)) s];
+			var names = [for (n in bounded.keys()) n];
+			names.sort(Reflect.compare);
+			for (n in names) {
+				var b = bounded.get(n);
+				rest.push(b.start);
+				for (s in data)
+					if (s.name == n && s != b.start && s != b.end) rest.push(s);
+				rest.push(b.end);
+			}
+			data = rest;
+		}
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
-		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section)) r];
+		// (Unwind.NONE: an LLVM function without unwind information)
+		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section) && !Unwind.none(r.ops)) r];
 		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing).sec : null;
 		addr.set(header, 0);
 		var pos = HEADER_RESERVE;

@@ -188,7 +188,7 @@ class LibM {
 	static inline var PIO2_1T = 6.07710050650619224932e-11;
 
 	// x reduced by multiples of pi/2: n (the result in y[0], y[1] at yp)
-	static inline function medium(ix:Int, x:Float, yp:Ptr):Int {
+	@:hxmc.unsafe(gc) static inline function medium(ix:Int, x:Float, yp:Ptr):Int {
 		var toint = 6755399441055744.0;
 		var pio4 = 0.7853981633974483;
 		var invpio2 = 6.36619772367581382433e-01;

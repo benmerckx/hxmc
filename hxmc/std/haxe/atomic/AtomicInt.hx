@@ -21,7 +21,7 @@ import hxmc.unsafe.Ptr;
 	Atomic integer.
 **/
 abstract AtomicInt(Dynamic) {
-	static function cell(v:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function cell(v:Int):Dynamic {
 		var a = Mem.allocRaw(1, hxmc.rt.Types.T_NATIVE, 2); // K_RAW
 		Mem.setI32(Mem.addr(a), 0, v);
 		return a;

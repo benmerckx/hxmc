@@ -311,8 +311,13 @@ class Inline {
 		};
 	}
 
+	// port: hook (not upstream): metadata of an inline function its inlined copies keep too (hxmc: @:hxmc.unsafe)
+	public static var keepMetaHook:Null<MetadataEntry->Bool> = null;
+
 	public static function inlineMetadata(e:TExpr, meta:Metadata):TExpr {
 		for (m in meta) switch m {
+			case _ if (keepMetaHook != null && keepMetaHook(m)): // port: keepMetaHook (not upstream)
+				e = mk(TMeta(m, e), e.etype, e.epos);
 			case {meta: core.MetaList.StrictMeta.Pure, exprs: [{expr: EConst(Ident("inferredPure"))}]}:
 			case {meta: core.MetaList.StrictMeta.Deprecated | core.MetaList.StrictMeta.Pure | core.MetaList.StrictMeta.NullSafety}:
 				e = mk(TMeta(m, e), e.etype, e.epos);

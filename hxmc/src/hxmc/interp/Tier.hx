@@ -103,7 +103,7 @@ class Tier {
 	// (its number in the descriptor's flags: Interp.tierCheck), with the
 	// optimizer as for the interpreter (`optimize`: its inlining decides
 	// which frames a stack has, hxmc.rt.Stacks.addMade)
-	public static function add(desc:Ptr, f:FuncInfo, site:TierSite, optimize = true) {
+	@:hxmc.unsafe(gc) public static function add(desc:Ptr, f:FuncInfo, site:TierSite, optimize = true) {
 		if (!on() || f.cAbi != null || f.sret) return;
 		fns.push(new TierFn(desc, f, site, optimize));
 		var flags = Mem.getI32(desc, InterpGen.H_FLAGS);
@@ -116,7 +116,7 @@ class Tier {
 	// references in registers across it) and its arguments are rooted. While
 	// a second thread runs interpreted code nothing is compiled: a descriptor
 	// made another's (Interp.become) is read by its callers in parts.
-	static function hook(id:Int, args:Ptr) {
+	@:hxmc.unsafe(gc) static function hook(id:Int, args:Ptr) {
 		if (busy || hxmc.rt.Interp.threads > 1) return;
 		if (Loader.full) {
 			stop();
@@ -153,7 +153,7 @@ class Tier {
 	// desc made its forwarder's; false: it is to be compiled for the
 	// interpreter (none registered, a second thread running interpreted
 	// code as for the hook, the native tier failed)
-	public static function compileStub(desc:Ptr, optimize:Bool):Bool {
+	@:hxmc.unsafe(gc) public static function compileStub(desc:Ptr, optimize:Bool):Bool {
 		var id = Mem.getI32(desc, InterpGen.H_FLAGS) >>> 8;
 		if (!eager || id == 0 || busy || hxmc.rt.Interp.threads > 1 || Loader.full) return false;
 		var t = fns[id - 1];
@@ -205,7 +205,7 @@ class Tier {
 	// stack before anything is allocated, which may collect and move what
 	// they reference; the first slot. Inline: pushed in the caller's frame,
 	// above its slots, given back as it returns or unwinds (its frame's pop)
-	public static inline function root(f:FuncInfo, args:Ptr):Ptr {
+	@:hxmc.unsafe(gc) public static inline function root(f:FuncInfo, args:Ptr):Ptr {
 		var first = hxmc.rt.Gc.sp;
 		for (j in 0...f.args.length)
 			if (f.args[j].ty.match(TRef(_))) hxmc.rt.Gc.pushRoot(Mem.obj(Mem.getPtr(args, 8 * j)));
@@ -213,7 +213,7 @@ class Tier {
 	}
 
 	// (root's references, as collections left them, written back to args)
-	public static inline function unroot(f:FuncInfo, args:Ptr, first:Ptr) {
+	@:hxmc.unsafe(gc) public static inline function unroot(f:FuncInfo, args:Ptr, first:Ptr) {
 		var s = first;
 		for (j in 0...f.args.length)
 			if (f.args[j].ty.match(TRef(_))) {
@@ -225,14 +225,14 @@ class Tier {
 
 	// t done with (compiled, or left interpreted): its descriptor no longer
 	// given to the hook (the forwarder's calls, under eager every one, cost nothing more)
-	static function settle(t:TierFn, state:TierState) {
+	@:hxmc.unsafe(gc) static function settle(t:TierFn, state:TierState) {
 		t.state = state;
 		Mem.setI32(t.desc, InterpGen.H_FLAGS, Mem.getI32(t.desc, InterpGen.H_FLAGS) & 0xff);
 	}
 
 	// t's function compiled to native code and loaded, its descriptor made
 	// the forwarder's; on a failure, it stays interpreted
-	static function compile(t:TierFn, optimize:Bool) {
+	@:hxmc.unsafe(gc) static function compile(t:TierFn, optimize:Bool) {
 		if (t.state == TierState.DONE || t.state == TierState.FAILED) return;
 		if (Loader.full) {
 			settle(t, TierState.FAILED);
@@ -325,7 +325,7 @@ private class TierFn {
 	public final optimize:Bool;
 	public var state:TierState = TierState.WAITING;
 
-	public function new(desc, f, site, optimize) {
+	@:hxmc.unsafe(gc) public function new(desc, f, site, optimize) {
 		this.desc = desc;
 		this.f = f;
 		this.site = site;
