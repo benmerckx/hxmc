@@ -189,7 +189,11 @@ class Wasi {
 		}
 	}
 
-	@:hxmc.unsafe public static function write(fd:Int, p:Ptr, n:Int) {
+	// b to fd (the kernels' writes: writeLit, writeInt)
+	@:hxmc.unsafe @:hxmc.kernel public static function writeSpan(fd:Int, b:hxmc.ReadOnlySpan<hxmc.unsafe.UInt8>)
+		write(fd, (cast b : hxmc.Span.SpanData).ptr, b.length);
+
+	@:hxmc.unsafe @:hxmc.kernel public static function write(fd:Int, p:Ptr, n:Int) {
 		if (fd != 1) {
 			flush();
 			writeRaw(fd, p, n);
@@ -207,18 +211,19 @@ class Wasi {
 	}
 
 	// a string literal (Latin-1) without allocating
-	@:hxmc.unsafe public static function writeLit(fd:Int, lit:String) {
-		var len = hxmc.rt.Str.len(lit);
-		var b = Mem.stack(128);
+	@:hxmc.kernel public static function writeLit(fd:Int, lit:String) {
+		var b:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(128);
+		var len = hxmc.rt.StrView.length(lit), one = hxmc.rt.StrView.isOne(lit);
+		var u1 = hxmc.rt.StrView.units1(lit), u2 = hxmc.rt.StrView.units2(lit);
 		var i = 0;
 		while (i < len) {
 			var k = 0;
 			while (k < 128 && i < len) {
-				Mem.setI8(b, k, hxmc.rt.Str.unit(lit, i));
+				b[k] = one ? u1[i] : (u2[i] : Int) & 0xFF;
 				k++;
 				i++;
 			}
-			write(fd, b, k);
+			writeSpan(fd, b.sub(0, k));
 		}
 	}
 
@@ -228,23 +233,23 @@ class Wasi {
 		Heap.free(u);
 	}
 
-	@:hxmc.unsafe public static function writeInt(fd:Int, v:Int) {
-		var b = Mem.stack(16);
+	@:hxmc.kernel public static function writeInt(fd:Int, v:Int) {
+		var b:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(16);
 		var k = 16;
 		if (v == 0) {
 			k--;
-			Mem.setI8(b, k, "0".code);
+			b[k] = "0".code;
 		}
-		while (v > 0) {
+		while (v > 0 && k > 0) {
 			k--;
-			Mem.setI8(b, k, "0".code + v % 10);
+			b[k] = "0".code + v % 10;
 			v = Std.int(v / 10);
 		}
-		write(fd, b.add(k), 16 - k);
+		writeSpan(fd, b.sub(k, 16 - k));
 	}
 
 	// "gc: major <n>: <a> MB live, limit <b> MB, memory <m> MB" (RT_STATS)
-	@:hxmc.unsafe public static function statLine(lit:String, n:Int, a:Int, b:Int, m:Int) {
+	@:hxmc.kernel public static function statLine(lit:String, n:Int, a:Int, b:Int, m:Int) {
 		writeLit(2, lit);
 		writeInt(2, n);
 		writeLit(2, ": ");

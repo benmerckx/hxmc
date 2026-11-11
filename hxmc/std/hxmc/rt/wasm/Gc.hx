@@ -251,7 +251,7 @@ class Gc {
 	static var cstackBase:Ptr;
 	static inline var CSTACK_RESERVE = 64 << 10;
 
-	@:hxmc.export("rt_stack_overflow") @:hxmc.unsafe static function stackOverflow():Void {
+	@:hxmc.export("rt_stack_overflow") @:hxmc.kernel static function stackOverflow():Void {
 		Wasi.writeLit(2, "stack overflow: the shadow stack's ");
 		Wasi.writeInt(2, stackMb);
 		Wasi.writeLit(2, " MB are full (RT_STACK_MB sets its size)\n");
@@ -1466,7 +1466,7 @@ class Gc {
 		Heap.free(tab);
 	}
 
-	@:hxmc.unsafe static function bad(lit:String, a:Int, b:Int, c:Int) {
+	@:hxmc.kernel static function bad(lit:String, a:Int, b:Int, c:Int) {
 		Wasi.writeLit(2, lit);
 		Wasi.writeInt(2, a);
 		Wasi.writeLit(2, " ");
@@ -1544,7 +1544,7 @@ class Gc {
 
 	// RT_STATS at the program's end (Exit.mainDone), as the native Gc.report:
 	// "gc: <n> minor (<s>s), <m> major (<s>s), old <a> MB used; promoted <p> of <y> MB"
-	@:hxmc.unsafe public static function report() {
+	@:hxmc.kernel public static function report() {
 		if (!stats) return;
 		Wasi.writeLit(2, "gc: ");
 		Wasi.writeInt(2, minors);
@@ -1564,7 +1564,7 @@ class Gc {
 	}
 
 	// seconds with two decimals
-	@:hxmc.unsafe static function writeSecs(s:Float) {
+	@:hxmc.kernel static function writeSecs(s:Float) {
 		var c = Std.int(s * 100 + 0.5);
 		Wasi.writeInt(2, Std.int(c / 100));
 		if (c % 100 < 10) Wasi.writeLit(2, ".0") else Wasi.writeLit(2, ".");
