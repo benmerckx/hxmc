@@ -58,9 +58,9 @@ class KernelCheck {
 
 	public static inline var SCRATCH = "a span of a kernel's frame lives while the kernel runs";
 
-	// whether e is a span of the frame's scratch, or of one
+	// whether e is a span of the frame's scratch, or of one (an element of one is no span)
 	function fromScratch(e:TExpr):Bool
-		return switch e.eexpr {
+		return spanOf(e.etype) != null && switch e.eexpr {
 			case TLocal(v): scratch.exists(v.vId);
 			case TParenthesis(x) | TMeta(_, x) | TCast(x, _): fromScratch(x);
 			case TIf(_, a, b): fromScratch(a) || b != null && fromScratch(b);

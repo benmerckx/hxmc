@@ -51,7 +51,14 @@ class SpanScratch {
 		return r * 10 + c[0] + (old >>> 40).toInt() + w[0].toInt();
 	}
 
+	// (an element of the scratch is no span: returned)
+	@:hxmc.kernel static function element(v:Int):Int {
+		var t:Span<Int> = Span.stack(2);
+		t[1] = v;
+		return t[1];
+	}
+
 	static function main() {
-		trace(reversed(12345), reversed(0), fresh(3), fresh(5), atomics());
+		trace(reversed(12345), reversed(0), fresh(3), fresh(5), atomics(), element(6));
 	}
 }
