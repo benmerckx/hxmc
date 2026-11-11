@@ -1,6 +1,8 @@
 package hxmc.rt;
 
 import hxmc.I64;
+import hxmc.ReadOnlySpan;
+import hxmc.Span;
 import hxmc.unsafe.*;
 
 // The stacks of a native program: walked through the frame records every
@@ -58,7 +60,15 @@ class Stacks {
 			Mem.setPtr(ix, 24 * i + 8, start.add(Mem.getI32(e, 4)));
 			Mem.setPtr(ix, 24 * i + 16, e);
 		}
-		// (heap sort by start)
+		sortIndex(Span.unsafeOf((cast ix : Ptr<IndexEntry>), n));
+		count = n;
+		index = ix;
+		return true;
+	}
+
+	// (heap sort by start, unsigned)
+	@:hxmc.kernel static function sortIndex(ix:Span<IndexEntry>) {
+		var n = ix.length;
 		var k = (n >> 1) - 1;
 		while (k >= 0) {
 			sift(ix, k, n);
@@ -70,23 +80,18 @@ class Stacks {
 			sift(ix, 0, end);
 			end--;
 		}
-		count = n;
-		index = ix;
-		return true;
 	}
 
-	@:hxmc.unsafe static inline function less(ix:Ptr, a:Int, b:Int):Bool
-		return Mem.getPtr(ix, 24 * a).ult(Mem.getPtr(ix, 24 * b));
+	static inline function less(ix:Span<IndexEntry>, a:Int, b:Int):Bool
+		return Mem.ult(ix[a].start, ix[b].start);
 
-	@:hxmc.unsafe static function swap(ix:Ptr, a:Int, b:Int) {
-		for (k in 0...3) {
-			var x = Mem.getI64(ix, 24 * a + 8 * k);
-			Mem.setI64(ix, 24 * a + 8 * k, Mem.getI64(ix, 24 * b + 8 * k));
-			Mem.setI64(ix, 24 * b + 8 * k, x);
-		}
+	@:hxmc.kernel static function swap(ix:Span<IndexEntry>, a:Int, b:Int) {
+		var x = ix[a];
+		ix[a] = ix[b];
+		ix[b] = x;
 	}
 
-	@:hxmc.unsafe static function sift(ix:Ptr, root:Int, end:Int) {
+	@:hxmc.kernel static function sift(ix:Span<IndexEntry>, root:Int, end:Int) {
 		var r = root;
 		while (true) {
 			var c = 2 * r + 1;
@@ -530,8 +535,10 @@ class Stacks {
 	}
 
 	// word k of a stack capture made (0 past its end)
-	@:hxmc.unsafe static function word(b:haxe.io.Bytes, k:Int):I64
-		return 8 * k < b.length ? Mem.getI64(Bytes.bytes(b.getData()), 8 * k) : (0 : I64);
+	@:hxmc.kernel static function word(b:haxe.io.Bytes, k:Int):I64 {
+		var w:ReadOnlySpan<I64> = BytesView.bytes(b).reinterpret();
+		return k >= 0 && k < w.length ? w[k] : (0 : I64);
+	}
 
 	// how many words the frame at word k of a stack's words takes
 	@:hxmc.unsafe static inline function words(p:Ptr, k:Int):Int
@@ -542,12 +549,12 @@ class Stacks {
 	public static function frame(b:haxe.io.Bytes, k:Int):Null<{name:Null<String>, file:Null<String>, line:Int}>
 		return describeWords(word(b, k), word(b, k + 1));
 
-	@:hxmc.unsafe public static function frameEnd(b:haxe.io.Bytes, k:Int):Int
-		return k + words(Bytes.bytes(b.getData()), k);
+	@:hxmc.kernel public static function frameEnd(b:haxe.io.Bytes, k:Int):Int
+		return k + (word(b, k) < (0 : I64) ? 2 : 1);
 
 	// whether the frame at word k of a stack capture made is the Mir interpreter's
-	@:hxmc.unsafe public static function interpreted(b:haxe.io.Bytes, k:Int):Bool
-		return words(Bytes.bytes(b.getData()), k) == 2;
+	@:hxmc.kernel public static function interpreted(b:haxe.io.Bytes, k:Int):Bool
+		return word(b, k) < (0 : I64);
 
 	// whether the frame at word k of a stack capture made is of code loaded at
 	// run time: interpreted, or the native tier's compilation of it (addMade)
@@ -601,4 +608,12 @@ class Stacks {
 		Os.write(c, LibC.strlen(c).toInt());
 		LibC.free(c);
 	}
+}
+
+// an entry of the index of the table's functions: its code's start and
+// end, its entry (addresses as words)
+@:hxmc.struct @:publicFields private class IndexEntry {
+	var start:I64;
+	var end:I64;
+	var e:I64;
 }

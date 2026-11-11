@@ -16,6 +16,10 @@ class BytesView {
 	public static function span(b:BytesData):Span<UInt8>
 		return Span.unsafeOf((cast Mem.addr(b) : Ptr<UInt8>), b.length);
 
+	// a haxe.io.Bytes' bytes (its data's, as long as it)
+	public static function bytes(b:haxe.io.Bytes):Span<UInt8>
+		return Span.unsafeOf((cast Bytes.bytes(b.getData()) : Ptr<UInt8>), b.length);
+
 	// a BytesBuffer's length
 	public static function bufLength(bb:Dynamic):Int
 		return Repr.bbLen(bb);
