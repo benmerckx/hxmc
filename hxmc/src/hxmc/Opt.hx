@@ -20,8 +20,13 @@ using core.ds.VectorTools;
 //    loop writes it. A load of the address a dominating store wrote, in
 //    the version the store left, takes the stored value.
 //  - dead code: pure operations and loads nothing uses.
-//  - branches decided by a dominating branch on the same comparison, and
-//    a span's element checks a loop proves (inRange).
+//  - branches decided by a dominating branch on the same comparison, or by
+//    the cases of a switch that lead there, and a span's element checks a
+//    loop proves (inRange); then, once branches were decided, redundancy
+//    elimination again (a load in one of two ways that now dominates its
+//    repetition).
+//  - jump threading: a join's phi of a constant tested by a branch or a
+//    switch, the constant's edge straight to its target.
 //  - loop-invariant code motion: pure operations, and loads that cannot
 //    fault of memory the loop does not write, move to a block before the
 //    loop.
@@ -103,27 +108,7 @@ class Opt {
 		simplifyCfg();
 		var cfg = f.cfg();
 		if (cfg.size == 0) return;
-		repl = MFunc.iota(f.vals.length);
-		// copies are their operand
-		for (bb in f.blocks)
-			for (i in bb.ins)
-				if (i.op == Copy && !i.dead) {
-					repl[i.id] = i.a;
-					i.dead = true;
-				}
-		ver = MFunc.ints(f.vals.length, 0);
-		// (functions with a try: a handler block, reached by setjmp's second
-		// return, starts with new memory versions, so no load from before
-		// is reused there; values computed before setjmp are immutable and
-		// live across it in memory or callee-saved registers)
-		{
-			versions(cfg);
-			canonicalize();
-			gvn(cfg);
-			forwardStores();
-		}
-		rewrite();
-		dce();
+		redundancy(cfg);
 		// (branches on comparisons of constants: inlined arguments; and a join
 		// branching on a phi of a constant, threaded so that condProp reads
 		// the comparisons it joins)
@@ -143,6 +128,18 @@ class Opt {
 			simplifyCfg();
 			dce();
 		}
+		// (branches decided: a load in what was one of two ways may now
+		// dominate its repetition, a view's read after its caller's test
+		// of the same header, TypeView; once more, then the branches again)
+		if (rounds > 1) {
+			redundancy(f.cfg());
+			if (condProp()) {
+				pruneBlocks();
+				mergeBlocks();
+				simplifyCfg();
+				dce();
+			}
+		}
 		if (nullsDropped) dce();
 		if (licmOn)
 			for (_ in 0...3)
@@ -151,6 +148,29 @@ class Opt {
 			freshTargets();
 			loneBarrierOperands();
 		}
+	}
+
+	// redundancy elimination (gvn) and store forwarding, then the operands rewritten
+	function redundancy(cfg:Cfg<MBlock>) {
+		repl = MFunc.iota(f.vals.length);
+		// copies are their operand
+		for (bb in f.blocks)
+			for (i in bb.ins)
+				if (i.op == Copy && !i.dead) {
+					repl[i.id] = i.a;
+					i.dead = true;
+				}
+		ver = MFunc.ints(f.vals.length, 0);
+		// (functions with a try: a handler block, reached by setjmp's second
+		// return, starts with new memory versions, so no load from before
+		// is reused there; values computed before setjmp are immutable and
+		// live across it in memory or callee-saved registers)
+		versions(cfg);
+		canonicalize();
+		gvn(cfg);
+		forwardStores();
+		rewrite();
+		dce();
 	}
 
 	static var licmOn = true; // (the build's, Options.apply)
@@ -387,6 +407,7 @@ class Opt {
 		var vals = f.vals;
 		// the facts in force: comparison (cond, a, b) is `val`
 		var fc:Array<Int> = [], fa:Array<Int> = [], fb:Array<Int> = [], fv:Array<Bool> = [];
+		var sets:Array<Array<Int>> = []; // (SWITCH_IN facts' cases, by fb)
 		var changed = false;
 		var stack = [0], state = [0], depth:Array<Int> = [];
 		while (stack.length > 0) {
@@ -412,6 +433,16 @@ class Opt {
 							fa.push(t.a);
 							fb.push(-1);
 							fv.push(b == t.targets[0]);
+						}
+					} else if (t != null && t.op == Switch && t.targets[t.targets.length - 1] != b) {
+						// (a switch's cases: the value is one of those that come here)
+						var ks = [for (q in 0...t.cases.length) if (t.targets[q] == b) t.cases[q]];
+						if (ks.length > 0) {
+							fc.push(SWITCH_IN);
+							fa.push(t.a);
+							fb.push(sets.length);
+							fv.push(true);
+							sets.push(ks);
 						}
 					}
 				}
@@ -439,6 +470,10 @@ class Opt {
 								// (a comparison of that value with null)
 								if (c.op == Cmp && isEqNe(c.imm) && (c.a == fa[k] && isZero(c.b) || c.b == fa[k] && isZero(c.a)))
 									known = c.imm == (CNe : Int) ? 1 : 2;
+								continue;
+							}
+							if (fc[k] == SWITCH_IN) {
+								if (c.op == Cmp && isEqNe(c.imm)) known = switchCase(c, k, sets[fb[k]], fc, fa, fb, fv);
 								continue;
 							}
 							if (fc[k] == -1 || c.op != Cmp) {
@@ -494,6 +529,27 @@ class Opt {
 		}
 		if (changed) f.edited();
 		return changed;
+	}
+
+	// a comparison c of a switch's value with a constant (x == q, x != q)
+	// decided by the switch's cases that lead here, ks (fact k), less those
+	// a later fact excludes (x != y on the way: `t == 2 || t == 4` in the
+	// case of 2 and 4): 1 true, 2 false, 0 unknown
+	function switchCase(c:MIns, k:Int, ks:Array<Int>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Int {
+		var s = fa[k];
+		var q = sameVal(c.a, s) ? intConst(c.b) : sameVal(c.b, s) ? intConst(c.a) : null;
+		if (q == null) return 0;
+		var left = [];
+		for (x in ks) {
+			var out = false;
+			for (j in k + 1...fc.length)
+				if ((fc[j] == (CEq : Int) && !fv[j] || fc[j] == (CNe : Int) && fv[j])
+					&& (sameVal(fa[j], s) && intConst(fb[j]) == x || sameVal(fb[j], s) && intConst(fa[j]) == x))
+					out = true;
+			if (!out) left.push(x);
+		}
+		var eq = left.indexOf(Std.int(q)) < 0 ? 2 : left.length == 1 ? 1 : 0;
+		return eq == 0 ? 0 : (eq == 1) == (c.imm == (CEq : Int)) ? 1 : 2;
 	}
 
 	// Whether a join branches on a phi with a constant operand: `a || b`,
@@ -909,7 +965,13 @@ class Opt {
 	function sameVal(a:Int, b:Int):Bool {
 		if (a == b) return true;
 		if (a < 0 || b < 0) return false;
+		// (through copies: a merged block's phis)
 		var x = f.vals[a], y = f.vals[b];
+		while (x.op == Copy && x.a >= 0)
+			x = f.vals[x.a];
+		while (y.op == Copy && y.a >= 0)
+			y = f.vals[y.a];
+		if (x == y) return true;
 		return x.op == Const && y.op == Const && x.ty == y.ty && x.sym == null && y.sym == null && x.imm == y.imm && x.imm2 == y.imm2;
 	}
 
@@ -1055,11 +1117,13 @@ class Opt {
 			b.succs = [keep];
 		}
 		knownPhiArgs();
+		// (a join's phi and the switch on it in the block it jumps to: one block)
+		mergeBlocks();
 		// (the blocks that may be threaded: a phi first, a branch last)
 		var any = false;
 		for (b in f.blocks) {
 			var n = b.ins.length;
-			if (n >= 2 && n <= 4 && b.ins[0].op == Phi && b.ins[n - 1].op == Br) {
+			if (n >= 2 && n <= 4 && b.ins[0].op == Phi && (b.ins[n - 1].op == Br || n <= 3 && b.ins[n - 1].op == Switch)) {
 				any = true;
 				break;
 			}
@@ -1091,6 +1155,38 @@ class Opt {
 			var n = ins.length;
 			if (n < 2 || n > 4) continue;
 			var phi = ins[0], br = ins[n - 1];
+			// (a switch on a phi, or on its copy: a constant operand's edge to
+			// its case, as TypeView.of's of null)
+			if (n <= 3 && phi.op == Phi && br.op == Switch && uses[phi.id] == 1
+				&& (n == 2 && br.a == phi.id || n == 3 && ins[1].op == Copy && ins[1].a == phi.id && br.a == ins[1].id && uses[ins[1].id] == 1)) {
+				var k = 0;
+				while (k < b.preds.length) {
+					var p = b.preds[k], x = vals[phi.args[k]];
+					var to = br.targets[br.targets.length - 1];
+					if (x.op == Const && x.sym == null && x.ty == I32)
+						for (q in 0...br.cases.length)
+							if (br.cases[q] == x.imm) {
+								to = br.targets[q];
+								break;
+							}
+					if (x.op != Const || x.sym != null || x.ty != I32 || to == b || hasPhi(to) && to.preds.indexOf(p) >= 0) {
+						k++;
+						continue;
+					}
+					var j = to.preds.indexOf(b);
+					for (i in to.ins)
+						if (i.op == Phi) {
+							i.addArg(i.args[j]);
+							uses[i.args[j]]++;
+						}
+					retarget(p, b, to);
+					b.preds.splice(k, 1);
+					phi.removeArg(k);
+					uses[x.id]--;
+					threaded = true;
+				}
+				continue;
+			}
 			if (phi.op != Phi || br.op != Br || uses[phi.id] != 1) continue;
 			var onZero:MBlock, onSet:MBlock;
 			if (n == 2) {
@@ -1659,6 +1755,7 @@ class Opt {
 	}
 
 	static inline var NONNULL = -2; // (condProp: a fact that fa is not null)
+	static inline var SWITCH_IN = -3; // (condProp: fa is one of the cases sets[fb])
 
 	inline function isZero(v:Int):Bool {
 		var x = f.vals[v];
