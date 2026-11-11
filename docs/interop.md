@@ -194,7 +194,10 @@ a field, an index or an operator. What is inside is read through a view: a
 kernel that knows the layout and gives it out checked, as `hxmc.rt.StrView`
 does a string's (its length, its width, its units as a `ReadOnlySpan`).
 The views are the trusted part, `@:hxmc.unsafe`; what reads through them
-is checked.
+is checked. A view's functions are inlined where they are called, as the
+inline representation calls they stand for were, and a kernel called at
+one place of its module is inlined there whatever its loops (`KernelOnce`):
+a kernel per width, as `count1` and `count2`, costs no call.
 
 ```haxe
 @:hxmc.kernel static function count(s:String, u:Int):Int

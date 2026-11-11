@@ -65,14 +65,22 @@ class Inline {
 		DEPTH = at(4, DEPTH_DEFAULT);
 	}
 	public static var DEPTH = DEPTH_DEFAULT; // levels of inlining (Fingerprint keys callers to that depth)
+	// a kernel called at one place of its module, inlined there (once): no
+	// bigger than this, its loops included (Str's first11 and the like:
+	// a string's widths split into kernels, each called once)
+	public static inline var MAX_ONCE = 128;
 
 	// whether f may be inlined (the IR test); not a function that runs the
 	// collector (@:hxmc.collects): the calls in its body are to the
 	// collector's own no-GC code, during which its callers' shadow-stack
 	// slots would be taken to keep their values (MIns.keepsFrame); not one
-	// without its body (FuncInfo.hostCode)
-	public static function candidate(f:FuncInfo):Bool {
+	// without its body (FuncInfo.hostCode). A view's function (StrView's:
+	// the representation's inline calls it replaces) and a kernel called once
+	// are judged on their Mir alone: a span made or read is many IR nodes,
+	// few instructions
+	public static function candidate(f:FuncInfo, once:Bool):Bool {
 		if (f.hasTry || f.collects || f.hostCode) return false;
+		if (once || f.view) return true;
 		var n = 0;
 		function ex(e:Ex) {
 			if (++n > MAX_IR) return;
@@ -90,6 +98,33 @@ class Inline {
 			if (n > MAX_IR) return false;
 		}
 		return true;
+	}
+
+	// the kernels called at one place of their module, each with the
+	// function calling it (by the module's calls only: a caller's key covers
+	// its module, Fingerprint)
+	public static function once(funcs:Array<FuncInfo>):Map<FuncInfo, FuncInfo> {
+		var callers = new Map<FuncInfo, Array<FuncInfo>>();
+		for (f in funcs) {
+			function ex(e:Ex) {
+				switch e {
+					case ECall(g, _) if (g.declKernel && g.module == f.module):
+						var cs = callers.get(g);
+						if (cs == null) callers.set(g, cs = []);
+						cs.push(f);
+					case _:
+				}
+				hxmc.ir.Facts.iterEx(ex, e);
+			}
+			function st(s:Stmt)
+				hxmc.ir.Facts.iterStmt(st, ex, s);
+			for (s in f.body)
+				st(s);
+		}
+		var r = new Map<FuncInfo, FuncInfo>();
+		for (g => cs in callers)
+			if (cs.length == 1 && cs[0] != g) r.set(g, cs[0]);
+		return r;
 	}
 
 	// the instructions of f outside slow paths once lowered, from its
@@ -160,9 +195,9 @@ class Inline {
 	// the callee's object-level Mir (mb's) when it can be inlined, judged on
 	// the size of its lowering (size; built once per caller module; a callee
 	// with a shadow-stack frame keeps it: its copy pushes and pops it)
-	public static function template(mb:MirBuild, mf:MFunc):Null<Template> {
-		var n = size(mf);
-		return n >= 0 && n <= maxSize(false, true, false) ? {mf: mf, sites: mb.inlineSites, size: n} : null;
+	public static function template(mb:MirBuild, mf:MFunc, once:Bool):Null<Template> {
+		var n = size(mf), max = maxSize(false, true, false);
+		return n >= 0 && n <= (once && max < MAX_ONCE ? MAX_ONCE : max) ? {mf: mf, sites: mb.inlineSites, size: n} : null;
 	}
 
 	// drops the blocks no longer reachable (after a callee that never returns)

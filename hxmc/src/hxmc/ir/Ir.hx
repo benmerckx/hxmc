@@ -323,6 +323,9 @@ class LambdaInfo {
 	// declared @:hxmc.kernel or @:hxmc.blocking: its body touches no GC value
 	// and calls only such functions (Facts.kernelCulprit)
 	public var declKernel:Bool = false;
+	// of a view: a class declared @:hxmc.kernel @:hxmc.unsafe (StrView), which
+	// hands a GC object's layout to kernels (Inline.candidate)
+	public var view:Bool = false;
 	// declared @:hxmc.blocking (GC-free): its calls run in a safe region
 	// (FnLower.inRegion)
 	public var declBlocking:Bool = false;

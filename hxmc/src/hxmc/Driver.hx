@@ -136,6 +136,7 @@ class Driver {
 
 	// the Mir of the callees inlined, built once (shared by the threads: read only once made)
 	var templates = new haxe.ds.ObjectMap<FuncInfo, {t:Null<Inline.Template>}>();
+	var once = new Map<FuncInfo, FuncInfo>(); // (Inline.once: a kernel, its one caller)
 	var tlock = new sys.thread.Mutex();
 
 	function template(fn:FuncInfo):Null<Inline.Template> {
@@ -146,7 +147,7 @@ class Driver {
 		// (object-level Mir, judged on the size of its lowering: Inline.size)
 		var cb = new MirBuild(prep, abi, fn);
 		cb.icSym = prep.funcSym(fn) + "__ic";
-		var t = try Inline.template(cb, cb.objects()) catch (_:Unsupported) null;
+		var t = try Inline.template(cb, cb.objects(), once.exists(fn)) catch (_:Unsupported) null;
 		tlock.acquire();
 		var e2 = templates.get(fn);
 		if (e2 == null) templates.set(fn, {t: t}) else t = e2.t;
@@ -165,7 +166,10 @@ class Driver {
 			// lowered (MemLower) for the memory-level passes and the back ends
 			var mf = mb.objects();
 			if (o.opt) {
-				// to a depth (Fingerprint keys callers with their callees' callees)
+				// to a depth (Fingerprint keys callers with their callees' callees);
+				// (fn and the kernels called once inlined into it: each is in mf
+				// once, and so is each one's single call of a kernel called once)
+				var here = [fn => true];
 				function rounds(todo:Array<{call:MIns, fn:FuncInfo}>) {
 					for (_ in 0...Inline.DEPTH) {
 						if (todo.length == 0) break;
@@ -173,11 +177,18 @@ class Driver {
 						var inLoop = Inline.loopBlocks(mf);
 						for (s in todo) {
 							var t = template(s.fn);
-							// (a kernel of the runtime, a view's accessor, as any function: what
-							// the runtime's code read inline before it reads through one)
+							// (a kernel of the runtime as any function, and a view's function
+							// (StrView) as at a call in a loop: what the runtime's code read
+							// inline before it reads through one; a kernel called once at
+							// its call, Inline.once)
 							var rt = StringTools.startsWith(s.fn.module, "hxmc.rt.") && !s.fn.declKernel;
-							if (t != null && s.fn != fn && t.size <= Inline.maxSize(abi.wasm, s.call.block.mark == inLoop, rt))
+							var max = Inline.maxSize(abi.wasm, s.call.block.mark == inLoop || s.fn.view, rt);
+							var caller = once.get(s.fn), one = caller != null && here.exists(caller);
+							if (one && max < Inline.MAX_ONCE) max = Inline.MAX_ONCE;
+							if (t != null && s.fn != fn && t.size <= max) {
 								sites.push({call: s.call, callee: t});
+								if (one) here.set(s.fn, true);
+							}
 						}
 						todo = Inline.run(mf, sites);
 					}
@@ -445,12 +456,15 @@ class Driver {
 			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
-	// the functions that may be inlined (before the keys: they are part of them)
-	function inlineCandidates() {
+	// the functions that may be inlined (before the keys: they are part of them);
+	// with the kernels called once (Inline.once) when the keys are the
+	// modules' (not the Mir bundles', a function's each)
+	function inlineCandidates(?modules:Bool) {
 		if (!o.opt) return;
+		once = modules ? Inline.once(prep.p.funcs) : new Map();
 		var m = new Map<FuncInfo, Bool>();
 		for (f in prep.p.funcs)
-			if (Inline.candidate(f)) m.set(f, true);
+			if (Inline.candidate(f, once.exists(f))) m.set(f, true);
 		MirBuild.inlineCands = m;
 		// (the slots of each type that hold references: Escape keeps a
 		// Mem.alloc object's on the shadow stack)
@@ -482,7 +496,7 @@ class Driver {
 	}
 
 	function build(t0:Float, t1:Float) {
-		inlineCandidates();
+		inlineCandidates(true);
 		var p = prep.p;
 		// modules in the order of their first function
 		var order:Array<String> = [];

@@ -1772,6 +1772,7 @@ class Lower implements LowerQueries {
 		if (c.clMeta.length > 0) {
 			if (isUnsafe(c.clMeta)) fi.declNoGc = fi.declUnsafe = true;
 			if (hasMeta(":hxmc.kernel", c.clMeta)) fi.declNoGc = fi.declKernel = true;
+			fi.view = fi.declKernel && fi.declUnsafe;
 		}
 		if (cf.cfMeta.length == 0) return;
 		if (isUnsafe(cf.cfMeta)) fi.declNoGc = fi.declUnsafe = true;
