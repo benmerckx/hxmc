@@ -19,14 +19,14 @@ import hxmc.rt.wasm.WasiApi;
 @:access(hxmc.rt.PosixSys) @:access(hxmc.rt.WinSys) #if (hxmc.target == "wasm32-wasi") @:access(hxmc.rt.WasiSys) #end
 extern class SysCore {
 	// s to a descriptor, as UTF-8
-	public static inline function printTo(fd:Int, s:String) {
+	@:hxmc.unsafe(gc) public static inline function printTo(fd:Int, s:String) {
 		var u = Str.toUtf8(Str.orNull(s));
 		if (Platform.os() == 2) WinSys.writeAll(fd, u, LibC.strlen(u).toInt()) else PosixSys.writeAll(fd, u, LibC.strlen(u).toInt());
 		LibC.free(u);
 	}
 
 	// n bytes at d written to fd, which is then closed: false when either failed
-	public static inline function saveAll(fd:Int, d:Ptr, n:Int):Bool {
+	@:hxmc.unsafe(gc) public static inline function saveAll(fd:Int, d:Ptr, n:Int):Bool {
 		// (Windows: the pages faulted in first, WinSys.touch)
 		if (Platform.os() == 2) WinSys.touch(d, n);
 		var ok = true;
@@ -47,7 +47,7 @@ extern class SysCore {
 
 	// ---- the calls
 
-	static inline function write(fd:Int, p:Ptr, n:Int):Int
+	@:hxmc.unsafe(gc) static inline function write(fd:Int, p:Ptr, n:Int):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else Platform.os() == 2 ? Win32._write(fd, p, n) : Posix.write(fd, p, n).toInt() #end;
 
 	// (POSIX: a negative count; Windows and WASI: none written either)

@@ -26,8 +26,9 @@ using core.TFunctions;
 // the next GC point); and hxmc.unsafe's own modules, the raw API. An inline
 // function's @:hxmc.unsafe goes with the copies Haxe inlines (the typer
 // keeps it there: TargetFlags), so a trusted helper is trusted where it
-// lands. Kernels are checked by KernelCheck (stricter); declarations of C
-// functions and fields not at all, only their uses.
+// lands; an extern class's inline functions are checked as any. Kernels are
+// checked by KernelCheck (stricter); declarations of C functions and fields
+// not at all, only their uses.
 //
 // In hxmc's std (a class path holding hxmc/unsafe/Mem.hx) a violation is an
 // error; in the program's own code a warning, an error with -D hxmc.strict.
@@ -73,7 +74,7 @@ class RawCheck {
 			switch t {
 				// (a module typed in this build: one restored from a cache, the server's or
 				// an archive, passed after the filters; its warnings come back with it)
-				case TClassDecl(c) if (c.clModule.mExtra.mProcessed == 0 && !c.hasClassFlag(CExtern) && !rawApi(c)):
+				case TClassDecl(c) if (c.clModule.mExtra.mProcessed == 0 && !rawApi(c)):
 					var std = inStd(c, roots);
 					function field(cf:TClassField) {
 						if (cf.cfExpr == null || trusted(c, cf)) return;
