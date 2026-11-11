@@ -317,6 +317,9 @@ class CInterop {
 			}
 			if (KernelCheck.spanOf(cf.cfType) != null)
 				throw new LowerError(KernelCheck.spanError(posOf(cf.cfPos), "", "the field " + cf.cfName + " of the struct " + where + " has a span type", KernelCheck.SPANS_LOCAL), "");
+			// (a struct's fields are written by any code, and its bytes reinterpreted)
+			if (KernelCheck.proofOf(cf.cfType) != null)
+				throw new LowerError(KernelCheck.spanError(posOf(cf.cfPos), "", "the field " + cf.cfName + " of the struct " + where + " is a proof", KernelCheck.PROOF + ": no struct holds one"), "");
 			var ct = ctype(cf.cfType);
 			switch ct {
 				case COpaque(o): throw new LowerError('@:hxmc.struct $where: ${cf.cfName}: an opaque type (${o.clPath.name}) only stands behind a Ptr', posOf(cf.cfPos));

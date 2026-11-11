@@ -2049,7 +2049,8 @@ class Lower implements LowerQueries {
 			if (cf.hasClassFieldFlag(CfExtern) || cf.hasClassFieldFlag(CfGeneric)) continue;
 			switch cf.cfKind {
 				// (a function taking or returning a struct is not reachable by name)
-				case Method(MethNormal | MethInline) if (funcOf(cf) != null && !hasStruct(staticFunc(c, cf))):
+				// (nor one taking a proof: KernelCheck.takesProof)
+				case Method(MethNormal | MethInline) if (funcOf(cf) != null && !hasStruct(staticFunc(c, cf)) && !KernelCheck.takesProof(cf.cfType)):
 					var f = staticFunc(c, cf);
 					ci.statics.push({name: cf.cfName, clos: staticClosure(f), fn: f, global: -1});
 				case Var(v) if ((cf.cfExpr != null || isPhysical(c, cf, v)) && !ty(cf.cfType).match(TStruct(_))):
@@ -2237,6 +2238,8 @@ class Lower implements LowerQueries {
 		if (g != null) return g;
 		if (KernelCheck.spanOf(cf.cfType) != null)
 			throw new LowerError(KernelCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " has a span type", KernelCheck.SPANS_LOCAL), "");
+		if (KernelCheck.proofOf(cf.cfType) != null)
+			throw new LowerError(KernelCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " is a proof", KernelCheck.PROOF + ": no static holds one"), "");
 		var t = ty(cf.cfType); // first: it may register globals itself (enum constructors)
 		g = prog.globals.length;
 		globalOwner.set(g, c);

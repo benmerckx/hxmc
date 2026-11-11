@@ -29,7 +29,14 @@ using core.TFunctions;
 //   - no unchecked cast but between scalars;
 //   - no write of a static (reading one is fine);
 //   - no closure, no call but of static @:hxmc.kernel functions, Math's
-//     and Std.int; no throw, no try, no untyped code.
+//     and Std.int; no throw, no try, no untyped code;
+//   - a proof (a @:hxmc.proof abstract, or one over it: hxmc.rt.TypeView's
+//     TypeIndex) is held, passed, compared and returned, never made: no
+//     cast to it, no other value where one is expected (an unboxed Dynamic);
+//     only @:hxmc.unsafe code makes one, and only kernels and @:hxmc.unsafe
+//     code call a function taking one (FnLower), which is no value
+//     (Lower.reflectStatics); no span of proofs, no static or struct field
+//     of one (Lower, CInterop).
 class KernelCheck {
 	var l:LowerQueries;
 	var fi:FuncInfo;
@@ -38,6 +45,9 @@ class KernelCheck {
 	// GC values as loans (not blocking; Facts.kernelCulprit checks the rest:
 	// no safe region entered, nothing stored)
 	var loans:Bool;
+
+	// the function's result type (a returned proof is checked as any flow)
+	var ret:Null<T>;
 
 	function new(l, fi) {
 		this.l = l;
@@ -48,6 +58,7 @@ class KernelCheck {
 	// the violations of fi's body tf (an error listing them all), or nothing
 	public static function check(l:LowerQueries, fi:FuncInfo, tf:TFunc) {
 		var c = new KernelCheck(l, fi);
+		c.ret = tf.tfType;
 		for (a in tf.tfArgs)
 			c.value(a.variable.vType, a.variable.vPos, "the parameter " + a.variable.vName);
 		c.value(tf.tfType, fi.pos, "the result");
@@ -87,6 +98,58 @@ class KernelCheck {
 	public static function spanError(at:String, fn:String, what:String, rule:String):String
 		return (at != "" ? at + ": " : "") + (fn != "" ? fn + ": " : "") + what + " (kernel: " + rule + ")";
 
+	// ---- proofs
+
+	public static inline var PROOF = "a proof is made only by @:hxmc.unsafe code";
+
+	// the @:hxmc.proof abstract t is, or stands on (an abstract over one), or null
+	public static function proofOf(t:T):Null<TAbstract> {
+		var depth = 0;
+		while (depth++ < 16)
+			switch t.follow() {
+				case TAbstract(a, pl):
+					if (a.aMeta.length > 0 && Lower.hasMeta(":hxmc.proof", a.aMeta)) return a;
+					if (core.Meta.has(core.Meta.CoreType, a.aMeta)) return null;
+					t = core.TFunctions.applyParams(a.aParams, pl, a.aThis);
+				case _:
+					return null;
+			}
+		return null;
+	}
+
+	// whether a function of type t takes a proof (GC code cannot call it, nor take it as a value)
+	public static function takesProof(t:T):Bool {
+		switch t.follow() {
+			case TFun(s):
+				for (a in s.args)
+					if (proofOf(a.type) != null) return true;
+			case _:
+		}
+		return false;
+	}
+
+	// a value src where one of type t is expected: a proof only from a proof of its kind
+	function flow(t:T, src:TExpr) {
+		var p = proofOf(t);
+		if (p == null) return;
+		switch src.eexpr {
+			case TParenthesis(x) | TMeta(_, x):
+				flow(t, x);
+			case TIf(_, a, b):
+				flow(t, a);
+				if (b != null) flow(t, b);
+			case TBlock(el) if (el.length > 0):
+				flow(t, el[el.length - 1]);
+			case TSwitch(sw):
+				for (c in sw.switchCases)
+					flow(t, c.caseExpr);
+				if (sw.switchDefault != null) flow(t, sw.switchDefault);
+			case _:
+				if (proofOf(src.etype) != p)
+					fail(src.epos, "a value of type " + typeName(src.etype) + " as the proof " + typeName(t), PROOF);
+		}
+	}
+
 	// ---- types
 
 	// hxmc.unsafe's C scalars, values like Int (docs/interop.md, "C interop")
@@ -115,6 +178,11 @@ class KernelCheck {
 
 	// a value of type t at p: neither raw memory nor of a GC type
 	function value(t:T, p:core.Globals.Pos, what:String):Bool {
+		var sp = spanOf(t);
+		if (sp != null && proofOf(sp.elem) != null) {
+			fail(p, what + " is a span of proofs", PROOF);
+			return false;
+		}
 		if (isRaw(t)) {
 			fail(p, what + " has the raw type " + typeName(t), "raw memory needs @:hxmc.unsafe");
 			return false;
@@ -265,8 +333,11 @@ class KernelCheck {
 				if (!value(e.etype, e.epos, "this value")) return;
 			case TConst(_):
 			case TLocal(_) | TBreak | TContinue | TTypeExpr(_):
-			case TVar(v, _):
+			case TVar(v, init):
 				if (!value(v.vType, e.epos, "the local " + v.vName)) return;
+				if (init != null) flow(v.vType, init);
+			case TReturn(x) if (x != null && ret != null):
+				flow(ret, x);
 			case TFunction(_):
 				fail(e.epos, "a closure", "no closures");
 				return;
@@ -291,6 +362,12 @@ class KernelCheck {
 				structCtor(c);
 			case TCall(f, args):
 				call(f, args, e);
+				switch f.etype.follow() {
+					case TFun(s):
+						for (i in 0...args.length)
+							if (i < s.args.length) flow(s.args[i].type, args[i]);
+					case _:
+				}
 				if (!value(e.etype, e.epos, "the result of this call")) return;
 				// (the callee is no value: its arguments only)
 				var named = simdIntrinsic(f);
@@ -334,6 +411,9 @@ class KernelCheck {
 			case TUnop(_, _, x) if (loans && isGc(x)):
 				opaque(x, "an operation on");
 				return;
+			case TCast(x, null) if (proofOf(e.etype) != null && proofOf(x.etype) != proofOf(e.etype)):
+				fail(e.epos, "a cast from " + typeName(x.etype) + " to the proof " + typeName(e.etype), PROOF);
+				return;
 			case TCast(x, null):
 				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow()) && !toUnderlying(x.etype, e.etype)
 					&& !(isVector(x.etype) && isVector(e.etype))) {
@@ -343,7 +423,8 @@ class KernelCheck {
 			case TCast(_, _):
 				fail(e.epos, "a checked cast", "no GC values");
 				return;
-			case TBinop(OpAssign | OpAssignOp(_), lhs, _):
+			case TBinop(OpAssign | OpAssignOp(_), lhs, rhs):
+				flow(lhs.etype, rhs);
 				var s = writtenStatic(lhs);
 				if (s != null) fail(e.epos, "a write of the static " + s.cfName, "statics are read-only in kernels");
 			case TUnop(Increment | Decrement, _, x):

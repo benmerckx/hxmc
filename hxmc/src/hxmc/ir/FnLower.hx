@@ -2183,6 +2183,8 @@ class FnLower {
 						coerce(EGlobal(g, t), t, tyOf(e));
 					case Method(_):
 						var f = l.staticFunc(c, cf);
+						if (KernelCheck.takesProof(cf.cfType))
+							spanFail(e, (f.display != null ? f.display : f.name) + " as a value, which takes a proof", KernelCheck.PROOF + ": a function taking one is no value");
 						var li = l.staticClosure(f);
 						// (capturing nothing: no temporary, so that a block of it sees the closure: blockOf)
 						coerce(ENewClos(li, vector()), TRef(RClos(li.sig)), tyOf(e));
@@ -3032,6 +3034,9 @@ class FnLower {
 				return EInt(0);
 			case TField(_, FStatic(c, cf)):
 				var fn = l.staticFunc(c, cf);
+				if (!fi.declKernel && !fi.declUnsafe && KernelCheck.takesProof(cf.cfType))
+					spanFail(e, "a call of " + (fn.display != null ? fn.display : fn.name) + ", which takes a proof",
+						KernelCheck.PROOF + ": only kernels and @:hxmc.unsafe code call a function taking one");
 				// (spans made as arguments of a kernel: filled once
 				// every argument is evaluated, spanCall)
 				var outer = boundary;

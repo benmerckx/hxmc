@@ -181,7 +181,7 @@ position):
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
 | calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
-| casts | unchecked casts between scalars | any other unchecked cast |
+| casts | unchecked casts between scalars | any other unchecked cast, and one to a proof (below) |
 | statics | reads | writes, also of a struct static's fields |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
 
@@ -204,6 +204,30 @@ a kernel per width, as `count1` and `count2`, costs no call.
   return StrView.isOne(s) ? count1(StrView.units1(s), u) : count2(StrView.units2(s), u);
 ```
 
+**Proofs.** A view can hand out a value that vouches for something, so
+that the view reads with it unchecked: `hxmc.rt.TypeView`'s `TypeIndex`
+is an index of a row of the type table, which `TypeView.kind(t)` and
+`sup(t)` read without a bound check. Such a type is an abstract marked
+`@:hxmc.proof` (or an abstract over one), and only `@:hxmc.unsafe` code
+makes one. A safe kernel holds, passes, compares and returns a proof;
+it never casts to one, nor takes another value where one is expected (a
+`Dynamic` unboxed). GC code could make one from anything, so only
+kernels and `@:hxmc.unsafe` code call a function that takes a proof, and
+such a function is no value (no closure, no reflection). No static, no
+struct field and no span element is a proof: GC code writes those, and a
+span of bytes reinterpreted would make them.
+
+```haxe
+@:hxmc.proof abstract Slot(Int) to Int {}
+
+@:hxmc.kernel @:hxmc.unsafe class Slots { // the view: the one place that makes a Slot
+  public static function of(i:Int):Slot return cast(i & 7);
+}
+
+@:hxmc.kernel static function slot(i:Int):Int
+  return Slots.of(i);  // `return (cast i : Slot)` is rejected
+```
+
 A GC type is one the lowering represents as a reference: class instances,
 `String`, arrays, anonymous objects, `Dynamic`, closures, enum values (also
 argument-less ones; an `enum abstract` over Int is the GC-free spelling),
@@ -219,7 +243,7 @@ Kernel.hx:14: Kernel.sum: a write of the static total (kernel: statics are read-
 
 `@:hxmc.kernel` plus `@:hxmc.unsafe` keeps the freedom of raw memory, as
 above: the escape hatch for trusted code. `KernelFunctions` (unsafe) and
-`KernelSafe` check both paths, `reject/Kernel*` the rules. The design:
+`KernelSafe` check both paths, `KernelProofs` proofs, `reject/Kernel*` the rules. The design:
 [plans/io.md](plans/io.md#kernels).
 
 ### Spans
