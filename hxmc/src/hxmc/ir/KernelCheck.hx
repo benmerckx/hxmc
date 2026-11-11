@@ -74,10 +74,14 @@ class KernelCheck {
 			case _: false;
 		}
 
+	// the kernels C calls (a @:hxmc.callback taking spans, Lower.spanCallback):
+	// as a blocking one, no loans: C may call them in a safe region
+	public static var entries = new Map<String, Bool>();
+
 	function new(l, fi) {
 		this.l = l;
 		this.fi = fi;
-		loans = !fi.declBlocking;
+		loans = !fi.declBlocking && !entries.exists(fi.name);
 	}
 
 	// the violations of fi's body tf (an error listing them all), or nothing

@@ -2,6 +2,7 @@ package hxmc.ir;
 
 import hxmc.ir.Ir;
 import hxmc.ir.LowerQueries;
+import hxmc.ir.CInterop;
 import hxmc.ir.Com.ComValue;
 import hxmc.ir.Jni.JniValue;
 import core.Ast.Binop;
@@ -1643,7 +1644,7 @@ class Lower implements LowerQueries {
 			fi.gcScan = {gc: !h.noGc, here: h.blocks, addr: false, callees: [], names: []};
 			return fi;
 		}
-		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, cf);
+		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, c, cf);
 		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.run(funcOf(cf));
@@ -1684,9 +1685,13 @@ class Lower implements LowerQueries {
 	public function callbackSym(fi:FuncInfo):String
 		return "hxmc_cb_" + fi.name;
 
-	function callback(fi:FuncInfo, cf:TClassField) {
+	function callback(fi:FuncInfo, c:TClass, cf:TClassField) {
 		var where = CInterop.posOf(cf.cfPos);
 		var tf = funcOf(cf);
+		if ([for (a in tf.tfArgs) if (KernelCheck.spanOf(a.variable.vType) != null) a].length > 0) {
+			spanCallback(fi, c, cf, tf, where);
+			return;
+		}
 		var cargs = [], structs = false;
 		for (a in fi.args.concat([new Local(-1, "result", fi.ret)])) {
 			if (a.id == -1 && a.ty == TVoid || a.name == "sret" && fi.sret && a.id == fi.args.length - 1) continue;
@@ -1765,6 +1770,95 @@ class Lower implements LowerQueries {
 			w.locals.push(r);
 			w.body = vector(begin, SSet(r, call), end, SReturn(ELocal(r)));
 		}
+		prog.funcs.push(w);
+	}
+
+	// a @:hxmc.callback kernel taking spans (docs/interop.md, "Typed
+	// callbacks"): C passes their memory as a typed binding's parameters are
+	// (CInterop.plan: an address and a size_t, or an address alone, its length
+	// a sibling parameter or a constant: @:hxmc.len), which its declaration
+	// vouches for; the wrapper makes the spans (a null address an empty one)
+	// and calls the kernel, which runs on C's thread in C's state, as an
+	// @:hxmc.unsafe callback does
+	function spanCallback(fi:FuncInfo, c:TClass, cf:TClassField, tf:TFunc, where:String) {
+		if (!fi.declKernel || fi.declBlocking) throw new LowerError('@:hxmc.callback ${cf.cfName} takes spans: it is a @:hxmc.kernel (spans exist only in kernels)', where);
+		if (fi.cSymbol != null) throw new LowerError('@:hxmc.callback ${cf.cfName} is also @:hxmc.export', where);
+		var s = switch TFunctions.follow(cf.cfType) {
+			case TFun(s): s;
+			case _: throw new LowerError('@:hxmc.callback ${cf.cfName} is no function', where);
+		};
+		var p = CInterop.plan(c, cf, s, cf.cfName, where);
+		KernelCheck.entries.set(fi.name, true);
+		if (p.ret >= 0) throw new LowerError('@:hxmc.callback ${cf.cfName}: a callback returns no span', where);
+		var w = new FuncInfo(fi.name + "__callback", fi.module);
+		w.cSymbol = callbackSym(fi);
+		w.display = fi.display;
+		w.pos = fi.pos;
+		var cargs:Array<CTy> = [], body:Array<Stmt> = [], id = 0;
+		// (the C arguments: each Haxe parameter's, a span's address first)
+		var ins:Array<Array<Local>> = [];
+		for (i in 0...s.args.length) {
+			var cts = switch p.args[i] {
+				case ASpan: [CPtr, CPtr];
+				case ASpanPtr(_): [CPtr];
+				case AValue | AHandle(_):
+					var ct = CInterop.ctype(s.args[i].type);
+					if (!ct.match(CI32 | CI64 | CF64 | CPtr)) throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} has the type ${CInterop.name(ct)}, which a callback cannot take yet (Int, Int64, Float, Ptr, spans)', where);
+					[ct];
+				case ACallback: throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a function', where);
+			}
+			ins.push([for (ct in cts) {
+				var lo = new Local(id++, s.args[i].name, ct == CI32 ? TI32 : ct == CF64 ? TF64 : TI64);
+				w.args.push(lo);
+				cargs.push(ct);
+				lo;
+			}]);
+		}
+		var ret = CInterop.ctype(tf.tfType);
+		if (!ret.match(CVoid | CI32 | CI64 | CF64 | CPtr)) throw new LowerError('@:hxmc.callback ${cf.cfName}: the result has the type ${CInterop.name(ret)}, which a callback cannot return yet', where);
+		w.cAbi = {args: cargs, ret: ret};
+		w.ret = fi.ret;
+		var xs:Array<Ex> = [];
+		for (i in 0...s.args.length)
+			switch p.args[i] {
+				case ASpan | ASpanPtr(_):
+					var sd = structOf(KernelCheck.spanOf(s.args[i].type) != null ? switch TFunctions.follow(s.args[i].type) {
+						case TAbstract(a, _): a.aThis;
+						case t: t;
+					} : s.args[i].type);
+					if (sd == null) throw new LowerError('@:hxmc.callback ${cf.cfName}: a span\'s data is no struct', where);
+					var addr = ins[i][0];
+					// (the length: C's size_t, a sibling parameter, or the constant)
+					var n:Ex = switch p.args[i] {
+						case ASpan: EConv(L2I, ELocal(ins[i][1]));
+						case ASpanPtr(count, _) if (count >= 0): ins[count][0].ty == TI64 ? EConv(L2I, ELocal(ins[count][0])) : ELocal(ins[count][0]);
+						case ASpanPtr(_, min): EInt(min);
+						case _: EInt(0);
+					};
+					var len = new Local(id++, "len", TI32), slot = new Local(id++, "span", TStruct(core.Globals.sTypePath(sd.clPath), CInterop.layout(sd).size));
+					w.locals.push(len);
+					w.locals.push(slot);
+					body.push(SSet(len, n));
+					// (a null address, or a negative length: an empty span)
+					body.push(SIf(EBin(Or, EBin(LEq, ELocal(addr), EConv(I2L, EInt(0))), EBin(Lt, ELocal(len), EInt(0))), vector(SSet(len, EInt(0))), vector()));
+					body.push(SSet(slot, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(CInterop.layout(sd).size), EInt(8)), TI64)));
+					body.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(slot), EInt(CInterop.field(sd, "ptr").off), ELocal(addr)), TVoid)));
+					body.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(slot), EInt(CInterop.field(sd, "length").off), ELocal(len)), TVoid)));
+					xs.push(ELocal(slot));
+				case _:
+					xs.push(ELocal(ins[i][0]));
+			}
+		var call = ECall(fi, Vector.fromArrayCopy(xs));
+		if (fi.ret == TVoid) {
+			body.push(SExpr(call));
+			body.push(SReturn(null));
+		} else {
+			var r = new Local(id++, "r", fi.ret);
+			w.locals.push(r);
+			body.push(SSet(r, call));
+			body.push(SReturn(ELocal(r)));
+		}
+		w.body = Vector.fromArrayCopy(body);
 		prog.funcs.push(w);
 	}
 

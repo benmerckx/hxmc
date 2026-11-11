@@ -1,0 +1,4 @@
+exit 0
+CBindingsFds.hx:42: 5, 3
+CBindingsFds.hx:44: 5, abcde
+CBindingsFds.hx:45: 294

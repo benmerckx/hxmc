@@ -1,0 +1,3 @@
+exit 0
+CBindingsCallbacks.hx:52: 6019
+CBindingsCallbacks.hx:53: 6, 16, 3

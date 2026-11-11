@@ -25,11 +25,13 @@ class HeaderCheck {
 		"wasm32-wasi" => "wasm32-wasi"
 	];
 	static final ORDER = ["linux-x86_64", "linux-arm64", "macos-x86_64", "macos-arm64", "windows-x86_64", "windows-arm64", "wasm32-wasi"];
-	// a program and its class path (the std's WASI imports name no header:
+	// a program, its class path, whether it is native only, POSIX only (the std's WASI imports name no header:
 	// wasi-libc declares them as __wasi_*; on wasm32, CBindings' own)
 	static final PROGRAMS = [
-		{main: "HeaderStd", cp: "hxmc/test/header", native: true},
-		{main: "CBindings", cp: "hxmc/test/cases", native: false}
+		{main: "HeaderStd", cp: "hxmc/test/header", native: true, posix: false},
+		{main: "CBindings", cp: "hxmc/test/cases", native: false, posix: false},
+		{main: "CBindingsCallbacks", cp: "hxmc/test/cases", native: true, posix: false},
+		{main: "CBindingsFds", cp: "hxmc/test/cases", native: true, posix: true}
 	];
 
 	static function main() {
@@ -45,7 +47,7 @@ class HeaderCheck {
 			var triple = TARGETS.get(t);
 			if (triple == null) fail("header check: unknown target " + t);
 			for (p in PROGRAMS) {
-				if (p.native && t == "wasm32-wasi") continue;
+				if (p.native && t == "wasm32-wasi" || p.posix && !(t.startsWith("linux") || t.startsWith("macos"))) continue;
 				var r = check(zig, p.main, p.cp, t, triple);
 				if (r == null) ok++ else {
 					failed++;
