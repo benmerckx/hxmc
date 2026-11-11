@@ -1582,7 +1582,7 @@ class Gc {
 		return f;
 	}
 
-	@:hxmc.unsafe public static function heapBytes():Float {
+	@:hxmc.kernel public static function heapBytes():Float {
 		var b:Float = cast oldLimit;
 		return b + minorSize;
 	}

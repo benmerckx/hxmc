@@ -373,12 +373,12 @@ class PosixNet {
 	}
 
 	// whether the last failure was EAGAIN/EWOULDBLOCK (a non-blocking socket not ready)
-	@:hxmc.unsafe public static function blocked():Bool
+	@:hxmc.kernel public static function blocked():Bool
 		return lastErrno() == EAGAIN();
 
 	// whether the last failure was a non-blocking connect in progress
 	// (EINPROGRESS, or EALREADY for a second one)
-	@:hxmc.unsafe public static function inProgress():Bool
+	@:hxmc.kernel public static function inProgress():Bool
 		return lastErrno() == EINPROGRESS() || lastErrno() == EALREADY();
 
 	// SO_ERROR: the socket's pending error, which reading clears (0: none);
