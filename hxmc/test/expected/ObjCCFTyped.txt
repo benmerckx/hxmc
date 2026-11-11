@@ -1,0 +1,8 @@
+exit 0
+ObjCCFTyped.hx:46: 5
+ObjCCFTyped.hx:51: true, 100, true
+ObjCCFTyped.hx:53: true, 3
+ObjCCFTyped.hx:54: false, true
+ObjCCFTyped.hx:55: true, 3840
+ObjCCFTyped.hx:57: 2
+ObjCCFTyped.hx:60: 1
