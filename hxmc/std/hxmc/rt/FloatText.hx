@@ -161,19 +161,13 @@ class FloatText {
 
 	// ---- doubles
 
-	@:hxmc.unsafe static function bits(v:Float):I64 {
-		var t = Mem.stack(8);
-		Mem.setF64(t, 0, v);
-		return Mem.getI64(t, 0);
-	}
+	@:hxmc.kernel static function bits(v:Float):I64
+		return Mem.f64Bits(v);
 
-	@:hxmc.unsafe static function ofBits(b:I64):Float {
-		var t = Mem.stack(8);
-		Mem.setI64(t, 0, b);
-		return Mem.getF64(t, 0);
-	}
+	@:hxmc.kernel static function ofBits(b:I64):Float
+		return Mem.bitsF64(b);
 
-	@:hxmc.unsafe static inline function inf():Float
+	static inline function inf():Float
 		return ofBits((0x7FF : I64) << 52);
 
 	// is X (dig: decimal digits, nd of them, value 0.d1d2... * 10^e10... as D * 10^k) vs b * 2^f
