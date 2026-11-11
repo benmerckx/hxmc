@@ -376,8 +376,22 @@ every target.
 Entries unused for 14 days are removed.
 
 **The compilation server** keeps typed modules, lowered bodies and compiled
-objects in memory: `haxe --wait 6000`, then `haxe --connect 6000
-build.hxml`.
+objects in memory. With the repository's tool, start it with `--server`
+and name each build's output with `-D hxmc.out` (not as the first
+argument: `hxmc --connect 6000 out ...` fails with `Package "out" was not
+found`):
+
+```sh
+hxmc --server --wait 6000 &
+hxmc --connect 6000 -D hxmc.out=bin/app -cp src -main Main -cp bin/hxmc/std --custom-target hxmc
+```
+
+The client passes the build's arguments as they are, hxmc's std
+(`-cp bin/hxmc/std`) among them. The build's messages go to the client;
+a failure of the server's own (no hxmc std, no `-D hxmc.out`) goes to
+the server's standard error. The server runs until it
+is stopped: Ctrl-C, or `kill` its process. `hxmc --server` sets
+`RT_OLD_MB=2048` and `RT_OLD_GROWTH=150` unless they are set.
 
 **The dev loop.** `haxe --dev build.hxml` (`hxmc dev build.hxml` with the
 repository's tool) builds the program, runs it, and on every save rebuilds
