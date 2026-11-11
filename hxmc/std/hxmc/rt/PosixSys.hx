@@ -86,21 +86,12 @@ class PosixSys {
 	@:hxmc.unsafe(gc) public static function argv0():String
 		return argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : null;
 
-	@:hxmc.unsafe(gc) public static function getEnv(s:String):String {
-		var n = cstr(s);
-		var v = Posix.getenv(n);
-		LibC.free(n);
-		return v.isNull() ? null : ofC(v);
-	}
+	public static function getEnv(s:String):String
+		return s == null ? null : PosixStrings.getenv(s);
 
-	@:hxmc.unsafe(gc) public static function putEnv(s:String, v:String):Void {
-		var n = cstr(s);
-		if (!Str.isNull(v)) {
-			var u = cstr(v);
-			Posix.setenv(n, u, 1);
-			LibC.free(u);
-		} else Posix.unsetenv(n);
-		LibC.free(n);
+	public static function putEnv(s:String, v:String):Void {
+		if (s == null) return;
+		if (v != null) PosixStrings.setenv(s, v, 1) else PosixStrings.unsetenv(s);
 	}
 
 	// the address of the C library's environ
@@ -141,12 +132,8 @@ class PosixSys {
 		return ofC(buf);
 	}
 
-	@:hxmc.unsafe(gc) public static function setCwd(s:String):Bool {
-		var n = cstr(s);
-		var r = Posix.chdir(n);
-		LibC.free(n);
-		return r == 0;
-	}
+	public static function setCwd(s:String):Bool
+		return PosixStrings.chdir(s) == 0;
 
 	public static function systemName():String
 		return mac() ? "Mac" : "Linux";
@@ -447,27 +434,14 @@ class PosixSys {
 		return r;
 	}
 
-	@:hxmc.unsafe(gc) public static function deleteFile(path:String):Bool {
-		var p = cstr(path);
-		var r = Posix.unlink(p) == 0;
-		LibC.free(p);
-		return r;
-	}
+	public static function deleteFile(path:String):Bool
+		return PosixStrings.unlink(path) == 0;
 
-	@:hxmc.unsafe(gc) public static function deleteDirectory(path:String):Bool {
-		var p = cstr(path);
-		var r = Posix.rmdir(p) == 0;
-		LibC.free(p);
-		return r;
-	}
+	public static function deleteDirectory(path:String):Bool
+		return PosixStrings.rmdir(path) == 0;
 
-	@:hxmc.unsafe(gc) public static function rename(path:String, newPath:String):Bool {
-		var a = cstr(path), b = cstr(newPath);
-		var r = Posix.rename(a, b) == 0;
-		LibC.free(a);
-		LibC.free(b);
-		return r;
-	}
+	public static function rename(path:String, newPath:String):Bool
+		return PosixStrings.rename(path, newPath) == 0;
 
 	// struct dirent: d_name at 19 (Linux), 21 (macOS, 64-bit inodes)
 	@:hxmc.unsafe(gc) public static function readDirectory(path:String):Array<String> {

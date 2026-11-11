@@ -17,5 +17,12 @@ class HeaderStd {
 		s.setTimeout(1.5);
 		try s.bind(new sys.net.Host("127.0.0.1"), 0) catch (_:Dynamic) {}
 		s.close();
+		Sys.putEnv("HXMC_HEADER", "1");
+		trace(Sys.getEnv("HXMC_HEADER"));
+		sys.FileSystem.rename("bin/header-std.txt", "bin/header-std2.txt");
+		sys.FileSystem.deleteFile("bin/header-std2.txt");
+		sys.FileSystem.createDirectory("bin/header-std.d");
+		sys.FileSystem.deleteDirectory("bin/header-std.d");
+		Sys.setCwd(Sys.getCwd());
 	}
 }

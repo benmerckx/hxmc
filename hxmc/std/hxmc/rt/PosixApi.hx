@@ -63,3 +63,17 @@ extern class PosixApi {
 @:hxmc.c @:hxmc.fast @:hxmc.header("sys/socket.h") private extern class PosixRaw {
 	@:hxmc.len(v, 0) static function getsockopt(fd:Int, level:Int, opt:Int, v:Span<UInt8>, len:Ptr):Int;
 }
+
+// The C library's calls of strings for GC code: each String a NUL-terminated
+// UTF-8 copy for the call, getenv's result copied (docs/interop.md, "Typed
+// bindings"). The same symbols as hxmc.unsafe.Posix's, and fast as those.
+@:hxmc.c @:hxmc.fast @:hxmc.safe @:hxmc.header("stdlib.h", "unistd.h", "stdio.h")
+extern class PosixStrings {
+	static function getenv(name:String):String;
+	static function setenv(name:String, value:String, overwrite:Int):Int;
+	static function unsetenv(name:String):Int;
+	static function chdir(path:String):Int;
+	static function unlink(path:String):Int;
+	static function rmdir(path:String):Int;
+	static function rename(from:String, to:String):Int;
+}
