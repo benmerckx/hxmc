@@ -36,6 +36,17 @@ class LinkInputs {
 		}
 		var objs:Array<Obj> = [];
 		var archives:Array<Archive> = [];
+		// (a universal Mach-O file, Apple's archives: the target's slice)
+		function thin(b:Bytes, p:String):Bytes {
+			if (b.length < 8 || b.get(0) != 0xca || b.get(1) != 0xfe || b.get(2) != 0xba || b.get(3) != 0xbe) return b;
+			inline function be(at:Int):Int return (b.get(at) << 24) | (b.get(at + 1) << 16) | (b.get(at + 2) << 8) | b.get(at + 3);
+			var cpu = abi.arm ? 0x0100000C : 0x01000007;
+			for (k in 0...be(4)) {
+				var e = 8 + 20 * k;
+				if (be(e) == cpu && be(e + 4) & 0xFFFFFF == (abi.arm ? 0 : 3)) return b.sub(be(e + 8), be(e + 12));
+			}
+			throw "hxmc: link: " + p + " has no slice for " + abi.name;
+		}
 		var have = defined.copy();
 		var queue = wanted.copy();
 		function add(o:Obj) {
@@ -55,6 +66,7 @@ class LinkInputs {
 		}
 		for (p in paths) {
 			var b = sys.io.File.getBytes(p);
+			if (abi.os == "macos") b = thin(b, p);
 			if (isArchive(b)) archives.push(new Archive(b, p)) else add(read(b, p));
 		}
 		var loaded = new Map<String, Bool>();

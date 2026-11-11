@@ -49,6 +49,8 @@ function preopens() {
 		for (const e of entries) {
 			if (n >= 60) return r;
 			if (!e.isDirectory() || e.name.startsWith('$')) continue;
+			// (unreadable system folders, e.g. C:\Recovery for a non-admin, fail uvwasi_init)
+			try { fs.readdirSync(`${d}:\\${e.name}`); } catch { continue; }
 			r[`/${d.toLowerCase()}/${e.name}`] = `${d}:\\${e.name}`;
 			n++;
 		}

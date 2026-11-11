@@ -57,6 +57,7 @@ enum abstract RelKind(Int) to Int {
 	var RWasmGlobal; // a global index (a thread-local variable or the stack pointer)
 	var RWasmAddr; // i64.const operand: S + A (a data address, a function's table index or an absolute value), 10 bytes
 	var RWasmAddr32; // i32.const operand: S + A (a link-time number), 5 bytes
+	var RPc64; // S + A - P, 64 bits (LLVM's profile records: a field's distance to the counters, MachOReader)
 }
 
 class Section {

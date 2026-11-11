@@ -228,6 +228,9 @@ class LinkCore {
 					absolute(s, r, P);
 				case RPc32 | RCall32:
 					buf.set32(r.offset, symAddr(r.sym) + A - P);
+				case RPc64:
+					var d = symAddr(r.sym) + A - P;
+					buf.set64(r.offset, d, d < 0 ? -1 : 0);
 				case RImgRel32:
 					var S = symAddr(r.sym);
 					buf.set32(r.offset, S == 0 ? 0 : S + A - imageBase);
