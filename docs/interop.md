@@ -264,7 +264,14 @@ recognizes these patterns:
   tested equal (`if (b.length != a.length) return ...`);
 - a sub-span's own loop (`var m = s.sub(p, k); for (i in 0...m.length) m[i]`);
 - a table's index masked below a length tested first
-  (`if (t.length < 256) return ...; t[x & 0xFF]`).
+  (`if (t.length < 256) return ...; t[x & 0xFF]`);
+- a window: `c[i + k]` and `d[k]` comparing d's m units at each i, after
+  `if (m < 1 || m > c.length) return ...`, with `k < m` and i counting up
+  from a value tested `>= 0` while `i < c.length - m + 1`, or down from
+  one tested `<= c.length - m` while `i >= 0` (`SpanWindows`).
+
+A test of two lengths at once counts as two (`if (n > a.length || n >
+b.length) return ...`).
 
 Other accesses keep their check, as do counters that may start below 0 or
 step by more than 1. `SpanLoops` names the checks left in each of its

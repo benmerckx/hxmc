@@ -124,8 +124,10 @@ class Opt {
 		}
 		rewrite();
 		dce();
-		// (branches on comparisons of constants: inlined arguments)
-		if (cmpFolded) {
+		// (branches on comparisons of constants: inlined arguments; and a join
+		// branching on a phi of a constant, threaded so that condProp reads
+		// the comparisons it joins)
+		if (cmpFolded || constJoin()) {
 			simplifyCfg();
 			pruneBlocks();
 			mergeBlocks();
@@ -492,6 +494,20 @@ class Opt {
 		return changed;
 	}
 
+	// Whether a join branches on a phi with a constant operand: `a || b`,
+	// whose `true` the first simplifyCfg saw as a copy
+	function constJoin():Bool {
+		for (b in f.blocks) {
+			var n = b.ins.length;
+			if (n < 2 || n > 4 || b.ins[0].op != Phi || b.ins[n - 1].op != Br) continue;
+			for (a in b.ins[0].args) {
+				var x = f.vals[a];
+				if (x.op == Const && x.sym == null) return true;
+			}
+		}
+		return false;
+	}
+
 	var nullsDropped = false;
 	var cmpFolded = false; // (gvn: a comparison of constants)
 
@@ -627,6 +643,7 @@ class Opt {
 		}
 		if (lt && nonNeg(i, cfg, 0)) return true;
 		if (strided(i, n, lx, ly, strict, cfg)) return true;
+		if (window(i, n, lx, ly, strict, cfg)) return true;
 		// (a small block's index: x * s + k with constants s, k >= 0, x never
 		// negative and below a constant, against a length of a constant or
 		// tested against one: `if (s.length < 64) return; for (c in 0...8)
@@ -685,6 +702,69 @@ class Opt {
 				if (y.op == Sar && y.ty == I32 && y.a == m && constOf(y.b) == j) return true;
 			}
 		return false;
+	}
+
+	// (a window's index: p + k, or p, against n, where 0 <= p <= n - m,
+	// 0 <= k < m (0 < m for p alone) and m <= n: then n - m cannot wrap, and
+	// p + k <= n - 1; m units compared from each p, Str.find's `c[i + k]`.
+	// p may be a counter: up from values never negative, or down from
+	// values at most n - m)
+	function window(i:Int, n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>, cfg:Cfg<MBlock>):Bool {
+		function holds(x:Int, y:Int, lt:Bool):Bool {
+			for (q in 0...lx.length)
+				if (sameVal(lx[q], x) && ly[q] == y && (strict[q] || !lt)) return true;
+			return false;
+		}
+		// (tested against a constant >= 0)
+		function tested(v:Int):Bool {
+			for (q in 0...lx.length)
+				if (ly[q] == v && constOf(lx[q]) >= 0) return true;
+			return false;
+		}
+		function nonNegHere(v:Int):Bool {
+			if (nonNeg(v, cfg, 0) || tested(v)) return true;
+			var x = f.vals[v];
+			if (x.op != Phi || x.ty != I32) return false;
+			for (a in x.args) {
+				if (a == v) continue;
+				var y = f.vals[a];
+				var up = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
+				if (up ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, 0) && !tested(a)) return false;
+			}
+			return true;
+		}
+		// (v <= s, or v < s + 1: no wrap, s = n - m <= n - 1)
+		function atMost(v:Int, s:Int):Bool {
+			if (holds(v, s, false)) return true;
+			for (q in 0...lx.length) {
+				var y = f.vals[ly[q]];
+				if (lx[q] == v && strict[q] && y.op == Add && (y.a == s && isOne(y.b) || y.b == s && isOne(y.a))) return true;
+			}
+			var x = f.vals[v];
+			if (x.op != Phi || x.ty != I32) return false;
+			for (a in x.args) {
+				if (a == v) continue;
+				var y = f.vals[a];
+				var down = y.op == Sub && y.a == v && isOne(y.b) || y.op == Add && (y.a == v && isConst(y.b, -1) || y.b == v && isConst(y.a, -1));
+				if (down ? !aboveSome(v, y.block, cfg) : !holds(a, s, false)) return false;
+			}
+			return true;
+		}
+		function at(p:Int, k:Int):Bool {
+			if (!nonNegHere(p) || k >= 0 && !nonNegHere(k)) return false;
+			for (q in 0...lx.length) {
+				var s = f.vals[ly[q]];
+				if (s.op == Add && s.ty == I32) s = f.vals[isOne(s.b) ? s.a : s.b];
+				if (s.op != Sub || s.ty != I32 || s.a != n || !atMost(p, s.id)) continue;
+				var m = s.b;
+				if (!holds(m, n, false)) continue;
+				if (k >= 0 ? holds(k, m, true) : lowerBound(m, lx, ly, strict) >= 1) return true;
+			}
+			return false;
+		}
+		var x = f.vals[i];
+		if (x.op == Add && x.ty == I32) return at(x.a, x.b) || at(x.b, x.a);
+		return at(i, -1);
 	}
 
 	// the least value n (an I32) has where the facts hold: a constant, or a
@@ -816,6 +896,43 @@ class Opt {
 			k = idom[k];
 		}
 		return false;
+	}
+
+	// whether a branch dominating block b found v above some value: v > y,
+	// or v >= k for a constant k >= 0 (a counter's decrement there cannot
+	// wrap)
+	function aboveSome(v:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CGt if (taken && c.a == v): return true;
+							case CLe if (!taken && c.a == v): return true;
+							case CLt if (taken && c.b == v): return true;
+							case CGe if (!taken && c.b == v): return true;
+							case CGe if (taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLt if (!taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLe if (taken && c.b == v && constOf(c.a) >= 0): return true;
+							case CGt if (!taken && c.b == v && constOf(c.a) >= 0): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	inline function isConst(v:Int, k:Int):Bool {
+		var c = f.vals[v];
+		return c.op == Const && c.ty == I32 && c.sym == null && c.imm == k;
 	}
 
 	static inline function isEqNe(c:Int):Bool

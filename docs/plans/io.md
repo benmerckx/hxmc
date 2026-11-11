@@ -404,9 +404,16 @@ decided when two things hold where it stands:
 So `for (i in 0...s.length)`, `while (i < n) { ...; i++ }` from 0, and a
 sub-span's own loop are covered. A table's index `x & m` (m >= 0
 constant) is in range of a length that is a constant above m, or that was
-tested against one (`if (t.length < 256) return`). Counters that may start
-below 0, other steps, and bounds the length was not tested against keep
-their checks. `SpanLoops` covers both kinds (its `// span-checks:` line:
+tested against one (`if (t.length < 256) return`). A window's index
+`p + k` (or p) is in range of n when `0 <= p <= n - m`, `0 <= k < m` (`0 <
+m` for p alone) and `m <= n` hold: n - m cannot wrap, and `p + k <= n -
+1`; p may be a counter up from values tested `>= 0` (`i < n - m + 1`, so
+that `i++` cannot wrap) or down from values tested `<= n - m`, its
+decrement made where it is above a value (Str's search). Counters that
+may start below 0, other steps, and bounds the length was not tested
+against keep their checks. A join branching on a phi of a constant (`a ||
+b`) is threaded before the facts are read, so that each comparison is a
+fact. `SpanLoops` covers both kinds (its `// span-checks:` line:
 Corpus counts the checks left in each kernel's optimized Mir).
 
 **Measured** (`SpanBench`, 2026-10-28, the same machine as above): the
