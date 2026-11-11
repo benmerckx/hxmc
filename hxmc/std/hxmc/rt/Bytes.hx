@@ -7,6 +7,12 @@ import hxmc.rt.Types.*;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.Float32;
+import hxmc.unsafe.UInt16;
+import hxmc.unsafe.UInt8;
+import haxe.io.BytesData;
+import hxmc.ReadOnlySpan;
+import hxmc.Span;
 
 // haxe.io.Bytes's natives (hxmc.NativeBytes), BytesBuffer's and FPHelper's
 // (formerly in rt_std.c), written over hxmc.rt.Repr. They take and make
@@ -41,8 +47,8 @@ class Bytes {
 		Repr.bytesMove(b, pos, src, srcpos, n);
 	}
 
-	@:hxmc.host("hxmc_NativeBytes_fill") @:hxmc.unsafe static function fill(b:Dynamic, pos:Int, n:Int, v:Int):Void
-		Repr.bytesFill(b, pos, n, v);
+	@:hxmc.host("hxmc_NativeBytes_fill") @:hxmc.kernel static function fill(b:BytesData, pos:Int, n:Int, v:Int):Void
+		BytesView.span(b).fill(pos, n, v);
 
 	@:hxmc.host("hxmc_NativeBytes_sub") static function sub(b:Dynamic, pos:Int, n:Int):Dynamic {
 		if (pos < 0 || n < 0 || pos > len(b) - n) outside();
@@ -52,38 +58,72 @@ class Bytes {
 	}
 
 	// the difference of the first differing bytes, else of the lengths
-	@:hxmc.host("hxmc_NativeBytes_compare") @:hxmc.unsafe static function compare(a:Dynamic, b:Dynamic):Int {
-		var na = len(a), nb = len(b);
-		var n = na < nb ? na : nb;
-		var pa = Repr.octets(a), pb = Repr.octets(b);
-		var c = Repr.compareOctets(pa, pb, n);
-		if (c != 0) return c;
-		return na - nb;
+	@:hxmc.host("hxmc_NativeBytes_compare") @:hxmc.kernel static function compare(a:BytesData, b:BytesData):Int {
+		var x = BytesView.span(a), y = BytesView.span(b);
+		var c = differ(x, y);
+		return c != 0 ? c : x.length - y.length;
 	}
 
-	@:hxmc.host("hxmc_NativeBytes_getUInt16") @:hxmc.unsafe static function getUInt16(b:Dynamic, pos:Int):Int
-		return Repr.octets(b).getU16(pos);
+	// the difference of the first differing bytes of the shorter's length, else 0
+	@:hxmc.kernel static function differ(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt8>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		// 8 bytes at a time while equal (MemOps.compare)
+		var wa:ReadOnlySpan<I64> = a.reinterpret(), wb:ReadOnlySpan<I64> = b.reinterpret();
+		var w = n >> 3, i = 0;
+		if (w > wa.length || w > wb.length) return 0;
+		while (i < w && wa[i] == wb[i])
+			i++;
+		var k = i << 3;
+		while (k < n) {
+			var x:Int = a[k], y:Int = b[k];
+			if (x != y) return x - y;
+			k++;
+		}
+		return 0;
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_setUInt16") @:hxmc.unsafe static function setUInt16(b:Dynamic, pos:Int, v:Int):Void
-		Repr.octets(b).setU16(pos, v);
+	// (haxe.io.Bytes tests pos first: these checks are its, again)
+	@:hxmc.host("hxmc_NativeBytes_getUInt16") @:hxmc.kernel static function getUInt16(b:BytesData, pos:Int):Int {
+		var s:ReadOnlySpan<UInt16> = BytesView.span(b).sub(pos, 2).reinterpret();
+		return s[0];
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_getInt32") @:hxmc.unsafe static function getInt32(b:Dynamic, pos:Int):Int
-		return Mem.getI32(bytes(b), pos);
+	@:hxmc.host("hxmc_NativeBytes_setUInt16") @:hxmc.kernel static function setUInt16(b:BytesData, pos:Int, v:Int):Void {
+		var s:Span<UInt16> = BytesView.span(b).sub(pos, 2).reinterpret();
+		s[0] = v;
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_setInt32") @:hxmc.unsafe static function setInt32(b:Dynamic, pos:Int, v:Int):Void
-		Mem.setI32(bytes(b), pos, v);
+	@:hxmc.host("hxmc_NativeBytes_getInt32") @:hxmc.kernel static function getInt32(b:BytesData, pos:Int):Int {
+		var s:ReadOnlySpan<Int> = BytesView.span(b).sub(pos, 4).reinterpret();
+		return s[0];
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_getDouble") @:hxmc.unsafe static function getDouble(b:Dynamic, pos:Int):Float
-		return Mem.getF64(bytes(b), pos);
+	@:hxmc.host("hxmc_NativeBytes_setInt32") @:hxmc.kernel static function setInt32(b:BytesData, pos:Int, v:Int):Void {
+		var s:Span<Int> = BytesView.span(b).sub(pos, 4).reinterpret();
+		s[0] = v;
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_setDouble") @:hxmc.unsafe static function setDouble(b:Dynamic, pos:Int, v:Float):Void
-		Mem.setF64(bytes(b), pos, v);
+	@:hxmc.host("hxmc_NativeBytes_getDouble") @:hxmc.kernel static function getDouble(b:BytesData, pos:Int):Float {
+		var s:ReadOnlySpan<Float> = BytesView.span(b).sub(pos, 8).reinterpret();
+		return s[0];
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_getFloat") @:hxmc.unsafe static function getFloat(b:Dynamic, pos:Int):Float
-		return Mem.getF32(bytes(b), pos);
+	@:hxmc.host("hxmc_NativeBytes_setDouble") @:hxmc.kernel static function setDouble(b:BytesData, pos:Int, v:Float):Void {
+		var s:Span<Float> = BytesView.span(b).sub(pos, 8).reinterpret();
+		s[0] = v;
+	}
 
-	@:hxmc.host("hxmc_NativeBytes_setFloat") @:hxmc.unsafe static function setFloat(b:Dynamic, pos:Int, v:Float):Void
-		Mem.setF32(bytes(b), pos, v);
+	@:hxmc.host("hxmc_NativeBytes_getFloat") @:hxmc.kernel static function getFloat(b:BytesData, pos:Int):Float {
+		var s:ReadOnlySpan<Float32> = BytesView.span(b).sub(pos, 4).reinterpret();
+		return s[0];
+	}
+
+	@:hxmc.host("hxmc_NativeBytes_setFloat") @:hxmc.kernel static function setFloat(b:BytesData, pos:Int, v:Float):Void {
+		var s:Span<Float32> = BytesView.span(b).sub(pos, 4).reinterpret();
+		s[0] = v;
+	}
 
 	@:hxmc.host("hxmc_NativeBytes_getString") static function getString(b:Dynamic, pos:Int, n:Int, encoding:Dynamic):String {
 		if (pos < 0 || n < 0 || pos > len(b) - n) outside();
@@ -165,8 +205,8 @@ class Bytes {
 	@:hxmc.host("haxe_io_BytesBuffer_new") static function bbNew():Dynamic
 		return Repr.bbNew();
 
-	@:hxmc.host("haxe_io_BytesBuffer_get_length") @:hxmc.unsafe static function bbGetLength(bb:Dynamic):Int
-		return bbLen(bb);
+	@:hxmc.host("haxe_io_BytesBuffer_get_length") @:hxmc.kernel static function bbGetLength(bb:Dynamic):Int
+		return BytesView.bufLength(bb);
 
 	// room for n more bytes
 	static function reserve(bb:Dynamic, n:Int) {

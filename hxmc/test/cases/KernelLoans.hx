@@ -40,5 +40,12 @@ class KernelLoans {
 		b.clear();
 		b.add("x");
 		trace(n, b.length, b.toString());
+		var x = haxe.io.Bytes.ofString("abcdefghijk"), y = haxe.io.Bytes.ofString("abcdefghijz");
+		trace(x.compare(y), y.compare(x), x.compare(x.sub(0, 9)), x.sub(0, 3).compare(haxe.io.Bytes.ofString("abd")), x.compare(x));
+		x.fill(2, 3, 0x41);
+		x.setInt32(7, -2);
+		x.setUInt16(0, 0xBEEF);
+		x.setFloat(3, 1.5);
+		trace(x.toHex(), x.getInt32(7), x.getUInt16(0), x.getFloat(3));
 	}
 }
