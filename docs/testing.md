@@ -168,7 +168,9 @@ tests are `TARGET` skips.
 ## CI
 
 `.github/workflows/build.yml` runs as parallel jobs, each waiting only for
-what it uses. **Gates** marks the jobs `publish-npm` and `release` wait for:
+what it uses (except that `build-checks`, `crosshost`, `fuzz-exec`,
+`upstream-suites` and `native-output` start after `build`, leaving the
+runners to `build` and `corpus` first). **Gates** marks the jobs `publish-npm` and `release` wait for:
 a release is published only when all of them pass.
 
 | Job | Gates | What |

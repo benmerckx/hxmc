@@ -69,8 +69,11 @@
 # - release: a rolling `nightly` pre-release on pushes to main, a release on
 #   v* tags; pages: the website on pushes to main (with the benchmark history
 #   of the bench-data branch, which bench.yml writes).
-# Each job names in `needs` only what it uses; publish-npm, release and pages
-# wait for every check. The jobs' `if` test each direct need by name (a job
+# Each job names in `needs` only what it uses, except that build-checks,
+# crosshost, fuzz-exec, upstream-suites and native-output also wait for build
+# (~3 min): the account runs 20 jobs at a time, and otherwise they took the
+# runners corpus and build need first (the test jobs wait for those);
+# publish-npm, release and pages wait for every check. The jobs' `if` test each direct need by name (a job
 # skipped by `changes`, or rt when the release exists, would otherwise skip
 # everything after it; and at job level needs.*.result also holds such a
 # skipped job further up).
@@ -348,8 +351,8 @@ jobs:
   # the build's checks, which nothing waits for but publish-npm and release
   # (in build, they held back every job that needs it)
   build-checks:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -562,8 +565,8 @@ jobs:
   # itself, byte-identical to the native tool (make crosshost; the cases in
   # five shards, every target in each, the tool in the first)
   crosshost:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -685,8 +688,8 @@ jobs:
   # hxmc.codesign-*'s files)
   native-output:
     name: native-output smoke
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -791,8 +794,8 @@ jobs:
   # a wasm32-wasi module under node), what they print compared; one job per
   # lane, each with its own tool from the stage0
   fuzz-exec:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -847,8 +850,8 @@ jobs:
   # hxmc/test/UpstreamSuites.hx): unit, sys and threads natively, unit as a
   # wasm32-wasi module under node; the counts in the job summary
   upstream-suites:
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
