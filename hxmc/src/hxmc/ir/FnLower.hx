@@ -3043,18 +3043,29 @@ class FnLower {
 				// every argument is evaluated, spanCall)
 				var outer = boundary;
 				var made = fn.declKernel ? [for (a in cargs) if (spanMaker(a)) strip(a)] : [];
-				boundary = made.length > 0 ? {direct: made, fills: []} : null;
+				boundary = made.length > 0 ? {direct: made, fills: [], releases: []} : null;
 				var xs = args(cargs, callTys(fn), defaultValues(fn), 0, fn);
 				var fills = boundary != null ? boundary.fills : null;
+				var releases = boundary != null ? boundary.releases : [];
 				boundary = outer;
 				if (fills != null)
 					for (fill in fills)
 						fill();
 				spanInGcCode(e.etype, e, "the result of " + (fn.display != null ? fn.display : fn.name));
 				// (@:hxmc.blocking: in a safe region, unless called from one)
-				if (fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3)
-					return inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt);
-				return callFn(fn, xs, rt);
+				var r = fn.declBlocking && !fi.declBlocking && Lower.targetOs != 3 ? inRegion(xs, callTys(fn), xs -> ECall(fn, xs), fn.ret, rt) : callFn(fn, xs, rt);
+				if (releases.length == 0) return r;
+				// (Buffers lent to the call: released once it returned, Span.ofBuffer)
+				if (rt == TVoid) {
+					out.push(SExpr(r));
+					for (release in releases)
+						release();
+					return EInt(0);
+				}
+				var v = temp(rt, r);
+				for (release in releases)
+					release();
+				return v;
 			// a message to super (ObjC): in a constructor, an initializer
 			// (`self = [super initX:...]`); elsewhere, objc_msgSendSuper
 			case TField({eexpr: TConst(TSuper)}, FInstance(c, _, cf)) if (ObjC.isObjC(c) && mode != null):
@@ -3706,15 +3717,15 @@ class FnLower {
 	// a kernel being lowered, and what fills those spans once every
 	// argument is evaluated: their addresses are taken last, after any GC
 	// point (Facts.checkHeapSpans: the callee of a Bytes' enters no region)
-	var boundary:Null<{direct:Array<TExpr>, fills:Array<() -> Void>}> = null;
+	var boundary:Null<{direct:Array<TExpr>, fills:Array<() -> Void>, releases:Array<() -> Void>}> = null;
 
-	// whether e makes a span (ofBytes, ofIoBuffer, unsafeOf)
+	// whether e makes a span (ofBytes, ofIoBuffer, ofBuffer, unsafeOf)
 	static function spanMaker(e:TExpr):Bool {
 		switch strip(e).eexpr {
 			case TCall({eexpr: TField(_, FStatic(c, cf))}, _):
 				switch c.clKind {
 					case KAbstractImpl(a) if (KernelCheck.isSpanAbstract(a)):
-						return cf.cfName == "ofBytes" || cf.cfName == "ofIoBuffer" || cf.cfName == "unsafeOf";
+						return cf.cfName == "ofBytes" || cf.cfName == "ofIoBuffer" || cf.cfName == "ofBuffer" || cf.cfName == "unsafeOf" || cf.cfName == "of";
 					case _:
 				}
 			case _:
@@ -3811,7 +3822,50 @@ class FnLower {
 			make(s, p, EInt(n));
 			return coerce(ELocal(s), sdt, tyOf(e));
 		}
-		if (name == "ofBytes" || name == "ofIoBuffer" || name == "unsafeOf") {
+		if (name == "of") {
+			// a value as a span of one for a call: copied into a slot of this
+			// frame, and (a Span's, of a variable) back after the call: an
+			// out-parameter, a `const T *` (GC code too: the slot is no GC memory)
+			if (boundary == null || boundary.direct.indexOf(e) < 0)
+				spanFail(e, a.aPath.name + ".of(x) outside a call's arguments", "x is copied in for the call, and back after it: an argument only");
+			var vt = tyOf(cargs[0]);
+			var slot = newSlot(vt, true);
+			var x = value(cargs[0]);
+			var sc = switch vt {
+				case TStruct(_): structOf(cargs[0].etype);
+				case _: null;
+			};
+			var acc = sc == null ? rawAccess(CInterop.ctype(cargs[0].etype)) : null;
+			if (sc != null) copyStruct(ELocal(slot), ELocal(asLocal(x, vt)), sc) else
+				out.push(SExpr(ECallHost("hxmc_unsafe_Mem_" + acc.set, vector(ELocal(slot), EInt(0), coerce(x, vt, acc.t)), TVoid)));
+			var s = newSlot(sdt, true);
+			make(s, ELocal(slot), EInt(1));
+			if (a.aPath.name == "Span")
+				switch strip(cargs[0]).eexpr {
+					case TLocal(_) | TField(_, FInstance(_) | FStatic(_)):
+						boundary.releases.push(() -> {
+							if (sc == null) {
+								assign(cargs[0], () -> {
+									x: coerce(ECallHost("hxmc_unsafe_Mem_" + acc.get, vector(ELocal(slot), EInt(0)), acc.t), acc.t, vt),
+									t: vt
+								}, cargs[0]);
+								return;
+							}
+							// (a struct: its bytes copied back in place, as structAssign does)
+							switch strip(cargs[0]).eexpr {
+								case TField(_, FStatic(k, kf)) if (!k.hasClassFlag(CExtern)):
+									var g = l.staticVar(k, kf);
+									copyStruct(EGlobal(g, l.globalTy(g)), ELocal(slot), sc);
+								case _:
+									copyStruct(placeOf(cargs[0], true).addr(), ELocal(slot), sc);
+							}
+						});
+					case _:
+						spanFail(e, "Span.of(x) of no variable", "C writes the span: x is a local, a field or a static, copied back after the call (ReadOnlySpan.of for a value)");
+				}
+			return coerce(ELocal(s), sdt, tyOf(e));
+		}
+		if (name == "ofBytes" || name == "ofIoBuffer" || name == "ofBuffer" || name == "unsafeOf") {
 			var direct = boundary != null && boundary.direct.indexOf(e) >= 0;
 			if (!direct && !fi.declKernel)
 				spanFail(e, "a span made outside a call's arguments",
@@ -3827,6 +3881,21 @@ class FnLower {
 					// (a negative length would pass every unsigned check)
 					out.push(SIf(EBin(Lt, n, EInt(0)), fatal("badRange", [EInt(0), n, EInt(0)]), vector()));
 					fill = () -> make(s, p, n);
+				case "ofBuffer":
+					// (its range now, the span lent once every argument is, released after the call)
+					if (!direct || fi.declKernel) spanFail(e, "a span of a Buffer made in a kernel", "GC code lends a Buffer, as a call's argument");
+					var b = loc(xs[0], tyOf(cargs[0])), pos = arg(1, 0), len = arg(2, -1);
+					var n = loc(ECall(spanSupport(sd, "bufferRange"), vector(b, pos, len)), TI32);
+					var k = newLocal("lent", TI32);
+					out.push(SSet(k, EInt(-1)));
+					boundary.releases.push(() -> out.push(SIf(EBin(Ge, ELocal(k), EInt(0)), vector(SExpr(ECall(spanSupport(sd, "bufferRelease"), vector(b)))), vector())));
+					fill = () -> {
+						out.push(SSet(k, ECall(spanSupport(sd, "bufferTake"), vector(b, n))));
+						var m = newLocal("lentn", TI32);
+						out.push(SSet(m, ELocal(k)));
+						out.push(SIf(EBin(Lt, ELocal(k), EInt(0)), vector(SSet(m, EInt(0))), vector()));
+						make(s, loc(ECall(spanSupport(sd, "bufferAddr"), vector(b, pos)), TI64), ELocal(m));
+					};
 				case "ofBytes":
 					var b = loc(xs[0], tyOf(cargs[0])), pos = arg(1, 0), len = arg(2, -1);
 					var n = loc(ECall(spanSupport(sd, "bytesRange"), vector(b, pos, len)), TI32);
@@ -4059,9 +4128,10 @@ class FnLower {
 			}
 		var made = [for (a in es) if (spanMaker(a)) strip(a)];
 		var outer = boundary;
-		boundary = made.length > 0 ? {direct: made, fills: []} : null;
+		boundary = made.length > 0 ? {direct: made, fills: [], releases: []} : null;
 		var xs = args(es, ats, null);
 		var fills = boundary != null ? boundary.fills : null;
+		var releases = boundary != null ? boundary.releases : [];
 		boundary = outer;
 		var enters = CInterop.BLOCKING.exists(sym) || CInterop.blockingCall(c, cf) && !fi.declBlocking;
 		if (enters)
@@ -4080,6 +4150,8 @@ class FnLower {
 			for (fill in fills)
 				fill();
 		var cx:Array<Ex> = [], cts:Array<Ty> = [], words:Array<Bool> = [];
+		var strs:Array<Ex> = [];
+		if (fi.declKernel && (p.str || p.args.indexOf(AString) >= 0)) spanFail(e, "the C function " + cf.cfName + " takes or returns a String", "Strings cross C calls in GC code: a kernel copies nothing");
 		function push(x:Ex, t:Ty, word = false) {
 			cx.push(x);
 			cts.push(t);
@@ -4110,6 +4182,11 @@ class FnLower {
 					push(vs[i], ats[i], CInterop.handleType(s.args[i].type) == CPtr);
 				case ACallback:
 					push(cbs.get(i), TI64, true);
+				case AString:
+					// (a copy for the call, freed after it)
+					var cs = temp(TI64, ECall(support("cstring"), vector(vs[i])));
+					strs.push(cs);
+					push(cs, TI64, true);
 				case _:
 					push(vs[i], ats[i], CInterop.isSize(s.args[i].type));
 			}
@@ -4131,7 +4208,7 @@ class FnLower {
 				case _:
 			}
 		}
-		var t = p.ret >= 0 ? TI64 : ty(s.ret);
+		var t = p.ret >= 0 || p.str ? TI64 : ty(s.ret);
 		var call = Vector.fromArrayCopy(cx);
 		var r:Ex;
 		if (CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3)
@@ -4144,6 +4221,21 @@ class FnLower {
 			out.push(SSet(lo, ECallHost(sym, call, t)));
 			if (t.match(TStruct(_))) freshSlots.set(lo, true);
 			r = ELocal(lo);
+		}
+		for (cs in strs)
+			out.push(SExpr(ECall(support("cfree"), vector(cs))));
+		for (release in releases)
+			release();
+		if (p.str) {
+			// (C's string copied, then freed by @:hxmc.free's function, else borrowed)
+			var str = temp(TRef(RStr), ECall(support("cresult"), vector(r)));
+			if (p.free != null) {
+				var fcf = c.clStatics.get(p.free), fsym = CInterop.cSymbol(c, c.clStatics.get(p.free));
+				if (fsym == null) cfail("@:hxmc.free(" + p.free + "): no C function", e);
+				l.cExtern(fsym, c, fcf);
+				out.push(SIf(EBin(LNe, r, EConv(I2L, EInt(0))), vector(SExpr(ECallHost(fsym, vector(r), TVoid))), vector()));
+			}
+			return coerce(str, TRef(RStr), tyOf(e));
 		}
 		// (@:hxmc.close: the place the handle came from holds the invalid value from now on)
 		for (i in 0...cargs.length)

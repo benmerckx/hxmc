@@ -1,0 +1,11 @@
+exit 0
+CBindingsBuffer.hx:37: 100, 0
+CBindingsBuffer.hx:39: 210, 1, 20, 0
+CBindingsBuffer.hx:40: 80, 10
+CBindingsBuffer.hx:24: Buffer.close: a span of it is lent to a running call
+CBindingsBuffer.hx:41: 100, 42
+CBindingsBuffer.hx:42: OutsideBounds
+CBindingsBuffer.hx:44: true, 0
+CBindingsBuffer.hx:45: Buffer: closed
+CBindingsBuffer.hx:46: Buffer: closed
+CBindingsBuffer.hx:54: 81509376

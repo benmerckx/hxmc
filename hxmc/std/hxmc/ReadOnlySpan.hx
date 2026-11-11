@@ -41,5 +41,10 @@ abstract ReadOnlySpan<T>(SpanData) {
 
 	extern public static function ofIoBuffer(buf:IoBuffer, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
 
+	extern public static function ofBuffer(buf:hxmc.Buffer, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
+
+	// a call's argument: a value as a span of one, copied for the call (`const T *`)
+	extern public static function of<T>(x:T):ReadOnlySpan<T>;
+
 	extern public static function unsafeOf<T>(p:Ptr<T>, length:Int):ReadOnlySpan<T>;
 }

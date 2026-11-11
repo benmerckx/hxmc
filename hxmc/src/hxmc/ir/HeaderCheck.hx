@@ -97,6 +97,8 @@ class HeaderCheck {
 					}
 				case ACallback:
 					arg('hxmc_check::pointer<${A()}>()', "a function pointer");
+				case AString:
+					arg('hxmc_check::cstring<${A()}>()', "a C string (char *)");
 				case _ if (CInterop.isSize(s.args[i].type)):
 					arg('hxmc_check::word<${A()}>()', "a size_t");
 				case _:
@@ -105,7 +107,9 @@ class HeaderCheck {
 			}
 		}
 		var R = '$F::ret';
-		if (p.ret >= 0) {
+		if (p.str)
+			out.push('static_assert(hxmc_check::cstring<$R>(), "$what: the result is a C string (char *)");');
+		else if (p.ret >= 0) {
 			var et = CInterop.ctype(KernelCheck.spanOf(s.ret).elem);
 			out.push('static_assert(hxmc_check::span<$R, ${element(et)}>(), "$what: the result is a pointer to ${described(et)}");');
 		} else
@@ -196,6 +200,7 @@ template<class P, int N> struct pointee<P, scalar<N>> {
 };
 template<class T, class E> constexpr bool span() { return __is_pointer(T) && pointee<__remove_cv(__remove_pointer(T)), E>::ok; }
 template<class T, int N> constexpr bool fits() { return size<__remove_cv(__remove_pointer(T))>() <= N; }
+template<class T> constexpr bool cstring() { return __is_pointer(T) && __is_same(__remove_cv(__remove_pointer(T)), char); }
 }
 ";
 

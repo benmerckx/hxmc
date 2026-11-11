@@ -31,7 +31,10 @@ class HeaderCheck {
 		{main: "HeaderStd", cp: "hxmc/test/header", native: true, posix: false},
 		{main: "CBindings", cp: "hxmc/test/cases", native: false, posix: false},
 		{main: "CBindingsCallbacks", cp: "hxmc/test/cases", native: true, posix: false},
-		{main: "CBindingsFds", cp: "hxmc/test/cases", native: true, posix: true}
+		{main: "CBindingsFds", cp: "hxmc/test/cases", native: true, posix: true},
+		{main: "CBindingsStrings", cp: "hxmc/test/cases", native: false, posix: false},
+		{main: "CBindingsBuffer", cp: "hxmc/test/cases", native: false, posix: false},
+		{main: "CBindingsOut", cp: "hxmc/test/cases", native: false, posix: false}
 	];
 
 	static function main() {

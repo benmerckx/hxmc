@@ -94,6 +94,14 @@ abstract Span<T>(SpanData) {
 	// -1 to its end; the callee is GC-free (@:hxmc.blocking too)
 	extern public static function ofIoBuffer(buf:IoBuffer, pos:Int = 0, len:Int = -1):Span<UInt8>;
 
+	// a call's argument in GC code: bytes [pos, pos + len) of buf, len -1 to
+	// its end, lent to that call (close() throws meanwhile); any callee
+	extern public static function ofBuffer(buf:hxmc.Buffer, pos:Int = 0, len:Int = -1):Span<UInt8>;
+
+	// a call's argument: x (a variable: a local, a field, a static) as a span
+	// of one, copied in for the call and back after it: an out-parameter
+	extern public static function of<T>(x:T):Span<T>;
+
 	// length elements of T at p, as their owner vouches (@:hxmc.unsafe code,
 	// or a call's argument in GC code: a pool's glue)
 	extern public static function unsafeOf<T>(p:Ptr<T>, length:Int):Span<T>;
@@ -156,6 +164,36 @@ abstract Span<T>(SpanData) {
 		r.str(" out of range [0, ");
 		r.int(n, 0);
 		end(r, where);
+	}
+
+	// a Buffer lent to a call (Span.ofBuffer, FnLower.spanCall): its range as
+	// the arguments are evaluated (OutsideBounds, closed); once they are, the
+	// span lent (-1: it closed meanwhile, an empty span), released after the call
+	public static function bufferRange(b:Buffer, pos:Int, len:Int):Int
+		return b.range(pos, len);
+
+	@:hxmc.unsafe public static function bufferTake(b:Buffer, n:Int):Int
+		return b.take(n);
+
+	@:hxmc.unsafe public static function bufferRelease(b:Buffer):Void
+		b.release();
+
+	@:hxmc.unsafe public static function bufferAddr(b:Buffer, pos:Int):hxmc.I64
+		return b.addr(pos);
+
+	// a String passed to a typed C call: a malloc'ed NUL-terminated UTF-8
+	// copy, 0 for null; freed after the call (cfree: FnLower.typedCall)
+	@:hxmc.unsafe public static function cstring(s:String):hxmc.I64
+		return s == null ? 0 : hxmc.rt.Str.toUtf8(s).toI64();
+
+	@:hxmc.unsafe public static function cfree(p:hxmc.I64):Void
+		if (p != (0 : hxmc.I64)) hxmc.unsafe.LibC.free(new Ptr(p));
+
+	// a String result of a typed C call: C's NUL-terminated UTF-8 copied, null for NULL
+	@:hxmc.unsafe(gc) public static function cresult(p:hxmc.I64):String {
+		if (p == (0 : hxmc.I64)) return null;
+		var c:Ptr = new Ptr(p);
+		return hxmc.rt.Str.ofUtf8(c, hxmc.unsafe.LibC.strlen(c).toInt());
 	}
 
 	// (a typed C call given a handle of its invalid value: FnLower.typedCall)

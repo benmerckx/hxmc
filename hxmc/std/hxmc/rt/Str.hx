@@ -299,7 +299,7 @@ class Str {
 	}
 
 	// a malloc'ed UTF-8 copy ("null" for null)
-	@:hxmc.host("hx_str_to_utf8") @:hxmc.unsafe static function toUtf8(s:String):Ptr {
+	@:hxmc.host("hx_str_to_utf8") @:hxmc.unsafe public static function toUtf8(s:String):Ptr {
 		if (isNull(s)) {
 			var p = LibC.malloc(5);
 			Mem.setI32(p, 0, 0x6c6c756e); // "null"

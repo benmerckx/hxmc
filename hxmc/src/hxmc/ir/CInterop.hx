@@ -38,19 +38,23 @@ typedef CSig = {args:Array<CTy>, ret:CTy};
 // how a call passes one Haxe parameter of a C function (docs/interop.md,
 // "Typed bindings"): as its C type, a span as its address and its length,
 // a span as its address alone (its length another parameter's, or a
-// minimum), a handle (checked against its invalid value), a callback's address
+// minimum), a handle (checked against its invalid value), a callback's address,
+// a String as a NUL-terminated UTF-8 copy for the call's duration (NULL for null)
 enum CArg {
 	AValue;
 	ASpan;
 	ASpanPtr(count:Int, min:Int);
 	AHandle(invalid:Null<Int>, close:Bool);
 	ACallback;
+	AString;
 }
 
 // a C function's parameters as its calls pass them; ret: the length of a
 // span result (@:hxmc.len(n)), else -1; typed: whether any parameter or
-// the result is passed otherwise than as its C type
-typedef CPlan = {args:Array<CArg>, ret:Int, typed:Bool};
+// the result is passed otherwise than as its C type; str: a String result,
+// C's NUL-terminated UTF-8 copied (null for NULL), free: the function of the
+// same class freeing it after the copy (@:hxmc.free(fn)), or null: borrowed
+typedef CPlan = {args:Array<CArg>, ret:Int, typed:Bool, str:Bool, free:Null<String>};
 
 class CInterop {
 	// C functions by symbol: their signature (one per symbol: every
@@ -480,7 +484,7 @@ class CInterop {
 					args.push(CPtr);
 					args.push(CPtr);
 					continue;
-				case ASpanPtr(_) | ACallback:
+				case ASpanPtr(_) | ACallback | AString:
 					args.push(CPtr);
 					continue;
 				case AHandle(_):
@@ -493,7 +497,7 @@ class CInterop {
 				throw new LowerError('C function $shown: parameter ${s.args[i].name} has no C type a call can pass (${describe(ct)}; scalars, Ptr, CString and structs)', where);
 			args.push(ct);
 		}
-		var ret = p.ret >= 0 ? CPtr : handleOf(s.ret) != null ? handleType(s.ret) : gc(ctype(s.ret));
+		var ret = p.ret >= 0 || p.str ? CPtr : handleOf(s.ret) != null ? handleType(s.ret) : gc(ctype(s.ret));
 		if (ret != CVoid && !isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('C function $shown: the result has no C type a call can return (${describe(ret)}; scalars, Ptr, CString, a struct or Void)', where);
 		var sig = {args: args, ret: ret};
@@ -667,20 +671,49 @@ class CInterop {
 				args[i] = ACallback;
 				typed = true;
 			}
+			if (isString(t) && isSafe(c, cf)) {
+				args[i] = AString;
+				typed = true;
+			}
 		}
-		if (ret >= 0) typed = true;
+		var str = isString(s.ret) && isSafe(c, cf), free:Null<String> = null;
+		var fm = core.Meta.getOpt(Custom(":hxmc.free"), cf.cfMeta);
+		if (fm != null) {
+			free = fm.exprs.length == 1 ? identOf(fm.exprs[0]) : null;
+			if (!str || free == null || !c.clStatics.exists(free))
+				throw new LowerError('C function $shown: @:hxmc.free(fn) names the function of its class that frees its String result', where);
+		}
+		if (ret >= 0 || str) typed = true;
 		if (KernelCheck.spanOf(s.ret) != null && ret < 0)
 			throw new LowerError('C function $shown: a span result needs its length (@:hxmc.len(n))', where);
-		if (isSafe(c, cf)) {
+		// (a function another of its class names in @:hxmc.free takes C's pointer: the
+		// compiler calls it; a call of it in the program passes raw memory, RawCheck)
+		if (isSafe(c, cf) && !freesResults(c, cf.cfName)) {
 			if (Lower.hasMeta(":hxmc.indirect", cf.cfMeta)) throw new LowerError('C function $shown: @:hxmc.safe and @:hxmc.indirect (a raw address)', where);
 			for (i in 0...s.args.length)
 				if (args[i].match(AValue) && !safeValue(s.args[i].type))
 					throw new LowerError('C function $shown is @:hxmc.safe but its parameter ${s.args[i].name} is raw memory or a GC value (${core.TPrinting.Printer.sType(s.args[i].type)}: spans, handles, scalars and structs of them)', where);
-			if (ret < 0 && ctype(s.ret) != CVoid && !safeValue(s.ret))
+			if (ret < 0 && !str && ctype(s.ret) != CVoid && !safeValue(s.ret))
 				throw new LowerError('C function $shown is @:hxmc.safe but its result is raw memory or a GC value (${core.TPrinting.Printer.sType(s.ret)})', where);
 		}
-		return {args: args, ret: ret, typed: typed};
+		return {args: args, ret: ret, typed: typed, str: str, free: free};
 	}
+
+	// whether a function of c names fn in @:hxmc.free
+	static function freesResults(c:TClass, fn:String):Bool {
+		for (f in c.clOrderedStatics) {
+			var m = f.cfMeta.length > 0 ? core.Meta.getOpt(Custom(":hxmc.free"), f.cfMeta) : null;
+			if (m != null && m.exprs.length == 1 && identOf(m.exprs[0]) == fn) return true;
+		}
+		return false;
+	}
+
+	// a String parameter or result: C's `const char *`, NUL-terminated UTF-8
+	public static function isString(t:T):Bool
+		return switch TFunctions.follow(t) {
+			case TInst(c, _): Lower.isCore(c, "String");
+			case _: false;
+		}
 
 	static function isInteger(ct:CTy):Bool
 		return ct.match(CI8 | CU8 | CI16 | CU16 | CI32 | CI64);
